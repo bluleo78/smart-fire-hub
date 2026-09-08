@@ -1,4 +1,4 @@
-import { createDatasets } from '../../factories/dataset.factory';
+import { createCategories, createDataset, createDatasets } from '../../factories/dataset.factory';
 import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { setupDatasetMocks } from '../../fixtures/dataset.fixture';
@@ -210,6 +210,60 @@ test.describe('데이터셋 목록 페이지', () => {
     // AlertDialog 열림 확인 — role="alertdialog"
     await expect(page.getByRole('alertdialog')).toBeVisible({ timeout: 3000 });
     await expect(page.getByText('데이터셋 삭제')).toBeVisible();
+  });
+
+  test('마지막 페이지의 유일한 항목을 삭제하면 이전 페이지로 이동해 남은 항목을 보여준다 (#549)', async ({ authenticatedPage: page }) => {
+    // 총 11건 → size=10 기준 2페이지. 삭제 후 프론트가 page(URL 쿼리 파라미터)를
+    // 보정하지 않으면 서버에 더 이상 존재하지 않는 page=1을 그대로 요청해
+    // "결과 없음"으로 오표시된다. DatasetListPage는 page state를 useSearchParams로 관리하므로
+    // 다른 4개 목록 페이지(useState 기반)와 달리 patchParams 경로를 검증한다.
+    const firstPageItems = createDatasets(10);
+    const lastItem = createDataset({ id: 11, name: '데이터셋 11', tableName: 'dataset_11' });
+    let deleted = false;
+
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', createCategories());
+    await mockApi(page, 'GET', '/api/v1/datasets/tags', []);
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets',
+      (route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        const requestedPage = new URL(route.request().url()).searchParams.get('page') ?? '0';
+
+        if (!deleted) {
+          const body =
+            requestedPage === '1'
+              ? createPageResponse([lastItem], { page: 1, totalElements: 11, totalPages: 2 })
+              : createPageResponse(firstPageItems, { page: 0, totalElements: 11, totalPages: 2 });
+          return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+        }
+
+        const body =
+          requestedPage === '1'
+            ? createPageResponse([], { page: 1, totalElements: 10, totalPages: 1 })
+            : createPageResponse(firstPageItems, { page: 0, totalElements: 10, totalPages: 1 });
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+      },
+    );
+    await mockApi(page, 'DELETE', '/api/v1/datasets/11', {});
+
+    await page.goto('/data/datasets');
+    await expect(page.getByText('데이터셋 1', { exact: true })).toBeVisible();
+
+    await page.getByRole('button', { name: '2 페이지' }).click();
+    await expect(page.getByText('데이터셋 11')).toBeVisible();
+    await expect(page).toHaveURL(/page=1/);
+
+    const lastRow = page.getByRole('row', { name: /데이터셋 11/ });
+    await lastRow.getByRole('button', { name: '삭제' }).click();
+    await expect(page.getByRole('alertdialog')).toBeVisible();
+    deleted = true;
+    await page.getByRole('alertdialog').getByRole('button', { name: '삭제' }).click();
+
+    await expect(page.getByText('데이터셋이 없습니다.')).not.toBeVisible();
+    await expect(page.getByText('데이터셋 1', { exact: true })).toBeVisible();
+    await expect(page.getByText('데이터셋 10', { exact: true })).toBeVisible();
+    // page=0으로 보정되어 URL에서 page 파라미터가 제거된다 (patchParams 규칙)
+    await expect(page).not.toHaveURL(/page=1/);
   });
 
   test('상태 필터 선택 시 status 파라미터가 반영된다', async ({ authenticatedPage: page }) => {

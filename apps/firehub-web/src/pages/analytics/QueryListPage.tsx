@@ -42,6 +42,7 @@ import {
 } from '../../hooks/queries/useAnalytics';
 import { handleApiError } from '../../lib/api-error';
 import { formatDateTimeMinute, formatRelativeTime } from '../../lib/formatters';
+import { getPageAfterDelete } from '../../lib/pagination';
 import { iGa } from '../../lib/utils';
 
 export default function QueryListPage() {
@@ -74,6 +75,9 @@ export default function QueryListPage() {
   const handleDelete = async (id: number, name: string) => {
     try {
       await deleteQuery.mutateAsync(id);
+      // 현재 페이지의 마지막 항목을 삭제한 경우, 페이지를 앞으로 보정해
+      // "검색 결과 없음" 오표시(#549)를 방지한다.
+      setPage((prev) => getPageAfterDelete(queries.length, prev));
       toast.success(`쿼리 "${name}"${iGa(name)} 삭제되었습니다.`);
     } catch (error) {
       handleApiError(error, '쿼리 삭제에 실패했습니다.');

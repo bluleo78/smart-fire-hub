@@ -102,6 +102,55 @@ test.describe('차트 목록 페이지', () => {
     expect(captured).toBeDefined();
   });
 
+  test('마지막 페이지의 유일한 항목을 삭제하면 이전 페이지로 이동해 남은 항목을 보여준다 (#549)', async ({ authenticatedPage: page }) => {
+    // 총 11건 → size=10 기준 2페이지. 삭제 후 프론트가 page를 보정하지 않으면
+    // 서버에 더 이상 존재하지 않는 page=1을 그대로 요청해 "결과 없음"으로 오표시된다.
+    const firstPageItems = Array.from({ length: 10 }, (_, i) =>
+      createChartListItem({ id: i + 1, name: `테스트 차트 ${i + 1}` }),
+    );
+    const lastItem = createChartListItem({ id: 11, name: '테스트 차트 11' });
+    let deleted = false;
+
+    await page.route(
+      (url) => url.pathname === '/api/v1/analytics/charts',
+      (route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        const requestedPage = new URL(route.request().url()).searchParams.get('page') ?? '0';
+
+        if (!deleted) {
+          const body =
+            requestedPage === '1'
+              ? createPageResponse([lastItem], { page: 1, totalElements: 11, totalPages: 2 })
+              : createPageResponse(firstPageItems, { page: 0, totalElements: 11, totalPages: 2 });
+          return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+        }
+
+        const body =
+          requestedPage === '1'
+            ? createPageResponse([], { page: 1, totalElements: 10, totalPages: 1 })
+            : createPageResponse(firstPageItems, { page: 0, totalElements: 10, totalPages: 1 });
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+      },
+    );
+    await mockApi(page, 'DELETE', '/api/v1/analytics/charts/11', {});
+
+    await page.goto('/analytics/charts');
+    await expect(page.getByText('테스트 차트 1', { exact: true })).toBeVisible();
+
+    await page.getByRole('button', { name: '2 페이지' }).click();
+    await expect(page.getByText('테스트 차트 11')).toBeVisible();
+
+    await page.getByRole('button', { name: '삭제' }).click();
+    await expect(page.getByRole('alertdialog')).toBeVisible();
+    deleted = true;
+    await page.getByRole('alertdialog').getByRole('button', { name: '삭제' }).click();
+
+    await expect(page.getByText('차트가 없습니다.')).not.toBeVisible();
+    await expect(page.getByText('테스트 차트 1', { exact: true })).toBeVisible();
+    await expect(page.getByText('테스트 차트 10', { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: '2 페이지' })).not.toBeVisible();
+  });
+
   test('차트 검색 시 search 파라미터가 API 에 전달된다', async ({ authenticatedPage: page }) => {
     // 검색어 포함 호출 캡처를 위해 route 직접 등록
     const searchCalls: string[] = [];

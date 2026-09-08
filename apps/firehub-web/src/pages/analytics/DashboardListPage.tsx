@@ -46,6 +46,7 @@ import {
 } from '../../hooks/queries/useAnalytics';
 import { handleApiError } from '../../lib/api-error';
 import { formatDateShort } from '../../lib/formatters';
+import { getPageAfterDelete } from '../../lib/pagination';
 import { iGa } from '../../lib/utils';
 import type { CreateDashboardRequest, DashboardListItem } from '../../types/analytics';
 
@@ -296,6 +297,9 @@ export default function DashboardListPage() {
   const handleDelete = async (id: number, name: string) => {
     try {
       await deleteDashboard.mutateAsync(id);
+      // 현재 페이지의 마지막 항목을 삭제한 경우, 페이지를 앞으로 보정해
+      // "검색 결과 없음" 오표시(#549)를 방지한다.
+      setPage((prev) => getPageAfterDelete(dashboards.length, prev));
       toast.success(`대시보드 "${name}"${iGa(name)} 삭제되었습니다.`);
     } catch (error) {
       handleApiError(error, '대시보드 삭제에 실패했습니다.');

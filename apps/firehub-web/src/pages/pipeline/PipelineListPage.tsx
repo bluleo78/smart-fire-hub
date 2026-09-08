@@ -25,6 +25,7 @@ import {
 } from '../../components/ui/table';
 import { useDeletePipeline,usePipelines } from '../../hooks/queries/usePipelines';
 import { formatDateOnly, formatDateTimeMinute } from '../../lib/formatters';
+import { getPageAfterDelete } from '../../lib/pagination';
 
 export default function PipelineListPage() {
   const navigate = useNavigate();
@@ -78,6 +79,9 @@ export default function PipelineListPage() {
   const handleDelete = async (id: number, name: string) => {
     try {
       await deletePipeline.mutateAsync(id);
+      // 현재 페이지의 마지막 항목을 삭제한 경우, 페이지를 앞으로 보정해
+      // "검색 결과 없음" 오표시(#549)를 방지한다.
+      setPage((prev) => getPageAfterDelete(rawPipelines.length, prev));
       toast.success(`파이프라인 "${name}"${iGa(name)} 삭제되었습니다.`);
     } catch (error) {
       handleApiError(error, '파이프라인 삭제에 실패했습니다.');

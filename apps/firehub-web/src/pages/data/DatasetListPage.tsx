@@ -30,6 +30,7 @@ import { useCategories, useDatasets, useDeleteDataset, useToggleFavorite } from 
 import { useRecentDatasets } from '../../hooks/useRecentDatasets';
 import { handleApiError } from '../../lib/api-error';
 import { formatDateOnly, formatDateTimeMinute, getOriginTypeLabel, getStorageTypeLabel } from '../../lib/formatters';
+import { getPageAfterDelete } from '../../lib/pagination';
 import { iGa } from '../../lib/utils';
 import { DatasetPreviewSheet } from './components/DatasetPreviewSheet';
 import { DatasetTypeModal, type DatasetTypeSelection } from './components/DatasetTypeModal';
@@ -199,6 +200,13 @@ export default function DatasetListPage() {
   const handleDelete = async (id: number, name: string) => {
     try {
       await deleteDataset.mutateAsync(id);
+      // 현재 페이지의 마지막 항목을 삭제한 경우, 페이지를 앞으로 보정해
+      // "검색 결과 없음" 오표시(#549)를 방지한다. page 는 URL 쿼리 파라미터라
+      // setPage 대신 patchParams 로 갱신한다 (0 페이지는 파라미터 제거로 표현).
+      const nextPage = getPageAfterDelete(rawDatasets.length, page);
+      if (nextPage !== page) {
+        patchParams({ page: nextPage === 0 ? null : nextPage });
+      }
       toast.success(`데이터셋 "${name}"${iGa(name)} 삭제되었습니다.`);
     } catch (error) {
       handleApiError(error, '데이터셋 삭제에 실패했습니다.');

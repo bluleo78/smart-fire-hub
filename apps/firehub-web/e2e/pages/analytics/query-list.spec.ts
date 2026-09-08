@@ -114,6 +114,56 @@ test.describe('쿼리 목록 페이지', () => {
     expect(req.url.pathname).toBe('/api/v1/analytics/queries/1');
   });
 
+  test('마지막 페이지의 유일한 항목을 삭제하면 이전 페이지로 이동해 남은 항목을 보여준다 (#549)', async ({ authenticatedPage: page }) => {
+    // 총 11건 → size=10 기준 2페이지. 삭제 후 프론트가 page를 보정하지 않으면
+    // 서버에 더 이상 존재하지 않는 page=1을 그대로 요청해 "결과 없음"으로 오표시된다.
+    const firstPageItems = Array.from({ length: 10 }, (_, i) =>
+      createSavedQueryListItem({ id: i + 1, name: `테스트 쿼리 ${i + 1}` }),
+    );
+    const lastItem = createSavedQueryListItem({ id: 11, name: '테스트 쿼리 11' });
+    let deleted = false;
+
+    await mockApi(page, 'GET', '/api/v1/analytics/queries/folders', []);
+    await page.route(
+      (url) => url.pathname === '/api/v1/analytics/queries',
+      (route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        const requestedPage = new URL(route.request().url()).searchParams.get('page') ?? '0';
+
+        if (!deleted) {
+          const body =
+            requestedPage === '1'
+              ? createPageResponse([lastItem], { page: 1, totalElements: 11, totalPages: 2 })
+              : createPageResponse(firstPageItems, { page: 0, totalElements: 11, totalPages: 2 });
+          return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+        }
+
+        const body =
+          requestedPage === '1'
+            ? createPageResponse([], { page: 1, totalElements: 10, totalPages: 1 })
+            : createPageResponse(firstPageItems, { page: 0, totalElements: 10, totalPages: 1 });
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+      },
+    );
+    await mockApi(page, 'DELETE', '/api/v1/analytics/queries/11', {});
+
+    await page.goto('/analytics/queries');
+    await expect(page.getByText('테스트 쿼리 1', { exact: true })).toBeVisible();
+
+    await page.getByRole('button', { name: '2 페이지' }).click();
+    await expect(page.getByText('테스트 쿼리 11')).toBeVisible();
+
+    await page.getByRole('button', { name: '삭제' }).click();
+    await expect(page.getByRole('alertdialog')).toBeVisible();
+    deleted = true;
+    await page.getByRole('alertdialog').getByRole('button', { name: '삭제' }).click();
+
+    await expect(page.getByText('저장된 쿼리가 없습니다.')).not.toBeVisible();
+    await expect(page.getByText('테스트 쿼리 1', { exact: true })).toBeVisible();
+    await expect(page.getByText('테스트 쿼리 10', { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: '2 페이지' })).not.toBeVisible();
+  });
+
   test('공유 쿼리에 공유 뱃지가 표시된다', async ({ authenticatedPage: page }) => {
     // isShared: true 쿼리 1개 모킹
     await mockApi(

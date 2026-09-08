@@ -27,6 +27,7 @@ import { Tabs, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import { useCharts, useDeleteChart } from '../../hooks/queries/useAnalytics';
 import { handleApiError } from '../../lib/api-error';
 import { formatDateShort } from '../../lib/formatters';
+import { getPageAfterDelete } from '../../lib/pagination';
 import { iGa } from '../../lib/utils';
 import { CHART_TYPE_LABELS } from '../../types/analytics';
 
@@ -68,6 +69,9 @@ export default function ChartListPage() {
   const handleDelete = async (id: number, name: string) => {
     try {
       await deleteChart.mutateAsync(id);
+      // 현재 페이지의 마지막 항목을 삭제한 경우, 페이지를 앞으로 보정해
+      // "검색 결과 없음" 오표시(#549)를 방지한다.
+      setPage((prev) => getPageAfterDelete(charts.length, prev));
       toast.success(`차트 "${name}"${iGa(name)} 삭제되었습니다.`);
     } catch (error) {
       handleApiError(error, '차트 삭제에 실패했습니다.');

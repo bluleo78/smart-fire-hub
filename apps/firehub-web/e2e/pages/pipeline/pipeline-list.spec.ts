@@ -127,6 +127,53 @@ test.describe('파이프라인 목록 페이지', () => {
     expect(req.url.pathname).toBe('/api/v1/pipelines/1');
   });
 
+  test('마지막 페이지의 유일한 항목을 삭제하면 이전 페이지로 이동해 남은 항목을 보여준다 (#549)', async ({ authenticatedPage: page }) => {
+    // 총 11건 → size=10 기준 2페이지. 삭제 후 프론트가 page를 보정하지 않으면
+    // 서버에 더 이상 존재하지 않는 page=1을 그대로 요청해 "결과 없음"으로 오표시된다.
+    const firstPageItems = createPipelines(10);
+    const lastItem = createPipeline({ id: 11, name: '파이프라인 11' });
+    let deleted = false;
+
+    await page.route(
+      (url) => url.pathname === '/api/v1/pipelines',
+      (route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        const requestedPage = new URL(route.request().url()).searchParams.get('page') ?? '0';
+
+        if (!deleted) {
+          const body =
+            requestedPage === '1'
+              ? createPageResponse([lastItem], { page: 1, totalElements: 11, totalPages: 2 })
+              : createPageResponse(firstPageItems, { page: 0, totalElements: 11, totalPages: 2 });
+          return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+        }
+
+        const body =
+          requestedPage === '1'
+            ? createPageResponse([], { page: 1, totalElements: 10, totalPages: 1 })
+            : createPageResponse(firstPageItems, { page: 0, totalElements: 10, totalPages: 1 });
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+      },
+    );
+    await mockApi(page, 'DELETE', '/api/v1/pipelines/11', null);
+
+    await page.goto('/pipelines');
+    await expect(page.getByText('파이프라인 1', { exact: true })).toBeVisible();
+
+    await page.getByRole('button', { name: '2 페이지' }).click();
+    await expect(page.getByText('파이프라인 11')).toBeVisible();
+
+    await page.getByRole('button', { name: '삭제' }).click();
+    await expect(page.getByRole('alertdialog')).toBeVisible();
+    deleted = true;
+    await page.getByRole('alertdialog').getByRole('button', { name: /확인|삭제/ }).click();
+
+    await expect(page.getByText('파이프라인이 없습니다.')).not.toBeVisible();
+    await expect(page.getByText('파이프라인 1', { exact: true })).toBeVisible();
+    await expect(page.getByText('파이프라인 10', { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: '2 페이지' })).not.toBeVisible();
+  });
+
   test('트리거가 있는 파이프라인은 트리거 수 뱃지를 표시한다', async ({ authenticatedPage: page }) => {
     // triggerCount: 3 파이프라인과 triggerCount: 0 파이프라인을 함께 모킹
     await mockApi(

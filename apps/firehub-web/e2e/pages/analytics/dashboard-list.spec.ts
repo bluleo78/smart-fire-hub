@@ -168,6 +168,63 @@ test.describe('대시보드 목록 페이지', () => {
     expect(captured).toBeDefined();
   });
 
+  test('마지막 페이지의 유일한 항목을 삭제하면 이전 페이지로 이동해 남은 항목을 보여준다 (#549)', async ({ authenticatedPage: page }) => {
+    // 총 11건 → size=10 기준 2페이지. 1페이지(page=0)에 10건, 2페이지(page=1)에 1건.
+    // 삭제 성공 후 목록 쿼리가 무효화되어 같은 page(=1)로 재조회되는데, 서버에는 더 이상
+    // 해당 페이지 데이터가 없다(totalPages: 1) — 프론트가 page를 보정하지 않으면
+    // "결과 없음" 빈 상태로 오표시된다.
+    const firstPageItems = Array.from({ length: 10 }, (_, i) =>
+      createDashboardListItem({ id: i + 1, name: `테스트 대시보드 ${i + 1}` }),
+    );
+    const lastItem = createDashboardListItem({ id: 11, name: '테스트 대시보드 11' });
+    let deleted = false;
+
+    await page.route(
+      (url) => url.pathname === '/api/v1/analytics/dashboards',
+      (route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        const requestedPage = new URL(route.request().url()).searchParams.get('page') ?? '0';
+
+        if (!deleted) {
+          // 삭제 전: page=0 → 10건, page=1 → 1건 (totalPages: 2)
+          const body =
+            requestedPage === '1'
+              ? createPageResponse([lastItem], { page: 1, totalElements: 11, totalPages: 2 })
+              : createPageResponse(firstPageItems, { page: 0, totalElements: 11, totalPages: 2 });
+          return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+        }
+
+        // 삭제 후: 서버 기준 이제 10건뿐 (totalPages: 1) — page=1 요청 시 빈 배열 반환
+        const body =
+          requestedPage === '1'
+            ? createPageResponse([], { page: 1, totalElements: 10, totalPages: 1 })
+            : createPageResponse(firstPageItems, { page: 0, totalElements: 10, totalPages: 1 });
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+      },
+    );
+    await mockApi(page, 'DELETE', '/api/v1/analytics/dashboards/11', {});
+
+    await page.goto('/analytics/dashboards');
+    await expect(page.getByText('테스트 대시보드 1', { exact: true })).toBeVisible();
+
+    // 2 페이지로 이동 → 유일한 항목(테스트 대시보드 11) 확인
+    await page.getByRole('button', { name: '2 페이지' }).click();
+    await expect(page.getByText('테스트 대시보드 11')).toBeVisible();
+
+    // 삭제 실행
+    await page.getByRole('button', { name: '삭제' }).click();
+    await expect(page.getByRole('alertdialog')).toBeVisible();
+    deleted = true;
+    await page.getByRole('alertdialog').getByRole('button', { name: '삭제' }).click();
+
+    // "결과 없음" 빈 상태가 아니라, 1페이지로 자동 이동해 남은 10건이 다시 보여야 한다
+    await expect(page.getByText('대시보드가 없습니다.')).not.toBeVisible();
+    await expect(page.getByText('테스트 대시보드 1', { exact: true })).toBeVisible();
+    await expect(page.getByText('테스트 대시보드 10', { exact: true })).toBeVisible();
+    // 삭제 후 totalPages: 1이 되어 페이지네이션 네비게이션 자체가 사라진다(SimplePagination 규칙)
+    await expect(page.getByRole('button', { name: '2 페이지' })).not.toBeVisible();
+  });
+
   test('공유 대시보드에 공유 뱃지가 표시된다', async ({ authenticatedPage: page }) => {
     // isShared: true 대시보드 1개 모킹
     await mockApi(
