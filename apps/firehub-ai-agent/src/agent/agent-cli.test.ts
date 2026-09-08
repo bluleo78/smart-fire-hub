@@ -509,6 +509,320 @@ describe('executeCliAgent — #428/#429 subagent 결과 중복 relay 억제 (화
   });
 });
 
+describe('executeCliAgent — #573 2차 수정: 동기(run_in_background:false) Agent 위임 fallback relay', () => {
+  // 1차 수정(process-message.ts, SDK 프로바이더)은 실제 재현 경로인 CLI 프로바이더
+  // (agentType: "cli" → agent-cli.ts)에 이식되지 않아 크로스체크에서 그대로 재발했다(회귀).
+  // 이 describe 는 agent-cli.ts 에 이식한 fallback relay 를 라이브 트레이스
+  // (crosscheck-573-attempt1.sse) 와 동일한 이벤트 시퀀스로 고정한다.
+  beforeEach(() => {
+    spawnMock.mockReset();
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('PM-573e: 동기 위임 tool_result 가 텍스트 없이 턴이 끝나면 footer 를 제거하고 강제로 relay 한다', async () => {
+    const delegateToolUseId = 'toolu_sync_delegate_1';
+    const lines: string[] = [
+      // 메인이 dataset-manager 에 동기(run_in_background:false) 위임 — 크로스체크 실측 케이스.
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: {
+          content: [
+            {
+              type: 'tool_use',
+              id: delegateToolUseId,
+              name: 'Agent',
+              input: {
+                subagent_type: 'dataset-manager',
+                prompt: 'Mode: DESIGN\n...',
+                run_in_background: false,
+              },
+            },
+          ],
+        },
+      }),
+      // 동기 위임 경로는 subagent 내부 텍스트가 interleave 되지 않고 tool_result 문자열
+      // 하나로만 온다 — 실측 트레이스와 동일하게 agentId/<usage> footer 를 포함한다.
+      JSON.stringify({
+        type: 'user',
+        parent_tool_use_id: null,
+        message: {
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: delegateToolUseId,
+              content:
+                "created_at은 시스템 예약 컬럼이라 사용할 수 없습니다. 대체 이름을 제안합니다.\n\n이 스키마로 생성할까요?agentId: ac10e871dec5c7204 (use SendMessage with to: 'ac10e871dec5c7204', summary: '<5-10 word recap>' to continue this agent)\n<usage>subagent_tokens: 19710\ntool_uses: 0\nduration_ms: 3010</usage>",
+            },
+          ],
+        },
+      }),
+      // 메인이 아무 텍스트도 내지 않고 바로 턴 종료 — 회귀 재현.
+      JSON.stringify({ type: 'result', subtype: 'success' }),
+    ];
+
+    const child = makeFakeChildWithLines(lines);
+    spawnMock.mockReturnValue(child);
+
+    const events: Array<{ type: string; content?: string }> = [];
+    for await (const ev of executeCliAgent({
+      message: '테스트용 데이터셋 만들어줘. 컬럼은 created_at(날짜), value(숫자) 두개만.',
+      tenantId: 1,
+      userId: 1,
+      useSubscription: false,
+      apiKey: 'sk-test',
+    } as never)) {
+      events.push(ev as { type: string; content?: string });
+    }
+
+    const texts = events.filter((e) => e.type === 'text').map((e) => e.content);
+    // 내부 식별자(agentId)/사용량 footer 는 제거되고 제안 본문만 강제 relay 되어야 한다.
+    expect(texts).toEqual([
+      'created_at은 시스템 예약 컬럼이라 사용할 수 없습니다. 대체 이름을 제안합니다.\n\n이 스키마로 생성할까요?',
+    ]);
+    expect(events.some((e) => e.type === 'done')).toBe(true);
+  });
+
+  it('PM-573f: 메인이 텍스트로 정상 relay 했으면 fallback 을 중복 적용하지 않는다', async () => {
+    const delegateToolUseId = 'toolu_sync_delegate_2';
+    const lines: string[] = [
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: {
+          content: [
+            {
+              type: 'tool_use',
+              id: delegateToolUseId,
+              name: 'Agent',
+              input: { subagent_type: 'dataset-manager', prompt: '...', run_in_background: false },
+            },
+          ],
+        },
+      }),
+      JSON.stringify({
+        type: 'user',
+        parent_tool_use_id: null,
+        message: {
+          content: [{ type: 'tool_result', tool_use_id: delegateToolUseId, content: '제안 내용...확인할까요?' }],
+        },
+      }),
+      // 메인이 정상적으로 시스템 프롬프트를 준수해 텍스트로 relay 함.
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: { content: [{ type: 'text', text: '제안 내용...확인할까요?' }] },
+      }),
+      JSON.stringify({ type: 'result', subtype: 'success' }),
+    ];
+
+    const child = makeFakeChildWithLines(lines);
+    spawnMock.mockReturnValue(child);
+
+    const events: Array<{ type: string; content?: string }> = [];
+    for await (const ev of executeCliAgent({
+      message: '테스트',
+      tenantId: 1,
+      userId: 1,
+      useSubscription: false,
+      apiKey: 'sk-test',
+    } as never)) {
+      events.push(ev as { type: string; content?: string });
+    }
+
+    const texts = events.filter((e) => e.type === 'text').map((e) => e.content);
+    // fallback 이 중복 적용됐다면 같은 텍스트가 2번 나온다 — 정확히 1개여야 한다.
+    expect(texts).toEqual(['제안 내용...확인할까요?']);
+  });
+
+  it('PM-573g: 비동기 위임(run_in_background 미지정)의 tool_result 는 fallback 대상이 아니다', async () => {
+    const delegateToolUseId = 'toolu_async_delegate_1';
+    const lines: string[] = [
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: {
+          content: [
+            {
+              type: 'tool_use',
+              id: delegateToolUseId,
+              name: 'Agent',
+              input: { subagent_type: 'dataset-manager', prompt: '...' },
+            },
+          ],
+        },
+      }),
+      // 비동기 위임의 tool_result 는 보통 "Async agent launched..." 같은 안내이며 최종 응답이
+      // 아니다 — run_in_background:false 로 표시되지 않았으므로 fallback 대상에서 제외돼야 한다.
+      JSON.stringify({
+        type: 'user',
+        parent_tool_use_id: null,
+        message: {
+          content: [
+            { type: 'tool_result', tool_use_id: delegateToolUseId, content: 'Async agent launched successfully.' },
+          ],
+        },
+      }),
+      JSON.stringify({ type: 'result', subtype: 'success' }),
+    ];
+
+    const child = makeFakeChildWithLines(lines);
+    spawnMock.mockReturnValue(child);
+
+    const events: Array<{ type: string; content?: string }> = [];
+    for await (const ev of executeCliAgent({
+      message: '테스트',
+      tenantId: 1,
+      userId: 1,
+      useSubscription: false,
+      apiKey: 'sk-test',
+    } as never)) {
+      events.push(ev as { type: string; content?: string });
+    }
+
+    expect(events.filter((e) => e.type === 'text')).toEqual([]);
+  });
+
+  it('PM-573h: 동기 위임 결과 이후 메인이 새 tool_use 를 발행하면(후속 작업) fallback relay 를 적용하지 않는다', async () => {
+    const delegateToolUseId = 'toolu_sync_delegate_3';
+    const lines: string[] = [
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: {
+          content: [
+            {
+              type: 'tool_use',
+              id: delegateToolUseId,
+              name: 'Agent',
+              input: { subagent_type: 'dataset-manager', prompt: '...', run_in_background: false },
+            },
+          ],
+        },
+      }),
+      JSON.stringify({
+        type: 'user',
+        parent_tool_use_id: null,
+        message: {
+          content: [{ type: 'tool_result', tool_use_id: delegateToolUseId, content: '스키마 확정, 생성 진행합니다.' }],
+        },
+      }),
+      // 메인이 확인 텍스트 없이 바로 다음 도구를 호출 — 실제 후속 작업이 진행 중이라는 증거.
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: {
+          content: [{ type: 'tool_use', id: 'toolu_create_dataset', name: 'mcp__firehub__create_dataset', input: {} }],
+        },
+      }),
+      JSON.stringify({
+        type: 'user',
+        parent_tool_use_id: null,
+        message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_create_dataset', content: '{"id":1}' }] },
+      }),
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: { content: [{ type: 'text', text: '데이터셋 생성이 완료됐습니다.' }] },
+      }),
+      JSON.stringify({ type: 'result', subtype: 'success' }),
+    ];
+
+    const child = makeFakeChildWithLines(lines);
+    spawnMock.mockReturnValue(child);
+
+    const events: Array<{ type: string; content?: string }> = [];
+    for await (const ev of executeCliAgent({
+      message: '테스트',
+      tenantId: 1,
+      userId: 1,
+      useSubscription: false,
+      apiKey: 'sk-test',
+    } as never)) {
+      events.push(ev as { type: string; content?: string });
+    }
+
+    const texts = events.filter((e) => e.type === 'text').map((e) => e.content);
+    // fallback 이 잘못 끼어들었다면 '스키마 확정, 생성 진행합니다.' 가 먼저 나왔을 것이다.
+    expect(texts).toEqual(['데이터셋 생성이 완료됐습니다.']);
+  });
+
+  it('PM-573i: 동기 위임 id 에 대해 뒤늦게 도착하는 중복 task_notification(#430)이 메인의 정상 relay 텍스트를 억제하지 않는다', async () => {
+    // 라이브 크로스체크로 실제 확인된 2차 회귀의 진짜 원인: `Agent(run_in_background:false)` 로
+    // 위임해도 CLI 는 내부적으로 같은 호출에 대해 `system/task_notification`(#430) 을 중복
+    // 발사할 수 있다(관찰상 tool_result 직후 거의 즉시 도착). 이전 구현은 동기 위임 id 를
+    // pendingDesignGuardToolUseIds 화이트리스트에도 함께 등록해, 이 중복 알림이 "이미
+    // 사용자에게 보였다"는 잘못된 전제로 suppressMainText 를 세팅했고, 메인이 tool_result 를
+    // 정상적으로 relay 하려는 유일한 텍스트까지 억제해 완전히 빈 응답이 재발했다.
+    const delegateToolUseId = 'toolu_sync_delegate_430';
+    const lines: string[] = [
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: {
+          content: [
+            {
+              type: 'tool_use',
+              id: delegateToolUseId,
+              name: 'Agent',
+              input: { subagent_type: 'dataset-manager', prompt: '...', run_in_background: false },
+            },
+          ],
+        },
+      }),
+      // #430 중복 알림이 tool_result 보다 먼저 도착 — 라이브 재현과 동일 순서.
+      JSON.stringify({
+        type: 'system',
+        subtype: 'task_notification',
+        task_id: delegateToolUseId,
+        tool_use_id: delegateToolUseId,
+        status: 'completed',
+      }),
+      JSON.stringify({
+        type: 'user',
+        parent_tool_use_id: null,
+        message: {
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: delegateToolUseId,
+              content: '다음과 같이 설계안을 제안합니다...이대로 생성할까요?',
+            },
+          ],
+        },
+      }),
+      // 메인이 시스템 프롬프트를 준수해 tool_result 를 텍스트로 relay 하려는 시도 — 억제되면 안 된다.
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: { content: [{ type: 'text', text: '다음과 같이 설계안을 제안합니다...이대로 생성할까요?' }] },
+      }),
+      JSON.stringify({ type: 'result', subtype: 'success' }),
+    ];
+
+    const child = makeFakeChildWithLines(lines);
+    spawnMock.mockReturnValue(child);
+
+    const events: Array<{ type: string; content?: string }> = [];
+    for await (const ev of executeCliAgent({
+      message: '테스트용 데이터셋 만들어줘.',
+      tenantId: 1,
+      userId: 1,
+      useSubscription: false,
+      apiKey: 'sk-test',
+    } as never)) {
+      events.push(ev as { type: string; content?: string });
+    }
+
+    const texts = events.filter((e) => e.type === 'text').map((e) => e.content);
+    // 중복 task_notification 때문에 억제됐다면 texts 가 빈 배열이었을 것이다(회귀 시 관찰된 증상).
+    expect(texts).toEqual(['다음과 같이 설계안을 제안합니다...이대로 생성할까요?']);
+  });
+});
+
 describe('executeCliAgent — #240 subagent registration', () => {
   beforeEach(() => {
     spawnMock.mockReset();

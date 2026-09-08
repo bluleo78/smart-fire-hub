@@ -70,7 +70,9 @@ export function createDesignGuardRelayState(): DesignGuardRelayState {
 // #573: Agent tool_result 끝에 SDK 가 자동으로 붙이는 내부 계속-실행 안내(agentId/SendMessage)와
 // 사용량 블록(<usage>...</usage>)을 제거한다. 이 텍스트가 사용자에게 그대로 노출되면 내부
 // 식별자(agentId) 유출이 되어 system-prompt.ts 의 PII/내부 식별자 마스킹 규칙을 위반한다.
-function stripAgentResultFooter(text: string): string {
+// #573 2차 수정: CLI 프로바이더(agent-cli.ts)도 동일한 footer 제거가 필요해 export 한다 —
+// 두 실행 경로(SDK/CLI)가 각자 복제하면 문구 패턴이 갈라질 수 있으므로 단일 출처로 공유.
+export function stripAgentResultFooter(text: string): string {
   return text
     .replace(/agentId:\s*\S+\s*\(use SendMessage[^)]*\)/g, '')
     .replace(/<usage>[\s\S]*?<\/usage>/g, '')
@@ -165,6 +167,15 @@ export function processMessage(
             }
             // #428/#429: 메인이 Agent 로 위임하는 순간(subagent_type 불문) 을 기록해, 해당
             // subagent 의 완료 텍스트를 이후 parent_tool_use_id 로 식별할 수 있게 한다.
+            //
+            // #573 2차 수정: `run_in_background:false`(동기 위임) id 는 이 화이트리스트
+            // (pendingGuardToolUseIds)에 넣지 않는다 — CLI 프로바이더(agent-cli.ts)에서 동기
+            // 위임 id 를 이 화이트리스트에도 같이 넣었더니, 내부적으로 뒤늦게 중복 발사되는
+            // 비동기 완료 알림(#430)이 "이미 사용자에게 보였다"는 잘못된 전제로 메인의 첫 relay
+            // 텍스트까지 억제해버리는 회귀가 실제로 재현됐다. SDK 프로바이더는 현재 #430 에
+            // 해당하는 알림 채널이 없어 무해하지만, 동기 위임의 완료는 애초에 이 화이트리스트가
+            // 다루는 "인터리브 텍스트로 이미 노출됨" 전제에 해당하지 않으므로 대칭적으로 제외한다
+            // — 완료 relay 는 오직 syncDelegationToolUseIds/pendingSyncAgentResultText 로만 다룬다.
             if (
               !parentToolUseId &&
               block.name === 'Agent' &&
@@ -172,11 +183,10 @@ export function processMessage(
               typeof (input as { subagent_type?: unknown })?.subagent_type === 'string'
             ) {
               const toolUseId = String((block as { id: string }).id);
-              relayState.pendingGuardToolUseIds.add(toolUseId);
-              // #573: run_in_background:false(동기 위임)만 별도로 표시해둔다 — 이 id 의 tool_result
-              // 는 subagent 가 interleave 로 노출할 기회가 전혀 없었던 최종 응답 원문이다.
               if ((input as { run_in_background?: unknown })?.run_in_background === false) {
                 relayState.syncDelegationToolUseIds.add(toolUseId);
+              } else {
+                relayState.pendingGuardToolUseIds.add(toolUseId);
               }
             }
             events.push({

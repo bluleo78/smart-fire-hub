@@ -18,6 +18,7 @@ import { totalInputTokens, type TokenUsageLike } from './token-usage.js';
 import { loadSubagents, buildSubagentGuide } from './subagent-loader.js';
 import type { AgentDefinition } from '@anthropic-ai/claude-agent-sdk';
 import type { SSEEvent, AgentOptions } from './agent-sdk.js';
+import { stripAgentResultFooter } from './process-message.js';
 import {
   isSafeSessionId,
   legacyTranscriptDir,
@@ -342,6 +343,13 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
   // 억제하지 않는다.
   const pendingDesignGuardToolUseIds = new Set<string>();
   let suppressMainText = false;
+  // #573 2차 수정: process-message.ts(SDK 프로바이더)에만 이식됐던 동기 위임 fallback relay가
+  // 실제 재현 경로인 CLI 프로바이더(agentType: "cli")에는 전혀 없었다 — 크로스체크가 여전히
+  // 재발을 확인한 진짜 원인. `Agent(..., run_in_background: false)` 로 위임된 tool_use id 를
+  // 기록해두고(subagent 내부 텍스트가 interleave 될 기회가 없는 경로), 그 tool_result 를
+  // 메인이 텍스트로 relay 하지 않은 채 턴이 끝나면 강제로 relay 한다.
+  const syncDelegationToolUseIds = new Set<string>();
+  let pendingSyncAgentResultText: string | undefined;
 
   // 사용자 메시지 기록 — 원본 메시지 + 첨부 메타 저장 (파일 경로는 AI에게만 전달)
   const userMsg: HistoryMessage = {
@@ -565,8 +573,36 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
             // 비동기 subagent 재개)를 발행하는 순간(subagent_type 불문)을 기록해, 이후 그
             // subagent 의 완료를 parent_tool_use_id(동기 인터리브) 또는 tool_use_id(비동기
             // task_notification, #430) 로 식별할 수 있게 한다.
+            //
+            // #573 2차 수정(진짜 회귀 원인): `run_in_background:false`(동기 위임)로 등록한
+            // id 를 이 화이트리스트(pendingDesignGuardToolUseIds)에도 함께 넣었더니, CLI 가
+            // 내부적으로 같은 Agent 호출에 대해 **뒤늦은 `task_notification`(#430)을 중복
+            // 발사**하는 경우(라이브 재현으로 확인 — 동기 tool_result 직후 비동기 완료 알림이
+            // 거의 즉시 도착)에 `suppressMainText` 가 잘못 세팅됐다. #430 의 전제는 "그 알림이
+            // 가리키는 위임은 이미 사용자에게 보이는 채널(인터리브 텍스트)로 내용이 전달됐다"
+            // 인데, 동기 위임은 그 채널 자체가 없다(내용은 오직 tool_result → 메인 relay 로만
+            // 전달된다 — 위 syncDelegationToolUseIds/pendingSyncAgentResultText 참조). 그
+            // 전제가 성립하지 않는 동기 위임 id 를 화이트리스트에 넣지 않으면, 중복
+            // task_notification 이 와도 무시되고 메인의 진짜(첫) relay 텍스트가 억제되지 않는다.
+            // subagent 내부 tool_use/tool_result 인터리브(parent_tool_use_id 매칭)에도 이
+            // 화이트리스트는 필요 없다 — 그건 parent id 비교로만 억제되는 별개 채널이고, 동기
+            // 위임의 subagent 는 애초에 parent 태그된 자기 완료 텍스트를 내보내지 않는다(라이브
+            // 재현으로 확인 — 내부 tool_result 만 interleave 되고 최종 텍스트는 없음).
+            const runInBackground = (block.input as { run_in_background?: unknown } | undefined)
+              ?.run_in_background;
+            const isSyncDelegation = toolName === 'Agent' && runInBackground === false;
             if (!msg.parent_tool_use_id && (toolName === 'Agent' || toolName === 'SendMessage') && block.id) {
-              pendingDesignGuardToolUseIds.add(block.id);
+              if (isSyncDelegation) {
+                syncDelegationToolUseIds.add(block.id);
+              } else {
+                pendingDesignGuardToolUseIds.add(block.id);
+              }
+            }
+            // #573 2차 수정: 메인이 새 tool_use 를 발행했다는 것은 이전 동기 위임 결과에 대한
+            // 실제 후속 작업(예: 확인 후 실제 도구 호출)이 진행 중이라는 구조적 증거다 — fallback
+            // relay 대상에서 제외한다(강제 relay 가 후속 작업과 순서/내용이 어긋나는 것을 방지).
+            if (!msg.parent_tool_use_id) {
+              pendingSyncAgentResultText = undefined;
             }
             yield {
               type: 'tool_use',
@@ -596,6 +632,12 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
             // subagent 텍스트 자체는 그대로 emit.
             if (msg.parent_tool_use_id && pendingDesignGuardToolUseIds.has(msg.parent_tool_use_id)) {
               suppressMainText = true;
+            }
+            // #573 2차 수정: 메인이 텍스트로 응답을 이어갔다면(스트리밍 여부 무관) 동기 위임
+            // fallback 은 더 이상 필요 없다 — relay 가 이미 정상적으로 일어난 것이므로 중복
+            // 방지를 위해 지운다(억제된 재서술이라도 메인이 발화를 시도한 것이므로 동일 처리).
+            if (!msg.parent_tool_use_id) {
+              pendingSyncAgentResultText = undefined;
             }
             if (!msg.parent_tool_use_id && suppressMainText) {
               continue;
@@ -627,6 +669,20 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
             };
             // Tier2: 연속 실패 기록 + 강제중단
             const isError = Boolean((block as { is_error?: unknown }).is_error);
+            // #573 2차 수정: 이 tool_result 가 동기(run_in_background:false) Agent 위임의
+            // 결과라면, subagent 는 자신의 텍스트를 interleave 로 노출할 기회가 없었으므로 이
+            // 문자열 자체가 relay 되어야 할 최종 응답이다. block.tool_use_id 로 위임 tool_use
+            // 와 매칭한다(#428/#430 의 task_notification 식별과 동일 필드 사용).
+            if (
+              !msg.parent_tool_use_id &&
+              !isError &&
+              resultText &&
+              block.tool_use_id &&
+              syncDelegationToolUseIds.has(block.tool_use_id)
+            ) {
+              syncDelegationToolUseIds.delete(block.tool_use_id);
+              pendingSyncAgentResultText = resultText;
+            }
             const tName = assistantToolCalls[assistantToolCalls.length - 1]?.name ?? '';
             const { halt } = haltTracker.record(tName, resultText, isError);
             if (halt) {
@@ -659,7 +715,7 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
         pendingDesignGuardToolUseIds.has(msg.tool_use_id)
       ) {
         suppressMainText = true;
-        console.log(`[CLI Agent] [design-guard] 비동기 subagent 지연 완료 알림 감지 — 메인 재요약 억제(#430)`);
+        console.log(`[CLI Agent] [design-guard] [${sessionId}] 비동기 subagent 지연 완료 알림 감지 — 메인 재요약 억제(#430) tool_use_id=${msg.tool_use_id}`);
       }
 
       // Turn boundary — commit current assistant message, start new one
@@ -683,12 +739,27 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
       // Final result — Claude session ID는 result 메시지에서만 캡처 (가장 신뢰)
       if (msg.type === 'result') {
         if (msg.session_id) claudeSessionId = msg.session_id;
-        await saveTranscript();
         // #336: 캐시 read/creation을 합산해야 실제 컨텍스트 크기가 나온다.
         // input_tokens만 쓰면 캐시 히트 시 4 같은 값이 나와 칩이 상시 0%가 된다.
         const inputTokens = totalInputTokens(msg.usage);
         const outputTokens = msg.usage?.output_tokens ?? 0;
-        if ((msg.subtype as string) === 'error_max_budget_usd') {
+        // #573 2차 수정: 동기 위임 tool_result 를 아무도 relay 하지 않은 채 턴이 끝나는(성공)
+        // 경우 — 시스템 프롬프트 준수가 실패해도 사용자에게 완전히 빈 응답이 나가지 않도록
+        // 방어적으로 relay 한다(process-message.ts 의 SDK 경로와 동일 패턴). 반드시
+        // saveTranscript() 이전에 assistantText 에 반영해야 트랜스크립트에도 남는다.
+        const isBudgetError = (msg.subtype as string) === 'error_max_budget_usd';
+        const isOtherError = !isBudgetError && Boolean((msg.subtype as string | undefined)?.startsWith('error'));
+        if (!isBudgetError && !isOtherError && pendingSyncAgentResultText) {
+          const relayText = stripAgentResultFooter(pendingSyncAgentResultText);
+          pendingSyncAgentResultText = undefined;
+          if (relayText) {
+            console.warn(`[CLI Agent] [design-guard] 동기 Agent 위임 결과가 텍스트 없이 턴 종료 — fallback relay 적용(#573): ${relayText.slice(0, 200)}`);
+            assistantText += relayText;
+            yield { type: 'text', content: relayText };
+          }
+        }
+        await saveTranscript();
+        if (isBudgetError) {
           // #277: 예산 초과 전용 메시지
           yield {
             type: 'error',
@@ -700,7 +771,7 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
           // 다른 error_* subtype 도 쓰는데, 그것들이 아래 else 로 빠지면 **빈 응답이 성공으로
           // 보고된다**. 재개 실패가 정확히 그 형태였다. 접두사로 판정해 새 subtype 이 생겨도
           // 조용히 성공으로 새지 않게 한다.
-        } else if ((msg.subtype as string | undefined)?.startsWith('error')) {
+        } else if (isOtherError) {
           // #410: CLI OAuth 토큰 만료/무효 시 msg.result 에 "Not logged in · Please run /login" 류
           // 원문 영문 문구가 그대로 담겨 있다. 검사 없이 넘기면 이 문구가 그대로 채팅 버블에 노출된다.
           // 원인 문자열은 서버 로그에 남기고, 사용자에게는 한국어 안내 메시지로 치환해 내보낸다.
