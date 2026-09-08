@@ -55,6 +55,10 @@ export function ColumnDialog({
 
   const schema = mode === 'add' ? addColumnSchema : updateColumnSchema;
 
+  // PostgreSQL은 GEOMETRY ↔ 다른 타입 간 CAST를 지원하지 않아 백엔드가 항상 거부한다.
+  // edit 모드에서는 애초에 성공할 수 없는 선택을 UI 단에서 막는다 (#539).
+  const isCurrentColumnGeometry = mode === 'edit' && column?.dataType === 'GEOMETRY';
+
   const form = useForm<AddColumnFormData>({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     resolver: zodResolver(schema) as any,
@@ -129,6 +133,12 @@ export function ColumnDialog({
             </InlineBanner>
           )}
 
+          {isCurrentColumnGeometry && (
+            <InlineBanner>
+              지오메트리(좌표) 타입은 다른 타입으로 변환할 수 없습니다. 컬럼을 삭제 후 다시 추가하세요.
+            </InlineBanner>
+          )}
+
           <div className="space-y-2">
             <Label htmlFor="columnName">필드명 *</Label>
             <Input
@@ -158,7 +168,10 @@ export function ColumnDialog({
             <ColumnTypeSelect
               value={form.watch('dataType')}
               onChange={(value) => form.setValue('dataType', value as AddColumnFormData['dataType'])}
-              disabled={mode === 'edit' && hasData}
+              disabled={mode === 'edit' && (hasData || isCurrentColumnGeometry)}
+              // 현재 타입이 GEOMETRY가 아닐 때만 GEOMETRY로의 변환을 막는다.
+              // (현재 타입이 GEOMETRY면 위 disabled로 select 자체가 잠긴다)
+              disabledOptions={mode === 'edit' && !isCurrentColumnGeometry ? ['GEOMETRY'] : undefined}
             />
             {form.formState.errors.dataType && (
               <p className="text-sm text-destructive">

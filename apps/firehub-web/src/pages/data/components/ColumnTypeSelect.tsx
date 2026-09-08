@@ -10,6 +10,9 @@ interface ColumnTypeSelectProps {
   value?: string;
   onChange: (value: string) => void;
   disabled?: boolean;
+  // 개별 옵션을 선택 불가로 표시할 값 목록. 항목 자체는 유지하여 현재 선택된
+  // 값이 GEOMETRY 등 비활성 옵션이어도 라벨이 정상적으로 표시되게 한다. (#539)
+  disabledOptions?: string[];
 }
 
 const DATA_TYPES = [
@@ -24,7 +27,7 @@ const DATA_TYPES = [
   { value: 'GEOMETRY', label: '지오메트리(좌표)' },
 ] as const;
 
-export function ColumnTypeSelect({ value, onChange, disabled }: ColumnTypeSelectProps) {
+export function ColumnTypeSelect({ value, onChange, disabled, disabledOptions }: ColumnTypeSelectProps) {
   return (
     <Select value={value} onValueChange={onChange} disabled={disabled}>
       <SelectTrigger>
@@ -32,7 +35,11 @@ export function ColumnTypeSelect({ value, onChange, disabled }: ColumnTypeSelect
       </SelectTrigger>
       <SelectContent>
         {DATA_TYPES.map((type) => (
-          <SelectItem key={type.value} value={type.value}>
+          <SelectItem
+            key={type.value}
+            value={type.value}
+            disabled={disabledOptions?.includes(type.value)}
+          >
             {type.label}
           </SelectItem>
         ))}

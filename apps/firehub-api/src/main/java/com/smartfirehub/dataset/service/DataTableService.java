@@ -404,10 +404,10 @@ public class DataTableService {
     validateName(tableName);
     validateName(columnName);
 
-    // Block conversion to/from GEOMETRY (PostgreSQL cannot CAST to/from GEOMETRY)
+    // GEOMETRY로/에서의 타입 변환은 차단한다 (PostgreSQL이 GEOMETRY CAST를 지원하지 않음)
     if ("GEOMETRY".equalsIgnoreCase(dataType) || "GEOMETRY".equalsIgnoreCase(currentDataType)) {
       throw new IllegalArgumentException(
-          "Cannot convert column type to/from GEOMETRY. Drop and recreate the column instead.");
+          "GEOMETRY 타입은 다른 타입으로 변환할 수 없습니다. 컬럼을 삭제 후 다시 추가하세요.");
     }
 
     String newType = mapDataType(dataType, maxLength);

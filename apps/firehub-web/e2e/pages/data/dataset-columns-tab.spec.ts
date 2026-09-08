@@ -513,6 +513,92 @@ test.describe('데이터셋 상세 — 컬럼 탭', () => {
     await expect(page.getByRole('combobox')).toContainText('지오메트리(좌표)');
   });
 
+  // GEOMETRY 로/에서의 타입 변환은 PostgreSQL이 CAST를 지원하지 않아 항상 실패한다.
+  // 편집 다이얼로그에서 애초에 선택 불가능하도록 막아야 한다 (#539).
+  test.describe('필드 수정 다이얼로그 — GEOMETRY 변환 차단 (#539)', () => {
+    // 이슈 재현 조건과 동일: 데이터가 없는(rowCount=0) 데이터셋의 TEXT/GEOMETRY 필드
+    const geometryDatasetDetail = createDatasetDetail({
+      id: 55,
+      name: '테스트 데이터셋',
+      rowCount: 0,
+      columns: [
+        createColumn({
+          id: 237,
+          columnName: 'item_name',
+          displayName: null,
+          dataType: 'TEXT',
+          isPrimaryKey: false,
+          isNullable: true,
+          columnOrder: 0,
+        }),
+        createColumn({
+          id: 258,
+          columnName: 'geo_col',
+          displayName: '지리',
+          dataType: 'GEOMETRY',
+          isPrimaryKey: false,
+          isNullable: true,
+          columnOrder: 1,
+        }),
+      ],
+    });
+
+    async function setupGeometryMocks(page: import('@playwright/test').Page) {
+      await mockApi(page, 'GET', '/api/v1/datasets/55', geometryDatasetDetail);
+      await mockApi(page, 'GET', '/api/v1/dataset-categories', createCategories());
+      await mockApi(page, 'GET', '/api/v1/datasets/55/queries', createPageResponse([]));
+      await mockApi(page, 'GET', '/api/v1/datasets/tags', []);
+    }
+
+    test('데이터 없는 TEXT 필드 편집 — "지오메트리(좌표)" 옵션이 비활성화되어 선택할 수 없다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupGeometryMocks(page);
+
+      await page.goto('/data/datasets/55');
+      await page.getByRole('tab', { name: '필드' }).click();
+      await expect(page.getByRole('heading', { name: /필드 목록/ })).toBeVisible({ timeout: 10000 });
+
+      // 데이터가 없으므로(rowCount=0) 다른 타입으로는 정상적으로 변경 가능해야 한다
+      const itemNameRow = page.getByRole('row').filter({ hasText: 'item_name' }).first();
+      await itemNameRow.getByRole('button', { name: '컬럼 편집' }).click();
+      await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5000 });
+
+      // 데이터 타입 select 자체는 활성 상태 (hasData=false)
+      await expect(page.getByRole('dialog').getByRole('combobox').first()).toBeEnabled();
+
+      await page.getByRole('dialog').getByRole('combobox').first().click();
+      const geometryOption = page.getByRole('option', { name: '지오메트리(좌표)' });
+      await expect(geometryOption).toBeVisible();
+      await expect(geometryOption).toBeDisabled();
+
+      // 활성 옵션(정수 등)은 여전히 선택 가능해야 한다 — 비활성화가 전체가 아닌 GEOMETRY 한정임을 확인
+      await page.getByRole('option', { name: '정수' }).click();
+      await expect(page.getByRole('dialog').getByRole('combobox').first()).toContainText('정수');
+    });
+
+    test('GEOMETRY 필드 편집 — 데이터 타입 select 전체가 비활성화되고 안내 문구가 표시된다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupGeometryMocks(page);
+
+      await page.goto('/data/datasets/55');
+      await page.getByRole('tab', { name: '필드' }).click();
+      await expect(page.getByRole('heading', { name: /필드 목록/ })).toBeVisible({ timeout: 10000 });
+
+      const geoRow = page.getByRole('row').filter({ hasText: 'geo_col' }).first();
+      await geoRow.getByRole('button', { name: '컬럼 편집' }).click();
+      await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5000 });
+
+      // GEOMETRY → 다른 타입 변환도 항상 실패하므로 select 자체를 잠근다
+      await expect(page.getByRole('dialog').getByRole('combobox').first()).toBeDisabled();
+      // 안내 문구 노출
+      await expect(
+        page.getByRole('dialog').getByText(/지오메트리\(좌표\) 타입은 다른 타입으로 변환할 수 없습니다/),
+      ).toBeVisible();
+    });
+  });
+
   // 데이터 있는 데이터셋 경고 메시지에 "NULL 허용 여부"가 포함되면 안 된다 (#198)
   // PR #117에서 NULL 허용 토글이 자유화됐으나 경고 메시지가 업데이트되지 않은 불일치 수정
   test('데이터 있는 경우 경고 메시지에 "NULL 허용 여부"가 없고 실제 비활성 필드만 언급한다 (#198)', async ({
