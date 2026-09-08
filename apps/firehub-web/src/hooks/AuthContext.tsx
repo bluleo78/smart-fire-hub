@@ -105,6 +105,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // 구독하지 않으면 강등 후 UI 가 이유 없는 전 API 403 루프에 빠진다(api/tenant-session.ts 참조).
   useEffect(() => subscribeTenantSession(applyTenantState), [applyTenantState]);
 
+  // 다른 탭에서의 로그아웃을 감지해 이 탭도 즉시 인증 상태를 초기화한다(#565).
+  // `storage` 이벤트는 변경을 일으킨 탭 자신에게는 발생하지 않고 다른 탭에서만 발생하므로,
+  // 여기서 초기화가 일어난다면 그 원인은 항상 "다른 탭의 로그아웃"이다. 액세스 토큰은
+  // 탭마다 별도의 JS 메모리에 있어 이 통지 없이는 만료(최대 30분) 전까지 계속 인증된 것처럼
+  // 동작한다. ProtectedRoute 가 `isAuthenticated`를 보고 `/login`으로 리다이렉트하므로
+  // 여기서는 로컬 상태만 비우면 충분하다.
+  useEffect(() => {
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key !== AUTH_FLAG_KEY || event.newValue !== null) return;
+      setAccessToken(null);
+      setUser(null);
+      setRoles([]);
+      setActiveTenantId(null);
+      setTenantOptions([]);
+    };
+    window.addEventListener('storage', handleStorage);
+    return () => window.removeEventListener('storage', handleStorage);
+  }, []);
+
   const login = useCallback(async (data: LoginFormData) => {
     const { data: tokens } = await authApi.login(data);
     setAccessToken(tokens.accessToken);
