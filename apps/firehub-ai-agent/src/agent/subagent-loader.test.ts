@@ -83,6 +83,33 @@ Body.
 
     expect(agents['tool-agent'].tools).toEqual(['mcp__firehub__*', 'Read', 'Grep']);
   });
+
+  it('리스트 중간의 YAML 주석·빈 줄 뒤 항목도 누락 없이 파싱한다 (#577)', () => {
+    // 회귀: 주석 줄에서 리스트 루프가 멈춰 뒤 항목이 조용히 잘리면 tools 화이트리스트가 축소된다
+    const root = makeTempDir();
+    const md = `---
+name: tool-agent
+description: "Agent with commented tools"
+tools:
+  - mcp__firehub__list_triggers
+  # 사전 확인용 조회 도구
+
+  - mcp__firehub__get_pipeline
+mcpServers:
+  - firehub
+---
+
+Body.
+`;
+    makeSubagentDir(root, 'tool-agent', md);
+
+    const agents = loadSubagents(root);
+
+    expect(agents['tool-agent'].tools).toEqual([
+      'mcp__firehub__list_triggers',
+      'mcp__firehub__get_pipeline',
+    ]);
+  });
 });
 
 // ── SL-03: Frontmatter parsing — model ───────────────────────────────────────

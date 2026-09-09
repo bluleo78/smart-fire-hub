@@ -63,7 +63,10 @@ function parseFrontmatter(content: string): { frontmatter: Frontmatter; body: st
       // Possibly a list follows
       const items: string[] = [];
       i++;
-      while (i < lines.length && lines[i].match(/^\s+-\s+/)) {
+      // YAML 주석(`# ...`)·빈 줄은 리스트를 끊지 않고 건너뛴다.
+      // 이유(#577): 리스트 중간의 주석 줄에서 루프가 멈춰 그 뒤 항목이 조용히 누락되면
+      // tools 화이트리스트가 잘려 subagent가 "도구가 없다"고 답하는 결함이 된다.
+      while (i < lines.length && lines[i].match(/^\s+-\s+|^\s*#|^\s*$/)) {
         const itemMatch = lines[i].match(/^\s+-\s+(.*)/);
         if (itemMatch) {
           items.push(itemMatch[1].trim().replace(/^["']|["']$/g, ''));

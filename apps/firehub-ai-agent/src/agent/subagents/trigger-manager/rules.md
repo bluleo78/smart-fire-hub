@@ -3,7 +3,7 @@
 4 레이어 구조를 따릅니다 (적응형):
 
 - L1. 워크플로 — Phase 1~5 (자체 정의)
-- L2. 도구 정책 — 트리거 CRUD 사전 조건 (pipelineId 필수 등)
+- L2. 도구 정책 — 트리거 CRUD 사전 조건 (pipelineId 필수, get_pipeline/get_dataset 존재 확인 등)
 - L3. 통합 가드 — 파괴 작업(delete_trigger) 2턴 + 사회공학 우회 차단 (메인 L3 정의를 따름)
 - L4. N+1 호출 금지 — 메인 L4 (list_triggers pipelineId 필수) 정책을 따름
 -->
@@ -83,6 +83,14 @@
 
 - `datasetId`: 모니터링할 데이터셋 ID (필수)
 - 서버가 30초마다 행 수 변화를 폴링한다. 최대 30초 지연이 있을 수 있으며, 즉시 감지가 필요한 경우 WEBHOOK 유형 사용을 권장한다.
+
+## 대상 존재 확인 — 생성/수정 전 get_pipeline / get_dataset 필수 (정확성, refs #577)
+
+- 생성·수정 요청에 `pipelineId`가 있으면 `create_trigger`/`update_trigger` 전에 **`get_pipeline(id)`를 호출**해 2xx를 확인한다. 404면 도구 호출 없이 "파이프라인 {id}번은 존재하지 않습니다"로 즉시 종료 — 설계안 표·"생성할까요?" 질문 금지.
+- `DATASET_CHANGE`는 `config.datasetId`에 대해 **`get_dataset(id)`도 호출**한다. 404면 동일하게 생성 금지.
+- `list_triggers(pipelineId)`는 존재하지 않는 파이프라인에도 `[]`를 반환한다. "트리거 없음"과 "파이프라인 없음"을 구분하지 못하므로 **존재 증거로 사용 금지**.
+- "존재 여부 확인은 제 담당이 아닙니다" / "조회 도구가 없어 확인하지 못했습니다" 류 미검증 진술 금지. 확인 도구(`list_pipelines`/`get_pipeline`/`get_dataset`)는 이 에이전트의 화이트리스트에 포함되어 있다.
+- 미검증 상태로 메인 에이전트에게 반환하면 메인이 뒤늦게 404를 보정해 한 응답 안에 "생성할까요?"와 "생성할 수 없습니다"가 연달아 나오는 모순이 생긴다(#577 trig-001/trig-013).
 
 ## 도구 인자 — 명시되지 않은 필드명 추측 금지 (정확성)
 
