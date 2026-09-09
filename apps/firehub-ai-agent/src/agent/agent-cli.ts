@@ -38,6 +38,15 @@ import {
 } from './file-downloader.js';
 import { DISALLOWED_TOOLS, checkToolPolicy } from './tool-policy.js';
 import { createTracker, buildHaltMessage } from './failure-streak.js';
+import {
+  createDelegationNarrationState,
+  classifyMainText,
+  noteMainToolUse,
+  noteMainToolResult,
+  noteSubagentText,
+  isNoopHostToolCall,
+  redactSubagentIdentifiers,
+} from './delegation-narration-guard.js';
 
 /**
  * #410: CLI OAuth 토큰 만료/무효 시 원문 영문 인증 실패 문구가 그대로 노출되던 결함의 패턴.
@@ -418,6 +427,15 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
   // 정의 파일들을 써두고 `--agents` 플래그는 사용하지 않는다.
   const subagents = loadSubagents();
   await writeSubagentDefinitions(userWorkDir, subagents);
+  // #578: 위임 narration 가드(코드 레벨 백스톱). 프롬프트(#239 L2 가드)만으로는 "trigger-manager에게
+  // 위임합니다"·위임 직후 "완료되면 전달드릴게요"·`Bash("echo noop")` 가 재호출에서도 그대로 재발했다.
+  // 구조 신호(subagent 코드명 포함 / 비동기 위임 직후 구간 / no-op 호스트 도구)로만 판별하며,
+  // 억제 때문에 사용자에게 아무 텍스트도 안 나가는 경우는 아래 `result` 처리에서 fallback 으로 막는다.
+  const narrationState = createDelegationNarrationState();
+  const subagentNames = Object.keys(subagents);
+  let userTextEmitted = false;
+  /** #578: 다음 이벤트로 "위임 직전 narration" 여부를 판정하기 위해 보류 중인 메인 텍스트 블록 */
+  let pendingMainText: string | undefined;
   // 시스템 프롬프트에 동적 위임 가이드를 부착(SDK 프로바이더와 동일 패턴).
   // subagent 이름 변경/추가 시 system-prompt.ts 정적 표와 동시에 갱신되도록 한다.
   const subagentGuide = buildSubagentGuide(subagents);
@@ -522,6 +540,47 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
         // Skip non-JSON lines (e.g. debug output)
         continue;
       }
+      // #578: 위임 **직전** 메인 텍스트("Found pipeline ID 18. Delegating…", "…위임하겠습니다") 판별.
+      // 이 텍스트는 Agent tool_use 보다 먼저 도착하므로 도착 시점엔 narration 인지 알 수 없다 — CLI
+      // 경로는 텍스트가 완성 블록 단위로 오므로, 메인 텍스트 블록 하나를 보류(pendingMainText)했다가
+      // **다음 이벤트**로 판정한다: 다음이 메인의 Agent/SendMessage 위임이면 버리고(위임 예고),
+      // 그 외(다른 도구·tool_result·subagent 이벤트·result)면 그 이벤트 앞에 그대로 내보낸다. 지연은
+      // stream-json 한 줄 분량이라 체감되지 않고, 최종 답변은 곧바로 뒤따르는 `result` 에서 flush 된다.
+      //
+      // 주의(라이브 raw stream-json 으로 확인): 텍스트 `assistant` 메시지 뒤에는 의미 없는 `stream_event`
+      // (content_block_stop / message_delta / message_stop / 다음 메시지의 message_start …)가 여러 줄 따라온다.
+      // 이 줄들에서 판정하면 항상 "위임 아님"으로 flush 돼 가드가 무력화된다(1차 구현의 실제 실패 원인).
+      // 따라서 stream_event 는 다음 tool_use 의 content_block_start(이름을 알 수 있음)에서만 판정하고,
+      // 그 외 stream_event/rate_limit_event 는 보류를 유지한다.
+      if (pendingMainText !== undefined) {
+        let decision: 'drop' | 'flush' | 'hold' = 'hold';
+        if (msg.type === 'stream_event') {
+          const ev = (msg as { event?: { type?: string; content_block?: { type?: string; name?: string } } }).event;
+          if (ev?.type === 'content_block_start' && ev.content_block?.type === 'tool_use' && !msg.parent_tool_use_id) {
+            decision = ev.content_block.name === 'Agent' || ev.content_block.name === 'SendMessage' ? 'drop' : 'flush';
+          }
+        } else if (msg.type === 'rate_limit_event') {
+          decision = 'hold';
+        } else if (msg.type === 'assistant' && !msg.parent_tool_use_id) {
+          const delegates = Boolean(
+            msg.message?.content?.some((b) => b.type === 'tool_use' && (b.name === 'Agent' || b.name === 'SendMessage')),
+          );
+          decision = delegates ? 'drop' : 'flush';
+        } else {
+          decision = 'flush';
+        }
+        if (decision !== 'hold') {
+          const held = pendingMainText;
+          pendingMainText = undefined;
+          if (decision === 'drop') {
+            narrationState.lastSuppressedMainText = held;
+            console.log(`[CLI Agent] [narration-guard] 위임 직전 메인 텍스트 억제(#578): ${held.slice(0, 80)}`);
+          } else {
+            userTextEmitted = true;
+            yield { type: 'text', content: held };
+          }
+        }
+      }
       // Stream text deltas
       if (msg.type === 'stream_event' && msg.delta?.type === 'text_delta' && msg.delta.text) {
         // #572 2차 수정(라이브 재현으로 확정된 실제 메커니즘): 동기 위임의 tool_result 를 받은
@@ -560,6 +619,17 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
         if (!msg.parent_tool_use_id && suppressMainText) {
           continue;
         }
+        // #578: 메인 델타가 subagent 코드명을 포함하거나 비동기 위임 직후 구간이면 억제.
+        if (!msg.parent_tool_use_id) {
+          const verdict = classifyMainText(narrationState, msg.delta.text, subagentNames);
+          if (verdict.suppress) {
+            console.log(`[CLI Agent] [narration-guard] 메인 델타 억제(${verdict.reason}, #578): ${msg.delta.text.slice(0, 80)}`);
+            continue;
+          }
+        } else {
+          noteSubagentText(narrationState);
+        }
+        userTextEmitted = true;
         yield { type: 'text', content: msg.delta.text };
         continue;
       }
@@ -645,6 +715,30 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
             if (!msg.parent_tool_use_id && !syncDelegationViolated) {
               pendingSyncAgentResultText = undefined;
             }
+            if (!msg.parent_tool_use_id) {
+              // #578: 같은 assistant 메시지 안에 [text, tool_use] 가 함께 온 경우의 보류 텍스트 판정 —
+              // 위임(Agent/SendMessage)이면 버리고, 다른 도구면 순서 보존을 위해 tool_use 앞에 내보낸다.
+              if (pendingMainText !== undefined) {
+                const held = pendingMainText;
+                pendingMainText = undefined;
+                if (toolName === 'Agent' || toolName === 'SendMessage') {
+                  narrationState.lastSuppressedMainText = held;
+                  console.log(`[CLI Agent] [narration-guard] 위임 직전 메인 텍스트 억제(#578): ${held.slice(0, 80)}`);
+                } else {
+                  userTextEmitted = true;
+                  yield { type: 'text', content: held };
+                }
+              }
+              // #578: 비동기 위임 발행 → 위임 직후 구간 시작 / 그 외 도구 → 구간 종료(#429 원칙).
+              noteMainToolUse(narrationState, toolName, block.input);
+              // #578: 목적 없는 `Bash("echo noop")` 류 호출은 사용자 표시(도구 칩)에서 숨긴다 —
+              // 트랜스크립트·정책 검사는 그대로 거치고 SSE 노출만 생략한다(대응 tool_result 도 숨김).
+              if (isNoopHostToolCall(toolName, block.input)) {
+                if (block.id) narrationState.hiddenNoopToolUseIds.add(block.id);
+                console.log(`[CLI Agent] [narration-guard] 메인 no-op 호스트 도구 호출 숨김(#578): ${toolName}(${JSON.stringify(block.input)})`);
+                continue;
+              }
+            }
             yield {
               type: 'tool_use',
               toolName,
@@ -690,6 +784,24 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
             if (!msg.parent_tool_use_id && suppressMainText) {
               continue;
             }
+            // #578: 메인 텍스트가 subagent 코드명을 포함하거나 비동기 위임 직후 구간이면 억제.
+            if (!msg.parent_tool_use_id) {
+              const verdict = classifyMainText(narrationState, block.text, subagentNames);
+              if (verdict.suppress) {
+                console.log(`[CLI Agent] [narration-guard] 메인 텍스트 억제(${verdict.reason}, #578): ${block.text.slice(0, 80)}`);
+                continue;
+              }
+              // #578: 메인 텍스트 블록은 즉시 내보내지 않고 보류 — 다음 이벤트가 위임이면 버린다.
+              // 이미 보류 중인 블록이 있으면(한 메시지에 텍스트 블록 2개) 앞 것은 그대로 내보낸다.
+              if (pendingMainText !== undefined) {
+                userTextEmitted = true;
+                yield { type: 'text', content: pendingMainText };
+              }
+              pendingMainText = block.text;
+              continue;
+            }
+            noteSubagentText(narrationState);
+            userTextEmitted = true;
             yield { type: 'text', content: block.text };
           }
         }
@@ -710,13 +822,19 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
             if (assistantToolCalls.length > 0) {
               assistantToolCalls[assistantToolCalls.length - 1].result = resultText;
             }
-            yield {
-              type: 'tool_result',
-              toolName: '',
-              result: resultText,
-            };
-            // Tier2: 연속 실패 기록 + 강제중단
             const isError = Boolean((block as { is_error?: unknown }).is_error);
+            // #578: 숨긴 no-op 호출의 결과도 숨긴다. 위임(Agent) 자체가 실패(is_error)했으면 subagent 가
+            // 답할 수 없으므로 위임 직후 구간을 끝내 메인이 직접 설명할 수 있게 한다.
+            const isHiddenNoop = Boolean(block.tool_use_id && narrationState.hiddenNoopToolUseIds.has(block.tool_use_id));
+            if (!msg.parent_tool_use_id) noteMainToolResult(narrationState, isError);
+            if (!isHiddenNoop) {
+              yield {
+                type: 'tool_result',
+                toolName: '',
+                result: resultText,
+              };
+            }
+            // Tier2: 연속 실패 기록 + 강제중단
             // #573 2차 수정: 이 tool_result 가 동기(run_in_background:false) Agent 위임의
             // 결과라면, subagent 는 자신의 텍스트를 interleave 로 노출할 기회가 없었으므로 이
             // 문자열 자체가 relay 되어야 할 최종 응답이다. block.tool_use_id 로 위임 tool_use
@@ -807,7 +925,21 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
           if (relayText) {
             console.warn(`[CLI Agent] [design-guard] 동기 Agent 위임 결과 relay(#573/#572 2차, violated=${syncDelegationViolated}): ${relayText.slice(0, 200)}`);
             assistantText += relayText;
+            userTextEmitted = true;
             yield { type: 'text', content: relayText };
+          }
+        }
+        // #578: narration 가드가 메인 텍스트를 억제했는데 그 뒤 subagent 도 아무 텍스트를 내지 않아
+        // 사용자에게 한 글자도 나가지 않은 채 성공 종료하는 경우 — 완전히 빈 응답(#573 과 같은 critical
+        // 회귀)을 막기 위해 마지막으로 억제한 메인 텍스트를 코드명만 가린 채 fallback 으로 내보낸다.
+        if (!isBudgetError && !isOtherError && !userTextEmitted && narrationState.lastSuppressedMainText) {
+          const fallback = redactSubagentIdentifiers(narrationState.lastSuppressedMainText, subagentNames);
+          narrationState.lastSuppressedMainText = undefined;
+          if (fallback) {
+            console.warn(`[CLI Agent] [narration-guard] 빈 응답 방지 fallback(#578): ${fallback.slice(0, 200)}`);
+            assistantText += fallback;
+            userTextEmitted = true;
+            yield { type: 'text', content: fallback };
           }
         }
         await saveTranscript();
@@ -842,6 +974,13 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
           yield { type: 'done', inputTokens, outputTokens };
         }
       }
+    }
+    // #578: 스트림이 `result` 없이 끝난 경우에도 보류 중인 메인 텍스트를 잃지 않는다.
+    if (pendingMainText !== undefined) {
+      const held = pendingMainText;
+      pendingMainText = undefined;
+      userTextEmitted = true;
+      yield { type: 'text', content: held };
     }
   } finally {
     rl.close();

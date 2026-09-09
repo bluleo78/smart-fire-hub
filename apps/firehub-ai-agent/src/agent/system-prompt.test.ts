@@ -403,6 +403,67 @@ describe('SYSTEM_PROMPT', () => {
       expect(styleSection).toMatch(/다음 단계 제안|확인 질문/);
     });
 
+    // #578: #239 가드가 데이터셋 조회 사례만 들고 있어 "조사 도구 → Agent 위임" 흐름에서
+    // "trigger-manager에게 위임합니다" 류 narration + subagent 코드명 노출 + Bash no-op 이 재발했다.
+    // 위임 흐름을 다중 도구 호출 가드의 명시적 금지 예로 고정한다.
+    describe('위임 흐름 narration 금지 (#578)', () => {
+      const guard = () => {
+        const section = SYSTEM_PROMPT.split('### 메인 에이전트 다중 도구 호출')[1]?.split('## L6.')[0];
+        expect(section).toBeDefined();
+        return section as string;
+      };
+
+      it('Agent 위임도 tool_use 로 간주해 조사 도구와 위임 사이·위임 직후 텍스트를 금지한다', () => {
+        const section = guard();
+        expect(section).toMatch(/`Agent` 위임도 tool_use/);
+        expect(section).toMatch(/위임 직후/);
+      });
+
+      it('❌ 금지 예에 "위임할게요"·"요청했습니다"·subagent 코드명 노출 사례를 포함한다', () => {
+        const section = guard();
+        const forbidden = section.split('❌ 금지:')[1]?.split('✅ 올바른 예:')[0];
+        expect(forbidden).toBeDefined();
+        expect(forbidden).toMatch(/트리거 생성을 위임할게요/);
+        expect(forbidden).toMatch(/trigger-manager에게 … 요청했습니다/);
+        expect(forbidden).toMatch(/subagent 코드명 노출 금지/);
+        expect(forbidden).toMatch(/사전 계획 선언/);
+      });
+
+      it('❌ 금지 예에 목적 없는 Bash no-op 호출(echo noop / true)을 포함한다', () => {
+        const forbidden = guard().split('❌ 금지:')[1]?.split('✅ 올바른 예:')[0];
+        expect(forbidden).toMatch(/echo noop/);
+        expect(forbidden).toMatch(/첨부 파일 처리에만/);
+      });
+
+      it('✅ 올바른 예에 "조사 → (텍스트 없음) → Agent → relay 1회" 흐름을 제시한다', () => {
+        const ok = guard().split('✅ 올바른 예:')[1];
+        expect(ok).toMatch(/list_pipelines.*텍스트 없음.*Agent.*relay 1회/s);
+      });
+    });
+
+    // #578: 진행 status 허용 절이 위임 narration 까지 허용으로 읽히지 않도록 금지 항목을 명시한다.
+    it('진행 status 금지 항목에 위임 narration·subagent 이름·영어 status 를 포함한다', () => {
+      const section = SYSTEM_PROMPT.split('### 진행 status')[1]?.split('✅ **허용 예**')[0];
+      expect(section).toBeDefined();
+      expect(section).toMatch(/위임 narration/);
+      expect(section).toMatch(/trigger-manager에게 위임합니다/);
+      expect(section).toMatch(/직전·직후에는 status 자체를 내지 않는다/);
+      expect(section).toMatch(/Delegating trigger creation/);
+    });
+
+    // #578: L1 relay 절이 "pipeline-builder에게 맡길게요 류 진행 안내 … 정상"으로 위임 narration 을
+    // 합법화하던 문구가 회귀의 프롬프트 내 모순점이었다. 다시 들어오지 못하게 고정한다.
+    it('L1 relay 절이 위임 전 진행 안내를 정상으로 서술하지 않는다', () => {
+      const relay = SYSTEM_PROMPT.split('### subagent 결과 relay')[1]?.split('## L4.')[0] ?? SYSTEM_PROMPT;
+      expect(relay).not.toMatch(/진행 안내.*정상이지만/);
+      expect(relay).toMatch(/진행 안내는 \*\*애초에 출력하지 않는다\*\*/);
+    });
+
+    // #578: #572 "별도 턴 조회" 예외가 조사→위임 사이 텍스트를 유발하지 않도록 명시한다.
+    it('#572 별도 턴 조회 예외가 조사 tool_result 와 Agent 사이 텍스트 금지를 함께 명시한다', () => {
+      expect(SYSTEM_PROMPT).toMatch(/"별도 턴"은 tool_use 를 분리하라는 뜻이지 그 사이에 텍스트를 내라는 뜻이 아니다/);
+    });
+
     // #260 PR-1: tool narration over-correction 정정 — 짧은 의도 status 허용
     it('진행 status 섹션이 짧은 의도 status 허용 예와 금지 예를 모두 명시한다', () => {
       const section = SYSTEM_PROMPT.split('### 진행 status')[1];

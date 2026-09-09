@@ -1438,3 +1438,283 @@ describe('executeCliAgent — 레거시 트랜스크립트 재개 (코드리뷰 
     expect(events.some((e) => e.type === 'done')).toBe(false);
   });
 });
+
+describe('executeCliAgent — #578 위임 narration 가드(코드 레벨 백스톱)', () => {
+  beforeEach(() => {
+    spawnMock.mockReset();
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  async function run(lines: string[]) {
+    const child = makeFakeChildWithLines(lines);
+    spawnMock.mockReturnValue(child);
+    const events: Array<{ type: string; content?: string; toolName?: string }> = [];
+    for await (const ev of executeCliAgent({
+      message: '트리거 바꿔줘',
+      tenantId: 1,
+      userId: 1,
+      useSubscription: false,
+      apiKey: 'sk-test',
+    } as never)) {
+      events.push(ev as { type: string; content?: string; toolName?: string });
+    }
+    return events;
+  }
+
+  // trig-010 실측 시퀀스: 메인 text(코드명 노출) → Agent(비동기) → 메인 text(위임 예고) →
+  // subagent 내부 tool_use → subagent 확인 질문. 사용자에게는 subagent 확인 질문 하나만 남아야 한다.
+  it('trig-010: 코드명 노출 텍스트와 위임 직후 예고 텍스트를 억제하고 subagent 텍스트만 남긴다', async () => {
+    const delegateId = 'toolu_578_agent';
+    const events = await run([
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: {
+          content: [
+            { type: 'text', text: '트리거 유형 변경은 삭제+재생성이 필요한 작업이라 trigger-manager에게 위임합니다.' },
+            { type: 'tool_use', id: delegateId, name: 'Agent', input: { subagent_type: 'pipeline-builder', prompt: '...' } },
+          ],
+        },
+      }),
+      JSON.stringify({
+        type: 'user',
+        parent_tool_use_id: null,
+        message: { content: [{ type: 'tool_result', tool_use_id: delegateId, content: 'Async agent launched successfully.' }] },
+      }),
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: { content: [{ type: 'text', text: '트리거 변경 작업을 진행 중입니다. 완료되면 결과를 전달드릴게요.' }] },
+      }),
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: delegateId,
+        message: { content: [{ type: 'tool_use', id: 'toolu_sub_1', name: 'mcp__firehub__list_triggers', input: { pipelineId: 15 } }] },
+      }),
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: delegateId,
+        message: { content: [{ type: 'text', text: "'issue233_verify' 트리거(파이프라인 'fatal_fires_filter', ID: 32)를 삭제합니다. 계속할까요? (네 / 아니오)" }] },
+      }),
+      JSON.stringify({ type: 'result', subtype: 'success' }),
+    ]);
+    const texts = events.filter((e) => e.type === 'text').map((e) => e.content);
+    expect(texts).toEqual(["'issue233_verify' 트리거(파이프라인 'fatal_fires_filter', ID: 32)를 삭제합니다. 계속할까요? (네 / 아니오)"]);
+  });
+
+  // trig-002 실측: 메인이 `Bash("echo noop")` 를 먼저 호출 — 사용자 표시(tool_use/tool_result)에서 숨긴다.
+  it('trig-002: 메인의 Bash("echo noop") 호출과 그 결과를 SSE 에서 숨긴다', async () => {
+    const events = await run([
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: { content: [{ type: 'tool_use', id: 'toolu_noop', name: 'Bash', input: { command: 'echo noop' } }] },
+      }),
+      JSON.stringify({
+        type: 'user',
+        parent_tool_use_id: null,
+        message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_noop', content: 'noop' }] },
+      }),
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: { content: [{ type: 'tool_use', id: 'toolu_lp', name: 'mcp__firehub__list_pipelines', input: {} }] },
+      }),
+      JSON.stringify({
+        type: 'user',
+        parent_tool_use_id: null,
+        message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_lp', content: '[]' }] },
+      }),
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: { content: [{ type: 'text', text: '파이프라인이 없습니다.' }] },
+      }),
+      JSON.stringify({ type: 'result', subtype: 'success' }),
+    ]);
+    expect(events.filter((e) => e.type === 'tool_use').map((e) => e.toolName)).toEqual(['mcp__firehub__list_pipelines']);
+    expect(events.filter((e) => e.type === 'tool_result')).toHaveLength(1);
+    expect(events.filter((e) => e.type === 'text').map((e) => e.content)).toEqual(['파이프라인이 없습니다.']);
+  });
+
+  // trig-002 2차 실측(프롬프트 보강 후에도 재발): 조사 tool_result 와 Agent 사이의 영어 독백
+  // "Found pipeline ID 18. Delegating trigger creation." — Agent 보다 먼저 도착하므로 다음 이벤트로 판정한다.
+  it('trig-002: 조사 도구 → 텍스트 → Agent 위임 흐름에서 위임 직전 텍스트를 억제한다', async () => {
+    const delegateId = 'toolu_578_pre';
+    const events = await run([
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: { content: [{ type: 'tool_use', id: 'toolu_lp', name: 'mcp__firehub__list_pipelines', input: {} }] },
+      }),
+      JSON.stringify({
+        type: 'user',
+        parent_tool_use_id: null,
+        message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_lp', content: '[{"id":18}]' }] },
+      }),
+      // 텍스트와 Agent 가 별도 assistant 메시지로 오는 경우
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: { content: [{ type: 'text', text: 'Found pipeline ID 18. Delegating trigger creation.' }] },
+      }),
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: { content: [{ type: 'tool_use', id: delegateId, name: 'Agent', input: { subagent_type: 'pipeline-builder', prompt: '...' } }] },
+      }),
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: delegateId,
+        message: { content: [{ type: 'text', text: "'주간 검증' 트리거가 등록되었습니다 (ID: 53)." }] },
+      }),
+      JSON.stringify({ type: 'result', subtype: 'success' }),
+    ]);
+    expect(events.filter((e) => e.type === 'text').map((e) => e.content)).toEqual(["'주간 검증' 트리거가 등록되었습니다 (ID: 53)."]);
+    // 위임 직전 텍스트를 버렸어도 tool_use 이벤트 순서는 유지된다
+    expect(events.filter((e) => e.type === 'tool_use').map((e) => e.toolName)).toEqual(['mcp__firehub__list_pipelines', 'Agent']);
+  });
+
+  // 라이브 raw stream-json 실측: 텍스트 assistant 메시지 뒤에 content_block_stop/message_delta/message_stop/
+  // message_start 같은 stream_event 가 여러 줄 따라온 뒤에야 Agent tool_use 가 온다 — 이 줄들에서 flush 하면
+  // 가드가 무력화된다(1차 구현의 실제 실패 원인). stream_event 는 보류를 유지해야 한다.
+  it('텍스트와 Agent 사이에 stream_event 줄이 끼어도 위임 직전 텍스트를 억제한다', async () => {
+    const delegateId = 'toolu_578_se';
+    const se = (event: Record<string, unknown>) => JSON.stringify({ type: 'stream_event', parent_tool_use_id: null, event });
+    const events = await run([
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: { content: [{ type: 'text', text: 'Pipeline ID 18 확인했습니다. 트리거 생성을 위임할게요.' }] },
+      }),
+      se({ type: 'content_block_stop', index: 0 }),
+      se({ type: 'message_delta', delta: { stop_reason: 'tool_use' } }),
+      se({ type: 'message_stop' }),
+      JSON.stringify({ type: 'rate_limit_event', rate_limit_info: { status: 'allowed' } }),
+      se({ type: 'message_start', message: { id: 'msg_2' } }),
+      se({ type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: delegateId, name: 'Agent' } }),
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: { content: [{ type: 'tool_use', id: delegateId, name: 'Agent', input: { subagent_type: 'pipeline-builder', prompt: '...' } }] },
+      }),
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: delegateId,
+        message: { content: [{ type: 'text', text: '설계안입니다. 이대로 생성할까요?' }] },
+      }),
+      JSON.stringify({ type: 'result', subtype: 'success' }),
+    ]);
+    expect(events.filter((e) => e.type === 'text').map((e) => e.content)).toEqual(['설계안입니다. 이대로 생성할까요?']);
+  });
+
+  it('텍스트 뒤 stream_event 를 지나 일반 도구 content_block_start 가 오면 그 앞에 텍스트를 내보낸다', async () => {
+    const se = (event: Record<string, unknown>) => JSON.stringify({ type: 'stream_event', parent_tool_use_id: null, event });
+    const events = await run([
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: { content: [{ type: 'text', text: '트리거 목록을 불러올게요' }] },
+      }),
+      se({ type: 'content_block_stop', index: 0 }),
+      se({ type: 'content_block_start', index: 1, content_block: { type: 'tool_use', id: 'toolu_lt', name: 'mcp__firehub__list_triggers' } }),
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: { content: [{ type: 'tool_use', id: 'toolu_lt', name: 'mcp__firehub__list_triggers', input: { pipelineId: 15 } }] },
+      }),
+      JSON.stringify({ type: 'result', subtype: 'success' }),
+    ]);
+    expect(events.map((e) => e.type).filter((t) => t !== 'init')).toEqual(['text', 'tool_use', 'done']);
+  });
+
+  // 최종 답변(뒤에 result 만 오는 텍스트)은 보류됐다가 그대로 나가야 한다 — 순서·내용 보존.
+  it('최종 답변 텍스트는 보류 후 done 앞에 그대로 내보낸다', async () => {
+    const events = await run([
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: { content: [{ type: 'text', text: '최종 답변입니다.' }] },
+      }),
+      JSON.stringify({ type: 'result', subtype: 'success' }),
+    ]);
+    expect(events.map((e) => e.type).filter((t) => t !== 'init')).toEqual(['text', 'done']);
+    expect(events.find((e) => e.type === 'text')?.content).toBe('최종 답변입니다.');
+  });
+
+  // 허용 status(#260)와 최종 응답은 건드리지 않는다 — 과억제 회귀 방지.
+  it('위임이 없는 요청의 허용 status 와 최종 응답은 그대로 통과한다', async () => {
+    const events = await run([
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: {
+          content: [
+            { type: 'text', text: '트리거 목록을 불러올게요' },
+            { type: 'tool_use', id: 'toolu_lt', name: 'mcp__firehub__list_triggers', input: { pipelineId: 15 } },
+          ],
+        },
+      }),
+      JSON.stringify({
+        type: 'user',
+        parent_tool_use_id: null,
+        message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_lt', content: '[]' }] },
+      }),
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: { content: [{ type: 'text', text: '파이프라인 15번에는 트리거가 없습니다.' }] },
+      }),
+      JSON.stringify({ type: 'result', subtype: 'success' }),
+    ]);
+    expect(events.filter((e) => e.type === 'text').map((e) => e.content)).toEqual([
+      '트리거 목록을 불러올게요',
+      '파이프라인 15번에는 트리거가 없습니다.',
+    ]);
+  });
+
+  // 억제 후 subagent 가 아무 텍스트도 내지 않으면 빈 응답 대신 코드명을 가린 fallback 을 내보낸다.
+  it('억제된 텍스트 외에 아무 텍스트도 나가지 않으면 코드명을 가린 fallback 을 내보낸다(빈 응답 방지)', async () => {
+    const events = await run([
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: {
+          content: [
+            { type: 'text', text: 'trigger-manager에게 위임합니다.' },
+            { type: 'tool_use', id: 'toolu_a', name: 'Agent', input: { subagent_type: 'pipeline-builder', prompt: '...' } },
+          ],
+        },
+      }),
+      JSON.stringify({ type: 'result', subtype: 'success' }),
+    ]);
+    const texts = events.filter((e) => e.type === 'text').map((e) => e.content);
+    expect(texts).toEqual(['전문 에이전트에게 위임합니다.']);
+  });
+
+  // 위임 자체가 실패(is_error)하면 메인이 직접 설명해야 하므로 억제하지 않는다.
+  it('Agent 위임 tool_result 가 is_error 면 이후 메인 텍스트를 억제하지 않는다', async () => {
+    const events = await run([
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: { content: [{ type: 'tool_use', id: 'toolu_a', name: 'Agent', input: { subagent_type: 'pipeline-builder', prompt: '...' } }] },
+      }),
+      JSON.stringify({
+        type: 'user',
+        parent_tool_use_id: null,
+        message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_a', is_error: true, content: 'Agent failed' }] },
+      }),
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: { content: [{ type: 'text', text: '처리 중 오류가 발생했습니다. 다시 시도해 주세요.' }] },
+      }),
+      JSON.stringify({ type: 'result', subtype: 'success' }),
+    ]);
+    expect(events.filter((e) => e.type === 'text').map((e) => e.content)).toEqual(['처리 중 오류가 발생했습니다. 다시 시도해 주세요.']);
+  });
+});

@@ -312,7 +312,8 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
   let hasStreamedText = false;
   // #428: DESIGN 가드 subagent(pipeline-builder 등)가 이미 확인 질문으로 응답을 마쳤을 때
   // 메인이 같은 요청 안에서 이를 재요약해 중복 확인을 노출하지 않도록 하는 요청-스코프 상태.
-  const designGuardRelayState = createDesignGuardRelayState();
+  // #578: subagent 코드명 목록을 넘겨 메인 텍스트의 코드명 노출을 코드 레벨에서 억제한다.
+  const designGuardRelayState = createDesignGuardRelayState(Object.keys(subagents));
   let lastTurnContextTokens = 0;
   // Tier2 강제중단용 연속 실패 트래커 (도구 이름은 lastToolName 재사용)
   const haltTracker = createTracker();

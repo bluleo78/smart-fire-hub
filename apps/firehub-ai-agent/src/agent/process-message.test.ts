@@ -742,3 +742,109 @@ describe('processMessage', () => {
     });
   });
 });
+
+// #578: SDK 경로에도 동일한 위임 narration 가드가 적용된다(CLI 경로와 대칭).
+describe('processMessage — #578 위임 narration 가드', () => {
+  const tag578 = () => '[t]';
+  const names = ['trigger-manager', 'pipeline-builder'];
+
+  it('비동기 Agent 위임 직후 메인 델타는 억제되고 subagent 텍스트 도착 후 해제된다', () => {
+    const state = createDesignGuardRelayState(names);
+    processMessage(
+      {
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: { content: [{ type: 'tool_use', id: 'toolu_a', name: 'Agent', input: { subagent_type: 'trigger-manager' } }] },
+      } as unknown as SDKMessage,
+      tag578,
+      false,
+      state,
+    );
+    const suppressed = processMessage(
+      {
+        type: 'stream_event',
+        parent_tool_use_id: null,
+        event: { type: 'content_block_delta', delta: { type: 'text_delta', text: '진행 중입니다. 완료되면 전달드릴게요.' } },
+      } as unknown as SDKMessage,
+      tag578,
+      true,
+      state,
+    );
+    expect(suppressed).toEqual([]);
+    const subText = processMessage(
+      {
+        type: 'stream_event',
+        parent_tool_use_id: 'toolu_a',
+        event: { type: 'content_block_delta', delta: { type: 'text_delta', text: '계속할까요?' } },
+      } as unknown as SDKMessage,
+      tag578,
+      true,
+      state,
+    );
+    expect(subText).toEqual([{ type: 'text', content: '계속할까요?' }]);
+    expect(state.narration.awaitingAsyncDelegation).toBe(false);
+  });
+
+  it('subagent 코드명을 포함한 메인 텍스트 블록은 억제된다', () => {
+    const state = createDesignGuardRelayState(names);
+    const events = processMessage(
+      {
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: { content: [{ type: 'text', text: 'trigger-manager에게 위임합니다.' }] },
+      } as unknown as SDKMessage,
+      tag578,
+      false,
+      state,
+    );
+    expect(events).toEqual([]);
+  });
+
+  it('메인의 Bash("echo noop") tool_use/tool_result 는 이벤트로 내보내지 않는다', () => {
+    const state = createDesignGuardRelayState(names);
+    const use = processMessage(
+      {
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: { content: [{ type: 'tool_use', id: 'toolu_noop', name: 'Bash', input: { command: 'echo noop' } }] },
+      } as unknown as SDKMessage,
+      tag578,
+      false,
+      state,
+    );
+    expect(use).toEqual([]);
+    const result = processMessage(
+      {
+        type: 'user',
+        parent_tool_use_id: null,
+        message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_noop', content: 'noop' }] },
+      } as unknown as SDKMessage,
+      tag578,
+      false,
+      state,
+    );
+    expect(result).toEqual([]);
+  });
+
+  it('억제 후 아무 텍스트도 나가지 않고 성공 종료하면 코드명을 가린 fallback 을 내보낸다', () => {
+    const state = createDesignGuardRelayState(names);
+    processMessage(
+      {
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: { content: [{ type: 'text', text: 'pipeline-builder에게 맡길게요.' }] },
+      } as unknown as SDKMessage,
+      tag578,
+      false,
+      state,
+    );
+    const events = processMessage(
+      { type: 'result', subtype: 'success', session_id: 'sess-578', usage: { input_tokens: 1, output_tokens: 1 } } as unknown as SDKMessage,
+      tag578,
+      false,
+      state,
+    );
+    expect(events[0]).toEqual({ type: 'text', content: '전문 에이전트에게 맡길게요.' });
+    expect(events[1]?.type).toBe('done');
+  });
+});

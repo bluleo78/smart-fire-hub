@@ -4,6 +4,16 @@ import { truncate } from '../utils.js';
 import { MAX_BUDGET_USD } from '../constants.js';
 // 지역 변수 totalInputTokens와 이름이 겹치므로 별칭으로 들여온다.
 import { totalInputTokens as sumInputTokens } from './token-usage.js';
+import {
+  createDelegationNarrationState,
+  classifyMainText,
+  noteMainToolUse,
+  noteMainToolResult,
+  noteSubagentText,
+  isNoopHostToolCall,
+  redactSubagentIdentifiers,
+  type DelegationNarrationState,
+} from './delegation-narration-guard.js';
 
 // Agent 위임 relay 가드(#428→#429 일반화) — SDK Agent 도구로 위임된 subagent 는
 // parent_tool_use_id 가 위임 tool_use 의 id 로 채워진 채 같은 top-level query() 스트림에
@@ -75,14 +85,23 @@ export interface DesignGuardRelayState {
    *  유지되며(리셋 없음), 이후 메인의 모든 text 는 억제되고 위임의 실제 tool_result 만 강제로
    *  relay 된다. */
   syncDelegationViolated: boolean;
+  /** #578: 위임 narration 가드 상태(비동기 위임 직후 구간 / 숨긴 no-op 호출 / 억제 텍스트 fallback) */
+  narration: DelegationNarrationState;
+  /** #578: 정의된 subagent 코드명 목록 — 메인 텍스트의 코드명 노출 판별에 사용 */
+  subagentNames: readonly string[];
+  /** #578: 이번 요청에서 사용자에게 text 이벤트가 하나라도 나갔는지 — 빈 응답 fallback 판정용 */
+  userTextEmitted: boolean;
 }
 
-export function createDesignGuardRelayState(): DesignGuardRelayState {
+export function createDesignGuardRelayState(subagentNames: readonly string[] = []): DesignGuardRelayState {
   return {
     pendingGuardToolUseIds: new Set(),
     suppressMainText: false,
     syncDelegationToolUseIds: new Set(),
     syncDelegationViolated: false,
+    narration: createDelegationNarrationState(),
+    subagentNames,
+    userTextEmitted: false,
   };
 }
 
@@ -172,7 +191,20 @@ export function processMessage(
               (relayState.suppressMainText ||
                 relayState.syncDelegationViolated ||
                 relayState.pendingSyncAgentResultText !== undefined);
-            if (!hasStreamedText && !isSuppressedMainText) {
+            // #578: 메인 텍스트 블록이 subagent 코드명을 포함하거나 비동기 위임 직후 구간이면 억제.
+            // (델타 스트림은 토큰 단위로 쪼개져 코드명 매칭이 불안정하므로 코드명 판별은 완성 블록에서만)
+            let narrationSuppressed = false;
+            if (!parentToolUseId) {
+              const verdict = classifyMainText(relayState.narration, String(block.text), relayState.subagentNames);
+              if (verdict.suppress) {
+                narrationSuppressed = true;
+                console.log(`${tag()} 🔇 위임 narration 억제(${verdict.reason}, #578)`);
+              }
+            } else {
+              noteSubagentText(relayState.narration);
+            }
+            if (!hasStreamedText && !isSuppressedMainText && !narrationSuppressed) {
+              relayState.userTextEmitted = true;
               events.push({ type: 'text', content: block.text });
             }
           } else if (block.type === 'tool_use' && 'name' in block) {
@@ -234,6 +266,16 @@ export function processMessage(
                 relayState.pendingGuardToolUseIds.add(toolUseId);
               }
             }
+            if (!parentToolUseId) {
+              // #578: 비동기 위임 발행 → 위임 직후 구간 시작 / 그 외 도구 → 구간 종료(#429 원칙).
+              noteMainToolUse(relayState.narration, block.name, input);
+              // #578: 목적 없는 `Bash("echo noop")` 류 호출은 사용자 표시에서 숨긴다(대응 tool_result 도 숨김).
+              if (isNoopHostToolCall(block.name, input)) {
+                if ('id' in block) relayState.narration.hiddenNoopToolUseIds.add(String((block as { id: string }).id));
+                console.log(`${tag()} 🔇 메인 no-op 호스트 도구 호출 숨김(#578): ${block.name}`);
+                continue;
+              }
+            }
             events.push({
               type: 'tool_use',
               toolName: block.name,
@@ -270,12 +312,16 @@ export function processMessage(
             // is_error 필드 추출: safeTool()이 에러 발생 시 isError: true를 반환하므로 SSE 이벤트에 포함
             const isError = 'is_error' in block ? Boolean((block as { is_error?: unknown }).is_error) : false;
             console.log(`${tag()} ◀ Tool result [${toolId}]${isError ? ' (ERROR)' : ''}: ${truncate(resultStr ?? '(empty)')}`);
-            events.push({
-              type: 'tool_result',
-              toolName: toolId,
-              result: resultStr,
-              isError,
-            });
+            // #578: 숨긴 no-op 호출의 결과도 숨긴다. 위임 자체가 실패(is_error)면 위임 직후 구간을 끝낸다.
+            if (!parentToolUseId) noteMainToolResult(relayState.narration, isError);
+            if (!relayState.narration.hiddenNoopToolUseIds.has(toolId)) {
+              events.push({
+                type: 'tool_result',
+                toolName: toolId,
+                result: resultStr,
+                isError,
+              });
+            }
             // #573: 이 tool_result 가 동기(run_in_background:false) Agent 위임의 결과라면, subagent
             // 는 자신의 텍스트를 interleave 로 노출할 기회가 없었으므로 이 문자열 자체가 relay 되어야
             // 할 최종 응답이다. 메인이 이후 텍스트로 이어가거나 새 tool_use 를 내면 지워지고, 텍스트
@@ -339,7 +385,19 @@ export function processMessage(
           relayState.pendingSyncAgentResultText = undefined;
           if (relayText) {
             console.warn(`${tag()} ⚠️ 동기 Agent 위임 결과 relay(#573/#572 2차, violated=${relayState.syncDelegationViolated}): ${truncate(relayText)}`);
+            relayState.userTextEmitted = true;
             events.push({ type: 'text', content: relayText });
+          }
+        }
+        // #578: narration 가드 억제 뒤 subagent 도 텍스트를 내지 않아 사용자에게 아무 텍스트도 안 나간
+        // 경우 — 빈 응답을 막기 위해 마지막 억제 텍스트를 코드명만 가린 채 fallback 으로 내보낸다.
+        if (!relayState.userTextEmitted && relayState.narration.lastSuppressedMainText) {
+          const fallback = redactSubagentIdentifiers(relayState.narration.lastSuppressedMainText, relayState.subagentNames);
+          relayState.narration.lastSuppressedMainText = undefined;
+          if (fallback) {
+            console.warn(`${tag()} ⚠️ 위임 narration 억제 후 빈 응답 방지 fallback(#578): ${truncate(fallback)}`);
+            relayState.userTextEmitted = true;
+            events.push({ type: 'text', content: fallback });
           }
         }
         console.log(`${tag()} ✓ Session completed: ${msg.session_id}`);
@@ -384,7 +442,20 @@ export function processMessage(
             (relayState.suppressMainText ||
               relayState.syncDelegationViolated ||
               relayState.pendingSyncAgentResultText !== undefined);
-          if (!isSuppressedMainDelta) {
+          // #578: 비동기 위임 직후 구간의 메인 델타는 위임 예고이므로 억제한다(구조 신호만 사용 —
+          // 델타는 토큰 단위라 코드명 문구 판별은 하지 않는다). subagent 델타는 구간을 끝낸다.
+          let narrationSuppressed = false;
+          if (!parentToolUseId) {
+            if (relayState.narration.awaitingAsyncDelegation) {
+              narrationSuppressed = true;
+              relayState.narration.lastSuppressedMainText =
+                (relayState.narration.lastSuppressedMainText ?? '') + delta.text;
+            }
+          } else {
+            noteSubagentText(relayState.narration);
+          }
+          if (!isSuppressedMainDelta && !narrationSuppressed) {
+            relayState.userTextEmitted = true;
             events.push({
               type: 'text',
               content: delta.text,
