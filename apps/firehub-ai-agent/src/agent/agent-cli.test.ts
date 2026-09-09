@@ -45,6 +45,10 @@ vi.mock('./subagent-loader.js', async () => {
         description: '스마트 작업 매니저',
         prompt: '당신은 스마트 작업 매니저입니다.',
       },
+      'data-analyst': {
+        description: '데이터 분석가',
+        prompt: '당신은 데이터 분석가입니다.',
+      },
     })),
     buildSubagentGuide: vi.fn(
       () =>
@@ -820,6 +824,198 @@ describe('executeCliAgent — #573 2차 수정: 동기(run_in_background:false) 
     const texts = events.filter((e) => e.type === 'text').map((e) => e.content);
     // 중복 task_notification 때문에 억제됐다면 texts 가 빈 배열이었을 것이다(회귀 시 관찰된 증상).
     expect(texts).toEqual(['다음과 같이 설계안을 제안합니다...이대로 생성할까요?']);
+  });
+});
+
+describe('executeCliAgent — #572 2차 수정: data-analyst 동기 위임과 조사 도구의 병렬 tool_use 배치', () => {
+  // 1차 수정(#572, commit 44a81286)은 "data-analyst 위임은 항상 run_in_background:false" 규칙만
+  // 추가했으나, 크로스체크에서 3회 연속 재현됐다 — 실제 재현 경로는 라이브 trace
+  // (test-results/subagent-eval/2026-09-09T10-05/traces/crosscheck-572-r1.sse)와 동일하게, 메인이
+  // Agent(data-analyst, run_in_background:false) 위임과 find_datasets/get_dataset 등 조사 도구를
+  // 같은 turn 안에서 병렬로 발행하는 것이다 — 실행이 가벼운 도구가 먼저 끝나고 무거운 Agent 위임의
+  // tool_result 는 가장 마지막에 도착한다. 메인은 자체 조사 결과로 결론 텍스트를 작성해 응답을
+  // 마치고, data-analyst 의 실제 분석 결과는 어떤 text 에도 노출되지 않은 채 폐기됐다.
+  beforeEach(() => {
+    spawnMock.mockReset();
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('PM-572-2: 위임 tool_result 를 받기 전에 조사 도구가 병렬 발행되면, 메인의 자체 재조사 텍스트는 억제되고 위임의 실제 결과만 relay 된다', async () => {
+    const delegateToolUseId = 'toolu_da_delegate';
+    const delegateResultText =
+      '"화재발생현황" 데이터셋을 찾아 월별 평균 사망자수를 집계했습니다: 1월 2.3명, 2월 1.8명...(LINE 차트 생성 완료)';
+    const wrongMainText =
+      '"화재발생현황"이라는 이름의 데이터셋은 없고, death_count 컬럼이 있는 fire_incidents 데이터셋은 0건이라 평균을 계산할 수 없습니다.';
+
+    const lines: string[] = [
+      // 메인이 data-analyst 에 동기 위임 — 라이브 trace 와 동일한 프롬프트.
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: {
+          content: [
+            {
+              type: 'tool_use',
+              id: delegateToolUseId,
+              name: 'Agent',
+              input: {
+                subagent_type: 'data-analyst',
+                description: '월별 평균 사망자수 분석',
+                run_in_background: false,
+                prompt: '화재발생현황 데이터셋을 찾아서 월별 평균 사망자수를 집계해줘.',
+              },
+            },
+          ],
+        },
+      }),
+      // 위임의 tool_result 가 오기 전에 메인이 조사 도구를 발행 — 병렬 배치의 정확한 재현.
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: {
+          content: [
+            { type: 'tool_use', id: 'toolu_find_1', name: 'mcp__firehub__find_datasets', input: { query: '화재발생현황' } },
+          ],
+        },
+      }),
+      JSON.stringify({
+        type: 'user',
+        parent_tool_use_id: null,
+        message: {
+          content: [
+            { type: 'tool_result', tool_use_id: 'toolu_find_1', content: '[{"datasetId":87,"name":"지역별 화재 통계"}]' },
+          ],
+        },
+      }),
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: {
+          content: [{ type: 'tool_use', id: 'toolu_schema_1', name: 'mcp__firehub__get_data_schema', input: { datasetIds: [67, 87] } }],
+        },
+      }),
+      JSON.stringify({
+        type: 'user',
+        parent_tool_use_id: null,
+        message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_schema_1', content: '{"tables":[]}' }] },
+      }),
+      // 위임의 실제 tool_result 는 가장 마지막에 도착 — 라이브 trace 와 동일한 순서.
+      JSON.stringify({
+        type: 'user',
+        parent_tool_use_id: null,
+        message: {
+          content: [{ type: 'tool_result', tool_use_id: delegateToolUseId, content: delegateResultText }],
+        },
+      }),
+      // 메인이 자체 조사 결과로 재구성한 결론 텍스트로 응답 — 반드시 사용자에게 노출되면 안 된다.
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: { content: [{ type: 'text', text: wrongMainText }] },
+      }),
+      JSON.stringify({ type: 'result', subtype: 'success' }),
+    ];
+
+    const child = makeFakeChildWithLines(lines);
+    spawnMock.mockReturnValue(child);
+
+    const events: Array<{ type: string; content?: string }> = [];
+    for await (const ev of executeCliAgent({
+      message: '화재발생현황 데이터셋을 분석해서 월별 평균 사망자수를 내줘',
+      tenantId: 1,
+      userId: 1,
+      useSubscription: false,
+      apiKey: 'sk-test',
+    } as never)) {
+      events.push(ev as { type: string; content?: string });
+    }
+
+    const texts = events.filter((e) => e.type === 'text').map((e) => e.content);
+    // 메인의 자체 재조사 텍스트(wrongMainText)는 절대 노출되지 않고, 위임의 실제 결과만 relay 된다.
+    expect(texts).toEqual([delegateResultText]);
+    expect(events.some((e) => e.type === 'done')).toBe(true);
+  });
+
+  it('PM-572-2c: 라이브 재현으로 확정된 실제 메커니즘 — 조사 도구는 subagent 내부(parent 태그)이고, 메인은 위임의 tool_result 를 문자 그대로 relay 하지 않고 재구성(paraphrase)만 한다', async () => {
+    // 2026-09-09 라이브 재현(curl 직접 호출, 동일 프롬프트 3회)으로 확정된 실제 원인: 최초
+    // 가설(메인이 top-level 로 조사 도구를 병렬 발행)과 달리, find_datasets/get_dataset 등은
+    // 전부 data-analyst subagent **내부**(parent_tool_use_id = 위임 tool_use id)에서 정당하게
+    // 호출된 것이었다 — 이는 아무 문제가 없다. 진짜 결함은 위임의 tool_result 가 도착한 뒤
+    // 메인이 그 내용을 문자 그대로 relay 하지 않고 자신의 말로 재구성(표 행 누락·문구 변경)해서
+    // 응답한 것 — "텍스트를 냈다"는 사실만으로 정상 relay 로 신뢰하던 예전 로직이 이를 통과시켰다.
+    const delegateToolUseId = 'toolu_01FCnsqvfY3XyXvjQx91Z6rQ';
+    const delegateResultText =
+      '이 테스트 더미셋도 0건, 사망자 관련 컬럼 없음. 확인 완료했습니다.\n\n## 결론: "화재발생현황"이라는 이름의 데이터셋은 존재하지 않으며, 월별 평균 사망자수를 산출할 수 있는 데이터가 없습니다\n\n| 데이터셋 | 사망자 관련 컬럼 | 행 수 |\n|---|---|---|\n| fire_incidents | death_count | 0건 |\n| fire_stats | casualties | 5건 |';
+    const paraphrasedMainText =
+      '"화재발생현황"이라는 이름의 데이터셋은 없고, 월별 평균 사망자수를 산출할 데이터가 없습니다.\n\n| 데이터셋 | 컬럼 | 행 수 |\n|---|---|---|\n| fire_incidents | death_count | 0건 |';
+
+    const lines: string[] = [
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: {
+          content: [
+            {
+              type: 'tool_use',
+              id: delegateToolUseId,
+              name: 'Agent',
+              input: { subagent_type: 'data-analyst', run_in_background: false, prompt: '...' },
+            },
+          ],
+        },
+      }),
+      // subagent 내부 조사 — parent_tool_use_id 가 위임 tool_use id 로 채워져 있다(정당한 흐름).
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: delegateToolUseId,
+        message: {
+          content: [{ type: 'tool_use', id: 'toolu_inner_find', name: 'mcp__firehub__find_datasets', input: {} }],
+        },
+      }),
+      JSON.stringify({
+        type: 'user',
+        parent_tool_use_id: delegateToolUseId,
+        message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_inner_find', content: '[]' }] },
+      }),
+      // 위임의 최종 tool_result(top-level, parent 없음) — subagent 의 실제 완료 내용.
+      JSON.stringify({
+        type: 'user',
+        parent_tool_use_id: null,
+        message: {
+          content: [{ type: 'tool_result', tool_use_id: delegateToolUseId, content: delegateResultText }],
+        },
+      }),
+      // 메인이 이 tool_result 를 받고도 자신의 말로 재구성(paraphrase)한 텍스트로 응답 — 새
+      // top-level tool_use 는 전혀 없다(라이브 재현과 동일).
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: { content: [{ type: 'text', text: paraphrasedMainText }] },
+      }),
+      JSON.stringify({ type: 'result', subtype: 'success' }),
+    ];
+
+    const child = makeFakeChildWithLines(lines);
+    spawnMock.mockReturnValue(child);
+
+    const events: Array<{ type: string; content?: string }> = [];
+    for await (const ev of executeCliAgent({
+      message: '화재발생현황 데이터셋을 분석해서 월별 평균 사망자수를 내줘',
+      tenantId: 1,
+      userId: 1,
+      useSubscription: false,
+      apiKey: 'sk-test',
+    } as never)) {
+      events.push(ev as { type: string; content?: string });
+    }
+
+    const texts = events.filter((e) => e.type === 'text').map((e) => e.content);
+    // 메인의 paraphrase 텍스트는 노출되지 않고, 위임의 tool_result 원문이 정확히 1번 relay 된다.
+    expect(texts).toEqual([delegateResultText]);
+    expect(events.some((e) => e.type === 'done')).toBe(true);
   });
 });
 

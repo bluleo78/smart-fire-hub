@@ -592,7 +592,13 @@ describe('processMessage', () => {
       expect(doneResult).toEqual([{ type: 'done', sessionId: 'sess-573', inputTokens: 100, outputTokens: 20 }]);
     });
 
-    it('PM-573c: 메인이 동기 위임 결과를 이미 텍스트로 relay 했다면 fallback 을 중복 출력하지 않는다', () => {
+    it('PM-573c → #572 2차로 개정: 메인이 자체 텍스트로 이어가도 신뢰하지 않고 억제하며, 위임의 실제 tool_result 만 정확히 1번 relay 된다', () => {
+      // #572 2차 수정으로 전제가 바뀌었다: "메인이 텍스트를 냈다"는 사실만으로 relay 가 정상
+      // 이뤄졌다고 신뢰하던 예전 로직(#573)이 실제 재현된 회귀의 원인이었다 — data-analyst
+      // 위임 완료 후 메인이 낸 텍스트가 tool_result 를 문자 그대로 relay 한 게 아니라 자신의
+      // 말로 재구성한 것이었는데도 이 신뢰 때문에 그대로 노출됐다(라이브 trace 로 확정). 이제
+      // 동기 위임 tool_result 대기 중에는 메인의 텍스트를 내용·일치 여부와 무관하게 항상
+      // 억제하고, 위임의 원문만 강제로 1번 relay 한다.
       const state = createDesignGuardRelayState();
       const toolUseId = 'toolu_sync_2';
 
@@ -600,17 +606,23 @@ describe('processMessage', () => {
       processMessage(syncToolResultMsg(toolUseId, '데이터셋을 생성했습니다.'), tag, false, state);
       expect(state.pendingSyncAgentResultText).toBeDefined();
 
-      // 메인이 직접 relay 텍스트를 델타로 출력 — 이 시점에 fallback 대상에서 제외된다.
-      processMessage(
+      // 메인이 (설사 정확히 일치하는) relay 텍스트를 델타로 냈더라도 억제되고, pending 상태는
+      // 유지된다 — "텍스트가 나갔다"는 사실만으로는 더 이상 신뢰하지 않는다.
+      const deltaEvents = processMessage(
         { type: 'stream_event', parent_tool_use_id: null, event: { type: 'content_block_delta', delta: { type: 'text_delta', text: '데이터셋을 생성했습니다.' } } } as unknown as SDKMessage,
         tag,
         false,
         state,
       );
-      expect(state.pendingSyncAgentResultText).toBeUndefined();
+      expect(deltaEvents).toEqual([]);
+      expect(state.pendingSyncAgentResultText).toBeDefined();
 
+      // 턴 종료 — fallback 이 위임의 원문(footer 제거)을 정확히 1번 relay 한다.
       const doneResult = processMessage(resultSuccessMsg(), tag, false, state);
-      expect(doneResult).toEqual([{ type: 'done', sessionId: 'sess-573', inputTokens: 100, outputTokens: 20 }]);
+      expect(doneResult).toEqual([
+        { type: 'text', content: '데이터셋을 생성했습니다.' },
+        { type: 'done', sessionId: 'sess-573', inputTokens: 100, outputTokens: 20 },
+      ]);
     });
 
     it('PM-573d: 메인이 새 tool_use 로 후속 작업을 이어가면 fallback 대상에서 제외된다', () => {
@@ -633,6 +645,100 @@ describe('processMessage', () => {
         state,
       );
       expect(state.pendingSyncAgentResultText).toBeUndefined();
+    });
+  });
+
+  describe('#572 2차 수정: data-analyst 동기 위임과 조사 도구의 병렬 tool_use 배치 — 위임 결과 폐기 회귀', () => {
+    // 1차 수정(#572)은 "위임 후 재조사 금지" 문구 + #573 fallback(텍스트 없을 때만 강제 relay)에
+    // 의존했다. 실제 재현된 2차 회귀는 모델이 Agent(data-analyst, run_in_background:false) 위임과
+    // find_datasets 등 조사 도구를 같은 tool_use 배치로 "병렬" 발행하는 것 — 가벼운 조사 도구가
+    // 먼저 끝나고, 무거운 Agent 위임은 tool_result 가 가장 늦게 도착한다. 그 사이 메인은 자체
+    // 조사로 결론 텍스트를 만들어내는데, 그 텍스트가 "텍스트를 냈다"는 이유만으로 #573 fallback 의
+    // 리셋 조건을 통과시켜(pendingSyncAgentResultText 클리어) 방어가 무력화됐었다.
+    const syncDelegateMsg = (toolUseId: string) =>
+      ({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: {
+          content: [
+            {
+              type: 'tool_use',
+              id: toolUseId,
+              name: 'Agent',
+              input: { subagent_type: 'data-analyst', prompt: '월별 평균 사망자수 분석', run_in_background: false },
+            },
+          ],
+        },
+      }) as unknown as SDKMessage;
+
+    const investigationToolUseMsg = (toolUseId: string, name: string) =>
+      ({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: { content: [{ type: 'tool_use', id: toolUseId, name, input: {} }] },
+      }) as unknown as SDKMessage;
+
+    const toolResultMsg = (toolUseId: string, content: string) =>
+      ({
+        type: 'user',
+        message: { content: [{ type: 'tool_result', tool_use_id: toolUseId, content }] },
+      }) as unknown as SDKMessage;
+
+    const mainTextDeltaMsg = (text: string) =>
+      ({
+        type: 'stream_event',
+        parent_tool_use_id: null,
+        event: { type: 'content_block_delta', delta: { type: 'text_delta', text } },
+      }) as unknown as SDKMessage;
+
+    const resultSuccessMsg = () =>
+      ({
+        type: 'result',
+        subtype: 'success',
+        session_id: 'sess-572-2',
+        usage: { input_tokens: 100, output_tokens: 20, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+      }) as unknown as SDKMessage;
+
+    it('PM-572-2a: 위임 tool_result 를 받기 전에 다른 tool_use 가 발행되면 위반으로 표시된다', () => {
+      const state = createDesignGuardRelayState();
+      const delegateId = 'toolu_da_1';
+
+      processMessage(syncDelegateMsg(delegateId), tag, false, state);
+      expect(state.syncDelegationViolated).toBe(false);
+
+      // 위임의 tool_result 가 아직 안 왔는데(syncDelegationToolUseIds 에 남아있음) 메인이 다른
+      // 조사 도구를 발행 — 실제 재현된 병렬 배치 패턴.
+      processMessage(investigationToolUseMsg('toolu_find_1', 'mcp__firehub__find_datasets'), tag, false, state);
+      expect(state.syncDelegationViolated).toBe(true);
+    });
+
+    it('PM-572-2b: 위반 이후 메인의 자체 재조사 텍스트는 억제되고, 위임의 실제 tool_result 가 강제 relay 된다', () => {
+      const state = createDesignGuardRelayState();
+      const delegateId = 'toolu_da_2';
+
+      processMessage(syncDelegateMsg(delegateId), tag, false, state);
+      // 위임 결과가 오기 전에 조사 도구가 병렬로 발행됨 → 위반 표시.
+      processMessage(investigationToolUseMsg('toolu_find_2', 'mcp__firehub__find_datasets'), tag, false, state);
+      processMessage(toolResultMsg('toolu_find_2', '[{"datasetId":87,"name":"지역별 화재 통계"}]'), tag, false, state);
+
+      // 위임 자신의 tool_result 가 (가장 늦게) 도착 — 이게 진짜 relay 되어야 할 내용.
+      const delegateResultText = '"화재발생현황" 데이터셋을 찾아 월별 평균 사망자수를 집계했습니다: 1월 2.3명...';
+      processMessage(toolResultMsg(delegateId, delegateResultText), tag, false, state);
+      expect(state.pendingSyncAgentResultText).toBe(delegateResultText);
+
+      // 메인이 자체 조사 결과로 재구성한 텍스트를 스트리밍 — 반드시 억제되어야 한다.
+      const wrongText = '"화재발생현황"이라는 이름의 데이터셋은 없고, death_count 는 0건입니다.';
+      const deltaResult = processMessage(mainTextDeltaMsg(wrongText), tag, false, state);
+      expect(deltaResult).toEqual([]); // 사용자에게 노출되지 않아야 한다.
+      // #573 의 "텍스트가 나갔으니 정상 relay" 리셋도 위반 상태에서는 적용되지 않아야 한다.
+      expect(state.pendingSyncAgentResultText).toBe(delegateResultText);
+
+      // 턴 종료 — fallback 이 위임의 진짜 결과를 강제로 relay 해야 한다(메인의 wrongText 는 등장 X).
+      const doneResult = processMessage(resultSuccessMsg(), tag, false, state);
+      expect(doneResult).toEqual([
+        { type: 'text', content: delegateResultText },
+        { type: 'done', sessionId: 'sess-572-2', inputTokens: 100, outputTokens: 20 },
+      ]);
     });
   });
 });

@@ -350,6 +350,17 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
   // 메인이 텍스트로 relay 하지 않은 채 턴이 끝나면 강제로 relay 한다.
   const syncDelegationToolUseIds = new Set<string>();
   let pendingSyncAgentResultText: string | undefined;
+  // #572 2차 수정(회귀): 1차 수정(위 "always run_in_background:false" 규칙 + #573 fallback)은
+  // "메인이 텍스트를 전혀 안 낸 경우"만 방어했다. 실제 재현된 회귀는 모델이 data-analyst 위임
+  // (Agent, run_in_background:false)과 find_datasets/get_dataset 등 조사 도구를 같은 tool_use
+  // 배치로 병렬 발행하는 것 — 실행이 빠른 조사 도구가 먼저 끝나고 무거운 Agent 위임은 가장 늦게
+  // 끝난다. 이후 메인은 "텍스트를 냈다"는 이유만으로 위 fallback 의 "이미 relay 됐다" 판정을
+  // 통과시켜(pendingSyncAgentResultText 리셋) 방어가 무력화됐다(크로스체크 3회 재현: 위임의
+  // tool_result 가 항상 가장 마지막에 도착 — 라이브 trace 로 확인). 위임의 tool_result 를 아직
+  // 받기 전에 메인이 Agent/SendMessage 가 아닌 다른 tool_use 를 발행하는 "시점" 자체를 위반으로
+  // 표시하면(병렬/순차 여부와 무관 — 발행 이벤트 자체가 증거), 이후 메인의 모든 text 를 사용자에게
+  // 노출하지 않고 억제한 채 위임의 실제 tool_result 만 강제로 relay 할 수 있다.
+  let syncDelegationViolated = false;
 
   // 사용자 메시지 기록 — 원본 메시지 + 첨부 메타 저장 (파일 경로는 AI에게만 전달)
   const userMsg: HistoryMessage = {
@@ -513,6 +524,20 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
       }
       // Stream text deltas
       if (msg.type === 'stream_event' && msg.delta?.type === 'text_delta' && msg.delta.text) {
+        // #572 2차 수정(라이브 재현으로 확정된 실제 메커니즘): 동기 위임의 tool_result 를 받은
+        // 뒤 메인이 내놓는 첫 텍스트를 "정상 relay 로 신뢰"하던 기존 전제(#573)가 틀렸다 —
+        // 실측 결과 data-analyst 위임이 끝난 뒤 메인은 그 tool_result 를 **문자 그대로 relay
+        // 하지 않고 자신의 말로 재구성(표 행 누락·문구 변경)** 했는데, 그 텍스트가 "텍스트를
+        // 냈다"는 이유만으로 신뢰받아 그대로 사용자에게 노출됐다(fallback 도 트리거 안 됨,
+        // 크로스체크 3회 재현). 이제는 동기 위임 tool_result 대기 중인(`pendingSyncAgentResultText`
+        // 가 세팅된) 상태에서는 메인의 텍스트를 **내용에 관계없이** 절대 신뢰하지 않고 억제한다
+        // — 신뢰할 수 있는 유일한 신호는 메인이 새 tool_use 를 발행하는 것(실제 후속 작업의
+        // 구조적 증거, 아래 tool_use 분기 참조)뿐이다. 억제된 텍스트는 트랜스크립트에도 남기지
+        // 않는다(누적조차 하지 않음) — 아래 `result` 처리에서 위임의 실제 tool_result 를 강제로
+        // relay 하므로, 여기서 섞으면 잘못된 텍스트와 강제 relay 텍스트가 뒤섞인다.
+        if (!msg.parent_tool_use_id && (pendingSyncAgentResultText !== undefined || syncDelegationViolated)) {
+          continue;
+        }
         assistantText += msg.delta.text;
         // #410: 이미 이번 응답에서 인증 실패로 판정했으면 이후 델타는 원문 조각이 섞여 있을 수
         // 있으므로 더 이상 사용자에게 그대로 흘리지 않는다(한국어 안내는 아래서 1회만 emit됨).
@@ -591,6 +616,20 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
             const runInBackground = (block.input as { run_in_background?: unknown } | undefined)
               ?.run_in_background;
             const isSyncDelegation = toolName === 'Agent' && runInBackground === false;
+            // #572 2차 수정: 동기 위임의 tool_result 를 아직 받기 전(syncDelegationToolUseIds 에
+            // 그 id 가 남아있음)인데 메인이 Agent/SendMessage 가 아닌 다른 tool_use 를 발행하면,
+            // 이는 "위임 결과를 기다리지 않고 직접 재조사"하는 이번 회귀 패턴 그 자체다 — 병렬
+            // tool_use 배치로 발행돼도(실행이 빠른 도구가 먼저 끝나 스트림 순서가 뒤바뀌어 보여도)
+            // 이 발행 "시점" 자체는 병렬/순차 여부와 무관하게 감지된다.
+            if (
+              !msg.parent_tool_use_id &&
+              toolName !== 'Agent' &&
+              toolName !== 'SendMessage' &&
+              syncDelegationToolUseIds.size > 0
+            ) {
+              syncDelegationViolated = true;
+              console.warn(`[CLI Agent] [sync-guard] 동기 위임 대기 중 다른 tool_use(${toolName}) 발행 감지 — 위임 결과 폐기 위반으로 표시(#572 2차)`);
+            }
             if (!msg.parent_tool_use_id && (toolName === 'Agent' || toolName === 'SendMessage') && block.id) {
               if (isSyncDelegation) {
                 syncDelegationToolUseIds.add(block.id);
@@ -601,7 +640,9 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
             // #573 2차 수정: 메인이 새 tool_use 를 발행했다는 것은 이전 동기 위임 결과에 대한
             // 실제 후속 작업(예: 확인 후 실제 도구 호출)이 진행 중이라는 구조적 증거다 — fallback
             // relay 대상에서 제외한다(강제 relay 가 후속 작업과 순서/내용이 어긋나는 것을 방지).
-            if (!msg.parent_tool_use_id) {
+            // #572 2차: 단, 위반이 이미 표시됐다면 이 리셋을 하지 않는다 — 위임의 실제 tool_result
+            // 를 끝까지 강제 relay 대상으로 보존해야 한다.
+            if (!msg.parent_tool_use_id && !syncDelegationViolated) {
               pendingSyncAgentResultText = undefined;
             }
             yield {
@@ -610,6 +651,12 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
               input: block.input,
             };
           } else if (block.type === 'text' && block.text) {
+            // #572 2차 수정: 동기 위임 tool_result 대기 중(`pendingSyncAgentResultText` 세팅됨)
+            // 이거나 위반이 표시된 경우, 메인(parent 없음)의 텍스트는 트랜스크립트에도 남기지
+            // 않는다(누적조차 하지 않음) — 위 stream_event 델타 분기와 동일 이유·근거.
+            if (!msg.parent_tool_use_id && (pendingSyncAgentResultText !== undefined || syncDelegationViolated)) {
+              continue;
+            }
             assistantText += block.text;
             // #410: stream_event 델타를 안 쓰는 CLI 경로(또는 델타 없이 완성된 블록으로만 오는
             // 경우)에서도 동일하게 인증 실패 패턴을 검사해 원문 노출을 막는다.
@@ -633,12 +680,13 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
             if (msg.parent_tool_use_id && pendingDesignGuardToolUseIds.has(msg.parent_tool_use_id)) {
               suppressMainText = true;
             }
-            // #573 2차 수정: 메인이 텍스트로 응답을 이어갔다면(스트리밍 여부 무관) 동기 위임
-            // fallback 은 더 이상 필요 없다 — relay 가 이미 정상적으로 일어난 것이므로 중복
-            // 방지를 위해 지운다(억제된 재서술이라도 메인이 발화를 시도한 것이므로 동일 처리).
-            if (!msg.parent_tool_use_id) {
-              pendingSyncAgentResultText = undefined;
-            }
+            // #572 2차 수정(라이브 재현으로 확정): 예전 #573 구현은 "메인이 텍스트를 냈다"는
+            // 사실만으로 relay 가 정상적으로 일어났다고 간주해 fallback 을 해제했다. 그러나 실제
+            // 재현된 회귀는 정확히 이 지점이다 — 메인이 낸 텍스트가 tool_result 를 **문자 그대로**
+            // relay 한 게 아니라 자신의 말로 재구성(표 행 누락·문구 변경)한 것이었는데도 이 리셋
+            // 때문에 검증 없이 신뢰돼 그대로 노출됐다(크로스체크 3회 재현 — 라이브 trace 로 확정).
+            // 이제 "텍스트가 나갔다"는 사실만으로는 더 이상 지우지 않는다 — 신뢰할 수 있는 유일한
+            // 신호는 메인이 새 tool_use 를 발행하는 것뿐이다(위 tool_use 분기 참조).
             if (!msg.parent_tool_use_id && suppressMainText) {
               continue;
             }
@@ -747,13 +795,17 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
         // 경우 — 시스템 프롬프트 준수가 실패해도 사용자에게 완전히 빈 응답이 나가지 않도록
         // 방어적으로 relay 한다(process-message.ts 의 SDK 경로와 동일 패턴). 반드시
         // saveTranscript() 이전에 assistantText 에 반영해야 트랜스크립트에도 남는다.
+        // #572 2차 수정: 이 fallback 은 이제 두 경로에서 트리거된다 — (1) 원래 #573 케이스(텍스트
+        // 없이 턴 종료), (2) syncDelegationViolated(위임 결과 대기 중 다른 tool_use 발행 감지)로
+        // 메인의 모든 후속 텍스트가 위에서 이미 억제된 경우. 두 경로 모두 pendingSyncAgentResultText
+        // 가 살아있는 것으로 판별되므로 이 블록은 변경 없이 재사용된다.
         const isBudgetError = (msg.subtype as string) === 'error_max_budget_usd';
         const isOtherError = !isBudgetError && Boolean((msg.subtype as string | undefined)?.startsWith('error'));
         if (!isBudgetError && !isOtherError && pendingSyncAgentResultText) {
           const relayText = stripAgentResultFooter(pendingSyncAgentResultText);
           pendingSyncAgentResultText = undefined;
           if (relayText) {
-            console.warn(`[CLI Agent] [design-guard] 동기 Agent 위임 결과가 텍스트 없이 턴 종료 — fallback relay 적용(#573): ${relayText.slice(0, 200)}`);
+            console.warn(`[CLI Agent] [design-guard] 동기 Agent 위임 결과 relay(#573/#572 2차, violated=${syncDelegationViolated}): ${relayText.slice(0, 200)}`);
             assistantText += relayText;
             yield { type: 'text', content: relayText };
           }

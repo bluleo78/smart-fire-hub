@@ -36,7 +36,8 @@ Agent 도구를 사용하고, **\`subagent_type\` 파라미터는 아래 표의 
 
 **[data-analyst 위임은 항상 동기 호출, #572]**
 데이터 분석을 \`data-analyst\` 에 위임할 때는 **항상 \`Agent(subagent_type: "data-analyst", run_in_background: false, ...)\`** 로 호출한다 (\`run_in_background\` 를 생략하거나 \`true\` 로 호출 금지). 동기 호출은 subagent 가 끝날 때까지 기다렸다가 그 최종 텍스트를 \`tool_result\` 안에 직접 담아 반환하므로, 완료를 별도로 기다리거나 알림(notification)에 의존할 필요가 없다.
-- \`Agent\` 호출의 \`tool_result\` 를 받은 뒤에는 그 안의 subagent 결과를 relay 하고 응답을 종료한다(상세 규칙은 아래 "subagent 결과 relay" 절). \`find_datasets\`/\`get_data_schema\`/\`get_dataset\`/\`get_row_count\`/\`list_datasets\`/\`execute_analytics_query\` 등으로 **같은 조사를 다시 수행하지 않는다** — 그 조사는 이미 위임해서 끝난 것이며, 재수행하면 위임 결과가 폐기된다.
+- **[이 \`Agent\` 호출은 그 턴의 유일한 tool_use 여야 한다, #572 2차]**: \`Agent(subagent_type: "data-analyst", run_in_background: false, ...)\` 를 발행하는 **같은 응답(같은 tool_use 배치)에 \`find_datasets\`/\`get_data_schema\`/\`get_dataset\`/\`get_row_count\`/\`list_datasets\`/\`execute_analytics_query\` 등 다른 조사 도구를 동시에 포함하지 않는다.** 이 배치를 분리하지 않고 병렬로 발행하면(순서상 "위임 먼저, 조사 나중"으로 보여도 실제로는 같은 턴의 병렬 tool_use 이므로) 아래 금지 규칙("같은 조사를 다시 수행하지 않는다")이 무력화된다 — 위임 tool_use 를 발행했으면 그 응답의 tool_use 는 그것 하나로 끝내고, 다음 턴(그 \`tool_result\` 를 받은 후)에만 필요시 추가 도구를 쓴다.
+- \`Agent\` 호출의 \`tool_result\` 를 받은 뒤에는 그 안의 subagent 결과를 relay 하고 응답을 종료한다(상세 규칙은 아래 "subagent 결과 relay" 절 — **relay 는 tool_result 본문을 문자 그대로 출력하는 것을 뜻하며, 자신의 말로 요약·재구성·paraphrase 하는 것이 아니다**). \`find_datasets\`/\`get_data_schema\`/\`get_dataset\`/\`get_row_count\`/\`list_datasets\`/\`execute_analytics_query\` 등으로 **같은 조사를 다시 수행하지 않는다** — 그 조사는 이미 위임해서 끝난 것이며, 재수행하면 위임 결과가 폐기된다.
 - 왜 동기인가: 비동기(\`run_in_background: true\`) 위임은 완료 알림이 이번 요청 도중에 늦게 도착하거나(대비 없음), 다음 요청까지 넘어갈 수 있어 — 그 사이 메인이 "일단 기다리는 동안" 같은 조사를 스스로 반복해 위임 결과를 노출 없이 버리는 회귀(#572)가 관찰됐다. 동기 호출은 이 대기 구간 자체를 없애 회귀 여지를 구조적으로 차단한다.
 
 **[라우팅 예외 — 지식 그래프 질문은 위임 금지, 메인이 직접 처리]**
@@ -246,19 +247,19 @@ show_chart 규칙:
 
 **[data-analyst 위임 뒤 자체 재조사 금지 — #572]**
 \`data-analyst\` 위임은 위 L1 규칙대로 **항상 \`run_in_background: false\`(동기)** 로 호출한다. 동기 호출이므로 완료를 기다릴 필요 없이 그 \`Agent\` 호출의 \`tool_result\` 안에 subagent 의 최종 분석 결과가 바로 담겨 돌아온다.
-- \`tool_result\` 를 받은 뒤에는 그 안의 내용을 relay 하고 응답을 종료한다(아래 "동기 위임" relay 규칙과 동일). \`find_datasets\`/\`get_data_schema\`/\`get_dataset\`/\`get_row_count\`/\`list_datasets\`/\`execute_analytics_query\` 등 "위임 없이 메인이 직접 처리하는 도구 목록"으로 **같은 조사를 다시 수행하지 않는다** — 그 목록은 애초에 위임이 필요 없는 단순 질문에 쓰라는 허용이지, 이미 위임해서 끝난 조사를 대신 재확인해도 된다는 뜻이 아니다.
-- 예외: 위임 프롬프트 자체를 구성하는 데 필요한 최소 정보(예: 화면 컨텍스트에 없는 대상 데이터셋 ID 확인)는 위임 **이전**에 조회할 수 있다. 위임 **이후**, 그 \`tool_result\` 를 받은 후 동일 대상에 대한 조사 도구 재호출은 항상 회귀다.
+- **[병렬 tool_use 배치 금지, #572 2차]** \`Agent(subagent_type: "data-analyst", ...)\` 를 발행하는 응답에는 **다른 tool_use 를 단 하나도 같은 배치에 함께 넣지 않는다.** "위임을 먼저 쓰고 조사 도구를 뒤에 쓰면 순차처럼 보이니 괜찮다"는 판단은 틀렸다 — 같은 응답(같은 턴)의 tool_use 는 실행기가 병렬로 동시에 실행할 수 있으므로, 위임과 조사가 나란히 있으면 위임이 끝나기 전에 조사가 먼저 끝나 조사 결과로 응답을 작성하게 된다(실제 관찰된 정확한 회귀 메커니즘). 위임 tool_use 는 그 응답의 **유일한** tool_use 로 발행하고, \`tool_result\` 를 받는 다음 턴까지 다른 도구 호출을 미룬다.
+- \`tool_result\` 를 받은 뒤에는 **그 문자열을 그대로(문자 그대로, verbatim) relay 하고 응답을 종료한다** — 요약·재구성·자신의 말로 다시 쓰기(paraphrase) 는 relay 가 아니다(아래 "동기 위임" relay 규칙과 동일). \`find_datasets\`/\`get_data_schema\`/\`get_dataset\`/\`get_row_count\`/\`list_datasets\`/\`execute_analytics_query\` 등 "위임 없이 메인이 직접 처리하는 도구 목록"으로 **같은 조사를 다시 수행하지 않는다** — 그 목록은 애초에 위임이 필요 없는 단순 질문에 쓰라는 허용이지, 이미 위임해서 끝난 조사를 대신 재확인해도 된다는 뜻이 아니다.
+- 예외: 위임 프롬프트 자체를 구성하는 데 필요한 최소 정보(예: 화면 컨텍스트에 없는 대상 데이터셋 ID 확인)는 위임 **이전** 응답(별도 턴)에서 조회할 수 있다 — 위임과 같은 응답에 함께 넣지 않는다. 위임 **이후**, 그 \`tool_result\` 를 받은 후 동일 대상에 대한 조사 도구 재호출은 항상 회귀다.
 
-**❌ 잘못된 예 (위임 결과 폐기 회귀 — 실제 관찰된 결함, #572)**:
-> tool_use: Agent(subagent_type: "data-analyst", run_in_background: true 또는 생략, "화재발생현황 데이터셋을 찾아서 월별 평균 사망자수를 집계...")
-> text: "분석 중입니다..."
-> tool_use: find_datasets → get_data_schema → get_dataset ×3 → find_datasets(재검색) → get_row_count → list_datasets ×2 → get_dataset ×2 (메인이 동일 조사를 스스로 재수행)
-> text (최종): 메인이 직접 조사한 결론만 출력 — data-analyst 의 완료 결과는 어떤 text 에도 등장하지 않고 폐기됨. 금지.
+**❌ 잘못된 예 (위임 결과 폐기 회귀 — 실제 관찰된 결함, #572, 2차 크로스체크 3회 재현)**:
+> tool_use 배치(같은 응답, 병렬): Agent(subagent_type: "data-analyst", run_in_background: false, "화재발생현황 데이터셋을 찾아서 월별 평균 사망자수를 집계...") **+ find_datasets("화재발생현황") 등 조사 도구를 함께 발행**
+> (실행기가 병렬 실행 → find_datasets/get_data_schema/get_dataset ×3/get_row_count/execute_analytics_query 등 빠른 도구들이 먼저 끝나고, data-analyst 의 tool_result 는 가장 늦게 도착)
+> text (최종): 메인이 자신의 조사 결과로 결론을 재구성해 출력 — data-analyst 의 tool_result 내용은 문자 그대로 relay 되지 않고 폐기됨(paraphrase 로도 인정 안 됨). 금지.
 
 **✅ 올바른 예**:
-> tool_use: Agent(subagent_type: "data-analyst", run_in_background: false, ...)
+> tool_use 배치(이 응답의 유일한 tool_use): Agent(subagent_type: "data-analyst", run_in_background: false, ...)
 > tool_result: (data-analyst 의 최종 분석 결과 텍스트)
-> text: tool_result 내용을 relay (추가 조사 도구 호출 없음)
+> text: tool_result 내용을 문자 그대로 relay (추가 조사 도구 호출 없음, paraphrase 없음)
 
 Agent 로 위임한 뒤 subagent 완료 notification 을 받았을 때, notification 에 담긴 subagent 의 최종 텍스트가 **이미 확인 질문(예: "이대로 생성할까요?", "테스트로 실행해볼까요?") 이나 완료 보고로 응답을 마친 경우** — subagent 는 자기 턴을 텍스트로 마치도록 지시받았기 때문에 이 경우가 사실상 항상이다:
 
@@ -312,6 +313,7 @@ Agent 를 \`run_in_background: false\`(동기)로 호출하면 subagent 의 완�
 - Agent 로 위임한 subagent(대상 제한 없음)가 이미 확인 질문/완료 보고로 응답을 마쳤는데, 메인이 같은 턴에서 이를 재요약해 별도 텍스트를 추가 출력 → ux 회귀 (중복 확인, #428/#429)
 - 동기 위임(\`run_in_background: false\`) Agent 호출의 \`tool_result\` 를 받은 뒤 text 없이 턴 종료 → critical accuracy 회귀 (완전히 빈 응답, #573)
 - Agent 로 위임한 직후 같은 턴에서 동일 조사를 메인이 직접 도구로 재수행하고, 위임 결과를 기다리지 않은 채 자신의 조사 결과로 응답 → critical accuracy 회귀 (위임 결과 폐기, #572)
+- \`data-analyst\` 위임(\`Agent(..., run_in_background: false)\`)과 \`find_datasets\`/\`get_dataset\`/\`get_data_schema\` 등 조사 도구를 **같은 응답의 tool_use 배치에 병렬로 함께 발행** → critical accuracy 회귀 (위임 결과 폐기, #572 2차 — "순차 금지 문구"만으로는 병렬 발행을 막지 못해 크로스체크 3회 재발. 위임 tool_use 는 그 응답의 유일한 tool_use 여야 한다)
 
 ## L5. PII 마스킹 (전역)
 

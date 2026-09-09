@@ -39,6 +39,18 @@ import { totalInputTokens as sumInputTokens } from './token-usage.js';
 // 시스템 프롬프트 준수가 실패하면(관찰된 회귀) 사용자는 완전히 빈 응답을 받는다. 방어적으로,
 // 동기 위임 tool_result 를 기록해두고 텍스트 없이 턴이 끝나면(`result` 성공) 그 내용을 강제로
 // relay 한다 — 문구 매칭이 아니라 위임 시점의 `run_in_background: false` 구조적 신호로 판별한다.
+//
+// #572 2차 수정(회귀): 1차 수정("위임 후 재조사 금지"라는 시스템 프롬프트 문구 + 위 #573 fallback)
+// 은 "메인이 아무 텍스트도 안 낸 경우"만 방어했다. 실제 재현된 회귀는 다르다 — 모델이 data-analyst
+// 위임(Agent, run_in_background:false)과 find_datasets/get_dataset 등 조사 도구를 **같은 tool_use
+// 배치로 병렬 발행**하면, 실행이 빠른 조사 도구들이 먼저 끝나고 무거운 Agent 위임은 가장 늦게
+// 끝난다. 이후 메인은 "텍스트를 냈다"는 이유만으로(그 텍스트는 자체 재조사 결과를 재구성한 것이지
+// 위임 결과가 아니다) 위 #573 fallback 의 "이미 relay 됐다" 판정(`pendingSyncAgentResultText`
+// 리셋)을 통과시켜 방어가 무력화됐다(크로스체크 3회 재현). 위임의 tool_result 를 아직 받기 전에
+// 메인이 Agent/SendMessage 가 아닌 다른 tool_use 를 발행하는 순간을 "위반"으로 구조적으로 표시해
+// (`syncDelegationViolated`), 이후 메인의 모든 text 를 사용자에게 노출하지 않고 억제한 채 위임의
+// 실제 tool_result 만 강제로 relay 한다 — 병렬 배치든 순차든 발행 "순간"만 보므로 순서 위장에
+// 영향받지 않는다.
 
 /**
  * processMessage 호출 간 유지되는 상태 — 한 HTTP 요청(executeAgent 1회 호출)의 수명과 일치한다.
@@ -57,6 +69,12 @@ export interface DesignGuardRelayState {
    *  이후 메인이 텍스트를 내거나 새 tool_use 를 발행하면 정리되고, 텍스트 없이 턴이 끝나면
    *  `result` 처리 시 이 내용을 강제로 text 이벤트로 relay 한다 */
   pendingSyncAgentResultText?: string;
+  /** #572 2차: 동기 위임(`syncDelegationToolUseIds`)의 tool_result 를 아직 받기 전에 메인이
+   *  Agent/SendMessage 가 아닌 다른 tool_use 를 발행하면 true — 위임 결과를 기다리지 않고 직접
+   *  재조사하는 회귀 패턴이 발생했다는 구조적 증거. 한 번 true 가 되면 이 요청이 끝날 때까지
+   *  유지되며(리셋 없음), 이후 메인의 모든 text 는 억제되고 위임의 실제 tool_result 만 강제로
+   *  relay 된다. */
+  syncDelegationViolated: boolean;
 }
 
 export function createDesignGuardRelayState(): DesignGuardRelayState {
@@ -64,6 +82,7 @@ export function createDesignGuardRelayState(): DesignGuardRelayState {
     pendingGuardToolUseIds: new Set(),
     suppressMainText: false,
     syncDelegationToolUseIds: new Set(),
+    syncDelegationViolated: false,
   };
 }
 
@@ -139,14 +158,22 @@ export function processMessage(
               relayState.suppressMainText = true;
               console.log(`${tag()} 🔇 DESIGN 가드 subagent 완료 감지 — 메인 재요약 억제(#428)`);
             }
-            const isSuppressedMainText = !parentToolUseId && relayState.suppressMainText;
+            // #572 2차 수정(라이브 재현으로 확정된 실제 메커니즘): 동기 위임의 tool_result 를
+            // 받은 뒤 메인이 내놓는 첫 텍스트를 "정상 relay 로 신뢰"하던 기존 전제(#573)가
+            // 틀렸다 — 실측 결과 data-analyst 위임이 끝난 뒤 메인은 그 tool_result 를 **문자
+            // 그대로 relay 하지 않고 자신의 말로 재구성**(표 행 누락·문구 변경)했는데, 그 텍스트가
+            // "텍스트를 냈다"는 이유만으로 신뢰받아 그대로 노출됐다(fallback 도 트리거 안 됨,
+            // 크로스체크 3회 재현 — CLI 프로바이더 라이브 trace 로 확정). 동기 위임 tool_result
+            // 대기 중(`pendingSyncAgentResultText` 세팅됨)이거나 위반이 표시된 경우, 메인의
+            // 텍스트는 내용에 관계없이 절대 신뢰하지 않고 억제한다 — 신뢰할 수 있는 유일한 신호는
+            // 메인이 새 tool_use 를 발행하는 것(아래 tool_use 분기 참조)뿐이다.
+            const isSuppressedMainText =
+              !parentToolUseId &&
+              (relayState.suppressMainText ||
+                relayState.syncDelegationViolated ||
+                relayState.pendingSyncAgentResultText !== undefined);
             if (!hasStreamedText && !isSuppressedMainText) {
               events.push({ type: 'text', content: block.text });
-            }
-            // #573: 메인이 텍스트로 응답을 이어갔다면(스트리밍 여부 무관) 동기 위임 fallback 은
-            // 더 이상 필요 없다 — relay 가 이미 정상적으로 일어난 것이므로 중복 방지를 위해 지운다.
-            if (!parentToolUseId) {
-              relayState.pendingSyncAgentResultText = undefined;
             }
           } else if (block.type === 'tool_use' && 'name' in block) {
             const input = 'input' in block ? block.input : {};
@@ -159,10 +186,28 @@ export function processMessage(
               relayState.suppressMainText = false;
               console.log(`${tag()} 🔊 메인 새 tool_use 발행 — 재요약 억제 해제(#429)`);
             }
+            // #572 2차: 동기 위임의 tool_result 를 아직 받기 전(`syncDelegationToolUseIds` 에 그
+            // id 가 남아있음)인데 메인이 Agent/SendMessage 가 아닌 다른 tool_use 를 발행하면, 이는
+            // "위임 결과를 기다리지 않고 직접 재조사"하는 이번 회귀 패턴 그 자체다 — 병렬 tool_use
+            // 배치로 발행돼도(실행이 빠른 도구가 먼저 끝나 순서가 뒤바뀌어 보여도) 이 발행 "시점"
+            // 자체는 병렬/순차 여부와 무관하게 감지된다. 위반으로 표시하고 이후 텍스트를 신뢰하지
+            // 않는다.
+            if (
+              !parentToolUseId &&
+              block.name !== 'Agent' &&
+              block.name !== 'SendMessage' &&
+              relayState.syncDelegationToolUseIds.size > 0
+            ) {
+              relayState.syncDelegationViolated = true;
+              console.warn(
+                `${tag()} ⚠️ 동기 위임 대기 중 다른 tool_use(${block.name}) 발행 감지 — 위임 결과 폐기 위반으로 표시(#572 2차)`,
+              );
+            }
             // #573: 메인이 새 tool_use 를 발행했다는 것은 이전 동기 위임 결과에 대한 실제 후속
             // 작업(예: 확인 후 실제 도구 호출)이 진행 중이라는 구조적 증거다 — fallback relay 대상에서
             // 제외한다(강제 relay 가 후속 작업과 순서/내용이 어긋나는 것을 방지).
-            if (!parentToolUseId) {
+            // #572 2차: 단, 위반이 이미 표시됐다면 이 리셋을 하지 않는다(위 text 블록과 동일 이유).
+            if (!parentToolUseId && !relayState.syncDelegationViolated) {
               relayState.pendingSyncAgentResultText = undefined;
             }
             // #428/#429: 메인이 Agent 로 위임하는 순간(subagent_type 불문) 을 기록해, 해당
@@ -285,11 +330,15 @@ export function processMessage(
       if (msg.subtype === 'success') {
         // #573: 동기 위임 tool_result 를 아무도 relay 하지 않은 채 턴이 끝나는 경우 — 시스템
         // 프롬프트 준수가 실패해도 사용자에게 완전히 빈 응답이 나가지 않도록 방어적으로 relay 한다.
+        // #572 2차: 이 fallback 은 이제 (1) #573 원 케이스(텍스트 없이 종료) 와 (2)
+        // syncDelegationViolated(위임 대기 중 재조사 감지, 메인 텍스트 전부 억제됨) 두 경로에서
+        // 모두 트리거된다 — 둘 다 pendingSyncAgentResultText 가 살아있는 것으로 판별되므로 이
+        // 블록 자체는 변경 없이 재사용한다.
         if (relayState.pendingSyncAgentResultText) {
           const relayText = stripAgentResultFooter(relayState.pendingSyncAgentResultText);
           relayState.pendingSyncAgentResultText = undefined;
           if (relayText) {
-            console.warn(`${tag()} ⚠️ 동기 Agent 위임 결과가 텍스트 없이 턴 종료 — fallback relay 적용(#573): ${truncate(relayText)}`);
+            console.warn(`${tag()} ⚠️ 동기 Agent 위임 결과 relay(#573/#572 2차, violated=${relayState.syncDelegationViolated}): ${truncate(relayText)}`);
             events.push({ type: 'text', content: relayText });
           }
         }
@@ -327,17 +376,19 @@ export function processMessage(
           // #428: 실제 사용자 노출 텍스트는 대부분 이 델타 스트림으로 나간다. DESIGN 가드
           // subagent 가 이미 확인 질문으로 마쳤다면(relayState.suppressMainText), 메인
           // (parent_tool_use_id=null) 의 후속 델타는 억제해 중복 확인 노출을 차단한다.
-          const isSuppressedMainDelta = !parentToolUseId && relayState.suppressMainText;
+          // #572 2차(라이브 재현으로 확정): 동기 위임 tool_result 대기 중이거나 위반이 표시된
+          // 경우 메인의 델타도 노출하지 않는다(위 text 블록과 동일 이유 — "텍스트가 나갔다"는
+          // 사실만으로는 relay 정상 여부를 신뢰할 수 없다는 것이 실측으로 확정됐다).
+          const isSuppressedMainDelta =
+            !parentToolUseId &&
+            (relayState.suppressMainText ||
+              relayState.syncDelegationViolated ||
+              relayState.pendingSyncAgentResultText !== undefined);
           if (!isSuppressedMainDelta) {
             events.push({
               type: 'text',
               content: delta.text,
             });
-          }
-          // #573: 메인의 실제 텍스트 델타가 나가면(억제 여부 무관 — 억제는 중복 방지 목적이지
-          // 무응답 방지 목적이 아니다) 동기 위임 fallback 은 더 이상 필요 없다.
-          if (!parentToolUseId) {
-            relayState.pendingSyncAgentResultText = undefined;
           }
         }
       } else if (event.type === 'message_delta') {
