@@ -8,6 +8,9 @@ import {
   noteMainToolUse,
   noteMainToolResult,
   noteSubagentText,
+  containsRoutingVocabulary,
+  redactRoutingVocabulary,
+  createRoutingVocabRedactor,
 } from './delegation-narration-guard.js';
 
 // #578: 위임 narration 가드의 판별 함수 — inspector trace(2026-09-09T23-15 trig-002/009/010/012/013)에서
@@ -100,5 +103,56 @@ describe('classifyMainText / 상태 전이 (#578)', () => {
       suppress: true,
       reason: 'subagent-identifier',
     });
+  });
+});
+
+// #581: 도구 호출이 전혀 없는 되묻기 턴의 라우팅 어휘 누출 — inspector crosscheck-578-trig-009 실측 문구를
+// 회귀 케이스로 고정한다. 억제가 아니라 치환이어야 한다(빈 응답·relay 누락 방지).
+describe('라우팅 어휘 치환 (#581)', () => {
+  const LEAK = '트리거 삭제(파괴 작업)는 위임하되, 먼저 어느 파이프라인 소속인지 알려주시겠어요? (파이프라인 ID 또는 이름)';
+
+  it('#578 가드는 코드명 없는 되묻기 턴의 "위임하되"를 잡지 못한다(사각 확인)', () => {
+    const state = createDelegationNarrationState();
+    expect(classifyMainText(state, LEAK, NAMES)).toEqual({ suppress: false });
+  });
+
+  it('containsRoutingVocabulary / redactRoutingVocabulary — 어휘만 바꾸고 문장은 유지한다', () => {
+    expect(containsRoutingVocabulary(LEAK)).toBe(true);
+    expect(containsRoutingVocabulary('트리거 32번이 어느 파이프라인에 속해 있는지 알려주시겠어요?')).toBe(false);
+    expect(redactRoutingVocabulary(LEAK)).toBe(
+      '트리거 삭제(파괴 작업)는 처리하되, 먼저 어느 파이프라인 소속인지 알려주시겠어요? (파이프라인 ID 또는 이름)',
+    );
+    expect(redactRoutingVocabulary('라우팅 규칙상 위임 대상입니다')).toBe('연결 규칙상 처리 대상입니다');
+  });
+
+  it('스트림 치환기 — 델타 경계에 걸친 "위"+"임하되"를 보류했다가 이어 붙여 치환한다', () => {
+    const r = createRoutingVocabRedactor('트리거 32번 삭제해줘');
+    expect(r.enabled).toBe(true);
+    const out: string[] = [];
+    for (const d of ['트리거 삭제는 위', '임하되, 먼저 ', '어느 파이프라인인지 알려주세요']) out.push(r.push(d));
+    out.push(r.flush());
+    expect(out.join('')).toBe('트리거 삭제는 처리하되, 먼저 어느 파이프라인인지 알려주세요');
+    // 첫 델타는 꼬리 '위' 만 보류하고 나머지는 즉시 방출된다(체감 지연 없음)
+    expect(out[0]).toBe('트리거 삭제는 ');
+  });
+
+  it('스트림 치환기 — 어휘가 아닌 "위"로 끝나는 델타("범위")는 다음 델타에서 그대로 풀린다', () => {
+    const r = createRoutingVocabRedactor('');
+    expect(r.push('조회 범위')).toBe('조회 범');
+    expect(r.push('를 알려주세요')).toBe('위를 알려주세요');
+    expect(r.flush()).toBe('');
+  });
+
+  it('스트림 치환기 — 스트림이 꼬리로 끝나면 flush 가 남은 글자를 돌려준다', () => {
+    const r = createRoutingVocabRedactor('');
+    expect(r.push('상위')).toBe('상');
+    expect(r.flush()).toBe('위');
+  });
+
+  it('사용자가 어휘를 직접 쓴 데이터 문맥이면 치환을 끈다(오탐 방지)', () => {
+    const r = createRoutingVocabRedactor('업무 위임 테이블 만들어줘');
+    expect(r.enabled).toBe(false);
+    expect(r.push('업무 위임 테이블을 만들까요?')).toBe('업무 위임 테이블을 만들까요?');
+    expect(r.redact('위임 컬럼 포함')).toBe('위임 컬럼 포함');
   });
 });

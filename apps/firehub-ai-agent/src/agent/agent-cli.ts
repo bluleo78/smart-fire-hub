@@ -46,6 +46,7 @@ import {
   noteSubagentText,
   isNoopHostToolCall,
   redactSubagentIdentifiers,
+  createRoutingVocabRedactor,
 } from './delegation-narration-guard.js';
 
 /**
@@ -433,6 +434,9 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
   // 억제 때문에 사용자에게 아무 텍스트도 안 나가는 경우는 아래 `result` 처리에서 fallback 으로 막는다.
   const narrationState = createDelegationNarrationState();
   const subagentNames = Object.keys(subagents);
+  // #581: 도구 호출이 전혀 없는 되묻기 턴의 라우팅 어휘("…는 위임하되, 먼저 …") 누출은 위 두 축이 못
+  // 잡는다 — 메인 텍스트에 한해 어휘를 중립 표현으로 치환한다(억제 아님 → 빈 응답·relay 누락 불가).
+  const routingRedactor = createRoutingVocabRedactor(message);
   let userTextEmitted = false;
   /** #578: 다음 이벤트로 "위임 직전 narration" 여부를 판정하기 위해 보류 중인 메인 텍스트 블록 */
   let pendingMainText: string | undefined;
@@ -540,6 +544,17 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
         // Skip non-JSON lines (e.g. debug output)
         continue;
       }
+      // #581: 메인 텍스트 델타가 아닌 이벤트가 오면 어휘 치환기가 보류 중인 꼬리를 먼저 내보낸다
+      // (보류는 델타 경계에 걸친 어휘 판정용이라 다음 이벤트에서 즉시 풀어야 순서가 어긋나지 않는다).
+      const isMainTextDelta =
+        msg.type === 'stream_event' && msg.delta?.type === 'text_delta' && Boolean(msg.delta.text) && !msg.parent_tool_use_id;
+      if (!isMainTextDelta) {
+        const heldTail = routingRedactor.flush();
+        if (heldTail) {
+          userTextEmitted = true;
+          yield { type: 'text', content: heldTail };
+        }
+      }
       // #578: 위임 **직전** 메인 텍스트("Found pipeline ID 18. Delegating…", "…위임하겠습니다") 판별.
       // 이 텍스트는 Agent tool_use 보다 먼저 도착하므로 도착 시점엔 narration 인지 알 수 없다 — CLI
       // 경로는 텍스트가 완성 블록 단위로 오므로, 메인 텍스트 블록 하나를 보류(pendingMainText)했다가
@@ -577,7 +592,7 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
             console.log(`[CLI Agent] [narration-guard] 위임 직전 메인 텍스트 억제(#578): ${held.slice(0, 80)}`);
           } else {
             userTextEmitted = true;
-            yield { type: 'text', content: held };
+            yield { type: 'text', content: routingRedactor.redact(held) };
           }
         }
       }
@@ -626,9 +641,14 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
             console.log(`[CLI Agent] [narration-guard] 메인 델타 억제(${verdict.reason}, #578): ${msg.delta.text.slice(0, 80)}`);
             continue;
           }
-        } else {
-          noteSubagentText(narrationState);
+          // #581: 메인 델타는 라우팅 어휘 치환기를 거친다(경계 보류 시 빈 문자열 → 다음 델타에서 방출).
+          const redactedDelta = routingRedactor.push(msg.delta.text);
+          if (!redactedDelta) continue;
+          userTextEmitted = true;
+          yield { type: 'text', content: redactedDelta };
+          continue;
         }
+        noteSubagentText(narrationState);
         userTextEmitted = true;
         yield { type: 'text', content: msg.delta.text };
         continue;
@@ -726,7 +746,7 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
                   console.log(`[CLI Agent] [narration-guard] 위임 직전 메인 텍스트 억제(#578): ${held.slice(0, 80)}`);
                 } else {
                   userTextEmitted = true;
-                  yield { type: 'text', content: held };
+                  yield { type: 'text', content: routingRedactor.redact(held) };
                 }
               }
               // #578: 비동기 위임 발행 → 위임 직후 구간 시작 / 그 외 도구 → 구간 종료(#429 원칙).
@@ -797,7 +817,8 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
                 userTextEmitted = true;
                 yield { type: 'text', content: pendingMainText };
               }
-              pendingMainText = block.text;
+              // #581: 보류 시점에 라우팅 어휘를 치환해 두면 이후 어느 경로로 나가든 동일하게 가려진다.
+              pendingMainText = routingRedactor.redact(block.text);
               continue;
             }
             noteSubagentText(narrationState);
@@ -933,7 +954,7 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
         // 사용자에게 한 글자도 나가지 않은 채 성공 종료하는 경우 — 완전히 빈 응답(#573 과 같은 critical
         // 회귀)을 막기 위해 마지막으로 억제한 메인 텍스트를 코드명만 가린 채 fallback 으로 내보낸다.
         if (!isBudgetError && !isOtherError && !userTextEmitted && narrationState.lastSuppressedMainText) {
-          const fallback = redactSubagentIdentifiers(narrationState.lastSuppressedMainText, subagentNames);
+          const fallback = routingRedactor.redact(redactSubagentIdentifiers(narrationState.lastSuppressedMainText, subagentNames));
           narrationState.lastSuppressedMainText = undefined;
           if (fallback) {
             console.warn(`[CLI Agent] [narration-guard] 빈 응답 방지 fallback(#578): ${fallback.slice(0, 200)}`);
@@ -980,7 +1001,7 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
       const held = pendingMainText;
       pendingMainText = undefined;
       userTextEmitted = true;
-      yield { type: 'text', content: held };
+      yield { type: 'text', content: routingRedactor.redact(held) };
     }
   } finally {
     rl.close();

@@ -304,6 +304,15 @@ describe('SYSTEM_PROMPT', () => {
       expect(section).toMatch(/관리자 전용/);
     });
 
+    // #581: 도구 호출 없는 되묻기 턴에서도 "위임하되" 류 라우팅 어휘를 쓰지 않도록 명시(코드 치환기의 1차 방어)
+    it('되묻기(clarification) 턴을 포함해 "위임"·"라우팅" 어휘 사용 금지를 명시한다', () => {
+      const section = SYSTEM_PROMPT.split('## L2. 응답 출력 규칙')[1];
+      expect(section).toBeDefined();
+      expect(section).toMatch(/라우팅 어휘/);
+      expect(section).toMatch(/되묻기/);
+      expect(section).toMatch(/위임하되/);
+    });
+
     // 메타 질문(architecture / 내부 구조 / 어떤 subagent) 에 대한 capability 중심 응답 가이드
     it('메타 질문(내부 구조/architecture/어떤 subagent) 트리거 키워드를 명시한다', () => {
       const section = SYSTEM_PROMPT.split('## L2. 응답 출력 규칙')[1];

@@ -12,7 +12,9 @@ import {
   noteSubagentText,
   isNoopHostToolCall,
   redactSubagentIdentifiers,
+  createRoutingVocabRedactor,
   type DelegationNarrationState,
+  type RoutingVocabRedactor,
 } from './delegation-narration-guard.js';
 
 // Agent 위임 relay 가드(#428→#429 일반화) — SDK Agent 도구로 위임된 subagent 는
@@ -91,9 +93,14 @@ export interface DesignGuardRelayState {
   subagentNames: readonly string[];
   /** #578: 이번 요청에서 사용자에게 text 이벤트가 하나라도 나갔는지 — 빈 응답 fallback 판정용 */
   userTextEmitted: boolean;
+  /** #581: 메인 텍스트의 내부 라우팅 어휘("위임하되") 치환기 — 도구 호출 없는 되묻기 턴까지 커버 */
+  routing: RoutingVocabRedactor;
 }
 
-export function createDesignGuardRelayState(subagentNames: readonly string[] = []): DesignGuardRelayState {
+/**
+ * @param userMessage 사용자 원문(#581) — 사용자가 '위임' 같은 어휘를 직접 쓴 데이터 문맥이면 치환을 끈다
+ */
+export function createDesignGuardRelayState(subagentNames: readonly string[] = [], userMessage = ''): DesignGuardRelayState {
   return {
     pendingGuardToolUseIds: new Set(),
     suppressMainText: false,
@@ -102,6 +109,7 @@ export function createDesignGuardRelayState(subagentNames: readonly string[] = [
     narration: createDelegationNarrationState(),
     subagentNames,
     userTextEmitted: false,
+    routing: createRoutingVocabRedactor(userMessage),
   };
 }
 
@@ -127,6 +135,22 @@ export function processMessage(
   // SDKMessage 유니온 중 parent_tool_use_id 를 갖는 타입(assistant/user/stream_event)에서만
   // 존재 — 메인 top-level 메시지는 null, subagent 위임 메시지는 위임 tool_use id.
   const parentToolUseId = 'parent_tool_use_id' in msg ? (msg as { parent_tool_use_id: string | null }).parent_tool_use_id : null;
+
+  // #581: 메인 텍스트 델타가 아닌 메시지가 오면 어휘 치환기가 델타 경계 판정용으로 보류한 꼬리를 먼저
+  // 내보낸다 — 보류는 다음 이벤트에서 즉시 풀어야 텍스트 순서가 어긋나지 않는다.
+  const isMainTextDelta =
+    msg.type === 'stream_event' &&
+    !parentToolUseId &&
+    msg.event?.type === 'content_block_delta' &&
+    'delta' in msg.event &&
+    (msg.event.delta as { type?: string }).type === 'text_delta';
+  if (!isMainTextDelta) {
+    const heldTail = relayState.routing.flush();
+    if (heldTail) {
+      relayState.userTextEmitted = true;
+      events.push({ type: 'text', content: heldTail });
+    }
+  }
 
   switch (msg.type) {
     case 'system': {
@@ -205,7 +229,8 @@ export function processMessage(
             }
             if (!hasStreamedText && !isSuppressedMainText && !narrationSuppressed) {
               relayState.userTextEmitted = true;
-              events.push({ type: 'text', content: block.text });
+              // #581: 메인 텍스트 블록만 라우팅 어휘 치환(subagent 텍스트는 그대로)
+              events.push({ type: 'text', content: parentToolUseId ? block.text : relayState.routing.redact(String(block.text)) });
             }
           } else if (block.type === 'tool_use' && 'name' in block) {
             const input = 'input' in block ? block.input : {};
@@ -392,7 +417,9 @@ export function processMessage(
         // #578: narration 가드 억제 뒤 subagent 도 텍스트를 내지 않아 사용자에게 아무 텍스트도 안 나간
         // 경우 — 빈 응답을 막기 위해 마지막 억제 텍스트를 코드명만 가린 채 fallback 으로 내보낸다.
         if (!relayState.userTextEmitted && relayState.narration.lastSuppressedMainText) {
-          const fallback = redactSubagentIdentifiers(relayState.narration.lastSuppressedMainText, relayState.subagentNames);
+          const fallback = relayState.routing.redact(
+            redactSubagentIdentifiers(relayState.narration.lastSuppressedMainText, relayState.subagentNames),
+          );
           relayState.narration.lastSuppressedMainText = undefined;
           if (fallback) {
             console.warn(`${tag()} ⚠️ 위임 narration 억제 후 빈 응답 방지 fallback(#578): ${truncate(fallback)}`);
@@ -455,11 +482,15 @@ export function processMessage(
             noteSubagentText(relayState.narration);
           }
           if (!isSuppressedMainDelta && !narrationSuppressed) {
-            relayState.userTextEmitted = true;
-            events.push({
-              type: 'text',
-              content: delta.text,
-            });
+            // #581: 메인 델타는 라우팅 어휘 치환기를 거친다(경계 보류 시 빈 문자열 → 다음 델타/이벤트에서 방출)
+            const outText = parentToolUseId ? delta.text : relayState.routing.push(delta.text);
+            if (outText) {
+              relayState.userTextEmitted = true;
+              events.push({
+                type: 'text',
+                content: outText,
+              });
+            }
           }
         }
       } else if (event.type === 'message_delta') {

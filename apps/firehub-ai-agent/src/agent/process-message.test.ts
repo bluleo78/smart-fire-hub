@@ -848,3 +848,58 @@ describe('processMessage — #578 위임 narration 가드', () => {
     expect(events[1]?.type).toBe('done');
   });
 });
+
+// #581: SDK 경로 — 도구 호출 없는 되묻기 턴의 라우팅 어휘("위임하되")를 억제하지 않고 치환한다.
+describe('processMessage — #581 라우팅 어휘 치환(되묻기 턴)', () => {
+  const tag581 = () => '[t]';
+  const delta = (text: string): SDKMessage =>
+    ({
+      type: 'stream_event',
+      parent_tool_use_id: null,
+      event: { type: 'content_block_delta', delta: { type: 'text_delta', text } },
+    }) as unknown as SDKMessage;
+
+  it('델타 경계에 걸친 "위"+"임하되"도 치환되고 텍스트는 하나도 사라지지 않는다', () => {
+    const state = createDesignGuardRelayState(['trigger-manager'], '트리거 32번 삭제해줘');
+    const out: string[] = [];
+    for (const d of ['트리거 삭제(파괴 작업)는 위', '임하되, 먼저 어느 ', '파이프라인 소속인지 알려주시겠어요?']) {
+      for (const ev of processMessage(delta(d), tag581, true, state)) if (ev.type === 'text') out.push(String(ev.content));
+    }
+    // 스트림 종료(result) 시 보류 꼬리가 있으면 방출된다 — 여기선 꼬리 없음
+    for (const ev of processMessage({ type: 'result', subtype: 'success', total_cost_usd: 0, usage: {} } as unknown as SDKMessage, tag581, true, state)) {
+      if (ev.type === 'text') out.push(String(ev.content));
+    }
+    expect(out.join('')).toBe('트리거 삭제(파괴 작업)는 처리하되, 먼저 어느 파이프라인 소속인지 알려주시겠어요?');
+    expect(state.userTextEmitted).toBe(true);
+  });
+
+  it('subagent 델타(parent_tool_use_id 있음)는 치환 대상이 아니다', () => {
+    const state = createDesignGuardRelayState(['trigger-manager'], '');
+    const events = processMessage(
+      {
+        type: 'stream_event',
+        parent_tool_use_id: 'toolu_x',
+        event: { type: 'content_block_delta', delta: { type: 'text_delta', text: '위임 컬럼 값은 3건입니다.' } },
+      } as unknown as SDKMessage,
+      tag581,
+      true,
+      state,
+    );
+    expect(events).toEqual([{ type: 'text', content: '위임 컬럼 값은 3건입니다.' }]);
+  });
+
+  it('스트리밍 없이 완성 블록으로 온 메인 텍스트도 치환된다', () => {
+    const state = createDesignGuardRelayState(['trigger-manager'], '');
+    const events = processMessage(
+      {
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: { content: [{ type: 'text', text: '해당 작업은 위임 대상입니다. 파이프라인 ID를 알려주세요.' }] },
+      } as unknown as SDKMessage,
+      tag581,
+      false,
+      state,
+    );
+    expect(events).toEqual([{ type: 'text', content: '해당 작업은 처리 대상입니다. 파이프라인 ID를 알려주세요.' }]);
+  });
+});

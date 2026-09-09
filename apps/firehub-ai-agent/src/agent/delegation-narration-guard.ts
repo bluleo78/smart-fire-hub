@@ -59,6 +59,96 @@ export function redactSubagentIdentifiers(text: string, subagentNames: readonly 
   return out.replace(new RegExp(SUBAGENT_SUFFIX_PATTERN.source, 'gi'), '전문 에이전트');
 }
 
+/**
+ * 내부 라우팅 어휘 → 중립 표현 치환표 (#581).
+ *
+ * 배경: #578 의 두 축(코드명 / 비동기 위임 직후 구간)은 **도구 호출이 전혀 없는 턴**의 어휘 누출을
+ * 구조상 잡지 못한다 — 실측(inspector crosscheck-578-trig-009): "트리거 삭제(파괴 작업)는 위임하되,
+ * 먼저 어느 파이프라인 소속인지 알려주시겠어요?" (tool_use 0건, 코드명 없음). '위임'은 시스템 프롬프트의
+ * 라우팅 표에서만 쓰이는 내부 어휘라 사용자 응답에 나올 정당한 이유가 없다(L2 노출 금지).
+ *
+ * 억제가 아니라 **치환**인 이유: 되묻기 턴은 그 텍스트가 응답의 전부라 억제하면 빈 응답(#573 급 critical)
+ * 이 되고, 동기 위임 relay(#572/#573) 텍스트를 오탐 억제할 위험도 있다. 치환은 문장을 살리면서 어휘만
+ * 가리므로 relay 누락·빈 응답을 만들 수 없다.
+ *
+ * 보수성: 단어 목록은 라우팅 문맥 밖에서 거의 쓰이지 않는 것만 둔다('맡기다' 같은 일상어는 제외).
+ * 사용자가 자기 메시지에 이 어휘를 직접 쓴 경우(데이터 문맥 — 예: "업무 위임 테이블")는 치환하지 않는다
+ * (`createRoutingVocabRedactor` 의 userMessage 인자).
+ */
+const ROUTING_VOCAB_RULES: ReadonlyArray<readonly [term: string, replacement: string]> = [
+  ['위임', '처리'],
+  ['라우팅', '연결'],
+];
+
+/** 텍스트에 내부 라우팅 어휘가 들어 있는지 판별한다 */
+export function containsRoutingVocabulary(text: string): boolean {
+  if (!text) return false;
+  return ROUTING_VOCAB_RULES.some(([term]) => text.includes(term));
+}
+
+/** 텍스트 안의 내부 라우팅 어휘를 중립 표현으로 치환한다(완성 텍스트용) */
+export function redactRoutingVocabulary(text: string): string {
+  if (!text) return text;
+  let out = text;
+  for (const [term, replacement] of ROUTING_VOCAB_RULES) {
+    out = out.split(term).join(replacement);
+  }
+  return out;
+}
+
+/**
+ * 스트리밍 델타용 라우팅 어휘 치환기.
+ *
+ * 델타는 토큰 단위로 쪼개져 '위' + '임하되' 처럼 어휘가 경계에 걸칠 수 있다. 그래서 델타 끝이 어떤 어휘의
+ * 진접두사(예: '위', '라', '라우')면 그 꼬리만 보류했다가 다음 델타와 이어 붙여 판정한다. 보류 꼬리는
+ * 다음 델타에서 즉시 풀리므로 체감 지연은 없고, 스트림이 끝나면 `flush()` 로 남은 꼬리를 내보낸다.
+ *
+ * @param userMessage 사용자 원문 — 사용자가 라우팅 어휘를 직접 썼으면(데이터 문맥) 치환을 끈다.
+ */
+export interface RoutingVocabRedactor {
+  /** 치환이 켜져 있는지(사용자가 어휘를 직접 쓴 경우 false) */
+  readonly enabled: boolean;
+  /** 델타를 넣고 지금 내보내도 되는(치환된) 부분을 돌려받는다. 빈 문자열이면 아직 보류 중 */
+  push(delta: string): string;
+  /** 스트림 종료·비델타 이벤트 도착 시 보류 꼬리를 내보낸다 */
+  flush(): string;
+  /** 완성 블록(비스트림) 치환 — 보류 상태를 건드리지 않는다 */
+  redact(text: string): string;
+}
+
+export function createRoutingVocabRedactor(userMessage = ''): RoutingVocabRedactor {
+  const enabled = !containsRoutingVocabulary(userMessage);
+  let tail = '';
+  return {
+    enabled,
+    push(delta: string): string {
+      if (!enabled) return delta;
+      const joined = tail + delta;
+      // 끝부분이 어휘의 진접두사와 일치하는 가장 긴 길이만큼 보류
+      let hold = 0;
+      for (const [term] of ROUTING_VOCAB_RULES) {
+        for (let k = term.length - 1; k > hold; k--) {
+          if (joined.endsWith(term.slice(0, k))) {
+            hold = k;
+            break;
+          }
+        }
+      }
+      tail = hold ? joined.slice(joined.length - hold) : '';
+      const emit = hold ? joined.slice(0, joined.length - hold) : joined;
+      return redactRoutingVocabulary(emit);
+    },
+    flush(): string {
+      const out = tail;
+      tail = '';
+      return out;
+    },
+    redact(text: string): string {
+      return enabled ? redactRoutingVocabulary(text) : text;
+    },
+  };
+}
+
 /** 목적 없는 no-op 명령 — 턴을 채우기 위한 호출로 실제 작업이 아니다 */
 const NOOP_COMMAND_PATTERN = /^\s*(?:echo(?:\s+["']?(?:noop|no-op|ok|start|ready)?["']?)?|true|:)\s*;?\s*$/i;
 

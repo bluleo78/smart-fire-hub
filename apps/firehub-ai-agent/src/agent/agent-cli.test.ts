@@ -1692,7 +1692,8 @@ describe('executeCliAgent — #578 위임 narration 가드(코드 레벨 백스�
       JSON.stringify({ type: 'result', subtype: 'success' }),
     ]);
     const texts = events.filter((e) => e.type === 'text').map((e) => e.content);
-    expect(texts).toEqual(['전문 에이전트에게 위임합니다.']);
+    // #581: fallback 도 사용자 대상 메인 텍스트이므로 코드명에 더해 라우팅 어휘('위임')까지 가려진다.
+    expect(texts).toEqual(['전문 에이전트에게 처리합니다.']);
   });
 
   // 위임 자체가 실패(is_error)하면 메인이 직접 설명해야 하므로 억제하지 않는다.
@@ -1716,5 +1717,72 @@ describe('executeCliAgent — #578 위임 narration 가드(코드 레벨 백스�
       JSON.stringify({ type: 'result', subtype: 'success' }),
     ]);
     expect(events.filter((e) => e.type === 'text').map((e) => e.content)).toEqual(['처리 중 오류가 발생했습니다. 다시 시도해 주세요.']);
+  });
+});
+
+// #581: CLI 경로 — 도구 호출이 전혀 없는 되묻기 턴(inspector crosscheck-578-trig-009 실측)의 라우팅 어휘를
+// 치환한다. #578 가드(코드명/비동기 위임 직후)는 이 턴을 구조상 잡지 못하므로 별도 회귀 케이스로 고정.
+describe('executeCliAgent — #581 되묻기 턴 라우팅 어휘 치환', () => {
+  beforeEach(() => {
+    spawnMock.mockReset();
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  async function run(lines: string[], message = '트리거 32번 삭제해줘') {
+    const child = makeFakeChildWithLines(lines);
+    spawnMock.mockReturnValue(child);
+    const events: Array<{ type: string; content?: string }> = [];
+    for await (const ev of executeCliAgent({
+      message,
+      tenantId: 1,
+      userId: 1,
+      useSubscription: false,
+      apiKey: 'sk-test',
+    } as never)) {
+      events.push(ev as { type: string; content?: string });
+    }
+    return events;
+  }
+
+  it('trig-009: tool_use 0건 되묻기 델타의 "위임하되"가 경계에 걸쳐 와도 치환되고 문장은 보존된다', async () => {
+    const events = await run([
+      JSON.stringify({ type: 'stream_event', delta: { type: 'text_delta', text: '트리거 삭제(파괴 작업)는 위' } }),
+      JSON.stringify({ type: 'stream_event', delta: { type: 'text_delta', text: '임하되, 먼저 어느 파이프라인 소속인지 알려주시겠어요?' } }),
+      JSON.stringify({ type: 'result', subtype: 'success' }),
+    ]);
+    const text = events.filter((e) => e.type === 'text').map((e) => e.content).join('');
+    expect(text).toBe('트리거 삭제(파괴 작업)는 처리하되, 먼저 어느 파이프라인 소속인지 알려주시겠어요?');
+  });
+
+  it('trig-009: 완성 블록으로 온 되묻기도 치환되며 억제(빈 응답)되지 않는다', async () => {
+    const events = await run([
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: { content: [{ type: 'text', text: '트리거 삭제(파괴 작업)는 위임하되, 먼저 어느 파이프라인 소속인지 알려주시겠어요?' }] },
+      }),
+      JSON.stringify({ type: 'result', subtype: 'success' }),
+    ]);
+    expect(events.filter((e) => e.type === 'text').map((e) => e.content)).toEqual([
+      '트리거 삭제(파괴 작업)는 처리하되, 먼저 어느 파이프라인 소속인지 알려주시겠어요?',
+    ]);
+  });
+
+  it('사용자가 "위임"을 직접 쓴 데이터 문맥이면 치환하지 않는다', async () => {
+    const events = await run(
+      [
+        JSON.stringify({
+          type: 'assistant',
+          parent_tool_use_id: null,
+          message: { content: [{ type: 'text', text: '업무 위임 테이블을 만들까요? 컬럼을 알려주세요.' }] },
+        }),
+        JSON.stringify({ type: 'result', subtype: 'success' }),
+      ],
+      '업무 위임 테이블 만들어줘',
+    );
+    expect(events.filter((e) => e.type === 'text').map((e) => e.content)).toEqual(['업무 위임 테이블을 만들까요? 컬럼을 알려주세요.']);
   });
 });
