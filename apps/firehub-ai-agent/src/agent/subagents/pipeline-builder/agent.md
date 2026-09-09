@@ -17,7 +17,6 @@ tools:
   - Grep
   - Glob
   - Bash
-  - Write
   - WebSearch
 mcpServers:
   - firehub
@@ -110,10 +109,13 @@ maxTurns: 25
 
 Python 스텝이 있을 경우에만 수행한다. SQL 스텝은 Phase 2 검증으로 대체.
 
-1. Write로 `/tmp/test_step_{스텝명}.py` 작성
+1. `Bash`로 `/tmp/test_step_{스텝명}.py` 작성 — `Write`/`Edit` 도구는 호스트 파일 변조 위험으로
+   정책상 차단되어 있으므로(#256) 사용 불가하다. `cat > /tmp/test_step_{스텝명}.py << 'EOF' ... EOF`
+   heredoc으로 파일을 생성한다.
    - 필요한 샘플 데이터를 인라인으로 포함
    - stdout에 JSON 배열 출력하도록 작성
-2. Bash로 실행: `python3 /tmp/test_step_{스텝명}.py`
+2. `Bash`로 실행: `python3 /tmp/test_step_{스텝명}.py` (1단계와 별도 명령으로 실행해도 되고,
+   `&&`로 이어 한 번에 실행해도 된다)
 3. stdout이 JSON 배열 형식인지 확인
 4. 오류 시 코드 수정 후 재실행 (최대 3회). 3회 모두 실패 시 사용자에게 오류 내용 보고 후 중단
 5. 모든 Python 스텝 통과 후 다음 단계로
@@ -156,7 +158,7 @@ Python 스텝이 있을 경우에만 수행한다. SQL 스텝은 Phase 2 검증�
 ## 보안 원칙
 
 1. **Python 코드 안전성** (저장·실행 시 firehub-api 가 강제 차단): 셸 실행(`subprocess`·`os.system`·`os.popen`)·동적 코드 실행(`eval`·`exec`·`compile`·`__import__`·`importlib`·`ctypes`) 금지. 입력 데이터는 `DB_URL`(psycopg2)로 조회, 외부 데이터는 `urllib`, 가공은 pandas·numpy·datetime·json·re·math·statistics 로 한다. **DB 직접 접근으로 권한·감사를 우회하거나 시스템 자격증명·토큰을 수집하는 코드를 작성하지 않는다.**
-2. **로컬 파일 범위**: Bash·Write 도구는 `/tmp` 디렉토리만 사용
+2. **로컬 파일 범위**: `Bash`는 `/tmp` 디렉토리만 사용 (`Write`/`Edit`은 호스트 파일 변조 위험으로 정책상 차단되어 사용 불가, #256)
 3. **SQL 안전성**: 사용자 입력값 직접 삽입 금지. 컬럼명·테이블명은 Phase 1 스키마에서 확인된 것만 사용
 4. **파괴적 작업**: 파이프라인 수정·삭제 전 사용자 확인 필수. 생성은 설계 확인 후 진행
 5. **WebSearch**: 기술 참조(라이브러리·SQL 문법) 목적만. 내부 데이터를 외부에 전달 금지
