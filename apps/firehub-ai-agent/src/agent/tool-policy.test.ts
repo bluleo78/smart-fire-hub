@@ -6,7 +6,7 @@
  * 새 호스트 도구는 자동 허용되어 "tool not in allow list" 무응답 회귀를 막는다.
  */
 import { describe, it, expect } from 'vitest';
-import { DISALLOWED_TOOLS, ALLOWED_TOOLS, checkToolPolicy } from './tool-policy.js';
+import { DISALLOWED_TOOLS, ALLOWED_TOOLS, DELEGATION_ONLY_TOOLS, checkToolPolicy } from './tool-policy.js';
 
 describe('tool-policy (#256, #266)', () => {
   it('DISALLOWED_TOOLS 의 명시 차단 도구가 유지된다 (회귀 가드)', () => {
@@ -138,6 +138,36 @@ describe('tool-policy (#256, #266)', () => {
       expect(
         checkToolPolicy('mcp__firehub__list_datasets', { subagent_type: 'general-purpose' }, WHITELIST),
       ).toBeNull();
+    });
+  });
+
+  // #588: 감사 로그 조회 위임 전용 백스톱 — 메인 top-level 직접 호출만 차단, subagent 내부 호출은 허용
+  describe('위임 전용 도구 백스톱 (#588)', () => {
+    it('DELEGATION_ONLY_TOOLS 에 list_audit_logs 가 포함된다 (회귀 가드)', () => {
+      expect(DELEGATION_ONLY_TOOLS).toContain('mcp__firehub__list_audit_logs');
+    });
+
+    it('메인이 parent_tool_use_id 없이 직접 호출하면 차단된다', () => {
+      const r = checkToolPolicy('mcp__firehub__list_audit_logs', undefined, undefined, null);
+      expect(r).toMatch(/blocked by policy \(#588\)/);
+    });
+
+    it('차단 메시지에 mcp__firehub__* 도구 식별자·subagent 코드명을 노출하지 않는다 (L2 준수)', () => {
+      const r = checkToolPolicy('mcp__firehub__list_audit_logs', undefined, undefined, null) ?? '';
+      expect(r).not.toContain('mcp__firehub__');
+      expect(r).not.toContain('audit-analyst');
+    });
+
+    it('parentToolUseId 미전달(undefined) 시에도 메인 직접 호출로 간주해 차단된다', () => {
+      expect(checkToolPolicy('mcp__firehub__list_audit_logs')).toMatch(/blocked by policy \(#588\)/);
+    });
+
+    it('parentToolUseId 가 있으면(위임된 subagent 내부 호출) 허용된다', () => {
+      expect(checkToolPolicy('mcp__firehub__list_audit_logs', undefined, undefined, 'toolu_abc123')).toBeNull();
+    });
+
+    it('다른 firehub 도구는 이 정책의 영향을 받지 않는다', () => {
+      expect(checkToolPolicy('mcp__firehub__list_datasets', undefined, undefined, null)).toBeNull();
     });
   });
 });

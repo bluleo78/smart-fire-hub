@@ -54,6 +54,23 @@ export const DISALLOWED_TOOLS: readonly string[] = [
 ] as const;
 
 /**
+ * 위임 전용(delegation-only) 도구 — 메인이 \`Agent\` 위임 없이 직접 호출하면 차단한다 (#588).
+ *
+ * 배경: audit-analyst 전용 안전장치(Phase 1.5 관리자 권한 고지, 4단계 워크플로, PII 마스킹
+ * 세부 규칙)는 subagent 의 \`agent.md\`/\`rules.md\` 에만 정의돼 있어, 메인이 \`Agent\` 위임을
+ * 생략하고 \`mcp__firehub__list_audit_logs\` 를 직접 호출하면 전부 우회된다. SYSTEM_PROMPT L1
+ * 라우팅 표(프롬프트 레벨, 1차 방어)만으로는 프롬프트 표현에 따라 위임 여부가 비결정적으로
+ * 흔들리는 것이 실측됐다(audit-001 직접 호출 vs audit-003 정상 위임, 동일 카테고리 프롬프트).
+ *
+ * \`checkToolPolicy\` 는 \`parentToolUseId\` 가 있으면(= 이미 \`Agent\` 로 위임된 subagent 내부에서
+ * 발행된 tool_use) 통과시키고, 없으면(= 메인이 top-level 에서 직접 발행) 차단한다 — 그래서
+ * audit-analyst 자신의 정당한 \`list_audit_logs\` 호출은 막지 않고, 메인의 직접 호출만 막는다.
+ */
+export const DELEGATION_ONLY_TOOLS: readonly string[] = [
+  'mcp__firehub__list_audit_logs',
+] as const;
+
+/**
  * (Legacy) 허용 도구 화이트리스트.
  *
  * SDK/CLI 의 \`allowedTools\` 옵션이 deny-by-default 효과를 갖기 때문에, allow-by-default 정책을
@@ -89,18 +106,31 @@ export const ALLOWED_TOOLS: readonly string[] = [
  * @param input (선택) tool_use.input — Agent 위임의 \`subagent_type\` 검사에 사용
  * @param validSubagentTypes (선택) 정의된 firehub subagent 이름 목록(\`Object.keys(loadSubagents())\`).
  *        제공 시 화이트리스트 강제, 미제공 시 빌트인 \`general-purpose\` 만 차단(방어 하한선).
+ * @param parentToolUseId (선택) SDK/CLI 메시지의 \`parent_tool_use_id\`. null/undefined 면 메인의
+ *        top-level 호출, 값이 있으면 이미 위임된 subagent 내부에서 발생한 호출이다(#588).
  * @returns 차단 사유 문자열(차단해야 할 때) 또는 null(허용)
  */
 export function checkToolPolicy(
   toolName: string,
   input?: Record<string, unknown>,
   validSubagentTypes?: readonly string[],
+  parentToolUseId?: string | null,
 ): string | null {
   if (!toolName) return null; // 빈 이름은 파싱 노이즈
   for (const pat of DISALLOWED_TOOLS) {
     if (matchToolPattern(pat, toolName)) {
       return `host tool blocked by policy (#256): ${toolName}`;
     }
+  }
+
+  // #588: 위임 전용 도구를 메인이 top-level(parent_tool_use_id 없음)로 직접 호출하면 차단.
+  // subagent 내부(parentToolUseId 존재)에서의 호출은 정상 위임 경로이므로 허용한다.
+  //
+  // L2 준수: 이 반환값은 user-facing SSE error 로 그대로 전달되므로(호출부가 console.warn 과
+  // 동일 문자열을 사용) mcp__firehub__* 도구 식별자·subagent 코드명(*-analyst 등)을 담지 않는다
+  // — toolName 원문은 서버 로그(호출부 console.warn)에서만 확인한다.
+  if (!parentToolUseId && DELEGATION_ONLY_TOOLS.includes(toolName)) {
+    return `admin-only tool blocked by policy (#588): audit log lookups must be delegated to the audit review subagent`;
   }
 
   // #276: Agent 위임 시 subagent_type 백스톱. input 이 없으면(호출부가 미전달) 검사 생략 — BC.

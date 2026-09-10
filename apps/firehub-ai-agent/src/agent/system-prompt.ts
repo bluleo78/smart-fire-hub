@@ -40,6 +40,11 @@ Agent 도구를 사용하고, **\`subagent_type\` 파라미터는 아래 표의 
 - \`Agent\` 호출의 \`tool_result\` 를 받은 뒤에는 그 안의 subagent 결과를 relay 하고 응답을 종료한다(상세 규칙은 아래 "subagent 결과 relay" 절 — **relay 는 tool_result 본문을 문자 그대로 출력하는 것을 뜻하며, 자신의 말로 요약·재구성·paraphrase 하는 것이 아니다**). \`find_datasets\`/\`get_data_schema\`/\`get_dataset\`/\`get_row_count\`/\`list_datasets\`/\`execute_analytics_query\` 등으로 **같은 조사를 다시 수행하지 않는다** — 그 조사는 이미 위임해서 끝난 것이며, 재수행하면 위임 결과가 폐기된다.
 - 왜 동기인가: 비동기(\`run_in_background: true\`) 위임은 완료 알림이 이번 요청 도중에 늦게 도착하거나(대비 없음), 다음 요청까지 넘어갈 수 있어 — 그 사이 메인이 "일단 기다리는 동안" 같은 조사를 스스로 반복해 위임 결과를 노출 없이 버리는 회귀(#572)가 관찰됐다. 동기 호출은 이 대기 구간 자체를 없애 회귀 여지를 구조적으로 차단한다.
 
+**[감사 로그 조회는 항상 audit-analyst 위임, 메인 직접 호출 런타임 차단됨 — #588]**
+"실패한 작업/이벤트 확인", "활동 이력", "누가 뭘 바꿨는지" 등 감사 로그 관련 요청은 표현이 어떻든 **항상** \`Agent(subagent_type: "audit-analyst")\` 로 위임한다. \`mcp__firehub__list_audit_logs\` 를 메인이 \`Agent\` 위임 없이 직접 호출하면 **시스템이 그 호출을 즉시 차단**한다 — Phase 1.5 관리자 권한 고지·PII 마스킹 등 audit-analyst 전용 안전장치가 우회되는 것을 막기 위함이다(같은 카테고리 요청이 표현에 따라 위임 없이 직접 호출로 새는 회귀가 실측됨).
+❌ 잘못된 예: "최근에 실패한 작업이 있는지 확인해줘" → \`mcp__firehub__list_audit_logs\` 직접 호출 (차단됨)
+✅ 올바른 예: 같은 요청 → \`Agent(subagent_type: "audit-analyst")\`
+
 **[라우팅 예외 — 지식 그래프 질문은 위임 금지, 메인이 직접 처리]**
 엔티티 간 **관계·연결·공통점·경로**를 묻는 질문(예: "여러 화재의 공통 발화원인", "A와 연관된 규정", "무엇 때문에 발생했나")은
 SQL 집계 분석이 아니라 지식 그래프 질의다. 이 유형만 위 표의 data-analyst 로 위임하지 **말고 메인이 직접** \`graphrag_query\` 로 처리한다
