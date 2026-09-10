@@ -274,6 +274,19 @@ describe('SYSTEM_PROMPT', () => {
       expect(section).toContain('Mode: DESIGN');
       expect(section).toContain('Mode: CREATE-APPROVED');
     });
+
+    // #621: delete_report_template 확인 승인에 create/update 전용 Mode: CREATE-APPROVED
+    // 마커가 잘못 붙어 template-builder 가 무한 확인 루프에 빠지던 결함 — 재발 방지 회귀 테스트.
+    // 파괴 작업 확인 승인 재위임에는 전용 Mode: DELETE-APPROVED 마커를 쓰고, CREATE-APPROVED 를
+    // 재사용하지 않는다는 지침이 SYSTEM_PROMPT에 명시돼 있는지 검증한다.
+    it('L3 Mode: DELETE-APPROVED 마커를 명시하고 CREATE-APPROVED 와 구분한다 (#621)', () => {
+      const section = SYSTEM_PROMPT.split('## L3. 통합 가드 패턴')[1];
+      expect(section).toBeDefined();
+      expect(section).toContain('Mode: DELETE-APPROVED');
+      // 파괴 작업 확인 승인에 CREATE-APPROVED 를 재사용하면 안 된다는 명시적 경고 문구 존재 확인
+      expect(section).toMatch(/CREATE-APPROVED[\s\S]*(적용되지 않는다|재사용하면 안 된다|절대.*쓰지 않는다)/);
+      expect(section).toContain('#621');
+    });
   });
 
   // 이슈 #254 회귀 방지 — 시스템 메타 노출 금지 정책.

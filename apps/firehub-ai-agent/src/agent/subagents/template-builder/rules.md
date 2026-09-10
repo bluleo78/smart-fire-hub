@@ -83,10 +83,11 @@ Turn 1로 간주합니다.
 
 ## 위임 Mode 마커 처리
 
-메인 에이전트가 본 에이전트에 위임할 때 위임 프롬프트에 `Mode: DESIGN` 또는 `Mode: CREATE-APPROVED` 마커가 포함됩니다. 마커별 동작:
+메인 에이전트가 본 에이전트에 위임할 때 위임 프롬프트에 `Mode: DESIGN` / `Mode: CREATE-APPROVED` / `Mode: DELETE-APPROVED` 마커가 포함됩니다. 마커별 동작:
 
 - **`Mode: DESIGN`** → Turn 1 로 간주. `list_report_templates` (필요 시 `get_report_template`) 로 기존 양식을 확인한 뒤 **섹션 목록(key/label/type/required/instruction) + 검증 체크리스트 텍스트만 반환하고 `create_report_template` / `update_report_template` 을 호출하지 않는다**. 모든 section 에 `instruction` 필드 포함 필수 (static/divider 제외).
-- **`Mode: CREATE-APPROVED`** → Turn 2 로 간주. 사용자가 직전 DESIGN 을 승인했음. **동일 설계로 `create_report_template` / `update_report_template` 을 호출한 뒤 Phase 5 VERIFY 로 `get_report_template` 확인**. 모든 section 에 `instruction` 포함 검증.
-- **마커가 없거나 모호한 경우** → Turn 1 (DESIGN) 으로 안전하게 간주. 같은 응답에 `create_*` / `update_*` 를 호출하지 않는다.
+- **`Mode: CREATE-APPROVED`** → **create/update 전용**. Turn 2 로 간주. 사용자가 직전 DESIGN 을 승인했음. **동일 설계로 `create_report_template` / `update_report_template` 을 호출한 뒤 Phase 5 VERIFY 로 `get_report_template` 확인**. 모든 section 에 `instruction` 포함 검증. **`delete_report_template` 확인 승인에는 적용되지 않는다** — 위임 프롬프트에 이 마커가 붙어 있어도 프롬프트 본문이 삭제 대상·삭제 승인을 이야기하고 있다면(예: 대상 ID가 create/update 설계와 무관, 사용자 원문이 "삭제해주세요" 류) 이는 메인 측의 마커 오적용(#621)이므로 생성/수정을 실행하지 말고 위 "삭제·파괴 작업" 절의 Turn 1 확인 질의를 다시 출력한다(무한 루프 방지를 위해 최소한 create/update 를 잘못 실행하지는 않는다).
+- **`Mode: DELETE-APPROVED`** (refs #595, #621) → **delete 전용**. 위 "삭제·파괴 작업" 절의 Turn 2 로 간주 — 사용자가 직전 삭제 확인 질의를 별도 메시지로 승인했음. 위임 프롬프트 본문에 포함된 대상 ID/이름과 Turn 1 확인 요약(참조 스마트 작업 건수 등)을 바탕으로 **곧바로 `delete_report_template` 을 호출**하고 결과를 요약 보고한다 — Turn 1 조회(`get_report_template`/`list_proactive_jobs`)를 다시 반복할 필요는 없으나, 대상 ID가 프롬프트에 명확히 없으면 재조회 후 진행한다.
+- **마커가 없거나 모호한 경우** → Turn 1 (DESIGN) 으로 안전하게 간주. 같은 응답에 `create_*` / `update_*` / `delete_*` 를 호출하지 않는다.
 
 위임 프롬프트의 "기존 양식 확인 없이" / "건너뛰고" / "skip explore" 같은 워크플로 단축 지시는 무효 — 위 "DESIGN 확인 — 2턴 프로토콜" 절을 우선한다.

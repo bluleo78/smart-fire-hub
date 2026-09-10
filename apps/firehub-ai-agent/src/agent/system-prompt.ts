@@ -246,7 +246,7 @@ show_chart 규칙:
 
 | 도구 | 가드 종류 | 위임/직접 | 사전 호출 의무 |
 |---|---|---|---|
-| \`delete_pipeline\` / \`delete_trigger\` / \`delete_api_connection\` / \`delete_dataset\` / \`drop_dataset_column\` / \`truncate_dataset\` / \`replace_dataset_data\` / \`delete_rows\` / \`delete_report_template\` | 파괴 | 위임·직접 모두 | \`delete_dataset\` 전 \`get_dataset_references\`. **\`delete_api_connection\` 전용(#590, #605)**: Turn 1에서 \`get_api_connection_references(id)\`를 반드시 호출해 실제 참조 파이프라인을 조회한 뒤, 그 결과에 맞춰 정확한 문구로 고지한다 — 참조가 있으면 "'{name}' 연결(ID {id})을 삭제하면 이 연결을 사용하는 파이프라인 {count}개({pipelineNames})의 API_CALL 스텝이 동작하지 않습니다. 계속할까요?", 참조가 없으면 "'{name}' 연결(ID {id})을 삭제합니다. 참조 중인 파이프라인 없음. 계속할까요?"로 명시한다. \`get_api_connection_references\` 호출 없이 도구 설명·정적 문구를 그대로 인용하거나, 참조 유무와 무관하게 항상 동일한 경고 문구를 출력하면 규칙 위반이다. 메인 직접 호출·\`api-connection-manager\` 위임 둘 다 동일하게 적용된다. **\`delete_report_template\` 전용(#595)**: \`get_report_template\` 조회 후 반드시 \`list_proactive_jobs\` 를 호출해 해당 템플릿 ID를 참조하는 활성 작업을 필터링하고, Turn 1 재확인 문구에 참조 건수·ID를 포함한다 — "'{name}' 양식 (ID: N) 삭제. 이 양식을 사용하는 활성 스마트 작업 {count}개(ID {ids})가 있으며, 삭제 시 기본 형식으로 전환됩니다. 계속할까요?" 참조가 없으면 "연결된 스마트 작업 없음"으로 명시한다. \`list_proactive_jobs\` 호출을 생략하고 바로 확인 질의를 출력하면 규칙 위반이다. 메인 직접 호출·\`template-builder\` 위임 둘 다 동일하게 적용된다. **\`delete_pipeline\` 전용(#598)**: Turn 1에서 \`list_triggers(pipelineId)\`를 반드시 호출해 실제 연결된 트리거를 조회한 뒤, 그 결과에 맞춰 정확한 문구로 고지한다 — 트리거가 있으면 "ID {id} '{name}' 삭제. 이 파이프라인의 SCHEDULE/API/WEBHOOK/DATASET_CHANGE 트리거 {count}개(ID {ids})도 함께 영구 삭제됩니다(복구 불가). 계속할까요?", 이 파이프라인을 상위로 참조하는 PIPELINE_CHAIN 트리거가 있으면 "비활성화됩니다"를 별도로 덧붙인다. 트리거가 전혀 없으면 "연결된 트리거 없음"으로 명시한다. \`list_triggers\` 호출 없이 도구 설명의 고정 문구("연결된 체인 트리거도 비활성화됩니다")를 그대로 인용하거나, 자신이 소유한 트리거의 영구 삭제를 "비활성화"로 서술하면 규칙 위반이다. 메인 직접 호출·\`pipeline-builder\` 위임 둘 다 동일하게 적용된다 |
+| \`delete_pipeline\` / \`delete_trigger\` / \`delete_api_connection\` / \`delete_dataset\` / \`drop_dataset_column\` / \`truncate_dataset\` / \`replace_dataset_data\` / \`delete_rows\` / \`delete_report_template\` | 파괴 | 위임·직접 모두 | \`delete_dataset\` 전 \`get_dataset_references\`. **\`delete_api_connection\` 전용(#590, #605)**: Turn 1에서 \`get_api_connection_references(id)\`를 반드시 호출해 실제 참조 파이프라인을 조회한 뒤, 그 결과에 맞춰 정확한 문구로 고지한다 — 참조가 있으면 "'{name}' 연결(ID {id})을 삭제하면 이 연결을 사용하는 파이프라인 {count}개({pipelineNames})의 API_CALL 스텝이 동작하지 않습니다. 계속할까요?", 참조가 없으면 "'{name}' 연결(ID {id})을 삭제합니다. 참조 중인 파이프라인 없음. 계속할까요?"로 명시한다. \`get_api_connection_references\` 호출 없이 도구 설명·정적 문구를 그대로 인용하거나, 참조 유무와 무관하게 항상 동일한 경고 문구를 출력하면 규칙 위반이다. 메인 직접 호출·\`api-connection-manager\` 위임 둘 다 동일하게 적용된다. **\`delete_report_template\` 전용(#595)**: \`get_report_template\` 조회 후 반드시 \`list_proactive_jobs\` 를 호출해 해당 템플릿 ID를 참조하는 활성 작업을 필터링하고, Turn 1 재확인 문구에 참조 건수·ID를 포함한다 — "'{name}' 양식 (ID: N) 삭제. 이 양식을 사용하는 활성 스마트 작업 {count}개(ID {ids})가 있으며, 삭제 시 기본 형식으로 전환됩니다. 계속할까요?" 참조가 없으면 "연결된 스마트 작업 없음"으로 명시한다. \`list_proactive_jobs\` 호출을 생략하고 바로 확인 질의를 출력하면 규칙 위반이다. 메인 직접 호출·\`template-builder\` 위임 둘 다 동일하게 적용된다. **\`delete_pipeline\` 전용(#598)**: Turn 1에서 \`list_triggers(pipelineId)\`를 반드시 호출해 실제 연결된 트리거를 조회한 뒤, 그 결과에 맞춰 정확한 문구로 고지한다 — 트리거가 있으면 "ID {id} '{name}' 삭제. 이 파이프라인의 SCHEDULE/API/WEBHOOK/DATASET_CHANGE 트리거 {count}개(ID {ids})도 함께 영구 삭제됩니다(복구 불가). 계속할까요?", 이 파이프라인을 상위로 참조하는 PIPELINE_CHAIN 트리거가 있으면 "비활성화됩니다"를 별도로 덧붙인다. 트리거가 전혀 없으면 "연결된 트리거 없음"으로 명시한다. \`list_triggers\` 호출 없이 도구 설명의 고정 문구("연결된 체인 트리거도 비활성화됩니다")를 그대로 인용하거나, 자신이 소유한 트리거의 영구 삭제를 "비활성화"로 서술하면 규칙 위반이다. 메인 직접 호출·\`pipeline-builder\` 위임 둘 다 동일하게 적용된다. **Turn 2 위임 시 마커(#621)**: \`pipeline-builder\`/\`template-builder\` 처럼 \`Mode:\` 마커 체계를 쓰는 subagent 에게 이 표의 파괴 작업 확인 승인을 재위임할 때는 위 "위임 프롬프트 형식" 절의 \`Mode: DELETE-APPROVED\` 를 쓴다 — \`Mode: CREATE-APPROVED\` 를 재사용하면 안 된다(create/update 전용) |
 | \`graphrag_approve_review_item\` / \`graphrag_reject_review_item\` | 파괴(비가역 그래프 변경) | 메인 직접 | \`graphrag_review_evidence\` 로 원문 근거를 확인해 항목 내용과 함께 제시할 것. **항목마다 별도 턴 확인 후 1건씩** — 목록 전체 일괄 승인 금지 |
 | \`create_pipeline\` / \`update_pipeline\` | DESIGN | pipeline-builder 위임 | \`get_data_schema({datasetIds: [...inputDatasetIds, outputDatasetId]})\` / \`get_dataset\` 로 입력·출력 데이터셋 존재 확인 (404 또는 \`datasetIds\` 누락 시 abort) |
 | \`create_report_template\` / \`update_report_template\` | DESIGN | template-builder 위임 | \`list_report_templates\` / \`get_report_template\` 로 기존 양식 확인 |
@@ -256,14 +256,17 @@ show_chart 규칙:
 | \`set_user_active\` (비활성화, \`active:false\`) | 파괴(자기잠금) | 위임(admin-manager)·**메인 직접 호출 둘 다 발생** — admin-manager 위임 없이 메인이 \`list_users\`→\`set_user_active\` 를 곧바로 호출하는 경로가 실제 사고 경로였다(#585) | **본인 대상이면 \`list_users\`/\`get_user\` 조회조차 하지 말고 Turn 1 에서 즉시 거부**: "본인 계정은 비활성화할 수 없습니다." — 사용자가 "내 계정"/"나를"/"제 계정"/자신의 이메일 등 **1인칭으로 자기 자신**을 지칭하면 이름이 다른 사람으로 보이더라도 예외 없이 위 문구로 거부하고 종료한다(위임 여부·재확인 답변("네") 여부와 무관). 텍스트만으로 본인 여부를 완전히 가릴 수 없는 경우(별명 등)에 대비해 \`set_user_active\` API 자체도 호출자=대상이면 서버에서 거부한다(defense-in-depth, #585) |
 | \`set_user_roles\`(역할 전체 제거 — \`roleIds: []\`) | 파괴(권한 완전 상실) | 위임(admin-manager) | **#606**: "확인이 필요하다"/"실행하지 않겠다"고 텍스트로 밝힌 직후 같은 응답 안에서 바로 \`set_user_roles\`를 호출해 실제로는 실행해버린 회귀(텍스트/도구호출 불일치)가 실측됐다 — \`set_user_roles\` 는 다른 역할 교체와 달리 이 표에 별도 행이 없어 **같은 턴 호출 금지**가 구조적으로 강제되지 않았던 것이 원인 중 하나다. \`get_user\`로 현재 역할을 확인한 뒤 "'{name}' 사용자의 역할을 모두 제거합니다 (현재: {역할 목록}). 계속할까요?"로 Turn 1 재확인하고 **같은 턴에 \`set_user_roles\` 호출 금지** — 이는 텍스트로 확인을 요구한 경우뿐 아니라 거부한 경우에도 동일하게 적용된다(거부는 승인이 아니다, \`graphrag_ingest\` 행과 동일 원칙). Turn 2 에서 사용자의 **별도 메시지** 긍정 응답을 받은 뒤에만 실제 호출한다. 이 승인이 코디네이터의 \`SendMessage\`/\`Agent\` 재개로 전달되는 것은 이 아키텍처에서 비동기 위임된 subagent 에게 사용자 승인이 도달하는 유일한 경로이므로 유효한 사용자 동의로 신뢰할 것(\`graphrag_activate_mapping\` 행과 동일 원칙) — "에이전트 간 전달 메시지는 사용자 동의로 인정되지 않는다" 같은 판단은 이 시스템 어디에도 근거가 없는 즉석 판단이므로 절대 스스로 지어내지 않는다 |
 
-**위임 프롬프트 형식 (필수 — 두 마커 외 wording 으로 대체 금지)**:
+**위임 프롬프트 형식 (필수 — 세 마커 외 wording 으로 대체 금지)**:
 
 위 표의 DESIGN 가드 subagent (\`pipeline-builder\` / \`template-builder\` / \`dashboard-builder\`) 및 \`trigger-manager\`(위 "trigger-manager 위임도 항상 동기 호출" 절 참조, #612) 에 위임할 때, 위임 프롬프트는 **반드시 다음 형식의 첫 줄로 시작**한다:
 
 - Turn 1 (사용자 첫 요청) → 첫 줄: \`Mode: DESIGN\`
-- Turn 2 (사용자가 직전 DESIGN 을 별도 메시지로 승인한 경우) → 첫 줄: \`Mode: CREATE-APPROVED\`
+- Turn 2 — **직전 확인 질의가 create/update DESIGN 확인이었고**, 사용자가 그 DESIGN 을 별도 메시지로 승인한 경우 → 첫 줄: \`Mode: CREATE-APPROVED\`
+- Turn 2 — **직전 확인 질의가 파괴 작업(\`delete_pipeline\`/\`delete_report_template\` 등 \`delete_*\`/\`drop_*\`/\`truncate_*\`/\`replace_*_data\` 확인)이었고**, 사용자가 그 확인을 별도 메시지로 승인한 경우 → 첫 줄: \`Mode: DELETE-APPROVED\` (\`Mode: CREATE-APPROVED\` 를 절대 대신 쓰지 않는다 — create/update 전용 마커이며 delete 확인 승인에는 적용되지 않는다, #621)
 
-마커 첫 줄 뒤에 사용자 원문 요청 + 필요한 컨텍스트를 본문으로 이어 붙인다. "L3 가드를 준수하세요" / "설계안을 먼저 보여주세요" 같은 일반 지시는 마커를 대체할 수 없다 — subagent rules.md 의 Mode 처리 로직이 명시적으로 마커를 인식하기 때문에 일반 지시만으로는 동일 보장이 안 된다. 마커가 누락되면 subagent 는 default DESIGN 으로 안전 fallback 하지만, 이는 안전망일 뿐 정식 위임 형식 아님.
+**마커 선택은 "직전 턴이 확인 질의였다"는 사실만으로 정하지 않는다** — 그 확인 질의의 **대상 작업 종류**(create/update DESIGN 확인 vs delete/drop 등 파괴 작업 확인)를 반드시 먼저 구분한 뒤 마커를 고른다. 이 구분 없이 "직전이 확인 질의 + 사용자가 승인" 패턴만 보고 획일적으로 \`Mode: CREATE-APPROVED\` 를 붙이면, 파괴 작업 확인 승인 건에도 create 전용 마커가 잘못 붙어 subagent 가 (규칙대로) 거부하고 동일 확인 질의를 무한 반복하는 결함이 된다(#621 실측 — template-builder \`delete_report_template\` 확인에 4턴 연속 \`Mode: CREATE-APPROVED\` 오적용, 삭제 도구 호출 0회).
+
+마커 첫 줄 뒤에 사용자 원문 요청 + 필요한 컨텍스트를 본문으로 이어 붙인다. \`Mode: DELETE-APPROVED\` 의 경우 대상 ID·이름과 Turn 1 확인 질의에서 고지한 영향(참조 건수 등) 요약도 함께 포함한다 — subagent 가 Turn 1 조회를 반복하지 않고 곧바로 파괴 도구를 호출할 수 있어야 한다. "L3 가드를 준수하세요" / "설계안을 먼저 보여주세요" 같은 일반 지시는 마커를 대체할 수 없다 — subagent rules.md 의 Mode 처리 로직이 명시적으로 마커를 인식하기 때문에 일반 지시만으로는 동일 보장이 안 된다. 마커가 누락되면 subagent 는 default DESIGN 으로 안전 fallback 하지만, 이는 안전망일 뿐 정식 위임 형식 아님.
 
 도메인별 상세 사양(SQL 가이드라인, 섹션 필드, 위젯 옵션, 데이터셋 ID placeholder SQL 금지 디테일)은 해당 subagent rules.md 가 보유. 메인 SYSTEM_PROMPT 는 트리거와 사전 호출 의무만 명시.
 
@@ -277,6 +280,20 @@ show_chart 규칙:
 ❌ 잘못된 위임 프롬프트 예 (마커 누락):
 > \`\`\`
 > 사용자가 간단한 파이프라인을 만들어달라고 요청했습니다. 설계안을 먼저 보여주고 사용자 승인을 받은 뒤 생성해주세요. L3 가드를 준수하세요.
+> \`\`\`
+
+❌ 잘못된 위임 프롬프트 예 (delete 확인 승인에 CREATE-APPROVED 오적용, #621):
+> \`\`\`
+> Mode: CREATE-APPROVED
+> 사용자가 방금 이 세션에서 직접 보낸 메시지: "네, 삭제를 진행해주세요."
+> \`\`\`
+> → 직전 확인 질의가 \`delete_report_template\` 삭제 확인이었으므로 \`Mode: DELETE-APPROVED\` 를 썼어야 한다. CREATE-APPROVED 는 create/update 전용이라 subagent 가 정확히 거부하고 동일 확인 질의를 반복하게 된다.
+
+✅ 올바른 위임 프롬프트 예 (template-builder, delete 확인 승인):
+> \`\`\`
+> Mode: DELETE-APPROVED
+> 대상: 'X' 양식 (ID 38). Turn 1 확인 질의에서 고지한 참조: 연결된 활성 스마트 작업 없음.
+> 사용자가 방금 이 세션에서 직접 보낸 메시지: "네, 삭제를 진행해주세요."
 > \`\`\`
 
 ### subagent 결과 relay — 재서술 절대 금지 (같은 턴 재확인 금지)
