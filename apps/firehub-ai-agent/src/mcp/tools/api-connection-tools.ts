@@ -40,6 +40,49 @@ const PLACEHOLDER_AUTH_VALUES = new Set([
 ]);
 
 /**
+ * 더미/placeholder 값이 접두사로 포함된 변형 패턴.
+ * (#619) 정확일치(Set) 검사만으로는 "dummyvalue12345", "testkey123"처럼
+ * 더미 단어 뒤에 다른 문자가 붙은 변형이 그대로 통과해, LLM의 prompt-level
+ * 판단(비결정적)에만 의존하게 되는 문제를 서버측에서 보강한다.
+ * 접두사 매칭만 사용해 "attestation-key-xyz" 같은 정상 값의 중간에
+ * 우연히 단어가 섞이는 오탐(false positive)은 배제한다.
+ */
+const PLACEHOLDER_PREFIXES = [
+  'dummy',
+  'placeholder',
+  'test',
+  'sample',
+  'example',
+  'fake',
+  'mock',
+  'changeme',
+  'change-me',
+  'change_me',
+  'todo',
+  'tbd',
+  'fixme',
+  'your-token',
+  'your_token',
+  'your-api-key',
+  'your_api_key',
+  'xxx',
+];
+
+/**
+ * 반복/순차 패턴 문자열 여부를 판별한다 (예: "aaaaaaaa", "000000000", "123456789").
+ * 실제 발급된 키는 통계적으로 균일하게 무작위이므로 이런 패턴은 거의 나오지 않는다 (#619).
+ */
+function isRepeatedOrSequentialPattern(value: string): boolean {
+  if (value.length < 4) return false;
+  // 단일 문자 반복 (예: "xxxxxxxx", "0000000000")
+  if (/^(.)\1+$/.test(value)) return true;
+  // 오름차순 연속 숫자 (예: "0123456789", "123456")
+  const digits = '0123456789';
+  if (/^\d+$/.test(value) && digits.includes(value)) return true;
+  return false;
+}
+
+/**
  * authConfig가 명백히 placeholder/더미 값을 포함하는지 검증한다.
  * 빈 문자열·공백만·`none`/`dummy` 등 placeholder는 거부.
  * authType별 필수 필드(API_KEY: apiKey+headerName, BEARER: token)도 함께 확인.
@@ -70,6 +113,19 @@ export function assertAuthConfigNotPlaceholder(
     if (PLACEHOLDER_AUTH_VALUES.has(normalized)) {
       throw new Error(
         `authConfig.${field}="${value}"는 명백한 placeholder 값입니다. 사용자에게 실제 인증 정보를 받기 전에는 등록할 수 없습니다 — 더미 권유·자가 보정 금지 (#255).`,
+      );
+    }
+    // 접두사 기반 변형 패턴 차단 — "dummyvalue12345", "testkey123" 등 (#619)
+    const matchedPrefix = PLACEHOLDER_PREFIXES.find((p) => normalized.startsWith(p));
+    if (matchedPrefix) {
+      throw new Error(
+        `authConfig.${field}="${value}"는 더미 패턴("${matchedPrefix}"로 시작)으로 보입니다. 사용자에게 실제 인증 정보를 받기 전에는 등록할 수 없습니다 — 더미 권유·자가 보정 금지 (#619).`,
+      );
+    }
+    // 반복/순차 패턴 차단 — "xxxxxxxx", "000000000", "123456789" 등 (#619)
+    if (isRepeatedOrSequentialPattern(normalized)) {
+      throw new Error(
+        `authConfig.${field}="${value}"는 반복/순차 패턴으로 실제 발급된 키로 보이지 않습니다. 사용자에게 실제 인증 정보를 재확인하세요 (#619).`,
       );
     }
     // 너무 짧은 값(< 3자) — 의도된 더미일 가능성 높음

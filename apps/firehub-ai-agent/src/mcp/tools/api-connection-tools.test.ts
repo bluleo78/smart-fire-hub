@@ -175,6 +175,75 @@ describe('API Connection MCP Tools', () => {
       expect(result.isError).toBeFalsy();
       expect(client.createApiConnection).toHaveBeenCalled();
     });
+
+    // (#619) 정확일치 Set만으로는 통과하던 "더미 단어 접두사" 변형 회귀 가드
+    it('rejects apiKey="dummyvalue12345" (dummy-prefixed variant)', async () => {
+      const result = await invokeTool(server, 'create_api_connection', {
+        name: 'noauth-dummy-variant',
+        authType: 'API_KEY',
+        authConfig: { apiKey: 'dummyvalue12345', headerName: 'X-Test-Key' },
+        baseUrl: 'https://example.com',
+      });
+      expect(result.isError).toBe(true);
+      expect(client.createApiConnection).not.toHaveBeenCalled();
+    });
+
+    it('rejects apiKey="testkey123" (test-prefixed variant)', async () => {
+      const result = await invokeTool(server, 'create_api_connection', {
+        name: 'noauth-test-variant',
+        authType: 'API_KEY',
+        authConfig: { apiKey: 'testkey123', headerName: 'X-Api-Key' },
+        baseUrl: 'https://example.com',
+      });
+      expect(result.isError).toBe(true);
+      expect(client.createApiConnection).not.toHaveBeenCalled();
+    });
+
+    it('rejects token="placeholdervalue999" (placeholder-prefixed variant)', async () => {
+      const result = await invokeTool(server, 'create_api_connection', {
+        name: 'noauth-placeholder-variant',
+        authType: 'BEARER',
+        authConfig: { token: 'placeholdervalue999' },
+        baseUrl: 'https://example.com',
+      });
+      expect(result.isError).toBe(true);
+      expect(client.createApiConnection).not.toHaveBeenCalled();
+    });
+
+    it('rejects repeated-character token ("xxxxxxxxxxxx")', async () => {
+      const result = await invokeTool(server, 'create_api_connection', {
+        name: 'noauth-repeated',
+        authType: 'BEARER',
+        authConfig: { token: 'xxxxxxxxxxxx' },
+        baseUrl: 'https://example.com',
+      });
+      expect(result.isError).toBe(true);
+      expect(client.createApiConnection).not.toHaveBeenCalled();
+    });
+
+    it('rejects sequential-digit token ("123456789")', async () => {
+      const result = await invokeTool(server, 'create_api_connection', {
+        name: 'noauth-sequential',
+        authType: 'BEARER',
+        authConfig: { token: '123456789' },
+        baseUrl: 'https://example.com',
+      });
+      expect(result.isError).toBe(true);
+      expect(client.createApiConnection).not.toHaveBeenCalled();
+    });
+
+    it('accepts key that merely contains a dummy word mid-string (not prefix)', async () => {
+      // "attestation-key-abc123f9" 처럼 접두사가 아닌 중간에 단어가 섞인 경우는
+      // 오탐 방지를 위해 통과시킨다 (접두사 매칭만 사용).
+      const result = await invokeTool(server, 'create_api_connection', {
+        name: 'real-key-with-substring',
+        authType: 'BEARER',
+        authConfig: { token: 'attestation-key-abc123f9' },
+        baseUrl: 'https://example.com',
+      });
+      expect(result.isError).toBeFalsy();
+      expect(client.createApiConnection).toHaveBeenCalled();
+    });
   });
 
   describe('update_api_connection — 더미 자격증명 차단 (#255)', () => {
