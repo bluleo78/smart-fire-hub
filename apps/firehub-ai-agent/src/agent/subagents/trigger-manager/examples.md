@@ -169,6 +169,7 @@ delete_trigger(pipelineId=5, triggerId=12) 호출
 
 > ❌ 잘못된 응답 (회귀 패턴): 도구 호출 0건으로 "list_triggers는 pipelineId가 필수라 알 수 없습니다. 트리거 32번이 속한 파이프라인 ID를 알려주시겠습니까?"라고 되묻는 것 — `list_pipelines`가 화이트리스트에 있다.
 > ❌ `list_pipelines` 없이 pipelineId를 1, 2, 3, 4, 5로 추측해 `list_triggers`를 부르는 것 — 실제 ID 목록을 먼저 얻는다.
+> ❌ **(refs #613)** 재확인 질문 앞에 영어 라벨/문장을 붙이는 것: "Found: 트리거 32번은 파이프라인 'fatal_fires_filter'(ID: 15)에 속한 'issue233_verify' 트리거입니다.\n\n'issue233_verify' 트리거…를 삭제합니다. 계속할까요?" 또는 "Found it: trigger ID 32 = \"issue233_verify\" (SCHEDULE, pipeline 15 = fatal_fires_filter)." — 탐색 결과를 알리는 문장 자체가 필요 없다. 재확인 질문 한 문장만 출력한다.
 
 ---
 

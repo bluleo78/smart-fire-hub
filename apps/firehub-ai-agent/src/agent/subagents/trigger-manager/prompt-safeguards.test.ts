@@ -96,4 +96,22 @@ describe('trigger-manager prompt safeguards (#577)', () => {
     expect(rules).toMatch(/## 대상 존재 확인/);
     expect(rules).toMatch(/존재 증거로 사용 금지/);
   });
+
+  it('agent.md/rules.md/examples.md에 삭제 Turn 1 탐색 중 영어 라벨 금지 규칙이 있어야 한다 (refs #613)', () => {
+    // 실측 회귀: "트리거 32번 삭제해줘" 요청에서 list_pipelines→list_triggers 순차 탐색 직후
+    // 최종 응답이 "Found: " / "Found it: " 같은 영어 라벨/문장으로 시작(비결정적, 관찰 1/4).
+    expect(agentMd).toMatch(/Found: [\s\S]*?Found it: /);
+    expect(agentMd).toMatch(/탐색 구간은 도구 호출만 반복하고 사용자 텍스트를 출력하지 않는다/);
+    // 실측 회귀 v2: "Found:" 패턴을 막은 뒤에도 "Mode is DESIGN, so..." 같은
+    // 내부 판단 근거를 설명하는 영어 문장이 새로 관찰됨 — 한국어/영어 무관하게 금지해야 한다.
+    expect(agentMd).toMatch(/이 금지는 \*\*한국어\/영어 무관\*\*하며/);
+    expect(agentMd).toMatch(/Mode is DESIGN, so no delete call/);
+
+    const rules = readPrompt('rules.md');
+    expect(rules).toMatch(/탐색 중 영어 라벨 \(refs #613\)/);
+
+    const examples = readPrompt('examples.md');
+    expect(examples).toMatch(/Found: 트리거 32번은 파이프라인/);
+    expect(examples).toMatch(/Found it: trigger ID 32/);
+  });
 });
