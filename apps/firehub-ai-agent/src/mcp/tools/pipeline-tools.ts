@@ -252,7 +252,7 @@ export function registerPipelineTools(
 
     safeTool(
       'delete_pipeline',
-      '파이프라인을 삭제합니다. 연결된 체인 트리거도 비활성화됩니다.',
+      '파이프라인을 삭제합니다. 이 파이프라인을 상위(upstream)로 참조하는 PIPELINE_CHAIN 트리거는 비활성화되지만, 이 파이프라인이 직접 소유한 트리거(SCHEDULE/API/WEBHOOK/DATASET_CHANGE 등)는 DB FK ON DELETE CASCADE로 영구 삭제됩니다(복구 불가). 삭제 전 list_triggers(pipelineId)로 실제 연결된 트리거를 조회해 개수·종류를 사용자에게 정확히 고지하세요.',
       {
         id: z.number().describe('파이프라인 ID'),
       },

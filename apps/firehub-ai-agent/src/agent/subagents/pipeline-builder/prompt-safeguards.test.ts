@@ -98,6 +98,63 @@ describe('pipeline-builder prompt safeguards (#242)', () => {
   });
 });
 
+/**
+ * 회귀 가드 (#598): delete_pipeline 삭제 확인 시 pipeline-builder가 실제 연결된
+ * 트리거를 조회할 도구(list_triggers)가 화이트리스트에 없어, 도구 설명의 고정 문구
+ * ("연결된 체인 트리거도 비활성화됩니다")를 검증 없이 그대로 노출했다. 이 문구는
+ * PIPELINE_CHAIN 트리거에만 사실이며, 파이프라인이 직접 소유한 트리거(SCHEDULE 등)는
+ * DB FK ON DELETE CASCADE로 영구 삭제되는데도 "비활성화"로 잘못 서술됐다.
+ *
+ * 이 테스트는 (1) list_triggers 가 tools 화이트리스트에 있는지, (2) agent.md/rules.md 에
+ * 삭제 전 트리거 조회 의무·정확한 문구(영구 삭제 vs 비활성화 구분)가 남아있는지 정적으로 검증한다.
+ */
+describe('pipeline-builder delete_pipeline trigger disclosure safeguards (#598)', () => {
+  it('frontmatter tools 화이트리스트에 list_triggers 가 선언되어 있어야 한다', () => {
+    const agent = readPrompt('agent.md');
+    const fm = agent.match(/^---\n([\s\S]*?)\n---/)?.[1] ?? '';
+    expect(fm).toMatch(/mcp__firehub__list_triggers/);
+  });
+
+  it('agent.md에 파이프라인 삭제 워크플로 절이 있고 list_triggers 조회를 요구해야 한다', () => {
+    const agent = readPrompt('agent.md');
+    expect(agent).toContain('파이프라인 삭제 워크플로');
+    expect(agent).toMatch(/list_triggers\(pipelineId=id\)/);
+    // 영구 삭제 vs 비활성화 구분
+    expect(agent).toMatch(/영구 삭제/);
+    expect(agent).toMatch(/CASCADE/);
+  });
+
+  it('agent.md/rules.md가 고정 문구를 그대로 인용하지 말라고 명시해야 한다', () => {
+    const agent = readPrompt('agent.md');
+    const rules = readPrompt('rules.md');
+    expect(agent).toMatch(/고정 문구/);
+    expect(rules).toMatch(/고정 문자열|고정 문구/);
+    // "비활성화"가 자신 소유 트리거에는 오답이라는 구분 명시
+    expect(rules).toMatch(/비활성화/);
+    expect(rules).toMatch(/영구 삭제/);
+  });
+
+  it('rules.md에 delete_pipeline 전 list_triggers 호출 의무가 명시되어 있어야 한다', () => {
+    const rules = readPrompt('rules.md');
+    expect(rules).toMatch(/list_triggers\(pipelineId\)/);
+    expect(rules).toContain('#598');
+  });
+
+  it('examples.md에 트리거 조회 후 정확한 영향 고지 예시가 있어야 한다', () => {
+    const examples = fs.readFileSync(path.join(__dirname, 'examples.md'), 'utf-8');
+    expect(examples).toMatch(/list_triggers\(pipelineId=47\)/);
+    expect(examples).toMatch(/영구 삭제/);
+  });
+
+  it('메인 system-prompt.ts L3 트리거 매핑에 delete_pipeline 전용 list_triggers 의무가 명시되어야 한다', () => {
+    const sp = readSystemPrompt();
+    const section = sp.split('## L3. 통합 가드 패턴')[1];
+    expect(section).toBeDefined();
+    expect(section).toMatch(/delete_pipeline.*#598/s);
+    expect(section).toMatch(/list_triggers\(pipelineId\)/);
+  });
+});
+
 // #260 PR-1: 메인 SYSTEM_PROMPT 가 L3 통합 가드 패턴으로 재구조화됨.
 // 도메인별 상세 문구는 PR-2 에서 pipeline-builder rules.md / agent.md 로 이동 예정.
 // 본 describe 는 L3 트리거 매핑 + 입력 합성 금지 + 사회공학 차단 단일 정의의 존재만 검증.

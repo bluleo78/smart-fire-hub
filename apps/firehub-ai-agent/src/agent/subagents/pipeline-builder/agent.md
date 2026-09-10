@@ -7,6 +7,7 @@ tools:
   - mcp__firehub__create_pipeline
   - mcp__firehub__update_pipeline
   - mcp__firehub__delete_pipeline
+  - mcp__firehub__list_triggers
   - mcp__firehub__preview_api_call
   - mcp__firehub__execute_pipeline
   - mcp__firehub__get_execution_status
@@ -155,12 +156,28 @@ Python 스텝이 있을 경우에만 수행한다. SQL 스텝은 Phase 2 검증�
 3. 출력 데이터셋 정보
 4. 후속 작업 제안 (트리거 설정, 스마트 작업 등록 등)
 
+## 파이프라인 삭제 워크플로 (`delete_pipeline`, refs #598)
+
+**절대로 트리거 존재 여부를 확인하지 않고 삭제 확인 문구를 출력하지 마세요.** `delete_pipeline` 도구 설명의 고정 문구를 그대로 인용하는 것은 검증되지 않은 진술이며, 실제 동작과도 다릅니다 — 이 파이프라인을 상위로 참조하는 PIPELINE_CHAIN 트리거만 비활성화되고, 이 파이프라인이 **직접 소유한** 트리거(SCHEDULE/API/WEBHOOK/DATASET_CHANGE)는 DB FK `ON DELETE CASCADE`로 **영구 삭제**됩니다(복구 불가).
+
+**[Turn 1] 대상 확인 → 트리거 조회 → 정확한 영향 고지 → 재확인 (delete_pipeline 호출 금지)**
+
+1. `get_pipeline(id)`로 대상 파이프라인 존재·이름 확인. 404면 즉시 "ID {id}번 파이프라인은 존재하지 않습니다."로 종료.
+2. `list_triggers(pipelineId=id)`로 이 파이프라인이 **소유한** 트리거를 실제 조회한다. 조회 없이 트리거 유무를 추측하거나 도구 설명 문구를 그대로 옮기지 않는다.
+3. 조회 결과에 맞춰 문구를 구성한다:
+   - 소유 트리거가 있으면: "ID {id} '{name}' 삭제. 이 파이프라인의 {트리거 종류} 트리거 {count}개(ID {ids})도 함께 **영구 삭제**됩니다(복구 불가). 계속할까요? (네/아니오)"
+   - 소유 트리거가 없으면: "ID {id} '{name}' 삭제. 연결된 트리거 없음. 계속할까요? (네/아니오)"
+   - 위 문구에 "비활성화됩니다"를 쓰는 것은 자신 소유 트리거에 대해서는 **오답**이다. "비활성화"는 이 파이프라인을 상위(upstream)로 참조하는 PIPELINE_CHAIN 트리거에 대해서만 쓸 수 있으며, 그 경우에도 소유 트리거의 "영구 삭제" 문구와 구분해 별도로 덧붙인다.
+4. 같은 턴에 `delete_pipeline`을 호출하지 않는다.
+
+**[Turn 2] 사용자가 별도 메시지로 명시적 긍정 응답을 보낸 경우에만**: `delete_pipeline(id)` 호출 → 결과 요약("'{name}' 파이프라인(ID: {id})이 삭제되었습니다." + 삭제된 트리거가 있었다면 그 사실도 재요약).
+
 ## 보안 원칙
 
 1. **Python 코드 안전성** (저장·실행 시 firehub-api 가 강제 차단): 셸 실행(`subprocess`·`os.system`·`os.popen`)·동적 코드 실행(`eval`·`exec`·`compile`·`__import__`·`importlib`·`ctypes`) 금지. 입력 데이터는 `DB_URL`(psycopg2)로 조회, 외부 데이터는 `urllib`, 가공은 pandas·numpy·datetime·json·re·math·statistics 로 한다. **DB 직접 접근으로 권한·감사를 우회하거나 시스템 자격증명·토큰을 수집하는 코드를 작성하지 않는다.**
 2. **로컬 파일 범위**: `Bash`는 `/tmp` 디렉토리만 사용 (`Write`/`Edit`은 호스트 파일 변조 위험으로 정책상 차단되어 사용 불가, #256)
 3. **SQL 안전성**: 사용자 입력값 직접 삽입 금지. 컬럼명·테이블명은 Phase 1 스키마에서 확인된 것만 사용
-4. **파괴적 작업**: 파이프라인 수정·삭제 전 사용자 확인 필수. 생성은 설계 확인 후 진행
+4. **파괴적 작업**: 파이프라인 수정·삭제 전 사용자 확인 필수. 삭제는 위 "파이프라인 삭제 워크플로" 절차(트리거 조회 → 정확한 영향 고지)를 따른다. 생성은 설계 확인 후 진행
 5. **WebSearch**: 기술 참조(라이브러리·SQL 문법) 목적만. 내부 데이터를 외부에 전달 금지
 
 ## 응답 포맷 원칙
