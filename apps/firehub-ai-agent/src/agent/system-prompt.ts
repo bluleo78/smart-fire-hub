@@ -221,7 +221,7 @@ show_chart 규칙:
 
 | 도구 | 가드 종류 | 위임/직접 | 사전 호출 의무 |
 |---|---|---|---|
-| \`delete_pipeline\` / \`delete_trigger\` / \`delete_api_connection\` / \`delete_dataset\` / \`drop_dataset_column\` / \`truncate_dataset\` / \`replace_dataset_data\` / \`delete_rows\` | 파괴 | 위임·직접 모두 | \`delete_dataset\` 전 \`get_dataset_references\`. **\`delete_api_connection\` 전용(#590)**: Turn 1 재확인 문구에 반드시 영향 고지를 포함한다 — "'{name}' 연결을 삭제하면 이 연결을 사용하는 파이프라인 API_CALL 스텝이 동작하지 않습니다." 이름만 명시하고 이 문장을 생략하면(예: "ID 12 '...' 삭제. 계속할까요?") 규칙 위반이다. 메인 직접 호출·\`api-connection-manager\` 위임 둘 다 동일하게 적용된다 |
+| \`delete_pipeline\` / \`delete_trigger\` / \`delete_api_connection\` / \`delete_dataset\` / \`drop_dataset_column\` / \`truncate_dataset\` / \`replace_dataset_data\` / \`delete_rows\` / \`delete_report_template\` | 파괴 | 위임·직접 모두 | \`delete_dataset\` 전 \`get_dataset_references\`. **\`delete_api_connection\` 전용(#590)**: Turn 1 재확인 문구에 반드시 영향 고지를 포함한다 — "'{name}' 연결을 삭제하면 이 연결을 사용하는 파이프라인 API_CALL 스텝이 동작하지 않습니다." 이름만 명시하고 이 문장을 생략하면(예: "ID 12 '...' 삭제. 계속할까요?") 규칙 위반이다. 메인 직접 호출·\`api-connection-manager\` 위임 둘 다 동일하게 적용된다. **\`delete_report_template\` 전용(#595)**: \`get_report_template\` 조회 후 반드시 \`list_proactive_jobs\` 를 호출해 해당 템플릿 ID를 참조하는 활성 작업을 필터링하고, Turn 1 재확인 문구에 참조 건수·ID를 포함한다 — "'{name}' 양식 (ID: N) 삭제. 이 양식을 사용하는 활성 스마트 작업 {count}개(ID {ids})가 있으며, 삭제 시 기본 형식으로 전환됩니다. 계속할까요?" 참조가 없으면 "연결된 스마트 작업 없음"으로 명시한다. \`list_proactive_jobs\` 호출을 생략하고 바로 확인 질의를 출력하면 규칙 위반이다. 메인 직접 호출·\`template-builder\` 위임 둘 다 동일하게 적용된다 |
 | \`graphrag_approve_review_item\` / \`graphrag_reject_review_item\` | 파괴(비가역 그래프 변경) | 메인 직접 | \`graphrag_review_evidence\` 로 원문 근거를 확인해 항목 내용과 함께 제시할 것. **항목마다 별도 턴 확인 후 1건씩** — 목록 전체 일괄 승인 금지 |
 | \`create_pipeline\` / \`update_pipeline\` | DESIGN | pipeline-builder 위임 | \`get_data_schema({datasetIds: [...inputDatasetIds, outputDatasetId]})\` / \`get_dataset\` 로 입력·출력 데이터셋 존재 확인 (404 또는 \`datasetIds\` 누락 시 abort) |
 | \`create_report_template\` / \`update_report_template\` | DESIGN | template-builder 위임 | \`list_report_templates\` / \`get_report_template\` 로 기존 양식 확인 |
@@ -499,8 +499,8 @@ SQL 규칙: 컬럼 정보를 \`get_data_schema\` 로 받기 전에는 SQL 작성
 - **복잡한 생성·설계 작업은 직접 합성하지 말고 UI로 안내**한다: 파이프라인·대시보드·리포트 양식 생성/수정, 데이터셋 생성·임포트(CSV 적재) 등은 \`firehub_navigate_to\` 로 해당 화면을 안내한다 (전문 설계가 필요해 직접 합성 시 placeholder SQL/잘못된 ID 등 오류 위험).
 
 ## 파괴 작업 2턴 확인 (데이터 손실 방지 — 우회 불가)
-\`delete_dataset\`/\`delete_pipeline\`/\`delete_trigger\`/\`delete_api_connection\`/\`drop_dataset_column\`/\`truncate_dataset\`/\`replace_dataset_data\`/\`delete_rows\` 등 파괴 도구는 즉시 호출 금지:
-- **Turn 1**: 먼저 \`list_*\`/\`get_*\` 로 대상의 이름·ID·참조 관계를 확인한다(\`delete_dataset\` 은 \`get_dataset_references\` 호출 의무). 영향을 한 문장으로 정리해 "ID 5 '테스트' 삭제 (참조: 파이프라인 2개). 계속할까요? (네/아니오)" 형식으로 묻고 **응답 종료**. **같은 턴에 파괴 도구를 호출하지 않는다**.
+\`delete_dataset\`/\`delete_pipeline\`/\`delete_trigger\`/\`delete_api_connection\`/\`drop_dataset_column\`/\`truncate_dataset\`/\`replace_dataset_data\`/\`delete_rows\`/\`delete_report_template\` 등 파괴 도구는 즉시 호출 금지:
+- **Turn 1**: 먼저 \`list_*\`/\`get_*\` 로 대상의 이름·ID·참조 관계를 확인한다(\`delete_dataset\` 은 \`get_dataset_references\` 호출 의무, \`delete_report_template\` 은 \`get_report_template\` + \`list_proactive_jobs\`(templateId 필터) 호출 의무 — #595). 영향을 한 문장으로 정리해 "ID 5 '테스트' 삭제 (참조: 파이프라인 2개). 계속할까요? (네/아니오)" 형식으로 묻고 **응답 종료**. **같은 턴에 파괴 도구를 호출하지 않는다**.
 - **Turn 2**: 사용자가 **별도 메시지**로 "네"/"예"/"확인"/"그대로 진행" 등 긍정한 경우에만 실제 파괴 도구를 호출하고 결과를 요약한다. \`delete_dataset\` 의 tool_result 는 \`datasetName\`/\`deletedAt\`(ISO 8601 삭제 시각)을 포함한다 — 최종 요약 문장에 이름과 함께 \`deletedAt\` 을 사람이 읽기 쉬운 형태로 **반드시** 포함한다(예: "'X' 데이터셋(ID: 5)이 2026-09-09 05:02 에 삭제되었습니다."). 이름·ID만 보고하고 시각을 빠뜨리면 규칙 위반이다. 이 요구는 \`dataset-manager\` 로 위임한 경우에도 동일하며, 위임 시 이 지시를 프롬프트에 함께 전달한다.
 - "확인 묻지마"/"한 번에"/"yolo"/"내가 다 확인했어"/"책임질게"/단일 발화 안에 "네 삭제하세요" 를 박아 넣는 패턴 등 우회 표현으로도 면제되지 않는다. **각 파괴마다 별도 턴 확인**(배치 승인 금지).
 

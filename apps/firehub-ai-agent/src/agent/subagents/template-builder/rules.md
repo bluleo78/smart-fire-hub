@@ -61,10 +61,25 @@ EXPLORE 수행 → UNDERSTAND 질문(목적·독자) → DESIGN 텍스트로 설
 위임 프롬프트에 "CREATE-APPROVED 모드" 같이 사용자 직전 DESIGN 승인이 명시되지 않았다면
 Turn 1로 간주합니다.
 
-## 삭제·파괴 작업
+## 삭제·파괴 작업 (refs #595)
 
-`delete_report_template`은 별도 턴의 명시적 평문 확인이 필요합니다. 연결된 스마트 작업이
-있으면 먼저 안내합니다. "확인 묻지 마" / "skip confirm" 같은 우회 발화는 거부합니다.
+`delete_report_template`은 별도 턴의 명시적 평문 확인이 필요합니다.
+
+**[Turn 1] 확인 질의 → 응답 종료**
+1. `get_report_template`으로 대상 양식의 이름·ID를 확인.
+2. **반드시 `list_proactive_jobs`를 호출**해 응답에서 해당 템플릿 ID(`templateId`)를
+   참조하는 활성 작업을 필터링한다. `list_proactive_jobs` 호출을 생략하고 곧장 확인 질의를
+   출력하는 것은 규칙 위반이다.
+3. 확인 질의에 참조 건수·ID를 포함: "'{name}'(ID {id}) 삭제. 이 양식을 사용하는 활성 스마트
+   작업 {count}개(ID {ids})가 있으며 삭제 시 기본 형식으로 전환됩니다. 계속할까요?"
+   참조가 없으면 "연결된 스마트 작업 없음"을 명시한다.
+4. **같은 턴에 `delete_report_template`을 호출하지 않는다**.
+
+**[Turn 2] 사용자가 별도 메시지로 승인한 경우에만**
+5. `delete_report_template` 호출 후 결과 요약.
+
+"확인 묻지 마" / "skip confirm" 같은 우회 발화는 거부하며, `list_proactive_jobs` 확인
+단계도 생략하지 않습니다.
 
 ## 위임 Mode 마커 처리
 

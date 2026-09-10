@@ -120,4 +120,36 @@ describe('main system-prompt safeguards for template-builder (L3 통합 가드, 
     expect(section).toBeDefined();
     expect(section).toMatch(/그대로 전달하지 않/);
   });
+
+  // #595: delete_report_template 삭제 확인 시 list_proactive_jobs 로 연결된 활성 작업을
+  // 확인·고지하지 않던 결함 회귀 가드.
+  it('L3 트리거 매핑에 delete_report_template 이 파괴 가드로 등록되고 list_proactive_jobs 사전 호출 의무가 명시된다', () => {
+    const sp = readSystemPrompt();
+    const section = sp.split('## L3. 통합 가드 패턴')[1];
+    expect(section).toBeDefined();
+    expect(section).toContain('delete_report_template');
+    expect(section).toMatch(/delete_report_template[\s\S]*?list_proactive_jobs/);
+  });
+
+  it('파괴 작업 2턴 확인 블록에 delete_report_template 과 list_proactive_jobs 사전 호출 의무가 명시된다', () => {
+    const sp = readSystemPrompt();
+    const section = sp.split('## 파괴 작업 2턴 확인')[1];
+    expect(section).toBeDefined();
+    expect(section).toContain('delete_report_template');
+    expect(section).toContain('list_proactive_jobs');
+  });
+});
+
+describe('template-builder delete safeguards (#595)', () => {
+  it('rules.md에 delete_report_template 삭제 전 list_proactive_jobs 호출 의무가 명시되어 있어야 한다', () => {
+    const rules = readPrompt('rules.md');
+    expect(rules).toMatch(/delete_report_template[\s\S]*?list_proactive_jobs/);
+    expect(rules).toContain('#595');
+  });
+
+  it('agent.md 보안 원칙에 양식 삭제 시 list_proactive_jobs 확인 의무가 명시되어 있어야 한다', () => {
+    const agent = readPrompt('agent.md');
+    expect(agent).toMatch(/list_proactive_jobs/);
+    expect(agent).toContain('#595');
+  });
 });
