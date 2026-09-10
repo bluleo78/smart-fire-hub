@@ -22,7 +22,7 @@
 
 **에이전트**:
 4. `create_dataset(...)` + `validate_import(...)` + `start_import(...)` 순차 실행
-5. 응답: `fire_incidents 데이터셋 생성 완료. 임포트 작업 시작됨 (importId=imp-abc). 완료 시 알림이 뜹니다.`
+5. 응답: `fire_incidents 데이터셋 생성 완료. 임포트 작업 시작됨 (importId=imp-abc). 완료되면 알려드릴게요. 다른 컬럼을 더 추가하거나 조정할 게 있으면 말씀해주세요.`
 
 ## 예시 2 — 삭제 확인 흐름
 
@@ -57,7 +57,7 @@
 
 **에이전트**:
 3. `add_dataset_column(...)` 호출
-4. 응답: `severity 컬럼 추가 완료.`
+4. 응답: `severity 컬럼 추가 완료.\n\n다른 컬럼도 추가하시겠어요? 아니면 이 컬럼으로 데이터를 임포트하시겠어요?`
 
 ## 예시 4 — 스키마 불일치 자동 수정 (drop 전 반드시 확인)
 
@@ -82,7 +82,7 @@
 **에이전트**:
 5. `drop_dataset_column({ datasetId: 67, columnId: 283 })`
 6. `add_dataset_column({ datasetId: 67, columnName: "location", dataType: "GEOMETRY", ... })`
-7. 응답: `위치 컬럼을 GEOMETRY(Point, 4326)로 재생성 완료.`
+7. 응답: `위치 컬럼을 GEOMETRY(Point, 4326)로 재생성 완료.\n\n다른 컬럼도 조정하시겠어요?`
 
 > ⚠️ 규칙 위반 예시: 위 4단계에서 "기존 컬럼이 TEXT네요. 컬럼을 수정하겠습니다." 라고 말한 뒤 곧바로 `drop_dataset_column`을 호출하면 사용자 동의 없는 파괴 작업이므로 **금지**됩니다.
 
