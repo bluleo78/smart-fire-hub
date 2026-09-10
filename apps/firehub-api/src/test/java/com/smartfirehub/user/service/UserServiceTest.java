@@ -146,11 +146,32 @@ class UserServiceTest extends IntegrationTestBase {
 
   @Test
   void setUserActive_success() {
-    // 일반 유저(ADMIN 아님) 비활성화는 정상 동작
-    userService.setUserActive(testUserId, false);
+    // 일반 유저(ADMIN 아님) 비활성화는 정상 동작 — callerId를 대상과 다르게 설정
+    userService.setUserActive(testUserId, false, testUserId + 1000);
 
     UserDetailResponse detail = userService.getUserById(testUserId);
     assertThat(detail.isActive()).isFalse();
+  }
+
+  @Test
+  void setUserActive_self_throwsException() {
+    // 자기 자신 비활성화 차단 — 사용자가 1인칭으로 자기 계정을 지칭해도 AI 에이전트가
+    // 이를 실행해버린 사고(#585)에 대한 서버측 방어선. callerId == 대상 userId 면 거부.
+    assertThatThrownBy(() -> userService.setUserActive(testUserId, false, testUserId))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("자기 자신");
+
+    UserDetailResponse detail = userService.getUserById(testUserId);
+    assertThat(detail.isActive()).isTrue();
+  }
+
+  @Test
+  void setUserActive_selfActivation_allowed() {
+    // 자기 자신을 "활성화"하는 것은 위험하지 않으므로 차단 대상이 아니다 (active=true 는 통과).
+    userService.setUserActive(testUserId, true, testUserId);
+
+    UserDetailResponse detail = userService.getUserById(testUserId);
+    assertThat(detail.isActive()).isTrue();
   }
 
   @Test
@@ -167,7 +188,7 @@ class UserServiceTest extends IntegrationTestBase {
 
     // 시스템에 활성 ADMIN이 testUserId 하나뿐인 상태에서 비활성화 시도
     // (setUp의 testUserId 외 다른 ADMIN이 없는 경우를 가정 — IntegrationTestBase 격리 환경)
-    assertThatThrownBy(() -> userService.setUserActive(testUserId, false))
+    assertThatThrownBy(() -> userService.setUserActive(testUserId, false, testUserId + 1000))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("마지막 활성 ADMIN");
   }
@@ -202,7 +223,7 @@ class UserServiceTest extends IntegrationTestBase {
         .execute();
 
     // 비활성 ADMIN 계정 활성화 — 예외 없이 성공해야 함
-    userService.setUserActive(adminUserId, true);
+    userService.setUserActive(adminUserId, true, adminUserId + 1000);
 
     UserDetailResponse detail = userService.getUserById(adminUserId);
     assertThat(detail.isActive()).isTrue();
@@ -236,7 +257,7 @@ class UserServiceTest extends IntegrationTestBase {
         .execute();
 
     // 2명의 활성 ADMIN 중 한 명 비활성화 — 예외 없이 성공해야 함
-    userService.setUserActive(testUserId, false);
+    userService.setUserActive(testUserId, false, testUserId + 1000);
 
     UserDetailResponse detail = userService.getUserById(testUserId);
     assertThat(detail.isActive()).isFalse();

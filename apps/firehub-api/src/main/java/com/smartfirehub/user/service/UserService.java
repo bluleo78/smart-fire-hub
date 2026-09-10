@@ -152,9 +152,17 @@ public class UserService {
   }
 
   @Transactional
-  public void setUserActive(Long userId, boolean active) {
+  public void setUserActive(Long userId, boolean active, Long callerId) {
     // 남의 테넌트 사용자를 비활성화(계정 잠금)할 수 없다. 존재 확인을 멤버십 확인으로 대체한다.
     requireTenantMember(userId);
+    // 자기 자신 비활성화 차단 — 즉시 로그인 불가 자기잠금(self-lockout) 방지 (#585).
+    // AI 에이전트(admin-manager subagent)가 "자기 자신 비활성화 금지" 규칙을 프롬프트
+    // 레벨에서 놓치더라도(사용자가 자기 자신임을 밝혔는데도 확인 절차만 거쳐 실행한 사고 사례),
+    // 실제 인증된 호출자와 대상 userId 를 서버가 직접 비교해 파괴적 액션을 원천 차단한다
+    // (defense-in-depth — 모델 판단에만 의존하지 않음).
+    if (!active && userId.equals(callerId)) {
+      throw new IllegalArgumentException("자기 자신의 계정은 비활성화할 수 없습니다");
+    }
     // 마지막 활성 ADMIN 비활성화 방지 — 모든 ADMIN이 잠기면 시스템 관리 불가 (#146)
     if (!active && userRepository.hasAdminRole(userId) && userRepository.countActiveAdmins() <= 1) {
       throw new IllegalStateException("마지막 활성 ADMIN 계정은 비활성화할 수 없습니다");

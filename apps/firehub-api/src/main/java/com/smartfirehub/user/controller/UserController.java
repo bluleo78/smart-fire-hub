@@ -77,8 +77,11 @@ public class UserController {
   @PutMapping("/{id}/active")
   @RequirePermission("user:write")
   public ResponseEntity<Void> setUserActive(
-      @PathVariable Long id, @Valid @RequestBody SetActiveRequest request) {
-    userService.setUserActive(id, request.active());
+      Authentication authentication,
+      @PathVariable Long id,
+      @Valid @RequestBody SetActiveRequest request) {
+    Long callerId = (Long) authentication.getPrincipal();
+    userService.setUserActive(id, request.active(), callerId);
     return ResponseEntity.noContent().build();
   }
 }

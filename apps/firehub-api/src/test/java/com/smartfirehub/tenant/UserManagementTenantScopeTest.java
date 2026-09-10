@@ -127,7 +127,9 @@ class UserManagementTenantScopeTest extends IntegrationTestBase {
   @DisplayName("비활성화: 남의 테넌트 사용자에게는 404 로 막힌다")
   void setUserActiveRejectsOtherTenantUser() {
     assertThatThrownBy(
-            () -> TenantContext.runScoped(tenantA, () -> userService.setUserActive(userB, false)))
+            () ->
+                TenantContext.runScoped(
+                    tenantA, () -> userService.setUserActive(userB, false, userA)))
         .isInstanceOf(UserNotFoundException.class);
 
     // 남의 테넌트 사용자가 실제로 비활성화되지 않았음을 확인한다 — 예외만 보고 만족하면, 예외를
