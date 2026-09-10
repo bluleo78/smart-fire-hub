@@ -105,10 +105,15 @@ describe('main system-prompt safeguards (#246)', () => {
     expect(sp).toMatch(/❌/);
   });
 
-  it('system-prompt.ts에 audit:read 권한 및 권한 없음 처리 규칙이 있어야 한다', () => {
+  // #616: system-prompt.ts의 "노출 금지" 규칙 자체가 audit:read 같은 리터럴 코드명을
+  // 예시로 박아두면, 모델이 그 문자열을 학습해 권한 메타 질문에 그대로 재사용하는
+  // 역효과가 있었다. 규칙은 추상 패턴(권한 메타)으로만 표현하고, 코드명 리터럴은
+  // 프롬프트에 남기지 않는다.
+  it('system-prompt.ts에 권한 메타 노출 금지 및 권한 없음 처리 규칙이 있어야 하며 audit:read 리터럴은 없어야 한다', () => {
     const sp = readSystemPrompt();
-    // L2 응답 출력 규칙에 audit:read 및 권한 없음 안내 포함
-    expect(sp).toContain('audit:read');
+    // L2 응답 출력 규칙에 권한 메타 노출 금지 및 권한 없음 안내 포함
+    expect(sp).toMatch(/권한 메타/);
     expect(sp).toMatch(/권한이 없습니다|권한 없음/);
+    expect(sp).not.toContain('audit:read');
   });
 });

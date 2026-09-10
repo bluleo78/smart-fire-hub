@@ -296,12 +296,18 @@ describe('SYSTEM_PROMPT', () => {
       expect(section).toMatch(/노출 금지|노출하지 않/);
     });
 
-    // 권한 어노테이션 노출 금지 명시 (audit:read, 관리자 전용)
-    it('권한 어노테이션(audit:read·관리자 전용) 노출 금지를 명시한다', () => {
+    // #616: 권한 코드명 노출 금지 규칙 자체가 "audit:read 권한" 같은 리터럴 예시를 프롬프트에
+    // 박아두면, 모델이 그 문자열을 학습해 권한 메타 질문에 그대로 재사용하는 역효과가 난다.
+    // 따라서 리터럴 코드명이 아니라 추상 패턴(`<리소스>:<동작>`)과 메타 질문 대응 지침으로 검증한다.
+    it('권한 코드명 노출 금지를 추상 패턴으로 명시하고 리터럴 코드명 예시를 포함하지 않는다', () => {
       const section = SYSTEM_PROMPT.split('## L2. 응답 출력 규칙')[1];
       expect(section).toBeDefined();
-      expect(section).toMatch(/audit:read/);
-      expect(section).toMatch(/관리자 전용/);
+      expect(section).toMatch(/권한 메타/);
+      expect(section).toMatch(/관리자 권한이 있어야/);
+      // 리터럴 코드명 예시(audit:read, user:read 등)가 프롬프트에 남아있지 않아야 함
+      expect(section).not.toMatch(/audit:read|user:read/);
+      // 권한 체계 자체를 묻는 메타 질문에도 코드명 대신 일반 표현으로 답하라는 지침이 있어야 함
+      expect(section).toMatch(/무슨 권한이 필요/);
     });
 
     // #581: 도구 호출 없는 되묻기 턴에서도 "위임하되" 류 라우팅 어휘를 쓰지 않도록 명시(코드 치환기의 1차 방어)
