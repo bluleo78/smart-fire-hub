@@ -129,6 +129,43 @@ class ProactiveJobControllerTest {
   }
 
   @Test
+  void createJob_unsupportedChannel_returnsBadRequest() throws Exception {
+    // 지원되지 않는 전달 채널(SMS)이 config.channels에 포함되면 저장 이전에 400으로 거부한다 (#594) —
+    // smart-job-manager가 프롬프트 규칙을 우회해 임의 채널을 전달하더라도 서버가 최종 방어선이 된다.
+    mockAuth("proactive:write");
+    Map<String, Object> config = new HashMap<>();
+    config.put("channels", List.of("SMS"));
+    CreateProactiveJobRequest req =
+        new CreateProactiveJobRequest(
+            "daily", "요약해줘", null, "0 0 9 * * *", "Asia/Seoul", null, config);
+
+    mockMvc
+        .perform(
+            post("/api/v1/proactive/jobs")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(req)))
+        .andExpect(status().isBadRequest());
+  }
+
+  @Test
+  void updateJob_unsupportedChannel_returnsBadRequest() throws Exception {
+    mockAuth("proactive:write");
+    Map<String, Object> config = new HashMap<>();
+    config.put("channels", List.of("SMS"));
+    UpdateProactiveJobRequest req =
+        new UpdateProactiveJobRequest(null, null, null, null, null, null, config);
+
+    mockMvc
+        .perform(
+            put("/api/v1/proactive/jobs/10")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(req)))
+        .andExpect(status().isBadRequest());
+  }
+
+  @Test
   void updateJob_withNullConfig_returnsNoContent() throws Exception {
     mockAuth("proactive:write");
     // config=null 분기 — ProactiveConfigParser를 타지 않는 경로

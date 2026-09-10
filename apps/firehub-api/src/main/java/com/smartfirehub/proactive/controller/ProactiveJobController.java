@@ -53,6 +53,8 @@ public class ProactiveJobController {
   public ResponseEntity<ProactiveJobResponse> createJob(
       @Valid @RequestBody CreateProactiveJobRequest request, Authentication authentication) {
     Long userId = (Long) authentication.getPrincipal();
+    ProactiveConfigParser.validateChannelTypes(
+        ProactiveConfigParser.getChannelTypes(request.config()));
     ProactiveConfigParser.parseChannels(request.config()).stream()
         .flatMap(ch -> ch.recipientEmails().stream())
         .forEach(ProactiveConfigParser::validateEmail);
@@ -68,6 +70,8 @@ public class ProactiveJobController {
       Authentication authentication) {
     Long userId = (Long) authentication.getPrincipal();
     if (request.config() != null) {
+      ProactiveConfigParser.validateChannelTypes(
+          ProactiveConfigParser.getChannelTypes(request.config()));
       ProactiveConfigParser.parseChannels(request.config()).stream()
           .flatMap(ch -> ch.recipientEmails().stream())
           .forEach(ProactiveConfigParser::validateEmail);

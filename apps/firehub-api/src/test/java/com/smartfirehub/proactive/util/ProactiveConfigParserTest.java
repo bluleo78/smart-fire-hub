@@ -229,4 +229,33 @@ class ProactiveConfigParserTest {
     assertThatThrownBy(() -> ProactiveConfigParser.validateEmail(null))
         .isInstanceOf(IllegalArgumentException.class);
   }
+
+  // ---------------------------------------------------------------------------
+  // validateChannelTypes (#594) — 지원되지 않는 전달 채널(SMS 등) 화이트리스트 검증
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void validateChannelTypes_supportedTypes_noException() {
+    assertThatNoException()
+        .isThrownBy(
+            () -> ProactiveConfigParser.validateChannelTypes(List.of("CHAT", "EMAIL", "WEBHOOK")));
+  }
+
+  @Test
+  void validateChannelTypes_unsupportedType_throws() {
+    assertThatThrownBy(() -> ProactiveConfigParser.validateChannelTypes(List.of("CHAT", "SMS")))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("SMS");
+  }
+
+  @Test
+  void validateChannelTypes_nullList_noException() {
+    assertThatNoException().isThrownBy(() -> ProactiveConfigParser.validateChannelTypes(null));
+  }
+
+  @Test
+  void validateChannelTypes_emptyList_noException() {
+    assertThatNoException()
+        .isThrownBy(() -> ProactiveConfigParser.validateChannelTypes(List.of()));
+  }
 }

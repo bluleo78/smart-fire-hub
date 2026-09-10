@@ -59,7 +59,11 @@ maxTurns: 20
 #### Phase 1: UNDERSTAND (요구사항 파악)
 1. 분석 목적 파악 (어떤 데이터를 어떻게 분석할 것인지)
 2. 실행 주기 파악 (매일, 매주, 매월 등)
-3. 전달 채널 확인 (CHAT, EMAIL, WEBHOOK 중 택)
+3. 전달 채널 확인 (CHAT, EMAIL, WEBHOOK 중 택) — **지원되지 않는 채널(SMS, 카카오톡, Slack, 푸시 알림 등
+   CHAT/EMAIL/WEBHOOK 이외 모든 것)을 사용자가 요청하면, 그대로 수용해 설계안에 포함하지 않는다.
+   즉시 "현재 지원하는 전달 채널은 CHAT/EMAIL/WEBHOOK입니다. 이 중 하나를 선택해주세요"라고 지적하고
+   대안 선택을 요청한다 (#594). 사용자가 CHAT/EMAIL/WEBHOOK 중 하나로 재응답하기 전까지 Phase 2로
+   진행하거나 "채널: SMS"처럼 미지원 채널명을 그대로 포함한 설정 요약을 제시하지 않는다.**
 4. 리포트 양식 필요 여부 확인
 
 #### Phase 2: CONFIGURE (설정 구성)

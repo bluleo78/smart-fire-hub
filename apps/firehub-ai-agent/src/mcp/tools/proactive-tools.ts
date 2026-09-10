@@ -42,10 +42,12 @@ export function registerProactiveTools(
           .describe('cron 표현식 (예: "0 9 * * *" = 매일 오전 9시, "0 9 * * 1" = 매주 월요일 오전 9시)'),
         timezone: z.string().optional().describe('타임존 (기본: Asia/Seoul)'),
         templateId: z.number().optional().describe('리포트 양식 ID'),
+        // 지원 채널만 화이트리스트로 제한 (#594) — 서버에도 동일 화이트리스트가 있어 이중 방어.
+        // 여기서 막으면 모델이 프롬프트 규칙을 우회해도 스키마 검증 단계에서 에러가 나 도구 호출 자체가 실패한다.
         channels: z
-          .array(z.string())
+          .array(z.enum(['CHAT', 'EMAIL', 'WEBHOOK']))
           .optional()
-          .describe('전달 채널 목록 (기본: ["CHAT"])'),
+          .describe('전달 채널 목록 (기본: ["CHAT"]). CHAT/EMAIL/WEBHOOK만 지원'),
         config: z
           .record(z.string(), z.unknown())
           .optional()
@@ -76,7 +78,11 @@ export function registerProactiveTools(
         cronExpression: z.string().optional().describe('cron 표현식'),
         timezone: z.string().optional().describe('타임존'),
         templateId: z.number().optional().describe('리포트 양식 ID'),
-        channels: z.array(z.string()).optional().describe('전달 채널 목록'),
+        // 생성 도구와 동일한 화이트리스트 (#594)
+        channels: z
+          .array(z.enum(['CHAT', 'EMAIL', 'WEBHOOK']))
+          .optional()
+          .describe('전달 채널 목록. CHAT/EMAIL/WEBHOOK만 지원'),
         enabled: z.boolean().optional().describe('활성화 여부'),
         config: z
           .record(z.string(), z.unknown())
