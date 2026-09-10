@@ -4,7 +4,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 /**
- * audit-analyst 프롬프트 회귀 가드 (#246).
+ * audit-analyst 프롬프트 회귀 가드 (#246, #589).
  *
  * 배경: inspector round 3에서 audit-analyst가 "관리자 전용" 표시에도
  *   (a) 권한 고지 없이 분석을 진행하고
@@ -14,6 +14,11 @@ import { fileURLToPath } from 'url';
  * 이 테스트는 agent.md / rules.md / system-prompt.ts 세 파일에
  * 권한 사전 고지 + PII 자발적 노출 금지 규칙이 정적으로 남아 있는지
  * (=프롬프트 수정 시 누군가가 가드를 실수로 제거하지 않았는지) 검증한다.
+ *
+ * #589: Phase 1.5 고지 문구/권한 에러 안내 문구(사용자 응답에 그대로 출력되는
+ * 인용문)에는 내부 권한 코드명(`audit:read`)이나 "관리자 전용" 같은 권한 메타
+ * 표현이 들어가면 안 된다 — 메인 system-prompt.ts L2 노출 금지 규칙과 충돌한다.
+ * frontmatter description(내부 라우팅 메타, 사용자 비노출)은 예외로 둔다.
  */
 
 // ESM에서 __dirname 대체
@@ -36,8 +41,21 @@ describe('audit-analyst prompt safeguards (#246)', () => {
     const agent = readPrompt('agent.md');
     expect(agent).toContain('Phase 1.5');
     expect(agent).toContain('PERMIT_NOTICE');
-    expect(agent).toContain('관리자 전용');
-    expect(agent).toContain('audit:read');
+  });
+
+  it('#589: Phase 1.5 사용자 응답 인용문에 권한 코드명/관리자 전용 표현이 없어야 한다', () => {
+    const agent = readPrompt('agent.md');
+    // frontmatter(내부 라우팅 메타)를 제외한 본문만 검사한다.
+    const body = agent.split(/^---$/m).slice(2).join('---');
+    // 사용자에게 그대로 출력되는 인용문(blockquote) 라인만 추출
+    const quotedLines = body
+      .split('\n')
+      .filter((line) => line.trimStart().startsWith('>'));
+    expect(quotedLines.length).toBeGreaterThan(0);
+    for (const line of quotedLines) {
+      expect(line).not.toContain('audit:read');
+      expect(line).not.toContain('관리자 전용');
+    }
   });
 
   it('agent.md에 권한 에러 수신 시 즉시 중단 규칙이 있어야 한다', () => {
