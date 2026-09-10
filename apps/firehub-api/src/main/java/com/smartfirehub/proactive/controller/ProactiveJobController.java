@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.security.RequirePermission;
 import com.smartfirehub.proactive.dto.CreateProactiveJobRequest;
 import com.smartfirehub.proactive.dto.ProactiveJobExecutionResponse;
+import com.smartfirehub.proactive.dto.ProactiveJobExecutionSummaryResponse;
 import com.smartfirehub.proactive.dto.ProactiveJobResponse;
 import com.smartfirehub.proactive.dto.ProactiveResult;
 import com.smartfirehub.proactive.dto.RecipientResponse;
@@ -110,9 +111,15 @@ public class ProactiveJobController {
     return ResponseEntity.accepted().build();
   }
 
+  /**
+   * 실행 이력 목록 — 리포트 본문(result.summary/sections 등)은 포함하지 않는 경량 뷰를 반환한다.
+   * 실행 건수가 많거나 리포트가 길면 본문 포함 시 응답이 수만 자에 달해 MCP 도구 결과 토큰 한도를 초과하고,
+   * 이를 우회하려는 극단적 offset 순차 개별 조회(N+1)를 유발했다 (#604). 리포트 본문이 필요하면
+   * {@link #getExecution}(단건 상세)을 사용해야 한다.
+   */
   @GetMapping("/{id}/executions")
   @RequirePermission("proactive:read")
-  public ResponseEntity<List<ProactiveJobExecutionResponse>> getExecutions(
+  public ResponseEntity<List<ProactiveJobExecutionSummaryResponse>> getExecutions(
       @PathVariable Long id,
       @RequestParam(defaultValue = "20") int limit,
       @RequestParam(defaultValue = "0") int offset,

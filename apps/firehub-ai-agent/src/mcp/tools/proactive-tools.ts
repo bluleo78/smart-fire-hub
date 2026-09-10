@@ -328,7 +328,10 @@ export function registerProactiveTools(
 
     safeTool(
       'list_job_executions',
-      '스마트 작업의 실행 이력 목록을 조회합니다. 최근 실행 결과, 상태, 소요 시간을 확인할 수 있습니다.',
+      '스마트 작업의 실행 이력 목록을 조회합니다. 상태·시작/종료 시각·전달 채널 등 요약 정보만 반환하며, ' +
+        '리포트 본문(summary/sections 등)은 포함하지 않습니다(#604). 특정 실행의 리포트 본문이 필요하면 ' +
+        '이 도구로 얻은 executionId로 get_execution을 호출하세요. 대량 조회 시 offset=0,1,2,...로 limit=1씩 ' +
+        '순차 반복 호출하지 말고, 필요한 개수만큼 limit을 한 번에 지정해 호출하세요.',
       {
         jobId: z.number(),
         limit: z.number().optional().describe('조회 개수 (기본 10)'),

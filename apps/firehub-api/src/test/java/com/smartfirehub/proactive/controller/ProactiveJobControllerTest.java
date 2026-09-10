@@ -22,6 +22,7 @@ import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.permission.service.PermissionService;
 import com.smartfirehub.proactive.dto.CreateProactiveJobRequest;
 import com.smartfirehub.proactive.dto.ProactiveJobExecutionResponse;
+import com.smartfirehub.proactive.dto.ProactiveJobExecutionSummaryResponse;
 import com.smartfirehub.proactive.dto.ProactiveJobResponse;
 import com.smartfirehub.proactive.dto.RecipientResponse;
 import com.smartfirehub.proactive.dto.UpdateProactiveJobRequest;
@@ -242,14 +243,13 @@ class ProactiveJobControllerTest {
   @Test
   void getExecutions_returnsList() throws Exception {
     mockAuth("proactive:read");
-    ProactiveJobExecutionResponse exec =
-        new ProactiveJobExecutionResponse(
+    ProactiveJobExecutionSummaryResponse exec =
+        new ProactiveJobExecutionSummaryResponse(
             99L,
             10L,
             "COMPLETED",
             LocalDateTime.now(),
             LocalDateTime.now(),
-            null,
             null,
             null,
             LocalDateTime.now());
@@ -261,7 +261,9 @@ class ProactiveJobControllerTest {
             get("/api/v1/proactive/jobs/10/executions")
                 .header("Authorization", "Bearer valid-token"))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$[0].id").value(99));
+        .andExpect(jsonPath("$[0].id").value(99))
+        // 목록 응답은 경량 뷰이므로 리포트 본문(result) 필드 자체가 없어야 한다 (#604)
+        .andExpect(jsonPath("$[0].result").doesNotExist());
   }
 
   @Test

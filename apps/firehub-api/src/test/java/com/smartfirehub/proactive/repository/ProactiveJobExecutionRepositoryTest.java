@@ -3,6 +3,7 @@ package com.smartfirehub.proactive.repository;
 import static com.smartfirehub.jooq.Tables.USER;
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.smartfirehub.proactive.dto.ProactiveJobExecutionSummaryResponse;
 import com.smartfirehub.proactive.dto.ReportListItemResponse;
 import com.smartfirehub.support.IntegrationTestBase;
 import java.time.LocalDateTime;
@@ -138,5 +139,43 @@ class ProactiveJobExecutionRepositoryTest extends IntegrationTestBase {
 
     assertThat(repository.findReportsByUserId(userId, 2, 0)).hasSize(2);
     assertThat(repository.findReportsByUserId(userId, 2, 2)).hasSize(1);
+  }
+
+  /**
+   * findSummariesByJobId 통합 테스트 (#604).
+   *
+   * <p>목록 endpoint 전용 경량 뷰가 리포트 본문(result)을 아예 담지 않으면서도 상태/시간 등 요약 정보와
+   * limit/offset 페이징은 findByJobId와 동일하게 동작하는지 검증한다.
+   */
+  @Test
+  void findSummariesByJobId_excludesResultButKeepsSummaryFields() {
+    Long jobId = createJob(userId, "요약 뷰 잡");
+    Long execId = createReport(jobId, "리포트 제목", "리포트 요약");
+    repository.updateDeliveredChannels(execId, List.of("CHAT", "EMAIL"));
+
+    List<ProactiveJobExecutionSummaryResponse> summaries =
+        repository.findSummariesByJobId(jobId, 20, 0);
+
+    assertThat(summaries).hasSize(1);
+    ProactiveJobExecutionSummaryResponse summary = summaries.get(0);
+    assertThat(summary.id()).isEqualTo(execId);
+    assertThat(summary.jobId()).isEqualTo(jobId);
+    assertThat(summary.status()).isEqualTo("COMPLETED");
+    assertThat(summary.deliveredChannels()).containsExactly("CHAT", "EMAIL");
+    // ProactiveJobExecutionSummaryResponse에는 result 필드 자체가 없다 — 리포트 본문 미포함을 타입 레벨로 보장
+  }
+
+  @Test
+  void findSummariesByJobId_appliesLimitAndOffsetOrderedByIdDesc() {
+    Long jobId = createJob(userId, "요약 페이징 잡");
+    Long first = createReport(jobId, "첫번째", "s1");
+    Long second = createReport(jobId, "두번째", "s2");
+    Long third = createReport(jobId, "세번째", "s3");
+
+    List<ProactiveJobExecutionSummaryResponse> page1 = repository.findSummariesByJobId(jobId, 2, 0);
+    List<ProactiveJobExecutionSummaryResponse> page2 = repository.findSummariesByJobId(jobId, 2, 2);
+
+    assertThat(page1).extracting(ProactiveJobExecutionSummaryResponse::id).containsExactly(third, second);
+    assertThat(page2).extracting(ProactiveJobExecutionSummaryResponse::id).containsExactly(first);
   }
 }

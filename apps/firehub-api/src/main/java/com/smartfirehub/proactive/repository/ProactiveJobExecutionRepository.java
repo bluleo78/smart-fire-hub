@@ -6,6 +6,7 @@ import static org.jooq.impl.DSL.*;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.proactive.dto.ProactiveJobExecutionResponse;
+import com.smartfirehub.proactive.dto.ProactiveJobExecutionSummaryResponse;
 import com.smartfirehub.proactive.dto.ReportListItemResponse;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -124,6 +125,32 @@ public class ProactiveJobExecutionRepository {
         .fetch(r -> toResponse(r));
   }
 
+  /**
+   * 실행 이력 목록(경량 뷰) 조회 — 컨트롤러 목록 endpoint 전용 (#604).
+   *
+   * <p>{@link #findByJobId}와 달리 {@code result}(리포트 본문) 컬럼 자체를 SELECT하지 않는다. 목록은 실행
+   * 건수만큼 반복되므로 본문을 포함하면 응답이 수만 자에 달해 MCP 도구 결과 토큰 한도를 초과할 수 있다. 본문이
+   * 필요하면 단건 조회({@link #findById})를 사용해야 한다.
+   */
+  public List<ProactiveJobExecutionSummaryResponse> findSummariesByJobId(
+      Long jobId, int limit, int offset) {
+    return dsl.select(
+            PJE_ID,
+            PJE_JOB_ID,
+            PJE_STATUS,
+            PJE_STARTED_AT,
+            PJE_COMPLETED_AT,
+            PJE_ERROR_MESSAGE,
+            PJE_DELIVERED_CHANNELS,
+            PJE_CREATED_AT)
+        .from(PROACTIVE_JOB_EXECUTION)
+        .where(PJE_JOB_ID.eq(jobId))
+        .orderBy(PJE_ID.desc())
+        .limit(limit)
+        .offset(offset)
+        .fetch(r -> toSummaryResponse(r));
+  }
+
   public Optional<ProactiveJobExecutionResponse> findById(Long id) {
     return dsl.select(
             PJE_ID,
@@ -213,5 +240,20 @@ public class ProactiveJobExecutionRepository {
     } catch (Exception e) {
       throw new RuntimeException("Failed to deserialize result", e);
     }
+  }
+
+  private ProactiveJobExecutionSummaryResponse toSummaryResponse(org.jooq.Record r) {
+    String channelsStr = r.get(PJE_DELIVERED_CHANNELS);
+    List<String> channels =
+        (channelsStr != null && !channelsStr.isBlank()) ? List.of(channelsStr.split(",")) : null;
+    return new ProactiveJobExecutionSummaryResponse(
+        r.get(PJE_ID),
+        r.get(PJE_JOB_ID),
+        r.get(PJE_STATUS),
+        r.get(PJE_STARTED_AT),
+        r.get(PJE_COMPLETED_AT),
+        r.get(PJE_ERROR_MESSAGE),
+        channels,
+        r.get(PJE_CREATED_AT));
   }
 }

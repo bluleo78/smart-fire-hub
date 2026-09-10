@@ -6,6 +6,7 @@ import com.smartfirehub.notification.service.SseEmitterRegistry;
 import com.smartfirehub.proactive.dto.AnomalyEvent;
 import com.smartfirehub.proactive.dto.CreateProactiveJobRequest;
 import com.smartfirehub.proactive.dto.ProactiveJobExecutionResponse;
+import com.smartfirehub.proactive.dto.ProactiveJobExecutionSummaryResponse;
 import com.smartfirehub.proactive.dto.ProactiveJobResponse;
 import com.smartfirehub.proactive.dto.RecipientResponse;
 import com.smartfirehub.proactive.dto.ReportListItemResponse;
@@ -199,11 +200,12 @@ public class ProactiveJobService {
   }
 
   @Transactional(readOnly = true)
-  public List<ProactiveJobExecutionResponse> getExecutions(
+  public List<ProactiveJobExecutionSummaryResponse> getExecutions(
       Long jobId, Long userId, int limit, int offset) {
     // job 소유권 확인
     getJob(jobId, userId);
-    return executionRepository.findByJobId(jobId, limit, offset);
+    // 목록은 경량 뷰(result 미포함)를 반환한다 — 리포트 본문은 get_execution(단건)으로 조회 (#604)
+    return executionRepository.findSummariesByJobId(jobId, limit, offset);
   }
 
   @Transactional(readOnly = true)

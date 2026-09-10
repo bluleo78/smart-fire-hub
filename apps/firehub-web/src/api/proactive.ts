@@ -92,6 +92,22 @@ export interface ProactiveJobExecution {
   completedAt: string | null;
 }
 
+/**
+ * 실행 이력 목록(GET /proactive/jobs/{jobId}/executions)의 행 1건 — 경량 뷰 (#604).
+ *
+ * 백엔드 `ProactiveJobExecutionSummaryResponse`와 대응한다. `result`(리포트 본문)를 포함하지 않는다 —
+ * 실행 건수가 많거나 리포트가 길면 목록 응답이 비대해지기 때문. 리포트 본문은 getExecution(단건, 위 타입)으로 조회한다.
+ */
+export interface ProactiveJobExecutionSummary {
+  id: number;
+  jobId: number;
+  status: 'RUNNING' | 'COMPLETED' | 'FAILED';
+  deliveredChannels: string[];
+  errorMessage: string | null;
+  startedAt: string;
+  completedAt: string | null;
+}
+
 export interface ProactiveJob {
   id: number;
   userId: number;
@@ -188,7 +204,7 @@ export const proactiveApi = {
   executeJob: (id: number) =>
     client.post<ProactiveJobExecution>(`/proactive/jobs/${id}/execute`),
   getJobExecutions: (jobId: number, params?: { limit?: number; offset?: number }) =>
-    client.get<ProactiveJobExecution[]>(`/proactive/jobs/${jobId}/executions`, { params }),
+    client.get<ProactiveJobExecutionSummary[]>(`/proactive/jobs/${jobId}/executions`, { params }),
   /** 특정 작업의 이상 탐지 이벤트 이력 조회 */
   getAnomalyEvents: (jobId: number, limit = 20) =>
     client.get<AnomalyEventRecord[]>(`/proactive/jobs/${jobId}/anomaly-events`, {

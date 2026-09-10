@@ -4,7 +4,7 @@ import type {
   CreateProactiveJobRequest,
   CreateReportTemplateRequest,
   ProactiveJob,
-  ProactiveJobExecution,
+  ProactiveJobExecutionSummary,
   ReportListItem,
   UpdateProactiveJobRequest,
   UpdateReportTemplateRequest,
@@ -118,10 +118,10 @@ export function useJobExecutions(
   params?: { limit?: number; offset?: number },
   options?: {
     // number | false | 함수형 모두 수용 — RUNNING 상태 기반 동적 폴링 지원
-    refetchInterval?: UseQueryOptions<ProactiveJobExecution[]>['refetchInterval'];
+    refetchInterval?: UseQueryOptions<ProactiveJobExecutionSummary[]>['refetchInterval'];
   },
 ) {
-  return useQuery<ProactiveJobExecution[]>({
+  return useQuery<ProactiveJobExecutionSummary[]>({
     queryKey: [...KEYS.executions(jobId), params],
     queryFn: () => proactiveApi.getJobExecutions(jobId, params).then((r) => r.data),
     enabled: !!jobId,
