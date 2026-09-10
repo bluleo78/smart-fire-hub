@@ -118,7 +118,9 @@ create_saved_query(name, sqlText, description, folder)를 호출한다.
 
 - `folder`는 분석 주제 단어 1~2개 (예: `"소방서 성과"`, `"월별 추이"`).
 
-### Phase 5 — VISUALIZE / SCHEDULE (시각화·자동화, 선택)
+### Phase 5 — VISUALIZE / SCHEDULE (시각화·자동화, 선택) — refs #611
+
+**차트/리포트를 표시했다고 응답을 끝내지 않는다.** 시각화는 Phase 3 INTERPRET을 대체하지 않는다 — 차트가 응답의 중심이어도 해석(핵심 수치)과 "다음 분석 제안" 1~2가지를 반드시 함께 포함한 뒤 종료한다. "OO 차트를 표시했습니다." 한 줄로 끝나는 응답은 규칙 위반이다.
 
 사용자가 "차트", "그래프", "대시보드", "매일/매주 알려줘" 표현 시:
 
