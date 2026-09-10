@@ -25,7 +25,17 @@ describe('adminApi (via FireHubApiClient)', () => {
 
   it('listUsers calls GET /users', async () => {
     const mock = {
-      content: [{ id: 2, username: 'kim', email: 'kim@test.com', name: '김철수', isActive: true, createdAt: '2026-01-01' }],
+      content: [
+        {
+          id: 2,
+          username: 'kim',
+          email: 'kim@test.com',
+          name: '김철수',
+          isActive: true,
+          createdAt: '2026-01-01',
+          roles: [{ id: 2, name: 'USER', description: null, isSystem: true }],
+        },
+      ],
       totalElements: 1,
       totalPages: 1,
       number: 0,
@@ -34,6 +44,8 @@ describe('adminApi (via FireHubApiClient)', () => {
     nock(BASE_URL).get('/users').reply(200, mock);
     const result = await client.listUsers();
     expect(result).toEqual(mock);
+    // 목록 조회에도 역할이 포함되는지 확인 (#586 회귀 방지)
+    expect(result.content[0].roles).toEqual([{ id: 2, name: 'USER', description: null, isSystem: true }]);
   });
 
   it('listUsers passes search query param', async () => {

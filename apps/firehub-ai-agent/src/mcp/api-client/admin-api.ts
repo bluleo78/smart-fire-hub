@@ -1,6 +1,6 @@
 import type { AxiosInstance } from 'axios';
 
-/** 사용자 목록 항목 */
+/** 사용자 목록 항목. 목록 조회(list_users)도 역할을 함께 포함한다(#586, 백엔드 배치 조회로 N+1 방지) */
 export interface UserResponse {
   id: number;
   username: string;
@@ -8,6 +8,7 @@ export interface UserResponse {
   name: string;
   isActive: boolean;
   createdAt: string;
+  roles: RoleResponse[];
 }
 
 /** 사용자 상세 (역할 포함) */

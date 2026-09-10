@@ -7,10 +7,12 @@ import com.smartfirehub.role.dto.RoleResponse;
 import com.smartfirehub.role.repository.RoleRepository;
 import com.smartfirehub.tenant.repository.MembershipRepository;
 import com.smartfirehub.user.dto.UserDetailResponse;
+import com.smartfirehub.user.dto.UserListResponse;
 import com.smartfirehub.user.dto.UserResponse;
 import com.smartfirehub.user.exception.UserNotFoundException;
 import com.smartfirehub.user.repository.UserRepository;
 import java.util.List;
+import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -34,13 +36,27 @@ public class UserService {
   private final PasswordEncoder passwordEncoder;
   private final MembershipRepository membershipRepository;
 
+  /**
+   * 사용자 목록 조회. 각 사용자의 역할도 함께 내려준다(#586).
+   *
+   * <p>역할은 페이지에 담긴 사용자 ID들을 모아 {@link RoleRepository#findByUserIds} 로 <b>한 번에</b>
+   * 배치 조회한다 — 사용자마다 {@code findByUserId}를 호출하면 페이지 크기만큼 N+1 쿼리가 발생하기
+   * 때문이다(AI 에이전트의 admin-manager subagent가 목록 표시에 역할 컬럼을 요구하는데, 기존에는
+   * 목록 조회 한 번으로는 역할을 채울 방법이 없어 항상 빈 컬럼으로 응답했다).
+   */
   @Transactional(readOnly = true)
-  public PageResponse<UserResponse> getUsers(String search, int page, int size) {
+  public PageResponse<UserListResponse> getUsers(String search, int page, int size) {
     long tenantId = TenantContext.require("사용자 목록 조회");
     List<UserResponse> content = userRepository.findAllPaginated(tenantId, search, page, size);
+    List<Long> userIds = content.stream().map(UserResponse::id).toList();
+    Map<Long, List<RoleResponse>> rolesByUserId = roleRepository.findByUserIds(userIds);
+    List<UserListResponse> withRoles =
+        content.stream()
+            .map(user -> UserListResponse.of(user, rolesByUserId.getOrDefault(user.id(), List.of())))
+            .toList();
     long totalElements = userRepository.countAll(tenantId, search);
     int totalPages = (int) Math.ceil((double) totalElements / size);
-    return new PageResponse<>(content, page, size, totalElements, totalPages);
+    return new PageResponse<>(withRoles, page, size, totalElements, totalPages);
   }
 
   /**

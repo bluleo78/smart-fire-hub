@@ -9,7 +9,7 @@ import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TenantRlsTestSupport;
 import com.smartfirehub.user.dto.UserDetailResponse;
-import com.smartfirehub.user.dto.UserResponse;
+import com.smartfirehub.user.dto.UserListResponse;
 import com.smartfirehub.user.exception.UserNotFoundException;
 import java.util.List;
 import org.jooq.DSLContext;
@@ -58,13 +58,37 @@ class UserServiceTest extends IntegrationTestBase {
 
   @Test
   void getUsers_returnsPaginatedResults() {
-    PageResponse<UserResponse> result = userService.getUsers("testuser@example.com", 0, 20);
+    PageResponse<UserListResponse> result = userService.getUsers("testuser@example.com", 0, 20);
 
     assertThat(result.content()).hasSizeGreaterThanOrEqualTo(1);
     assertThat(result.content().stream().anyMatch(u -> u.username().equals("testuser@example.com")))
         .isTrue();
     assertThat(result.page()).isEqualTo(0);
     assertThat(result.size()).isEqualTo(20);
+  }
+
+  /**
+   * 목록 조회도 상세 조회처럼 역할을 함께 반환해야 한다(#586) — admin-manager subagent가
+   * list_users() 한 번의 호출만으로 "역할" 컬럼을 채울 수 있어야 하므로, 목록 응답에 역할이
+   * 실려 있는지 회귀 테스트로 고정한다.
+   */
+  @Test
+  void getUsers_includesRolesPerUser() {
+    Long adminRoleId =
+        dsl.select(ROLE.ID).from(ROLE).where(ROLE.NAME.eq("ADMIN")).fetchOne(ROLE.ID);
+    dsl.insertInto(USER_ROLE)
+        .set(USER_ROLE.USER_ID, testUserId)
+        .set(USER_ROLE.ROLE_ID, adminRoleId)
+        .execute();
+
+    PageResponse<UserListResponse> result = userService.getUsers("testuser@example.com", 0, 20);
+
+    UserListResponse target =
+        result.content().stream()
+            .filter(u -> u.username().equals("testuser@example.com"))
+            .findFirst()
+            .orElseThrow();
+    assertThat(target.roles()).extracting("name").containsExactly("ADMIN");
   }
 
   @Test

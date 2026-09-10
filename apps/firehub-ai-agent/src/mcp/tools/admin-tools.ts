@@ -15,7 +15,7 @@ export function registerAdminTools(
   return [
     safeTool(
       'list_users',
-      '사용자 목록을 조회합니다. 이름·이메일 검색과 페이지네이션을 지원합니다.',
+      '사용자 목록을 조회합니다. 이름·이메일 검색과 페이지네이션을 지원하며, 각 사용자의 할당된 역할(roles)도 함께 반환합니다.',
       {
         search: z.string().optional().describe('이름 또는 이메일 검색어'),
         page: z.number().optional().describe('페이지 번호 (0부터 시작, 기본 0)'),

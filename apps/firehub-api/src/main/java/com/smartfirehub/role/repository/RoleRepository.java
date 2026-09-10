@@ -4,8 +4,11 @@ import static com.smartfirehub.jooq.Tables.*;
 
 import com.smartfirehub.role.dto.RoleResponse;
 import java.time.LocalDateTime;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
 import org.jooq.Record;
@@ -103,5 +106,35 @@ public class RoleRepository {
         .where(USER_ROLE.USER_ID.eq(userId))
         .orderBy(ROLE.ID.asc())
         .fetch(this::mapToRoleResponse);
+  }
+
+  /**
+   * 여러 사용자의 역할을 한 번의 쿼리로 조회한다 (#586).
+   *
+   * <p>목록 화면에서 사용자마다 {@link #findByUserId}를 호출하면 N+1 쿼리가 발생한다. 이 메서드는
+   * {@code user_role.user_id} 를 함께 조회해 사용자 ID → 역할 목록 맵으로 묶어 반환함으로써, 사용자
+   * 목록 조회 시 단일 배치 쿼리로 역할까지 채울 수 있게 한다.
+   *
+   * @param userIds 역할을 조회할 사용자 ID 목록
+   * @return 사용자 ID → 역할 목록(ROLE.ID asc 정렬) 맵. 역할이 없는 사용자는 키 자체가 없다.
+   */
+  public Map<Long, List<RoleResponse>> findByUserIds(List<Long> userIds) {
+    if (userIds == null || userIds.isEmpty()) {
+      return Map.of();
+    }
+    return dsl
+        .select(USER_ROLE.USER_ID, ROLE.ID, ROLE.NAME, ROLE.DESCRIPTION, ROLE.IS_SYSTEM)
+        .from(ROLE)
+        .join(USER_ROLE)
+        .on(USER_ROLE.ROLE_ID.eq(ROLE.ID))
+        .where(USER_ROLE.USER_ID.in(userIds))
+        .orderBy(USER_ROLE.USER_ID.asc(), ROLE.ID.asc())
+        .fetch()
+        .stream()
+        .collect(
+            Collectors.groupingBy(
+                r -> r.get(USER_ROLE.USER_ID),
+                LinkedHashMap::new,
+                Collectors.mapping(this::mapToRoleResponse, Collectors.toList())));
   }
 }

@@ -12,7 +12,7 @@ import com.smartfirehub.proactive.dto.RecipientResponse;
 import com.smartfirehub.proactive.service.ProactiveJobService;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TenantRlsTestSupport;
-import com.smartfirehub.user.dto.UserResponse;
+import com.smartfirehub.user.dto.UserListResponse;
 import com.smartfirehub.user.exception.UserNotFoundException;
 import com.smartfirehub.user.service.UserService;
 import java.util.List;
@@ -84,9 +84,9 @@ class UserManagementTenantScopeTest extends IntegrationTestBase {
   @Test
   @DisplayName("목록: 자기 테넌트 사용자만 보이고 남의 테넌트 사용자는 목록·총건수에서 빠진다")
   void listAndCountAreScopedToCurrentTenant() {
-    PageResponse<UserResponse> inA =
+    PageResponse<UserListResponse> inA =
         TenantContext.runScopedGet(tenantA, () -> userService.getUsers(prefix, 0, 20));
-    PageResponse<UserResponse> inB =
+    PageResponse<UserListResponse> inB =
         TenantContext.runScopedGet(tenantB, () -> userService.getUsers(prefix, 0, 20));
 
     assertThat(idsOf(inA))
@@ -154,8 +154,8 @@ class UserManagementTenantScopeTest extends IntegrationTestBase {
     assertThat(inB.stream().map(RecipientResponse::userId)).containsExactly(userB);
   }
 
-  private List<Long> idsOf(PageResponse<UserResponse> page) {
-    return page.content().stream().map(UserResponse::id).toList();
+  private List<Long> idsOf(PageResponse<UserListResponse> page) {
+    return page.content().stream().map(UserListResponse::id).toList();
   }
 
   private boolean isActive(Long userId) {

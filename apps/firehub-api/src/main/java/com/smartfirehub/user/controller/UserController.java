@@ -48,11 +48,11 @@ public class UserController {
 
   @GetMapping
   @RequirePermission("user:read")
-  public ResponseEntity<PageResponse<UserResponse>> getUsers(
+  public ResponseEntity<PageResponse<UserListResponse>> getUsers(
       @RequestParam(required = false) String search,
       @RequestParam(defaultValue = "0") int page,
       @RequestParam(defaultValue = "20") int size) {
-    PageResponse<UserResponse> users = userService.getUsers(search, page, size);
+    PageResponse<UserListResponse> users = userService.getUsers(search, page, size);
     return ResponseEntity.ok(users);
   }
 

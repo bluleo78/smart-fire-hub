@@ -108,11 +108,17 @@ class UserControllerTest {
   @Test
   void getUsers_withPermission_returnsList() throws Exception {
     mockAuthentication("user:read");
-    PageResponse<UserResponse> page =
+    PageResponse<UserListResponse> page =
         new PageResponse<>(
             List.of(
-                new UserResponse(
-                    1L, "testuser", "test@example.com", "Test User", true, LocalDateTime.now())),
+                new UserListResponse(
+                    1L,
+                    "testuser",
+                    "test@example.com",
+                    "Test User",
+                    true,
+                    LocalDateTime.now(),
+                    List.of(new RoleResponse(1L, "ADMIN", null, true)))),
             0,
             20,
             1,
@@ -123,6 +129,8 @@ class UserControllerTest {
         .perform(get("/api/v1/users").header("Authorization", "Bearer valid-token"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.content[0].username").value("testuser"))
+        // 목록 응답에도 역할이 포함되는지 확인 (#586 회귀 방지)
+        .andExpect(jsonPath("$.content[0].roles[0].name").value("ADMIN"))
         .andExpect(jsonPath("$.totalElements").value(1));
   }
 
