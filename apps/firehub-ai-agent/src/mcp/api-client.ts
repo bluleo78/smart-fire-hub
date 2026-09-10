@@ -39,6 +39,7 @@ import {
   type DashboardList,
   type AddDashboardWidgetParams,
   type DashboardWidget,
+  type DashboardDetail,
 } from './api-client/analytics-api.js';
 import {
   createAdminApi,
@@ -684,6 +685,11 @@ export class FireHubApiClient {
 
   listDashboards(params?: { search?: string }): Promise<DashboardList> {
     return this._analytics.listDashboards(params);
+  }
+
+  /** 대시보드 단건 상세(위젯 좌표 포함) 조회 (이슈 #583) */
+  getDashboardDetail(dashboardId: number): Promise<DashboardDetail> {
+    return this._analytics.getDashboardDetail(dashboardId);
   }
 
   addDashboardWidget(dashboardId: number, data: AddDashboardWidgetParams): Promise<DashboardWidget> {

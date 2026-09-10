@@ -360,7 +360,23 @@ export function registerAnalyticsTools(
       },
     ),
 
-    // 12. 채팅 인라인 차트 표시 (프론트엔드 전용, 백엔드 호출 없음)
+    // 12. 대시보드 단건 상세 조회 (위젯 좌표 포함, 이슈 #583)
+    // dashboard-builder가 기존 위젯과 겹치지 않는 위치를 계산하려면 실제 좌표가 필요하다.
+    // list_dashboards는 widgetCount만 반환하고 widgets는 항상 빈 배열이므로 이 도구로 보완한다.
+    safeTool(
+      'get_dashboard_detail',
+      '대시보드 하나의 상세 정보를 조회합니다. list_dashboards와 달리 각 위젯의 실제 좌표(positionX, positionY, width, height)를 포함합니다. ' +
+        '**add_chart_to_dashboard로 위젯을 추가하기 전에 반드시 이 도구로 대상 대시보드의 기존 위젯 배치를 먼저 확인**하여 겹치지 않는 위치를 계산하세요.',
+      {
+        dashboardId: z.number().describe('상세를 조회할 대시보드 ID'),
+      },
+      async (args: { dashboardId: number }) => {
+        const result = await apiClient.getDashboardDetail(args.dashboardId);
+        return jsonResult(result);
+      },
+    ),
+
+    // 13. 채팅 인라인 차트 표시 (프론트엔드 전용, 백엔드 호출 없음)
     safeTool(
       'show_chart',
       '채팅에 인라인 차트를 표시합니다. execute_analytics_query로 조회한 데이터를 차트로 시각화할 때 사용합니다.',

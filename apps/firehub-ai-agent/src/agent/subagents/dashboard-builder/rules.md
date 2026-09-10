@@ -21,10 +21,13 @@
 | `width` | 6 | 열 점유 수 (1~12) |
 | `height` | 4 | 행 점유 수 (1 이상) |
 
-**자동 배치 전략** (사용자가 위치를 지정하지 않은 경우):
-1. 첫 번째 차트: `positionX=0, positionY=0`
-2. 두 번째 차트: `positionX=6, positionY=0` (같은 행 오른쪽) — **단, width=12인 차트(TABLE/MAP)는 한 행을 단독 점유하므로 `positionX=0`으로 배치**
-3. 세 번째 차트 이후: `positionY`를 앞 행의 height만큼 증가하여 새 행에 배치 (기본 height=4 가정; TABLE/MAP은 height=6이므로 6씩 증가)
+**자동 배치 전략 (refs #583)**: `add_chart_to_dashboard`를 제안하기 전, 사용자가 위치를 지정했는지 여부와 무관하게 **항상 `get_dashboard_detail(dashboardId)`로 대상 대시보드의 기존 위젯 좌표를 먼저 조회**한다. 다른 세션/사용자가 이미 위젯을 추가했을 수 있으므로 "이번 대화에서 내가 추가한 개수"만으로 판단하지 않는다.
+
+1. `widgets` 배열이 비어 있으면(신규 대시보드): 첫 번째 차트 `positionX=0, positionY=0`
+2. `widgets` 배열이 있으면: 기존 위젯들의 점유 영역(각 위젯의 `positionX~positionX+width-1`, `positionY~positionY+height-1`)과 겹치지 않는 다음 위치를 계산한다
+   - 같은 행에 여유 열(합계 width ≤ 12)이 있으면 마지막 위젯의 `positionX + width`에 이어 붙인다 — **단, 새로 추가할 차트 또는 기존 위젯이 width=12(TABLE/MAP)이면 해당 행은 단독 점유이므로 이어 붙이지 않는다**
+   - 여유 열이 없거나 width=12 위젯이 껴 있으면 기존 위젯 중 `positionY + height`의 최댓값을 구해 새 행(`positionY = 그 최댓값`)에 `positionX=0`으로 배치
+3. 계산한 좌표가 실제로 기존 위젯과 겹치지 않는지 재확인한 뒤에만 사용자에게 제안한다. 조회 실패 등으로 좌표를 확정할 수 없으면 dash-012처럼 "정확한 좌표를 알 수 없어 추정값을 사용한다"고 **반드시 사용자에게 고지**한다 (선택적 고지 금지).
 
 ## 차트 타입별 권장 크기
 
@@ -51,6 +54,7 @@
 삭제 기능 없음. 잘못 추가한 위젯은 UI에서 직접 제거해야 한다. 추가 전:
 - 올바른 dashboardId인지 확인
 - 올바른 chartId인지 `list_charts` 도구로 재확인 (이름 기반 검색 시)
+- **`add_chart_to_dashboard` 제안 전 항상 `get_dashboard_detail`로 대상 대시보드의 기존 위젯 좌표를 조회한다** (refs #583) — 위치 파라미터를 사용자가 명시했더라도, 겹침 여부를 안내하려면 조회가 필요하다
 
 ## add_chart_to_dashboard — 파라미터 요약
 
@@ -62,6 +66,14 @@
 | `positionY` | 선택 | 기본 0 (자동 배치 전략 참조) |
 | `width` | 선택 | 기본 6 |
 | `height` | 선택 | 기본 4 |
+
+## get_dashboard_detail — 파라미터 요약
+
+| 파라미터 | 필수 | 설명 |
+|---------|------|------|
+| `dashboardId` | ✅ | 상세를 조회할 대시보드 ID |
+
+응답의 `widgets` 배열에 각 위젯의 `positionX`/`positionY`/`width`/`height`가 포함된다. `list_dashboards`는 `widgetCount`만 제공하고 `widgets`는 항상 빈 배열이므로 좌표 확인에는 사용할 수 없다.
 
 ## 위임 Mode 마커 처리
 

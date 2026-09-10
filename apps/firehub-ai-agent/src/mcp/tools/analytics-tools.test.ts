@@ -676,6 +676,44 @@ describe('Analytics MCP Tools', () => {
     expect(result.isError).toBe(true);
   });
 
+  // --- get_dashboard_detail (이슈 #583) ---
+  it('get_dashboard_detail calls apiClient.getDashboardDetail with dashboardId', async () => {
+    const mockDetail = {
+      id: 49,
+      name: '화재 현황',
+      description: null,
+      isShared: false,
+      autoRefreshSeconds: null,
+      widgets: [
+        { id: 1, chartId: 3, chartName: '지역별 히트맵', chartType: 'HEATMAP', positionX: 0, positionY: 0, width: 12, height: 6 },
+      ],
+      widgetCount: 1,
+      createdByName: 'admin',
+      createdBy: 1,
+      createdAt: '2026-02-28T00:00:00Z',
+      updatedAt: '2026-02-28T00:00:00Z',
+    };
+    (client.getDashboardDetail as ReturnType<typeof vi.fn>).mockResolvedValue(mockDetail);
+
+    const result = await invokeTool(server, 'get_dashboard_detail', { dashboardId: 49 });
+
+    expect(client.getDashboardDetail).toHaveBeenCalledWith(49);
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.widgets).toHaveLength(1);
+    expect(parsed.widgets[0].positionX).toBe(0);
+    expect(parsed.widgets[0].width).toBe(12);
+    expect(result.isError).toBeUndefined();
+  });
+
+  it('get_dashboard_detail returns isError when dashboard not found', async () => {
+    (client.getDashboardDetail as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Dashboard not found'));
+
+    const result = await invokeTool(server, 'get_dashboard_detail', { dashboardId: 9999 });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('Dashboard not found');
+  });
+
   // --- show_chart ---
   describe('show_chart', () => {
     it('should validate and return displayed result', async () => {
@@ -769,7 +807,7 @@ describe('Analytics MCP Tools', () => {
   });
 
   // --- tool registration ---
-  it('all 12 analytics tools are registered in the MCP server', () => {
+  it('all 13 analytics tools are registered in the MCP server', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const registeredTools = Object.keys((server.instance as any)._registeredTools);
     expect(registeredTools).toContain('execute_analytics_query');
@@ -783,6 +821,7 @@ describe('Analytics MCP Tools', () => {
     expect(registeredTools).toContain('create_dashboard');
     expect(registeredTools).toContain('add_chart_to_dashboard');
     expect(registeredTools).toContain('list_dashboards');
+    expect(registeredTools).toContain('get_dashboard_detail');
     expect(registeredTools).toContain('show_chart');
   });
 });

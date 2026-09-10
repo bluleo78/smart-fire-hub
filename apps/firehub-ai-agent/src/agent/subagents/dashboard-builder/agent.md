@@ -4,6 +4,7 @@ description: "대시보드를 생성하고 기존 차트를 위젯으로 추가�
 tools:
   - mcp__firehub__create_dashboard
   - mcp__firehub__list_dashboards
+  - mcp__firehub__get_dashboard_detail
   - mcp__firehub__list_charts
   - mcp__firehub__add_chart_to_dashboard
   - mcp__firehub__navigate_to
@@ -51,7 +52,8 @@ maxTurns: 20
 위젯 추가 시:
 1. list_charts()로 사용 가능한 차트 목록 조회
 2. 사용자가 원하는 차트 선택
-3. **레이아웃** 안내 (rules.md 참조): 위치(positionX, positionY)와 크기(width, height) 제안
+3. **get_dashboard_detail(dashboardId)로 대상 대시보드의 기존 위젯 좌표를 반드시 먼저 조회** (refs #583) — 위치를 지정하지 않은 요청이라도 생략하지 않는다
+4. **레이아웃** 안내 (rules.md 참조): 조회한 기존 위젯과 겹치지 않는 위치(positionX, positionY)와 크기(width, height) 제안
 
 ### Phase 3 — EXECUTE (실행)
 

@@ -201,6 +201,35 @@ export interface DashboardWidget {
   updatedAt: string;
 }
 
+// 대시보드 단건 상세 (위젯 좌표 포함) — 이슈 #583
+// GET /analytics/dashboards/{id} 는 list_dashboards와 달리 widgets 배열에
+// 각 위젯의 실제 positionX/positionY/width/height를 채워 반환한다.
+// dashboard-builder가 새 위젯 위치를 제안하기 전 기존 배치를 확인하는 용도로 사용.
+export interface DashboardDetailWidget {
+  id: number;
+  chartId: number;
+  chartName: string;
+  chartType: string;
+  positionX: number;
+  positionY: number;
+  width: number;
+  height: number;
+}
+
+export interface DashboardDetail {
+  id: number;
+  name: string;
+  description: string | null;
+  isShared: boolean;
+  autoRefreshSeconds: number | null;
+  widgets: DashboardDetailWidget[];
+  widgetCount: number;
+  createdByName: string;
+  createdBy: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export function createAnalyticsApi(client: AxiosInstance) {
   return {
     async executeAnalyticsQuery(sql: string, maxRows?: number): Promise<AnalyticsQueryResult> {
@@ -263,6 +292,12 @@ export function createAnalyticsApi(client: AxiosInstance) {
 
     async listDashboards(params?: { search?: string }): Promise<DashboardList> {
       const response = await client.get('/analytics/dashboards', { params });
+      return response.data;
+    },
+
+    // 대시보드 단건 상세 조회 (위젯 좌표 포함, 이슈 #583)
+    async getDashboardDetail(dashboardId: number): Promise<DashboardDetail> {
+      const response = await client.get(`/analytics/dashboards/${dashboardId}`);
       return response.data;
     },
 
