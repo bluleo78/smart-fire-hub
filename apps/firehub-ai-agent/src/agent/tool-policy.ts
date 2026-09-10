@@ -68,7 +68,30 @@ export const DISALLOWED_TOOLS: readonly string[] = [
  */
 export const DELEGATION_ONLY_TOOLS: readonly string[] = [
   'mcp__firehub__list_audit_logs',
+  // #590: audit-analyst(#588)와 동일한 회귀 — 생성/수정 확인(DESIGN) 단계가 Agent 위임 없이
+  // 메인에서 직접 처리되면 agent.md 보안 원칙 1(인증 값 대화 반복 금지)이 우회된다.
+  // list/get/delete 는 agent.md 담당표가 메인 직접 호출을 명시적으로 허용(단순 조회, 파괴
+  // 확인은 L3 트리거 매핑 표에서 "위임·직접 모두")하므로 제외 — create/update 만 차단한다.
+  'mcp__firehub__create_api_connection',
+  'mcp__firehub__update_api_connection',
 ] as const;
+
+/**
+ * DELEGATION_ONLY_TOOLS 차단 사유 메시지 — 도구별 매핑 (#590).
+ *
+ * #588 초기 구현은 메시지를 단일 하드코딩 문자열로 두어, 이후 도구가 추가되면 엉뚱한 사유
+ * (예: audit 문구가 api-connection 차단에 노출)가 그대로 재사용되는 결함이 있었다. 도구별로
+ * 분리해 각자의 사유를 정확히 반환한다. L2 준수: mcp__firehub__* 식별자·subagent 코드명은
+ * 담지 않는다(테스트: tool-policy.test.ts L2 준수 케이스).
+ */
+const DELEGATION_ONLY_REASONS: Readonly<Record<string, string>> = {
+  'mcp__firehub__list_audit_logs':
+    'admin-only tool blocked by policy (#588): audit log lookups must be delegated to the audit review subagent',
+  'mcp__firehub__create_api_connection':
+    'admin-only tool blocked by policy (#590): API connection creation must be delegated to the connection management subagent',
+  'mcp__firehub__update_api_connection':
+    'admin-only tool blocked by policy (#590): API connection updates must be delegated to the connection management subagent',
+};
 
 /**
  * (Legacy) 허용 도구 화이트리스트.
@@ -130,7 +153,7 @@ export function checkToolPolicy(
   // 동일 문자열을 사용) mcp__firehub__* 도구 식별자·subagent 코드명(*-analyst 등)을 담지 않는다
   // — toolName 원문은 서버 로그(호출부 console.warn)에서만 확인한다.
   if (!parentToolUseId && DELEGATION_ONLY_TOOLS.includes(toolName)) {
-    return `admin-only tool blocked by policy (#588): audit log lookups must be delegated to the audit review subagent`;
+    return DELEGATION_ONLY_REASONS[toolName] ?? 'admin-only tool blocked by policy: this action must be delegated to a specialized subagent';
   }
 
   // #276: Agent 위임 시 subagent_type 백스톱. input 이 없으면(호출부가 미전달) 검사 생략 — BC.

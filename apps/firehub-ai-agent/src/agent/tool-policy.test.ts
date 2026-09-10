@@ -170,4 +170,57 @@ describe('tool-policy (#256, #266)', () => {
       expect(checkToolPolicy('mcp__firehub__list_datasets', undefined, undefined, null)).toBeNull();
     });
   });
+
+  // #590: API 연결 생성/수정 위임 전용 백스톱 — audit-analyst(#588)와 동일한 parentToolUseId 판별.
+  // 삭제/조회(list_api_connections·get_api_connection·delete_api_connection)는 agent.md 가
+  // 메인 직접 호출을 명시적으로 허용하므로 대상에서 제외한다.
+  describe('API 연결 생성/수정 위임 전용 백스톱 (#590)', () => {
+    it('DELEGATION_ONLY_TOOLS 에 create/update_api_connection 이 포함된다 (회귀 가드)', () => {
+      expect(DELEGATION_ONLY_TOOLS).toContain('mcp__firehub__create_api_connection');
+      expect(DELEGATION_ONLY_TOOLS).toContain('mcp__firehub__update_api_connection');
+    });
+
+    it('메인이 parent_tool_use_id 없이 create_api_connection 을 직접 호출하면 차단된다', () => {
+      const r = checkToolPolicy('mcp__firehub__create_api_connection', undefined, undefined, null);
+      expect(r).toMatch(/blocked by policy \(#590\)/);
+    });
+
+    it('메인이 parent_tool_use_id 없이 update_api_connection 을 직접 호출하면 차단된다', () => {
+      const r = checkToolPolicy('mcp__firehub__update_api_connection', undefined, undefined, null);
+      expect(r).toMatch(/blocked by policy \(#590\)/);
+    });
+
+    it('parentToolUseId 가 있으면(위임된 api-connection-manager 내부 호출) 허용된다', () => {
+      expect(
+        checkToolPolicy('mcp__firehub__create_api_connection', undefined, undefined, 'toolu_conn1'),
+      ).toBeNull();
+      expect(
+        checkToolPolicy('mcp__firehub__update_api_connection', undefined, undefined, 'toolu_conn2'),
+      ).toBeNull();
+    });
+
+    it('list/get/delete_api_connection 은 메인 직접 호출도 허용된다 (agent.md 담당표)', () => {
+      expect(checkToolPolicy('mcp__firehub__list_api_connections', undefined, undefined, null)).toBeNull();
+      expect(checkToolPolicy('mcp__firehub__get_api_connection', undefined, undefined, null)).toBeNull();
+      expect(checkToolPolicy('mcp__firehub__delete_api_connection', undefined, undefined, null)).toBeNull();
+    });
+
+    it('차단 메시지에 mcp__firehub__* 도구 식별자·subagent 코드명을 노출하지 않는다 (L2 준수)', () => {
+      const r1 = checkToolPolicy('mcp__firehub__create_api_connection', undefined, undefined, null) ?? '';
+      const r2 = checkToolPolicy('mcp__firehub__update_api_connection', undefined, undefined, null) ?? '';
+      for (const r of [r1, r2]) {
+        expect(r).not.toContain('mcp__firehub__');
+        expect(r).not.toContain('api-connection-manager');
+      }
+    });
+
+    it('#588 차단 메시지와 사유 문구가 서로 섞이지 않는다 (도구별 매핑 회귀 가드)', () => {
+      const auditReason = checkToolPolicy('mcp__firehub__list_audit_logs', undefined, undefined, null) ?? '';
+      const createReason =
+        checkToolPolicy('mcp__firehub__create_api_connection', undefined, undefined, null) ?? '';
+      expect(auditReason).not.toBe(createReason);
+      expect(createReason).not.toMatch(/audit/i);
+      expect(auditReason).not.toMatch(/connection/i);
+    });
+  });
 });
