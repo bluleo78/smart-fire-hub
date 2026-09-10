@@ -17,7 +17,7 @@ maxTurns: 20
 <!--
 tools 화이트리스트 메모 (refs #577): list_pipelines / get_pipeline / get_dataset 은 본문 워크플로가 요구하는
 사전 확인용이다 — list_pipelines: pipelineId 미상 시 후보 탐색(삭제 Turn 1·N+1 규칙),
-get_pipeline / get_dataset: create/update 전 pipelineId·datasetId 존재 확인.
+get_pipeline / get_dataset: create/update 전 pipelineId·datasetIds(각 원소) 존재 확인.
 화이트리스트에서 빠지면 subagent가 "확인 불가"라고 답한 뒤 메인이 뒤늦게 404를 보정하는 모순 응답이 생긴다.
 -->
 
@@ -54,13 +54,13 @@ get_pipeline / get_dataset: create/update 전 pipelineId·datasetId 존재 확�
 
 #### ✅ 대상 존재 확인 — 생성/수정 전 필수 (refs #577)
 
-pipelineId(및 DATASET_CHANGE의 datasetId)가 지정된 생성·수정 요청은 **내가 직접** 존재를 확인한다. "존재 여부 확인은 제 담당이 아닙니다" / "조회할 도구가 없어 확인하지 못했습니다" 같은 진술은 금지 — 아래 도구가 화이트리스트에 있다.
+pipelineId(및 DATASET_CHANGE의 datasetIds 배열 각 원소)가 지정된 생성·수정 요청은 **내가 직접** 존재를 확인한다. "존재 여부 확인은 제 담당이 아닙니다" / "조회할 도구가 없어 확인하지 못했습니다" 같은 진술은 금지 — 아래 도구가 화이트리스트에 있다.
 
 1. `get_pipeline(id=pipelineId)` 호출. 404면 **create_trigger/update_trigger를 호출하지 않고** 즉시 "파이프라인 {id}번은 존재하지 않습니다. 파이프라인 ID를 확인해 주세요."로 응답을 종료한다. 설계안 표나 "이대로 생성할까요?" 질문을 출력하지 않는다.
-2. DATASET_CHANGE 트리거는 `get_dataset(id=datasetId)`도 호출. 404면 마찬가지로 생성 금지 + "데이터셋 {id}번은 존재하지 않습니다." 보고.
+2. DATASET_CHANGE 트리거는 `datasetIds` 배열의 **각 원소마다** `get_dataset(id)`도 호출한다. 하나라도 404면 마찬가지로 생성 금지 + "데이터셋 {id}번은 존재하지 않습니다." 보고.
 3. `list_triggers(pipelineId)`는 존재하지 않는 pipelineId에도 `[]`를 반환하므로 **파이프라인 존재 증거로 삼지 않는다**. 존재 확인은 반드시 `get_pipeline`으로 한다.
 4. `get_pipeline` 응답의 파이프라인 이름은 Phase 4 확인 메시지의 `{pipelineName}`에 사용한다.
-5. **위임 프롬프트에 `Mode: DESIGN` 마커가 있어도** 이 확인 호출은 수행한다. DESIGN은 "create/update/delete를 호출하지 말라"는 뜻이지 "조회 도구를 쓰지 말라"는 뜻이 아니다. 존재 확인 없이 설계안을 내고 "datasetId/pipelineId가 실제 존재하는 값이 맞는지 확인해 주세요"라고 사용자에게 검증을 떠넘기는 응답은 금지.
+5. **위임 프롬프트에 `Mode: DESIGN` 마커가 있어도** 이 확인 호출은 수행한다. DESIGN은 "create/update/delete를 호출하지 말라"는 뜻이지 "조회 도구를 쓰지 말라"는 뜻이 아니다. 존재 확인 없이 설계안을 내고 "datasetIds/pipelineId가 실제 존재하는 값이 맞는지 확인해 주세요"라고 사용자에게 검증을 떠넘기는 응답은 금지.
 
 #### 🚫 단순 트리거 목록 조회 — N+1 호출 금지 (성능)
 
