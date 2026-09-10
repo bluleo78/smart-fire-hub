@@ -16,7 +16,7 @@ API 연결 생성 시 다음 순서로 정보를 수집한다:
 
 1. **연결 이름** — 서비스명 + 목적 (예: `"Make.com API"`)
 2. **Base URL** — 서비스의 기본 URL (예: `https://api.make.com/v2`). trailing slash 제거 필수.
-3. **인증 유형** — API_KEY / BEARER / OAUTH2
+3. **인증 유형** — API_KEY / BEARER
 4. **authConfig** — 인증 유형별 설정 (아래 섹션 참조)
 5. **헬스체크 경로** (선택) — `/health`, `/status` 등. 생략 시 주기적 점검 미수행.
 

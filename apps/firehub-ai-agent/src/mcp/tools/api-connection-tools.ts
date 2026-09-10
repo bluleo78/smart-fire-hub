@@ -123,7 +123,7 @@ export function registerApiConnectionTools(
       {
         name: z.string().describe('연결 이름 (예: Make.com API)'),
         description: z.string().optional().describe('연결 설명'),
-        authType: z.enum(['API_KEY', 'BEARER', 'OAUTH2']).describe('인증 유형'),
+        authType: z.enum(['API_KEY', 'BEARER']).describe('인증 유형'),
         authConfig: z
           .record(z.string(), z.string())
           .describe(
