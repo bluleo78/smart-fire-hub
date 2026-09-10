@@ -1,6 +1,6 @@
 ---
 name: smart-job-manager
-description: "스마트 작업을 종합적으로 관리하는 전문 에이전트. 작업 생성/수정, 실행 이력 분석, 문제 진단까지 담당. 단순 목록 조회나 즉시 실행은 위임하지 마세요."
+description: "스마트 작업을 종합적으로 관리하는 전문 에이전트. 작업 생성/수정, 즉시 실행 및 결과 확인(execute_proactive_job/list_job_executions/get_execution), 실행 이력 분석, 문제 진단까지 담당(#614 — 이전 문구가 '즉시 실행은 위임하지 마세요'로 이 에이전트의 담당표와 모순돼 메인이 위임을 완전히 우회하는 회귀가 있었다). 단순 목록 조회(list_proactive_jobs)만 위임하지 마세요."
 tools:
   - mcp__firehub__list_proactive_jobs
   - mcp__firehub__create_proactive_job

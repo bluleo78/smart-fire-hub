@@ -22,6 +22,8 @@ describe('tool-policy (#256, #266)', () => {
     for (const t of ['ToolSearch', 'mcp__claude-search__*']) {
       expect(DISALLOWED_TOOLS).toContain(t);
     }
+    // 코디네이터 전용 메타 도구 (#614)
+    expect(DISALLOWED_TOOLS).toContain('Monitor');
   });
 
   it('ALLOWED_TOOLS (옵션 양수 화이트리스트 보조) 에 핵심 도구가 포함된다', () => {
@@ -51,6 +53,10 @@ describe('tool-policy (#256, #266)', () => {
   it('meta-search 도구(ToolSearch / mcp__claude-search__*)는 차단된다', () => {
     expect(checkToolPolicy('ToolSearch')).toMatch(/blocked/);
     expect(checkToolPolicy('mcp__claude-search__find')).toMatch(/blocked/);
+  });
+
+  it('코디네이터 전용 메타 도구(Monitor)는 차단된다 (#614)', () => {
+    expect(checkToolPolicy('Monitor')).toMatch(/blocked/);
   });
 
   it('채팅 UX 도구(AskUserQuestion 등)는 허용된다 (#266)', () => {
@@ -221,6 +227,48 @@ describe('tool-policy (#256, #266)', () => {
       expect(auditReason).not.toBe(createReason);
       expect(createReason).not.toMatch(/audit/i);
       expect(auditReason).not.toMatch(/connection/i);
+    });
+  });
+
+  // #614: 스마트 작업 즉시 실행/결과 확인 위임 전용 백스톱 — #588/#590 과 동일한 parentToolUseId 판별.
+  // 실제 관찰된 회귀: 스마트 작업 생성 완료 직후 "지금 실행해줘" 후속 요청에서 메인이 smart-job-manager
+  // 위임 없이 이 3개 도구를 직접 호출했다(위임 완전 우회).
+  describe('스마트 작업 즉시 실행·결과 확인 위임 전용 백스톱 (#614)', () => {
+    it('DELEGATION_ONLY_TOOLS 에 execute_proactive_job/list_job_executions/get_execution 이 포함된다 (회귀 가드)', () => {
+      expect(DELEGATION_ONLY_TOOLS).toContain('mcp__firehub__execute_proactive_job');
+      expect(DELEGATION_ONLY_TOOLS).toContain('mcp__firehub__list_job_executions');
+      expect(DELEGATION_ONLY_TOOLS).toContain('mcp__firehub__get_execution');
+    });
+
+    it('메인이 parent_tool_use_id 없이 세 도구를 직접 호출하면 모두 차단된다', () => {
+      for (const tool of [
+        'mcp__firehub__execute_proactive_job',
+        'mcp__firehub__list_job_executions',
+        'mcp__firehub__get_execution',
+      ]) {
+        const r = checkToolPolicy(tool, undefined, undefined, null);
+        expect(r).toMatch(/blocked by policy \(#614\)/);
+      }
+    });
+
+    it('parentToolUseId 가 있으면(위임된 smart-job-manager 내부 호출) 허용된다', () => {
+      for (const tool of [
+        'mcp__firehub__execute_proactive_job',
+        'mcp__firehub__list_job_executions',
+        'mcp__firehub__get_execution',
+      ]) {
+        expect(checkToolPolicy(tool, undefined, undefined, 'toolu_job1')).toBeNull();
+      }
+    });
+
+    it('차단 메시지에 mcp__firehub__* 도구 식별자·subagent 코드명을 노출하지 않는다 (L2 준수)', () => {
+      const r = checkToolPolicy('mcp__firehub__execute_proactive_job', undefined, undefined, null) ?? '';
+      expect(r).not.toContain('mcp__firehub__');
+      expect(r).not.toContain('smart-job-manager');
+    });
+
+    it('list_proactive_jobs(단순 목록 조회)는 이 정책의 영향을 받지 않는다 (agent.md 담당표)', () => {
+      expect(checkToolPolicy('mcp__firehub__list_proactive_jobs', undefined, undefined, null)).toBeNull();
     });
   });
 });

@@ -51,6 +51,12 @@ export const DISALLOWED_TOOLS: readonly string[] = [
   // meta-search 우회 (#216)
   'ToolSearch',
   'mcp__claude-search__*',
+  // 코디네이터 전용 메타 도구 (#614): Monitor 는 최상위 코디네이터가 백그라운드 Bash 작업을
+  // 감시하기 위한 도구인데, 이 서비스는 요청당 단일 query() 스트림만 실행하고 메인은 라우팅/위임
+  // 역할만 한다 — Monitor 로 감시할 백그라운드 작업 자체가 구조적으로 없다. 실제 관찰된 회귀:
+  // 스마트 작업 실행 완료를 기다리며 메인이 Monitor 를 직접 호출했다가 실패하자 그 판단 과정을
+  // 영어 내부 독백으로 사용자에게 노출했다(#614). Monitor 를 아예 차단해 이 경로 자체를 없앤다.
+  'Monitor',
 ] as const;
 
 /**
@@ -74,6 +80,15 @@ export const DELEGATION_ONLY_TOOLS: readonly string[] = [
   // 확인은 L3 트리거 매핑 표에서 "위임·직접 모두")하므로 제외 — create/update 만 차단한다.
   'mcp__firehub__create_api_connection',
   'mcp__firehub__update_api_connection',
+  // #614: audit-analyst(#588)와 동일한 회귀의 새 표면 — 스마트 작업 생성 완료 직후 "지금
+  // 실행해줘" 후속 요청에서 메인이 smart-job-manager 위임 없이 이 3개 도구를 직접 호출하고,
+  // 실행 완료를 기다리며 코디네이터 전용 도구(Monitor)/Bash 로 직접 폴링을 시도하다 실패하자
+  // 내부 독백을 사용자 text 로 노출했다. smart-job-manager 의 agent.md 담당표는 "즉시 실행 및
+  // 결과 확인"을 자신의 책임으로 명시하므로, 메인의 top-level 직접 호출만 차단하고
+  // smart-job-manager 내부(parentToolUseId 존재)의 정당한 호출은 통과시킨다.
+  'mcp__firehub__execute_proactive_job',
+  'mcp__firehub__list_job_executions',
+  'mcp__firehub__get_execution',
 ] as const;
 
 /**
@@ -91,6 +106,12 @@ const DELEGATION_ONLY_REASONS: Readonly<Record<string, string>> = {
     'admin-only tool blocked by policy (#590): API connection creation must be delegated to the connection management subagent',
   'mcp__firehub__update_api_connection':
     'admin-only tool blocked by policy (#590): API connection updates must be delegated to the connection management subagent',
+  'mcp__firehub__execute_proactive_job':
+    'admin-only tool blocked by policy (#614): smart job execution must be delegated to the smart job management subagent',
+  'mcp__firehub__list_job_executions':
+    'admin-only tool blocked by policy (#614): smart job execution history lookups must be delegated to the smart job management subagent',
+  'mcp__firehub__get_execution':
+    'admin-only tool blocked by policy (#614): smart job execution result lookups must be delegated to the smart job management subagent',
 };
 
 /**
