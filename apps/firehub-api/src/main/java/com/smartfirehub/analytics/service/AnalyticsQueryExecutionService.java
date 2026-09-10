@@ -381,7 +381,13 @@ public class AnalyticsQueryExecutionService {
    *       <li>비어있음 — 빈 응답 (defensive: 외부에서 ?datasetIds= 빈값으로 호출 시 전체 폴백 방지)
    *       <li>값 있음 — 해당 id 들만 필터
    *     </ul>
+   *     <p>#596: {@code @Transactional}이 없으면 {@code TenantAwareTransactionManager.doBegin()}이
+   *     실행되지 않아 {@code app.tenant_id} GUC가 주입되지 않는다. 그 결과 V107 이후 RLS가 걸린
+   *     {@code dataset}/{@code dataset_column} 테이블에 대한 이 raw-SQL LEFT JOIN이 예외 없이 항상
+   *     0행을 반환해(fail-closed) datasetId/datasetName이 늘 null이 된다(형제 메서드 {@link
+   *     #execute}는 이미 {@code @Transactional}이 있어 문제가 없었다).
    */
+  @Transactional(readOnly = true)
   public SchemaInfoResponse getSchemaInfo(List<Long> datasetIds) {
     if (datasetIds != null && datasetIds.isEmpty()) {
       return new SchemaInfoResponse(List.of());
