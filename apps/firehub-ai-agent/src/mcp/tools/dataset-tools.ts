@@ -190,8 +190,12 @@ export function registerDatasetTools(
         datasetId: z.number().describe('데이터셋 ID'),
         columnName: z.string().describe('컬럼 이름 ([a-z][a-z0-9_]* 패턴)'),
         displayName: z.string().describe('표시 이름'),
+        // #597: 자유 문자열이면 지원하지 않는 값(예: MONEY)이 그대로 백엔드로 전달되어
+        // DB CHECK 제약조건 위반(409, opaque 메시지)으로만 걸러졌다.
+        // 백엔드 DB 제약조건(V29__enable_postgis.sql)·프론트엔드 검증 스키마와 동일한
+        // 허용 목록을 z.enum으로 강제해 MCP 레이어에서 즉시 명확한 오류를 반환한다.
         dataType: z
-          .string()
+          .enum(['TEXT', 'INTEGER', 'DECIMAL', 'BOOLEAN', 'DATE', 'TIMESTAMP', 'VARCHAR', 'GEOMETRY'])
           .describe(
             '데이터 타입 (TEXT, INTEGER, DECIMAL, BOOLEAN, DATE, TIMESTAMP, VARCHAR, GEOMETRY)',
           ),
@@ -204,7 +208,7 @@ export function registerDatasetTools(
         datasetId: number;
         columnName: string;
         displayName: string;
-        dataType: string;
+        dataType: 'TEXT' | 'INTEGER' | 'DECIMAL' | 'BOOLEAN' | 'DATE' | 'TIMESTAMP' | 'VARCHAR' | 'GEOMETRY';
         maxLength?: number;
         isNullable?: boolean;
         isIndexed?: boolean;

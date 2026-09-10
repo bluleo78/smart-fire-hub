@@ -145,6 +145,30 @@ describe('Dataset MCP Tools', () => {
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('Invalid column name');
     });
+
+    it('rejects unsupported dataType at the MCP schema layer before hitting the API (#597)', () => {
+      // #597: dataType이 자유 문자열(z.string())이면 MONEY 같은 값도 그대로
+      // 백엔드로 전달되어 opaque한 409 DB 제약조건 오류로만 걸러졌다.
+      // z.enum으로 강제한 뒤에는 MCP 스키마 레벨에서 즉시 검증 실패해야 한다.
+      const entry = (server.instance as { _registeredTools: Record<string, { inputSchema: { safeParse: (v: unknown) => { success: boolean } } }> })
+        ._registeredTools['add_dataset_column'];
+
+      const invalid = entry.inputSchema.safeParse({
+        datasetId: 42,
+        columnName: 'geum_aek',
+        displayName: '금액',
+        dataType: 'MONEY',
+      });
+      expect(invalid.success).toBe(false);
+
+      const valid = entry.inputSchema.safeParse({
+        datasetId: 42,
+        columnName: 'geum_aek',
+        displayName: '금액',
+        dataType: 'DECIMAL',
+      });
+      expect(valid.success).toBe(true);
+    });
   });
 
   describe('drop_dataset_column', () => {
