@@ -235,7 +235,7 @@ export function registerDatasetTools(
 
     safeTool(
       'get_dataset_references',
-      '데이터셋을 참조하는 파이프라인/대시보드/스마트잡을 조회합니다. 삭제 전 영향 범위 확인 필수.',
+      '데이터셋을 참조하는 파이프라인/대시보드/스마트잡/DATASET_CHANGE 트리거를 조회합니다. 삭제 전 영향 범위 확인 필수. triggers는 FK가 아니라 트리거 config의 datasetIds 배열로만 연결되므로 다른 참조가 없어도 존재할 수 있다 — totalCount=0이 아니면 반드시 고지할 것.',
       { id: z.number().describe('데이터셋 ID') },
       async (args: { id: number }) => {
         const result = await apiClient.getDatasetReferences(args.id);

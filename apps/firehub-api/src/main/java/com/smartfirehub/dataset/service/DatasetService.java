@@ -752,6 +752,10 @@ public class DatasetService {
    *       간접적으로만 데이터셋과 연결된다.
    *   <li><b>Proactive Jobs</b>: 현재 {@code proactive_job} 스키마는 datasetId 를 저장하지 않는다(채널/수신자/템플릿만
    *       저장). 따라서 이 메서드는 항상 빈 리스트를 반환한다. 추후 스키마가 datasetId 를 포함하게 되면 업데이트 필요.
+   *   <li><b>Triggers</b>: {@code pipeline_trigger.trigger_type = 'DATASET_CHANGE'} 이고 {@code
+   *       config} JSONB의 {@code datasetIds} 배열이 주어진 datasetId 를 포함하는 트리거. 이 참조는 FK가
+   *       아니라 JSONB 배열 소속이므로 위 3개 카테고리와 달리 DB 제약으로 보호되지 않는다 — 데이터셋을 삭제해도
+   *       트리거는 고아로 남아 존재하지 않는 데이터셋 ID를 계속 폴링하게 된다(#600).
    * </ul>
    */
   @Transactional(readOnly = true)
@@ -829,9 +833,38 @@ public class DatasetService {
     // 4. Proactive Jobs: 현재 스키마상 datasetId 연결이 없음 → 빈 리스트. (Phase 5.10 설계 문서 참조)
     List<DatasetReferencesResponse.ReferenceItem> proactiveJobs = List.of();
 
-    int totalCount = pipelines.size() + dashboards.size() + proactiveJobs.size();
+    // 5. Triggers (#600): pipeline_trigger 는 FK가 아니라 config JSONB의 datasetIds 배열로
+    //    데이터셋을 감시한다. `config -> 'datasetIds' @> to_jsonb(datasetId)` 로 배열 포함 여부를
+    //    검사한다 — 삭제 시 이 참조를 놓치면 트리거가 고아로 남아 존재하지 않는 데이터셋을 계속 폴링한다.
+    List<DatasetReferencesResponse.TriggerReferenceItem> triggers =
+        dsl.selectDistinct(
+                field(name("pipeline_trigger", "id"), Long.class),
+                field(name("pipeline_trigger", "name"), String.class),
+                field(name("pipeline", "id"), Long.class),
+                field(name("pipeline", "name"), String.class))
+            .from(table(name("pipeline_trigger")))
+            .join(table(name("pipeline")))
+            .on(
+                field(name("pipeline_trigger", "pipeline_id"), Long.class)
+                    .eq(field(name("pipeline", "id"), Long.class)))
+            .where(field(name("pipeline_trigger", "trigger_type"), String.class).eq("DATASET_CHANGE"))
+            .and(
+                condition(
+                    "(pipeline_trigger.config -> 'datasetIds') @> to_jsonb({0}::bigint)",
+                    datasetId))
+            .orderBy(field(name("pipeline_trigger", "id"), Long.class))
+            .fetch(
+                r ->
+                    new DatasetReferencesResponse.TriggerReferenceItem(
+                        r.get(field(name("pipeline_trigger", "id"), Long.class)),
+                        r.get(field(name("pipeline_trigger", "name"), String.class)),
+                        r.get(field(name("pipeline", "id"), Long.class)),
+                        r.get(field(name("pipeline", "name"), String.class))));
+
+    int totalCount =
+        pipelines.size() + dashboards.size() + proactiveJobs.size() + triggers.size();
     return new DatasetReferencesResponse(
-        datasetId, pipelines, dashboards, proactiveJobs, totalCount);
+        datasetId, pipelines, dashboards, proactiveJobs, triggers, totalCount);
   }
 
   // --- Phase 6-1: Status ---

@@ -208,7 +208,10 @@ describe('Dataset MCP Tools', () => {
         pipelines: [{ id: 1, name: 'daily_import' }],
         dashboards: [{ id: 2, name: 'ops_overview' }],
         proactiveJobs: [],
-        totalCount: 2,
+        // #600: DATASET_CHANGE 트리거는 FK가 아니라 config.datasetIds 로만 연결되므로
+        // pipelines 참조와 별개로 반드시 응답에 포함되어야 한다.
+        triggers: [{ id: 3, name: 'watch_dataset_42', pipelineId: 1, pipelineName: 'daily_import' }],
+        totalCount: 3,
       };
       (client.getDatasetReferences as ReturnType<typeof vi.fn>).mockResolvedValue(mockResp);
 
@@ -220,9 +223,11 @@ describe('Dataset MCP Tools', () => {
 
       // 응답은 DatasetReferencesResponse 형태 그대로 반환되어야 한다
       const parsed = JSON.parse(result.content[0].text);
-      expect(parsed.totalCount).toBe(2);
+      expect(parsed.totalCount).toBe(3);
       expect(parsed.pipelines[0].name).toBe('daily_import');
       expect(parsed.dashboards[0].name).toBe('ops_overview');
+      expect(parsed.triggers[0].name).toBe('watch_dataset_42');
+      expect(parsed.triggers[0].pipelineName).toBe('daily_import');
     });
 
     it('returns isError on API failure', async () => {

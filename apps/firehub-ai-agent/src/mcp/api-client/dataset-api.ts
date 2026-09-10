@@ -34,14 +34,19 @@ export interface DatasetColumnResponse {
 
 /**
  * 백엔드 `DatasetReferencesResponse` 레코드의 TypeScript 미러.
- * 데이터셋을 참조하는 파이프라인/대시보드/스마트잡 정보를 반환한다.
+ * 데이터셋을 참조하는 파이프라인/대시보드/스마트잡/DATASET_CHANGE 트리거 정보를 반환한다.
  * 삭제 전 영향 범위 확인용.
+ *
+ * `triggers`(#600): pipeline_trigger 는 FK가 아니라 config JSONB의 datasetIds 배열로
+ * 데이터셋을 감시하므로, 다른 참조가 전혀 없어도 트리거만 존재할 수 있다. 이 경우에도
+ * "참조 없음"으로 보고하면 안 되며, 소속 파이프라인(pipelineId/pipelineName)까지 고지해야 한다.
  */
 export interface DatasetReferences {
   datasetId: number;
   pipelines: Array<{ id: number; name: string }>;
   dashboards: Array<{ id: number; name: string }>;
   proactiveJobs: Array<{ id: number; name: string }>;
+  triggers: Array<{ id: number; name: string; pipelineId: number; pipelineName: string }>;
   totalCount: number;
 }
 

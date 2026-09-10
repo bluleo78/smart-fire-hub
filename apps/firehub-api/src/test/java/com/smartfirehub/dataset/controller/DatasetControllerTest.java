@@ -260,7 +260,8 @@ class DatasetControllerTest {
             List.of(new DatasetReferencesResponse.ReferenceItem(10L, "Pipeline A")),
             List.of(new DatasetReferencesResponse.ReferenceItem(20L, "Dashboard B")),
             List.of(),
-            2);
+            List.of(new DatasetReferencesResponse.TriggerReferenceItem(30L, "Trigger C", 10L, "Pipeline A")),
+            3);
 
     when(datasetService.getReferences(1L)).thenReturn(response);
 
@@ -273,7 +274,11 @@ class DatasetControllerTest {
         .andExpect(jsonPath("$.dashboards[0].id").value(20))
         .andExpect(jsonPath("$.dashboards[0].name").value("Dashboard B"))
         .andExpect(jsonPath("$.proactiveJobs").isArray())
-        .andExpect(jsonPath("$.totalCount").value(2));
+        .andExpect(jsonPath("$.triggers[0].id").value(30))
+        .andExpect(jsonPath("$.triggers[0].name").value("Trigger C"))
+        .andExpect(jsonPath("$.triggers[0].pipelineId").value(10))
+        .andExpect(jsonPath("$.triggers[0].pipelineName").value("Pipeline A"))
+        .andExpect(jsonPath("$.totalCount").value(3));
   }
 
   @Test

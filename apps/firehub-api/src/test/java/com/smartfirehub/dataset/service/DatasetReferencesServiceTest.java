@@ -19,9 +19,13 @@ import com.smartfirehub.dataset.dto.DatasetDetailResponse;
 import com.smartfirehub.dataset.dto.DatasetReferencesResponse;
 import com.smartfirehub.dataset.exception.DatasetNotFoundException;
 import com.smartfirehub.pipeline.dto.CreatePipelineRequest;
+import com.smartfirehub.pipeline.dto.CreateTriggerRequest;
 import com.smartfirehub.pipeline.dto.PipelineDetailResponse;
 import com.smartfirehub.pipeline.dto.PipelineStepRequest;
+import com.smartfirehub.pipeline.dto.TriggerResponse;
+import com.smartfirehub.pipeline.dto.TriggerType;
 import com.smartfirehub.pipeline.service.PipelineService;
+import com.smartfirehub.pipeline.service.TriggerService;
 import com.smartfirehub.support.IntegrationTestBase;
 import java.util.List;
 import java.util.Map;
@@ -42,6 +46,7 @@ class DatasetReferencesServiceTest extends IntegrationTestBase {
 
   @Autowired private DatasetService datasetService;
   @Autowired private PipelineService pipelineService;
+  @Autowired private TriggerService triggerService;
   @Autowired private SavedQueryService savedQueryService;
   @Autowired private ChartService chartService;
   @Autowired private AnalyticsDashboardService dashboardService;
@@ -91,6 +96,7 @@ class DatasetReferencesServiceTest extends IntegrationTestBase {
     assertThat(response.pipelines()).isEmpty();
     assertThat(response.dashboards()).isEmpty();
     assertThat(response.proactiveJobs()).isEmpty();
+    assertThat(response.triggers()).isEmpty();
     assertThat(response.totalCount()).isZero();
   }
 
@@ -151,6 +157,7 @@ class DatasetReferencesServiceTest extends IntegrationTestBase {
         .containsExactlyInAnyOrder("Output Ref Pipeline", "Input Ref Pipeline");
     assertThat(response.dashboards()).isEmpty();
     assertThat(response.proactiveJobs()).isEmpty();
+    assertThat(response.triggers()).isEmpty();
     assertThat(response.totalCount()).isEqualTo(2);
   }
 
@@ -185,6 +192,62 @@ class DatasetReferencesServiceTest extends IntegrationTestBase {
 
     assertThat(response.pipelines()).hasSize(1);
     assertThat(response.pipelines().get(0).id()).isEqualTo(pipeline.id());
+  }
+
+  @Test
+  void getReferences_withDatasetChangeTriggerReference_returnsTriggerList() {
+    // Given: targetDatasetId 를 감시하는 DATASET_CHANGE 트리거를 가진 파이프라인. 이 참조는
+    // pipeline_step 처럼 FK 컬럼이 아니라 pipeline_trigger.config JSONB 의 datasetIds 배열로만
+    // 연결되므로, getReferences() 가 이를 놓치면 삭제 시 트리거가 고아로 남는다(#600).
+    PipelineDetailResponse pipeline =
+        pipelineService.createPipeline(
+            new CreatePipelineRequest(
+                "Trigger Ref Pipeline",
+                "watched by a DATASET_CHANGE trigger",
+                List.of(
+                    new PipelineStepRequest(
+                        "step1", "noop", "SQL", "SELECT 1", otherDatasetId, List.of(), null))),
+            testUserId);
+
+    TriggerResponse trigger =
+        triggerService.createTrigger(
+            pipeline.id(),
+            new CreateTriggerRequest(
+                "Refs Trigger",
+                TriggerType.DATASET_CHANGE,
+                "watches target dataset",
+                Map.of("datasetIds", List.of(targetDatasetId))),
+            testUserId);
+
+    // 무관한 트리거: otherDatasetId 만 감시 — 결과에 포함되면 안 됨
+    triggerService.createTrigger(
+        pipeline.id(),
+        new CreateTriggerRequest(
+            "Unrelated Trigger",
+            TriggerType.DATASET_CHANGE,
+            "watches other dataset",
+            Map.of("datasetIds", List.of(otherDatasetId))),
+        testUserId);
+
+    // When
+    DatasetReferencesResponse response = datasetService.getReferences(targetDatasetId);
+
+    // Then
+    assertThat(response.triggers())
+        .extracting(DatasetReferencesResponse.TriggerReferenceItem::id)
+        .containsExactly(trigger.id());
+    assertThat(response.triggers())
+        .extracting(DatasetReferencesResponse.TriggerReferenceItem::name)
+        .containsExactly("Refs Trigger");
+    assertThat(response.triggers())
+        .extracting(DatasetReferencesResponse.TriggerReferenceItem::pipelineId)
+        .containsExactly(pipeline.id());
+    assertThat(response.triggers())
+        .extracting(DatasetReferencesResponse.TriggerReferenceItem::pipelineName)
+        .containsExactly("Trigger Ref Pipeline");
+    assertThat(response.pipelines()).isEmpty();
+    assertThat(response.dashboards()).isEmpty();
+    assertThat(response.totalCount()).isEqualTo(1);
   }
 
   @Test
