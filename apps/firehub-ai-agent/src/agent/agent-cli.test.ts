@@ -590,6 +590,70 @@ describe('executeCliAgent — #573 2차 수정: 동기(run_in_background:false) 
     expect(events.some((e) => e.type === 'done')).toBe(true);
   });
 
+  it('#582: 동기 위임 tool_result 에 다른 subagent 코드명이 포함되면 강제 relay 시 redact 한다', async () => {
+    const delegateToolUseId = 'toolu_sync_delegate_582';
+    const lines: string[] = [
+      // 메인이 data-analyst 에 동기(run_in_background:false) 위임.
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: {
+          content: [
+            {
+              type: 'tool_use',
+              id: delegateToolUseId,
+              name: 'Agent',
+              input: {
+                subagent_type: 'data-analyst',
+                prompt: 'Mode: DESIGN\n...',
+                run_in_background: false,
+              },
+            },
+          ],
+        },
+      }),
+      // data-analyst 자신의 응답 안에 다른 subagent 코드명(dataset-manager)이 그대로 포함된
+      // 실측 크로스체크 재현 케이스(crosscheck-578-572-02/03).
+      JSON.stringify({
+        type: 'user',
+        parent_tool_use_id: null,
+        message: {
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: delegateToolUseId,
+              content:
+                "현재는 빈 테이블이라 dataset-manager를 통한 데이터 임포트가 선행되어야 정확한 분석이 가능합니다.agentId: ac10e871dec5c7204 (use SendMessage with to: 'ac10e871dec5c7204', summary: '<5-10 word recap>' to continue this agent)\n<usage>subagent_tokens: 19710\ntool_uses: 0\nduration_ms: 3010</usage>",
+            },
+          ],
+        },
+      }),
+      JSON.stringify({ type: 'result', subtype: 'success' }),
+    ];
+
+    const child = makeFakeChildWithLines(lines);
+    spawnMock.mockReturnValue(child);
+
+    const events: Array<{ type: string; content?: string }> = [];
+    for await (const ev of executeCliAgent({
+      message: '화재발생현황 데이터셋을 분석해서 월별 평균 사망자수를 내줘',
+      tenantId: 1,
+      userId: 1,
+      useSubscription: false,
+      apiKey: 'sk-test',
+    } as never)) {
+      events.push(ev as { type: string; content?: string });
+    }
+
+    const texts = events.filter((e) => e.type === 'text').map((e) => e.content);
+    // 코드명(dataset-manager)은 중립 표현으로 치환되고, 실제 분석 안내 내용은 그대로 보존되어야 한다.
+    expect(texts).toEqual([
+      '현재는 빈 테이블이라 전문 에이전트를 통한 데이터 임포트가 선행되어야 정확한 분석이 가능합니다.',
+    ]);
+    expect(texts.join('')).not.toContain('dataset-manager');
+    expect(events.some((e) => e.type === 'done')).toBe(true);
+  });
+
   it('PM-573f: 메인이 텍스트로 정상 relay 했으면 fallback 을 중복 적용하지 않는다', async () => {
     const delegateToolUseId = 'toolu_sync_delegate_2';
     const lines: string[] = [

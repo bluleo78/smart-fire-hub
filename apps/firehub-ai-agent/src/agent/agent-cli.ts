@@ -941,10 +941,15 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
         const isBudgetError = (msg.subtype as string) === 'error_max_budget_usd';
         const isOtherError = !isBudgetError && Boolean((msg.subtype as string | undefined)?.startsWith('error'));
         if (!isBudgetError && !isOtherError && pendingSyncAgentResultText) {
-          const relayText = stripAgentResultFooter(pendingSyncAgentResultText);
+          // #582: 이 relayText 는 subagent(data-analyst 등) 가 생성한 문자열이며 메인이 만든 텍스트가
+          // 아니라 delegation-narration-guard 의 기존 classifyMainText 경로를 타지 않는다. subagent 가
+          // 후속 안내에서 다른 subagent 코드명(예: "dataset-manager")을 언급할 수 있으므로, relay 직전에
+          // redactSubagentIdentifiers 로 코드명만 중립 표현으로 치환한다 — 실제 분석 결과·데이터 내용은
+          // 그대로 보존해 #573 의 relay 요구사항(빈 응답 방지)을 깨지 않는다.
+          const relayText = redactSubagentIdentifiers(stripAgentResultFooter(pendingSyncAgentResultText), subagentNames);
           pendingSyncAgentResultText = undefined;
           if (relayText) {
-            console.warn(`[CLI Agent] [design-guard] 동기 Agent 위임 결과 relay(#573/#572 2차, violated=${syncDelegationViolated}): ${relayText.slice(0, 200)}`);
+            console.warn(`[CLI Agent] [design-guard] 동기 Agent 위임 결과 relay(#573/#572 2차/#582 redact, violated=${syncDelegationViolated}): ${relayText.slice(0, 200)}`);
             assistantText += relayText;
             userTextEmitted = true;
             yield { type: 'text', content: relayText };

@@ -565,6 +565,40 @@ describe('processMessage', () => {
       expect(state.pendingSyncAgentResultText).toBeUndefined();
     });
 
+    it('#582: 동기 위임 tool_result 본문에 다른 subagent 코드명이 포함되면 강제 relay 시 redact 한다', () => {
+      const state = createDesignGuardRelayState(['dataset-manager', 'data-analyst']);
+      const toolUseId = 'toolu_sync_582';
+
+      processMessage(syncDelegateMsg(toolUseId), tag, false, state);
+      expect(state.syncDelegationToolUseIds.has(toolUseId)).toBe(true);
+
+      // 크로스체크 실측 재현(crosscheck-578-572-02/03) — data-analyst 자신의 응답 안에 다른
+      // subagent 코드명(dataset-manager)이 노출된다.
+      processMessage(
+        syncToolResultMsg(
+          toolUseId,
+          '현재는 빈 테이블이라 dataset-manager를 통한 데이터 임포트가 선행되어야 정확한 분석이 가능합니다.',
+        ),
+        tag,
+        false,
+        state,
+      );
+      expect(state.pendingSyncAgentResultText).toContain('dataset-manager');
+
+      const doneResult = processMessage(resultSuccessMsg(), tag, false, state);
+
+      // 코드명은 중립 표현으로 치환되고 나머지 안내 내용은 그대로 보존되어야 한다.
+      expect(doneResult).toEqual([
+        {
+          type: 'text',
+          content: '현재는 빈 테이블이라 전문 에이전트를 통한 데이터 임포트가 선행되어야 정확한 분석이 가능합니다.',
+        },
+        { type: 'done', sessionId: 'sess-573', inputTokens: 100, outputTokens: 20 },
+      ]);
+      const relayedText = (doneResult[0] as { type: string; content?: string }).content ?? '';
+      expect(relayedText).not.toContain('dataset-manager');
+    });
+
     it('PM-573b: 비동기(기본값) 위임의 launch 응답은 fallback 대상이 아니다 — 실제 완료 내용이 아직 도착 전이기 때문', () => {
       const state = createDesignGuardRelayState();
       const toolUseId = 'toolu_async_1';

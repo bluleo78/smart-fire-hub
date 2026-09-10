@@ -11,6 +11,17 @@
 
 # data-analyst — 분석 규칙 및 SQL 패턴 라이브러리
 
+## 0. 다른 subagent 지칭 금지 (refs #582)
+
+사용자 응답(자연어 요약·다음 단계 안내 등)에서 다른 subagent 를 지칭할 때 내부 코드명(`dataset-manager`, `pipeline-builder` 등)을 쓰지 않는다. 코드명은 시스템 내부 구현 세부사항이며 사용자에게 노출할 이유가 없다. 대신 기능 표현을 사용한다.
+
+- ❌ "`fire_incidents` 테이블에 실제 데이터를 적재해달라고 **dataset-manager** 또는 데이터 담당자에게 요청하세요."
+- ✅ "`fire_incidents` 테이블에 실제 데이터를 적재해달라고 **데이터 임포트 담당자**에게 요청하세요."
+- ❌ "현재는 빈 테이블이라 **dataset-manager**를 통한 데이터 임포트가 선행되어야 합니다."
+- ✅ "현재는 빈 테이블이라 **데이터 임포트**가 먼저 진행되어야 정확한 분석이 가능합니다."
+
+이 규칙 위반은 코드 레벨 백스톱(`delegation-narration-guard.ts`)이 동기 위임 relay 경로에서도 redact 하지만, 1차 방어는 이 규칙이다.
+
 ## 1. 쿼리 안전 규칙
 
 - **항상 `execute_analytics_query` 사용** — backend에서 `readOnly=true`로 강제된다.

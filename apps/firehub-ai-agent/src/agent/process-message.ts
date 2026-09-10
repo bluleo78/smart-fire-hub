@@ -406,10 +406,18 @@ export function processMessage(
         // 모두 트리거된다 — 둘 다 pendingSyncAgentResultText 가 살아있는 것으로 판별되므로 이
         // 블록 자체는 변경 없이 재사용한다.
         if (relayState.pendingSyncAgentResultText) {
-          const relayText = stripAgentResultFooter(relayState.pendingSyncAgentResultText);
+          // #582: relayText 는 subagent 가 생성한 문자열이라 메인 텍스트만 거르는
+          // classifyMainText/narration 가드를 타지 않는다. subagent 가 후속 안내에서 다른
+          // subagent 코드명(예: "dataset-manager")을 언급할 수 있으므로 relay 직전에
+          // redactSubagentIdentifiers 로 코드명만 중립 표현으로 치환한다 — 실제 분석 결과·데이터
+          // 내용은 그대로 보존해 #573 의 relay 요구사항(빈 응답 방지)을 깨지 않는다.
+          const relayText = redactSubagentIdentifiers(
+            stripAgentResultFooter(relayState.pendingSyncAgentResultText),
+            relayState.subagentNames,
+          );
           relayState.pendingSyncAgentResultText = undefined;
           if (relayText) {
-            console.warn(`${tag()} ⚠️ 동기 Agent 위임 결과 relay(#573/#572 2차, violated=${relayState.syncDelegationViolated}): ${truncate(relayText)}`);
+            console.warn(`${tag()} ⚠️ 동기 Agent 위임 결과 relay(#573/#572 2차/#582 redact, violated=${relayState.syncDelegationViolated}): ${truncate(relayText)}`);
             relayState.userTextEmitted = true;
             events.push({ type: 'text', content: relayText });
           }
