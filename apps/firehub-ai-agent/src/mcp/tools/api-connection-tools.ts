@@ -195,5 +195,15 @@ export function registerApiConnectionTools(
         return jsonResult(result);
       },
     ),
+
+    safeTool(
+      'get_api_connection_references',
+      '이 API 연결을 사용하는 파이프라인(API_CALL 스텝의 api_connection_id 참조)을 조회합니다. delete_api_connection 호출 전 영향 범위 확인 필수 — totalCount>0이면 반드시 참조 파이프라인 이름/개수를 사용자에게 고지할 것 (#605).',
+      { id: z.number().describe('API 연결 ID') },
+      async (args: { id: number }) => {
+        const result = await apiClient.getApiConnectionReferences(args.id);
+        return jsonResult(result);
+      },
+    ),
   ];
 }

@@ -4,6 +4,7 @@ import static org.jooq.impl.DSL.*;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartfirehub.apiconnection.dto.ApiConnectionReferencesResponse;
 import com.smartfirehub.apiconnection.dto.ApiConnectionResponse;
 import com.smartfirehub.apiconnection.dto.ApiConnectionSelectableResponse;
 import com.smartfirehub.apiconnection.dto.CreateApiConnectionRequest;
@@ -139,6 +140,31 @@ public class ApiConnectionService {
         .findById(id)
         .orElseThrow(() -> new ApiConnectionException("ApiConnection not found: " + id));
     repository.deleteById(id);
+  }
+
+  /**
+   * 이 API 연결을 참조하는 파이프라인을 집계한다. 삭제 전 영향 범위 확인용(#605).
+   *
+   * <p>{@code pipeline_step.api_connection_id}는 FK(ON DELETE 절 없음 → 기본 RESTRICT)로 실제 삭제 시 참조가 있으면
+   * 409로 거부되지만, 그 전에는 확인할 방법이 없어 사전 고지가 정적 문구로만 이루어지던 문제(dataset-manager의
+   * {@code get_dataset_references}와 동일 패턴)를 해결한다.
+   */
+  @Transactional(readOnly = true)
+  public ApiConnectionReferencesResponse getReferences(Long id) {
+    repository
+        .findById(id)
+        .orElseThrow(() -> new ApiConnectionException("ApiConnection not found: " + id));
+
+    List<ApiConnectionReferencesResponse.ReferenceItem> pipelines =
+        repository.findReferencingPipelines(id).stream()
+            .map(
+                r ->
+                    new ApiConnectionReferencesResponse.ReferenceItem(
+                        r.get(field(name("pipeline", "id"), Long.class)),
+                        r.get(field(name("pipeline", "name"), String.class))))
+            .toList();
+
+    return new ApiConnectionReferencesResponse(id, pipelines, pipelines.size());
   }
 
   /** 일반 사용자가 파이프라인 스텝에서 선택할 수 있는 slim 목록을 반환. 민감한 authConfig, healthCheckPath, last* 필드는 제외. */

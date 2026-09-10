@@ -73,4 +73,23 @@ describe('connectionApi (via FireHubApiClient)', () => {
     const result = await client.testApiConnection(4);
     expect(result).toEqual(mock);
   });
+
+  // #605: 삭제 전 참조 파이프라인 확인
+  it('getApiConnectionReferences calls GET /api-connections/:id/references', async () => {
+    const mock = {
+      apiConnectionId: 15,
+      pipelines: [{ id: 56, name: 'inspector-fk-test' }],
+      totalCount: 1,
+    };
+    nock(BASE_URL).get('/api-connections/15/references').reply(200, mock);
+    const result = await client.getApiConnectionReferences(15);
+    expect(result).toEqual(mock);
+  });
+
+  it('getApiConnectionReferences returns empty pipelines when unreferenced', async () => {
+    const mock = { apiConnectionId: 16, pipelines: [], totalCount: 0 };
+    nock(BASE_URL).get('/api-connections/16/references').reply(200, mock);
+    const result = await client.getApiConnectionReferences(16);
+    expect(result).toEqual(mock);
+  });
 });

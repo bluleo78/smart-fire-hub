@@ -403,6 +403,10 @@ export class FireHubApiClient {
   testApiConnection(id: number) {
     return this._connections.testApiConnection(id);
   }
+  /** 이 API 연결을 참조하는 파이프라인 목록을 조회한다. 삭제 전 영향 범위 확인용(#605). */
+  getApiConnectionReferences(id: number) {
+    return this._connections.getApiConnectionReferences(id);
+  }
   /** 파이프라인 스텝 참조용 slim 연결 목록을 반환한다. */
   listSelectableConnections() {
     return this._connections.listSelectableConnections();

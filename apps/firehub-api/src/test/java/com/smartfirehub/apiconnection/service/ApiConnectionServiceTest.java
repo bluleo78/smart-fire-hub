@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.jooq.impl.DSL.*;
 
+import com.smartfirehub.apiconnection.dto.ApiConnectionReferencesResponse;
 import com.smartfirehub.apiconnection.dto.ApiConnectionResponse;
 import com.smartfirehub.apiconnection.dto.ApiConnectionSelectableResponse;
 import com.smartfirehub.apiconnection.dto.CreateApiConnectionRequest;
@@ -351,5 +352,85 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
     assertThat(first.name()).isEqualTo("Test Conn");
     assertThat(first.authType()).isEqualTo("API_KEY");
     assertThat(first.baseUrl()).isEqualTo("https://a.example.com");
+  }
+
+  // ── #605: getReferences (삭제 전 참조 파이프라인 확인) ─────────────────────────
+
+  private static final Table<?> PIPELINE = table(name("pipeline"));
+  private static final Table<?> PIPELINE_STEP = table(name("pipeline_step"));
+
+  /**
+   * 테스트용 파이프라인 + API_CALL 스텝(주어진 apiConnectionId 참조)을 직접 INSERT 한다. 실제 서비스 경로(PipelineService)를
+   * 거치지 않고 최소 컬럼만 채워, getReferences가 보는 FK 관계(pipeline_step.api_connection_id)만 재현한다.
+   */
+  private Long createPipelineWithApiCallStep(String pipelineName, Long apiConnectionId) {
+    // pipeline/pipeline_step 모두 RLS(V96) 대상 — GUC는 트랜잭션 시작 시점에만 주입되므로
+    // 별도 트랜잭션 경계(tx.executeWithoutResult) 안에서 INSERT 해야 한다.
+    return tx.execute(
+        s ->
+            dsl.insertInto(PIPELINE)
+                .set(field(name("pipeline", "name"), String.class), pipelineName)
+                .set(field(name("pipeline", "created_by"), Long.class), testUserId)
+                .returning(field(name("pipeline", "id"), Long.class))
+                .fetchOne(
+                    r -> {
+                      Long pipelineId = r.get(field(name("pipeline", "id"), Long.class));
+                      dsl.insertInto(PIPELINE_STEP)
+                          .set(field(name("pipeline_step", "pipeline_id"), Long.class), pipelineId)
+                          .set(field(name("pipeline_step", "name"), String.class), "call-step")
+                          .set(field(name("pipeline_step", "script_type"), String.class), "API_CALL")
+                          .set(field(name("pipeline_step", "step_order"), Integer.class), 1)
+                          .set(
+                              field(name("pipeline_step", "api_connection_id"), Long.class),
+                              apiConnectionId)
+                          .execute();
+                      return pipelineId;
+                    }));
+  }
+
+  private void deletePipeline(Long pipelineId) {
+    tx.executeWithoutResult(
+        s -> {
+          dsl.deleteFrom(PIPELINE_STEP)
+              .where(field(name("pipeline_step", "pipeline_id"), Long.class).eq(pipelineId))
+              .execute();
+          dsl.deleteFrom(PIPELINE)
+              .where(field(name("pipeline", "id"), Long.class).eq(pipelineId))
+              .execute();
+        });
+  }
+
+  @Test
+  void getReferences_noReferences_returnsEmpty() {
+    ApiConnectionResponse created = apiConnectionService.create(validReq("https://noref.example.com"), testUserId);
+
+    ApiConnectionReferencesResponse refs = apiConnectionService.getReferences(created.id());
+
+    assertThat(refs.apiConnectionId()).isEqualTo(created.id());
+    assertThat(refs.pipelines()).isEmpty();
+    assertThat(refs.totalCount()).isZero();
+  }
+
+  @Test
+  void getReferences_withReferencingPipeline_returnsPipeline() {
+    ApiConnectionResponse created = apiConnectionService.create(validReq("https://ref.example.com"), testUserId);
+    Long pipelineId = createPipelineWithApiCallStep("inspector-fk-test-" + System.nanoTime(), created.id());
+
+    try {
+      ApiConnectionReferencesResponse refs = apiConnectionService.getReferences(created.id());
+
+      assertThat(refs.totalCount()).isEqualTo(1);
+      assertThat(refs.pipelines()).hasSize(1);
+      assertThat(refs.pipelines().get(0).id()).isEqualTo(pipelineId);
+    } finally {
+      deletePipeline(pipelineId);
+    }
+  }
+
+  @Test
+  void getReferences_nonExistentConnection_throwsException() {
+    assertThatThrownBy(() -> apiConnectionService.getReferences(-1L))
+        .isInstanceOf(ApiConnectionException.class)
+        .hasMessageContaining("not found");
   }
 }

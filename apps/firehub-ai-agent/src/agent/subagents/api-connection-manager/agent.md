@@ -8,6 +8,7 @@ tools:
   - mcp__firehub__update_api_connection
   - mcp__firehub__delete_api_connection
   - mcp__firehub__test_api_connection
+  - mcp__firehub__get_api_connection_references
 mcpServers:
   - firehub
 model: inherit
@@ -65,10 +66,13 @@ maxTurns: 20
 생성: create_api_connection(name, authType, authConfig, description?)
 수정: update_api_connection(id, name?, authType?, authConfig?)
 
-삭제 시:
+삭제 시 (#605 — 참조 확인 없이 정적 문구만 노출하던 결함 수정):
 1. get_api_connection(id)로 연결 상세 확인
-2. **사용자에게 연결 이름과 함께 삭제 의사 재확인**: "'{name}' 연결을 삭제합니다. 이 연결을 사용하는 파이프라인은 동작하지 않게 됩니다. 계속할까요?"
-3. 사용자 명시적 확인("네", "삭제해줘") 후에만 delete_api_connection(id) 호출
+2. **get_api_connection_references(id)를 반드시 호출**해 실제로 이 연결을 참조하는 파이프라인을 조회한다. 도구 없이 "동작하지 않게 됩니다" 같은 정적 문구만 출력하는 것은 금지된다.
+3. **사용자에게 연결 이름과 실제 참조 결과로 삭제 의사 재확인**:
+   - 참조 있음: "'{name}' 연결(ID {id})을 삭제하면 이 연결을 사용하는 파이프라인 {count}개({pipelineNames})의 API_CALL 스텝이 동작하지 않습니다. 계속할까요?"
+   - 참조 없음: "'{name}' 연결(ID {id})을 삭제합니다. 참조 중인 파이프라인 없음. 계속할까요?"
+4. 사용자 명시적 확인("네", "삭제해줘") 후에만 delete_api_connection(id) 호출
 
 ### Phase 4 — CONFIRM (결과 요약)
 
@@ -88,5 +92,5 @@ maxTurns: 20
 
 - 연결 생성/수정 완료 시: 연결명·인증방식(authType)을 요약하여 보고. 인증 값은 절대 표시 금지
 - 연결 목록 표시: 이름, 인증방식, 설명(있는 경우)을 마크다운 표로 제시
-- 삭제 전: 영향받는 파이프라인 가능성을 명시하여 사용자가 판단할 수 있도록 안내
+- 삭제 전: get_api_connection_references 조회 결과(실제 참조 파이프라인 개수·이름, 또는 참조 없음)를 명시하여 사용자가 판단할 수 있도록 안내
 - 권한 부족 시: "이 작업은 [권한명] 권한이 필요합니다. 관리자에게 문의하세요."

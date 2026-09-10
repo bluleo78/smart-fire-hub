@@ -1,5 +1,6 @@
 package com.smartfirehub.apiconnection.controller;
 
+import com.smartfirehub.apiconnection.dto.ApiConnectionReferencesResponse;
 import com.smartfirehub.apiconnection.dto.ApiConnectionResponse;
 import com.smartfirehub.apiconnection.dto.ApiConnectionSelectableResponse;
 import com.smartfirehub.apiconnection.dto.CreateApiConnectionRequest;
@@ -56,6 +57,13 @@ public class ApiConnectionController {
   public ResponseEntity<Void> deleteApiConnection(@PathVariable Long id) {
     apiConnectionService.delete(id);
     return ResponseEntity.noContent().build();
+  }
+
+  /** 이 API 연결을 참조하는 파이프라인 집계. 삭제 전 영향 범위 확인용(#605). */
+  @GetMapping("/{id}/references")
+  @RequirePermission("apiconnection:read")
+  public ResponseEntity<ApiConnectionReferencesResponse> getReferences(@PathVariable Long id) {
+    return ResponseEntity.ok(apiConnectionService.getReferences(id));
   }
 
   @GetMapping("/{id}/decrypted")

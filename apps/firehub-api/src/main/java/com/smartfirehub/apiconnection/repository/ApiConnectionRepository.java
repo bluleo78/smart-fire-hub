@@ -233,4 +233,30 @@ public class ApiConnectionRepository {
   public void deleteById(Long id) {
     dsl.deleteFrom(API_CONNECTION).where(AC_ID.eq(id)).execute();
   }
+
+  /**
+   * 이 API 연결을 사용하는(pipeline_step.api_connection_id로 참조하는) 파이프라인 목록을 조회한다. 삭제 전 영향 범위 확인용(#605).
+   * DISTINCT로 같은 파이프라인의 여러 API_CALL 스텝이 동일 연결을 참조하는 경우 중복을 제거한다.
+   */
+  public List<Record> findReferencingPipelines(Long apiConnectionId) {
+    Table<?> pipelineStep = table(name("pipeline_step"));
+    Table<?> pipeline = table(name("pipeline"));
+    Field<Long> psApiConnectionId = field(name("pipeline_step", "api_connection_id"), Long.class);
+    Field<Long> psPipelineId = field(name("pipeline_step", "pipeline_id"), Long.class);
+    Field<Long> pId = field(name("pipeline", "id"), Long.class);
+    Field<String> pName = field(name("pipeline", "name"), String.class);
+
+    return dsl
+        .selectDistinct(pId, pName)
+        .from(pipeline)
+        .where(
+            pId.in(
+                dsl.select(psPipelineId)
+                    .from(pipelineStep)
+                    .where(psApiConnectionId.eq(apiConnectionId))))
+        .fetch()
+        .stream()
+        .map(r -> (Record) r)
+        .toList();
+  }
 }

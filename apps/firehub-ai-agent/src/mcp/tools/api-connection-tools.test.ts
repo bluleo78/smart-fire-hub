@@ -249,4 +249,29 @@ describe('API Connection MCP Tools', () => {
       expect(result.isError).toBe(true);
     });
   });
+
+  // #605: 삭제 전 참조 파이프라인 확인 도구 — dataset-manager의 get_dataset_references와 동일 패턴
+  describe('get_api_connection_references', () => {
+    it('calls apiClient.getApiConnectionReferences with id', async () => {
+      (client.getApiConnectionReferences as ReturnType<typeof vi.fn>).mockResolvedValue({
+        apiConnectionId: 15,
+        pipelines: [{ id: 56, name: 'inspector-fk-test' }],
+        totalCount: 1,
+      });
+
+      const result = await invokeTool(server, 'get_api_connection_references', { id: 15 });
+
+      expect(client.getApiConnectionReferences).toHaveBeenCalledWith(15);
+      expect(result.isError).toBeFalsy();
+      expect(result.content[0].text).toContain('inspector-fk-test');
+    });
+
+    it('returns isError on failure', async () => {
+      (client.getApiConnectionReferences as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error('API 오류'),
+      );
+      const result = await invokeTool(server, 'get_api_connection_references', { id: 15 });
+      expect(result.isError).toBe(true);
+    });
+  });
 });

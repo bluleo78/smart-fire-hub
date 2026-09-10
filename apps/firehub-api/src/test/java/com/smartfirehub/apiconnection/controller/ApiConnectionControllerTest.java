@@ -125,6 +125,36 @@ class ApiConnectionControllerTest {
     mockMvc.perform(get("/api/v1/api-connections")).andExpect(status().isUnauthorized());
   }
 
+  /** GET /{id}/references — 삭제 전 참조 파이프라인 확인용 신규 엔드포인트(#605). */
+  @Test
+  void getReferences_withPermission_returnsPipelines() throws Exception {
+    when(apiConnectionService.getReferences(1L))
+        .thenReturn(
+            new com.smartfirehub.apiconnection.dto.ApiConnectionReferencesResponse(
+                1L,
+                List.of(
+                    new com.smartfirehub.apiconnection.dto.ApiConnectionReferencesResponse
+                        .ReferenceItem(56L, "inspector-fk-test")),
+                1));
+
+    mockMvc
+        .perform(
+            get("/api/v1/api-connections/1/references")
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.apiConnectionId").value(1))
+        .andExpect(jsonPath("$.totalCount").value(1))
+        .andExpect(jsonPath("$.pipelines[0].id").value(56))
+        .andExpect(jsonPath("$.pipelines[0].name").value("inspector-fk-test"));
+  }
+
+  @Test
+  void getReferences_withoutAuth_returnsUnauthorized() throws Exception {
+    mockMvc
+        .perform(get("/api/v1/api-connections/1/references"))
+        .andExpect(status().isUnauthorized());
+  }
+
   // ── 신규 엔드포인트 테스트 ──────────────────────────────────────────────────────
 
   /**

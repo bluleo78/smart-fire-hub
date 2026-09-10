@@ -16,6 +16,17 @@ export interface ApiConnectionSelectable {
   baseUrl: string;
 }
 
+/**
+ * 백엔드 `ApiConnectionReferencesResponse` 레코드의 TypeScript 미러.
+ * 이 API 연결을 사용하는(pipeline_step.api_connection_id로 참조하는) 파이프라인 목록.
+ * 삭제 전 영향 범위 확인용(#605) — dataset-manager의 get_dataset_references와 동일 패턴.
+ */
+export interface ApiConnectionReferences {
+  apiConnectionId: number;
+  pipelines: { id: number; name: string }[];
+  totalCount: number;
+}
+
 export function createConnectionApi(client: AxiosInstance) {
   return {
     async listApiConnections(): Promise<unknown> {
@@ -56,6 +67,18 @@ export function createConnectionApi(client: AxiosInstance) {
     async deleteApiConnection(id: number): Promise<unknown> {
       await client.delete(`/api-connections/${id}`);
       return { success: true };
+    },
+    /**
+     * 이 API 연결을 참조하는 파이프라인 목록을 조회한다. 삭제 전 영향 범위 확인용(#605).
+     * pipeline_step.api_connection_id는 FK(ON DELETE 절 없음 → 기본 RESTRICT)라 참조가 있으면
+     * 실제 삭제는 409로 거부되지만, 그 전에는 확인할 방법이 없었다 — dataset-manager의
+     * get_dataset_references와 동일한 사전 확인 패턴을 제공한다.
+     */
+    async getApiConnectionReferences(id: number): Promise<ApiConnectionReferences> {
+      const response = await client.get<ApiConnectionReferences>(
+        `/api-connections/${id}/references`,
+      );
+      return response.data;
     },
     /** 저장된 API 연결을 즉시 테스트 호출하고 상태를 반환한다. 결과는 DB에도 반영된다. */
     async testApiConnection(id: number): Promise<TestConnectionResponse> {
