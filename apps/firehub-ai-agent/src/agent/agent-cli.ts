@@ -648,6 +648,10 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
           yield { type: 'text', content: redactedDelta };
           continue;
         }
+        // #620 점검 결과: subagent(parent_tool_use_id 있음) 델타는 classifyMainText 를 타지 않고
+        // 그대로 relay 된다 — subagent 텍스트는 위임 결과(최종 답변)로 신뢰되므로 코드로 narration
+        // 여부를 구분할 구조적 신호가 없다. subagent 자신의 도구 호출 사이 narration 억제는 각
+        // subagent 의 rules.md/agent.md 프롬프트 규칙이 유일한 방어선이다.
         noteSubagentText(narrationState);
         userTextEmitted = true;
         yield { type: 'text', content: msg.delta.text };

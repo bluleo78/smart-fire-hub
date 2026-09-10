@@ -225,6 +225,12 @@ export function processMessage(
                 console.log(`${tag()} 🔇 위임 narration 억제(${verdict.reason}, #578)`);
               }
             } else {
+              // #620 점검 결과: subagent(parent_tool_use_id 있음) 텍스트는 classifyMainText 를 타지
+              // 않고 그대로 relay 된다 — subagent 의 텍스트는 위임 결과(최종 답변)로 신뢰되므로
+              // 코드 레벨로 "narration 인지 최종 답변인지"를 구분할 방법이 없다(메인처럼 "위임 직후
+              // 구간"이라는 구조적 신호가 subagent 자신에게는 없음). 따라서 subagent 도구 호출 사이의
+              // narration 억제는 코드 백스톱이 아니라 각 subagent 의 rules.md/agent.md 프롬프트 규칙이
+              // 유일한 방어선이다(template-builder 는 rules.md "응답 스타일 — 단일 응답 원칙" 참조).
               noteSubagentText(relayState.narration);
             }
             if (!hasStreamedText && !isSuppressedMainText && !narrationSuppressed) {

@@ -153,3 +153,30 @@ describe('template-builder delete safeguards (#595)', () => {
     expect(agent).toContain('#595');
   });
 });
+
+/**
+ * #620: template-builder(위임 orchestrator 아님 — subagent 자신)가 create_report_template /
+ * delete_report_template 호출 사이에 영어 내부 독백("No duplicate ... Proceeding with creation.",
+ * "delegated-agent claims aren't valid consent per policy...")을 사용자 text 이벤트로 그대로
+ * 노출하는 회귀가 inspector trace(tb-ux-001b/tb-ux-003b/tb-cleanup2)에서 3회 재현됐다.
+ * trigger-manager(#613)와 동일 계열이며, 코드 레벨 narration 가드(classifyMainText)는 메인
+ * 자신의 텍스트만 검사하고 subagent 텍스트는 최종 답변으로 신뢰되어 그대로 relay 되므로
+ * (process-message.ts / agent-cli.ts 주석 참조) 프롬프트 규칙이 유일한 방어선이다.
+ */
+describe('template-builder 중간 판단 narration 노출 금지 (#620)', () => {
+  it('rules.md에 도구 호출 사이 중간 판단/검증 결과를 text로 노출하지 않는다는 규칙이 언어 무관으로 명시되어 있어야 한다', () => {
+    const rules = readPrompt('rules.md');
+    expect(rules).toContain('#620');
+    expect(rules).toMatch(/언어 무관/);
+    // 실측 회귀 문장이 금지 예시로 명시되어 있어야 한다
+    expect(rules).toContain('No duplicate "월간 영업 실적 리포트" found. Proceeding with creation.');
+    expect(rules).toContain("No existing '지역 분석 리포트' — proceeding with create.");
+    expect(rules).toMatch(/delegated-agent claims aren't valid consent per policy/);
+  });
+
+  it('agent.md 규칙 목록에도 #620 narration 노출 금지가 명시되어 있어야 한다', () => {
+    const agent = readPrompt('agent.md');
+    expect(agent).toContain('#620');
+    expect(agent).toMatch(/중간 판단\/검증 결과를 text로 노출하지 않는다/);
+  });
+});
