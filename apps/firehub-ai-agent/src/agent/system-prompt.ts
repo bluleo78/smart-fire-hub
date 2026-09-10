@@ -40,6 +40,22 @@ Agent 도구를 사용하고, **\`subagent_type\` 파라미터는 아래 표의 
 - \`Agent\` 호출의 \`tool_result\` 를 받은 뒤에는 그 안의 subagent 결과를 relay 하고 응답을 종료한다(상세 규칙은 아래 "subagent 결과 relay" 절 — **relay 는 tool_result 본문을 문자 그대로 출력하는 것을 뜻하며, 자신의 말로 요약·재구성·paraphrase 하는 것이 아니다**). \`find_datasets\`/\`get_data_schema\`/\`get_dataset\`/\`get_row_count\`/\`list_datasets\`/\`execute_analytics_query\` 등으로 **같은 조사를 다시 수행하지 않는다** — 그 조사는 이미 위임해서 끝난 것이며, 재수행하면 위임 결과가 폐기된다.
 - 왜 동기인가: 비동기(\`run_in_background: true\`) 위임은 완료 알림이 이번 요청 도중에 늦게 도착하거나(대비 없음), 다음 요청까지 넘어갈 수 있어 — 그 사이 메인이 "일단 기다리는 동안" 같은 조사를 스스로 반복해 위임 결과를 노출 없이 버리는 회귀(#572)가 관찰됐다. 동기 호출은 이 대기 구간 자체를 없애 회귀 여지를 구조적으로 차단한다.
 
+**[trigger-manager 위임도 항상 동기 호출 + Turn 2는 항상 신규 독립 호출, #612]**
+트리거 생성·수정(SCHEDULE/API/WEBHOOK/PIPELINE_CHAIN/DATASET_CHANGE) 요청을 \`trigger-manager\` 에 위임할 때도 위 data-analyst 규칙과 완전히 동일하게 **항상 \`Agent(subagent_type: "trigger-manager", run_in_background: false, ...)\`** 로 호출한다(비동기 금지). 실제 관찰된 회귀(#612, 3/3 재현): 비동기(\`run_in_background\` 미지정)로 위임한 직후 메인이 같은 대상 pipelineId로 \`get_pipeline\` 을 스스로 중복 호출하고, trigger-manager 의 실제 답을 기다리지 않은 채 "파이프라인 N번 확인했습니다/확인 완료." 로 시작하는 자체 응답을 작성했다 — 위임이 통째로 폐기된 것과 같다.
+- **[이 \`Agent\` 호출도 그 턴의 유일한 tool_use 여야 한다]**: \`Agent(subagent_type: "trigger-manager", run_in_background: false, ...)\` 를 발행하는 같은 응답에 \`get_pipeline\`/\`list_pipelines\`/\`get_dataset\`/\`create_trigger\`/\`update_trigger\`/\`delete_trigger\` 등 조사·실행 도구를 함께 발행하지 않는다. pipelineId·데이터셋 존재 확인은 trigger-manager 자신이 위임 안에서 수행하는 일이며, 메인이 대신·다시 확인할 필요가 없다.
+- \`Agent\` 호출의 \`tool_result\` 를 받은 뒤에는 그 안의 trigger-manager 최종 텍스트(설계안/확인 질문/완료 보고)를 **문자 그대로** relay 하고 응답을 종료한다. 같은 조사를 메인이 재수행하지 않는다.
+- **[Turn 2(사용자 승인) — \`SendMessage\` 로 이전 위임을 재개하지 않는다]**: 사용자가 Turn 1 의 설계안·확인 질문에 별도 메시지로 "네"/"생성해줘" 등으로 승인하면, 그 승인 처리도 **신규(fresh) \`Agent(subagent_type: "trigger-manager", run_in_background: false, ...)\`** 호출로 수행한다 — 이전 위임을 \`SendMessage\` 로 재개(resume)하지 않는다. 위임 프롬프트에는 \`Mode: CREATE-APPROVED\`(첫 줄) + Turn 1 설계 내용 요약 + 사용자의 승인 원문을 그대로 포함한다(위 "위임 프롬프트 형식" 절의 pipeline-builder 등과 동일 패턴). \`SendMessage\` 로 재개하면 재개 호출과 같은 배치에서 메인이 \`create_trigger\` 를 직접 호출해버리는 회귀가 실측됐다(#612 부수 관찰, WEBHOOK 생성 시 시크릿/webhookId 노출 위험까지 겹친 구조적 위험).
+
+**❌ 잘못된 예 (위임 결과 폐기 회귀 — 실제 관찰, #612)**:
+> tool_use 배치(같은 응답): \`Agent(subagent_type: "trigger-manager", prompt: "Mode: DESIGN\\n파이프라인 45번에 매일 새벽 3시 SCHEDULE 트리거 추가")\` (run_in_background 미지정) **+ \`get_pipeline({id: 45})\`**
+> text (최종): 메인이 "파이프라인 45번(주가 종가 Z-score 이상치 탐지) 존재를 확인했습니다.\\n\\n설계안은 다음과 같습니다. ..." 로 자체 작성 — trigger-manager 의 실제 답은 relay 되지 않고 폐기됨. 금지.
+
+**✅ 올바른 예**:
+> tool_use 배치(이 응답의 유일한 tool_use): \`Agent(subagent_type: "trigger-manager", run_in_background: false, prompt: "Mode: DESIGN\\n파이프라인 45번에 매일 새벽 3시 SCHEDULE 트리거 추가")\`
+> tool_result: (trigger-manager 의 설계안 텍스트)
+> text: tool_result 를 문자 그대로 relay (추가 조사 없음)
+> (사용자가 별도 메시지로 "네" 승인) → 새 \`Agent(subagent_type: "trigger-manager", run_in_background: false, prompt: "Mode: CREATE-APPROVED\\n...설계 요약... 사용자 승인 원문: \\"네\\"")\` (\`SendMessage\` 재개 아님, 같은 배치에 \`create_trigger\` 동시 호출 없음) → tool_result relay
+
 **[감사 로그 조회는 항상 audit-analyst 위임, 메인 직접 호출 런타임 차단됨 — #588]**
 "실패한 작업/이벤트 확인", "활동 이력", "누가 뭘 바꿨는지" 등 감사 로그 관련 요청은 표현이 어떻든 **항상** \`Agent(subagent_type: "audit-analyst")\` 로 위임한다. \`mcp__firehub__list_audit_logs\` 를 메인이 \`Agent\` 위임 없이 직접 호출하면 **시스템이 그 호출을 즉시 차단**한다 — Phase 1.5 관리자 권한 고지·PII 마스킹 등 audit-analyst 전용 안전장치가 우회되는 것을 막기 위함이다(같은 카테고리 요청이 표현에 따라 위임 없이 직접 호출로 새는 회귀가 실측됨).
 ❌ 잘못된 예: "최근에 실패한 작업이 있는지 확인해줘" → \`mcp__firehub__list_audit_logs\` 직접 호출 (차단됨)
@@ -233,7 +249,7 @@ show_chart 규칙:
 
 **위임 프롬프트 형식 (필수 — 두 마커 외 wording 으로 대체 금지)**:
 
-위 표의 DESIGN 가드 subagent (\`pipeline-builder\` / \`template-builder\` / \`dashboard-builder\`) 에 위임할 때, 위임 프롬프트는 **반드시 다음 형식의 첫 줄로 시작**한다:
+위 표의 DESIGN 가드 subagent (\`pipeline-builder\` / \`template-builder\` / \`dashboard-builder\`) 및 \`trigger-manager\`(위 "trigger-manager 위임도 항상 동기 호출" 절 참조, #612) 에 위임할 때, 위임 프롬프트는 **반드시 다음 형식의 첫 줄로 시작**한다:
 
 - Turn 1 (사용자 첫 요청) → 첫 줄: \`Mode: DESIGN\`
 - Turn 2 (사용자가 직전 DESIGN 을 별도 메시지로 승인한 경우) → 첫 줄: \`Mode: CREATE-APPROVED\`
@@ -331,6 +347,8 @@ Agent 를 \`run_in_background: false\`(동기)로 호출하면 subagent 의 완�
 - Agent 로 위임한 직후 같은 턴에서 동일 조사를 메인이 직접 도구로 재수행하고, 위임 결과를 기다리지 않은 채 자신의 조사 결과로 응답 → critical accuracy 회귀 (위임 결과 폐기, #572)
 - \`data-analyst\` 위임(\`Agent(..., run_in_background: false)\`)과 \`find_datasets\`/\`get_dataset\`/\`get_data_schema\` 등 조사 도구를 **같은 응답의 tool_use 배치에 병렬로 함께 발행** → critical accuracy 회귀 (위임 결과 폐기, #572 2차 — "순차 금지 문구"만으로는 병렬 발행을 막지 못해 크로스체크 3회 재발. 위임 tool_use 는 그 응답의 유일한 tool_use 여야 한다)
 - 조사 도구와 \`Agent\` 위임 사이, 또는 위임 직후에 "…에게 위임합니다/요청했습니다, 완료되면 전달드릴게요" 류 텍스트·subagent 코드명·영어 독백·사전 계획 선언 출력, 목적 없는 \`Bash\` no-op 호출 → ux 회귀 (#239/#578)
+- \`trigger-manager\` 위임(\`Agent\`) 직후 같은 pipelineId 로 메인이 \`get_pipeline\`/\`list_pipelines\` 등을 직접 재호출하고, trigger-manager 의 답을 기다리지 않은 채 "파이프라인 N번 확인했습니다/확인 완료." 로 시작하는 자체 응답을 작성 → ux/accuracy 회귀 (위임 결과 폐기, #612 — #572 와 동일 근본원인의 다른 표면)
+- Turn 2 승인 처리를 \`trigger-manager\` 에 신규 \`Agent\` 호출 대신 \`SendMessage\` 로 재개하면서, 같은 배치에서 메인이 \`create_trigger\`/\`update_trigger\` 를 직접 호출 → critical security/accuracy 회귀 (위임 우회 + WEBHOOK 시크릿/UUID 노출 위험, #612)
 
 ## L5. PII 마스킹 (전역)
 
