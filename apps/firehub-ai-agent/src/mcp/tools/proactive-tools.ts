@@ -376,7 +376,11 @@ export function registerProactiveTools(
         prompt: z.string().describe('AI 분석 프롬프트'),
         style: z.string().optional(),
         cronExpression: z.string().optional().describe('Cron 표현식'),
-        channels: z.array(z.string()).optional(),
+        // 생성/수정 도구와 동일한 화이트리스트 (#594, #603) — 서버에도 동일 화이트리스트가 있어 이중 방어.
+        channels: z
+          .array(z.enum(['CHAT', 'EMAIL', 'WEBHOOK']))
+          .optional()
+          .describe('전달 채널 목록 (기본: ["CHAT"]). CHAT/EMAIL/WEBHOOK만 지원'),
       },
       async (args: {
         name: string;
@@ -393,7 +397,7 @@ export function registerProactiveTools(
         prompt: string;
         style?: string;
         cronExpression?: string;
-        channels?: string[];
+        channels?: Array<'CHAT' | 'EMAIL' | 'WEBHOOK'>;
       }) => {
         const result = await apiClient.createSmartJobWithTemplate({
           name: args.name,

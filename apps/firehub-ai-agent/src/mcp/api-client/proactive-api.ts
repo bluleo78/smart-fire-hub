@@ -123,8 +123,19 @@ export function createProactiveApi(client: AxiosInstance) {
         },
       };
       if (!data.cronExpression) jobPayload.enabled = false;
-      const job = await client.post('/proactive/jobs', jobPayload);
-      return { template: template.data, job: job.data };
+      // (#603) 템플릿 생성과 작업 생성은 서로 다른 백엔드 엔드포인트로 원자적 결합 불가(별도 트랜잭션).
+      // 작업 생성이 실패하면(예: 미지원 채널 400) 방금 만든 템플릿이 고아로 남으므로,
+      // 애플리케이션 레벨 보상 트랜잭션으로 방금 생성한 템플릿을 롤백(삭제)한다.
+      try {
+        const job = await client.post('/proactive/jobs', jobPayload);
+        return { template: template.data, job: job.data };
+      } catch (error) {
+        await client.delete(`/proactive/templates/${templateId}`).catch(() => {
+          // 롤백 삭제 실패는 원래 에러를 가리지 않도록 무시한다. 고아 템플릿이 남을 수 있으나
+          // 원인(작업 생성 실패)은 그대로 상위로 전파되어 사용자/모델이 알 수 있다.
+        });
+        throw error;
+      }
     },
 
     /**

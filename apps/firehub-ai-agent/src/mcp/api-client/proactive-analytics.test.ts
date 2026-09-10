@@ -230,6 +230,51 @@ describe('proactiveApi (via FireHubApiClient)', () => {
     });
   });
 
+  it('createSmartJobWithTemplate rolls back (deletes) the template when job creation fails (#603)', async () => {
+    const template = { id: 55, name: 'orphan-candidate' };
+    nock(BASE_URL).post('/proactive/templates').reply(201, template);
+    // 2단계(작업 생성)가 400으로 실패하는 상황을 재현 — 미지원 채널 등
+    nock(BASE_URL)
+      .post('/proactive/jobs')
+      .reply(400, { message: '지원하지 않는 전달 채널입니다: SMS (지원 채널: EMAIL, CHAT, WEBHOOK)' });
+    // 보상 트랜잭션: 방금 생성한 템플릿(id=55)이 삭제되어야 한다
+    const deleteScope = nock(BASE_URL).delete('/proactive/templates/55').reply(204);
+
+    await expect(
+      client.createSmartJobWithTemplate({
+        name: 'n',
+        prompt: 'p',
+        templateName: 't',
+        templateStructure: {
+          sections: [{ key: 'k', label: 'l' }],
+          output_format: 'markdown',
+        },
+      }),
+    ).rejects.toThrow();
+
+    expect(deleteScope.isDone()).toBe(true);
+  });
+
+  it('createSmartJobWithTemplate still throws the original error even if rollback delete itself fails', async () => {
+    const template = { id: 56 };
+    nock(BASE_URL).post('/proactive/templates').reply(201, template);
+    nock(BASE_URL).post('/proactive/jobs').reply(400, { message: 'job creation failed' });
+    // 롤백 삭제 자체가 실패하는 경우에도 원래 에러가 그대로 전파되어야 한다
+    nock(BASE_URL).delete('/proactive/templates/56').reply(500);
+
+    await expect(
+      client.createSmartJobWithTemplate({
+        name: 'n',
+        prompt: 'p',
+        templateName: 't',
+        templateStructure: {
+          sections: [{ key: 'k', label: 'l' }],
+          output_format: 'markdown',
+        },
+      }),
+    ).rejects.toThrow(/job creation failed|400/);
+  });
+
   it('getReportTemplate calls GET /proactive/templates/:id', async () => {
     const mock = { id: 3, name: 'tpl' };
     nock(BASE_URL).get('/proactive/templates/3').reply(200, mock);
