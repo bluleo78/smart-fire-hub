@@ -46,6 +46,7 @@ class ChatDeliveryChannelTest extends IntegrationTestBase {
         "0 9 * * *",
         "Asia/Seoul",
         true,
+        null,
         config,
         null,
         null,

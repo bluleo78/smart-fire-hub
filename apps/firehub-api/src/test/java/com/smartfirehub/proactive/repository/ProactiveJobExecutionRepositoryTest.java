@@ -50,7 +50,7 @@ class ProactiveJobExecutionRepositoryTest extends IntegrationTestBase {
 
   private Long createJob(Long ownerId, String name) {
     return jobRepository.create(
-        ownerId, name, "prompt", null, "0 0 9 * * *", "Asia/Seoul", true, Map.of());
+        ownerId, name, "prompt", null, "0 0 9 * * *", "Asia/Seoul", true, null, Map.of());
   }
 
   /** COMPLETED + htmlContent 있는 실행 = 리포트 */

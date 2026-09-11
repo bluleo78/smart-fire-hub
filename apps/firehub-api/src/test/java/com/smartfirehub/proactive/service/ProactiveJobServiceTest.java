@@ -79,6 +79,7 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
         "0 0 9 * * *",
         "Asia/Seoul",
         null,
+        null,
         Map.of("channels", List.of("CHAT")));
   }
 
@@ -127,6 +128,7 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
             "0 0 9 * * *",
             "Asia/Seoul",
             false,
+            null,
             Map.of("channels", List.of("CHAT")));
 
     // when
@@ -149,6 +151,7 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
             "0 0 9 * * *",
             "Asia/Seoul",
             null,
+            null,
             Map.of("channels", List.of("CHAT")));
 
     ProactiveJobResponse created = proactiveJobService.createJob(req, testUserId);
@@ -164,13 +167,112 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
 
     // when
     UpdateProactiveJobRequest updateReq =
-        new UpdateProactiveJobRequest("수정 후 이름", "수정된 프롬프트", null, "0 0 8 * * *", null, null, null);
+        new UpdateProactiveJobRequest(
+            "수정 후 이름", "수정된 프롬프트", null, "0 0 8 * * *", null, null, null, null);
     proactiveJobService.updateJob(created.id(), updateReq, testUserId);
 
     // then
     ProactiveJobResponse updated = proactiveJobService.getJob(created.id(), testUserId);
     assertThat(updated.name()).isEqualTo("수정 후 이름");
     assertThat(updated.cronExpression()).isEqualTo("0 0 8 * * *");
+  }
+
+  /**
+   * 회귀 테스트 — triggerType=ANOMALY로 생성하면 DB trigger_type 컬럼에 실제로 저장되어야 한다 (#655).
+   *
+   * <p>이전에는 CreateProactiveJobRequest DTO 자체에 triggerType 필드가 없어 프론트엔드가 값을 보내도 조용히 버려지고 DB 컬럼
+   * 기본값(SCHEDULE)만 저장됐다. 그 결과 MetricPollerService의 {@code trigger_type IN ('ANOMALY','BOTH')} 조회 대상에서
+   * 영원히 제외되어 이상 탐지 작업이 절대 발화하지 않았다.
+   */
+  @Test
+  void createJob_withAnomalyTriggerType_persistsTriggerType() {
+    CreateProactiveJobRequest req =
+        new CreateProactiveJobRequest(
+            "이상 탐지 트리거 테스트",
+            "테스트 프롬프트",
+            null,
+            null,
+            "Asia/Seoul",
+            true,
+            "ANOMALY",
+            Map.of(
+                "channels",
+                List.of("CHAT"),
+                "anomaly",
+                Map.of(
+                    "enabled", true, "metrics", List.of(), "sensitivity", "medium",
+                    "cooldownMinutes", 30)));
+
+    ProactiveJobResponse created = proactiveJobService.createJob(req, testUserId);
+
+    // 응답 DTO에도 triggerType이 반영돼야 한다 (조회 시 프론트가 폼을 정확히 복원할 수 있도록)
+    assertThat(created.triggerType()).isEqualTo("ANOMALY");
+
+    // 재조회해도 유지돼야 한다 — insert 시점 반영 확인
+    ProactiveJobResponse refetched = proactiveJobService.getJob(created.id(), testUserId);
+    assertThat(refetched.triggerType()).isEqualTo("ANOMALY");
+
+    // DB 컬럼 자체를 직접 조회해 MetricPollerService의 trigger_type IN ('ANOMALY','BOTH') 조건에
+    // 실제로 걸리는지 확인한다 — 응답 DTO만 맞고 컬럼이 여전히 SCHEDULE인 회귀를 잡기 위함.
+    String rawTriggerType =
+        dsl.select(com.smartfirehub.jooq.Tables.PROACTIVE_JOB.TRIGGER_TYPE)
+            .from(com.smartfirehub.jooq.Tables.PROACTIVE_JOB)
+            .where(com.smartfirehub.jooq.Tables.PROACTIVE_JOB.ID.eq(created.id()))
+            .fetchOne(com.smartfirehub.jooq.Tables.PROACTIVE_JOB.TRIGGER_TYPE);
+    assertThat(rawTriggerType).isEqualTo("ANOMALY");
+  }
+
+  /** triggerType 미지정(null) 시 기존 동작과 동일하게 기본값 SCHEDULE로 저장돼야 한다 (#655 회귀 없음 확인). */
+  @Test
+  void createJob_withoutTriggerType_defaultsToSchedule() {
+    ProactiveJobResponse created =
+        proactiveJobService.createJob(buildCreateRequest("트리거 유형 미지정 테스트"), testUserId);
+
+    assertThat(created.triggerType()).isEqualTo("SCHEDULE");
+    String rawTriggerType =
+        dsl.select(com.smartfirehub.jooq.Tables.PROACTIVE_JOB.TRIGGER_TYPE)
+            .from(com.smartfirehub.jooq.Tables.PROACTIVE_JOB)
+            .where(com.smartfirehub.jooq.Tables.PROACTIVE_JOB.ID.eq(created.id()))
+            .fetchOne(com.smartfirehub.jooq.Tables.PROACTIVE_JOB.TRIGGER_TYPE);
+    assertThat(rawTriggerType).isEqualTo("SCHEDULE");
+  }
+
+  /** 기존 SCHEDULE 잡의 트리거 유형을 ANOMALY로 수정하면 DB에도 반영돼야 한다 (#655). */
+  @Test
+  void updateJob_changingTriggerTypeToAnomaly_persists() {
+    ProactiveJobResponse created =
+        proactiveJobService.createJob(buildCreateRequest("트리거 유형 수정 테스트"), testUserId);
+    assertThat(created.triggerType()).isEqualTo("SCHEDULE");
+
+    UpdateProactiveJobRequest updateReq =
+        new UpdateProactiveJobRequest(null, null, null, null, null, null, "ANOMALY", null);
+    proactiveJobService.updateJob(created.id(), updateReq, testUserId);
+
+    ProactiveJobResponse updated = proactiveJobService.getJob(created.id(), testUserId);
+    assertThat(updated.triggerType()).isEqualTo("ANOMALY");
+  }
+
+  /** triggerType을 지정하지 않은 update는 기존 값을 유지해야 한다 (부분 수정 호환성, #655). */
+  @Test
+  void updateJob_withNullTriggerType_keepsExisting() {
+    CreateProactiveJobRequest req =
+        new CreateProactiveJobRequest(
+            "트리거 유형 유지 테스트",
+            "프롬프트",
+            null,
+            null,
+            "Asia/Seoul",
+            true,
+            "ANOMALY",
+            Map.of("channels", List.of("CHAT")));
+    ProactiveJobResponse created = proactiveJobService.createJob(req, testUserId);
+
+    UpdateProactiveJobRequest updateReq =
+        new UpdateProactiveJobRequest("이름만 변경2", null, null, null, null, null, null, null);
+    proactiveJobService.updateJob(created.id(), updateReq, testUserId);
+
+    ProactiveJobResponse updated = proactiveJobService.getJob(created.id(), testUserId);
+    assertThat(updated.triggerType()).isEqualTo("ANOMALY");
   }
 
   /**
@@ -188,6 +290,7 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
             "not a cron",
             "Asia/Seoul",
             true,
+            null,
             Map.of("channels", List.of("CHAT")));
 
     assertThatThrownBy(() -> proactiveJobService.createJob(req, testUserId))
@@ -209,6 +312,7 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
             "0 0 9 * * *",
             "Mars/Phobos",
             true,
+            null,
             Map.of("channels", List.of("CHAT")));
 
     assertThatThrownBy(() -> proactiveJobService.createJob(req, testUserId))
@@ -222,7 +326,8 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
     ProactiveJobResponse created =
         proactiveJobService.createJob(buildCreateRequest("업데이트 검증 테스트"), testUserId);
     UpdateProactiveJobRequest req =
-        new UpdateProactiveJobRequest("x", "y", null, "### BAD ###", "Asia/Seoul", true, null);
+        new UpdateProactiveJobRequest(
+            "x", "y", null, "### BAD ###", "Asia/Seoul", true, null, null);
 
     assertThatThrownBy(() -> proactiveJobService.updateJob(created.id(), req, testUserId))
         .isInstanceOf(ProactiveJobException.class)
@@ -235,7 +340,7 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
     ProactiveJobResponse created =
         proactiveJobService.createJob(buildCreateRequest("blank 업데이트 테스트"), testUserId);
     UpdateProactiveJobRequest req =
-        new UpdateProactiveJobRequest("이름만 변경", null, null, null, null, null, null);
+        new UpdateProactiveJobRequest("이름만 변경", null, null, null, null, null, null, null);
 
     proactiveJobService.updateJob(created.id(), req, testUserId);
 

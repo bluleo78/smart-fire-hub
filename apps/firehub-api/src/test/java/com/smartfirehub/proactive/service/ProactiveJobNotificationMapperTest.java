@@ -126,6 +126,7 @@ class ProactiveJobNotificationMapperTest {
         null,
         null, // cronExpression, timezone
         true,
+        null, // triggerType
         config,
         null,
         null, // lastExecutedAt, nextExecuteAt

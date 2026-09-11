@@ -69,6 +69,7 @@ class ProactiveJobSchedulerServiceTest extends IntegrationTestBase {
         cron,
         timezone,
         enabled,
+        null,
         Map.of(),
         null,
         null,
@@ -185,7 +186,7 @@ class ProactiveJobSchedulerServiceTest extends IntegrationTestBase {
     ProactiveJobResponse created =
         proactiveJobService.createJob(
             new CreateProactiveJobRequest(
-                "다음 실행 검증 잡", "프롬프트", null, "0 0 9 * * *", "Asia/Seoul", true, Map.of()),
+                "다음 실행 검증 잡", "프롬프트", null, "0 0 9 * * *", "Asia/Seoul", true, null, Map.of()),
             testUserId);
 
     LocalDateTime next = readNextExecuteAt(created.id());
@@ -201,14 +202,14 @@ class ProactiveJobSchedulerServiceTest extends IntegrationTestBase {
     ProactiveJobResponse created =
         proactiveJobService.createJob(
             new CreateProactiveJobRequest(
-                "cron 수정 검증 잡", "프롬프트", null, "0 0 9 * * *", "Asia/Seoul", true, Map.of()),
+                "cron 수정 검증 잡", "프롬프트", null, "0 0 9 * * *", "Asia/Seoul", true, null, Map.of()),
             testUserId);
     LocalDateTime before = readNextExecuteAt(created.id());
     assertThat(before).isNotNull();
 
     proactiveJobService.updateJob(
         created.id(),
-        new UpdateProactiveJobRequest(null, null, null, "0 0 21 * * *", null, null, null),
+        new UpdateProactiveJobRequest(null, null, null, "0 0 21 * * *", null, null, null, null),
         testUserId);
 
     LocalDateTime after = readNextExecuteAt(created.id());
@@ -224,7 +225,7 @@ class ProactiveJobSchedulerServiceTest extends IntegrationTestBase {
     ProactiveJobResponse created =
         proactiveJobService.createJob(
             new CreateProactiveJobRequest(
-                "등록 실패 검증 잡", "프롬프트", null, "0 0 9 * * *", "Asia/Seoul", true, Map.of()),
+                "등록 실패 검증 잡", "프롬프트", null, "0 0 9 * * *", "Asia/Seoul", true, null, Map.of()),
             testUserId);
     assertThat(readNextExecuteAt(created.id())).isNotNull();
 
@@ -241,7 +242,7 @@ class ProactiveJobSchedulerServiceTest extends IntegrationTestBase {
     ProactiveJobResponse created =
         proactiveJobService.createJob(
             new CreateProactiveJobRequest(
-                "5필드 cron 잡", "프롬프트", null, "0 0 9 * * *", "Asia/Seoul", true, Map.of()),
+                "5필드 cron 잡", "프롬프트", null, "0 0 9 * * *", "Asia/Seoul", true, null, Map.of()),
             testUserId);
 
     schedulerService.registerSchedule(created.id(), "0 9 * * *", "Asia/Seoul");
@@ -265,7 +266,7 @@ class ProactiveJobSchedulerServiceTest extends IntegrationTestBase {
     ProactiveJobResponse created =
         proactiveJobService.createJob(
             new CreateProactiveJobRequest(
-                "5필드 프리셋 잡", "프롬프트", null, "0 9 * * *", "Asia/Seoul", true, Map.of()),
+                "5필드 프리셋 잡", "프롬프트", null, "0 9 * * *", "Asia/Seoul", true, null, Map.of()),
             testUserId);
 
     // 사용자가 입력한 원문은 그대로 보존하고, 해석 시점에만 정규화한다
@@ -279,7 +280,7 @@ class ProactiveJobSchedulerServiceTest extends IntegrationTestBase {
     ProactiveJobResponse created =
         proactiveJobService.createJob(
             new CreateProactiveJobRequest(
-                "토글 검증 잡", "프롬프트", null, "0 0 9 * * *", "Asia/Seoul", true, Map.of()),
+                "토글 검증 잡", "프롬프트", null, "0 0 9 * * *", "Asia/Seoul", true, null, Map.of()),
             testUserId);
     assertThat(readNextExecuteAt(created.id())).isNotNull();
 

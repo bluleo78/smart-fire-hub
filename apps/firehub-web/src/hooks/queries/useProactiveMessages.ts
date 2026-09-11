@@ -98,13 +98,16 @@ export function useExecuteProactiveJob() {
 export function useCloneProactiveJob() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (job: Pick<ProactiveJob, 'name' | 'prompt' | 'templateId' | 'cronExpression' | 'timezone' | 'config'>) =>
+    mutationFn: (job: Pick<ProactiveJob, 'name' | 'prompt' | 'templateId' | 'cronExpression' | 'timezone' | 'triggerType' | 'config'>) =>
       proactiveApi.createJob({
         name: `${job.name} (복사본)`,
         prompt: job.prompt,
         templateId: job.templateId,
         cronExpression: job.cronExpression,
         timezone: job.timezone,
+        // triggerType을 넘기지 않으면 백엔드 기본값(SCHEDULE)으로 복제돼 원본이 이상 탐지
+        // 트리거였어도 복사본은 조용히 스케줄 트리거로 바뀌는 문제가 있었다 (#655 관련 수정)
+        triggerType: job.triggerType,
         config: job.config,
       }).then((r) => r.data),
     onSuccess: () => {

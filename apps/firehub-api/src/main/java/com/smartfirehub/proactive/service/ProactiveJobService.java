@@ -144,6 +144,7 @@ public class ProactiveJobService {
             request.cronExpression(),
             request.timezone(),
             request.enabled(),
+            request.triggerType(),
             request.config());
     ProactiveJobResponse job =
         proactiveJobRepository
@@ -173,6 +174,7 @@ public class ProactiveJobService {
         request.cronExpression(),
         request.timezone(),
         request.enabled(),
+        request.triggerType(),
         request.config());
     ProactiveJobResponse updated = proactiveJobRepository.findById(id, userId).orElse(null);
     if (updated != null) {
@@ -188,7 +190,7 @@ public class ProactiveJobService {
 
   @Transactional
   public void toggleJob(Long id, Long userId, boolean enabled) {
-    proactiveJobRepository.update(id, userId, null, null, null, null, null, enabled, null);
+    proactiveJobRepository.update(id, userId, null, null, null, null, null, enabled, null, null);
     ProactiveJobResponse job = proactiveJobRepository.findById(id, userId).orElse(null);
     if (job != null) {
       if (enabled && job.cronExpression() != null && !job.cronExpression().isBlank()) {

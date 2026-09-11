@@ -78,6 +78,7 @@ class ProactiveJobControllerTest {
         "0 0 9 * * *",
         "Asia/Seoul",
         true,
+        "SCHEDULE",
         new HashMap<>(),
         null,
         null,
@@ -116,7 +117,7 @@ class ProactiveJobControllerTest {
     config.put("channels", List.of());
     CreateProactiveJobRequest req =
         new CreateProactiveJobRequest(
-            "daily", "요약해줘", null, "0 0 9 * * *", "Asia/Seoul", null, config);
+            "daily", "요약해줘", null, "0 0 9 * * *", "Asia/Seoul", null, "SCHEDULE", config);
     when(proactiveJobService.createJob(any(), eq(1L))).thenReturn(sampleJob());
 
     mockMvc
@@ -138,7 +139,7 @@ class ProactiveJobControllerTest {
     config.put("channels", List.of("SMS"));
     CreateProactiveJobRequest req =
         new CreateProactiveJobRequest(
-            "daily", "요약해줘", null, "0 0 9 * * *", "Asia/Seoul", null, config);
+            "daily", "요약해줘", null, "0 0 9 * * *", "Asia/Seoul", null, "SCHEDULE", config);
 
     mockMvc
         .perform(
@@ -155,7 +156,7 @@ class ProactiveJobControllerTest {
     Map<String, Object> config = new HashMap<>();
     config.put("channels", List.of("SMS"));
     UpdateProactiveJobRequest req =
-        new UpdateProactiveJobRequest(null, null, null, null, null, null, config);
+        new UpdateProactiveJobRequest(null, null, null, null, null, null, null, config);
 
     mockMvc
         .perform(
@@ -171,7 +172,7 @@ class ProactiveJobControllerTest {
     mockAuth("proactive:write");
     // config=null 분기 — ProactiveConfigParser를 타지 않는 경로
     UpdateProactiveJobRequest req =
-        new UpdateProactiveJobRequest("new-name", null, null, null, null, null, null);
+        new UpdateProactiveJobRequest("new-name", null, null, null, null, null, null, null);
     doNothing().when(proactiveJobService).updateJob(eq(10L), any(), eq(1L));
 
     mockMvc
@@ -189,7 +190,7 @@ class ProactiveJobControllerTest {
     Map<String, Object> config = new HashMap<>();
     config.put("channels", List.of());
     UpdateProactiveJobRequest req =
-        new UpdateProactiveJobRequest(null, null, null, null, null, null, config);
+        new UpdateProactiveJobRequest(null, null, null, null, null, null, null, config);
     doNothing().when(proactiveJobService).updateJob(eq(10L), any(), eq(1L));
 
     mockMvc

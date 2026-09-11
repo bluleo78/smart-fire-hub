@@ -69,6 +69,7 @@ class EmailDeliveryChannelTest {
         "0 9 * * *",
         "Asia/Seoul",
         true,
+        null,
         config,
         null,
         null,

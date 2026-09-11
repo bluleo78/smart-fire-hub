@@ -51,6 +51,11 @@ public class ProactiveJobRepository {
       field(name("proactive_job", "timezone"), String.class);
   private static final Field<Boolean> PJ_ENABLED =
       field(name("proactive_job", "enabled"), Boolean.class);
+  // 트리거 유형(SCHEDULE/ANOMALY/BOTH). V45에서 컬럼은 추가됐지만 이 리포지토리는 필드 상수 자체가
+  // 없어 insert/update/select 어디서도 다루지 않았고, 그 결과 DB 컬럼 기본값(SCHEDULE)만 저장되는
+  // 회귀가 있었다 (#655) — ANOMALY/BOTH로 생성해도 MetricPollerService가 절대 조회하지 못함.
+  private static final Field<String> PJ_TRIGGER_TYPE =
+      field(name("proactive_job", "trigger_type"), String.class);
   private static final Field<JSONB> PJ_CONFIG = field(name("proactive_job", "config"), JSONB.class);
   private static final Field<LocalDateTime> PJ_LAST_EXECUTED_AT =
       field(name("proactive_job", "last_executed_at"), LocalDateTime.class);
@@ -79,6 +84,7 @@ public class ProactiveJobRepository {
             PJ_CRON_EXPRESSION,
             PJ_TIMEZONE,
             PJ_ENABLED,
+            PJ_TRIGGER_TYPE,
             PJ_CONFIG,
             PJ_LAST_EXECUTED_AT,
             PJ_NEXT_EXECUTE_AT,
@@ -103,6 +109,7 @@ public class ProactiveJobRepository {
             PJ_CRON_EXPRESSION,
             PJ_TIMEZONE,
             PJ_ENABLED,
+            PJ_TRIGGER_TYPE,
             PJ_CONFIG,
             PJ_LAST_EXECUTED_AT,
             PJ_NEXT_EXECUTE_AT,
@@ -126,6 +133,7 @@ public class ProactiveJobRepository {
             PJ_CRON_EXPRESSION,
             PJ_TIMEZONE,
             PJ_ENABLED,
+            PJ_TRIGGER_TYPE,
             PJ_CONFIG,
             PJ_LAST_EXECUTED_AT,
             PJ_NEXT_EXECUTE_AT,
@@ -158,6 +166,7 @@ public class ProactiveJobRepository {
             PJ_CRON_EXPRESSION,
             PJ_TIMEZONE,
             PJ_ENABLED,
+            PJ_TRIGGER_TYPE,
             PJ_CONFIG,
             PJ_LAST_EXECUTED_AT,
             PJ_NEXT_EXECUTE_AT,
@@ -185,6 +194,7 @@ public class ProactiveJobRepository {
       String cronExpression,
       String timezone,
       Boolean enabled,
+      String triggerType,
       Map<String, Object> config) {
     try {
       String configJson = config != null ? objectMapper.writeValueAsString(config) : "{}";
@@ -196,6 +206,8 @@ public class ProactiveJobRepository {
           .set(PJ_CRON_EXPRESSION, cronExpression)
           .set(PJ_TIMEZONE, timezone != null ? timezone : "Asia/Seoul")
           .set(PJ_ENABLED, enabled != null ? enabled : true)
+          // triggerType 미지정 시 DB 컬럼 기본값과 동일하게 SCHEDULE로 명시 저장 (#655)
+          .set(PJ_TRIGGER_TYPE, triggerType != null ? triggerType : "SCHEDULE")
           .set(PJ_CONFIG, JSONB.valueOf(configJson))
           .returning(PJ_ID)
           .fetchOne(r -> r.get(PJ_ID));
@@ -213,6 +225,7 @@ public class ProactiveJobRepository {
       String cronExpression,
       String timezone,
       Boolean enabled,
+      String triggerType,
       Map<String, Object> config) {
     try {
       var query = dsl.update(PROACTIVE_JOB).set(PJ_UPDATED_AT, ProactiveTime.nowUtc());
@@ -222,6 +235,9 @@ public class ProactiveJobRepository {
       if (cronExpression != null) query = query.set(PJ_CRON_EXPRESSION, cronExpression);
       if (timezone != null) query = query.set(PJ_TIMEZONE, timezone);
       if (enabled != null) query = query.set(PJ_ENABLED, enabled);
+      // triggerType이 null이면 기존 값을 유지한다(부분 수정 지원) — 회귀 원인이었던 필드이므로
+      // 명시적으로 전달된 경우에만 갱신하도록 나머지 필드와 동일한 패턴을 따른다 (#655)
+      if (triggerType != null) query = query.set(PJ_TRIGGER_TYPE, triggerType);
       if (config != null) {
         query = query.set(PJ_CONFIG, JSONB.valueOf(objectMapper.writeValueAsString(config)));
       }
@@ -280,6 +296,7 @@ public class ProactiveJobRepository {
           r.get(PJ_CRON_EXPRESSION),
           r.get(PJ_TIMEZONE),
           r.get(PJ_ENABLED),
+          r.get(PJ_TRIGGER_TYPE),
           config,
           r.get(PJ_LAST_EXECUTED_AT),
           r.get(PJ_NEXT_EXECUTE_AT),

@@ -13,6 +13,7 @@ public record ProactiveJobResponse(
     String cronExpression,
     String timezone,
     Boolean enabled,
+    String triggerType,
     Map<String, Object> config,
     LocalDateTime lastExecutedAt,
     LocalDateTime nextExecuteAt,
