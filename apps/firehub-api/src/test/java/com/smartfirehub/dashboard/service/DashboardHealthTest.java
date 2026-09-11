@@ -240,6 +240,46 @@ class DashboardHealthTest extends IntegrationTestBase {
     assertThat(health.datasetHealth()).isNotNull();
   }
 
+  /**
+   * #669 — 홈 대시보드 스파크라인이 실제 최근 7일 추이를 반영해야 한다.
+   *
+   * <p>고정 하드코딩 배열([3,5,2,8,4,6,9] 등) 대신 pipelineHealth.trend/datasetHealth.trend가 오늘 실행/임포트한
+   * 데이터를 실제로 카운트해서 담는지 검증한다.
+   */
+  @Test
+  void getSystemHealth_trend_reflectsRealActivity() {
+    SystemHealthResponse before = dashboardService.getSystemHealth();
+    assertThat(before.pipelineHealth().trend()).hasSize(7);
+    assertThat(before.datasetHealth().trend()).hasSize(7);
+    int todayPipelineCountBefore = before.pipelineHealth().trend().get(6);
+    int todayDatasetCountBefore = before.datasetHealth().trend().get(6);
+
+    // 오늘 새 파이프라인 실행 1건 추가
+    dsl.insertInto(PIPELINE_EXECUTION)
+        .set(PIPELINE_EXECUTION.PIPELINE_ID, activePipeline1Id)
+        .set(PIPELINE_EXECUTION.STATUS, "COMPLETED")
+        .set(PIPELINE_EXECUTION.EXECUTED_BY, testUserId)
+        .set(PIPELINE_EXECUTION.CREATED_AT, LocalDateTime.now())
+        .execute();
+
+    // 오늘 새 데이터셋 임포트 이력 1건 추가
+    dsl.insertInto(AUDIT_LOG)
+        .set(AUDIT_LOG.USER_ID, testUserId)
+        .set(AUDIT_LOG.USERNAME, "dashtest")
+        .set(AUDIT_LOG.ACTION_TYPE, "IMPORT")
+        .set(AUDIT_LOG.RESOURCE, "dataset")
+        .set(AUDIT_LOG.RESOURCE_ID, freshDatasetId.toString())
+        .set(AUDIT_LOG.RESULT, "SUCCESS")
+        .set(AUDIT_LOG.ACTION_TIME, LocalDateTime.now())
+        .execute();
+
+    SystemHealthResponse after = dashboardService.getSystemHealth();
+
+    // 마지막 원소(오늘)의 카운트가 늘어나야 한다 — 고정 배열이라면 절대 변하지 않는다
+    assertThat(after.pipelineHealth().trend().get(6)).isEqualTo(todayPipelineCountBefore + 1);
+    assertThat(after.datasetHealth().trend().get(6)).isEqualTo(todayDatasetCountBefore + 1);
+  }
+
   // ======================================================================
   // getAttentionItems() tests
   // ======================================================================

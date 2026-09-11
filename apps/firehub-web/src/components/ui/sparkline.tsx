@@ -4,9 +4,13 @@ interface SparklineProps {
   data: number[];
   color?: 'pipeline' | 'dataset' | 'dashboard';
   className?: string;
+  /** 접근성 라벨 (예: "최근 7일 파이프라인 실행 추이") — 실데이터 배선 확인용 테스트에도 사용 */
+  ariaLabel?: string;
+  /** E2E 테스트에서 특정 스파크라인을 식별하기 위한 testid */
+  testId?: string;
 }
 
-export function Sparkline({ data, color = 'dataset', className }: SparklineProps) {
+export function Sparkline({ data, color = 'dataset', className, ariaLabel, testId }: SparklineProps) {
   const max = Math.max(...data, 1);
 
   const colorMap = {
@@ -19,7 +23,12 @@ export function Sparkline({ data, color = 'dataset', className }: SparklineProps
   const threshold = max * 0.75;
 
   return (
-    <div className={cn('flex items-end gap-[2px] h-5', className)}>
+    <div
+      className={cn('flex items-end gap-[2px] h-5', className)}
+      role="img"
+      aria-label={ariaLabel}
+      data-testid={testId}
+    >
       {data.map((value, i) => (
         <div
           key={i}

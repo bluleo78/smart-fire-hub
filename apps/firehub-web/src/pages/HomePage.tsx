@@ -152,7 +152,14 @@ export default function HomePage() {
               ) : (
                 <span className="text-sm text-muted-foreground tabular-nums whitespace-nowrap">0개</span>
               )}
-              <Sparkline data={[3, 5, 2, 8, 4, 6, 9]} color="pipeline" className="mt-1" />
+              {/* #669: 하드코딩 배열 대신 백엔드가 계산한 최근 7일 실제 실행 추이(ph.trend) 사용 */}
+              <Sparkline
+                data={ph?.trend ?? []}
+                color="pipeline"
+                className="mt-1"
+                ariaLabel="최근 7일 파이프라인 실행 추이"
+                testId="pipeline-sparkline"
+              />
             </button>
 
             <div className="h-4 w-px bg-border" />
@@ -179,7 +186,14 @@ export default function HomePage() {
               ) : (
                 <span className="text-sm text-muted-foreground tabular-nums whitespace-nowrap">0개</span>
               )}
-              <Sparkline data={[8, 10, 6, 4, 7, 9, 5]} color="dataset" className="mt-1" />
+              {/* #669: 하드코딩 배열 대신 백엔드가 계산한 최근 7일 실제 임포트/변경 추이(dh.trend) 사용 */}
+              <Sparkline
+                data={dh?.trend ?? []}
+                color="dataset"
+                className="mt-1"
+                ariaLabel="최근 7일 데이터셋 변경 추이"
+                testId="dataset-sparkline"
+              />
             </button>
 
             <div className="h-4 w-px bg-border" />

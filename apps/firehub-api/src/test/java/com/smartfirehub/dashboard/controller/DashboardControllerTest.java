@@ -68,8 +68,9 @@ class DashboardControllerTest {
   void getSystemHealth_withPermission_returnsOk() throws Exception {
     SystemHealthResponse health =
         new SystemHealthResponse(
-            new SystemHealthResponse.PipelineHealth(5, 4, 1, 0, 0),
-            new SystemHealthResponse.DatasetHealth(10, 8, 1, 1));
+            new SystemHealthResponse.PipelineHealth(
+                5, 4, 1, 0, 0, List.of(1, 2, 0, 3, 1, 2, 1)),
+            new SystemHealthResponse.DatasetHealth(10, 8, 1, 1, List.of(0, 1, 1, 2, 0, 1, 1)));
     when(dashboardService.getSystemHealth()).thenReturn(health);
 
     mockMvc

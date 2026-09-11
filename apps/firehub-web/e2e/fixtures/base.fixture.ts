@@ -22,8 +22,21 @@ export async function setupHomeMocks(page: Page) {
 
   // 대시보드 헬스 — 파이프라인/데이터셋 상태 요약
   await mockApi(page, 'GET', '/api/v1/dashboard/health', {
-    pipelineHealth: { total: 5, healthy: 3, failing: 1, running: 0, disabled: 1 },
-    datasetHealth: { total: 10, fresh: 8, stale: 1, empty: 1 },
+    pipelineHealth: {
+      total: 5,
+      healthy: 3,
+      failing: 1,
+      running: 0,
+      disabled: 1,
+      trend: [1, 3, 2, 4, 1, 2, 3],
+    },
+    datasetHealth: {
+      total: 10,
+      fresh: 8,
+      stale: 1,
+      empty: 1,
+      trend: [2, 1, 3, 2, 4, 1, 2],
+    },
   });
 
   // 주의 필요 항목 목록 (빈 배열로 모킹)

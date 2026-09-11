@@ -12,6 +12,7 @@ import com.smartfirehub.dashboard.dto.SystemHealthResponse;
 import com.smartfirehub.dashboard.dto.SystemHealthResponse.DatasetHealth;
 import com.smartfirehub.dashboard.dto.SystemHealthResponse.PipelineHealth;
 import com.smartfirehub.global.tenant.DataSchema;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -92,6 +93,23 @@ public class DashboardService {
       field(name("pipeline_execution", "started_at"), LocalDateTime.class);
   private static final Field<LocalDateTime> PE_COMPLETED_AT =
       field(name("pipeline_execution", "completed_at"), LocalDateTime.class);
+
+  // 홈 대시보드 스파크라인에 표시할 추이 일수 (#669 — 하드코딩 배열 대체)
+  private static final int TREND_DAYS = 7;
+
+  /**
+   * 날짜별 카운트 맵을 최근 TREND_DAYS일 범위의 정렬된 리스트로 변환한다 (과거→오늘 순).
+   *
+   * <p>데이터가 없는 날짜는 0으로 채운다 — 스파크라인이 실제 활동량 0을 그대로 반영하도록 하기 위함(#669).
+   */
+  private List<Integer> fillTrendDays(Map<LocalDate, Integer> countsByDay) {
+    LocalDate today = LocalDate.now();
+    List<Integer> trend = new ArrayList<>(TREND_DAYS);
+    for (int i = TREND_DAYS - 1; i >= 0; i--) {
+      trend.add(countsByDay.getOrDefault(today.minusDays(i), 0));
+    }
+    return trend;
+  }
 
   @Transactional(readOnly = true)
   public DashboardStatsResponse getStats() {
@@ -214,13 +232,25 @@ public class DashboardService {
     int healthyPipelines = activePipelinesTotal - runningPipelines - failingPipelines;
     if (healthyPipelines < 0) healthyPipelines = 0;
 
+    // ---- Pipeline trend (최근 7일 일자별 실행 건수, #669) ----
+    LocalDateTime trendFrom = LocalDate.now().minusDays(TREND_DAYS - 1).atStartOfDay();
+    Field<LocalDate> execDay = field("CAST({0} AS date)", LocalDate.class, PE_CREATED_AT);
+    Map<LocalDate, Integer> pipelineCountsByDay =
+        dsl.select(execDay, count())
+            .from(PIPELINE_EXECUTION)
+            .where(PE_CREATED_AT.greaterOrEqual(trendFrom))
+            .groupBy(execDay)
+            .fetchMap(r -> r.get(execDay), r -> r.get(1, Integer.class));
+    List<Integer> pipelineTrend = fillTrendDays(pipelineCountsByDay);
+
     PipelineHealth pipelineHealth =
         new PipelineHealth(
             totalPipelines,
             healthyPipelines,
             failingPipelines,
             runningPipelines,
-            disabledPipelines);
+            disabledPipelines,
+            pipelineTrend);
 
     // ---- Dataset health ----
     int totalDatasets = dsl.selectCount().from(DATASET).fetchOne(0, int.class);
@@ -337,8 +367,18 @@ public class DashboardService {
                                 .eq(DataSchema.current())))
                 .where(field("psu.n_live_tup", Long.class).eq(0L)));
 
+    // ---- Dataset trend (최근 7일 일자별 임포트 이력 건수, #669) ----
+    Field<LocalDate> auditDay = field("CAST({0} AS date)", LocalDate.class, AL_ACTION_TIME);
+    Map<LocalDate, Integer> datasetCountsByDay =
+        dsl.select(auditDay, count())
+            .from(AUDIT_LOG)
+            .where(AL_RESOURCE.eq("dataset").and(AL_ACTION_TIME.greaterOrEqual(trendFrom)))
+            .groupBy(auditDay)
+            .fetchMap(r -> r.get(auditDay), r -> r.get(1, Integer.class));
+    List<Integer> datasetTrend = fillTrendDays(datasetCountsByDay);
+
     DatasetHealth datasetHealth =
-        new DatasetHealth(totalDatasets, freshDatasets, staleDatasets, emptyDatasets);
+        new DatasetHealth(totalDatasets, freshDatasets, staleDatasets, emptyDatasets, datasetTrend);
 
     return new SystemHealthResponse(pipelineHealth, datasetHealth);
   }

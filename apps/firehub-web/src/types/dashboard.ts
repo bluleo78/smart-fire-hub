@@ -30,12 +30,16 @@ export interface SystemHealthResponse {
     failing: number;
     running: number;
     disabled: number;
+    /** 최근 7일간 일자별 파이프라인 실행 건수 (과거→오늘 순, 홈 대시보드 스파크라인용, #669) */
+    trend: number[];
   };
   datasetHealth: {
     total: number;
     fresh: number;
     stale: number;
     empty: number;
+    /** 최근 7일간 일자별 데이터셋 임포트/변경 건수 (과거→오늘 순, 홈 대시보드 스파크라인용, #669) */
+    trend: number[];
   };
 }
 

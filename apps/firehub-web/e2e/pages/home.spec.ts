@@ -64,6 +64,47 @@ test.describe('홈 페이지', () => {
   });
 
   /**
+   * 테스트 2.5: 스파크라인이 실제 health API의 trend 데이터를 반영한다 (#669 회귀 방지)
+   * - 이전에는 [3,5,2,8,4,6,9] / [8,10,6,4,7,9,5]가 하드코딩되어 어떤 API 응답을 줘도 그대로였다.
+   * - health API를 서로 다른 trend 배열로 두 번 모킹하여, 두 번째 응답의 막대 개수/높이가
+   *   첫 번째와 달라지는지 — 즉 실제로 API 응답을 그려내는지 검증한다.
+   */
+  test('스파크라인이 health API의 trend 값을 그대로 반영한다', async ({ authenticatedPage: page }) => {
+    // 최댓값이 명확한 trend로 오버라이드: [1,1,1,1,1,1,10] → 마지막 막대만 100% 높이
+    await mockApi(page, 'GET', '/api/v1/dashboard/health', {
+      pipelineHealth: { total: 5, healthy: 3, failing: 1, running: 0, disabled: 1, trend: [1, 1, 1, 1, 1, 1, 10] },
+      datasetHealth: { total: 10, fresh: 8, stale: 1, empty: 1, trend: [5, 5, 5, 5, 5, 5, 5] },
+    });
+
+    await page.goto('/');
+
+    const pipelineSparkline = page.getByTestId('pipeline-sparkline');
+    const datasetSparkline = page.getByTestId('dataset-sparkline');
+
+    // 막대 개수 = trend 배열 길이(7) — 고정 배열이었다면 항상 동일한 개수/모양이었을 것
+    await expect(pipelineSparkline.locator('> div')).toHaveCount(7);
+    await expect(datasetSparkline.locator('> div')).toHaveCount(7);
+
+    // 파이프라인 trend의 마지막 값(10)이 최댓값이므로 마지막 막대 높이는 100%
+    const lastBarHeight = await pipelineSparkline.locator('> div').last().evaluate(
+      (el) => (el as HTMLElement).style.height,
+    );
+    expect(lastBarHeight).toBe('100%');
+
+    // 첫 막대(값 1)의 높이는 10% ((1/10)*100)
+    const firstBarHeight = await pipelineSparkline.locator('> div').first().evaluate(
+      (el) => (el as HTMLElement).style.height,
+    );
+    expect(firstBarHeight).toBe('10%');
+
+    // 데이터셋 trend는 모든 값이 동일(5) → 모든 막대 높이가 100%로 동일해야 함
+    const datasetBarHeights = await datasetSparkline.locator('> div').evaluateAll(
+      (els) => els.map((el) => (el as HTMLElement).style.height),
+    );
+    expect(datasetBarHeights).toEqual(new Array(7).fill('100%'));
+  });
+
+  /**
    * 테스트 3: 주의 항목이 있을 때 주의 섹션 표시
    * - attention API를 주의 항목 포함으로 오버라이드 모킹한 뒤
    *   "주의 필요" 카드와 항목 내용이 렌더링되는지 확인한다
@@ -115,8 +156,8 @@ test.describe('홈 페이지', () => {
   test('주의 항목이 없으면 주의 필요 섹션이 숨겨진다', async ({ authenticatedPage: page }) => {
     // 건강 상태를 완전 정상으로 오버라이드 (failing/stale/empty = 0)
     await mockApi(page, 'GET', '/api/v1/dashboard/health', {
-      pipelineHealth: { total: 5, healthy: 5, failing: 0, running: 0, disabled: 0 },
-      datasetHealth: { total: 10, fresh: 10, stale: 0, empty: 0 },
+      pipelineHealth: { total: 5, healthy: 5, failing: 0, running: 0, disabled: 0, trend: [1, 1, 2, 1, 2, 1, 1] },
+      datasetHealth: { total: 10, fresh: 10, stale: 0, empty: 0, trend: [1, 2, 1, 1, 2, 1, 2] },
     });
     // attention 빈 배열 — 기본 모킹과 동일하지만 명시적으로 재확인
     await mockApi(page, 'GET', '/api/v1/dashboard/attention', []);
