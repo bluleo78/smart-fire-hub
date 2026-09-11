@@ -149,9 +149,16 @@ export function PipelineCanvas({
   };
 
   const handleAddStep = () => {
+    // 노드 카드 크기(가로 220px)보다 완전 랜덤 좌표 범위가 좁으면 신규 스텝이
+    // 기존 스텝과 겹쳐 배치될 확률이 높다(#668). 기존 마지막 스텝 위치에서
+    // 오른쪽/아래로 일정 간격 오프셋을 주는 계단식 배치로 겹침을 방지한다.
+    const lastStep = state.steps[state.steps.length - 1];
+    const position = lastStep
+      ? { x: lastStep.position.x + 280, y: lastStep.position.y + 60 }
+      : { x: 100, y: 100 };
     dispatch({
       type: 'ADD_STEP',
-      payload: { position: { x: Math.random() * 400, y: Math.random() * 300 } },
+      payload: { position },
     });
   };
 

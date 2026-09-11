@@ -220,6 +220,47 @@ test.describe('파이프라인 에디터 — 상호작용', () => {
   });
 
   /**
+   * 회귀 테스트: #668 — "스텝 추가"로 3개 이상 연속 생성 시 카드가 서로 겹치지 않아야 한다.
+   *
+   * 버그 원인: handleAddStep이 x:0~400, y:0~300 완전 랜덤 좌표만 사용해 카드(가로 220px)가
+   * 겹칠 확률이 매우 높았다. 수정 후에는 마지막 스텝 위치에서 오프셋을 주는 계단식 배치라
+   * 연속으로 추가해도 바운딩 박스가 서로 겹치지 않아야 한다.
+   */
+  test('스텝을 3개 연속 추가해도 카드가 서로 겹치지 않는다 (#668)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupNewEditorMocks(page);
+
+    await page.goto('/pipelines/new');
+
+    // 스텝 3개 연속 추가 → ADD_STEP 3번 dispatch
+    await page.getByRole('button', { name: /스텝 추가/ }).click();
+    await expect(page.getByRole('button', { name: '자동 정렬' })).toBeVisible();
+    await page.getByRole('button', { name: /스텝 추가/ }).first().click();
+    await page.getByRole('button', { name: /스텝 추가/ }).first().click();
+
+    await expect(page.locator('.react-flow__node')).toHaveCount(3);
+
+    // 각 노드의 바운딩 박스를 수집해 서로 겹치는 쌍이 없는지 검증한다.
+    const nodes = page.locator('.react-flow__node');
+    const boxes = [];
+    for (let i = 0; i < 3; i++) {
+      const box = await nodes.nth(i).boundingBox();
+      expect(box).not.toBeNull();
+      if (box) boxes.push(box);
+    }
+
+    const overlaps = (a: { x: number; y: number; width: number; height: number }, b: typeof a) =>
+      a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
+
+    for (let i = 0; i < boxes.length; i++) {
+      for (let j = i + 1; j < boxes.length; j++) {
+        expect(overlaps(boxes[i], boxes[j])).toBe(false);
+      }
+    }
+  });
+
+  /**
    * 회귀 테스트: #32 — 편집 모드에서 파이프라인 이름 Input이 단 하나만 존재해야 한다
    *
    * 버그 원인: EditorHeader와 StepConfigPanel 두 곳에 동일 state.name을 바인딩한 Input이 있어
