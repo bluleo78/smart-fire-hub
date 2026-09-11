@@ -559,6 +559,90 @@ test.describe('채널 설정 페이지', () => {
     });
   });
 
+  /**
+   * 회귀 테스트: OAuth 팝업 60초 타임아웃 시 실제 연동 상태를 재확인해야 한다 (#665)
+   * - 2FA·최초 로그인 등으로 60초를 넘기는 경우, 팝업 강제 종료 시점에 백엔드 콜백은
+   *   이미 성공 처리됐을 수 있다. 타임아웃 분기가 무조건 "취소됨"을 띄우던 결함을 재현·검증한다.
+   * - window.open을 스텁으로 교체해 실제 팝업 없이 타임아웃 로직만 격리 검증하고,
+   *   Playwright Clock으로 60초를 가상 진행시켜 setTimeout을 실제 대기 없이 발동시킨다.
+   */
+  test.describe('OAuth 팝업 60초 타임아웃 (#665)', () => {
+    /** window.open을 가짜 팝업 객체로 대체 — 실제 팝업 없이 타임아웃 분기만 검증 */
+    async function stubPopup(page: Parameters<typeof mockApi>[0]) {
+      await page.addInitScript(() => {
+        (window as unknown as { open: typeof window.open }).open = () => {
+          const fakePopup = {
+            closed: false,
+            close(this: { closed: boolean }) {
+              this.closed = true;
+            },
+          } as unknown as Window;
+          (window as unknown as { __oauthPopup: unknown }).__oauthPopup = fakePopup;
+          return fakePopup;
+        };
+      });
+    }
+
+    /** KAKAO oauthStartUrl을 내부 API 경로로 오버라이드 + auth-url 200 응답 모킹 */
+    async function setupOAuthStartMocks(page: Parameters<typeof mockApi>[0], initialSettings: ChannelSetting[]) {
+      await mockApi(page, 'GET', '/api/v1/channels/settings', initialSettings);
+      await mockApi(page, 'GET', '/api/v1/oauth/kakao/auth-url', { url: 'https://kauth.kakao.com/oauth/authorize?client_id=test' });
+    }
+
+    const KAKAO_DISCONNECTED_WITH_API_PATH: ChannelSetting[] = MOCK_CHANNEL_SETTINGS.map((s) =>
+      s.channel === 'KAKAO' ? { ...s, oauthStartUrl: '/api/v1/oauth/kakao/auth-url' } : s,
+    );
+
+    test('타임아웃 시점에 백엔드 콜백이 이미 성공 처리된 경우 — 성공 토스트 + 캐시 갱신', async ({
+      authenticatedPage: page,
+    }) => {
+      await stubPopup(page);
+      await setupOAuthStartMocks(page, KAKAO_DISCONNECTED_WITH_API_PATH);
+      await page.clock.install();
+
+      await page.goto('/settings/channels');
+      await page.getByRole('button', { name: '연동하기' }).click();
+
+      // 팝업이 열릴 때까지 대기 (실제 팝업 대신 스텁 객체)
+      await page.waitForFunction(() => Boolean((window as unknown as { __oauthPopup: unknown }).__oauthPopup));
+
+      // 타임아웃 발동 전, 백엔드 콜백이 이미 처리되어 KAKAO가 connected: true로 바뀐 상황을 시뮬레이션
+      const CONNECTED_SETTINGS: ChannelSetting[] = KAKAO_DISCONNECTED_WITH_API_PATH.map((s) =>
+        s.channel === 'KAKAO' ? { ...s, connected: true, enabled: true } : s,
+      );
+      await mockApi(page, 'GET', '/api/v1/channels/settings', CONNECTED_SETTINGS);
+
+      // 60초 가상 진행 → setTimeout 타임아웃 분기 발동
+      await page.clock.fastForward(60_000);
+
+      // 실제로는 연동에 성공했으므로 "취소됨"이 아닌 성공 토스트가 표시되어야 한다
+      await expect(page.getByText('KAKAO 연동이 완료되었습니다.')).toBeVisible();
+      await expect(page.getByText('KAKAO 연동이 취소되었습니다.')).toHaveCount(0);
+
+      // 캐시가 갱신되어 카드도 "연결됨" 상태(연결 해제 버튼 노출)로 반영되어야 한다
+      await expect(page.getByRole('button', { name: '연결 해제' })).toBeVisible();
+    });
+
+    test('타임아웃 시점에 실제로 연동되지 않은 경우 — 기존과 동일하게 취소 토스트', async ({
+      authenticatedPage: page,
+    }) => {
+      await stubPopup(page);
+      await setupOAuthStartMocks(page, KAKAO_DISCONNECTED_WITH_API_PATH);
+      await page.clock.install();
+
+      await page.goto('/settings/channels');
+      await page.getByRole('button', { name: '연동하기' }).click();
+
+      await page.waitForFunction(() => Boolean((window as unknown as { __oauthPopup: unknown }).__oauthPopup));
+
+      // 60초 가상 진행 — channel-settings는 여전히 미연결 상태를 반환
+      await page.clock.fastForward(60_000);
+
+      await expect(page.getByText('KAKAO 연동이 취소되었습니다.')).toBeVisible();
+      await expect(page.getByRole('button', { name: '연동하기' })).toBeVisible();
+    });
+  });
+
   test('KAKAO 카드 아이콘 컨테이너에 카카오 브랜드 배경색이 적용된다', async ({
     authenticatedPage: page,
   }) => {
