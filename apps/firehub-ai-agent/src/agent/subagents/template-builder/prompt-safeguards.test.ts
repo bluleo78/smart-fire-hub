@@ -180,3 +180,45 @@ describe('template-builder 중간 판단 narration 노출 금지 (#620)', () => 
     expect(agent).toMatch(/중간 판단\/검증 결과를 text로 노출하지 않는다/);
   });
 });
+
+/**
+ * #620 2차 (크로스체크 회귀): 1차 보강(문자 그대로의 금지 예시 2건)에도 불구하고 다른 표현으로
+ * 같은 패턴이 재발했다 ("No name collision found. Proceeding to create.",
+ * "No duplicate named '...' exists, proceeding to create."). 특정 문장을 암기해 피하는 방식이
+ * 근본적으로 비결정적 LLM 출력을 막지 못하므로, 구조적 규칙(tool_result → 다음 tool_use 사이
+ * 무음 전이)과 일반화된 패턴 설명을 추가했다. trigger-manager(#613)와 동일하게 100% 근절은
+ * 보장하지 못하며 재현 빈도 감소가 목표다.
+ */
+describe('template-builder 중간 판단 narration 노출 금지 — 구조적 규칙 (#620 2차)', () => {
+  it('rules.md에 tool_result 수신 후 다음 tool_use 발행 전까지 완전 침묵 규칙이 명시되어 있어야 한다', () => {
+    const rules = readPrompt('rules.md');
+    expect(rules).toMatch(/완전한 침묵|완전히 침묵/);
+    expect(rules).toContain('tool_result');
+  });
+
+  it('rules.md에 문구를 바꿔가며 재발한 2차 크로스체크 회귀 문장이 명시되어 있어야 한다', () => {
+    const rules = readPrompt('rules.md');
+    expect(rules).toContain('No name collision found. Proceeding to create.');
+    expect(rules).toContain("No duplicate named '크로스체크 테스트 양식 620' exists, proceeding to create.");
+  });
+
+  it('agent.md에도 암기 회피가 아닌 구조적 침묵 원칙이 명시되어 있어야 한다', () => {
+    const agent = readPrompt('agent.md');
+    expect(agent).toMatch(/완전히 침묵|완전한 침묵/);
+  });
+
+  it('agent.md 핵심 원칙(문서 상단)에도 완전 침묵 규칙이 명시되어 눈에 잘 띄어야 한다', () => {
+    const agent = readPrompt('agent.md');
+    const section = agent.split('## 핵심 원칙')[1]?.split('## 워크플로')[0];
+    expect(section).toBeDefined();
+    expect(section).toMatch(/완전 침묵|완전한 침묵/);
+    expect(section).toContain('#620');
+  });
+
+  it('rules.md 구조적 규칙이 Turn/Mode 를 가리지 않고 모든 Phase 에 적용됨을 명시해야 한다 (Turn 1 삭제 확인 구간 재현 반영)', () => {
+    const rules = readPrompt('rules.md');
+    expect(rules).toMatch(/Turn\/Mode 를 가리지 않고|모든 Phase·모든 Turn 공통/);
+    expect(rules).toContain('list_proactive_jobs');
+    expect(rules).toContain('Now checking for referencing smart jobs');
+  });
+});
