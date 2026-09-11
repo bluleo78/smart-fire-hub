@@ -588,6 +588,80 @@ test.describe('스마트 작업 상세 페이지', () => {
     await expect(page.getByText(/이상 탐지 시에만 실행됩니다/)).toBeVisible();
   });
 
+  test('새 작업 생성 — 트리거 유형을 "이상 탐지"로 선택하면 config.anomaly.enabled=true로 저장된다 (#655)', async ({ authenticatedPage: page }) => {
+    // 새 작업 페이지 API 모킹
+    await setupNewJobMocks(page);
+
+    // 생성 API 요청 페이로드를 캡처해 실제 제출값을 검증한다
+    const createCapture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/proactive/jobs',
+      createJob({ id: 99, triggerType: 'ANOMALY', name: '이상 탐지 신규 작업' }),
+      { capture: true },
+    );
+
+    await page.goto('/ai-insights/jobs/new');
+
+    await page.locator('#job-name').fill('이상 탐지 신규 작업');
+    await page.locator('#job-prompt').fill('이상 탐지 시 분석할 프롬프트');
+
+    // 트리거 유형을 "이상 탐지"로 변경 — 모니터링 탭은 방문하지 않는다(이슈 재현 조건)
+    await page.locator('#job-trigger-type').click();
+    await page.getByRole('option', { name: '이상 탐지 (이벤트 기반)' }).click();
+
+    const createBtn = page.getByRole('button', { name: '생성', exact: true });
+    await expect(createBtn).toBeEnabled();
+    await createBtn.click();
+
+    // 실제 제출된 payload에 config.anomaly.enabled=true가 포함돼야 한다.
+    // 수정 전에는 트리거 유형만 바뀌고 config.anomaly가 undefined로 남아
+    // 상단 배지는 "활성"이지만 폴러 대상에서 제외되는 모순 상태가 됐다.
+    const req = await createCapture.waitForRequest();
+    const payload = req.payload as {
+      triggerType: string;
+      config: { anomaly?: { enabled: boolean } };
+    };
+    expect(payload.triggerType).toBe('ANOMALY');
+    expect(payload.config.anomaly).toBeDefined();
+    expect(payload.config.anomaly?.enabled).toBe(true);
+  });
+
+  test('새 작업 생성 — 트리거 유형을 "스케줄"로 유지하면 config.anomaly 없이 cronExpression이 정상 제출된다 (#655 회귀 방지)', async ({ authenticatedPage: page }) => {
+    // 새 작업 페이지 API 모킹
+    await setupNewJobMocks(page);
+
+    const createCapture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/proactive/jobs',
+      createJob({ id: 100, name: '스케줄 신규 작업' }),
+      { capture: true },
+    );
+
+    await page.goto('/ai-insights/jobs/new');
+
+    await page.locator('#job-name').fill('스케줄 신규 작업');
+    await page.locator('#job-prompt').fill('정기 실행 분석 프롬프트');
+
+    // 트리거 유형은 기본값(SCHEDULE)에서 건드리지 않는다 — 회귀 없는지 확인
+
+    const createBtn = page.getByRole('button', { name: '생성', exact: true });
+    await expect(createBtn).toBeEnabled();
+    await createBtn.click();
+
+    const req = await createCapture.waitForRequest();
+    const payload = req.payload as {
+      triggerType: string;
+      cronExpression: string;
+      config: { anomaly?: { enabled: boolean } };
+    };
+    expect(payload.triggerType).toBe('SCHEDULE');
+    expect(payload.cronExpression).toBeTruthy();
+    // SCHEDULE 트리거는 anomaly.enabled를 강제로 켜지 않아야 한다 (회귀 방지)
+    expect(payload.config.anomaly?.enabled).not.toBe(true);
+  });
+
   test('시스템 메트릭 추가 동작 검증', async ({ authenticatedPage: page }) => {
     // 이상 탐지 활성화된 작업 설정
     const jobWithAnomaly = createJob({

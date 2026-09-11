@@ -98,7 +98,7 @@ function generateAutoTemplate(question: string): TemplateSection[] {
 }
 
 export default function JobOverviewTab({ job, isNew, isEditing, form, templates, onChange }: JobOverviewTabProps) {
-  const { register, watch, setValue, formState: { errors } } = form;
+  const { register, watch, setValue, getValues, formState: { errors } } = form;
   // 접근성: 그룹 라벨↔위젯 연결용 id 접두사 (#432).
   // 기존 하드코딩 id(job-name, mode-manual 등)는 E2E 계약이라 그대로 둔다.
   const baseId = useId();
@@ -435,7 +435,25 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates,
           value={watch('triggerType') ?? 'SCHEDULE'}
           onValueChange={(v) => {
             markDirty();
-            setValue('triggerType', v as TriggerType);
+            const triggerType = v as TriggerType;
+            setValue('triggerType', triggerType);
+            // 트리거 유형을 이상 탐지(ANOMALY/BOTH)로 바꿔도 여기서는 config.anomaly.enabled를
+            // 건드리지 않아, 모니터링 탭을 방문하지 않고 저장하면 상단 배지는 "활성"인데
+            // 실제로는 폴러 대상에서 제외돼 영원히 발화하지 않는 모순 상태가 됐다 (#655).
+            // 트리거 유형 선택 시점에 anomaly.enabled를 함께 켜서 폼 상태를 동기화한다.
+            if (triggerType === 'ANOMALY' || triggerType === 'BOTH') {
+              const currentAnomaly = getValues('config.anomaly');
+              setValue(
+                'config.anomaly',
+                {
+                  enabled: true,
+                  metrics: currentAnomaly?.metrics ?? [],
+                  sensitivity: currentAnomaly?.sensitivity ?? 'medium',
+                  cooldownMinutes: currentAnomaly?.cooldownMinutes ?? 30,
+                },
+                { shouldValidate: true },
+              );
+            }
           }}
         >
           <SelectTrigger id="job-trigger-type">
