@@ -272,4 +272,68 @@ test.describe('데이터셋 목록 — 필터 및 미리보기', () => {
     // size=50 으로 재호출되는지 확인
     await expect.poll(() => dataUrls.some((u) => u.searchParams.get('size') === '50')).toBeTruthy();
   });
+
+  /**
+   * 이슈 #667: 미리보기 다이얼로그가 데이터 탭(DatasetDataTab)과 동일하게 formatCellValue로
+   * TIMESTAMP/BOOLEAN 값을 가공해 표시하는지 회귀 방지.
+   * - 기존 버그: String(value)만 사용해 TIMESTAMP는 원문 ISO(밀리초+오프셋 포함), BOOLEAN은 "true"/"false" 그대로 노출.
+   * - 수정 후: TIMESTAMP는 로컬 표기(연/월/일 + 오전/오후 시:분), BOOLEAN은 ✓/✗ 로 표시.
+   * - 회귀 확인: VARCHAR 컬럼은 원문 그대로 표시되어야 한다(과도한 가공 없음).
+   */
+  test('미리보기 다이얼로그 — TIMESTAMP/BOOLEAN 값이 데이터 탭과 동일하게 포맷된다 (#667)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupCommon(page);
+    await captureListRequests(page);
+
+    await mockApi(page, 'GET', '/api/v1/datasets/1', {
+      ...datasets[0],
+      columns: [],
+      sourceType: 'MANUAL',
+      sourceConfig: {},
+      rowCount: 0,
+      updatedAt: '2026-01-01T00:00:00Z',
+    });
+
+    await mockApi(page, 'GET', '/api/v1/datasets/1/data', {
+      columns: [
+        { id: 1, columnName: 'occurredAt', displayName: '발생일시', dataType: 'TIMESTAMP', maxLength: null, isNullable: false, isIndexed: false, isPrimaryKey: false, description: null, columnOrder: 0 },
+        { id: 2, columnName: 'extinguished', displayName: '진화 완료', dataType: 'BOOLEAN', maxLength: null, isNullable: false, isIndexed: false, isPrimaryKey: false, description: null, columnOrder: 1 },
+        { id: 3, columnName: 'address', displayName: '주소', dataType: 'VARCHAR', maxLength: 200, isNullable: false, isIndexed: false, isPrimaryKey: false, description: null, columnOrder: 2 },
+      ],
+      rows: [
+        { occurredAt: '2026-05-17T01:00:00.000+00:00', extinguished: true, address: '서울특별시 중구' },
+      ],
+      page: 0,
+      size: 5,
+      totalElements: 1,
+      totalPages: 1,
+    });
+
+    await page.goto('/data/datasets');
+    await expect(page.getByRole('heading', { name: /데이터셋/ })).toBeVisible();
+
+    const previewBtn = page.getByRole('button', { name: '미리보기' }).first();
+    await previewBtn.click({ force: true });
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toBeVisible();
+
+    // TIMESTAMP: 원문 ISO 문자열이 그대로 노출되면 안 되고, formatCellValue 와 동일한 로직(브라우저의
+    // Intl 구현)으로 가공된 값(로컬 타임존 기준)이 보여야 한다 — Node의 ICU 데이터는 브라우저와
+    // 다를 수 있으므로 브라우저 컨텍스트에서 직접 기대값을 계산한다.
+    const expectedTimestamp = await page.evaluate(() =>
+      new Intl.DateTimeFormat('ko-KR', { dateStyle: 'medium', timeStyle: 'short' }).format(
+        new Date('2026-05-17T01:00:00.000+00:00'),
+      ),
+    );
+    await expect(dialog.getByText('2026-05-17T01:00:00.000+00:00')).toHaveCount(0);
+    await expect(dialog.getByText(expectedTimestamp, { exact: true })).toBeVisible();
+
+    // BOOLEAN: 원문 "true" 문자열이 아니라 체크마크로 표시되어야 한다
+    await expect(dialog.getByText('true', { exact: true })).toHaveCount(0);
+    await expect(dialog.getByText('✓', { exact: true })).toBeVisible();
+
+    // 회귀 확인: VARCHAR 는 원문 그대로 표시(과도한 가공 없음)
+    await expect(dialog.getByText('서울특별시 중구')).toBeVisible();
+  });
 });

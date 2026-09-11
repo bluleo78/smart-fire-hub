@@ -19,6 +19,7 @@ import {
   SelectValue,
 } from '../../../components/ui/select';
 import { Skeleton } from '../../../components/ui/skeleton';
+import { formatCellValue } from '../../../lib/formatters';
 
 interface DatasetPreviewSheetProps {
   datasetId: number;
@@ -119,7 +120,11 @@ export function DatasetPreviewSheet({ datasetId, datasetName, open, onOpenChange
                           {row[col.columnName] == null ? (
                             // null 값은 시각적으로 구분되는 dash로 표시 (빈 셀과 달리 null임을 명시)
                             <span className="text-muted-foreground italic text-xs select-none">-</span>
-                          ) : String(row[col.columnName])}
+                          ) : (
+                            // 데이터 탭(DatasetDataTab)과 동일하게 formatCellValue로 TIMESTAMP/BOOLEAN 등을
+                            // 사람이 읽기 좋은 형태로 가공한다 (#667 — 원문 String() 그대로 표시하던 버그 수정)
+                            formatCellValue(row[col.columnName], col.dataType)
+                          )}
                         </td>
                       ))}
                     </tr>
