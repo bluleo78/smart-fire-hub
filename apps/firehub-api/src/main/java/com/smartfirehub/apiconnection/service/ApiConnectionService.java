@@ -11,6 +11,7 @@ import com.smartfirehub.apiconnection.dto.CreateApiConnectionRequest;
 import com.smartfirehub.apiconnection.dto.TestConnectionResponse;
 import com.smartfirehub.apiconnection.dto.UpdateApiConnectionRequest;
 import com.smartfirehub.apiconnection.exception.ApiConnectionException;
+import com.smartfirehub.apiconnection.exception.ApiConnectionNameAlreadyExistsException;
 import com.smartfirehub.apiconnection.repository.ApiConnectionRepository;
 import com.smartfirehub.job.service.AsyncJobService;
 import com.smartfirehub.pipeline.service.executor.SsrfException;
@@ -68,6 +69,7 @@ public class ApiConnectionService {
   @Transactional
   public ApiConnectionResponse create(CreateApiConnectionRequest request, Long userId) {
     validateAuthType(request.authType());
+    validateNameNotDuplicated(request.name());
     String normalizedBaseUrl = validateAndNormalizeBaseUrl(request.baseUrl());
 
     String encryptedConfig = serializeAndEncrypt(request.authConfig());
@@ -106,6 +108,13 @@ public class ApiConnectionService {
     repository
         .findById(id)
         .orElseThrow(() -> new ApiConnectionException("ApiConnection not found: " + id));
+
+    // 이름을 변경하는 경우에만 중복 검사 — 자기 자신은 제외 (#647)
+    if (request.name() != null && !request.name().isBlank()) {
+      if (repository.existsByNameExcludingId(request.name(), id)) {
+        throw new ApiConnectionNameAlreadyExistsException(request.name());
+      }
+    }
 
     String encryptedConfig = null;
     if (request.authConfig() != null) {
@@ -510,6 +519,17 @@ public class ApiConnectionService {
         .queryParam(paramName, apiKey)
         .build(true)
         .toUriString();
+  }
+
+  /**
+   * 동일 테넌트 내 이름 중복을 막는다 (#647). {@code api_connection.name}에는 유니크 제약이 없어(V93 주석 참고) 같은
+   * 이름의 연결이 여러 개 생성될 수 있었고, 목록/삭제 확인 다이얼로그가 이름만으로 항목을 구분해 오삭제 위험이 있었다.
+   * RLS 정책이 테넌트 경계를 자동으로 걸어주므로 여기서는 이름만 검사하면 된다.
+   */
+  private void validateNameNotDuplicated(String name) {
+    if (repository.existsByName(name)) {
+      throw new ApiConnectionNameAlreadyExistsException(name);
+    }
   }
 
   private void validateAuthType(String authType) {

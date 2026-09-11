@@ -482,6 +482,8 @@ export default function ApiConnectionListPage() {
                     <DeleteConfirmDialog
                       entityName="API 연결"
                       itemName={conn.name}
+                      // (#647) 이름이 같은 다른 연결과 혼동해 잘못 삭제하지 않도록 ID/Base URL을 함께 표시
+                      extraDetail={`ID: ${conn.id} · ${conn.baseUrl}`}
                       onConfirm={() => handleDelete(conn.id, conn.name)}
                       trigger={
                         <Button variant="outline" size="sm">

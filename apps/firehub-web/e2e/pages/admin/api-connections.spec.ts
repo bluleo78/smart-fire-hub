@@ -1157,6 +1157,81 @@ test.describe('API 연결 페이지', () => {
     expect(putCalled).toBe(false);
   });
 
+  // (#647) 동일 테넌트 내 이름 중복 시 백엔드가 409로 거부 — 토스트 노출 + 다이얼로그 유지 검증
+  test('생성 폼 — 이름 중복 시 서버 409 오류가 토스트로 표시되고 다이얼로그가 닫히지 않는다 (#647)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupApiConnectionListMocks(page);
+
+    // 백엔드 ApiConnectionNameAlreadyExistsException → 409 응답 모킹
+    await page.route(
+      (url) => url.pathname === '/api/v1/api-connections',
+      (route) => {
+        if (route.request().method() === 'POST') {
+          return route.fulfill({
+            status: 409,
+            contentType: 'application/json',
+            body: JSON.stringify({
+              status: 409,
+              error: 'Conflict',
+              message: '이미 사용 중인 이름입니다: 공공 데이터 API',
+              errors: null,
+            }),
+          });
+        }
+        return route.fallback();
+      },
+    );
+
+    await page.goto('/admin/api-connections');
+    await page.getByRole('button', { name: '새 연결' }).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+
+    // 기존 연결과 동일한 이름으로 생성 시도
+    await page.getByPlaceholder('예: Make.com API').fill('공공 데이터 API');
+    await page.getByPlaceholder('https://api.example.com').fill('https://dup.example.com');
+    await page.getByPlaceholder('Authorization').fill('X-API-Key');
+    await page.getByPlaceholder('API 키를 입력하세요').fill('dup-key');
+
+    await page.getByRole('button', { name: '생성' }).click();
+
+    // 백엔드 409 메시지가 토스트로 그대로 노출되어야 한다
+    await expect(page.getByText('이미 사용 중인 이름입니다: 공공 데이터 API')).toBeVisible();
+    // 거부되었으므로 다이얼로그는 닫히지 않고 입력값도 유지되어야 한다
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await expect(page.getByPlaceholder('예: Make.com API')).toHaveValue('공공 데이터 API');
+  });
+
+  // (#647) 이름이 같은 다른 연결과 혼동해 잘못 삭제하지 않도록 삭제 확인 다이얼로그에 ID/Base URL을 표시
+  test('목록 삭제 확인 다이얼로그에 ID와 Base URL이 함께 표시된다 (#647)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupApiConnectionListMocks(page);
+    await page.goto('/admin/api-connections');
+
+    const rows = page.getByRole('row').filter({ has: page.getByRole('button') });
+    await rows.first().getByRole('button').click();
+
+    const dialog = page.getByRole('alertdialog');
+    await expect(dialog).toBeVisible();
+    // 이름만이 아니라 ID/Base URL도 함께 노출되어야 오삭제를 방지할 수 있다
+    await expect(dialog).toContainText('ID: 1');
+    await expect(dialog).toContainText('https://api.example.com');
+  });
+
+  test('상세 페이지 삭제 확인 다이얼로그에도 ID와 Base URL이 함께 표시된다 (#647)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupApiConnectionDetailMocks(page, 1);
+    await page.goto('/admin/api-connections/1');
+
+    await page.getByRole('button', { name: '이 연결 삭제' }).click();
+    const dialog = page.getByRole('alertdialog');
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toContainText('ID: 1');
+    await expect(dialog).toContainText('https://api.example.com');
+  });
+
   test('폼 라벨이 입력 요소와 연결돼 있다 — 접근 가능한 이름 + 라벨 클릭 포커스 (#432)', async ({
     authenticatedPage: page,
   }) => {

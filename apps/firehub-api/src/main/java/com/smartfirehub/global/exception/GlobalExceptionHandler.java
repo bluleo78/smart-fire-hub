@@ -5,6 +5,7 @@ import com.smartfirehub.analytics.exception.ChartNotFoundException;
 import com.smartfirehub.analytics.exception.DashboardNotFoundException;
 import com.smartfirehub.analytics.exception.SavedQueryNotFoundException;
 import com.smartfirehub.apiconnection.exception.ApiConnectionException;
+import com.smartfirehub.apiconnection.exception.ApiConnectionNameAlreadyExistsException;
 import com.smartfirehub.auth.exception.AccountLockedException;
 import com.smartfirehub.auth.exception.EmailAlreadyExistsException;
 import com.smartfirehub.auth.exception.InvalidCredentialsException;
@@ -511,6 +512,14 @@ public class GlobalExceptionHandler {
       ApiConnectionException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.NOT_FOUND, ex.getMessage(), null, request);
     return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
+  }
+
+  /** 동일 테넌트 내 API 연결 이름 중복 시 409 반환 (#647). */
+  @ExceptionHandler(ApiConnectionNameAlreadyExistsException.class)
+  public ResponseEntity<ErrorResponse> handleApiConnectionNameAlreadyExists(
+      ApiConnectionNameAlreadyExistsException ex, HttpServletRequest request) {
+    ErrorResponse response = buildError(HttpStatus.CONFLICT, ex.getMessage(), null, request);
+    return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
   }
 
   @ExceptionHandler(SavedQueryNotFoundException.class)

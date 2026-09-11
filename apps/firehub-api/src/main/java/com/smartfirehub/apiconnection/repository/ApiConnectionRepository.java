@@ -230,6 +230,24 @@ public class ApiConnectionRepository {
         .toList();
   }
 
+  /**
+   * 동일 이름의 API 연결이 이미 존재하는지 확인한다 (#647). RLS(V96) 정책이 현재 트랜잭션의
+   * {@code app.tenant_id} GUC로 자동 필터링하므로 여기서 tenant_id를 명시적으로 조건에 넣을 필요가 없다 — 이미 pipeline.name
+   * 유니크 인덱스(V93)에서 검증된 것과 동일한 전제다.
+   */
+  public boolean existsByName(String name) {
+    return dsl.fetchExists(dsl.selectOne().from(API_CONNECTION).where(AC_NAME.eq(name)));
+  }
+
+  /** 이름 중복 확인 시 자기 자신(id)은 제외한다 — update()에서 이름을 바꾸지 않는 경우 자기 자신과 충돌 판정되는 것을 방지. */
+  public boolean existsByNameExcludingId(String name, Long excludeId) {
+    return dsl.fetchExists(
+        dsl.selectOne()
+            .from(API_CONNECTION)
+            .where(AC_NAME.eq(name))
+            .and(AC_ID.ne(excludeId)));
+  }
+
   public void deleteById(Long id) {
     dsl.deleteFrom(API_CONNECTION).where(AC_ID.eq(id)).execute();
   }

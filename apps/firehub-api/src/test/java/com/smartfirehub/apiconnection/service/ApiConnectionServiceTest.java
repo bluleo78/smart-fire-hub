@@ -61,8 +61,16 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
 
   /** 기본 테스트용 유효 요청 빌더 — 외부 URL 사용 (SSRF 검증 통과) */
   private CreateApiConnectionRequest validReq(String baseUrl) {
+    return validReq(baseUrl, "Test Conn");
+  }
+
+  /**
+   * 이름을 지정할 수 있는 오버로드. (#647) 이름 중복 검증이 추가된 이후로는 같은 테스트 안에서 커넥션을 여러 개
+   * 만들 때 이름이 겹치면 안 되므로, 겹칠 가능성이 있는 호출부는 이 오버로드로 서로 다른 이름을 지정한다.
+   */
+  private CreateApiConnectionRequest validReq(String baseUrl, String name) {
     return new CreateApiConnectionRequest(
-        "Test Conn",
+        name,
         null,
         "API_KEY",
         Map.of("placement", "header", "headerName", "X-Key", "apiKey", "secret"),
@@ -328,8 +336,9 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
   @Test
   void findSelectable_returnsSlim_withoutAuthConfig() {
     // slim DTO에는 authConfig 필드가 없어야 한다 (컴파일 레벨 보장)
-    apiConnectionService.create(validReq("https://a.example.com"), testUserId);
-    apiConnectionService.create(validReq("https://b.example.com"), testUserId);
+    // (#647) 이름 중복 검증이 추가되어 서로 다른 이름을 지정해야 한다.
+    apiConnectionService.create(validReq("https://a.example.com", "Slim Test A"), testUserId);
+    apiConnectionService.create(validReq("https://b.example.com", "Slim Test B"), testUserId);
 
     List<ApiConnectionSelectableResponse> list = apiConnectionService.findSelectable();
 
@@ -349,7 +358,7 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
             .findFirst()
             .orElseThrow();
     assertThat(first.id()).isNotNull();
-    assertThat(first.name()).isEqualTo("Test Conn");
+    assertThat(first.name()).isEqualTo("Slim Test A");
     assertThat(first.authType()).isEqualTo("API_KEY");
     assertThat(first.baseUrl()).isEqualTo("https://a.example.com");
   }
@@ -432,5 +441,70 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
     assertThatThrownBy(() -> apiConnectionService.getReferences(-1L))
         .isInstanceOf(ApiConnectionException.class)
         .hasMessageContaining("not found");
+  }
+
+  // ── #647: 이름 중복 검증 ─────────────────────────────────────────────────────
+
+  /** 동일 테넌트 내 같은 이름으로 두 번째 연결을 생성하면 409에 대응하는 예외로 거부되어야 한다. */
+  @Test
+  void create_duplicateName_throwsApiConnectionNameAlreadyExistsException() {
+    String dupName = "Duplicate Name Test " + System.nanoTime();
+    apiConnectionService.create(validReq("https://dup-a.example.com", dupName), testUserId);
+
+    assertThatThrownBy(
+            () ->
+                apiConnectionService.create(
+                    validReq("https://dup-b.example.com", dupName), testUserId))
+        .isInstanceOf(
+            com.smartfirehub.apiconnection.exception.ApiConnectionNameAlreadyExistsException
+                .class)
+        .hasMessageContaining(dupName);
+  }
+
+  /** 서로 다른 이름이면 baseUrl이 같아도 정상 생성되어야 한다 (이름만 검사 대상). */
+  @Test
+  void create_differentNames_sameBaseUrl_succeeds() {
+    String baseUrl = "https://same-base.example.com";
+    ApiConnectionResponse first =
+        apiConnectionService.create(validReq(baseUrl, "Name A " + System.nanoTime()), testUserId);
+    ApiConnectionResponse second =
+        apiConnectionService.create(validReq(baseUrl, "Name B " + System.nanoTime()), testUserId);
+
+    assertThat(first.id()).isNotEqualTo(second.id());
+  }
+
+  /** update()로 이름을 다른 기존 연결과 같은 이름으로 바꾸려 하면 거부되어야 한다. */
+  @Test
+  void update_toExistingName_throwsApiConnectionNameAlreadyExistsException() {
+    String nameA = "Update Dup A " + System.nanoTime();
+    String nameB = "Update Dup B " + System.nanoTime();
+    apiConnectionService.create(validReq("https://update-dup-a.example.com", nameA), testUserId);
+    ApiConnectionResponse connB =
+        apiConnectionService.create(
+            validReq("https://update-dup-b.example.com", nameB), testUserId);
+
+    UpdateApiConnectionRequest updateReq =
+        new UpdateApiConnectionRequest(nameA, null, null, null, null, null);
+
+    assertThatThrownBy(() -> apiConnectionService.update(connB.id(), updateReq))
+        .isInstanceOf(
+            com.smartfirehub.apiconnection.exception.ApiConnectionNameAlreadyExistsException
+                .class)
+        .hasMessageContaining(nameA);
+  }
+
+  /** update()로 이름을 바꾸지 않고 다른 필드만 수정하면 자기 자신과의 "중복" 오탐 없이 성공해야 한다. */
+  @Test
+  void update_sameNameUnchanged_doesNotThrow() {
+    String name = "Update Self " + System.nanoTime();
+    ApiConnectionResponse created =
+        apiConnectionService.create(validReq("https://update-self.example.com", name), testUserId);
+
+    UpdateApiConnectionRequest updateReq =
+        new UpdateApiConnectionRequest(name, "새 설명", null, null, null, null);
+    ApiConnectionResponse updated = apiConnectionService.update(created.id(), updateReq);
+
+    assertThat(updated.name()).isEqualTo(name);
+    assertThat(updated.description()).isEqualTo("새 설명");
   }
 }
