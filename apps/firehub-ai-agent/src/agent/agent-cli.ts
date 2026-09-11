@@ -328,6 +328,15 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
   const now = () => new Date().toISOString();
   let assistantText = '';
   let assistantToolCalls: HistoryToolCall[] = [];
+  // #623: agent-sdk.ts(#336)와 동일한 override — `result.usage`는 이 `claude -p` 프로세스가
+  // 지금까지 처리한 모든 턴(코디네이터 자신의 턴 + 위임된 subagent의 턴까지)의 **누적** usage라
+  // "이번 턴만의 컨텍스트 크기"로 그대로 내보내면 항상 거대한 고정값처럼 보인다. `--include-
+  // partial-messages`로 흘러오는 `stream_event`의 `message_start.usage`는 매 턴 시작마다 그
+  // 시점의 컨텍스트 크기를 담고 있으므로, 가장 최근에 관측된 값을 여기 저장해뒀다가 `result`
+  // 처리 시 덮어쓴다. 라이브 검증(#623): subagent/코디네이터의 `result`가 각각 자신의 마지막
+  // `message_start` 직후에 도착하므로(parent_tool_use_id 태그 없이도) 별도 스코프 구분 없이
+  // "가장 최근 값"만 추적해도 각 result에 올바른 턴의 값이 매칭된다.
+  let lastTurnContextTokens = 0;
   // Tier2 강제중단용 연속 실패 트래커
   const haltTracker = createTracker();
   // #277 소프트 알람: 턴 수 누적 + 1회 emit 플래그
@@ -543,6 +552,15 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
       } catch {
         // Skip non-JSON lines (e.g. debug output)
         continue;
+      }
+      // #623: agent-sdk.ts:349-354와 동일한 패턴 — `stream_event`의 `message_start.usage`로
+      // "이번 턴만의" 컨텍스트 크기를 갱신한다. 이 값은 아래 `result` 처리에서 누적값을
+      // 덮어쓰는 데 쓰인다(agent-sdk.ts:450-452 참조).
+      if (msg.type === 'stream_event') {
+        const evt = (msg as { event?: { type?: string; message?: { usage?: Record<string, number> } } }).event;
+        if (evt?.type === 'message_start' && evt.message?.usage) {
+          lastTurnContextTokens = totalInputTokens(evt.message.usage);
+        }
       }
       // #581: 메인 텍스트 델타가 아닌 이벤트가 오면 어휘 치환기가 보류 중인 꼬리를 먼저 내보낸다
       // (보류는 델타 경계에 걸친 어휘 판정용이라 다음 이벤트에서 즉시 풀어야 순서가 어긋나지 않는다).
@@ -935,8 +953,13 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
         if (msg.session_id) claudeSessionId = msg.session_id;
         // #336: 캐시 read/creation을 합산해야 실제 컨텍스트 크기가 나온다.
         // input_tokens만 쓰면 캐시 히트 시 4 같은 값이 나와 칩이 상시 0%가 된다.
-        const inputTokens = totalInputTokens(msg.usage);
+        let inputTokens = totalInputTokens(msg.usage);
         const outputTokens = msg.usage?.output_tokens ?? 0;
+        // #623: 누적 usage를 이번(마지막) 턴의 실제 컨텍스트 크기로 덮어쓴다.
+        if (lastTurnContextTokens > 0) {
+          console.log(`[CLI Agent] Context: ${lastTurnContextTokens} tokens (cumulative was ${inputTokens})`);
+          inputTokens = lastTurnContextTokens;
+        }
         // #573 2차 수정: 동기 위임 tool_result 를 아무도 relay 하지 않은 채 턴이 끝나는(성공)
         // 경우 — 시스템 프롬프트 준수가 실패해도 사용자에게 완전히 빈 응답이 나가지 않도록
         // 방어적으로 relay 한다(process-message.ts 의 SDK 경로와 동일 패턴). 반드시

@@ -1370,6 +1370,113 @@ describe('executeCliAgent — #277 비용 가드레일', () => {
 });
 
 /**
+ * #623: CLI 프로바이더가 `result.usage`(claude -p 프로세스 전체의 누적 usage)를 그대로
+ * `done.inputTokens`로 내보내던 결함 회귀 가드.
+ *
+ * agent-sdk.ts(#336)는 `stream_event`의 `message_start.usage`로 "이번 턴만의" 컨텍스트
+ * 크기를 추적해 `result`의 누적값을 덮어쓰는데, agent-cli.ts에는 이 override가 없어서
+ * 다중 턴(또는 중첩 subagent 위임) 대화에서 `done.inputTokens`가 실제 마지막 턴 크기가
+ * 아니라 모든 턴의 누적 합으로 보고됐다 — 컨텍스트 게이지가 상시 100%에 가깝게 오표시됨.
+ */
+describe('executeCliAgent — #623 CLI inputTokens 누적→마지막 턴 override', () => {
+  beforeEach(() => {
+    capturedSystemPromptFile = null;
+  });
+
+  /** message_start stream_event 한 줄을 생성한다 (agent-sdk.ts와 동일한 usage 필드 형태). */
+  function messageStart(usage: { input_tokens: number; cache_read_input_tokens: number; cache_creation_input_tokens: number }) {
+    return JSON.stringify({
+      type: 'stream_event',
+      parent_tool_use_id: null,
+      event: { type: 'message_start', message: { usage } },
+    });
+  }
+
+  it('CLI-623a: 다중 턴 대화에서 done.inputTokens가 마지막 turn의 message_start usage와 일치하고 누적 합과는 다르다', async () => {
+    // 턴1: 5,000 토큰 컨텍스트. 턴2(마지막, 중첩 tool_use 이후): 8,000 토큰 컨텍스트.
+    // result.usage는 5,000+8,000보다도 훨씬 큰 "프로세스 전체 누적"을 흉내낸다(예: 다른
+    // subagent 턴들까지 합산된 것처럼 50,000) — 세 값이 서로 겹치지 않게 해 override가
+    // 실제로 동작해야만 테스트가 통과하도록 만든다(공허한 테스트 방지).
+    const lines = [
+      messageStart({ input_tokens: 2, cache_read_input_tokens: 4000, cache_creation_input_tokens: 998 }), // turn1 = 5000
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: { content: [{ type: 'tool_use', id: 'tu_1', name: 'mcp__firehub__get_dataset', input: { id: 254 } }] },
+      }),
+      JSON.stringify({
+        type: 'user',
+        parent_tool_use_id: null,
+        message: { content: [{ type: 'tool_result', tool_use_id: 'tu_1', content: '{"id":254}' }] },
+      }),
+      // 중첩 subagent tool_use(parent_tool_use_id 있음) — 실제 위임 트레이스와 동일하게
+      // parent가 태그된 블록이 섞여도 message_start 추적에는 영향이 없어야 한다.
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: 'tu_agent',
+        message: { content: [{ type: 'tool_use', id: 'tu_nested', name: 'mcp__firehub__get_dataset', input: { id: 250 } }] },
+      }),
+      messageStart({ input_tokens: 2, cache_read_input_tokens: 7000, cache_creation_input_tokens: 998 }), // turn2(마지막) = 8000
+      JSON.stringify({
+        type: 'result',
+        subtype: 'success',
+        session_id: 's',
+        // 누적 usage — 실제로는 이보다 더 클 수 있지만, 마지막 턴(8000)과 뚜렷이 구분되게
+        // input_tokens=10 + cache_read=48000 + cache_creation=1990 = 50000
+        usage: { input_tokens: 10, cache_read_input_tokens: 48000, cache_creation_input_tokens: 1990, output_tokens: 42 },
+      }),
+    ];
+    const child = makeFakeChildWithLines(lines);
+    spawnMock.mockReturnValue(child);
+    const events: Array<{ type: string; inputTokens?: number; outputTokens?: number }> = [];
+    for await (const e of executeCliAgent({
+      message: 'hi',
+      tenantId: 1,
+      userId: 1,
+      useSubscription: false,
+      apiKey: 'sk-test',
+    } as never)) {
+      events.push(e as { type: string; inputTokens?: number; outputTokens?: number });
+    }
+    const done = events.find((e) => e.type === 'done');
+    expect(done).toBeDefined();
+    // 마지막 턴의 message_start usage 합(8000)과 일치해야 한다.
+    expect(done!.inputTokens).toBe(8000);
+    // 누적 usage 합(50000)과는 달라야 한다 — override가 실제로 적용됐다는 증거.
+    expect(done!.inputTokens).not.toBe(50000);
+    expect(done!.outputTokens).toBe(42);
+  });
+
+  it('CLI-623b: message_start 이벤트가 전혀 없으면(레거시/구버전 CLI) 기존처럼 누적 usage를 그대로 사용한다', async () => {
+    const lines = [
+      JSON.stringify({
+        type: 'result',
+        subtype: 'success',
+        session_id: 's',
+        usage: { input_tokens: 10, cache_read_input_tokens: 48000, cache_creation_input_tokens: 1990, output_tokens: 42 },
+      }),
+    ];
+    const child = makeFakeChildWithLines(lines);
+    spawnMock.mockReturnValue(child);
+    const events: Array<{ type: string; inputTokens?: number }> = [];
+    for await (const e of executeCliAgent({
+      message: 'hi',
+      tenantId: 1,
+      userId: 1,
+      useSubscription: false,
+      apiKey: 'sk-test',
+    } as never)) {
+      events.push(e as { type: string; inputTokens?: number });
+    }
+    const done = events.find((e) => e.type === 'done');
+    expect(done).toBeDefined();
+    // override할 lastTurnContextTokens가 없으므로(0) 원래 누적 합(50000)이 그대로 나가야 한다 —
+    // fallback 안전성 확인(하위 호환).
+    expect(done!.inputTokens).toBe(50000);
+  });
+});
+
+/**
  * 재개(resume) 경로의 레거시 트랜스크립트 취급 — 코드리뷰 MAJOR 회귀 가드.
  *
  * <p>테넌트 세그먼트를 cwd 에 끼우면서 claude CLI 의 프로젝트 디렉터리가 갈렸으므로, 예전 cwd 에서
