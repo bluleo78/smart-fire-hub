@@ -33,6 +33,75 @@ export function AxisConfigPanel({ chartType, columns, config, onChange }: AxisCo
   const showGroupBy = chartType === 'SCATTER';
   const isPieOrDonut = chartType === 'PIE' || chartType === 'DONUT';
   const isMap = chartType === 'MAP';
+  const isCandlestick = chartType === 'CANDLESTICK';
+
+  if (isCandlestick) {
+    // 캔들스틱은 yAxis가 아니라 시가/고가/저가/종가 4개 컬럼을 개별 매핑해야 렌더링된다 (#663).
+    // 쿼리 컬럼명이 open/high/low/close와 다르면 자동 감지가 실패하므로, 직접 선택할 UI가 필요하다.
+    const ohlcFields: { key: 'open' | 'high' | 'low' | 'close'; label: string }[] = [
+      { key: 'open', label: '시가 (Open)' },
+      { key: 'high', label: '고가 (High)' },
+      { key: 'low', label: '저가 (Low)' },
+      { key: 'close', label: '종가 (Close)' },
+    ];
+    return (
+      <div className="space-y-4">
+        {/* X축 — 캔들 라벨(보통 날짜) */}
+        <div className="space-y-1.5">
+          <Label
+            htmlFor={`${baseId}-x-axis`}
+            className="text-xs font-semibold text-muted-foreground uppercase tracking-wide"
+          >
+            X축
+          </Label>
+          <Select
+            value={config.xAxis || NO_COLUMN}
+            onValueChange={(v) => update({ xAxis: v === NO_COLUMN ? '' : v })}
+          >
+            <SelectTrigger id={`${baseId}-x-axis`} className="h-8 text-sm">
+              <SelectValue placeholder="컬럼 선택" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={NO_COLUMN}>선택 안 함</SelectItem>
+              {columns.map((col) => (
+                <SelectItem key={col} value={col}>
+                  {col}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        {/* OHLC 컬럼 매핑 */}
+        {ohlcFields.map(({ key, label }) => (
+          <div key={key} className="space-y-1.5">
+            <Label
+              htmlFor={`${baseId}-${key}`}
+              className="text-xs font-semibold text-muted-foreground uppercase tracking-wide"
+            >
+              {label}
+            </Label>
+            <Select
+              value={config[key] || NO_COLUMN}
+              onValueChange={(v) => update({ [key]: v === NO_COLUMN ? undefined : v })}
+            >
+              <SelectTrigger id={`${baseId}-${key}`} className="h-8 text-sm" aria-label={label}>
+                <SelectValue placeholder="컬럼 선택" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={NO_COLUMN}>선택 안 함</SelectItem>
+                {columns.map((col) => (
+                  <SelectItem key={col} value={col}>
+                    {col}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        ))}
+      </div>
+    );
+  }
 
   if (isMap) {
     const mode = config.mapDisplayMode ?? 'points';

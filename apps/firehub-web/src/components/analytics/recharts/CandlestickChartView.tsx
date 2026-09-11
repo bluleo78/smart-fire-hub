@@ -22,10 +22,27 @@ export function CandlestickChartView({ data, config, height = 300 }: ChartViewPr
     return () => obs.disconnect();
   }, []);
 
-  const openKey = config.open ?? 'open';
-  const highKey = config.high ?? 'high';
-  const lowKey = config.low ?? 'low';
-  const closeKey = config.close ?? 'close';
+  const openKey = config.open;
+  const highKey = config.high;
+  const lowKey = config.low;
+  const closeKey = config.close;
+
+  // #663: 매핑 미설정 시 임의 리터럴('open' 등)로 폴백하면 컬럼명이 다를 때
+  // open=high=low=close=0인 flat 캔들이 오류 없이 조용히 그려진다.
+  // 매핑이 비어 있으면 렌더링 대신 명시적으로 안내한다.
+  if (!openKey || !highKey || !lowKey || !closeKey) {
+    // containerRef를 계속 붙여둔다 — 그렇지 않으면 useEffect의 ResizeObserver가
+    // 이 마운트 시점에 null을 관측해 매핑 완료 후에도 dims가 영영 0으로 남는다.
+    return (
+      <div
+        ref={containerRef}
+        style={{ width: '100%', height }}
+        className="flex items-center justify-center text-sm text-muted-foreground"
+      >
+        시가/고가/저가/종가 컬럼을 선택하세요.
+      </div>
+    );
+  }
 
   const candles = data.map(d => ({
     label: String(d[config.xAxis] ?? ''),

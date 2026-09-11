@@ -637,7 +637,18 @@ export default function ChartBuilderPage() {
         toast.error('선택한 컬럼에 공간 데이터(GeoJSON)가 없습니다. GEOMETRY 타입 컬럼을 선택하세요.');
         return;
       }
-    } else if (['CANDLESTICK', 'BOXPLOT', 'HISTOGRAM'].includes(chartType)) {
+    } else if (chartType === 'CANDLESTICK') {
+      // 캔들스틱은 yAxis 대신 시가/고가/저가/종가 4개 컬럼 매핑이 필수 (#663).
+      // 하나라도 비어 있으면 CandlestickChartView가 0으로 폴백해 flat 캔들이 그려진다.
+      if (!config.xAxis) {
+        toast.error('X축을 설정하세요.');
+        return;
+      }
+      if (!config.open || !config.high || !config.low || !config.close) {
+        toast.error('시가/고가/저가/종가 컬럼을 모두 선택하세요.');
+        return;
+      }
+    } else if (['BOXPLOT', 'HISTOGRAM'].includes(chartType)) {
       // 이 타입들은 yAxis 대신 전용 컬럼 설정 사용 — xAxis만 필수
       if (!config.xAxis) {
         toast.error('X축을 설정하세요.');
