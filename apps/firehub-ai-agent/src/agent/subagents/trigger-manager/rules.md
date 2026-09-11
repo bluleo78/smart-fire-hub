@@ -114,10 +114,21 @@
 | WEBHOOK 시크릿 | 입력받아 config에 전달만. 확인 메시지에 포함 금지 |
 | WEBHOOK ID(UUID) | `config.webhookId` 채팅 출력 금지. URL/경로(`/api/webhooks/<UUID>`)·URL 형식 예시도 금지. "파이프라인 상세 화면에서 확인"으로만 안내 |
 | 위임 금지 | 트리거 작업을 `Agent` 도구로 다른 subagent에 위임 금지. trigger-manager가 mcp__firehub__* 도구로 직접 처리 |
-| 삭제 전 확인 | **2턴 분리 필수**. 1턴: 재확인 질문만 출력하고 응답 종료. 2턴: 사용자 "네/삭제해줘/확인" 별도 응답 후 delete_trigger 호출. 같은 턴에 list_triggers → delete_trigger 연속 호출 금지 |
+| 삭제 전 확인 | **2턴 분리 필수**. 1턴: 재확인 질문만 출력하고 응답 종료. 2턴: 사용자 "네/삭제해줘/확인" 별도 응답 후 delete_trigger 호출. 같은 턴에 list_triggers → delete_trigger 연속 호출 금지. **단, 위임 프롬프트에 `Mode: DELETE-APPROVED` 마커가 있으면 이 2턴은 이미 완료된 것으로 간주** — Turn 1 재조회(get_pipeline/list_triggers) 없이 곧바로 delete_trigger 호출 (아래 "위임 Mode 마커 처리" 절 참조, #621, #624) |
 | ID 단독 삭제 | 금지. 항상 이름을 함께 표시 |
 | 첫 발화 "삭제해줘" | 그 자체가 명시적 확인이 **아님**. 1턴 재확인 질문 후 별도 턴의 긍정 응답이 필요 |
 | 탐색 중 영어 라벨 (refs #613) | pipelineId 미상 삭제 요청에서 `list_pipelines`→`list_triggers` 순차 탐색 중 "Found: " / "Found it: " / "Located: " 같은 영어 라벨·문장을 텍스트로 출력 금지. 탐색은 도구 호출로만 하고, 결과는 재확인 질문 한 문장에만 반영한다 |
+
+## 위임 Mode 마커 처리 (refs #612, #621, #624)
+
+메인 에이전트가 본 에이전트에 위임할 때 위임 프롬프트에 `Mode: DESIGN` / `Mode: CREATE-APPROVED` / `Mode: DELETE-APPROVED` 마커가 포함됩니다. 마커별 동작:
+
+- **`Mode: DESIGN`** → Turn 1 로 간주. 트리거 유형·config 설계안만 제시하고 `create_trigger`/`update_trigger`를 호출하지 않는다. 단, 위 "대상 존재 확인" 절의 `get_pipeline`/`get_dataset` 확인 호출은 `Mode: DESIGN`이어도 수행한다 — DESIGN은 "생성/수정/삭제를 호출하지 말라"는 뜻이지 "조회 도구를 쓰지 말라"는 뜻이 아니다.
+- **`Mode: CREATE-APPROVED`** → **create/update 전용**. Turn 2 로 간주. 사용자가 직전 DESIGN 을 승인했음. 동일 설계로 `create_trigger`/`update_trigger` 를 호출한다. **`delete_trigger` 확인 승인에는 적용되지 않는다** — 위임 프롬프트 본문이 삭제 대상·삭제 승인을 이야기하고 있다면 이 마커가 붙어 있어도 메인 측 오적용(#621)이므로 `create_trigger`/`update_trigger` 를 호출하지 말고 아래 "삭제 전 확인" 절의 Turn 1 재확인 질문을 다시 출력한다.
+- **`Mode: DELETE-APPROVED`** (refs #598, #621, #624) → **delete 전용**. 위 "삭제 전 확인" 절의 Turn 2 로 간주 — 사용자가 직전 삭제 확인 질의를 별도 메시지로 승인했음. 위임 프롬프트 본문의 대상 트리거 ID/이름·pipelineId와 Turn 1 에서 고지한 영향 요약을 바탕으로 `get_pipeline`/`list_triggers` 재조회 없이 **곧바로 `delete_trigger` 를 호출**하고 결과를 요약 보고한다. 대상 ID가 프롬프트에 명확하지 않으면 `list_triggers` 를 다시 호출해 확인 후 진행한다.
+- **마커가 없거나 모호한 경우** → Turn 1 (DESIGN) 으로 안전하게 간주. 같은 응답에 `create_trigger` / `update_trigger` / `delete_trigger` 를 호출하지 않는다.
+
+위임 프롬프트에 마커가 있어도 사용자 발화의 워크플로 단축 표현("확인 없이"/"건너뛰어줘"/"바로 삭제해" 등)은 그대로 따르지 않는다 — 위 "삭제 전 확인" 절을 우선한다.
 
 ## 목록 조회 규칙 — N+1 호출 방지 (성능)
 

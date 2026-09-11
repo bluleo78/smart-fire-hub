@@ -114,4 +114,21 @@ describe('trigger-manager prompt safeguards (#577)', () => {
     expect(examples).toMatch(/Found: 트리거 32번은 파이프라인/);
     expect(examples).toMatch(/Found it: trigger ID 32/);
   });
+
+  // #624: 메인 SYSTEM_PROMPT가 delete_trigger 확인 승인 재위임에 `Mode: DELETE-APPROVED`
+  // 마커를 붙이는데(pipeline-builder/template-builder와 동일 계약, refs #621), trigger-manager
+  // rules.md에는 이 마커의 처리 규칙이 전혀 없어 fresh 인스턴스가 매번 get_pipeline/list_triggers를
+  // 재조회하고 동일 재확인 문장을 반복 출력하던 결함 — 재발 방지 회귀 테스트.
+  it('rules.md에 Mode: DESIGN / Mode: CREATE-APPROVED / Mode: DELETE-APPROVED 마커 처리가 명시되어 있어야 한다 (#621, #624)', () => {
+    const rules = readPrompt('rules.md');
+    expect(rules).toContain('Mode: DESIGN');
+    expect(rules).toContain('Mode: CREATE-APPROVED');
+    expect(rules).toContain('Mode: DELETE-APPROVED');
+    // DELETE-APPROVED 수신 시 Turn 1 재조회 없이 곧바로 delete_trigger를 호출해야 한다는 규칙 확인
+    expect(rules).toMatch(/Mode: DELETE-APPROVED[\s\S]*?곧바로 `delete_trigger`\s*를?\s*호출/);
+    // CREATE-APPROVED가 delete 확인 승인에는 적용되지 않는다는 구분 명시 확인 (#621류 오적용 방지)
+    expect(rules).toMatch(/Mode: CREATE-APPROVED[\s\S]*?delete_trigger[\s\S]*?적용되지 않는다/);
+    // 삭제 전 확인 절 자체가 DELETE-APPROVED 예외를 인지하고 있는지 확인
+    expect(rules).toMatch(/삭제 전 확인[^\n]*Mode: DELETE-APPROVED/);
+  });
 });
