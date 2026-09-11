@@ -46,8 +46,11 @@ export function createProactiveApi(client: AxiosInstance) {
       const response = await client.post(`/proactive/jobs/${id}/execute`);
       return response.data;
     },
-    async listReportTemplates(): Promise<unknown> {
-      const response = await client.get('/proactive/templates');
+    // #632: 목록 조회 응답이 요약(섹션 개수만 포함, sections/style 제외)으로 축소됐다.
+    // page/size로 결과 규모를 제어할 수 있다(기본: 서버 기본값 page=0/size=50).
+    // 섹션 상세 구조가 필요하면 getReportTemplate(id)를 별도 호출해야 한다.
+    async listReportTemplates(params?: { page?: number; size?: number }): Promise<unknown> {
+      const response = await client.get('/proactive/templates', { params });
       return response.data;
     },
     async createReportTemplate(data: {

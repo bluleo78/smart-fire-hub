@@ -8,10 +8,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { SearchInput } from '@/components/ui/search-input';
 import { useProactiveTemplates } from '@/hooks/queries/useProactiveMessages';
 
-function sectionCount(sections: unknown): number {
-  return Array.isArray(sections) ? sections.length : 0;
-}
-
 export default function ReportTemplatesTab() {
   const { data: templates = [], isLoading } = useProactiveTemplates();
   const navigate = useNavigate();
@@ -60,7 +56,7 @@ export default function ReportTemplatesTab() {
               </CardHeader>
               {/* flex-1로 설정하여 카드 높이가 늘어날 때 콘텐츠 영역이 확장되도록 함 */}
               <CardContent className="flex-1">
-                <p className="text-xs text-muted-foreground">섹션 {sectionCount(t.sections)}개</p>
+                <p className="text-xs text-muted-foreground">섹션 {t.sectionCount}개</p>
               </CardContent>
             </Card>
           ))}
@@ -128,7 +124,7 @@ export default function ReportTemplatesTab() {
                     </CardHeader>
                     {/* flex-1로 설정하여 카드 높이가 늘어날 때 콘텐츠 영역이 확장되도록 함 */}
                     <CardContent className="flex-1">
-                      <p className="text-xs text-muted-foreground">섹션 {sectionCount(t.sections)}개</p>
+                      <p className="text-xs text-muted-foreground">섹션 {t.sectionCount}개</p>
                     </CardContent>
                   </Card>
                 ))}

@@ -1,6 +1,7 @@
 package com.smartfirehub.proactive.controller;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
@@ -20,6 +21,7 @@ import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.permission.service.PermissionService;
 import com.smartfirehub.proactive.dto.CreateReportTemplateRequest;
 import com.smartfirehub.proactive.dto.ReportTemplateResponse;
+import com.smartfirehub.proactive.dto.ReportTemplateSummaryResponse;
 import com.smartfirehub.proactive.dto.UpdateReportTemplateRequest;
 import com.smartfirehub.proactive.service.ReportTemplateService;
 import java.time.LocalDateTime;
@@ -67,16 +69,39 @@ class ReportTemplateControllerTest {
         LocalDateTime.now());
   }
 
+  /** 목록 조회 응답(요약, #632) 샘플 — sections/style 없이 sectionCount만 포함. */
+  private ReportTemplateSummaryResponse sampleTemplateSummary() {
+    return new ReportTemplateSummaryResponse(
+        5L, "Daily Summary", "A daily summary template", 1, 1L, false, LocalDateTime.now(), LocalDateTime.now());
+  }
+
   @Test
   void getTemplates_returnsList() throws Exception {
     mockAuth("proactive:read");
-    when(reportTemplateService.getTemplates(anyLong())).thenReturn(List.of(sampleTemplate()));
+    when(reportTemplateService.getTemplates(anyLong(), anyInt(), anyInt()))
+        .thenReturn(List.of(sampleTemplateSummary()));
 
     mockMvc
         .perform(get("/api/v1/proactive/templates").header("Authorization", "Bearer valid-token"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$[0].id").value(5))
-        .andExpect(jsonPath("$[0].name").value("Daily Summary"));
+        .andExpect(jsonPath("$[0].name").value("Daily Summary"))
+        .andExpect(jsonPath("$[0].sectionCount").value(1))
+        .andExpect(jsonPath("$[0].sections").doesNotExist());
+  }
+
+  /** #632 — page/size 쿼리 파라미터가 서비스로 그대로 전달되는지 확인. */
+  @Test
+  void getTemplates_withPageSizeParams_passesThemToService() throws Exception {
+    mockAuth("proactive:read");
+    when(reportTemplateService.getTemplates(eq(1L), eq(1), eq(5))).thenReturn(List.of());
+
+    mockMvc
+        .perform(
+            get("/api/v1/proactive/templates?page=1&size=5")
+                .header("Authorization", "Bearer valid-token"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$").isArray());
   }
 
   @Test

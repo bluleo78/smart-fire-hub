@@ -414,6 +414,13 @@ describe('Proactive MCP Tools', () => {
       const result = await invokeTool(server, 'list_report_templates');
       expect(result.isError).toBe(true);
     });
+
+    // #632: page/size 파라미터가 apiClient로 그대로 전달되는지 확인 (요약 응답 + 페이지네이션 지원)
+    it('forwards page/size args to apiClient.listReportTemplates', async () => {
+      const result = await invokeTool(server, 'list_report_templates', { page: 1, size: 20 });
+      expect(client.listReportTemplates).toHaveBeenCalledWith({ page: 1, size: 20 });
+      expect(result.isError).toBeFalsy();
+    });
   });
 
   // --- create_report_template ---

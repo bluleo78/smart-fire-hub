@@ -96,6 +96,14 @@ describe('proactiveApi (via FireHubApiClient)', () => {
     expect(result).toEqual(mock);
   });
 
+  // #632: page/size 쿼리 파라미터가 GET 요청에 그대로 실리는지 확인 (요약 응답 + 페이지네이션)
+  it('listReportTemplates forwards page/size as query params', async () => {
+    const mock = [{ id: 1, name: 'tpl', sectionCount: 2 }];
+    nock(BASE_URL).get('/proactive/templates').query({ page: '1', size: '20' }).reply(200, mock);
+    const result = await client.listReportTemplates({ page: 1, size: 20 });
+    expect(result).toEqual(mock);
+  });
+
   it('createReportTemplate calls POST /proactive/templates with flat payload (no structure wrapper) — #245', async () => {
     const body = {
       name: 'tpl',

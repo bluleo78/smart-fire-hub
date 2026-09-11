@@ -43,8 +43,10 @@ maxTurns: 15
 ## 워크플로 (5단계)
 
 ### Phase 1: EXPLORE (기존 양식 탐색)
-1. `list_report_templates`로 기존 양식 목록 조회
-2. 수정 요청이면 `get_report_template`으로 해당 양식의 섹션 구조 확인
+1. `list_report_templates`로 기존 양식 목록 조회 — **이름/설명/섹션 개수만 포함된 요약**이며
+   섹션 구조(key/label/type/instruction)와 style은 포함하지 않는다(#632).
+2. 수정 요청이거나, 참고할 기존 양식의 섹션 구조를 확인해야 하면 반드시 `get_report_template`을
+   추가로 호출한다 — 목록만으로는 섹션 구조를 알 수 없다.
 3. 참고할 양식이 있으면 구조를 분석
 
 **이 단계를 건너뛰면 중복 양식을 생성하거나 기존 구조를 무시할 수 있습니다.**

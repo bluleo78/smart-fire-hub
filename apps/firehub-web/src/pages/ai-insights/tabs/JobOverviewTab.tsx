@@ -2,7 +2,7 @@ import { ChevronDown, Sparkles } from 'lucide-react';
 import { useCallback, useId, useMemo, useState } from 'react';
 import { type UseFormReturn } from 'react-hook-form';
 
-import type { ProactiveJob, ReportTemplate, TemplateSection, TriggerType } from '@/api/proactive';
+import type { ProactiveJob, ReportTemplateSummary, TemplateSection, TriggerType } from '@/api/proactive';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -53,7 +53,7 @@ interface JobOverviewTabProps {
   isNew: boolean;
   isEditing: boolean;
   form: UseFormReturn<ProactiveJobFormValues>;
-  templates: ReportTemplate[];
+  templates: ReportTemplateSummary[];
   /** 사용자 입력으로 폼이 변경됐을 때 호출 — 이탈 가드용 dirty 마킹 (이슈 #59) */
   onChange?: () => void;
 }

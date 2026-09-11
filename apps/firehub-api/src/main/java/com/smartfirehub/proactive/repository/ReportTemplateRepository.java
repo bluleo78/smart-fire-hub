@@ -6,6 +6,7 @@ import static org.jooq.impl.DSL.*;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.proactive.dto.ReportTemplateResponse;
+import com.smartfirehub.proactive.dto.ReportTemplateSummaryResponse;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -55,28 +56,34 @@ public class ReportTemplateRepository {
   private static final Field<LocalDateTime> RT_UPDATED_AT =
       field(name("report_template", "updated_at"), LocalDateTime.class);
 
-  public List<ReportTemplateResponse> findAllForUser(Long userId) {
-    return dsl.select(
-            RT_ID,
-            RT_NAME,
-            RT_DESCRIPTION,
-            RT_SECTIONS,
-            RT_STYLE,
-            RT_USER_ID,
-            RT_CREATED_AT,
-            RT_UPDATED_AT)
+  /**
+   * 목록 조회 전용 요약 조회 (#632).
+   *
+   * <p>{@code sections}/{@code style} 전체 JSONB를 읽지 않고, 섹션 개수만 DB에서
+   * {@code jsonb_array_length()}로 계산해 반환한다 — 목록 조회 payload가 템플릿 규모/섹션 수에
+   * 비례해 커지는 문제를 근본적으로 없앤다(select-then-drop이 아니라 애초에 컬럼을 안 읽음).
+   * 상세 구조가 필요하면 {@link #findById(Long)}(단건 조회)을 사용한다.
+   *
+   * @param page 0-based 페이지 번호
+   * @param size 페이지당 개수
+   */
+  public List<ReportTemplateSummaryResponse> findAllForUser(Long userId, int page, int size) {
+    Field<Integer> sectionCount = field("jsonb_array_length({0})", Integer.class, RT_SECTIONS);
+    return dsl.select(RT_ID, RT_NAME, RT_DESCRIPTION, sectionCount, RT_USER_ID, RT_CREATED_AT, RT_UPDATED_AT)
         .from(REPORT_TEMPLATE)
         .where(RT_USER_ID.isNull().or(RT_USER_ID.eq(userId)))
         .orderBy(RT_ID.asc())
+        .limit(size)
+        .offset(page * size)
         .fetch(
             r ->
-                toResponse(
+                new ReportTemplateSummaryResponse(
                     r.get(RT_ID),
                     r.get(RT_NAME),
                     r.get(RT_DESCRIPTION),
-                    r.get(RT_SECTIONS),
-                    r.get(RT_STYLE),
+                    r.get(sectionCount),
                     r.get(RT_USER_ID),
+                    r.get(RT_USER_ID) == null,
                     r.get(RT_CREATED_AT),
                     r.get(RT_UPDATED_AT)));
   }

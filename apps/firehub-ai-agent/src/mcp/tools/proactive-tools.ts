@@ -132,10 +132,16 @@ export function registerProactiveTools(
 
     safeTool(
       'list_report_templates',
-      '리포트 양식 목록을 조회합니다',
-      {},
-      async () => {
-        const result = await apiClient.listReportTemplates();
+      // #632: 목록은 요약(이름/설명/섹션 개수)만 반환하고 섹션 전체 구조(key/label/type/instruction)와
+      // style은 포함하지 않는다 — 특정 양식의 상세 구조가 필요하면 반드시 get_report_template을
+      // 추가로 호출해야 한다.
+      '리포트 양식 목록을 요약 정보(이름/설명/섹션 개수)로 조회합니다. 섹션 상세 구조나 style이 필요하면 get_report_template을 별도로 호출하세요.',
+      {
+        page: z.number().int().min(0).optional().describe('0-based 페이지 번호 (기본: 0)'),
+        size: z.number().int().min(1).max(200).optional().describe('페이지당 개수 (기본: 50)'),
+      },
+      async (args: { page?: number; size?: number }) => {
+        const result = await apiClient.listReportTemplates(args);
         return jsonResult(result);
       },
     ),

@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.smartfirehub.proactive.dto.CreateReportTemplateRequest;
 import com.smartfirehub.proactive.dto.ReportTemplateResponse;
+import com.smartfirehub.proactive.dto.ReportTemplateSummaryResponse;
 import com.smartfirehub.proactive.dto.UpdateReportTemplateRequest;
 import com.smartfirehub.proactive.exception.ProactiveJobException;
 import com.smartfirehub.support.IntegrationTestBase;
@@ -40,10 +41,43 @@ class ReportTemplateServiceTest extends IntegrationTestBase {
 
   @Test
   void getTemplates_returnsBuiltinThree() {
-    List<ReportTemplateResponse> templates = reportTemplateService.getTemplates(testUserId);
+    List<ReportTemplateSummaryResponse> templates = reportTemplateService.getTemplates(testUserId, 0, 50);
 
-    long builtinCount = templates.stream().filter(ReportTemplateResponse::builtin).count();
+    long builtinCount = templates.stream().filter(ReportTemplateSummaryResponse::builtin).count();
     assertThat(builtinCount).isGreaterThanOrEqualTo(3);
+  }
+
+  /**
+   * #632 회귀 테스트 — 목록 응답이 sections/style 전체 JSONB 대신 섹션 개수(sectionCount)만
+   * 포함하는지, 그리고 size 파라미터가 실제로 결과 건수를 제한하는지 확인한다. 공유 test DB에
+   * 누적된 다른 워크트리의 템플릿까지 셀 수 있으므로(#394와 동일한 함정) 이 테스트가 직접 생성한
+   * 템플릿의 sectionCount 값 자체를 단언하고, size 제한은 "요청한 size 이하로 반환되는가"로
+   * 검증한다(전역 카운트에 의존하지 않음).
+   */
+  @Test
+  void getTemplates_summaryExcludesSectionsAndRespectsSize() {
+    // given: 섹션 3개짜리 커스텀 템플릿 생성
+    List<Map<String, Object>> sections =
+        List.of(
+            Map.of("key", "a", "label", "A"),
+            Map.of("key", "b", "label", "B"),
+            Map.of("key", "c", "label", "C"));
+    CreateReportTemplateRequest createReq =
+        new CreateReportTemplateRequest("#632 sectionCount 검증용", null, sections, null);
+    ReportTemplateResponse created = reportTemplateService.createTemplate(createReq, testUserId);
+
+    // when
+    List<ReportTemplateSummaryResponse> templates = reportTemplateService.getTemplates(testUserId, 0, 50);
+    ReportTemplateSummaryResponse summary =
+        templates.stream().filter(t -> t.id().equals(created.id())).findFirst().orElseThrow();
+
+    // then: sectionCount가 DB에서 정확히 계산됨 (전체 sections JSONB는 응답에 없음 — 레코드에 필드 자체가 없음)
+    assertThat(summary.sectionCount()).isEqualTo(3);
+    assertThat(summary.name()).isEqualTo("#632 sectionCount 검증용");
+
+    // when: size=1로 재조회 — 실제 데이터가 2건 이상 존재하는 상태에서 결과가 1건으로 제한되는지 확인
+    List<ReportTemplateSummaryResponse> limited = reportTemplateService.getTemplates(testUserId, 0, 1);
+    assertThat(limited).hasSize(1);
   }
 
   @Test
@@ -114,9 +148,9 @@ class ReportTemplateServiceTest extends IntegrationTestBase {
 
   @Test
   void deleteTemplate_builtinTemplate_throwsProactiveJobException() {
-    List<ReportTemplateResponse> templates = reportTemplateService.getTemplates(testUserId);
-    ReportTemplateResponse builtin =
-        templates.stream().filter(ReportTemplateResponse::builtin).findFirst().orElseThrow();
+    List<ReportTemplateSummaryResponse> templates = reportTemplateService.getTemplates(testUserId, 0, 50);
+    ReportTemplateSummaryResponse builtin =
+        templates.stream().filter(ReportTemplateSummaryResponse::builtin).findFirst().orElseThrow();
 
     assertThatThrownBy(() -> reportTemplateService.deleteTemplate(builtin.id(), testUserId))
         .isInstanceOf(ProactiveJobException.class)
@@ -125,9 +159,9 @@ class ReportTemplateServiceTest extends IntegrationTestBase {
 
   @Test
   void updateTemplate_builtinTemplate_throwsProactiveJobException() {
-    List<ReportTemplateResponse> templates = reportTemplateService.getTemplates(testUserId);
-    ReportTemplateResponse builtin =
-        templates.stream().filter(ReportTemplateResponse::builtin).findFirst().orElseThrow();
+    List<ReportTemplateSummaryResponse> templates = reportTemplateService.getTemplates(testUserId, 0, 50);
+    ReportTemplateSummaryResponse builtin =
+        templates.stream().filter(ReportTemplateSummaryResponse::builtin).findFirst().orElseThrow();
 
     UpdateReportTemplateRequest updateReq =
         new UpdateReportTemplateRequest("수정 시도", null, null, null);

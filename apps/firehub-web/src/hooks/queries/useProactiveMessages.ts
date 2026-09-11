@@ -243,6 +243,9 @@ export function useMarkAllAsRead() {
 
 // ── Templates ─────────────────────────────────────────────────────────────────
 
+// #632: 응답 타입이 ReportTemplate[] → ReportTemplateSummary[]로 바뀌었다(sections/style 제외).
+// 이 훅을 쓰는 4개 화면 중 상세 구조가 필요한 ReportTemplateDetailPage는 별도로
+// useProactiveTemplate(id)(단건 조회)를 함께 사용한다.
 export function useProactiveTemplates() {
   return useQuery({
     queryKey: KEYS.templates,

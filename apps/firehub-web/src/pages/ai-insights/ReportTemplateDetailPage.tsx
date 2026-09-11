@@ -5,6 +5,7 @@ import { useForm } from 'react-hook-form';
 import { useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
+import type { ReportTemplate, ReportTemplateSummary } from '@/api/proactive';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -51,6 +52,17 @@ import { useSectionTree } from './hooks/useSectionTree';
 
 const DEFAULT_STRUCTURE = JSON.stringify({ sections: [] }, null, 2);
 
+/**
+ * 목록 요약(ReportTemplateSummary)을 폴백용 ReportTemplate 형태로 변환한다(#632).
+ * 단건 조회(getTemplate)가 실패했을 때만 쓰이는 드문 경로이며, 요약에는 sections/style이
+ * 없으므로 빈 값으로 채운다 — 이름/설명 등 메타데이터는 보존해 화면이 완전히 비지 않도록 한다.
+ */
+function toFallbackTemplate(summary: ReportTemplateSummary | undefined): ReportTemplate | undefined {
+  if (!summary) return undefined;
+  const { id, name, description, builtin, createdAt, updatedAt } = summary;
+  return { id, name, description, builtin, createdAt, updatedAt, sections: [], style: null };
+}
+
 export default function ReportTemplateDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -63,7 +75,10 @@ export default function ReportTemplateDetailPage() {
   // FK가 ON DELETE SET NULL이라 삭제 자체는 막히지 않고, 참조 작업이 조용히 기본 형식으로 전환된다.
   const { data: allJobs = [] } = useProactiveJobs();
   // Fallback: use list data if single-item API fails
-  const template = templateDirect ?? templates.find((t) => t.id === templateId);
+  // #632: 목록 응답이 요약(ReportTemplateSummary)으로 축소되어 sections/style을 포함하지 않는다.
+  // 이 폴백은 단건 조회 실패라는 드문 경로에서만 쓰이므로, 이름/설명 등 메타데이터만 살리고
+  // sections/style은 빈 값으로 채워 타입 계약을 유지한다(단건 조회가 정상 동작하면 도달하지 않음).
+  const template = templateDirect ?? toFallbackTemplate(templates.find((t) => t.id === templateId));
   // 두 쿼리 중 하나라도 진행 중이면 "로딩 중"으로 본다 — 저장 직후 /templates/new → /templates/100 으로
   // 이동하는 시점에 list 쿼리가 캐시 적중으로 즉시 false가 되어 guard(73~80)가 잘못 발화,
   // detail 쿼리가 끝나기 전에 목록으로 되돌리던 race를 차단한다.

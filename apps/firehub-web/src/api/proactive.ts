@@ -11,6 +11,22 @@ export interface ReportTemplate {
   updatedAt: string;
 }
 
+/**
+ * 리포트 양식 목록(list) 조회 전용 요약 타입 (#632).
+ * `ReportTemplate`과 달리 sections/style 전체 구조를 포함하지 않고 섹션 개수(sectionCount)만
+ * 제공한다 — 목록 조회 payload가 템플릿/섹션 규모에 비례해 커지는 문제를 없애기 위함.
+ * 상세 구조가 필요하면 `getTemplate(id)`(단건 조회)를 사용해야 한다.
+ */
+export interface ReportTemplateSummary {
+  id: number;
+  name: string;
+  description: string | null;
+  sectionCount: number;
+  builtin: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export type SectionType =
   | 'text'
   | 'cards'
@@ -234,7 +250,11 @@ export const proactiveApi = {
   markAllAsRead: () => client.put('/proactive/messages/read-all'),
 
   // Templates (4 methods)
-  getTemplates: () => client.get<ReportTemplate[]>('/proactive/templates'),
+  // #632: 목록 조회 응답이 요약(ReportTemplateSummary[], sections/style 제외)으로 축소됐다.
+  // page/size 미지정 시 서버 기본값(size=50)이 적용되어 현재 UI(전체 목록 렌더링)와 호환된다.
+  // 응답 자체는 기존과 동일하게 바로 배열이다(엔벨로프 아님).
+  getTemplates: (params?: { page?: number; size?: number }) =>
+    client.get<ReportTemplateSummary[]>('/proactive/templates', { params }),
   getTemplate: (id: number) =>
     client.get<ReportTemplate>(`/proactive/templates/${id}`),
   createTemplate: (data: CreateReportTemplateRequest) =>

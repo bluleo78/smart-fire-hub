@@ -864,8 +864,8 @@ export class FireHubApiClient {
   executeSmartJob(id: number) {
     return this._proactive.executeSmartJob(id);
   }
-  listReportTemplates() {
-    return this._proactive.listReportTemplates();
+  listReportTemplates(params?: { page?: number; size?: number }) {
+    return this._proactive.listReportTemplates(params);
   }
   createReportTemplate(data: {
     name: string;

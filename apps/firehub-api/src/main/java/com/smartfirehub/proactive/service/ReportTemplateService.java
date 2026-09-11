@@ -2,6 +2,7 @@ package com.smartfirehub.proactive.service;
 
 import com.smartfirehub.proactive.dto.CreateReportTemplateRequest;
 import com.smartfirehub.proactive.dto.ReportTemplateResponse;
+import com.smartfirehub.proactive.dto.ReportTemplateSummaryResponse;
 import com.smartfirehub.proactive.dto.UpdateReportTemplateRequest;
 import com.smartfirehub.proactive.exception.ProactiveJobException;
 import com.smartfirehub.proactive.repository.ReportTemplateRepository;
@@ -16,9 +17,14 @@ public class ReportTemplateService {
 
   private final ReportTemplateRepository reportTemplateRepository;
 
+  /**
+   * 리포트 양식 목록을 요약 정보(섹션 전체 JSONB 제외)로 page/size 페이지네이션 조회한다(#632).
+   * AI subagent(list_report_templates)와 프론트엔드 목록 탭이 공통으로 사용하며, 상세 구조는
+   * {@link #getTemplate(Long)}로 별도 조회해야 한다.
+   */
   @Transactional(readOnly = true)
-  public List<ReportTemplateResponse> getTemplates(Long userId) {
-    return reportTemplateRepository.findAllForUser(userId);
+  public List<ReportTemplateSummaryResponse> getTemplates(Long userId, int page, int size) {
+    return reportTemplateRepository.findAllForUser(userId, page, size);
   }
 
   @Transactional(readOnly = true)
