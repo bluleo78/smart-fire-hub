@@ -350,4 +350,82 @@ test.describe('역할 관리 페이지', () => {
     await expect(page.getByRole('button', { name: 'USER 역할 삭제' })).not.toBeVisible();
     await expect(page.getByRole('button', { name: 'ADMIN 역할 삭제' })).not.toBeVisible();
   });
+
+  /**
+   * 이슈 #636 회귀 방지 — 역할 상세 페이지는 useUnsavedChangesGuard 자체를 호출하지 않아
+   * "목록으로 돌아가기" 버튼이 navigate()를 직접 호출, dirty 상태에서도 경고 없이 이탈되던 결함.
+   */
+  test.describe('이슈 #636 — 미저장 변경 가드', () => {
+    test('설명 필드 dirty 상태에서 "목록으로 돌아가기" 버튼 클릭 시 이탈 다이얼로그가 표시된다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupRoleDetailMocks(page, 3, false);
+      await page.goto('/admin/roles/3');
+      await expect(page.getByRole('heading', { name: '역할 상세' })).toBeVisible();
+
+      // 설명 필드 변경 (저장 버튼은 누르지 않음)
+      const descInput = page.getByLabel('설명');
+      await descInput.fill('636-unsaved-change-probe');
+
+      // 목록으로 돌아가기 버튼 클릭 — dirty 상태이므로 즉시 이동하면 안 되고 확인 다이얼로그가 떠야 한다
+      await page.getByRole('button', { name: '목록으로 돌아가기' }).click();
+      await expect(page.getByRole('alertdialog')).toBeVisible();
+      await expect(
+        page.getByText('저장하지 않은 변경사항이 있습니다. 이탈하시겠습니까?'),
+      ).toBeVisible();
+
+      // 아직 역할 상세 페이지에 머물러 있어야 한다
+      await expect(page).toHaveURL(/\/admin\/roles\/3$/);
+    });
+
+    test('이탈 다이얼로그에서 취소 클릭 시 페이지에 머무르고 입력값이 보존된다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupRoleDetailMocks(page, 3, false);
+      await page.goto('/admin/roles/3');
+
+      const descInput = page.getByLabel('설명');
+      await descInput.fill('636-unsaved-change-probe');
+
+      await page.getByRole('button', { name: '목록으로 돌아가기' }).click();
+      await expect(page.getByRole('alertdialog')).toBeVisible();
+      await page.getByRole('button', { name: '취소' }).click();
+      await expect(page.getByRole('alertdialog')).not.toBeVisible();
+
+      // 입력값이 그대로 보존되어야 한다
+      await expect(descInput).toHaveValue('636-unsaved-change-probe');
+      await expect(page).toHaveURL(/\/admin\/roles\/3$/);
+    });
+
+    test('이탈 다이얼로그에서 이탈 클릭 시 역할 목록 페이지로 이동한다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupRoleDetailMocks(page, 3, false);
+      await page.goto('/admin/roles/3');
+
+      const descInput = page.getByLabel('설명');
+      await descInput.fill('636-unsaved-change-probe');
+
+      await page.getByRole('button', { name: '목록으로 돌아가기' }).click();
+      await expect(page.getByRole('alertdialog')).toBeVisible();
+
+      await setupRoleListMocks(page);
+      await page.getByRole('button', { name: '이탈' }).click();
+
+      await expect(page).toHaveURL(/\/admin\/roles$/);
+    });
+
+    test('dirty 상태가 아니면 목록으로 돌아가기 클릭 시 다이얼로그 없이 즉시 이동한다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupRoleDetailMocks(page, 3, false);
+      await page.goto('/admin/roles/3');
+
+      await setupRoleListMocks(page);
+      await page.getByRole('button', { name: '목록으로 돌아가기' }).click();
+
+      await expect(page.getByRole('alertdialog')).not.toBeVisible();
+      await expect(page).toHaveURL(/\/admin\/roles$/);
+    });
+  });
 });

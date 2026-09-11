@@ -26,6 +26,7 @@ import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
 import { Separator } from '../../components/ui/separator';
 import { Skeleton } from '../../components/ui/skeleton';
+import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
 import type { UpdateRoleFormData } from '../../lib/validations/role';
 import { updateRoleSchema } from '../../lib/validations/role';
 import type { ErrorResponse } from '../../types/auth';
@@ -53,6 +54,12 @@ export default function RoleDetailPage() {
       description: '',
     },
   });
+
+  // 이름/설명 폼이 저장되지 않은 채로 이탈하는 것을 막는 가드 (#636) — 목록으로 돌아가기 버튼은
+  // navigate() 대신 requestNavigate를 통해서만 이동해야 dirty 시 확인 다이얼로그가 뜬다.
+  const { dialog: unsavedChangesDialog, requestNavigate } = useUnsavedChangesGuard(
+    form.formState.isDirty,
+  );
 
   useEffect(() => {
     const fetchData = async () => {
@@ -175,8 +182,9 @@ export default function RoleDetailPage() {
   return (
     <div className="mx-auto max-w-2xl space-y-6">
       <div className="flex items-center gap-4">
-        {/* 역할 목록으로 돌아가는 뒤로가기 버튼 — 접근성 보강 (#102) */}
-        <Button variant="ghost" size="icon" onClick={() => navigate('/admin/roles')} aria-label="목록으로 돌아가기" title="목록으로 돌아가기">
+        {/* 역할 목록으로 돌아가는 뒤로가기 버튼 — 접근성 보강 (#102)
+            (#636) navigate() 직접 호출 대신 requestNavigate 사용 — dirty 상태면 이탈 가드 다이얼로그를 띄운다 */}
+        <Button variant="ghost" size="icon" onClick={() => requestNavigate('/admin/roles')} aria-label="목록으로 돌아가기" title="목록으로 돌아가기">
           <ArrowLeft className="h-4 w-4" />
         </Button>
         <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">역할 상세</h1>
@@ -282,6 +290,9 @@ export default function RoleDetailPage() {
           </Button>
         </CardContent>
       </Card>
+
+      {/* 미저장 변경 이탈 확인 다이얼로그 (#636) */}
+      {unsavedChangesDialog}
     </div>
   );
 }

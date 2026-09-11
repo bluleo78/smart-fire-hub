@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { ArrowLeft } from 'lucide-react';
-import { useEffect,useId,useState } from 'react';
+import { useEffect,useId,useMemo,useState } from 'react';
 import { useNavigate,useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
@@ -25,6 +25,7 @@ import { Separator } from '../../components/ui/separator';
 import { Skeleton } from '../../components/ui/skeleton';
 import { Switch } from '../../components/ui/switch';
 import { useAuth } from '../../hooks/useAuth';
+import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
 import { formatDateShort } from '../../lib/formatters';
 import type { ErrorResponse } from '../../types/auth';
 import type { RoleResponse } from '../../types/role';
@@ -37,6 +38,8 @@ export default function UserDetailPage() {
   const [user, setUser] = useState<UserDetailResponse | null>(null);
   const [allRoles, setAllRoles] = useState<RoleResponse[]>([]);
   const [selectedRoleIds, setSelectedRoleIds] = useState<number[]>([]);
+  // 저장 없이 이탈 시 유실 경고를 위한 dirty 비교 기준 스냅샷 — 로드/저장 성공 시마다 갱신 (#636)
+  const [initialRoleIds, setInitialRoleIds] = useState<number[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSavingRoles, setIsSavingRoles] = useState(false);
   const [isTogglingActive, setIsTogglingActive] = useState(false);
@@ -58,7 +61,9 @@ export default function UserDetailPage() {
         ]);
         setUser(userRes.data);
         setAllRoles(rolesRes.data);
-        setSelectedRoleIds(userRes.data.roles.map(r => r.id));
+        const roleIds = userRes.data.roles.map(r => r.id);
+        setSelectedRoleIds(roleIds);
+        setInitialRoleIds(roleIds);
       } catch {
         toast.error('사용자 정보를 불러오는데 실패했습니다.');
         navigate('/admin/users');
@@ -75,6 +80,18 @@ export default function UserDetailPage() {
       checked ? [...prev, roleId] : prev.filter(id => id !== roleId)
     );
   };
+
+  // 역할 체크박스가 로드된 초기값과 달라졌는지 여부 (#636) — 순서 무관 비교를 위해 정렬 후 비교
+  const rolesDirty = useMemo(() => {
+    if (selectedRoleIds.length !== initialRoleIds.length) return true;
+    const a = [...selectedRoleIds].sort((x, y) => x - y);
+    const b = [...initialRoleIds].sort((x, y) => x - y);
+    return a.some((v, i) => v !== b[i]);
+  }, [selectedRoleIds, initialRoleIds]);
+
+  // "역할 저장" 없이 이탈 시 경고를 위한 가드 — 목록으로 돌아가기 버튼은 navigate() 대신
+  // requestNavigate를 통해서만 이동해야 dirty 시 확인 다이얼로그가 뜬다 (#636).
+  const { dialog: unsavedChangesDialog, requestNavigate } = useUnsavedChangesGuard(rolesDirty);
 
   /**
    * "역할 저장" 버튼 클릭 핸들러 — 선택된 역할이 0개(전체 해제)면 확인 다이얼로그를 먼저 띄우고,
@@ -96,7 +113,9 @@ export default function UserDetailPage() {
       await usersApi.setUserRoles(user.id, { roleIds: selectedRoleIds });
       const { data: updatedUser } = await usersApi.getUserById(user.id);
       setUser(updatedUser);
-      setSelectedRoleIds(updatedUser.roles.map(r => r.id));
+      const roleIds = updatedUser.roles.map(r => r.id);
+      setSelectedRoleIds(roleIds);
+      setInitialRoleIds(roleIds);
       toast.success('역할이 저장되었습니다.');
     } catch (error) {
       if (axios.isAxiosError(error) && error.response?.data) {
@@ -173,8 +192,9 @@ export default function UserDetailPage() {
   return (
     <div className="mx-auto max-w-2xl space-y-6">
       <div className="flex items-center gap-4">
-        {/* 사용자 목록으로 돌아가는 뒤로가기 버튼 — 접근성 보강 (#102) */}
-        <Button variant="ghost" size="icon" onClick={() => navigate('/admin/users')} aria-label="목록으로 돌아가기" title="목록으로 돌아가기">
+        {/* 사용자 목록으로 돌아가는 뒤로가기 버튼 — 접근성 보강 (#102)
+            (#636) navigate() 직접 호출 대신 requestNavigate 사용 — dirty 상태면 이탈 가드 다이얼로그를 띄운다 */}
+        <Button variant="ghost" size="icon" onClick={() => requestNavigate('/admin/users')} aria-label="목록으로 돌아가기" title="목록으로 돌아가기">
           <ArrowLeft className="h-4 w-4" />
         </Button>
         <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">사용자 상세</h1>
@@ -307,6 +327,9 @@ export default function UserDetailPage() {
           </Button>
         </CardContent>
       </Card>
+
+      {/* 미저장 변경 이탈 확인 다이얼로그 (#636) */}
+      {unsavedChangesDialog}
     </div>
   );
 }

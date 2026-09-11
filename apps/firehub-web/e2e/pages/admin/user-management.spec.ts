@@ -428,4 +428,95 @@ test.describe('사용자 관리 페이지', () => {
     const req = await saveCapture.waitForRequest();
     expect((req.payload as { roleIds: number[] }).roleIds).toEqual([]);
   });
+
+  /**
+   * 이슈 #636 회귀 방지 — 사용자 상세 페이지는 useUnsavedChangesGuard 자체를 호출하지 않고
+   * 역할 체크박스 dirty 계산도 없어, "목록으로 돌아가기" 버튼이 경고 없이 즉시 이동하던 결함.
+   */
+  test.describe('이슈 #636 — 미저장 변경 가드', () => {
+    test('역할 체크박스 dirty 상태에서 "목록으로 돌아가기" 버튼 클릭 시 이탈 다이얼로그가 표시된다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupUserDetailMocks(page, 1);
+      await page.goto('/admin/users/1');
+      await expect(page.getByRole('heading', { name: '사용자 상세' })).toBeVisible();
+
+      // setupUserDetailMocks(1)은 USER 역할만 부여 — ADMIN 체크박스를 토글해 dirty 상태로 만든다 (저장 버튼은 누르지 않음)
+      const adminRoleCheckbox = page.getByRole('checkbox', { name: /ADMIN/ });
+      await adminRoleCheckbox.click();
+      await expect(adminRoleCheckbox).toBeChecked();
+
+      await page.getByRole('button', { name: '목록으로 돌아가기' }).click();
+      await expect(page.getByRole('alertdialog')).toBeVisible();
+      await expect(
+        page.getByText('저장하지 않은 변경사항이 있습니다. 이탈하시겠습니까?'),
+      ).toBeVisible();
+
+      // 아직 사용자 상세 페이지에 머물러 있어야 한다
+      await expect(page).toHaveURL(/\/admin\/users\/1$/);
+    });
+
+    test('이탈 다이얼로그에서 취소 클릭 시 페이지에 머무르고 체크박스 상태가 보존된다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupUserDetailMocks(page, 1);
+      await page.goto('/admin/users/1');
+
+      const adminRoleCheckbox = page.getByRole('checkbox', { name: /ADMIN/ });
+      await adminRoleCheckbox.click();
+
+      await page.getByRole('button', { name: '목록으로 돌아가기' }).click();
+      await expect(page.getByRole('alertdialog')).toBeVisible();
+      await page.getByRole('button', { name: '취소' }).click();
+      await expect(page.getByRole('alertdialog')).not.toBeVisible();
+
+      // 체크박스 변경값이 그대로 보존되어야 한다
+      await expect(adminRoleCheckbox).toBeChecked();
+      await expect(page).toHaveURL(/\/admin\/users\/1$/);
+    });
+
+    test('이탈 다이얼로그에서 이탈 클릭 시 사용자 목록 페이지로 이동한다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupUserDetailMocks(page, 1);
+      await page.goto('/admin/users/1');
+
+      const adminRoleCheckbox = page.getByRole('checkbox', { name: /ADMIN/ });
+      await adminRoleCheckbox.click();
+
+      await page.getByRole('button', { name: '목록으로 돌아가기' }).click();
+      await expect(page.getByRole('alertdialog')).toBeVisible();
+
+      await setupUserListMocks(page, 3);
+      await page.getByRole('button', { name: '이탈' }).click();
+
+      await expect(page).toHaveURL(/\/admin\/users$/);
+    });
+
+    test('역할 저장 성공 후에는 목록으로 돌아가기 클릭 시 다이얼로그 없이 즉시 이동한다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupUserDetailMocks(page, 1);
+      await mockApi(
+        page,
+        'PUT',
+        '/api/v1/users/1/roles',
+        { id: 1, roles: [{ id: 2, name: 'ADMIN', description: '시스템 관리자', isSystem: true }] },
+      );
+      await setupUserDetailMocks(page, 1);
+
+      await page.goto('/admin/users/1');
+
+      const adminRoleCheckbox = page.getByRole('checkbox', { name: /ADMIN/ });
+      await adminRoleCheckbox.click();
+      await page.getByRole('button', { name: '역할 저장' }).click();
+      await expect(page.getByText('역할이 저장되었습니다.')).toBeVisible({ timeout: 3000 });
+
+      await setupUserListMocks(page, 3);
+      await page.getByRole('button', { name: '목록으로 돌아가기' }).click();
+
+      await expect(page.getByRole('alertdialog')).not.toBeVisible();
+      await expect(page).toHaveURL(/\/admin\/users$/);
+    });
+  });
 });
