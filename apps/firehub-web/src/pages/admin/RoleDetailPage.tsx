@@ -215,6 +215,7 @@ export default function RoleDetailPage() {
               <Input
                 id="role-description"
                 {...form.register('description')}
+                disabled={role.isSystem}
               />
             </div>
             {roleError && (

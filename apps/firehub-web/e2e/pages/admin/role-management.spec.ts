@@ -132,6 +132,33 @@ test.describe('역할 관리 페이지', () => {
     await expect(page.getByLabel('역할 이름')).toBeDisabled();
   });
 
+  test('시스템 역할 상세 페이지에서 설명 필드도 비활성화된다 (#646)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 버그: "역할 이름"에는 disabled={role.isSystem}가 있었으나 "설명"에는 누락되어
+    // 저장이 원천 차단된 시스템 역할에서도 설명 필드가 편집 가능해 보였다 (#646).
+    await setupRoleDetailMocks(page, 1, true);
+    await page.goto('/admin/roles/1');
+
+    await expect(page.getByText('시스템 역할')).toBeVisible();
+
+    // 설명 필드가 비활성화(disabled)되어 있는지 확인 — 이름 필드와 동일하게 처리되어야 한다
+    await expect(page.getByLabel('설명')).toBeDisabled();
+  });
+
+  test('커스텀 역할 상세 페이지에서는 설명 필드가 정상적으로 편집 가능하다 (#646)', async ({
+    authenticatedPage: page,
+  }) => {
+    // isSystem=false 역할(EDITOR)은 이름/설명 모두 편집 가능해야 한다 — 시스템 역할에만 적용되는 회귀 방지
+    await setupRoleDetailMocks(page, 3, false);
+    await page.goto('/admin/roles/3');
+
+    const descInput = page.getByLabel('설명');
+    await expect(descInput).toBeEnabled();
+    await descInput.fill('편집 가능 확인');
+    await expect(descInput).toHaveValue('편집 가능 확인');
+  });
+
   test('시스템 역할 상세 페이지에서 저장 버튼은 비활성화된다 (refs #3)', async ({ authenticatedPage: page }) => {
     // isSystem=true 역할 상세 모킹 — 저장 버튼이 disabled 처리되어야 한다
     await setupRoleDetailMocks(page, 1, true);
