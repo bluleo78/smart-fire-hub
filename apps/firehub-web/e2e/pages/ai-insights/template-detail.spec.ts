@@ -32,6 +32,45 @@ test.describe('리포트 템플릿 상세 페이지', () => {
     await expect(page.getByText('상세 내용').first()).toBeVisible({ timeout: 10000 });
   });
 
+  test('#633 회귀 — 목록 캐시가 warm한 상태에서 단건 조회가 지연되어도 무한 리렌더 없이 정상 렌더된다', async ({
+    authenticatedPage: page,
+  }) => {
+    // #632에서 추가된 toFallbackTemplate()이 매 렌더 새 객체를 반환해, 참조 동일성(!==) 기반
+    // state 조정과 만나 무한 리렌더로 크래시하던 회귀(#633)의 실제 재현 조건을 그대로 구성한다:
+    // 1) 목록 탭에서 이동해 templates 목록 쿼리가 이미 캐시에 적재된(warm) 상태를 만들고
+    // 2) 단건 조회(getTemplate) 응답을 지연시켜, fallback 경로가 여러 렌더에 걸쳐 활성화되게 한다.
+    const template = createTemplate({ id: 3, name: '지연조회 템플릿', builtin: false });
+    await mockApi(page, 'GET', '/api/v1/proactive/templates', [template]);
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs', []);
+
+    // 단건 조회만 별도로 지연 응답 처리 (fallback 경로가 여러 렌더 동안 유지되도록)
+    await page.route(
+      (url) => url.pathname === '/api/v1/proactive/templates/3',
+      async (route) => {
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(template) });
+      },
+    );
+
+    // 콘솔 에러 수집 — "Too many re-renders"가 발생하면 즉시 잡아낸다
+    const consoleErrors: string[] = [];
+    page.on('console', (msg) => {
+      if (msg.type() === 'error') consoleErrors.push(msg.text());
+    });
+
+    // 목록 탭에서 진입해 templates 쿼리를 warm 시킨 뒤 카드 클릭으로 상세 진입 (SPA 네비게이션)
+    await page.goto('/ai-insights/reports?tab=templates');
+    await expect(page.getByText('지연조회 템플릿', { exact: true })).toBeVisible();
+    await page.getByText('지연조회 템플릿', { exact: true }).click();
+
+    // 크래시 화면(PageErrorBoundary)이 아니라 정상 상세 화면이 렌더되는지 확인
+    await expect(page.getByRole('heading', { name: '지연조회 템플릿' })).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText('페이지를 불러오는 중 문제가 발생했습니다')).toHaveCount(0);
+
+    expect(consoleErrors.some((e) => e.includes('Too many re-renders'))).toBe(false);
+  });
+
   test('빌트인 템플릿에는 "기본" 뱃지가 표시되고 편집/삭제 버튼이 없다', async ({ authenticatedPage: page }) => {
     // setupTemplateDetailMocks는 createTemplate({ id: 1 }) 기본값(builtin: true)을 사용한다
     await setupTemplateDetailMocks(page, 1);

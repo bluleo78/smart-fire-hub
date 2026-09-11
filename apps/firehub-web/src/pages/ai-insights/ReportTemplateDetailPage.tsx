@@ -76,9 +76,16 @@ export default function ReportTemplateDetailPage() {
   const { data: allJobs = [] } = useProactiveJobs();
   // Fallback: use list data if single-item API fails
   // #632: 목록 응답이 요약(ReportTemplateSummary)으로 축소되어 sections/style을 포함하지 않는다.
-  // 이 폴백은 단건 조회 실패라는 드문 경로에서만 쓰이므로, 이름/설명 등 메타데이터만 살리고
-  // sections/style은 빈 값으로 채워 타입 계약을 유지한다(단건 조회가 정상 동작하면 도달하지 않음).
-  const template = templateDirect ?? toFallbackTemplate(templates.find((t) => t.id === templateId));
+  // 이 폴백은 단건 조회 실패라는 드문 경로뿐 아니라, 단건 조회가 아직 pending인 정상 경로에서도
+  // 항상 거쳐가는 흔한 경로다(목록 캐시가 warm하고 단건 조회가 로딩 중인 동안).
+  // toFallbackTemplate()는 매 호출마다 새 객체를 반환하므로, 아래 146번 줄처럼 결과를 참조
+  // 동일성(!==)으로 비교해 렌더 중 state를 조정하는 코드와 만나면 매 렌더마다 값이 "바뀐 것"으로
+  // 오인되어 무한 리렌더에 빠진다(#633). summary(목록에서 찾은 원본 객체)는 react-query 캐시가
+  // 안정적으로 유지하는 참조이므로, 이를 의존성으로 useMemo에 넣어 fallback 객체 자체도 같은
+  // summary에 대해 항상 같은 참조를 반환하도록 고정한다.
+  const fallbackSummary = templates.find((t) => t.id === templateId);
+  const fallbackTemplate = useMemo(() => toFallbackTemplate(fallbackSummary), [fallbackSummary]);
+  const template = templateDirect ?? fallbackTemplate;
   // 두 쿼리 중 하나라도 진행 중이면 "로딩 중"으로 본다 — 저장 직후 /templates/new → /templates/100 으로
   // 이동하는 시점에 list 쿼리가 캐시 적중으로 즉시 false가 되어 guard(73~80)가 잘못 발화,
   // detail 쿼리가 끝나기 전에 목록으로 되돌리던 race를 차단한다.
@@ -143,6 +150,9 @@ export default function ReportTemplateDetailPage() {
   });
 
   // 템플릿 로드 시 구조/스타일 동기화 — 렌더링 중 state 조정 (React 권장 패턴)
+  // 주의(#633): 이 비교는 참조 동일성(!==)에 의존한다. `template`을 만들어내는 계산(위 fallbackTemplate 등)이
+  // 매 렌더마다 새 객체를 반환하면 이 비교가 항상 true가 되어 무한 리렌더에 빠진다 — `template` 값에
+  // 관여하는 모든 계산은 반드시 useMemo 등으로 참조를 안정화해야 한다.
   if (template && template !== prevTemplate && !isEditing) {
     setPrevTemplate(template);
     const sections = Array.isArray(template.sections) ? template.sections : [];
