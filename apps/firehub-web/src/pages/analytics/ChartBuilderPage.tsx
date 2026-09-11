@@ -648,6 +648,18 @@ export default function ChartBuilderPage() {
         toast.error('시가/고가/저가/종가 컬럼을 모두 선택하세요.');
         return;
       }
+    } else if (chartType === 'HEATMAP') {
+      // 히트맵은 행(xAxis)/열(yAxis[0])/값(valueColumn) 3개 컬럼이 모두 필요하고
+      // 서로 겹치면 격자가 깨진다 (#664) — 저장 시점에 명시적으로 차단한다.
+      const col = config.yAxis[0];
+      if (!config.xAxis || !col || !config.valueColumn) {
+        toast.error('행, 열, 값(색상 기준) 컬럼을 모두 선택하세요.');
+        return;
+      }
+      if (config.xAxis === col || config.xAxis === config.valueColumn || col === config.valueColumn) {
+        toast.error('행, 열, 값 컬럼은 서로 달라야 합니다.');
+        return;
+      }
     } else if (['BOXPLOT', 'HISTOGRAM'].includes(chartType)) {
       // 이 타입들은 yAxis 대신 전용 컬럼 설정 사용 — xAxis만 필수
       if (!config.xAxis) {

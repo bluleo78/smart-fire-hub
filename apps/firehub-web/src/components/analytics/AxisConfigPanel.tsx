@@ -34,6 +34,95 @@ export function AxisConfigPanel({ chartType, columns, config, onChange }: AxisCo
   const isPieOrDonut = chartType === 'PIE' || chartType === 'DONUT';
   const isMap = chartType === 'MAP';
   const isCandlestick = chartType === 'CANDLESTICK';
+  const isHeatmap = chartType === 'HEATMAP';
+
+  if (isHeatmap) {
+    // 히트맵은 xAxis=행, yAxis[0]=열, valueColumn=셀 색상 값 3개 역할이 필요하다 (#664).
+    // 범용 X/Y(다중 선택) UI를 그대로 쓰면 "열" 선택이 "Y축 다중 선택"으로 오인되고
+    // valueColumn을 바꿀 컨트롤이 아예 없어 열 카테고리와 값 컬럼이 겹쳐버린다.
+    // 캔들스틱(#663)과 동일하게 세 필드를 각각 독립된 단일 Select로 분리한다.
+    return (
+      <div className="space-y-4">
+        {/* 행 — xAxis */}
+        <div className="space-y-1.5">
+          <Label
+            htmlFor={`${baseId}-heatmap-row`}
+            className="text-xs font-semibold text-muted-foreground uppercase tracking-wide"
+          >
+            행 (카테고리)
+          </Label>
+          <Select
+            value={config.xAxis || NO_COLUMN}
+            onValueChange={(v) => update({ xAxis: v === NO_COLUMN ? '' : v })}
+          >
+            <SelectTrigger id={`${baseId}-heatmap-row`} className="h-8 text-sm">
+              <SelectValue placeholder="컬럼 선택" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={NO_COLUMN}>선택 안 함</SelectItem>
+              {columns.map((col) => (
+                <SelectItem key={col} value={col}>
+                  {col}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        {/* 열 — yAxis[0] (다중 체크박스가 아니라 단일 Select) */}
+        <div className="space-y-1.5">
+          <Label
+            htmlFor={`${baseId}-heatmap-col`}
+            className="text-xs font-semibold text-muted-foreground uppercase tracking-wide"
+          >
+            열 (카테고리)
+          </Label>
+          <Select
+            value={config.yAxis[0] || NO_COLUMN}
+            onValueChange={(v) => update({ yAxis: v === NO_COLUMN ? [] : [v] })}
+          >
+            <SelectTrigger id={`${baseId}-heatmap-col`} className="h-8 text-sm">
+              <SelectValue placeholder="컬럼 선택" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={NO_COLUMN}>선택 안 함</SelectItem>
+              {columns.map((col) => (
+                <SelectItem key={col} value={col}>
+                  {col}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        {/* 값 — valueColumn (셀 색상 기준) */}
+        <div className="space-y-1.5">
+          <Label
+            htmlFor={`${baseId}-heatmap-value`}
+            className="text-xs font-semibold text-muted-foreground uppercase tracking-wide"
+          >
+            값 (색상 기준)
+          </Label>
+          <Select
+            value={config.valueColumn || NO_COLUMN}
+            onValueChange={(v) => update({ valueColumn: v === NO_COLUMN ? undefined : v })}
+          >
+            <SelectTrigger id={`${baseId}-heatmap-value`} className="h-8 text-sm" aria-label="값 (색상 기준)">
+              <SelectValue placeholder="컬럼 선택" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={NO_COLUMN}>선택 안 함</SelectItem>
+              {columns.map((col) => (
+                <SelectItem key={col} value={col}>
+                  {col}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+    );
+  }
 
   if (isCandlestick) {
     // 캔들스틱은 yAxis가 아니라 시가/고가/저가/종가 4개 컬럼을 개별 매핑해야 렌더링된다 (#663).

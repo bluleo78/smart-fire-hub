@@ -53,11 +53,27 @@ function toNivoFormat(
 
 export function HeatmapChartView({ data, config, height = 300 }: ChartViewProps) {
   const theme = useNivoTheme();
-  const valueKey = config.valueColumn ?? config.yAxis[0] ?? 'value';
+  const rowKey = config.xAxis;
+  const colKey = config.yAxis[0] ?? '';
+  const valueKey = config.valueColumn;
+
+  // #664: valueColumn이 비어 있거나 행/열 컬럼과 겹치면 열 카테고리와 값이 같은 컬럼을
+  // 오용하게 되어 유효하지 않은 격자가 그려진다 — 조용히 렌더링하지 않고 안내를 표시한다.
+  const isMappingInvalid =
+    !rowKey || !colKey || !valueKey || rowKey === colKey || rowKey === valueKey || colKey === valueKey;
+
   const nivoData = useMemo(
-    () => toNivoFormat(data, config.xAxis, config.yAxis[0] ?? '', valueKey),
-    [data, config.xAxis, config.yAxis, valueKey],
+    () => (isMappingInvalid ? [] : toNivoFormat(data, rowKey, colKey, valueKey as string)),
+    [data, rowKey, colKey, valueKey, isMappingInvalid],
   );
+
+  if (isMappingInvalid) {
+    return (
+      <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
+        행/열/값(색상 기준) 컬럼을 서로 다르게 선택하세요.
+      </div>
+    );
+  }
 
   if (nivoData.length === 0) {
     return (
