@@ -31,8 +31,14 @@ import { bypassNextPopstateGuard, registerActiveGuard } from '../lib/unsaved-cha
  * - 이슈 #86: 관리자 설정 페이지(이메일 탭 등)에서 dirty 상태 이탈 시 가드 부재로 입력값 유실.
  *
  * 사용법:
- *   const { dialog } = useUnsavedChangesGuard(isDirty);
+ *   const { dialog, requestNavigate } = useUnsavedChangesGuard(isDirty);
  *   return <>{...page UI}{dialog}</>;
+ *
+ * - (이슈 #634) 위 (1)의 document click 캡처는 클릭 경로에 `<a href>`가 있을 때만 동작한다.
+ *   페이지 내 "뒤로가기" 버튼처럼 `<button onClick={() => navigate(...)}>`로 프로그래매틱하게
+ *   이동하는 경로는 `<a>` 요소가 없어 가드를 우회한다. 이런 인페이지 이동 버튼은 `navigate()`를
+ *   직접 호출하지 말고 이 훅이 반환하는 `requestNavigate(to)`를 통해서만 이동해야 한다 —
+ *   dirty 상태면 다이얼로그를 띄우고, 아니면 즉시 navigate 한다.
  */
 export function useUnsavedChangesGuard(isDirty: boolean) {
   const navigate = useNavigate();
@@ -130,6 +136,22 @@ export function useUnsavedChangesGuard(isDirty: boolean) {
     return () => window.removeEventListener('beforeunload', handler);
   }, []);
 
+  // (이슈 #634) 페이지 내 "뒤로가기" 등 프로그래매틱 이동 버튼용 헬퍼.
+  // dirty면 <a> 클릭 가로채기와 동일하게 다이얼로그를 띄우고, 아니면 바로 navigate 한다.
+  // 페이지는 navigate()를 직접 호출하는 대신 이 함수를 통해서만 이동해야 click 캡처의
+  // <a> 탐지 사각지대를 우회하지 않는다.
+  const requestNavigate = useCallback(
+    (to: string) => {
+      if (!isDirtyRef.current) {
+        navigate(to);
+        return;
+      }
+      setPendingTo(to);
+      setOpen(true);
+    },
+    [navigate],
+  );
+
   const handleCancel = useCallback(() => {
     setOpen(false);
     setPendingTo(null);
@@ -178,7 +200,7 @@ export function useUnsavedChangesGuard(isDirty: boolean) {
     </AlertDialog>
   );
 
-  return { dialog };
+  return { dialog, requestNavigate };
 }
 
 /**

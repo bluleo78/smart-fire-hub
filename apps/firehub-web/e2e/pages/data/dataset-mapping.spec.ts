@@ -841,6 +841,54 @@ test.describe('데이터셋 매핑 탭', () => {
   });
 
   /**
+   * 이슈 #634 회귀 방지 — API 연결 상세 페이지와 동일한 패턴의 구멍.
+   * 헤더의 "목록으로 돌아가기" 버튼은 <a href>가 아니라 navigate()를 직접 호출하는 <button>이라
+   * useUnsavedChangesGuard의 클릭 캡처(<a> 전용 탐지)를 우회했다. requestNavigate로 교체된
+   * 이후에는 매핑 탭이 dirty(mappingDirty)한 상태에서 이 버튼을 눌러도 가드가 동작해야 한다.
+   */
+  test.describe('#634 매핑 탭 미저장 변경 — 목록으로 돌아가기 버튼 가드', () => {
+    test('매핑 탭이 dirty한 상태에서 "목록으로 돌아가기" 클릭 시 이탈 확인 다이얼로그가 표시된다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupMappingMocks(page);
+      await mockApi(page, 'GET', `/api/v1/datasets/${MAPPING_DATASET_ID}/mapping`, createMappingResponse());
+      await page.goto(MAPPING_URL);
+
+      // 관계 매핑을 삭제해 dirty 상태를 만든다.
+      await page.getByTestId('relation-row-OCCURRED_AT').getByRole('button', { name: '삭제' }).click();
+      await page.getByTestId('relation-delete-confirm').getByRole('button', { name: '삭제' }).click();
+      await expect(page.getByTestId('mapping-dirty')).toBeVisible();
+
+      await page.getByRole('button', { name: '목록으로 돌아가기' }).click();
+
+      await expect(page.getByRole('alertdialog')).toBeVisible();
+      await expect(
+        page.getByText('저장하지 않은 변경사항이 있습니다. 이탈하시겠습니까?'),
+      ).toBeVisible();
+      // 즉시 이동하지 않고 상세 페이지에 머물러야 한다
+      expect(new URL(page.url()).pathname).toBe(`/data/datasets/${MAPPING_DATASET_ID}`);
+
+      // "이탈" 클릭 시 실제로 목록 페이지로 이동
+      await page.getByRole('button', { name: '이탈' }).click();
+      await expect(page).toHaveURL(/\/data\/datasets$/);
+    });
+
+    test('매핑 탭이 dirty하지 않으면 "목록으로 돌아가기" 클릭 시 확인 없이 즉시 이동한다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupMappingMocks(page);
+      await mockApi(page, 'GET', `/api/v1/datasets/${MAPPING_DATASET_ID}/mapping`, createMappingResponse());
+      await page.goto(MAPPING_URL);
+      await expect(page.getByTestId('mapping-tab')).toBeVisible();
+
+      await page.getByRole('button', { name: '목록으로 돌아가기' }).click();
+
+      await expect(page.getByRole('alertdialog')).not.toBeVisible();
+      await expect(page).toHaveURL(/\/data\/datasets$/);
+    });
+  });
+
+  /**
    * #328 회귀: 다이얼로그를 닫으면 포커스가 트리거로 복귀해야 한다(WCAG SC 2.4.3).
    *
    * 원인: Radix modal Content 는 onCloseAutoFocus 에서 preventDefault() 후

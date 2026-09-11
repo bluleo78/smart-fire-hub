@@ -84,7 +84,7 @@ export default function DatasetDetailPage() {
   // 이탈을 막을 수 없으므로, 부모인 이 페이지가 값을 받아 탭 전환·라우트 이탈을 가로챈다(#502).
   const [mappingDirty, setMappingDirty] = useState(false);
   // 사이드바 링크 클릭 등 SPA 라우트 이탈·브라우저 뒤로가기·새로고침/탭 닫기를 가드한다.
-  const { dialog: unsavedChangesDialog } = useUnsavedChangesGuard(mappingDirty);
+  const { dialog: unsavedChangesDialog, requestNavigate } = useUnsavedChangesGuard(mappingDirty);
   // 자체 스크롤러를 가진 탭 — 페이지가 뷰포트 높이에 정확히 맞아야 이중 스크롤이 생기지 않는다.
   // 현재는 데이터 탭(가상 스크롤 테이블)뿐이다.
   const fillsHeight = activeTab === 'data';
@@ -236,12 +236,14 @@ export default function DatasetDetailPage() {
         />
         {/* Header with name and favorite */}
         <div className="flex items-start gap-3">
-          {/* 데이터셋 목록으로 돌아가는 뒤로가기 버튼 — 스크린리더/마우스 사용자 모두를 위해 aria-label·title 명시 (#102) */}
+          {/* 데이터셋 목록으로 돌아가는 뒤로가기 버튼 — 스크린리더/마우스 사용자 모두를 위해 aria-label·title 명시 (#102)
+              (#634) navigate() 직접 호출은 이탈 가드(<a> 클릭 캡처)를 우회하므로 requestNavigate로 대체 —
+              매핑 탭이 dirty(mappingDirty)면 이탈 확인 다이얼로그를 띄운다 */}
           <Button
             variant="ghost"
             size="icon"
             className="mt-0.5 flex-shrink-0"
-            onClick={() => navigate('/data/datasets')}
+            onClick={() => requestNavigate('/data/datasets')}
             aria-label="목록으로 돌아가기"
             title="목록으로 돌아가기"
           >

@@ -120,7 +120,9 @@ export default function ApiConnectionDetailPage() {
       healthCheckPath !== initialInfo.healthCheckPath);
   // 인증 정보 편집 모드에서 새 키/토큰을 입력 중인 경우도 미저장 변경으로 간주 (#551)
   const isAuthDirty = isEditingAuth && (apiKey.trim() !== '' || token.trim() !== '');
-  const { dialog: unsavedChangesDialog } = useUnsavedChangesGuard(isInfoDirty || isAuthDirty);
+  const { dialog: unsavedChangesDialog, requestNavigate } = useUnsavedChangesGuard(
+    isInfoDirty || isAuthDirty,
+  );
 
   /** 기본 정보(이름/설명/baseUrl/healthCheckPath) 저장 */
   const handleSaveInfo = async () => {
@@ -275,8 +277,9 @@ export default function ApiConnectionDetailPage() {
       {/* 미저장 변경사항 이탈 가드 다이얼로그 (#551) */}
       {unsavedChangesDialog}
       <div className="flex items-center gap-4">
-        {/* API 연결 목록으로 돌아가는 뒤로가기 버튼 — 접근성 보강 (#102) */}
-        <Button variant="ghost" size="icon" onClick={() => navigate('/admin/api-connections')} aria-label="목록으로 돌아가기" title="목록으로 돌아가기">
+        {/* API 연결 목록으로 돌아가는 뒤로가기 버튼 — 접근성 보강 (#102)
+            (#634) navigate() 직접 호출 대신 requestNavigate 사용 — dirty 상태면 이탈 가드 다이얼로그를 띄운다 */}
+        <Button variant="ghost" size="icon" onClick={() => requestNavigate('/admin/api-connections')} aria-label="목록으로 돌아가기" title="목록으로 돌아가기">
           <ArrowLeft className="h-4 w-4" />
         </Button>
         <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">API 연결 상세</h1>

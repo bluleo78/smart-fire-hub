@@ -468,6 +468,54 @@ test.describe('API 연결 페이지', () => {
       // dirty 가 해제되었으므로 가드 없이 바로 이동해야 한다
       await expect(page).toHaveURL(/\/admin\/users$/);
     });
+
+    /**
+     * 이슈 #634 회귀 방지 — 헤더의 "목록으로 돌아가기" 버튼은 <a href>가 아니라
+     * navigate()를 직접 호출하는 <button>이라 클릭 캡처 기반 가드(<a> 탐지)를 우회했었다.
+     * requestNavigate로 교체된 이후에는 dirty 상태에서 이 버튼을 눌러도 가드가 동작해야 한다.
+     */
+    test('설명 필드 dirty 상태에서 "목록으로 돌아가기" 버튼 클릭 시 이탈 다이얼로그가 표시된다 (#634)', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupApiConnectionDetailMocks(page, 1);
+      await page.goto('/admin/api-connections/1');
+      await expect(page.getByRole('heading', { name: 'API 연결 상세' })).toBeVisible();
+
+      const descInput = page.getByPlaceholder('설명 (선택)');
+      await descInput.fill('PE-TEST-back-button-probe');
+
+      await page.getByRole('button', { name: '목록으로 돌아가기' }).click();
+
+      await expect(page.getByRole('alertdialog')).toBeVisible();
+      await expect(
+        page.getByText('저장하지 않은 변경사항이 있습니다. 이탈하시겠습니까?'),
+      ).toBeVisible();
+      // 즉시 이동하지 않고 상세 페이지에 머물러야 한다
+      expect(new URL(page.url()).pathname).toBe('/admin/api-connections/1');
+
+      // "이탈" 클릭 시 실제로 목록 페이지로 이동
+      await page.getByRole('button', { name: '이탈' }).click();
+      await expect(page).toHaveURL(/\/admin\/api-connections$/);
+    });
+
+    test('설명 필드 dirty 상태에서 "목록으로 돌아가기" 이탈 다이얼로그의 취소 클릭 시 입력값이 보존된다 (#634)', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupApiConnectionDetailMocks(page, 1);
+      await page.goto('/admin/api-connections/1');
+
+      const descInput = page.getByPlaceholder('설명 (선택)');
+      await descInput.fill('PE-TEST-back-button-probe');
+
+      await page.getByRole('button', { name: '목록으로 돌아가기' }).click();
+      await expect(page.getByRole('alertdialog')).toBeVisible();
+
+      await page.getByRole('button', { name: '취소' }).click();
+
+      await expect(page.getByRole('alertdialog')).not.toBeVisible();
+      expect(new URL(page.url()).pathname).toBe('/admin/api-connections/1');
+      await expect(descInput).toHaveValue('PE-TEST-back-button-probe');
+    });
   });
 
   test('헬스체크 경로 비우고 저장 → PUT payload 에 빈 문자열 전달 (#115)', async ({
