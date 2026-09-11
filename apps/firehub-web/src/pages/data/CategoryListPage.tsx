@@ -64,7 +64,14 @@ const SORT_OPTIONS: { value: SortKey; label: string }[] = [
 ];
 
 const categorySchema = z.object({
-  name: z.string().min(1, '카테고리 이름을 입력해주세요.').max(50, '카테고리 이름은 50자 이하여야 합니다.'),
+  // trim() 없이 min(1)만 검사하면 공백만 있는 값(length >= 1)도 통과해
+  // "생성" 버튼이 활성화되는 문제(#659)가 있어, trim() 후 길이를 검사하고
+  // 제출 값도 trim된 문자열이 되도록 한다.
+  name: z
+    .string()
+    .trim()
+    .min(1, '카테고리 이름을 입력해주세요.')
+    .max(50, '카테고리 이름은 50자 이하여야 합니다.'),
   description: z.string().max(255, '설명은 255자 이하여야 합니다.').optional(),
 });
 

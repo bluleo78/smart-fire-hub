@@ -288,6 +288,57 @@ test.describe('카테고리 관리 페이지', () => {
     await expect(editBtn).toBeDisabled();
   });
 
+  test('생성 다이얼로그 — 공백만 있는 이름은 생성 버튼을 비활성화한다 (이슈 #659 회귀)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 빈 목록 모킹
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', []);
+
+    await page.goto('/data/categories');
+
+    // 새 카테고리 다이얼로그 열기
+    await page.getByRole('button', { name: /새 카테고리/ }).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+
+    const createBtn = page.getByRole('dialog').getByRole('button', { name: '생성' });
+
+    // 공백 문자만 입력 — trim() 없이 min(1)만 검사하면 통과해버리던 버그(#659)
+    await page.getByLabel('이름').fill('   ');
+    await expect(createBtn).toBeDisabled();
+
+    // 앞뒤 공백이 섞인 정상 이름은 trim 후 통과해야 하며, 버튼이 활성화된다
+    await page.getByLabel('이름').fill('  정상 이름  ');
+    await expect(createBtn).toBeEnabled();
+  });
+
+  test('생성 다이얼로그 — 앞뒤 공백이 trim된 이름으로 생성 요청이 전송된다 (이슈 #659 회귀)', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', []);
+
+    // POST 요청 payload 캡처 — trim된 값이 그대로 전달되는지 검증
+    const createCapture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/dataset-categories',
+      { id: 11, name: '앞뒤공백카테고리', description: '' },
+      { capture: true },
+    );
+
+    await page.goto('/data/categories');
+
+    await page.getByRole('button', { name: /새 카테고리/ }).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+
+    // 이름 앞뒤에 공백을 섞어 입력
+    await page.getByLabel('이름').fill('  앞뒤공백카테고리  ');
+    await page.getByRole('dialog').getByRole('button', { name: '생성' }).click();
+
+    // 서버로 전송되는 payload의 name은 trim된 값이어야 한다
+    const req = await createCapture.waitForRequest();
+    expect(req.payload).toMatchObject({ name: '앞뒤공백카테고리' });
+  });
+
   test('검색 입력으로 카테고리를 필터링한다 (이슈 #75)', async ({
     authenticatedPage: page,
   }) => {
