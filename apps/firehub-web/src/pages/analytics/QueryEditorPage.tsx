@@ -21,16 +21,6 @@ import { useLocation, useNavigate, useParams, useSearchParams } from 'react-rout
 import { toast } from 'sonner';
 
 import { exportsApi } from '../../api/exports';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '../../components/ui/alert-dialog';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import {
@@ -66,6 +56,7 @@ import {
   useSchemaInfo,
   useUpdateSavedQuery,
 } from '../../hooks/queries/useAnalytics';
+import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
 import { extractApiError, handleApiError } from '../../lib/api-error';
 import { downloadBlob } from '../../lib/download';
 import { cn } from '../../lib/utils';
@@ -425,8 +416,10 @@ export default function QueryEditorPage() {
   const [isDirty, setIsDirty] = useState(false);
   const markDirty = useCallback(() => setIsDirty(true), []);
 
-  // 이탈 확인 다이얼로그 상태 — 뒤로가기 클릭 시 dirty면 오픈
-  const [leaveDialogOpen, setLeaveDialogOpen] = useState(false);
+  // 미저장 변경사항 이탈 가드 (#639) — 사이드바 링크(<a> 클릭)·브라우저 뒤로가기·탭 닫기/새로고침을
+  // 모두 포괄하는 공용 훅으로 교체. 기존에는 "목록으로 돌아가기" 버튼 전용 수동 가드만 있어
+  // 사이드바 네비게이션 등 다른 이탈 경로가 경고 없이 뚫려 있었다.
+  const { dialog: unsavedChangesDialog, requestNavigate } = useUnsavedChangesGuard(isDirty);
 
   // CodeMirror 외부 sync(초기 로드)로 인한 onChange를 사용자 입력과 구분하기 위한 플래그.
   // - savedQuery 로드 시 setSql → CodeMirror sync useEffect → updateListener → onChange 발화.
@@ -472,31 +465,6 @@ export default function QueryEditorPage() {
       setIsDirty(false);
     }
   }, [savedQuery, initialSql]);
-
-  // 브라우저 탭 닫기·새로고침 시 이탈 경고 (이슈 #57 — ChartBuilderPage와 동일 패턴)
-  useEffect(() => {
-    const handler = (e: BeforeUnloadEvent) => {
-      if (isDirty) e.preventDefault();
-    };
-    window.addEventListener('beforeunload', handler);
-    return () => window.removeEventListener('beforeunload', handler);
-  }, [isDirty]);
-
-  // 뒤로가기 버튼 클릭 핸들러 — dirty면 다이얼로그 표시, 아니면 즉시 이동 (이슈 #57)
-  const handleBackClick = () => {
-    if (isDirty) {
-      setLeaveDialogOpen(true);
-    } else {
-      navigate('/analytics/queries');
-    }
-  };
-
-  // 다이얼로그에서 '이탈' 클릭 — 변경사항 버리고 목록으로 이동 (이슈 #57)
-  const handleLeaveConfirm = () => {
-    setLeaveDialogOpen(false);
-    setIsDirty(false);
-    navigate('/analytics/queries');
-  };
 
   // SQL 텍스트 변경 핸들러 — CodeMirror onChange에 전달, 사용자 입력 시 dirty 마킹 (이슈 #57)
   // - ignoreNextChangeRef가 true면 외부 sync(초기 로드)로 인한 onChange이므로 dirty 마킹을 건너뛴다.
@@ -679,7 +647,7 @@ export default function QueryEditorPage() {
           variant="ghost"
           size="icon"
           aria-label="목록으로 돌아가기"
-          onClick={handleBackClick}
+          onClick={() => requestNavigate('/analytics/queries')}
         >
           <ArrowLeft className="h-4 w-4" />
         </Button>
@@ -880,24 +848,8 @@ export default function QueryEditorPage() {
         error={saveError}
       />
 
-      {/*
-        이탈 확인 다이얼로그 — 뒤로가기 클릭 시 dirty면 표시 (이슈 #57)
-        취소 시 머무름, 확인 시 변경사항 버리고 이동
-      */}
-      <AlertDialog open={leaveDialogOpen} onOpenChange={setLeaveDialogOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>저장하지 않은 변경사항</AlertDialogTitle>
-            <AlertDialogDescription>
-              저장하지 않은 변경사항이 있습니다. 이탈하시겠습니까?
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>취소</AlertDialogCancel>
-            <AlertDialogAction onClick={handleLeaveConfirm}>이탈</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      {/* 미저장 변경사항 이탈 가드 다이얼로그 (#639) — useUnsavedChangesGuard가 렌더 */}
+      {unsavedChangesDialog}
     </div>
   );
 }

@@ -638,4 +638,95 @@ test.describe('쿼리 에디터 페이지', () => {
       await expect(page).toHaveURL('/analytics/queries');
     });
   });
+
+  /**
+   * 회귀 테스트 — 이슈 #639
+   * "목록으로 돌아가기" 버튼 경로만 가드되고, 사이드바 링크 등 다른 이탈 경로는
+   * 경고 없이 즉시 이동되어 SQL이 유실되던 문제. useUnsavedChangesGuard로 교체 후
+   * document click 캡처가 사이드바 <a> 링크도 가로채는지 검증한다.
+   */
+  test.describe('이슈 #639 — 사이드바 링크 이탈 가드', () => {
+    test('SQL 입력 후 사이드바 링크 클릭 시 이탈 확인 다이얼로그가 표시된다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupNewQueryEditorMocks(page);
+
+      await page.goto('/analytics/queries/new');
+      await expect(page.getByText('새 쿼리')).toBeVisible();
+
+      // SQL 입력 → dirty
+      await page.locator('.cm-content').click();
+      await page.keyboard.type('SELECT 1');
+      await expect(page.getByText('미저장 변경사항')).toBeVisible();
+
+      // 목록으로 돌아가기 버튼이 아닌 사이드바 "홈" 링크 클릭
+      await page.getByRole('navigation').getByRole('link', { name: '홈' }).click();
+
+      // 이탈 확인 다이얼로그가 떠야 하며, URL은 변경되지 않아야 한다
+      await expect(page.getByRole('alertdialog')).toBeVisible();
+      await expect(
+        page.getByText('저장하지 않은 변경사항이 있습니다. 이탈하시겠습니까?'),
+      ).toBeVisible();
+      await expect(page).toHaveURL('/analytics/queries/new');
+    });
+
+    test('사이드바 이탈 다이얼로그에서 취소 클릭 시 페이지에 머무르고 SQL이 보존된다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupNewQueryEditorMocks(page);
+
+      await page.goto('/analytics/queries/new');
+      await expect(page.getByText('새 쿼리')).toBeVisible();
+
+      await page.locator('.cm-content').click();
+      await page.keyboard.type('SELECT 1');
+      await expect(page.getByText('미저장 변경사항')).toBeVisible();
+
+      await page.getByRole('navigation').getByRole('link', { name: '홈' }).click();
+      await expect(page.getByRole('alertdialog')).toBeVisible();
+
+      await page.getByRole('alertdialog').getByRole('button', { name: '취소' }).click();
+
+      await expect(page.getByRole('alertdialog')).toBeHidden();
+      await expect(page).toHaveURL('/analytics/queries/new');
+      // 입력한 SQL이 유실되지 않고 그대로 남아있어야 한다
+      await expect(page.locator('.cm-content')).toContainText('SELECT 1');
+    });
+
+    test('사이드바 이탈 다이얼로그에서 이탈 클릭 시 SQL을 버리고 다른 페이지로 이동한다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupNewQueryEditorMocks(page);
+
+      await page.goto('/analytics/queries/new');
+      await expect(page.getByText('새 쿼리')).toBeVisible();
+
+      await page.locator('.cm-content').click();
+      await page.keyboard.type('SELECT 1');
+      await expect(page.getByText('미저장 변경사항')).toBeVisible();
+
+      await page.getByRole('navigation').getByRole('link', { name: '홈' }).click();
+      await expect(page.getByRole('alertdialog')).toBeVisible();
+
+      await page.getByRole('alertdialog').getByRole('button', { name: '이탈' }).click();
+
+      await expect(page).toHaveURL(/\/$/);
+      await expect(page.getByRole('alertdialog')).toBeHidden();
+    });
+
+    test('변경 사항이 없으면 사이드바 링크 클릭 시 다이얼로그 없이 즉시 이동한다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupNewQueryEditorMocks(page);
+
+      await page.goto('/analytics/queries/new');
+      await expect(page.getByText('새 쿼리')).toBeVisible();
+      await expect(page.getByText('미저장 변경사항')).not.toBeVisible();
+
+      await page.getByRole('navigation').getByRole('link', { name: '홈' }).click();
+
+      await expect(page).toHaveURL(/\/$/);
+      await expect(page.getByRole('alertdialog')).toBeHidden();
+    });
+  });
 });
