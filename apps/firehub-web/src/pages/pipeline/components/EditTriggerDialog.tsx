@@ -1,4 +1,5 @@
 import axios from 'axios';
+import cronstrue from 'cronstrue/i18n';
 import { Loader2 } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
@@ -85,7 +86,17 @@ export function EditTriggerDialog({ open, onOpenChange, pipelineId, trigger }: E
     }
     if (trigger.triggerType === 'SCHEDULE') {
       const c = config as { cron: string };
-      if (!c.cron?.trim()) errors.cron = 'Cron 표현식을 입력하세요';
+      // AddTriggerDialog와 동일하게 cronstrue로 형식까지 검증한다 (#641) —
+      // 빈 값만 체크하면 문법적으로 잘못된 Cron이 그대로 저장되어 스케줄러가 실행할 수 없다.
+      if (!c.cron?.trim()) {
+        errors.cron = 'Cron 표현식을 입력하세요';
+      } else {
+        try {
+          cronstrue.toString(c.cron, { locale: 'ko' });
+        } catch {
+          errors.cron = '유효하지 않은 Cron 표현식입니다';
+        }
+      }
     }
     if (trigger.triggerType === 'PIPELINE_CHAIN') {
       const c = config as { upstreamPipelineId: number | null };

@@ -207,6 +207,98 @@ test.describe('파이프라인 트리거 탭', () => {
     expect(req.payload).toMatchObject({ name: '수정된 스케줄' });
   });
 
+  /**
+   * 회귀 방지 테스트 (#641)
+   * EditTriggerDialog의 validate()가 빈 값만 체크하고 cronstrue 형식 검증이 없어,
+   * 문법적으로 잘못된 Cron이 오류 없이 그대로 PUT 저장되던 결함.
+   */
+  test('트리거 편집 — 유효하지 않은 cron 표현식 입력 시 에러가 표시되고 저장이 차단된다 (refs #641)', async ({
+    authenticatedPage: page,
+  }) => {
+    const existing = createTrigger({
+      id: 5,
+      name: '기존 스케줄',
+      triggerType: 'SCHEDULE',
+      config: { cron: '0 9 * * *', timezone: 'Asia/Seoul', concurrencyPolicy: 'SKIP' },
+    });
+    await setupTriggerTabMocks(page, { triggers: [existing] });
+
+    let apiCalled = false;
+    await page.route('/api/v1/pipelines/1/triggers/5', (route) => {
+      if (route.request().method() === 'PUT') {
+        apiCalled = true;
+        return route.fulfill({ status: 200, body: JSON.stringify(existing) });
+      }
+      return route.continue();
+    });
+
+    await gotoTriggerTab(page);
+
+    await expect(page.getByText('기존 스케줄')).toBeVisible();
+    await page.getByRole('button').filter({ has: page.locator('.lucide-ellipsis') }).first().click();
+    await page.getByRole('menuitem', { name: '편집' }).click();
+    await expect(page.getByRole('dialog').getByText('트리거 편집')).toBeVisible();
+
+    // 유효하지 않은 cron 직접 입력
+    const cronInput = page.locator('input[placeholder*="* * *"]').first();
+    await cronInput.fill('invalid-cron');
+
+    await page.getByRole('button', { name: '저장' }).click();
+
+    // 에러 메시지 표시, API 미호출 — 잘못된 값이 저장되면 안 된다
+    await expect(page.getByText('유효하지 않은 Cron 표현식입니다')).toBeVisible();
+    expect(apiCalled).toBe(false);
+  });
+
+  /**
+   * 회귀 방지 테스트 (#638의 stale-error 처리가 EditTriggerDialog에서도 동작하는지 확인)
+   * 잘못된 cron으로 1차 저장 실패 후 값을 올바르게 고치면, 재제출 없이도
+   * stale하게 남아있던 오류 문구가 즉시 사라져야 한다.
+   */
+  test('트리거 편집 — 잘못된 cron 저장 실패 후 값을 고치면 오류 문구가 즉시 사라진다 (refs #638, #641)', async ({
+    authenticatedPage: page,
+  }) => {
+    const existing = createTrigger({
+      id: 5,
+      name: '기존 스케줄',
+      triggerType: 'SCHEDULE',
+      config: { cron: '0 9 * * *', timezone: 'Asia/Seoul', concurrencyPolicy: 'SKIP' },
+    });
+    await setupTriggerTabMocks(page, { triggers: [existing] });
+
+    let apiCalled = false;
+    await page.route('/api/v1/pipelines/1/triggers/5', (route) => {
+      if (route.request().method() === 'PUT') {
+        apiCalled = true;
+        return route.fulfill({ status: 200, body: JSON.stringify(existing) });
+      }
+      return route.continue();
+    });
+
+    await gotoTriggerTab(page);
+
+    await expect(page.getByText('기존 스케줄')).toBeVisible();
+    await page.getByRole('button').filter({ has: page.locator('.lucide-ellipsis') }).first().click();
+    await page.getByRole('menuitem', { name: '편집' }).click();
+    await expect(page.getByRole('dialog').getByText('트리거 편집')).toBeVisible();
+
+    const cronInput = page.locator('input[placeholder*="* * *"]').first();
+
+    // 1차: 잘못된 cron으로 저장 시도 → 오류 표시 확인
+    await cronInput.fill('invalid cron here');
+    await page.getByRole('button', { name: '저장' }).click();
+    await expect(page.getByText('유효하지 않은 Cron 표현식입니다')).toBeVisible();
+    expect(apiCalled).toBe(false);
+
+    // 값을 유효한 cron으로 고침 — 재제출 없이도 stale 오류 문구가 사라져야 함
+    await cronInput.fill('0 9 * * *');
+    await expect(page.getByText('유효하지 않은 Cron 표현식입니다')).not.toBeVisible();
+
+    // 재제출 시 정상적으로 저장됨
+    await page.getByRole('button', { name: '저장' }).click();
+    await expect.poll(() => apiCalled).toBe(true);
+  });
+
   test('트리거 삭제 — 확인 다이얼로그 후 DELETE 호출', async ({ authenticatedPage: page }) => {
     const existing = createTrigger({ id: 7, name: '삭제 대상 트리거' });
     await setupTriggerTabMocks(page, { triggers: [existing] });
