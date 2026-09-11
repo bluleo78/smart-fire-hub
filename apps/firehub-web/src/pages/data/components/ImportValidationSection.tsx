@@ -10,6 +10,7 @@ interface ImportValidationSectionProps {
   showAllErrors: boolean;
   displayedErrors: ValidationErrorDetail[];
   hasUnmappedRequired: boolean;
+  hasAnyMapping: boolean;
   isValidating: boolean;
   onValidate: () => void;
   onShowAllErrors: (show: boolean) => void;
@@ -20,6 +21,7 @@ export function ImportValidationSection({
   showAllErrors,
   displayedErrors,
   hasUnmappedRequired,
+  hasAnyMapping,
   isValidating,
   onValidate,
   onShowAllErrors,
@@ -29,11 +31,13 @@ export function ImportValidationSection({
   // live region이 내용과 함께 마운트되면 대부분의 스크린리더가 읽지 않는다.
   const liveMessage = isValidating
     ? '검증 중'
-    : validationResult
-      ? validationResult.errorRows === 0
-        ? `검증 성공, 유효 ${validationResult.validRows.toLocaleString()}행`
-        : `검증 오류 발견, 유효 ${validationResult.validRows.toLocaleString()}행, 오류 ${validationResult.errorRows.toLocaleString()}건`
-      : '';
+    : !hasAnyMapping
+      ? '매핑된 컬럼이 없습니다'
+      : validationResult
+        ? validationResult.errorRows === 0
+          ? `검증 성공, 유효 ${validationResult.validRows.toLocaleString()}행`
+          : `검증 오류 발견, 유효 ${validationResult.validRows.toLocaleString()}행, 오류 ${validationResult.errorRows.toLocaleString()}건`
+        : '';
 
   return (
     <div className="space-y-2">
@@ -43,7 +47,7 @@ export function ImportValidationSection({
           variant="outline"
           size="sm"
           onClick={onValidate}
-          disabled={isValidating || hasUnmappedRequired}
+          disabled={isValidating || hasUnmappedRequired || !hasAnyMapping}
         >
           {isValidating ? (
             <>
@@ -64,7 +68,23 @@ export function ImportValidationSection({
         {liveMessage}
       </div>
 
-      {validationResult && (
+      {/* 매핑된 컬럼이 0개면 서버 검증 없이도 항상 보이는 경고 — 전부 미매핑 상태로
+       * "검증 통과"를 오인하고 임포트를 진행하는 것을 방지한다(#653). */}
+      {!hasAnyMapping && (
+        <Card className="p-4 space-y-1 border-destructive/50">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="h-5 w-5 text-destructive flex-shrink-0 mt-0.5" />
+            <div className="text-sm">
+              <p className="font-medium text-destructive">매핑된 컬럼이 없습니다</p>
+              <p className="text-muted-foreground">
+                최소 1개 이상의 파일 컬럼을 데이터셋 컬럼에 매핑해야 검증 및 임포트가 가능합니다.
+              </p>
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {hasAnyMapping && validationResult && (
         <Card className="p-4 space-y-3">
           <div className="flex items-start gap-2">
             {validationResult.errorRows === 0 ? (

@@ -1,7 +1,8 @@
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-import { mockApi } from '../../fixtures/api-mock';
+import { createColumn, createDatasetDetail } from '../../factories/dataset.factory';
+import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { setupDatasetDetailMocks } from '../../fixtures/dataset.fixture';
 
@@ -745,5 +746,127 @@ test.describe('임포트 다이얼로그 접근성 (#330 #331)', () => {
     await expect(dialog.getByTestId('import-validation-status')).toHaveText(
       '검증 오류 발견, 유효 1행, 오류 1건',
     );
+  });
+});
+
+/**
+ * #653 회귀 방지 — 컬럼이 하나도 매핑되지 않아도 검증 통과·임포트 성공으로 표시되던 문제.
+ * NOT NULL(필수) 컬럼이 없는(nullable-only) 데이터셋에서는 hasUnmappedRequired가 항상 false가
+ * 되어 매핑 0개 상태를 차단하지 못했다 — hasAnyMapping을 도입해 이 구멍을 별도로 막는다.
+ */
+test.describe('#653 회귀 방지 — 매핑 0개 시 검증/임포트 차단', () => {
+  /**
+   * NOT NULL 컬럼이 하나도 없는 데이터셋 모킹 — 재현 조건의 핵심.
+   * hasUnmappedRequired만으로는 매핑 0개를 잡아낼 수 없는 유일한 경로를 재현한다.
+   */
+  async function setupNullableOnlyDatasetMocks(page: import('@playwright/test').Page) {
+    const detail = createDatasetDetail({
+      id: DATASET_ID,
+      columns: [createColumn({ id: 1, columnName: 'record_id', displayName: 'record_id', isPrimaryKey: false, isNullable: true })],
+    });
+    await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}`, detail);
+    await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}/data`, {
+      columns: detail.columns,
+      rows: [],
+      page: 0,
+      size: 20,
+      totalElements: 0,
+      totalPages: 0,
+    });
+    await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}/stats`, []);
+    await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}/queries`, createPageResponse([]));
+    await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}/imports`, []);
+  }
+
+  /** 파일 컬럼명이 데이터셋 컬럼명과 전혀 달라 전부 미매핑(NONE)으로 제안되는 미리보기 응답 */
+  function createAllUnmatchedPreviewResponse() {
+    return {
+      fileHeaders: ['wrong_col1', 'wrong_col2'],
+      sampleRows: [
+        { wrong_col1: 'a', wrong_col2: 'b' },
+        { wrong_col1: 'c', wrong_col2: 'd' },
+      ],
+      suggestedMappings: [
+        { fileColumn: 'wrong_col1', datasetColumn: null, matchType: 'NONE', confidence: 0 },
+        { fileColumn: 'wrong_col2', datasetColumn: null, matchType: 'NONE', confidence: 0 },
+      ],
+      totalRows: 2,
+    };
+  }
+
+  test('nullable 컬럼만 있는 데이터셋에서 전부 미매핑이면 검증/임포트 버튼이 비활성화되고 경고가 표시된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupNullableOnlyDatasetMocks(page);
+    await mockApi(page, 'POST', `/api/v1/datasets/${DATASET_ID}/imports/preview`, createAllUnmatchedPreviewResponse());
+    const validateCapture = await mockApi(
+      page,
+      'POST',
+      `/api/v1/datasets/${DATASET_ID}/imports/validate`,
+      createValidateResponse(),
+      { capture: true },
+    );
+
+    await page.goto(`/data/datasets/${DATASET_ID}`);
+    await page.getByRole('tab', { name: '데이터' }).click();
+    await page.getByRole('button', { name: '임포트' }).first().click();
+
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/imports/preview') && r.status() === 200),
+      page.getByRole('dialog').locator('input[type="file"]').setInputFiles(CSV_FILE),
+    ]);
+
+    const dialog = page.getByRole('dialog');
+    // 매핑 테이블 상단에 "매핑된 컬럼이 없습니다" 경고 배너가 표시된다 — 필수 필드 배너와
+    // 무관하게(이 데이터셋엔 필수 필드가 없음) 항상 노출되어야 한다.
+    await expect(dialog.getByText('매핑된 컬럼이 없습니다:')).toBeVisible();
+
+    // 검증 버튼이 비활성화되어 서버 검증(행 단위 값 검사)만으로 "통과"를 오인시키는
+    // 경로 자체가 원천 차단된다.
+    const validateBtn = dialog.getByRole('button', { name: '검증' });
+    await expect(validateBtn).toBeDisabled();
+
+    // 임포트 버튼도 비활성화된다 — 매핑 0개인 채로 전부 NULL 행이 생성되는 것을 방지.
+    const importBtn = dialog.getByRole('button', { name: '임포트' });
+    await expect(importBtn).toBeDisabled();
+
+    // 검증 API 자체가 호출되지 않았어야 한다(클라이언트에서 선차단).
+    expect(validateCapture.requests.length).toBe(0);
+  });
+
+  test('일부 컬럼을 매핑하면 경고가 사라지고 검증·임포트가 정상 동작한다 (회귀 없음)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupNullableOnlyDatasetMocks(page);
+    await mockApi(page, 'POST', `/api/v1/datasets/${DATASET_ID}/imports/preview`, createAllUnmatchedPreviewResponse());
+    await mockApi(page, 'POST', `/api/v1/datasets/${DATASET_ID}/imports/validate`, createValidateResponse());
+
+    await page.goto(`/data/datasets/${DATASET_ID}`);
+    await page.getByRole('tab', { name: '데이터' }).click();
+    await page.getByRole('button', { name: '임포트' }).first().click();
+
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/imports/preview') && r.status() === 200),
+      page.getByRole('dialog').locator('input[type="file"]').setInputFiles(CSV_FILE),
+    ]);
+
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByText('매핑된 컬럼이 없습니다:')).toBeVisible();
+
+    // wrong_col1을 record_id에 매핑 — 매핑이 1개라도 생기면 차단이 풀려야 한다.
+    await dialog.getByRole('combobox', { name: 'wrong_col1 컬럼을 매핑할 데이터셋 컬럼' }).click();
+    await page.getByRole('option', { name: 'record_id' }).click();
+
+    await expect(dialog.getByText('매핑된 컬럼이 없습니다:')).not.toBeVisible();
+    const validateBtn = dialog.getByRole('button', { name: '검증' });
+    await expect(validateBtn).toBeEnabled();
+
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/imports/validate') && r.status() === 200),
+      validateBtn.click(),
+    ]);
+
+    const importBtn = dialog.getByRole('button', { name: '임포트' });
+    await expect(importBtn).toBeEnabled();
   });
 });

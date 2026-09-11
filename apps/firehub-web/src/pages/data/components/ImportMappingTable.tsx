@@ -12,6 +12,7 @@ interface ImportMappingTableProps {
   suggestedMappings: ColumnMappingDto[];
   mappings: ColumnMappingEntry[];
   hasUnmappedRequired: boolean;
+  hasAnyMapping: boolean;
   unmappedRequired: DatasetColumnResponse[];
   getAvailableDatasetColumns: (fileColumn: string) => DatasetColumnResponse[];
   onMappingChange: (fileColumn: string, datasetColumn: string | null) => void;
@@ -33,6 +34,7 @@ export function ImportMappingTable({
   suggestedMappings,
   mappings,
   hasUnmappedRequired,
+  hasAnyMapping,
   unmappedRequired,
   getAvailableDatasetColumns,
   onMappingChange,
@@ -50,6 +52,14 @@ export function ImportMappingTable({
       <h3 className="text-sm font-semibold" ref={headingRef} tabIndex={-1}>
         컬럼 매핑
       </h3>
+      {/* 매핑이 하나도 없으면(#653) 전부 미매핑 상태로 임포트가 진행될 수 있으므로
+       * 필수 필드 경고보다 먼저 눈에 띄게 경고한다. 필수 필드가 없는(nullable-only)
+       * 데이터셋에서는 hasUnmappedRequired가 항상 false라 이 배너가 유일한 시각 경고다. */}
+      {!hasAnyMapping && suggestedMappings.length > 0 && (
+        <InlineBanner icon={<AlertTriangle />} title="매핑된 컬럼이 없습니다:">
+          <p className="text-xs">최소 1개 이상의 파일 컬럼을 데이터셋 컬럼에 매핑해주세요.</p>
+        </InlineBanner>
+      )}
       {hasUnmappedRequired && (
         <InlineBanner icon={<AlertTriangle />} title="필수 필드가 매핑되지 않았습니다:">
           <p className="text-xs">

@@ -71,6 +71,7 @@ export function ImportMappingDialog(props: ImportMappingDialogProps) {
                 suggestedMappings={previewData.suggestedMappings}
                 mappings={mappings}
                 hasUnmappedRequired={derived.hasUnmappedRequired}
+                hasAnyMapping={derived.hasAnyMapping}
                 unmappedRequired={derived.unmappedRequired}
                 getAvailableDatasetColumns={derived.getAvailableDatasetColumns}
                 onMappingChange={handlers.mappingChange}
@@ -93,6 +94,7 @@ export function ImportMappingDialog(props: ImportMappingDialogProps) {
                 showAllErrors={showAllErrors}
                 displayedErrors={derived.displayedErrors}
                 hasUnmappedRequired={derived.hasUnmappedRequired}
+                hasAnyMapping={derived.hasAnyMapping}
                 isValidating={status.isValidating}
                 onValidate={handlers.validate}
                 onShowAllErrors={setShowAllErrors}
@@ -108,8 +110,13 @@ export function ImportMappingDialog(props: ImportMappingDialogProps) {
               <Button variant="outline" onClick={() => props.onOpenChange(false)} disabled={status.isUploading}>
                 취소
               </Button>
-              {/* validRows가 0이면 임포트 불가 — 헤더만 있고 데이터 행이 없는 파일 방지 (#128) */}
-              <Button onClick={handlers.import} disabled={derived.hasUnmappedRequired || status.isUploading || (validationResult !== null && validationResult.validRows === 0)}>
+              {/*
+               * validRows가 0이면 임포트 불가 — 헤더만 있고 데이터 행이 없는 파일 방지 (#128)
+               * !hasAnyMapping이면 임포트 불가 — 매핑된 컬럼이 0개인데 통과로 보이며 전부 NULL
+               * 행이 생성되는 것을 방지 (#653). NOT NULL 컬럼이 없는 데이터셋에서는
+               * hasUnmappedRequired만으로는 이 상태를 막지 못한다.
+               */}
+              <Button onClick={handlers.import} disabled={derived.hasUnmappedRequired || !derived.hasAnyMapping || status.isUploading || (validationResult !== null && validationResult.validRows === 0)}>
                 {status.isUploading ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" />

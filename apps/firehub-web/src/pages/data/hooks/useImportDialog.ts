@@ -48,6 +48,7 @@ interface UseImportDialogReturn {
     requiredColumns: DatasetColumnResponse[];
     unmappedRequired: DatasetColumnResponse[];
     hasUnmappedRequired: boolean;
+    hasAnyMapping: boolean;
     hasPrimaryKey: boolean;
     getAvailableDatasetColumns: (fileColumn: string) => DatasetColumnResponse[];
     displayedErrors: ValidationErrorDetail[];
@@ -154,6 +155,14 @@ export function useImportDialog({
 
   const handleValidate = async () => {
     if (!selectedFile) return;
+    // 매핑된 컬럼이 0개면 서버 검증(행 단위 값 검사)만으로는 "매핑 자체가 없다"는 사실을
+    // 잡아내지 못해 항상 "통과"로 보인다(#653) — 서버 호출 전에 명시적으로 차단한다.
+    const anyMapped = mappings.some((m) => m.datasetColumn !== null);
+    if (!anyMapped) {
+      toast.error('매핑된 컬럼이 없습니다. 최소 1개 이상의 컬럼을 매핑해주세요.');
+      setValidationResult(null);
+      return;
+    }
     try {
       const result = await validateImport.mutateAsync({ file: selectedFile, mappings });
       setValidationResult(result);
@@ -193,6 +202,10 @@ export function useImportDialog({
     (col) => !mappings.some((m) => m.datasetColumn === col.columnName)
   );
   const hasUnmappedRequired = unmappedRequired.length > 0;
+  // 필수(NOT NULL) 컬럼이 없는 데이터셋(nullable 컬럼만 존재)이면 hasUnmappedRequired가
+  // 항상 false가 되어 매핑 0개인 상태도 통과시키는 구멍이 생긴다(#653) — 매핑이 하나라도
+  // 있는지를 별도로 검사해 임포트/검증 차단 조건에 함께 사용한다.
+  const hasAnyMapping = mappings.some((m) => m.datasetColumn !== null);
   const hasPrimaryKey = datasetColumns.some((col) => col.isPrimaryKey);
 
   const getAvailableDatasetColumns = (currentFileColumn: string): DatasetColumnResponse[] => {
@@ -233,6 +246,7 @@ export function useImportDialog({
       requiredColumns,
       unmappedRequired,
       hasUnmappedRequired,
+      hasAnyMapping,
       hasPrimaryKey,
       getAvailableDatasetColumns,
       displayedErrors,
