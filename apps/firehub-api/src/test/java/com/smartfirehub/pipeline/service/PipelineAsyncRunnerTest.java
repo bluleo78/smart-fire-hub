@@ -447,8 +447,9 @@ class PipelineAsyncRunnerTest {
     when(datasetRepository.findTableNameById(tempDatasetId))
         .thenReturn(Optional.of("ptmp_12_plain_select_abcd"));
 
+    // SELECT 컬럼 id는 시스템 예약어이므로 임시 데이터셋에는 id_1로 별칭 처리되어 저장된다(#645)
     when(columnRepository.findByDatasetId(tempDatasetId))
-        .thenReturn(List.of(col("id", false), col("name", false)));
+        .thenReturn(List.of(col("id_1", false), col("name", false)));
     when(sqlExecutor.execute(anyString())).thenReturn("2 rows affected");
 
     // when
@@ -462,6 +463,61 @@ class PipelineAsyncRunnerTest {
     ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
     verify(sqlExecutor).execute(sqlCaptor.capture());
     assertThat(sqlCaptor.getValue()).startsWith("INSERT INTO data.\"ptmp_12_plain_select_abcd\"");
+  }
+
+  @Test
+  void executeStep_selectStarWithReservedColumnNames_autoRenamesInsteadOfFailing() {
+    // given: SELECT * FROM {{#N}} 패턴 재현 — 이전 스텝(또는 실제 데이터셋)의 결과에는 시스템 예약
+    // 컬럼(id, created_at)이 이미 포함돼 있다. 예약어를 그대로 새 임시 데이터셋의 사용자 컬럼으로
+    // 넘기면 DataTableService의 예약어 가드에 걸려 항상 실패했다(#645). 이 테스트는 PipelineAsyncRunner가
+    // 그 경로에 도달하기 전에 예약어 컬럼명을 자동으로 별칭 처리(id → id_1)해 우회하는지 검증한다.
+    Long pipelineId = 20L;
+    Long userId = 1L;
+    Long stepId = 210L;
+    Long stepExecId = 310L;
+    Long tempDatasetId = 991L;
+
+    String selectSql = "SELECT * FROM data.\"ptmp_1_step1\"";
+    PipelineStepResponse sqlStep =
+        stepResponse(stepId, "select-star-step", "SQL", selectSql, null, List.of());
+
+    // SELECT * 결과에는 id/created_at/name이 순서대로 포함된다 (실제 데이터셋 물리 테이블의 시스템 컬럼 + 사용자 컬럼)
+    Result<?> mockResult =
+        DSL.using(org.jooq.SQLDialect.POSTGRES)
+            .newResult(DSL.field("id"), DSL.field("created_at"), DSL.field("name"));
+    doReturn(mockResult).when(pipelineDsl).fetch(anyString());
+
+    when(tempDatasetService.findExistingTempDataset(stepId)).thenReturn(Optional.empty());
+
+    ArgumentCaptor<List<ColumnInfo>> columnsCaptor = ArgumentCaptor.forClass(List.class);
+    when(tempDatasetService.createTempDataset(
+            columnsCaptor.capture(), eq(pipelineId), anyString(), eq(stepId), anyString(), eq(userId)))
+        .thenReturn(tempDatasetId);
+    when(datasetRepository.findTableNameById(tempDatasetId))
+        .thenReturn(Optional.of("ptmp_20_select_star_step_abcd"));
+
+    // 임시 데이터셋에 실제로 저장된 컬럼명(별칭 처리된 결과)을 그대로 반영
+    when(columnRepository.findByDatasetId(tempDatasetId))
+        .thenReturn(List.of(col("id_1", false), col("created_at_1", false), col("name", false)));
+    when(sqlExecutor.execute(anyString())).thenReturn("3 rows affected");
+
+    // when
+    String status =
+        runner.executeStep(stepExecId, sqlStep, pipelineId, "TestPipeline", userId, false);
+
+    // then: 예약어 가드 진입 전에 별칭 처리되어 정상 완료
+    assertThat(status).isEqualTo("COMPLETED");
+
+    List<ColumnInfo> createdColumns = columnsCaptor.getValue();
+    assertThat(createdColumns).extracting(ColumnInfo::name).doesNotContain("id", "created_at");
+    assertThat(createdColumns)
+        .extracting(ColumnInfo::name)
+        .containsExactly("id_1", "created_at_1", "name");
+
+    // INSERT 컬럼 목록도 별칭과 동일해야 실제 저장된 컬럼과 매칭된다
+    ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
+    verify(sqlExecutor).execute(sqlCaptor.capture());
+    assertThat(sqlCaptor.getValue()).contains("\"id_1\"", "\"created_at_1\"", "\"name\"");
   }
 
   @Test
@@ -485,8 +541,9 @@ class PipelineAsyncRunnerTest {
     when(tempDatasetService.hasSchemaChanged(eq(existingTempDatasetId), any())).thenReturn(false);
     when(datasetRepository.findTableNameById(existingTempDatasetId))
         .thenReturn(Optional.of("ptmp_15_reuse_step_1234"));
+    // SELECT 컬럼 id는 시스템 예약어이므로 임시 데이터셋에는 id_1로 별칭 처리되어 저장돼 있다(#645)
     when(columnRepository.findByDatasetId(existingTempDatasetId))
-        .thenReturn(List.of(col("id", false)));
+        .thenReturn(List.of(col("id_1", false)));
     when(sqlExecutor.execute(anyString())).thenReturn("1 row affected");
 
     // when
@@ -524,8 +581,9 @@ class PipelineAsyncRunnerTest {
         .thenReturn(newTempDatasetId);
     when(datasetRepository.findTableNameById(newTempDatasetId))
         .thenReturn(Optional.of("ptmp_16_schema_change_step_5678"));
+    // SELECT 컬럼 id는 시스템 예약어이므로 임시 데이터셋에는 id_1로 별칭 처리되어 저장된다(#645)
     when(columnRepository.findByDatasetId(newTempDatasetId))
-        .thenReturn(List.of(col("id", false), col("name", false), col("extra", false)));
+        .thenReturn(List.of(col("id_1", false), col("name", false), col("extra", false)));
     when(sqlExecutor.execute(anyString())).thenReturn("3 rows affected");
 
     // when
@@ -1038,7 +1096,9 @@ class PipelineAsyncRunnerTest {
             any(), eq(pipelineId), any(), eq(step2Id), any(), eq(userId)))
         .thenReturn(tempDsId);
     when(datasetRepository.findTableNameById(tempDsId)).thenReturn(Optional.of("ptmp_step2"));
-    when(columnRepository.findByDatasetId(tempDsId)).thenReturn(List.of(col("id", false)));
+    // "SELECT *"로 시스템 예약 컬럼 id가 그대로 섞여 들어오므로, 임시 데이터셋 생성 시 id_1로
+    // 자동 별칭 처리된다(#645) — mock도 실제 저장되는 컬럼명과 일치시킨다.
+    when(columnRepository.findByDatasetId(tempDsId)).thenReturn(List.of(col("id_1", false)));
     when(sqlExecutor.execute(contains("data.\"table1\""))).thenReturn("1 row");
 
     // when

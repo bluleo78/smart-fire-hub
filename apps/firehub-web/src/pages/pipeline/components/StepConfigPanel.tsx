@@ -403,6 +403,9 @@ export default function StepConfigPanel({
                     <p className="text-xs text-muted-foreground">
                       {'{{#N}}은 해당 스텝의 출력 데이터셋으로 치환됩니다. 명시적 데이터셋은 data."tableName" 형식을 사용하세요.'}
                     </p>
+                    <p className="text-xs text-muted-foreground">
+                      {'SELECT * 사용 시 결과에 시스템 컬럼(id, import_id, created_at)이 포함될 수 있습니다. 이 컬럼들은 임시 데이터셋 저장 시 자동으로 별칭(예: id_1)이 붙습니다.'}
+                    </p>
                   </div>
                 )}
                 <div role="group" aria-labelledby={scriptLabelId}>

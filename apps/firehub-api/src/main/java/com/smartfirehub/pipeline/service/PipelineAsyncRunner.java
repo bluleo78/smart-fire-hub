@@ -375,11 +375,24 @@ public class PipelineAsyncRunner {
         // 단일 statement·세미콜론 없음이 보장되어 구조적으로 안전하다. (#136)
         sqlValidator.validate(sql);
         boolean isSelect = isSelectStatement(sql);
+        // 이번 실행에서 SQL 스텝 출력을 위해 임시 데이터셋을 자동 생성/재사용했는지 여부.
+        // 예약어 컬럼명 별칭 처리(renameReservedColumn*)는 이 경로에서만 적용해야 한다 — 사용자가
+        // 명시적으로 지정한 기존 데이터셋(outputDatasetId가 원래부터 있던 경우)은 실제로 "id"라는
+        // 정상 사용자 컬럼을 가질 수 있으므로 그 이름을 그대로 매칭해야 한다(#645).
+        boolean tempDatasetAutoCreated = false;
 
         // SELECT이고 outputDatasetId가 없으면 임시 데이터셋 자동 생성
         if (isSelect && outputDatasetId == null) {
+          tempDatasetAutoCreated = true;
           Long stepId = step.id();
-          List<ColumnInfo> selectColumns = extractSelectColumnsWithTypes(sql);
+          // SELECT * FROM {{#N}} 처럼 이전 스텝(또는 실제 데이터셋)의 결과를 그대로 재사용하면
+          // 결과 컬럼에 시스템 예약 컬럼(id/import_id/created_at)이 그대로 섞여 들어온다.
+          // 이 컬럼들을 그대로 새 임시 데이터셋의 사용자 컬럼으로 넘기면
+          // DataTableService의 예약어 가드(사용자가 신규 데이터셋에 직접 그 이름을 짓는 것을 막기 위한 것)에
+          // 걸려 실행이 항상 실패한다(#645). 자동 생성 경로에서만 예약어 컬럼명을 자동으로
+          // 별칭 처리(rename-on-conflict)해 우회한다 — 사용자가 명시적으로 짓는 다른 스텝 타입의
+          // 출력 컬럼명 검증은 그대로 유지한다.
+          List<ColumnInfo> selectColumns = renameReservedColumns(extractSelectColumnsWithTypes(sql));
 
           Optional<Long> existingDatasetId = tempDatasetService.findExistingTempDataset(stepId);
           if (existingDatasetId.isPresent()) {
@@ -406,7 +419,14 @@ public class PipelineAsyncRunner {
 
         if (isSelect && outputTableName != null && outputDatasetId != null) {
           // SELECT 자동 적재: 컬럼 추출 → 매칭 → INSERT INTO ... SELECT 래핑
-          List<String> selectColumns = extractSelectColumns(sql);
+          // 이번 실행에서 임시 데이터셋을 자동 생성/재사용한 경우에만 위와 동일한 규칙으로 예약어
+          // 컬럼명을 별칭 처리한다 — 임시 데이터셋에 실제로 저장된 컬럼명(id_1 등)과 정확히
+          // 매칭되어야 하기 때문이다. 사용자가 직접 지정한 기존 출력 데이터셋에는 이 별칭 처리를
+          // 적용하지 않는다 — 그 데이터셋의 "id" 컬럼은 예약어 충돌이 아니라 사용자가 실제로
+          // 만든 정상 컬럼일 수 있다(#645).
+          List<String> rawSelectColumns = extractSelectColumns(sql);
+          List<String> selectColumns =
+              tempDatasetAutoCreated ? renameReservedColumnNames(rawSelectColumns) : rawSelectColumns;
 
           java.util.Set<String> outputColumnNames =
               columnRepository.findByDatasetId(outputDatasetId).stream()
@@ -1145,6 +1165,51 @@ public class PipelineAsyncRunner {
     } catch (Exception e) {
       throw new ScriptExecutionException("SQL 컬럼 타입 분석 실패: " + e.getMessage(), e);
     }
+  }
+
+  /** 임시 데이터셋 물리 테이블이 항상 자동 보유하는 시스템 예약 컬럼명 (DataTableService 참조). */
+  private static final Set<String> RESERVED_COLUMN_NAMES = Set.of("id", "import_id", "created_at");
+
+  /**
+   * SELECT 결과 컬럼명 중 시스템 예약어(id/import_id/created_at)와 충돌하는 이름을 자동으로 안전한 이름으로 바꾼다(#645).
+   *
+   * <p>{@code SELECT * FROM {{#N}}}처럼 이전 스텝(또는 실제 데이터셋)의 출력을 그대로 재사용하면, 모든 데이터셋 물리 테이블이
+   * 자동으로 갖는 시스템 컬럼(id/created_at 등)이 결과 컬럼에 그대로 섞여 들어온다. 이를 새 임시 데이터셋의 "사용자 컬럼"으로
+   * 그대로 저장하려 하면 {@code DataTableService}의 예약어 가드에 걸려 항상 실패한다. 그 가드는 사용자가 신규 데이터셋을 만들 때
+   * 컬럼명을 직접 예약어로 짓는 것을 막기 위한 것이라 이 자동 패스스루 시나리오에는 부적합하므로, 여기서는 충돌하는 컬럼명에 순번
+   * 접미사를 붙여 자동으로 별칭 처리한다 (예: {@code id} → {@code id_1}).
+   *
+   * @param names SELECT 결과 컬럼명 목록 (순서 보존 필요 — INSERT 매칭에 그대로 재사용됨)
+   * @return 예약어 충돌이 해소된 컬럼명 목록 (같은 순서, 같은 개수)
+   */
+  private static List<String> renameReservedColumnNames(List<String> names) {
+    Set<String> used = new HashSet<>(names);
+    List<String> result = new ArrayList<>();
+    for (String name : names) {
+      String candidate = name;
+      if (RESERVED_COLUMN_NAMES.contains(name.toLowerCase())) {
+        int suffix = 1;
+        candidate = name + "_" + suffix;
+        while (used.contains(candidate)) {
+          suffix++;
+          candidate = name + "_" + suffix;
+        }
+      }
+      used.add(candidate);
+      result.add(candidate);
+    }
+    return result;
+  }
+
+  /** {@link #renameReservedColumnNames(List)}의 {@link ColumnInfo} 목록 버전 (타입 정보는 그대로 보존). */
+  private static List<ColumnInfo> renameReservedColumns(List<ColumnInfo> columns) {
+    List<String> renamedNames =
+        renameReservedColumnNames(columns.stream().map(ColumnInfo::name).toList());
+    List<ColumnInfo> result = new ArrayList<>();
+    for (int i = 0; i < columns.size(); i++) {
+      result.add(new ColumnInfo(renamedNames.get(i), columns.get(i).appType()));
+    }
+    return result;
   }
 
   /**
