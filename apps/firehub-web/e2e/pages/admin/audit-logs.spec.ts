@@ -595,6 +595,61 @@ test.describe('감사 로그 페이지', () => {
     await expect(row5.getByRole('cell', { name: '지식 모델', exact: true })).toBeVisible();
   });
 
+  /**
+   * 이슈 #637: "지식 모델 요소 단위 편집" 이니셔티브에서 백엔드(OntologyElementService)가
+   * 기록하기 시작한 타입/관계/속성/도메인 세분화 actionType 10종이 매핑에서 누락돼
+   * 영문 raw 값이 그대로 노출되던 문제 회귀 방지.
+   */
+  test('온톨로지 요소 단위 편집 actionType 10종이 한글 라벨로 표시된다 (#637)', async ({ authenticatedPage: page }) => {
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/admin/audit-logs',
+      createPageResponse([
+        createAuditLog({ id: 1, actionType: 'ONTOLOGY_TYPE_ADD', resource: 'ontology', description: 'desc-row1' }),
+        createAuditLog({ id: 2, actionType: 'ONTOLOGY_TYPE_UPDATE', resource: 'ontology', description: 'desc-row2' }),
+        createAuditLog({ id: 3, actionType: 'ONTOLOGY_TYPE_DELETE', resource: 'ontology', description: 'desc-row3' }),
+        createAuditLog({ id: 4, actionType: 'ONTOLOGY_RELATION_ADD', resource: 'ontology', description: 'desc-row4' }),
+        createAuditLog({ id: 5, actionType: 'ONTOLOGY_RELATION_UPDATE', resource: 'ontology', description: 'desc-row5' }),
+        createAuditLog({ id: 6, actionType: 'ONTOLOGY_RELATION_DELETE', resource: 'ontology', description: 'desc-row6' }),
+        createAuditLog({ id: 7, actionType: 'ONTOLOGY_PROPERTY_ADD', resource: 'ontology', description: 'desc-row7' }),
+        createAuditLog({ id: 8, actionType: 'ONTOLOGY_PROPERTY_UPDATE', resource: 'ontology', description: 'desc-row8' }),
+        createAuditLog({ id: 9, actionType: 'ONTOLOGY_PROPERTY_DELETE', resource: 'ontology', description: 'desc-row9' }),
+        createAuditLog({ id: 10, actionType: 'ONTOLOGY_DOMAIN_UPDATE', resource: 'ontology', description: 'desc-row10' }),
+      ]),
+    );
+
+    // 브라우저 콘솔 경고 수집 — "Unknown actionType" 경고가 더 이상 발생하지 않아야 함
+    const consoleWarnings: string[] = [];
+    page.on('console', (msg) => {
+      if (msg.type() === 'warning') consoleWarnings.push(msg.text());
+    });
+
+    await page.goto('/admin/audit-logs');
+
+    const expectedLabels = [
+      '엔티티 타입 추가',
+      '엔티티 타입 수정',
+      '엔티티 타입 삭제',
+      '관계 추가',
+      '관계 수정',
+      '관계 삭제',
+      '속성 추가',
+      '속성 수정',
+      '속성 삭제',
+      '도메인 수정',
+    ];
+
+    for (let i = 0; i < expectedLabels.length; i++) {
+      const row = page.getByRole('row').nth(i + 1);
+      await expect(row.getByRole('cell', { name: expectedLabels[i], exact: true })).toBeVisible();
+    }
+
+    // "Unknown actionType" 경고가 이 10종에 대해 발생하지 않아야 함
+    const unknownActionWarnings = consoleWarnings.filter((w) => w.includes('Unknown actionType'));
+    expect(unknownActionWarnings).toHaveLength(0);
+  });
+
   test('알 수 없는 액션/리소스 enum은 raw 값 fallback으로 표시된다 (#109)', async ({ authenticatedPage: page }) => {
     await mockApi(
       page,

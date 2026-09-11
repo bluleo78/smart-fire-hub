@@ -36,10 +36,14 @@ import type { AuditLogResponse } from '@/types/auditLog';
 /**
  * 액션 유형 옵션 목록
  * - 백엔드(AuditLogService.log) 호출부에서 사용 중인 enum 전수: CREATE/UPDATE/DELETE/LOGIN/LOGOUT/IMPORT/EXECUTE/DATA_EXPORT/STATUS_CHANGE
- *   + 온톨로지 도메인의 ONTOLOGY_* 4종.
+ *   + 온톨로지 도메인의 ONTOLOGY_* 4종 + 요소 단위 편집 10종.
  * - #109 회귀: DATA_EXPORT, STATUS_CHANGE 매핑 누락 보강.
  * - ONTOLOGY_* 는 OntologyService가 처음부터 기록해 왔지만 매핑이 없어 영문 raw로 노출되고 있었다.
  *   상태 전이를 ONTOLOGY_UPDATE에서 ONTOLOGY_STATUS_CHANGE로 분리하면서 함께 보강한다.
+ * - #637 회귀: "지식 모델 요소 단위 편집" 이니셔티브(S1~S3)에서 OntologyElementService가
+ *   기록하기 시작한 타입/관계/속성/도메인 세분화 actionType 10종이 매핑에서 누락돼 영문 raw로 노출되던 문제.
+ *   신규 actionType 추가 시 apps/firehub-api에서 `grep -rn "ONTOLOGY_" --include=*.java`로
+ *   실제 audit() 호출부 전수를 대조해 이 배열을 갱신해야 한다.
  */
 const ACTION_TYPES = [
   { value: 'CREATE', label: '생성' },
@@ -55,6 +59,16 @@ const ACTION_TYPES = [
   { value: 'ONTOLOGY_UPDATE', label: '지식 모델 편집' },
   { value: 'ONTOLOGY_STATUS_CHANGE', label: '지식 모델 상태 변경' },
   { value: 'ONTOLOGY_DELETE', label: '지식 모델 삭제' },
+  { value: 'ONTOLOGY_TYPE_ADD', label: '엔티티 타입 추가' },
+  { value: 'ONTOLOGY_TYPE_UPDATE', label: '엔티티 타입 수정' },
+  { value: 'ONTOLOGY_TYPE_DELETE', label: '엔티티 타입 삭제' },
+  { value: 'ONTOLOGY_RELATION_ADD', label: '관계 추가' },
+  { value: 'ONTOLOGY_RELATION_UPDATE', label: '관계 수정' },
+  { value: 'ONTOLOGY_RELATION_DELETE', label: '관계 삭제' },
+  { value: 'ONTOLOGY_PROPERTY_ADD', label: '속성 추가' },
+  { value: 'ONTOLOGY_PROPERTY_UPDATE', label: '속성 수정' },
+  { value: 'ONTOLOGY_PROPERTY_DELETE', label: '속성 삭제' },
+  { value: 'ONTOLOGY_DOMAIN_UPDATE', label: '도메인 수정' },
 ];
 
 /**
