@@ -75,6 +75,31 @@ export function AddTriggerDialog({ open, onOpenChange, pipelineId }: AddTriggerD
     setCreatedTrigger(null);
   };
 
+  // 이름 입력값이 바뀌면 이전 제출 시점의 stale한 name 검증 오류를 지운다 (#638).
+  const handleNameChange = (value: string) => {
+    setName(value);
+    if (validationErrors.name) {
+      setValidationErrors((prev) => {
+        const next = { ...prev };
+        delete next.name;
+        return next;
+      });
+    }
+  };
+
+  // config(Cron, 선행 파이프라인, 데이터셋 등) 필드가 바뀔 때마다 이전 제출 시점의
+  // stale한 config 관련 검증 오류를 전부 지운다. validate()는 제출 시에만 호출되므로
+  // 값이 바뀌어도 오류가 그대로 남아있던 문제(#638)를 막는다.
+  const handleConfigChange = (newConfig: Record<string, unknown>) => {
+    setConfig(newConfig);
+    setValidationErrors((prev) => {
+      const nameError = prev.name;
+      const hasConfigError = Object.keys(prev).some((key) => key !== 'name');
+      if (!hasConfigError) return prev;
+      return nameError ? { name: nameError } : {};
+    });
+  };
+
   const validate = (): boolean => {
     const errors: Record<string, string> = {};
     if (!name.trim()) {
@@ -206,7 +231,7 @@ export function AddTriggerDialog({ open, onOpenChange, pipelineId }: AddTriggerD
               <Input
                 id="trigger-name"
                 value={name}
-                onChange={(e) => setName(e.target.value)}
+                onChange={(e) => handleNameChange(e.target.value)}
                 placeholder="트리거 이름"
                 className={validationErrors.name ? 'border-destructive' : undefined}
                 disabled={!!createdTrigger}
@@ -231,14 +256,14 @@ export function AddTriggerDialog({ open, onOpenChange, pipelineId }: AddTriggerD
             {selectedType === 'SCHEDULE' && (
               <ScheduleTriggerForm
                 config={config as { cron: string; timezone: string; concurrencyPolicy: 'SKIP' | 'ALLOW' }}
-                onChange={setConfig}
+                onChange={handleConfigChange}
                 errors={validationErrors}
               />
             )}
             {selectedType === 'API' && (
               <ApiTriggerForm
                 config={config as { allowedIps: string[] }}
-                onChange={setConfig}
+                onChange={handleConfigChange}
                 generatedToken={createdTrigger?.config?.rawToken as string | undefined}
               />
             )}
@@ -246,20 +271,20 @@ export function AddTriggerDialog({ open, onOpenChange, pipelineId }: AddTriggerD
               <PipelineChainForm
                 pipelineId={pipelineId}
                 config={config as { upstreamPipelineId: number | null; condition: 'SUCCESS' | 'FAILURE' | 'ANY' }}
-                onChange={setConfig}
+                onChange={handleConfigChange}
                 errors={validationErrors}
               />
             )}
             {selectedType === 'WEBHOOK' && (
               <WebhookTriggerForm
                 config={config as { webhookId?: string; secret?: string }}
-                onChange={setConfig}
+                onChange={handleConfigChange}
               />
             )}
             {selectedType === 'DATASET_CHANGE' && (
               <DatasetChangeTriggerForm
                 config={config as { datasetIds: number[]; pollingIntervalSeconds: number; debounceSeconds: number }}
-                onChange={setConfig}
+                onChange={handleConfigChange}
                 errors={validationErrors}
               />
             )}

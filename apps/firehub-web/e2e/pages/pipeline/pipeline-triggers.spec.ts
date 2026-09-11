@@ -382,6 +382,53 @@ test.describe('파이프라인 트리거 탭', () => {
     expect(apiCalled).toBe(false);
   });
 
+  /**
+   * 회귀 방지 테스트 (#638)
+   * 잘못된 cron으로 1차 제출 실패 후 값을 올바르게 고치면, 부모(AddTriggerDialog)가
+   * 제출 시점에만 계산해 stale하게 남아있던 validationErrors.cron이 즉시 지워져야 한다.
+   * 이전에는 CronExpressionInput의 displayError가 stale한 부모 error를 우선해
+   * 유효한 값인데도 오류 문구가 정상 설명·다음 실행 예정 목록과 함께 계속 표시됐다.
+   */
+  test('스케줄 트리거 — 잘못된 cron 제출 실패 후 값을 고치면 오류 문구가 즉시 사라진다 (refs #638)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupTriggerTabMocks(page);
+
+    let apiCalled = false;
+    await page.route('/api/v1/pipelines/1/triggers', (route) => {
+      if (route.request().method() === 'POST') {
+        apiCalled = true;
+        return route.fulfill({ status: 201, body: JSON.stringify(createTrigger({ id: 99 })) });
+      }
+      return route.continue();
+    });
+
+    await gotoTriggerTab(page);
+
+    await page.getByRole('button', { name: /트리거 추가/ }).click();
+    await page.getByRole('button', { name: /스케줄.*Cron/ }).click();
+
+    await page.getByLabel(/^이름/).fill('cron stale 테스트');
+
+    const cronInput = page.locator('input[placeholder*="* * *"]').first();
+
+    // 1차: 잘못된 cron으로 제출 → 오류 표시 확인
+    await cronInput.fill('invalid cron here');
+    await page.getByRole('button', { name: '트리거 생성' }).click();
+    await expect(page.getByText('유효하지 않은 Cron 표현식입니다')).toBeVisible();
+    expect(apiCalled).toBe(false);
+
+    // 값을 유효한 cron으로 고침 — 재제출 없이도 stale 오류 문구가 사라져야 함
+    await cronInput.fill('0 9 * * *');
+    await expect(page.getByText('유효하지 않은 Cron 표현식입니다')).not.toBeVisible();
+    // 정상 해석 문구가 표시됨
+    await expect(page.getByText('시간 09:00')).toBeVisible();
+
+    // 재제출 시 정상적으로 생성됨
+    await page.getByRole('button', { name: '트리거 생성' }).click();
+    await expect.poll(() => apiCalled).toBe(true);
+  });
+
   test('API 트리거 — 잘못된 IP 형식 입력 시 추가 차단 + 에러 메시지가 표시된다', async ({
     authenticatedPage: page,
   }) => {
