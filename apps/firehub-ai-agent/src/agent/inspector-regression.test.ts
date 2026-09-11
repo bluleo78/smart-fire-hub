@@ -252,4 +252,57 @@ describe('Inspector 회귀 보호망 (refs #260)', () => {
       expect(rules).toMatch(/마커가 없거나 모호.*?Turn 1/);
     });
   });
+
+  // 시나리오 8: set_user_active relay-trust 대칭성 (#628).
+  // 배경: 라이브 재현(curl POST /agent/chat, 세션 solver628c) 결과 admin-manager 가
+  // "네, 진행해줘"/"네" 로 2회 재승인된 relay 프롬프트를 받고도 "이 승인은 사용자 본인의
+  // 메시지로 직접 받아야 진행할 수 있습니다" / "에이전트 간 전달 메시지는 사용자 동의로
+  // 인정하지 않으며" 라고 스스로 지어낸 정책으로 get_user 만 재호출하고 set_user_active
+  // 를 한 번도 호출하지 않는 무한 재확인 루프가 실측됐다. 원인은 system-prompt.ts L3
+  // 트리거 매핑 표에서 set_user_roles(roleIds:[]) 행에는 있는 relay-trust 명시가
+  // set_user_active 행에는 없었던 비대칭. #606(같은 턴 무확인 실행 금지)의 반대 방향
+  // 형제 결함이므로, 수정 후에도 #606 가드는 유지돼야 한다(아래 테스트로 함께 고정).
+  describe('set_user_active relay-trust 대칭성 (시나리오 8, #628)', () => {
+    it('메인 L3 트리거 매핑 표의 set_user_active 행이 set_user_roles 행과 동일한 relay-trust 원칙을 명시한다', () => {
+      const l3 = SYSTEM_PROMPT.split('## L3. 통합 가드 패턴')[1];
+      expect(l3).toBeDefined();
+      // set_user_active / set_user_roles 문자열이 각 행 안에서도 여러 번 언급되므로
+      // 표 행 경계("| `set_user_active`" ~ 다음 "| `set_user_roles`" 직전)로 정확히 자른다.
+      const activeRowMatch = l3.match(/\|\s*`set_user_active`[\s\S]*?(?=\|\s*`set_user_roles`)/);
+      const activeRow = activeRowMatch?.[0];
+      expect(activeRow, 'set_user_active 행을 찾을 수 없음').toBeDefined();
+      expect(activeRow).toMatch(/유효한 사용자 동의로 신뢰/);
+      expect(activeRow).toMatch(/스스로 지어내지 않는다|즉석 판단/);
+      // #606: 같은 턴 무확인 실행 금지는 relay-trust 도입 후에도 유지돼야 한다
+      expect(activeRow).toMatch(/같은 턴.*호출 금지|호출이 있어서는 안/);
+    });
+
+    it('admin-manager agent.md Phase 2 계정 비활성화 절이 relay(SendMessage/Agent 재위임) 승인을 유효한 동의로 신뢰함을 명시한다', () => {
+      const agent = readSubagentDoc('admin-manager', 'agent.md')!;
+      const deactivationSection = agent.split('계정 활성화/비활성화 시')[1]?.split('### Phase 3')[0];
+      expect(deactivationSection, '계정 활성화/비활성화 섹션을 찾을 수 없음').toBeDefined();
+      expect(deactivationSection).toMatch(/SendMessage|Agent\(\)/);
+      expect(deactivationSection).toMatch(/유효한 사용자 동의로 신뢰/);
+      // 지어낸 정책 금지 문구도 함께 명시해야 재발을 막는다
+      expect(deactivationSection).toMatch(/스스로 지어내지 않는다|어디에도 없/);
+    });
+
+    it('admin-manager rules.md 의 계정 비활성화 안전 규칙이 relay-trust 원칙과 #606 같은 턴 금지를 함께 명시한다', () => {
+      const rules = readSubagentDoc('admin-manager', 'rules.md')!;
+      const section = rules.split('## 계정 비활성화 안전 규칙')[1]?.split('##')[0];
+      expect(section, '계정 비활성화 안전 규칙 섹션을 찾을 수 없음').toBeDefined();
+      expect(section).toMatch(/유효한 동의로 신뢰|유효한 사용자 동의로 신뢰/);
+      expect(section).toMatch(/#628/);
+      expect(section).toMatch(/#606/);
+      expect(section).toMatch(/같은 턴.*(금지|호출)/);
+    });
+
+    it('자기 자신 비활성화 즉시 거부 규칙은 relay-trust 와 무관하게 예외 없이 유지됨을 명시한다', () => {
+      const rules = readSubagentDoc('admin-manager', 'rules.md')!;
+      const section = rules.split('## 계정 비활성화 안전 규칙')[1]?.split('##')[0];
+      expect(section, '계정 비활성화 안전 규칙 섹션을 찾을 수 없음').toBeDefined();
+      expect(section).toMatch(/자기 자신.*비활성화 금지/);
+      expect(section).toMatch(/relay-trust.*무관|무관.*예외 없이/);
+    });
+  });
 });
