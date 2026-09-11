@@ -83,8 +83,14 @@ export default function DatasetDetailPage() {
   // 매핑 탭의 미저장 편집 여부. DatasetMappingTab은 탭 전환 시 완전히 unmount되어 자체적으론
   // 이탈을 막을 수 없으므로, 부모인 이 페이지가 값을 받아 탭 전환·라우트 이탈을 가로챈다(#502).
   const [mappingDirty, setMappingDirty] = useState(false);
+  // "기본 정보" 카드 인라인 편집 폼의 미저장 변경 여부. DatasetInfoTab도 매핑 탭과 동일하게
+  // 탭 전환 시 unmount되므로 자체적으론 이탈을 막을 수 없어 부모가 값을 받아 가드에 합류시킨다(#635).
+  const [infoDirty, setInfoDirty] = useState(false);
   // 사이드바 링크 클릭 등 SPA 라우트 이탈·브라우저 뒤로가기·새로고침/탭 닫기를 가드한다.
-  const { dialog: unsavedChangesDialog, requestNavigate } = useUnsavedChangesGuard(mappingDirty);
+  // 매핑 탭과 기본 정보 탭 중 하나라도 dirty면 가드를 발동한다(#635).
+  const { dialog: unsavedChangesDialog, requestNavigate } = useUnsavedChangesGuard(
+    mappingDirty || infoDirty,
+  );
   // 자체 스크롤러를 가진 탭 — 페이지가 뷰포트 높이에 정확히 맞아야 이중 스크롤이 생기지 않는다.
   // 현재는 데이터 탭(가상 스크롤 테이블)뿐이다.
   const fillsHeight = activeTab === 'data';
@@ -238,7 +244,7 @@ export default function DatasetDetailPage() {
         <div className="flex items-start gap-3">
           {/* 데이터셋 목록으로 돌아가는 뒤로가기 버튼 — 스크린리더/마우스 사용자 모두를 위해 aria-label·title 명시 (#102)
               (#634) navigate() 직접 호출은 이탈 가드(<a> 클릭 캡처)를 우회하므로 requestNavigate로 대체 —
-              매핑 탭이 dirty(mappingDirty)면 이탈 확인 다이얼로그를 띄운다 */}
+              매핑 탭(mappingDirty) 또는 기본 정보 인라인 편집(infoDirty)이 dirty면 이탈 확인 다이얼로그를 띄운다 (#635) */}
           <Button
             variant="ghost"
             size="icon"
@@ -457,6 +463,14 @@ export default function DatasetDetailPage() {
             // 이탈 확정 → 가드 해제. 실제 draft 소실은 DatasetMappingTab의 unmount로 일어난다.
             setMappingDirty(false);
           }
+          // "기본 정보" 인라인 편집도 탭 전환 시 DatasetInfoTab이 unmount되어 동일하게 소실된다(#635).
+          if (activeTab === 'info' && tab !== 'info' && infoDirty) {
+            const confirmed = window.confirm(
+              '저장하지 않은 기본 정보 변경사항이 있습니다. 이동하면 편집 내용이 사라집니다. 이동하시겠습니까?',
+            );
+            if (!confirmed) return;
+            setInfoDirty(false);
+          }
           // 탭 전환 시 URL ?tab= 파라미터도 동기화 (뒤로 가기·북마크·링크 공유 지원)
           setActiveTab(tab);
           setSearchParams((prev) => {
@@ -490,7 +504,12 @@ export default function DatasetDetailPage() {
 
         {activeTab === 'info' && (
           <div className="mt-6">
-            <DatasetInfoTab dataset={dataset} categories={categories} datasetId={datasetId} />
+            <DatasetInfoTab
+              dataset={dataset}
+              categories={categories}
+              datasetId={datasetId}
+              onDirtyChange={setInfoDirty}
+            />
           </div>
         )}
         {activeTab === 'columns' && (
@@ -537,7 +556,7 @@ export default function DatasetDetailPage() {
         dataset={dataset}
       />
 
-      {/* 매핑 탭 미저장 변경 이탈 가드 — 사이드바 링크 클릭/뒤로가기 등 라우트 이탈 시 확인 (#502) */}
+      {/* 매핑 탭·기본 정보 인라인 편집 미저장 변경 이탈 가드 — 사이드바 링크 클릭/뒤로가기 등 라우트 이탈 시 확인 (#502, #635) */}
       {unsavedChangesDialog}
     </div>
   );

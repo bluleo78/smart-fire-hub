@@ -686,4 +686,105 @@ test.describe('데이터셋 상세 페이지', () => {
     await expect(page.getByRole('tab', { name: '데이터' })).toHaveAttribute('data-state', 'active', { timeout: 3000 });
     await expect(page.getByRole('tab', { name: '정보' })).toHaveAttribute('data-state', 'inactive');
   });
+
+  /**
+   * 회귀 방지 (#635): "기본 정보" 카드 인라인 편집(DatasetInfoTab)은 #634 수정 당시
+   * mappingDirty만 추적하던 useUnsavedChangesGuard 대상에서 애초에 빠져 있었다.
+   * DatasetInfoTab의 dirty 상태를 onDirtyChange로 부모에 끌어올려 mappingDirty와
+   * OR 합산해 가드에 전달하도록 고쳤다 — 매핑 탭과 동일한 시나리오로 검증한다.
+   */
+  test.describe('#635 기본 정보 인라인 편집 미저장 변경 — 이탈 가드', () => {
+    test('설명을 수정하고 저장하지 않은 채 "목록으로 돌아가기" 클릭 시 이탈 확인 다이얼로그가 표시된다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupDetailPageMocks(page, 1);
+      await page.goto('/data/datasets/1');
+      await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible();
+
+      // "기본 정보" 카드의 "수정" 버튼 → 인라인 편집 모드 진입
+      await page.getByRole('button', { name: '수정' }).click();
+
+      // 설명 입력값 변경 (저장 버튼은 누르지 않음)
+      const descriptionInput = page.getByLabel('설명');
+      await descriptionInput.fill('저장 안 한 변경된 설명');
+
+      // 헤더의 "목록으로 돌아가기" 버튼 클릭
+      await page.getByRole('button', { name: '목록으로 돌아가기' }).click();
+
+      await expect(page.getByRole('alertdialog')).toBeVisible();
+      await expect(
+        page.getByText('저장하지 않은 변경사항이 있습니다. 이탈하시겠습니까?'),
+      ).toBeVisible();
+      // 경고 없이 즉시 이동하지 않고 상세 페이지에 머물러야 한다
+      expect(new URL(page.url()).pathname).toBe('/data/datasets/1');
+
+      // "이탈" 클릭 시 실제로 목록 페이지로 이동
+      const { createDatasets } = await import('../../factories/dataset.factory');
+      await mockApi(page, 'GET', '/api/v1/datasets', createPageResponse(createDatasets(5)));
+      await page.getByRole('button', { name: '이탈' }).click();
+      await expect(page).toHaveURL(/\/data\/datasets$/);
+    });
+
+    test('기본 정보 편집 중이 아니면 "목록으로 돌아가기" 클릭 시 확인 없이 즉시 이동한다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupDetailPageMocks(page, 1);
+      const { createDatasets } = await import('../../factories/dataset.factory');
+      await mockApi(page, 'GET', '/api/v1/datasets', createPageResponse(createDatasets(5)));
+
+      await page.goto('/data/datasets/1');
+      await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible();
+
+      await page.getByRole('button', { name: '목록으로 돌아가기' }).click();
+
+      await expect(page.getByRole('alertdialog')).not.toBeVisible();
+      await expect(page).toHaveURL(/\/data\/datasets$/);
+    });
+
+    test('기본 정보 편집 중 다른 탭으로 전환하면 확인을 요구하고, 취소하면 편집 모드가 유지된다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupDetailPageMocks(page, 1);
+      await page.goto('/data/datasets/1');
+      await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible();
+
+      await page.getByRole('button', { name: '수정' }).click();
+      await page.getByLabel('설명').fill('탭 전환 테스트용 변경');
+
+      page.once('dialog', (dialog) => {
+        expect(dialog.message()).toContain('저장하지 않은 기본 정보 변경사항이 있습니다');
+        void dialog.dismiss();
+      });
+      await page.getByRole('tab', { name: '필드' }).click();
+
+      // 취소했으므로 여전히 "정보" 탭 + 편집 모드(입력값 보존)에 머물러야 한다
+      await expect(page.getByRole('tab', { name: '정보' })).toHaveAttribute('data-state', 'active');
+      await expect(page.getByLabel('설명')).toHaveValue('탭 전환 테스트용 변경');
+    });
+
+    test('저장 버튼으로 정상 저장하면 이탈 가드가 해제된다', async ({ authenticatedPage: page }) => {
+      await setupDetailPageMocks(page, 1);
+      await mockApi(page, 'PUT', '/api/v1/datasets/1', createDatasetDetail({
+        id: 1,
+        name: '테스트 데이터셋',
+        description: '저장된 설명',
+      }));
+      const { createDatasets } = await import('../../factories/dataset.factory');
+      await mockApi(page, 'GET', '/api/v1/datasets', createPageResponse(createDatasets(5)));
+
+      await page.goto('/data/datasets/1');
+      await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible();
+
+      await page.getByRole('button', { name: '수정' }).click();
+      await page.getByLabel('설명').fill('저장된 설명');
+      await page.getByRole('button', { name: '저장', exact: true }).click();
+
+      await expect(page.getByText('데이터셋 정보가 업데이트되었습니다.')).toBeVisible();
+
+      // 저장 완료 후에는 dirty가 해제되어 확인 없이 즉시 이동해야 한다
+      await page.getByRole('button', { name: '목록으로 돌아가기' }).click();
+      await expect(page.getByRole('alertdialog')).not.toBeVisible();
+      await expect(page).toHaveURL(/\/data\/datasets$/);
+    });
+  });
 });

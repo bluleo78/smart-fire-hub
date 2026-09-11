@@ -1,7 +1,7 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import axios from 'axios';
 import { Clock,Columns, Database, Pencil, Tag } from 'lucide-react';
-import React, { useCallback } from 'react';
+import React, { useCallback, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
 
@@ -28,6 +28,9 @@ interface DatasetInfoTabProps {
   dataset: DatasetDetailResponse;
   categories: CategoryResponse[];
   datasetId: number;
+  // 인라인 편집 폼의 미저장 변경 여부를 부모(DatasetDetailPage)에 보고한다 (#635).
+  // 매핑 탭의 onDirtyChange와 동일한 콜백 패턴 — 부모가 useUnsavedChangesGuard에 합류시킨다.
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
 function getRelativeTime(dateStr: string | null): string {
@@ -48,6 +51,7 @@ export const DatasetInfoTab = React.memo(function DatasetInfoTab({
   dataset,
   categories,
   datasetId,
+  onDirtyChange,
 }: DatasetInfoTabProps) {
   const [isEditing, setIsEditing] = React.useState(false);
   const updateDataset = useUpdateDataset(datasetId);
@@ -61,6 +65,23 @@ export const DatasetInfoTab = React.memo(function DatasetInfoTab({
       categoryId: dataset.category?.id,
     },
   });
+
+  // 편집 모드에서 실제로 값이 바뀐 경우에만 dirty로 간주한다 — 뷰 모드(isEditing=false)는
+  // react-hook-form의 formState.isDirty와 무관하게 항상 안전(#635).
+  const isInfoDirty = isEditing && infoForm.formState.isDirty;
+
+  // dirty 변화를 부모로 실시간 보고 — DatasetMappingTab의 onDirtyChange와 동일한 패턴(#502 참고).
+  // 부모는 이 값을 mappingDirty와 OR 합산해 useUnsavedChangesGuard에 전달한다.
+  useEffect(() => {
+    onDirtyChange?.(isInfoDirty);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- onDirtyChange는 부모의 setState라 항상 안정적 참조
+  }, [isInfoDirty]);
+
+  // 탭 전환 등으로 unmount될 때도 false로 정리해 부모 쪽 가드가 남지 않게 한다.
+  useEffect(() => {
+    return () => onDirtyChange?.(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 최초 마운트 시점의 onDirtyChange로 충분(부모 setState는 안정적)
+  }, []);
 
   const onInfoSubmit = useCallback(
     async (data: UpdateDatasetFormData) => {
