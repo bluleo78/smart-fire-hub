@@ -161,6 +161,12 @@ test.describe('파이프라인 트리거 탭', () => {
     await expect(page.getByText('웹훅 URL')).toBeVisible();
     await expect(page.getByText(/wh-test-uuid-1234/)).toBeVisible();
 
+    // 생성 완료 후에는 이름/설명뿐 아니라 시크릿 키 입력란도 비활성화되어야 함 (#656 회귀 방지)
+    // — isEditMode 미전달로 시크릿 필드만 활성 상태로 남아 편집 가능한 것처럼 보이던 버그
+    await expect(page.getByLabel(/^이름/)).toBeDisabled();
+    await expect(page.getByPlaceholder('HMAC-SHA256 서명 검증에 사용할 시크릿 키')).toBeDisabled();
+    await expect(page.getByText('시크릿 키는 수정할 수 없습니다')).toBeVisible();
+
     // "닫기" 버튼이 표시되어 수동으로 닫을 수 있어야 함
     // 푸터의 텍스트 닫기 버튼 (X 아이콘 sr-only 버튼과 구분하기 위해 data-slot="button" 사용)
     const closeBtn = page.locator('[data-slot="button"]:has-text("닫기")');

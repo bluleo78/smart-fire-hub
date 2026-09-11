@@ -279,6 +279,9 @@ export function AddTriggerDialog({ open, onOpenChange, pipelineId }: AddTriggerD
               <WebhookTriggerForm
                 config={config as { webhookId?: string; secret?: string }}
                 onChange={handleConfigChange}
+                // 생성 완료(createdTrigger 존재) 후 시크릿 키 입력란을 읽기 전용으로 전환한다.
+                // 이름/설명 필드와 동일하게 EditTriggerDialog의 isEditMode 패턴을 따른다 (#656).
+                isEditMode={!!createdTrigger}
               />
             )}
             {selectedType === 'DATASET_CHANGE' && (
