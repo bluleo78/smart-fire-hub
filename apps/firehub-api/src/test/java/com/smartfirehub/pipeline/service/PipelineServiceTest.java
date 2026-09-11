@@ -167,6 +167,57 @@ class PipelineServiceTest extends IntegrationTestBase {
         .hasMessageContaining("멀티");
   }
 
+  // UI가 안내하는 "스텝 참조" 문법({{#N}})을 FROM절에 그대로 써도 저장이 성공해야 한다 (#643).
+  // {{#N}}은 유효한 SQL 토큰이 아니라서, 저장 시점 검증이 치환 없이 원본을 그대로 파싱하면
+  // 항상 파싱 실패로 거부된다 — 실행 시점(PipelineAsyncRunner#resolveStepReferences)과 동일하게
+  // 먼저 치환한 뒤 검증해야 한다.
+  @Test
+  void createPipeline_sqlStepWithStepReferenceInFromClause_succeeds() {
+    List<PipelineStepRequest> steps =
+        List.of(
+            new PipelineStepRequest(
+                "step1", "First step", "SQL", "SELECT 1 as test_col", null, null, null),
+            new PipelineStepRequest(
+                "step2",
+                "Second step",
+                "SQL",
+                "SELECT * FROM {{#1}} LIMIT 1",
+                null,
+                null,
+                List.of("step1")));
+
+    CreatePipelineRequest request =
+        new CreatePipelineRequest("Step Reference Pipeline", "test", steps);
+
+    assertThatCode(() -> pipelineService.createPipeline(request, testUserId))
+        .doesNotThrowAnyException();
+  }
+
+  // {{#N}} 치환이 검증을 완전히 우회하는 통로가 되면 안 된다 — 치환 후에도 여전히 여러 statement면
+  // 거부돼야 한다 (더미 치환으로 구조적 검증 자체가 무력화되지 않는지 확인).
+  @Test
+  void createPipeline_sqlStepWithStepReferenceAndMultiStatement_isRejected() {
+    List<PipelineStepRequest> steps =
+        List.of(
+            new PipelineStepRequest(
+                "step1", "First step", "SQL", "SELECT 1 as test_col", null, null, null),
+            new PipelineStepRequest(
+                "step2",
+                "Second step",
+                "SQL",
+                "SELECT * FROM {{#1}}; SELECT 2",
+                null,
+                null,
+                List.of("step1")));
+
+    CreatePipelineRequest request =
+        new CreatePipelineRequest("Step Reference Multi Pipeline", "test", steps);
+
+    assertThatThrownBy(() -> pipelineService.createPipeline(request, testUserId))
+        .isInstanceOf(UnsafeSqlException.class)
+        .hasMessageContaining("멀티");
+  }
+
   // PYTHON 스텝 escalation 코드 차단 — 저장 경로 end-to-end 검증 (#270).
   // validate() 호출이 saveSteps 에 실제로 배선되어 있는지 보장한다(단위테스트만으로는 배선 미검증).
   @Test

@@ -2,6 +2,7 @@ package com.smartfirehub.pipeline.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.dto.PageResponse;
+import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.pipeline.dto.*;
 import com.smartfirehub.pipeline.exception.PipelineInactiveException;
 import com.smartfirehub.pipeline.exception.PipelineNameConflictException;
@@ -17,6 +18,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -30,6 +33,10 @@ public class PipelineService {
   private static final Set<String> VALID_OUTPUT_COLUMN_TYPES =
       Set.of("TEXT", "INTEGER", "DECIMAL", "BOOLEAN", "DATE", "TIMESTAMP");
   private static final Set<String> VALID_ON_ERROR = Set.of("CONTINUE", "RETRY_BATCH", "FAIL_STEP");
+
+  // "스텝 참조" 문법({{#N}}) — 실행 시점(PipelineAsyncRunner#resolveStepReferences)과 동일한 패턴을
+  // 저장 시점 검증에도 적용해야 두 시점의 검증 대상이 일치한다 (#643).
+  private static final Pattern STEP_REFERENCE_PATTERN = Pattern.compile("\\{\\{#(\\d+)\\}\\}");
 
   private final PipelineRepository pipelineRepository;
   private final PipelineStepRepository stepRepository;
@@ -98,8 +105,11 @@ public class PipelineService {
       }
 
       // SQL 스텝 안전 정책(단일 statement + DML + data 스키마 + 위험 함수 차단) 검증 (#136)
+      // {{#N}} 스텝 참조는 유효한 SQL 문법이 아니므로, 실행 시점과 동일하게 먼저 더미 테이블
+      // 참조로 치환한 뒤 검증한다 — 그렇지 않으면 UI가 권장하는 표준 사용법이 저장 단계에서
+      // 항상 파싱 실패로 거부된다 (#643).
       if ("SQL".equals(stepRequest.scriptType())) {
-        sqlValidator.validate(stepRequest.scriptContent());
+        sqlValidator.validate(substituteStepReferencesForValidation(stepRequest.scriptContent()));
       }
 
       // Save step
@@ -127,6 +137,28 @@ public class PipelineService {
         }
       }
     }
+  }
+
+  /**
+   * 저장 시점 SQL 구조 검증 전, {{#N}} 스텝 참조를 유효한 더미 테이블 참조로 치환한다.
+   *
+   * <p>실행 시점({@code PipelineAsyncRunner#resolveStepReferences})은 {{#N}}을 {@link DataSchema#qualify}가
+   * 만든 실제 테이블 FQN으로 치환한 뒤 {@link SqlValidator#validate}를 호출하므로 정상 통과한다.
+   * 반면 저장 시점은 지금까지 원본(치환 전) SQL을 그대로 파싱했기 때문에, {{#N}}이 SQL
+   * 문법상 유효하지 않아(예: FROM절) 항상 파싱 실패로 저장이 거부됐다 (#643). 두 시점의 검증 대상을
+   * 구조적으로 맞추기 위해, 여기서도 실제 치환과 동일한 형태(현재 테넌트 데이터 스키마 + 식별자)의
+   * 더미로 바꿔 넣는다 — 스텝 번호가 유효한지, 참조 대상이 실제로 존재하는지는 실행 시점에만 알 수 있으므로
+   * (저장 시점엔 DAG의 나머지 스텝이 아직 없을 수도 있음) 검사하지 않고, 오직 "SQL 구조가 유효한가"만 본다.
+   */
+  private String substituteStepReferencesForValidation(String sql) {
+    Matcher matcher = STEP_REFERENCE_PATTERN.matcher(sql);
+    StringBuilder result = new StringBuilder();
+    while (matcher.find()) {
+      String dummyTableRef = DataSchema.qualify("step_ref_" + matcher.group(1));
+      matcher.appendReplacement(result, Matcher.quoteReplacement(dummyTableRef));
+    }
+    matcher.appendTail(result);
+    return result.toString();
   }
 
   @Transactional(readOnly = true)
