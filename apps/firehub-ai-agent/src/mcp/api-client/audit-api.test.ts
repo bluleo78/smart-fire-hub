@@ -69,6 +69,19 @@ describe('auditApi (via FireHubApiClient)', () => {
     expect(result.content).toHaveLength(0);
   });
 
+  it('listAuditLogs passes startDate + endDate filter (#629)', async () => {
+    const mock = { content: [], totalElements: 0, totalPages: 0, number: 0, size: 20 };
+    nock(BASE_URL)
+      .get('/admin/audit-logs')
+      .query({ startDate: '2026-09-01T00:00:00', endDate: '2026-09-05T23:59:59' })
+      .reply(200, mock);
+    const result = await client.listAuditLogs({
+      startDate: '2026-09-01T00:00:00',
+      endDate: '2026-09-05T23:59:59',
+    });
+    expect(result.totalElements).toBe(0);
+  });
+
   it('listAuditLogs passes search + page + size params', async () => {
     const mock = { content: [], totalElements: 0, totalPages: 0, number: 1, size: 50 };
     nock(BASE_URL)

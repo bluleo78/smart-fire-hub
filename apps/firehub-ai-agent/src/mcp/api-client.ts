@@ -552,6 +552,8 @@ export class FireHubApiClient {
     actionType?: string;
     resource?: string;
     result?: string;
+    startDate?: string;
+    endDate?: string;
     page?: number;
     size?: number;
   }): Promise<AuditLogPage> {

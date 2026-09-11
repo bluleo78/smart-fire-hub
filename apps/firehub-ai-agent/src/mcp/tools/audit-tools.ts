@@ -20,6 +20,18 @@ export function registerAuditTools(
         actionType: z.string().optional().describe('액션 유형 필터 (CREATE, UPDATE, DELETE, LOGIN, LOGOUT 등)'),
         resource: z.string().optional().describe('리소스 유형 필터 (dataset, pipeline, user, trigger, role, api_connection 등)'),
         result: z.string().optional().describe('결과 상태 필터 (SUCCESS, FAILURE)'),
+        startDate: z
+          .string()
+          .optional()
+          .describe(
+            '조회 시작 일시 (ISO 8601, 예: 2026-09-01T00:00:00). 날짜만 주어진 질의는 해당 날짜의 00:00:00으로 지정한다.',
+          ),
+        endDate: z
+          .string()
+          .optional()
+          .describe(
+            '조회 종료 일시 (ISO 8601, 예: 2026-09-05T23:59:59). endDate는 이하(lessOrEqual) 조건이므로 날짜만 주어진 질의는 해당 날짜를 포함하려면 23:59:59로 지정한다.',
+          ),
         page: z.number().optional().describe('페이지 번호 (0부터 시작, 기본 0)'),
         size: z.number().optional().describe('페이지 크기 (기본 20, 최대 100)'),
       },

@@ -42,6 +42,13 @@ describe('Audit MCP Tools', () => {
       expect(result.isError).toBeFalsy();
     });
 
+    it('calls apiClient.listAuditLogs with startDate/endDate args (#629)', async () => {
+      const args = { startDate: '2026-09-01T00:00:00', endDate: '2026-09-05T23:59:59' };
+      const result = await invokeTool(server, 'list_audit_logs', args);
+      expect(client.listAuditLogs).toHaveBeenCalledWith(args);
+      expect(result.isError).toBeFalsy();
+    });
+
     it('calls apiClient.listAuditLogs with empty args', async () => {
       const result = await invokeTool(server, 'list_audit_logs', {});
       expect(client.listAuditLogs).toHaveBeenCalledWith({});

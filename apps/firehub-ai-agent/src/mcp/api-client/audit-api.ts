@@ -42,6 +42,10 @@ export function createAuditApi(client: AxiosInstance) {
       actionType?: string;
       resource?: string;
       result?: string;
+      /** 조회 시작 일시 (ISO 8601). 백엔드 AuditLogController가 LocalDateTime으로 파싱한다. */
+      startDate?: string;
+      /** 조회 종료 일시 (ISO 8601, inclusive). */
+      endDate?: string;
       page?: number;
       size?: number;
     }): Promise<AuditLogPage> {
