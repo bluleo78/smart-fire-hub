@@ -49,10 +49,10 @@
 `execute_analytics_query` 호출 직전, 다음 세 가지가 **모두** 충족되어야 한다:
 
 - [ ] 해당 테이블의 `datasetId` 가 결정되어 있다 (Phase 1 `find_datasets` 결과로 확보)
-- [ ] 해당 `datasetId` 의 `get_data_schema({datasetIds: […]})` 응답이 현재 컨텍스트에 있다 (Phase 1)
-- [ ] 작성한 SQL 의 모든 컬럼명·테이블명이 위 응답과 일치한다
+- [ ] 해당 `datasetId` 의 스키마 정보가 현재 컨텍스트에 있다 — `get_data_schema({datasetIds: […]})` 를 직접 호출했거나(Phase 1), **위임 프롬프트에 그 데이터셋의 컬럼 목록이 이미 요약 전달되어 있는 경우도 포함**(#622, 동일 세션 후속 위임)
+- [ ] 작성한 SQL 의 모든 컬럼명·테이블명이 위 스키마와 일치한다
 
-위 조건을 건너뛰고 SQL 을 추측하면 `42703` (UNDEFINED_COLUMN) retry loop 가 발생한다. 사용자가 `"분석해줘"` 한 줄만 입력해도 Phase 1 을 생략하지 않는다.
+위 조건을 건너뛰고 SQL 을 추측하면 `42703` (UNDEFINED_COLUMN) retry loop 가 발생한다. 사용자가 `"분석해줘"` 한 줄만 입력해도, 그리고 위임 프롬프트에 스키마 요약이 없는 한, Phase 1 을 생략하지 않는다.
 
 ### 빈 호출 금지
 
