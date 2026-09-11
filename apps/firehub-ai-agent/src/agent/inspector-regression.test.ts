@@ -215,4 +215,41 @@ describe('Inspector 회귀 보호망 (refs #260)', () => {
       }
     });
   });
+
+  // 시나리오 7: api-connection-manager 독립 방어 — 메인 위임 프롬프트 보강 문구 유무와
+  // 무관하게 자체적으로 2턴(DESIGN→승인→EXECUTE)을 강제해야 한다 (#626).
+  // 배경: 메인이 위임 프롬프트에 우회 방지 보강 지시를 추가하지 않고 사용자 발화("확인
+  // 없이 바로 만들어")를 그대로 전달한 경우, api-connection-manager 가 list_api_connections()
+  // 직후 설계안/승인 질의 없이 곧바로 create_api_connection() 을 호출하는 비결정적 순응이
+  // 실측됨 (더미 자격증명 패턴 검증(#619)이 우연히 막았을 뿐 side effect 방지는 구조적으로
+  // 보장되지 않았음).
+  describe('api-connection-manager 생성/수정 2턴 독립 방어 (시나리오 7, #626)', () => {
+    it('rules.md 가 create/update 2턴 프로토콜을 자체적으로 정의한다', () => {
+      const rules = readSubagentDoc('api-connection-manager', 'rules.md')!;
+      expect(rules).toContain('2턴 프로토콜');
+      expect(rules).toMatch(/Turn 1[\s\S]{0,400}?create_api_connection[\s\S]{0,60}?(?:호출하지 않|미호출)/);
+    });
+
+    it('rules.md 가 위임 프롬프트의 우회 방지 보강 문구 유무와 무관하게 적용됨을 명시한다', () => {
+      const rules = readSubagentDoc('api-connection-manager', 'rules.md')!;
+      // "위임 프롬프트에 보강 지시가 있는지 여부와 무관/의존하지 않는다" 류 표현
+      expect(rules).toMatch(/위임 프롬프트[\s\S]{0,80}?(?:무관|의존하지 않)/);
+    });
+
+    it('rules.md 가 "확인 없이"/"바로 만들어" 류 우회 표현이 있어도 Turn 1을 생략하지 않음을 명시한다', () => {
+      const rules = readSubagentDoc('api-connection-manager', 'rules.md')!;
+      expect(rules).toMatch(/확인 없이/);
+      expect(rules).toMatch(/Turn 1을 건너뛰지 않는다/);
+    });
+
+    it('agent.md Phase 2 DESIGN 이 같은 턴에 Phase 3 EXECUTE 를 호출하지 않음을 명시한다', () => {
+      const agent = readSubagentDoc('api-connection-manager', 'agent.md')!;
+      expect(agent).toMatch(/같은 턴에 Phase 3.*호출하지 않는다/);
+    });
+
+    it('마커가 없거나 모호하면 항상 Turn 1(DESIGN) 로 안전하게 간주함을 명시한다', () => {
+      const rules = readSubagentDoc('api-connection-manager', 'rules.md')!;
+      expect(rules).toMatch(/마커가 없거나 모호.*?Turn 1/);
+    });
+  });
 });

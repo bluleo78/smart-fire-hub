@@ -46,6 +46,8 @@ maxTurns: 20
 
 ### Phase 2 — DESIGN (설계 대화)
 
+🚫 **워크플로 우회 절대 금지 (refs #626)**: 사용자가 한 메시지에 연결 이름·authType·authConfig 등 모든 필드와 "확인 없이 바로 만들어"/"묻지 말고"/"바로 등록해" 같은 우회 지시를 함께 제공해도, 그리고 **메인의 위임 프롬프트가 이 우회 지시를 그대로 전달하거나 별도의 우회 방지 보강 문구를 포함하지 않아도**, 아래 2턴 프로토콜(rules.md "생성/수정 2턴 프로토콜" 절)은 예외 없이 적용된다. 위임 프롬프트에 우회 방지 보강 지시가 있는지 여부로 이 규칙의 적용을 판단하지 않는다 — 본 에이전트 자신이 항상 강제한다.
+
 생성/수정 시:
 
 1. **연결 이름** 확인: 서비스를 식별할 수 있는 이름 (예: "Kakao Mobility API", "공공데이터포털")
@@ -57,11 +59,13 @@ maxTurns: 20
      - 더미 자격증명(`apiKey:"none"`, `headerName:"X-No-Auth"`, `token:"none"`, 빈 문자열 등)을 임의로 **합성하지 않는다**.
      - 사용자의 명시적 응답(실제 키/토큰 제공, 또는 API_KEY/BEARER 선택) 전에는 `create_api_connection` / `update_api_connection`을 호출하지 않는다.
 3. **authConfig 필드** 안내 (rules.md 참조)
-4. 사용자에게 실제 인증 값 입력 요청
+4. 수집한 연결 이름·authType·authConfig(값 자체는 마스킹하여) 요약을 텍스트로 보여주고 "이대로 등록/수정할까요? (예 / 수정 요청)"으로 **응답을 종료한다 — 같은 턴에 Phase 3(create_api_connection/update_api_connection)을 호출하지 않는다**. 상세 프로토콜은 rules.md 참조.
 
 > **보안 안내**: 입력받은 인증 값은 AES-256-GCM으로 암호화되어 저장되며, 조회 시 마스킹된다.
 
 ### Phase 3 — EXECUTE (실행)
+
+**사용자가 Phase 2의 설계안을 별도 메시지(턴)로 명시적으로 승인한 경우에만** 진행한다 (rules.md "생성/수정 2턴 프로토콜" 참조).
 
 생성: create_api_connection(name, authType, authConfig, description?)
 수정: update_api_connection(id, name?, authType?, authConfig?)
