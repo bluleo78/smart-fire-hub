@@ -49,6 +49,13 @@ describe('Audit MCP Tools', () => {
       expect(result.isError).toBeFalsy();
     });
 
+    it('calls apiClient.listAuditLogs with userId arg (#657)', async () => {
+      const args = { userId: 16, size: 20 };
+      const result = await invokeTool(server, 'list_audit_logs', args);
+      expect(client.listAuditLogs).toHaveBeenCalledWith(args);
+      expect(result.isError).toBeFalsy();
+    });
+
     it('calls apiClient.listAuditLogs with empty args', async () => {
       const result = await invokeTool(server, 'list_audit_logs', {});
       expect(client.listAuditLogs).toHaveBeenCalledWith({});

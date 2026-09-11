@@ -39,6 +39,8 @@ export function createAuditApi(client: AxiosInstance) {
      */
     async listAuditLogs(params?: {
       search?: string;
+      /** 사용자 ID 정확 일치 필터. 백엔드가 이미 지원하는 파라미터를 그대로 전달한다 (#657). */
+      userId?: number;
       actionType?: string;
       resource?: string;
       result?: string;

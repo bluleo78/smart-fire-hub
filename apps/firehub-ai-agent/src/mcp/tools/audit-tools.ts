@@ -17,6 +17,12 @@ export function registerAuditTools(
       '시스템 감사 로그를 조회합니다. 사용자 활동, 리소스 변경, 실패 이벤트를 검색·필터링할 수 있습니다. 최신 항목부터 정렬됩니다.',
       {
         search: z.string().optional().describe('사용자명 또는 설명 검색어'),
+        userId: z
+          .number()
+          .optional()
+          .describe(
+            '사용자 ID 정확 일치 필터 (동명이인/오타 노이즈 없이 특정 사용자만 조회). userId가 주어진 조회는 search 대신 이 파라미터를 우선 사용한다.',
+          ),
         actionType: z.string().optional().describe('액션 유형 필터 (CREATE, UPDATE, DELETE, LOGIN, LOGOUT 등)'),
         resource: z.string().optional().describe('리소스 유형 필터 (dataset, pipeline, user, trigger, role, api_connection 등)'),
         result: z.string().optional().describe('결과 상태 필터 (SUCCESS, FAILURE)'),

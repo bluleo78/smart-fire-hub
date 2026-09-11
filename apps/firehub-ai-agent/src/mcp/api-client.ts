@@ -549,6 +549,8 @@ export class FireHubApiClient {
   /** 감사 로그 목록 조회 */
   listAuditLogs(params?: {
     search?: string;
+    /** 사용자 ID 정확 일치 필터 (#657) */
+    userId?: number;
     actionType?: string;
     resource?: string;
     result?: string;

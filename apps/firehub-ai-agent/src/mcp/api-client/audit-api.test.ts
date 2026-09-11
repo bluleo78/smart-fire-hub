@@ -82,6 +82,13 @@ describe('auditApi (via FireHubApiClient)', () => {
     expect(result.totalElements).toBe(0);
   });
 
+  it('listAuditLogs passes userId filter (#657)', async () => {
+    const mock = { content: [], totalElements: 0, totalPages: 0, number: 0, size: 20 };
+    nock(BASE_URL).get('/admin/audit-logs').query({ userId: '16' }).reply(200, mock);
+    const result = await client.listAuditLogs({ userId: 16 });
+    expect(result.totalElements).toBe(0);
+  });
+
   it('listAuditLogs passes search + page + size params', async () => {
     const mock = { content: [], totalElements: 0, totalPages: 0, number: 1, size: 50 };
     nock(BASE_URL)
