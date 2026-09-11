@@ -3,8 +3,23 @@ import { Controller } from 'react-hook-form';
 
 import { Input } from '../../../components/ui/input';
 import { Label } from '../../../components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
 import { Switch } from '../../../components/ui/switch';
 import type { DatasetColumnResponse } from '../../../types/dataset';
+
+// tri-state BOOLEAN Select에서 사용하는 문자열 표현 <-> 실제 폼 값(true/false/null) 변환
+// (#670) NULL 허용 컬럼은 "값 없음(NULL)"을 명시적으로 선택할 수 있어야 한다.
+function booleanToSelectValue(value: unknown): string {
+  if (value === true) return 'true';
+  if (value === false) return 'false';
+  return 'null';
+}
+
+function selectValueToBoolean(value: string): boolean | null {
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  return null;
+}
 
 interface RowFormFieldsProps {
   columns: DatasetColumnResponse[];
@@ -39,7 +54,30 @@ export function RowFormFields({ columns, form, idPrefix, changedFields }: RowFor
               )}
             </Label>
 
-            {col.dataType === 'BOOLEAN' ? (
+            {col.dataType === 'BOOLEAN' && col.isNullable ? (
+              // NULL 허용 BOOLEAN — 이진 Switch로는 "값 없음(NULL)" 상태를 표현할 수 없으므로
+              // 3상태(예/아니오/비어있음) Select로 렌더링한다. (#670)
+              <Controller
+                name={col.columnName}
+                control={form.control}
+                render={({ field }) => (
+                  <Select
+                    value={booleanToSelectValue(field.value)}
+                    onValueChange={(v) => field.onChange(selectValueToBoolean(v))}
+                  >
+                    <SelectTrigger id={`${idPrefix}-${col.columnName}`} className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="true">예</SelectItem>
+                      <SelectItem value="false">아니오</SelectItem>
+                      <SelectItem value="null">(비어있음)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                )}
+              />
+            ) : col.dataType === 'BOOLEAN' ? (
+              // NOT NULL BOOLEAN — NULL 상태 자체가 불가능하므로 기존 이진 Switch 유지
               <Controller
                 name={col.columnName}
                 control={form.control}

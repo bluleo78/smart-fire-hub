@@ -21,8 +21,13 @@ interface EditRowDialogProps {
   initialData: Record<string, unknown>;
 }
 
-function toFormValue(value: unknown, dataType: string): unknown {
-  if (value === null || value === undefined) return dataType === 'BOOLEAN' ? false : '';
+// (#670) BOOLEAN 값이 NULL인 경우, NULL 허용 컬럼이면 NULL을 그대로 보존해야 한다.
+// 과거에는 무조건 false로 변환해 "값 없음"과 "거짓"을 구분할 수 없게 만들었다.
+function toFormValue(value: unknown, dataType: string, isNullable: boolean): unknown {
+  if (value === null || value === undefined) {
+    if (dataType === 'BOOLEAN') return isNullable ? null : false;
+    return '';
+  }
   if (dataType === 'BOOLEAN') return value === true || value === 'true';
   return String(value);
 }
@@ -34,7 +39,7 @@ export function EditRowDialog({ open, onOpenChange, datasetId, columns, rowId, i
   const defaultValues = useMemo(() => {
     const vals: Record<string, unknown> = {};
     for (const col of editableColumns) {
-      vals[col.columnName] = toFormValue(initialData[col.columnName], col.dataType);
+      vals[col.columnName] = toFormValue(initialData[col.columnName], col.dataType, col.isNullable);
     }
     return vals;
   }, [editableColumns, initialData]);
@@ -57,7 +62,7 @@ export function EditRowDialog({ open, onOpenChange, datasetId, columns, rowId, i
   const changedFields = useMemo(() => {
     const changed = new Set<string>();
     for (const col of editableColumns) {
-      const initial = toFormValue(initialData[col.columnName], col.dataType);
+      const initial = toFormValue(initialData[col.columnName], col.dataType, col.isNullable);
       const current = watchedValues[col.columnName];
       if (String(initial) !== String(current)) {
         changed.add(col.columnName);

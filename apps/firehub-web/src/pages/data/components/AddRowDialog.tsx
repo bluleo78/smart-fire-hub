@@ -26,7 +26,8 @@ export function AddRowDialog({ open, onOpenChange, datasetId, columns }: AddRowD
   const defaultValues = useMemo(() => {
     const vals: Record<string, unknown> = {};
     for (const col of editableColumns) {
-      if (col.dataType === 'BOOLEAN') vals[col.columnName] = false;
+      // (#670) NULL 허용 BOOLEAN 컬럼은 NULL로 초기화해야 애초에 NULL 값으로 행을 생성할 수 있다.
+      if (col.dataType === 'BOOLEAN') vals[col.columnName] = col.isNullable ? null : false;
       else vals[col.columnName] = '';
     }
     return vals;

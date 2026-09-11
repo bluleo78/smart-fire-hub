@@ -211,7 +211,7 @@ test.describe('데이터셋 상세 — 행 추가/편집', () => {
     await expect(page.getByText(/개 행 선택됨/)).toBeVisible({ timeout: 5000 });
   });
 
-  test('BOOLEAN 컬럼이 있는 행 추가 — Switch 토글로 값이 전송된다', async ({
+  test('BOOLEAN 컬럼(NULL 허용)이 있는 행 추가 — tri-state Select로 값이 전송된다', async ({
     authenticatedPage: page,
   }) => {
     // BOOLEAN 컬럼 포함 데이터셋
@@ -271,11 +271,13 @@ test.describe('데이터셋 상세 — 행 추가/편집', () => {
     await page.getByRole('button', { name: /행 추가/ }).click();
     await expect(page.getByRole('dialog').getByRole('heading', { name: '행 추가' })).toBeVisible();
 
-    // BOOLEAN 컬럼 — Switch 컴포넌트 렌더링 확인 및 토글
-    const boolSwitch = page.locator('#add-is_active');
-    await expect(boolSwitch).toBeVisible();
-    // 기본값은 false(unchecked) — 클릭하면 true로 변경
-    await boolSwitch.click();
+    // BOOLEAN 컬럼(NULL 허용) — tri-state Select 렌더링 확인
+    const boolSelect = page.locator('#add-is_active');
+    await expect(boolSelect).toBeVisible();
+    // 기본값은 "(비어있음)" = NULL — "예"를 선택하면 true로 변경
+    await expect(boolSelect).toHaveText('(비어있음)');
+    await boolSelect.click();
+    await page.getByRole('option', { name: '예' }).click();
 
     // TEXT 컬럼 입력
     await page.locator('#add-label').fill('테스트');
@@ -287,6 +289,234 @@ test.describe('데이터셋 상세 — 행 추가/편집', () => {
     const payload = captured.payload as { data: Record<string, unknown> };
     expect(payload.data.is_active).toBe(true);
     expect(payload.data.label).toBe('테스트');
+  });
+
+  test('BOOLEAN 컬럼(NULL 허용) 행 추가 시 값을 선택하지 않으면 NULL로 전송된다', async ({
+    authenticatedPage: page,
+  }) => {
+    // (#670) 행 추가 다이얼로그는 NULL 허용 BOOLEAN 컬럼을 애초에 NULL로 초기화해야 하며,
+    // 사용자가 아무것도 선택하지 않고 제출해도 NULL이 그대로 전송되어야 한다.
+    const boolDataset = createDatasetDetail({
+      id: 4,
+      rowCount: 0,
+      columns: [
+        createColumn({ id: 1, columnName: 'id', displayName: 'ID', dataType: 'INTEGER', isPrimaryKey: true }),
+        createColumn({
+          id: 2,
+          columnName: 'is_active',
+          displayName: '활성화',
+          dataType: 'BOOLEAN',
+          isPrimaryKey: false,
+          isNullable: true,
+          columnOrder: 1,
+        }),
+        createColumn({
+          id: 3,
+          columnName: 'label',
+          displayName: '라벨',
+          dataType: 'TEXT',
+          isPrimaryKey: false,
+          isNullable: false,
+          columnOrder: 2,
+        }),
+      ],
+    });
+
+    await mockApi(page, 'GET', '/api/v1/datasets/4', boolDataset);
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', createCategories());
+    await mockApi(page, 'GET', '/api/v1/datasets/4/queries', createPageResponse([]));
+    await mockApi(page, 'GET', '/api/v1/datasets/tags', []);
+    await mockApi(page, 'GET', '/api/v1/datasets/4/stats', []);
+
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets/4/data',
+      (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ columns: boolDataset.columns, rows: [], page: 0, size: 50, totalElements: 0, totalPages: 0 }),
+      }),
+    );
+
+    const addCapture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/datasets/4/data/rows',
+      { id: 1, is_active: null, label: '테스트' },
+      { capture: true },
+    );
+
+    await page.goto('/data/datasets/4');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible({ timeout: 10000 });
+    await page.getByRole('tab', { name: '데이터' }).click();
+
+    await page.getByRole('button', { name: /행 추가/ }).click();
+    await expect(page.getByRole('dialog').getByRole('heading', { name: '행 추가' })).toBeVisible();
+
+    // BOOLEAN(NULL 허용) 기본값은 "(비어있음)" — 건드리지 않고 제출
+    await expect(page.locator('#add-is_active')).toHaveText('(비어있음)');
+    await page.locator('#add-label').fill('테스트');
+    await page.getByRole('dialog').getByRole('button', { name: '추가' }).click();
+
+    const captured = await addCapture.waitForRequest();
+    const payload = captured.payload as { data: Record<string, unknown> };
+    expect(payload.data.is_active).toBeNull();
+  });
+
+  test('NULL인 NULL 허용 BOOLEAN 행을 편집 다이얼로그에서 그대로 저장하면 NULL이 유지된다', async ({
+    authenticatedPage: page,
+  }) => {
+    // (#670) 회귀 재현 테스트 — 편집 다이얼로그를 열고 아무것도 바꾸지 않고 저장해도
+    // NULL이 false로 손상되면 안 된다.
+    const boolDataset = createDatasetDetail({
+      id: 5,
+      rowCount: 1,
+      columns: [
+        createColumn({ id: 1, columnName: 'id', displayName: 'ID', dataType: 'INTEGER', isPrimaryKey: true }),
+        createColumn({
+          id: 2,
+          columnName: 'is_active',
+          displayName: '활성화',
+          dataType: 'BOOLEAN',
+          isPrimaryKey: false,
+          isNullable: true,
+          columnOrder: 1,
+        }),
+        createColumn({
+          id: 3,
+          columnName: 'label',
+          displayName: '라벨',
+          dataType: 'TEXT',
+          isPrimaryKey: false,
+          isNullable: false,
+          columnOrder: 2,
+        }),
+      ],
+    });
+
+    await mockApi(page, 'GET', '/api/v1/datasets/5', boolDataset);
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', createCategories());
+    await mockApi(page, 'GET', '/api/v1/datasets/5/queries', createPageResponse([]));
+    await mockApi(page, 'GET', '/api/v1/datasets/tags', []);
+    await mockApi(page, 'GET', '/api/v1/datasets/5/stats', []);
+
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets/5/data',
+      (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          columns: boolDataset.columns,
+          rows: [{ id: 1, is_active: null, label: '기존값' }],
+          page: 0,
+          size: 50,
+          totalElements: 1,
+          totalPages: 1,
+        }),
+      }),
+    );
+
+    const updateCapture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/datasets/5/data/rows/1',
+      { id: 1, is_active: null, label: '기존값' },
+      { capture: true },
+    );
+
+    await page.goto('/data/datasets/5');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible({ timeout: 10000 });
+    await page.getByRole('tab', { name: '데이터' }).click();
+
+    const labelCell = page.getByRole('cell', { name: '기존값' });
+    await expect(labelCell).toBeVisible();
+    await labelCell.dblclick();
+
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByRole('heading', { name: /행 편집 \(ID: 1\)/ })).toBeVisible();
+
+    // 기존 값이 NULL이었으므로 "(비어있음)"으로 표시되어야 한다 — false로 왜곡되면 안 됨
+    await expect(page.locator('#edit-is_active')).toHaveText('(비어있음)');
+
+    // 아무것도 바꾸지 않고 저장
+    await dialog.getByRole('button', { name: '저장' }).click();
+
+    const captured = await updateCapture.waitForRequest();
+    const payload = captured.payload as { data: Record<string, unknown> };
+    expect(payload.data.is_active).toBeNull();
+  });
+
+  test('NOT NULL BOOLEAN 컬럼은 기존과 동일하게 이진 Switch로 동작한다', async ({
+    authenticatedPage: page,
+  }) => {
+    // (#670) NOT NULL 컬럼은 NULL 상태 자체가 불가능하므로 회귀 없이 기존 Switch UI를 유지해야 한다.
+    const boolDataset = createDatasetDetail({
+      id: 6,
+      rowCount: 0,
+      columns: [
+        createColumn({ id: 1, columnName: 'id', displayName: 'ID', dataType: 'INTEGER', isPrimaryKey: true }),
+        createColumn({
+          id: 2,
+          columnName: 'is_active',
+          displayName: '활성화',
+          dataType: 'BOOLEAN',
+          isPrimaryKey: false,
+          isNullable: false,
+          columnOrder: 1,
+        }),
+        createColumn({
+          id: 3,
+          columnName: 'label',
+          displayName: '라벨',
+          dataType: 'TEXT',
+          isPrimaryKey: false,
+          isNullable: false,
+          columnOrder: 2,
+        }),
+      ],
+    });
+
+    await mockApi(page, 'GET', '/api/v1/datasets/6', boolDataset);
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', createCategories());
+    await mockApi(page, 'GET', '/api/v1/datasets/6/queries', createPageResponse([]));
+    await mockApi(page, 'GET', '/api/v1/datasets/tags', []);
+    await mockApi(page, 'GET', '/api/v1/datasets/6/stats', []);
+
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets/6/data',
+      (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ columns: boolDataset.columns, rows: [], page: 0, size: 50, totalElements: 0, totalPages: 0 }),
+      }),
+    );
+
+    const addCapture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/datasets/6/data/rows',
+      { id: 1, is_active: true, label: '테스트' },
+      { capture: true },
+    );
+
+    await page.goto('/data/datasets/6');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible({ timeout: 10000 });
+    await page.getByRole('tab', { name: '데이터' }).click();
+
+    await page.getByRole('button', { name: /행 추가/ }).click();
+    await expect(page.getByRole('dialog').getByRole('heading', { name: '행 추가' })).toBeVisible();
+
+    // NOT NULL BOOLEAN — Switch 렌더링(Select 아님), 기본값 false
+    const boolSwitch = page.locator('#add-is_active');
+    await expect(boolSwitch).toBeVisible();
+    await expect(boolSwitch).toHaveAttribute('role', 'switch');
+    await boolSwitch.click();
+
+    await page.locator('#add-label').fill('테스트');
+    await page.getByRole('dialog').getByRole('button', { name: '추가' }).click();
+
+    const captured = await addCapture.waitForRequest();
+    const payload = captured.payload as { data: Record<string, unknown> };
+    expect(payload.data.is_active).toBe(true);
   });
 
   test('GEOMETRY 컬럼에 잘못된 값 입력 → 클라이언트 GeoJSON 유효성 에러 표시', async ({

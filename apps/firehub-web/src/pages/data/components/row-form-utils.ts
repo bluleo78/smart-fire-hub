@@ -18,7 +18,9 @@ export function buildRowZodSchema(columns: DatasetColumnResponse[]) {
         break;
       case 'BOOLEAN':
         field = z.boolean();
-        if (col.isNullable) field = field.optional();
+        // NULL 허용 컬럼은 true/false 외에 null(값 없음)도 유효한 값으로 허용한다.
+        // (#670) 그렇지 않으면 tri-state UI가 null을 선택해도 Zod 검증에서 걸러진다.
+        if (col.isNullable) field = field.nullable().optional();
         break;
       case 'VARCHAR':
         field = z.string();
