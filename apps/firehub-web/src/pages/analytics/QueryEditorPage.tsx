@@ -578,6 +578,17 @@ export default function QueryEditorPage() {
 
   const handleQueryExport = async (format: ExportFormat) => {
     if (!result || result.error || result.columns.length === 0) return;
+
+    // 결과가 서버 maxRows 캡으로 잘린 경우, 메모리상의 result.rows는 전체가 아니라
+    // 상위 N행뿐이다. 이를 그대로 내보내면 사용자가 전체 데이터를 받았다고
+    // 오인할 수 있으므로, 내보내기 진행 전 명확히 확인받는다. (#658)
+    if (result.truncated) {
+      const confirmed = window.confirm(
+        `결과가 ${result.rows.length}행으로 제한되어 있어 전체 데이터가 아닌 일부만 내보내집니다. 계속하시겠습니까?`,
+      );
+      if (!confirmed) return;
+    }
+
     try {
       const response = await exportsApi.exportQueryResult({
         columnNames: result.columns,
@@ -585,9 +596,15 @@ export default function QueryEditorPage() {
         format,
       });
       const ext = format === 'CSV' ? 'csv' : 'xlsx';
-      const filename = `query_result_${new Date().toISOString().slice(0, 10).replace(/-/g, '')}.${ext}`;
+      // truncated인 경우 파일명에도 잘림 사실을 남겨 파일만 봐도 알 수 있게 한다.
+      const suffix = result.truncated ? `_상위${result.rows.length}행` : '';
+      const filename = `query_result_${new Date().toISOString().slice(0, 10).replace(/-/g, '')}${suffix}.${ext}`;
       downloadBlob(filename, response.data as Blob);
-      toast.success('파일이 다운로드되었습니다.');
+      if (result.truncated) {
+        toast.warning(`상위 ${result.rows.length}행만 내보내졌습니다. 전체 결과가 아닙니다.`);
+      } else {
+        toast.success('파일이 다운로드되었습니다.');
+      }
     } catch (error) {
       handleApiError(error, '내보내기에 실패했습니다.');
     }

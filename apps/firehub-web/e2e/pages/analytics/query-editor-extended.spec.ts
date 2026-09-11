@@ -203,6 +203,137 @@ test.describe('쿼리 에디터 심화', () => {
     await expect(page.getByRole('menuitem', { name: 'CSV로 내보내기' })).toBeVisible();
   });
 
+  test('truncated 결과 내보내기 — 확인 다이얼로그에서 취소하면 내보내기 API가 호출되지 않는다 (#658)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupQueryEditorMocks(page, 1);
+    // truncated: true — 서버 maxRows 캡으로 잘린 결과
+    await mockApi(
+      page,
+      'POST',
+      '/api/v1/analytics/queries/execute',
+      createQueryResult({
+        queryType: 'SELECT',
+        rows: [{ id: 1, name: '항목 1', value: 100 }],
+        columns: ['id', 'name', 'value'],
+        truncated: true,
+      }),
+    );
+
+    let exportCalled = false;
+    await page.route(
+      (url) => url.pathname === '/api/v1/query-results/export',
+      (route) => {
+        exportCalled = true;
+        return route.fulfill({ status: 200, contentType: 'text/csv', body: 'id,name,value' });
+      },
+    );
+
+    // window.confirm을 취소로 응답 — 잘림 경고 메시지 검증
+    page.once('dialog', async (dialog) => {
+      expect(dialog.type()).toBe('confirm');
+      expect(dialog.message()).toContain('제한되어 있어');
+      await dialog.dismiss();
+    });
+
+    await page.goto('/analytics/queries/1');
+    await expect(page.getByText('테스트 쿼리')).toBeVisible();
+    await page.getByRole('button', { name: '실행' }).click();
+    await expect(page.getByRole('columnheader', { name: 'id' })).toBeVisible();
+
+    await page.getByRole('button', { name: '내보내기' }).click();
+    await page.getByRole('menuitem', { name: 'CSV로 내보내기' }).click();
+
+    // 취소했으므로 내보내기 API는 호출되지 않아야 한다
+    await page.waitForTimeout(300);
+    expect(exportCalled).toBe(false);
+  });
+
+  test('truncated 결과 내보내기 — 확인하면 내보내지되 잘림 경고 토스트가 표시된다 (#658)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupQueryEditorMocks(page, 1);
+    await mockApi(
+      page,
+      'POST',
+      '/api/v1/analytics/queries/execute',
+      createQueryResult({
+        queryType: 'SELECT',
+        rows: [{ id: 1, name: '항목 1', value: 100 }],
+        columns: ['id', 'name', 'value'],
+        truncated: true,
+      }),
+    );
+
+    let exportCalled = false;
+    await page.route(
+      (url) => url.pathname === '/api/v1/query-results/export',
+      (route) => {
+        exportCalled = true;
+        return route.fulfill({ status: 200, contentType: 'text/csv', body: 'id,name,value' });
+      },
+    );
+
+    page.once('dialog', async (dialog) => {
+      await dialog.accept();
+    });
+
+    await page.goto('/analytics/queries/1');
+    await expect(page.getByText('테스트 쿼리')).toBeVisible();
+    await page.getByRole('button', { name: '실행' }).click();
+    await expect(page.getByRole('columnheader', { name: 'id' })).toBeVisible();
+
+    await page.getByRole('button', { name: '내보내기' }).click();
+    await page.getByRole('menuitem', { name: 'CSV로 내보내기' }).click();
+
+    // 확인했으므로 내보내기 API가 호출되고, 잘림을 알리는 경고 토스트가 떠야 한다
+    await expect.poll(() => exportCalled).toBe(true);
+    await expect(page.getByText(/상위 1행만 내보내졌습니다/)).toBeVisible();
+  });
+
+  test('내보내기 회귀 — truncated가 아닌 정상 결과는 확인 없이 바로 내보내진다 (#658)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupQueryEditorMocks(page, 1);
+    // truncated: false (기본값) — maxRows 캡에 걸리지 않은 정상 결과
+    await mockApi(
+      page,
+      'POST',
+      '/api/v1/analytics/queries/execute',
+      createQueryResult({
+        queryType: 'SELECT',
+        rows: [{ id: 1, name: '항목 1', value: 100 }],
+        columns: ['id', 'name', 'value'],
+      }),
+    );
+
+    let exportCalled = false;
+    let dialogShown = false;
+    page.on('dialog', () => {
+      dialogShown = true;
+    });
+    await page.route(
+      (url) => url.pathname === '/api/v1/query-results/export',
+      (route) => {
+        exportCalled = true;
+        return route.fulfill({ status: 200, contentType: 'text/csv', body: 'id,name,value' });
+      },
+    );
+
+    await page.goto('/analytics/queries/1');
+    await expect(page.getByText('테스트 쿼리')).toBeVisible();
+    await page.getByRole('button', { name: '실행' }).click();
+    await expect(page.getByRole('columnheader', { name: 'id' })).toBeVisible();
+
+    await page.getByRole('button', { name: '내보내기' }).click();
+    await page.getByRole('menuitem', { name: 'CSV로 내보내기' }).click();
+
+    // 확인 다이얼로그 없이 바로 내보내기 API가 호출되고, 일반 성공 토스트가 표시된다
+    await expect.poll(() => exportCalled).toBe(true);
+    expect(dialogShown).toBe(false);
+    await expect(page.getByText('파일이 다운로드되었습니다.')).toBeVisible();
+  });
+
   test('폴더가 있는 쿼리 — 폴더 뱃지가 툴바에 표시된다', async ({
     authenticatedPage: page,
   }) => {
