@@ -1,6 +1,6 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Activity, ArrowLeft, Copy } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -28,6 +28,7 @@ import {
   useProactiveTemplates,
   useUpdateProactiveJob,
 } from '@/hooks/queries/useProactiveMessages';
+import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import { handleApiError } from '@/lib/api-error';
 import { type ProactiveJobFormValues,proactiveJobSchema } from '@/lib/validations/proactive-job';
 
@@ -156,14 +157,11 @@ export default function ProactiveJobDetailPage() {
     setSearchParams({ tab });
   };
 
-  // 브라우저 탭 닫기·새로고침 시 이탈 경고 (이슈 #59 — #56/#57/#58과 동일 패턴)
-  useEffect(() => {
-    const handler = (e: BeforeUnloadEvent) => {
-      if (isDirty) e.preventDefault();
-    };
-    window.addEventListener('beforeunload', handler);
-    return () => window.removeEventListener('beforeunload', handler);
-  }, [isDirty]);
+  // 사이드바 메뉴 클릭(SPA 내부 네비게이션) · 브라우저 뒤로/앞으로 · 탭 닫기·새로고침 가드 (이슈 #640)
+  // - 페이지 내 명시적 "뒤로가기"/"취소" 버튼은 아래 handleBackClick/handleCancelEdit이 별도로 처리한다
+  //   (leaveAction으로 back/cancel-edit을 구분해야 하므로 이 공용 훅으로 대체할 수 없음)
+  // - 이슈 #59에서 커버하던 beforeunload도 이 훅이 함께 처리하므로 페이지 자체의 중복 리스너는 제거한다
+  const { dialog: unsavedChangesDialog } = useUnsavedChangesGuard(isDirty);
 
   // 뒤로가기 버튼 클릭 핸들러 — dirty면 다이얼로그 표시, 아니면 즉시 이동 (이슈 #59)
   const handleBackClick = () => {
@@ -451,6 +449,9 @@ export default function ProactiveJobDetailPage() {
           </TabsContent>
         )}
       </Tabs>
+
+      {/* 사이드바 링크·브라우저 뒤로가기·탭 닫기 이탈 가드 다이얼로그 (#640) — useUnsavedChangesGuard가 렌더 */}
+      {unsavedChangesDialog}
 
       {/*
         이탈 확인 다이얼로그 — 뒤로가기/취소 클릭 시 dirty면 표시 (이슈 #59)
