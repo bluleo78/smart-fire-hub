@@ -1,6 +1,9 @@
 import { z } from 'zod';
 
-const tableNameRegex = /^[a-z][a-z0-9_]*$/;
+// 테이블명 인라인 유효성(입력 중 실시간 판정)에서도 재사용하기 위해 export.
+// (#644) react-hook-form이 mode:'onSubmit'이면 formState.errors가 최초 제출 전까지
+// 채워지지 않으므로, 입력 중 성공 메시지 노출 조건은 이 정규식을 직접 재검사해야 한다.
+export const tableNameRegex = /^[a-z][a-z0-9_]*$/;
 const columnNameRegex = /^[a-z][a-z0-9_]*$/;
 
 export const datasetColumnSchema = z.object({

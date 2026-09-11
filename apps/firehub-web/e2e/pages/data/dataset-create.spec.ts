@@ -165,4 +165,26 @@ test.describe('데이터셋 생성 페이지', () => {
       page.getByText('영문 소문자, 숫자, 밑줄만 사용 가능합니다'),
     ).toBeVisible();
   });
+
+  test('제출 전 입력 중에도 형식에 안 맞는 테이블명에는 "사용 가능" 메시지가 뜨지 않는다 (#644)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDatasetMocks(page);
+    await page.goto('/data/datasets/new');
+
+    // 형식 규칙(영문 소문자로 시작, 소문자·숫자·밑줄만 허용) 위반 값 입력 —
+    // 아직 "생성" 버튼을 누르지 않았으므로 formState.errors는 채워지지 않은 상태다.
+    await page.getByLabel('테이블명').fill('1invalid-table name!');
+
+    // 중복 검사 debounce(400ms)가 끝날 때까지 대기
+    await page.waitForTimeout(600);
+
+    // 회귀 확인: 형식이 잘못됐음에도 "사용 가능한 테이블명입니다"가 표시되면 안 된다
+    await expect(page.getByText('사용 가능한 테이블명입니다.')).toHaveCount(0);
+
+    // 정상 케이스 회귀 없음 확인: 형식이 유효한 이름을 입력하면 "사용 가능" 메시지가 정상적으로 뜬다
+    await page.getByLabel('테이블명').fill('valid_table_name');
+    await page.waitForTimeout(600);
+    await expect(page.getByText('사용 가능한 테이블명입니다.')).toBeVisible();
+  });
 });
