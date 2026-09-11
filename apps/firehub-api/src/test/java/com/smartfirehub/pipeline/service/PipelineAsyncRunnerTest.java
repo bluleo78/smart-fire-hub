@@ -661,6 +661,51 @@ class PipelineAsyncRunnerTest {
   }
 
   @Test
+  void executeStep_selectProbeQueryFails_usesRootCauseMessageNotJooqInternals() {
+    // given: SELECT 컬럼 스키마 추론용 probe 쿼리가 실패(존재하지 않는 테이블 등)하는 상황(#662).
+    // jOOQ의 DataAccessException.getMessage()는 "jOOQ; bad SQL grammar [probe SQL 원문]" 형식으로
+    // 사용자가 작성하지 않은 내부 구현 세부사항(AS _probe LIMIT 0 래핑)을 그대로 노출하므로,
+    // 실제 근본 원인(cause)이 우선 사용돼야 한다.
+    Long pipelineId = 15L;
+    Long userId = 1L;
+    Long stepId = 205L;
+    Long stepExecId = 305L;
+    Long outputDatasetId = 55L;
+
+    String selectSql = "SELECT * FROM data.\"nonexistent_table\"";
+    PipelineStepResponse sqlStep =
+        stepResponseWithOutput(stepId, "probe-fail", "SQL", selectSql, outputDatasetId, List.of());
+
+    when(datasetRepository.findTableNameById(outputDatasetId))
+        .thenReturn(Optional.of("output_probefail"));
+
+    String rootCauseMessage =
+        "ERROR: relation \"data.nonexistent_table\" does not exist\n  Position: 15";
+    RuntimeException rootCause = new RuntimeException(rootCauseMessage);
+    org.jooq.exception.DataAccessException probeFailure =
+        new org.jooq.exception.DataAccessException(
+            "SQL [SELECT * FROM (SELECT * FROM data.\"nonexistent_table\") AS _probe LIMIT 0]; "
+                + rootCauseMessage,
+            rootCause);
+    doThrow(probeFailure).when(pipelineDsl).fetch(anyString());
+
+    // when
+    String status =
+        runner.executeStep(stepExecId, sqlStep, pipelineId, "TestPipeline", userId, false);
+
+    // then: FAILED 반환, 근본 원인 메시지 포함 + probe 래핑 내부 구현 디테일은 노출되지 않음
+    assertThat(status).isEqualTo("FAILED");
+    ArgumentCaptor<String> errorCaptor = ArgumentCaptor.forClass(String.class);
+    verify(executionRepository)
+        .updateStepExecution(
+            eq(stepExecId), eq("FAILED"), isNull(), isNull(), errorCaptor.capture(), isNull(), any());
+    String errorMessage = errorCaptor.getValue();
+    assertThat(errorMessage).contains("relation \"data.nonexistent_table\" does not exist");
+    assertThat(errorMessage).doesNotContain("_probe");
+    assertThat(errorMessage).doesNotContain("jOOQ");
+  }
+
+  @Test
   void executeStep_apiCallWithoutOutputDataset_createsTempDataset() {
     // given: API_CALL 스텝, outputDatasetId 없음 → fieldMappings에서 임시 데이터셋 자동 생성
     Long pipelineId = 20L;

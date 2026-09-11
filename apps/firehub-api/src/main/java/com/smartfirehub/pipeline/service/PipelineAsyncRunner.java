@@ -1145,7 +1145,7 @@ public class PipelineAsyncRunner {
           .map(Field::getName)
           .collect(Collectors.toList());
     } catch (Exception e) {
-      throw new ScriptExecutionException("SQL 컬럼 분석 실패: " + e.getMessage(), e);
+      throw new ScriptExecutionException("SQL 컬럼 분석 실패: " + extractRootCauseMessage(e), e);
     }
   }
 
@@ -1163,8 +1163,29 @@ public class PipelineAsyncRunner {
           .map(f -> new ColumnInfo(f.getName(), mapJooqTypeToAppType(f.getDataType())))
           .collect(Collectors.toList());
     } catch (Exception e) {
-      throw new ScriptExecutionException("SQL 컬럼 타입 분석 실패: " + e.getMessage(), e);
+      throw new ScriptExecutionException("SQL 컬럼 타입 분석 실패: " + extractRootCauseMessage(e), e);
     }
+  }
+
+  /**
+   * SQL 컬럼 스키마 추론용 probe 쿼리 실행 실패 시, 사용자에게 보여줄 근본 원인 메시지를 추출한다(#662).
+   *
+   * <p>jOOQ가 던지는 {@code DataAccessException.getMessage()}는 "jOOQ; bad SQL grammar [<probe SQL 원문>]"
+   * 형식으로 {@code SELECT * FROM (...) AS _probe LIMIT 0}처럼 사용자가 작성하지 않은 내부 구현 세부사항(probe
+   * 래핑)을 그대로 노출한다. 반면 실제 DB(PostgreSQL 등)가 반환한 구체적 원인(예: "relation ... does not
+   * exist")은 {@code getCause()}에만 담겨 있어 그대로는 사용자에게 전달되지 않는다. 이 메서드는 cause 체인을
+   * 우선 사용해 근본 원인만 뽑아내고, cause가 없거나 메시지가 비어 있을 때만 원래 메시지로 폴백한다.
+   *
+   * @param e probe 쿼리 실행 중 발생한 예외
+   * @return 사용자에게 노출할 근본 원인 메시지 (probe SQL 구문 등 내부 구현 디테일 제거)
+   */
+  private String extractRootCauseMessage(Exception e) {
+    Throwable cause = e.getCause();
+    if (cause != null && cause.getMessage() != null && !cause.getMessage().isBlank()) {
+      return cause.getMessage();
+    }
+    // cause가 없으면 원본 예외 메시지로 폴백 (probe SQL 원문이 포함될 수 있으나 최소한의 정보는 제공)
+    return e.getMessage();
   }
 
   /** 임시 데이터셋 물리 테이블이 항상 자동 보유하는 시스템 예약 컬럼명 (DataTableService 참조). */
