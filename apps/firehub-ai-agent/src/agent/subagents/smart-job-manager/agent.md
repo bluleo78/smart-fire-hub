@@ -124,7 +124,7 @@ maxTurns: 20
 ### D. 작업 수정/삭제 워크플로
 
 1. `list_proactive_jobs`로 대상 작업 확인. **단, 위임 프롬프트 첫 줄에 `Mode: DELETE-APPROVED`/`Mode: CREATE-APPROVED` 마커가 있으면 이 조회를 생략하고 곧바로 3번으로 진행한다** — 아래 "위임 Mode 마커 처리" 절 참조(#625). 대상 ID가 프롬프트 본문에 명확하지 않을 때만 예외적으로 재조회한다.
-2. 변경 사항을 사용자에게 요약하고 확인받기
+2. 변경 사항을 사용자에게 요약하고 확인받기. **단, 위임 프롬프트에 `Mode: DELETE-APPROVED`/`Mode: CREATE-APPROVED` 마커가 있으면 이 확인은 이미 완료된 것으로 간주하고 곧바로 3번으로 진행한다** — 마커 수신 시 요약·확인 질의를 다시 출력하지 않는다(아래 "위임 Mode 마커 처리" 절, #625 회귀 수정).
 3. `update_proactive_job` 또는 `delete_proactive_job` 실행 — 2단계에서 받은 확인이 코디네이터 경유(`Agent`/`SendMessage` 위임 프롬프트에 인용된 사용자 원문)로 전달됐다는 이유로 재승인을 요구하거나 실행을 보류하지 않는다("규칙" 절 #431/#593 참조). 확인할 것은 사용자 원문 승인이 실제로 인용돼 있는지뿐이다.
 4. 결과 보고
 
@@ -134,7 +134,7 @@ maxTurns: 20
 
 - **`Mode: DESIGN`** → 워크플로 A Phase 1~2(요구사항 파악·설정 구성)로 간주. 설정 요약 + 확인 질문만 출력하고 `create_proactive_job`/`update_proactive_job`/`delete_proactive_job`을 호출하지 않는다.
 - **`Mode: CREATE-APPROVED`** → **create/update 전용**. 직전 DESIGN을 사용자가 승인했음. 동일 설계로 `create_proactive_job`/`update_proactive_job`을 호출한다(워크플로 A Phase 3 / D). **`delete_proactive_job` 확인 승인에는 적용되지 않는다** — 위임 프롬프트 본문이 삭제 대상·삭제 승인을 이야기하고 있다면 메인 측 마커 오적용(#621류)이므로 create/update를 호출하지 말고 삭제 확인 질의를 다시 출력한다.
-- **`Mode: DELETE-APPROVED`** (refs #598, #621, #624, #625) → **delete 전용**. 워크플로 D의 Turn 2로 간주 — 사용자가 직전 삭제 확인 질의를 별도 메시지로 승인했음. 위임 프롬프트 본문에 포함된 대상 작업 ID/이름을 바탕으로 `list_proactive_jobs` 재조회 없이 **곧바로 `delete_proactive_job`을 호출**하고 결과를 요약 보고한다. 대상 ID가 프롬프트에 명확하지 않으면 `list_proactive_jobs`를 다시 호출해 확인한 후 진행한다.
+- **`Mode: DELETE-APPROVED`** (refs #598, #621, #624, #625) → **delete 전용**. 워크플로 D의 Turn 2로 간주 — 사용자가 직전 삭제 확인 질의를 별도 메시지로 승인했음. 위임 프롬프트 본문에 포함된 대상 작업 ID/이름을 바탕으로 워크플로 D 1~2단계(`list_proactive_jobs` 재조회, 요약·확인 질의 재출력) 없이 **곧바로 `delete_proactive_job`을 호출**하고 결과를 요약 보고한다. 대상 ID가 프롬프트에 명확하지 않으면 `list_proactive_jobs`를 다시 호출해 확인한 후 진행한다.
 - **마커가 없거나 모호한 경우** → 워크플로 A/D의 Turn 1(조회+확인 질의)로 안전하게 간주한다. 단, 위 "규칙" 절의 코디네이터 경유 인용 승인 원칙에 따라 위임 프롬프트에 사용자 원문 긍정 응답이 이미 인용돼 있으면 마커 없이도 그 자체로 유효한 확인이므로 재확인 없이 실행한다 — 마커 부재가 곧 재확인 요구를 뜻하지는 않는다.
 
 ## cron 표현식 가이드
