@@ -59,6 +59,8 @@
 - ⚠️ 개별 자격증명 키(DB_PASSWORD/DB_USER/DB_HOST 등)는 제공하지 않는다. DB 접근은 `DB_URL` 만 사용한다.
 - ⚠️ 금지(저장·실행 시 차단됨): 셸 실행(`subprocess`/`os.system`/`os.popen`), 동적 코드 실행(`eval`/`exec`/`__import__`/`importlib`/`ctypes`). 데이터 가공은 pandas/numpy 로 한다.
 
+**⚠️ 이전 스텝 temp 출력 참조 불가 (refs #654)**: PYTHON scriptContent에는 SQL의 `{{#N}}` 같은 치환이 적용되지 않고, `dependsOnStepNames` → 입력 자동 resolve도 구현되어 있지 않다(AI_CLASSIFY 전용). PYTHON 스텝이 조회할 수 있는 것은 **`inputDatasetIds`로 명시 지정된 영구(TABLE) 데이터셋**뿐이며, `DB_URL`로 조회할 실제 테이블명을 하드코딩해야 한다. 이전 스텝(SQL/PYTHON 무관)의 `outputDatasetId` 미지정 temp 출력에만 의존하는 PYTHON 스텝 설계는 현재 지원하지 않는다 — 아래 예시는 모두 체인의 **첫 스텝**(외부 API 호출)이거나 영구 데이터셋을 조회하는 경우이며, "이전 스텝 temp 출력을 이어받는 PYTHON" 예시는 의도적으로 없다. 자세한 대안은 `rules.md`의 "PYTHON 입력 데이터셋 (제약)" 절 참조.
+
 **예시**:
 ```json
 {

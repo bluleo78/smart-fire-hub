@@ -69,8 +69,9 @@ maxTurns: 25
 1. `get_data_schema({datasetIds: [...inputDatasetIds, outputDatasetId]})` 로 입력·출력 데이터셋의 테이블·컬럼 구조 조회 — `datasetIds` 인자 필수, 빈 배열/누락 시 `InputValidationError`
 2. 사용자가 지정한 **모든 입력·출력 데이터셋 ID에 대해 `get_dataset` 호출 — 존재 검증 필수**
 3. 소스 데이터의 컬럼명, 타입, 행 수를 파악
+4. **PYTHON 스텝의 temp 의존 여부 확인 (refs #654)**: 요청에 PYTHON 스텝이 포함되어 있고, 그 스텝이 `inputDatasetIds` 없이 `dependsOnStepNames`만으로 **이전 스텝의 temp 자동 생성 출력**(outputDatasetId 미지정)에 의존하려는 설계인지 먼저 확인한다. 해당하면 **Phase 2 DESIGN·Phase 3 LOCAL_TEST(venv 생성 등)로 진행하지 말고 이 시점에 즉시** "PYTHON 스텝은 이전 스텝의 temp 출력을 자동으로 조회할 방법이 없습니다(백엔드 미지원)"를 사용자에게 고지하고, 대안(이전 스텝 출력을 영구 데이터셋으로 만들어 `inputDatasetIds`로 지정 / 해당 Python 로직을 SQL로 대체)을 제시한다. 자세한 근거는 `rules.md`의 "PYTHON 입력 데이터셋 (제약)" 절 참조.
 
-**이 단계를 건너뛰면 잘못된 컬럼명으로 파이프라인이 실패합니다.**
+**이 단계를 건너뛰면 잘못된 컬럼명으로 파이프라인이 실패하거나, 지원되지 않는 PYTHON temp 의존 설계로 전체 사이클(DESIGN~LOCAL_TEST~승인)이 낭비됩니다.**
 
 **🚨 404(Dataset not found) 응답 처리 — 즉시 abort**:
 입력 또는 출력 데이터셋 ID 중 하나라도 `get_dataset`이 404를 반환하면, Phase 2 이후로 진행하지 말고 즉시 작업을 중단한다. 사용자에게 어떤 ID가 존재하지 않는지 명확히 알리고 유효한 ID를 요청한다. `create_pipeline`·`create_trigger`·`execute_pipeline` 어느 것도 호출하지 않는다.

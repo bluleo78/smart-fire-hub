@@ -21,7 +21,7 @@
 - N은 steps 배열 내 순서 기준 (첫 번째 스텝 = {{#1}})
 - SQL scriptContent 내에서만 사용
 - 실행 시 `data."ptmp_{pipelineId}_{stepname}_{hash}"` 형태로 치환
-- 참조하는 스텝이 출력 데이터셋을 가져야 함 (temp 자동 생성 포함)
+- 참조하는 스텝이 출력 데이터셋을 가져야 함 (temp 자동 생성 포함) — **단, 이 자동 치환은 SQL scriptContent 전용이다. PYTHON 스텝의 scriptContent 문자열에는 `{{#N}}` 치환이 적용되지 않는다** (백엔드 `PipelineAsyncRunner`는 SQL 실행 분기에서만 치환을 수행). 아래 "PYTHON 입력 데이터셋 (제약)" 절 참조.
 
 ## 출력 데이터셋
 - outputDatasetId 지정: 해당 데이터셋에 결과 적재
@@ -55,6 +55,17 @@ AI_CLASSIFY 스텝의 입력 데이터는 두 가지 방법으로 지정합니�
 
 파이프라인 생성 시 AI_CLASSIFY에 inputDatasetIds를 지정하지 마세요.
 dependsOnStepNames만 설정하면 됩니다.
+
+## PYTHON 입력 데이터셋 (제약 — 백엔드 미지원, refs #654)
+
+**PYTHON 스텝은 AI_CLASSIFY와 달리 `dependsOnStepNames` → 입력 데이터 자동 resolve가 구현되어 있지 않다.** `PipelineAsyncRunner`의 PYTHON 실행 분기에는 이전 스텝의 (특히 `outputDatasetId` 미지정으로 자동 생성된) temp 출력 테이블명을 주입하는 로직이 전혀 없고, `{{#N}}` 치환도 SQL 전용이라 PYTHON scriptContent 문자열에는 적용되지 않는다. 즉 PYTHON scriptContent는 실행 시점의 temp 테이블 실제 이름(`ptmp_{pipelineId}_{stepname}_{hash}`)을 알아낼 검증된 방법이 없다.
+
+**따라서 PYTHON 스텝이 이전 스텝(SQL이든 PYTHON이든)의 **temp 자동 생성 출력**에만 의존해야 하는 설계는 현재 지원되지 않는다.** 가능한 경우만 다음과 같다:
+
+1. **체인의 첫 스텝** — 외부 API 호출(`urllib`)이나 고정된 영구 데이터셋 조회로 시작하는 PYTHON 스텝. 이전 스텝 출력에 의존하지 않음.
+2. **`inputDatasetIds`로 명시 지정된 영구(TABLE) 데이터셋만 조회** — PYTHON 스텝은 `DB_URL`(psycopg2)로 하드코딩 가능한 실제 테이블명만 조회할 수 있다. 이전 스텝의 결과를 PYTHON에 넘기려면, 그 이전 스텝이 **영구 데이터셋**(`outputDatasetId` 지정)에 적재하도록 설계하고, PYTHON 스텝은 그 영구 데이터셋 ID를 `inputDatasetIds`로 명시해야 한다.
+
+`dependsOnStepNames`만으로 PYTHON 스텝을 이전 스텝의 temp 출력에 연결하려는 설계를 사용자가 요청하면(예: "SQL → Python → Python → SQL"처럼 중간에 Python이 끼는 체인), **Phase 1(DISCOVER) 단계에서 즉시** 이 제약을 사용자에게 고지하고 대안(위 2번처럼 중간 산출물을 영구 데이터셋으로 만들거나, Python 로직을 SQL로 대체)을 제시한다. Phase 2 DESIGN·Phase 3 LOCAL_TEST(venv 생성 등)까지 진행한 뒤에 뒤늦게 이 제약을 발견해 설계를 폐기하지 않는다.
 
 ## loadStrategy
 - REPLACE (기본): 실행 전 기존 데이터 전체 삭제 → 새 데이터 삽입
@@ -153,6 +164,7 @@ dependsOnStepNames만 설정하면 됩니다.
 | placeholder/더미 SQL로 파이프라인 강제 생성 | 입력 데이터셋 404를 우회하려는 환각 | get_dataset 404 → 즉시 abort, SELECT 1 류 대체 금지 (위 "데이터셋 ID 유효성" 절 참조) |
 | 의미 없는 파이프라인에 SCHEDULE 트리거 자동 등록 | "일단 트리거까지 걸어둬" 위임 | 입력 데이터셋 유효성 미검증 파이프라인에는 create_trigger 호출 금지 |
 | get_dataset 호출 없이 "확인해보니 존재하지 않습니다" 진술 | 사용자가 이미 없다고 말한 것을 근거로 검증 생략 후 확정 진술 | ID 언급 시 `get_dataset` 실제 호출 후에만 확인 표현 사용, 생략 시 "확인이 필요합니다" 등 미검증 표현 사용 (refs #574) |
+| PYTHON 스텝이 이전 스텝 temp 출력에 dependsOnStepNames만으로 의존 → DESIGN/LOCAL_TEST까지 마친 뒤 create_pipeline 직전에야 불가능 판명 | PYTHON은 AI_CLASSIFY와 달리 dependsOnStepNames 자동 resolve 미구현, {{#N}}도 SQL 전용 (refs #654) | Phase 1(DISCOVER)에서 PYTHON 스텝 간/PYTHON-SQL 간 temp 의존 여부를 먼저 확인해 조기 고지. 위 "PYTHON 입력 데이터셋 (제약)" 절 참조 |
 
 ## 파이프라인 삭제 전 트리거 조회 필수 (정확성, refs #598)
 
