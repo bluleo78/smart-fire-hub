@@ -94,4 +94,31 @@ class ChannelSettingsServiceTest {
 
     assertThat(result.success()).isTrue();
   }
+
+  /**
+   * TransientFailure(네트워크 오류) 시 토스트 메시지에 원본 예외 클래스명이 아닌 사용자 친화적인
+   * 한국어 문구가 담겨야 한다 (#666). 채널 구현체가 reason에 {@code NETWORK_ERROR} 같은 안정적인 코드를
+   * 담아도, 이를 그대로 노출하면 사용자가 이해할 수 없으므로 서비스 레이어에서 매핑이 이루어져야 한다.
+   */
+  @Test
+  void testChannel_transientFailure_returnsUserFriendlyMessageNotRawReasonCode() {
+    when(preferenceRepo.isEnabled(USER_ID, ChannelType.EMAIL)).thenReturn(true);
+    when(userRepository.findById(USER_ID))
+        .thenReturn(
+            Optional.of(new UserResponse(USER_ID, "user1", "user@example.com", "User", true, null)));
+    lenient().when(channelRegistry.get(ChannelType.EMAIL)).thenReturn(emailChannel);
+    when(emailChannel.deliver(any()))
+        .thenReturn(
+            new DeliveryResult.TransientFailure(
+                com.smartfirehub.notification.TransientFailureReason.NETWORK_ERROR,
+                new RuntimeException("Connection refused")));
+
+    ChannelTestResult result = service.testChannel(USER_ID, ChannelType.EMAIL);
+
+    assertThat(result.success()).isFalse();
+    assertThat(result.message())
+        .doesNotContain("NETWORK_ERROR")
+        .doesNotContain("Exception")
+        .contains("연결할 수 없습니다");
+  }
 }

@@ -207,4 +207,29 @@ class KakaoChannelTest {
 
     assertThat(result).isInstanceOf(DeliveryResult.TransientFailure.class);
   }
+
+  /**
+   * 네트워크 오류 시 reason()에 원본 예외 클래스명이 아닌 안정적인 사유 코드
+   * {@link com.smartfirehub.notification.TransientFailureReason#NETWORK_ERROR}가 담겨야 한다 (#666).
+   */
+  @Test
+  void deliver_networkError_returnsTransientFailureWithStableReasonCode() {
+    when(bindingRepo.findActive(USER_ID, ChannelType.KAKAO))
+        .thenReturn(Optional.of(activeBinding()));
+    when(encryptionService.decrypt(ACCESS_TOKEN_ENC)).thenReturn(ACCESS_TOKEN);
+    when(textFormatter.render(any())).thenReturn("텍스트");
+    doThrow(new RuntimeException("Connection refused: connect"))
+        .when(channelHttpClient)
+        .send(anyString(), any(), any());
+
+    DeliveryResult result = channel.deliver(ctx());
+
+    assertThat(result)
+        .isInstanceOfSatisfying(
+            DeliveryResult.TransientFailure.class,
+            tf ->
+                assertThat(tf.reason())
+                    .isEqualTo(com.smartfirehub.notification.TransientFailureReason.NETWORK_ERROR)
+                    .doesNotContain("Exception"));
+  }
 }

@@ -94,6 +94,30 @@ class EmailChannelTest {
   }
 
   /**
+   * 네트워크 오류(예: 커넥션 실패) 시 reason()에 원본 예외 클래스명이 아닌 안정적인 사유 코드
+   * {@link com.smartfirehub.notification.TransientFailureReason#NETWORK_ERROR}가 담겨야 한다 (#666).
+   * 예외 클래스명이 그대로 노출되면 ChannelSettingsService가 만드는 사용자 토스트 메시지에
+   * "WebClientRequestException" 같은 문구가 그대로 섞여 나간다.
+   */
+  @Test
+  void deliver_networkError_returnsTransientFailureWithStableReasonCode() {
+    when(settingsService.getSmtpConfig()).thenReturn(smtpConfig());
+    doThrow(new RuntimeException("Connection refused: connect"))
+        .when(channelHttpClient)
+        .send(anyString(), any(), any());
+
+    var result = channel.deliver(ctx(null, "to@example.com"));
+
+    assertThat(result)
+        .isInstanceOfSatisfying(
+            DeliveryResult.TransientFailure.class,
+            tf ->
+                assertThat(tf.reason())
+                    .isEqualTo(com.smartfirehub.notification.TransientFailureReason.NETWORK_ERROR)
+                    .doesNotContain("Exception"));
+  }
+
+  /**
    * <b>연결 번들 규칙이 만든 새 상태</b>: 테넌트가 {@code smtp.host} 만 재정의하면 나머지 연결
    * 4키가 <b>키는 있고 값은 빈</b> 상태로 내려온다(P7-c1 Task 5). 그 조합은 이 커밋 이전에는
    * 존재할 수 없었다 — V42 가 {@code smtp.port='587'} 로 시드하고 쓰기 검증(1~65535)이 빈 포트를

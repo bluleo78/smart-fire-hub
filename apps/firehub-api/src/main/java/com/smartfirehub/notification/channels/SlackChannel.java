@@ -7,6 +7,7 @@ import com.smartfirehub.notification.ChannelType;
 import com.smartfirehub.notification.DeliveryContext;
 import com.smartfirehub.notification.DeliveryResult;
 import com.smartfirehub.notification.PermanentFailureReason;
+import com.smartfirehub.notification.TransientFailureReason;
 import com.smartfirehub.notification.channels.slack.SlackBlockKitRenderer;
 import com.smartfirehub.notification.repository.SlackWorkspaceRepository;
 import com.smartfirehub.notification.repository.UserChannelBinding;
@@ -151,10 +152,12 @@ public class SlackChannel implements BoundChannel {
           e.getStatusCode(),
           userId,
           ctx.outboxId());
-      return new DeliveryResult.TransientFailure("CHANNEL_HTTP_" + e.getStatusCode(), e);
+      return new DeliveryResult.TransientFailure(
+          TransientFailureReason.CHANNEL_HTTP_PREFIX + e.getStatusCode(), e);
     } catch (Exception e) {
+      // 원본 예외(클래스명 등)는 서버 로그에만 남기고, 사용자에게는 노출하지 않는다.
       log.warn("SlackChannel: 네트워크 오류 (userId={}, outboxId={})", userId, ctx.outboxId(), e);
-      return new DeliveryResult.TransientFailure(e.getClass().getSimpleName(), e);
+      return new DeliveryResult.TransientFailure(TransientFailureReason.NETWORK_ERROR, e);
     }
   }
 
