@@ -31,6 +31,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -319,10 +320,27 @@ public class DatasetDataService {
     rejectIfDocument(dataset.storageType(), "행 수정");
 
     List<DatasetColumnResponse> columns = columnRepository.findByDatasetId(datasetId);
-    Map<String, Object> validatedData = validateAndConvertRowData(columns, request.data());
-
     List<String> columnNames = columns.stream().map(DatasetColumnResponse::columnName).toList();
     Map<String, String> columnTypes = buildColumnTypes(columns);
+
+    // (#672) 부분 업데이트(merge-then-validate): 사용자 정의 PK 컬럼처럼 프론트 편집 폼에서
+    // 읽기 전용으로 제외되어 요청 바디에 아예 포함되지 않는 컬럼이 있을 수 있다.
+    // 요청에 없는 컬럼은 기존 DB 값을 그대로 유지하도록 먼저 조회해 병합한 뒤,
+    // 요청에 "명시적으로 포함된" 컬럼(값이 null이어도 포함)만 재검증한다.
+    Map<String, Object> existingRow =
+        dataTableRowService.getRow(dataset.tableName(), columnNames, rowId, columnTypes);
+
+    Map<String, Object> mergedData = new HashMap<>();
+    for (String columnName : columnNames) {
+      if (request.data().containsKey(columnName)) {
+        mergedData.put(columnName, request.data().get(columnName));
+      } else {
+        mergedData.put(columnName, existingRow.get(columnName));
+      }
+    }
+
+    Map<String, Object> validatedData =
+        validateAndConvertRowData(columns, mergedData, request.data().keySet());
     dataTableRowService.updateRow(
         dataset.tableName(), rowId, columnNames, validatedData, columnTypes);
   }
@@ -401,11 +419,34 @@ public class DatasetDataService {
 
   private Map<String, Object> validateAndConvertRowData(
       List<DatasetColumnResponse> columns, Map<String, Object> data) {
+    // 전체 컬럼을 항상 검증 대상으로 삼는 기존 동작 유지 (행 추가 등 전체 삽입 경로용)
+    Set<String> allColumnNames =
+        columns.stream().map(DatasetColumnResponse::columnName).collect(Collectors.toSet());
+    return validateAndConvertRowData(columns, data, allColumnNames);
+  }
+
+  /**
+   * 행 데이터를 검증·변환한다.
+   *
+   * <p>{@code columnsToValidate}에 포함된 컬럼만 not-null 검사 및 타입 변환을 수행하고, 그 외
+   * 컬럼(예: 부분 업데이트에서 요청에 없어 기존 DB 값으로 병합된 컬럼)은 이미 유효한 값으로
+   * 간주해 그대로 통과시킨다 (#672). 병합된 기존 값은 DB에서 그대로 조회한 원시 타입이라
+   * {@link #convertValue}가 기대하는 입력 포맷(예: DATE 컬럼의 문자열)과 다를 수 있어
+   * 재변환하면 오히려 실패하므로, 재검증 없이 그대로 사용해야 한다.
+   */
+  private Map<String, Object> validateAndConvertRowData(
+      List<DatasetColumnResponse> columns, Map<String, Object> data, Set<String> columnsToValidate) {
     Map<String, Object> result = new HashMap<>();
     List<String> errors = new ArrayList<>();
 
     for (DatasetColumnResponse col : columns) {
       Object value = data.get(col.columnName());
+
+      if (!columnsToValidate.contains(col.columnName())) {
+        // 요청에 없어 기존 DB 값을 그대로 유지하는 컬럼 — 재검증하지 않고 통과
+        result.put(col.columnName(), value);
+        continue;
+      }
 
       if (value == null) {
         if (!col.isNullable()) {

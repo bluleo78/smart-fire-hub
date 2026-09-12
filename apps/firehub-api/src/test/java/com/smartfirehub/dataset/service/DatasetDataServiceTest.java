@@ -809,4 +809,118 @@ class DatasetDataServiceTest extends IntegrationTestBase {
     assertThatThrownBy(() -> datasetDataService.propagateDescriptions(999999L))
         .isInstanceOf(DatasetNotFoundException.class);
   }
+
+  // =========================================================================
+  // updateRow — 부분 업데이트(merge-then-validate) (#672)
+  // =========================================================================
+
+  /**
+   * 정상: 사용자 정의 PK(NOT NULL) 컬럼이 요청 바디에서 빠져도(프론트 편집 폼이 읽기 전용으로
+   * 제외한 경우를 시뮬레이션) 기존 DB 값이 그대로 유지된 채 다른 컬럼만 갱신되어야 한다.
+   *
+   * <p>수정 전에는 updateRow가 요청 바디만으로 검증해 빠진 PK 컬럼을 null로 취급, NOT NULL
+   * 검증 실패(400)로 항상 저장이 막혔다.
+   */
+  @Test
+  void updateRow_partialUpdate_missingPkColumn_keepsExistingValue() {
+    List<DatasetColumnRequest> columns =
+        List.of(
+            new DatasetColumnRequest("row_key", "Row Key", "INTEGER", null, false, false, null, true),
+            new DatasetColumnRequest("label", "Label", "TEXT", null, true, false, null));
+    DatasetDetailResponse dataset =
+        datasetService.createDataset(
+            new CreateDatasetRequest(
+                "PK Update Test", "pk_update_test", null, null, "TABLE", "SOURCE", columns, null),
+            testUserId);
+
+    RowDataResponse added =
+        datasetDataService.addRow(
+            dataset.id(), new RowDataRequest(Map.of("row_key", 1, "label", "before")));
+
+    // 프론트 EditRowDialog가 PK 컬럼(row_key)을 폼에서 제외하는 상황을 재현 — 요청 바디에 row_key 없음
+    datasetDataService.updateRow(
+        dataset.id(), added.id(), new RowDataRequest(Map.of("label", "after")));
+
+    RowDataResponse result = datasetDataService.getRow(dataset.id(), added.id());
+    assertThat(result.data().get("row_key")).isEqualTo(1L);
+    assertThat(result.data().get("label")).isEqualTo("after");
+  }
+
+  /** 정상: 일반(PK 미지정) 데이터셋의 전체 필드 포함 행 편집은 기존과 동일하게 정상 동작해야 한다 (회귀 없음) */
+  @Test
+  void updateRow_normalDataset_fullPayload_updatesAllFields() {
+    DatasetDetailResponse dataset = createSimpleDataset("Update Normal", "update_normal");
+    RowDataResponse added =
+        datasetDataService.addRow(dataset.id(), new RowDataRequest(Map.of("name", "Old", "value", 1)));
+
+    datasetDataService.updateRow(
+        dataset.id(), added.id(), new RowDataRequest(Map.of("name", "New", "value", 2)));
+
+    RowDataResponse result = datasetDataService.getRow(dataset.id(), added.id());
+    assertThat(result.data().get("name")).isEqualTo("New");
+    assertThat(result.data().get("value")).isEqualTo(2L);
+  }
+
+  /**
+   * 회귀(#670): NULL 허용 BOOLEAN 컬럼에 요청 바디로 명시적 null을 보내면(값 없음으로 지우는
+   * 경우) 병합 로직이 "요청에 없는 컬럼"으로 오인해 기존 값을 덮어써 되살리면 안 되고, 요청된
+   * null이 그대로 반영되어야 한다.
+   */
+  @Test
+  void updateRow_nullableBooleanExplicitNull_clearsValue() {
+    DatasetDetailResponse dataset =
+        createSingleColumnDataset("bool_null_update", "active", "BOOLEAN", null, true);
+    RowDataResponse added =
+        datasetDataService.addRow(dataset.id(), new RowDataRequest(Map.of("active", true)));
+
+    // HashMap 사용 — Map.of는 null 값을 허용하지 않으므로 명시적 null 요청을 표현하려면 HashMap 필요
+    Map<String, Object> nullActive = new java.util.HashMap<>();
+    nullActive.put("active", null);
+    datasetDataService.updateRow(dataset.id(), added.id(), new RowDataRequest(nullActive));
+
+    RowDataResponse result = datasetDataService.getRow(dataset.id(), added.id());
+    assertThat(result.data().get("active")).isNull();
+  }
+
+  /** 회귀(#670): 부분 업데이트 병합 후에도 NULL 허용 BOOLEAN 컬럼을 요청에서 생략하면 기존 값(NULL 포함)이 유지되어야 한다 */
+  @Test
+  void updateRow_nullableBooleanOmittedFromRequest_keepsExistingNull() {
+    DatasetDetailResponse dataset =
+        createSingleColumnDataset("bool_null_keep", "flag", "BOOLEAN", null, true);
+    Map<String, Object> initialNull = new java.util.HashMap<>();
+    initialNull.put("flag", null);
+    RowDataResponse added =
+        datasetDataService.addRow(dataset.id(), new RowDataRequest(initialNull));
+
+    // flag를 요청 바디에서 아예 생략 — 기존 NULL 값이 그대로 유지되어야 함
+    datasetDataService.updateRow(dataset.id(), added.id(), new RowDataRequest(Map.of()));
+
+    RowDataResponse result = datasetDataService.getRow(dataset.id(), added.id());
+    assertThat(result.data().get("flag")).isNull();
+  }
+
+  /** 예외: 부분 업데이트 병합 후에도 요청에 포함된 컬럼의 타입/필수 검증은 여전히 수행되어야 한다 */
+  @Test
+  void updateRow_partialUpdate_invalidRequestedColumn_stillValidates() {
+    List<DatasetColumnRequest> columns =
+        List.of(
+            new DatasetColumnRequest("row_key", "Row Key", "INTEGER", null, false, false, null, true),
+            new DatasetColumnRequest("label", "Label", "TEXT", null, false, false, null));
+    DatasetDetailResponse dataset =
+        datasetService.createDataset(
+            new CreateDatasetRequest(
+                "PK Update Invalid", "pk_update_invalid", null, null, "TABLE", "SOURCE", columns, null),
+            testUserId);
+
+    RowDataResponse added =
+        datasetDataService.addRow(
+            dataset.id(), new RowDataRequest(Map.of("row_key", 1, "label", "before")));
+
+    // label은 NOT NULL인데 빈 문자열이 아닌 null을 명시적으로 보냄 — 여전히 검증 실패해야 함
+    Map<String, Object> invalid = new java.util.HashMap<>();
+    invalid.put("label", null);
+    assertThatThrownBy(
+            () -> datasetDataService.updateRow(dataset.id(), added.id(), new RowDataRequest(invalid)))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
 }

@@ -660,6 +660,98 @@ test.describe('데이터셋 상세 — 행 추가/편집', () => {
     });
   });
 
+  test('사용자 정의 PK(NOT NULL) 컬럼이 있는 데이터셋 — 편집 시 PK는 읽기 전용으로 표시되고 값이 유지된 채 저장된다', async ({
+    authenticatedPage: page,
+  }) => {
+    // (#672) 회귀 재현 테스트 — 이전에는 EditRowDialog가 isPrimaryKey 컬럼을 폼에서 완전히
+    // 제외해 PUT 페이로드에 값이 아예 안 담겼고, 백엔드가 NOT NULL 검증에 실패해 400을 반환했다.
+    // 이제는 PK 컬럼이 읽기 전용 입력으로 표시되고, 값이 폼 상태/페이로드에 그대로 유지되어야 한다.
+    const pkDataset = createDatasetDetail({
+      id: 7,
+      rowCount: 1,
+      columns: [
+        createColumn({
+          id: 1,
+          columnName: 'row_key',
+          displayName: '행 키',
+          dataType: 'INTEGER',
+          isPrimaryKey: true,
+          isNullable: false,
+          columnOrder: 0,
+        }),
+        createColumn({
+          id: 2,
+          columnName: 'label',
+          displayName: '라벨',
+          dataType: 'TEXT',
+          isPrimaryKey: false,
+          isNullable: false,
+          columnOrder: 1,
+        }),
+      ],
+    });
+
+    await mockApi(page, 'GET', '/api/v1/datasets/7', pkDataset);
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', createCategories());
+    await mockApi(page, 'GET', '/api/v1/datasets/7/queries', createPageResponse([]));
+    await mockApi(page, 'GET', '/api/v1/datasets/tags', []);
+    await mockApi(page, 'GET', '/api/v1/datasets/7/stats', []);
+
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets/7/data',
+      (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            columns: pkDataset.columns,
+            rows: [{ id: 1, row_key: 42, label: '기존라벨' }],
+            page: 0,
+            size: 50,
+            totalElements: 1,
+            totalPages: 1,
+          }),
+        }),
+    );
+
+    const updateCapture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/datasets/7/data/rows/1',
+      { id: 1, row_key: 42, label: '새라벨' },
+      { capture: true },
+    );
+
+    await page.goto('/data/datasets/7');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible({ timeout: 10000 });
+    await page.getByRole('tab', { name: '데이터' }).click();
+
+    const labelCell = page.getByRole('cell', { name: '기존라벨' });
+    await expect(labelCell).toBeVisible();
+    await labelCell.dblclick();
+
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByRole('heading', { name: /행 편집 \(ID: 1\)/ })).toBeVisible();
+
+    // PK 컬럼은 읽기 전용 입력으로 표시되고 기존 값(42)을 그대로 보여준다
+    const pkInput = page.locator('#edit-pk-row_key');
+    await expect(pkInput).toBeVisible();
+    await expect(pkInput).toHaveValue('42');
+    await expect(pkInput).toBeDisabled();
+    // 일반 편집 필드(label)와 달리 PK 컬럼용 입력 id(#edit-row_key)는 렌더링되지 않는다
+    await expect(page.locator('#edit-row_key')).toHaveCount(0);
+
+    // 일반 컬럼(label)만 수정하고 저장 — PK는 건드리지 않음
+    await page.locator('#edit-label').fill('새라벨');
+    await dialog.getByRole('button', { name: '저장' }).click();
+
+    // PUT payload에 PK(row_key)가 기존 값 그대로 포함되어야 한다 — 누락되면 백엔드가 400 반환
+    const captured = await updateCapture.waitForRequest();
+    const payload = captured.payload as { data: Record<string, unknown> };
+    expect(payload.data.row_key).toBe(42);
+    expect(payload.data.label).toBe('새라벨');
+  });
+
   test('EditRowDialog — X 버튼 클릭 시 다이얼로그가 닫힌다', async ({
     authenticatedPage: page,
   }) => {

@@ -64,7 +64,11 @@ export function buildRowZodSchema(columns: DatasetColumnResponse[]) {
     }
     shape[col.columnName] = field;
   }
-  return z.object(shape);
+  // (#672) PK 컬럼은 shape에 없는 키다. z.object 기본(strip) 모드는 스키마에 없는 키를
+  // 파싱 결과에서 제거하므로, EditRowDialog가 폼 상태에 실어 보낸 PK 값(읽기 전용)이
+  // zodResolver를 거치며 사라져 버린다. passthrough()로 알 수 없는 키를 그대로 통과시켜
+  // PK 값이 onSubmit 데이터에 남도록 한다.
+  return z.object(shape).passthrough();
 }
 
 export function cleanFormValues(
@@ -73,7 +77,9 @@ export function cleanFormValues(
 ): Record<string, unknown> {
   const cleaned: Record<string, unknown> = {};
   for (const col of columns) {
-    if (col.isPrimaryKey) continue;
+    // (#672) PK 컬럼은 읽기 전용이라 폼에서 직접 편집되지 않지만, EditRowDialog가 defaultValues에
+    // 기존 값을 그대로 실어두므로 values에 존재하면 그대로 페이로드에 포함해 백엔드 저장을 돕는다.
+    // (AddRowDialog는 애초에 PK 컬럼을 defaultValues에 넣지 않으므로 값이 없어 아래에서 자연히 제외된다.)
     const val = values[col.columnName];
     if (val === '' || val === undefined) {
       if (col.isNullable) cleaned[col.columnName] = null;
