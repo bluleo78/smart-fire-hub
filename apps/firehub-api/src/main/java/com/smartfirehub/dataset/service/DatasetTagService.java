@@ -27,7 +27,10 @@ public class DatasetTagService {
         .findById(datasetId)
         .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
 
-    boolean alreadyExists = tagRepository.findByDatasetId(datasetId).contains(tagName);
+    // 태그 중복 검사는 대소문자를 구분하지 않는다 — "Test"와 "test"는 동일 태그로 취급 (#671)
+    boolean alreadyExists =
+        tagRepository.findByDatasetId(datasetId).stream()
+            .anyMatch(existing -> existing.equalsIgnoreCase(tagName));
     if (alreadyExists) {
       throw new IllegalStateException("Tag already exists: " + tagName);
     }

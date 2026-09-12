@@ -110,6 +110,16 @@ class DatasetTagServiceTest extends IntegrationTestBase {
         .hasMessageContaining("duplicate");
   }
 
+  /** 예외: 대소문자만 다른 태그(예: "Test" → "test")는 동일 태그로 취급되어 IllegalStateException이 발생해야 한다 (#671). */
+  @Test
+  void addTag_duplicateTagDifferentCase_throwsIllegalStateException() {
+    datasetTagService.addTag(datasetId, "Test", testUserId);
+
+    assertThatThrownBy(() -> datasetTagService.addTag(datasetId, "test", testUserId))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("test");
+  }
+
   /** 예외: 존재하지 않는 데이터셋 ID로 태그 추가 시 DatasetNotFoundException이 발생해야 한다. */
   @Test
   void addTag_nonExistentDataset_throwsDatasetNotFoundException() {

@@ -630,6 +630,44 @@ test.describe('데이터셋 상세 페이지', () => {
   });
 
   /**
+   * 대소문자만 다른 태그(예: 기존 "Test" → 신규 입력 "test")도 중복으로 판정되어야 한다 (#671).
+   * DatasetDetailPage.tsx handleAddTag: dataset.tags.some(t => t.toLowerCase() === tag.toLowerCase())
+   */
+  test('대소문자만 다른 태그 입력 시에도 중복 에러가 표시된다 (#671)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDetailPageMocks(page, 1);
+    // 기존 태그를 영문 "Test"로 오버라이드 — 대소문자 비교를 검증하기 위해 한글이 아닌 태그 필요
+    await mockApi(page, 'GET', '/api/v1/datasets/1', createDatasetDetail({ id: 1, tags: ['Test'] }));
+
+    // POST 호출이 발생하면 안 되므로 실패 응답으로 모킹해 잘못 호출됐을 때 즉시 드러나게 한다
+    const addTagCapture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/datasets/1/tags',
+      { message: '중복 검사를 우회하여 addTag API가 호출되었습니다.' },
+      { status: 500, capture: true },
+    );
+
+    await page.goto('/data/datasets/1');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible();
+    await expect(page.getByText('Test').first()).toBeVisible();
+
+    // 태그 추가 버튼(+) 클릭 → Popover 열기
+    await page.locator('button[title="태그 추가"]').click();
+
+    // 소문자 "test" 입력 — 기존 "Test"와 대소문자만 다름
+    const tagInput = page.getByPlaceholder(/태그 입력/);
+    await tagInput.fill('test');
+    await tagInput.press('Enter');
+
+    // 에러 토스트 표시 확인 — 대소문자 무시 중복 판정
+    await expect(page.getByText(/이미 추가된 태그/)).toBeVisible({ timeout: 5000 });
+    // 프론트에서 중복으로 걸러졌으므로 addTag API는 호출되지 않아야 한다
+    expect(addTagCapture.requests).toHaveLength(0);
+  });
+
+  /**
    * 관리자 상태 변경 Popover에서 취소 버튼 클릭 시 Popover가 닫힌다.
    * DatasetDetailPage.tsx line 217-220: 취소 버튼 → setStatusEditOpen(false) 분기
    */

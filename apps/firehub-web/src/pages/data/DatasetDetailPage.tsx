@@ -168,7 +168,8 @@ export default function DatasetDetailPage() {
   const handleAddTag = async () => {
     const tag = tagInput.trim();
     if (!tag) return;
-    if (dataset?.tags?.includes(tag)) {
+    // 태그 중복 검사는 대소문자를 구분하지 않는다 — "Test"와 "test"는 동일 태그로 취급 (#671)
+    if (dataset?.tags?.some((t) => t.toLowerCase() === tag.toLowerCase())) {
       toast.error('이미 추가된 태그입니다.');
       return;
     }
@@ -202,8 +203,11 @@ export default function DatasetDetailPage() {
     }
   };
 
+  // 자동완성 제안 목록에서도 이미 추가된 태그를 대소문자 무시로 걸러낸다 (#671)
   const filteredTagSuggestions = allTags.filter(
-    (t) => t.toLowerCase().includes(tagInput.toLowerCase()) && !dataset?.tags?.includes(t)
+    (t) =>
+      t.toLowerCase().includes(tagInput.toLowerCase()) &&
+      !dataset?.tags?.some((existing) => existing.toLowerCase() === t.toLowerCase())
   );
 
   const hasGeometry = dataset?.columns.some(c => c.dataType === 'GEOMETRY') ?? false;
@@ -418,7 +422,8 @@ export default function DatasetDetailPage() {
                           key={suggestion}
                           className="w-full text-left text-sm px-2 py-1 rounded hover:bg-muted transition-colors"
                           onClick={async () => {
-                            if (dataset?.tags?.includes(suggestion)) {
+                            // 대소문자 무시 중복 검사 (#671) — filteredTagSuggestions에서 이미 걸러지지만 방어적으로 재확인
+                            if (dataset?.tags?.some((t) => t.toLowerCase() === suggestion.toLowerCase())) {
                               toast.error('이미 추가된 태그입니다.');
                               return;
                             }
