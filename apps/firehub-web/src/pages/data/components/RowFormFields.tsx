@@ -27,10 +27,13 @@ interface RowFormFieldsProps {
   form: UseFormReturn<any>;
   idPrefix: string; // 'add' or 'edit' to differentiate htmlFor ids
   changedFields?: Set<string>; // optional: highlight changed fields (used by EditRowDialog)
+  // (#673) 'add'에서는 PK도 입력 가능한 필드로 렌더링한다(자동생성 옵션이 없어 사용자가 직접 값을 채워야 함).
+  // 'edit'(기본값)에서는 PK를 여기서 렌더링하지 않는다 — EditRowDialog가 읽기 전용으로 별도 렌더링한다.
+  mode?: 'add' | 'edit';
 }
 
-export function RowFormFields({ columns, form, idPrefix, changedFields }: RowFormFieldsProps) {
-  const editableColumns = columns.filter((c) => !c.isPrimaryKey);
+export function RowFormFields({ columns, form, idPrefix, changedFields, mode = 'edit' }: RowFormFieldsProps) {
+  const editableColumns = mode === 'add' ? columns : columns.filter((c) => !c.isPrimaryKey);
 
   return (
     <>
@@ -47,6 +50,8 @@ export function RowFormFields({ columns, form, idPrefix, changedFields }: RowFor
           >
             <Label htmlFor={`${idPrefix}-${col.columnName}`}>
               {label}
+              {/* (#673) 행 추가 시 PK 필드는 사용자가 직접 값을 정해야 함을 안내하는 뱃지 */}
+              {col.isPrimaryKey && <span className="text-muted-foreground text-xs ml-1">(기본 키)</span>}
               {!col.isNullable ? (
                 <span className="text-destructive ml-0.5">*</span>
               ) : (

@@ -2,10 +2,14 @@ import { z } from 'zod';
 
 import type { DatasetColumnResponse } from '../../../types/dataset';
 
-export function buildRowZodSchema(columns: DatasetColumnResponse[]) {
+export function buildRowZodSchema(columns: DatasetColumnResponse[], mode: 'add' | 'edit' = 'edit') {
   const shape: Record<string, z.ZodTypeAny> = {};
   for (const col of columns) {
-    if (col.isPrimaryKey) continue; // Skip auto-generated PK
+    // (#673) 이 앱의 테이블 생성 폼에는 auto-increment 옵션이 없어 PK는 항상 사용자가
+    // 직접 값을 입력해야 한다. "행 추가"(add)에서는 PK도 다른 필수 컬럼처럼 검증 대상에
+    // 포함시킨다. "행 편집"(edit)에서는 PK가 불변이라 EditRowDialog가 읽기 전용으로
+    // 별도 렌더링하고 값은 passthrough()로 유지하므로 여기서는 계속 건너뛴다.
+    if (col.isPrimaryKey && mode === 'edit') continue;
     let field: z.ZodTypeAny;
     switch (col.dataType) {
       case 'INTEGER':

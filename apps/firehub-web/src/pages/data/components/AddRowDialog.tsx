@@ -20,18 +20,20 @@ interface AddRowDialogProps {
 }
 
 export function AddRowDialog({ open, onOpenChange, datasetId, columns }: AddRowDialogProps) {
-  const editableColumns = useMemo(() => columns.filter((c) => !c.isPrimaryKey), [columns]);
-  const schema = useMemo(() => buildRowZodSchema(columns), [columns]);
+  // (#673) 이 앱의 테이블 생성 폼에는 auto-increment 옵션이 없어 PK는 항상 사용자가 정의한
+  // 일반 컬럼이고 값도 직접 입력해야 한다. 그래서 "행 추가"에서는 PK를 숨기지 않고 다른
+  // 필수 컬럼과 동일하게 입력 필드로 노출한다(반대로 "행 수정"에서는 PK가 불변이라 읽기 전용).
+  const schema = useMemo(() => buildRowZodSchema(columns, 'add'), [columns]);
 
   const defaultValues = useMemo(() => {
     const vals: Record<string, unknown> = {};
-    for (const col of editableColumns) {
+    for (const col of columns) {
       // (#670) NULL 허용 BOOLEAN 컬럼은 NULL로 초기화해야 애초에 NULL 값으로 행을 생성할 수 있다.
       if (col.dataType === 'BOOLEAN') vals[col.columnName] = col.isNullable ? null : false;
       else vals[col.columnName] = '';
     }
     return vals;
-  }, [editableColumns]);
+  }, [columns]);
 
   const form = useForm({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -61,7 +63,7 @@ export function AddRowDialog({ open, onOpenChange, datasetId, columns }: AddRowD
           <DialogDescription className="sr-only">데이터셋에 새 행을 추가합니다.</DialogDescription>
         </DialogHeader>
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-          <RowFormFields columns={columns} form={form} idPrefix="add" />
+          <RowFormFields columns={columns} form={form} idPrefix="add" mode="add" />
 
           <Button type="submit" className="w-full" disabled={form.formState.isSubmitting}>
             {form.formState.isSubmitting ? (

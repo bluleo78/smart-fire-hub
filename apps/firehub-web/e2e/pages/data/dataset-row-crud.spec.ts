@@ -101,6 +101,11 @@ test.describe('데이터셋 상세 — 행 추가/편집', () => {
       .evaluate((el) => getComputedStyle(el).overscrollBehaviorY);
     expect(overscroll).toBe('contain');
 
+    // (#673) PK(id) 컬럼도 자동생성 옵션이 없으므로 입력 필드로 노출되고, "(기본 키)" 뱃지가 표시된다.
+    const pkLabel = page.locator('label[for="add-id"]');
+    await expect(pkLabel).toContainText('기본 키');
+    await page.locator('#add-id').fill('3');
+
     // 필드 입력 (add- prefix, editable columns = name, amount)
     await page.locator('#add-name').fill('Carol');
     await page.locator('#add-amount').fill('30');
@@ -108,10 +113,11 @@ test.describe('데이터셋 상세 — 행 추가/편집', () => {
     // 제출 (다이얼로그 내 "추가" 버튼)
     await page.getByRole('dialog').getByRole('button', { name: '추가' }).click();
 
-    // POST payload 검증 — { data: { name: 'Carol', amount: 30 } }
+    // POST payload 검증 — { data: { id: 3, name: 'Carol', amount: 30 } }
     const captured = await addCapture.waitForRequest();
     const payload = captured.payload as { data: Record<string, unknown> };
     expect(payload.data).toMatchObject({
+      id: 3, // (#673) PK도 사용자가 입력한 값이 그대로 페이로드에 포함되어야 한다
       name: 'Carol',
       amount: 30, // cleanFormValues 가 INTEGER 를 Number 로 변환
     });
@@ -271,6 +277,9 @@ test.describe('데이터셋 상세 — 행 추가/편집', () => {
     await page.getByRole('button', { name: /행 추가/ }).click();
     await expect(page.getByRole('dialog').getByRole('heading', { name: '행 추가' })).toBeVisible();
 
+    // (#673) PK(id) 컬럼도 입력 필드로 노출되므로 값 채움
+    await page.locator('#add-id').fill('1');
+
     // BOOLEAN 컬럼(NULL 허용) — tri-state Select 렌더링 확인
     const boolSelect = page.locator('#add-is_active');
     await expect(boolSelect).toBeVisible();
@@ -351,6 +360,9 @@ test.describe('데이터셋 상세 — 행 추가/편집', () => {
 
     await page.getByRole('button', { name: /행 추가/ }).click();
     await expect(page.getByRole('dialog').getByRole('heading', { name: '행 추가' })).toBeVisible();
+
+    // (#673) PK(id) 컬럼도 입력 필드로 노출되므로 값 채움
+    await page.locator('#add-id').fill('1');
 
     // BOOLEAN(NULL 허용) 기본값은 "(비어있음)" — 건드리지 않고 제출
     await expect(page.locator('#add-is_active')).toHaveText('(비어있음)');
@@ -505,6 +517,9 @@ test.describe('데이터셋 상세 — 행 추가/편집', () => {
     await page.getByRole('button', { name: /행 추가/ }).click();
     await expect(page.getByRole('dialog').getByRole('heading', { name: '행 추가' })).toBeVisible();
 
+    // (#673) PK(id) 컬럼도 입력 필드로 노출되므로 값 채움
+    await page.locator('#add-id').fill('1');
+
     // NOT NULL BOOLEAN — Switch 렌더링(Select 아님), 기본값 false
     const boolSwitch = page.locator('#add-is_active');
     await expect(boolSwitch).toBeVisible();
@@ -570,6 +585,9 @@ test.describe('데이터셋 상세 — 행 추가/편집', () => {
 
     await page.getByRole('button', { name: /행 추가/ }).click();
     await expect(page.getByRole('dialog').getByRole('heading', { name: '행 추가' })).toBeVisible();
+
+    // (#673) PK(id) 컬럼도 입력 필드로 노출되므로 값 채움
+    await page.locator('#add-id').fill('1');
 
     // 필수 필드 입력
     await page.locator('#add-label').fill('테스트');
@@ -644,6 +662,9 @@ test.describe('데이터셋 상세 — 행 추가/편집', () => {
     await page.getByRole('button', { name: /행 추가/ }).click();
     await expect(page.getByRole('dialog').getByRole('heading', { name: '행 추가' })).toBeVisible();
 
+    // (#673) PK(id) 컬럼도 입력 필드로 노출되므로 값 채움
+    await page.locator('#add-id').fill('1');
+
     await page.locator('#add-label').fill('테스트');
 
     // 유효한 GeoJSON Point 입력
@@ -655,6 +676,7 @@ test.describe('데이터셋 상세 — 행 추가/편집', () => {
     const captured = await addCapture.waitForRequest();
     const payload = captured.payload as { data: Record<string, unknown> };
     expect(payload.data).toMatchObject({
+      id: 1,
       label: '테스트',
       geom: '{"type":"Point","coordinates":[126.97,37.56]}',
     });
@@ -750,6 +772,88 @@ test.describe('데이터셋 상세 — 행 추가/편집', () => {
     const payload = captured.payload as { data: Record<string, unknown> };
     expect(payload.data.row_key).toBe(42);
     expect(payload.data.label).toBe('새라벨');
+  });
+
+  test('사용자 정의 PK(NOT NULL) 컬럼이 있는 데이터셋 — 행 추가 시 PK 입력 필드가 노출되고 값이 페이로드에 포함된다', async ({
+    authenticatedPage: page,
+  }) => {
+    // (#673) 회귀 재현 테스트 — 이전에는 AddRowDialog/RowFormFields/row-form-utils가 PK 컬럼을
+    // 무조건 폼에서 제외해, auto-increment 옵션이 없는 이 앱에서는 PK가 있는 테이블에 UI로
+    // 행을 단 하나도 추가할 수 없었다("Column '...' cannot be null" 서버 400만 반복 노출).
+    // 이제는 PK를 다른 필수 컬럼과 동일하게 입력 필드로 노출하고, 사용자가 입력한 값이
+    // POST 페이로드에 포함되어야 한다.
+    const pkDataset = createDatasetDetail({
+      id: 8,
+      rowCount: 0,
+      columns: [
+        createColumn({
+          id: 1,
+          columnName: 'row_key',
+          displayName: '행 키',
+          dataType: 'INTEGER',
+          isPrimaryKey: true,
+          isNullable: false,
+          columnOrder: 0,
+        }),
+        createColumn({
+          id: 2,
+          columnName: 'label',
+          displayName: '라벨',
+          dataType: 'TEXT',
+          isPrimaryKey: false,
+          isNullable: false,
+          columnOrder: 1,
+        }),
+      ],
+    });
+
+    await mockApi(page, 'GET', '/api/v1/datasets/8', pkDataset);
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', createCategories());
+    await mockApi(page, 'GET', '/api/v1/datasets/8/queries', createPageResponse([]));
+    await mockApi(page, 'GET', '/api/v1/datasets/tags', []);
+    await mockApi(page, 'GET', '/api/v1/datasets/8/stats', []);
+
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets/8/data',
+      (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ columns: pkDataset.columns, rows: [], page: 0, size: 50, totalElements: 0, totalPages: 0 }),
+        }),
+    );
+
+    const addCapture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/datasets/8/data/rows',
+      { id: 1, row_key: 99, label: '새행' },
+      { capture: true },
+    );
+
+    await page.goto('/data/datasets/8');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible({ timeout: 10000 });
+    await page.getByRole('tab', { name: '데이터' }).click();
+
+    await page.getByRole('button', { name: /행 추가/ }).click();
+    await expect(page.getByRole('dialog').getByRole('heading', { name: '행 추가' })).toBeVisible();
+
+    // PK 컬럼(row_key)이 활성화된 입력 필드로 노출되고 "(기본 키)" 뱃지가 표시된다
+    const pkInput = page.locator('#add-row_key');
+    await expect(pkInput).toBeVisible();
+    await expect(pkInput).toBeEnabled();
+    const pkLabel = page.locator('label[for="add-row_key"]');
+    await expect(pkLabel).toContainText('기본 키');
+
+    // PK 값을 포함해 정상 입력 후 제출
+    await page.locator('#add-label').fill('새행');
+    await pkInput.fill('99');
+    await page.getByRole('dialog').getByRole('button', { name: '추가' }).click();
+
+    const captured = await addCapture.waitForRequest();
+    const payload = captured.payload as { data: Record<string, unknown> };
+    expect(payload.data.row_key).toBe(99);
+    expect(payload.data.label).toBe('새행');
   });
 
   test('EditRowDialog — X 버튼 클릭 시 다이얼로그가 닫힌다', async ({
