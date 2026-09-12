@@ -63,6 +63,7 @@ class TriggerControllerTest {
         true,
         Map.of("cron", "0 0 * * *"),
         Map.of(),
+        null,
         1L,
         LocalDateTime.now());
   }

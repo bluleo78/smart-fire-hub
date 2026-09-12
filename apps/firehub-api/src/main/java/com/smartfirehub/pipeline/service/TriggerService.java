@@ -152,6 +152,7 @@ public class TriggerService {
               response.isEnabled(),
               configWithToken,
               response.triggerState(),
+              response.nextFireTime(),
               response.createdBy(),
               response.createdAt());
     }

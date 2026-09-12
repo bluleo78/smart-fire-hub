@@ -7,20 +7,19 @@ import com.smartfirehub.pipeline.repository.TriggerEventRepository;
 import com.smartfirehub.pipeline.repository.TriggerRepository;
 import jakarta.annotation.PostConstruct;
 import java.time.Instant;
-import java.time.LocalDateTime;
 import java.time.ZoneId;
-import java.time.ZonedDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.atomic.AtomicReference;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.TaskScheduler;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 import org.springframework.scheduling.support.CronTrigger;
+import org.springframework.scheduling.support.SimpleTriggerContext;
 import org.springframework.stereotype.Service;
 
 @Slf4j
@@ -72,10 +71,15 @@ public class TriggerSchedulerService {
 
           for (TriggerResponse trigger : schedules) {
             try {
-              registerSchedule(trigger.id(), trigger.config());
+              // detectMissedFire 를 registerSchedule 보다 먼저 호출한다. registerSchedule 은
+              // trigger_state.nextFireTime 을 "지금부터의 다음 실행 시각"으로 즉시 덮어쓰므로,
+              // 순서를 바꾸면 재기동 전에 지나가버린(=놓친) nextFireTime 증거가 detectMissedFire가
+              // 보기도 전에 사라진다. trigger 는 이 순회 진입 시점에 조회한 스냅샷이라
+              // registerSchedule 의 DB 쓰기와 무관하게 재기동 직전 상태를 그대로 들고 있다.
+              detectMissedFire(trigger);
               // detectMissedFire 는 이 순회 콜백 안에서 동기 실행되므로 테넌트 ThreadLocal 이 그대로
               // 유효하다. 별도 래핑이 필요 없다(내부 DB 접근은 전부 @Transactional 빈 경유).
-              detectMissedFire(trigger);
+              registerSchedule(trigger.id(), trigger.config());
             } catch (Exception e) {
               log.error(
                   "Failed to register schedule trigger {} (tenant={}): {}",
@@ -97,9 +101,16 @@ public class TriggerSchedulerService {
    * <p>{@code require()} 를 {@code compute()} 람다 <b>밖</b>에서 부르는 이유: 맵의 bin lock 을 잡은
    * 채 던지면 이미 {@code cancel} 된 기존 스케줄이 대체 없이 사라진다. 밖에서 먼저 실패하면 아무것도
    * 건드리지 않는다. 호출 경로(요청 스코프의 afterCommit, 기동 시 테넌트 순회)는 모두 컨텍스트가 있다.
+   *
+   * <p>등록 성공 시 {@code CronTrigger} 기준으로 다음 발화 시각을 계산해 {@code
+   * trigger_state.nextFireTime}에 기록한다(#676) — 이 값이 없으면 프론트엔드의 "다음 실행" 표시와
+   * {@link #detectMissedFire} 가 둘 다 전제로 삼는 값이 영영 채워지지 않는다. 계산 결과는 {@code
+   * compute()} 밖으로 홀더를 통해 전달한 뒤 쓴다 — bin lock 을 잡은 채 DB I/O(트랜잭션)를 하지
+   * 않기 위함이다.
    */
   public void registerSchedule(Long triggerId, Map<String, Object> config) {
     final long tenantId = TenantContext.require();
+    final AtomicReference<Instant> nextFireHolder = new AtomicReference<>();
 
     scheduledTasks.compute(
         triggerId,
@@ -117,8 +128,17 @@ public class TriggerSchedulerService {
                 taskScheduler.schedule(
                     () ->
                         TenantContext.runScoped(
-                            tenantId, () -> triggerService.fireTrigger(triggerId, Map.of())),
+                            tenantId,
+                            () -> {
+                              triggerService.fireTrigger(triggerId, Map.of());
+                              // 발화 직후 다음 실행 시각을 재계산해 갱신한다 — 그래야 매 발화마다
+                              // "다음 실행" 표시와 missed-fire 감지 기준이 최신으로 유지된다.
+                              writeNextFireTime(
+                                  triggerId, cronTrigger.nextExecution(new SimpleTriggerContext()));
+                            }),
                     cronTrigger);
+            // 최초 등록 시점의 다음 발화 시각. compute() 밖(락 해제 후)에서 DB에 반영한다.
+            nextFireHolder.set(cronTrigger.nextExecution(new SimpleTriggerContext()));
             log.info(
                 "Registered schedule trigger {} with cron '{}' timezone '{}' (tenant={})",
                 triggerId,
@@ -132,6 +152,27 @@ public class TriggerSchedulerService {
             return null;
           }
         });
+
+    writeNextFireTime(triggerId, nextFireHolder.get());
+  }
+
+  /**
+   * 다음 발화 시각을 {@code trigger_state.nextFireTime}에 UTC ISO-8601 문자열({@link
+   * Instant#toString()})로 기록한다.
+   *
+   * <p>UTC로 고정하는 이유(#676, #160): 프론트엔드의 날짜 계약은 "오프셋 없는 문자열=UTC"이고
+   * (`formatDate`/`parseUtcDate`), {@link #detectMissedFire} 도 같은 값을 다시 읽어 비교해야 한다.
+   * 트리거 설정의 timezone(예: Asia/Seoul)으로 저장하면 두 소비자 중 하나는 반드시 잘못
+   * 해석하게 되므로, 저장 시점에 UTC Instant로 정규화해 타임존 모호성을 원천 차단한다.
+   */
+  private void writeNextFireTime(Long triggerId, Instant nextFireInstant) {
+    if (nextFireInstant == null) {
+      return;
+    }
+    // REQUIRES_NEW 트랜잭션(TriggerRepository.mergeNextFireTime 참고)으로 위임한다 — 이 메서드가
+    // afterCommit() 콜백 안에서 불릴 수 있어, 기본 REQUIRED 로는 이미 커밋된 트랜잭션에 조용히
+    // 합류해 반영되지 않는다(#676).
+    triggerRepository.mergeNextFireTime(triggerId, nextFireInstant.toString());
   }
 
   /** Unregister a cron schedule. */
@@ -154,12 +195,15 @@ public class TriggerSchedulerService {
   }
 
   /**
-   * nextFireTime과 현재 시각을 timezone-aware하게 비교하여 missed fire를 감지한다.
+   * nextFireTime과 현재 시각을 비교하여 missed fire를 감지한다.
    *
    * <p>테스트에서 현재 시각을 주입할 수 있도록 now 파라미터를 받는 package-private 오버로드.
    *
-   * <p>nextFireTime은 trigger config의 timezone 기준 LocalDateTime으로 저장되어 있으므로, config.timezone을 적용해
-   * ZonedDateTime으로 해석한 뒤 Instant로 변환하여 비교한다. 이렇게 하면 JVM 기본 timezone에 무관하게 올바른 시점 비교가 가능하다.
+   * <p>nextFireTime은 {@link #writeNextFireTime}이 UTC {@code Instant.toString()} 형식으로 저장한다
+   * (#676). 과거에는 config.timezone 기준 LocalDateTime으로 저장한다고 가정하고 여기서 다시
+   * ZonedDateTime으로 재해석했는데(#160), 애초에 write 경로가 없어 실행된 적이 없던 코드라 그
+   * 재해석 로직 자체도 검증되지 않은 채였다. UTC로 저장을 통일해 timezone 재해석을 아예
+   * 없앤다 — JVM 기본 timezone에도 무관하게 올바른 시점 비교가 된다.
    */
   void detectMissedFire(TriggerResponse trigger, Instant now) {
     Map<String, Object> state = trigger.triggerState();
@@ -169,13 +213,7 @@ public class TriggerSchedulerService {
 
     try {
       String nextFireTimeStr = state.get("nextFireTime").toString();
-
-      // config.timezone 기준으로 nextFireTime을 ZonedDateTime으로 해석 (registerSchedule과 동일 기준)
-      String timezone = (String) trigger.config().getOrDefault("timezone", "Asia/Seoul");
-      ZoneId zoneId = ZoneId.of(timezone);
-      LocalDateTime localNextFireTime =
-          LocalDateTime.parse(nextFireTimeStr, DateTimeFormatter.ISO_LOCAL_DATE_TIME);
-      Instant nextFireInstant = ZonedDateTime.of(localNextFireTime, zoneId).toInstant();
+      Instant nextFireInstant = Instant.parse(nextFireTimeStr);
 
       if (nextFireInstant.isBefore(now)) {
         log.warn(

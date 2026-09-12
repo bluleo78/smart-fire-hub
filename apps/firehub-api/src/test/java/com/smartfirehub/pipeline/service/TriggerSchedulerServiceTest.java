@@ -7,9 +7,6 @@ import com.smartfirehub.pipeline.dto.*;
 import com.smartfirehub.pipeline.repository.TriggerEventRepository;
 import com.smartfirehub.support.IntegrationTestBase;
 import java.time.Instant;
-import java.time.LocalDateTime;
-import java.time.ZoneId;
-import java.time.ZonedDateTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -113,25 +110,23 @@ class TriggerSchedulerServiceTest extends IntegrationTestBase {
   }
 
   // ─────────────────────────────────────────────────────────────
-  // detectMissedFire timezone-aware 비교 검증 (#160)
+  // detectMissedFire: nextFireTime UTC 저장 계약 검증 (#676, #160)
+  //
+  // registerSchedule()이 trigger_state.nextFireTime을 UTC Instant.toString() 형식으로 쓰기
+  // 시작했으므로(#676), detectMissedFire도 같은 형식을 그대로 Instant.parse로 읽어 비교한다.
+  // 트리거의 config.timezone(스케줄 자체가 언제 발화하는지 계산하는 데만 쓰임)과는 무관하게
+  // 저장·비교 모두 UTC로 고정되어 있는지가 이 테스트들의 핵심 단언이다.
   // ─────────────────────────────────────────────────────────────
 
   /**
-   * 시나리오: nextFireTime = "2026-05-07T09:00:00" (KST 기준 저장). config.timezone = "Asia/Seoul" → 실제
-   * Instant = 2026-05-07T00:00:00Z. now = 2026-05-07T00:30:00Z (서버 UTC 기준 00:30) → 이미 지남 → missed
-   * fire 감지해야 함.
-   *
-   * <p>수정 전 버그: now를 UTC LocalDateTime.now()로 해석하면 nextFireTime "09:00:00 UTC"와 비교 → 아직 미래라고 판단하여
-   * missed fire를 놓친다.
+   * 시나리오: trigger.config.timezone = "Asia/Seoul" 인 트리거라도, nextFireTime은 UTC Instant
+   * 문자열로 저장되어 있다. now가 그 시각보다 뒤라면(=이미 지남) missed fire를 감지해야 한다.
    */
   @Test
   void detectMissedFire_withSeoulTimezone_detectsMissedFireCorrectly() {
-    // KST 09:00 → nextFireTime 문자열 (timezone 없이 저장된 형태)
-    String nextFireTimeStr = "2026-05-07T09:00:00";
-    // KST 09:00 = UTC 00:00
-    Instant expectedFireInstant =
-        ZonedDateTime.of(LocalDateTime.parse(nextFireTimeStr), ZoneId.of("Asia/Seoul")).toInstant();
-    // now = UTC 00:30 → KST 09:30, 이미 09:00 KST를 지남
+    Instant expectedFireInstant = Instant.parse("2026-05-07T00:00:00Z");
+    String nextFireTimeStr = expectedFireInstant.toString();
+    // now = 30분 뒤 → 이미 지남
     Instant now = expectedFireInstant.plusSeconds(1800);
 
     // 트리거 생성 (DB에 저장되어 fireTrigger 호출 가능하도록)
@@ -145,7 +140,7 @@ class TriggerSchedulerServiceTest extends IntegrationTestBase {
                 Map.of("cron", "0 9 * * *", "timezone", "Asia/Seoul")),
             testUserId);
 
-    // triggerState에 nextFireTime 주입
+    // triggerState에 nextFireTime 주입 (UTC Instant 문자열)
     Map<String, Object> stateWithNextFire = new HashMap<>();
     stateWithNextFire.put("nextFireTime", nextFireTimeStr);
     TriggerResponse triggerWithState =
@@ -158,10 +153,11 @@ class TriggerSchedulerServiceTest extends IntegrationTestBase {
             trigger.isEnabled(),
             trigger.config(),
             stateWithNextFire,
+            nextFireTimeStr,
             trigger.createdBy(),
             trigger.createdAt());
 
-    // 실행 (now를 KST 09:30 기준 UTC로 주입)
+    // 실행 (이미 지난 시각으로 now 주입)
     schedulerService.detectMissedFire(triggerWithState, now);
 
     // MISSED 이벤트가 생성되었는지 확인
@@ -169,20 +165,12 @@ class TriggerSchedulerServiceTest extends IntegrationTestBase {
     assertThat(events).anySatisfy(e -> assertThat(e.eventType()).isEqualTo("MISSED"));
   }
 
-  /**
-   * 시나리오: nextFireTime = "2026-05-07T09:00:00" (KST 기준 저장). config.timezone = "Asia/Seoul" → 실제
-   * Instant = 2026-05-07T00:00:00Z. now = 2026-05-06T23:30:00Z (서버 UTC 기준, 아직 KST 09:00 이전) → 미래 →
-   * missed fire 없어야 함.
-   *
-   * <p>수정 전 버그: LocalDateTime.now()를 UTC 기준으로 사용하면 "09:00 UTC"와 비교하여 동일한 시각을 "이미 지남"으로 오탐한다.
-   */
+  /** 시나리오: 위와 동일 저장 형식이지만 now가 nextFireTime보다 앞선 경우(아직 미래) → missed fire 없어야 함. */
   @Test
   void detectMissedFire_withSeoulTimezone_doesNotFireWhenStillFuture() {
-    String nextFireTimeStr = "2026-05-07T09:00:00";
-    // KST 09:00 = UTC 00:00
-    Instant expectedFireInstant =
-        ZonedDateTime.of(LocalDateTime.parse(nextFireTimeStr), ZoneId.of("Asia/Seoul")).toInstant();
-    // now = UTC 23:30 전날 → KST 08:30, 아직 09:00 KST 이전
+    Instant expectedFireInstant = Instant.parse("2026-05-07T00:00:00Z");
+    String nextFireTimeStr = expectedFireInstant.toString();
+    // now = 30분 전 → 아직 미래
     Instant now = expectedFireInstant.minusSeconds(1800);
 
     TriggerResponse trigger =
@@ -207,6 +195,7 @@ class TriggerSchedulerServiceTest extends IntegrationTestBase {
             trigger.isEnabled(),
             trigger.config(),
             stateWithNextFire,
+            nextFireTimeStr,
             trigger.createdBy(),
             trigger.createdAt());
 
@@ -218,15 +207,11 @@ class TriggerSchedulerServiceTest extends IntegrationTestBase {
     assertThat(events).noneMatch(e -> "MISSED".equals(e.eventType()));
   }
 
-  /**
-   * 시나리오: nextFireTime = "2026-05-07T09:00:00" (UTC 기준 저장, config.timezone = "UTC"). now =
-   * 2026-05-07T09:30:00Z → 이미 지남 → missed fire 감지.
-   */
+  /** 시나리오: config.timezone = "UTC" 인 트리거에서도 동일하게 동작해야 한다(스토리지 형식은 config.timezone과 무관). */
   @Test
   void detectMissedFire_withUtcTimezone_detectsMissedFireCorrectly() {
-    String nextFireTimeStr = "2026-05-07T09:00:00";
-    Instant expectedFireInstant =
-        ZonedDateTime.of(LocalDateTime.parse(nextFireTimeStr), ZoneId.of("UTC")).toInstant();
+    Instant expectedFireInstant = Instant.parse("2026-05-07T09:00:00Z");
+    String nextFireTimeStr = expectedFireInstant.toString();
     Instant now = expectedFireInstant.plusSeconds(1800);
 
     TriggerResponse trigger =
@@ -251,6 +236,7 @@ class TriggerSchedulerServiceTest extends IntegrationTestBase {
             trigger.isEnabled(),
             trigger.config(),
             stateWithNextFire,
+            nextFireTimeStr,
             trigger.createdBy(),
             trigger.createdAt());
 
@@ -259,4 +245,9 @@ class TriggerSchedulerServiceTest extends IntegrationTestBase {
     var events = triggerEventRepository.findByTriggerId(trigger.id(), 10);
     assertThat(events).anySatisfy(e -> assertThat(e.eventType()).isEqualTo("MISSED"));
   }
+
+  // registerSchedule()의 nextFireTime write 경로(REQUIRES_NEW) 자체는 이 클래스 레벨
+  // @Transactional(롤백 전용) 통합 테스트로는 검증할 수 없다 — REQUIRES_NEW가 여는 새 물리
+  // 트랜잭션은 아직 커밋되지 않은(=이 테스트 트랜잭션 안에만 있는) 트리거 행을 볼 수 없다.
+  // 별도의 순수 단위 테스트(TriggerSchedulerServiceUnitTest)에서 Mockito로 검증한다(#676).
 }

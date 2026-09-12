@@ -736,4 +736,35 @@ test.describe('파이프라인 트리거 탭', () => {
       }),
     });
   });
+
+  /**
+   * 회귀 테스트 (#676): 백엔드가 SCHEDULE 트리거의 nextFireTime을 쓰는 경로가 없어
+   * "다음 실행" 줄이 한 번도 표시된 적이 없었다. GET /triggers 응답에 nextFireTime이
+   * 채워지면 트리거 카드에 "다음 실행" 문구가 나타나고, 없으면 나타나지 않아야 한다.
+   */
+  test('스케줄 트리거 — nextFireTime이 있으면 "다음 실행" 문구가 표시된다 (refs #676)', async ({
+    authenticatedPage: page,
+  }) => {
+    const withNextFire = createTrigger({
+      id: 20,
+      name: '다음 실행 표시 트리거',
+      triggerType: 'SCHEDULE',
+      nextFireTime: '2026-09-13T09:00:00Z',
+    });
+    const withoutNextFire = createTrigger({
+      id: 21,
+      name: '다음 실행 미등록 트리거',
+      triggerType: 'SCHEDULE',
+      nextFireTime: null,
+    });
+
+    await setupTriggerTabMocks(page, { triggers: [withNextFire, withoutNextFire] });
+    await gotoTriggerTab(page);
+
+    const withCard = page.getByText('다음 실행 표시 트리거').locator('..').locator('..');
+    await expect(withCard.getByText(/다음 실행:/)).toBeVisible();
+
+    const withoutCard = page.getByText('다음 실행 미등록 트리거').locator('..').locator('..');
+    await expect(withoutCard.getByText(/다음 실행:/)).toHaveCount(0);
+  });
 });

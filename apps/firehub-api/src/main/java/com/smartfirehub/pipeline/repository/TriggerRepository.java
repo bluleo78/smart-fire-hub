@@ -9,6 +9,7 @@ import com.smartfirehub.pipeline.dto.TriggerResponse;
 import com.smartfirehub.pipeline.dto.UpdateTriggerRequest;
 import java.time.LocalDateTime;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -18,6 +19,7 @@ import org.jooq.Field;
 import org.jooq.JSONB;
 import org.jooq.Table;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 @Repository
@@ -78,6 +80,10 @@ public class TriggerRepository {
   }
 
   private TriggerResponse mapToResponse(org.jooq.Record r) {
+    Map<String, Object> triggerState = parseJsonb(r.get(T_TRIGGER_STATE));
+    // nextFireTime 은 trigger_state(jsonb) 안에 저장돼 있다 (#676) — DTO 최상위 필드로 꺼내
+    // 프론트엔드가 별도 파싱 없이 trigger.nextFireTime 으로 바로 읽을 수 있게 한다.
+    Object nextFireTimeValue = triggerState.get("nextFireTime");
     return new TriggerResponse(
         r.get(T_ID),
         r.get(T_PIPELINE_ID),
@@ -86,7 +92,8 @@ public class TriggerRepository {
         r.get(T_DESCRIPTION),
         r.get(T_IS_ENABLED),
         parseJsonb(r.get(T_CONFIG)),
-        parseJsonb(r.get(T_TRIGGER_STATE)),
+        triggerState,
+        nextFireTimeValue == null ? null : nextFireTimeValue.toString(),
         r.get(T_CREATED_BY),
         r.get(T_CREATED_AT));
   }
@@ -218,6 +225,28 @@ public class TriggerRepository {
         .set(T_UPDATED_AT, LocalDateTime.now())
         .where(T_ID.eq(id))
         .execute();
+  }
+
+  /**
+   * {@code trigger_state.nextFireTime} 을 읽기-수정-쓰기로 병합한다(#676).
+   *
+   * <p>{@code REQUIRES_NEW} 인 이유: 이 메서드는 {@code TriggerService.createTrigger}/{@code
+   * updateTrigger} 의 {@code TransactionSynchronization.afterCommit()} 콜백(=
+   * {@code TriggerSchedulerService.registerSchedule}) 안에서 호출된다. afterCommit 시점에는 방금
+   * 커밋된 트랜잭션의 리소스(커넥션)가 아직 스레드에 바인딩된 채라, 클래스 레벨 기본값인 {@code
+   * REQUIRED} 로는 이미 완료된 그 트랜잭션에 "참여"하게 되어 이 update 가 예외 없이 조용히
+   * 반영되지 않는다(#676 구현 중 실측: 로그·리턴값 모두 정상인데 DB에는 반영 안 됨). {@code
+   * REQUIRES_NEW} 로 강제로 새 물리 트랜잭션·커넥션을 열어야 실제로 커밋된다.
+   */
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public void mergeNextFireTime(Long id, String nextFireTimeIso) {
+    findById(id)
+        .ifPresent(
+            trigger -> {
+              Map<String, Object> updatedState = new HashMap<>(trigger.triggerState());
+              updatedState.put("nextFireTime", nextFireTimeIso);
+              updateTriggerState(id, updatedState);
+            });
   }
 
   public int disableByUpstreamPipelineId(Long upstreamPipelineId) {
