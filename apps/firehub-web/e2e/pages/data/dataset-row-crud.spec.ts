@@ -33,6 +33,16 @@ test.describe('데이터셋 상세 — 행 추가/편집', () => {
         isNullable: true,
         columnOrder: 2,
       }),
+      // (#674) nullable DECIMAL 컬럼 — 빈 값 저장 시 NULL 대신 0으로 저장되는 회귀 검증용
+      createColumn({
+        id: 4,
+        columnName: 'price',
+        displayName: '가격',
+        dataType: 'DECIMAL',
+        isPrimaryKey: false,
+        isNullable: true,
+        columnOrder: 3,
+      }),
     ],
   });
 
@@ -52,8 +62,8 @@ test.describe('데이터셋 상세 — 행 추가/편집', () => {
           body: JSON.stringify({
             columns: datasetDetail.columns,
             rows: [
-              { id: 1, name: 'Alice', amount: 10 },
-              { id: 2, name: 'Bob', amount: 20 },
+              { id: 1, name: 'Alice', amount: 10, price: 12.5 },
+              { id: 2, name: 'Bob', amount: 20, price: 20.75 },
             ],
             page: 0,
             size: 50,
@@ -174,6 +184,143 @@ test.describe('데이터셋 상세 — 행 추가/편집', () => {
       name: 'Alice Updated',
       amount: 99,
     });
+  });
+
+  test('(#674) nullable INTEGER/DECIMAL 필드를 비우고 저장하면 0이 아닌 NULL로 전송된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupMocks(page);
+
+    const updateCapture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/datasets/1/data/rows/1',
+      { id: 1, name: 'Alice', amount: null, price: null },
+      { capture: true },
+    );
+
+    await page.goto('/data/datasets/1');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible({ timeout: 10000 });
+    await page.getByRole('tab', { name: '데이터' }).click();
+
+    const aliceCell = page.getByRole('cell', { name: 'Alice' });
+    await expect(aliceCell).toBeVisible();
+    await aliceCell.dblclick();
+
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByRole('heading', { name: /행 편집 \(ID: 1\)/ })).toBeVisible();
+
+    // 기본값 확인 — amount(INTEGER)=10, price(DECIMAL)=12.5
+    await expect(page.locator('#edit-amount')).toHaveValue('10');
+    await expect(page.locator('#edit-price')).toHaveValue('12.5');
+
+    // 두 필드를 전부 비운다 (커서를 끝으로 이동 후 Backspace 반복 — 실제 사용자 조작 재현)
+    await page.locator('#edit-amount').fill('');
+    await page.locator('#edit-price').fill('');
+
+    await dialog.getByRole('button', { name: '저장' }).click();
+
+    // PUT payload 검증 — 0이 아니라 null 이어야 한다
+    const captured = await updateCapture.waitForRequest();
+    const payload = captured.payload as { data: Record<string, unknown> };
+    expect(payload.data.amount).toBeNull();
+    expect(payload.data.price).toBeNull();
+    // 회귀 방지: falsy-0 함정에 빠지면 0 이 전송되므로 명시적으로 0이 아님을 재확인
+    expect(payload.data.amount).not.toBe(0);
+    expect(payload.data.price).not.toBe(0);
+
+    // 성공 토스트까지 확인 — 저장 자체는 정상 완료되어야 한다(값만 올바르게 NULL)
+    await expect(page.getByText('행이 수정되었습니다.')).toBeVisible();
+  });
+
+  test('(#674) NOT NULL INTEGER/DECIMAL 컬럼은 비운 채 저장 시도하면 여전히 유효성 에러가 뜬다', async ({
+    authenticatedPage: page,
+  }) => {
+    // nullable 스키마 수정(z.preprocess)이 NOT NULL 숫자 컬럼의 필수 검증까지 깨뜨리지 않는지
+    // 확인하는 회귀 테스트 — NOT NULL 컬럼은 preprocess 분기를 타지 않으므로 원래 z.coerce.number()가
+    // 그대로 적용되어 빈 문자열은 여전히 검증 실패해야 한다.
+    const notNullDataset = createDatasetDetail({
+      id: 8,
+      rowCount: 1,
+      columns: [
+        createColumn({ id: 1, columnName: 'id', displayName: 'ID', dataType: 'INTEGER', isPrimaryKey: true }),
+        createColumn({
+          id: 2,
+          columnName: 'score',
+          displayName: '점수',
+          dataType: 'INTEGER',
+          isPrimaryKey: false,
+          isNullable: false,
+          columnOrder: 1,
+        }),
+        createColumn({
+          id: 3,
+          columnName: 'ratio',
+          displayName: '비율',
+          dataType: 'DECIMAL',
+          isPrimaryKey: false,
+          isNullable: false,
+          columnOrder: 2,
+        }),
+      ],
+    });
+
+    await mockApi(page, 'GET', '/api/v1/datasets/8', notNullDataset);
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', createCategories());
+    await mockApi(page, 'GET', '/api/v1/datasets/8/queries', createPageResponse([]));
+    await mockApi(page, 'GET', '/api/v1/datasets/tags', []);
+    await mockApi(page, 'GET', '/api/v1/datasets/8/stats', []);
+
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets/8/data',
+      (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            columns: notNullDataset.columns,
+            rows: [{ id: 1, score: 90, ratio: 1.5 }],
+            page: 0,
+            size: 50,
+            totalElements: 1,
+            totalPages: 1,
+          }),
+        }),
+    );
+
+    // PUT이 실제로 호출되는지까지 캡처해 명시적으로 확인한다 (다이얼로그가 닫히지 않는 것만으로는
+    // "요청이 아예 안 갔다"를 증명하지 못한다 — 성공 응답 후 UI 갱신 실패로 우연히 열려있을 수도 있음)
+    let putCalled = false;
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets/8/data/rows/1' && url.search === '',
+      (route) => {
+        if (route.request().method() === 'PUT') putCalled = true;
+        return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+      },
+    );
+
+    await page.goto('/data/datasets/8');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible({ timeout: 10000 });
+    await page.getByRole('tab', { name: '데이터' }).click();
+
+    const scoreCell = page.getByRole('cell', { name: '90' });
+    await expect(scoreCell).toBeVisible();
+    await scoreCell.dblclick();
+
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByRole('heading', { name: /행 편집 \(ID: 1\)/ })).toBeVisible();
+
+    // NOT NULL INTEGER/DECIMAL 필드를 비우고 저장 시도
+    await page.locator('#edit-score').fill('');
+    await page.locator('#edit-ratio').fill('');
+    await dialog.getByRole('button', { name: '저장' }).click();
+
+    // 유효성 에러로 제출이 막혀 다이얼로그가 여전히 열려 있어야 한다 (0으로 조용히 저장되면 안 됨)
+    await expect(dialog).toBeVisible();
+    // 잠깐 대기해도 PUT 요청 자체가 나가지 않아야 한다 — falsy-0 함정이면 score/ratio가 0으로
+    // "유효한" 값이 되어 여기서 PUT이 호출돼 버린다.
+    await page.waitForTimeout(300);
+    expect(putCalled).toBe(false);
   });
 
   test('행 추가 시 필수 필드 미입력 → Zod 유효성 에러 표시', async ({

@@ -14,11 +14,19 @@ export function buildRowZodSchema(columns: DatasetColumnResponse[], mode: 'add' 
     switch (col.dataType) {
       case 'INTEGER':
         field = z.coerce.number({ error: '숫자를 입력하세요.' }).int({ error: '정수를 입력하세요.' });
-        if (col.isNullable) field = field.optional().or(z.literal('').transform(() => undefined));
+        // (#674) 이전에는 `.optional().or(z.literal('').transform(() => undefined))` 형태였는데
+        // union의 첫 대안(coerce.number())이 먼저 시도되고 `Number('') === 0`이라 빈 문자열이
+        // 0으로 "성공" 파싱돼 버렸다. 이 falsy-0 함정은 NOT NULL 컬럼에도 동일하게 적용되어
+        // 필수 숫자 필드를 비워도 검증을 통과해 0이 저장되는 문제가 있었다(발견 당시 함께 수정).
+        // z.preprocess로 빈 문자열을 coerce 이전에 undefined로 바꿔 원천 차단한다 — NOT NULL이면
+        // undefined가 coerce.number()에서 NaN이 되어 그대로 검증 실패(필수 처리), NULL 허용이면
+        // .optional()로 undefined를 통과시켜 cleanFormValues가 null로 변환하게 한다.
+        field = z.preprocess((v) => (v === '' ? undefined : v), col.isNullable ? field.optional() : field);
         break;
       case 'DECIMAL':
         field = z.coerce.number({ error: '숫자를 입력하세요.' });
-        if (col.isNullable) field = field.optional().or(z.literal('').transform(() => undefined));
+        // (#674) INTEGER와 동일한 이유로 preprocess 적용 (NOT NULL 포함).
+        field = z.preprocess((v) => (v === '' ? undefined : v), col.isNullable ? field.optional() : field);
         break;
       case 'BOOLEAN':
         field = z.boolean();
