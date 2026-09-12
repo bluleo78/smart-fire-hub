@@ -1,10 +1,11 @@
-import { Navigate, Outlet } from 'react-router-dom';
+import { Navigate, Outlet, useLocation } from 'react-router-dom';
 
 import { useAuth } from '../hooks/useAuth';
 import { SelectTenantPage } from '../pages/SelectTenantPage';
 
 export function ProtectedRoute() {
   const { isLoading, isAuthenticated, activeTenantId } = useAuth();
+  const location = useLocation();
 
   if (isLoading) {
     return (
@@ -15,7 +16,9 @@ export function ProtectedRoute() {
   }
 
   if (!isAuthenticated) {
-    return <Navigate to="/login" replace />;
+    // 딥링크 보존(#675): 로그인 후 원래 접근하려던 경로로 되돌아갈 수 있도록
+    // 현재 location을 state.from에 실어 전달한다. LoginPage가 로그인 성공 시 이를 읽는다.
+    return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
   // 세 번째 상태: 인증됐지만 테넌트 미선택. 여기서 막지 않으면 GUC 가 비어 있어 모든 API 가 403 이

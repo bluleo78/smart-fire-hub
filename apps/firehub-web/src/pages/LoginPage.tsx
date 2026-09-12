@@ -2,7 +2,8 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import axios from 'axios';
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
-import { Link, Navigate } from 'react-router-dom';
+import type { Location } from 'react-router-dom';
+import { Link, Navigate, useLocation } from 'react-router-dom';
 
 import { BrandLogo } from '../components/BrandLogo';
 import { Button } from '../components/ui/button';
@@ -20,6 +21,7 @@ export default function LoginPage() {
   const { login, isAuthenticated } = useAuth();
   const { brandName } = useBranding(); // 런타임 브랜드명 (로그인 화면 제목)
   const [serverError, setServerError] = useState('');
+  const location = useLocation();
 
   const {
     register,
@@ -30,7 +32,13 @@ export default function LoginPage() {
   });
 
   if (isAuthenticated) {
-    return <Navigate to="/" replace />;
+    // 딥링크 보존(#675): ProtectedRoute가 미인증 상태로 리다이렉트하며 실어 보낸
+    // state.from이 있으면 원래 접근하려던 경로로, 없으면 기존처럼 홈으로 이동한다.
+    // state.from은 ProtectedRoute의 useLocation()이 만든 내부 객체이므로 외부 입력으로
+    // 조작 불가능하다(open redirect 위험 없음).
+    const from = (location.state as { from?: Location } | null)?.from;
+    const redirectTo = from ? `${from.pathname}${from.search}${from.hash}` : '/';
+    return <Navigate to={redirectTo} replace />;
   }
 
   const onSubmit = async (data: LoginFormData) => {
