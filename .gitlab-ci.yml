@@ -22,6 +22,16 @@
 #   3) *.integration.test.ts (Neo4j 필요)
 #      vitest.config.ts 가 기본 실행에서 제외한다(VITEST_INTEGRATION=1 에서만 포함).
 #      아래 test 잡도 그 기본값을 따른다 — Neo4j 서비스를 붙이면 열 수 있다.
+#
+#   4) firehub-channel lint
+#      이 워크스페이스만 eslint.config.js 도 eslint 의존성도 없는데 lint 스크립트는
+#      "eslint src" 로 있다(나머지 셋은 설정이 있다). 설정을 새로 쓰는 건 코드 결정이라
+#      CI 에서 임의로 만들지 않고 대상에서 뺐다 — 설정이 생기면 필터에 다시 넣으면 된다.
+#
+#   5) test_health_no_auth_required (firehub-executor)
+#      /health 는 DB 풀이 준비돼야 200 이다(app/routers/health.py) — 서비스 없는 이 잡에서는
+#      구조적으로 503 이다. 마커가 없어 파일 단위로 구분되지 않아 그 테스트만 deselect 한다.
+#      DB 를 붙이면 되살린다.
 
 stages: [check]
 
@@ -52,8 +62,9 @@ node-checks:
     - pnpm config set store-dir .pnpm-store
     - pnpm install --frozen-lockfile
   script:
+    # firehub-channel 은 eslint 설정이 없어 제외한다(머리말 4 참고).
     - pnpm --filter @smart-fire-hub/firehub-web --filter @smart-fire-hub/firehub-admin
-        --filter @smart-fire-hub/firehub-ai-agent --filter @smart-fire-hub/firehub-channel lint
+        --filter @smart-fire-hub/firehub-ai-agent lint
     - pnpm --filter @smart-fire-hub/firehub-web --filter @smart-fire-hub/firehub-admin
         --filter @smart-fire-hub/firehub-ai-agent typecheck
     # 통합 테스트(*.integration.test.ts)는 vitest.config.ts 가 기본에서 제외한다.
@@ -70,4 +81,6 @@ executor-checks:
     - .venv/bin/pip install --upgrade pip --quiet
     - |
       if [ -f pyproject.toml ]; then .venv/bin/pip install --quiet -e '.[dev]' || .venv/bin/pip install --quiet -e .; fi
+    # /health 는 DB 풀을 요구한다 — 서비스가 붙기 전까지 그 한 건만 뺀다(머리말 5 참고).
     - .venv/bin/python3 -m pytest tests/ -q
+        --deselect tests/test_auth_middleware.py::test_health_no_auth_required
