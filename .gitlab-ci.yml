@@ -1,0 +1,73 @@
+# Smart Data Platform (firehub) GitLab CI
+#
+# 이 레포에는 CI 가 없었다. 서비스 없이 확실히 도는 검사부터 세운다 —
+# 추측으로 잡을 늘려 빨간 파이프라인을 만드는 것보다, 녹색으로 지켜지는 게이트가 낫다.
+#
+# 러너: buildrunner01/02 (Docker executor, tag: docker·build, run_untagged=true).
+#
+# 아직 없는 것(의도적으로 비워 둠):
+#
+#   1) firehub-api (Java 21) 테스트
+#      src/test/resources/application-test.yml 이 localhost:5433/smartfirehub_test 의
+#      실제 Postgres 를 요구하고, 그 DB 는 docker/postgres/Dockerfile 로 빌드하는
+#      PostGIS 16 + pgvector 커스텀 이미지다(GitLab services 는 이미지를 빌드하지 못한다).
+#      게다가 테스트는 app_tenant·pipeline_executor 롤로 붙는데 초기화 경로가 레포에
+#      드러나 있지 않다. 이미지 빌드 + 롤 부트스트랩을 확정한 뒤 잡을 추가해야 한다.
+#
+#   2) 이미지 빌드/배포
+#      scripts/deploy.sh 가 ghcr.io/bluleo78/smart-fire-hub 로 :latest 를 민다 —
+#      조직이 아닌 개인 계정 네임스페이스이고 버전 태그도 없다. 레지스트리를
+#      docker.io/iacloudops 로 옮길지 정해진 뒤에 릴리스 잡을 붙인다.
+#
+#   3) *.integration.test.ts (Neo4j 필요)
+#      vitest.config.ts 가 기본 실행에서 제외한다(VITEST_INTEGRATION=1 에서만 포함).
+#      아래 test 잡도 그 기본값을 따른다 — Neo4j 서비스를 붙이면 열 수 있다.
+
+stages: [check]
+
+variables:
+  GIT_DEPTH: "20"
+
+default:
+  interruptible: true
+  retry:
+    max: 1
+    when: [api_failure, runner_system_failure, scheduler_failure]
+
+.on-mr-or-main: &on-mr-or-main
+  - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+  - if: $CI_COMMIT_BRANCH == "main"
+
+node-checks:
+  stage: check
+  image: node:24-bookworm
+  rules: *on-mr-or-main
+  cache:
+    key:
+      files: [pnpm-lock.yaml]
+    paths: [.pnpm-store]
+  before_script:
+    - corepack enable
+    - corepack prepare pnpm@10.11.0 --activate
+    - pnpm config set store-dir .pnpm-store
+    - pnpm install --frozen-lockfile
+  script:
+    - pnpm --filter @smart-fire-hub/firehub-web --filter @smart-fire-hub/firehub-admin
+        --filter @smart-fire-hub/firehub-ai-agent --filter @smart-fire-hub/firehub-channel lint
+    - pnpm --filter @smart-fire-hub/firehub-web --filter @smart-fire-hub/firehub-admin
+        --filter @smart-fire-hub/firehub-ai-agent typecheck
+    # 통합 테스트(*.integration.test.ts)는 vitest.config.ts 가 기본에서 제외한다.
+    - pnpm --filter @smart-fire-hub/firehub-admin --filter @smart-fire-hub/firehub-ai-agent
+        --filter @smart-fire-hub/firehub-channel test
+
+executor-checks:
+  stage: check
+  image: python:3.12-bookworm
+  rules: *on-mr-or-main
+  script:
+    - cd apps/firehub-executor
+    - python3 -m venv .venv
+    - .venv/bin/pip install --upgrade pip --quiet
+    - |
+      if [ -f pyproject.toml ]; then .venv/bin/pip install --quiet -e '.[dev]' || .venv/bin/pip install --quiet -e .; fi
+    - .venv/bin/python3 -m pytest tests/ -q
