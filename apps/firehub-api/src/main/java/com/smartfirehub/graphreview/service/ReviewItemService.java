@@ -32,6 +32,9 @@ public class ReviewItemService {
   static final String ENTITY = "entity_extraction";
   static final String RELATION = "relation_extraction";
 
+  // SYNONYM/ENTITY/RELATION 승인만 datasetId가 필수(PROPERTY는 예외) — requireDatasetId 문서 참고.
+  private static final Set<String> DATASET_ID_REQUIRED = Set.of(SYNONYM, ENTITY, RELATION);
+
   // resolver.ts normalizeName과 동일 규칙(trim + 연속공백 1칸 + 소문자) — 정렬 키로만 사용, 저장은 원본(trim).
   private static String normalize(String s) {
     return s.trim().replaceAll("\\s+", " ").toLowerCase();
@@ -185,12 +188,13 @@ public class ReviewItemService {
   public ReviewItemResponse approve(long id, String correctedValue, long userId) {
     ReviewItemRecord row = getPendingOrThrow(id);
     JsonNode p = parse(row.payloadJson());
+    // SYNONYM/ENTITY/RELATION은 공통으로 datasetId 필수(사유는 requireDatasetId 문서 참고). PROPERTY만 예외.
+    if (DATASET_ID_REQUIRED.contains(row.itemType())) {
+      requireDatasetId(row);
+    }
     switch (row.itemType()) {
-      case SYNONYM -> {
-        requireDatasetId(row);
-        mutationClient.mergeEntities(
-            p.path("entityType").asText(), p.path("nameA").asText(), p.path("nameB").asText(), row.datasetId());
-      }
+      case SYNONYM -> mutationClient.mergeEntities(
+          p.path("entityType").asText(), p.path("nameA").asText(), p.path("nameB").asText(), row.datasetId());
       case PROPERTY -> {
         if (correctedValue == null || correctedValue.isBlank()) {
           throw new IllegalArgumentException("속성 정규화 승인에는 정정값(correctedValue)이 필요합니다.");
@@ -201,7 +205,6 @@ public class ReviewItemService {
       }
       case ENTITY -> {
         // as-extracted 타입/이름 그대로 적재(정정 없음). 보류 관계는 add-entity가 끝점 존재 시에만 MERGE.
-        requireDatasetId(row);
         JsonNode props = p.path("properties");
         List<Long> chunkIds = new ArrayList<>();
         p.path("sourceChunkIds").forEach(n -> chunkIds.add(n.asLong()));
@@ -213,7 +216,6 @@ public class ReviewItemService {
       }
       case RELATION -> {
         // as-extracted 관계 그대로 적재. add-relation이 양 끝점 존재 시에만 MERGE.
-        requireDatasetId(row);
         List<Long> chunkIds = new ArrayList<>();
         p.path("sourceChunkIds").forEach(n -> chunkIds.add(n.asLong()));
         mutationClient.addRelation(
