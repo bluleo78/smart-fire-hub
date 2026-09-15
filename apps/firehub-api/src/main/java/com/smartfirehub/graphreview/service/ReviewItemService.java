@@ -186,8 +186,11 @@ public class ReviewItemService {
     ReviewItemRecord row = getPendingOrThrow(id);
     JsonNode p = parse(row.payloadJson());
     switch (row.itemType()) {
-      case SYNONYM -> mutationClient.mergeEntities(
-          p.path("entityType").asText(), p.path("nameA").asText(), p.path("nameB").asText());
+      case SYNONYM -> {
+        requireDatasetId(row);
+        mutationClient.mergeEntities(
+            p.path("entityType").asText(), p.path("nameA").asText(), p.path("nameB").asText(), row.datasetId());
+      }
       case PROPERTY -> {
         if (correctedValue == null || correctedValue.isBlank()) {
           throw new IllegalArgumentException("속성 정규화 승인에는 정정값(correctedValue)이 필요합니다.");
@@ -198,6 +201,7 @@ public class ReviewItemService {
       }
       case ENTITY -> {
         // as-extracted 타입/이름 그대로 적재(정정 없음). 보류 관계는 add-entity가 끝점 존재 시에만 MERGE.
+        requireDatasetId(row);
         JsonNode props = p.path("properties");
         List<Long> chunkIds = new ArrayList<>();
         p.path("sourceChunkIds").forEach(n -> chunkIds.add(n.asLong()));
@@ -205,14 +209,16 @@ public class ReviewItemService {
         p.path("relations").forEach(r -> rels.add(new GraphMutationClient.RelationRef(
             r.path("relType").asText(), r.path("direction").asText(), r.path("otherKey").asText())));
         mutationClient.addEntity(p.path("entityType").asText(), p.path("name").asText(),
-            props.isMissingNode() ? null : props, chunkIds, rels);
+            props.isMissingNode() ? null : props, chunkIds, rels, row.datasetId());
       }
       case RELATION -> {
         // as-extracted 관계 그대로 적재. add-relation이 양 끝점 존재 시에만 MERGE.
+        requireDatasetId(row);
         List<Long> chunkIds = new ArrayList<>();
         p.path("sourceChunkIds").forEach(n -> chunkIds.add(n.asLong()));
         mutationClient.addRelation(
-            p.path("subjectKey").asText(), p.path("relType").asText(), p.path("objectKey").asText(), chunkIds);
+            p.path("subjectKey").asText(), p.path("relType").asText(), p.path("objectKey").asText(), chunkIds,
+            row.datasetId());
       }
       default -> throw new IllegalStateException("알 수 없는 item_type: " + row.itemType());
     }
@@ -243,6 +249,19 @@ public class ReviewItemService {
       if (want.contains(c.chunkId())) out.add(new EvidenceChunk(c.chunkId(), c.content()));
     }
     return out;
+  }
+
+  /**
+   * SYNONYM/ENTITY/RELATION 승인은 ai-agent 호출에 datasetId가 필수다(#678 — "기본 온톨로지" 폴백 제거로
+   * ai-agent가 온톨로지를 고를 다른 방법이 없어졌다). datasetId가 없는(레거시) 항목을 그대로 호출하면
+   * ai-agent가 400을 반환하는데, 그건 승인 자체가 pending으로 남아 원인 파악이 어려운 실패다 — 대신 여기서
+   * 미리 막아 "왜 승인이 안 되는지" 명확한 사유를 준다. PROPERTY는 이 제약이 없다(set-property는 datasetId를
+   * 요구하지 않음).
+   */
+  private void requireDatasetId(ReviewItemRecord row) {
+    if (row.datasetId() == null) {
+      throw new IllegalArgumentException("이 검수 항목에는 데이터셋 정보가 없어 승인할 수 없습니다.");
+    }
   }
 
   private ReviewItemRecord getPendingOrThrow(long id) {

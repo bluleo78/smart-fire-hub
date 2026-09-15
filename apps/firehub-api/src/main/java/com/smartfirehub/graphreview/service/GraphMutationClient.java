@@ -41,11 +41,20 @@ public class GraphMutationClient {
             .build();
   }
 
-  /** ai-agent POST /agent/graph/merge-entities — 두 엔티티 노드를 Neo4j에서 동기 병합(동의어 승인). */
-  public void mergeEntities(String entityType, String nameA, String nameB) {
-    post("/agent/graph/merge-entities",
-        Map.of("entityType", entityType, "nameA", nameA, "nameB", nameB),
-        "엔티티 병합");
+  /**
+   * ai-agent POST /agent/graph/merge-entities — 두 엔티티 노드를 Neo4j에서 동기 병합(동의어 승인).
+   *
+   * <p>datasetId는 ai-agent가 entityType 문자열→typeId 변환에 쓸 온톨로지를 고르는 데 필수다(#678,
+   * "기본 온톨로지" 폴백 제거). null을 그대로 흘려보내면 ai-agent의 zod 스키마(z.number())가 400으로
+   * 거부하므로, 호출측(ReviewItemService)이 null이면 이 메서드를 부르기 전에 막아야 한다.
+   */
+  public void mergeEntities(String entityType, String nameA, String nameB, Long datasetId) {
+    Map<String, Object> body = new HashMap<>();
+    body.put("entityType", entityType);
+    body.put("nameA", nameA);
+    body.put("nameB", nameB);
+    body.put("datasetId", datasetId);
+    postJson("/agent/graph/merge-entities", body, "엔티티 병합");
   }
 
   /** ai-agent POST /agent/graph/set-property — 엔티티 노드 속성값을 정정 write(속성 정규화 승인). */
@@ -58,9 +67,12 @@ public class GraphMutationClient {
   /** add-entity 요청의 보류 관계 참조. */
   public record RelationRef(String relType, String direction, String otherKey) {}
 
-  /** ai-agent POST /agent/graph/add-entity — 승인된 저신뢰 엔티티를 Neo4j에 적재(as-extracted 타입/이름). */
+  /**
+   * ai-agent POST /agent/graph/add-entity — 승인된 저신뢰 엔티티를 Neo4j에 적재(as-extracted 타입/이름).
+   * datasetId는 mergeEntities와 동일한 이유로 필수다(#678) — 호출측이 null이면 부르기 전에 막아야 한다.
+   */
   public void addEntity(String entityType, String name, JsonNode properties,
-      List<Long> sourceChunkIds, List<RelationRef> relations) {
+      List<Long> sourceChunkIds, List<RelationRef> relations, Long datasetId) {
     Map<String, Object> body = new HashMap<>();
     body.put("entityType", entityType);
     body.put("name", name);
@@ -68,16 +80,22 @@ public class GraphMutationClient {
     body.put("sourceChunkIds", sourceChunkIds == null ? List.of() : sourceChunkIds);
     body.put("relations", relations == null ? List.of()
         : relations.stream().map(r -> Map.of("relType", r.relType(), "direction", r.direction(), "otherKey", r.otherKey())).toList());
+    body.put("datasetId", datasetId);
     postJson("/agent/graph/add-entity", body, "엔티티 적재");
   }
 
-  /** ai-agent POST /agent/graph/add-relation — 승인된 저신뢰 관계를 Neo4j에 적재(양 끝점 존재 시 MERGE). */
-  public void addRelation(String subjectKey, String relType, String objectKey, List<Long> sourceChunkIds) {
+  /**
+   * ai-agent POST /agent/graph/add-relation — 승인된 저신뢰 관계를 Neo4j에 적재(양 끝점 존재 시 MERGE).
+   * datasetId는 mergeEntities와 동일한 이유로 필수다(#678) — 호출측이 null이면 부르기 전에 막아야 한다.
+   */
+  public void addRelation(String subjectKey, String relType, String objectKey, List<Long> sourceChunkIds,
+      Long datasetId) {
     Map<String, Object> body = new HashMap<>();
     body.put("subjectKey", subjectKey);
     body.put("relType", relType);
     body.put("objectKey", objectKey);
     body.put("sourceChunkIds", sourceChunkIds == null ? List.of() : sourceChunkIds);
+    body.put("datasetId", datasetId);
     postJson("/agent/graph/add-relation", body, "관계 적재");
   }
 

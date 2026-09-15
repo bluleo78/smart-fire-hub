@@ -90,16 +90,30 @@ class ReviewItemServiceTest {
 
   @Test
   void approve_synonym_callsMergeThenUpdatesStatus() {
-    ReviewItemRecord pending = record("synonym_merge",
+    ReviewItemRecord pending = record("synonym_merge", 99L,
         "{\"entityType\":\"Cause\",\"nameA\":\"전기적 요인\",\"nameB\":\"분전반의 누전\"}");
     ReviewItemRecord approved = withStatus(pending, "approved");
     when(repo.findById(1L)).thenReturn(Optional.of(pending), Optional.of(approved));
 
     var res = service.approve(1L, null, 1L);
 
-    verify(mutationClient).mergeEntities("Cause", "전기적 요인", "분전반의 누전");
+    verify(mutationClient).mergeEntities("Cause", "전기적 요인", "분전반의 누전", 99L);
     verify(repo).updateStatus(1L, "approved", 1L);
     assertThat(res.status()).isEqualTo("approved");
+  }
+
+  @Test
+  @DisplayName("datasetId가 없는 동의어 승인은 ai-agent를 호출하지 않고 거부한다(#678 — 레거시 항목 보호)")
+  void approve_synonym_withoutDatasetId_throwsBeforeCallingMutationClient() {
+    ReviewItemRecord pending = record("synonym_merge",
+        "{\"entityType\":\"Cause\",\"nameA\":\"전기적 요인\",\"nameB\":\"분전반의 누전\"}");
+    when(repo.findById(8L)).thenReturn(Optional.of(pending));
+
+    assertThatThrownBy(() -> service.approve(8L, null, 1L))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("데이터셋 정보가 없어");
+    verify(mutationClient, never()).mergeEntities(any(), any(), any(), any());
+    verify(repo, never()).updateStatus(eq(8L), anyString(), anyLong());
   }
 
   @Test
@@ -127,7 +141,7 @@ class ReviewItemServiceTest {
     service.reject(3L, 1L);
 
     verify(mutationClient, never()).setProperty(any(), any(), any(), any());
-    verify(mutationClient, never()).mergeEntities(any(), any(), any());
+    verify(mutationClient, never()).mergeEntities(any(), any(), any(), any());
     verify(repo).updateStatus(3L, "rejected", 1L);
   }
 
@@ -171,10 +185,25 @@ class ReviewItemServiceTest {
     service.approve(3L, null, 1L); // correctedValue 불필요.
 
     ArgumentCaptor<List<GraphMutationClient.RelationRef>> relCaptor = ArgumentCaptor.forClass(List.class);
-    verify(mutationClient).addEntity(eq("Cause"), eq("노후배선"), any(), eq(List.of(10L)), relCaptor.capture());
+    verify(mutationClient).addEntity(eq("Cause"), eq("노후배선"), any(), eq(List.of(10L)), relCaptor.capture(), eq(99L));
     assertThat(relCaptor.getValue()).hasSize(1);
     assertThat(relCaptor.getValue().get(0).otherKey()).isEqualTo("3:과부하");
     verify(repo).updateStatus(3L, "approved", 1L);
+  }
+
+  @Test
+  @DisplayName("datasetId가 없는 엔티티 승인은 ai-agent를 호출하지 않고 거부한다(#678 — 레거시 항목 보호)")
+  void approve_entity_withoutDatasetId_throwsBeforeCallingMutationClient() {
+    ReviewItemRecord pending = new ReviewItemRecord(9L, "entity_extraction", "pending", null, "low_confidence", 0.3,
+        "추론", "{\"entityType\":\"Cause\",\"name\":\"노후배선\",\"sourceChunkIds\":[10],\"relations\":[]}",
+        null, null, LocalDateTime.now());
+    when(repo.findById(9L)).thenReturn(Optional.of(pending));
+
+    assertThatThrownBy(() -> service.approve(9L, null, 1L))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("데이터셋 정보가 없어");
+    verify(mutationClient, never()).addEntity(any(), any(), any(), any(), any(), any());
+    verify(repo, never()).updateStatus(eq(9L), anyString(), anyLong());
   }
 
   @Test
@@ -218,8 +247,23 @@ class ReviewItemServiceTest {
 
     service.approve(4L, null, 1L); // correctedValue 불필요.
 
-    verify(mutationClient).addRelation("12:누전", "CAUSED_BY", "34:과부하", List.of(7L));
+    verify(mutationClient).addRelation("12:누전", "CAUSED_BY", "34:과부하", List.of(7L), 99L);
     verify(repo).updateStatus(4L, "approved", 1L);
+  }
+
+  @Test
+  @DisplayName("datasetId가 없는 관계 승인은 ai-agent를 호출하지 않고 거부한다(#678 — 레거시 항목 보호)")
+  void approve_relation_withoutDatasetId_throwsBeforeCallingMutationClient() {
+    ReviewItemRecord pending = new ReviewItemRecord(10L, "relation_extraction", "pending", null, "low_confidence",
+        0.3, "추론", "{\"subjectKey\":\"12:누전\",\"relType\":\"CAUSED_BY\",\"objectKey\":\"34:과부하\",\"sourceChunkIds\":[7]}",
+        null, null, LocalDateTime.now());
+    when(repo.findById(10L)).thenReturn(Optional.of(pending));
+
+    assertThatThrownBy(() -> service.approve(10L, null, 1L))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("데이터셋 정보가 없어");
+    verify(mutationClient, never()).addRelation(any(), any(), any(), any(), any());
+    verify(repo, never()).updateStatus(eq(10L), anyString(), anyLong());
   }
 
   @Test
@@ -232,7 +276,7 @@ class ReviewItemServiceTest {
     when(repo.findById(5L)).thenReturn(Optional.of(pending));
     // ai-agent가 409를 주면 GraphMutationClient가 사유를 담은 IllegalStateException으로 바꿔 던진다.
     Mockito.doThrow(new IllegalStateException("주어/목적어 엔티티가 그래프에 없어 관계를 적재할 수 없습니다."))
-        .when(mutationClient).addRelation(any(), any(), any(), any());
+        .when(mutationClient).addRelation(any(), any(), any(), any(), any());
 
     // 무음 유실 방지: 그래프에 아무 것도 안 들어갔으면 승인도 실패해야 한다.
     assertThatThrownBy(() -> service.approve(5L, null, 1L))
@@ -244,11 +288,11 @@ class ReviewItemServiceTest {
   @Test
   @DisplayName("병합 대상 없는 동의어 승인도 status를 갱신하지 않는다 (#310)")
   void approve_synonym_targetMissing_keepsPending() {
-    when(repo.findById(6L)).thenReturn(Optional.of(new ReviewItemRecord(6L, "synonym_merge", "pending", null,
+    when(repo.findById(6L)).thenReturn(Optional.of(new ReviewItemRecord(6L, "synonym_merge", "pending", 99L,
         "similarity", 0.7, "동의어", "{\"entityType\":\"Cause\",\"nameA\":\"누전\",\"nameB\":\"분전반 누전\"}",
         null, null, LocalDateTime.now())));
     Mockito.doThrow(new IllegalStateException("병합할 엔티티가 그래프에 없어 동의어를 병합할 수 없습니다."))
-        .when(mutationClient).mergeEntities(any(), any(), any());
+        .when(mutationClient).mergeEntities(any(), any(), any(), any());
 
     assertThatThrownBy(() -> service.approve(6L, null, 1L)).isInstanceOf(IllegalStateException.class);
     verify(repo, never()).updateStatus(eq(6L), anyString(), anyLong());
@@ -347,6 +391,9 @@ class ReviewItemServiceTest {
   // --- helpers ---
   private static ReviewItemRecord record(String itemType, String payloadJson) {
     return new ReviewItemRecord(1L, itemType, "pending", null, null, null, null, payloadJson, null, null, LocalDateTime.now());
+  }
+  private static ReviewItemRecord record(String itemType, long datasetId, String payloadJson) {
+    return new ReviewItemRecord(1L, itemType, "pending", datasetId, null, null, null, payloadJson, null, null, LocalDateTime.now());
   }
   private static ReviewItemRecord withStatus(ReviewItemRecord r, String status) {
     return new ReviewItemRecord(r.id(), r.itemType(), status, r.datasetId(), r.signalType(), r.signalScore(),

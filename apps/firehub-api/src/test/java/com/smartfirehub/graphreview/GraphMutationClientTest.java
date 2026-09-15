@@ -58,7 +58,7 @@ class GraphMutationClientTest {
                         "{\"error\":\"graph target missing\","
                             + "\"message\":\"주어/목적어 엔티티가 그래프에 없어 관계를 적재할 수 없습니다.\"}")));
 
-    assertThatThrownBy(() -> client().addRelation("1:a", "CAUSED_BY", "9:없음", List.of(18L)))
+    assertThatThrownBy(() -> client().addRelation("1:a", "CAUSED_BY", "9:없음", List.of(18L), 42L))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("그래프에 없어 관계를 적재할 수 없습니다");
   }
@@ -79,7 +79,7 @@ class GraphMutationClientTest {
   void mergeEntities_serverError_mapsToExternalServiceException() {
     wireMock.stubFor(post(urlEqualTo("/agent/graph/merge-entities")).willReturn(aResponse().withStatus(502)));
 
-    assertThatThrownBy(() -> client().mergeEntities("Cause", "누전", "합선"))
+    assertThatThrownBy(() -> client().mergeEntities("Cause", "누전", "합선", 42L))
         .isInstanceOf(ExternalServiceException.class);
   }
 
@@ -118,6 +118,45 @@ class GraphMutationClientTest {
   void addRelation_success() {
     wireMock.stubFor(post(urlEqualTo("/agent/graph/add-relation")).willReturn(aResponse().withStatus(204)));
 
-    assertThatCode(() -> client().addRelation("1:a", "CAUSED_BY", "2:b", List.of(7L))).doesNotThrowAnyException();
+    assertThatCode(() -> client().addRelation("1:a", "CAUSED_BY", "2:b", List.of(7L), 42L))
+        .doesNotThrowAnyException();
+  }
+
+  // ── datasetId 배선(#678) — ai-agent의 세 라우트(merge-entities/add-entity/add-relation)는
+  // "기본 온톨로지" 폴백이 사라지며 datasetId를 필수로 요구하게 됐다(z.number()). 이 Java 메서드들이
+  // 그 필드를 실제로 담아 보내지 않으면 셋 다 400으로 깨진다 — 요청 바디를 직접 검사해 회귀를 잡는다.
+  // matchingJsonPath만으로는 datasetId가 문자열로 새어나가도(String.valueOf 같은 실수) 통과하므로,
+  // equalToJson으로 값의 JSON 타입(숫자)까지 함께 검증한다.
+  @Test
+  @DisplayName("mergeEntities는 datasetId를 JSON 숫자로 보낸다(#678)")
+  void mergeEntities_sendsDatasetIdAsNumber() {
+    wireMock.stubFor(post(urlEqualTo("/agent/graph/merge-entities")).willReturn(aResponse().withStatus(204)));
+
+    client().mergeEntities("Cause", "누전", "합선", 42L);
+
+    wireMock.verify(postRequestedFor(urlEqualTo("/agent/graph/merge-entities"))
+        .withRequestBody(matchingJsonPath("$[?(@.datasetId == 42)]")));
+  }
+
+  @Test
+  @DisplayName("addEntity는 datasetId를 JSON 숫자로 보낸다(#678)")
+  void addEntity_sendsDatasetIdAsNumber() {
+    wireMock.stubFor(post(urlEqualTo("/agent/graph/add-entity")).willReturn(aResponse().withStatus(204)));
+
+    client().addEntity("Cause", "노후배선", null, List.of(10L), List.of(), 42L);
+
+    wireMock.verify(postRequestedFor(urlEqualTo("/agent/graph/add-entity"))
+        .withRequestBody(matchingJsonPath("$[?(@.datasetId == 42)]")));
+  }
+
+  @Test
+  @DisplayName("addRelation은 datasetId를 JSON 숫자로 보낸다(#678)")
+  void addRelation_sendsDatasetIdAsNumber() {
+    wireMock.stubFor(post(urlEqualTo("/agent/graph/add-relation")).willReturn(aResponse().withStatus(204)));
+
+    client().addRelation("1:a", "CAUSED_BY", "2:b", List.of(7L), 42L);
+
+    wireMock.verify(postRequestedFor(urlEqualTo("/agent/graph/add-relation"))
+        .withRequestBody(matchingJsonPath("$[?(@.datasetId == 42)]")));
   }
 }
