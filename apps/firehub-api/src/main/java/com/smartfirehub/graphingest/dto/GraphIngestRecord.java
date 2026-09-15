@@ -14,6 +14,7 @@ public record GraphIngestRecord(
     int extractionFailures,
     String status) {
 
-  /** stale 질의용 — 데이터셋별 최신 적재행(온톨로지 버전 드리프트 점검). */
-  public record StaleRow(long datasetId, LocalDateTime latestIngestedAt, int schemaVersionAtIngest) {}
+  /** stale 질의용 — 데이터셋별 최신 적재행 + 그 데이터셋이 실제 바인딩된 온톨로지의 현재 schema_version. */
+  public record StaleRow(
+      long datasetId, LocalDateTime latestIngestedAt, int schemaVersionAtIngest, int currentSchemaVersion) {}
 }

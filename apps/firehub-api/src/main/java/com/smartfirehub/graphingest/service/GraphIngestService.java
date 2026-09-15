@@ -4,7 +4,6 @@ import com.smartfirehub.graphingest.dto.GraphIngestResponse;
 import com.smartfirehub.graphingest.dto.RecordGraphIngestRequest;
 import com.smartfirehub.graphingest.dto.StaleDatasetResponse;
 import com.smartfirehub.graphingest.repository.GraphIngestRepository;
-import com.smartfirehub.ontology.repository.OntologyRepository;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -15,7 +14,6 @@ import org.springframework.stereotype.Service;
 public class GraphIngestService {
 
   private final GraphIngestRepository repo;
-  private final OntologyRepository ontologyRepository; // currentSchemaVersion()
 
   /** 적재 이력 기록 → 생성 id. */
   public long record(long datasetId, RecordGraphIngestRequest req) {
@@ -47,14 +45,14 @@ public class GraphIngestService {
         .toList();
   }
 
-  /** 현재 온톨로지 버전보다 낡게 적재된 데이터셋. */
+  /** 각 데이터셋이 실제 바인딩된 온톨로지의 현재 버전보다 낡게 적재된 데이터셋. */
   public List<StaleDatasetResponse> stale() {
-    int current = ontologyRepository.currentSchemaVersion();
-    return repo.findStale(current).stream()
+    return repo.findStale().stream()
         .map(
             s ->
                 new StaleDatasetResponse(
-                    s.datasetId(), s.latestIngestedAt().toString(), s.schemaVersionAtIngest(), current))
+                    s.datasetId(), s.latestIngestedAt().toString(), s.schemaVersionAtIngest(),
+                    s.currentSchemaVersion()))
         .toList();
   }
 }

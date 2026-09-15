@@ -51,23 +51,91 @@ class GraphIngestRepositoryTest extends IntegrationTestBase {
   }
 
   @Test
-  void findStale_returnsDatasetsBelowCurrentVersion_latestRowOnly() {
-    repo.save(9101L, 1, 1, 1, 1, 0, "SUCCESS"); // v1 적재(낡음)
-    repo.save(9102L, 3, 1, 1, 1, 0, "SUCCESS"); // v3 적재(최신, 낡지 않음)
+  void findStale_returnsDatasetsBelowBoundOntologyVersion_latestRowOnly() {
+    long ontologyId = createOntology("V102_STALE_PROBE_" + System.nanoTime(), 3);
+    bindDataset(9101L, ontologyId);
+    bindDataset(9102L, ontologyId);
+    try {
+      repo.save(9101L, 1, 1, 1, 1, 0, "SUCCESS"); // v1 적재(낡음, 바인딩 온톨로지 v3 미만)
+      repo.save(9102L, 3, 1, 1, 1, 0, "SUCCESS"); // v3 적재(최신, 낡지 않음)
 
-    var stale = repo.findStale(3); // 현재 온톨로지 버전 3
+      var stale = repo.findStale();
 
-    assertThat(stale).extracting("datasetId").contains(9101L).doesNotContain(9102L);
+      assertThat(stale).extracting("datasetId").contains(9101L).doesNotContain(9102L);
+    } finally {
+      cleanupOntologyFixture(ontologyId, 9101L, 9102L);
+    }
   }
 
   @Test
   void findStale_usesOnlyLatestRowPerDataset() {
-    // 9201: 과거엔 v1로 적재됐지만 이후 v3로 재적재됨 → 최신 기준으로는 stale 아님
-    repo.save(9201L, 1, 1, 1, 1, 0, "SUCCESS");
-    repo.save(9201L, 3, 1, 1, 1, 0, "SUCCESS");
+    long ontologyId = createOntology("V102_LATEST_ONLY_PROBE_" + System.nanoTime(), 3);
+    bindDataset(9201L, ontologyId);
+    try {
+      // 9201: 과거엔 v1로 적재됐지만 이후 v3로 재적재됨 → 최신 기준으로는 stale 아님
+      repo.save(9201L, 1, 1, 1, 1, 0, "SUCCESS");
+      repo.save(9201L, 3, 1, 1, 1, 0, "SUCCESS");
 
-    var stale = repo.findStale(3);
+      var stale = repo.findStale();
 
-    assertThat(stale).extracting("datasetId").doesNotContain(9201L);
+      assertThat(stale).extracting("datasetId").doesNotContain(9201L);
+    } finally {
+      cleanupOntologyFixture(ontologyId, 9201L);
+    }
+  }
+
+  @Test
+  void findStale_바인딩이_없는_데이터셋은_결과에서_제외된다() {
+    // 적재 이력만 있고 dataset_ontology 바인딩이 없는 데이터셋은 INNER JOIN에서 걸러져
+    // stale 여부와 무관하게 결과에 나타나지 않아야 한다(적재 자체가 바인딩 전제이므로 정상 케이스).
+    repo.save(9301L, 0, 1, 1, 1, 0, "SUCCESS");
+
+    var stale = repo.findStale();
+
+    assertThat(stale).extracting("datasetId").doesNotContain(9301L);
+  }
+
+  /** 테스트용 온톨로지 1행 생성(schema_version 지정), 트랜잭션 안에서 실행. */
+  private long createOntology(String domain, int schemaVersion) {
+    return TenantRlsTestSupport.runInTenantTransaction(
+        tx,
+        DEFAULT_TEST_TENANT_ID,
+        () ->
+            dsl.insertInto(table(name("ontology")))
+                .set(field(name("domain"), String.class), domain)
+                .set(field(name("schema_version"), Integer.class), schemaVersion)
+                .returning(field(name("id"), Long.class))
+                .fetchOne()
+                .get(field(name("id"), Long.class)));
+  }
+
+  /** 데이터셋↔온톨로지 바인딩 1행 생성, 트랜잭션 안에서 실행. */
+  private void bindDataset(long datasetId, long ontologyId) {
+    TenantRlsTestSupport.runInTenantTransaction(
+        tx,
+        DEFAULT_TEST_TENANT_ID,
+        () ->
+            dsl.insertInto(table(name("dataset_ontology")))
+                .set(field(name("dataset_id"), Long.class), datasetId)
+                .set(field(name("ontology_id"), Long.class), ontologyId)
+                .execute());
+  }
+
+  /** 온톨로지 + 바인딩 픽스처 정리(커밋되므로 수동 삭제 필수). */
+  private void cleanupOntologyFixture(long ontologyId, Long... datasetIds) {
+    TenantRlsTestSupport.runInTenantTransaction(
+        tx,
+        DEFAULT_TEST_TENANT_ID,
+        () ->
+            dsl.deleteFrom(table(name("dataset_ontology")))
+                .where(field(name("dataset_id"), Long.class).in(datasetIds))
+                .execute());
+    TenantRlsTestSupport.runInTenantTransaction(
+        tx,
+        DEFAULT_TEST_TENANT_ID,
+        () ->
+            dsl.deleteFrom(table(name("ontology")))
+                .where(field(name("id"), Long.class).eq(ontologyId))
+                .execute());
   }
 }

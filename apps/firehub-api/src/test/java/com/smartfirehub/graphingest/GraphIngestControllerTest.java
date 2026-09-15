@@ -17,7 +17,6 @@ import com.smartfirehub.graphingest.dto.GraphIngestRecord.StaleRow;
 import com.smartfirehub.graphingest.dto.RecordGraphIngestRequest;
 import com.smartfirehub.graphingest.repository.GraphIngestRepository;
 import com.smartfirehub.graphingest.service.GraphIngestService;
-import com.smartfirehub.ontology.repository.OntologyRepository;
 import com.smartfirehub.permission.service.PermissionService;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -37,7 +36,7 @@ import org.springframework.test.web.servlet.MockMvc;
  *
  * <p>{@link com.smartfirehub.document.controller.DocumentChunkControllerTest} 선례를 따라
  * {@code @WebMvcTest} + 인증/권한 mock 패턴을 사용한다. 단, GraphIngestService는 실제 빈을 사용하고
- * 그 하위 리포지토리(GraphIngestRepository, OntologyRepository)만 mock하여, 컨트롤러→서비스의
+ * 그 하위 리포지토리(GraphIngestRepository)만 mock하여, 컨트롤러→서비스의
  * 매핑 로직(예: LocalDateTime→문자열 변환, stale 필터링)까지 포함한 입력=출력 왕복을 검증한다.
  */
 @WebMvcTest(GraphIngestController.class)
@@ -49,8 +48,6 @@ class GraphIngestControllerTest {
   @Autowired private ObjectMapper objectMapper;
 
   @MockitoBean private GraphIngestRepository graphIngestRepository;
-
-  @MockitoBean private OntologyRepository ontologyRepository;
 
   @MockitoBean private PermissionService permissionService;
 
@@ -120,13 +117,12 @@ class GraphIngestControllerTest {
 
   @Test
   void stale_currentVersionRow_excluded_lowerVersionRow_included() throws Exception {
-    // 현재 온톨로지 버전 = 3(V71 시드=1을 흉내낸 임의값). v1 적재행은 stale, v3 적재행은 경계에서 제외.
-    when(ontologyRepository.currentSchemaVersion()).thenReturn(3);
+    // 데이터셋 9101은 자기 바인딩 온톨로지 기준 v1로 낡음(현재 3). repo.findStale()은 이미
+    // 데이터셋별 바인딩 온톨로지 조인 + lt(schema_version) 필터링을 마친 결과만 반환하므로,
+    // 서비스는 그 결과를 그대로 응답으로 매핑하기만 한다.
     LocalDateTime latestAt = LocalDateTime.of(2026, 7, 20, 9, 0, 0);
-    // findStale은 repo 레벨에서 이미 lt(currentVersion) 필터링을 수행하므로,
-    // 현재버전(3)과 동일한 데이터셋(9102L)은 결과에 포함되지 않고 v1로 낡은 데이터셋(9101L)만 반환된다.
-    when(graphIngestRepository.findStale(3))
-        .thenReturn(List.of(new StaleRow(9101L, latestAt, 1)));
+    when(graphIngestRepository.findStale())
+        .thenReturn(List.of(new StaleRow(9101L, latestAt, 1, 3)));
 
     mockMvc
         .perform(
