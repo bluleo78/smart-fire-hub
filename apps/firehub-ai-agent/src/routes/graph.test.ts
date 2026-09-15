@@ -136,6 +136,7 @@ describe('POST /agent/graph/add-entity', () => {
     expect(resolveDatasetOntology).toHaveBeenCalledWith(expect.anything(), 900);
     expect(addEntityMock).toHaveBeenCalledWith(
       boundOntology,
+      42,
       expect.objectContaining({ entityType: 'Inspection', name: '2026년 정기점검' }),
     );
   });

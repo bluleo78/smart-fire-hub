@@ -38,27 +38,27 @@ describe('addRelation (실 Neo4j)', () => {
 
   it('양 끝점이 존재하면 엣지를 MERGE한다', async () => {
     await mkA(); await mkB();
-    await addRelation(CORE_ONTOLOGY, kA, 'CAUSED_BY', kB, [7]);
+    await addRelation(CORE_ONTOLOGY, 9, kA, 'CAUSED_BY', kB, [7]);
     expect(await edgeCount(kA, kB)).toBe(1);
   });
 
   it('끝점이 없으면 엣지를 만들지 않고 실패를 던진다 — 무음 유실 방지(#310)', async () => {
     await mkA(); // kB 없음
-    await expect(addRelation(CORE_ONTOLOGY, kA, 'CAUSED_BY', kB, [7]))
+    await expect(addRelation(CORE_ONTOLOGY, 9, kA, 'CAUSED_BY', kB, [7]))
       .rejects.toThrow(GraphTargetMissingError);
     expect(await edgeCount(kA, kB)).toBe(0);
   });
 
   it('이미 같은 엣지가 있으면 성공한다(멱등) — 새 엣지 생성 수가 아니라 끝점 바인딩으로 판정', async () => {
     await mkA(); await mkB();
-    await addRelation(CORE_ONTOLOGY, kA, 'CAUSED_BY', kB, [7]);
-    await expect(addRelation(CORE_ONTOLOGY, kA, 'CAUSED_BY', kB, [8])).resolves.toBeUndefined();
+    await addRelation(CORE_ONTOLOGY, 9, kA, 'CAUSED_BY', kB, [7]);
+    await expect(addRelation(CORE_ONTOLOGY, 9, kA, 'CAUSED_BY', kB, [8])).resolves.toBeUndefined();
     expect(await edgeCount(kA, kB)).toBe(1);
   });
 
   it('온톨로지에 없는 관계 타입은 엣지를 만들지 않고 거부한다(#319)', async () => {
     await mkA(); await mkB();
-    await expect(addRelation(CORE_ONTOLOGY, kA, 'ZZTEST_UNKNOWN_REL', kB, [7]))
+    await expect(addRelation(CORE_ONTOLOGY, 9, kA, 'ZZTEST_UNKNOWN_REL', kB, [7]))
       .rejects.toThrow(OntologyConformanceError);
     expect(await edgeCount(kA, kB)).toBe(0);
   });
@@ -67,7 +67,7 @@ describe('addRelation (실 Neo4j)', () => {
     // Cause -CAUSED_BY-> Cause 는 온톨로지에 없는 트리플이다(허용: Incident -> Cause).
     const kC = entityKey(entityTypeId(CORE_ONTOLOGY, 'Cause'), 'ZZTEST_과부하');
     await makeNode(kC, 'ZZTEST_과부하', 'Cause'); await mkB();
-    await expect(addRelation(CORE_ONTOLOGY, kC, 'CAUSED_BY', kB, [7]))
+    await expect(addRelation(CORE_ONTOLOGY, 9, kC, 'CAUSED_BY', kB, [7]))
       .rejects.toThrow(OntologyConformanceError);
     expect(await edgeCount(kC, kB)).toBe(0);
   });

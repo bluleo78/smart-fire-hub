@@ -4,7 +4,9 @@ import { getSession } from './neo4j-client.js';
 import { GraphMutationRejectedError, GraphTargetMissingError, affectedCount } from './graph-mutation-guard.js';
 import { normalizePropertyChecked } from './property-normalizer.js';
 
-const RESERVED_NODE_KEYS = new Set(['key', 'type', 'name', 'sourceChunkIds', 'schemaVersion']);
+// ontologyId도 예약한다(#678) — 이 파일은 새 노드를 만들거나 스탬프를 쓰지 않지만, 예약어 목록에 없으면
+// 속성명이 문자 그대로 "ontologyId"인 정정값이 이 경로로 들어와 스탬프를 덮어쓸 수 있다.
+const RESERVED_NODE_KEYS = new Set(['key', 'type', 'name', 'sourceChunkIds', 'schemaVersion', 'ontologyId']);
 
 /** text 정정값 상한 — 속성값은 문장이 아니라 짧은 값이라는 전제. 초과분은 오추출/오입력으로 본다. */
 const MAX_TEXT_LENGTH = 1000;

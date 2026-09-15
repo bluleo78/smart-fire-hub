@@ -36,16 +36,16 @@ describe('addEntity (실 Neo4j)', () => {
   const typeId = entityTypeId(CORE_ONTOLOGY, 'Cause');
 
   it('as-extracted 타입/이름으로 노드를 MERGE한다', async () => {
-    await addEntity(CORE_ONTOLOGY, { entityType: 'Cause', name: 'ZZTEST_노후배선', sourceChunkIds: [9], relations: [] });
+    await addEntity(CORE_ONTOLOGY, 9, { entityType: 'Cause', name: 'ZZTEST_노후배선', sourceChunkIds: [9], relations: [] });
     expect(await nodeExists(entityKey(typeId, 'ZZTEST_노후배선'))).toBe(true);
   });
 
   it('끝점이 존재하는 관계만 MERGE하고, 부재 끝점 관계는 스킵한다', async () => {
     // 상대 끝점(과부하)을 먼저 만들어 둔다.
-    await addEntity(CORE_ONTOLOGY, { entityType: 'Cause', name: 'ZZTEST_과부하', sourceChunkIds: [1], relations: [] });
+    await addEntity(CORE_ONTOLOGY, 9, { entityType: 'Cause', name: 'ZZTEST_과부하', sourceChunkIds: [1], relations: [] });
     const otherKey = entityKey(typeId, 'ZZTEST_과부하');
     const missingKey = entityKey(typeId, 'ZZTEST_존재하지않음');
-    await addEntity(CORE_ONTOLOGY, {
+    await addEntity(CORE_ONTOLOGY, 9, {
       entityType: 'Cause', name: 'ZZTEST_노후배선', sourceChunkIds: [9],
       relations: [
         { relType: 'CAUSED_BY', direction: 'out', otherKey },      // 끝점 존재 → 생성
@@ -55,5 +55,16 @@ describe('addEntity (실 Neo4j)', () => {
     const selfKey = entityKey(typeId, 'ZZTEST_노후배선');
     expect(await edgeCount(selfKey, otherKey)).toBe(1);
     expect(await edgeCount(selfKey, missingKey)).toBe(0);
+  });
+
+  it('ontologyId를 노드에 INTEGER로 스탬프한다(#678)', async () => {
+    await addEntity(CORE_ONTOLOGY, 9, { entityType: 'Cause', name: 'ZZTEST_ontologyId스탬프', sourceChunkIds: [1], relations: [] });
+    const s = getSession();
+    try {
+      const r = await s.run('MATCH (n:Entity {key:$key}) RETURN n.ontologyId AS id, valueType(n.ontologyId) AS t',
+        { key: entityKey(typeId, 'ZZTEST_ontologyId스탬프') });
+      expect(r.records[0].get('id').toNumber()).toBe(9);
+      expect(r.records[0].get('t')).toMatch(/^INTEGER/);
+    } finally { await s.close(); }
   });
 });

@@ -15,7 +15,8 @@ import { GraphTargetMissingError, OntologyConformanceError, affectedCount } from
  * 관계 타입의 엣지가 실제로 생성됐다(add-entity는 entityTypeId()가 우연히 막아주지만 여기엔 그런 후속 조회가 없다).
  */
 export async function addRelation(
-  ontology: Ontology, subjectKey: string, relType: RelationType, objectKey: string, sourceChunkIds: number[],
+  ontology: Ontology, ontologyId: number, subjectKey: string, relType: RelationType, objectKey: string,
+  sourceChunkIds: number[],
 ): Promise<void> {
   // 1차: 관계 타입 자체가 온톨로지에 존재하는가. 그래프를 건드리기 전에 거른다.
   if (!isRelationType(ontology, relType)) {
@@ -52,11 +53,12 @@ export async function addRelation(
     const result = await session.run(
       `MATCH (a:Entity {key: $subjectKey}), (b:Entity {key: $objectKey})
        MERGE (a)-[x:REL {type: $relType}]->(b)
-       SET x.schemaVersion = $schemaVersion
+       SET x.schemaVersion = $schemaVersion, x.ontologyId = $ontologyId
        SET x.sourceChunkIds = coalesce(x.sourceChunkIds, []) + [c IN $sourceChunkIds WHERE NOT c IN coalesce(x.sourceChunkIds, [])]
        RETURN count(x) AS merged`,
-      // schemaVersion은 INTEGER로 바인딩한다 — plain number는 FLOAT로 저장돼 읽기측이 깨진다(#308).
-      { subjectKey, objectKey, relType, schemaVersion: neo4j.int(schemaVersion), sourceChunkIds },
+      // schemaVersion/ontologyId는 INTEGER로 바인딩한다 — plain number는 FLOAT로 저장돼 읽기측이 깨진다(#308).
+      // ontologyId 스탬프는 loader.ts/entity-add.ts와 동일한 last-write-wins 관용구다(#678).
+      { subjectKey, objectKey, relType, schemaVersion: neo4j.int(schemaVersion), ontologyId: neo4j.int(ontologyId), sourceChunkIds },
     );
     // 판정 기준은 "MATCH가 양 끝점을 바인딩했는가"(=MERGE가 실행됐는가)이지 "엣지가 새로 생겼는가"가 아니다.
     // 이미 같은 엣지가 있으면 relationshipsCreated는 0이지만 원하는 상태는 충족된 것이므로 성공이어야 한다.

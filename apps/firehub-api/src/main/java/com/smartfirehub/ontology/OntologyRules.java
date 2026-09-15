@@ -15,8 +15,10 @@ public final class OntologyRules {
   // Neo4j 노드 예약 필드(loader.ts 모델 (:Entity{key,type,name,sourceChunkIds,schemaVersion}))와 겹치는
   // 속성명은 적재 시 SET n += props 가 노드 정체성 필드를 덮어쓰므로 편집 시점에 차단한다.
   // ai-agent loader.ts 의 동일 상수와 노드 모델이 바뀌면 함께 갱신해야 한다(서비스 경계상 공유 불가).
+  // ontologyId(#678)도 loader.ts 가 스탬프하는 예약 필드라 여기서 함께 차단한다 — 이 필드가
+  // 사용자 속성으로 덮어써지면 "구버전" 판정(node.ontologyId)이 조용히 깨진다.
   public static final Set<String> RESERVED_PROPERTY_NAMES =
-      Set.of("key", "type", "name", "sourceChunkIds", "schemaVersion");
+      Set.of("key", "type", "name", "sourceChunkIds", "schemaVersion", "ontologyId");
 
   // 속성 dataType 허용값 — DB CHECK(text|number|date)와 일치해야 한다.
   public static final List<String> DATA_TYPES = List.of("text", "number", "date");

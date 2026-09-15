@@ -40,6 +40,11 @@ describe('setEntityProperty', () => {
     expect(runMock).not.toHaveBeenCalled();
   });
 
+  it('ontologyId 속성명도 예약어라 거부한다(#678 — 구버전 판정 스탬프 보호)', async () => {
+    await expect(setEntityProperty('3:화재', 'ontologyId', 'text', '1')).rejects.toThrow();
+    expect(runMock).not.toHaveBeenCalled();
+  });
+
   it('대상 노드가 없으면 GraphTargetMissingError를 던진다(#310 무음 유실 방지)', async () => {
     runMock.mockResolvedValue(updatedCount(0));
     await expect(setEntityProperty('3:없는엔티티', '피해액', 'number', '100'))

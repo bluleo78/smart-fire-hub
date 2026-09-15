@@ -7,7 +7,7 @@ import { getSession } from './neo4j-client.js';
 import { EntityType, Ontology, RelationType, entityTypeId } from './ontology.js';
 import { entityKey } from './resolver.js';
 
-const RESERVED_NODE_KEYS = new Set(['key', 'type', 'name', 'sourceChunkIds', 'schemaVersion']);
+const RESERVED_NODE_KEYS = new Set(['key', 'type', 'name', 'sourceChunkIds', 'schemaVersion', 'ontologyId']);
 
 function sanitizeProperties(properties?: Record<string, number | string>): Record<string, number | string> {
   if (!properties) return {};
@@ -22,34 +22,39 @@ export interface AddEntityInput {
   relations: { relType: RelationType; direction: 'out' | 'in'; otherKey: string }[];
 }
 
-export async function addEntity(ontology: Ontology, input: AddEntityInput): Promise<void> {
+export async function addEntity(ontology: Ontology, ontologyId: number, input: AddEntityInput): Promise<void> {
   const key = entityKey(entityTypeId(ontology, input.entityType), input.name);
   const props = sanitizeProperties(input.properties);
   // plain JS number를 그대로 바인딩하면 Cypher FLOAT로 저장돼 읽기측 Integer 가정이 깨진다(#308).
   // 노드/관계 쿼리 모두 이 값을 재사용하므로 한 번만 INTEGER로 감싼다.
   const schemaVersion = neo4j.int(ontology.schemaVersion);
+  // ontologyId도 schemaVersion과 동일하게 last-write-wins로 스탬프한다(loader.ts와 동일 관용구, #678).
+  const ontologyIdInt = neo4j.int(ontologyId);
   const session = getSession();
   try {
     // 노드 MERGE(loader.ts 관용구) — 예약키 제거 속성 병합 + sourceChunkIds 누적(dedup).
     await session.run(
       `MERGE (n:Entity {key: $key})
-       SET n.type = $type, n.name = $name, n.schemaVersion = $schemaVersion
+       SET n.type = $type, n.name = $name, n.schemaVersion = $schemaVersion, n.ontologyId = $ontologyId
        SET n += $props
        SET n.sourceChunkIds = coalesce(n.sourceChunkIds, []) + [c IN $sourceChunkIds WHERE NOT c IN coalesce(n.sourceChunkIds, [])]`,
-      { key, type: input.entityType, name: input.name, schemaVersion, props, sourceChunkIds: input.sourceChunkIds },
+      { key, type: input.entityType, name: input.name, schemaVersion, ontologyId: ontologyIdInt, props, sourceChunkIds: input.sourceChunkIds },
     );
     // 보류 관계 — 상대 끝점 존재 시에만 MERGE(MATCH 미스면 자연 no-op). 양쪽 보류는 마지막 승인 때 생성.
     for (const r of input.relations) {
       const query = r.direction === 'out'
         ? `MATCH (a:Entity {key: $key}), (b:Entity {key: $otherKey})
            MERGE (a)-[x:REL {type: $relType}]->(b)
-           SET x.schemaVersion = $schemaVersion
+           SET x.schemaVersion = $schemaVersion, x.ontologyId = $ontologyId
            SET x.sourceChunkIds = coalesce(x.sourceChunkIds, []) + [c IN $sourceChunkIds WHERE NOT c IN coalesce(x.sourceChunkIds, [])]`
         : `MATCH (b:Entity {key: $otherKey}), (a:Entity {key: $key})
            MERGE (b)-[x:REL {type: $relType}]->(a)
-           SET x.schemaVersion = $schemaVersion
+           SET x.schemaVersion = $schemaVersion, x.ontologyId = $ontologyId
            SET x.sourceChunkIds = coalesce(x.sourceChunkIds, []) + [c IN $sourceChunkIds WHERE NOT c IN coalesce(x.sourceChunkIds, [])]`;
-      await session.run(query, { key, otherKey: r.otherKey, relType: r.relType, schemaVersion, sourceChunkIds: input.sourceChunkIds });
+      await session.run(query, {
+        key, otherKey: r.otherKey, relType: r.relType, schemaVersion, ontologyId: ontologyIdInt,
+        sourceChunkIds: input.sourceChunkIds,
+      });
     }
   } finally {
     await session.close();

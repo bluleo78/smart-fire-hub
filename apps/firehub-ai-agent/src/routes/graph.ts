@@ -18,9 +18,12 @@ import { FireHubApiClient } from '../mcp/api-client.js';
  *
  * datasetId 는 필수다 — "기본 온톨로지" 폴백은 없다(#678). GET /api/v1/ontology 자체가
  * firehub-api 에서 제거되어, 예전의 폴백 경로는 어차피 네트워크 계층에서 항상 실패했다.
+ *
+ * ontology 뿐 아니라 ontologyId 도 그대로 반환한다 — add-entity/add-relation 이 Neo4j 노드/엣지에
+ * ontologyId 를 스탬프해야 "구버전" 판정(loader.ts 와 동일 관용구)이 가능하다(#678).
  */
 async function loadOntologyForMutation(apiClient: FireHubApiClient, datasetId: number) {
-  return (await resolveDatasetOntology(apiClient, datasetId)).ontology;
+  return resolveDatasetOntology(apiClient, datasetId);
 }
 
 // 온톨로지 시각화용 읽기 전용 + HITL 승인 병합 라우터. 온톨로지 스키마는 api DB 소유로 이관됨(이 라우트 제거).
@@ -77,7 +80,7 @@ router.post('/graph/merge-entities', internalAuth, async (req, res) => {
     const apiBaseUrl = process.env.API_BASE_URL || 'http://localhost:8080/api/v1';
     const internalToken = process.env.INTERNAL_SERVICE_TOKEN || '';
     const apiClient = new FireHubApiClient(apiBaseUrl, internalToken, 1);
-    const ontology = await loadOntologyForMutation(apiClient, parsed.data.datasetId);
+    const { ontology } = await loadOntologyForMutation(apiClient, parsed.data.datasetId);
     await mergeEntities(ontology, parsed.data.entityType as EntityType, parsed.data.nameA, parsed.data.nameB);
     res.status(204).send();
   } catch (e) {
@@ -133,8 +136,8 @@ router.post('/graph/add-entity', internalAuth, async (req, res) => {
     const apiBaseUrl = process.env.API_BASE_URL || 'http://localhost:8080/api/v1';
     const internalToken = process.env.INTERNAL_SERVICE_TOKEN || '';
     const apiClient = new FireHubApiClient(apiBaseUrl, internalToken, 1);
-    const ontology = await loadOntologyForMutation(apiClient, parsed.data.datasetId);
-    await addEntity(ontology, {
+    const { ontology, ontologyId } = await loadOntologyForMutation(apiClient, parsed.data.datasetId);
+    await addEntity(ontology, ontologyId, {
       entityType: parsed.data.entityType as EntityType,
       name: parsed.data.name,
       properties: parsed.data.properties,
@@ -171,11 +174,11 @@ router.post('/graph/add-relation', internalAuth, async (req, res) => {
     const apiBaseUrl = process.env.API_BASE_URL || 'http://localhost:8080/api/v1';
     const internalToken = process.env.INTERNAL_SERVICE_TOKEN || '';
     const apiClient = new FireHubApiClient(apiBaseUrl, internalToken, 1);
-    const ontology = await loadOntologyForMutation(apiClient, parsed.data.datasetId);
+    const { ontology, ontologyId } = await loadOntologyForMutation(apiClient, parsed.data.datasetId);
     // relType은 zod의 문자열 검사만 거친 값이므로 온톨로지 대조는 addRelation이 담당한다(#319).
     // 위반 시 OntologyConformanceError → respondMutationError가 409 + 한국어 사유로 매핑한다
     // (400이 아니라 409인 이유: firehub-api의 GraphMutationClient는 409만 사유 문구를 살려 올린다).
-    await addRelation(ontology, parsed.data.subjectKey, parsed.data.relType as RelationType,
+    await addRelation(ontology, ontologyId, parsed.data.subjectKey, parsed.data.relType as RelationType,
       parsed.data.objectKey, parsed.data.sourceChunkIds);
     res.status(204).send();
   } catch (e) {
