@@ -89,7 +89,7 @@ class OntologyMigrationTest extends IntegrationTestBase {
   void ontology_exposesSchemaVersion() {
     OntologyResponse res = ontologyRepository.findById(1L);
     assertThat(res.schemaVersion()).isEqualTo(1);
-    assertThat(ontologyRepository.currentSchemaVersion()).isEqualTo(1);
+    assertThat(ontologyRepository.currentSchemaVersion(1L)).isEqualTo(1);
   }
 
   // V80: TEXT 이름 참조를 FK로 옮긴 뒤에도 시드 6개 트리플이 "같은 타입 쌍"을 가리켜야 한다.

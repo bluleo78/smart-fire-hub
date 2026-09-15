@@ -17,10 +17,8 @@ import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
 // 온톨로지 DB 읽기/쓰기 — id로 지정한 온톨로지를 OntologyResponse 계약으로 조립한다(다중 온톨로지 지원).
-// currentSchemaVersion()의 무인자 오버로드는 기존 단일 온톨로지(id=1) 호출부(GraphIngestService의
-// 레거시 경로)와의 하위호환을 위해 currentSchemaVersion(1L)로 위임한다(findOntology 무인자 오버로드는
-// 요소 단위 편집 API 도입과 함께 삭제됨 — #678). sort_order 정렬로 ai-agent 프롬프트 조립 순서(바이트
-// 동일성)를 보존한다. plain-SQL DSL(생성 클래스 비의존).
+// findOntology 무인자 오버로드는 요소 단위 편집 API 도입과 함께 삭제됨 — #678. sort_order 정렬로
+// ai-agent 프롬프트 조립 순서(바이트 동일성)를 보존한다. plain-SQL DSL(생성 클래스 비의존).
 // (S2 Task 7) 전체 스키마 교체(entity_type/relation의 매칭 기반 UPDATE/INSERT/DELETE) updateOntology는
 // 요소 단위 편집(OntologyElementRepository)으로 대체되어 삭제됐다.
 @Repository
@@ -137,7 +135,6 @@ public class OntologyRepository {
     return new OntologyResponse(domain, schemaVersion, entities, relations);
   }
 
-
   // 온톨로지 목록(요약). id 순. statusFilter가 null이면 전체, 아니면 해당 상태만.
   // 엔티티 수와 바인딩된 데이터셋 수는 상관 서브쿼리로 센다 — 온톨로지 행 수가 한 자릿수 규모라
   // 조인 폭발 걱정이 없고, GROUP BY보다 읽기 쉽다.
@@ -229,11 +226,6 @@ public class OntologyRepository {
       throw new IllegalArgumentException("존재하지 않는 온톨로지입니다: " + ontologyId);
     }
     return record.get(O_SCHEMA_VERSION);
-  }
-
-  // 하위호환 — id=1 위임.
-  public int currentSchemaVersion() {
-    return currentSchemaVersion(1L);
   }
 
   // 관계 삽입용 이름→id 해석(createOntology 전용). 관계는 V80 이후 FK를 요구하는데 쓰기 계약
