@@ -1,4 +1,6 @@
 import { createDocument, createDocuments } from '../../factories/document.factory';
+import { createBinding, createOntologySummaries } from '../../factories/mapping.factory';
+import { createOntologySchema } from '../../factories/ontology.factory';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { setupDocumentDatasetMocks } from '../../fixtures/document.fixture';
@@ -321,5 +323,56 @@ test.describe('문서 데이터셋 상세', () => {
 
     const req = await capture.waitForRequest();
     expect(req.url.pathname).toBe(`/api/v1/datasets/${DATASET_ID}/documents/7`);
+  });
+
+  /**
+   * 신규 (#678 Task 11): DOCUMENT 탭에도 TABLE 데이터셋 매핑 탭과 동일한 온톨로지 연결 카드를 노출한다.
+   * 미바인딩 상태면 GraphRAG 적재가 거부되므로, 문서 업로드 전에 먼저 연결하도록 유도해야 한다.
+   */
+  test.describe('온톨로지 연결', () => {
+    test('미바인딩 상태면 온톨로지 연결 카드가 보이고, 연결하면 사라지고 연결된 온톨로지가 표시된다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupDocumentDatasetMocks(page, DATASET_ID, createDocuments(1));
+      await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}/ontology`, createBinding(null));
+      await mockApi(page, 'GET', '/api/v1/ontologies', createOntologySummaries());
+      await mockApi(page, 'GET', '/api/v1/ontology/1', createOntologySchema());
+      const capture = await mockApi(page, 'PUT', `/api/v1/datasets/${DATASET_ID}/ontology`, null, {
+        status: 204,
+        capture: true,
+      });
+
+      await page.goto(`/data/datasets/${DATASET_ID}?tab=documents`);
+
+      const card = page.getByTestId('ontology-binding-card');
+      await expect(card).toBeVisible();
+      await expect(page.getByTestId('ontology-bound-status')).toHaveCount(0);
+
+      await page.getByTestId('ontology-select').click();
+      await page.getByRole('option', { name: '화재조사 보고서 (v1)' }).click();
+      await page.getByRole('button', { name: '연결' }).click();
+
+      const req = await capture.waitForRequest();
+      expect(req.payload).toEqual({ ontologyId: 1 });
+
+      // 연결 성공 후 바인딩 재조회 응답을 연결됨으로 갱신하면 카드가 사라지고 상태 문구가 뜬다.
+      await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}/ontology`, createBinding(1));
+      await expect(card).not.toBeVisible();
+      await expect(page.getByText('연결된 온톨로지: 화재조사 보고서')).toBeVisible();
+    });
+
+    test('바인딩된 상태면 연결 카드 대신 연결된 온톨로지 도메인명을 보여준다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupDocumentDatasetMocks(page, DATASET_ID, createDocuments(1));
+      await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}/ontology`, createBinding(1));
+      await mockApi(page, 'GET', '/api/v1/ontologies', createOntologySummaries());
+      await mockApi(page, 'GET', '/api/v1/ontology/1', createOntologySchema());
+
+      await page.goto(`/data/datasets/${DATASET_ID}?tab=documents`);
+
+      await expect(page.getByTestId('ontology-binding-card')).toHaveCount(0);
+      await expect(page.getByTestId('ontology-bound-status')).toHaveText('연결된 온톨로지: 화재조사 보고서');
+    });
   });
 });

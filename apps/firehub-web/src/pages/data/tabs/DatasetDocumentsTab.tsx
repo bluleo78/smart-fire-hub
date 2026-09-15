@@ -4,11 +4,13 @@ import { toast } from 'sonner';
 
 import { Button } from '../../../components/ui/button';
 import { useDeleteDocument, useDocuments, useUploadDocument } from '../../../hooks/queries/useDocuments';
+import { useBinding, useOntologyById } from '../../../hooks/queries/useMapping';
 import { extractApiError } from '../../../lib/api-error';
 import type { DatasetDetailResponse } from '../../../types/dataset';
 import { DocumentList } from '../components/DocumentList';
 import { DocumentSearchPanel } from '../components/DocumentSearchPanel';
 import { FileUploadZone } from '../components/FileUploadZone';
+import { OntologyBindingCard } from '../components/OntologyBindingCard';
 
 interface DatasetDocumentsTabProps {
   dataset: DatasetDetailResponse;
@@ -27,6 +29,11 @@ export function DatasetDocumentsTab({ dataset: _dataset, datasetId }: DatasetDoc
   const { data: documents, isLoading } = useDocuments(datasetId);
   const upload = useUploadDocument(datasetId);
   const remove = useDeleteDocument(datasetId);
+  // 온톨로지 바인딩 — 미바인딩 데이터셋은 GraphRAG 적재(graphrag_ingest)가 거부되므로(#678),
+  // TABLE 데이터셋의 매핑 탭(DatasetMappingTab)과 같은 패턴으로 이 탭에서도 먼저 연결을 유도한다.
+  const { data: binding, isLoading: bindingLoading } = useBinding(datasetId);
+  const ontologyId = binding?.ontologyId ?? null;
+  const { data: ontology } = useOntologyById(ontologyId);
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   // uploadKey가 바뀌면 FileUploadZone을 리마운트하여 내부 selectedFile 상태를 초기화한다.
   const [uploadKey, setUploadKey] = useState(0);
@@ -60,6 +67,16 @@ export function DatasetDocumentsTab({ dataset: _dataset, datasetId }: DatasetDoc
 
   return (
     <div className="space-y-6">
+      {/* 온톨로지 연결 — 미바인딩이면 GraphRAG 적재(graphrag_ingest)가 거부되므로(#678),
+          업로드 전에 먼저 연결하도록 문서 업로드 섹션보다 위에 배치한다. */}
+      {bindingLoading ? null : ontologyId == null ? (
+        <OntologyBindingCard datasetId={datasetId} />
+      ) : (
+        <div className="text-sm text-muted-foreground" data-testid="ontology-bound-status">
+          연결된 온톨로지: {ontology?.domain ?? `#${ontologyId}`}
+        </div>
+      )}
+
       <section>
         <h2 className="text-lg font-semibold mb-3">문서 업로드</h2>
         <FileUploadZone
