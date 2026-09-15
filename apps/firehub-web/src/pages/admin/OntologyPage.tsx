@@ -7,7 +7,12 @@ import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
 import { SearchInput } from '@/components/ui/search-input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { useOntologyById, useOntologyGraph, useOntologyList } from '@/hooks/queries/useOntology';
+import {
+  useMergedOntologyEntities,
+  useOntologyById,
+  useOntologyGraph,
+  useOntologyList,
+} from '@/hooks/queries/useOntology';
 import { useOntologyElementMutations } from '@/hooks/queries/useOntologyElement';
 import { useAuth } from '@/hooks/useAuth';
 import { useDirtyAggregator, useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
@@ -56,8 +61,10 @@ export default function OntologyPage() {
   // 온톨로지 목록 — 기본 온톨로지 id를 여기서 파생시킨다(아래 defaultOntologyId). schema/graph 훅보다
   // 먼저 선언해야 그 파생값을 바로 아래에서 쓸 수 있다.
   const { data: ontologies } = useOntologyList('all');
-  // 인스턴스 탭(Neo4j 적재 그래프)의 타입 어휘·schemaVersion 비교 기준 — 그래프 탐색이 어느 온톨로지를
-  // 보고 있는지와 무관하게 항상 기본 온톨로지 고정이다(레거시 bare 온톨로지 개념). 예전에는
+  // 인스턴스 탭(Neo4j 적재 그래프)의 schemaVersion 비교 기준(NodeDetailDrawer의 "구버전" 배지) — 그래프
+  // 탐색이 어느 온톨로지를 보고 있는지와 무관하게 항상 기본 온톨로지 고정이다(레거시 bare 온톨로지
+  // 개념, #678에서 재검토 예정). 타입 어휘(필터 목록)는 더 이상 이 스키마 하나가 아니라 active 온톨로지
+  // 전체를 합친 instanceEntities를 쓴다(#677 — 아래에서 파생). 예전에는
   // useOntologySchema()(bare GET /ontology)로 읽었지만, 그 응답은 서버에서 늘 기본 온톨로지였다 —
   // useOntologyById(defaultOntologyId)로 바꿔도 같은 데이터를 같은 쿼리키로 읽을 뿐이다(S2 Step 1.5).
   // (리뷰 MIN-1) id를 1로 하드코딩하지 않는다 — OntologySummary.isDefault가 정확히 이 매직넘버를
@@ -69,6 +76,26 @@ export default function OntologyPage() {
   // useOntology.ts 쪽에서 함께 정리했다(MIN-2).
   const defaultOntologyId = ontologies?.find((o) => o.isDefault)?.id ?? null;
   const { data: schema } = useOntologyById(defaultOntologyId);
+  // (#677) 그래프 탐색 탭의 "타입 필터"는 기본 온톨로지(schema) 하나가 아니라 active 온톨로지 전체의
+  // 엔티티 타입을 합쳐 보여줘야 한다 — Neo4j 적재 그래프 자체가 온톨로지로 스코프되지 않는 전체
+  // 그래프라(getGraph()에 id 파라미터 없음), 다른 온톨로지로 만든 타입의 노드도 실제로 존재할 수 있는데
+  // 필터 목록이 기본 온톨로지 스키마에만 갇혀 있으면 그 타입들이 필터에서 아예 보이지 않았다.
+  const activeOntologyIds = useMemo(
+    () => (ontologies ?? []).filter((o) => o.status === 'active').map((o) => o.id),
+    [ontologies],
+  );
+  // useMergedOntologyEntities는 combine 옵션(구조적 공유)으로 값이 같으면 참조도 유지해 준다 — 그래야
+  // 아래 currentTypeNames/activeTypes 자동 동기화(#412, 참조 비교로 "새 타입 추가"를 판정)가 매 렌더
+  // 무한 루프에 빠지지 않는다(#677 구현 중 실제로 겪은 회귀 — activeSchemaResults를 그대로 의존성에
+  // 넣었을 때 매 렌더 새 배열이 나와 "Too many re-renders" 크래시가 재현됐다).
+  // TypeFilterPanel은 entities만 읽으므로(domain/schemaVersion/relations는 어디서도 소비하지
+  // 않는다) 가짜 OntologySchema를 조립하지 않고 EntityTypeDef[]를 그대로 넘긴다 — currentSchemaVersion
+  // 배지는 여전히 schema(기본 온톨로지) 하나를 기준으로 한다(#678에서 재검토).
+  const mergedEntities = useMergedOntologyEntities(activeOntologyIds);
+  const instanceEntities = useMemo(
+    () => (mergedEntities.length > 0 ? mergedEntities : (schema?.entities ?? [])),
+    [mergedEntities, schema],
+  );
   // 인스턴스 그래프(Neo4j 적재분)는 여전히 온톨로지 id로 스코프되지 않는 단일 엔드포인트다
   // (getGraph()에 id 파라미터가 없다) — 그래서 selectedOntologyId를 바꿔도 이 쿼리는 영향을 받지 않고,
   // 요소 단위 편집 뮤테이션도 이 키를 무효화할 이유가 없다(스키마 편집이 이미 적재된 그래프 노드를
@@ -203,8 +230,13 @@ export default function OntologyPage() {
   // 값을 들고 있는다 — react-hooks/refs 린트 규칙이 렌더 중 ref.current 값을 콜백/파생 계산에
   // 재사용하는 것을 금지하기 때문이다(순수 비교·대입만 허용). React 공식 문서의 "이전 props/state를
   // 저장" 패턴을 그대로 따른다.
-  const filterSchema = tab === 'schema' ? selectedSchema : schema;
-  const currentTypeNames = useMemo(() => (filterSchema?.entities ?? []).map((e) => e.type), [filterSchema]);
+  // selectedSchema?.entities가 없을 때의 [] 폴백이 매 렌더 새 배열이 되어 useMemo 의존성을 매번
+  // 바꾸지 않도록(#412 자동 동기화가 매 렌더 "새 타입 추가"로 오판) filterEntities 자체를 메모이즈한다.
+  const filterEntities = useMemo(
+    () => (tab === 'schema' ? (selectedSchema?.entities ?? []) : instanceEntities),
+    [tab, selectedSchema, instanceEntities],
+  );
+  const currentTypeNames = useMemo(() => filterEntities.map((e) => e.type), [filterEntities]);
   const [prevTypeNames, setPrevTypeNames] = useState(currentTypeNames);
   if (currentTypeNames !== prevTypeNames) {
     setPrevTypeNames(currentTypeNames);
@@ -441,8 +473,9 @@ export default function OntologyPage() {
             읽기 모드는 기존 그대로: resolution 그룹핑 + 개수 + 토글 필터(접기 가능).
             스키마 탭에서는 캔버스(selectedSchema)와 같은 온톨로지의 타입을 보여줘야 한다 — 그렇지 않으면
             선택된 온톨로지가 기본 온톨로지가 아닐 때 캔버스와 필터 패널이 서로 다른 타입 어휘를 나란히
-            보여주게 된다. 인스턴스 탭은 여전히 bare schema(기본 온톨로지) — Neo4j 적재 그래프가 그
-            기반이라 건드리지 않는다. */}
+            보여주게 된다. 인스턴스 탭은 instanceEntities(active 온톨로지 전체 합집합, #677) — Neo4j 적재
+            그래프(getGraph())가 온톨로지로 스코프되지 않는 전체 그래프라 기본 온톨로지 하나만으로는
+            다른 온톨로지의 타입이 필터에서 누락됐다. */}
         {showEditor && selectedSchema ? (
           <ModelOutline
             schema={selectedSchema}
@@ -464,7 +497,7 @@ export default function OntologyPage() {
           />
         ) : (
           <TypeFilterPanel
-            schema={tab === 'schema' ? selectedSchema : schema}
+            entities={filterEntities}
             graph={graph}
             activeTypes={activeTypes}
             onToggle={toggleType}

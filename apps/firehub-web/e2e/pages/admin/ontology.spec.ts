@@ -527,6 +527,37 @@ test.describe('지식그래프 시각화 페이지', () => {
     await expectNodeCount(page, graph.nodes.length);
   });
 
+  // (#677) 그래프 탐색 탭의 타입 필터는 기본 온톨로지 하나가 아니라 active 온톨로지 전체의 엔티티
+  // 타입을 합쳐 보여줘야 한다 — Neo4j 적재 그래프 자체가 온톨로지로 스코프되지 않으므로, 기본이
+  // 아닌 온톨로지(id=2)로 만든 타입의 노드도 실제로 존재할 수 있는데 예전에는 그 타입이 필터에
+  // 아예 나타나지 않았다(기본 온톨로지 스키마만 참조).
+  test('그래프 탐색 탭 타입 필터가 기본 온톨로지뿐 아니라 다른 active 온톨로지의 타입도 함께 보여준다(#677)', async ({
+    authenticatedPage: page,
+  }) => {
+    const secondOntologySchema = createOntologySchema({
+      domain: '건축물 대장',
+      entities: [
+        { type: 'Zoning', description: '용도지역', naming: '본문 표기 보존', resolution: 'exact', properties: [] },
+        { type: 'Permit', description: '인허가', naming: '본문 표기 보존', resolution: 'embedding', properties: [] },
+      ],
+      relations: [],
+    });
+    await mockApi(page, 'GET', '/api/v1/ontology', createOntologySchema());
+    await mockApi(page, 'GET', '/api/v1/ontology/1', createOntologySchema());
+    await mockApi(page, 'GET', '/api/v1/ontology/2', secondOntologySchema);
+    await mockApi(page, 'GET', '/api/v1/ontology/graph', createOntologyGraph());
+    // createOntologySummaries() 기본값 — id=1(active, 기본) + id=2(active, 기본 아님).
+    await mockApi(page, 'GET', '/api/v1/ontologies', createOntologySummaries());
+    await page.goto('/knowledge-graph/explore');
+
+    // 기본 온톨로지(6타입) + 다른 active 온톨로지(2타입) = 총 8타입이 필터에 모두 나타난다.
+    const typeList = page.getByTestId('type-filter-list');
+    await expect(typeList.getByRole('button')).toHaveCount(8);
+    await expect(typeList.getByRole('button', { name: /^Zoning/ })).toBeVisible();
+    await expect(typeList.getByRole('button', { name: /^Permit/ })).toBeVisible();
+    await expect(typeList.getByRole('button', { name: /^Incident/ })).toBeVisible();
+  });
+
   // (#407) 빈 초안 온톨로지로 전환하면 좌측 타입 필터 패널도 진짜로 비어야 한다 — 예전에는
   // entities.length===0을 "로딩 중"과 동일하게 취급해 이전 온톨로지의 데모 타입 6종(색상표 키)을
   // 그대로 남겨 보여줬다(실재하지 않는 타입이 존재하는 것처럼 보이는 회귀).

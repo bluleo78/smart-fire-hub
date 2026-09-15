@@ -137,11 +137,15 @@ test.describe('#396 엔티티 타입 색상 — 데모 이름과 다른 온톨�
   test('탭을 바꿔도 각 화면 안에서 타입 색은 계속 구분된다', async ({ authenticatedPage: page }) => {
     await selectCustomOntology(page);
 
-    // 그래프 탐색(인스턴스) 탭은 기본 온톨로지(6타입) 기준 — 여기서도 회색 뭉침이 없어야 한다.
+    // 그래프 탐색(인스턴스) 탭은 active 온톨로지 전체(기본 6타입 + 이 온톨로지의 9타입, #677)를 합쳐
+    // 보여준다 — 기본 온톨로지 하나로 좁아지지 않는다. 합계 15타입은 팔레트 12색을 넘으므로 이름 해시가
+    // 겹치는 색 순환이 나올 수 있어(#493 주석 참고) "전부 다른 색"까지는 더 이상 보장되지 않지만,
+    // 폴백 회색 하나로 뭉개지는 회귀(#396)가 없는지는 여전히 검증한다.
+    const mergedTypeCount = 6 + CUSTOM_TYPE_NAMES.length;
     await page.getByRole('tab', { name: '그래프 탐색' }).click();
-    await expect(page.getByTestId('type-filter-list').getByRole('button')).toHaveCount(6);
+    await expect(page.getByTestId('type-filter-list').getByRole('button')).toHaveCount(mergedTypeCount);
     const instanceColors = await readDotColors(page);
-    expect(new Set(instanceColors).size).toBe(6);
+    expect(instanceColors).toHaveLength(mergedTypeCount);
     expect(instanceColors).not.toContain(FALLBACK_GRAY);
 
     // 지식 모델 탭으로 되돌아오면 초안 온톨로지의 9색이 그대로 복원된다(색이 요동치지 않는다).

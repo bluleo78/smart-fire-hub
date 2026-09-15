@@ -1,9 +1,9 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 
 import { ontologyApi } from '@/api/ontology';
 import { handleApiError } from '@/lib/api-error';
-import type { CreateOntologyRequest, OntologyStatus } from '@/types/ontology';
+import type { CreateOntologyRequest, EntityTypeDef, OntologyStatus } from '@/types/ontology';
 
 // 전체 지식그래프.
 export const useOntologyGraph = () =>
@@ -29,6 +29,39 @@ export function useOntologyById(ontologyId: number | null | undefined) {
     queryFn: () => ontologyApi.getOntologyById(ontologyId as number).then((r) => r.data),
     enabled: ontologyId != null,
     staleTime: 5 * 60 * 1000,
+  });
+}
+
+/**
+ * 여러 온톨로지의 엔티티 타입을 하나로 합쳐 조회. 그래프 탐색 탭 타입 필터(#677)가 기본 온톨로지
+ * 하나가 아니라 active 온톨로지 전체의 엔티티 타입을 합쳐 보여줘야 해서 도입했다 — useOntologyById와
+ * 같은 ['ontology', id] 쿼리키를 쓰므로 이미 로드된 스키마(예: defaultOntologyId)는 중복 요청되지 않는다.
+ *
+ * useQueries가 돌려주는 결과 배열은 매 렌더마다 새 참조라 그대로 useMemo 의존성에 넣으면 값이 같아도
+ * 매번 재계산돼(OntologyPage의 activeTypes 자동 동기화가 참조 비교로 "새 타입 추가"를 판정하므로) 무한
+ * 렌더 루프에 빠진다 — 실제로 재현해 확인했다. combine 옵션은 TanStack Query가 내부적으로 구조적
+ * 공유(structural sharing)를 적용해 반환값이 값 기준으로 같으면 참조도 그대로 유지해 준다.
+ */
+export function useMergedOntologyEntities(ontologyIds: number[]): EntityTypeDef[] {
+  return useQueries({
+    queries: ontologyIds.map((id) => ({
+      queryKey: ['ontology', id],
+      queryFn: () => ontologyApi.getOntologyById(id).then((r) => r.data),
+      staleTime: 5 * 60 * 1000,
+    })),
+    combine: (results) => {
+      const seen = new Set<string>();
+      const entities: EntityTypeDef[] = [];
+      for (const r of results) {
+        if (!r.data) continue;
+        for (const e of r.data.entities) {
+          if (seen.has(e.type)) continue;
+          seen.add(e.type);
+          entities.push(e);
+        }
+      }
+      return entities;
+    },
   });
 }
 

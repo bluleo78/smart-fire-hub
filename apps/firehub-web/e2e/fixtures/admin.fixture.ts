@@ -271,12 +271,18 @@ export async function setupApiConnectionDetailMocks(page: Page, connectionId = 1
  * - 온톨로지 선택기(Task 9)가 목록(GET /api/v1/ontologies)과 기본 선택(id=1) by-id 조회를
  *   항상 호출하므로 이 둘도 함께 모킹한다 — 없으면 선택기가 비어 편집 버튼 등 스키마 탭
  *   컨트롤이 전부 노출되지 않는다.
+ * - createOntologySummaries()가 기본으로 active 온톨로지 2개(id=1,2)를 내려주므로, 그래프 탐색 탭의
+ *   타입 필터가 active 온톨로지 전체를 합쳐 조회하는(#677) 이상 id=2도 모킹해야 한다 — 안 하면 매 테스트마다
+ *   백엔드 없는 환경에서 실패하는 네트워크 요청이 발생한다. entities를 비워 기존 count(6) 단언들이
+ *   깨지지 않게 한다(합집합에 새 타입을 보태지 않음). 여러 온톨로지의 타입을 실제로 합치는 동작은
+ *   ontology.spec.ts의 전용 테스트가 별도로 검증한다.
  */
 export async function setupOntologyMocks(page: Page) {
   await mockApi(page, 'GET', '/api/v1/ontology', createOntologySchema());
   await mockApi(page, 'GET', '/api/v1/ontology/graph', createOntologyGraph());
   await mockApi(page, 'GET', '/api/v1/ontologies', createOntologySummaries());
   await mockApi(page, 'GET', '/api/v1/ontology/1', createOntologySchema());
+  await mockApi(page, 'GET', '/api/v1/ontology/2', createOntologySchema({ domain: '건축물 대장', entities: [], relations: [] }));
 }
 
 /**

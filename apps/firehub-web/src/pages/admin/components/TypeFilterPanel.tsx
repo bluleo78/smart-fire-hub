@@ -3,10 +3,12 @@ import { useMemo, useState } from 'react';
 import { SearchInput } from '@/components/ui/search-input';
 import type { TypePalette } from '@/lib/ontology-colors';
 import { cn } from '@/lib/utils';
-import type { GraphData, OntologySchema } from '@/types/ontology';
+import type { EntityTypeDef, GraphData } from '@/types/ontology';
 
 interface Props {
-  schema?: OntologySchema;
+  // (#677 정리) 이 패널은 entities만 읽으므로 스키마 전체(domain/schemaVersion/relations)를 받을
+  // 필요가 없다 — 호출부가 여러 온톨로지를 합친 목록을 넘길 때도 가짜 스키마 객체를 만들지 않아도 된다.
+  entities?: EntityTypeDef[];
   graph?: GraphData;
   activeTypes: Set<string>;
   // (#404) 클릭한 타입뿐 아니라 이 패널이 알고 있는 전체 타입 목록(allTypes)도 함께 넘긴다 —
@@ -34,19 +36,19 @@ const RESOLUTION_LABEL: Record<string, string> = {
 // 좌측 타입 필터 패널 — flat 칩 범례(TypeLegend)를 대체.
 // resolution별 그룹핑 + 패널 내 검색 + 개수 표시 + 토글 필터(빈 activeTypes = 전체 활성).
 // 접기(collapsed) 시 폭 0으로 트랜지션해 캔버스를 넓힌다.
-export default function TypeFilterPanel({ schema, graph, activeTypes, onToggle, onReset, collapsed, search = '', palette }: Props) {
+export default function TypeFilterPanel({ entities: entityList, graph, activeTypes, onToggle, onReset, collapsed, search = '', palette }: Props) {
   const [filter, setFilter] = useState('');
 
   // resolution별로 타입을 그룹화.
-  // (#407) schema는 왔지만 entities가 빈 배열인 경우는 "정상적으로 비어있는 온톨로지"이므로 데모
+  // (#407) entities는 왔지만 빈 배열인 경우는 "정상적으로 비어있는 온톨로지"이므로 데모
   // 타입으로 대체하지 않고 빈 그룹(= 빈 목록)을 그대로 반환해야 한다 — 예전엔 두 상태를
   // entities.length===0 하나로 뭉뚱그려 판별해, 방금 만든 빈 초안 온톨로지에서도 이전 온톨로지의
   // 데모 타입 6종이 실재하는 것처럼 표시됐다.
-  // (#396) 로딩 중(schema === undefined)에도 마찬가지로 빈 목록을 반환한다 — 예전엔 색상표의 키
+  // (#396) 로딩 중(entities === undefined)에도 마찬가지로 빈 목록을 반환한다 — 예전엔 색상표의 키
   // (데모 타입 6종)를 스켈레톤으로 보여줬는데, 그 색상표 자체가 사라졌을 뿐 아니라 실재하지 않는
   // 타입 이름을 잠시라도 보여주는 것은 #407이 막으려던 오인과 같은 부류다.
   const groups = useMemo(() => {
-    const entities = schema?.entities ?? [];
+    const entities = entityList ?? [];
     const byResolution = new Map<string, string[]>();
     for (const e of entities) {
       const list = byResolution.get(e.resolution) ?? [];
@@ -57,7 +59,7 @@ export default function TypeFilterPanel({ schema, graph, activeTypes, onToggle, 
       label: RESOLUTION_LABEL[resolution] ?? resolution,
       types,
     }));
-  }, [schema]);
+  }, [entityList]);
 
   // groups에 속한 전체 타입(검색 필터와 무관) — onToggle 호출 시 "빈 Set=전체" 해석에 쓸
   // 전체 타입 목록으로 그대로 전달한다(#404).
