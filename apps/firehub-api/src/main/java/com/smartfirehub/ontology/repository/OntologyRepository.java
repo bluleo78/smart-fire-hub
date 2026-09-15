@@ -136,10 +136,6 @@ public class OntologyRepository {
     return new OntologyResponse(domain, schemaVersion, entities, relations);
   }
 
-  // 하위호환 — 기존 단일 온톨로지 호출부(문서 파이프라인 프록시 라우트)는 기본 화재조사(id=1)를 본다.
-  public OntologyResponse findOntology() {
-    return findById(1L);
-  }
 
   // 온톨로지 목록(요약). id 순. statusFilter가 null이면 전체, 아니면 해당 상태만.
   // 엔티티 수와 바인딩된 데이터셋 수는 상관 서브쿼리로 센다 — 온톨로지 행 수가 한 자릿수 규모라
@@ -168,8 +164,7 @@ public class OntologyRepository {
                     r.get(O_STATUS),
                     r.get(entityCount),
                     r.get(datasetCount),
-                    r.get(O_UPDATED_AT),
-                    false)); // isDefault는 리포지토리가 판정하지 않는다 — OntologyService가 채워 넣는다.
+                    r.get(O_UPDATED_AT)));
   }
 
   // 하위호환 — 인자 없는 호출은 전체 목록.

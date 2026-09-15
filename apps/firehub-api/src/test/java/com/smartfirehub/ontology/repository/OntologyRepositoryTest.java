@@ -20,7 +20,7 @@ class OntologyRepositoryTest extends IntegrationTestBase {
 
   @Test
   void findOntology_는_시드를_순서대로_조립한다() {
-    OntologyResponse res = repository.findOntology();
+    OntologyResponse res = repository.findById(1L);
     assertThat(res.domain()).isEqualTo("화재조사 보고서");
     assertThat(res.entities()).extracting(OntologyResponse.EntityType::type)
         .containsExactly("Incident", "Building", "Cause", "Damage", "Equipment", "Regulation");

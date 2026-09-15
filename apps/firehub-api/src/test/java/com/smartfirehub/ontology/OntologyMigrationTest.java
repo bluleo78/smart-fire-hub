@@ -70,7 +70,7 @@ class OntologyMigrationTest extends IntegrationTestBase {
   // V72 시드: Incident 는 '피해액'(number, 원) 속성 1개를 가져야 한다. 다른 타입은 속성 없음.
   @Test
   void incident_hasDamageAmountProperty() {
-    OntologyResponse res = ontologyRepository.findOntology();
+    OntologyResponse res = ontologyRepository.findById(1L);
     OntologyResponse.EntityType incident = res.entities().stream()
         .filter(e -> e.type().equals("Incident")).findFirst().orElseThrow();
     assertThat(incident.properties()).hasSize(1);
@@ -87,7 +87,7 @@ class OntologyMigrationTest extends IntegrationTestBase {
   // V71 시드의 schema_version(=1)이 응답/조회로 노출되어야 한다.
   @Test
   void ontology_exposesSchemaVersion() {
-    OntologyResponse res = ontologyRepository.findOntology();
+    OntologyResponse res = ontologyRepository.findById(1L);
     assertThat(res.schemaVersion()).isEqualTo(1);
     assertThat(ontologyRepository.currentSchemaVersion()).isEqualTo(1);
   }
@@ -132,7 +132,7 @@ class OntologyMigrationTest extends IntegrationTestBase {
   // 클라이언트가 무엇을 수정할지 지목할 방법이 없다.
   @Test
   void 읽기_응답은_관계와_속성의_안정_id를_함께_노출한다() {
-    OntologyResponse res = ontologyRepository.findOntology();
+    OntologyResponse res = ontologyRepository.findById(1L);
 
     assertThat(res.relations()).isNotEmpty();
     assertThat(res.relations()).allSatisfy(t -> {

@@ -51,10 +51,6 @@ public class OntologyService {
     this.userRepository = userRepository;
   }
 
-  // 온톨로지 스키마 — api DB에서 직접 조회(더 이상 ai-agent 프록시 아님).
-  public OntologyResponse getOntology() {
-    return ontologyRepository.findOntology();
-  }
 
   // id 스코프 조회.
   public OntologyResponse getById(long ontologyId) {
@@ -76,15 +72,7 @@ public class OntologyService {
       }
       summaries = ontologyRepository.findAllSummaries(filter);
     }
-    // isDefault는 리포지토리가 모르는 서비스 판정이다 — "기본 온톨로지"의 기준(현재는 id=1)이 바뀌어도
-    // 프론트가 DEFAULT_ONTOLOGY_ID를 따로 들고 있지 않도록 여기서 계산해 채운다.
-    return summaries.stream().map(this::withDefaultFlag).toList();
-  }
-
-  private OntologySummary withDefaultFlag(OntologySummary s) {
-    return new OntologySummary(
-        s.id(), s.domain(), s.schemaVersion(), s.status(), s.entityCount(), s.datasetCount(),
-        s.updatedAt(), s.id() == DEFAULT_ONTOLOGY_ID);
+    return summaries;
   }
 
   // 하위호환 — 무인자 호출은 기본값(active)과 동일하게 동작한다.
@@ -145,9 +133,6 @@ public class OntologyService {
     return id;
   }
 
-  // 문서 적재 파이프라인이 단수 GET /ontology(하드코딩 findById(1L), 상태 미검사)로 의존하는 기본 온톨로지.
-  // 삭제뿐 아니라 은퇴도 막아야 "id=1은 항상 active"가 가정이 아닌 강제가 된다.
-  private static final long DEFAULT_ONTOLOGY_ID = 1L;
 
   // 상태 전이 판정. 허용: draft→active, active→archived, archived→active. 그 외 상태 변경은 거부.
   // 거부는 IllegalStateException(→409) — 잘못된 입력(400)이 아니라 현재 상태와의 충돌이다.
@@ -160,9 +145,6 @@ public class OntologyService {
     if ("archived".equals(to)) {
       if (!"active".equals(from)) {
         throw new IllegalStateException("운영 중인 온톨로지만 은퇴시킬 수 있습니다. 현재 상태: " + from);
-      }
-      if (ontologyId == DEFAULT_ONTOLOGY_ID) {
-        throw new IllegalStateException("기본 온톨로지는 은퇴시킬 수 없습니다. 문서 적재가 이 온톨로지에 의존합니다.");
       }
       return;
     }
@@ -225,14 +207,8 @@ public class OntologyService {
     }
   }
 
-  // 온톨로지 삭제. 거부 사유는 두 가지뿐이다 — 참조 중이거나, 기본 온톨로지이거나.
-  // 상태는 사유가 아니다: 참조 없는 active를 못 지우면 잘못 활성화한 온톨로지를 회수할 수 없다.
-  // 참조가 있어 지울 수 없는 것은 은퇴(archived)로 물러나게 한다 — 삭제와 은퇴가 짝을 이뤄야
-  // 막다른 길이 생기지 않는다.
+  // 온톨로지 삭제. 참조 중이면 거부하고, 은퇴(archived)로 물러나게 안내한다.
   public void deleteOntology(long ontologyId) {
-    if (ontologyId == DEFAULT_ONTOLOGY_ID) {
-      throw new IllegalStateException("기본 온톨로지는 삭제할 수 없습니다. 문서 적재가 이 온톨로지에 의존합니다.");
-    }
     // 존재 확인 — 없으면 400(IllegalArgumentException)으로 떨어진다.
     ontologyRepository.findStatusById(ontologyId);
 

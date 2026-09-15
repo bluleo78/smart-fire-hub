@@ -68,16 +68,12 @@ class OntologyControllerTest {
         .thenReturn(
             List.of(
                 new OntologySummary(
-                    1L, "화재조사 보고서", 1, "active", 0, 0, java.time.OffsetDateTime.now(), false)));
+                    1L, "화재조사 보고서", 1, "active", 0, 0, java.time.OffsetDateTime.now())));
 
     mockMvc
         .perform(get("/api/v1/ontologies").header("Authorization", "Bearer valid-token"))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$[0].id").value(1))
-        // 리포지토리는 isDefault=false로 채워 넣지만(mock 위 코드) 서비스가 id=1을 보고 true로 덮어써야
-        // 한다 — OntologyService.withDefaultFlag의 계산과, boolean isDefault의 Jackson 직렬화 이름이
-        // "isDefault"로 유지되는지(isXxx 스트리핑 없이)를 함께 고정한다.
-        .andExpect(jsonPath("$[0].isDefault").value(true));
+        .andExpect(jsonPath("$[0].id").value(1));
   }
 
   // 무필터 기본값은 active만 — 바인딩 후보 목록이 draft·archived를 집어가지 않게 한다.

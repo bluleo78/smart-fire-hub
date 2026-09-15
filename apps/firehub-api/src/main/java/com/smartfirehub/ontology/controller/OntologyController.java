@@ -13,8 +13,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 // 온톨로지 CRUD — 다중 온톨로지 지원(Task 3). 클래스 매핑을 /api/v1로 올려 복수형 /ontologies(목록·생성)와
-// 단수형 /ontology/{id}(단건 조회·상태전이·삭제)를 함께 표현한다. 기존 GET /ontology(id=1 하위호환)와
-// GET /ontology/graph(ai-agent 프록시)는 문서 파이프라인 등 기존 호출부 회귀 방지를 위해 그대로 유지한다.
+// 단수형 /ontology/{id}(단건 조회·상태전이·삭제)를 함께 표현한다. GET /ontology/graph(ai-agent 프록시)는
+// 기존 호출부 회귀 방지를 위해 그대로 유지한다.
 // (S2 Task 7) 전체 스키마 교체 PUT /ontology, PUT /ontology/{id}는 요소 단위 편집 API
 // (OntologyElementController)로 완전히 대체되어 삭제됐다 — 웹이 더 이상 호출하지 않는다.
 @RestController
@@ -22,13 +22,6 @@ import org.springframework.web.bind.annotation.*;
 @RequiredArgsConstructor
 public class OntologyController {
   private final OntologyService ontologyService;
-
-  // [하위호환] 기본 온톨로지(화재조사 id=1) 스키마 — 문서 파이프라인 프록시가 사용.
-  @GetMapping("/ontology")
-  @RequirePermission("dataset:read")
-  public OntologyResponse getOntology() {
-    return ontologyService.getOntology();
-  }
 
   // 전체 적재 지식그래프(노드/엣지) — ai-agent 프록시.
   @GetMapping("/ontology/graph")

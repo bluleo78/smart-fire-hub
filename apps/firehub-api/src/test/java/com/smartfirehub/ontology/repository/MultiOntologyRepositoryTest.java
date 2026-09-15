@@ -74,12 +74,6 @@ class MultiOntologyRepositoryTest extends IntegrationTestBase {
   }
 
   @Test
-  void findOntology_는_findById_1과_동일하다() {
-    // 하위호환: 무인자 findOntology()는 id=1 위임이어야 한다.
-    assertThat(repository.findOntology()).isEqualTo(repository.findById(1L));
-  }
-
-  @Test
   void 존재하지_않는_id는_IllegalArgumentException() {
     // 신규 라우트가 임의 id를 받으므로 NPE→500이 아니라 400 매핑 예외여야 한다.
     org.assertj.core.api.Assertions.assertThatThrownBy(() -> repository.findById(999999L))

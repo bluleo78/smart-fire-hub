@@ -248,4 +248,26 @@ class OntologyServiceTest {
     when(repository.findById(2L)).thenReturn(expected);
     assertThat(service.getById(2L)).isEqualTo(expected);
   }
+
+  // Task 1: id=1이어도 참조 없으면 삭제 가능해야 한다.
+  @Test
+  void deleteOntology_id1도_참조없으면_삭제된다() {
+    // id=1이라도 countReferences가 0이면 더 이상 특별 취급하지 않는다.
+    when(repository.findStatusById(1L)).thenReturn("active");
+    when(repository.countReferences(1L)).thenReturn(0);
+
+    service.deleteOntology(1L);
+
+    verify(repository).deleteOntology(1L);
+  }
+
+  // Task 1: id=1이어도 참조 없으면 상태 전이 가능해야 한다.
+  @Test
+  void changeStatus_id1도_참조없으면_archived로_전이된다() {
+    when(repository.findStatusById(1L)).thenReturn("active");
+
+    service.changeStatus(1L, "archived");
+
+    verify(repository).updateStatus(1L, "archived");
+  }
 }
