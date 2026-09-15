@@ -28,9 +28,6 @@ export interface GraphEdge { subjectKey: string; type: string; objectKey: string
 export interface GraphData { nodes: GraphNode[]; edges: GraphEdge[]; }
 
 // 다중 온톨로지 목록(GET /api/v1/ontologies). 관리 다이얼로그가 쓰는 카운트·수정일을 포함한다.
-// isDefault: 문서 적재가 단수 /ontology로 의존하는 기본 온톨로지인지 — 서버(OntologyService)가 판정해
-// 내려준다. "기본 온톨로지" 판정 기준이 바뀌어도(id 대신 플래그 컬럼 등) 프론트가 매직넘버를 다시
-// 선언할 필요가 없도록 하기 위함이다. 삭제 불가 사유 문구는 프론트가 그대로 표현한다.
 export interface OntologySummary {
   id: number;
   domain: string;
@@ -39,7 +36,6 @@ export interface OntologySummary {
   entityCount: number;
   datasetCount: number;
   updatedAt: string;
-  isDefault: boolean;
 }
 
 // POST /api/v1/ontologies — 신규 생성. 챗은 'draft'로, UI 생성 폼도 'draft'로 만든 뒤 사람이 활성화한다.
