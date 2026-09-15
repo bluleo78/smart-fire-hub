@@ -33,9 +33,9 @@ describe('loadTableGraph (integration)', () => {
   afterAll(async () => { await clean(); await closeDriver(); });
 
   it('두 번 적재해도 노드 수가 불변이고 sourceDatasetIds가 누적된다', async () => {
-    await loadTableGraph(graph, 501, 1);
+    await loadTableGraph(graph, 501, 1, 9);
     expect(await countScoped()).toBe(2);
-    await loadTableGraph(graph, 502, 1); // 다른 데이터셋 재적재 → 멱등 + provenance 누적
+    await loadTableGraph(graph, 502, 1, 9); // 다른 데이터셋 재적재 → 멱등 + provenance 누적
     expect(await countScoped()).toBe(2);
 
     const s = getSession();

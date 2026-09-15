@@ -78,6 +78,21 @@ describe('readWholeGraph', () => {
     const g = await readWholeGraph();
     expect(g.nodes[0].schemaVersion).toBe(1);
   });
+
+  // #678: schema_version은 온톨로지별 독립 카운터라, 어느 온톨로지의 버전인지(ontologyId)를 함께
+  // 읽지 않으면 "구버전" 판정이 불가능하다 — schemaVersion과 동일한 계약(레거시 노드는 필드 생략).
+  it('ontologyId가 있으면 number로 포함하고, 없으면(레거시 노드) 필드를 생략한다', async () => {
+    runMock
+      .mockResolvedValueOnce({ records: [
+        rec({ key: 'incident:a', type: 'Incident', name: '화재A', sourceChunkCount: int(1), schemaVersion: int(3), ontologyId: int(5) }),
+        rec({ key: 'legacy:b', type: 'Building', name: '레거시', sourceChunkCount: int(1), schemaVersion: null, ontologyId: null }),
+      ] })
+      .mockResolvedValueOnce({ records: [] });
+
+    const g = await readWholeGraph();
+    expect(g.nodes[0].ontologyId).toBe(5);
+    expect(g.nodes[1]).not.toHaveProperty('ontologyId');
+  });
 });
 
 // 5-6: 엔티티 타입 리네임이 entity_type_id 보존 기반의 순수 DB 연산이 되어(entityKey가 typeId 기반)

@@ -26,16 +26,30 @@ describe('ingestDataset', () => {
       load,
       embed: mockEmbed,
     };
-    const summary = await ingestDataset(deps, 7, CORE_ONTOLOGY);
+    const summary = await ingestDataset(deps, 7, CORE_ONTOLOGY, 99);
 
     expect(deps.extract).toHaveBeenCalledTimes(2);
-    // load는 청크별로 호출되며, remap된 그래프와 현재 온톨로지 schemaVersion을 받는다(5-4).
-    expect(load).toHaveBeenCalledWith(expect.anything(), 10, CORE_ONTOLOGY.schemaVersion);
-    expect(load).toHaveBeenCalledWith(expect.anything(), 11, CORE_ONTOLOGY.schemaVersion);
+    // load는 청크별로 호출되며, remap된 그래프와 현재 온톨로지 schemaVersion, ontologyId를 받는다(5-4, #678).
+    expect(load).toHaveBeenCalledWith(expect.anything(), 10, CORE_ONTOLOGY.schemaVersion, 99);
+    expect(load).toHaveBeenCalledWith(expect.anything(), 11, CORE_ONTOLOGY.schemaVersion, 99);
     expect(mockEmbed).toHaveBeenCalled();
 
     // 청크 간 동일 엔티티(A, B)가 중복 추출되었으므로 distinct canonical 엔티티는 2개, 관계는 1개.
     expect(summary).toEqual({ datasetId: 7, chunks: 2, entities: 2, relations: 1 });
+  });
+
+  // #678: mergeGraph가 ontologyId를 SET하려면 ingestDataset이 deps.load에 4번째 인자로 전달해야 한다.
+  it('ingestDataset은 load에 ontologyId를 전달한다', async () => {
+    const load = vi.fn().mockResolvedValue({ nodes: 1, relations: 0 });
+    const deps: IngestDeps = {
+      listChunks: vi.fn().mockResolvedValue([{ chunkId: 1, content: 'c1' }]),
+      extract: vi.fn().mockResolvedValue({ entities: [{ type: 'Incident', name: 'A' }], relations: [] }),
+      load,
+      embed: mockEmbed,
+    };
+    await ingestDataset(deps, 1, CORE_ONTOLOGY, 99);
+
+    expect(load).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.anything(), 99);
   });
 
   it('추출 결과가 비어있는 청크가 있어도 계속 진행한다', async () => {
@@ -50,7 +64,7 @@ describe('ingestDataset', () => {
       load,
       embed: mockEmbed,
     };
-    const summary = await ingestDataset(deps, 8, CORE_ONTOLOGY);
+    const summary = await ingestDataset(deps, 8, CORE_ONTOLOGY, 99);
     expect(summary.entities).toBe(1);
     expect(summary.chunks).toBe(2);
   });
@@ -73,7 +87,7 @@ describe('ingestDataset', () => {
         (t === '전기적 요인' ? [1, 0, 0] : [0.6, 0.6, 0]))),
       link,
     };
-    await ingestDataset(deps, 9, CORE_ONTOLOGY);
+    await ingestDataset(deps, 9, CORE_ONTOLOGY, 99);
 
     expect(link).toHaveBeenCalledWith('전기적 요인', '분전반의 누전', 'Cause');
   });
@@ -91,7 +105,7 @@ describe('ingestDataset', () => {
       lookupDecision,
       recordPending,
     };
-    await ingestDataset(deps, 1, CORE_ONTOLOGY);
+    await ingestDataset(deps, 1, CORE_ONTOLOGY, 99);
     // 근접쌍이 없는(엔티티 0개) 케이스라 lookupDecision/recordPending이 호출되지 않을 수 있다 —
     // 이 테스트는 buildCanonicalMap 호출 자체에 deps가 실려가는지(타입 오류 없이 통과하는지)만 확인한다.
     expect(deps.load).toHaveBeenCalled();
@@ -112,7 +126,7 @@ describe('ingestDataset', () => {
       embed: async (texts: string[]) => texts.map(() => [1, 0, 0]),
       recordPropertyReview,
     };
-    await ingestDataset(deps, 42, CORE_ONTOLOGY);
+    await ingestDataset(deps, 42, CORE_ONTOLOGY, 99);
 
     // Incident는 exact 정책 → canonical=자기자신. 최종 key = entityKey(typeId, '창고 화재').
     const expectedKey = entityKey(entityTypeId(CORE_ONTOLOGY, 'Incident'), '창고 화재');
@@ -146,7 +160,7 @@ describe('ingestDataset', () => {
       embed: async (texts: string[]) => texts.map(() => [1, 0, 0]),
       recordPropertyReview,
     };
-    await ingestDataset(deps, 42, testOntology);
+    await ingestDataset(deps, 42, testOntology, 99);
 
     const canonicalKey = entityKey(entityTypeId(testOntology, 'Equipment'), longName);
     const localKey = entityKey(entityTypeId(testOntology, 'Equipment'), shortName);
@@ -164,7 +178,7 @@ describe('ingestDataset', () => {
       load: async () => ({ nodes: 1, relations: 0 }),
       embed: async (t: string[]) => t.map(() => [1, 0, 0]),
     };
-    await expect(ingestDataset(deps, 1, CORE_ONTOLOGY)).resolves.toBeDefined();
+    await expect(ingestDataset(deps, 1, CORE_ONTOLOGY, 99)).resolves.toBeDefined();
   });
 
   it('동의어 근접쌍 등록 시 datasetId와 두 이름 청크의 합집합(dedup)을 recordPending에 전달한다', async () => {
@@ -190,7 +204,7 @@ describe('ingestDataset', () => {
       lookupDecision,
       recordPending,
     };
-    await ingestDataset(deps, 99, CORE_ONTOLOGY);
+    await ingestDataset(deps, 99, CORE_ONTOLOGY, 99);
 
     // 판별 포인트: datasetId=99, 그리고 sourceChunkIds가 양쪽 청크(10,20)를 모두 포함해야 한다.
     expect(recordPending).toHaveBeenCalledTimes(1);
@@ -239,7 +253,7 @@ describe('ingestDataset 저신뢰 보류', () => {
     // CAUSED_BY는 CORE_ONTOLOGY에서 Incident->Cause만 허용 트리플이지만, 이 mock 경로는
     // extractor를 거치지 않고 resolveExtraction에 직접 주입되며 resolveExtraction은 허용 트리플을
     // 검사하지 않고 두 끝점 이름이 해소되는지만 확인하므로 관계가 그대로 유지된다.
-    await ingestDataset(deps, 122, CORE_ONTOLOGY);
+    await ingestDataset(deps, 122, CORE_ONTOLOGY, 99);
     const loadedKeys = loads.flatMap((g) => g.entities.map((e) => e.name));
     expect(loadedKeys).toEqual(expect.arrayContaining(['누전', '과부하']));
     // 관계도 그대로 적재되어야 "그래프가 이전과 완전히 동일"이 성립한다(관계 드롭 회귀 방지).
@@ -255,7 +269,7 @@ describe('ingestDataset 저신뢰 보류', () => {
         { type: 'Cause', name: '노후배선', confidence: 0.3, reason: '추론' },
       ] } }),
     }, loads, pending);
-    await ingestDataset(deps, 122, CORE_ONTOLOGY);
+    await ingestDataset(deps, 122, CORE_ONTOLOGY, 99);
     expect(loads.flatMap((g) => g.entities)).toHaveLength(0);
     expect(pending).toHaveLength(1);
     expect(pending[0]).toMatchObject({ entityType: 'Cause', name: '노후배선', confidence: 0.3, reason: '추론', datasetId: 122 });
@@ -272,7 +286,7 @@ describe('ingestDataset 저신뢰 보류', () => {
         c2: { entities: [{ type: 'Cause', name: '누전', confidence: 0.9 }] },
       }),
     }, loads, pending);
-    await ingestDataset(deps, 122, CORE_ONTOLOGY);
+    await ingestDataset(deps, 122, CORE_ONTOLOGY, 99);
     expect(loads.flatMap((g) => g.entities).some((e) => e.name === '누전')).toBe(true);
     expect(pending).toHaveLength(0);
   });
@@ -289,7 +303,7 @@ describe('ingestDataset 저신뢰 보류', () => {
         c2: { entities: [{ type: 'Cause', name: '누전', confidence: 0.4 }] },
       }),
     }, loads, pending);
-    await ingestDataset(deps, 122, CORE_ONTOLOGY);
+    await ingestDataset(deps, 122, CORE_ONTOLOGY, 99);
     expect(loads.flatMap((g) => g.entities).some((e) => e.name === '누전')).toBe(true);
     expect(pending).toHaveLength(0);
   });
@@ -303,7 +317,7 @@ describe('ingestDataset 저신뢰 보류', () => {
         lookupEntityDecision: () => Promise.resolve(decision),
         extract: extractFrom({ c1: { entities: [{ type: 'Cause', name: '노후배선', confidence: 0.3 }] } }),
       }, loads, pending);
-      await ingestDataset(deps, 122, CORE_ONTOLOGY);
+      await ingestDataset(deps, 122, CORE_ONTOLOGY, 99);
       expect(loads.flatMap((g) => g.entities).some((e) => e.name === '노후배선')).toBe(expectLoaded);
       expect(pending.length > 0).toBe(expectQueued);
     }
@@ -318,7 +332,7 @@ describe('ingestDataset 저신뢰 보류', () => {
         { type: 'Cause', name: '과부하', confidence: 0.9 },     // 적재
       ], relations: [{ subject: '노후배선', type: 'CAUSED_BY', object: '과부하' }] } }),
     }, loads, pending);
-    await ingestDataset(deps, 122, CORE_ONTOLOGY);
+    await ingestDataset(deps, 122, CORE_ONTOLOGY, 99);
     // 관계는 보류 끝점을 포함하므로 적재 안 됨.
     expect(loads.flatMap((g) => g.relations)).toHaveLength(0);
     expect(pending).toHaveLength(1);
@@ -347,7 +361,7 @@ describe('ingestDataset 저신뢰 관계 보류', () => {
     const loads: ResolvedGraph[] = []; const relPending: RelPendingItem[] = [];
     const deps = relDeps({ extract: extractFrom({ c1: { entities: [ENT('누전'), ENT('과부하')],
       relations: [{ subject: '누전', type: 'CAUSED_BY', object: '과부하', confidence: 0.9 }] } }) }, loads, relPending);
-    await ingestDataset(deps, 122, CORE_ONTOLOGY);
+    await ingestDataset(deps, 122, CORE_ONTOLOGY, 99);
     expect(loads.flatMap((g) => g.relations)).toHaveLength(1);
     expect(relPending).toHaveLength(0);
   });
@@ -357,7 +371,7 @@ describe('ingestDataset 저신뢰 관계 보류', () => {
     const deps = relDeps({ lookupRelationDecision: () => Promise.resolve(undefined),
       extract: extractFrom({ c1: { entities: [ENT('누전'), ENT('과부하')],
         relations: [{ subject: '누전', type: 'CAUSED_BY', object: '과부하', confidence: 0.3, reason: '추론' }] } }) }, loads, relPending);
-    await ingestDataset(deps, 122, CORE_ONTOLOGY);
+    await ingestDataset(deps, 122, CORE_ONTOLOGY, 99);
     expect(loads.flatMap((g) => g.entities).length).toBe(2);       // 끝점 엔티티는 적재
     expect(loads.flatMap((g) => g.relations)).toHaveLength(0);     // 저신뢰 엣지는 미적재
     expect(relPending).toHaveLength(1);
@@ -378,7 +392,7 @@ describe('ingestDataset 저신뢰 관계 보류', () => {
           c2: { entities: [ENT('누전'), ENT('과부하')], relations: [{ subject: '누전', type: 'CAUSED_BY', object: '과부하', confidence: c2conf }] },
         }),
       }, loads, relPending);
-      await ingestDataset(deps, 122, CORE_ONTOLOGY);
+      await ingestDataset(deps, 122, CORE_ONTOLOGY, 99);
       expect(loads.flatMap((g) => g.relations).length > 0).toBe(true);
       expect(relPending).toHaveLength(0);
     }
@@ -390,7 +404,7 @@ describe('ingestDataset 저신뢰 관계 보류', () => {
       const deps = relDeps({ lookupRelationDecision: () => Promise.resolve(decision),
         extract: extractFrom({ c1: { entities: [ENT('누전'), ENT('과부하')],
           relations: [{ subject: '누전', type: 'CAUSED_BY', object: '과부하', confidence: 0.3 }] } }) }, loads, relPending);
-      await ingestDataset(deps, 122, CORE_ONTOLOGY);
+      await ingestDataset(deps, 122, CORE_ONTOLOGY, 99);
       expect(loads.flatMap((g) => g.relations).length > 0).toBe(loaded);
       expect(relPending.length > 0).toBe(queued);
     }
@@ -407,7 +421,7 @@ describe('ingestDataset 저신뢰 관계 보류', () => {
         { type: 'Cause', name: '과부하', confidence: 0.9 },
       ], relations: [{ subject: '노후배선', type: 'CAUSED_BY', object: '과부하', confidence: 0.3 }] } }),
     }, loads, relPending);
-    await ingestDataset(deps, 122, CORE_ONTOLOGY);
+    await ingestDataset(deps, 122, CORE_ONTOLOGY, 99);
     // 관계는 끝점(노후배선)이 엔티티-보류라 슬라이스1이 지배 → relation 큐 X(엔티티 payload에 수집됨).
     expect(relPending).toHaveLength(0);
     expect(entPending).toHaveLength(1);

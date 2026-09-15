@@ -28,7 +28,7 @@ describe('loadGraph', () => {
       ],
       relations: [],
     };
-    await loadGraph(graph, 1, 3);
+    await loadGraph(graph, 1, 3, 5);
 
     // 첫 run 호출 = 노드 MERGE. Cypher에 속성 병합(coalesce)이 포함되어야 한다.
     const [nodeCypher, nodeParams] = runMock.mock.calls[0];
@@ -51,12 +51,13 @@ describe('loadGraph', () => {
             name: '가짜이름',
             sourceChunkIds: '깨진값',
             schemaVersion: 999,
+            ontologyId: 999,
           },
         },
       ],
       relations: [],
     };
-    await loadGraph(graph, 1, 3);
+    await loadGraph(graph, 1, 3, 5);
 
     const [, nodeParams] = runMock.mock.calls[0];
     expect(nodeParams.entities[0].properties).toEqual({ 피해액: 120_000_000 });
@@ -73,7 +74,7 @@ describe('loadGraph', () => {
         { subjectKey: entityKey(incidentId, '사건'), type: 'CAUSED_BY', objectKey: entityKey(causeId, '원인') },
       ],
     };
-    await loadGraph(graph, 1, 5);
+    await loadGraph(graph, 1, 5, 7);
 
     const [nodeCypher, nodeParams] = runMock.mock.calls[0];
     const [relCypher, relParams] = runMock.mock.calls[1];
@@ -85,5 +86,29 @@ describe('loadGraph', () => {
     expect(nodeParams.schemaVersion.toNumber()).toBe(5);
     expect(neo4j.isInt(relParams.schemaVersion)).toBe(true);
     expect(relParams.schemaVersion.toNumber()).toBe(5);
+  });
+
+  // #678: schema_version은 온톨로지마다 독립적으로 매겨지는 숫자라, 어느 온톨로지의 버전인지
+  // 함께 남기지 않으면 "구버전" 판정이 불가능하다 — 노드/관계 MERGE 모두 ontologyId를 스탬프해야 한다.
+  it('노드와 관계 MERGE 모두 ontologyId를 Cypher params로 전달한다', async () => {
+    const graph = {
+      entities: [
+        { key: entityKey(incidentId, '사건'), type: 'Incident' as const, name: '사건' },
+        { key: entityKey(causeId, '원인'), type: 'Cause' as const, name: '원인' },
+      ],
+      relations: [
+        { subjectKey: entityKey(incidentId, '사건'), type: 'CAUSED_BY', objectKey: entityKey(causeId, '원인') },
+      ],
+    };
+    await loadGraph(graph, 1, 5, 7);
+
+    const [nodeCypher, nodeParams] = runMock.mock.calls[0];
+    const [relCypher, relParams] = runMock.mock.calls[1];
+    expect(nodeCypher).toContain('n.ontologyId = $ontologyId');
+    expect(relCypher).toContain('x.ontologyId = $ontologyId');
+    expect(neo4j.isInt(nodeParams.ontologyId)).toBe(true);
+    expect(nodeParams.ontologyId.toNumber()).toBe(7);
+    expect(neo4j.isInt(relParams.ontologyId)).toBe(true);
+    expect(relParams.ontologyId.toNumber()).toBe(7);
   });
 });

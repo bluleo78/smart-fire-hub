@@ -55,13 +55,13 @@ describe('schemaVersion 저장 타입 (실 Neo4j, #308)', () => {
   afterAll(async () => { await closeDriver(); });
 
   it('loadGraph는 노드/엣지 schemaVersion을 INTEGER로 저장한다', async () => {
-    await loadGraph(graph, 30801, 1);
+    await loadGraph(graph, 30801, 1, 9);
     expect(await nodeValueType(kA)).toMatch(/^INTEGER/);
     expect(await relValueType(kA, kB)).toMatch(/^INTEGER/);
   });
 
   it('addRelation도 엣지 schemaVersion을 INTEGER로 저장한다', async () => {
-    await loadGraph({ entities: graph.entities, relations: [] }, 30802, 1);
+    await loadGraph({ entities: graph.entities, relations: [] }, 30802, 1, 9);
     await addRelation(CORE_ONTOLOGY, kA, 'CAUSED_BY', kB, [30802]);
     expect(await relValueType(kA, kB)).toMatch(/^INTEGER/);
   });

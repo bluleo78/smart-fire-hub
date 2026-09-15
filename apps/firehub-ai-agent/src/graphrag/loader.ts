@@ -10,7 +10,7 @@ import { ResolvedGraph } from './resolver.js';
 // 우회 경로에 대비해 적재 직전에도 한 번 더 방어한다(defense-in-depth).
 // 두 provenance 필드(sourceChunkIds/sourceDatasetIds) 모두 방어 대상에 포함한다.
 const RESERVED_NODE_KEYS = new Set([
-  'key', 'type', 'name', 'sourceChunkIds', 'sourceDatasetIds', 'schemaVersion',
+  'key', 'type', 'name', 'sourceChunkIds', 'sourceDatasetIds', 'schemaVersion', 'ontologyId',
 ]);
 
 function sanitizeProperties(
@@ -31,6 +31,7 @@ async function mergeGraph(
   provParam: 'chunkId' | 'datasetId',
   provValue: number,
   schemaVersion: number,
+  ontologyId: number,
 ): Promise<{ nodes: number; relations: number }> {
   const session = getSession();
   try {
@@ -43,15 +44,19 @@ async function mergeGraph(
     // 드라이버는 plain JS number를 Cypher FLOAT로 직렬화한다 — 그대로 넘기면 schemaVersion이 1.0(FLOAT)로
     // 저장돼 읽기측 Integer 가정이 깨진다(#308). 정수 의미가 명확한 값이므로 neo4j.int()로 INTEGER 바인딩한다.
     const schemaVersionInt = neo4j.int(schemaVersion);
+    // ontologyId도 schemaVersion과 동일하게 last-write-wins로 스탬프한다 — schema_version은
+    // 온톨로지마다 독립적으로 매겨지는 숫자라, 어느 온톨로지의 버전인지 함께 남기지 않으면
+    // "구버전" 판정 자체가 불가능하다(#678).
+    const ontologyIdInt = neo4j.int(ontologyId);
     await session.run(
       `UNWIND $entities AS e
        MERGE (n:Entity {key: e.key})
-       SET n.type = e.type, n.name = e.name, n.schemaVersion = $schemaVersion
+       SET n.type = e.type, n.name = e.name, n.schemaVersion = $schemaVersion, n.ontologyId = $ontologyId
        SET n += coalesce(e.properties, {})
        SET n.${provField} =
          CASE WHEN $${provParam} IN coalesce(n.${provField}, [])
               THEN n.${provField} ELSE coalesce(n.${provField}, []) + $${provParam} END`,
-      { entities, [provParam]: provValue, schemaVersion: schemaVersionInt },
+      { entities, [provParam]: provValue, schemaVersion: schemaVersionInt, ontologyId: ontologyIdInt },
     );
     // 관계 MERGE — (subjectKey)-[:REL {type}]->(objectKey). provenance(provField) 동일 누적.
     // schemaVersion은 저장만 하고 읽기 API(GraphEdge)에는 노출하지 않는다(소비자 생기면 노출 — 노드측
@@ -60,11 +65,11 @@ async function mergeGraph(
       `UNWIND $rels AS r
        MATCH (a:Entity {key: r.subjectKey}), (b:Entity {key: r.objectKey})
        MERGE (a)-[x:REL {type: r.type}]->(b)
-       SET x.schemaVersion = $schemaVersion
+       SET x.schemaVersion = $schemaVersion, x.ontologyId = $ontologyId
        SET x.${provField} =
          CASE WHEN $${provParam} IN coalesce(x.${provField}, [])
               THEN x.${provField} ELSE coalesce(x.${provField}, []) + $${provParam} END`,
-      { rels: graph.relations, [provParam]: provValue, schemaVersion: schemaVersionInt },
+      { rels: graph.relations, [provParam]: provValue, schemaVersion: schemaVersionInt, ontologyId: ontologyIdInt },
     );
     return { nodes: graph.entities.length, relations: graph.relations.length };
   } finally { await session.close(); }
@@ -72,14 +77,14 @@ async function mergeGraph(
 
 // 문서 청크 → 그래프 적재(provenance=sourceChunkIds). 방출 Cypher·파라미터는 리팩터 전과 동일.
 export async function loadGraph(
-  graph: ResolvedGraph, sourceChunkId: number, schemaVersion: number,
+  graph: ResolvedGraph, sourceChunkId: number, schemaVersion: number, ontologyId: number,
 ): Promise<{ nodes: number; relations: number }> {
-  return mergeGraph(graph, 'sourceChunkIds', 'chunkId', sourceChunkId, schemaVersion);
+  return mergeGraph(graph, 'sourceChunkIds', 'chunkId', sourceChunkId, schemaVersion, ontologyId);
 }
 
 // 표 행 → 그래프 결정적 투영(provenance=sourceDatasetIds). 문서 경로와 동일 exact-key MERGE.
 export async function loadTableGraph(
-  graph: ResolvedGraph, datasetId: number, schemaVersion: number,
+  graph: ResolvedGraph, datasetId: number, schemaVersion: number, ontologyId: number,
 ): Promise<{ nodes: number; relations: number }> {
-  return mergeGraph(graph, 'sourceDatasetIds', 'datasetId', datasetId, schemaVersion);
+  return mergeGraph(graph, 'sourceDatasetIds', 'datasetId', datasetId, schemaVersion, ontologyId);
 }

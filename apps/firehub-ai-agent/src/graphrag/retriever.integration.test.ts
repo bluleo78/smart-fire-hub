@@ -25,7 +25,7 @@ beforeAll(async () => {
       { subjectKey: entityKey(incidentId, '2026-001'), type: 'OCCURRED_AT', objectKey: entityKey(buildingId, '중앙로 상가') },
       { subjectKey: entityKey(incidentId, '2026-001'), type: 'CAUSED_BY', objectKey: entityKey(causeId, '전기적 요인') },
     ],
-  }, 500, 1);
+  }, 500, 1, 9);
 });
 afterAll(async () => { await closeDriver(); });
 
@@ -61,7 +61,7 @@ describe('retrieve (integration)', () => {
         ...unrelatedKeys.map((k, i) => ({ key: k, type: 'Incident' as const, name: `무관-${i}` })),
       ],
       relations: unrelatedKeys.map((k) => ({ subjectKey: k, type: 'VIOLATED' as const, objectKey: hubKey })),
-    }, 601, 1);
+    }, 601, 1, 9);
     await loadGraph({
       entities: [
         { key: seedIncidentKey, type: 'Incident', name: '2026-002' },
@@ -69,7 +69,7 @@ describe('retrieve (integration)', () => {
       relations: [
         { subjectKey: seedIncidentKey, type: 'VIOLATED', objectKey: hubKey },
       ],
-    }, 600, 1);
+    }, 600, 1, 9);
 
     const deps = {
       searchDocuments: async () => [{ chunkId: 600, fileName: 'report-02.md', content: '2026-002 화재...' }],

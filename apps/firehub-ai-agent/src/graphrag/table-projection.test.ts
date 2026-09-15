@@ -45,7 +45,7 @@ describe('projectTableDataset', () => {
       1: { rows: [{ inc: 'B', bld: 'X', loss: '2' }], totalPages: 2 },
     };
     const deps = { fetchRows: vi.fn(async (_id: number, page: number) => pages[page]), load };
-    const summary = await projectTableDataset(deps, 900, CORE_ONTOLOGY, mapping);
+    const summary = await projectTableDataset(deps, 900, CORE_ONTOLOGY, 5, mapping);
 
     expect(summary.rowCount).toBe(3);
     expect(summary.pageCount).toBe(2);
@@ -57,8 +57,19 @@ describe('projectTableDataset', () => {
   it('행이 없으면 load를 호출하지 않는다', async () => {
     const load = vi.fn().mockResolvedValue({ nodes: 0, relations: 0 });
     const deps = { fetchRows: vi.fn(async () => ({ rows: [], totalPages: 1 })), load };
-    const summary = await projectTableDataset(deps, 901, CORE_ONTOLOGY, mapping);
+    const summary = await projectTableDataset(deps, 901, CORE_ONTOLOGY, 5, mapping);
     expect(summary.rowCount).toBe(0);
     expect(load).not.toHaveBeenCalled();
+  });
+
+  // #678: mergeGraph가 ontologyId를 SET하려면 projectTableDataset이 deps.load에 4번째 인자로 전달해야 한다.
+  it('load에 ontologyId를 전달한다', async () => {
+    const load = vi.fn().mockResolvedValue({ nodes: 0, relations: 0 });
+    const deps = {
+      fetchRows: vi.fn(async () => ({ rows: [{ inc: 'A', bld: 'X', loss: '1' }], totalPages: 1 })),
+      load,
+    };
+    await projectTableDataset(deps, 902, CORE_ONTOLOGY, 5, mapping);
+    expect(load).toHaveBeenCalledWith(expect.anything(), 902, CORE_ONTOLOGY.schemaVersion, 5);
   });
 });

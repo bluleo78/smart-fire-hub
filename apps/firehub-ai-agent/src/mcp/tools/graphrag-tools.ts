@@ -263,7 +263,7 @@ export function registerGraphragTools(
           {
             listChunks: (id) => apiClient.listDocumentChunks(id),
             extract: (text) => extractGraph(text, { complete, ontology }),
-            load: (graph, chunkId, schemaVersion) => loadGraph(graph, chunkId, schemaVersion),
+            load: (graph, chunkId, schemaVersion, ontologyId) => loadGraph(graph, chunkId, schemaVersion, ontologyId),
             // 데이터셋 전역 시맨틱 엔티티 해소(semantic-resolver.ts)용 임베딩 — firehub-api 활성 provider 에 위임.
             embed: (texts) => apiClient.embed(texts),
             // 임베딩 임계값 미달 근접쌍(코사인 0.5~0.78)을 LLM으로 재판단해 의미적 동의어를 추가 병합.
@@ -284,6 +284,7 @@ export function registerGraphragTools(
           },
           args.datasetId,
           ontology,
+          resolved.ontologyId,
         );
         // 적재 이력을 best-effort 로 기록한다(실패해도 적재 결과 반환에는 영향 없음).
         const failures = summary.extractionFailures ?? 0;
@@ -316,9 +317,9 @@ export function registerGraphragTools(
           {
             fetchRows: (id, page, size) =>
               apiClient.queryDatasetData(id, { page, size, includeTotalCount: true }) as Promise<DataPage>,
-            load: (graph, datasetId, schemaVersion) => loadTableGraph(graph, datasetId, schemaVersion),
+            load: (graph, datasetId, schemaVersion, ontologyId) => loadTableGraph(graph, datasetId, schemaVersion, ontologyId),
           },
-          args.datasetId, ontology, mapping.spec,
+          args.datasetId, ontology, mapping.ontologyId, mapping.spec,
         );
         // 투영 이력 best-effort 기록(chunkCount에는 처리 행 수를 담는다 — 표엔 청크 개념이 없음).
         try {

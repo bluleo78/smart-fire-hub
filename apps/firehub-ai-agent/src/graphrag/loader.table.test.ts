@@ -23,7 +23,7 @@ describe('loadTableGraph', () => {
       entities: [{ key: entityKey(incidentId, 'A'), type: 'Incident' as const, name: 'A' }],
       relations: [],
     };
-    await loadTableGraph(graph, 77, 3);
+    await loadTableGraph(graph, 77, 3, 9);
 
     const [nodeCypher, nodeParams] = runMock.mock.calls[0];
     expect(nodeCypher).toContain('n.sourceDatasetIds');
@@ -42,7 +42,7 @@ describe('loadTableGraph', () => {
       ],
       relations: [{ subjectKey: '1:a', type: 'OCCURRED_AT' as const, objectKey: '2:b' }],
     };
-    await loadTableGraph(graph, 88, 1);
+    await loadTableGraph(graph, 88, 1, 9);
     const [relCypher, relParams] = runMock.mock.calls[1];
     expect(relCypher).toContain('x.sourceDatasetIds');
     expect(relParams.datasetId).toBe(88);

@@ -14,7 +14,9 @@ export interface DataPage { rows: Record<string, unknown>[]; totalPages: number;
 
 export interface ProjectTableDeps {
   fetchRows(datasetId: number, page: number, size: number): Promise<DataPage>;
-  load(graph: ResolvedGraph, datasetId: number, schemaVersion: number): Promise<{ nodes: number; relations: number }>;
+  load(
+    graph: ResolvedGraph, datasetId: number, schemaVersion: number, ontologyId: number,
+  ): Promise<{ nodes: number; relations: number }>;
 }
 export interface ProjectionSummary {
   datasetId: number; rowCount: number; nodeCount: number; edgeCount: number; pageCount: number;
@@ -66,7 +68,7 @@ export function rowToGraph(
 
 // 데이터셋 전체를 페이지 순회하며 투영. 페이지마다 그래프를 모아 1회 load(멱등 MERGE).
 export async function projectTableDataset(
-  deps: ProjectTableDeps, datasetId: number, ontology: Ontology, mapping: MappingSpec,
+  deps: ProjectTableDeps, datasetId: number, ontology: Ontology, ontologyId: number, mapping: MappingSpec,
 ): Promise<ProjectionSummary> {
   const distinctNodeKeys = new Set<string>();
   const distinctEdgeKeys = new Set<string>();
@@ -85,7 +87,7 @@ export async function projectTableDataset(
       graph.relations.push(...rowGraph.relations);
     }
     if (graph.entities.length > 0 || graph.relations.length > 0) {
-      await deps.load(graph, datasetId, ontology.schemaVersion);
+      await deps.load(graph, datasetId, ontology.schemaVersion, ontologyId);
     }
     for (const e of graph.entities) distinctNodeKeys.add(e.key);
     for (const r of graph.relations) distinctEdgeKeys.add(`${r.subjectKey}|${r.type}|${r.objectKey}`);

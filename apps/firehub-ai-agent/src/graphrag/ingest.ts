@@ -31,7 +31,7 @@ export interface IngestDeps {
   listChunks(datasetId: number): Promise<{ chunkId: number; content: string }[]>;
   extract(text: string): Promise<ExtractionResult>;
   load(
-    graph: ResolvedGraph, chunkId: number, schemaVersion: number,
+    graph: ResolvedGraph, chunkId: number, schemaVersion: number, ontologyId: number,
   ): Promise<{ nodes: number; relations: number }>;
   embed: EmbedFn;
   // 근접쌍(코사인 0.5~0.78) LLM 재판단 — 생략 시 semantic-resolver.ts가 기존 임베딩-only 동작을 유지한다.
@@ -71,7 +71,7 @@ export interface IngestSummary {
 }
 
 export async function ingestDataset(
-  deps: IngestDeps, datasetId: number, ontology: Ontology,
+  deps: IngestDeps, datasetId: number, ontology: Ontology, ontologyId: number,
 ): Promise<IngestSummary> {
   const chunks = await deps.listChunks(datasetId);
 
@@ -195,7 +195,7 @@ export async function ingestDataset(
         !withheldKeys.has(r.subjectKey) && !withheldKeys.has(r.objectKey)
         && !relWithheldEdges.has(`${r.subjectKey}|${r.type}|${r.objectKey}`)),
     };
-    await deps.load(filtered, chunkId, ontology.schemaVersion);
+    await deps.load(filtered, chunkId, ontology.schemaVersion, ontologyId);
     for (const e of filtered.entities) distinctEntityKeys.add(e.key);
     for (const r of filtered.relations) distinctRelKeys.add(`${r.subjectKey}|${r.type}|${r.objectKey}`);
 
