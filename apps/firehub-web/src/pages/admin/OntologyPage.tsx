@@ -76,24 +76,16 @@ export default function OntologyPage() {
     () => (ontologies ?? []).filter((o) => o.status === 'active').map((o) => o.id),
     [ontologies],
   );
-  // instanceEntities(아래)의 폴백 전용 — mergedEntities가 비어 있을 때(active 온톨로지가 하나도 없을
-  // 때)만 쓰인다. "기본 온톨로지" 개념이 #678에서 제거됐으므로 첫 active 온톨로지, 그마저 없으면
-  // 목록의 첫 항목으로 대체한다(NodeDetailDrawer로 넘기는 구버전 판정 기준은 위 Map을 쓰며 이 값과
-  // 무관하다).
-  const fallbackOntologyId = ontologies?.find((o) => o.status === 'active')?.id ?? ontologies?.[0]?.id ?? null;
-  const { data: schema } = useOntologyById(fallbackOntologyId);
   // useMergedOntologyEntities는 combine 옵션(구조적 공유)으로 값이 같으면 참조도 유지해 준다 — 그래야
   // 아래 currentTypeNames/activeTypes 자동 동기화(#412, 참조 비교로 "새 타입 추가"를 판정)가 매 렌더
   // 무한 루프에 빠지지 않는다(#677 구현 중 실제로 겪은 회귀 — activeSchemaResults를 그대로 의존성에
   // 넣었을 때 매 렌더 새 배열이 나와 "Too many re-renders" 크래시가 재현됐다).
   // TypeFilterPanel은 entities만 읽으므로(domain/schemaVersion/relations는 어디서도 소비하지
   // 않는다) 가짜 OntologySchema를 조립하지 않고 EntityTypeDef[]를 그대로 넘긴다. "구버전" 배지
-  // 기준은 더 이상 이 schema(폴백 온톨로지) 하나가 아니라 위 schemaVersionByOntologyId 맵이다(#678).
-  const mergedEntities = useMergedOntologyEntities(activeOntologyIds);
-  const instanceEntities = useMemo(
-    () => (mergedEntities.length > 0 ? mergedEntities : (schema?.entities ?? [])),
-    [mergedEntities, schema],
-  );
+  // 기준은 schema가 아니라 위 schemaVersionByOntologyId 맵이다(#678).
+  // active 온톨로지가 하나도 없으면 mergedEntities는 빈 배열이다 — "기본 온톨로지"로 임의 대체하지
+  // 않는다(#678). TypeFilterPanel은 빈 배열을 정상적인 빈 상태로 렌더한다.
+  const instanceEntities = useMergedOntologyEntities(activeOntologyIds);
   // 인스턴스 그래프(Neo4j 적재분)는 여전히 온톨로지 id로 스코프되지 않는 단일 엔드포인트다
   // (getGraph()에 id 파라미터가 없다) — 그래서 selectedOntologyId를 바꿔도 이 쿼리는 영향을 받지 않고,
   // 요소 단위 편집 뮤테이션도 이 키를 무효화할 이유가 없다(스키마 편집이 이미 적재된 그래프 노드를
