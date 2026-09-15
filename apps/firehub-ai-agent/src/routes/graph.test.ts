@@ -4,11 +4,10 @@ import express from 'express';
 import request from 'supertest';
 
 // merge-entities/add-entity/add-relation 핸들러가 entityType→typeId 변환용 온톨로지를 fetch한다 —
-// 실제 HTTP 호출 없이 고정 온톨로지로 대체. resolveDatasetOntology 는 datasetId 경로(#1) 검증용으로 별도 mock.
+// 실제 HTTP 호출 없이 고정 온톨로지로 대체. datasetId 는 이제 필수 필드라(#678) "기본 온톨로지" 폴백은 없다.
 // vi.mock 팩토리는 호이스팅되므로, 팩토리 안에서 참조하는 값도 vi.hoisted로 함께 끌어올려야 한다.
-const { mergeEntitiesMock, setEntityPropertyMock, addEntityMock, defaultOntology, boundOntology } = vi.hoisted(() => ({
+const { mergeEntitiesMock, setEntityPropertyMock, addEntityMock, boundOntology } = vi.hoisted(() => ({
   mergeEntitiesMock: vi.fn(), setEntityPropertyMock: vi.fn(), addEntityMock: vi.fn(),
-  defaultOntology: { domain: 'test', schemaVersion: 1, entities: [], relations: [] },
   boundOntology: { domain: 'bound', schemaVersion: 2, entities: [], relations: [] },
 }));
 vi.mock('../graphrag/synonym-merge.js', () => ({ mergeEntities: mergeEntitiesMock }));
@@ -16,14 +15,13 @@ vi.mock('../graphrag/property-mutation.js', () => ({ setEntityProperty: setEntit
 vi.mock('../graphrag/entity-add.js', () => ({ addEntity: addEntityMock }));
 vi.mock('../graphrag/neo4j-client.js', () => ({ readWholeGraph: vi.fn() }));
 vi.mock('../graphrag/ontology-source.js', () => ({
-  loadOntology: vi.fn().mockResolvedValue(defaultOntology),
-  resolveDatasetOntology: vi.fn().mockResolvedValue({ ontology: boundOntology, ontologyId: 42, source: 'binding' }),
+  resolveDatasetOntology: vi.fn().mockResolvedValue({ ontology: boundOntology, ontologyId: 42 }),
 }));
 
 process.env.INTERNAL_SERVICE_TOKEN = 'test-internal-token';
 
 import { readWholeGraph } from '../graphrag/neo4j-client.js';
-import { loadOntology, resolveDatasetOntology } from '../graphrag/ontology-source.js';
+import { resolveDatasetOntology } from '../graphrag/ontology-source.js';
 import graphRouter from './graph.js';
 
 const app = express();
@@ -57,11 +55,11 @@ describe('POST /agent/graph/merge-entities', () => {
     const res = await request(app)
       .post('/agent/graph/merge-entities')
       .set('Authorization', 'Internal test-internal-token')
-      .send({ entityType: 'Cause', nameA: '전기적 요인', nameB: '분전반의 누전' });
+      .send({ entityType: 'Cause', nameA: '전기적 요인', nameB: '분전반의 누전', datasetId: 900 });
 
     expect(res.status).toBe(204);
     expect(mergeEntitiesMock).toHaveBeenCalledWith(
-      { domain: 'test', schemaVersion: 1, entities: [], relations: [] },
+      boundOntology,
       'Cause', '전기적 요인', '분전반의 누전',
     );
   });
@@ -69,7 +67,7 @@ describe('POST /agent/graph/merge-entities', () => {
   it('내부 토큰 없이 호출하면 401', async () => {
     const res = await request(app)
       .post('/agent/graph/merge-entities')
-      .send({ entityType: 'Cause', nameA: 'a', nameB: 'b' });
+      .send({ entityType: 'Cause', nameA: 'a', nameB: 'b', datasetId: 900 });
     expect(res.status).toBe(401);
     expect(mergeEntitiesMock).not.toHaveBeenCalled();
   });
@@ -88,7 +86,7 @@ describe('POST /agent/graph/merge-entities', () => {
     const res = await request(app)
       .post('/agent/graph/merge-entities')
       .set('Authorization', 'Internal test-internal-token')
-      .send({ entityType: 'Cause', nameA: 'a', nameB: 'b' });
+      .send({ entityType: 'Cause', nameA: 'a', nameB: 'b', datasetId: 900 });
     expect(res.status).toBe(502);
   });
 
@@ -97,7 +95,7 @@ describe('POST /agent/graph/merge-entities', () => {
 
   // #1(review): 기본이 아닌 온톨로지에 바인딩된 데이터셋의 검수 승인은 datasetId 없이는 typeId 가
   // 어긋난다 — datasetId 를 받으면 그 데이터셋의 바인딩 온톨로지로 변환해야 한다.
-  it('datasetId가 있으면 resolveDatasetOntology로 바인딩된 온톨로지를 변환에 쓴다', async () => {
+  it('datasetId를 resolveDatasetOntology로 바인딩된 온톨로지 변환에 쓴다', async () => {
     mergeEntitiesMock.mockResolvedValue(undefined);
     const res = await request(app)
       .post('/agent/graph/merge-entities')
@@ -106,29 +104,28 @@ describe('POST /agent/graph/merge-entities', () => {
 
     expect(res.status).toBe(204);
     expect(resolveDatasetOntology).toHaveBeenCalledWith(expect.anything(), 900);
-    expect(loadOntology).not.toHaveBeenCalled();
     expect(mergeEntitiesMock).toHaveBeenCalledWith(boundOntology, 'Cause', 'a', 'b');
   });
 
-  it('datasetId가 없으면 기존처럼 loadOntology 기본 온톨로지로 폴백한다', async () => {
-    mergeEntitiesMock.mockResolvedValue(undefined);
+  // #678: datasetId 미바인딩 시 "기본 온톨로지"로 조용히 폴백하던 동작 제거 — 이제 datasetId 는
+  // 필수 zod 필드라 빠지면 다른 필수 필드 누락과 마찬가지로 400을 반환한다(폴백 경로 자체가 없다).
+  it('datasetId가 없으면 400을 반환한다(폴백 없음)', async () => {
     const res = await request(app)
       .post('/agent/graph/merge-entities')
       .set(authHeader)
       .send({ entityType: 'Cause', nameA: 'a', nameB: 'b' });
 
-    expect(res.status).toBe(204);
-    expect(loadOntology).toHaveBeenCalledTimes(1);
+    expect(res.status).toBe(400);
     expect(resolveDatasetOntology).not.toHaveBeenCalled();
-    expect(mergeEntitiesMock).toHaveBeenCalledWith(defaultOntology, 'Cause', 'a', 'b');
+    expect(mergeEntitiesMock).not.toHaveBeenCalled();
   });
 });
 
 describe('POST /agent/graph/add-entity', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  // merge-entities와 동일한 이유(#1) — datasetId 유무에 따라 온톨로지 해소 경로가 갈려야 한다.
-  it('datasetId가 있으면 resolveDatasetOntology로 바인딩된 온톨로지를 변환에 쓴다', async () => {
+  // merge-entities와 동일한 이유(#1) — datasetId 로 바인딩된 온톨로지를 해소한다.
+  it('datasetId를 resolveDatasetOntology로 바인딩된 온톨로지 변환에 쓴다', async () => {
     addEntityMock.mockResolvedValue(undefined);
     const res = await request(app)
       .post('/agent/graph/add-entity')
@@ -137,27 +134,22 @@ describe('POST /agent/graph/add-entity', () => {
 
     expect(res.status).toBe(204);
     expect(resolveDatasetOntology).toHaveBeenCalledWith(expect.anything(), 900);
-    expect(loadOntology).not.toHaveBeenCalled();
     expect(addEntityMock).toHaveBeenCalledWith(
       boundOntology,
       expect.objectContaining({ entityType: 'Inspection', name: '2026년 정기점검' }),
     );
   });
 
-  it('datasetId가 없으면 기존처럼 loadOntology 기본 온톨로지로 폴백한다', async () => {
-    addEntityMock.mockResolvedValue(undefined);
+  // #678: datasetId 필수화 — 없으면 폴백하지 않고 400.
+  it('datasetId가 없으면 400을 반환한다(폴백 없음)', async () => {
     const res = await request(app)
       .post('/agent/graph/add-entity')
       .set(authHeader)
       .send({ entityType: 'Inspection', name: '2026년 정기점검' });
 
-    expect(res.status).toBe(204);
-    expect(loadOntology).toHaveBeenCalledTimes(1);
+    expect(res.status).toBe(400);
     expect(resolveDatasetOntology).not.toHaveBeenCalled();
-    expect(addEntityMock).toHaveBeenCalledWith(
-      defaultOntology,
-      expect.objectContaining({ entityType: 'Inspection', name: '2026년 정기점검' }),
-    );
+    expect(addEntityMock).not.toHaveBeenCalled();
   });
 });
 

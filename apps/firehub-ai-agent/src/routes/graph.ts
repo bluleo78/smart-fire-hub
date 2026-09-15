@@ -8,25 +8,19 @@ import { addEntity, AddEntityInput } from '../graphrag/entity-add.js';
 import { addRelation } from '../graphrag/relation-add.js';
 import { EntityType, RelationType } from '../graphrag/ontology.js';
 import { GraphMutationRejectedError } from '../graphrag/graph-mutation-guard.js';
-import { loadOntology, resolveDatasetOntology } from '../graphrag/ontology-source.js';
+import { resolveDatasetOntology } from '../graphrag/ontology-source.js';
 import { FireHubApiClient } from '../mcp/api-client.js';
 
 /**
- * entityType 문자열 → typeId 변환에 쓸 온톨로지를 고른다.
- * datasetId 가 오면 그 데이터셋에 **바인딩된** 온톨로지를 쓴다 — resolver.ts 의 entityKey 는
- * `<entity_type_id>:<name>` 이고, 적재는 바인딩된 온톨로지의 typeId 를 쓰므로(#resolveDatasetOntology
- * 도입 배경), 기본 온톨로지로 변환하면 기본이 아닌 온톨로지에 바인딩된 데이터셋의 키와 어긋난다.
- * datasetId 가 없으면(백엔드가 아직 이 필드를 보내지 않는 하위호환 경로) 기존처럼 기본 온톨로지로 폴백한다.
+ * entityType 문자열 → typeId 변환에 쓸, datasetId 에 **바인딩된** 온톨로지를 로드한다.
+ * resolver.ts 의 entityKey 는 `<entity_type_id>:<name>` 이고, 적재는 바인딩된 온톨로지의 typeId 를
+ * 쓰므로(resolveDatasetOntology 도입 배경), 다른 온톨로지로 변환하면 데이터셋의 키와 어긋난다.
  *
- * 후속 과제: firehub-api 의 SynonymMergeClient·GraphMutationClient 가 승인 호출에 datasetId 를
- * 실어 보내도록 고쳐야 이 폴백이 실제로 걷힌다. 그 전까지 기본이 아닌 온톨로지에 바인딩된
- * 데이터셋의 검수 승인은 typeId 가 어긋난 채로 남는다.
+ * datasetId 는 필수다 — "기본 온톨로지" 폴백은 없다(#678). GET /api/v1/ontology 자체가
+ * firehub-api 에서 제거되어, 예전의 폴백 경로는 어차피 네트워크 계층에서 항상 실패했다.
  */
-async function loadOntologyForMutation(apiClient: FireHubApiClient, datasetId?: number) {
-  if (datasetId != null) {
-    return (await resolveDatasetOntology(apiClient, datasetId)).ontology;
-  }
-  return loadOntology(apiClient);
+async function loadOntologyForMutation(apiClient: FireHubApiClient, datasetId: number) {
+  return (await resolveDatasetOntology(apiClient, datasetId)).ontology;
 }
 
 // 온톨로지 시각화용 읽기 전용 + HITL 승인 병합 라우터. 온톨로지 스키마는 api DB 소유로 이관됨(이 라우트 제거).
@@ -65,8 +59,8 @@ const mergeBodySchema = z.object({
   entityType: z.string().min(1),
   nameA: z.string().min(1),
   nameB: z.string().min(1),
-  // 있으면 바인딩된 온톨로지로 typeId 를 변환한다 — 이유와 후속 과제는 loadOntologyForMutation 참고.
-  datasetId: z.number().optional(),
+  // 바인딩된 온톨로지로 typeId 를 변환하는 데 필수다 — 이유는 loadOntologyForMutation 참고.
+  datasetId: z.number(),
 });
 
 // HITL 승인된 근접쌍 동기 병합 — firehub-api(SynonymMergeClient)가 승인 시 호출한다.
@@ -123,8 +117,8 @@ const addEntityBodySchema = z.object({
     direction: z.enum(['out', 'in']),
     otherKey: z.string().min(1),
   })).default([]),
-  // 있으면 바인딩된 온톨로지로 typeId 를 변환한다 — 이유와 후속 과제는 loadOntologyForMutation 참고.
-  datasetId: z.number().optional(),
+  // 바인딩된 온톨로지로 typeId 를 변환하는 데 필수다 — 이유는 loadOntologyForMutation 참고.
+  datasetId: z.number(),
 });
 
 // HITL 승인된 저신뢰 엔티티를 Neo4j에 적재 — firehub-api(GraphMutationClient)가 승인 시 호출.
@@ -161,8 +155,8 @@ const addRelationBodySchema = z.object({
   relType: z.string().min(1),
   objectKey: z.string().min(1),
   sourceChunkIds: z.array(z.number()).default([]),
-  // 있으면 바인딩된 온톨로지로 typeId 를 변환한다 — 이유와 후속 과제는 loadOntologyForMutation 참고.
-  datasetId: z.number().optional(),
+  // 바인딩된 온톨로지로 typeId 를 변환하는 데 필수다 — 이유는 loadOntologyForMutation 참고.
+  datasetId: z.number(),
 });
 
 // HITL 승인된 저신뢰 관계를 Neo4j에 적재 — firehub-api(GraphMutationClient)가 승인 시 호출.
