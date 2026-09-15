@@ -88,7 +88,6 @@ test.describe('데이터셋 매핑 탭', () => {
         entityCount: 6,
         datasetCount: 3,
         updatedAt: '2026-04-12T09:00:00Z',
-        isDefault: true,
       },
     ]);
     await mockApi(page, 'GET', `/api/v1/datasets/${MAPPING_DATASET_ID}/mapping`, createMappingResponse({ status: 'active' }));

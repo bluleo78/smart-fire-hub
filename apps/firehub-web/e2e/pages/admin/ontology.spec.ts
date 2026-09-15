@@ -157,12 +157,17 @@ test.describe('지식그래프 시각화 페이지', () => {
     const graph = createOntologyGraph();
     const building = graph.nodes.find((n) => n.key === 'building-1')!; // factory: schemaVersion=1 (<2)
     await mockApi(page, 'GET', '/api/v1/ontology', schema);
-    // 인스턴스 탭의 currentSchemaVersion 비교 기준이 useOntologyById(defaultOntologyId)로 옮겨갔다
-    // (S2 Step 1.5, 리뷰 MIN-1) — bare 엔드포인트만 모킹하면 이 페이지가 실제로 호출하는 /ontology/1이
-    // 비어 있어 비교가 되지 않는다. defaultOntologyId는 /ontologies의 isDefault 항목에서 파생되므로
-    // 목록도 함께 모킹해야 한다(비어 있으면 useOntologyById가 enabled:false로 아예 쏘지 않는다).
+    // 인스턴스 탭의 "구버전" 배지 기준은 이제 schemaVersionByOntologyId(/ontologies 목록에서 파생) 맵이다
+    // (#678) — building 노드의 ontologyId(factory: 1)로 이 맵에서 id=1 온톨로지의 schemaVersion을
+    // 찾아 비교하므로, /ontologies 응답의 id=1 항목이 override된 schema(=2)와 같은 버전을 담고 있어야
+    // 한다. /ontology/1은 지식 모델(스키마) 탭이 별도로 읽는 값이라 함께 모킹해 둔다.
     await mockApi(page, 'GET', '/api/v1/ontology/1', schema);
-    await mockApi(page, 'GET', '/api/v1/ontologies', createOntologySummaries());
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/ontologies',
+      createOntologySummaries().map((o) => (o.id === 1 ? { ...o, schemaVersion: 2 } : o)),
+    );
     await mockApi(page, 'GET', '/api/v1/ontology/graph', graph);
     await page.goto('/knowledge-graph/model');
     await page.getByRole('tab', { name: '그래프 탐색' }).click();

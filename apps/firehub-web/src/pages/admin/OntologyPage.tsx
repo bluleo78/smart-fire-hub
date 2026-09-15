@@ -58,24 +58,16 @@ function GraphError({ message, onRetry }: { message: string; onRetry: () => void
 // 단위 편집기(수정 모드 토글, ModelOutline/EntityInspector/RelationInspector)를 직접 소유한다
 // (M-1, S2 최종 리뷰 — 전체 문서 모달을 제거한 Task 6부터 더 이상 "읽기 전용"이 아니었다).
 export default function OntologyPage() {
-  // 온톨로지 목록 — 기본 온톨로지 id를 여기서 파생시킨다(아래 defaultOntologyId). schema/graph 훅보다
-  // 먼저 선언해야 그 파생값을 바로 아래에서 쓸 수 있다.
+  // 온톨로지 목록 — schema/graph 훅보다 먼저 선언해야 그 파생값을 바로 아래에서 쓸 수 있다.
   const { data: ontologies } = useOntologyList('all');
-  // 인스턴스 탭(Neo4j 적재 그래프)의 schemaVersion 비교 기준(NodeDetailDrawer의 "구버전" 배지) — 그래프
-  // 탐색이 어느 온톨로지를 보고 있는지와 무관하게 항상 기본 온톨로지 고정이다(레거시 bare 온톨로지
-  // 개념, #678에서 재검토 예정). 타입 어휘(필터 목록)는 더 이상 이 스키마 하나가 아니라 active 온톨로지
-  // 전체를 합친 instanceEntities를 쓴다(#677 — 아래에서 파생). 예전에는
-  // useOntologySchema()(bare GET /ontology)로 읽었지만, 그 응답은 서버에서 늘 기본 온톨로지였다 —
-  // useOntologyById(defaultOntologyId)로 바꿔도 같은 데이터를 같은 쿼리키로 읽을 뿐이다(S2 Step 1.5).
-  // (리뷰 MIN-1) id를 1로 하드코딩하지 않는다 — OntologySummary.isDefault가 정확히 이 매직넘버를
-  // 피하려고 서버가 계산해 내려주는 필드다(기본 온톨로지 판정 기준이 바뀌어도 프론트가 값을 다시
-  // 선언할 필요가 없도록). 목록 로딩 전 한 틱은 null이지만 useOntologyById가 enabled 가드를 이미 갖고
-  // 있어 안전하다.
-  // 이 마이그레이션으로 useOntology.ts의 레거시 PUT 뮤테이션이 bare ['ontology'] 키를 무효화해 주던
-  // 특례 분기가 더 이상 필요하지 않게 된다(이 페이지가 그 키를 아예 읽지 않으므로) — 그 분기 자체는
-  // useOntology.ts 쪽에서 함께 정리했다(MIN-2).
-  const defaultOntologyId = ontologies?.find((o) => o.isDefault)?.id ?? null;
-  const { data: schema } = useOntologyById(defaultOntologyId);
+  // NodeDetailDrawer의 "구버전" 배지 기준(#678) — 그래프 인스턴스 노드가 여러 온톨로지에 걸쳐 있을 수
+  // 있으므로 더 이상 "기본 온톨로지" 하나의 schema만 보는 게 아니라, 노드별 ontologyId로 그 노드가
+  // 실제로 속한 온톨로지의 최신 schema_version을 찾아 비교한다. ontologies 목록이 이미 각 온톨로지의
+  // schemaVersion을 담고 있으므로 별도 쿼리 없이 파생 가능하다.
+  const schemaVersionByOntologyId = useMemo(
+    () => new Map((ontologies ?? []).map((o) => [o.id, o.schemaVersion])),
+    [ontologies],
+  );
   // (#677) 그래프 탐색 탭의 "타입 필터"는 기본 온톨로지(schema) 하나가 아니라 active 온톨로지 전체의
   // 엔티티 타입을 합쳐 보여줘야 한다 — Neo4j 적재 그래프 자체가 온톨로지로 스코프되지 않는 전체
   // 그래프라(getGraph()에 id 파라미터 없음), 다른 온톨로지로 만든 타입의 노드도 실제로 존재할 수 있는데
@@ -84,13 +76,19 @@ export default function OntologyPage() {
     () => (ontologies ?? []).filter((o) => o.status === 'active').map((o) => o.id),
     [ontologies],
   );
+  // instanceEntities(아래)의 폴백 전용 — mergedEntities가 비어 있을 때(active 온톨로지가 하나도 없을
+  // 때)만 쓰인다. "기본 온톨로지" 개념이 #678에서 제거됐으므로 첫 active 온톨로지, 그마저 없으면
+  // 목록의 첫 항목으로 대체한다(NodeDetailDrawer로 넘기는 구버전 판정 기준은 위 Map을 쓰며 이 값과
+  // 무관하다).
+  const fallbackOntologyId = ontologies?.find((o) => o.status === 'active')?.id ?? ontologies?.[0]?.id ?? null;
+  const { data: schema } = useOntologyById(fallbackOntologyId);
   // useMergedOntologyEntities는 combine 옵션(구조적 공유)으로 값이 같으면 참조도 유지해 준다 — 그래야
   // 아래 currentTypeNames/activeTypes 자동 동기화(#412, 참조 비교로 "새 타입 추가"를 판정)가 매 렌더
   // 무한 루프에 빠지지 않는다(#677 구현 중 실제로 겪은 회귀 — activeSchemaResults를 그대로 의존성에
   // 넣었을 때 매 렌더 새 배열이 나와 "Too many re-renders" 크래시가 재현됐다).
   // TypeFilterPanel은 entities만 읽으므로(domain/schemaVersion/relations는 어디서도 소비하지
-  // 않는다) 가짜 OntologySchema를 조립하지 않고 EntityTypeDef[]를 그대로 넘긴다 — currentSchemaVersion
-  // 배지는 여전히 schema(기본 온톨로지) 하나를 기준으로 한다(#678에서 재검토).
+  // 않는다) 가짜 OntologySchema를 조립하지 않고 EntityTypeDef[]를 그대로 넘긴다. "구버전" 배지
+  // 기준은 더 이상 이 schema(폴백 온톨로지) 하나가 아니라 위 schemaVersionByOntologyId 맵이다(#678).
   const mergedEntities = useMergedOntologyEntities(activeOntologyIds);
   const instanceEntities = useMemo(
     () => (mergedEntities.length > 0 ? mergedEntities : (schema?.entities ?? [])),
@@ -642,7 +640,7 @@ export default function OntologyPage() {
               nodesByKey={nodesByKey}
               onClose={() => setSelected(null)}
               onNavigate={navigateTo}
-              currentSchemaVersion={schema?.schemaVersion}
+              schemaVersionByOntologyId={schemaVersionByOntologyId}
               palette={typePalette}
             />
           )}

@@ -37,11 +37,9 @@ interface OntologyManageDialogProps {
 }
 
 // 삭제할 수 없는 이유. null이면 삭제 가능.
-// 기본 온톨로지 판정(o.isDefault)은 서버(OntologyService.DEFAULT_ONTOLOGY_ID)가 내려준다 —
-// "기본 온톨로지"의 기준이 바뀌어도 프론트가 매직넘버를 따로 들고 있다가 조용히 틀린 UI를 보여주지 않게 한다.
-// 사유 문구 자체는 프론트가 표현한다.
+// "기본 온톨로지" 개념은 #678에서 제거됐다 — 모든 온톨로지가 동일한 규칙(참조 데이터셋이 있으면
+// 삭제 불가)을 따른다. 사유 문구 자체는 프론트가 표현한다.
 function deleteBlockReason(o: OntologySummary): string | null {
-  if (o.isDefault) return '기본 온톨로지';
   if (o.datasetCount > 0) return `${o.datasetCount}개 데이터셋이 사용 중`;
   return null;
 }
@@ -166,8 +164,6 @@ function OntologyLifecycleAction({ ontology }: { ontology: OntologySummary }) {
   const { transition, isPending } = useOntologyStatusTransition();
 
   if (ontology.status === 'draft') return null;
-  // 기본 온톨로지는 은퇴도 금지 — 문서 적재가 의존한다. 판정은 서버(isDefault)가 내려준다.
-  if (ontology.status === 'active' && ontology.isDefault) return null;
 
   const target: OntologyStatus = ontology.status === 'active' ? 'archived' : 'active';
   const label = target === 'archived' ? '은퇴' : '복귀';

@@ -23,7 +23,13 @@ export const ONTOLOGY_STATUS_LABEL: Record<OntologyStatus, string> = {
 
 // schemaVersion: 적재 당시 온톨로지 schema_version(5-4). 스탬프 도입 이전 레거시 노드는 null —
 // "값 없음"과 "구버전"을 UI가 혼동하지 않도록 별도 상태로 다룬다(NodeDetailDrawer 참조).
-export interface GraphNode { key: string; type: string; name: string; sourceChunkCount: number; schemaVersion: number | null; }
+export interface GraphNode {
+  key: string; type: string; name: string; sourceChunkCount: number;
+  schemaVersion: number | null;
+  // 이 노드가 실제로 적재된 온톨로지 id(#678). 스탬프 도입 이전 레거시 노드는 null —
+  // NodeDetailDrawer가 "구버전" 판정 기준(schemaVersionByOntologyId)을 찾을 키로 쓴다.
+  ontologyId: number | null;
+}
 export interface GraphEdge { subjectKey: string; type: string; objectKey: string; }
 export interface GraphData { nodes: GraphNode[]; edges: GraphEdge[]; }
 

@@ -12,8 +12,10 @@ interface Props {
   onClose: () => void;
   // 관계 항목 클릭 시 인접 노드로 이동(대상 노드가 그래프에 있을 때만 활성).
   onNavigate?: (key: string) => void;
-  // 현재 온톨로지 schema_version — node.schemaVersion과 비교해 구버전 적재 여부를 표시(5-4).
-  currentSchemaVersion?: number;
+  // 온톨로지 id → 현재 schema_version. node.ontologyId로 찾은 값과 node.schemaVersion을 비교해
+  // 구버전 적재 여부를 표시한다(#678 — 노드마다 실제로 속한 온톨로지가 다를 수 있어, 하나의
+  // "기본" 버전과 비교하던 이전 방식은 다른 온톨로지 소속 노드를 잘못 판정했다).
+  schemaVersionByOntologyId?: Map<number, number>;
   // (#396) 타입 색 팔레트 — 캔버스·타입 필터와 같은 인스턴스를 받아야 인스펙터의 점 색이
   // 캔버스 노드와 일치한다.
   palette: TypePalette;
@@ -37,7 +39,7 @@ export default function NodeDetailDrawer({
   nodesByKey,
   onClose,
   onNavigate,
-  currentSchemaVersion,
+  schemaVersionByOntologyId,
   palette,
 }: Props) {
   const [width, setWidth] = useState(DEFAULT_WIDTH);
@@ -91,6 +93,11 @@ export default function NodeDetailDrawer({
   };
 
   if (!node) return null;
+
+  // 이 노드가 실제로 적재된 온톨로지의 현재 schema_version. ontologyId가 없는 레거시 노드는
+  // 기준을 알 수 없으므로 undefined로 두어 배지를 표시하지 않는다.
+  const currentSchemaVersion =
+    node.ontologyId != null ? schemaVersionByOntologyId?.get(node.ontologyId) : undefined;
 
   // 이 노드가 주어(subject)/목적어(object)인 관계를 각각 수집한다.
   const outgoing = edges.filter((e) => e.subjectKey === node.key);

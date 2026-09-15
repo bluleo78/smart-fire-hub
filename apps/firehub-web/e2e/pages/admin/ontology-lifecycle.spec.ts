@@ -115,9 +115,10 @@ test.describe('온톨로지 생명주기', () => {
     const fireRow = dialog.getByRole('row', { name: /화재조사 보고서/ });
     // exact: true — 수정일 셀(예: "오후 6:00:00")이 시각 표기에 우연히 "6"을 포함해 서브스트링 매칭 시 충돌한다.
     await expect(fireRow.getByRole('cell', { name: '6', exact: true })).toBeVisible();
-    await expect(fireRow.getByRole('cell', { name: '3개 데이터셋' })).toBeVisible();
-    // 기본 온톨로지(id=1)는 삭제 불가 사유가 버튼 대신 표시된다.
-    await expect(fireRow.getByText('기본 온톨로지')).toBeVisible();
+    await expect(fireRow.getByRole('cell', { name: '3개 데이터셋', exact: true })).toBeVisible();
+    // "기본 온톨로지" 개념은 #678에서 제거됐다 — 참조 데이터셋(3개)이 있어 삭제 불가 사유가
+    // 버튼 대신 표시된다(모든 온톨로지가 동일한 참조 기반 규칙을 따른다).
+    await expect(fireRow.getByText('3개 데이터셋이 사용 중')).toBeVisible();
     await expect(fireRow.getByRole('button', { name: '삭제' })).toBeHidden();
   });
 
@@ -184,7 +185,6 @@ test.describe('온톨로지 생명주기', () => {
           entityCount: 6,
           datasetCount: 3,
           updatedAt: '2026-04-12T09:00:00Z',
-          isDefault: true,
         },
         {
           id: 99,
@@ -194,7 +194,6 @@ test.describe('온톨로지 생명주기', () => {
           entityCount: 0,
           datasetCount: 0,
           updatedAt: '2026-08-01T09:00:00Z',
-          isDefault: false,
         },
       ]),
     );
@@ -271,7 +270,6 @@ test.describe('온톨로지 생명주기', () => {
         entityCount: 5,
         datasetCount: 4,
         updatedAt: '2026-07-01T09:00:00Z',
-        isDefault: false,
       },
     ]);
     await page.goto('/knowledge-graph/model');
@@ -421,7 +419,6 @@ test.describe('온톨로지 생명주기', () => {
         entityCount: 6,
         datasetCount: 3,
         updatedAt: '2026-04-12T09:00:00Z',
-        isDefault: true,
       },
       ...Array.from({ length: 10 }, (_, i) => ({
         id: 100 + i,
@@ -431,7 +428,6 @@ test.describe('온톨로지 생명주기', () => {
         entityCount: 0,
         datasetCount: 0,
         updatedAt: '2026-08-01T09:00:00Z',
-        isDefault: false,
       })),
       {
         id: 200,
@@ -441,7 +437,6 @@ test.describe('온톨로지 생명주기', () => {
         entityCount: 1,
         datasetCount: 0,
         updatedAt: '2026-01-01T09:00:00Z',
-        isDefault: false,
       },
     ];
     await mockApi(page, 'GET', '/api/v1/ontologies', many);

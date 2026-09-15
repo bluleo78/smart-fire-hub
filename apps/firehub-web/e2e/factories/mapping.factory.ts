@@ -55,7 +55,6 @@ export function createOntologySummaries(overrides?: OntologySummary[]): Ontology
         entityCount: 6,
         datasetCount: 3,
         updatedAt: '2026-04-12T09:00:00Z',
-        isDefault: true,
       },
       {
         id: 2,
@@ -65,7 +64,6 @@ export function createOntologySummaries(overrides?: OntologySummary[]): Ontology
         entityCount: 4,
         datasetCount: 0,
         updatedAt: '2026-08-01T09:00:00Z',
-        isDefault: false,
       },
     ]
   );
@@ -81,7 +79,6 @@ export function createDraftOntologySummary(overrides?: Partial<OntologySummary>)
     entityCount: 0,
     datasetCount: 0,
     updatedAt: '2026-08-06T09:00:00Z',
-    isDefault: false,
     ...overrides,
   };
 }
@@ -96,7 +93,6 @@ export function createArchivedOntologySummary(overrides?: Partial<OntologySummar
     entityCount: 6,
     datasetCount: 2,
     updatedAt: '2026-03-02T09:00:00Z',
-    isDefault: false,
     ...overrides,
   };
 }

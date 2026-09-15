@@ -1277,7 +1277,6 @@ test.describe('SchemaGraph — 캔버스 Delete 키 삭제', () => {
           entityCount: 6,
           datasetCount: 3,
           updatedAt: '2026-04-12T09:00:00Z',
-          isDefault: true,
         },
         {
           id: 99,
@@ -1287,7 +1286,6 @@ test.describe('SchemaGraph — 캔버스 Delete 키 삭제', () => {
           entityCount: 0,
           datasetCount: 0,
           updatedAt: '2026-08-01T09:00:00Z',
-          isDefault: false,
         },
       ]),
     );
@@ -1339,7 +1337,6 @@ test.describe('SchemaGraph — 캔버스 Delete 키 삭제', () => {
           entityCount: 6,
           datasetCount: 3,
           updatedAt: '2026-04-12T09:00:00Z',
-          isDefault: true,
         },
         {
           id: 99,
@@ -1349,7 +1346,6 @@ test.describe('SchemaGraph — 캔버스 Delete 키 삭제', () => {
           entityCount: 0,
           datasetCount: 0,
           updatedAt: '2026-08-01T09:00:00Z',
-          isDefault: false,
         },
       ]),
     );
