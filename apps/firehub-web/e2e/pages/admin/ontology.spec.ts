@@ -156,7 +156,6 @@ test.describe('지식그래프 시각화 페이지', () => {
     const schema = createOntologySchema({ schemaVersion: 2 });
     const graph = createOntologyGraph();
     const building = graph.nodes.find((n) => n.key === 'building-1')!; // factory: schemaVersion=1 (<2)
-    await mockApi(page, 'GET', '/api/v1/ontology', schema);
     // 인스턴스 탭의 "구버전" 배지 기준은 이제 schemaVersionByOntologyId(/ontologies 목록에서 파생) 맵이다
     // (#678) — building 노드의 ontologyId(factory: 1)로 이 맵에서 id=1 온톨로지의 schemaVersion을
     // 찾아 비교하므로, /ontologies 응답의 id=1 항목이 override된 schema(=2)와 같은 버전을 담고 있어야
@@ -547,7 +546,6 @@ test.describe('지식그래프 시각화 페이지', () => {
       ],
       relations: [],
     });
-    await mockApi(page, 'GET', '/api/v1/ontology', createOntologySchema());
     await mockApi(page, 'GET', '/api/v1/ontology/1', createOntologySchema());
     await mockApi(page, 'GET', '/api/v1/ontology/2', secondOntologySchema);
     await mockApi(page, 'GET', '/api/v1/ontology/graph', createOntologyGraph());
@@ -570,7 +568,6 @@ test.describe('지식그래프 시각화 페이지', () => {
     authenticatedPage: page,
   }) => {
     const emptySchema = createOntologySchema({ domain: '테스트', entities: [], relations: [] });
-    await mockApi(page, 'GET', '/api/v1/ontology', createOntologySchema());
     await mockApi(page, 'GET', '/api/v1/ontology/1', createOntologySchema());
     await mockApi(page, 'GET', '/api/v1/ontology/2', emptySchema);
     await mockApi(page, 'GET', '/api/v1/ontology/graph', createOntologyGraph());

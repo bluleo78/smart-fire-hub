@@ -64,7 +64,8 @@ public class OntologyController {
     return ResponseEntity.noContent().build();
   }
 
-  // 온톨로지 삭제(ADMIN 특권). 참조 중이거나 기본 온톨로지면 409.
+  // 온톨로지 삭제(ADMIN 특권). 참조 중(countReferences>0)이면 409 — id 무관하게 균일한 규칙이다(#678,
+  // "기본 온톨로지" id=1 특별 취급 삭제 가드는 제거됨).
   @DeleteMapping("/ontology/{id}")
   @RequirePermission("ontology:write")
   public ResponseEntity<Void> delete(@PathVariable Long id) {

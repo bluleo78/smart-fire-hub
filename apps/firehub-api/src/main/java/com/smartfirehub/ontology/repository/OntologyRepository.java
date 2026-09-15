@@ -17,9 +17,10 @@ import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
 // 온톨로지 DB 읽기/쓰기 — id로 지정한 온톨로지를 OntologyResponse 계약으로 조립한다(다중 온톨로지 지원).
-// 무인자 오버로드(findOntology/currentSchemaVersion)는 기존 단일 온톨로지(id=1) 호출부와의
-// 하위호환을 위해 findById(1L) 등으로 위임한다. sort_order 정렬로 ai-agent 프롬프트 조립 순서(바이트 동일성)를
-// 보존한다. plain-SQL DSL(생성 클래스 비의존).
+// currentSchemaVersion()의 무인자 오버로드는 기존 단일 온톨로지(id=1) 호출부(GraphIngestService의
+// 레거시 경로)와의 하위호환을 위해 currentSchemaVersion(1L)로 위임한다(findOntology 무인자 오버로드는
+// 요소 단위 편집 API 도입과 함께 삭제됨 — #678). sort_order 정렬로 ai-agent 프롬프트 조립 순서(바이트
+// 동일성)를 보존한다. plain-SQL DSL(생성 클래스 비의존).
 // (S2 Task 7) 전체 스키마 교체(entity_type/relation의 매칭 기반 UPDATE/INSERT/DELETE) updateOntology는
 // 요소 단위 편집(OntologyElementRepository)으로 대체되어 삭제됐다.
 @Repository

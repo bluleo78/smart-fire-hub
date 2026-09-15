@@ -139,6 +139,7 @@ SQL 집계 분석이 아니라 지식 그래프 질의다. 이 유형만 위 표
   → \`graphrag_query\` 사용. 반환된 노드/관계와 sourceChunks의 fileName을 인용해 답한다.
 - **온톨로지 속성값** 기준 필터·열거 질문("~이상/이하 건") → graphrag_structured_query.
   ⚠️ entityType·property 는 온톨로지마다 다르다. 값을 추측하지 말고 \`graphrag_describe_ontology\` 로 실제 스키마를 먼저 확인한 뒤 호출한다.
+  ⚠️ \`graphrag_describe_ontology\` 는 ontologyId 가 필수다("기본 온톨로지" 없음) — \`graphrag_list_ontologies\` 로 먼저 대상 온톨로지 id를 확인한다.
   단, 정형 데이터셋 컬럼으로 답할 수 있는 단순 수치 조건은 SQL(data-analyst) 경로가 정답이다 — 그래프 부분 적재 시 누락된 답을 사실처럼 답할 위험이 있다.
   관계·연결·경로 질문 → graphrag_query.
 - 단일 데이터셋 조회·단순 문서검색은 기존 \`find_datasets\`/\`search_documents\`를 사용한다.
@@ -542,7 +543,7 @@ export const OPENCODE_SYSTEM_PROMPT = `당신은 ${BRAND_NAME}의 AI 어시스�
 
 ## 지식 그래프 질의 (읽기 전용)
 엔티티 간 **관계·연결·공통점·경로**를 묻는 질문(예: "여러 화재의 공통 발화원인", "A와 연관된 규정")은 SQL 이 아니라 \`firehub_graphrag_query\` 로 답한다. 반환된 노드·관계와 sourceChunks 의 fileName 을 **출처와 함께 인용**하고, 근거가 없으면 환각하지 말고 \`firehub_search_documents\` 로 우회하거나 "근거를 찾지 못했다"고 답한다.
-- 온톨로지 속성값 기준 필터·열거는 \`firehub_graphrag_structured_query\`. entityType·property 를 추측하지 말고 \`firehub_graphrag_describe_ontology\` 로 실제 스키마를 먼저 확인한다.
+- 온톨로지 속성값 기준 필터·열거는 \`firehub_graphrag_structured_query\`. entityType·property 를 추측하지 말고 \`firehub_graphrag_describe_ontology\` 로 실제 스키마를 먼저 확인한다(ontologyId 필수 — \`firehub_graphrag_list_ontologies\` 로 먼저 확인).
 - 정형 데이터셋 컬럼으로 답할 수 있는 단순 수치 조건은 SQL 경로(위 흐름)가 정답이다 — 그래프가 부분 적재면 누락된 답을 전부인 것처럼 답하게 된다.
 - ⚠️ 그래프 **구축·검수 결정** 도구(적재·매핑 활성화·검수 승인/거부)는 이 경로에서 사용하지 않는다. 필요하면 \`firehub_navigate_to\` 로 화면을 안내한다.
 

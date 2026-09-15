@@ -26,6 +26,7 @@ export const ontologyApi = {
   // 호출부가 대상 온톨로지 스키마를 미리 조회할 필요가 없고, schema_version도 올라가지 않는다.
   updateOntologyStatus: (id: number, status: OntologyStatus) =>
     client.patch<void>(`/ontology/${id}/status`, { status }),
-  // 삭제 — 참조 중이거나 기본 온톨로지면 409.
+  // 삭제 — 참조 중(데이터셋이 바인딩/매핑돼 있음)이면 409. id 무관하게 균일한 규칙이다(#678 — "기본
+  // 온톨로지" 특별 취급 없음).
   deleteOntology: (id: number) => client.delete<void>(`/ontology/${id}`),
 };
