@@ -34,10 +34,10 @@ describe('FireHubApiClient', () => {
   });
 
   // --- Ontology ---
-  it('getOntology 는 GET /ontology 로 스키마를 조회한다', async () => {
+  it('getOntologyById 는 GET /ontology/{id} 로 스키마를 조회한다', async () => {
     const mock = { domain: '화재조사 보고서', entities: [], relations: [] };
-    nock(BASE_URL).get('/ontology').reply(200, mock);
-    const result = await client.getOntology();
+    nock(BASE_URL).get('/ontology/7').reply(200, mock);
+    const result = await client.getOntologyById(7);
     expect(result.domain).toBe('화재조사 보고서');
   });
 

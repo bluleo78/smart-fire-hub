@@ -13,8 +13,8 @@ import { deserializeOntology } from '../../graphrag/ontology.js';
 import { profileColumns } from '../../graphrag/column-profiler.js';
 import { inferMapping } from '../../graphrag/mapping-inference.js';
 import { inferOntology, DatasetEvidence } from '../../graphrag/ontology-inference.js';
-// 추출 시점 온톨로지는 api(DB 소유)에서 fetch하고 실패 시 번들 CORE_ONTOLOGY 로 폴백한다.
-import { loadOntology, loadOntologyWithSource, resolveDatasetOntology } from '../../graphrag/ontology-source.js';
+// 추출 시점 온톨로지는 api(DB 소유)에서 fetch한다. 데이터셋 바인딩이 없으면 예외가 던져진다(폴백 없음).
+import { resolveDatasetOntology } from '../../graphrag/ontology-source.js';
 import { structuredQuery, Filter, Operator } from '../../graphrag/structured-query.js';
 import { link as semanticLink } from '../../graphrag/semantic-link.js';
 
@@ -255,7 +255,7 @@ export function registerGraphragTools(
       async (args: { datasetId: number }) => {
         // Neo4j 제약조건(유니크 키 등)을 먼저 보장한 뒤 적재를 수행한다.
         await bootstrapConstraints();
-        // 데이터셋에 바인딩된 온톨로지로 적재한다(미바인딩이면 기본 온톨로지 폴백).
+        // 데이터셋에 바인딩된 온톨로지로 적재한다(미바인딩이면 예외 — 기본 온톨로지 폴백 없음).
         // ingest 당 1회 fetch → 청크 전반에 재사용.
         const resolved = await resolveDatasetOntology(apiClient, args.datasetId);
         const ontology = resolved.ontology;
@@ -296,8 +296,7 @@ export function registerGraphragTools(
         } catch (err) {
           console.warn('[graphrag] 적재 이력 기록 실패(무시하고 계속):', err);
         }
-        // 어떤 스키마로 적재됐는지(바인딩/기본/번들 폴백) 사용자가 알 수 있도록 출처를 함께 노출한다.
-        return jsonResult({ ...summary, ontologyId: resolved.ontologyId, ontologySource: resolved.source });
+        return jsonResult({ ...summary, ontologyId: resolved.ontologyId });
       },
     ),
     safeTool(
@@ -545,20 +544,14 @@ export function registerGraphragTools(
     safeTool(
       'graphrag_describe_ontology',
       '온톨로지의 엔티티 타입·필터 가능 속성(이름/타입/단위)·허용 관계 트리플을 조회한다. '
-        + 'graphrag_structured_query 의 entityType·property 인자를 정하기 전에 반드시 이 도구로 실제 스키마를 확인하라.',
-      { ontologyId: z.number().optional().describe('조회할 온톨로지 id(생략 시 기본 온톨로지)') },
-      async (args: { ontologyId?: number }) => {
-        // 기본 온톨로지는 loadOntology(폴백 있음), id 지정 시 by-id 로드(폴백 없음).
-        // ⚠️ 폴백이 걸리면 DB 가 아니라 번들 CORE_ONTOLOGY 를 보게 되는데, 그걸 숨기면
-        // "하드코딩 속성 광고 금지"라는 이 도구의 존재 이유가 무너진다 → source 로 표면화한다.
-        const { ontology, source } = args.ontologyId == null
-          ? await loadOntologyWithSource(apiClient)
-          : { ontology: deserializeOntology(await apiClient.getOntologyById(args.ontologyId)), source: 'db' as const };
+        + 'graphrag_structured_query 의 entityType·property 인자를 정하기 전에 반드시 이 도구로 실제 스키마를 확인하라. '
+        + '"기본 온톨로지"는 없다 — graphrag_list_ontologies 또는 데이터셋 바인딩(graphrag_query 등)으로 ontologyId를 먼저 확인하라.',
+      { ontologyId: z.number().describe('조회할 온톨로지 id(graphrag_list_ontologies로 확인)') },
+      async (args: { ontologyId: number }) => {
+        const ontology = deserializeOntology(await apiClient.getOntologyById(args.ontologyId));
         return jsonResult({
           domain: ontology.domain,
           schemaVersion: ontology.schemaVersion,
-          // 'bundled-fallback' 이면 실제 등록 스키마와 다를 수 있으므로 단정하지 말고 확인 불가로 답할 것.
-          source,
           entityTypes: ontology.entities.map((e) => ({
             type: e.type,
             description: e.description,
@@ -744,8 +737,8 @@ export function registerGraphragTools(
         + '해당 속성의 정규화 실패로 검수 대기 중인 값이 있다는 뜻이다 — graphrag_list_review_items(itemType: "property") '
         + '로 확인한 뒤 "결과 없음"이 아니라 "데이터 불완전(검수 대기 N건)"으로 답하라.',
       {
-        ontologyId: z.number().optional()
-          .describe('속성 화이트리스트로 쓸 온톨로지 id(생략 시 기본 온톨로지). 대상이 기본이 아닌 온톨로지에 바인딩된 경우 반드시 지정'),
+        ontologyId: z.number()
+          .describe('속성 화이트리스트로 쓸 온톨로지 id(graphrag_list_ontologies 또는 graphrag_query 로 확인)'),
         entityType: z.string().describe('필터할 엔티티 타입(graphrag_describe_ontology 의 entityTypes[].type)'),
         filters: z.array(z.object({
           property: z.string().describe('온톨로지에 정의된 속성명(graphrag_describe_ontology 의 filterableProperties[].name)'),
@@ -753,13 +746,9 @@ export function registerGraphragTools(
           value: z.union([z.number(), z.string()]).describe('비교값(number 속성은 원 단위 정수)'),
         })).describe('AND 로 결합되는 술어 목록'),
       },
-      async (args: { ontologyId?: number; entityType: string; filters: Array<{ property: string; operator: Operator; value: number | string }> }) => {
+      async (args: { ontologyId: number; entityType: string; filters: Array<{ property: string; operator: Operator; value: number | string }> }) => {
         // 질의 시점 온톨로지를 fetch 해 화이트리스트로 사용한다.
-        // ontologyId 미지정 시 기본(id=1) 온톨로지 — 다른 온톨로지에 바인딩된 데이터셋을 질의하면
-        // 정당한 속성이 "필터 불가"로 거부되므로, 그 경우 호출부가 ontologyId 를 지정해야 한다.
-        const ontology = args.ontologyId == null
-          ? await loadOntology(apiClient)
-          : deserializeOntology(await apiClient.getOntologyById(args.ontologyId));
+        const ontology = deserializeOntology(await apiClient.getOntologyById(args.ontologyId));
         // 도구 설명에 속성을 하드코딩하면 온톨로지가 바뀌어도 모델이 옛 속성만 알게 된다.
         // 대신 검증 실패 시 "지금 이 온톨로지에서 실제로 가능한 값"을 오류에 실어 1턴 내 자체 정정을 유도한다.
         const typeDef = ontology.entities.find((e) => e.type === args.entityType);
@@ -776,10 +765,8 @@ export function registerGraphragTools(
         if (unknown.length > 0) {
           throw new Error(
             `필터 불가 속성: ${unknown.map((f) => f.property).join(', ')}. `
-              + `${args.entityType} 에서 필터 가능: ${allowed.join(', ') || '없음'}`
-              + (args.ontologyId == null
-                ? ' (기본 온톨로지 기준. 대상이 다른 온톨로지에 바인딩되어 있다면 ontologyId 를 지정해 재시도하라)'
-                : ` (온톨로지 id=${args.ontologyId} 기준)`),
+              + `${args.entityType} 에서 필터 가능: ${allowed.join(', ') || '없음'} `
+              + `(온톨로지 id=${args.ontologyId} 기준)`,
           );
         }
         const result = await structuredQuery(ontology, args.entityType, args.filters as Filter[]);

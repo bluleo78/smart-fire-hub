@@ -572,12 +572,6 @@ export class FireHubApiClient {
     return data;
   }
 
-  /** GraphRAG 추출용 — api 소유 온톨로지 스키마를 조회한다(GET /api/v1/ontology, dataset:read). */
-  async getOntology(): Promise<SerializedOntology> {
-    const { data } = await this.client.get<SerializedOntology>('/ontology');
-    return data;
-  }
-
   /**
    * 온톨로지 목록 요약을 조회한다(GET /api/v1/ontologies, dataset:read).
    * 바인딩 대상 ontologyId 를 에이전트가 스스로 고를 수 있게 하는 discovery 진입점.

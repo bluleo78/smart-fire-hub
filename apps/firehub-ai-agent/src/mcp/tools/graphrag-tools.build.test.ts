@@ -60,7 +60,6 @@ function baseClient(overrides: Partial<any> = {}) {
       { id: 1, domain: 'fire', schemaVersion: 3 },
       { id: 2, domain: 'safety', schemaVersion: 1 },
     ]),
-    getOntology: vi.fn().mockResolvedValue(ontologyWire),
     getOntologyById: vi.fn().mockResolvedValue(ontologyWire),
     bindDatasetOntology: vi.fn().mockResolvedValue(undefined),
     getDatasetMapping: vi.fn().mockResolvedValue({ status: 'draft', ontologyId: 1, spec: {} }),
@@ -100,33 +99,17 @@ describe('graphrag_list_ontologies', () => {
 });
 
 describe('graphrag_describe_ontology', () => {
-  it('ontologyId 생략 시 기본 온톨로지를 로드해 엔티티 타입·필터 가능 속성을 노출한다', async () => {
+  it('ontologyId 지정 시 by-id 로 로드해 엔티티 타입·필터 가능 속성을 노출한다(source 필드 없음)', async () => {
     const client = baseClient();
-    const out = await findTool(client, 'graphrag_describe_ontology').handler({});
-    expect(client.getOntology).toHaveBeenCalledTimes(1);
-    expect(client.getOntologyById).not.toHaveBeenCalled();
+    const out = await findTool(client, 'graphrag_describe_ontology').handler({ ontologyId: 7 });
+    expect(client.getOntologyById).toHaveBeenCalledWith(7);
     expect(out.domain).toBe('fire');
+    expect(out).not.toHaveProperty('source');
     const incident = out.entityTypes.find((e: { type: string }) => e.type === 'Incident');
     expect(incident.filterableProperties).toEqual([
       expect.objectContaining({ name: '피해액', dataType: 'number', unit: '원' }),
     ]);
     expect(out.relationTypes[0]).toMatchObject({ subject: 'Incident', relation: 'OCCURRED_AT' });
-  });
-
-  it('ontologyId 지정 시 by-id 로 로드하고 source=db 로 표기한다', async () => {
-    const client = baseClient();
-    const out = await findTool(client, 'graphrag_describe_ontology').handler({ ontologyId: 7 });
-    expect(client.getOntologyById).toHaveBeenCalledWith(7);
-    expect(out.source).toBe('db');
-  });
-
-  // 폴백을 숨기면 이 도구가 바로 그 "낡은 하드코딩 스키마"를 사실처럼 광고하게 된다.
-  it('DB fetch 실패로 번들 폴백이 걸리면 source 로 표면화한다', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const client = baseClient({ getOntology: vi.fn().mockRejectedValue(new Error('api down')) });
-    const out = await findTool(client, 'graphrag_describe_ontology').handler({});
-    expect(out.source).toBe('bundled-fallback');
-    warn.mockRestore();
   });
 });
 
@@ -186,7 +169,7 @@ describe('graphrag_structured_query — 동적 스키마 검증', () => {
   it('알 수 없는 엔티티 타입은 사용 가능 목록과 함께 거부한다', async () => {
     const client = baseClient();
     await expect(
-      findTool(client, 'graphrag_structured_query').handler({ entityType: 'Nope', filters: [] }),
+      findTool(client, 'graphrag_structured_query').handler({ ontologyId: 1, entityType: 'Nope', filters: [] }),
     ).rejects.toThrow(/Incident.*Building|사용 가능/s);
     expect(structuredQueryMock).not.toHaveBeenCalled();
   });
@@ -195,6 +178,7 @@ describe('graphrag_structured_query — 동적 스키마 검증', () => {
     const client = baseClient();
     await expect(
       findTool(client, 'graphrag_structured_query').handler({
+        ontologyId: 1,
         entityType: 'Incident',
         filters: [{ property: '없는속성', operator: 'gt', value: 1 }],
       }),
@@ -202,9 +186,9 @@ describe('graphrag_structured_query — 동적 스키마 검증', () => {
     expect(structuredQueryMock).not.toHaveBeenCalled();
   });
 
-  // 기본(id=1) 온톨로지만 화이트리스트로 쓰면 다른 온톨로지에 바인딩된 데이터셋의
-  // 정당한 속성이 "필터 불가"로 거부된다 → ontologyId 로 타겟팅 가능해야 한다.
-  it('ontologyId 지정 시 해당 온톨로지를 화이트리스트로 사용한다', async () => {
+  // 온톨로지가 기본(id=1)으로 고정돼 있으면 다른 온톨로지에 바인딩된 데이터셋의
+  // 정당한 속성이 "필터 불가"로 거부된다 → ontologyId 를 항상 명시해 타겟팅한다(필수 파라미터).
+  it('ontologyId 로 지정한 온톨로지를 화이트리스트로 사용한다', async () => {
     const client = baseClient();
     await findTool(client, 'graphrag_structured_query').handler({
       ontologyId: 2,
@@ -212,23 +196,24 @@ describe('graphrag_structured_query — 동적 스키마 검증', () => {
       filters: [{ property: '피해액', operator: 'gt', value: 1 }],
     });
     expect(client.getOntologyById).toHaveBeenCalledWith(2);
-    expect(client.getOntology).not.toHaveBeenCalled();
     expect(structuredQueryMock).toHaveBeenCalledTimes(1);
   });
 
-  it('ontologyId 미지정 상태의 속성 거부 오류는 ontologyId 재시도를 안내한다', async () => {
+  it('필터 불가 속성 거부 오류는 온톨로지 id를 명시한다(기본 온톨로지 안내 없음)', async () => {
     const client = baseClient();
     await expect(
       findTool(client, 'graphrag_structured_query').handler({
+        ontologyId: 1,
         entityType: 'Incident',
         filters: [{ property: '없는속성', operator: 'gt', value: 1 }],
       }),
-    ).rejects.toThrow(/ontologyId/);
+    ).rejects.toThrow(/온톨로지 id=1/);
   });
 
   it('온톨로지에 정의된 속성이면 실행한다', async () => {
     const client = baseClient();
     await findTool(client, 'graphrag_structured_query').handler({
+      ontologyId: 1,
       entityType: 'Incident',
       filters: [{ property: '피해액', operator: 'gte', value: 100000000 }],
     });
@@ -264,6 +249,7 @@ describe('graphrag_structured_query — 동적 스키마 검증', () => {
         ]),
       });
       const out = await findTool(client, 'graphrag_structured_query').handler({
+        ontologyId: 1,
         entityType: 'Incident',
         filters: [{ property: '피해액', operator: 'gt', value: 100000000 }],
       });
@@ -276,6 +262,7 @@ describe('graphrag_structured_query — 동적 스키마 검증', () => {
     it('일치하는 pending 항목이 없으면 pendingReview 를 넣지 않는다', async () => {
       const client = baseClient({ listReviewItems: vi.fn().mockResolvedValue([]) });
       const out = await findTool(client, 'graphrag_structured_query').handler({
+        ontologyId: 1,
         entityType: 'Incident',
         filters: [{ property: '피해액', operator: 'gt', value: 100000000 }],
       });
@@ -289,6 +276,7 @@ describe('graphrag_structured_query — 동적 스키마 검증', () => {
       });
       const client = baseClient({ listReviewItems: vi.fn().mockResolvedValue([]) });
       const out = await findTool(client, 'graphrag_structured_query').handler({
+        ontologyId: 1,
         entityType: 'Incident',
         filters: [{ property: '피해액', operator: 'gt', value: 100000000 }],
       });
@@ -299,6 +287,7 @@ describe('graphrag_structured_query — 동적 스키마 검증', () => {
     it('검수 목록 조회가 실패해도 주 결과는 그대로 반환한다(부가 신호이므로 조용히 무시)', async () => {
       const client = baseClient({ listReviewItems: vi.fn().mockRejectedValue(new Error('down')) });
       const out = await findTool(client, 'graphrag_structured_query').handler({
+        ontologyId: 1,
         entityType: 'Incident',
         filters: [{ property: '피해액', operator: 'gt', value: 100000000 }],
       });

@@ -14,11 +14,14 @@ async function main() {
   const apiBaseUrl = process.env.API_BASE_URL ?? 'http://localhost:5010/api/v1';
   const internalToken = process.env.INTERNAL_SERVICE_TOKEN;
   const userId = Number(process.env.MIGRATION_USER_ID ?? '0');
+  const ontologyId = Number(process.env.MIGRATION_ONTOLOGY_ID ?? '0');
   if (!internalToken) throw new Error('INTERNAL_SERVICE_TOKEN 환경변수가 필요합니다.');
   if (!userId) throw new Error('MIGRATION_USER_ID 환경변수(dataset:read 권한을 가진 사용자 id)가 필요합니다.');
+  // "기본 온톨로지"가 폐지됨에 따라 마이그레이션 대상 온톨로지를 명시적으로 지정해야 한다.
+  if (!ontologyId) throw new Error('MIGRATION_ONTOLOGY_ID 환경변수(대상 온톨로지 id)가 필요합니다.');
 
   const apiClient = new FireHubApiClient(apiBaseUrl, internalToken, userId);
-  const ontology = await apiClient.getOntology();
+  const ontology = await apiClient.getOntologyById(ontologyId);
 
   const session = getSession();
   const skipped: string[] = [];
