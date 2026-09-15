@@ -19,7 +19,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.support.TransactionTemplate;
 
-// 삭제 규칙 검증 — 거부 사유는 "참조 중"과 "기본 온톨로지"뿐이고 상태는 사유가 아니다.
+// 삭제 규칙 검증 — 거부 사유는 "참조 중"뿐이고(#678 이후 id 무관하게 균일), 상태는 사유가 아니다.
 class OntologyDeleteTest extends IntegrationTestBase {
 
   @Autowired private OntologyService service;
@@ -139,13 +139,10 @@ class OntologyDeleteTest extends IntegrationTestBase {
     }
   }
 
-  @Test
-  void 기본_온톨로지는_삭제할_수_없다() {
-    assertThatThrownBy(() -> service.deleteOntology(1L))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("기본 온톨로지");
-    assertThat(repository.findStatusById(1L)).isEqualTo("active");
-  }
+  // (#678) "기본 온톨로지"(id=1) 특별 취급 삭제 가드는 제거됐다 — 삭제 거부는 이제 id와 무관하게
+  // 오직 countReferences(참조 중) 하나만 사유다. 그 규칙은 id=1을 건드리지 않고 fixture 온톨로지로
+  // 검증하는 바인딩된_데이터셋이_있으면_삭제할_수_없다()가 이미 커버하므로 여기서 중복 테스트를 두지
+  // 않는다(id=1 자체를 삭제/복구하면 공유 테스트 DB의 시드 온톨로지를 오염시키는 위험만 남는다).
 
   @Test
   void 삭제하면_엔티티_타입도_함께_사라진다() {

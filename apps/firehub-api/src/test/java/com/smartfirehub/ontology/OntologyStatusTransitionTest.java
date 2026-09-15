@@ -11,6 +11,7 @@ import com.smartfirehub.ontology.repository.OntologyRepository;
 import com.smartfirehub.ontology.service.OntologyService;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.OntologyTestSupport;
+import com.smartfirehub.support.TenantRlsTestSupport;
 import java.util.List;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.AfterEach;
@@ -111,12 +112,32 @@ class OntologyStatusTransitionTest extends IntegrationTestBase {
   }
 
   @Test
-  void 기본_온톨로지는_은퇴시킬_수_없다() {
-    // id=1은 문서 적재가 단수 /ontology로 의존한다 — 은퇴시키면 적재가 조용히 깨진다.
-    assertThatThrownBy(() -> OntologyTestSupport.transitionTo(service, 1L, "archived"))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("기본 온톨로지");
-    assertThat(repository.findStatusById(1L)).isEqualTo("active");
+  void 참조_중인_온톨로지도_은퇴시킬_수_있다() {
+    // (#678) "기본 온톨로지"(id=1) 특별 취급은 제거됐다. 은퇴(archived)는 deleteOntology가 참조 중인
+    // 온톨로지에 안내하는 회수 경로("...은퇴(archived)를 사용하세요")이므로, 데이터셋에 바인딩되어
+    // 참조 중이어도 은퇴 자체는 막히지 않는다(참조 카운트는 changeStatus의 판정 대상이 아니다) —
+    // id 무관하게 균일하다는 것을 fixture 온톨로지로 검증한다(id=1을 직접 건드리지 않음).
+    long id = given("전이 테스트 참조중 은퇴", "active");
+    TenantRlsTestSupport.runInTenantTransaction(
+        tx,
+        IntegrationTestBase.DEFAULT_TEST_TENANT_ID,
+        () ->
+            dsl.insertInto(table(name("dataset_ontology")))
+                .set(field(name("dataset_id"), Long.class), 999_101L)
+                .set(field(name("ontology_id"), Long.class), id)
+                .execute());
+    try {
+      transitionTo(id, "archived");
+      assertThat(repository.findStatusById(id)).isEqualTo("archived");
+    } finally {
+      TenantRlsTestSupport.runInTenantTransaction(
+          tx,
+          IntegrationTestBase.DEFAULT_TEST_TENANT_ID,
+          () ->
+              dsl.deleteFrom(table(name("dataset_ontology")))
+                  .where(field(name("dataset_id"), Long.class).eq(999_101L))
+                  .execute());
+    }
   }
 
   // (Task 7) 이 규칙(archived 편집 거부)의 원래 테스트는 전체 스키마 PUT(OntologyService.updateOntology)을
