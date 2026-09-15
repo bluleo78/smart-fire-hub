@@ -51,7 +51,6 @@ public class OntologyService {
     this.userRepository = userRepository;
   }
 
-
   // id 스코프 조회.
   public OntologyResponse getById(long ontologyId) {
     return ontologyRepository.findById(ontologyId);
@@ -132,7 +131,6 @@ public class OntologyService {
 
     return id;
   }
-
 
   // 상태 전이 판정. 허용: draft→active, active→archived, archived→active. 그 외 상태 변경은 거부.
   // 거부는 IllegalStateException(→409) — 잘못된 입력(400)이 아니라 현재 상태와의 충돌이다.
