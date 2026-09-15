@@ -4,10 +4,9 @@
 // loader.ts와 동일한 예약키 방어·sourceChunkIds 누적 관용구를 재사용한다.
 import neo4j from 'neo4j-driver';
 import { getSession } from './neo4j-client.js';
+import { RESERVED_NODE_KEYS } from './loader.js';
 import { EntityType, Ontology, RelationType, entityTypeId } from './ontology.js';
 import { entityKey } from './resolver.js';
-
-const RESERVED_NODE_KEYS = new Set(['key', 'type', 'name', 'sourceChunkIds', 'schemaVersion', 'ontologyId']);
 
 function sanitizeProperties(properties?: Record<string, number | string>): Record<string, number | string> {
   if (!properties) return {};

@@ -9,7 +9,9 @@ import { ResolvedGraph } from './resolver.js';
 // api(OntologyService.RESERVED_PROPERTY_NAMES)가 편집 시점에 막지만, 과거 데이터·직접 DB조작 등
 // 우회 경로에 대비해 적재 직전에도 한 번 더 방어한다(defense-in-depth).
 // 두 provenance 필드(sourceChunkIds/sourceDatasetIds) 모두 방어 대상에 포함한다.
-const RESERVED_NODE_KEYS = new Set([
+// 그래프 노드 속성 중 사용자 입력과 충돌하면 안 되는 예약 키 — identity/provenance 필드.
+// entity-add.ts, property-mutation.ts도 이 상수를 그대로 재사용한다(로컬 복제 금지 — 드리프트 방지).
+export const RESERVED_NODE_KEYS = new Set([
   'key', 'type', 'name', 'sourceChunkIds', 'sourceDatasetIds', 'schemaVersion', 'ontologyId',
 ]);
 
