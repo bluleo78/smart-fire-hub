@@ -71,6 +71,36 @@ class OntologyServiceTest {
     assertThat(res.edges().get(0).objectKey()).isEqualTo("n2");
   }
 
+  // K8s 회귀(운영에서 "그래프를 불러오지 못했습니다"): 실제 적재된 지식그래프 응답은 1.5MB 수준인데 WebClient 기본
+  // maxInMemorySize는 256KB라 그 한도를 넘는 순간 DataBufferLimitException으로 터졌다.
+  // 로컬(그래프가 작음)에서는 재현되지 않아 운영에서만 "그래프를 불러오지 못했습니다"가 났다.
+  // 256KB를 확실히 넘는 응답도 정상 역직렬화되는지 검증한다.
+  @Test
+  void getGraph_는_256KB를_넘는_대용량_응답도_역직렬화한다() {
+    StringBuilder nodes = new StringBuilder("{\"nodes\":[");
+    // 이름만 한글 160자(UTF-8 480B)라 노드 1개당 약 570B × 2000개 ≈ 1.1MB — 기본 한도(262144B)를
+    // 운영 그래프(약 1.5MB)와 비슷한 배율로 초과시킨다.
+    for (int i = 0; i < 2000; i++) {
+      if (i > 0) nodes.append(',');
+      nodes
+          .append("{\"key\":\"n")
+          .append(i)
+          .append("\",\"type\":\"Incident\",\"name\":\"")
+          .append("화재사고상세명칭".repeat(20))
+          .append(i)
+          .append("\",\"sourceChunkCount\":1,\"schemaVersion\":1}");
+    }
+    nodes.append("],\"edges\":[]}");
+    String body = nodes.toString();
+    assertThat(body.getBytes(java.nio.charset.StandardCharsets.UTF_8).length).isGreaterThan(262144);
+
+    server.enqueue(new MockResponse().setHeader("Content-Type", "application/json").setBody(body));
+
+    GraphResponse res = service.getGraph();
+
+    assertThat(res.nodes()).hasSize(2000);
+  }
+
   @Test
   void getGraph_는_ai_agent_502를_예외로_전파한다() {
     server.enqueue(new MockResponse().setResponseCode(502).setBody("{\"error\":\"graph read failed\"}"));

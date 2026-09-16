@@ -44,6 +44,14 @@ public class OntologyService {
     this.webClient =
         WebClient.builder()
             .baseUrl(agentUrl)
+            // 지식그래프(/agent/graph)는 전체 그래프를 페이지네이션 없이 한 번에 내려주므로 응답이
+            // 수 MB까지 커진다(운영 기준 노드 3천/엣지 7천 ≈ 1.5MB, 요소당 약 148B). WebClient 기본
+            // 버퍼 한도는 256KB라 이 설정이 없으면 노드 1,400개 수준에서 이미 DataBufferLimitException
+            // 으로 502가 났다. 다른 ai-agent 호출부(AiAgentProxyService 등)의 10MB보다 큰 32MB를 쓰는
+            // 이유는 그래프만 유일하게 전체 덤프라서다 — 노드 6만/엣지 16만 수준까지 여유를 둔다.
+            // 그 이상은 한도를 올려서 될 일이 아니다(전체 덤프 대신 스코프·페이지네이션이 필요하고,
+            // 프론트 캔버스가 먼저 한계에 닿는다).
+            .codecs(c -> c.defaultCodecs().maxInMemorySize(32 * 1024 * 1024))
             .defaultHeader("Authorization", "Internal " + internalToken)
             .build();
     this.ontologyRepository = ontologyRepository;
