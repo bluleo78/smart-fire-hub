@@ -7,15 +7,11 @@ import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
 import { SearchInput } from '@/components/ui/search-input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import {
-  useMergedOntologyEntities,
-  useOntologyById,
-  useOntologyGraph,
-  useOntologyList,
-} from '@/hooks/queries/useOntology';
+import { useOntologyById, useOntologyGraph, useOntologyList } from '@/hooks/queries/useOntology';
 import { useOntologyElementMutations } from '@/hooks/queries/useOntologyElement';
 import { useAuth } from '@/hooks/useAuth';
 import { useDirtyAggregator, useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
+import { filterGraphByNode } from '@/lib/graph-scope';
 import { createTypePalette } from '@/lib/ontology-colors';
 import { affectedRelationsFor, isLastActiveEntityType } from '@/lib/ontology-validation';
 import type { GraphNode } from '@/types/ontology';
@@ -68,28 +64,11 @@ export default function OntologyPage() {
     () => new Map((ontologies ?? []).map((o) => [o.id, o.schemaVersion])),
     [ontologies],
   );
-  // (#677) 그래프 탐색 탭의 "타입 필터"는 기본 온톨로지(schema) 하나가 아니라 active 온톨로지 전체의
-  // 엔티티 타입을 합쳐 보여줘야 한다 — Neo4j 적재 그래프 자체가 온톨로지로 스코프되지 않는 전체
-  // 그래프라(getGraph()에 id 파라미터 없음), 다른 온톨로지로 만든 타입의 노드도 실제로 존재할 수 있는데
-  // 필터 목록이 기본 온톨로지 스키마에만 갇혀 있으면 그 타입들이 필터에서 아예 보이지 않았다.
-  const activeOntologyIds = useMemo(
-    () => (ontologies ?? []).filter((o) => o.status === 'active').map((o) => o.id),
-    [ontologies],
-  );
-  // useMergedOntologyEntities는 combine 옵션(구조적 공유)으로 값이 같으면 참조도 유지해 준다 — 그래야
-  // 아래 currentTypeNames/activeTypes 자동 동기화(#412, 참조 비교로 "새 타입 추가"를 판정)가 매 렌더
-  // 무한 루프에 빠지지 않는다(#677 구현 중 실제로 겪은 회귀 — activeSchemaResults를 그대로 의존성에
-  // 넣었을 때 매 렌더 새 배열이 나와 "Too many re-renders" 크래시가 재현됐다).
-  // TypeFilterPanel은 entities만 읽으므로(domain/schemaVersion/relations는 어디서도 소비하지
-  // 않는다) 가짜 OntologySchema를 조립하지 않고 EntityTypeDef[]를 그대로 넘긴다. "구버전" 배지
-  // 기준은 schema가 아니라 위 schemaVersionByOntologyId 맵이다(#678).
-  // active 온톨로지가 하나도 없으면 mergedEntities는 빈 배열이다 — "기본 온톨로지"로 임의 대체하지
-  // 않는다(#678). TypeFilterPanel은 빈 배열을 정상적인 빈 상태로 렌더한다.
-  const instanceEntities = useMergedOntologyEntities(activeOntologyIds);
   // 인스턴스 그래프(Neo4j 적재분)는 여전히 온톨로지 id로 스코프되지 않는 단일 엔드포인트다
-  // (getGraph()에 id 파라미터가 없다) — 그래서 selectedOntologyId를 바꿔도 이 쿼리는 영향을 받지 않고,
-  // 요소 단위 편집 뮤테이션도 이 키를 무효화할 이유가 없다(스키마 편집이 이미 적재된 그래프 노드를
-  // 다시 쓰지는 않으므로 — Neo4j 재적재는 별도 임포트 파이프라인의 몫이다).
+  // (getGraph()에 id 파라미터가 없다) — 그래서 selectedOntologyId를 바꿔도 이 쿼리 자체는 영향을
+  // 받지 않고, 요소 단위 편집 뮤테이션도 이 키를 무효화할 이유가 없다(스키마 편집이 이미 적재된
+  // 그래프 노드를 다시 쓰지는 않으므로 — Neo4j 재적재는 별도 임포트 파이프라인의 몫이다). 대신
+  // 선택된 온톨로지로 좁혀 보여주는 것은 클라이언트 쪽에서 한다(아래 scopedGraph, #677 후속).
   const { data: graph, isLoading: isGraphLoading, isError, refetch: refetchGraph } = useOntologyGraph();
 
   // 탭 상태는 URL(:view)에서 파생 — 사이드바 '그래프 탐색'(explore)/'지식 모델'(model) 항목과 하이라이트를 동기화한다.
@@ -141,8 +120,10 @@ export default function OntologyPage() {
   const { isAnyDirty: isModelEditorDirty, makeReporter: makeModelDirtyReporter } = useDirtyAggregator();
   const { dialog: unsavedChangesDialog } = useUnsavedChangesGuard(modelEditMode && isModelEditorDirty);
 
-  // 스키마 탭에서 보고 있는 온톨로지. 인스턴스 탭(Neo4j 적재 그래프)은 여전히 기본 온톨로지 기반이므로
-  // 이 선택은 스키마 탭에만 영향을 준다 — 여기까지 번지면 타입 필터가 조용히 어긋난다.
+  // 지금 보고 있는 온톨로지 — 지식 모델(스키마) 탭뿐 아니라 그래프 탐색(인스턴스) 탭도 이 선택을
+  // 공유한다(#677 후속). 그래야 "지식 모델처럼 온톨로지를 고를 수 있어야 한다"는 요구대로 두 탭이
+  // 항상 같은 온톨로지 어휘(타입 필터)를 보여준다. 인스턴스 탭에서는 여기서 고른 온톨로지 id로
+  // Neo4j 그래프(scopedGraph, 아래)도 함께 좁힌다.
   const [selectedOntologyId, setSelectedOntologyId] = useState<number | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
@@ -222,10 +203,8 @@ export default function OntologyPage() {
   // 저장" 패턴을 그대로 따른다.
   // selectedSchema?.entities가 없을 때의 [] 폴백이 매 렌더 새 배열이 되어 useMemo 의존성을 매번
   // 바꾸지 않도록(#412 자동 동기화가 매 렌더 "새 타입 추가"로 오판) filterEntities 자체를 메모이즈한다.
-  const filterEntities = useMemo(
-    () => (tab === 'schema' ? (selectedSchema?.entities ?? []) : instanceEntities),
-    [tab, selectedSchema, instanceEntities],
-  );
+  // 두 탭이 selectedOntologyId를 공유하므로(#677 후속) tab에 따라 다른 소스를 고를 필요가 없다.
+  const filterEntities = useMemo(() => selectedSchema?.entities ?? [], [selectedSchema]);
   const currentTypeNames = useMemo(() => filterEntities.map((e) => e.type), [filterEntities]);
   const [prevTypeNames, setPrevTypeNames] = useState(currentTypeNames);
   if (currentTypeNames !== prevTypeNames) {
@@ -241,12 +220,28 @@ export default function OntologyPage() {
   // 소비처가 각자 타입 목록을 모아 팔레트를 만들면 같은 타입이 화면마다 다른 색이 된다(특히
   // SchemaGraph는 필터로 걸러진 목록만 알고, TypeFilterPanel은 검색으로 더 걸러진 목록만 안다).
   // createTypePalette가 입력을 정렬해 색을 배정하므로 배열 순서에는 의존하지 않는다.
-  // 알려진 한계: 두 탭이 서로 다른 온톨로지를 보여주므로(스키마 탭=선택 온톨로지, 인스턴스 탭=기본
-  // 온톨로지) 두 온톨로지에 이름이 같은 타입이 있으면 탭 간 색이 다를 수 있다 — 각 화면 안에서는
-  // 항상 구분된다는 것이 이 수정의 계약이다.
+  // 두 탭이 이제 같은 selectedOntologyId를 공유하므로(#677 후속) 탭을 바꿔도 같은 타입은 항상
+  // 같은 색을 유지한다.
   const typePalette = useMemo(() => createTypePalette(currentTypeNames), [currentTypeNames]);
 
-  const nodesByKey = useMemo(() => new Map((graph?.nodes ?? []).map((n) => [n.key, n])), [graph]);
+  // 인스턴스 탭에 실제로 보여줄 그래프 — 선택된 온톨로지(effectiveOntologyId)로 좁힌다(#677 후속,
+  // "지식 모델처럼 온톨로지를 선택할 수 있어야 한다"는 요구). Neo4j 그래프 자체는 스코프되지 않은
+  // 단일 엔드포인트라(getGraph()) 클라이언트에서 node.ontologyId로 걸러낸다. ontologyId가 null인
+  // 노드(#678: schema_version 스탬프 도입 이전 레거시 적재)는 특정 온톨로지에 귀속시킬 근거가
+  // 없으므로 어느 온톨로지를 선택해도 계속 보여준다 — 그러지 않으면 선택기 도입만으로 기존에
+  // 보이던 데이터가 조용히 사라지는 회귀가 된다. 엣지는 양쪽 노드가 모두 남아 있을 때만 유지한다.
+  const scopedGraph = useMemo(() => {
+    if (!graph) return graph;
+    if (effectiveOntologyId == null) return graph;
+    // 노드 필터 → 양끝 생존 엣지만 유지하는 공용 규칙은 filterGraphByNode에 있다(InstanceGraph의
+    // 타입/검색 필터와 동일한 패턴이라 여기서도 재사용).
+    return filterGraphByNode(graph, (n) => n.ontologyId === effectiveOntologyId || n.ontologyId == null);
+  }, [graph, effectiveOntologyId]);
+
+  const nodesByKey = useMemo(
+    () => new Map((scopedGraph?.nodes ?? []).map((n) => [n.key, n])),
+    [scopedGraph],
+  );
 
   // 인스펙터에 내려줄 선택된 엔티티 타입 — ModelOutline과 마찬가지로 id 없는 항목은 편집 대상이 될 수
   // 없으므로 걸러낸다(요소 단위 편집 API가 id로 대화한다).
@@ -389,8 +384,8 @@ export default function OntologyPage() {
         {/* 온톨로지 선택기(고정 220px)까지 들어오며 항목이 늘었다 — 이 그룹도 outer 툴바처럼
             max-md에서 줄바꿈해야 320px 리플로우(#345)와 640~900px 겹침(#402)이 깨지지 않는다. */}
         <div className="ml-auto flex flex-wrap items-center justify-end gap-x-2 gap-y-1 md:flex-nowrap">
-          {/* 온톨로지 선택기 — 스키마 탭 전용. 비-ADMIN도 볼 수 있지만 관리 진입점은 없다. */}
-          {tab === 'schema' && ontologies && ontologies.length > 0 && (
+          {/* 온톨로지 선택기 — 두 탭이 공유한다(#677 후속). 비-ADMIN도 볼 수 있지만 관리 진입점은 없다. */}
+          {ontologies && ontologies.length > 0 && (
             <OntologySelect
               ontologies={ontologies}
               value={effectiveOntologyId}
@@ -461,11 +456,8 @@ export default function OntologyPage() {
         {/* 좌측 패널 — 편집 모드(showEditor)에서는 타입 필터 대신 아웃라인(타입/관계 목록)을 보여준다.
             아웃라인은 selectedSchema만 다룬다(편집 대상이 항상 선택된 온톨로지이므로 bare schema 분기가 없다).
             읽기 모드는 기존 그대로: resolution 그룹핑 + 개수 + 토글 필터(접기 가능).
-            스키마 탭에서는 캔버스(selectedSchema)와 같은 온톨로지의 타입을 보여줘야 한다 — 그렇지 않으면
-            선택된 온톨로지가 기본 온톨로지가 아닐 때 캔버스와 필터 패널이 서로 다른 타입 어휘를 나란히
-            보여주게 된다. 인스턴스 탭은 instanceEntities(active 온톨로지 전체 합집합, #677) — Neo4j 적재
-            그래프(getGraph())가 온톨로지로 스코프되지 않는 전체 그래프라 기본 온톨로지 하나만으로는
-            다른 온톨로지의 타입이 필터에서 누락됐다. */}
+            두 탭이 selectedOntologyId를 공유하므로(#677 후속) filterEntities(=selectedSchema.entities)가
+            어느 탭에서나 캔버스가 실제로 보여주는 것과 같은 온톨로지의 타입 어휘다. */}
         {showEditor && selectedSchema ? (
           <ModelOutline
             schema={selectedSchema}
@@ -488,7 +480,7 @@ export default function OntologyPage() {
         ) : (
           <TypeFilterPanel
             entities={filterEntities}
-            graph={graph}
+            graph={scopedGraph}
             activeTypes={activeTypes}
             onToggle={toggleType}
             onReset={() => setActiveTypes(new Set())}
@@ -609,11 +601,11 @@ export default function OntologyPage() {
             <TabsContent value="instance" className="m-0 h-full">
               {isError ? (
                 <GraphError message="그래프를 불러오지 못했습니다." onRetry={() => refetchGraph()} />
-              ) : isGraphLoading || !graph ? (
+              ) : isGraphLoading || !scopedGraph ? (
                 <GraphLoading />
               ) : (
                 <InstanceGraph
-                  graph={graph}
+                  graph={scopedGraph}
                   activeTypes={activeTypes}
                   search={search}
                   onNodeSelect={setSelected}
@@ -628,7 +620,7 @@ export default function OntologyPage() {
           {tab === 'instance' && (
             <NodeDetailDrawer
               node={selected}
-              edges={graph?.edges ?? []}
+              edges={scopedGraph?.edges ?? []}
               nodesByKey={nodesByKey}
               onClose={() => setSelected(null)}
               onNavigate={navigateTo}

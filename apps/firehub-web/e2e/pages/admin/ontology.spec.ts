@@ -531,11 +531,11 @@ test.describe('지식그래프 시각화 페이지', () => {
     await expectNodeCount(page, graph.nodes.length);
   });
 
-  // (#677) 그래프 탐색 탭의 타입 필터는 기본 온톨로지 하나가 아니라 active 온톨로지 전체의 엔티티
-  // 타입을 합쳐 보여줘야 한다 — Neo4j 적재 그래프 자체가 온톨로지로 스코프되지 않으므로, 기본이
-  // 아닌 온톨로지(id=2)로 만든 타입의 노드도 실제로 존재할 수 있는데 예전에는 그 타입이 필터에
-  // 아예 나타나지 않았다(기본 온톨로지 스키마만 참조).
-  test('그래프 탐색 탭 타입 필터가 기본 온톨로지뿐 아니라 다른 active 온톨로지의 타입도 함께 보여준다(#677)', async ({
+  // (#677) 그래프 탐색 탭도 지식 모델 탭과 동일하게 온톨로지 선택기를 공유한다 — 예전에는 타입
+  // 필터가 하드코딩된 기본 온톨로지(id=1) 스키마에 고정돼 다른 온톨로지의 타입이 필터에 아예
+  // 나타나지 않았다. 이제 선택기가 그래프 탐색 탭에도 노출되고, 선택을 바꾸면 타입 필터뿐 아니라
+  // 캔버스에 실제로 그려지는 노드(scopedGraph, node.ontologyId 기준)도 그 온톨로지로 좁혀진다.
+  test('그래프 탐색 탭에서도 온톨로지를 선택할 수 있고, 선택을 바꾸면 타입 필터와 캔버스가 그 온톨로지 기준으로 바뀐다(#677)', async ({
     authenticatedPage: page,
   }) => {
     const secondOntologySchema = createOntologySchema({
@@ -546,19 +546,31 @@ test.describe('지식그래프 시각화 페이지', () => {
       ],
       relations: [],
     });
+    const graph = createOntologyGraph();
     await mockApi(page, 'GET', '/api/v1/ontology/1', createOntologySchema());
     await mockApi(page, 'GET', '/api/v1/ontology/2', secondOntologySchema);
-    await mockApi(page, 'GET', '/api/v1/ontology/graph', createOntologyGraph());
+    await mockApi(page, 'GET', '/api/v1/ontology/graph', graph);
     // createOntologySummaries() 기본값 — id=1(active, 기본) + id=2(active, 기본 아님).
     await mockApi(page, 'GET', '/api/v1/ontologies', createOntologySummaries());
     await page.goto('/knowledge-graph/explore');
 
-    // 기본 온톨로지(6타입) + 다른 active 온톨로지(2타입) = 총 8타입이 필터에 모두 나타난다.
+    // 기본 선택(첫 active 온톨로지, id=1) 기준 6타입 + 모킹 그래프 전체 7노드(id=1 6개 + 레거시 1개).
     const typeList = page.getByTestId('type-filter-list');
-    await expect(typeList.getByRole('button')).toHaveCount(8);
+    await expect(typeList.getByRole('button')).toHaveCount(6);
+    await expectNodeCount(page, graph.nodes.length);
+
+    // 온톨로지 선택기는 그래프 탐색 탭에도 노출된다 — 지식 모델 탭 전용이 아니다.
+    await page.getByRole('combobox', { name: '온톨로지 선택' }).click();
+    await page.getByRole('option', { name: '건축물 대장' }).click();
+
+    // id=2로 바꾸면 타입 필터가 그 온톨로지의 타입(2개)으로 완전히 바뀐다.
+    await expect(typeList.getByRole('button')).toHaveCount(2);
     await expect(typeList.getByRole('button', { name: /^Zoning/ })).toBeVisible();
     await expect(typeList.getByRole('button', { name: /^Permit/ })).toBeVisible();
-    await expect(typeList.getByRole('button', { name: /^Incident/ })).toBeVisible();
+    await expect(typeList.getByRole('button', { name: /^Incident/ })).toHaveCount(0);
+    // 캔버스도 함께 좁혀진다 — id=2 소속 노드가 없으므로 ontologyId=null(레거시) 노드 1개만 남는다.
+    const legacyNodeCount = graph.nodes.filter((n) => n.ontologyId == null).length;
+    await expectNodeCount(page, legacyNodeCount);
   });
 
   // (#407) 빈 초안 온톨로지로 전환하면 좌측 타입 필터 패널도 진짜로 비어야 한다 — 예전에는

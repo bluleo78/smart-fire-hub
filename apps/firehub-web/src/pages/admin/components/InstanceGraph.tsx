@@ -6,6 +6,7 @@ import { useTheme } from 'next-themes';
 import { useEffect, useMemo, useRef } from 'react';
 
 import { useCanvasBackground } from '@/hooks/useCanvasBackground';
+import { filterGraphByNode } from '@/lib/graph-scope';
 import type { TypePalette } from '@/lib/ontology-colors';
 import type { GraphData, GraphNode } from '@/types/ontology';
 
@@ -94,12 +95,12 @@ export default function InstanceGraph({ graph, activeTypes, search, onNodeSelect
   // 타입 토글·검색 필터 적용(activeTypes 비어 있으면 전체 표시).
   const { filteredNodes, filteredEdges } = useMemo(() => {
     const q = search.trim().toLowerCase();
-    const nodes = graph.nodes.filter(
+    // 노드 필터 → 양끝 생존 엣지만 유지하는 공용 규칙은 filterGraphByNode에 있다(OntologyPage의
+    // 온톨로지 스코프 필터와 동일한 패턴을 여기서도 재사용).
+    const { nodes, edges } = filterGraphByNode(
+      graph,
       (n) => (activeTypes.size === 0 || activeTypes.has(n.type)) && (q === '' || n.name.toLowerCase().includes(q)),
     );
-    const visible = new Set(nodes.map((n) => n.key));
-    // 엣지는 양쪽 노드가 모두 보일 때만 표시.
-    const edges = graph.edges.filter((e) => visible.has(e.subjectKey) && visible.has(e.objectKey));
     return { filteredNodes: nodes, filteredEdges: edges };
   }, [graph, activeTypes, search]);
 
