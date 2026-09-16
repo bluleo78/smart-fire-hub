@@ -1,5 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
 
+import { HARDWARE_GL, USE_HARDWARE_GL } from './e2e/gpu-launch';
+
 /**
  * Playwright E2E 테스트 설정
  * - Vite dev 서버를 자동 기동하고 Chromium에서 테스트 실행
@@ -34,7 +36,11 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
-      use: { ...devices['Desktop Chrome'] },
+      use: {
+        ...devices['Desktop Chrome'],
+        // 근거·조건은 e2e/gpu-launch.ts, 주입 결과 단정은 e2e/webgl-renderer-guard.spec.ts.
+        launchOptions: { args: USE_HARDWARE_GL ? [...HARDWARE_GL.args] : [] },
+      },
     },
   ],
 
