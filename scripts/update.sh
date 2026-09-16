@@ -3,8 +3,10 @@ set -euo pipefail
 
 # Smart Fire Hub 원격 업데이트 스크립트
 # ghcr.io에서 최신 이미지를 pull하고 컨테이너를 재생성한다.
-# Usage: ./scripts/update.sh [api|web|ai-agent|executor|channel|db|minio|all]
-# all = api + executor + web + ai-agent + channel (5개 앱 전부, db/minio 제외 — 둘 다 개별 배포로만 재기동)
+# Usage: ./scripts/update.sh [api|web|ai-agent|executor|channel|admin|db|minio|all]
+# all = api + executor + web + ai-agent + channel (5개 앱 전부, db/minio/admin 제외 — 셋 다 개별 배포로만 재기동)
+# admin(firehub-admin, 플랫폼 슈퍼관리자 콘솔)은 권한상승 경로를 배포 수준에서도 분리하기 위해
+# 의도적으로 all 밖에 둔다 — 업데이트는 항상 `./scripts/update.sh admin`으로 명시적으로 트리거한다.
 
 PROD_DIR="$HOME/prod/smart-fire-hub"
 

@@ -1,12 +1,20 @@
 # 배포 가이드
 
-배포 스크립트: `./scripts/deploy.sh [api|executor|web|ai-agent|channel|db|minio|all]`
+배포 스크립트: `./scripts/deploy.sh [api|executor|web|ai-agent|channel|admin|db|minio|all]`
 
-> `all` = **api + executor + web + ai-agent + channel** (운영 5개 앱 전부, **db·minio는 제외**).
+> `all` = **api + executor + web + ai-agent + channel** (운영 5개 앱 전부, **db·minio·admin은 제외**).
 > `all` 정의는 **3곳**에서 동기화 필요: `scripts/deploy.sh`, `scripts/update.sh`, 본 문서.
 > 운영 docker-compose 서비스명이 빌드 키와 다른 경우(`channel` → `firehub-channel`)는 두 스크립트의 `prod_service_name()` 헬퍼가 흡수한다.
 > `db`, `minio`는 stateful/변경이 드문 서비스로 재기동 시 데이터·서비스 전체에 영향을 주므로 `all`에서 제외 — 각각 `./scripts/deploy.sh db`, `./scripts/deploy.sh minio`로 개별 배포만 가능.
 > `minio`는 **public 이미지**(`minio/minio`)라 빌드/push 없이 `docker compose pull minio && docker compose up -d --force-recreate minio`만 수행한다 (`db`가 자체 Dockerfile로 빌드하는 것과 다름).
+> `admin`(firehub-admin, 플랫폼 슈퍼관리자 콘솔)은 stateful은 아니지만 **권한상승 경로를 배포 수준에서도 분리**하는 설계 의도(참조: 멀티 테넌시 P7-c) 때문에 의도적으로 `all`에서 제외했다 — 항상 `./scripts/deploy.sh admin`으로 명시적으로만 배포한다.
+
+## firehub-admin (플랫폼 슈퍼관리자 콘솔)
+
+- 빌드 컨텍스트는 web/ai-agent와 동일하게 **프로젝트 루트**(`docker build -f apps/firehub-admin/Dockerfile .`) — 이미지 태그는 `admin`.
+- 백엔드 API(`/api/platform/**`)는 firehub-api가 이미 제공하며 별도 서비스가 아니다. firehub-admin 이미지 자체 nginx.conf가 `/api/` 를 컨테이너 네트워크의 `api:8080`으로 프록시하므로, 운영 compose에는 볼륨 마운트나 별도 env 없이 이미지 그대로 등록하면 된다(web처럼 게이트웨이용 `./nginx.conf`를 덮어쓸 필요 없음).
+- 운영 포트: `ADMIN_PORT`(기본 `8889`, `.env`) → 컨테이너 80. web과 동일하게 전체 공개 바인딩.
+- 첫 배포 전 확인: `docker compose up -d admin` 실행 후 `http://<host>:${ADMIN_PORT:-8889}` 접속, 운영자 로그인 화면이 뜨는지 확인.
 
 ## Docker 빌드 규칙 (중요)
 
