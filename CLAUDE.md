@@ -15,6 +15,7 @@
 ## Rules
 - **한국어 주석 필수**: 클래스·메서드·주요 로직에 무엇을·왜 설명.
 - **커밋/배포 금지**: 사용자 명시적 승인 후에만 실행. 배포 시 반드시 `.claude/docs/deploy.md` 먼저 읽고 진행.
+- **워크트리 기본**: 사용자가 명시적으로 메인 체크아웃에서 하라고 지시하지 않는 한, 작업 브랜치에 착수할 때는 `EnterWorktree`로 격리한다 — 메인 체크아웃에서 직접 코드를 수정하지 않는다. 병합은 `ExitWorktree`로 메인 체크아웃에 돌아온 뒤 일반 `git merge`로 한다. 자율 파이프라인(ai-driven-pilot/solver/explorer 등)은 각자 격리 전략이 있으므로 예외.
 - **테스트 필수**: backend/ai-agent → TC, frontend → Playwright E2E.
 - **스크린샷**: 탐색 테스트 → `test-results/exploratory/<기능>/<timestamp>/screenshots/`, TC 테스트 → `test-results/tc/<suite>/`
 
