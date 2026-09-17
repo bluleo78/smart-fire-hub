@@ -13,6 +13,8 @@ import org.springframework.transaction.annotation.Transactional;
  * 같은 함수를 앱에서도 부를 수 있게 하는 얇은 래퍼다.
  *
  * <p>이 시드가 없으면 신규 테넌트는 역할·권한 0개라 멤버십이 있어도 모든 API 가 403 이다.
+ * V121 부터 이 함수는 역할 정의에 더해 OWNER 멤버십 보유자에게 ADMIN 을 배정한다 — 그래서
+ * 호출 전에 멤버십이 이미 있어야 한다.
  */
 @Service
 @RequiredArgsConstructor

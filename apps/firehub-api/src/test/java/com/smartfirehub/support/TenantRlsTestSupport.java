@@ -175,10 +175,19 @@ public final class TenantRlsTestSupport {
    * 잘못된 이유로 초록이 된다.
    */
   public static void insertActiveMembership(DSLContext dsl, Long userId, long tenantId) {
+    insertActiveMembership(dsl, userId, tenantId, "MEMBER");
+  }
+
+  /**
+   * 표시용 라벨({@code role})을 지정하는 버전. 프로비저닝이 {@code role='OWNER'} 행을 읽어 소유자에게
+   * ADMIN 을 배정하므로(V121), 그 경로를 검증하는 테스트는 라벨을 골라야 한다.
+   */
+  public static void insertActiveMembership(
+      DSLContext dsl, Long userId, long tenantId, String role) {
     dsl.insertInto(table(name("membership")))
         .set(field(name("user_id"), Long.class), userId)
         .set(field(name("tenant_id"), Long.class), tenantId)
-        .set(field(name("role"), String.class), "MEMBER")
+        .set(field(name("role"), String.class), role)
         .set(field(name("status"), String.class), "ACTIVE")
         .execute();
   }
@@ -373,6 +382,25 @@ public final class TenantRlsTestSupport {
     // 터진다. dataset 이 이 카테고리를 참조하고 있으면 그 테스트가 자기 dataset 을 먼저 지워야 한다.
     dsl.execute("delete from dataset_category where tenant_id = ?", tenantId);
     dsl.execute("delete from role where tenant_id = ?", tenantId);
+  }
+
+  /**
+   * 프로비저닝된 테넌트 하나를 통째로 되돌린다 — RBAC·시드 행(테넌트 컨텍스트 안) → 멤버십 →
+   * 테넌트 행 순서다.
+   *
+   * <p>승격 이유(simplify 패스 REUSE 축): 이 3단계는 {@code PlatformTenantControllerTest} 와
+   * {@code TenantOwnerAdminProvisioningTest} 에 바이트 단위로 같게 복붙돼 있었다. {@link
+   * #deleteRbacCascade} 의 테이블 목록은 {@code provision_tenant_defaults} 와 함께 움직여야 하는데
+   * (V113 이 어겨 테스트 3건이 깨진 적이 있다), 호출부가 둘이면 그 실패면이 그대로 두 배가 된다.
+   *
+   * @param tx 픽스처 트랜잭션 템플릿({@code IntegrationTestBase.fixtureTransactionTemplate})
+   */
+  public static void deleteProvisionedTenantCascade(
+      DSLContext dsl, TransactionTemplate tx, long tenantId) {
+    runInTenantTransaction(tx, tenantId, () -> deleteRbacCascade(dsl, tenantId));
+    // membership 은 테넌트 경계 위의 전역 테이블(RLS 없음)이라 컨텍스트 밖에서 지운다.
+    dsl.execute("delete from membership where tenant_id = ?", tenantId);
+    deleteTenants(dsl, tenantId);
   }
 
   /**

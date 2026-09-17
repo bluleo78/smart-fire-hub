@@ -55,6 +55,8 @@ public class PlatformTenantService {
     }
 
     long tenantId = tenantRepository.insertTenant(request.slug(), request.name());
+    // 순서 의존: provisionDefaults 는 역할을 정의한 뒤 OWNER 멤버십을 읽어 소유자에게 ADMIN 을
+    // 배정한다(V121). 멤버십 삽입이 먼저여야 소유자가 권한 0개로 태어나지 않는다.
     tenantRepository.insertOwnerMembership(tenantId, request.ownerUserId());
     provisioningService.provisionDefaults(tenantId);
 

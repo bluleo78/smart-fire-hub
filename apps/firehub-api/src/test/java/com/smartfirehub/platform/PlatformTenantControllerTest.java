@@ -51,10 +51,7 @@ class PlatformTenantControllerTest extends IntegrationTestBase {
   @AfterEach
   void cleanUp() {
     if (createdTenant != null) {
-      TenantRlsTestSupport.runInTenantTransaction(
-          tx, createdTenant, () -> TenantRlsTestSupport.deleteRbacCascade(dsl, createdTenant));
-      dsl.execute("delete from membership where tenant_id = ?", createdTenant);
-      TenantRlsTestSupport.deleteTenants(dsl, createdTenant);
+      TenantRlsTestSupport.deleteProvisionedTenantCascade(dsl, tx, createdTenant);
       createdTenant = null;
     }
   }

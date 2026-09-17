@@ -51,11 +51,21 @@ INSERT INTO tenant (slug, name, status) VALUES ('<slug>', '<name>', 'ACTIVE') RE
 테스트 헬퍼(`TenantRlsTestSupport.insertActiveTenant`)가 컨텍스트 없이 직접 INSERT 한다. 반환된
 `<id>` 를 이후 모든 단계에서 쓴다.
 
-### 1-2. 기본 RBAC·양식 시드
+### 1-2. 소유자 멤버십 → 기본 RBAC·양식 시드 (순서 주의)
 
 ```sql
+INSERT INTO membership (user_id, tenant_id, role, status)
+VALUES (<owner_user_id>, <id>, 'OWNER', 'ACTIVE')
+ON CONFLICT (user_id, tenant_id) DO NOTHING;
+
 SELECT provision_tenant_defaults(<id>);
 ```
+
+**멤버십이 먼저다.** V121 부터 `provision_tenant_defaults` 는 역할을 정의한 뒤 그 테넌트의 OWNER
+멤버십을 읽어 소유자에게 ADMIN 을 배정한다. 순서를 뒤집으면 배정 루프가 0행을 보고 지나가고,
+소유자는 `user_role` 0행 → 관리 메뉴(사용자·역할·감사 로그·설정) 전체가 사라진 상태로 태어난다.
+역할을 배정할 화면(`/admin/roles`)도 ADMIN 전용이라 **자력 복구가 불가능**하다. 순서를 틀렸다면
+멤버십을 넣은 뒤 `SELECT provision_tenant_defaults(<id>);` 를 다시 부르면 된다(멱등).
 
 `V98__provision_tenant_defaults_function.sql` 을 읽어 확인했다 — `SECURITY DEFINER` 함수로,
 테넌트 1(원본)의 시스템 역할·역할-권한 매핑·내장 리포트 양식 3건을 대상 테넌트로 복제한다.
