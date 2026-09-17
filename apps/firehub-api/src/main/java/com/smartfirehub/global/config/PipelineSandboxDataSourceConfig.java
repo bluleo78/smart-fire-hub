@@ -9,8 +9,6 @@ import org.jooq.impl.DSL;
 import org.jooq.impl.DataSourceConnectionProvider;
 import org.jooq.impl.DefaultConfiguration;
 import org.jooq.impl.DefaultExecuteListenerProvider;
-import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.jdbc.DataSourceProperties;
 import org.springframework.boot.autoconfigure.jooq.ExceptionTranslatorExecuteListener;
 import org.springframework.boot.autoconfigure.jooq.SpringTransactionProvider;
@@ -18,7 +16,6 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
-import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.transaction.PlatformTransactionManager;
 
@@ -64,41 +61,19 @@ public class PipelineSandboxDataSourceConfig {
     return DSL.using(config);
   }
 
-  // --- 파이프라인 샌드박스 DataSource + DSLContext (pipeline_executor 사용자) ---
-
-  @Bean("pipelineDataSource")
-  public DataSource pipelineDataSource(
-      @Value("${app.pipeline.datasource.url}") String url,
-      @Value("${app.pipeline.datasource.username}") String username,
-      @Value("${app.pipeline.datasource.password}") String password) {
-    HikariDataSource ds = new HikariDataSource();
-    ds.setJdbcUrl(url);
-    ds.setUsername(username);
-    ds.setPassword(password);
-    ds.setMaximumPoolSize(10);
-    ds.setPoolName("pipeline-sandbox-pool");
-    ds.setConnectionTestQuery("SELECT 1");
-    // HikariCP는 기본적으로 풀 생성 시 커넥션을 즉시 검증해 실패하면 앱 기동 자체를 막는다.
-    // pipeline_executor 비밀번호는 RolePasswordSyncCallback이 Flyway migrate 직후 동기화하므로,
-    // 그 시점 이전에 이 빈이 즉시 검증하면 동기화 전 상태로 실패할 수 있다 — 지연 검증으로 전환.
-    ds.setInitializationFailTimeout(-1);
-    return ds;
-  }
-
-  @Bean("pipelineDslContext")
-  public DSLContext pipelineDslContext(@Qualifier("pipelineDataSource") DataSource dataSource) {
-    // 주 dslContext()와 동일한 패턴 적용:
-    // 1. TransactionAwareDataSourceProxy → Spring @Transactional과 jOOQ가 같은 커넥션 공유
-    // 2. SpringTransactionProvider → dsl.transaction()이 Spring 트랜잭션에 참여 (테스트 롤백 정상 동작)
-    // 3. ExceptionTranslatorExecuteListener → jOOQ 예외를 Spring DataAccessException 계층으로 번역
-    // 별도의 DataSourceTransactionManager 를 새로 만드는 것은 의도적이다: 파이프라인 샌드박스(data
-    // 스키마)는 이후 단계에서 GUC/RLS 가 아니라 스키마+롤 분리로 격리되므로, 이 커넥션은 테넌트 GUC 주입이
-    // 필요 없다("고려했지만 불필요"임을 명시해 다음에 읽는 사람이 "고려 안 됨"으로 오해하지 않게 한다).
-    DefaultConfiguration config = new DefaultConfiguration();
-    config.set(new DataSourceConnectionProvider(new TransactionAwareDataSourceProxy(dataSource)));
-    config.set(SQLDialect.POSTGRES);
-    config.set(new SpringTransactionProvider(new DataSourceTransactionManager(dataSource)));
-    config.set(new DefaultExecuteListenerProvider(ExceptionTranslatorExecuteListener.DEFAULT));
-    return DSL.using(config);
-  }
+  // 공용 pipeline_executor 자격증명으로 여는 DataSource·DSLContext 는 삭제했다(빈 이름
+  // "pipelineDataSource"/"pipelineDslContext").
+  //
+  // 그 빈들의 마지막 프로덕션 소비자는 PipelineAsyncRunner 의 SQL 컬럼 probe 였다. P3-b2 가 스키마를
+  // data_t{id} 로 분리하면서 실행 경로는 테넌트 롤로 옮겼지만 probe 는 이 공용 롤에 남았고, 테넌트 2의
+  // 파이프라인이 "permission denied for schema data_t2" 로 터졌다. probe 는 SqlColumnProbe 로 옮겨
+  // TenantPipelineDataSourceRegistry(테넌트별 롤)를 쓴다.
+  //
+  // 빈을 남겨 두고 주석으로 "쓰지 말라"고 적지 않는 이유는 TenantPipelineDataSourceRegistry 가
+  // dslForWithoutLease 를 private 으로 둔 것과 같다 — 이 저장소에서 주석형 처방이 낡거나 무시된 전례가
+  // 여러 번 있었다. 빈이 없으면 @Qualifier("pipelineDslContext") 주입은 컴파일되지 않으므로, 같은 종류의
+  // 실수를 다시 할 수 없다.
+  //
+  // app.pipeline.datasource.* 프로퍼티 자체는 남는다 — TenantPipelineDataSourceRegistry(url),
+  // FlywayCallbackConfig(password), PythonScriptExecutor 가 계속 읽는다.
 }

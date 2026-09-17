@@ -243,7 +243,14 @@ class DataSchemaResolutionTest {
               "com/smartfirehub/pipeline/service/SqlScriptExecutor.java",
               "\"SET LOCAL search_path = '\" + DataSchema.current() + \"'\"",
               1,
-              "파이프라인 SQL 실행 직전 search_path — 위와 같은 이유(식별자 목록)로 조립이 맞다"));
+              "파이프라인 SQL 실행 직전 search_path — 위와 같은 이유(식별자 목록)로 조립이 맞다"),
+          new PinnedSite(
+              "com/smartfirehub/pipeline/service/SqlColumnProbe.java",
+              "\"SET LOCAL search_path = '\" + DataSchema.current() + \"'\"",
+              1,
+              // 같은 SQL 이 probe 와 실행에서 다른 search_path 로 해석되면 probe 가 본 컬럼과 실제로
+              // 적재되는 컬럼이 어긋난다 — 그래서 SqlScriptExecutor 와 같은 문장을 같은 이유로 세운다.
+              "컬럼 probe 직전 search_path — 실행 경로(SqlScriptExecutor)와 같은 조리법이어야 한다"));
 
   /**
    * 카탈로그로 테넌트 스키마를 <b>열거</b>하는 코드를 잡는다(P3-b2 T2, 신설. 라운드 1 리뷰로

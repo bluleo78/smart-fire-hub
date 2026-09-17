@@ -26,7 +26,6 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -40,10 +39,8 @@ import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.jooq.DSLContext;
-import org.jooq.Field;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
@@ -58,6 +55,7 @@ import org.springframework.stereotype.Service;
  */
 @Service
 @Slf4j
+@RequiredArgsConstructor
 public class PipelineAsyncRunner {
 
   private final PipelineStepRepository stepRepository;
@@ -67,7 +65,7 @@ public class PipelineAsyncRunner {
   private final DataTableRowService dataTableRowService;
   private final DatasetRepository datasetRepository;
   private final DatasetColumnRepository columnRepository;
-  private final DSLContext pipelineDsl;
+  private final SqlColumnProbe sqlColumnProbe;
   private final SqlScriptExecutor sqlExecutor;
   private final PythonScriptExecutor pythonExecutor;
   private final ApplicationEventPublisher applicationEventPublisher;
@@ -81,49 +79,6 @@ public class PipelineAsyncRunner {
   private final SqlValidator sqlValidator;
   private final PythonScriptValidator pythonScriptValidator;
 
-  /** {@code @Qualifier("pipelineDslContext")}가 필요하여 명시적 생성자 주입을 사용한다. */
-  public PipelineAsyncRunner(
-      PipelineStepRepository stepRepository,
-      PipelineExecutionRepository executionRepository,
-      PipelineRepository pipelineRepository,
-      DataTableService dataTableService,
-      DataTableRowService dataTableRowService,
-      DatasetRepository datasetRepository,
-      DatasetColumnRepository columnRepository,
-      @Qualifier("pipelineDslContext") DSLContext pipelineDsl,
-      SqlScriptExecutor sqlExecutor,
-      PythonScriptExecutor pythonExecutor,
-      ApplicationEventPublisher applicationEventPublisher,
-      ApiCallExecutor apiCallExecutor,
-      ApiConnectionService apiConnectionService,
-      ObjectMapper objectMapper,
-      PermissionChecker permissionChecker,
-      ExecutorClient executorClient,
-      AiClassifyExecutor aiClassifyExecutor,
-      TempDatasetService tempDatasetService,
-      SqlValidator sqlValidator,
-      PythonScriptValidator pythonScriptValidator) {
-    this.stepRepository = stepRepository;
-    this.executionRepository = executionRepository;
-    this.pipelineRepository = pipelineRepository;
-    this.dataTableService = dataTableService;
-    this.dataTableRowService = dataTableRowService;
-    this.datasetRepository = datasetRepository;
-    this.columnRepository = columnRepository;
-    this.pipelineDsl = pipelineDsl;
-    this.sqlExecutor = sqlExecutor;
-    this.pythonExecutor = pythonExecutor;
-    this.applicationEventPublisher = applicationEventPublisher;
-    this.apiCallExecutor = apiCallExecutor;
-    this.apiConnectionService = apiConnectionService;
-    this.objectMapper = objectMapper;
-    this.permissionChecker = permissionChecker;
-    this.executorClient = executorClient;
-    this.aiClassifyExecutor = aiClassifyExecutor;
-    this.tempDatasetService = tempDatasetService;
-    this.sqlValidator = sqlValidator;
-    this.pythonScriptValidator = pythonScriptValidator;
-  }
 
   /**
    * 파이프라인을 비동기로 실행한다.
@@ -380,6 +335,10 @@ public class PipelineAsyncRunner {
         // 명시적으로 지정한 기존 데이터셋(outputDatasetId가 원래부터 있던 경우)은 실제로 "id"라는
         // 정상 사용자 컬럼을 가질 수 있으므로 그 이름을 그대로 매칭해야 한다(#645).
         boolean tempDatasetAutoCreated = false;
+        // probe 결과를 스텝당 한 번만 얻어 재사용한다 — 아래 두 블록이 같은 sql 을 각각 probe 하면
+        // 테넌트 풀 대여·트랜잭션·왕복이 두 벌 나가고, 그 사이 풀이 축출·close() 될 틈까지 생긴다.
+        // SELECT 가 아니면 probe 자체가 필요 없으므로 지연 획득한다.
+        List<ColumnInfo> probedColumns = null;
 
         // SELECT이고 outputDatasetId가 없으면 임시 데이터셋 자동 생성
         if (isSelect && outputDatasetId == null) {
@@ -392,7 +351,8 @@ public class PipelineAsyncRunner {
           // 걸려 실행이 항상 실패한다(#645). 자동 생성 경로에서만 예약어 컬럼명을 자동으로
           // 별칭 처리(rename-on-conflict)해 우회한다 — 사용자가 명시적으로 짓는 다른 스텝 타입의
           // 출력 컬럼명 검증은 그대로 유지한다.
-          List<ColumnInfo> selectColumns = renameReservedColumns(extractSelectColumnsWithTypes(sql));
+          probedColumns = sqlColumnProbe.columnsWithTypes(sql);
+          List<ColumnInfo> selectColumns = renameReservedColumns(probedColumns);
 
           Optional<Long> existingDatasetId = tempDatasetService.findExistingTempDataset(stepId);
           if (existingDatasetId.isPresent()) {
@@ -424,7 +384,11 @@ public class PipelineAsyncRunner {
           // 매칭되어야 하기 때문이다. 사용자가 직접 지정한 기존 출력 데이터셋에는 이 별칭 처리를
           // 적용하지 않는다 — 그 데이터셋의 "id" 컬럼은 예약어 충돌이 아니라 사용자가 실제로
           // 만든 정상 컬럼일 수 있다(#645).
-          List<String> rawSelectColumns = extractSelectColumns(sql);
+          // 위 자동 생성 블록이 이미 probe 했으면 그 결과를 그대로 쓴다(이름은 ColumnInfo 에서 뽑는다).
+          if (probedColumns == null) {
+            probedColumns = sqlColumnProbe.columnsWithTypes(sql);
+          }
+          List<String> rawSelectColumns = probedColumns.stream().map(ColumnInfo::name).toList();
           List<String> selectColumns =
               tempDatasetAutoCreated ? renameReservedColumnNames(rawSelectColumns) : rawSelectColumns;
 
@@ -1132,62 +1096,6 @@ public class PipelineAsyncRunner {
     return false;
   }
 
-  /**
-   * SQL SELECT 문의 컬럼명 목록을 추출한다. 실제 DB에 probe 쿼리를 실행하여 정확한 컬럼명을 얻는다.
-   *
-   * @param sql SELECT SQL 문
-   * @return 컬럼명 목록
-   */
-  private List<String> extractSelectColumns(String sql) {
-    try {
-      String probeSql = "SELECT * FROM (" + sql + ") AS _probe LIMIT 0";
-      return Arrays.stream(pipelineDsl.fetch(probeSql).fields())
-          .map(Field::getName)
-          .collect(Collectors.toList());
-    } catch (Exception e) {
-      throw new ScriptExecutionException("SQL 컬럼 분석 실패: " + extractRootCauseMessage(e), e);
-    }
-  }
-
-  /**
-   * SQL SELECT 문의 컬럼명과 타입 목록을 추출한다. 임시 데이터셋 스키마 생성에 사용된다.
-   *
-   * @param sql SELECT SQL 문
-   * @return 컬럼 정보(이름, 타입) 목록
-   */
-  private List<ColumnInfo> extractSelectColumnsWithTypes(String sql) {
-    try {
-      String probeSql = "SELECT * FROM (" + sql + ") AS _probe LIMIT 0";
-      var result = pipelineDsl.fetch(probeSql);
-      return Arrays.stream(result.fields())
-          .map(f -> new ColumnInfo(f.getName(), mapJooqTypeToAppType(f.getDataType())))
-          .collect(Collectors.toList());
-    } catch (Exception e) {
-      throw new ScriptExecutionException("SQL 컬럼 타입 분석 실패: " + extractRootCauseMessage(e), e);
-    }
-  }
-
-  /**
-   * SQL 컬럼 스키마 추론용 probe 쿼리 실행 실패 시, 사용자에게 보여줄 근본 원인 메시지를 추출한다(#662).
-   *
-   * <p>jOOQ가 던지는 {@code DataAccessException.getMessage()}는 "jOOQ; bad SQL grammar [<probe SQL 원문>]"
-   * 형식으로 {@code SELECT * FROM (...) AS _probe LIMIT 0}처럼 사용자가 작성하지 않은 내부 구현 세부사항(probe
-   * 래핑)을 그대로 노출한다. 반면 실제 DB(PostgreSQL 등)가 반환한 구체적 원인(예: "relation ... does not
-   * exist")은 {@code getCause()}에만 담겨 있어 그대로는 사용자에게 전달되지 않는다. 이 메서드는 cause 체인을
-   * 우선 사용해 근본 원인만 뽑아내고, cause가 없거나 메시지가 비어 있을 때만 원래 메시지로 폴백한다.
-   *
-   * @param e probe 쿼리 실행 중 발생한 예외
-   * @return 사용자에게 노출할 근본 원인 메시지 (probe SQL 구문 등 내부 구현 디테일 제거)
-   */
-  private String extractRootCauseMessage(Exception e) {
-    Throwable cause = e.getCause();
-    if (cause != null && cause.getMessage() != null && !cause.getMessage().isBlank()) {
-      return cause.getMessage();
-    }
-    // cause가 없으면 원본 예외 메시지로 폴백 (probe SQL 원문이 포함될 수 있으나 최소한의 정보는 제공)
-    return e.getMessage();
-  }
-
   /** 임시 데이터셋 물리 테이블이 항상 자동 보유하는 시스템 예약 컬럼명 (DataTableService 참조). */
   private static final Set<String> RESERVED_COLUMN_NAMES = Set.of("id", "import_id", "created_at");
 
@@ -1233,24 +1141,4 @@ public class PipelineAsyncRunner {
     return result;
   }
 
-  /**
-   * jOOQ DataType을 애플리케이션 타입 문자열로 변환한다.
-   *
-   * @param dataType jOOQ 데이터 타입
-   * @return 애플리케이션 타입 문자열 (TEXT, INTEGER, DECIMAL, BOOLEAN, DATE, TIMESTAMP)
-   */
-  private String mapJooqTypeToAppType(org.jooq.DataType<?> dataType) {
-    String sqlType = dataType.getTypeName().toUpperCase();
-    if (sqlType.contains("VARCHAR") || sqlType.contains("TEXT") || sqlType.contains("CHAR"))
-      return "TEXT";
-    if (sqlType.contains("INT") || sqlType.contains("SERIAL")) return "INTEGER";
-    if (sqlType.contains("NUMERIC")
-        || sqlType.contains("DECIMAL")
-        || sqlType.contains("FLOAT")
-        || sqlType.contains("DOUBLE")) return "DECIMAL";
-    if (sqlType.contains("BOOL")) return "BOOLEAN";
-    if (sqlType.equals("DATE")) return "DATE";
-    if (sqlType.contains("TIMESTAMP")) return "TIMESTAMP";
-    return "TEXT";
-  }
 }
