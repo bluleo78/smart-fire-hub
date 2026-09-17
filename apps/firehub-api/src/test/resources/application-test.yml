@@ -48,7 +48,6 @@ app:
   pipeline:
     datasource:
       url: jdbc:postgresql://localhost:5433/smartfirehub_test
-      username: pipeline_executor
       password: pipeline_exec_pwd
     # 테넌트별 파이프라인 실행 롤(pipeline_executor_t{id}) 비밀번호 파생 HMAC 키.
     # RolePasswordSyncCallback 이 이 값으로 매 기동마다 DB 쪽 비밀번호를 맞춘다(T1 TenantPipelineRole).

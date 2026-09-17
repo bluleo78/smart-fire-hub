@@ -74,6 +74,11 @@ public class PipelineSandboxDataSourceConfig {
   // 여러 번 있었다. 빈이 없으면 @Qualifier("pipelineDslContext") 주입은 컴파일되지 않으므로, 같은 종류의
   // 실수를 다시 할 수 없다.
   //
-  // app.pipeline.datasource.* 프로퍼티 자체는 남는다 — TenantPipelineDataSourceRegistry(url),
-  // FlywayCallbackConfig(password), PythonScriptExecutor 가 계속 읽는다.
+  // app.pipeline.datasource.* 프로퍼티 자체는 남는다 — TenantPipelineDataSourceRegistry 와
+  // PythonScriptExecutor 가 url 을, FlywayCallbackConfig 가 password 를 계속 읽는다.
+  //
+  // 공용 롤 **자격증명**(username/password)을 실행 경로에서 읽는 곳은 이제 없다(#681). 예전에는
+  // PythonScriptExecutor 가 빈이 아니라 @Value 로 같은 자격증명을 직접 읽어, "공용 롤에 프로덕션
+  // 소비자가 없다"는 위 서술이 빈 기준으로만 참이었다 — 그 비대칭을 닫았다. 남은 password 소비자는
+  // Flyway 콜백의 ALTER ROLE 동기화 하나이며, 그것은 접속이 아니라 레거시 롤 비밀번호 유지용이다.
 }
