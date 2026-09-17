@@ -1,5 +1,6 @@
 package com.smartfirehub.platform.service;
 
+import com.smartfirehub.global.tenant.TenantPipelineRoleProvisioner;
 import com.smartfirehub.global.tenant.TenantProvisioningService;
 import com.smartfirehub.platform.dto.CreateTenantRequest;
 import com.smartfirehub.platform.dto.TenantMemberResponse;
@@ -26,6 +27,7 @@ public class PlatformTenantService {
   private final PlatformTenantRepository tenantRepository;
   private final TenantProvisioningService provisioningService;
   private final UserRepository userRepository;
+  private final TenantPipelineRoleProvisioner pipelineRoleProvisioner;
 
   /**
    * 신규 테넌트를 만들고 초기 Owner 와 기본 시드를 채운다.
@@ -40,6 +42,11 @@ public class PlatformTenantService {
    * <p><b>데이터 스키마({@code data_t{id}})는 만들지 않는다.</b> {@code TenantSchemaProvisioner} 는
    * 의도적으로 <b>지연 생성</b>이다 — 공유 test DB 에 테넌트가 수백 개 누적돼 있어 테넌트마다 선제
    * 생성하면 스키마가 무한히 쌓인다. 실제로 데이터 테이블을 만드는 테넌트만 스키마를 갖는다.
+   *
+   * <p><b>파이프라인 실행 DB 롤은 여기서 만든다(#680).</b> 스키마와 달리 롤은 지연 생성할 수 없다 —
+   * 스키마를 만드는 시점에 롤이 없으면 {@code TenantSchemaProvisioner} 가 executor GRANT 를 통째로
+   * 건너뛰고, 그 사실은 <b>그 테넌트가 파이프라인을 처음 돌릴 때까지</b> 아무 데도 드러나지 않는다
+   * (2026-09-17 운영 장애). 그래서 롤이 먼저다.
    */
   @Transactional
   public TenantSummaryResponse create(CreateTenantRequest request) {
@@ -59,6 +66,17 @@ public class PlatformTenantService {
     // 배정한다(V121). 멤버십 삽입이 먼저여야 소유자가 권한 0개로 태어나지 않는다.
     tenantRepository.insertOwnerMembership(tenantId, request.ownerUserId());
     provisioningService.provisionDefaults(tenantId);
+    // DB 롤 생성은 소유자 커넥션이라 이 트랜잭션에 묶이지 않는다 — 그래서 **일부러 마지막**이다.
+    //
+    // 실패 두 가지를 구분할 것:
+    //  (a) 롤 생성 자체가 실패 → 그 자신의 트랜잭션이 롤백돼 **롤은 남지 않고**, 예외가 전파돼
+    //      위의 tenant/membership 삽입도 롤백된다. 아무것도 남지 않으므로 같은 slug 로 재시도하면 된다.
+    //  (b) 롤 생성은 커밋됐는데 그 **뒤**가 실패(아래 findById, 또는 커밋 자체) → 존재하지 않을
+    //      테넌트 id 의 고아 롤이 남는다. 무해하고 멱등이지만 남기는 남는다.
+    // 이 호출을 마지막에 두는 이유가 바로 (b) 의 창을 최소화하는 것이다 — 앞에 두면 뒤따르는
+    // 모든 단계의 실패가 전부 (b) 가 된다. 반대로 순서를 뒤집어 롤을 나중에 "언젠가" 만들게 하면
+    // "행은 있고 롤은 없는" 테넌트 2와 똑같은 상태가 커밋과 함께 확정된다 — 그것이 이 장애다.
+    pipelineRoleProvisioner.ensureRoleIfAutoProvisionEnabled(tenantId);
 
     return tenantRepository
         .findById(tenantId)

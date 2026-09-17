@@ -72,6 +72,36 @@ SELECT provision_tenant_defaults(<id>);
 **멱등**이다(`NOT EXISTS` 가드로 재실행해도 중복 삽입되지 않음, 소스 주석 확인). `p_tenant_id`
 가 원본 테넌트(1) 자신이면 즉시 반환하고 아무 것도 하지 않는다.
 
+> **#680 이후 정정 (2026-09-18) — 1-3 · 1-5 · 1-6 은 이제 앱이 자동으로 한다.**
+> `POST /api/platform/tenants` 로 테넌트를 만들면 `TenantPipelineRoleProvisioner` 가 같은 요청
+> 안에서 `CREATE ROLE` + `GRANT CONNECT` + `ALTER ROLE ... IN DATABASE ... SET search_path` 를
+> 실행한다. **비밀번호는 처음부터 `TenantPipelineRole.password(id, secret)` 파생값**이라 1-6(앱
+> 재기동)이 아예 필요 없다. 이미 만들어진 테넌트는 앱 기동 시
+> `TenantPipelineRoleBootstrap` 이 ACTIVE 테넌트를 훑어 같은 절차를 멱등 적용하고, 스키마가 이미
+> 있으면 1-4 의 GRANT 까지 다시 걸어 준다.
+>
+> **왜 이 절차가 아직 문서에 남아 있는가.** (a) `app.pipeline.role-auto-provision=false` 인 환경
+> (test 프로필)과 (b) 앱을 띄울 수 없는 상황의 폴백, (c) 자동 프로비저닝이 실제로 무엇을 하는지의
+> 명세 — 세 가지 용도다. **아래를 손으로 실행해도 안전하다(전부 멱등).**
+>
+> 이 절차를 사람이 실행하지 않아서 난 것이 2026-09-17 테넌트 2 장애다(#680). 테넌트는 정상으로
+> 보이고 데이터셋도 잘 만들어지지만, **그 테넌트가 파이프라인을 처음 돌릴 때에야**
+> `permission denied for schema data_t<id>` 로 터진다.
+>
+> **배포 전 확인 (기동 치유가 락 폭풍을 내지 않는지).** 기동 치유는 스키마가 이미 있는 테넌트에
+> 대해 `TenantSchemaProvisioner` 를 부르고, 그 프로비저너는 "기본 권한이 완비됐는가"로만 단락한다.
+> 기본 권한이 빠진 큰 스키마가 있으면 `GRANT ... ON ALL TABLES` 가 **매 기동마다** 돌며 테이블마다
+> AccessExclusiveLock 을 잡는다(R9 가 막으려던 그 상황). 배포 전에 각 테넌트 스키마에 대해:
+>
+> ```sql
+> select defaclobjtype, defaclacl from pg_default_acl
+>   where defaclnamespace = 'data_t<id>'::regnamespace and defaclrole = 'app_tenant'::regrole;
+> -- (테넌트 1 은 data) 'r'·'S' 두 행이 있고 각 defaclacl 에 pipeline_executor_t<id> 가 있어야 한다.
+> ```
+>
+> 2026-09-18 prod 실측: 테넌트 1(`data`)·2(`data_t2`) 모두 두 행 완비 → 기동 치유는 두 테넌트
+> 전부 단락한다(6문장 재실행 없음).
+
 ### 1-3. 파이프라인 실행 롤 생성 (스키마와 무관 — 언제 실행해도 안전)
 
 **최종 전체 리뷰 A5 로 순서를 다시 짰다.** 예전 버전은 번호 절차 안에 스키마 의존 GRANT 5문장을
@@ -180,7 +210,10 @@ select rolname, setdatabase, setconfig from pg_db_role_setting drs
 -- (setdatabase 는 pg_database.oid 값이라 DB 마다 다르다 — 0 인지만 확인하면 된다.)
 ```
 
-### 1-6. 비밀번호 동기화
+### 1-6. 비밀번호 동기화 (자동 프로비저닝을 쓰면 불필요)
+
+**앱이 만든 롤은 처음부터 파생 비밀번호를 갖는다(#680)** — 이 단계는 1-3 을 손으로 실행해 임시
+비밀번호를 넣었을 때만 필요하다.
 
 앱을 재기동(또는 Flyway `migrate` 를 다시 트리거)하면 `RolePasswordSyncCallback` 이 1-3 에서
 임시로 넣은 비밀번호를 `TenantPipelineRole.password(<id>, secret)` 로 파생한 실제 값으로

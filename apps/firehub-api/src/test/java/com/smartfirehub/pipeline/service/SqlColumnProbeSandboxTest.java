@@ -102,12 +102,7 @@ class SqlColumnProbeSandboxTest extends IntegrationTestBase {
       TenantRlsTestSupport.cleanupAll(
           () -> dsl.execute("DROP TABLE IF EXISTS " + probeTable),
           () -> TenantRlsTestSupport.dropSchemasCreatedByThisTest(ownerDsl(), schema),
-          () -> {
-            String db = ownerDsl().fetch("SELECT current_database()").get(0).get(0, String.class);
-            ownerDsl().execute("REVOKE ALL ON DATABASE \"" + db + "\" FROM " + executorRole);
-            ownerDsl().execute("DROP OWNED BY " + executorRole);
-            ownerDsl().execute("DROP ROLE IF EXISTS " + executorRole);
-          },
+          () -> TenantRlsTestSupport.dropPipelineLoginRole(ownerDsl(), executorRole),
           () -> TenantRlsTestSupport.deleteTenants(dsl, tenantId));
     }
   }

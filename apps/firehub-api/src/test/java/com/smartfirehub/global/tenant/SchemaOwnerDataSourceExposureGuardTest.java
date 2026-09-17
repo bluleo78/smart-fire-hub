@@ -37,11 +37,25 @@ import org.junit.jupiter.api.Test;
  */
 class SchemaOwnerDataSourceExposureGuardTest {
 
-  /** 이 문자열을 참조해도 되는 유일한 두 파일 — 빈 정의 지점과 유일한 프로덕션 주입 지점. */
+  /**
+   * 이 문자열을 참조해도 되는 파일 — 빈 정의 지점과 프로덕션 주입 지점들.
+   *
+   * <p>{@code TenantPipelineRoleProvisioner} 는 #680 에서 추가됐다. {@code CREATE ROLE} /
+   * {@code GRANT ... ON DATABASE} / {@code ALTER ROLE ... IN DATABASE} 는 런타임 롤
+   * ({@code app_tenant})로 실행할 수 없어 소유자 커넥션 말고는 방법이 없다 — 위 Javadoc 이 말하는
+   * "이연된 방안 A"(전용 비-슈퍼유저 롤)가 도입되면 {@link TenantSchemaProvisioner} 와 함께 그쪽으로
+   * 옮겨갈 자리다.
+   *
+   * <p><b>{@code TenantPipelineRoleBootstrap} 은 일부러 여기 없다.</b> 기동 치유 루프는 읽기
+   * 두 건({@code tenant}, {@code pg_namespace})만 직접 하고 쓰기는 전부 위 두 프로비저너에
+   * 위임하므로, 런타임 DSLContext 로 충분하다. 노출을 늘리지 않는 쪽을 골랐다는 사실 자체를
+   * 이 목록의 부재로 기록해 둔다.
+   */
   private static final List<String> ALLOWED_FILES =
       List.of(
           "com/smartfirehub/global/config/SchemaOwnerDataSourceConfig.java",
-          "com/smartfirehub/global/tenant/TenantSchemaProvisioner.java");
+          "com/smartfirehub/global/tenant/TenantSchemaProvisioner.java",
+          "com/smartfirehub/global/tenant/TenantPipelineRoleProvisioner.java");
 
   private static final String TARGET_TOKEN = "schemaOwnerDataSource";
 
