@@ -267,4 +267,39 @@ describe('pipeline-builder workflow social-engineering safeguards (#250)', () =>
     expect(section).toBeDefined();
     expect(section).toMatch(/연쇄/);
   });
+
+  /**
+   * #682 (2026-09-17 운영 사고): `permission denied for schema data_t2` 를 "스키마명이 틀렸다"로
+   * 오독해, 올바르던 `data_t2.` 한정자를 떼어낸 SQL 로 `update_pipeline` 을 호출했다. 서버
+   * 검증기가 400 으로 막아 저장되지는 않았지만, 사용자에게는 "파이프라인 수정 실패"로 보였다.
+   * 이 테스트는 두 오류 계열을 정반대로 다루라는 규칙이 프롬프트에서 사라지지 않는지 고정한다.
+   */
+  it('rules.md에 permission denied 오류를 SQL 수정으로 대응하지 말라는 규칙이 있어야 한다', () => {
+    const rules = readPrompt('rules.md');
+    expect(rules).toContain('permission denied for schema');
+    expect(rules).toMatch(/#682/);
+    // 권한 오류 = SQL 문제가 아니라는 판정
+    expect(rules).toMatch(/스키마 이름이 틀렸다는 뜻이 아니다/);
+    // 한정자 제거 금지 — 이번 사고의 실제 행동
+    expect(rules).toMatch(/한정자[\s\S]{0,20}제거/);
+    // 중단·보고로 끝내라는 지시
+    expect(rules).toMatch(/중단하고|운영자/);
+  });
+
+  it('rules.md가 SQL을 실제로 고쳐야 하는 스키마 오류를 권한 오류와 구분한다', () => {
+    const rules = readPrompt('rules.md');
+    expect(rules).toContain('허용되지 않는 스키마 참조');
+    expect(rules).toContain('테이블 참조에 스키마가 없습니다');
+    // 이쪽 메시지는 올바른 스키마명을 담고 있으므로 그대로 쓰라는 지시
+    expect(rules).toMatch(/메시지에 적힌 이름을 그대로/);
+  });
+
+  /**
+   * 워크스페이스마다 스키마명이 다르므로(`data` / `data_t{id}`), 프롬프트가 특정 스키마명을
+   * "고정값"으로 단정하면 그 자체가 #682 계열 오독의 원인이 된다.
+   */
+  it('rules.md가 실행 계정 스키마를 특정 이름으로 단정하지 않는다', () => {
+    const rules = readPrompt('rules.md');
+    expect(rules).not.toMatch(/실행 계정은 `data` 스키마로 제한/);
+  });
 });
