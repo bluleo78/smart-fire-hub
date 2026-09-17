@@ -7,6 +7,7 @@ import io.jsonwebtoken.security.Keys;
 import java.util.Base64;
 import java.util.Date;
 import java.util.Optional;
+import java.util.UUID;
 import javax.crypto.SecretKey;
 import org.springframework.stereotype.Component;
 
@@ -46,11 +47,20 @@ public class JwtTokenProvider {
     return builder.signWith(key).compact();
   }
 
-  /** 리프레시 토큰 발급. 갱신 시 활성 테넌트를 유지하기 위해 tenant 클레임을 함께 싣는다. */
+  /**
+   * 리프레시 토큰 발급. 갱신 시 활성 테넌트를 유지하기 위해 tenant 클레임을 함께 싣는다.
+   *
+   * <p><b>jti 가 반드시 필요하다</b>: {@code iat}/{@code exp} 는 JWT 규격상 초 단위이고 서명은 HMAC
+   * 대칭키라 결정적이다. 고유 클레임이 없으면 같은 사용자·테넌트에 대해 같은 1초 안에 발급한 토큰이
+   * 바이트까지 동일해지고, {@code refresh_token.token_hash} 의 UNIQUE 제약에 걸려 저장이 실패한다.
+   * 실제로 {@code select-tenant} 직후 하드 리로드가 유발하는 세션 복원 {@code refresh} 가 같은 초에
+   * 들어와 로그인이 전면 실패했다(2026-09-16).
+   */
   public String generateRefreshToken(Long userId, Long tenantId) {
     Date now = new Date();
     var builder =
         Jwts.builder()
+            .id(UUID.randomUUID().toString())
             .subject(userId.toString())
             .claim("type", "refresh")
             .issuedAt(now)
@@ -83,10 +93,16 @@ public class JwtTokenProvider {
         .compact();
   }
 
-  /** 플랫폼 리프레시 토큰. 마찬가지로 tenant 클레임이 없다. */
+  /**
+   * 플랫폼 리프레시 토큰. 마찬가지로 tenant 클레임이 없다.
+   *
+   * <p>운영자 평면도 같은 {@code refresh_token} 테이블·같은 UNIQUE 제약을 쓰므로 고유화({@code jti})가
+   * 테넌트 평면과 대칭으로 필요하다 — 한쪽만 고치면 다른 평면에서 같은 결함이 남는다.
+   */
   public String generatePlatformRefreshToken(Long userId) {
     Date now = new Date();
     return Jwts.builder()
+        .id(UUID.randomUUID().toString())
         .subject(userId.toString())
         .claim("type", "refresh")
         .claim("platform", true)
