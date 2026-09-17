@@ -392,9 +392,21 @@ public class PipelineAsyncRunner {
           List<String> selectColumns =
               tempDatasetAutoCreated ? renameReservedColumnNames(rawSelectColumns) : rawSelectColumns;
 
+          // 출력 데이터셋의 컬럼은 **하나도 빼지 않는다**. 특히 is_primary_key 컬럼을 제외하면 안 된다
+          // (#684). 이 경로는 대상 목록만 좁히고 SELECT 식 목록은 그대로 두기 때문에, 대상에서 한
+          // 컬럼이라도 빠지면 식 개수가 어긋나 PostgreSQL 이 INSERT has more expressions than target
+          // columns 로 거부한다 — 2026-09-17 운영 장애가 정확히 이것이다.
+          //
+          // 예전에는 여기서 !col.isPrimaryKey() 로 걸렀다. "PK 는 시스템이 채우는 대리키"라는 가정이
+          // 었는데 이 스키마에서는 성립하지 않는다:
+          //  - 물리 PK 는 DataTableService 가 id BIGSERIAL PRIMARY KEY 로 **따로** 만든다.
+          //  - id/import_id/created_at 은 시스템 예약어라 dataset_column 에 애초에 들어올 수 없다.
+          //  - is_primary_key 가 붙은 컬럼은 평범한 NOT NULL 컬럼 + UNIQUE 인덱스(ux_<table>_pk)일
+          //    뿐이고 기본값도 없다 — 즉 대리키가 아니라 **사용자가 값을 넣어야 하는 업무 키**다.
+          // 그래서 빼면 개수 불일치로 실패하고, SELECT 에서도 빼면 이번엔 NOT NULL 위반이 난다.
+          // 어느 쪽으로도 성공할 수 없었다.
           java.util.Set<String> outputColumnNames =
               columnRepository.findByDatasetId(outputDatasetId).stream()
-                  .filter(col -> !col.isPrimaryKey())
                   .map(DatasetColumnResponse::columnName)
                   .collect(Collectors.toSet());
 

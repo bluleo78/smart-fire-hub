@@ -249,6 +249,66 @@ class PipelineAsyncRunnerTest {
     assertThat(executedSql).endsWith(selectSql);
   }
 
+  /**
+   * 출력 데이터셋이 <b>업무 키(PK)</b> 컬럼을 선언했고 SELECT 가 그 컬럼을 함께 낼 때, 그 컬럼이
+   * INSERT 대상 목록에 살아 있어야 한다(#684).
+   *
+   * <p>이 경로는 대상 컬럼 목록만 좁히고 SELECT 식 목록은 그대로 둔다. 그래서 대상에서 한 컬럼이라도
+   * 빠지면 식 개수가 어긋나 PostgreSQL 이 {@code INSERT has more expressions than target columns} 로
+   * 거부한다 — 2026-09-17 운영 장애의 실제 실패 문구다.
+   *
+   * <p><b>왜 PK 컬럼을 빼면 안 되는가</b>: 물리 PK 는 {@code DataTableService} 가
+   * {@code id BIGSERIAL PRIMARY KEY} 로 따로 만든다. {@code id}/{@code import_id}/{@code created_at}
+   * 은 시스템 예약어라 {@code dataset_column} 에 들어올 수 없다. 즉 {@code is_primary_key} 가 붙은
+   * 컬럼은 시스템이 채우는 대리키가 아니라 <b>사용자가 값을 넣어야 하는 업무 키</b>이고(기본값 없음),
+   * {@code DatasetService} 가 거기에 NOT NULL 까지 강제한다. 빼면 넣을 방법이 사라진다.
+   *
+   * <p>그래서 개수까지 본다 — 컬럼 이름만 확인하면 목록이 한 칸 어긋나는 회귀를 놓친다.
+   */
+  @Test
+  void executeStep_selectIncludingPrimaryKeyColumn_keepsItAmongInsertTargets() {
+    // given: 출력 데이터셋의 post_id 가 업무 키로 선언돼 있고, SELECT 가 그것까지 낸다
+    Long pipelineId = 10L;
+    Long userId = 1L;
+    Long stepId = 201L;
+    Long stepExecId = 301L;
+    Long outputDatasetId = 51L;
+
+    String selectSql = "SELECT post_id, summary, urgency FROM data.\"src\"";
+    PipelineStepResponse sqlStep =
+        stepResponseWithOutput(stepId, "load-step", "SQL", selectSql, outputDatasetId, List.of());
+
+    when(datasetRepository.findTableNameById(outputDatasetId))
+        .thenReturn(Optional.of("analysis_table"));
+    when(columnRepository.findByDatasetId(outputDatasetId))
+        .thenReturn(List.of(col("post_id", true), col("summary", false), col("urgency", false)));
+
+    stubProbeColumns("post_id", "summary", "urgency");
+
+    when(sqlExecutor.execute(anyString())).thenReturn("3 rows affected");
+
+    // when
+    String status =
+        runner.executeStep(stepExecId, sqlStep, pipelineId, "TestPipeline", userId, false);
+
+    // then
+    assertThat(status).isEqualTo("COMPLETED");
+    ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
+    verify(sqlExecutor).execute(sqlCaptor.capture());
+    String executedSql = sqlCaptor.getValue();
+
+    String columnList =
+        executedSql.substring(executedSql.indexOf('(') + 1, executedSql.indexOf(')'));
+    assertThat(columnList.split(","))
+        .as("SELECT 식 3개와 INSERT 대상 3개가 정확히 맞아야 한다 — 어긋나면 운영에서 개수 불일치로 거부된다")
+        .hasSize(3);
+    assertThat(columnList)
+        .as("업무 키 컬럼은 시스템이 채워주지 않는다 — 대상에서 빠지면 넣을 방법이 없다")
+        .contains("\"post_id\"");
+    assertThat(executedSql).startsWith("INSERT INTO data.\"analysis_table\"");
+    assertThat(executedSql).endsWith(selectSql);
+  }
+
   @Test
   void executeStep_withCteAndOutputDataset_wrapsAsInsertIntoSelect() {
     // given
