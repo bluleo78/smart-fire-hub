@@ -28,10 +28,6 @@ class SqlScriptExecutorSandboxTest extends IntegrationTestBase {
 
   @Autowired private SqlScriptExecutor sqlScriptExecutor;
 
-  @Autowired
-  @Qualifier("pipelineDslContext")
-  private DSLContext pipelineDsl;
-
   // ── P3-b2 T4: search_path 조립 지점 실측 회귀 가드에서 쓰는 필드(라운드 2 리뷰 NIT-3 —
   // 테스트 메서드들 사이에 흩어져 있던 것을 클래스 상단으로 모았다) ────────────────────────
 
@@ -106,14 +102,6 @@ class SqlScriptExecutorSandboxTest extends IntegrationTestBase {
         .hasMessageContaining("data");
   }
 
-  @Test
-  void pipelineDslContext_usesCorrectUser() {
-    // pipeline_executor가 연결한 사용자인지 확인. 이 빈은 R5 에 따라 그대로 남아 있다(dev·prod 의
-    // 현행 경로) — SqlScriptExecutor 가 더 이상 이 빈을 쓰지 않는다는 사실은 아래 테넌트 롤 테스트가
-    // 고정한다.
-    String currentUser = pipelineDsl.fetch("SELECT current_user").get(0).get(0, String.class);
-    assertThat(currentUser).isEqualTo("pipeline_executor");
-  }
 
   // ── P3-b1 Task 3: 테넌트별 롤·명시적 search_path 배선 ─────────────────────────
 

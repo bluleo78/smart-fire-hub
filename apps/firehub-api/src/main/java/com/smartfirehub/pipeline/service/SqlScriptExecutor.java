@@ -25,7 +25,10 @@ public class SqlScriptExecutor {
    * {@code pipeline_executor} 자격증명 하나로 만든 풀이라, 어느 테넌트의 SQL 스텝을 실행하든 같은 DB
    * 롤로 접속한다 — 즉 스키마·grant 계층에서 테넌트를 구분할 수단이 없다. 여기서 테넌트별 롤
    * ({@code pipeline_executor_t{tenantId}}) 로 접속하면 격리의 근거가 애플리케이션 코드가 아니라
-   * <b>DB 권한</b>이 된다. 기존 빈은 R5 에 따라 그대로 남아 있다(dev·prod 의 현행 경로).
+   * <b>DB 권한</b>이 된다.
+   *
+   * <p>그 공용 빈({@code pipelineDslContext})은 이제 존재하지 않는다 — 삭제 경위는 {@link
+   * SqlColumnProbe} 의 Javadoc 에 있다.
    */
   private final TenantPipelineDataSourceRegistry tenantPipelineDataSources;
 

@@ -13,6 +13,7 @@ import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.global.security.PermissionChecker;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.pipeline.exception.ScriptExecutionException;
 import com.smartfirehub.pipeline.dto.AiClassifyConfig;
 import com.smartfirehub.pipeline.dto.PipelineStepResponse;
 import com.smartfirehub.pipeline.event.PipelineCompletedEvent;
@@ -25,12 +26,10 @@ import com.smartfirehub.pipeline.service.executor.ApiCallExecutor;
 import com.smartfirehub.pipeline.service.executor.ExecutorClient;
 import com.smartfirehub.pipeline.service.validator.PythonScriptValidator;
 import com.smartfirehub.pipeline.service.validator.SqlValidator;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import org.jooq.DSLContext;
-import org.jooq.Result;
-import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -57,7 +56,7 @@ class PipelineAsyncRunnerTest {
   @Mock DataTableRowService dataTableRowService;
   @Mock DatasetRepository datasetRepository;
   @Mock DatasetColumnRepository columnRepository;
-  @Mock DSLContext pipelineDsl;
+  @Mock SqlColumnProbe sqlColumnProbe;
   @Mock SqlScriptExecutor sqlExecutor;
   @Mock PythonScriptExecutor pythonExecutor;
   @Mock ApplicationEventPublisher applicationEventPublisher;
@@ -72,6 +71,17 @@ class PipelineAsyncRunnerTest {
   @Mock PythonScriptValidator pythonScriptValidator;
 
   @InjectMocks PipelineAsyncRunner runner;
+
+  /**
+   * SQL probe 가 돌려줄 컬럼 목록을 고정한다.
+   *
+   * <p>타입은 이 테스트가 검증하는 대상이 아니라 TEXT 로 고정한다(타입 매핑 자체는 probe 의 몫이다).
+   */
+  private void stubProbeColumns(String... names) {
+    doReturn(Arrays.stream(names).map(n -> new ColumnInfo(n, "TEXT")).toList())
+        .when(sqlColumnProbe)
+        .columnsWithTypes(anyString());
+  }
 
   /**
    * 스텝 SQL 조립이 {@code DataSchema.current()} 를 거치면서 테넌트 컨텍스트를 요구하게 됐다.
@@ -218,9 +228,7 @@ class PipelineAsyncRunnerTest {
         .thenReturn(
             List.of(col("pk_id", true), col("id", false), col("name", false), col("extra", false)));
 
-    Result<?> mockResult =
-        DSL.using(org.jooq.SQLDialect.POSTGRES).newResult(DSL.field("id"), DSL.field("name"));
-    doReturn(mockResult).when(pipelineDsl).fetch(anyString());
+    stubProbeColumns("id", "name");
 
     when(sqlExecutor.execute(anyString())).thenReturn("2 rows affected");
 
@@ -258,8 +266,7 @@ class PipelineAsyncRunnerTest {
         .thenReturn(Optional.of("output_cte"));
     when(columnRepository.findByDatasetId(outputDatasetId)).thenReturn(List.of(col("val", false)));
 
-    Result<?> mockResult = DSL.using(org.jooq.SQLDialect.POSTGRES).newResult(DSL.field("val"));
-    doReturn(mockResult).when(pipelineDsl).fetch(anyString());
+    stubProbeColumns("val");
 
     when(sqlExecutor.execute(anyString())).thenReturn("1 row affected");
 
@@ -313,7 +320,7 @@ class PipelineAsyncRunnerTest {
         .as("CTE+UPDATE DML은 INSERT INTO 래핑 없이 그대로 실행되어야 한다")
         .doesNotStartWith("INSERT INTO");
     assertThat(sqlCaptor.getValue()).isEqualTo(cteDml);
-    verify(pipelineDsl, never()).fetch(anyString());
+    verifyNoInteractions(sqlColumnProbe);
   }
 
   @Test
@@ -346,7 +353,7 @@ class PipelineAsyncRunnerTest {
     assertThat(sqlCaptor.getValue())
         .as("CTE+DELETE DML은 INSERT INTO 래핑 없이 그대로 실행되어야 한다")
         .doesNotStartWith("INSERT INTO");
-    verify(pipelineDsl, never()).fetch(anyString());
+    verifyNoInteractions(sqlColumnProbe);
   }
 
   @Test
@@ -370,9 +377,7 @@ class PipelineAsyncRunnerTest {
     when(columnRepository.findByDatasetId(outputDatasetId))
         .thenReturn(List.of(col("category", false), col("cnt", false)));
 
-    Result<?> mockResult =
-        DSL.using(org.jooq.SQLDialect.POSTGRES).newResult(DSL.field("category"), DSL.field("cnt"));
-    doReturn(mockResult).when(pipelineDsl).fetch(anyString());
+    stubProbeColumns("category", "cnt");
 
     when(sqlExecutor.execute(anyString())).thenReturn("10 rows affected");
 
@@ -420,7 +425,7 @@ class PipelineAsyncRunnerTest {
     assertThat(sqlCaptor.getValue())
         .as("CTE+INSERT DML은 이중 INSERT INTO 래핑 없이 원본 SQL 그대로 실행되어야 한다")
         .isEqualTo(cteInsert);
-    verify(pipelineDsl, never()).fetch(anyString());
+    verifyNoInteractions(sqlColumnProbe);
   }
 
   @Test
@@ -436,9 +441,7 @@ class PipelineAsyncRunnerTest {
     PipelineStepResponse sqlStep =
         stepResponse(stepId, "plain-select", "SQL", selectSql, null, List.of());
 
-    Result<?> mockResult =
-        DSL.using(org.jooq.SQLDialect.POSTGRES).newResult(DSL.field("id"), DSL.field("name"));
-    doReturn(mockResult).when(pipelineDsl).fetch(anyString());
+    stubProbeColumns("id", "name");
 
     when(tempDatasetService.findExistingTempDataset(stepId)).thenReturn(Optional.empty());
     when(tempDatasetService.createTempDataset(
@@ -482,10 +485,7 @@ class PipelineAsyncRunnerTest {
         stepResponse(stepId, "select-star-step", "SQL", selectSql, null, List.of());
 
     // SELECT * 결과에는 id/created_at/name이 순서대로 포함된다 (실제 데이터셋 물리 테이블의 시스템 컬럼 + 사용자 컬럼)
-    Result<?> mockResult =
-        DSL.using(org.jooq.SQLDialect.POSTGRES)
-            .newResult(DSL.field("id"), DSL.field("created_at"), DSL.field("name"));
-    doReturn(mockResult).when(pipelineDsl).fetch(anyString());
+    stubProbeColumns("id", "created_at", "name");
 
     when(tempDatasetService.findExistingTempDataset(stepId)).thenReturn(Optional.empty());
 
@@ -533,8 +533,7 @@ class PipelineAsyncRunnerTest {
     PipelineStepResponse sqlStep =
         stepResponse(stepId, "reuse-step", "SQL", selectSql, null, List.of());
 
-    Result<?> mockResult = DSL.using(org.jooq.SQLDialect.POSTGRES).newResult(DSL.field("id"));
-    doReturn(mockResult).when(pipelineDsl).fetch(anyString());
+    stubProbeColumns("id");
 
     when(tempDatasetService.findExistingTempDataset(stepId))
         .thenReturn(Optional.of(existingTempDatasetId));
@@ -568,10 +567,7 @@ class PipelineAsyncRunnerTest {
     PipelineStepResponse sqlStep =
         stepResponse(stepId, "schema-change-step", "SQL", selectSql, null, List.of());
 
-    Result<?> mockResult =
-        DSL.using(org.jooq.SQLDialect.POSTGRES)
-            .newResult(DSL.field("id"), DSL.field("name"), DSL.field("extra"));
-    doReturn(mockResult).when(pipelineDsl).fetch(anyString());
+    stubProbeColumns("id", "name", "extra");
 
     when(tempDatasetService.findExistingTempDataset(stepId))
         .thenReturn(Optional.of(oldTempDatasetId));
@@ -618,7 +614,7 @@ class PipelineAsyncRunnerTest {
     // then: 원본 INSERT 그대로 실행 (래핑 없음)
     assertThat(status).isEqualTo("COMPLETED");
     verify(sqlExecutor).execute(insertSql);
-    verify(pipelineDsl, never()).fetch(anyString());
+    verifyNoInteractions(sqlColumnProbe);
   }
 
   @Test
@@ -639,9 +635,7 @@ class PipelineAsyncRunnerTest {
     when(columnRepository.findByDatasetId(outputDatasetId))
         .thenReturn(List.of(col("id", true), col("name", false)));
 
-    Result<?> mockResult =
-        DSL.using(org.jooq.SQLDialect.POSTGRES).newResult(DSL.field("foo"), DSL.field("bar"));
-    doReturn(mockResult).when(pipelineDsl).fetch(anyString());
+    stubProbeColumns("foo", "bar");
 
     // when
     String status =
@@ -679,15 +673,13 @@ class PipelineAsyncRunnerTest {
     when(datasetRepository.findTableNameById(outputDatasetId))
         .thenReturn(Optional.of("output_probefail"));
 
+    // probe 래핑을 벗겨 근본 원인만 남기는 책임은 SqlColumnProbe 로 옮겼다(SqlColumnProbeTest 가
+    // 그 추출 자체를 검증한다). 여기서는 러너가 그 메시지를 스텝 실행 기록에 그대로 실어 보내는지만 본다.
     String rootCauseMessage =
         "ERROR: relation \"data.nonexistent_table\" does not exist\n  Position: 15";
-    RuntimeException rootCause = new RuntimeException(rootCauseMessage);
-    org.jooq.exception.DataAccessException probeFailure =
-        new org.jooq.exception.DataAccessException(
-            "SQL [SELECT * FROM (SELECT * FROM data.\"nonexistent_table\") AS _probe LIMIT 0]; "
-                + rootCauseMessage,
-            rootCause);
-    doThrow(probeFailure).when(pipelineDsl).fetch(anyString());
+    doThrow(new ScriptExecutionException("SQL 컬럼 타입 분석 실패: " + rootCauseMessage))
+        .when(sqlColumnProbe)
+        .columnsWithTypes(anyString());
 
     // when
     String status =
@@ -1134,8 +1126,7 @@ class PipelineAsyncRunnerTest {
 
     // step2: SELECT → 임시 데이터셋 자동 생성
     when(stepRepository.findByPipelineId(pipelineId)).thenReturn(List.of(step1, step2));
-    Result<?> mockResult = DSL.using(org.jooq.SQLDialect.POSTGRES).newResult(DSL.field("id"));
-    doReturn(mockResult).when(pipelineDsl).fetch(anyString());
+    stubProbeColumns("id");
     when(tempDatasetService.findExistingTempDataset(step2Id)).thenReturn(Optional.empty());
     when(tempDatasetService.createTempDataset(
             any(), eq(pipelineId), any(), eq(step2Id), any(), eq(userId)))
