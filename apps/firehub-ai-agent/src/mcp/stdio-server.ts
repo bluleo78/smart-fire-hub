@@ -5,12 +5,13 @@
  * then connects over stdio so the CLI can call them.
  *
  * Usage (standalone):
- *   API_BASE_URL=... INTERNAL_SERVICE_TOKEN=... USER_ID=... node dist/mcp/stdio-server.js
+ *   API_BASE_URL=... INTERNAL_SERVICE_TOKEN=... USER_ID=... TENANT_ID=... node dist/mcp/stdio-server.js
  */
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { FireHubApiClient } from './api-client.js';
 import { MCP_SERVER_NAME, MCP_SERVER_VERSION } from '../constants.js';
+import { isValidTenantId } from '../agent/tenant-paths.js';
 import type { SafeToolFn, JsonResultFn } from './firehub-mcp-server.js';
 import { registerAllTools } from './firehub-mcp-server.js';
 import type { AnyZodRawShape, InferShape } from '@anthropic-ai/claude-agent-sdk';
@@ -62,23 +63,31 @@ const jsonResult: JsonResultFn = (data: unknown): ToolResult => ({
   content: [{ type: 'text', text: JSON.stringify(data, null, 2) }],
 });
 
+/**
+ * 프로세스 단위 식별자 환경변수를 읽는다. 없거나 양수 정수가 아니면 기동을 멈춘다.
+ *
+ * <p>술어는 경로 판정의 권위인 isValidTenantId 를 재사용한다 — 예전의 `isNaN` 단독 검사는
+ * `0`·음수·소수를 통과시켜, 그 값이 나중에 헤더 누락으로 조용히 바뀌었다(복제된 술어가 갈린 사례).
+ */
+function requireIdEnv(name: 'USER_ID' | 'TENANT_ID'): number {
+  const value = Number(process.env[name]);
+  if (!isValidTenantId(value)) {
+    console.error(`[MCP Stdio] ${name} environment variable is required (positive integer)`);
+    process.exit(1);
+  }
+  return value;
+}
+
 async function main(): Promise<void> {
   const apiBaseUrl = process.env.API_BASE_URL ?? 'http://localhost:8080/api/v1';
   const internalToken = process.env.INTERNAL_SERVICE_TOKEN ?? '';
-  const userIdRaw = process.env.USER_ID;
+  // USER_ID 와 TENANT_ID 는 둘 다 필수다. TENANT_ID 를 빠뜨리면 api 가 멤버십 역추론 폴백을
+  // 타는데(동작은 FireHubApiClient 생성자 주석 참고) 그 실패는 멀티 워크스페이스 사용자에게서만
+  // 터져 재현이 어렵다 — 주입 누락은 기동 시점에 드러낸다.
+  const userId = requireIdEnv('USER_ID');
+  const tenantId = requireIdEnv('TENANT_ID');
 
-  if (!userIdRaw) {
-    console.error('[MCP Stdio] USER_ID environment variable is required');
-    process.exit(1);
-  }
-
-  const userId = Number(userIdRaw);
-  if (isNaN(userId)) {
-    console.error('[MCP Stdio] USER_ID must be a valid number');
-    process.exit(1);
-  }
-
-  const apiClient = new FireHubApiClient(apiBaseUrl, internalToken, userId);
+  const apiClient = new FireHubApiClient(apiBaseUrl, internalToken, userId, tenantId);
 
   const server = new McpServer({
     name: MCP_SERVER_NAME,

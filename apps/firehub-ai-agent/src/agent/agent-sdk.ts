@@ -123,7 +123,7 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
 
   const apiBaseUrl = process.env.API_BASE_URL || 'http://localhost:8080/api/v1';
   const internalToken = process.env.INTERNAL_SERVICE_TOKEN || '';
-  const apiClient = new FireHubApiClient(apiBaseUrl, internalToken, userId);
+  const apiClient = new FireHubApiClient(apiBaseUrl, internalToken, userId, tenantId);
 
   // 세션 사용자 권한 조회 + 첨부 파일 다운로드를 병렬 실행한다.
   // 두 작업은 서로 독립적이므로 순차 대기할 필요가 없다.

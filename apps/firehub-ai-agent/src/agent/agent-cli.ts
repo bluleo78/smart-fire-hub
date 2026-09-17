@@ -153,8 +153,13 @@ export async function writeCliTranscript(
 }
 
 
+/**
+ * @param tenantId 원요청 테넌트. `TENANT_ID` 로 stdio MCP 프로세스에 주입해야 그 프로세스가 테넌트
+ *   헤더를 붙인다(누락 시 api 동작은 FireHubApiClient 생성자 주석 참고).
+ */
 function buildMcpConfig(
   userId: number,
+  tenantId: number,
   apiBaseUrl: string,
   internalToken: string,
   credentials?: { apiKey?: string; oauthToken?: string },
@@ -167,6 +172,7 @@ function buildMcpConfig(
     API_BASE_URL: apiBaseUrl,
     INTERNAL_SERVICE_TOKEN: internalToken,
     USER_ID: String(userId),
+    TENANT_ID: String(tenantId),
   };
   if (credentials?.oauthToken?.trim()) {
     env.CLAUDE_CODE_OAUTH_TOKEN = credentials.oauthToken;
@@ -262,7 +268,7 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
   let downloadedFiles: Awaited<ReturnType<typeof downloadChatFiles>>['files'] = [];
 
   if (fileIds?.length) {
-    const apiClient = new FireHubApiClient(apiBaseUrl, internalToken, userId);
+    const apiClient = new FireHubApiClient(apiBaseUrl, internalToken, userId, tenantId);
     const { files, failed } = await downloadChatFiles(apiClient, fileIds, chatFilesDir);
     downloadedFiles = files;
 
@@ -417,7 +423,7 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
   await writeFile(
     mcpConfigPath,
     JSON.stringify(
-      buildMcpConfig(userId, apiBaseUrl, internalToken, { apiKey, oauthToken }),
+      buildMcpConfig(userId, tenantId, apiBaseUrl, internalToken, { apiKey, oauthToken }),
       null,
       2,
     ),

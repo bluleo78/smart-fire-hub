@@ -94,7 +94,7 @@ Package base: `com.smartfirehub`. Feature-sliced 도메인 모듈, 각 모듈은
 
 - **JWT**: HS256. Access token 30분, Refresh token 7일 (HttpOnly cookie)
 - **`@RequirePermission("code")`**: 컨트롤러 메서드에 선언, `PermissionInterceptor`가 검증
-- **내부 통신**: `Authorization: Internal <token>` + `X-On-Behalf-Of: userId` 헤더
+- **내부 통신**: `Authorization: Internal <token>` + `X-On-Behalf-Of: userId` + `X-On-Behalf-Of-Tenant: tenantId` 헤더. 테넌트 헤더는 멤버십 대조 후에만 `TenantContext`에 반영되고, 없으면 ACTIVE 멤버십이 1개일 때만 역추론한다(2개 이상이면 fail-closed 403)
 - **공개 엔드포인트**: `/api/v1/auth/**`, `/api/v1/triggers/api/**`, `/api/v1/triggers/webhook/**`
 - **`Authentication.getPrincipal()`**: `Long userId` 반환
 

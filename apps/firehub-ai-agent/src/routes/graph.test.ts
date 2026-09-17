@@ -28,7 +28,13 @@ const app = express();
 app.use(express.json());
 app.use('/agent', graphRouter);
 
-const authHeader = { Authorization: 'Internal test-internal-token' };
+// 유효한 내부 호출의 헤더 집합. firehub-api(GraphMutationClient)는 Internal 토큰과 함께 승인
+// 요청을 낸 사용자·테넌트를 대행 헤더로 싣는다 — 라우트가 api 를 역호출할 때 쓸 주체다.
+const authHeader = {
+  Authorization: 'Internal test-internal-token',
+  'X-On-Behalf-Of': '42',
+  'X-On-Behalf-Of-Tenant': '7',
+};
 
 describe('GET /agent/graph', () => {
   beforeEach(() => vi.clearAllMocks());
@@ -54,7 +60,7 @@ describe('POST /agent/graph/merge-entities', () => {
     mergeEntitiesMock.mockResolvedValue(undefined);
     const res = await request(app)
       .post('/agent/graph/merge-entities')
-      .set('Authorization', 'Internal test-internal-token')
+      .set(authHeader)
       .send({ entityType: 'Cause', nameA: '전기적 요인', nameB: '분전반의 누전', datasetId: 900 });
 
     expect(res.status).toBe(204);
@@ -75,7 +81,7 @@ describe('POST /agent/graph/merge-entities', () => {
   it('필수 필드 누락 시 400', async () => {
     const res = await request(app)
       .post('/agent/graph/merge-entities')
-      .set('Authorization', 'Internal test-internal-token')
+      .set(authHeader)
       .send({ entityType: 'Cause' });
     expect(res.status).toBe(400);
     expect(mergeEntitiesMock).not.toHaveBeenCalled();
@@ -85,7 +91,7 @@ describe('POST /agent/graph/merge-entities', () => {
     mergeEntitiesMock.mockRejectedValue(new Error('neo4j down'));
     const res = await request(app)
       .post('/agent/graph/merge-entities')
-      .set('Authorization', 'Internal test-internal-token')
+      .set(authHeader)
       .send({ entityType: 'Cause', nameA: 'a', nameB: 'b', datasetId: 900 });
     expect(res.status).toBe(502);
   });
@@ -105,6 +111,19 @@ describe('POST /agent/graph/merge-entities', () => {
     expect(res.status).toBe(204);
     expect(resolveDatasetOntology).toHaveBeenCalledWith(expect.anything(), 900);
     expect(mergeEntitiesMock).toHaveBeenCalledWith(boundOntology, 'Cause', 'a', 'b');
+  });
+
+  // 대행 헤더가 없으면 라우트는 api 역호출의 주체를 알 수 없다. 예전처럼 userId=1 로 폴백하면
+  // 그 사용자가 요청 테넌트의 멤버가 아닐 때 역호출이 403 나고, 원인은 로그에만 남는다.
+  it('대행 헤더가 없으면 400을 반환한다(userId 하드코딩 폴백 없음)', async () => {
+    const res = await request(app)
+      .post('/agent/graph/merge-entities')
+      .set('Authorization', 'Internal test-internal-token')
+      .send({ entityType: 'Cause', nameA: 'a', nameB: 'b', datasetId: 900 });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('missing delegation headers');
+    expect(mergeEntitiesMock).not.toHaveBeenCalled();
   });
 
   // #678: datasetId 미바인딩 시 "기본 온톨로지"로 조용히 폴백하던 동작 제거 — 이제 datasetId 는
@@ -160,7 +179,7 @@ describe('POST /agent/graph/set-property', () => {
   it('POST /agent/graph/set-property는 setEntityProperty를 호출하고 204를 반환한다', async () => {
     const res = await request(app)
       .post('/agent/graph/set-property')
-      .set('Authorization', 'Internal test-internal-token')
+      .set(authHeader)
       .send({ entityKey: '3:화재', propertyName: '피해액', dataType: 'number', value: '30000000' });
     expect(res.status).toBe(204);
     expect(setEntityPropertyMock).toHaveBeenCalledWith('3:화재', '피해액', 'number', '30000000');
@@ -169,7 +188,7 @@ describe('POST /agent/graph/set-property', () => {
   it('POST /agent/graph/set-property는 잘못된 body에 400', async () => {
     const res = await request(app)
       .post('/agent/graph/set-property')
-      .set('Authorization', 'Internal test-internal-token')
+      .set(authHeader)
       .send({ entityKey: '', propertyName: '피해액', dataType: 'number', value: '1' });
     expect(res.status).toBe(400);
   });

@@ -8,6 +8,7 @@
 // 멱등성: 이미 "id:이름" 형식으로 바뀐 노드는 건드리지 않는다(WHERE n.key STARTS WITH 원본 타입명 + ':').
 // 실행: cd apps/firehub-ai-agent && npx tsx src/graphrag/migrate-entity-keys-to-id.ts
 import { FireHubApiClient } from '../mcp/api-client.js';
+import { isValidTenantId } from '../agent/tenant-paths.js';
 import { getSession, closeDriver } from './neo4j-client.js';
 
 async function main() {
@@ -20,7 +21,14 @@ async function main() {
   // "기본 온톨로지"가 폐지됨에 따라 마이그레이션 대상 온톨로지를 명시적으로 지정해야 한다.
   if (!ontologyId) throw new Error('MIGRATION_ONTOLOGY_ID 환경변수(대상 온톨로지 id)가 필요합니다.');
 
-  const apiClient = new FireHubApiClient(apiBaseUrl, internalToken, userId);
+  // MIGRATION_TENANT_ID 는 해당 사용자가 두 개 이상의 워크스페이스에 속할 때 필수다(미지정 시 api
+  // 동작은 FireHubApiClient 생성자 주석 참고).
+  const tenantRaw = process.env.MIGRATION_TENANT_ID;
+  const tenantId = tenantRaw ? Number(tenantRaw) : undefined;
+  if (tenantRaw && !isValidTenantId(tenantId)) {
+    throw new Error(`MIGRATION_TENANT_ID 는 양의 정수여야 합니다: ${tenantRaw}`);
+  }
+  const apiClient = new FireHubApiClient(apiBaseUrl, internalToken, userId, tenantId);
   const ontology = await apiClient.getOntologyById(ontologyId);
 
   const session = getSession();

@@ -112,7 +112,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     byte[] b = internalToken.getBytes(java.nio.charset.StandardCharsets.UTF_8);
     if (a.length != b.length || !MessageDigest.isEqual(a, b)) return;
 
-    String onBehalfOf = request.getHeader("X-On-Behalf-Of");
+    String onBehalfOf = request.getHeader(InternalCallHeaders.ON_BEHALF_OF);
     if (!StringUtils.hasText(onBehalfOf)) return;
 
     try {
@@ -121,7 +121,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
       // setSecurityContext 의 권한 조회(permission ⨝ role_permission ⨝ user_role)가 V99 의 RLS
       // 아래에서 0행이 되어 권한 집합이 비고, PermissionInterceptor 가 모든 @RequirePermission
       // 엔드포인트를 403 으로 막는다 — 즉 ai-agent 의 모든 MCP 도구 호출이 죽는다.
-      resolveInternalTenant(userId).ifPresent(TenantContext::set);
+      resolveInternalTenant(userId, request.getHeader(InternalCallHeaders.ON_BEHALF_OF_TENANT))
+          .ifPresent(TenantContext::set);
       setSecurityContext(userId);
     } catch (NumberFormatException ignored) {
       // Invalid userId, skip authentication
@@ -129,34 +130,81 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
   }
 
   /**
-   * 내부 토큰 대행 호출({@code X-On-Behalf-Of})의 실행 테넌트를 대행 대상 사용자의 멤버십에서
-   * 해석한다.
+   * 내부 토큰 대행 호출({@code X-On-Behalf-Of})의 실행 테넌트를 해석한다.
    *
-   * <p>멤버십이 정확히 하나일 때만 그 테넌트를 쓴다. 0개이거나 2개 이상이면 <b>컨텍스트를 세우지
-   * 않는다</b> — 임의로 기본 테넌트를 고르면 그 사용자가 속하지도 않은 워크스페이스의 데이터를
-   * 대행자에게 열어 주게 된다. 컨텍스트가 없으면 권한이 비어 403 이 되는데, 그것이 의도된
-   * fail-closed 결과다. 특히 {@code audit_log} 정책은 형태 (b)({@code IS NOT DISTINCT FROM})라
-   * GUC 가 비면 <b>모든 테넌트의 NULL 테넌트 LOGIN 행</b>(username·IP·User-Agent)이 매칭되는
-   * fail-open 이므로, 권한만 복구하고 테넌트를 세우지 않는 절충은 교차 테넌트 유출이 된다.
+   * <p><b>원칙: 추측하지 않고 전달받은 값을 검증한다.</b> 호출측이
+   * {@link InternalCallHeaders#ON_BEHALF_OF_TENANT} 로 원요청 테넌트를 실어 보내면(웹 세션 JWT 의
+   * tenant 클레임 → {@code AiAgentProxyService} → ai-agent → {@code FireHubApiClient}) 그 값을 대행
+   * 대상 사용자의 ACTIVE 멤버십과 대조한 뒤에만 쓴다.
    *
-   * <p>헤더로 테넌트를 지정받는 방식은 의도적으로 범위 밖이다 — 내부 토큰의 테넌트 결정은 스펙상
-   * P5 단계로 미뤄져 있다.
+   * <p>이 대조가 실제로 막는 것은 <b>호출측의 잘못된 테넌트 전파</b>다(다른 워크스페이스의 요청
+   * 문맥이 섞여 들어오는 경우). 내부 토큰을 쥔 쪽은 {@code X-On-Behalf-Of} 자체도 자유롭게 고를 수
+   * 있어 이 대조가 악의적 호출자에 대한 상한이 되지는 않는다 — 내부 경로의 신뢰 경계는 토큰 자체다.
+   * 그래도 대조하는 이유는, 테넌트를 무검증 채택하면 호출측의 전파 오류가 RLS 아래에서 조용히 남의
+   * 워크스페이스 읽기·쓰기로 바뀌기 때문이다.
+   *
+   * <p>판정은 {@link MembershipRepository#hasActiveMembership} 를 재사용한다 — {@code AuthService}
+   * 의 tenant 클레임 검증이 쓰는 것과 같은 게이트여서 규칙이 한 벌로 유지되고, 이 핫패스에서 쓰지도
+   * 않는 멤버십 DTO 를 사용자 멤버십 수만큼 만들지 않는다.
+   *
+   * <p>헤더가 <b>없을 때</b>만 멤버십에서 역추론하는 기존 폴백을 쓴다(헤더를 아직 보내지 않는
+   * eval·migration 스크립트 호환). 멤버십이 정확히 하나일 때만 그 테넌트를 쓰고, 0개이거나 2개
+   * 이상이면 <b>컨텍스트를 세우지 않는다</b> — 임의로 기본 테넌트를 고르면 그 사용자가 속하지도 않은
+   * 워크스페이스의 데이터를 대행자에게 열어 주게 된다. 컨텍스트가 없으면 권한이 비어 403 이 되는데,
+   * 그것이 의도된 fail-closed 결과다. 특히 {@code audit_log} 정책은 형태 (b)({@code IS NOT DISTINCT
+   * FROM})라 GUC 가 비면 <b>모든 테넌트의 NULL 테넌트 LOGIN 행</b>(username·IP·User-Agent)이
+   * 매칭되는 fail-open 이므로, 권한만 복구하고 테넌트를 세우지 않는 절충은 교차 테넌트 유출이 된다.
+   *
+   * <p>헤더 값이 숫자가 아니면 폴백하지 않고 그대로 fail-closed 한다 — 깨진 헤더를 조용히 무시하면
+   * 호출측 버그가 단일 멤버십 환경에서만 숨고 멀티 테넌트에서 터진다.
    *
    * <p>{@code membership}/{@code tenant} 는 전역(RLS 미적용) 테이블이라 컨텍스트도 트랜잭션도 없이
-   * 조회된다({@link MembershipRepository} 클래스 주석 참고). 2단계 로그인 흐름이 쓰는 것과 같은
-   * 조회를 재사용한다.
+   * 조회된다({@link MembershipRepository} 클래스 주석 참고).
+   *
+   * @param requestedTenantRaw 테넌트 헤더 원문. 없으면 {@code null}
    */
-  private Optional<Long> resolveInternalTenant(Long userId) {
+  private Optional<Long> resolveInternalTenant(Long userId, String requestedTenantRaw) {
+    if (StringUtils.hasText(requestedTenantRaw)) {
+      return validateRequestedTenant(userId, requestedTenantRaw.trim());
+    }
+
     List<MembershipResponse> memberships = membershipRepository.findActiveByUser(userId);
     Optional<Long> tenantId = MembershipResponse.soleActiveTenant(memberships);
     if (tenantId.isEmpty()) {
       log.warn(
           "내부 토큰 대행 호출: 사용자 {} 의 ACTIVE 멤버십이 {}개라 실행 테넌트가 모호하다 —"
-              + " 테넌트 컨텍스트 없이 진행한다(권한 0개 → 403). 내부 토큰의 테넌트 결정은 P5 범위다.",
+              + " 테넌트 컨텍스트 없이 진행한다(권한 0개 → 403)."
+              + " 호출측이 {} 헤더로 원요청 테넌트를 실어 보내야 한다.",
           userId,
-          memberships.size());
+          memberships.size(),
+          InternalCallHeaders.ON_BEHALF_OF_TENANT);
     }
     return tenantId;
+  }
+
+  /** 전달받은 테넌트가 대행 대상 사용자의 ACTIVE 멤버십 안에 있을 때만 통과시킨다. */
+  private Optional<Long> validateRequestedTenant(Long userId, String requestedTenantRaw) {
+    Long requested;
+    try {
+      requested = Long.valueOf(requestedTenantRaw);
+    } catch (NumberFormatException e) {
+      log.warn(
+          "내부 토큰 대행 호출: {} 헤더 값 '{}' 이 숫자가 아니다 — 테넌트 컨텍스트 없이 진행한다"
+              + "(권한 0개 → 403).",
+          InternalCallHeaders.ON_BEHALF_OF_TENANT,
+          requestedTenantRaw);
+      return Optional.empty();
+    }
+
+    if (!membershipRepository.hasActiveMembership(userId, requested)) {
+      log.warn(
+          "내부 토큰 대행 호출: 사용자 {} 는 요청된 테넌트 {} 의 ACTIVE 멤버가 아니다 —"
+              + " 테넌트 컨텍스트 없이 진행한다(권한 0개 → 403).",
+          userId,
+          requested);
+      return Optional.empty();
+    }
+    return Optional.of(requested);
   }
 
   /**

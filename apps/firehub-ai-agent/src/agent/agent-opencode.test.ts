@@ -4,21 +4,22 @@ import { OPENCODE_SYSTEM_PROMPT, SYSTEM_PROMPT } from './system-prompt.js';
 
 describe('buildOpenCodeConfig', () => {
   it('mcp.firehub 에 USER_ID 등 환경변수를 주입한다', () => {
-    const cfg = buildOpenCodeConfig(7, 'http://api/v1', 'tok');
+    const cfg = buildOpenCodeConfig(7, 3, 'http://api/v1', 'tok');
     expect(cfg.mcp.firehub.type).toBe('local');
     expect(cfg.mcp.firehub.environment.USER_ID).toBe('7');
+    expect(cfg.mcp.firehub.environment.TENANT_ID).toBe('3');
     expect(cfg.mcp.firehub.environment.INTERNAL_SERVICE_TOKEN).toBe('tok');
     expect(cfg.mcp.firehub.environment.API_BASE_URL).toBe('http://api/v1');
     expect(Array.isArray(cfg.mcp.firehub.command)).toBe(true);
   });
 
   it('model 필드를 넣지 않는다 (옵션 3: 배포 측 전역 설정 상속)', () => {
-    const cfg = buildOpenCodeConfig(1, 'u', 't');
+    const cfg = buildOpenCodeConfig(1, 1, 'u', 't');
     expect(cfg.model).toBeUndefined();
   });
 
   it('permission 으로 bash/edit/write/webfetch 를 deny 하고 firehub MCP 만 allow 한다', () => {
-    const cfg = buildOpenCodeConfig(1, 'u', 't');
+    const cfg = buildOpenCodeConfig(1, 1, 'u', 't');
     expect(cfg.permission.bash).toBe('deny');
     expect(cfg.permission.edit).toBe('deny');
     expect(cfg.permission.write).toBe('deny');
@@ -27,7 +28,7 @@ describe('buildOpenCodeConfig', () => {
 
   it('메인(build) 에서 task 위임을 전면 차단하고 빌트인 general 을 비활성화한다 (#0 보안)', () => {
     // 위임 차단으로 firehub 도구 직접 호출을 강제 — 비격리 general 서브에이전트 누수 방지.
-    const cfg = buildOpenCodeConfig(1, 'u', 't');
+    const cfg = buildOpenCodeConfig(1, 1, 'u', 't');
     expect(cfg.agent.build.permission.task['*']).toBe('deny');
     expect(cfg.agent.general.disable).toBe(true);
   });

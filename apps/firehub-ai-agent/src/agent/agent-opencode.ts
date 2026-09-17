@@ -52,6 +52,7 @@ export interface OpenCodeConfig {
 
 export function buildOpenCodeConfig(
   userId: number,
+  tenantId: number,
   apiBaseUrl: string,
   internalToken: string,
 ): OpenCodeConfig {
@@ -91,6 +92,8 @@ export function buildOpenCodeConfig(
           API_BASE_URL: apiBaseUrl,
           INTERNAL_SERVICE_TOKEN: internalToken,
           USER_ID: String(userId),
+          // 원요청 테넌트(누락 시 동작은 FireHubApiClient 생성자 주석 참고).
+          TENANT_ID: String(tenantId),
           // 게이트웨이 호환: tools/list 스키마에서 propertyNames 제거(2026-06-24 실측 400 회피).
           OPENCODE_SCHEMA_COMPAT: '1',
         },
@@ -256,7 +259,7 @@ export async function* executeOpenCodeAgent(options: ChatProviderOptions): Async
   // opencode.json 생성 (요청별 USER_ID 주입 + permission 잠금, model 은 전역 상속)
   await writeFile(
     join(userWorkDir, 'opencode.json'),
-    JSON.stringify(buildOpenCodeConfig(userId, apiBaseUrl, internalToken), null, 2),
+    JSON.stringify(buildOpenCodeConfig(userId, tenantId, apiBaseUrl, internalToken), null, 2),
   );
 
   // 시스템 프롬프트 (단일 에이전트 직접처리). OpenCode 는 프로젝트 디렉토리의 AGENTS.md 를 시스템 지시로 읽는다.
