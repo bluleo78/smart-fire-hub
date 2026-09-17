@@ -5,13 +5,14 @@ import { FireHubApiClient } from './api-client.js';
 const BASE_URL = 'http://localhost:8080/api/v1';
 const TOKEN = 'test-token';
 const USER_ID = 42;
+const TENANT_ID = 7;
 
 describe('FireHubApiClient', () => {
   let client: FireHubApiClient;
 
   beforeEach(() => {
     nock.cleanAll();
-    client = new FireHubApiClient(BASE_URL, TOKEN, USER_ID);
+    client = new FireHubApiClient(BASE_URL, TOKEN, USER_ID, TENANT_ID);
   });
 
   afterEach(() => {
@@ -24,12 +25,25 @@ describe('FireHubApiClient', () => {
       reqheaders: {
         authorization: `Internal ${TOKEN}`,
         'x-on-behalf-of': String(USER_ID),
+        'x-on-behalf-of-tenant': String(TENANT_ID),
       },
     })
       .get('/dataset-categories')
       .reply(200, []);
 
     await client.listCategories();
+    expect(scope.isDone()).toBe(true);
+  });
+
+  it('tenantId 를 생략하면 테넌트 헤더를 붙이지 않는다 (단일 멤버십 스크립트용 폴백)', async () => {
+    const scriptClient = new FireHubApiClient(BASE_URL, TOKEN, USER_ID);
+    const scope = nock(BASE_URL, {
+      badheaders: ['x-on-behalf-of-tenant'],
+    })
+      .get('/dataset-categories')
+      .reply(200, []);
+
+    await scriptClient.listCategories();
     expect(scope.isDone()).toBe(true);
   });
 

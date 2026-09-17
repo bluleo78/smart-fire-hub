@@ -7,13 +7,17 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
 import com.smartfirehub.global.exception.ExternalServiceException;
+import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.graphreview.service.GraphMutationClient;
 import java.util.List;
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.context.SecurityContextHolder;
 
 /**
  * GraphMutationClient 단위 테스트 — ai-agent 응답을 WireMock으로 모킹해 상태코드별 예외 매핑을 검증한다.
@@ -39,6 +43,18 @@ class GraphMutationClientTest {
   @BeforeEach
   void resetWireMock() {
     wireMock.resetAll();
+    // 운영에서는 JwtAuthenticationFilter 가 요청마다 세워 두는 값이다. 없으면 postJson 이 원격을
+    // 부르기 전에 끊으므로(대행 주체 확정 실패), 상태코드 매핑 테스트가 원격까지 가지 못한다.
+    SecurityContextHolder.getContext()
+        .setAuthentication(new UsernamePasswordAuthenticationToken(42L, null, List.of()));
+    TenantContext.set(7L);
+  }
+
+  @AfterEach
+  void clearRequestContext() {
+    // 대행 헤더는 요청 컨텍스트에서 읽으므로, 남겨 두면 형제 테스트의 요청에 새어 나간다.
+    SecurityContextHolder.clearContext();
+    TenantContext.clear();
   }
 
   private GraphMutationClient client() {
@@ -158,5 +174,55 @@ class GraphMutationClientTest {
 
     wireMock.verify(postRequestedFor(urlEqualTo("/agent/graph/add-relation"))
         .withRequestBody(matchingJsonPath("$[?(@.datasetId == 42)]")));
+  }
+  @Test
+  @DisplayName("승인 요청의 사용자·테넌트를 대행 헤더로 실어 보낸다")
+  void postJson_attachesDelegationHeaders() {
+    // ai-agent 는 이 요청을 처리하다 api 를 역호출해 온톨로지를 읽는다 — 그때 쓸 주체가 픽스처의
+    // 사용자·테넌트로 실려 나가야 한다.
+    wireMock.stubFor(
+        post(urlEqualTo("/agent/graph/merge-entities")).willReturn(aResponse().withStatus(204)));
+
+    assertThatCode(() -> client().mergeEntities("Cause", "a", "b", 900L)).doesNotThrowAnyException();
+
+    wireMock.verify(
+        postRequestedFor(urlEqualTo("/agent/graph/merge-entities"))
+            .withHeader("X-On-Behalf-Of", equalTo("42"))
+            .withHeader("X-On-Behalf-Of-Tenant", equalTo("7")));
+  }
+
+  @Test
+  @DisplayName("요청 컨텍스트에 대행 주체가 없으면 원격을 부르지 않고 사유를 남긴 채 실패한다")
+  void postJson_withoutRequestContext_failsFastBeforeCalling() {
+    // ai-agent 는 대행 헤더 없는 변형 요청을 400 으로 거부한다 — "헤더 없이 진행"은 완화가 아니라
+    // 확정된 실패이고, 그 실패는 일반 502 문구로 퇴화해 원인이 원격 로그에만 남는다.
+    SecurityContextHolder.clearContext();
+    TenantContext.clear();
+    wireMock.stubFor(
+        post(urlEqualTo("/agent/graph/merge-entities")).willReturn(aResponse().withStatus(204)));
+
+    assertThatThrownBy(() -> client().mergeEntities("Cause", "a", "b", 900L))
+        .isInstanceOf(ExternalServiceException.class)
+        .hasMessageContaining("워크스페이스 정보를 확인할 수 없어");
+
+    wireMock.verify(0, postRequestedFor(urlEqualTo("/agent/graph/merge-entities")));
+  }
+
+  @Test
+  @DisplayName("400(요청 계약 불일치)은 버전 스큐를 알리는 문구로 매핑된다")
+  void postJson_badRequest_mapsToContractMismatch() {
+    // 실제로 400 이 나는 경우는 두 이미지의 버전 스큐다(구버전 api 가 대행 헤더를 안 보내면
+    // ai-agent 가 400). 일반 catch 로 흘리면 "응답 코드 400" 만 남아 원인 추적이 불가능하다.
+    wireMock.stubFor(
+        post(urlEqualTo("/agent/graph/merge-entities"))
+            .willReturn(
+                aResponse()
+                    .withStatus(400)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("{\"error\":\"missing delegation headers\"}")));
+
+    assertThatThrownBy(() -> client().mergeEntities("Cause", "a", "b", 900L))
+        .isInstanceOf(ExternalServiceException.class)
+        .hasMessageContaining("버전 불일치");
   }
 }

@@ -25,7 +25,9 @@ public record MembershipResponse(
    *   <caption>모호(0개 또는 2개 이상)할 때의 호출부별 반응</caption>
    *   <tr><th>호출부</th><th>로그</th><th>결과</th></tr>
    *   <tr>
-   *     <td>{@code JwtAuthenticationFilter.resolveInternalTenant}</td>
+   *     <td>{@code JwtAuthenticationFilter.resolveInternalTenant}
+   *         (<b>{@code X-On-Behalf-Of-Tenant} 헤더가 없을 때만</b> — 헤더가 오면 그 값을 멤버십과
+   *         대조해 쓰므로 이 규칙을 타지 않는다)</td>
    *     <td>WARN</td>
    *     <td>테넌트 컨텍스트 미설정 → 권한 0개 → <b>403</b>(fail-closed). {@code audit_log} 정책이
    *         형태 (b) 라 GUC 가 비면 모든 테넌트의 NULL 테넌트 LOGIN 행이 매칭되는 fail-open 이

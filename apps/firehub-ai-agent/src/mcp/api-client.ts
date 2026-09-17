@@ -63,6 +63,8 @@ import {
   type PresignedUrlResponse,
 } from './api-client/file-object-api.js';
 import type { SerializedOntology, EntityType } from '../graphrag/ontology.js';
+import { ON_BEHALF_OF_HEADER, ON_BEHALF_OF_TENANT_HEADER } from '../constants.js';
+import { isValidTenantId } from '../agent/tenant-paths.js';
 
 export type { DocumentSearchHit };
 export type { DatasetSearchHit };
@@ -89,15 +91,30 @@ export class FireHubApiClient {
   private _review: ReturnType<typeof createReviewApi>;
   private _fileObject: ReturnType<typeof createFileObjectApi>;
 
-  constructor(baseURL: string, internalToken: string, userId: number) {
-    this.client = axios.create({
-      baseURL,
-      headers: {
-        Authorization: `Internal ${internalToken}`,
-        'X-On-Behalf-Of': String(userId),
-        'Content-Type': 'application/json',
-      },
-    });
+  /**
+   * @param tenantId 원요청 테넌트(웹 세션 JWT 의 tenant 클레임에서 파생). 테넌트 헤더로 api 에
+   *   전달해 실행 테넌트를 확정한다 — api 는 이 값을 대행 대상 사용자의 ACTIVE 멤버십과 대조한
+   *   뒤에만 쓴다.
+   *
+   *   <p><b>테넌트 누락 시의 동작(정본)</b>: api 가 멤버십에서 역추론하는 폴백을 타는데, 그 추론은
+   *   **ACTIVE 멤버십이 정확히 하나일 때만** 성립한다. 사용자가 두 워크스페이스에 속하면 테넌트
+   *   컨텍스트가 비고 권한 조회가 RLS 아래에서 0행이 되어 모든 도구 호출이 403 난다. 따라서 요청
+   *   문맥에서 테넌트를 알 수 있는 경로(채팅·파이프라인·검수 승인)는 반드시 넘겨야 하고, 생략은
+   *   단일 멤버십이 보장된 개발 스크립트에만 허용된다. 다른 파일들은 이 문단을 가리킨다.
+   */
+  constructor(baseURL: string, internalToken: string, userId: number, tenantId?: number) {
+    const headers: Record<string, string> = {
+      Authorization: `Internal ${internalToken}`,
+      [ON_BEHALF_OF_HEADER]: String(userId),
+      'Content-Type': 'application/json',
+    };
+    // 성립하지 않는 값(NaN·0·소수)을 그대로 실으면 api 가 파싱에 실패해 fail-closed 하고 사유는
+    // api 로그에만 남는다. 헤더를 빼서 위 문단의 폴백 판정에 맡긴다. 술어는 경로 판정의 권위인
+    // isValidTenantId 를 재사용한다(복제하면 강도가 갈린다 — tenant-paths.ts 주석 참고).
+    if (isValidTenantId(tenantId)) {
+      headers[ON_BEHALF_OF_TENANT_HEADER] = String(tenantId);
+    }
+    this.client = axios.create({ baseURL, headers });
 
     // Request/Response logging & error extraction
     this.client.interceptors.request.use((config) => {

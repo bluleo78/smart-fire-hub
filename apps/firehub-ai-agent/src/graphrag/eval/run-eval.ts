@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path';
 import { createCompleter } from '../llm-completer.js';
 import { retrieve } from '../retriever.js';
 import { FireHubApiClient } from '../../mcp/api-client.js';
+import { isValidTenantId } from '../../agent/tenant-paths.js';
 import { loadQuestions } from './questions.js';
 import { runEval } from './orchestrator.js';
 import { aggregate, renderScorecard } from './scorecard.js';
@@ -56,7 +57,14 @@ async function main(): Promise<void> {
   const internalToken = process.env.INTERNAL_SERVICE_TOKEN || '';
   // X-On-Behalf-Of 로 실 사용자를 대행해야 dataset:read 권한 검사를 통과한다(EVAL_USER_ID 미지정 시 1).
   const evalUserId = Number(process.env.EVAL_USER_ID ?? '1');
-  const apiClient = new FireHubApiClient(apiBaseUrl, internalToken, evalUserId);
+  // EVAL_TENANT_ID 는 그 사용자가 두 개 이상의 워크스페이스에 속할 때 필수다(미지정 시 api 동작은
+  // FireHubApiClient 생성자 주석 참고). 오타를 조용히 흘리면 헤더가 빠져 전부 403 난다.
+  const evalTenantRaw = process.env.EVAL_TENANT_ID;
+  const evalTenantId = evalTenantRaw ? Number(evalTenantRaw) : undefined;
+  if (evalTenantRaw && !isValidTenantId(evalTenantId)) {
+    throw new Error(`EVAL_TENANT_ID 는 양의 정수여야 합니다: ${evalTenantRaw}`);
+  }
+  const apiClient = new FireHubApiClient(apiBaseUrl, internalToken, evalUserId, evalTenantId);
 
   const complete = createCompleter();
   const sourceDocs = loadSourceDocs();

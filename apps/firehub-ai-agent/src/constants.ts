@@ -19,6 +19,15 @@ export const MCP_SERVER_NAME = 'firehub';
 /** MCP server version */
 export const MCP_SERVER_VERSION = '1.0.0';
 
+/**
+ * 내부 서비스 대행 호출의 와이어 계약 헤더 이름. api 쪽 짝은
+ * `apps/firehub-api/.../global/security/InternalCallHeaders.java` 다 — 언어가 달라 공유가
+ * 불가능하므로 두 파일이 서로를 가리킨다. 이름이 어긋나면 컴파일이 아니라 런타임 403/400 으로만
+ * 드러나기 때문에 리터럴을 흩지 않는다.
+ */
+export const ON_BEHALF_OF_HEADER = 'X-On-Behalf-Of';
+export const ON_BEHALF_OF_TENANT_HEADER = 'X-On-Behalf-Of-Tenant';
+
 /** API error message prefix */
 export const API_ERROR_PREFIX = 'API 오류';
 

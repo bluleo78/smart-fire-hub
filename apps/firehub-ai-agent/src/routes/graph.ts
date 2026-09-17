@@ -1,6 +1,6 @@
-import { Router } from 'express';
+import { Router, type Response } from 'express';
 import { z } from 'zod/v4';
-import { internalAuth } from '../middleware/auth.js';
+import { internalAuth, requireDelegation, type Delegation } from '../middleware/auth.js';
 import { readWholeGraph } from '../graphrag/neo4j-client.js';
 import { mergeEntities } from '../graphrag/synonym-merge.js';
 import { setEntityProperty } from '../graphrag/property-mutation.js';
@@ -27,6 +27,17 @@ import { FireHubApiClient } from '../mcp/api-client.js';
 // 5-6: 엔티티 타입 리네임은 이제 순수 DB 연산(entity_type_id 보존)이라 Neo4j 마이그레이션 라우트가
 // 불필요해져 제거했다(5-5의 POST /graph/rename-type — resolver.ts entityKey 참조).
 const router = Router();
+
+/**
+ * `requireDelegation` 이 확정한 주체로, 그 사용자·테넌트를 대행해 api 를 역호출하는 클라이언트를
+ * 만든다. 검증과 400 응답은 미들웨어가 끝냈으므로 여기서는 널을 돌려주지 않는다.
+ */
+function delegationClient(res: Response): FireHubApiClient {
+  const { userId, tenantId } = res.locals.delegation as Delegation;
+  const apiBaseUrl = process.env.API_BASE_URL || 'http://localhost:8080/api/v1';
+  const internalToken = process.env.INTERNAL_SERVICE_TOKEN || '';
+  return new FireHubApiClient(apiBaseUrl, internalToken, userId, tenantId);
+}
 
 /**
  * 그래프 변경 실패를 상태코드로 나눠 응답한다(#310).
@@ -67,16 +78,14 @@ const mergeBodySchema = z.object({
 // entityKey가 typeId 기반(5-6)이라 entityType 문자열→typeId 변환에 온톨로지가 필요하다.
 // 사용자 세션이 없는 서비스 간 호출이라, on-behalf-of는 시스템 사용자(id=1)로 고정한다
 // (다른 백엔드 트리거 스크립트들과 동일한 관례 — migrate-entity-keys-to-id.ts, run-eval.ts 참고).
-router.post('/graph/merge-entities', internalAuth, async (req, res) => {
+router.post('/graph/merge-entities', internalAuth, requireDelegation, async (req, res) => {
   const parsed = mergeBodySchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: 'invalid request body', details: parsed.error.issues });
     return;
   }
   try {
-    const apiBaseUrl = process.env.API_BASE_URL || 'http://localhost:8080/api/v1';
-    const internalToken = process.env.INTERNAL_SERVICE_TOKEN || '';
-    const apiClient = new FireHubApiClient(apiBaseUrl, internalToken, 1);
+    const apiClient = delegationClient(res);
     const { ontology } = await resolveDatasetOntology(apiClient, parsed.data.datasetId);
     await mergeEntities(ontology, parsed.data.entityType as EntityType, parsed.data.nameA, parsed.data.nameB);
     res.status(204).send();
@@ -123,16 +132,14 @@ const addEntityBodySchema = z.object({
 
 // HITL 승인된 저신뢰 엔티티를 Neo4j에 적재 — firehub-api(GraphMutationClient)가 승인 시 호출.
 // entityKey가 typeId 기반이라 entityType→typeId 변환에 온톨로지가 필요(merge-entities와 동일 관례, 시스템유저 id=1).
-router.post('/graph/add-entity', internalAuth, async (req, res) => {
+router.post('/graph/add-entity', internalAuth, requireDelegation, async (req, res) => {
   const parsed = addEntityBodySchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: 'invalid request body', details: parsed.error.issues });
     return;
   }
   try {
-    const apiBaseUrl = process.env.API_BASE_URL || 'http://localhost:8080/api/v1';
-    const internalToken = process.env.INTERNAL_SERVICE_TOKEN || '';
-    const apiClient = new FireHubApiClient(apiBaseUrl, internalToken, 1);
+    const apiClient = delegationClient(res);
     const { ontology, ontologyId } = await resolveDatasetOntology(apiClient, parsed.data.datasetId);
     await addEntity(ontology, ontologyId, {
       entityType: parsed.data.entityType as EntityType,
@@ -160,17 +167,15 @@ const addRelationBodySchema = z.object({
 });
 
 // HITL 승인된 저신뢰 관계를 Neo4j에 적재 — firehub-api(GraphMutationClient)가 승인 시 호출.
-// 엣지 schemaVersion 스탬프를 위해 온톨로지를 로드한다(add-entity와 동일 관례, 시스템유저 id=1).
-router.post('/graph/add-relation', internalAuth, async (req, res) => {
+// 엣지 schemaVersion 스탬프를 위해 온톨로지를 로드한다(add-entity와 동일 관례).
+router.post('/graph/add-relation', internalAuth, requireDelegation, async (req, res) => {
   const parsed = addRelationBodySchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: 'invalid request body', details: parsed.error.issues });
     return;
   }
   try {
-    const apiBaseUrl = process.env.API_BASE_URL || 'http://localhost:8080/api/v1';
-    const internalToken = process.env.INTERNAL_SERVICE_TOKEN || '';
-    const apiClient = new FireHubApiClient(apiBaseUrl, internalToken, 1);
+    const apiClient = delegationClient(res);
     const { ontology, ontologyId } = await resolveDatasetOntology(apiClient, parsed.data.datasetId);
     // relType은 zod의 문자열 검사만 거친 값이므로 온톨로지 대조는 addRelation이 담당한다(#319).
     // 위반 시 OntologyConformanceError → respondMutationError가 409 + 한국어 사유로 매핑한다

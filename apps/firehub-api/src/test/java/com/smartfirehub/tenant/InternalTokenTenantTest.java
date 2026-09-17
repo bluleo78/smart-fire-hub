@@ -6,13 +6,14 @@ import com.smartfirehub.global.security.JwtAuthenticationFilter;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TenantRlsTestSupport;
+import jakarta.servlet.FilterChain;
+import java.util.concurrent.atomic.AtomicReference;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.mock.web.MockFilterChain;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.core.Authentication;
@@ -109,20 +110,47 @@ class InternalTokenTenantTest extends IntegrationTestBase {
         tenantId);
   }
 
+  /** 필터가 체인 안에서 세운 인증·테넌트를 함께 담는다. */
+  private record FilterOutcome(Authentication authentication, Long tenantId) {}
+
   /** 운영의 ai-agent 호출을 재현한다 — 앰비언트 트랜잭션도 테넌트 컨텍스트도 없다. */
   private Authentication runFilter() throws Exception {
+    return runFilter(null).authentication();
+  }
+
+  /** 숫자 테넌트를 헤더로 싣는 축약형. 헤더 원문을 그대로 넘기려면 {@link #runFilter(String)}. */
+  private FilterOutcome runFilter(long requestedTenant) throws Exception {
+    return runFilter(String.valueOf(requestedTenant));
+  }
+
+  /**
+   * 운영의 ai-agent 호출을 재현한다. {@code requestedTenant} 가 있으면 원요청 테넌트를
+   * {@code X-On-Behalf-Of-Tenant} 헤더로 실어 보낸다(웹 세션 JWT 의 tenant 클레임에서 파생된 값).
+   *
+   * <p>필터는 finally 에서 컨텍스트를 지우므로, 체인 안(= 실제 컨트롤러가 도는 시점)에서 인증과
+   * 테넌트를 모두 캡처해야 한다. 테넌트를 캡처하는 이유: 권한 집합만 보면 "헤더를 거부했다" 와
+   * "헤더가 가리킨 비소속 테넌트를 그대로 세웠다" 가 둘 다 권한 0개로 보여 구분되지 않는다.
+   */
+  private FilterOutcome runFilter(String requestedTenantRaw) throws Exception {
     SecurityContextHolder.clearContext();
     TenantContext.clear();
 
     MockHttpServletRequest request = new MockHttpServletRequest();
     request.addHeader("Authorization", "Internal " + INTERNAL_TOKEN);
     request.addHeader("X-On-Behalf-Of", String.valueOf(userId));
+    if (requestedTenantRaw != null) {
+      request.addHeader("X-On-Behalf-Of-Tenant", requestedTenantRaw);
+    }
 
-    // 필터는 finally 에서 컨텍스트를 지우므로, 체인 안(= 실제 컨트롤러가 도는 시점)에서 인증 결과를
-    // 캡처해야 한다. 필터가 반환된 뒤에는 SecurityContext 도 남아 있지만 컨텍스트는 이미 비어 있다.
-    MockFilterChain chain = new MockFilterChain();
+    AtomicReference<Authentication> capturedAuth = new AtomicReference<>();
+    AtomicReference<Long> capturedTenant = new AtomicReference<>();
+    FilterChain chain =
+        (req, res) -> {
+          capturedAuth.set(SecurityContextHolder.getContext().getAuthentication());
+          capturedTenant.set(TenantContext.get());
+        };
     filter.doFilter(request, new MockHttpServletResponse(), chain);
-    return SecurityContextHolder.getContext().getAuthentication();
+    return new FilterOutcome(capturedAuth.get(), capturedTenant.get());
   }
 
   @Test
@@ -164,5 +192,48 @@ class InternalTokenTenantTest extends IntegrationTestBase {
 
     assertThat(authentication).isNotNull();
     assertThat(authentication.getAuthorities()).isEmpty();
+  }
+
+  @Test
+  @DisplayName("원요청 테넌트 헤더가 오면 멤버십이 여러 개여도 그 테넌트로 권한이 채워진다")
+  void requestedTenantResolvesDespiteMultipleMemberships() throws Exception {
+    insertMembership(tenantA);
+    insertMembership(tenantB);
+
+    // 권한은 tenantA 에만 부여돼 있다(setUp) — 헤더가 실제로 반영됐는지는 권한 유무로 드러난다.
+    FilterOutcome outcome = runFilter(tenantA);
+
+    assertThat(outcome.tenantId())
+        .as("웹 세션이 알고 있는 실행 테넌트를 전달받았으므로 추측할 것이 없다")
+        .isEqualTo(tenantA);
+    assertThat(outcome.authentication().getAuthorities())
+        .extracting(GrantedAuthority::getAuthority)
+        .contains(permissionCode);
+  }
+
+  @Test
+  @DisplayName("비소속 테넌트를 요구하는 헤더는 무검증 신뢰하지 않고 fail-closed 한다")
+  void requestedTenantOutsideMembershipFailsClosed() throws Exception {
+    insertMembership(tenantA);
+
+    // 대행 대상 사용자는 tenantB 멤버가 아니다. 헤더를 그대로 믿으면 내부 토큰을 쥔 쪽이 임의
+    // 테넌트를 열 수 있게 되므로(권한 위임의 상한이 사라진다), 멤버십 대조에서 걸러야 한다.
+    FilterOutcome outcome = runFilter(tenantB);
+
+    assertThat(outcome.tenantId()).as("헤더가 가리킨 비소속 테넌트를 세우면 안 된다").isNull();
+    assertThat(outcome.authentication().getAuthorities()).isEmpty();
+  }
+
+  @Test
+  @DisplayName("헤더 값이 숫자가 아니면 폴백 없이 fail-closed 한다")
+  void malformedRequestedTenantFailsClosed() throws Exception {
+    // 멤버십이 1개라 폴백하면 통과해 버린다 — 깨진 헤더를 조용히 무시하면 호출측 버그가
+    // 단일 멤버십 환경에서만 숨고 멀티 테넌트에서 터진다(이번 장애와 같은 형태다).
+    insertMembership(tenantA);
+
+    FilterOutcome outcome = runFilter("not-a-number");
+
+    assertThat(outcome.tenantId()).isNull();
+    assertThat(outcome.authentication().getAuthorities()).isEmpty();
   }
 }

@@ -19,7 +19,7 @@
 
 - **web → api**: Vite 프록시(`/api` → `localhost:8080`), JWT Bearer token 인증
 - **web → ai-agent**: SSE 스트리밍 (`POST /agent/chat`), JWT Bearer token 인증
-- **ai-agent → api**: 내부 서비스 인증 — `Authorization: Internal {token}` + `X-On-Behalf-Of: {userId}` 헤더
+- **ai-agent → api**: 내부 서비스 인증 — `Authorization: Internal {token}` + `X-On-Behalf-Of: {userId}` + `X-On-Behalf-Of-Tenant: {tenantId}` 헤더. 테넌트는 원요청(웹 세션 JWT의 tenant 클레임)에서 전파되며, api가 대행 대상의 ACTIVE 멤버십과 대조한 뒤에만 채택한다. 헤더가 없으면 멤버십이 정확히 1개일 때만 역추론하는 폴백(멀티 워크스페이스 사용자는 권한 0개 → 403)
 
 ## API 규칙
 

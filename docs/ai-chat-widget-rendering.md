@@ -145,9 +145,10 @@ safeTool('show_table', '...', { title, sql, columns, rows, canvas }, async (args
 #### 3-C. firehub-api 인증 (`api-client.ts`)
 
 ```typescript
-// 모든 API 요청에 두 가지 헤더 자동 첨부
+// 모든 API 요청에 세 가지 헤더 자동 첨부
 Authorization: Internal {INTERNAL_SERVICE_TOKEN}   // 서비스 간 신뢰 증명
 X-On-Behalf-Of: {userId}                          // 사용자 권한 위임 (행 수준 보안)
+X-On-Behalf-Of-Tenant: {tenantId}                 // 실행 테넌트 (api가 멤버십 대조 후 채택)
 ```
 
 #### 3-D. Express SSE 라우터 (`routes/chat.ts`)

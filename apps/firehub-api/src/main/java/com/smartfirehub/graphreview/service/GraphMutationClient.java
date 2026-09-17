@@ -3,6 +3,8 @@ package com.smartfirehub.graphreview.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.exception.ExternalServiceException;
+import com.smartfirehub.global.security.InternalCallHeaders;
+import com.smartfirehub.global.tenant.TenantContext;
 import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
@@ -11,7 +13,10 @@ import java.util.concurrent.TimeoutException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
@@ -104,6 +109,42 @@ public class GraphMutationClient {
   }
 
   /**
+   * ai-agent 가 이 요청을 처리하다 다시 api 를 역호출할 때(예: 온톨로지 조회) 쓸 <b>대행 주체</b>를
+   * 요청 컨텍스트에서 읽어 헤더로 만든다 — 승인 요청을 낸 사용자와 그가 보고 있던 테넌트다.
+   *
+   * <p>파라미터로 받지 않고 컨텍스트에서 읽는 이유: 두 값은 {@code JwtAuthenticationFilter} 가 이미
+   * 요청 단위로 세워 둔 앰비언트 상태다(테넌트는 RLS 가 이 방식에 의존한다). 네 개의 변형 메서드
+   * 시그니처에 같은 값을 다시 얹으면 그 상태를 이중으로 들고 다니게 된다.
+   *
+   * <p>컨텍스트가 비어 있으면 <b>호출하지 않고 즉시 실패한다</b>. ai-agent 는 대행 헤더가 없는 변형
+   * 요청을 400 으로 거부하므로 "헤더 없이 진행"은 완화가 아니라 확정된 실패이고, 그 실패는 원격
+   * 400 → 일반 문구로 퇴화해 원인이 ai-agent 로그에만 남는다. 여기서 끊으면 사유가 api 쪽에 남는다.
+   * 컨텍스트가 비는 것은 요청 경로 밖 호출(스케줄러·단위 테스트)뿐이다.
+   */
+  private HttpHeaders delegationHeaders(String opLabel) {
+    Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+    Long userId =
+        authentication != null && authentication.getPrincipal() instanceof Long id ? id : null;
+    Long tenantId = TenantContext.get();
+
+    if (userId == null || tenantId == null) {
+      log.error(
+          "[graph-mutation] {} 호출 중단 — 요청 컨텍스트에 대행 주체가 없다(userId={}, tenantId={}).",
+          opLabel,
+          userId,
+          tenantId);
+      throw new ExternalServiceException(
+          "승인 요청의 사용자·워크스페이스 정보를 확인할 수 없어 " + opLabel + "에 실패했습니다."
+              + " 다시 로그인한 뒤 시도해 주세요.");
+    }
+
+    HttpHeaders headers = new HttpHeaders();
+    headers.set(InternalCallHeaders.ON_BEHALF_OF, String.valueOf(userId));
+    headers.set(InternalCallHeaders.ON_BEHALF_OF_TENANT, String.valueOf(tenantId));
+    return headers;
+  }
+
+  /**
    * 임의 JSON 바디 POST.
    *
    * <p>ai-agent가 409를 주면 "대상 노드가 그래프에 없어 반영할 수 없음"이라는 상태 충돌이다(#310). 이때는 장애(502)가
@@ -115,10 +156,14 @@ public class GraphMutationClient {
    * 경로에 기대면 사유가 조용히 사라져 일반 실패 문구로 퇴화할 수 있다.
    */
   private void postJson(String uri, Object body, String opLabel) {
+    // 원격 호출 전에 대행 주체를 확정한다 — 없으면 원격이 400 으로 거부할 것이 확정이므로,
+    // 사유가 남는 쪽(여기)에서 끊는다.
+    HttpHeaders delegation = delegationHeaders(opLabel);
     try {
       webClient
           .post()
           .uri(uri)
+          .headers(headers -> headers.addAll(delegation))
           .bodyValue(body)
           .retrieve()
           .onStatus(
@@ -128,11 +173,25 @@ public class GraphMutationClient {
                       .bodyToMono(String.class)
                       .defaultIfEmpty("")
                       .map(raw -> new GraphConflictException(conflictMessage(raw, opLabel))))
+          // 400 은 "요청 계약 불일치"다 — 바디/헤더 스펙이 어긋났다는 뜻이고, 실제로 일어나는
+          // 경우는 두 서비스 이미지의 버전 스큐다(예: 구버전 api 가 대행 헤더를 안 보냄).
+          // 일반 catch 로 흘리면 "응답 코드 400" 문구만 남고 원격이 돌려준 사유가 버려지므로,
+          // 여기서 바디를 읽어 로그에 남긴다(#313: 사용자 문구에는 내부 정보를 싣지 않는다).
+          .onStatus(
+              status -> status.value() == HttpStatus.BAD_REQUEST.value(),
+              response ->
+                  response
+                      .bodyToMono(String.class)
+                      .defaultIfEmpty("")
+                      .map(raw -> contractMismatch(raw, opLabel, uri)))
           .toBodilessEntity()
           .timeout(TIMEOUT)
           .block();
     } catch (GraphConflictException e) {
       // 409 사유 전달용(#310) — 이미 사용자용 한국어 문구이므로 그대로 위임한다.
+      throw e;
+    } catch (ExternalServiceException e) {
+      // 400 매핑에서 이미 사용자용 문구를 만들고 로그도 남겼다 — 일반 문구로 덧씌우지 않는다.
       throw e;
     } catch (RuntimeException e) {
       // 전송 계층 실패(연결 거부·5xx·타임아웃). 상세는 로그에만 남긴다(#313).
@@ -172,6 +231,14 @@ public class GraphMutationClient {
     GraphConflictException(String message) {
       super(message);
     }
+  }
+
+  /** 400(요청 계약 불일치) — 원격이 돌려준 사유는 로그에만 남기고, 사용자에게는 행동 문구만 준다. */
+  private ExternalServiceException contractMismatch(String rawBody, String opLabel, String uri) {
+    log.error("[graph-mutation] {} 요청이 400 으로 거부됐다 (uri={}, body={})", opLabel, uri, rawBody);
+    return new ExternalServiceException(
+        "AI 그래프 서비스가 " + opLabel + " 요청 형식을 거부했습니다(서비스 버전 불일치로 보입니다)."
+            + " 관리자에게 문의해 주세요.");
   }
 
   /** 409 바디({"error":..,"message":..})에서 사용자용 사유를 뽑는다. 파싱 실패 시 일반 문구로 폴백. */
