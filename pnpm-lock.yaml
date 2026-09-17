@@ -378,6 +378,9 @@ importers:
       cytoscape-edgehandles:
         specifier: ^4.0.1
         version: 4.0.1(cytoscape@3.34.0)
+      cytoscape-euler:
+        specifier: ^1.2.4
+        version: 1.2.4(cytoscape@3.34.0)
       cytoscape-expand-collapse:
         specifier: ^4.1.1
         version: 4.1.1(cytoscape@3.34.0)
@@ -3180,6 +3183,11 @@ packages:
     peerDependencies:
       cytoscape: ^3.2.0
 
+  cytoscape-euler@1.2.4:
+    resolution: {integrity: sha512-RRYQydZ3E+UDao0MwFy7zXk08MHhdO9X/+HVoeurDCsg7P51tJ7fKIS4VSAe/TztM/V97MnbtJky9QihZ7nKDw==}
+    peerDependencies:
+      cytoscape: ^3.0.0
+
   cytoscape-expand-collapse@4.1.1:
     resolution: {integrity: sha512-MI4/GsA6Rf6RRzNR1aCitBLSnxiIKLxvZyCzF+oti/zn/ui1jmf769VcEFAEbjjsAtwteGsTmczI+niCMWJNvA==}
     peerDependencies:
@@ -3564,6 +3572,7 @@ packages:
   eslint@9.39.2:
     resolution: {integrity: sha512-LEyamqS7W5HB3ujJyvi0HQK/dtVINZvd5mAAp9eT5S/ujByGjiZLCzPcHVzuXbpJDJF/cxwHlfceVUDZ2lnSTw==}
     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
+    deprecated: This version is no longer supported. Please see https://eslint.org/version-support for other options.
     hasBin: true
     peerDependencies:
       jiti: '*'
@@ -8842,6 +8851,10 @@ snapshots:
       cytoscape: 3.34.0
       lodash.memoize: 4.1.2
       lodash.throttle: 4.1.1
+
+  cytoscape-euler@1.2.4(cytoscape@3.34.0):
+    dependencies:
+      cytoscape: 3.34.0
 
   cytoscape-expand-collapse@4.1.1(cytoscape@3.34.0):
     dependencies:

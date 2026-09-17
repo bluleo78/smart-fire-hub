@@ -1,4 +1,5 @@
 import cytoscape from 'cytoscape';
+import euler from 'cytoscape-euler';
 import expandCollapse from 'cytoscape-expand-collapse';
 import fcose from 'cytoscape-fcose';
 import { Network, SearchX } from 'lucide-react';
@@ -13,7 +14,9 @@ import type { GraphData, GraphNode } from '@/types/ontology';
 import GraphKeyboardList from './GraphKeyboardList';
 import { buildStylesheet } from './instance-graph-stylesheet';
 
-// fcose 레이아웃 + expand-collapse(타입 묶기) 확장을 모듈 로드 시 1회 등록(중복 등록은 cytoscape가 무시).
+// 레이아웃 2종(euler/fcose) + expand-collapse(타입 묶기) 확장을 모듈 로드 시 1회 등록
+// (중복 등록은 cytoscape가 무시). 둘을 모두 쓰는 이유는 아래 pickLayout 주석 참고.
+cytoscape.use(euler);
 cytoscape.use(fcose);
 cytoscape.use(expandCollapse);
 
@@ -36,29 +39,71 @@ interface Props {
   palette: TypePalette;
 }
 
-// fcose 레이아웃 옵션 — 겹침 방지(nodeRepulsion/nodeSeparation)를 내장 제공한다.
-// 코어 타입에 fcose 옵션이 없어 단언(cast)으로 전달한다.
-// (#508) randomize:true를 주면 fcose가 내부적으로 spectral(고유벡터) 초기 배치를 실행하는데,
-// 사건→피해→원인→시설→장비→법규로 이어지는 체인형(선형) 그래프에서는 라플라시안 선행
-// 고유벡터가 거의 선형이라 배치 결과가 대각선 하나로 붕괴한다. quality를 'draft'/'proof'로
-// 바꿔도 동일한 spectral 계산 경로를 타므로 붕괴가 재현됨을 확인했다(라이브러리 소스 확인 +
-// 실제 재현 데이터로 검증). randomize:false는 fcose의 spectral 계산 자체를 건너뛰고 cy에 이미
-// 있는 노드 좌표를 그대로 시작점 삼아 incremental CoSE(힘 기반) 리파인만 수행하므로,
-// cy.add 시 캐시가 없는(=새로) 나타난 노드에 우리가 직접 비-일직선 랜덤 좌표를 흩뿌려 주면
-// (아래 randomScatterPosition) spectral 붕괴 경로를 완전히 우회할 수 있다.
-const FCOSE_LAYOUT = {
+// 평탄(묶기 OFF) 모드의 레이아웃 옵션 — 코어 타입에 euler 옵션이 없어 단언(cast)으로 전달한다.
+//
+// [왜 fcose에서 euler로 바꿨나] fcose는 매 틱 모든 노드 쌍의 반발력을 계산해 O(n²)이라,
+// 운영 그래프(3,053노드/7,313엣지)에서 배치에만 35.7초가 걸려 페이지가 40초 넘게 멈췄다.
+// euler는 쿼드트리 Barnes-Hut 근사로 먼 노드 뭉치를 질량중심 하나로 묶어 O(n log n)이라
+// 같은 데이터에서 4.1초로 떨어진다(측정: 500→1,000→3,053노드에서 fcose는 1.2/3.6/35.7초로
+// 제곱 증가, euler는 3,000→30,000노드에서 4.3→6.9초). 근사라 배치 품질은 미세하게 낮지만,
+// fcose의 35.7초짜리 결과는 아웃라이어 때문에 fit()이 끝까지 줌아웃해 실제로는 더 안 읽혔다.
+//
+// (#508) 체인형(사건→피해→원인→시설→장비→법규) 그래프가 대각선 하나로 붕괴하던 문제는
+// fcose의 spectral(라플라시안 고유벡터) 초기 배치가 원인이었다. euler에는 spectral 단계 자체가
+// 없어 이 경로가 아예 존재하지 않는다. 240노드 순수 체인으로 재검증한 결과(PCA 분산비, 1=원형
+// /0=대각선 붕괴): fcose quality:'draft' 0.21(붕괴 재현), euler 0.98~0.99(전 엔진 중 최고).
+// euler는 같은 위치에 겹친 노드를 내부적으로 밀어내는 가드가 있어, 시작 좌표 없이 전 노드를
+// 원점에 겹쳐 둔 경우에도 0.99로 대칭을 스스로 깬다.
+//
+// randomize:false는 euler의 기본값이자 우리에게 필요한 동작이다 — 아래 positionsRef로 복원한
+// 기존 좌표를 시작점으로 그대로 쓴다(true면 전부 무시하고 새로 흩뿌려 #496 좌표 유지가 깨진다).
+//
+// maxSimulationTime은 "수렴 시간"이 아니라 하드 캡이다 — 4초가 지나면 수렴 여부와 무관하게
+// 중단한다. 위 4.1초/6.9초 측정치도 이 캡에 걸린 값이므로, 그래프가 더 커져도 배치 대기시간은
+// 4초대에서 더 늘지 않는 대신 배치가 덜 다듬어진 상태로 끝난다.
+const EULER_LAYOUT = {
+  name: 'euler',
+  animate: false,
+  randomize: false,
+  springLength: 90, // fcose의 idealEdgeLength와 동일한 목표 엣지 길이
+  maxIterations: 1000,
+  maxSimulationTime: 4000,
+  padding: 32,
+  fit: true,
+} as unknown as cytoscape.LayoutOptions;
+
+// 타입 묶기(grouped) 모드 전용 레이아웃 — 이 모드에서만 fcose를 계속 쓴다.
+//
+// [왜 여기만 euler로 못 바꾸나] 묶기 모드는 타입마다 compound 부모(grp:<타입>)를 만들어 자식을
+// 담는데, euler에는 compound 개념이 없다. euler는 비-부모 노드로만 body를 만들고 실제 엣지로만
+// 스프링을 거는데, 우리 엣지는 노드↔노드라 grp: 부모에는 스프링이 하나도 걸리지 않는다. 결과적으로
+// "같은 타입끼리 모이고 다른 타입과는 떨어지는" 힘이 없어 타입 박스가 서로 포개진다.
+// 운영 그래프(3,053노드/7종 타입)로 측정한 타입 박스 겹침 비율(작은 쪽 면적 기준)과 접은 뒤
+// 메타노드 최소 중심간 거리: euler 0.963 / 21쌍 중 21쌍이 절반 이상 겹침 / 47px,
+// fcose 0.24 / 21쌍 중 5쌍 / 223px. euler 쪽은 접어도 덩어리가 한 점에 쌓여 읽을 수 없다.
+// 시작 좌표를 타입별로 뭉쳐 주는 우회(타입 중심을 원 위에 배치)도 측정했으나 0.974로 오히려
+// 나빴다 — 힘 계산에 타입 개념이 없어 4초 시뮬레이션이 엣지를 따라 다시 섞어버리기 때문이다.
+// fcose는 compound를 인지해 그룹을 분리해 주므로, 묶기 모드의 9.6초(평탄 모드 35.7초와 달리
+// 감당 가능한 수준)를 받아들이고 여기만 fcose를 유지한다.
+const FCOSE_GROUPED_LAYOUT = {
   name: 'fcose',
   animate: false,
   quality: 'default',
-  randomize: false,
+  randomize: false, // (#508) spectral 초기 배치 우회 — 위 EULER_LAYOUT 주석의 붕괴 사유와 동일
   nodeSeparation: 80,
   idealEdgeLength: 90,
   padding: 32,
   fit: true,
 } as unknown as cytoscape.LayoutOptions;
 
-// 캐시된 좌표가 없는(=새로 나타난) 노드의 CoSE 리파인 시작점 — 원점 근처에 겹쳐 놓으면 힘-기반
-// 알고리즘이 대칭을 못 깨고 다시 일직선/뭉침으로 수렴할 수 있어, 노드 수에 비례해 넓게 흩뿌린다.
+// 모드에 맞는 레이아웃 선택 — 묶기 ON이면 compound를 인지하는 fcose, OFF면 10배 빠른 euler.
+function pickLayout(grouped: boolean | undefined): cytoscape.LayoutOptions {
+  return grouped ? FCOSE_GROUPED_LAYOUT : EULER_LAYOUT;
+}
+
+// 캐시된 좌표가 없는(=새로 나타난) 노드의 힘-기반 리파인 시작점 — 원점 근처에 겹쳐 놓으면
+// 대칭을 못 깨고 뭉칠 수 있어, 노드 수에 비례해 넓게 흩뿌린다. 위 0.99처럼 euler의 겹침 가드만으로도
+// 동작은 하지만, 시작점이 흩어져 있을수록 4초 캡 안에서 더 잘 수렴한다.
 function randomScatterPosition(nodeCount: number): { x: number; y: number } {
   const spread = 120 * Math.sqrt(Math.max(nodeCount, 1));
   return { x: (Math.random() - 0.5) * spread, y: (Math.random() - 0.5) * spread };
@@ -67,7 +112,8 @@ function randomScatterPosition(nodeCount: number): { x: number; y: number } {
 // 리사이즈 후 재맞춤 시 노드가 경계에 붙지 않도록 주는 여백(px).
 const FIT_PADDING = 40;
 
-// 인스턴스 그래프 캔버스 — 개체·관계를 Cytoscape.js(Canvas, fcose 레이아웃)로 렌더링한다.
+// 인스턴스 그래프 캔버스 — 개체·관계를 Cytoscape.js(Canvas)로 렌더링하며, 레이아웃은 모드에 따라
+// 평탄 모드는 euler·묶기 모드는 fcose를 쓴다(선택 근거는 pickLayout 위 주석 참고).
 // activeTypes(빈 Set이면 전체)·search(이름 부분일치, 대소문자 무시)로 필터링하며, 노드 tap 시 상세 드로어 오픈을 위임한다.
 // 캔버스는 DOM 노드가 없으므로 테스트/디버그를 위해 컨테이너에 data-node-count를 노출하고, dev에서 cy 인스턴스를 window에 싣는다.
 export default function InstanceGraph({ graph, activeTypes, search, onNodeSelect, focusKey, grouped, palette }: Props) {
@@ -88,8 +134,8 @@ export default function InstanceGraph({ graph, activeTypes, search, onNodeSelect
   // 이 좌표를 복원해, 사용자가 드래그로 옮긴 위치가 필터 조작만으로 초기화되지 않게 한다.
   const positionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
   // 직전 렌더의 graph 참조 — 참조가 바뀌면(온톨로지 전환 등 실제 새 데이터셋 로드) "완전히 새로운
-  // 그래프"로 간주해 좌표 캐시를 비우고 fcose를 randomize:true로 전체 재배치한다. 참조가 그대로면
-  // (검색/타입 필터/묶기 토글 등 파생 상태만 바뀐 경우) 기존 좌표를 유지한다.
+  // 그래프"로 간주해 좌표 캐시를 비우고 전체를 새로 배치한다. 참조가 그대로면(검색/타입 필터/
+  // 묶기 토글 등 파생 상태만 바뀐 경우) 기존 좌표를 유지한다.
   const prevGraphRef = useRef<GraphData | null>(null);
 
   // 타입 토글·검색 필터 적용(activeTypes 비어 있으면 전체 표시).
@@ -204,7 +250,8 @@ export default function InstanceGraph({ graph, activeTypes, search, onNodeSelect
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 필터 결과(요소) 갱신 → 요소 교체 후 fcose 재배치. grouped면 타입별 compound 부모로 묶는다.
+  // 필터 결과(요소) 갱신 → 요소 교체 후 모드에 맞는 레이아웃(pickLayout)으로 재배치.
+  // grouped면 타입별 compound 부모로 묶는다.
   // (#496) graph 참조가 바뀐 "진짜 새 데이터셋" 로드일 때만 전체 랜덤 재배치를 하고,
   // 검색/타입 필터처럼 같은 graph에서 파생된 부분집합만 바뀐 경우엔 기존 노드 위치를 그대로 복원한다.
   useEffect(() => {
@@ -240,7 +287,7 @@ export default function InstanceGraph({ graph, activeTypes, search, onNodeSelect
           parent: grouped ? `grp:${n.type}` : undefined,
         },
         // 캐시된 좌표가 있으면 그 자리에 다시 배치 — 없으면(새로 나타난 노드) (#508) 원점에 겹쳐
-        // 놓지 않고 랜덤 흩뿌림 좌표에서 시작시켜, 아래 레이아웃(CoSE 힘 기반 리파인)이 대칭
+        // 놓지 않고 랜덤 흩뿌림 좌표에서 시작시켜, 아래 레이아웃(힘 기반 리파인)이 대칭
         // 붕괴 없이 빈 자리를 찾아가게 한다.
         position: positionsRef.current.get(n.key) ?? randomScatterPosition(filteredNodes.length),
       })),
@@ -252,17 +299,23 @@ export default function InstanceGraph({ graph, activeTypes, search, onNodeSelect
     const hasNewNodes = filteredNodes.some((n) => !positionsRef.current.has(n.key));
     const needsLayout = filteredNodes.length > 0 && (isNewGraph || hasNewNodes || grouped);
     if (needsLayout) {
-      if (!isNewGraph) {
+      // 묶기 모드에서는 잠그지 않는다 — 타입별로 노드를 다시 모아야 하는데 기존 좌표로 전부
+      // 잠그면 레이아웃이 한 노드도 못 움직여, 평탄 모드에서 타입과 무관하게 흩어져 있던 배치가
+      // 그대로 굳는다. 그러면 타입 박스끼리 포개져 접었을 때 메타노드가 한 점에 쌓인다
+      // (운영 3,053노드 측정: 잠그면 박스 겹침 0.995·메타노드 최소 거리 16px에 14초가 걸리지만,
+      // 안 잠그면 0.284·389px에 9.6초). 묶기 모드는 개별 노드가 번들 안에 접혀 보이지 않으므로
+      // 개별 드래그 위치를 지킬 실익도 없다. 평탄 모드에서는 기존대로 잠가 #496을 보장한다.
+      if (!isNewGraph && !grouped) {
         // 기존 위치가 있던 노드는 잠가 레이아웃이 건드리지 못하게 한다 — 결과적으로 새 노드만
         // 배치 대상이 되는 partial-layout이 되어, 드래그로 옮긴 위치가 유지된다.
         cy.nodes().forEach((n) => {
           if (!n.data('isGroup') && positionsRef.current.has(n.id())) n.lock();
         });
       }
-      // (#508) 신규 로드든 부분 재배치든 항상 randomize:false로 fcose의 spectral 초기 배치를
-      // 우회한다 — 새로 나타난 노드는 이미 cy.add에서 randomScatterPosition으로 흩뿌려 뒀으므로
-      // CoSE 힘 기반 리파인만으로 충분히 자연스럽게 자리를 잡는다.
-      const layout = cy.layout(FCOSE_LAYOUT);
+      // (#508) 두 레이아웃 모두 randomize:false라 spectral 초기 배치를 타지 않는다 — 위 cy.add에서
+      // 복원한 기존 좌표(또는 신규 노드의 흩뿌림 좌표)를 시작점으로 삼아 힘-기반 리파인만 수행한다.
+      // 묶기 ON일 때만 compound를 인지하는 fcose를 쓰는 이유는 FCOSE_GROUPED_LAYOUT 주석 참고.
+      const layout = cy.layout(pickLayout(grouped));
       layout.one('layoutstop', () => {
         cy.nodes().unlock();
         // 배치 완료 후, 묶기 모드면 모든 타입 부모를 접어 번들(메타노드)로 축약한다.

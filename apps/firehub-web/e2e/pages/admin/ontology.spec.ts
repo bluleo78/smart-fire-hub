@@ -16,7 +16,7 @@ import { expect, test } from '../../fixtures/auth.fixture';
  * - 페이지는 더 이상 AdminRoute로 게이팅되지 않지만(비관리자 접근은 별도 describe에서 검증), 이 블록은 ADMIN 픽스처로 유지한다.
  * - 백엔드 없이 page.route()로 /api/v1/ontology(/graph)를 모킹한다.
  * - 인스턴스 그래프는 Cytoscape.js(Canvas) 렌더 — DOM 노드가 없으므로 컨테이너의 data-node-count(필터 후 노드 수)와
- *   dev에서 노출되는 window.__ontologyCy로 검증한다. fcose 레이아웃은 비결정적이라 캔버스 좌표 클릭은 쓰지 않는다.
+ *   dev에서 노출되는 window.__ontologyCy로 검증한다. 힘-기반 레이아웃은 비결정적이라 캔버스 좌표 클릭은 쓰지 않는다.
  */
 test.describe('지식그래프 시각화 페이지', () => {
   test.beforeEach(async ({ authenticatedPage: page }) => {
@@ -340,10 +340,76 @@ test.describe('지식그래프 시각화 페이지', () => {
     expect(flatTotal).toBe(graph.nodes.length);
   });
 
-  // (#496) 검색/타입 필터 조작이 fcose 레이아웃을 randomize:true로 재실행해, 드래그로 옮긴 노드
-  // 위치가 필터를 만질 때마다 초기화되던 회귀 가드. graph 참조가 그대로인(=같은 데이터셋) 필터
-  // 재렌더에서는 기존 좌표가 그대로 보존돼야 한다. fcose 최초 배치는 비결정적이므로 절대 좌표를
-  // 단언하지 않고, "드래그로 직접 설정한 좌표가 필터 조작 후에도 그대로인가"만 검증한다.
+  // 묶기 모드의 레이아웃이 compound를 인지하지 못하면 타입 덩어리들이 한 점에 포개져, 접어도
+  // "어느 덩어리가 어느 타입인지" 구분할 수 없게 된다(평탄 모드용 euler로 묶기까지 처리했을 때
+  // 실제로 발생: 메타노드 최소 중심간 거리 47px, 타입 박스 21쌍이 전부 절반 이상 겹침).
+  // 위 토글 테스트는 "개수"만 세므로 이 증상을 통과시켜 버린다 — 여기서는 "간격"을 단언한다.
+  test('타입 묶기 시 접힌 메타노드들이 서로 겹치지 않고 분리된다', async ({ authenticatedPage: page }) => {
+    // 기본 목 그래프(노드 수 한 자릿수)로는 이 증상이 재현되지 않는다 — 노드가 적으면 어떻게
+    // 배치해도 서로 떨어지기 때문. 타입마다 노드를 충분히 넣고 관계를 "타입을 가로질러" 걸어,
+    // 타입 개념이 없는 배치가 돌면 타입끼리 뒤섞이도록 만든 전용 그래프를 쓴다.
+    const bundleTypes = ['Incident', 'Damage', 'Cause', 'Building', 'Equipment', 'Regulation'] as const;
+    const PER_TYPE = 25;
+    const nodes = bundleTypes.flatMap((type, ti) =>
+      Array.from({ length: PER_TYPE }, (_, i) => ({
+        key: `bundle-${ti}-${i}`,
+        type,
+        name: `${type} 노드 ${i}`,
+        sourceChunkCount: 1,
+        schemaVersion: 1,
+      })),
+    );
+    // 관계는 전부 다른 타입 사이에만 건다 — 같은 타입끼리 끌어당기는 힘이 하나도 없는 조건이라,
+    // compound를 인지하지 못하거나 노드가 잠겨 못 움직이면 타입 덩어리가 곧바로 포개진다.
+    const edges = nodes.map((n, i) => ({
+      subjectKey: n.key,
+      type: 'RELATES_TO',
+      objectKey: nodes[(i + PER_TYPE + 7) % nodes.length].key,
+    }));
+    const graph = { nodes, edges };
+    const typeCount = bundleTypes.length;
+    await setupOntologyMocks(page);
+    await mockApi(page, 'GET', '/api/v1/ontology/graph', graph);
+    await page.goto('/knowledge-graph/model');
+    await page.getByRole('tab', { name: '그래프 탐색' }).click();
+    await expectNodeCount(page, graph.nodes.length);
+
+    type MetaCy = {
+      nodes(sel?: string): {
+        length: number;
+        map<T>(f: (n: { position(): { x: number; y: number }; width(): number }) => T): T[];
+      };
+    };
+    const groupCount = () =>
+      page.evaluate(() => (window as unknown as { __ontologyCy: MetaCy }).__ontologyCy.nodes('[?isGroup]').length);
+
+    await page.getByRole('button', { name: '타입 묶기' }).click();
+    await expect.poll(groupCount).toBe(typeCount);
+
+    // 접힌 메타노드들의 중심 좌표와 지름을 읽어 쌍별 거리를 계산한다.
+    const metas = await page.evaluate(() =>
+      (window as unknown as { __ontologyCy: MetaCy }).__ontologyCy
+        .nodes('.cy-expand-collapse-collapsed-node')
+        .map((n) => ({ x: n.position().x, y: n.position().y, w: n.width() })),
+    );
+    expect(metas.length).toBe(typeCount);
+
+    // 두 메타노드의 중심 거리가 반지름 합보다 짧으면 화면에서 원이 겹친다 — 한 쌍도 없어야 한다.
+    const overlapping: string[] = [];
+    for (let i = 0; i < metas.length; i++) {
+      for (let j = i + 1; j < metas.length; j++) {
+        const dist = Math.hypot(metas[i].x - metas[j].x, metas[i].y - metas[j].y);
+        if (dist < (metas[i].w + metas[j].w) / 2) overlapping.push(`${i}-${j}(${Math.round(dist)}px)`);
+      }
+    }
+    expect(overlapping, `겹친 메타노드 쌍: ${overlapping.join(', ')}`).toEqual([]);
+  });
+
+  // (#496) 검색/타입 필터 조작이 레이아웃을 전체 재실행해, 드래그로 옮긴 노드 위치가 필터를
+  // 만질 때마다 초기화되던 회귀 가드. graph 참조가 그대로인(=같은 데이터셋) 필터 재렌더에서는
+  // 기존 좌표가 그대로 보존돼야 한다(구현상 기존 노드를 lock()으로 고정해 신규 노드만 배치한다).
+  // 힘-기반 최초 배치는 비결정적이므로 절대 좌표를 단언하지 않고, "드래그로 직접 설정한 좌표가
+  // 필터 조작 후에도 그대로인가"만 검증한다.
   test('노드를 드래그로 옮긴 뒤 검색/타입 필터를 조작해도 위치가 유지된다(#496)', async ({
     authenticatedPage: page,
   }) => {
@@ -370,7 +436,7 @@ test.describe('지식그래프 시각화 페이지', () => {
       { id: targetKey, pos: draggedPosition },
     );
 
-    // 이름 검색 한 글자 입력 — 필터로 인한 재렌더를 유발한다(수정 전에는 여기서 fcose가 랜덤 재배치됐다).
+    // 이름 검색 한 글자 입력 — 필터로 인한 재렌더를 유발한다(수정 전에는 여기서 레이아웃이 랜덤 재배치됐다).
     await page.getByPlaceholder('이름 검색').fill(graph.nodes[0].name[0]);
     await expect(page.getByTestId('instance-graph')).toHaveAttribute('data-node-count', /^[1-9]/);
 
@@ -399,9 +465,11 @@ test.describe('지식그래프 시각화 페이지', () => {
   });
 
   // (#508) 사건→피해→원인→시설→장비→법규처럼 순차적으로 이어지는 체인형(선형) 위상의 그래프에서
-  // fcose의 spectral 초기 배치가 라플라시안 선행 고유벡터 붕괴로 노드 전체를 하나의 대각선(y≈x+c)
-  // 위에 늘어놓던 회귀 가드. 30노드 체인 그래프를 모킹해, 렌더된 좌표들이 한 직선 위에 몰리지
-  // 않고(=x-y 편차가 노드마다 달라야 함) 2차원으로 퍼져 있는지 검증한다.
+  // 노드 전체가 하나의 대각선(y≈x+c) 위에 늘어놓이던 회귀 가드. 원인은 당시 쓰던 fcose의 spectral
+  // (라플라시안 고유벡터) 초기 배치였고, 현재 레이아웃(euler)에는 그 단계 자체가 없다. 엔진을 바꿔도
+  // 증상이 돌아오지 않는지 지키기 위해 테스트는 엔진에 의존하지 않고 결과 좌표만 본다 — 30노드 체인
+  // 그래프를 모킹해, 렌더된 좌표들이 한 직선 위에 몰리지 않고(=x-y 편차가 노드마다 달라야 함)
+  // 2차원으로 퍼져 있는지 검증한다.
   test('체인형 위상 그래프(30노드)가 기본 진입 시 하나의 대각선으로 붕괴하지 않는다(#508)', async ({
     authenticatedPage: page,
   }) => {
@@ -426,7 +494,7 @@ test.describe('지식그래프 시각화 페이지', () => {
     await page.getByRole('tab', { name: '그래프 탐색' }).click();
     await expectNodeCount(page, nodes.length);
 
-    // fcose layoutstop을 기다린 뒤 좌표를 읽는다 — 비동기 레이아웃이 끝나기 전에 읽으면 아직 초기값일 수 있다.
+    // layoutstop을 기다린 뒤 좌표를 읽는다 — 비동기 레이아웃이 끝나기 전에 읽으면 아직 초기값일 수 있다.
     await page.waitForFunction(() => {
       const cy = (window as unknown as { __ontologyCy?: { nodes(): { length: number } } }).__ontologyCy;
       return !!cy && cy.nodes().length === 30;
