@@ -52,11 +52,19 @@ app:
   pipeline:
     datasource:
       url: ${spring.datasource.url}
-      username: pipeline_executor
+      # username 키는 #681 에서 제거했다 — 읽는 코드가 하나도 남지 않았다. 파이프라인 실행 접속은
+      # 전부 테넌트별 롤(pipeline_executor_t{id})로 하고, 롤 이름은 TenantPipelineRole 이 파생한다.
+      # 아래 password 는 접속용이 아니라 레거시 공용 롤의 비밀번호를 기동 시 맞추는 용도로만 남는다
+      # (RolePasswordSyncCallback). url 은 테넌트와 무관하게 같으므로 계속 쓰인다.
       password: ${PIPELINE_EXECUTOR_PASSWORD:pipeline_exec_pwd}
     # 테넌트별 파이프라인 실행 롤(pipeline_executor_t{id}) 비밀번호를 결정적으로 파생하는 HMAC 키.
     # TenantPipelineRole/TenantPipelineDataSourceRegistry/RolePasswordSyncCallback 이 함께 쓴다.
     role-password-secret: ${PIPELINE_ROLE_PASSWORD_SECRET:tenant-pipeline-role-dev-secret}
+    # 테넌트 생성·기동 시 pipeline_executor_t{id} 롤을 자동으로 만들고 설정할지(#680).
+    # 끄면 런북 §1-3/§1-5 의 운영자 수동 SQL 절차로 돌아간다 — 그 절차 누락이 2026-09-17 운영
+    # 장애의 원인이었으므로 기본값은 켬이다. test 프로필만 끈다(pg_roles 는 클러스터 전역이라
+    # 공유 test DB 에 LOGIN 롤이 무한 누적된다 — TenantPipelineRoleProvisioner Javadoc).
+    role-auto-provision: ${PIPELINE_ROLE_AUTO_PROVISION:true}
     tenant-pool:
       max-pools: ${PIPELINE_TENANT_POOL_MAX_POOLS:8}
       max-size: ${PIPELINE_TENANT_POOL_MAX_SIZE:2}

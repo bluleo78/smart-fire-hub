@@ -684,14 +684,39 @@ public final class TenantRlsTestSupport {
    *     있다).
    */
   public static boolean ensureRoleExists(DSLContext ownerDsl, String roleName) {
-    boolean exists =
-        ownerDsl.fetchExists(
-            ownerDsl.selectOne().from("pg_roles").where(field("rolname", String.class).eq(roleName)));
-    if (exists) {
+    if (roleExists(ownerDsl, roleName)) {
       return false;
     }
     ownerDsl.execute("CREATE ROLE " + roleName + " NOLOGIN");
     return true;
+  }
+
+  /** pg_roles 에 롤이 존재하는지 확인한다 — 테스트 쪽 판정의 단일 지점. */
+  public static boolean roleExists(DSLContext ownerDsl, String roleName) {
+    return ownerDsl.fetchExists(
+        ownerDsl.selectOne().from("pg_roles").where(field("rolname", String.class).eq(roleName)));
+  }
+
+  /**
+   * LOGIN 파이프라인 실행 롤을 정리한다 — 없으면 아무것도 하지 않는다.
+   *
+   * <p><b>왜 {@link #dropRoleIfCreatedByThisTest} 가 아닌 별도 헬퍼인가.</b> 그쪽은 NOLOGIN 롤의
+   * "이 테스트가 만들었을 때만 지운다" 플래그 패턴이다. 여기서 다루는 롤은 <b>실제로 로그인</b>해야
+   * 해서 무작위 900,000,000+ 대역 테넌트 id 로 무조건 생성·삭제하는 다른 규율을 따른다(R22).
+   *
+   * <p><b>문장 순서가 계약이다.</b> {@code GRANT CONNECT} 로 생긴 DB 권한과 소유 객체가 남아 있으면
+   * {@code DROP ROLE} 이 거부된다 — REVOKE → {@code DROP OWNED BY} → {@code DROP ROLE} 순서여야 한다.
+   * 이 순서를 네 테스트가 각자 손으로 적고 있었고(그 중 한 곳만 주석이 있었다), 순서를 아는 곳이
+   * 여럿이면 언젠가 하나가 틀린다. 그래서 여기 한 곳으로 모은다.
+   */
+  public static void dropPipelineLoginRole(DSLContext ownerDsl, String roleName) {
+    if (!roleExists(ownerDsl, roleName)) {
+      return;
+    }
+    String database = ownerDsl.fetch("select current_database()").get(0).get(0, String.class);
+    ownerDsl.execute("REVOKE ALL ON DATABASE \"" + database + "\" FROM " + roleName);
+    ownerDsl.execute("DROP OWNED BY " + roleName);
+    ownerDsl.execute("DROP ROLE IF EXISTS " + roleName);
   }
 
   /**

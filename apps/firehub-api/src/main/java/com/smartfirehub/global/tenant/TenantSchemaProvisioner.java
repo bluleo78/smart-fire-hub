@@ -63,8 +63,9 @@ public class TenantSchemaProvisioner {
     //    대상 테이블마다 AccessExclusiveLock 을 잡는다. prod 의 data 에는 테이블이 86개 있으므로
     //    (실측) 단락이 없으면 createTable 마다 그 락을 다시 걸었다 풀며, 동시에 임포트가 돌면
     //    락 대기·데드락으로 번진다.
-    // 2) **자가치유 경로를 닫지 않는다.** 신규 테넌트의 pipeline_executor_t{id} 생성은 운영자
-    //    절차(#383)라 첫 데이터셋 생성 시점에는 없는 것이 흔하고, 그때 executor 대상 문장들은
+    // 2) **자가치유 경로를 닫지 않는다.** pipeline_executor_t{id} 는 이제 테넌트 생성 시점에
+    //    자동으로 만들어지지만(TenantPipelineRoleProvisioner, #680), 그 이전에 태어난 테넌트나
+    //    자동 프로비저닝이 꺼진 환경에서는 여전히 없을 수 있고, 그때 executor 대상 문장들은
     //    전부 건너뛴다. 그래서 "스키마가 있으면 끝" 으로 단락시키면 롤이 나중에 생겨도 다시
     //    들어오지 않아(FlywayCallbackConfig 는 비밀번호만 동기화한다) 그 테넌트의 파이프라인이
     //    에러 없이 영구히 안 돈다. "USAGE 보유" 로 판정해도 같은 함정이 남는다 — 운영자가 1차
@@ -100,10 +101,14 @@ public class TenantSchemaProvisioner {
             // permission denied 로 터진다(V111 에는 없는 V83 계승분).
             tx.execute("GRANT CREATE ON SCHEMA {0} TO {1}", name(schema), name(RUNTIME_ROLE));
 
-            // executorRole 이 아직 없을 수 있다 — 신규 테넌트 롤 생성은 운영자 절차(#383)이지
-            // 이 프로비저너가 만드는 것이 아니다. 없다고 실패시키면, 롤이 아직 프로비저닝되지
-            // 않은 테넌트 하나 때문에 데이터셋 생성 전체가 막힌다(FlywayCallbackConfig.roleExists
-            // 와 같은 판단). 롤이 나중에 생기면 위 단락 조건이 다시 이 블록으로 들여보낸다.
+            // executorRole 이 아직 없을 수 있다 — 이 프로비저너가 롤을 만들지는 않는다(그건
+            // TenantPipelineRoleProvisioner 의 일이다, #680). 없다고 실패시키면, 롤이 아직
+            // 프로비저닝되지 않은 테넌트 하나 때문에 데이터셋 생성 전체가 막힌다
+            // (FlywayCallbackConfig.roleExists 와 같은 판단). 롤이 나중에 생기면 위 단락 조건이
+            // 다시 이 블록으로 들여보낸다 — 그 재진입을 기동 시 한 번 강제로 일으켜 주는 것이
+            // TenantPipelineRoleBootstrap 이다. 파이프라인은 테이블을 만들지 않고 읽기만 하므로
+            // 이 메서드에 영영 도달하지 못하고, 그래서 그것이 없으면 재진입 자체가 일어나지 않는다
+            // (2026-09-17 장애의 테넌트 2가 정확히 그 상태였다).
             if (roleExists(tx, executorRole)) {
               tx.execute("GRANT USAGE ON SCHEMA {0} TO {1}", name(schema), name(executorRole));
               tx.execute(
@@ -225,15 +230,31 @@ public class TenantSchemaProvisioner {
 
   /** 소유자 커넥션으로 pg_namespace 를 조회해 스키마 존재 여부를 확인한다. */
   private boolean schemaExists(String schema) {
-    return ownerDsl.fetchExists(
-        ownerDsl
-            .selectOne()
-            .from("pg_namespace")
-            .where(field("nspname", String.class).eq(schema)));
+    return schemaExists(ownerDsl, schema);
   }
 
-  /** pg_roles 에 롤이 실제로 존재하는지 확인한다(FlywayCallbackConfig.roleExists 와 같은 판단). */
-  private boolean roleExists(DSLContext dsl, String roleName) {
+  /**
+   * pg_namespace 로 스키마 존재를 확인한다.
+   *
+   * <p>{@code static} 이고 {@code DSLContext} 를 받는 이유: {@code TenantPipelineRoleBootstrap} 이
+   * 같은 판정을 <b>런타임 커넥션</b>으로 해야 한다(그 클래스는 소유자 DataSource 를 주입받지 않는다
+   * — {@code SchemaOwnerDataSourceExposureGuardTest}). 카탈로그 조회는 어느 롤로 해도 결과가 같으므로
+   * 판정을 한 곳에 두고 커넥션만 호출부가 고르게 한다.
+   */
+  static boolean schemaExists(DSLContext dsl, String schema) {
+    return dsl.fetchExists(
+        dsl.selectOne().from("pg_namespace").where(field("nspname", String.class).eq(schema)));
+  }
+
+  /**
+   * pg_roles 에 롤이 실제로 존재하는지 확인한다.
+   *
+   * <p>같은 판정을 {@code TenantPipelineRoleProvisioner} 도 쓴다 — 그래서 여기 하나만 둔다.
+   * ({@code FlywayCallbackConfig} 에 세 번째 구현이 남아 있는 것은 그쪽이 jOOQ 가 아니라 원시
+   * {@code Connection} 위에서 돌기 때문이다. 콜백에 jOOQ 를 끌어들이지 않으려고 남긴 의도적
+   * 중복이며, 판정의 정본은 이 메서드다.)
+   */
+  static boolean roleExists(DSLContext dsl, String roleName) {
     return dsl.fetchExists(
         dsl.selectOne().from("pg_roles").where(field("rolname", String.class).eq(roleName)));
   }

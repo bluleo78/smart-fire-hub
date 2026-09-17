@@ -44,10 +44,18 @@ public class FlywayCallbackConfig {
    * 파생값으로 맞춘다. 롤 이름은 반드시 {@link TenantPipelineRole#roleName} 을 거쳐 조립한다(문자열
    * 직접 조립 금지 — TenantPipelineRoleTest 가 규약을 고정한다).
    *
-   * <p>V111 은 테넌트 1 의 롤만 만든다(R6) — 새 테넌트를 위한 롤 생성은 운영자가 실행하는 문서화된
-   * 절차(#383)이지 이 애플리케이션이 자동으로 만드는 것이 아니다. 그래서 ACTIVE 테넌트라도 아직 롤이
-   * 없으면 조용히 건너뛴다: 여기서 실패하거나 앱 기동을 막으면, 아직 프로비저닝되지 않은 테넌트
-   * 하나 때문에 이미 정상 동작 중인 다른 모든 테넌트까지 기동이 막히는 과잉 대응이 된다.
+   * <p>롤 생성은 이 콜백의 일이 아니다 — {@code TenantPipelineRoleProvisioner} 가 테넌트 생성
+   * 시점에 만들고, {@code TenantPipelineRoleBootstrap} 이 기동 시 기존 테넌트를 훑는다(#680).
+   * 여기에 넣지 않은 이유: Flyway 콜백은 원시 {@code Connection} 만 받아 스프링 빈
+   * ({@code TenantSchemaProvisioner})에 닿지 못하므로, 롤만 만들고 스키마 GRANT 는 못 거는
+   * 절반짜리 치유가 된다. 이 콜백에 남은 일은 <b>비밀번호 동기화</b>뿐이고 그건 커넥션 하나로
+   * 충분하다(시크릿 회전 시에도 이 경로가 정본이다).
+   *
+   * <p>그래서 ACTIVE 테넌트라도 아직 롤이 없으면 조용히 건너뛴다: 여기서 실패하거나 앱 기동을
+   * 막으면, 아직 프로비저닝되지 않은 테넌트 하나 때문에 이미 정상 동작 중인 다른 모든 테넌트까지
+   * 기동이 막히는 과잉 대응이 된다. 콜백은 마이그레이션 단계라 기동 치유({@code
+   * ApplicationReadyEvent})보다 <b>먼저</b> 돈다는 점도 같은 결론을 가리킨다 — 갓 만들어진 롤은
+   * 이미 파생 비밀번호를 갖고 태어나므로 이 콜백이 그것을 기다릴 이유가 없다.
    */
   private static Map<String, String> resolveActiveTenantPipelineRolePasswords(
       Connection connection, String secret) throws SQLException {

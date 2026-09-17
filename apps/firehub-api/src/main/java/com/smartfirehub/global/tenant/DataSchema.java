@@ -48,7 +48,24 @@ public final class DataSchema {
    *     않는다 — 그 폴백이 곧 크로스 테넌트 접근이 된다.
    */
   public static String current() {
-    long tenantId = TenantContext.require("data 스키마 식별자 해석");
+    return forTenant(TenantContext.require("data 스키마 식별자 해석"));
+  }
+
+  /**
+   * 테넌트 id 를 직접 아는 호출부를 위한 형태 — {@link #current()} 와 같은 규칙, 같은 결과다.
+   *
+   * <p><b>왜 필요한가.</b> 스키마명은 tenantId 의 순수 함수인데, 이 클래스가 {@link #current()} 만
+   * 노출하던 동안에는 id 를 이미 손에 쥔 호출부(테넌트 프로비저닝·기동 치유·자식 프로세스 환경
+   * 조립)가 {@code TenantContext.runScopedGet(id, DataSchema::current)} 로 <b>가짜 스코프를
+   * 만들어</b> 우회해야 했다. 그 관용구가 세 곳으로 번지자, 다음 사람이 스코프를 만드는 대신
+   * {@code "data_t" + id} 를 손으로 적을 유인이 생겼다 — 이 클래스가 막으려던 바로 그 일이다.
+   *
+   * <p>요청 스코프 안에서 도는 코드는 계속 {@link #current()} 를 쓴다. 그쪽은 "지금 이 요청의
+   * 테넌트"를 묻는 것이고, 조용히 기본 테넌트로 떨어지지 않는 fail-closed 가 계약이다.
+   *
+   * @param tenantId 스키마를 물을 테넌트 id
+   */
+  public static String forTenant(long tenantId) {
     return LEGACY_SCHEMA_BY_TENANT.getOrDefault(tenantId, TENANT_SCHEMA_PREFIX + tenantId);
   }
 

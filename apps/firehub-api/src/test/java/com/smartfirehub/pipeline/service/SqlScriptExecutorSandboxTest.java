@@ -305,20 +305,12 @@ class SqlScriptExecutorSandboxTest extends IntegrationTestBase {
       TenantRlsTestSupport.cleanupAll(
           () -> dsl.execute("DROP TABLE IF EXISTS " + guardTable),
           () -> TenantRlsTestSupport.dropSchemasCreatedByThisTest(ownerDsl(), schema),
-          () -> {
-            // R22(라운드 2 리뷰 확정) — 이 롤은 무조건 생성·삭제한다, ensureRoleExists 의
-            // "만들었을 때만" 플래그 패턴을 쓰지 않는다. 규율: 롤이 LOGIN 을 필요로 하면 무조건
-            // 생성/삭제, 아니면 플래그 패턴. ensureRoleExists 는 NOLOGIN 만 만들어
-            // SqlScriptExecutor 가 실제로 로그인해야 하는 이 롤의 요구를 못 채운다 — 헬퍼를
-            // 확장하는 것은 이 밴드 범위에서 이득이 없고, 무작위 900,000,000+ 대역 id 라 이
-            // 롤이 사전에 존재할 확률은 무시할 만하다(DataSchemaGrantIsolationTest 가 고정
-            // 리터럴 id 로 같은 근거를 이미 쓰고 있다).
-            ownerDsl().execute("REVOKE ALL ON DATABASE \"" +
-                ownerDsl().fetch("SELECT current_database()").get(0).get(0, String.class) + "\" FROM "
-                + executorRole);
-            ownerDsl().execute("DROP OWNED BY " + executorRole);
-            ownerDsl().execute("DROP ROLE IF EXISTS " + executorRole);
-          },
+          // R22(라운드 2 리뷰 확정) — 이 롤은 무조건 생성·삭제한다, ensureRoleExists 의
+          // "만들었을 때만" 플래그 패턴을 쓰지 않는다. 규율: 롤이 LOGIN 을 필요로 하면 무조건
+          // 생성/삭제, 아니면 플래그 패턴. 무작위 900,000,000+ 대역 id 라 이 롤이 사전에 존재할
+          // 확률은 무시할 만하다. (문장 세 개를 손으로 적던 것은 #680 에서 헬퍼로 옮겼다 — 네
+          // 테스트가 같은 순서를 각자 적고 있었고 그 중 한 곳에만 주석이 있었다.)
+          () -> TenantRlsTestSupport.dropPipelineLoginRole(ownerDsl(), executorRole),
           () -> TenantRlsTestSupport.deleteTenants(dsl, tenantId));
     }
   }
