@@ -75,8 +75,8 @@ class AiAgentClientTest {
   void classify_injectsOauthTokenAndModelIntoBody() {
     AiAgentClient client = newClient();
     when(settingsService.getValue("ai.model")).thenReturn(Optional.of("claude-sonnet-5"));
-    when(settingsService.getDecryptedApiKey()).thenReturn(Optional.empty());
-    when(settingsService.getDecryptedCliOauthToken()).thenReturn(Optional.of("oauth-token-value"));
+    when(settingsService.getAiCredentials())
+        .thenReturn(new SettingsService.AiCredentials("sdk", "", "oauth-token-value"));
     stubOk();
 
     AiAgentClient.ClassifyResponse response = client.classify(REQUEST, 42L);
@@ -93,8 +93,8 @@ class AiAgentClientTest {
   void classify_injectsApiKeyWhenPresent() {
     AiAgentClient client = newClient();
     when(settingsService.getValue("ai.model")).thenReturn(Optional.of("claude-haiku-4-5"));
-    when(settingsService.getDecryptedApiKey()).thenReturn(Optional.of("sk-test-key"));
-    when(settingsService.getDecryptedCliOauthToken()).thenReturn(Optional.empty());
+    when(settingsService.getAiCredentials())
+        .thenReturn(new SettingsService.AiCredentials("sdk", "sk-test-key", ""));
     stubOk();
 
     client.classify(REQUEST, 7L);
@@ -109,8 +109,8 @@ class AiAgentClientTest {
     AiAgentClient client = newClient();
     when(settingsService.getValue("ai.model")).thenReturn(Optional.empty());
     // 공백 문자열은 "없음"으로 취급해 바디에 넣지 않는다 — ai-agent 가 잘못된 자격증명으로 시도하지 않도록.
-    when(settingsService.getDecryptedApiKey()).thenReturn(Optional.of("   "));
-    when(settingsService.getDecryptedCliOauthToken()).thenReturn(Optional.of(""));
+    when(settingsService.getAiCredentials())
+        .thenReturn(new SettingsService.AiCredentials("sdk", "   ", ""));
     stubOk();
 
     client.classify(REQUEST, 1L);
@@ -119,5 +119,30 @@ class AiAgentClientTest {
         postRequestedFor(urlEqualTo("/agent/classify"))
             .withRequestBody(notMatching(".*apiKey.*"))
             .withRequestBody(notMatching(".*oauthToken.*")));
+  }
+
+  /**
+   * classify 는 채팅과 달리 opencode 로 라우팅되지 않는다 — ai-agent 의
+   * ProviderFactory.createCompletionProvider(provider-factory.ts)는 agentType 분기 없이 SDK 경로
+   * 하나로 고정되어 있다. 그래서 agentType=opencode 라도 자격증명은 그대로 바디에 실려야 한다. 예전에
+   * AiAgentProxyService(채팅 경로)의 opencode 규칙을 여기로 잘못 옮겨와 opencode + 자격증명 보유 테넌트의
+   * classify 요청이 자격증명 없이 나가고, ai-agent 가 컨테이너 자신의 ANTHROPIC_API_KEY 로 조용히 폴백하는
+   * 회귀가 있었다(테넌트 청구가 플랫폼 계정으로 새는 사고). 이 테스트는 그 회귀를 고정 방지한다 — 다시
+   * agentType 가드를 넣으면 이 테스트가 실패해야 한다.
+   */
+  @Test
+  void classify_opencode_stillSendsCredentialsWhenPresent() {
+    AiAgentClient client = newClient();
+    when(settingsService.getValue("ai.model")).thenReturn(Optional.of("claude-sonnet-5"));
+    when(settingsService.getAiCredentials())
+        .thenReturn(new SettingsService.AiCredentials("opencode", "sk-test-key", "oauth-token-value"));
+    stubOk();
+
+    client.classify(REQUEST, 1L);
+
+    wireMock.verify(
+        postRequestedFor(urlEqualTo("/agent/classify"))
+            .withRequestBody(matchingJsonPath("$.apiKey", equalTo("sk-test-key")))
+            .withRequestBody(matchingJsonPath("$.oauthToken", equalTo("oauth-token-value"))));
   }
 }

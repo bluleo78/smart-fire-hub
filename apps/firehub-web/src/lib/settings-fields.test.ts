@@ -35,9 +35,14 @@ describe('TENANT_EDITABLE_KEYS', () => {
   // tenantEditable 플래그**다. 표시(배지·disabled)와 저장 페이로드가 모두 그 플래그로 구동되므로
   // (SettingsPage 의 fieldState), 이 상수는 "응답에 아예 없는 키"의 폴백 판정에만 남는다.
   // 그 폴백 동작은 아래 resolveSettingFieldState 케이스들이 검증한다.
-  it('폴백 판정에 쓰는 12키 상수의 내용이 바뀌지 않았다(회귀 가드, 백엔드 대조 아님)', () => {
+  it('폴백 판정에 쓰는 15키 상수의 내용이 바뀌지 않았다(회귀 가드, 백엔드 대조 아님)', () => {
+    // 이 테스트는 "길이는 맞는데 구성원이 틀린" 실수를 잡는 유일한 자리다 — 예를 들어
+    // 새 키를 추가하면서 기존 키 하나를 실수로 지워도 개수만 보는 테스트는 통과해 버린다.
     expect([...TENANT_EDITABLE_KEYS].sort()).toEqual(
       [
+        'ai.agent_type',
+        'ai.api_key',
+        'ai.cli_oauth_token',
         'ai.max_tokens',
         'ai.max_turns',
         'ai.model',
@@ -54,10 +59,23 @@ describe('TENANT_EDITABLE_KEYS', () => {
     );
   });
 
+  it('AI 자격증명 3키가 테넌트 편집 허용 목록에 있다', () => {
+    // 번들 규칙상 셋이 함께 움직인다 — 하나라도 빠지면 서버의 번들 채움과 어긋나
+    // overridden=true + tenantEditable=false 라는 모순 조합이 화면에 나타난다.
+    expect(isTenantEditableKey('ai.api_key')).toBe(true);
+    expect(isTenantEditableKey('ai.cli_oauth_token')).toBe(true);
+    expect(isTenantEditableKey('ai.agent_type')).toBe(true);
+  });
+
+  it('embedding 키는 아직 플랫폼 잠금이다', () => {
+    // embedding.* 4키는 이번 단계에서 건드리지 않는다 — 여전히 플랫폼 전용이다.
+    expect(isTenantEditableKey('embedding.model')).toBe(false);
+  });
+
   it('플랫폼 잠금 키는 편집 허용 키가 아니다', () => {
-    // smtp.* 는 P7-c1 에서 허용으로 넘어갔으므로 이 목록에서 뺐다 — 남겨 두면 재분류를 되돌리는
-    // 방향으로 테스트가 잠근다.
-    ['ai.agent_type', 'ai.api_key', 'ai.cli_oauth_token', 'embedding.model'].forEach((key) =>
+    // smtp.* 는 P7-c1 에서, AI 자격증명 3키는 이번 단계에서 허용으로 넘어갔으므로 이 목록에서
+    // 뺐다 — 남겨 두면 재분류를 되돌리는 방향으로 테스트가 잠근다. embedding.* 만 아직 잠금이다.
+    ['embedding.model', 'embedding.provider'].forEach((key) =>
       expect(isTenantEditableKey(key)).toBe(false),
     );
   });
@@ -102,7 +120,10 @@ describe('resolveSettingFieldState', () => {
     // 아니다. 백엔드 SettingsService.getValue 는 읽을 때마다 화이트리스트를 다시 확인하므로,
     // 플랫폼이 키를 회수하면 그 즉시 tenantEditable=false 가 내려온다. 화면이 자기 상수를
     // 우선하면 입력창이 열린 채 남고 사용자는 저장 시 400 을 받는다.
-    // 위 두 케이스(api_key·smtp.host)는 플래그와 화이트리스트가 같은 답을 주어 이 구분을 못 한다.
+    // smtp.host 케이스는 플래그와 화이트리스트가 같은 답을 주어 이 구분을 못 한다.
+    // api_key 는 이제 화이트리스트 소속(true)과 서버 플래그(false)가 갈리므로 오히려 이
+    // 구분을 보여주는 사례다 — 화이트리스트를 따랐다면 'locked' 가 아니라 편집 가능이 나왔을
+    // 것이다.
     expect(
       resolveSettingFieldState('ai.model', setting('ai.model', { tenantEditable: false })),
     ).toBe('locked');
@@ -158,7 +179,9 @@ describe('resolveSettingFieldState', () => {
 
   it('응답에 없는 잠금 키는 잠금으로 남는다(fail-closed)', () => {
     // 폴백이 열리는 방향으로 틀리면 저장 시 400 을 받는 입력창이 생긴다.
-    expect(resolveSettingFieldState('ai.api_key', undefined)).toBe('locked');
+    // ai.api_key 는 이번 단계에서 화이트리스트로 옮겨졌으므로 더는 이 사례가 아니다 —
+    // 여전히 플랫폼 잠금인 embedding.* 두 키로 검증한다.
+    expect(resolveSettingFieldState('embedding.api_key', undefined)).toBe('locked');
     expect(resolveSettingFieldState('embedding.provider', undefined)).toBe('locked');
   });
 });

@@ -9,7 +9,6 @@ import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
@@ -73,13 +72,14 @@ public class AiAgentProxyService {
   }
 
   public String verifyCliToken() {
-    Optional<String> tokenOpt = settingsService.getDecryptedCliOauthToken();
-    if (tokenOpt.isEmpty() || tokenOpt.get().isBlank()) {
+    // 자격증명은 번들로 함께 해석된다(getAiCredentials()) — 단일 키 조회는 rejectBundleKey 가 막는다.
+    SettingsService.AiCredentials creds = settingsService.getAiCredentials();
+    if (!creds.hasOauthToken()) {
       return "{\"valid\":false}";
     }
     // JSON 인젝션 방지: 문자열 연결이 아닌 ObjectMapper로 안전하게 직렬화한다.
     // 백슬래시(\\), 따옴표("), 줄바꿈(\n), 탭(\t) 등 모든 JSON 특수문자가 자동 이스케이프된다.
-    String body = serializeBody(Map.of("token", tokenOpt.get()));
+    String body = serializeBody(Map.of("token", creds.cliOauthToken()));
     return webClient
         .post()
         .uri("/agent/cli-auth/verify")
@@ -92,12 +92,13 @@ public class AiAgentProxyService {
   }
 
   public String verifyApiKey() {
-    Optional<String> apiKeyOpt = settingsService.getDecryptedApiKey();
-    if (apiKeyOpt.isEmpty() || apiKeyOpt.get().isBlank()) {
+    // 자격증명은 번들로 함께 해석된다(getAiCredentials()) — 단일 키 조회는 rejectBundleKey 가 막는다.
+    SettingsService.AiCredentials creds = settingsService.getAiCredentials();
+    if (!creds.hasApiKey()) {
       return "{\"valid\":false}";
     }
     // JSON 인젝션 방지: 문자열 연결이 아닌 ObjectMapper로 안전하게 직렬화한다.
-    String body = serializeBody(Map.of("apiKey", apiKeyOpt.get()));
+    String body = serializeBody(Map.of("apiKey", creds.apiKey()));
     return webClient
         .post()
         .uri("/agent/api-key/verify")
@@ -167,27 +168,38 @@ public class AiAgentProxyService {
     // 않는다. 그래서 예전의 aiSettings.remove("ai.api_key") 는 아무것도 막지 못하는 흔적기관이었다
     // — 같은 논리라면 지웠어야 할 ai.cli_oauth_token 은 남아 있어, "비밀 키를 맵에서 지운다"는
     // 규칙이 이미 절반만 지켜진 상태였다. 절반만 지켜지는 규칙은 지키고 있다는 착각만 준다.
-    // 비밀 키는 아래에서 apiKeyOpt / cliTokenOpt 로 명시적으로만 실린다.
+    // 비밀 키는 아래에서 creds(getAiCredentials())에서만 명시적으로 실린다.
     Map<String, String> aiSettings = settingsService.getAsMap("ai");
-    String agentType = aiSettings.getOrDefault("ai.agent_type", "sdk");
+
+    // agentType 의 출처는 getAiCredentials() 하나뿐이어야 한다. 예전에는
+    // aiSettings.getOrDefault("ai.agent_type", "sdk") 로 따로 읽었는데, getAsMap 은 getValue()
+    // 의 rejectBundleKey 를 거치지 않으므로 번들 단일 키 금지 규칙을 조용히 우회하는 뒷문이었다
+    // — 그리고 getOrDefault 는 키가 존재하면 빈 문자열도 그대로 돌려주므로(정규화 없음), 빈 값이
+    // 저장되면 sdk 폴백이 아니라 else 분기(cli-api)로 떨어져 엉뚱하게 API 키를 요구했다. 같은
+    // 상태를 보는 AiAgentClient.classify()/AiController.getAuthStatus() 는 번들이 정규화한
+    // "sdk" 를 보므로, 두 소스가 있으면 한쪽만 고쳐지는 사고가 난다(AiAgentClient 의 경고와 같은
+    // 이유). 그래서 agentType 은 아래 creds 에서만 파생한다 — 여기서 다시 aiSettings 를 읽지 말 것.
+    SettingsService.AiCredentials creds = settingsService.getAiCredentials();
+    String agentType = creds.agentType();
 
     // 인증 수단 검증: cli/sdk=OAuth 토큰(sdk는 API 키와 양자택일), cli-api=API 키, opencode=배포측 인증(검증 불필요)
-    Optional<String> apiKeyOpt = settingsService.getDecryptedApiKey();
-    Optional<String> cliTokenOpt =
-        ("cli".equals(agentType) || "sdk".equals(agentType))
-            ? settingsService.getDecryptedCliOauthToken()
-            : Optional.empty();
+    //
+    // 공백 문자열을 "없음"으로 취급하는 정규화는 AiCredentials.hasApiKey()/hasOauthToken() 안에
+    // 이미 들어 있다 — 그래서 아래 판정과 바디 조립 어디에서도 isBlank() 를 다시 보지 않는다.
+    // OAuth 토큰은 cli/sdk 에서만 쓴다(cli-api 는 API 키 전용이라 토큰이 있어도 쓰지 않는다).
+    boolean hasApiKey = creds.hasApiKey();
+    boolean hasOauthToken =
+        ("cli".equals(agentType) || "sdk".equals(agentType)) && creds.hasOauthToken();
     boolean missingCredential;
     if ("opencode".equals(agentType)) {
       missingCredential = false; // OpenCode 는 배포 환경 opencode auth 에 의존(옵션 3)
     } else if ("cli".equals(agentType)) {
-      missingCredential = cliTokenOpt.isEmpty() || cliTokenOpt.get().isBlank();
+      missingCredential = !hasOauthToken;
     } else if ("sdk".equals(agentType)) {
       // sdk 는 API 키 또는 OAuth 토큰 중 하나만 있어도 인증 가능(OAuth 우선).
-      boolean hasToken = cliTokenOpt.isPresent() && !cliTokenOpt.get().isBlank();
-      missingCredential = apiKeyOpt.isEmpty() && !hasToken;
+      missingCredential = !hasApiKey && !hasOauthToken;
     } else { // cli-api
-      missingCredential = apiKeyOpt.isEmpty();
+      missingCredential = !hasApiKey;
     }
     if (missingCredential) {
       try {
@@ -217,15 +229,15 @@ public class AiAgentProxyService {
       requestBody.put("fileIds", fileIds);
     }
     // opencode 는 배포 환경에서 자체 인증 처리 — apiKey 를 요청 바디에 포함하지 않음
-    if (!"opencode".equals(agentType)) {
-      apiKeyOpt.ifPresent(key -> requestBody.put("apiKey", key));
+    if (!"opencode".equals(agentType) && hasApiKey) {
+      requestBody.put("apiKey", creds.apiKey());
     }
     requestBody.put("agentType", agentType);
-    // cli 또는 sdk 에서 OAuth 토큰이 있으면 body 에 주입(중립 키 oauthToken).
-    // sdk 에서 apiKey 와 함께 있으면 ai-agent 가 OAuth 를 우선 선택한다.
-    // 공백 문자열은 missingCredential/verify 판정과 동일하게 "없음"으로 취급한다.
-    if ("cli".equals(agentType) || "sdk".equals(agentType)) {
-      cliTokenOpt.filter(token -> !token.isBlank()).ifPresent(token -> requestBody.put("oauthToken", token));
+    // cli 또는 sdk 에서 OAuth 토큰이 있으면 body 에 주입(중립 키 oauthToken) — 그 두 형태 조건은
+    // hasOauthToken 자체가 이미 담고 있다. sdk 에서 apiKey 와 함께 있으면 ai-agent 가 OAuth 를
+    // 우선 선택한다.
+    if (hasOauthToken) {
+      requestBody.put("oauthToken", creds.cliOauthToken());
     }
     requestBody.put("model", aiSettings.getOrDefault("ai.model", "claude-sonnet-5"));
     requestBody.put("maxTurns", parseIntSafe(aiSettings.get("ai.max_turns"), 10));

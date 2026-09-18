@@ -12,9 +12,14 @@ import java.util.Set;
  * <p><b>왜 DB 가 아니라 코드 상수인가</b>: 재분류가 마이그레이션이 아니라 한 줄 편집이 되고,
  * 분류 근거를 주석으로 코드에 붙여 둘 수 있다.
  *
- * <p>여기 없는 7키가 플랫폼 잠금인 이유: {@code embedding.*} 4키는 모델 변경이 벡터 차원을 바꿔
- * <b>기존 임베딩 전량을 무효화</b>하며, {@code ai.api_key}/{@code ai.cli_oauth_token}/
- * {@code ai.agent_type} 은 과금 주체와 실행 형태라 BYO 키 정책이 정해질 때까지 플랫폼이 갖는다.
+ * <p>여기 없는 4키({@code embedding.*})가 플랫폼 잠금인 이유: 모델 변경이 벡터 차원을 바꿔
+ * <b>기존 임베딩 전량을 무효화</b>하므로, Phase B 가 차원별 컬럼을 넣을 때까지 플랫폼이 갖는다.
+ *
+ * <p><b>AI 자격증명 3키({@code ai.api_key}/{@code ai.cli_oauth_token}/{@code ai.agent_type})는
+ * 아래 목록에 있지만 과금 주체가 섞이지 않는다.</b> 그것을 보장하는 것은 이 화이트리스트가
+ * 아니라 {@code SettingsService} 의 AI 자격증명 번들({@code AI_CREDENTIAL_KEYS}) 이다 — 세 키
+ * 중 하나라도 테넌트 행이 있으면 셋 다 원자적으로 같은 평면에서 해석되어, 테넌트가 실행 형태만
+ * 바꿔도 플랫폼 API 키가 거기 묻어 나가지 않는다. 자세한 내용은 그 상수의 javadoc 참고.
  *
  * <p><b>SMTP 6키는 P7-c1(2026-08-22)에 플랫폼 잠금에서 여기로 재분류됐다.</b> v1 은 "발신 도메인
  * 신뢰도를 전 테넌트가 공유한다"를 근거로 플랫폼 잠금이었으나, "자기 조직 명의로 메일을 보낸다"는
@@ -25,8 +30,10 @@ import java.util.Set;
 public final class SettingsOverridePolicy {
 
   /**
-   * 오버라이드 허용 키. 전부 "테넌트의 업무 성격에 종속되고, 파괴적이지 않고, 과금 주체를
-   * 바꾸지 않는다"는 기준을 만족한다({@code api_key} 가 플랫폼 소유이므로 비용은 플랫폼이 진다).
+   * 오버라이드 허용 키. 전부 "테넌트의 업무 성격에 종속되고, 파괴적이지 않다"는 기준을 만족한다.
+   * AI 자격증명 3키는 파괴적이진 않지만 그 자체로는 과금 주체를 바꿀 수 있는 값이라 예외처럼
+   * 보인다 — 그 위험은 이 화이트리스트가 아니라 {@code SettingsService} 의 AI 자격증명 번들이
+   * 막는다(아래 {@code ai.api_key} 항목의 인라인 주석과 클래스 javadoc 참고).
    */
   private static final Set<String> TENANT_OVERRIDABLE =
       Set.of(
@@ -38,6 +45,12 @@ public final class SettingsOverridePolicy {
           // 스펙 §4.5 표에는 없지만 ALLOWED_AI_KEYS 에 실재하는 키다. 세션 토큰 상한은 테넌트
           // 업무 성격에 종속되고 파괴적이지 않아 같은 기준으로 허용한다(계획서 Ruling 참조).
           "ai.session_max_tokens",
+          // 테넌트별로 어떤 AI 를 쓰는가가 제품의 핵심 요구다. 과금 주체가 섞이지 않는 것은
+          // 화이트리스트가 아니라 SettingsService 의 AI 자격증명 번들이 보장한다 —
+          // 세 키는 항상 같은 평면에서 함께 해석된다.
+          "ai.api_key",
+          "ai.cli_oauth_token",
+          "ai.agent_type",
           // P7-c1 재분류(2026-08-22). v1 은 "발신 도메인 신뢰도를 전 테넌트가 공유한다"를 근거로
           // 플랫폼 잠금이었으나, "자기 조직 명의로 메일을 보낸다"는 테넌트 요구가 앞선다고
           // 판단했다. embedding.model 과 결정적으로 다른 점: 값을 바꿔도 기존 데이터가

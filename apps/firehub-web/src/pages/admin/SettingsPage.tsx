@@ -5,7 +5,9 @@ import { toast } from 'sonner';
 import { settingsApi } from '../../api/settings';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
+import { InlineBanner } from '../../components/ui/inline-banner';
 import { Input } from '../../components/ui/input';
+import { Label } from '../../components/ui/label';
 import {
   Select,
   SelectContent,
@@ -17,16 +19,17 @@ import { Separator } from '../../components/ui/separator';
 import { Skeleton } from '../../components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import { Textarea } from '../../components/ui/textarea';
-import { useSettingsOverrideForm } from '../../hooks/useSettingsOverrideForm';
+import type { AISettingsForm } from '../../hooks/useAiSettingsForm';
+import { AI_CREDENTIAL_BUNDLE_KEYS, AI_FIELD_LABELS, useAiSettingsForm } from '../../hooks/useAiSettingsForm';
 import { useSmtpSettingsForm } from '../../hooks/useSmtpSettingsForm';
 import {
   useDirtyAggregator,
   useUnsavedChangesGuard,
 } from '../../hooks/useUnsavedChangesGuard';
-import { BUILTIN_AI_DEFAULTS } from '../../lib/settings-fields';
 import EmbeddingSettingsTab from './EmbeddingSettingsTab';
 import {
   ClearOverrideButton,
+  EmptyInBundleNote,
   PlatformLockedNote,
   SettingFieldLabel,
   SettingStateBadge,
@@ -47,58 +50,6 @@ const MODEL_OPTIONS = [
   { value: 'claude-haiku-4-5', label: 'Claude Haiku 4.5' },
 ];
 
-// 인덱스 시그니처(`[key: string]: string`)를 <b>명시하지 않는다</b> — 명시하면 keyof 가
-// string|number 로 넓어져 키를 설정 키 문자열로 다루는 곳마다 타입이 무너진다. 폼 키는 이 9개로
-// 닫혀 있다.
-//
-// `interface` 가 아니라 `type` 인 이유: `useSettingsOverrideForm<F extends SettingsFormShape>` 의
-// 제약(`Record<string, string>`)은 <b>암묵적</b> 인덱스 시그니처로 만족되는데, TS 는 그것을
-// 타입 별칭에만 준다(interface 는 선언 병합으로 나중에 넓어질 수 있어 주지 않는다).
-// keyof 는 그대로 9개 리터럴이므로 위 문단의 성질은 유지된다.
-type AISettingsForm = {
-  'ai.api_key': string;
-  'ai.cli_oauth_token': string;
-  'ai.agent_type': string;
-  'ai.model': string;
-  'ai.max_turns': string;
-  'ai.system_prompt': string;
-  'ai.temperature': string;
-  'ai.max_tokens': string;
-  'ai.session_max_tokens': string;
-};
-
-// 조회 전 초기값은 전부 빈 문자열이다. 조회 후에는 "서버 값 → 코드 기본값(BUILTIN_AI_DEFAULTS)
-// → 빈 문자열" 순으로 채운다. 코드 기본값까지 보여주는 이유는 그 값이 실제로 적용되고 있기
-// 때문이고, 그 사실은 "내장 기본값" 배지가 함께 알린다.
-const EMPTY_VALUES: AISettingsForm = {
-  'ai.api_key': '',
-  'ai.cli_oauth_token': '',
-  'ai.agent_type': '',
-  'ai.model': '',
-  'ai.max_turns': '',
-  'ai.system_prompt': '',
-  'ai.temperature': '',
-  'ai.max_tokens': '',
-  'ai.session_max_tokens': '',
-};
-
-/**
- * 훅에 넘기는 시드 폴백 한 벌. 예전 코드의 `byKey[key]?.value ?? BUILTIN_AI_DEFAULTS[key] ?? ''`
- * <b>두 단 폴백을 미리 합쳐</b> 훅의 한 단(`?? defaults[key]`)으로 만든다.
- *
- * 모듈 레벨 상수여야 한다 — 훅 계약이 그렇게 요구한다(인라인 객체는 렌더마다 새 참조).
- */
-const AI_DEFAULTS: AISettingsForm = {
-  ...EMPTY_VALUES,
-  'ai.session_max_tokens': BUILTIN_AI_DEFAULTS['ai.session_max_tokens'] ?? '',
-};
-
-// 필드의 화면 표시 이름 — 저장이 거부된 필드를 이름으로 지목하는 데 쓴다.
-// "어떤 필드가 문제인지" 말해주지 않으면 사용자가 무엇을 고쳐야 할지 알 수 없다.
-//
-// 편집 허용 6키뿐 아니라 폼의 9키 전부를 담는다. 저장 대상 판정이 web 상수가 아니라 서버
-// 플래그(fieldState)로 바뀌었으므로, 서버가 지금 잠겨 있는 키를 열어 주면 그 키도 이 목록에
-// 나타날 수 있다 — 6키만 담아 두면 그때 이름 대신 undefined 가 사용자에게 보인다.
 // 숫자 필드 검증 규칙. 하한·상한은 백엔드 SettingsService.validateValues 와 반드시 같아야 한다 —
 // 어긋나면 "운영자가 저장한 값 때문에 테넌트가 아무 필드도 저장 못 하는" 상태가 만들어진다
 // (session_max_tokens 가 실제로 그랬다: backend 1000 vs web 10000).
@@ -121,28 +72,25 @@ const NUMBER_RULES: {
   },
 ];
 
-const FIELD_LABELS: Record<keyof AISettingsForm, string> = {
-  'ai.system_prompt': '시스템 프롬프트',
-  'ai.model': '모델',
-  'ai.temperature': 'Temperature',
-  'ai.max_turns': '최대 턴 수',
-  'ai.max_tokens': '최대 응답 토큰',
-  'ai.session_max_tokens': '세션 최대 토큰',
-  'ai.agent_type': '에이전트 유형',
-  'ai.api_key': 'API 키',
-  'ai.cli_oauth_token': 'OAuth 토큰',
-};
-
 export default function SettingsPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [authStatus, setAuthStatus] = useState<{ valid: boolean; email?: string; subscriptionType?: string } | null>(null);
   const [isVerifying, setIsVerifying] = useState(false);
 
   /**
-   * AI 탭의 폼 상태 기계 — 이메일 탭과 <b>같은 훅</b>을 쓴다. 조회 실패 시 이 탭은 종단 화면을
-   * 만들지 않고 toast 만으로 알린 뒤 폴백 값으로 렌더한다(비대칭은 의도된 것이다: 이 탭에는
-   * 서버가 마스킹해 내려주는 자격증명 필드가 없어 "빈 폼"이 덮어쓰기를 부르지 않는다).
+   * AI 탭의 <b>번들 레이어 + 폼 상태 기계</b>. 이메일 탭과 같은 모양이다 — `useAiSettingsForm` 이
+   * 공통 훅(`useSettingsOverrideForm`) 위에 자격증명 3키의 원자성을 얹고, 페이지는 그 반환값을
+   * 그린다. 숫자 검증·`handleSave`·인증 확인은 번들과 무관해 여기 남는다.
+   *
+   * 조회 실패 시 이 탭은 종단 화면을 만들지 않고 toast 만으로 알린 뒤 폴백 값으로 렌더한다.
+   *
+   * <b>2026-09-18 이후로 이 비대칭의 전제가 흔들렸다</b>: `ai.api_key` / `ai.cli_oauth_token`
+   * 도 이제 테넌트 오버라이드가 가능해져 서버가 마스킹해 내려주는 자격증명 필드가 이 탭에도
+   * 생겼다(SMTP 탭이 종단 화면을 쓰는 바로 그 이유). 다만 저장 페이로드는 여전히 "이번에 바꾼
+   * 키만" 담고(`buildChangedPayload`), 비밀 2키는 <b>애초에 서버 값을 시드하지 않으므로</b>
+   * (`emptySeedKeys`) 손대지 않은 비밀은 조회 성공·실패와 무관하게 페이로드에서 빠진다.
    */
+  const ai = useAiSettingsForm();
   const {
     isLoading,
     settings,
@@ -159,7 +107,8 @@ export default function SettingsPage() {
     buildChangedPayload,
     commitSaved,
     refreshMeta,
-  } = useSettingsOverrideForm<AISettingsForm>({ prefix: 'ai', defaults: AI_DEFAULTS });
+    resyncFromServer,
+  } = ai.base;
 
   const verifyAuth = useCallback(async () => {
     setIsVerifying(true);
@@ -183,10 +132,12 @@ export default function SettingsPage() {
   const validate = (): boolean => {
     const newErrors: Partial<Record<keyof AISettingsForm, string>> = {};
 
-    // 잠긴 3키(ai.agent_type / ai.api_key / ai.cli_oauth_token)는 검증하지 않는다.
-    // 저장 대상이 아니고 테넌트가 고칠 수도 없으므로, 여기서 검증하면 "고칠 수 없는 오류" 때문에
-    // temperature 같은 편집 가능 필드의 저장까지 영구히 막힌다(플랫폼이 sdk + api_key 미설정인
-    // 상태가 실제로 존재한다).
+    // 자격증명 3키(ai.agent_type / ai.api_key / ai.cli_oauth_token)는 형식 검증하지 않는다.
+    // agent_type 은 Select 가 고정 옵션으로 이미 제약하고, api_key·oauth_token 은 자유 형식
+    // 문자열이라 정해진 형식 규칙이 없다. 2026-09-18 부터 이 셋도 테넌트가 고칠 수 있지만
+    // (플랫폼이 잠가 둔 경우엔 `isEditable` 이 입력을 막는다), 여기서 없는 규칙을 만들어
+    // 검증하면 "고칠 수 없는 오류" 때문에 temperature 같은 편집 가능 필드의 저장까지 영구히
+    // 막힌다(플랫폼이 sdk + api_key 미설정인 상태가 실제로 존재한다).
     // 숫자 4필드는 검증 모양이 같아 표로 한 번만 돈다. 네 벌로 복사돼 있던 시절에는 하한 하나가
     // 백엔드와 어긋난 것(session_max_tokens 1000 vs 10000)을 아무도 못 봤다 — 같은 규칙이 네 곳에
     // 흩어져 있으면 한 곳만 틀려도 눈에 띄지 않는다.
@@ -227,7 +178,7 @@ export default function SettingsPage() {
     // 완화되어도 이 대조는 계속 성립해야 하므로 페이로드를 만든 뒤 한 번 더 확인한다.
     const { payload, droppedChangedKeys } = buildChangedPayload();
     if (droppedChangedKeys.length > 0) {
-      const names = droppedChangedKeys.map((key) => FIELD_LABELS[key]).join(', ');
+      const names = droppedChangedKeys.map((key) => AI_FIELD_LABELS[key]).join(', ');
       toast.error(
         `${names}을(를) 비워 둔 채로는 저장할 수 없습니다. 플랫폼 기본값으로 되돌리려면 "재정의 해제"를 사용하세요.`,
       );
@@ -240,7 +191,24 @@ export default function SettingsPage() {
       commitSaved();
       toast.success('설정이 저장되었습니다.');
       // 저장한 키는 이제 테넌트 재정의 상태이므로 배지를 다시 읽어 맞춘다.
-      refreshMeta().catch(() => undefined);
+      //
+      // 자격증명 번들 3키(ai.agent_type/ai.api_key/ai.cli_oauth_token) 중 하나라도 이번
+      // payload 에 있었다면 추가로 폼 값도 다시 시드한다 — commitSaved() 는 이번에 안 바뀐
+      // 나머지 번들 키의 "저장 전 낡은 표시값"을 그대로 새 기준(original)으로 확정해 버리는데,
+      // 서버는 번들 규칙(SettingsService.applyAiCredentialBundle)에 따라 그 키들의 해석값을
+      // 조용히 바꿔 놓았을 수 있다(예: agent_type 만 저장 → api_key/oauth_token 이 서버에서는
+      // "" 로 해석되기 시작하는데 화면은 여전히 저장 전 마스킹 값을 보여준다). 이 어긋남은
+      // Task 6 이 세 필드를 처음으로 조작 가능하게 만들면서 새로 열린 회귀다 — 예전에는 세
+      // 필드가 항상 잠겨 있어 payload 에 들어갈 수 없었으므로 번들 계산 자체가 이 화면에서
+      // 트리거될 일이 없었다(2026-09-18 리뷰, Concern 4). `refreshMeta` 가 돌려주는 최신
+      // byKey 로 세 키를 `resyncFromServer` 하면 폼이 서버 진실과 다시 맞는다.
+      refreshMeta()
+        .then((byKey) => {
+          if (AI_CREDENTIAL_BUNDLE_KEYS.some((key) => key in payload)) {
+            resyncFromServer(AI_CREDENTIAL_BUNDLE_KEYS, byKey);
+          }
+        })
+        .catch(() => undefined);
       verifyAuth();
     } catch {
       toast.error('설정 저장에 실패했습니다.');
@@ -249,9 +217,64 @@ export default function SettingsPage() {
     }
   };
 
+  /**
+   * 비밀 입력(<b>항상 빈 채로 시작한다</b>) 밑의 상태 힌트. 빈 입력창은 "아직 안 채운 칸"과
+   * "이미 값이 있는 칸"을 시각적으로 구별하지 못하므로, 이 한 줄이 그 구별의 <b>유일한</b>
+   * 전달 경로다 — 그래서 각 입력의 `aria-describedby` 에 포함한다.
+   *
+   * 판정은 폼이 아니라 <b>서버가 내려준 값</b>을 본다. 폼 값은 이 두 키에 대해 항상 빈 문자열이라
+   * (마스크를 시드하지 않는다) 폼을 보면 "모든 비밀이 비어 있다"는 답만 나온다.
+   *
+   * 세 갈래다:
+   * 1. 번들이 재정의됐는데 이 키에 행이 없어 <b>빈 값으로 해석</b>되는 상태 — 공용
+   *    `EmptyInBundleNote` 가 말한다("플랫폼 값이 사용되지 않습니다"). 아래 3번과 뭉뚱그리면
+   *    사용자가 의도해서 비운 것처럼 읽혀, 자격증명 없이 동작하게 된 위험을 감춘다.
+   * 2. 값이 있다 — 비워 두면 유지된다는 사실을 함께 말해야 한다. 그러지 않으면 "빈 칸이니 다시
+   *    입력해야 하나 보다"로 읽혀 매번 키를 다시 붙여넣게 된다.
+   * 3. 값이 없고 번들도 상속 중 — 정말 설정된 값이 없다.
+   *
+   * <b>"사실"과 "할 일"을 나눠 쓴다.</b> 사실("현재 값이 설정되어 있습니다")은 잠금 여부와 무관하게
+   * 참이지만, 할 일("바꾸려면 새 값을 입력하세요")은 <b>입력이 열려 있을 때만</b> 참이다. 잠긴
+   * 그룹에서는 입력이 `disabled` 라 시키는 대로 할 수가 없고, 바로 아래에 `PlatformLockedNote`
+   * ("플랫폼 운영자만 변경할 수 있는 항목입니다")가 붙어 두 문장이 정면으로 충돌한다 —
+   * <b>거짓 어포던스</b>다.
+   *
+   * 이 갈림은 Finding 2 가 새로 연 것이다: 예전에는 잠긴 입력에도 마스크가 시드돼 있어 힌트가
+   * 아예 필요 없었는데, 입력을 비우면서 힌트가 상태의 유일한 전달 경로가 되자 그 문장이 잠긴
+   * 쪽까지 따라왔다.
+   *
+   * 잠겼다고 힌트를 <b>통째로</b> 지우지는 않는다 — 그러면 "값이 있는 잠긴 키"와 "값이 없는 잠긴
+   * 키"가 똑같이 빈 칸으로 보여, 플랫폼이 아직 자격증명을 넣지 않았다는 사실이 화면에서 사라진다.
+   *
+   * 잠금 판정은 `isEditable` 하나만 쓴다(그룹 상태를 여기서 다시 읽지 않는다) — 그 함수가 이미
+   * `effectiveState` 를 지나 번들 그룹 판정(fail-closed)을 반영하므로, 따로 계산하면 입력의
+   * `disabled` 와 힌트가 갈라질 자리가 생긴다.
+   */
+  const secretStateHint = (key: keyof AISettingsForm, id: string) => {
+    if (ai.isEmptyInBundle(key)) return <EmptyInBundleNote id={id} show />;
+    if (!ai.isSecretStored(key)) {
+      return (
+        <p id={id} className="text-sm text-muted-foreground">
+          설정된 값이 없습니다.
+        </p>
+      );
+    }
+    return (
+      <p id={id} className="text-sm text-muted-foreground">
+        현재 값이 설정되어 있습니다.
+        {isEditable(key) && ' 바꾸려면 새 값을 입력하세요 — 비워 두면 현재 값이 그대로 유지됩니다.'}
+      </p>
+    );
+  };
+
   // 재정의 중인 필드에만 해제 버튼을 붙인다 — 상속 중인 필드에는 지울 오버라이드가 없다.
+  //
+  // <b>자격증명 3키는 여기 오지 않는다</b>(SMTP 연결 5키와 같은 규칙, 같은 이유): 그 3키의 키 단위
+  // 해제는 "플랫폼 상속으로 돌아간다"를 표현하지 못한다 — 행 하나를 지워도 남은 두 행 때문에
+  // `applyAiCredentialBundle` 이 계속 발동해 그 키가 플랫폼 값이 아니라 번들 채움("" / "sdk")으로
+  // 해석되기 때문이다. 그래서 그룹 머리의 버튼 하나가 3키를 함께 지운다.
   const clearAction = (key: keyof AISettingsForm) =>
-    fieldState(key) === 'overridden' ? (
+    !AI_CREDENTIAL_BUNDLE_KEYS.includes(key) && fieldState(key) === 'overridden' ? (
       <ClearOverrideButton onConfirm={() => handleClearOverride(key)} disabled={isClearing} />
     ) : undefined;
 
@@ -339,127 +362,219 @@ export default function SettingsPage() {
               <CardTitle>모델 설정</CardTitle>
             </CardHeader>
             <CardContent className="space-y-6">
-              {/* 에이전트 유형 — 실행 형태·과금 주체라 플랫폼 소유(잠금) */}
-              <div className="space-y-2">
-                <SettingFieldLabel htmlFor="ai-agent-type" state={fieldState('ai.agent_type')}>
-                  에이전트 유형
-                </SettingFieldLabel>
-                <Select value={form['ai.agent_type']} disabled={!isEditable('ai.agent_type')}>
-                  <SelectTrigger id="ai-agent-type" className="w-full max-w-md">
-                    <SelectValue placeholder="에이전트 유형을 선택하세요" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {AGENT_TYPE_OPTIONS.map((opt) => (
-                      <SelectItem key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <p className="text-sm text-muted-foreground">AI 채팅에 사용할 에이전트 유형</p>
-                <PlatformLockedNote />
-              </div>
+              {/* 자격증명 3키는 하나의 `fieldset` 으로 묶는다 — <b>SMTP 연결 그룹의 구조를 그대로
+                  거울로 삼는다</b>. 같은 서버 규칙(번들 원자 해석)이 같은 화면 문제를 만들기
+                  때문이고, 다른 모양으로 풀면 한쪽만 고치는 사고가 난다. 그룹 경계를 테두리로만
+                  전달하면 스크린리더 사용자가 "API 키 필드 하나"만 만났을 때 그것이 묶음의
+                  일부라는 사실을 듣지 못한다 — `legend` 는 그룹 안 어느 필드에 도착하든 함께 읽힌다. */}
+              <fieldset
+                className="space-y-6 rounded-md border p-4"
+                aria-describedby="ai-credential-desc"
+              >
+                <legend className="flex flex-wrap items-center gap-2 px-1 text-sm font-medium">
+                  자격증명
+                  {/* 범위는 배지가 아니라 이 보조 문구가 짊어진다 — 배지 문자열을 새로 만들면
+                      어휘 부담이 영구히 생긴다(SMTP 그룹과 같은 판단). */}
+                  <span className="font-normal text-muted-foreground">3개 항목이 함께 적용됩니다</span>
+                </legend>
 
-              <Separator />
+                <div className="space-y-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {/* 그룹 배지 하나 + 필드 배지 0개. 세 필드가 전부 같은 배지를 달면 오히려
+                        "각각 독립적으로 그런 상태다"로 읽혀, 배지가 고치려던 오해를 다시 심는다
+                        (SMTP 연결 그룹이 같은 이유로 필드 배지를 뗐다). */}
+                    <SettingStateBadge state={ai.credentialGroupState} />
+                    {ai.credentialGroupState === 'overridden' && (
+                      <ClearOverrideButton
+                        onConfirm={ai.handleClearCredentialBundle}
+                        disabled={isClearing}
+                        label="자격증명 전체 재정의 해제"
+                        dialogTitle="자격증명 재정의 해제"
+                        /* 3개 항목을 이름으로 나열한다 — "이 그룹"이라고 쓰면 사용자가 그룹 경계를
+                           스크롤 밖에서 추정해야 한다. 비밀 2키는 화면에 평문이 없어 다시 칠 수
+                           없으므로 "복구할 수 없으며" 한 마디를 번들 문구에만 더한다. */
+                        dialogDescription="에이전트 유형, OAuth 토큰, API 키 3개 항목의 테넌트 설정이 모두 삭제되고 플랫폼 기본값으로 전환됩니다. 입력한 OAuth 토큰과 API 키는 복구할 수 없으며, 필요하면 언제든 다시 재정의할 수 있습니다."
+                      />
+                    )}
+                  </div>
+                  {/* 번들 규칙 안내는 <b>그룹 설명문 하나</b>가 짊어진다. 예전에는 에이전트 유형
+                      필드 밑에 따로 붙어 있었는데, 그러면 그룹 상태 문장과 이 문장이 같은 그룹을
+                      서로 다르게 말하게 된다.
 
-              {/* OpenCode / CLI OAuth 토큰 / API 키 — 에이전트 유형에 따라 분기
-                  sdk는 OAuth 토큰과 API 키를 모두 지원(백엔드에서 OAuth 우선 적용)하므로
-                  두 필드를 동시에 노출한다. */}
-              {form['ai.agent_type'] === 'opencode' ? (
-                // OpenCode: 배포 환경 인증(opencode auth) 사용 — 별도 키 입력 불필요
-                <div className="rounded-md border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
-                  배포 환경에 구성된 OpenCode 인증(opencode auth)을 사용합니다. 별도 키 입력이 필요 없습니다.
+                      채워지는 값이 둘로 갈린다는 사실은 반드시 남긴다
+                      (`SettingsService.BUNDLE_FILL_VALUES`): 자격증명(OAuth 토큰·API 키)은 ""
+                      로 채워져 정말 비워지지만, `ai.agent_type` 은 "" 대신 "sdk"(Claude Agent
+                      SDK)로 채워진다 — 실행 형태 선택자라 빈 값이 안전한 방향이 아니기 때문이다
+                      (빈 값은 AiAgentProxyService 에서 cli-api 분기로 떨어진다). 그래서
+                      "나머지는 비워진다"는 자격증명 2키에만 참이다. */}
+                  <p id="ai-credential-desc" className="text-sm text-muted-foreground">
+                    {ai.credentialGroupState === 'overridden'
+                      ? '이 3개 항목은 우리 조직 값으로 적용되고 있습니다. 플랫폼 기본값은 이 중 어느 항목에도 더 이상 사용되지 않습니다. 셋 중 하나만 바꿔도 나머지는 플랫폼 값을 상속하지 않습니다 — 자격증명(OAuth 토큰·API 키)은 비워지고, 에이전트 유형은 Claude Agent SDK 가 적용됩니다.'
+                      : '에이전트 유형·OAuth 토큰·API 키는 한 벌의 실행 자격이므로 항상 함께 적용됩니다. 지금은 플랫폼 기본값을 그대로 쓰고 있습니다. 셋 중 하나라도 저장하면 나머지는 플랫폼 값을 상속하지 않습니다 — 자격증명(OAuth 토큰·API 키)은 비워지고, 에이전트 유형에 테넌트 값이 없으면 Claude Agent SDK 가 적용됩니다.'}
+                  </p>
                 </div>
-              ) : (
-                <div className="space-y-4">
-                  {/* cli 또는 sdk: OAuth 토큰 필드 (sdk는 OAuth 우선) */}
-                  {(form['ai.agent_type'] === 'cli' || form['ai.agent_type'] === 'sdk') && (
-                    <div className="space-y-2">
-                      <SettingFieldLabel
-                        htmlFor="ai-cli-oauth-token"
-                        state={fieldState('ai.cli_oauth_token')}
-                      >
-                        OAuth 토큰
-                      </SettingFieldLabel>
-                      <div className="flex gap-2 max-w-md">
-                        {/* 값은 서버에서 **** 로 마스킹되어 내려오고 편집도 불가하므로 표시/숨기기
-                            토글을 두지 않는다 — 눌러도 보여줄 평문이 없다. */}
-                        <Input
-                          id="ai-cli-oauth-token"
-                          type="password"
-                          className="flex-1"
-                          value={form['ai.cli_oauth_token']}
-                          disabled={!isEditable('ai.cli_oauth_token')}
-                          placeholder="sk-ant-oat01-..."
-                        />
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={verifyAuth}
-                          disabled={isVerifying || hasChanges}
-                          className="shrink-0"
-                        >
-                          <ShieldCheck className="h-3.5 w-3.5" />
-                          {isVerifying ? '검증 중...' : '인증 확인'}
-                        </Button>
-                      </div>
-                      <p className="text-sm text-muted-foreground">
-                        로컬에서 claude setup-token으로 발급받은 OAuth 토큰
-                        {authStatus && (
-                          <span className={`ml-2 inline-flex items-center text-xs font-medium ${authStatus.valid ? 'text-success' : 'text-destructive'}`}>
-                            {authStatus.valid ? '✓ 인증됨' : '✗ 유효하지 않음'}
-                            {authStatus.valid && authStatus.email && ` (${authStatus.email})`}
-                            {authStatus.valid && authStatus.subscriptionType && ` · ${authStatus.subscriptionType}`}
-                          </span>
-                        )}
-                      </p>
-                      <PlatformLockedNote />
-                    </div>
-                  )}
-                  {/* cli-api 또는 sdk: API 키 필드 */}
-                  {(form['ai.agent_type'] === 'cli-api' || form['ai.agent_type'] === 'sdk') && (
-                    <div className="space-y-2">
-                      <SettingFieldLabel htmlFor="ai-api-key" state={fieldState('ai.api_key')}>
-                        API 키
-                      </SettingFieldLabel>
-                      <div className="flex gap-2 max-w-md">
-                        {/* OAuth 토큰과 같은 이유로 표시/숨기기 토글 없음 (마스킹 + 편집 불가) */}
-                        <Input
-                          id="ai-api-key"
-                          type="password"
-                          className="flex-1"
-                          value={form['ai.api_key']}
-                          disabled={!isEditable('ai.api_key')}
-                          placeholder="sk-ant-..."
-                        />
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={verifyAuth}
-                          disabled={isVerifying || hasChanges}
-                          className="shrink-0"
-                        >
-                          <ShieldCheck className="h-3.5 w-3.5" />
-                          {isVerifying ? '검증 중...' : '인증 확인'}
-                        </Button>
-                      </div>
-                      <p className="text-sm text-muted-foreground">
-                        Anthropic API 키 (sk-ant-...)
-                        {authStatus && (
-                          <span className={`ml-2 inline-flex items-center text-xs font-medium ${authStatus.valid ? 'text-success' : 'text-destructive'}`}>
-                            {authStatus.valid ? '✓ 인증됨' : '✗ 유효하지 않음'}
-                            {authStatus.valid && authStatus.email && ` (${authStatus.email})`}
-                            {authStatus.valid && authStatus.subscriptionType && ` · ${authStatus.subscriptionType}`}
-                          </span>
-                        )}
-                      </p>
-                      <PlatformLockedNote />
-                    </div>
-                  )}
+
+                {/* "지금 화면을 믿지 말고 다시 읽어라" 안내. 토스트 한 번으로 끝내지 않는 이유는
+                    사용자가 다시 조작해야 하는 상태이고 토스트는 사라지기 때문이다(SMTP 와 동일).
+
+                    <b>SMTP 는 이 안내를 탭 범위에 두는데 여기는 그룹 범위다</b> — 다른 결론이
+                    아니라 같은 규칙("표시 범위는 사건 범위와 같아야 한다")의 다른 답이다. SMTP 는
+                    번들과 무관한 저장 후 재조회 실패도 이 슬롯을 쓰므로 탭 범위가 맞고, 여기서
+                    이 슬롯을 세우는 것은 번들 해제 부분 실패와 토큰 삭제 후 재조회 실패뿐이라
+                    전부 이 그룹 안의 사건이다. */}
+                {ai.staleNotice && <InlineBanner variant="warning">{ai.staleNotice}</InlineBanner>}
+
+                {/* 에이전트 유형 — 실행 형태·과금 주체라 예전엔 플랫폼 전용이었지만, 2026-09-18
+                    부터 ai.api_key / ai.cli_oauth_token 과 한 번들로 테넌트 오버라이드가 가능하다.
+                    편집 가능 여부는 서버의 tenantEditable 플래그를 그대로 따르되, 번들이므로
+                    3키 중 하나라도 잠겨 있으면 그룹 전체가 잠긴다(fail-closed, 훅 참고).
+                    잠금 안내문은 "잠겼을 때만" 조건부로 띄운다 — 항상 띄우면 편집 가능한
+                    테넌트에게 거짓 안내가 되고, 아예 없애면 실제로 잠긴 테넌트에게 이유를
+                    알려줄 수단이 사라진다. 배지는 그룹 머리에 하나뿐이므로 여기서는 평범한
+                    `Label` 을 쓴다. */}
+                <div className="space-y-2">
+                  <Label htmlFor="ai-agent-type">에이전트 유형</Label>
+                  <Select
+                    value={form['ai.agent_type']}
+                    onValueChange={(value) => updateField('ai.agent_type', value)}
+                    disabled={!isEditable('ai.agent_type')}
+                  >
+                    <SelectTrigger id="ai-agent-type" className="w-full max-w-md">
+                      <SelectValue placeholder="에이전트 유형을 선택하세요" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {AGENT_TYPE_OPTIONS.map((opt) => (
+                        <SelectItem key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-sm text-muted-foreground">AI 채팅에 사용할 에이전트 유형</p>
+                  {!isEditable('ai.agent_type') && <PlatformLockedNote />}
                 </div>
-              )}
+
+                {/* OpenCode / CLI OAuth 토큰 / API 키 — 에이전트 유형에 따라 분기
+                    sdk는 OAuth 토큰과 API 키를 모두 지원(백엔드에서 OAuth 우선 적용)하므로
+                    두 필드를 동시에 노출한다. */}
+                {form['ai.agent_type'] === 'opencode' ? (
+                  // OpenCode: 배포 환경 인증(opencode auth) 사용 — 별도 키 입력 불필요
+                  <div className="rounded-md border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
+                    배포 환경에 구성된 OpenCode 인증(opencode auth)을 사용합니다. 별도 키 입력이 필요 없습니다.
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {/* cli 또는 sdk: OAuth 토큰 필드 (sdk는 OAuth 우선) */}
+                    {(form['ai.agent_type'] === 'cli' || form['ai.agent_type'] === 'sdk') && (
+                      <div className="space-y-2">
+                        <Label htmlFor="ai-cli-oauth-token">OAuth 토큰</Label>
+                        <div className="flex gap-2 max-w-md">
+                          {/* <b>입력은 항상 빈 채로 시작한다</b> — 서버 마스크를 시드하지 않는다
+                              (`useSettingsOverrideForm` 의 `emptySeedKeys`). 마스크가 시드돼 있으면
+                              사용자가 그 뒤에 키를 <b>덧붙여</b> `****ab12sk-ant-…` 를 만들 수 있고,
+                              그 문자열은 서버 센티널 판정(길이 4 또는 8 만 드롭)을 빠져나가 진짜
+                              자격증명으로 저장된다 — 저장 후 새 마스크가 보이므로 사용자가 알아챌
+                              표면이 없다.
+                              표시/숨기기 토글은 두지 않는다: 서버가 평문을 절대 내려주지 않아
+                              눌러도 보여줄 것이 없다. */}
+                          <Input
+                            id="ai-cli-oauth-token"
+                            type="password"
+                            className="flex-1"
+                            value={form['ai.cli_oauth_token']}
+                            disabled={!isEditable('ai.cli_oauth_token')}
+                            onChange={(e) => updateField('ai.cli_oauth_token', e.target.value)}
+                            placeholder="sk-ant-oat01-..."
+                            aria-describedby="ai-cli-oauth-token-desc ai-cli-oauth-token-hint"
+                          />
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={verifyAuth}
+                            disabled={isVerifying || hasChanges}
+                            className="shrink-0"
+                          >
+                            <ShieldCheck className="h-3.5 w-3.5" />
+                            {isVerifying ? '검증 중...' : '인증 확인'}
+                          </Button>
+                        </div>
+                        <p id="ai-cli-oauth-token-desc" className="text-sm text-muted-foreground">
+                          로컬에서 claude setup-token으로 발급받은 OAuth 토큰
+                          {authStatus && (
+                            <span className={`ml-2 inline-flex items-center text-xs font-medium ${authStatus.valid ? 'text-success' : 'text-destructive'}`}>
+                              {authStatus.valid ? '✓ 인증됨' : '✗ 유효하지 않음'}
+                              {authStatus.valid && authStatus.email && ` (${authStatus.email})`}
+                              {authStatus.valid && authStatus.subscriptionType && ` · ${authStatus.subscriptionType}`}
+                            </span>
+                          )}
+                        </p>
+                        {secretStateHint('ai.cli_oauth_token', 'ai-cli-oauth-token-hint')}
+                        {/* 저장된 토큰을 <b>빈 값으로</b> 내리는 유일한 조작. 입력창을 비우는
+                            제스처는 더 이상 존재하지 않는다(폼이 항상 비어 있으므로 "비웠다"는
+                            변경이 성립하지 않는다) — 그래서 명시적 버튼이 필요하다. 노출 조건과
+                            그것이 막는 사고는 `canDeleteOauthToken` 주석에 있다. */}
+                        {ai.canDeleteOauthToken && (
+                          <ClearOverrideButton
+                            onConfirm={ai.handleDeleteOauthToken}
+                            disabled={isClearing}
+                            label="저장된 OAuth 토큰 삭제"
+                            dialogTitle="저장된 OAuth 토큰 삭제"
+                            dialogDescription="우리 조직에 저장된 OAuth 토큰이 빈 값으로 저장됩니다. 에이전트 유형과 API 키는 그대로 유지되므로, sdk 로 동작 중이라면 이후 API 키로 인증합니다. 삭제한 토큰은 복구할 수 없으며, 필요하면 언제든 다시 입력할 수 있습니다."
+                            confirmLabel="삭제"
+                          />
+                        )}
+                        {!isEditable('ai.cli_oauth_token') && <PlatformLockedNote />}
+                      </div>
+                    )}
+                    {/* cli-api 또는 sdk: API 키 필드 */}
+                    {(form['ai.agent_type'] === 'cli-api' || form['ai.agent_type'] === 'sdk') && (
+                      <div className="space-y-2">
+                        <Label htmlFor="ai-api-key">API 키</Label>
+                        <div className="flex gap-2 max-w-md">
+                          {/* OAuth 토큰과 같은 이유로 빈 입력 시드 + 표시/숨기기 토글 없음. */}
+                          <Input
+                            id="ai-api-key"
+                            type="password"
+                            className="flex-1"
+                            value={form['ai.api_key']}
+                            disabled={!isEditable('ai.api_key')}
+                            onChange={(e) => updateField('ai.api_key', e.target.value)}
+                            placeholder="sk-ant-..."
+                            aria-describedby="ai-api-key-desc ai-api-key-hint"
+                          />
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={verifyAuth}
+                            disabled={isVerifying || hasChanges}
+                            className="shrink-0"
+                          >
+                            <ShieldCheck className="h-3.5 w-3.5" />
+                            {isVerifying ? '검증 중...' : '인증 확인'}
+                          </Button>
+                        </div>
+                        <p id="ai-api-key-desc" className="text-sm text-muted-foreground">
+                          Anthropic API 키 (sk-ant-...)
+                          {authStatus && (
+                            <span className={`ml-2 inline-flex items-center text-xs font-medium ${authStatus.valid ? 'text-success' : 'text-destructive'}`}>
+                              {authStatus.valid ? '✓ 인증됨' : '✗ 유효하지 않음'}
+                              {authStatus.valid && authStatus.email && ` (${authStatus.email})`}
+                              {authStatus.valid && authStatus.subscriptionType && ` · ${authStatus.subscriptionType}`}
+                            </span>
+                          )}
+                        </p>
+                        {secretStateHint('ai.api_key', 'ai-api-key-hint')}
+                        {/* API 키에는 "삭제" 버튼이 없다 — 서버가 빈 `ai.api_key` 를 거부하므로
+                            (`SettingsService.validateValues`) 표현할 수 있는 조작이 아니다.
+                            플랫폼으로 돌아가는 길은 그룹 전체 해제뿐이다. */}
+                        {!isEditable('ai.api_key') && <PlatformLockedNote />}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </fieldset>
 
               <Separator />
 

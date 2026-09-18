@@ -185,6 +185,71 @@ describe('useSettingsOverrideForm', () => {
     expect(result.current.form).toEqual(DEMO_DEFAULTS);
   });
 
+  /**
+   * `emptySeedKeys` — 마스크를 편집 가능한 입력에 <b>시드하지 않는다</b>.
+   *
+   * 무엇을 막는가: 마스크가 시드돼 있으면 사용자가 그 뒤에 진짜 키를 덧붙일 수 있고
+   * (`****3f2asecret`), 그 문자열은 서버 센티널 판정(`****` 로 시작 + 길이가 정확히 4 또는 8)을
+   * 빠져나가 <b>테넌트의 진짜 자격증명으로 저장</b>된다.
+   *
+   * <b>`form` 과 `original` 을 둘 다 단언한다.</b> `form` 만 보면 `original` 에 마스크가 남은
+   * 변이에서도 통과하는데, 그 상태는 손대지 않은 비밀이 `form !== original` 이 되어 "빈 값으로
+   * 바꿨다"로 판정되는 더 나쁜 결함이다 — 그래서 아래에서 페이로드 제외까지 이어서 확인한다.
+   */
+  it('emptySeedKeys 의 키는 서버 마스크 대신 빈 값으로 form·original 을 함께 시드한다', async () => {
+    const { result } = renderHook(() =>
+      useSettingsOverrideForm<DemoForm>({
+        prefix: 'demo',
+        defaults: DEMO_DEFAULTS,
+        emptySeedKeys: new Set<keyof DemoForm>(['demo.password']),
+      }),
+    );
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    expect(result.current.form['demo.password']).toBe('');
+    expect(result.current.original['demo.password']).toBe('');
+    // 음성 대조군: 집합 밖의 키는 여전히 서버 값으로 시드된다 — 이것이 없으면 "아무것도 시드하지
+    // 않는다"는 변이에서도 통과해 옵션이 <b>선택적</b>이라는 성질을 증명하지 못한다.
+    expect(result.current.form['demo.host']).toBe('smtp.platform.com');
+
+    // 손대지 않은 비밀은 페이로드에서 빠진다(이 성질이 깨지면 빈 문자열이 저장돼 자격증명이 날아간다).
+    act(() => result.current.updateField('demo.host', 'smtp.ourcompany.com'));
+    expect(result.current.buildChangedPayload()).toEqual({
+      payload: { 'demo.host': 'smtp.ourcompany.com' },
+      droppedChangedKeys: [],
+    });
+    // dirty 판정도 비밀 때문에 켜지면 안 된다(그러면 "안 바꿨는데 저장 버튼이 활성"이 된다).
+    act(() => result.current.handleReset());
+    expect(result.current.hasChanges).toBe(false);
+  });
+
+  /**
+   * 재시드도 <b>조회와 같은 규칙</b>을 따라야 한다. 여기만 서버 값을 넣으면 저장·해제 직후 비밀
+   * 입력에 새 마스크가 다시 들어앉아, 조회 경로에서 막은 덧붙이기 결함이 저장 경로로 되살아난다.
+   */
+  it('emptySeedKeys 의 키는 resyncFromServer 에서도 서버 마스크를 되돌려받지 않는다', async () => {
+    mockedClear.mockResolvedValue({} as never);
+    const { result } = renderHook(() =>
+      useSettingsOverrideForm<DemoForm>({
+        prefix: 'demo',
+        defaults: DEMO_DEFAULTS,
+        emptySeedKeys: new Set<keyof DemoForm>(['demo.password']),
+      }),
+    );
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    // 해제 후 재조회는 <b>새 마스크</b>를 내려준다 — 재시드가 서버 값을 쓰면 이 값이 폼에 들어온다.
+    mockedGet.mockResolvedValue({
+      data: [row('demo.host', 'smtp.platform.com'), row('demo.password', '****ffff')],
+    } as never);
+    await act(async () => {
+      await result.current.handleClearOverride('demo.password');
+    });
+
+    expect(result.current.form['demo.password']).toBe('');
+    expect(result.current.original['demo.password']).toBe('');
+  });
+
   it('개별 재정의 해제는 그 키 하나만 서버 값으로 되돌리고 다른 필드의 편집을 건드리지 않는다', async () => {
     mockedClear.mockResolvedValue({} as never);
     const { result } = renderHook(() =>

@@ -1,11 +1,13 @@
 package com.smartfirehub.settings.service;
 
+import static com.smartfirehub.support.SettingsTestSupport.rawSystemSettingValue;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.smartfirehub.support.IntegrationTestBase;
 import java.util.Map;
 import java.util.Optional;
+import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
@@ -25,33 +27,37 @@ import org.springframework.transaction.annotation.Transactional;
 class SettingsServiceCliTokenTest extends IntegrationTestBase {
 
   @Autowired private SettingsService settingsService;
+  @Autowired private DSLContext dsl;
 
   @Test
   void updateSettings_cliOauthToken_encryptsBeforeStore() {
     settingsService.updatePlatformSettings(Map.of("ai.cli_oauth_token", "oauth-test-token-abc"), null);
 
-    Optional<String> raw = settingsService.getValue("ai.cli_oauth_token");
-    assertThat(raw).isPresent();
+    // getValue("ai.cli_oauth_token") 는 이제 번들 키라 거부된다(rejectBundleKey) — DB 원문을
+    // 직접 읽는다.
+    String raw = rawSystemSettingValue(dsl, "ai.cli_oauth_token");
+    assertThat(raw).isNotNull();
     // 평문이 그대로 저장되지 않음 (암호화됨)
-    assertThat(raw.get()).isNotEqualTo("oauth-test-token-abc");
-    assertThat(raw.get()).contains(":");
+    assertThat(raw).isNotEqualTo("oauth-test-token-abc");
+    assertThat(raw).contains(":");
   }
 
   @Test
-  void getDecryptedCliOauthToken_returnsOriginal() {
+  void getAiCredentials_cliOauthToken_returnsOriginal() {
     settingsService.updatePlatformSettings(Map.of("ai.cli_oauth_token", "my-cli-token-xyz"), null);
 
-    Optional<String> result = settingsService.getDecryptedCliOauthToken();
+    // getDecryptedCliOauthToken() 은 Task 2 가 지웠다 — 대체 접근자로 같은 계약을 검증한다.
+    SettingsService.AiCredentials creds = settingsService.getAiCredentials();
 
-    assertThat(result).isPresent().hasValue("my-cli-token-xyz");
+    assertThat(creds.cliOauthToken()).isEqualTo("my-cli-token-xyz");
   }
 
   @Test
-  void getDecryptedCliOauthToken_notSet_returnsEmpty() {
-    // 시드값이 빈 문자열이므로 Empty 반환
-    Optional<String> result = settingsService.getDecryptedCliOauthToken();
+  void getAiCredentials_cliOauthToken_notSet_returnsEmpty() {
+    // 시드값이 빈 문자열이므로 빈 문자열 반환
+    SettingsService.AiCredentials creds = settingsService.getAiCredentials();
 
-    assertThat(result).isEmpty();
+    assertThat(creds.cliOauthToken()).isEmpty();
   }
 
   @Test
@@ -143,9 +149,9 @@ class SettingsServiceCliTokenTest extends IntegrationTestBase {
   void updateSettings_cliOauthToken_maskedValue_skipsUpdate() {
     // 먼저 토큰 저장
     settingsService.updatePlatformSettings(Map.of("ai.cli_oauth_token", "real-cli-token-stored"), null);
-    Optional<String> encrypted = settingsService.getValue("ai.cli_oauth_token");
-    assertThat(encrypted).isPresent();
-    String encryptedValue = encrypted.get();
+    // getValue("ai.cli_oauth_token") 는 번들 키라 거부된다 — DB 원문을 직접 읽는다.
+    String encryptedValue = rawSystemSettingValue(dsl, "ai.cli_oauth_token");
+    assertThat(encryptedValue).isNotNull();
 
     // masked 값 전송 시 업데이트 스킵.
     // Task 5 가 센티널 판정을 EncryptionService.maskValue 의 **형태**(길이 4 또는 8)로 좁혔다 —
@@ -154,7 +160,6 @@ class SettingsServiceCliTokenTest extends IntegrationTestBase {
     // (maskValue("real-cli-token-stored") == "****ored")로 바꾼다.
     settingsService.updatePlatformSettings(Map.of("ai.cli_oauth_token", "****ored"), null);
 
-    Optional<String> afterMasked = settingsService.getValue("ai.cli_oauth_token");
-    assertThat(afterMasked).isPresent().hasValue(encryptedValue);
+    assertThat(rawSystemSettingValue(dsl, "ai.cli_oauth_token")).isEqualTo(encryptedValue);
   }
 }

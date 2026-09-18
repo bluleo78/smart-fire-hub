@@ -28,9 +28,11 @@ public class SettingsService {
    * {@link #updateSettings} 자신의 화이트리스트였다).</b> 테넌트 오버라이드 허용 키
    * ({@link SettingsOverridePolicy#tenantOverridableKeys}) 는 이 9키를 포함한 세 서브
    * 화이트리스트({@link #ALLOWED_AI_KEYS}/{@link #ALLOWED_SMTP_KEYS}/{@link #ALLOWED_EMBEDDING_KEYS})
-   * 의 <b>합집합의 부분집합</b>이다 — {@code ai.api_key}/{@code ai.agent_type}/
-   * {@code ai.cli_oauth_token} 은 여기 있지만 테넌트 화이트리스트에는 없다(과금 주체·실행 형태라
-   * 플랫폼이 갖는다).
+   * 의 <b>합집합의 부분집합</b>이다. {@code ai.api_key}/{@code ai.agent_type}/
+   * {@code ai.cli_oauth_token} 은 이 9키에도, 테넌트 화이트리스트에도 둘 다 있다 — 플랫폼은
+   * 자기 기본값을 이 경로로 쓰고, 테넌트는 자기 값을 {@link #AI_CREDENTIAL_KEYS} 번들을 통해
+   * 원자적으로 오버라이드한다. 과금 주체가 섞이지 않는 것은 화이트리스트가 아니라 그 번들이
+   * 보장한다.
    */
   // 패키지 가시성: SettingsKeyWhitelistInvariantTest 가 "테넌트 허용 키 ⊆ 플랫폼 쓰기 가능 키
   // 합집합" 불변식을 실행 가능한 단언으로 고정한다(javadoc 문장만으로는 깨져도 아무도 모른다).
@@ -99,14 +101,29 @@ public class SettingsService {
       Set.of("smtp.host", "smtp.port", "smtp.username", "smtp.password", "smtp.starttls");
 
   /**
-   * 번들 채움 값이 <b>빈 문자열이 아닌</b> 키. 여기 없는 연결 키는 전부 {@code ""} 로 채운다 —
-   * {@link #applySmtpConnectionBundle} 참고.
+   * AI <b>자격증명 번들 3키</b>. {@link #SMTP_CONNECTION_KEYS} 와 같은 이유로 원자적으로 해석한다 —
+   * 저쪽이 막은 것이 "테넌트 호스트 + 플랫폼 자격증명"이라면, 이쪽이 막는 것은 <b>"테넌트가 고른
+   * 실행 형태 + 플랫폼 키"</b>다. 후자는 과금 주체가 섞이는 형태라 더 직접적이다.
    *
-   * <p><b>{@code smtp.starttls} 만 {@code "true"} 인 이유(밴드 리뷰 RULING F).</b> 나머지 네 키는
-   * <b>자격증명이거나 주소</b>라 "비어 있음 = 설정되지 않음"이고, 이 태스크가 얻어낸 안전 성질은
-   * 정확히 그 미설정이 <b>눈에 보이게 실패</b>한다는 것이다. {@code smtp.starttls} 는 자격증명이
-   * 아니라 <b>보안 토글</b>이고, 이 키에서만 빈 값이 <b>덜</b> 안전한 방향이다 — 발송은 그대로
-   * 성공하면서 암호화만 조용히 꺼진다("조용한 노출").
+   * <p>구체적 시나리오: 테넌트 ADMIN 이 실행 형태만 {@code sdk} 로 바꿔 저장한다. API 키 필드는
+   * 마스킹된 채 채워져 보이므로(플랫폼 값이 폼에 시드된다) 손댈 이유가 없고, web 은 <b>바뀐 키만</b>
+   * 전송하므로 {@code ai.api_key} 테넌트 행이 생기지 않는다. 번들이 없으면 그 테넌트의 AI 사용료를
+   * 플랫폼이 낸다.
+   */
+  // 패키지 가시성: SettingsKeyWhitelistInvariantTest.AI_자격증명_번들_3키는_전부_테넌트_오버라이드_허용키다
+  // 가 "3키 ⊆ 테넌트 허용 키" 불변식을 실행 가능한 단언으로 고정한다. ALLOWED_AI_KEYS 등과 같은 이유.
+  static final Set<String> AI_CREDENTIAL_KEYS =
+      Set.of("ai.api_key", "ai.cli_oauth_token", "ai.agent_type");
+
+  /**
+   * 번들 채움 값이 <b>빈 문자열이 아닌</b> 키. {@link #applySmtpConnectionBundle} 과
+   * {@link #applyAiCredentialBundle} 이 공유한다 — 여기 없는 번들 키는 전부 {@code ""} 로 채운다.
+   *
+   * <p><b>{@code smtp.starttls} 만 {@code "true"} 인 이유(밴드 리뷰 RULING F).</b> SMTP 연결 5키
+   * 중 나머지 네 키는 <b>자격증명이거나 주소</b>라 "비어 있음 = 설정되지 않음"이고, 이 태스크가
+   * 얻어낸 안전 성질은 정확히 그 미설정이 <b>눈에 보이게 실패</b>한다는 것이다. {@code smtp.starttls}
+   * 는 자격증명이 아니라 <b>보안 토글</b>이고, 이 키에서만 빈 값이 <b>덜</b> 안전한 방향이다 —
+   * 발송은 그대로 성공하면서 암호화만 조용히 꺼진다("조용한 노출").
    *
    * <p>구체적으로 막는 시나리오: 테넌트 ADMIN 이 호스트·사용자 이름·비밀번호를 자기 회사 값으로
    * 채워 저장한다. STARTTLS 스위치는 화면에 <b>켜짐</b>으로 보이므로(플랫폼 값 {@code 'true'} 가
@@ -118,8 +135,17 @@ public class SettingsService {
    * <p>"플랫폼 값을 쓰지 않는다"는 목적이 이 키에서는 빈 값을 요구하지 않는다 — <b>withhold 할
    * 비밀이 없고</b>, 플랫폼 값 자체도 {@code 'true'}(V42 시드)다. TLS 를 정말 끄려는 테넌트는
    * 스위치를 내려 {@code 'false'} 행을 만들면 되고, 그것은 명시적 조작이라 조용하지 않다.
+   *
+   * <p><b>{@code ai.agent_type} 도 같은 이유로 {@code "sdk"}</b>. 자격증명이 아니라 실행 형태
+   * 선택자라 빈 값이 안전한 방향이 아니다(빈 값은 {@code AiAgentProxyService} 에서 cli-api 분기로
+   * 떨어진다 — Task 4 가 고치는 결함). {@code sdk} 는 API 키·OAuth 어느 쪽으로도 인증되므로 "키만
+   * 넣은" 테넌트에 맞고, 기존 코드 기본값({@code getOrDefault("ai.agent_type","sdk")})과도
+   * 일치한다.
    */
-  private static final Map<String, String> BUNDLE_FILL_VALUES = Map.of("smtp.starttls", "true");
+  private static final Map<String, String> BUNDLE_FILL_VALUES =
+      Map.of(
+          "smtp.starttls", "true",
+          "ai.agent_type", "sdk");
 
   private final SettingsRepository settingsRepository;
   private final EncryptionService encryptionService;
@@ -203,32 +229,42 @@ public class SettingsService {
   }
 
   /**
-   * SMTP 연결 번들 키를 <b>단일 키로 조회하는 것 자체를 거부한다.</b>
+   * <b>번들 키(SMTP 연결 5키, AI 자격증명 3키)를 단일 키로 조회하는 것 자체를 거부한다.</b>
    *
    * <p>해석 진입점은 둘이다 — {@link #getValue}(키 하나)와 {@link #resolveOverridesByPrefix}
    * (프리픽스 통째). 원자 해석 규칙은 <b>뒤쪽에만</b> 있고, 있을 수 있는 자리도 거기뿐이다:
-   * "5키가 함께 움직인다"는 규칙은 5키를 한꺼번에 봐야 판정할 수 있어서, 키 하나만 받는 이 경로는
+   * "N키가 함께 움직인다"는 규칙은 N키를 한꺼번에 봐야 판정할 수 있어서, 키 하나만 받는 이 경로는
    * 원리적으로 그 규칙을 지킬 수 없다. 실제로 호스트만 재정의된 테넌트에서
    * {@code getAsMap("smtp").get("smtp.password")} 는 {@code ""}(안전)를 주는데
-   * {@code getValue("smtp.password")} 는 <b>플랫폼 암호문</b>(상속 폴백)을 준다.
+   * {@code getValue("smtp.password")} 는 <b>플랫폼 암호문</b>(상속 폴백)을 준다 — AI 쪽도 실행
+   * 형태만 재정의된 테넌트에서 {@code getAsMap("ai").get("ai.api_key")} 는 {@code ""} 를 주는데
+   * {@code getValue("ai.api_key")} 는 플랫폼 암호문을 준다는 점에서 같은 결함 모양이다.
    *
    * <p><b>오늘 이 경로로 SMTP 키가 들어오는 프로덕션 호출부는 없다</b>(전수 실측: 호출부 4곳이
    * 전부 {@code ai.*}/{@code embedding.*} 리터럴). 그런데도 막는 이유는 "오늘은 그런 호출부가
    * 없다"가 <b>이 밴드가 방금 죽인 문장</b>이기 때문이다 — 도달 불가에 기댄 안전이 이 코드베이스에서
-   * 이미 여러 번 배신했고, 이 밴드의 원 결함 자체가 그 형태였다.
+   * 이미 여러 번 배신했고, 이 밴드의 원 결함 자체가 그 형태였다. AI 자격증명은 반대로 <b>오늘도
+   * 살아 있는 호출부가 4파일 6곳</b>이었다({@code getDecryptedApiKey()}/{@code getDecryptedCliOauthToken()}
+   * 의 옛 호출부) — 그래서 이 태스크가 그 여섯을 전부 {@link #getAiCredentials} 로 옮기고 옛
+   * 메서드를 지운다. 막기만 하고 대안을 안 주면 호출부가 막힌 채로 남는다.
    *
    * <p><b>왜 {@code getAsMap} 으로 조용히 위임하지 않는가.</b> 위임하면 {@code getValue("smtp.password")}
-   * 가 "동작하게" 되고, 다음 사람은 그 위에 키 단위 SMTP 읽기 경로를 짓는다 — 번들 규칙이 존재하는
-   * 이유가 정확히 "연결 키를 키 단위로 해석하지 않는다"인데, API 표면이 그 반대를 허락하게 된다.
+   * 가 "동작하게" 되고, 다음 사람은 그 위에 키 단위 읽기 경로를 짓는다 — 번들 규칙이 존재하는
+   * 이유가 정확히 "번들 키를 키 단위로 해석하지 않는다"인데, API 표면이 그 반대를 허락하게 된다.
    * 거부하면 불변식이 호출 시점에 보인다. 모호하면 fail-closed 다.
    *
    * <p>{@code smtp.from_address} 는 <b>막지 않는다</b> — 번들이 아니라 키 단위 상속이므로
-   * {@link #getValue} 가 옳은 답을 준다.
+   * {@link #getValue} 가 옳은 답을 준다. {@code ai.model} 등 나머지 {@code ai.*} 키도 같은
+   * 이유로 막지 않는다.
    */
   private static void rejectBundleKey(String key) {
     if (SMTP_CONNECTION_KEYS.contains(key)) {
       throw new IllegalArgumentException(
           "SMTP 연결 설정은 단일 키로 해석할 수 없습니다(연결 5키는 함께 해석된다). getSmtpConfig() 를 쓰세요: " + key);
+    }
+    if (AI_CREDENTIAL_KEYS.contains(key)) {
+      throw new IllegalArgumentException(
+          "AI 자격증명은 단일 키로 해석할 수 없습니다(3키는 함께 해석된다). getAiCredentials() 를 쓰세요: " + key);
     }
   }
 
@@ -326,12 +362,14 @@ public class SettingsService {
    * 적용하면 {@link #getAsMap}(발송 경로)과 {@link #getResolvedByPrefix}(화면 경로)가 <b>같은
    * 해석</b>을 자동으로 공유한다. 두 곳에 각각 넣으면 한쪽만 고쳐질 때 "화면은 상속이라는데
    * 발송은 테넌트 값"(또는 그 반대)이 되고, 그것이 이 밴드가 반복해서 잡아 온 실패 유형이다.
+   * AI 자격증명 번들도 같은 이유로 바로 다음 줄에 있다.
    */
   private Map<String, String> resolveOverridesByPrefix(String prefix) {
     if (TenantContext.get() == null) return Map.of();
     Map<String, String> candidates = tenantSettingsRepository.findByPrefix(prefix);
     candidates.keySet().removeIf(key -> !SettingsOverridePolicy.isTenantOverridable(key));
     applySmtpConnectionBundle(candidates);
+    applyAiCredentialBundle(candidates);
     return candidates;
   }
 
@@ -377,14 +415,44 @@ public class SettingsService {
   }
 
   /**
+   * AI 자격증명 3키를 <b>원자적으로</b> 해석한다. 규칙·근거·주의사항은 전부
+   * {@link #applySmtpConnectionBundle} 과 같으므로 그쪽 javadoc 을 함께 읽어야 한다 —
+   * 특히 <b>채움이 화이트리스트를 다시 보지 않는다</b>는 점과, 그 대가를
+   * {@code SettingsKeyWhitelistInvariantTest.AI_자격증명_번들_3키는_전부_테넌트_오버라이드_허용키다}
+   * 가 진다는 점이 동일하다.
+   *
+   * <p><b>Task 1~2 시점에는 배선만 되고 휴면 상태였다.</b> {@link #resolveOverridesByPrefix} 의
+   * {@code removeIf} 가 {@link SettingsOverridePolicy#isTenantOverridable} 로 후보를 거르는데,
+   * 그때는 3키가 아직 그 화이트리스트에 없어 이 메서드에 도달하는 {@code overrides} 맵에 3키가
+   * 애초에 들어올 수 없었다 — {@code bundleOverridden} 이 항상 거짓이라 실제 동작 변화가 없었다.
+   * 규칙(이 메서드)을 먼저 세우고 화이트리스트 개방을 나중에 두는 순서가 의도였고, 화이트리스트를
+   * 여는 이 태스크가 그 순서의 마지막 조각이다 — 이제부터 이 메서드가 실제로 발동한다.
+   *
+   * <p><b>패키지 가시성인 이유(SMTP 쪽과 다르다).</b> {@link #applySmtpConnectionBundle} 은
+   * {@code private} 인데 이쪽만 패키지 가시성 {@code static} 이다 — Task 1~2 시점에는 화이트리스트가
+   * 3키를 막고 있어 {@code SettingsResolutionTest}(통합 테스트, {@code getAsMap("ai")} 경유)로
+   * 규칙 자체를 검증할 수 없었다. 그래서 {@code AiCredentialBundleTest}(같은 패키지의 순수 단위
+   * 테스트)가 이 메서드를 직접 호출해 규칙을 먼저 고정했다. 지금은 {@code SettingsResolutionTest}
+   * 도 {@code getAsMap("ai")} 로 같은 규칙을 end-to-end 로 확인하지만, 단위 테스트를 지우지
+   * 않는다 — 패키지 가시성 자체는 여전히 최소 노출 원칙이다.
+   */
+  static void applyAiCredentialBundle(Map<String, String> overrides) {
+    boolean bundleOverridden = overrides.keySet().stream().anyMatch(AI_CREDENTIAL_KEYS::contains);
+    if (!bundleOverridden) return;
+    AI_CREDENTIAL_KEYS.forEach(
+        key -> overrides.putIfAbsent(key, BUNDLE_FILL_VALUES.getOrDefault(key, "")));
+  }
+
+  /**
    * <b>테넌트 평면</b> 쓰기. {@link SettingsOverridePolicy#isTenantOverridable} 화이트리스트
-   * (12키: {@code ai.*} 6 + {@code smtp.*} 6, P7-c1 재분류 이후)만 받아 {@code tenant_settings}
-   * 에 저장한다 — {@code system_settings}(전역 18행)는 절대 건드리지 않는다. 이 구분이 이 밴드의
-   * 존재 이유다(오늘의 결함: 한 테넌트의 저장이 전 테넌트에 적용됨).
+   * (15키: {@code ai.*} 9 + {@code smtp.*} 6 — P7-c1 이 smtp 6키를, 이 태스크가 ai 자격증명 3키를
+   * 더 열었다)만 받아 {@code tenant_settings} 에 저장한다 — {@code system_settings}(전역 18행)는
+   * 절대 건드리지 않는다. 이 구분이 이 밴드의 존재 이유다(오늘의 결함: 한 테넌트의 저장이 전
+   * 테넌트에 적용됨).
    *
    * <p>거부 메시지에 키 이름을 넣는다 — web 이 어느 필드가 잠겼는지 사용자에게 보여줄 수 있어야
-   * 하기 때문이다. 플랫폼 잠금 키(자격증명·{@code embedding.*}) 는 {@link #updatePlatformSettings}
-   * 로만 바뀐다.
+   * 하기 때문이다. 플랫폼 잠금 키({@code embedding.*}) 는 {@link #updatePlatformSettings} 로만
+   * 바뀐다.
    *
    * <p>{@link #validateValues} 는 그대로 지난다 — 범위 검증(예: max_turns 1~50)은 값이
    * {@code tenant_settings} 로 가든 {@code system_settings} 로 가든 똑같이 필요하다.
@@ -601,21 +669,49 @@ public class SettingsService {
   }
 
   /**
-   * {@code ai.api_key} 는 {@link SettingsOverridePolicy} 화이트리스트에 없는 플랫폼 잠금 키다 —
-   * {@link #getValue} 가 해석기를 타더라도 {@link #resolveOverrides} 가 항상 빈 결과를 주므로 여기
-   * 결과는 바뀌지 않는다. 장래에 {@code ai.api_key} 가 BYO(Bring Your Own) 키 정책으로 테넌트에
-   * 열리면(정책 화이트리스트 추가), 이 메서드가 "어느 테넌트의 키를 복호화하는가"를 다시 따져야
-   * 하는 지점이 된다.
+   * AI 자격증명 3키를 <b>번들 규칙대로</b> 해석해 함께 돌려준다.
+   *
+   * <p>{@code getDecryptedApiKey()} / {@code getDecryptedCliOauthToken()} 를 대체한다. 그 둘은
+   * {@link #getValue} 기반이라 번들 규칙을 지날 수 없었다 — 키를 하나만 보는 경로는 "3키가 함께
+   * 움직인다"를 판정할 수 없기 때문이고, 근거는 {@link #rejectBundleKey} 에 있다.
+   *
+   * <p>미설정은 {@code null} 이 아니라 <b>빈 문자열</b>이다. 번들 채움이 빈 문자열을 쓰므로
+   * 두 경로(채움/미설정)가 같은 모양이어야 호출부가 분기를 하나만 갖는다.
+   *
+   * <p>{@code @Transactional} 을 떼지 말 것 — {@link #getAsMap} 을 자기 호출로 부르므로 프록시를
+   * 지나지 않는다. {@code tenant_settings}(RLS) 조회에 GUC 를 주입하는 트랜잭션은 <b>이 애노테이션</b>이 연다.
    */
   @Transactional(readOnly = true)
-  public Optional<String> getDecryptedApiKey() {
-    return getValue("ai.api_key").filter(v -> !v.isBlank()).map(encryptionService::decrypt);
+  public AiCredentials getAiCredentials() {
+    Map<String, String> ai = getAsMap("ai");
+    String agentType = ai.getOrDefault("ai.agent_type", "sdk");
+    if (agentType.isBlank()) agentType = "sdk"; // 빈 값 정규화 — Task 4 와 같은 이유
+    return new AiCredentials(
+        agentType,
+        decryptOrEmpty(ai.get("ai.api_key")),
+        decryptOrEmpty(ai.get("ai.cli_oauth_token")));
   }
 
-  /** {@code ai.cli_oauth_token} 도 플랫폼 잠금 키다 — 근거는 {@link #getDecryptedApiKey} 와 같다. */
-  @Transactional(readOnly = true)
-  public Optional<String> getDecryptedCliOauthToken() {
-    return getValue("ai.cli_oauth_token").filter(v -> !v.isBlank()).map(encryptionService::decrypt);
+  /** 암호문을 복호화하되 미설정(null/빈 값)은 빈 문자열로 통일한다. */
+  private String decryptOrEmpty(String encrypted) {
+    if (encrypted == null || encrypted.isBlank()) return "";
+    return encryptionService.decrypt(encrypted);
+  }
+
+  /**
+   * AI 자격증명 묶음. 세 값은 <b>항상 같은 평면</b>에서 왔다(번들 규칙) — 섞여 있지 않다는 것이
+   * 이 타입이 존재하는 이유다. 빈 문자열은 "설정되지 않음"을 뜻한다.
+   */
+  public record AiCredentials(String agentType, String apiKey, String cliOauthToken) {
+    /** sdk/cli 에서 OAuth 우선 판정에 쓴다. */
+    public boolean hasOauthToken() {
+      return !cliOauthToken.isBlank();
+    }
+
+    /** cli-api/sdk 에서 API 키 존재 판정에 쓴다. */
+    public boolean hasApiKey() {
+      return !apiKey.isBlank();
+    }
   }
 
   /**
@@ -623,7 +719,9 @@ public class SettingsService {
    * empty 를 반환한다. 키는 절대 ai-agent 로 내려보내지 않고 api 내부(EmbeddingProviderFactory)에서만 쓴다.
    *
    * <p>{@code embedding.*} 4키도 화이트리스트에 없는 플랫폼 잠금 키다(모델 교체가 벡터 차원을 바꿔
-   * 기존 임베딩을 무효화하므로 테넌트별로 다를 수 없다) — 근거는 {@link #getDecryptedApiKey} 와 같다.
+   * 기존 임베딩을 무효화하므로 테넌트별로 다를 수 없다) — {@code ai.api_key} 와 같은 근거이지만,
+   * 이쪽은 번들이 아니라 <b>단독</b> 잠금 키라({@code embedding.provider}/{@code model}/
+   * {@code base_url} 과 원자적으로 묶이지 않는다) {@link #getValue} 로 조회해도 안전하다.
    */
   @Transactional(readOnly = true)
   public Optional<String> getDecryptedEmbeddingApiKey() {

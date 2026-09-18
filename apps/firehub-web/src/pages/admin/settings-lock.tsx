@@ -99,6 +99,39 @@ export function PlatformLockedBanner({ children }: { children: ReactNode }) {
 }
 
 /**
+ * 번들 안에서 <b>비어 있는 항목</b>임을 알리는 정적 노트(디자인 스펙 §1-1 신설 어휘).
+ *
+ * 배지가 아니라 노트인 이유: 배지 문자열은 어휘를 영구히 넓히는 부담을 만들지만, 노트는 그
+ * 화면 안에 머문다. 빈 입력창은 시각적으로 "아직 안 채운 칸"과 구별되지 않으므로 이 텍스트가
+ * 유일한 전달 경로다 — 그래서 각 입력의 `aria-describedby` 에 포함한다.
+ *
+ * <b>원래 `SmtpSettingsTab` 안의 지역 컴포넌트였다.</b> "이 화면 안에 머문다"는 전제가 AI 자격증명
+ * 번들이 생기면서 깨졌다 — 같은 서버 규칙(번들 원자 해석)이 두 탭에 같은 화면 문제를 만든다.
+ * 복사하면 문구가 두 벌이 되어 한쪽만 고치는 사고가 나므로 공용 자리로 올린다.
+ */
+export function EmptyInBundleNote({
+  id,
+  show,
+  extra,
+}: {
+  id: string;
+  show: boolean;
+  /**
+   * 비어 있을 때 <b>실제로 적용되는 값</b>이 따로 있는 키만 채운다. SMTP 포트가 그렇다 —
+   * 소비자 3곳이 전부 빈 포트를 587 로 대체하므로, 이 문장이 없으면 "포트가 없어서 못 나간다"로
+   * 읽힌다.
+   */
+  extra?: string;
+}) {
+  if (!show) return null;
+  return (
+    <p id={id} className="text-sm text-muted-foreground">
+      이 항목은 비어 있습니다 — 플랫폼 값이 사용되지 않습니다.{extra ? ` ${extra}` : ''}
+    </p>
+  );
+}
+
+/**
  * 재정의 해제 버튼 + 확인 다이얼로그.
  *
  * - 배치 저장(PUT)에 얹지 않고 즉시 DELETE 를 호출한다 — 오버라이드 삭제는 "빈 문자열 저장"과
@@ -113,7 +146,9 @@ export function PlatformLockedBanner({ children }: { children: ReactNode }) {
  * <b>문구를 prop 으로 받는 이유(Task 5)</b>: SMTP 연결 5키는 <b>번들 단위</b>로 해제되므로 고정
  * 문구의 "이 항목"(단수)이 거짓이 된다. 그렇다고 번들 전용 컴포넌트를 복사해 만들면 확인 동작이
  * 다시 두 벌이 되어, 위 문단이 경고하는 그 사고가 난다. 그래서 <b>기본값이 있는 선택 prop</b>으로
- * 넓힌다 — AI 탭 호출부는 아무것도 넘기지 않고 동작이 그대로다.
+ * 넓힌다. 지금 문구를 넘기는 호출부는 셋이다 — SMTP 연결 그룹 해제, AI 자격증명 그룹 해제,
+ * AI "저장된 OAuth 토큰 삭제". 아무것도 넘기지 않는 개별 키 해제(AI 의 `ai.model`·숫자 필드,
+ * SMTP 의 `smtp.from_address`)는 기본 문구로 동작이 그대로다.
  *
  * <b>`settingKey` 를 받지 않는 이유(#390 item 6)</b>: 예전 시그니처는 `settingKey: string` 을 받아
  * `onConfirm(settingKey)` 로 되돌려 줬다. 그런데 번들 해제에는 되돌려 줄 <b>단일 키가 존재하지
@@ -129,6 +164,7 @@ export function ClearOverrideButton({
   label = '재정의 해제',
   dialogTitle = '재정의 해제',
   dialogDescription = '이 항목의 테넌트 설정이 삭제되고 플랫폼 기본값으로 즉시 전환됩니다. 지금 입력된 값은 사라지며, 필요하면 언제든 다시 재정의할 수 있습니다.',
+  confirmLabel = '되돌리기',
 }: {
   /** 확인 다이얼로그를 지난 뒤 실행할 동작. 무엇을 지우는지는 호출부가 클로저로 묶는다. */
   onConfirm: () => void;
@@ -137,6 +173,13 @@ export function ClearOverrideButton({
   label?: string;
   dialogTitle?: string;
   dialogDescription?: ReactNode;
+  /**
+   * 확인 버튼 문구. 기본값 '되돌리기' 는 <b>상속으로 되돌리는</b> 해제에만 맞다 — AI 탭의
+   * "저장된 OAuth 토큰 삭제"는 상속으로 돌아가는 것이 아니라 테넌트 값을 빈 값으로 덮는
+   * 조작이라(번들은 그대로 재정의 상태로 남는다) '되돌리기' 가 거짓이 된다. 그 한 단어 때문에
+   * 다이얼로그 컴포넌트를 복사하면 확인 동작이 다시 두 벌이 된다 — 그래서 문구만 넓힌다.
+   */
+  confirmLabel?: string;
 }) {
   return (
     <AlertDialog>
@@ -154,7 +197,7 @@ export function ClearOverrideButton({
         <AlertDialogFooter>
           <AlertDialogCancel>취소</AlertDialogCancel>
           {/* destructive 색을 쓰지 않는다 — 되돌릴 수 있는 동작이다 */}
-          <AlertDialogAction onClick={onConfirm}>되돌리기</AlertDialogAction>
+          <AlertDialogAction onClick={onConfirm}>{confirmLabel}</AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>

@@ -68,9 +68,11 @@ public class AiAgentClient {
    * ai-agent 의 분류 엔드포인트를 호출한다.
    *
    * <p>자격증명(apiKey / oauthToken)과 모델은 여기서 관리자 설정(DB)에서 복호화해 요청 바디에 주입한다 —
-   * AiAgentProxyService(채팅)와 동일한 패턴이다. 이전에는 ai-agent 가 {@code /settings/ai-api-key} 를 역호출해
-   * 스스로 키를 가져왔는데, 그 엔드포인트는 {@code ai:settings}(ADMIN 전용) 권한을 요구하므로 비-ADMIN 사용자의
-   * 파이프라인이 조용히 실패했고 OAuth 토큰은 아예 전달되지 않았다.
+   * "DB 에서 복호화해 바디로 넘긴다"는 골격은 AiAgentProxyService(채팅)와 같다. 다만 agentType=opencode
+   * 일 때 자격증명을 숨기는 채팅 쪽 규칙은 여기 적용되지 않는다 — 이유는 아래 classify() 본문 주석 참고.
+   * 이전에는 ai-agent 가 {@code /settings/ai-api-key} 를 역호출해 스스로 키를 가져왔는데, 그 엔드포인트는
+   * {@code ai:settings}(ADMIN 전용) 권한을 요구하므로 비-ADMIN 사용자의 파이프라인이 조용히 실패했고 OAuth
+   * 토큰은 아예 전달되지 않았다.
    */
   public ClassifyResponse classify(ClassifyRequest request, Long userId) {
     try {
@@ -79,15 +81,15 @@ public class AiAgentClient {
       body.put("prompt", request.prompt());
       body.put("outputColumns", request.outputColumns());
       body.put("model", settingsService.getValue("ai.model").orElse("claude-sonnet-5"));
-      // OAuth 토큰이 있으면 ai-agent 가 구독 인증을 우선 선택한다(둘 다 보내도 무방).
-      settingsService
-          .getDecryptedApiKey()
-          .filter(key -> !key.isBlank())
-          .ifPresent(key -> body.put("apiKey", key));
-      settingsService
-          .getDecryptedCliOauthToken()
-          .filter(token -> !token.isBlank())
-          .ifPresent(token -> body.put("oauthToken", token));
+      // 자격증명은 번들로 함께 해석되어 agentType 과 무관하게 항상 보낸다 — 채팅 경로(AiAgentProxyService)와
+      // 다르다. classify 는 opencode 로 라우팅되지 않는다: ai-agent 의 ProviderFactory.createCompletionProvider
+      // (provider-factory.ts)에는 agentType 분기가 아예 없고 SDK 경로 하나로 고정되어 있다. 여기서 agentType
+      // 을 보고 자격증명을 숨기면(과거의 실수) 바디에 apiKey/oauthToken 이 둘 다 빠지고, SDK 가 ai-agent
+      // 컨테이너 자신의 ANTHROPIC_API_KEY/CLAUDE_CODE_OAUTH_TOKEN 으로 폴백한다 — 인증 실패 또는 테넌트
+      // 청구가 플랫폼 계정으로 새는 사고로 이어진다.
+      var creds = settingsService.getAiCredentials();
+      if (creds.hasApiKey()) body.put("apiKey", creds.apiKey());
+      if (creds.hasOauthToken()) body.put("oauthToken", creds.cliOauthToken());
 
       String responseBody =
           webClient
