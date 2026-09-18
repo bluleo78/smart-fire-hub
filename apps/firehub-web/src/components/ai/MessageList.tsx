@@ -58,6 +58,14 @@ export function MessageList({ messages, pendingUserMessage, streamingMessage, is
 
   const showThinking = isStreaming && isThinking;
 
+  /**
+   * 렌더할 스트리밍 버블 (없으면 null).
+   * 조건식을 JSX에 직접 쓰면 toolCalls가 빈 배열일 때 length(0)가 그대로 렌더되므로,
+   * 값으로 좁혀서 내보낸다.
+   */
+  const streamingBubble =
+    streamingMessage?.content || streamingMessage?.toolCalls?.length ? streamingMessage : null;
+
   return (
     <div ref={scrollContainerRef} className="h-full overflow-y-auto" onScroll={handleScroll}>
       <div className="space-y-3 p-3">
@@ -67,7 +75,7 @@ export function MessageList({ messages, pendingUserMessage, streamingMessage, is
         {pendingUserMessage && (
           <MessageBubble message={{ role: 'user', content: pendingUserMessage, timestamp: new Date().toISOString() }} />
         )}
-        {(streamingMessage?.content || streamingMessage?.toolCalls?.length) && <MessageBubble key="streaming" message={streamingMessage} isStreaming={isStreaming} />}
+        {streamingBubble && <MessageBubble key="streaming" message={streamingBubble} isStreaming={isStreaming} />}
         {showThinking && <ThinkingIndicator />}
         <div ref={bottomRef} />
       </div>
