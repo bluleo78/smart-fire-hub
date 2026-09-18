@@ -327,6 +327,30 @@ public class DataTableService {
    * tenant's data schema) by dropping the original and renaming the tmp table inside a single
    * transaction. Called only after all data has been successfully inserted into the tmp table.
    */
+  /**
+   * REPLACE 적재를 마무리한다 — <b>쓴 행이 있을 때만</b> 맞바꾸고, 없으면 임시 테이블만 버린다.
+   *
+   * <p>"빈 결과는 기존 데이터를 파괴하지 않는다"는 제품 결정이다. 이 판단이 실행기마다 흩어져 있던
+   * 탓에 네 호출부 중 둘이 무조건 {@link #swapTable} 을 불렀고, 2026-09-18 운영에서 AI 분류가
+   * 전량 실패해 0행이 나오자 빈 임시 테이블이 원본을 덮어 10건이 사라졌다(#685). API_CALL 경로 둘은
+   * 같은 결함이 아직 터지지 않은 상태였다 — API 가 빈 페이지를 돌려주면 똑같이 지워진다.
+   *
+   * <p>정책을 {@code swapTable} 안에 숨기지 않는 이유: 그러면 "swap" 이라는 이름이 거짓말이 되고,
+   * DDL 원시연산 안에 제품 결정이 묻힌다. 결정은 이름이 있는 자리에 둔다.
+   *
+   * <p>부분 실패(일부 배치만 성공)는 여기서 구분하지 않는다 — 성공한 행이 있으면 맞바꾼다. 그것이
+   * {@code onError=CONTINUE} 를 고른 쪽의 선택이다.
+   *
+   * @param rowsWritten 임시 테이블에 실제로 적재된 행 수
+   */
+  public void finishReplace(String tableName, long rowsWritten) {
+    if (rowsWritten > 0) {
+      swapTable(tableName);
+    } else {
+      dropTempTable(tableName);
+    }
+  }
+
   public void swapTable(String tableName) {
     validateName(tableName);
     String tmpName = tableName + "_tmp";

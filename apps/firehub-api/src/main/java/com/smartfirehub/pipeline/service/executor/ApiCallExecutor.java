@@ -193,9 +193,11 @@ public class ApiCallExecutor {
         totalPages = 1;
       }
 
-      // 4. All pages succeeded — atomically swap tmp -> original for REPLACE
+      // 4. All pages succeeded — swap tmp -> original for REPLACE.
+      // 적재된 행이 0이면 맞바꾸지 않는다(#685) — API 가 빈 페이지를 돌려줬다고 해서 기존 데이터를
+      // 지울 이유는 없다. 판단은 finishReplace 가 단독으로 갖는다.
       if (isReplace) {
-        dataTableService.swapTable(outputTableName);
+        dataTableService.finishReplace(outputTableName, totalRows);
         swapped = true;
       }
 

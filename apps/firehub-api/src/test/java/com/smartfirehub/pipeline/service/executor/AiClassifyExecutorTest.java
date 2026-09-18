@@ -27,6 +27,7 @@ import java.lang.reflect.Method;
 import java.math.BigDecimal;
 import java.sql.Timestamp;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -41,6 +42,7 @@ import org.jooq.SelectWhereStep;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -98,17 +100,45 @@ class AiClassifyExecutorTest {
   // Helpers
   // -----------------------------------------------------------------------
 
-  private AiClassifyConfig buildConfig() {
-    return new AiClassifyConfig(
-        "Classify rows",
-        List.of(new OutputColumn("category", "TEXT"), new OutputColumn("score", "NUMERIC")),
-        List.of("id", "text"),
-        20,
-        "CONTINUE");
+  /**
+   * 캐시 조회 목 체인을 전부 미스로 세운다.
+   *
+   * <p>jOOQ 빌더 체인이 길어 테스트마다 복제하면 V103 같은 술어 추가 때 손볼 곳이 그만큼 늘어난다.
+   */
+  @SuppressWarnings({"unchecked", "rawtypes"})
+  private void stubCacheMiss() {
+    stubCacheLookup(null);
+  }
+
+  /** 캐시 조회 목 체인을 세우고 {@code fetchOne()} 이 돌려줄 값을 지정한다(null 이면 미스). */
+  @SuppressWarnings({"unchecked", "rawtypes"})
+  private void stubCacheLookup(Record1<JSONB> result) {
+    SelectSelectStep selectStep = mock(SelectSelectStep.class);
+    SelectJoinStep joinStep = mock(SelectJoinStep.class);
+    SelectConditionStep condStep1 = mock(SelectConditionStep.class);
+    SelectConditionStep condStep2 = mock(SelectConditionStep.class);
+    when(dsl.select(any(org.jooq.Field.class))).thenReturn(selectStep);
+    when(selectStep.from(any(org.jooq.Table.class))).thenReturn(joinStep);
+    when(joinStep.where(any(org.jooq.Condition.class))).thenReturn(condStep1);
+    when(condStep1.and(any(org.jooq.Condition.class))).thenReturn(condStep2);
+    when(condStep2.and(any(org.jooq.Condition.class))).thenReturn(condStep2);
+    when(condStep2.fetchOne()).thenReturn(result);
   }
 
   private PipelineStepResponse buildStep(String loadStrategy, List<Long> inputDatasetIds) {
-    Map<String, Object> aiConfig = objectMapper.convertValue(buildConfig(), Map.class);
+    return buildStep(loadStrategy, inputDatasetIds, 20);
+  }
+
+  private PipelineStepResponse buildStep(
+      String loadStrategy, List<Long> inputDatasetIds, int batchSize) {
+    AiClassifyConfig config =
+        new AiClassifyConfig(
+            "Classify rows",
+            List.of(new OutputColumn("category", "TEXT"), new OutputColumn("score", "NUMERIC")),
+            List.of("id", "text"),
+            batchSize,
+            "CONTINUE");
+    Map<String, Object> aiConfig = objectMapper.convertValue(config, Map.class);
     return new PipelineStepResponse(
         10L,
         "AI Step",
@@ -340,7 +370,7 @@ class AiClassifyExecutorTest {
 
   @Test
   @SuppressWarnings({"unchecked", "rawtypes"})
-  void execute_withAiAgentError_andOnErrorContinue_skipsBatch() {
+  void execute_withAllBatchesFailed_andOnErrorContinue_failsStepInsteadOfReportingSuccess() {
     when(datasetRepository.findTableNameById(200L)).thenReturn(Optional.of("output_table"));
     when(datasetRepository.findTableNameById(1L)).thenReturn(Optional.of("source_table"));
     when(dataTableRowService.countRows("source_table")).thenReturn(1L);
@@ -352,29 +382,141 @@ class AiClassifyExecutorTest {
         .thenReturn(List.of(sourceRow));
 
     // cache miss
-    SelectSelectStep selectStep = mock(SelectSelectStep.class);
-    SelectJoinStep joinStep = mock(SelectJoinStep.class);
-    SelectConditionStep condStep1 = mock(SelectConditionStep.class);
-    SelectConditionStep condStep2 = mock(SelectConditionStep.class);
-    when(dsl.select(any(org.jooq.Field.class))).thenReturn(selectStep);
-    when(selectStep.from(any(org.jooq.Table.class))).thenReturn(joinStep);
-    when(joinStep.where(any(org.jooq.Condition.class))).thenReturn(condStep1);
-    when(condStep1.and(any(org.jooq.Condition.class))).thenReturn(condStep2);
-    // V103 이후 캐시 조회에 tenant_id 술어가 하나 더 붙는다 — 체인이 한 단계 길어졌으므로
-    // 자기 자신을 돌려주게 해 마지막 fetchOne() 스텁이 계속 유효하도록 한다.
-    when(condStep2.and(any(org.jooq.Condition.class))).thenReturn(condStep2);
-    when(condStep2.fetchOne()).thenReturn(null);
-
+    stubCacheMiss();
     when(aiAgentClient.classify(any(), anyLong())).thenThrow(new RuntimeException("AI agent down"));
 
     PipelineStepResponse step = buildStep("APPEND", List.of(1L));
 
+    // 배치가 하나뿐이고 그것이 실패했다 = 전량 실패. onError=CONTINUE 라도 성공이 아니다.
+    assertThatThrownBy(() -> executor.execute(step, 100L, 1L))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("0행")
+        .hasMessageContaining("배치 실패 1개")
+        // 사유가 cause 로 실려야 한다 — 없으면 pipeline_step_execution.error_message 를 보고도
+        // 왜 실패했는지 알 수 없고 로그를 따로 뒤져야 한다.
+        .hasRootCauseMessage("AI agent down");
+
+    verify(dataTableRowService, never()).insertBatch(anyString(), anyList(), anyList(), anyMap());
+  }
+
+  /**
+   * 전량 실패 시 <b>기존 출력 테이블이 살아남아야</b> 한다(#685).
+   *
+   * <p>2026-09-18 운영에서 실제로 잃은 것이 이것이다. 배치가 전부 실패해 결과가 0행인데도 REPLACE
+   * 스왑이 그대로 실행돼 <b>빈 임시 테이블이 원본을 덮었고</b>, 직전 실행이 적재한 10건이 사라졌다.
+   * 그러고도 스텝은 COMPLETED 였다.
+   *
+   * <p>Python 경로({@code PipelineAsyncRunner:538})는 {@code rowsLoaded() > 0} 일 때만 스왑한다 —
+   * "빈 결과는 기존 데이터를 파괴하지 않는다"가 플랫폼 관례이고 AI_CLASSIFY 만 이를 어기고 있었다.
+   */
+  @Test
+  @SuppressWarnings({"unchecked", "rawtypes"})
+  void execute_withAllBatchesFailed_andReplaceStrategy_preservesExistingTable() {
+    when(datasetRepository.findTableNameById(200L)).thenReturn(Optional.of("output_table"));
+    when(datasetRepository.findTableNameById(1L)).thenReturn(Optional.of("source_table"));
+    when(dataTableRowService.countRows("source_table")).thenReturn(1L);
+
+    Map<String, Object> sourceRow = new HashMap<>();
+    sourceRow.put("id", 99L);
+    sourceRow.put("text", "oops");
+    when(dataTableRowService.queryData(anyString(), any(), any(), anyInt(), anyInt()))
+        .thenReturn(List.of(sourceRow));
+
+    stubCacheMiss();
+    when(aiAgentClient.classify(any(), anyLong())).thenThrow(new RuntimeException("timeout"));
+
+    PipelineStepResponse step = buildStep("REPLACE", List.of(1L));
+
+    assertThatThrownBy(() -> executor.execute(step, 100L, 1L))
+        .isInstanceOf(IllegalStateException.class);
+
+    // 임시 테이블은 버리고 원본은 건드리지 않는다
+    verify(dataTableService).createTempTable("output_table");
+    verify(dataTableService).dropTempTable("output_table");
+    verify(dataTableService, never()).swapTable(anyString());
+  }
+
+  /**
+   * 예외 없이 <b>조용히</b> 0행이 된 경우도 실패다(#685).
+   *
+   * <p>{@code processBatch} 는 응답에 {@code source_id} 가 맞는 항목이 없으면 그 행을 warn 한 줄
+   * 남기고 버린다. LLM 이 형식은 멀쩡하되 {@code source_id} 를 어긋나게 돌려주면 <b>예외 0건 ·
+   * 결과 0행</b>이 된다 — 배치 오류 수로 판정했다면 이 경우가 다시 "성공"이 됐을 것이다.
+   *
+   * <p>입력이 비었으면 임시 테이블을 만들기도 전에 조기 반환하므로, 여기까지 와서 결과가 비었다는
+   * 것은 언제나 "행이 있었는데 하나도 분류되지 못했다"는 뜻이다.
+   */
+  @Test
+  @SuppressWarnings({"unchecked", "rawtypes"})
+  void execute_withSilentlyDroppedRows_failsStepAndPreservesExistingTable() {
+    when(datasetRepository.findTableNameById(200L)).thenReturn(Optional.of("output_table"));
+    when(datasetRepository.findTableNameById(1L)).thenReturn(Optional.of("source_table"));
+    when(dataTableRowService.countRows("source_table")).thenReturn(1L);
+
+    Map<String, Object> sourceRow = new HashMap<>();
+    sourceRow.put("id", 99L);
+    sourceRow.put("text", "hello");
+    when(dataTableRowService.queryData(anyString(), any(), any(), anyInt(), anyInt()))
+        .thenReturn(List.of(sourceRow));
+
+    stubCacheMiss();
+    // 예외 없이 결과만 비어 있다 — 그 행에 대한 응답이 없었던 경우
+    when(aiAgentClient.classify(any(), anyLong()))
+        .thenReturn(new AiAgentClient.ClassifyResponse(List.of(), 0, "test-model"));
+
+    PipelineStepResponse step = buildStep("REPLACE", List.of(1L));
+
+    assertThatThrownBy(() -> executor.execute(step, 100L, 1L))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("0행");
+
+    verify(dataTableService).dropTempTable("output_table");
+    verify(dataTableService, never()).swapTable(anyString());
+  }
+
+  /**
+   * 일부 배치만 실패하면 {@code CONTINUE} 는 <b>계속 간다</b> — 성공한 배치의 행은 남는다.
+   *
+   * <p>#685 의 수정이 여기까지 번지면 안 된다. 전량 실패만 막는 것이지, 부분 실패를 감내하겠다는
+   * 사용자의 선택({@code onError=CONTINUE})을 뒤집는 것이 아니다.
+   */
+  @Test
+  @SuppressWarnings({"unchecked", "rawtypes"})
+  void execute_withPartialBatchFailure_andOnErrorContinue_keepsSucceededRows() {
+    when(datasetRepository.findTableNameById(200L)).thenReturn(Optional.of("output_table"));
+    when(datasetRepository.findTableNameById(1L)).thenReturn(Optional.of("source_table"));
+    when(dataTableRowService.countRows("source_table")).thenReturn(2L);
+
+    Map<String, Object> row1 = new HashMap<>();
+    row1.put("id", 1L);
+    row1.put("text", "first");
+    Map<String, Object> row2 = new HashMap<>();
+    row2.put("id", 2L);
+    row2.put("text", "second");
+    when(dataTableRowService.queryData(anyString(), any(), any(), anyInt(), anyInt()))
+        .thenReturn(List.of(row1, row2));
+
+    stubCacheMiss();
+
+    // batchSize=1 → 배치 2개. 첫 배치는 실패, 둘째 배치는 성공.
+    Map<String, Object> okValues = new HashMap<>();
+    okValues.put("source_id", 2);
+    okValues.put("category", "A");
+    when(aiAgentClient.classify(any(), anyLong()))
+        .thenThrow(new RuntimeException("first batch down"))
+        .thenReturn(
+            new AiAgentClient.ClassifyResponse(
+                List.of(new AiAgentClient.ClassifyRowResult(okValues)), 1, "test-model"));
+
+    PipelineStepResponse step = buildStep("APPEND", List.of(1L), 1);
+
     AiClassifyExecutor.ExecutionResult result = executor.execute(step, 100L, 1L);
 
-    // onError=CONTINUE → 배치는 스킵, 출력 0행, 예외 없음
-    assertThat(result.outputRows()).isEqualTo(0);
+    assertThat(result.outputRows())
+        .as("성공한 배치의 행은 살아남아야 한다 — CONTINUE 의 존재 이유다")
+        .isEqualTo(1);
     assertThat(result.executionLog()).contains("1 batch errors");
-    verify(dataTableRowService, never()).insertBatch(anyString(), anyList(), anyList(), anyMap());
+    verify(dataTableRowService).insertBatch(anyString(), anyList(), anyList(), anyMap());
   }
 
   @Test
@@ -440,6 +582,107 @@ class AiClassifyExecutorTest {
     verify(dataTableService).createTempTable("output_table");
     verify(dataTableService).dropTempTable("output_table");
     verify(dataTableService, never()).swapTable(anyString());
+  }
+
+  // -----------------------------------------------------------------------
+  // rowContentHash() — 캐시 키 (#687)
+  // -----------------------------------------------------------------------
+
+  /**
+   * 캐시 키는 <b>내용만</b> 본다 — surrogate {@code id} 가 달라도 같은 키여야 한다(#687).
+   *
+   * <p>운영에서 캐시가 한 번도 히트하지 않던 이유다. 입력이 임시 데이터셋이면 {@code id} 는 매 실행
+   * {@code TRUNCATE} 뒤 다시 채워지는 {@code BIGSERIAL} 값이라 실행마다 달라진다. 그 값이 해시에
+   * 섞여 있으면 같은 보도자료도 매번 새 키가 되고, LLM 을 처음부터 다시 태운다.
+   */
+  @Test
+  void rowContentHash_ignoresSurrogateId() {
+    Map<String, Object> run1 = new HashMap<>();
+    run1.put("id", 101L);
+    run1.put("text", "같은 내용");
+    Map<String, Object> run2 = new HashMap<>();
+    run2.put("id", 999L);
+    run2.put("text", "같은 내용");
+
+    assertThat(AiClassifyExecutor.rowContentHash(run1, "p1"))
+        .as("id 는 내용이 아니다 — 실행마다 바뀌는 값이 캐시를 무효화하면 안 된다")
+        .isEqualTo(AiClassifyExecutor.rowContentHash(run2, "p1"));
+  }
+
+  /** 내용이나 프롬프트가 다르면 키도 달라야 한다 — 위 테스트만 있으면 상수 반환도 통과한다. */
+  @Test
+  void rowContentHash_differsOnContentOrPrompt() {
+    Map<String, Object> row = new HashMap<>();
+    row.put("id", 1L);
+    row.put("text", "원본");
+    Map<String, Object> other = new HashMap<>();
+    other.put("id", 1L);
+    other.put("text", "수정됨");
+
+    assertThat(AiClassifyExecutor.rowContentHash(row, "p1"))
+        .isNotEqualTo(AiClassifyExecutor.rowContentHash(other, "p1"));
+    assertThat(AiClassifyExecutor.rowContentHash(row, "p1"))
+        .as("프롬프트가 바뀌면 이전 결과를 재사용하면 안 된다")
+        .isNotEqualTo(AiClassifyExecutor.rowContentHash(row, "p2"));
+  }
+
+  /**
+   * 맵 순회 순서가 키를 가르면 안 된다.
+   *
+   * <p>{@code HashMap} 의 순서는 보장이 없어서, 같은 내용이 다른 순서로 직렬화되면 캐시가 조용히
+   * 갈린다. 삽입 순서를 뒤집어도 같은 키가 나오는지 본다.
+   */
+  @Test
+  void rowContentHash_isStableRegardlessOfKeyOrder() {
+    Map<String, Object> forward = new LinkedHashMap<>();
+    forward.put("a", "1");
+    forward.put("b", "2");
+    Map<String, Object> reversed = new LinkedHashMap<>();
+    reversed.put("b", "2");
+    reversed.put("a", "1");
+
+    assertThat(AiClassifyExecutor.rowContentHash(forward, "p"))
+        .isEqualTo(AiClassifyExecutor.rowContentHash(reversed, "p"));
+  }
+
+  /**
+   * 캐시 히트가 <b>자기 행의</b> {@code source_id} 를 갖는지 본다(#687).
+   *
+   * <p>키에서 {@code id} 를 뺀 대가로 내용이 같은 여러 행이 한 캐시 항목을 공유하게 됐다. 저장된
+   * {@code source_id} 를 그대로 쓰면 그 행들이 전부 남의 조인 키를 물려받는다 — 캐시 키 수정이
+   * 만들어낼 수 있었던 새 결함이고, 이 단언이 그것을 막는다.
+   */
+  @Test
+  @SuppressWarnings({"unchecked", "rawtypes"})
+  void execute_withCacheHit_overridesSourceIdWithCurrentRowId() {
+    when(datasetRepository.findTableNameById(200L)).thenReturn(Optional.of("output_table"));
+    when(datasetRepository.findTableNameById(1L)).thenReturn(Optional.of("source_table"));
+    when(dataTableRowService.countRows("source_table")).thenReturn(1L);
+
+    Map<String, Object> sourceRow = new HashMap<>();
+    sourceRow.put("id", 77L);
+    sourceRow.put("text", "hello");
+    when(dataTableRowService.queryData(anyString(), any(), any(), anyInt(), anyInt()))
+        .thenReturn(List.of(sourceRow));
+
+    // 캐시에는 **다른 행**이 남긴 source_id 가 들어 있다(예전 형식으로 저장된 항목).
+    Record1<JSONB> cachedRecord = mock(Record1.class);
+    JSONB cachedJson = JSONB.valueOf("{\"category\":\"B\",\"source_id\":11}");
+    when(cachedRecord.get(any(org.jooq.Field.class))).thenReturn(cachedJson);
+
+    stubCacheLookup(cachedRecord);
+
+    PipelineStepResponse step = buildStep("APPEND", List.of(1L));
+
+    executor.execute(step, 100L, 1L);
+
+    ArgumentCaptor<List<Map<String, Object>>> rowsCaptor = ArgumentCaptor.forClass(List.class);
+    verify(dataTableRowService).insertBatch(anyString(), anyList(), rowsCaptor.capture(), anyMap());
+
+    assertThat(rowsCaptor.getValue()).hasSize(1);
+    assertThat(rowsCaptor.getValue().get(0).get("source_id"))
+        .as("캐시에 저장돼 있던 남의 source_id(11) 가 아니라 이 행의 id(77) 여야 한다")
+        .isEqualTo(77L);
   }
 
   // -----------------------------------------------------------------------

@@ -54,8 +54,36 @@ function coerceValue(value: unknown, type: OutputColumn['type']): unknown {
   }
 }
 
-/** 배치 응답 상한(ms). 상위 Spring(AiAgentClient)의 60초 타임아웃보다 짧게 잡아 원인을 이쪽에서 남긴다. */
-const CLASSIFY_TIMEOUT_MS = 50_000;
+/**
+ * 배치 응답 상한을 행 수에 비례해 정한다(#686).
+ *
+ * 이전에는 50초 고정이었는데, 그 값은 작업량에서 나온 것이 아니라 상위 Spring(AiAgentClient)의
+ * 60초에서 역산한 것이었다. 배치 하나는 LLM completion **한 번**이고 그 소요 시간은 출력 토큰 수
+ * (≈ 행 수 × 출력 컬럼 수)에 비례하는데, 천장만 고정이니 배치를 키우면 반드시 넘긴다.
+ * 운영 실측(출력 컬럼 10개, 요약 2~3문장 한국어): 10행 41초 → 행당 약 4.1초. 그런데 batchSize
+ * 기본값이 20이라 **기본 설정조차 50초를 넘겼다**.
+ *
+ * PER_ROW 는 실측의 약 2배로 잡는다 — 프롬프트 형태에 따라 행당 비용이 달라지기 때문이다.
+ *
+ * CAP 이 있는 이유: batchSize 상한이 100이라 공식만 두면 830초까지 늘어난다. 그렇게 오래 붙들면
+ * 호출자(pipeline-exec 스레드)가 그만큼 묶인다. CAP 을 넘길 배치는 batchSize 를 줄여야 하고,
+ * 타임아웃 메시지가 그 점을 직접 말한다.
+ *
+ * **CAP 은 Spring AiAgentClient.TIMEOUT 보다 반드시 작아야 한다**(현재 330초). 그래야 ai-agent 가
+ * 먼저 끊어 "몇 초 안에 못 끝냈다"는 진단 가능한 메시지를 남긴다 — Spring 이 먼저 끊으면 원인 없는
+ * 타임아웃만 남는다. 저쪽은 일부러 **고정값**이다: 불변식이 공식 두 개의 동기화가 아니라 상수
+ * 하나의 대소 관계에만 기대게 하려는 것이다.
+ */
+const CLASSIFY_TIMEOUT_BASE_MS = 30_000;
+const CLASSIFY_TIMEOUT_PER_ROW_MS = 8_000;
+const CLASSIFY_TIMEOUT_CAP_MS = 300_000;
+
+export function classifyTimeoutMs(rowCount: number): number {
+  return Math.min(
+    CLASSIFY_TIMEOUT_CAP_MS,
+    CLASSIFY_TIMEOUT_BASE_MS + CLASSIFY_TIMEOUT_PER_ROW_MS * Math.max(0, rowCount),
+  );
+}
 
 /**
  * 출력 토큰 상한.
@@ -99,10 +127,23 @@ Rules:
   // (이전에는 axios 로 api.anthropic.com 을 x-api-key 로 직접 호출했는데, prod 는 ai.api_key 가
   //  비어 있고 ai.cli_oauth_token(OAuth)만 설정되어 있어 인증 자체가 불가능했다.)
   const provider = ProviderFactory.createCompletionProvider({ ...credentials, model });
-  const completion = await provider.complete(systemPrompt, userMessage, {
-    timeoutMs: CLASSIFY_TIMEOUT_MS,
-    maxOutputTokens: CLASSIFY_MAX_OUTPUT_TOKENS,
-  });
+  const timeoutMs = classifyTimeoutMs(rows.length);
+  let completion;
+  try {
+    completion = await provider.complete(systemPrompt, userMessage, {
+      timeoutMs,
+      maxOutputTokens: CLASSIFY_MAX_OUTPUT_TOKENS,
+    });
+  } catch (e) {
+    // 공급자의 타임아웃 메시지는 범용이라(채팅·GraphRAG 와 공유) 왜 이 배치가 오래 걸렸는지 말해
+    // 주지 않는다. 배치 규모와 해결책을 실어 실패가 스스로 원인을 설명하게 한다 — 운영에서 이
+    // 실패를 받은 쪽이 다음에 무엇을 바꿔야 하는지 로그만 보고 알 수 있어야 한다.
+    const message = e instanceof Error ? e.message : String(e);
+    throw new Error(
+      `${message} (배치 ${rows.length}행 × 출력 컬럼 ${outputColumns.length}개, 상한 ${timeoutMs}ms). ` +
+        `스텝의 batchSize 를 줄이면 호출당 소요 시간이 줄어듭니다.`,
+    );
+  }
 
   const promptTokens = completion.usage?.inputTokens ?? 0;
   const completionTokens = completion.usage?.outputTokens ?? 0;

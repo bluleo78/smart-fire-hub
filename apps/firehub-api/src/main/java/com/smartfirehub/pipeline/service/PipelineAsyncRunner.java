@@ -535,11 +535,10 @@ public class PipelineAsyncRunner {
             if (!result.success()) {
               throw new ScriptExecutionException("Python 실행 실패: " + result.error());
             }
-            if (isReplace && result.rowsLoaded() > 0) {
-              dataTableService.swapTable(outputTableName);
-            } else if (isReplace) {
-              // stdout에 JSON 없거나 0행 → temp table 삭제, 원본 유지
-              dataTableService.dropTempTable(outputTableName);
+            if (isReplace) {
+              // stdout 에 JSON 이 없거나 0행이면 맞바꾸지 않고 원본을 유지한다 — 판단은
+              // finishReplace 가 단독으로 갖는다(#685).
+              dataTableService.finishReplace(outputTableName, result.rowsLoaded());
             }
             executionLog = result.output();
           } catch (Exception e) {
@@ -625,7 +624,9 @@ public class PipelineAsyncRunner {
               throw new ScriptExecutionException("API_CALL 실행 실패: " + result.error());
             }
             if (isReplace) {
-              dataTableService.swapTable(outputTableName);
+              // 여기에는 빈 결과 가드가 없었다 — API 가 0행을 돌려주면 빈 임시 테이블이 원본을
+              // 덮었다(#685 와 같은 결함이 아직 터지지 않은 상태였다).
+              dataTableService.finishReplace(outputTableName, result.rowsLoaded());
             }
             executionLog = result.executionLog();
           } catch (Exception e) {

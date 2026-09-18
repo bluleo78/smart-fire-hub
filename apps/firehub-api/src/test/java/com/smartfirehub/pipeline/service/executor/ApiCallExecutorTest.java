@@ -702,7 +702,10 @@ class ApiCallExecutorTest {
     verify(dataTableRowService, never()).insertBatch(eq("rep_table"), anyList(), anyList());
 
     // On success, swap must be called
-    verify(dataTableService).swapTable("rep_table");
+    // 스왑 여부의 판단은 DataTableService.finishReplace 가 단독으로 갖는다(#685) — 여기서는
+    // 적재된 행 수가 그대로 전달되는지만 본다. API 가 0행을 돌려줘도 원본이 지워지지 않는 것은
+    // finishReplace 의 책임이고 DataTableServiceTest 가 본다.
+    verify(dataTableService).finishReplace("rep_table", 2L);
 
     // dropTempTable must NOT be called on success
     verify(dataTableService, never()).dropTempTable(any());

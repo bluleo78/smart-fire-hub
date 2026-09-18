@@ -12,7 +12,7 @@ vi.mock('../providers/provider-factory.js', () => ({
   },
 }));
 
-const { classifyBatch } = await import('./classification-service.js');
+const { classifyBatch, classifyTimeoutMs } = await import('./classification-service.js');
 
 /** LLM이 JSON 배열 텍스트를 돌려준 것으로 가정한 completion 결과를 만든다. */
 function completionOf(payload: unknown, usage = { inputTokens: 200, outputTokens: 100 }) {
@@ -187,5 +187,32 @@ describe('classifyBatch', () => {
 
     expect(result.results[0].is_positive).toBe(true);
     expect(result.results[1].is_positive).toBe(false);
+  });
+});
+
+describe('classifyTimeoutMs (#686)', () => {
+  // 배치 하나는 LLM completion 한 번이고, 그 소요 시간은 출력 토큰 수(≈ 행 수 × 출력 컬럼 수)에
+  // 비례한다. 상한이 고정이면 배치를 키우는 순간 반드시 넘긴다 — 운영에서 20행 배치가 50초
+  // 고정 상한을 넘겨 통째로 날아갔다.
+  it('행 수에 따라 늘어난다', () => {
+    expect(classifyTimeoutMs(20)).toBeGreaterThan(classifyTimeoutMs(10));
+  });
+
+  it('운영에서 실패했던 크기를 실측 소요시간의 여유를 두고 담는다', () => {
+    // 실측: 10행 41초. 20행이면 82초 안팎이고, 이전 상한 50초로는 담기지 않았다.
+    expect(classifyTimeoutMs(20)).toBeGreaterThan(82_000);
+    expect(classifyTimeoutMs(10)).toBeGreaterThan(41_000);
+  });
+
+  it('상한이 있고, 그 상한은 Spring AiAgentClient.TIMEOUT(330초)보다 작다', () => {
+    // 이 대소 관계가 깨지면 Spring 이 먼저 끊어 원인 없는 타임아웃만 남는다.
+    // batchSize 검증 상한은 100이므로 그 끝에서도 천장을 넘지 않아야 한다.
+    expect(classifyTimeoutMs(100)).toBeLessThan(330_000);
+    expect(classifyTimeoutMs(10_000)).toBeLessThan(330_000);
+  });
+
+  it('행이 없어도 음수가 되지 않는다', () => {
+    expect(classifyTimeoutMs(0)).toBeGreaterThan(0);
+    expect(classifyTimeoutMs(-1)).toBeGreaterThan(0);
   });
 });

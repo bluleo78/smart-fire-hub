@@ -19,7 +19,16 @@ import reactor.netty.http.client.HttpClient;
 @Component
 public class AiAgentClient {
 
-  private static final Duration TIMEOUT = Duration.ofSeconds(60);
+  /**
+   * ai-agent 호출 상한. <b>ai-agent 쪽 상한보다 반드시 커야 한다</b> — 저쪽이 먼저 끊어야 원인이
+   * 담긴 메시지가 올라오고, 순서가 뒤집히면 원인 없는 타임아웃만 남는다. 근거와 값의 유래는
+   * {@code classification-service.ts} 의 {@code classifyTimeoutMs} 에 있다(그쪽 천장 300초 + 여유).
+   *
+   * <p>아래에서 {@code HttpClient.responseTimeout} 과 {@code Mono.timeout} <b>양쪽</b>에 쓰인다 —
+   * 한쪽만 고치면 효과가 없다. {@code classify()} 가 이 WebClient 의 유일한 소비자라,
+   * 이 값을 올려도 다른 ai-agent 호출의 예산은 넓어지지 않는다.
+   */
+  private static final Duration TIMEOUT = Duration.ofSeconds(330);
 
   private final WebClient webClient;
   private final ObjectMapper objectMapper;
