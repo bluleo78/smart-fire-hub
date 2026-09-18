@@ -98,17 +98,39 @@ class AiClassifyExecutorTest {
   // Helpers
   // -----------------------------------------------------------------------
 
-  private AiClassifyConfig buildConfig() {
-    return new AiClassifyConfig(
-        "Classify rows",
-        List.of(new OutputColumn("category", "TEXT"), new OutputColumn("score", "NUMERIC")),
-        List.of("id", "text"),
-        20,
-        "CONTINUE");
+  /**
+   * 캐시 조회 목 체인을 전부 미스로 세운다.
+   *
+   * <p>jOOQ 빌더 체인이 길어 테스트마다 복제하면 V103 같은 술어 추가 때 손볼 곳이 그만큼 늘어난다.
+   */
+  @SuppressWarnings({"unchecked", "rawtypes"})
+  private void stubCacheMiss() {
+    SelectSelectStep selectStep = mock(SelectSelectStep.class);
+    SelectJoinStep joinStep = mock(SelectJoinStep.class);
+    SelectConditionStep condStep1 = mock(SelectConditionStep.class);
+    SelectConditionStep condStep2 = mock(SelectConditionStep.class);
+    when(dsl.select(any(org.jooq.Field.class))).thenReturn(selectStep);
+    when(selectStep.from(any(org.jooq.Table.class))).thenReturn(joinStep);
+    when(joinStep.where(any(org.jooq.Condition.class))).thenReturn(condStep1);
+    when(condStep1.and(any(org.jooq.Condition.class))).thenReturn(condStep2);
+    when(condStep2.and(any(org.jooq.Condition.class))).thenReturn(condStep2);
+    when(condStep2.fetchOne()).thenReturn(null);
   }
 
   private PipelineStepResponse buildStep(String loadStrategy, List<Long> inputDatasetIds) {
-    Map<String, Object> aiConfig = objectMapper.convertValue(buildConfig(), Map.class);
+    return buildStep(loadStrategy, inputDatasetIds, 20);
+  }
+
+  private PipelineStepResponse buildStep(
+      String loadStrategy, List<Long> inputDatasetIds, int batchSize) {
+    AiClassifyConfig config =
+        new AiClassifyConfig(
+            "Classify rows",
+            List.of(new OutputColumn("category", "TEXT"), new OutputColumn("score", "NUMERIC")),
+            List.of("id", "text"),
+            batchSize,
+            "CONTINUE");
+    Map<String, Object> aiConfig = objectMapper.convertValue(config, Map.class);
     return new PipelineStepResponse(
         10L,
         "AI Step",
@@ -340,7 +362,7 @@ class AiClassifyExecutorTest {
 
   @Test
   @SuppressWarnings({"unchecked", "rawtypes"})
-  void execute_withAiAgentError_andOnErrorContinue_skipsBatch() {
+  void execute_withAllBatchesFailed_andOnErrorContinue_failsStepInsteadOfReportingSuccess() {
     when(datasetRepository.findTableNameById(200L)).thenReturn(Optional.of("output_table"));
     when(datasetRepository.findTableNameById(1L)).thenReturn(Optional.of("source_table"));
     when(dataTableRowService.countRows("source_table")).thenReturn(1L);
@@ -352,29 +374,141 @@ class AiClassifyExecutorTest {
         .thenReturn(List.of(sourceRow));
 
     // cache miss
-    SelectSelectStep selectStep = mock(SelectSelectStep.class);
-    SelectJoinStep joinStep = mock(SelectJoinStep.class);
-    SelectConditionStep condStep1 = mock(SelectConditionStep.class);
-    SelectConditionStep condStep2 = mock(SelectConditionStep.class);
-    when(dsl.select(any(org.jooq.Field.class))).thenReturn(selectStep);
-    when(selectStep.from(any(org.jooq.Table.class))).thenReturn(joinStep);
-    when(joinStep.where(any(org.jooq.Condition.class))).thenReturn(condStep1);
-    when(condStep1.and(any(org.jooq.Condition.class))).thenReturn(condStep2);
-    // V103 이후 캐시 조회에 tenant_id 술어가 하나 더 붙는다 — 체인이 한 단계 길어졌으므로
-    // 자기 자신을 돌려주게 해 마지막 fetchOne() 스텁이 계속 유효하도록 한다.
-    when(condStep2.and(any(org.jooq.Condition.class))).thenReturn(condStep2);
-    when(condStep2.fetchOne()).thenReturn(null);
-
+    stubCacheMiss();
     when(aiAgentClient.classify(any(), anyLong())).thenThrow(new RuntimeException("AI agent down"));
 
     PipelineStepResponse step = buildStep("APPEND", List.of(1L));
 
+    // 배치가 하나뿐이고 그것이 실패했다 = 전량 실패. onError=CONTINUE 라도 성공이 아니다.
+    assertThatThrownBy(() -> executor.execute(step, 100L, 1L))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("0행")
+        .hasMessageContaining("배치 실패 1개")
+        // 사유가 cause 로 실려야 한다 — 없으면 pipeline_step_execution.error_message 를 보고도
+        // 왜 실패했는지 알 수 없고 로그를 따로 뒤져야 한다.
+        .hasRootCauseMessage("AI agent down");
+
+    verify(dataTableRowService, never()).insertBatch(anyString(), anyList(), anyList(), anyMap());
+  }
+
+  /**
+   * 전량 실패 시 <b>기존 출력 테이블이 살아남아야</b> 한다(#685).
+   *
+   * <p>2026-09-18 운영에서 실제로 잃은 것이 이것이다. 배치가 전부 실패해 결과가 0행인데도 REPLACE
+   * 스왑이 그대로 실행돼 <b>빈 임시 테이블이 원본을 덮었고</b>, 직전 실행이 적재한 10건이 사라졌다.
+   * 그러고도 스텝은 COMPLETED 였다.
+   *
+   * <p>Python 경로({@code PipelineAsyncRunner:538})는 {@code rowsLoaded() > 0} 일 때만 스왑한다 —
+   * "빈 결과는 기존 데이터를 파괴하지 않는다"가 플랫폼 관례이고 AI_CLASSIFY 만 이를 어기고 있었다.
+   */
+  @Test
+  @SuppressWarnings({"unchecked", "rawtypes"})
+  void execute_withAllBatchesFailed_andReplaceStrategy_preservesExistingTable() {
+    when(datasetRepository.findTableNameById(200L)).thenReturn(Optional.of("output_table"));
+    when(datasetRepository.findTableNameById(1L)).thenReturn(Optional.of("source_table"));
+    when(dataTableRowService.countRows("source_table")).thenReturn(1L);
+
+    Map<String, Object> sourceRow = new HashMap<>();
+    sourceRow.put("id", 99L);
+    sourceRow.put("text", "oops");
+    when(dataTableRowService.queryData(anyString(), any(), any(), anyInt(), anyInt()))
+        .thenReturn(List.of(sourceRow));
+
+    stubCacheMiss();
+    when(aiAgentClient.classify(any(), anyLong())).thenThrow(new RuntimeException("timeout"));
+
+    PipelineStepResponse step = buildStep("REPLACE", List.of(1L));
+
+    assertThatThrownBy(() -> executor.execute(step, 100L, 1L))
+        .isInstanceOf(IllegalStateException.class);
+
+    // 임시 테이블은 버리고 원본은 건드리지 않는다
+    verify(dataTableService).createTempTable("output_table");
+    verify(dataTableService).dropTempTable("output_table");
+    verify(dataTableService, never()).swapTable(anyString());
+  }
+
+  /**
+   * 예외 없이 <b>조용히</b> 0행이 된 경우도 실패다(#685).
+   *
+   * <p>{@code processBatch} 는 응답에 {@code source_id} 가 맞는 항목이 없으면 그 행을 warn 한 줄
+   * 남기고 버린다. LLM 이 형식은 멀쩡하되 {@code source_id} 를 어긋나게 돌려주면 <b>예외 0건 ·
+   * 결과 0행</b>이 된다 — 배치 오류 수로 판정했다면 이 경우가 다시 "성공"이 됐을 것이다.
+   *
+   * <p>입력이 비었으면 임시 테이블을 만들기도 전에 조기 반환하므로, 여기까지 와서 결과가 비었다는
+   * 것은 언제나 "행이 있었는데 하나도 분류되지 못했다"는 뜻이다.
+   */
+  @Test
+  @SuppressWarnings({"unchecked", "rawtypes"})
+  void execute_withSilentlyDroppedRows_failsStepAndPreservesExistingTable() {
+    when(datasetRepository.findTableNameById(200L)).thenReturn(Optional.of("output_table"));
+    when(datasetRepository.findTableNameById(1L)).thenReturn(Optional.of("source_table"));
+    when(dataTableRowService.countRows("source_table")).thenReturn(1L);
+
+    Map<String, Object> sourceRow = new HashMap<>();
+    sourceRow.put("id", 99L);
+    sourceRow.put("text", "hello");
+    when(dataTableRowService.queryData(anyString(), any(), any(), anyInt(), anyInt()))
+        .thenReturn(List.of(sourceRow));
+
+    stubCacheMiss();
+    // 예외 없이 결과만 비어 있다 — 그 행에 대한 응답이 없었던 경우
+    when(aiAgentClient.classify(any(), anyLong()))
+        .thenReturn(new AiAgentClient.ClassifyResponse(List.of(), 0, "test-model"));
+
+    PipelineStepResponse step = buildStep("REPLACE", List.of(1L));
+
+    assertThatThrownBy(() -> executor.execute(step, 100L, 1L))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("0행");
+
+    verify(dataTableService).dropTempTable("output_table");
+    verify(dataTableService, never()).swapTable(anyString());
+  }
+
+  /**
+   * 일부 배치만 실패하면 {@code CONTINUE} 는 <b>계속 간다</b> — 성공한 배치의 행은 남는다.
+   *
+   * <p>#685 의 수정이 여기까지 번지면 안 된다. 전량 실패만 막는 것이지, 부분 실패를 감내하겠다는
+   * 사용자의 선택({@code onError=CONTINUE})을 뒤집는 것이 아니다.
+   */
+  @Test
+  @SuppressWarnings({"unchecked", "rawtypes"})
+  void execute_withPartialBatchFailure_andOnErrorContinue_keepsSucceededRows() {
+    when(datasetRepository.findTableNameById(200L)).thenReturn(Optional.of("output_table"));
+    when(datasetRepository.findTableNameById(1L)).thenReturn(Optional.of("source_table"));
+    when(dataTableRowService.countRows("source_table")).thenReturn(2L);
+
+    Map<String, Object> row1 = new HashMap<>();
+    row1.put("id", 1L);
+    row1.put("text", "first");
+    Map<String, Object> row2 = new HashMap<>();
+    row2.put("id", 2L);
+    row2.put("text", "second");
+    when(dataTableRowService.queryData(anyString(), any(), any(), anyInt(), anyInt()))
+        .thenReturn(List.of(row1, row2));
+
+    stubCacheMiss();
+
+    // batchSize=1 → 배치 2개. 첫 배치는 실패, 둘째 배치는 성공.
+    Map<String, Object> okValues = new HashMap<>();
+    okValues.put("source_id", 2);
+    okValues.put("category", "A");
+    when(aiAgentClient.classify(any(), anyLong()))
+        .thenThrow(new RuntimeException("first batch down"))
+        .thenReturn(
+            new AiAgentClient.ClassifyResponse(
+                List.of(new AiAgentClient.ClassifyRowResult(okValues)), 1, "test-model"));
+
+    PipelineStepResponse step = buildStep("APPEND", List.of(1L), 1);
+
     AiClassifyExecutor.ExecutionResult result = executor.execute(step, 100L, 1L);
 
-    // onError=CONTINUE → 배치는 스킵, 출력 0행, 예외 없음
-    assertThat(result.outputRows()).isEqualTo(0);
+    assertThat(result.outputRows())
+        .as("성공한 배치의 행은 살아남아야 한다 — CONTINUE 의 존재 이유다")
+        .isEqualTo(1);
     assertThat(result.executionLog()).contains("1 batch errors");
-    verify(dataTableRowService, never()).insertBatch(anyString(), anyList(), anyList(), anyMap());
+    verify(dataTableRowService).insertBatch(anyString(), anyList(), anyList(), anyMap());
   }
 
   @Test

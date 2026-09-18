@@ -111,9 +111,11 @@ public class AiClassifyExecutor {
     //      캐시인지 정할 수 없다. 조용히 진행하면 조회는 영구 미스, 쓰기는 tenant_id NOT NULL 위반이
     //      되어 "기능은 도는데 LLM 비용만 무한히 드는" 상태가 된다.
     //      **반드시 배치 루프 밖에서** 던져야 한다. 배치 루프 안(:processBatch)에서 던지면
-    //      onError=CONTINUE 기본값이 예외를 삼켜 "0행 출력 + 1 batch errors" 로 성공 반환하고,
-    //      onError=RETRY_BATCH 면 절대 성공할 수 없는 재시도로 14초를 잔다 — 배선 결함이 다시
-    //      조용해진다. 임시 테이블 생성 전에 두어 정리할 것이 남지 않게 한다.
+    //      onError=CONTINUE 기본값이 예외를 삼켜 배치 실패로 격하되고, onError=RETRY_BATCH 면
+    //      절대 성공할 수 없는 재시도로 14초를 잔다 — 배선 결함의 원인이 흐려진다.
+    //      (#685 이후로는 결과가 0행이면 스텝이 떨어지긴 한다. 하지만 메시지가 "결과가 0행이다"로
+    //       바뀌어 배선 결함이라는 진짜 원인을 가린다 — 그래서 여전히 여기서 던진다.)
+    //      임시 테이블 생성 전에 두어 정리할 것이 남지 않게 한다.
     if (TenantContext.get() == null) {
       throw new IllegalStateException(
           "테넌트 컨텍스트 없이 AI_CLASSIFY 를 실행할 수 없다(ai_inference_cache 는 테넌트별 파티션) — 배경 경로 배선 오류");
@@ -138,6 +140,11 @@ public class AiClassifyExecutor {
     int totalProcessed = 0;
     int totalCached = 0;
     int totalErrors = 0;
+    // 마지막 배치 실패. 결과가 0행이라 스텝을 떨굴 때 이것을 예외의 cause 로 실어 보낸다 —
+    // 이게 없으면 pipeline_step_execution.error_message 가 "0행이다"까지만 말하고 원인은 로그에만
+    // 남는다. 메시지 문자열이 아니라 예외를 들고 가는 이유: getMessage() 는 null 일 수 있고,
+    // cause 체인과 스택트레이스가 진짜 원인(타임아웃인지 파싱 실패인지)을 가른다.
+    Exception lastBatchFailure = null;
 
     try {
       List<List<Map<String, Object>>> batches = partition(allInputRows, batchSize);
@@ -160,6 +167,7 @@ public class AiClassifyExecutor {
 
         } catch (Exception e) {
           totalErrors++;
+          lastBatchFailure = e;
           log.error(
               "[AI_CLASSIFY] Step '{}': Batch {} failed: {}",
               step.name(),
@@ -182,6 +190,8 @@ public class AiClassifyExecutor {
                 retrySuccess = true;
                 break;
               } catch (Exception retryEx) {
+                // 재시도 실패도 "마지막 실패"다 — 담지 않으면 스텝이 떨어질 때 최초 실패만 보고된다.
+                lastBatchFailure = retryEx;
                 log.warn("[AI_CLASSIFY] Retry {} failed: {}", retry, retryEx.getMessage());
               }
             }
@@ -193,18 +203,47 @@ public class AiClassifyExecutor {
         }
       }
 
-      // 4. Insert all output rows (AI는 모든 값을 문자열/숫자로 반환 → Java 타입 변환 후 삽입)
-      if (!outputRows.isEmpty()) {
-        Map<String, String> columnTypes = new HashMap<>();
-        columnTypes.put("source_id", "BIGINT");
-        config.outputColumns().forEach(col -> columnTypes.put(col.name(), col.type()));
-
-        for (Map<String, Object> row : outputRows) {
-          coerceRowValues(row, columnTypes);
-        }
-        dataTableRowService.insertBatch(targetTable, outputColumnNames, outputRows, columnTypes);
+      // 3-1. 입력이 있었는데 결과가 0행이면 실패다(#685).
+      //
+      // 입력이 비었으면 위에서 이미 조기 반환했으므로(임시 테이블을 만들기도 전이다), 여기서
+      // outputRows 가 비었다는 것은 **행이 있었는데 하나도 분류되지 못했다**는 뜻이다. 그건 어떤
+      // 경로로 왔든 실패다.
+      //
+      // 예전에는 모든 배치가 실패해도 ExecutionResult(0, "...N batch errors") 로 정상 반환했고,
+      // 스텝은 COMPLETED 가 됐다. REPLACE 면 그 뒤 빈 임시 테이블을 원본과 맞바꿔 **기존 데이터까지
+      // 지웠다** — 2026-09-18 운영에서 실제로 10건이 사라졌다.
+      //
+      // totalErrors 가 아니라 결과가 비었는지를 보는 이유: totalErrors 는 배치 단위 예외만 센다.
+      // processBatch 는 응답에 source_id 가 맞는 항목이 없으면 그 행을 warn 한 줄 남기고 **조용히
+      // 버린다**. LLM 이 형식은 멀쩡하되 source_id 를 어긋나게 돌려주면 예외 0건 · 결과 0행이 되고,
+      // totalErrors 로 판정하면 그 경우가 다시 "성공"이 된다.
+      //
+      // 적재 전략과 무관하게 던진다. APPEND 라고 해서 전량 실패가 성공이 되지는 않는다.
+      // 던지면 아래 catch 가 임시 테이블을 지우므로 원본이 보존되고, 스텝은 FAILED,
+      // 후속 스텝은 의존성 규칙에 따라 SKIPPED 된다.
+      if (outputRows.isEmpty()) {
+        throw new IllegalStateException(
+            "AI_CLASSIFY 결과가 0행이다(입력 "
+                + allInputRows.size()
+                + "행, 배치 실패 "
+                + totalErrors
+                + "개)",
+            lastBatchFailure);
       }
 
+      // 4. Insert all output rows (AI는 모든 값을 문자열/숫자로 반환 → Java 타입 변환 후 삽입)
+      Map<String, String> columnTypes = new HashMap<>();
+      columnTypes.put("source_id", "BIGINT");
+      config.outputColumns().forEach(col -> columnTypes.put(col.name(), col.type()));
+
+      for (Map<String, Object> row : outputRows) {
+        coerceRowValues(row, columnTypes);
+      }
+      dataTableRowService.insertBatch(targetTable, outputColumnNames, outputRows, columnTypes);
+
+      // 여기 도달했다면 결과가 비어 있지 않다(위에서 던졌다) — 그래서 finishReplace 가 아니라
+      // swapTable 을 직접 부른다. 다른 실행기(Python·API_CALL)는 0행이 정상 결과일 수 있어
+      // finishReplace 로 판단을 위임하지만, AI_CLASSIFY 에서 0행은 정상 결과가 아니다.
       if (isReplace) {
         dataTableService.swapTable(outputTableName);
       }

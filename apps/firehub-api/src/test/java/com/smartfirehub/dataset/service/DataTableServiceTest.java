@@ -731,4 +731,57 @@ class DataTableServiceTest extends IntegrationTestBase {
     dataTableRowService.insertBatch(tableName, List.of("name"), List.of(Map.of("name", "after")));
     assertThat(dataTableRowService.countRows(tableName)).isEqualTo(2);
   }
+
+  // -------------------------------------------------------------------------
+  // 1-6. REPLACE 마무리 정책 (finishReplace) — #685
+  //
+  // "빈 결과는 기존 데이터를 파괴하지 않는다"는 제품 결정이다. 이 판단이 실행기마다 흩어져 있던
+  // 탓에 네 호출부 중 둘이 무조건 스왑했고, 2026-09-18 운영에서 AI 분류가 0행을 내자 빈 임시
+  // 테이블이 원본을 덮어 10건이 사라졌다. 이제 판단은 여기 한 곳에 있으므로, 못박는 것도 여기다.
+  // 실행기 쪽 테스트는 "행 수를 정확히 넘겼는가"만 본다.
+  // -------------------------------------------------------------------------
+
+  @Test
+  void finishReplace_withZeroRows_keepsOriginalAndDropsTemp() {
+    String tableName = "test_finish_replace_empty";
+    tablesToCleanup.add(tableName);
+    dataTableService.createTable(
+        tableName,
+        List.of(new DatasetColumnRequest("name", "Name", "TEXT", null, true, false, null)));
+    dataTableRowService.insertBatch(tableName, List.of("name"), List.of(Map.of("name", "keep-me")));
+
+    // 적재 결과가 0행인 REPLACE — 임시 테이블은 비어 있다
+    dataTableService.createTempTable(tableName);
+    dataTableService.finishReplace(tableName, 0);
+
+    List<String> names =
+        dsl.fetch("SELECT name FROM data.\"" + tableName + "\"").getValues("name", String.class);
+    assertThat(names).as("빈 결과가 기존 데이터를 지워서는 안 된다").containsExactly("keep-me");
+
+    Long tmpTable =
+        dsl.selectCount()
+            .from("pg_tables")
+            .where("schemaname = 'data' AND tablename = '" + tableName + "_tmp'")
+            .fetchOne(0, Long.class);
+    assertThat(tmpTable).as("임시 테이블은 정리돼야 한다 — 남으면 다음 실행이 걸린다").isEqualTo(0);
+  }
+
+  @Test
+  void finishReplace_withRows_swapsTempOverOriginal() {
+    String tableName = "test_finish_replace_rows";
+    tablesToCleanup.add(tableName);
+    dataTableService.createTable(
+        tableName,
+        List.of(new DatasetColumnRequest("name", "Name", "TEXT", null, true, false, null)));
+    dataTableRowService.insertBatch(tableName, List.of("name"), List.of(Map.of("name", "old")));
+
+    dataTableService.createTempTable(tableName);
+    dataTableRowService.insertBatch(
+        tableName + "_tmp", List.of("name"), List.of(Map.of("name", "new")));
+    dataTableService.finishReplace(tableName, 1);
+
+    List<String> names =
+        dsl.fetch("SELECT name FROM data.\"" + tableName + "\"").getValues("name", String.class);
+    assertThat(names).as("적재된 행이 있으면 REPLACE 는 평소대로 맞바꾼다").containsExactly("new");
+  }
 }

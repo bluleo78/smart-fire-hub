@@ -1086,7 +1086,9 @@ class PipelineAsyncRunnerTest {
 
     // then: createTempTable + swapTable (rows_loaded=10 > 0)
     verify(dataTableService).createTempTable("output_replace");
-    verify(dataTableService).swapTable("output_replace");
+    // 스왑 여부의 판단은 DataTableService.finishReplace 가 단독으로 갖는다(#685) — 여기서는
+    // 실행기가 **적재된 행 수를 정확히 넘겼는지**만 본다. 판단 자체는 DataTableServiceTest 가 본다.
+    verify(dataTableService).finishReplace("output_replace", 10L);
     verify(dataTableService, never()).dropTempTable(any());
   }
 
@@ -1129,7 +1131,8 @@ class PipelineAsyncRunnerTest {
 
     // then: createTempTable 후 rows_loaded=0 → dropTempTable (swap 없음)
     verify(dataTableService).createTempTable("output_norows");
-    verify(dataTableService).dropTempTable("output_norows");
+    // 0행이 그대로 전달돼야 finishReplace 가 원본을 지키는 쪽으로 판단할 수 있다.
+    verify(dataTableService).finishReplace("output_norows", 0L);
     verify(dataTableService, never()).swapTable(any());
   }
 
