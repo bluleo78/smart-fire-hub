@@ -72,13 +72,18 @@ class SettingsWritePlaneTest extends IntegrationTestBase {
 
   @Test
   void 플랫폼_잠금_키를_쓰면_거부된다() {
+    // 검증 키로 ai.api_key 대신 embedding.api_key 를 쓴다(이 태스크). ai.api_key 는 이제
+    // 테넌트 오버라이드 허용 키라 updateSettings 가 거부하지 않으므로, 이 테스트가 지키려는
+    // "플랫폼 잠금 키는 테넌트 쓰기를 거부한다"는 불변식을 더 이상 그 키로는 관측할 수 없다.
+    // embedding.* 4키는 여전히 플랫폼 잠금이라 같은 불변식을 계속 지킨다.
     testTenant = createActiveTenant(dsl, "swp-locked");
     TenantContext.set(testTenant);
 
     // 메시지에 키 이름이 들어가야 web 이 어느 필드가 잠겼는지 보여줄 수 있다.
-    assertThatThrownBy(() -> settingsService.updateSettings(Map.of("ai.api_key", "sneaky"), null))
+    assertThatThrownBy(
+            () -> settingsService.updateSettings(Map.of("embedding.api_key", "sneaky"), null))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("플랫폼 관리자만 변경할 수 있는 설정입니다: ai.api_key");
+        .hasMessageContaining("플랫폼 관리자만 변경할 수 있는 설정입니다: embedding.api_key");
 
     assertThatThrownBy(
             () -> settingsService.updateSettings(Map.of("embedding.model", "sneaky-model"), null))
@@ -388,13 +393,15 @@ class SettingsWritePlaneTest extends IntegrationTestBase {
    * <p>테넌트 쓰기는 SMTP 부분맵만 떼어 정규화한 뒤 다시 합치므로, 합치는 단계가 어긋나면
    * <b>비 SMTP 키가 조용히 사라진다</b>(예외 없이 204). 그 회귀를 여기서 잡는다.
    *
-   * <p><b>이 테스트가 덮지 <i>못하는</i> 것</b>: "암호화 판정이 프리픽스가 아니라 {@code SECRET_KEYS}
-   * 에서 나온다"는 성질은 오늘 <b>도달 불가</b>다 — 테넌트 오버라이드 허용 12키 중 비밀 키는
-   * {@code smtp.password} 하나뿐이라, 프리픽스로 판정해도 결과가 같다. 그 성질을 증명하려면
-   * SMTP 가 아닌 비밀 키가 테넌트에 열려야 하고, 그 문은 {@code SettingsOverridePolicy} javadoc 이
-   * 예고한 BYO 키 정책({@code ai.api_key})이다. 억지 테스트 대신 판정의 근거를 코드에서 읽히게 뒀다
-   * ({@code encryptIfSecret} 의 첫 줄이 {@code SECRET_KEYS.contains(key)} 이고, 두 쓰기 경로가
-   * 부분맵이 아니라 <b>합친 맵 전체</b>에 {@code encryptSecrets} 를 적용한다).
+   * <p><b>이 테스트가 덮지 <i>못하는</i> 것(이 태스크 이전 기준).</b> "암호화 판정이 프리픽스가
+   * 아니라 {@code SECRET_KEYS} 에서 나온다"는 성질은 그때는 <b>도달 불가</b>였다 — 테넌트
+   * 오버라이드 허용 12키 중 비밀 키는 {@code smtp.password} 하나뿐이라, 프리픽스로 판정해도
+   * 결과가 같았다. <b>이 태스크가 그 전제를 깼다</b>: {@code SettingsOverridePolicy} javadoc 이
+   * 예고한 BYO 키 정책대로 {@code ai.api_key}/{@code ai.cli_oauth_token} 이 열려, SMTP 가 아닌
+   * 비밀 키가 이제 테넌트 평면에 실재한다. 그 성질을 직접 증명하는 전용 테스트는 아직 없다 —
+   * 판정의 근거는 여전히 코드에서 읽힌다({@code encryptIfSecret} 의 첫 줄이
+   * {@code SECRET_KEYS.contains(key)} 이고, 두 쓰기 경로가 부분맵이 아니라 <b>합친 맵 전체</b>에
+   * {@code encryptSecrets} 를 적용한다).
    */
   @Test
   void SMTP_와_비_SMTP_키가_섞인_저장은_둘_다_반영된다() {

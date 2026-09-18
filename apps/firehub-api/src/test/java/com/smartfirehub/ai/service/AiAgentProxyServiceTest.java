@@ -17,7 +17,6 @@ import com.smartfirehub.support.IntegrationTestBase;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -67,7 +66,8 @@ class AiAgentProxyServiceTest extends IntegrationTestBase {
   @Test
   void verifyCliToken_whenTokenEmpty_returnsInvalidJson() {
     // given: CLI OAuth 토큰이 설정되지 않은 상태
-    when(settingsService.getDecryptedCliOauthToken()).thenReturn(Optional.empty());
+    when(settingsService.getAiCredentials())
+        .thenReturn(new SettingsService.AiCredentials("sdk", "", ""));
 
     // when
     String result = aiAgentProxyService.verifyCliToken();
@@ -79,7 +79,8 @@ class AiAgentProxyServiceTest extends IntegrationTestBase {
   @Test
   void verifyCliToken_whenTokenBlank_returnsInvalidJson() {
     // given: 빈 토큰
-    when(settingsService.getDecryptedCliOauthToken()).thenReturn(Optional.of(""));
+    when(settingsService.getAiCredentials())
+        .thenReturn(new SettingsService.AiCredentials("sdk", "", " "));
 
     String result = aiAgentProxyService.verifyCliToken();
 
@@ -89,7 +90,8 @@ class AiAgentProxyServiceTest extends IntegrationTestBase {
   @Test
   void verifyApiKey_whenKeyEmpty_returnsInvalidJson() {
     // given: API 키가 설정되지 않은 상태
-    when(settingsService.getDecryptedApiKey()).thenReturn(Optional.empty());
+    when(settingsService.getAiCredentials())
+        .thenReturn(new SettingsService.AiCredentials("sdk", "", ""));
 
     String result = aiAgentProxyService.verifyApiKey();
 
@@ -99,7 +101,8 @@ class AiAgentProxyServiceTest extends IntegrationTestBase {
   @Test
   void verifyApiKey_whenKeyBlank_returnsInvalidJson() {
     // given: 빈 API 키
-    when(settingsService.getDecryptedApiKey()).thenReturn(Optional.of("  "));
+    when(settingsService.getAiCredentials())
+        .thenReturn(new SettingsService.AiCredentials("sdk", "  ", ""));
 
     String result = aiAgentProxyService.verifyApiKey();
 
@@ -116,8 +119,8 @@ class AiAgentProxyServiceTest extends IntegrationTestBase {
     // given: agent_type=sdk, OAuth 토큰 설정, API 키는 없음
     when(settingsService.getAsMap("ai"))
         .thenReturn(Map.of("ai.agent_type", "sdk", "ai.model", "claude-sonnet-5"));
-    when(settingsService.getDecryptedCliOauthToken()).thenReturn(Optional.of("oat-test"));
-    when(settingsService.getDecryptedApiKey()).thenReturn(Optional.empty());
+    when(settingsService.getAiCredentials())
+        .thenReturn(new SettingsService.AiCredentials("sdk", "", "oat-test"));
     wireMock.stubFor(
         post(urlEqualTo("/agent/chat"))
             .willReturn(
@@ -144,6 +147,42 @@ class AiAgentProxyServiceTest extends IntegrationTestBase {
                             matchingJsonPath(
                                 "$.tenantId", equalTo(String.valueOf(DEFAULT_TEST_TENANT_ID))))
                         .withRequestBody(notMatching(".*cliOauthToken.*"))));
+  }
+
+  /**
+   * agentType 의 출처가 getAiCredentials() 하나뿐인지 검증한다.
+   *
+   * <p>{@code getAsMap("ai")} 의 {@code ai.agent_type} 은 빈 문자열(정규화 전 원본), {@code
+   * getAiCredentials()} 는 "sdk"(정규화 후 번들)를 돌려주도록 일부러 <b>다르게</b> 스텁한다 —
+   * streamChat 이 번들만 보고 맵을 다시 읽지 않는지가 이 테스트의 단언이다. 맵을 다시 읽었다면
+   * (예전 {@code aiSettings.getOrDefault("ai.agent_type","sdk")}) 빈 문자열이 그대로 살아남아
+   * else 분기(cli-api)로 떨어지고, API 키가 없으니 ai-agent 호출 자체가 나가지 않는다. sdk 로
+   * 정규화된 값을 썼다면 OAuth 토큰만으로 인증이 성립해 호출이 나간다 — WireMock 이 그 요청을
+   * 받는 것으로 "출처가 하나"임을 확인한다(오류 emit 여부보다 직접적이다).
+   */
+  @Test
+  void streamChat_agentTypeComesOnlyFromCredentialsBundle_notFromRawMap() {
+    // given: 맵의 원본은 빈 문자열, 번들(getAiCredentials)은 이미 정규화된 sdk
+    when(settingsService.getAsMap("ai"))
+        .thenReturn(Map.of("ai.agent_type", "", "ai.model", "claude-sonnet-5"));
+    when(settingsService.getAiCredentials())
+        .thenReturn(new SettingsService.AiCredentials("sdk", "", "oat-test"));
+    wireMock.stubFor(
+        post(urlEqualTo("/agent/chat"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "text/event-stream")
+                    .withBody("event: done\ndata: {}\n\n")));
+
+    // when
+    SseEmitter emitter = new SseEmitter();
+    aiAgentProxyService.streamChat(emitter, "hi", null, List.of(), 1L, null, null);
+
+    // then: 맵을 다시 읽어 cli-api 분기로 떨어졌다면 자격증명 부족으로 호출 자체가 나가지 않는다.
+    await()
+        .atMost(Duration.ofSeconds(3))
+        .untilAsserted(() -> wireMock.verify(postRequestedFor(urlEqualTo("/agent/chat"))));
   }
 
   /**

@@ -27,9 +27,31 @@ export interface UseSettingsOverrideFormOptions<F extends SettingsFormShape> {
    */
   blankAllowed?: ReadonlySet<keyof F>;
   /**
-   * 필드 단위 상태를 <b>다른 기준으로 치환</b>하고 싶을 때 쓴다. SMTP 연결 5키가 그룹(번들)
-   * 상태로 치환되는 경우가 유일한 소비자다. 두 번째 인자로 훅 자신의 필드 단위 판정 함수를
-   * 넘겨 주므로, 호출자가 그룹 상태를 계산하려고 `settings` 를 다시 파헤칠 필요가 없다.
+   * <b>서버 값을 절대 폼에 시드하지 않는 키</b>(비밀 입력 전용). 이 집합의 키는 조회·재시드
+   * 모두에서 `form` 과 `original` 을 <b>둘 다 빈 문자열</b>로 맞춘다.
+   *
+   * <b>왜 필요한가</b>: 서버는 비밀을 마스크(`****ab12`)로 내려준다. 입력이 `disabled` 이던 동안은
+   * 그 마스크를 시드해도 무해했지만, 편집이 열리는 순간 <b>덧붙이기</b>가 치명적이 된다 —
+   * 사용자가 마스크 뒤에 실제 키를 이어 붙이면(`****ab12sk-ant-…`, 길이 9+) 서버의 센티널 판정
+   * (`SettingsService.isMaskSentinel`)은 <b>길이가 정확히 4 또는 8</b>인 값만 드롭하므로 이 문자열이
+   * 그대로 통과해 <b>테넌트의 진짜 자격증명으로 암호화·저장</b>된다. 저장 후 화면에는 새 마스크가
+   * 보이므로 <b>사용자가 알아챌 표면이 없다</b>. 근본 해법은 "마스크를 편집 가능한 입력에 시드하지
+   * 않는 것"이고(`SmtpSettingsTab` 의 알려진 결함 주석이 지목하는 바로 그 해법), 이 옵션이 그것을
+   * 훅 차원에서 제공한다.
+   *
+   * <b>둘 다 `''` 여야 하는 이유</b>: `original` 에만 마스크를 남기면 손대지 않은 필드가
+   * `form !== original` 이 되어 "빈 값으로 바꿨다"로 판정되고, `blankAllowed` 에 없으면 저장 자체가
+   * 거부된다. 둘 다 `''` 여야 <b>손대지 않은 비밀은 페이로드에서 빠진다</b>는 성질이 유지된다.
+   *
+   * <b>SMTP 는 넘기지 않는다</b> — `smtp.password` 의 같은 결함은 서버 계약과 함께 봐야 하고
+   * (`SmtpSettingsTab` 주석), 이 밴드의 범위 밖이다.
+   */
+  emptySeedKeys?: ReadonlySet<keyof F>;
+  /**
+   * 필드 단위 상태를 <b>다른 기준으로 치환</b>하고 싶을 때 쓴다. 지금 소비자는 둘이고 둘 다
+   * 번들이다 — SMTP 연결 5키(`useSmtpSettingsForm`)와 AI 자격증명 3키(`useAiSettingsForm`).
+   * 두 번째 인자로 훅 자신의 필드 단위 판정 함수를 넘겨 주므로, 호출자가 그룹 상태를 계산하려고
+   * `settings` 를 다시 파헤칠 필요가 없다.
    */
   resolveState?: (
     key: keyof F,
@@ -49,10 +71,11 @@ export interface SettingsOverrideForm<F extends SettingsFormShape> {
   loadFailed: boolean;
   isClearing: boolean;
   /**
-   * 해제 진행 중 표시를 <b>훅 밖의 해제 작업</b>도 함께 쓰기 위한 setter. SMTP 의 "연결 5키
-   * 전체 해제"가 유일한 소비자다 — 그 작업은 번들 개념이라 훅 밖에 있지만(RULING B), 화면에서
-   * 잠그는 버튼은 개별 해제와 <b>같은 것들</b>이다. 별도 플래그를 두면 두 상태가 갈라져
-   * "해제 중인데 해제 버튼이 눌린다"가 생긴다.
+   * 해제 진행 중 표시를 <b>훅 밖의 해제 작업</b>도 함께 쓰기 위한 setter. 소비자는 번들 레이어의
+   * 해제 작업들이다 — SMTP 의 "연결 5키 전체 해제", AI 의 "자격증명 3키 전체 해제"와 "저장된
+   * OAuth 토큰 삭제". 전부 번들 개념이라 훅 밖에 있지만(RULING B), 화면에서 잠그는 버튼은 개별
+   * 해제와 <b>같은 것들</b>이다. 별도 플래그를 두면 두 상태가 갈라져 "해제 중인데 해제 버튼이
+   * 눌린다"가 생긴다.
    */
   setIsClearing: Dispatch<SetStateAction<boolean>>;
   settings: Record<string, ResolvedSettingResponse>;
@@ -68,7 +91,8 @@ export interface SettingsOverrideForm<F extends SettingsFormShape> {
    * 연산이므로 <b>쌍을 깨뜨릴 수 없는 형태로</b>만 노출한다.
    *
    * 값은 조회와 <b>같은 폴백</b>을 거친다(서버 값 → `defaults`) — 코드 기본값이 있는 키를
-   * 빈칸으로 만들면 실제 적용값과 화면이 어긋난다.
+   * 빈칸으로 만들면 실제 적용값과 화면이 어긋난다. <b>예외는 `emptySeedKeys` 하나</b>이고, 그
+   * 예외도 조회와 같다: 그 키들은 여기서도 서버 값 대신 `''` 다(이유는 그 옵션의 주석).
    */
   resyncFromServer: (keys: readonly (keyof F)[], byKey: Record<string, ResolvedSettingResponse>) => void;
   errors: Partial<Record<keyof F, string>>;
@@ -102,24 +126,33 @@ export interface SettingsOverrideForm<F extends SettingsFormShape> {
  * "바꾼 키만" 페이로드 diff, `hasChanges`, 되돌리기.
  *
  * <b>소유하지 않는 것</b>(다음 사람이 여기로 밀어 넣으려 할 것이다 — 넣지 마라):
- * - <b>번들(연결 5키) 개념 일체</b> — `SMTP_CONNECTION_KEYS`, 그룹 상태, 그룹 해제 버튼,
- *   "번들 안에서 비어 있음" 노트, 저장 후 번들 전환 재시드. 훅은 `resolveState` 라는 <b>구멍</b>
- *   하나만 열어 두고, 그 구멍에 무엇을 끼울지는 호출자가 정한다.
+ * - <b>번들 개념 일체</b> — 번들 키 목록(`SMTP_CONNECTION_KEYS` / `AI_CREDENTIAL_BUNDLE_KEYS`),
+ *   그룹 상태, 그룹 해제 버튼, "번들 안에서 비어 있음" 노트, 저장 후 번들 전환 재시드. 훅은
+ *   `resolveState` 라는 <b>구멍</b> 하나만 열어 두고, 그 구멍에 무엇을 끼울지는 호출자가 정한다.
  * - <b>낡음 안내(`staleNotice`)</b> — 훅은 갱신이 실제로 일어난 지점을 `onMetaRefreshed` 로
- *   알릴 뿐, 그 사실로 어떤 배너를 세우고 지울지는 호출자의 표현 문제다.
+ *   알릴 뿐, 그 사실로 어떤 배너를 세우고 지울지는 호출자의 표현 문제다(SMTP 는 탭 범위에,
+ *   AI 는 그룹 범위에 그린다 — 사건 범위가 다르기 때문이고, 그 판단이 바로 호출자 몫이다).
  * - <b>조회 실패 종단 화면</b> — `loadFailed` 를 보고만 한다(RULING C). AI 탭은 toast 만 띄우고
  *   폴백 값으로 렌더하고, SMTP 탭은 폼 자체를 그리지 않는다. 비밀번호 필드가 있는 쪽에서만
  *   "빈 폼"이 자격증명 덮어쓰기로 이어지므로 <b>이 비대칭은 의도된 것</b>이다.
  * - <b>연결 테스트 안내</b> — SMTP 전용 3단 우선순위 문자열.
  *
- * 이유는 하나다: 위 전부가 오늘도 내일도 소비자가 SMTP 하나뿐이라, 훅에 넣으면 AI 탭이 영원히
- * 쓰지 않는 분기를 훅이 들고 다니게 된다. 평면 통합이 아니라 <b>계층화</b>다 — SMTP 고유 개념은
- * 이 훅의 반환값 <b>위에 얹히는 레이어</b>로 SMTP 파일에 남는다.
+ * <b>이 규칙의 근거는 2026-09-18 에 더 강해졌다.</b> 예전 근거는 "소비자가 SMTP 하나뿐이라
+ * 훅에 넣으면 AI 탭이 영원히 쓰지 않는 분기를 들고 다닌다"였는데, AI 자격증명 3키가 열리면서
+ * 번들 소비자가 <b>둘</b>이 됐다. 그래도 답은 같다 — 오히려 더 분명하다: 두 번들은 <b>모양만
+ * 같고 내용이 다르다</b>(채움 값이 SMTP 는 `starttls='true'`, AI 는 `agent_type='sdk'`;
+ * 안내 범위도 탭 vs 그룹). 둘을 훅 안에서 합치면 "어느 번들이냐"로 갈라지는 분기가 훅에
+ * 생긴다. 평면 통합이 아니라 <b>계층화</b>다 — 각 번들 고유 개념은 이 훅의 반환값 <b>위에
+ * 얹히는 레이어</b>로 각자의 파일(`useSmtpSettingsForm` / `useAiSettingsForm`)에 남는다.
+ *
+ * (`emptySeedKeys` 는 예외가 아니다: 그것은 번들 개념이 아니라 "서버가 마스킹해 내려주는 비밀을
+ * 폼에 시드하지 않는다"는 <b>시드 규칙</b>이고, 시드는 원래 이 훅의 일이다.)
  */
 export function useSettingsOverrideForm<F extends SettingsFormShape>({
   prefix,
   defaults,
   blankAllowed,
+  emptySeedKeys,
   resolveState,
   onMetaRefreshed,
 }: UseSettingsOverrideFormOptions<F>): SettingsOverrideForm<F> {
@@ -135,6 +168,8 @@ export function useSettingsOverrideForm<F extends SettingsFormShape>({
   // 콜백·상수를 effect 의존성에서 떼어 낸다 — 호출부의 참조가 바뀌어도 조회가 다시 돌지 않는다.
   const defaultsRef = useRef(defaults);
   defaultsRef.current = defaults;
+  const emptySeedKeysRef = useRef(emptySeedKeys);
+  emptySeedKeysRef.current = emptySeedKeys;
   const metaRefreshedRef = useRef(onMetaRefreshed);
   metaRefreshedRef.current = onMetaRefreshed;
 
@@ -148,7 +183,10 @@ export function useSettingsOverrideForm<F extends SettingsFormShape>({
       // 입력창에 렌더되는 일은 없다.
       const values = { ...base } as Record<keyof F, string>;
       (Object.keys(values) as (keyof F)[]).forEach((key) => {
-        values[key] = byKey[key as string]?.value ?? base[key];
+        // 비밀 키는 서버 값(마스크)을 시드하지 않는다 — `emptySeedKeys` javadoc 참고.
+        values[key] = emptySeedKeysRef.current?.has(key)
+          ? ''
+          : (byKey[key as string]?.value ?? base[key]);
       });
       setSettings(byKey);
       setForm(values as F);
@@ -230,7 +268,12 @@ export function useSettingsOverrideForm<F extends SettingsFormShape>({
   ) => {
     const patch = {} as Partial<Record<keyof F, string>>;
     keys.forEach((key) => {
-      patch[key] = byKey[key as string]?.value ?? defaultsRef.current[key];
+      // 재시드도 조회와 <b>같은 규칙</b>을 따라야 한다. 여기만 서버 값을 넣으면 저장 직후
+      // 비밀 입력에 새 마스크가 다시 들어앉아, 조회 경로에서 막은 덧붙이기 결함이 저장 경로로
+      // 되살아난다.
+      patch[key] = emptySeedKeysRef.current?.has(key)
+        ? ''
+        : (byKey[key as string]?.value ?? defaultsRef.current[key]);
     });
     setForm((prev) => ({ ...prev, ...patch }) as F);
     setOriginal((prev) => ({ ...prev, ...patch }) as F);

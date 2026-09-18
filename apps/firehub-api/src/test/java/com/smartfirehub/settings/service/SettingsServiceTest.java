@@ -1,5 +1,6 @@
 package com.smartfirehub.settings.service;
 
+import static com.smartfirehub.support.SettingsTestSupport.rawSystemSettingValue;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
@@ -7,7 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import com.smartfirehub.apiconnection.service.EncryptionService;
 import com.smartfirehub.support.IntegrationTestBase;
 import java.util.Map;
-import java.util.Optional;
+import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
@@ -24,6 +25,7 @@ class SettingsServiceTest extends IntegrationTestBase {
 
   @Autowired private SettingsService settingsService;
   @Autowired private EncryptionService encryptionService;
+  @Autowired private DSLContext dsl;
 
   // getByPrefix_aiPrefix_returnsAiSettings 는 삭제했다 — 그 메서드가 P7-c1 에서 사라졌다(호출자 0).
   // 그 테스트가 지키던 "프리픽스 조회는 그 프리픽스 키만 준다"는 성질은 **살아 있는 경로**에서
@@ -82,10 +84,11 @@ class SettingsServiceTest extends IntegrationTestBase {
     // when: store a plain-text API key
     settingsService.updatePlatformSettings(Map.of("ai.api_key", "sk-test-plain-key"), null);
 
-    // then: the raw value in DB is NOT the plain text — it is an encrypted iv:ciphertext blob
-    Optional<String> rawStored = settingsService.getValue("ai.api_key");
-    assertThat(rawStored).isPresent();
-    String raw = rawStored.get();
+    // then: the raw value in DB is NOT the plain text — it is an encrypted iv:ciphertext blob.
+    // getValue("ai.api_key") 는 이제 번들 키라 거부되므로(rejectBundleKey), 저장된 원문은
+    // DB 를 직접 읽는 rawSystemSettingValue 로 확인한다.
+    String raw = rawSystemSettingValue(dsl, "ai.api_key");
+    assertThat(raw).isNotNull();
     assertThat(raw).isNotEqualTo("sk-test-plain-key");
     // AES-GCM output format is "base64iv:base64cipher" — both parts are Base64, separated by ':'
     assertThat(raw).contains(":");
@@ -117,28 +120,30 @@ class SettingsServiceTest extends IntegrationTestBase {
   }
 
   @Test
-  void getDecryptedApiKey_returnsOriginal() {
+  void getAiCredentials_apiKey_returnsOriginal() {
     // given: encrypt and persist
     settingsService.updatePlatformSettings(Map.of("ai.api_key", "sk-original-secret"), null);
 
-    // when
-    Optional<String> decrypted = settingsService.getDecryptedApiKey();
+    // when: getDecryptedApiKey() 는 Task 2 가 지웠다 — 단일 키로는 번들 규칙을 지킬 수 없어서다.
+    // 대체 접근자 getAiCredentials() 로 같은 계약(복호화된 원문 복원)을 검증한다.
+    SettingsService.AiCredentials creds = settingsService.getAiCredentials();
 
     // then: original plain-text is recovered
-    assertThat(decrypted).isPresent().hasValue("sk-original-secret");
+    assertThat(creds.apiKey()).isEqualTo("sk-original-secret");
   }
 
   @Test
-  void getDecryptedApiKey_notSet_returnsEmpty() {
+  void getAiCredentials_apiKey_notSet_returnsEmpty() {
     // given: ensure api_key is blank (reset to empty by storing a blank-equivalent via direct repo)
     // The V31 migration seeds ai.api_key with '' — within this @Transactional test we can rely on
     // that initial empty state because no other test in this class persists a key before us.
     // We explicitly reset it here through a masked-value update (which skips the DB write),
     // so the value remains the seeded empty string.
-    // Actually we just call getDecryptedApiKey on the unmodified seeded empty row.
-    Optional<String> result = settingsService.getDecryptedApiKey();
+    // Actually we just call getAiCredentials on the unmodified seeded empty row.
+    SettingsService.AiCredentials creds = settingsService.getAiCredentials();
 
-    assertThat(result).isEmpty();
+    // AiCredentials 는 미설정을 null 이 아니라 빈 문자열로 표현한다(번들 채움과 같은 모양).
+    assertThat(creds.apiKey()).isEmpty();
   }
 
   // ── getAsMap NPE 회귀 테스트 ──────────────────────────────────────────────
@@ -231,16 +236,15 @@ class SettingsServiceTest extends IntegrationTestBase {
   void updateSettings_apiKey_maskedValue_skipsUpdate() {
     // given: store a real key first
     settingsService.updatePlatformSettings(Map.of("ai.api_key", "sk-real-key-stored"), null);
-    Optional<String> encryptedAfterFirstStore = settingsService.getValue("ai.api_key");
-    assertThat(encryptedAfterFirstStore).isPresent();
-    String encryptedValue = encryptedAfterFirstStore.get();
+    // getValue("ai.api_key") 는 번들 키라 거부된다 — DB 원문을 직접 읽는다.
+    String encryptedValue = rawSystemSettingValue(dsl, "ai.api_key");
+    assertThat(encryptedValue).isNotNull();
 
     // when: send a masked value (as the frontend does when the user has not changed the key)
     settingsService.updatePlatformSettings(Map.of("ai.api_key", "****abcd"), null);
 
     // then: the stored encrypted value must NOT have changed
-    Optional<String> encryptedAfterMaskedUpdate = settingsService.getValue("ai.api_key");
-    assertThat(encryptedAfterMaskedUpdate).isPresent().hasValue(encryptedValue);
+    assertThat(rawSystemSettingValue(dsl, "ai.api_key")).isEqualTo(encryptedValue);
   }
 
   // ── 임베딩 provider 정합성 검증 (#322 base_url 불일치 / #323 API 키 누락) ──────────

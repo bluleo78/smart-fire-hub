@@ -163,7 +163,8 @@ class PlatformSettingsControllerTest extends IntegrationTestBase {
           .andExpect(status().isNoContent());
 
       // 마스크를 그대로 되돌려 보냈으니 복호화 값은 원래 실제 키와 같아야 한다.
-      assertThat(settingsService.getDecryptedApiKey()).hasValue("sk-live-secret-value");
+      // getDecryptedApiKey() 는 Task 2 가 지웠다 — 대체 접근자로 같은 계약을 검증한다.
+      assertThat(settingsService.getAiCredentials().apiKey()).isEqualTo("sk-live-secret-value");
     } finally {
       restoreSystemSettingValue(dsl, "ai.api_key", original);
     }

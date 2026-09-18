@@ -21,7 +21,6 @@ import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.permission.service.PermissionService;
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
@@ -239,9 +238,13 @@ class AiControllerTest {
   @Test
   void getAuthStatus_sdkWithOauthToken_usesTokenVerification() throws Exception {
     // given: sdk 타입이고 OAuth 토큰이 설정된 상태
+    // getAsMap("ai") 스텁은 삭제했다 — getAuthStatus() 는 Task 2 부터 getAiCredentials() 로
+    // 자격증명 3키를 함께 읽으므로 더 이상 부르지 않는 죽은 스텁이었다.
     mockAuthentication("ai:settings");
-    when(settingsService.getAsMap("ai")).thenReturn(Map.of("ai.agent_type", "sdk"));
-    when(settingsService.getDecryptedCliOauthToken()).thenReturn(Optional.of("oat-test"));
+    when(settingsService.getAiCredentials())
+        .thenReturn(
+            new com.smartfirehub.settings.service.SettingsService.AiCredentials(
+                "sdk", "", "oat-test"));
     when(aiAgentProxyService.verifyCliToken()).thenReturn("{\"valid\":true}");
 
     // when: /auth-status 엔드포인트 호출

@@ -11,35 +11,15 @@ import { Switch } from '../../components/ui/switch';
 import { useTestSmtpSettings } from '../../hooks/queries/useProactiveMessages';
 import type { SmtpForm, SmtpSettingsFormState } from '../../hooks/useSmtpSettingsForm';
 import { PORT_MAX, PORT_MIN, SMTP_CONNECTION_KEYS } from '../../hooks/useSmtpSettingsForm';
-import { ClearOverrideButton, SettingFieldLabel, SettingStateBadge } from './settings-lock';
-
-/**
- * 번들 안에서 <b>비어 있는 항목</b>임을 알리는 정적 노트(디자인 스펙 §1-1 신설 어휘).
- *
- * 배지가 아니라 노트인 이유: 배지 문자열은 어휘를 영구히 넓혀 AI 탭까지 따라와야 하는 부담을
- * 만들지만, 노트는 이 화면 안에 머문다. 빈 입력창은 시각적으로 "아직 안 채운 칸"과 구별되지
- * 않으므로 이 텍스트가 유일한 전달 경로다 — 그래서 각 입력의 `aria-describedby` 에 포함한다.
- */
-function EmptyInBundleNote({
-  id,
-  show,
-  extra,
-}: {
-  id: string;
-  show: boolean;
-  /**
-   * 비어 있을 때 <b>실제로 적용되는 값</b>이 따로 있는 키만 채운다. 포트가 그렇다 — 소비자 3곳이
-   * 전부 빈 포트를 587 로 대체하므로, 이 문장이 없으면 "포트가 없어서 못 나간다"로 읽힌다.
-   */
-  extra?: string;
-}) {
-  if (!show) return null;
-  return (
-    <p id={id} className="text-sm text-muted-foreground">
-      이 항목은 비어 있습니다 — 플랫폼 값이 사용되지 않습니다.{extra ? ` ${extra}` : ''}
-    </p>
-  );
-}
+// `EmptyInBundleNote` 는 예전엔 이 파일의 지역 컴포넌트였다 — AI 자격증명 번들이 같은 노트를
+// 필요로 하게 되어 `settings-lock` 으로 올렸다(문구가 두 벌이 되는 것을 막는다). 이 탭의 사용법과
+// 동작은 그대로다.
+import {
+  ClearOverrideButton,
+  EmptyInBundleNote,
+  SettingFieldLabel,
+  SettingStateBadge,
+} from './settings-lock';
 
 /**
  * 이메일(SMTP) 설정 탭 — P7-c1 이후 <b>테넌트 상속/재정의 편집 화면</b>이자, #390-2b 이후

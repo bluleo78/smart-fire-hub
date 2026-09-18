@@ -14,6 +14,7 @@ import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.settings.dto.ResolvedSettingResponse;
 import com.smartfirehub.settings.repository.TenantSettingsRepository;
 import com.smartfirehub.settings.service.SettingsService;
+import com.smartfirehub.settings.service.SettingsService.AiCredentials;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.SettingsTestSupport;
 import org.jooq.DSLContext;
@@ -78,20 +79,28 @@ class SettingsResolutionTest extends IntegrationTestBase {
   void 플랫폼_잠금_키는_오버라이드_행이_있어도_무시한다() {
     // 방어적 계약. 화이트리스트가 나중에 좁아지거나 누가 직접 SQL 로 행을 넣어도, 읽기는
     // 화이트리스트를 다시 확인하므로 잠긴 키가 테넌트 값으로 해석되지 않는다.
+    //
+    // 검증 키로 ai.api_key 대신 embedding.model 을 쓴다(Task 2). ai.api_key 는 이제 AI 번들
+    // 3키의 원소라 getValue 자체가 거부하므로(rejectBundleKey), 이 테스트가 지키려는 "단일 키
+    // 경로가 화이트리스트를 다시 확인한다"는 성질을 더 이상 그 키로는 관측할 수 없다.
+    // embedding.model 은 화이트리스트 밖(플랫폼 잠금)이면서 번들도 아니라 getValue 로 안전하게
+    // 조회되므로 같은 불변식을 계속 지킨다.
     testTenant = createActiveTenant(dsl, "sr-locked");
-    // ai.api_key 는 SettingsOverridePolicy 화이트리스트에 없는 플랫폼 잠금 키다. 정상 upsert 경로로는
-    // 만들 수 없는 상태(직접 SQL 로 밀어넣은 것)를 재현하기 위해 저장소 자체가 아니라 직접 DML 을 쓴다.
+    // embedding.model 은 SettingsOverridePolicy 화이트리스트에 없는 플랫폼 잠금 키다. 정상 upsert
+    // 경로로는 만들 수 없는 상태(직접 SQL 로 밀어넣은 것)를 재현하기 위해 저장소 자체가 아니라
+    // 직접 DML 을 쓴다.
     runInTenantTransaction(
         transactionTemplate,
         testTenant,
         () ->
             dsl.execute(
-                "insert into tenant_settings (tenant_id, key, value) values (?, 'ai.api_key', 'sneaky-key')",
+                "insert into tenant_settings (tenant_id, key, value) values (?, 'embedding.model', 'sneaky-model')",
                 testTenant));
 
     TenantContext.set(testTenant);
-    // 플랫폼 값(비어있거나 seed 값)으로 폴백해야 한다 — 절대 'sneaky-key' 가 아니다.
-    assertThat(settingsService.getValue("ai.api_key")).isNotEqualTo(java.util.Optional.of("sneaky-key"));
+    // 플랫폼 값(seed 값)으로 폴백해야 한다 — 절대 'sneaky-model' 이 아니다.
+    assertThat(settingsService.getValue("embedding.model"))
+        .isNotEqualTo(java.util.Optional.of("sneaky-model"));
   }
 
   @Test
@@ -161,28 +170,35 @@ class SettingsResolutionTest extends IntegrationTestBase {
   void 프리픽스_경로도_잠긴_키_오버라이드는_무시한다() {
     // 단일 키 조회(findValue)에서 프리픽스 조회(findByPrefix)로 바꾸면서 화이트리스트 필터가
     // 새어나가면 안 된다 — 합집합으로 바뀐 것이 "잠긴 키까지 전부 노출"로 변질되지 않았는지 확인.
+    //
+    // 검증 키로 ai.api_key 대신 embedding.model 을 쓴다(이 태스크). ai.api_key 는 이제 테넌트
+    // 오버라이드 허용 키라 이 프리픽스 경로도 정상적으로 반영해야 하므로, 이 테스트가 지키려는
+    // "잠긴 키 오버라이드가 새지 않는다"는 불변식을 더 이상 그 키로는 관측할 수 없다.
+    // embedding.model 은 화이트리스트 밖(플랫폼 잠금)으로 남아 있어 같은 불변식을 계속 지킨다.
     testTenant = createActiveTenant(dsl, "sr-locked-prefix");
     // 저장소는 화이트리스트를 모른다(서비스만 안다) — upsert 로 직접 잠긴 키를 심어 재현한다.
     runInTenantTransaction(
         transactionTemplate,
         testTenant,
-        () -> tenantSettingsRepository.upsert("ai.api_key", "sneaky-key", null));
+        () -> tenantSettingsRepository.upsert("embedding.model", "sneaky-model", null));
     try {
       TenantContext.set(testTenant);
 
-      var asMap = settingsService.getAsMap("ai");
-      assertThat(asMap.get("ai.api_key")).isNotEqualTo("sneaky-key");
+      var asMap = settingsService.getAsMap("embedding");
+      assertThat(asMap.get("embedding.model")).isNotEqualTo("sneaky-model");
 
-      var resolved = settingsService.getResolvedByPrefix("ai");
-      var apiKeyEntry =
-          resolved.stream().filter(r -> r.key().equals("ai.api_key")).findFirst().orElseThrow();
-      assertThat(apiKeyEntry.overridden()).isFalse();
-      assertThat(apiKeyEntry.value()).isNotEqualTo("sneaky-key");
+      var resolved = settingsService.getResolvedByPrefix("embedding");
+      var modelEntry =
+          resolved.stream().filter(r -> r.key().equals("embedding.model")).findFirst().orElseThrow();
+      assertThat(modelEntry.overridden()).isFalse();
+      assertThat(modelEntry.value()).isNotEqualTo("sneaky-model");
     } finally {
       // upsert 로 심은 오버라이드 행을 명시적으로 정리한다(deleteTenants 가 tenant_settings 를
       // cascade 로 지우긴 하지만, 여기서 직접 지워 이 테스트의 의도를 코드로 남긴다).
       runInTenantTransaction(
-          transactionTemplate, testTenant, () -> tenantSettingsRepository.delete("ai.api_key"));
+          transactionTemplate,
+          testTenant,
+          () -> tenantSettingsRepository.delete("embedding.model"));
     }
   }
 
@@ -613,6 +629,227 @@ class SettingsResolutionTest extends IntegrationTestBase {
     assertThat(settingsService.getValue("smtp.from_address")).isNotNull();
     // 다른 프리픽스도 그대로다(가드가 SMTP 밖으로 새지 않았다).
     assertThat(settingsService.getValue("ai.model")).isPresent();
+  }
+
+  /**
+   * AI 자격증명 번들 3키도 SMTP 연결 5키와 <b>같은 이유로</b> 단일 조회가 거부된다: 단일 키 경로는
+   * "3키가 함께 움직인다"를 원리적으로 판정할 수 없다.
+   *
+   * <p>막지 않으면 {@code getAsMap("ai").get("ai.api_key")} 는 {@code ""}(안전, 번들 규칙 적용)를
+   * 주는데 {@code getValue("ai.api_key")} 는 <b>플랫폼 암호문</b>(상속 폴백, 번들 미적용)을 준다 —
+   * 두 공개 경로가 서로 다른 답을 내는 것은 {@link SettingsService#rejectBundleKey} 가 SMTP 에서
+   * 이미 막은 결함과 정확히 같은 모양이고, AI 쪽은 실행 형태와 플랫폼 키가 섞이는 형태라 과금
+   * 주체가 새는 결과로 이어진다.
+   */
+  @Test
+  void AI_번들키는_단일_조회를_거부한다() {
+    // 단일 키 경로는 "3키가 함께 움직인다"를 판정할 수 없다 — SMTP 연결 키와 같은 이유로 막는다.
+    // 막지 않으면 getAsMap("ai") 는 ""(안전)를 주는데 getValue 는 플랫폼 암호문(상속)을 주어
+    // 두 경로가 서로 다른 답을 낸다.
+    assertThatThrownBy(() -> settingsService.getValue("ai.api_key"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("getAiCredentials()");
+    assertThatThrownBy(() -> settingsService.getValue("ai.agent_type"))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> settingsService.getValue("ai.cli_oauth_token"))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  void AI_번들이_아닌_키는_단일_조회가_그대로_동작한다() {
+    // ai.model 은 번들이 아니라 키 단위 상속이므로 getValue 가 옳은 답을 준다.
+    assertThat(settingsService.getValue("ai.model")).isPresent();
+  }
+
+  /**
+   * <b>번들 규칙의 핵심 보안 단언(AI 자격증명)</b>: 테넌트가 {@code ai.agent_type} 하나만
+   * 재정의해도 플랫폼 {@code ai.api_key}/{@code ai.cli_oauth_token} 이 그 실행 형태에 <b>실리지
+   * 않는다</b>. SMTP 연결 번들의 {@code 호스트만_재정의해도_플랫폼_SMTP_자격증명은_발송에_실리지_않는다}
+   * 와 대응하는 AI 쪽 시나리오다.
+   *
+   * <p>번들이 없다면 테넌트 ADMIN 이 실행 형태만 바꿔 저장한 순간 API 키 필드는 여전히 행이 없어
+   * 상위 {@code putAll} 이 플랫폼 암호문으로 상속하고, 그 테넌트의 AI 사용료를 플랫폼이 낸다 —
+   * 이 화이트리스트가 방금 연 바로 그 문이다.
+   *
+   * <p>플랫폼 값을 먼저 진짜로 저장한다 — 시드가 비어 있으면(테스트 DB 기본값) 빈 값끼리
+   * 비교하는 공허한 테스트가 된다(SMTP 쪽과 같은 이유).
+   */
+  @Test
+  void 테넌트가_실행_형태만_재정의하면_플랫폼_AI_자격증명은_새지_않는다() {
+    String originalApiKey = rawSystemSettingValue(dsl, "ai.api_key");
+    String originalOauth = rawSystemSettingValue(dsl, "ai.cli_oauth_token");
+    try {
+      settingsService.updatePlatformSettings(
+          java.util.Map.of(
+              "ai.api_key", "platform-shared-api-key",
+              "ai.cli_oauth_token", "platform-shared-oauth-token"),
+          null);
+      assertThat(rawSystemSettingValue(dsl, "ai.api_key")).isNotBlank();
+
+      testTenant = createActiveTenant(dsl, "sr-ai-bundle-agent-only");
+      TenantContext.set(testTenant);
+      settingsService.updateSettings(java.util.Map.of("ai.agent_type", "sdk"), null);
+
+      var resolved = settingsService.getAsMap("ai");
+      assertThat(resolved).containsEntry("ai.agent_type", "sdk");
+      assertThat(resolved)
+          .as("플랫폼 API 키 암호문이 테넌트가 고른 실행 형태에 섞이면 안 된다")
+          .containsEntry("ai.api_key", "");
+      assertThat(resolved)
+          .as("플랫폼 CLI OAuth 토큰이 새면 안 된다")
+          .containsEntry("ai.cli_oauth_token", "");
+    } finally {
+      restoreSystemSettingValue(dsl, "ai.api_key", originalApiKey);
+      restoreSystemSettingValue(dsl, "ai.cli_oauth_token", originalOauth);
+    }
+  }
+
+  /**
+   * 테넌트가 {@code ai.api_key} 만 재정의해도 나머지 두 키가 번들 규칙대로 함께 채워진다:
+   * {@code ai.agent_type} 은 {@code "sdk"}, {@code ai.cli_oauth_token} 은 빈 값이다. 위 테스트와
+   * 반대 방향 — 이번엔 자격증명 쪽을 먼저 건드린 테넌트가 실행 형태·나머지 비밀까지 원자적으로
+   * 같은 평면에서 해석되는지를 본다.
+   *
+   * <p><b>플랫폼 {@code ai.agent_type}/{@code ai.cli_oauth_token} 을 번들 채움 값과 다르게 먼저
+   * 심는다.</b> 테스트 DB 시드가 이미 {@code "sdk"}/{@code ""} 라(채움 값과 우연히 같다), 시드를
+   * 그대로 두면 번들을 통째로 지워도 "플랫폼 값을 그대로 상속"이 채움과 똑같이 보여 이 테스트가
+   * 무의미하게 통과한다. {@code "cli"}/비어 있지 않은 토큰으로 먼저 바꿔 둬야 결과가
+   * {@code "sdk"}/{@code ""} 로 나오는 것이 <b>채움이 실제로 실행됐다는 증거</b>가 된다.
+   */
+  @Test
+  void 테넌트가_API_키만_재정의하면_실행_형태는_sdk로_채워진다() {
+    String originalAgentType = rawSystemSettingValue(dsl, "ai.agent_type");
+    String originalOauth = rawSystemSettingValue(dsl, "ai.cli_oauth_token");
+    try {
+      settingsService.updatePlatformSettings(
+          java.util.Map.of(
+              "ai.agent_type", "cli",
+              "ai.cli_oauth_token", "platform-oauth-should-not-leak"),
+          null);
+      assertThat(rawSystemSettingValue(dsl, "ai.agent_type"))
+          .as("채움 값(sdk)과 달라야 아래 결과가 채움의 증거가 된다")
+          .isEqualTo("cli");
+
+      testTenant = createActiveTenant(dsl, "sr-ai-bundle-apikey-only");
+      TenantContext.set(testTenant);
+      settingsService.updateSettings(java.util.Map.of("ai.api_key", "tenant-own-api-key"), null);
+
+      var resolved = settingsService.getAsMap("ai");
+      assertThat(resolved.get("ai.api_key"))
+          .as("테넌트가 방금 저장한 자격증명 행이 번들 채움에 덮이면 안 된다")
+          .isNotBlank();
+      assertThat(resolved)
+          .as("플랫폼 agent_type(cli) 이 아니라 번들 채움값(sdk) 이어야 한다")
+          .containsEntry("ai.agent_type", "sdk");
+      assertThat(resolved)
+          .as("플랫폼 OAuth 토큰이 테넌트가 고른 자격증명에 섞이면 안 된다")
+          .containsEntry("ai.cli_oauth_token", "");
+    } finally {
+      restoreSystemSettingValue(dsl, "ai.agent_type", originalAgentType);
+      restoreSystemSettingValue(dsl, "ai.cli_oauth_token", originalOauth);
+    }
+  }
+
+  /**
+   * 번들이 <b>과잉 발동하지 않는다</b>: AI 자격증명 3키를 하나도 재정의하지 않은 테넌트는 세 키
+   * 모두 플랫폼 값을 <b>그대로</b> 상속한다 — {@code ai.model} 같은 관련 없는 {@code ai.*} 키만
+   * 바꾼 흔한 테넌트를 흉내낸다.
+   *
+   * <p>이 단언이 없으면 "AI 프리픽스에 오버라이드 행이 하나라도 있으면 3키를 비운다"는 잘못된
+   * 구현도 앞의 두 테스트를 통과한다 — 그리고 그 구현은 {@code ai.model} 만 바꾼 미설정 테넌트의
+   * 실행 형태를 조용히 {@code "sdk"} 로 고정해 버린다({@code AiCredentialBundleTest.세키_모두_없으면_맵은_전혀_변하지_않는다}
+   * 의 end-to-end 대응).
+   *
+   * <p><b>플랫폼 3키를 먼저 번들 채움 값과 다르게 심는다.</b> 테스트 DB 시드({@code "", "", "sdk"})가
+   * 번들 채움 값과 우연히 같아서, 시드를 그대로 두면 번들이 과잉 발동해도(3키를 채움 값으로
+   * 덮어써도) {@code platformOnly} 스냅샷과 결과가 똑같아 보여 이 테스트가 무의미하게 통과한다.
+   * 채움 값과 다른 값을 심어야 "결과가 스냅샷과 같다"는 것이 <b>번들이 안 돌았다는 증거</b>가
+   * 된다.
+   */
+  @Test
+  void AI_자격증명_3키를_아무것도_재정의하지_않으면_전부_플랫폼_값을_그대로_상속한다() {
+    String originalApiKey = rawSystemSettingValue(dsl, "ai.api_key");
+    String originalOauth = rawSystemSettingValue(dsl, "ai.cli_oauth_token");
+    String originalAgentType = rawSystemSettingValue(dsl, "ai.agent_type");
+    try {
+      settingsService.updatePlatformSettings(
+          java.util.Map.of(
+              "ai.api_key", "platform-real-api-key",
+              "ai.cli_oauth_token", "platform-real-oauth-token",
+              "ai.agent_type", "cli"),
+          null);
+
+      TenantContext.clear();
+      var platformOnly = settingsService.getAsMap("ai");
+      assertThat(platformOnly.get("ai.agent_type"))
+          .as("채움 값(sdk)과 달라야 아래 비교가 과잉 발동의 증거가 된다")
+          .isEqualTo("cli");
+
+      testTenant = createActiveTenant(dsl, "sr-ai-bundle-none");
+      runInTenantTransaction(
+          transactionTemplate,
+          testTenant,
+          () -> tenantSettingsRepository.upsert("ai.model", "tenant-model", null));
+
+      TenantContext.set(testTenant);
+      var resolved = settingsService.getAsMap("ai");
+
+      assertThat(resolved.get("ai.api_key")).isEqualTo(platformOnly.get("ai.api_key"));
+      assertThat(resolved.get("ai.cli_oauth_token")).isEqualTo(platformOnly.get("ai.cli_oauth_token"));
+      assertThat(resolved.get("ai.agent_type")).isEqualTo(platformOnly.get("ai.agent_type"));
+    } finally {
+      restoreSystemSettingValue(dsl, "ai.api_key", originalApiKey);
+      restoreSystemSettingValue(dsl, "ai.cli_oauth_token", originalOauth);
+      restoreSystemSettingValue(dsl, "ai.agent_type", originalAgentType);
+    }
+  }
+
+  /**
+   * {@code getAiCredentials()} 가 번들 해석을 따르는지 확인한다 — 테넌트가 실행 형태만 바꾼 상태에서
+   * 플랫폼 API 키가 섞여 나오지 않아야 한다.
+   *
+   * <p>Task 1 이 {@code applyAiCredentialBundle} 규칙을 세울 때는 {@code ai.agent_type} 이 아직
+   * {@link com.smartfirehub.settings.service.SettingsOverridePolicy#tenantOverridableKeys()} 에
+   * 없어 {@code resolveOverridesByPrefix} 의 {@code removeIf} 가 이 오버라이드 행을 걷어냈다 — 그때는
+   * 규칙(막기 + 접근자)만 세우고 화이트리스트 개방은 뒤로 미뤘다(순서가 안전 속성이라는 계획서의
+   * 근거). 화이트리스트를 여는 이 태스크가 그 removeIf 를 통과시켜 이 테스트를 비로소 활성화한다.
+   *
+   * <p><b>플랫폼 {@code ai.api_key}/{@code ai.cli_oauth_token} 을 먼저 진짜로 심는다.</b> 테스트
+   * DB 시드가 이미 {@code ""} 라(위 통합 테스트들과 같은 함정), 시드를 그대로 두면
+   * {@code decryptOrEmpty} 가 무엇을 받든 결과가 {@code isEmpty()} 로 나와 번들이 통째로 빠져도
+   * 이 두 단언은 통과한다 — {@code creds.agentType() == "opencode"} 만 번들이 실제로 도는지를
+   * 증명한다. 값을 먼저 심어야 {@code isEmpty()} 가 "플랫폼 키가 안 샜다"는 증거가 된다.
+   */
+  @Test
+  void getAiCredentials_는_번들_해석을_따른다() {
+    String originalApiKey = rawSystemSettingValue(dsl, "ai.api_key");
+    String originalOauth = rawSystemSettingValue(dsl, "ai.cli_oauth_token");
+    try {
+      settingsService.updatePlatformSettings(
+          java.util.Map.of(
+              "ai.api_key", "platform-shared-api-key",
+              "ai.cli_oauth_token", "platform-shared-oauth-token"),
+          null);
+      assertThat(rawSystemSettingValue(dsl, "ai.api_key")).isNotBlank();
+
+      testTenant = createActiveTenant(dsl, "sr-ai-bundle");
+      runInTenantTransaction(
+          transactionTemplate,
+          testTenant,
+          () -> tenantSettingsRepository.upsert("ai.agent_type", "opencode", null));
+
+      // 검증 대상은 감싸지 않고 그대로 부른다 — getAiCredentials 자신의 @Transactional 이 이 시점의
+      // TenantContext 로 GUC 를 받는다(다른 검증 대상들과 같은 규칙, 클래스 javadoc 참고).
+      TenantContext.set(testTenant);
+      AiCredentials creds = settingsService.getAiCredentials();
+
+      assertThat(creds.agentType()).isEqualTo("opencode");
+      assertThat(creds.apiKey()).as("플랫폼 키가 새면 안 된다").isEmpty();
+      assertThat(creds.cliOauthToken()).as("플랫폼 OAuth 토큰이 새면 안 된다").isEmpty();
+    } finally {
+      restoreSystemSettingValue(dsl, "ai.api_key", originalApiKey);
+      restoreSystemSettingValue(dsl, "ai.cli_oauth_token", originalOauth);
+    }
   }
 
   /** {@code prefix=smtp} 를 채워 넣는 얇은 위임 — 본체는 {@code SettingsTestSupport} 다. */

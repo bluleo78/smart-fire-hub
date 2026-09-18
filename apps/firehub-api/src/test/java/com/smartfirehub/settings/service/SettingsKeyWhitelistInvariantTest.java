@@ -61,4 +61,17 @@ class SettingsKeyWhitelistInvariantTest {
         .as("연결 키가 플랫폼으로 회수되면 번들 채움이 그 키를 되살려 그룹 전체가 조용히 잠긴다")
         .containsAll(SettingsService.SMTP_CONNECTION_KEYS);
   }
+
+  /**
+   * AI 자격증명 번들 3키는 전부 테넌트 오버라이드 허용 키여야 한다. 근거는 바로 위
+   * {@code 연결_번들_5키는_...} 와 같다 — 하나라도 플랫폼으로 회수되면 채움이 그 키를 되살려
+   * {@code overridden=true} + {@code tenantEditable=false} 라는 모순 조합이 나오고, web 이
+   * fail-closed 로 읽어 그룹 전체를 조용히 잠근다.
+   */
+  @Test
+  void AI_자격증명_번들_3키는_전부_테넌트_오버라이드_허용키다() {
+    assertThat(SettingsOverridePolicy.tenantOverridableKeys())
+        .as("번들 키가 플랫폼으로 회수되면 채움이 그 키를 되살려 그룹 전체가 조용히 잠긴다")
+        .containsAll(SettingsService.AI_CREDENTIAL_KEYS);
+  }
 }

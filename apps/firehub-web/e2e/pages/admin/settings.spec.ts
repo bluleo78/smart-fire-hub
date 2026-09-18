@@ -32,11 +32,27 @@ import { expect, test } from '../../fixtures/auth.fixture';
 const fieldBox = (page: Page, inputId: string) =>
   page.locator('div.space-y-2', { has: page.locator(`#${inputId}`) });
 
+/**
+ * AI 자격증명 번들 3키를 감싸는 `fieldset`. 배지·그룹 해제 버튼이 그룹 머리에 <b>하나씩만</b>
+ * 있다는 사실을 단언하려면 스코프가 필요하다 — 페이지 전역으로 세면 다른 필드의 같은 배지까지
+ * 섞인다(SMTP `connectionGroup` 과 같은 관용구).
+ */
+const aiCredentialGroup = (page: Page) =>
+  page.locator('fieldset', { has: page.locator('#ai-agent-type') });
+
 /** 시스템 프롬프트는 배지·재정의 해제 버튼이 카드 제목 줄에 있어 카드 단위로 스코프를 잡는다. */
 const systemPromptCard = (page: Page) =>
   page.locator('div.card-hover', { has: page.locator('#ai-system-prompt') });
 
 const LOCKED_NOTE = '플랫폼 운영자만 변경할 수 있는 항목입니다.';
+
+/**
+ * 비밀 입력 힌트의 <b>할 일</b> 절. 이 절만 따로 잡는 이유: 사실 절("현재 값이 설정되어 있습니다")은
+ * 잠금 여부와 무관하게 참이라 잠긴 화면에도 남아야 하고, 거짓이 되는 것은 이 절 하나뿐이다.
+ * 둘을 합친 문자열로 단언하면 "사실 절까지 사라졌다"는 회귀와 구별하지 못한다.
+ */
+const SECRET_ACTION_HINT = '바꾸려면 새 값을 입력하세요';
+const SECRET_FACT_HINT = '현재 값이 설정되어 있습니다.';
 
 test.describe('설정 페이지', () => {
   test.beforeEach(async ({ authenticatedPage: page }) => {
@@ -149,24 +165,47 @@ test.describe('설정 페이지', () => {
       await expect(fieldBox(page, 'ai-temperature').getByText('기본값 사용 중')).toBeVisible();
     });
 
-    test('플랫폼 전용 키는 Lock 배지 + 비활성 입력 + 고정 안내문 네 겹으로 표시된다', async ({
+    test('플랫폼 전용 자격증명 3키는 그룹 Lock 배지 + 필드별 비활성·안내문으로 표시된다', async ({
       authenticatedPage: page,
     }) => {
       await setupSettingsMocks(page);
       await page.goto('/admin/settings');
 
-      // tenantEditable: false 로 내려오는 3키 — 색이 아니라 아이콘+텍스트+비활성+안내문으로 전달
+      // 자격증명 3키는 **번들**이라 배지가 그룹 머리에 하나뿐이다(SMTP 연결 그룹과 같은 규칙).
+      // 예전 이 테스트는 필드마다 배지를 찾았는데, 세 필드가 전부 같은 배지를 달면 "각각
+      // 독립적으로 잠겼다"로 읽혀 원자 해석을 오해하게 만든다 — 그래서 필드 배지를 뗐다.
+      // 색 단독 전달 금지는 그대로 지킨다: 배지 안 Lock 아이콘 + 필드별 안내문 + 비활성 입력.
+      const group = aiCredentialGroup(page);
+      const badge = group.getByLabel('플랫폼 전용: 이 테넌트에서 편집할 수 없음');
+      await expect(badge).toBeVisible();
+      await expect(badge.locator('svg')).toBeVisible();
+      // 그룹 안에 배지는 정확히 하나다 — 필드 배지가 되살아나면 여기서 잡힌다.
+      await expect(group.getByLabel('플랫폼 전용: 이 테넌트에서 편집할 수 없음')).toHaveCount(1);
+      // 잠긴 그룹에는 해제할 테넌트 재정의가 존재할 수 없다(그룹 버튼도 필드 버튼도).
+      await expect(group.getByRole('button', { name: /재정의 해제/ })).toHaveCount(0);
+
       for (const inputId of ['ai-agent-type', 'ai-api-key', 'ai-cli-oauth-token']) {
         const box = fieldBox(page, inputId);
-        const badge = box.getByLabel('플랫폼 전용: 이 테넌트에서 편집할 수 없음');
-        await expect(badge).toBeVisible();
-        // 색 단독 전달 금지 — 배지 안에 Lock 아이콘이 함께 있어야 한다
-        await expect(badge.locator('svg')).toBeVisible();
         await expect(box.getByText(LOCKED_NOTE)).toBeVisible();
         await expect(page.locator(`#${inputId}`)).toBeDisabled();
-        // 잠긴 필드에는 해제할 테넌트 재정의가 존재할 수 없다
-        await expect(box.getByRole('button', { name: '재정의 해제' })).toHaveCount(0);
       }
+
+      // 비밀 2키는 마스크를 시드하지 않아 잠겨 있어도 빈 칸으로 보인다. 그래서 상태는 힌트가
+      // 말하는데, <b>할 일 절은 잠긴 입력에서 거짓</b>이 된다 — "새 값을 입력하세요" 바로 아래에
+      // "플랫폼 운영자만 변경할 수 있는 항목입니다"가 붙어 두 문장이 정면으로 충돌하고, 사용자는
+      // disabled 입력에 대고 시키는 대로 하려 든다(거짓 어포던스).
+      await expect(
+        aiCredentialGroup(page).getByText(SECRET_ACTION_HINT, { exact: false }),
+      ).toHaveCount(0);
+
+      // 그렇다고 힌트가 통째로 사라지면 안 된다 — "값이 있는 잠긴 키"와 "값이 없는 잠긴 키"가
+      // 똑같이 빈 칸으로 보여, 플랫폼이 아직 자격증명을 넣지 않았다는 사실이 화면에서 없어진다.
+      // 기본 픽스처가 정확히 그 두 경우를 한 화면에 담는다(api_key='****masked****',
+      // cli_oauth_token='').
+      await expect(fieldBox(page, 'ai-api-key').getByText(SECRET_FACT_HINT)).toBeVisible();
+      await expect(
+        fieldBox(page, 'ai-cli-oauth-token').getByText('설정된 값이 없습니다.'),
+      ).toBeVisible();
     });
 
     test('화이트리스트 키라도 서버가 tenantEditable=false 로 내리면 잠금으로 렌더된다', async ({
