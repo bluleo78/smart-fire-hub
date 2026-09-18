@@ -43,12 +43,27 @@ export function useAIChat(options?: {
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [contextTokens, setContextTokens] = useState<number | null>(null);
   const [isCompacting, setIsCompacting] = useState(false);
+  // 압축 시작 시각 — 대화 영역 진행 표시의 경과 시간 계산용. 미압축 시 null.
+  const [compactionStartedAt, setCompactionStartedAt] = useState<number | null>(null);
+  // SSE 콜백은 클로저라 state 를 읽으면 stale 이므로, 완료 시점 경과 계산은 ref 로 한다.
+  const compactionStartedAtRef = useRef<number | null>(null);
   const [isThinking, setIsThinking] = useState(false);
   const abortControllerRef = useRef<AbortController | null>(null);
   const messagesCommittedRef = useRef(false);
   const streamingContentRef = useRef<Partial<AIMessage> | null>(null);
   // 스트리밍 중단 시 메시지 유실 방지용 — messages[]에 커밋되기 전 userMessage 보관
   const pendingUserMessageObjRef = useRef<AIMessage | null>(null);
+
+  /**
+   * 압축 진행 표시 해제.
+   * 스트림이 어떤 경로로 끝나든(완료·오류·중단·스트림 조기 종료·새 턴 시작) 표시가 남으면
+   * 대화 영역에 "요약하는 중"이 영원히 돌게 되므로 모든 종료 지점에서 호출한다.
+   */
+  const clearCompaction = useCallback(() => {
+    setIsCompacting(false);
+    compactionStartedAtRef.current = null;
+    setCompactionStartedAt(null);
+  }, []);
 
   const [isUploading, setIsUploading] = useState(false);
 
@@ -130,6 +145,8 @@ export function useAIChat(options?: {
     setPendingUserMessage(content);
     setIsStreaming(true);
     setIsThinking(true);
+    // 이전 턴이 비정상 종료해 압축 표시가 남았더라도 새 턴에서 스스로 회복한다
+    clearCompaction();
     streamingContentRef.current = {
       id: assistantId,
       role: 'assistant',
@@ -199,6 +216,7 @@ export function useAIChat(options?: {
       pendingUserMessageObjRef.current = null;
       setIsStreaming(false);
       setIsThinking(false);
+      clearCompaction();
       streamingContentRef.current = null;
     };
 
@@ -305,16 +323,28 @@ export function useAIChat(options?: {
           case 'compaction':
             if (event.status === 'started') {
               setIsCompacting(true);
+              compactionStartedAtRef.current = Date.now();
+              setCompactionStartedAt(compactionStartedAtRef.current);
             } else if (event.status === 'completed') {
-              setIsCompacting(false);
               // After compaction, token count resets significantly
               if (typeof event.preTokens === 'number') {
                 setContextTokens(null); // Will be updated on next done event
               }
+              // 완료 메시지에 "무엇을 얼마나 오래" 요약했는지 남긴다 —
+              // 진행 표시가 사라진 뒤에도 95초의 공백이 무엇이었는지 사후에 알 수 있어야 한다.
+              const startedAt = compactionStartedAtRef.current;
+              const elapsedSec = startedAt != null ? Math.floor((Date.now() - startedAt) / 1000) : null;
+              const detail = [
+                typeof event.preTokens === 'number' ? `${event.preTokens.toLocaleString()} 토큰` : null,
+                elapsedSec !== null ? `${elapsedSec}초 소요` : null,
+              ].filter(Boolean).join(', ');
+              clearCompaction();
               setMessages(prev => [...prev, {
                 id: `system-compaction-${Date.now()}`,
                 role: 'system' as const,
-                content: '컨텍스트가 길어져 자동으로 요약되었습니다.',
+                content: detail
+                  ? `컨텍스트가 길어져 자동으로 요약되었습니다. (${detail})`
+                  : '컨텍스트가 길어져 자동으로 요약되었습니다.',
                 timestamp: new Date().toISOString(),
               }]);
             }
@@ -323,7 +353,7 @@ export function useAIChat(options?: {
             if (typeof event.inputTokens === 'number') {
               setContextTokens(event.inputTokens);
             }
-            setIsCompacting(false);
+            clearCompaction();
             commitMessages();
             break;
           case 'error': {
@@ -346,6 +376,8 @@ export function useAIChat(options?: {
             }
             setIsStreaming(false);
             setIsThinking(false);
+            // 압축 도중 오류로 끊기면 진행 표시가 영구히 남으므로 함께 해제
+            clearCompaction();
             setStreamingMessage(null);
             setPendingUserMessage(null);
             streamingContentRef.current = null;
@@ -357,6 +389,7 @@ export function useAIChat(options?: {
         console.error('AI stream error:', error);
         setIsStreaming(false);
         setIsThinking(false);
+        clearCompaction();
         setStreamingMessage(null);
         setPendingUserMessage(null);
         streamingContentRef.current = null;
@@ -368,7 +401,7 @@ export function useAIChat(options?: {
       navContext,
       screen,
     );
-  }, [currentSessionId, queryClient, createTrackedBlobUrl]);
+  }, [currentSessionId, queryClient, createTrackedBlobUrl, clearCompaction]);
 
   const stopStreaming = useCallback(() => {
     if (abortControllerRef.current) {
@@ -379,6 +412,8 @@ export function useAIChat(options?: {
     messagesCommittedRef.current = true;
     setIsStreaming(false);
     setIsThinking(false);
+    // 사용자가 중단하면 압축 진행 표시도 즉시 걷는다
+    clearCompaction();
 
     // pendingUserMessage가 아직 messages[]에 커밋되지 않은 상태라면 보존
     const pendingMsg = pendingUserMessageObjRef.current;
@@ -404,7 +439,7 @@ export function useAIChat(options?: {
 
     setStreamingMessage(null);
     setPendingUserMessage(null);
-  }, []);
+  }, [clearCompaction]);
 
   const startNewSession = useCallback(() => {
     // 스트리밍 중 새 세션 시작 시 기존 SSE 스트림을 취소하여 상태 오염 방지
@@ -420,8 +455,8 @@ export function useAIChat(options?: {
     setIsStreaming(false);
     setIsThinking(false);
     setContextTokens(null);
-    setIsCompacting(false);
-  }, []);
+    clearCompaction();
+  }, [clearCompaction]);
 
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
 
@@ -440,7 +475,7 @@ export function useAIChat(options?: {
     setIsStreaming(false);
     setIsThinking(false);
     setContextTokens(null);
-    setIsCompacting(false);
+    clearCompaction();
     try {
       const response = await aiApi.getSessionMessages(sessionId);
       // 히스토리의 이미지 첨부에 인증된 blob URL 생성 (img 태그는 JWT 헤더를 보낼 수 없으므로)
@@ -469,7 +504,7 @@ export function useAIChat(options?: {
     } finally {
       setIsLoadingHistory(false);
     }
-  }, [createTrackedBlobUrl]);
+  }, [createTrackedBlobUrl, clearCompaction]);
 
   return {
     messages,
@@ -478,6 +513,7 @@ export function useAIChat(options?: {
     isUploading,
     isLoadingHistory,
     isCompacting,
+    compactionStartedAt,
     streamingMessage,
     pendingUserMessage,
     currentSessionId,

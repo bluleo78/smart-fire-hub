@@ -47,6 +47,7 @@ export function AIChatPanel({ showModeSwitch = true, showSessionSwitcher = true,
     loadSession,
     contextTokens,
     isCompacting,
+    compactionStartedAt,
   } = useAI();
 
   const hasMessages = messages.length > 0 || pendingUserMessage || streamingMessage;
@@ -129,6 +130,8 @@ export function AIChatPanel({ showModeSwitch = true, showSessionSwitcher = true,
             streamingMessage={streamingMessage}
             isStreaming={isStreaming}
             isThinking={isThinking}
+            isCompacting={isCompacting}
+            compactionStartedAt={compactionStartedAt}
           />
         )}
       </div>

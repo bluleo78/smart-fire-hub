@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { AIMessage } from '../../types/ai';
+import { CompactionIndicator } from './CompactionIndicator';
 import { MessageBubble } from './MessageBubble';
 import { ThinkingIndicator } from './ThinkingIndicator';
 
@@ -10,12 +11,16 @@ interface MessageListProps {
   streamingMessage?: Partial<AIMessage> | null;
   isStreaming?: boolean;
   isThinking?: boolean;
+  /** 컨텍스트 자동 압축 진행 여부 (#692) */
+  isCompacting?: boolean;
+  /** 압축 시작 시각(ms) — 경과 시간 표시용 */
+  compactionStartedAt?: number | null;
 }
 
 /** 스크롤 컨테이너 하단 기준 허용 오차 (px) — 이 범위 이내면 "맨 아래"로 판단 */
 const BOTTOM_THRESHOLD = 50;
 
-export function MessageList({ messages, pendingUserMessage, streamingMessage, isStreaming, isThinking }: MessageListProps) {
+export function MessageList({ messages, pendingUserMessage, streamingMessage, isStreaming, isThinking, isCompacting, compactionStartedAt }: MessageListProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
@@ -54,9 +59,11 @@ export function MessageList({ messages, pendingUserMessage, streamingMessage, is
   useEffect(() => {
     if (!isAtBottom) return;
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [streamingMessage, isStreaming, isThinking, isAtBottom]);
+  }, [streamingMessage, isStreaming, isThinking, isCompacting, isAtBottom]);
 
-  const showThinking = isStreaming && isThinking;
+  // 압축 중에는 "생각하는 중" 대신 압축 진행 표시만 보여준다 — 두 표시가 겹치면
+  // 무엇을 기다리는지 오히려 흐려진다.
+  const showThinking = isStreaming && isThinking && !isCompacting;
 
   /**
    * 렌더할 스트리밍 버블 (없으면 null).
@@ -76,6 +83,7 @@ export function MessageList({ messages, pendingUserMessage, streamingMessage, is
           <MessageBubble message={{ role: 'user', content: pendingUserMessage, timestamp: new Date().toISOString() }} />
         )}
         {streamingBubble && <MessageBubble key="streaming" message={streamingBubble} isStreaming={isStreaming} />}
+        {isCompacting && <CompactionIndicator startedAt={compactionStartedAt} />}
         {showThinking && <ThinkingIndicator />}
         <div ref={bottomRef} />
       </div>
