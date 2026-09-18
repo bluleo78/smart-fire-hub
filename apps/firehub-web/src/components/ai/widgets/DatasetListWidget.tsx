@@ -1,3 +1,5 @@
+import { parseUtcDate } from '@/lib/formatters';
+
 import type { WidgetProps } from './types';
 import { WidgetShell } from './WidgetShell';
 
@@ -29,7 +31,7 @@ function originLabel(originType?: string): string {
 
 function formatDate(dateStr: string | undefined): string {
   if (!dateStr) return '-';
-  return new Date(dateStr).toLocaleDateString('ko-KR', {
+  return parseUtcDate(dateStr).toLocaleDateString('ko-KR', {
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',

@@ -4,6 +4,7 @@ import { useNavigate,useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { Breadcrumb } from '@/components/layout/Breadcrumb';
+import { DurationText } from '@/components/pipeline/DurationText';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -29,7 +30,7 @@ import { Tabs, TabsContent,TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useDatasets } from '@/hooks/queries/useDatasets';
 import { useExecutePipeline, useExecution, useExecutions,usePipeline } from '@/hooks/queries/usePipelines';
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
-import { formatDate, getStatusBadgeVariant, getStatusLabel, parseUtcDate } from '@/lib/formatters';
+import { formatDate, getStatusBadgeVariant, getStatusLabel } from '@/lib/formatters';
 import type { PipelineExecutionResponse } from '@/types/pipeline';
 
 import { EditorHeader } from './components/EditorHeader';
@@ -38,20 +39,6 @@ import { PipelineCanvas } from './components/PipelineCanvas';
 import StepConfigPanel from './components/StepConfigPanel';
 import TriggerTab from './components/TriggerTab';
 import { usePipelineEditor } from './hooks/usePipelineEditor';
-
-function formatDuration(startedAt: string | null, completedAt: string | null): string {
-  if (!startedAt) return '-';
-  // 서버가 타임존 없는 UTC 문자열을 내려주므로 반드시 parseUtcDate를 거쳐야 한다.
-  // new Date()로 직접 파싱하면 KST 브라우저에서 9시간 오차가 발생한다 (#349, #533).
-  const start = parseUtcDate(startedAt).getTime();
-  const end = completedAt ? parseUtcDate(completedAt).getTime() : Date.now();
-  const totalSeconds = Math.floor((end - start) / 1000);
-  if (totalSeconds < 0) return '-';
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  if (minutes > 0) return `${minutes}m ${seconds}s`;
-  return `${seconds}s`;
-}
 
 export default function PipelineEditorPage() {
   const { id, execId } = useParams<{ id: string; execId: string }>();
@@ -402,7 +389,11 @@ export default function PipelineEditorPage() {
                       <TableCell className="text-sm">{exec.executedBy}</TableCell>
                       <TableCell className="text-sm">{formatDate(exec.startedAt)}</TableCell>
                       <TableCell className="text-sm">
-                        {formatDuration(exec.startedAt, exec.completedAt)}
+                        <DurationText
+                          startedAt={exec.startedAt}
+                          completedAt={exec.completedAt}
+                          running={exec.status === 'RUNNING'}
+                        />
                       </TableCell>
                     </TableRow>
                   ))}

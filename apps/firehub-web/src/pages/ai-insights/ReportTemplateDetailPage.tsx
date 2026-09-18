@@ -41,6 +41,7 @@ import {
 } from '@/hooks/queries/useProactiveMessages';
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import { handleApiError } from '@/lib/api-error';
+import { parseUtcDate } from '@/lib/formatters';
 import { parseTemplateSections, validateSectionKeys } from '@/lib/template-section-types';
 import { type ReportTemplateFormValues, reportTemplateSchema } from '@/lib/validations/report-template';
 
@@ -457,8 +458,8 @@ export default function ReportTemplateDetailPage() {
                 {template.description}
               </span>
             )}
-            <span className="shrink-0">생성: {new Date(template.createdAt).toLocaleDateString('ko-KR')}</span>
-            <span className="shrink-0">수정: {new Date(template.updatedAt).toLocaleDateString('ko-KR')}</span>
+            <span className="shrink-0">생성: {parseUtcDate(template.createdAt).toLocaleDateString('ko-KR')}</span>
+            <span className="shrink-0">수정: {parseUtcDate(template.updatedAt).toLocaleDateString('ko-KR')}</span>
           </div>
           {template.style && (
             <div className="text-sm text-muted-foreground">

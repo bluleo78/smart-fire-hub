@@ -1,4 +1,5 @@
 import { StatusBadge as UnifiedStatusBadge } from '@/components/ui/status-badge';
+import { parseUtcDate } from '@/lib/formatters';
 
 /**
  * API 연결 상태 배지 (도메인 wrapper)
@@ -16,7 +17,7 @@ export function StatusBadge({
   checkedAt: string | null;
 }) {
   const title = checkedAt
-    ? `${new Date(checkedAt).toLocaleString('ko-KR')} 확인`
+    ? `${parseUtcDate(checkedAt).toLocaleString('ko-KR')} 확인`
     : undefined;
 
   if (!status) {

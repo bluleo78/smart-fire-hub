@@ -1,5 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
 
+import { DurationText } from '@/components/pipeline/DurationText';
+import { formatRelativeTime } from '@/lib/formatters';
+
 import { pipelinesApi } from '../../../api/pipelines';
 import type { WidgetProps } from './types';
 import { WidgetLoading } from './WidgetLoading';
@@ -28,22 +31,6 @@ const STATUS_CLASS: Record<ExecutionStatus, string> = {
   CANCELLED: 'bg-muted text-muted-foreground',
 };
 
-
-function formatRelativeTime(dateStr: string | null | undefined): string {
-  if (!dateStr) return '';
-  const diff = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
-  if (diff < 60) return `${diff}초 전`;
-  if (diff < 3600) return `${Math.floor(diff / 60)}분 전`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}시간 전`;
-  return `${Math.floor(diff / 86400)}일 전`;
-}
-
-function formatDuration(startedAt: string | null, completedAt: string | null): string {
-  if (!startedAt) return '';
-  const end = completedAt ? new Date(completedAt).getTime() : Date.now();
-  const ms = end - new Date(startedAt).getTime();
-  return `${(ms / 1000).toFixed(1)}s`;
-}
 
 export default function PipelineStatusWidget({ input, onNavigate, displayMode }: WidgetProps<ShowPipelineInput>) {
   const pipelineId = Number(input.pipelineId);
@@ -123,7 +110,14 @@ export default function PipelineStatusWidget({ input, onNavigate, displayMode }:
         <div className="border-t border-border px-3 py-1.5 text-xs text-muted-foreground">
           마지막 실행: {formatRelativeTime(latestExecution.createdAt)}
           {latestExecution.startedAt && (
-            <span> · 총 {formatDuration(latestExecution.startedAt, latestExecution.completedAt)}</span>
+            <span>
+              {' · 총 '}
+              <DurationText
+                startedAt={latestExecution.startedAt}
+                completedAt={latestExecution.completedAt}
+                running={latestExecution.status === 'RUNNING'}
+              />
+            </span>
           )}
         </div>
       )}

@@ -29,25 +29,12 @@ import { TableSkeletonRows } from '../../components/ui/table-skeleton';
 import { useCategories, useDatasets, useDeleteDataset, useToggleFavorite } from '../../hooks/queries/useDatasets';
 import { useRecentDatasets } from '../../hooks/useRecentDatasets';
 import { handleApiError } from '../../lib/api-error';
-import { formatDateOnly, formatDateTimeMinute, getOriginTypeLabel, getStorageTypeLabel } from '../../lib/formatters';
+import { formatDateOnly, formatDateTimeMinute, formatRelativeTime, getOriginTypeLabel, getStorageTypeLabel } from '../../lib/formatters';
 import { getPageAfterDelete } from '../../lib/pagination';
 import { iGa } from '../../lib/utils';
 import { DatasetPreviewSheet } from './components/DatasetPreviewSheet';
 import { DatasetTypeModal, type DatasetTypeSelection } from './components/DatasetTypeModal';
 import { ExportDialog } from './components/ExportDialog';
-
-function getRelativeTime(dateStr: string): string {
-  const diff = Date.now() - new Date(dateStr).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return '방금 전';
-  if (mins < 60) return `${mins}분 전`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}시간 전`;
-  const days = Math.floor(hours / 24);
-  if (days < 30) return `${days}일 전`;
-  const months = Math.floor(days / 30);
-  return `${months}개월 전`;
-}
 
 type SortKey = 'name' | 'createdAt';
 
@@ -253,7 +240,7 @@ export default function DatasetListPage() {
                   {recent.tableName}
                 </p>
                 <p className="text-xs text-muted-foreground mt-1">
-                  {getRelativeTime(recent.accessedAt)}
+                  {formatRelativeTime(recent.accessedAt)}
                 </p>
               </div>
             ))}

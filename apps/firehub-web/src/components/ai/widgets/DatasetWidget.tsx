@@ -2,6 +2,8 @@ import { useQuery } from '@tanstack/react-query';
 import { ChevronDown, ChevronsUpDown,ChevronUp, Loader2 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
+import { parseUtcDate } from '@/lib/formatters';
+
 import { datasetsApi } from '../../../api/datasets';
 import { downloadBlob, downloadCsv } from '../../../lib/download';
 import { ActiveFilterChips } from './table/ActiveFilterChips';
@@ -28,7 +30,7 @@ const PAGE_SIZE = 20;
 
 function formatDate(dateStr: string | null | undefined): string {
   if (!dateStr) return '-';
-  return new Date(dateStr).toLocaleDateString('ko-KR', {
+  return parseUtcDate(dateStr).toLocaleDateString('ko-KR', {
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',

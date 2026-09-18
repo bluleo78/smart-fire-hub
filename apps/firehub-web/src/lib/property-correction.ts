@@ -14,6 +14,7 @@ const DATE_PATTERN = /^(\d{4})\s*[-.년]\s*(\d{1,2})\s*[-.월]\s*(\d{1,2})\s*일
 /** YYYY-MM-DD 구성요소가 달력상 실재하는지 확인한다(2026-02-31처럼 다음 달로 굴러가는 값 배제). */
 function isRealDate(y: number, m: number, d: number): boolean {
   if (m < 1 || m > 12 || d < 1) return false;
+  // eslint-disable-next-line no-restricted-syntax -- 문자열 파싱이 아니라 Date.UTC 로 조립한 값이다
   const dt = new Date(Date.UTC(y, m - 1, d));
   return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;
 }

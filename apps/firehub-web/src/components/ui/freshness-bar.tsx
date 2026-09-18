@@ -1,4 +1,5 @@
 import { cn } from '../../lib/utils';
+import { parseUtcDate } from '@/lib/formatters';
 
 interface FreshnessBarProps {
   lastUpdated: string | null;
@@ -8,7 +9,7 @@ interface FreshnessBarProps {
 function getFreshness(lastUpdated: string | null): { percent: number; level: 'fresh' | 'stale' | 'old' } {
   if (!lastUpdated) return { percent: 0, level: 'old' };
 
-  const days = (Date.now() - new Date(lastUpdated).getTime()) / (1000 * 60 * 60 * 24);
+  const days = (Date.now() - parseUtcDate(lastUpdated).getTime()) / (1000 * 60 * 60 * 24);
 
   if (days <= 7) return { percent: Math.max(100 - (days / 7) * 30, 70), level: 'fresh' };
   if (days <= 14) return { percent: Math.max(60 - ((days - 7) / 7) * 30, 30), level: 'stale' };

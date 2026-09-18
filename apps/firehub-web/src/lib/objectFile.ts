@@ -1,6 +1,7 @@
 import { toast } from 'sonner';
 
 import { objectsApi } from '../api/objects';
+import { parseUtcDate } from './formatters';
 
 /**
  * FILE(오브젝트) 데이터셋 공통 유틸.
@@ -18,7 +19,7 @@ export function formatObjectSize(bytes: number): string {
 /** ISO 문자열을 로컬 날짜시간으로(없거나 잘못되면 '-'). */
 export function formatObjectDate(iso: string | null): string {
   if (!iso) return '-';
-  const d = new Date(iso);
+  const d = parseUtcDate(iso);
   return Number.isNaN(d.getTime()) ? '-' : d.toLocaleString();
 }
 
