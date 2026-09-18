@@ -263,6 +263,9 @@ export function useAIChat(options?: {
           }
           case 'tool_result':
             if (streamingContentRef.current) {
+              // 이 clone이 undefined를 []로 바꾸는 유일한 지점이다.
+              // 선행 tool_use 없이 tool_result가 오면 []가 상태에 남고,
+              // 렌더 조건에서 length(0)가 그대로 화면에 찍히므로 비어 있으면 상태를 건드리지 않는다.
               const toolCalls = [...(streamingContentRef.current.toolCalls || [])];
               if (toolCalls.length > 0) {
                 const lastTool = toolCalls[toolCalls.length - 1];
@@ -290,9 +293,10 @@ export function useAIChat(options?: {
                 for (const key of keys) {
                   queryClient.invalidateQueries({ queryKey: key });
                 }
+
+                streamingContentRef.current = { ...streamingContentRef.current, toolCalls };
+                setStreamingMessage({ ...streamingContentRef.current });
               }
-              streamingContentRef.current = { ...streamingContentRef.current, toolCalls };
-              setStreamingMessage({ ...streamingContentRef.current });
             }
             break;
           case 'turn':
