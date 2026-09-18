@@ -27,6 +27,7 @@ import java.lang.reflect.Method;
 import java.math.BigDecimal;
 import java.sql.Timestamp;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -41,6 +42,7 @@ import org.jooq.SelectWhereStep;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -105,6 +107,12 @@ class AiClassifyExecutorTest {
    */
   @SuppressWarnings({"unchecked", "rawtypes"})
   private void stubCacheMiss() {
+    stubCacheLookup(null);
+  }
+
+  /** 캐시 조회 목 체인을 세우고 {@code fetchOne()} 이 돌려줄 값을 지정한다(null 이면 미스). */
+  @SuppressWarnings({"unchecked", "rawtypes"})
+  private void stubCacheLookup(Record1<JSONB> result) {
     SelectSelectStep selectStep = mock(SelectSelectStep.class);
     SelectJoinStep joinStep = mock(SelectJoinStep.class);
     SelectConditionStep condStep1 = mock(SelectConditionStep.class);
@@ -114,7 +122,7 @@ class AiClassifyExecutorTest {
     when(joinStep.where(any(org.jooq.Condition.class))).thenReturn(condStep1);
     when(condStep1.and(any(org.jooq.Condition.class))).thenReturn(condStep2);
     when(condStep2.and(any(org.jooq.Condition.class))).thenReturn(condStep2);
-    when(condStep2.fetchOne()).thenReturn(null);
+    when(condStep2.fetchOne()).thenReturn(result);
   }
 
   private PipelineStepResponse buildStep(String loadStrategy, List<Long> inputDatasetIds) {
@@ -574,6 +582,107 @@ class AiClassifyExecutorTest {
     verify(dataTableService).createTempTable("output_table");
     verify(dataTableService).dropTempTable("output_table");
     verify(dataTableService, never()).swapTable(anyString());
+  }
+
+  // -----------------------------------------------------------------------
+  // rowContentHash() — 캐시 키 (#687)
+  // -----------------------------------------------------------------------
+
+  /**
+   * 캐시 키는 <b>내용만</b> 본다 — surrogate {@code id} 가 달라도 같은 키여야 한다(#687).
+   *
+   * <p>운영에서 캐시가 한 번도 히트하지 않던 이유다. 입력이 임시 데이터셋이면 {@code id} 는 매 실행
+   * {@code TRUNCATE} 뒤 다시 채워지는 {@code BIGSERIAL} 값이라 실행마다 달라진다. 그 값이 해시에
+   * 섞여 있으면 같은 보도자료도 매번 새 키가 되고, LLM 을 처음부터 다시 태운다.
+   */
+  @Test
+  void rowContentHash_ignoresSurrogateId() {
+    Map<String, Object> run1 = new HashMap<>();
+    run1.put("id", 101L);
+    run1.put("text", "같은 내용");
+    Map<String, Object> run2 = new HashMap<>();
+    run2.put("id", 999L);
+    run2.put("text", "같은 내용");
+
+    assertThat(AiClassifyExecutor.rowContentHash(run1, "p1"))
+        .as("id 는 내용이 아니다 — 실행마다 바뀌는 값이 캐시를 무효화하면 안 된다")
+        .isEqualTo(AiClassifyExecutor.rowContentHash(run2, "p1"));
+  }
+
+  /** 내용이나 프롬프트가 다르면 키도 달라야 한다 — 위 테스트만 있으면 상수 반환도 통과한다. */
+  @Test
+  void rowContentHash_differsOnContentOrPrompt() {
+    Map<String, Object> row = new HashMap<>();
+    row.put("id", 1L);
+    row.put("text", "원본");
+    Map<String, Object> other = new HashMap<>();
+    other.put("id", 1L);
+    other.put("text", "수정됨");
+
+    assertThat(AiClassifyExecutor.rowContentHash(row, "p1"))
+        .isNotEqualTo(AiClassifyExecutor.rowContentHash(other, "p1"));
+    assertThat(AiClassifyExecutor.rowContentHash(row, "p1"))
+        .as("프롬프트가 바뀌면 이전 결과를 재사용하면 안 된다")
+        .isNotEqualTo(AiClassifyExecutor.rowContentHash(row, "p2"));
+  }
+
+  /**
+   * 맵 순회 순서가 키를 가르면 안 된다.
+   *
+   * <p>{@code HashMap} 의 순서는 보장이 없어서, 같은 내용이 다른 순서로 직렬화되면 캐시가 조용히
+   * 갈린다. 삽입 순서를 뒤집어도 같은 키가 나오는지 본다.
+   */
+  @Test
+  void rowContentHash_isStableRegardlessOfKeyOrder() {
+    Map<String, Object> forward = new LinkedHashMap<>();
+    forward.put("a", "1");
+    forward.put("b", "2");
+    Map<String, Object> reversed = new LinkedHashMap<>();
+    reversed.put("b", "2");
+    reversed.put("a", "1");
+
+    assertThat(AiClassifyExecutor.rowContentHash(forward, "p"))
+        .isEqualTo(AiClassifyExecutor.rowContentHash(reversed, "p"));
+  }
+
+  /**
+   * 캐시 히트가 <b>자기 행의</b> {@code source_id} 를 갖는지 본다(#687).
+   *
+   * <p>키에서 {@code id} 를 뺀 대가로 내용이 같은 여러 행이 한 캐시 항목을 공유하게 됐다. 저장된
+   * {@code source_id} 를 그대로 쓰면 그 행들이 전부 남의 조인 키를 물려받는다 — 캐시 키 수정이
+   * 만들어낼 수 있었던 새 결함이고, 이 단언이 그것을 막는다.
+   */
+  @Test
+  @SuppressWarnings({"unchecked", "rawtypes"})
+  void execute_withCacheHit_overridesSourceIdWithCurrentRowId() {
+    when(datasetRepository.findTableNameById(200L)).thenReturn(Optional.of("output_table"));
+    when(datasetRepository.findTableNameById(1L)).thenReturn(Optional.of("source_table"));
+    when(dataTableRowService.countRows("source_table")).thenReturn(1L);
+
+    Map<String, Object> sourceRow = new HashMap<>();
+    sourceRow.put("id", 77L);
+    sourceRow.put("text", "hello");
+    when(dataTableRowService.queryData(anyString(), any(), any(), anyInt(), anyInt()))
+        .thenReturn(List.of(sourceRow));
+
+    // 캐시에는 **다른 행**이 남긴 source_id 가 들어 있다(예전 형식으로 저장된 항목).
+    Record1<JSONB> cachedRecord = mock(Record1.class);
+    JSONB cachedJson = JSONB.valueOf("{\"category\":\"B\",\"source_id\":11}");
+    when(cachedRecord.get(any(org.jooq.Field.class))).thenReturn(cachedJson);
+
+    stubCacheLookup(cachedRecord);
+
+    PipelineStepResponse step = buildStep("APPEND", List.of(1L));
+
+    executor.execute(step, 100L, 1L);
+
+    ArgumentCaptor<List<Map<String, Object>>> rowsCaptor = ArgumentCaptor.forClass(List.class);
+    verify(dataTableRowService).insertBatch(anyString(), anyList(), rowsCaptor.capture(), anyMap());
+
+    assertThat(rowsCaptor.getValue()).hasSize(1);
+    assertThat(rowsCaptor.getValue().get(0).get("source_id"))
+        .as("캐시에 저장돼 있던 남의 source_id(11) 가 아니라 이 행의 id(77) 여야 한다")
+        .isEqualTo(77L);
   }
 
   // -----------------------------------------------------------------------

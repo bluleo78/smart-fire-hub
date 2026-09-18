@@ -20,6 +20,7 @@ import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -113,7 +114,7 @@ public class AiClassifyExecutor {
     //      **반드시 배치 루프 밖에서** 던져야 한다. 배치 루프 안(:processBatch)에서 던지면
     //      onError=CONTINUE 기본값이 예외를 삼켜 배치 실패로 격하되고, onError=RETRY_BATCH 면
     //      절대 성공할 수 없는 재시도로 14초를 잔다 — 배선 결함의 원인이 흐려진다.
-    //      (#685 이후로는 결과가 0행이면 스텝이 떨어지긴 한다. 하지만 메시지가 "결과가 0행이다"로
+    //      (#685 이후로는 전량 실패면 스텝이 떨어지긴 한다. 하지만 메시지가 "배치가 모두 실패했다"로
     //       바뀌어 배선 결함이라는 진짜 원인을 가린다 — 그래서 여전히 여기서 던진다.)
     //      임시 테이블 생성 전에 두어 정리할 것이 남지 않게 한다.
     if (TenantContext.get() == null) {
@@ -289,7 +290,7 @@ public class AiClassifyExecutor {
     List<Map<String, Object>> cacheMissRows = new ArrayList<>();
 
     // 행 해시는 순수 계산이라 트랜잭션 밖에서 미리 구한다 — 경계를 DB 접근에만 좁히기 위함.
-    List<String> rowHashes = batch.stream().map(row -> sha256(toJson(row) + promptHash)).toList();
+    List<String> rowHashes = batch.stream().map(row -> rowContentHash(row, promptHash)).toList();
 
     // ── 조회 루프 (좁은 트랜잭션 1/2) ──────────────────────────────────────
     // 외부 HTTP 호출은 이 블록 밖에 있다(R3). 트랜잭션이 필요한 이유는 GUC 주입이다(클래스 Javadoc).
@@ -297,9 +298,9 @@ public class AiClassifyExecutor {
     // null 방어를 넣게 되고, 그 방어가 "트랜잭션이 안 돌면 전부 미스"로 조용히 성립해 버린다.
     //
     // 행마다 SELECT 를 던진다(N 왕복). IN 한 번으로 접으면 결과를 row_hash 로 되짚어야 하는데,
-    // 해시는 private sha256/toJson 의 산물이라 단위 테스트가 그 계산을 복제해야만 목을 세울 수
-    // 있게 된다 — 테스트를 사설 해시 구현에 묶는 대가가, LLM 호출이 지배하는 이 경로에서 아끼는
-    // 몇 번의 왕복보다 크다. 배치 크기가 의미 있게 커지면 다시 볼 것.
+    // IN 으로 접으면 테스트가 목을 세우려고 rowContentHash 를 직접 불러 기대 키를 만들어야 하고,
+    // 그러면 테스트가 해시 구현에 묶인다 — LLM 호출이 지배하는 이 경로에서 아끼는 몇 번의 왕복보다
+    // 그 대가가 크다. 배치 크기가 의미 있게 커지면 다시 볼 것.
     List<JSONB> cachedJsonByIndex = new ArrayList<>(rowHashes.size());
     transactionTemplate.executeWithoutResult(
         status -> {
@@ -322,7 +323,11 @@ public class AiClassifyExecutor {
       if (cachedJson != null) {
         Map<String, Object> cachedValues = fromJson(cachedJson.data());
         Map<String, Object> outputRow = new HashMap<>(cachedValues);
-        if (!outputRow.containsKey("source_id") && row.containsKey("id")) {
+        // source_id 는 **언제나** 지금 이 행의 id 로 덮는다(#687). 캐시 키가 내용만 보게 된 뒤로
+        // 내용이 같은 여러 행이 한 캐시 항목을 공유한다 — 저장된 값을 재사용하면 그 행들이 전부
+        // 처음 한 행의 source_id 를 물려받아 조인 키가 중복된다. 애초에 캐시에 싣지도 않지만
+        // (아래 쓰기 경로), 예전 형식으로 저장된 항목이 남아 있을 수 있으므로 여기서 확실히 덮는다.
+        if (row.containsKey("id")) {
           outputRow.put("source_id", row.get("id"));
         }
         cacheHits.add(outputRow);
@@ -373,12 +378,16 @@ public class AiClassifyExecutor {
           continue;
         }
 
-        Map<String, Object> outputRow = new HashMap<>(classifyResult.values());
-        if (!outputRow.containsKey("source_id") && sourceId != null) {
-          outputRow.put("source_id", sourceId);
-        }
+        // 캐시에 넣을 값을 **먼저** 만든다 — source_id 를 싣지 않는다(#687). 그것은 행의 정체성이지
+        // 내용에서 나온 값이 아니라서, 실으면 내용이 같은 다른 행이 이 항목을 히트할 때 남의 id 를
+        // 물려받는다. 출력 행은 거기에 이 행의 id 를 얹어 만든다 — 조회 경로와 같은 모양이다
+        // (저장된 내용 + 언제나 이 행의 source_id).
+        Map<String, Object> cacheValues = new HashMap<>(classifyResult.values());
+        cacheValues.remove("source_id");
+        pendingCacheEntries.add(new PendingCacheEntry(rowHash, toJson(cacheValues)));
 
-        pendingCacheEntries.add(new PendingCacheEntry(rowHash, toJson(outputRow)));
+        Map<String, Object> outputRow = new HashMap<>(cacheValues);
+        outputRow.put("source_id", sourceId);
         results.add(outputRow);
       }
 
@@ -437,7 +446,7 @@ public class AiClassifyExecutor {
       return allRows;
     }
 
-    // queryData always includes "id" (as "_id" in result Map), no need to add it
+    // queryData 는 결과 맵에 "id" 를 항상 넣어 준다 — 따로 요청할 필요가 없다.
     List<String> columnsToFetch = null;
     if (config.inputColumns() != null && !config.inputColumns().isEmpty()) {
       List<String> cols = new ArrayList<>(config.inputColumns());
@@ -495,6 +504,38 @@ public class AiClassifyExecutor {
       partitions.add(list.subList(i, Math.min(i + size, list.size())));
     }
     return partitions;
+  }
+
+  /**
+   * 캐시 키가 될 행 해시를 만든다 — <b>내용만</b> 보고 {@code id} 는 제외한다(#687).
+   *
+   * <p>예전에는 행 맵을 통째로 직렬화해 해시했는데, 그 맵에는 {@code queryData} 가 항상 넣어 주는
+   * {@code id} 가 들어 있다. 입력이 임시 데이터셋이면 그 {@code id} 는 매 실행 {@code TRUNCATE} 후
+   * 다시 채워지는 {@code BIGSERIAL} 값이고({@code RESTART IDENTITY} 를 쓰지 않으므로 계속 증가한다),
+   * 결국 <b>내용이 완전히 같은 행도 실행마다 해시가 달라져 캐시가 영구히 미스</b>했다. 운영에서
+   * 실행 5·6·7 이 모두 {@code 0 cached} 였다.
+   *
+   * <p>키를 정렬하는 이유: {@code HashMap} 의 순회 순서는 보장이 없어서, 같은 내용이 다른 순서로
+   * 직렬화되면 해시가 갈린다. 캐시 키는 그런 우연에 기대면 안 된다.
+   *
+   * <p>{@code static} 인 이유: 목(mock) 체인 없이 성질 자체를 검증하기 위해서다 — 내용이 같고
+   * id 만 다르면 같은 해시, 내용이 다르면 다른 해시.
+   *
+   * <p><b>{@link #toJson} 을 쓰지 않는다.</b> 한 줄로 줄어들지만 그쪽은 직렬화 실패를 삼켜
+   * {@code "{}"} 를 돌려준다 — 캐시 <b>키</b>에서 그러면 직렬화에 실패한 모든 행이 한 항목으로
+   * 붕괴해 서로의 분류 결과를 물려받는다. 예전 구현이 {@code toJson(row)} 로 해시를 만들고 있었으니
+   * 잠재해 있던 위험이기도 하다.
+   *
+   * <p>고칠 자리를 헷갈리지 말 것: {@code truncateTable} 에 {@code RESTART IDENTITY} 를 붙이는 것은
+   * <b>틀린 해법</b>이다. 캐시 키의 정확성이 시퀀스 상태에 의존하게 되고, 실행이 달라지면 서로 다른
+   * 내용이 같은 키로 충돌한다.
+   */
+  static String rowContentHash(Map<String, Object> row, String promptHash) {
+    Map<String, Object> content = new TreeMap<>(row);
+    content.remove("id");
+    StringBuilder sb = new StringBuilder();
+    content.forEach((k, v) -> sb.append(k).append('=').append(v).append('\u001f'));
+    return sha256(sb + promptHash);
   }
 
   private static String sha256(String input) {
