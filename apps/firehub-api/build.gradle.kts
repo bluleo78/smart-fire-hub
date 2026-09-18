@@ -129,7 +129,10 @@ jooq {
             jooqConfiguration.apply {
                 jdbc.apply {
                     driver = "org.postgresql.Driver"
-                    url = "jdbc:postgresql://smart-fire-hub-db-1.orb.local:5432/smartfirehub"
+                    // 기본값은 localhost(게시된 5432 포트) — OrbStack/Podman 모두에서 동작한다.
+                    // orb.local은 OrbStack 전용 호스트명이라 Podman에선 해석되지 않고, macOS 로컬 네트워크
+                    // 권한에 막히면 Java만 접속 실패한다. 다른 프로젝트 DB와 5432가 겹치면 JOOQ_DB_URL로 덮어쓴다.
+                    url = System.getenv("JOOQ_DB_URL") ?: "jdbc:postgresql://localhost:5432/smartfirehub"
                     user = "app"
                     password = "app"
                 }
