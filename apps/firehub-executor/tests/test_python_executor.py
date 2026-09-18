@@ -470,3 +470,23 @@ def test_parse_stdout_json_empty_array():
 
 def test_parse_stdout_json_non_dict_items():
     assert _parse_stdout_json('[1, 2, 3]') is None
+
+
+# ---------------------------------------------------------------------------
+# nsjail 진단 로그 보존
+#   nsjail 의 FATAL 은 "무엇이 실패했는지"만 말하고 "왜"는 바로 앞 ERROR 줄에 있다.
+#   --really_quiet 는 그 ERROR 를 지워 스텝 오류 메시지를 무의미하게 만든다.
+# ---------------------------------------------------------------------------
+def test_nsjail_keeps_error_level_diagnostics():
+    settings = make_settings(nsjail_enabled=True)
+    with patch("app.services.python_executor.subprocess.run") as mock_run, \
+         patch("app.services.python_executor.os.unlink"):
+        mock_run.return_value = make_completed_process(stdout="ok\n", returncode=0)
+        execute_python("print('ok')", None, settings, tenant_id=1)
+
+    cmd = mock_run.call_args[0][0]
+    assert "--really_quiet" not in cmd, (
+        "--really_quiet 는 FATAL 만 남겨 실패 원인(ERROR 줄)이 잘린다 — "
+        "AppArmor 가 mount 를 막은 장애에서 로그만으로 원인을 알 수 없었다"
+    )
+    assert "--quiet" in cmd

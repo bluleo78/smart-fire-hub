@@ -70,7 +70,15 @@ def execute_python(
                 "--rlimit_nproc", str(settings.nsjail_rlimit_nproc),
                 "--disable_proc",
                 "--disable_clone_newnet",
-                "--really_quiet",
+                # --really_quiet 가 아니라 --quiet 다. --really_quiet 는 FATAL 만 남기는데,
+                # nsjail 의 FATAL 은 "runChild(): Launching child process failed" 처럼 **무엇이
+                # 실패했는지만** 말하고 **왜**는 바로 앞의 ERROR 줄에 있다. 그 줄이 잘리면 스텝
+                # 오류 메시지가 원인을 전혀 담지 못한다 — 2026-09-18 운영에서 AppArmor 가 mount 를
+                # 막아 샌드박스가 뜨지 못했는데, 로그만으로는 알 수 없어 파드에 직접 들어가
+                # 같은 명령을 재현해야 했다. --quiet 는 ERROR 를 남긴다.
+                # 대가는 nsjail 이 매 실행 남기는 UID/GID 경고 두 줄이 스텝 로그에 섞이는 것인데,
+                # 재현 불가능한 실패보다 알아볼 수 있는 상수 잡음이 낫다.
+                "--quiet",
                 "-R", "/usr",
                 "-R", "/lib",
             ]
