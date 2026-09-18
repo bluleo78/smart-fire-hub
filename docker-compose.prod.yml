@@ -133,8 +133,14 @@ services:
     restart: unless-stopped
     cap_add:
       - SYS_ADMIN
+    # nsjail 샌드박스는 새 마운트 네임스페이스에서 루트를 private 로 remount 한다. 그 mount(2) 를
+    # 막는 계층이 **셋**이라 셋 다 풀어야 한다 — capability(SYS_ADMIN, 없으면 EPERM), seccomp,
+    # 그리고 AppArmor(거부 시 EACCES). apparmor 항목이 오래 빠져 있었는데, 개발이 macOS 라
+    # AppArmor 자체가 없어 드러나지 않았다. Linux 호스트에서 돌리면 Python 스텝이 전부
+    # "Launching child process failed" 로 죽는다 — k8s 차트에서 같은 누락으로 실제 발생했다.
     security_opt:
       - seccomp=unconfined
+      - apparmor=unconfined
 
   ai-agent:
     build:
