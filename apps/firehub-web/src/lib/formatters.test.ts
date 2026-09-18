@@ -209,6 +209,26 @@ describe('formatDuration', () => {
   it('시간 + 분', () => {
     expect(formatDuration('2026-04-11T00:00:00Z', '2026-04-11T01:05:00Z')).toBe('1시간 5분');
   });
+
+  /**
+   * 실행 중(completedAt === null) 경과 시간 — #691 의 회귀 테스트.
+   *
+   * **완료 케이스만으로는 잡히지 않는다.** 시작·종료를 둘 다 같은 방향으로 밀면 차이에서 상쇄되고,
+   * 실행 중일 때만 진짜 현재(Date.now())와 섞여 9시간이 드러난다(운영: "소요 564m 58s" vs 실제 25분).
+   */
+  it('실행 중이면 nowMs 를 끝으로 보고, 타임존 표기 없는 시작 시각을 UTC로 해석한다 (#691)', () => {
+    const nowMs = Date.UTC(2026, 8, 18, 3, 43, 27);
+    expect(formatDuration('2026-09-18T03:17:33', null, nowMs)).toBe('25분 54초');
+  });
+
+  it('완료 시각이 있으면 nowMs 는 무시한다', () => {
+    const nowMs = Date.UTC(2026, 8, 18, 9, 0, 0);
+    expect(formatDuration('2026-09-18T03:17:33', '2026-09-18T03:18:33', nowMs)).toBe('1분');
+  });
+
+  it('완료 시각도 nowMs 도 없으면 "-"', () => {
+    expect(formatDuration('2026-09-18T03:17:33', null)).toBe('-');
+  });
 });
 
 describe('formatDateTime / formatDateTimeMinute / formatDateOnly', () => {

@@ -3,7 +3,7 @@ import React, { useMemo } from 'react';
 import { Badge } from '../../../components/ui/badge';
 import { useImports } from '../../../hooks/queries/useDatasets';
 import { parseErrorDetails } from '../../../lib/errorDetails';
-import { formatDate, formatFileSize, getStatusBadgeVariant, getStatusLabel } from '../../../lib/formatters';
+import { formatDate, formatFileSize, getStatusBadgeVariant, getStatusLabel, parseUtcDate } from '../../../lib/formatters';
 import type { DatasetDetailResponse } from '../../../types/dataset';
 import { ValidationErrorTable } from '../components/ValidationErrorTable';
 
@@ -20,7 +20,9 @@ export const DatasetHistoryTab = React.memo(function DatasetHistoryTab({
 
   const sortedImports = useMemo(() => {
     if (!imports) return [];
-    return [...imports].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    return [...imports].sort(
+      (a, b) => parseUtcDate(b.createdAt).getTime() - parseUtcDate(a.createdAt).getTime(),
+    );
   }, [imports]);
 
   return (

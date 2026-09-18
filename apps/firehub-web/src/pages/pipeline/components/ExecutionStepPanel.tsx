@@ -1,6 +1,6 @@
 import { X } from 'lucide-react';
-import { useEffect, useState } from 'react';
 
+import { DurationText } from '@/components/pipeline/DurationText';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -14,36 +14,11 @@ interface ExecutionStepPanelProps {
   onClose: () => void;
 }
 
-function formatDuration(startedAt: string | null, completedAt: string | null, elapsed?: number): string {
-  if (!startedAt) return '-';
-  const totalSeconds = completedAt
-    ? Math.floor((new Date(completedAt).getTime() - new Date(startedAt).getTime()) / 1000)
-    : elapsed ?? 0;
-  if (totalSeconds < 0) return '-';
-  if (totalSeconds === 0) return '< 1s';
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  if (minutes > 0) return `${minutes}m ${seconds}s`;
-  return `${seconds}s`;
-}
-
 function StepDetails({
   step,
 }: {
   step: StepExecutionResponse;
 }) {
-  const isRunning = step.status === 'RUNNING' || step.status === 'PENDING';
-  const [elapsed, setElapsed] = useState<number>(0);
-
-  useEffect(() => {
-    if (!isRunning || !step.startedAt) return;
-    const start = new Date(step.startedAt).getTime();
-    const update = () => setElapsed(Math.floor((Date.now() - start) / 1000));
-    update();
-    const id = setInterval(update, 1000);
-    return () => clearInterval(id);
-  }, [isRunning, step.startedAt]);
-
   return (
     <div className="flex-1 min-h-0">
       <ScrollArea className="h-full">
@@ -63,9 +38,11 @@ function StepDetails({
         <div className="flex items-center gap-2">
           <span className="text-muted-foreground w-16 shrink-0">소요</span>
           <span>
-            {isRunning
-              ? formatDuration(step.startedAt, null, elapsed)
-              : formatDuration(step.startedAt, step.completedAt)}
+            <DurationText
+              startedAt={step.startedAt}
+              completedAt={step.completedAt}
+              running={step.status === 'RUNNING'}
+            />
           </span>
         </div>
 
@@ -184,7 +161,13 @@ function ExecutionSummary({ execution }: { execution: ExecutionDetailResponse })
 
           <div className="flex items-center gap-2">
             <span className="text-muted-foreground w-16 shrink-0">소요</span>
-            <span>{formatDuration(execution.startedAt, execution.completedAt)}</span>
+            <span>
+              <DurationText
+                startedAt={execution.startedAt}
+                completedAt={execution.completedAt}
+                running={execution.status === 'RUNNING'}
+              />
+            </span>
           </div>
 
           {execution.errorMessage && <ExecutionErrorMessage errorMessage={execution.errorMessage} />}

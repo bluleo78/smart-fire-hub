@@ -272,14 +272,27 @@ export function getStatusLabel(status: string): string {
 
 /**
  * 두 시점 사이의 경과 시간을 사람이 읽기 쉬운 형태로 반환한다.
- * completedAt이 null이면 "-"를 반환한다.
  * 예: "45초", "2분 30초", "1시간 5분"
+ *
+ * - 완료된 경우(`completedAt` 있음): 두 시점의 차이.
+ * - 실행 중인 경우(`completedAt` 이 null): `nowMs`(보통 `Date.now()`)를 끝으로 본다. 화면이 1초마다
+ *   다시 그리도록 인자로 받는다 — 함수가 직접 `Date.now()` 를 읽으면 값이 변해도 리렌더가 안 된다.
+ * - 둘 다 없으면 "-".
+ *
+ * **실행 중 계산은 파싱을 틀리기 쉽다** (#691). `startedAt` 은 타임존 표기가 없는 UTC 문자열이라
+ * `new Date()` 로 직접 파싱하면 KST 브라우저에서 9시간 이른 시각이 되고, 진짜 현재인 `Date.now()`
+ * 와 빼면 경과 시간이 9시간 부풀려진다. 완료된 경우에는 양쪽이 같은 방향으로 밀려 상쇄되므로
+ * **실행 중일 때만** 드러난다 — 그래서 파싱은 반드시 `parseUtcDate` 한 곳을 거친다.
  */
-export function formatDuration(startedAt: string, completedAt: string | null): string {
-  if (!completedAt) return '-';
-  // 두 값 모두 서버 LocalDateTime 문자열이므로 동일한 파서를 거쳐야 한다 (#349).
-  // 차이만 쓰므로 결과는 같지만, 한쪽만 타임존 표기가 있는 경우를 방지한다.
-  const diffMs = parseUtcDate(completedAt).getTime() - parseUtcDate(startedAt).getTime();
+export function formatDuration(
+  startedAt: string | null,
+  completedAt: string | null,
+  nowMs?: number,
+): string {
+  if (!startedAt) return '-';
+  const endMs = completedAt ? parseUtcDate(completedAt).getTime() : nowMs;
+  if (endMs === undefined) return '-';
+  const diffMs = endMs - parseUtcDate(startedAt).getTime();
   if (diffMs < 0) return '-';
   const seconds = Math.floor(diffMs / 1000);
   if (seconds < 60) return `${seconds}초`;

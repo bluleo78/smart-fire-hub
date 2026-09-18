@@ -18,7 +18,7 @@ import {
   SelectValue,
 } from '../../../components/ui/select';
 import { useUpdateDataset } from '../../../hooks/queries/useDatasets';
-import { formatDate, getOriginTypeLabel, getStorageTypeLabel } from '../../../lib/formatters';
+import { formatDate, formatRelativeTime, getOriginTypeLabel, getStorageTypeLabel } from '../../../lib/formatters';
 import type { UpdateDatasetFormData } from '../../../lib/validations/dataset';
 import { updateDatasetSchema } from '../../../lib/validations/dataset';
 import type { ErrorResponse } from '../../../types/auth';
@@ -31,20 +31,6 @@ interface DatasetInfoTabProps {
   // 인라인 편집 폼의 미저장 변경 여부를 부모(DatasetDetailPage)에 보고한다 (#635).
   // 매핑 탭의 onDirtyChange와 동일한 콜백 패턴 — 부모가 useUnsavedChangesGuard에 합류시킨다.
   onDirtyChange?: (dirty: boolean) => void;
-}
-
-function getRelativeTime(dateStr: string | null): string {
-  if (!dateStr) return '-';
-  const diff = Date.now() - new Date(dateStr).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return '방금 전';
-  if (mins < 60) return `${mins}분 전`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}시간 전`;
-  const days = Math.floor(hours / 24);
-  if (days < 30) return `${days}일 전`;
-  const months = Math.floor(days / 30);
-  return `${months}개월 전`;
 }
 
 export const DatasetInfoTab = React.memo(function DatasetInfoTab({
@@ -143,7 +129,7 @@ export const DatasetInfoTab = React.memo(function DatasetInfoTab({
         <Card className="p-4">
           <Clock size={20} className="text-muted-foreground mb-2" />
           <p className="text-2xl font-semibold font-mono tabular-nums">
-            {getRelativeTime(dataset.updatedAt || dataset.createdAt)}
+            {formatRelativeTime(dataset.updatedAt || dataset.createdAt)}
           </p>
           <p className="text-sm text-muted-foreground">최근 수정</p>
         </Card>

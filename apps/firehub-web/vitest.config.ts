@@ -14,6 +14,8 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'jsdom',
+    // KST 고정 — UTC 러너에서는 타임존 버그가 있어도 테스트가 통과한다 (#691).
+    env: { TZ: 'Asia/Seoul' },
     include: ['src/**/*.test.{ts,tsx}'],
     setupFiles: ['./vitest.setup.ts'],
     passWithNoTests: true,

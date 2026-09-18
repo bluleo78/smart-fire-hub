@@ -22,6 +22,7 @@ import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.pipeline.dto.AiClassifyConfig;
 import com.smartfirehub.pipeline.dto.AiClassifyConfig.OutputColumn;
 import com.smartfirehub.pipeline.dto.PipelineStepResponse;
+import com.smartfirehub.pipeline.repository.PipelineExecutionRepository;
 import com.smartfirehub.pipeline.service.executor.AiAgentClient;
 import com.smartfirehub.pipeline.service.executor.AiClassifyExecutor;
 import com.smartfirehub.support.IntegrationTestBase;
@@ -104,7 +105,9 @@ class AiInferenceCacheTenantTest extends IntegrationTestBase {
             datasetRepository,
             objectMapper,
             dsl,
-            transactionTemplate);
+            transactionTemplate,
+            // 진척 기록(#691)은 이 테스트의 관심사(캐시 테넌트 격리)가 아니므로 mock 으로 둔다.
+            mock(PipelineExecutionRepository.class));
 
     when(datasetRepository.findTableNameById(200L)).thenReturn(Optional.of("output_table"));
     when(datasetRepository.findTableNameById(1L)).thenReturn(Optional.of("source_table"));

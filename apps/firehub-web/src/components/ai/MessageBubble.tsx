@@ -13,6 +13,8 @@ import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import remarkGfm from 'remark-gfm';
 import { toast } from 'sonner';
 
+import { parseUtcDate } from '@/lib/formatters';
+
 import { useDataset } from '../../hooks/queries/useDatasets';
 import { cn } from '../../lib/utils';
 import type { AIAttachment, AIMessage, AIToolCall } from '../../types/ai';
@@ -548,7 +550,7 @@ export function MessageBubble({ message, isStreaming }: MessageBubbleProps) {
         )}
         {message.timestamp && (
           <p className="mt-1 text-xs opacity-70">
-            {new Date(message.timestamp).toLocaleTimeString('ko-KR', {
+            {parseUtcDate(message.timestamp).toLocaleTimeString('ko-KR', {
               hour: '2-digit',
               minute: '2-digit',
             })}

@@ -145,6 +145,21 @@ public class PipelineExecutionRepository {
         .fetchOne(r -> r.get(PSE_ID));
   }
 
+  /**
+   * 실행 중인 스텝의 진척만 갱신한다 — 상태는 건드리지 않는다(#691).
+   *
+   * <p>{@link #updateStepExecution} 은 상태를 반드시 쓰게 되어 있어, 진척을 남기려다 호출부가
+   * 관리하는 RUNNING/FAILED 전이를 덮어쓸 수 있다. 오래 도는 스텝(AI_CLASSIFY 는 배치 174개 ×
+   * 45초)이 배치마다 부르는 경로이므로 output_rows 와 log 만 좁게 갱신한다.
+   */
+  public void updateStepProgress(Long stepExecId, Integer outputRows, String log) {
+    dsl.update(PIPELINE_STEP_EXECUTION)
+        .set(PSE_OUTPUT_ROWS, outputRows)
+        .set(PSE_LOG, log)
+        .where(PSE_ID.eq(stepExecId))
+        .execute();
+  }
+
   public void updateStepExecution(
       Long stepExecId,
       String status,

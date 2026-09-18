@@ -4,6 +4,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
 import ReportModal from '@/components/ai/ReportModal';
+import { parseUtcDate } from '@/lib/formatters';
 
 import type { ProactiveMessage as ProactiveMessageType } from '../../api/proactive';
 import { getSections } from '../../lib/proactive-utils';
@@ -26,7 +27,7 @@ export function ProactiveMessage({ message, onMarkRead, onFollowUp }: ProactiveM
   // ChatDeliveryChannel이 저장한 jobId/executionId — 리포트 보기 링크 생성에 사용
   const jobId = message.content.jobId as string | undefined;
   const executionId = message.content.executionId as string | undefined;
-  const time = new Date(message.createdAt).toLocaleTimeString('ko-KR', {
+  const time = parseUtcDate(message.createdAt).toLocaleTimeString('ko-KR', {
     hour: '2-digit',
     minute: '2-digit',
   });

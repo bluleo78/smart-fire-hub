@@ -10,6 +10,7 @@ import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.pipeline.dto.AiClassifyConfig;
 import com.smartfirehub.pipeline.dto.PipelineStepResponse;
+import com.smartfirehub.pipeline.repository.PipelineExecutionRepository;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -71,10 +72,12 @@ public class AiClassifyExecutor {
   private final ObjectMapper objectMapper;
   private final DSLContext dsl;
   private final TransactionTemplate transactionTemplate;
+  // 배치마다 진척을 남기기 위한 저장소 — 근거는 reportProgress javadoc 참고(#691).
+  private final PipelineExecutionRepository executionRepository;
 
   public record ExecutionResult(long outputRows, String executionLog) {}
 
-  public ExecutionResult execute(PipelineStepResponse step, Long executionId, Long userId) {
+  public ExecutionResult execute(PipelineStepResponse step, Long stepExecutionId, Long userId) {
     AiClassifyConfig config = objectMapper.convertValue(step.aiConfig(), AiClassifyConfig.class);
 
     String outputTableName =
@@ -137,7 +140,14 @@ public class AiClassifyExecutor {
     outputColumnNames.add("source_id");
     config.outputColumns().forEach(col -> outputColumnNames.add(col.name()));
 
-    List<Map<String, Object>> outputRows = new ArrayList<>();
+    // 4. 출력 컬럼 타입 — 배치마다 적재하므로 루프 **전에** 만든다.
+    //    (AI 는 모든 값을 문자열/숫자로 돌려주므로 삽입 전에 Java 타입으로 변환해야 한다.)
+    Map<String, String> columnTypes = new HashMap<>();
+    columnTypes.put("source_id", "BIGINT");
+    config.outputColumns().forEach(col -> columnTypes.put(col.name(), col.type()));
+
+    // 배치마다 적재하고 카운트만 누적한다 — 자세한 경위는 writeBatch 의 주석 참고(#690).
+    int written = 0;
     int totalProcessed = 0;
     int totalCached = 0;
     int totalErrors = 0;
@@ -159,12 +169,14 @@ public class AiClassifyExecutor {
             batches.size(),
             batch.size());
 
+        List<Map<String, Object>> classifiedRows = List.of();
+
         try {
           BatchResult batchResult =
               processBatch(batch, config, promptHash, outputColumnSpecs, userId);
           totalCached += batchResult.cached();
           totalProcessed += batchResult.processed();
-          outputRows.addAll(batchResult.rows());
+          classifiedRows = batchResult.rows();
 
         } catch (Exception e) {
           totalErrors++;
@@ -187,7 +199,7 @@ public class AiClassifyExecutor {
                     processBatch(batch, config, promptHash, outputColumnSpecs, userId);
                 totalCached += batchResult.cached();
                 totalProcessed += batchResult.processed();
-                outputRows.addAll(batchResult.rows());
+                classifiedRows = batchResult.rows();
                 retrySuccess = true;
                 break;
               } catch (Exception retryEx) {
@@ -202,19 +214,33 @@ public class AiClassifyExecutor {
           }
           // CONTINUE: skip batch
         }
+
+        // 적재는 AI 호출 try **밖**이다. 안에 두면 insert 실패(타입 변환·DDL 불일치·DB 장애)가
+        // "배치 실패"로 격하돼, onError=RETRY_BATCH 가 LLM 이 고칠 수 없는 오류에 2+4+8초를 자며
+        // 분류를 세 번 더 태운다(토큰도 그만큼 나간다). 밖에 두면 적재 실패는 onError 와 무관하게
+        // 곧장 스텝을 떨구고, 아래 catch 가 임시 테이블을 지워 원본을 보존한다.
+        written += writeBatch(targetTable, outputColumnNames, classifiedRows, columnTypes);
+
+        // 실패한 배치 뒤에도 남겨야 몇 번째에서 막혔는지가 보이므로 catch **밖**이다(#691).
+        reportProgress(
+            stepExecutionId,
+            written,
+            String.format(
+                "AI_CLASSIFY 진행 중: 배치 %d/%d, %d행 적재 (캐시 %d, AI %d, 배치 실패 %d)",
+                batchIdx + 1, batches.size(), written, totalCached, totalProcessed, totalErrors));
       }
 
       // 3-1. 입력이 있었는데 결과가 0행이면 실패다(#685).
       //
       // 입력이 비었으면 위에서 이미 조기 반환했으므로(임시 테이블을 만들기도 전이다), 여기서
-      // outputRows 가 비었다는 것은 **행이 있었는데 하나도 분류되지 못했다**는 뜻이다. 그건 어떤
+      // written 이 0 이라는 것은 **행이 있었는데 하나도 분류되지 못했다**는 뜻이다. 그건 어떤
       // 경로로 왔든 실패다.
       //
       // 예전에는 모든 배치가 실패해도 ExecutionResult(0, "...N batch errors") 로 정상 반환했고,
       // 스텝은 COMPLETED 가 됐다. REPLACE 면 그 뒤 빈 임시 테이블을 원본과 맞바꿔 **기존 데이터까지
       // 지웠다** — 2026-09-18 운영에서 실제로 10건이 사라졌다.
       //
-      // totalErrors 가 아니라 결과가 비었는지를 보는 이유: totalErrors 는 배치 단위 예외만 센다.
+      // totalErrors 가 아니라 적재된 행이 0 인지를 보는 이유: totalErrors 는 배치 단위 예외만 센다.
       // processBatch 는 응답에 source_id 가 맞는 항목이 없으면 그 행을 warn 한 줄 남기고 **조용히
       // 버린다**. LLM 이 형식은 멀쩡하되 source_id 를 어긋나게 돌려주면 예외 0건 · 결과 0행이 되고,
       // totalErrors 로 판정하면 그 경우가 다시 "성공"이 된다.
@@ -222,7 +248,11 @@ public class AiClassifyExecutor {
       // 적재 전략과 무관하게 던진다. APPEND 라고 해서 전량 실패가 성공이 되지는 않는다.
       // 던지면 아래 catch 가 임시 테이블을 지우므로 원본이 보존되고, 스텝은 FAILED,
       // 후속 스텝은 의존성 규칙에 따라 SKIPPED 된다.
-      if (outputRows.isEmpty()) {
+      //
+      // APPEND 에서는 중간에 실패하면 부분 행이 실제 테이블에 남는다 — 모아 두던 시절에는 남지
+      // 않았다. 의도한 맞바꿈이다: 원자성은 REPLACE 의 스테이징 테이블(t_tmp → swapTable)이 맡고,
+      // API_CALL 도 APPEND 에서 이미 부분 행을 남긴다. 전손 위험이 부분 적재보다 크다(#690).
+      if (written == 0) {
         throw new IllegalStateException(
             "AI_CLASSIFY 결과가 0행이다(입력 "
                 + allInputRows.size()
@@ -231,16 +261,6 @@ public class AiClassifyExecutor {
                 + "개)",
             lastBatchFailure);
       }
-
-      // 4. Insert all output rows (AI는 모든 값을 문자열/숫자로 반환 → Java 타입 변환 후 삽입)
-      Map<String, String> columnTypes = new HashMap<>();
-      columnTypes.put("source_id", "BIGINT");
-      config.outputColumns().forEach(col -> columnTypes.put(col.name(), col.type()));
-
-      for (Map<String, Object> row : outputRows) {
-        coerceRowValues(row, columnTypes);
-      }
-      dataTableRowService.insertBatch(targetTable, outputColumnNames, outputRows, columnTypes);
 
       // 여기 도달했다면 결과가 비어 있지 않다(위에서 던졌다) — 그래서 finishReplace 가 아니라
       // swapTable 을 직접 부른다. 다른 실행기(Python·API_CALL)는 0행이 정상 결과일 수 있어
@@ -257,16 +277,67 @@ public class AiClassifyExecutor {
           log.warn("[AI_CLASSIFY] Failed to drop temp table: {}", dropEx.getMessage());
         }
       }
+      // 실패로 끝나는 스텝에 "진행 중" 진척이 남지 않게 마지막 줄을 덮어쓴다. 러너의 실패 경로는
+      // output_rows/log 에 null 을 넘겨 기존 값을 덮지 않으므로(updateStepExecution 은 null 필드를
+      // 건너뛴다), 여기서 정리하지 않으면 FAILED 스텝이 "출력행 4 · 배치 4/174 진행 중" 을 계속
+      // 보여준다. REPLACE 면 임시 테이블을 버렸으니 실제로 남은 행은 0 이다.
+      reportProgress(
+          stepExecutionId, isReplace ? 0 : written, "AI_CLASSIFY 실패: " + e.getMessage());
       throw e;
     }
 
     String executionLog =
         String.format(
             "AI_CLASSIFY completed: %d rows output, %d cached, %d AI-processed, %d batch errors",
-            outputRows.size(), totalCached, totalProcessed, totalErrors);
+            written, totalCached, totalProcessed, totalErrors);
     log.info("[AI_CLASSIFY] Step '{}': {}", step.name(), executionLog);
 
-    return new ExecutionResult(outputRows.size(), executionLog);
+    return new ExecutionResult(written, executionLog);
+  }
+
+  /**
+   * 배치 하나의 결과를 곧바로 대상 테이블에 적재하고 적재한 행 수를 돌려준다(#690).
+   *
+   * <p>예전에는 모든 배치의 결과를 List 에 모아 두었다가 루프가 끝난 뒤 한 번에 적재했다. 그래서
+   * 재시작·OOM·배포 어느 것이든 그때까지의 분류가 전부 사라졌고, 힙 사용량이 입력 행 수에 비례했다.
+   * 타입 변환({@link #coerceRowValues})은 행 단위라 전체 결과를 기다릴 이유가 없고, {@code
+   * DataTableRowService} 에는 {@code @Transactional} 이 없어 각 INSERT 가 곧바로 커밋된다 —
+   * 그래서 도중에 죽어도 그때까지의 진척이 {@code t_tmp} 에 남는다. 빈 배치는 삽입하지 않는다.
+   */
+  private long writeBatch(
+      String targetTable,
+      List<String> outputColumnNames,
+      List<Map<String, Object>> rows,
+      Map<String, String> columnTypes) {
+    if (rows.isEmpty()) {
+      return 0;
+    }
+    for (Map<String, Object> row : rows) {
+      coerceRowValues(row, columnTypes);
+    }
+    dataTableRowService.insertBatch(targetTable, outputColumnNames, rows, columnTypes);
+    return rows.size();
+  }
+
+  /**
+   * 실행 중인 스텝의 진척(적재 행 수 + 진행 메시지)을 {@code pipeline_step_execution} 에
+   * 남긴다(#691).
+   *
+   * <p>화면은 이 두 값을 이미 "출력행"과 "로그"로 보여주므로 새 컬럼이나 새 UI 없이 진행률이
+   * 드러난다. 상태는 건드리지 않는다 — 여기서 상태를 쓰면 호출부가 관리하는 RUNNING/FAILED 전이와
+   * 경합한다.
+   *
+   * <p>진척 기록 실패는 분류를 중단시킬 이유가 아니므로 삼키고 로그만 남긴다.
+   */
+  private void reportProgress(Long stepExecutionId, int written, String message) {
+    if (stepExecutionId == null) {
+      return;
+    }
+    try {
+      executionRepository.updateStepProgress(stepExecutionId, written, message);
+    } catch (Exception e) {
+      log.warn("[AI_CLASSIFY] Failed to record progress: {}", e.getMessage());
+    }
   }
 
   private record BatchResult(List<Map<String, Object>> rows, int cached, int processed) {}

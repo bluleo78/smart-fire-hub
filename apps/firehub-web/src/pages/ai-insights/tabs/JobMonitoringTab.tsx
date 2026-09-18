@@ -35,6 +35,7 @@ import {
 import { Textarea } from '@/components/ui/textarea';
 import { useDatasets } from '@/hooks/queries/useDatasets';
 import { useAnomalyEvents } from '@/hooks/queries/useProactiveMessages';
+import { parseUtcDate } from '@/lib/formatters';
 import type { ProactiveJobFormValues } from '@/lib/validations/proactive-job';
 
 const SENSITIVITY_OPTIONS: { value: Sensitivity; label: string; description: string }[] = [
@@ -110,7 +111,7 @@ function AnomalyHistorySection({ jobId }: { jobId: number }) {
             {events.map((event) => (
               <TableRow key={event.id}>
                 <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
-                  {new Date(event.detectedAt).toLocaleString('ko-KR')}
+                  {parseUtcDate(event.detectedAt).toLocaleString('ko-KR')}
                 </TableCell>
                 <TableCell className="text-sm font-medium">{event.metricName}</TableCell>
                 <TableCell className="text-right text-sm">

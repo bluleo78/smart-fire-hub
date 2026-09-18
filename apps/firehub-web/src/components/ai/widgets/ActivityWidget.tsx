@@ -1,5 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 
+import { parseUtcDate } from '@/lib/formatters';
+
 import { dashboardApi } from '../../../api/dashboard';
 import type { WidgetProps } from './types';
 import { WidgetRowsSkeleton } from './WidgetLoading';
@@ -24,7 +26,7 @@ const ENTITY_ICON: Record<string, string> = {
 };
 
 function formatRelativeTime(dateStr: string): string {
-  const diff = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
+  const diff = Math.floor((Date.now() - parseUtcDate(dateStr).getTime()) / 1000);
   if (diff < 60) return `${diff}초 전`;
   if (diff < 3600) return `${Math.floor(diff / 60)}분 전`;
   if (diff < 86400) return `${Math.floor(diff / 3600)}시간 전`;

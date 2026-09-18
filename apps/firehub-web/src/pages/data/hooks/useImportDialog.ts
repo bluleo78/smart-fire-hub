@@ -3,6 +3,8 @@ import axios from 'axios';
 import { useEffect,useMemo,useState } from 'react';
 import { toast } from 'sonner';
 
+import { parseUtcDate } from '@/lib/formatters';
+
 import { useImports,usePreviewImport, useUploadFile,useValidateImport } from '../../../hooks/queries/useDatasets';
 import type { ImportProgress } from '../../../hooks/queries/useImportProgress';
 import { useImportProgress } from '../../../hooks/queries/useImportProgress';
@@ -100,7 +102,7 @@ export function useImportDialog({
     if (importProgress?.stage !== 'FAILED' || !imports) return null;
     const candidates = imports
       .filter((i) => i.status === 'FAILED' && (!selectedFile || i.fileName === selectedFile.name))
-      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      .sort((a, b) => parseUtcDate(b.createdAt).getTime() - parseUtcDate(a.createdAt).getTime());
     for (const candidate of candidates) {
       const parsed = parseErrorDetails(candidate.errorDetails);
       if (parsed) return parsed;

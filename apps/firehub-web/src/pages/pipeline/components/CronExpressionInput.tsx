@@ -77,6 +77,7 @@ export default function CronExpressionInput({
       for (let i = 0; i < 5; i++) {
         const next = interval.next();
         times.push(
+          // eslint-disable-next-line no-restricted-syntax -- 서버 문자열이 아니라 cron 파서가 준 epoch 숫자다
           new Date(next.getTime()).toLocaleString('ko-KR', { timeZone: timezone })
         );
       }

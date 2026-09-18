@@ -8,10 +8,13 @@ import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -23,6 +26,7 @@ import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.pipeline.dto.AiClassifyConfig;
 import com.smartfirehub.pipeline.dto.AiClassifyConfig.OutputColumn;
 import com.smartfirehub.pipeline.dto.PipelineStepResponse;
+import com.smartfirehub.pipeline.repository.PipelineExecutionRepository;
 import java.lang.reflect.Method;
 import java.math.BigDecimal;
 import java.sql.Timestamp;
@@ -59,6 +63,7 @@ class AiClassifyExecutorTest {
   private ObjectMapper objectMapper;
   private DSLContext dsl;
   private TransactionTemplate transactionTemplate;
+  private PipelineExecutionRepository executionRepository;
 
   private AiClassifyExecutor executor;
 
@@ -70,6 +75,7 @@ class AiClassifyExecutorTest {
     datasetRepository = mock(DatasetRepository.class);
     objectMapper = new ObjectMapper();
     dsl = mock(DSLContext.class, org.mockito.Mockito.RETURNS_DEEP_STUBS);
+    executionRepository = mock(PipelineExecutionRepository.class);
 
     // TransactionTemplate 은 mock 이 아니라 실물을 쓴다. mock 이면 execute/executeWithoutResult 가
     // 콜백을 아예 실행하지 않아 캐시 조회·쓰기가 통째로 사라지고, 아래 캐시 단언들이 조용히
@@ -88,7 +94,8 @@ class AiClassifyExecutorTest {
             datasetRepository,
             objectMapper,
             dsl,
-            transactionTemplate);
+            transactionTemplate,
+            executionRepository);
   }
 
   @AfterEach
@@ -131,13 +138,18 @@ class AiClassifyExecutorTest {
 
   private PipelineStepResponse buildStep(
       String loadStrategy, List<Long> inputDatasetIds, int batchSize) {
+    return buildStep(loadStrategy, inputDatasetIds, batchSize, "CONTINUE");
+  }
+
+  private PipelineStepResponse buildStep(
+      String loadStrategy, List<Long> inputDatasetIds, int batchSize, String onError) {
     AiClassifyConfig config =
         new AiClassifyConfig(
             "Classify rows",
             List.of(new OutputColumn("category", "TEXT"), new OutputColumn("score", "NUMERIC")),
             List.of("id", "text"),
             batchSize,
-            "CONTINUE");
+            onError);
     Map<String, Object> aiConfig = objectMapper.convertValue(config, Map.class);
     return new PipelineStepResponse(
         10L,
@@ -582,6 +594,189 @@ class AiClassifyExecutorTest {
     verify(dataTableService).createTempTable("output_table");
     verify(dataTableService).dropTempTable("output_table");
     verify(dataTableService, never()).swapTable(anyString());
+  }
+
+  // -----------------------------------------------------------------------
+  // 배치마다 적재 (#690)
+  // -----------------------------------------------------------------------
+
+  /** 분류 결과를 담은 배치 응답 하나를 만든다 — source_id 가 입력 행의 id 와 맞아야 결과로 인정된다. */
+  private AiAgentClient.ClassifyResponse classifyResponse(int sourceId, String category) {
+    Map<String, Object> values = new HashMap<>();
+    values.put("source_id", sourceId);
+    values.put("category", category);
+    return new AiAgentClient.ClassifyResponse(
+        List.of(new AiAgentClient.ClassifyRowResult(values)), 1, "test-model");
+  }
+
+  /** id/text 두 컬럼짜리 입력 행. */
+  private Map<String, Object> sourceRow(long id, String text) {
+    Map<String, Object> row = new HashMap<>();
+    row.put("id", id);
+    row.put("text", text);
+    return row;
+  }
+
+  /**
+   * 배치 결과는 <b>배치마다</b> 적재된다 — 끝까지 모아 두지 않는다(#690).
+   *
+   * <p>예전에는 모든 배치의 결과를 힙에 모아 두었다가 루프가 끝난 뒤 한 번만 {@code insertBatch} 를
+   * 불렀다. 174배치 × 45초 ≈ 2시간짜리 실행이 중간 저장 없이 돌았고, 재시작·OOM·배포 무엇이든
+   * 그때까지의 분류가 전부 사라졌다(운영 실행 9 실측: 캐시 342행 vs 스테이징 테이블 0행).
+   */
+  @Test
+  @SuppressWarnings({"unchecked", "rawtypes"})
+  void execute_withMultipleBatches_insertsEachBatchImmediately() {
+    when(datasetRepository.findTableNameById(200L)).thenReturn(Optional.of("output_table"));
+    when(datasetRepository.findTableNameById(1L)).thenReturn(Optional.of("source_table"));
+    when(dataTableRowService.countRows("source_table")).thenReturn(3L);
+    when(dataTableRowService.queryData(anyString(), any(), any(), anyInt(), anyInt()))
+        .thenReturn(List.of(sourceRow(1L, "a"), sourceRow(2L, "b"), sourceRow(3L, "c")));
+
+    stubCacheMiss();
+    when(aiAgentClient.classify(any(), anyLong()))
+        .thenReturn(classifyResponse(1, "A"))
+        .thenReturn(classifyResponse(2, "B"))
+        .thenReturn(classifyResponse(3, "C"));
+
+    // batchSize=1 → 배치 3개
+    PipelineStepResponse step = buildStep("REPLACE", List.of(1L), 1);
+
+    AiClassifyExecutor.ExecutionResult result = executor.execute(step, 100L, 1L);
+
+    assertThat(result.outputRows()).isEqualTo(3);
+    // 핵심 단언: 루프 끝의 한 번이 아니라 배치마다 한 번씩
+    verify(dataTableRowService, times(3))
+        .insertBatch(eq("output_table_tmp"), anyList(), anyList(), anyMap());
+    verify(dataTableService).swapTable("output_table");
+  }
+
+  /**
+   * 뒤 배치가 실패해도 <b>앞 배치가 쓴 행은 이미 커밋돼 있다</b>(#690).
+   *
+   * <p>모아 두던 시절에는 마지막 한 번의 적재 전에 예외가 나면 앞의 모든 배치 결과가 통째로
+   * 증발했다. 이제는 실패 시점까지의 적재가 {@code t_tmp} 에 남는다 — REPLACE 이므로 그 임시
+   * 테이블은 드롭되고 원본은 그대로다(#685 의 보장은 유지된다).
+   */
+  @Test
+  @SuppressWarnings({"unchecked", "rawtypes"})
+  void execute_withLaterBatchFailure_andFailStep_writesEarlierBatchBeforeThrowing() {
+    when(datasetRepository.findTableNameById(200L)).thenReturn(Optional.of("output_table"));
+    when(datasetRepository.findTableNameById(1L)).thenReturn(Optional.of("source_table"));
+    when(dataTableRowService.countRows("source_table")).thenReturn(2L);
+    when(dataTableRowService.queryData(anyString(), any(), any(), anyInt(), anyInt()))
+        .thenReturn(List.of(sourceRow(1L, "ok"), sourceRow(2L, "boom")));
+
+    stubCacheMiss();
+    when(aiAgentClient.classify(any(), anyLong()))
+        .thenReturn(classifyResponse(1, "A"))
+        .thenThrow(new RuntimeException("AI agent down"));
+
+    PipelineStepResponse step = buildStep("REPLACE", List.of(1L), 1, "FAIL_STEP");
+
+    assertThatThrownBy(() -> executor.execute(step, 100L, 1L))
+        .isInstanceOf(RuntimeException.class)
+        .hasMessageContaining("AI_CLASSIFY batch 2");
+
+    // 첫 배치는 예외 전에 이미 적재됐다 — 모아 두던 구현에서는 0회였다.
+    verify(dataTableRowService, times(1))
+        .insertBatch(eq("output_table_tmp"), anyList(), anyList(), anyMap());
+    verify(dataTableService).dropTempTable("output_table");
+    verify(dataTableService, never()).swapTable(anyString());
+  }
+
+  /**
+   * 배치마다 진척(적재 행 수 + 진행 메시지)이 {@code pipeline_step_execution} 에 기록된다(#691).
+   *
+   * <p>기록이 없으면 실행 중 화면의 "출력행"은 스텝이 끝날 때까지 {@code -} 이고, 몇 번째 배치를
+   * 돌고 있는지는 서버 로그에만 남는다 — 사용자는 멈춘 것과 도는 것을 구분할 수 없다.
+   */
+  @Test
+  @SuppressWarnings({"unchecked", "rawtypes"})
+  void execute_reportsPerBatchProgressToStepExecution() {
+    when(datasetRepository.findTableNameById(200L)).thenReturn(Optional.of("output_table"));
+    when(datasetRepository.findTableNameById(1L)).thenReturn(Optional.of("source_table"));
+    when(dataTableRowService.countRows("source_table")).thenReturn(2L);
+    when(dataTableRowService.queryData(anyString(), any(), any(), anyInt(), anyInt()))
+        .thenReturn(List.of(sourceRow(1L, "a"), sourceRow(2L, "b")));
+
+    stubCacheMiss();
+    when(aiAgentClient.classify(any(), anyLong()))
+        .thenReturn(classifyResponse(1, "A"))
+        .thenReturn(classifyResponse(2, "B"));
+
+    PipelineStepResponse step = buildStep("APPEND", List.of(1L), 1);
+
+    executor.execute(step, 100L, 1L);
+
+    // 배치 1 종료 시점 1행, 배치 2 종료 시점 2행 — 누적 카운트가 그대로 올라간다.
+    verify(executionRepository).updateStepProgress(eq(100L), eq(1), contains("배치 1/2"));
+    verify(executionRepository).updateStepProgress(eq(100L), eq(2), contains("배치 2/2"));
+  }
+
+  /**
+   * 적재 실패는 <b>배치 실패가 아니다</b> — onError 와 무관하게 스텝을 떨군다.
+   *
+   * <p>적재를 AI 호출 try 안에 두면 insert 오류(타입 변환·DDL 불일치·DB 장애)가 "배치 실패"로
+   * 격하된다. CONTINUE 면 그 배치를 조용히 건너뛰고, RETRY_BATCH 면 LLM 이 고칠 수 없는 오류에
+   * 2+4+8초를 자며 분류를 세 번 더 태운다. 그래서 적재는 try 밖에 있다.
+   */
+  @Test
+  @SuppressWarnings({"unchecked", "rawtypes"})
+  void execute_withInsertFailure_failsStepEvenWhenOnErrorIsContinue() {
+    when(datasetRepository.findTableNameById(200L)).thenReturn(Optional.of("output_table"));
+    when(datasetRepository.findTableNameById(1L)).thenReturn(Optional.of("source_table"));
+    when(dataTableRowService.countRows("source_table")).thenReturn(2L);
+    when(dataTableRowService.queryData(anyString(), any(), any(), anyInt(), anyInt()))
+        .thenReturn(List.of(sourceRow(1L, "a"), sourceRow(2L, "b")));
+
+    stubCacheMiss();
+    when(aiAgentClient.classify(any(), anyLong()))
+        .thenReturn(classifyResponse(1, "A"))
+        .thenReturn(classifyResponse(2, "B"));
+    doThrow(new RuntimeException("insert failed: column mismatch"))
+        .when(dataTableRowService)
+        .insertBatch(anyString(), anyList(), anyList(), anyMap());
+
+    // 기본값 onError=CONTINUE — 그래도 스텝이 떨어져야 한다.
+    PipelineStepResponse step = buildStep("REPLACE", List.of(1L), 1);
+
+    assertThatThrownBy(() -> executor.execute(step, 100L, 1L))
+        .isInstanceOf(RuntimeException.class)
+        .hasMessageContaining("insert failed");
+
+    // 첫 배치에서 곧바로 떨어졌으므로 둘째 배치의 LLM 호출은 없다.
+    verify(aiAgentClient, times(1)).classify(any(), anyLong());
+    verify(dataTableService).dropTempTable("output_table");
+    verify(dataTableService, never()).swapTable(anyString());
+  }
+
+  /**
+   * 실패로 끝난 스텝에 "진행 중" 진척이 남지 않는다(#691).
+   *
+   * <p>러너의 실패 경로는 output_rows/log 에 null 을 넘겨 기존 값을 덮지 않는다. 실행기가 정리하지
+   * 않으면 FAILED 스텝이 "출력행 N · 배치 4/174 진행 중" 을 계속 보여준다 — REPLACE 는 임시
+   * 테이블을 버렸으니 실제로 남은 행은 0 인데도.
+   */
+  @Test
+  @SuppressWarnings({"unchecked", "rawtypes"})
+  void execute_whenStepFails_overwritesProgressWithFailureLine() {
+    when(datasetRepository.findTableNameById(200L)).thenReturn(Optional.of("output_table"));
+    when(datasetRepository.findTableNameById(1L)).thenReturn(Optional.of("source_table"));
+    when(dataTableRowService.countRows("source_table")).thenReturn(1L);
+    when(dataTableRowService.queryData(anyString(), any(), any(), anyInt(), anyInt()))
+        .thenReturn(List.of(sourceRow(1L, "boom")));
+
+    stubCacheMiss();
+    when(aiAgentClient.classify(any(), anyLong())).thenThrow(new RuntimeException("AI agent down"));
+
+    PipelineStepResponse step = buildStep("REPLACE", List.of(1L), 1);
+
+    assertThatThrownBy(() -> executor.execute(step, 100L, 1L))
+        .isInstanceOf(IllegalStateException.class);
+
+    // "배치 실패 1" 도 '실패' 를 포함하므로 진행 줄과 구분되는 접두사로 단언한다.
+    verify(executionRepository).updateStepProgress(eq(100L), eq(0), contains("AI_CLASSIFY 실패:"));
   }
 
   // -----------------------------------------------------------------------
