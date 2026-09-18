@@ -19,6 +19,7 @@ interface AIContextValue {
   pendingUserMessage: string | null;
   contextTokens: number | null;
   isCompacting: boolean;
+  compactionStartedAt: number | null;
   openAI: () => void;
   closeAI: () => void;
   toggleAI: () => void;
@@ -94,6 +95,7 @@ export function AIProvider({ children }: { children: ReactNode }) {
     loadSession: loadSessionBase,
     contextTokens,
     isCompacting,
+    compactionStartedAt,
   } = useAIChat({ onCanvasWidget: handleCanvasWidget });
 
   const openAI = useCallback(() => setIsOpen(true), []);
@@ -147,6 +149,7 @@ export function AIProvider({ children }: { children: ReactNode }) {
       pendingUserMessage,
       contextTokens,
       isCompacting,
+      compactionStartedAt,
       openAI,
       closeAI,
       toggleAI,
@@ -170,6 +173,7 @@ export function AIProvider({ children }: { children: ReactNode }) {
       pendingUserMessage,
       contextTokens,
       isCompacting,
+      compactionStartedAt,
       openAI,
       closeAI,
       toggleAI,

@@ -15,6 +15,8 @@ export function AINativeMode() {
     isStreaming,
     isThinking,
     isUploading,
+    isCompacting,
+    compactionStartedAt,
     sendMessage,
     stopStreaming,
   } = useAI();
@@ -103,6 +105,8 @@ export function AINativeMode() {
               streamingMessage={streamingMessage}
               isStreaming={isStreaming}
               isThinking={isThinking}
+              isCompacting={isCompacting}
+              compactionStartedAt={compactionStartedAt}
             />
           </div>
         </div>
