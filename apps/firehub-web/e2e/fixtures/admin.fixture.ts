@@ -190,6 +190,47 @@ export async function setupSettingsMocks(
   );
 }
 
+/** `GET /api/v1/ai/auth-status` 의 경로. 네 곳이 같은 문자열을 따로 적고 있었다. */
+export const AI_AUTH_STATUS_PATH = '/api/v1/ai/auth-status';
+
+/**
+ * 인증 확인 응답 한 벌. <b>`SettingsPage` 의 `authStatus` 상태와 같은 모양이어야 한다</b> —
+ * 그 타입은 `subscriptionType` 까지 갖는데 스펙의 손수 만든 본문들은 그걸 보내지 않고 있었다.
+ * 모양이 네 군데 흩어져 있으면 계약이 바뀔 때 한 곳만 고치고 넘어간다.
+ */
+export interface AiAuthStatus {
+  valid: boolean;
+  email?: string;
+  subscriptionType?: string;
+}
+
+/**
+ * 위 응답을 `route.fulfill` 인자로 만든다.
+ *
+ * 라우팅을 스스로 해야 하는 스펙(호출 순서를 직접 다루는 경쟁 상태 테스트)도 <b>본문만은</b>
+ * 이걸 쓰게 해서, 라우트 핸들러의 타이밍을 건드리지 않고 모양의 중복만 없앤다.
+ */
+export function aiAuthStatusResponse(status: AiAuthStatus) {
+  return { status: 200, contentType: 'application/json', body: JSON.stringify(status) };
+}
+
+/**
+ * `GET /api/v1/ai/auth-status` 모킹 — <b>값을 함수로 받는다</b>.
+ *
+ * <b>왜 `mockApi` 를 못 쓰나</b>: 그쪽은 본문이 고정이라 도중에 바꿀 수 없다. 이 화면의 테스트는
+ * 대부분 "조작 <b>전</b>에는 인증됨, <b>후</b>에는 아님"을 확인하므로 같은 라우트가 호출 시점마다
+ * 다른 답을 줘야 한다. 그래서 스펙마다 같은 블록을 손으로 다시 적고 있었다(세 벌).
+ *
+ * 값이 아니라 함수를 받는 것은 `setupSettingsMocks` 의 `SettingsSource` 와 <b>같은 규약</b>이다 —
+ * 호출부는 `let` 하나를 뒤집으면 되고, 플래그와 응답이 따로 놀 자리가 없다.
+ */
+export async function mockAiAuthStatus(page: Page, resolve: () => AiAuthStatus) {
+  await page.route(
+    (url) => url.pathname === AI_AUTH_STATUS_PATH,
+    (route) => route.fulfill(aiAuthStatusResponse(resolve())),
+  );
+}
+
 /**
  * `DELETE /api/v1/settings/overrides/{key}` 캡처 라우트.
  *

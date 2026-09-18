@@ -1,4 +1,4 @@
-import { Lock, RotateCcw } from 'lucide-react';
+import { Lock, RotateCcw, Trash2 } from 'lucide-react';
 import type { ReactNode } from 'react';
 
 import {
@@ -150,6 +150,17 @@ export function EmptyInBundleNote({
  * AI "저장된 OAuth 토큰 삭제". 아무것도 넘기지 않는 개별 키 해제(AI 의 `ai.model`·숫자 필드,
  * SMTP 의 `smtp.from_address`)는 기본 문구로 동작이 그대로다.
  *
+ * <b>`destructive` 가 <u>선택</u> prop 인 이유(#390 item 5)</b>: 위 문단이 넓힌 세 호출부 중
+ * "저장된 OAuth 토큰 삭제" 하나만은 <b>되돌릴 수 없다</b> — 서버가 평문을 절대 내려주지 않아
+ * 화면에 다시 칠 원본이 없고, 빈 값 PUT 이 끝나면 옛 토큰은 어디에도 남지 않는다. 그런데 그
+ * 호출부는 `confirmLabel` 만 넘겨서 <b>되돌리기 아이콘(`RotateCcw`) + 비파괴 확인 버튼</b>을
+ * 그대로 달고 있었다 — 복구 불가 조작이 "실행 취소"처럼 보이는 <b>거짓 어포던스</b>다.
+ *
+ * 그렇다고 이 표현을 기본값으로 만들 수는 없다. 나머지 호출부(SMTP 개별/그룹 해제, AI 개별/그룹
+ * 해제)는 <b>전부 되돌릴 수 있는</b> 재정의 해제라, 파괴적 표현을 기본으로 깔면 위 "destructive
+ * 색을 쓰지 않는다 — 되돌릴 수 있는 동작이다" 판단이 통째로 뒤집힌다. 그래서 <b>기본값 false 의
+ * opt-in</b> 이고, 넘기지 않는 호출부의 렌더 결과는 글자 하나 바뀌지 않는다.
+ *
  * <b>`settingKey` 를 받지 않는 이유(#390 item 6)</b>: 예전 시그니처는 `settingKey: string` 을 받아
  * `onConfirm(settingKey)` 로 되돌려 줬다. 그런데 번들 해제에는 되돌려 줄 <b>단일 키가 존재하지
  * 않아</b> 호출부가 `"smtp.connection"` 이라는 <b>실재하지 않는 키</b>를 넘기고 있었고, 그것이
@@ -165,6 +176,7 @@ export function ClearOverrideButton({
   dialogTitle = '재정의 해제',
   dialogDescription = '이 항목의 테넌트 설정이 삭제되고 플랫폼 기본값으로 즉시 전환됩니다. 지금 입력된 값은 사라지며, 필요하면 언제든 다시 재정의할 수 있습니다.',
   confirmLabel = '되돌리기',
+  destructive = false,
 }: {
   /** 확인 다이얼로그를 지난 뒤 실행할 동작. 무엇을 지우는지는 호출부가 클로저로 묶는다. */
   onConfirm: () => void;
@@ -180,12 +192,30 @@ export function ClearOverrideButton({
    * 다이얼로그 컴포넌트를 복사하면 확인 동작이 다시 두 벌이 된다 — 그래서 문구만 넓힌다.
    */
   confirmLabel?: string;
+  /**
+   * 되돌릴 수 없는 조작임을 <b>표현</b>으로도 알린다 — 휴지통 아이콘 + 위험색 트리거 +
+   * `destructive` 확인 버튼. 문구(`confirmLabel`)만 '삭제' 로 바꾸고 표현을 그대로 두면,
+   * 복구 불가 조작이 되돌리기 아이콘과 비파괴 버튼을 달고 나온다.
+   *
+   * <b>기본값이 false 여야 한다</b>: 재정의 해제는 언제든 다시 재정의할 수 있는 <b>되돌릴 수
+   * 있는</b> 조작이라 위험색을 쓰면 안 된다(아래 확인 버튼 주석 참고). 이 prop 을 넘기지 않는
+   * 호출부는 SMTP 개별·그룹 해제와 AI 개별·그룹 해제이고, 그 넷의 렌더 결과는 변하지 않는다.
+   */
+  destructive?: boolean;
 }) {
   return (
     <AlertDialog>
       <AlertDialogTrigger asChild>
-        <Button type="button" variant="ghost" size="sm" disabled={disabled}>
-          <RotateCcw className="h-3.5 w-3.5" />
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          disabled={disabled}
+          className={destructive ? 'text-destructive hover:text-destructive' : undefined}
+        >
+          {/* 아이콘도 갈린다 — 색은 색각 이상 사용자에게 전달되지 않으므로, 위험색 하나로는
+              "되돌리기"와 "삭제"가 같은 모양으로 보인다(`10-accessibility.md` 색상 단독 전달 금지). */}
+          {destructive ? <Trash2 className="h-3.5 w-3.5" /> : <RotateCcw className="h-3.5 w-3.5" />}
           {label}
         </Button>
       </AlertDialogTrigger>
@@ -196,8 +226,11 @@ export function ClearOverrideButton({
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>취소</AlertDialogCancel>
-          {/* destructive 색을 쓰지 않는다 — 되돌릴 수 있는 동작이다 */}
-          <AlertDialogAction onClick={onConfirm}>{confirmLabel}</AlertDialogAction>
+          {/* 기본은 destructive 색을 쓰지 않는다 — 재정의 해제는 되돌릴 수 있는 동작이다.
+              `destructive` 를 켠 호출부(복구 불가 삭제)만 위험색을 받는다. */}
+          <AlertDialogAction variant={destructive ? 'destructive' : 'default'} onClick={onConfirm}>
+            {confirmLabel}
+          </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>

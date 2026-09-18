@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import { settingsApi } from '../api/settings';
@@ -150,8 +150,22 @@ export interface AiSettingsFormState {
   isSecretStored: (key: keyof AISettingsForm) => boolean;
   /** "저장된 OAuth 토큰 삭제"를 지금 제시해도 되는가 — 조건은 `handleDeleteOauthToken` 주석 참고. */
   canDeleteOauthToken: boolean;
+  /**
+   * 번들 3키 중 <b>아직 저장하지 않은 입력</b>이 하나라도 있는가. 확인 다이얼로그가 이것을 읽어
+   * "저장된 값만 사라진다"는 기본 카피에 한 문장을 덧붙인다 — 이유는 호출부 주석 참고.
+   */
+  hasUnsavedCredentialInput: boolean;
   handleClearCredentialBundle: () => Promise<void>;
   handleDeleteOauthToken: () => Promise<void>;
+  /**
+   * <b>저장은 성공했는데 재조회가 실패했다</b>를 낡음 안내 슬롯에 세운다.
+   *
+   * `handleSave` 는 이 탭에서 <b>페이지가</b> 갖고 있는데(번들과 무관한 숫자 검증이 붙어 있다)
+   * 안내 슬롯은 이 훅의 상태라, 그 경로가 안내를 세울 통로가 필요하다. `setStaleNotice` 를
+   * 통째로 내주지 않는 이유: 그러면 문구를 호출부가 짜게 되어 SMTP 와 글자가 갈라지고, 낡음
+   * 안내의 어휘가 화면마다 달라진다.
+   */
+  markSaveRefreshFailed: () => void;
 }
 
 /**
@@ -165,9 +179,31 @@ export interface AiSettingsFormState {
  * 그룹 상태로 판정"을 얹는다. 그룹 배지·그룹 해제·낡음 안내는 전부 이 파일에 남는다.
  *
  * <b>페이지가 여전히 갖는 것</b>: 숫자 검증(`NUMBER_RULES`)·`handleSave`·인증 확인(`verifyAuth`).
- * 이 셋은 번들과 무관해 옮길 이유가 없다.
+ * 이 셋은 번들과 무관해 옮길 이유가 없다 — 다만 `verifyAuth` 는 <b>번들 조작이 트리거한다</b>:
+ * 자격증명 번들을 해제하거나 저장된 OAuth 토큰을 지우면 인증 배지가 낡으므로, 훅이
+ * `onCredentialsChanged` 로 사건만 알리고 실행은 페이지가 한다(그 옵션 주석 참고).
  */
-export function useAiSettingsForm(): AiSettingsFormState {
+/** 훅이 페이지에서 받아야 하는 협력자. `useSettingsOverrideForm` 의 `onMetaRefreshed` 와 같은 모양이다. */
+export interface UseAiSettingsFormOptions {
+  /**
+   * 번들의 <b>적용되는 자격증명이 바뀐</b> 직후 호출된다 — 페이지의 `verifyAuth` 를 물린다.
+   * 지금 이걸 쏘는 곳은 둘이다: 토큰 삭제 성공 직후, 그리고 번들 해제 시도 직후.
+   *
+   * <b>왜 훅이 직접 못 하나</b>: 인증 배지(`authStatus`)는 페이지 상태이고 `settingsApi.verifyAuthStatus`
+   * 는 번들과 무관한 관심사라, 훅 안으로 끌어오면 이 파일이 "번들 레이어"라는 경계를 잃는다.
+   * 그래서 훅은 <b>사건만</b> 알리고 무엇을 할지는 페이지가 정한다.
+   *
+   * <b>왜 필요한가</b>: 배지의 `✓ 인증됨` 은 <b>방금 치운 그 자격증명</b>으로 얻은 결과다. 그대로
+   * 두면 화면이 "인증됨"이라고 말하는데 서버에는 그 값이 없거나 더 이상 적용되지 않는다 —
+   * `handleSave` 가 저장 뒤 `verifyAuth()` 를 부르는 것과 정확히 같은 이유다.
+   *
+   * <b>"토큰 삭제"에만 달지 않는 이유</b>: 번들 해제도 <b>적용되는 자격증명을 바꾼다</b>(테넌트
+   * 값에서 플랫폼 값으로). 한쪽에만 달면 같은 종류의 낡은 배지가 다른 버튼으로 다시 들어온다.
+   */
+  onCredentialsChanged?: () => void;
+}
+
+export function useAiSettingsForm(options: UseAiSettingsFormOptions = {}): AiSettingsFormState {
   /**
    * <b>"지금 화면이 서버 상태와 다를 수 있다"</b>를 알리는 지속 안내. 토스트로 끝내지 않는 이유는
    * SMTP 와 같다 — 사용자가 다시 조작해야 하는 상태인데 토스트는 사라지고 스크린리더 사용자가
@@ -179,6 +215,22 @@ export function useAiSettingsForm(): AiSettingsFormState {
   // 에서만 지운다. 호출부마다 지우면 하나를 빠뜨리고, SMTP 쪽에서 실제로 빠뜨린 전례가 있다.
   const clearStaleNotice = useCallback(() => setStaleNotice(null), []);
 
+  // 콜백을 ref 로 들고 있는다 — `useSettingsOverrideForm` 이 `onMetaRefreshed` 에 쓰는 것과 같은
+  // 관용구다. 호출부가 인라인 화살표를 넘겨도(렌더마다 새 참조) 핸들러가 낡은 클로저를 잡지 않는다.
+  const onCredentialsChangedRef = useRef(options.onCredentialsChanged);
+  onCredentialsChangedRef.current = options.onCredentialsChanged;
+
+  /**
+   * 저장 성공 + 재조회 실패를 알리는 문구. <b>SMTP 와 글자까지 같아야 한다</b> — 같은 사건에
+   * 화면마다 다른 어휘를 쓰면 사용자가 둘을 다른 사건으로 읽는다.
+   */
+  const markSaveRefreshFailed = useCallback(() => {
+    const message =
+      '저장은 완료됐지만 화면을 다시 읽지 못했습니다. 지금 보이는 값은 서버 상태와 다를 수 있습니다 — 새로고침하세요.';
+    setStaleNotice(message);
+    toast.error(message);
+  }, []);
+
   const base = useSettingsOverrideForm<AISettingsForm>({
     prefix: 'ai',
     defaults: AI_DEFAULTS,
@@ -188,7 +240,7 @@ export function useAiSettingsForm(): AiSettingsFormState {
     onMetaRefreshed: clearStaleNotice,
   });
 
-  const { settings, fieldState, setIsClearing, refreshMeta, resyncFromServer } = base;
+  const { settings, form, original, fieldState, setIsClearing, refreshMeta, resyncFromServer } = base;
 
   // 그룹 배지·그룹 해제 버튼·그룹 설명문이 읽는 값. 훅에 `resolveState` 로 넘긴 것과 <b>같은</b>
   // 함수를 쓴다 — 표시용 그룹 상태와 저장/dirty 를 지배하는 그룹 상태가 갈라질 자리를 없앤다.
@@ -247,6 +299,12 @@ export function useAiSettingsForm(): AiSettingsFormState {
       }
     }
 
+    // 적용되는 자격증명이 바뀌었으므로 인증 배지도 다시 읽는다 — 전부 성공했으면 플랫폼 값으로,
+    // 부분 실패면 남은 테넌트 행으로 해석이 바뀌어 있다. 어느 쪽이든 해제 <b>전에</b> 얻은
+    // `✓ 인증됨` 은 더 이상 지금 적용되는 자격증명의 답이 아니다. 한 건도 못 지운 경우까지 포함해
+    // 무조건 쏜다 — 확인은 멱등하고, 실패 여부를 여기서 다시 판정하면 판정이 두 벌이 된다.
+    onCredentialsChangedRef.current?.();
+
     try {
       // 성공·실패 어느 쪽이든 서버에서 다시 읽는다 — 화면 상태가 실제 행 상태에서 파생되므로
       // 부분 실패도 자동으로 올바르게 그려진다.
@@ -254,8 +312,12 @@ export function useAiSettingsForm(): AiSettingsFormState {
       resyncFromServer(AI_CREDENTIAL_BUNDLE_KEYS, byKey);
 
       if (failedLabels.length > 0) {
-        const message =
-          '일부 항목만 해제되었습니다. 남은 항목은 아직 우리 조직 값으로 적용됩니다 — 다시 시도하세요.';
+        // <b>실패한 항목을 이름으로 지목한다.</b> `AI_FIELD_LABELS` 가 존재하는 이유가 이것인데
+        // (그 상수의 주석이 "번들 해제 부분 실패"를 직접 지목한다) 정작 모아만 두고 쓰지 않아,
+        // 사용자는 3개 중 무엇이 남았는지 알 길이 없었다 — 다시 시도하라면서 무엇을 다시 시도해야
+        // 하는지 말하지 않는 안내였다. 나열 형태는 이 화면의 다른 안내와 같다(`handleSave` 의
+        // 거부 목록, SMTP 의 빈 자격증명 목록 — 전부 라벨을 `', '` 로 잇는다).
+        const message = `일부 항목만 해제되었습니다. 해제하지 못한 항목: ${failedLabels.join(', ')}. 이 항목은 아직 우리 조직 값으로 적용됩니다 — 다시 시도하세요.`;
         setStaleNotice(message);
         toast.error(message);
       } else {
@@ -293,6 +355,23 @@ export function useAiSettingsForm(): AiSettingsFormState {
   const canDeleteOauthToken =
     credentialGroupState === 'overridden' && isSecretStored('ai.cli_oauth_token');
 
+  /**
+   * 번들 3키에 <b>아직 저장하지 않은 입력</b>이 있는가. SMTP 의 `bundleTransitionPending` 과 같은
+   * 모양(`form[key] !== original[key]`)이지만 쓰임이 다르다 — 저쪽은 "저장이 번들을 전환시킨다"는
+   * 예고이고, 이쪽은 "지금 누르면 그 입력까지 사라진다"는 <b>확인 다이얼로그의 경고</b>다.
+   *
+   * <b>해제/삭제가 실제로 그 입력을 버린다.</b> 두 핸들러 모두 끝에서 3키를 `resyncFromServer`
+   * 하므로, 사용자가 방금 친 API 키·토큰·유형 선택은 서버 해석 값으로 덮인다. 그걸 되살리지
+   * 않는 것은 <b>의도한 결정</b>이다 — "플랫폼 기본값으로 되돌린다"고 확인해 놓고 입력만 남으면
+   * 그게 더 놀라운 결과다. 대신 <b>누르기 전에</b> 말한다.
+   *
+   * 비밀 2키의 폼 값은 시드되지 않아 항상 `''` 에서 출발하므로(`emptySeedKeys`), 여기서 `!==` 가
+   * 참이라는 것은 곧 "사용자가 직접 쳤다"는 뜻이다 — 서버 마스크가 만드는 거짓 양성이 없다.
+   */
+  const hasUnsavedCredentialInput = AI_CREDENTIAL_BUNDLE_KEYS.some(
+    (key) => form[key] !== original[key],
+  );
+
   const handleDeleteOauthToken = async () => {
     setIsClearing(true);
     try {
@@ -304,6 +383,10 @@ export function useAiSettingsForm(): AiSettingsFormState {
       setIsClearing(false);
       return;
     }
+
+    // 쓰기가 성공한 바로 이 지점에서 알린다 — <b>재조회 성공 여부와 무관하게</b>. 배지의
+    // `✓ 인증됨` 은 방금 지운 토큰으로 얻은 결과라, 재조회가 실패한 경우엔 오히려 더 낡는다.
+    onCredentialsChangedRef.current?.();
 
     try {
       const byKey = await refreshMeta();
@@ -331,7 +414,9 @@ export function useAiSettingsForm(): AiSettingsFormState {
     isEmptyInBundle,
     isSecretStored,
     canDeleteOauthToken,
+    hasUnsavedCredentialInput,
     handleClearCredentialBundle,
     handleDeleteOauthToken,
+    markSaveRefreshFailed,
   };
 }
