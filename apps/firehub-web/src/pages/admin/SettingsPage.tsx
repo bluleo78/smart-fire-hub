@@ -1,5 +1,5 @@
 import { Bot, Boxes, Mail, RotateCcw, Save, Settings, ShieldCheck } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import { settingsApi } from '../../api/settings';
@@ -72,10 +72,83 @@ const NUMBER_RULES: {
   },
 ];
 
+/**
+ * 확인 다이얼로그 카피에 <b>덧붙이는</b> 한 문장 — 자격증명 번들에 아직 저장하지 않은 입력이
+ * 있을 때만 붙는다.
+ *
+ * <b>왜 필요한가</b>: 두 다이얼로그의 기본 카피는 전부 <b>저장된</b> 값 이야기다("테넌트 설정이
+ * 삭제되고", "저장된 OAuth 토큰이"). 그런데 두 조작 모두 끝에서 3키를 `resyncFromServer` 하므로,
+ * 사용자가 방금 친 API 키·토큰·유형 선택도 함께 사라진다. 카피에 없는 결과가 일어나는 것이다.
+ *
+ * <b>왜 입력을 살려 주지 않는가</b>: "플랫폼 기본값으로 되돌린다"고 스스로 확인해 놓고 자기 입력만
+ * 남아 있으면 그게 더 놀라운 결과이고, 그 입력은 곧바로 미저장 dirty 로 남아 이탈 가드까지 울린다.
+ * 그래서 되살리지 않되 <b>누르기 전에</b> 말한다.
+ *
+ * <b>기본 카피 뒤에 붙인다(앞에 끼우지 않는다)</b> — 다이얼로그 문구를 앞부분 부분 일치로 잡는
+ * E2E 단언들이 있고, 앞에 끼우면 그 단언이 조용히 다른 문장을 잡게 된다.
+ */
+const UNSAVED_CREDENTIAL_WARNING = (hasUnsaved: boolean) =>
+  hasUnsaved
+    ? ' 자격증명 항목에 아직 저장하지 않은 입력이 있습니다 — 그 입력도 함께 사라집니다.'
+    : '';
+
 export default function SettingsPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [authStatus, setAuthStatus] = useState<{ valid: boolean; email?: string; subscriptionType?: string } | null>(null);
   const [isVerifying, setIsVerifying] = useState(false);
+
+  /**
+   * 마지막으로 시작한 인증 확인의 일련번호. <b>늦게 도착한 낡은 응답을 버리기 위한</b> 것이다
+   * (latest-request-wins).
+   *
+   * <b>왜 필요해졌나</b>: 예전에는 호출부가 둘뿐이었고 둘 다 겹칠 수 없었다 — "인증 확인" 버튼은
+   * `disabled={isVerifying || hasChanges}` 라 자기 자신과 겹치지 않고, `handleSave` 는
+   * `hasChanges === true` 일 때만 도달하는데 그때 그 버튼은 이미 비활성이다. `onCredentialsChanged`
+   * 가 세 번째 호출부를 열면서 그 성질이 깨졌다: 번들 해제·토큰 삭제 버튼은 `isClearing` 으로만
+   * 잠기므로 인증 확인이 <b>진행 중일 때</b> 누를 수 있다.
+   *
+   * 그때 이런 순서가 실재한다 — auth-status 는 외부 제공자를 부르므로 느린 응답이 이상한 일이
+   * 아니다: (A) 인증 확인 클릭 → 응답 대기 → (B) 토큰 삭제 → PUT 성공 → B 의 확인이 `valid:false`
+   * 로 돌아와 `✗` 를 그린다 → <b>A 가 마지막에 도착해 `valid:true` 로 다시 `✓ 인증됨` 을 그린다</b>.
+   * 그 `true` 는 <b>이미 지워진 토큰</b>으로 얻은 값이다 — item 2 가 고치려던 바로 그 증상이 고침
+   * 안에서 살아남는 형태다.
+   *
+   * <b>버튼을 더 잠그는 방식으로 풀지 않는 이유</b>: 창을 좁힐 뿐 닫지 못하고(클릭과 상태 반영
+   * 사이가 여전히 열려 있다), `handleSave` 가 부르는 경로는 애초에 그 버튼과 무관해 남는다.
+   * 일련번호는 호출부가 몇 개로 늘든 "가장 마지막에 시작한 확인만 화면에 반영된다"를 보장한다.
+   *
+   * `useRef` 여야 한다 — 렌더를 유발하지 않고 <b>가장 최근 값</b>을 비동기 클로저가 읽어야 한다.
+   */
+  const verifySeqRef = useRef(0);
+
+  /**
+   * OAuth 토큰/API 키가 실제로 서버에서 통하는지 확인해 배지(`authStatus`)를 갱신한다.
+   *
+   * <b>훅보다 위에 선언한다</b> — `useAiSettingsForm` 에 `onCredentialsChanged` 로 넘겨야 하기
+   * 때문이다. 의존성이 비어 있어(`[]`) 훅 반환값을 참조하지 않으므로 순서를 올려도 안전하다.
+   *
+   * 부르는 곳은 넷이다: "인증 확인" 버튼, 저장 성공 직후, <b>자격증명 번들 해제 직후</b>,
+   * <b>저장된 OAuth 토큰 삭제 직후</b>. 뒤의 둘이 빠져 있으면 이미 적용되지 않는 자격증명으로
+   * 얻은 `✓ 인증됨` 이 화면에 그대로 남는다.
+   */
+  const verifyAuth = useCallback(async () => {
+    const seq = ++verifySeqRef.current;
+    setIsVerifying(true);
+    try {
+      const { data } = await settingsApi.verifyAuthStatus();
+      // 내가 더 이상 <b>최신</b> 확인이 아니면 결과를 버린다. 화면에는 나중에 시작한 확인의
+      // 답만 남아야 한다 — 그 답이 지금 서버 상태를 본 것이기 때문이다.
+      if (seq !== verifySeqRef.current) return;
+      setAuthStatus(data);
+    } catch {
+      if (seq !== verifySeqRef.current) return;
+      setAuthStatus(null);
+    } finally {
+      // 진행 표시도 같은 규칙을 따른다. 무조건 내리면 낡은 확인이 끝나는 순간 아직 진행 중인
+      // 최신 확인 위로 버튼이 다시 열려, 그 위에 또 겹칠 수 있다.
+      if (seq === verifySeqRef.current) setIsVerifying(false);
+    }
+  }, []);
 
   /**
    * AI 탭의 <b>번들 레이어 + 폼 상태 기계</b>. 이메일 탭과 같은 모양이다 — `useAiSettingsForm` 이
@@ -90,7 +163,7 @@ export default function SettingsPage() {
    * 키만" 담고(`buildChangedPayload`), 비밀 2키는 <b>애초에 서버 값을 시드하지 않으므로</b>
    * (`emptySeedKeys`) 손대지 않은 비밀은 조회 성공·실패와 무관하게 페이로드에서 빠진다.
    */
-  const ai = useAiSettingsForm();
+  const ai = useAiSettingsForm({ onCredentialsChanged: verifyAuth });
   const {
     isLoading,
     settings,
@@ -109,18 +182,6 @@ export default function SettingsPage() {
     refreshMeta,
     resyncFromServer,
   } = ai.base;
-
-  const verifyAuth = useCallback(async () => {
-    setIsVerifying(true);
-    try {
-      const { data } = await settingsApi.verifyAuthStatus();
-      setAuthStatus(data);
-    } catch {
-      setAuthStatus(null);
-    } finally {
-      setIsVerifying(false);
-    }
-  }, []);
 
   // isBlankAllowed 는 제거했다. DB 행도 코드 기본값도 없는 'no-default' 상태에서만 참이 되는데,
   // AI 8키는 V15/V69 에서 전부 non-null 로 시드돼 있고 유일하게 시드가 없는
@@ -208,7 +269,15 @@ export default function SettingsPage() {
             resyncFromServer(AI_CREDENTIAL_BUNDLE_KEYS, byKey);
           }
         })
-        .catch(() => undefined);
+        .catch(() => {
+          // <b>저장은 성공했고 다시 그리기가 실패했다.</b> 삼키면 화면이 조용히 거짓말한다:
+          // 배지는 저장 전 상태로 남고, 방금 저장한 비밀의 평문은 `form`·`original` 에 그대로
+          // 남으며, 힌트는 옛 "설정되어 있습니다"를 계속 보여준다. 그렇다고 바깥 catch 로 넘겨
+          // "저장 실패" 토스트를 띄우면 실제로 저장된 값을 사용자가 되돌리려 든다. 그래서 저장
+          // 성공은 성공대로 두고, 무엇이 실패했고 무엇을 해야 하는지를 낡음 안내로 따로 말한다
+          // (SMTP `handleSave` 와 같은 문구 — 훅의 `markSaveRefreshFailed` 가 소유한다).
+          ai.markSaveRefreshFailed();
+        });
       verifyAuth();
     } catch {
       toast.error('설정 저장에 실패했습니다.');
@@ -362,6 +431,18 @@ export default function SettingsPage() {
               <CardTitle>모델 설정</CardTitle>
             </CardHeader>
             <CardContent className="space-y-6">
+              {/* "지금 화면을 믿지 말고 다시 읽어라" 안내. 토스트 한 번으로 끝내지 않는 이유는
+                  사용자가 다시 조작해야 하는 상태이고 토스트는 사라지기 때문이다(SMTP 와 동일).
+
+                  <b>탭 범위에 둔다.</b> 예전에는 자격증명 `fieldset` 안에 있었고, 그때는 이 슬롯을
+                  세우는 사건이 번들 해제 부분 실패와 토큰 삭제 후 재조회 실패뿐이라 맞는 자리였다.
+                  저장 후 재조회 실패가 이 슬롯을 함께 쓰게 되면서 전제가 깨졌다 — `ai.max_turns`
+                  하나만 저장하고 재조회가 실패해도 번들과 아무 상관 없는 경고가 "지금은 플랫폼
+                  기본값을 그대로 쓰고 있습니다" 문단 밑에 붙어, 사용자가 자격증명이 잘못됐다고
+                  읽는다. 상태가 탭 범위가 됐으면 표시도 탭 범위여야 한다(SMTP 가 같은 이유로
+                  같은 이동을 이미 했다). */}
+              {ai.staleNotice && <InlineBanner variant="warning">{ai.staleNotice}</InlineBanner>}
+
               {/* 자격증명 3키는 하나의 `fieldset` 으로 묶는다 — <b>SMTP 연결 그룹의 구조를 그대로
                   거울로 삼는다</b>. 같은 서버 규칙(번들 원자 해석)이 같은 화면 문제를 만들기
                   때문이고, 다른 모양으로 풀면 한쪽만 고치는 사고가 난다. 그룹 경계를 테두리로만
@@ -393,7 +474,7 @@ export default function SettingsPage() {
                         /* 3개 항목을 이름으로 나열한다 — "이 그룹"이라고 쓰면 사용자가 그룹 경계를
                            스크롤 밖에서 추정해야 한다. 비밀 2키는 화면에 평문이 없어 다시 칠 수
                            없으므로 "복구할 수 없으며" 한 마디를 번들 문구에만 더한다. */
-                        dialogDescription="에이전트 유형, OAuth 토큰, API 키 3개 항목의 테넌트 설정이 모두 삭제되고 플랫폼 기본값으로 전환됩니다. 입력한 OAuth 토큰과 API 키는 복구할 수 없으며, 필요하면 언제든 다시 재정의할 수 있습니다."
+                        dialogDescription={`에이전트 유형, OAuth 토큰, API 키 3개 항목의 테넌트 설정이 모두 삭제되고 플랫폼 기본값으로 전환됩니다. 입력한 OAuth 토큰과 API 키는 복구할 수 없으며, 필요하면 언제든 다시 재정의할 수 있습니다.${UNSAVED_CREDENTIAL_WARNING(ai.hasUnsavedCredentialInput)}`}
                       />
                     )}
                   </div>
@@ -413,16 +494,6 @@ export default function SettingsPage() {
                       : '에이전트 유형·OAuth 토큰·API 키는 한 벌의 실행 자격이므로 항상 함께 적용됩니다. 지금은 플랫폼 기본값을 그대로 쓰고 있습니다. 셋 중 하나라도 저장하면 나머지는 플랫폼 값을 상속하지 않습니다 — 자격증명(OAuth 토큰·API 키)은 비워지고, 에이전트 유형에 테넌트 값이 없으면 Claude Agent SDK 가 적용됩니다.'}
                   </p>
                 </div>
-
-                {/* "지금 화면을 믿지 말고 다시 읽어라" 안내. 토스트 한 번으로 끝내지 않는 이유는
-                    사용자가 다시 조작해야 하는 상태이고 토스트는 사라지기 때문이다(SMTP 와 동일).
-
-                    <b>SMTP 는 이 안내를 탭 범위에 두는데 여기는 그룹 범위다</b> — 다른 결론이
-                    아니라 같은 규칙("표시 범위는 사건 범위와 같아야 한다")의 다른 답이다. SMTP 는
-                    번들과 무관한 저장 후 재조회 실패도 이 슬롯을 쓰므로 탭 범위가 맞고, 여기서
-                    이 슬롯을 세우는 것은 번들 해제 부분 실패와 토큰 삭제 후 재조회 실패뿐이라
-                    전부 이 그룹 안의 사건이다. */}
-                {ai.staleNotice && <InlineBanner variant="warning">{ai.staleNotice}</InlineBanner>}
 
                 {/* 에이전트 유형 — 실행 형태·과금 주체라 예전엔 플랫폼 전용이었지만, 2026-09-18
                     부터 ai.api_key / ai.cli_oauth_token 과 한 번들로 테넌트 오버라이드가 가능하다.
@@ -520,8 +591,13 @@ export default function SettingsPage() {
                             disabled={isClearing}
                             label="저장된 OAuth 토큰 삭제"
                             dialogTitle="저장된 OAuth 토큰 삭제"
-                            dialogDescription="우리 조직에 저장된 OAuth 토큰이 빈 값으로 저장됩니다. 에이전트 유형과 API 키는 그대로 유지되므로, sdk 로 동작 중이라면 이후 API 키로 인증합니다. 삭제한 토큰은 복구할 수 없으며, 필요하면 언제든 다시 입력할 수 있습니다."
+                            dialogDescription={`우리 조직에 저장된 OAuth 토큰이 빈 값으로 저장됩니다. 에이전트 유형과 API 키는 그대로 유지되므로, sdk 로 동작 중이라면 이후 API 키로 인증합니다. 삭제한 토큰은 복구할 수 없으며, 필요하면 언제든 다시 입력할 수 있습니다.${UNSAVED_CREDENTIAL_WARNING(ai.hasUnsavedCredentialInput)}`}
                             confirmLabel="삭제"
+                            destructive
+                            /* 되돌릴 수 없는 유일한 호출부다 — 서버가 평문을 내려주지 않아
+                               화면에 다시 칠 원본이 없다. 표현(휴지통 아이콘·위험색)까지 갈라
+                               두지 않으면 복구 불가 조작이 "실행 취소"처럼 보인다. 이 그룹의
+                               "자격증명 전체 재정의 해제"는 다시 재정의할 수 있으므로 켜지 않는다. */
                           />
                         )}
                         {!isEditable('ai.cli_oauth_token') && <PlatformLockedNote />}
