@@ -19,7 +19,7 @@
 
 ## 지금 존재하는 버그 (이 작업이 고친다)
 
-`agent_type=opencode` 만 저장한 테넌트는 번들 채움으로 `api_key=""` 가 된다. `AiAgentClient.classify()` 는 빈 값이면 자격증명을 싣지 않고, `buildCompletionEnv` 는 그러면 컨테이너의 ambient `ANTHROPIC_API_KEY` 로 폴백한다. **즉 opencode 테넌트의 AI 분류는 이미 플랫폼 계정으로 과금되고 있다.** 아래 「분류 경로」가 이것을 명시적 오류로 바꾼다.
+`agent_type=opencode` 만 저장한 테넌트는 번들 채움으로 `api_key=""` 가 된다. `AiAgentClient.classify()` 는 빈 값이면 자격증명을 싣지 않고, `buildCompletionEnv` 는 그러면 컨테이너의 ambient `ANTHROPIC_API_KEY` 로 폴백한다. **즉 opencode 테넌트의 AI 분류는 이미 플랫폼 계정으로 과금되고 있다.** GraphRAG 추출도 같은 경로를 쓰므로 같은 상태다. 아래 「completion 경로」가 이것을 테넌트 자기 공급자 호출로 바꾼다.
 
 ## 저장 계약
 
