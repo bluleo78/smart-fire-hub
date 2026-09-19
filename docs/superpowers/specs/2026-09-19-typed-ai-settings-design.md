@@ -99,17 +99,30 @@ public sealed interface AiCredential {
 
 `getDecryptedApiKey()` 류 단건 접근자는 부활시키지 않는다.
 
-### 분류 경로 — opencode 는 분류할 수 없다
+### completion 경로 — opencode 전용 프로바이더를 더한다
 
-`AiAgentClient.classify()` 는 `agent_type` 과 무관하게 항상 Claude SDK 경로로 간다(`provider-factory.ts:52-57` 의 `createCompletionProvider` 가 `ClaudeSdkCompletionProvider` 를 돌려준다).
+`createCompletionProvider` 는 지금 `agentType` 분기 없이 항상 `ClaudeSdkCompletionProvider` 를 돌려준다(`provider-factory.ts:52-57`). 호출부는 둘 — **분류**(`classification-service.ts:129`)와 **GraphRAG 추출**(`llm-completer.ts:30`).
 
-**`Opencode.apiKey` 는 OpenAI 호환 공급자의 키다.** 이것을 Claude SDK 에 실으면 401 이거나, 비어 있으면 ambient 키로 떨어진다(= 위에 적은 현존 버그). 1단계의 "opencode 도 분류에는 자격증명을 싣는다" 규칙은 그때 `ai.api_key` 가 의미상 항상 Anthropic 키였기에 성립했고, **유형별 구조에서는 성립하지 않는다.**
+**`Opencode.apiKey` 는 OpenAI 호환 공급자의 키다.** Claude SDK 에 실으면 401 이고, 비어 있으면 ambient 키로 떨어진다(= 위에 적은 현존 버그). 1단계의 "opencode 도 분류에는 자격증명을 싣는다" 규칙은 그때 `ai.api_key` 가 의미상 항상 Anthropic 키였기에 성립했고, 유형별 구조에서는 성립하지 않는다.
 
-따라서 `Opencode` 자격증명으로 분류를 시도하면 **`AI_CLASSIFY_UNAVAILABLE` 로 명시적 실패**시킨다. 조용히 플랫폼 키를 쓰지 않는다.
+`createCompletionProvider` 에 `agentType` 분기를 넣고 **`OpenAICompatCompletionProvider`** 를 더한다 — `POST {baseURL}/chat/completions` 한 번이다.
 
-opencode 테넌트에게 분류를 제공하려면 분류를 opencode 로 라우팅해야 하고(`provider-factory` 변경), 그것은 3단계(`ai.classify_model`) 범위다.
+```ts
+switch (cred.agentType) {
+  case 'opencode': return new OpenAICompatCompletionProvider(baseURL, apiKey, model);
+  default:         return new ClaudeSdkCompletionProvider(apiKey, oauthToken, model);
+}
+```
 
-테스트로 고정할 것: (1) `Opencode` 로 분류 시 명시적 오류, (2) 테넌트 자격증명이 있을 때 ambient 키가 **결코** 쓰이지 않음.
+**이것이 가능해진 이유가 이 변경 자체다.** 예전에는 baseURL·키가 배포 측 전역 파일에 있어 앱이 알 수 없었다. 이제 credential 에 있으므로 직접 호출할 수 있다. opencode CLI 를 다시 스폰할 필요가 없다 — 분류·추출은 단발 completion 이라 CLI 의 도구·세션 기계가 필요 없다.
+
+"분류 불가"로 두지 않는 이유: 테넌트가 opencode 를 고른 것은 자기 AI 로 돌리겠다는 뜻이고 분류도 AI 작업이다. 파이프라인의 `AI_CLASSIFY` 스텝이 에이전트 유형에 따라 되고 안 되고 하면 기능 구멍이다.
+
+`createCompletionProvider` 의 "채팅과 달리 agentType 분기가 없다" 주석은 그 이유("자격증명만 흘려받아 인증 경로가 갈라지지 않도록")가 **자격증명이 한 종류일 때** 성립하던 것이므로 함께 갱신한다.
+
+**주의**: 분류·GraphRAG 추출 프롬프트는 Claude 기준으로 튜닝돼 있다(`systemPromptMode: 'append-to-preset'` 을 쓰는 호출부가 있다). OpenAI 호환 경로에는 claude_code 프리셋이 없으므로 그 모드의 의미를 정의하고, 출력 품질을 실제 공급자로 확인한다.
+
+테스트로 고정할 것: (1) `Opencode` 자격증명이면 OpenAI 호환 프로바이더가 선택됨, (2) 테넌트 자격증명이 있을 때 ambient 키가 **결코** 쓰이지 않음, (3) 두 호출부(분류·GraphRAG) 모두 같은 분기를 지남.
 
 ## API 표면
 
@@ -295,7 +308,7 @@ Flyway community 는 undo 가 없으므로 **forward-only** 다. 되돌리는 �
 
 반드시 고정할 것:
 
-- **분류**: `Opencode` 자격증명으로 분류 시 명시적 오류. 테넌트 자격증명이 있을 때 ambient 키가 결코 쓰이지 않음.
+- **completion 분기**: `Opencode` 면 OpenAI 호환 프로바이더가 선택되고, 분류·GraphRAG 두 호출부가 같은 분기를 지남. 테넌트 자격증명이 있을 때 ambient 키가 결코 쓰이지 않음.
 - **범용 조회 차단**: `getAll` / prefix 조회 / 단건 조회 어느 것도 `ai.credential` 을 내보내지 않음(암호문 유출 회귀 방지).
 - **프로브 보안**: 평면 교차 폴백 거부, baseURL 변경 시 키 요구, 사설 대역 거부, 응답에 upstream 본문·apiKey 없음.
 - **유형 전환**: 이전 유형의 secret 이 이름이 겹쳐도 전부 폐기됨.
@@ -307,7 +320,6 @@ E2E 는 이 머신에서 핀 고정 브라우저가 설치되지 않으므로 �
 ## 범위 밖
 
 - **Claude 계열 추론 강도** — `firehub-ai-agent` 에 전달 경로가 전혀 없다(`thinking`·`reasoningEffort`·`budget_tokens` 0건). 현행 모델은 `budget_tokens` 를 400 으로 거부하고 별도 파라미터를 쓰므로 조사가 먼저 필요하다. **별도 이슈.**
-- **opencode 테넌트의 AI 분류** — 분류를 opencode 로 라우팅하려면 `provider-factory` 변경이 필요하다. 3단계 범위.
 - **`enabled` 플래그** — `iacloud_eis` 에는 있으나 쓸 자리가 없다.
 - **테넌트 재정의 허용 여부 토글** — 껐을 때 이미 직접 설정한 테넌트 처리가 과금 주체를 바꾸므로 별도 설계.
 - **SMTP 후속 3건** — `useSmtpSettingsForm.ts:346` 의 `failedLabels` 폐기 버그, 부분 실패 어휘 분기, 두 훅에 복사된 재조회 실패 문구.
@@ -318,7 +330,7 @@ E2E 는 이 머신에서 핀 고정 브라우저가 설치되지 않으므로 �
 초안 대비 주요 수정:
 
 1. **`ai.model` 을 credential 에 넣지 않는다** (3개 리뷰 모두 반대). 마이그레이션 난제·모델 상속 단절·sealed 중복·`ai.model` 소비처 무성 회귀가 한꺼번에 해소된다.
-2. **분류는 opencode 에서 명시적 실패**한다. 초안은 현존 과금 혼입 버그를 테스트로 고정하려 했다.
+2. **completion 경로에 opencode 분기를 더한다.** 초안은 현존 과금 혼입 버그를 테스트로 고정하려 했다. 리뷰는 "분류 불가로 막고 3단계에서 해결"을 권했으나, 그 판단은 provider 설정이 앱 밖에 있던 전제였다 — 이 변경이 baseURL·키를 앱에 주므로 `POST {baseURL}/chat/completions` 하나로 끝난다. GraphRAG 추출도 같은 호출부라 함께 해결된다.
 3. **범용 조회 차단**을 불변식으로 추가. 초안은 `rejectBundleKey` 를 없애면서 대체를 두지 않아 암호문 유출 경로를 열어두었다.
 4. **프로브 보안 요구**를 명시. 평면 교차 폴백은 플랫폼 키 유출이다.
 5. **저장 시 검증의 약속을 축소**. `/models` 로는 추론 강도 지원 여부를 알 수 없고, "없는 모델이면 400"은 자유 입력 상태와 모순됐다.
