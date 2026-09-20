@@ -4,6 +4,7 @@ import com.smartfirehub.global.tenant.TenantContext;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.proactive.dto.ProactiveResult;
+import com.smartfirehub.settings.model.AiCredential;
 import com.smartfirehub.proactive.exception.ProactiveJobException;
 import java.time.Duration;
 import java.util.HashMap;
@@ -43,70 +44,40 @@ public class ProactiveAiClient {
   }
 
   /**
-   * opencode 전용 provider 필드(Ruling #32) — apiKey/agentType 은 기존 평면 파라미터를 그대로
-   * 쓰고(하위 호환), 이 record 는 다른 유형에는 없는 필드만 묶는다. 문자열 파라미터를 계속
-   * 늘리면(이미 apiKey/agentType/oauthToken 세 개가 연속 String 이다) 호출부에서 인자 순서를
-   * 실수로 바꿔도 컴파일이 통과해 조용히 틀린 값이 실린다 — record 로 묶으면 그 실수의 표면이
-   * 줄어든다.
+   * ai-agent 의 프로액티브 라우트를 호출한다.
    *
-   * <p>{@code model} 을 포함하는 이유: 채팅 경로({@code AiAgentProxyService})는 항상
-   * {@code aiSettings.getOrDefault("ai.model", ...)} 로 모델을 보내지만, 이 프로액티브 경로는
-   * 지금까지 모델 자체를 보낸 적이 없다({@code ProactiveAiClient.execute} 의 body 에 "model" 키가
-   * 없었다) — ai-agent 의 proactive 라우트는 고정 기본값(`claude-haiku-4-5`)만 썼다. 이 태스크
-   * 이전에는 opencode 의 {@code buildOpenCodeConfig} 가 model 을 아예 쓰지 않아(옵션 3) 무해했지만,
-   * top-level model 이 필수가 된 지금은 opencode 테넌트의 프로액티브 잡이 그 고정값(슬래시 없음
-   * → "providerId/modelId 형식이어야 합니다" throw)으로 전부 깨진다. sdk/cli/cli-api 는 여전히
-   * 고정 기본값을 쓴다(이 gap 을 넓히지 않는다 — 별도 이슈 대상).
+   * <p>자격증명은 평면 문자열 파라미터가 아니라 {@link AiCredential} 을 그대로 받는다(이슈
+   * #695). 예전에는 {@code apiKey}/{@code agentType}/{@code oauthToken} 세 개의 연속 String 과
+   * opencode 전용 필드를 묶은 별도 record 를 받아 <b>이 메서드가 직접 바디를 조립</b>했는데,
+   * 그 조립 규칙이 채팅·분류 경로와 따로 유지되는 세 번째 방언이었다 — 실제로 필드 누락과
+   * 빈 값 처리 차이가 생겨 있었다. 이제 필드 조립은 {@link AiCredential#applyTo(Map)} 하나뿐이다.
+   *
+   * @param model opencode 에서만 실어 보낼 {@code ai.model}. {@code null} 이면 생략하고 ai-agent
+   *     라우트의 고정 기본값을 쓴다 — sdk/cli/cli-api 는 지금까지 모델을 보낸 적이 없고, 여기서
+   *     보내기 시작하면 그 테넌트들의 프로액티브 비용이 조용히 바뀐다(의도된 gap, 별도 이슈).
    */
-  public record OpencodeFields(String providerId, String baseUrl, String reasoningEffort, String model) {
-    /** opencode 가 아닌 유형(또는 옛 호출부)을 위한 빈 값. */
-    public static final OpencodeFields NONE = new OpencodeFields("", "", "", "");
-  }
-
   public ProactiveResult execute(
       Long userId,
       String prompt,
       String context,
-      String apiKey,
-      String agentType,
-      String oauthToken,
+      AiCredential credential,
+      String model,
       Map<String, Object> template,
-      Map<String, Object> config,
-      OpencodeFields opencodeFields) {
+      Map<String, Object> config) {
     try {
       Map<String, Object> body = new HashMap<>();
       body.put("prompt", prompt);
       body.put("context", context != null ? context : "{}");
-      body.put("apiKey", apiKey != null ? apiKey : "");
-      // 기본값을 두지 않는다 — 유일한 호출부(ProactiveJobAsyncRunner)가 resolve() 의 exhaustive
-      // switch 에서 네 유형 중 하나를 반드시 채우므로 null 이 도달할 수 없고, 설령 도달하더라도
-      // 조용히 "sdk" 로 떨어지면 안 된다(ai-agent 의 isKnownAgentType 가드가 400 으로 막게 둔다).
-      // ai-agent 라우트 3곳(chat/proactive/classify)에서 같은 이유로 걷어낸 기본값의 송신 측 잔재였다.
-      body.put("agentType", agentType);
+      // 자격증명 필드(agentType/apiKey/oauthToken/providerId/baseUrl/reasoningEffort)를 유형별로
+      // 채운다. agentType 에 기본값을 두지 않는 것도 그 안의 규칙이다 — 조용히 "sdk" 로 떨어지면
+      // 안 되고, 알 수 없는 유형은 ai-agent 의 isKnownAgentType 가드가 400 으로 막게 둔다.
+      credential.applyTo(body);
       body.put("config", config != null ? config : Map.of());
-      // ai-agent가 body의 oauthToken 키를 읽는다 (cli/sdk 공통, 구 cliOauthToken 키는 폐기).
-      // 공백 문자열은 다른 검증 지점(missingCredential 등)과 동일하게 "없음"으로 취급한다.
-      if (oauthToken != null && !oauthToken.isBlank()) {
-        body.put("oauthToken", oauthToken);
-      }
-      // opencode 전용 — ai-agent 의 buildOpenCodeConfig 가 provider 블록을 조립하는 데 쓴다
-      // (필드명은 AiAgentClient.buildClassifyBody 와 동일해야 한다). providerId/baseUrl 이
-      // 비어 있으면 아예 채우지 않는다 — ProactiveJobAsyncRunner 는 opencode 자격증명일 때만
-      // NONE 이 아닌 값을 넘긴다(그 switch 의 opencode 분기 주석 참고).
-      if (opencodeFields != null && !opencodeFields.providerId().isBlank()) {
-        body.put("providerId", opencodeFields.providerId());
-        body.put("baseUrl", opencodeFields.baseUrl());
-        // opencode 는 buildOpenCodeConfig 가 top-level model(providerId/modelId 형식)을 필수로
-        // 요구한다 — 비어 있으면 ai-agent 라우트의 고정 기본값(claude-haiku-4-5, 슬래시 없음)이
-        // 대신 실려 형식 위반으로 채팅이 깨진다(OpencodeFields 의 model javadoc 참고).
-        if (!opencodeFields.model().isBlank()) {
-          body.put("model", opencodeFields.model());
-        }
-        // 빈 문자열은 "설정 안 함" 이므로 생략한다 — 그대로 보내면 ai-agent 쪽에서 opencode 가
-        // 400 을 반환한다.
-        if (!opencodeFields.reasoningEffort().isBlank()) {
-          body.put("reasoningEffort", opencodeFields.reasoningEffort());
-        }
+      // opencode 는 buildOpenCodeConfig 가 top-level model(providerId/modelId 형식)을 필수로
+      // 요구한다 — 비어 있으면 ai-agent 라우트의 고정 기본값(claude-haiku-4-5, 슬래시 없음)이
+      // 대신 실려 형식 위반으로 실행이 깨진다. 호출부가 opencode 일 때만 값을 넘긴다.
+      if (model != null) {
+        body.put("model", model);
       }
       if (template != null) {
         body.put("template", template);

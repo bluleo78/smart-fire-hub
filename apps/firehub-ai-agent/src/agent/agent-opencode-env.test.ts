@@ -35,6 +35,7 @@ vi.mock('child_process', () => ({
 
 import { executeOpenCodeAgent } from './agent-opencode.js';
 import { opencodeWorkspaceDir } from './tenant-paths.js';
+import { HARD_DENIED } from './opencode-child-env.js';
 
 /** spawn() 이 돌려줄 가짜 child — readline 이 즉시 끝나도록 빈 stdout, stderr 는 EventEmitter. */
 function makeFakeChild() {
@@ -52,38 +53,18 @@ function makeFakeChild() {
 }
 
 /**
- * 자식 env 에서 반드시 제거돼야 하는 키 전체 목록(보안 리뷰 Fix4 + 재검토 N6).
+ * 자식 env 에서 반드시 제거돼야 하는 키 전체 목록.
  *
- * <p>왜: opencode 본체는 OPENCODE_CONFIG_CONTENT 의 provider 블록으로 테넌트 자격증명을 이미
- * 받았다. 컨테이너에 남은 ambient 자격증명/설정이 자식에게 상속되면, opencode(또는 그 안에서
- * 로드되는 provider)가 그 공유 값으로 테넌트 설정을 조용히 대체해 플랫폼 계정으로 과금하는
- * 6b1c6383 과 같은 회귀가 된다. ANTHROPIC_API_KEY 만 지우고 ANTHROPIC_AUTH_TOKEN/
- * OPENAI_API_KEY 를 남기거나, IRSA 환경에서 정적 AWS 키만 지우는 것은 같은 사고를 이름만 바꿔
- * 재현한다(재검토 N6).
+ * <p><b>목록을 여기 베껴 적지 않는다 (이슈 #696 정리 리뷰).</b> 예전에는 이 파일이 20개 이름을
+ * 그대로 복사해 들고 있었다 — 구현에 이름을 하나 추가해도 이 목록은 낡은 채로 남고 아무 테스트도
+ * 빨간불이 되지 않는, 사본이 셋인 상태였다. 이제 구현의 단일 출처를 그대로 가져다 쓴다.
+ *
+ * <p>왜 이 키들이 위험한가: opencode 본체는 OPENCODE_CONFIG_CONTENT 의 provider 블록으로 테넌트
+ * 자격증명을 이미 받았다. 컨테이너에 남은 ambient 자격증명/설정이 자식에게 상속되면, opencode
+ * (또는 그 안에서 로드되는 provider)가 그 공유 값으로 테넌트 설정을 조용히 대체해 플랫폼
+ * 계정으로 과금하는 6b1c6383 과 같은 회귀가 된다.
  */
-const DENIED_ENV_KEYS = [
-  'INTERNAL_SERVICE_TOKEN',
-  'ANTHROPIC_API_KEY',
-  'CLAUDE_CODE_OAUTH_TOKEN',
-  'OPENCODE_CONFIG',
-  'OPENCODE_PERMISSION',
-  'BEDROCK_API_KEY',
-  'AWS_BEARER_TOKEN_BEDROCK',
-  'AWS_ACCESS_KEY_ID',
-  'AWS_SECRET_ACCESS_KEY',
-  'AWS_SESSION_TOKEN',
-  'AWS_PROFILE',
-  // 재검토 N6 에서 추가된 키들
-  'OPENAI_API_KEY',
-  'ANTHROPIC_AUTH_TOKEN',
-  'ANTHROPIC_BASE_URL',
-  'AWS_WEB_IDENTITY_TOKEN_FILE',
-  'AWS_ROLE_ARN',
-  'AWS_CONTAINER_CREDENTIALS_RELATIVE_URI',
-  'AWS_CONTAINER_CREDENTIALS_FULL_URI',
-  'AWS_SHARED_CREDENTIALS_FILE',
-  'AWS_CONFIG_FILE',
-] as const;
+const DENIED_ENV_KEYS = [...HARD_DENIED] as const;
 
 const OPTIONS: ChatProviderOptions = {
   message: '안녕',

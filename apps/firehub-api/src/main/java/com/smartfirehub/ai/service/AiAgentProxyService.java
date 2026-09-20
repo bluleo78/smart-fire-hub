@@ -152,45 +152,6 @@ public class AiAgentProxyService {
   }
 
   /**
-   * {@code streamChat} 이 요청 바디에 실을 필드들. 유형별로 쓰이지 않는 필드는 이미 빈 문자열로
-   * 정규화돼 있다 — 호출부가 다시 agentType 을 보고 걸러낼 필요가 없다.
-   *
-   * <p>{@code providerId}/{@code baseUrl}/{@code reasoningEffort} 는 opencode 전용이다(Ruling
-   * #32) — 다른 유형에서는 빈 문자열로 채워진다.
-   */
-  private record ResolvedChatCredential(
-      String agentType,
-      String apiKey,
-      String oauthToken,
-      String providerId,
-      String baseUrl,
-      String reasoningEffort) {}
-
-  /**
-   * {@link AiCredentialService#resolve()} 를 유형별로 나눠 {@link ResolvedChatCredential} 로
-   * 바꾼다. switch 라 새 유형이 늘면 이 메서드가 컴파일 오류로 강제 갱신된다.
-   *
-   * <p>{@code opencode} 는 {@code Opencode.apiKey}(OpenAI 호환 키)를 그대로 {@code apiKey} 로
-   * 싣는다 — 2026-06-23 의 "옵션 3: 배포 환경 opencode auth 상속" 결정은 2026-09-19(이슈 #693)에
-   * 뒤집혔다. ai-agent 의 {@code buildOpenCodeConfig} 가 이제 provider 블록(baseURL/apiKey)을
-   * 요청 바디로 직접 받아 쓰므로, 여기서 비워 보내면 그 provider 블록이 빈 채로 조립돼 채팅이
-   * 깨진다. {@code cli} 는 apiKey 개념이 없고, {@code cli-api} 는 oauthToken 을 쓰지 않는다.
-   */
-  private ResolvedChatCredential resolveChatCredential() {
-    return switch (aiCredentialService.resolve()) {
-      case AiCredential.Sdk sdk ->
-          new ResolvedChatCredential("sdk", sdk.apiKey(), sdk.oauthToken(), "", "", "");
-      case AiCredential.Cli cli ->
-          new ResolvedChatCredential("cli", "", cli.oauthToken(), "", "", "");
-      case AiCredential.CliApi cliApi ->
-          new ResolvedChatCredential("cli-api", cliApi.apiKey(), "", "", "", "");
-      case AiCredential.Opencode oc ->
-          new ResolvedChatCredential(
-              "opencode", oc.apiKey(), "", oc.providerId(), oc.baseUrl(), oc.reasoningEffort());
-    };
-  }
-
-  /**
    * ai-agent 의 세션 트랜스크립트를 가져온다.
    *
    * <p>테넌트를 쿼리 파라미터로 실어 보낸다 — ai-agent 는 트랜스크립트를 테넌트별 디렉터리에
@@ -234,7 +195,8 @@ public class AiAgentProxyService {
     // aiSettings 는 이후 키 단위로만 읽히고(아래 requestBody 조립) 맵 자체가 요청 바디에 실리지
     // 않는다. ai.credential 은 이 맵에 나타나지 않는다 — SettingsService.getAsMap 이 그 키를
     // 범용 경로에서 걸러낸다(비밀이 하위 필드에 있어 이 맵의 마스킹 계약으로는 다룰 수 없다).
-    // 비밀 값은 아래에서 resolveChatCredential()(AiCredentialService.resolve())에서만 명시적으로 실린다.
+    // 비밀 값은 아래 aiCredentialService.resolve() 의 결과(AiCredential)가 credential.applyTo()
+    // 로 요청 바디에 실을 때만 들어간다 — 그 경로 하나뿐이다.
     Map<String, String> aiSettings = settingsService.getAsMap("ai");
 
     // agentType 의 출처는 AiCredentialService.resolve() 하나뿐이어야 한다. 예전에는
@@ -251,68 +213,28 @@ public class AiAgentProxyService {
     // AiController.chat() 까지 전파돼 500 이 된다(fail-closed). 구독 콜백 안에서 불렀다면 이
     // 예외가 리액터 에러 경로로 흘러 원인 불명의 조용한 실패가 됐을 것이다 — 6b1c6383 과 같은
     // 모양의 회귀를 만들지 않으려면 이 위치가 중요하다.
-    ResolvedChatCredential resolved = resolveChatCredential();
-    String agentType = resolved.agentType();
+    AiCredential credential = aiCredentialService.resolve();
 
-    // 인증 수단 검증: cli/sdk=OAuth 토큰(sdk는 API 키와 양자택일), cli-api=API 키, opencode=배포측 인증(검증 불필요)
+    // 사용 가능 여부 판정은 전부 AiCredential 의 유형별 메서드에 있다(이슈 #695). 예전에는 여기에
+    // agentType 문자열 if-else 사슬과 opencode 전용 instanceof 가 있었는데, 그건 #693 이 걷어낸
+    // 바로 그 안티패턴이 타입 있는 분기 옆에 남아 있던 자리였다 — 유형이 늘 때 컴파일이 아무것도
+    // 막아주지 않는다. 공백 문자열을 "없음"으로 보는 정규화도 각 유형의 isComplete() 안에 있다.
     //
-    // 공백 문자열을 "없음"으로 취급하는 정규화는 아래 hasApiKey/hasOauthToken 판정에 있다 —
-    // resolveChatCredential() 이 유형별로 쓰이지 않는 필드를 이미 빈 문자열로 정규화해 돌려주므로
-    // (예: cli-api 의 oauthToken, opencode 의 apiKey/oauthToken) 여기서 다시 agentType 을 보지
-    // 않아도 같은 결과가 나온다.
-    boolean hasApiKey = !resolved.apiKey().isBlank();
-    boolean hasOauthToken = !resolved.oauthToken().isBlank();
-    boolean missingCredential;
-    // opencode 전용: 모델 형식 위반(슬래시 없음 또는 providerId 불일치) 여부. providerId/baseUrl
-    // 이 이미 빈 경우에는 아래에서 계산하지 않는다(missingCredential 가 먼저 걸린다) — 그 경우
-    // opencodeModel 은 사용되지 않으므로 빈 문자열로 둬도 안전하다.
-    boolean opencodeModelFormatInvalid = false;
-    String opencodeModel = "";
-    if ("opencode".equals(agentType)) {
-      // 옵션 3 폐기(2026-09-19, 이슈 #693) — provider 설정(providerId/baseUrl)이 없으면
-      // ai-agent 의 buildOpenCodeConfig 가 배포 측 전역 설정으로 조용히 떨어질 여지를 주지
-      // 않고, 여기서 먼저 사용자에게 보이는 오류로 끝낸다(다른 세 유형과 같은 fail-closed).
-      missingCredential = resolved.providerId().isBlank() || resolved.baseUrl().isBlank();
-      if (!missingCredential) {
-        // ai.model 이 opencode 형식(providerId/modelId)이 아니면(예: sdk 시절 값
-        // "claude-sonnet-5" 가 남아 있는 채로 opencode 로 전환) ai-agent 의
-        // buildOpenCodeConfig 가 "providerId/modelId 형식이어야 합니다" 로 throw 한다 — 그
-        // 시점은 이미 SSE 헤더가 나간 뒤(chat.ts 가 헤더를 먼저 쓰고서 provider.execute() 를
-        // 부른다)라, 프론트엔드는 구체적 원인 없이 "Agent 처리 중 오류가 발생했습니다" 만 본다.
-        // OpencodeCredentialValidation.checkProviderConsistency(저장 시 검증)는 저장 순서상
-        // 슬래시 없는 값을 통과시켜야 하는 이유(순환 잠금 회피, 그 클래스 javadoc 참고)가
-        // 있지만, 여기는 저장이 아니라 **실제 호출 시점**이라 그 이유가 성립하지 않는다 —
-        // 슬래시가 없으면 무조건 형식 위반으로 막는다(저장 시 검증보다 엄격).
-        opencodeModel = aiSettings.getOrDefault("ai.model", "claude-sonnet-5");
-        int slash = opencodeModel.indexOf('/');
-        opencodeModelFormatInvalid =
-            slash < 0 || !opencodeModel.substring(0, slash).equals(resolved.providerId());
-      }
-    } else if ("cli".equals(agentType)) {
-      missingCredential = !hasOauthToken;
-    } else if ("sdk".equals(agentType)) {
-      // sdk 는 API 키 또는 OAuth 토큰 중 하나만 있어도 인증 가능(OAuth 우선).
-      missingCredential = !hasApiKey && !hasOauthToken;
-    } else { // cli-api
-      missingCredential = !hasApiKey;
-    }
-    if (missingCredential || opencodeModelFormatInvalid) {
+    // ai.model 은 유형과 무관하게 한 번 읽어 넘긴다 — 모델 제약이 없는 유형에서는 modelProblem 이
+    // 항상 null 이라 no-op 이다. opencode 에서 이 검사가 중요한 이유: ai.model 이 opencode 형식
+    // (providerId/modelId)이 아니면(예: sdk 시절 값 "claude-sonnet-5" 가 남아 있는 채로 opencode 로
+    // 전환) ai-agent 의 buildOpenCodeConfig 가 throw 하는데, 그 시점은 이미 SSE 헤더가 나간 뒤
+    // (chat.ts 가 헤더를 먼저 쓰고서 provider.execute() 를 부른다)라 프론트엔드는 구체적 원인 없이
+    // "Agent 처리 중 오류가 발생했습니다" 만 본다. 그래서 여기서 먼저 막는다.
+    String model = aiSettings.getOrDefault("ai.model", AiCredential.DEFAULT_MODEL);
+    String credentialProblem =
+        credential.isComplete() ? credential.modelProblem(model) : credential.incompleteMessage();
+    if (credentialProblem != null) {
       try {
-        String errorMessage;
-        if (opencodeModelFormatInvalid) {
-          errorMessage =
-              "AI 모델(" + opencodeModel + ")이 opencode 형식(공급자/모델)이 아니거나 선택한 공급자와 일치하지 않습니다. 관리자 설정에서 모델을 다시 선택하세요.";
-        } else if ("cli".equals(agentType)) {
-          errorMessage = "Claude CLI OAuth 토큰이 설정되지 않았습니다. 관리자 설정에서 토큰을 등록하세요.";
-        } else if ("sdk".equals(agentType)) {
-          errorMessage = "AI API 키 또는 OAuth 토큰이 설정되지 않았습니다. 관리자 설정에서 등록하세요.";
-        } else if ("opencode".equals(agentType)) {
-          errorMessage = "AI 공급자 설정(공급자/기본 URL)이 완전하지 않습니다. 관리자 설정에서 opencode 설정을 확인하세요.";
-        } else {
-          errorMessage = "AI API 키가 설정되지 않았습니다. 관리자 설정에서 API 키를 등록하세요.";
-        }
+        // 채팅은 예외가 아니라 SSE 이벤트로 오류를 내보내야 하므로 requireModelUsable 대신 문구만
+        // 가져다 쓴다(분류·프로액티브는 같은 문구를 예외로 던진다).
         String errorPayload =
-            objectMapper.writeValueAsString(Map.of("type", "error", "message", errorMessage));
+            objectMapper.writeValueAsString(Map.of("type", "error", "message", credentialProblem));
         emitter.send(SseEmitter.event().data(errorPayload));
         emitter.complete();
       } catch (IOException ignored) {
@@ -328,31 +250,11 @@ public class AiAgentProxyService {
     if (fileIds != null && !fileIds.isEmpty()) {
       requestBody.put("fileIds", fileIds);
     }
-    // opencode/cli 는 resolveChatCredential() 이 이미 apiKey 를 빈 문자열로 정규화해 두므로
-    // hasApiKey 가 자연히 거짓이다 — agentType 을 다시 보는 별도 가드가 필요 없다.
-    if (hasApiKey) {
-      requestBody.put("apiKey", resolved.apiKey());
-    }
-    requestBody.put("agentType", agentType);
-    // cli 또는 sdk 에서 OAuth 토큰이 있으면 body 에 주입(중립 키 oauthToken) — 그 두 형태 조건은
-    // hasOauthToken 자체가 이미 담고 있다. sdk 에서 apiKey 와 함께 있으면 ai-agent 가 OAuth 를
-    // 우선 선택한다.
-    if (hasOauthToken) {
-      requestBody.put("oauthToken", resolved.oauthToken());
-    }
-    // opencode 전용 — ai-agent 의 buildOpenCodeConfig 가 provider 블록(baseURL/apiKey/model)을
-    // 조립하는 데 쓴다(필드명은 AiAgentClient.buildClassifyBody 와 동일해야 한다 — ai-agent 가
-    // 그 이름으로 읽는다). providerId/baseUrl 은 missingCredential 가드가 이미 비어있지 않음을
-    // 보장하므로 무조건 싣고, reasoningEffort 는 빈 값이면 "설정 안 함"이라 아예 생략한다(빈
-    // 문자열을 그대로 보내면 ai-agent 쪽에서 opencode 가 400 을 반환한다).
-    if ("opencode".equals(agentType)) {
-      requestBody.put("providerId", resolved.providerId());
-      requestBody.put("baseUrl", resolved.baseUrl());
-      if (!resolved.reasoningEffort().isBlank()) {
-        requestBody.put("reasoningEffort", resolved.reasoningEffort());
-      }
-    }
-    requestBody.put("model", aiSettings.getOrDefault("ai.model", "claude-sonnet-5"));
+    // 자격증명 필드(agentType/apiKey/oauthToken/providerId/baseUrl/reasoningEffort)는 유형별
+    // applyTo() 가 채운다 — 필드 이름은 ai-agent 가 읽는 이름이라 분류·프로액티브 경로와 같아야
+    // 하고, 그래서 세 경로가 이 메서드 하나를 공유한다(이슈 #695).
+    credential.applyTo(requestBody);
+    requestBody.put("model", model);
     requestBody.put("maxTurns", parseIntSafe(aiSettings.get("ai.max_turns"), 10));
     requestBody.put("systemPrompt", aiSettings.get("ai.system_prompt"));
     requestBody.put("temperature", parseDoubleSafe(aiSettings.get("ai.temperature"), 1.0));

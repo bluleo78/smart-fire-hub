@@ -11,6 +11,7 @@ import { internalAuth } from '../middleware/auth.js';
 import { readSessionTranscript } from '../agent/transcript-reader.js';
 import { checkSessionOwnership } from '../agent/session-owner.js';
 import { isValidTenantId } from '../agent/tenant-paths.js';
+import { AdminActionableError } from '../agent/admin-actionable-error.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -157,15 +158,26 @@ router.post('/chat', internalAuth, async (req: Request, res: Response) => {
     const errorMessage = error instanceof Error ? error.message : String(error);
     console.error('[Agent] Chat error:', errorMessage);
 
+    // 관리자가 조치해야 풀리는 실패만 문구를 그대로 내보낸다. 나머지는 예전처럼 고정 문구로
+    // 뭉갠다 — 내부 오류 원문이 사용자 화면에 새면 안 된다(이슈 #350/#313).
+    //
+    // 왜 예외를 뒀는가: #697(배포 측 ambient 인증 파일)·#698(baseUrl SSRF 재검증)은 자바 쪽에
+    // 대응 검사가 없어 ai-agent 안에서만 판별된다. 고정 문구로 뭉개면 관리자는 무엇을 고쳐야
+    // 할지 알 수 없고, 운영자가 DB 질의로 대상을 찾아다니는 수밖에 없었다. AdminActionableError
+    // 의 message 는 경로·호스트·IP 를 담지 않도록 그 클래스가 규칙으로 못박고 있다.
+    const isActionable = error instanceof AdminActionableError;
+    if (isActionable && error.detail) {
+      console.error('[Agent] Chat error detail:', error.detail);
+    }
+    const userMessage = isActionable ? error.message : 'Agent 처리 중 오류가 발생했습니다';
+
     if (clientDisconnected) return;
 
     if (!res.headersSent) {
-      res.status(500).json({ error: 'Internal server error' });
+      res.status(500).json({ error: isActionable ? userMessage : 'Internal server error' });
     } else {
       res.write(`event: error\n`);
-      res.write(
-        `data: ${JSON.stringify({ type: 'error', message: 'Agent 처리 중 오류가 발생했습니다' })}\n\n`,
-      );
+      res.write(`data: ${JSON.stringify({ type: 'error', message: userMessage })}\n\n`);
       res.end();
     }
   } finally {

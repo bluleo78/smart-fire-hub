@@ -397,7 +397,7 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
 
     when(proactiveContextCollector.collectContext(any(), any())).thenReturn("{}");
     when(proactiveAiClient.execute(
-            anyLong(), anyString(), anyString(), anyString(), anyString(), any(), any(), any(), any()))
+            anyLong(), anyString(), anyString(), any(), any(), any(), any()))
         .thenReturn(buildMockResult());
     when(chatDeliveryChannel.type()).thenReturn("CHAT");
 
@@ -421,7 +421,7 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
 
     when(proactiveContextCollector.collectContext(any(), any())).thenReturn("{}");
     when(proactiveAiClient.execute(
-            anyLong(), anyString(), anyString(), anyString(), anyString(), any(), any(), any(), any()))
+            anyLong(), anyString(), anyString(), any(), any(), any(), any()))
         .thenThrow(new RuntimeException("AI Agent 연결 실패"));
 
     // when / then — @Async 프록시를 우회한 raw 빈으로 직접 호출 (이슈 #192)
@@ -466,7 +466,7 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
 
     when(proactiveContextCollector.collectContext(any(), any())).thenReturn("{}");
     when(proactiveAiClient.execute(
-            anyLong(), anyString(), anyString(), anyString(), anyString(), any(), any(), any(), any()))
+            anyLong(), anyString(), anyString(), any(), any(), any(), any()))
         .thenReturn(authFailureResult);
     when(chatDeliveryChannel.type()).thenReturn("CHAT");
 
@@ -496,7 +496,7 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
 
     when(proactiveContextCollector.collectContext(any(), any())).thenReturn("{}");
     when(proactiveAiClient.execute(
-            anyLong(), anyString(), anyString(), anyString(), anyString(), any(), any(), any(), any()))
+            anyLong(), anyString(), anyString(), any(), any(), any(), any()))
         .thenReturn(buildMockResult());
     when(chatDeliveryChannel.type()).thenReturn("CHAT");
 
@@ -515,7 +515,7 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
 
     when(proactiveContextCollector.collectContext(any(), any())).thenReturn("{}");
     when(proactiveAiClient.execute(
-            anyLong(), anyString(), anyString(), anyString(), anyString(), any(), any(), any(), any()))
+            anyLong(), anyString(), anyString(), any(), any(), any(), any()))
         .thenReturn(buildMockResult());
     when(chatDeliveryChannel.type()).thenReturn("CHAT");
     doThrow(new RuntimeException("채널 오류"))
@@ -600,7 +600,7 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
     var job = proactiveJobService.createJob(buildCreateRequest("쿨다운 테스트"), testUserId);
     when(proactiveContextCollector.collectContext(any(), any())).thenReturn("{}");
     when(proactiveAiClient.execute(
-            anyLong(), anyString(), anyString(), anyString(), anyString(), any(), any(), any(), any()))
+            anyLong(), anyString(), anyString(), any(), any(), any(), any()))
         .thenReturn(buildMockResult());
     when(chatDeliveryChannel.type()).thenReturn("CHAT");
 
@@ -635,7 +635,7 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
     var job = proactiveJobService.createJob(buildCreateRequest("asyncRunner 위임 테스트"), testUserId);
     when(proactiveContextCollector.collectContext(any(), any())).thenReturn("{}");
     when(proactiveAiClient.execute(
-            anyLong(), anyString(), anyString(), anyString(), anyString(), any(), any(), any(), any()))
+            anyLong(), anyString(), anyString(), any(), any(), any(), any()))
         .thenReturn(buildMockResult());
     when(chatDeliveryChannel.type()).thenReturn("CHAT");
 

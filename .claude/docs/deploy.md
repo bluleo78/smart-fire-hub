@@ -74,6 +74,45 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
    (providerId/baseURL/reasoningEffort)는 스냅샷 없이는 영영 복구 불가**하다 — 자세한 이유는
    `apps/firehub-api/src/main/resources/db/migration/V122__ai_credential.sql` 헤더 주석 참고.
 
+### opencode baseURL 사설망 점검 (이슈 #698)
+
+#693 의 SSRF 가드는 **저장 시점**에만 baseURL 을 검사한다. 그 가드가 생기기 전에 저장된 행에는
+사설망 주소가 그대로 남아 있을 수 있다.
+
+**코드 쪽은 닫혀 있다** — ai-agent 가 opencode CLI 를 띄우기 직전에 `assertSafeCompletionTarget`
+으로 baseURL 을 다시 검사한다(`agent-opencode.ts`). 저장 시점과 무관하게 모든 행이 사용 시점에
+검사되므로, 옛 행이 남아 있어도 실제로 사설망에 나가지는 않는다. 분류 경로는 그 전부터 같은
+가드를 쓰고 있었다.
+
+**그래도 어떤 행이 그런 상태인지는 알아야 한다** — 가드에 걸리는 테넌트는 채팅이 오류로
+끝나므로, 배포 후 다음 질의로 대상을 찾아 관리자에게 정정 안내한다.
+
+```sql
+-- 테넌트 평면
+SELECT tenant_id,
+       value::jsonb -> 'payload' ->> 'providerId' AS provider_id,
+       value::jsonb -> 'payload' ->> 'baseUrl'    AS base_url
+  FROM tenant_settings
+ WHERE key = 'ai.credential'
+   AND value::jsonb ->> 'agentType' = 'opencode'
+ ORDER BY tenant_id;
+
+-- 플랫폼 평면
+SELECT value::jsonb -> 'payload' ->> 'baseUrl' AS base_url
+  FROM system_settings
+ WHERE key = 'ai.credential'
+   AND value::jsonb ->> 'agentType' = 'opencode';
+```
+
+`https` 가 아니거나, 포트가 443/8443 이 아니거나, 호스트가 사설 대역(루프백, 10/172.16/192.168,
+169.254, 100.64/10, fc00::/7, 0.0.0.0/8)으로 해석되면 그 행은 이제 **차단된다**. 해당 테넌트에
+정상 URL 로 다시 저장하도록 안내한다.
+
+> 기동 시 자동 스캔은 **만들지 않았다**(판단 근거). `tenant_settings` 는 RLS 로 테넌트별로
+> 격리돼 있어 전 테넌트를 훑으려면 RLS 를 우회하는 데이터소스를 애플리케이션 코드에 새로
+> 노출해야 한다 — 경고 로그 하나를 얻자고 열기에는 그 문이 너무 크다. 사용 시점 가드가 실제
+> 차단을 이미 담당하므로, 남은 것은 위 질의로 충분한 **가시성** 문제다.
+
 ### 부분 배포 (빌드+push 완료 후 컨테이너만 재시작)
 
 ```bash
@@ -160,11 +199,20 @@ services:
 
 1. **바이너리**: ai-agent 이미지에 `opencode` CLI 포함됨 (Dockerfile 에서 `npm install -g opencode-ai`). 별도 조치 불필요.
 2. **모델 인증 (테넌트별 provider, 2026-09-19 이슈 #693 — "옵션 3: 배포 측 전역 설정 상속" 폐기)**: OpenCode → 모델 provider 인증은 이제 **테넌트가 관리자 설정 화면에서 저장한 opencode 자격증명**(공급자 ID·기본 URL·API 키·추론 강도)에서 온다. firehub-api 가 저장된 자격증명을 요청 바디로 흘려보내고, ai-agent 의 `buildOpenCodeConfig`(`agent-opencode.ts`)가 요청마다 `provider` 블록을 조립해 `OPENCODE_CONFIG_CONTENT` 환경변수(자식 프로세스 전용, 디스크에 쓰지 않음)로 opencode CLI 자식에 주입한다. **배포 측 전역 opencode 설정 파일(`~/.config/opencode/opencode.json`, `OPENCODE_CONFIG`)이나 컨테이너 env(`ANTHROPIC_API_KEY` 등)는 더 이상 opencode 모델 인증의 출처가 아니다.**
-   - **env 경로**: `agent-opencode.ts` 가 자식 spawn 시 `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_BASE_URL`/`OPENAI_API_KEY`/`CLAUDE_CODE_OAUTH_TOKEN`/`OPENCODE_CONFIG`/`OPENCODE_PERMISSION`/`BEDROCK_API_KEY` 및 AWS 자격증명 체인 전체를 코드에서 명시적으로 제거한다 — 컨테이너 env 에 남아 있어도 자식에는 도달하지 않는다.
+   - **env 경로 (이슈 #696 — denylist → allowlist 전환됨)**: `agent-opencode.ts` 가 자식 env 를 **빈 객체에서 조립**한다(`opencode-child-env.ts`). 예전처럼 "아는 이름을 지우는" 방식이 아니라 **허용한 이름만 통과**하므로, 컨테이너 env 에 무엇이 있든 목록에 없으면 자식에 도달하지 않는다 — 새 공급자 자격증명 관례가 생겨도 자동으로 차단된다.
+     - 허용되는 것: `PATH`(실측상 유일한 필수 키), `HOME`(`--session` 재개의 기준점), `USER`/`LOGNAME`/`SHELL`, `TMPDIR`/`TMP`/`TEMP`, `LANG`/`LANGUAGE`/`LC_*`/`TZ`/`TERM`, 프록시(`HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY`/`ALL_PROXY` 대소문자 양쪽), 사내 CA(`NODE_EXTRA_CA_CERTS`/`SSL_CERT_FILE`/`SSL_CERT_DIR`/`CURL_CA_BUNDLE`), `npm_config_*`, `XDG_DATA_HOME`/`XDG_CACHE_HOME`/`XDG_STATE_HOME`.
+     - `NODE_OPTIONS` 는 **일부러 뺐다** — `--require` 로 자식에 임의 코드를 주입할 수 있다.
+     - ⚠ **운영 전용 변수가 끊겨 opencode 가 깨지면** 재배포 없이 `OPENCODE_CHILD_ENV_EXTRA` 에 쉼표로 변수 **이름**을 적어 열 수 있다(값이 아니라 이름이다). 단 위 차단 목록(`ANTHROPIC_API_KEY` 등 20개, `opencode-child-env.ts` 의 `HARD_DENIED`)은 이 탈출구로도 통과하지 못하고, 시도하면 WARN 로그가 남는다. 이 탈출구를 쓰게 됐다면 그 변수를 허용 목록에 정식으로 추가하는 후속 작업이 필요하다는 신호다.
    - **파일 경로**: `OPENCODE_CONFIG` env 를 지우는 것만으로는 **부족하다**. opencode CLI 는 그 env 가 없으면 기본 경로 `$XDG_CONFIG_HOME/opencode/opencode.json`(XDG 미설정이면 `$HOME/.config/opencode/opencode.json`)을 읽는다. 그래서 `agent-opencode.ts` 가 자식에게 `XDG_CONFIG_HOME` 을 **ai-agent 프로세스당 하나인 임시 디렉터리**(OS 임시 디렉터리 아래, 첫 opencode 요청에 지연 생성 후 프로세스 수명 동안 재사용)로 준다. HOME 은 바꾸지 않는다 — opencode 세션 상태가 `~/.local/share/opencode` 에 있어 `--session` 재개가 깨진다. 실제 opencode 바이너리(v1.18.31)로 확인한 동작이다.
      - ⚠ **npm 레지스트리 egress 필요 (재검토 D1)**: opencode 는 설정을 로드할 때 그 디렉터리 아래에 플러그인 npm 트리(`@opencode-ai/plugin`, 실측 약 61MB/3,648 파일)를 **스스로 설치**한다. 따라서 **파드 수명당 첫 opencode 요청 1회**는 npm 레지스트리로 나가는 egress 가 필요하다(실측 약 +4s). 막혀 있으면 그 첫 요청이 **약 70초 지연**된 뒤 진행되고, 이후 요청은 캐시를 재사용해 warm(약 0.6s)이다. 프록시/사설 레지스트리 환경이면 컨테이너 env 로 `npm_config_registry` 를 지정하는 것을 검토한다(설치기가 이 값을 읽는 것은 확인됨). 디렉터리 경로는 `mkdtemp` 의 **무작위 이름**이라 이미지에 미리 심어 둘 자리가 없다 — 고정 경로로 바꾸면 공유 `/tmp` 에 제3자가 `opencode.json` 을 선점할 수 있어 가드가 무너진다. 콜드 부트스트랩을 더 줄이려면 프로세스 기동 시 1회 pre-warm 이 남은 선택지다(현재 범위 밖, 후속). (요청별 디렉터리였다면 이 비용이 **매 채팅**에 붙었다 — 그래서 프로세스당 1개다.)
-     - **한계 (재검토 D3)**: 이 가드는 **설정** 디렉터리만 끊는다. opencode 의 ambient provider 인증은 `$XDG_DATA_HOME/opencode/auth.json`(기본 `~/.local/share/opencode`)에도 남을 수 있고, 그 경로는 `--session` 재개 때문에 일부러 살려 둔다. 현재는 차트가 `.local/share/opencode` 를 마운트하지 않아 실 위험이 없다 — **그 마운트를 추가하지 마라**.
-   - ⚠ **배포 조치(필수)**: 위 코드 가드와 **별개로** aiagent Deployment 의 `.config/opencode` subPath 마운트를 **제거하라**(`~/k8s/smart-fire-hub/templates/aiagent-deployment.yaml`, mountPath `/home/appuser/.config/opencode`, subPath `opencode`). 그 마운트는 이 단계가 폐기한 "배포 측 전역 설정 상속"을 위해 존재하던 것이라 이제 쓰임이 없고, 남겨 두면 코드 가드가 (리팩터링·버전업 등으로) 무효화되는 순간 전역 provider 가 테넌트 설정을 조용히 이기는 상태로 되돌아간다. 가드와 마운트 제거를 **둘 다** 건다. **대가(재검토 D1)**: 그 PVC 가 opencode 의 플러그인 npm 캐시 자리도 겸하고 있었으므로, 제거하면 그 캐시는 PVC 수명이 아니라 **파드 수명**을 따른다 — 즉 파드 재시작마다 위 "첫 요청 1회 콜드 부트스트랩"이 다시 일어난다. 요청마다가 아니므로 수용 가능한 비용으로 판단했다.
+     - **데이터 디렉터리 (재검토 D3 → 이슈 #697 에서 닫음)**: 이 XDG 가드는 **설정** 디렉터리만 끊는다. opencode 의 ambient provider 인증은 `$XDG_DATA_HOME/opencode/auth.json`(기본 `~/.local/share/opencode`)에도 있을 수 있고, 그 경로는 `--session` 재개 때문에 일부러 살려 둔다.
+       - **실측(2026-09-21, v1.18.31)**: `OPENCODE_CONFIG_CONTENT` 로만 자격증명을 주는 정상 실행은 `auth.json` 을 **만들지 않는다**(생기는 것은 세션 DB·로그뿐). 테넌트 apiKey 가 데이터 디렉터리에 남지도 않는다(전체 재귀 grep 0건). 그 파일은 `opencode auth login` 의 산물이다.
+       - 따라서 위험은 **미리 심어진 파일**뿐이고, 이제 ai-agent 가 opencode spawn 직전에 그 파일의 존재를 확인해 **그 요청을 실패시킨다**(`opencode-ambient-auth-guard.ts`). 기동 실패가 아니라 요청 단위인 이유는 sdk/cli 테넌트까지 멈추지 않기 위해서다.
+       - ⚠ **`.local/share/opencode` 를 마운트하지 마라**. 마운트하면 위 가드에 걸려 opencode 채팅이 전부 실패한다(조용히 잘못 과금되는 것보다 낫다는 판단). 차트에도 같은 경고를 주석으로 박아 뒀다.
+       - 로컬 개발 머신은 보통 개발자가 `opencode auth login` 을 한 적이 있어 이 파일이 이미 있다 — 그때만 `OPENCODE_ALLOW_AMBIENT_AUTH=1` 로 끌 수 있다(끄면 매 요청 WARN). **운영에는 절대 설정하지 않는다.**
+   - ⚠ **배포 조치(필수)**: aiagent Deployment 의 `.config/opencode` subPath 마운트는 **차트에서 이미 제거했다**(`~/k8s/smart-fire-hub/templates/aiagent-deployment.yaml`, 2026-09-21, 이슈 #697). 그 마운트는 이 단계가 폐기한 "배포 측 전역 설정 상속"을 위해 존재하던 것이라 이제 쓰임이 없고, 남겨 두면 코드 가드가 (리팩터링·버전업 등으로) 무효화되는 순간 전역 provider 가 테넌트 설정을 조용히 이기는 상태로 되돌아간다.
+     - **차트 파일을 고친 것과 클러스터에 적용된 것은 다르다** — `helm upgrade` 후 `kubectl get deploy aiagent -o yaml` 로 그 마운트가 실제로 사라졌는지 확인할 것.
+     - **대가(재검토 D1)**: 그 PVC 가 opencode 의 플러그인 npm 캐시 자리도 겸하고 있었으므로, 제거하면 그 캐시는 PVC 수명이 아니라 **파드 수명**을 따른다 — 즉 파드 재시작마다 위 "첫 요청 1회 콜드 부트스트랩"이 다시 일어난다. 요청마다가 아니므로 수용 가능한 비용으로 판단했다.
    - **`ANTHROPIC_API_KEY` 를 컨테이너에서 아예 없애라는 뜻이 아니다 — 범위를 좁혀서 읽을 것 (보안 리뷰 Fix5).** 이 항목은 *opencode 모델 인증*의 출처 얘기다. sdk/cli/cli-api 를 쓰는 테넌트는 사정이 다르다: 그 테넌트가 플랫폼 평면(`system_settings`)을 그대로 상속(즉 테넌트 오버라이드 없음)하는데 그 **플랫폼 자체의** sdk/cli/cli-api 자격증명이 `system_settings` 가 아니라 컨테이너 env 에만 있는 배포라면, `proactive.ts` 의 ambient `ANTHROPIC_API_KEY` 폴백(및 분류 경로의 `ClaudeSdkCompletionProvider` 같은 폴백)이 정확히 그 배포를 살아 있게 한다 — 이때 과금 주체는 플랫폼이 자기 자신에게 과금하는 것이라 6b1c6383 이 말하는 오분류가 아니다(Ruling #31). 요약하면:
      - **필요**: 플랫폼 sdk/cli/cli-api 자격증명을 관리자 화면(`/api/platform/settings/ai-credential`)에 아직 저장하지 않은 배포.
      - **제거 가능**: 그 자격증명을 화면에서 저장한 뒤에는 컨테이너 쪽 값을 지워도 된다(더는 쓰이지 않는다).

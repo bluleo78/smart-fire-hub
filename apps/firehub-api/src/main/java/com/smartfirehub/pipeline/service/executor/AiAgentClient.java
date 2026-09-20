@@ -86,51 +86,22 @@ public class AiAgentClient {
     body.put("rows", request.rows());
     body.put("prompt", request.prompt());
     body.put("outputColumns", request.outputColumns());
-    body.put("model", settingsService.getValue("ai.model").orElse("claude-sonnet-5"));
+    body.put("model", settingsService.getValue("ai.model").orElse(AiCredential.DEFAULT_MODEL));
 
-    // 유형마다 실리는 키가 다르다 — switch 라 유형이 늘면 누락이 컴파일 오류가 된다(근거는
-    // AiCredential 클래스 javadoc). 1단계 평면 모델에서는 ai.api_key 가 언제나 Anthropic 키였으므로
-    // agentType 과 무관하게 그대로 넘겨도 안전했다. Opencode.apiKey 는 OpenAI 호환 키로 의미가
-    // 다르므로 "그냥 apiKey 를 넘긴다"를 유형 전체에 일반화하면 안 된다 — 유형별로 실제로 쓰이는
-    // 필드만 담는다.
-    switch (aiCredentialService.resolve()) {
-      case AiCredential.Sdk sdk -> {
-        body.put("agentType", "sdk");
-        if (!sdk.oauthToken().isBlank()) body.put("oauthToken", sdk.oauthToken());
-        if (!sdk.apiKey().isBlank()) body.put("apiKey", sdk.apiKey());
-      }
-      case AiCredential.Cli cli -> {
-        body.put("agentType", "cli");
-        if (!cli.oauthToken().isBlank()) body.put("oauthToken", cli.oauthToken());
-      }
-      case AiCredential.CliApi cliApi -> {
-        body.put("agentType", "cli-api");
-        if (!cliApi.apiKey().isBlank()) body.put("apiKey", cliApi.apiKey());
-      }
-      case AiCredential.Opencode oc -> {
-        body.put("agentType", "opencode");
-        body.put("providerId", oc.providerId());
-        body.put("baseUrl", oc.baseUrl());
-        if (!oc.reasoningEffort().isBlank()) body.put("reasoningEffort", oc.reasoningEffort());
-        if (!oc.apiKey().isBlank()) body.put("apiKey", oc.apiKey());
+    // 유형마다 실리는 키가 다르다 — 그 규칙은 AiCredential 의 유형별 applyTo() 하나에만 있다
+    // (이슈 #695: 예전에는 여기·채팅·프로액티브에 각각 switch 가 있었고 이미 드리프트했다).
+    // 1단계 평면 모델에서는 ai.api_key 가 언제나 Anthropic 키였으므로 agentType 과 무관하게
+    // 그대로 넘겨도 안전했다. Opencode.apiKey 는 OpenAI 호환 키로 의미가 다르므로 "그냥 apiKey 를
+    // 넘긴다"를 유형 전체에 일반화하면 안 된다 — applyTo() 가 유형별로 실제 쓰이는 필드만 담는다.
+    AiCredential credential = aiCredentialService.resolve();
+    credential.applyTo(body);
 
-        // opencode 모델 형식 가드(전체 브랜치 리뷰 I3) — chat(AiAgentProxyService:274-292)에는
-        // 이미 있는 검사인데 분류 경로만 빠져 있었다. 위에서 "model" 에 넣은 기본값
-        // "claude-sonnet-5"(슬래시 없음)은 opencode 형식이 아니라, 가드 없이 그대로 보내면
-        // OpenAI 호환 호스트가 이유를 알 수 없는 상류 오류로만 실패한다. 여기서 먼저 걸러 분명한
-        // 설정 오류로 바꾼다 — chat 과 같은 검사(슬래시 유무 + providerId 접두사 일치)를 그대로
-        // 쓴다(세 번째 방언을 만들지 않는다).
-        String opencodeModel = (String) body.get("model");
-        int slash = opencodeModel.indexOf('/');
-        if (slash < 0 || !opencodeModel.substring(0, slash).equals(oc.providerId())) {
-          throw new IllegalStateException(
-              "AI 모델("
-                  + opencodeModel
-                  + ")이 opencode 형식(공급자/모델)이 아니거나 선택한 공급자와 일치하지 않습니다."
-                  + " 관리자 설정에서 모델을 다시 선택하세요.");
-        }
-      }
-    }
+    // opencode 모델 형식 가드(전체 브랜치 리뷰 I3) — 위에서 "model" 에 넣은 기본값
+    // AiCredential.DEFAULT_MODEL(슬래시 없음)은 opencode 형식이 아니라, 가드 없이 그대로 보내면
+    // OpenAI 호환 호스트가 이유를 알 수 없는 상류 오류로만 실패한다. 여기서 먼저 걸러 분명한
+    // 설정 오류로 바꾼다 — 검사와 문구는 AiCredential.modelProblem 하나에서 온다(세 경로 공통).
+    // 모델 제약이 없는 유형에서는 no-op 이라 여기서 유형을 따로 분기하지 않는다.
+    credential.requireModelUsable((String) body.get("model"));
     return body;
   }
 

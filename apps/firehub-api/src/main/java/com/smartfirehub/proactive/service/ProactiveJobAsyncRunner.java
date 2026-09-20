@@ -125,56 +125,35 @@ public class ProactiveJobAsyncRunner {
       // 자격증명으로 해석된다. resolve() 가 던지는 UnknownAgentTypeException 은 여기서 잡지
       // 않는다 — 아래 바깥의 catch(Exception e) 가 FAILED 로 기록하고 실행을 끝낸다. 조용히 빈
       // 자격증명으로 계속 진행하면 6b1c6383 과 같은 모양의 과금 혼입이 재발한다.
-      String agentType;
-      String apiKey;
-      String oauthToken;
-      ProactiveAiClient.OpencodeFields opencodeFields = ProactiveAiClient.OpencodeFields.NONE;
-      switch (aiCredentialService.resolve()) {
-        case AiCredential.Sdk sdk -> {
-          agentType = "sdk";
-          apiKey = sdk.apiKey();
-          // sdk 는 OAuth 우선 — apiKey 와 함께 있어도 ai-agent 가 OAuth 를 선택한다.
-          oauthToken = sdk.oauthToken().isBlank() ? null : sdk.oauthToken();
-        }
-        case AiCredential.Cli cli -> {
-          agentType = "cli";
-          apiKey = "";
-          oauthToken = cli.oauthToken().isBlank() ? null : cli.oauthToken();
-        }
-        case AiCredential.CliApi cliApi -> {
-          agentType = "cli-api";
-          apiKey = cliApi.apiKey();
-          oauthToken = null;
-        }
-        case AiCredential.Opencode oc -> {
-          // 옵션 3 폐기(2026-09-19, 이슈 #693) — ai-agent 의 buildOpenCodeConfig 가 이제
-          // provider 블록(baseURL/apiKey)을 요청 바디로 직접 받아 조립하므로, Opencode.apiKey
-          // (OpenAI 호환 키)를 실제 값으로 싣는다. 예전 주석("빈 값을 보낸다")은 apiKey 를
-          // Anthropic 용 필드로 오인한 것이었다 — 이 요청 자체가 opencode 전용이라 그 구분이
-          // 성립하지 않는다(AiAgentProxyService.resolveChatCredential 과 같은 정정).
-          agentType = "opencode";
-          apiKey = oc.apiKey();
-          oauthToken = null;
-          // ai.model 을 함께 싣는다 — 없으면 ai-agent 의 고정 기본값(슬래시 없음)이 대신 실려
-          // buildOpenCodeConfig 가 "providerId/modelId 형식이어야 합니다" 로 throw 한다.
-          String opencodeModel = settingsService.getValue("ai.model").orElse("");
-          opencodeFields = new ProactiveAiClient.OpencodeFields(
-              oc.providerId(), oc.baseUrl(), oc.reasoningEffort(), opencodeModel);
-        }
+      //
+      // 예전에는 여기에 유형별 switch 가 있어 평면 문자열을 풀어냈는데, 그 매핑이 채팅·분류와
+      // 따로 유지되는 세 번째 사본이었다(이슈 #695). 이제 자격증명을 그대로 클라이언트에 넘기고
+      // 필드 조립은 AiCredential.applyTo() 하나가 맡는다.
+      AiCredential credential = aiCredentialService.resolve();
+
+      // opencode 만 모델을 함께 싣는다 — sdk/cli/cli-api 는 지금까지 모델을 보낸 적이 없고
+      // ai-agent 의 고정 기본값(claude-haiku-4-5)을 쓴다(비용 차이가 있는 의도된 gap).
+      // 자격증명 자체가 불완전하면 모델 검사보다 **먼저** 막는다 — 순서가 뒤집히면 providerId/
+      // baseUrl 이 비어 있는 테넌트에게 "모델을 다시 선택하세요"라는 엉뚱한 안내가 나간다
+      // (리뷰 3b). 채팅(AiAgentProxyService)이 isComplete() 를 먼저 보는 것과 같은 순서다.
+      if (!credential.isComplete()) {
+        throw new IllegalStateException(credential.incompleteMessage());
       }
+
+      // 모델은 그것을 실제로 쓰는 유형에서만 조회한다(Supplier) — sdk/cli/cli-api 는 지금까지
+      // 모델을 보낸 적이 없고 ai-agent 라우트의 고정 기본값을 쓴다(비용 차이가 있는 의도된 gap).
+      String opencodeModel =
+          credential.modelToSend(
+              () -> settingsService.getValue("ai.model").orElse(AiCredential.DEFAULT_MODEL));
+      // 모델 접두사 가드(이슈 #695) — 채팅·분류에는 있었으나 이 경로에만 없어서, ai.model 이 낡은
+      // opencode 테넌트의 잡은 ai-agent 안쪽에서 원인 불명으로 실패했다. 모델을 보내지 않는
+      // 유형에서는 null 이 넘어가 no-op 이다(세 경로 같은 검사·같은 문구).
+      credential.requireModelUsable(opencodeModel);
 
       // AI 실행
       ProactiveResult result =
           aiClient.execute(
-              userId,
-              job.prompt(),
-              context,
-              apiKey,
-              agentType,
-              oauthToken,
-              template,
-              job.config(),
-              opencodeFields);
+              userId, job.prompt(), context, credential, opencodeModel, template, job.config());
 
       // 발송 전 결과 검증 (이슈 #350) — 내용이 없거나 본문이 에이전트 실패 메시지인 결과를
       // COMPLETED로 기록하면 오류 원문이 그대로 CHAT/EMAIL로 나간다. 검증 실패 시 예외를 던져

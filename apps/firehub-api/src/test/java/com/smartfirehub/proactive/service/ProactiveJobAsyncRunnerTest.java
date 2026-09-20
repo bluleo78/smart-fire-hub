@@ -100,114 +100,94 @@ class ProactiveJobAsyncRunnerTest {
    * 옵션 3 폐기(2026-09-19, 이슈 #693, Ruling #32) — 이 테스트는 그 결정을 고정하던 이전 핀
    * 테스트({@code apiKey=""}, {@code oauthToken=null} 만 확인)를 뒤집는다. ai-agent 의
    * {@code buildOpenCodeConfig} 가 이제 provider 블록을 요청 바디로 직접 받아 조립하므로,
-   * {@link ProactiveAiClient#execute} 가 실제 apiKey 와 providerId/baseUrl/reasoningEffort
-   * (OpencodeFields)를 받아야 한다 — 예전처럼 빈 값을 보내면 그 provider 블록이 빈 채로
-   * 조립돼 프로액티브 리포트 생성이 깨진다.
+   * {@link ProactiveAiClient#execute} 가 실제 자격증명을 받아야 한다 — 예전처럼 빈 값을 보내면
+   * 그 provider 블록이 빈 채로 조립돼 프로액티브 리포트 생성이 깨진다.
+   *
+   * <p>이슈 #695 이후 이 러너는 평면 문자열로 풀어내지 않고 {@link AiCredential} 을 그대로
+   * 넘긴다 — 바디 조립은 {@code applyTo()} 한 곳이 맡는다. 그래서 여기서는 "해석된 자격증명이
+   * 손상 없이 그대로 전달되는가"와 "opencode 에서만 모델이 함께 실리는가"를 본다.
    */
   @Test
-  void opencode_자격증명이면_에이전트에_provider_필드가_모두_전달된다() {
-    when(aiCredentialService.resolve())
-        .thenReturn(
-            new AiCredential.Opencode(
-                "openai", "https://api.openai.com/v1", "medium", "sk-oai-secret"));
+  void opencode_자격증명이면_에이전트에_자격증명과_모델이_그대로_전달된다() {
+    AiCredential.Opencode credential =
+        new AiCredential.Opencode("openai", "https://api.openai.com/v1", "medium", "sk-oai-secret");
+    when(aiCredentialService.resolve()).thenReturn(credential);
     when(settingsService.getValue("ai.model")).thenReturn(Optional.of("openai/gpt-4o"));
-    when(aiClient.execute(
-            eq(USER_ID), anyString(), anyString(), anyString(), anyString(), any(), any(), any(), any()))
-        .thenReturn(
-            new ProactiveResult("제목", List.of(), null, null, "요약 내용"));
+    when(aiClient.execute(eq(USER_ID), anyString(), anyString(), any(), any(), any(), any()))
+        .thenReturn(new ProactiveResult("제목", List.of(), null, null, "요약 내용"));
 
     runner.executeJob(JOB_ID, USER_ID);
 
-    ArgumentCaptor<String> apiKeyCaptor = ArgumentCaptor.forClass(String.class);
-    ArgumentCaptor<String> agentTypeCaptor = ArgumentCaptor.forClass(String.class);
-    ArgumentCaptor<String> oauthTokenCaptor = ArgumentCaptor.forClass(String.class);
-    ArgumentCaptor<ProactiveAiClient.OpencodeFields> opencodeFieldsCaptor =
-        ArgumentCaptor.forClass(ProactiveAiClient.OpencodeFields.class);
+    ArgumentCaptor<AiCredential> credentialCaptor = ArgumentCaptor.forClass(AiCredential.class);
+    ArgumentCaptor<String> modelCaptor = ArgumentCaptor.forClass(String.class);
     verify(aiClient)
         .execute(
             eq(USER_ID),
             anyString(),
             anyString(),
-            apiKeyCaptor.capture(),
-            agentTypeCaptor.capture(),
-            oauthTokenCaptor.capture(),
+            credentialCaptor.capture(),
+            modelCaptor.capture(),
             any(),
-            any(),
-            opencodeFieldsCaptor.capture());
+            any());
 
-    assertThat(agentTypeCaptor.getValue()).isEqualTo("opencode");
-    // Opencode.apiKey(OpenAI 호환 키)를 실제 값으로 싣는다 — 더 이상 Anthropic 필드로 오인해
-    // 비우지 않는다.
-    assertThat(apiKeyCaptor.getValue()).isEqualTo("sk-oai-secret");
-    assertThat(oauthTokenCaptor.getValue()).isNull();
-    assertThat(opencodeFieldsCaptor.getValue().providerId()).isEqualTo("openai");
-    assertThat(opencodeFieldsCaptor.getValue().baseUrl()).isEqualTo("https://api.openai.com/v1");
-    assertThat(opencodeFieldsCaptor.getValue().reasoningEffort()).isEqualTo("medium");
-    assertThat(opencodeFieldsCaptor.getValue().model()).isEqualTo("openai/gpt-4o");
-    // 실행이 정상 완료로 기록됐는지도 함께 확인 — opencode 분기가 예외를 던지지 않는다는 뜻.
-    verify(executionRepository).updateResult(eq(EXECUTION_ID), eq("COMPLETED"), any(), any());
+    assertThat(credentialCaptor.getValue()).isEqualTo(credential);
+    assertThat(modelCaptor.getValue()).isEqualTo("openai/gpt-4o");
   }
 
   /**
-   * ai.model 이 저장돼 있지 않으면(플랫폼 기본값도 없는 극단 상황) {@code OpencodeFields.model} 은
-   * 빈 문자열이어야 한다 — {@code Optional.orElse("")} 가 {@code Optional.orElseThrow()} 등으로
-   * 바뀌어 예외를 던지면 안 된다(이 브랜치는 여전히 정상 완료해야 하고, 빈 값 처리는
-   * ProactiveAiClient.execute 의 책임이다).
+   * 모델 접두사 가드(이슈 #695) — {@code ai.model} 이 opencode 형식이 아니면(설정 안 함이라
+   * 기본값 {@code claude-sonnet-5} 로 떨어지는 경우 포함) 호출 <b>전에</b> 막는다.
+   *
+   * <p>이전 동작은 빈 모델을 그대로 넘겨 ai-agent 의 고정 기본값(슬래시 없음)이 대신 실리게 두는
+   * 것이었고, 실패는 ai-agent 안쪽에서 원인 불명으로 났다. 채팅·분류에는 이미 있던 검사가 이
+   * 경로에만 없었다 — 이제 세 경로가 같은 검사와 같은 문구를 쓴다. 배경 잡이라 사용자에게
+   * 보이는 오류가 없으므로, 분명한 설정 오류로 {@code execution.error} 에 남는 것이 중요하다.
    */
   @Test
-  void opencode_ai모델이_없으면_OpencodeFields의_model이_빈문자열이다() {
+  void opencode_ai모델이_형식에_맞지_않으면_호출전에_FAILED로_기록된다() {
     when(aiCredentialService.resolve())
-        .thenReturn(
-            new AiCredential.Opencode("openai", "https://api.openai.com/v1", "", "sk-oai"));
+        .thenReturn(new AiCredential.Opencode("openai", "https://api.openai.com/v1", "", "sk-oai"));
     when(settingsService.getValue("ai.model")).thenReturn(Optional.empty());
-    when(aiClient.execute(
-            eq(USER_ID), anyString(), anyString(), anyString(), anyString(), any(), any(), any(), any()))
-        .thenReturn(new ProactiveResult("제목", List.of(), null, null, "요약 내용"));
 
-    runner.executeJob(JOB_ID, USER_ID);
+    assertThatThrownBy(() -> runner.executeJob(JOB_ID, USER_ID))
+        .isInstanceOf(ProactiveJobException.class);
 
-    ArgumentCaptor<ProactiveAiClient.OpencodeFields> opencodeFieldsCaptor =
-        ArgumentCaptor.forClass(ProactiveAiClient.OpencodeFields.class);
-    verify(aiClient)
-        .execute(
-            eq(USER_ID),
-            anyString(),
-            anyString(),
-            anyString(),
-            anyString(),
-            any(),
-            any(),
-            any(),
-            opencodeFieldsCaptor.capture());
-
-    assertThat(opencodeFieldsCaptor.getValue().model()).isEmpty();
+    verify(aiClient, never()).execute(any(), any(), any(), any(), any(), any(), any());
+    verify(executionRepository).updateError(eq(EXECUTION_ID), anyString());
   }
 
-  /** sdk 자격증명이면 OpencodeFields.NONE(빈 값)이 전달돼야 한다 — opencode 전용 필드가 새지 않는다. */
+  /**
+   * 불완전한 자격증명은 모델 검사보다 **먼저** 막힌다(리뷰 3b).
+   *
+   * <p>순서가 뒤집히면 providerId/baseUrl 이 비어 있는 테넌트가 "모델을 다시 선택하세요"라는
+   * 엉뚱한 안내를 받는다 — 고쳐야 할 것은 모델이 아니라 공급자 설정이다. 배경 잡이라 그
+   * 문구가 {@code execution.error} 에 남는 것이 관리자가 얻는 유일한 단서다.
+   */
   @Test
-  void sdk_자격증명이면_opencodeFields는_NONE이_전달된다() {
+  void opencode_공급자설정이_비어있으면_모델안내가_아니라_공급자안내로_실패한다() {
+    when(aiCredentialService.resolve()).thenReturn(new AiCredential.Opencode("", "", "", "sk-oai"));
+
+    assertThatThrownBy(() -> runner.executeJob(JOB_ID, USER_ID))
+        .isInstanceOf(ProactiveJobException.class);
+
+    ArgumentCaptor<String> errorCaptor = ArgumentCaptor.forClass(String.class);
+    verify(executionRepository).updateError(eq(EXECUTION_ID), errorCaptor.capture());
+    assertThat(errorCaptor.getValue()).contains("공급자");
+    assertThat(errorCaptor.getValue()).doesNotContain("모델을 다시 선택");
+    verify(aiClient, never()).execute(any(), any(), any(), any(), any(), any(), any());
+  }
+
+  /** sdk 자격증명이면 모델을 아예 보내지 않는다 — ai-agent 라우트의 고정 기본값이 그대로 산다. */
+  @Test
+  void sdk_자격증명이면_모델을_보내지_않는다() {
     when(aiCredentialService.resolve()).thenReturn(new AiCredential.Sdk("", "sk-anthropic"));
-    when(aiClient.execute(
-            eq(USER_ID), anyString(), anyString(), anyString(), anyString(), any(), any(), any(), any()))
+    when(aiClient.execute(eq(USER_ID), anyString(), anyString(), any(), isNull(), any(), any()))
         .thenReturn(new ProactiveResult("제목", List.of(), null, null, "요약 내용"));
 
     runner.executeJob(JOB_ID, USER_ID);
 
-    ArgumentCaptor<ProactiveAiClient.OpencodeFields> opencodeFieldsCaptor =
-        ArgumentCaptor.forClass(ProactiveAiClient.OpencodeFields.class);
     verify(aiClient)
-        .execute(
-            eq(USER_ID),
-            anyString(),
-            anyString(),
-            anyString(),
-            anyString(),
-            any(),
-            any(),
-            any(),
-            opencodeFieldsCaptor.capture());
-
-    assertThat(opencodeFieldsCaptor.getValue()).isEqualTo(ProactiveAiClient.OpencodeFields.NONE);
+        .execute(eq(USER_ID), anyString(), anyString(), any(), isNull(), any(), any());
   }
 
   /**
@@ -226,8 +206,7 @@ class ProactiveJobAsyncRunnerTest {
     assertThatThrownBy(() -> runner.executeJob(JOB_ID, USER_ID))
         .isInstanceOf(ProactiveJobException.class);
 
-    verify(aiClient, never())
-        .execute(any(), any(), any(), any(), any(), any(), any(), any(), any());
+    verify(aiClient, never()).execute(any(), any(), any(), any(), any(), any(), any());
     verify(executionRepository).updateError(eq(EXECUTION_ID), anyString());
     verify(executionRepository, never()).updateResult(any(), any(), any(), any());
   }
