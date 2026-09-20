@@ -376,6 +376,8 @@ class AiClassifyExecutorTest {
 
     assertThat(result.outputRows()).isEqualTo(1);
     assertThat(result.executionLog()).contains("1 AI-processed");
+    // 정상 응답이면 누락이 0으로 남는다(#694) — source_id 가 전부 맞아떨어진 경우의 회귀 방지.
+    assertThat(result.executionLog()).contains("0 rows dropped");
     verify(aiAgentClient).classify(any(), eq(1L));
     verify(dataTableRowService).insertBatch(eq("output_table"), anyList(), anyList(), anyMap());
   }
@@ -600,13 +602,23 @@ class AiClassifyExecutorTest {
   // 배치마다 적재 (#690)
   // -----------------------------------------------------------------------
 
-  /** 분류 결과를 담은 배치 응답 하나를 만든다 — source_id 가 입력 행의 id 와 맞아야 결과로 인정된다. */
-  private AiAgentClient.ClassifyResponse classifyResponse(int sourceId, String category) {
+  /** LLM 이 돌려준 결과 한 건 — {@code source_id} 는 LLM 이 받아 적는 값이라 일부러 틀리게도 쓴다. */
+  private AiAgentClient.ClassifyRowResult classifyRow(int sourceId, String category) {
     Map<String, Object> values = new HashMap<>();
     values.put("source_id", sourceId);
     values.put("category", category);
-    return new AiAgentClient.ClassifyResponse(
-        List.of(new AiAgentClient.ClassifyRowResult(values)), 1, "test-model");
+    return new AiAgentClient.ClassifyRowResult(values);
+  }
+
+  /** 결과 여러 건을 담은 배치 응답. */
+  private AiAgentClient.ClassifyResponse classifyResponse(
+      AiAgentClient.ClassifyRowResult... rows) {
+    return new AiAgentClient.ClassifyResponse(List.of(rows), rows.length, "test-model");
+  }
+
+  /** 분류 결과를 담은 배치 응답 하나를 만든다 — source_id 가 입력 행의 id 와 맞아야 결과로 인정된다. */
+  private AiAgentClient.ClassifyResponse classifyResponse(int sourceId, String category) {
+    return classifyResponse(classifyRow(sourceId, category));
   }
 
   /** id/text 두 컬럼짜리 입력 행. */
@@ -937,5 +949,181 @@ class AiClassifyExecutorTest {
     m.invoke(null, row, types);
 
     assertThat(row.get("bigint_bad")).isEqualTo("not_a_number");
+  }
+
+  // -----------------------------------------------------------------------
+  // source_id 대조 (#694)
+  //
+  // 배치가 1행이면 "결과 하나는 그 행의 것"이라 식별자가 필요 없다. 10행을 한 번에 보내는
+  // 순간 "3번째 결과는 누구 것인가"에 답해야 하고, 이 구현은 이름표(source_id)를 골랐다.
+  // 그런데 그 이름표를 **LLM 이 받아 적는다** — 위험은 지면서 이름표 방식의 유일한 이점인
+  // 검증 가능성은 쓰지 않고 있었다. 아래 셋이 그 검증이다.
+  //
+  // onError 를 FAIL_STEP 으로 두는 이유: RETRY_BATCH 는 2+4+8초를 실제로 자므로 테스트가 14초
+  // 느려진다. 검사 자체는 정책과 무관하게 processBatch 안에서 던진다.
+  // -----------------------------------------------------------------------
+
+  /**
+   * 보낸 번호 중 하나가 응답에 없으면 배치를 실패시킨다 — 예전에는 warn 한 줄 남기고 버렸다.
+   *
+   * <p>같은 시나리오로 <b>캐시 순서</b>도 함께 못박는다. {@code verifySourceIds} 는 캐시 쓰기
+   * <b>뒤</b>에 불린다 — 대조에 실패할 배치라도 제대로 분류된 행(여기서는 1번)이 먼저 캐시에 남아야
+   * 재시도가 싸다. 검사를 캐시 쓰기 앞으로 옮기면 {@code insertInto} 가 아예 일어나지 않아 이
+   * 테스트가 깨진다.
+   *
+   * <p>결과를 버리면서 캐시는 남기는 것이 모순이 아닌 이유: 캐시는 "이 내용 + 이 프롬프트의 분류
+   * 결과"이지 "어느 행의 것인가"가 아니다(#687 로 {@code source_id} 를 싣지 않는다). 틀린 것은 행에
+   * 되짚는 부분이지 분류 자체가 아니다.
+   */
+  @Test
+  @SuppressWarnings({"unchecked", "rawtypes"})
+  void execute_withMissingSourceIdInResponse_failsBatchButKeepsCacheForMatchedRows() {
+    when(datasetRepository.findTableNameById(200L)).thenReturn(Optional.of("output_table"));
+    when(datasetRepository.findTableNameById(1L)).thenReturn(Optional.of("source_table"));
+    when(dataTableRowService.countRows("source_table")).thenReturn(2L);
+    when(dataTableRowService.queryData(anyString(), any(), any(), anyInt(), anyInt()))
+        .thenReturn(List.of(sourceRow(1L, "a"), sourceRow(2L, "b")));
+
+    stubCacheMiss();
+    // 2행을 보냈는데 1번 행의 결과만 돌아왔다.
+    when(aiAgentClient.classify(any(), anyLong())).thenReturn(classifyResponse(1, "A"));
+
+    PipelineStepResponse step = buildStep("REPLACE", List.of(1L), 2, "FAIL_STEP");
+
+    assertThatThrownBy(() -> executor.execute(step, 100L, 1L))
+        .hasMessageContaining("source_id")
+        .hasMessageContaining("보낸 2행")
+        .hasMessageContaining("누락 [2]");
+
+    verify(dataTableService).dropTempTable("output_table");
+    verify(dataTableService, never()).swapTable(anyString());
+    // 대조 실패로 배치를 버렸어도 캐시 쓰기는 이미 시도됐다.
+    verify(dsl)
+        .insertInto(
+            any(org.jooq.Table.class),
+            any(org.jooq.Field.class),
+            any(org.jooq.Field.class),
+            any(org.jooq.Field.class));
+  }
+
+  /** 보낸 적 없는 번호를 돌려주면 배치를 실패시킨다. */
+  @Test
+  @SuppressWarnings({"unchecked", "rawtypes"})
+  void execute_withUnknownSourceIdInResponse_failsBatch() {
+    when(datasetRepository.findTableNameById(200L)).thenReturn(Optional.of("output_table"));
+    when(datasetRepository.findTableNameById(1L)).thenReturn(Optional.of("source_table"));
+    when(dataTableRowService.countRows("source_table")).thenReturn(1L);
+    when(dataTableRowService.queryData(anyString(), any(), any(), anyInt(), anyInt()))
+        .thenReturn(List.of(sourceRow(1L, "a")));
+
+    stubCacheMiss();
+    // 1번 행을 보냈는데 999번의 결과가 돌아왔다 — 예전에는 조회가 null 이라 그 행만 조용히 빠졌다.
+    when(aiAgentClient.classify(any(), anyLong())).thenReturn(classifyResponse(999, "A"));
+
+    PipelineStepResponse step = buildStep("REPLACE", List.of(1L), 2, "FAIL_STEP");
+
+    assertThatThrownBy(() -> executor.execute(step, 100L, 1L))
+        .hasMessageContaining("누락 [1]")
+        .hasMessageContaining("모르는 번호 [999]");
+  }
+
+  /**
+   * 같은 번호를 두 번 돌려주면 배치를 실패시킨다.
+   *
+   * <p>{@code toMap} 의 병합 함수 {@code (a,b)->a} 가 중복을 삼키므로, 이 경우 다른 한 행은 짝을
+   * 잃고 조용히 사라졌다. 집합 비교가 그 손실을 드러낸다.
+   */
+  @Test
+  @SuppressWarnings({"unchecked", "rawtypes"})
+  void execute_withDuplicateSourceIdInResponse_failsBatch() {
+    when(datasetRepository.findTableNameById(200L)).thenReturn(Optional.of("output_table"));
+    when(datasetRepository.findTableNameById(1L)).thenReturn(Optional.of("source_table"));
+    when(dataTableRowService.countRows("source_table")).thenReturn(2L);
+    when(dataTableRowService.queryData(anyString(), any(), any(), anyInt(), anyInt()))
+        .thenReturn(List.of(sourceRow(1L, "a"), sourceRow(2L, "b")));
+
+    stubCacheMiss();
+    // 두 결과가 모두 1번이라고 주장한다 — 2번 행은 짝을 잃는다.
+    when(aiAgentClient.classify(any(), anyLong()))
+        .thenReturn(classifyResponse(classifyRow(1, "A"), classifyRow(1, "B")));
+
+    PipelineStepResponse step = buildStep("REPLACE", List.of(1L), 2, "FAIL_STEP");
+
+    assertThatThrownBy(() -> executor.execute(step, 100L, 1L))
+        .hasMessageContaining("source_id")
+        .hasMessageContaining("누락 [2]");
+  }
+
+  /**
+   * 버려진 <b>행</b> 수가 결과에 남는다(#694).
+   *
+   * <p>{@code batch errors} 는 배치 수라, 10행짜리 배치가 통째로 빠져도 "1"로 보인다. 몇 행이
+   * 사라졌는지가 결과 문자열에 없으면 같은 행이 매 실행 결정적으로 실패하는 영구 루프가 조용히
+   * 굳는다 — 2026-09-19 운영의 guid 사건이 정확히 그 모양이었다.
+   */
+  @Test
+  @SuppressWarnings({"unchecked", "rawtypes"})
+  void execute_withDroppedRows_reportsRowCountNotJustBatchCount() {
+    when(datasetRepository.findTableNameById(200L)).thenReturn(Optional.of("output_table"));
+    when(datasetRepository.findTableNameById(1L)).thenReturn(Optional.of("source_table"));
+    when(dataTableRowService.countRows("source_table")).thenReturn(4L);
+    when(dataTableRowService.queryData(anyString(), any(), any(), anyInt(), anyInt()))
+        .thenReturn(
+            List.of(
+                sourceRow(1L, "a"), sourceRow(2L, "b"), sourceRow(3L, "c"), sourceRow(4L, "d")));
+
+    stubCacheMiss();
+    // batchSize=2 → 배치 2개. 첫 배치가 통째로 실패하고 CONTINUE 가 건너뛴다.
+    // **배치 크기를 1보다 크게 잡는 것이 이 테스트의 요점**이다 — 1이면 "배치 1개 실패"와
+    // "1행 누락"이 같은 숫자라 두 지표가 구분되는지를 증명하지 못한다.
+    when(aiAgentClient.classify(any(), anyLong()))
+        .thenThrow(new RuntimeException("boom"))
+        .thenReturn(classifyResponse(classifyRow(3, "C"), classifyRow(4, "D")));
+
+    PipelineStepResponse step = buildStep("APPEND", List.of(1L), 2);
+
+    AiClassifyExecutor.ExecutionResult result = executor.execute(step, 100L, 1L);
+
+    assertThat(result.outputRows()).isEqualTo(2);
+    assertThat(result.executionLog())
+        .as("배치 1개가 실패했지만 사라진 것은 2행이다 — 두 숫자가 달라야 한다")
+        .contains("1 batch errors")
+        .contains("2 rows dropped");
+  }
+
+  /**
+   * 입력 행의 id 가 겹치면 <b>LLM 을 태우기 전에</b> 진짜 원인을 말하고 멈춘다(#694).
+   *
+   * <p>입력 데이터셋이 둘 이상이면 각 출력 테이블이 자기 {@code BIGSERIAL} 을 쓰므로 id 가 1 부터
+   * 다시 시작해 반드시 겹친다({@code PipelineAsyncRunner} 가 의존 스텝마다 입력 데이터셋을 하나씩
+   * 쌓는다). 그 상태에서는 "어느 결과가 어느 행의 것인가"를 판별할 방법이 없다 — 겹친 두 행이 같은
+   * 결과를 물려받아 한쪽의 분류가 다른 쪽에 조용히 저장된다.
+   *
+   * <p>배치 루프 <b>밖</b>에서 던져야 한다. 안에서 던지면 {@code onError=CONTINUE} 가 삼켜 "배치가
+   * 모두 실패했다"로 격하되고, {@code RETRY_BATCH} 는 절대 성공할 수 없는 재시도로 14초를 잔다.
+   */
+  @Test
+  @SuppressWarnings({"unchecked", "rawtypes"})
+  void execute_withDuplicateInputRowIds_failsBeforeCallingAi() {
+    when(datasetRepository.findTableNameById(200L)).thenReturn(Optional.of("output_table"));
+    when(datasetRepository.findTableNameById(1L)).thenReturn(Optional.of("source_table_a"));
+    when(datasetRepository.findTableNameById(2L)).thenReturn(Optional.of("source_table_b"));
+    when(dataTableRowService.countRows(anyString())).thenReturn(1L);
+    // 두 데이터셋이 각자 id=1 을 돌려준다 — 서로 다른 테이블의 BIGSERIAL 이라 겹친다.
+    when(dataTableRowService.queryData(anyString(), any(), any(), anyInt(), anyInt()))
+        .thenReturn(List.of(sourceRow(1L, "from A")))
+        .thenReturn(List.of(sourceRow(1L, "from B")));
+
+    PipelineStepResponse step = buildStep("REPLACE", List.of(1L, 2L));
+
+    assertThatThrownBy(() -> executor.execute(step, 100L, 1L))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("id 가 중복")
+        .hasMessageContaining("겹친 id [1]")
+        .hasMessageContaining("입력 데이터셋 2개");
+
+    verify(aiAgentClient, never()).classify(any(), anyLong());
+    // 임시 테이블을 만들기 전에 멈춘다 — 정리할 것을 남기지 않는다.
+    verify(dataTableService, never()).createTempTable(anyString());
   }
 }

@@ -188,6 +188,38 @@ describe('classifyBatch', () => {
     expect(result.results[0].is_positive).toBe(true);
     expect(result.results[1].is_positive).toBe(false);
   });
+
+  // processed 는 "보낸 행 수"가 아니라 "실제로 파싱된 결과 수"다(#694).
+  // 파싱 루프가 형태 어긋난 원소를 조용히 건너뛰므로, rows.length 를 싣던 예전 값은 10행을
+  // 보내고 8건이 돌아와도 "10건 처리"라고 보고했다 — 상위에서 누락을 알 방법이 없었다.
+  it('processed 는 보낸 행 수가 아니라 파싱된 결과 수다 (#694)', async () => {
+    completeMock.mockResolvedValue(
+      completionOf([
+        { source_id: 1, label: '긍정', confidence: 0.9, reason: 'ok' },
+        // 2번 행의 결과가 빠졌다 — 2행을 보냈는데 1건만 돌아온 상황
+      ]),
+    );
+
+    const result = await classifyBatch(validRequest, CREDS, MODEL);
+
+    expect(result.results).toHaveLength(1);
+    expect(result.processed).toBe(1);
+  });
+
+  it('형태가 어긋난 원소를 건너뛴 경우에도 processed 가 실제 건수를 반영한다 (#694)', async () => {
+    completeMock.mockResolvedValue(
+      completionOf([
+        { source_id: 1, label: '긍정', confidence: 0.9, reason: 'ok' },
+        null, // 파싱 루프가 continue 로 건너뛴다
+        'not an object',
+      ]),
+    );
+
+    const result = await classifyBatch(validRequest, CREDS, MODEL);
+
+    expect(result.results).toHaveLength(1);
+    expect(result.processed).toBe(1);
+  });
 });
 
 describe('classifyTimeoutMs (#686)', () => {

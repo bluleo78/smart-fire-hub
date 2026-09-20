@@ -224,7 +224,15 @@ export async function classifyBatch(
 
   return {
     results: items,
-    processed: rows.length,
+    // 보낸 행 수(rows.length)가 아니라 **실제로 파싱된 결과 수**다(#694). 파싱 루프는 형태가
+    // 어긋난 원소를 조용히 건너뛰므로, rows.length 를 싣던 예전 값은 10행을 보내고 8건이 돌아와도
+    // "10건 처리"라고 보고했다.
+    //
+    // 이것만으로 누락이 막히지는 않는다 — 실제 판정은 id 집합을 쥔 호출부가 한다
+    // (AiClassifyExecutor#verifySourceIds). 현재 Spring 쪽은 이 필드를 읽지도 않는다(집계는
+    // 자기 BatchResult 로 한다). 그래도 고치는 이유는 응답이 스스로에 대해 거짓말을 하지 않게
+    // 하기 위해서다 — 나중에 누가 이 값을 믿고 쓰면 그때는 결함이 된다.
+    processed: items.length,
     model,
     usage: {
       promptTokens,

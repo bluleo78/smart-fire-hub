@@ -18,9 +18,12 @@ import java.security.NoSuchAlgorithmException;
 import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.HexFormat;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
@@ -111,6 +114,9 @@ public class AiClassifyExecutor {
 
     log.info("[AI_CLASSIFY] Step '{}': {} input rows", step.name(), allInputRows.size());
 
+    // 1-0. 입력 행의 id 가 유일한지 확인한다(#694).
+    rejectDuplicateInputIds(allInputRows, step);
+
     // 1-1. 테넌트 컨텍스트 확인 — 캐시가 테넌트별로 파티션되므로(R2) 컨텍스트가 없으면 어느 테넌트의
     //      캐시인지 정할 수 없다. 조용히 진행하면 조회는 영구 미스, 쓰기는 tenant_id NOT NULL 위반이
     //      되어 "기능은 도는데 LLM 비용만 무한히 드는" 상태가 된다.
@@ -151,6 +157,12 @@ public class AiClassifyExecutor {
     int totalProcessed = 0;
     int totalCached = 0;
     int totalErrors = 0;
+    // 분류되지 못하고 버려진 **행** 수(#694). totalErrors 는 배치 수를 세므로 "몇 행이 빠졌는지"를
+    // 말하지 못한다 — 배치 하나가 통째로 빠져도 "배치 실패 1"이라 10행 손실이 1로 보인다.
+    // onError 정책(CONTINUE/재시도 소진)이 배치를 건너뛰는 것은 설정한 쪽의 선택이므로 스텝을
+    // 떨구지는 않는다. 다만 **몇 행이 사라졌는지는 반드시 결과에 남긴다** — 이게 없으면 같은 행이
+    // 매 실행 결정적으로 실패하는 영구 루프가 조용히 굳는다(2026-09-19 guid 사건이 그랬다).
+    int droppedRows = 0;
     // 마지막 배치 실패. 결과가 0행이라 스텝을 떨굴 때 이것을 예외의 cause 로 실어 보낸다 —
     // 이게 없으면 pipeline_step_execution.error_message 가 "0행이다"까지만 말하고 원인은 로그에만
     // 남는다. 메시지 문자열이 아니라 예외를 들고 가는 이유: getMessage() 는 null 일 수 있고,
@@ -219,6 +231,12 @@ public class AiClassifyExecutor {
         // "배치 실패"로 격하돼, onError=RETRY_BATCH 가 LLM 이 고칠 수 없는 오류에 2+4+8초를 자며
         // 분류를 세 번 더 태운다(토큰도 그만큼 나간다). 밖에 두면 적재 실패는 onError 와 무관하게
         // 곧장 스텝을 떨구고, 아래 catch 가 임시 테이블을 지워 원본을 보존한다.
+
+        // 버린 행은 여기 한 곳에서만 센다(#694). 경로마다(CONTINUE / 재시도 소진 / 부분 누락)
+        // 따로 세면 새 경로가 생길 때마다 빠뜨린다 — "보낸 행 − 돌아온 행"은 경로와 무관하게
+        // 언제나 참이다.
+        droppedRows += batch.size() - classifiedRows.size();
+
         written += writeBatch(targetTable, outputColumnNames, classifiedRows, columnTypes);
 
         // 실패한 배치 뒤에도 남겨야 몇 번째에서 막혔는지가 보이므로 catch **밖**이다(#691).
@@ -226,8 +244,14 @@ public class AiClassifyExecutor {
             stepExecutionId,
             written,
             String.format(
-                "AI_CLASSIFY 진행 중: 배치 %d/%d, %d행 적재 (캐시 %d, AI %d, 배치 실패 %d)",
-                batchIdx + 1, batches.size(), written, totalCached, totalProcessed, totalErrors));
+                "AI_CLASSIFY 진행 중: 배치 %d/%d, %d행 적재 (캐시 %d, AI %d, 배치 실패 %d, 누락 %d행)",
+                batchIdx + 1,
+                batches.size(),
+                written,
+                totalCached,
+                totalProcessed,
+                totalErrors,
+                droppedRows));
       }
 
       // 3-1. 입력이 있었는데 결과가 0행이면 실패다(#685).
@@ -286,10 +310,22 @@ public class AiClassifyExecutor {
       throw e;
     }
 
+    // 누락 행 수를 결과 문자열에 싣는다(#694). 이 문자열이 pipeline_step_execution.log 로 남아
+    // 화면에 보이는 유일한 값이라, 여기 없으면 "몇 행이 사라졌는가"를 로그를 뒤져야만 알 수 있다.
     String executionLog =
         String.format(
-            "AI_CLASSIFY completed: %d rows output, %d cached, %d AI-processed, %d batch errors",
-            written, totalCached, totalProcessed, totalErrors);
+            "AI_CLASSIFY completed: %d rows output, %d cached, %d AI-processed, %d batch errors,"
+                + " %d rows dropped",
+            written, totalCached, totalProcessed, totalErrors, droppedRows);
+    if (droppedRows > 0) {
+      log.warn(
+          "[AI_CLASSIFY] Step '{}': {}행이 분류되지 못해 누락됐다(입력 {}행). onError={} 정책에 따라"
+              + " 스텝은 계속 진행한다 — 같은 행이 매 실행 실패하면 영구 누락이 되므로 확인이 필요하다.",
+          step.name(),
+          droppedRows,
+          allInputRows.size(),
+          onError);
+    }
     log.info("[AI_CLASSIFY] Step '{}': {}", step.name(), executionLog);
 
     return new ExecutionResult(written, executionLog);
@@ -344,6 +380,120 @@ public class AiClassifyExecutor {
 
   /** 캐시에 새로 적재할 항목 — 쓰기 루프를 한 트랜잭션으로 모으기 위해 잠시 모아 둔다. */
   private record PendingCacheEntry(String rowHash, String resultJson) {}
+
+  /**
+   * 행을 가리키는 키 — id 를 문자열로 통일한다.
+   *
+   * <p>같은 id 가 입력 맵에서는 {@code Long}, LLM 응답에서는 {@code Integer} 로 올라오므로 타입을
+   * 그대로 두면 {@code equals} 가 어긋난다. 이 변환을 세 군데(중복 검사·대조·조회)가 각자 하던
+   * 것을 한 곳으로 모은다.
+   */
+  private static String rowId(Map<String, Object> row) {
+    return String.valueOf(row.get("id"));
+  }
+
+  /**
+   * 입력 행의 id 가 겹치면 던진다(#694).
+   *
+   * <p><b>왜 우회하지 않고 거절하는가.</b> {@code source_id} 는 출력 테이블의 <b>계보 키</b>다 —
+   * 후속 스텝이 이 값으로 원본 행에 조인한다. id 가 겹치면 {@code source_id=5} 가 서로 다른 두 행을
+   * 가리키게 되어 그 조인이 성립하지 않는다. 배치 안의 상관(어느 결과가 어느 행의 것인가)은 LLM 이
+   * 되돌려주는 값 대신 배치 내 일련번호를 쓰면 우회할 수 있지만, 계보의 모호함은 그렇게 해도 남는다
+   * — 그걸 없애려면 {@code source_dataset_id} 컬럼이 필요하고 스키마 변경·마이그레이션·UI 가 따라
+   * 붙는다. 그래서 지금은 <b>거절이 옳은 깊이</b>다.
+   *
+   * <p><b>실제로 도달 가능한 경로다.</b> {@code PipelineAsyncRunner} 는 명시 입력이 없을 때
+   * {@code dependsOnStepNames} 를 따라 <b>의존 스텝마다 출력 데이터셋을 하나씩</b> 쌓고,
+   * {@link #fetchInputRows} 는 그 테이블들의 행을 그냥 이어 붙인다. 각 출력 테이블은 자기
+   * {@code BIGSERIAL} 을 쓰므로 데이터셋이 둘 이상이면 id 가 1 부터 다시 시작해 <b>반드시</b> 겹친다.
+   *
+   * <p><b>배치 루프 밖에서</b> 던진다. 안에서 던지면 {@code onError=CONTINUE} 가 삼켜 "배치가 모두
+   * 실패했다"로 격하되고, {@code RETRY_BATCH} 면 절대 성공할 수 없는 재시도로 14초를 잔다 — 테넌트
+   * 검사와 같은 이유다. 여기서 던지면 LLM 을 한 번도 태우지 않는다.
+   *
+   * <p>데이터셋 수가 아니라 <b>행의 id</b>를 본다. "입력 데이터셋이 2개 이상이면 거절"은 특수 케이스고,
+   * 여기서 지켜야 하는 일반 불변식은 "id 가 유일하다"이다.
+   */
+  private void rejectDuplicateInputIds(
+      List<Map<String, Object>> allInputRows, PipelineStepResponse step) {
+    Set<String> seenIds = new HashSet<>(allInputRows.size() * 4 / 3 + 1);
+    // 겹친 id 를 최대 10개까지만 모은다 — 전부 실으면 메시지가 입력 크기만큼 길어진다.
+    Set<String> duplicatedIds = new LinkedHashSet<>();
+    for (Map<String, Object> row : allInputRows) {
+      if (!seenIds.add(rowId(row)) && duplicatedIds.size() < 10) {
+        duplicatedIds.add(rowId(row));
+      }
+    }
+    if (duplicatedIds.isEmpty()) {
+      return;
+    }
+    throw new IllegalStateException(
+        "AI_CLASSIFY 입력 행의 id 가 중복이라 결과를 행에 되짚을 수 없다 — 겹친 id "
+            + duplicatedIds
+            + " (입력 "
+            + allInputRows.size()
+            + "행, 입력 데이터셋 "
+            + (step.inputDatasetIds() == null ? 0 : step.inputDatasetIds().size())
+            + "개). 입력 데이터셋이 둘 이상이면 각 테이블의 id 가 서로 겹친다 —"
+            + " 앞 스텝에서 하나로 합친 뒤 분류하도록 파이프라인을 바꿔야 한다.");
+  }
+
+  /**
+   * 배치 응답의 {@code source_id} 집합이 요청과 정확히 일치하는지 확인하고, 어긋나면 던진다(#694).
+   *
+   * <p><b>왜 필요한가.</b> 배치가 1행이면 "결과 하나는 그 행의 것"이라 식별자가 필요 없다. 10행을
+   * 한 번에 보내는 순간 "3번째 결과는 누구 것인가"에 답해야 하고, 방법은 순서 아니면 이름표뿐이다.
+   * 이 구현은 이름표({@code source_id})를 골랐는데 — 순서 방식은 하나만 빠져도 뒤가 전부 밀리므로
+   * 합리적인 선택이다 — 그 이름표를 <b>LLM 이 받아 적는다</b>. 즉 위험은 지면서 이름표 방식의
+   * 유일한 이점인 <b>검증 가능성</b>은 쓰지 않고 있었다.
+   *
+   * <p>검사가 없을 때의 실패 모드: {@code source_id} 를 빠뜨리면 ai-agent 파서가 조용히 {@code 0}
+   * 으로 떨구고, 없는 번호나 중복 번호를 돌려줘도 아래 조회가 {@code null} 이 되어 그 행을
+   * {@code warn} 한 줄 남기고 버린다. 스텝은 그대로 COMPLETED 다 — #685 가드는 <b>전량</b> 누락일
+   * 때만 던진다. 1109 건 중 1건이 빠지면 아무도 모른다.
+   *
+   * <p>던지면 호출부의 {@code onError} 정책이 비로소 살아난다. {@code RETRY_BATCH} 면 LLM 을 다시
+   * 태워 대개 다음 번에 맞는다 — 지금은 재시도할 기회조차 없이 행을 버렸다.
+   *
+   * <p><b>개수를 따로 세는 이유.</b> {@code toMap} 의 병합 함수 {@code (a,b)->a} 가 중복 번호를
+   * 삼키므로, 집합 비교만으로는 "11개를 돌려줬는데 둘이 같은 번호"를 놓칠 수 있다. 원본 리스트
+   * 길이를 함께 본다.
+   *
+   * <p><b>막지 못하는 것.</b> 두 행의 번호를 <b>서로 바꿔</b> 쓰면 집합도 개수도 그대로라 통과한다.
+   * 그건 배치를 쓰는 한 구조적으로 감지할 수 없다({@code batchSize: 1} 만이 막는다). 이 검사는
+   * 누락·미지·중복 세 가지를 걷어낼 뿐이며, 그 한계는 의도한 것이다.
+   */
+  private void verifySourceIds(
+      List<Map<String, Object>> sentRows, int receivedCount, Set<String> receivedIds) {
+
+    Set<String> sentIds =
+        sentRows.stream().map(AiClassifyExecutor::rowId).collect(Collectors.toSet());
+
+    // 보낸 행 수와 비교한다 — sentIds.size() 가 아니다. 두 값은 입력 id 가 유일할 때만 같은데,
+    // 그 유일성은 execute() 가 배치 루프 전에 이미 보장한다(rejectDuplicateInputIds). 여기서 집합
+    // 크기를 쓰면 그 불변식이 깨졌을 때 "보낸 15행, 받은 20건"처럼 **없는 과잉 생성**을 가리켜,
+    // 진짜 원인인 id 충돌에서 눈을 돌리게 한다.
+    if (sentIds.equals(receivedIds) && receivedCount == sentRows.size()) {
+      return;
+    }
+
+    List<String> missing =
+        sentIds.stream().filter(id -> !receivedIds.contains(id)).sorted().toList();
+    List<String> unknown =
+        receivedIds.stream().filter(id -> !sentIds.contains(id)).sorted().toList();
+
+    throw new IllegalStateException(
+        "AI_CLASSIFY 배치 응답의 source_id 가 요청과 다르다 — 보낸 "
+            + sentRows.size()
+            + "행, 받은 "
+            + receivedCount
+            + "건(고유 "
+            + receivedIds.size()
+            + "), 누락 "
+            + missing
+            + ", 모르는 번호 "
+            + unknown);
+  }
 
   private BatchResult processBatch(
       List<Map<String, Object>> batch,
@@ -441,9 +591,12 @@ public class AiClassifyExecutor {
       for (Map<String, Object> missRow : cacheMissRows) {
         String rowHash = (String) missRow.get("_rowHash");
         Object sourceId = missRow.get("id");
-        AiAgentClient.ClassifyRowResult classifyResult =
-            sourceId != null ? resultBySourceId.get(String.valueOf(sourceId)) : null;
+        AiAgentClient.ClassifyRowResult classifyResult = resultBySourceId.get(rowId(missRow));
 
+        // 이 분기는 살아 있다 — verifySourceIds 는 **이 루프 뒤**에서 던진다(#694). 대조에 실패할
+        // 배치라도 제대로 분류된 행들을 먼저 캐시에 남기려고 그 순서를 골랐고, 그러려면 짝을 못 찾은
+        // 행을 여기서 건너뛰어야 루프가 끝까지 돈다. 이 배치의 결과는 곧 통째로 버려지지만, 캐시에
+        // 남은 행들 덕에 재시도가 싸진다.
         if (classifyResult == null) {
           log.warn("[AI_CLASSIFY] No result for source_id {}", sourceId);
           continue;
@@ -504,6 +657,16 @@ public class AiClassifyExecutor {
               e);
         }
       }
+
+      // 대조는 **캐시 쓰기 뒤**다(#694). 검사가 실패하면 이 배치의 결과를 통째로 버리는데,
+      // 그 전에 캐시를 채워 두면 재시도가 싸진다 — 제대로 분류된 행들은 캐시 히트가 되어 LLM 을
+      // 다시 태우지 않고, 어긋났던 행만 다시 물어본다. 검사를 앞에 두면 19행이 멀쩡해도 캐시가
+      // 비어 재시도 때 20행을 통째로 다시 결제한다.
+      //
+      // 결과를 버리면서 캐시는 남기는 것이 모순이 아닌 이유: 캐시는 "이 내용 + 이 프롬프트의
+      // 분류 결과"이지 "어느 행의 것인가"가 아니다(#687 로 source_id 를 싣지 않는다). 틀린 것은
+      // 행에 되짚는 부분이지 분류 자체가 아니다.
+      verifySourceIds(cacheMissRows, response.results().size(), resultBySourceId.keySet());
     }
 
     return new BatchResult(results, cacheHits.size(), cacheMissRows.size());
