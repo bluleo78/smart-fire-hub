@@ -54,11 +54,105 @@ class ProactiveAiClientTest extends IntegrationTestBase {
         post(urlEqualTo("/agent/proactive")).willReturn(okJson("{\"sections\":[]}")));
 
     // when: sdk 에이전트 타입으로 OAuth 토큰과 함께 호출
-    client.execute(1L, "prompt", "{}", "sk-x", "sdk", "oat-test", null, Map.of());
+    client.execute(
+        1L, "prompt", "{}", "sk-x", "sdk", "oat-test", null, Map.of(), ProactiveAiClient.OpencodeFields.NONE);
 
     // then: 요청 body에 oauthToken 키로 토큰이 전달되어야 한다 (구 cliOauthToken 키는 더 이상 사용하지 않음)
     wireMock.verify(
         postRequestedFor(urlEqualTo("/agent/proactive"))
             .withRequestBody(matchingJsonPath("$.oauthToken", equalTo("oat-test"))));
+  }
+
+  /**
+   * 옵션 3 폐기(2026-09-19, 이슈 #693, Ruling #32) — proactive 바디에도 채팅과 동일하게
+   * providerId/baseUrl/model/reasoningEffort 가 실려야 ai-agent 의 buildOpenCodeConfig 가
+   * provider 블록을 조립할 수 있다(model 은 top-level 필수 필드 — OpencodeFields.model javadoc
+   * 참고).
+   */
+  @Test
+  void execute_opencodeFields가_있으면_providerId_baseUrl_model_reasoningEffort가_바디에_실린다() {
+    wireMock.stubFor(
+        post(urlEqualTo("/agent/proactive")).willReturn(okJson("{\"sections\":[]}")));
+
+    client.execute(
+        1L,
+        "prompt",
+        "{}",
+        "sk-oai-secret",
+        "opencode",
+        null,
+        null,
+        Map.of(),
+        new ProactiveAiClient.OpencodeFields(
+            "openai", "https://api.openai.com/v1", "medium", "openai/gpt-4o"));
+
+    wireMock.verify(
+        postRequestedFor(urlEqualTo("/agent/proactive"))
+            .withRequestBody(matchingJsonPath("$.agentType", equalTo("opencode")))
+            .withRequestBody(matchingJsonPath("$.apiKey", equalTo("sk-oai-secret")))
+            .withRequestBody(matchingJsonPath("$.providerId", equalTo("openai")))
+            .withRequestBody(matchingJsonPath("$.baseUrl", equalTo("https://api.openai.com/v1")))
+            .withRequestBody(matchingJsonPath("$.model", equalTo("openai/gpt-4o")))
+            .withRequestBody(matchingJsonPath("$.reasoningEffort", equalTo("medium"))));
+  }
+
+  /** 추론 강도가 빈 값이면 "설정 안 함"이므로 필드 자체를 생략한다(그대로 보내면 opencode 가 400). */
+  @Test
+  void execute_추론강도가_비어있으면_reasoningEffort_필드를_생략한다() {
+    wireMock.stubFor(
+        post(urlEqualTo("/agent/proactive")).willReturn(okJson("{\"sections\":[]}")));
+
+    client.execute(
+        1L,
+        "prompt",
+        "{}",
+        "sk-oai",
+        "opencode",
+        null,
+        null,
+        Map.of(),
+        new ProactiveAiClient.OpencodeFields(
+            "openai", "https://api.openai.com/v1", "", "openai/gpt-4o"));
+
+    wireMock.verify(
+        postRequestedFor(urlEqualTo("/agent/proactive"))
+            .withRequestBody(notMatching(".*reasoningEffort.*")));
+  }
+
+  /** model 이 빈 값이면 필드 자체를 생략한다 — ai-agent 라우트의 폴백이 그대로 살아 있게 둔다. */
+  @Test
+  void execute_model이_비어있으면_model_필드를_생략한다() {
+    wireMock.stubFor(
+        post(urlEqualTo("/agent/proactive")).willReturn(okJson("{\"sections\":[]}")));
+
+    client.execute(
+        1L,
+        "prompt",
+        "{}",
+        "sk-oai",
+        "opencode",
+        null,
+        null,
+        Map.of(),
+        new ProactiveAiClient.OpencodeFields("openai", "https://api.openai.com/v1", "", ""));
+
+    wireMock.verify(
+        postRequestedFor(urlEqualTo("/agent/proactive")).withRequestBody(notMatching(".*model.*")));
+  }
+
+  /** opencodeFields 가 NONE(providerId 빈 값)이면 네 필드 모두 생략한다 — sdk/cli/cli-api 호출부. */
+  @Test
+  void execute_opencodeFieldsNONE이면_providerId_baseUrl_model_reasoningEffort를_생략한다() {
+    wireMock.stubFor(
+        post(urlEqualTo("/agent/proactive")).willReturn(okJson("{\"sections\":[]}")));
+
+    client.execute(
+        1L, "prompt", "{}", "sk-x", "sdk", "oat-test", null, Map.of(), ProactiveAiClient.OpencodeFields.NONE);
+
+    wireMock.verify(
+        postRequestedFor(urlEqualTo("/agent/proactive"))
+            .withRequestBody(notMatching(".*providerId.*"))
+            .withRequestBody(notMatching(".*baseUrl.*"))
+            .withRequestBody(notMatching(".*reasoningEffort.*")));
   }
 }

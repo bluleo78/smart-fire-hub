@@ -1,7 +1,7 @@
 // GraphRAG 적재/질의 MCP 도구. register 규약: (apiClient, safeTool, jsonResult) => Tool[]
 import { z } from 'zod/v4';
 import type { FireHubApiClient } from '../api-client.js';
-import type { SafeToolFn, JsonResultFn } from '../firehub-mcp-server.js';
+import type { SafeToolFn, JsonResultFn, GraphragCredentials } from '../firehub-mcp-server.js';
 import { ingestDataset } from '../../graphrag/ingest.js';
 import { extractGraph } from '../../graphrag/extractor.js';
 import { createCompleter } from '../../graphrag/llm-completer.js';
@@ -238,14 +238,19 @@ async function createDraftOntology(
  * 엔티티/관계 추출 등의 LLM 호출은 CompletionProvider(Agent SDK)에 위임한다 — 채팅 경로와 동일한
  * 인증 규칙을 쓰기 위함이다. credentials 는 채팅 요청이 관리자 설정(DB)에서 받아온 값이 그대로
  * 흘러온 것이며, 없으면 프로세스 환경/로컬 CLI 키체인 인증으로 폴백한다.
+ *
+ * opencode 테넌트(Ruling #30)는 `credentials.model` 도 함께 온다 — createCompleter 의
+ * `credentials` 인자에는 `model` 이 없으므로(그 타입은 순수 자격증명만 다룬다) 별도 `model`
+ * 옵션으로 넘겨야 한다. 빠뜨리면 OpenAICompatCompletionProvider 가 `model: ''` 를 보내 상류가
+ * 400 을 반환한다.
  */
 export function registerGraphragTools(
   apiClient: FireHubApiClient,
   safeTool: SafeToolFn,
   jsonResult: JsonResultFn,
-  credentials?: { apiKey?: string; oauthToken?: string },
+  credentials?: GraphragCredentials,
 ) {
-  const complete = createCompleter({ credentials });
+  const complete = createCompleter({ credentials, model: credentials?.model });
 
   return [
     safeTool(

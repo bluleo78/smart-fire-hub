@@ -47,6 +47,39 @@ describe('ClaudeClassifyProvider', () => {
     );
   });
 
+  // CC-03 (Task 8): agentType/baseUrl/providerId/reasoningEffort 가 classifyBatch 로 그대로
+  // 흘러가는지 검증. 빠지면 opencode 테넌트의 자격증명이 classify.ts → classifyBatch 로 이어지는
+  // 구간 어딘가에서 사라져도 이 계층의 테스트만으로는 잡히지 않는다.
+  it('CC-03: opencode 자격증명(agentType/baseUrl/providerId/reasoningEffort)을 classifyBatch 로 그대로 전달한다', async () => {
+    mockClassifyBatch.mockResolvedValue(mockResponse);
+
+    const provider = new ClaudeClassifyProvider();
+    await provider.classify({
+      rows: [{ id: 1 }],
+      prompt: 'classify',
+      outputColumns: [{ name: 'label', type: 'TEXT' as const }],
+      model: 'openai/gpt-4o',
+      apiKey: 'openai-key',
+      agentType: 'opencode',
+      baseUrl: 'https://x/v1',
+      providerId: 'openai',
+      reasoningEffort: 'medium',
+    });
+
+    expect(mockClassifyBatch).toHaveBeenCalledWith(
+      expect.anything(),
+      {
+        apiKey: 'openai-key',
+        oauthToken: undefined,
+        agentType: 'opencode',
+        baseUrl: 'https://x/v1',
+        providerId: 'openai',
+        reasoningEffort: 'medium',
+      },
+      'openai/gpt-4o',
+    );
+  });
+
   // CC-02: 모델 미지정 시 DEFAULT_MODEL 로 폴백하는지 검증
   it('CC-02: falls back to DEFAULT_MODEL when model is omitted', async () => {
     mockClassifyBatch.mockResolvedValue(mockResponse);

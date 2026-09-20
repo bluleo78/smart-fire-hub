@@ -19,6 +19,9 @@ import com.smartfirehub.global.security.JwtAuthenticationFilter;
 import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.permission.service.PermissionService;
+import com.smartfirehub.settings.model.AiCredential;
+import com.smartfirehub.settings.model.UnknownAgentTypeException;
+import com.smartfirehub.settings.service.AiCredentialService;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -45,7 +48,7 @@ class AiControllerTest {
 
   @MockitoBean private AiAgentProxyService aiAgentProxyService;
 
-  @MockitoBean private com.smartfirehub.settings.service.SettingsService settingsService;
+  @MockitoBean private AiCredentialService aiCredentialService;
 
   @MockitoBean private JwtTokenProvider jwtTokenProvider;
 
@@ -237,15 +240,11 @@ class AiControllerTest {
 
   @Test
   void getAuthStatus_sdkWithOauthToken_usesTokenVerification() throws Exception {
-    // given: sdk 타입이고 OAuth 토큰이 설정된 상태
-    // getAsMap("ai") 스텁은 삭제했다 — getAuthStatus() 는 Task 2 부터 getAiCredentials() 로
-    // 자격증명 3키를 함께 읽으므로 더 이상 부르지 않는 죽은 스텁이었다.
+    // given: sdk 타입이고 OAuth 토큰이 설정된 상태 — 타입형 전환(2026-09) 이후로는
+    // AiCredentialService.resolve() 가 유일한 출처다.
     mockAuthentication("ai:settings");
-    when(settingsService.getAiCredentials())
-        .thenReturn(
-            new com.smartfirehub.settings.service.SettingsService.AiCredentials(
-                "sdk", "", "oat-test"));
-    when(aiAgentProxyService.verifyCliToken()).thenReturn("{\"valid\":true}");
+    when(aiCredentialService.resolve()).thenReturn(new AiCredential.Sdk("oat-test", ""));
+    when(aiAgentProxyService.verifyCliToken("oat-test")).thenReturn("{\"valid\":true}");
 
     // when: /auth-status 엔드포인트 호출
     mockMvc
@@ -255,7 +254,50 @@ class AiControllerTest {
         .andExpect(content().string("{\"valid\":true}"));
 
     // then: OAuth 토큰 검증 경로(`verifyCliToken`)가 호출되고 API 키 경로(`verifyApiKey`)는 호출되지 않음
-    verify(aiAgentProxyService).verifyCliToken();
-    verify(aiAgentProxyService, never()).verifyApiKey();
+    // 컨트롤러 switch 가 쥔 토큰을 그대로 넘겼는지까지 본다 — 프록시가 내부에서 resolve() 를
+    // 다시 부르지 않는다는 것이 이 인자로 드러난다.
+    verify(aiAgentProxyService).verifyCliToken("oat-test");
+    verify(aiAgentProxyService, never()).verifyApiKey(any());
+  }
+
+  /**
+   * opencode 는 Anthropic 인증 개념이 없다 — ai-agent 를 부르지 않고 "해당 없음"을 바로
+   * 응답해야 한다. {@code Opencode.apiKey}(OpenAI 호환 키)를 verifyApiKey()(Anthropic 키 검증)로
+   * 보내는 회귀를 이 테스트가 잡는다.
+   */
+  @Test
+  void getAuthStatus_opencode면_해당없음을_바로_응답한다() throws Exception {
+    mockAuthentication("ai:settings");
+    when(aiCredentialService.resolve())
+        .thenReturn(
+            new AiCredential.Opencode("openai", "https://api.openai.com/v1", "", "sk-oai"));
+
+    mockMvc
+        .perform(get("/api/v1/ai/auth-status").header("Authorization", "Bearer valid-token"))
+        .andExpect(status().isOk())
+        .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+        .andExpect(content().string("{\"valid\":false,\"applicable\":false}"));
+
+    verify(aiAgentProxyService, never()).verifyCliToken(any());
+    verify(aiAgentProxyService, never()).verifyApiKey(any());
+  }
+
+  /**
+   * fail-closed 가드: 알 수 없는 agentType(손으로 고친 행 등)을 만나면 resolve() 가 던지는
+   * {@code UnknownAgentTypeException} 이 그대로 전파돼 500 이 되어야 한다. 누군가 이 예외를
+   * 잡아 빈 자격증명으로 계속 진행하게 바꾸면(예: sdk 로 폴백) 이 테스트가 RED 가 된다 — 그
+   * 폴백이 정확히 6b1c6383 과 같은 모양의 과금 혼입이다.
+   */
+  @Test
+  void getAuthStatus_알수없는_유형이면_500으로_실패한다() throws Exception {
+    mockAuthentication("ai:settings");
+    when(aiCredentialService.resolve()).thenThrow(new UnknownAgentTypeException("martian"));
+
+    mockMvc
+        .perform(get("/api/v1/ai/auth-status").header("Authorization", "Bearer valid-token"))
+        .andExpect(status().is5xxServerError());
+
+    verify(aiAgentProxyService, never()).verifyCliToken(any());
+    verify(aiAgentProxyService, never()).verifyApiKey(any());
   }
 }

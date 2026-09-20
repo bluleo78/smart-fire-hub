@@ -28,6 +28,7 @@ vi.mock('../../graphrag/loader.js', () => ({ loadGraph: vi.fn() }));
 import { registerGraphragTools } from './graphrag-tools.js';
 import { ingestDataset } from '../../graphrag/ingest.js';
 import { resolveDatasetOntology } from '../../graphrag/ontology-source.js';
+import { createCompleter } from '../../graphrag/llm-completer.js';
 import { FireHubApiClient } from '../api-client.js';
 import { createFireHubMcpServer } from '../firehub-mcp-server.js';
 import type { SafeToolFn, JsonResultFn } from '../firehub-mcp-server.js';
@@ -47,6 +48,43 @@ function createMockClient(): FireHubApiClient {
   }
   return client as FireHubApiClient;
 }
+
+// Ruling #30 — opencode 테넌트의 GraphRAG completion 이 tenant provider(baseUrl/apiKey/model)
+// 로 가려면 registerGraphragTools 가 credentials 의 model 필드까지 createCompleter 로 넘겨야
+// 한다. createCompleter 의 credentials 파라미터 자체에는 model 이 없으므로(순수 자격증명 타입),
+// 별도 top-level model 옵션으로 전달돼야 한다 — 빠뜨리면 OpenAICompatCompletionProvider 가
+// model: '' 을 보내 상류가 400 을 반환한다.
+describe('registerGraphragTools — credentials.model 전달', () => {
+  it('credentials.model 을 createCompleter 의 model 옵션으로 넘긴다', () => {
+    const apiClient = {} as unknown as FireHubApiClient;
+    const safeTool = (() => undefined) as unknown as SafeToolFn;
+    const jsonResult = (() => ({ content: [] })) as unknown as JsonResultFn;
+
+    registerGraphragTools(apiClient, safeTool, jsonResult, {
+      agentType: 'opencode',
+      baseUrl: 'https://api.openai.com/v1',
+      apiKey: 'sk-tenant',
+      providerId: 'openai',
+      model: 'openai/gpt-4o',
+    });
+
+    expect(createCompleter).toHaveBeenCalledWith(
+      expect.objectContaining({ model: 'openai/gpt-4o' }),
+    );
+  });
+
+  it('credentials 가 없으면 model 도 undefined 로 넘긴다', () => {
+    const apiClient = {} as unknown as FireHubApiClient;
+    const safeTool = (() => undefined) as unknown as SafeToolFn;
+    const jsonResult = (() => ({ content: [] })) as unknown as JsonResultFn;
+
+    registerGraphragTools(apiClient, safeTool, jsonResult);
+
+    expect(createCompleter).toHaveBeenCalledWith(
+      expect.objectContaining({ model: undefined }),
+    );
+  });
+});
 
 describe('graphrag_query 도구', () => {
   it('retrieve 결과를 jsonResult로 반환한다', async () => {

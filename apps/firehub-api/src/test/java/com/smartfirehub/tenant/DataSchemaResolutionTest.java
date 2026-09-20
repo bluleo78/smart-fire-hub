@@ -208,7 +208,15 @@ class DataSchemaResolutionTest {
               "com/smartfirehub/proactive/service/ReportRenderUtils.java",
               "\"data\",",
               2,
-              "차트 스펙(Chart.js 계열) 의 필드명 2곳 — 동명이의"));
+              "차트 스펙(Chart.js 계열) 의 필드명 2곳 — 동명이의"),
+          new PinnedSite(
+              "com/smartfirehub/settings/service/OpencodeProbeService.java",
+              "root.path(\"data\")",
+              1,
+              "OpenAI 호환 /models 응답 봉투의 JSON 필드명(표준 {data:[...]} 형태) — 물리 스키마와"
+                  + " 무관한 동명이의. 이름을 바꾸면 실제 공급자 응답과 안 맞으므로 프로덕션 코드는"
+                  + " 그대로 두고 여기만 핀으로 인정한다(OpenAiEmbeddingProvider 의 resp.get(\"data\")"
+                  + " 와 같은 선례)."));
 
   /**
    * {@link #HAND_ASSEMBLY_PATTERNS} 규칙의 핀 목록 — 조립이 <b>정당한</b> 곳들뿐이다.

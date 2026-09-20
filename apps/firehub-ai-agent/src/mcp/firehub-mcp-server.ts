@@ -24,6 +24,17 @@ import { registerDataImportTools } from './tools/dataimport-tools.js';
 import { registerAdminTools } from './tools/admin-tools.js';
 import { registerAuditTools } from './tools/audit-tools.js';
 import { registerGraphragTools } from './tools/graphrag-tools.js';
+import type { ProviderConfig } from '../providers/types.js';
+
+/**
+ * GraphRAG completion 호출에 쓰는 자격증명 필드 집합. `ProviderConfig` 의 부분집합을 그대로
+ * 재사용한다(Ruling #30) — createCompleter(llm-completer.ts)가 이미 이 필드들을
+ * `ProviderFactory.createCompletionProvider` 로 그대로 넘기므로, 이 경계에서 이름이 갈리면
+ * stdio-server.ts 가 채워도 조용히 버려진다.
+ */
+export type GraphragCredentials = Partial<
+  Pick<ProviderConfig, 'apiKey' | 'oauthToken' | 'agentType' | 'baseUrl' | 'providerId' | 'reasoningEffort' | 'model'>
+>;
 
 type ToolResult = { content: Array<{ type: 'text'; text: string }>; isError?: boolean };
 
@@ -176,11 +187,14 @@ export interface BuildToolsOptions {
    */
   userPermissions?: string[];
   /**
-   * 요청 단위 Anthropic 자격증명. GraphRAG 도구가 내부적으로 LLM completion 을 호출하므로
+   * 요청 단위 LLM 자격증명. GraphRAG 도구가 내부적으로 LLM completion 을 호출하므로
    * 채팅 요청이 관리자 설정(DB)에서 받아온 자격증명을 그대로 흘려보내야 한다.
    * 없으면 프로세스 환경으로 폴백한다(단독 스크립트·개발 환경).
+   *
+   * `agentType`/`baseUrl`/`providerId`/`reasoningEffort`/`model` 은 opencode 전용이다(Ruling
+   * #30) — 없으면 createCompleter 가 기본 Claude SDK 경로로 간다(llm-completer.ts 참고).
    */
-  credentials?: { apiKey?: string; oauthToken?: string };
+  credentials?: GraphragCredentials;
 }
 
 /**

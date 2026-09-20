@@ -4,7 +4,8 @@ import com.smartfirehub.ai.dto.*;
 import com.smartfirehub.ai.service.AiAgentProxyService;
 import com.smartfirehub.ai.service.AiSessionService;
 import com.smartfirehub.global.security.RequirePermission;
-import com.smartfirehub.settings.service.SettingsService;
+import com.smartfirehub.settings.model.AiCredential;
+import com.smartfirehub.settings.service.AiCredentialService;
 import jakarta.validation.Valid;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
@@ -20,9 +21,18 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 @RequiredArgsConstructor
 public class AiController {
 
+  /**
+   * opencode 자격증명 유형에 대한 인증 상태 응답. opencode 는 Anthropic 인증 개념이 없다 —
+   * {@code Opencode.apiKey} 는 OpenAI 호환 키라 {@link AiAgentProxyService#verifyApiKey()}(Anthropic
+   * 키 검증 엔드포인트)로 보내면 안 된다. ai-agent 를 아예 부르지 않고 "해당 없음"을 바로
+   * 응답한다. web 은 Task 11 에서 opencode 일 때 이 배지/버튼 자체를 숨긴다 — {@code applicable}
+   * 필드는 그 화면 분기가 참고할 계약이다.
+   */
+  private static final String NOT_APPLICABLE_AUTH_STATUS = "{\"valid\":false,\"applicable\":false}";
+
   private final AiSessionService aiSessionService;
   private final AiAgentProxyService aiAgentProxyService;
-  private final SettingsService settingsService;
+  private final AiCredentialService aiCredentialService;
 
   /**
    * AI 세션 목록을 페이지네이션으로 조회한다.
@@ -87,15 +97,29 @@ public class AiController {
   @GetMapping("/auth-status")
   @RequirePermission("ai:settings")
   public ResponseEntity<String> getAuthStatus() {
-    // 테넌트가 자기 AI 를 고를 수 있게 되면서(Task 3 이후) 이 검증은 **호출자의 테넌트 기준**이 됐다.
-    // 자격증명 3키는 번들로 함께 해석되므로 단일 키 조회가 아니라 묶음 접근자를 쓴다.
-    SettingsService.AiCredentials creds = settingsService.getAiCredentials();
-    boolean useTokenVerification =
-        "cli".equals(creds.agentType())
-            || ("sdk".equals(creds.agentType()) && creds.hasOauthToken());
-    String result = useTokenVerification
-        ? aiAgentProxyService.verifyCliToken()
-        : aiAgentProxyService.verifyApiKey();
+    // 테넌트가 자기 AI 를 고를 수 있게 되면서 이 검증은 **호출자의 테넌트 기준**이 됐다.
+    // resolve() 는 알 수 없는 agentType 에서 UnknownAgentTypeException 을 던진다(fail-closed) —
+    // 여기서 잡지 않는다. 삼키고 빈 자격증명으로 계속하면 그 유형이 실제로는 무엇인지 모르는 채로
+    // verifyApiKey()/verifyCliToken() 중 하나를 임의로 골라 부르는 꼴이 된다.
+    //
+    // 반드시 switch(exhaustive) 로 판정한다 — instanceof 사슬은 마지막 분기가 "그 외 전부"가 되어
+    // 새 자격증명 유형이 추가돼도 조용히 컴파일된 채 verifyApiKey()(Anthropic 전용 엔드포인트)로
+    // 흘러들 수 있다(리뷰에서 지적됨). sealed interface 에 변형이 늘면 이 switch 가 컴파일
+    // 오류로 막는다 — default 를 두지 않는다.
+    //
+    // 이 switch 가 **이미 쥔** 토큰/키를 프록시에 그대로 넘긴다 — 프록시가 안에서 resolve() 를
+    // 또 부르던 예전 모양에서는 요청 1건당 두 평면 SELECT + AES-GCM 복호화가 두 번 돌았다.
+    AiCredential cred = aiCredentialService.resolve();
+    String result =
+        switch (cred) {
+          case AiCredential.Opencode ignored -> NOT_APPLICABLE_AUTH_STATUS;
+          case AiCredential.Cli cli -> aiAgentProxyService.verifyCliToken(cli.oauthToken());
+          case AiCredential.Sdk sdk ->
+              sdk.oauthToken().isBlank()
+                  ? aiAgentProxyService.verifyApiKey(sdk.apiKey())
+                  : aiAgentProxyService.verifyCliToken(sdk.oauthToken());
+          case AiCredential.CliApi cliApi -> aiAgentProxyService.verifyApiKey(cliApi.apiKey());
+        };
     return ResponseEntity.ok().contentType(MediaType.APPLICATION_JSON).body(result);
   }
 

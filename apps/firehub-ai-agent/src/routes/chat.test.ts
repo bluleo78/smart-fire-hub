@@ -174,7 +174,7 @@ describe('Chat routes — integration tests', () => {
       app,
       'POST',
       '/agent/chat',
-      { message: 'Hello', tenantId: 1, userId: 42, apiKey: 'sk-from-client' },
+      { message: 'Hello', tenantId: 1, userId: 42, apiKey: 'sk-from-client', agentType: 'sdk' },
       { Authorization: `Internal ${VALID_TOKEN}` },
     );
 
@@ -195,7 +195,7 @@ describe('Chat routes — integration tests', () => {
       app,
       'POST',
       '/agent/chat',
-      { message: 'Hello world', tenantId: 1, userId: 99, apiKey: 'sk-test' },
+      { message: 'Hello world', tenantId: 1, userId: 99, apiKey: 'sk-test', agentType: 'sdk' },
       { Authorization: `Internal ${VALID_TOKEN}` },
     );
 
@@ -205,6 +205,72 @@ describe('Chat routes — integration tests', () => {
     expect(calledWith.userId).toBe(99);
     // 테넌트가 provider 까지 흘러야 디스크 경로가 테넌트별로 갈린다.
     expect(calledWith.tenantId).toBe(1);
+  });
+
+  // CR-AT01 (Task 8): agentType 이 없으면 400 — 조용히 'sdk' 로 취급하지 않는다.
+  // 6b1c6383 과금 회귀가 opencode 자격증명이 Claude SDK 경로로 새며 일어났으므로, agentType
+  // 판별자 자체가 누락된 요청은 방어적으로 이 경계에서 걸러야 한다.
+  it('CR-AT01: agentType 이 없으면 400 이고 provider 를 호출하지 않는다', async () => {
+    const app = createApp();
+    const res = await makeRequest(
+      app,
+      'POST',
+      '/agent/chat',
+      { message: 'Hello', tenantId: 1, userId: 1, apiKey: 'sk-test' },
+      { Authorization: `Internal ${VALID_TOKEN}` },
+    );
+
+    expect(res.status).toBe(400);
+    expect(mockExecute).not.toHaveBeenCalled();
+  });
+
+  it('CR-AT02: agentType 이 알려진 네 값 중 하나가 아니면 400', async () => {
+    const app = createApp();
+    const res = await makeRequest(
+      app,
+      'POST',
+      '/agent/chat',
+      { message: 'Hello', tenantId: 1, userId: 1, apiKey: 'sk-test', agentType: 'not-a-real-type' },
+      { Authorization: `Internal ${VALID_TOKEN}` },
+    );
+
+    expect(res.status).toBe(400);
+    expect(mockExecute).not.toHaveBeenCalled();
+  });
+
+  // CR-OC01 (Task 8): opencode 전용 필드(baseUrl/providerId/reasoningEffort)가 라우트를 거치며
+  // 사라지지 않고 ProviderConfig 까지 도달하는지 검증한다(Ruling #2).
+  it('CR-OC01: baseUrl/providerId/reasoningEffort 를 ProviderFactory.createChatProvider 로 그대로 전달한다', async () => {
+    const { ProviderFactory } = await import('../providers/index.js');
+    const mockCreateChatProvider = vi.mocked(ProviderFactory.createChatProvider);
+
+    async function* fakeStream() {
+      yield { type: 'done' as const };
+    }
+    mockExecute.mockReturnValue(fakeStream());
+
+    const app = createApp();
+    await makeRequest(
+      app,
+      'POST',
+      '/agent/chat',
+      {
+        message: 'Hello',
+        tenantId: 1,
+        userId: 42,
+        apiKey: 'openai-key',
+        agentType: 'opencode',
+        baseUrl: 'https://x/v1',
+        providerId: 'openai',
+        reasoningEffort: 'medium',
+      },
+      { Authorization: `Internal ${VALID_TOKEN}` },
+    );
+
+    const calledWith = mockCreateChatProvider.mock.calls[0][0];
+    expect(calledWith.baseUrl).toBe('https://x/v1');
+    expect(calledWith.providerId).toBe('openai');
+    expect(calledWith.reasoningEffort).toBe('medium');
   });
 
   // CR-T01: 테넌트가 없으면 400 — ai-agent 는 이 값으로 디스크 경로를 가르므로 전역 경로
@@ -289,6 +355,7 @@ describe('API 키 / CLI OAuth 검증 엔드포인트 — 명령어 인젝션 방
 
   afterEach(() => {
     delete process.env.INTERNAL_SERVICE_TOKEN;
+    delete process.env.ANTHROPIC_API_KEY;
   });
 
   // SEC-01: /api-key/verify — 셸을 경유하지 않고 claude를 직접 실행하는지 확인
@@ -381,6 +448,29 @@ describe('API 키 / CLI OAuth 검증 엔드포인트 — 명령어 인젝션 방
     const [, args, opts] = mockExecFile.mock.calls[0] as [string, string[], { env?: NodeJS.ProcessEnv }];
     expect(args.join(' ')).not.toContain(testToken);
     expect(opts?.env?.CLAUDE_CODE_OAUTH_TOKEN).toBe(testToken);
+  });
+
+  // SEC-05b: /cli-auth/verify — 컨테이너에 ambient ANTHROPIC_API_KEY 가 있어도 spawn 환경에
+  // 넘기지 않는다. agent-cli.ts:509 주석대로 claude CLI 는 API 키가 있으면 OAuth 토큰보다
+  // 그 키를 우선한다 — 지우지 않으면 아무 토큰이나 valid:true 로 검증되고 그 호출은 컨테이너의
+  // ambient 키(플랫폼 계정)로 과금된다(전체 브랜치 리뷰 I4, Ruling #33 번복).
+  // "in" 연산자로 **키 자체의 부재**를 확인한다 — toBeUndefined()/falsy 검사는 빈 문자열
+  // 대입으로도 통과하는 공허한 테스트가 된다(이 브랜치에서 반복된 실수).
+  it('SEC-05b: /cli-auth/verify는 ambient ANTHROPIC_API_KEY를 spawn 환경에서 제거한다', async () => {
+    process.env.ANTHROPIC_API_KEY = 'ambient-platform-key-should-not-leak';
+    const app = createApp();
+    await makeRequest(
+      app,
+      'POST',
+      '/agent/cli-auth/verify',
+      { token: 'oauth-test-token' },
+      { Authorization: `Internal ${VALID_TOKEN}` },
+    );
+
+    expect(mockExecFile).toHaveBeenCalledOnce();
+    const [, , opts] = mockExecFile.mock.calls[0] as [string, string[], { env?: NodeJS.ProcessEnv }];
+    expect('ANTHROPIC_API_KEY' in (opts?.env ?? {})).toBe(false);
+    expect(opts?.env?.CLAUDE_CODE_OAUTH_TOKEN).toBe('oauth-test-token');
   });
 
   // SEC-06: /cli-auth/verify — token 없으면 { valid: false } 반환

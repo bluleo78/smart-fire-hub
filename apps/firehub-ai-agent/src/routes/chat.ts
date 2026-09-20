@@ -3,6 +3,10 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { ProviderFactory } from '../providers/index.js';
 import type { AgentType, ProviderConfig } from '../providers/index.js';
+// providers/index.js 가 아니라 providers/types.js 에서 직접 가져온다 — chat.test.ts 가
+// '../providers/index.js' 를 통째로 목킹하므로(ProviderFactory 만 정의), 여기서 그 경로로
+// 가져오면 목이 정의하지 않은 값이라 undefined 가 되어 라우트가 깨진다.
+import { isKnownAgentType } from '../providers/types.js';
 import { internalAuth } from '../middleware/auth.js';
 import { readSessionTranscript } from '../agent/transcript-reader.js';
 import { checkSessionOwnership } from '../agent/session-owner.js';
@@ -35,7 +39,10 @@ router.post('/chat', internalAuth, async (req: Request, res: Response) => {
     maxTokens,
     apiKey,
     oauthToken,
-    agentType = 'sdk',
+    agentType,
+    baseUrl,
+    providerId,
+    reasoningEffort,
     navigationContext,
     screenContext,
   } = req.body;
@@ -61,6 +68,18 @@ router.post('/chat', internalAuth, async (req: Request, res: Response) => {
   // 헤더가 이미 나가 있어 클라이언트는 의도한 400 대신 밋밋한 error 이벤트를 본다.
   if (!isValidTenantId(tenantId)) {
     res.status(400).json({ error: 'tenantId is required and must be a positive integer' });
+    return;
+  }
+
+  // agentType 은 **필수**다 — 예전엔 생략 시 'sdk' 로 기본값을 줬는데, 그러면 opencode 테넌트가
+  // 이 필드를 빠뜨린 요청이 조용히 Claude SDK 경로로 떨어진다(agentType 이 없거나 오타여도
+  // ProviderFactory.createChatProvider 가 결국 'sdk' 취급 없이 즉시 throw 하긴 하지만, SSE 헤더가
+  // 이미 나간 뒤라 클라이언트는 400 대신 error 이벤트를 받는다 — 여기서 일찍 걸러 명확한 400 으로
+  // 끝낸다). firehub-api 는 이제 이 필드를 항상 보낸다(설계서 "API 인터페이스" 절).
+  if (!isKnownAgentType(agentType)) {
+    res.status(400).json({
+      error: 'agentType is required and must be one of: sdk, cli, cli-api, opencode',
+    });
     return;
   }
 
@@ -98,6 +117,12 @@ router.post('/chat', internalAuth, async (req: Request, res: Response) => {
       apiKey,
       oauthToken: typeof oauthToken === 'string' ? oauthToken : undefined,
       model,
+      // opencode 전용 — ProviderFactory.createChatProvider 의 opencode 분기가 이 필드들로
+      // OpenCodeChatProvider 를 구성하고, agent-opencode.ts 의 buildOpenCodeConfig 가 provider
+      // 블록에 그대로 싣는다(옵션 3 폐기, 2026-09-19 이슈 #693).
+      baseUrl: typeof baseUrl === 'string' ? baseUrl : undefined,
+      providerId: typeof providerId === 'string' ? providerId : undefined,
+      reasoningEffort: typeof reasoningEffort === 'string' ? reasoningEffort : undefined,
     };
     const provider = ProviderFactory.createChatProvider(providerConfig);
     const events = provider.execute({
@@ -227,13 +252,20 @@ router.post('/cli-auth/verify', internalAuth, async (req: Request, res: Response
     return;
   }
   try {
+    // 컨테이너에 ambient ANTHROPIC_API_KEY 가 있으면 agent-cli.ts:509 주석대로 claude CLI 는
+    // OAuth 토큰보다 그 키를 우선한다 — 지우지 않으면 이 엔드포인트가 "아무 토큰이나 valid:true"
+    // 로 검증하고, 그 호출은 플랫폼 계정에 과금된다. 이 브랜치가 PlatformAiController.verifyCliToken()
+    // 을 통해 이 경로에 새 호출자(플랫폼 화면의 "인증 확인" 버튼)를 추가했으므로 여기서 반드시
+    // 지운다(전체 브랜치 리뷰 I4 — Ruling #33 을 뒤집는다).
+    const childEnv: NodeJS.ProcessEnv = { ...process.env, CLAUDE_CODE_OAUTH_TOKEN: token };
+    delete childEnv.ANTHROPIC_API_KEY;
     const { stdout } = await execFileAsync(
       'claude',
       ['-p', 'hi', '--output-format', 'json', '--no-session-persistence', '--model', 'haiku', '--disable-slash-commands'],
       {
         timeout: 30000,
         // 현재 환경변수를 상속하되 OAuth 토큰만 덮어쓴다 — 셸 인젝션 없이 안전하게 전달
-        env: { ...process.env, CLAUDE_CODE_OAUTH_TOKEN: token },
+        env: childEnv,
       },
     );
     const parsed = JSON.parse(stdout) as Record<string, unknown>;

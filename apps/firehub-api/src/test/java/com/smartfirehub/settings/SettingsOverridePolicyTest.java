@@ -12,13 +12,17 @@ import org.junit.jupiter.api.Test;
 class SettingsOverridePolicyTest {
 
   @Test
-  void 오버라이드_허용_키는_15개다() {
-    // P7-c1(2026-08-22): smtp.* 6키 재분류. 이번: ai 자격증명·실행형태 3키 개방.
+  void 오버라이드_허용_키는_13개다() {
+    // P7-c1(2026-08-22): smtp.* 6키 재분류. 타입형 전환(2026-09): ai 자격증명 3키
+    // (ai.api_key/ai.cli_oauth_token/ai.agent_type) 를 빼고 ai.credential 하나로 합쳤다
+    // (9 - 3 + 1 = 7개 ai.* + 6개 smtp.* = 13개).
     assertThat(SettingsOverridePolicy.tenantOverridableKeys())
         .containsExactlyInAnyOrder(
             "ai.system_prompt", "ai.model", "ai.temperature",
             "ai.max_turns", "ai.max_tokens", "ai.session_max_tokens",
-            "ai.api_key", "ai.cli_oauth_token", "ai.agent_type",
+            // AiCredentialService.KEY 는 다른 패키지(settings.service) package-private 상수라
+            // 이 테스트(settings 패키지)에서 참조할 수 없다 — 리터럴을 쓴다.
+            "ai.credential",
             "smtp.host", "smtp.port", "smtp.username",
             "smtp.password", "smtp.starttls", "smtp.from_address");
   }

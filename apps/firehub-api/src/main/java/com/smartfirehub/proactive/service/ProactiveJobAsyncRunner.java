@@ -13,6 +13,8 @@ import com.smartfirehub.proactive.service.delivery.DeliveryChannel;
 import com.smartfirehub.proactive.util.ProactiveConfigParser;
 import com.smartfirehub.proactive.util.ProactiveCron;
 import com.smartfirehub.proactive.util.ProactiveTime;
+import com.smartfirehub.settings.model.AiCredential;
+import com.smartfirehub.settings.service.AiCredentialService;
 import com.smartfirehub.settings.service.SettingsService;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -45,6 +47,9 @@ public class ProactiveJobAsyncRunner {
   private final ReportTemplateRepository reportTemplateRepository;
   private final ProactiveContextCollector contextCollector;
   private final ProactiveAiClient aiClient;
+  private final AiCredentialService aiCredentialService;
+  // opencode 자격증명일 때만 ai.model 을 읽는다 — OpencodeFields.model javadoc 참고
+  // (buildOpenCodeConfig 가 top-level model 을 필수로 요구하게 되면서 새로 필요해졌다).
   private final SettingsService settingsService;
   private final ObjectMapper objectMapper;
   private final List<DeliveryChannel> deliveryChannels;
@@ -117,15 +122,46 @@ public class ProactiveJobAsyncRunner {
 
       // AI 설정 조회.
       // 배경 잡이지만 TenantScopedRunner 가 테넌트 컨텍스트를 세워 두므로 **그 잡 소유 테넌트의**
-      // 자격증명으로 해석된다. 3키는 번들로 함께 온다 — 섞여 있지 않다.
-      SettingsService.AiCredentials creds = settingsService.getAiCredentials();
-      String agentType = creds.agentType();
-      String apiKey = creds.apiKey();
-      // cli 또는 sdk 에서만 구독 OAuth 토큰을 전달한다(sdk 는 OAuth 우선).
-      String oauthToken =
-          ("cli".equals(agentType) || "sdk".equals(agentType)) && creds.hasOauthToken()
-              ? creds.cliOauthToken()
-              : null;
+      // 자격증명으로 해석된다. resolve() 가 던지는 UnknownAgentTypeException 은 여기서 잡지
+      // 않는다 — 아래 바깥의 catch(Exception e) 가 FAILED 로 기록하고 실행을 끝낸다. 조용히 빈
+      // 자격증명으로 계속 진행하면 6b1c6383 과 같은 모양의 과금 혼입이 재발한다.
+      String agentType;
+      String apiKey;
+      String oauthToken;
+      ProactiveAiClient.OpencodeFields opencodeFields = ProactiveAiClient.OpencodeFields.NONE;
+      switch (aiCredentialService.resolve()) {
+        case AiCredential.Sdk sdk -> {
+          agentType = "sdk";
+          apiKey = sdk.apiKey();
+          // sdk 는 OAuth 우선 — apiKey 와 함께 있어도 ai-agent 가 OAuth 를 선택한다.
+          oauthToken = sdk.oauthToken().isBlank() ? null : sdk.oauthToken();
+        }
+        case AiCredential.Cli cli -> {
+          agentType = "cli";
+          apiKey = "";
+          oauthToken = cli.oauthToken().isBlank() ? null : cli.oauthToken();
+        }
+        case AiCredential.CliApi cliApi -> {
+          agentType = "cli-api";
+          apiKey = cliApi.apiKey();
+          oauthToken = null;
+        }
+        case AiCredential.Opencode oc -> {
+          // 옵션 3 폐기(2026-09-19, 이슈 #693) — ai-agent 의 buildOpenCodeConfig 가 이제
+          // provider 블록(baseURL/apiKey)을 요청 바디로 직접 받아 조립하므로, Opencode.apiKey
+          // (OpenAI 호환 키)를 실제 값으로 싣는다. 예전 주석("빈 값을 보낸다")은 apiKey 를
+          // Anthropic 용 필드로 오인한 것이었다 — 이 요청 자체가 opencode 전용이라 그 구분이
+          // 성립하지 않는다(AiAgentProxyService.resolveChatCredential 과 같은 정정).
+          agentType = "opencode";
+          apiKey = oc.apiKey();
+          oauthToken = null;
+          // ai.model 을 함께 싣는다 — 없으면 ai-agent 의 고정 기본값(슬래시 없음)이 대신 실려
+          // buildOpenCodeConfig 가 "providerId/modelId 형식이어야 합니다" 로 throw 한다.
+          String opencodeModel = settingsService.getValue("ai.model").orElse("");
+          opencodeFields = new ProactiveAiClient.OpencodeFields(
+              oc.providerId(), oc.baseUrl(), oc.reasoningEffort(), opencodeModel);
+        }
+      }
 
       // AI 실행
       ProactiveResult result =
@@ -137,7 +173,8 @@ public class ProactiveJobAsyncRunner {
               agentType,
               oauthToken,
               template,
-              job.config());
+              job.config(),
+              opencodeFields);
 
       // 발송 전 결과 검증 (이슈 #350) — 내용이 없거나 본문이 에이전트 실패 메시지인 결과를
       // COMPLETED로 기록하면 오류 원문이 그대로 CHAT/EMAIL로 나간다. 검증 실패 시 예외를 던져

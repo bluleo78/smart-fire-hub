@@ -7,7 +7,7 @@
 import type { ApiConnectionResponse } from '@/types/api-connection';
 import type { AuditLogResponse } from '@/types/auditLog';
 import type { PermissionResponse, RoleDetailResponse } from '@/types/role';
-import type { ResolvedSettingResponse } from '@/types/settings';
+import type { AiCredentialResponse, ResolvedSettingResponse } from '@/types/settings';
 
 /** 권한(Permission) 응답 객체 생성 */
 export function createPermission(overrides?: Partial<PermissionResponse>): PermissionResponse {
@@ -128,6 +128,27 @@ export function createAiSettings(
     }),
   ];
   return base.map((s) => (patch[s.key] ? { ...s, ...patch[s.key] } : s));
+}
+
+/**
+ * `GET /settings/ai-credential` 응답 재현 — Task 12(타입형 AI 자격증명 전용 문서)의 유일한 소비처.
+ * 옛 `createAiSettings` 의 3키(`ai.agent_type`/`ai.api_key`/`ai.cli_oauth_token`)와는 완전히 다른
+ * 자원이다 — 저 3키는 `GET /settings?prefix=ai` 가 아직 돌려줄 수 있지만(마이그레이션이 옛 키
+ * 삭제를 한 릴리스 미룬다, 설계서 "롤백" 절) 화면은 더는 그 3키를 읽지 않는다.
+ *
+ * 기본값은 `sdk` · 테넌트 소유 · 비밀 둘 다 설정됨(값이 있는 상태) — 값이 있어야 "현재 값이
+ * 설정되어 있습니다" 힌트처럼 손대지 않아도 화면에 보이는 무언가를 만들 수 있다
+ * (`tenant-ai-settings.spec.ts` 의 `inheritedAi` 와 같은 이유). 비밀 "값" 자체는 서버가 절대
+ * 돌려주지 않으므로(`secretFieldNames` 는 이름만) 이 팩토리도 값을 갖지 않는다.
+ */
+export function createAiCredential(overrides?: Partial<AiCredentialResponse>): AiCredentialResponse {
+  return {
+    agentType: 'sdk',
+    payload: {},
+    secretFieldNames: ['oauthToken', 'apiKey'],
+    tenantOwned: true,
+    ...overrides,
+  };
 }
 
 /** SMTP **연결 번들** 5키 — 백엔드 `SettingsService.SMTP_CONNECTION_KEYS` 와 같은 집합이다. */

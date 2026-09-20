@@ -42,23 +42,12 @@ class SettingsServiceCliTokenTest extends IntegrationTestBase {
     assertThat(raw).contains(":");
   }
 
-  @Test
-  void getAiCredentials_cliOauthToken_returnsOriginal() {
-    settingsService.updatePlatformSettings(Map.of("ai.cli_oauth_token", "my-cli-token-xyz"), null);
-
-    // getDecryptedCliOauthToken() 은 Task 2 가 지웠다 — 대체 접근자로 같은 계약을 검증한다.
-    SettingsService.AiCredentials creds = settingsService.getAiCredentials();
-
-    assertThat(creds.cliOauthToken()).isEqualTo("my-cli-token-xyz");
-  }
-
-  @Test
-  void getAiCredentials_cliOauthToken_notSet_returnsEmpty() {
-    // 시드값이 빈 문자열이므로 빈 문자열 반환
-    SettingsService.AiCredentials creds = settingsService.getAiCredentials();
-
-    assertThat(creds.cliOauthToken()).isEmpty();
-  }
+  // getAiCredentials_cliOauthToken_returnsOriginal / getAiCredentials_cliOauthToken_notSet_returnsEmpty
+  // 는 지웠다 — 검증 대상이던 SettingsService.getAiCredentials()/AiCredentials 자체가 타입형
+  // 전환(2026-09)으로 사라졌다. ai.cli_oauth_token 은 이제 플랫폼 기본값 전용 레거시 값이라
+  // 아무도 읽지 않는다(암호화 저장 자체는 위 updateSettings_cliOauthToken_encryptsBeforeStore 가
+  // 계속 지킨다). 복호화된 원문 복원 계약은 지금은 AiCredentialService.resolve()/
+  // AiCredentialServiceTest 가 진다.
 
   @Test
   void updateSettings_agentType_validValues_success() {

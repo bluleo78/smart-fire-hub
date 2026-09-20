@@ -35,10 +35,15 @@ export function SettingStateBadge({ state }: { state: SettingFieldState }) {
     );
   }
   if (state === 'overridden') {
-    return <Badge variant="info">테넌트 재정의 적용됨</Badge>;
+    // Task 11: AI 자격증명 그룹이 "재정의" 대신 라디오 어휘("플랫폼 설정을 사용" / "우리 조직이
+    // 직접 설정")로 바뀌면서, 라디오 두 줄 아래에 남은 단일 키(온도·최대 턴 수 등)의 배지가
+    // "재정의"라는 옛 어휘를 계속 쓰면 같은 화면 안에서 같은 상태를 다른 말로 부르게 된다
+    // (설계서 §221). 이 배지는 AI 탭에만 있지 않다 — SMTP·임베딩 탭도 공유하므로 문구가 전역으로
+    // 바뀐다.
+    return <Badge variant="info">우리 조직 값 적용 중</Badge>;
   }
   if (state === 'builtin-default') {
-    // "기본값 사용 중"(DB 행 상속)과 구분한다 — 이 키는 플랫폼에 시드된 행이 없고, 코드에 박힌
+    // "플랫폼 값 사용 중"(DB 행 상속)과 구분한다 — 이 키는 플랫폼에 시드된 행이 없고, 코드에 박힌
     // 기본값이 적용되고 있다. "기본값 없음"이라고 하면 아무 값도 적용되지 않는다는 거짓이 된다.
     return <Badge variant="outline">내장 기본값</Badge>;
   }
@@ -46,7 +51,7 @@ export function SettingStateBadge({ state }: { state: SettingFieldState }) {
     // DB 행도 코드 기본값도 없는 경우 — 정말 적용되는 값이 없다.
     return <Badge variant="outline">기본값 없음</Badge>;
   }
-  return <Badge variant="outline">기본값 사용 중</Badge>;
+  return <Badge variant="outline">플랫폼 값 사용 중</Badge>;
 }
 
 /**

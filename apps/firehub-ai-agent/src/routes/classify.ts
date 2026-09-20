@@ -22,6 +22,17 @@ const classifyRequestSchema = z.object({
   model: z.string().optional(),
   apiKey: z.string().optional(),
   oauthToken: z.string().optional(),
+  // agentType 은 **필수**다(값 목록은 providers/types.ts 의 AgentType 이 단일 출처).
+  // 생략을 허용하고 여기서 'sdk' 로 기본값을 주면, opencode 테넌트가 실수로 이 필드를 빠뜨린
+  // 요청이 조용히 Claude SDK 경로로 떨어져 빈 apiKey 가 ambient ANTHROPIC_API_KEY 로 새는
+  // 6b1c6383 과금 회귀를 재현한다. firehub-api 는 이제 이 필드를 항상 보내므로(설계서 "API
+  // 인터페이스" 절) 누락은 버그 신호이고, 400 으로 거절해 그 자리에서 드러낸다.
+  agentType: z.enum(['sdk', 'cli', 'cli-api', 'opencode']),
+  // opencode 전용 — OpenAI 호환 provider 설정. 없으면 팩토리가 opencode 분기에서 크게 실패한다.
+  baseUrl: z.string().optional(),
+  providerId: z.string().optional(),
+  // 현재 이 앱엔 사용처가 없다(ProviderConfig.reasoningEffort 참고) — 떨구지 않고 보존만 한다.
+  reasoningEffort: z.string().optional(),
 });
 
 router.post('/classify', jsonParser, internalAuth, async (req: Request, res: Response) => {
@@ -34,7 +45,8 @@ router.post('/classify', jsonParser, internalAuth, async (req: Request, res: Res
     return;
   }
 
-  const { rows, prompt, outputColumns, model, apiKey, oauthToken } = parseResult.data;
+  const { rows, prompt, outputColumns, model, apiKey, oauthToken, agentType, baseUrl, providerId, reasoningEffort } =
+    parseResult.data;
 
   try {
     const provider = ProviderFactory.createClassifyProvider();
@@ -45,6 +57,10 @@ router.post('/classify', jsonParser, internalAuth, async (req: Request, res: Res
       model,
       apiKey,
       oauthToken,
+      agentType,
+      baseUrl,
+      providerId,
+      reasoningEffort,
     });
     res.json(result);
   } catch (error: unknown) {

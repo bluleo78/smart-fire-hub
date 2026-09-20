@@ -2,9 +2,22 @@ import { describe, it, expect } from 'vitest';
 import { parseOpenCodeEvent, buildOpenCodeConfig, buildOpenCodeRunArgs, normalizeFirehubToolName } from './agent-opencode.js';
 import { OPENCODE_SYSTEM_PROMPT, SYSTEM_PROMPT } from './system-prompt.js';
 
+// 공통 테스트 fixture — 세션 배선 필드는 이 describe 의 관심사가 아니므로 고정값으로 묶는다.
+const BASE: Parameters<typeof buildOpenCodeConfig>[0] = {
+  userId: 7,
+  tenantId: 3,
+  apiBaseUrl: 'http://api/v1',
+  internalToken: 'tok',
+  providerId: 'openai',
+  baseUrl: 'https://api.openai.com/v1',
+  apiKey: 'k',
+  model: 'openai/gpt-4o',
+  reasoningEffort: 'medium',
+};
+
 describe('buildOpenCodeConfig', () => {
   it('mcp.firehub 에 USER_ID 등 환경변수를 주입한다', () => {
-    const cfg = buildOpenCodeConfig(7, 3, 'http://api/v1', 'tok');
+    const cfg = buildOpenCodeConfig(BASE);
     expect(cfg.mcp.firehub.type).toBe('local');
     expect(cfg.mcp.firehub.environment.USER_ID).toBe('7');
     expect(cfg.mcp.firehub.environment.TENANT_ID).toBe('3');
@@ -13,13 +26,81 @@ describe('buildOpenCodeConfig', () => {
     expect(Array.isArray(cfg.mcp.firehub.command)).toBe(true);
   });
 
-  it('model 필드를 넣지 않는다 (옵션 3: 배포 측 전역 설정 상속)', () => {
-    const cfg = buildOpenCodeConfig(1, 1, 'u', 't');
-    expect(cfg.model).toBeUndefined();
+  // GraphRAG 도구(stdio-server.ts)가 ambient ANTHROPIC_API_KEY 대신 이 테넌트의 opencode
+  // provider 를 쓰도록 MCP 자식 env 에도 자격증명을 명시 전달해야 한다(Ruling #30).
+  it('mcp.firehub 환경에 opencode 자격증명을 AI_CREDENTIAL_* 키로 전달한다', () => {
+    const cfg = buildOpenCodeConfig(BASE);
+    expect(cfg.mcp.firehub.environment.AI_CREDENTIAL_AGENT_TYPE).toBe('opencode');
+    expect(cfg.mcp.firehub.environment.AI_CREDENTIAL_PROVIDER_ID).toBe('openai');
+    expect(cfg.mcp.firehub.environment.AI_CREDENTIAL_BASE_URL).toBe('https://api.openai.com/v1');
+    expect(cfg.mcp.firehub.environment.AI_CREDENTIAL_API_KEY).toBe('k');
+    expect(cfg.mcp.firehub.environment.AI_CREDENTIAL_REASONING_EFFORT).toBe('medium');
+    expect(cfg.mcp.firehub.environment.AI_CREDENTIAL_MODEL).toBe('openai/gpt-4o');
+  });
+
+  // 옵션 3 폐기(2026-09-19, 이슈 #693) — 이전 핀 테스트('model 필드를 넣지 않는다')를 뒤집는다.
+  // top-level model 을 비우면 배포 측 전역 opencode 설정의 model 이 여전히 이겨 provider
+  // 블록이 죽은 코드가 된다.
+  it('provider 블록을 쓴다 (옵션 3 폐기 — 2026-09-19, 이슈 #693)', () => {
+    const config = buildOpenCodeConfig(BASE);
+
+    expect(config.model).toBe('openai/gpt-4o');
+    expect(config.provider.openai.options).toEqual({
+      baseURL: 'https://api.openai.com/v1',
+      apiKey: 'k',
+    });
+    expect(config.provider.openai.npm).toBe('@ai-sdk/openai-compatible');
+  });
+
+  it('modalities.input 에 image 를 반드시 넣는다', () => {
+    // 없으면 opencode 코어가 사용자 메시지의 image 파트를 제거하고
+    // "does not support image input" 에러 텍스트로 바꿔친다(iacloud_eis 실측).
+    const config = buildOpenCodeConfig(BASE);
+    expect(config.provider.openai.models['gpt-4o'].modalities.input).toContain('image');
+  });
+
+  it('추론 강도가 비면 options 를 아예 넣지 않는다', () => {
+    // 빈 문자열을 그대로 보내면 400 이다.
+    const config = buildOpenCodeConfig({ ...BASE, reasoningEffort: '' });
+    expect(config.provider.openai.models['gpt-4o'].options).toBeUndefined();
+  });
+
+  it('추론 강도가 공백뿐이면(trim 후 빈 값) options 를 아예 넣지 않는다', () => {
+    const config = buildOpenCodeConfig({ ...BASE, reasoningEffort: '   ' });
+    expect(config.provider.openai.models['gpt-4o'].options).toBeUndefined();
+  });
+
+  it('추론 강도가 있으면 options.reasoningEffort 로 싣는다', () => {
+    const config = buildOpenCodeConfig({ ...BASE, reasoningEffort: 'high' });
+    expect(config.provider.openai.models['gpt-4o'].options).toEqual({ reasoningEffort: 'high' });
+  });
+
+  it('모델의 providerId 가 payload 와 다르면 throw 한다', () => {
+    expect(() =>
+      buildOpenCodeConfig({ ...BASE, providerId: 'openai', model: 'google/gemini' }),
+    ).toThrow(/providerID/);
+  });
+
+  it('모델에 슬래시가 없으면(형식 위반) throw 한다', () => {
+    expect(() => buildOpenCodeConfig({ ...BASE, model: 'gpt-4o' })).toThrow(
+      /providerId\/modelId/,
+    );
+  });
+
+  it('providerId 가 없으면 throw 한다 (배포 측 전역 설정으로 조용히 떨어지지 않는다)', () => {
+    expect(() => buildOpenCodeConfig({ ...BASE, providerId: '' })).toThrow(/providerId/);
+  });
+
+  it('baseUrl 이 없으면 throw 한다', () => {
+    expect(() => buildOpenCodeConfig({ ...BASE, baseUrl: '' })).toThrow(/baseUrl/);
+  });
+
+  it('model 이 없으면 throw 한다', () => {
+    expect(() => buildOpenCodeConfig({ ...BASE, model: '' })).toThrow(/model/);
   });
 
   it('permission 으로 bash/edit/write/webfetch 를 deny 하고 firehub MCP 만 allow 한다', () => {
-    const cfg = buildOpenCodeConfig(1, 1, 'u', 't');
+    const cfg = buildOpenCodeConfig(BASE);
     expect(cfg.permission.bash).toBe('deny');
     expect(cfg.permission.edit).toBe('deny');
     expect(cfg.permission.write).toBe('deny');
@@ -28,7 +109,7 @@ describe('buildOpenCodeConfig', () => {
 
   it('메인(build) 에서 task 위임을 전면 차단하고 빌트인 general 을 비활성화한다 (#0 보안)', () => {
     // 위임 차단으로 firehub 도구 직접 호출을 강제 — 비격리 general 서브에이전트 누수 방지.
-    const cfg = buildOpenCodeConfig(1, 1, 'u', 't');
+    const cfg = buildOpenCodeConfig(BASE);
     expect(cfg.agent.build.permission.task['*']).toBe('deny');
     expect(cfg.agent.general.disable).toBe(true);
   });

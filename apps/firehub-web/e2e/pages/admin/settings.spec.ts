@@ -32,27 +32,11 @@ import { expect, test } from '../../fixtures/auth.fixture';
 const fieldBox = (page: Page, inputId: string) =>
   page.locator('div.space-y-2', { has: page.locator(`#${inputId}`) });
 
-/**
- * AI 자격증명 번들 3키를 감싸는 `fieldset`. 배지·그룹 해제 버튼이 그룹 머리에 <b>하나씩만</b>
- * 있다는 사실을 단언하려면 스코프가 필요하다 — 페이지 전역으로 세면 다른 필드의 같은 배지까지
- * 섞인다(SMTP `connectionGroup` 과 같은 관용구).
- */
-const aiCredentialGroup = (page: Page) =>
-  page.locator('fieldset', { has: page.locator('#ai-agent-type') });
-
 /** 시스템 프롬프트는 배지·재정의 해제 버튼이 카드 제목 줄에 있어 카드 단위로 스코프를 잡는다. */
 const systemPromptCard = (page: Page) =>
   page.locator('div.card-hover', { has: page.locator('#ai-system-prompt') });
 
 const LOCKED_NOTE = '플랫폼 운영자만 변경할 수 있는 항목입니다.';
-
-/**
- * 비밀 입력 힌트의 <b>할 일</b> 절. 이 절만 따로 잡는 이유: 사실 절("현재 값이 설정되어 있습니다")은
- * 잠금 여부와 무관하게 참이라 잠긴 화면에도 남아야 하고, 거짓이 되는 것은 이 절 하나뿐이다.
- * 둘을 합친 문자열로 단언하면 "사실 절까지 사라졌다"는 회귀와 구별하지 못한다.
- */
-const SECRET_ACTION_HINT = '바꾸려면 새 값을 입력하세요';
-const SECRET_FACT_HINT = '현재 값이 설정되어 있습니다.';
 
 test.describe('설정 페이지', () => {
   test.beforeEach(async ({ authenticatedPage: page }) => {
@@ -130,14 +114,14 @@ test.describe('설정 페이지', () => {
    * 세 상태(상속/재정의/잠금)와 응답에 아예 없는 키(내장 기본값)를 모두 덮는다.
    */
   test.describe('필드 상태 — 상속 / 재정의 / 잠금', () => {
-    test('상속 중인 필드는 "기본값 사용 중" 배지 + 편집 가능 + 재정의 해제 버튼 없음', async ({
+    test('상속 중인 필드는 "플랫폼 값 사용 중" 배지 + 편집 가능 + 재정의 해제 버튼 없음', async ({
       authenticatedPage: page,
     }) => {
       await setupSettingsMocks(page);
       await page.goto('/admin/settings');
 
       const box = fieldBox(page, 'ai-max-turns');
-      await expect(box.getByText('기본값 사용 중')).toBeVisible();
+      await expect(box.getByText('플랫폼 값 사용 중')).toBeVisible();
       await expect(page.locator('#ai-max-turns')).toBeEnabled();
       // 지울 오버라이드가 없으므로 해제 버튼이 붙어서는 안 된다 — 이 음성 단언이 없으면
       // 버튼이 전 필드에 붙는 회귀를 놓친다.
@@ -146,7 +130,7 @@ test.describe('설정 페이지', () => {
       await expect(box.getByText(LOCKED_NOTE)).toHaveCount(0);
     });
 
-    test('재정의된 필드는 "테넌트 재정의 적용됨" 배지 + 재정의 해제 버튼이 붙는다', async ({
+    test('재정의된 필드는 "우리 조직 값 적용 중" 배지 + 재정의 해제 버튼이 붙는다', async ({
       authenticatedPage: page,
     }) => {
       // 같은 키가 재정의 상태로 내려오면(overridden: true) 값도 오버라이드 값이 보여야 한다
@@ -156,57 +140,24 @@ test.describe('설정 페이지', () => {
       await page.goto('/admin/settings');
 
       const box = fieldBox(page, 'ai-max-turns');
-      await expect(box.getByText('테넌트 재정의 적용됨')).toBeVisible();
+      await expect(box.getByText('우리 조직 값 적용 중')).toBeVisible();
       await expect(page.locator('#ai-max-turns')).toHaveValue('25');
       await expect(page.locator('#ai-max-turns')).toBeEnabled();
       await expect(box.getByRole('button', { name: '재정의 해제' })).toBeVisible();
 
       // 다른 편집 가능 필드는 여전히 상속 상태여야 한다(재정의가 필드 단위임을 고정)
-      await expect(fieldBox(page, 'ai-temperature').getByText('기본값 사용 중')).toBeVisible();
+      await expect(fieldBox(page, 'ai-temperature').getByText('플랫폼 값 사용 중')).toBeVisible();
     });
 
-    test('플랫폼 전용 자격증명 3키는 그룹 Lock 배지 + 필드별 비활성·안내문으로 표시된다', async ({
-      authenticatedPage: page,
-    }) => {
-      await setupSettingsMocks(page);
-      await page.goto('/admin/settings');
-
-      // 자격증명 3키는 **번들**이라 배지가 그룹 머리에 하나뿐이다(SMTP 연결 그룹과 같은 규칙).
-      // 예전 이 테스트는 필드마다 배지를 찾았는데, 세 필드가 전부 같은 배지를 달면 "각각
-      // 독립적으로 잠겼다"로 읽혀 원자 해석을 오해하게 만든다 — 그래서 필드 배지를 뗐다.
-      // 색 단독 전달 금지는 그대로 지킨다: 배지 안 Lock 아이콘 + 필드별 안내문 + 비활성 입력.
-      const group = aiCredentialGroup(page);
-      const badge = group.getByLabel('플랫폼 전용: 이 테넌트에서 편집할 수 없음');
-      await expect(badge).toBeVisible();
-      await expect(badge.locator('svg')).toBeVisible();
-      // 그룹 안에 배지는 정확히 하나다 — 필드 배지가 되살아나면 여기서 잡힌다.
-      await expect(group.getByLabel('플랫폼 전용: 이 테넌트에서 편집할 수 없음')).toHaveCount(1);
-      // 잠긴 그룹에는 해제할 테넌트 재정의가 존재할 수 없다(그룹 버튼도 필드 버튼도).
-      await expect(group.getByRole('button', { name: /재정의 해제/ })).toHaveCount(0);
-
-      for (const inputId of ['ai-agent-type', 'ai-api-key', 'ai-cli-oauth-token']) {
-        const box = fieldBox(page, inputId);
-        await expect(box.getByText(LOCKED_NOTE)).toBeVisible();
-        await expect(page.locator(`#${inputId}`)).toBeDisabled();
-      }
-
-      // 비밀 2키는 마스크를 시드하지 않아 잠겨 있어도 빈 칸으로 보인다. 그래서 상태는 힌트가
-      // 말하는데, <b>할 일 절은 잠긴 입력에서 거짓</b>이 된다 — "새 값을 입력하세요" 바로 아래에
-      // "플랫폼 운영자만 변경할 수 있는 항목입니다"가 붙어 두 문장이 정면으로 충돌하고, 사용자는
-      // disabled 입력에 대고 시키는 대로 하려 든다(거짓 어포던스).
-      await expect(
-        aiCredentialGroup(page).getByText(SECRET_ACTION_HINT, { exact: false }),
-      ).toHaveCount(0);
-
-      // 그렇다고 힌트가 통째로 사라지면 안 된다 — "값이 있는 잠긴 키"와 "값이 없는 잠긴 키"가
-      // 똑같이 빈 칸으로 보여, 플랫폼이 아직 자격증명을 넣지 않았다는 사실이 화면에서 없어진다.
-      // 기본 픽스처가 정확히 그 두 경우를 한 화면에 담는다(api_key='****masked****',
-      // cli_oauth_token='').
-      await expect(fieldBox(page, 'ai-api-key').getByText(SECRET_FACT_HINT)).toBeVisible();
-      await expect(
-        fieldBox(page, 'ai-cli-oauth-token').getByText('설정된 값이 없습니다.'),
-      ).toBeVisible();
-    });
+    // "플랫폼 전용 자격증명 3키는 그룹 Lock 배지 + 필드별 비활성·안내문으로 표시된다" 테스트는
+    // Task 12 에서 삭제했다(참조: `.superpowers/sdd/2026-09-19-typed-ai-settings/task-12-report.md`).
+    // `ai.agent_type`/`ai.api_key`/`ai.cli_oauth_token` 을 `GET /settings?prefix=ai` 의
+    // `tenantEditable:false` 3키 번들로 잠그는 이 화면 자체가 Task 11(`AiCredentialFieldset.tsx`)
+    // 이후 존재하지 않는다 — 그 3키는 더 이상 이 폼이 읽지 않고, 전용 문서
+    // `GET/PUT/DELETE /settings/ai-credential` 하나로 완전히 옮겨갔다(`#ai-agent-type` 같은 id
+    // 자체가 화면에서 사라졌다). 대체 시나리오는 `tenant-ai-settings.spec.ts` 가 그 새 문서
+    // 엔드포인트를 대상으로 갖는다 — 같은 종류의 "잠금 상태"는 이제 GET 403(`cred.isLocked`)
+    // 하나뿐이고, 그건 `AiCredentialFieldset.test.tsx`(단위 테스트)가 이미 덮는다.
 
     test('화이트리스트 키라도 서버가 tenantEditable=false 로 내리면 잠금으로 렌더된다', async ({
       authenticatedPage: page,
@@ -257,7 +208,7 @@ test.describe('설정 페이지', () => {
       await page.goto('/admin/settings');
 
       const card = systemPromptCard(page);
-      await expect(card.getByText('테넌트 재정의 적용됨')).toBeVisible();
+      await expect(card.getByText('우리 조직 값 적용 중')).toBeVisible();
       await expect(card.getByRole('button', { name: '재정의 해제' })).toBeVisible();
       await expect(page.locator('#ai-system-prompt')).toHaveValue('테넌트 전용 프롬프트');
     });
@@ -339,7 +290,7 @@ test.describe('설정 페이지', () => {
       await page.goto('/admin/settings');
       // 재정의가 실제로 실려 있는 상태에서 출발한다는 전제를 먼저 고정한다
       await expect(page.locator('#ai-temperature')).toHaveValue('0.7');
-      await expect(fieldBox(page, 'ai-temperature').getByText('테넌트 재정의 적용됨')).toBeVisible();
+      await expect(fieldBox(page, 'ai-temperature').getByText('우리 조직 값 적용 중')).toBeVisible();
 
       // temperature 는 건드리지 않고 다른 키 하나만 편집한다
       await page.locator('#ai-max-turns').fill('15');
@@ -446,7 +397,7 @@ test.describe('설정 페이지', () => {
 
       // 해당 필드만 플랫폼 값(10) + 상속 배지로 전환
       await expect(page.locator('#ai-max-turns')).toHaveValue('10');
-      await expect(fieldBox(page, 'ai-max-turns').getByText('기본값 사용 중')).toBeVisible();
+      await expect(fieldBox(page, 'ai-max-turns').getByText('플랫폼 값 사용 중')).toBeVisible();
       await expect(
         fieldBox(page, 'ai-max-turns').getByRole('button', { name: '재정의 해제' }),
       ).toHaveCount(0);
@@ -472,57 +423,21 @@ test.describe('설정 페이지', () => {
 
       expect(deletedPaths).toEqual([]);
       await expect(page.locator('#ai-max-turns')).toHaveValue('25');
-      await expect(fieldBox(page, 'ai-max-turns').getByText('테넌트 재정의 적용됨')).toBeVisible();
+      await expect(fieldBox(page, 'ai-max-turns').getByText('우리 조직 값 적용 중')).toBeVisible();
     });
   });
 
-  /**
-   * 에이전트 유형에 따른 키 필드 분기.
-   * P7-b 이후 유형 자체가 플랫폼 소유라 사용자가 바꿀 수 없으므로, 분기는 **서버 값이 구동**한다.
-   * (예전 스펙은 사용자가 Select 를 바꿔 분기를 확인했지만 그 조작은 더 이상 존재하지 않는다.)
-   */
-  test.describe('에이전트 유형별 키 필드 분기 (서버 값 구동)', () => {
-    test('agent_type=sdk 면 OAuth 토큰과 API 키가 모두 노출되고 둘 다 잠금이다', async ({
-      authenticatedPage: page,
-    }) => {
-      await setupSettingsMocks(page);
-      await page.goto('/admin/settings');
-
-      // 유형 자체를 테넌트가 바꿀 수 없다 — 분기가 서버 값으로만 결정된다는 전제
-      await expect(page.locator('#ai-agent-type')).toBeDisabled();
-      await expect(page.locator('#ai-cli-oauth-token')).toBeVisible();
-      await expect(page.locator('#ai-cli-oauth-token')).toBeDisabled();
-      await expect(page.locator('#ai-api-key')).toBeVisible();
-      await expect(page.locator('#ai-api-key')).toBeDisabled();
-    });
-
-    test('agent_type=cli-api 면 API 키만 노출된다', async ({ authenticatedPage: page }) => {
-      await setupSettingsMocks(page, {
-        ai: createAiSettings({ 'ai.agent_type': { value: 'cli-api' } }),
-      });
-      await page.goto('/admin/settings');
-
-      await expect(page.locator('#ai-api-key')).toBeVisible();
-      await expect(page.locator('#ai-cli-oauth-token')).toHaveCount(0);
-    });
-
-    test('agent_type=opencode 면 키 입력 UI 없이 안내 문구만 표시된다', async ({
-      authenticatedPage: page,
-    }) => {
-      await setupSettingsMocks(page, {
-        ai: createAiSettings({ 'ai.agent_type': { value: 'opencode' } }),
-      });
-      await page.goto('/admin/settings');
-
-      await expect(page.locator('#ai-api-key')).toHaveCount(0);
-      await expect(page.locator('#ai-cli-oauth-token')).toHaveCount(0);
-      await expect(
-        page.getByText(
-          '배포 환경에 구성된 OpenCode 인증(opencode auth)을 사용합니다. 별도 키 입력이 필요 없습니다.',
-        ),
-      ).toBeVisible();
-    });
-  });
+  // "에이전트 유형별 키 필드 분기 (서버 값 구동)" describe 블록(3 테스트)은 Task 12 에서
+  // 삭제했다. `ai.agent_type`/`ai.api_key`/`ai.cli_oauth_token` 을 이 화면(behavior 6키 폼)이
+  // 서버가 내린 값으로 직접 렌더하던 시절의 테스트인데, Task 11 이후 이 3키는 애초에
+  // `GET /settings?prefix=ai` 응답에서 읽히지 않는다(`#ai-agent-type`/`#ai-api-key`/
+  // `#ai-cli-oauth-token` id 자체가 화면에 없다) — 전용 `ai.credential` 문서로 완전히 옮겨갔고,
+  // "유형별로 어떤 필드가 보이는가"는 이제 `AiCredentialFieldset.tsx` 가 <b>테넌트가 직접 고른
+  // 유형</b>으로 그린다(서버가 유형을 강제하지 않는다 — 정반대 방향의 계약 변경이라 이 테스트를
+  // 고쳐 쓸 수 없었다, 아예 다른 사실을 검증해야 한다). 대체 시나리오는
+  // `tenant-ai-settings.spec.ts` 의 "유형을 opencode 로 바꾸면..."(브리프 #2) ·
+  // "opencode 에는 '인증 확인' 버튼이 없고, sdk 에는 있다"(브리프 #9) 두 테스트가 opencode/sdk
+  // 양쪽 분기를 덮는다.
 
   /**
    * 계약 3(P7-c1): 이메일 탭은 AI 탭과 같은 상속/재정의 편집 화면이다.
@@ -585,10 +500,10 @@ test.describe('설정 페이지', () => {
       // 연결 5키는 그룹 배지 하나가 상태를 말한다. 개별 필드 배지를 단언하던 예전 줄
       // (`fieldBox(page,'smtp-host')` / `starttlsBox(page)`)은 번들 모델에서 거짓이라 제거했다 —
       // 배지가 필드 단위면 "이 비밀번호는 플랫폼 것" 같은 거짓말을 그린다.
-      await expect(connectionGroup(page).getByText('기본값 사용 중')).toBeVisible();
+      await expect(connectionGroup(page).getByText('플랫폼 값 사용 중')).toBeVisible();
       await expect(page.getByText('5개 항목이 함께 적용됩니다')).toBeVisible();
       // 발신자 주소는 그룹 밖에서 개별 배지를 유지한다.
-      await expect(fieldBox(page, 'smtp-from').getByText('기본값 사용 중')).toBeVisible();
+      await expect(fieldBox(page, 'smtp-from').getByText('플랫폼 값 사용 중')).toBeVisible();
 
       // 전면 잠금 배너·잠금 안내문은 사라졌고 저장/되돌리기 행이 돌아왔다
       await expect(page.getByText('플랫폼 전용 설정')).toHaveCount(0);
@@ -619,15 +534,15 @@ test.describe('설정 페이지', () => {
 
       const group = connectionGroup(page);
       await expect(page.locator('#smtp-host')).toHaveValue('smtp.ourcompany.com');
-      await expect(group.getByText('테넌트 재정의 적용됨')).toBeVisible();
+      await expect(group.getByText('우리 조직 값 적용 중')).toBeVisible();
       await expect(
         group.getByRole('button', { name: '연결 설정 전체 재정의 해제' }),
       ).toBeVisible();
 
       // **핵심**: 배지도 해제 버튼도 그룹에 하나씩뿐이다. 필드마다 반복되면 "각각 독립적으로
       // 그런 상태다"로 읽혀 원자 해석을 오해하게 만든다.
-      await expect(group.getByText('테넌트 재정의 적용됨')).toHaveCount(1);
-      await expect(group.getByText('기본값 사용 중')).toHaveCount(0);
+      await expect(group.getByText('우리 조직 값 적용 중')).toHaveCount(1);
+      await expect(group.getByText('플랫폼 값 사용 중')).toHaveCount(0);
       await expect(group.getByRole('button', { name: /재정의 해제/ })).toHaveCount(1);
 
       // 행이 없는 연결 키는 플랫폼 값이 아니라 빈 값이고, 그 사실을 노트가 말한다.
@@ -650,7 +565,7 @@ test.describe('설정 페이지', () => {
       await expect(page.getByText('설정된 비밀번호가 없습니다 (인증 없는 SMTP)')).toHaveCount(0);
 
       // 발신자 주소는 번들 밖이라 여전히 상속 + 개별 배지다.
-      await expect(fieldBox(page, 'smtp-from').getByText('기본값 사용 중')).toBeVisible();
+      await expect(fieldBox(page, 'smtp-from').getByText('플랫폼 값 사용 중')).toBeVisible();
       await expect(page.locator('#smtp-from')).toHaveValue('noreply@example.com');
     });
 
@@ -744,7 +659,7 @@ test.describe('설정 페이지', () => {
 
       await expect(warning).toBeVisible();
       // 배지는 아직 상속이다 — 저장 전에는 서버에 행이 없고 실제로 플랫폼 값으로 메일이 나간다.
-      await expect(connectionGroup(page).getByText('기본값 사용 중')).toBeVisible();
+      await expect(connectionGroup(page).getByText('플랫폼 값 사용 중')).toBeVisible();
       // 어떤 필드도 사전 채움되지 않는다: 플랫폼 값을 채워 두면 저장 시 플랫폼과 같은 테넌트 행이
       // 4개 기록돼 상속이 조용히 끊긴다.
       await expect(page.locator('#smtp-port')).toHaveValue('587');
@@ -804,7 +719,7 @@ test.describe('설정 페이지', () => {
       expect(settings).not.toHaveProperty('smtp.starttls');
 
       await expect(page.getByText('설정이 저장되었습니다.')).toBeVisible({ timeout: 8000 });
-      await expect(connectionGroup(page).getByText('테넌트 재정의 적용됨')).toBeVisible();
+      await expect(connectionGroup(page).getByText('우리 조직 값 적용 중')).toBeVisible();
       // 전환 후에도 암호화는 켜진 채다.
       await expect(page.locator('#smtp-starttls')).toBeChecked();
       // 자격증명이 실린 상태이므로 무인증 안내는 뜨지 않는다.
@@ -834,10 +749,10 @@ test.describe('설정 페이지', () => {
       await expect(page.getByText('설정이 저장되었습니다.')).toBeVisible({ timeout: 8000 });
     });
 
-    test('저장이 성공하면 그룹 배지가 "테넌트 재정의 적용됨"으로 바뀐다', async ({
+    test('저장이 성공하면 그룹 배지가 "우리 조직 값 적용 중"으로 바뀐다', async ({
       authenticatedPage: page,
     }) => {
-      // 저장 후 배지를 다시 읽지 않으면 화면은 "기본값 사용 중"이라고 계속 말한다 — 저장은 됐는데
+      // 저장 후 배지를 다시 읽지 않으면 화면은 "플랫폼 값 사용 중"이라고 계속 말한다 — 저장은 됐는데
       // 표시만 틀린, 이 밴드가 반복해서 잡아 온 "둘 중 하나만 맞는" 모양이다. 그래서 저장 성공
       // 토스트가 아니라 **배지 전환**까지 단언한다.
       let saved = false;
@@ -865,13 +780,13 @@ test.describe('설정 페이지', () => {
       );
 
       await openEmailTab(page);
-      await expect(connectionGroup(page).getByText('기본값 사용 중')).toBeVisible();
+      await expect(connectionGroup(page).getByText('플랫폼 값 사용 중')).toBeVisible();
 
       await page.locator('#smtp-host').fill('smtp.ourcompany.com');
       await page.getByRole('button', { name: '저장' }).click();
 
       await expect(page.getByText('설정이 저장되었습니다.')).toBeVisible({ timeout: 8000 });
-      await expect(connectionGroup(page).getByText('테넌트 재정의 적용됨')).toBeVisible();
+      await expect(connectionGroup(page).getByText('우리 조직 값 적용 중')).toBeVisible();
       await expect(
         connectionGroup(page).getByRole('button', { name: '연결 설정 전체 재정의 해제' }),
       ).toBeVisible();
@@ -1010,7 +925,7 @@ test.describe('설정 페이지', () => {
         ]);
       await expect(page.locator('#smtp-host')).toHaveValue('smtp.gmail.com');
       await expect(page.locator('#smtp-port')).toHaveValue('587');
-      await expect(connectionGroup(page).getByText('기본값 사용 중')).toBeVisible();
+      await expect(connectionGroup(page).getByText('플랫폼 값 사용 중')).toBeVisible();
       await expect(page.locator('#smtp-from')).toHaveValue('kept@example.com');
     });
 
@@ -1051,7 +966,7 @@ test.describe('설정 페이지', () => {
         connectionGroup(page).getByText('일부 항목만 해제되었습니다', { exact: false }),
       ).toHaveCount(0);
       // 안전하다는 사실도 함께 말한다 — 남은 항목은 아직 테넌트 값으로 적용된다.
-      await expect(connectionGroup(page).getByText('테넌트 재정의 적용됨')).toBeVisible();
+      await expect(connectionGroup(page).getByText('우리 조직 값 적용 중')).toBeVisible();
     });
 
     test('발신자 주소는 그룹 밖에서 개별 배지·개별 해제 버튼을 유지한다', async ({
@@ -1072,9 +987,9 @@ test.describe('설정 페이지', () => {
       await expect(page.locator('#smtp-from')).toHaveValue('ours@ourcompany.com');
 
       const box = fieldBox(page, 'smtp-from');
-      await expect(box.getByText('테넌트 재정의 적용됨')).toBeVisible();
+      await expect(box.getByText('우리 조직 값 적용 중')).toBeVisible();
       // 연결 5키는 상속 그대로다 — from_address 는 번들이 아니므로 5키를 끌고 들어가지 않는다.
-      await expect(connectionGroup(page).getByText('기본값 사용 중')).toBeVisible();
+      await expect(connectionGroup(page).getByText('플랫폼 값 사용 중')).toBeVisible();
       await expect(page.locator('#smtp-host')).toHaveValue('smtp.gmail.com');
 
       await box.getByRole('button', { name: '재정의 해제' }).click();
@@ -1220,7 +1135,7 @@ test.describe('설정 페이지', () => {
       authenticatedPage: page,
     }) => {
       // 코드리뷰 Major 1. 저장은 성공했고 **다시 그리기**가 실패했다. 삼키면 배지는
-      // `기본값 사용 중`, 그룹 문구는 "플랫폼 기본값을 쓰고 있습니다", 폼은 플랫폼 사용자 이름을
+      // `플랫폼 값 사용 중`, 그룹 문구는 "플랫폼 기본값을 쓰고 있습니다", 폼은 플랫폼 사용자 이름을
       // 계속 보여주는데 서버는 이미 그 테넌트를 빈 자격증명 번들로 옮긴 상태다.
       // 호출 횟수가 아니라 플래그로 분기한다 — StrictMode 가 최초 마운트에서 GET 을 두 번 내므로
       // "두 번째부터 실패" 로 짜면 저장 전에 이미 실패해 다른 상태를 시험하게 된다.

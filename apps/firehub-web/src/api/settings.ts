@@ -1,4 +1,11 @@
-import type { ResolvedSettingResponse, UpdateSettingsRequest } from '../types/settings';
+import type {
+  AiCredentialProbeRequest,
+  AiCredentialProbeResponse,
+  AiCredentialResponse,
+  AiCredentialUpsertPayload,
+  ResolvedSettingResponse,
+  UpdateSettingsRequest,
+} from '../types/settings';
 import { client } from './client';
 
 export const settingsApi = {
@@ -15,4 +22,20 @@ export const settingsApi = {
 
   verifyAuthStatus: () =>
     client.get<{ valid: boolean; email?: string; subscriptionType?: string }>('/ai/auth-status'),
+
+  // `ai.credential` 은 하위 필드(secret)에 비밀이 있는 JSON 문서라 위 범용 `/settings` 경로
+  // (문자열 키·값 전제)에 얹을 수 없다 — 타입형 전환(2026-09)으로 전용 엔드포인트가 생겼다
+  // (Task 7). 네 메서드 모두 `ai:settings` 권한이 필요하다.
+  getAiCredential: () => client.get<AiCredentialResponse>('/settings/ai-credential'),
+
+  putAiCredential: (data: AiCredentialUpsertPayload) => client.put('/settings/ai-credential', data),
+
+  // 테넌트 오버라이드 삭제 = 플랫폼 값 상속으로 복귀(clearOverride 와 같은 뜻이지만, 이 키는
+  // 전용 엔드포인트를 쓰므로 별도 메서드다).
+  deleteAiCredential: () => client.delete('/settings/ai-credential'),
+
+  // opencode 전용 모델 목록 조회. 인증된 외부 호출(임의 baseURL 에 Bearer 전송)을 일으키므로
+  // 쓰기 권한(`ai:settings`)이 필요하다 — 조회 전용처럼 보여도 GET 이 아니라 POST 인 이유다.
+  probeAiCredential: (data: AiCredentialProbeRequest) =>
+    client.post<AiCredentialProbeResponse>('/settings/ai-credential/probe', data),
 };

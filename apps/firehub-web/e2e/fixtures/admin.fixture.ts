@@ -1,8 +1,9 @@
 import type { Page } from '@playwright/test';
 
-import type { ResolvedSettingResponse } from '@/types/settings';
+import type { AiCredentialResponse, AiCredentialUpsertPayload, ResolvedSettingResponse } from '@/types/settings';
 
 import {
+  createAiCredential,
   createAiSettings,
   createApiConnections,
   createAuditLogs,
@@ -188,6 +189,51 @@ export async function setupSettingsMocks(
       });
     },
   );
+}
+
+/**
+ * `GET/PUT/DELETE /api/v1/settings/ai-credential` 모킹 — Task 12 이 새로 여는 전용 문서 자원.
+ *
+ * 옛 3키(`ai.agent_type`/`ai.api_key`/`ai.cli_oauth_token`)는 `setupSettingsMocks` 의 `prefix=ai`
+ * 목록에 얹혔지만(문자열 키·값 배열), `ai.credential` 은 하위 필드(secret)를 가진 JSON 문서 하나라
+ * 경로 자체가 다르고(`/settings/ai-credential`), 세 메서드(GET/PUT/DELETE)가 그 경로 하나를
+ * 공유한다 — `prefix` 분기가 필요 없는 대신, 메서드 분기가 필요하다.
+ *
+ * `get` 은 `setupSettingsMocks` 의 `SettingsSource` 와 같은 규약(고정값 | 재평가 함수)을 따른다.
+ * `PUT`/`DELETE` 는 호출 자체가 브리프의 핵심 단언 대상이라("라디오만 바꾸고 저장하지 않으면
+ * DELETE 가 없다") 캡처해 반환한다 — `captureOverrideDeletes` 와 같은 이유지만, 그쪽은 키마다
+ * 다른 경로(`/settings/overrides/{key}`)에 3번 나가는 번들이고 이쪽은 단일 문서라 한 번만 나간다.
+ *
+ * 반환하는 `calls` 는 <b>같은 객체를 계속 변형한다</b> — 스펙이 `get` 함수 안에서
+ * `calls.deleteCount > 0 ? 저장후상태 : 저장전상태` 처럼 자기 자신을 참조해 "저장한 뒤에만 새
+ * 값을 준다"는 재조회 응답을 만들 수 있다(호출 시점에는 이미 `const calls = await
+ * mockAiCredential(...)` 대입이 끝나 있으므로 TDZ 걱정 없이 안전하다).
+ */
+export async function mockAiCredential(
+  page: Page,
+  get: AiCredentialResponse | (() => AiCredentialResponse) = createAiCredential(),
+): Promise<{ puts: AiCredentialUpsertPayload[]; deleteCount: number }> {
+  const calls: { puts: AiCredentialUpsertPayload[]; deleteCount: number } = { puts: [], deleteCount: 0 };
+  await page.route(
+    (url) => url.pathname === '/api/v1/settings/ai-credential',
+    (route) => {
+      const method = route.request().method();
+      if (method === 'GET') {
+        const data = typeof get === 'function' ? get() : get;
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(data) });
+      }
+      if (method === 'PUT') {
+        calls.puts.push(route.request().postDataJSON() as AiCredentialUpsertPayload);
+        return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+      }
+      if (method === 'DELETE') {
+        calls.deleteCount += 1;
+        return route.fulfill({ status: 204 });
+      }
+      return route.fallback();
+    },
+  );
+  return calls;
 }
 
 /** `GET /api/v1/ai/auth-status` 의 경로. 네 곳이 같은 문자열을 따로 적고 있었다. */

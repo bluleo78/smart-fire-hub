@@ -34,7 +34,9 @@ RUN npm install -g @anthropic-ai/claude-code
 
 # Install OpenCode CLI (required by the `opencode` agent type)
 # npm 래퍼가 플랫폼에 맞는 바이너리를 받아 alpine(musl)에서도 동작한다.
-# 모델 인증은 배포 환경의 opencode 전역 설정/환경변수에 의존(옵션 3).
+# 모델 인증은 테넌트별 opencode 자격증명에서 온다(옵션 3 폐기, 2026-09-19 이슈 #693) — 요청마다
+# buildOpenCodeConfig(agent-opencode.ts)가 provider 블록을 OPENCODE_CONFIG_CONTENT 로 자식
+# 프로세스에 주입한다. 이 컨테이너의 env 에는 opencode 모델 인증용 값을 두지 않는다.
 RUN npm install -g opencode-ai
 
 # Create non-root user (Claude Code blocks --dangerously-skip-permissions as root)

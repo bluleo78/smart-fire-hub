@@ -14,10 +14,24 @@ export type CompleteFn = (systemPrompt: string, userText: string) => Promise<str
 export interface CompleterOptions {
   model?: string;
   /**
-   * 요청 자격증명. MCP 도구 경로에서는 채팅 요청의 apiKey/oauthToken 이 전달되고,
-   * 단독 스크립트에서는 생략되어 프로세스 환경 / CLI 키체인 인증으로 폴백한다.
+   * 요청 자격증명. MCP 도구 경로에서는 채팅 요청의 자격증명이 전달되고, 단독 스크립트에서는
+   * 생략되어 프로세스 환경 / CLI 키체인 인증으로 폴백한다.
+   *
+   * agentType/baseUrl/providerId 를 포함하는 이유(Task 8): classification-service.ts 와 이
+   * 함수(llm-completer.ts:30, 설계서가 명시한 두 completion 호출부)가 같은
+   * ProviderFactory.createCompletionProvider 를 거치고 같은 opencode 분기를 타야 한다.
+   * opencode 로 설정한 테넌트의 챗은 OpenCode CLI 를 스폰하는 별도 경로를 타지만, 그 CLI 가
+   * 다시 spawn 하는 firehub MCP 자식(stdio-server.ts)이 이 함수를 GraphRAG 도구 경유로 호출할
+   * 때는 opencode 의 provider 자격증명을 채워 보낸다(Ruling #30, stdio-server.ts 의
+   * resolveStdioCredentials 참고) — "이 값을 실제로 채워 보내는 호출부는 없다"던 이전 상태는
+   * 그 배선이 완성되며 끝났다.
    */
-  credentials?: Pick<ProviderConfig, 'apiKey' | 'oauthToken'>;
+  credentials?: Partial<
+    Pick<
+      ProviderConfig,
+      'apiKey' | 'oauthToken' | 'agentType' | 'baseUrl' | 'providerId' | 'reasoningEffort'
+    >
+  >;
 }
 
 /**
@@ -30,6 +44,10 @@ export function createCompleter(opts?: CompleterOptions): CompleteFn {
   const provider = ProviderFactory.createCompletionProvider({
     apiKey: opts?.credentials?.apiKey,
     oauthToken: opts?.credentials?.oauthToken,
+    agentType: opts?.credentials?.agentType,
+    baseUrl: opts?.credentials?.baseUrl,
+    providerId: opts?.credentials?.providerId,
+    reasoningEffort: opts?.credentials?.reasoningEffort,
     model: opts?.model ?? process.env.AI_CLI_MODEL,
   });
 

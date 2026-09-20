@@ -10,7 +10,7 @@ export interface SettingSpec {
   options?: { value: string; label: string }[];
   /**
    * DB 행이 없어 화면이 대신 보여줘야 하는 코드 수준 기본값.
-   * `ai.session_max_tokens` 는 어떤 마이그레이션도 시드하지 않아 응답 18행에 없다 —
+   * `ai.session_max_tokens` 는 어떤 마이그레이션도 시드하지 않아 응답 15행에 없다 —
    * 저장소가 upsert 라 첫 저장에 행이 생기고 `내장 기본값` 배지는 사라진다.
    */
   builtinDefault?: string;
@@ -19,9 +19,9 @@ export interface SettingSpec {
   /**
    * 빈 문자열 저장이 합법인가.
    *
-   * false 인 키는 10개다:
-   * - `ai.api_key` — 서버 `validateValues` 가 "API 키는 비어있을 수 없습니다" 로 거부한다.
-   * - `ai.system_prompt` — 같은 이유("시스템 프롬프트는 비어있을 수 없습니다").
+   * false 인 키는 9개다(타입형 AI 설정 전환, Task 13 — `ai.api_key` 는 `ai.credential` 문서로
+   * 옮겨가 이 카탈로그에서 빠졌고, 그 문서는 `AiCredentialSection` 이 별도 저장 흐름으로 다룬다):
+   * - `ai.system_prompt` — 서버 `validateValues` 가 "시스템 프롬프트는 비어있을 수 없습니다" 로 거부한다.
    * - `smtp.starttls` — 스위치라 값이 항상 `'true'`/`'false'` 둘 중 하나다. 비울 대상이 없다.
    * - `embedding.model` · `embedding.base_url` — 서버 `validateEmbeddingConsistency` 가 페이로드에
    *   키가 있으면 blank 를 거부한다(리뷰 M2).
@@ -45,8 +45,9 @@ export interface SettingSpec {
    * 원칙은 "서버와 같은 경계" 다 — 어긋나면 사용자가 이유 없이 막히거나(더 엄격), 클라이언트를
    * 지나 서버 예외 문구를 그대로 보게 된다(더 느슨).
    *
-   * **의도적으로 서버보다 엄격한 키는 `ai.model` 하나뿐이다** — 서버는 자유 문자열로 두고
-   * 3개 옵션 제한은 select 드롭다운만의 규칙이다.
+   * (예전엔 `ai.model` 이 유일하게 서버보다 엄격한 키였다 — 서버는 자유 문자열로 두는데
+   * 3개 Claude 모델로 좁힌 select 였다. Ruling #48 로 그 키가 `AiCredentialSection` 으로
+   * 옮겨가며 이 카탈로그에서 빠져, 지금은 이 문단이 가리킬 예외가 없다.)
    *
    * `smtp.port` 는 예전에 "서버 미검증이라 클라이언트만 엄격"으로 여기 기재돼 있었으나
    * **틀렸다(리뷰 H2 정정)**: `SettingsService.validateSmtpPort` 가 같은 1~65535 범위를
@@ -93,19 +94,14 @@ function intRange(min: number, max: number, message: string) {
 
 export const SETTING_CATALOG: Record<string, SettingSpec> = {
   // ── AI 에이전트 ────────────────────────────────────────────────────────────
-  'ai.model': {
-    key: 'ai.model',
-    label: '모델',
-    kind: 'select',
-    // 서버 validateValues 는 이 키를 자유 문자열로 두고 검증하지 않는다 — 목록이 유일한 방어선이다.
-    options: [
-      { value: 'claude-sonnet-5', label: 'Claude Sonnet 5' },
-      { value: 'claude-opus-4-8', label: 'Claude Opus 4.8' },
-      { value: 'claude-haiku-4-5', label: 'Claude Haiku 4.5' },
-    ],
-    secret: false,
-    clearable: true,
-  },
+  // `ai.model` 은 여기 없다(Ruling #48, Task 13 fix round 1) — `AiCredentialSection` 이 직접
+  // 그리고 직접 쓴다. 옛 3-Claude-모델 Select 는 opencode 를 고른 관리자가 `providerId/modelId`
+  // 형식을 이 화면만으로 지정할 방법이 없다는 결함이 있었다(그 화면은 서버가 자유 문자열로 두는
+  // 값을 3개로 임의로 좁히기만 했다) — 유형에 따라 Select/자유 입력을 가르려면 유형을 아는
+  // 컴포넌트(`AiCredentialSection`)가 이 필드도 함께 가져야 한다. 옵션 목록은
+  // `lib/ai-credential.ts` 의 `CLAUDE_MODEL_CANDIDATES` 로 옮겼다. 백엔드 키·저장 형식은
+  // 그대로다 — `SettingsOverridePolicy.TENANT_OVERRIDABLE` 에도 여전히 있다(진짜 재정의 가능
+  // 키다, `override-policy.ts` 참고) — 바뀐 것은 "어느 화면이 그리는가"뿐이다.
   'ai.max_turns': {
     key: 'ai.max_turns',
     label: '최대 턴 수',
@@ -156,35 +152,10 @@ export const SETTING_CATALOG: Record<string, SettingSpec> = {
     clearable: false,
     validate: intRange(10000, 200000, '10,000~200,000 사이의 정수를 입력하세요'),
   },
-  'ai.api_key': {
-    key: 'ai.api_key',
-    label: 'API 키',
-    kind: 'secret',
-    secret: true,
-    // 서버가 빈 값을 거부한다 — 지우기 버튼을 보여주고 400 으로 실패시키는 것보다 안 보이는 편이 낫다.
-    clearable: false,
-    validate: (value) => (value.trim() === '' ? 'API 키는 비워 둘 수 없습니다' : undefined),
-  },
-  'ai.agent_type': {
-    key: 'ai.agent_type',
-    label: '에이전트 유형',
-    kind: 'select',
-    options: [
-      { value: 'sdk', label: 'Claude Agent SDK' },
-      { value: 'cli', label: 'Claude Code CLI' },
-      { value: 'cli-api', label: 'Claude API' },
-      { value: 'opencode', label: 'OpenCode' },
-    ],
-    secret: false,
-    clearable: true,
-  },
-  'ai.cli_oauth_token': {
-    key: 'ai.cli_oauth_token',
-    label: 'OAuth 토큰',
-    kind: 'secret',
-    secret: true,
-    clearable: true,
-  },
+  // `ai.api_key`/`ai.agent_type`/`ai.cli_oauth_token` 은 여기 없다(타입형 AI 설정 전환,
+  // Task 13) — 유형별 구조 `ai.credential` 문서로 옮겨갔고, `AiCredentialSection.tsx` 가
+  // 전용 `GET/PUT /settings/ai-credential` 로 별도 관리한다. 이 범용 카탈로그(`/settings`
+  // 문자열 키·값)에는 애초에 얹을 수 없는 모양(하위 필드 암호화 JSON)이다.
 
   // ── 이메일(SMTP) ──────────────────────────────────────────────────────────
   'smtp.host': { key: 'smtp.host', label: 'SMTP 호스트', kind: 'text', secret: false, clearable: true },
@@ -272,17 +243,12 @@ export const SETTINGS_TABS: SettingsTab[] = [
   {
     id: 'ai',
     label: 'AI 에이전트',
-    keys: [
-      'ai.model',
-      'ai.max_turns',
-      'ai.system_prompt',
-      'ai.temperature',
-      'ai.max_tokens',
-      'ai.session_max_tokens',
-      'ai.api_key',
-      'ai.agent_type',
-      'ai.cli_oauth_token',
-    ],
+    // `ai.api_key`/`ai.agent_type`/`ai.cli_oauth_token` 3키는 여기 없다 — `ai.credential`
+    // 문서로 옮겨가 `AiCredentialSection`(`SettingsPage.tsx`)이 이 탭 맨 앞에 전용으로
+    // 그린다(Task 13). `ai.model` 도 이제 여기 없다(Ruling #48, fix round 1) — 같은
+    // `AiCredentialSection` 이 유형별 필드 바로 다음, 이 범용 렌더러보다 앞에 그리고 직접
+    // 쓴다(SETTING_CATALOG 의 `ai.model` 헤더 주석 참고).
+    keys: ['ai.max_turns', 'ai.system_prompt', 'ai.temperature', 'ai.max_tokens', 'ai.session_max_tokens'],
   },
   {
     id: 'smtp',

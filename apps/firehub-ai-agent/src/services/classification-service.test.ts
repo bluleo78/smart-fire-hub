@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 // CompletionProvider를 목킹해 실제 Agent SDK 실행 없이 프롬프트 구성·응답 파싱·타입 강제만 검증한다.
 const completeMock = vi.fn();
@@ -83,6 +83,64 @@ describe('classifyBatch', () => {
       apiKey: undefined,
       oauthToken: undefined,
       model: MODEL,
+    });
+  });
+
+  // Task 8: agentType/baseUrl/providerId/reasoningEffort 가 이 함수를 거치며 사라지지 않는지
+  // 검증한다. (Ruling #2 — 팩토리에 opencode 분기를 넣어도 여기서 필드가 떨어지면 무의미하다.)
+  it('agentType·baseUrl·providerId·reasoningEffort 를 CompletionProvider 생성에 그대로 전달한다 (opencode)', async () => {
+    completeMock.mockResolvedValue(completionOf([{ source_id: 1, label: 'a' }]));
+
+    await classifyBatch(
+      validRequest,
+      {
+        agentType: 'opencode',
+        apiKey: 'openai-key',
+        baseUrl: 'https://x/v1',
+        providerId: 'openai',
+        reasoningEffort: 'medium',
+      },
+      'openai/gpt-4o',
+    );
+
+    expect(createCompletionProviderMock).toHaveBeenCalledWith({
+      agentType: 'opencode',
+      apiKey: 'openai-key',
+      baseUrl: 'https://x/v1',
+      providerId: 'openai',
+      reasoningEffort: 'medium',
+      model: 'openai/gpt-4o',
+    });
+  });
+
+  // Fix round 2 (리뷰 지적 #1): 6b1c6383 이 실제로 발생한 두 지점 중 하나가 이 함수
+  // (callClassifyCompletion, 이 파일 안)다 — opencode 자격증명에서 apiKey 가 빠졌을 때 이
+  // 함수가 스스로 ambient 로 메워 넣지 않는지 여기서 직접 고정한다. 팩토리/provider 계층
+  // 테스트는 이 함수가 이미 올바른 값을 넘겨줬다고 가정하므로, 이 함수 자체가 ambient 를
+  // 끼워 넣는 회귀는 그 테스트들로 잡히지 않는다.
+  describe('ambient ANTHROPIC_API_KEY 미사용 (opencode, apiKey 생략)', () => {
+    const ORIGINAL = process.env.ANTHROPIC_API_KEY;
+
+    beforeEach(() => {
+      process.env.ANTHROPIC_API_KEY = 'ambient-must-not-leak';
+    });
+
+    afterEach(() => {
+      if (ORIGINAL === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = ORIGINAL;
+    });
+
+    it('apiKey 를 생략한 opencode 자격증명은 ambient 로 메워지지 않고 undefined 그대로 전달된다', async () => {
+      completeMock.mockResolvedValue(completionOf([{ source_id: 1, label: 'a' }]));
+
+      await classifyBatch(
+        validRequest,
+        { agentType: 'opencode', baseUrl: 'https://x/v1', providerId: 'openai' },
+        'openai/gpt-4o',
+      );
+
+      const calledWith = createCompletionProviderMock.mock.calls[0][0] as { apiKey?: string };
+      expect(calledWith.apiKey).toBeUndefined();
     });
   });
 

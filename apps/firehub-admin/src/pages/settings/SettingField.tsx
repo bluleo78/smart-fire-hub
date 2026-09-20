@@ -35,6 +35,15 @@ export interface SettingFieldProps {
   cleared?: boolean;
   /** `지우기` 를 눌렀을 때. `spec.clearable === false` 면 호출부가 넘기지 않는다. */
   onClear?: () => void;
+  /**
+   * `테넌트 재정의 가능`/`전역 고정` 배지와 그 설명문을 숨긴다. 브리프에는 없지만 실제로
+   * 필요한 prop 이다 — AI 탭이 `AiCredentialSection` 전용 화면이 되면서 이 탭에 남은 6키
+   * (`ai.model` 등)도 전부 테넌트 재정의 가능해져(설계서 §225) 배지가 전부 같은 문구를
+   * 반복한다. `SettingsPage.tsx` 가 `tab.id === 'ai'` 일 때만 `true` 로 넘긴다 — 이메일·
+   * 임베딩 탭은 이 prop 을 아예 넘기지 않아(생략 = `undefined` = 기본 렌더) 배지가 그대로
+   * 남는다.
+   */
+  hideOverrideBadge?: boolean;
 }
 
 /**
@@ -75,6 +84,7 @@ export function SettingField({
   maskedValue,
   cleared,
   onClear,
+  hideOverrideBadge,
 }: SettingFieldProps) {
   const id = `setting-${spec.key.replace(/\./g, '-')}`;
 
@@ -82,7 +92,7 @@ export function SettingField({
     <div className="space-y-2">
       <div className="flex flex-wrap items-center gap-2">
         <Label htmlFor={id}>{spec.label}</Label>
-        <OverrideBadge settingKey={spec.key} />
+        {!hideOverrideBadge && <OverrideBadge settingKey={spec.key} />}
         {usingBuiltinDefault && <Badge variant="outline">내장 기본값</Badge>}
       </div>
 
@@ -182,7 +192,7 @@ export function SettingField({
           됩니다.
         </p>
       )}
-      <OverrideNote settingKey={spec.key} />
+      {!hideOverrideBadge && <OverrideNote settingKey={spec.key} />}
     </div>
   );
 }

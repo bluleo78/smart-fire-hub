@@ -9,6 +9,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartfirehub.apiconnection.service.EncryptionService;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.settings.service.SettingsService;
 import com.smartfirehub.support.IntegrationTestBase;
@@ -35,6 +36,7 @@ class PlatformSettingsControllerTest extends IntegrationTestBase {
   @Autowired private MockMvc mockMvc;
   @Autowired private JwtTokenProvider jwtTokenProvider;
   @Autowired private SettingsService settingsService;
+  @Autowired private EncryptionService encryptionService;
   @Autowired private DSLContext dsl;
 
   /** 운영자는 세 프리픽스의 키를 한 번에 읽는다. */
@@ -163,8 +165,10 @@ class PlatformSettingsControllerTest extends IntegrationTestBase {
           .andExpect(status().isNoContent());
 
       // 마스크를 그대로 되돌려 보냈으니 복호화 값은 원래 실제 키와 같아야 한다.
-      // getDecryptedApiKey() 는 Task 2 가 지웠다 — 대체 접근자로 같은 계약을 검증한다.
-      assertThat(settingsService.getAiCredentials().apiKey()).isEqualTo("sk-live-secret-value");
+      // getAiCredentials() 는 타입형 전환(2026-09)이 지웠다 — ai.api_key 는 이제 플랫폼 기본값
+      // 전용 레거시 값이라 전용 접근자가 없다. DB 원문을 직접 복호화해 같은 계약을 검증한다.
+      assertThat(encryptionService.decrypt(rawSystemSettingValue(dsl, "ai.api_key")))
+          .isEqualTo("sk-live-secret-value");
     } finally {
       restoreSystemSettingValue(dsl, "ai.api_key", original);
     }

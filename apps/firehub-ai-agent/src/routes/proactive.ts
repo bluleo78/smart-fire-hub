@@ -2,6 +2,10 @@ import express, { Router, Request, Response } from 'express';
 import fs from 'fs/promises';
 import { ProviderFactory } from '../providers/index.js';
 import type { AgentType, ProviderConfig } from '../providers/index.js';
+// providers/index.js 가 아니라 providers/types.js 에서 직접 가져온다 — proactive.test.ts 가
+// '../providers/index.js' 를 통째로 목킹하므로(ProviderFactory 만 정의) 그 경로로 가져오면
+// 목이 정의하지 않은 값이라 undefined 가 되어 라우트가 깨진다.
+import { isKnownAgentType } from '../providers/types.js';
 import { internalAuth } from '../middleware/auth.js';
 import { isValidTenantId, proactiveReportDir } from '../agent/tenant-paths.js';
 
@@ -35,6 +39,12 @@ interface ProactiveRequest {
   tenantId?: number;
   agentType?: string;
   oauthToken?: string;
+  /** opencode 전용 — OpenAI 호환 provider 베이스 URL. */
+  baseUrl?: string;
+  /** opencode 전용 — provider 식별자(payload.providerId). */
+  providerId?: string;
+  /** opencode 전용 — 추론 강도. 현재 이 앱엔 사용처가 없다(ProviderConfig.reasoningEffort 참고). */
+  reasoningEffort?: string;
 }
 
 interface OutputSection {
@@ -303,14 +313,38 @@ router.post('/proactive', express.json(), internalAuth, async (req: Request, res
     return;
   }
 
-  const agentType = (body.agentType || 'sdk') as AgentType;
-  const apiKey = body.apiKey || process.env.ANTHROPIC_API_KEY || '';
-
-  // SDK/cli-api 모드에서는 API 키 필수, CLI 모드에서는 불필요 (구독 인증 사용)
-  if (agentType !== 'cli' && !apiKey) {
-    res.status(500).json({ error: 'ANTHROPIC_API_KEY is not configured' });
+  // agentType 은 **필수**다 — 예전엔 생략 시 'sdk' 로 기본값을 줬는데, 그러면 opencode
+  // 테넌트가 이 필드를 빠뜨린 요청이 조용히 Claude SDK 경로로 떨어진다. firehub-api 는 이제 이
+  // 필드를 항상 보낸다(설계서 "API 인터페이스" 절) — 누락은 버그 신호이므로 400 으로 거절한다.
+  if (!isKnownAgentType(body.agentType)) {
+    res.status(400).json({
+      error: 'agentType is required and must be one of: sdk, cli, cli-api, opencode',
+    });
     return;
   }
+  const agentType: AgentType = body.agentType;
+
+  // ambient ANTHROPIC_API_KEY 폴백은 opencode 에는 **적용하지 않는다**. sdk/cli-api 는
+  // 유지한다 — 이 비대칭은 의도적인 경계다(Ruling #31), 손대지 않은 우연이 아니다.
+  //
+  // sdk/cli-api 테넌트가 플랫폼 평면(system_settings)을 그대로 상속해 apiKey 를 빈 값으로
+  // 받으면, 컨테이너의 ANTHROPIC_API_KEY 는 **바로 그 플랫폼 자신의 Anthropic 자격증명**이다.
+  // 배포에 따라 그 값이 system_settings 가 아니라 컨테이너 env 에만 있는 경우도 있어, 이
+  // 폴백을 없애면 그런 배포가 깨진다. 어느 쪽이든 "플랫폼 계정에 과금"이 아니라 "플랫폼
+  // 계정이 자기 자신에게 과금"이라 6b1c6383 이 말하는 오분류(mis-attribution)가 아니다.
+  //
+  // opencode 는 다르다 — 그 테넌트는 Anthropic 이 아닌 **다른 provider(OpenAI 호환 호스트)**를
+  // 명시적으로 선택했다. 컨테이너의 Anthropic 키로 메우면 (a) 엉뚱한 호환 호스트에 Anthropic
+  // 키가 Bearer 로 전송되거나 (b) provider 가 그 값을 다시 무시하고 빈 키로 ambient Claude
+  // 키에 과금되는 6b1c6383 사고가 재현된다 — 이건 진짜 오분류다.
+  //
+  // 따라서 모든 유형에서 폴백을 걷어내는 안(대칭성을 위해)은 채택하지 않는다: sdk/cli-api 에서
+  // 걷어내면 컨테이너 env 에만 자격증명을 둔 정상 배포를 깬다. TC-SDK01/TC-BOUNDARY01 이 이
+  // 경계를 고정한다.
+  const apiKey =
+    agentType === 'opencode'
+      ? body.apiKey || ''
+      : body.apiKey || process.env.ANTHROPIC_API_KEY || '';
 
   const model = body.model || 'claude-haiku-4-5';
   const userId = body.userId ?? (Number(req.headers['x-on-behalf-of']) || 0);
@@ -329,29 +363,40 @@ router.post('/proactive', express.json(), internalAuth, async (req: Request, res
   const systemPrompt = buildProactiveSystemPrompt(body.template, reportDir);
   const initialUserMessage = `${body.prompt}\n\n컨텍스트:\n${JSON.stringify(body.context)}`;
 
-  const providerConfig: ProviderConfig = {
-    agentType,
-    apiKey: apiKey || undefined,
-    oauthToken: body.oauthToken || undefined,
-    model: model,
-  };
-  const provider = ProviderFactory.createChatProvider(providerConfig);
-
-  const events = provider.execute({
-    message: initialUserMessage,
-    tenantId,
-    userId,
-    model,
-    systemPrompt: systemPrompt,
-    overrideSystemPrompt: true,
-    maxTurns: MAX_AGENT_TURNS,
-  });
-
   let rawText = '';
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
 
   try {
+    const providerConfig: ProviderConfig = {
+      agentType,
+      apiKey: apiKey || undefined,
+      oauthToken: body.oauthToken || undefined,
+      model: model,
+      // opencode 전용 — ProviderFactory.createChatProvider 의 opencode 분기가 이 필드들로
+      // OpenCodeChatProvider 를 구성한다(옵션 3 폐기, 2026-09-19 이슈 #693).
+      baseUrl: body.baseUrl || undefined,
+      providerId: body.providerId || undefined,
+      reasoningEffort: body.reasoningEffort || undefined,
+    };
+    // createChatProvider 는 try 안에서 만든다 — sdk/cli-api 는 자격증명이 없으면 여기서 동기적으로
+    // throw 한다(예: "API key or OAuth token required"). try 밖에 있으면 async 핸들러 안의 동기
+    // throw 가 처리되지 않은 Promise 거부가 되어 요청이 응답 없이 멈춘다(express 4 는 async
+    // 핸들러의 예외를 자동으로 잡지 않는다). 예전엔 ambient 폴백이 항상 apiKey 를 채워 이 경로가
+    // 드러나지 않았을 뿐이다 — 그 폴백을 opencode 에서 걷어낸 지금은 실제로 밟을 수 있는 경로다.
+    // 자격증명 유효성 검증 자체는 라우트가 중복하지 않고 createChatProvider 에 맡긴다.
+    const provider = ProviderFactory.createChatProvider(providerConfig);
+
+    const events = provider.execute({
+      message: initialUserMessage,
+      tenantId,
+      userId,
+      model,
+      systemPrompt: systemPrompt,
+      overrideSystemPrompt: true,
+      maxTurns: MAX_AGENT_TURNS,
+    });
+
     for await (const event of events) {
       if (event.type === 'text') {
         rawText += event.content;

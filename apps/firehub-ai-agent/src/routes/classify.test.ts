@@ -75,6 +75,8 @@ const validBody = {
     { name: 'confidence', type: 'DECIMAL' },
     { name: 'reason', type: 'TEXT' },
   ],
+  // Task 8: firehub-api 가 항상 실어 보내는 필드 — 이 라우트는 이제 이 값을 필수로 요구한다.
+  agentType: 'sdk',
 };
 
 const mockResponse = {
@@ -167,6 +169,58 @@ describe('POST /agent/classify', () => {
       { Authorization: `Internal ${VALID_TOKEN}` },
     );
     expect(res.status).toBe(400);
+  });
+
+  // Task 8: agentType 없이는 조용히 sdk 로 취급하지 않는다 — 6b1c6383 과금 회귀 재발 방지.
+  it('should return 400 when agentType is missing', async () => {
+    const { agentType: _agentType, ...bodyWithoutAgentType } = validBody;
+    const app = createApp();
+    const res = await makeRequest(app, '/agent/classify', bodyWithoutAgentType, {
+      Authorization: `Internal ${VALID_TOKEN}`,
+    });
+    expect(res.status).toBe(400);
+    expect(res.body).toHaveProperty('error');
+  });
+
+  it('should return 400 when agentType is not one of sdk/cli/cli-api/opencode', async () => {
+    const app = createApp();
+    const res = await makeRequest(
+      app,
+      '/agent/classify',
+      { ...validBody, agentType: 'not-a-real-type' },
+      { Authorization: `Internal ${VALID_TOKEN}` },
+    );
+    expect(res.status).toBe(400);
+  });
+
+  // opencode 필드(baseUrl/providerId/reasoningEffort)가 라우트를 거치며 사라지지 않는지 검증.
+  it('opencode 자격증명 필드(baseUrl/providerId/reasoningEffort)를 classify provider 로 그대로 전달한다', async () => {
+    mockClassify.mockResolvedValue(mockResponse);
+
+    const app = createApp();
+    const res = await makeRequest(
+      app,
+      '/agent/classify',
+      {
+        ...validBody,
+        agentType: 'opencode',
+        apiKey: 'openai-key',
+        baseUrl: 'https://x/v1',
+        providerId: 'openai',
+        reasoningEffort: 'medium',
+      },
+      { Authorization: `Internal ${VALID_TOKEN}` },
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockClassify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentType: 'opencode',
+        baseUrl: 'https://x/v1',
+        providerId: 'openai',
+        reasoningEffort: 'medium',
+      }),
+    );
   });
 
   it('should classify successfully with valid request', async () => {

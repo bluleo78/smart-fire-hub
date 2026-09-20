@@ -48,10 +48,12 @@ export interface UseSettingsOverrideFormOptions<F extends SettingsFormShape> {
    */
   emptySeedKeys?: ReadonlySet<keyof F>;
   /**
-   * 필드 단위 상태를 <b>다른 기준으로 치환</b>하고 싶을 때 쓴다. 지금 소비자는 둘이고 둘 다
-   * 번들이다 — SMTP 연결 5키(`useSmtpSettingsForm`)와 AI 자격증명 3키(`useAiSettingsForm`).
-   * 두 번째 인자로 훅 자신의 필드 단위 판정 함수를 넘겨 주므로, 호출자가 그룹 상태를 계산하려고
-   * `settings` 를 다시 파헤칠 필요가 없다.
+   * 필드 단위 상태를 <b>다른 기준으로 치환</b>하고 싶을 때 쓴다. 지금 소비자는 SMTP 연결
+   * 5키(`useSmtpSettingsForm`) 하나다 — AI 자격증명 3키 번들(`useAiSettingsForm`)은 Task 11 에서
+   * `ai.credential` 전용 문서(`useAiCredentialForm`)로 옮겨가며 사라졌다: 문서 하나가 이미
+   * 원자적이라 "번들 상태 치환"이라는 개념 자체가 필요 없어졌다. 두 번째 인자로 훅 자신의 필드
+   * 단위 판정 함수를 넘겨 주므로, 호출자가 그룹 상태를 계산하려고 `settings` 를 다시 파헤칠
+   * 필요가 없다.
    */
   resolveState?: (
     key: keyof F,
@@ -137,13 +139,11 @@ export interface SettingsOverrideForm<F extends SettingsFormShape> {
  *   "빈 폼"이 자격증명 덮어쓰기로 이어지므로 <b>이 비대칭은 의도된 것</b>이다.
  * - <b>연결 테스트 안내</b> — SMTP 전용 3단 우선순위 문자열.
  *
- * <b>이 규칙의 근거는 2026-09-18 에 더 강해졌다.</b> 예전 근거는 "소비자가 SMTP 하나뿐이라
- * 훅에 넣으면 AI 탭이 영원히 쓰지 않는 분기를 들고 다닌다"였는데, AI 자격증명 3키가 열리면서
- * 번들 소비자가 <b>둘</b>이 됐다. 그래도 답은 같다 — 오히려 더 분명하다: 두 번들은 <b>모양만
- * 같고 내용이 다르다</b>(채움 값이 SMTP 는 `starttls='true'`, AI 는 `agent_type='sdk'`;
- * 안내 범위도 탭 vs 그룹). 둘을 훅 안에서 합치면 "어느 번들이냐"로 갈라지는 분기가 훅에
- * 생긴다. 평면 통합이 아니라 <b>계층화</b>다 — 각 번들 고유 개념은 이 훅의 반환값 <b>위에
- * 얹히는 레이어</b>로 각자의 파일(`useSmtpSettingsForm` / `useAiSettingsForm`)에 남는다.
+ * <b>이 규칙의 근거는 2026-09-18 에 잠깐 더 강해졌다가(AI 자격증명 3키가 번들로 열려 소비자가
+ * 둘이 됐던 시절) Task 11 에서 다시 하나로 줄었다.</b> `ai.credential` 이 전용 문서로 옮겨가며
+ * AI 쪽 번들 개념 자체가 없어졌기 때문이다. 소비자가 하나뿐이어도 답은 같다 — 번들 고유 개념은
+ * 이 훅의 반환값 <b>위에 얹히는 레이어</b>로 소비자 자신의 파일(`useSmtpSettingsForm`)에 남아야,
+ * 다음 번들 소비자가 생겼을 때도 "어느 번들이냐"로 갈라지는 분기가 이 훅 안에 들어오지 않는다.
  *
  * (`emptySeedKeys` 는 예외가 아니다: 그것은 번들 개념이 아니라 "서버가 마스킹해 내려주는 비밀을
  * 폼에 시드하지 않는다"는 <b>시드 규칙</b>이고, 시드는 원래 이 훅의 일이다.)

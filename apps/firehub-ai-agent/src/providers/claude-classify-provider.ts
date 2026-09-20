@@ -15,7 +15,17 @@ export class ClaudeClassifyProvider implements ClassifyProvider {
   async classify(options: ClassifyProviderOptions): Promise<ClassifyResponse> {
     return classifyBatch(
       { rows: options.rows, prompt: options.prompt, outputColumns: options.outputColumns },
-      { apiKey: options.apiKey, oauthToken: options.oauthToken },
+      {
+        apiKey: options.apiKey,
+        oauthToken: options.oauthToken,
+        // agentType/baseUrl/providerId 는 opencode 테넌트에만 의미가 있다. 여기서 누락하면
+        // classifyBatch → callClassifyCompletion → createCompletionProvider 로 흘러가며 사라져
+        // OpenAI 호환 분기가 아니라 Claude SDK 로 떨어진다(Task 8 이 고치는 회귀 그 자체).
+        agentType: options.agentType,
+        baseUrl: options.baseUrl,
+        providerId: options.providerId,
+        reasoningEffort: options.reasoningEffort,
+      },
       options.model || DEFAULT_MODEL,
     );
   }

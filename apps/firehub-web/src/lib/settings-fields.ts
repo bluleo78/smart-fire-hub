@@ -1,20 +1,26 @@
 import type { ResolvedSettingResponse } from '../types/settings';
 
 /**
- * 테넌트가 자기 값으로 덮어쓸 수 있는 설정 키.
- * 백엔드 `SettingsOverridePolicy` 화이트리스트와 동일하며, `PUT /settings` 는 이 15키 외의 키가
- * 오면 키 이름을 명시해 400 으로 거부한다.
+ * 테넌트가 자기 값으로 덮어쓸 수 있는 설정 키 중, <b>범용 프리픽스 조회/저장 경로</b>(`GET
+ * /settings?prefix=`, `PUT /settings`)로 오가는 것만 담는다. 백엔드 `SettingsOverridePolicy`
+ * 화이트리스트의 부분집합이며, `PUT /settings` 는 이 12키 외의 키가 오면 키 이름을 명시해 400 으로
+ * 거부한다.
  *
  * <b>이 사본은 P7-c1 에서 6키 → 12키로 두 배가 됐다</b>(`smtp.*` 6키 재분류). 코드젠도 계약
  * 테스트도 없다는 사실은 아래에 그대로이고, 사본이 커진 만큼 어긋날 표면도 커졌다는 뜻이다.
  *
- * <b>2026-09-18 에 12키 → 15키가 됐다</b>(AI 자격증명 3키 개방). 서버에서 이 세 키는
- * 번들로 함께 해석되므로, 셋 중 하나만 이 목록에 넣으면 폴백 판정이 서버와 어긋난다.
+ * <b>2026-09-18 에 12키 → 15키 → 다시 12키로 돌아왔다</b>(AI 자격증명 타입형 전환, 이슈 #693).
+ * 한때 여기 있던 3키(`ai.api_key`/`ai.cli_oauth_token`/`ai.agent_type`)는 이제 `ai.credential`
+ * 하나(JSON 문서)로 합쳐졌고, 그 키는 범용 쓰기·단일 읽기가 막혀 있어(`SettingsService.
+ * rejectBundleKey`) 애초에 이 프리픽스 경로를 타지 않는다 — 전용 엔드포인트
+ * (`GET/PUT/DELETE /settings/ai-credential`, `useAiCredentialForm`/`AiCredentialFieldset`)만
+ * 쓴다. 그래서 옛 3키를 여기서 빼면서 `ai.credential` 을 대신 넣지 않는다 — 넣어도 이 목록을
+ * 읽는 두 소비처(`isTenantEditableKey` 폴백, 아래 `resolveSettingFieldState`) 중 어느 쪽도
+ * `ai.credential` 을 만날 일이 없다(전용 화면이 서버가 내려주는 `tenantEditable` 을 직접 쓴다).
  *
  * <b>AI 전용이 아니다</b>: P7-c1 이 `smtp.*` 6키를 테넌트 오버라이드 허용으로 재분류하면서
- * 목록이 AI 6 + SMTP 6 이 됐고, 2026-09-18 의 AI 자격증명 3키 개방으로 AI 9 + SMTP 6 이 됐다.
- * 예전 이름(`TENANT_EDITABLE_AI_KEYS`)을 그대로 두면 SMTP 키를 넣는 것이 이름과 어긋나고,
- * 넣지 않으면 아래 폴백이 SMTP 키를 `locked` 로 떨어뜨린다.
+ * 목록이 AI 6 + SMTP 6 이 됐다. 예전 이름(`TENANT_EDITABLE_AI_KEYS`)을 그대로 두면 SMTP 키를
+ * 넣는 것이 이름과 어긋나고, 넣지 않으면 아래 폴백이 SMTP 키를 `locked` 로 떨어뜨린다.
  *
  * 화면 표시(배지·disabled)는 서버가 내려주는 `tenantEditable` 플래그를 따른다. 이 상수는
  * <b>응답에 아예 없는 키의 판정 폴백</b> 한 자리에만 쓴다 — 플랫폼 시드 행도 오버라이드도 없는 키
@@ -38,9 +44,6 @@ export const TENANT_EDITABLE_KEYS = [
   'ai.max_turns',
   'ai.max_tokens',
   'ai.session_max_tokens',
-  'ai.api_key',
-  'ai.cli_oauth_token',
-  'ai.agent_type',
   'smtp.host',
   'smtp.port',
   'smtp.username',

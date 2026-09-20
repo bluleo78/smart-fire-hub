@@ -127,6 +127,170 @@ describe('Proactive routes — integration tests', () => {
     },
   );
 
+  // TC-AT (Task 8): agentType 이 없거나 알려진 값이 아니면 400 — 조용히 'sdk' 로 취급하지 않는다.
+  it('TC-AT01: agentType 이 없으면 400', async () => {
+    const app = createApp();
+    const res = await makeRequest(
+      app,
+      'POST',
+      '/agent/proactive',
+      { prompt: '분석', context: { data: 'test' }, tenantId: 1 },
+      { Authorization: `Internal ${VALID_TOKEN}` },
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it('TC-AT02: agentType 이 알려진 네 값 중 하나가 아니면 400', async () => {
+    const app = createApp();
+    const res = await makeRequest(
+      app,
+      'POST',
+      '/agent/proactive',
+      { prompt: '분석', context: { data: 'test' }, tenantId: 1, agentType: 'not-a-real-type' },
+      { Authorization: `Internal ${VALID_TOKEN}` },
+    );
+    expect(res.status).toBe(400);
+  });
+
+  // TC-OC (Ruling #17): opencode 의 두 결함 — ambient apiKey 폴백, opencode 필드 누락.
+  it('TC-OC01: opencode 이고 apiKey 가 없으면 ambient ANTHROPIC_API_KEY 를 쓰지 않는다', async () => {
+    const { ProviderFactory } = await import('../providers/index.js');
+    const mockCreateChatProvider = vi.mocked(ProviderFactory.createChatProvider);
+    mockExecute.mockReturnValue(
+      (async function* () {
+        yield { type: 'done', inputTokens: 0, outputTokens: 0 };
+      })(),
+    );
+
+    const app = createApp();
+    await makeRequest(
+      app,
+      'POST',
+      '/agent/proactive',
+      {
+        prompt: '분석',
+        context: { data: 'test' },
+        tenantId: 1,
+        agentType: 'opencode',
+        baseUrl: 'https://x/v1',
+        providerId: 'openai',
+      },
+      { Authorization: `Internal ${VALID_TOKEN}` },
+    );
+
+    // beforeEach 가 process.env.ANTHROPIC_API_KEY = 'test-api-key' 를 심어 둔다 — opencode 는
+    // 그 값을 apiKey 로 물려받으면 안 된다(그 키는 Anthropic 용이지 OpenAI 호환 호스트용이 아니다).
+    const calledWith = mockCreateChatProvider.mock.calls[0][0];
+    expect(calledWith.apiKey).toBeUndefined();
+  });
+
+  it('TC-OC02: baseUrl/providerId/reasoningEffort 를 ProviderConfig 로 그대로 전달한다 (opencode)', async () => {
+    const { ProviderFactory } = await import('../providers/index.js');
+    const mockCreateChatProvider = vi.mocked(ProviderFactory.createChatProvider);
+    mockExecute.mockReturnValue(
+      (async function* () {
+        yield { type: 'done', inputTokens: 0, outputTokens: 0 };
+      })(),
+    );
+
+    const app = createApp();
+    await makeRequest(
+      app,
+      'POST',
+      '/agent/proactive',
+      {
+        prompt: '분석',
+        context: { data: 'test' },
+        tenantId: 1,
+        agentType: 'opencode',
+        apiKey: 'openai-key',
+        baseUrl: 'https://x/v1',
+        providerId: 'openai',
+        reasoningEffort: 'medium',
+      },
+      { Authorization: `Internal ${VALID_TOKEN}` },
+    );
+
+    const calledWith = mockCreateChatProvider.mock.calls[0][0];
+    expect(calledWith.apiKey).toBe('openai-key');
+    expect(calledWith.baseUrl).toBe('https://x/v1');
+    expect(calledWith.providerId).toBe('openai');
+    expect(calledWith.reasoningEffort).toBe('medium');
+  });
+
+  it('TC-SDK01: sdk 는 apiKey 가 없으면 여전히 ambient ANTHROPIC_API_KEY 를 쓴다', async () => {
+    const { ProviderFactory } = await import('../providers/index.js');
+    const mockCreateChatProvider = vi.mocked(ProviderFactory.createChatProvider);
+    mockExecute.mockReturnValue(
+      (async function* () {
+        yield { type: 'done', inputTokens: 0, outputTokens: 0 };
+      })(),
+    );
+
+    const app = createApp();
+    await makeRequest(
+      app,
+      'POST',
+      '/agent/proactive',
+      { prompt: '분석', context: { data: 'test' }, tenantId: 1, agentType: 'sdk' },
+      { Authorization: `Internal ${VALID_TOKEN}` },
+    );
+
+    const calledWith = mockCreateChatProvider.mock.calls[0][0];
+    expect(calledWith.apiKey).toBe('test-api-key');
+  });
+
+  // TC-BOUNDARY01 (Ruling #31): sdk 뿐 아니라 cli-api 도 ambient 폴백을 유지한다는 것을 명시적으로
+  // 고정한다 — opencode 만 걷어낸 것이 우연이 아니라 "다른 provider 를 명시적으로 고른 유형만
+  // 예외"라는 의도적 경계임을 테스트로 못박는다(코멘트만으로는 리뷰가 다시 물을 수 있다).
+  it('TC-BOUNDARY01: cli-api 도 apiKey 가 없으면 여전히 ambient ANTHROPIC_API_KEY 를 쓴다 (opencode 만의 예외임을 고정)', async () => {
+    const { ProviderFactory } = await import('../providers/index.js');
+    const mockCreateChatProvider = vi.mocked(ProviderFactory.createChatProvider);
+    mockExecute.mockReturnValue(
+      (async function* () {
+        yield { type: 'done', inputTokens: 0, outputTokens: 0 };
+      })(),
+    );
+
+    const app = createApp();
+    await makeRequest(
+      app,
+      'POST',
+      '/agent/proactive',
+      { prompt: '분석', context: { data: 'test' }, tenantId: 1, agentType: 'cli-api' },
+      { Authorization: `Internal ${VALID_TOKEN}` },
+    );
+
+    const calledWith = mockCreateChatProvider.mock.calls[0][0];
+    expect(calledWith.apiKey).toBe('test-api-key');
+  });
+
+  // TC-SYNC01: createChatProvider 가 동기적으로 throw 해도(예: opencode 인데 apiKey 없이 sdk 로
+  // 잘못 설정된 경우, 또는 실제 팩토리의 "API key or OAuth token required") 요청이 응답 없이
+  // 멈추지 않고 500 으로 끝나야 한다. 예전엔 ambient 폴백이 apiKey 를 항상 채워 이 동기 throw 가
+  // 실제로 발생하지 않았다 — opencode 에서 그 폴백을 걷어낸 지금은 밟을 수 있는 경로다. provider
+  // 생성을 try 밖에 두면 async 핸들러 안의 동기 throw 가 처리되지 않은 Promise 거부가 되어
+  // (express 4 는 async 핸들러의 예외를 자동으로 잡지 않는다) 응답이 영영 나가지 않는다.
+  it('TC-SYNC01: createChatProvider 가 동기적으로 throw 하면 응답 없이 멈추지 않고 500 을 반환한다', async () => {
+    const { ProviderFactory } = await import('../providers/index.js');
+    const mockCreateChatProvider = vi.mocked(ProviderFactory.createChatProvider);
+    mockCreateChatProvider.mockImplementationOnce(() => {
+      throw new Error('API key or OAuth token required for SDK mode');
+    });
+
+    const app = createApp();
+    const res = await makeRequest(
+      app,
+      'POST',
+      '/agent/proactive',
+      { prompt: '분석', context: { data: 'test' }, tenantId: 1, agentType: 'sdk' },
+      { Authorization: `Internal ${VALID_TOKEN}` },
+    );
+
+    expect(res.status).toBe(500);
+    expect(res.body).toHaveProperty('error');
+  });
+
   it('TC3: POST /agent/proactive with template returns structured 3-section response with cards', async () => {
     const cardsData = [
       { title: '카드1', value: '100', description: '설명1' },
@@ -153,6 +317,7 @@ describe('Proactive routes — integration tests', () => {
       {
         prompt: '데이터를 분석해주세요',
         tenantId: 1,
+        agentType: 'sdk',
         context: { metric: 42 },
         template: {
           sections: [
@@ -201,6 +366,7 @@ describe('Proactive routes — integration tests', () => {
       {
         prompt: '간단히 분석해주세요',
         tenantId: 1,
+        agentType: 'sdk',
         context: { value: 'test' },
       },
       { Authorization: `Internal ${VALID_TOKEN}` },
@@ -240,7 +406,7 @@ describe('Proactive routes — integration tests', () => {
       app,
       'POST',
       '/agent/proactive',
-      { prompt: '일간 KPI 리포트', tenantId: 1, context: { value: 'test' } },
+      { prompt: '일간 KPI 리포트', tenantId: 1, agentType: 'sdk', context: { value: 'test' } },
       { Authorization: `Internal ${VALID_TOKEN}` },
     );
 
@@ -265,7 +431,7 @@ describe('Proactive routes — integration tests', () => {
       app,
       'POST',
       '/agent/proactive',
-      { prompt: '일간 KPI 리포트', tenantId: 1, context: { value: 'test' } },
+      { prompt: '일간 KPI 리포트', tenantId: 1, agentType: 'sdk', context: { value: 'test' } },
       { Authorization: `Internal ${VALID_TOKEN}` },
     );
 
@@ -294,7 +460,7 @@ describe('Proactive routes — integration tests', () => {
       app,
       'POST',
       '/agent/proactive',
-      { prompt: '운영 리포트', tenantId: 1, context: { value: 'test' } },
+      { prompt: '운영 리포트', tenantId: 1, agentType: 'sdk', context: { value: 'test' } },
       { Authorization: `Internal ${VALID_TOKEN}` },
     );
 

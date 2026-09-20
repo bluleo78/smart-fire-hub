@@ -119,32 +119,11 @@ class SettingsServiceTest extends IntegrationTestBase {
     assertThat(valueOf("ai.api_key")).startsWith("****");
   }
 
-  @Test
-  void getAiCredentials_apiKey_returnsOriginal() {
-    // given: encrypt and persist
-    settingsService.updatePlatformSettings(Map.of("ai.api_key", "sk-original-secret"), null);
-
-    // when: getDecryptedApiKey() 는 Task 2 가 지웠다 — 단일 키로는 번들 규칙을 지킬 수 없어서다.
-    // 대체 접근자 getAiCredentials() 로 같은 계약(복호화된 원문 복원)을 검증한다.
-    SettingsService.AiCredentials creds = settingsService.getAiCredentials();
-
-    // then: original plain-text is recovered
-    assertThat(creds.apiKey()).isEqualTo("sk-original-secret");
-  }
-
-  @Test
-  void getAiCredentials_apiKey_notSet_returnsEmpty() {
-    // given: ensure api_key is blank (reset to empty by storing a blank-equivalent via direct repo)
-    // The V31 migration seeds ai.api_key with '' — within this @Transactional test we can rely on
-    // that initial empty state because no other test in this class persists a key before us.
-    // We explicitly reset it here through a masked-value update (which skips the DB write),
-    // so the value remains the seeded empty string.
-    // Actually we just call getAiCredentials on the unmodified seeded empty row.
-    SettingsService.AiCredentials creds = settingsService.getAiCredentials();
-
-    // AiCredentials 는 미설정을 null 이 아니라 빈 문자열로 표현한다(번들 채움과 같은 모양).
-    assertThat(creds.apiKey()).isEmpty();
-  }
+  // getAiCredentials_apiKey_returnsOriginal / getAiCredentials_apiKey_notSet_returnsEmpty 는
+  // 지웠다 — 검증 대상이던 SettingsService.getAiCredentials()/AiCredentials 자체가 타입형 전환
+  // (2026-09)으로 사라졌다. ai.api_key 는 이제 플랫폼 기본값 전용 레거시 값이라 아무도 읽지
+  // 않는다(암호화 저장 자체는 위 updateSettings_apiKey_encryptsBeforeStore 가 계속 지킨다).
+  // 복호화된 원문 복원 계약은 지금은 AiCredentialService.resolve()/AiCredentialServiceTest 가 진다.
 
   // ── getAsMap NPE 회귀 테스트 ──────────────────────────────────────────────
 

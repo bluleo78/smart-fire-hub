@@ -337,6 +337,14 @@ E2E 는 이 머신에서 핀 고정 브라우저가 설치되지 않으므로 �
 6. **`인증 확인` 유지**. 초안은 opencode 아닌 유형의 유일한 검증 수단을 말없이 없앴다.
 7. 라디오 전환은 **폼 상태**, 플랫폼 무설정 상태 추가, 모델 접두사는 서버 한 곳, 유형 전환 시 비밀 폐기 경고, 배지 어휘 정렬, 과금 문구 수정, `tenantOwned` 는 플랫폼 응답에서 제외.
 
+## 구현에서 바뀐 것
+
+Task 1~13 구현 중 스펙과 실제로 달라진 결정(전체 목록은 `.superpowers/sdd/2026-09-19-typed-ai-settings/progress.md` 의 Ruling #1~#57). 스펙 서술 자체를 정정할 필요가 있는 것만 아래에 남긴다 — 구현 세부사항일 뿐인 리뷰 지적은 progress.md 에만 남긴다.
+
+1. **[모델 불러오기] 활성 조건에 `tenantOwned` 와 유형 일치를 더한다** (Ruling #35/#37). §화면·공통의 "요청에 실을 키가 있거나 `secretFieldNames` 에 `apiKey` 가 있을 때"(위 197행)는 §프로브의 "평면 교차 폴백 금지"(위 156행)와 충돌한다 — 플랫폼 값을 상속 중인 테넌트는 `secretFieldNames` 에 `apiKey` 가 보여도(플랫폼 키가 있다는 뜻) 그 키로 프로브를 보낼 수 없다(평면 교차 폴백이 되어버린다). 실제 조건은 **`tenantOwned && 저장된 유형과 현재 선택이 같음 && (입력한 키 || secretFieldNames 에 apiKey)`** 다. 스펙 197행 원문은 이 조건이 빠진 결함으로 정정한다.
+2. **플랫폼 전용 `GET /api/platform/ai/auth-status` 엔드포인트를 추가한다** (Ruling #47). §API 표면 표에 없다 — 초안 작성 중 조용히 누락됐다(§공통 화면의 "인증 확인" 버튼이 sdk/cli/cli-api 유형에서 플랫폼 화면에도 있어야 하는데, 이 엔드포인트 없이는 플랫폼 관리자가 자기 자격증명을 검증할 방법이 없었다). 테넌트용 `AiController` 의 `resolve()` 로직을 그대로 재사용하되 `TenantContext` 가 없는 상태로 호출해 플랫폼 행을 읽는다. **권한은 `platform:settings:write`** 다(Ruling #54) — 프로브와 마찬가지로 실제로 ai-agent 에 인증된 외부 호출을 낸다는 점에서 조회 권한만으로 트리거되면 안 된다(read 권한 사용자가 200 을 받으면 회귀).
+3. **V122 마이그레이션 가드를 opencode 하나가 아니라 `ai.agent_type` 화이트리스트 전체로 넓힌다** (Ruling #21). §마이그레이션 §착수 전 증거 수집은 "opencode 사용자가 있으면 중단"만 요구했다. 구현은 거기에 빈 문자열·오타(`cli_api` 등) 같은 **알 수 없는 `ai.agent_type` 값을 가진 행**도 함께 차단하도록 넓혔다 — 그런 값을 그대로 옮기면 `AiCredentialService.resolve()` 의 fail-closed 스위치(§백엔드 해석 인터페이스)가 그 테넌트의 AI 기능을 되돌릴 방법 없이 멈춘다. forward-only 세계에서는 "마이그레이션이 시끄럽게 거부"가 "테넌트 하나가 조용히 죽는다"보다 항상 낫다는 판단.
+
 ## 참조
 
 - 참조 구현: `~/git/iacloud_eis` — `apps/eis-ai-agent/src/agent/opencode-config.ts`, `opencode-probe.ts`, `apps/eis-web/src/features/ai/AiSettingsPage.tsx`, `opencode-presets.ts`

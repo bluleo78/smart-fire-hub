@@ -93,8 +93,27 @@ export function classifyTimeoutMs(rowCount: number): number {
  */
 const CLASSIFY_MAX_OUTPUT_TOKENS = 16_384;
 
+/**
+ * 분류 completion 호출에 필요한 자격증명 부분집합.
+ *
+ * agentType/baseUrl/providerId/reasoningEffort 를 포함한 이유: opencode 테넌트는 apiKey 가
+ * OpenAI 호환 키라 ProviderFactory.createCompletionProvider 가 agentType 을 보고
+ * OpenAICompatCompletionProvider 로 분기해야 한다(Task 8). 이 타입에서 필드를 하나라도 떨구면
+ * 라우트(classify.ts)가 아무리 잘 실어 보내도 이 함수를 거치며 사라진다 — Ruling #2 가
+ * "baseUrl/providerId/reasoningEffort 가 팩토리까지 실제로 도달하는지 확인하라"고 요구하는
+ * 지점이 바로 여기다. reasoningEffort 는 팩토리까지는 도달하지만 그 자리에서 멈춘다 —
+ * OpenAICompatCompletionProvider·firehub-ai-agent 전체에 이 값을 실제로 쓰는 경로가 아직
+ * 없다(설계서 §322, 별도 이슈).
+ */
+type ClassifyCredentials = Partial<
+  Pick<
+    ProviderConfig,
+    'agentType' | 'apiKey' | 'oauthToken' | 'baseUrl' | 'providerId' | 'reasoningEffort'
+  >
+>;
+
 async function callClassifyCompletion(
-  credentials: Pick<ProviderConfig, 'apiKey' | 'oauthToken'>,
+  credentials: ClassifyCredentials,
   model: string,
   rows: Record<string, unknown>[],
   prompt: string,
@@ -203,14 +222,18 @@ Rules:
  */
 export async function classifyBatch(
   request: ClassifyRequest,
-  credentials: Pick<ProviderConfig, 'apiKey' | 'oauthToken'>,
+  credentials: ClassifyCredentials,
   model: string,
 ): Promise<ClassifyResponse> {
   const { rows, prompt, outputColumns } = request;
 
-  // 자격증명이 비어 있어도 여기서 막지 않는다 — CompletionProvider 가 프로세스 환경
-  // (ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN)이나 로컬 CLI 키체인으로 폴백하며,
-  // 이는 GraphRAG 경로와 동일한 계약이다. 진짜로 인증이 없으면 SDK 가 subtype/원인을 담아 실패한다.
+  // 자격증명이 비어 있어도 여기서 막지 않는다 — 단, 그 "빈 자격증명 폴백" 계약은 agentType 이
+  // sdk/cli/cli-api 이거나 아예 없을 때만 유효하다(ClaudeSdkCompletionProvider 가 프로세스 환경
+  // ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN 이나 로컬 CLI 키체인으로 폴백 — GraphRAG 경로와
+  // 동일한 계약). **agentType==='opencode' 면 이 폴백은 금지된다** — opencode 의 apiKey 는 OpenAI
+  // 호환 키라 Claude SDK 의 ambient 키로 새면 6b1c6383 과금 회귀가 재현된다. 그 경우
+  // ProviderFactory.createCompletionProvider 가 OpenAICompatCompletionProvider 로 분기해 애초에
+  // ambient 폴백 경로(buildCompletionEnv)를 타지 않는다.
   //
   // 타임아웃은 CompletionProvider 안에서 abort 로 처리한다.
   // (이전에는 axios timeout 과 Promise.race 가 이중으로 걸려 race 가 이겨도 HTTP 요청이 취소되지 않았다.)

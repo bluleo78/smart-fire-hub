@@ -10,30 +10,44 @@ import {
 } from './settings-catalog';
 
 describe('설정 카탈로그', () => {
-  it('19키를 정확히 덮는다 — 서버 화이트리스트 합집합과 같다', () => {
-    // 근거: SettingsService.ALLOWED_AI_KEYS(9) + ALLOWED_SMTP_KEYS(6) + ALLOWED_EMBEDDING_KEYS(4)
-    expect(ALL_SETTING_KEYS).toHaveLength(19);
-    expect(new Set(ALL_SETTING_KEYS).size).toBe(19);
+  it('15키를 정확히 덮는다 — 타입형 AI 설정 전환(Task 13) + Ruling #48(fix round 1) 이후 남은 집합', () => {
+    // 근거: 서버 화이트리스트에서 ai.api_key/ai.agent_type/ai.cli_oauth_token 3키가
+    // ai.credential 문서로 옮겨갔고(ALLOWED_AI_KEYS 9→6), Ruling #48 로 ai.model 이
+    // AiCredentialSection 으로 한 번 더 옮겨가 이 범용 카탈로그에서 빠졌다(6→5) —
+    // ALLOWED_AI_KEYS(5, 카탈로그 관점) + ALLOWED_SMTP_KEYS(6) + ALLOWED_EMBEDDING_KEYS(4) = 15.
+    // 서버 화이트리스트 자체는 여전히 ai.model 을 포함한다 — 빠진 것은 이 화면의 렌더링
+    // 책임뿐이다(PUT /settings 는 AiCredentialSection 이 여전히 이 키로 쓴다).
+    expect(ALL_SETTING_KEYS).toHaveLength(15);
+    expect(new Set(ALL_SETTING_KEYS).size).toBe(15);
+    expect(ALL_SETTING_KEYS).not.toContain('ai.model');
     expect(Object.keys(SETTING_CATALOG).sort()).toEqual([...ALL_SETTING_KEYS].sort());
   });
 
   it('탭 3개이고 키가 중복 없이 배분된다', () => {
     expect(SETTINGS_TABS.map((t) => t.label)).toEqual(['AI 에이전트', '이메일(SMTP)', '임베딩']);
-    expect(SETTINGS_TABS.find((t) => t.id === 'ai')!.keys).toHaveLength(9);
+    expect(SETTINGS_TABS.find((t) => t.id === 'ai')!.keys).toHaveLength(5);
     expect(SETTINGS_TABS.find((t) => t.id === 'smtp')!.keys).toHaveLength(6);
     expect(SETTINGS_TABS.find((t) => t.id === 'embedding')!.keys).toHaveLength(4);
   });
 
-  it('테넌트 재정의 허용은 12키이고 전부 카탈로그에 있다', () => {
-    expect(TENANT_OVERRIDABLE_KEYS).toHaveLength(12);
+  it('테넌트 재정의 허용은 11키다 — ai.model 은 이 사본의 정의역 밖이다(fix round 2)', () => {
+    // 서버 SettingsOverridePolicy.TENANT_OVERRIDABLE 은 12개(이 목록 + ai.model)다. 이 TS
+    // 사본은 round 2 부터 ai.model 을 일부러 뺀다 — 이 배열의 유일한 소비자 badgeKindOf() 가
+    // SETTING_CATALOG(=ALL_SETTING_KEYS) 의 키에만 불리는데, ai.model 은 Ruling #48 로 그
+    // 정의역에서 완전히 빠졌다(AiCredentialSection 이 별도로 다룬다) — badgeKindOf('ai.model')
+    // 은 이 앱 어디서도 호출되지 않으므로, 배열에 남겨 두는 건 실행되지 않는 죽은 데이터였다
+    // (override-policy.ts 헤더 주석 참고). 그래서 여기서는 "이 배열이 SETTING_CATALOG 의
+    // 키를 정확히 덮는다"만 확인한다 — 예전처럼 서버 카운트(12)와의 정합성은 이 파일의
+    // 책임이 아니다.
+    expect(TENANT_OVERRIDABLE_KEYS).toHaveLength(11);
+    expect(TENANT_OVERRIDABLE_KEYS).not.toContain('ai.model');
+    expect(SETTING_CATALOG['ai.model']).toBeUndefined();
     TENANT_OVERRIDABLE_KEYS.forEach((k) => expect(SETTING_CATALOG[k]).toBeDefined());
   });
 
-  it('비밀 키는 정확히 4개다 — 서버 SECRET_KEYS 와 같다', () => {
+  it('비밀 키는 정확히 2개다 — ai.credential 로 옮겨간 두 비밀(apiKey/oauthToken)은 이 카탈로그에 없다', () => {
     const secrets = ALL_SETTING_KEYS.filter((k) => SETTING_CATALOG[k].secret);
-    expect(secrets.sort()).toEqual(
-      ['ai.api_key', 'ai.cli_oauth_token', 'embedding.api_key', 'smtp.password'].sort(),
-    );
+    expect(secrets.sort()).toEqual(['embedding.api_key', 'smtp.password'].sort());
   });
 
   it('smtp.password 는 비밀이면서 동시에 테넌트 재정의 가능하다 (두 축은 직교)', () => {
@@ -41,11 +55,11 @@ describe('설정 카탈로그', () => {
     expect(badgeKindOf('smtp.password')).toBe('tenant-overridable');
   });
 
-  it('ai.api_key 만 지울 수 없다', () => {
+  it('지울 수 없는 비밀 키는 이제 없다 — ai.api_key(유일했다)가 ai.credential 로 옮겨갔다', () => {
     const notClearableSecrets = ALL_SETTING_KEYS.filter(
       (k) => SETTING_CATALOG[k].secret && !SETTING_CATALOG[k].clearable,
     );
-    expect(notClearableSecrets).toEqual(['ai.api_key']);
+    expect(notClearableSecrets).toEqual([]);
   });
 
   it('ai.session_max_tokens 만 내장 기본값을 가진다', () => {
@@ -81,7 +95,6 @@ describe('설정 카탈로그', () => {
     expect(validateSettingValue('smtp.port', '587')).toBeUndefined();
 
     expect(validateSettingValue('ai.system_prompt', '  ')).toBe('시스템 프롬프트를 입력하세요');
-    expect(validateSettingValue('ai.api_key', '')).toBe('API 키는 비워 둘 수 없습니다');
   });
 
   it('서버가 무조건 파싱하는 숫자 4키는 빈 값을 거부하고 지울 수 없다', () => {
@@ -122,13 +135,13 @@ describe('설정 카탈로그', () => {
     expect(validateSettingValue('embedding.base_url', 'https://api.openai.com')).toBeUndefined();
   });
 
-  it('지울 수 없는 키는 정확히 10개다 — smtp.port·embedding.model·embedding.base_url 포함(리뷰 H2/M2/L3)', () => {
+  it('지울 수 없는 키는 정확히 9개다 — smtp.port·embedding.model·embedding.base_url 포함(리뷰 H2/M2/L3)', () => {
     // 대조군: 지울 수 있는 키(smtp.host)는 이 집합에 없어야 한다 — 그렇지 않으면 필터가
     // 아무것도 걸러내지 않아도 통과하는 공허한 단언이 된다.
+    // ai.api_key(옛 유일한 지울 수 없는 비밀)는 ai.credential 문서로 옮겨가 이제 없다.
     const notClearable = ALL_SETTING_KEYS.filter((k) => !SETTING_CATALOG[k].clearable);
     expect(notClearable.sort()).toEqual(
       [
-        'ai.api_key',
         'ai.system_prompt',
         'ai.max_turns',
         'ai.max_tokens',
@@ -143,19 +156,16 @@ describe('설정 카탈로그', () => {
     expect(notClearable).not.toContain('smtp.host');
   });
 
-  it('배지 종류가 두 가지뿐이고 전역 고정은 7키다', () => {
+  it('배지 종류가 두 가지뿐이고 전역 고정은 4키다', () => {
+    // ai.api_key/ai.agent_type/ai.cli_oauth_token 3키는 이제 이 범용 카탈로그에 없다 —
+    // AiCredentialSection 이 별도 문서(ai.credential)로 다루고, 그 화면엔 배지가 없다
+    // (설계서 §225, 브리프 Step 3).
     const globalFixed = ALL_SETTING_KEYS.filter((k) => badgeKindOf(k) === 'global-fixed');
     expect(globalFixed.sort()).toEqual(
-      [
-        'ai.api_key',
-        'ai.agent_type',
-        'ai.cli_oauth_token',
-        'embedding.provider',
-        'embedding.model',
-        'embedding.base_url',
-        'embedding.api_key',
-      ].sort(),
+      ['embedding.provider', 'embedding.model', 'embedding.base_url', 'embedding.api_key'].sort(),
     );
-    expect(isTenantOverridable('ai.model')).toBe(true);
+    // ai.model 은 이 TS 사본의 정의역 밖이다(fix round 2, 위 '테넌트 재정의 허용은 11키다'
+    // 테스트 참고) — isTenantOverridable('ai.model') 은 더 이상 true 를 보장하지 않는다.
+    expect(isTenantOverridable('ai.model')).toBe(false);
   });
 });
