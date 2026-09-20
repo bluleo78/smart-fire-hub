@@ -11,7 +11,6 @@ import { useOntologyById, useOntologyGraph, useOntologyList } from '@/hooks/quer
 import { useOntologyElementMutations } from '@/hooks/queries/useOntologyElement';
 import { useAuth } from '@/hooks/useAuth';
 import { useDirtyAggregator, useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
-import { filterGraphByNode } from '@/lib/graph-scope';
 import { createTypePalette } from '@/lib/ontology-colors';
 import { affectedRelationsFor, isLastActiveEntityType } from '@/lib/ontology-validation';
 import type { GraphNode } from '@/types/ontology';
@@ -32,8 +31,11 @@ import SchemaGraph, { type SchemaGraphSelection } from './components/SchemaGraph
 import TypeFilterPanel from './components/TypeFilterPanel';
 
 // 캔버스 로딩 중 표시하는 스켈레톤 — 컨테이너를 꽉 채워 레이아웃 시프트를 막는다.
+// testid 를 붙인 이유: "로딩 중에는 빈 상태를 단정하지 않는다"를 검증할 때 문구 부재(toHaveCount(0))로
+// 단언하면 렌더 이전 시점에 즉시 통과해 버리는 경쟁 조건이 생긴다 — 실제로 그렇게 만들어 공허한
+// 테스트를 한 번 겪었다. 로딩 상태를 긍정으로 지목할 수 있는 선택자가 필요하다.
 function GraphLoading() {
-  return <Skeleton className="h-full w-full" />;
+  return <Skeleton className="h-full w-full" data-testid="graph-loading" />;
 }
 
 // 캔버스 에러 상태 — 아이콘 + 메시지 + 재시도 버튼(하우스 error 패턴). 재시도는 해당 쿼리 refetch를 호출한다.
@@ -49,13 +51,38 @@ function GraphError({ message, onRetry }: { message: string; onRetry: () => void
   );
 }
 
+// 그래프 탐색 탭에서 "볼 온톨로지 자체가 없는" 상태 — 아직 지식 모델을 하나도 만들지 않은 테넌트다.
+// 그래프는 온톨로지 스코프로만 조회되므로(useOntologyGraph) 고를 온톨로지가 없으면 조회할 대상도 없다.
+// 별도 컴포넌트를 둔 이유: 스키마 탭의 OntologyEmptyState 는 "온톨로지는 있는데 엔티티 타입이 0개"라는
+// 다른 상태를 말한다 — 같은 화면을 재사용하면 "첫 타입 만들기"가 있지도 않은 온톨로지를 가리키게 된다.
+function GraphEmptyNoOntology() {
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-3 py-16 text-center">
+      <Boxes className="h-10 w-10 text-muted-foreground" />
+      <p className="text-sm font-medium">아직 지식 모델이 없습니다</p>
+      <p className="max-w-sm text-xs text-muted-foreground">
+        그래프는 지식 모델에 적재된 데이터를 보여줍니다. 먼저 지식 모델을 만들어 주세요.
+      </p>
+    </div>
+  );
+}
+
 // 온톨로지 시각화 페이지 — 풀하이트 에디터 셸(툴바 + 좌측 타입 필터/아웃라인 + 캔버스 + 리사이즈
 // 인스펙터). 인스턴스 탭(그래프 탐색)은 여전히 읽기 전용이지만, 스키마 탭은 이제 이 페이지가 요소
 // 단위 편집기(수정 모드 토글, ModelOutline/EntityInspector/RelationInspector)를 직접 소유한다
 // (M-1, S2 최종 리뷰 — 전체 문서 모달을 제거한 Task 6부터 더 이상 "읽기 전용"이 아니었다).
 export default function OntologyPage() {
   // 온톨로지 목록 — schema/graph 훅보다 먼저 선언해야 그 파생값을 바로 아래에서 쓸 수 있다.
-  const { data: ontologies } = useOntologyList('all');
+  // 로딩/에러 상태도 함께 받는다: 그래프 탐색 탭의 "지식 모델 없음" 판정이 이 목록에서 파생되므로
+  // (effectiveOntologyId), 목록이 아직 도착하지 않았거나 실패한 것을 "0개"와 구분하지 못하면
+  // 매 첫 진입마다 없다고 단정해 보였다가 뒤늦게 그래프로 바뀌고, 실패 시엔 재시도 경로도 없이
+  // "없음"에 영구히 갇힌다(그래프 쿼리의 isError/refetch 는 그 쿼리가 아예 실행되지 않아 무용).
+  const {
+    data: ontologies,
+    isLoading: isOntologyListLoading,
+    isError: isOntologyListError,
+    refetch: refetchOntologyList,
+  } = useOntologyList('all');
   // NodeDetailDrawer의 "구버전" 배지 기준(#678) — 그래프 인스턴스 노드가 여러 온톨로지에 걸쳐 있을 수
   // 있으므로 더 이상 "기본 온톨로지" 하나의 schema만 보는 게 아니라, 노드별 ontologyId로 그 노드가
   // 실제로 속한 온톨로지의 최신 schema_version을 찾아 비교한다. ontologies 목록이 이미 각 온톨로지의
@@ -64,13 +91,6 @@ export default function OntologyPage() {
     () => new Map((ontologies ?? []).map((o) => [o.id, o.schemaVersion])),
     [ontologies],
   );
-  // 인스턴스 그래프(Neo4j 적재분)는 여전히 온톨로지 id로 스코프되지 않는 단일 엔드포인트다
-  // (getGraph()에 id 파라미터가 없다) — 그래서 selectedOntologyId를 바꿔도 이 쿼리 자체는 영향을
-  // 받지 않고, 요소 단위 편집 뮤테이션도 이 키를 무효화할 이유가 없다(스키마 편집이 이미 적재된
-  // 그래프 노드를 다시 쓰지는 않으므로 — Neo4j 재적재는 별도 임포트 파이프라인의 몫이다). 대신
-  // 선택된 온톨로지로 좁혀 보여주는 것은 클라이언트 쪽에서 한다(아래 scopedGraph, #677 후속).
-  const { data: graph, isLoading: isGraphLoading, isError, refetch: refetchGraph } = useOntologyGraph();
-
   // 탭 상태는 URL(:view)에서 파생 — 사이드바 '그래프 탐색'(explore)/'지식 모델'(model) 항목과 하이라이트를 동기화한다.
   // explore↔instance, model↔schema. view가 없거나 알 수 없으면 그래프 탐색(instance)으로 폴백.
   const { view } = useParams<{ view?: string }>();
@@ -122,8 +142,8 @@ export default function OntologyPage() {
 
   // 지금 보고 있는 온톨로지 — 지식 모델(스키마) 탭뿐 아니라 그래프 탐색(인스턴스) 탭도 이 선택을
   // 공유한다(#677 후속). 그래야 "지식 모델처럼 온톨로지를 고를 수 있어야 한다"는 요구대로 두 탭이
-  // 항상 같은 온톨로지 어휘(타입 필터)를 보여준다. 인스턴스 탭에서는 여기서 고른 온톨로지 id로
-  // Neo4j 그래프(scopedGraph, 아래)도 함께 좁힌다.
+  // 항상 같은 온톨로지 어휘(타입 필터)를 보여준다. 인스턴스 탭에서는 여기서 고른 온톨로지 id가
+  // 그대로 그래프 조회의 스코프가 된다(아래 useOntologyGraph).
   const [selectedOntologyId, setSelectedOntologyId] = useState<number | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
@@ -138,6 +158,17 @@ export default function OntologyPage() {
     ontologies?.[0] ??
     null;
   const effectiveOntologyId = selectedOntology?.id ?? null;
+
+  // 인스턴스 그래프(Neo4j 적재분) — 선택된 온톨로지로 **서버가** 좁혀 내려준다. 그래서 이 훅 호출은
+  // effectiveOntologyId 아래에 있어야 한다. 스코프를 서버로 옮긴 근거는 OntologyService.getGraph 참고.
+  // 요소 단위 편집 뮤테이션이 이 키를 무효화할 이유는 없다 — 스키마 편집이 이미 적재된 그래프 노드를
+  // 다시 쓰지는 않는다(Neo4j 재적재는 별도 임포트 파이프라인의 몫).
+  const {
+    data: graph,
+    isLoading: isGraphLoading,
+    isError: isGraphError,
+    refetch: refetchGraph,
+  } = useOntologyGraph(effectiveOntologyId);
 
   const {
     data: selectedSchema,
@@ -224,23 +255,9 @@ export default function OntologyPage() {
   // 같은 색을 유지한다.
   const typePalette = useMemo(() => createTypePalette(currentTypeNames), [currentTypeNames]);
 
-  // 인스턴스 탭에 실제로 보여줄 그래프 — 선택된 온톨로지(effectiveOntologyId)로 좁힌다(#677 후속,
-  // "지식 모델처럼 온톨로지를 선택할 수 있어야 한다"는 요구). Neo4j 그래프 자체는 스코프되지 않은
-  // 단일 엔드포인트라(getGraph()) 클라이언트에서 node.ontologyId로 걸러낸다. ontologyId가 null인
-  // 노드(#678: schema_version 스탬프 도입 이전 레거시 적재)는 특정 온톨로지에 귀속시킬 근거가
-  // 없으므로 어느 온톨로지를 선택해도 계속 보여준다 — 그러지 않으면 선택기 도입만으로 기존에
-  // 보이던 데이터가 조용히 사라지는 회귀가 된다. 엣지는 양쪽 노드가 모두 남아 있을 때만 유지한다.
-  const scopedGraph = useMemo(() => {
-    if (!graph) return graph;
-    if (effectiveOntologyId == null) return graph;
-    // 노드 필터 → 양끝 생존 엣지만 유지하는 공용 규칙은 filterGraphByNode에 있다(InstanceGraph의
-    // 타입/검색 필터와 동일한 패턴이라 여기서도 재사용).
-    return filterGraphByNode(graph, (n) => n.ontologyId === effectiveOntologyId || n.ontologyId == null);
-  }, [graph, effectiveOntologyId]);
-
   const nodesByKey = useMemo(
-    () => new Map((scopedGraph?.nodes ?? []).map((n) => [n.key, n])),
-    [scopedGraph],
+    () => new Map((graph?.nodes ?? []).map((n) => [n.key, n])),
+    [graph],
   );
 
   // 인스펙터에 내려줄 선택된 엔티티 타입 — ModelOutline과 마찬가지로 id 없는 항목은 편집 대상이 될 수
@@ -345,6 +362,39 @@ export default function OntologyPage() {
     // 리뷰 I-2) 다이얼로그를 다시 열지 않는다 — 다시 열면 사용자가 또 확인해 두 번째 DELETE가 나간다.
     if (deletingElementKeysRef.current.has(`relation:${relationId}`)) return;
     setCanvasDeleteRelationId(relationId);
+  };
+
+  /**
+   * 그래프 탐색(인스턴스) 탭 본문. 조기 반환의 **순서가 곧 계약**이라 JSX 인라인 삼항 대신 함수로 둔다.
+   *
+   * "지식 모델 없음"은 목록이 도착해서 실제로 비어 있을 때만 말할 수 있다 — 목록의 로딩·에러도
+   * effectiveOntologyId 를 null 로 만들기 때문에, 그 둘을 먼저 걸러내지 않으면 매 첫 진입마다
+   * 없다고 단정했다가 뒤늦게 그래프로 바뀌고, 목록이 실패하면 재시도 경로도 없이 그 오답에 갇힌다.
+   * 그래프 쿼리의 로딩·에러는 조회가 실제로 일어난 뒤에만 의미가 있으니 마지막이다.
+   */
+  const renderInstanceTab = () => {
+    if (isOntologyListError) {
+      return (
+        <GraphError message="지식 모델 목록을 불러오지 못했습니다." onRetry={() => refetchOntologyList()} />
+      );
+    }
+    if (isOntologyListLoading) return <GraphLoading />;
+    if (effectiveOntologyId == null) return <GraphEmptyNoOntology />;
+    if (isGraphError) {
+      return <GraphError message="그래프를 불러오지 못했습니다." onRetry={() => refetchGraph()} />;
+    }
+    if (isGraphLoading || !graph) return <GraphLoading />;
+    return (
+      <InstanceGraph
+        graph={graph}
+        activeTypes={activeTypes}
+        search={search}
+        onNodeSelect={setSelected}
+        focusKey={focusKey}
+        grouped={grouped}
+        palette={typePalette}
+      />
+    );
   };
 
   return (
@@ -480,7 +530,7 @@ export default function OntologyPage() {
         ) : (
           <TypeFilterPanel
             entities={filterEntities}
-            graph={scopedGraph}
+            graph={graph}
             activeTypes={activeTypes}
             onToggle={toggleType}
             onReset={() => setActiveTypes(new Set())}
@@ -599,28 +649,14 @@ export default function OntologyPage() {
               )}
             </TabsContent>
             <TabsContent value="instance" className="m-0 h-full">
-              {isError ? (
-                <GraphError message="그래프를 불러오지 못했습니다." onRetry={() => refetchGraph()} />
-              ) : isGraphLoading || !scopedGraph ? (
-                <GraphLoading />
-              ) : (
-                <InstanceGraph
-                  graph={scopedGraph}
-                  activeTypes={activeTypes}
-                  search={search}
-                  onNodeSelect={setSelected}
-                  focusKey={focusKey}
-                  grouped={grouped}
-                  palette={typePalette}
-                />
-              )}
+              {renderInstanceTab()}
             </TabsContent>
           </div>
           {/* 인스펙터는 인스턴스 탭에서만 도킹(스키마 탭은 노드 선택 개념 없음). */}
           {tab === 'instance' && (
             <NodeDetailDrawer
               node={selected}
-              edges={scopedGraph?.edges ?? []}
+              edges={graph?.edges ?? []}
               nodesByKey={nodesByKey}
               onClose={() => setSelected(null)}
               onNavigate={navigateTo}

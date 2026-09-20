@@ -13,8 +13,13 @@ const OP_CYPHER: Record<Exclude<Operator, 'contains'>, string> = {
 const MAX_RESULTS = 100;
 
 // 화이트리스트 검증 후 Cypher WHERE 를 조립한다. 검증 실패 시 { error }.
+//
+// ontologyId 는 필수다(스코프 규약은 neo4j-client.readWholeGraph 주석 참고). 이 파일에 고유한
+// 이유: n.type 은 타입 **이름 문자열**이라(loader 가 `SET n.type = e.type`) 여러 온톨로지가 같은
+// 이름을 쓰면 — Incident, Building 처럼 흔하다 — 이름만으로는 구분되지 않는다. 게다가 이 경로는
+// properties(n) 를 통째로 돌려주므로 누수의 폭이 넓다.
 export function buildStructuredCypher(
-  ontology: Ontology, entityType: string, filters: Filter[],
+  ontology: Ontology, ontologyId: number, entityType: string, filters: Filter[],
 ): { cypher: string; params: Record<string, unknown> } | { error: string } {
   if (!isEntityType(ontology, entityType)) return { error: `알 수 없는 엔티티 타입: ${entityType}` };
   const def = ontology.entities.find((e) => e.type === (entityType as EntityType));
@@ -22,7 +27,10 @@ export function buildStructuredCypher(
 
   // cap 은 Cypher LIMIT 에 쓰이므로 반드시 Neo4j INTEGER 로 바인딩한다.
   // (JS number 를 그대로 넘기면 드라이버가 Float 로 패킹 → LIMIT 이 INTEGER 를 요구해 런타임 에러.)
-  const params: Record<string, unknown> = { entityType, cap: neo4j.int(MAX_RESULTS) };
+  // ontologyId 는 적재측이 neo4j.int() 로 INTEGER 를 쓰므로(#308 의 교훈) 조회측도 INTEGER 로 맞춘다.
+  const params: Record<string, unknown> = {
+    entityType, ontologyId: neo4j.int(ontologyId), cap: neo4j.int(MAX_RESULTS),
+  };
   const preds: string[] = [];
   for (let i = 0; i < filters.length; i++) {
     const f = filters[i];
@@ -33,7 +41,7 @@ export function buildStructuredCypher(
     if (f.operator === 'contains') preds.push(`n.${col} CONTAINS $${pk}`);
     else preds.push(`n.${col} ${OP_CYPHER[f.operator]} $${pk}`);
   }
-  const where = ['n.type = $entityType', ...preds].join(' AND ');
+  const where = ['n.ontologyId = $ontologyId', 'n.type = $entityType', ...preds].join(' AND ');
   const cypher =
     `MATCH (n:Entity) WHERE ${where} ` +
     `RETURN n.key AS key, n.type AS type, n.name AS name, properties(n) AS props, ` +
@@ -49,9 +57,9 @@ export interface StructuredResult {
 
 // Cypher 를 실행해 매칭 엔티티 + 출처 청크 id 를 반환한다.
 export async function structuredQuery(
-  ontology: Ontology, entityType: string, filters: Filter[],
+  ontology: Ontology, ontologyId: number, entityType: string, filters: Filter[],
 ): Promise<StructuredResult> {
-  const built = buildStructuredCypher(ontology, entityType, filters);
+  const built = buildStructuredCypher(ontology, ontologyId, entityType, filters);
   if ('error' in built) throw new Error(built.error);
   const session = getSession();
   try {

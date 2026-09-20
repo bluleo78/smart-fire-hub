@@ -213,7 +213,9 @@ public class OntologyRepository {
     dsl.deleteFrom(ONTOLOGY).where(O_ID.eq(ontologyId)).execute();
   }
 
-  // 온톨로지 존재 여부(바인딩 검증용).
+  // 온톨로지 존재 여부(바인딩 검증용 + 그래프 프록시의 소유권 확인용).
+  // ONTOLOGY 는 RLS 가 걸려 있어(V102) 다른 테넌트의 행은 이 조회에 애초에 보이지 않는다 —
+  // 그래서 "존재하지 않음"과 "내 것이 아님"이 같은 답이 되고, 이 한 줄이 곧 테넌트 경계가 된다.
   public boolean existsById(long ontologyId) {
     return dsl.fetchExists(dsl.selectOne().from(ONTOLOGY).where(O_ID.eq(ontologyId)));
   }

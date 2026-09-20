@@ -11,7 +11,7 @@ import {
   createRelationMutation,
   createVersionOnly,
 } from '../../factories/ontology.factory';
-import { setupAdminAuth, setupOntologyMocks } from '../../fixtures/admin.fixture';
+import { mockOntologyGraph, setupAdminAuth, setupOntologyMocks } from '../../fixtures/admin.fixture';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 
@@ -227,7 +227,7 @@ test.describe('지식 모델 요소 편집기 — 모드 셸', () => {
     const schemaWithOrphan = createOntologySchema({ relations: [...base.relations, orphanRelation] });
     await mockApi(page, 'GET', '/api/v1/ontology', schemaWithOrphan);
     await mockApi(page, 'GET', '/api/v1/ontology/1', schemaWithOrphan);
-    await mockApi(page, 'GET', '/api/v1/ontology/graph', createOntologyGraph());
+    await mockOntologyGraph(page, createOntologyGraph());
     await mockApi(page, 'GET', '/api/v1/ontologies', createOntologySummaries());
 
     const warnings: string[] = [];
@@ -725,7 +725,7 @@ test.describe('EntityInspector — 타입 필드 · 속성 CRUD · 자동 저장
     // GET /api/v1/ontology(id 없는 bare 엔드포인트)는 모킹하지 않는다 — M-2로 프론트 호출부
     // (useOntologySchema/ontologyApi.getOntology)를 지웠으므로 이 화면이 더 이상 그 경로를 부르지
     // 않는다(N-3, S2 최종 리뷰). 남겨두면 다음 독자가 "여전히 호출된다"고 오해할 수 있었다.
-    await mockApi(page, 'GET', '/api/v1/ontology/graph', createOntologyGraph());
+    await mockOntologyGraph(page, createOntologyGraph());
     await mockApi(page, 'GET', '/api/v1/ontologies', createOntologySummaries());
     await mockApi(
       page,
@@ -1286,7 +1286,7 @@ test.describe('RelationInspector — 관계 생성·편집·삭제', () => {
     const schema = createOntologySchema({ relations: [...base.relations, extra] });
     await mockApi(page, 'GET', '/api/v1/ontology', schema);
     await mockApi(page, 'GET', '/api/v1/ontology/1', schema);
-    await mockApi(page, 'GET', '/api/v1/ontology/graph', createOntologyGraph());
+    await mockOntologyGraph(page, createOntologyGraph());
     await mockApi(page, 'GET', '/api/v1/ontologies', createOntologySummaries());
     await page.goto('/knowledge-graph/model');
     await page.getByRole('button', { name: '수정 모드' }).click();
@@ -1497,7 +1497,7 @@ test.describe('EntityInspector — 새 타입 만들기', () => {
     const emptySchema = createOntologySchema({ entities: [], relations: [] });
     await mockApi(page, 'GET', '/api/v1/ontology', emptySchema);
     await mockApi(page, 'GET', '/api/v1/ontology/1', emptySchema);
-    await mockApi(page, 'GET', '/api/v1/ontology/graph', createOntologyGraph());
+    await mockOntologyGraph(page, createOntologyGraph());
     await mockApi(page, 'GET', '/api/v1/ontologies', createOntologySummaries());
     await page.goto('/knowledge-graph/model');
     // 엔티티가 0개면 캔버스 대신 빈 상태가 뜨지만, 수정 모드 자체는 독립적으로 켤 수 있다.

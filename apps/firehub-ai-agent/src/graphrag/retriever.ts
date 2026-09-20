@@ -13,6 +13,7 @@
 // 사건 중심 타입은 무조건 확장) OR degree < hubDegree(저차수 노드)"로 통일한다. 시드도 예외 없이
 // 이 규칙을 따른다 — 시드는 항상 결과에 "포함"되지만, 공유 Equipment/Regulation 시드는 고차수면
 // 더 이상 확장하지 않는 "종단(terminal)" 노드가 된다.
+import neo4j from 'neo4j-driver';
 import { getSession } from './neo4j-client.js';
 
 export interface SubgraphNode { key: string; type: string; name: string; }
@@ -132,8 +133,14 @@ export async function expandSubgraph(
   return { nodes: [...included.values()], relations };
 }
 
+/**
+ * 지식 그래프 검색 — 문서검색으로 시드를 잡고 1~2홉 확장한 서브그래프를 돌려준다.
+ *
+ * ontologyId 는 필수다 — 스코프 규약과 그 근거는 neo4j-client.readWholeGraph 주석 참고.
+ */
 export async function retrieve(
   deps: RetrieverDeps,
+  ontologyId: number,
   query: string,
   opts: RetrieveOptions = {},
 ): Promise<RetrievalResult> {
@@ -144,16 +151,33 @@ export async function retrieve(
   const chunkIds = hits.map((h) => h.chunkId);
   if (chunkIds.length === 0) return { nodes: [], relations: [], sourceChunks: [] };
 
+  // 적재측이 neo4j.int() 로 INTEGER 를 쓰므로 조회측도 INTEGER 로 바인딩한다(#308).
+  const ontologyIdInt = neo4j.int(ontologyId);
   const session = getSession();
   try {
     // 2) 시드 청크에서 유래한 엔티티 키/노드 + 전역 degree 조회.
     //    앵커타입 인지 확장 규칙을 시드에도 동일 적용하려면 시드의 degree가 필요하다
     //    (공유 Equipment/Regulation 시드가 고차수면 확장하지 않는 종단 노드가 되어야 함).
+    // ontologyId 술어는 시드와 확장 양쪽에 모두 건다. 시드는 RLS 스코프된 문서검색에서 오므로
+    // 전이적으로는 안전하지만 그것을 강제하는 장치가 없고, 확장은 아예 무방비였다 — 정당한 시드
+    // 하나에서 1홉만 걸어도 남의 서브그래프로 넘어갈 수 있었다.
+    //
+    // degree 를 같은 스코프로 세는 이유는 누수 차단이 아니라 **정합성**이다(degree 는 호출자에게
+    // 반환되지 않는다). fetchNeighbors 가 같은 온톨로지 엣지만 순회하므로 degree 도 같은 엣지
+    // 집합을 세야 한다 — 전역으로 세면 남의 엣지가 내 노드를 hubDegree 위로 밀어 올려 종단으로
+    // 만들고, 내 서브그래프가 조용히 잘린다. 크로스 온톨로지 엣지는 실제로 만들어질 수 있다:
+    // relation-add 의 HITL 경로가 호출자가 준 key 로 MATCH 하고 ontologyId 를 보지 않는다.
+    //
+    // 성능 주의: `COUNT { (n)-[:REL]-() }` 는 노드 레코드의 degree 를 O(1) 로 읽지만, 여기처럼
+    // 이웃 노드에 술어가 붙으면 확장 + 이웃 속성 읽기로 바뀌어 O(degree) 가 된다. 그래서 아래
+    // 이웃 질의는 degree 투영 **전에** WITH DISTINCT 로 행을 접는다 — RETURN DISTINCT 는 투영
+    // 이후에 적용돼 같은 이웃의 degree 를 중복 계산한다(무방향 패턴 + $keys 다중이라 배수가 크다).
     const seedResult = await session.run(
-      `MATCH (seed:Entity) WHERE any(c IN seed.sourceChunkIds WHERE c IN $chunkIds)
+      `MATCH (seed:Entity) WHERE seed.ontologyId = $ontologyId
+         AND any(c IN seed.sourceChunkIds WHERE c IN $chunkIds)
        RETURN seed.key AS key, seed.type AS type, seed.name AS name,
-              COUNT { (seed)-[:REL]-() } AS degree`,
-      { chunkIds },
+              COUNT { (seed)-[:REL]-(x:Entity) WHERE x.ontologyId = $ontologyId } AS degree`,
+      { chunkIds, ontologyId: ontologyIdInt },
     );
     const seedNodes: SeedNode[] = seedResult.records.map((rec) => ({
       key: rec.get('key') as string,
@@ -171,10 +195,12 @@ export async function retrieve(
       const r = await session.run(
         `MATCH (a:Entity)-[rel:REL]-(b:Entity)
          WHERE a.key IN $keys AND b.key <> a.key
-         RETURN DISTINCT a.key AS fromKey, rel.type AS relType,
+           AND a.ontologyId = $ontologyId AND b.ontologyId = $ontologyId
+         WITH DISTINCT a.key AS fromKey, rel.type AS relType, b
+         RETURN fromKey, relType,
                 b.key AS neighborKey, b.type AS neighborType, b.name AS neighborName,
-                COUNT { (b)-[:REL]-() } AS neighborDegree`,
-        { keys },
+                COUNT { (b)-[:REL]-(x:Entity) WHERE x.ontologyId = $ontologyId } AS neighborDegree`,
+        { keys, ontologyId: ontologyIdInt },
       );
       return r.records.map((rec) => ({
         fromKey: rec.get('fromKey') as string,

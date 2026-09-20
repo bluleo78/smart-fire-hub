@@ -1,6 +1,7 @@
 import { Router, type Response } from 'express';
 import { z } from 'zod/v4';
 import { internalAuth, requireDelegation, type Delegation } from '../middleware/auth.js';
+import { isValidTenantId } from '../agent/tenant-paths.js';
 import { readWholeGraph } from '../graphrag/neo4j-client.js';
 import { mergeEntities } from '../graphrag/synonym-merge.js';
 import { setEntityProperty } from '../graphrag/property-mutation.js';
@@ -55,10 +56,24 @@ function respondMutationError(res: import('express').Response, opLabel: string, 
   res.status(502).json({ error: fallback });
 }
 
-// 전체 지식그래프(Neo4j). 읽기 실패 시 502(상위 프록시가 그대로 전파).
-router.get('/graph', internalAuth, async (_req, res) => {
+// 한 온톨로지의 지식그래프(Neo4j). 읽기 실패 시 502(상위 프록시가 그대로 전파).
+//
+// ontologyId 는 필수 쿼리 파라미터다 — 선택 인자로 두면 무스코프 전체 조회 경로가 그대로 살아남아,
+// 내부 호출자 누구나 전 테넌트 그래프를 읽을 수 있다. 해당 온톨로지의 소유권(테넌트) 검증은 호출부인
+// firehub-api 가 RLS 걸린 ontology 테이블 조회로 끝낸다(내부 토큰은 만능 자격증명이라 여기서 받은
+// 값을 그대로 신뢰할 수 없고, 그래서 검증 지점이 api 쪽이다).
+router.get('/graph', internalAuth, async (req, res) => {
+  const ontologyId = Number(req.query.ontologyId);
+  // 양수 정수 판정은 isValidTenantId 를 그대로 재사용한다 — 이름은 테넌트지만 그 술어의 주석이
+  // "복제하고 주석으로 같은 강도로 맞춰라" 방식은 이미 한 번 어긋났다고 못박고 있고, auth.ts 가
+  // userId 에도 같은 술어를 쓴다. 쿼리 파라미터 검증은 이 리포에서 zod 가 아니라 이 관용구다
+  // (chat.ts 의 tenantId 가드와 동일 — `Number('')` 이 0 으로 통과하는 구멍도 함께 막힌다).
+  if (!isValidTenantId(ontologyId)) {
+    res.status(400).json({ error: 'ontologyId is required' });
+    return;
+  }
   try {
-    res.json(await readWholeGraph());
+    res.json(await readWholeGraph(ontologyId));
   } catch (e) {
     // 무로그 502 금지(#308) — 로그가 없으면 원인 추적이 불가능하다.
     console.error('[graph] readWholeGraph 실패:', e);

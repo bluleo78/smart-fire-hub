@@ -39,16 +39,31 @@ const authHeader = {
 describe('GET /agent/graph', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('전체 그래프를 반환한다', async () => {
+  it('ontologyId 로 스코프된 그래프를 반환한다', async () => {
     vi.mocked(readWholeGraph).mockResolvedValue({ nodes: [{ key: 'a', type: 'Incident', name: 'x', sourceChunkCount: 1 }], edges: [] });
-    const res = await request(app).get('/agent/graph').set(authHeader);
+    const res = await request(app).get('/agent/graph?ontologyId=5').set(authHeader);
     expect(res.status).toBe(200);
     expect(res.body.nodes).toHaveLength(1);
+    expect(readWholeGraph).toHaveBeenCalledWith(5);
+  });
+
+  // ontologyId 가 선택 인자면 무스코프 전체 조회 경로가 그대로 살아남는다 — 누락은 400 으로 막고,
+  // readWholeGraph 를 아예 호출하지 않는다(호출 후 걸러내면 이미 남의 데이터를 읽은 것이다).
+  it('ontologyId 가 없으면 400 이고 Neo4j 를 조회하지 않는다', async () => {
+    const res = await request(app).get('/agent/graph').set(authHeader);
+    expect(res.status).toBe(400);
+    expect(readWholeGraph).not.toHaveBeenCalled();
+  });
+
+  it('ontologyId 가 숫자가 아니면 400 이다', async () => {
+    const res = await request(app).get('/agent/graph?ontologyId=abc').set(authHeader);
+    expect(res.status).toBe(400);
+    expect(readWholeGraph).not.toHaveBeenCalled();
   });
 
   it('읽기 실패 시 502를 반환한다', async () => {
     vi.mocked(readWholeGraph).mockRejectedValue(new Error('neo4j down'));
-    const res = await request(app).get('/agent/graph').set(authHeader);
+    const res = await request(app).get('/agent/graph?ontologyId=5').set(authHeader);
     expect(res.status).toBe(502);
   });
 });

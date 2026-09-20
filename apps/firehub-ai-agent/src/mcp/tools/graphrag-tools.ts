@@ -14,7 +14,7 @@ import { profileColumns } from '../../graphrag/column-profiler.js';
 import { inferMapping } from '../../graphrag/mapping-inference.js';
 import { inferOntology, DatasetEvidence } from '../../graphrag/ontology-inference.js';
 // 추출 시점 온톨로지는 api(DB 소유)에서 fetch한다. 데이터셋 바인딩이 없으면 예외가 던져진다(폴백 없음).
-import { resolveDatasetOntology } from '../../graphrag/ontology-source.js';
+import { resolveDatasetOntology, resolveOntologyById } from '../../graphrag/ontology-source.js';
 import { structuredQuery, Filter, Operator } from '../../graphrag/structured-query.js';
 import { link as semanticLink } from '../../graphrag/semantic-link.js';
 
@@ -551,7 +551,8 @@ export function registerGraphragTools(
       'graphrag_describe_ontology',
       '온톨로지의 엔티티 타입·필터 가능 속성(이름/타입/단위)·허용 관계 트리플을 조회한다. '
         + 'graphrag_structured_query 의 entityType·property 인자를 정하기 전에 반드시 이 도구로 실제 스키마를 확인하라. '
-        + '"기본 온톨로지"는 없다 — graphrag_list_ontologies 또는 데이터셋 바인딩(graphrag_query 등)으로 ontologyId를 먼저 확인하라.',
+        + '"기본 온톨로지"는 없다 — graphrag_list_ontologies 로 ontologyId를 먼저 확인하라 '
+        + '(graphrag_query 도 이제 ontologyId 를 요구하므로 그것으로 id를 알아낼 수는 없다).',
       { ontologyId: z.number().describe('조회할 온톨로지 id(graphrag_list_ontologies로 확인)') },
       async (args: { ontologyId: number }) => {
         const ontology = deserializeOntology(await apiClient.getOntologyById(args.ontologyId));
@@ -710,12 +711,17 @@ export function registerGraphragTools(
     safeTool(
       'graphrag_query',
       '엔티티 간 관계/연결/공통점/경로를 묻는 질문에 지식 그래프로 답한다. '
-        + '반환된 subgraph 노드·관계와 sourceChunks의 fileName을 반드시 인용해 답하라.',
+        + '반환된 subgraph 노드·관계와 sourceChunks의 fileName을 반드시 인용해 답하라. '
+        + '"기본 온톨로지"는 없다 — graphrag_list_ontologies 로 ontologyId를 먼저 확인하라.',
       {
+        ontologyId: z.number()
+          .describe('탐색할 온톨로지 id(graphrag_list_ontologies 로 확인). 그래프 읽기는 온톨로지 단위다'),
         query: z.string().describe('관계·연결을 묻는 자연어 질문'),
         topK: z.number().min(1).max(20).optional().describe('시드 문서 검색 수(기본 8)'),
       },
-      async (args: { query: string; topK?: number }) => {
+      async (args: { ontologyId: number; query: string; topK?: number }) => {
+        // 소유권 확인 — 근거는 resolveOntologyById 주석 참고(여기선 ontology 본문은 쓰지 않는다).
+        await resolveOntologyById(apiClient, args.ontologyId);
         // 벡터검색(searchDocuments)을 retriever의 deps 규약으로 어댑팅해 시드 청크를 확보하고,
         // 그 청크에서 유래한 엔티티를 1~2홉 확장한 서브그래프+출처를 조립한다.
         const result = await retrieve(
@@ -724,7 +730,7 @@ export function registerGraphragTools(
               q, ids, k, mode as 'SEMANTIC' | 'KEYWORD' | 'HYBRID' | undefined,
             ),
           },
-          args.query, { topK: args.topK },
+          args.ontologyId, args.query, { topK: args.topK },
         );
         // Neo4j 연결 불가 등은 retrieve에서 throw → safeTool이 isError로 감싸 폴백 메시지 제공.
         return jsonResult({
@@ -744,7 +750,7 @@ export function registerGraphragTools(
         + '로 확인한 뒤 "결과 없음"이 아니라 "데이터 불완전(검수 대기 N건)"으로 답하라.',
       {
         ontologyId: z.number()
-          .describe('속성 화이트리스트로 쓸 온톨로지 id(graphrag_list_ontologies 또는 graphrag_query 로 확인)'),
+          .describe('속성 화이트리스트 겸 조회 스코프로 쓸 온톨로지 id(graphrag_list_ontologies 로 확인)'),
         entityType: z.string().describe('필터할 엔티티 타입(graphrag_describe_ontology 의 entityTypes[].type)'),
         filters: z.array(z.object({
           property: z.string().describe('온톨로지에 정의된 속성명(graphrag_describe_ontology 의 filterableProperties[].name)'),
@@ -753,8 +759,9 @@ export function registerGraphragTools(
         })).describe('AND 로 결합되는 술어 목록'),
       },
       async (args: { ontologyId: number; entityType: string; filters: Array<{ property: string; operator: Operator; value: number | string }> }) => {
-        // 질의 시점 온톨로지를 fetch 해 화이트리스트로 사용한다.
-        const ontology = deserializeOntology(await apiClient.getOntologyById(args.ontologyId));
+        // 질의 시점 온톨로지를 fetch 해 화이트리스트로 쓴다. 이 한 번의 왕복이 소유권 확인도 겸한다
+        // (근거는 resolveOntologyById 주석) — 조회 스코프와 화이트리스트가 같은 온톨로지임이 보장된다.
+        const { ontology } = await resolveOntologyById(apiClient, args.ontologyId);
         // 도구 설명에 속성을 하드코딩하면 온톨로지가 바뀌어도 모델이 옛 속성만 알게 된다.
         // 대신 검증 실패 시 "지금 이 온톨로지에서 실제로 가능한 값"을 오류에 실어 1턴 내 자체 정정을 유도한다.
         const typeDef = ontology.entities.find((e) => e.type === args.entityType);
@@ -775,7 +782,9 @@ export function registerGraphragTools(
               + `(온톨로지 id=${args.ontologyId} 기준)`,
           );
         }
-        const result = await structuredQuery(ontology, args.entityType, args.filters as Filter[]);
+        const result = await structuredQuery(
+          ontology, args.ontologyId, args.entityType, args.filters as Filter[],
+        );
         // 빈 결과 = "조건에 맞는 데이터 없음"과 "정규화 실패로 검수 대기 중" 두 원인이 뒤섞일 수 있다(#427).
         // 검수 대기 항목이 있으면 pendingReview 로 신호를 실어 LLM 이 둘을 구분하게 한다.
         if (result.entities.length === 0) {

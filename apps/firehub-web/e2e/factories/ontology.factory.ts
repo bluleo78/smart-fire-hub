@@ -63,6 +63,17 @@ export function createOntologySchema(overrides?: Partial<OntologySchema>): Ontol
   };
 }
 
+/**
+ * 두 번째 온톨로지(id=2, createOntologySummaries 기본값) 스키마.
+ *
+ * entities를 비워 두는 것이 핵심이다: 픽스처가 id=2도 모킹해야 하는데(#677 이후 타입 필터가
+ * active 온톨로지를 합쳐 본다) 타입을 채우면 합집합이 늘어 기존 count(6) 단언들이 전부 깨진다.
+ * 여러 온톨로지의 타입을 실제로 합치는 동작은 ontology.spec.ts의 전용 테스트가 따로 검증한다.
+ */
+export function createSecondOntologySchema(): OntologySchema {
+  return createOntologySchema({ domain: '건축물 대장', entities: [], relations: [] });
+}
+
 /** 인스턴스 그래프 노드 키 상수 — 스펙에서 특정 노드를 재참조할 때 사용 */
 export const ONTOLOGY_GRAPH_NODE_KEYS = {
   incident1: 'incident-1',

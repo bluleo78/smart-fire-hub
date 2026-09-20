@@ -9,7 +9,7 @@ import {
   createRelationMutation,
   createVersionOnly,
 } from '../../factories/ontology.factory';
-import { setupAdminAuth, setupOntologyMocks } from '../../fixtures/admin.fixture';
+import { mockOntologyGraph, setupAdminAuth, setupOntologyMocks } from '../../fixtures/admin.fixture';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 
@@ -229,7 +229,7 @@ test.describe('SchemaGraph — 캔버스 노드 id 이관', () => {
     };
     await mockApi(page, 'GET', '/api/v1/ontology', legacySchema);
     await mockApi(page, 'GET', '/api/v1/ontology/1', legacySchema);
-    await mockApi(page, 'GET', '/api/v1/ontology/graph', createOntologyGraph());
+    await mockOntologyGraph(page, createOntologyGraph());
     await mockApi(page, 'GET', '/api/v1/ontologies', createOntologySummaries());
     await page.goto('/knowledge-graph/model');
 
@@ -261,7 +261,7 @@ test.describe('SchemaGraph — 캔버스 노드 id 이관', () => {
     };
     await mockApi(page, 'GET', '/api/v1/ontology', legacySchema);
     await mockApi(page, 'GET', '/api/v1/ontology/1', legacySchema);
-    await mockApi(page, 'GET', '/api/v1/ontology/graph', createOntologyGraph());
+    await mockOntologyGraph(page, createOntologyGraph());
     await mockApi(page, 'GET', '/api/v1/ontologies', createOntologySummaries());
     await page.goto('/knowledge-graph/model');
 
@@ -1455,7 +1455,7 @@ test.describe('OntologyEmptyState — 예시 트리플 + 첫 타입 만들기 CT
     const emptySchema = createOntologySchema({ entities: [], relations: [] });
     await mockApi(page, 'GET', '/api/v1/ontology', emptySchema);
     await mockApi(page, 'GET', '/api/v1/ontology/1', emptySchema);
-    await mockApi(page, 'GET', '/api/v1/ontology/graph', createOntologyGraph());
+    await mockOntologyGraph(page, createOntologyGraph());
     await mockApi(page, 'GET', '/api/v1/ontologies', createOntologySummaries());
     await page.goto('/knowledge-graph/model');
 

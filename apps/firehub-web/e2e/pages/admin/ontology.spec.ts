@@ -1,6 +1,8 @@
 import { createOntologySummaries } from '../../factories/mapping.factory';
 import { createEntityTypeMutation, createOntologyGraph, createOntologySchema } from '../../factories/ontology.factory';
 import {
+  mockFailThenSucceed,
+  mockOntologyGraph,
   setupAdminAuth,
   setupOntologyGraphErrorMock,
   setupOntologyGraphRetryMock,
@@ -167,7 +169,7 @@ test.describe('지식그래프 시각화 페이지', () => {
       '/api/v1/ontologies',
       createOntologySummaries().map((o) => (o.id === 1 ? { ...o, schemaVersion: 2 } : o)),
     );
-    await mockApi(page, 'GET', '/api/v1/ontology/graph', graph);
+    await mockOntologyGraph(page, graph);
     await page.goto('/knowledge-graph/model');
     await page.getByRole('tab', { name: '그래프 탐색' }).click();
     await expectNodeCount(page, graph.nodes.length);
@@ -369,7 +371,7 @@ test.describe('지식그래프 시각화 페이지', () => {
     const graph = { nodes, edges };
     const typeCount = bundleTypes.length;
     await setupOntologyMocks(page);
-    await mockApi(page, 'GET', '/api/v1/ontology/graph', graph);
+    await mockOntologyGraph(page, graph);
     await page.goto('/knowledge-graph/model');
     await page.getByRole('tab', { name: '그래프 탐색' }).click();
     await expectNodeCount(page, graph.nodes.length);
@@ -489,7 +491,7 @@ test.describe('지식그래프 시각화 페이지', () => {
       objectKey: `chain-${i + 1}`,
     }));
     await setupOntologyMocks(page);
-    await mockApi(page, 'GET', '/api/v1/ontology/graph', { nodes, edges });
+    await mockOntologyGraph(page, { nodes, edges });
     await page.goto('/knowledge-graph/model');
     await page.getByRole('tab', { name: '그래프 탐색' }).click();
     await expectNodeCount(page, nodes.length);
@@ -602,8 +604,13 @@ test.describe('지식그래프 시각화 페이지', () => {
   // (#677) 그래프 탐색 탭도 지식 모델 탭과 동일하게 온톨로지 선택기를 공유한다 — 예전에는 타입
   // 필터가 하드코딩된 기본 온톨로지(id=1) 스키마에 고정돼 다른 온톨로지의 타입이 필터에 아예
   // 나타나지 않았다. 이제 선택기가 그래프 탐색 탭에도 노출되고, 선택을 바꾸면 타입 필터뿐 아니라
-  // 캔버스에 실제로 그려지는 노드(scopedGraph, node.ontologyId 기준)도 그 온톨로지로 좁혀진다.
-  test('그래프 탐색 탭에서도 온톨로지를 선택할 수 있고, 선택을 바꾸면 타입 필터와 캔버스가 그 온톨로지 기준으로 바뀐다(#677)', async ({
+  // 캔버스도 그 온톨로지로 바뀐다.
+  //
+  // 스코프 주체가 클라이언트에서 서버로 옮겨간 것이 이 테스트의 핵심이다 — 예전에는 무스코프 전체
+  // 그래프를 받아 node.ontologyId로 화면에서 걸렀다(그래서 남의 테넌트 그래프가 네트워크로 그대로
+  // 내려왔다). 이제 온톨로지마다 별도 경로(/ontology/{id}/graph)로 조회하므로, 선택을 바꾸면 그
+  // 온톨로지의 경로로 실제 재조회가 일어나야 한다 — 요청 경로까지 단언해 캐시 키 고정 회귀를 막는다.
+  test('그래프 탐색 탭에서 온톨로지를 바꾸면 그 온톨로지 경로로 그래프를 재조회하고 캔버스·타입 필터가 함께 바뀐다(#677)', async ({
     authenticatedPage: page,
   }) => {
     const secondOntologySchema = createOntologySchema({
@@ -614,18 +621,31 @@ test.describe('지식그래프 시각화 페이지', () => {
       ],
       relations: [],
     });
-    const graph = createOntologyGraph();
+    // 서버가 온톨로지별로 다른 그래프를 내려주는 상황을 모킹한다 — 같은 응답을 주면 "재조회했는가"는
+    // 검증되지만 "그 응답이 화면에 반영되는가"는 검증되지 않는다(캐시 키가 고정돼도 통과해 버린다).
+    const firstGraph = createOntologyGraph();
+    const secondGraph = {
+      nodes: [
+        { key: 'zoning:1', type: 'Zoning', name: '제1종일반주거', sourceChunkCount: 1, ontologyId: 2 },
+        { key: 'permit:1', type: 'Permit', name: '건축허가', sourceChunkCount: 1, ontologyId: 2 },
+        { key: 'permit:2', type: 'Permit', name: '사용승인', sourceChunkCount: 1, ontologyId: 2 },
+      ],
+      edges: [],
+    };
+    const { requestedPaths } = await mockOntologyGraph(page, (pathname) =>
+      pathname === '/api/v1/ontology/2/graph' ? secondGraph : firstGraph,
+    );
     await mockApi(page, 'GET', '/api/v1/ontology/1', createOntologySchema());
     await mockApi(page, 'GET', '/api/v1/ontology/2', secondOntologySchema);
-    await mockApi(page, 'GET', '/api/v1/ontology/graph', graph);
     // createOntologySummaries() 기본값 — id=1(active, 기본) + id=2(active, 기본 아님).
     await mockApi(page, 'GET', '/api/v1/ontologies', createOntologySummaries());
     await page.goto('/knowledge-graph/explore');
 
-    // 기본 선택(첫 active 온톨로지, id=1) 기준 6타입 + 모킹 그래프 전체 7노드(id=1 6개 + 레거시 1개).
+    // 기본 선택(첫 active 온톨로지, id=1) 기준 6타입 + id=1 경로로 받은 그래프.
     const typeList = page.getByTestId('type-filter-list');
     await expect(typeList.getByRole('button')).toHaveCount(6);
-    await expectNodeCount(page, graph.nodes.length);
+    await expectNodeCount(page, firstGraph.nodes.length);
+    expect(requestedPaths).toEqual(['/api/v1/ontology/1/graph']);
 
     // 온톨로지 선택기는 그래프 탐색 탭에도 노출된다 — 지식 모델 탭 전용이 아니다.
     await page.getByRole('combobox', { name: '온톨로지 선택' }).click();
@@ -636,9 +656,90 @@ test.describe('지식그래프 시각화 페이지', () => {
     await expect(typeList.getByRole('button', { name: /^Zoning/ })).toBeVisible();
     await expect(typeList.getByRole('button', { name: /^Permit/ })).toBeVisible();
     await expect(typeList.getByRole('button', { name: /^Incident/ })).toHaveCount(0);
-    // 캔버스도 함께 좁혀진다 — id=2 소속 노드가 없으므로 ontologyId=null(레거시) 노드 1개만 남는다.
-    const legacyNodeCount = graph.nodes.filter((n) => n.ontologyId == null).length;
-    await expectNodeCount(page, legacyNodeCount);
+    // 캔버스는 id=2 경로로 새로 받아온 그래프(3노드)를 그린다 — 이전 그래프를 걸러낸 결과가 아니다.
+    await expectNodeCount(page, secondGraph.nodes.length);
+    expect(requestedPaths).toContain('/api/v1/ontology/2/graph');
+  });
+
+  // 테넌트에 지식 모델이 하나도 없을 때. 예전에는 (1) 마운트 즉시 무스코프 전체 그래프를 조회하고
+  // (2) 선택된 온톨로지가 없으면(effectiveOntologyId == null) 클라이언트 필터를 통째로 건너뛰어,
+  // 다른 테넌트가 적재한 그래프가 그대로 캔버스에 렌더됐다. 지금은 조회 자체가 일어나지 않아야 한다.
+  //
+  // "요청이 0건"까지 단언하는 것이 이 테스트의 핵심이다 — 화면만 비우는 수정(빈 상태 렌더)으로는
+  // 크로스테넌트 페이로드가 여전히 브라우저까지 내려오고, DevTools/네트워크 탭에서 그대로 읽힌다.
+  test('지식 모델이 하나도 없으면 그래프를 조회하지 않고 빈 상태를 보여준다', async ({
+    authenticatedPage: page,
+  }) => {
+    // 실제로 호출되면 응답까지 주어(200) 화면이 그려지므로, 아래 빈 상태 단언과 요청 0건 단언이
+    // 서로를 보강한다. 매처가 id 자리를 숫자로 좁히지 않는 이유는 ONTOLOGY_GRAPH_PATH 주석 참고.
+    const { requestedPaths } = await mockOntologyGraph(page, createOntologyGraph());
+    await mockApi(page, 'GET', '/api/v1/ontologies', []); // 지식 모델 0개인 테넌트
+    await page.goto('/knowledge-graph/explore');
+
+    await expect(page.getByText('아직 지식 모델이 없습니다')).toBeVisible();
+    // 캔버스 자체가 렌더되지 않는다 — 빈 그래프를 그리는 것이 아니라 그릴 대상이 없는 상태다.
+    // (남의 그래프가 새어 들어와 노드가 그려지면 이 단언이 깨진다.)
+    await expect(page.getByTestId('instance-graph')).toHaveCount(0);
+    // 그래프 엔드포인트를 아예 부르지 않았다 — 고를 온톨로지가 없으면 물어보지도 않는다.
+    expect(requestedPaths).toEqual([]);
+  });
+
+  // "지식 모델 없음" 판정은 목록이 도착해서 실제로 비어 있을 때만 내려야 한다. 목록이 아직
+  // 오지 않았을 때도 effectiveOntologyId 는 null 이므로, 그 둘을 구분하지 않으면 매 첫 진입마다
+  // "없습니다"를 단정해 보였다가 뒤늦게 그래프로 바뀐다(잘못된 상태 깜빡임).
+  test('온톨로지 목록이 아직 도착하지 않은 동안에는 "지식 모델 없음"을 단정하지 않는다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupOntologyMocks(page);
+    // 목록 응답을 붙잡아 둔 채로 진입한다 — 이 구간이 "로딩 중"이다. 기본 모킹 뒤에 등록해
+    // 목록 라우트만 덮어쓴다(나중 라우트가 앞을 가린다).
+    let releaseList: (() => void) | null = null;
+    const listHeld = new Promise<void>((resolve) => {
+      releaseList = resolve;
+    });
+    await page.route(
+      (url) => url.pathname === '/api/v1/ontologies',
+      async (route) => {
+        await listHeld;
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(createOntologySummaries()),
+        });
+      },
+    );
+    await page.goto('/knowledge-graph/explore');
+
+    // 목록이 오기 전에는 로딩 스켈레톤이어야 한다. 여기서 "빈 상태 문구가 없다"(toHaveCount(0))로만
+    // 단언하면 렌더가 시작되기도 전에 통과해 버려 공허해진다 — 로딩 상태를 긍정으로 지목한다.
+    await expect(page.getByTestId('graph-loading')).toBeVisible();
+    await expect(page.getByText('아직 지식 모델이 없습니다')).toHaveCount(0);
+
+    // 목록을 풀어 주면 정상적으로 그래프가 그려진다.
+    releaseList!();
+    await expect(page.getByTestId('instance-graph')).toBeVisible();
+    await expect(page.getByText('아직 지식 모델이 없습니다')).toHaveCount(0);
+  });
+
+  // 목록 조회가 실패한 것도 "0개"와 구분해야 한다 — 구분하지 않으면 사용자가 "지식 모델이 없다"는
+  // 오답에 영구히 갇힌다(그래프 쿼리의 재시도 버튼은 그 쿼리가 실행조차 되지 않아 나타나지 않는다).
+  test('온톨로지 목록 조회가 실패하면 "없음"이 아니라 에러와 재시도를 보여준다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupOntologyMocks(page);
+    // 기본 모킹 뒤에 목록 라우트만 덮어쓴다 — 실패 후 성공 관용구는 픽스처 헬퍼가 갖고 있다.
+    await mockFailThenSucceed(page, '/api/v1/ontologies', {
+      errorBody: { message: '목록 조회 실패' },
+      okBody: createOntologySummaries(),
+    });
+    await page.goto('/knowledge-graph/explore');
+
+    await expect(page.getByText('지식 모델 목록을 불러오지 못했습니다.')).toBeVisible();
+    await expect(page.getByText('아직 지식 모델이 없습니다')).toHaveCount(0);
+
+    // 재시도가 실제로 회복 경로다 — 누르면 목록이 로드되고 그래프가 그려진다.
+    await page.getByRole('button', { name: '다시 시도' }).click();
+    await expect(page.getByTestId('instance-graph')).toBeVisible();
   });
 
   // (#407) 빈 초안 온톨로지로 전환하면 좌측 타입 필터 패널도 진짜로 비어야 한다 — 예전에는
@@ -650,7 +751,7 @@ test.describe('지식그래프 시각화 페이지', () => {
     const emptySchema = createOntologySchema({ domain: '테스트', entities: [], relations: [] });
     await mockApi(page, 'GET', '/api/v1/ontology/1', createOntologySchema());
     await mockApi(page, 'GET', '/api/v1/ontology/2', emptySchema);
-    await mockApi(page, 'GET', '/api/v1/ontology/graph', createOntologyGraph());
+    await mockOntologyGraph(page, createOntologyGraph());
     await mockApi(page, 'GET', '/api/v1/ontologies', createOntologySummaries());
     await page.goto('/knowledge-graph/model');
 

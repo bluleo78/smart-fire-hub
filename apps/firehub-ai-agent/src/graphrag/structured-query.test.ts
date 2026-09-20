@@ -15,7 +15,7 @@ import { CORE_ONTOLOGY } from './ontology.js';
 
 describe('buildStructuredCypher', () => {
   it('number gt 술어를 백틱·파라미터로 조립', () => {
-    const r = buildStructuredCypher(CORE_ONTOLOGY, 'Incident',
+    const r = buildStructuredCypher(CORE_ONTOLOGY, 9, 'Incident',
       [{ property: '피해액', operator: 'gt', value: 100_000_000 }]);
     expect('cypher' in r).toBe(true);
     if ('cypher' in r) {
@@ -25,19 +25,32 @@ describe('buildStructuredCypher', () => {
     }
   });
 
+  // n.type 은 타입 "이름"이라 서로 다른 테넌트의 온톨로지가 같은 이름(Incident 등)을 쓰면 이름만으로는
+  // 구분되지 않는다 — Neo4j 에 RLS 가 없으므로 이 술어가 빠지면 흔한 타입명 하나로 남의 엔티티와
+  // properties(n) 가 그대로 읽힌다. 화이트리스트용 ontology 를 받아 놓고 조회는 전역으로 하던 형태의 가드.
+  it('ontologyId 술어로 스코프하고 INTEGER 로 바인딩한다', () => {
+    const r = buildStructuredCypher(CORE_ONTOLOGY, 9, 'Incident', []);
+    expect('cypher' in r).toBe(true);
+    if ('cypher' in r) {
+      expect(r.cypher).toContain('n.ontologyId = $ontologyId');
+      expect(neo4j.isInt(r.params.ontologyId)).toBe(true);
+      expect((r.params.ontologyId as { toNumber(): number }).toNumber()).toBe(9);
+    }
+  });
+
   it('온톨로지 미정의 속성은 거부(화이트리스트)', () => {
-    const r = buildStructuredCypher(CORE_ONTOLOGY, 'Incident',
+    const r = buildStructuredCypher(CORE_ONTOLOGY, 9, 'Incident',
       [{ property: '해킹', operator: 'gt', value: 1 }]);
     expect('error' in r).toBe(true);
   });
 
   it('미정의 엔티티 타입은 거부', () => {
-    const r = buildStructuredCypher(CORE_ONTOLOGY, 'Nope', []);
+    const r = buildStructuredCypher(CORE_ONTOLOGY, 9, 'Nope', []);
     expect('error' in r).toBe(true);
   });
 
   it('contains 연산자는 CONTAINS 로 매핑', () => {
-    const r = buildStructuredCypher(CORE_ONTOLOGY, 'Incident',
+    const r = buildStructuredCypher(CORE_ONTOLOGY, 9, 'Incident',
       [{ property: '피해액', operator: 'contains', value: '1억' }]);
     expect('cypher' in r).toBe(true);
     if ('cypher' in r) {
@@ -74,7 +87,7 @@ describe('structuredQuery', () => {
       ],
     });
 
-    const result = await structuredQuery(CORE_ONTOLOGY, 'Incident',
+    const result = await structuredQuery(CORE_ONTOLOGY, 9, 'Incident',
       [{ property: '피해액', operator: 'gt', value: 100_000_000 }]);
 
     expect(runMock).toHaveBeenCalledTimes(1);

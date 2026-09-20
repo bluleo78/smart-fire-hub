@@ -2,6 +2,7 @@ package com.smartfirehub.ontology;
 
 import static org.assertj.core.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -28,11 +29,17 @@ class OntologyServiceTest {
   private OntologyService service;
   private OntologyRepository repository;
 
+  // getGraph 테스트들이 공유하는 "내 테넌트 소유" 온톨로지 id.
+  private static final long OWNED_ONTOLOGY_ID = 7L;
+
   @BeforeEach
   void setUp() throws Exception {
     server = new MockWebServer();
     server.start();
     repository = mock(OntologyRepository.class);
+    // 기본값은 "존재함" — 소유권 거부를 검증하는 테스트만 자기 id로 false를 덮어쓴다
+    // (Mockito 는 나중에 지정한 구체 스텁이 이긴다).
+    when(repository.existsById(anyLong())).thenReturn(true);
     service =
         new OntologyService(
             server.url("/").toString(),
@@ -52,6 +59,7 @@ class OntologyServiceTest {
   // schemaVersion(5-4)은 두 노드로 있음/없음(레거시) 두 경로를 모두 확인한다.
   @Test
   void getGraph_는_노드와_엣지의_camelCase_필드를_정확히_역직렬화한다() {
+
     server.enqueue(
         new MockResponse()
             .setHeader("Content-Type", "application/json")
@@ -59,7 +67,7 @@ class OntologyServiceTest {
                 "{\"nodes\":[{\"key\":\"n1\",\"type\":\"Incident\",\"name\":\"화재\",\"sourceChunkCount\":3,\"schemaVersion\":2},"
                     + "{\"key\":\"n2\",\"type\":\"Cause\",\"name\":\"누전\",\"sourceChunkCount\":1}],"
                     + "\"edges\":[{\"subjectKey\":\"n1\",\"type\":\"CAUSED_BY\",\"objectKey\":\"n2\"}]}"));
-    GraphResponse res = service.getGraph();
+    GraphResponse res = service.getGraph(OWNED_ONTOLOGY_ID);
     assertThat(res.nodes().get(0).sourceChunkCount()).isEqualTo(3);
     assertThat(res.nodes().get(0).key()).isEqualTo("n1");
     assertThat(res.nodes().get(0).type()).isEqualTo("Incident");
@@ -77,6 +85,7 @@ class OntologyServiceTest {
   // 256KB를 확실히 넘는 응답도 정상 역직렬화되는지 검증한다.
   @Test
   void getGraph_는_256KB를_넘는_대용량_응답도_역직렬화한다() {
+
     StringBuilder nodes = new StringBuilder("{\"nodes\":[");
     // 이름만 한글 160자(UTF-8 480B)라 노드 1개당 약 570B × 2000개 ≈ 1.1MB — 기본 한도(262144B)를
     // 운영 그래프(약 1.5MB)와 비슷한 배율로 초과시킨다.
@@ -96,15 +105,45 @@ class OntologyServiceTest {
 
     server.enqueue(new MockResponse().setHeader("Content-Type", "application/json").setBody(body));
 
-    GraphResponse res = service.getGraph();
+    GraphResponse res = service.getGraph(OWNED_ONTOLOGY_ID);
 
     assertThat(res.nodes()).hasSize(2000);
   }
 
   @Test
   void getGraph_는_ai_agent_502를_예외로_전파한다() {
+
     server.enqueue(new MockResponse().setResponseCode(502).setBody("{\"error\":\"graph read failed\"}"));
-    assertThatThrownBy(() -> service.getGraph()).isInstanceOf(ExternalServiceException.class);
+    assertThatThrownBy(() -> service.getGraph(OWNED_ONTOLOGY_ID)).isInstanceOf(ExternalServiceException.class);
+  }
+
+  // 이 경로의 테넌트 경계 회귀 가드. Neo4j 에는 RLS 도 tenant_id 도 없어서, 남의 온톨로지 id 로
+  // 그래프를 읽을 수 있으면 그대로 크로스테넌트 열람이 된다. RLS 가 걸린 ontology 테이블에서
+  // 보이지 않는 id(= 다른 테넌트 것이거나 없는 것)는 ai-agent 를 호출하기도 전에 막혀야 한다 —
+  // 호출한 뒤 걸러내면 이미 남의 데이터를 읽은 뒤다.
+  @Test
+  void getGraph_는_내_테넌트에_없는_온톨로지_id면_ai_agent_를_호출하지_않고_거부한다() {
+    when(repository.existsById(999L)).thenReturn(false); // RLS 로 안 보임 == 없음
+
+    assertThatThrownBy(() -> service.getGraph(999L)).isInstanceOf(IllegalArgumentException.class);
+
+    assertThat(server.getRequestCount()).isZero();
+  }
+
+  // 위 거부 테스트만 있으면 "항상 거부"로 구현해도 통과한다 — 정상 경로에서 id 가 실제로 하위
+  // 호출까지 전달되는지(쿼리 파라미터)를 함께 못박아야 스코프가 비어 있지 않음이 증명된다.
+  @Test
+  void getGraph_는_ontologyId_를_ai_agent_쿼리파라미터로_전달한다() throws Exception {
+
+    server.enqueue(
+        new MockResponse()
+            .setHeader("Content-Type", "application/json")
+            .setBody("{\"nodes\":[],\"edges\":[]}"));
+
+    service.getGraph(42L);
+
+    var recorded = server.takeRequest();
+    assertThat(recorded.getPath()).isEqualTo("/agent/graph?ontologyId=42");
   }
 
   // 생성 검증(#305): 생성 경로도 동일한 validateCore를 타므로 null description을 400으로 거부한다.

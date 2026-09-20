@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import neo4j from 'neo4j-driver';
 import { getSession, bootstrapConstraints, closeDriver } from './neo4j-client.js';
 import { loadGraph } from './loader.js';
 import { entityKey } from './resolver.js';
@@ -35,7 +36,7 @@ describe('retrieve (integration)', () => {
     const deps = {
       searchDocuments: async () => [{ chunkId: 500, fileName: 'report-01.md', content: '중앙로 상가건물 화재...' }],
     };
-    const result = await retrieve(deps, '중앙로 상가건물 화재의 원인은?');
+    const result = await retrieve(deps, 9, '중앙로 상가건물 화재의 원인은?');
     const names = result.nodes.map((n) => n.name).sort();
     expect(names).toContain('2026-001');
     expect(names).toContain('전기적 요인'); // 1홉 확장으로 원인 도달
@@ -74,11 +75,48 @@ describe('retrieve (integration)', () => {
     const deps = {
       searchDocuments: async () => [{ chunkId: 600, fileName: 'report-02.md', content: '2026-002 화재...' }],
     };
-    const result = await retrieve(deps, '2026-002 화재는 어떤 규정을 위반했는가?');
+    const result = await retrieve(deps, 9, '2026-002 화재는 어떤 규정을 위반했는가?');
     const names = result.nodes.map((n) => n.name);
     expect(names).toContain('2026-002');
     expect(names).toContain('소방시설법 제12조'); // 허브 자체는 포함(직접 연결)
     // 허브를 거쳐야만 도달 가능한 무관 사건들은 제외되어야 한다.
     for (let i = 0; i < 10; i += 1) expect(names).not.toContain(`무관-${i}`);
+  });
+
+  // 크로스 온톨로지(=크로스 테넌트) 격리. 시드는 RLS 스코프된 문서검색에서 오므로 전이적으로는
+  // 안전했지만 확장은 무방비였다 — 정당한 시드 하나에서 1홉만 걸어도 다른 온톨로지의 노드로
+  // 넘어갈 수 있었다. 두 온톨로지를 실제로 이어 붙인 엣지를 심어야만 이 술어가 증명된다.
+  it('다른 온톨로지의 노드로는 확장하지 않는다(엣지가 이어져 있어도)', async () => {
+    const otherOntologyId = 900012;
+    const foreignKey = entityKey(causeId, '남의원인');
+    const s = getSession();
+    try {
+      // 여기서만 raw Cypher 를 쓴다(옆 structured-query 통합 테스트는 loadGraph 를 쓴다):
+      // loadGraph 는 `MERGE (n:Entity {key}) SET n.ontologyId = $ontologyId` 라 last-write-wins 다.
+      // 관계 끝점으로 시드(2026-001)를 포함시키면 그 시드가 900012 로 재스탬프돼 픽스처가 무너진다 —
+      // "두 온톨로지를 가로지르는 엣지"는 적재 경로로는 만들 수 없다.
+      // 내 시드(2026-001)와 **직접** 연결된 남의 온톨로지 노드. 1홉이면 닿는 거리다.
+      await s.run(
+        `MATCH (a:Entity {key: $seedKey})
+         CREATE (b:Entity {key: $foreignKey, type: 'Cause', name: '남의원인', ontologyId: $oid})
+         CREATE (a)-[:REL {type: 'CAUSED_BY'}]->(b)`,
+        {
+          seedKey: entityKey(incidentId, '2026-001'),
+          foreignKey,
+          oid: neo4j.int(otherOntologyId),
+        },
+      );
+    } finally { await s.close(); }
+
+    const deps = {
+      searchDocuments: async () => [{ chunkId: 500, fileName: 'report-01.md', content: '중앙로 상가건물 화재...' }],
+    };
+    const result = await retrieve(deps, 9, '중앙로 상가건물 화재의 원인은?');
+    const names = result.nodes.map((n) => n.name);
+
+    expect(names).toContain('전기적 요인'); // 내 온톨로지의 1홉 이웃은 그대로 도달
+    expect(names).not.toContain('남의원인'); // 같은 거리의 남의 노드는 제외
+    // 관계 목록으로도 새면 안 된다 — 노드를 걸러도 엣지가 남으면 남의 노드 이름이 노출된다.
+    expect(result.relations.some((r) => r.object === '남의원인' || r.subject === '남의원인')).toBe(false);
   });
 });

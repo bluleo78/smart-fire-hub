@@ -42,7 +42,7 @@ describe('readWholeGraph', () => {
         rec({ subjectKey: 'incident:a', type: 'OCCURRED_AT', objectKey: 'building:b' }),
       ] });
 
-    const g = await readWholeGraph();
+    const g = await readWholeGraph(5);
     expect(g.nodes).toHaveLength(3);
     expect(g.nodes[0]).toEqual({ key: 'incident:a', type: 'Incident', name: '화재A', sourceChunkCount: 3 });
     expect(g.nodes[2].sourceChunkCount).toBe(0); // 고립 노드도 포함
@@ -60,7 +60,7 @@ describe('readWholeGraph', () => {
       ] })
       .mockResolvedValueOnce({ records: [] });
 
-    const g = await readWholeGraph();
+    const g = await readWholeGraph(5);
     expect(g.nodes[0].schemaVersion).toBe(3);
     expect(g.nodes[1]).not.toHaveProperty('schemaVersion');
   });
@@ -75,7 +75,7 @@ describe('readWholeGraph', () => {
       ] })
       .mockResolvedValueOnce({ records: [] });
 
-    const g = await readWholeGraph();
+    const g = await readWholeGraph(5);
     expect(g.nodes[0].schemaVersion).toBe(1);
   });
 
@@ -89,9 +89,31 @@ describe('readWholeGraph', () => {
       ] })
       .mockResolvedValueOnce({ records: [] });
 
-    const g = await readWholeGraph();
+    const g = await readWholeGraph(5);
     expect(g.nodes[0].ontologyId).toBe(5);
     expect(g.nodes[1]).not.toHaveProperty('ontologyId');
+  });
+
+  // 테넌트 격리의 실질 경계 — Neo4j 는 단일 공유 DB 라 RLS 가 없고, 노드에 tenantId 도 없다.
+  // 유일하게 신뢰할 수 있는 스코프 축이 loader 가 스탬프하는 ontologyId 이고, 그 온톨로지가
+  // 요청자 테넌트 소유인지는 firehub-api 가 RLS 걸린 ontology 테이블로 이미 검증한다.
+  // 따라서 여기서 술어가 빠지면 그 위의 모든 검증이 무의미해진다 — 쿼리 자체를 단언한다.
+  it('노드·엣지 쿼리 모두 ontologyId 로 스코프하고 INTEGER 로 바인딩한다', async () => {
+    runMock.mockResolvedValue({ records: [] });
+
+    await readWholeGraph(7);
+
+    const [nodeCypher, nodeParams] = runMock.mock.calls[0];
+    expect(nodeCypher).toContain('n.ontologyId = $ontologyId');
+    const [edgeCypher, edgeParams] = runMock.mock.calls[1];
+    // 엣지는 양끝이 모두 스코프 안일 때만 — 한쪽만 걸면 남의 노드가 엣지를 타고 딸려 나온다.
+    expect(edgeCypher).toContain('a.ontologyId = $ontologyId');
+    expect(edgeCypher).toContain('b.ontologyId = $ontologyId');
+    // #308 과 같은 함정: plain number 를 넘기면 FLOAT 로 직렬화된다. 적재측이 neo4j.int() 로
+    // INTEGER 를 썼으므로 조회측도 INTEGER 여야 타입 의미가 어긋나지 않는다.
+    expect(neo4j.isInt(nodeParams.ontologyId)).toBe(true);
+    expect(nodeParams.ontologyId.toNumber()).toBe(7);
+    expect(neo4j.isInt(edgeParams.ontologyId)).toBe(true);
   });
 });
 

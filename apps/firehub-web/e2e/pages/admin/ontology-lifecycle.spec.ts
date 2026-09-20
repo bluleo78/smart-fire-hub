@@ -7,7 +7,7 @@ import {
   MAPPING_ONTOLOGY_ID,
 } from '../../factories/mapping.factory';
 import { createOntologyGraph, createOntologySchema } from '../../factories/ontology.factory';
-import { setupAdminAuth } from '../../fixtures/admin.fixture';
+import { mockOntologyGraph, setupAdminAuth } from '../../fixtures/admin.fixture';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 
@@ -16,7 +16,7 @@ test.describe('온톨로지 생명주기', () => {
   test.beforeEach(async ({ authenticatedPage: page }) => {
     await setupAdminAuth(page);
     await mockApi(page, 'GET', '/api/v1/ontology', createOntologySchema());
-    await mockApi(page, 'GET', '/api/v1/ontology/graph', createOntologyGraph());
+    await mockOntologyGraph(page, createOntologyGraph());
     await mockApi(page, 'GET', '/api/v1/ontologies', [
       ...createOntologySummaries(),
       createDraftOntologySummary(),

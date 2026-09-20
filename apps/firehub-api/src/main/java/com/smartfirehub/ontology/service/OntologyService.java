@@ -44,12 +44,13 @@ public class OntologyService {
     this.webClient =
         WebClient.builder()
             .baseUrl(agentUrl)
-            // 지식그래프(/agent/graph)는 전체 그래프를 페이지네이션 없이 한 번에 내려주므로 응답이
+            // 지식그래프(/agent/graph)는 한 온톨로지를 페이지네이션 없이 한 번에 내려주므로 응답이
             // 수 MB까지 커진다(운영 기준 노드 3천/엣지 7천 ≈ 1.5MB, 요소당 약 148B). WebClient 기본
             // 버퍼 한도는 256KB라 이 설정이 없으면 노드 1,400개 수준에서 이미 DataBufferLimitException
             // 으로 502가 났다. 다른 ai-agent 호출부(AiAgentProxyService 등)의 10MB보다 큰 32MB를 쓰는
-            // 이유는 그래프만 유일하게 전체 덤프라서다 — 노드 6만/엣지 16만 수준까지 여유를 둔다.
-            // 그 이상은 한도를 올려서 될 일이 아니다(전체 덤프 대신 스코프·페이지네이션이 필요하고,
+            // 이유는 그래프만 유일하게 통째로 내려오기 때문이다. 이제 온톨로지 스코프가 걸려 있으므로
+            // 기준은 "가장 큰 단일 온톨로지"다 — 한도는 할당이 아니라 상한이라 넉넉히 둬도 비용이 없고,
+            // 줄여서 얻을 것은 없다. 그 이상은 한도로 될 일이 아니다(페이지네이션이 필요하고,
             // 프론트 캔버스가 먼저 한계에 닿는다).
             .codecs(c -> c.defaultCodecs().maxInMemorySize(32 * 1024 * 1024))
             .defaultHeader("Authorization", "Internal " + internalToken)
@@ -318,10 +319,28 @@ public class OntologyService {
     }
   }
 
-  // 전체 지식그래프 — ai-agent GET /agent/graph 프록시(Neo4j). 실패는 ExternalServiceException(502)로 매핑.
-  public GraphResponse getGraph() {
+  // 한 온톨로지의 지식그래프 — ai-agent GET /agent/graph 프록시(Neo4j). 실패는 ExternalServiceException(502)로 매핑.
+  //
+  // 여기가 이 경로의 테넌트 경계다. Neo4j 는 전 테넌트 공유 단일 DB(RLS 없음, 노드에 tenant_id 없음)라
+  // 그래프 자체로는 소유권을 판정할 수 없다 — 대신 RLS 걸린 ontology 테이블(V102)로 "이 온톨로지가
+  // 내 테넌트 것인가"를 먼저 확인하고, 통과한 id 로만 Neo4j 를 좁힌다. 클라이언트가 준 id 를 검증 없이
+  // ai-agent 로 넘기면 남의 온톨로지 그래프를 그대로 읽는 IDOR 이 된다.
+  // (예전에는 인자 없는 전체 덤프를 받아 프론트가 화면에서만 걸렀다 — 크로스테넌트 페이로드가 네트워크로
+  //  내려갔고, 온톨로지가 없는 테넌트는 그 필터마저 건너뛰어 남의 그래프가 렌더됐다.)
+  public GraphResponse getGraph(long ontologyId) {
+    // 다른 테넌트의 온톨로지는 RLS 때문에 애초에 보이지 않아 "존재하지 않음"과 같은 응답이 된다 —
+    // 존재 여부로 남의 테넌트 구성을 떠보는 것(열거)도 함께 막힌다. 404 대신 400 인 것은 findById 와
+    // 동일한 기존 규약(전역 핸들러가 IllegalArgumentException → 400)을 따른 것이다.
+    if (!ontologyRepository.existsById(ontologyId)) {
+      throw new IllegalArgumentException("존재하지 않는 온톨로지입니다: " + ontologyId);
+    }
     try {
-      return webClient.get().uri("/agent/graph").retrieve().bodyToMono(GraphResponse.class).block(BLOCK_TIMEOUT);
+      return webClient
+          .get()
+          .uri(b -> b.path("/agent/graph").queryParam("ontologyId", ontologyId).build())
+          .retrieve()
+          .bodyToMono(GraphResponse.class)
+          .block(BLOCK_TIMEOUT);
     } catch (WebClientException e) {
       throw new ExternalServiceException("지식그래프 조회 중 ai-agent 호출 실패: " + e.getMessage(), e);
     }

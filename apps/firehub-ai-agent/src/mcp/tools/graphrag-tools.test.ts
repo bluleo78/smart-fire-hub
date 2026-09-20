@@ -19,12 +19,23 @@ vi.mock('../../graphrag/ontology-source.js', () => ({
     ontology: { domain: 'fire', schemaVersion: 1, entities: [], relations: [] },
     ontologyId: 42,
   }),
+  // id 기반 해소 — 읽기 도구(graphrag_query·structured_query)의 소유권 확인 겸 온톨로지 로딩.
+  // apiClient 를 실제와 같은 지점에서 호출한다: 그래야 "api 가 거부하면 Neo4j 를 조회하지 않는다"를
+  // 테스트가 apiClient 목만으로 조종할 수 있다. 역직렬화는 생략하고 응답을 그대로 흘린다 —
+  // vi.mock 팩토리는 호이스팅돼 모듈 import 를 참조할 수 없고, 이 테스트들이 보는 것은
+  // entities/relations 필드뿐이라 형태가 같다.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  resolveOntologyById: vi.fn(async (apiClient: any, ontologyId: number) => ({
+    ontology: await apiClient.getOntologyById(ontologyId),
+    ontologyId,
+  })),
 }));
 vi.mock('../../graphrag/neo4j-client.js', () => ({ bootstrapConstraints: vi.fn() }));
 vi.mock('../../graphrag/extractor.js', () => ({ extractGraph: vi.fn() }));
 vi.mock('../../graphrag/llm-completer.js', () => ({ createCompleter: vi.fn(() => vi.fn()) }));
 vi.mock('../../graphrag/loader.js', () => ({ loadGraph: vi.fn() }));
 
+import { retrieve } from '../../graphrag/retriever.js';
 import { registerGraphragTools } from './graphrag-tools.js';
 import { ingestDataset } from '../../graphrag/ingest.js';
 import { resolveDatasetOntology } from '../../graphrag/ontology-source.js';
@@ -87,19 +98,46 @@ describe('registerGraphragTools — credentials.model 전달', () => {
 });
 
 describe('graphrag_query 도구', () => {
+  // retrieve 목은 모듈 레벨이라 테스트 간 호출 기록이 누적된다 — "호출되지 않았다" 단언이
+  // 앞 테스트의 호출을 보고 실패한다. 구현(mockResolvedValue)은 clearAllMocks 로 지워지지 않는다.
+  beforeEach(() => vi.clearAllMocks());
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const jsonResult = ((data: any) => ({ content: [{ type: 'text', text: JSON.stringify(data) }] })) as unknown as JsonResultFn;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const safeTool = ((_n: string, _d: string, _s: any, handler: any) => ({ name: _n, handler })) as unknown as SafeToolFn;
+
   it('retrieve 결과를 jsonResult로 반환한다', async () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const jsonResult = ((data: any) => ({ content: [{ type: 'text', text: JSON.stringify(data) }] })) as unknown as JsonResultFn;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const safeTool = ((_n: string, _d: string, _s: any, handler: any) => ({ name: _n, handler })) as unknown as SafeToolFn;
-    const apiClient = { searchDocuments: vi.fn() } as unknown as FireHubApiClient;
+    const apiClient = {
+      searchDocuments: vi.fn(),
+      getOntologyById: vi.fn().mockResolvedValue({ domain: 'd', schemaVersion: 1, entities: [], relations: [] }),
+    } as unknown as FireHubApiClient;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const tools: any[] = registerGraphragTools(apiClient, safeTool, jsonResult);
     const query = tools.find((t) => t.name === 'graphrag_query');
-    const out = await query.handler({ query: '원인?' });
+    const out = await query.handler({ ontologyId: 9, query: '원인?' });
     const payload = JSON.parse(out.content[0].text);
     expect(payload.subgraph.nodes[0].name).toBe('X');
     expect(payload.sourceChunks[0].fileName).toBe('r.md');
+    // 스코프 인자가 실제로 retriever 까지 전달돼야 한다 — 도구가 ontologyId 를 받기만 하고
+    // 흘려버리면 Cypher 술어가 있어도 전역 조회가 된다.
+    expect(vi.mocked(retrieve)).toHaveBeenCalledWith(expect.anything(), 9, '원인?', expect.anything());
+  });
+
+  // 소유권 확인은 firehub-api 왕복(RLS)이 전담한다 — Neo4j 에는 RLS 가 없으므로 이 호출이
+  // 빠지면 남의 온톨로지 id 를 그대로 받아 그래프를 읽는 IDOR 이 된다. api 가 거부하면(남의 것
+  // 또는 없는 것) 그 예외가 그대로 올라가 Neo4j 를 조회조차 하지 않아야 한다.
+  it('온톨로지 소유권 확인에 실패하면 그래프를 조회하지 않는다', async () => {
+    const apiClient = {
+      searchDocuments: vi.fn(),
+      getOntologyById: vi.fn().mockRejectedValue(new Error('존재하지 않는 온톨로지입니다: 999')),
+    } as unknown as FireHubApiClient;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const tools: any[] = registerGraphragTools(apiClient, safeTool, jsonResult);
+    const query = tools.find((t) => t.name === 'graphrag_query');
+
+    await expect(query.handler({ ontologyId: 999, query: '원인?' })).rejects.toThrow('존재하지 않는 온톨로지');
+    expect(vi.mocked(retrieve)).not.toHaveBeenCalled();
   });
 });
 

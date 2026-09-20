@@ -2,7 +2,7 @@ import type { EntityTypeDef } from '@/types/ontology';
 
 import { createOntologySummaries } from '../../factories/mapping.factory';
 import { createOntologyGraph, createOntologySchema } from '../../factories/ontology.factory';
-import { setupAdminAuth } from '../../fixtures/admin.fixture';
+import { mockOntologyGraph, setupAdminAuth } from '../../fixtures/admin.fixture';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 
@@ -71,7 +71,7 @@ test.describe('#396 엔티티 타입 색상 — 데모 이름과 다른 온톨�
     await mockApi(page, 'GET', '/api/v1/ontology', createOntologySchema());
     await mockApi(page, 'GET', '/api/v1/ontology/1', createOntologySchema());
     await mockApi(page, 'GET', '/api/v1/ontology/2', customSchema());
-    await mockApi(page, 'GET', '/api/v1/ontology/graph', createOntologyGraph());
+    await mockOntologyGraph(page, createOntologyGraph());
     await mockApi(page, 'GET', '/api/v1/ontologies', createOntologySummaries());
   });
 

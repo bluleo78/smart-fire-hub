@@ -5,9 +5,23 @@ import { ontologyApi } from '@/api/ontology';
 import { handleApiError } from '@/lib/api-error';
 import type { CreateOntologyRequest, OntologyStatus } from '@/types/ontology';
 
-// 전체 지식그래프.
-export const useOntologyGraph = () =>
-  useQuery({ queryKey: ['ontology', 'graph'], queryFn: () => ontologyApi.getGraph().then((r) => r.data) });
+/**
+ * 한 온톨로지의 인스턴스 그래프. 스코프는 서버가 잡는다(근거는 OntologyService.getGraph 참고).
+ *
+ * ontologyId 가 없으면 조회 자체를 하지 않는다(enabled) — 고를 온톨로지가 없으면 물어보지도 않는다.
+ * 쿼리 키에 id 를 넣는 것이 필수다: 키가 고정이면 온톨로지를 바꿔도 이전 온톨로지의 캐시가 그대로
+ * 재사용돼(react-query structural sharing) 화면이 조용히 옛 그래프를 보여준다.
+ *
+ * staleTime 은 형제 훅들과 같은 5분 — 전역 기본값(30초)을 쓰면 온톨로지를 왕복할 때마다 수 MB
+ * 페이로드를 배경 재조회한다. 이 응답이 셋 중 가장 크므로 오히려 더 길어야 할 자리다.
+ */
+export const useOntologyGraph = (ontologyId: number | null | undefined) =>
+  useQuery({
+    queryKey: ['ontology', 'graph', ontologyId],
+    queryFn: () => ontologyApi.getGraph(ontologyId as number).then((r) => r.data),
+    enabled: ontologyId != null,
+    staleTime: 5 * 60 * 1000,
+  });
 
 /**
  * 온톨로지 목록. status 미지정이면 서버 기본값(active만) — 바인딩 후보 용도다.
@@ -82,6 +96,9 @@ export function useDeleteOntology() {
     onSuccess: (_data, id) => {
       queryClient.invalidateQueries({ queryKey: ['ontologies'] });
       queryClient.removeQueries({ queryKey: ['ontology', id] });
+      // 그래프 캐시는 ['ontology', 'graph', id] 라 위 접두사에 걸리지 않는다 — 따로 지우지 않으면
+      // 삭제된 온톨로지의 수 MB 그래프가 gcTime 까지 메모리에 남는다.
+      queryClient.removeQueries({ queryKey: ['ontology', 'graph', id] });
     },
   });
 }

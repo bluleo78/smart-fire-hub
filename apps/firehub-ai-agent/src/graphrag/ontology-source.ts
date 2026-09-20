@@ -5,6 +5,26 @@ import type { FireHubApiClient } from '../mcp/api-client.js';
 import { Ontology, deserializeOntology } from './ontology.js';
 
 /**
+ * id 로 온톨로지를 해소한다 — **그리고 그것이 요청자 테넌트의 것인지 확인한다.**
+ *
+ * 이 왕복이 그래프 읽기 경로의 유일한 테넌트 경계다. Neo4j 는 전 테넌트가 공유하는 단일 DB 라
+ * RLS 가 없고 노드에 tenant_id 도 없으므로, "이 ontologyId 를 써도 되는가"는 RLS 가 걸린
+ * firehub-api 의 ontology 테이블만 답할 수 있다. api 클라이언트가 위임(delegation) 바인딩돼 있어
+ * 남의 온톨로지는 보이지 않고, 없는 것과 똑같이 예외가 된다 — 호출부는 그 예외를 잡지 말고
+ * 그대로 올려 Neo4j 를 조회조차 하지 않아야 한다.
+ *
+ * 소유권 확인만 필요한 호출부(graphrag_query)도 이 함수를 쓴다. `await getOntologyById(id)` 를
+ * 결과 버리고 호출하는 형태보다, 이름이 목적을 말하는 편이 다음 사람이 지우지 않는다.
+ */
+export async function resolveOntologyById(
+  apiClient: Pick<FireHubApiClient, 'getOntologyById'>,
+  ontologyId: number,
+): Promise<{ ontology: Ontology; ontologyId: number }> {
+  const ontology = deserializeOntology(await apiClient.getOntologyById(ontologyId));
+  return { ontology, ontologyId };
+}
+
+/**
  * 데이터셋에 바인딩된 온톨로지를 해소한다.
  *
  * 바인딩 조회 자체가 실패하면(네트워크 오류 등) 그대로 전파한다 — 조용히 진행하면 어떤 온톨로지로
@@ -22,6 +42,5 @@ export async function resolveDatasetOntology(
         + '먼저 온톨로지를 연결하세요(graphrag_bind_ontology 또는 데이터셋 상세 화면의 "온톨로지 연결").',
     );
   }
-  const ontology = deserializeOntology(await apiClient.getOntologyById(ontologyId));
-  return { ontology, ontologyId };
+  return resolveOntologyById(apiClient, ontologyId);
 }

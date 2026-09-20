@@ -13,7 +13,9 @@ export const ontologyApi = {
   // bare GET /ontology(id 없는 기본 온톨로지 조회)의 프론트 래퍼는 M-2(S2 최종 리뷰)로 제거했다 —
   // by-id 이관(useOntologyById) 이후 프론트 호출부가 하나도 남지 않았다. 백엔드 엔드포인트 자체는
   // ai-agent와 문서 파이프라인이 계속 쓰므로 건드리지 않는다.
-  getGraph: () => client.get<GraphData>('/ontology/graph'),
+  // 한 온톨로지에 적재된 인스턴스 그래프. id 는 필수다 — 무스코프 GET /ontology/graph 는 제거됐다:
+  // Neo4j 에는 RLS 가 없어 전체를 내려주면 다른 테넌트의 그래프까지 응답에 실려 나갔다.
+  getGraph: (ontologyId: number) => client.get<GraphData>(`/ontology/${ontologyId}/graph`),
   // 목록. status 미지정 시 서버 기본값(active만)이 적용된다. 관리 화면은 'all'을 넘긴다.
   listOntologies: (status?: OntologyStatus | 'all') =>
     client.get<OntologySummary[]>('/ontologies', { params: status ? { status } : undefined }),
