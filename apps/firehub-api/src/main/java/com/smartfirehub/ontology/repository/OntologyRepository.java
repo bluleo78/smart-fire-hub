@@ -6,6 +6,7 @@ import com.smartfirehub.ontology.dto.CreateOntologyRequest;
 import com.smartfirehub.ontology.dto.OntologyResponse;
 import com.smartfirehub.ontology.dto.OntologySummary;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -93,23 +94,30 @@ public class OntologyRepository {
     String domain = head.get(O_DOMAIN);
     int schemaVersion = head.get(O_SCHEMA_VERSION);
 
+    // 이 온톨로지에 속한 모든 엔티티 타입의 프로퍼티를 한 번에 읽어 타입 id별로 묶는다.
+    // 예전에는 타입 하나당 한 번씩 조회하는 N+1이었다 — ai-agent가 매 턴 이 응답을 여러 번 가져가므로
+    // 타입이 수십 개인 온톨로지에서는 왕복 비용이 그대로 응답 지연이 됐다.
+    // 정렬은 (타입, sort_order)로 걸어, 순차 적재만으로 타입별 순서가 기존과 동일하게 보존된다.
+    Map<Long, List<OntologyResponse.Property>> propsByTypeId = new HashMap<>();
+    dsl.select(EP_TYPE_ID, EP_NAME, EP_DESC, EP_DTYPE, EP_UNIT, EP_ID)
+        .from(ENTITY_PROP)
+        .where(EP_TYPE_ID.in(
+            dsl.select(ET_ID).from(ENTITY_TYPE).where(ET_ONTOLOGY_ID.eq(ontologyId))))
+        .orderBy(EP_TYPE_ID, EP_ORDER)
+        .forEach(pr -> propsByTypeId
+            .computeIfAbsent(pr.get(EP_TYPE_ID), k -> new ArrayList<>())
+            .add(new OntologyResponse.Property(
+                pr.get(EP_NAME), pr.get(EP_DESC), pr.get(EP_DTYPE), pr.get(EP_UNIT), pr.get(EP_ID))));
+
     List<OntologyResponse.EntityType> entities =
         dsl.select(ET_ID, ET_TYPE, ET_DESC, ET_NAMING, ET_RES)
             .from(ENTITY_TYPE)
             .where(ET_ONTOLOGY_ID.eq(ontologyId)) // ← 다중 온톨로지: 자기 타입만
             .orderBy(ET_ORDER)
-            .fetch(r -> {
-              // 각 엔티티 타입의 데이터 프로퍼티를 sort_order 순으로 조회한다.
-              List<OntologyResponse.Property> props =
-                  dsl.select(EP_NAME, EP_DESC, EP_DTYPE, EP_UNIT, EP_ID)
-                      .from(ENTITY_PROP)
-                      .where(EP_TYPE_ID.eq(r.get(ET_ID)))
-                      .orderBy(EP_ORDER)
-                      .fetch(p -> new OntologyResponse.Property(
-                          p.get(EP_NAME), p.get(EP_DESC), p.get(EP_DTYPE), p.get(EP_UNIT), p.get(EP_ID)));
-              return new OntologyResponse.EntityType(
-                  r.get(ET_TYPE), r.get(ET_DESC), r.get(ET_NAMING), r.get(ET_RES), props, r.get(ET_ID));
-            });
+            .fetch(r -> new OntologyResponse.EntityType(
+                r.get(ET_TYPE), r.get(ET_DESC), r.get(ET_NAMING), r.get(ET_RES),
+                // 프로퍼티가 하나도 없는 타입도 빈 목록이어야 한다(기존 계약 — null 아님).
+                propsByTypeId.getOrDefault(r.get(ET_ID), List.of()), r.get(ET_ID)));
 
     // V80 이후 관계는 타입 id를 들고 있다. 읽기 계약(OntologyResponse.Triple)은 이름을 유지해야 하므로
     // 위에서 이미 조회한 entities로 id→이름 맵을 만들어 되붙인다. 셀프 조인 2회보다 싸고 읽기 쉽다.

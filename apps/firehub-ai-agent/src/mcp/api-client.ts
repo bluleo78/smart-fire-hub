@@ -71,8 +71,16 @@ export type { DatasetSearchHit };
 export type { ChunkContent };
 export type { ObjectItem, ObjectListResponse, PresignedUrlResponse };
 
+/**
+ * getOntologyById 캐시 수명. 한 에이전트 턴(수 초~수십 초)을 덮되, UI에서 온톨로지를 고친 뒤
+ * 다음 턴에는 반드시 새 값을 보도록 짧게 잡는다.
+ */
+const ONTOLOGY_CACHE_TTL_MS = 30_000;
+
 export class FireHubApiClient {
   private client: AxiosInstance;
+  /** id → 진행 중이거나 방금 끝난 온톨로지 조회. 인스턴스 단위(=테넌트 단위) — getOntologyById 주석 참고. */
+  private ontologyCache = new Map<number, { at: number; promise: Promise<SerializedOntology> }>();
   private _categories: ReturnType<typeof createCategoryApi>;
   private _datasets: ReturnType<typeof createDatasetApi>;
   private _data: ReturnType<typeof createDataApi>;
@@ -620,10 +628,39 @@ export class FireHubApiClient {
     return data;
   }
 
-  /** 표 투영용 — 특정 온톨로지를 id로 조회한다(GET /api/v1/ontology/{id}). */
+  /**
+   * 특정 온톨로지를 id로 조회한다(GET /api/v1/ontology/{id}).
+   *
+   * 한 에이전트 턴에서 이 조회는 여러 번 일어난다 — 그래프 읽기/구조질의/적재 도구가 각자
+   * 온톨로지를 해소하고, 그 해소 자체가 테넌트 소유권 확인(RLS 경계)을 겸하기 때문이다.
+   * 같은 id를 짧은 창 안에서 다시 물을 때는 진행 중인 약속(Promise)을 그대로 돌려준다:
+   * 결과가 아니라 Promise를 캐시해야 동시 호출까지 한 번의 왕복으로 합쳐진다.
+   *
+   * TTL이 필요한 이유: 이 클라이언트 인스턴스는 채팅 경로에서는 턴 단위로 새로 만들어지지만,
+   * stdio MCP 서버에서는 프로세스 수명만큼 산다. 무기한 캐시하면 사용자가 UI에서 온톨로지를
+   * 고친 뒤에도 에이전트가 낡은 스키마를 계속 본다.
+   *
+   * 테넌트 격리: 캐시는 인스턴스 단위이고 인스턴스는 (userId, tenantId)에 고정 바인딩돼 있다
+   * (생성자 참고). 따라서 캐시 적중이 남의 테넌트 응답을 돌려줄 수 없다 — 모듈 단위 캐시로
+   * 옮기면 그 순간 크로스테넌트 캐시가 되므로 절대 끌어올리지 말 것.
+   */
   async getOntologyById(id: number): Promise<SerializedOntology> {
-    const { data } = await this.client.get<SerializedOntology>(`/ontology/${id}`);
-    return data;
+    const cached = this.ontologyCache.get(id);
+    if (cached) {
+      if (Date.now() - cached.at < ONTOLOGY_CACHE_TTL_MS) return cached.promise;
+      // 만료된 엔트리는 즉시 버린다 — 여기서 지우지 않으면 한 번 조회하고 다시 묻지 않은 id 가
+      // 프로세스 수명 내내(stdio MCP 서버) 응답 본문을 붙들고 남는다.
+      this.ontologyCache.delete(id);
+    }
+    const promise = this.client
+      .get<SerializedOntology>(`/ontology/${id}`)
+      .then((r) => r.data);
+    // 실패는 캐시에 남기지 않는다 — 일시적 오류가 TTL 동안 고정되면 재시도가 무의미해진다.
+    promise.catch(() => {
+      if (this.ontologyCache.get(id)?.promise === promise) this.ontologyCache.delete(id);
+    });
+    this.ontologyCache.set(id, { at: Date.now(), promise });
+    return promise;
   }
 
   /**

@@ -565,4 +565,58 @@ describe('FireHubApiClient', () => {
       expect((err as { response?: { status?: number } }).response?.status).toBe(404);
     });
   });
+
+  // 한 턴 안에서 여러 GraphRAG 도구가 같은 온톨로지를 각자 해소하는 탓에 이 조회는 반복된다.
+  // 반복 왕복을 없애되, 인스턴스(= 고정된 userId/tenantId) 밖으로는 절대 새지 않아야 한다.
+  describe('getOntologyById 메모이제이션', () => {
+    const ontology = { domain: 'fire', schemaVersion: 1, entities: [], relations: [] };
+
+    it('같은 id 를 다시 물으면 HTTP 왕복을 반복하지 않는다', async () => {
+      const scope = nock(BASE_URL).get('/ontology/5').once().reply(200, ontology);
+
+      const first = await client.getOntologyById(5);
+      const second = await client.getOntologyById(5);
+
+      expect(second).toEqual(first);
+      expect(scope.isDone()).toBe(true); // 인터셉터가 정확히 한 번만 소비됐다 = 왕복 1회.
+    });
+
+    it('동시 호출도 한 번의 왕복으로 합쳐진다(결과가 아니라 Promise 를 캐시한다)', async () => {
+      const scope = nock(BASE_URL).get('/ontology/6').once().reply(200, ontology);
+
+      const [a, b] = await Promise.all([client.getOntologyById(6), client.getOntologyById(6)]);
+
+      expect(a).toEqual(b);
+      expect(scope.isDone()).toBe(true);
+    });
+
+    it('다른 id 는 따로 조회한다', async () => {
+      nock(BASE_URL).get('/ontology/7').once().reply(200, { ...ontology, domain: 'a' });
+      nock(BASE_URL).get('/ontology/8').once().reply(200, { ...ontology, domain: 'b' });
+
+      expect((await client.getOntologyById(7)).domain).toBe('a');
+      expect((await client.getOntologyById(8)).domain).toBe('b');
+    });
+
+    // 실패를 캐시에 남기면 일시적 오류가 TTL 동안 고정돼 재시도가 무의미해진다.
+    it('실패는 캐시하지 않는다 — 다음 호출이 다시 왕복한다', async () => {
+      nock(BASE_URL).get('/ontology/9').once().reply(500);
+      await expect(client.getOntologyById(9)).rejects.toThrow();
+
+      const retry = nock(BASE_URL).get('/ontology/9').once().reply(200, ontology);
+      await expect(client.getOntologyById(9)).resolves.toEqual(ontology);
+      expect(retry.isDone()).toBe(true);
+    });
+
+    // 캐시는 인스턴스 단위여야 한다 — 모듈 단위로 끌어올리는 순간 크로스테넌트 캐시가 된다.
+    it('다른 인스턴스는 캐시를 공유하지 않는다', async () => {
+      nock(BASE_URL).get('/ontology/10').once().reply(200, { ...ontology, domain: 'mine' });
+      await client.getOntologyById(10);
+
+      const other = new FireHubApiClient(BASE_URL, TOKEN, 99, 100);
+      const scope = nock(BASE_URL).get('/ontology/10').once().reply(200, { ...ontology, domain: 'theirs' });
+      expect((await other.getOntologyById(10)).domain).toBe('theirs');
+      expect(scope.isDone()).toBe(true); // 남의 인스턴스는 제 몫의 왕복을 했다.
+    });
+  });
 });
