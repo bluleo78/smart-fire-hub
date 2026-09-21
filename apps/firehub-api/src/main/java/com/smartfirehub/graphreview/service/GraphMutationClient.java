@@ -3,7 +3,7 @@ package com.smartfirehub.graphreview.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.exception.ExternalServiceException;
-import com.smartfirehub.global.security.InternalCallHeaders;
+import com.smartfirehub.global.security.DelegationHeaders;
 import com.smartfirehub.global.tenant.TenantContext;
 import java.time.Duration;
 import java.util.HashMap;
@@ -62,11 +62,22 @@ public class GraphMutationClient {
     postJson("/agent/graph/merge-entities", body, "엔티티 병합");
   }
 
-  /** ai-agent POST /agent/graph/set-property — 엔티티 노드 속성값을 정정 write(속성 정규화 승인). */
-  public void setProperty(String entityKey, String propertyName, String dataType, String value) {
-    post("/agent/graph/set-property",
-        Map.of("entityKey", entityKey, "propertyName", propertyName, "dataType", dataType, "value", value),
-        "엔티티 속성 갱신");
+  /**
+   * ai-agent POST /agent/graph/set-property — 엔티티 노드 속성값을 정정 write(속성 정규화 승인).
+   *
+   * <p>datasetId는 다른 세 메서드와 같은 이유로 필수지만 쓰임이 다르다: 여기서는 typeId 변환이 아니라
+   * <b>write 스코프</b>다. entityKey는 추측 가능한 문자열이고 Neo4j는 전 테넌트 공유 DB라, datasetId로
+   * 해소한 온톨로지 술어가 없으면 남의 그래프 노드를 덮어쓸 수 있다.
+   */
+  public void setProperty(String entityKey, String propertyName, String dataType, String value,
+      Long datasetId) {
+    Map<String, Object> body = new HashMap<>();
+    body.put("entityKey", entityKey);
+    body.put("propertyName", propertyName);
+    body.put("dataType", dataType);
+    body.put("value", value);
+    body.put("datasetId", datasetId);
+    postJson("/agent/graph/set-property", body, "엔티티 속성 갱신");
   }
 
   /** add-entity 요청의 보류 관계 참조. */
@@ -104,46 +115,6 @@ public class GraphMutationClient {
     postJson("/agent/graph/add-relation", body, "관계 적재");
   }
 
-  private void post(String uri, Map<String, String> body, String opLabel) {
-    postJson(uri, body, opLabel);
-  }
-
-  /**
-   * ai-agent 가 이 요청을 처리하다 다시 api 를 역호출할 때(예: 온톨로지 조회) 쓸 <b>대행 주체</b>를
-   * 요청 컨텍스트에서 읽어 헤더로 만든다 — 승인 요청을 낸 사용자와 그가 보고 있던 테넌트다.
-   *
-   * <p>파라미터로 받지 않고 컨텍스트에서 읽는 이유: 두 값은 {@code JwtAuthenticationFilter} 가 이미
-   * 요청 단위로 세워 둔 앰비언트 상태다(테넌트는 RLS 가 이 방식에 의존한다). 네 개의 변형 메서드
-   * 시그니처에 같은 값을 다시 얹으면 그 상태를 이중으로 들고 다니게 된다.
-   *
-   * <p>컨텍스트가 비어 있으면 <b>호출하지 않고 즉시 실패한다</b>. ai-agent 는 대행 헤더가 없는 변형
-   * 요청을 400 으로 거부하므로 "헤더 없이 진행"은 완화가 아니라 확정된 실패이고, 그 실패는 원격
-   * 400 → 일반 문구로 퇴화해 원인이 ai-agent 로그에만 남는다. 여기서 끊으면 사유가 api 쪽에 남는다.
-   * 컨텍스트가 비는 것은 요청 경로 밖 호출(스케줄러·단위 테스트)뿐이다.
-   */
-  private HttpHeaders delegationHeaders(String opLabel) {
-    Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-    Long userId =
-        authentication != null && authentication.getPrincipal() instanceof Long id ? id : null;
-    Long tenantId = TenantContext.get();
-
-    if (userId == null || tenantId == null) {
-      log.error(
-          "[graph-mutation] {} 호출 중단 — 요청 컨텍스트에 대행 주체가 없다(userId={}, tenantId={}).",
-          opLabel,
-          userId,
-          tenantId);
-      throw new ExternalServiceException(
-          "승인 요청의 사용자·워크스페이스 정보를 확인할 수 없어 " + opLabel + "에 실패했습니다."
-              + " 다시 로그인한 뒤 시도해 주세요.");
-    }
-
-    HttpHeaders headers = new HttpHeaders();
-    headers.set(InternalCallHeaders.ON_BEHALF_OF, String.valueOf(userId));
-    headers.set(InternalCallHeaders.ON_BEHALF_OF_TENANT, String.valueOf(tenantId));
-    return headers;
-  }
-
   /**
    * 임의 JSON 바디 POST.
    *
@@ -158,7 +129,7 @@ public class GraphMutationClient {
   private void postJson(String uri, Object body, String opLabel) {
     // 원격 호출 전에 대행 주체를 확정한다 — 없으면 원격이 400 으로 거부할 것이 확정이므로,
     // 사유가 남는 쪽(여기)에서 끊는다.
-    HttpHeaders delegation = delegationHeaders(opLabel);
+    HttpHeaders delegation = DelegationHeaders.require(opLabel);
     try {
       webClient
           .post()

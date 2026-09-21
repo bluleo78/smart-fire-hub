@@ -1,4 +1,5 @@
 // rowToGraph / projectTableDataset 단위 테스트(Neo4j·API mock).
+import { VerifiedOntologyId } from './verified-ontology-id.js';
 import { describe, it, expect, vi } from 'vitest';
 import { rowToGraph, projectTableDataset } from './table-projection.js';
 import type { MappingSpec } from './table-projection.js';
@@ -45,7 +46,7 @@ describe('projectTableDataset', () => {
       1: { rows: [{ inc: 'B', bld: 'X', loss: '2' }], totalPages: 2 },
     };
     const deps = { fetchRows: vi.fn(async (_id: number, page: number) => pages[page]), load };
-    const summary = await projectTableDataset(deps, 900, CORE_ONTOLOGY, 5, mapping);
+    const summary = await projectTableDataset(deps, 900, CORE_ONTOLOGY, 5 as VerifiedOntologyId, mapping);
 
     expect(summary.rowCount).toBe(3);
     expect(summary.pageCount).toBe(2);
@@ -57,7 +58,7 @@ describe('projectTableDataset', () => {
   it('행이 없으면 load를 호출하지 않는다', async () => {
     const load = vi.fn().mockResolvedValue({ nodes: 0, relations: 0 });
     const deps = { fetchRows: vi.fn(async () => ({ rows: [], totalPages: 1 })), load };
-    const summary = await projectTableDataset(deps, 901, CORE_ONTOLOGY, 5, mapping);
+    const summary = await projectTableDataset(deps, 901, CORE_ONTOLOGY, 5 as VerifiedOntologyId, mapping);
     expect(summary.rowCount).toBe(0);
     expect(load).not.toHaveBeenCalled();
   });
@@ -69,7 +70,7 @@ describe('projectTableDataset', () => {
       fetchRows: vi.fn(async () => ({ rows: [{ inc: 'A', bld: 'X', loss: '1' }], totalPages: 1 })),
       load,
     };
-    await projectTableDataset(deps, 902, CORE_ONTOLOGY, 5, mapping);
+    await projectTableDataset(deps, 902, CORE_ONTOLOGY, 5 as VerifiedOntologyId, mapping);
     expect(load).toHaveBeenCalledWith(expect.anything(), 902, CORE_ONTOLOGY.schemaVersion, 5);
   });
 });

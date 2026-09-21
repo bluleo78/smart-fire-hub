@@ -2,6 +2,7 @@
 // ingest 시 보류돼 그래프에 없던 엔티티를 as-extracted 타입/이름으로 노드 MERGE하고,
 // 함께 보류됐던 관계는 "상대 끝점이 이미 존재할 때만" MERGE한다(양쪽 보류 관계는 마지막 승인 시 생성).
 // loader.ts와 동일한 예약키 방어·sourceChunkIds 누적 관용구를 재사용한다.
+import { VerifiedOntologyId, ontologyIdParam } from './verified-ontology-id.js';
 import neo4j from 'neo4j-driver';
 import { getSession } from './neo4j-client.js';
 import { RESERVED_NODE_KEYS } from './loader.js';
@@ -21,14 +22,14 @@ export interface AddEntityInput {
   relations: { relType: RelationType; direction: 'out' | 'in'; otherKey: string }[];
 }
 
-export async function addEntity(ontology: Ontology, ontologyId: number, input: AddEntityInput): Promise<void> {
+export async function addEntity(ontology: Ontology, ontologyId: VerifiedOntologyId, input: AddEntityInput): Promise<void> {
   const key = entityKey(entityTypeId(ontology, input.entityType), input.name);
   const props = sanitizeProperties(input.properties);
   // plain JS number를 그대로 바인딩하면 Cypher FLOAT로 저장돼 읽기측 Integer 가정이 깨진다(#308).
   // 노드/관계 쿼리 모두 이 값을 재사용하므로 한 번만 INTEGER로 감싼다.
   const schemaVersion = neo4j.int(ontology.schemaVersion);
   // ontologyId도 schemaVersion과 동일하게 last-write-wins로 스탬프한다(loader.ts와 동일 관용구, #678).
-  const ontologyIdInt = neo4j.int(ontologyId);
+  const ontologyIdInt = ontologyIdParam(ontologyId);
   const session = getSession();
   try {
     // 노드 MERGE(loader.ts 관용구) — 예약키 제거 속성 병합 + sourceChunkIds 누적(dedup).
@@ -40,13 +41,18 @@ export async function addEntity(ontology: Ontology, ontologyId: number, input: A
       { key, type: input.entityType, name: input.name, schemaVersion, ontologyId: ontologyIdInt, props, sourceChunkIds: input.sourceChunkIds },
     );
     // 보류 관계 — 상대 끝점 존재 시에만 MERGE(MATCH 미스면 자연 no-op). 양쪽 보류는 마지막 승인 때 생성.
+    // 상대 끝점(otherKey)에는 ontologyId 술어를 건다: otherKey 는 호출자가 준 문자열이라, 스코프가
+    // 없으면 남의 온톨로지 노드로 엣지를 그어 두 그래프를 이어붙일 수 있다(근거는 verified-ontology-id.ts).
+    // 내 노드(a=$key)는 바로 위에서 이 온톨로지로 MERGE 했으므로 술어가 불필요하다.
     for (const r of input.relations) {
       const query = r.direction === 'out'
         ? `MATCH (a:Entity {key: $key}), (b:Entity {key: $otherKey})
+           WHERE b.ontologyId = $ontologyId
            MERGE (a)-[x:REL {type: $relType}]->(b)
            SET x.schemaVersion = $schemaVersion, x.ontologyId = $ontologyId
            SET x.sourceChunkIds = coalesce(x.sourceChunkIds, []) + [c IN $sourceChunkIds WHERE NOT c IN coalesce(x.sourceChunkIds, [])]`
         : `MATCH (b:Entity {key: $otherKey}), (a:Entity {key: $key})
+           WHERE b.ontologyId = $ontologyId
            MERGE (b)-[x:REL {type: $relType}]->(a)
            SET x.schemaVersion = $schemaVersion, x.ontologyId = $ontologyId
            SET x.sourceChunkIds = coalesce(x.sourceChunkIds, []) + [c IN $sourceChunkIds WHERE NOT c IN coalesce(x.sourceChunkIds, [])]`;

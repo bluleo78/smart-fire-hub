@@ -1,7 +1,10 @@
 // loadTableGraph 단위 테스트 — Neo4j 세션을 모킹해 sourceDatasetIds MERGE 파라미터를 검증한다.
+import { VerifiedOntologyId } from './verified-ontology-id.js';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const runMock = vi.fn().mockResolvedValue({ records: [] });
+// 관계 MERGE 는 `RETURN count(x) AS merged` 로 실제 반영 건수를 돌려받는다(무음 유실 방지) —
+// 목도 집계 행을 내놓아야 한다. 값은 이 테스트들이 단언하지 않으므로 0 으로 충분하다.
+const runMock = vi.fn().mockResolvedValue({ records: [{ get: () => 0 }] });
 const closeMock = vi.fn().mockResolvedValue(undefined);
 
 vi.mock('./neo4j-client.js', () => ({
@@ -23,7 +26,7 @@ describe('loadTableGraph', () => {
       entities: [{ key: entityKey(incidentId, 'A'), type: 'Incident' as const, name: 'A' }],
       relations: [],
     };
-    await loadTableGraph(graph, 77, 3, 9);
+    await loadTableGraph(graph, 77, 3, 9 as VerifiedOntologyId);
 
     const [nodeCypher, nodeParams] = runMock.mock.calls[0];
     expect(nodeCypher).toContain('n.sourceDatasetIds');
@@ -42,7 +45,7 @@ describe('loadTableGraph', () => {
       ],
       relations: [{ subjectKey: '1:a', type: 'OCCURRED_AT' as const, objectKey: '2:b' }],
     };
-    await loadTableGraph(graph, 88, 1, 9);
+    await loadTableGraph(graph, 88, 1, 9 as VerifiedOntologyId);
     const [relCypher, relParams] = runMock.mock.calls[1];
     expect(relCypher).toContain('x.sourceDatasetIds');
     expect(relParams.datasetId).toBe(88);

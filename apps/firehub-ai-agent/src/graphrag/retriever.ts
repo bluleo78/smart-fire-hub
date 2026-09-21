@@ -13,6 +13,7 @@
 // 사건 중심 타입은 무조건 확장) OR degree < hubDegree(저차수 노드)"로 통일한다. 시드도 예외 없이
 // 이 규칙을 따른다 — 시드는 항상 결과에 "포함"되지만, 공유 Equipment/Regulation 시드는 고차수면
 // 더 이상 확장하지 않는 "종단(terminal)" 노드가 된다.
+import { VerifiedOntologyId } from './verified-ontology-id.js';
 import neo4j from 'neo4j-driver';
 import { getSession } from './neo4j-client.js';
 
@@ -140,7 +141,7 @@ export async function expandSubgraph(
  */
 export async function retrieve(
   deps: RetrieverDeps,
-  ontologyId: number,
+  ontologyId: VerifiedOntologyId,
   query: string,
   opts: RetrieveOptions = {},
 ): Promise<RetrievalResult> {
@@ -165,8 +166,8 @@ export async function retrieve(
     // degree 를 같은 스코프로 세는 이유는 누수 차단이 아니라 **정합성**이다(degree 는 호출자에게
     // 반환되지 않는다). fetchNeighbors 가 같은 온톨로지 엣지만 순회하므로 degree 도 같은 엣지
     // 집합을 세야 한다 — 전역으로 세면 남의 엣지가 내 노드를 hubDegree 위로 밀어 올려 종단으로
-    // 만들고, 내 서브그래프가 조용히 잘린다. 크로스 온톨로지 엣지는 실제로 만들어질 수 있다:
-    // relation-add 의 HITL 경로가 호출자가 준 key 로 MATCH 하고 ontologyId 를 보지 않는다.
+    // 만들고, 내 서브그래프가 조용히 잘린다. 쓰기 경로가 전부 스코프된 지금은 새 크로스 온톨로지
+    // 엣지가 생기지 않지만, 그 이전에 만들어진 엣지는 그래프에 남아 있을 수 있다.
     //
     // 성능 주의: `COUNT { (n)-[:REL]-() }` 는 노드 레코드의 degree 를 O(1) 로 읽지만, 여기처럼
     // 이웃 노드에 술어가 붙으면 확장 + 이웃 속성 읽기로 바뀌어 O(degree) 가 된다. 그래서 아래

@@ -1,4 +1,6 @@
 // synonym-merge 단위 테스트 — Neo4j 세션을 모킹해 keeper 판정과 Cypher 호출을 검증한다.
+import { VerifiedOntologyId } from './verified-ontology-id.js';
+import neo4j from 'neo4j-driver';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const runMock = vi.fn();
@@ -13,6 +15,12 @@ import { entityKey } from './resolver.js';
 import { pickCanonicalName } from './semantic-resolver.js';
 import { CORE_ONTOLOGY, entityTypeId } from './ontology.js';
 import { GraphTargetMissingError } from './graph-mutation-guard.js';
+
+// 테스트용 온톨로지 id — 모든 쓰기는 이 스코프 안에서만 일어나야 한다.
+const TEST_ONTOLOGY_ID = 9 as VerifiedOntologyId;
+// 쿼리 파라미터로 실리는 형태(INTEGER 바인딩, #308). 단언에서 재사용한다.
+const SCOPE = neo4j.int(TEST_ONTOLOGY_ID);
+
 
 // 5-6: entityKey는 typeId 기반 — CORE_ONTOLOGY의 고정 id를 조회해 사용한다.
 const causeId = entityTypeId(CORE_ONTOLOGY, 'Cause');
@@ -36,13 +44,16 @@ describe('mergeEntities', () => {
     // out/in 관계 조회는 빈 결과.
     runMock.mockResolvedValue({ records: [] });
 
-    await mergeEntities(CORE_ONTOLOGY, 'Cause', '누전', '분전반 누전');
+    await mergeEntities(CORE_ONTOLOGY, TEST_ONTOLOGY_ID, 'Cause', '누전', '분전반 누전');
 
     // keeper는 chunk 수가 아니라 canonical(가장 긴) 이름 — 여기서는 B(분전반 누전).
     const setCall = runMock.mock.calls.find(([cypher]) => cypher.includes('SET k.sourceChunkIds'));
+    // ontologyId 술어 바인딩까지 함께 단언한다 — 스코프가 빠지면 이 단언이 깨진다.
+    // keeper 는 스코프로 걸러낸 노드 조회 결과에서만 나오므로 SET 에는 술어가 없다(구성상 스코프 안).
     expect(setCall?.[1]).toEqual({ keeperKey: keyB, merged: [4, 1, 2, 3] });
     const deleteCall = runMock.mock.calls.find(([cypher]) => cypher.includes('DETACH DELETE'));
-    expect(deleteCall?.[1]).toEqual({ loserKey: keyA });
+    expect(deleteCall?.[0]).toContain('l.ontologyId = $ontologyId'); // 삭제는 반드시 스코프 안에서만.
+    expect(deleteCall?.[1]).toEqual({ loserKey: keyA, ontologyId: SCOPE });
   });
 
   it('둘 중 하나가 그래프에 없으면 병합하지 않고 실패를 던진다(#310 무음 유실 방지)', async () => {
@@ -52,7 +63,7 @@ describe('mergeEntities', () => {
     });
 
     // 예전에는 조용히 return해 호출측이 승인 성공으로 처리했고, 병합 결정이 유실됐다.
-    await expect(mergeEntities(CORE_ONTOLOGY, 'Cause', '전기적 요인', '분전반의 누전'))
+    await expect(mergeEntities(CORE_ONTOLOGY, TEST_ONTOLOGY_ID, 'Cause', '전기적 요인', '분전반의 누전'))
       .rejects.toThrow(GraphTargetMissingError);
 
     expect(runMock).toHaveBeenCalledTimes(1); // 노드 조회 1회만, 그래프 변경 호출 없음.
@@ -63,7 +74,7 @@ describe('mergeEntities', () => {
     runMock.mockResolvedValueOnce({ records: [{ get: (k: string) => (k === 'matched' ? 0 : undefined) }] });
 
     // 대소문자·공백만 다른 두 표기 → 정규화 후 같은 key.
-    await expect(mergeEntities(CORE_ONTOLOGY, 'Cause', '누전 ', '누전'))
+    await expect(mergeEntities(CORE_ONTOLOGY, TEST_ONTOLOGY_ID, 'Cause', '누전 ', '누전'))
       .rejects.toThrow(GraphTargetMissingError);
     expect(closeMock).toHaveBeenCalled(); // 조기 반환 경로도 세션을 닫아야 한다.
   });
@@ -71,7 +82,7 @@ describe('mergeEntities', () => {
   it('같은 키이고 노드가 존재하면 그래프를 건드리지 않고 성공한다(no-op 병합)', async () => {
     runMock.mockResolvedValueOnce({ records: [{ get: (k: string) => (k === 'matched' ? 1 : undefined) }] });
 
-    await expect(mergeEntities(CORE_ONTOLOGY, 'Cause', '누전 ', '누전')).resolves.toBeUndefined();
+    await expect(mergeEntities(CORE_ONTOLOGY, TEST_ONTOLOGY_ID, 'Cause', '누전 ', '누전')).resolves.toBeUndefined();
     expect(runMock).toHaveBeenCalledTimes(1); // 존재 확인 1회만 — 변경 쿼리 없음.
     expect(runMock.mock.calls[0][0]).toContain('RETURN count(n) AS matched');
   });
@@ -90,7 +101,7 @@ describe('mergeEntities', () => {
     });
     runMock.mockResolvedValue({ records: [] });
 
-    await mergeEntities(CORE_ONTOLOGY, 'Cause', nameA, nameB);
+    await mergeEntities(CORE_ONTOLOGY, TEST_ONTOLOGY_ID, 'Cause', nameA, nameB);
 
     const setCall = runMock.mock.calls.find(([cypher]) => cypher.includes('SET k.sourceChunkIds'));
     expect(setCall?.[1].keeperKey).toBe(expectedKeeper);
@@ -155,13 +166,17 @@ describe('mergeEntities', () => {
       return { records: [] };
     });
 
-    await mergeEntities(CORE_ONTOLOGY, 'Cause', '누전', '분전반 누전');
+    await mergeEntities(CORE_ONTOLOGY, TEST_ONTOLOGY_ID, 'Cause', '누전', '분전반 누전');
 
     const calls = runMock.mock.calls;
     const outMergeCall = calls.find(([cypher]) => cypher.includes('MERGE (k)-[x:REL {type: $type}]->(o)'));
-    expect(outMergeCall?.[1]).toEqual({ keeperKey: keyB, otherKey: otherOutKey, type: 'CAUSES', sourceChunkIds: [10, 20] });
+    expect(outMergeCall?.[1]).toEqual({
+      keeperKey: keyB, otherKey: otherOutKey, type: 'CAUSES', sourceChunkIds: [10, 20], ontologyId: SCOPE,
+    });
     const inMergeCall = calls.find(([cypher]) => cypher.includes('MERGE (o)-[x:REL {type: $type}]->(k)'));
-    expect(inMergeCall?.[1]).toEqual({ keeperKey: keyB, otherKey: otherInKey, type: 'TRIGGERS', sourceChunkIds: [30] });
+    expect(inMergeCall?.[1]).toEqual({
+      keeperKey: keyB, otherKey: otherInKey, type: 'TRIGGERS', sourceChunkIds: [30], ontologyId: SCOPE,
+    });
 
     // 자기참조(otherKey === keeperKey) 관계는 재배선 MERGE 호출을 유발하지 않아야 한다.
     const selfLoopMergeCall = calls.find(([cypher, params]) => cypher.includes('MERGE (k)-[x:REL') && params?.otherKey === keyB);
@@ -176,6 +191,6 @@ describe('mergeEntities', () => {
     expect(deleteIdx).toBeGreaterThan(inMergeIdx);
 
     const deleteCall = calls[deleteIdx];
-    expect(deleteCall[1]).toEqual({ loserKey: keyA });
+    expect(deleteCall[1]).toEqual({ loserKey: keyA, ontologyId: SCOPE });
   });
 });

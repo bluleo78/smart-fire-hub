@@ -1,4 +1,5 @@
 // structured-query 단위 테스트 — 순수 빌더(화이트리스트/파라미터 조립)와 실행 함수(Neo4j 세션 모킹)를 검증한다.
+import { VerifiedOntologyId } from './verified-ontology-id.js';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import neo4j from 'neo4j-driver';
 
@@ -15,7 +16,7 @@ import { CORE_ONTOLOGY } from './ontology.js';
 
 describe('buildStructuredCypher', () => {
   it('number gt 술어를 백틱·파라미터로 조립', () => {
-    const r = buildStructuredCypher(CORE_ONTOLOGY, 9, 'Incident',
+    const r = buildStructuredCypher(CORE_ONTOLOGY, 9 as VerifiedOntologyId, 'Incident',
       [{ property: '피해액', operator: 'gt', value: 100_000_000 }]);
     expect('cypher' in r).toBe(true);
     if ('cypher' in r) {
@@ -29,7 +30,7 @@ describe('buildStructuredCypher', () => {
   // 구분되지 않는다 — Neo4j 에 RLS 가 없으므로 이 술어가 빠지면 흔한 타입명 하나로 남의 엔티티와
   // properties(n) 가 그대로 읽힌다. 화이트리스트용 ontology 를 받아 놓고 조회는 전역으로 하던 형태의 가드.
   it('ontologyId 술어로 스코프하고 INTEGER 로 바인딩한다', () => {
-    const r = buildStructuredCypher(CORE_ONTOLOGY, 9, 'Incident', []);
+    const r = buildStructuredCypher(CORE_ONTOLOGY, 9 as VerifiedOntologyId, 'Incident', []);
     expect('cypher' in r).toBe(true);
     if ('cypher' in r) {
       expect(r.cypher).toContain('n.ontologyId = $ontologyId');
@@ -39,18 +40,18 @@ describe('buildStructuredCypher', () => {
   });
 
   it('온톨로지 미정의 속성은 거부(화이트리스트)', () => {
-    const r = buildStructuredCypher(CORE_ONTOLOGY, 9, 'Incident',
+    const r = buildStructuredCypher(CORE_ONTOLOGY, 9 as VerifiedOntologyId, 'Incident',
       [{ property: '해킹', operator: 'gt', value: 1 }]);
     expect('error' in r).toBe(true);
   });
 
   it('미정의 엔티티 타입은 거부', () => {
-    const r = buildStructuredCypher(CORE_ONTOLOGY, 9, 'Nope', []);
+    const r = buildStructuredCypher(CORE_ONTOLOGY, 9 as VerifiedOntologyId, 'Nope', []);
     expect('error' in r).toBe(true);
   });
 
   it('contains 연산자는 CONTAINS 로 매핑', () => {
-    const r = buildStructuredCypher(CORE_ONTOLOGY, 9, 'Incident',
+    const r = buildStructuredCypher(CORE_ONTOLOGY, 9 as VerifiedOntologyId, 'Incident',
       [{ property: '피해액', operator: 'contains', value: '1억' }]);
     expect('cypher' in r).toBe(true);
     if ('cypher' in r) {
@@ -87,7 +88,7 @@ describe('structuredQuery', () => {
       ],
     });
 
-    const result = await structuredQuery(CORE_ONTOLOGY, 9, 'Incident',
+    const result = await structuredQuery(CORE_ONTOLOGY, 9 as VerifiedOntologyId, 'Incident',
       [{ property: '피해액', operator: 'gt', value: 100_000_000 }]);
 
     expect(runMock).toHaveBeenCalledTimes(1);

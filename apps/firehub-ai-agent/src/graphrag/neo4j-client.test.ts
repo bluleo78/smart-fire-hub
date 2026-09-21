@@ -1,3 +1,4 @@
+import { VerifiedOntologyId } from './verified-ontology-id.js';
 import { describe, it, expect, vi, afterEach } from 'vitest';
 
 // 주의: './neo4j-client' 자체를 부분 목킹(vi.mock + importOriginal)하면
@@ -42,7 +43,7 @@ describe('readWholeGraph', () => {
         rec({ subjectKey: 'incident:a', type: 'OCCURRED_AT', objectKey: 'building:b' }),
       ] });
 
-    const g = await readWholeGraph(5);
+    const g = await readWholeGraph(5 as VerifiedOntologyId);
     expect(g.nodes).toHaveLength(3);
     expect(g.nodes[0]).toEqual({ key: 'incident:a', type: 'Incident', name: '화재A', sourceChunkCount: 3 });
     expect(g.nodes[2].sourceChunkCount).toBe(0); // 고립 노드도 포함
@@ -60,7 +61,7 @@ describe('readWholeGraph', () => {
       ] })
       .mockResolvedValueOnce({ records: [] });
 
-    const g = await readWholeGraph(5);
+    const g = await readWholeGraph(5 as VerifiedOntologyId);
     expect(g.nodes[0].schemaVersion).toBe(3);
     expect(g.nodes[1]).not.toHaveProperty('schemaVersion');
   });
@@ -75,7 +76,7 @@ describe('readWholeGraph', () => {
       ] })
       .mockResolvedValueOnce({ records: [] });
 
-    const g = await readWholeGraph(5);
+    const g = await readWholeGraph(5 as VerifiedOntologyId);
     expect(g.nodes[0].schemaVersion).toBe(1);
   });
 
@@ -89,7 +90,7 @@ describe('readWholeGraph', () => {
       ] })
       .mockResolvedValueOnce({ records: [] });
 
-    const g = await readWholeGraph(5);
+    const g = await readWholeGraph(5 as VerifiedOntologyId);
     expect(g.nodes[0].ontologyId).toBe(5);
     expect(g.nodes[1]).not.toHaveProperty('ontologyId');
   });
@@ -101,7 +102,7 @@ describe('readWholeGraph', () => {
   it('노드·엣지 쿼리 모두 ontologyId 로 스코프하고 INTEGER 로 바인딩한다', async () => {
     runMock.mockResolvedValue({ records: [] });
 
-    await readWholeGraph(7);
+    await readWholeGraph(7 as VerifiedOntologyId);
 
     const [nodeCypher, nodeParams] = runMock.mock.calls[0];
     expect(nodeCypher).toContain('n.ontologyId = $ontologyId');

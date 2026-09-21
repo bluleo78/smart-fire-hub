@@ -1,7 +1,10 @@
 // ResolvedGraph를 Neo4j에 MERGE로 멱등 적재한다.
 // 모델: (:Entity {key,type,name,sourceChunkIds|sourceDatasetIds,schemaVersion})-[:REL {type,...}]->(:Entity)
 // 문서 파이프라인(loadGraph)은 provenance=sourceChunkIds, 표 투영(loadTableGraph)은 sourceDatasetIds.
+import { VerifiedOntologyId } from './verified-ontology-id.js';
 import neo4j from 'neo4j-driver';
+import { affectedCount } from './graph-mutation-guard.js';
+import { ontologyIdParam } from './verified-ontology-id.js';
 import { getSession } from './neo4j-client.js';
 import { ResolvedGraph } from './resolver.js';
 
@@ -33,7 +36,7 @@ async function mergeGraph(
   provParam: 'chunkId' | 'datasetId',
   provValue: number,
   schemaVersion: number,
-  ontologyId: number,
+  ontologyId: VerifiedOntologyId,
 ): Promise<{ nodes: number; relations: number }> {
   const session = getSession();
   try {
@@ -48,8 +51,8 @@ async function mergeGraph(
     const schemaVersionInt = neo4j.int(schemaVersion);
     // ontologyId도 schemaVersion과 동일하게 last-write-wins로 스탬프한다 — schema_version은
     // 온톨로지마다 독립적으로 매겨지는 숫자라, 어느 온톨로지의 버전인지 함께 남기지 않으면
-    // "구버전" 판정 자체가 불가능하다(#678).
-    const ontologyIdInt = neo4j.int(ontologyId);
+    // "구버전" 판정 자체가 불가능하다(#678). INTEGER 바인딩 근거는 ontologyIdParam 참고(#308).
+    const ontologyIdInt = ontologyIdParam(ontologyId);
     await session.run(
       `UNWIND $entities AS e
        MERGE (n:Entity {key: e.key})
@@ -61,32 +64,41 @@ async function mergeGraph(
       { entities, [provParam]: provValue, schemaVersion: schemaVersionInt, ontologyId: ontologyIdInt },
     );
     // 관계 MERGE — (subjectKey)-[:REL {type}]->(objectKey). provenance(provField) 동일 누적.
+    // 양 끝점에 ontologyId 술어를 건다: 이 배치에 함께 실린 노드는 바로 위에서 이 온톨로지로 스탬프됐으니
+    // 무해하고, **배치에 없는 키**(다른 온톨로지의 기존 노드)로 엣지를 긋는 것만 막힌다. 그렇게 생긴
+    // 크로스 온톨로지 엣지는 읽기측 양끝점 술어를 통과하지 못해 조용히 사라지는 엣지가 된다.
     // schemaVersion은 저장만 하고 읽기 API(GraphEdge)에는 노출하지 않는다(소비자 생기면 노출 — 노드측
     // 소비자(NodeDetailDrawer)만 우선 구현).
-    await session.run(
+    const relResult = await session.run(
       `UNWIND $rels AS r
        MATCH (a:Entity {key: r.subjectKey}), (b:Entity {key: r.objectKey})
+       WHERE a.ontologyId = $ontologyId AND b.ontologyId = $ontologyId
        MERGE (a)-[x:REL {type: r.type}]->(b)
        SET x.schemaVersion = $schemaVersion, x.ontologyId = $ontologyId
        SET x.${provField} =
          CASE WHEN $${provParam} IN coalesce(x.${provField}, [])
-              THEN x.${provField} ELSE coalesce(x.${provField}, []) + $${provParam} END`,
+              THEN x.${provField} ELSE coalesce(x.${provField}, []) + $${provParam} END
+       RETURN count(x) AS merged`,
       { rels: graph.relations, [provParam]: provValue, schemaVersion: schemaVersionInt, ontologyId: ontologyIdInt },
     );
-    return { nodes: graph.entities.length, relations: graph.relations.length };
+    // 요청한 건수가 아니라 **실제로 MERGE 된 건수**를 돌려준다. 끝점이 없거나(적재 순서) 다른
+    // 온톨로지 소속이면 위 MATCH 가 그 행을 버리는데, 예전처럼 graph.relations.length 를 그대로
+    // 보고하면 적재 요약이 "다 들어갔다"고 거짓말한다 — #310 이 다른 모든 변형 경로에서 막은
+    // 무음 유실이 적재 경로에만 남아 있던 셈이다. 차이가 나면 호출부 요약에 그대로 드러난다.
+    return { nodes: graph.entities.length, relations: affectedCount(relResult, 'merged') };
   } finally { await session.close(); }
 }
 
 // 문서 청크 → 그래프 적재(provenance=sourceChunkIds). 방출 Cypher·파라미터는 리팩터 전과 동일.
 export async function loadGraph(
-  graph: ResolvedGraph, sourceChunkId: number, schemaVersion: number, ontologyId: number,
+  graph: ResolvedGraph, sourceChunkId: number, schemaVersion: number, ontologyId: VerifiedOntologyId,
 ): Promise<{ nodes: number; relations: number }> {
   return mergeGraph(graph, 'sourceChunkIds', 'chunkId', sourceChunkId, schemaVersion, ontologyId);
 }
 
 // 표 행 → 그래프 결정적 투영(provenance=sourceDatasetIds). 문서 경로와 동일 exact-key MERGE.
 export async function loadTableGraph(
-  graph: ResolvedGraph, datasetId: number, schemaVersion: number, ontologyId: number,
+  graph: ResolvedGraph, datasetId: number, schemaVersion: number, ontologyId: VerifiedOntologyId,
 ): Promise<{ nodes: number; relations: number }> {
   return mergeGraph(graph, 'sourceDatasetIds', 'datasetId', datasetId, schemaVersion, ontologyId);
 }

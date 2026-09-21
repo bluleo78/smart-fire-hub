@@ -9,7 +9,7 @@ import { addEntity, AddEntityInput } from '../graphrag/entity-add.js';
 import { addRelation } from '../graphrag/relation-add.js';
 import { EntityType, RelationType } from '../graphrag/ontology.js';
 import { GraphMutationRejectedError } from '../graphrag/graph-mutation-guard.js';
-import { resolveDatasetOntology } from '../graphrag/ontology-source.js';
+import { resolveDatasetOntology, resolveOntologyById } from '../graphrag/ontology-source.js';
 import { FireHubApiClient } from '../mcp/api-client.js';
 
 /**
@@ -59,10 +59,14 @@ function respondMutationError(res: import('express').Response, opLabel: string, 
 // 한 온톨로지의 지식그래프(Neo4j). 읽기 실패 시 502(상위 프록시가 그대로 전파).
 //
 // ontologyId 는 필수 쿼리 파라미터다 — 선택 인자로 두면 무스코프 전체 조회 경로가 그대로 살아남아,
-// 내부 호출자 누구나 전 테넌트 그래프를 읽을 수 있다. 해당 온톨로지의 소유권(테넌트) 검증은 호출부인
-// firehub-api 가 RLS 걸린 ontology 테이블 조회로 끝낸다(내부 토큰은 만능 자격증명이라 여기서 받은
-// 값을 그대로 신뢰할 수 없고, 그래서 검증 지점이 api 쪽이다).
-router.get('/graph', internalAuth, async (req, res) => {
+// 내부 호출자 누구나 전 테넌트 그래프를 읽을 수 있다.
+//
+// 소유권 검증은 변형 라우트 네 개와 **똑같이** 여기서 한다: requireDelegation 으로 주체를 확정하고,
+// 그 주체를 대행해 RLS 걸린 ontology 테이블을 되읽는다(resolveOntologyById). 예전에는 "호출부인
+// firehub-api 가 이미 확인했다"며 값을 그대로 믿었는데, 내부 토큰은 만능 자격증명이라 그 말은
+// "ai-agent 쪽에는 검증 지점이 없다"와 같았다 — 내부망에 닿는 누구나 전 테넌트 그래프를 읽을 수 있었다.
+// api 쪽 확인이 사라진 것은 아니고(OntologyService#getGraph), 두 겹이 된 것이다.
+router.get('/graph', internalAuth, requireDelegation, async (req, res) => {
   const ontologyId = Number(req.query.ontologyId);
   // 양수 정수 판정은 isValidTenantId 를 그대로 재사용한다 — 이름은 테넌트지만 그 술어의 주석이
   // "복제하고 주석으로 같은 강도로 맞춰라" 방식은 이미 한 번 어긋났다고 못박고 있고, auth.ts 가
@@ -73,7 +77,10 @@ router.get('/graph', internalAuth, async (req, res) => {
     return;
   }
   try {
-    res.json(await readWholeGraph(ontologyId));
+    // 이 왕복이 테넌트 경계다 — 남의 온톨로지면 RLS 때문에 "없는 것"과 같아져 예외가 나고,
+    // Neo4j 는 조회조차 하지 않는다. 통과한 값만 VerifiedOntologyId 라 readWholeGraph 에 들어간다.
+    const { ontologyId: verified } = await resolveOntologyById(delegationClient(res), ontologyId);
+    res.json(await readWholeGraph(verified));
   } catch (e) {
     // 무로그 502 금지(#308) — 로그가 없으면 원인 추적이 불가능하다.
     console.error('[graph] readWholeGraph 실패:', e);
@@ -101,8 +108,8 @@ router.post('/graph/merge-entities', internalAuth, requireDelegation, async (req
   }
   try {
     const apiClient = delegationClient(res);
-    const { ontology } = await resolveDatasetOntology(apiClient, parsed.data.datasetId);
-    await mergeEntities(ontology, parsed.data.entityType as EntityType, parsed.data.nameA, parsed.data.nameB);
+    const { ontology, ontologyId } = await resolveDatasetOntology(apiClient, parsed.data.datasetId);
+    await mergeEntities(ontology, ontologyId, parsed.data.entityType as EntityType, parsed.data.nameA, parsed.data.nameB);
     res.status(204).send();
   } catch (e) {
     respondMutationError(res, 'merge-entities', 'entity merge failed', e);
@@ -114,17 +121,25 @@ const setPropertyBodySchema = z.object({
   propertyName: z.string().min(1),
   dataType: z.enum(['text', 'number', 'date']),
   value: z.string(),
+  // 다른 세 변형 라우트와 같은 이유로 필수다 — 여기서는 typeId 변환이 아니라 **스코프**가 목적이다.
+  // entityKey 는 추측 가능한 문자열이라, 이 값 없이는 남의 온톨로지 노드를 덮어쓰는 것을 막을 수 없다.
+  datasetId: z.number(),
 });
 
 // HITL 승인된 속성 정정값을 Neo4j 노드에 write — firehub-api(GraphMutationClient)가 승인 시 호출.
-router.post('/graph/set-property', internalAuth, async (req, res) => {
+// 예전에는 이 라우트만 requireDelegation 없이 entityKey 를 그대로 받아 write 했다 — 내부 토큰만 있으면
+// 임의 키의 노드 속성을 고칠 수 있었다. 이제 datasetId→온톨로지 해소(RLS 경계)를 거쳐 스코프된 write 만 한다.
+router.post('/graph/set-property', internalAuth, requireDelegation, async (req, res) => {
   const parsed = setPropertyBodySchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: 'invalid request body', details: parsed.error.issues });
     return;
   }
   try {
-    await setEntityProperty(parsed.data.entityKey, parsed.data.propertyName, parsed.data.dataType, parsed.data.value);
+    const apiClient = delegationClient(res);
+    const { ontologyId } = await resolveDatasetOntology(apiClient, parsed.data.datasetId);
+    await setEntityProperty(ontologyId, parsed.data.entityKey, parsed.data.propertyName,
+      parsed.data.dataType, parsed.data.value);
     res.status(204).send();
   } catch (e) {
     respondMutationError(res, 'set-property', 'set property failed', e);

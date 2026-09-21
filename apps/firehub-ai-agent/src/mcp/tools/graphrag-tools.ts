@@ -9,7 +9,6 @@ import { loadGraph, loadTableGraph } from '../../graphrag/loader.js';
 import { bootstrapConstraints } from '../../graphrag/neo4j-client.js';
 import { retrieve } from '../../graphrag/retriever.js';
 import { projectTableDataset, DataPage } from '../../graphrag/table-projection.js';
-import { deserializeOntology } from '../../graphrag/ontology.js';
 import { profileColumns } from '../../graphrag/column-profiler.js';
 import { inferMapping } from '../../graphrag/mapping-inference.js';
 import { inferOntology, DatasetEvidence } from '../../graphrag/ontology-inference.js';
@@ -317,14 +316,16 @@ export function registerGraphragTools(
           throw new Error(`매핑이 active 상태가 아닙니다(현재: ${mapping.status ?? '없음'}). 먼저 매핑을 활성화하세요.`);
         }
         // 표는 id=1이 아닌 온톨로지에 바인딩될 수 있어 by-id로 로드한다(폴백 없음).
-        const ontology = deserializeOntology(await apiClient.getOntologyById(mapping.ontologyId));
+        // resolveOntologyById 를 거치는 이유: 이 왕복이 소유권 확인(RLS 경계)이고, 그것만이
+        // 적재에 쓸 VerifiedOntologyId 를 만든다 — getOntologyById 직접 호출로는 타입이 맞지 않는다.
+        const { ontology, ontologyId } = await resolveOntologyById(apiClient, mapping.ontologyId);
         const summary = await projectTableDataset(
           {
             fetchRows: (id, page, size) =>
               apiClient.queryDatasetData(id, { page, size, includeTotalCount: true }) as Promise<DataPage>,
             load: loadTableGraph,
           },
-          args.datasetId, ontology, mapping.ontologyId, mapping.spec,
+          args.datasetId, ontology, ontologyId, mapping.spec,
         );
         // 투영 이력 best-effort 기록(chunkCount에는 처리 행 수를 담는다 — 표엔 청크 개념이 없음).
         try {
@@ -371,7 +372,7 @@ export function registerGraphragTools(
         if (binding.ontologyId == null) {
           throw new Error('데이터셋이 온톨로지에 바인딩되지 않았습니다. 먼저 온톨로지를 바인딩하세요.');
         }
-        const ontology = deserializeOntology(await apiClient.getOntologyById(binding.ontologyId));
+        const { ontology } = await resolveOntologyById(apiClient, binding.ontologyId);
         // 3) 컬럼 메타 + 행 표본을 동일 data 쿼리로 확보(최대 3페이지, ≤600행).
         const SAMPLE_ROW_CAP = 600;
         const { columns, rows: sampleRows } = await sampleTableRows(apiClient, args.datasetId, SAMPLE_ROW_CAP);
@@ -555,7 +556,9 @@ export function registerGraphragTools(
         + '(graphrag_query 도 이제 ontologyId 를 요구하므로 그것으로 id를 알아낼 수는 없다).',
       { ontologyId: z.number().describe('조회할 온톨로지 id(graphrag_list_ontologies로 확인)') },
       async (args: { ontologyId: number }) => {
-        const ontology = deserializeOntology(await apiClient.getOntologyById(args.ontologyId));
+        // 사용자가 준 id 다 — 소유권 확인을 겸하는 정본 진입점을 반드시 거친다
+        // (getOntologyById 직접 호출은 그 확인을 건너뛴 것처럼 보인다).
+        const { ontology } = await resolveOntologyById(apiClient, args.ontologyId);
         return jsonResult({
           domain: ontology.domain,
           schemaVersion: ontology.schemaVersion,
@@ -721,7 +724,9 @@ export function registerGraphragTools(
       },
       async (args: { ontologyId: number; query: string; topK?: number }) => {
         // 소유권 확인 — 근거는 resolveOntologyById 주석 참고(여기선 ontology 본문은 쓰지 않는다).
-        await resolveOntologyById(apiClient, args.ontologyId);
+        // 아래 retrieve 에는 args.ontologyId(생인자)가 아니라 이 왕복이 돌려준 값을 넘긴다 —
+        // 런타임 값은 같지만, 생인자를 넘기면 컴파일되지 않아 "검증을 건너뛴 경로"가 드러난다.
+        const { ontologyId } = await resolveOntologyById(apiClient, args.ontologyId);
         // 벡터검색(searchDocuments)을 retriever의 deps 규약으로 어댑팅해 시드 청크를 확보하고,
         // 그 청크에서 유래한 엔티티를 1~2홉 확장한 서브그래프+출처를 조립한다.
         const result = await retrieve(
@@ -730,7 +735,7 @@ export function registerGraphragTools(
               q, ids, k, mode as 'SEMANTIC' | 'KEYWORD' | 'HYBRID' | undefined,
             ),
           },
-          args.ontologyId, args.query, { topK: args.topK },
+          ontologyId, args.query, { topK: args.topK },
         );
         // Neo4j 연결 불가 등은 retrieve에서 throw → safeTool이 isError로 감싸 폴백 메시지 제공.
         return jsonResult({
@@ -761,7 +766,7 @@ export function registerGraphragTools(
       async (args: { ontologyId: number; entityType: string; filters: Array<{ property: string; operator: Operator; value: number | string }> }) => {
         // 질의 시점 온톨로지를 fetch 해 화이트리스트로 쓴다. 이 한 번의 왕복이 소유권 확인도 겸한다
         // (근거는 resolveOntologyById 주석) — 조회 스코프와 화이트리스트가 같은 온톨로지임이 보장된다.
-        const { ontology } = await resolveOntologyById(apiClient, args.ontologyId);
+        const { ontology, ontologyId } = await resolveOntologyById(apiClient, args.ontologyId);
         // 도구 설명에 속성을 하드코딩하면 온톨로지가 바뀌어도 모델이 옛 속성만 알게 된다.
         // 대신 검증 실패 시 "지금 이 온톨로지에서 실제로 가능한 값"을 오류에 실어 1턴 내 자체 정정을 유도한다.
         const typeDef = ontology.entities.find((e) => e.type === args.entityType);
@@ -783,7 +788,7 @@ export function registerGraphragTools(
           );
         }
         const result = await structuredQuery(
-          ontology, args.ontologyId, args.entityType, args.filters as Filter[],
+          ontology, ontologyId, args.entityType, args.filters as Filter[],
         );
         // 빈 결과 = "조건에 맞는 데이터 없음"과 "정규화 실패로 검수 대기 중" 두 원인이 뒤섞일 수 있다(#427).
         // 검수 대기 항목이 있으면 pendingReview 로 신호를 실어 LLM 이 둘을 구분하게 한다.

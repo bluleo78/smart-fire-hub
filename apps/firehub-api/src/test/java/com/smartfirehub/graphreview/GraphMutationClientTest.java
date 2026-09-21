@@ -85,7 +85,7 @@ class GraphMutationClientTest {
     wireMock.stubFor(
         post(urlEqualTo("/agent/graph/set-property")).willReturn(aResponse().withStatus(409).withBody("boom")));
 
-    assertThatThrownBy(() -> client().setProperty("3:없음", "피해액", "number", "100"))
+    assertThatThrownBy(() -> client().setProperty("3:없음", "피해액", "number", "100", 42L))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("엔티티 속성 갱신");
   }
@@ -106,7 +106,7 @@ class GraphMutationClientTest {
         post(urlEqualTo("/agent/graph/set-property"))
             .willReturn(aResponse().withStatus(502).withBody("{\"error\":\"set property failed\"}")));
 
-    assertThatThrownBy(() -> client().setProperty("3:창고 화재", "피해액", "number", "30000000"))
+    assertThatThrownBy(() -> client().setProperty("3:창고 화재", "피해액", "number", "30000000", 42L))
         .isInstanceOf(ExternalServiceException.class)
         .hasMessageNotContaining("http://")
         .hasMessageNotContaining("127.0.0.1")
@@ -122,7 +122,7 @@ class GraphMutationClientTest {
     // 아무도 듣지 않는 포트 → WebClientRequestException(연결 거부). 메시지에 내부 주소가 박히는 대표 경로다.
     GraphMutationClient offline = new GraphMutationClient("http://127.0.0.1:1", "test-token");
 
-    assertThatThrownBy(() -> offline.setProperty("3:창고 화재", "피해액", "number", "30000000"))
+    assertThatThrownBy(() -> offline.setProperty("3:창고 화재", "피해액", "number", "30000000", 42L))
         .isInstanceOf(ExternalServiceException.class)
         .hasMessageNotContaining("127.0.0.1")
         .hasMessageNotContaining("http://")
@@ -224,5 +224,26 @@ class GraphMutationClientTest {
     assertThatThrownBy(() -> client().mergeEntities("Cause", "a", "b", 900L))
         .isInstanceOf(ExternalServiceException.class)
         .hasMessageContaining("버전 불일치");
+  }
+
+  /**
+   * set-property 요청에 datasetId 가 실제로 실리는지 본문으로 확인한다.
+   *
+   * <p>페이로드 단언이 필요한 이유: 이 값은 ai-agent 가 write 를 온톨로지로 스코프하는 유일한
+   * 근거다. 호출 여부(verify)만 보면 필드를 빠뜨린 채로도 통과하고, 그 결과는 ai-agent 의 400 —
+   * 즉 승인이 조용히 pending 으로 남는 실패다.
+   */
+  @Test
+  @DisplayName("set-property 요청 본문에 스코프 근거인 datasetId 가 실린다")
+  void setProperty_sendsDatasetIdInBody() {
+    wireMock.stubFor(
+        post(urlEqualTo("/agent/graph/set-property")).willReturn(aResponse().withStatus(204)));
+
+    client().setProperty("3:창고 화재", "피해액", "number", "30000000", 900L);
+
+    wireMock.verify(
+        postRequestedFor(urlEqualTo("/agent/graph/set-property"))
+            .withRequestBody(matchingJsonPath("$.datasetId", equalTo("900")))
+            .withRequestBody(matchingJsonPath("$.entityKey", equalTo("3:창고 화재"))));
   }
 }

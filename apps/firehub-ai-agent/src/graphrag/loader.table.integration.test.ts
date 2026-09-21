@@ -1,5 +1,6 @@
 // loadTableGraph 통합 테스트 — 실 Neo4j에 sourceDatasetIds 누적·멱등을 검증한다.
 // 공유 dev/test Neo4j 보호: ZZTEST_ 접두 노드만 생성하고 그 스코프만 정리한다(blanket 삭제 금지).
+import { VerifiedOntologyId } from './verified-ontology-id.js';
 import { describe, it, expect, beforeEach, afterAll } from 'vitest';
 import { isInt } from 'neo4j-driver';
 import { loadTableGraph } from './loader.js';
@@ -33,9 +34,9 @@ describe('loadTableGraph (integration)', () => {
   afterAll(async () => { await clean(); await closeDriver(); });
 
   it('두 번 적재해도 노드 수가 불변이고 sourceDatasetIds가 누적된다', async () => {
-    await loadTableGraph(graph, 501, 1, 9);
+    await loadTableGraph(graph, 501, 1, 9 as VerifiedOntologyId);
     expect(await countScoped()).toBe(2);
-    await loadTableGraph(graph, 502, 1, 9); // 다른 데이터셋 재적재 → 멱등 + provenance 누적
+    await loadTableGraph(graph, 502, 1, 9 as VerifiedOntologyId); // 다른 데이터셋 재적재 → 멱등 + provenance 누적
     expect(await countScoped()).toBe(2);
 
     const s = getSession();

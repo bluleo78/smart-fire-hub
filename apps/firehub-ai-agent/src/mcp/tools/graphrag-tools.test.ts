@@ -1,4 +1,5 @@
 // graphrag_query / graphrag_ingest MCP 도구 단위 테스트.
+import { VerifiedOntologyId } from '../../graphrag/verified-ontology-id.js';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('../../graphrag/retriever.js', () => ({
@@ -148,9 +149,12 @@ describe('graphrag_ingest 도구 — 적재 이력 best-effort 기록', () => {
   const safeTool = ((_n: string, _d: string, _s: any, handler: any) => ({ name: _n, handler })) as unknown as SafeToolFn;
 
   const ontology = { domain: 'd', schemaVersion: 3, entities: [], relations: [] };
+  // resolveDatasetOntology 는 RLS 경계를 통과한 id(VerifiedOntologyId)만 돌려준다 —
+  // 목도 같은 계약을 지켜야 타입이 맞는다.
+  const TEST_ONTOLOGY_ID = 42 as VerifiedOntologyId;
 
   it('추출 실패가 0건이면 status=SUCCESS 로 recordGraphIngest 를 호출한다', async () => {
-    vi.mocked(resolveDatasetOntology).mockResolvedValue({ ontology, ontologyId: 42 });
+    vi.mocked(resolveDatasetOntology).mockResolvedValue({ ontology, ontologyId: TEST_ONTOLOGY_ID });
     vi.mocked(ingestDataset).mockResolvedValue({ datasetId: 1, chunks: 10, entities: 20, relations: 15 });
     const recordGraphIngest = vi.fn().mockResolvedValue(undefined);
     const apiClient = { recordGraphIngest } as unknown as FireHubApiClient;
@@ -173,7 +177,7 @@ describe('graphrag_ingest 도구 — 적재 이력 best-effort 기록', () => {
   });
 
   it('추출 실패가 있으면 status=PARTIAL 로 recordGraphIngest 를 호출한다', async () => {
-    vi.mocked(resolveDatasetOntology).mockResolvedValue({ ontology, ontologyId: 42 });
+    vi.mocked(resolveDatasetOntology).mockResolvedValue({ ontology, ontologyId: TEST_ONTOLOGY_ID });
     vi.mocked(ingestDataset).mockResolvedValue({
       datasetId: 1, chunks: 10, entities: 20, relations: 15, extractionFailures: 2,
     });
@@ -191,7 +195,7 @@ describe('graphrag_ingest 도구 — 적재 이력 best-effort 기록', () => {
   });
 
   it('recordGraphIngest 가 실패해도 도구는 jsonResult(summary) 를 정상 반환한다(best-effort)', async () => {
-    vi.mocked(resolveDatasetOntology).mockResolvedValue({ ontology, ontologyId: 42 });
+    vi.mocked(resolveDatasetOntology).mockResolvedValue({ ontology, ontologyId: TEST_ONTOLOGY_ID });
     vi.mocked(ingestDataset).mockResolvedValue({ datasetId: 1, chunks: 5, entities: 3, relations: 2 });
     const recordGraphIngest = vi.fn().mockRejectedValue(new Error('api down'));
     const apiClient = { recordGraphIngest } as unknown as FireHubApiClient;

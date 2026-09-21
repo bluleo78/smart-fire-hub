@@ -3,6 +3,7 @@
 // 그 실패를 그대로 사용자에게 전달해 "먼저 온톨로지를 연결하라"고 안내해야 한다(#678).
 import type { FireHubApiClient } from '../mcp/api-client.js';
 import { Ontology, deserializeOntology } from './ontology.js';
+import { VerifiedOntologyId } from './verified-ontology-id.js';
 
 /**
  * id 로 온톨로지를 해소한다 — **그리고 그것이 요청자 테넌트의 것인지 확인한다.**
@@ -19,9 +20,12 @@ import { Ontology, deserializeOntology } from './ontology.js';
 export async function resolveOntologyById(
   apiClient: Pick<FireHubApiClient, 'getOntologyById'>,
   ontologyId: number,
-): Promise<{ ontology: Ontology; ontologyId: number }> {
+): Promise<{ ontology: Ontology; ontologyId: VerifiedOntologyId }> {
   const ontology = deserializeOntology(await apiClient.getOntologyById(ontologyId));
-  return { ontology, ontologyId };
+  // 위 왕복이 RLS 경계다 — 남의 온톨로지면 여기까지 오지 못하고 예외가 난다.
+  // 이 파일이 브랜드를 만드는 **유일한** 곳이라, 그래프를 만지는 함수들은 이 경로를 거칠 수밖에 없다
+  // (근거는 verified-ontology-id.ts — 크로스테넌트 논거의 정본).
+  return { ontology, ontologyId: ontologyId as VerifiedOntologyId };
 }
 
 /**
@@ -34,7 +38,7 @@ export async function resolveOntologyById(
 export async function resolveDatasetOntology(
   apiClient: Pick<FireHubApiClient, 'getDatasetOntology' | 'getOntologyById'>,
   datasetId: number,
-): Promise<{ ontology: Ontology; ontologyId: number }> {
+): Promise<{ ontology: Ontology; ontologyId: VerifiedOntologyId }> {
   const { ontologyId } = await apiClient.getDatasetOntology(datasetId);
   if (ontologyId == null) {
     throw new Error(

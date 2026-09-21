@@ -1,4 +1,5 @@
 // 표 데이터셋 행을 승인된 매핑에 따라 그래프로 결정적 투영한다(exact 키만, LLM/임베딩 미사용).
+import { VerifiedOntologyId } from './verified-ontology-id.js';
 import { Ontology, entityTypeId } from './ontology.js';
 import { ResolvedGraph, ResolvedEntity, ResolvedRelation, entityKey } from './resolver.js';
 
@@ -15,7 +16,7 @@ export interface DataPage { rows: Record<string, unknown>[]; totalPages: number;
 export interface ProjectTableDeps {
   fetchRows(datasetId: number, page: number, size: number): Promise<DataPage>;
   load(
-    graph: ResolvedGraph, datasetId: number, schemaVersion: number, ontologyId: number,
+    graph: ResolvedGraph, datasetId: number, schemaVersion: number, ontologyId: VerifiedOntologyId,
   ): Promise<{ nodes: number; relations: number }>;
 }
 export interface ProjectionSummary {
@@ -68,7 +69,7 @@ export function rowToGraph(
 
 // 데이터셋 전체를 페이지 순회하며 투영. 페이지마다 그래프를 모아 1회 load(멱등 MERGE).
 export async function projectTableDataset(
-  deps: ProjectTableDeps, datasetId: number, ontology: Ontology, ontologyId: number, mapping: MappingSpec,
+  deps: ProjectTableDeps, datasetId: number, ontology: Ontology, ontologyId: VerifiedOntologyId, mapping: MappingSpec,
 ): Promise<ProjectionSummary> {
   const distinctNodeKeys = new Set<string>();
   const distinctEdgeKeys = new Set<string>();

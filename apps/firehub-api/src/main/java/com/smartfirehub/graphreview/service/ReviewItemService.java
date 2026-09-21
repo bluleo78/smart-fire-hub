@@ -32,9 +32,6 @@ public class ReviewItemService {
   static final String ENTITY = "entity_extraction";
   static final String RELATION = "relation_extraction";
 
-  // SYNONYM/ENTITY/RELATION 승인만 datasetId가 필수(PROPERTY는 예외) — requireDatasetId 문서 참고.
-  private static final Set<String> DATASET_ID_REQUIRED = Set.of(SYNONYM, ENTITY, RELATION);
-
   // resolver.ts normalizeName과 동일 규칙(trim + 연속공백 1칸 + 소문자) — 정렬 키로만 사용, 저장은 원본(trim).
   private static String normalize(String s) {
     return s.trim().replaceAll("\\s+", " ").toLowerCase();
@@ -188,10 +185,8 @@ public class ReviewItemService {
   public ReviewItemResponse approve(long id, String correctedValue, long userId) {
     ReviewItemRecord row = getPendingOrThrow(id);
     JsonNode p = parse(row.payloadJson());
-    // SYNONYM/ENTITY/RELATION은 공통으로 datasetId 필수(사유는 requireDatasetId 문서 참고). PROPERTY만 예외.
-    if (DATASET_ID_REQUIRED.contains(row.itemType())) {
-      requireDatasetId(row);
-    }
+    // 네 타입 모두 datasetId가 필수다(사유는 requireDatasetId 문서 참고).
+    requireDatasetId(row);
     switch (row.itemType()) {
       case SYNONYM -> mutationClient.mergeEntities(
           p.path("entityType").asText(), p.path("nameA").asText(), p.path("nameB").asText(), row.datasetId());
@@ -201,7 +196,7 @@ public class ReviewItemService {
         }
         mutationClient.setProperty(
             p.path("entityKey").asText(), p.path("propertyName").asText(),
-            p.path("dataType").asText(), correctedValue);
+            p.path("dataType").asText(), correctedValue, row.datasetId());
       }
       case ENTITY -> {
         // as-extracted 타입/이름 그대로 적재(정정 없음). 보류 관계는 add-entity가 끝점 존재 시에만 MERGE.
@@ -254,11 +249,14 @@ public class ReviewItemService {
   }
 
   /**
-   * SYNONYM/ENTITY/RELATION 승인은 ai-agent 호출에 datasetId가 필수다(#678 — "기본 온톨로지" 폴백 제거로
-   * ai-agent가 온톨로지를 고를 다른 방법이 없어졌다). datasetId가 없는(레거시) 항목을 그대로 호출하면
-   * ai-agent가 400을 반환하는데, 그건 승인 자체가 pending으로 남아 원인 파악이 어려운 실패다 — 대신 여기서
-   * 미리 막아 "왜 승인이 안 되는지" 명확한 사유를 준다. PROPERTY는 이 제약이 없다(set-property는 datasetId를
-   * 요구하지 않음).
+   * 네 항목 타입 모두 ai-agent 호출에 datasetId가 필수다(#678 — "기본 온톨로지" 폴백 제거로 ai-agent가
+   * 온톨로지를 고를 다른 방법이 없어졌다). datasetId가 없는(레거시) 항목을 그대로 호출하면 ai-agent가
+   * 400을 반환하는데, 그건 승인 자체가 pending으로 남아 원인 파악이 어려운 실패다 — 대신 여기서 미리 막아
+   * "왜 승인이 안 되는지" 명확한 사유를 준다.
+   *
+   * <p>PROPERTY도 예외가 아니게 됐다: set-property가 datasetId로 해소한 온톨로지로 write를 스코프하게
+   * 바뀌었기 때문이다(그 전에는 entityKey만으로 남의 그래프 노드를 덮어쓸 수 있었다). 실적재 경로
+   * (recordPendingProperty)는 항상 datasetId를 채우므로, 막히는 것은 그 이전의 레거시 행뿐이다.
    */
   private void requireDatasetId(ReviewItemRecord row) {
     if (row.datasetId() == null) {

@@ -1,4 +1,5 @@
 // 실제 Neo4j 필요: `pnpm db:up` 후 실행. 미기동 시 이 파일은 실패한다.
+import { VerifiedOntologyId } from './verified-ontology-id.js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import neo4j from 'neo4j-driver';
 import { getSession, bootstrapConstraints, closeDriver, readWholeGraph } from './neo4j-client.js';
@@ -54,7 +55,7 @@ describe('readWholeGraph 온톨로지 스코프 (integration)', () => {
   });
 
   it('요청한 온톨로지의 노드만 반환하고, 다른 온톨로지의 노드·엣지는 제외한다', async () => {
-    const g = await readWholeGraph(OWN);
+    const g = await readWholeGraph(OWN as VerifiedOntologyId);
     const got = g.nodes.filter((n) => keys.includes(n.key)).map((n) => n.key).sort();
     expect(got).toEqual([keys[0], keys[1]]);
     expect(got).not.toContain(keys[2]);
@@ -65,7 +66,7 @@ describe('readWholeGraph 온톨로지 스코프 (integration)', () => {
   });
 
   it('다른 온톨로지를 요청하면 그쪽 노드만 반환한다(대칭 확인)', async () => {
-    const g = await readWholeGraph(OTHER);
+    const g = await readWholeGraph(OTHER as VerifiedOntologyId);
     const got = g.nodes.filter((n) => keys.includes(n.key)).map((n) => n.key);
     expect(got).toEqual([keys[2]]);
   });

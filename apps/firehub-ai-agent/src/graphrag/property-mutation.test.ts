@@ -1,4 +1,5 @@
 // property-mutation 단위 테스트 — Neo4j 세션을 모킹해 예약키 거부와 타입 강제 write를 검증한다.
+import { VerifiedOntologyId } from './verified-ontology-id.js';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const runMock = vi.fn();
@@ -7,6 +8,9 @@ vi.mock('./neo4j-client.js', () => ({ getSession: () => ({ run: runMock, close: 
 
 import { coercePropertyValue, PropertyValueInvalidError, setEntityProperty } from './property-mutation.js';
 import { GraphTargetMissingError } from './graph-mutation-guard.js';
+
+// 테스트용 온톨로지 id — 모든 쓰기는 이 스코프 안에서만 일어나야 한다.
+const TEST_ONTOLOGY_ID = 9 as VerifiedOntologyId;
 
 // `RETURN count(n) AS updated` 결과 모킹 — 기본은 노드 1건을 찾은 정상 경로.
 function updatedCount(n: number) {
@@ -17,7 +21,7 @@ describe('setEntityProperty', () => {
   beforeEach(() => { runMock.mockReset(); runMock.mockResolvedValue(updatedCount(1)); });
 
   it('number 타입은 숫자로 강제해 SET한다', async () => {
-    await setEntityProperty('3:화재', '피해액', 'number', '30000000');
+    await setEntityProperty(TEST_ONTOLOGY_ID, '3:화재', '피해액', 'number', '30000000');
     const [cypher, params] = runMock.mock.calls[0];
     expect(cypher).toContain('SET n += $props');
     expect(params.key).toBe('3:화재');
@@ -25,36 +29,36 @@ describe('setEntityProperty', () => {
   });
 
   it('date 타입은 YYYY-MM-DD 문자열로 SET한다', async () => {
-    await setEntityProperty('3:화재', '발생일', 'date', '2026-01-15');
+    await setEntityProperty(TEST_ONTOLOGY_ID, '3:화재', '발생일', 'date', '2026-01-15');
     expect(runMock.mock.calls[0][1].props['발생일']).toBe('2026-01-15');
   });
 
   it('date 타입에 형식을 벗어난 정정값이 오면 그래프를 건드리지 않고 거절한다(#311)', async () => {
-    await expect(setEntityProperty('3:화재', '발생일', 'date', '작년겨울'))
+    await expect(setEntityProperty(TEST_ONTOLOGY_ID, '3:화재', '발생일', 'date', '작년겨울'))
       .rejects.toThrow(PropertyValueInvalidError);
     expect(runMock).not.toHaveBeenCalled();
   });
 
   it('예약 속성명은 거부한다(노드 정체성 보호)', async () => {
-    await expect(setEntityProperty('3:화재', 'key', 'text', 'x')).rejects.toThrow();
+    await expect(setEntityProperty(TEST_ONTOLOGY_ID, '3:화재', 'key', 'text', 'x')).rejects.toThrow();
     expect(runMock).not.toHaveBeenCalled();
   });
 
   it('ontologyId 속성명도 예약어라 거부한다(#678 — 구버전 판정 스탬프 보호)', async () => {
-    await expect(setEntityProperty('3:화재', 'ontologyId', 'text', '1')).rejects.toThrow();
+    await expect(setEntityProperty(TEST_ONTOLOGY_ID, '3:화재', 'ontologyId', 'text', '1')).rejects.toThrow();
     expect(runMock).not.toHaveBeenCalled();
   });
 
   it('대상 노드가 없으면 GraphTargetMissingError를 던진다(#310 무음 유실 방지)', async () => {
     runMock.mockResolvedValue(updatedCount(0));
-    await expect(setEntityProperty('3:없는엔티티', '피해액', 'number', '100'))
+    await expect(setEntityProperty(TEST_ONTOLOGY_ID, '3:없는엔티티', '피해액', 'number', '100'))
       .rejects.toThrow(GraphTargetMissingError);
   });
 
   it('정정값이 기존 값과 같아 실제 write가 없어도 성공한다 — MATCH 성사 여부로 판정하기 때문', async () => {
     // SET이 같은 값을 써서 propertiesSet이 0이어도 count(n)은 1이다.
     runMock.mockResolvedValue(updatedCount(1));
-    await expect(setEntityProperty('3:화재', '피해액', 'number', '100')).resolves.toBeUndefined();
+    await expect(setEntityProperty(TEST_ONTOLOGY_ID, '3:화재', '피해액', 'number', '100')).resolves.toBeUndefined();
   });
 });
 

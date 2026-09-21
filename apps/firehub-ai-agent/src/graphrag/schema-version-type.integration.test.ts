@@ -4,6 +4,7 @@
 // 왜 "저장 타입"을 검증하는가: 읽기측(neo4j-client.toJsNumber)이 FLOAT/INTEGER를 모두 받아주므로
 // loadGraph → readWholeGraph 왕복값 검증은 쓰기 버그가 있어도 통과한다(무의미한 가드). 실제 결함은
 // "Neo4j에 무엇으로 저장되는가"이므로 valueType()으로 저장 타입을 직접 확인한다.
+import { VerifiedOntologyId } from './verified-ontology-id.js';
 import { describe, it, expect, beforeAll, afterEach, afterAll } from 'vitest';
 import neo4j from 'neo4j-driver';
 import { getSession, bootstrapConstraints, closeDriver, readWholeGraph } from './neo4j-client.js';
@@ -56,14 +57,14 @@ describe('schemaVersion 저장 타입 (실 Neo4j, #308)', () => {
   afterAll(async () => { await closeDriver(); });
 
   it('loadGraph는 노드/엣지 schemaVersion을 INTEGER로 저장한다', async () => {
-    await loadGraph(graph, 30801, 1, 9);
+    await loadGraph(graph, 30801, 1, 9 as VerifiedOntologyId);
     expect(await nodeValueType(kA)).toMatch(/^INTEGER/);
     expect(await relValueType(kA, kB)).toMatch(/^INTEGER/);
   });
 
   it('addRelation도 엣지 schemaVersion을 INTEGER로 저장한다', async () => {
-    await loadGraph({ entities: graph.entities, relations: [] }, 30802, 1, 9);
-    await addRelation(CORE_ONTOLOGY, 9, kA, 'CAUSED_BY', kB, [30802]);
+    await loadGraph({ entities: graph.entities, relations: [] }, 30802, 1, 9 as VerifiedOntologyId);
+    await addRelation(CORE_ONTOLOGY, 9 as VerifiedOntologyId, kA, 'CAUSED_BY', kB, [30802]);
     expect(await relValueType(kA, kB)).toMatch(/^INTEGER/);
   });
 
@@ -81,7 +82,7 @@ describe('schemaVersion 저장 타입 (실 Neo4j, #308)', () => {
     } finally { await s.close(); }
     expect(await nodeValueType(kA)).toMatch(/^FLOAT/); // 전제 확인 — 실제로 FLOAT로 심어졌는지
 
-    const g = await readWholeGraph(9);
+    const g = await readWholeGraph(9 as VerifiedOntologyId);
     expect(g.nodes.find((n) => n.key === kA)?.schemaVersion).toBe(1);
   });
 });

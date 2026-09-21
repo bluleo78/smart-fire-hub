@@ -1,5 +1,6 @@
 package com.smartfirehub.ontology.service;
 
+import com.smartfirehub.global.security.DelegationHeaders;
 import com.smartfirehub.audit.service.AuditLogService;
 import com.smartfirehub.global.exception.ExternalServiceException;
 import com.smartfirehub.ontology.OntologyRules;
@@ -338,6 +339,11 @@ public class OntologyService {
       return webClient
           .get()
           .uri(b -> b.path("/agent/graph").queryParam("ontologyId", ontologyId).build())
+          // 대행 주체를 싣는다 — ai-agent 가 이 id 의 소유권을 **스스로** 다시 확인하기 위해서다.
+          // 내부 토큰은 만능 자격증명이라 "api 가 보냈으니 믿는다"는 ai-agent 쪽에 검증 지점이
+          // 없다는 뜻이고, 그러면 내부망에 닿는 누구나 전 테넌트 그래프를 읽을 수 있다.
+          // 변형 라우트 네 개가 이미 같은 계약을 쓴다(GraphMutationClient).
+          .headers(h -> h.addAll(DelegationHeaders.require("지식그래프 조회")))
           .retrieve()
           .bodyToMono(GraphResponse.class)
           .block(BLOCK_TIMEOUT);

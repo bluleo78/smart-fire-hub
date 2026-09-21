@@ -6,6 +6,7 @@
 // loader.ts / entity-add.ts와 동일한 sourceChunkIds 누적 관용구를 재사용한다.
 import neo4j from 'neo4j-driver';
 import { getSession } from './neo4j-client.js';
+import { VerifiedOntologyId, ontologyIdParam } from './verified-ontology-id.js';
 import { Ontology, RelationType, isAllowedTriple, isRelationType } from './ontology.js';
 import { GraphTargetMissingError, OntologyConformanceError, affectedCount } from './graph-mutation-guard.js';
 
@@ -15,7 +16,7 @@ import { GraphTargetMissingError, OntologyConformanceError, affectedCount } from
  * 관계 타입의 엣지가 실제로 생성됐다(add-entity는 entityTypeId()가 우연히 막아주지만 여기엔 그런 후속 조회가 없다).
  */
 export async function addRelation(
-  ontology: Ontology, ontologyId: number, subjectKey: string, relType: RelationType, objectKey: string,
+  ontology: Ontology, ontologyId: VerifiedOntologyId, subjectKey: string, relType: RelationType, objectKey: string,
   sourceChunkIds: number[],
 ): Promise<void> {
   // 1차: 관계 타입 자체가 온톨로지에 존재하는가. 그래프를 건드리기 전에 거른다.
@@ -24,14 +25,20 @@ export async function addRelation(
       `온톨로지에 정의되지 않은 관계 타입이라 관계를 적재할 수 없습니다(${relType}).`,
     );
   }
+  // 끝점 조회와 MERGE 가 같은 값을 재사용한다(INTEGER 바인딩 근거는 ontologyIdParam 참고).
+  const ontologyIdInt = ontologyIdParam(ontologyId);
   const session = getSession();
   try {
     // 2차: 양 끝점의 실제 엔티티 타입으로 (주어타입, 관계, 목적어타입) 트리플까지 검증한다.
     // 끝점 조회를 겸하므로, 여기서 0행이면 대상 부재(GraphTargetMissingError)로 곧장 갈린다.
+    // 양 끝점 모두 이 온톨로지 소속이어야 한다(근거는 verified-ontology-id.ts). 스코프 밖 키는
+    // "없는 키"와 똑같이 0행이 되어 동일한 GraphTargetMissingError 로 갈린다 — 이 대칭이 깨지면
+    // 아래 conformance 409 가 남의 노드 타입을 사유 문구에 실어 돌려주는 읽기 오라클이 된다.
     const endpoints = await session.run(
       `MATCH (a:Entity {key: $subjectKey}), (b:Entity {key: $objectKey})
+       WHERE a.ontologyId = $ontologyId AND b.ontologyId = $ontologyId
        RETURN a.type AS subjectType, b.type AS objectType`,
-      { subjectKey, objectKey },
+      { subjectKey, objectKey, ontologyId: ontologyIdInt },
     );
     const endpoint = endpoints.records[0];
     if (!endpoint) {
@@ -51,14 +58,17 @@ export async function addRelation(
 
     const schemaVersion = ontology.schemaVersion;
     const result = await session.run(
-      `MATCH (a:Entity {key: $subjectKey}), (b:Entity {key: $objectKey})
+      // 위 끝점 조회가 이미 같은 술어로 걸렀지만 여기서도 건다 — 두 문장 사이에 동시 변경이
+       // 끼어들 수 있는 TOCTOU 창이고, 이쪽이 실제로 엣지를 쓰는 문장이다.
+       `MATCH (a:Entity {key: $subjectKey}), (b:Entity {key: $objectKey})
+       WHERE a.ontologyId = $ontologyId AND b.ontologyId = $ontologyId
        MERGE (a)-[x:REL {type: $relType}]->(b)
        SET x.schemaVersion = $schemaVersion, x.ontologyId = $ontologyId
        SET x.sourceChunkIds = coalesce(x.sourceChunkIds, []) + [c IN $sourceChunkIds WHERE NOT c IN coalesce(x.sourceChunkIds, [])]
        RETURN count(x) AS merged`,
-      // schemaVersion/ontologyId는 INTEGER로 바인딩한다 — plain number는 FLOAT로 저장돼 읽기측이 깨진다(#308).
+      // schemaVersion도 INTEGER로 바인딩한다 — plain number는 FLOAT로 저장돼 읽기측이 깨진다(#308).
       // ontologyId 스탬프는 loader.ts/entity-add.ts와 동일한 last-write-wins 관용구다(#678).
-      { subjectKey, objectKey, relType, schemaVersion: neo4j.int(schemaVersion), ontologyId: neo4j.int(ontologyId), sourceChunkIds },
+      { subjectKey, objectKey, relType, schemaVersion: neo4j.int(schemaVersion), ontologyId: ontologyIdInt, sourceChunkIds },
     );
     // 판정 기준은 "MATCH가 양 끝점을 바인딩했는가"(=MERGE가 실행됐는가)이지 "엣지가 새로 생겼는가"가 아니다.
     // 이미 같은 엣지가 있으면 relationshipsCreated는 0이지만 원하는 상태는 충족된 것이므로 성공이어야 한다.

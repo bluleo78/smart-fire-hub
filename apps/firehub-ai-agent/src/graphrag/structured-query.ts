@@ -1,5 +1,6 @@
 // 구조적 질의: 단일 엔티티 타입을 타입값 술어로 필터한다(1-hop·집계 없음).
 // 인젝션 방지: 속성명은 온톨로지 화이트리스트로만(백틱 인용), 값은 파라미터 바인딩.
+import { VerifiedOntologyId } from './verified-ontology-id.js';
 import neo4j from 'neo4j-driver';
 import { getSession } from './neo4j-client.js';
 import { Ontology, isEntityType, EntityType } from './ontology.js';
@@ -19,7 +20,7 @@ const MAX_RESULTS = 100;
 // 이름을 쓰면 — Incident, Building 처럼 흔하다 — 이름만으로는 구분되지 않는다. 게다가 이 경로는
 // properties(n) 를 통째로 돌려주므로 누수의 폭이 넓다.
 export function buildStructuredCypher(
-  ontology: Ontology, ontologyId: number, entityType: string, filters: Filter[],
+  ontology: Ontology, ontologyId: VerifiedOntologyId, entityType: string, filters: Filter[],
 ): { cypher: string; params: Record<string, unknown> } | { error: string } {
   if (!isEntityType(ontology, entityType)) return { error: `알 수 없는 엔티티 타입: ${entityType}` };
   const def = ontology.entities.find((e) => e.type === (entityType as EntityType));
@@ -57,7 +58,7 @@ export interface StructuredResult {
 
 // Cypher 를 실행해 매칭 엔티티 + 출처 청크 id 를 반환한다.
 export async function structuredQuery(
-  ontology: Ontology, ontologyId: number, entityType: string, filters: Filter[],
+  ontology: Ontology, ontologyId: VerifiedOntologyId, entityType: string, filters: Filter[],
 ): Promise<StructuredResult> {
   const built = buildStructuredCypher(ontology, ontologyId, entityType, filters);
   if ('error' in built) throw new Error(built.error);

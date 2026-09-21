@@ -118,7 +118,8 @@ class ReviewItemServiceTest {
 
   @Test
   void approve_property_requiresCorrectedValue_thenSetsProperty() {
-    ReviewItemRecord pending = record("property_normalization",
+    // datasetId는 PROPERTY도 필수다 — ai-agent가 이 값으로 해소한 온톨로지로 write를 스코프한다.
+    ReviewItemRecord pending = record("property_normalization", 900L,
         "{\"entityKey\":\"3:화재\",\"propertyName\":\"피해액\",\"dataType\":\"number\"}");
     // 항상 pending 반환 — 두 번 호출(throw 경로 + success 경로)에서 모두 pending 상태여야 한다.
     // (호출 순서별 다른 값을 주면 두 번째 approve가 status≠pending으로 오작동)
@@ -126,11 +127,29 @@ class ReviewItemServiceTest {
 
     // correctedValue 없으면 거부(400성 예외).
     assertThatThrownBy(() -> service.approve(2L, null, 1L)).isInstanceOf(IllegalArgumentException.class);
-    verify(mutationClient, never()).setProperty(any(), any(), any(), any());
+    verify(mutationClient, never()).setProperty(any(), any(), any(), any(), any());
 
     service.approve(2L, "30000000", 1L);
-    verify(mutationClient).setProperty("3:화재", "피해액", "number", "30000000");
+    verify(mutationClient).setProperty("3:화재", "피해액", "number", "30000000", 900L);
     verify(repo).updateStatus(2L, "approved", 1L);
+  }
+
+  /**
+   * PROPERTY가 datasetId 예외였던 구멍의 회귀 가드. 예전에는 datasetId 없이도 승인이 진행돼
+   * ai-agent가 entityKey만으로 노드를 덮어썼다 — 그 키가 남의 온톨로지 것이어도 막을 수단이 없었다.
+   * 이제는 스코프를 해소할 수 없으므로 그래프를 건드리기 전에 막고, status도 그대로 둔다.
+   */
+  @Test
+  void approve_property_withoutDatasetId_isRejectedBeforeMutation() {
+    ReviewItemRecord pending = record("property_normalization",
+        "{\"entityKey\":\"3:화재\",\"propertyName\":\"피해액\",\"dataType\":\"number\"}");
+    when(repo.findById(21L)).thenReturn(Optional.of(pending));
+
+    assertThatThrownBy(() -> service.approve(21L, "30000000", 1L))
+        .isInstanceOf(IllegalArgumentException.class);
+
+    verify(mutationClient, never()).setProperty(any(), any(), any(), any(), any());
+    verify(repo, never()).updateStatus(anyLong(), anyString(), anyLong());
   }
 
   @Test
@@ -140,7 +159,7 @@ class ReviewItemServiceTest {
 
     service.reject(3L, 1L);
 
-    verify(mutationClient, never()).setProperty(any(), any(), any(), any());
+    verify(mutationClient, never()).setProperty(any(), any(), any(), any(), any());
     verify(mutationClient, never()).mergeEntities(any(), any(), any(), any());
     verify(repo).updateStatus(3L, "rejected", 1L);
   }
@@ -306,7 +325,7 @@ class ReviewItemServiceTest {
         "{\"entityKey\":\"3:없는엔티티\",\"propertyName\":\"피해액\",\"dataType\":\"number\"}",
         null, null, LocalDateTime.now())));
     Mockito.doThrow(new IllegalStateException("대상 엔티티가 그래프에 없어 속성을 정정할 수 없습니다."))
-        .when(mutationClient).setProperty(any(), any(), any(), any());
+        .when(mutationClient).setProperty(any(), any(), any(), any(), any());
 
     assertThatThrownBy(() -> service.approve(7L, "30000000", 1L)).isInstanceOf(IllegalStateException.class);
     verify(repo, never()).updateStatus(eq(7L), anyString(), anyLong());

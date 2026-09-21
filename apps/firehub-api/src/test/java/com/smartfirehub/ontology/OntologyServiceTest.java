@@ -10,6 +10,8 @@ import static org.mockito.Mockito.when;
 
 import com.smartfirehub.audit.service.AuditLogService;
 import com.smartfirehub.global.exception.ExternalServiceException;
+import com.smartfirehub.global.security.InternalCallHeaders;
+import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.ontology.dto.GraphResponse;
 import com.smartfirehub.ontology.dto.OntologyResponse;
 import com.smartfirehub.ontology.repository.OntologyRepository;
@@ -18,7 +20,10 @@ import com.smartfirehub.user.repository.UserRepository;
 import java.util.List;
 import okhttp3.mockwebserver.MockResponse;
 import okhttp3.mockwebserver.MockWebServer;
+import okhttp3.mockwebserver.RecordedRequest;
 import org.junit.jupiter.api.*;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.context.SecurityContextHolder;
 
 // OntologyService 단위 테스트 — MockWebServer로 ai-agent를 흉내내어 getGraph 프록시가
 // camelCase 필드를 정확히 역직렬화하고 실패 응답(502)을 예외로 전파하는지 검증한다.
@@ -31,9 +36,16 @@ class OntologyServiceTest {
 
   // getGraph 테스트들이 공유하는 "내 테넌트 소유" 온톨로지 id.
   private static final long OWNED_ONTOLOGY_ID = 7L;
+  private static final long REQUEST_USER_ID = 11L;
+  private static final long REQUEST_TENANT_ID = 3L;
 
   @BeforeEach
   void setUp() throws Exception {
+    // getGraph 는 대행 주체(요청 사용자·테넌트)를 헤더로 싣는다 — ai-agent 가 온톨로지 소유권을
+    // 스스로 되확인하기 위해서다. 컨텍스트가 비면 원격 호출 전에 실패하므로 여기서 세워 둔다.
+    SecurityContextHolder.getContext()
+        .setAuthentication(new UsernamePasswordAuthenticationToken(REQUEST_USER_ID, null, List.of()));
+    TenantContext.set(REQUEST_TENANT_ID);
     server = new MockWebServer();
     server.start();
     repository = mock(OntologyRepository.class);
@@ -51,7 +63,41 @@ class OntologyServiceTest {
 
   @AfterEach
   void tearDown() throws Exception {
+    SecurityContextHolder.clearContext();
+    TenantContext.clear();
     server.shutdown();
+  }
+
+  /**
+   * ai-agent 는 이 헤더로 대행 주체를 확정하고, 그 주체를 대행해 RLS 걸린 ontology 테이블을 되읽어
+   * 소유권을 **한 번 더** 확인한다. 헤더가 빠지면 ai-agent 가 400 으로 거부하는데, 그 실패는 여기가
+   * 아니라 원격 로그에만 남아 원인 파악이 어렵다 — 계약을 이 테스트로 못박는다.
+   */
+  @Test
+  void getGraph_는_대행_주체_헤더를_싣는다() throws Exception {
+    server.enqueue(
+        new MockResponse()
+            .setHeader("Content-Type", "application/json")
+            .setBody("{\"nodes\":[],\"edges\":[]}"));
+
+    service.getGraph(OWNED_ONTOLOGY_ID);
+
+    RecordedRequest req = server.takeRequest();
+    assertThat(req.getHeader(InternalCallHeaders.ON_BEHALF_OF)).isEqualTo(String.valueOf(REQUEST_USER_ID));
+    assertThat(req.getHeader(InternalCallHeaders.ON_BEHALF_OF_TENANT))
+        .isEqualTo(String.valueOf(REQUEST_TENANT_ID));
+  }
+
+  /** 요청 컨텍스트 밖(스케줄러 등)에서는 원격을 부르지 않고 즉시 실패한다 — 사유가 api 쪽에 남는다. */
+  @Test
+  void getGraph_는_대행_주체가_없으면_ai_agent_를_호출하지_않는다() {
+    SecurityContextHolder.clearContext();
+    TenantContext.clear();
+
+    assertThatThrownBy(() -> service.getGraph(OWNED_ONTOLOGY_ID))
+        .isInstanceOf(ExternalServiceException.class);
+
+    assertThat(server.getRequestCount()).isZero();
   }
 
   // getGraph()의 다중 단어 camelCase 필드(sourceChunkCount, subjectKey, objectKey)가

@@ -1,8 +1,11 @@
 // loader 단위 테스트 — Neo4j 세션을 모킹해 MERGE 쿼리·파라미터 형태를 검증한다.
 // 실제 DB 대상 멱등성 검증은 loader.integration.test.ts(별도) 담당.
+import { VerifiedOntologyId } from './verified-ontology-id.js';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const runMock = vi.fn().mockResolvedValue({ records: [] });
+// 관계 MERGE 는 `RETURN count(x) AS merged` 로 실제 반영 건수를 돌려받는다(무음 유실 방지) —
+// 목도 집계 행을 내놓아야 한다. 값은 이 테스트들이 단언하지 않으므로 0 으로 충분하다.
+const runMock = vi.fn().mockResolvedValue({ records: [{ get: () => 0 }] });
 const closeMock = vi.fn().mockResolvedValue(undefined);
 
 vi.mock('./neo4j-client.js', () => ({
@@ -28,7 +31,7 @@ describe('loadGraph', () => {
       ],
       relations: [],
     };
-    await loadGraph(graph, 1, 3, 5);
+    await loadGraph(graph, 1, 3, 5 as VerifiedOntologyId);
 
     // 첫 run 호출 = 노드 MERGE. Cypher에 속성 병합(coalesce)이 포함되어야 한다.
     const [nodeCypher, nodeParams] = runMock.mock.calls[0];
@@ -57,7 +60,7 @@ describe('loadGraph', () => {
       ],
       relations: [],
     };
-    await loadGraph(graph, 1, 3, 5);
+    await loadGraph(graph, 1, 3, 5 as VerifiedOntologyId);
 
     const [, nodeParams] = runMock.mock.calls[0];
     expect(nodeParams.entities[0].properties).toEqual({ 피해액: 120_000_000 });
@@ -74,7 +77,7 @@ describe('loadGraph', () => {
         { subjectKey: entityKey(incidentId, '사건'), type: 'CAUSED_BY', objectKey: entityKey(causeId, '원인') },
       ],
     };
-    await loadGraph(graph, 1, 5, 7);
+    await loadGraph(graph, 1, 5, 7 as VerifiedOntologyId);
 
     const [nodeCypher, nodeParams] = runMock.mock.calls[0];
     const [relCypher, relParams] = runMock.mock.calls[1];
@@ -100,7 +103,7 @@ describe('loadGraph', () => {
         { subjectKey: entityKey(incidentId, '사건'), type: 'CAUSED_BY', objectKey: entityKey(causeId, '원인') },
       ],
     };
-    await loadGraph(graph, 1, 5, 7);
+    await loadGraph(graph, 1, 5, 7 as VerifiedOntologyId);
 
     const [nodeCypher, nodeParams] = runMock.mock.calls[0];
     const [relCypher, relParams] = runMock.mock.calls[1];
