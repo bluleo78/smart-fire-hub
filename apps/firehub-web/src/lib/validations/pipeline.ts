@@ -8,7 +8,7 @@ export const pipelineStepSchema = z.object({
   outputDatasetId: z.number().nullable().default(null),
   inputDatasetIds: z.array(z.number()).default([]),
   dependsOnStepNames: z.array(z.string()).default([]),
-  loadStrategy: z.enum(['REPLACE', 'APPEND']).default('REPLACE'),
+  loadStrategy: z.enum(['REPLACE', 'APPEND', 'MERGE']).default('REPLACE'),
   apiConfig: z.record(z.string(), z.unknown()).optional(),
   // AI_CLASSIFY 스텝 설정 (백엔드 PipelineStepRequest.aiConfig와 일치)
   aiConfig: z.record(z.string(), z.unknown()).optional(),
@@ -43,7 +43,7 @@ export const editorStepSchema = z.object({
   scriptContent: z.string().optional().or(z.literal('')),
   outputDatasetId: z.number().nullable(),
   inputDatasetIds: z.array(z.number()).default([]),
-  loadStrategy: z.enum(['REPLACE', 'APPEND']).default('REPLACE'),
+  loadStrategy: z.enum(['REPLACE', 'APPEND', 'MERGE']).default('REPLACE'),
   apiConfig: z.record(z.string(), z.unknown()).optional(),
   // AI_CLASSIFY 스텝 설정 (백엔드 PipelineStepRequest.aiConfig와 일치)
   aiConfig: z.record(z.string(), z.unknown()).optional(),

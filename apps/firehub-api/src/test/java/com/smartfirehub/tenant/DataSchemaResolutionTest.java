@@ -195,6 +195,14 @@ class DataSchemaResolutionTest {
               "신규 테넌트 스키마 접두사의 유일한 선언 지점(P3-b2 T2 라운드 1 NIT) — 이름만 바꾼"
                   + " 클론 상수 선언을 이 핀 밖에서 잡는다"),
           new PinnedSite(
+              "db/migration/V125__pipeline_incremental_updated_at_indexes.java",
+              "then 'data' else",
+              1,
+              "Flyway 마이그레이션은 런타임 DataSchema(TenantContext 의존)를 쓸 수 없다 — 모든 테넌트의"
+                  + " 물리 테이블을 한 번에 훑어야 하고, 마이그레이션 시점에는 테넌트 컨텍스트가 없다."
+                  + " V124 의 백필 DO 블록이 같은 매핑을 SQL 로 적고 있는 것과 같은 자리다."
+                  + " 매핑이 바뀌면 DataSchema.java·V124·이 한 줄이 함께 바뀌어야 한다"),
+          new PinnedSite(
               "com/smartfirehub/embedding/OpenAiEmbeddingProvider.java",
               "resp.get(\"data\")",
               1,
@@ -252,6 +260,16 @@ class DataSchemaResolutionTest {
               "\"SET LOCAL search_path = '\" + DataSchema.current() + \"'\"",
               1,
               "파이프라인 SQL 실행 직전 search_path — 위와 같은 이유(식별자 목록)로 조립이 맞다"),
+          new PinnedSite(
+              "com/smartfirehub/pipeline/service/SqlScriptExecutor.java",
+              "\"DELETE FROM \\\"\" + DataSchema.current() + \"\\\".\\\"\"",
+              1,
+              // Task 4 Fix round 1 — 선행 문장 검증의 기대 접두어. qualify() 는 스키마 부분을
+              // 인용하지 않아(data."tbl") executor 의 화이트리스트(스키마·테이블 양쪽 인용)와
+              // 형태가 맞지 않으므로, 검증 전용으로 스키마·테이블 양쪽을 인용한 접두어를 직접
+              // 조립한다. OutputClearStatement.deleteAll 이 만드는 문장과 정확히 같은 형태여야
+              // 검증이 성립하므로 qualify() 로 우회할 수 없다.
+              "선행 문장(DELETE) 검증 접두어 — qualify() 출력 형태와 달라 직접 조립이 불가피하다"),
           new PinnedSite(
               "com/smartfirehub/pipeline/service/SqlColumnProbe.java",
               "\"SET LOCAL search_path = '\" + DataSchema.current() + \"'\"",

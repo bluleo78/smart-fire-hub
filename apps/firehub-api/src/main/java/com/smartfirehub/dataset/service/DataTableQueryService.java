@@ -86,8 +86,8 @@ public class DataTableQueryService {
         var result = dsl.fetch(limitedSql);
         long executionTimeMs = System.currentTimeMillis() - startTime;
 
-        // Filter out system columns (id, import_id, created_at)
-        Set<String> systemColumns = Set.of("id", "import_id", "created_at");
+        // Filter out system columns (id, import_id, created_at, _updated_at)
+        Set<String> systemColumns = DataTableService.SYSTEM_COLUMNS;
 
         List<String> columns = new ArrayList<>();
         List<Integer> visibleIndices = new ArrayList<>();

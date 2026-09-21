@@ -147,4 +147,98 @@ class PipelineControllerTest {
   void getPipelines_withoutAuth_returnsUnauthorized() throws Exception {
     mockMvc.perform(get("/api/v1/pipelines")).andExpect(status().isUnauthorized());
   }
+
+  // --- 전체 재생성/재읽기 예약 API (Task 7) ---
+
+  @Test
+  void reserveFullRebuild_withPermission_returnsNoContent() throws Exception {
+    mockMvc
+        .perform(
+            post("/api/v1/pipelines/1/steps/2/full-rebuild")
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isNoContent());
+
+    verify(pipelineService).setFullRebuildPending(1L, 2L, true);
+  }
+
+  @Test
+  void cancelFullRebuild_withPermission_returnsNoContent() throws Exception {
+    mockMvc
+        .perform(
+            delete("/api/v1/pipelines/1/steps/2/full-rebuild")
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isNoContent());
+
+    verify(pipelineService).setFullRebuildPending(1L, 2L, false);
+  }
+
+  /** 증분 플레이스홀더가 없는 스텝에 예약을 걸면 서비스가 {@link IllegalArgumentException}(400)을 던진다. */
+  @Test
+  void reserveFullRebuild_nonIncrementalStep_returnsBadRequest() throws Exception {
+    org.mockito.Mockito.doThrow(
+            new IllegalArgumentException("{{last_run_at}} 을 쓰는 SQL 스텝만 전체 재생성을 예약할 수 있습니다."))
+        .when(pipelineService)
+        .setFullRebuildPending(1L, 2L, true);
+
+    mockMvc
+        .perform(
+            post("/api/v1/pipelines/1/steps/2/full-rebuild")
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isBadRequest());
+  }
+
+  @Test
+  void reserveFullRebuild_withoutAuth_returnsUnauthorized() throws Exception {
+    mockMvc.perform(post("/api/v1/pipelines/1/steps/2/full-rebuild")).andExpect(status().isUnauthorized());
+  }
+
+  /**
+   * 증분 필드(Task 7)의 JSON 계약 — Task 8 웹 UI가 이 필드명·형태에 그대로 의존한다. {@code lastRunAt} 이
+   * ISO-8601 오프셋 문자열로 직렬화되는지(에포크 숫자가 아닌지)까지 함께 확인한다.
+   */
+  @Test
+  void getPipelineById_includesIncrementalFields() throws Exception {
+    PipelineStepResponse step =
+        new PipelineStepResponse(
+            10L,
+            "stepA",
+            "설명",
+            "SQL",
+            "SELECT code FROM data.src WHERE _updated_at >= {{last_run_at}}",
+            5L,
+            "out",
+            List.of(),
+            List.of(),
+            0,
+            "MERGE",
+            null,
+            null,
+            null,
+            null,
+            java.time.OffsetDateTime.parse("2026-09-19T01:02:03Z"),
+            true,
+            List.of("경고 문구"),
+            PipelineStepResponse.FULL_REBUILD_MODE_REBUILD_OUTPUT);
+    PipelineDetailResponse detail =
+        new PipelineDetailResponse(
+            1L,
+            "ETL Daily",
+            "Daily ETL run",
+            true,
+            "testuser",
+            List.of(step),
+            LocalDateTime.now(),
+            LocalDateTime.now(),
+            "testuser");
+
+    when(pipelineService.getPipelineById(1L)).thenReturn(detail);
+
+    mockMvc
+        .perform(get("/api/v1/pipelines/1").header("Authorization", "Bearer test-token"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.steps[0].lastRunAt").value("2026-09-19T01:02:03Z"))
+        .andExpect(jsonPath("$.steps[0].fullRebuildPending").value(true))
+        .andExpect(jsonPath("$.steps[0].warnings[0]").value("경고 문구"))
+        .andExpect(jsonPath("$.steps[0].fullRebuildMode").value("REBUILD_OUTPUT"));
+  }
 }

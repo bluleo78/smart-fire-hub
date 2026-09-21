@@ -269,7 +269,9 @@ public class DatasetDataService {
     Map<String, Object> data = new LinkedHashMap<>();
     LocalDateTime createdAt = null;
     for (var entry : rowData.entrySet()) {
-      if ("id".equals(entry.getKey()) || "import_id".equals(entry.getKey())) {
+      if ("id".equals(entry.getKey())
+          || "import_id".equals(entry.getKey())
+          || DataTableService.UPDATED_AT_COLUMN.equals(entry.getKey())) {
         continue;
       }
       if ("created_at".equals(entry.getKey())) {
@@ -369,7 +371,8 @@ public class DatasetDataService {
         }
         continue;
       }
-      if ("import_id".equals(entry.getKey())) {
+      if ("import_id".equals(entry.getKey())
+          || DataTableService.UPDATED_AT_COLUMN.equals(entry.getKey())) {
         continue;
       }
       if ("created_at".equals(entry.getKey())) {

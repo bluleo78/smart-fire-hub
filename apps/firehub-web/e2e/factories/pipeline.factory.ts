@@ -47,6 +47,10 @@ export function createStep(overrides?: Partial<PipelineStepResponse>): PipelineS
     aiConfig: undefined,
     pythonConfig: undefined,
     apiConnectionId: null,
+    lastRunAt: null,
+    fullRebuildPending: false,
+    warnings: [],
+    fullRebuildMode: null,
     ...overrides,
   };
 }

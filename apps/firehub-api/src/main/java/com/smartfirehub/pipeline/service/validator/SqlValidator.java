@@ -2,6 +2,7 @@ package com.smartfirehub.pipeline.service.validator;
 
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.pipeline.exception.UnsafeSqlException;
+import com.smartfirehub.pipeline.service.LastRunAtPlaceholder;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
@@ -261,6 +262,11 @@ public class SqlValidator {
           "provision_tenant_defaults",
           "resolve_slack_workspace_tenant_by_team_id",
           "outbox_tenant_ids",
+          // V123: 증분 처리 책갈피 후보값(가장 오래된 활성 트랜잭션 시작 시각) 계산용 SECURITY DEFINER.
+          // IncrementalCursorService 가 DSLContext 로 직접 호출하는 전용 경로이지, 사용자 파이프라인
+          // SQL 스텝이 호출할 이유가 없다(카탈로그 열람과 마찬가지로 애드혹 SQL 경로에서 미한정 허용할
+          // 근거가 없다) — 차단한다.
+          "fh_incremental_cursor_candidate",
           "query_to_xml",
           "query_to_xmlschema",
           "query_to_xml_and_xmlschema",
@@ -526,6 +532,28 @@ public class SqlValidator {
    */
   private static final Set<String> SEQUENCE_FUNCTIONS = Set.of("nextval", "currval");
 
+  /**
+   * {@link #incrementalWarnings(String)} 이 위험 신호로 보는 집계 함수 이름 목록(소문자 정규화 대조).
+   * 새로 바뀐 행만으로 계산하면 틀린 부분 집계가 되는 함수들이다.
+   */
+  private static final Set<String> AGGREGATE_FUNCTIONS =
+      Set.of(
+          "count",
+          "sum",
+          "avg",
+          "min",
+          "max",
+          "array_agg",
+          "string_agg",
+          "json_agg",
+          "jsonb_agg",
+          "bool_and",
+          "bool_or",
+          "every",
+          "percentile_cont",
+          "percentile_disc",
+          "mode");
+
   /** 검증 실패 시 {@link UnsafeSqlException}을 던진다. */
   public void validate(String scriptContent) {
     if (scriptContent == null || scriptContent.isBlank()) {
@@ -541,6 +569,47 @@ public class SqlValidator {
     requireOnlyKnownFunctions(collected.functions(), collected.analyticFunctionNames());
     requireNoReservedPseudoColumns(collected.columns());
     requireNoSelectInto(collected.plainSelects());
+  }
+
+  /**
+   * {@code {{last_run_at}}} 을 쓰는 SELECT 를 부분 집계(GROUP BY·집계 함수·윈도우 함수·DISTINCT)로 짜면 위험하다는
+   * 경고를 반환한다(Task 7). 새로 바뀐 행만 읽어 계산한 부분 집계를 MERGE 로 덮어쓰면, 이번에 바뀌지 않은
+   * 나머지 그룹/행이 반영된 전체 집계가 부분 집계로 대체돼 결과가 틀린다 — 예를 들어 {@code SELECT code,
+   * count(*) FROM data.src WHERE _updated_at >= {{last_run_at}} GROUP BY code} 는 이번 실행에 바뀐
+   * 행만으로 각 code 의 count 를 다시 세워 기존 총합을 지워 버린다.
+   *
+   * <p>저장을 막지는 않는다(어드바이저리) — 사용자가 의도적으로 "최근 구간만 집계"를 원하는 경우도 있으므로
+   * 판단은 사용자에게 맡긴다. 플레이스홀더가 없는 SQL(=증분 스텝이 아님)은 항상 빈 목록을 반환한다.
+   */
+  public List<String> incrementalWarnings(String sql) {
+    if (!LastRunAtPlaceholder.isUsedIn(sql)) {
+      return List.of();
+    }
+    // 플레이스홀더는 SQL 문법이 아니므로 파싱 전에 유효한 타임스탬프 리터럴로 치환한다. 값 자체는
+    // 구조 분석에 영향이 없으므로 고정된 epoch 를 쓴다.
+    String parsed =
+        LastRunAtPlaceholder.substitute(sql, java.time.OffsetDateTime.parse("1970-01-01T00:00:00Z"));
+    Statement stmt;
+    try {
+      stmt = parseSingleStatement(parsed);
+    } catch (RuntimeException e) {
+      // 구문 오류는 validate() 가 저장 시점에 별도로 보고한다 — 여기서는 조용히 넘어간다(어드바이저리
+      // 경고 계산이 저장을 막는 검증과 다른 실패 경로로 새는 것을 막는다).
+      return List.of();
+    }
+    AstNodeCollector collected = collectSafely(stmt);
+    boolean groupBy = collected.plainSelects().stream().anyMatch(ps -> ps.getGroupBy() != null);
+    boolean distinct = collected.plainSelects().stream().anyMatch(ps -> ps.getDistinct() != null);
+    boolean window = !collected.analyticFunctionNames().isEmpty();
+    boolean aggregate =
+        collected.functions().stream()
+            .anyMatch(f -> f.getName() != null && AGGREGATE_FUNCTIONS.contains(f.getName().toLowerCase()));
+    if (groupBy || distinct || window || aggregate) {
+      return List.of(
+          "{{last_run_at}} 을 쓰는 SQL 에 집계(GROUP BY·집계 함수·윈도우 함수·DISTINCT)가 있습니다. "
+              + "새로 바뀐 행만으로 계산한 부분 집계가 기존 값을 덮어써 결과가 틀릴 수 있습니다.");
+    }
+    return List.of();
   }
 
   /**

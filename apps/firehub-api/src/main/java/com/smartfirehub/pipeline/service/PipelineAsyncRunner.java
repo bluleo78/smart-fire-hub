@@ -10,7 +10,9 @@ import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.global.security.PermissionChecker;
 import com.smartfirehub.global.tenant.DataSchema;
+import com.smartfirehub.pipeline.dto.LoadStrategy;
 import com.smartfirehub.pipeline.dto.PipelineStepResponse;
+import com.smartfirehub.pipeline.dto.StepCursor;
 import com.smartfirehub.pipeline.event.PipelineCompletedEvent;
 import com.smartfirehub.pipeline.exception.ScriptExecutionException;
 import com.smartfirehub.pipeline.repository.PipelineExecutionRepository;
@@ -23,6 +25,7 @@ import com.smartfirehub.pipeline.service.executor.ExecutorClient;
 import com.smartfirehub.pipeline.service.validator.PythonScriptValidator;
 import com.smartfirehub.pipeline.service.validator.SqlValidator;
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -78,6 +81,7 @@ public class PipelineAsyncRunner {
   private final TempDatasetService tempDatasetService;
   private final SqlValidator sqlValidator;
   private final PythonScriptValidator pythonScriptValidator;
+  private final IncrementalCursorService incrementalCursorService;
 
 
   /**
@@ -295,37 +299,102 @@ public class PipelineAsyncRunner {
         outputTableName = datasetRepository.findTableNameById(outputDatasetId).orElse(null);
       }
 
-      // 로드 전략 결정 (기본: REPLACE)
+      // 전략 문자열 원본(미지정이면 기본 REPLACE). 아래 API_CALL 실행기 호출은 enum 이 아니라 이 원본을
+      // 그대로 넘긴다 — strategy.name() 으로 바꾸면 소문자 레거시 값("append")이 대문자로 둔갑해 실행기가
+      // 보는 값이 달라진다.
       String loadStrategy = step.loadStrategy() != null ? step.loadStrategy() : "REPLACE";
 
-      // API_CALL, AI_CLASSIFY, 외부 Python executor는 내부에서 로드 전략을 처리하므로 여기서는 스킵
-      if (!"API_CALL".equals(step.scriptType())
-          && !"AI_CLASSIFY".equals(step.scriptType())
-          && !(executorEnabled && "PYTHON".equals(step.scriptType()))) {
-        switch (loadStrategy) {
-          case "REPLACE":
-            if (outputTableName != null) {
-              log.info("REPLACE strategy: Truncating output table: {}", outputTableName);
-              dataTableRowService.truncateTable(outputTableName);
-            }
-            break;
-          case "APPEND":
-            log.info("APPEND strategy: Skipping truncation for output table: {}", outputTableName);
-            break;
-          default:
-            log.warn("Unknown load strategy '{}', falling back to REPLACE", loadStrategy);
-            if (outputTableName != null) {
-              dataTableRowService.truncateTable(outputTableName);
-            }
-            break;
+      // 로드 전략을 이 메서드에서 딱 한 번 해석한다. load_strategy 컬럼에는 서버 쪽 enum·체크 제약이
+      // 없어(PipelineStepRepository 는 null 만 "REPLACE" 로 매핑) 임의 문자열이 그대로 들어올 수 있으므로
+      // 해석 실패는 REPLACE 로 폴백하고 경고를 한 번만 남긴다 — 예전에는 같은 폴백이 비SQL 분기와 SQL
+      // 분기에 따로 하나씩 있었다. 대소문자 무시(LoadStrategy.parse)라 소문자 레거시 행("append")도
+      // APPEND 로 해석된다.
+      LoadStrategy strategy =
+          LoadStrategy.parse(loadStrategy)
+              .orElseGet(
+                  () -> {
+                    // 미지정(null)은 위에서 이미 "REPLACE" 로 바뀌어 해석에 성공하므로, 여기 오는 값은
+                    // 오직 해석할 수 없는 값(오타·과거 값)뿐이다.
+                    log.warn("Unknown load strategy '{}', falling back to REPLACE", loadStrategy);
+                    return LoadStrategy.REPLACE;
+                  });
+
+      // Fix round 1, nit 5 — MERGE 는 SQL 스텝 전용 거부를 아래 로드 전략 블록(비SQL 타입만 타는 블록)에
+      // 두면 API_CALL/AI_CLASSIFY/실행기 켠 PYTHON 은 애초에 그 블록 진입 조건에서 제외돼 있어
+      // (바로 아래 if) 거기 도달하지 못한다 — 즉 레거시 PYTHON+MERGE 행이 실행기 켠 상태로 오면
+      // 아무 거부도 없이 그냥 APPEND 처럼(비우지 않고) 조용히 실행된다. 저장 시점(PipelineService.
+      // saveSteps)이 이미 이 조합을 거부하지만, 그 우회(레거시 데이터 등)에 대한 2차 방어는 스텝
+      // 타입을 가리지 않고 걸어야 의미가 있으므로 모든 타입 분기보다 앞에 둔다.
+      if (strategy == LoadStrategy.MERGE && !"SQL".equals(step.scriptType())) {
+        throw new ScriptExecutionException("MERGE 는 SQL 스텝 전용입니다");
+      }
+
+      // 여기서 로드 전략을 직접 처리하는 유일한 경우는 <b>실행기를 끈 PYTHON 스텝</b>뿐이다.
+      // API_CALL·AI_CLASSIFY·실행기 켠 PYTHON 은 각 실행기가 임시 테이블 맞바꿈으로 직접 처리하고,
+      // SQL 스텝은 REPLACE 비우기를 즉시 truncate 할지 INSERT 와 같은 트랜잭션으로 보낼 DELETE 선행
+      // 문장으로 만들지를 SQL 분기(isSelect 판단 이후)에서 결정한다(Task 4, 원자성). 스크립트 타입은
+      // 이 네 가지가 전부다(DB CHECK 제약 pipeline_step_script_type_check, V35).
+      if ("PYTHON".equals(step.scriptType()) && !executorEnabled) {
+        // 위에서 이미 MERGE+비SQL 조합을 걸렀으므로 여기 도달하는 전략은 REPLACE/APPEND 뿐이다
+        // (알 수 없는 값은 이미 REPLACE 로 폴백됐다).
+        if (strategy == LoadStrategy.APPEND) {
+          log.info("APPEND strategy: Skipping truncation for output table: {}", outputTableName);
+        } else if (outputTableName != null) {
+          log.info("REPLACE strategy: Truncating output table: {}", outputTableName);
+          dataTableRowService.truncateTable(outputTableName);
         }
       }
+
+      // 증분 처리 상태 — SQL 분기 안에서 정해지지만, 책갈피 전진은 실행 성공 이후(분기 밖)에 하므로
+      // 메서드 스코프에 둔다.
+      boolean incrementalStep = false;
+      OffsetDateTime stepCursorCandidate = null;
+      boolean stepWasFullRebuild = false;
 
       // 스크립트 타입별 실행
       String executionLog;
       if ("SQL".equals(step.scriptType())) {
+        // 출력 비우기를 INSERT 와 같은 트랜잭션으로 보내기 위한 선행 문장 — 따로 커밋하면 실패 시 출력이
+        // 빈 채로 남는다(Task 4). SELECT 자동 적재(REPLACE)일 때만 채워진다 — 아래에서 결정한다.
+        List<String> preStatements = new ArrayList<>();
         String sql = step.scriptContent().trim();
         sql = resolveStepReferences(sql, pipelineId, step);
+
+        // ── 증분 처리({{last_run_at}}) ────────────────────────────────────────────────
+        // 책갈피 후보값은 SQL 실행 "전에" 잡아야 한다 — 실행 도중 커밋되는 트랜잭션의 행
+        // (_updated_at = 그 트랜잭션 시작 시각)을 다음 실행이 놓치지 않기 위해서다. 실행 후에 잡으면
+        // 그 구간이 영원히 비어 버린다. 값 자체의 안전한 계산(시각 먼저 → 활성 트랜잭션 최소값)은
+        // V123 의 DB 함수가 책임진다.
+        incrementalStep = LastRunAtPlaceholder.isUsedIn(sql);
+        if (incrementalStep) {
+          // 저장 시점(PipelineService.saveSteps)이 이미 REPLACE+증분을 거부하지만, 그 검증을 우회해
+          // 저장된 레거시 행에 대한 2차 방어를 둔다 — REPLACE 로 돌면 매 실행 출력에 변경분만 남는다.
+          if (strategy == LoadStrategy.REPLACE) {
+            throw new ScriptExecutionException(
+                "{{last_run_at}} 은 REPLACE 와 함께 쓸 수 없습니다(매 실행 출력이 변경분만 남습니다). MERGE 를 사용하세요.");
+          }
+          StepCursor cursor =
+              stepRepository
+                  .findCursor(step.id())
+                  .orElseThrow(
+                      () -> new ScriptExecutionException("증분 스텝의 책갈피를 찾을 수 없습니다: " + step.name()));
+          stepWasFullRebuild = cursor.fullRebuildPending();
+          // 전체 재생성 예약이면 책갈피를 무시하고 전체를 읽는다(-infinity).
+          OffsetDateTime injected = stepWasFullRebuild ? null : cursor.lastRunAt();
+          stepCursorCandidate = incrementalCursorService.captureCandidate();
+          sql = LastRunAtPlaceholder.substitute(sql, injected);
+          // 소스 테이블의 백필(_updated_at 컬럼+트리거) 완료 여부를 여기서 따로 확인하지 않는다.
+          // V124 백필은 락을 못 잡은 테이블을 건너뛸 수 있지만, 그 결과는 fail-closed 다:
+          // 컬럼이 없으면 사용자 SQL 의 `_updated_at >= {{last_run_at}}` 이 PG 에서
+          // "column _updated_at does not exist" 로 즉시 실패한다. 그리고 "컬럼은 있는데 트리거가
+          // 없는"(=증분이 조용히 틀리는) 조합은 V124·수리 스크립트가 컬럼과 트리거를 한 (서브)
+          // 트랜잭션에 넣기 때문에 만들어지지 않는다. 즉 여기 가드를 두어도 막을 새로운 사고가 없다.
+          // (초안에서 실제로 가드를 넣었다가 걷어냈다 — 이 경로의 SqlValidator 는 미한정 테이블
+          //  참조를 거부하므로 미한정 이름 집합이 항상 비어 가드가 무조건 통과하는 죽은 코드였다.
+          //  "보호한다고 주장하는 죽은 코드"는 보호가 없는 것보다 나쁘다.)
+          executionRepository.setInjectedLastRunAt(stepExecId, injected);
+        }
+
         // 실행 직전 재검증 — 저장 이후 정책 변경/우회 방지. probe/wrappedSql 결합은 이 검증 통과 후이므로
         // 단일 statement·세미콜론 없음이 보장되어 구조적으로 안전하다. (#136)
         sqlValidator.validate(sql);
@@ -345,7 +414,8 @@ public class PipelineAsyncRunner {
           tempDatasetAutoCreated = true;
           Long stepId = step.id();
           // SELECT * FROM {{#N}} 처럼 이전 스텝(또는 실제 데이터셋)의 결과를 그대로 재사용하면
-          // 결과 컬럼에 시스템 예약 컬럼(id/import_id/created_at)이 그대로 섞여 들어온다.
+          // 결과 컬럼에 시스템 예약 컬럼(id/import_id/created_at/_updated_at)이 그대로 섞여 들어온다.
+          // V124 백필 이후 _updated_at 은 모든 데이터셋 테이블에 있으므로 SELECT * 는 항상 이 경로를 탄다.
           // 이 컬럼들을 그대로 새 임시 데이터셋의 사용자 컬럼으로 넘기면
           // DataTableService의 예약어 가드(사용자가 신규 데이터셋에 직접 그 이름을 짓는 것을 막기 위한 것)에
           // 걸려 실행이 항상 실패한다(#645). 자동 생성 경로에서만 예약어 컬럼명을 자동으로
@@ -374,7 +444,52 @@ public class PipelineAsyncRunner {
                     selectColumns, pipelineId, pipelineName, stepId, step.name(), userId);
           }
           outputTableName = datasetRepository.findTableNameById(outputDatasetId).orElseThrow();
-          dataTableRowService.truncateTable(outputTableName);
+          // 여기서 즉시 truncate 하지 않는다 — 임시 데이터셋도 이번 실행 재사용 시 이전 실행 결과를
+          // 담고 있어(findExistingTempDataset) 일반 출력 테이블과 같은 원자성 문제를 겪는다. 비우기는
+          // 아래 REPLACE 판단 블록에서 DELETE 선행 문장으로 통일해 처리한다(Task 4).
+        }
+
+        // 출력 비우기 결정 — SELECT(자동 적재)는 DELETE 를 INSERT 와 같은 트랜잭션으로 보낼 선행 문장으로
+        // 쌓고, 비SELECT(사용자가 직접 쓴 INSERT/UPDATE/DELETE)는 기존처럼 별도 트랜잭션으로 즉시
+        // truncate 한다 — 사용자 DML 자체가 이미 트랜잭션 원자성을 스스로 책임지는 영역이라 기존 동작을
+        // 바꾸지 않는다.
+        //
+        // 알 수 없는 loadStrategy 는 이미 위(메서드 상단)에서 경고와 함께 REPLACE 로 해석됐으므로, 여기는
+        // REPLACE/APPEND/MERGE 세 가지만 본다 — 알 수 없는 값이 조용히 아무것도 비우지 않고 매 실행마다
+        // 행이 누적되던 회귀(Fix round 1, 리뷰 지적 1)는 그 해석에서 이미 막힌다.
+        //
+        // MERGE 는 APPEND 처럼 출력을 비우지 않는다 — MERGE 의 존재 이유 자체가 "기존 행은 그대로 두고
+        // PK 로 upsert"이므로, 여기서 비우면 그 전 실행 결과가 통째로 사라진 뒤 이번 실행분만 남는다
+        // (REPLACE 와 다를 게 없어진다). preStatements 도 비워 둔다 — 아래 SELECT 래핑 분기가 MERGE 일 때
+        // 자체적으로 사용하지 않는다.
+        boolean isMerge = strategy == LoadStrategy.MERGE;
+        if (strategy == LoadStrategy.REPLACE) {
+          if (outputTableName != null) {
+            if (isSelect) {
+              preStatements.add(OutputClearStatement.deleteAll(outputTableName));
+            } else {
+              log.info("REPLACE strategy: Truncating output table: {}", outputTableName);
+              dataTableRowService.truncateTable(outputTableName);
+            }
+          }
+        }
+
+        // (stepWasFullRebuild 는 증분 스텝일 때만 참이 될 수 있으므로 증분 여부를 따로 묻지 않는다.)
+        // 전체 재생성 예약이 걸린 증분 스텝은 이번 실행에서 출력을 통째로 비운다 — 증분 스텝은 APPEND/
+        // MERGE 라 평소에는 출력을 비우지 않으므로, 예약을 해소하려면 여기서 DELETE 선행 문장을 넣어야
+        // 한다. 본 INSERT 와 같은 트랜잭션이므로 실패하면 출력이 그대로 보존된다(Task 4 와 같은 계약).
+        // 위 REPLACE 블록과 중복될 일은 없다 — 증분 스텝은 바로 위에서 APPEND/MERGE 가 아니면 예외를
+        // 던지므로, 여기 도달하는 증분 스텝의 preStatements 는 언제나 빈 목록이다.
+        //
+        // <b>isSelect 가 반드시 필요하다.</b> SELECT 자동 적재 경로만이 이 DELETE 뒤에 출력을 다시
+        // 채운다(INSERT INTO ... SELECT 래핑). 사용자가 직접 쓴 INSERT/UPDATE/DELETE 스텝
+        // (APPEND + {{last_run_at}} 조합은 저장 시점에 거부되지 않는다)에 이 DELETE 를 얹으면, 출력을
+        // 비운 뒤 사용자 DML 이 그 자리를 채운다는 보장이 전혀 없어 출력이 빈 채로 COMPLETED 가 되고
+        // 책갈피까지 전진한다 — 조용한 전량 손실이다. 비SELECT 증분 스텝의 "전체 재생성"은 출력을
+        // 비우는 것이 아니라 <b>전체 읽기</b>(-infinity 치환)까지만을 뜻한다. 무엇을 다시 쓸지는
+        // 사용자 DML 이 스스로 정한다.
+        if (stepWasFullRebuild && isSelect && outputTableName != null) {
+          preStatements.add(OutputClearStatement.deleteAll(outputTableName));
         }
 
         if (isSelect && outputTableName != null && outputDatasetId != null) {
@@ -405,8 +520,12 @@ public class PipelineAsyncRunner {
           //    뿐이고 기본값도 없다 — 즉 대리키가 아니라 **사용자가 값을 넣어야 하는 업무 키**다.
           // 그래서 빼면 개수 불일치로 실패하고, SELECT 에서도 빼면 이번엔 NOT NULL 위반이 난다.
           // 어느 쪽으로도 성공할 수 없었다.
+          // 출력 데이터셋 컬럼 메타데이터는 여기서 한 번만 읽는다 — 아래 MERGE 분기의 PK 목록도 같은
+          // 목록에서 뽑는다(같은 스텝 실행 안에서 두 번 읽을 이유가 없다).
+          List<DatasetColumnResponse> outputColumns =
+              columnRepository.findByDatasetId(outputDatasetId);
           java.util.Set<String> outputColumnNames =
-              columnRepository.findByDatasetId(outputDatasetId).stream()
+              outputColumns.stream()
                   .map(DatasetColumnResponse::columnName)
                   .collect(Collectors.toSet());
 
@@ -423,39 +542,75 @@ public class PipelineAsyncRunner {
                     + outputColumnNames);
           }
 
-          String columnList =
-              matchedColumns.stream()
-                  .map(col -> "\"" + col + "\"")
-                  .collect(Collectors.joining(", "));
           // 출력 테이블은 현재 테넌트의 데이터 스키마에 있다 — 스키마명을 직접 적지 않고
           // DataSchema.qualify 로 조립한다(테이블명 인용·따옴표 이중화까지 그쪽이 책임진다).
-          String wrappedSql =
-              "INSERT INTO "
-                  + DataSchema.qualify(outputTableName)
-                  + " ("
-                  + columnList
-                  + ") "
-                  + sql;
+          String wrappedSql;
+          List<String> mergePkColumns = List.of();
+          if (isMerge) {
+            // MERGE 는 출력 데이터셋의 기존 PK(ux_<table>_pk 유니크 인덱스, dataset_column.is_primary_key
+            // 로 기록됨)를 그대로 재사용한다 — 사용자가 별도로 병합 키를 고르지 않는다. 저장 시점
+            // (PipelineService.saveSteps)에 PK 존재가 이미 검증됐지만, 저장 이후 데이터셋 스키마가
+            // 바뀌었을 수 있어(컬럼 삭제 등) 실행 시점에도 다시 확인한다 — 조용히 APPEND 로 격하되면
+            // 안 되므로 여기서 명확히 실패시킨다.
+            mergePkColumns =
+                outputColumns.stream()
+                    .filter(DatasetColumnResponse::isPrimaryKey)
+                    .map(DatasetColumnResponse::columnName)
+                    .toList();
+            if (mergePkColumns.isEmpty()) {
+              throw new ScriptExecutionException(
+                  "MERGE 에는 출력 데이터셋 PK 컬럼이 필요합니다(데이터셋 스키마가 변경되었는지 확인하세요).");
+            }
+            wrappedSql =
+                MergeSqlBuilder.build(
+                    DataSchema.qualify(outputTableName), matchedColumns, mergePkColumns, sql);
+          } else {
+            String columnList =
+                matchedColumns.stream()
+                    .map(col -> "\"" + col + "\"")
+                    .collect(Collectors.joining(", "));
+            wrappedSql =
+                "INSERT INTO "
+                    + DataSchema.qualify(outputTableName)
+                    + " ("
+                    + columnList
+                    + ") "
+                    + sql;
+          }
 
           if (executorEnabled) {
-            var result = executorClient.executeSql(wrappedSql);
+            var result = executorClient.executeSql(wrappedSql, preStatements);
             if (!result.success()) {
+              String translated = translateMergeError(isMerge, result.error(), mergePkColumns);
+              if (translated != null) {
+                throw new ScriptExecutionException(translated);
+              }
               throw new ScriptExecutionException("SQL 실행 실패: " + result.error());
             }
             executionLog = result.executionLog();
           } else {
-            executionLog = sqlExecutor.execute(wrappedSql);
+            try {
+              executionLog = sqlExecutor.execute(preStatements, wrappedSql);
+            } catch (ScriptExecutionException e) {
+              String translated = translateMergeError(isMerge, e.getMessage(), mergePkColumns);
+              if (translated != null) {
+                throw new ScriptExecutionException(translated, e);
+              }
+              throw e;
+            }
           }
         } else {
-          // 기존 INSERT/UPDATE/DELETE는 그대로 실행
+          // 기존 INSERT/UPDATE/DELETE는 그대로 실행. 이 경로의 preStatements 는 항상 빈 목록이다
+          // (사용자 DML 은 위 REPLACE 판단에서 즉시 truncate 로 처리했고, 증분 전체 재생성 DELETE 도
+          // isSelect 게이트가 걸려 여기로 오지 않는다) — 그래도 시그니처를 맞추기 위해 그대로 넘긴다.
           if (executorEnabled) {
-            var result = executorClient.executeSql(sql);
+            var result = executorClient.executeSql(sql, preStatements);
             if (!result.success()) {
               throw new ScriptExecutionException("SQL 실행 실패: " + result.error());
             }
             executionLog = result.executionLog();
           } else {
-            executionLog = sqlExecutor.execute(sql);
+            executionLog = sqlExecutor.execute(preStatements, sql);
           }
         }
       } else if ("PYTHON".equals(step.scriptType())) {
@@ -516,6 +671,9 @@ public class PipelineAsyncRunner {
           }
 
           // REPLACE 전략: 임시 테이블 생성 후 swap (API_CALL 패턴과 동일)
+          // 여기는 의도적으로 enum(strategy)이 아니라 원본 문자열을 본다 — strategy 는 알 수 없는 값을
+          // REPLACE 로 폴백하지만, 맞바꿈 경로는 "명시적으로 REPLACE 라고 적힌" 경우에만 타야 한다.
+          // 폴백을 여기까지 끌고 오면 알 수 없는 값이 갑자기 _tmp 생성·맞바꿈을 시작해 동작이 바뀐다.
           String targetTable = outputTableName;
           boolean isReplace = "REPLACE".equalsIgnoreCase(loadStrategy) && outputTableName != null;
           if (isReplace) {
@@ -594,7 +752,19 @@ public class PipelineAsyncRunner {
                     apiColumns, pipelineId, pipelineName, stepId, step.name(), userId);
           }
           outputTableName = datasetRepository.findTableNameById(outputDatasetId).orElseThrow();
-          dataTableRowService.truncateTable(outputTableName);
+          // 여기서 truncateTable 하지 않는다 — 다시 넣지 말 것.
+          // 이유 셋:
+          //  (1) 로드 전략을 무시했다 — 재사용된 임시 데이터셋(ptmp_*)은 APPEND 스텝에서도 매 실행
+          //      통째로 비워졌다. APPEND 는 절대 비우면 안 된다.
+          //  (2) API 호출보다 **먼저** 커밋됐다(DataTableRowService 에는 @Transactional 이 없어
+          //      truncate 가 즉시 커밋된다). 그 뒤 호출이 실패하면 출력 데이터셋이 빈 채로 남는다 —
+          //      이 브랜치가 SQL 경로에서 없앤 바로 그 결함이다.
+          //  (3) 빈 결과 가드(#685: "0행은 기존 데이터를 파괴하지 않는다")를 무력화했다. 아래
+          //      finishReplace 가 0행이면 맞바꾸지 않고 원본을 지키는데, 앞에서 이미 비워 버리면
+          //      지킬 원본이 없다.
+          // REPLACE 비우기는 아래 두 경로가 이미 원자적으로 처리한다 — 실행기 켠 경로는
+          // createTempTable → finishReplace 맞바꿈(이 블록 바로 아래), 끈 경로는 ApiCallExecutor
+          // 내부의 동일한 t_tmp 맞바꿈이다. 실패 시 dropTempTable 로 이전 행이 그대로 남는다.
         }
 
         // 정확한 타입 변환을 위해 데이터셋 메타데이터에서 컬럼 타입 맵 구성
@@ -609,6 +779,8 @@ public class PipelineAsyncRunner {
 
         if (executorEnabled) {
           // REPLACE 전략: API가 DDL 오케스트레이션 (executor는 INSERT만 수행)
+          // PYTHON 블록과 같은 이유로 enum(strategy)이 아니라 원본 문자열을 본다 — 알 수 없는 값의
+          // REPLACE 폴백을 맞바꿈 경로까지 끌고 오면 동작이 바뀐다.
           String targetTable = outputTableName;
           boolean isReplace = "REPLACE".equalsIgnoreCase(loadStrategy) && outputTableName != null;
           if (isReplace) {
@@ -624,8 +796,9 @@ public class PipelineAsyncRunner {
               throw new ScriptExecutionException("API_CALL 실행 실패: " + result.error());
             }
             if (isReplace) {
-              // 여기에는 빈 결과 가드가 없었다 — API 가 0행을 돌려주면 빈 임시 테이블이 원본을
-              // 덮었다(#685 와 같은 결함이 아직 터지지 않은 상태였다).
+              // 빈 결과 가드는 finishReplace 가 단독으로 갖는다(#685) — API 가 0행을 돌려주면
+              // 맞바꾸지 않고 임시 테이블만 버려 원본을 지킨다. 예전에는 여기서 swapTable 을 바로
+              // 불러 빈 테이블이 원본을 덮었다(같은 결함이 아직 터지지 않은 상태였다).
               dataTableService.finishReplace(outputTableName, result.rowsLoaded());
             }
             executionLog = result.executionLog();
@@ -719,7 +892,15 @@ public class PipelineAsyncRunner {
                     aiColumns, pipelineId, pipelineName, stepId, step.name(), userId);
           }
           outputTableName = datasetRepository.findTableNameById(outputDatasetId).orElseThrow();
-          dataTableRowService.truncateTable(outputTableName);
+          // 여기서 truncateTable 하지 않는다 — 다시 넣지 말 것. API_CALL 블록과 같은 이유다:
+          //  (1) APPEND 스텝의 재사용 임시 데이터셋까지 매 실행 비웠다.
+          //  (2) AI 분류가 돌기 **전에** 즉시 커밋돼, 분류가 실패하면 출력이 빈 채로 남았다.
+          //  (3) #685 의 빈 결과 가드를 무력화했다(지킬 원본을 미리 없애 버린다).
+          // REPLACE 비우기는 AiClassifyExecutor 가 loadStrategy 를 직접 읽어 createTempTable →
+          // swapTable 로 처리한다(AiClassifyExecutor:128-136, :268-269). 여기만 finishReplace 가
+          // 아니라 swapTable 을 직접 부르는데, AI_CLASSIFY 에서 0행은 정상 결과가 아니라
+          // :255 에서 먼저 예외를 던지기 때문이다 — 즉 swapTable 에 도달하면 이미 비어 있지 않다.
+          // 실패하면 :273 의 dropTempTable 로 이전 행이 그대로 남는다.
         }
 
         // AiClassifyExecutor에 전달할 스텝 래퍼: 해결된 outputDatasetId 및 inputDatasetIds 반영
@@ -749,6 +930,20 @@ public class PipelineAsyncRunner {
         // AI_CLASSIFY는 자체적으로 출력 행 수를 관리
       } else {
         throw new ScriptExecutionException("Unsupported script type: " + step.scriptType());
+      }
+
+      // 증분 책갈피 전진 — 반드시 "출력이 커밋된 뒤"다.
+      //
+      // 출력(테넌트 파이프라인 롤 커넥션)과 책갈피(앱 커넥션)는 서로 다른 커넥션이라 한 트랜잭션으로
+      // 묶을 수 없다. 그래서 순서가 곧 안전장치다: 출력 커밋 → 책갈피 전진. 이 사이에서 죽으면 다음
+      // 실행이 같은 구간을 다시 읽고, MERGE 의 멱등성이 그 중복을 흡수한다. 반대로 먼저 전진시키면
+      // 출력 실패 시 그 구간이 영원히 비는 데이터 손실이 된다.
+      //
+      // 실패 경로(catch)에서는 전진하지 않는다 — 여기까지 도달하지 못하기 때문이다. 전체 재생성 예약은
+      // "이번 실행이 실제로 전체 재생성이었을 때"만 해제한다(advanceCursor Javadoc) — 실패하면 예약이
+      // 그대로 유지돼 다음 실행이 다시 시도하고, 이번 실행 도중 새로 켜진 예약도 잃지 않는다.
+      if (incrementalStep) {
+        stepRepository.advanceCursor(step.id(), stepCursorCandidate, stepWasFullRebuild);
       }
 
       // 출력 행 수 계산 (출력 테이블이 있는 경우)
@@ -1059,8 +1254,12 @@ public class PipelineAsyncRunner {
    *
    * <p>WITH 절로 시작하는 CTE 구문은 본문 키워드(SELECT / INSERT / UPDATE / DELETE / MERGE)를 파싱하여 실제 DML 여부를
    * 확인한다.
+   *
+   * <p>패키지 전용 static — {@code PipelineService.saveSteps}가 MERGE 로드 전략은 SELECT 스텝에만
+   * 허용된다는 저장 시점 검증(Fix round 1, must 3)에 같은 판별 로직을 재사용한다. 인스턴스 상태를 쓰지
+   * 않는 순수 문자열 판별이라 static 으로 승격해도 동작이 바뀌지 않는다.
    */
-  private boolean isSelectStatement(String sql) {
+  static boolean isSelectStatement(String sql) {
     String upper = sql.stripLeading().toUpperCase();
     if (upper.startsWith("SELECT")) {
       return true;
@@ -1076,7 +1275,7 @@ public class PipelineAsyncRunner {
    *
    * <p>괄호 깊이를 추적하여 최상위 레벨에 도달한 뒤 첫 번째 키워드를 검사한다.
    */
-  private boolean isCteFollowedBySelect(String upperSql) {
+  private static boolean isCteFollowedBySelect(String upperSql) {
     int depth = 0;
     int len = upperSql.length();
     int i = 0;
@@ -1109,17 +1308,57 @@ public class PipelineAsyncRunner {
     return false;
   }
 
-  /** 임시 데이터셋 물리 테이블이 항상 자동 보유하는 시스템 예약 컬럼명 (DataTableService 참조). */
-  private static final Set<String> RESERVED_COLUMN_NAMES = Set.of("id", "import_id", "created_at");
+  /**
+   * MERGE 실행 오류 메시지를 한국어 안내로 번역한다. 번역 대상이 아니면 {@code null}을 돌려줘 호출부가
+   * 원본 오류를 그대로 쓰게 한다.
+   *
+   * <p>두 가지 PostgreSQL 오류 문구를 처리한다(Fix round 1, must 2 / must 4):
+   *
+   * <ul>
+   *   <li>{@link MergeSqlBuilder#DUPLICATE_KEY_PG_MESSAGE} — SELECT 가 같은 PK 를 두 번 이상 낼 때.
+   *   <li>{@link MergeSqlBuilder#NO_UNIQUE_CONSTRAINT_PG_MESSAGE} — {@code ux_<table>_pk} 인덱스가
+   *       (동시 생성 실패 등으로) INVALID 상태라 메타데이터(is_primary_key=true)와 실제 제약이 어긋날 때.
+   * </ul>
+   *
+   * <p>executor 켠 경로({@code result.error()})와 끈 경로({@code sqlExecutor.execute} 가 던지는
+   * {@link ScriptExecutionException#getMessage()}) 양쪽이 이 메서드 하나를 공유한다 — 번역 문구가 두
+   * 곳에서 갈리는 사고를 막는다.
+   */
+  private static String translateMergeError(boolean isMerge, String rawMessage, List<String> pkColumns) {
+    if (!isMerge || rawMessage == null) {
+      return null;
+    }
+    if (rawMessage.contains(MergeSqlBuilder.DUPLICATE_KEY_PG_MESSAGE)) {
+      return "SQL 결과에 같은 키(" + String.join(", ", pkColumns) + ")가 두 번 이상 나옵니다. "
+          + "키별로 한 행만 나오도록 SQL을 수정하세요.";
+    }
+    if (rawMessage.contains(MergeSqlBuilder.NO_UNIQUE_CONSTRAINT_PG_MESSAGE)) {
+      return "출력 데이터셋의 PK("
+          + String.join(", ", pkColumns)
+          + ") 유니크 인덱스가 유효하지 않습니다. 데이터셋 설정에서 PK 를 다시 지정한 뒤 다시 실행하세요.";
+    }
+    return null;
+  }
 
   /**
-   * SELECT 결과 컬럼명 중 시스템 예약어(id/import_id/created_at)와 충돌하는 이름을 자동으로 안전한 이름으로 바꾼다(#645).
+   * SELECT 결과 컬럼명 중 시스템 예약어(id/import_id/created_at/_updated_at)와 충돌하는 이름을 자동으로 안전한 이름으로 바꾼다(#645).
    *
    * <p>{@code SELECT * FROM {{#N}}}처럼 이전 스텝(또는 실제 데이터셋)의 출력을 그대로 재사용하면, 모든 데이터셋 물리 테이블이
    * 자동으로 갖는 시스템 컬럼(id/created_at 등)이 결과 컬럼에 그대로 섞여 들어온다. 이를 새 임시 데이터셋의 "사용자 컬럼"으로
    * 그대로 저장하려 하면 {@code DataTableService}의 예약어 가드에 걸려 항상 실패한다. 그 가드는 사용자가 신규 데이터셋을 만들 때
    * 컬럼명을 직접 예약어로 짓는 것을 막기 위한 것이라 이 자동 패스스루 시나리오에는 부적합하므로, 여기서는 충돌하는 컬럼명에 순번
-   * 접미사를 붙여 자동으로 별칭 처리한다 (예: {@code id} → {@code id_1}).
+   * 접미사를 붙여 자동으로 별칭 처리한다 (예: {@code id} → {@code id_1}, {@code _updated_at} →
+   * {@code updated_at_1}).
+   *
+   * <p><b>선행 밑줄을 반드시 떼고 접미사를 붙인다(코드리뷰 HIGH).</b> {@code DataTableService.validateName}
+   * 은 컬럼명마다 {@code ^[a-z][a-z0-9_]*$} 를 요구한다 — 밑줄로 시작하는 이름은 거부다. 그래서
+   * {@code _updated_at} 을 단순히 {@code _updated_at_1} 로 바꾸면 여전히 무효라 임시 데이터셋 생성이
+   * {@code InvalidTableNameException} 으로 실패한다. V124 백필이 <b>모든</b> 데이터셋 테이블에
+   * {@code _updated_at} 을 추가했으므로 {@code SELECT *} 스텝은 100% 이 경로를 탄다. 대소문자도 함께
+   * 정규화한다 — 검증 정규식이 소문자만 허용하기 때문이다.
+   *
+   * <p>목록의 <b>개수와 순서는 절대 바꾸지 않는다</b> — 같은 목록이 뒤에서 INSERT 대상 컬럼 매칭에
+   * 그대로 재사용되므로, 한 컬럼이라도 빠지면 SELECT 식 목록과 어긋나 실행이 깨진다.
    *
    * @param names SELECT 결과 컬럼명 목록 (순서 보존 필요 — INSERT 매칭에 그대로 재사용됨)
    * @return 예약어 충돌이 해소된 컬럼명 목록 (같은 순서, 같은 개수)
@@ -1129,12 +1368,22 @@ public class PipelineAsyncRunner {
     List<String> result = new ArrayList<>();
     for (String name : names) {
       String candidate = name;
-      if (RESERVED_COLUMN_NAMES.contains(name.toLowerCase())) {
+      // 예약 컬럼 집합은 DataTableService 와 공유한다 — 따로 복사해 두면 시스템 컬럼이 하나 늘었을 때
+      // 이쪽만 조용히 낡는다(실제로 _updated_at 이 그렇게 추가됐다).
+      if (DataTableService.SYSTEM_COLUMNS.contains(name.toLowerCase())) {
+        // 접미사를 붙일 기반 이름 — 선행 밑줄 제거 + 소문자화로 항상 ^[a-z][a-z0-9_]*$ 를 만족시킨다.
+        // (예약어 집합이 전부 영문자로 시작하므로 밑줄을 떼면 반드시 [a-z] 로 시작한다. 그래도
+        // 방어적으로 빈 문자열이면 "col" 로 대체한다.)
+        String base = name.toLowerCase().replaceFirst("^_+", "");
+        if (base.isEmpty()) {
+          base = "col";
+        }
         int suffix = 1;
-        candidate = name + "_" + suffix;
+        candidate = base + "_" + suffix;
+        // 사용자 컬럼에 이미 그 이름이 있으면 번호를 올려 충돌을 피한다(원래 이름 집합 + 이미 만든 별칭).
         while (used.contains(candidate)) {
           suffix++;
-          candidate = name + "_" + suffix;
+          candidate = base + "_" + suffix;
         }
       }
       used.add(candidate);

@@ -7,6 +7,15 @@ spring:
     baseline-version: 80
     # 런타임 접속(spring.datasource)은 비특권 app_tenant 롤, 마이그레이션(spring.flyway)은 소유자 롤(app) —
     # 실제 url/username/password 는 프로필별(test/local/prod)로 분리 정의한다.
+    postgresql:
+      # Flyway 의 PostgreSQL 기본 잠금은 pg_try_advisory_xact_lock — 즉 **트랜잭션 수준** 잠금이라
+      # 메타데이터 커넥션이 마이그레이션 내내 "idle in transaction" 으로 열린 트랜잭션을 붙들고 있다.
+      # 그 상태에서 V125 의 CREATE INDEX CONCURRENTLY 는 그 트랜잭션이 끝나기를 기다리는데, 그 트랜잭션은
+      # 마이그레이션이 끝나야 닫히므로 **영원히 멈춘다**(실측 2026-09-21: 테스트 기동이 15분 넘게 hang,
+      # pg_stat_activity 에서 CIC 가 wait_event=virtualxid 로 대기, 상대 pid 는 Flyway 의
+      # "SELECT COUNT(*) FROM pg_namespace" 커넥션). false 로 두면 세션 수준(pg_try_advisory_lock)
+      # 잠금을 쓰므로 열린 트랜잭션이 없고 CIC 가 정상 진행한다. 잠금의 상호배제 효과는 그대로다.
+      transactional-lock: false
   task:
     scheduling:
       pool:

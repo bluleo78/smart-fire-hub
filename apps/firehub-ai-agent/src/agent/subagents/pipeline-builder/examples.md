@@ -31,7 +31,7 @@ WHERE death_count > 0
 ### 검증 체크리스트
 - [✅] 컬럼명이 실제 스키마와 일치 (occurred_at / death_count / location)
 - [✅] SELECT * 미사용 — 필요한 컬럼만 명시
-- [✅] 예약 컬럼(id/import_id/created_at) 충돌 없음
+- [✅] 예약 컬럼(id/import_id/created_at/_updated_at) 충돌 없음
 - [✅] {{#N}} 미사용 (단일 스텝)
 - [✅] 순환 의존성 없음
 

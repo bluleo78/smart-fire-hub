@@ -37,6 +37,19 @@ export interface PipelineStepResponse {
   aiConfig?: Record<string, unknown>;
   pythonConfig?: PythonStepConfig;
   apiConnectionId: number | null;
+  /** 증분 처리 책갈피 — 이 스텝이 마지막으로 성공 실행된 시각. 증분 대상이 아니면 null */
+  lastRunAt: string | null;
+  /** 다음 실행 시 전체 재생성(책갈피 무시)이 예약돼 있는지 여부 */
+  fullRebuildPending: boolean;
+  /** 저장 시 백엔드가 계산한 안내성 경고 목록 — 저장을 막지 않는다 */
+  warnings: string[];
+  /**
+   * 전체 재생성 예약 시 실제로 벌어지는 동작.
+   * REBUILD_OUTPUT: 출력 데이터셋을 비우고 원천 전체로 다시 만듦 (SELECT 스텝)
+   * READ_ALL: 출력은 그대로 두고 원천만 전체 재조회 (사용자 DML 스텝) — 출력 재생성 아님
+   * null: 이 스텝은 증분 처리 대상이 아니어서 재생성 예약을 제공하지 않음
+   */
+  fullRebuildMode: 'REBUILD_OUTPUT' | 'READ_ALL' | null;
 }
 
 export interface PipelineDetailResponse {

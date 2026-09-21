@@ -22,6 +22,15 @@ async function invokeTool(server: any, toolName: string, args: Record<string, un
   return entry.handler(args, {});
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function getInputSchema(server: any, toolName: string) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const instance = server.instance as any;
+  const entry = instance._registeredTools[toolName];
+  if (!entry) throw new Error(`Tool ${toolName} not found`);
+  return entry.inputSchema;
+}
+
 describe('Pipeline MCP Tools', () => {
   let client: FireHubApiClient;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -147,6 +156,78 @@ describe('Pipeline MCP Tools', () => {
       (client.executePipeline as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('API 오류'));
       const result = await invokeTool(server, 'execute_pipeline', { id: 7 });
       expect(result.isError).toBe(true);
+    });
+  });
+
+  describe('loadStrategy zod 파싱', () => {
+    it('create_pipeline: loadStrategy=MERGE인 스텝은 zod 파싱에 성공한다', () => {
+      const args = {
+        name: '증분 파이프라인',
+        steps: [
+          {
+            name: 'step1',
+            scriptType: 'SQL',
+            scriptContent: 'SELECT 1',
+            loadStrategy: 'MERGE',
+          },
+        ],
+      };
+      const schema = getInputSchema(server, 'create_pipeline');
+      const result = schema.safeParse(args);
+      expect(result.success).toBe(true);
+    });
+
+    it('update_pipeline: loadStrategy=MERGE인 스텝은 zod 파싱에 성공한다', () => {
+      const args = {
+        id: 9,
+        name: '증분 파이프라인',
+        steps: [
+          {
+            name: 'step1',
+            scriptType: 'SQL',
+            scriptContent: 'SELECT 1',
+            loadStrategy: 'MERGE',
+          },
+        ],
+      };
+      const schema = getInputSchema(server, 'update_pipeline');
+      const result = schema.safeParse(args);
+      expect(result.success).toBe(true);
+    });
+
+    it('create_pipeline: loadStrategy=FOO는 zod 파싱에 실패한다', () => {
+      const args = {
+        name: '잘못된 파이프라인',
+        steps: [
+          {
+            name: 'step1',
+            scriptType: 'SQL',
+            scriptContent: 'SELECT 1',
+            loadStrategy: 'FOO',
+          },
+        ],
+      };
+      const schema = getInputSchema(server, 'create_pipeline');
+      const result = schema.safeParse(args);
+      expect(result.success).toBe(false);
+    });
+
+    it('update_pipeline: loadStrategy=FOO는 zod 파싱에 실패한다', () => {
+      const args = {
+        id: 9,
+        name: '잘못된 파이프라인',
+        steps: [
+          {
+            name: 'step1',
+            scriptType: 'SQL',
+            scriptContent: 'SELECT 1',
+            loadStrategy: 'FOO',
+          },
+        ],
+      };
+      const schema = getInputSchema(server, 'update_pipeline');
+      const result = schema.safeParse(args);
+      expect(result.success).toBe(false);
     });
   });
 

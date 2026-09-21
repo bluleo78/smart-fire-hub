@@ -1,6 +1,8 @@
 package com.smartfirehub.pipeline.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartfirehub.dataset.dto.DatasetColumnResponse;
+import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.pipeline.dto.*;
@@ -47,6 +49,7 @@ public class PipelineService {
   private final ObjectMapper objectMapper;
   private final SqlValidator sqlValidator;
   private final PythonScriptValidator pythonScriptValidator;
+  private final DatasetColumnRepository columnRepository;
 
   @Transactional
   public PipelineDetailResponse createPipeline(CreatePipelineRequest request, Long userId) {
@@ -112,6 +115,50 @@ public class PipelineService {
         sqlValidator.validate(substituteStepReferencesForValidation(stepRequest.scriptContent()));
       }
 
+      // 출력 방식 검증 — 문자열로만 저장되던 값을 enum 으로 고정한다(알 수 없는 값이 REPLACE 로 조용히 폴백되던 경로 차단).
+      String strategy = stepRequest.loadStrategy() != null ? stepRequest.loadStrategy() : "REPLACE";
+      LoadStrategy ls;
+      try {
+        ls = LoadStrategy.valueOf(strategy);
+      } catch (IllegalArgumentException e) {
+        throw new IllegalArgumentException("알 수 없는 로드 전략입니다: " + strategy);
+      }
+      // 증분 스텝은 REPLACE 와 양립할 수 없다 — REPLACE 는 매 실행 출력을 비우므로, 변경분만 읽는
+      // SELECT 와 합치면 출력에 "이번에 바뀐 행"만 남고 나머지가 전부 사라진다(조용한 데이터 손실).
+      // MERGE(권장) 또는 APPEND 를 쓰게 한다.
+      if (ls == LoadStrategy.REPLACE
+          && "SQL".equals(stepRequest.scriptType())
+          && LastRunAtPlaceholder.isUsedIn(stepRequest.scriptContent())) {
+        throw new IllegalArgumentException(
+            "{{last_run_at}} 은 REPLACE 와 함께 쓸 수 없습니다(매 실행 출력이 변경분만 남습니다). MERGE 를 사용하세요: "
+                + stepRequest.name());
+      }
+
+      if (ls == LoadStrategy.MERGE) {
+        if (!"SQL".equals(stepRequest.scriptType())) {
+          throw new IllegalArgumentException("MERGE 로드 전략은 SQL 스텝에서만 사용할 수 있습니다: " + stepRequest.name());
+        }
+        // Fix round 1, must 3 — 사용자가 직접 쓴 INSERT/UPDATE/DELETE 스텝에 MERGE 를 걸면 실행 시점의
+        // 출력 비우기 판단과 SELECT 래핑 두 블록이 모두 스킵돼(둘 다 SELECT 자동 적재 경로 전용) MERGE 가
+        // 조용히 아무 의미도 없는 채로 사용자 SQL 이 그대로 실행된다 — PK 없음과 같은 무동작 부류라 저장
+        // 시점에 막는다.
+        if (!isSelectAsRunnerWouldJudge(stepRequest.scriptContent())) {
+          throw new IllegalArgumentException(
+              "MERGE 로드 전략은 SELECT 스텝에만 사용할 수 있습니다(INSERT/UPDATE/DELETE 는 지원하지 않습니다): "
+                  + stepRequest.name());
+        }
+        if (stepRequest.outputDatasetId() == null) {
+          throw new IllegalArgumentException("MERGE 로드 전략에는 출력 데이터셋이 필요합니다: " + stepRequest.name());
+        }
+        boolean hasPk =
+            columnRepository.findByDatasetId(stepRequest.outputDatasetId()).stream()
+                .anyMatch(DatasetColumnResponse::isPrimaryKey);
+        if (!hasPk) {
+          throw new IllegalArgumentException(
+              "MERGE 로드 전략에는 출력 데이터셋의 PK 컬럼이 필요합니다: " + stepRequest.name());
+        }
+      }
+
       // Save step
       Long stepId = stepRepository.saveStep(pipelineId, stepRequest, i);
       stepNameToId.put(stepRequest.name(), stepId);
@@ -151,6 +198,35 @@ public class PipelineService {
    * (저장 시점엔 DAG의 나머지 스텝이 아직 없을 수도 있음) 검사하지 않고, 오직 "SQL 구조가 유효한가"만 본다.
    */
   private String substituteStepReferencesForValidation(String sql) {
+    // 증분 플레이스홀더도 여기서 유효한 타임스탬프 리터럴로 바꿔 둔다 — {{last_run_at}} 은 SQL 문법이
+    // 아니므로 그대로 두면 저장 시점 SQL 가드(AST 파싱)가 항상 실패해 증분 스텝을 아예 저장할 수 없다.
+    // 값 자체는 검증에 영향이 없으므로 고정된 epoch 를 쓴다(실행 시점 값은 러너가 따로 주입한다).
+    return LastRunAtPlaceholder.substitute(
+        substituteStepReferences(sql), java.time.OffsetDateTime.parse("1970-01-01T00:00:00Z"));
+  }
+
+  /**
+   * 실행 시점(PipelineAsyncRunner)이 내릴 것과 <b>똑같은</b> "이게 SELECT 인가" 판단을 저장/조회 시점에 내린다.
+   *
+   * <p>두 시점의 판단이 갈리면 저장은 SELECT 로 통과했는데 실행은 DML 로 보고 다르게 도는(또는 상세 조회가 실제와
+   * 다른 전체 재생성 모드를 보여주는) 결함이 생긴다. 그래서 치환 + 판별의 조합 자체를 이 메서드 하나로 고정하고,
+   * 호출하는 쪽은 언제나 이것만 쓴다.
+   */
+  private boolean isSelectAsRunnerWouldJudge(String scriptContent) {
+    return PipelineAsyncRunner.isSelectStatement(
+        substituteStepReferencesForValidation(scriptContent));
+  }
+
+  /**
+   * {@code {{#N}}} 스텝 참조만 더미 테이블 참조로 치환한다({@code {{last_run_at}}} 은 그대로 둔다).
+   *
+   * <p>{@link #substituteStepReferencesForValidation}과 분리한 이유(코드리뷰 MEDIUM): {@link
+   * SqlValidator#incrementalWarnings}는 <b>{@code {{last_run_at}}} 이 원문에 남아 있어야</b> 동작한다
+   * (없으면 증분 스텝이 아니라고 보고 빈 목록을 돌려준다). 그런데 스텝 참조가 남아 있으면 JSqlParser
+   * 파싱이 실패하고, 그 예외는 조용히 삼켜져 역시 빈 목록이 된다 — 즉 두 치환을 한 덩어리로 쓰든 아예
+   * 안 쓰든 경고가 영원히 안 나온다. 그래서 "스텝 참조만" 바꾸는 이 단계가 따로 필요하다.
+   */
+  private String substituteStepReferences(String sql) {
     Matcher matcher = STEP_REFERENCE_PATTERN.matcher(sql);
     StringBuilder result = new StringBuilder();
     while (matcher.find()) {
@@ -176,7 +252,8 @@ public class PipelineService {
             .findById(id)
             .orElseThrow(() -> new PipelineNotFoundException("Pipeline not found: " + id));
 
-    List<PipelineStepResponse> steps = stepRepository.findByPipelineId(id);
+    List<PipelineStepResponse> steps =
+        stepRepository.findByPipelineId(id).stream().map(this::attachIncrementalMeta).toList();
 
     var updatedAt = pipelineRepository.findUpdatedAtById(id).orElse(null);
 
@@ -197,6 +274,82 @@ public class PipelineService {
         pipeline.createdAt(),
         updatedAt,
         updatedByUsername);
+  }
+
+  /**
+   * SQL 스텝에 증분 처리 관련 어드바이저리 경고와 "전체 재생성 예약이 실제로 무엇을 하는가"({@code
+   * fullRebuildMode})를 계산해 붙인다(Task 7). 저장을 막지 않는다 — 상세 조회 시 매번 다시 계산해 사용자에게
+   * 보여줄 뿐이다.
+   *
+   * <p>경고:
+   *
+   * <ul>
+   *   <li>{@code {{last_run_at}}} + GROUP BY/집계/윈도우/DISTINCT — {@link SqlValidator#incrementalWarnings}
+   *   <li>{@code {{last_run_at}}} + APPEND — 매 실행 바뀐 행이 추가로 한 번 더 쌓여 중복된다(MERGE 권장)
+   * </ul>
+   *
+   * <p>{@code fullRebuildMode} 는 문자열 경고가 아니라 별도 필드로 노출한다 — 웹 UI(Task 8)가 문구를
+   * 파싱하지 않고도 "전체 재생성"(출력 재작성)과 "전체 재읽기"(출력은 그대로, 입력만 전체)를 정확히 갈라
+   * 라벨을 붙이도록 하기 위해서다. 판정은 저장 시점 MERGE 검증(#saveSteps)과 같은 {@link
+   * #isSelectAsRunnerWouldJudge}로 내린다.
+   */
+  private PipelineStepResponse attachIncrementalMeta(PipelineStepResponse step) {
+    if (!"SQL".equals(step.scriptType()) || step.scriptContent() == null) {
+      return step;
+    }
+    if (!LastRunAtPlaceholder.isUsedIn(step.scriptContent())) {
+      return step; // 증분 스텝이 아니면 경고도 재생성 모드도 없다(둘 다 기본값 유지).
+    }
+    // 스텝 참조({{#N}})를 먼저 치환하고 넘긴다 — 원문 그대로 넘기면 JSqlParser 가 파싱에 실패하고
+    // incrementalWarnings 가 그 RuntimeException 을 삼켜 항상 빈 목록을 돌려준다(코드리뷰 MEDIUM).
+    // 이전 스텝 출력을 읽는 형태가 증분 스텝의 가장 흔한 모양이라, 사실상 경고가 아예 안 나왔다.
+    // {{last_run_at}} 은 남겨야 한다 — incrementalWarnings 가 그 존재로 증분 여부를 판단한다.
+    List<String> warnings =
+        new java.util.ArrayList<>(
+            sqlValidator.incrementalWarnings(substituteStepReferences(step.scriptContent())));
+    // equalsIgnoreCase — 실행기(PipelineAsyncRunner)가 로드 전략을 대소문자 무시로 해석하므로
+    // 여기만 대소문자를 가리면 소문자 레거시 행("append")이 APPEND 로 실행되면서 경고만 빠진다.
+    if ("APPEND".equalsIgnoreCase(step.loadStrategy())) {
+      warnings.add(
+          "APPEND 와 {{last_run_at}} 을 함께 쓰면 수정된 행이 한 줄 더 추가되어 중복됩니다. MERGE 를 권장합니다.");
+    }
+    String fullRebuildMode =
+        isSelectAsRunnerWouldJudge(step.scriptContent())
+            ? PipelineStepResponse.FULL_REBUILD_MODE_REBUILD_OUTPUT
+            : PipelineStepResponse.FULL_REBUILD_MODE_READ_ALL;
+    return step.withIncrementalMeta(warnings, fullRebuildMode);
+  }
+
+  /**
+   * 전체 재생성/재읽기 예약(해제). 이 시점에는 데이터를 지우지 않는다 — 다음 실행이 비우기(SELECT 자동
+   * 적재 스텝) 또는 전체 읽기(사용자 DML 스텝)를 실제로 한 트랜잭션에서 수행한다.
+   *
+   * <p><b>주의(운영 문서화 대상) — 사용자가 직접 쓴 INSERT/UPDATE/DELETE 증분 스텝은 "예약"이 출력을
+   * 재생성하지 않는다.</b> {@code {{last_run_at}}} 이 {@code -infinity} 로 바뀌어 전체 행을 다시 읽을
+   * 뿐이고, 그 다음에 무엇을 하는지는 사용자 SQL 자체(INSERT/UPDATE/DELETE 로직)에 달려 있다. 반면 SELECT
+   * 자동 적재 스텝(MERGE/APPEND)은 실행기가 출력을 비우고 전체를 다시 채운다. 두 경우를 뭉뚱그려 "전체
+   * 재생성"이라 안내하면 사용자 DML 스텝에서는 거짓 약속이 된다 — 호출부(웹 UI 등)는 스텝의 로드 전략을
+   * 보고 문구를 갈라 써야 한다.
+   *
+   * @throws PipelineNotFoundException 파이프라인에 그 stepId 가 없을 때(다른 파이프라인의 스텝 포함)
+   * @throws IllegalArgumentException {@code pending=true} 인데 스텝 SQL 이 {@code {{last_run_at}}} 을
+   *     쓰지 않을 때 — 그런 스텝은 실행기가 증분 경로를 타지 않아 예약 플래그를 영원히 해제하지 못한다.
+   */
+  @Transactional
+  public void setFullRebuildPending(Long pipelineId, Long stepId, boolean pending) {
+    PipelineStepResponse step =
+        stepRepository.findByPipelineId(pipelineId).stream()
+            .filter(s -> s.id().equals(stepId))
+            .findFirst()
+            .orElseThrow(
+                () ->
+                    new PipelineNotFoundException(
+                        "Step not found in pipeline " + pipelineId + ": " + stepId));
+    if (pending && !LastRunAtPlaceholder.isUsedIn(step.scriptContent())) {
+      throw new IllegalArgumentException(
+          "{{last_run_at}} 을 쓰는 SQL 스텝만 전체 재생성을 예약할 수 있습니다.");
+    }
+    stepRepository.setFullRebuildPending(stepId, pending);
   }
 
   @Transactional
@@ -226,8 +379,30 @@ public class PipelineService {
 
     // Delete old steps and save new ones (full replacement)
     if (request.steps() != null) {
+      // 스텝은 전체 삭제·재생성되므로 스텝 id 가 매번 바뀐다 — 증분 책갈피를 이름 기준으로 떠 두었다가
+      // 복원한다. 복원하지 않으면 파이프라인을 한 번 저장할 때마다 책갈피가 사라져 매번 전체를 다시 읽는다.
+      //
+      // 출력 데이터셋이 바뀐 스텝은 이월하지 않는다 — 새 출력은 과거 실행분을 받은 적이 없는데 책갈피만
+      // 이어받으면 그 구간이 영원히 비는(=조용한 데이터 누락) 결과가 된다. 전체 읽기로 되돌리는 쪽이 안전하다.
+      //
+      // 출력이 null(임시 데이터셋 자동 생성)인 스텝도 이월하지 않는다 — null == null 은 "같은 출력"이
+      // 아니다. 임시 데이터셋은 source_pipeline_step_id = 스텝 id 로 묶여 있는데 재저장으로 id 가 바뀌면
+      // 러너가 기존 임시 데이터셋을 찾지 못하고 빈 것을 새로 만든다. 그 새 출력에 책갈피만 이어받으면
+      // 이전 실행분이 통째로 빠진 채 변경분만 쌓인다.
+      Map<String, StepCursor> cursors = stepRepository.findCursorsByPipelineId(id);
       stepRepository.deleteByPipelineId(id);
       saveSteps(id, request.steps());
+      // 새로 저장하는 쪽의 동명 스텝은 따로 거를 필요가 없다 — pipeline_step 에는
+      // UNIQUE (pipeline_id, name) 제약이 있어(V3:24) saveSteps 가 이 루프에 닿기 전에 실패하고
+      // 트랜잭션 전체가 롤백된다. 이름을 이월 키로 쓸 수 있는 근거도 그 제약이다.
+      for (PipelineStepRequest s : request.steps()) {
+        StepCursor c = cursors.get(s.name());
+        if (c != null
+            && c.outputDatasetId() != null
+            && java.util.Objects.equals(c.outputDatasetId(), s.outputDatasetId())) {
+          stepRepository.restoreCursor(id, s.name(), c.lastRunAt(), c.fullRebuildPending());
+        }
+      }
     }
   }
 

@@ -22,6 +22,7 @@
 **loadStrategy**:
 - REPLACE (기본): 기존 데이터 삭제 후 새 데이터 삽입
 - APPEND: 기존 데이터에 추가
+- MERGE: 출력 데이터셋 PK 기준 upsert (SQL 스텝 전용, 출력 데이터셋에 PK가 있어야 함)
 
 **예시**:
 ```json

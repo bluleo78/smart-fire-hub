@@ -4,8 +4,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.pipeline.exception.UnsafeSqlException;
+import com.smartfirehub.pipeline.service.MergeSqlBuilder;
+import com.smartfirehub.global.tenant.TenantContext;
 import java.util.List;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -1137,5 +1139,63 @@ class SqlValidatorTest {
   /** 이 JVM 에 살아 있는 스레드 수. 누수 판정의 유일한 관측 수단이다. */
   private static long liveThreadCount() {
     return Thread.getAllStackTraces().keySet().stream().filter(Thread::isAlive).count();
+  }
+
+  // --- Task 5: MERGE 래핑 SQL 게이트 ---
+
+  /**
+   * Task 5 브리핑의 차단 항목 게이트 — {@link MergeSqlBuilder}가 만든 INSERT ... ON CONFLICT 문이
+   * strict(파이프라인 정책) {@link SqlValidator}를 통과하는지 실측한다. 실행기를 끈 경로
+   * ({@code SqlScriptExecutor.execute})가 래핑된 전체 SQL을 이 검증기로 다시 검증하므로, 여기서
+   * 막히면 MERGE 기능 전체가 test 프로필에서 동작하지 않는다 — 구현 전에 먼저 확인한다.
+   */
+  @Test
+  void MERGE_래핑_SQL은_API_검증기를_통과한다() {
+    String merge =
+        MergeSqlBuilder.build(
+            DataSchema.qualify("out"),
+            List.of("code", "name"),
+            List.of("code"),
+            "SELECT code, name FROM " + DataSchema.qualify("src"));
+    assertThatCode(() -> validator.validate(merge)).doesNotThrowAnyException();
+  }
+
+  // --- Task 7: 증분 SQL 경고(incrementalWarnings) ---
+
+  /**
+   * {@code {{last_run_at}}} 을 쓰는 SELECT 가 GROUP BY·집계 함수·윈도우 함수·DISTINCT 중 하나라도 쓰면
+   * 경고해야 한다 — 새로 바뀐 행만으로 계산한 부분 집계가 MERGE 로 기존 전체 집계를 덮어써 결과가 틀리기
+   * 때문이다.
+   */
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "SELECT code, count(*) FROM data.src WHERE _updated_at >= {{last_run_at}} GROUP BY code",
+        "SELECT sum(v) FROM data.src WHERE _updated_at >= {{last_run_at}}",
+        "SELECT code, row_number() OVER (ORDER BY code) FROM data.src WHERE _updated_at >= {{last_run_at}}",
+        "SELECT DISTINCT code FROM data.src WHERE _updated_at >= {{last_run_at}}"
+      })
+  void 증분_SQL의_집계는_경고한다(String sql) {
+    assertThat(validator.incrementalWarnings(sql)).isNotEmpty();
+  }
+
+  /**
+   * 비어 있음 논-베이커스 짝: 행 단위 증분 SQL(집계 없음)과, 플레이스홀더가 아예 없는 집계 SQL(증분 스텝이
+   * 아님) 둘 다 경고가 없어야 한다 — 경고기가 "항상 울림"이 아니라 실제로 집계/플레이스홀더 유무를 보고
+   * 판단한다는 것을 함께 증명한다.
+   */
+  @Test
+  void 행단위_증분_SQL과_플레이스홀더_없는_집계는_경고하지_않는다() {
+    assertThat(
+            validator.incrementalWarnings(
+                "SELECT code, name FROM data.src WHERE _updated_at >= {{last_run_at}}"))
+        .isEmpty();
+    assertThat(validator.incrementalWarnings("SELECT code, count(*) FROM data.src GROUP BY code"))
+        .isEmpty();
+  }
+
+  @Test
+  void 플레이스홀더가_없으면_빈_목록이다() {
+    assertThat(validator.incrementalWarnings("SELECT * FROM data.t")).isEmpty();
   }
 }

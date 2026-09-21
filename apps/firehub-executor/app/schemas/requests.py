@@ -30,6 +30,10 @@ class TenantScopedRequest(BaseModel):
 class SqlExecuteRequest(TenantScopedRequest):
     query: str
     params: Optional[dict] = None
+    # 출력 비우기(DELETE) 등 본 쿼리와 같은 트랜잭션에서 먼저 실행할 선행 문장들.
+    # API 서버가 생성하는 문장만 들어오므로 validate_pre_statement 로 엄격히 검증한다.
+    # alias 표기는 TenantScopedRequest.tenant_id(→ tenantId)와 같은 camelCase 규칙을 따른다.
+    pre_statements: List[str] = Field(default_factory=list, alias="preStatements")
 
 
 class PythonExecuteRequest(TenantScopedRequest):

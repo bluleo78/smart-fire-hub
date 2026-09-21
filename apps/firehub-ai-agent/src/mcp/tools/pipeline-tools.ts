@@ -56,9 +56,9 @@ export function registerPipelineTools(
                 .optional()
                 .describe('의존하는 스텝 이름 목록 (DAG)'),
               loadStrategy: z
-                .enum(['REPLACE', 'APPEND'])
+                .enum(['REPLACE', 'APPEND', 'MERGE'])
                 .optional()
-                .describe('적재 전략 (기본: REPLACE)'),
+                .describe('적재 전략 (기본: REPLACE). MERGE: 출력 데이터셋 PK 기준 upsert(SQL 스텝 전용)'),
               apiConfig: z
                 .object({
                   path: z
@@ -191,7 +191,10 @@ export function registerPipelineTools(
               outputDatasetId: z.number().optional().describe('출력 데이터셋 ID (미지정 시 실행할 때 TEMP 타입 임시 데이터셋이 자동 생성됨)'),
               inputDatasetIds: z.array(z.number()).optional().describe('입력 데이터셋 ID 목록'),
               dependsOnStepNames: z.array(z.string()).optional().describe('의존 스텝 이름 목록'),
-              loadStrategy: z.enum(['REPLACE', 'APPEND']).optional().describe('적재 전략'),
+              loadStrategy: z
+                .enum(['REPLACE', 'APPEND', 'MERGE'])
+                .optional()
+                .describe('적재 전략. MERGE: 출력 데이터셋 PK 기준 upsert(SQL 스텝 전용)'),
               apiConfig: z.record(z.string(), z.unknown()).optional().describe('API_CALL 설정'),
               aiConfig: z
                 .object({

@@ -73,12 +73,33 @@ public class ExecutorClient {
         .block();
   }
 
-  /** SQL 실행 요청. POST /execute/sql Timeout: 60s */
+  /** SQL 실행 요청(선행 문장 없음). {@link #executeSql(String, List)} 에 빈 목록으로 위임한다. */
   public SqlExecuteResult executeSql(String query) {
+    return executeSql(query, List.of());
+  }
+
+  /**
+   * SQL 실행 요청. POST /execute/sql Timeout: 60s
+   *
+   * <p><b>선행 문장(preStatements)이란.</b> Task 4 — REPLACE 전략의 SQL 스텝은 "출력 비우기(DELETE) +
+   * INSERT"를 한 트랜잭션으로 묶어야 한다. 따로 요청을 두 번 보내면(비우기 커밋 → INSERT 별도 요청)
+   * INSERT 가 실패했을 때 출력 테이블이 <b>빈 채로</b> 남는다(원래 결함). 그래서 비우기 문장을 본 쿼리와
+   * 같은 요청에 실어 executor 가 같은 트랜잭션에서 순서대로 실행하게 한다({@code SqlScriptExecutor} 의
+   * 실행기 비활성 경로도 동일 계약을 따른다).
+   *
+   * <p>HTTP 필드명은 {@code preStatements}(camelCase) — executor(Python) 쪽 Pydantic 모델이 이 이름을
+   * alias 로 받는다(Task 3). executor 는 각 선행 문장을 엄격한 화이트리스트 정규식으로 재검증하므로,
+   * 여기서는 호출부가 만든 문자열을 그대로 전달한다({@link com.smartfirehub.pipeline.service.OutputClearStatement}
+   * 가 그 형태를 보장하는 유일한 지점).
+   *
+   * @param query 본 SQL 쿼리
+   * @param preStatements 본 쿼리보다 먼저, 같은 트랜잭션으로 실행할 문장 목록(순서 보존). 없으면 빈 목록.
+   */
+  public SqlExecuteResult executeSql(String query, List<String> preStatements) {
     return webClient
         .post()
         .uri("/execute/sql")
-        .bodyValue(withTenant(Map.of("query", query)))
+        .bodyValue(withTenant(Map.of("query", query, "preStatements", preStatements)))
         .retrieve()
         .bodyToMono(SqlExecuteResult.class)
         .timeout(Duration.ofSeconds(60))

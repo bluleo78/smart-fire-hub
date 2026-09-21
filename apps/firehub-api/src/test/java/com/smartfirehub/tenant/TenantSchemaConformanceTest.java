@@ -370,7 +370,10 @@ class TenantSchemaConformanceTest extends IntegrationTestBase {
           "resolve_trigger_tenant_by_webhook_id",
           "provision_tenant_defaults",
           "outbox_tenant_ids",
-          "resolve_slack_workspace_tenant_by_team_id");
+          "resolve_slack_workspace_tenant_by_team_id",
+          // V123: 증분 처리 책갈피 후보값 계산용. search_path 고정 + PUBLIC EXECUTE 회수 + app_tenant
+          // 에만 명시 GRANT — 다른 definer 함수와 같은 최소권한 설계다.
+          "fh_incremental_cursor_candidate");
 
   /**
    * {@code PUBLIC EXECUTE} 를 남겨 둘 사유가 있는 definer 함수. <b>지금은 비어 있고, 비어 있는

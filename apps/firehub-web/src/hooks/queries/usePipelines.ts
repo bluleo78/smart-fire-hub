@@ -56,6 +56,28 @@ export function useExecutePipeline(pipelineId: number) {
   });
 }
 
+// 증분 처리 스텝의 "처음부터 다시 만들기" 예약/취소 — 성공 시 파이프라인 상세를 무효화해
+// StepConfigPanel이 최신 lastRunAt/fullRebuildPending/warnings를 다시 조회하게 한다.
+export function useReserveFullRebuild(pipelineId: number) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (stepId: number) => pipelinesApi.reserveFullRebuild(pipelineId, stepId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['pipelines', pipelineId] });
+    },
+  });
+}
+
+export function useCancelFullRebuild(pipelineId: number) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (stepId: number) => pipelinesApi.cancelFullRebuild(pipelineId, stepId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['pipelines', pipelineId] });
+    },
+  });
+}
+
 export function useExecutions(pipelineId: number) {
   return useQuery({
     queryKey: ['pipelines', pipelineId, 'executions'],

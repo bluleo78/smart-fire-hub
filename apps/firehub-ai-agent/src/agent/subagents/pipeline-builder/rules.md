@@ -36,12 +36,13 @@
 - `id` (BIGSERIAL PRIMARY KEY)
 - `import_id` (BIGINT)
 - `created_at` (TIMESTAMP DEFAULT NOW())
+- `_updated_at` (TIMESTAMP) — 행이 마지막으로 갱신된 시점을 기록하는 시스템 컬럼
 
-**따라서 SQL SELECT에서 `id`, `import_id`, `created_at` 컬럼을 포함하면 "column specified more than once" 에러가 발생합니다.**
+**따라서 SQL SELECT에서 `id`, `import_id`, `created_at`, `_updated_at` 컬럼을 포함하면 "column specified more than once" 에러가 발생합니다.**
 
 방지법:
 - 소스 테이블의 `id` 컬럼이 필요하면 반드시 별칭 사용: `SELECT id AS source_id, ...`
-- `import_id`, `created_at`도 마찬가지로 별칭 사용
+- `import_id`, `created_at`, `_updated_at`도 마찬가지로 별칭 사용
 - **`SELECT *` 금지 — 반드시 필요한 컬럼만 명시적으로 나열**. `create_pipeline` 호출 직전에 scriptContent를 다시 확인해 `*`가 없는지 점검할 것
 - 필터링만 하고 모든 컬럼이 필요한 경우에도 `*` 대신 컬럼명을 모두 풀어 적는다. Phase 1에서 받은 컬럼 목록을 그대로 사용하면 된다
 
@@ -70,6 +71,7 @@ dependsOnStepNames만 설정하면 됩니다.
 ## loadStrategy
 - REPLACE (기본): 실행 전 기존 데이터 전체 삭제 → 새 데이터 삽입
 - APPEND: 기존 데이터 유지 + 새 데이터 추가
+- MERGE: 출력 데이터셋 PK 기준 upsert (SQL 스텝 전용, 출력 데이터셋에 PK가 있어야 함 — 없으면 저장 시 에러)
 
 ## 보안
 - API_CALL: SSRF 보호 (사설 IP 127.0.0.1, 10.x, 172.16-31.x, 192.168.x 차단)
@@ -192,7 +194,7 @@ SQL 컬럼 타입 분석 실패: ERROR: permission denied for schema data_t2
 | {{#0}} 사용 | 0-indexed 착각 | {{#1}}부터 시작 |
 | 순환 의존성 | DAG 미검증 | 설계 시 의존 그래프 확인 |
 | temp 데이터셋 수동 생성 | 자동 생성 미인지 | outputDatasetId 미지정으로 자동 생성 |
-| column "id" specified more than once | SELECT에 id/import_id/created_at 포함 | 예약 컬럼은 별칭 사용 (id → source_id) |
+| column "id" specified more than once | SELECT에 id/import_id/created_at/_updated_at 포함 | 예약 컬럼은 별칭 사용 (id → source_id) |
 | AI_CLASSIFY "No input rows found" | inputDatasetIds가 비어있고 의존 스텝 없음 | dependsOnStepNames로 이전 스텝 연결 (자동 resolve) |
 | placeholder/더미 SQL로 파이프라인 강제 생성 | 입력 데이터셋 404를 우회하려는 환각 | get_dataset 404 → 즉시 abort, SELECT 1 류 대체 금지 (위 "데이터셋 ID 유효성" 절 참조) |
 | 의미 없는 파이프라인에 SCHEDULE 트리거 자동 등록 | "일단 트리거까지 걸어둬" 위임 | 입력 데이터셋 유효성 미검증 파이프라인에는 create_trigger 호출 금지 |

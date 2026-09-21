@@ -321,6 +321,8 @@ export default function PipelineEditorPage() {
             readOnly={readOnly}
             datasets={datasetOptions}
             pipelineInfo={pipelineInfo}
+            pipelineId={pipelineId}
+            serverSteps={pipelineData?.steps}
           />
         </TabsContent>
 

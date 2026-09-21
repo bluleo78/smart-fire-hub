@@ -9,6 +9,7 @@ import com.smartfirehub.dataset.dto.SqlQueryResponse;
 import com.smartfirehub.dataset.exception.InvalidTableNameException;
 import com.smartfirehub.dataset.exception.RowNotFoundException;
 import com.smartfirehub.dataset.exception.SqlQueryException;
+import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.support.IntegrationTestBase;
 import java.util.List;
 import java.util.Map;
@@ -783,5 +784,91 @@ class DataTableServiceTest extends IntegrationTestBase {
     List<String> names =
         dsl.fetch("SELECT name FROM data.\"" + tableName + "\"").getValues("name", String.class);
     assertThat(names).as("적재된 행이 있으면 REPLACE 는 평소대로 맞바꾼다").containsExactly("new");
+  }
+
+  // -------------------------------------------------------------------------
+  // 1-7. _updated_at 증분 처리 기반 (V123 Task 2) — 4 TC
+  //
+  // Task 1(V123)은 기존 테이블을 백필했다. 여기서는 "새로 만드는" 모든 경로
+  // (createTable/createTempTable+swapTable/cloneTable)가 트리거·컬럼·인덱스를 빠짐없이
+  // 갖추는지 못박는다.
+  // -------------------------------------------------------------------------
+
+  /** 테스트에서 반복되는 "이름 하나짜리 TEXT 컬럼" 요청을 만드는 헬퍼. */
+  private DatasetColumnRequest textColumn(String name) {
+    return new DatasetColumnRequest(name, name, "TEXT", null, true, false, null);
+  }
+
+  @Test
+  void 새_테이블에_updated_at_컬럼과_트리거가_생성되고_UPDATE시_갱신된다() {
+    String table = "t_upd_" + System.nanoTime();
+    tablesToCleanup.add(table);
+    dataTableService.createTable(table, List.of(textColumn("name")));
+    String q = DataSchema.qualify(table);
+    dsl.execute("INSERT INTO " + q + " (name) VALUES ('a')");
+    java.time.OffsetDateTime before =
+        (java.time.OffsetDateTime) dsl.fetchValue("SELECT _updated_at FROM " + q);
+    // 별도 트랜잭션에서 수정해야 now() 가 달라진다 — 이 테스트는 IntegrationTestBase 의 테스트
+    // 트랜잭션 안에서 실행되므로 now()(=트랜잭션 시작 시각)가 동일할 수 있다. 그래서 아래 단언은
+    // 의도적으로 약하다(isAfterOrEqualTo) — 실제 트리거 동작 증명은 다음 단언(명시값 덮어쓰기)이 한다.
+    dsl.execute("UPDATE " + q + " SET name = 'b'");
+    java.time.OffsetDateTime after =
+        (java.time.OffsetDateTime) dsl.fetchValue("SELECT _updated_at FROM " + q);
+    assertThat(after).isAfterOrEqualTo(before);
+    // 명시값을 넣어도 트리거가 덮어쓴다
+    dsl.execute("UPDATE " + q + " SET _updated_at = '2000-01-01'::timestamptz");
+    java.time.OffsetDateTime forced =
+        (java.time.OffsetDateTime) dsl.fetchValue("SELECT _updated_at FROM " + q);
+    assertThat(forced.getYear()).isNotEqualTo(2000);
+  }
+
+  @Test
+  void 예약_컬럼명_updated_at은_거부된다() {
+    assertThatThrownBy(
+            () ->
+                dataTableService.createTable(
+                    "t_rsv_" + System.nanoTime(), List.of(textColumn("_updated_at"))))
+        .hasMessageContaining("_updated_at");
+  }
+
+  @Test
+  void 임시테이블_스왑_후에도_트리거가_유지된다() {
+    String table = "t_swap_upd_" + System.nanoTime();
+    tablesToCleanup.add(table);
+    dataTableService.createTable(table, List.of(textColumn("name")));
+    dataTableService.createTempTable(table);
+    dataTableService.swapTable(table);
+    Long triggers =
+        (Long)
+            dsl.fetchValue(
+                "select count(*) from pg_trigger where tgname='fh_touch_updated_at' and tgrelid = to_regclass(?)",
+                DataSchema.qualify(table));
+    assertThat(triggers).isEqualTo(1);
+  }
+
+  @Test
+  void 복제_테이블은_updated_at_기본값과_트리거를_가진다() {
+    String src = "t_src_upd_" + System.nanoTime();
+    String dst = "t_dst_upd_" + System.nanoTime();
+    tablesToCleanup.add(src);
+    tablesToCleanup.add(dst);
+    dataTableService.createTable(src, List.of(textColumn("name")));
+    dsl.execute("INSERT INTO " + DataSchema.qualify(src) + " (name) VALUES ('a')");
+    List<DatasetColumnResponse> columnDefs =
+        List.of(new DatasetColumnResponse(1L, "name", "name", "TEXT", null, true, false, null, 0, false));
+    dataTableService.cloneTable(src, dst, List.of("name"), columnDefs);
+    dsl.execute("INSERT INTO " + DataSchema.qualify(dst) + " (name) VALUES ('b')");
+    Long nulls =
+        (Long)
+            dsl.fetchValue(
+                "select count(*) from " + DataSchema.qualify(dst) + " where _updated_at is null");
+    assertThat(nulls).isZero();
+
+    Long triggers =
+        (Long)
+            dsl.fetchValue(
+                "select count(*) from pg_trigger where tgname='fh_touch_updated_at' and tgrelid = to_regclass(?)",
+                DataSchema.qualify(dst));
+    assertThat(triggers).isEqualTo(1);
   }
 }

@@ -72,6 +72,12 @@ public class PipelineExecutionRepository {
   private static final Field<LocalDateTime> PSE_COMPLETED_AT =
       field(name("pipeline_step_execution", "completed_at"), LocalDateTime.class);
 
+  // 이번 실행이 {{last_run_at}} 자리에 실제로 넣은 값(V123). null 이면 전체 읽기(-infinity)였다는 뜻이다.
+  // 운영 진단용 — "이 실행이 어디서부터 읽었는가"를 사후에 확인할 유일한 기록이다.
+  private static final Field<java.time.OffsetDateTime> PSE_INJECTED_LAST_RUN_AT =
+      field(
+          name("pipeline_step_execution", "injected_last_run_at"), java.time.OffsetDateTime.class);
+
   private static final Table<?> USER_TABLE = table(name("user"));
   private static final Field<Long> U_ID = field(name("user", "id"), Long.class);
   private static final Field<String> U_NAME = field(name("user", "name"), String.class);
@@ -156,6 +162,19 @@ public class PipelineExecutionRepository {
     dsl.update(PIPELINE_STEP_EXECUTION)
         .set(PSE_OUTPUT_ROWS, outputRows)
         .set(PSE_LOG, log)
+        .where(PSE_ID.eq(stepExecId))
+        .execute();
+  }
+
+  /**
+   * 증분 스텝이 이번 실행에 주입한 책갈피 값을 기록한다(전체 읽기였으면 null).
+   *
+   * <p>{@link #updateStepExecution} 에 인자로 얹지 않는다 — 그쪽은 상태를 반드시 쓰므로, "실행 시작 직전에
+   * 주입값만 남긴다"는 이 호출이 RUNNING/FAILED 전이와 얽히면 안 된다.
+   */
+  public void setInjectedLastRunAt(Long stepExecId, java.time.OffsetDateTime value) {
+    dsl.update(PIPELINE_STEP_EXECUTION)
+        .set(PSE_INJECTED_LAST_RUN_AT, value)
         .where(PSE_ID.eq(stepExecId))
         .execute();
   }

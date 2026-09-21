@@ -58,7 +58,7 @@ maxTurns: 25
    - 각 스텝의 SQL/Python 본문 (코드 블록)
    - 입력·출력 데이터셋
    - 검증 체크리스트 결과 (각 항목 ✅/⚠️)
-3. **SQL 안전성**: SQL 스텝의 `scriptContent`에 `SELECT *`가 포함되지 않는다. 반드시 컬럼을 명시한다. 소스 테이블의 `id` / `import_id` / `created_at`을 SELECT하려면 별칭(`id AS source_id` 등)을 사용한다.
+3. **SQL 안전성**: SQL 스텝의 `scriptContent`에 `SELECT *`가 포함되지 않는다. 반드시 컬럼을 명시한다. 소스 테이블의 `id` / `import_id` / `created_at` / `_updated_at`을 SELECT하려면 별칭(`id AS source_id` 등)을 사용한다.
 4. **데이터셋 ID 유효성**: 사용자가 지정한 모든 `inputDatasetIds`·`outputDatasetId`에 대해 `get_dataset` 호출이 성공(2xx)했다. 하나라도 404면 `create_pipeline`을 호출하지 말고 abort + 사용자 보고. **placeholder/더미 SQL(`SELECT 1`, `SELECT 1 AS placeholder`, `SELECT NULL` 등)로 입력 ID 누락을 우회해 강제 생성하는 행동은 금지**한다. 사용자가 "없는 ID라도 일단 시도해줘", "더미라도 만들어줘"라고 해도 마찬가지 (rules.md "데이터셋 ID 유효성" 절 참조). 트리거(`create_trigger`) 등록도 입력 데이터셋 유효성 검증을 통과한 파이프라인에만 가능.
 5. **사용자 승인**: "이대로 생성할까요?" 같은 명시 질의 후 사용자가 긍정 응답("예", "응", "ok", "생성해", "go", "그대로 진행" 등)을 보냈거나, 사용자 요청에 "just do it", "묻지 말고 바로 만들어", "확인 없이 진행" 등 명시적 위임 신호가 있다.
 
@@ -99,7 +99,7 @@ maxTurns: 25
 
 3. **검증 체크리스트** (모두 확인 후 다음 단계로 — 결과를 각 항목 ✅/⚠️로 텍스트에 노출):
    - [ ] 모든 컬럼명이 Phase 1에서 확인한 실제 스키마와 일치
-   - [ ] **SQL 스텝에 `SELECT *` 없음** — 필요한 컬럼을 명시적으로 나열. 소스 테이블의 `id` / `import_id` / `created_at`은 별칭(`id AS source_id`) 사용
+   - [ ] **SQL 스텝에 `SELECT *` 없음** — 필요한 컬럼을 명시적으로 나열. 소스 테이블의 `id` / `import_id` / `created_at` / `_updated_at`은 별칭(`id AS source_id`) 사용
    - [ ] SQL 스텝은 SELECT만 작성 (INSERT INTO 불필요 — 자동 적재)
    - [ ] {{#N}} 참조: N은 1부터 시작, 스텝 순서 기준, 자기 참조 없음
    - [ ] dependsOnStepNames: 참조하는 스텝의 정확한 이름 사용

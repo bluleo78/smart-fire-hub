@@ -22,6 +22,45 @@ public class DataTableService {
   private final TenantSchemaProvisioner schemaProvisioner;
   private static final Pattern VALID_NAME = Pattern.compile("^[a-z][a-z0-9_]*$");
 
+  /** 행 변경 시각 시스템 컬럼 — 파이프라인 증분 처리({{last_run_at}})의 기준. 트리거가 관리한다. */
+  public static final String UPDATED_AT_COLUMN = "_updated_at";
+
+  /** 사용자가 컬럼명으로 쓸 수 없는 시스템 예약 컬럼. 생성·컬럼 추가·결과 숨김이 모두 이 집합을 따른다. */
+  public static final Set<String> SYSTEM_COLUMNS =
+      Set.of("id", "import_id", "created_at", UPDATED_AT_COLUMN);
+
+  /**
+   * _updated_at 트리거를 (재)설치한다. CREATE TABLE ... LIKE 는 트리거를 복사하지 않으므로
+   * 새 테이블·임시(_tmp) 테이블·복제 테이블 모두 이 메서드를 거쳐야 한다.
+   */
+  private void installUpdatedAtTrigger(String tableName) {
+    String q = DataSchema.qualify(tableName);
+    dsl.execute("DROP TRIGGER IF EXISTS fh_touch_updated_at ON " + q);
+    dsl.execute(
+        "CREATE TRIGGER fh_touch_updated_at BEFORE INSERT OR UPDATE ON "
+            + q
+            + " FOR EACH ROW EXECUTE FUNCTION public.fh_touch_updated_at()");
+  }
+
+  /**
+   * {{last_run_at}} 범위 조건 성능용 인덱스.
+   *
+   * <p>이름·모양(ix_&lt;table&gt;_upd, (_updated_at))은 기존 테이블을 백필하는
+   * {@code V125__pipeline_incremental_updated_at_indexes} 와 반드시 같아야 한다 — 규약을 둘로
+   * 늘리면 V125 가 이미 있는 인덱스를 못 알아보고 중복 인덱스를 만든다. 여기서는 CONCURRENTLY 를
+   * 쓰지 않는다: 이 경로는 방금 만든 <b>빈</b> 테이블에만 쓰이므로 빌드가 즉시 끝나고, 데이터셋
+   * 생성 트랜잭션 안에서 실행되기 때문에 CONCURRENTLY 자체가 불가능하다.
+   */
+  private void createUpdatedAtIndex(String tableName) {
+    dsl.execute(
+        "CREATE INDEX IF NOT EXISTS \""
+            + "ix_"
+            + tableName
+            + "_upd\" ON "
+            + DataSchema.qualify(tableName)
+            + " (_updated_at)");
+  }
+
   private String mapDataType(String dataType, Integer maxLength) {
     return switch (dataType) {
       case "TEXT" -> "TEXT";
@@ -80,12 +119,13 @@ public class DataTableService {
     sql.append("id BIGSERIAL PRIMARY KEY, ");
     sql.append("import_id BIGINT, ");
 
-    // id, import_id, created_at은 시스템 예약 컬럼명 — 사용자 지정 불가
-    Set<String> reserved = Set.of("id", "import_id", "created_at");
+    // id, import_id, created_at, _updated_at은 시스템 예약 컬럼명 — 사용자 지정 불가
     for (DatasetColumnRequest col : columns) {
-      if (reserved.contains(col.columnName().toLowerCase())) {
+      if (SYSTEM_COLUMNS.contains(col.columnName().toLowerCase())) {
         throw new InvalidTableNameException(
-            "컬럼명 '" + col.columnName() + "'은 시스템 예약어입니다. (예약어: id, import_id, created_at)");
+            "컬럼명 '"
+                + col.columnName()
+                + "'은 시스템 예약어입니다. (예약어: id, import_id, created_at, _updated_at)");
       }
       validateName(col.columnName());
       sql.append("\"").append(col.columnName()).append("\" ");
@@ -97,9 +137,14 @@ public class DataTableService {
     }
 
     sql.append("created_at TIMESTAMP DEFAULT NOW()");
+    sql.append(", _updated_at TIMESTAMPTZ NOT NULL DEFAULT now()");
     sql.append(")");
 
     dsl.execute(sql.toString());
+
+    // 신규 테이블도 기존 테이블(V124 백필)과 동일하게 증분 처리 기반(트리거+인덱스)을 갖춘다.
+    installUpdatedAtTrigger(tableName);
+    createUpdatedAtIndex(tableName);
 
     // Create indexes for indexed columns
     for (DatasetColumnRequest col : columns) {
@@ -139,11 +184,12 @@ public class DataTableService {
     validateName(tableName);
     validateName(column.columnName());
 
-    // id, import_id, created_at은 시스템 예약 컬럼명 — addColumn 시에도 차단
-    Set<String> reserved = Set.of("id", "import_id", "created_at");
-    if (reserved.contains(column.columnName().toLowerCase())) {
+    // id, import_id, created_at, _updated_at은 시스템 예약 컬럼명 — addColumn 시에도 차단
+    if (SYSTEM_COLUMNS.contains(column.columnName().toLowerCase())) {
       throw new InvalidTableNameException(
-          "컬럼명 '" + column.columnName() + "'은 시스템 예약어입니다. (예약어: id, import_id, created_at)");
+          "컬럼명 '"
+              + column.columnName()
+              + "'은 시스템 예약어입니다. (예약어: id, import_id, created_at, _updated_at)");
     }
 
     StringBuilder sql = new StringBuilder();
@@ -320,6 +366,9 @@ public class DataTableService {
             + " ALTER COLUMN id SET DEFAULT nextval('"
             + DataSchema.qualify(tmpSeq)
             + "')");
+    // LIKE INCLUDING ALL은 컬럼 기본값·인덱스는 복사하지만 트리거는 복사하지 않는다 — 임시 테이블에도
+    // 별도로 설치해야 스왑(swapTable, RENAME) 후 원본 이름을 물려받은 테이블이 트리거를 유지한다.
+    installUpdatedAtTrigger(tmpName);
   }
 
   /**
@@ -507,6 +556,14 @@ public class DataTableService {
     dsl.execute(
         "ALTER TABLE " + DataSchema.qualify(targetTable) + " ADD COLUMN id BIGSERIAL PRIMARY KEY");
     dsl.execute("ALTER TABLE " + DataSchema.qualify(targetTable) + " ADD COLUMN import_id BIGINT");
+    // 복제본은 새 데이터셋이므로 원본의 _updated_at 값을 옮기지 않고(CTAS SELECT 목록에서 제외됨)
+    // 복제 시각을 기준으로 새로 시작한다.
+    dsl.execute(
+        "ALTER TABLE "
+            + DataSchema.qualify(targetTable)
+            + " ADD COLUMN _updated_at TIMESTAMPTZ NOT NULL DEFAULT now()");
+    installUpdatedAtTrigger(targetTable);
+    createUpdatedAtIndex(targetTable);
 
     // Re-apply NOT NULL constraints (CTAS does not preserve them)
     for (DatasetColumnResponse col : columnDefs) {

@@ -29,10 +29,13 @@ import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
+import { useDataset } from '@/hooks/queries/useDatasets';
 import { formatDate } from '@/lib/formatters';
+import type { PipelineStepResponse } from '@/types/pipeline';
 
 import type { EditorAction, EditorStep,PipelineEditorState } from '../hooks/usePipelineEditor';
 import DatasetCombobox from './DatasetCombobox';
+import { IncrementalProcessingSection } from './IncrementalProcessingSection';
 
 const ScriptEditor = lazy(() => import('./ScriptEditor'));
 
@@ -41,6 +44,13 @@ interface DatasetOption {
   name: string;
   tableName: string;
 }
+
+// 로드 전략별 도움말 — 삼항식 대신 매핑으로 두어 MERGE 추가 시 분기가 늘어나지 않게 한다.
+const LOAD_STRATEGY_HELP: Record<string, string> = {
+  REPLACE: '출력 테이블을 비운 후 새로 생성합니다',
+  APPEND: '기존 데이터에 새 데이터를 추가합니다',
+  MERGE: '출력 데이터셋 PK가 같은 행은 덮어쓰고, 없는 행은 추가합니다',
+};
 
 interface PipelineInfo {
   createdBy?: string;
@@ -55,6 +65,14 @@ interface StepConfigPanelProps {
   readOnly: boolean;
   datasets: DatasetOption[];
   pipelineInfo?: PipelineInfo;
+  /** 증분 처리 컨트롤(예약/취소) 호출에 필요 — 신규 파이프라인(/pipelines/new)에서는 없다 */
+  pipelineId?: number;
+  /**
+   * 서버에 저장된 스텝 목록 — 증분 처리 값(lastRunAt/fullRebuildPending/warnings/fullRebuildMode)은
+   * 여기서 이름으로 매칭해 읽는다. 편집기 상태(EditorStep)의 id는 저장할 때마다 서버가
+   * 스텝을 전부 삭제·재생성해 매번 바뀌므로 신뢰할 수 없다.
+   */
+  serverSteps?: PipelineStepResponse[];
 }
 
 export default function StepConfigPanel({
@@ -63,6 +81,8 @@ export default function StepConfigPanel({
   readOnly,
   datasets,
   pipelineInfo,
+  pipelineId,
+  serverSteps,
 }: StepConfigPanelProps) {
   const step = state.selectedStepId
     ? state.steps.find((s) => s.tempId === state.selectedStepId) ?? null
@@ -75,6 +95,20 @@ export default function StepConfigPanel({
 
   // 스텝 삭제 확인 다이얼로그 표시 여부 — 실수 삭제 방지 (rules-of-hooks: early return 이전 선언)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+
+  // MERGE 로드 전략의 PK 안내에 필요 — 출력 데이터셋의 컬럼 정의를 조회한다.
+  // (rules-of-hooks: early return 이전 선언, step이 없으면 id 0으로 비활성 조회)
+  const { data: outputDataset, isLoading: outputDatasetLoading } = useDataset(step?.outputDatasetId ?? 0);
+  const pkColumns = outputDataset?.columns.filter((c) => c.isPrimaryKey) ?? [];
+  const hasPk = pkColumns.length > 0;
+  const pkNames = pkColumns.map((c) => c.columnName);
+  // MERGE는 SQL 스텝 + 출력 데이터셋이 지정된 경우에만 의미가 있다.
+  // (PYTHON/API_CALL/AI_CLASSIFY나 SQL의 자동 임시 데이터셋은 useDataset 조회 자체가 비활성화되어
+  //  hasPk가 항상 false로 떨어지므로, PK 안내 문구와 비활성화 이유가 이 조건 없이는 무의미하게 뜬다.)
+  const mergeApplicable = step?.scriptType === 'SQL' && step?.outputDatasetId != null;
+  // 조회가 아직 끝나지 않았으면(enabled=true인 최초 로딩) PK 유무를 알 수 없으므로
+  // 안내 문구·비활성화 모두 판단을 보류한다 — 그렇지 않으면 로딩 중 잠깐 "PK 없음"으로 오판해 깜빡인다.
+  const pkStatusPending = mergeApplicable && outputDatasetLoading;
 
   // 접근성: 라벨↔컨트롤 연결용 id 접두사 (#432). 기존 하드코딩 id(step-name 등)는 E2E 회귀를 피해 유지하고,
   // 새로 연결하는 것만 useId 로 만든다. (rules-of-hooks: early return 이전 선언)
@@ -243,6 +277,12 @@ export default function StepConfigPanel({
   const stepErrors = state.validationErrors.filter((e) => e.stepTempId === step.tempId);
   const getFieldError = (field: string) => stepErrors.find((e) => e.field === field)?.message;
 
+  // 저장 시 이름을 trim해서 보내므로(usePipelineSave) 같은 방식으로 맞춰 매칭한다.
+  // 매칭되는 서버 스텝이 없으면 저장 전 신규 스텝이거나 저장하지 않은 이름 변경이다.
+  const serverStep = serverSteps?.find((s) => s.name === step.name.trim());
+  const isIncrementalSql =
+    step.scriptType === 'SQL' && /\{\{\s*last_run_at\s*\}\}/.test(step.scriptContent ?? '');
+
   const handleClose = () => {
     dispatch({ type: 'SELECT_STEP', payload: { tempId: null } });
   };
@@ -404,7 +444,7 @@ export default function StepConfigPanel({
                       {'{{#N}}은 해당 스텝의 출력 데이터셋으로 치환됩니다. 명시적 데이터셋은 data."tableName" 형식을 사용하세요.'}
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      {'SELECT * 사용 시 결과에 시스템 컬럼(id, import_id, created_at)이 포함될 수 있습니다. 이 컬럼들은 임시 데이터셋 저장 시 자동으로 별칭(예: id_1)이 붙습니다.'}
+                      {'SELECT * 사용 시 결과에 시스템 컬럼(id, import_id, created_at, _updated_at)이 포함될 수 있습니다. 이 컬럼들은 임시 데이터셋 저장 시 자동으로 별칭(예: id_1)이 붙습니다.'}
                     </p>
                   </div>
                 )}
@@ -513,14 +553,46 @@ export default function StepConfigPanel({
               <SelectContent>
                 <SelectItem value="REPLACE">교체 (Replace)</SelectItem>
                 <SelectItem value="APPEND">추가 (Append)</SelectItem>
+                <SelectItem value="MERGE" disabled={!pkStatusPending && !hasPk}>병합 (Merge)</SelectItem>
               </SelectContent>
             </Select>
             <p id={loadStrategyHelpId} className="text-xs text-muted-foreground">
-              {(step.loadStrategy ?? 'REPLACE') === 'REPLACE'
-                ? '출력 테이블을 비운 후 새로 생성합니다'
-                : '기존 데이터에 새 데이터를 추가합니다'}
+              {LOAD_STRATEGY_HELP[step.loadStrategy ?? 'REPLACE'] ?? LOAD_STRATEGY_HELP.REPLACE}
             </p>
+            {step.loadStrategy === 'MERGE' && hasPk && (
+              <p className="text-xs text-muted-foreground">PK: {pkNames.join(', ')}</p>
+            )}
+            {mergeApplicable && !pkStatusPending && !hasPk && (
+              <p className="text-xs text-muted-foreground">
+                출력 데이터셋에 PK 컬럼을 지정해야 병합을 쓸 수 있습니다
+              </p>
+            )}
           </div>
+
+          {/* 증분 처리 — {{last_run_at}} 책갈피를 쓰는 SQL 스텝에서만 노출 */}
+          {isIncrementalSql && pipelineId != null && (
+            <>
+              <Separator />
+              <IncrementalProcessingSection
+                pipelineId={pipelineId}
+                stepId={serverStep?.id}
+                lastRunAt={serverStep?.lastRunAt ?? null}
+                fullRebuildPending={serverStep?.fullRebuildPending ?? false}
+                fullRebuildMode={serverStep?.fullRebuildMode ?? null}
+                outputDatasetName={step.outputDatasetId != null ? outputDataset?.name : undefined}
+                isDirty={state.isDirty}
+              />
+            </>
+          )}
+
+          {/* 저장 시 백엔드가 계산한 안내성 경고 — 저장을 막지 않는다 */}
+          {serverStep && (serverStep.warnings ?? []).length > 0 && (
+            <div className="space-y-1 rounded-md border border-amber-300 bg-amber-50 p-2 dark:bg-amber-950/30">
+              {(serverStep.warnings ?? []).map((warning, i) => (
+                <p key={i} className="text-xs text-amber-600">{warning}</p>
+              ))}
+            </div>
+          )}
 
           {step.scriptType !== 'API_CALL' && (
             <>

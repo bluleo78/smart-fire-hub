@@ -104,6 +104,26 @@ public class PipelineController {
     return ResponseEntity.ok(events);
   }
 
+  /**
+   * 스텝의 다음 실행에서 전체 재생성(SELECT 자동 적재 스텝)/전체 재읽기(사용자 DML 스텝)을 예약한다.
+   * 스텝이 {@code {{last_run_at}}} 을 쓰지 않으면 예약할 수 없다(400) — 그런 스텝은 실행기가 증분 경로를
+   * 타지 않아 플래그를 영원히 해제하지 못한다. 수정 권한(PUT `/{id}`)과 같은 권한을 요구한다.
+   */
+  @PostMapping("/{id}/steps/{stepId}/full-rebuild")
+  @RequirePermission("pipeline:write")
+  public ResponseEntity<Void> reserveFullRebuild(@PathVariable Long id, @PathVariable Long stepId) {
+    pipelineService.setFullRebuildPending(id, stepId, true);
+    return ResponseEntity.noContent().build();
+  }
+
+  /** 전체 재생성/재읽기 예약을 취소한다. 예약이 없어도 멱등하게 204를 반환한다. */
+  @DeleteMapping("/{id}/steps/{stepId}/full-rebuild")
+  @RequirePermission("pipeline:write")
+  public ResponseEntity<Void> cancelFullRebuild(@PathVariable Long id, @PathVariable Long stepId) {
+    pipelineService.setFullRebuildPending(id, stepId, false);
+    return ResponseEntity.noContent().build();
+  }
+
   @PostMapping("/api-call/preview")
   @RequirePermission("pipeline:write")
   public ResponseEntity<ApiCallPreviewResponse> previewApiCall(

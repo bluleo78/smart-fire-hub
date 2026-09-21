@@ -19,6 +19,11 @@ export const pipelinesApi = {
     client.delete(`/pipelines/${id}`),
   executePipeline: (id: number) =>
     client.post<PipelineExecutionResponse>(`/pipelines/${id}/execute`),
+  // 증분 처리 스텝의 다음 실행에서 전체 재생성(책갈피 무시)을 예약/취소한다.
+  reserveFullRebuild: (pipelineId: number, stepId: number) =>
+    client.post<void>(`/pipelines/${pipelineId}/steps/${stepId}/full-rebuild`),
+  cancelFullRebuild: (pipelineId: number, stepId: number) =>
+    client.delete<void>(`/pipelines/${pipelineId}/steps/${stepId}/full-rebuild`),
   getExecutions: (pipelineId: number) =>
     client.get<PipelineExecutionResponse[]>(`/pipelines/${pipelineId}/executions`),
   getExecutionById: (pipelineId: number, execId: number) =>

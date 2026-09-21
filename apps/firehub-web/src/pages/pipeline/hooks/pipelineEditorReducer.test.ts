@@ -121,6 +121,17 @@ describe('pipelineEditorReducer', () => {
       expect(next.validationErrors).toHaveLength(1);
       expect(next.validationErrors[0].stepTempId).toBe(s2.tempId);
     });
+
+    // loadStrategy는 이미 string 타입이라 리듀서 수정 없이 MERGE 값도 그대로 반영돼야 한다 (위 케이스 복제)
+    it('loadStrategy를 MERGE로 변경하면 반영된다', () => {
+      const s1 = createDefaultStep({ x: 0, y: 0 });
+      state = { ...state, steps: [s1] };
+      const next = dispatch(state, {
+        type: 'UPDATE_STEP',
+        payload: { tempId: s1.tempId, changes: { loadStrategy: 'MERGE' } },
+      });
+      expect(next.steps.find((s) => s.tempId === s1.tempId)!.loadStrategy).toBe('MERGE');
+    });
   });
 
   describe('SELECT_STEP', () => {

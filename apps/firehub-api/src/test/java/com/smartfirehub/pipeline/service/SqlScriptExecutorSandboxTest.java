@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.smartfirehub.dataset.dto.DatasetColumnRequest;
+import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.global.config.TenantPipelineDataSourceRegistry;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.MissingTenantScopeException;
@@ -14,6 +16,8 @@ import com.smartfirehub.pipeline.exception.ScriptExecutionException;
 import com.smartfirehub.pipeline.exception.UnsafeSqlException;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TenantRlsTestSupport;
+import java.util.List;
+import java.util.UUID;
 import javax.sql.DataSource;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -120,6 +124,9 @@ class SqlScriptExecutorSandboxTest extends IntegrationTestBase {
 
   /** 메인 애플리케이션 커넥션({@code app_tenant}) — 가드 테이블 DDL·검증 조회용. */
   @Autowired private DSLContext dsl;
+
+  /** Task 4 원자성 테스트의 출력 테이블 픽스처를 만드는 데 쓴다(정식 생성 경로 — 권한·트리거까지 갖춘다). */
+  @Autowired private DataTableService dataTableService;
 
   /**
    * 가드 테이블을 만들고 테넌트 1 파이프라인 롤에만 명시적으로 권한을 준다.
@@ -312,6 +319,82 @@ class SqlScriptExecutorSandboxTest extends IntegrationTestBase {
           // 테스트가 같은 순서를 각자 적고 있었고 그 중 한 곳에만 주석이 있었다.)
           () -> TenantRlsTestSupport.dropPipelineLoginRole(ownerDsl(), executorRole),
           () -> TenantRlsTestSupport.deleteTenants(dsl, tenantId));
+    }
+  }
+
+  // ── Task 4: SQL 스텝 REPLACE 원자화 — DELETE 선행 문장과 INSERT 가 같은 트랜잭션에서 함께
+  // 롤백되는지를 실제 DB로 확인한다(mock 이 아니라 진짜 원자성 증거) ─────────────────────────
+
+  /**
+   * DELETE 선행 문장 뒤 INSERT 가 실패하면 <b>기존 행이 그대로 남는다</b> — 원래 결함(따로 커밋되는
+   * truncate + INSERT)이었다면 이 테스트는 0행으로 실패했을 것이다.
+   *
+   * <p><b>이 테스트는 롤백되는 테스트 트랜잭션 안에서 돌지 않는다.</b> 이 클래스는 클래스 레벨
+   * {@code @Transactional} 을 쓰지 않으므로(파일 상단 관례), 기존 1행을 심는 {@code dsl.execute} 는
+   * 즉시 커밋된다 — 그래야 별도 롤(테넌트 파이프라인 실행 롤) 연결이 그 행을 볼 수 있다. 만약 이
+   * 픽스처가 롤백되는 트랜잭션 안에 있었다면, DELETE 는 (아직 남 앞에 보이지 않는) 0행을 지우고도
+   * 테스트가 공허하게 통과했을 것이다.
+   */
+  @Test
+  void 선행_DELETE_후_INSERT가_실패하면_기존_행이_남는다() {
+    String table = "p3b_replace_atomic_" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
+
+    // given: 출력 테이블 생성(정식 경로 — 권한·트리거까지 갖춘 실제 데이터셋 물리 테이블과 동일)
+    // 후 기존 1행을 커밋되는 경로로 심는다.
+    dataTableService.createTable(
+        table,
+        List.of(new DatasetColumnRequest("name", "name", "TEXT", null, true, false, null, false)));
+    try {
+      dsl.execute("INSERT INTO " + DataSchema.qualify(table) + " (name) VALUES ('existing')");
+
+      // when: DELETE 선행 문장 다음에 실행되는 INSERT 가 0으로 나누기로 실패한다. 같은 트랜잭션이므로
+      // DELETE 도 함께 롤백돼야 한다.
+      assertThatThrownBy(
+              () ->
+                  sqlScriptExecutor.execute(
+                      List.of(OutputClearStatement.deleteAll(table)),
+                      "INSERT INTO " + DataSchema.qualify(table) + " (name) SELECT 1/0"))
+          .isInstanceOf(Exception.class);
+
+      // then: 기존 행이 살아 있다 — 출력이 빈 채로 남지 않는다.
+      assertThat(dsl.fetchCount(DSL.table(DSL.name(DataSchema.current(), table)))).isEqualTo(1);
+    } finally {
+      dsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(table));
+    }
+  }
+
+  /**
+   * Fix round 1, 리뷰 지적 2 — 선행 문장 검증은 "DELETE FROM 으로 시작 + 세미콜론 없음" 정도로는
+   * 부족했다. {@code WHERE} 절이 붙은 문장(전체 삭제가 아니라 조건부 삭제)도 그 느슨한 검증은
+   * 통과시킨다 — API 서버가 만들지 않은 임의의 DELETE 를 테넌트 파이프라인 롤 권한으로 실행할 수
+   * 있었다는 뜻이다. 이 테스트는 {@code OutputClearStatement.deleteAll} 이 만드는 정확한 형태에서
+   * 벗어난 문장(WHERE 절 추가)이 <b>본 스크립트 실행 전에</b> 거부되는지 — 그리고 실제로 아무 것도
+   * 실행되지 않는지(INSERT 가 도달하지 못해 테이블이 계속 비어 있는지)를 함께 확인한다.
+   */
+  @Test
+  void 형식에_맞지_않는_선행_문장은_본_스크립트_실행_전에_거부된다() {
+    String table =
+        "p3b_replace_atomic_reject_" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+
+    dataTableService.createTable(
+        table,
+        List.of(new DatasetColumnRequest("name", "name", "TEXT", null, true, false, null, false)));
+    try {
+      // WHERE 절이 붙어 OutputClearStatement.deleteAll 의 "전체 삭제" 형태를 벗어난 선행 문장.
+      String nonConformingPreStatement = OutputClearStatement.deleteAll(table) + " WHERE 1=1";
+
+      assertThatThrownBy(
+              () ->
+                  sqlScriptExecutor.execute(
+                      List.of(nonConformingPreStatement),
+                      "INSERT INTO " + DataSchema.qualify(table) + " (name) VALUES ('should-not-run')"))
+          .isInstanceOf(ScriptExecutionException.class)
+          .hasMessageContaining("허용되지 않은 선행 문장");
+
+      // then: 검증에서 걸렸으므로 본 스크립트(INSERT)는 아예 실행되지 않았다.
+      assertThat(dsl.fetchCount(DSL.table(DSL.name(DataSchema.current(), table)))).isZero();
+    } finally {
+      dsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(table));
     }
   }
 }

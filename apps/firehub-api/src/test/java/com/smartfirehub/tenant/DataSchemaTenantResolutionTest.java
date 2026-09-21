@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.MissingTenantScopeException;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.pipeline.service.OutputClearStatement;
 import com.smartfirehub.support.IntegrationTestBase;
 import org.junit.jupiter.api.Test;
 
@@ -55,5 +56,18 @@ class DataSchemaTenantResolutionTest extends IntegrationTestBase {
     for (long id : new long[] {1L, 2L, 7L, 43259L}) {
       assertThat(TenantContext.runScopedGet(id, DataSchema::current)).matches("[a-z_][a-z0-9_]*");
     }
+  }
+
+  /**
+   * Fix round 1 선택 항목 — {@link OutputClearStatement#deleteAll} 이 접미사 붙은 테넌트
+   * 스키마에서도 스키마·테이블 양쪽을 인용하는지 손으로만 확인하고 넘어갔던 것을 문자열로
+   * 못박는다(리뷰 지적: "손으로만 확인" 상태를 남기지 말 것).
+   */
+  @Test
+  void deleteAll은_접미사_붙은_테넌트_스키마도_양쪽_인용한다() {
+    assertThat(TenantContext.runScopedGet(12L, () -> OutputClearStatement.deleteAll("x")))
+        .isEqualTo("DELETE FROM \"data_t12\".\"x\"");
+    assertThat(TenantContext.runScopedGet(1L, () -> OutputClearStatement.deleteAll("my_table")))
+        .isEqualTo("DELETE FROM \"data\".\"my_table\"");
   }
 }
