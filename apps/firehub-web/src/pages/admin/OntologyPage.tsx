@@ -51,18 +51,27 @@ function GraphError({ message, onRetry }: { message: string; onRetry: () => void
   );
 }
 
-// 그래프 탐색 탭에서 "볼 온톨로지 자체가 없는" 상태 — 아직 지식 모델을 하나도 만들지 않은 테넌트다.
-// 그래프는 온톨로지 스코프로만 조회되므로(useOntologyGraph) 고를 온톨로지가 없으면 조회할 대상도 없다.
+// "볼 온톨로지 자체가 없는" 상태 — 아직 지식 모델을 하나도 만들지 않은 테넌트다. 두 탭이 함께 쓴다.
+// 그래프는 온톨로지 스코프로만 조회되므로(useOntologyGraph) 고를 온톨로지가 없으면 조회할 대상도 없고,
+// 지식 모델 탭도 편집할 스키마가 없다 — 예전엔 지식 모델 탭이 이 경우를 로딩으로 취급해 스켈레톤만
+// 덩그러니 남았다(끝나지 않는 로딩 = 빈 캔버스).
 // 별도 컴포넌트를 둔 이유: 스키마 탭의 OntologyEmptyState 는 "온톨로지는 있는데 엔티티 타입이 0개"라는
 // 다른 상태를 말한다 — 같은 화면을 재사용하면 "첫 타입 만들기"가 있지도 않은 온톨로지를 가리키게 된다.
-function GraphEmptyNoOntology() {
+// onCreate 는 생성 권한(ADMIN)이 있을 때만 넘긴다 — 없으면 CTA 대신 관리자 안내 문구를 보여준다.
+function GraphEmptyNoOntology({ description, onCreate }: { description: string; onCreate?: () => void }) {
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3 py-16 text-center">
       <Boxes className="h-10 w-10 text-muted-foreground" />
       <p className="text-sm font-medium">아직 지식 모델이 없습니다</p>
-      <p className="max-w-sm text-xs text-muted-foreground">
-        그래프는 지식 모델에 적재된 데이터를 보여줍니다. 먼저 지식 모델을 만들어 주세요.
-      </p>
+      <p className="max-w-sm text-xs text-muted-foreground">{description}</p>
+      {onCreate ? (
+        <Button onClick={onCreate} className="gap-1.5">
+          <Plus className="h-4 w-4" />
+          새 온톨로지
+        </Button>
+      ) : (
+        <p className="max-w-sm text-xs text-muted-foreground">지식 모델 생성은 관리자에게 요청해 주세요.</p>
+      )}
     </div>
   );
 }
@@ -365,21 +374,39 @@ export default function OntologyPage() {
   };
 
   /**
-   * 그래프 탐색(인스턴스) 탭 본문. 조기 반환의 **순서가 곧 계약**이라 JSX 인라인 삼항 대신 함수로 둔다.
-   *
-   * "지식 모델 없음"은 목록이 도착해서 실제로 비어 있을 때만 말할 수 있다 — 목록의 로딩·에러도
-   * effectiveOntologyId 를 null 로 만들기 때문에, 그 둘을 먼저 걸러내지 않으면 매 첫 진입마다
-   * 없다고 단정했다가 뒤늦게 그래프로 바뀌고, 목록이 실패하면 재시도 경로도 없이 그 오답에 갇힌다.
-   * 그래프 쿼리의 로딩·에러는 조회가 실제로 일어난 뒤에만 의미가 있으니 마지막이다.
+   * 두 탭이 공유하는 온톨로지 목록 게이트 — 목록에 따라 결정되는 상태면 그 화면을, 아니면 null 을 준다.
+   * **순서가 곧 계약**이다: "지식 모델 없음"은 목록이 도착해서 실제로 비어 있을 때만 말할 수 있다 —
+   * 목록의 로딩·에러도 effectiveOntologyId 를 null 로 만들기 때문에, 그 둘을 먼저 걸러내지 않으면
+   * 매 첫 진입마다 없다고 단정했다가 뒤늦게 바뀌고, 목록이 실패하면 재시도 경로도 없이 그 오답에 갇힌다.
+   * 지식 모델 탭이 예전에 이 게이트 없이 selectedOntology 만 봐서, 0개 테넌트에서 스켈레톤에 갇혔다.
    */
-  const renderInstanceTab = () => {
+  const renderOntologyListGate = (emptyDescription: string) => {
     if (isOntologyListError) {
       return (
         <GraphError message="지식 모델 목록을 불러오지 못했습니다." onRetry={() => refetchOntologyList()} />
       );
     }
     if (isOntologyListLoading) return <GraphLoading />;
-    if (effectiveOntologyId == null) return <GraphEmptyNoOntology />;
+    if (effectiveOntologyId == null) {
+      return (
+        <GraphEmptyNoOntology
+          description={emptyDescription}
+          onCreate={isAdmin ? () => setCreateOpen(true) : undefined}
+        />
+      );
+    }
+    return null;
+  };
+
+  /**
+   * 그래프 탐색(인스턴스) 탭 본문. 조기 반환의 **순서가 곧 계약**이라 JSX 인라인 삼항 대신 함수로 둔다.
+   * 목록 게이트가 먼저고, 그래프 쿼리의 로딩·에러는 조회가 실제로 일어난 뒤에만 의미가 있으니 마지막이다.
+   */
+  const renderInstanceTab = () => {
+    const gate = renderOntologyListGate(
+      '그래프는 지식 모델에 적재된 데이터를 보여줍니다. 먼저 지식 모델을 만들어 주세요.',
+    );
+    if (gate) return gate;
     if (isGraphError) {
       return <GraphError message="그래프를 불러오지 못했습니다." onRetry={() => refetchGraph()} />;
     }
@@ -551,7 +578,10 @@ export default function OntologyPage() {
               사이에서 패널이 펼침 상태로 남아 있는 폭 대역(sm~xl)에 대한 추가 방어선이다. */}
           <div className="relative min-w-[280px] flex-1">
             <TabsContent value="schema" className="m-0 h-full">
-              {isSelectedSchemaError ? (
+              {/* 목록 게이트(renderOntologyListGate)를 먼저 통과해야 선택된 온톨로지의 스키마 상태를 본다. */}
+              {renderOntologyListGate(
+                '지식 모델은 무엇을 추출할지(타입)와 어떻게 이어질지(관계)를 정의합니다.',
+              ) ?? (isSelectedSchemaError ? (
                 <GraphError message="온톨로지를 불러오지 못했습니다." onRetry={() => refetchSelectedSchema()} />
               ) : !selectedSchema || !selectedOntology ? (
                 <GraphLoading />
@@ -646,7 +676,7 @@ export default function OntologyPage() {
                     )}
                   </div>
                 </div>
-              )}
+              ))}
             </TabsContent>
             <TabsContent value="instance" className="m-0 h-full">
               {renderInstanceTab()}

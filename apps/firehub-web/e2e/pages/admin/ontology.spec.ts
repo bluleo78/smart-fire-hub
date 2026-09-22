@@ -684,6 +684,23 @@ test.describe('지식그래프 시각화 페이지', () => {
     expect(requestedPaths).toEqual([]);
   });
 
+  // 지식 모델(스키마) 탭도 같은 상태를 말해야 한다. 예전엔 목록이 비어 selectedOntology 가 영원히
+  // undefined 라 로딩 스켈레톤에 갇혀 "없다"는 말도, 만들 길도 없는 빈 캔버스만 남았다.
+  test('지식 모델이 하나도 없으면 지식 모델 탭에 빈 상태와 생성 CTA를 보여준다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupOntologyMocks(page);
+    await mockApi(page, 'GET', '/api/v1/ontologies', []); // 지식 모델 0개인 테넌트
+    await page.goto('/knowledge-graph/model');
+
+    await expect(page.getByText('아직 지식 모델이 없습니다')).toBeVisible();
+    // 끝나지 않는 로딩이 아니다 — 스켈레톤은 사라져 있어야 한다.
+    await expect(page.getByTestId('graph-loading')).toHaveCount(0);
+    // 빈 상태의 CTA 가 툴바의 "새 온톨로지"와 같은 생성 다이얼로그를 연다.
+    await page.getByTestId('instance-graph-panel').getByRole('button', { name: '새 온톨로지' }).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+  });
+
   // "지식 모델 없음" 판정은 목록이 도착해서 실제로 비어 있을 때만 내려야 한다. 목록이 아직
   // 오지 않았을 때도 effectiveOntologyId 는 null 이므로, 그 둘을 구분하지 않으면 매 첫 진입마다
   // "없습니다"를 단정해 보였다가 뒤늦게 그래프로 바뀐다(잘못된 상태 깜빡임).
