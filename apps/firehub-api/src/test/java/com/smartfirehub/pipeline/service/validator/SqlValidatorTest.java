@@ -604,6 +604,18 @@ class SqlValidatorTest {
 
   // --- 재재재리뷰 C — 깊이 상한 도달은 fail-closed(거부), fail-open(조용한 통과) 아님 ---
 
+  /**
+   * 600 단 중첩 입력이 거부되는 <b>경로</b>는 머신 부하에 따라 갈린다 — 순회 깊이 가드에 닿기도 하고,
+   * 그 전에 {@code parseSingleStatement} 의 {@code PARSE_EXECUTOR} 파싱 예산이 먼저 끝나 파서가
+   * null 을 돌려주기도 한다(후자는 SqlValidator 안에 선재 결함으로 주석까지 달린 경로다).
+   *
+   * <p>이 테스트들이 지키려는 성질은 "상한 아래 묻힌 위반이 조용히 통과하지 않는다"(fail-closed)이고
+   * 그 성질은 어느 경로로 거부되든 동일하게 성립한다. 그래서 단언을 특정 경로의 메시지가 아니라
+   * "둘 중 하나로 거부됐다"에 건다 — 중첩 단수를 더 올리는 쪽(169→600 전례)은 파싱 예산 초과 확률만
+   * 키워 오히려 반대 방향이다.
+   */
+  private static final String REJECTED_BEYOND_LIMIT = "순회 깊이|파서가 결과를 반환하지 않았습니다";
+
   /** {@code WHERE a IN (SELECT ...)} 를 {@code depth} 단 중첩하고 최내부에 {@code innermost}를 심는다. */
   private static String deepNestedWhereIn(int depth, String innermost) {
     StringBuilder sb = new StringBuilder("SELECT a FROM data.t WHERE a IN (");
@@ -633,7 +645,7 @@ class SqlValidatorTest {
     assertThatThrownBy(
             () -> permissive.validate(deepNestedWhereIn(600, "SELECT a FROM public.usr")))
         .isInstanceOf(UnsafeSqlException.class)
-        .hasMessageContaining("순회 깊이");
+        .hasMessageFindingMatch(REJECTED_BEYOND_LIMIT);
   }
 
   /**
@@ -652,7 +664,7 @@ class SqlValidatorTest {
 
     assertThatThrownBy(() -> permissive.validate(sql.toString()))
         .isInstanceOf(UnsafeSqlException.class)
-        .hasMessageContaining("순회 깊이");
+        .hasMessageFindingMatch(REJECTED_BEYOND_LIMIT);
   }
 
   /**
@@ -674,7 +686,7 @@ class SqlValidatorTest {
                 permissive.unqualifiedTableNames(
                     deepNestedWhereIn(600, "SELECT a FROM some_unqualified_table_xyz")))
         .isInstanceOf(UnsafeSqlException.class)
-        .hasMessageContaining("순회 깊이");
+        .hasMessageFindingMatch(REJECTED_BEYOND_LIMIT);
   }
 
   /** 양성 대조 — 상한 근처에도 못 미치는 정상 중첩 쿼리는 여전히 통과해야 한다. */
