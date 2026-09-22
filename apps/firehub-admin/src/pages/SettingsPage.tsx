@@ -10,7 +10,6 @@ import { InlineBanner } from '@/components/ui/inline-banner';
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { useAiCredentialSection } from '@/hooks/useAiCredentialSection';
 import { useAuth } from '@/hooks/useAuth';
 import { formatDateTimeMinute } from '@/lib/formatters';
 import { isForbidden, serverMessage } from '@/lib/http-errors';
@@ -20,7 +19,6 @@ import { ALL_SETTING_KEYS, SETTING_CATALOG, SETTINGS_TABS } from '@/lib/settings
 import { validateForm } from '@/lib/settings-form';
 import type { SettingResponse } from '@/types/platform';
 
-import { AiCredentialSection } from './settings/AiCredentialSection';
 import { buildSettingsPayload, type SettingDiff } from './settings/build-payload';
 import { SaveConfirmDialog } from './settings/SaveConfirmDialog';
 import { SettingField } from './settings/SettingField';
@@ -31,7 +29,6 @@ import { SettingField } from './settings/SettingField';
  * - 비밀 키는 **항상 빈 문자열**로 시작한다. 서버가 준 마스크(`****` / `****last4`)를 입력창에
  *   넣으면 (a) 사용자가 지우고 다시 써야 하는 어색함, (b) 진짜 8자 비밀번호가 `****` 로 시작할 때
  *   조용히 드롭되는 잔여 위험을 UI 가 떠안는다. 클라이언트가 마스크 문자열을 **만들 일이 없다**.
- * - 응답에 없는 키(`ai.session_max_tokens`)는 내장 기본값으로 채운다.
  */
 function buildForm(settings: SettingResponse[]): Record<string, string> {
   const byKey = Object.fromEntries(settings.map((s) => [s.key, s]));
@@ -42,7 +39,7 @@ function buildForm(settings: SettingResponse[]): Record<string, string> {
       form[key] = '';
       continue;
     }
-    form[key] = byKey[key]?.value ?? spec.builtinDefault ?? '';
+    form[key] = byKey[key]?.value ?? '';
   }
   return form;
 }
@@ -56,17 +53,6 @@ export default function SettingsPage() {
     queryKey: ['platform-settings'],
     queryFn: () => settingsApi.getAll().then((r) => r.data),
   });
-
-  // Ruling #50(Task 13 fix round 1) — `Tabs` 바깥, 이 컴포넌트 자신의 스코프에서 딱 한 번
-  // 부른다. `AiCredentialSection` 은 `TabsContent value="ai"` 안에 있어 탭을 SMTP/임베딩으로
-  // 옮기면 Radix 가 그 패널을 언마운트하는데, 이 훅을 그 컴포넌트 자신이 불렀다면 상태까지
-  // 함께 사라진다 — 여기서 부르고 `cred` prop 으로 내려주면 `SettingsPage` 자체는 탭 전환에
-  // 언마운트되지 않으므로 타이핑 중인 값이 살아남는다(훅 파일 헤더 주석 참고). `data` 를
-  // 그대로 넘긴다 — 이 훅이 `ai.model` 을 스스로 다시 불러오면 같은 경로에 요청이 두 번
-  // 나간다(훅 파일 헤더 주석의 실측 버그). 저장 후 이 쿼리를 무효화하지는 않는다 — 그러면
-  // 이 훅이 모르는 다른 탭(예: 이메일)의 미저장 편집까지 재시드 블록이 덮어쓴다(#50 과 같은
-  // 종류의 사고, 훅 파일 헤더 주석에 더 자세히).
-  const cred = useAiCredentialSection(data);
 
   const [form, setForm] = useState<Record<string, string> | null>(null);
   const [original, setOriginal] = useState<Record<string, string> | null>(null);
@@ -215,9 +201,10 @@ export default function SettingsPage() {
       <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">플랫폼 설정</h1>
 
       {/* info 이지 warning 이 아니다 — 이 화면의 정상 동작이지 이상 징후가 아니다(D-4). */}
+      {/* AI 설정은 이 화면에 없다 — 워크스페이스별 설정이라 운영자가 찾지 않도록 위치를 알린다. */}
       <InlineBanner variant="info">
-        여기서 저장한 값은 전 테넌트의 기본값입니다. 일부 항목은 각 워크스페이스가 자기 값으로
-        재정의할 수 있습니다.
+        여기서 저장한 값은 모든 워크스페이스에 적용되는 기본값입니다. AI 설정은 각 워크스페이스의
+        설정 화면에서 관리합니다.
       </InlineBanner>
 
       {!canWrite && (
@@ -226,7 +213,7 @@ export default function SettingsPage() {
         </InlineBanner>
       )}
 
-      <Tabs defaultValue="ai">
+      <Tabs defaultValue="smtp">
         <TabsList className="overflow-x-auto overflow-y-hidden flex-nowrap">
           {SETTINGS_TABS.map((tab) => (
             <TabsTrigger key={tab.id} value={tab.id}>
@@ -241,19 +228,6 @@ export default function SettingsPage() {
             <TabsContent key={tab.id} value={tab.id}>
               <Card>
                 <CardContent className="space-y-6 pt-6">
-                  {/* AI 탭만 전용 섹션을 먼저 그린다 — 유형에 따라 필드가 달라지는 유일한 탭이라
-                      tab.keys.map 범용 렌더러로는 표현할 수 없다(브리프 Step 2). 이메일·임베딩
-                      탭은 그대로 둔다. 이 섹션이 "유형(맨 앞) → 유형별 필드 → 모델"(Ruling #48,
-                      fix round 1)까지 이미 그리므로, 바로 아래 범용 렌더러가 나머지 동작 설정
-                      5키(ai.max_turns 등, ai.model 은 더 이상 여기 없다)부터 시작하는 것만으로
-                      설계서가 요구하는 "유형 → 유형별 필드 → 모델 → 동작 설정" 순서가 자연히
-                      만들어진다. */}
-                  {tab.id === 'ai' && (
-                    <>
-                      <AiCredentialSection cred={cred} />
-                      <Separator />
-                    </>
-                  )}
                   {tab.keys.map((key, index) => (
                     <div key={key} className="space-y-6">
                       {index > 0 && <Separator />}
@@ -264,10 +238,6 @@ export default function SettingsPage() {
                         disabled={!canWrite}
                         error={errors[key]}
                         description={byKey[key]?.description ?? null}
-                        usingBuiltinDefault={
-                          byKey[key] === undefined &&
-                          SETTING_CATALOG[key].builtinDefault !== undefined
-                        }
                         maskedValue={byKey[key]?.value ?? null}
                         cleared={cleared.has(key)}
                         onClear={
@@ -280,11 +250,6 @@ export default function SettingsPage() {
                                 })
                             : undefined
                         }
-                        // AI 탭은 이 섹션이 생기면서 남은 5키(ai.max_turns 등, ai.model 은
-                        // Ruling #48 로 AiCredentialSection 이 가져갔다) 전부가 테넌트
-                        // 재정의 가능해져 배지가 전부 같은 문구를 반복한다(설계서 §225) —
-                        // 이 탭에서만 배지·안내문을 숨긴다. 이메일·임베딩 탭은 그대로 둔다.
-                        hideOverrideBadge={tab.id === 'ai'}
                       />
                     </div>
                   ))}
@@ -301,23 +266,13 @@ export default function SettingsPage() {
       </Tabs>
 
       {canWrite && (
-        <div className="flex flex-col items-end gap-2">
-          {/* Ruling #49(fix round 1) — "저장"만으로는 이 버튼이 AI 탭의 자격증명·모델까지
-              함께 저장한다는 오해를 준다(실제로는 별도 흐름, 위 AiCredentialSection 참고).
-              이 버튼은 세 탭(AI 나머지 5키 + 이메일 6키 + 임베딩 4키) 전부의 범용 카탈로그
-              값을 저장한다 — "AI 탭 나머지"라고만 쓰면 이메일·임베딩 탭에서 거짓이 되므로
-              "나머지 설정"으로 그 탭 교차 범위를 정직하게 남긴다. */}
-          <p className="text-sm text-muted-foreground">
-            AI 자격증명·모델을 제외한 나머지 설정(이 탭의 다른 필드, 이메일, 임베딩)을 저장합니다.
-          </p>
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={handleRevert} disabled={!hasChanges}>
-              나머지 설정 되돌리기
-            </Button>
-            <Button onClick={handleSaveClick} disabled={!hasChanges || saveMutation.isPending}>
-              나머지 설정 저장
-            </Button>
-          </div>
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" onClick={handleRevert} disabled={!hasChanges}>
+            되돌리기
+          </Button>
+          <Button onClick={handleSaveClick} disabled={!hasChanges || saveMutation.isPending}>
+            저장
+          </Button>
         </div>
       )}
 

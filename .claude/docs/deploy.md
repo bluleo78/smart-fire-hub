@@ -213,11 +213,10 @@ services:
    - ⚠ **배포 조치(필수)**: aiagent Deployment 의 `.config/opencode` subPath 마운트는 **차트에서 이미 제거했다**(`~/k8s/smart-fire-hub/templates/aiagent-deployment.yaml`, 2026-09-21, 이슈 #697). 그 마운트는 이 단계가 폐기한 "배포 측 전역 설정 상속"을 위해 존재하던 것이라 이제 쓰임이 없고, 남겨 두면 코드 가드가 (리팩터링·버전업 등으로) 무효화되는 순간 전역 provider 가 테넌트 설정을 조용히 이기는 상태로 되돌아간다.
      - **차트 파일을 고친 것과 클러스터에 적용된 것은 다르다** — `helm upgrade` 후 `kubectl get deploy aiagent -o yaml` 로 그 마운트가 실제로 사라졌는지 확인할 것.
      - **대가(재검토 D1)**: 그 PVC 가 opencode 의 플러그인 npm 캐시 자리도 겸하고 있었으므로, 제거하면 그 캐시는 PVC 수명이 아니라 **파드 수명**을 따른다 — 즉 파드 재시작마다 위 "첫 요청 1회 콜드 부트스트랩"이 다시 일어난다. 요청마다가 아니므로 수용 가능한 비용으로 판단했다.
-   - **`ANTHROPIC_API_KEY` 를 컨테이너에서 아예 없애라는 뜻이 아니다 — 범위를 좁혀서 읽을 것 (보안 리뷰 Fix5).** 이 항목은 *opencode 모델 인증*의 출처 얘기다. sdk/cli/cli-api 를 쓰는 테넌트는 사정이 다르다: 그 테넌트가 플랫폼 평면(`system_settings`)을 그대로 상속(즉 테넌트 오버라이드 없음)하는데 그 **플랫폼 자체의** sdk/cli/cli-api 자격증명이 `system_settings` 가 아니라 컨테이너 env 에만 있는 배포라면, `proactive.ts` 의 ambient `ANTHROPIC_API_KEY` 폴백(및 분류 경로의 `ClaudeSdkCompletionProvider` 같은 폴백)이 정확히 그 배포를 살아 있게 한다 — 이때 과금 주체는 플랫폼이 자기 자신에게 과금하는 것이라 6b1c6383 이 말하는 오분류가 아니다(Ruling #31). 요약하면:
-     - **필요**: 플랫폼 sdk/cli/cli-api 자격증명을 관리자 화면(`/api/platform/settings/ai-credential`)에 아직 저장하지 않은 배포.
-     - **제거 가능**: 그 자격증명을 화면에서 저장한 뒤에는 컨테이너 쪽 값을 지워도 된다(더는 쓰이지 않는다).
-     - **opencode 자식에는 무관**: 위 스크럽이 항상 지우므로, 컨테이너에 있든 없든 opencode 채팅/분류에는 영향이 없다.
-     - **테넌트 소유 문서에는 절대 안 쓰인다**: 이 브랜치(보안 리뷰 Fix3)가 테넌트 소유 sdk/cli/cli-api 자격증명은 비밀이 최소 하나 있어야 저장되게 막으므로, 이 ambient 폴백은 *상속 중인* 테넌트에만 관여하고 테넌트가 직접 설정한 문서를 대신 채우는 일은 없다.
+   - **컨테이너의 `ANTHROPIC_API_KEY`/`CLAUDE_CODE_OAUTH_TOKEN` 은 두지 않는다 (#706, V126 이후).** AI 자격증명은 이제 **테넌트 전용**이다 — 플랫폼 평면(`system_settings` 의 `ai.credential`, `/api/platform/settings/ai-credential`)은 삭제됐고 V126 이 그 행과 옛 3키를 지운다(복사 마이그레이션 없음). 자기 자격증명이 없는 테넌트는 채팅·프로액티브·AI_CLASSIFY 가 API 단에서 명확한 오류로 멈추고, 테넌트 관리자가 설정 › AI 에이전트에서 저장하면 동작한다.
+     - ai-agent 에는 여전히 ambient 폴백(`proactive.ts` 의 `ANTHROPIC_API_KEY`, 분류 경로 `ClaudeSdkCompletionProvider`, cli 의 keychain)이 남아 있다(로컬 dev 챗이 keychain 폴백에 의존해 범위 밖, #706 잔여). API 가 불완전 자격증명을 먼저 막으므로 지금은 도달하지 않지만, **컨테이너에 키를 넣으면 그 폴백이 살아나는 순간 다른 계정으로 조용히 과금된다** — 그래서 두지 않는다.
+     - **V126 배포 직후**: 자기 행이 없는 테넌트는 AI 가 즉시 멈춘다(의도). api + web + admin 은 반드시 함께 배포한다(admin 이 삭제된 플랫폼 AI 엔드포인트를 부르면 404).
+     - **V127 (AI 동작 설정도 테넌트 전용)**: `system_settings` 의 `ai.%` 행을 전부 지운다. `ai.model`/`ai.max_turns`/`ai.system_prompt`/`ai.temperature`/`ai.max_tokens`/`ai.session_max_tokens` 는 "테넌트 값 → 코드 기본값(`AiBehaviorDefaults`: claude-sonnet-5 / 10 / 슬림 프롬프트 / 1.0 / 16384 / 50000)"으로 해석되고 플랫폼 설정 화면·API 에서 사라졌다. **배포 전** prod `system_settings` 의 `ai.%` 값이 시드와 다른지 확인할 것 — 운영자가 바꿔 둔 값은 V127 이후 코드 기본값으로 대체된다(필요한 워크스페이스는 자기 설정에서 저장).
    - 테넌트가 opencode 자격증명을 저장하지 않았거나(providerId/baseUrl 미설정) 불완전하면 채팅은 명확한 `error` SSE(chat) 또는 400(proactive, missingCredential 가드)로 종료된다 — 배포 측 전역 설정으로 조용히 폴백하지 않는다(fail-closed).
    - **배포 후 필수 수동 검증 (Ruling #34)** — `OPENCODE_CONFIG_CONTENT`(요청별, 테넌트 provider)가
      PVC 전역 `opencode.json`/`OPENCODE_CONFIG` 를 실제로 **이긴다**는 것은 자동화 테스트로

@@ -12,6 +12,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.settings.dto.ResolvedSettingResponse;
+import com.smartfirehub.settings.model.AiBehaviorDefaults;
 import com.smartfirehub.settings.repository.TenantSettingsRepository;
 import com.smartfirehub.settings.service.SettingsService;
 import com.smartfirehub.support.IntegrationTestBase;
@@ -67,11 +68,11 @@ class SettingsResolutionTest extends IntegrationTestBase {
   }
 
   @Test
-  void 오버라이드가_없으면_플랫폼_값으로_폴백한다() {
+  void AI_키는_테넌트_값이_없으면_코드_기본값이다() {
+    // AI 설정은 테넌트 전용 — 플랫폼 행을 심어 둔 채 무시되는지는 AiSettingsTenantOnlyTest 가 본다.
     testTenant = createActiveTenant(dsl, "sr-fallback");
-    // 오버라이드 행을 만들지 않은 채로 조회한다.
     TenantContext.set(testTenant);
-    assertThat(settingsService.getValue("ai.model")).contains("claude-sonnet-5");
+    assertThat(settingsService.getValue("ai.model")).contains(AiBehaviorDefaults.MODEL);
   }
 
   @Test
@@ -103,13 +104,14 @@ class SettingsResolutionTest extends IntegrationTestBase {
   }
 
   @Test
-  void 컨텍스트가_없으면_예외가_아니라_플랫폼_값이다() {
+  void 컨텍스트가_없으면_예외가_아니라_기본값이다() {
     // 이 단언이 이 밴드의 핵심 회귀 가드다. TenantContext 없이 getValue 를 부르는 것은 JobRunr
     // @Job·@Async·@Scheduled 배경 경로에서 정상적으로 일어난다. require() 를 쓰면 임베딩 백필과
     // 문서 인제스션이 영구 무동작이 된다(P3-a·P2-g 전례).
     TenantContext.clear();
-    assertThat(settingsService.getValue("ai.model")).isPresent();
-    assertThat(settingsService.getValue("ai.model")).contains("claude-sonnet-5");
+    // 플랫폼 키는 플랫폼 값, AI 키는 코드 기본값.
+    assertThat(settingsService.getValue("embedding.model")).isPresent();
+    assertThat(settingsService.getValue("ai.model")).contains(AiBehaviorDefaults.MODEL);
   }
 
   @Test
@@ -123,8 +125,9 @@ class SettingsResolutionTest extends IntegrationTestBase {
     TenantContext.set(testTenant);
     var resolved = settingsService.getAsMap("ai");
     assertThat(resolved).containsEntry("ai.model", "tenant-model");
-    // 오버라이드 대상이 아닌 다른 ai.* 키는 여전히 플랫폼 값이어야 한다.
-    assertThat(resolved).containsKey("ai.max_turns");
+    // 테넌트가 저장하지 않은 다른 ai.* 키는 코드 기본값이다.
+    assertThat(resolved)
+        .containsEntry("ai.max_turns", String.valueOf(AiBehaviorDefaults.MAX_TURNS));
   }
 
   @Test
@@ -226,8 +229,9 @@ class SettingsResolutionTest extends IntegrationTestBase {
   /**
    * {@code getResolvedByPrefix} 도 비밀 키를 마스킹한다.
    *
-   * <p>이 경로는 web 설정 화면이 실제로 부르는 경로다({@code GET /api/v1/settings?prefix=ai}).
-   * 마스킹을 빠뜨리면 {@code ai.api_key} 의 <b>AES 암호문이 그대로</b> 응답에 실린다. 이 프로젝트는
+   * <p>이 경로는 web 설정 화면이 실제로 부르는 경로다({@code GET /api/v1/settings?prefix=...}).
+   * 마스킹을 빠뜨리면 비밀 키(여기서는 {@code embedding.api_key})의 <b>AES 암호문이 그대로</b>
+   * 응답에 실린다. (예전 검증 키 {@code ai.api_key} 는 #706 으로 사라졌다.) 이 프로젝트는
    * 정확히 그 사고를 이미 한 번 냈다 — SMTP 전용 읽기 메서드만 마스킹하고 {@code getAll} 은
    * 빠뜨려서 암호문이 나갔다. 읽기 경로를 새로 만들 때마다 같은 실수가 가능하므로 경로별로 단언한다.
    *
@@ -241,7 +245,7 @@ class SettingsResolutionTest extends IntegrationTestBase {
    * 노출 안전성에 대한 거짓 안심이 되고, 그것을 믿고 어떤 읽기 경로의 오버라이드 마스킹을
    * 생략하면 테넌트 비밀번호 암호문이 나간다.
    *
-   * <p><b>먼저 진짜 키를 저장한다.</b> 테스트 DB 의 {@code ai.api_key} 시드 값은 빈 문자열이라,
+   * <p><b>먼저 진짜 키를 저장한다.</b> 테스트 DB 의 {@code embedding.api_key} 시드 값은 빈 문자열이라,
    * 값이 있을 때만 단언하는 형태로 두면 <b>단언이 한 줄도 실행되지 않는</b> 공허한 테스트가 된다
    * (실제로 그렇게 쓰여 있었다). 그 상태에서는 {@code getResolvedByPrefix} 의 {@code maskSecret}
    * 을 통째로 지워도 이 테스트가 녹색으로 남는다 — 즉 막으려던 유출을 전혀 막지 못한다.
@@ -251,21 +255,22 @@ class SettingsResolutionTest extends IntegrationTestBase {
    */
   @Test
   void getResolvedByPrefix_는_비밀_키를_마스킹한다() {
-    String original = rawSystemSettingValue(dsl, "ai.api_key");
+    String original = rawSystemSettingValue(dsl, "embedding.api_key");
     try {
       // 평문을 넣으면 서비스가 암호화해 저장한다 — 마스킹이 없으면 이 암호문이 그대로 응답에 실린다.
-      settingsService.updatePlatformSettings(java.util.Map.of("ai.api_key", "sk-real-secret"), null);
+      settingsService.updatePlatformSettings(
+          java.util.Map.of("embedding.api_key", "sk-real-secret"), null);
       // 전제 확인: 저장된 원문이 실제로 암호문("iv:ciphertext")이어야 이 테스트가 의미를 갖는다.
-      assertThat(rawSystemSettingValue(dsl, "ai.api_key")).contains(":");
+      assertThat(rawSystemSettingValue(dsl, "embedding.api_key")).contains(":");
 
-      var apiKey = resolvedSetting(settingsService, "ai", "ai.api_key");
+      var apiKey = resolvedSetting(settingsService, "embedding", "embedding.api_key");
 
       assertThat(apiKey.value()).startsWith("****");
       // 암호문은 "iv:ciphertext" 형태이므로 콜론이 없다는 것이 곧 암호문이 아니라는 뜻이다.
       assertThat(apiKey.value()).doesNotContain(":");
       assertThat(apiKey.value()).doesNotContain("sk-real-secret");
     } finally {
-      restoreSystemSettingValue(dsl, "ai.api_key", original);
+      restoreSystemSettingValue(dsl, "embedding.api_key", original);
     }
   }
 
@@ -284,7 +289,7 @@ class SettingsResolutionTest extends IntegrationTestBase {
   void 프리픽스에_마침표를_붙이면_조용히_빈_맵이_된다() {
     assertThat(settingsService.getAsMap("ai"))
         .as("마침표 없는 형태가 올바르다")
-        .containsKey("ai.agent_type");
+        .containsKey("ai.model");
 
     assertThat(settingsService.getAsMap("ai."))
         .as("마침표를 붙이면 ai..%% 패턴이 되어 0행 — 이 형태를 쓰면 안 된다")
@@ -638,17 +643,15 @@ class SettingsResolutionTest extends IntegrationTestBase {
   // AI_자격증명_3키를_아무것도_재정의하지_않으면_전부_플랫폼_값을_그대로_상속한다,
   // getAiCredentials_는_번들_해석을_따른다)는 지웠다 — 검증 대상이던
   // SettingsService.AI_CREDENTIAL_KEYS 번들과 getAiCredentials()/getAiCredentials 자체가
-  // 타입형 전환(2026-09)으로 사라졌다. ai.api_key/ai.agent_type/ai.cli_oauth_token 은 이제
-  // 테넌트 오버라이드 대상이 아니라(SettingsOverridePolicy 에서 빠졌다) 이 시나리오들 자체를
-  // 더 이상 재현할 수 없다 — updateSettings(Map.of("ai.agent_type", ...)) 는 지금은
-  // "플랫폼 관리자만 변경할 수 있는 설정입니다" 로 거부된다. 그 자리를 대체하는 성질(테넌트가
-  // 실행 형태를 재정의해도 플랫폼 값이 새지 않는다)은 이제 "문서가 하나(ai.credential)라
-  // 재정의가 항상 통째"라는 구조 자체가 지키고, AiCredentialLeakGuardTest(범용 경로 차단)와
-  // AiCredentialServiceTest(두 평면 해석 자체)가 그 성질을 각자의 각도에서 고정한다.
+  // 타입형 전환(2026-09)으로 사라졌고, 옛 3키 자체도 #706 에서 코드·데이터(V126) 모두에서
+  // 지워졌다. 그 자리를 대체하는 성질(테넌트의 AI 호출에 플랫폼 자격증명이 섞이지 않는다)은 이제
+  // "AI 자격증명은 테넌트 전용 문서 하나(ai.credential)"라는 구조 자체가 지키고,
+  // AiCredentialLeakGuardTest(범용 경로 차단)와 AiCredentialServiceTest(플랫폼 행을 읽지 않음)가
+  // 각자의 각도에서 고정한다.
 
   @Test
   void AI_번들이_아닌_키는_단일_조회가_그대로_동작한다() {
-    // ai.model 은 번들이 아니라 키 단위 상속이므로 getValue 가 옳은 답을 준다.
+    // ai.model 은 번들이 아니라 키 단위 해석이므로 getValue 가 옳은 답을 준다.
     assertThat(settingsService.getValue("ai.model")).isPresent();
   }
 

@@ -11,17 +11,12 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 
 /**
- * 테넌트({@code AiCredentialController})/플랫폼({@code PlatformAiCredentialController}) 두
- * 컨트롤러가 공유하는 opencode PUT 검증 로직.
+ * {@code AiCredentialController} 의 opencode PUT/프로브 검증 로직({@link Reason} → HTTP 상태
+ * 매핑, ai.model 정합성·모델 소속 검사, 추론 강도 enum).
  *
- * <p><b>왜 별도 클래스인가(Task 7 브리프의 「Files」 목록에는 없다 — 의도적 이탈).</b> 브리프는
- * 파일을 컨트롤러 2개 + 테스트 1개로만 못박았지만, 그대로 따르면 {@link Reason} → HTTP 상태
- * 매핑과 ai.model 정합성 검사를 두 컨트롤러에 각각 손으로 복붙해야 한다. 두 사본은 반드시
- * 갈라진다 — 나중에 {@code Reason} 값이 하나 늘 때 한쪽만 고치고 다른 쪽을 잊는 것이 바로
- * Ruling #25("Reason 을 매핑하지, 문자열을 매칭하지 않는다")가 막으려는 종류의 드리프트다. 두
- * 컨트롤러가 이미 서로 다른 패키지({@code settings.controller}/{@code platform.controller})라
- * {@code private} 헬퍼 공유가 안 되므로, "동일하게 지킨다"는 요구 자체를 만족시키려면 이 public
- * 유틸리티가 필요하다.
+ * <p><b>왜 별도 클래스인가.</b> 컨트롤러와 분리된 순수 정적 함수라
+ * {@code OpencodeCredentialValidationTest} 가 HTTP 없이 매핑 규칙을 고정할 수 있다 — Ruling
+ * #25("Reason 을 매핑하지, 문자열을 매칭하지 않는다")가 여기 한 곳에 있다.
  */
 public final class OpencodeCredentialValidation {
 
@@ -148,9 +143,8 @@ public final class OpencodeCredentialValidation {
   }
 
   /**
-   * {@link Problem} 을 그대로 응답으로 바꾼다. 두 컨트롤러가 바이트 단위로 같은 사본을 각각
-   * 들고 있었다 — 응답 모양({@code {message}})은 이 클래스가 만드는 {@code Problem} 의 짝이므로
-   * 여기 함께 둔다.
+   * {@link Problem} 을 그대로 응답으로 바꾼다. 응답 모양({@code {message}})은 이 클래스가 만드는
+   * {@code Problem} 의 짝이므로 여기 함께 둔다.
    */
   public static ResponseEntity<Map<String, Object>> problemResponse(Problem problem) {
     return ResponseEntity.status(problem.status()).body(Map.of("message", problem.message()));

@@ -7,8 +7,12 @@ import java.time.LocalDateTime;
  * 테넌트 오버라이드에서 온 것인지"와 "이 키를 테넌트가 바꿀 수 있는지"를 함께 보여주기 위한
  * 응답이다 — {@link SettingResponse} 는 이 두 정보를 담지 못한다.
  *
- * @param value {@code tenant_settings} 오버라이드가 있으면 그 값, 없으면 {@code system_settings} 값
- * @param overridden 현재 테넌트 컨텍스트에서 오버라이드가 실제로 적용됐는지
+ * <p>AI 동작 키({@code ai.*})는 테넌트 전용이라 플랫폼 값이 없다 — {@code value} 는 테넌트 값
+ * 또는 코드 기본값, {@code overridden} 은 "테넌트가 저장한 값이 있음"을 뜻한다.
+ *
+ * @param value {@code tenant_settings} 값이 있으면 그 값, 없으면 {@code system_settings} 값(AI 동작
+ *     키는 코드 기본값)
+ * @param overridden 현재 테넌트 컨텍스트에서 테넌트 값이 실제로 적용됐는지
  * @param tenantEditable 이 키 자체가 화이트리스트({@code SettingsOverridePolicy})에 있어 테넌트가
  *     편집 가능한 키인지 — 현재 오버라이드 존재 여부와 무관하게 키 고유의 성질이다
  */

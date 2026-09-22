@@ -9,7 +9,6 @@ import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.settings.model.AiCredential;
 import com.smartfirehub.settings.model.AiCredentialDocument;
 import com.smartfirehub.settings.model.UnknownAgentTypeException;
-import com.smartfirehub.settings.repository.SettingsRepository;
 import com.smartfirehub.settings.repository.TenantSettingsRepository;
 import java.util.List;
 import java.util.Map;
@@ -28,8 +27,11 @@ import org.springframework.stereotype.Service;
  * (1) 검증이 문자열 파싱이 되고 (2) 하위 필드 암호화를 범용 경로가 알아야 하며 (3)
  * {@code secretFieldNames} 같은 응답 성형이 불가능하다.
  *
- * <p><b>두 평면</b>: 테넌트 행이 있으면 그 값, 없으면 플랫폼 값. 블롭이 하나라 재정의는 항상
- * 통째다 — 1단계 번들 규칙이 원하던 원자성이 구조상 공짜가 된다.
+ * <p><b>테넌트 전용(단일 평면, #706)</b>: 값은 {@code tenant_settings} 의 현재 테넌트 행에만
+ * 있다. 행이 없거나 테넌트 컨텍스트가 없으면 "미설정"이다 — {@code system_settings}(플랫폼)는
+ * 읽지도 쓰지도 않는다. 플랫폼 폴백은 테넌트가 모르는 사이 플랫폼 계정으로 과금되게 하므로,
+ * 미설정 테넌트는 호출 전에 {@link AiCredential#incompleteMessage()} 로 명확히 멈춘다.
+ * 블롭이 하나라 저장은 항상 통째다.
  *
  * <p><b>복호화는 이 서비스 한 곳에서만 한다.</b> {@link AiCredentialDocument} 는 이름으로
  * 암호문을 꺼내는 {@link AiCredentialDocument#secretCipher(String)} 는 내주지만 복호화는 하지
@@ -45,15 +47,15 @@ public class AiCredentialService {
   /**
    * 저장 키. 패키지 가시성 — 같은 패키지의 {@code AiCredentialServiceTest} 가 손으로 행을
    * 심어(fail-closed 시나리오) 이 서비스를 우회하는 경로를 재현해야 하기 때문이고,
-   * {@code SettingsService}/{@code SettingsOverridePolicy} 도 같은 이유로(범용 경로에서
-   * 이 키를 걸러내야 한다) 이 상수를 그대로 참조한다 — 리터럴을 여러 곳에 복제하지 않는다.
+   * {@code SettingsService} 도 같은 이유로(범용 경로에서 이 키를 걸러내야 한다) 이 상수를
+   * 그대로 참조한다 — 리터럴을 여러 곳에 복제하지 않는다.
    */
   static final String KEY = "ai.credential";
 
   /**
-   * 문서가 어느 평면에도 전혀 없을 때(마이그레이션 이전, 혹은 시드가 안 된 테스트 환경) 쓰는
-   * 기본 유형. 1단계 번들 채움 규칙("미설정은 sdk, 자격증명은 빈 문자열"이라는 옛
-   * {@code SettingsService} AI 자격증명 번들의 관례)과 같은 선상을 그대로 잇는다.
+   * 테넌트 행이 없을 때(미설정) 쓰는 기본 유형. 빈 {@code sdk} 문서는 비밀이 없어
+   * {@link AiCredential#isComplete()} 가 거짓이므로, 소비처가 호출 전에 "설정되지 않았다" 오류로
+   * 멈춘다. 화면도 이 유형으로 폼을 시작한다({@code configured=false} 와 함께).
    */
   private static final String DEFAULT_AGENT_TYPE = "sdk";
 
@@ -66,9 +68,9 @@ public class AiCredentialService {
   private static final Set<String> KNOWN_AGENT_TYPES = Set.of("sdk", "cli", "cli-api", "opencode");
 
   /**
-   * 보안 리뷰 Fix3 — 이 세 유형은 <b>테넌트 소유</b> 문서일 때, 그 유형이 실제로 읽는 비밀 필드
-   * 중 최소 하나가 비어 있지 않아야 한다. {@code opencode} 는 넣지 않는다 — opencode 는 애초에
-   * baseURL 로만 나가는 별개 공급자라 비밀이 없으면 그냥 그 공급자 호출이 실패할 뿐 "컨테이너
+   * 보안 리뷰 Fix3 — 이 세 유형은 저장할 때 그 유형이 실제로 읽는 비밀 필드 중 최소 하나가
+   * 비어 있지 않아야 한다(평면 구분이 사라져 이제 무조건 적용된다). {@code opencode} 는 넣지
+   * 않는다 — opencode 는 애초에 baseURL 로만 나가는 별개 공급자라 비밀이 없으면 그냥 그 공급자 호출이 실패할 뿐 "컨테이너
    * ambient 키로 몰래 넘어가는" 경로가 없다(3방향 세 소비처 중 sdk/cli/cli-api 만
    * {@code ANTHROPIC_API_KEY}/{@code CLAUDE_CODE_OAUTH_TOKEN} ambient 폴백을 갖는다).
    *
@@ -81,13 +83,12 @@ public class AiCredentialService {
    * 클라이언트)도 받는다 — 화면의 필터링에 기대면 이 API 가 그 필터를 제 손으로 우회할 수 있는
    * 구멍이 된다. {@link #toCredential} 의 필드 매핑과 이 맵이 갈리지 않게 유지할 것.
    */
-  private static final Map<String, Set<String>> TENANT_REQUIRED_SECRET_FIELDS =
+  private static final Map<String, Set<String>> REQUIRED_SECRET_FIELDS =
       Map.of(
           "sdk", Set.of("oauthToken", "apiKey"),
           "cli", Set.of("oauthToken"),
           "cli-api", Set.of("apiKey"));
 
-  private final SettingsRepository settingsRepository;
   private final TenantSettingsRepository tenantSettingsRepository;
   private final EncryptionService encryptionService;
 
@@ -97,16 +98,19 @@ public class AiCredentialService {
   private static final ObjectMapper MAPPER = new ObjectMapper();
 
   /**
-   * 두 평면 해석 후 타입으로 바꾼다. 테넌트 행 → 없으면 플랫폼 행 → 그것도 없으면
-   * {@link #DEFAULT_AGENT_TYPE} 빈 문서.
+   * 현재 테넌트의 자격증명을 타입으로 바꾼다. 테넌트 행이 없거나 테넌트 컨텍스트가 없으면
+   * {@link #DEFAULT_AGENT_TYPE} 빈 문서(= {@code isComplete()==false}, 미설정)다 — 플랫폼 행은
+   * 절대 읽지 않는다(클래스 javadoc "테넌트 전용" 참고).
    *
    * <p><b>알 수 없는 {@code agentType} 은 fail-closed 다</b>({@link UnknownAgentTypeException}).
-   * 플랫폼 값으로 폴백하지 않는다 — 손으로 고친 테넌트 행이 우연히 플랫폼 자격증명을 쓰게
-   * 되면(과금 주체가 섞이는) {@code 6b1c6383} 과 같은 회귀가 된다.
+   * 빈 자격증명으로 조용히 넘어가지 않는다 — 소비처가 ambient 키로 떨어질 여지를 주면
+   * {@code 6b1c6383} 과 같은 과금 회귀가 된다.
    */
   public AiCredential resolve() {
     AiCredentialDocument doc =
-        loadEffectiveDocument().orElseGet(() -> AiCredentialDocument.empty(DEFAULT_AGENT_TYPE));
+        readTenantRaw()
+            .map(AiCredentialDocument::parse)
+            .orElseGet(() -> AiCredentialDocument.empty(DEFAULT_AGENT_TYPE));
     return toCredential(doc);
   }
 
@@ -118,18 +122,20 @@ public class AiCredentialService {
    * <p><b>JSON 파싱 자체가 실패해도(손상된 값) throw 하지 않는다</b>(보안 리뷰 Fix7). {@code
    * agentType} 을 모르는 경우(위 문단)는 이미 관대하게 다뤘지만, {@link AiCredentialDocument#parse}
    * 는 JSON 문법 자체가 깨졌거나 최상위가 객체가 아니면 여전히 던졌다 — 그러면 이 메서드가
-   * 그대로 예외를 전파해 GET 자체가 500 이 됐다. 플랫폼 평면은 {@code DELETE} 가 없어(스펙 98행,
-   * {@code PlatformAiCredentialController} 클래스 javadoc), 손상된 플랫폼 행을 만나면 GET 도 PUT
-   * 도 막혀 관리자가 API 로는 복구할 방법이 아예 없었다. {@link #tryParse} 로 감싸 손상을 "미설정"
-   * 으로 보여주고({@code tenantOwned} 는 그대로 정확히 보고한다 — 어느 평면이 손상됐는지는 알 수
-   * 있어야 한다), {@link #save} 가 그 자리를 덮어써 복구할 수 있게 한다.
+   * 그대로 예외를 전파해 GET 자체가 500 이 됐고, 손상된 행을 보고 고칠 화면 자체가 막혔다.
+   * {@link #tryParse} 로 감싸 손상을 "미설정"처럼 보여주고, {@link #save} 가 그 자리를 덮어써
+   * 복구할 수 있게 한다.
+   *
+   * <p><b>{@code configured} 는 테넌트 행의 존재 여부 그대로다</b> — 행이 손상돼 내용이 빈 폼으로
+   * 보이더라도 행이 있으면 참이다(무엇인가 저장돼 있다는 사실은 정확히 보고한다). 행이 없으면
+   * {@code {agentType:"sdk", payload:{}, secretFieldNames:[], configured:false}} 이고, 화면은 이
+   * 값을 보고 "AI 설정이 없습니다" 안내와 직접 설정 폼을 띄운다.
    */
   public AiCredentialView read() {
     Optional<String> tenantRaw = readTenantRaw();
-    boolean tenantOwned = tenantRaw.isPresent();
+    boolean configured = tenantRaw.isPresent();
     AiCredentialDocument doc =
         tenantRaw
-            .or(this::readPlatformRaw)
             .flatMap(raw -> tryParse(raw, "GET"))
             .orElseGet(() -> AiCredentialDocument.empty(DEFAULT_AGENT_TYPE));
 
@@ -139,11 +145,11 @@ public class AiCredentialService {
     // 아닌 값을 담고 있어도(예: "not-a-cipher") 화면은 죽지 않고 "미설정"으로 보여야 관리자가
     // 되돌릴 수 있다(스펙 §"알 수 없는 agentType" 문단과 같은 이유, 아래 메서드 javadoc 참고).
     List<String> secretFieldNames = doc.secretNames(this::decryptOrEmptyLenient);
-    return new AiCredentialView(doc.agentType(), payload, secretFieldNames, tenantOwned);
+    return new AiCredentialView(doc.agentType(), payload, secretFieldNames, configured);
   }
 
   /**
-   * 저장한다. {@code platformPlane} 이면 {@code system_settings}, 아니면 {@code tenant_settings}.
+   * 현재 테넌트의 {@code tenant_settings} 행에 저장한다(유일한 저장 위치).
    *
    * <p><b>payload 는 secret 과 같은 규칙으로 병합한다(요청에 있는 키만 덮어쓰고, 없는 키는
    * 그대로 둔다) — 단, 유형이 바뀌지 않았을 때만.</b> {@link AiCredentialDocument} 의 역직렬화가
@@ -173,24 +179,22 @@ public class AiCredentialService {
    * {@link AiCredentialDocument#empty} 로 새로 시작한다 — secret 하위 객체를 비우는 공개 API가
    * 없으므로, "빈 문서에서 다시 시작"이 유일한 통째 초기화 방법이다.
    *
-   * <p><b>테넌트 소유 sdk/cli/cli-api 는 비밀이 최소 하나 있어야 한다</b>(보안 리뷰 Fix3). 병합이
-   * 끝난 <b>문서</b>(요청이 아니라)를 검사한다 — 요청만 보면 "baseURL 만 고치고 저장된 키는
-   * 그대로 두는" 정상 저장이 스푸리어스 400 을 받는다(Ruling #16 이 열어 둔 자리, 아래
-   * {@link #requireSecretForTenantOwnedCredential} 참고). 플랫폼 평면은 예외다 — 그 문서가
-   * 비어도 소비처는 컨테이너 ambient 키로 폴백하는데, 그 키는 플랫폼 자신의 키라 과금 주체가
-   * 어긋나지 않는다(Ruling #31). 반대로 테넌트 소유 문서가 비밀 없이 저장되면 화면은 "우리 조직
-   * 값 적용 중"이라 말하면서 실제로는 ambient(=플랫폼) 키로 과금되는 오귀속이 생긴다 — 이
-   * 브랜치가 막으려는 바로 그 사고(6b1c6383)의 세 번째 경로였다.
+   * <p><b>sdk/cli/cli-api 는 비밀이 최소 하나 있어야 한다</b>(보안 리뷰 Fix3). 병합이 끝난
+   * <b>문서</b>(요청이 아니라)를 검사한다 — 요청만 보면 "baseURL 만 고치고 저장된 키는 그대로
+   * 두는" 정상 저장이 스푸리어스 400 을 받는다(Ruling #16 이 열어 둔 자리, 아래
+   * {@link #requireUsableSecret} 참고). 비밀 없이 저장되면 화면은 "설정됨"이라 말하는데 실제
+   * 호출은 비밀이 없어 실패하거나, 더 나쁘게는 ai-agent 컨테이너의 ambient 키로 과금되는
+   * 오귀속이 생긴다 — 이 규칙이 막으려는 사고(6b1c6383)의 한 경로다.
    */
-  public void save(AiCredentialUpsert req, Long userId, boolean platformPlane) {
+  public void save(AiCredentialUpsert req, Long userId) {
     validate(req);
 
     // 손상된 JSON(파싱 실패)을 만나도 "행이 없다"와 똑같이 취급한다(보안 리뷰 Fix7) — typeChanged
     // 분기가 이미 그 경우를 AiCredentialDocument.empty() 로 시작하는 경로로 처리하므로, 손상된
-    // 기존 값을 null 로 흡수하기만 하면 자연히 같은 길을 탄다. 플랫폼 평면은 DELETE 가 없어(spec
-    // 98행), 파싱 실패를 여기서 던지면(예전 동작) 이 PUT 이 손상을 덮어쓸 유일한 통로였는데도
-    // 막혀 버렸다 — 그 값은 이번 저장으로 통째로 교체되므로 흡수해도 잃는 게 없다.
-    Optional<String> existingRaw = platformPlane ? readPlatformRaw() : readTenantRaw();
+    // 기존 값을 null 로 흡수하기만 하면 자연히 같은 길을 탄다. 파싱 실패를 여기서 던지면 이 PUT 이
+    // 손상을 덮어쓸 유일한 통로인데도 막혀 버린다 — 그 값은 이번 저장으로 통째로 교체되므로
+    // 흡수해도 잃는 게 없다.
+    Optional<String> existingRaw = readTenantRaw();
     AiCredentialDocument existing = existingRaw.flatMap(raw -> tryParse(raw, "PUT")).orElse(null);
     boolean typeChanged = existing == null || !req.agentType().equals(existing.agentType());
     AiCredentialDocument doc = typeChanged ? AiCredentialDocument.empty(req.agentType()) : existing;
@@ -206,26 +210,20 @@ public class AiCredentialService {
     req.secret().forEach((name, value) -> doc.withSecret(name, encryptionService.encrypt(value)));
 
     // 병합이 끝난 doc 을 검사한다 — 아직 DB 에 쓰기 전이라 여기서 던져도 부수효과가 없다(Fix3).
-    requireSecretForTenantOwnedCredential(doc, platformPlane);
+    requireUsableSecret(doc);
 
-    String json = doc.toJson();
-    if (platformPlane) {
-      settingsRepository.updateSettings(Map.of(KEY, json), userId);
-    } else {
-      tenantSettingsRepository.upsert(KEY, json, userId);
-    }
+    tenantSettingsRepository.upsert(KEY, doc.toJson(), userId);
   }
 
   /**
-   * 보안 리뷰 Fix3 — 병합된 문서를 검사해, 테넌트 소유 sdk/cli/cli-api 에 그 유형이 실제로 읽는
-   * 비밀 필드가 하나도 채워져 있지 않으면 거부한다. {@link #save} javadoc "테넌트 소유
-   * sdk/cli/cli-api 는 비밀이 최소 하나 있어야 한다" 문단, {@link #TENANT_REQUIRED_SECRET_FIELDS}
-   * javadoc "필드 이름까지 좁히는 이유" 참고 — 이름이 아무거나면 안 되고 {@link #toCredential}
-   * 이 그 유형에서 실제로 읽는 필드여야 한다.
+   * 보안 리뷰 Fix3 — 병합된 문서를 검사해, sdk/cli/cli-api 에 그 유형이 실제로 읽는 비밀 필드가
+   * 하나도 채워져 있지 않으면 거부한다. {@link #save} javadoc "sdk/cli/cli-api 는 비밀이 최소
+   * 하나 있어야 한다" 문단, {@link #REQUIRED_SECRET_FIELDS} javadoc "필드 이름까지 좁히는 이유"
+   * 참고 — 이름이 아무거나면 안 되고 {@link #toCredential} 이 그 유형에서 실제로 읽는 필드여야
+   * 한다.
    */
-  private void requireSecretForTenantOwnedCredential(AiCredentialDocument doc, boolean platformPlane) {
-    if (platformPlane) return;
-    Set<String> requiredFields = TENANT_REQUIRED_SECRET_FIELDS.get(doc.agentType());
+  private void requireUsableSecret(AiCredentialDocument doc) {
+    Set<String> requiredFields = REQUIRED_SECRET_FIELDS.get(doc.agentType());
     if (requiredFields == null) return; // opencode 등 이 가드 대상이 아닌 유형
 
     // 관용 복호화를 쓴다(재검토 N1) — "복호화가 안 되는 비밀"은 "없는 비밀"과 같다. 여기서
@@ -241,19 +239,17 @@ public class AiCredentialService {
     if (hasUsableSecret) return;
 
     throw new IllegalArgumentException(
-        "우리 조직이 직접 설정하는 "
-            + doc.agentType()
+        doc.agentType()
             + " 자격증명은 "
             + String.join("/", requiredFields)
             + " 중 최소 하나가 있어야 한다 — 비밀 없이(혹은 이 유형이 쓰지 않는 이름으로만) 저장하면"
-            + " 실제 호출이 컨테이너의 ambient 키(플랫폼 계정)로 과금된다. 플랫폼 값을 쓰려면"
-            + " DELETE 로 테넌트 오버라이드를 지워라.");
+            + " 실제 호출이 인증에 실패하거나 컨테이너의 ambient 키로 과금된다.");
   }
 
   /**
    * JSON 을 파싱하되, 파싱 자체가 실패하면(손상된 값) 예외 대신 빈 값을 돌려준다(보안 리뷰
-   * Fix7). {@link #read}/{@link #save} 둘 다 이 도우미를 쓴다 — {@link #resolve}(정확히는
-   * {@link #loadEffectiveDocument})는 쓰지 않는다: 그쪽은 화면이 아니라 실제 호출에 쓰이는
+   * Fix7). {@link #read}/{@link #save}/{@link #tenantOpencodeCredential} 가 이 도우미를 쓴다 —
+   * {@link #resolve} 는 쓰지 않는다: 그쪽은 화면이 아니라 실제 호출에 쓰이는
    * 값이라 손상을 감추면 안 된다(클래스 상단 javadoc "복호화는 이 서비스 한 곳에서만" 문단과
    * 같은 이유로, fail-closed 를 유지해야 하는 경로다). {@code context} 는 로그에만 쓰는 라벨이다
    * (예: "GET"/"PUT") — 어느 호출부에서 손상을 만났는지 운영 로그로 구분하기 위해서다.
@@ -267,20 +263,13 @@ public class AiCredentialService {
     }
   }
 
-  /** 테넌트 오버라이드를 지운다. 이후 해석은 플랫폼 값으로 되돌아간다. */
-  public void clearTenantOverride() {
-    tenantSettingsRepository.delete(KEY);
-  }
-
   /**
    * {@code OpencodeProbeService} 전용 — 테넌트 자신의 opencode 자격증명만 읽는다.
    *
    * <p><b>{@link #resolve()} 를 쓰지 않는 이유</b>: 프로브는 인증된 외부 호출(임의 baseURL 에
-   * Bearer 를 실어 보낸다)을 만든다. 요청이 {@code apiKey} 를 생략했을 때 "저장된 값"으로
-   * {@link #resolve()}(두 평면 해석)를 쓰면, 테넌트가 opencode 로 재정의하지 않은 경우 조용히
-   * 플랫폼 행으로 폴백해 <b>플랫폼의 apiKey 를 테넌트가 지정한 임의 baseURL 로 전송</b>하게
-   * 된다 — 이 메서드가 막는 것이 정확히 그 유출이다(설계서 "평면 교차 폴백 금지"). 그래서 여기서는
-   * {@code tenant_settings} 행이 실제로 있을 때만 값을 내준다.
+   * Bearer 를 실어 보낸다)을 만드는 화면 경로라, 손상된 행에서 {@code resolve()} 처럼 던지지 않고
+   * 관용적으로 읽어야 하며(아래 본문 주석) 유형 필터도 필요하다(다음 문단). 두 메서드 모두
+   * 현재 테넌트의 {@code tenant_settings} 행만 본다.
    *
    * <p><b>{@code agentType} 필터가 필요한 이유</b>: {@code sdk} 문서도 {@code apiKey} 라는 이름의
    * secret 필드를 갖는다(Anthropic 키, {@link AiCredential.Sdk#apiKey}). 필터 없이
@@ -289,12 +278,12 @@ public class AiCredentialService {
    * OpenAI 호환 호스트로 전송된다 — {@link #save} 클래스 javadoc 이 경고하는 "이름만 같고 다른
    * 비밀" 사고와 같은 모양이다.
    *
-   * @return 테넌트 컨텍스트가 없거나, 테넌트가 재정의하지 않았거나, 재정의했지만 유형이
-   *     {@code opencode} 가 아니면 빈 값. 있으면 baseURL(평문)과 apiKey(복호화된 평문).
+   * @return 테넌트 컨텍스트가 없거나, 테넌트 행이 없거나, 유형이 {@code opencode} 가 아니면
+   *     빈 값. 있으면 baseURL(평문)과 apiKey(복호화된 평문).
    */
   public Optional<StoredOpencodeCredential> tenantOpencodeCredential() {
-    // 손상된 행에서 500 이 나지 않게 관용적으로 읽는다(재검토 N7). 파싱 실패는 "테넌트
-    // 오버라이드가 없다"와 같게 취급하고(=빈 값), 복호화 실패는 "저장된 키가 없다"와 같게
+    // 손상된 행에서 500 이 나지 않게 관용적으로 읽는다(재검토 N7). 파싱 실패는 "테넌트 행이
+    // 없다"와 같게 취급하고(=빈 값), 복호화 실패는 "저장된 키가 없다"와 같게
     // 취급한다 — 둘 다 OpencodeProbeService 가 이미 한국어 400(MSG_NO_STORED_KEY)으로 다루는
     // 모양이다. 여기서 던지면 POST /ai-credential/probe 가 500 이 되어, 손상된 행을 고치려는
     // 관리자가 "연결 테스트" 버튼부터 막힌다. resolve() 와 달리 이 값은 화면이 눌러 보는
@@ -312,21 +301,13 @@ public class AiCredentialService {
   // ---- 내부 헬퍼 ----
 
   /**
-   * 테넌트 원문. 컨텍스트가 없으면(배경 경로) 조회 자체를 하지 않는다 — {@code SettingsService
-   * .getValue()} 와 같은 "컨텍스트 없음 = 오버라이드 없음 = 플랫폼 값" 계약이다.
+   * 현재 테넌트의 원문. 컨텍스트가 없으면 조회 자체를 하지 않고 빈 값(= 미설정)이다 — 어느
+   * 테넌트의 값인지 모르는 채로 아무 행이나 읽을 수 없고, 대신 읽을 플랫폼 값도 없다. 테넌트
+   * 소유 배경 작업(프로액티브 등)은 {@code TenantScopedRunner} 가 컨텍스트를 세운 뒤 부른다.
    */
   private Optional<String> readTenantRaw() {
     if (TenantContext.get() == null) return Optional.empty();
     return tenantSettingsRepository.findValue(KEY);
-  }
-
-  private Optional<String> readPlatformRaw() {
-    return settingsRepository.getValue(KEY);
-  }
-
-  /** 두 평면 해석: 테넌트 우선, 없으면 플랫폼. 둘 다 없으면 빈 값. */
-  private Optional<AiCredentialDocument> loadEffectiveDocument() {
-    return readTenantRaw().or(this::readPlatformRaw).map(AiCredentialDocument::parse);
   }
 
   /**
@@ -373,9 +354,9 @@ public class AiCredentialService {
    * "비밀이 있는지 없는지에 대한 판정"이다. 두 소비처가 있다.
    *
    * <ul>
-   *   <li>{@link #read} — 화면(GET)과 삭제(DELETE)는 손상된 값에서도 동작해야 관리자가 상태를
-   *       보고 되돌릴 수 있다. 여기서 던지면 그 되돌릴 방법 자체가 막힌다.
-   *   <li>{@link #requireSecretForTenantOwnedCredential} — 필수 비밀 검사(재검토 N1). 복호화가
+   *   <li>{@link #read} — 화면(GET)은 손상된 값에서도 동작해야 관리자가 상태를 보고 다시 저장해
+   *       고칠 수 있다. 여기서 던지면 그 되돌릴 방법 자체가 막힌다.
+   *   <li>{@link #requireUsableSecret} — 필수 비밀 검사(재검토 N1). 복호화가
    *       안 되는 값은 실제 호출에 쓸 수 없으므로 "설정됨"으로 세면 안 된다. 동시에, 손상된 값
    *       하나 때문에 정상 PUT 이 400/500 으로 떨어지면 Fix7 의 복구 경로가 막힌다.
    *   <li>{@link #tenantOpencodeCredential} — 프로브가 재사용할 저장된 키(재검토 N7). 손상이면
@@ -440,9 +421,12 @@ public class AiCredentialService {
     }
   }
 
-  /** 화면용 읽기 결과. {@code payload} 는 평문(비밀 아님), 비밀 값 자체는 절대 담지 않는다. */
+  /**
+   * 화면용 읽기 결과. {@code payload} 는 평문(비밀 아님), 비밀 값 자체는 절대 담지 않는다.
+   * {@code configured} 는 현재 테넌트에 {@code ai.credential} 행이 있는지다(없으면 AI 미설정).
+   */
   public record AiCredentialView(
-      String agentType, Map<String, Object> payload, List<String> secretFieldNames, Boolean tenantOwned) {}
+      String agentType, Map<String, Object> payload, List<String> secretFieldNames, boolean configured) {}
 
   /** {@link #tenantOpencodeCredential()} 반환 형태. {@code baseUrl}/{@code apiKey} 모두 평문(복호화됨)이다. */
   public record StoredOpencodeCredential(String baseUrl, String apiKey) {}

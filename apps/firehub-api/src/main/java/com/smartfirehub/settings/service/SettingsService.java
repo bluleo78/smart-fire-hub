@@ -1,10 +1,13 @@
 package com.smartfirehub.settings.service;
 
+import static com.smartfirehub.settings.service.SettingsOverridePolicy.planeOf;
+
 import com.smartfirehub.apiconnection.service.EncryptionService;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.settings.dto.ResolvedSettingResponse;
 import com.smartfirehub.global.security.PlatformAuthentication;
 import com.smartfirehub.settings.dto.SettingResponse;
+import com.smartfirehub.settings.model.AiBehaviorDefaults;
 import com.smartfirehub.settings.repository.SettingsRepository;
 import com.smartfirehub.settings.repository.TenantSettingsRepository;
 import java.util.HashMap;
@@ -24,57 +27,6 @@ import org.springframework.transaction.annotation.Transactional;
 public class SettingsService {
 
   /**
-   * <b>플랫폼 쓰기 경로({@link #updatePlatformSettings})의 화이트리스트다(P7-b 이전에는
-   * {@link #updateSettings} 자신의 화이트리스트였다).</b> 테넌트 오버라이드 허용 키
-   * ({@link SettingsOverridePolicy#tenantOverridableKeys}) 는 이 9키를 포함한 세 서브
-   * 화이트리스트({@link #ALLOWED_AI_KEYS}/{@link #ALLOWED_SMTP_KEYS}/{@link #ALLOWED_EMBEDDING_KEYS})
-   * 의 <b>합집합의 부분집합</b>이다.
-   *
-   * <p><b>타입형 AI 설정 전환(2026-09) 이후.</b> {@code ai.api_key}/{@code ai.agent_type}/
-   * {@code ai.cli_oauth_token} 3키는 <b>플랫폼 기본값 전용</b>으로 남는다 — 이 9키에는 여전히
-   * 있지만 {@link SettingsOverridePolicy#tenantOverridableKeys} 에서는 빠졌다(테넌트는 더 이상
-   * 이 3키를 개별적으로 재정의할 수 없다). 테넌트 오버라이드는 대신 {@link AiCredentialService}
-   * 가 유일하게 소유하는 {@code ai.credential}(JSON 블롭) 로 옮겨갔다 — 세 키가 흩어져 있어야
-   * 지켜지던 원자성(구 {@code AI_CREDENTIAL_KEYS} 번들)이 이제 "블롭이 하나"라는 구조 자체에서
-   * 공짜로 나온다. 이 3키는 아무도 읽지 않는 <b>쓰기 전용 레거시 값</b>이 됐지만, 손으로 다시
-   * 읽는 코드를 만들면 안 된다 — 그 순간 {@code ai.credential} 과 값이 갈라질 수 있는 두 번째
-   * 진실 공급원이 생긴다.
-   */
-  // 패키지 가시성: SettingsKeyWhitelistInvariantTest 가 "테넌트 허용 키 ⊆ 플랫폼 쓰기 가능 키
-  // 합집합" 불변식을 실행 가능한 단언으로 고정한다(javadoc 문장만으로는 깨져도 아무도 모른다).
-  static final Set<String> ALLOWED_AI_KEYS =
-      Set.of(
-          "ai.model",
-          "ai.max_turns",
-          "ai.system_prompt",
-          "ai.temperature",
-          "ai.max_tokens",
-          "ai.session_max_tokens",
-          "ai.api_key",
-          "ai.agent_type",
-          "ai.cli_oauth_token");
-
-  /**
-   * SMTP 6키. P7-c1(2026-08-22)부터 전부 테넌트 오버라이드 허용이다 — {@link
-   * SettingsOverridePolicy#tenantOverridableKeys} 참조. 패키지 가시성 이유는 {@link
-   * #ALLOWED_AI_KEYS} 와 같다.
-   */
-  static final Set<String> ALLOWED_SMTP_KEYS =
-      Set.of(
-          "smtp.host",
-          "smtp.port",
-          "smtp.username",
-          "smtp.password",
-          "smtp.starttls",
-          "smtp.from_address");
-
-  // 임베딩 provider 설정 키 (V63 시드). embedding.api_key 는 ai.api_key 와 동일하게 암호화/마스킹 처리한다.
-  // 4키 전부 플랫폼 잠금이라 테넌트 화이트리스트에 대응하는 부분집합이 없다 — 근거는 ALLOWED_AI_KEYS 와 같다.
-  // 패키지 가시성 이유는 ALLOWED_AI_KEYS 와 같다(SettingsKeyWhitelistInvariantTest 가 읽는다).
-  static final Set<String> ALLOWED_EMBEDDING_KEYS =
-      Set.of("embedding.provider", "embedding.model", "embedding.base_url", "embedding.api_key");
-
-  /**
    * 암호화 저장되는 비밀 키의 집합. 마스킹 판정의 <b>단일 출처</b>다.
    *
    * <p>{@code smtp.password} 가 빠져 있었다. 플랫폼 SMTP 쓰기는 이 키를 암호화해
@@ -83,11 +35,11 @@ public class SettingsService {
    * 목록은 이미 한 번 어긋난 상태였다). 새 비밀 키를 추가할 때는 <b>여기만</b> 고친다.
    */
   private static final Set<String> SECRET_KEYS =
-      Set.of("ai.api_key", "ai.cli_oauth_token", "embedding.api_key", "smtp.password");
+      Set.of("embedding.api_key", "smtp.password");
 
   /**
-   * SMTP <b>연결 번들</b> 5키. {@link #ALLOWED_SMTP_KEYS} 6키에서 {@code smtp.from_address} 를 뺀
-   * 나머지다.
+   * SMTP <b>연결 번들</b> 5키. 두 평면 SMTP 6키({@link SettingsOverridePolicy#twoPlaneKeys})에서
+   * {@code smtp.from_address} 를 뺀 나머지다.
    *
    * <p><b>왜 원자적인가.</b> {@code {host, port, username, password, starttls}} 는 <b>한 서버에
    * 대한 한 벌의 접속 정보</b>다. 이것을 키 단위로 상속하면 A 서버의 주소와 B 서버의 자격증명이
@@ -102,26 +54,9 @@ public class SettingsService {
    * 전체 재정의를 강요당한다.
    */
   // 패키지 가시성: SettingsKeyWhitelistInvariantTest 가 "연결 5키 ⊆ 테넌트 허용 키" 불변식을
-  // 실행 가능한 단언으로 고정한다(ALLOWED_AI_KEYS 등과 같은 이유).
+  // 실행 가능한 단언으로 고정한다.
   static final Set<String> SMTP_CONNECTION_KEYS =
       Set.of("smtp.host", "smtp.port", "smtp.username", "smtp.password", "smtp.starttls");
-
-  /**
-   * {@code ai.credential} 키 — 타입형 AI 자격증명 JSON 블롭의 <b>유일한 소유자</b>는
-   * {@link AiCredentialService} 다. 여기서는 그 리터럴을 다시 쓰지 않고 그 서비스의 상수를
-   * 그대로 참조한다(같은 패키지라 package-private 상수를 볼 수 있다) — 리터럴이 두 곳에 있으면
-   * 한쪽만 바뀌는 드리프트가 난다.
-   *
-   * <p><b>왜 범용 경로에서 이 키를 특별 취급해야 하는가.</b> 이 키는 {@link #SECRET_KEYS} 에
-   * 없다(비밀이 문서의 하위 필드에 있어 최상위 값 자체는 암호문이 아니다). 아무 조치도 하지
-   * 않으면 {@code ai.} 프리픽스로 조회하는 {@link #getAll}/{@link #getResolvedByPrefix}/
-   * {@link #getAsMap} 이 이 JSON 값을 <b>그대로</b>(비밀 하위 필드의 AES 암호문까지) 내보낸다 —
-   * {@link #SECRET_KEYS} javadoc 이 기록한 사고와 같은 부류다. {@link #getValue}/
-   * {@link #updateSettings}/{@link #updatePlatformSettings} 로 단일 키 읽기·범용 쓰기를 허용하면
-   * {@link AiCredentialService} 가 지키는 유형별 검증·암호화·원자적 교체를 통째로 우회해
-   * 저장할 수 있게 된다 — 그래서 이 세 경로 모두 이 키를 거부한다({@link #rejectBundleKey}).
-   */
-  private static final String AI_CREDENTIAL_KEY = AiCredentialService.KEY;
 
   /**
    * 번들 채움 값이 <b>빈 문자열이 아닌</b> 키. {@link #applySmtpConnectionBundle} 이 쓴다 — 여기
@@ -143,11 +78,6 @@ public class SettingsService {
    * <p>"플랫폼 값을 쓰지 않는다"는 목적이 이 키에서는 빈 값을 요구하지 않는다 — <b>withhold 할
    * 비밀이 없고</b>, 플랫폼 값 자체도 {@code 'true'}(V42 시드)다. TLS 를 정말 끄려는 테넌트는
    * 스위치를 내려 {@code 'false'} 행을 만들면 되고, 그것은 명시적 조작이라 조용하지 않다.
-   *
-   * <p><b>AI 자격증명 3키(구 {@code ai.agent_type} 채움 포함)는 여기서 빠졌다.</b> 타입형 전환
-   * (2026-09) 이 그 3키를 {@code AI_CREDENTIAL_KEYS} 번들과 함께 지웠다 — {@code ai.credential}
-   * 은 테넌트 오버라이드 자체가 문서 하나를 통째로 교체하는 구조라({@link AiCredentialService}),
-   * "일부 필드만 재정의됐을 때 나머지를 채운다"는 이 번들 채움 규칙이 더 이상 필요하지 않다.
    */
   private static final Map<String, String> BUNDLE_FILL_VALUES = Map.of("smtp.starttls", "true");
 
@@ -156,7 +86,7 @@ public class SettingsService {
   private final TenantSettingsRepository tenantSettingsRepository;
 
   /**
-   * 전체 설정(18키). 운영자 평면({@code GET /api/platform/settings})이 플랫폼 기본값을 한 화면에
+   * 플랫폼 설정 전체(임베딩·SMTP, {@code ai.*} 제외). 운영자 평면({@code GET /api/platform/settings})이 플랫폼 기본값을 한 화면에
    * 보여 주기 위해 쓴다.
    *
    * <p>P7-c1 이전 이 위에 {@code getByPrefix(prefix)} 가 있었다. 마지막 실사용 호출자였던
@@ -169,17 +99,27 @@ public class SettingsService {
    * <p>되살리고 싶어지면 <b>{@link #getResolvedByPrefix} 로 충분한지 먼저 묻는다.</b> 플랫폼 평면
    * 전용 프리픽스 조회가 정말 필요한 날 다시 만드는 비용은 네 줄이고, 그때는 호출자가 있다.
    *
-   * <p><b>{@link #AI_CREDENTIAL_KEY} 는 결과에서 뺀다.</b> {@code findAll()} 은 프리픽스를
-   * 가리지 않으므로 이 필터가 없으면 {@code ai.credential} 의 비밀 하위 필드 암호문이 운영자
-   * 화면에 그대로 나간다({@link #AI_CREDENTIAL_KEY} javadoc 참고) — {@link #maskSecret} 은 이
-   * 키를 모른다({@code SECRET_KEYS} 의 원소가 아니다).
+   * <p>플랫폼 평면이 없는 키({@code ai.*}, {@link SettingsOverridePolicy.Plane#readsPlatformRow})의
+   * 행은 뺀다 — 남은 행을 내보내면 운영자가 "플랫폼 기본값"으로 오해하고, {@code ai.credential}
+   * 은 {@link #maskSecret} 이 모르는 비밀 하위 필드 암호문이 그대로 나간다.
    */
   @Transactional(readOnly = true)
   public List<SettingResponse> getAll() {
     return settingsRepository.findAll().stream()
-        .filter(s -> !AI_CREDENTIAL_KEY.equals(s.key()))
+        .filter(s -> planeOf(s.key()).readsPlatformRow())
         .map(this::maskSecret)
         .collect(Collectors.toList());
+  }
+
+  /**
+   * 프리픽스에 속한 플랫폼 행 중 플랫폼 평면이 있는 키만. 테넌트 네임스페이스({@code "ai"})면
+   * 조회 자체를 생략한다.
+   */
+  private List<SettingResponse> platformRows(String prefix) {
+    if (!SettingsOverridePolicy.mayHavePlatformRows(prefix)) return List.of();
+    return settingsRepository.findByPrefix(prefix).stream()
+        .filter(s -> planeOf(s.key()).readsPlatformRow())
+        .toList();
   }
 
   /**
@@ -216,6 +156,11 @@ public class SettingsService {
   /**
    * 설정 값 해석. {@code tenant_settings} 에 값이 있으면 그 값, 없으면 {@code system_settings}.
    *
+   * <p><b>테넌트 전용 키({@link SettingsOverridePolicy.Plane#TENANT_ONLY})는 다르다</b> — 테넌트 값이
+   * 없으면 {@code system_settings} 가 아니라 코드 기본값({@link AiBehaviorDefaults})이다. 그래서
+   * 이 키들은 항상 값이 있는 {@code Optional} 을 돌려준다. 테넌트 컨텍스트가 없는 호출(배경
+   * 경로)도 코드 기본값이다 — 플랫폼 행은 어느 경우에도 읽지 않는다.
+   *
    * <p><b>컨텍스트가 없으면 예외를 던지지 않는다.</b> {@code TenantContext.require()} 를 쓰면
    * JobRunr {@code @Job}·{@code @Async}·{@code @Scheduled} 배경 경로가 전멸한다(설계서 §4.5,
    * P3-a·P2-g 에서 두 번 겪음). 컨텍스트 없음은 "플랫폼 기본값"이라는 정상 분기다.
@@ -230,20 +175,32 @@ public class SettingsService {
   @Transactional(readOnly = true)
   public Optional<String> getValue(String key) {
     rejectBundleKey(key);
-    // 컨텍스트가 없으면(배경 잡 경로) DB 조회조차 하지 않고 플랫폼 값으로 간다 —
-    // "컨텍스트 없음 = 오버라이드 없음 = 항상 플랫폼 값" 계약이다. 화이트리스트를 읽기에서 다시
-    // 보는 이유는 위 javadoc 참고(키를 플랫폼으로 회수하면 즉시 효력을 갖는다).
-    if (TenantContext.get() != null && SettingsOverridePolicy.isTenantOverridable(key)) {
-      Optional<String> override = tenantSettingsRepository.findValue(key);
-      if (override.isPresent()) return override;
+    return switch (planeOf(key)) {
+      // 테넌트 값 → 코드 기본값. system_settings 에 남은 옛 행이 있어도 보지 않는다. 동작 6키가
+      // 아닌 옛 ai.* 키는 기본값이 없어 empty 다.
+      case TENANT_ONLY ->
+          tenantValue(key).or(() -> Optional.ofNullable(AiBehaviorDefaults.defaultOf(key)));
+      case EXTERNAL_OWNER -> throw externalOwnerKey(key); // rejectBundleKey 가 이미 막는다
+      default -> tenantValue(key).or(() -> settingsRepository.getValue(key));
+    };
+  }
+
+  /**
+   * 이 키의 테넌트 저장 값. 컨텍스트가 없으면(배경 잡 경로) DB 조회조차 하지 않는다 — "컨텍스트
+   * 없음 = 오버라이드 없음" 계약이다. 화이트리스트를 읽기에서 다시 보는 이유는 {@link #getValue}
+   * javadoc 참고(키를 플랫폼으로 회수하면 즉시 효력을 갖는다).
+   */
+  private Optional<String> tenantValue(String key) {
+    if (TenantContext.get() == null || !SettingsOverridePolicy.isTenantOverridable(key)) {
+      return Optional.empty();
     }
-    return settingsRepository.getValue(key);
+    return tenantSettingsRepository.findValue(key);
   }
 
   /**
    * <b>단일 키 조회({@link #getValue})로는 해석할 수 없는 키를 거부한다.</b> 대상은 둘이다:
-   * SMTP 연결 5키(함께 해석돼야 하는 번들)와 {@link #AI_CREDENTIAL_KEY}(비밀이 하위 필드에 있는
-   * JSON 블롭, 유일한 소유자가 따로 있는 값).
+   * SMTP 연결 5키(함께 해석돼야 하는 번들)와 {@link SettingsOverridePolicy.Plane#EXTERNAL_OWNER}
+   * 키(비밀이 하위 필드에 있는 JSON 블롭, 유일한 소유자가 따로 있는 값).
    *
    * <p><b>SMTP 연결 5키.</b> 해석 진입점은 둘이다 — {@link #getValue}(키 하나)와
    * {@link #resolveOverridesByPrefix}(프리픽스 통째). 원자 해석 규칙은 <b>뒤쪽에만</b> 있고,
@@ -262,7 +219,7 @@ public class SettingsService {
    * (운영자가 호스트만 바꾸는 등). "함께 해석돼야 한다"는 규칙은 <b>읽을 때</b>만 성립하는
    * 제약이지 쓰기에는 적용되지 않는다 — {@link #encryptIfSecret}/{@link #dropMaskSentinels} 가
    * 키 단위로 이미 안전하게 처리한다. 그래서 두 쓰기 경로는 이 메서드가 아니라
-   * {@link #rejectAiCredentialKey} 만 부른다.
+   * {@link #rejectExternalOwnerKey} 만 부른다.
    *
    * <p><b>왜 {@code getAsMap} 으로 조용히 위임하지 않는가.</b> 위임하면 {@code getValue("smtp.password")}
    * 가 "동작하게" 되고, 다음 사람은 그 위에 키 단위 읽기 경로를 짓는다 — 번들 규칙이 존재하는
@@ -270,40 +227,36 @@ public class SettingsService {
    * 거부하면 불변식이 호출 시점에 보인다. 모호하면 fail-closed 다.
    *
    * <p>{@code smtp.from_address}/{@code ai.model} 등은 <b>막지 않는다</b> — 번들도 아니고 별도
-   * 소유자도 없는 평범한 키 단위 상속이므로 {@link #getValue} 가 옳은 답을 준다.
+   * 소유자도 없는 평범한 키 단위 해석이므로 {@link #getValue} 가 옳은 답을 준다.
    */
   private static void rejectBundleKey(String key) {
     if (SMTP_CONNECTION_KEYS.contains(key)) {
       throw new IllegalArgumentException(
           "SMTP 연결 설정은 단일 키로 해석할 수 없습니다(연결 5키는 함께 해석된다). getSmtpConfig() 를 쓰세요: " + key);
     }
-    rejectAiCredentialKey(key);
+    rejectExternalOwnerKey(key);
   }
 
   /**
-   * <b>{@link #AI_CREDENTIAL_KEY} 를 범용 경로(읽기·쓰기 전부)로 못 쓰게 막는다.</b>
-   * {@link #getValue}(경유 {@link #rejectBundleKey})·{@link #updateSettings}·
-   * {@link #updatePlatformSettings} 셋이 이 검사를 공유한다.
+   * <b>전용 서비스 소유 키({@link SettingsOverridePolicy.Plane#EXTERNAL_OWNER})를 범용 경로(읽기·쓰기
+   * 전부)로 못 쓰게 막는 단일 관문.</b> {@link #getValue}·{@link #updateSettings}·
+   * {@link #clearOverride} 가 공유하고, {@link #resolveOverridesByPrefix} 도 같은 판정으로 뺀다.
    *
-   * <p><b>SMTP 5키와 달리 쓰기도 막아야 하는 이유.</b> SMTP 5키는 "키 단위 저장"이 정상 동작이지만
-   * (문자열 값이라 {@link #encryptIfSecret} 가 키 단위로 안전하게 암호화한다), 이 키는 값 자체가
-   * JSON 이고 비밀이 <b>하위 필드</b>에 있다 — 범용 쓰기가 이 값을 그대로 받으면 유형별 검증·
-   * 하위 필드 암호화·{@code agentType} 화이트리스트를 전부 건너뛴 미검증 JSON 이 저장된다.
-   * {@code ai.credential} 이 타입형 전환(2026-09) 으로
-   * {@link SettingsOverridePolicy#tenantOverridableKeys} 에 들어가면서, 이 거부가 없으면
-   * {@code updateSettings(Map.of("ai.credential", "{}"), userId)} 가 화이트리스트 검사를 그냥
-   * 통과해 {@link AiCredentialService} 를 완전히 우회한다.
-   *
-   * <p>{@link #updatePlatformSettings} 는 이 키가 세 서브 화이트리스트 어디에도 없어 이 호출이
-   * 없어도 이미 거부된다 — 그래도 두 쓰기 경로가 항상 같은 관문을 지나게 해서, 화이트리스트가
-   * 나중에 실수로 넓어져도 이 경로가 별도로 막게 한다.
+   * <p>SMTP 5키와 달리 쓰기도 막는 이유: 값이 JSON 이고 비밀이 <b>하위 필드</b>에 있어, 범용 쓰기가
+   * 받으면 {@link AiCredentialService} 의 유형별 검증·하위 필드 암호화·비밀 필수 규칙을 전부
+   * 건너뛴 미검증 문서가 저장된다. 화이트리스트에도 없지만, 그것이 실수로 넓어져도 이 관문이
+   * 별도로 막는다.
    */
-  private static void rejectAiCredentialKey(String key) {
-    if (AI_CREDENTIAL_KEY.equals(key)) {
-      throw new IllegalArgumentException(
-          "AI 자격증명은 범용 설정 경로로 읽거나 쓸 수 없습니다(비밀이 하위 필드에 있다). AiCredentialService 를 쓰세요: "
-              + key);
+  private static void rejectExternalOwnerKey(String key) {
+    if (planeOf(key) == SettingsOverridePolicy.Plane.EXTERNAL_OWNER) {
+      throw externalOwnerKey(key);
     }
+  }
+
+  private static IllegalArgumentException externalOwnerKey(String key) {
+    return new IllegalArgumentException(
+        "AI 자격증명은 범용 설정 경로로 읽거나 쓸 수 없습니다(비밀이 하위 필드에 있다). AiCredentialService 를 쓰세요: "
+            + key);
   }
 
   /**
@@ -315,26 +268,25 @@ public class SettingsService {
    * 나타난다. AI 채팅·프로액티브 잡이 실제로 읽는 경로라 이 구멍은 "오버라이드를 저장했는데 실제
    * 호출은 여전히 하드코딩 폴백을 쓴다"는 형태로 조용히 발현한다.
    *
-   * <p><b>{@link #AI_CREDENTIAL_KEY} 는 플랫폼·오버라이드 양쪽에서 뺀다.</b> 이 키는 이제
-   * {@link SettingsOverridePolicy#tenantOverridableKeys} 의 원소라 테넌트 행으로도 실재할 수
-   * 있다 — 플랫폼 스트림만 거르고 {@link #resolveOverridesByPrefix} 가 돌려주는 오버라이드
-   * 맵을 그대로 두면, 테넌트가 저장한 {@code ai.credential} 의 비밀 하위 필드 암호문이 이
-   * {@code putAll} 로 새어 나간다.
+   * <p><b>{@code ai.*} 는 플랫폼 행을 읽지 않는다.</b> AI 동작 키는 코드 기본값
+   * ({@link #aiDefaultsForPrefix})을 바닥에 깔고 테넌트 값으로 덮는다 — 그래서 {@code getAsMap("ai")}
+   * 는 테넌트가 아무것도 저장하지 않았어도 6키를 전부 담는다. {@code ai.credential} 은 어느
+   * 쪽에도 실리지 않는다(실리면 비밀 하위 필드 암호문이 새어 나간다).
    */
   @Transactional(readOnly = true)
   public Map<String, String> getAsMap(String prefix) {
     // system_settings.value 컬럼은 nullable이므로 null value가 있으면 Collectors.toMap이 NPE를 발생시킨다.
     // null value는 빈 문자열로 대체하고, 중복 키 발생 시 나중 값(b)을 사용하는 merge function을 지정한다.
-    Map<String, String> platform =
-        settingsRepository.findByPrefix(prefix).stream()
-            .filter(s -> !AI_CREDENTIAL_KEY.equals(s.key()))
+    Map<String, String> resolved =
+        platformRows(prefix).stream()
             .collect(
                 Collectors.toMap(
-                    SettingResponse::key, s -> s.value() != null ? s.value() : "", (a, b) -> b));
-
-    Map<String, String> overrides = resolveOverridesByPrefix(prefix);
-    Map<String, String> resolved = new HashMap<>(platform);
-    resolved.putAll(overrides);
+                    SettingResponse::key,
+                    s -> s.value() != null ? s.value() : "",
+                    (a, b) -> b,
+                    HashMap::new));
+    resolved.putAll(aiDefaultsForPrefix(prefix));
+    resolved.putAll(resolveOverridesByPrefix(prefix));
     return resolved;
   }
 
@@ -347,8 +299,8 @@ public class SettingsService {
    * {@code null} 이다({@link TenantSettingsRepository#findByPrefix} 가 값만 주고 갱신 시각은 주지
    * 않아 오버라이드 쪽에서도 채울 수 없다).
    *
-   * <p><b>플랫폼 행은 {@link #maskSecret} 을 지난다.</b> 이 경로만 빠뜨리면 {@code prefix=ai} 조회가
-   * {@code ai.api_key} 의 <b>AES 암호문을 그대로</b> 내보낸다 — {@link #SECRET_KEYS} javadoc 이
+   * <p><b>플랫폼 행은 {@link #maskSecret} 을 지난다.</b> 이 경로만 빠뜨리면 비밀 키(예:
+   * {@code embedding.api_key}) 조회가 <b>AES 암호문을 그대로</b> 내보낸다 — {@link #SECRET_KEYS} javadoc 이
    * 기록하듯 이 프로젝트는 정확히 그 사고를 이미 한 번 냈다(SMTP 전용 읽기 메서드만 마스킹하고
    * {@code getAll} 은 빠뜨렸던 건).
    *
@@ -360,45 +312,63 @@ public class SettingsService {
    * 암호문이 그대로 응답에 실린다</b>. 그 문단은 "이 누락이 어떤 테스트에도 걸리지 않았던 이유"까지
    * 스스로 적어 두고 있었다.
    *
-   * <p><b>{@link #AI_CREDENTIAL_KEY} 는 플랫폼·오버라이드 양쪽에서 뺀다.</b> {@link #getAsMap}
-   * javadoc 과 같은 이유다 — 이 키는 {@link #SECRET_KEYS} 의 원소가 아니라 {@link #maskSecret}
-   * 을 지나도 그대로 살아남고, 오버라이드 쪽도 막지 않으면 테넌트가 저장한 값이 새어 나간다.
+   * <p><b>{@code ai.*} 는 플랫폼 행을 읽지 않는다</b>({@link #getAsMap} javadoc 과 같은 이유).
+   * AI 동작 6키는 항상 전부 나오고, {@code value} 는 테넌트 값 또는 코드 기본값,
+   * {@code overridden} 은 "테넌트가 저장한 값이 있음", {@code description}/{@code updatedAt} 은
+   * {@code null} 이다 — 화면은 이 플래그로 "저장된 값"과 "기본값"을 구분한다.
    */
   @Transactional(readOnly = true)
   public List<ResolvedSettingResponse> getResolvedByPrefix(String prefix) {
-    List<SettingResponse> platform =
-        settingsRepository.findByPrefix(prefix).stream()
-            .filter(s -> !AI_CREDENTIAL_KEY.equals(s.key()))
-            .map(this::maskSecret)
-            .toList();
     Map<String, SettingResponse> platformByKey =
-        platform.stream().collect(Collectors.toMap(SettingResponse::key, s -> s));
+        platformRows(prefix).stream()
+            .map(this::maskSecret)
+            .collect(Collectors.toMap(SettingResponse::key, s -> s));
+    Map<String, String> aiDefaults = aiDefaultsForPrefix(prefix);
     Map<String, String> overrides = resolveOverridesByPrefix(prefix);
 
-    // 순서는 플랫폼 키 먼저(기존 화면 순서 유지) + 플랫폼에 없는 오버라이드 전용 키를 뒤에 덧붙인다.
+    // 순서: 플랫폼 키(기존 화면 순서 유지) → AI 동작 키(기본값 맵 순서) → 그 밖의 오버라이드 전용 키.
     java.util.LinkedHashSet<String> allKeys = new java.util.LinkedHashSet<>(platformByKey.keySet());
+    allKeys.addAll(aiDefaults.keySet());
     allKeys.addAll(overrides.keySet());
 
     return allKeys.stream()
         .map(
             key -> {
               SettingResponse platformRow = platformByKey.get(key);
-              boolean overridden = overrides.containsKey(key);
-              // 플랫폼 행은 위에서 이미 maskSecret 을 지났고, 오버라이드 값은 여기서 지난다.
-              String value =
-                  overridden ? maskIfSecret(key, overrides.get(key)) : platformRow.value();
               return new ResolvedSettingResponse(
                   key,
-                  value,
+                  displayValue(key, overrides, platformRow, aiDefaults),
                   platformRow != null ? platformRow.description() : null,
                   platformRow != null ? platformRow.updatedAt() : null,
-                  overridden,
+                  overrides.containsKey(key),
                   SettingsOverridePolicy.isTenantOverridable(key));
             })
         .collect(Collectors.toList());
   }
 
+  /**
+   * 화면에 보일 값: 오버라이드(여기서 마스킹) → 플랫폼 행(이미 마스킹됨) → 코드 기본값(플랫폼 행이
+   * 없는 AI 동작 키).
+   */
+  private String displayValue(
+      String key,
+      Map<String, String> overrides,
+      SettingResponse platformRow,
+      Map<String, String> aiDefaults) {
+    if (overrides.containsKey(key)) return maskIfSecret(key, overrides.get(key));
+    if (platformRow != null) return platformRow.value();
+    return aiDefaults.get(key);
+  }
 
+  /**
+   * 프리픽스에 속한 AI 동작 키의 코드 기본값(순서 보존). {@code prefix} 규칙은
+   * {@link SettingsRepository#findByPrefix} 와 같다({@code prefix + "."} 로 시작).
+   */
+  private static Map<String, String> aiDefaultsForPrefix(String prefix) {
+    Map<String, String> out = new java.util.LinkedHashMap<>(AiBehaviorDefaults.all());
+    out.keySet().removeIf(key -> !key.startsWith(prefix + "."));
+    return out;
+  }
 
   /**
    * 오버라이드 판정의 <b>프리픽스 형태</b>. {@link #getAsMap}·{@link #getResolvedByPrefix} 가
@@ -415,17 +385,18 @@ public class SettingsService {
    * 해석</b>을 자동으로 공유한다. 두 곳에 각각 넣으면 한쪽만 고쳐질 때 "화면은 상속이라는데
    * 발송은 테넌트 값"(또는 그 반대)이 되고, 그것이 이 밴드가 반복해서 잡아 온 실패 유형이다.
    *
-   * <p><b>{@link #AI_CREDENTIAL_KEY} 도 같은 이유로 여기서 뺀다.</b> 이 키는 이제
-   * {@link SettingsOverridePolicy#tenantOverridableKeys} 의 원소라 {@code removeIf} 를 그냥
-   * 통과하므로, 여기서 걷어내지 않으면 {@link #getAsMap}/{@link #getResolvedByPrefix} 양쪽에
-   * 테넌트 {@code ai.credential} 의 비밀 하위 필드 암호문이 그대로 흘러간다 — 플랫폼 스트림
-   * 쪽만 걸러서는 막을 수 없는 유출 경로다(오버라이드는 별도 저장소·별도 조회다).
+   * <p><b>{@link SettingsOverridePolicy.Plane#EXTERNAL_OWNER} 키도 여기서 뺀다(방어적 중복).</b>
+   * {@code ai.credential} 은 {@code tenant_settings} 에 실재하지만 화이트리스트에 없어 이미
+   * 걸러진다. 화이트리스트가 실수로 넓어져도 비밀 하위 필드 암호문이 두 화면 경로로 새지 않게
+   * 평면 판정으로 한 번 더 뺀다.
    */
   private Map<String, String> resolveOverridesByPrefix(String prefix) {
     if (TenantContext.get() == null) return Map.of();
     Map<String, String> candidates = tenantSettingsRepository.findByPrefix(prefix);
     candidates.keySet().removeIf(
-        key -> !SettingsOverridePolicy.isTenantOverridable(key) || AI_CREDENTIAL_KEY.equals(key));
+        key ->
+            !SettingsOverridePolicy.isTenantOverridable(key)
+                || planeOf(key) == SettingsOverridePolicy.Plane.EXTERNAL_OWNER);
     applySmtpConnectionBundle(candidates);
     return candidates;
   }
@@ -473,16 +444,15 @@ public class SettingsService {
 
   /**
    * <b>테넌트 평면</b> 쓰기. {@link SettingsOverridePolicy#isTenantOverridable} 화이트리스트
-   * (13키: {@code ai.*} 7 + {@code smtp.*} 6 — P7-c1 이 smtp 6키를 열었고, 타입형 전환(2026-09)
-   * 이 {@code ai.api_key}/{@code ai.cli_oauth_token}/{@code ai.agent_type} 3키를 빼고
-   * {@link AiCredentialService#KEY}(단일 JSON 블롭)를 더했다)만 받아 {@code tenant_settings} 에
-   * 저장한다 — {@code system_settings}(전역 18행)는 절대 건드리지 않는다. 이 구분이 이 밴드의
+   * (12키: 테넌트 전용 {@code ai.*} 동작 키 6 + 두 평면 {@code smtp.*} 6. AI 자격증명은
+   * 이 화이트리스트가 아니라 {@link AiCredentialService} 로만 쓴다)만 받아
+   * {@code tenant_settings} 에
+   * 저장한다 — {@code system_settings}(전역 행)는 절대 건드리지 않는다. 이 구분이 이 밴드의
    * 존재 이유다(오늘의 결함: 한 테넌트의 저장이 전 테넌트에 적용됨).
    *
-   * <p>{@link AiCredentialService#KEY} 는 이 화이트리스트에 있지만 <b>이 메서드로 저장할 수
-   * 없다</b> — {@link #rejectBundleKey} 가 별도로 막는다. 화이트리스트는 "테넌트가 재정의할 수
-   * 있는 개념인가"만 답하고, "그 값을 어느 API 로 써야 하는가"는 값 형태(문자열 vs 하위 필드가
-   * 있는 JSON)에 달려 있어 다른 질문이다 — {@link AiCredentialService#save} 가 그 API 다.
+   * <p>{@link AiCredentialService#KEY} 는 <b>이 메서드로 저장할 수 없다</b> — 화이트리스트에 없고,
+   * {@link #rejectExternalOwnerKey} 가 별도로도 막는다. 유일한 쓰기 API 는
+   * {@link AiCredentialService#save} 다.
    *
    * <p>거부 메시지에 키 이름을 넣는다 — web 이 어느 필드가 잠겼는지 사용자에게 보여줄 수 있어야
    * 하기 때문이다. 플랫폼 잠금 키({@code embedding.*}) 는 {@link #updatePlatformSettings} 로만
@@ -507,13 +477,9 @@ public class SettingsService {
   public void updateSettings(Map<String, String> settings, Long userId) {
     rejectNullValues(settings);
     for (String key : settings.keySet()) {
-      // ai.credential 은 이제 isTenantOverridable() 이 참이라(테넌트가 재정의할 수 있는 키다)
-      // 화이트리스트 검사만으로는 걸러지지 않는다 — rejectAiCredentialKey 가 그 값을 범용
-      // 쓰기로 저장하는 것 자체를 별도로 막는다(AiCredentialService 의 유형별 검증·암호화를
-      // 우회하지 못하게). 화이트리스트 검사보다 먼저 불러 순서에 상관없이 항상 걸리게 한다.
-      // rejectBundleKey 가 아니라 이 메서드를 쓰는 이유: SMTP 5키는 여기(테넌트 쓰기)로 키
-      // 단위 저장되는 것이 정상 동작이라 그쪽 검사를 함께 부르면 정상 요청까지 막힌다.
-      rejectAiCredentialKey(key);
+      // 화이트리스트보다 먼저 불러 "AiCredentialService 를 쓰라"는 정확한 안내로 거부한다.
+      // rejectBundleKey 가 아닌 이유: SMTP 5키는 여기서 키 단위로 저장되는 것이 정상 동작이다.
+      rejectExternalOwnerKey(key);
       if (!SettingsOverridePolicy.isTenantOverridable(key)) {
         throw new IllegalArgumentException("플랫폼 관리자만 변경할 수 있는 설정입니다: " + key);
       }
@@ -523,7 +489,7 @@ public class SettingsService {
     // 포트 검증은 smtp.port 유무) SMTP 부분맵을 떼었다 다시 합칠 이유가 없다 — 그 분리·재병합은
     // 하지 않아도 되는 일을 열 줄로 하고 있었다. 프리픽스로 미리 갈라 놓으면 "이 변환 대상인가"의
     // 답이 키가 아니라 프리픽스에서 나오고, SMTP 아닌 비밀 키가 테넌트에 열리는 순간 평문으로
-    // 저장된다(BYO 키 정책 → ai.api_key 화이트리스트 한 줄). 아래 applyPlatformSmtpSettings 도
+    // 저장된다(BYO 키 정책으로 비밀 키 하나를 화이트리스트에 여는 한 줄). 아래 applyPlatformSmtpSettings 도
     // 같은 형태다.
     Map<String, String> payload = dropMaskSentinels(settings);
     validateValues(payload);
@@ -536,15 +502,16 @@ public class SettingsService {
   }
 
   /**
-   * <b>플랫폼 평면</b> 쓰기(운영자 전용, Task 6). AI·임베딩·SMTP 18키 전체를 대상으로 하고
-   * {@code system_settings} 에 쓴다. 세 서브 화이트리스트({@link #ALLOWED_AI_KEYS} /
-   * {@link #ALLOWED_EMBEDDING_KEYS} / {@link #ALLOWED_SMTP_KEYS}) 의 합집합이 아닌 키는 즉시
-   * 거부한다.
+   * <b>플랫폼 평면</b> 쓰기(운영자 전용, Task 6). 임베딩·SMTP 10키를 대상으로 하고
+   * {@code system_settings} 에 쓴다. 키의 평면({@link SettingsOverridePolicy#planeOf})이
+   * {@code PLATFORM_ONLY}/{@code TWO_PLANE} 이 아니면 즉시 거부한다.
    *
-   * <p>키를 두 그룹(AI+임베딩 / SMTP)으로 나눠 각자의 검증·마스킹·암호화 로직에 위임한다 — 그
+   * <p><b>{@code ai.*} 는 전부 거부한다.</b> 플랫폼 평면이 없어 여기서 쓰면 아무도 읽지 않는
+   * 값이 "저장됨"으로 보이는 무동작이 된다.
+   *
+   * <p>키를 두 그룹(임베딩 / SMTP)으로 나눠 각자의 검증·마스킹·암호화 로직에 위임한다 — 그
    * 로직은 Task 5 이전에 {@link #updateSettings} 와 옛 테넌트 평면 SMTP 쓰기가 쓰던 것과
-   * <b>동일한 코드</b>다({@link #applyPlatformAiEmbeddingSettings}, {@link #applyPlatformSmtpSettings}
-   * 로 이름만 옮겼다). 플랫폼 경로가 검증을 다시 구현하면 두 평면(테넌트/플랫폼)의 "유효한 값"
+   * <b>동일한 코드</b>다({@link #applyPlatformEmbeddingSettings}, {@link #applyPlatformSmtpSettings}). 플랫폼 경로가 검증을 다시 구현하면 두 평면(테넌트/플랫폼)의 "유효한 값"
    * 판정이 갈라진다.
    */
   @Transactional
@@ -552,42 +519,37 @@ public class SettingsService {
     requirePlatformPlane();
     rejectNullValues(settings);
     for (String key : settings.keySet()) {
-      // ai.credential 은 애초에 세 서브 화이트리스트 어디에도 없어 아래 검사만으로 이미 거부된다
-      // — 이 호출은 방어적 중복이다(그 화이트리스트가 나중에 실수로 넓어져도 이 경로가 별도로
-      // 막는다는 것이 유일한 실효). getValue/updateSettings 와 같은 관문을 매 쓰기 경로에
-      // 일관되게 두는 쪽이, "여긴 어차피 화이트리스트가 막아 준다"고 믿고 빼먹는 쪽보다 안전하다.
-      // rejectBundleKey 가 아니라 이 메서드를 쓰는 이유는 updateSettings 와 같다 — SMTP 5키는
-      // 이 경로(플랫폼 쓰기)로도 키 단위 저장되는 것이 정상 동작이다.
-      rejectAiCredentialKey(key);
-      if (!ALLOWED_AI_KEYS.contains(key)
-          && !ALLOWED_EMBEDDING_KEYS.contains(key)
-          && !ALLOWED_SMTP_KEYS.contains(key)) {
-        throw new IllegalArgumentException("허용되지 않는 설정 키: " + key);
+      switch (planeOf(key)) {
+        case PLATFORM_ONLY, TWO_PLANE -> {}
+        case TENANT_ONLY, EXTERNAL_OWNER ->
+            throw new IllegalArgumentException("AI 설정은 플랫폼 설정이 아닙니다(워크스페이스별 설정): " + key);
+        case UNKNOWN -> throw new IllegalArgumentException("허용되지 않는 설정 키: " + key);
       }
     }
 
-    Map<String, String> aiEmbedding =
-        settings.entrySet().stream()
-            .filter(e -> ALLOWED_AI_KEYS.contains(e.getKey()) || ALLOWED_EMBEDDING_KEYS.contains(e.getKey()))
-            .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
-    Map<String, String> smtp =
-        settings.entrySet().stream()
-            .filter(e -> ALLOWED_SMTP_KEYS.contains(e.getKey()))
-            .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+    Map<String, String> embedding = keysOfPlane(settings, SettingsOverridePolicy.Plane.PLATFORM_ONLY);
+    Map<String, String> smtp = keysOfPlane(settings, SettingsOverridePolicy.Plane.TWO_PLANE);
 
-    if (!aiEmbedding.isEmpty()) applyPlatformAiEmbeddingSettings(aiEmbedding, userId);
+    if (!embedding.isEmpty()) applyPlatformEmbeddingSettings(embedding, userId);
     if (!smtp.isEmpty()) applyPlatformSmtpSettings(smtp, userId);
   }
 
+  /** 주어진 평면에 속한 키만 남긴 부분맵. */
+  private static Map<String, String> keysOfPlane(
+      Map<String, String> settings, SettingsOverridePolicy.Plane plane) {
+    return settings.entrySet().stream()
+        .filter(e -> planeOf(e.getKey()) == plane)
+        .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+  }
+
   /**
-   * {@link #updateSettings} 가 P7-b 이전까지 하던 일 그대로다(AI+임베딩 검증·마스킹·암호화 후
-   * {@code system_settings} 갱신) — 이름만 "테넌트 쓰기"에서 "플랫폼 쓰기"로 바뀌었다. 지금은
-   * {@link #updatePlatformSettings} 만 부른다.
+   * 임베딩 키의 검증·마스킹·암호화 후 {@code system_settings} 갱신. {@link #updatePlatformSettings}
+   * 만 부른다.
    */
-  private void applyPlatformAiEmbeddingSettings(Map<String, String> settings, Long userId) {
-    // 센티널 드롭은 검증보다 **먼저**다 — 사용자가 안 고친 키를 검증하면 "API 키는 비어있을 수
-    // 없습니다" 같은 규칙이 마스크 문자열에 걸린다. 키를 세 개 나열하던 boolean+filter 세 벌은
-    // dropMaskSentinels 가 SECRET_KEYS 로 대신한다(그 셋은 전부 SECRET_KEYS 의 원소다).
+  private void applyPlatformEmbeddingSettings(Map<String, String> settings, Long userId) {
+    // 센티널 드롭은 검증보다 **먼저**다 — 사용자가 안 고친 비밀 키의 마스크 문자열이 값 검증에
+    // 걸리거나 그대로 저장되지 않게 한다. 키를 나열하던 boolean+filter 세 벌은 dropMaskSentinels 가
+    // SECRET_KEYS 로 대신한다.
     Map<String, String> filtered = dropMaskSentinels(settings);
     validateValues(filtered);
     validateEmbeddingConsistency(filtered);
@@ -600,12 +562,15 @@ public class SettingsService {
   }
 
   /**
-   * 테넌트 오버라이드를 지운다 = 상속 복귀. {@code tenant_settings} 에 행이 있으면 지우고, 없으면
+   * 테넌트 오버라이드를 지운다 = 상속 복귀(AI 동작 키는 코드 기본값 복귀). {@code tenant_settings} 에 행이 있으면 지우고, 없으면
    * 아무 일도 하지 않는다 — "이미 상속 중"은 오류가 아니라 멱등한 성공이다(호출부인
    * {@code DELETE /api/v1/settings/{key}} 는 있든 없든 204 를 돌려준다).
    */
   @Transactional
   public void clearOverride(String key) {
+    // ai.credential 은 "지우고 상속 복귀"가 성립하지 않는다(플랫폼 값이 없다). 값을 바꾸려면
+    // AiCredentialService.save(PUT /settings/ai-credential)로 덮어쓴다.
+    rejectExternalOwnerKey(key);
     tenantSettingsRepository.delete(key);
   }
 
@@ -634,7 +599,7 @@ public class SettingsService {
    * 플랫폼 평면에서 호출됐는지 <b>서비스 레벨에서</b> 확인한다.
    *
    * <p>이 밴드는 "컨트롤러가 아니라 서비스에서 막는다 — 애노테이션
-   * 하나만 지우면 뚫리는 방식보다 안전하다"고 선언해 놓고, 정작 <b>전 테넌트가 공유하는 18행을
+   * 하나만 지우면 뚫리는 방식보다 안전하다"고 선언해 놓고, 정작 <b>전 테넌트가 공유하는 플랫폼 설정 행을
    * 쓰는 가장 위험한 메서드</b>는 컨트롤러 애노테이션과 {@code PlatformPlaneFilter} 에만 기대고
    * 있었다. {@code /api/v1/**} 경로에 이 메서드를 부르는 호출자가 하나 생기면 필터는 그 경로를
    * 보지 않고 메서드는 평면을 묻지 않는다.
@@ -673,9 +638,8 @@ public class SettingsService {
    * <p><b>남는 잔여 위험</b>: 진짜 비밀번호가 우연히 길이 8 이고 {@code ****} 로 시작하면 여전히
    * 조용히 드롭된다. 저장소를 읽지 않는 한 닫을 수 없는 구멍이고, 확률이 무시할 만하다.
    *
-   * <p>{@code ai.api_key}/{@code ai.cli_oauth_token}/{@code embedding.api_key} 도 같은 판정을
-   * 공유하므로 플랫폼 평면 동작이 함께 좁아진다 — <b>의도된 개선이다</b>(같은 결함이 그 세 키에도
-   * 있었다).
+   * <p>{@code embedding.api_key} 도 같은 판정을 공유하므로 플랫폼 평면 동작이 함께 좁아진다 —
+   * <b>의도된 개선이다</b>(같은 결함이 그 키에도 있었다).
    */
   private static boolean isMaskSentinel(String value) {
     return value != null
@@ -684,7 +648,7 @@ public class SettingsService {
   }
 
   /**
-   * 비밀 값(ai.api_key, ai.cli_oauth_token, embedding.api_key, smtp.password)은 저장 전 암호화한다.
+   * 비밀 값(embedding.api_key, smtp.password)은 저장 전 암호화한다.
    * embedding.api_key 는 Ollama 로컬 등 키가 불필요한 경우, smtp.password 는 인증 없는 릴레이를 쓰는 경우
    * 빈 문자열일 수 있으므로, 빈 값은 암호화하지 않고 그대로 둔다(빈 ciphertext 복호화 실패 방지).
    *
@@ -697,12 +661,8 @@ public class SettingsService {
     // 암호화 대상인지는 **오직 SECRET_KEYS 가** 정한다 — 키 이름을 하나씩 나열하면 새 비밀 키가
     // 추가될 때 이 목록이 따라오지 않는다(이 밴드가 고친 결함이 정확히 그 형태였다).
     if (!SECRET_KEYS.contains(key)) return value;
-
-    // 여기서 키를 다시 보는 것은 "암호화할까"가 아니라 "빈 값도 암호화할까"뿐이다.
-    // ai.api_key 는 빈 값을 validateValues 가 이미 거부하고, ai.cli_oauth_token 은 빈 값도
-    // 암호화하던 기존 동작을 유지한다(SettingsServiceCliTokenTest 가 그 왕복을 고정한다).
-    boolean encryptEvenIfBlank = "ai.api_key".equals(key) || "ai.cli_oauth_token".equals(key);
-    return !encryptEvenIfBlank && value.isBlank() ? value : encryptionService.encrypt(value);
+    // 빈 값은 암호화하지 않고 그대로 둔다(위 javadoc — 빈 ciphertext 복호화 실패 방지).
+    return value.isBlank() ? value : encryptionService.encrypt(value);
   }
 
   /**
@@ -721,7 +681,7 @@ public class SettingsService {
    * empty 를 반환한다. 키는 절대 ai-agent 로 내려보내지 않고 api 내부(EmbeddingProviderFactory)에서만 쓴다.
    *
    * <p>{@code embedding.*} 4키도 화이트리스트에 없는 플랫폼 잠금 키다(모델 교체가 벡터 차원을 바꿔
-   * 기존 임베딩을 무효화하므로 테넌트별로 다를 수 없다) — {@code ai.api_key} 와 같은 근거이지만,
+   * 기존 임베딩을 무효화하므로 테넌트별로 다를 수 없다). 다만
    * 이쪽은 번들이 아니라 <b>단독</b> 잠금 키라({@code embedding.provider}/{@code model}/
    * {@code base_url} 과 원자적으로 묶이지 않는다) {@link #getValue} 로 조회해도 안전하다.
    */
@@ -737,16 +697,10 @@ public class SettingsService {
    *
    * <p>검증·센티널·암호화는 {@link #validateValues}·{@link #validateSmtpPort}·
    * {@link #dropMaskSentinels}·{@link #encryptSecrets} 로 빠졌고 — 넷 다 {@link #updateSettings}
-   * (테넌트 평면)와 <b>같은 순서로</b> 지난다 — 여기 남은 것은 <b>플랫폼 전용</b> 두 가지다:
-   * 플랫폼 화이트리스트 판정과 {@code system_settings} 쓰기.
+   * (테넌트 평면)와 <b>같은 순서로</b> 지난다 — 여기 남은 것은 <b>플랫폼 전용</b>인
+   * {@code system_settings} 쓰기다(키 판정은 호출부가 평면으로 이미 끝냈다).
    */
   private void applyPlatformSmtpSettings(Map<String, String> settings, Long userId) {
-    for (String key : settings.keySet()) {
-      if (!ALLOWED_SMTP_KEYS.contains(key)) {
-        throw new IllegalArgumentException("허용되지 않는 SMTP 설정 키: " + key);
-      }
-    }
-
     // validateValues 를 여기서도 부른다. 예전에는 플랫폼 경로에서 AI/임베딩 그룹만 검증을
     // 지나고 SMTP 그룹은 건너뛰었는데, 테넌트 경로는 전체 키를 지나므로 두 평면의 "유효한 값"
     // 판정이 비대칭이었다. validateValues 에 smtp case 가 하나도 없어 오늘은 공허하지만, 누가
@@ -903,18 +857,6 @@ public class SettingsService {
               if (value == null || value.isBlank())
                 throw new IllegalArgumentException("시스템 프롬프트는 비어있을 수 없습니다");
             }
-            case "ai.api_key" -> {
-              if (value == null || value.isBlank())
-                throw new IllegalArgumentException("API 키는 비어있을 수 없습니다");
-            }
-            case "ai.cli_oauth_token" -> {
-              /* CLI OAuth 토큰은 비어있을 수 있음 (구독 미사용 시) */
-            }
-            case "ai.agent_type" -> {
-              // opencode 추가: opencode 는 배포 환경의 opencode auth 에 의존하므로 별도 자격증명 불필요
-              if (!Set.of("sdk", "cli", "cli-api", "opencode").contains(value))
-                throw new IllegalArgumentException("에이전트 유형은 sdk, cli, cli-api, opencode 중 하나여야 합니다");
-            }
             case "embedding.provider" -> {
               if (!Set.of("OLLAMA", "VOYAGE", "OPENAI").contains(value))
                 throw new IllegalArgumentException(
@@ -941,7 +883,8 @@ public class SettingsService {
    */
   private void validateEmbeddingConsistency(Map<String, String> settings) {
     // 임베딩 키가 하나도 없는 저장(예: AI 탭 저장)은 검증 대상이 아니다.
-    if (settings.keySet().stream().noneMatch(ALLOWED_EMBEDDING_KEYS::contains)) return;
+    if (settings.keySet().stream()
+        .noneMatch(SettingsOverridePolicy.platformOnlyKeys()::contains)) return;
 
     String provider = effectiveValue(settings, "embedding.provider").orElse("OLLAMA");
     String model = effectiveValue(settings, "embedding.model").orElse("");

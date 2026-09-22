@@ -13,6 +13,7 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 
 import com.smartfirehub.apiconnection.service.EncryptionService;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.settings.model.AiBehaviorDefaults;
 import com.smartfirehub.settings.repository.TenantSettingsRepository;
 import com.smartfirehub.settings.service.SettingsService;
 import com.smartfirehub.support.IntegrationTestBase;
@@ -51,31 +52,38 @@ class SettingsWritePlaneTest extends IntegrationTestBase {
     TenantContext.set(DEFAULT_TEST_TENANT_ID);
   }
 
-  /** 이 단언이 이 밴드의 존재 이유다 — 저장 후 system_settings.ai.model 이 변하지 않아야 한다. */
+  /**
+   * 이 단언이 이 밴드의 존재 이유다 — 저장 후 system_settings 가 변하지 않아야 한다.
+   *
+   * <p>검증 키로 두 평면 키 {@code smtp.from_address} 를 쓴다 — 플랫폼 시드 행(V42)이 실재해야
+   * "그대로다" 단언이 공허하지 않다. AI 키는 V127 이후 플랫폼 행이 없어 null == null 로 통과한다.
+   */
   @Test
   void 테넌트_쓰기는_tenant_settings_에_들어가고_system_settings_는_그대로다() {
     testTenant = createActiveTenant(dsl, "swp-write");
-    String platformValueBefore = rawSystemSettingValue(dsl, "ai.model");
+    String platformValueBefore = rawSystemSettingValue(dsl, "smtp.from_address");
+    assertThat(platformValueBefore).as("전제: 플랫폼 시드 행이 있다").isNotNull();
 
     TenantContext.set(testTenant);
-    settingsService.updateSettings(Map.of("ai.model", "tenant-only-model"), null);
+    settingsService.updateSettings(Map.of("smtp.from_address", "tenant-only@example.com"), null);
 
     // tenant_settings 에 들어갔다.
     assertThat(
             runInTenantTransaction(
-                transactionTemplate, testTenant, () -> tenantSettingsRepository.findValue("ai.model")))
-        .contains("tenant-only-model");
+                transactionTemplate,
+                testTenant,
+                () -> tenantSettingsRepository.findValue("smtp.from_address")))
+        .contains("tenant-only@example.com");
 
     // system_settings 는 이 쓰기 전후로 완전히 그대로다 — 이 밴드가 고치는 결함의 핵심.
-    assertThat(rawSystemSettingValue(dsl, "ai.model")).isEqualTo(platformValueBefore);
+    assertThat(rawSystemSettingValue(dsl, "smtp.from_address")).isEqualTo(platformValueBefore);
   }
 
   @Test
   void 플랫폼_잠금_키를_쓰면_거부된다() {
-    // 검증 키로 ai.api_key 대신 embedding.api_key 를 쓴다(이 태스크). ai.api_key 는 이제
-    // 테넌트 오버라이드 허용 키라 updateSettings 가 거부하지 않으므로, 이 테스트가 지키려는
-    // "플랫폼 잠금 키는 테넌트 쓰기를 거부한다"는 불변식을 더 이상 그 키로는 관측할 수 없다.
-    // embedding.* 4키는 여전히 플랫폼 잠금이라 같은 불변식을 계속 지킨다.
+    // 검증 키로 embedding.api_key 를 쓴다 — 예전 검증 키 ai.api_key 는 #706 으로 설정 키 자체가
+    // 사라졌다. embedding.* 4키는 여전히 플랫폼 잠금이라 "플랫폼 잠금 키는 테넌트 쓰기를
+    // 거부한다"는 불변식을 계속 지킨다.
     testTenant = createActiveTenant(dsl, "swp-locked");
     TenantContext.set(testTenant);
 
@@ -110,75 +118,39 @@ class SettingsWritePlaneTest extends IntegrationTestBase {
 
     settingsService.clearOverride("ai.model");
 
-    // 삭제 후에는 플랫폼 값으로 폴백한다.
-    assertThat(settingsService.getValue("ai.model")).contains("claude-sonnet-5");
+    // 삭제 후에는 코드 기본값으로 돌아간다(AI 설정은 테넌트 전용 — 플랫폼 값이 없다).
+    assertThat(settingsService.getValue("ai.model")).contains(AiBehaviorDefaults.MODEL);
 
     // 없는 오버라이드를 지워도 예외가 없다 — "이미 상속 중"은 오류가 아니라 멱등한 성공이다
     // (컨트롤러는 이 경우에도 204 를 돌려준다).
     assertDoesNotThrow(() -> settingsService.clearOverride("ai.model"));
   }
 
-  /**
-   * 플랫폼 쓰기는 <b>시드 행이 없는 키도</b> 실제로 저장해야 한다.
-   *
-   * <p>이 테스트를 쓰기 전 저장소의 {@code updateSettings} 는 {@code UPDATE ... WHERE key = ?} 였다.
-   * 행이 없으면 0행이 갱신되고 <b>예외 없이 성공으로 끝난다</b> — 운영자는 204 를 받고 저장됐다고
-   * 믿지만 아무 일도 일어나지 않는다. {@code ai.session_max_tokens} 가 정확히 그 상태였다:
-   * {@code ALLOWED_AI_KEYS} 에 있고 값 검증(1000~200000)도 통과하는데 어떤 마이그레이션도 시드하지
-   * 않아, <b>플랫폼 운영자가 영원히 설정할 수 없는 키</b>였다. 이 밴드가 테넌트에게만 재정의를
-   * 허용한 6키 중 하나라서, 플랫폼 기본값을 못 정하는 것은 2단 상속의 윗단이 비어 있다는 뜻이다.
-   *
-   * <p>정리는 <b>내가 만든 행만</b> 지운다 — 공유 테스트 DB 이므로 시드 행에는 손대지 않는다.
-   */
-  @Test
-  void 플랫폼_쓰기는_시드_행이_없는_키도_저장한다() {
-    String key = "ai.session_max_tokens";
-    // 전제 확인: 이 키는 시드되어 있지 않다. 언젠가 시드되면 이 테스트의 의미가 달라지므로
-    // 조용히 통과시키지 않고 전제 자체를 단언한다.
-    assertThat(rawSystemSettingValue(dsl, key)).isNull();
-
-    try {
-      settingsService.updatePlatformSettings(Map.of(key, "50000"), null);
-
-      // UPDATE-only 였다면 여기서 여전히 null 이고, 그 사이 예외는 하나도 나지 않았다.
-      assertThat(rawSystemSettingValue(dsl, key)).isEqualTo("50000");
-      // 운영자 목록(getAll)에도 나타나야 한다 — 보이지 않으면 고칠 수도 없다.
-      assertThat(settingsService.getAll().stream().map(s -> s.key())).contains(key);
-    } finally {
-      deleteSystemSetting(dsl, key);
-    }
-  }
+  // 플랫폼_쓰기는_시드_행이_없는_키도_저장한다 는 지웠다 — 검증 키였던 ai.session_max_tokens 는
+  // AI 설정 테넌트 전용화로 플랫폼 쓰기 자체가 거부된다(AiSettingsTenantOnlyTest). 남은 플랫폼 쓰기
+  // 키(임베딩·SMTP)는 전부 시드돼 있다. 저장소의 upsert 성질은 그대로다.
 
   /**
    * {@code ai.session_max_tokens} 의 유효 범위는 <b>web 의 검증과 같아야 한다</b>(10,000~200,000).
-   *
-   * <p>백엔드 하한이 1000 이던 시절에는 이 어긋남이 도달 불가였다 — 시드 행이 없고 저장소가
-   * UPDATE-only 라 이 키를 <b>아무도 저장할 수 없었기 때문</b>이다. 저장 경로를 upsert 로 연
-   * 순간 그 잠재 결함이 함께 깨어난다: 운영자가 5000 을 저장하면 테넌트 설정 화면이 그 값으로
-   * 시드되고, web 의 하한 10000 에 걸려 <b>사용자가 그 필드를 건드리지도 않았는데 temperature
-   * 하나 고치려던 저장이 통째로 막힌다</b>. 잠긴 경로를 여는 수정은 그 끝에 있던 결함을 같이
-   * 깨운다 — 그래서 두 하한이 같다는 것을 여기서 못 박는다.
+   * web 이 거부하는 값을 백엔드가 저장해 버리면, 화면이 그 값으로 시드되고 web 하한에 걸려
+   * 사용자가 그 필드를 건드리지도 않았는데 다른 필드 저장까지 막힌다. 이 키는 테넌트 전용이라
+   * 테넌트 쓰기 경로로 검증한다.
    */
   @Test
   void 세션_최대_토큰_하한은_web_과_같은_10000_이다() {
+    testTenant = createActiveTenant(dsl, "swp-session-min");
+    TenantContext.set(testTenant);
+
     // web 이 거부하는 값(5000)은 백엔드도 거부해야 한다 — 저장돼 버리면 화면이 잠긴다.
     assertThatThrownBy(
-            () ->
-                settingsService.updatePlatformSettings(
-                    Map.of("ai.session_max_tokens", "5000"), null))
+            () -> settingsService.updateSettings(Map.of("ai.session_max_tokens", "5000"), null))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("10000");
 
-    // 경계값은 통과해야 한다. 정리는 내가 만든 행만 지운다(공유 test DB).
-    try {
-      assertDoesNotThrow(
-          () ->
-              settingsService.updatePlatformSettings(
-                  Map.of("ai.session_max_tokens", "10000"), null));
-      assertThat(rawSystemSettingValue(dsl, "ai.session_max_tokens")).isEqualTo("10000");
-    } finally {
-      deleteSystemSetting(dsl, "ai.session_max_tokens");
-    }
+    // 경계값은 통과해야 한다.
+    assertDoesNotThrow(
+        () -> settingsService.updateSettings(Map.of("ai.session_max_tokens", "10000"), null));
+    assertThat(tenantRawValue("ai.session_max_tokens")).contains("10000");
   }
 
   /**
@@ -199,7 +171,9 @@ class SettingsWritePlaneTest extends IntegrationTestBase {
     // 테스트를 돌리면 쓰기가 실제로 커밋된 뒤 단언이 실패한다** — 공유 test DB 에서는 그 순간
     // ai.model 이 "hijacked" 로 남아 무관한 테스트들이 줄줄이 깨진다(실제로 한 번 겪었다).
     // 변이 실험까지 안전하도록 값을 미리 붙잡아 두고 finally 에서 되돌린다.
-    String original = rawSystemSettingValue(dsl, "ai.model");
+    // 검증 키는 플랫폼 쓰기가 실제로 받는 smtp.from_address 다 — ai.* 는 평면 가드가 없어도
+    // 키 거부로 막히므로 이 가드를 증명하지 못한다.
+    String original = rawSystemSettingValue(dsl, "smtp.from_address");
     var tenantAuth =
         new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
             1L, null, java.util.List.of());
@@ -207,11 +181,13 @@ class SettingsWritePlaneTest extends IntegrationTestBase {
         .setAuthentication(tenantAuth);
     try {
       assertThatThrownBy(
-              () -> settingsService.updatePlatformSettings(Map.of("ai.model", "hijacked"), null))
+              () ->
+                  settingsService.updatePlatformSettings(
+                      Map.of("smtp.from_address", "hijacked@example.com"), null))
           .isInstanceOf(AccessDeniedException.class);
     } finally {
       org.springframework.security.core.context.SecurityContextHolder.clearContext();
-      restoreSystemSettingValue(dsl, "ai.model", original);
+      restoreSystemSettingValue(dsl, "smtp.from_address", original);
     }
   }
 

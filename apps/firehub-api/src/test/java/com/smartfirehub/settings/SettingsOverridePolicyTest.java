@@ -3,6 +3,7 @@ package com.smartfirehub.settings;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.smartfirehub.settings.service.SettingsOverridePolicy;
+import com.smartfirehub.settings.service.SettingsOverridePolicy.Plane;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -12,19 +13,52 @@ import org.junit.jupiter.api.Test;
 class SettingsOverridePolicyTest {
 
   @Test
-  void 오버라이드_허용_키는_13개다() {
-    // P7-c1(2026-08-22): smtp.* 6키 재분류. 타입형 전환(2026-09): ai 자격증명 3키
-    // (ai.api_key/ai.cli_oauth_token/ai.agent_type) 를 빼고 ai.credential 하나로 합쳤다
-    // (9 - 3 + 1 = 7개 ai.* + 6개 smtp.* = 13개).
+  void 테넌트_쓰기_허용_키는_12개다() {
+    // 테넌트 전용 ai.* 동작 6키 + 두 평면 smtp.* 6키.
     assertThat(SettingsOverridePolicy.tenantOverridableKeys())
         .containsExactlyInAnyOrder(
             "ai.system_prompt", "ai.model", "ai.temperature",
             "ai.max_turns", "ai.max_tokens", "ai.session_max_tokens",
-            // AiCredentialService.KEY 는 다른 패키지(settings.service) package-private 상수라
-            // 이 테스트(settings 패키지)에서 참조할 수 없다 — 리터럴을 쓴다.
-            "ai.credential",
             "smtp.host", "smtp.port", "smtp.username",
             "smtp.password", "smtp.starttls", "smtp.from_address");
+  }
+
+  @Test
+  void AI_동작_키는_테넌트_전용이고_두_평면_키가_아니다() {
+    // AI 설정은 플랫폼 기본값이 없다 — 테넌트 값이 없으면 코드 기본값이다(#706 후속).
+    for (String key :
+        java.util.List.of(
+            "ai.system_prompt", "ai.model", "ai.temperature",
+            "ai.max_turns", "ai.max_tokens", "ai.session_max_tokens")) {
+      assertThat(SettingsOverridePolicy.planeOf(key)).as(key).isEqualTo(Plane.TENANT_ONLY);
+      assertThat(SettingsOverridePolicy.twoPlaneKeys()).as(key).doesNotContain(key);
+    }
+    assertThat(SettingsOverridePolicy.twoPlaneKeys())
+        .containsExactlyInAnyOrder(
+            "smtp.host", "smtp.port", "smtp.username",
+            "smtp.password", "smtp.starttls", "smtp.from_address");
+    assertThat(SettingsOverridePolicy.planeOf("smtp.host")).isEqualTo(Plane.TWO_PLANE);
+  }
+
+  @Test
+  void 평면_분류() {
+    // ai.credential 은 AiCredentialService 소유, 옛 ai.* 키도 플랫폼 행을 읽지 않는다.
+    assertThat(SettingsOverridePolicy.planeOf("ai.credential")).isEqualTo(Plane.EXTERNAL_OWNER);
+    assertThat(SettingsOverridePolicy.planeOf("ai.agent_type")).isEqualTo(Plane.TENANT_ONLY);
+    assertThat(SettingsOverridePolicy.planeOf("embedding.model")).isEqualTo(Plane.PLATFORM_ONLY);
+    assertThat(SettingsOverridePolicy.planeOf("unknown.key")).isEqualTo(Plane.UNKNOWN);
+    assertThat(SettingsOverridePolicy.planeOf(null)).isEqualTo(Plane.UNKNOWN);
+    assertThat(SettingsOverridePolicy.mayHavePlatformRows("ai")).isFalse();
+    assertThat(SettingsOverridePolicy.mayHavePlatformRows("smtp")).isTrue();
+  }
+
+  @Test
+  void AI_자격증명은_두_평면_키가_아니다() {
+    // #706 결정 7 — AiCredentialService 전용 값이라 이 화이트리스트에 없다. 옛 평면 3키도 마찬가지다.
+    // (AiCredentialService.KEY 는 다른 패키지의 package-private 상수라 리터럴을 쓴다.)
+    for (String key : java.util.List.of("ai.credential", "ai.api_key", "ai.cli_oauth_token", "ai.agent_type")) {
+      assertThat(SettingsOverridePolicy.isTenantOverridable(key)).as(key).isFalse();
+    }
   }
 
   @Test

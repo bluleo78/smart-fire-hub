@@ -98,47 +98,41 @@ export function createResolvedSetting(
 }
 
 /**
- * AI 설정 탭이 실제 서버에서 받는 목록을 재현한다 — 혼합 상태(상속 5 + 잠금 3)가 기본이다.
+ * `GET /settings?prefix=ai` 응답 재현 — AI 동작 설정은 <b>테넌트 전용</b>이다.
  *
- * - `ai.agent_type` / `ai.api_key` / `ai.cli_oauth_token` → 플랫폼 전용(`tenantEditable: false`).
- *   실행 형태·과금 주체·비밀값이라 테넌트가 바꿀 수 없다.
- * - 나머지 5키 → 편집 가능 + 상속 중(`overridden: false`). 재정의 상태가 필요한 테스트는
- *   `patch` 로 그 키만 `overridden: true` 로 바꾼다.
- * - **`ai.session_max_tokens` 는 일부러 넣지 않는다.** 어떤 마이그레이션도 이 키를 시드하지 않아
- *   프리픽스 조회 응답에서 빠진다(플랫폼 행도 오버라이드도 없음). 여기에 넣으면 실제로 존재할 수
- *   없는 상태를 테스트하게 된다 — 화면은 "내장 기본값" 배지 + 50000 을 보여야 한다.
- * - `ai.model` 값은 `MODEL_OPTIONS` 에 실재하는 코드여야 한다. 목록에 없는 코드를 주면 Select 가
- *   placeholder 를 렌더해 모델 표시에 대한 단언이 무의미해진다(되돌리지 말 것).
+ * 서버는 6키를 <b>항상</b> 내려준다. 테넌트가 저장한 적 없는 키는 코드 기본값(백엔드
+ * `AiBehaviorDefaults`)을 `value` 로, `overridden:false` 로 준다. `description`·`updatedAt` 은 null,
+ * `tenantEditable` 은 언제나 true 다. 기본은 "아무것도 저장 안 함"(6키 전부 기본값)이고, 저장된
+ * 상태가 필요한 테스트는 `patch` 로 그 키만 `{ overridden: true, value }` 로 바꾼다.
+ *
+ * `ai.model` 값은 `MODEL_OPTIONS` 에 실재하는 코드여야 한다. 목록에 없는 코드를 주면 Select 가
+ * placeholder 를 렌더해 모델 표시에 대한 단언이 무의미해진다(되돌리지 말 것).
  */
 export function createAiSettings(
   patch: Partial<Record<string, Partial<ResolvedSettingResponse>>> = {},
 ): ResolvedSettingResponse[] {
+  const aiDefault = (key: string, value: string) =>
+    createResolvedSetting({ key, value, description: null, updatedAt: null, overridden: false, tenantEditable: true });
   const base: ResolvedSettingResponse[] = [
-    createResolvedSetting({ key: 'ai.agent_type', value: 'sdk', description: '에이전트 유형', tenantEditable: false }),
-    createResolvedSetting({ key: 'ai.api_key', value: '****masked****', description: 'API 키', tenantEditable: false }),
-    createResolvedSetting({ key: 'ai.cli_oauth_token', value: '', description: 'OAuth 토큰', tenantEditable: false }),
-    createResolvedSetting({ key: 'ai.model', value: 'claude-sonnet-5', description: '모델' }),
-    createResolvedSetting({ key: 'ai.max_turns', value: '10', description: '최대 턴 수' }),
-    createResolvedSetting({ key: 'ai.temperature', value: '1.0', description: 'Temperature' }),
-    createResolvedSetting({ key: 'ai.max_tokens', value: '16384', description: '최대 응답 토큰' }),
-    createResolvedSetting({
-      key: 'ai.system_prompt',
-      value: '당신은 도움이 되는 AI 어시스턴트입니다.',
-      description: '시스템 프롬프트',
-    }),
+    aiDefault('ai.model', 'claude-sonnet-5'),
+    aiDefault('ai.max_turns', '10'),
+    aiDefault(
+      'ai.system_prompt',
+      '당신은 Smart Fire Hub의 AI 어시스턴트입니다.\n응답은 한국어로 하고, 마크다운 형식을 사용하세요.',
+    ),
+    aiDefault('ai.temperature', '1.0'),
+    aiDefault('ai.max_tokens', '16384'),
+    aiDefault('ai.session_max_tokens', '50000'),
   ];
   return base.map((s) => (patch[s.key] ? { ...s, ...patch[s.key] } : s));
 }
 
 /**
  * `GET /settings/ai-credential` 응답 재현 — Task 12(타입형 AI 자격증명 전용 문서)의 유일한 소비처.
- * 옛 `createAiSettings` 의 3키(`ai.agent_type`/`ai.api_key`/`ai.cli_oauth_token`)와는 완전히 다른
- * 자원이다 — 저 3키는 `GET /settings?prefix=ai` 가 아직 돌려줄 수 있지만(마이그레이션이 옛 키
- * 삭제를 한 릴리스 미룬다, 설계서 "롤백" 절) 화면은 더는 그 3키를 읽지 않는다.
+ * `createAiSettings`(동작 설정 6키)와는 다른 자원이다.
  *
- * 기본값은 `sdk` · 테넌트 소유 · 비밀 둘 다 설정됨(값이 있는 상태) — 값이 있어야 "현재 값이
- * 설정되어 있습니다" 힌트처럼 손대지 않아도 화면에 보이는 무언가를 만들 수 있다
- * (`tenant-ai-settings.spec.ts` 의 `inheritedAi` 와 같은 이유). 비밀 "값" 자체는 서버가 절대
+ * 기본값은 `sdk` · 설정됨(`configured:true`) · 비밀 둘 다 설정됨(값이 있는 상태) — 값이 있어야 "현재 값이
+ * 설정되어 있습니다" 힌트처럼 손대지 않아도 화면에 보이는 무언가를 만들 수 있다. 비밀 "값" 자체는 서버가 절대
  * 돌려주지 않으므로(`secretFieldNames` 는 이름만) 이 팩토리도 값을 갖지 않는다.
  */
 export function createAiCredential(overrides?: Partial<AiCredentialResponse>): AiCredentialResponse {
@@ -146,7 +140,7 @@ export function createAiCredential(overrides?: Partial<AiCredentialResponse>): A
     agentType: 'sdk',
     payload: {},
     secretFieldNames: ['oauthToken', 'apiKey'],
-    tenantOwned: true,
+    configured: true,
     ...overrides,
   };
 }

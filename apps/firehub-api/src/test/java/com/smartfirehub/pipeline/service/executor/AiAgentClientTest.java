@@ -7,6 +7,7 @@ import static org.mockito.Mockito.*;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
+import com.smartfirehub.settings.model.AiBehaviorDefaults;
 import com.smartfirehub.settings.model.AiCredential;
 import com.smartfirehub.settings.service.AiCredentialService;
 import com.smartfirehub.settings.service.SettingsService;
@@ -115,9 +116,10 @@ class AiAgentClientTest {
   @Test
   void classify_omitsBlankCredentials() {
     AiAgentClient client = newClient();
-    when(settingsService.getValue("ai.model")).thenReturn(Optional.empty());
+    when(settingsService.getValue("ai.model")).thenReturn(Optional.of(AiBehaviorDefaults.MODEL));
     // 공백 문자열은 "없음"으로 취급해 바디에 넣지 않는다 — ai-agent 가 잘못된 자격증명으로 시도하지 않도록.
-    when(aiCredentialService.resolve()).thenReturn(new AiCredential.Sdk("", "   "));
+    // oauthToken 은 채워 둔다 — 둘 다 비면 자격증명 자체가 불완전해 요청 전에 막힌다(아래 테스트).
+    when(aiCredentialService.resolve()).thenReturn(new AiCredential.Sdk("oauth-x", "   "));
     stubOk();
 
     client.classify(REQUEST, 1L);
@@ -125,7 +127,38 @@ class AiAgentClientTest {
     wireMock.verify(
         postRequestedFor(urlEqualTo("/agent/classify"))
             .withRequestBody(notMatching(".*apiKey.*"))
-            .withRequestBody(notMatching(".*oauthToken.*")));
+            .withRequestBody(matchingJsonPath("$.oauthToken", equalTo("oauth-x"))));
+  }
+
+  /**
+   * #706 — AI 자격증명이 테넌트 전용이 되면서 미설정 테넌트의 {@code resolve()} 는 빈 sdk 를
+   * 돌려준다. 분류는 채팅·프로액티브와 같은 문구({@code incompleteMessage()})로 <b>요청 전에</b>
+   * 실패해야 한다 — 비밀 없는 요청이 ai-agent 에 닿으면 컨테이너 ambient 키로 떨어질 여지가 생긴다.
+   * 네 유형 전부의 불완전 형태를 돌려 보고, 어느 경우에도 ai-agent 가 요청을 한 건도 받지 않았는지
+   * 확인한다. opencode 는 ai.model 이 opencode 형식이 아닌데도 "모델" 문구가 아니라 자격증명 문구가
+   * 나와야 한다(불완전 검사가 모델 검사보다 먼저 — 순서 고정).
+   */
+  @Test
+  void classify_자격증명이_불완전하면_요청을_보내지_않고_안내_문구로_실패한다() {
+    List<AiCredential> incomplete =
+        List.of(
+            new AiCredential.Sdk("", ""),
+            new AiCredential.Cli(""),
+            new AiCredential.CliApi(""),
+            new AiCredential.Opencode("", "", "", "sk-x"));
+    for (AiCredential credential : incomplete) {
+      AiAgentClient client = newClient();
+      when(settingsService.getValue("ai.model")).thenReturn(Optional.of("claude-sonnet-5"));
+      when(aiCredentialService.resolve()).thenReturn(credential);
+      stubOk();
+
+      assertThatThrownBy(() -> client.classify(REQUEST, 1L))
+          .as(credential.agentType())
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage(credential.incompleteMessage());
+    }
+
+    wireMock.verify(0, anyRequestedFor(anyUrl()));
   }
 
   /**

@@ -40,9 +40,13 @@ import org.springframework.beans.factory.annotation.Autowired;
  * <p><b>테넌트 평면 재생은 RLS 로 안전하다.</b> {@code app_tenant} 커넥션에서 GUC 를 테스트 전용
  * 테넌트로 좁혀 두고 재생하므로, {@code INSERT ... SELECT ... GROUP BY} 가 "보는" 행은 그 테넌트
  * 행뿐이다 — 공유 테스트 DB 의 다른 테넌트를 건드리지 않는다(V114 의 RLS 정책이 owner 가 아닌
- * app_tenant 에는 그대로 걸린다). 반대로 플랫폼 평면({@code system_settings})은 RLS 가 없는 전역
- * 단일 행 집합이라 이렇게 격리할 수 없다 — {@link #플랫폼_평면도_같은_규칙으로_변환된다()} 가
- * 따로 다룬다.
+ * app_tenant 에는 그대로 걸린다).
+ *
+ * <p><b>플랫폼 평면({@code system_settings}) 변환 테스트는 없앴다(#706).</b> V126 이 V122 가 만든
+ * 플랫폼 {@code ai.credential} 과 옛 플랫폼 3키를 전부 지우고, 애플리케이션도 더 이상 플랫폼 행을
+ * 읽지 않는다 — V122 의 플랫폼 변환 결과는 어디에도 쓰이지 않는 이력이 됐다. 테스트 DB 에도 그
+ * 행들이 없어 재생할 입력 자체가 없다. V122 의 가드 DO 블록은 여전히 {@code system_settings} 를
+ * 검사하지만, 행이 없으면 그 분기는 통과한다.
  */
 class AiCredentialMigrationTest extends IntegrationTestBase {
 
@@ -54,19 +58,16 @@ class AiCredentialMigrationTest extends IntegrationTestBase {
   private static final String MIGRATION_SQL = loadMigrationSql();
 
   // V122 파일 본문에서 잘라낸 문 3개(가드 DO 블록 / 테넌트 INSERT / 변환 행 수 단언 DO 블록).
-  // 플랫폼 INSERT 는 별도 필드(PLATFORM_INSERT_SQL)로 아래에 둔다 — system_settings 는 이미
-  // 부팅 시 실행된 결과가 있어 재생 전 기존 행을 지워야 하므로 쓰임새가 다르다.
+  // 플랫폼 INSERT 는 재생하지 않는다 — 그 결과는 V126 이 지우는 이력이다(클래스 javadoc 참고).
   private static final String GUARD_SQL;
   private static final String TENANT_INSERT_SQL;
   private static final String ASSERT_SQL;
-  private static final String PLATFORM_INSERT_SQL;
 
   static {
     GUARD_SQL = segment(MIGRATION_SQL, "DO $$", 0, "END $$;");
     TENANT_INSERT_SQL = segment(MIGRATION_SQL, "INSERT INTO tenant_settings", 0, ";");
     int afterGuard = MIGRATION_SQL.indexOf("END $$;") + "END $$;".length();
     ASSERT_SQL = segment(MIGRATION_SQL, "DO $$", afterGuard, "END $$;");
-    PLATFORM_INSERT_SQL = segment(MIGRATION_SQL, "INSERT INTO system_settings", 0, ";");
   }
 
   // 이 테스트가 만든 테넌트만 정리한다 — 공유 테스트 DB 의 다른 세션 픽스처와 섞이지 않는다.
@@ -152,11 +153,6 @@ class AiCredentialMigrationTest extends IntegrationTestBase {
                     dsl.fetchOne(
                         "select value from tenant_settings where tenant_id = ? and key = ?", tenantId, key))
                 .map(r -> r.get(0, String.class)));
-  }
-
-  private Optional<String> rawPlatformValue(String key) {
-    return Optional.ofNullable(dsl.fetchOne("select value from system_settings where key = ?", key))
-        .map(r -> r.get(0, String.class));
   }
 
   private JsonNode parseJson(String json) {
@@ -264,12 +260,12 @@ class AiCredentialMigrationTest extends IntegrationTestBase {
 
     replayTenantPlane(tenantId);
 
-    // tenantOwned/원본 행 존재를 먼저 못박는다 — 이게 없으면 테넌트 INSERT 가 아무것도 안 써도
-    // read()/resolve() 가 플랫폼 값으로 폴백해 우연히 통과한다(플랫폼도 세 키가 빈 값이라 결과가
-    // 같다). 이 단언이 실제로 테넌트 행을 봤다는 것을 고정한다.
+    // configured/원본 행 존재를 먼저 못박는다 — 이게 없으면 테넌트 INSERT 가 아무것도 안 써도
+    // read()/resolve() 가 "행 없음 = 빈 sdk" 로 우연히 같은 결과를 낸다. 이 단언이 실제로 테넌트
+    // 행을 봤다는 것을 고정한다.
     assertThat(rawTenantValue(tenantId, "ai.credential")).isPresent();
     AiCredentialView view = TenantContext.runScopedGet(tenantId, aiCredentialService::read);
-    assertThat(view.tenantOwned()).isTrue();
+    assertThat(view.configured()).isTrue();
     assertThat(view.secretFieldNames()).doesNotContain("apiKey", "oauthToken");
 
     AiCredential resolved = TenantContext.runScopedGet(tenantId, aiCredentialService::resolve);
@@ -294,7 +290,7 @@ class AiCredentialMigrationTest extends IntegrationTestBase {
     // coalesce(...,'sdk') 는 NULL 만 잡는다. tenant_settings.value 는 NOT NULL 이라 NULL 은
     // 애초에 나오지 않고, 리터럴 빈 문자열 ''은 그대로 agentType:"" 으로 옮겨진다.
     // AiCredentialService.resolve() 의 switch 는 이 값을 모르므로 UnknownAgentTypeException 을
-    // 던지고 플랫폼으로도 폴백하지 않는다 — 되돌릴 방법 없이 죽는 테넌트가 생긴다.
+    // 던진다(빈 자격증명으로 넘어가지 않는다) — 되돌릴 방법 없이 죽는 테넌트가 생긴다.
     long tenantId = newTenant("aicred-guard-empty");
     insertLegacyRow(tenantId, "ai.agent_type", "");
 
@@ -314,166 +310,5 @@ class AiCredentialMigrationTest extends IntegrationTestBase {
 
     assertThatThrownBy(() -> inTenantFixture(tenantId, () -> dsl.execute(GUARD_SQL)))
         .hasMessageContaining("알 수 없는 ai.agent_type");
-  }
-
-  @Test
-  @DisplayName("플랫폼 평면도 같은 규칙으로 변환된다")
-  void 플랫폼_평면도_같은_규칙으로_변환된다() {
-    // 플랫폼 평면은 부팅 시 실제로 한 번 변환된다 — V31/V40/V41 이 ai.api_key=''/ai.cli_oauth_token=''
-    // /ai.agent_type='sdk' 를 시드하므로 신선한 DB 에서도 항상 대상이 있다(테넌트 평면과 달리
-    // "픽스처가 없으면 빈 채로 부팅"이 아니다). 그래서 재생이 아니라 "지우고 다시 재생"으로
-    // 검증한다 — 그래야 이 테스트가 지금 디스크에 있는 파일 내용에 실제로 반응한다(안 그러면
-    // 예전에 부팅 시 만들어진 행을 영원히 그대로 보게 되어 파일을 고쳐도 테스트가 안 움직인다).
-    //
-    // **부팅 시드 값 그대로는 검증력이 없다.** V31/V40/V41 의 시드가 정확히 sdk/''/'' 라 —
-    // "agentType 을 'sdk' 로 하드코딩한 뮤테이션"도 "apiKey 를 ai.cli_oauth_token 에서 잘못
-    // 끌어오는 뮤테이션"도 시드 값 자체가 소스 식과 자기 기본값을 구분 못 하게 만들어 결과가
-    // 우연히 똑같이 나온다(리뷰에서 실제로 GREEN 으로 살아남았다). 그래서 재생 전에 3키를
-    // **서로 다른, 기본값이 아닌** 값으로 UPDATE 해 두고 결과 문서에 그 값이 그대로 반영됐는지
-    // 확인한다 — 끝나면 원래 시드 값으로 복원한다.
-    Optional<String> beforeCredential = rawPlatformValue("ai.credential");
-    assertThat(beforeCredential).as("부팅 시 플랫폼 ai.credential 이 이미 만들어져 있어야 한다").isPresent();
-    String knownGoodCredentialJson = beforeCredential.get();
-    String originalAgentType = rawPlatformValue("ai.agent_type").orElseThrow();
-    String originalApiKey = rawPlatformValue("ai.api_key").orElseThrow();
-    String originalOauthToken = rawPlatformValue("ai.cli_oauth_token").orElseThrow();
-
-    String apiKeyCipher = encryptionService.encrypt("sk-platform-real-key");
-    String oauthCipher = encryptionService.encrypt("oauth-platform-token"); // apiKey 와 평문이 달라야 크로스와이어를 잡는다.
-
-    try {
-      dsl.execute("update system_settings set value = ? where key = 'ai.agent_type'", "cli-api");
-      dsl.execute("update system_settings set value = ? where key = 'ai.api_key'", apiKeyCipher);
-      dsl.execute("update system_settings set value = ? where key = 'ai.cli_oauth_token'", oauthCipher);
-
-      dsl.execute("delete from system_settings where key = 'ai.credential'");
-      dsl.execute(PLATFORM_INSERT_SQL);
-
-      String json = rawPlatformValue("ai.credential").orElseThrow();
-      JsonNode doc = parseJson(json);
-      // v/payload — 테넌트 평면 테스트와 같은 이유(원본 JSON 을 직접 봐야 "필드 누락" 뮤테이션을 잡는다).
-      assertThat(doc.path("v").asInt()).isEqualTo(1);
-      assertThat(doc.has("payload")).isTrue();
-      assertThat(doc.path("agentType").asText()).isEqualTo("cli-api");
-
-      AiCredentialDocument parsed = AiCredentialDocument.parse(json);
-      // 크로스와이어 검사 — apiKey/oauthToken 이 서로 바뀌어 있었다면 여기서 걸린다.
-      assertThat(parsed.secretCipher("apiKey")).isEqualTo(apiKeyCipher);
-      assertThat(parsed.secretCipher("oauthToken")).isEqualTo(oauthCipher);
-
-      TenantContext.clear();
-      try {
-        AiCredentialView view = aiCredentialService.read();
-        assertThat(view.agentType()).isEqualTo("cli-api");
-        assertThat(view.tenantOwned()).isFalse();
-        assertThat(view.secretFieldNames()).containsExactlyInAnyOrder("apiKey", "oauthToken");
-      } finally {
-        TenantContext.set(DEFAULT_TEST_TENANT_ID);
-      }
-    } finally {
-      // **무조건 복원한다 — "행이 없을 때만"이 아니다.** 뮤테이션이 "없는" 게 아니라 "틀린데
-      // 있는" 행을 만들면(예: agentType 하드코딩) 예전 조건(`if (rawPlatformValue(...).isEmpty())`)
-      // 은 통과시켜 잘못된 행이 공유 테스트 DB 에 영구히 남는다 — 실제로 이 실수가 한 번
-      // 일어나 리뷰어가 손으로 고쳤다. 그래서 결과가 뭐든 일단 지우고, 시작 시점에 읽어 둔
-      // 원본 JSON/3키 값을 그대로 다시 넣는다 — 재생 대상 SQL(PLATFORM_INSERT_SQL)에 기대지
-      // 않는 독립적인 복원 경로다(그 문 자체가 뮤테이션으로 깨진 상태일 수 있기 때문).
-      dsl.execute("delete from system_settings where key = 'ai.credential'");
-      dsl.execute(
-          "insert into system_settings (key, value, description) values (?, ?, ?)",
-          "ai.credential",
-          knownGoodCredentialJson,
-          "AI 자격증명(유형별 구조)");
-      dsl.execute("update system_settings set value = ? where key = 'ai.agent_type'", originalAgentType);
-      dsl.execute("update system_settings set value = ? where key = 'ai.api_key'", originalApiKey);
-      dsl.execute("update system_settings set value = ? where key = 'ai.cli_oauth_token'", originalOauthToken);
-    }
-  }
-
-  /**
-   * {@code system_settings.ai.agent_type} 만 잠깐 바꿔 GUARD_SQL 을 돌려 본 뒤 원복한다.
-   *
-   * <p>전체 브랜치 리뷰 C1 이전에는 두 가드 모두 {@code tenant_settings} 만 읽어 플랫폼 행이
-   * 완전히 무방비였다 — 배포측 PVC(opencode.jsonc)가 강하게 시사하는 상태(플랫폼 기본값이
-   * opencode)에서 V122 를 그대로 배포하면 플랫폼 행이 {@code agentType:"opencode",payload:{}} 로
-   * 변환돼 그 값을 상속하는 테넌트 전부가 죽는다. 아래 세 테스트는 그 가드가 실제로 system_settings
-   * 를 보는지 GUARD_SQL 을 직접 재생해 확인한다(v122 파일 본문 그대로 — 규칙을 테스트 쪽에 다시
-   * 베끼지 않는다는 클래스 상단 원칙과 동일).
-   */
-  private void withPlatformAgentType(String value, Runnable body) {
-    String original = rawPlatformValue("ai.agent_type").orElseThrow();
-    try {
-      dsl.execute("update system_settings set value = ? where key = 'ai.agent_type'", value);
-      body.run();
-    } finally {
-      dsl.execute("update system_settings set value = ? where key = 'ai.agent_type'", original);
-    }
-  }
-
-  @Test
-  @DisplayName("전체 브랜치 리뷰 C1 — 플랫폼 ai.agent_type 이 opencode 면 가드가 중단시킨다")
-  void 가드는_플랫폼_opencode도_막는다() {
-    withPlatformAgentType(
-        "opencode",
-        () ->
-            assertThatThrownBy(() -> dsl.execute(GUARD_SQL))
-                .hasMessageContaining("opencode")
-                .hasMessageContaining("플랫폼"));
-  }
-
-  @Test
-  @DisplayName("전체 브랜치 리뷰 C1 — 플랫폼의 알 수 없는 agent_type(빈 문자열)도 가드가 막는다")
-  void 가드는_플랫폼의_알수없는_agent_type도_막는다() {
-    withPlatformAgentType(
-        "",
-        () ->
-            assertThatThrownBy(() -> dsl.execute(GUARD_SQL))
-                .hasMessageContaining("알 수 없는 플랫폼"));
-  }
-
-  @Test
-  @DisplayName("전체 브랜치 리뷰 C1 — 플랫폼 agent_type 이 유효하면 가드를 통과하고 실제로 변환된다(cli, cli-api 외 케이스)")
-  void 가드를_통과한_플랫폼_cli는_실제로_변환된다() {
-    // 기존 플랫폼 변환 테스트는 cli-api 하나만 exercise 했다(전체 브랜치 리뷰 지적) — cli 는
-    // oauthToken 만 쓰고 apiKey 는 쓰지 않아 cli-api 와 조립 규칙이 다르다.
-    String originalAgentType = rawPlatformValue("ai.agent_type").orElseThrow();
-    String originalOauthToken = rawPlatformValue("ai.cli_oauth_token").orElseThrow();
-    String originalCredentialJson = rawPlatformValue("ai.credential").orElseThrow();
-    String oauthCipher = encryptionService.encrypt("oauth-platform-cli-token");
-
-    try {
-      dsl.execute("update system_settings set value = ? where key = 'ai.agent_type'", "cli");
-      dsl.execute("update system_settings set value = ? where key = 'ai.cli_oauth_token'", oauthCipher);
-
-      // 가드는 통과해야 한다(예외 없음).
-      dsl.execute(GUARD_SQL);
-
-      dsl.execute("delete from system_settings where key = 'ai.credential'");
-      dsl.execute(PLATFORM_INSERT_SQL);
-
-      String json = rawPlatformValue("ai.credential").orElseThrow();
-      AiCredentialDocument parsed = AiCredentialDocument.parse(json);
-      assertThat(parsed.agentType()).isEqualTo("cli");
-      assertThat(parsed.secretCipher("oauthToken")).isEqualTo(oauthCipher);
-
-      TenantContext.clear();
-      try {
-        AiCredential resolved = aiCredentialService.resolve();
-        assertThat(resolved).isEqualTo(new AiCredential.Cli("oauth-platform-cli-token"));
-      } finally {
-        TenantContext.set(DEFAULT_TEST_TENANT_ID);
-      }
-    } finally {
-      // 무조건 복원한다 — 위 큰 플랫폼 변환 테스트와 같은 이유(원래 있던 값으로 되돌린다,
-      // "지우고 없으면 넘어간다"가 아니다).
-      dsl.execute("delete from system_settings where key = 'ai.credential'");
-      dsl.execute(
-          "insert into system_settings (key, value, description) values (?, ?, ?)",
-          "ai.credential",
-          originalCredentialJson,
-          "AI 자격증명(유형별 구조)");
-      dsl.execute("update system_settings set value = ? where key = 'ai.agent_type'", originalAgentType);
-      dsl.execute(
-          "update system_settings set value = ? where key = 'ai.cli_oauth_token'", originalOauthToken);
-    }
   }
 }

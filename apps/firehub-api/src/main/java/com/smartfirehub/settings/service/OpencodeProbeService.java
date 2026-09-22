@@ -46,10 +46,10 @@ import reactor.netty.http.client.HttpClient;
  *       시점엔 공인 IP, 접속 시점엔 사설 IP)으로 우회된다.
  *   <li>응답은 모델 ID 배열만 담는다 — upstream 본문·상태 텍스트·헤더를 그대로 흘리지 않는다.
  *   <li>{@code apiKey} 는 로그·응답 어디에도 남기지 않는다.
- *   <li><b>평면 교차 폴백 금지</b> — 요청이 {@code apiKey} 를 생략했을 때 쓰는 "저장된 값"은
- *       {@link AiCredentialService#tenantOpencodeCredential()}(테넌트 행만)이다.
- *       {@link AiCredentialService#resolve()}(두 평면 해석)를 쓰면 테넌트가 재정의하지 않았을 때
- *       플랫폼의 apiKey 가 테넌트가 지정한 임의 baseURL 로 샌다.
+ *   <li><b>저장된 키 재사용은 현재 테넌트의 opencode 행에서만</b> — 요청이 {@code apiKey} 를
+ *       생략했을 때 쓰는 "저장된 값"은 {@link AiCredentialService#tenantOpencodeCredential()}
+ *       (현재 테넌트 행, 유형이 opencode 일 때만)이다. 이름만 같은 다른 유형의 비밀(sdk 의
+ *       Anthropic {@code apiKey})이 임의 baseURL 로 실려 나가지 않게 한다.
  * </ul>
  *
  * <p><b>실패를 구분한다.</b> 모든 실패를 {@code ok=false} 하나로 뭉치면(원인 문구가 전부
@@ -200,8 +200,8 @@ public class OpencodeProbeService {
    *
    * @param baseUrl 테넌트가 입력한 opencode 공급자 기본 URL. 신뢰하지 않는다 — 클래스 상단 가드가
    *     전부 이 값에 대해 돈다.
-   * @param apiKey 요청에 실린 키. {@code null}/공백이면 테넌트 자신의 저장된 키로 폴백한다(평면
-   *     교차 금지, 클래스 javadoc 참고). 그때 {@code baseUrl} 이 저장된 값과 다르면 폴백하지
+   * @param apiKey 요청에 실린 키. {@code null}/공백이면 테넌트 자신의 저장된 opencode 키로
+   *     폴백한다(클래스 javadoc 참고). 그때 {@code baseUrl} 이 저장된 값과 다르면 폴백하지
    *     않고 400 으로 거부한다.
    * @throws IllegalArgumentException 재사용할 저장된 키가 없거나, baseUrl 이 저장된 값과 달라
    *     키 없이는 재사용할 수 없을 때(둘 다 요청 형태 문제 — 400)
@@ -249,8 +249,7 @@ public class OpencodeProbeService {
    * baseUrl 이 SSRF 가드(스킴/포트/DNS 해석·사설대역)를 통과하는지만 검사한다 — 실제
    * {@code GET /models} 네트워크 호출은 하지 않는다.
    *
-   * <p><b>왜 필요한가(보안 리뷰 Fix1).</b> {@code AiCredentialController}/
-   * {@code PlatformAiCredentialController} 의 opencode PUT 검증은 {@code apiKey} 가 생략되면
+   * <p><b>왜 필요한가(보안 리뷰 Fix1).</b> {@code AiCredentialController} 의 opencode PUT 검증은 {@code apiKey} 가 생략되면
    * {@link #probe} 를 통째로 건너뛰어 왔다(Ruling #27/#29 — "프로브만 건너뛴다"는 판정 자체는
    * 맞지만, 그 프로브 안에 있던 이 가드까지 함께 건너뛰는 게 문제였다). 그 결과 {@code apiKey}
    * 없이 저장하는 opencode 자격증명은 {@code baseURL} 이 전혀 검증되지 않은 채 저장됐고, 클라우드
@@ -364,13 +363,13 @@ public class OpencodeProbeService {
   }
 
   // -------------------------------------------------------------------------
-  // apiKey 해석 — 평면 교차 폴백 금지
+  // apiKey 해석 — 현재 테넌트의 opencode 행만
   // -------------------------------------------------------------------------
 
   /**
    * 요청에 {@code apiKey} 가 있으면 그대로 쓴다. 없으면(생략/공백) 테넌트 자신의 저장된 opencode
-   * 자격증명으로만 폴백한다 — {@link AiCredentialService#resolve()}(두 평면)를 쓰지 않는다(클래스
-   * javadoc "평면 교차 폴백 금지" 참고).
+   * 자격증명으로만 폴백한다 — 유형 필터가 있는 {@link AiCredentialService#tenantOpencodeCredential()}
+   * 를 쓰고 {@link AiCredentialService#resolve()} 는 쓰지 않는다(클래스 javadoc 참고).
    */
   private String resolveApiKey(String baseUrl, String apiKey) {
     if (apiKey != null && !apiKey.isBlank()) {

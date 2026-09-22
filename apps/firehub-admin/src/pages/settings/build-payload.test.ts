@@ -3,13 +3,11 @@ import { describe, expect, it } from 'vitest';
 import { buildSettingsPayload } from './build-payload';
 
 const ORIGINAL = {
-  'ai.model': 'claude-sonnet-5',
-  'ai.max_turns': '20',
+  'smtp.host': 'smtp.example.com',
+  'smtp.port': '587',
   'smtp.starttls': 'true',
   'smtp.password': '',
-  // 타입형 AI 설정 전환(Task 13) 이후 ai.api_key/ai.cli_oauth_token 은 이 카탈로그에 없다
-  // (ai.credential 문서로 옮겨갔다) — 이 파일의 "다른 비밀 키" 양성 대조군은 이제
-  // embedding.api_key 를 쓴다.
+  // "다른 비밀 키" 양성 대조군 — smtp.password 와 같은 비밀 분기를 지난다.
   'embedding.api_key': '',
 };
 
@@ -21,13 +19,13 @@ describe('buildSettingsPayload', () => {
 
   it('바뀐 비-비밀 키만 담는다', () => {
     const { payload, diff } = buildSettingsPayload(
-      { ...ORIGINAL, 'ai.max_turns': '30' },
+      { ...ORIGINAL, 'smtp.port': '2525' },
       ORIGINAL,
       new Set(),
     );
-    expect(payload).toEqual({ 'ai.max_turns': '30' });
+    expect(payload).toEqual({ 'smtp.port': '2525' });
     expect(diff).toEqual([
-      { key: 'ai.max_turns', label: '최대 턴 수', group: 'AI 에이전트', before: '20', after: '30', secret: false },
+      { key: 'smtp.port', label: '포트', group: '이메일(SMTP)', before: '587', after: '2525', secret: false },
     ]);
   });
 
@@ -101,8 +99,16 @@ describe('buildSettingsPayload', () => {
     expect(on.payload).toEqual({});
   });
 
-  // "ai.api_key 와 embedding.api_key 라벨 충돌" 테스트는 여기 없다 — 타입형 AI 설정 전환
-  // (Task 13) 으로 ai.api_key 가 이 범용 카탈로그를 떠나 ai.credential 문서로 옮겨갔다.
-  // 이제 이 카탈로그에서 라벨 'API 키'를 쓰는 키는 embedding.api_key 하나뿐이라 그 전제
-  // (같은 라벨을 쓰는 두 키가 동시에 바뀐다) 자체가 성립하지 않는다.
+  it('여러 탭의 변경은 각자의 탭 그룹을 단다 (리뷰 L1)', () => {
+    const original = { ...ORIGINAL, 'embedding.model': 'bge-m3' };
+    const { diff } = buildSettingsPayload(
+      { ...original, 'smtp.host': 'mail.example.org', 'embedding.model': 'bge-m4' },
+      original,
+      new Set(),
+    );
+    expect(Object.fromEntries(diff.map((d) => [d.key, d.group]))).toEqual({
+      'smtp.host': '이메일(SMTP)',
+      'embedding.model': '임베딩',
+    });
+  });
 });

@@ -18,9 +18,7 @@ import com.smartfirehub.global.security.JwtAuthenticationFilter;
 import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.permission.service.PermissionService;
-import com.smartfirehub.platform.controller.PlatformAiCredentialController;
 import com.smartfirehub.platform.repository.PlatformRoleRepository;
-import com.smartfirehub.settings.repository.SettingsRepository;
 import com.smartfirehub.settings.service.AiCredentialService;
 import com.smartfirehub.settings.service.OpencodeProbeService;
 import com.smartfirehub.settings.service.OpencodeProbeService.ProbeResult;
@@ -52,7 +50,7 @@ import org.springframework.test.web.servlet.MockMvc;
  * 컨트롤러에서 호출되고 있다는 배선을 증명한다(순수 유닛 테스트만으로는 그 호출부가 실제로
  * 연결됐는지 보장하지 못한다).
  */
-@WebMvcTest({AiCredentialController.class, PlatformAiCredentialController.class})
+@WebMvcTest(AiCredentialController.class)
 @Import({SecurityConfig.class, JwtAuthenticationFilter.class})
 class AiCredentialProbeStatusMappingTest {
 
@@ -62,7 +60,6 @@ class AiCredentialProbeStatusMappingTest {
   @MockitoBean private AiCredentialService aiCredentialService;
   @MockitoBean private OpencodeProbeService opencodeProbeService;
   @MockitoBean private SettingsService settingsService;
-  @MockitoBean private SettingsRepository settingsRepository;
   @MockitoBean private PermissionService permissionService;
   @MockitoBean private PlatformRoleRepository platformRoleRepository;
   @MockitoBean private MembershipRepository membershipRepository;
@@ -97,14 +94,6 @@ class AiCredentialProbeStatusMappingTest {
     when(permissionService.getUserPermissions(1L)).thenReturn(Set.of(permissions));
   }
 
-  /** 플랫폼 토큰 인증 mock — {@code JwtAuthenticationFilter} 가 플랫폼 분기에서는 {@code
-   * platformRoleRepository} 로만 권한을 읽는다({@code permissionService} 는 타지 않는다). */
-  private void mockPlatformAuth(String... permissions) {
-    when(jwtTokenProvider.parseAccessToken("platform-token"))
-        .thenReturn(Optional.of(new JwtTokenProvider.AccessTokenPrincipal(1L, null, true)));
-    when(platformRoleRepository.findPlatformPermissionCodes(1L)).thenReturn(Set.of(permissions));
-  }
-
   private String content(Map<String, Object> body) throws Exception {
     return objectMapper.writeValueAsString(body);
   }
@@ -131,28 +120,6 @@ class AiCredentialProbeStatusMappingTest {
         .perform(
             put("/api/v1/settings/ai-credential")
                 .header("Authorization", "Bearer valid-token")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(content(opencodeBody())))
-        .andExpect(status().isBadGateway());
-  }
-
-  /**
-   * 위 테스트는 <b>테넌트</b> 컨트롤러만 지난다 — {@code PlatformAiCredentialController} 의
-   * {@code statusFor(...)} 호출부는 이 테스트가 없으면 전혀 exercise 되지 않는다(플랫폼 PUT 이
-   * 실제로 실패하는 프로브까지 도달하는 다른 테스트가 없었다 — apiKey 생략 시나리오는 프로브
-   * 자체를 건너뛰고, cli-api 저장 테스트는 opencode 가 아니다). 이 테스트가 그 배선을 증명한다.
-   */
-  @Test
-  void 플랫폼_PUT_도달불가는_502() throws Exception {
-    mockPlatformAuth("platform:settings:write");
-    when(settingsRepository.getValue("ai.model")).thenReturn(Optional.empty());
-    when(opencodeProbeService.probe(any(OpencodeProbeService.TargetCheck.class), any()))
-        .thenReturn(new ProbeResult(false, List.of(), "공급자에 연결할 수 없습니다", Reason.UNREACHABLE));
-
-    mockMvc
-        .perform(
-            put("/api/platform/settings/ai-credential")
-                .header("Authorization", "Bearer platform-token")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(content(opencodeBody())))
         .andExpect(status().isBadGateway());
@@ -250,19 +217,13 @@ class AiCredentialProbeStatusMappingTest {
   }
 
   /**
-   * 테넌트 PUT 성공 경로가 <b>실제로 테넌트 평면</b>({@code save(..., false)})으로 저장을
-   * 요청하는지 확인한다.
-   *
-   * <p><b>왜 필요한가(리뷰 라운드 1, 뮤테이션으로 실증됨).</b> {@code AiCredentialController
-   * .put()} 의 {@code aiCredentialService.save(toUpsert(request), userId, false)} 를
-   * {@code true} 로 바꿔도(=테넌트 관리자의 저장이 {@code system_settings} 로 가서 <b>전
-   * 테넌트</b>에 적용된다) 이 파일에 있던 기존 PUT 성공 테스트는 전부 opencode 400/4xx 경로
-   * 아니면 상태 코드(204)만 보고 있어 그 뮤테이션을 잡지 못했다. {@code sdk} 처럼 프로브가
-   * 필요 없는 유형으로 가장 단순한 성공 경로를 만들고, 저장 호출의 세 번째 인자를 직접
-   * 단언한다.
+   * PUT 성공 경로가 실제로 {@code save} 를 인증된 사용자 id 로 부르는지 확인한다 — 상태 코드(204)
+   * 만 보는 테스트는 "저장을 부르지 않고 204 만 돌려주는" 뮤테이션을 잡지 못한다. {@code sdk} 처럼
+   * 프로브가 필요 없는 유형으로 가장 단순한 성공 경로를 만든다. (예전엔 여기서 테넌트/플랫폼
+   * 평면 플래그를 단언했지만, #706 으로 저장 위치가 테넌트 하나뿐이라 그 인자 자체가 사라졌다.)
    */
   @Test
-  void PUT_은_테넌트_평면에_저장한다() throws Exception {
+  void PUT_은_인증된_사용자로_저장을_위임한다() throws Exception {
     mockAuth("ai:settings");
 
     mockMvc
@@ -273,7 +234,7 @@ class AiCredentialProbeStatusMappingTest {
                 .content(content(Map.of("agentType", "sdk", "payload", Map.of(), "secret", Map.of("apiKey", "sk-x")))))
         .andExpect(status().isNoContent());
 
-    verify(aiCredentialService).save(any(), any(), eq(false));
+    verify(aiCredentialService).save(any(), eq(1L));
   }
 
   /**
@@ -292,13 +253,18 @@ class AiCredentialProbeStatusMappingTest {
         .andExpect(status().isForbidden());
   }
 
+  /**
+   * #706 — {@code DELETE /api/v1/settings/ai-credential}(옛 "플랫폼 값으로 복귀")는 제거됐다.
+   * {@code ai:settings} 를 가진 관리자가 불러도 삭제가 일어나지 않고 405 로 끝나야 한다 — 복귀할
+   * 플랫폼 값이 없으니 "지우기"는 곧 "AI 를 조용히 끄기"다.
+   */
   @Test
-  void DELETE_는_ai_read_권한만으로는_403() throws Exception {
-    mockAuth("ai:read");
+  void DELETE_는_제거됐다() throws Exception {
+    mockAuth("ai:settings");
 
     mockMvc
         .perform(delete("/api/v1/settings/ai-credential").header("Authorization", "Bearer valid-token"))
-        .andExpect(status().isForbidden());
+        .andExpect(status().isMethodNotAllowed());
   }
 
   /** 프로브가 성공했지만 저장된 모델이 목록에 없으면 422 — save() 를 절대 부르지 않는다. */
@@ -318,11 +284,11 @@ class AiCredentialProbeStatusMappingTest {
         .andExpect(status().isUnprocessableEntity());
 
     org.mockito.Mockito.verify(aiCredentialService, org.mockito.Mockito.never())
-        .save(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyBoolean());
+        .save(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
   }
 
   /**
-   * 컨트롤러가 요청의 apiKey 를 <b>그대로</b> 프로브에 전달하는지(별도 두 평면 해석 없이) —
+   * 컨트롤러가 요청의 apiKey 를 <b>그대로</b> 프로브에 전달하는지(컨트롤러가 따로 해석하지 않고) —
    * {@code /probe} 엔드포인트에서 확인한다. apiKey 를 생략한 요청이 {@code probe(baseURL, null)}
    * 로 정확히 넘어가야 한다.
    */

@@ -6,7 +6,7 @@
  * 테넌트 설정 화면용 "해석된" 설정 1건 — 백엔드 `ResolvedSettingResponse` DTO와 1:1 대응.
  * `GET /settings?prefix=...` 가 이 형태로 응답한다.
  *
- * - `value`: 테넌트 오버라이드가 있으면 그 값, 없으면 플랫폼 값. 비밀 키는 `****` 로 마스킹된다.
+ * - `value`: 테넌트 값이 있으면 그 값, 없으면 플랫폼 값(AI 설정 `ai.*` 는 코드 기본값). 비밀 키는 `****` 로 마스킹된다.
  * - `overridden`: 지금 보이는 값이 테넌트 오버라이드에서 왔는지.
  * - `tenantEditable`: 이 키를 테넌트가 바꿀 수 있는지(오버라이드 존재 여부와 무관한 키 고유 성질).
  *
@@ -28,6 +28,7 @@ export interface UpdateSettingsRequest {
 
 /**
  * `GET /settings/ai-credential` 응답 — 백엔드 `AiCredentialService.AiCredentialView` 와 1:1 대응.
+ * 자격증명은 테넌트 전용이다(#706) — 플랫폼 값으로 폴백하지 않는다.
  *
  * `ai.credential` 은 하위 필드(secret)에 비밀이 있는 JSON 문서라 `ResolvedSettingResponse`
  * (문자열 단일 값 전제)로 표현할 수 없어 별도 타입을 둔다.
@@ -36,15 +37,14 @@ export interface UpdateSettingsRequest {
  * - `secretFieldNames`: 값이 실재하는 비밀 필드 이름만. **값 자체는 어떤 경로로도 내려오지
  *   않는다** — 서버가 절대 평문/마스크를 돌려주지 않으므로, 화면은 이 목록으로만 "설정됨"을
  *   판정한다.
- * - `tenantOwned`: 지금 응답이 테넌트 오버라이드에서 왔는지(`true`) 플랫폼 값에서 왔는지
- *   (`false`). 플랫폼 미러(`/api/platform/settings/ai-credential`)에는 이 필드가 **없다** — 상위
- *   평면이 없어 의미가 없다.
+ * - `configured`: 이 테넌트에 자격증명 행이 저장돼 있는지. `false` 면 서버는 빈 `sdk` 문서
+ *   (`payload:{}`, `secretFieldNames:[]`)를 돌려주고, 이 조직의 AI 기능은 설정 전까지 동작하지 않는다.
  */
 export interface AiCredentialResponse {
   agentType: string;
   payload: Record<string, unknown>;
   secretFieldNames: string[];
-  tenantOwned: boolean;
+  configured: boolean;
 }
 
 /**
@@ -63,7 +63,7 @@ export interface AiCredentialUpsertPayload {
 /** `POST /settings/ai-credential/probe` 요청 바디 — opencode 전용 모델 목록 조회. */
 export interface AiCredentialProbeRequest {
   baseURL: string;
-  /** 생략하면 서버가 테넌트에 저장된 값을 재사용한다(평면 교차 폴백 없음 — 테넌트 값만 본다). */
+  /** 생략하면 서버가 이 테넌트에 저장된 값을 재사용한다. */
   apiKey?: string;
 }
 

@@ -1,6 +1,7 @@
 package com.smartfirehub.settings.service;
 
 import static com.smartfirehub.settings.service.AiCredentialService.KEY;
+import static com.smartfirehub.support.SettingsTestSupport.upsertSystemSetting;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -22,9 +23,9 @@ import org.springframework.beans.factory.annotation.Autowired;
  *
  * <p>이 키는 {@link SettingsService#SECRET_KEYS} 의 원소가 아니다(비밀이 최상위 값이 아니라
  * 하위 필드에 있다) — 아무 조치도 하지 않으면 {@code getAll}/{@code getResolvedByPrefix}/
- * {@code getAsMap} 이 이 JSON 값을(비밀 하위 필드의 AES 암호문까지) 그대로 내보낸다. 그리고
- * 이 키는 타입형 전환(2026-09)으로 {@link SettingsOverridePolicy#tenantOverridableKeys} 의
- * 원소가 됐다 — 화이트리스트 검사만으로는 범용 쓰기({@code updateSettings})를 막지 못한다.
+ * {@code getAsMap} 이 이 JSON 값을(비밀 하위 필드의 AES 암호문까지) 그대로 내보낸다. 이 키는
+ * 테넌트 전용 값(#706)이라 {@code tenant_settings} 행으로 실재하고, V126 이전 DB 에는
+ * {@code system_settings} 행도 남아 있을 수 있다 — 두 저장소 모두에 시드해 두고 본다.
  *
  * <p><b>정리 방식은 {@code AiCredentialServiceTest} 와 같다</b>(플랫폼 행 캡처·원복, 테넌트 행
  * 삭제) — 공유 테스트 DB 에 이 클래스가 심은 {@code ai.credential} 이 남으면 기본 테넌트(1번)를
@@ -44,8 +45,12 @@ class AiCredentialLeakGuardTest extends IntegrationTestBase {
   @BeforeEach
   void seed() {
     platformOriginal = SettingsTestSupport.rawSystemSettingValue(dsl, KEY);
-    aiCredentialService.save(
-        new AiCredentialUpsert("sdk", Map.of(), Map.of("apiKey", "sk-live-secret")), USER, true);
+    // 옛 플랫폼 행(V126 이 지우기 전의 DB, 혹은 손으로 되살린 행)을 흉내낸다 — 쓰기 API 가 없으므로
+    // 직접 심는다. 범용 읽기 경로가 이 행을 그대로 흘리면 안 된다.
+    upsertSystemSetting(
+        dsl,
+        KEY,
+        "{\"v\":1,\"agentType\":\"sdk\",\"payload\":{},\"secret\":{\"apiKey\":\"sk-live-secret\"}}");
 
     // 시드가 실제로 반영됐는지 먼저 확인한다 — 확인하지 않으면 "행이 애초에 없어서 유출도
     // 없다"는 이유로 아래 모든 유출 테스트가 공허하게 통과할 수 있다.
@@ -75,16 +80,16 @@ class AiCredentialLeakGuardTest extends IntegrationTestBase {
   }
 
   /**
-   * 플랫폼 시드만으로는 잡지 못하는 유출 경로: {@code ai.credential} 은 이제 테넌트 오버라이드
-   * 허용 키라 테넌트 행으로도 실재할 수 있다. {@code resolveOverridesByPrefix} 가 이 키를 걸러
-   * 내지 않으면, 플랫폼 스트림만 거른 구현도 이 테스트에서는 유출이 드러난다 —
-   * {@code getResolvedByPrefix}/{@code getAsMap} 이 오버라이드 맵을 그대로 {@code putAll} 하기
-   * 때문이다.
+   * 플랫폼 시드만으로는 잡지 못하는 유출 경로: {@code ai.credential} 은 테넌트 전용 값이라
+   * {@code tenant_settings} 행으로 실재한다. {@code resolveOverridesByPrefix} 가 이 키를 걸러
+   * 내지 않으면(화이트리스트 제외 + 방어적 명시 제외 둘 다 사라지면), 플랫폼 스트림만 거른 구현도
+   * 이 테스트에서는 유출이 드러난다 — {@code getResolvedByPrefix}/{@code getAsMap} 이 오버라이드
+   * 맵을 그대로 {@code putAll} 하기 때문이다.
    */
   @Test
-  void 테넌트_오버라이드로_저장해도_prefix_조회는_ai_credential_을_내보내지_않는다() {
+  void 테넌트_행으로_저장해도_prefix_조회는_ai_credential_을_내보내지_않는다() {
     aiCredentialService.save(
-        new AiCredentialUpsert("sdk", Map.of(), Map.of("apiKey", "sk-tenant-secret")), USER, false);
+        new AiCredentialUpsert("sdk", Map.of(), Map.of("apiKey", "sk-tenant-secret")), USER);
     String tenantRaw = tenantSettingsRepository.findValue(KEY).orElseThrow();
     assertThat(tenantRaw).as("테넌트 시드가 반영되지 않으면 아래 단언이 공허해진다").contains("agentType");
 
@@ -99,17 +104,41 @@ class AiCredentialLeakGuardTest extends IntegrationTestBase {
     assertThatThrownBy(() -> settingsService.getValue(KEY)).isInstanceOf(IllegalArgumentException.class);
   }
 
+  /**
+   * #706 결정 7 — {@code ai.credential} 이 테넌트 오버라이드 화이트리스트에서 빠진 뒤에도 범용 PUT
+   * 경로({@code updateSettings})는 이 키를 계속 <b>거부</b>해야 한다. 새면 {@code AiCredentialService}
+   * 의 비밀 필수 규칙을 우회해 비밀 없는 문서를 저장할 수 있다. 거부 문구로 전용 관문
+   * ({@code rejectExternalOwnerKey})이 먼저 막는지까지 본다 — 화이트리스트 거부("플랫폼 관리자만")로
+   * 떨어지면 그 관문이 사라진 것이다.
+   */
   @Test
   void 범용_쓰기로는_테넌트_평면에_저장할_수_없다() {
     assertThatThrownBy(() -> settingsService.updateSettings(Map.of(KEY, "{}"), USER))
-        .isInstanceOf(IllegalArgumentException.class);
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("AI 자격증명은 범용 설정 경로로");
+    assertThat(tenantSettingsRepository.findValue(KEY)).isEmpty();
   }
 
   /**
-   * {@code updatePlatformSettings} 는 이 키가 세 서브 화이트리스트({@code ALLOWED_AI_KEYS} 등)
-   * 어디에도 없어 그 검사만으로 이미 거부된다 — {@code rejectBundleKey} 호출은 방어적 중복이다
-   * (뮤테이션 검사 보고 참고). 그래도 두 쓰기 경로가 항상 같은 관문을 지나야 한다는 계약을
-   * 실행 가능한 단언으로 고정해 둔다.
+   * #706 — 전용 {@code DELETE /settings/ai-credential} 을 없앤 뒤, 범용 오버라이드 삭제
+   * ({@code DELETE /settings/overrides/ai.credential} → {@code clearOverride})가 그 뒷문이 되면 안
+   * 된다. 테넌트 행을 실제로 만들어 두고, 거부된 뒤에도 행이 남아 있는지 본다(행이 없으면 "삭제할
+   * 게 없어서 무동작"과 구분되지 않는다).
+   */
+  @Test
+  void 범용_오버라이드_삭제로는_ai_credential_을_지울_수_없다() {
+    aiCredentialService.save(
+        new AiCredentialUpsert("sdk", Map.of(), Map.of("apiKey", "sk-tenant-secret")), USER);
+
+    assertThatThrownBy(() -> settingsService.clearOverride(KEY))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThat(tenantSettingsRepository.findValue(KEY)).isPresent();
+  }
+
+  /**
+   * {@code updatePlatformSettings} 는 {@code ai.*} 키 전부를 거부한다(AI 설정은 테넌트 전용) —
+   * 이 키도 그 검사에 걸린다. 범용 쓰기로 플랫폼 평면에 이 키를 저장할 수 없다는 계약을 실행 가능한
+   * 단언으로 고정해 둔다.
    */
   @Test
   void 범용_쓰기로는_플랫폼_평면에도_저장할_수_없다() {

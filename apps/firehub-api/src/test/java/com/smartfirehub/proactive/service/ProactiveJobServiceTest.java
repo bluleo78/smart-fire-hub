@@ -42,6 +42,7 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
   private ProactiveJobAsyncRunner rawAsyncRunner;
   @Autowired private ProactiveJobExecutionRepository executionRepository;
   @Autowired private DSLContext dsl;
+  @Autowired private com.smartfirehub.settings.service.AiCredentialService aiCredentialService;
 
   @MockitoBean private ProactiveAiClient proactiveAiClient;
   @MockitoBean private ProactiveContextCollector proactiveContextCollector;
@@ -69,6 +70,14 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
             .returning(USER.ID)
             .fetchOne()
             .getId();
+
+    // 실행 경로는 AI 호출 전에 자격증명 완결성을 검사한다. AI 자격증명은 테넌트 전용(#706)이라
+    // 플랫폼 기본값이 없으므로, 기본 테넌트에 자격증명을 심어 둔다(proactiveAiClient 는 mock 이라 키
+    // 값 자체는 쓰이지 않는다). 클래스가 @Transactional 이라 테스트마다 롤백된다.
+    aiCredentialService.save(
+        new com.smartfirehub.settings.service.AiCredentialService.AiCredentialUpsert(
+            "sdk", Map.of(), Map.of("apiKey", "sk-proactive-test")),
+        null);
   }
 
   private CreateProactiveJobRequest buildCreateRequest(String name) {

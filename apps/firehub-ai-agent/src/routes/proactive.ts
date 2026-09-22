@@ -327,11 +327,10 @@ router.post('/proactive', express.json(), internalAuth, async (req: Request, res
   // ambient ANTHROPIC_API_KEY 폴백은 opencode 에는 **적용하지 않는다**. sdk/cli-api 는
   // 유지한다 — 이 비대칭은 의도적인 경계다(Ruling #31), 손대지 않은 우연이 아니다.
   //
-  // sdk/cli-api 테넌트가 플랫폼 평면(system_settings)을 그대로 상속해 apiKey 를 빈 값으로
-  // 받으면, 컨테이너의 ANTHROPIC_API_KEY 는 **바로 그 플랫폼 자신의 Anthropic 자격증명**이다.
-  // 배포에 따라 그 값이 system_settings 가 아니라 컨테이너 env 에만 있는 경우도 있어, 이
-  // 폴백을 없애면 그런 배포가 깨진다. 어느 쪽이든 "플랫폼 계정에 과금"이 아니라 "플랫폼
-  // 계정이 자기 자신에게 과금"이라 6b1c6383 이 말하는 오분류(mis-attribution)가 아니다.
+  // AI 자격증명은 테넌트 전용이라(#706) API 는 비밀이 없는 sdk/cli-api 자격증명으로 이 라우트를
+  // 부르지 않는다(불완전하면 호출 전에 오류로 멈춘다). 그래서 정상 경로에서 apiKey 가 빈 값으로
+  // 오는 일은 없고, 이 폴백은 컨테이너 env/로컬 keychain 에 기대는 개발 환경용으로 남아 있다
+  // (#706 잔여 — 제거는 별도 결정).
   //
   // opencode 는 다르다 — 그 테넌트는 Anthropic 이 아닌 **다른 provider(OpenAI 호환 호스트)**를
   // 명시적으로 선택했다. 컨테이너의 Anthropic 키로 메우면 (a) 엉뚱한 호환 호스트에 Anthropic

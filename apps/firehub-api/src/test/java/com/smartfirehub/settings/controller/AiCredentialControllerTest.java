@@ -1,5 +1,6 @@
 package com.smartfirehub.settings.controller;
 
+import static com.smartfirehub.support.SettingsTestSupport.upsertSystemSetting;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.not;
@@ -12,12 +13,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartfirehub.apiconnection.service.EncryptionService;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.settings.repository.TenantSettingsRepository;
 import com.smartfirehub.settings.service.AiCredentialService;
 import com.smartfirehub.settings.service.AiCredentialService.AiCredentialUpsert;
-import com.smartfirehub.settings.service.SettingsService;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.SettingsTestSupport;
 import com.smartfirehub.support.TenantRlsTestSupport;
@@ -25,7 +26,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import org.jooq.DSLContext;
-import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -35,13 +35,13 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
 /**
- * {@code AiCredentialController}/{@code PlatformAiCredentialController} 통합 테스트(Task 7).
+ * {@code AiCredentialController} 통합 테스트(Task 7, #706 로 테넌트 전용화).
  *
  * <p><b>실제 {@code OpencodeProbeService} 빈을 쓴다 — mock 하지 않는다.</b> 이 파일의 핵심 단언
- * 두 개("프로브는 평면을 건너 폴백하지 않는다", "baseURL 이 저장된 값과 다르면 apiKey 를
+ * 두 개("프로브는 플랫폼 행의 키를 빌리지 않는다", "baseURL 이 저장된 값과 다르면 apiKey 를
  * 요구한다")는 그 서비스 <b>내부</b>의 실제 분기(재사용할 저장된 키가 없음/baseURL 불일치)가
  * 실행돼야 의미가 있다 — mock 으로 그 예외를 흉내 내면 "컨트롤러가 예외를 400 으로 옮기는지"만
- * 증명하지 "컨트롤러가 스스로 두 평면을 해석해 키를 새어 보내지 않는지"는 증명하지 못한다. 다행히
+ * 증명하지 "컨트롤러가 스스로 다른 저장소를 읽어 키를 새어 보내지 않는지"는 증명하지 못한다. 다행히
  * 두 시나리오 모두 {@code resolveApiKey} 의 사전 검증 단계에서 끝나 실제 네트워크 호출 전에
  * {@code IllegalArgumentException} 이 던져지므로(해당 서비스의 javadoc 참고) 네트워크 없이도
  * 빠르고 결정적이다. 같은 이유로 Reason→상태 매핑의 <b>일부</b>(INVALID_URL/SCHEME_NOT_ALLOWED/
@@ -59,20 +59,17 @@ class AiCredentialControllerTest extends IntegrationTestBase {
   @Autowired private MockMvc mockMvc;
   @Autowired private JwtTokenProvider jwtTokenProvider;
   @Autowired private AiCredentialService aiCredentialService;
-  @Autowired private SettingsService settingsService;
   @Autowired private TenantSettingsRepository tenantSettingsRepository;
   @Autowired private DSLContext dsl;
 
+  @Autowired private EncryptionService encryptionService;
+
   private String platformCredentialOriginal;
-  private Long platformCredentialOriginalUpdatedBy;
   private final List<Long> createdUserIds = new ArrayList<>();
-  private final List<Long> createdPlatformRoleIds = new ArrayList<>();
 
   @BeforeEach
   void captureOriginalPlatformValue() {
     platformCredentialOriginal = SettingsTestSupport.rawSystemSettingValue(dsl, CREDENTIAL_KEY);
-    var row = dsl.fetchOne("select updated_by from system_settings where key = ?", CREDENTIAL_KEY);
-    platformCredentialOriginalUpdatedBy = row == null ? null : row.get(0, Long.class);
   }
 
   @AfterEach
@@ -85,25 +82,13 @@ class AiCredentialControllerTest extends IntegrationTestBase {
     // 해당한다 — 여기서는 직접 복원해야 tenant_settings RLS 삭제가 fail-closed 로 막히지 않는다.
     TenantContext.set(DEFAULT_TEST_TENANT_ID);
     tenantSettingsRepository.delete(CREDENTIAL_KEY);
+    tenantSettingsRepository.delete("ai.model");
+    // 플랫폼 행은 plantPlatformCredential 로만 심는다(V126 이후 원래 없다 → 삭제로 원복).
     SettingsTestSupport.restoreSystemSettingValue(dsl, CREDENTIAL_KEY, platformCredentialOriginal);
-    // restoreSystemSettingValue 는 value 컬럼만 되돌린다(SettingsTestSupport 계약) — updated_by 는
-    // 그대로 남는다. 플랫폼 PUT 테스트가 실제 생성한 테스트 사용자를 인증 주체로 써서 저장하면
-    // 그 사용자 id 가 updated_by 로 남고, 아래에서 그 사용자를 지우려 할 때
-    // system_settings_updated_by_fkey 위반으로 막힌다 — 그래서 여기서 updated_by 도 함께 되돌린다.
-    if (platformCredentialOriginal != null) {
-      dsl.execute(
-          "update system_settings set updated_by = ? where key = ?",
-          platformCredentialOriginalUpdatedBy,
-          CREDENTIAL_KEY);
-    }
 
     for (Long userId : createdUserIds) {
       inTenantFixture(() -> dsl.execute("delete from user_role where user_id = ?", userId));
-      dsl.execute("delete from platform_user_role where user_id = ?", userId);
       TenantRlsTestSupport.deleteUser(dsl, userId);
-    }
-    for (Long roleId : createdPlatformRoleIds) {
-      dsl.execute("delete from platform_role where id = ?", roleId); // role_permission/user_role 은 CASCADE
     }
   }
 
@@ -111,12 +96,33 @@ class AiCredentialControllerTest extends IntegrationTestBase {
   // 픽스처 헬퍼
   // -------------------------------------------------------------------------
 
-  private void saveTenantCredential(String agentType, String baseURL, String apiKey) {
-    aiCredentialService.save(upsert(agentType, baseURL, apiKey), USER, false);
+  /** 기본 테스트 테넌트의 {@code ai.model} 을 저장한다(AI 설정은 테넌트 전용). */
+  private void setTenantAiModel(String model) {
+    inTenantFixture(() -> tenantSettingsRepository.upsert("ai.model", model, null));
   }
 
-  private void savePlatformCredential(String agentType, String baseURL, String apiKey) {
-    aiCredentialService.save(upsert(agentType, baseURL, apiKey), USER, true);
+  private void saveTenantCredential(String agentType, String baseURL, String apiKey) {
+    aiCredentialService.save(upsert(agentType, baseURL, apiKey), USER);
+  }
+
+  /**
+   * 옛 플랫폼 평면 행을 {@code system_settings} 에 직접 심는다(쓰기 API 가 없다). opencode 면
+   * baseURL 을 함께 담는다. 이 행이 있어도 테넌트 API 의 결과가 바뀌지 않아야 한다.
+   */
+  private void plantPlatformCredential(String agentType, String apiKey) {
+    String payload =
+        "opencode".equals(agentType)
+            ? "{\"providerId\":\"openai\",\"baseURL\":\"https://api.openai.com/v1\"}"
+            : "{}";
+    String json =
+        "{\"v\":1,\"agentType\":\""
+            + agentType
+            + "\",\"payload\":"
+            + payload
+            + ",\"secret\":{\"apiKey\":\""
+            + encryptionService.encrypt(apiKey)
+            + "\"}}";
+    upsertSystemSetting(dsl, CREDENTIAL_KEY, json);
   }
 
   private AiCredentialUpsert upsert(String agentType, String baseURL, String apiKey) {
@@ -148,56 +154,22 @@ class AiCredentialControllerTest extends IntegrationTestBase {
     return jwtTokenProvider.generateAccessToken(userId, "u" + userId, DEFAULT_TEST_TENANT_ID);
   }
 
-  /** 지정한 권한 코드만 가진 플랫폼 사용자. 임시 platform_role 을 만들어 그 권한만 붙인다. */
-  private long platformUserWithPermissions(String... codes) {
-    long userId =
-        TenantRlsTestSupport.insertUserWithPassword(dsl, "p7t7-plat-" + System.nanoTime(), "{noop}x");
-    createdUserIds.add(userId);
-
-    Long roleId =
-        dsl.insertInto(DSL.table(DSL.name("platform_role")))
-            .set(DSL.field(DSL.name("platform_role", "name"), String.class), "P7T7_" + System.nanoTime())
-            .returning(DSL.field(DSL.name("platform_role", "id"), Long.class))
-            .fetchOne()
-            .get(DSL.field(DSL.name("platform_role", "id"), Long.class));
-    createdPlatformRoleIds.add(roleId);
-
-    for (String code : codes) {
-      dsl.execute(
-          "insert into platform_role_permission (platform_role_id, permission_id)"
-              + " select ?, id from permission where code = ?",
-          roleId,
-          code);
-    }
-    dsl.execute(
-        "insert into platform_user_role (user_id, platform_role_id) values (?, ?)", userId, roleId);
-    return userId;
-  }
-
-  private String platformToken(long userId) {
-    return jwtTokenProvider.generatePlatformAccessToken(userId, "op" + userId);
-  }
-
   private String json(Map<String, ?> body) throws Exception {
     return new ObjectMapper().writeValueAsString(body);
   }
 
   // -------------------------------------------------------------------------
-  // 프로브 — 평면 교차 폴백 금지 (브리프 Step 1의 핵심 두 시나리오)
+  // 프로브 — 저장된 키 재사용은 현재 테넌트 행에서만 (브리프 Step 1의 핵심 두 시나리오)
   // -------------------------------------------------------------------------
 
   /**
-   * 테넌트가 opencode 로 재정의하지 않은 상태에서 apiKey 를 생략하면, 두 평면을 해석하는 폴백이
-   * 있었다면 플랫폼의 apiKey 를 테넌트가 지정한 임의 baseURL(evil.example)로 내보냈을 것이다.
-   *
-   * <p><b>뮤테이션 체크(브리프 Step 5).</b> 이 컨트롤러가 apiKey 를 {@code opencodeProbeService
-   * .probe(...)} 에 그대로 넘기지 않고 대신 {@code settingsService.getValue(...)} 같은 두 평면
-   * 해석기로 직접 채워 넘기도록 바꾸면, 그 해석은 테넌트 오버라이드가 없으니 플랫폼 값(sk-PLATFORM)
-   * 으로 떨어지고 프로브가 거부 없이 진행돼(또는 다른 상태로) 이 단언이 깨진다 — RED.
+   * 테넌트 행이 없는 상태에서 apiKey 를 생략하면 재사용할 키가 없어 400 이다. 옛 플랫폼 행(완전한
+   * opencode 자격증명)을 심어 두어, 그 행을 읽는 폴백이 되살아나면 플랫폼의 apiKey 를 테넌트가
+   * 지정한 임의 baseURL(evil.example)로 내보내게 되는 경로를 막는지 본다.
    */
   @Test
-  void 프로브는_평면을_건너_폴백하지_않는다() throws Exception {
-    savePlatformCredential("opencode", "https://api.openai.com/v1", "sk-PLATFORM");
+  void 프로브는_플랫폼_행의_키를_빌리지_않는다() throws Exception {
+    plantPlatformCredential("opencode", "sk-PLATFORM");
     long userId = tenantUserWithAiSettings();
 
     mockMvc
@@ -279,19 +251,8 @@ class AiCredentialControllerTest extends IntegrationTestBase {
         .andExpect(status().isForbidden());
   }
 
-  @Test
-  void DELETE_는_권한이_없으면_403() throws Exception {
-    long userId = tenantUserWithoutPermission();
-
-    mockMvc
-        .perform(
-            delete("/api/v1/settings/ai-credential")
-                .header("Authorization", "Bearer " + tenantToken(userId)))
-        .andExpect(status().isForbidden());
-  }
-
   // -------------------------------------------------------------------------
-  // GET / DELETE 동작
+  // GET 동작
   // -------------------------------------------------------------------------
 
   @Test
@@ -303,24 +264,8 @@ class AiCredentialControllerTest extends IntegrationTestBase {
         .perform(get("/api/v1/settings/ai-credential").header("Authorization", "Bearer " + tenantToken(userId)))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.secretFieldNames[0]").value("apiKey"))
-        .andExpect(jsonPath("$.tenantOwned").value(true))
+        .andExpect(jsonPath("$.configured").value(true))
         .andExpect(content().string(not(containsString("sk-secret"))));
-  }
-
-  @Test
-  void DELETE_후에는_플랫폼_값을_상속한다() throws Exception {
-    savePlatformCredential("sdk", null, "sk-platform");
-    saveTenantCredential("cli-api", null, "sk-tenant");
-    long userId = tenantUserWithAiSettings();
-
-    mockMvc
-        .perform(delete("/api/v1/settings/ai-credential").header("Authorization", "Bearer " + tenantToken(userId)))
-        .andExpect(status().isNoContent());
-
-    mockMvc
-        .perform(get("/api/v1/settings/ai-credential").header("Authorization", "Bearer " + tenantToken(userId)))
-        .andExpect(jsonPath("$.agentType").value("sdk"))
-        .andExpect(jsonPath("$.tenantOwned").value(false));
   }
 
   // -------------------------------------------------------------------------
@@ -365,28 +310,23 @@ class AiCredentialControllerTest extends IntegrationTestBase {
   @Test
   void PUT_opencode_ai_model과_providerId가_다르면_400() throws Exception {
     long userId = tenantUserWithAiSettings();
-    String original = SettingsTestSupport.rawSystemSettingValue(dsl, "ai.model");
-    try {
-      settingsService.updatePlatformSettings(Map.of("ai.model", "openai/gpt-4o"), null);
-
-      mockMvc
-          .perform(
-              put("/api/v1/settings/ai-credential")
-                  .header("Authorization", "Bearer " + tenantToken(userId))
-                  .contentType(MediaType.APPLICATION_JSON)
-                  .content(
-                      json(
-                          Map.of(
-                              "agentType",
-                              "opencode",
-                              "payload",
-                              Map.of("providerId", "anthropic", "baseURL", "https://api.anthropic.com/v1"),
-                              "secret",
-                              Map.of("apiKey", "sk-x")))))
-          .andExpect(status().isBadRequest());
-    } finally {
-      SettingsTestSupport.restoreSystemSettingValue(dsl, "ai.model", original);
-    }
+    // AI 설정은 테넌트 전용 — 이 테넌트의 ai.model 을 고정한다(정리는 cleanup 이 한다).
+    setTenantAiModel("openai/gpt-4o");
+    mockMvc
+        .perform(
+            put("/api/v1/settings/ai-credential")
+                .header("Authorization", "Bearer " + tenantToken(userId))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    json(
+                        Map.of(
+                            "agentType",
+                            "opencode",
+                            "payload",
+                            Map.of("providerId", "anthropic", "baseURL", "https://api.anthropic.com/v1"),
+                            "secret",
+                            Map.of("apiKey", "sk-x")))))
+        .andExpect(status().isBadRequest());
   }
 
   /** SSRF 가드에 걸리는(=네트워크 왕복 없는) 요청 형태 실패도 저장을 막는다 — INVALID_URL. */
@@ -397,34 +337,28 @@ class AiCredentialControllerTest extends IntegrationTestBase {
     // 아니라 실제로 의도한 경로(프로브의 INVALID_URL)에서 나온다는 것이 확실해진다. 고정하지
     // 않으면 시드된 ai.model 값에 따라 결과 상태 코드는 같아도(둘 다 400) 실제로 통과한 코드
     // 경로가 테스트마다 달라져, 이 테스트가 실제로 무엇을 지키는지 흐려진다.
-    String original = SettingsTestSupport.rawSystemSettingValue(dsl, "ai.model");
-    try {
-      settingsService.updatePlatformSettings(Map.of("ai.model", "openai/gpt-4o"), null);
-
-      mockMvc
-          .perform(
-              put("/api/v1/settings/ai-credential")
-                  .header("Authorization", "Bearer " + tenantToken(userId))
-                  .contentType(MediaType.APPLICATION_JSON)
-                  .content(
-                      json(
-                          Map.of(
-                              "agentType",
-                              "opencode",
-                              "payload",
-                              Map.of("providerId", "openai", "baseURL", "not-a-url"),
-                              "secret",
-                              Map.of("apiKey", "sk-x")))))
-          .andExpect(status().isBadRequest());
-    } finally {
-      SettingsTestSupport.restoreSystemSettingValue(dsl, "ai.model", original);
-    }
+    // AI 설정은 테넌트 전용 — 이 테넌트의 ai.model 을 고정한다(정리는 cleanup 이 한다).
+    setTenantAiModel("openai/gpt-4o");
+    mockMvc
+        .perform(
+            put("/api/v1/settings/ai-credential")
+                .header("Authorization", "Bearer " + tenantToken(userId))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    json(
+                        Map.of(
+                            "agentType",
+                            "opencode",
+                            "payload",
+                            Map.of("providerId", "openai", "baseURL", "not-a-url"),
+                            "secret",
+                            Map.of("apiKey", "sk-x")))))
+        .andExpect(status().isBadRequest());
   }
 
   /**
-   * Ruling #29(리뷰 라운드 1) — 테넌트 PUT 도 플랫폼 PUT 과 대칭이어야 한다. apiKey 를 생략한 채
-   * baseURL 만 바꾸는 PUT 은 저장을 막지 않는다(모델 검증만 건너뛴다) — 스펙의 "생략하면 현재 값
-   * 유지"는 평면을 가리지 않고, 막아도 얻는 게 없다(저장된 키는 이 PUT 의 승인 여부와 무관하게
+   * Ruling #29(리뷰 라운드 1) — apiKey 를 생략한 채 baseURL 만 바꾸는 PUT 은 저장을 막지 않는다
+   * (모델 검증만 건너뛴다) — 스펙의 "생략하면 현재 값 유지"를 따르고, 막아도 얻는 게 없다(저장된 키는 이 PUT 의 승인 여부와 무관하게
    * 어차피 새 baseURL 로 나간다). <b>반대로 {@code POST /probe} 의 같은 모양(같은 baseURL 불일치 +
    * 키 생략)은 여전히 400 이어야 한다</b> — 프로브는 그 자리에서 실제로 외부에 접속하는 별개의
    * 행위이고, 그 접속을 저장된 키로 몰래 다른 호스트에 쏠 수 없게 막는 것이 그 가드의 존재
@@ -537,34 +471,6 @@ class AiCredentialControllerTest extends IntegrationTestBase {
         .andExpect(status().isBadRequest());
   }
 
-  /** 플랫폼 평면의 거울 — 플랫폼 관리자도 같은 가드를 받는다. */
-  @Test
-  void 플랫폼_PUT_opencode는_apiKey_생략해도_사설대역_baseURL을_거부한다() throws Exception {
-    long userId = platformUserWithPermissions("platform:settings:write", "platform:settings:read");
-    savePlatformCredential("cli-api", null, "sk-baseline");
-
-    mockMvc
-        .perform(
-            put("/api/platform/settings/ai-credential")
-                .header("Authorization", "Bearer " + platformToken(userId))
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(
-                    json(
-                        Map.of(
-                            "agentType",
-                            "opencode",
-                            "payload",
-                            Map.of("providerId", "x", "baseURL", "http://169.254.169.254/latest/meta-data"),
-                            "secret",
-                            Map.of()))))
-        .andExpect(status().isBadRequest());
-
-    mockMvc
-        .perform(get("/api/platform/settings/ai-credential").header("Authorization", "Bearer " + platformToken(userId)))
-        .andExpect(jsonPath("$.agentType").value("cli-api"))
-        .andExpect(jsonPath("$.secretFieldNames[0]").value("apiKey"));
-  }
-
   /**
    * Ruling #28(리뷰 라운드 1) — {@code ai.model} 에 슬래시가 없을 때(아직 opencode 형식이 아닐
    * 때) providerId 정합성 검사를 건너뛰는 완화가 실제로 막는 잠금을 고정한다. {@code sdk} 를
@@ -584,139 +490,12 @@ class AiCredentialControllerTest extends IntegrationTestBase {
   void PUT_opencode_전환시_슬래시_없는_ai_model은_막지_않는다() throws Exception {
     long userId = tenantUserWithAiSettings();
     saveTenantCredential("sdk", null, "sk-anthropic");
-    String original = SettingsTestSupport.rawSystemSettingValue(dsl, "ai.model");
-    try {
-      settingsService.updatePlatformSettings(Map.of("ai.model", "claude-sonnet-4-20250514"), null);
-
-      mockMvc
-          .perform(
-              put("/api/v1/settings/ai-credential")
-                  .header("Authorization", "Bearer " + tenantToken(userId))
-                  .contentType(MediaType.APPLICATION_JSON)
-                  .content(
-                      json(
-                          Map.of(
-                              "agentType",
-                              "opencode",
-                              "payload",
-                              Map.of("providerId", "openai", "baseURL", "https://8.8.8.8/v1")))))
-          .andExpect(status().isNoContent());
-
-      mockMvc
-          .perform(get("/api/v1/settings/ai-credential").header("Authorization", "Bearer " + tenantToken(userId)))
-          .andExpect(jsonPath("$.agentType").value("opencode"));
-    } finally {
-      SettingsTestSupport.restoreSystemSettingValue(dsl, "ai.model", original);
-    }
-  }
-
-  // -------------------------------------------------------------------------
-  // 플랫폼 평면
-  // -------------------------------------------------------------------------
-
-  @Test
-  void 플랫폼_응답에는_tenantOwned_가_없다() throws Exception {
-    long userId = platformUserWithPermissions("platform:settings:read");
-
-    mockMvc
-        .perform(get("/api/platform/settings/ai-credential").header("Authorization", "Bearer " + platformToken(userId)))
-        .andExpect(status().isOk())
-        .andExpect(jsonPath("$.tenantOwned").doesNotExist())
-        // doesNotExist() 는 "tenantOwned":null 도 통과시키므로, 문자열 자체에 그 키가
-        // 없다는 것까지 별도로 단언한다(응답 record 에 필드가 아예 없어야 이게 통과한다).
-        .andExpect(content().string(not(containsString("tenantOwned"))));
-  }
-
-  @Test
-  void 플랫폼_GET은_읽기_권한이_없으면_403() throws Exception {
-    long userId = platformUserWithPermissions(); // 권한 없음
-
-    mockMvc
-        .perform(get("/api/platform/settings/ai-credential").header("Authorization", "Bearer " + platformToken(userId)))
-        .andExpect(status().isForbidden());
-  }
-
-  @Test
-  void 플랫폼_PUT은_쓰기_권한이_없으면_403() throws Exception {
-    long userId = platformUserWithPermissions("platform:settings:read");
-
+    // AI 설정은 테넌트 전용 — 이 테넌트의 ai.model 을 고정한다(정리는 cleanup 이 한다).
+    setTenantAiModel("claude-sonnet-4-20250514");
     mockMvc
         .perform(
-            put("/api/platform/settings/ai-credential")
-                .header("Authorization", "Bearer " + platformToken(userId))
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(json(Map.of("agentType", "sdk", "payload", Map.of(), "secret", Map.of()))))
-        .andExpect(status().isForbidden());
-  }
-
-  /** 프로브는 읽기 권한만으로는 안 된다 — 쓰기 권한과의 구분이 실제로 갈리는 지점(테넌트 평면엔 없다). */
-  @Test
-  void 플랫폼_프로브는_읽기_권한만으로는_403() throws Exception {
-    long userId = platformUserWithPermissions("platform:settings:read");
-
-    mockMvc
-        .perform(
-            post("/api/platform/settings/ai-credential/probe")
-                .header("Authorization", "Bearer " + platformToken(userId))
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(json(Map.of("baseURL", "https://api.openai.com/v1", "apiKey", "sk-x"))))
-        .andExpect(status().isForbidden());
-  }
-
-  @Test
-  void 플랫폼_프로브는_쓰기_권한이면_apiKey를_줬을_때_동작한다() throws Exception {
-    long userId = platformUserWithPermissions("platform:settings:write");
-
-    mockMvc
-        .perform(
-            post("/api/platform/settings/ai-credential/probe")
-                .header("Authorization", "Bearer " + platformToken(userId))
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(json(Map.of("baseURL", "https://10.0.0.5/v1", "apiKey", "sk-x"))))
-        .andExpect(status().isOk())
-        .andExpect(jsonPath("$.ok").value(false));
-  }
-
-  /**
-   * Ruling #24 — 플랫폼 평면은 상위 평면이 없어 apiKey 생략을 허용하지 않는다. apiKey 를 생략한 채
-   * 보내면, 폴백을 시도조차 하지 않고 곧바로 400 이어야 한다(프로브 자체를 호출하지 않는다 —
-   * 그래서 baseURL 이 어떤 값이든 네트워크로 나가지 않는다).
-   */
-  @Test
-  void 플랫폼_프로브는_apiKey_생략을_허용하지_않는다() throws Exception {
-    long userId = platformUserWithPermissions("platform:settings:write");
-
-    mockMvc
-        .perform(
-            post("/api/platform/settings/ai-credential/probe")
-                .header("Authorization", "Bearer " + platformToken(userId))
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(json(Map.of("baseURL", "https://api.openai.com/v1"))))
-        .andExpect(status().isBadRequest());
-  }
-
-  /**
-   * PUT 은 프로브(Ruling #24)와 다르다 — apiKey 를 생략해도 저장 자체는 막지 않는다(스펙
-   * "PUT 의 비밀 의미: 생략하면 유지"는 평면을 가리지 않는다). 대신 저장 전 모델 검증(프로브)만
-   * 건너뛴다 — 플랫폼 평면에는 저장된 apiKey 를 복호화해 재사용할 접근자가 없기 때문이다
-   * ({@code PlatformAiCredentialController#validateOpencode} javadoc 참고).
-   */
-  @Test
-  void 플랫폼_PUT_opencode는_apiKey_생략시_프로브만_건너뛰고_기존_값을_유지한다() throws Exception {
-    long userId = platformUserWithPermissions("platform:settings:write", "platform:settings:read");
-    savePlatformCredential("opencode", "https://api.openai.com/v1", "sk-platform-existing");
-
-    // baseURL 만 바꾸고 apiKey 는 생략한다. baseURL 은 8.8.8.8(구글 DNS, 공인 IP 리터럴)을 쓴다 —
-    // 이전에는 여기서 사설 대역(10.0.0.5)을 써서 "프로브가 실제로 불렸다면 막혔겠지만 건너뛰므로
-    // 204"를 보였는데, Fix1 이후로는 baseURL 의 SSRF 가드가 apiKey 생략과 무관하게 항상 돌기
-    // 때문에 그 값 자체가 이제 (프로브 여부와 무관하게) 거부된다. 이 테스트가 실제로 보고 싶은
-    // 것은 "apiKey 생략이 (네트워크가 필요한) 모델 프로브만 건너뛴다"이므로, 가드를 통과하는
-    // 공인 주소로 바꿔 그 지점만 결정적으로 확인한다 — 사설 대역이 거부되는 것은 별도 테스트
-    // (플랫폼_PUT_opencode는_apiKey_생략해도_사설대역_baseURL을_거부한다)가 고정한다.
-    mockMvc
-        .perform(
-            put("/api/platform/settings/ai-credential")
-                .header("Authorization", "Bearer " + platformToken(userId))
+            put("/api/v1/settings/ai-credential")
+                .header("Authorization", "Bearer " + tenantToken(userId))
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(
                     json(
@@ -727,43 +506,54 @@ class AiCredentialControllerTest extends IntegrationTestBase {
                             Map.of("providerId", "openai", "baseURL", "https://8.8.8.8/v1")))))
         .andExpect(status().isNoContent());
 
-    // 저장은 실제로 일어났고(save() 의 "생략=유지" 규칙대로) 비밀은 그대로 살아 있다.
     mockMvc
-        .perform(get("/api/platform/settings/ai-credential").header("Authorization", "Bearer " + platformToken(userId)))
-        .andExpect(jsonPath("$.agentType").value("opencode"))
-        .andExpect(jsonPath("$.payload.baseURL").value("https://8.8.8.8/v1"))
-        .andExpect(jsonPath("$.secretFieldNames[0]").value("apiKey"));
+        .perform(get("/api/v1/settings/ai-credential").header("Authorization", "Bearer " + tenantToken(userId)))
+        .andExpect(jsonPath("$.agentType").value("opencode"));
   }
 
-  /** 플랫폼 평면에는 DELETE 라우트가 없다 — 405(매핑 자체가 없다는 뜻, 404 가 아니라 405 인 이유는 GET/PUT/POST 가 같은 경로에 매핑돼 있기 때문이다). */
+  // -------------------------------------------------------------------------
+  // #706 — 테넌트 전용 API 계약(web 이 의존한다)
+  // -------------------------------------------------------------------------
+
+  /**
+   * 미설정 테넌트의 GET 응답 계약: {@code {agentType:"sdk", payload:{}, secretFieldNames:[],
+   * configured:false}}. 옛 {@code tenantOwned} 필드는 사라졌다(web 이 {@code configured} 로
+   * "AI 설정이 없습니다" 안내를 띄운다). 완전한 플랫폼 행을 심어 두어, 그 값이 새어 나오지 않는지
+   * (폴백이 되살아나면 agentType/secretFieldNames/configured 가 바뀐다)까지 함께 본다.
+   */
   @Test
-  void 플랫폼_DELETE는_없다() throws Exception {
-    long userId = platformUserWithPermissions("platform:settings:write", "platform:settings:read");
+  void GET_은_미설정이면_configured_false_와_빈_sdk_를_준다() throws Exception {
+    plantPlatformCredential("cli-api", "sk-platform-must-not-leak");
+    long userId = tenantUserWithAiSettings();
 
     mockMvc
-        .perform(
-            delete("/api/platform/settings/ai-credential")
-                .header("Authorization", "Bearer " + platformToken(userId)))
+        .perform(get("/api/v1/settings/ai-credential").header("Authorization", "Bearer " + tenantToken(userId)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.agentType").value("sdk"))
+        .andExpect(jsonPath("$.payload").isEmpty())
+        .andExpect(jsonPath("$.secretFieldNames").isEmpty())
+        .andExpect(jsonPath("$.configured").value(false))
+        .andExpect(jsonPath("$.tenantOwned").doesNotExist())
+        .andExpect(content().string(not(containsString("tenantOwned"))));
+  }
+
+  /**
+   * {@code DELETE /api/v1/settings/ai-credential}(옛 "플랫폼 값으로 복귀")는 제거됐다 — 같은 경로에
+   * GET/PUT 이 있어 404 가 아니라 405 다. 테넌트 행을 실제로 만들어 두고, 호출 뒤에도 그대로
+   * 남아 있는지 확인한다(행이 없으면 "삭제할 게 없어 무동작"과 구분되지 않는다).
+   */
+  @Test
+  void DELETE_는_제거돼_405이고_테넌트_값은_그대로다() throws Exception {
+    saveTenantCredential("cli-api", null, "sk-tenant");
+    long userId = tenantUserWithAiSettings();
+
+    mockMvc
+        .perform(delete("/api/v1/settings/ai-credential").header("Authorization", "Bearer " + tenantToken(userId)))
         .andExpect(status().isMethodNotAllowed());
-  }
-
-  /** 플랫폼 저장은 platform_settings(system_settings) 평면에 쓴다 — 실제로 조회 가능한지까지 확인한다. */
-  @Test
-  void 플랫폼_PUT은_저장하고_조회된다() throws Exception {
-    long userId = platformUserWithPermissions("platform:settings:write", "platform:settings:read");
 
     mockMvc
-        .perform(
-            put("/api/platform/settings/ai-credential")
-                .header("Authorization", "Bearer " + platformToken(userId))
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(
-                    json(Map.of("agentType", "cli-api", "payload", Map.of(), "secret", Map.of("apiKey", "sk-p")))))
-        .andExpect(status().isNoContent());
-
-    mockMvc
-        .perform(get("/api/platform/settings/ai-credential").header("Authorization", "Bearer " + platformToken(userId)))
+        .perform(get("/api/v1/settings/ai-credential").header("Authorization", "Bearer " + tenantToken(userId)))
         .andExpect(jsonPath("$.agentType").value("cli-api"))
-        .andExpect(jsonPath("$.secretFieldNames[0]").value("apiKey"));
+        .andExpect(jsonPath("$.configured").value(true));
   }
 }

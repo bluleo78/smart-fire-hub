@@ -3,6 +3,7 @@ package com.smartfirehub.platform;
 import static com.smartfirehub.support.SettingsTestSupport.deleteSystemSetting;
 import static com.smartfirehub.support.SettingsTestSupport.rawSystemSettingValue;
 import static com.smartfirehub.support.SettingsTestSupport.restoreSystemSettingValue;
+import static com.smartfirehub.support.SettingsTestSupport.upsertSystemSetting;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -39,27 +40,63 @@ class PlatformSettingsControllerTest extends IntegrationTestBase {
   @Autowired private EncryptionService encryptionService;
   @Autowired private DSLContext dsl;
 
-  /** 운영자는 세 프리픽스의 키를 한 번에 읽는다. */
+  /**
+   * 운영자는 임베딩·SMTP 키를 한 번에 읽고, AI 키는 받지 않는다 — AI 설정은 테넌트 전용이다.
+   *
+   * <p>V127 이 {@code ai.*} 플랫폼 행을 지웠으므로, 행을 <b>직접 심어 둔 채</b> 응답에서 빠지는지
+   * 본다(심지 않으면 필터가 사라져도 통과하는 공허한 단언이 된다).
+   */
   @Test
-  void getSettings_returnsAllPrefixes() throws Exception {
-    String body =
-        mockMvc
-            .perform(
-                get("/api/platform/settings")
-                    .header("Authorization", "Bearer " + operatorToken()))
-            .andExpect(status().isOk())
-            .andReturn()
-            .getResponse()
-            .getContentAsString();
+  void getSettings_returnsPlatformKeysButNoAiKeys() throws Exception {
+    plantPlatformRow("ai.model", "planted-platform-model");
+    plantPlatformRow("ai.max_turns", "42");
+    try {
+      String body =
+          mockMvc
+              .perform(
+                  get("/api/platform/settings")
+                      .header("Authorization", "Bearer " + operatorToken()))
+              .andExpect(status().isOk())
+              .andReturn()
+              .getResponse()
+              .getContentAsString();
 
-    // 프리픽스별로 최소 한 키씩 — getByPrefix 만으로는 세 번 호출해야 하는 것을 한 번에 준다.
-    assertThat(body).contains("ai.model", "embedding.model", "smtp.host");
+      assertThat(body).contains("embedding.model", "smtp.host");
+      assertThat(body).doesNotContain("\"ai.").doesNotContain("planted-platform-model");
+    } finally {
+      deleteSystemSetting(dsl, "ai.model");
+      deleteSystemSetting(dsl, "ai.max_turns");
+    }
+  }
+
+  /** 플랫폼 PUT 은 {@code ai.*} 를 거부하고 아무것도 저장하지 않는다. */
+  @Test
+  void 운영자도_AI_키는_쓸_수_없다() throws Exception {
+    try {
+      mockMvc
+          .perform(
+              put("/api/platform/settings")
+                  .header("Authorization", "Bearer " + operatorToken())
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(objectMapperContent(Map.of("ai.model", "operator-model"))))
+          .andExpect(status().isBadRequest());
+
+      assertThat(rawSystemSettingValue(dsl, "ai.model")).isNull();
+    } finally {
+      deleteSystemSetting(dsl, "ai.model");
+    }
+  }
+
+  /** V127 이후 없는 {@code ai.*} 플랫폼 행을 직접 심는다(쓰기 API 가 없다). */
+  private void plantPlatformRow(String key, String value) {
+    upsertSystemSetting(dsl, key, value);
   }
 
   /**
    * 비밀값은 마스킹된 채로 반환된다.
    *
-   * <p><b>먼저 진짜 키를 저장한다.</b> test DB 의 {@code ai.api_key} 시드 값은 빈 문자열이라,
+   * <p><b>먼저 진짜 키를 저장한다.</b> test DB 의 {@code embedding.api_key} 시드 값은 빈 문자열이라
+   * (예전 검증 키 {@code ai.api_key} 는 #706 으로 사라졌다),
    * "값이 있을 때만 단언한다"는 형태로 두면 조건이 항상 거짓이 되어 <b>유출 단언이 한 번도
    * 실행되지 않는다</b>(실제로 그렇게 쓰여 있었다). 그 상태에서는 {@code SettingsService.getAll}
    * 의 {@code maskSecret} 을 지워도 이 테스트가 녹색으로 남아, 막으려던 암호문 유출을 전혀
@@ -69,10 +106,10 @@ class PlatformSettingsControllerTest extends IntegrationTestBase {
    */
   @Test
   void getSettings_doesNotLeakCiphertext() throws Exception {
-    String original = rawSystemSettingValue(dsl, "ai.api_key");
+    String original = rawSystemSettingValue(dsl, "embedding.api_key");
     try {
-      settingsService.updatePlatformSettings(Map.of("ai.api_key", "sk-platform-secret"), null);
-      String ciphertext = rawSystemSettingValue(dsl, "ai.api_key");
+      settingsService.updatePlatformSettings(Map.of("embedding.api_key", "sk-platform-secret"), null);
+      String ciphertext = rawSystemSettingValue(dsl, "embedding.api_key");
       // 전제 확인: 저장된 원본이 실제 암호문이어야 이 단언이 의미를 갖는다.
       assertThat(ciphertext).contains(":");
 
@@ -85,11 +122,11 @@ class PlatformSettingsControllerTest extends IntegrationTestBase {
               .getResponse()
               .getContentAsString();
 
-      assertThat(body).contains("ai.api_key");
+      assertThat(body).contains("embedding.api_key");
       assertThat(body).doesNotContain(ciphertext);
       assertThat(body).doesNotContain("sk-platform-secret");
     } finally {
-      restoreSystemSettingValue(dsl, "ai.api_key", original);
+      restoreSystemSettingValue(dsl, "embedding.api_key", original);
     }
   }
 
@@ -136,21 +173,21 @@ class PlatformSettingsControllerTest extends IntegrationTestBase {
    */
   @Test
   void 마스킹된_비밀값은_저장되지_않는다() throws Exception {
-    String original = rawSystemSettingValue(dsl, "ai.api_key");
+    String original = rawSystemSettingValue(dsl, "embedding.api_key");
     try {
       mockMvc
           .perform(
               put("/api/platform/settings")
                   .header("Authorization", "Bearer " + operatorToken())
                   .contentType(MediaType.APPLICATION_JSON)
-                  .content(objectMapperContent(Map.of("ai.api_key", "sk-live-secret-value"))))
+                  .content(objectMapperContent(Map.of("embedding.api_key", "sk-live-secret-value"))))
           .andExpect(status().isNoContent());
 
       // 운영자 UI 가 GET 으로 받는 마스킹된 값 형태를 그대로 재현한다 — 그 라우트가 부르는
       // 메서드(getAll)를 그대로 쓴다. 예전에는 getByPrefix 를 썼는데 그 메서드는 운영자 UI 가
       // 부르지 않는 경로였고(P7-c1 에서 호출자 0으로 삭제됐다), 재현이라면서 다른 문을 열고 있었다.
       String masked = settingsService.getAll().stream()
-          .filter(s -> "ai.api_key".equals(s.key()))
+          .filter(s -> "embedding.api_key".equals(s.key()))
           .findFirst()
           .orElseThrow()
           .value();
@@ -161,16 +198,15 @@ class PlatformSettingsControllerTest extends IntegrationTestBase {
               put("/api/platform/settings")
                   .header("Authorization", "Bearer " + operatorToken())
                   .contentType(MediaType.APPLICATION_JSON)
-                  .content(objectMapperContent(Map.of("ai.api_key", masked))))
+                  .content(objectMapperContent(Map.of("embedding.api_key", masked))))
           .andExpect(status().isNoContent());
 
       // 마스크를 그대로 되돌려 보냈으니 복호화 값은 원래 실제 키와 같아야 한다.
-      // getAiCredentials() 는 타입형 전환(2026-09)이 지웠다 — ai.api_key 는 이제 플랫폼 기본값
-      // 전용 레거시 값이라 전용 접근자가 없다. DB 원문을 직접 복호화해 같은 계약을 검증한다.
-      assertThat(encryptionService.decrypt(rawSystemSettingValue(dsl, "ai.api_key")))
+      // DB 원문을 직접 복호화해 계약을 검증한다.
+      assertThat(encryptionService.decrypt(rawSystemSettingValue(dsl, "embedding.api_key")))
           .isEqualTo("sk-live-secret-value");
     } finally {
-      restoreSystemSettingValue(dsl, "ai.api_key", original);
+      restoreSystemSettingValue(dsl, "embedding.api_key", original);
     }
   }
 

@@ -62,7 +62,7 @@ public class TenantSettingsRepository {
   private static final Field<LocalDateTime> UPDATED_AT =
       field(name("tenant_settings", "updated_at"), LocalDateTime.class);
 
-  /** 현재 테넌트가 이 키를 오버라이드했는지. 없으면 빈 값 — 플랫폼 기본값을 쓰라는 뜻이다. */
+  /** 현재 테넌트가 이 키를 오버라이드했는지. 없으면 빈 값 — 플랫폼 기본값(AI 키는 코드 기본값)을 쓰라는 뜻이다. */
   public Optional<String> findValue(String key) {
     return dsl.select(VALUE).from(TENANT_SETTINGS).where(KEY.eq(key)).fetchOptional(VALUE);
   }

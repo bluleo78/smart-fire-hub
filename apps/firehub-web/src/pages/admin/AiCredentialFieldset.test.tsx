@@ -11,19 +11,15 @@
  * 요소가 보이는지만 확인하는 테스트는 이 화면에서 가치가 없다(사용자가 스스로 검증할 수 없는
  * 주장일수록 그렇다).
  */
-import { act, render, renderHook, screen } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { UseAiCredentialFormResult } from '../../hooks/useAiCredentialForm';
-import { useSavedAgentType } from '../../hooks/useSavedAgentType';
-import type { AgentType } from '../../lib/ai-credential';
 import {
-  buildSaveConfirm,
-  credentialIsDirty,
   hasTypeChangedFromSaved,
   stripProviderPrefix,
-  willDeleteOnSave,
+  typeChangeConfirmDescription,
   withProviderPrefix,
 } from '../../lib/ai-credential-screen';
 import { AiCredentialFieldset, OpencodeModelField } from './AiCredentialFieldset';
@@ -31,16 +27,15 @@ import { AiCredentialFieldset, OpencodeModelField } from './AiCredentialFieldset
 /**
  * `UseAiCredentialFormResult` 조립기 — 기본값은 "테넌트가 opencode 를 직접 설정해 둔, 저장된
  * API 키가 있는 상태"다(가장 많은 분기를 건드리는 상태를 기본으로 둔다). 개별 테스트는
- * `overrides` 로 필요한 축만 바꾼다.
+ * `overrides` 로 필요한 축만 바꾼다. `savedAgentType` 을 주지 않으면 지금 유형과 같다고 보고,
+ * `typeChanged` 는 훅과 같은 규칙(`hasTypeChangedFromSaved`)으로 파생한다.
  */
 function makeCred(overrides: Partial<UseAiCredentialFormResult> = {}): UseAiCredentialFormResult {
-  return {
+  const base: UseAiCredentialFormResult = {
     isLoading: false,
     loadFailed: false,
     isLocked: false,
-    plane: 'tenant',
-    tenantOwned: true,
-    setPlane: vi.fn(),
+    configured: true,
     agentType: 'opencode',
     setAgentType: vi.fn(),
     payload: { providerId: 'openai', baseURL: 'https://api.openai.com/v1', reasoningEffort: '' },
@@ -56,23 +51,26 @@ function makeCred(overrides: Partial<UseAiCredentialFormResult> = {}): UseAiCred
     save: vi.fn(async () => true),
     staleNotice: null,
     reset: vi.fn(),
+    savedAgentType: 'opencode',
+    typeChanged: false,
     ...overrides,
+  };
+  const savedAgentType = overrides.savedAgentType ?? base.agentType;
+  return {
+    ...base,
+    savedAgentType,
+    typeChanged:
+      overrides.typeChanged ?? hasTypeChangedFromSaved(base.agentType, savedAgentType, base.configured),
   };
 }
 
-function renderFieldset(
-  cred: UseAiCredentialFormResult,
-  agentType: AgentType = cred.agentType,
-  resolvedModel = '',
-) {
+function renderFieldset(cred: UseAiCredentialFormResult) {
   return render(
     <AiCredentialFieldset
       cred={cred}
-      savedAgentType={agentType}
       authStatus={null}
       isVerifying={false}
       onVerifyAuth={vi.fn()}
-      resolvedModel={resolvedModel}
     />,
   );
 }
@@ -81,7 +79,7 @@ describe('AiCredentialFieldset — 비밀 필드 표시', () => {
   /**
    * <b>변종: `secretFieldNames` 를 필터링 전 원본으로 렌더한다.</b>
    *
-   * `cred.secretFieldNames` 는 훅이 이미 유형·평면 불일치를 걸러 낸 값이다(Ruling #38). 이
+   * `cred.secretFieldNames` 는 훅이 이미 유형 불일치를 걸러 낸 값이다. 이
    * 테스트는 <b>필터링된 뒤에도 값이 없는 상황</b>(`secretFieldNames: []`)을 흉내 낸다 — 만약
    * 컴포넌트가 `secretFieldNames` 대신 어떤 이유로든 필터를 우회한 값(예: 항상 "값 있음"으로
    * 가정)을 쓴다면 이 단언이 깨진다. "설정된 값이 없습니다"가 반드시 보여야 한다.
@@ -108,7 +106,6 @@ describe('AiCredentialFieldset — 비밀 필드 표시', () => {
         payload: {},
         secretFieldNames: ['oauthToken'],
       }),
-      'sdk',
     );
     const noneTexts = screen.getAllByText('설정된 값이 없습니다.');
     expect(noneTexts).toHaveLength(1); // API 키 쪽만 "없음" — OAuth 토큰 쪽은 "설정되어 있음"
@@ -129,149 +126,53 @@ describe('AiCredentialFieldset — 비밀 필드 표시', () => {
   });
 });
 
-describe('AiCredentialFieldset — 라디오는 폼 상태다(즉시 DELETE 없음)', () => {
+describe('AiCredentialFieldset — 테넌트 전용 단일 폼(#706)', () => {
   /**
-   * <b>변종: 라디오를 "플랫폼 설정을 사용"으로 클릭하면 그 자리에서 `cred.save()`(또는 DELETE)를
-   * 부른다.</b> 설계서 §213: "전환은 폼 상태다 — 즉시 삭제하면 실수로 한 번 누른 대가가 모든
-   * 비밀 재입력이다." 클릭은 `cred.setPlane('platform')` 만 불러야 하고, 저장/삭제는 페이지의
-   * "저장" 버튼(그리고 확인 다이얼로그)을 거쳐야 한다 — 이 컴포넌트에는 애초에 `save` 호출
-   * 지점이 없다.
+   * <b>변종: 옛 "플랫폼 설정을 사용 / 우리 조직이 직접 설정" 라디오를 남겨 둔다.</b> 플랫폼 평면이
+   * 사라져 "플랫폼 값"을 고를 곳이 없다 — 라디오가 남아 있으면 존재하지 않는 선택지를 약속한다.
    */
-  it('"플랫폼 설정을 사용" 라디오 클릭은 setPlane 만 부르고 save/delete 는 부르지 않는다', async () => {
-    const user = userEvent.setup();
-    const cred = makeCred({ plane: 'tenant', tenantOwned: true });
-    renderFieldset(cred);
-
-    await user.click(screen.getByRole('radio', { name: /플랫폼 설정을 사용/ }));
-
-    expect(cred.setPlane).toHaveBeenCalledExactlyOnceWith('platform');
-    expect(cred.save).not.toHaveBeenCalled();
+  it('라디오가 없고 입력 폼(유형 Select + 유형별 필드)이 항상 보인다', () => {
+    renderFieldset(makeCred({ configured: true }));
+    expect(screen.queryByRole('radio')).not.toBeInTheDocument();
+    expect(screen.queryByText(/플랫폼 설정을 사용/)).not.toBeInTheDocument();
+    expect(screen.getByLabelText('에이전트 유형')).toBeInTheDocument();
+    expect(screen.getByLabelText('기본 URL')).toBeInTheDocument();
   });
 
-  it('"우리 조직이 직접 설정" 라디오 클릭은 setPlane 만 부른다', async () => {
-    const user = userEvent.setup();
-    const cred = makeCred({ plane: 'platform', tenantOwned: false, secretFieldNames: [] });
-    renderFieldset(cred);
-
-    await user.click(screen.getByRole('radio', { name: /우리 조직이 직접 설정/ }));
-
-    expect(cred.setPlane).toHaveBeenCalledExactlyOnceWith('tenant');
-    expect(cred.save).not.toHaveBeenCalled();
-  });
-});
-
-describe('AiCredentialFieldset — 라디오 설명 문구는 스펙이 고정한 그대로다(item 4, fix round 1)', () => {
   /**
-   * <b>변종: "우리 조직이 직접 설정" 설명을 "사용량도 우리 계정으로 청구됩니다."로 바꾼다.</b>
-   * 브리프·설계서 둘 다 이 문장을 명시적으로 금지한다 — cli(구독 OAuth)·사내 엔드포인트에서는
-   * 거짓이다. 이전에는 어떤 테스트도 이 설명 문구의 <b>정확한 내용</b>을 확인하지 않아, 이
-   * 변종을 넣어도 전부 초록이었다.
+   * <b>변종: `configured:false` 인데 안내 없이 빈 폼만 그린다.</b> 플랫폼 폴백이 없으므로 미설정은
+   * 곧 AI 중단이다 — 사용자가 "왜 AI 가 안 되는지"를 이 화면에서 알 수 있어야 한다. 문장을
+   * 정확히 고정한다(부분 일치로 두면 뒷부분 "설정해야 …"가 잘려도 초록이 된다).
    */
-  it('두 라디오의 설명 문구가 스펙 문구와 정확히 같다(부분 일치 아님)', () => {
-    renderFieldset(makeCred({ plane: 'tenant', tenantOwned: false, secretFieldNames: [] }));
-    expect(
-      screen.getByText(
-        '플랫폼 운영자가 정한 값이 그대로 적용됩니다. 운영자가 값을 바꾸면 우리 조직에도 함께 반영됩니다.',
-      ),
-    ).toBeInTheDocument();
-    expect(screen.getByText('AI 호출이 우리 조직 자격증명으로 나갑니다.')).toBeInTheDocument();
-    // 금지된 과금 문구가 어디에도 없어야 한다.
-    expect(screen.queryByText(/사용량도 우리 계정으로 청구/)).not.toBeInTheDocument();
+  it('configured=false 면 미설정 안내를 전체 문장 그대로 보여주고, 입력 폼도 함께 보인다', () => {
+    renderFieldset(makeCred({ configured: false, agentType: 'sdk', payload: {}, secretFieldNames: [] }));
+    expect(screen.getByText('AI 설정이 없습니다. 설정해야 AI 기능을 쓸 수 있습니다.')).toBeInTheDocument();
+    // 안내만 보여주고 폼을 숨기면 설정할 방법이 없다.
+    expect(screen.getByLabelText('OAuth 토큰')).toBeEnabled();
+    expect(screen.getByLabelText('API 키')).toBeEnabled();
+  });
+
+  it('configured=true 면 미설정 안내가 없다', () => {
+    renderFieldset(makeCred({ configured: true }));
+    expect(screen.queryByText(/AI 설정이 없습니다/)).not.toBeInTheDocument();
   });
 });
 
-describe('willDeleteOnSave / credentialIsDirty — 순수 로직', () => {
-  it('plane=platform + tenantOwned=true 일 때만 저장이 DELETE 를 일으킨다고 본다', () => {
-    expect(willDeleteOnSave({ plane: 'platform', tenantOwned: true })).toBe(true);
-    // 플랫폼에도 애초에 테넌트 문서가 없으면(tenantOwned=false) 지울 것이 없다
-    expect(willDeleteOnSave({ plane: 'platform', tenantOwned: false })).toBe(false);
-    expect(willDeleteOnSave({ plane: 'tenant', tenantOwned: true })).toBe(false);
-  });
-
-  it('라디오를 tenant→platform→tenant 로 왕복하면(원래 평면으로 복귀) dirty 가 아니다', () => {
-    // tenantOwned=true 인 문서에서 라디오만 왕복했고 입력은 안 건드린 상태
-    expect(
-      credentialIsDirty({ plane: 'tenant', tenantOwned: true, hasUnsavedInput: false }),
-    ).toBe(false);
-  });
-
-  it('라디오가 실제 소유 평면과 다르면(아직 저장 전) dirty 다', () => {
-    expect(
-      credentialIsDirty({ plane: 'platform', tenantOwned: true, hasUnsavedInput: false }),
-    ).toBe(true);
-  });
-
-  it('타이핑만 하고 라디오는 그대로여도 dirty 다', () => {
-    expect(
-      credentialIsDirty({ plane: 'tenant', tenantOwned: true, hasUnsavedInput: true }),
-    ).toBe(true);
-  });
-});
-
-describe('buildSaveConfirm — 저장 확인 다이얼로그 문구', () => {
-  it('플랫폼으로 되돌리는 저장은 확인이 필요하고, "재정의"/과금 문구를 쓰지 않는다', () => {
-    const confirm = buildSaveConfirm({
-      willDelete: true,
-      typeChanged: false,
-      hasUnsavedInput: false,
-      agentType: 'opencode',
-      savedAgentType: 'opencode',
-    });
-    expect(confirm).not.toBeNull();
-    expect(confirm!.description).not.toMatch(/재정의/);
-    expect(confirm!.description).not.toMatch(/사용량도 우리 계정으로 청구/);
-  });
-
-  it('미저장 입력이 있으면 "함께 사라집니다" 문장이 덧붙는다', () => {
-    const withUnsaved = buildSaveConfirm({
-      willDelete: true,
-      typeChanged: false,
-      hasUnsavedInput: true,
-      agentType: 'opencode',
-      savedAgentType: 'opencode',
-    });
-    const withoutUnsaved = buildSaveConfirm({
-      willDelete: true,
-      typeChanged: false,
-      hasUnsavedInput: false,
-      agentType: 'opencode',
-      savedAgentType: 'opencode',
-    });
-    expect(withUnsaved!.description).toMatch(/아직 저장하지 않은 내용도 함께 사라집니다/);
-    expect(withoutUnsaved!.description).not.toMatch(/아직 저장하지 않은 내용도 함께 사라집니다/);
-  });
-
-  it('유형만 바뀌었으면(플랫폼 삭제 아님) 별도의 유형 전환 확인 문구를 준다', () => {
-    const confirm = buildSaveConfirm({
-      willDelete: false,
-      typeChanged: true,
-      hasUnsavedInput: true,
-      agentType: 'sdk',
-      savedAgentType: 'opencode',
-    });
-    expect(confirm).not.toBeNull();
-    expect(confirm!.description).toMatch(/OpenCode에서 Claude Agent SDK\(으\)로/);
-  });
-
-  it('아무 파괴적 전환도 없으면 확인 없이 즉시 저장(null)한다', () => {
-    expect(
-      buildSaveConfirm({
-        willDelete: false,
-        typeChanged: false,
-        hasUnsavedInput: true,
-        agentType: 'sdk',
-        savedAgentType: 'sdk',
-      }),
-    ).toBeNull();
+describe('typeChangeConfirmDescription — 저장 확인 다이얼로그 문구', () => {
+  it('유형 전환 확인 문구를 준다 — "재정의"/과금 문구는 쓰지 않는다', () => {
+    const description = typeChangeConfirmDescription('opencode', 'sdk');
+    expect(description).toMatch(/OpenCode에서 Claude Agent SDK\(으\)로/);
+    expect(description).not.toMatch(/재정의/);
+    expect(description).not.toMatch(/사용량도 우리 계정으로 청구/);
   });
 });
 
 describe('hasTypeChangedFromSaved', () => {
-  it('테넌트 문서가 아직 없으면(tenantOwned=false) 유형이 달라도 경고하지 않는다 — 잃을 게 없다', () => {
+  it('테넌트 자격증명이 아직 없으면(configured=false) 유형이 달라도 경고하지 않는다 — 잃을 게 없다', () => {
     expect(hasTypeChangedFromSaved('opencode', 'sdk', false)).toBe(false);
   });
 
-  it('테넌트 문서가 있고 유형이 다르면 경고한다', () => {
+  it('테넌트 자격증명이 있고(configured=true) 유형이 다르면 경고한다', () => {
     expect(hasTypeChangedFromSaved('opencode', 'sdk', true)).toBe(true);
   });
 
@@ -282,139 +183,63 @@ describe('hasTypeChangedFromSaved', () => {
 
 describe('AiCredentialFieldset — 유형 전환 경고(설계서 §193)', () => {
   it('저장된 유형과 다르면 Select 아래에 정적 경고가 뜬다', () => {
-    const cred = makeCred({ agentType: 'sdk', payload: {}, secretFieldNames: [] });
-    renderFieldset(cred, 'opencode' /* savedAgentType */);
+    const cred = makeCred({ agentType: 'sdk', savedAgentType: 'opencode', payload: {}, secretFieldNames: [] });
+    renderFieldset(cred);
     expect(screen.getByText(/유형을 바꾸면 이전 유형\(OpenCode\)의 저장된 비밀이/)).toBeInTheDocument();
   });
 
   it('저장된 유형과 같으면 경고가 없다', () => {
     const cred = makeCred({ agentType: 'sdk', payload: {}, secretFieldNames: [] });
-    renderFieldset(cred, 'sdk');
+    renderFieldset(cred);
     expect(screen.queryByText(/저장된 비밀이/)).not.toBeInTheDocument();
   });
-});
 
-describe('AiCredentialFieldset — 플랫폼 설정을 사용(입력칸 없음, §209)', () => {
-  /**
-   * <b>변종: 플랫폼에도 값이 없을 때 빈 정의 목록(또는 아무 안내도 없이 공백)을 그린다.</b>
-   * 설계서 §210: "플랫폼에도 자격증명이 없으면 빈 목록이 아니라 [...] 를 보여준다." Ruling #15가
-   * 이 판정을 `secretFieldNames` 가 비었는지로 유도하라고 명시한다.
-   *
-   * <b>전체 문장을 정확히 고정한다</b>(item 4, fix round 1) — 이전에는 접두 regex 만 확인해
-   * "직접 설정하거나 플랫폼 운영자에게 요청하세요." 뒷부분을 잘라내도 초록이었다. 이 문장이
-   * 플랫폼에 값이 전혀 없을 때 사용자가 다음에 뭘 해야 하는지 알려주는 유일한 안내라, 잘리면
-   * "AI 가 왜 안 되는지"는 알아도 "어떻게 고치는지"는 사라진다.
-   */
-  it('플랫폼에도 값이 없으면 빈 목록 대신 "AI 기능이 동작하지 않습니다" 안내를 전체 문장 그대로 보여준다', () => {
+  it('미설정(configured=false)이면 유형이 달라도 경고가 없다 — 폐기될 비밀이 없다', () => {
     const cred = makeCred({
-      plane: 'platform',
-      tenantOwned: false,
-      secretFieldNames: [],
+      configured: false,
+      agentType: 'opencode',
+      savedAgentType: 'sdk',
       payload: {},
+      secretFieldNames: [],
     });
     renderFieldset(cred);
-    expect(
-      screen.getByText(
-        '플랫폼에 설정된 값이 없습니다 — AI 기능이 동작하지 않습니다. 직접 설정하거나 플랫폼 운영자에게 요청하세요.',
-      ),
-    ).toBeInTheDocument();
-    // 값이 있는 것처럼 보이는 정의 목록(dl)이 함께 그려지면 안 된다
-    expect(screen.queryByRole('term')).not.toBeInTheDocument();
-  });
-
-  it('플랫폼에 값이 있으면 정의 목록(유형·payload·설정된 비밀)을 보여준다', () => {
-    const cred = makeCred({
-      plane: 'platform',
-      tenantOwned: false,
-      agentType: 'opencode',
-      payload: { providerId: 'openai', baseURL: 'https://api.openai.com/v1' },
-      secretFieldNames: ['apiKey'],
-    });
-    renderFieldset(cred);
-    expect(screen.getByText('OpenCode')).toBeInTheDocument();
-    expect(screen.getByText('https://api.openai.com/v1')).toBeInTheDocument();
-    expect(screen.getByText('지금 적용 중인 플랫폼 값입니다.')).toBeInTheDocument();
-  });
-
-  /**
-   * <b>변종: "지금 적용 중" 정의 목록에서 모델 행을 뺀다</b>(Ruling #43, fix round 1). `ai.model`
-   * 은 `ai.credential` 문서에 없어 이 컴포넌트가 원천적으로 모르지만, 페이지가 `resolvedModel`
-   * prop 으로 <b>해석된</b> 값을 내려준다 — 목록에서 빠지면 "지금 적용 중인 값" 이 모델만 쏙
-   * 빠진 반쪽짜리가 된다.
-   */
-  it('정의 목록에 "모델" 행이 resolvedModel 값으로 나온다', () => {
-    const cred = makeCred({
-      plane: 'platform',
-      tenantOwned: false,
-      agentType: 'opencode',
-      payload: { providerId: 'openai', baseURL: 'https://api.openai.com/v1' },
-      secretFieldNames: ['apiKey'],
-    });
-    renderFieldset(cred, cred.agentType, 'openai/gpt-4o');
-    expect(screen.getByText('모델')).toBeInTheDocument();
-    expect(screen.getByText('openai/gpt-4o')).toBeInTheDocument();
-  });
-
-  /**
-   * <b>변종: `tenantOwned===true` 인 상태(라디오만 막 "플랫폼"으로 옮겼고 저장 전)에서도 진짜
-   * 플랫폼 값인 것처럼 정의 목록을 그린다.</b> 이 순간 `cred.payload`/`secretFieldNames` 는
-   * 여전히 <b>테넌트 문서</b>를 반영하므로(Ruling #38 필터가 이 경우엔 값을 그대로 통과시킨다 —
-   * `agentType`/`plane` 이 원본과 아직 일치하기 때문) 그걸 "플랫폼 값"이라고 부르면 거짓말이다.
-   */
-  it('tenantOwned=true 인데 라디오만 플랫폼으로 옮긴 상태 — 정의 목록 대신 예고 문구만 보여준다', () => {
-    const cred = makeCred({
-      plane: 'platform',
-      tenantOwned: true,
-      agentType: 'opencode',
-      payload: { providerId: 'openai', baseURL: 'https://api.openai.com/v1' },
-      secretFieldNames: ['apiKey'],
-    });
-    renderFieldset(cred);
-    expect(screen.getByText('저장하면 플랫폼 운영자가 정한 값이 적용됩니다.')).toBeInTheDocument();
-    expect(screen.queryByText('https://api.openai.com/v1')).not.toBeInTheDocument();
-    expect(screen.queryByText(/AI 기능이 동작하지 않습니다/)).not.toBeInTheDocument();
-  });
-
-  it('플랫폼 상태에는 입력칸이 없다', () => {
-    const cred = makeCred({ plane: 'platform', tenantOwned: false, secretFieldNames: ['apiKey'] });
-    renderFieldset(cred);
-    expect(screen.queryByLabelText('API 키')).not.toBeInTheDocument();
-    expect(screen.queryByLabelText('기본 URL')).not.toBeInTheDocument();
+    expect(screen.queryByText(/저장된 비밀이/)).not.toBeInTheDocument();
   });
 });
 
 describe('AiCredentialFieldset — 최초 조회 실패(Important #1, fix round 1)', () => {
   /**
-   * <b>변종: `loadFailed` 를 무시하고 평소 렌더 경로(라디오 + 평면 요약)를 그대로 그린다.</b>
-   * GET 이 실패하면 훅은 안전한 기본값(`plane:'platform', tenantOwned:false,
-   * secretFieldNames:[]`)으로 주저앉는다 — 그 기본값을 평소처럼 그리면 "플랫폼에 설정된 값이
-   * 없습니다"를 <b>사실</b>인 것처럼 보여주게 된다(실은 몰라서 못 그리는 것뿐인데). 토스트는
-   * 지나가 버리므로, 이 지속적인 실패 문구가 화면에 남아야 한다 — 그리고 평소 라디오/정의
-   * 목록은 <b>같이 그려지면 안 된다</b>(반쪽 사실 + 반쪽 안내가 섞이면 더 헷갈린다).
+   * <b>변종: `loadFailed` 를 무시하고 평소 렌더 경로(미설정 안내 + 폼)를 그대로 그린다.</b>
+   * GET 이 실패하면 훅은 안전한 초기값(`configured:false, secretFieldNames:[]`)으로 주저앉는다 —
+   * 그 초기값을 평소처럼 그리면 "AI 설정이 없습니다"를 <b>사실</b>인 것처럼 보여주게 된다(실은
+   * 몰라서 못 그리는 것뿐인데). 토스트는 지나가 버리므로 지속적인 실패 문구가 남아야 하고, 평소
+   * 폼·미설정 안내는 <b>같이 그려지면 안 된다</b>.
    */
-  it('loadFailed 면 라디오 대신 지속적인 실패 안내를 보여준다', () => {
+  it('loadFailed 면 폼·미설정 안내 대신 지속적인 실패 안내를 보여준다', () => {
     const cred = makeCred({
       loadFailed: true,
-      plane: 'platform',
-      tenantOwned: false,
+      configured: false,
       secretFieldNames: [],
       payload: {},
     });
     renderFieldset(cred);
     expect(screen.getByText(/자격증명 정보를 불러오지 못했습니다/)).toBeInTheDocument();
-    // 실패 상태의 기본값을 "사실"처럼 그리는 평소 경로가 함께 나오면 안 된다.
-    expect(screen.queryByRole('radio')).not.toBeInTheDocument();
-    expect(screen.queryByText(/AI 기능이 동작하지 않습니다/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/AI 설정이 없습니다/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('에이전트 유형')).not.toBeInTheDocument();
   });
 });
 
-describe('AiCredentialFieldset — 잠금 상태', () => {
-  it('isLocked 이면 라디오 둘 다 비활성 + PlatformLockedNote', () => {
-    const cred = makeCred({ isLocked: true });
+describe('AiCredentialFieldset — 잠금 상태(GET 403)', () => {
+  /**
+   * <b>변종: 403 후 초기값(`configured:false`)으로 미설정 안내를 그린다.</b> 권한이 없어 볼 수
+   * 없는 것을 "설정이 없다"고 단정하면 loadFailed 와 같은 종류의 거짓이 된다.
+   */
+  it('isLocked 이면 권한 안내만 보여주고 폼·미설정 안내는 그리지 않는다', () => {
+    const cred = makeCred({ isLocked: true, configured: false, secretFieldNames: [], payload: {} });
     renderFieldset(cred);
-    expect(screen.getByRole('radio', { name: /플랫폼 설정을 사용/ })).toBeDisabled();
-    expect(screen.getByRole('radio', { name: /우리 조직이 직접 설정/ })).toBeDisabled();
-    expect(screen.getByText('플랫폼 운영자만 변경할 수 있는 항목입니다.')).toBeInTheDocument();
+    expect(screen.getByText('AI 자격증명을 조회·변경할 권한이 없습니다.')).toBeInTheDocument();
+    expect(screen.queryByText(/AI 설정이 없습니다/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('에이전트 유형')).not.toBeInTheDocument();
   });
 });
 
@@ -425,7 +250,7 @@ describe('AiCredentialFieldset — opencode 는 "인증 확인" 을 숨긴다', 
   });
 
   it('sdk 유형에는 인증 확인 버튼이 둘(OAuth·API 키) 있다', () => {
-    renderFieldset(makeCred({ agentType: 'sdk', payload: {}, secretFieldNames: [] }), 'sdk');
+    renderFieldset(makeCred({ agentType: 'sdk', payload: {}, secretFieldNames: [] }));
     expect(screen.getAllByRole('button', { name: /인증 확인/ })).toHaveLength(2);
   });
 });
@@ -458,7 +283,7 @@ describe('OpencodeModelField — 모델 칸 4상태(설계서 §195)', () => {
   function renderModel(cred: UseAiCredentialFormResult, modelValue = '') {
     const onModelChange = vi.fn();
     const view = render(
-      <OpencodeModelField cred={cred} modelValue={modelValue} onModelChange={onModelChange} disabled={false} />,
+      <OpencodeModelField cred={cred} modelValue={modelValue} onModelChange={onModelChange} />,
     );
     return { onModelChange, ...view };
   }
@@ -567,72 +392,13 @@ describe('OpencodeModelField — 모델 칸 4상태(설계서 §195)', () => {
     expect(onModelChange).toHaveBeenCalledWith('openai/g');
   });
 
-  /**
-   * <b>변종: 플랫폼 평면에서 모델 칸이 여전히 비활성 빈 칸(4상태의 "미로드")이다</b>(Ruling
-   * #44, fix round 1). 플랫폼 평면(§209)엔 기본 URL·API 키 입력이 없어 `canLoadModels` 가 항상
-   * false 다 — 4상태 로직을 그대로 적용하면 모델을 절대 정할 수 없다. §48이 약속한 "플랫폼
-   * 자격증명 + 우리 모델" 조합이 막히면 이 테스트가 잡는다.
-   */
-  it('플랫폼 평면이면 모델이 항상 편집 가능한 자유 입력이다(canLoadModels 와 무관)', async () => {
-    const user = userEvent.setup();
-    const cred = makeCred({
-      plane: 'platform',
-      tenantOwned: false,
-      models: null,
-      modelsError: null,
-      canLoadModels: false,
-      payload: { providerId: 'openai', baseURL: '', reasoningEffort: '' },
-    });
-    const { onModelChange } = renderModel(cred, 'openai/gpt-4o');
-    const input = screen.getByPlaceholderText('예: gpt-4o');
-    expect(input).toBeEnabled();
-    expect(input).toHaveValue('gpt-4o');
-    // 이 렌더는 상태 없는 prop 주입이라 매 keystroke 마다 value 가 bareModel 로 되돌아간다(기존
-    // "자유 입력에 맨 모델 id..." 테스트와 같은 이유) — 한 글자만 쳐서 접두사 조합만 확인한다.
-    await user.type(input, '!');
-    expect(onModelChange).toHaveBeenCalledWith('openai/gpt-4o!');
-  });
-
-  /**
-   * <b>변종: 플랫폼 평면에서도 "모델 불러오기" 버튼과 "기본 URL과 API 키를 입력하면..." 힌트를
-   * 그대로 그린다.</b> 그 평면엔 기본 URL·API 키 입력 자체가 없으니, 버튼은 영원히 눌리지 않고
-   * 힌트는 존재하지 않는 입력칸을 가리키는 거짓 안내가 된다.
-   */
-  it('플랫폼 평면에는 "모델 불러오기" 버튼도, 그 안내 문구도 없다', () => {
-    renderModel(
-      makeCred({
-        plane: 'platform',
-        tenantOwned: false,
-        models: null,
-        modelsError: null,
-        canLoadModels: false,
-        payload: { providerId: 'openai', baseURL: '', reasoningEffort: '' },
-      }),
-      'openai/gpt-4o',
-    );
-    expect(screen.queryByRole('button', { name: '모델 불러오기' })).not.toBeInTheDocument();
+  it('"기본 URL과 API 키를 입력하면" 안내는 canLoadModels=false 일 때만 보인다', () => {
+    const { unmount } = renderModel(makeCred({ canLoadModels: false }));
+    expect(screen.getByText('기본 URL과 API 키를 입력하면 모델을 불러올 수 있습니다.')).toBeInTheDocument();
+    unmount();
+    renderModel(makeCred({ canLoadModels: true }));
     expect(
       screen.queryByText('기본 URL과 API 키를 입력하면 모델을 불러올 수 있습니다.'),
     ).not.toBeInTheDocument();
-  });
-});
-
-describe('useSavedAgentType — 서버와 동기화된 유형 스냅샷', () => {
-  it('동기화된 상태에서만 갱신되고, dirty 인 동안은 마지막 값을 유지한다', () => {
-    let cred = makeCred({ agentType: 'sdk', plane: 'tenant', tenantOwned: true, hasUnsavedInput: false });
-    const view = renderHook(({ c }) => useSavedAgentType(c), { initialProps: { c: cred } });
-    expect(view.result.current).toBe('sdk');
-
-    // 사용자가 로컬에서 유형을 바꾼다(아직 저장 전 — dirty)
-    cred = { ...cred, agentType: 'opencode', hasUnsavedInput: true };
-    act(() => view.rerender({ c: cred }));
-    // dirty 인 동안은 "저장된 값"이 그대로 sdk 여야 한다 — 지금 값(opencode)으로 따라가면
-    // 비교 기준 자체가 사라져 유형 전환 경고가 절대 뜨지 않는다.
-    expect(view.result.current).toBe('sdk');
-
-    // 저장이 성공해 훅이 재조회로 폼을 다시 채웠다고 가정 — dirty 가 풀리고 opencode 로 동기화
-    cred = { ...cred, hasUnsavedInput: false };
-    act(() => view.rerender({ c: cred }));
-    expect(view.result.current).toBe('opencode');
   });
 });

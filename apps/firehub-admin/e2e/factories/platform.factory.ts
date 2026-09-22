@@ -1,5 +1,4 @@
 import type {
-  PlatformAiCredentialResponse,
   PlatformMeResponse,
   PlatformTokenResponse,
   PlatformUserResponse,
@@ -75,15 +74,11 @@ export function createSetting(key: string, value: string | null, description = '
 }
 
 /**
- * 서버 시드 15행(타입형 AI 설정 전환, Task 13). `ai.session_max_tokens` 는 **일부러 빠져
- * 있다** — 어떤 마이그레이션도 시드하지 않는다. 이름은 `SEEDED_18` 그대로 둔다 — 옛 18행 시절의
- * 이름이지만, 여러 스펙 파일이 이 이름으로 import 하고 있어 이름을 바꾸면 이 리팩터와 무관한
- * import 경로 diff 가 커진다(가치보다 위험이 크다).
+ * 플랫폼 설정 응답(서버 시드 10행: SMTP 6 + 임베딩 4). 이름은 `SEEDED_18` 그대로 둔다 — 옛 18행
+ * 시절의 이름이지만, 여러 스펙 파일이 이 이름으로 import 하고 있어 이름을 바꾸면 무관한 import
+ * 경로 diff 가 커진다.
  *
- * `ai.api_key`/`ai.agent_type`/`ai.cli_oauth_token` 3키는 더 이상 여기 없다 — `ai.credential`
- * 문서로 옮겨갔고, `AiCredentialSection` 이 별도 엔드포인트(`GET/PUT
- * /api/platform/settings/ai-credential`)로 관리한다. 그 문서는 `createAiCredential` 로 따로
- * 만든다.
+ * AI 설정(`ai.*`)은 여기 없다 — 워크스페이스 전용이라 서버가 플랫폼 설정 응답에서 뺀다.
  *
  * `.spec.ts` 가 아니라 여기 두는 이유(리뷰 L2): 스펙 파일에서 `export` 하면 Playwright 가 그
  * 파일을 테스트 파일로도 등록해 다른 스펙이 이걸 `import` 하는 순간 settings.spec.ts 의 테스트가
@@ -91,11 +86,6 @@ export function createSetting(key: string, value: string | null, description = '
  * 팩토리 모듈은 애초에 테스트를 export 하지 않으므로 이 문제가 없다.
  */
 export const SEEDED_18: SettingResponse[] = [
-  createSetting('ai.model', 'claude-sonnet-5', 'AI 에이전트 사용 모델'),
-  createSetting('ai.max_turns', '20', '최대 턴 수'),
-  createSetting('ai.system_prompt', '당신은 소방 데이터 분석가입니다.', '시스템 프롬프트'),
-  createSetting('ai.temperature', '0.7', '샘플링 온도'),
-  createSetting('ai.max_tokens', '8192', '최대 응답 토큰'),
   createSetting('smtp.host', 'smtp.example.com', 'SMTP 호스트'),
   createSetting('smtp.port', '587', 'SMTP 포트'),
   createSetting('smtp.username', 'mailer', 'SMTP 사용자'),
@@ -107,18 +97,3 @@ export const SEEDED_18: SettingResponse[] = [
   createSetting('embedding.base_url', 'http://localhost:11434', '임베딩 base URL'),
   createSetting('embedding.api_key', '', '임베딩 API Key'),
 ];
-
-/**
- * `GET /api/platform/settings/ai-credential` 모킹 응답. `PlatformAiCredentialResponse` 에는
- * (테넌트 평면과 달리) `tenantOwned` 가 없다 — 상위 평면이 없어 의미가 없다.
- */
-export function createAiCredential(
-  overrides: Partial<PlatformAiCredentialResponse> = {},
-): PlatformAiCredentialResponse {
-  return {
-    agentType: 'sdk',
-    payload: {},
-    secretFieldNames: [],
-    ...overrides,
-  };
-}

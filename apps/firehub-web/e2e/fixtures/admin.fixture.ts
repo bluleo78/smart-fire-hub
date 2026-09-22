@@ -192,20 +192,21 @@ export async function setupSettingsMocks(
 }
 
 /**
- * `GET/PUT/DELETE /api/v1/settings/ai-credential` 모킹 — Task 12 이 새로 여는 전용 문서 자원.
+ * `GET/PUT /api/v1/settings/ai-credential` 모킹 — Task 12 이 새로 여는 전용 문서 자원.
  *
  * 옛 3키(`ai.agent_type`/`ai.api_key`/`ai.cli_oauth_token`)는 `setupSettingsMocks` 의 `prefix=ai`
  * 목록에 얹혔지만(문자열 키·값 배열), `ai.credential` 은 하위 필드(secret)를 가진 JSON 문서 하나라
- * 경로 자체가 다르고(`/settings/ai-credential`), 세 메서드(GET/PUT/DELETE)가 그 경로 하나를
- * 공유한다 — `prefix` 분기가 필요 없는 대신, 메서드 분기가 필요하다.
+ * 경로 자체가 다르고(`/settings/ai-credential`), 메서드(GET/PUT)가 그 경로 하나를 공유한다 —
+ * `prefix` 분기가 필요 없는 대신, 메서드 분기가 필요하다.
  *
  * `get` 은 `setupSettingsMocks` 의 `SettingsSource` 와 같은 규약(고정값 | 재평가 함수)을 따른다.
- * `PUT`/`DELETE` 는 호출 자체가 브리프의 핵심 단언 대상이라("라디오만 바꾸고 저장하지 않으면
- * DELETE 가 없다") 캡처해 반환한다 — `captureOverrideDeletes` 와 같은 이유지만, 그쪽은 키마다
- * 다른 경로(`/settings/overrides/{key}`)에 3번 나가는 번들이고 이쪽은 단일 문서라 한 번만 나간다.
+ * `PUT` 은 호출 자체가 핵심 단언 대상이라 캡처해 반환한다. <b>`DELETE` 는 서버에서 제거됐다</b>
+ * (#706 — 자격증명은 테넌트 전용이라 삭제 경로가 없다). 실제 서버처럼 405 로 응답하되 호출 횟수를
+ * `deleteCount` 로 세어, 화면이 더는 DELETE 를 보내지 않는다는 것을 스펙이 런타임으로 단언할 수
+ * 있게 한다.
  *
  * 반환하는 `calls` 는 <b>같은 객체를 계속 변형한다</b> — 스펙이 `get` 함수 안에서
- * `calls.deleteCount > 0 ? 저장후상태 : 저장전상태` 처럼 자기 자신을 참조해 "저장한 뒤에만 새
+ * `calls.puts.length > 0 ? 저장후상태 : 저장전상태` 처럼 자기 자신을 참조해 "저장한 뒤에만 새
  * 값을 준다"는 재조회 응답을 만들 수 있다(호출 시점에는 이미 `const calls = await
  * mockAiCredential(...)` 대입이 끝나 있으므로 TDZ 걱정 없이 안전하다).
  */
@@ -227,8 +228,9 @@ export async function mockAiCredential(
         return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
       }
       if (method === 'DELETE') {
+        // 백엔드에서 제거된 메서드 — 실제 서버와 같이 405. 화면이 보내면 스펙이 deleteCount 로 잡는다.
         calls.deleteCount += 1;
-        return route.fulfill({ status: 204 });
+        return route.fulfill({ status: 405, contentType: 'application/json', body: '{}' });
       }
       return route.fallback();
     },

@@ -24,15 +24,19 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
  *
  * <b>이 파일이 대체하는 것</b>: 옛 스펙(853줄, 14 테스트)은 삭제된 3키 번들 UI(그룹 배지 ·
  * [재정의 해제] · [저장된 OAuth 토큰 삭제] · 부분 해제 실패)를 검증했다. Task 11 이 그 UI 자체를
- * 지우고 라디오 2개 + 유형별 폼으로 재작성했으므로(`AiCredentialFieldset.tsx`), 그 UI를 겨눈
+ * 지우고 유형별 폼으로 재작성했으므로(`AiCredentialFieldset.tsx`), 그 UI를 겨눈
  * 단언은 전부 "존재하지 않는 요소를 찾다가 타임아웃"으로만 실패해 신호가 없다 — 옛 시나리오의
  * 운명은 각 테스트 앞 주석에 남긴다(무엇을 대체했는지, 왜 그냥 지웠는지).
  *
- * <b>범위</b>: 브리프(`task-12-brief.md`)의 9개 시나리오 + 3개 보강(저장 페이로드가 손대지 않은
- * 비밀을 안 싣는다 / 미저장 입력 경고 문구 / 재정의 배지·버튼의 부재 대조). 권위는 설계서
+ * <b>범위</b>: 브리프(`task-12-brief.md`)의 9개 시나리오 + 보강(저장 페이로드가 손대지 않은
+ * 비밀을 안 싣는다 / 미저장 입력 경고 문구) + AI 동작 설정 6키가 테넌트 전용 평면 설정으로
+ * 그려지는지(플랫폼·재정의 개념 부재, 기본값 힌트, 저장 페이로드). 권위는 설계서
  * (`docs/superpowers/specs/2026-09-19-typed-ai-settings-design.md`) "화면" 절이다 — 카피가
  * 그대로 고정하는 문구는 부분 매치가 아니라 전체 문자열로 단언한다(리뷰가 지적한 "문구가
  * 바뀌어도 초록"을 막기 위해).
+ *
+ * <b>#706 — 자격증명과 AI 동작 설정은 테넌트 전용이다.</b> 유형 선택 라디오도 삭제(DELETE) 경로도
+ * 없다 — "미설정이면 안내 + 폼, 저장은 PUT 하나, DELETE 없음"을 고정한다.
  */
 
 /** 필드 한 개를 감싸는 컨테이너 — `settings.spec.ts` 의 `fieldBox` 와 같은 스코프 규칙. 자격증명
@@ -56,31 +60,15 @@ const credentialGroup = (page: Page) => page.getByRole('group', { name: '자격�
  * (예: 동작 설정 저장 실패 안내가 자격증명 그룹 밖에 있어야 한다는 식의 자리 고정). */
 const aiPanel = (page: Page) => page.getByRole('tabpanel', { name: 'AI 에이전트' });
 
-/** 스크린샷 저장 경로 — CLAUDE.md 규약(`test-results/tc/<suite>/`)을 따른다. */
+/** 스크린샷 저장 경로 — `apps/firehub-web/test-results/tc/<suite>/` 규약을 따른다. */
 const screenshotPath = (name: string) =>
-  path.resolve(__dirname, '..', '..', '..', '..', '..', 'test-results', 'tc', 'tenant-ai-settings', name);
+  path.resolve(__dirname, '..', '..', '..', 'test-results', 'tc', 'tenant-ai-settings', name);
 
-/** 설계서 "테넌트 화면" 절의 "플랫폼에도 자격증명이 없으면" 안내 — `no-default` 상태의 대체
- * (옛 배지 체계에서는 이 상태를 표현할 말이 없었다). 부분 매치가 아니라 전체 문자열로 고정한다. */
-const PLATFORM_EMPTY_NOTE =
-  '플랫폼에 설정된 값이 없습니다 — AI 기능이 동작하지 않습니다. 직접 설정하거나 플랫폼 운영자에게 요청하세요.';
+/** 테넌트에 자격증명이 없을 때(`configured:false`)의 안내 — 테넌트 전용이라 미설정은 곧 AI
+ * 중단이다(#706). 부분 매치가 아니라 전체 문자열로 고정한다. */
+const NOT_CONFIGURED_NOTE = 'AI 설정이 없습니다. 설정해야 AI 기능을 쓸 수 있습니다.';
 
-/** 저장 확인 다이얼로그가 미저장 입력이 있을 때 덧붙이는 문장(`buildSaveConfirm`). */
-const UNSAVED_INPUT_SENTENCE = '입력한 값 중 아직 저장하지 않은 내용도 함께 사라집니다.';
-
-/**
- * 플랫폼 전환(되돌리기) 저장 확인 다이얼로그의 <b>전체</b> 문구(`buildSaveConfirm` 의 `willDelete`
- * 분기, 미저장 입력 없음). 옛 [재정의 해제] 문구("...필요하면 언제든 <b>다시 재정의</b>할 수
- * 있습니다")를 그대로 재사용하지 않는다는 것이 설계 결정이었는데(`ai-credential-screen.ts` 의
- * `buildSaveConfirm` 주석: "'재정의'는 이 화면이 없애려는 바로 그 어휘다"), 첫 문장만 부분
- * 매치(`exact:false`)로 보면 그 금지된 두 번째 문장이 몰래 돌아와도 초록이 유지된다 — 그래서
- * 전체 문자열로 고정하고, 아래 테스트에서 금지 어휘의 부재도 따로 단언한다.
- */
-const PLATFORM_REVERT_CONFIRM_DESC =
-  '우리 조직이 설정한 에이전트 유형과 자격증명이 모두 삭제되고, 플랫폼 운영자가 정한 값이 적용됩니다. ' +
-  '삭제된 값은 복구할 수 없으며, 필요하면 언제든 다시 설정할 수 있습니다.';
-
-test.describe('테넌트별 AI 자격증명 — 유형별 화면과 라디오 전환(Task 12)', () => {
+test.describe('테넌트별 AI 자격증명 — 유형별 화면과 미설정 안내(Task 12, #706)', () => {
   test.beforeEach(async ({ authenticatedPage: page }) => {
     await setupAdminAuth(page);
     // 동작 설정 6키(모델·최대 턴 수 등)는 자격증명과 별도 자원이지만 같은 페이지·같은 로딩
@@ -90,99 +78,118 @@ test.describe('테넌트별 AI 자격증명 — 유형별 화면과 라디오 �
   });
 
   /**
-   * 브리프 시나리오 1(전반부) — "전환 의미: 폼 상태다"(설계서 §213)의 핵심.
+   * #706 핵심 — 미설정 테넌트는 안내 + 직접 설정 폼을 보고, 첫 저장은 PUT 한 번으로 끝난다.
    *
-   * <b>뮤테이션 대상</b>: `setPlane`/라디오 `onValueChange` 가 `cred.save()`(DELETE)를 직접 부르게
-   * 바꾸면 이 테스트가 빨개진다 — 라디오를 두 번(플랫폼→직접) 눌러도 `deleteCount` 가 0 이어야
-   * 하는데, 즉시 호출 버전은 첫 클릭에서 이미 1이 된다.
+   * <b>뮤테이션 대상</b>:
+   *  1. `AiCredentialFieldset.tsx` 의 `!cred.configured` 안내를 지우면 첫 단언이 빨개진다.
+   *  2. 옛 라디오를 되살리면 `radio` 부재 단언이 빨개진다.
+   *  3. `save()` 가 다시 DELETE 를 보내면 `deleteCount` 단언이 빨개진다.
+   *  4. 저장 후 재조회를 지우면 안내가 사라지지 않아 마지막 단언이 빨개진다.
    */
-  test('라디오를 왕복하는 것만으로는 DELETE 가 나가지 않는다', async ({ authenticatedPage: page }) => {
-    const calls = await mockAiCredential(
-      page,
-      createAiCredential({ agentType: 'sdk', tenantOwned: true, secretFieldNames: ['oauthToken', 'apiKey'] }),
-    );
-    await page.goto('/admin/settings');
-
-    // 전제: 테넌트가 이미 직접 설정 중이다.
-    await expect(page.getByRole('radio', { name: '우리 조직이 직접 설정' })).toBeChecked();
-
-    await page.getByRole('radio', { name: '플랫폼 설정을 사용' }).click();
-    // 플랫폼 라디오로 옮긴 직후에도 실제 문서는 여전히 테넌트 것이다(저장 전) — "저장하면
-    // 이렇게 된다"는 예고 문구만 보이고, 지금 적용 중인 값 정의 목록(진짜 플랫폼 값)은 아니다.
-    // 이 문구가 뜬다는 것 자체가 "아직 삭제되지 않았다"의 화면 쪽 증거이기도 하다.
-    await expect(credentialGroup(page).getByText('저장하면 플랫폼 운영자가 정한 값이 적용됩니다.')).toBeVisible();
-    expect(calls.deleteCount).toBe(0);
-
-    await page.getByRole('radio', { name: '우리 조직이 직접 설정' }).click();
-    await expect(page.getByRole('radio', { name: '우리 조직이 직접 설정' })).toBeChecked();
-    // OAuth 토큰 입력이 다시 보이는 것도 "진짜로 폼으로 돌아왔다"는 증거다.
-    await expect(page.locator('#ai-cred-oauth-token')).toBeVisible();
-    expect(calls.deleteCount).toBe(0);
-
-    await page.screenshot({ path: screenshotPath('radio-toggle-no-immediate-delete.png'), fullPage: true });
-  });
-
-  /**
-   * 브리프 시나리오 1(후반부) — 위 테스트의 반대편. 저장을 <b>확정</b>하면 그제서야 DELETE 가,
-   * 그것도 정확히 한 번만 나가야 한다(옛 번들은 3번이었다 — `ai.credential` 은 문서 하나다).
-   */
-  test('저장을 확정하면 DELETE 가 정확히 한 번 나가고, 확인 다이얼로그를 거친다', async ({
+  test('미설정(configured:false)이면 안내와 직접 설정 폼이 보이고, 저장은 PUT 한 번뿐 — DELETE 는 없다', { tag: '@smoke' }, async ({
     authenticatedPage: page,
   }) => {
-    const calls = await mockAiCredential(
-      page,
-      createAiCredential({ agentType: 'sdk', tenantOwned: true, secretFieldNames: ['oauthToken', 'apiKey'] }),
+    const calls = await mockAiCredential(page, () =>
+      calls.puts.length > 0
+        ? createAiCredential({ agentType: 'sdk', configured: true, payload: {}, secretFieldNames: ['oauthToken'] })
+        : createAiCredential({ agentType: 'sdk', configured: false, payload: {}, secretFieldNames: [] }),
     );
     await mockAiAuthStatus(page, () => ({ valid: true, email: 'tenant@example.com' }));
-
     await page.goto('/admin/settings');
-    await page.getByRole('radio', { name: '플랫폼 설정을 사용' }).click();
+
+    await expect(credentialGroup(page).getByText(NOT_CONFIGURED_NOTE)).toBeVisible();
+    // 라디오(플랫폼/직접) 선택지는 없다 — 폼이 곧바로 보인다.
+    await expect(aiPanel(page).getByRole('radio')).toHaveCount(0);
+    await expect(credentialGroup(page).getByText('플랫폼 설정을 사용')).toHaveCount(0);
+    await expect(page.locator('#ai-cred-agent-type')).toBeVisible();
+    await expect(page.locator('#ai-cred-oauth-token')).toBeEnabled();
+    await expect(fieldBox(page, 'ai-cred-oauth-token').getByText('설정된 값이 없습니다.')).toBeVisible();
+
+    await page.screenshot({ path: screenshotPath('ai-settings-not-configured.png'), fullPage: true });
+
+    await page.locator('#ai-cred-oauth-token').fill('sk-ant-oat01-first');
+    // 미설정 상태의 첫 저장은 잃을 비밀이 없으므로 확인 다이얼로그 없이 바로 나간다.
     await page.getByRole('button', { name: '저장' }).click();
 
-    const dialog = page.getByRole('alertdialog');
-    await expect(dialog.getByText('플랫폼 설정으로 되돌릴까요?')).toBeVisible();
-    // 전체 문구로 고정한다 — 첫 문장만 보면 옛 [재정의 해제] 문구("...다시 재정의할 수
-    // 있습니다")가 두 번째 문장 자리에 몰래 돌아와도 통과한다(fix round 1 리뷰 #1).
-    await expect(dialog.getByText(PLATFORM_REVERT_CONFIRM_DESC)).toBeVisible();
-    await expect(dialog.getByText('다시 재정의할 수 있습니다', { exact: false })).toHaveCount(0);
-    await dialog.getByRole('button', { name: '되돌리기' }).click();
-
-    await expect.poll(() => calls.deleteCount).toBe(1);
-    expect(calls.puts).toHaveLength(0);
+    await expect.poll(() => calls.puts.length).toBe(1);
+    expect(calls.puts[0]).toEqual({ agentType: 'sdk', payload: {}, secret: { oauthToken: 'sk-ant-oat01-first' } });
+    expect(calls.deleteCount).toBe(0);
     await expect(page.getByText('저장했습니다.')).toBeVisible({ timeout: 8000 });
+    await expect(page.getByRole('alertdialog')).toHaveCount(0);
+
+    // 재조회가 configured:true 를 반영하면 안내가 사라지고 힌트가 "설정됨"으로 바뀐다.
+    await expect(credentialGroup(page).getByText(NOT_CONFIGURED_NOTE)).toHaveCount(0);
+    await expect(
+      fieldBox(page, 'ai-cred-oauth-token').getByText(
+        '현재 값이 설정되어 있습니다. 바꾸려면 새 값을 입력하세요 — 비워 두면 현재 값이 그대로 유지됩니다.',
+      ),
+    ).toBeVisible();
+    expect(calls.deleteCount).toBe(0);
   });
 
-  /**
-   * 보강(fix round 1 리뷰 #1) — 라디오는 <b>제목</b>으로만 찾는다
-   * (`getByRole('radio', {name: title})`) — 스펙이 고정한 설명문(description)은 그 어떤 단언도
-   * 거치지 않고 있었다. 특히 "우리 조직이 직접 설정" 설명문은 과금 문구가 명시적으로 금지된
-   * 자리다(설계서 "테넌트 화면" 절: "'사용량도 우리 계정으로 청구됩니다'는 cli(구독 OAuth)·사내
-   * 엔드포인트에서 거짓이다. 'AI 호출이 우리 조직 자격증명으로 나갑니다'로 쓴다"). 설명문이
-   * 금지된 문장으로 바뀌어도 title 기반 단언은 전부 그대로 통과하므로, 설명문 자체와 금지
-   * 문구의 부재를 따로 본다.
-   *
-   * <b>뮤테이션 대상</b>: `AiCredentialFieldset.tsx` 의 "우리 조직이 직접 설정" `description`
-   * 을 "AI 사용량도 우리 계정으로 청구됩니다." 로 바꾸면 이 테스트가 빨개진다.
-   */
-  test('라디오 설명문은 스펙이 고정한 문구 그대로이고, 금지된 과금 표현을 쓰지 않는다', async ({
+  /** 설정된 테넌트(`configured:true`)에는 미설정 안내도, 옛 라디오도 없다. */
+  test('설정됨(configured:true)이면 미설정 안내가 없고 저장된 비밀이 힌트로 보인다', async ({
     authenticatedPage: page,
   }) => {
     await mockAiCredential(
       page,
-      createAiCredential({ agentType: 'sdk', tenantOwned: true, secretFieldNames: ['oauthToken', 'apiKey'] }),
+      createAiCredential({ agentType: 'sdk', configured: true, secretFieldNames: ['oauthToken', 'apiKey'] }),
     );
     await page.goto('/admin/settings');
 
+    await expect(page.locator('#ai-cred-oauth-token')).toBeVisible();
+    await expect(credentialGroup(page).getByText(NOT_CONFIGURED_NOTE)).toHaveCount(0);
+    await expect(aiPanel(page).getByRole('radio')).toHaveCount(0);
     await expect(
-      credentialGroup(page).getByText(
-        '플랫폼 운영자가 정한 값이 그대로 적용됩니다. 운영자가 값을 바꾸면 우리 조직에도 함께 반영됩니다.',
+      fieldBox(page, 'ai-cred-api-key').getByText(
+        '현재 값이 설정되어 있습니다. 바꾸려면 새 값을 입력하세요 — 비워 두면 현재 값이 그대로 유지됩니다.',
       ),
     ).toBeVisible();
-    await expect(credentialGroup(page).getByText('AI 호출이 우리 조직 자격증명으로 나갑니다.')).toBeVisible();
-    // 금지된 과금 문구 — cli(구독 OAuth)·사내 엔드포인트에서 거짓이라 스펙이 명시적으로 뺐다.
-    await expect(
-      credentialGroup(page).getByText('사용량도 우리 계정으로 청구됩니다', { exact: false }),
-    ).toHaveCount(0);
+
+    await page.screenshot({ path: screenshotPath('ai-settings-configured.png'), fullPage: true });
+  });
+
+  /**
+   * 서버의 비밀 필수 규칙(#706: 평면 무관하게 sdk/cli/cli-api 는 비밀이 최소 하나 있어야 한다)이
+   * 400 으로 거부하면 그 한국어 메시지가 그대로 토스트로 보여야 한다 — 화면이 "저장했습니다"로
+   * 뭉개거나 일반 문구로 바꾸면 사용자는 무엇을 넣어야 하는지 모른다.
+   */
+  test('비밀 없이 저장해 서버가 400 으로 거부하면 서버 메시지를 그대로 보여준다', async ({
+    authenticatedPage: page,
+  }) => {
+    const calls = await mockAiCredential(
+      page,
+      createAiCredential({ agentType: 'sdk', configured: false, payload: {}, secretFieldNames: [] }),
+    );
+    const rejection = 'cli 자격증명은 oauthToken 중 최소 하나가 있어야 한다 — 값을 입력하세요.';
+    // mockAiCredential 보다 나중에 등록한 라우트가 먼저 잡는다 — PUT 만 400 으로 가로채고 나머지는 넘긴다.
+    let rejectedPuts = 0;
+    await page.route(
+      (url) => url.pathname === '/api/v1/settings/ai-credential',
+      (route) => {
+        if (route.request().method() !== 'PUT') return route.fallback();
+        rejectedPuts += 1;
+        return route.fulfill({
+          status: 400,
+          contentType: 'application/json',
+          body: JSON.stringify({ status: 400, error: 'Bad Request', message: rejection }),
+        });
+      },
+    );
+    await page.goto('/admin/settings');
+
+    // 유형만 cli 로 바꾸고(미설정이라 유형 전환 경고·확인 다이얼로그가 없다) 비밀 없이 저장한다.
+    await page.locator('#ai-cred-agent-type').click();
+    await page.getByRole('option', { name: 'Claude Code CLI', exact: true }).click();
+    await expect(page.getByText('유형을 바꾸면 이전 유형', { exact: false })).toHaveCount(0);
+    await page.getByRole('button', { name: '저장' }).click();
+
+    await expect.poll(() => rejectedPuts).toBe(1);
+    await expect(page.getByText(rejection)).toBeVisible();
+    await expect(page.getByText('저장했습니다.')).toHaveCount(0);
+    expect(calls.deleteCount).toBe(0);
+    // 실패했으므로 미설정 안내는 그대로다.
+    await expect(credentialGroup(page).getByText(NOT_CONFIGURED_NOTE)).toBeVisible();
   });
 
   /**
@@ -194,7 +201,7 @@ test.describe('테넌트별 AI 자격증명 — 유형별 화면과 라디오 �
   }) => {
     await mockAiCredential(
       page,
-      createAiCredential({ agentType: 'sdk', tenantOwned: true, secretFieldNames: ['oauthToken', 'apiKey'] }),
+      createAiCredential({ agentType: 'sdk', configured: true, secretFieldNames: ['oauthToken', 'apiKey'] }),
     );
     await page.goto('/admin/settings');
 
@@ -236,7 +243,7 @@ test.describe('테넌트별 AI 자격증명 — 유형별 화면과 라디오 �
       page,
       createAiCredential({
         agentType: 'opencode',
-        tenantOwned: true,
+        configured: true,
         payload: { providerId: 'openai', baseURL: 'https://api.openai.com/v1' },
         secretFieldNames: ['apiKey'],
       }),
@@ -249,7 +256,7 @@ test.describe('테넌트별 AI 자격증명 — 유형별 화면과 라디오 �
 
     await page.goto('/admin/settings');
 
-    // 전제: 저장된 API 키가 있어(Ruling #37/#38 — 기본 URL 도 저장된 값과 같다) 아무것도 새로
+    // 전제: 저장된 API 키가 있어(유형·기본 URL 도 저장된 값과 같다) 아무것도 새로
     // 입력하지 않아도 버튼이 이미 활성이다.
     const loadButton = page.getByRole('button', { name: '모델 불러오기' });
     await expect(loadButton).toBeEnabled();
@@ -271,7 +278,7 @@ test.describe('테넌트별 AI 자격증명 — 유형별 화면과 라디오 �
       page,
       createAiCredential({
         agentType: 'opencode',
-        tenantOwned: true,
+        configured: true,
         payload: { providerId: 'openai', baseURL: 'https://api.openai.com/v1' },
         secretFieldNames: ['apiKey'],
       }),
@@ -300,7 +307,7 @@ test.describe('테넌트별 AI 자격증명 — 유형별 화면과 라디오 �
       page,
       createAiCredential({
         agentType: 'opencode',
-        tenantOwned: true,
+        configured: true,
         payload: { providerId: 'openai', baseURL: 'https://api.openai.com/v1' },
         secretFieldNames: ['apiKey'],
       }),
@@ -330,80 +337,47 @@ test.describe('테넌트별 AI 자격증명 — 유형별 화면과 라디오 �
   });
 
   /**
-   * 브리프 시나리오 6 — `no-default` 상태의 화면 쪽 대체(설계서 §209). 배지가 없어진 지금, 이
-   * 문구가 유일하게 "플랫폼도 못 믿는다"를 말한다.
-   *
-   * <b>뮤테이션 대상</b>: 이 안내를 지우면(또는 조건을 뒤집으면) 이 테스트가 빨개진다 — 옛 배지
-   * 체계라면 조용히 빈 목록만 보여줬을 자리다.
-   */
-  test('플랫폼에도 자격증명이 없으면 화면이 그 사실을 말한다', async ({ authenticatedPage: page }) => {
-    await mockAiCredential(page, createAiCredential({ agentType: 'sdk', tenantOwned: false, payload: {}, secretFieldNames: [] }));
-    await page.goto('/admin/settings');
-
-    // tenantOwned:false 이므로 라디오는 처음부터 "플랫폼 설정을 사용" 이다.
-    await expect(page.getByRole('radio', { name: '플랫폼 설정을 사용' })).toBeChecked();
-    await expect(credentialGroup(page).getByText(PLATFORM_EMPTY_NOTE)).toBeVisible();
-
-    await page.screenshot({ path: screenshotPath('platform-empty-notice.png'), fullPage: true });
-  });
-
-  /**
-   * 보강 — 조회 실패는 <b>플랫폼 무설정과 다른 모양</b>이어야 한다(브리프 상위 지시: "A failed
-   * credential GET renders a failure notice, deliberately distinct from that platform-empty
-   * state" — 이 브랜치가 최근 "네트워크 실패를 확신에 찬 사실처럼 렌더"한 결함을 낸 전례가
-   * 있어 각별히 겨눈다). GET 500 은 `cred.loadFailed` 로 떨어지고, 훅은 안전한 기본값
-   * (`plane:'platform', tenantOwned:false, secretFieldNames:[]`)으로 주저앉는다 — 그 기본값을
-   * 그대로 평소 렌더 경로에 흘리면 "플랫폼에 설정된 값이 없습니다"를 <b>사실</b>처럼 보여주게
-   * 된다(실제로는 "몰라서" 못 그리는 것뿐인데 "없다"고 단정하는 것이다).
-   * `AiCredentialFieldset.tsx` 는 `loadFailed` 를 먼저 걸러 별도 실패 안내로 대체한다 — 여기서는
-   * 그 대체가 실제로 일어나고, 플랫폼 무설정 문구와 섞이지 않는지를 본다.
+   * 보강 — 조회 실패는 <b>미설정과 다른 모양</b>이어야 한다(이 브랜치가 "네트워크 실패를 확신에
+   * 찬 사실처럼 렌더"한 결함을 낸 전례가 있어 각별히 겨눈다). GET 500 은 `cred.loadFailed` 로
+   * 떨어지고, 훅은 안전한 초기값(`configured:false, secretFieldNames:[]`)으로 주저앉는다 — 그
+   * 초기값을 그대로 평소 렌더 경로에 흘리면 "AI 설정이 없습니다"를 <b>사실</b>처럼 보여주게 된다
+   * (실제로는 "몰라서" 못 그리는 것뿐인데 "없다"고 단정하는 것이다).
    *
    * <b>뮤테이션 대상</b>: `AiCredentialFieldset.tsx` 의 `if (cred.loadFailed) return ...` 가드를
-   * 지우면 이 테스트가 빨개진다 — 실패 안내 대신 라디오·`PLATFORM_EMPTY_NOTE` 가 렌더된다.
+   * 지우면 이 테스트가 빨개진다 — 실패 안내 대신 미설정 안내·폼이 렌더된다.
    */
-  test('자격증명 조회가 실패하면 플랫폼 무설정과 다른 실패 안내가 뜬다', async ({ authenticatedPage: page }) => {
+  test('자격증명 조회가 실패하면 미설정 안내와 다른 실패 안내가 뜬다', async ({ authenticatedPage: page }) => {
     await mockApi(page, 'GET', '/api/v1/settings/ai-credential', {}, { status: 500 });
     await page.goto('/admin/settings');
 
     await expect(
       credentialGroup(page).getByRole('alert').filter({ hasText: '자격증명 정보를 불러오지 못했습니다' }),
     ).toBeVisible();
-    // 플랫폼 무설정 문구와 섞이면 안 된다 — 둘은 서로 다른 사실(모른다 vs 없다)을 말한다.
-    await expect(credentialGroup(page).getByText(PLATFORM_EMPTY_NOTE)).toHaveCount(0);
-    // 라디오 자체가 없다 — 실패 화면은 폼을 전혀 그리지 않는다.
-    await expect(page.getByRole('radio')).toHaveCount(0);
+    // 미설정 문구와 섞이면 안 된다 — 둘은 서로 다른 사실(모른다 vs 없다)을 말한다.
+    await expect(credentialGroup(page).getByText(NOT_CONFIGURED_NOTE)).toHaveCount(0);
+    // 실패 화면은 폼을 전혀 그리지 않는다.
+    await expect(page.locator('#ai-cred-agent-type')).toHaveCount(0);
   });
 
   /**
-   * 보강 — 잠금 상태(설계서 "잠금 상태" 절: "서버가 편집 불가로 보고하면 라디오 둘 다 비활성 +
-   * `PlatformLockedNote`")의 유일한 실재 경로는 GET 403(`ai:settings` 권한 없음)이다
-   * (`useAiCredentialForm.ts` 의 `isLocked` 주석). `settings.spec.ts` 에서 Task 12 가 지운 옛
-   * "플랫폼 전용 자격증명 3키는 그룹 Lock 배지…" 테스트가 검증하던 것의 새 UI 버전 대체다 — 그
-   * 테스트는 옛 3키 번들의 `tenantEditable:false` 를 겨눴지만, 새 문서는 판정 자리 자체가 이
-   * GET 403 하나뿐이라 같은 방식으로 옮겨 쓸 수 없었다.
+   * 보강 — 잠금 상태의 유일한 실재 경로는 GET 403(`ai:settings` 권한 없음)이다
+   * (`useAiCredentialForm.ts` 의 `isLocked` 주석). 403 은 `applyResponse` 를 아예 못 부르는 경로라
+   * 이 시점의 `configured` 는 훅의 초기값(false)이다 — 그 초기값으로 미설정 안내를 그리면 "볼
+   * 권한이 없다"를 "설정이 없다"로 단정하게 된다. `loadFailed` 가드가 막는 것과 같은 종류의 결함.
    *
-   * <b>Ruling #46(fix round 1 리뷰) — "권한이 없다"와 "값이 없다"를 섞으면 안 된다.</b> 403 은
-   * `fetchAndApply` 가 `applyResponse` 를 아예 못 부르는 경로라, 이 시점의 `secretFieldNames`
-   * 는 훅의 초기값(빈 배열)이다 — 그 초기값을 평소 렌더 경로(`PlatformPlaneSummary`)로 흘리면
-   * `PLATFORM_EMPTY_NOTE`("플랫폼에 설정된 값이 없습니다")를 <b>사실</b>처럼 함께 보여주게
-   * 된다. 진실은 "볼 권한이 없다"인데 화면이 "플랫폼에도 없다"고 단정하는 것이다 — `loadFailed`
-   * 가드가 막는 것과 같은 종류의 결함이라, 브리프 6번(플랫폼 무설정) 테스트가 이미 가진
-   * `toHaveCount(0)` 대구(실패 시 무설정 문구가 안 보임)를 이 테스트에도 건다.
-   *
-   * <b>뮤테이션 대상</b>: `AiCredentialFieldset.tsx` 에서 `editable &&` 가드를 지우면(잠긴
-   * 상태에서도 평면 내용을 그리면) 이 테스트가 빨개진다.
+   * <b>뮤테이션 대상</b>: `AiCredentialFieldset.tsx` 의 `if (cred.isLocked) return ...` 가드를
+   * 지우면 이 테스트가 빨개진다.
    */
-  test('자격증명 조회가 403 이면 라디오 둘 다 비활성이고 잠금 안내가 뜬다 — 플랫폼 무설정 문구와 섞이지 않는다', async ({
+  test('자격증명 조회가 403 이면 권한 안내만 뜨고 폼·미설정 안내는 그리지 않는다', async ({
     authenticatedPage: page,
   }) => {
     await mockApi(page, 'GET', '/api/v1/settings/ai-credential', {}, { status: 403 });
     await page.goto('/admin/settings');
 
-    await expect(page.getByRole('radio', { name: '플랫폼 설정을 사용' })).toBeDisabled();
-    await expect(page.getByRole('radio', { name: '우리 조직이 직접 설정' })).toBeDisabled();
-    await expect(credentialGroup(page).getByText('플랫폼 운영자만 변경할 수 있는 항목입니다.')).toBeVisible();
-    // 핵심: "권한 없음"이 "값 없음"으로 오해되면 안 된다.
-    await expect(credentialGroup(page).getByText(PLATFORM_EMPTY_NOTE)).toHaveCount(0);
+    await expect(credentialGroup(page).getByText('AI 자격증명을 조회·변경할 권한이 없습니다.')).toBeVisible();
+    // 핵심: "권한 없음"이 "설정 없음"으로 오해되면 안 된다.
+    await expect(credentialGroup(page).getByText(NOT_CONFIGURED_NOTE)).toHaveCount(0);
+    await expect(page.locator('#ai-cred-agent-type')).toHaveCount(0);
   });
 
   /** 브리프 시나리오 7 — 유형 전환 경고. Select 아래 정적 안내 + 저장 확인 다이얼로그 양쪽에
@@ -413,7 +387,7 @@ test.describe('테넌트별 AI 자격증명 — 유형별 화면과 라디오 �
   }) => {
     await mockAiCredential(
       page,
-      createAiCredential({ agentType: 'sdk', tenantOwned: true, secretFieldNames: ['oauthToken', 'apiKey'] }),
+      createAiCredential({ agentType: 'sdk', configured: true, secretFieldNames: ['oauthToken', 'apiKey'] }),
     );
     await page.goto('/admin/settings');
 
@@ -444,7 +418,7 @@ test.describe('테넌트별 AI 자격증명 — 유형별 화면과 라디오 �
    */
   test('비밀 입력은 항상 비어 있고, 설정 여부는 힌트 문구로만 전달된다', async ({ authenticatedPage: page }) => {
     // OAuth 토큰은 미설정, API 키는 설정됨 — 두 힌트를 한 화면에서 대조한다.
-    await mockAiCredential(page, createAiCredential({ agentType: 'sdk', tenantOwned: true, secretFieldNames: ['apiKey'] }));
+    await mockAiCredential(page, createAiCredential({ agentType: 'sdk', configured: true, secretFieldNames: ['apiKey'] }));
     await page.goto('/admin/settings');
 
     await expect(page.locator('#ai-cred-oauth-token')).toHaveValue('');
@@ -464,7 +438,7 @@ test.describe('테넌트별 AI 자격증명 — 유형별 화면과 라디오 �
   test('opencode 에는 "인증 확인" 버튼이 없고, sdk 에는 있다', async ({ authenticatedPage: page }) => {
     await mockAiCredential(
       page,
-      createAiCredential({ agentType: 'sdk', tenantOwned: true, secretFieldNames: ['oauthToken', 'apiKey'] }),
+      createAiCredential({ agentType: 'sdk', configured: true, secretFieldNames: ['oauthToken', 'apiKey'] }),
     );
     await page.goto('/admin/settings');
 
@@ -478,38 +452,6 @@ test.describe('테넌트별 AI 자격증명 — 유형별 화면과 라디오 �
   });
 
   /**
-   * 보강 — 저장 확인 다이얼로그의 "미저장 입력" 덧문장(설계서: "미저장 입력이 있으면 그 사실을
-   * 문구에 더한다"). 브리프의 9개 목록엔 없지만, 이 문장이 조용히 빠지는 것이야말로 이 브랜치가
-   * 반복해서 겪은 "사용자가 잃을 것을 몰랐던" 종류의 결함이라 request/copy 양쪽에서 고정한다.
-   */
-  test('저장하지 않은 입력이 있으면 저장 확인 다이얼로그가 그 사실을 덧붙인다', async ({ authenticatedPage: page }) => {
-    await mockAiCredential(
-      page,
-      createAiCredential({ agentType: 'sdk', tenantOwned: true, secretFieldNames: ['oauthToken', 'apiKey'] }),
-    );
-    await page.goto('/admin/settings');
-
-    // (1) 입력 없이 플랫폼으로 되돌리면 덧문장이 없다 — 늘 붙으면 잡음이 된다.
-    await page.getByRole('radio', { name: '플랫폼 설정을 사용' }).click();
-    await page.getByRole('button', { name: '저장' }).click();
-    const cleanDialog = page.getByRole('alertdialog');
-    await expect(cleanDialog.getByText('플랫폼 설정으로 되돌릴까요?')).toBeVisible();
-    await expect(cleanDialog.getByText(UNSAVED_INPUT_SENTENCE, { exact: false })).toHaveCount(0);
-    await cleanDialog.getByRole('button', { name: '취소' }).click();
-    await expect(page.getByRole('alertdialog')).toHaveCount(0);
-
-    // (2) 직접 설정으로 되돌아가 API 키를 입력한 채로 같은 조작을 반복하면 덧문장이 붙는다.
-    //     (라디오 자체는 원본으로 그대로 되돌아왔지만, 지금 타이핑 중인 입력은 남아 있다 —
-    //     `setPlane` 은 `secretInputs` 를 비우지 않는다.)
-    await page.getByRole('radio', { name: '우리 조직이 직접 설정' }).click();
-    await page.locator('#ai-cred-api-key').fill('sk-typed-but-not-saved');
-    await page.getByRole('radio', { name: '플랫폼 설정을 사용' }).click();
-    await page.getByRole('button', { name: '저장' }).click();
-    const dirtyDialog = page.getByRole('alertdialog');
-    await expect(dirtyDialog.getByText(UNSAVED_INPUT_SENTENCE, { exact: false })).toBeVisible();
-  });
-
-  /**
    * 보강 — 요청 쪽 핵심 불변식(브리프 상위 지시: "저장하는 것이 untouched secret 에 대해 빈
    * 문자열을 보내지 않는다"). 빈 문자열을 보내면 서버 계약상 "삭제"라(`AiCredentialUpsertPayload`
    * 주석), 손대지 않은 OAuth 토큰이 API 키 하나 바꾼 저장에 딸려 사라진다 — 화면 단언만으로는
@@ -520,13 +462,13 @@ test.describe('테넌트별 AI 자격증명 — 유형별 화면과 라디오 �
   }) => {
     const calls = await mockAiCredential(
       page,
-      createAiCredential({ agentType: 'sdk', tenantOwned: true, secretFieldNames: ['oauthToken', 'apiKey'] }),
+      createAiCredential({ agentType: 'sdk', configured: true, secretFieldNames: ['oauthToken', 'apiKey'] }),
     );
     await mockAiAuthStatus(page, () => ({ valid: true, email: 'tenant@example.com' }));
 
     await page.goto('/admin/settings');
 
-    // API 키만 새로 입력한다 — OAuth 토큰 입력칸은 처음부터 빈 채로 둔다(유형·평면도 안 바꾸므로
+    // API 키만 새로 입력한다 — OAuth 토큰 입력칸은 처음부터 빈 채로 둔다(유형도 안 바꾸므로
     // 확인 다이얼로그 없이 바로 저장된다).
     await page.locator('#ai-cred-api-key').fill('sk-ant-new-key');
     await page.getByRole('button', { name: '저장' }).click();
@@ -534,6 +476,7 @@ test.describe('테넌트별 AI 자격증명 — 유형별 화면과 라디오 �
     await expect.poll(() => calls.puts.length).toBe(1);
     expect(calls.puts[0]).toEqual({ agentType: 'sdk', payload: {}, secret: { apiKey: 'sk-ant-new-key' } });
     expect(calls.puts[0].secret).not.toHaveProperty('oauthToken');
+    expect(calls.deleteCount).toBe(0);
   });
 
   /**
@@ -557,7 +500,7 @@ test.describe('테넌트별 AI 자격증명 — 유형별 화면과 라디오 �
     const calls = await mockAiCredential(page, () =>
       createAiCredential({
         agentType: 'sdk',
-        tenantOwned: true,
+        configured: true,
         // 저장(PUT) 전엔 API 키가 없다가, 저장 후에만 서버가 "있다"고 답한다 — 재조회가 실제로
         // 일어나야만 화면이 이 전환을 따라간다.
         secretFieldNames: calls.puts.length > 0 ? ['oauthToken', 'apiKey'] : ['oauthToken'],
@@ -603,7 +546,7 @@ test.describe('테넌트별 AI 자격증명 — 유형별 화면과 라디오 �
   }) => {
     await mockAiCredential(
       page,
-      createAiCredential({ agentType: 'sdk', tenantOwned: true, secretFieldNames: ['oauthToken', 'apiKey'] }),
+      createAiCredential({ agentType: 'sdk', configured: true, secretFieldNames: ['oauthToken', 'apiKey'] }),
     );
     let authCalls = 0;
     let releaseStaleAuth = false;
@@ -634,7 +577,7 @@ test.describe('테넌트별 AI 자격증명 — 유형별 화면과 라디오 �
     await page.getByRole('button', { name: '인증 확인' }).first().click();
     await expect.poll(() => authCalls).toBe(1);
 
-    // (B) 그 사이 API 키를 바꿔 저장한다 — 유형·평면은 안 건드렸으니 확인 다이얼로그 없이 바로
+    // (B) 그 사이 API 키를 바꿔 저장한다 — 유형은 안 건드렸으니 확인 다이얼로그 없이 바로
     // 저장되고, 성공하면 `performSave` 가 두 번째 `verifyAuth()` 를 자동으로 건다.
     await page.locator('#ai-cred-api-key').fill('sk-ant-second-call');
     await page.getByRole('button', { name: '저장' }).click();
@@ -661,32 +604,110 @@ test.describe('테넌트별 AI 자격증명 — 유형별 화면과 라디오 �
   });
 
   /**
-   * 보강 — 사용자가 거부한 것(배지·[재정의 해제] 버튼)의 <b>부재</b>를 자격증명 그룹 안에서만
-   * 단언하고, 같은 화면의 동작 설정 6키는 그대로 갖고 있다는 대조를 함께 고정한다("적용 범위는
-   * AI 자격증명 그룹뿐이다", 설계서). 대조가 없으면 "전부 지워버리는" 과잉 리팩터도 통과한다.
+   * 보강 — 자격증명 그룹에 옛 배지·[재정의 해제] 버튼·라디오가 없다. 폼 자체가 그려져 있음을 함께
+   * 단언해 "그룹이 비어서" 공허하게 통과하지 않게 한다.
    */
-  test('자격증명 그룹엔 재정의 배지도 [재정의 해제] 버튼도 없다 — 동작 설정 6키는 그대로 갖고 있다', async ({
+  test('자격증명 그룹엔 상태 배지도 [재정의 해제] 버튼도 라디오도 없다', async ({ authenticatedPage: page }) => {
+    await mockAiCredential(
+      page,
+      createAiCredential({ agentType: 'sdk', configured: true, secretFieldNames: ['oauthToken', 'apiKey'] }),
+    );
+    await page.goto('/admin/settings');
+
+    await expect(credentialGroup(page).locator('#ai-cred-oauth-token')).toBeVisible();
+    await expect(credentialGroup(page).getByRole('button', { name: /재정의 해제/ })).toHaveCount(0);
+    await expect(credentialGroup(page).getByText(/재정의|플랫폼|오버라이드|상속|우리 조직 값/)).toHaveCount(0);
+    await expect(aiPanel(page).getByRole('radio')).toHaveCount(0);
+  });
+});
+
+/** 기본값 힌트 — 라벨 옆의 작은 배지. 옵션 이름 등과 섞이지 않게 전체 문자열로 찾는다. */
+const defaultHint = (scope: ReturnType<Page['locator']>) => scope.getByText('기본값', { exact: true });
+
+/** 시스템 프롬프트는 라벨 대신 카드 제목 줄에 힌트가 붙어 카드 단위로 스코프를 잡는다. */
+const systemPromptCard = (page: Page) => page.locator('div.card-hover', { has: page.locator('#ai-system-prompt') });
+
+/**
+ * AI 동작 설정 6키(모델·최대 턴 수·Temperature·최대 응답 토큰·세션 최대 토큰·시스템 프롬프트)는
+ * <b>테넌트 전용 평면 설정</b>이다. 서버는 6키를 항상 내려주고, 저장 안 한 키는 코드 기본값을
+ * `overridden:false` 로 준다. 화면은 플랫폼 상속·재정의·잠금 개념 없이 평범한 폼으로 그리고,
+ * 저장 안 한 필드에만 "기본값" 힌트를 붙인다.
+ */
+test.describe('AI 동작 설정 — 테넌트 전용 평면 설정', () => {
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await setupAdminAuth(page);
+    await mockAiCredential(page, createAiCredential());
+  });
+
+  /**
+   * <b>뮤테이션 대상</b>:
+   *  1. 옛 상태 배지(`SettingStateBadge`)나 [재정의 해제] 버튼을 되살리면 문구 부재 단언이 빨개진다.
+   *  2. 힌트를 `overridden` 과 무관하게 항상 그리면 저장된 Temperature 의 힌트 부재 단언이 빨개진다.
+   *  3. 힌트를 지우면 최대 턴 수·시스템 프롬프트의 힌트 존재 단언이 빨개진다.
+   *  4. `tenantEditable` 기반 disabled 를 되살려도 서버가 true 를 주므로 통과한다 — 그래서 입력
+   *     활성 단언은 "잠금이 끼어들지 않았다"는 확인일 뿐이다.
+   */
+  test('플랫폼·재정의 문구가 없고, 저장 안 한 필드엔 기본값 힌트가, 저장된 필드엔 값만 보인다', { tag: '@smoke' }, async ({
     authenticatedPage: page,
   }) => {
     await setupSettingsMocks(page, {
       ai: createAiSettings({ 'ai.temperature': { overridden: true, value: '0.7' } }),
     });
-    await mockAiCredential(
-      page,
-      createAiCredential({ agentType: 'sdk', tenantOwned: true, secretFieldNames: ['oauthToken', 'apiKey'] }),
-    );
     await page.goto('/admin/settings');
 
-    await expect(credentialGroup(page).getByRole('button', { name: /재정의 해제/ })).toHaveCount(0);
-    await expect(credentialGroup(page).getByText('우리 조직 값 적용 중')).toHaveCount(0);
-    await expect(credentialGroup(page).getByText('플랫폼 값 사용 중')).toHaveCount(0);
-    await expect(page.getByRole('radio', { name: '플랫폼 설정을 사용' })).toBeVisible();
-    await expect(page.getByRole('radio', { name: '우리 조직이 직접 설정' })).toBeVisible();
+    const panel = aiPanel(page);
+    // 저장 안 한 필드: 서버가 내려준 코드 기본값 + "기본값" 힌트
+    await expect(page.locator('#ai-max-turns')).toHaveValue('10');
+    await expect(defaultHint(fieldBox(page, 'ai-max-turns'))).toBeVisible();
+    await expect(page.locator('#ai-session-max-tokens')).toHaveValue('50000');
+    await expect(defaultHint(fieldBox(page, 'ai-session-max-tokens'))).toBeVisible();
+    await expect(defaultHint(systemPromptCard(page))).toBeVisible();
+    // 저장된 필드: 값만 보이고 힌트는 없다
+    await expect(page.locator('#ai-temperature')).toHaveValue('0.7');
+    await expect(defaultHint(fieldBox(page, 'ai-temperature'))).toHaveCount(0);
+    // 저장 안 한 5키만 힌트를 단다(모델·최대 턴 수·최대 응답 토큰·세션 최대 토큰·시스템 프롬프트)
+    await expect(defaultHint(panel)).toHaveCount(5);
 
-    // 대조: 동작 설정의 Temperature 는 재정의 배지·버튼을 그대로 유지한다.
-    await expect(fieldBox(page, 'ai-temperature').getByText('우리 조직 값 적용 중')).toBeVisible();
-    await expect(fieldBox(page, 'ai-temperature').getByRole('button', { name: '재정의 해제' })).toBeVisible();
+    // 플랫폼 상속·재정의 개념은 AI 탭 어디에도 없다
+    await expect(panel.getByText(/재정의|플랫폼|오버라이드|상속/)).toHaveCount(0);
+    await expect(panel.getByRole('button', { name: /재정의 해제/ })).toHaveCount(0);
+    for (const id of ['ai-model', 'ai-max-turns', 'ai-temperature', 'ai-max-tokens', 'ai-session-max-tokens', 'ai-system-prompt']) {
+      await expect(page.locator(`#${id}`)).toBeEnabled();
+    }
 
-    await expect(aiPanel(page).getByRole('radio')).toHaveCount(2);
+    // 앱 레이아웃은 내부 컨테이너가 스크롤해 fullPage 로도 아래쪽 필드가 잘린다 — 뷰포트를 늘려
+    // AI 탭 전체(동작 설정 6키 포함)가 한 장에 담기게 한다.
+    await page.setViewportSize({ width: 1280, height: 2400 });
+    await page.screenshot({ path: screenshotPath('ai-tab.png'), fullPage: true });
+  });
+
+  test('저장 안 한 필드를 편집해 저장하면 그 키만 PUT 되고, 저장 후에는 기본값 힌트가 사라진다', async ({
+    authenticatedPage: page,
+  }) => {
+    // PUT 캡처를 먼저 등록한다 — setupSettingsMocks 는 GET 이 아닌 요청을 fallback 으로 넘긴다.
+    const saveCapture = await mockApi(page, 'PUT', '/api/v1/settings', {}, { capture: true });
+    // 저장 뒤 재조회는 "그 키가 저장된" 응답을 준다(실제 서버와 같은 흐름).
+    await setupSettingsMocks(page, {
+      ai: () =>
+        saveCapture.lastRequest()
+          ? createAiSettings({ 'ai.max_turns': { overridden: true, value: '15' } })
+          : createAiSettings(),
+    });
+    await page.goto('/admin/settings');
+
+    await expect(defaultHint(fieldBox(page, 'ai-max-turns'))).toBeVisible();
+    await page.locator('#ai-max-turns').fill('15');
+    await page.getByRole('button', { name: '저장' }).click();
+
+    const req = await saveCapture.waitForRequest();
+    const settings = (req.payload as { settings: Record<string, string> }).settings;
+    // 손대지 않은 키(서버가 기본값으로 내려준 값)는 보내지 않는다 — 보내면 기본값이 저장값으로 굳는다.
+    expect(settings).toEqual({ 'ai.max_turns': '15' });
+
+    await expect(page.getByText('설정이 저장되었습니다.')).toBeVisible({ timeout: 8000 });
+    await expect(page.locator('#ai-max-turns')).toHaveValue('15');
+    await expect(defaultHint(fieldBox(page, 'ai-max-turns'))).toHaveCount(0);
+    // 다른 필드는 여전히 기본값이다
+    await expect(defaultHint(fieldBox(page, 'ai-temperature'))).toBeVisible();
   });
 });

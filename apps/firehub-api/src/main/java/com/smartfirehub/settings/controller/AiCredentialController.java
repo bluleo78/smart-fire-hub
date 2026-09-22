@@ -14,7 +14,6 @@ import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
-import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -30,17 +29,16 @@ import org.springframework.web.bind.annotation.RestController;
  * 클래스 javadoc "왜 SettingsService 가 아닌가" 절 참고. 그래서 이 키 하나만을 위한 별도
  * 컨트롤러가 존재한다.
  *
- * <p><b>권한은 네 라우트 전부 {@code ai:settings} 다.</b> {@code SettingsController} 가 이미 세운
+ * <p><b>권한은 세 라우트(GET/PUT/POST probe) 전부 {@code ai:settings} 다.</b> {@code SettingsController} 가 이미 세운
  * 규칙(조회·저장·연결 테스트가 같은 권한)을 그대로 잇는다 — 프로브도 예외가 아니다. 프로브가
  * 인증된 외부 호출(임의 baseURL 에 Bearer 전송)을 만드는 것은 맞지만, 이미 그 호출을 일으킬 수
  * 있는 사람(=자격증명을 저장할 수 있는 사람)에게 프로브가 새로운 능력을 주는 게 아니다. 다만
  * "쓰기 권한이 필요하다"(설계서 「권한」 절, Ruling #9)는 요구는 이 권한 하나로 이미 충족된다.
  * ({@code ai:read} 라는 권한 코드 자체는 존재한다 — AI 세션 조회용(V12)이고, 이 컨트롤러가 다루는
- * {@code ai.credential} 과는 무관한 리소스다. "테넌트 평면엔 이 네 라우트를 가를 더 약한 권한이
- * 없다"는 결론은 그대로지만, 근거를 {@code ai:read} 부재가 아니라 "네 라우트가 원래
- * {@code ai:settings} 하나로 묶여 있었고 그것을 쪼갤 이유가 없었다"는 쪽에 둔다 — 그 구분이
- * 실제로 갈리는 곳은 플랫폼 평면이다({@code platform:settings:read} vs
- * {@code platform:settings:write}).
+ * {@code ai.credential} 과는 무관한 리소스다. 근거는 {@code ai:read} 부재가 아니라 "이
+ * 라우트들이 원래 {@code ai:settings} 하나로 묶여 있었고 그것을 쪼갤 이유가 없었다"는 쪽에 둔다.)
+ *
+ * <p>{@code DELETE} 는 없다 — 복귀할 플랫폼 기본값이 없으므로 값은 {@code PUT} 으로 덮어쓴다.
  */
 @RestController
 @RequestMapping("/api/v1/settings/ai-credential")
@@ -51,7 +49,10 @@ public class AiCredentialController {
   private final OpencodeProbeService opencodeProbeService;
   private final SettingsService settingsService;
 
-  /** 화면용 조회. {@link AiCredentialService#read} 를 그대로 노출한다 — {@code tenantOwned} 포함. */
+  /**
+   * 화면용 조회. {@link AiCredentialService#read} 를 그대로 노출한다 — 미설정이면
+   * {@code configured=false}.
+   */
   @GetMapping
   @RequirePermission("ai:settings")
   public ResponseEntity<AiCredentialView> get() {
@@ -71,15 +72,7 @@ public class AiCredentialController {
       if (rejected.isPresent()) return rejected.get();
     }
     Long userId = (Long) authentication.getPrincipal();
-    aiCredentialService.save(toUpsert(request), userId, false);
-    return ResponseEntity.noContent().build();
-  }
-
-  /** 테넌트 오버라이드 삭제 → 이후 조회는 플랫폼 값으로 되돌아간다({@code tenantOwned=false}). */
-  @DeleteMapping
-  @RequirePermission("ai:settings")
-  public ResponseEntity<Void> delete() {
-    aiCredentialService.clearTenantOverride();
+    aiCredentialService.save(toUpsert(request), userId);
     return ResponseEntity.noContent().build();
   }
 
@@ -88,11 +81,9 @@ public class AiCredentialController {
    * 전달한다.
    *
    * <p><b>여기서 apiKey 를 직접 해석하지 않는다.</b> {@code apiKey} 생략 시 "저장된 값 재사용"
-   * 판정(평면 교차 폴백 금지 포함)은 이미 {@code OpencodeProbeService}(테넌트 행만 본다,
-   * {@code AiCredentialService#tenantOpencodeCredential} 참고)가 구현하고 있다. 이 메서드가
-   * 대신 {@code settingsService.getValue(...)} 같은 두 평면 해석기로 apiKey 를 채워 넘기면, 테넌트가
-   * 재정의하지 않은 상태에서 <b>플랫폼의 apiKey 가 테넌트가 지정한 임의 baseURL 로 전송</b>된다 —
-   * 이미 막혀 있는 유출을 이 계층에서 다시 여는 셈이라 절대 하지 않는다.
+   * 판정(유형 필터·baseURL 일치 검사 포함)은 이미 {@code OpencodeProbeService}(현재 테넌트 행만
+   * 본다, {@code AiCredentialService#tenantOpencodeCredential} 참고)가 구현하고 있다 — 같은
+   * 판정을 이 계층에 두 번 두지 않는다.
    */
   @PostMapping("/probe")
   @RequirePermission("ai:settings")
@@ -119,9 +110,8 @@ public class AiCredentialController {
    * </ol>
    *
    * <p><b>{@code apiKey} 생략 = 프로브(모델 검증)만 건너뛴다 — 저장 자체도, baseURL 가드도 막지
-   * 않는다.</b> 스펙의 "PUT 의 비밀 의미: 필드를 생략하면 현재 값 유지"는 평면을 가리지 않고(플랫폼
-   * 컨트롤러의 {@code validateOpencode} javadoc과 같은 근거), 막아도 실제로 얻는 것이 없다 —
-   * 저장된 키는 이 PUT 의 승인 여부와 무관하게 런타임에 새 baseURL 로 그대로 나간다(막았다고 그
+   * 않는다.</b> 스펙의 "PUT 의 비밀 의미: 필드를 생략하면 현재 값 유지"를 그대로 따르고, 막아도
+   * 실제로 얻는 것이 없다 — 저장된 키는 이 PUT 의 승인 여부와 무관하게 런타임에 새 baseURL 로 그대로 나간다(막았다고 그
    * 조합이 안전해지지 않는다). <b>다만 baseURL 자체의 안전성(SSRF 가드)은 apiKey 유무와 별개다</b>
    * — 예전에는 apiKey 생략이 프로브 호출 자체를 건너뛰면서 그 안에 있던 SSRF 가드까지 함께
    * 건너뛰어, {@code apiKey} 없이 169.254.169.254 같은 내부 주소를 무검증으로 저장할 수 있었다

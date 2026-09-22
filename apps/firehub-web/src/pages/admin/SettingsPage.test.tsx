@@ -1,7 +1,7 @@
 /**
  * `SettingsPage` 저장 오케스트레이션 단위 테스트.
  *
- * `AiCredentialFieldset.test.tsx` 는 자격증명 fieldset 자체(라디오·비밀 힌트·모델 4상태)를
+ * `AiCredentialFieldset.test.tsx` 는 자격증명 fieldset 자체(미설정 안내·비밀 힌트·모델 4상태)를
  * `cred` prop 주입으로 검증한다. 이 파일은 그 아래 <b>페이지가 직접 소유한</b> 두 결정을
  * 검증한다 — 어느 컴포넌트 테스트로도 닿지 않는 로직이다:
  *
@@ -9,9 +9,9 @@
  *    바뀌어도(자문이 먼저 제안했다가 `AiCredentialController.validateOpencode` 를 직접 읽고
  *    뒤집은 그 순서) 컴포넌트 트리 모양은 전혀 달라지지 않는다 — 오직 두 API 호출이 일어나는
  *    <b>순서</b>만 문제가 된다.
- * 2. <b>확인 다이얼로그 게이팅</b>. `handleSaveClick` 이 `buildSaveConfirm` 결과가 있으면
+ * 2. <b>확인 다이얼로그 게이팅</b>. `handleSaveClick` 이 `cred.typeChanged` 면
  *    다이얼로그를 열고 `performSave` 를 <b>보류</b>해야 한다 — `AiCredentialFieldset.test.tsx`
- *    는 `buildSaveConfirm` 자체(순수 함수)와 라디오 클릭이 `save` 를 안 부르는 것만 봤을 뿐,
+ *    는 `typeChangeConfirmDescription` 자체(순수 함수)만 봤을 뿐,
  *    "저장" 버튼을 눌렀을 때 실제로 다이얼로그가 막아서는지는 이 파일에서만 검증된다.
  *
  * `useAiCredentialForm`/`useSettingsOverrideForm`/`useSmtpSettingsForm`/
@@ -73,9 +73,7 @@ function makeCred(overrides: Partial<UseAiCredentialFormResult> = {}): UseAiCred
     isLoading: false,
     loadFailed: false,
     isLocked: false,
-    plane: 'tenant',
-    tenantOwned: true,
-    setPlane: vi.fn(),
+    configured: true,
     agentType: 'sdk',
     setAgentType: vi.fn(),
     payload: {},
@@ -91,6 +89,8 @@ function makeCred(overrides: Partial<UseAiCredentialFormResult> = {}): UseAiCred
     save: vi.fn(async () => true),
     staleNotice: null,
     reset: vi.fn(),
+    savedAgentType: 'sdk',
+    typeChanged: false,
     ...overrides,
   };
 }
@@ -137,34 +137,9 @@ beforeEach(() => {
 });
 
 describe('SettingsPage — 저장 확인 다이얼로그 게이팅', () => {
-  /**
-   * <b>변종: `handleSaveClick` 이 `buildSaveConfirm` 결과를 무시하고 항상 `performSave()` 를
-   * 바로 부른다</b>(`if (confirm) setSaveConfirm(confirm) else void performSave()` 를
-   * `void performSave()` 로 바꾸는 것과 동치). plane==='platform' && tenantOwned===true 는
-   * 저장이 DELETE 를 일으키는 유일한 경우이므로, 다이얼로그 없이 곧장 `cred.save()` 가 불리면
-   * 이 테스트가 잡는다.
-   */
-  it('플랫폼으로 되돌리는 저장은 다이얼로그를 먼저 열고, 확인 전에는 save 를 부르지 않는다', async () => {
-    const user = userEvent.setup();
-    const cred = makeCred({ plane: 'platform', tenantOwned: true, hasUnsavedInput: false });
-    mockedUseAiCredentialForm.mockReturnValue(cred);
-    mockedUseSettingsOverrideForm.mockReturnValue(makeBehavior({ hasChanges: false }));
-
-    render(<SettingsPage />);
-
-    await user.click(screen.getByRole('button', { name: '저장' }));
-
-    expect(cred.save).not.toHaveBeenCalled();
-    expect(screen.getByText('플랫폼 설정으로 되돌릴까요?')).toBeInTheDocument();
-
-    await user.click(screen.getByRole('button', { name: '되돌리기' }));
-
-    await waitFor(() => expect(cred.save).toHaveBeenCalledOnce());
-  });
-
   it('파괴적 전환이 없으면 다이얼로그 없이 곧장 저장한다', async () => {
     const user = userEvent.setup();
-    const cred = makeCred({ plane: 'tenant', tenantOwned: true, hasUnsavedInput: true });
+    const cred = makeCred({ hasUnsavedInput: true });
     mockedUseAiCredentialForm.mockReturnValue(cred);
     mockedUseSettingsOverrideForm.mockReturnValue(makeBehavior({ hasChanges: false }));
 
@@ -172,7 +147,7 @@ describe('SettingsPage — 저장 확인 다이얼로그 게이팅', () => {
 
     await user.click(screen.getByRole('button', { name: '저장' }));
 
-    expect(screen.queryByText('플랫폼 설정으로 되돌릴까요?')).not.toBeInTheDocument();
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
     await waitFor(() => expect(cred.save).toHaveBeenCalledOnce());
   });
 });
@@ -189,7 +164,7 @@ describe('SettingsPage — 저장 순서(동작 설정 → 자격증명)', () =>
     const user = userEvent.setup();
     const order: string[] = [];
 
-    const cred = makeCred({ plane: 'tenant', tenantOwned: true, hasUnsavedInput: true });
+    const cred = makeCred({ hasUnsavedInput: true });
     cred.save = vi.fn(async () => {
       order.push('cred.save');
       return true;
@@ -216,7 +191,7 @@ describe('SettingsPage — 저장 순서(동작 설정 → 자격증명)', () =>
 
   it('동작 설정에 변경이 없으면 settingsApi.update 를 부르지 않고 자격증명만 저장한다', async () => {
     const user = userEvent.setup();
-    const cred = makeCred({ plane: 'tenant', tenantOwned: true, hasUnsavedInput: true });
+    const cred = makeCred({ hasUnsavedInput: true });
     mockedUseAiCredentialForm.mockReturnValue(cred);
     mockedUseSettingsOverrideForm.mockReturnValue(makeBehavior({ hasChanges: false }));
 
@@ -230,40 +205,21 @@ describe('SettingsPage — 저장 순서(동작 설정 → 자격증명)', () =>
 
 describe('SettingsPage — 유형 전환 확인 다이얼로그(§193, fix round 1 item 3)', () => {
   /**
-   * <b>변종: `handleSaveClick` 이 `typeChanged` 를 항상 `false` 로 넘긴다</b>(`SettingsPage.tsx`
-   * 의 `typeChanged: cred.plane === 'tenant' && hasTypeChangedFromSaved(...)` 를 `typeChanged:
-   * false` 로 바꾸는 것과 동치). 기존 mutant #12(willDelete 게이팅 제거)는 이 경로를 전혀
-   * 지나지 않는다 — `willDelete` 는 여기서 처음부터 `false` 다. 유형만 바뀌었을 때(플랫폼
-   * 삭제가 아님) 다이얼로그 없이 곧장 `cred.save()` 가 불리면 이 테스트가 잡는다.
-   *
-   * `useSavedAgentType` 은 실제 훅(모킹 안 함)이라, "서버와 동기화된 유형"을 realistic 하게
-   * 재구성하려면 첫 렌더는 동기화 상태(hasUnsavedInput=false)로 opencode 를 저장된 값으로
-   * 굳히고, 이어서 같은 mock 을 sdk 로 바꾼 뒤 dirty 상태로 rerender 해야 한다 — 그래야
-   * savedAgentType 이 'opencode' 로 고정된 채 cred.agentType 만 'sdk' 로 갈라진다.
+   * <b>변종: `handleSaveClick` 이 `cred.typeChanged` 를 무시하고 곧장 `performSave()` 를 부른다.</b>
+   * 유형이 바뀌었을 때 다이얼로그 없이 `cred.save()` 가 불리면 이 테스트가 잡는다.
    */
-  it('유형만 바뀌면(플랫폼 삭제 아님) 다이얼로그를 먼저 열고, 확인 전에는 save 를 부르지 않는다', async () => {
+  it('유형이 바뀌면 다이얼로그를 먼저 열고, 확인 전에는 save 를 부르지 않는다', async () => {
     const user = userEvent.setup();
-    const synced = makeCred({
-      plane: 'tenant',
-      tenantOwned: true,
-      agentType: 'opencode',
-      hasUnsavedInput: false,
-    });
-    mockedUseAiCredentialForm.mockReturnValue(synced);
-    mockedUseSettingsOverrideForm.mockReturnValue(makeBehavior({ hasChanges: false }));
-
-    const { rerender } = render(<SettingsPage />);
-
-    // 저장된 유형을 'opencode' 로 동기화시킨 뒤 — 유형만 로컬에서 'sdk' 로 바꾼다(아직 저장 전).
     const dirty = makeCred({
-      plane: 'tenant',
-      tenantOwned: true,
       agentType: 'sdk',
+      savedAgentType: 'opencode',
+      typeChanged: true,
       hasUnsavedInput: true,
-      save: synced.save,
     });
     mockedUseAiCredentialForm.mockReturnValue(dirty);
-    rerender(<SettingsPage />);
+    mockedUseSettingsOverrideForm.mockReturnValue(makeBehavior({ hasChanges: false }));
+
+    render(<SettingsPage />);
 
     await user.click(screen.getByRole('button', { name: '저장' }));
 
@@ -289,7 +245,7 @@ describe('SettingsPage — 되돌리기는 두 자원을 함께 되돌린다(Rul
    */
   it('되돌리기 클릭은 handleReset 과 cred.reset 을 모두 부른다', async () => {
     const user = userEvent.setup();
-    const cred = makeCred({ plane: 'tenant', tenantOwned: true, hasUnsavedInput: true });
+    const cred = makeCred({ hasUnsavedInput: true });
     mockedUseAiCredentialForm.mockReturnValue(cred);
     const behavior = makeBehavior({ hasChanges: true });
     mockedUseSettingsOverrideForm.mockReturnValue(behavior);
@@ -303,42 +259,16 @@ describe('SettingsPage — 되돌리기는 두 자원을 함께 되돌린다(Rul
 
   /**
    * <b>변종: 되돌리기 버튼의 `disabled` 조건이 `credDirty` 를 무시한다</b>(`!behaviorHasChanges`
-   * 로 되돌리는 것과 동치). 동작 설정은 안 건드리고 자격증명(라디오·입력)만 건드린 상태에서
+   * 로 되돌리는 것과 동치). 동작 설정은 안 건드리고 자격증명 입력만 건드린 상태에서
    * 버튼이 비활성이면, 사용자가 되돌릴 방법이 아예 없다.
    */
   it('동작 설정은 안 바뀌고 자격증명만 dirty 여도 되돌리기 버튼이 활성이다', () => {
-    const cred = makeCred({ plane: 'tenant', tenantOwned: true, hasUnsavedInput: true });
+    const cred = makeCred({ hasUnsavedInput: true });
     mockedUseAiCredentialForm.mockReturnValue(cred);
     mockedUseSettingsOverrideForm.mockReturnValue(makeBehavior({ hasChanges: false }));
 
     render(<SettingsPage />);
     expect(screen.getByRole('button', { name: '되돌리기' })).toBeEnabled();
-  });
-});
-
-describe('SettingsPage — 플랫폼 정의 목록에 해석된 ai.model 을 내려준다(Ruling #43, fix round 1 item 7)', () => {
-  /**
-   * <b>변종: `resolvedModel` 을 항상 빈 문자열로 내린다</b>(`behaviorOriginal['ai.model']` 을
-   * `''` 로 바꾸는 것과 동치). `AiCredentialFieldset.test.tsx` 는 그 prop 이 넘어오면 잘
-   * 그리는지만 본다 — 페이지가 <b>실제로 해석된 값을 골라 넘기는지</b>는 여기서만 검증된다.
-   */
-  it('플랫폼 정의 목록의 "모델" 행이 behaviorOriginal[\'ai.model\'] 값을 그대로 보여준다', () => {
-    const cred = makeCred({
-      plane: 'platform',
-      tenantOwned: false,
-      agentType: 'opencode',
-      payload: { providerId: 'openai', baseURL: 'https://api.openai.com/v1' },
-      secretFieldNames: ['apiKey'],
-    });
-    mockedUseAiCredentialForm.mockReturnValue(cred);
-    mockedUseSettingsOverrideForm.mockReturnValue(
-      makeBehavior({ hasChanges: false, original: { 'ai.model': 'openai/gpt-4o' } }),
-    );
-
-    render(<SettingsPage />);
-    // "모델"은 동작 설정 카드의 필드 라벨로도 나오므로(별개 자원), 정의 목록의 <dt> 로 좁힌다.
-    expect(screen.getByText('모델', { selector: 'dt' })).toBeInTheDocument();
-    expect(screen.getByText('openai/gpt-4o')).toBeInTheDocument();
   });
 });
 
@@ -352,8 +282,6 @@ describe('SettingsPage — verifyAuth 는 자격증명 저장이 실제로 성�
   it('cred.save() 가 false 를 돌려주면 verifyAuthStatus 를 부르지 않는다', async () => {
     const user = userEvent.setup();
     const cred = makeCred({
-      plane: 'tenant',
-      tenantOwned: true,
       agentType: 'sdk',
       hasUnsavedInput: true,
       save: vi.fn(async () => false),
@@ -371,8 +299,6 @@ describe('SettingsPage — verifyAuth 는 자격증명 저장이 실제로 성�
   it('cred.save() 가 true 를 돌려주면(sdk 유형) verifyAuthStatus 를 부른다', async () => {
     const user = userEvent.setup();
     const cred = makeCred({
-      plane: 'tenant',
-      tenantOwned: true,
       agentType: 'sdk',
       hasUnsavedInput: true,
       save: vi.fn(async () => true),
@@ -384,5 +310,53 @@ describe('SettingsPage — verifyAuth 는 자격증명 저장이 실제로 성�
     await user.click(screen.getByRole('button', { name: '저장' }));
 
     await waitFor(() => expect(mockedVerifyAuthStatus).toHaveBeenCalledOnce());
+  });
+});
+
+describe('SettingsPage — AI 동작 설정은 테넌트 전용 평면 설정으로 그린다', () => {
+  /** 서버 응답 1건(새 계약: description·updatedAt 은 null, tenantEditable 은 항상 true). */
+  const resolved = (key: string, value: string, overridden: boolean) => ({
+    key,
+    value,
+    description: null,
+    updatedAt: null,
+    overridden,
+    tenantEditable: true,
+  });
+
+  /**
+   * <b>변종: 옛 상태 배지·재정의 해제 버튼을 되살린다.</b> AI 설정은 플랫폼 값을 물려받지 않으므로
+   * "플랫폼 값 사용 중"/"우리 조직 값 적용 중"/"재정의 해제" 는 존재하지 않는 개념을 약속한다.
+   * 저장 안 한 필드에만 "기본값" 힌트가 붙어야 하며, 저장된 필드에는 붙지 않아야 한다.
+   */
+  it('저장 안 한 필드에만 "기본값" 힌트가 붙고, 플랫폼/재정의 문구·해제 버튼은 없다', () => {
+    mockedUseAiCredentialForm.mockReturnValue(makeCred());
+    mockedUseSettingsOverrideForm.mockReturnValue(
+      makeBehavior({
+        settings: {
+          'ai.model': resolved('ai.model', 'claude-sonnet-5', false),
+          'ai.max_turns': resolved('ai.max_turns', '25', true),
+          'ai.system_prompt': resolved('ai.system_prompt', '너는 유능한 어시스턴트다.', false),
+          'ai.temperature': resolved('ai.temperature', '0.5', true),
+          'ai.max_tokens': resolved('ai.max_tokens', '4096', true),
+          'ai.session_max_tokens': resolved('ai.session_max_tokens', '50000', true),
+        },
+      }),
+    );
+
+    render(<SettingsPage />);
+
+    // 저장 안 한 키는 ai.model·ai.system_prompt 둘 — 힌트도 정확히 둘이어야 한다.
+    expect(screen.getAllByText('기본값')).toHaveLength(2);
+    const maxTurnsRow = screen.getByLabelText('최대 턴 수').closest('div.space-y-2') as HTMLElement;
+    expect(within(maxTurnsRow).queryByText('기본값')).not.toBeInTheDocument();
+    const modelRow = screen.getByText('모델', { selector: 'label' }).closest('div.space-y-2') as HTMLElement;
+    expect(within(modelRow).getByText('기본값')).toBeInTheDocument();
+
+    expect(screen.queryByText(/재정의|플랫폼|오버라이드|상속/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /재정의 해제/ })).not.toBeInTheDocument();
+    // 잠금 개념도 없다 — 모든 입력이 편집 가능하다.
+    expect(screen.getByLabelText('최대 턴 수')).toBeEnabled();
+    expect(screen.getByLabelText('세션 최대 토큰')).toBeEnabled();
   });
 });

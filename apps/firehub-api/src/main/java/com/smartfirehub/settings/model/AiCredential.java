@@ -31,22 +31,11 @@ import java.util.Map;
  * 하나를 남긴 대가가 "그 하나가 예전보다 덜 보호받는" 것이었다. 그래서 가드 테스트는 이제
  * 정의 파일 밖의 {@code instanceof AiCredential} 부재도 함께 단언한다.
  *
- * <p>여전히 {@code switch} 로 남아 있는 곳은 인증 상태 컨트롤러 두 곳
- * ({@code AiController}/{@code PlatformAiController})뿐이다. 그쪽은 값을 조립하는 게 아니라
- * <b>다른 서비스 메서드를 고르는</b> 컨트롤러 계층의 결정이라 모델로 내리지 않았고, 그래서
- * 그 두 곳은 계속 {@code AiCredentialSwitchGuardTest} 가 지킨다.
+ * <p>여전히 {@code switch} 로 남아 있는 곳은 인증 상태 컨트롤러({@code AiController})뿐이다.
+ * 그쪽은 값을 조립하는 게 아니라 <b>다른 서비스 메서드를 고르는</b> 컨트롤러 계층의 결정이라
+ * 모델로 내리지 않았고, 그래서 계속 {@code AiCredentialSwitchGuardTest} 가 지킨다.
  */
 public sealed interface AiCredential {
-
-  /**
-   * {@code ai.model} 이 비어 있을 때 쓰는 기본 모델.
-   *
-   * <p>세 소비처가 각각 {@code orElse(...)} 를 적어 값이 갈려 있었다(채팅·분류는
-   * {@code "claude-sonnet-5"}, 프로액티브는 {@code ""}). 프로액티브의 빈 문자열은 opencode
-   * 테넌트에서 ai-agent 의 고정 기본값(슬래시 없음)이 대신 실려 원인 불명의 형식 오류로
-   * 끝났다 — 답이 하나여야 하므로 여기로 모은다.
-   */
-  String DEFAULT_MODEL = "claude-sonnet-5";
 
   /** ai-agent 가 body 의 {@code agentType} 키로 읽는 식별자. 저장 값과 같은 문자열이다. */
   String agentType();
@@ -60,6 +49,17 @@ public sealed interface AiCredential {
 
   /** {@link #isComplete()} 가 거짓일 때 사용자에게 보일 문구. 내부 정보를 담지 않는다. */
   String incompleteMessage();
+
+  /**
+   * 불완전하면 {@link #incompleteMessage()} 로 {@link IllegalStateException} 을 던지고, 아니면 자신을
+   * 돌려준다 — 예외로 끝내는 경로(분류·프로액티브)가 쓴다. 채팅은 SSE 오류 이벤트로 문구만 쓴다.
+   */
+  default AiCredential requireComplete() {
+    if (!isComplete()) {
+      throw new IllegalStateException(incompleteMessage());
+    }
+    return this;
+  }
 
   /**
    * ai-agent 요청 바디에 이 유형이 실제로 쓰는 필드만 채운다.

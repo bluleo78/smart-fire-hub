@@ -129,22 +129,16 @@ public class ProactiveJobAsyncRunner {
       // 예전에는 여기에 유형별 switch 가 있어 평면 문자열을 풀어냈는데, 그 매핑이 채팅·분류와
       // 따로 유지되는 세 번째 사본이었다(이슈 #695). 이제 자격증명을 그대로 클라이언트에 넘기고
       // 필드 조립은 AiCredential.applyTo() 하나가 맡는다.
-      AiCredential credential = aiCredentialService.resolve();
-
-      // opencode 만 모델을 함께 싣는다 — sdk/cli/cli-api 는 지금까지 모델을 보낸 적이 없고
-      // ai-agent 의 고정 기본값(claude-haiku-4-5)을 쓴다(비용 차이가 있는 의도된 gap).
+      //
       // 자격증명 자체가 불완전하면 모델 검사보다 **먼저** 막는다 — 순서가 뒤집히면 providerId/
-      // baseUrl 이 비어 있는 테넌트에게 "모델을 다시 선택하세요"라는 엉뚱한 안내가 나간다
-      // (리뷰 3b). 채팅(AiAgentProxyService)이 isComplete() 를 먼저 보는 것과 같은 순서다.
-      if (!credential.isComplete()) {
-        throw new IllegalStateException(credential.incompleteMessage());
-      }
+      // baseUrl 이 비어 있는 테넌트에게 "모델을 다시 선택하세요"라는 엉뚱한 안내가 나간다(리뷰 3b).
+      AiCredential credential = aiCredentialService.resolve().requireComplete();
 
-      // 모델은 그것을 실제로 쓰는 유형에서만 조회한다(Supplier) — sdk/cli/cli-api 는 지금까지
+      // 모델은 그것을 실제로 쓰는 유형(opencode)에서만 조회한다(Supplier) — sdk/cli/cli-api 는
       // 모델을 보낸 적이 없고 ai-agent 라우트의 고정 기본값을 쓴다(비용 차이가 있는 의도된 gap).
+      // ai.model 은 테넌트 값 → 코드 기본값으로 항상 해석된다(SettingsService.getValue).
       String opencodeModel =
-          credential.modelToSend(
-              () -> settingsService.getValue("ai.model").orElse(AiCredential.DEFAULT_MODEL));
+          credential.modelToSend(() -> settingsService.getValue("ai.model").orElseThrow());
       // 모델 접두사 가드(이슈 #695) — 채팅·분류에는 있었으나 이 경로에만 없어서, ai.model 이 낡은
       // opencode 테넌트의 잡은 ai-agent 안쪽에서 원인 불명으로 실패했다. 모델을 보내지 않는
       // 유형에서는 null 이 넘어가 no-op 이다(세 경로 같은 검사·같은 문구).

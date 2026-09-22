@@ -36,7 +36,7 @@ public class PlatformSettingsController {
 
   private final SettingsService settingsService;
 
-  /** 플랫폼 기본 설정 전체. 비밀값(ai.api_key / ai.cli_oauth_token / embedding.api_key)은 마스킹된다. */
+  /** 플랫폼 기본 설정 전체. 비밀값(embedding.api_key / smtp.password)은 마스킹된다. */
   @GetMapping
   @RequirePermission("platform:settings:read")
   public ResponseEntity<List<SettingResponse>> getAll() {

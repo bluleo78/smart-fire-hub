@@ -13,6 +13,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '../../components/ui/alert-dialog';
+import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { InlineBanner } from '../../components/ui/inline-banner';
@@ -29,23 +30,16 @@ import { Skeleton } from '../../components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import { Textarea } from '../../components/ui/textarea';
 import { useAiCredentialForm } from '../../hooks/useAiCredentialForm';
-import { useSavedAgentType } from '../../hooks/useSavedAgentType';
 import { useSettingsOverrideForm } from '../../hooks/useSettingsOverrideForm';
 import { useSmtpSettingsForm } from '../../hooks/useSmtpSettingsForm';
 import {
   useDirtyAggregator,
   useUnsavedChangesGuard,
 } from '../../hooks/useUnsavedChangesGuard';
-import {
-  buildSaveConfirm,
-  credentialIsDirty,
-  hasTypeChangedFromSaved,
-  willDeleteOnSave,
-} from '../../lib/ai-credential-screen';
-import { BUILTIN_AI_DEFAULTS } from '../../lib/settings-fields';
+import { typeChangeConfirmDescription } from '../../lib/ai-credential-screen';
 import { AiCredentialFieldset, OpencodeModelField } from './AiCredentialFieldset';
 import EmbeddingSettingsTab from './EmbeddingSettingsTab';
-import { ClearOverrideButton, SettingFieldLabel, SettingStateBadge } from './settings-lock';
+import { SettingFieldLabel } from './settings-lock';
 import SmtpSettingsTab from './SmtpSettingsTab';
 
 const MODEL_OPTIONS = [
@@ -60,11 +54,10 @@ const MODEL_OPTIONS = [
  * 전용 문서(`useAiCredentialForm`, `AiCredentialFieldset.tsx`)로 옮겨가 이 폼에서 빠졌다 —
  * 설계서 §72 "키 변화" 표의 "평면 유지" 목록이 정확히 이 6키다.
  *
- * <b>옛 `useAiSettingsForm` 을 대체한다(Task 11 이 삭제).</b> 그 훅이 얹던 번들 레이어(그룹
- * 배지·그룹 해제·부분 실패 안내)는 3키가 통째로 다른 자원으로 옮겨가며 존재 이유가 없어졌다 —
- * 남은 6키는 전부 <b>키 단위</b> 상속/재정의라 `useSettingsOverrideForm` 을 다른 개별 키(SMTP
- * `smtp.from_address` 등)와 똑같이 직접 쓴다. 번들 레이어를 다시 씌우면 없는 문제를 다시 푸는
- * 셈이다.
+ * <b>테넌트 전용 설정이다.</b> 서버(`GET /settings?prefix=ai`)는 6키를 항상 내려주고, 테넌트가
+ * 저장한 적 없는 키는 코드 기본값을 `value` 로, `overridden:false` 로 준다. 그래서 화면은 상태 배지나
+ * 잠금 없이 평범한 입력 폼으로 그리고, 저장하지 않은 필드에만 "기본값" 힌트를 붙인다.
+ * 폼 상태(조회·바꾼 키만 PUT·되돌리기)는 `useSettingsOverrideForm` 을 그대로 쓴다.
  */
 type AIBehaviorForm = {
   'ai.model': string;
@@ -75,15 +68,15 @@ type AIBehaviorForm = {
   'ai.session_max_tokens': string;
 };
 
-// 조회 전 초기값은 빈 문자열이다. `ai.session_max_tokens` 만 코드 기본값을 미리 시드한다 — 이유는
-// `BUILTIN_AI_DEFAULTS` 주석 참고(마이그레이션이 시드하지 않는 유일한 AI 키).
+// 조회 전 초기값은 빈 문자열이다 — 기본값은 서버가 값으로 내려주므로 화면이 따로 들고 있지 않는다
+// (백엔드 `AiBehaviorDefaults` 가 단일 원본이다).
 const AI_BEHAVIOR_DEFAULTS: AIBehaviorForm = {
   'ai.model': '',
   'ai.max_turns': '',
   'ai.system_prompt': '',
   'ai.temperature': '',
   'ai.max_tokens': '',
-  'ai.session_max_tokens': BUILTIN_AI_DEFAULTS['ai.session_max_tokens'] ?? '',
+  'ai.session_max_tokens': '',
 };
 
 // 필드 표시 이름 — 저장이 거부된 필드(빈 값으로는 저장할 수 없는 키를 비운 채 저장 시도)를
@@ -118,6 +111,19 @@ const NUMBER_RULES: {
   },
 ];
 
+/**
+ * 저장한 적 없는(=코드 기본값이 적용 중인) 필드 라벨 옆에 붙는 작은 힌트.
+ * 저장된 필드에는 아무것도 붙이지 않는다 — 입력창의 값이 곧 적용 중인 값이라 따로 알릴 것이 없다.
+ */
+function DefaultHint({ show }: { show: boolean }) {
+  if (!show) return null;
+  return (
+    <Badge variant="outline" className="font-normal text-muted-foreground">
+      기본값
+    </Badge>
+  );
+}
+
 export default function SettingsPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [authStatus, setAuthStatus] = useState<{ valid: boolean; email?: string; subscriptionType?: string } | null>(null);
@@ -125,8 +131,8 @@ export default function SettingsPage() {
   /** 동작 설정(6키) 저장 후 재조회가 실패했을 때의 지속 안내 — 옛 `useAiSettingsForm.staleNotice`
    * 를 대체한다. 자격증명 쪽의 같은 안내는 `cred.staleNotice`(별도 자원, 별도 슬롯)가 갖는다. */
   const [behaviorStaleNotice, setBehaviorStaleNotice] = useState<string | null>(null);
-  /** 저장 확인 다이얼로그 내용 — null 이면 닫힘. `handleSaveClick` 이 채우고, 확인/취소가 비운다. */
-  const [saveConfirm, setSaveConfirm] = useState<ReturnType<typeof buildSaveConfirm>>(null);
+  /** 유형 전환 저장 확인 다이얼로그 열림 여부 — `handleSaveClick` 이 열고, 확인/취소가 닫는다. */
+  const [saveConfirmOpen, setSaveConfirmOpen] = useState(false);
 
   /**
    * 마지막으로 시작한 인증 확인의 일련번호. <b>늦게 도착한 낡은 응답을 버리기 위한</b> 것이다
@@ -157,15 +163,13 @@ export default function SettingsPage() {
   }, []);
 
   /**
-   * AI <b>자격증명</b>(`ai.credential`) 전용 폼(Task 10) — 유형·payload·비밀·라디오(플랫폼/직접)를
-   * 전부 갖는다. 동작 설정 6키와는 완전히 독립된 서버 자원(전용 GET/PUT/DELETE/probe 엔드포인트)
-   * 이라 저장도 따로 간다(`performSave` 참고).
+   * AI <b>자격증명</b>(`ai.credential`) 전용 폼(Task 10) — 유형·payload·비밀을 갖는다(테넌트
+   * 전용, #706). 동작 설정 6키와는 완전히 독립된 서버 자원(전용 GET/PUT/probe 엔드포인트)이라
+   * 저장도 따로 간다(`performSave` 참고).
    */
   const cred = useAiCredentialForm();
-  /** 유형 전환 경고·저장 확인 다이얼로그가 비교할, 서버와 마지막으로 동기화된 유형. */
-  const savedAgentType = useSavedAgentType(cred);
 
-  /** 동작 설정 6키 — 키 단위 상속/재정의(번들 아님, 파일 헤더 주석 참고). */
+  /** 동작 설정 6키 — 테넌트 전용 평면 설정(파일 헤더 주석 참고). */
   const behavior = useSettingsOverrideForm<AIBehaviorForm>({
     prefix: 'ai',
     defaults: AI_BEHAVIOR_DEFAULTS,
@@ -175,11 +179,8 @@ export default function SettingsPage() {
     isLoading: behaviorLoading,
     settings,
     form,
-    original: behaviorOriginal,
     errors,
     setErrors,
-    fieldState,
-    isEditable,
     hasChanges: behaviorHasChanges,
     updateField,
     handleReset,
@@ -263,8 +264,8 @@ export default function SettingsPage() {
         }
       }
 
-      if (credentialIsDirty(cred)) {
-        // `cred.save()` 가 쓰기(PUT/DELETE) 성공 여부를 boolean 으로 돌려준다(Ruling #42, fix
+      if (cred.hasUnsavedInput) {
+        // `cred.save()` 가 쓰기(PUT) 성공 여부를 boolean 으로 돌려준다(Ruling #42, fix
         // round 1) — 실패한 쓰기 뒤에 `verifyAuth()` 를 돌리면 여전히 낡은(그러나 여전히 유효할
         // 수 있는) 자격증명을 검사해 사용자를 혼란스럽게 한다. 성공했을 때만 부른다.
         const saved = await cred.save();
@@ -286,37 +287,24 @@ export default function SettingsPage() {
   }, [behaviorHasChanges, buildChangedPayload, commitSaved, refreshMeta, cred, verifyAuth]);
 
   /**
-   * "저장" 클릭 — 파괴적 결과(플랫폼으로 되돌리기 · 유형 전환)가 예정돼 있으면 확인 다이얼로그를
-   * 먼저 연다(설계서 §193 "유형 전환", §213 "전환 의미"). 두 시나리오는 상호 배타적이다
-   * (`willDeleteOnSave` 는 `plane==='platform'` 을, 유형 전환은 `plane==='tenant'` 를 전제한다)
-   * — `buildSaveConfirm` 이 최대 하나만 고른다.
+   * "저장" 클릭 — 파괴적 결과(유형 전환 = 이전 유형 비밀 폐기)가 예정돼 있으면 확인 다이얼로그를
+   * 먼저 연다(설계서 §193 "유형 전환").
    */
   const handleSaveClick = () => {
     if (!validate()) {
       toast.error('입력값을 확인하세요.');
       return;
     }
-    const confirm = buildSaveConfirm({
-      willDelete: willDeleteOnSave(cred),
-      typeChanged:
-        cred.plane === 'tenant' && hasTypeChangedFromSaved(cred.agentType, savedAgentType, cred.tenantOwned),
-      hasUnsavedInput: cred.hasUnsavedInput,
-      agentType: cred.agentType,
-      savedAgentType,
-    });
-    if (confirm) {
-      setSaveConfirm(confirm);
+    if (cred.typeChanged) {
+      setSaveConfirmOpen(true);
     } else {
       void performSave();
     }
   };
 
-  // 재정의 중인 필드에만 해제 버튼을 붙인다 — 상속 중인 필드에는 지울 오버라이드가 없다. 동작
-  // 설정 6키는 전부 키 단위라(번들 아님) 모든 키에 이 판정이 그대로 적용된다.
-  const clearAction = (key: keyof AIBehaviorForm) =>
-    fieldState(key) === 'overridden' ? (
-      <ClearOverrideButton onConfirm={() => behavior.handleClearOverride(key)} disabled={behavior.isClearing} />
-    ) : undefined;
+  // 테넌트가 아직 저장하지 않은 키인가 — 서버가 `overridden:false` 로 알려 준다(값은 코드 기본값).
+  // 응답이 없으면(조회 실패) 판단할 근거가 없으므로 힌트를 붙이지 않는다.
+  const isDefault = (key: keyof AIBehaviorForm) => settings[key]?.overridden === false;
 
   /**
    * 이메일 탭의 폼 상태도 <b>페이지가 소유한다</b>. Radix `TabsContent` 가 비활성 탭을
@@ -325,13 +313,13 @@ export default function SettingsPage() {
   const smtp = useSmtpSettingsForm();
 
   // 탭별 dirty 상태를 합산해 페이지 전체 dirty 여부를 결정한다(이슈 #86). AI 탭은 이제 두 독립
-  // 자원(동작 설정 6키 + 자격증명)을 갖고 있어 `credentialIsDirty(cred)` 도 함께 보고해야 한다 —
-  // 빠뜨리면 라디오만 바꾸고 떠나는 이탈이 조용히 통과한다.
+  // 자원(동작 설정 6키 + 자격증명)을 갖고 있어 `cred.hasUnsavedInput` 도 함께 보고해야 한다 —
+  // 빠뜨리면 자격증명만 입력하고 떠나는 이탈이 조용히 통과한다.
   const { isAnyDirty, makeReporter } = useDirtyAggregator();
   const aiReporter = makeReporter('ai');
   const smtpReporter = makeReporter('smtp');
   const smtpHasChanges = smtp.base.hasChanges;
-  const credDirty = credentialIsDirty(cred);
+  const credDirty = cred.hasUnsavedInput;
   useEffect(() => {
     aiReporter(behaviorHasChanges || credDirty);
   }, [aiReporter, behaviorHasChanges, credDirty]);
@@ -407,15 +395,9 @@ export default function SettingsPage() {
 
               <AiCredentialFieldset
                 cred={cred}
-                savedAgentType={savedAgentType}
                 authStatus={authStatus}
                 isVerifying={isVerifying}
                 onVerifyAuth={verifyAuth}
-                // Ruling #43(fix round 1) — "플랫폼 설정을 사용" 정의 목록의 "모델" 행에 쓸
-                // 해석된 값. `behaviorOriginal`(마지막 서버 확정 값)을 쓴다 — 다른 곳에서 아직
-                // 저장 전인 `form['ai.model']` 을 쓰면, 사용자가 모델 칸에 타이핑 중인 미저장
-                // 값이 "지금 적용 중"이라고 거짓으로 보일 수 있다.
-                resolvedModel={behaviorOriginal['ai.model']}
               />
 
               <Separator />
@@ -424,7 +406,10 @@ export default function SettingsPage() {
                   남는다"). opencode 는 자격증명의 providerId/모델 불러오기 결과에 딸린 4상태
                   칸(`OpencodeModelField`)을, 나머지 세 유형은 옛 정적 Claude 모델 목록을 쓴다. */}
               <div className="space-y-2">
-                <SettingFieldLabel htmlFor="ai-model" state={fieldState('ai.model')} action={clearAction('ai.model')}>
+                <SettingFieldLabel
+                  htmlFor="ai-model"
+                  badge={<DefaultHint show={isDefault('ai.model')} />}
+                >
                   모델
                 </SettingFieldLabel>
                 {cred.agentType === 'opencode' ? (
@@ -432,14 +417,12 @@ export default function SettingsPage() {
                     cred={cred}
                     modelValue={form['ai.model']}
                     onModelChange={(v) => updateField('ai.model', v)}
-                    disabled={!isEditable('ai.model')}
                   />
                 ) : (
                   <>
                     <Select
                       value={form['ai.model']}
                       onValueChange={(value) => updateField('ai.model', value)}
-                      disabled={!isEditable('ai.model')}
                     >
                       <SelectTrigger id="ai-model" className="w-full max-w-md">
                         <SelectValue placeholder="모델을 선택하세요" />
@@ -463,8 +446,7 @@ export default function SettingsPage() {
               <div className="space-y-2">
                 <SettingFieldLabel
                   htmlFor="ai-max-turns"
-                  state={fieldState('ai.max_turns')}
-                  action={clearAction('ai.max_turns')}
+                  badge={<DefaultHint show={isDefault('ai.max_turns')} />}
                 >
                   최대 턴 수
                 </SettingFieldLabel>
@@ -475,7 +457,6 @@ export default function SettingsPage() {
                   max={50}
                   className="w-full max-w-md"
                   value={form['ai.max_turns']}
-                  disabled={!isEditable('ai.max_turns')}
                   onChange={(e) => updateField('ai.max_turns', e.target.value)}
                 />
                 {errors['ai.max_turns'] && (
@@ -490,8 +471,7 @@ export default function SettingsPage() {
               <div className="space-y-2">
                 <SettingFieldLabel
                   htmlFor="ai-temperature"
-                  state={fieldState('ai.temperature')}
-                  action={clearAction('ai.temperature')}
+                  badge={<DefaultHint show={isDefault('ai.temperature')} />}
                 >
                   Temperature
                 </SettingFieldLabel>
@@ -503,7 +483,6 @@ export default function SettingsPage() {
                   step={0.1}
                   className="w-full max-w-md"
                   value={form['ai.temperature']}
-                  disabled={!isEditable('ai.temperature')}
                   onChange={(e) => updateField('ai.temperature', e.target.value)}
                 />
                 {errors['ai.temperature'] && (
@@ -518,8 +497,7 @@ export default function SettingsPage() {
               <div className="space-y-2">
                 <SettingFieldLabel
                   htmlFor="ai-max-tokens"
-                  state={fieldState('ai.max_tokens')}
-                  action={clearAction('ai.max_tokens')}
+                  badge={<DefaultHint show={isDefault('ai.max_tokens')} />}
                 >
                   최대 응답 토큰
                 </SettingFieldLabel>
@@ -530,7 +508,6 @@ export default function SettingsPage() {
                   max={65536}
                   className="w-full max-w-md"
                   value={form['ai.max_tokens']}
-                  disabled={!isEditable('ai.max_tokens')}
                   onChange={(e) => updateField('ai.max_tokens', e.target.value)}
                 />
                 {errors['ai.max_tokens'] && (
@@ -545,8 +522,7 @@ export default function SettingsPage() {
               <div className="space-y-2">
                 <SettingFieldLabel
                   htmlFor="ai-session-max-tokens"
-                  state={fieldState('ai.session_max_tokens')}
-                  action={clearAction('ai.session_max_tokens')}
+                  badge={<DefaultHint show={isDefault('ai.session_max_tokens')} />}
                 >
                   세션 최대 토큰
                 </SettingFieldLabel>
@@ -558,17 +534,13 @@ export default function SettingsPage() {
                   step={10000}
                   className="w-full max-w-md"
                   value={form['ai.session_max_tokens']}
-                  disabled={!isEditable('ai.session_max_tokens')}
                   onChange={(e) => updateField('ai.session_max_tokens', e.target.value)}
                 />
                 {errors['ai.session_max_tokens'] && (
                   <p className="text-sm text-destructive">{errors['ai.session_max_tokens']}</p>
                 )}
-                {/* 이 키는 플랫폼 시드 행이 없어 서버 description 이 null 일 수 있다 — 그때는
-                    허용 범위를 담은 기존 문구로 폴백한다. */}
                 <p className="text-sm text-muted-foreground">
-                  {settings['ai.session_max_tokens']?.description ??
-                    '세션의 입력 토큰이 이 값을 초과하면 대화를 자동 요약하고 새 세션으로 전환합니다 (10,000~200,000)'}
+                  세션의 입력 토큰이 이 값을 초과하면 대화를 자동 요약하고 새 세션으로 전환합니다 (10,000~200,000)
                 </p>
               </div>
             </CardContent>
@@ -576,12 +548,10 @@ export default function SettingsPage() {
 
           <Card className="card-hover">
             <CardHeader>
-              {/* 이 카드에는 별도 Label 이 없으므로(제목이 곧 필드 이름) 배지와 재정의 해제 버튼을
-                  제목 줄에 붙인다. */}
+              {/* 이 카드에는 별도 Label 이 없으므로(제목이 곧 필드 이름) 기본값 힌트를 제목 줄에 붙인다. */}
               <CardTitle className="flex flex-wrap items-center gap-2">
                 <span>시스템 프롬프트</span>
-                <SettingStateBadge state={fieldState('ai.system_prompt')} />
-                {clearAction('ai.system_prompt')}
+                <DefaultHint show={isDefault('ai.system_prompt')} />
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -591,7 +561,6 @@ export default function SettingsPage() {
                   rows={15}
                   className="font-mono text-sm"
                   value={form['ai.system_prompt']}
-                  disabled={!isEditable('ai.system_prompt')}
                   onChange={(e) => updateField('ai.system_prompt', e.target.value)}
                   placeholder="시스템 프롬프트를 입력하세요..."
                 />
@@ -609,7 +578,7 @@ export default function SettingsPage() {
               {isSaving ? '저장 중...' : '저장'}
             </Button>
             {/* 되돌리기는 두 자원을 함께 되돌린다(Ruling #41, fix round 1) — 동작 설정 6키는
-                `handleReset()`, 자격증명(유형·payload·비밀 입력·라디오)은 `cred.reset()`. 화면
+                `handleReset()`, 자격증명(유형·payload·비밀 입력)은 `cred.reset()`. 화면
                 에는 버튼이 하나뿐이라, 절반만(동작 설정만) 되돌리면 사용자에게 그 구분이
                 설명되지 않는다. */}
             <Button
@@ -635,28 +604,28 @@ export default function SettingsPage() {
         </TabsContent>
       </Tabs>
 
-      {/* 저장 확인 다이얼로그 — 플랫폼으로 되돌리기/유형 전환처럼 되돌릴 수 없는 결과가 예정돼
+      {/* 저장 확인 다이얼로그 — 유형 전환(이전 비밀 폐기)처럼 되돌릴 수 없는 결과가 예정돼
           있을 때만 뜬다(`handleSaveClick`). 그 외에는 저장이 즉시 진행된다. */}
       <AlertDialog
-        open={saveConfirm !== null}
-        onOpenChange={(open) => {
-          if (!open) setSaveConfirm(null);
-        }}
+        open={saveConfirmOpen}
+        onOpenChange={setSaveConfirmOpen}
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{saveConfirm?.title}</AlertDialogTitle>
-            <AlertDialogDescription>{saveConfirm?.description}</AlertDialogDescription>
+            <AlertDialogTitle>자격증명 유형을 바꿀까요?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {typeChangeConfirmDescription(cred.savedAgentType, cred.agentType)}
+            </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>취소</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => {
-                setSaveConfirm(null);
+                setSaveConfirmOpen(false);
                 void performSave();
               }}
             >
-              {saveConfirm?.confirmLabel}
+              저장
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

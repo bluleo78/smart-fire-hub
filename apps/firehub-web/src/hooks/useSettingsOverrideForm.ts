@@ -17,8 +17,8 @@ export interface UseSettingsOverrideFormOptions<F extends SettingsFormShape> {
    * 서버 값이 없을 때 쓰는 키별 폴백. <b>모듈 레벨 상수여야 한다</b> — 인라인 객체를 넘기면
    * 렌더마다 새 참조가 되어 해제 폴백이 매번 다른 객체를 읽는다.
    *
-   * AI 탭은 "빈 문자열 + 코드 기본값(BUILTIN_AI_DEFAULTS)"을 미리 합쳐 넘기고, SMTP 탭은
-   * 조회 전 초기값(starttls 만 'true')을 넘긴다 — 두 폴백 규칙이 이 한 파라미터로 합쳐진다.
+   * AI 탭은 전부 빈 문자열을 넘기고(서버가 저장값이 없으면 코드 기본값을 값으로 내려준다),
+   * SMTP 탭은 조회 전 초기값(starttls 만 'true')을 넘긴다.
    */
   defaults: F;
   /**
@@ -73,10 +73,9 @@ export interface SettingsOverrideForm<F extends SettingsFormShape> {
   loadFailed: boolean;
   isClearing: boolean;
   /**
-   * 해제 진행 중 표시를 <b>훅 밖의 해제 작업</b>도 함께 쓰기 위한 setter. 소비자는 번들 레이어의
-   * 해제 작업들이다 — SMTP 의 "연결 5키 전체 해제", AI 의 "자격증명 3키 전체 해제"와 "저장된
-   * OAuth 토큰 삭제". 전부 번들 개념이라 훅 밖에 있지만(RULING B), 화면에서 잠그는 버튼은 개별
-   * 해제와 <b>같은 것들</b>이다. 별도 플래그를 두면 두 상태가 갈라져 "해제 중인데 해제 버튼이
+   * 해제 진행 중 표시를 <b>훅 밖의 해제 작업</b>도 함께 쓰기 위한 setter. 소비자는 SMTP 번들
+   * 레이어의 "연결 5키 전체 해제"다. 번들 개념이라 훅 밖에 있지만(RULING B), 화면에서 잠그는
+   * 버튼은 개별 해제와 <b>같은 것들</b>이다. 별도 플래그를 두면 두 상태가 갈라져 "해제 중인데 해제 버튼이
    * 눌린다"가 생긴다.
    */
   setIsClearing: Dispatch<SetStateAction<boolean>>;

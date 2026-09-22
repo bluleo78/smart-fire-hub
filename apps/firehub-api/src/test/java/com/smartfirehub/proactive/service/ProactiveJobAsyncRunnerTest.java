@@ -13,6 +13,7 @@ import com.smartfirehub.proactive.exception.ProactiveJobException;
 import com.smartfirehub.proactive.repository.ProactiveJobExecutionRepository;
 import com.smartfirehub.proactive.repository.ProactiveJobRepository;
 import com.smartfirehub.proactive.repository.ReportTemplateRepository;
+import com.smartfirehub.settings.model.AiBehaviorDefaults;
 import com.smartfirehub.settings.model.AiCredential;
 import com.smartfirehub.settings.model.UnknownAgentTypeException;
 import com.smartfirehub.settings.service.AiCredentialService;
@@ -147,7 +148,7 @@ class ProactiveJobAsyncRunnerTest {
   void opencode_ai모델이_형식에_맞지_않으면_호출전에_FAILED로_기록된다() {
     when(aiCredentialService.resolve())
         .thenReturn(new AiCredential.Opencode("openai", "https://api.openai.com/v1", "", "sk-oai"));
-    when(settingsService.getValue("ai.model")).thenReturn(Optional.empty());
+    when(settingsService.getValue("ai.model")).thenReturn(Optional.of(AiBehaviorDefaults.MODEL));
 
     assertThatThrownBy(() -> runner.executeJob(JOB_ID, USER_ID))
         .isInstanceOf(ProactiveJobException.class);

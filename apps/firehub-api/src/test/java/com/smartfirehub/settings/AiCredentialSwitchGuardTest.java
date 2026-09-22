@@ -67,10 +67,10 @@ class AiCredentialSwitchGuardTest {
 
   /**
    * 스캔이 조용히 0건을 훑고 통과하는 사고(경로 오타, 디렉터리 이동)를 막는 하한선. 현재 대상은
-   * 인증 상태 컨트롤러 둘({@code AiController}, {@code PlatformAiController})이다 — 줄어들 일이
-   * 있다면 이 숫자와 함께 의도적으로 내려야 한다.
+   * 인증 상태 컨트롤러 하나({@code AiController})다 — {@code PlatformAiController} 는 플랫폼 AI
+   * 자격증명 평면과 함께 삭제됐다(#706). 줄어들 일이 있다면 이 숫자와 함께 의도적으로 내려야 한다.
    */
-  private static final int MIN_EXPECTED_FILES = 2;
+  private static final int MIN_EXPECTED_FILES = 1;
 
   @Test
   void AiCredential_을_switch_로_분기하는_모든_생산소스가_exhaustive_하다() {

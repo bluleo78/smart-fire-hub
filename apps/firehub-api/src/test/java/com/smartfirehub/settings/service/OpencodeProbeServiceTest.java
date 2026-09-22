@@ -10,7 +10,6 @@ import com.smartfirehub.apiconnection.service.EncryptionService;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.pipeline.service.executor.SsrfProtectionService;
 import com.smartfirehub.settings.model.AiCredentialDocument;
-import com.smartfirehub.settings.repository.SettingsRepository;
 import com.smartfirehub.settings.repository.TenantSettingsRepository;
 import com.smartfirehub.settings.service.OpencodeProbeService.ProbeResult;
 import com.smartfirehub.settings.service.OpencodeProbeService.ProbeResult.Reason;
@@ -127,23 +126,21 @@ class OpencodeProbeServiceTest {
 
   /**
    * 실제 {@link AiCredentialService} 를 Mockito 로 저장소만 가짜로 채워 구성한다.
-   * {@link OpencodeProbeService#tenantOpencodeCredential} 경로(=평면 교차 폴백 금지 로직)를 진짜
+   * {@link AiCredentialService#tenantOpencodeCredential} 경로(현재 테넌트의 opencode 행만 읽는 로직)를 진짜
    * 구현으로 통과시켜 검증하기 위해서다 — {@code AiCredentialService} 자체를 통째로 mock 하면
    * "OpencodeProbeService 가 올바른 메서드를 부르는지"만 보고, 그 메서드 내부가 실제로 테넌트
    * 행만 읽는지는 확인하지 못한다.
    */
-  private AiCredentialService realAiCredentialService(String tenantRawJson, String platformRawJson) {
+  private AiCredentialService realAiCredentialService(String tenantRawJson) {
     TenantSettingsRepository tenantRepo = mock(TenantSettingsRepository.class);
-    SettingsRepository platformRepo = mock(SettingsRepository.class);
     EncryptionService encryption = mock(EncryptionService.class);
     when(tenantRepo.findValue(AiCredentialService.KEY)).thenReturn(Optional.ofNullable(tenantRawJson));
-    when(platformRepo.getValue(AiCredentialService.KEY)).thenReturn(Optional.ofNullable(platformRawJson));
     // "enc:" 접두사를 벗기는 가짜 복호화 — 실제 AES 는 필요 없다(EncryptionService 자체의 정확성은
     // EncryptionServiceTest 가 검증한다). 이 테스트는 AiCredentialService 가 "어느 저장소에서"
     // 읽는지를 검증하는 것이지 암호화 알고리즘을 재검증하는 것이 아니다.
     when(encryption.decrypt(anyString()))
         .thenAnswer(inv -> ((String) inv.getArgument(0)).replaceFirst("^enc:", ""));
-    return new AiCredentialService(platformRepo, tenantRepo, encryption);
+    return new AiCredentialService(tenantRepo, encryption);
   }
 
   // ---------------------------------------------------------------------
@@ -499,15 +496,15 @@ class OpencodeProbeServiceTest {
   }
 
   // ---------------------------------------------------------------------
-  // 3. 평면 교차 폴백 금지 — apiKey 생략 시 테넌트 행만 본다
+  // 3. apiKey 생략 시 현재 테넌트의 opencode 행만 본다
   // ---------------------------------------------------------------------
 
   @Test
-  void apiKey_생략시_테넌트_행이_없으면_플랫폼_키로_새지_않고_400이다() {
-    // 테넌트 행 없음 + 플랫폼 행에는 키가 있다. 뮤턴트(플랫폼으로 폴백)가 들어가면 이 테스트가
-    // "성공"으로 뒤집히거나(플랫폼 키를 실어 보냄) 최소한 메시지가 달라진다.
+  void apiKey_생략시_테넌트_행이_없으면_요청을_보내지_않고_400이다() {
+    // 테넌트 행 없음 → 재사용할 저장된 키가 없다. AI 자격증명은 테넌트 전용이라(#706) 다른 곳에서
+    // 키를 빌려올 수 없고, 요청 자체가 나가면 안 된다.
     TenantContext.set(1L);
-    AiCredentialService cred = realAiCredentialService(null, tenantDocJson("opencode", wireMockUrl("/v1"), "enc:platform-secret"));
+    AiCredentialService cred = realAiCredentialService(null);
     wireMock.stubFor(get("/v1/models").willReturn(okJson("{\"data\":[]}")));
 
     OpencodeProbeService service = wireMockService(cred);
@@ -515,7 +512,7 @@ class OpencodeProbeServiceTest {
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage(OpencodeProbeService.MSG_NO_STORED_KEY);
 
-    // 플랫폼 키를 들고 실제로 요청을 보내지 않았다는 것까지 확인한다(메시지만 보면 우연히 같은
+    // 실제로 요청을 보내지 않았다는 것까지 확인한다(메시지만 보면 우연히 같은
     // 문구를 내면서 실제로는 요청을 보내는 구현도 통과해 버릴 수 있다).
     wireMock.verify(0, anyRequestedFor(anyUrl()));
   }
@@ -524,7 +521,7 @@ class OpencodeProbeServiceTest {
   void apiKey_생략시_테넌트_행의_키를_쓴다() {
     TenantContext.set(1L);
     String tenantBaseUrl = wireMockUrl("/v1");
-    AiCredentialService cred = realAiCredentialService(tenantDocJson("opencode", tenantBaseUrl, "enc:tenant-secret"), null);
+    AiCredentialService cred = realAiCredentialService(tenantDocJson("opencode", tenantBaseUrl, "enc:tenant-secret"));
 
     // Authorization 헤더가 정확히 테넌트의 복호화된 키여야만 매치되는 stub — 폴백이 빈 값/다른
     // 값을 쓰는 뮤턴트라면 매치가 안 돼 WireMock 기본 404 가 나서 ok()==false 로 드러난다.
@@ -543,7 +540,7 @@ class OpencodeProbeServiceTest {
   void apiKey_생략시_baseUrl이_저장된_값과_다르면_400이다() {
     TenantContext.set(1L);
     AiCredentialService cred =
-        realAiCredentialService(tenantDocJson("opencode", wireMockUrl("/v1-stored"), "enc:tenant-secret"), null);
+        realAiCredentialService(tenantDocJson("opencode", wireMockUrl("/v1-stored"), "enc:tenant-secret"));
 
     OpencodeProbeService service = wireMockService(cred);
     assertThatThrownBy(() -> service.probe(wireMockUrl("/v1-different"), null))
@@ -562,7 +559,7 @@ class OpencodeProbeServiceTest {
   void baseUrl이_null이고_apiKey도_생략이면_NPE_없이_400이다() {
     TenantContext.set(1L);
     AiCredentialService cred =
-        realAiCredentialService(tenantDocJson("opencode", wireMockUrl("/v1"), "enc:tenant-secret"), null);
+        realAiCredentialService(tenantDocJson("opencode", wireMockUrl("/v1"), "enc:tenant-secret"));
 
     OpencodeProbeService service = wireMockService(cred);
     // (String) 캐스트 — probe 에 String/TargetCheck 두 오버로드가 있어 생 null 은 모호하다.
@@ -575,7 +572,7 @@ class OpencodeProbeServiceTest {
   void apiKey_생략시_baseUrl_끝_슬래시_차이는_허용한다() {
     TenantContext.set(1L);
     String stored = wireMockUrl("/v1");
-    AiCredentialService cred = realAiCredentialService(tenantDocJson("opencode", stored, "enc:tenant-secret"), null);
+    AiCredentialService cred = realAiCredentialService(tenantDocJson("opencode", stored, "enc:tenant-secret"));
     wireMock.stubFor(
         get("/v1/models")
             .withHeader("Authorization", equalTo("Bearer tenant-secret"))
@@ -599,7 +596,7 @@ class OpencodeProbeServiceTest {
     TenantContext.set(1L);
     AiCredentialDocument sdkDoc = AiCredentialDocument.empty("sdk");
     sdkDoc.withSecret("apiKey", "enc:anthropic-secret");
-    AiCredentialService cred = realAiCredentialService(sdkDoc.toJson(), null);
+    AiCredentialService cred = realAiCredentialService(sdkDoc.toJson());
 
     OpencodeProbeService service = wireMockService(cred);
     assertThatThrownBy(() -> service.probe(wireMockUrl("/v1"), null))

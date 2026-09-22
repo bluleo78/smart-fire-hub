@@ -11,9 +11,6 @@ import { Switch } from '../../components/ui/switch';
 import { useTestSmtpSettings } from '../../hooks/queries/useProactiveMessages';
 import type { SmtpForm, SmtpSettingsFormState } from '../../hooks/useSmtpSettingsForm';
 import { PORT_MAX, PORT_MIN, SMTP_CONNECTION_KEYS } from '../../hooks/useSmtpSettingsForm';
-// `EmptyInBundleNote` 는 예전엔 이 파일의 지역 컴포넌트였다 — AI 자격증명 번들이 같은 노트를
-// 필요로 하게 되어 `settings-lock` 으로 올렸다(문구가 두 벌이 되는 것을 막는다). 이 탭의 사용법과
-// 동작은 그대로다.
 import {
   ClearOverrideButton,
   EmptyInBundleNote,

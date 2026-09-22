@@ -15,7 +15,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * <b>P7-b Task 5 이후 이 파일 전체가 {@code updatePlatformSettings} 를 검증한다.</b> 여기서 쓰는 키
- * (ai.api_key, ai.agent_type, embedding.* 등)는 전부 플랫폼 잠금이라 이제 {@code updateSettings}
+ * (embedding.* 등)는 전부 플랫폼 잠금이라 이제 {@code updateSettings}
  * (테넌트 평면, 6키 화이트리스트)로는 저장할 수 없다 — 저장 대상이 {@code updateSettings} 에서
  * {@code updatePlatformSettings} 로 옮겨졌을 뿐, 검증·마스킹·암호화 로직 자체는 그대로다(재사용).
  * 테넌트 평면 6키 쓰기는 {@code SettingsWritePlaneTest} 가 검증한다.
@@ -34,18 +34,24 @@ class SettingsServiceTest extends IntegrationTestBase {
   // SettingsResolutionTest.프리픽스에_마침표를_붙이면_조용히_빈_맵이_된다 가 경계까지 본다.
   // 마스킹 계약은 아래 getAll_apiKey_returnsMasked 로 옮겼다(같은 maskSecret 을 지난다).
 
+  /**
+   * AI 설정은 테넌트 전용이다 — 플랫폼 쓰기는 {@code ai.*} 동작 6키를 전부 거부하고
+   * {@code system_settings} 에 아무것도 남기지 않는다(받아 두면 아무도 읽지 않는 값이 "저장됨"으로
+   * 보이는 무동작이 된다).
+   */
   @Test
-  void updateSettings_validKey_updatesSuccessfully() {
-    // given: pick a key we know exists from migrations
-    // userId is null because no user seed data exists in the test DB;
-    // updated_by column is nullable (no NOT NULL constraint).
-    Map<String, String> update = Map.of("ai.max_turns", "10");
-
-    // when / then: no exception
-    settingsService.updatePlatformSettings(update, null);
-
-    // 저장 확인은 운영자 평면이 실제로 쓰는 읽기(getAll)로 한다.
-    assertThat(valueOf("ai.max_turns")).isEqualTo("10");
+  void updatePlatformSettings_AI_동작_키는_거부된다() {
+    for (String key : com.smartfirehub.settings.model.AiBehaviorDefaults.keys()) {
+      assertThatThrownBy(
+              () ->
+                  settingsService.updatePlatformSettings(
+                      Map.of(key, com.smartfirehub.settings.model.AiBehaviorDefaults.defaultOf(key)),
+                      null))
+          .as(key)
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("AI 설정은 플랫폼 설정이 아닙니다");
+      assertThat(rawSystemSettingValue(dsl, key)).as(key).isNull();
+    }
   }
 
   @Test
@@ -57,12 +63,14 @@ class SettingsServiceTest extends IntegrationTestBase {
         .hasMessageContaining("허용되지 않는 설정 키");
   }
 
+  // AI 값 범위 검증은 테넌트 쓰기 경로에서 한다(AI 설정은 테넌트 전용). validateValues 는 저장
+  // 전에 던지므로 tenant_settings 에 아무것도 쓰이지 않는다.
   @Test
   void updateSettings_maxTurnsBelowRange_throwsIllegalArgumentException() {
     // ai.max_turns must be 1~50; 0 is invalid
     Map<String, String> update = Map.of("ai.max_turns", "0");
 
-    assertThatThrownBy(() -> settingsService.updatePlatformSettings(update, 1L))
+    assertThatThrownBy(() -> settingsService.updateSettings(update, 1L))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("최대 턴 수는 1에서 50 사이");
   }
@@ -72,22 +80,23 @@ class SettingsServiceTest extends IntegrationTestBase {
     // ai.temperature must be 0.0~1.0; 1.5 is invalid
     Map<String, String> update = Map.of("ai.temperature", "1.5");
 
-    assertThatThrownBy(() -> settingsService.updatePlatformSettings(update, 1L))
+    assertThatThrownBy(() -> settingsService.updateSettings(update, 1L))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Temperature는 0.0에서 1.0 사이");
   }
 
   // ── API key tests ─────────────────────────────────────────────────────────
+  // 비밀 키 암호화·마스킹 계약은 embedding.api_key 로 검증한다. 예전 검증 키였던 ai.api_key 는
+  // AI 자격증명 테넌트 전용화(#706)로 화이트리스트·SECRET_KEYS 에서 사라졌다(V126 이 행도 지운다).
+  // 클래스가 @Transactional 이라 embedding.api_key 변경은 롤백된다.
 
   @Test
   void updateSettings_apiKey_encryptsBeforeStore() {
     // when: store a plain-text API key
-    settingsService.updatePlatformSettings(Map.of("ai.api_key", "sk-test-plain-key"), null);
+    settingsService.updatePlatformSettings(Map.of("embedding.api_key", "sk-test-plain-key"), null);
 
     // then: the raw value in DB is NOT the plain text — it is an encrypted iv:ciphertext blob.
-    // getValue("ai.api_key") 는 이제 번들 키라 거부되므로(rejectBundleKey), 저장된 원문은
-    // DB 를 직접 읽는 rawSystemSettingValue 로 확인한다.
-    String raw = rawSystemSettingValue(dsl, "ai.api_key");
+    String raw = rawSystemSettingValue(dsl, "embedding.api_key");
     assertThat(raw).isNotNull();
     assertThat(raw).isNotEqualTo("sk-test-plain-key");
     // AES-GCM output format is "base64iv:base64cipher" — both parts are Base64, separated by ':'
@@ -97,11 +106,19 @@ class SettingsServiceTest extends IntegrationTestBase {
     assertThat(encryptionService.decrypt(raw)).isEqualTo("sk-test-plain-key");
   }
 
+  /**
+   * #706 — 옛 AI 자격증명 평면 3키는 플랫폼 쓰기 화이트리스트에서 빠졌다. 되살리면
+   * {@code ai.credential}(테넌트 전용)과 값이 갈라질 수 있는 두 번째 진실 공급원이 생긴다.
+   */
   @Test
-  void updateSettings_apiKey_emptyValue_throwsValidation() {
-    assertThatThrownBy(() -> settingsService.updatePlatformSettings(Map.of("ai.api_key", ""), null))
-        .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("API 키는 비어있을 수 없습니다");
+  void updateSettings_레거시_AI_자격증명_키는_거부된다() {
+    for (String legacyKey : java.util.List.of("ai.api_key", "ai.cli_oauth_token", "ai.agent_type")) {
+      assertThatThrownBy(() -> settingsService.updatePlatformSettings(Map.of(legacyKey, "x"), null))
+          .as(legacyKey)
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("AI 설정은 플랫폼 설정이 아닙니다");
+    }
+    assertThat(rawSystemSettingValue(dsl, "ai.api_key")).isNull();
   }
 
   /**
@@ -113,23 +130,22 @@ class SettingsServiceTest extends IntegrationTestBase {
   @Test
   void getAll_apiKey_returnsMasked() {
     // given: store a real API key first
-    settingsService.updatePlatformSettings(Map.of("ai.api_key", "sk-test-abcdefghij"), null);
+    settingsService.updatePlatformSettings(Map.of("embedding.api_key", "sk-test-abcdefghij"), null);
 
-    // then: ai.api_key value must start with "****" (masked)
-    assertThat(valueOf("ai.api_key")).startsWith("****");
+    // then: embedding.api_key value must start with "****" (masked)
+    assertThat(valueOf("embedding.api_key")).startsWith("****");
   }
 
   // getAiCredentials_apiKey_returnsOriginal / getAiCredentials_apiKey_notSet_returnsEmpty 는
   // 지웠다 — 검증 대상이던 SettingsService.getAiCredentials()/AiCredentials 자체가 타입형 전환
-  // (2026-09)으로 사라졌다. ai.api_key 는 이제 플랫폼 기본값 전용 레거시 값이라 아무도 읽지
-  // 않는다(암호화 저장 자체는 위 updateSettings_apiKey_encryptsBeforeStore 가 계속 지킨다).
-  // 복호화된 원문 복원 계약은 지금은 AiCredentialService.resolve()/AiCredentialServiceTest 가 진다.
+  // (2026-09)으로 사라졌다. 복호화된 원문 복원 계약은 지금은 AiCredentialService.resolve()/
+  // AiCredentialServiceTest 가 진다.
 
   // ── getAsMap NPE 회귀 테스트 ──────────────────────────────────────────────
 
   @Test
   void getAsMap_withNullValue_returnsEmptyString() {
-    // given: ai.api_key는 초기 시드값이 '' (빈 문자열)이지만, system_settings.value 컬럼은 nullable이다.
+    // given: system_settings.value 컬럼은 nullable이다.
     // null value가 포함된 경우 Collectors.toMap이 NPE를 발생시키는 버그를 검증한다.
     // 실제 null을 직접 주입하기 위해 ai.model 설정을 먼저 확인하고, JDBC로 null 업데이트를 수행한다.
     // 단, IntegrationTestBase에서 직접 DSLContext를 사용할 수 없으므로
@@ -146,36 +162,23 @@ class SettingsServiceTest extends IntegrationTestBase {
 
   @Test
   void getAsMap_withMixedValues_returnsMappedCorrectly() {
-    // given: 정상 값이 있는 설정을 업데이트한다
-    settingsService.updatePlatformSettings(Map.of("ai.max_turns", "15"), null);
+    // given: 정상 값이 있는 플랫폼 설정을 업데이트한다(클래스 @Transactional 로 롤백된다).
+    // AI 키는 플랫폼 평면에 쓸 수 없으므로 플랫폼 키인 embedding.model 로 검증한다.
+    settingsService.updatePlatformSettings(Map.of("embedding.model", "bge-m3-mixed"), null);
 
     // when: getAsMap 호출
-    Map<String, String> result = settingsService.getAsMap("ai");
+    Map<String, String> result = settingsService.getAsMap("embedding");
 
     // then: 정상 값은 그대로 반환된다
     assertThat(result).isNotNull();
-    assertThat(result).containsEntry("ai.max_turns", "15");
+    assertThat(result).containsEntry("embedding.model", "bge-m3-mixed");
     // 모든 value는 null이 아니어야 한다 (null → 빈 문자열 치환 정책)
     assertThat(result.values()).doesNotContainNull();
   }
 
-  // ── ai.agent_type opencode 허용 테스트 ────────────────────────────────────
-
-  @Test
-  void updateSettings_opencode_agentType_허용() {
-    // ai.agent_type = "opencode" 저장이 예외 없이 통과해야 한다
-    assertDoesNotThrow(() -> settingsService.updatePlatformSettings(Map.of("ai.agent_type", "opencode"), null));
-    assertThat(settingsService.getAsMap("ai")).containsEntry("ai.agent_type", "opencode");
-  }
-
-  @Test
-  void updateSettings_invalidAgentType_throwsIllegalArgumentException() {
-    // opencode 허용 후에도 잘못된 값은 예외가 발생해야 한다
-    assertThatThrownBy(
-            () -> settingsService.updatePlatformSettings(Map.of("ai.agent_type", "unknown-type"), 1L))
-        .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("에이전트 유형은 sdk, cli, cli-api, opencode 중 하나여야 합니다");
-  }
+  // ai.agent_type 값 검증 테스트(opencode 허용/알 수 없는 값 거부)는 지웠다 — 그 키 자체가 #706 으로
+  // 화이트리스트에서 빠졌다(위 updateSettings_레거시_AI_자격증명_키는_거부된다). 유형 검증은
+  // AiCredentialService.save 의 KNOWN_AGENT_TYPES 가 진다(AiCredentialServiceTest).
 
   // ── 임베딩 설정 테스트 ─────────────────────────────────────────────────────
 
@@ -191,7 +194,7 @@ class SettingsServiceTest extends IntegrationTestBase {
     // updated_by FK 제약 때문에 test DB에 존재하지 않는 userId 대신 null 사용 (기존 테스트 관례)
     settingsService.updatePlatformSettings(Map.of("embedding.api_key", "secret-key-123"), null);
     assertThat(valueOf("embedding.api_key")).doesNotContain("secret-key-123");
-    // ai.api_key 마스킹 테스트와 동일하게 마스킹 포맷(****)도 검증한다
+    // getAll_apiKey_returnsMasked 와 동일하게 마스킹 포맷(****)도 검증한다
     assertThat(valueOf("embedding.api_key")).startsWith("****");
   }
 
@@ -214,16 +217,15 @@ class SettingsServiceTest extends IntegrationTestBase {
   @Test
   void updateSettings_apiKey_maskedValue_skipsUpdate() {
     // given: store a real key first
-    settingsService.updatePlatformSettings(Map.of("ai.api_key", "sk-real-key-stored"), null);
-    // getValue("ai.api_key") 는 번들 키라 거부된다 — DB 원문을 직접 읽는다.
-    String encryptedValue = rawSystemSettingValue(dsl, "ai.api_key");
+    settingsService.updatePlatformSettings(Map.of("embedding.api_key", "sk-real-key-stored"), null);
+    String encryptedValue = rawSystemSettingValue(dsl, "embedding.api_key");
     assertThat(encryptedValue).isNotNull();
 
     // when: send a masked value (as the frontend does when the user has not changed the key)
-    settingsService.updatePlatformSettings(Map.of("ai.api_key", "****abcd"), null);
+    settingsService.updatePlatformSettings(Map.of("embedding.api_key", "****abcd"), null);
 
     // then: the stored encrypted value must NOT have changed
-    assertThat(rawSystemSettingValue(dsl, "ai.api_key")).isEqualTo(encryptedValue);
+    assertThat(rawSystemSettingValue(dsl, "embedding.api_key")).isEqualTo(encryptedValue);
   }
 
   // ── 임베딩 provider 정합성 검증 (#322 base_url 불일치 / #323 API 키 누락) ──────────

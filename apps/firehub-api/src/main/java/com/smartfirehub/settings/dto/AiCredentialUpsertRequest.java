@@ -3,7 +3,7 @@ package com.smartfirehub.settings.dto;
 import java.util.Map;
 
 /**
- * {@code PUT /settings/ai-credential} (테넌트/플랫폼 공용) 요청 바디.
+ * {@code PUT /settings/ai-credential} 요청 바디.
  *
  * <p>{@link com.smartfirehub.settings.service.AiCredentialService.AiCredentialUpsert} 와 필드가
  * 같지만 별도 record 를 둔다 — 그 record 는 {@code payload}/{@code secret} 이 {@code null} 이면

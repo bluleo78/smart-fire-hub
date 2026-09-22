@@ -1,6 +1,6 @@
 import { isTenantOverridable } from './override-policy';
 
-export type SettingKind = 'text' | 'number' | 'textarea' | 'select' | 'switch' | 'secret';
+export type SettingKind = 'text' | 'number' | 'select' | 'switch' | 'secret';
 
 export interface SettingSpec {
   key: string;
@@ -8,30 +8,15 @@ export interface SettingSpec {
   label: string;
   kind: SettingKind;
   options?: { value: string; label: string }[];
-  /**
-   * DB 행이 없어 화면이 대신 보여줘야 하는 코드 수준 기본값.
-   * `ai.session_max_tokens` 는 어떤 마이그레이션도 시드하지 않아 응답 15행에 없다 —
-   * 저장소가 upsert 라 첫 저장에 행이 생기고 `내장 기본값` 배지는 사라진다.
-   */
-  builtinDefault?: string;
   /** 암호화 저장되고 마스킹되어 내려오는 키. 서버 `SECRET_KEYS` 와 같아야 한다. */
   secret: boolean;
   /**
    * 빈 문자열 저장이 합법인가.
    *
-   * false 인 키는 9개다(타입형 AI 설정 전환, Task 13 — `ai.api_key` 는 `ai.credential` 문서로
-   * 옮겨가 이 카탈로그에서 빠졌고, 그 문서는 `AiCredentialSection` 이 별도 저장 흐름으로 다룬다):
-   * - `ai.system_prompt` — 서버 `validateValues` 가 "시스템 프롬프트는 비어있을 수 없습니다" 로 거부한다.
+   * false 인 키는 4개다:
    * - `smtp.starttls` — 스위치라 값이 항상 `'true'`/`'false'` 둘 중 하나다. 비울 대상이 없다.
    * - `embedding.model` · `embedding.base_url` — 서버 `validateEmbeddingConsistency` 가 페이로드에
    *   키가 있으면 blank 를 거부한다(리뷰 M2).
-   * - `ai.max_turns` · `ai.max_tokens` · `ai.session_max_tokens` · `ai.temperature` —
-   *   서버가 이 네 키에 `Integer.parseInt` / `Double.parseDouble` 을 **무조건** 호출한다
-   *   (`SettingsService.validateValues`). 빈 문자열이 도달하면 `NumberFormatException`
-   *   (`IllegalArgumentException` 의 서브클래스)이 `GlobalExceptionHandler.handleIllegalArgument`
-   *   를 거쳐 **400** 으로 거부된다(500 이 아니다) — 가드 자체는 옳지만, 서버가 던지는 영문 미번역
-   *   예외 문구보다 클라이언트가 먼저 막아 한국어 안내를 주는 편이 낫다. 그래서 `지우기` 를 렌더하지
-   *   않고, 아래 `validate` 가 빈 값을 **거부**한다.
    * - `smtp.port` — **정정(리뷰 H2, 2026-08-24): 서버가 이 키도 검증한다.** 최초 조사가
    *   `validateValues` 스위치에 `smtp.port` case 가 없는 것만 보고 "서버 미검증"이라 잘못 결론
    *   냈다. 실제로는 별도 메서드 `SettingsService.validateSmtpPort`(710행)가 두 쓰기 경로
@@ -44,10 +29,6 @@ export interface SettingSpec {
    *
    * 원칙은 "서버와 같은 경계" 다 — 어긋나면 사용자가 이유 없이 막히거나(더 엄격), 클라이언트를
    * 지나 서버 예외 문구를 그대로 보게 된다(더 느슨).
-   *
-   * (예전엔 `ai.model` 이 유일하게 서버보다 엄격한 키였다 — 서버는 자유 문자열로 두는데
-   * 3개 Claude 모델로 좁힌 select 였다. Ruling #48 로 그 키가 `AiCredentialSection` 으로
-   * 옮겨가며 이 카탈로그에서 빠져, 지금은 이 문단이 가리킬 예외가 없다.)
    *
    * `smtp.port` 는 예전에 "서버 미검증이라 클라이언트만 엄격"으로 여기 기재돼 있었으나
    * **틀렸다(리뷰 H2 정정)**: `SettingsService.validateSmtpPort` 가 같은 1~65535 범위를
@@ -63,18 +44,15 @@ export interface SettingSpec {
   validate?: (value: string) => string | undefined;
 }
 
-/** 숫자 키를 비워 저장하려 할 때의 공통 문구. 서버 parse 예외로 넘어가기 전에 여기서 막는다. */
+/** 숫자 키를 비워 저장하려 할 때의 문구. 서버 parse 예외로 넘어가기 전에 여기서 막는다. */
 const EMPTY_NUMBER_MESSAGE = '값을 비워 둘 수 없습니다. 숫자를 입력하세요';
 
 /**
- * 정수 검증 공통.
+ * 정수 검증.
  *
- * 빈 값은 전부 거부한다. `intRange` 를 쓰는 숫자 키 4개(`ai.max_turns`/`ai.max_tokens`/
- * `ai.session_max_tokens`/`smtp.port`) 모두 서버가 값을 무조건 파싱한다 —
- * `ai.*` 세 키는 `SettingsService.validateValues` 의 `Integer.parseInt`, `smtp.port` 는
- * 별도 메서드 `validateSmtpPort`(리뷰 H2 정정: 이전에는 이 키만 서버 미검증이라 믿고
- * 빈 값을 허용했으나, 실측 결과 서버가 여기도 검증한다). 빈 값이 실제로 안전한 숫자 키는
- * 이 카탈로그에 하나도 없다.
+ * 빈 값은 거부한다. `intRange` 를 쓰는 숫자 키(`smtp.port`)는 서버가 값을 무조건 파싱한다 —
+ * `SettingsService.validateSmtpPort`(리뷰 H2 정정: 이전에는 이 키만 서버 미검증이라 믿고
+ * 빈 값을 허용했으나, 실측 결과 서버가 여기도 검증한다).
  *
  * 형태 검증은 `Integer.parseInt` 와 같은 것만 통과시킨다(리뷰 H1 정정): 선행 부호(`+`/`-`)
  * 다음 십진수 숫자만 허용하고, 공백·소수점·지수 표기는 전부 거부한다. `Number(value)` 를
@@ -92,71 +70,13 @@ function intRange(min: number, max: number, message: string) {
   };
 }
 
+/**
+ * 플랫폼 설정 키 카탈로그(이메일·임베딩 10키).
+ *
+ * AI 설정(`ai.*`)은 여기 없다 — 워크스페이스(테넌트)별 설정이라 플랫폼 설정에 속하지 않는다.
+ * 서버도 플랫폼 설정 응답에서 `ai.*` 를 빼고, 플랫폼 쓰기에서 거부한다.
+ */
 export const SETTING_CATALOG: Record<string, SettingSpec> = {
-  // ── AI 에이전트 ────────────────────────────────────────────────────────────
-  // `ai.model` 은 여기 없다(Ruling #48, Task 13 fix round 1) — `AiCredentialSection` 이 직접
-  // 그리고 직접 쓴다. 옛 3-Claude-모델 Select 는 opencode 를 고른 관리자가 `providerId/modelId`
-  // 형식을 이 화면만으로 지정할 방법이 없다는 결함이 있었다(그 화면은 서버가 자유 문자열로 두는
-  // 값을 3개로 임의로 좁히기만 했다) — 유형에 따라 Select/자유 입력을 가르려면 유형을 아는
-  // 컴포넌트(`AiCredentialSection`)가 이 필드도 함께 가져야 한다. 옵션 목록은
-  // `lib/ai-credential.ts` 의 `CLAUDE_MODEL_CANDIDATES` 로 옮겼다. 백엔드 키·저장 형식은
-  // 그대로다 — `SettingsOverridePolicy.TENANT_OVERRIDABLE` 에도 여전히 있다(진짜 재정의 가능
-  // 키다, `override-policy.ts` 참고) — 바뀐 것은 "어느 화면이 그리는가"뿐이다.
-  'ai.max_turns': {
-    key: 'ai.max_turns',
-    label: '최대 턴 수',
-    kind: 'number',
-    secret: false,
-    // 비우면 400(서버가 parseInt 를 무조건 부른다) — 근거는 위 clearable 필드 문서 참고.
-    clearable: false,
-    validate: intRange(1, 50, '1~50 사이의 정수를 입력하세요'),
-  },
-  'ai.system_prompt': {
-    key: 'ai.system_prompt',
-    label: '시스템 프롬프트',
-    kind: 'textarea',
-    secret: false,
-    clearable: false,
-    validate: (value) => (value.trim() === '' ? '시스템 프롬프트를 입력하세요' : undefined),
-  },
-  'ai.temperature': {
-    key: 'ai.temperature',
-    label: 'Temperature',
-    kind: 'number',
-    secret: false,
-    // 비우면 400(서버가 parseDouble 을 무조건 부른다) — 근거는 위 clearable 필드 문서 참고.
-    clearable: false,
-    validate: (value) => {
-      if (value.trim() === '') return EMPTY_NUMBER_MESSAGE;
-      const n = Number(value);
-      if (Number.isNaN(n) || n < 0 || n > 1) return '0.0~1.0 사이의 값을 입력하세요';
-      return undefined;
-    },
-  },
-  'ai.max_tokens': {
-    key: 'ai.max_tokens',
-    label: '최대 응답 토큰',
-    kind: 'number',
-    secret: false,
-    // 비우면 400(서버가 parseInt 를 무조건 부른다) — 근거는 위 clearable 필드 문서 참고.
-    clearable: false,
-    validate: intRange(1, 65536, '1~65536 사이의 정수를 입력하세요'),
-  },
-  'ai.session_max_tokens': {
-    key: 'ai.session_max_tokens',
-    label: '세션 최대 토큰',
-    kind: 'number',
-    builtinDefault: '50000',
-    secret: false,
-    // 비우면 400(서버가 parseInt 를 무조건 부른다) — 근거는 위 clearable 필드 문서 참고.
-    clearable: false,
-    validate: intRange(10000, 200000, '10,000~200,000 사이의 정수를 입력하세요'),
-  },
-  // `ai.api_key`/`ai.agent_type`/`ai.cli_oauth_token` 은 여기 없다(타입형 AI 설정 전환,
-  // Task 13) — 유형별 구조 `ai.credential` 문서로 옮겨갔고, `AiCredentialSection.tsx` 가
-  // 전용 `GET/PUT /settings/ai-credential` 로 별도 관리한다. 이 범용 카탈로그(`/settings`
-  // 문자열 키·값)에는 애초에 얹을 수 없는 모양(하위 필드 암호화 JSON)이다.
-
   // ── 이메일(SMTP) ──────────────────────────────────────────────────────────
   'smtp.host': { key: 'smtp.host', label: 'SMTP 호스트', kind: 'text', secret: false, clearable: true },
   'smtp.port': {
@@ -230,26 +150,16 @@ export const SETTING_CATALOG: Record<string, SettingSpec> = {
 };
 
 export interface SettingsTab {
-  id: 'ai' | 'smtp' | 'embedding';
+  id: 'smtp' | 'embedding';
   label: string;
   keys: string[];
 }
 
 /**
- * 탭 3개. firehub-web 의 4탭에서 `일반` 을 뺐다 — 그쪽에서도 "준비 중입니다" 플레이스홀더다.
- * 각 탭 안의 키 순서가 곧 화면 순서다.
+ * 탭 2개(이메일·임베딩). 각 탭 안의 키 순서가 곧 화면 순서다.
+ * AI 에이전트 탭은 없다 — AI 설정은 각 워크스페이스의 설정 화면에서 관리한다.
  */
 export const SETTINGS_TABS: SettingsTab[] = [
-  {
-    id: 'ai',
-    label: 'AI 에이전트',
-    // `ai.api_key`/`ai.agent_type`/`ai.cli_oauth_token` 3키는 여기 없다 — `ai.credential`
-    // 문서로 옮겨가 `AiCredentialSection`(`SettingsPage.tsx`)이 이 탭 맨 앞에 전용으로
-    // 그린다(Task 13). `ai.model` 도 이제 여기 없다(Ruling #48, fix round 1) — 같은
-    // `AiCredentialSection` 이 유형별 필드 바로 다음, 이 범용 렌더러보다 앞에 그리고 직접
-    // 쓴다(SETTING_CATALOG 의 `ai.model` 헤더 주석 참고).
-    keys: ['ai.max_turns', 'ai.system_prompt', 'ai.temperature', 'ai.max_tokens', 'ai.session_max_tokens'],
-  },
   {
     id: 'smtp',
     label: '이메일(SMTP)',

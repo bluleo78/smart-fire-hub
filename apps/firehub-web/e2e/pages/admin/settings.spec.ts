@@ -7,17 +7,15 @@ import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 
 /**
- * 설정 페이지 E2E 테스트 (P7-b 설정 2단 상속 + P7-c1 SMTP 재분류)
+ * 설정 페이지 E2E 테스트
  *
- * 검증 대상은 "무엇이 보이는가"가 아니라 두 밴드가 세운 계약이다:
- *  - `GET /settings?prefix=...` 의 `overridden`/`tenantEditable` 플래그가 필드 상태(상속/재정의/잠금)로
- *    정확히 번역되는가
- *  - `PUT /settings` 페이로드가 편집 허용 키 중 바꾼 키만 담고, 잠긴 키와 미편집 키는 담지 않는가
- *    (밴드 핵심 경계 — 미편집 키를 보내면 상속이 끊긴다)
- *  - `DELETE /settings/overrides/{key}` 가 그 필드 하나만 상속으로 되돌리고 다른 필드의 미저장 편집을
- *    건드리지 않는가
- *  - 이메일 탭(SMTP 6키)이 AI 탭과 같은 상속/재정의 편집 화면인가 — P7-c1 이 이 6키를 열었다.
- *    비밀번호 마스크 센티널이 저장에서 빠지는가, 빈 값 규칙이 키마다 다른가가 이 탭 고유의 경계다.
+ * 검증 대상은 "무엇이 보이는가"가 아니라 화면이 지키는 계약이다:
+ *  - AI 탭: 동작 설정 6키가 서버 값으로 채워지고, `PUT /settings` 페이로드가 이번에 바꾼 키만 담는가.
+ *    AI 설정은 테넌트 전용이라 상속/재정의 개념이 없다 — 그 화면 계약(기본값 힌트, 문구 부재)은
+ *    `tenant-ai-settings.spec.ts` 가 맡는다.
+ *  - 이메일 탭(SMTP 6키): `GET /settings?prefix=smtp` 의 `overridden`/`tenantEditable` 플래그가 필드
+ *    상태(상속/재정의/잠금)로 번역되는가, `DELETE /settings/overrides/{key}` 가 그 필드 하나만 상속으로
+ *    되돌리는가. 비밀번호 마스크 센티널이 저장에서 빠지는가, 빈 값 규칙이 키마다 다른가가 이 탭 고유의 경계다.
  *  - 임베딩 탭이 전면 잠금이고 저장 경로가 화면에서 사라졌는가
  *
  * AdminRoute 통과를 위해 ADMIN 역할로 users/me 를 오버라이드한다.
@@ -31,10 +29,6 @@ import { expect, test } from '../../fixtures/auth.fixture';
  */
 const fieldBox = (page: Page, inputId: string) =>
   page.locator('div.space-y-2', { has: page.locator(`#${inputId}`) });
-
-/** 시스템 프롬프트는 배지·재정의 해제 버튼이 카드 제목 줄에 있어 카드 단위로 스코프를 잡는다. */
-const systemPromptCard = (page: Page) =>
-  page.locator('div.card-hover', { has: page.locator('#ai-system-prompt') });
 
 const LOCKED_NOTE = '플랫폼 운영자만 변경할 수 있는 항목입니다.';
 
@@ -86,14 +80,13 @@ test.describe('설정 페이지', () => {
     await expect(page.locator('#ai-max-turns')).toHaveValue('10');
     await expect(page.locator('#ai-temperature')).toHaveValue('1.0');
     await expect(page.locator('#ai-max-tokens')).toHaveValue('16384');
+    await expect(page.locator('#ai-session-max-tokens')).toHaveValue('50000');
     await expect(page.locator('#ai-system-prompt')).toHaveValue(
-      '당신은 도움이 되는 AI 어시스턴트입니다.',
+      '당신은 Smart Fire Hub의 AI 어시스턴트입니다.\n응답은 한국어로 하고, 마크다운 형식을 사용하세요.',
     );
 
-    // 계약: 편집 허용 6키는 **전부** 실제로 조작 가능해야 한다. 밴드의 전제가 "이 6키만 열린다"인데
-    // 지금까지 max_turns·session_max_tokens 둘만 단언돼 있어 나머지 넷은 잠겨도 아무도 몰랐다.
-    // (잠긴 3키의 비활성은 별도 테스트가 지킨다 — 이쪽은 그 반대 방향의 회귀를 막는다.)
-    for (const id of ['ai-model', 'ai-max-tokens', 'ai-system-prompt', 'ai-temperature']) {
+    // 계약: AI 동작 설정 6키는 테넌트 전용이라 **전부** 조작 가능해야 한다.
+    for (const id of ['ai-model', 'ai-max-turns', 'ai-max-tokens', 'ai-session-max-tokens', 'ai-system-prompt', 'ai-temperature']) {
       await expect(page.locator(`#${id}`)).toBeEnabled();
     }
   });
@@ -110,128 +103,17 @@ test.describe('설정 페이지', () => {
   });
 
   /**
-   * 계약 1·2: 응답 플래그(`overridden`/`tenantEditable`)가 필드 상태로 번역되는지.
-   * 세 상태(상속/재정의/잠금)와 응답에 아예 없는 키(내장 기본값)를 모두 덮는다.
-   */
-  test.describe('필드 상태 — 상속 / 재정의 / 잠금', () => {
-    test('상속 중인 필드는 "플랫폼 값 사용 중" 배지 + 편집 가능 + 재정의 해제 버튼 없음', async ({
-      authenticatedPage: page,
-    }) => {
-      await setupSettingsMocks(page);
-      await page.goto('/admin/settings');
-
-      const box = fieldBox(page, 'ai-max-turns');
-      await expect(box.getByText('플랫폼 값 사용 중')).toBeVisible();
-      await expect(page.locator('#ai-max-turns')).toBeEnabled();
-      // 지울 오버라이드가 없으므로 해제 버튼이 붙어서는 안 된다 — 이 음성 단언이 없으면
-      // 버튼이 전 필드에 붙는 회귀를 놓친다.
-      await expect(box.getByRole('button', { name: '재정의 해제' })).toHaveCount(0);
-      // 상속 중인 필드에 잠금 안내문이 새어 나오면 안 된다
-      await expect(box.getByText(LOCKED_NOTE)).toHaveCount(0);
-    });
-
-    test('재정의된 필드는 "우리 조직 값 적용 중" 배지 + 재정의 해제 버튼이 붙는다', async ({
-      authenticatedPage: page,
-    }) => {
-      // 같은 키가 재정의 상태로 내려오면(overridden: true) 값도 오버라이드 값이 보여야 한다
-      await setupSettingsMocks(page, {
-        ai: createAiSettings({ 'ai.max_turns': { overridden: true, value: '25' } }),
-      });
-      await page.goto('/admin/settings');
-
-      const box = fieldBox(page, 'ai-max-turns');
-      await expect(box.getByText('우리 조직 값 적용 중')).toBeVisible();
-      await expect(page.locator('#ai-max-turns')).toHaveValue('25');
-      await expect(page.locator('#ai-max-turns')).toBeEnabled();
-      await expect(box.getByRole('button', { name: '재정의 해제' })).toBeVisible();
-
-      // 다른 편집 가능 필드는 여전히 상속 상태여야 한다(재정의가 필드 단위임을 고정)
-      await expect(fieldBox(page, 'ai-temperature').getByText('플랫폼 값 사용 중')).toBeVisible();
-    });
-
-    // "플랫폼 전용 자격증명 3키는 그룹 Lock 배지 + 필드별 비활성·안내문으로 표시된다" 테스트는
-    // Task 12 에서 삭제했다(참조: `.superpowers/sdd/2026-09-19-typed-ai-settings/task-12-report.md`).
-    // `ai.agent_type`/`ai.api_key`/`ai.cli_oauth_token` 을 `GET /settings?prefix=ai` 의
-    // `tenantEditable:false` 3키 번들로 잠그는 이 화면 자체가 Task 11(`AiCredentialFieldset.tsx`)
-    // 이후 존재하지 않는다 — 그 3키는 더 이상 이 폼이 읽지 않고, 전용 문서
-    // `GET/PUT/DELETE /settings/ai-credential` 하나로 완전히 옮겨갔다(`#ai-agent-type` 같은 id
-    // 자체가 화면에서 사라졌다). 대체 시나리오는 `tenant-ai-settings.spec.ts` 가 그 새 문서
-    // 엔드포인트를 대상으로 갖는다 — 같은 종류의 "잠금 상태"는 이제 GET 403(`cred.isLocked`)
-    // 하나뿐이고, 그건 `AiCredentialFieldset.test.tsx`(단위 테스트)가 이미 덮는다.
-
-    test('화이트리스트 키라도 서버가 tenantEditable=false 로 내리면 잠금으로 렌더된다', async ({
-      authenticatedPage: page,
-    }) => {
-      // 계약: 편집 가능 여부의 권위는 **서버 플래그**다 — 화면이 든 편집 허용 6키 상수가 아니다.
-      // 백엔드는 읽을 때마다 화이트리스트를 다시 확인하므로, 플랫폼이 ai.model 을 회수하면 그
-      // 즉시 tenantEditable=false 가 내려온다. 화면이 자기 사본을 우선하면 Select 가 열린 채
-      // 남고 사용자는 고른 뒤 저장에서 400 을 받는다. 다른 테스트는 플래그와 상수가 같은 답을
-      // 주는 응답만 써서 이 갈림을 전혀 검증하지 못한다.
-      await setupSettingsMocks(page, {
-        ai: createAiSettings({ 'ai.model': { tenantEditable: false } }),
-      });
-      await page.goto('/admin/settings');
-
-      const box = fieldBox(page, 'ai-model');
-      const badge = box.getByLabel('플랫폼 전용: 이 테넌트에서 편집할 수 없음');
-      await expect(badge).toBeVisible();
-      await expect(badge.locator('svg')).toBeVisible();
-      // 배지만 잠금이고 입력이 열려 있으면 "잠겼다면서 조작은 된다"가 된다 — 둘을 함께 못 박는다.
-      await expect(page.locator('#ai-model')).toBeDisabled();
-      // 잠긴 필드에 해제할 테넌트 재정의가 있을 수 없다
-      await expect(box.getByRole('button', { name: '재정의 해제' })).toHaveCount(0);
-      // 잠겨도 읽기는 계속 동작한다(값 표시까지 사라지면 회수 = 정보 소실이 된다)
-      await expect(page.locator('#ai-model')).toContainText('Claude Sonnet 5');
-    });
-
-    test('응답에 없는 ai.session_max_tokens 는 "내장 기본값" 배지와 코드 기본값 50000 을 보여준다', async ({
-      authenticatedPage: page,
-    }) => {
-      // 이 키는 어떤 마이그레이션도 시드하지 않아 프리픽스 조회 응답에서 빠진다(플랫폼 행 없음).
-      // 그래도 백엔드 코드 폴백(50000)이 실제로 적용되므로 화면은 값 + "내장 기본값"을 보여야 한다.
-      // 빈칸이나 잠금으로 떨어지면 결함이다(없는 키를 falsy 로 흘리면 잠김으로 뒤집힌다).
-      await setupSettingsMocks(page);
-      await page.goto('/admin/settings');
-
-      const box = fieldBox(page, 'ai-session-max-tokens');
-      await expect(box.getByText('내장 기본값')).toBeVisible();
-      await expect(page.locator('#ai-session-max-tokens')).toHaveValue('50000');
-      await expect(page.locator('#ai-session-max-tokens')).toBeEnabled();
-    });
-
-    test('시스템 프롬프트 카드도 상태 배지를 카드 제목 줄에 표시한다', async ({
-      authenticatedPage: page,
-    }) => {
-      await setupSettingsMocks(page, {
-        ai: createAiSettings({ 'ai.system_prompt': { overridden: true, value: '테넌트 전용 프롬프트' } }),
-      });
-      await page.goto('/admin/settings');
-
-      const card = systemPromptCard(page);
-      await expect(card.getByText('우리 조직 값 적용 중')).toBeVisible();
-      await expect(card.getByRole('button', { name: '재정의 해제' })).toBeVisible();
-      await expect(page.locator('#ai-system-prompt')).toHaveValue('테넌트 전용 프롬프트');
-    });
-  });
-
-  /**
-   * 계약 5(밴드 핵심 경계): 저장 페이로드는 편집 허용 6키 중 <b>실제로 바꾼 키만</b> 담는다.
-   * 두 가지가 걸려 있다 — (1) 잠긴 3키(agent_type/api_key/cli_oauth_token)가 새면 테넌트가 플랫폼
-   * 자산을 덮어쓰는 경로가 된다. (2) 편집하지 않은 키까지 보내면 그 키들이 tenant_settings 에
-   * 기록되어 상속이 조용히 끊기고, 이후 플랫폼 기본값 변경이 이 테넌트에 전파되지 않는다 —
-   * 2단 상속을 세우는 밴드에서 UI 가 상속을 없애는 셈이 된다.
+   * 저장 페이로드는 AI 동작 설정 6키 중 <b>실제로 바꾼 키만</b> 담는다. 편집하지 않은 키까지 보내면
+   * 서버가 기본값으로 내려준 값이 그대로 저장값으로 굳어, 이후 코드 기본값이 바뀌어도 따라가지 않는다.
    */
   test.describe('저장 페이로드 경계', () => {
     test(
-      '설정 변경 후 저장하면 바꾼 키만 PUT 되고 잠긴 키·미편집 키는 담기지 않는다',
+      '설정 변경 후 저장하면 바꾼 키만 PUT 되고 미편집 키는 담기지 않는다',
       { tag: '@smoke' },
       async ({ authenticatedPage: page }) => {
         await setupSettingsMocks(page);
         // PUT 캡처 — goto 이전에 등록해야 첫 저장을 놓치지 않는다
         const saveCapture = await mockApi(page, 'PUT', '/api/v1/settings', {}, { capture: true });
-        // 저장 성공 후 화면이 호출하는 인증 상태 조회
-        await mockApi(page, 'GET', '/api/v1/ai/auth-status', { valid: true });
-
         await page.goto('/admin/settings');
         await expect(page.locator('#ai-max-turns')).toHaveValue('10');
 
@@ -243,29 +125,9 @@ test.describe('설정 페이지', () => {
         const req = await saveCapture.waitForRequest();
         const settings = (req.payload as { settings: Record<string, string> }).settings;
 
-        // 경계 단언 1: 페이로드는 **바꾼 키 하나만** 담는다.
-        // 편집하지 않은 키까지 보내면 그 키들이 같은 값으로 tenant_settings 에 기록되어 상속이
-        // 조용히 끊기고, 그 뒤로 플랫폼 기본값 변경이 이 테넌트에 영원히 전파되지 않는다.
-        // 2단 상속을 세우는 밴드에서 UI 가 상속을 없애는 셈이므로 여기서 못 박는다.
-        // 부분 단언(toMatchObject)으로 두면 나머지 5키가 섞여 들어와도 통과한다.
+        // 경계 단언: 페이로드는 **바꾼 키 하나만** 담는다. 부분 단언(toMatchObject)으로 두면
+        // 나머지 5키(서버가 기본값으로 내려준 값)가 섞여 들어와도 통과한다.
         expect(Object.keys(settings)).toEqual(['ai.max_turns']);
-        // 경계 단언 1-b: 페이로드에는 서버가 tenantEditable=false 로 내린 키가 절대 없어야 한다.
-        // 이 픽스처에서 잠긴 키는 3개이므로 그 셋의 부재로 불변식을 표현한다. 예전에는 web 상수
-        // TENANT_EDITABLE_AI_KEYS 소속인지를 물었는데, 저장 대상 판정 자체가 그 상수로 이뤄지던
-        // 시절의 단언이라 **같은 사본을 사본으로 검증**하는 동어반복이었다. 지금은 판정 권위가
-        // 서버 플래그로 옮겨졌으므로 단언도 서버가 내린 사실을 기준으로 세운다.
-        for (const key of Object.keys(settings)) {
-          expect(['ai.agent_type', 'ai.api_key', 'ai.cli_oauth_token']).not.toContain(key);
-        }
-        // 경계 단언 2: 잠긴 3키는 어떤 경우에도 담기지 않는다. 위 단언이 이미 배제하지만,
-        // 화이트리스트 상수가 잘못 바뀌거나 "전 키 저장"으로 되돌아가는 회귀까지 잡기 위해 명시한다.
-        expect(settings).not.toHaveProperty('ai.agent_type');
-        expect(settings).not.toHaveProperty('ai.api_key');
-        expect(settings).not.toHaveProperty('ai.cli_oauth_token');
-        // 편집 가능하지만 손대지 않은 키도 담기지 않는다 — 특히 응답에 아예 없던
-        // ai.session_max_tokens 가 첫 저장에 딸려 들어가 재정의로 굳는 일이 없어야 한다.
-        expect(settings).not.toHaveProperty('ai.session_max_tokens');
-        expect(settings).not.toHaveProperty('ai.temperature');
 
         // 입력 → payload 값 검증
         expect(settings['ai.max_turns']).toBe('15');
@@ -274,23 +136,19 @@ test.describe('설정 페이지', () => {
       },
     );
 
-    test('이미 재정의된 키라도 이번에 손대지 않았으면 페이로드에 담기지 않는다', async ({
+    test('이미 저장된 키라도 이번에 손대지 않았으면 페이로드에 담기지 않는다', async ({
       authenticatedPage: page,
     }) => {
-      // 계약: 제외 기준은 "이번에 바꾸지 않았다" 하나뿐이다 — 이미 재정의 중인지 여부와 무관하다.
-      // 전 필드가 상속 상태인 픽스처만 쓰면 "미편집 키 제외"와 "미편집이면서 아직 재정의가 없는
-      // 키만 제외"를 구분할 수 없고, 후자는 저장할 때마다 기존 오버라이드를 같은 값으로 다시 써서
-      // updated_at 과 감사 로그를 오염시키고 재정의 해제 직후의 상속 복귀도 되돌려 버린다.
+      // 계약: 제외 기준은 "이번에 바꾸지 않았다" 하나뿐이다 — 이미 저장된 키인지 여부와 무관하다.
+      // 저장할 때마다 기존 값을 같은 값으로 다시 쓰면 updated_at 과 감사 로그가 오염된다.
       await setupSettingsMocks(page, {
         ai: createAiSettings({ 'ai.temperature': { overridden: true, value: '0.7' } }),
       });
       const saveCapture = await mockApi(page, 'PUT', '/api/v1/settings', {}, { capture: true });
-      await mockApi(page, 'GET', '/api/v1/ai/auth-status', { valid: true });
 
       await page.goto('/admin/settings');
-      // 재정의가 실제로 실려 있는 상태에서 출발한다는 전제를 먼저 고정한다
+      // 저장된 값이 실려 있는 상태에서 출발한다는 전제를 먼저 고정한다
       await expect(page.locator('#ai-temperature')).toHaveValue('0.7');
-      await expect(fieldBox(page, 'ai-temperature').getByText('우리 조직 값 적용 중')).toBeVisible();
 
       // temperature 는 건드리지 않고 다른 키 하나만 편집한다
       await page.locator('#ai-max-turns').fill('15');
@@ -362,85 +220,7 @@ test.describe('설정 페이지', () => {
   });
 
   /**
-   * 계약 4: `DELETE /settings/{key}` 는 확인 다이얼로그를 지나며, 그 필드 하나만 상속으로 되돌린다.
-   */
-  test.describe('재정의 해제', () => {
-    test('확인 다이얼로그를 지나 DELETE 가 호출되고 해당 필드만 상속으로 돌아온다', async ({
-      authenticatedPage: page,
-    }) => {
-      // 해제 후 화면은 GET 을 다시 읽어 배지를 갱신한다. 그래서 모킹 응답도 "해제된 뒤" 상태로
-      // 바뀌어야 한다 — 아니면 배지가 그대로여서 앱이 아니라 모킹을 디버깅하게 된다.
-      // 재조회 응답 분기를 별도 boolean 이 아니라 캡처 배열에서 읽는다 — 플래그와 배열이 따로
-      // 놀 여지가 사라지고, "DELETE 가 나갔다"의 근거가 한 곳이 된다.
-      const { deletedPaths } = await captureOverrideDeletes(page);
-      await setupSettingsMocks(page, {
-        ai: () =>
-          deletedPaths.length > 0
-            ? createAiSettings()
-            : createAiSettings({ 'ai.max_turns': { overridden: true, value: '25' } }),
-      });
-
-      await page.goto('/admin/settings');
-      await expect(page.locator('#ai-max-turns')).toHaveValue('25');
-
-      // 다른 필드에 미저장 편집을 남긴다 — 해제가 이걸 날려버리면 안 된다
-      await page.locator('#ai-temperature').fill('0.3');
-
-      await fieldBox(page, 'ai-max-turns').getByRole('button', { name: '재정의 해제' }).click();
-      const dialog = page.getByRole('alertdialog');
-      await expect(dialog).toBeVisible();
-      await expect(dialog.getByText('재정의 해제')).toBeVisible();
-      await dialog.getByRole('button', { name: '되돌리기' }).click();
-
-      // 요청 경로 검증 — 키가 URL 세그먼트로 인코딩되어 나간다
-      await expect.poll(() => deletedPaths).toEqual(['/api/v1/settings/overrides/ai.max_turns']);
-
-      // 해당 필드만 플랫폼 값(10) + 상속 배지로 전환
-      await expect(page.locator('#ai-max-turns')).toHaveValue('10');
-      await expect(fieldBox(page, 'ai-max-turns').getByText('플랫폼 값 사용 중')).toBeVisible();
-      await expect(
-        fieldBox(page, 'ai-max-turns').getByRole('button', { name: '재정의 해제' }),
-      ).toHaveCount(0);
-      await expect(page.getByText('플랫폼 기본값으로 되돌렸습니다.')).toBeVisible({ timeout: 5000 });
-
-      // 핵심: 다른 필드의 미저장 편집은 그대로 남아 있어야 한다(전체 폼 재시드 회귀 방지)
-      await expect(page.locator('#ai-temperature')).toHaveValue('0.3');
-      await expect(page.getByRole('button', { name: '저장' })).toBeEnabled();
-    });
-
-    test('다이얼로그에서 취소하면 DELETE 가 호출되지 않고 재정의가 유지된다', async ({
-      authenticatedPage: page,
-    }) => {
-      await setupSettingsMocks(page, {
-        ai: createAiSettings({ 'ai.max_turns': { overridden: true, value: '25' } }),
-      });
-      const { deletedPaths } = await captureOverrideDeletes(page);
-
-      await page.goto('/admin/settings');
-      await fieldBox(page, 'ai-max-turns').getByRole('button', { name: '재정의 해제' }).click();
-      await page.getByRole('alertdialog').getByRole('button', { name: '취소' }).click();
-      await expect(page.getByRole('alertdialog')).toBeHidden();
-
-      expect(deletedPaths).toEqual([]);
-      await expect(page.locator('#ai-max-turns')).toHaveValue('25');
-      await expect(fieldBox(page, 'ai-max-turns').getByText('우리 조직 값 적용 중')).toBeVisible();
-    });
-  });
-
-  // "에이전트 유형별 키 필드 분기 (서버 값 구동)" describe 블록(3 테스트)은 Task 12 에서
-  // 삭제했다. `ai.agent_type`/`ai.api_key`/`ai.cli_oauth_token` 을 이 화면(behavior 6키 폼)이
-  // 서버가 내린 값으로 직접 렌더하던 시절의 테스트인데, Task 11 이후 이 3키는 애초에
-  // `GET /settings?prefix=ai` 응답에서 읽히지 않는다(`#ai-agent-type`/`#ai-api-key`/
-  // `#ai-cli-oauth-token` id 자체가 화면에 없다) — 전용 `ai.credential` 문서로 완전히 옮겨갔고,
-  // "유형별로 어떤 필드가 보이는가"는 이제 `AiCredentialFieldset.tsx` 가 <b>테넌트가 직접 고른
-  // 유형</b>으로 그린다(서버가 유형을 강제하지 않는다 — 정반대 방향의 계약 변경이라 이 테스트를
-  // 고쳐 쓸 수 없었다, 아예 다른 사실을 검증해야 한다). 대체 시나리오는
-  // `tenant-ai-settings.spec.ts` 의 "유형을 opencode 로 바꾸면..."(브리프 #2) ·
-  // "opencode 에는 '인증 확인' 버튼이 없고, sdk 에는 있다"(브리프 #9) 두 테스트가 opencode/sdk
-  // 양쪽 분기를 덮는다.
-
-  /**
-   * 계약 3(P7-c1): 이메일 탭은 AI 탭과 같은 상속/재정의 편집 화면이다.
+   * 계약(P7-c1): 이메일 탭은 플랫폼 값 상속/테넌트 재정의 편집 화면이다.
    *
    * 이 describe 는 P7-b 시절 "6필드 전부 잠금 + 저장 경로 없음"을 단언하던 블록을 **대체**한다 —
    * 그 단언들은 지금 전부 거짓이므로 남겨 두면 밴드가 되돌려진 것처럼 보인다.

@@ -3,6 +3,7 @@ package com.smartfirehub.ai.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.settings.model.AiBehaviorDefaults;
 import com.smartfirehub.settings.model.AiCredential;
 import com.smartfirehub.settings.service.AiCredentialService;
 import com.smartfirehub.settings.service.SettingsService;
@@ -81,8 +82,8 @@ public class AiAgentProxyService {
    *
    * <p><b>토큰은 호출부가 넘긴다 — 여기서 다시 해석하지 않는다.</b> 예전에는 이 메서드가
    * {@code aiCredentialService.resolve()} 를 스스로 한 번 더 불러 유형별로 토큰을 골랐는데,
-   * 유일한 호출부인 두 {@code getAuthStatus} 컨트롤러가 <b>이미 같은 {@code resolve()} 로
-   * 판정해 그 값을 손에 쥔 채</b> 이 메서드를 불렀다 — 요청 1건당 두 평면 SELECT + AES-GCM
+   * 유일한 호출부인 {@code AiController.getAuthStatus} 가 <b>이미 같은 {@code resolve()} 로
+   * 판정해 그 값을 손에 쥔 채</b> 이 메서드를 불렀다 — 요청 1건당 설정 SELECT + AES-GCM
    * 복호화가 정확히 두 번 돌았다. 어느 유형에서 무엇이 토큰인지(그리고 어떤 유형이 이 경로
    * 자체를 타면 안 되는지)를 정하는 것은 그 컨트롤러의 exhaustive switch 의 책임이다 —
    * 그 switch 는 {@code AiCredential} 에 변형이 늘면 컴파일 오류로 막히고,
@@ -115,7 +116,7 @@ public class AiAgentProxyService {
    * <p><b>키는 호출부가 넘긴다</b>(위 {@link #verifyCliToken(String)} 와 같은 이유 — 요청당
    * {@code resolve()} 가 두 번 돌던 것을 한 번으로 줄인다). <b>어떤 유형의 키를 여기로 보낼지는
    * 호출부 switch 가 정한다</b> — 특히 {@code Opencode.apiKey} 는 OpenAI 호환 키라 이
-   * 엔드포인트(Anthropic 키 검증)로 보내면 안 되고, 두 {@code getAuthStatus} 컨트롤러의
+   * 엔드포인트(Anthropic 키 검증)로 보내면 안 되고, {@code AiController.getAuthStatus} 의
    * switch 가 opencode 를 이 경로가 아니라 "해당 없음" 응답으로 보낸다.
    *
    * @param apiKey 호출부가 자격증명에서 꺼낸 Anthropic API 키. 비어 있으면 ai-agent 를 부르지
@@ -226,7 +227,7 @@ public class AiAgentProxyService {
     // 전환) ai-agent 의 buildOpenCodeConfig 가 throw 하는데, 그 시점은 이미 SSE 헤더가 나간 뒤
     // (chat.ts 가 헤더를 먼저 쓰고서 provider.execute() 를 부른다)라 프론트엔드는 구체적 원인 없이
     // "Agent 처리 중 오류가 발생했습니다" 만 본다. 그래서 여기서 먼저 막는다.
-    String model = aiSettings.getOrDefault("ai.model", AiCredential.DEFAULT_MODEL);
+    String model = aiSettings.get("ai.model");
     String credentialProblem =
         credential.isComplete() ? credential.modelProblem(model) : credential.incompleteMessage();
     if (credentialProblem != null) {
@@ -255,12 +256,22 @@ public class AiAgentProxyService {
     // 하고, 그래서 세 경로가 이 메서드 하나를 공유한다(이슈 #695).
     credential.applyTo(requestBody);
     requestBody.put("model", model);
-    requestBody.put("maxTurns", parseIntSafe(aiSettings.get("ai.max_turns"), 10));
-    requestBody.put("systemPrompt", aiSettings.get("ai.system_prompt"));
-    requestBody.put("temperature", parseDoubleSafe(aiSettings.get("ai.temperature"), 1.0));
-    requestBody.put("maxTokens", parseIntSafe(aiSettings.get("ai.max_tokens"), 16384));
+    // AI 동작 키는 aiSettings 에 항상 들어 있다(SettingsService.getAsMap 이 코드 기본값을 깐다).
+    // 아래 폴백은 저장된 값이 숫자로 파싱되지 않을 때만 쓰인다.
     requestBody.put(
-        "sessionMaxTokens", parseIntSafe(aiSettings.get("ai.session_max_tokens"), 50000));
+        "maxTurns", parseIntSafe(aiSettings.get("ai.max_turns"), AiBehaviorDefaults.MAX_TURNS));
+    requestBody.put(
+        "systemPrompt",
+        aiSettings.get("ai.system_prompt"));
+    requestBody.put(
+        "temperature",
+        parseDoubleSafe(aiSettings.get("ai.temperature"), AiBehaviorDefaults.TEMPERATURE));
+    requestBody.put(
+        "maxTokens", parseIntSafe(aiSettings.get("ai.max_tokens"), AiBehaviorDefaults.MAX_TOKENS));
+    requestBody.put(
+        "sessionMaxTokens",
+        parseIntSafe(
+            aiSettings.get("ai.session_max_tokens"), AiBehaviorDefaults.SESSION_MAX_TOKENS));
     if (navigationContext != null && !navigationContext.isEmpty()) {
       requestBody.put("navigationContext", navigationContext);
     }

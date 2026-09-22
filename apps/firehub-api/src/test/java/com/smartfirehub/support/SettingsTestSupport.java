@@ -53,6 +53,15 @@ public final class SettingsTestSupport {
     dsl.execute("update system_settings set value = ? where key = ?", original, key);
   }
 
+  /** {@code system_settings} 행을 심는다(있으면 값만 덮어쓴다). 플랫폼 행이 무시되는지 보는 테스트용. */
+  public static void upsertSystemSetting(DSLContext dsl, String key, String value) {
+    dsl.execute(
+        "insert into system_settings (key, value) values (?, ?)"
+            + " on conflict (key) do update set value = excluded.value",
+        key,
+        value);
+  }
+
   /** <b>테스트가 새로 만든 행</b>을 지운다. 시드된 키에는 쓰지 말 것 — 다른 테스트가 그 행을 읽는다. */
   public static void deleteSystemSetting(DSLContext dsl, String key) {
     dsl.execute("delete from system_settings where key = ?", key);

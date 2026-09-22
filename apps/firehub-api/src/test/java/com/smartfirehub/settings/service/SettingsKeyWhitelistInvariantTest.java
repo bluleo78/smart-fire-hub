@@ -16,37 +16,28 @@ import org.junit.jupiter.api.Test;
 class SettingsKeyWhitelistInvariantTest {
 
   /**
-   * 테넌트 오버라이드 허용 키는 전부 "플랫폼 평면이 쓸 수 있는 키"의 부분집합이어야 한다 —
-   * {@link AiCredentialService#KEY} 하나만 예외다.
-   *
-   * <p><b>왜 합집합인가.</b> P7-b 까지 이 단언은 {@code ALLOWED_AI_KEYS} 하나만 봤다. 그때는
-   * 그것으로 충분했는데 <b>테넌트 허용 키가 전부 {@code ai.*} 였기 때문일 뿐</b>이고, 불변식
-   * 자체가 "AI 키여야 한다"였던 적은 없다. P7-c1 이 SMTP 를 열자 그 우연이 깨졌다.
-   *
-   * <p>이 불변식이 지키는 것: 테넌트가 재정의할 수 있는데 <b>플랫폼은 기본값을 정할 수 없는</b>
-   * 키가 생기지 않도록 한다. 그런 키는 상속의 윗단이 비어 있어 2단 상속이 1단으로 무너진다.
-   *
-   * <p><b>{@link AiCredentialService#KEY} 는 이 불변식의 전제 자체가 성립하지 않는다.</b> 세 서브
-   * 화이트리스트({@code ALLOWED_*})는 모두 "{@code SettingsService} 가 {@code system_settings}
-   * 에 직접 쓴다"는 경로만 나열한다 — 이 키의 플랫폼 기본값은 그 경로를 거치지 않고
-   * {@link AiCredentialService#save(AiCredentialService.AiCredentialUpsert, Long, boolean)
-   * save(..., true)} 로 별도로 쓰인다({@code SettingsService.rejectBundleKey} 가 범용 경로로는
-   * 이 키를 아예 못 쓰게 막는다). "2단 상속이 1단으로 무너진다"는 이 불변식의 근거는 <b>상속의
-   * 윗단을 채울 방법이 아예 없을 때</b>만 성립하는데, 이 키는 그 방법이 다른 서비스로 옮겨갔을
-   * 뿐 존재한다 — 그래서 예외로 둔다.
+   * <b>AI 키는 플랫폼 평면에 쓸 수 없다</b> — AI 설정은 테넌트 전용이다. 누가 플랫폼 평면 키
+   * 목록에 {@code ai.*} 를 넣으면, 아무도 읽지 않는 플랫폼 값이 "저장됨"으로 보이는 무동작이
+   * 생긴다.
    */
   @Test
-  void 테넌트_허용키는_플랫폼_쓰기가능키의_부분집합이다() {
-    Set<String> platformWritable = new HashSet<>();
-    platformWritable.addAll(SettingsService.ALLOWED_AI_KEYS);
-    platformWritable.addAll(SettingsService.ALLOWED_SMTP_KEYS);
-    platformWritable.addAll(SettingsService.ALLOWED_EMBEDDING_KEYS);
+  void AI_키는_플랫폼_쓰기가능키와_겹치지_않는다() {
+    assertThat(platformWritable()).noneMatch(k -> k.startsWith("ai."));
+  }
 
-    Set<String> tenantOverridableExceptCredential =
-        new HashSet<>(SettingsOverridePolicy.tenantOverridableKeys());
-    tenantOverridableExceptCredential.remove(AiCredentialService.KEY);
+  /** 테넌트가 저장할 수 있는 키 = 두 평면 키 ∪ 테넌트 전용 AI 동작 키 — 빠짐도 초과도 없다. */
+  @Test
+  void 테넌트_쓰기가능키는_두_평면_키와_테넌트_전용_키의_합집합이다() {
+    Set<String> expected = new HashSet<>(SettingsOverridePolicy.twoPlaneKeys());
+    expected.addAll(com.smartfirehub.settings.model.AiBehaviorDefaults.keys());
+    assertThat(SettingsOverridePolicy.tenantOverridableKeys()).isEqualTo(expected);
+  }
 
-    assertThat(platformWritable).containsAll(tenantOverridableExceptCredential);
+  private static Set<String> platformWritable() {
+    Set<String> keys = new HashSet<>();
+    keys.addAll(SettingsOverridePolicy.twoPlaneKeys());
+    keys.addAll(SettingsOverridePolicy.platformOnlyKeys());
+    return keys;
   }
 
   /**
@@ -75,10 +66,4 @@ class SettingsKeyWhitelistInvariantTest {
         .as("연결 키가 플랫폼으로 회수되면 번들 채움이 그 키를 되살려 그룹 전체가 조용히 잠긴다")
         .containsAll(SettingsService.SMTP_CONNECTION_KEYS);
   }
-
-  // AI_자격증명_번들_3키는_전부_테넌트_오버라이드_허용키다 는 지웠다 — 검증 대상이던
-  // SettingsService.AI_CREDENTIAL_KEYS 번들 자체가 타입형 전환(2026-09)으로 사라졌다. 그
-  // 번들이 막던 유출("실행 형태만 재정의해도 플랫폼 API 키가 새지 않는다")은 이제 문서가
-  // 하나(ai.credential)라는 구조 자체가 막는다 — AiCredentialLeakGuardTest 와
-  // AiCredentialServiceTest 가 그 성질을 다른 각도에서 고정한다.
 }

@@ -13,7 +13,6 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
-import { Textarea } from '@/components/ui/textarea';
 import { badgeKindOf, type SettingSpec } from '@/lib/settings-catalog';
 
 import { isMaskSentinel } from './build-payload';
@@ -27,23 +26,12 @@ export interface SettingFieldProps {
   error?: string;
   /** 서버 `SettingResponse.description`. 문구를 프런트에 복제하지 않는다. */
   description?: string | null;
-  /** 서버 응답에 이 키의 행이 없다 = 내장 기본값이 적용 중이다. */
-  usingBuiltinDefault?: boolean;
   /** 서버가 준 마스크(`****` / `****last4`). 비밀 키에서만 의미가 있고, 힌트에만 쓴다. */
   maskedValue?: string | null;
   /** 이 비밀 키가 `지우기` 표시되어 있는가. */
   cleared?: boolean;
   /** `지우기` 를 눌렀을 때. `spec.clearable === false` 면 호출부가 넘기지 않는다. */
   onClear?: () => void;
-  /**
-   * `테넌트 재정의 가능`/`전역 고정` 배지와 그 설명문을 숨긴다. 브리프에는 없지만 실제로
-   * 필요한 prop 이다 — AI 탭이 `AiCredentialSection` 전용 화면이 되면서 이 탭에 남은 6키
-   * (`ai.model` 등)도 전부 테넌트 재정의 가능해져(설계서 §225) 배지가 전부 같은 문구를
-   * 반복한다. `SettingsPage.tsx` 가 `tab.id === 'ai'` 일 때만 `true` 로 넘긴다 — 이메일·
-   * 임베딩 탭은 이 prop 을 아예 넘기지 않아(생략 = `undefined` = 기본 렌더) 배지가 그대로
-   * 남는다.
-   */
-  hideOverrideBadge?: boolean;
 }
 
 /**
@@ -80,11 +68,9 @@ export function SettingField({
   disabled,
   error,
   description,
-  usingBuiltinDefault,
   maskedValue,
   cleared,
   onClear,
-  hideOverrideBadge,
 }: SettingFieldProps) {
   const id = `setting-${spec.key.replace(/\./g, '-')}`;
 
@@ -92,13 +78,10 @@ export function SettingField({
     <div className="space-y-2">
       <div className="flex flex-wrap items-center gap-2">
         <Label htmlFor={id}>{spec.label}</Label>
-        {!hideOverrideBadge && <OverrideBadge settingKey={spec.key} />}
-        {usingBuiltinDefault && <Badge variant="outline">내장 기본값</Badge>}
+        <OverrideBadge settingKey={spec.key} />
       </div>
 
-      {spec.kind === 'textarea' ? (
-        <Textarea id={id} rows={6} value={value} disabled={disabled} onChange={(e) => onChange(e.target.value)} />
-      ) : spec.kind === 'select' ? (
+      {spec.kind === 'select' ? (
         <Select value={value} disabled={disabled} onValueChange={onChange}>
           <SelectTrigger id={id} className="w-full max-w-md">
             <SelectValue placeholder={`${spec.label}을(를) 선택하세요`} />
@@ -133,8 +116,8 @@ export function SettingField({
                   : '설정되지 않음'}
             </p>
             {/*
-              `지우기` 는 명시적으로 빈 문자열을 보내는 조작이다. `ai.api_key` 는 서버가 빈 값을
-              거부하므로 버튼 자체를 렌더하지 않는다 — 보여주고 400 으로 실패시키는 것보다 낫다.
+              `지우기` 는 명시적으로 빈 문자열을 보내는 조작이다. 서버가 빈 값을 거부하는 비밀 키
+              (`clearable: false`)는 버튼 자체를 렌더하지 않는다 — 보여주고 400 으로 실패시키는 것보다 낫다.
               (리뷰 L4) 눌렀을 때 입력창의 값도 함께 지운다 — 안 지우면 비활성화된 입력창에
               방금 타이핑한 문자가 그대로 남아, 실제로 보내는 값(빈 문자열)과 화면이 어긋난다.
             */}
@@ -186,13 +169,7 @@ export function SettingField({
 
       {error && <p className="text-sm text-destructive">{error}</p>}
       {description && <p className="text-sm text-muted-foreground">{description}</p>}
-      {usingBuiltinDefault && (
-        <p className="text-sm text-muted-foreground">
-          아직 저장된 값이 없어 코드 기본값이 적용되고 있습니다. 저장하면 이 값이 플랫폼 기본값이
-          됩니다.
-        </p>
-      )}
-      {!hideOverrideBadge && <OverrideNote settingKey={spec.key} />}
+      <OverrideNote settingKey={spec.key} />
     </div>
   );
 }

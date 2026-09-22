@@ -1,4 +1,3 @@
-import type { UseAiCredentialFormResult } from '../hooks/useAiCredentialForm';
 import type { AgentType } from './ai-credential';
 
 /**
@@ -7,8 +6,8 @@ import type { AgentType } from './ai-credential';
  * <b>왜 컴포넌트 파일에 같이 두지 않는가</b>: `react-refresh/only-export-components` 가 컴포넌트
  * 파일은 컴포넌트만 export 하기를 요구한다(Fast Refresh 가 컴포넌트 아닌 export 를 보면 모듈
  * 전체를 다시 평가해 상태를 잃는다). 아래 함수들은 렌더 없이도 검증 가능한 결정 로직이라 —
- * 저장 확인 다이얼로그를 실제로 열지 않고도 `buildSaveConfirm` 문구를, 컴포넌트를 마운트하지
- * 않고도 `credentialIsDirty`/`willDeleteOnSave` 의 경계값을 테스트할 수 있다는 이점도 겸한다.
+ * 저장 확인 다이얼로그를 실제로 열지 않고도 `typeChangeConfirmDescription` 문구를, 훅을 마운트하지
+ * 않고도 `hasTypeChangedFromSaved` 의 경계값을 테스트할 수 있다는 이점도 겸한다.
  */
 
 /** 유형 Select·확인 다이얼로그가 공유하는 사람이 읽는 유형 이름. */
@@ -83,95 +82,28 @@ export function stripProviderPrefix(model: string, providerId: string): string {
 }
 
 /**
- * 지금 라디오(`plane`)로 저장하면 **DELETE 가 나가는가** — 확인 다이얼로그를 띄울지 결정하는
- * 유일한 조건(설계서 §213 "전환 의미: 폼 상태다").
- *
- * `tenantOwned` 를 함께 보는 이유: `plane==='platform'` 이라도 애초에 테넌트 문서가 없었다면
- * (`tenantOwned===false`) 저장이 지우는 것이 없다 — "저장 전에 되돌리면 확인 다이얼로그도
- * DELETE 도 없다"는 문장이 바로 이 경우다(라디오를 tenant→platform→tenant 로 왕복하면 `plane`
- * 이 원래 소유 평면과 같아지므로 이 함수는 애초에 `false`).
- */
-export function willDeleteOnSave(cred: Pick<UseAiCredentialFormResult, 'plane' | 'tenantOwned'>): boolean {
-  return cred.plane === 'platform' && cred.tenantOwned;
-}
-
-/**
- * 자격증명 쪽에 저장할 거리가 있는가 — 페이지의 "저장" 버튼 활성화, `useDirtyAggregator` 보고,
- * 이탈 가드에 전부 쓰인다.
- *
- * `cred.hasUnsavedInput`(유형/payload/비밀 입력 변경)만으로는 부족하다 — 라디오만 만졌지만 그
- * 결과가 지금 실제로 적용 중인 평면과 다르면(`plane !== tenantOwned 기준 평면`) 저장 시 DELETE
- * 든 PUT 이든 실제 서버 상태가 바뀐다. 반대로 라디오를 왕복해 원래 평면으로 돌아오면 이 값도
- * `false` 로 돌아온다 — "되돌리면 아무 일도 없다"를 dirty 판정에도 그대로 반영한다.
- */
-export function credentialIsDirty(
-  cred: Pick<UseAiCredentialFormResult, 'plane' | 'tenantOwned' | 'hasUnsavedInput'>,
-): boolean {
-  return cred.hasUnsavedInput || cred.plane !== (cred.tenantOwned ? 'tenant' : 'platform');
-}
-
-/**
  * 유형 Select 를 "저장된 유형"과 비교해 전환 경고를 띄울지 결정한다(설계서 §193 "유형 전환").
- * `savedAgentType` 은 `useSavedAgentType` 이 유지하는 마지막 <b>서버와 동기화된</b> 유형이다.
+ * `savedAgentType` 은 `useAiCredentialForm` 이 들고 있는 마지막 <b>서버와 동기화된</b> 유형이다.
  *
- * `tenantOwned` 를 요구하는 이유: 테넌트 문서가 아직 없으면(`tenantOwned===false`) 잃을 비밀이
- * 없다 — 이때 `savedAgentType` 은 플랫폼 값을 보여줄 뿐인 화면 초기값이라, 그것과 다르다고
- * 경고하면 "당신이 지금 막 처음 고르는 값인데 무언가 사라진다"는 거짓 경고가 된다.
+ * `configured` 를 요구하는 이유: 테넌트에 저장된 자격증명이 아직 없으면(`configured===false`)
+ * 잃을 비밀이 없다 — 이때 `savedAgentType` 은 서버가 준 빈 문서의 기본 유형일 뿐이라, 그것과
+ * 다르다고 경고하면 "지금 막 처음 고르는 값인데 무언가 사라진다"는 거짓 경고가 된다.
  */
 export function hasTypeChangedFromSaved(
   agentType: AgentType,
   savedAgentType: AgentType,
-  tenantOwned: boolean,
+  configured: boolean,
 ): boolean {
-  return tenantOwned && agentType !== savedAgentType;
-}
-
-/** 저장 확인 다이얼로그 한 번에 쓸 문구. 두 가지 파괴적 시나리오가 동시에 성립할 수 없으므로
- * (하나는 `plane==='platform'`, 다른 하나는 `plane==='tenant'` 를 전제) 항상 최대 하나만 고른다. */
-export interface SaveConfirmContent {
-  title: string;
-  description: string;
-  confirmLabel: string;
+  return configured && agentType !== savedAgentType;
 }
 
 /**
- * 저장 확인 다이얼로그 내용을 만든다 — 렌더와 분리된 순수 함수라 다이얼로그를 열지 않고도 문구
- * 자체를 테스트할 수 있다.
- *
- * <b>목업(`inherit-or-own.html`, git 미추적)의 "② → ① 로 되돌릴 때" 문구를 기반으로 하되, 그대로
- * 재사용하지 않는다</b> — 그 목업은 "사용량도 우리 계정으로 청구됩니다"라는, 스펙이 이후
- * 명시적으로 금지한 과금 문구가 다른 곳에 남아 있던 초안이다(cli/사내 엔드포인트에서 거짓이므로).
- * 여기 문구는 과금 언급 없이 "우리 조직이 설정한 값이 삭제되고 플랫폼 값이 적용된다"는 사실만
- * 말한다. 옛 [재정의 해제] 문구("...필요하면 언제든 다시 재정의할 수 있습니다")도 그대로 쓰지
- * 않는다 — "재정의"는 이 화면이 없애려는 바로 그 어휘다.
+ * 유형 전환 저장 확인 다이얼로그의 본문 — 렌더와 분리된 순수 함수라 다이얼로그를 열지 않고도
+ * 문구를 테스트할 수 있다. 확인이 필요한 파괴적 시나리오는 유형 전환(이전 비밀 폐기) 하나뿐이다.
  */
-export function buildSaveConfirm(params: {
-  willDelete: boolean;
-  typeChanged: boolean;
-  hasUnsavedInput: boolean;
-  agentType: AgentType;
-  savedAgentType: AgentType;
-}): SaveConfirmContent | null {
-  if (params.willDelete) {
-    const unsaved = params.hasUnsavedInput
-      ? ' 입력한 값 중 아직 저장하지 않은 내용도 함께 사라집니다.'
-      : '';
-    return {
-      title: '플랫폼 설정으로 되돌릴까요?',
-      description:
-        '우리 조직이 설정한 에이전트 유형과 자격증명이 모두 삭제되고, 플랫폼 운영자가 정한 값이 적용됩니다. ' +
-        `삭제된 값은 복구할 수 없으며, 필요하면 언제든 다시 설정할 수 있습니다.${unsaved}`,
-      confirmLabel: '되돌리기',
-    };
-  }
-  if (params.typeChanged) {
-    return {
-      title: '자격증명 유형을 바꿀까요?',
-      description:
-        `유형을 ${AGENT_TYPE_LABELS[params.savedAgentType]}에서 ${AGENT_TYPE_LABELS[params.agentType]}(으)로 바꾸면 ` +
-        '이전 유형의 저장된 비밀이 삭제됩니다. 복구할 수 없습니다.',
-      confirmLabel: '저장',
-    };
-  }
-  return null;
+export function typeChangeConfirmDescription(savedAgentType: AgentType, agentType: AgentType): string {
+  return (
+    `유형을 ${AGENT_TYPE_LABELS[savedAgentType]}에서 ${AGENT_TYPE_LABELS[agentType]}(으)로 바꾸면 ` +
+    '이전 유형의 저장된 비밀이 삭제됩니다. 복구할 수 없습니다.'
+  );
 }

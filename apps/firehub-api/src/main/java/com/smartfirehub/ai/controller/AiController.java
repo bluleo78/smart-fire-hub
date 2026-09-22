@@ -108,7 +108,7 @@ public class AiController {
     // 오류로 막는다 — default 를 두지 않는다.
     //
     // 이 switch 가 **이미 쥔** 토큰/키를 프록시에 그대로 넘긴다 — 프록시가 안에서 resolve() 를
-    // 또 부르던 예전 모양에서는 요청 1건당 두 평면 SELECT + AES-GCM 복호화가 두 번 돌았다.
+    // 또 부르던 예전 모양에서는 요청 1건당 설정 SELECT + AES-GCM 복호화가 두 번 돌았다.
     AiCredential cred = aiCredentialService.resolve();
     String result =
         switch (cred) {

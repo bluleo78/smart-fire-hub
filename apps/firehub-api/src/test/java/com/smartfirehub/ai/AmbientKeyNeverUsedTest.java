@@ -1,9 +1,12 @@
 package com.smartfirehub.ai;
 
+import static com.smartfirehub.support.SettingsTestSupport.upsertSystemSetting;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.smartfirehub.apiconnection.service.EncryptionService;
 import com.smartfirehub.pipeline.service.executor.AiAgentClient;
+import com.smartfirehub.settings.model.AiCredential;
 import com.smartfirehub.settings.model.UnknownAgentTypeException;
 import com.smartfirehub.settings.repository.TenantSettingsRepository;
 import com.smartfirehub.settings.service.AiCredentialService;
@@ -38,6 +41,7 @@ class AmbientKeyNeverUsedTest extends IntegrationTestBase {
   @Autowired private AiCredentialService aiCredentialService;
   @Autowired private TenantSettingsRepository tenantSettingsRepository;
   @Autowired private DSLContext dsl;
+  @Autowired private EncryptionService encryptionService;
 
   private String platformOriginal;
 
@@ -74,8 +78,7 @@ class AmbientKeyNeverUsedTest extends IntegrationTestBase {
             "opencode",
             Map.of("providerId", "openai", "baseURL", "https://api.openai.com/v1"),
             Map.of("apiKey", "sk-oai")),
-        USER,
-        false);
+        USER);
     // ai.model 을 opencode 형식(providerId/modelId)으로 맞춰 둔다 — 안 그러면 기본값
     // "claude-sonnet-5"(슬래시 없음)이 새 모델 형식 가드(전체 브랜치 리뷰 I3)에 걸려 이 테스트가
     // 검증하려는 바디 조립까지 못 간다.
@@ -101,8 +104,7 @@ class AmbientKeyNeverUsedTest extends IntegrationTestBase {
             "opencode",
             Map.of("providerId", "openai", "baseURL", "https://api.openai.com/v1"),
             Map.of("apiKey", "sk-oai")),
-        USER,
-        false);
+        USER);
     // ai.model 미설정 — AiAgentClient 의 기본값("claude-sonnet-5")이 그대로 쓰인다.
 
     assertThatThrownBy(() -> aiAgentClient.buildClassifyBody(classifyRequest()))
@@ -114,8 +116,7 @@ class AmbientKeyNeverUsedTest extends IntegrationTestBase {
   void sdk_자격증명이면_oauth_우선으로_실린다() {
     aiCredentialService.save(
         new AiCredentialUpsert("sdk", Map.of(), Map.of("oauthToken", "oat", "apiKey", "sk-ant")),
-        USER,
-        false);
+        USER);
 
     Map<String, Object> body = aiAgentClient.buildClassifyBody(classifyRequest());
 
@@ -132,7 +133,7 @@ class AmbientKeyNeverUsedTest extends IntegrationTestBase {
    */
   @Test
   void cli_자격증명이면_oauthToken이_실리고_apiKey는_없다() {
-    aiCredentialService.save(new AiCredentialUpsert("cli", Map.of(), Map.of("oauthToken", "cli-oat")), USER, false);
+    aiCredentialService.save(new AiCredentialUpsert("cli", Map.of(), Map.of("oauthToken", "cli-oat")), USER);
 
     Map<String, Object> body = aiAgentClient.buildClassifyBody(classifyRequest());
 
@@ -149,13 +150,32 @@ class AmbientKeyNeverUsedTest extends IntegrationTestBase {
    */
   @Test
   void cliApi_자격증명이면_agentType이_cli_api이고_apiKey가_실린다() {
-    aiCredentialService.save(new AiCredentialUpsert("cli-api", Map.of(), Map.of("apiKey", "sk-cliapi")), USER, false);
+    aiCredentialService.save(new AiCredentialUpsert("cli-api", Map.of(), Map.of("apiKey", "sk-cliapi")), USER);
 
     Map<String, Object> body = aiAgentClient.buildClassifyBody(classifyRequest());
 
     assertThat(body).containsEntry("agentType", "cli-api");
     assertThat(body).containsEntry("apiKey", "sk-cliapi");
     assertThat(body).doesNotContainKey("oauthToken");
+  }
+
+  /**
+   * #706 — 테넌트 행이 없으면 분류는 요청 바디를 만들기 전에 "설정되지 않았다" 문구로 실패한다.
+   * {@code system_settings} 에 <b>완전한</b> 플랫폼 자격증명을 심어 두는 것이 핵심이다 — 그 행을
+   * 읽는 폴백이 되살아나면 바디가 그 키로 조립돼 이 테스트가 RED 가 된다(행 없이 확인하면 공허하다).
+   */
+  @Test
+  void 테넌트_자격증명이_없으면_플랫폼_행이_있어도_분류가_안내_문구로_실패한다() {
+    upsertSystemSetting(
+        dsl,
+        KEY,
+        "{\"v\":1,\"agentType\":\"sdk\",\"payload\":{},\"secret\":{\"apiKey\":\""
+            + encryptionService.encrypt("sk-platform-must-not-leak")
+            + "\"}}");
+
+    assertThatThrownBy(() -> aiAgentClient.buildClassifyBody(classifyRequest()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage(new AiCredential.Sdk("", "").incompleteMessage());
   }
 
   /**

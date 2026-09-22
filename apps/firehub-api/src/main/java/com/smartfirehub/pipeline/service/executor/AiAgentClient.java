@@ -80,24 +80,33 @@ public class AiAgentClient {
    * {@code catch (Exception e)} 에 잡혀 평범한 {@code RuntimeException}("AI agent classify request
    * failed")으로 뭉개진다 — 알 수 없는 유형이라는 신호가 사라지고, 다음 사람이 그 catch 안에서
    * 빈 자격증명으로 계속 진행하는 실수를 해도 테스트가 구분하지 못한다.
+   *
+   * <p><b>자격증명이 불완전하면 여기서 던진다({@link IllegalStateException}, #706).</b> AI 자격증명이
+   * 테넌트 전용이 되면서 미설정 테넌트의 {@code resolve()} 는 빈 {@code sdk} 문서를 돌려준다 —
+   * 그대로 ai-agent 에 넘기면 비밀 없는 요청이 ai-agent 컨테이너의 ambient 자격증명으로 조용히
+   * 떨어질 여지가 생긴다(6b1c6383 의 모양). 이 메서드가 {@code classify()} 의 {@code try} 밖에서
+   * 불리므로 HTTP 호출 전에 끝나고, 문구가 catch 에 뭉개지지 않은 채 그대로 올라간다.
    */
   public Map<String, Object> buildClassifyBody(ClassifyRequest request) {
     Map<String, Object> body = new java.util.HashMap<>();
     body.put("rows", request.rows());
     body.put("prompt", request.prompt());
     body.put("outputColumns", request.outputColumns());
-    body.put("model", settingsService.getValue("ai.model").orElse(AiCredential.DEFAULT_MODEL));
+    // AI 동작 키는 테넌트 값 → 코드 기본값으로 항상 해석된다(SettingsService.getValue).
+    body.put("model", settingsService.getValue("ai.model").orElseThrow());
+
+    // 불완전(미설정 포함)이면 모델 검사보다 **먼저** 막는다 — 순서가 뒤집히면 providerId/baseUrl
+    // 이 빈 opencode 테넌트에게 "모델을 다시 선택하세요"라는 엉뚱한 안내가 나간다.
+    AiCredential credential = aiCredentialService.resolve().requireComplete();
 
     // 유형마다 실리는 키가 다르다 — 그 규칙은 AiCredential 의 유형별 applyTo() 하나에만 있다
     // (이슈 #695: 예전에는 여기·채팅·프로액티브에 각각 switch 가 있었고 이미 드리프트했다).
-    // 1단계 평면 모델에서는 ai.api_key 가 언제나 Anthropic 키였으므로 agentType 과 무관하게
-    // 그대로 넘겨도 안전했다. Opencode.apiKey 는 OpenAI 호환 키로 의미가 다르므로 "그냥 apiKey 를
+    // Opencode.apiKey 는 OpenAI 호환 키로 Sdk.apiKey(Anthropic)와 의미가 다르므로 "그냥 apiKey 를
     // 넘긴다"를 유형 전체에 일반화하면 안 된다 — applyTo() 가 유형별로 실제 쓰이는 필드만 담는다.
-    AiCredential credential = aiCredentialService.resolve();
     credential.applyTo(body);
 
     // opencode 모델 형식 가드(전체 브랜치 리뷰 I3) — 위에서 "model" 에 넣은 기본값
-    // AiCredential.DEFAULT_MODEL(슬래시 없음)은 opencode 형식이 아니라, 가드 없이 그대로 보내면
+    // AiBehaviorDefaults.MODEL(슬래시 없음)은 opencode 형식이 아니라, 가드 없이 그대로 보내면
     // OpenAI 호환 호스트가 이유를 알 수 없는 상류 오류로만 실패한다. 여기서 먼저 걸러 분명한
     // 설정 오류로 바꾼다 — 검사와 문구는 AiCredential.modelProblem 하나에서 온다(세 경로 공통).
     // 모델 제약이 없는 유형에서는 no-op 이라 여기서 유형을 따로 분기하지 않는다.

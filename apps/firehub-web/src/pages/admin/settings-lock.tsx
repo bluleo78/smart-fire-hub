@@ -1,4 +1,4 @@
-import { Lock, RotateCcw, Trash2 } from 'lucide-react';
+import { Lock, RotateCcw } from 'lucide-react';
 import type { ReactNode } from 'react';
 
 import {
@@ -19,9 +19,10 @@ import { Label } from '../../components/ui/label';
 import type { SettingFieldState } from '../../lib/settings-fields';
 
 /**
- * 설정 필드의 상속/재정의/잠금 상태 배지.
+ * 설정 필드의 상속/재정의/잠금 상태 배지 — 이메일(SMTP)·임베딩 탭 전용이다. AI 탭의 동작 설정은
+ * 테넌트 전용이라 이 배지를 쓰지 않는다.
  *
- * 네 상태 모두 배지를 "항상" 렌더한다 — 배지의 있음/없음으로 상태를 표현하면 사용자가
+ * 세 상태 모두 배지를 "항상" 렌더한다 — 배지의 있음/없음으로 상태를 표현하면 사용자가
  * "표시가 없는 것"과 "상속 중"을 구별할 수 없기 때문이다. 대비는 텍스트가 만든다.
  * 잠금은 색이 아니라 아이콘+텍스트+비활성 입력+고정 안내문 네 겹으로 전달해
  * `10-accessibility.md` 의 "색상 단독 전달 금지"를 충족한다.
@@ -35,44 +36,36 @@ export function SettingStateBadge({ state }: { state: SettingFieldState }) {
     );
   }
   if (state === 'overridden') {
-    // Task 11: AI 자격증명 그룹이 "재정의" 대신 라디오 어휘("플랫폼 설정을 사용" / "우리 조직이
-    // 직접 설정")로 바뀌면서, 라디오 두 줄 아래에 남은 단일 키(온도·최대 턴 수 등)의 배지가
-    // "재정의"라는 옛 어휘를 계속 쓰면 같은 화면 안에서 같은 상태를 다른 말로 부르게 된다
-    // (설계서 §221). 이 배지는 AI 탭에만 있지 않다 — SMTP·임베딩 탭도 공유하므로 문구가 전역으로
-    // 바뀐다.
+    // "재정의"는 시스템 내부 용어라 쓰는 사람의 말("우리 조직 값 적용 중")로 부른다(설계서 §221).
     return <Badge variant="info">우리 조직 값 적용 중</Badge>;
-  }
-  if (state === 'builtin-default') {
-    // "플랫폼 값 사용 중"(DB 행 상속)과 구분한다 — 이 키는 플랫폼에 시드된 행이 없고, 코드에 박힌
-    // 기본값이 적용되고 있다. "기본값 없음"이라고 하면 아무 값도 적용되지 않는다는 거짓이 된다.
-    return <Badge variant="outline">내장 기본값</Badge>;
-  }
-  if (state === 'no-default') {
-    // DB 행도 코드 기본값도 없는 경우 — 정말 적용되는 값이 없다.
-    return <Badge variant="outline">기본값 없음</Badge>;
   }
   return <Badge variant="outline">플랫폼 값 사용 중</Badge>;
 }
 
 /**
  * 라벨 + 상태 배지(+ 우측 액션) 한 줄.
+ * `state` 는 상속/재정의/잠금 배지를 그리는 SMTP·임베딩 탭용이고, 테넌트 전용인 AI 탭은 상태 대신
+ * `badge`(기본값 힌트)만 넘긴다 — 같은 라벨 줄 레이아웃을 두 벌 두지 않기 위해서다.
  * `action` 은 재정의 해제 버튼처럼 상태와 함께 붙는 조작만 넣는다.
  */
 export function SettingFieldLabel({
   htmlFor,
   state,
+  badge,
   action,
   children,
 }: {
   htmlFor: string;
-  state: SettingFieldState;
+  state?: SettingFieldState;
+  badge?: ReactNode;
   action?: ReactNode;
   children: ReactNode;
 }) {
   return (
     <div className="flex flex-wrap items-center gap-2">
       <Label htmlFor={htmlFor}>{children}</Label>
-      <SettingStateBadge state={state} />
+      {state && <SettingStateBadge state={state} />}
+      {badge}
       {action}
     </div>
   );
@@ -104,15 +97,11 @@ export function PlatformLockedBanner({ children }: { children: ReactNode }) {
 }
 
 /**
- * 번들 안에서 <b>비어 있는 항목</b>임을 알리는 정적 노트(디자인 스펙 §1-1 신설 어휘).
+ * SMTP 연결 번들 안에서 <b>비어 있는 항목</b>임을 알리는 정적 노트(디자인 스펙 §1-1 신설 어휘).
  *
  * 배지가 아니라 노트인 이유: 배지 문자열은 어휘를 영구히 넓히는 부담을 만들지만, 노트는 그
  * 화면 안에 머문다. 빈 입력창은 시각적으로 "아직 안 채운 칸"과 구별되지 않으므로 이 텍스트가
  * 유일한 전달 경로다 — 그래서 각 입력의 `aria-describedby` 에 포함한다.
- *
- * <b>원래 `SmtpSettingsTab` 안의 지역 컴포넌트였다.</b> "이 화면 안에 머문다"는 전제가 AI 자격증명
- * 번들이 생기면서 깨졌다 — 같은 서버 규칙(번들 원자 해석)이 두 탭에 같은 화면 문제를 만든다.
- * 복사하면 문구가 두 벌이 되어 한쪽만 고치는 사고가 나므로 공용 자리로 올린다.
  */
 export function EmptyInBundleNote({
   id,
@@ -151,20 +140,8 @@ export function EmptyInBundleNote({
  * <b>문구를 prop 으로 받는 이유(Task 5)</b>: SMTP 연결 5키는 <b>번들 단위</b>로 해제되므로 고정
  * 문구의 "이 항목"(단수)이 거짓이 된다. 그렇다고 번들 전용 컴포넌트를 복사해 만들면 확인 동작이
  * 다시 두 벌이 되어, 위 문단이 경고하는 그 사고가 난다. 그래서 <b>기본값이 있는 선택 prop</b>으로
- * 넓힌다. 지금 문구를 넘기는 호출부는 셋이다 — SMTP 연결 그룹 해제, AI 자격증명 그룹 해제,
- * AI "저장된 OAuth 토큰 삭제". 아무것도 넘기지 않는 개별 키 해제(AI 의 `ai.model`·숫자 필드,
- * SMTP 의 `smtp.from_address`)는 기본 문구로 동작이 그대로다.
- *
- * <b>`destructive` 가 <u>선택</u> prop 인 이유(#390 item 5)</b>: 위 문단이 넓힌 세 호출부 중
- * "저장된 OAuth 토큰 삭제" 하나만은 <b>되돌릴 수 없다</b> — 서버가 평문을 절대 내려주지 않아
- * 화면에 다시 칠 원본이 없고, 빈 값 PUT 이 끝나면 옛 토큰은 어디에도 남지 않는다. 그런데 그
- * 호출부는 `confirmLabel` 만 넘겨서 <b>되돌리기 아이콘(`RotateCcw`) + 비파괴 확인 버튼</b>을
- * 그대로 달고 있었다 — 복구 불가 조작이 "실행 취소"처럼 보이는 <b>거짓 어포던스</b>다.
- *
- * 그렇다고 이 표현을 기본값으로 만들 수는 없다. 나머지 호출부(SMTP 개별/그룹 해제, AI 개별/그룹
- * 해제)는 <b>전부 되돌릴 수 있는</b> 재정의 해제라, 파괴적 표현을 기본으로 깔면 위 "destructive
- * 색을 쓰지 않는다 — 되돌릴 수 있는 동작이다" 판단이 통째로 뒤집힌다. 그래서 <b>기본값 false 의
- * opt-in</b> 이고, 넘기지 않는 호출부의 렌더 결과는 글자 하나 바뀌지 않는다.
+ * 넓힌다. 지금 호출부는 이메일 탭뿐이다 — 연결 그룹 해제는 문구를 넘기고, 개별 키 해제
+ * (`smtp.from_address`)는 기본 문구를 쓴다.
  *
  * <b>`settingKey` 를 받지 않는 이유(#390 item 6)</b>: 예전 시그니처는 `settingKey: string` 을 받아
  * `onConfirm(settingKey)` 로 되돌려 줬다. 그런데 번들 해제에는 되돌려 줄 <b>단일 키가 존재하지
@@ -181,7 +158,6 @@ export function ClearOverrideButton({
   dialogTitle = '재정의 해제',
   dialogDescription = '이 항목의 테넌트 설정이 삭제되고 플랫폼 기본값으로 즉시 전환됩니다. 지금 입력된 값은 사라지며, 필요하면 언제든 다시 재정의할 수 있습니다.',
   confirmLabel = '되돌리기',
-  destructive = false,
 }: {
   /** 확인 다이얼로그를 지난 뒤 실행할 동작. 무엇을 지우는지는 호출부가 클로저로 묶는다. */
   onConfirm: () => void;
@@ -191,36 +167,16 @@ export function ClearOverrideButton({
   dialogTitle?: string;
   dialogDescription?: ReactNode;
   /**
-   * 확인 버튼 문구. 기본값 '되돌리기' 는 <b>상속으로 되돌리는</b> 해제에만 맞다 — AI 탭의
-   * "저장된 OAuth 토큰 삭제"는 상속으로 돌아가는 것이 아니라 테넌트 값을 빈 값으로 덮는
-   * 조작이라(번들은 그대로 재정의 상태로 남는다) '되돌리기' 가 거짓이 된다. 그 한 단어 때문에
-   * 다이얼로그 컴포넌트를 복사하면 확인 동작이 다시 두 벌이 된다 — 그래서 문구만 넓힌다.
+   * 확인 버튼 문구. 기본값 '되돌리기' 는 <b>상속으로 되돌리는</b> 해제에 맞는 문구다 — 다른 성격의
+   * 조작에 이 버튼을 쓸 때만 바꾼다(다이얼로그를 복사하면 확인 동작이 두 벌이 된다).
    */
   confirmLabel?: string;
-  /**
-   * 되돌릴 수 없는 조작임을 <b>표현</b>으로도 알린다 — 휴지통 아이콘 + 위험색 트리거 +
-   * `destructive` 확인 버튼. 문구(`confirmLabel`)만 '삭제' 로 바꾸고 표현을 그대로 두면,
-   * 복구 불가 조작이 되돌리기 아이콘과 비파괴 버튼을 달고 나온다.
-   *
-   * <b>기본값이 false 여야 한다</b>: 재정의 해제는 언제든 다시 재정의할 수 있는 <b>되돌릴 수
-   * 있는</b> 조작이라 위험색을 쓰면 안 된다(아래 확인 버튼 주석 참고). 이 prop 을 넘기지 않는
-   * 호출부는 SMTP 개별·그룹 해제와 AI 개별·그룹 해제이고, 그 넷의 렌더 결과는 변하지 않는다.
-   */
-  destructive?: boolean;
 }) {
   return (
     <AlertDialog>
       <AlertDialogTrigger asChild>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          disabled={disabled}
-          className={destructive ? 'text-destructive hover:text-destructive' : undefined}
-        >
-          {/* 아이콘도 갈린다 — 색은 색각 이상 사용자에게 전달되지 않으므로, 위험색 하나로는
-              "되돌리기"와 "삭제"가 같은 모양으로 보인다(`10-accessibility.md` 색상 단독 전달 금지). */}
-          {destructive ? <Trash2 className="h-3.5 w-3.5" /> : <RotateCcw className="h-3.5 w-3.5" />}
+        <Button type="button" variant="ghost" size="sm" disabled={disabled}>
+          <RotateCcw className="h-3.5 w-3.5" />
           {label}
         </Button>
       </AlertDialogTrigger>
@@ -231,9 +187,8 @@ export function ClearOverrideButton({
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>취소</AlertDialogCancel>
-          {/* 기본은 destructive 색을 쓰지 않는다 — 재정의 해제는 되돌릴 수 있는 동작이다.
-              `destructive` 를 켠 호출부(복구 불가 삭제)만 위험색을 받는다. */}
-          <AlertDialogAction variant={destructive ? 'destructive' : 'default'} onClick={onConfirm}>
+          {/* destructive 색을 쓰지 않는다 — 재정의 해제는 언제든 다시 재정의할 수 있는 동작이다. */}
+          <AlertDialogAction variant="default" onClick={onConfirm}>
             {confirmLabel}
           </AlertDialogAction>
         </AlertDialogFooter>
