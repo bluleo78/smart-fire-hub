@@ -64,8 +64,8 @@ test.describe('파이프라인 에디터 페이지', () => {
 
     // 첫 번째 실행의 소요 시간 확인
     // createExecution defaults: startedAt='2024-01-01T00:00:00Z', completedAt='2024-01-01T00:01:00Z'
-    // formatDuration(00:00:00 → 00:01:00) = '1m 0s'
-    await expect(firstRow.getByText('1m 0s')).toBeVisible();
+    // formatDuration(00:00:00 → 00:01:00) = '1분' (초 나머지가 0이면 분만 표기)
+    await expect(firstRow.getByText('1분')).toBeVisible();
   });
 
   test('실행중인(RUNNING) 실행의 소요시간이 KST 파싱 오류 없이 표시된다 (#533)', async ({
@@ -101,9 +101,9 @@ test.describe('파이프라인 에디터 페이지', () => {
     await page.getByRole('tab', { name: '실행 이력' }).click();
 
     const firstRow = page.getByRole('row').nth(1);
-    // 버그가 있었다면 '540m 0s'(9시간)가 표시됨. 수정 후에는 5초 경과로 '5s'가 표시되어야 한다.
-    await expect(firstRow.getByText('5s')).toBeVisible();
-    await expect(firstRow.getByText(/540m/)).not.toBeVisible();
+    // 버그가 있었다면 9시간(540분)이 표시됨. 수정 후에는 5초 경과로 '5초'가 표시되어야 한다.
+    await expect(firstRow.getByText('5초')).toBeVisible();
+    await expect(firstRow.getByText(/9시간|540분/)).not.toBeVisible();
   });
 
   test('실행 이력이 없을 때 빈 상태 메시지를 표시한다', async ({ authenticatedPage: page }) => {
