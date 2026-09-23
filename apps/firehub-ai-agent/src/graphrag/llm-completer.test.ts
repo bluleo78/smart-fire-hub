@@ -89,15 +89,42 @@ describe('createCompleter', () => {
     });
   });
 
-  it('자격증명이 없으면 undefined로 생성해 환경 폴백에 맡긴다(단독 스크립트 경로)', async () => {
-    const { createCompleter } = await import('./llm-completer.js');
-    createCompleter();
+  // #708: 자격증명이 없으면 생성은 되지만(MCP 자식 기동 시 도구 등록이 죽지 않도록) 호출 시점에
+  // ambient 환경/키체인으로 폴백하지 않고 명확히 실패한다. ambient 값을 심어 둬도 쓰이지 않는다.
+  it('자격증명이 없으면 호출 시 ambient 값이 있어도 provider 의 자격증명 없음 오류가 그대로 드러난다', async () => {
+    const saved = process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = 'ambient-must-not-leak';
+    try {
+      // 팩토리 목 대신 실제 ClaudeSdkCompletionProvider 를 쓴다 — 자격증명 검사는 이제 provider 가 자식 env 를
+      // 만들 때 한 곳에서 한다(buildClaudeChildEnv). env 조립이 query() 호출 전에 던지므로 SDK 는 뜨지 않는다.
+      const { ClaudeSdkCompletionProvider } = await vi.importActual<
+        typeof import('../providers/claude-sdk-completion-provider.js')
+      >('../providers/claude-sdk-completion-provider.js');
+      createCompletionProviderMock.mockImplementation((config?: unknown) => {
+        const c = (config ?? {}) as { apiKey?: string; oauthToken?: string };
+        return new ClaudeSdkCompletionProvider(c.apiKey, c.oauthToken) as never;
+      });
+      const { createCompleter } = await import('./llm-completer.js');
+      const complete = createCompleter();
+      await expect(complete('sys', 'user')).rejects.toThrow(/AI 자격증명/);
+      expect(completeMock).not.toHaveBeenCalled();
+    } finally {
+      createCompletionProviderMock.mockImplementation((_config?: unknown) => ({
+        name: 'mock-completion',
+        complete: completeMock,
+      }));
+      if (saved === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = saved;
+    }
+  });
 
-    expect(createCompletionProviderMock).toHaveBeenCalledWith({
-      apiKey: undefined,
-      oauthToken: undefined,
-      model: undefined,
+  it('opencode 자격증명은 apiKey 가 비어 있어도 호출 시 막지 않는다 (키 없는 호환 엔드포인트)', async () => {
+    completeMock.mockResolvedValue({ text: 'ok', usage: { inputTokens: 1, outputTokens: 1 } });
+    const { createCompleter } = await import('./llm-completer.js');
+    const complete = createCompleter({
+      credentials: { agentType: 'opencode', baseUrl: 'http://llm.local/v1', providerId: 'local' },
     });
+    await expect(complete('sys', 'user')).resolves.toBe('ok');
   });
 
   it('model 미지정 시 AI_CLI_MODEL 환경변수를 사용한다', async () => {
@@ -117,7 +144,7 @@ describe('createCompleter', () => {
     });
 
     const { createCompleter } = await import('./llm-completer.js');
-    const complete = createCompleter();
+    const complete = createCompleter({ credentials: { oauthToken: 'oauth-xyz' } });
 
     await expect(complete('시스템 프롬프트', '사용자 텍스트')).resolves.toBe('추출 결과');
     // 기존 `claude -p --append-system-prompt` 의미 보존 — 프롬프트 튜닝 전제가 바뀌지 않도록.
@@ -130,7 +157,7 @@ describe('createCompleter', () => {
     completeMock.mockRejectedValue(new Error('[completion] SDK 실행 실패 (subtype=error_during_execution): Not logged in'));
 
     const { createCompleter } = await import('./llm-completer.js');
-    const complete = createCompleter();
+    const complete = createCompleter({ credentials: { oauthToken: 'oauth-xyz' } });
 
     await expect(complete('sys', 'user')).rejects.toThrow(/Not logged in/);
   });

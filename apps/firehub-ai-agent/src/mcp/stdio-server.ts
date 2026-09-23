@@ -181,8 +181,9 @@ async function main(): Promise<void> {
 
   // Register all FireHub tools (공통 함수 사용)
   // GraphRAG 도구는 LLM completion 을 호출하므로 자격증명이 필요하다 — resolveStdioCredentials
-  // 가 opencode/CLI 두 경로를 가른다(위 함수 docstring 참고, 둘 다 없으면 provider 가 환경/
-  // 키체인 인증으로 폴백한다).
+  // 가 opencode/CLI 두 경로를 가른다(위 함수 docstring 참고). 이 프로세스 env 는 부모가 명시적으로
+  // 심어 준 값이라 ambient 가 아니다. 자격증명이 비어 있으면 GraphRAG 호출 시점에 명확히 실패한다
+  // (#708 — 환경/키체인 폴백 없음).
   registerAllTools(apiClient, safeTool, jsonResult, {
     credentials: resolveStdioCredentials(process.env),
   });

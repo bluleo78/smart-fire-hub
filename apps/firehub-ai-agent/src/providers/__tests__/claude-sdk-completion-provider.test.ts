@@ -61,21 +61,37 @@ describe('buildCompletionEnv', () => {
     expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
   });
 
-  it('자격증명이 없으면 프로세스 환경을 그대로 둔다(환경/키체인 폴백)', () => {
+  // #708: 자격증명이 없으면 ambient 환경/키체인에 맡기지 않고 실패한다.
+  it('자격증명이 없으면 ambient 값이 있어도 실패한다(환경/키체인 폴백 없음)', () => {
     process.env.ANTHROPIC_API_KEY = 'env-key';
 
-    const env = buildCompletionEnv(undefined);
-
-    expect(env.ANTHROPIC_API_KEY).toBe('env-key');
+    expect(() => buildCompletionEnv(undefined)).toThrow(/AI 자격증명/);
   });
 
-  it('공백 문자열 자격증명은 "없음"으로 취급한다', () => {
+  it('공백 문자열 자격증명은 "없음"으로 취급해 실패한다', () => {
     process.env.ANTHROPIC_API_KEY = 'env-key';
 
-    const env = buildCompletionEnv({ apiKey: '   ', oauthToken: '  ' });
+    expect(() => buildCompletionEnv({ apiKey: '   ', oauthToken: '  ' })).toThrow(/AI 자격증명/);
+  });
 
-    expect(env.ANTHROPIC_API_KEY).toBe('env-key');
+  // #708: 요청 자격증명이 있을 때도 다른 ambient 인증 경로(Bearer 토큰·엔드포인트·Bedrock 전환·AWS
+  // 체인)는 자식에 도달하지 않는다. #711: 재시도 횟수가 명시된다.
+  it('ambient 인증 경로를 전부 걷어내고 재시도 횟수를 명시한다', () => {
+    process.env.ANTHROPIC_AUTH_TOKEN = 'ambient-bearer';
+    process.env.ANTHROPIC_BASE_URL = 'https://ambient.example';
+    process.env.CLAUDE_CODE_USE_BEDROCK = '1';
+    process.env.AWS_ACCESS_KEY_ID = 'AKIA-ambient';
+    process.env.CLAUDE_CODE_OAUTH_TOKEN = 'ambient-oauth';
+
+    const env = buildCompletionEnv({ apiKey: 'sk-request' });
+
+    expect(env.ANTHROPIC_API_KEY).toBe('sk-request');
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+    expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
+    expect(env.CLAUDE_CODE_USE_BEDROCK).toBeUndefined();
+    expect(env.AWS_ACCESS_KEY_ID).toBeUndefined();
     expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+    expect(env.CLAUDE_CODE_MAX_RETRIES).toBe('2');
   });
 
   it('process.env를 변경하지 않는다(동시 요청 간 자격증명 오염 방지)', () => {
@@ -131,6 +147,54 @@ describe('ClaudeSdkCompletionProvider', () => {
     expect((input.options.env as NodeJS.ProcessEnv).CLAUDE_CODE_OAUTH_TOKEN).toBe('oauth-xyz');
   });
 
+  // #708: 자격증명 없는 provider 는 SDK 를 띄우지 않고 실패한다(키체인 로그인은 env 로 가릴 수 없다).
+  it('자격증명이 없으면 query 를 호출하지 않고 실패한다', async () => {
+    queryMock.mockReturnValue(streamOf(successResult('응답')));
+
+    const provider = new ClaudeSdkCompletionProvider(undefined, undefined);
+    await expect(provider.complete('시스템', '사용자')).rejects.toThrow(/AI 자격증명/);
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+
+  // #711 (코드리뷰): result(success) 에 is_error=true 면 원문을 모델 출력으로 돌려주지 않고 실패한다.
+  it('result(success, is_error) 인증 실패는 한국어 안내의 AiCredentialFailureError 로 실패한다', async () => {
+    queryMock.mockReturnValue(
+      streamOf({
+        type: 'result',
+        subtype: 'success',
+        is_error: true,
+        result: 'Invalid API key · Fix external API key',
+        usage: { input_tokens: 1, output_tokens: 1 },
+      }),
+    );
+    const { AiCredentialFailureError } = await import('../../agent/ai-auth-failure.js');
+
+    const provider = new ClaudeSdkCompletionProvider('sk-bad', undefined);
+    const err = await provider.complete('s', 'u').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(AiCredentialFailureError);
+    expect((err as Error).message).toContain('설정 › AI 에이전트');
+    expect((err as Error).message).not.toContain('Invalid API key');
+  });
+
+  it('result(success, is_error) 일시 오류는 원문이 아니라 한국어 안내로 실패한다(자격증명 오류 타입은 아님)', async () => {
+    queryMock.mockReturnValue(
+      streamOf({
+        type: 'result',
+        subtype: 'success',
+        is_error: true,
+        result: 'API Error: 529 overloaded_error',
+        usage: { input_tokens: 1, output_tokens: 1 },
+      }),
+    );
+    const { AiCredentialFailureError } = await import('../../agent/ai-auth-failure.js');
+
+    const provider = new ClaudeSdkCompletionProvider('sk', undefined);
+    const err = await provider.complete('s', 'u').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(AiCredentialFailureError);
+    expect((err as Error).message).toContain('일시적인 오류');
+  });
+
   it('기본은 systemPrompt를 그대로(replace) 전달한다', async () => {
     queryMock.mockReturnValue(streamOf(successResult('ok')));
 
@@ -170,7 +234,7 @@ describe('ClaudeSdkCompletionProvider', () => {
       streamOf({
         type: 'result',
         subtype: 'error_during_execution',
-        errors: ['Not logged in'],
+        errors: ['tool process crashed'],
         usage: {},
       }),
     );
@@ -178,8 +242,26 @@ describe('ClaudeSdkCompletionProvider', () => {
     const provider = new ClaudeSdkCompletionProvider('sk', undefined);
 
     await expect(provider.complete('시스템', '사용자')).rejects.toThrow(
-      /error_during_execution.*Not logged in/,
+      /error_during_execution.*tool process crashed/,
     );
+  });
+
+  // 두 실패 출구가 같은 경로(toCompletionError)를 탄다 — error_* 로 보고된 인증 실패도
+  // AiCredentialFailureError 가 되어 GraphRAG 의 빈 결과 삼킴에서 빠진다.
+  it('result(error_*) 의 인증 실패도 한국어 안내의 AiCredentialFailureError 로 실패한다', async () => {
+    queryMock.mockReturnValue(
+      streamOf({
+        type: 'result',
+        subtype: 'error_during_execution',
+        errors: ['Not logged in · Please run /login'],
+        usage: {},
+      }),
+    );
+    const { AiCredentialFailureError } = await import('../../agent/ai-auth-failure.js');
+
+    const err = await new ClaudeSdkCompletionProvider('sk', undefined).complete('s', 'u').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(AiCredentialFailureError);
+    expect((err as Error).message).toContain('설정 › AI 에이전트');
   });
 
   it('result 없이 스트림이 끝나면 실패한다', async () => {

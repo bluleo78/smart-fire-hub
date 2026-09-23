@@ -7,6 +7,7 @@
 import type { CompleteFn } from './llm-completer.js';
 import type { ColumnProfile } from './column-profiler.js';
 import { parseJsonBlock } from './extractor.js';
+import { completeOrNull } from './complete-or-null.js';
 
 /**
  * 온톨로지 속성·타입명으로 쓸 수 없는 예약어.
@@ -244,16 +245,14 @@ export async function inferOntology(
   hint: string | undefined,
   evidence: DatasetEvidence[],
 ): Promise<OntologyInferenceResult> {
-  let content = '';
-  try {
-    content = await deps.complete(
-      buildOntologyInferencePrompt(domain, hint, evidence),
-      '위 근거로 온톨로지 JSON 을 출력하세요.',
-    );
-  } catch (err) {
-    console.warn('[graphrag] inferOntology LLM 호출 실패, 빈 결과 반환:', err);
-    return empty();
-  }
+  // LLM 호출 실패 → 빈 결과(throw 하지 않는다). 자격증명 실패만은 전파된다(completeOrNull).
+  const content = await completeOrNull(
+    deps.complete,
+    buildOntologyInferencePrompt(domain, hint, evidence),
+    '위 근거로 온톨로지 JSON 을 출력하세요.',
+    'inferOntology',
+  );
+  if (content === null) return empty();
   const parsed = parseJsonBlock(content);
   if (!parsed) return empty();
   return filterProposal(parsed);

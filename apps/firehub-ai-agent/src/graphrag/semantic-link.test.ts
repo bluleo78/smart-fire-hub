@@ -48,6 +48,12 @@ describe('link', () => {
     expect(complete).toHaveBeenCalledWith(expect.any(String), '전기적 요인');
   });
 
+  it('자격증명 실패(자격증명 없음 포함)는 "병합 안 함"으로 삼키지 않고 전파한다 (#711)', async () => {
+    const { MissingAiCredentialError } = await import('../agent/ai-auth-failure.js');
+    const complete = vi.fn().mockRejectedValue(new MissingAiCredentialError());
+    await expect(link(complete, '전기적 요인', '분전반의 누전', 'Cause')).rejects.toThrow(/AI 자격증명/);
+  });
+
   it('complete 가 예외를 던지면 false 를 반환하고 전파하지 않는다', async () => {
     const complete = vi.fn().mockRejectedValue(new Error('CLI 종료 코드 1'));
     const result = await link(complete, '전기적 요인', '분전반의 누전', 'Cause');

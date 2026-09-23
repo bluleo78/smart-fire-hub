@@ -236,7 +236,7 @@ async function createDraftOntology(
  * GraphRAG 관련 MCP 도구를 등록한다.
  * 엔티티/관계 추출 등의 LLM 호출은 CompletionProvider(Agent SDK)에 위임한다 — 채팅 경로와 동일한
  * 인증 규칙을 쓰기 위함이다. credentials 는 채팅 요청이 관리자 설정(DB)에서 받아온 값이 그대로
- * 흘러온 것이며, 없으면 프로세스 환경/로컬 CLI 키체인 인증으로 폴백한다.
+ * 흘러온 것이며, 없으면 호출 시점에 명확히 실패한다(#708 — 프로세스 환경/키체인 폴백 없음).
  *
  * opencode 테넌트(Ruling #30)는 `credentials.model` 도 함께 온다 — createCompleter 의
  * `credentials` 인자에는 `model` 이 없으므로(그 타입은 순수 자격증명만 다룬다) 별도 `model`

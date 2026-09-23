@@ -28,6 +28,8 @@ import { DISALLOWED_TOOLS, checkToolPolicy } from './tool-policy.js';
 import { claimSession } from './session-owner.js';
 import { sdkChatFilesDir } from './tenant-paths.js';
 import { createTracker, buildHaltMessage } from './failure-streak.js';
+import { buildClaudeChildEnv, resolveClaudeCredential } from './claude-child-env.js';
+import { MissingAiCredentialError } from './ai-auth-failure.js';
 
 import type { SSEEvent } from '../providers/types.js';
 export type { SSEEvent } from '../providers/types.js';
@@ -121,6 +123,16 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
 
   console.log(`${tag()} ▶ User: "${truncate(message, 500)}"`);
 
+  // #708: 요청 자격증명이 없으면 권한 조회·파일 다운로드 같은 부수효과 전에 실패한다.
+  // 예전엔 ambient ANTHROPIC_API_KEY 가 있으면 그것으로 진행했다 — AI 자격증명은 테넌트 전용이므로
+  // 요청이 주지 않은 값은 절대 쓰지 않는다(호스트 키체인 로그인도 env 로 가릴 수 없어 spawn 전 차단).
+  if (!resolveClaudeCredential({ apiKey, oauthToken })) {
+    // 프로액티브가 502 + 코드로 응답할 수 있게 코드도 싣는다(채팅 웹은 message 만 쓴다).
+    const missing = new MissingAiCredentialError();
+    yield { type: 'error' as const, message: missing.message, code: missing.code };
+    return;
+  }
+
   const apiBaseUrl = process.env.API_BASE_URL || 'http://localhost:8080/api/v1';
   const internalToken = process.env.INTERNAL_SERVICE_TOKEN || '';
   const apiClient = new FireHubApiClient(apiBaseUrl, internalToken, userId, tenantId);
@@ -147,10 +159,10 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
     abortSignal.addEventListener('abort', () => abortController.abort(), { once: true });
   }
 
-  // Remove env vars that prevent nested Claude Code sessions
-  const cleanEnv = { ...process.env };
-  delete cleanEnv.CLAUDECODE;
-  delete cleanEnv.CLAUDE_CODE_ENTRYPOINT;
+  // #708: 자식 env 는 공용 헬퍼로 만든다 — ambient 자격증명(ANTHROPIC_API_KEY/AUTH_TOKEN/BASE_URL,
+  // CLAUDE_CODE_OAUTH_TOKEN, Bedrock/Vertex 전환, AWS 체인)과 중첩 세션 변수를 걷어내고 요청
+  // 자격증명 하나만 싣는다(OAuth 우선). CLAUDE_CODE_MAX_RETRIES 도 여기서 설정된다(#711).
+  const cleanEnv = buildClaudeChildEnv(process.env, { apiKey, oauthToken });
   // Auto-compact at ~60% of effective context window (~108K tokens)
   cleanEnv.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = '60';
   // #216: deferred-tools(ToolSearch 메타 호출) 강제 비활성화.
@@ -169,20 +181,6 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
   // 호스트의 ENABLE_EXPERIMENTAL_MCP_CLI 가 주입되어 mcp-cli 모드로 빠지지 않도록
   // 함께 차단한다. ai-agent 백엔드는 in-process MCP 서버(createSdkMcpServer)만 쓴다.
   cleanEnv.ENABLE_EXPERIMENTAL_MCP_CLI = 'false';
-
-  // 인증 우선순위: OAuth 구독 토큰 > 메서드 API 키 > 프로세스 환경 폴백.
-  // OAuth 토큰이 있으면 구독 인증을 강제하기 위해 ANTHROPIC_API_KEY를 제거한다
-  // (Agent SDK가 CLAUDE_CODE_OAUTH_TOKEN으로 인증 — smart-workplace sdk-runner와 동일).
-  // 공백 문자열은 프록시 쪽 검증(missingCredential 등)과 동일하게 "없음"으로 취급한다.
-  if (oauthToken?.trim()) {
-    delete cleanEnv.ANTHROPIC_API_KEY;
-    cleanEnv.CLAUDE_CODE_OAUTH_TOKEN = oauthToken;
-  } else if (apiKey) {
-    cleanEnv.ANTHROPIC_API_KEY = apiKey;
-  } else if (!cleanEnv.ANTHROPIC_API_KEY) {
-    yield { type: 'error' as const, message: 'No API key or OAuth token provided' };
-    return;
-  }
 
   // Build enhanced prompt from parallel-downloaded files (see Promise.all above).
   // 이미지 파일은 base64 content block으로 직접 전달하여 Claude가 시각적으로 분석 가능하게 한다.
@@ -454,6 +452,17 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
           console.log(`${tag()} Total ${turnNumber} turn(s)`);
         }
         yield event;
+        // #711: error 는 종결 이벤트다. 계속 소비하면 SDK 가 뒤이어 보내는 result 가 두 번째
+        // error 나 done 을 만들어 프론트가 "실패 후 정상 종료"처럼 보게 된다 — 정확히 한 번만
+        // 알리고 스트림을 끊는다(위 policyDeny 처리와 같은 방식).
+        if (event.type === 'error') {
+          try {
+            abortController.abort();
+          } catch {
+            /* ignore */
+          }
+          return;
+        }
         // Tier2: 실패 결과를 프론트에 전달한 뒤 강제중단
         if (haltNow) {
           console.warn(`${tag()} [failure-streak] ${haltMessage} — aborting stream`);

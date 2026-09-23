@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { readdir } from 'fs/promises';
 import { join } from 'path';
 import { useTempHome } from './temp-home.fixture.js';
-import { processMessage } from './process-message.js';
+import { processMessage, createDesignGuardRelayState } from './process-message.js';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { MAX_BUDGET_USD, COST_ALARM_TOKENS } from '../constants.js';
 
@@ -644,21 +644,29 @@ describe('executeAgent', () => {
     expect(events.filter((e) => e.type === 'error').length).toBe(0);
   });
 
-  // AS-20: missing apiKey and no env var yields error event immediately
-  it('AS-20: yields error event when apiKey is missing and ANTHROPIC_API_KEY env var is unset', async () => {
+  // AS-20 (#708): 요청에 자격증명이 없으면 ambient ANTHROPIC_API_KEY 가 있어도 즉시 error.
+  // 예전엔 ambient 키가 있으면 그것으로 진행했다(이 테스트는 env 가 비어 있을 때만 error 를 봤다).
+  it('AS-20: yields error event when apiKey is missing even if ambient ANTHROPIC_API_KEY is set', async () => {
     const { query } = await import('@anthropic-ai/claude-agent-sdk');
     const mockQuery = vi.mocked(query);
 
     const { executeAgent } = await import('./agent-sdk.js');
 
+    const saved = process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = 'ambient-must-not-leak';
     const events: unknown[] = [];
-    for await (const event of executeAgent({
-      message: 'hello',
-      tenantId: 1,
-      userId: 1,
-      // no apiKey
-    })) {
-      events.push(event);
+    try {
+      for await (const event of executeAgent({
+        message: 'hello',
+        tenantId: 1,
+        userId: 1,
+        // no apiKey
+      })) {
+        events.push(event);
+      }
+    } finally {
+      if (saved === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = saved;
     }
 
     // query should never be called — we bail out before reaching it
@@ -666,7 +674,7 @@ describe('executeAgent', () => {
 
     // Should yield exactly one error event
     expect(events).toHaveLength(1);
-    expect(events[0]).toMatchObject({ type: 'error' });
+    expect(events[0]).toMatchObject({ type: 'error', code: 'AGENT_AUTH_OR_QUOTA_FAILURE' });
   });
 
   // AS-25 (Task 1): 인증 우선순위 — OAuth 구독 토큰 > 메서드 API 키 > 프로세스 환경 폴백.
@@ -954,5 +962,208 @@ describe('executeAgent — 세션 귀속 표식 배선', () => {
     });
     // 다른 테넌트 디렉터리에는 생기지 않아야 한다 — 생겼다면 테넌트 파생이 틀린 것이다.
     await expect(readdir(join(home.path, '.firehub', 'session-owner', 't1'))).rejects.toThrow();
+  });
+});
+
+/**
+ * #708/#711: ambient 자격증명 차단과 인증 실패의 단일 error 변환.
+ * ambient 값을 process.env 에 실제로 심어 두고, query() 에 넘어간 env 에 그 값이 없음을 본다.
+ */
+describe('executeAgent — ambient 자격증명 차단 / 공급자 오류 (#708, #711)', () => {
+  const AMBIENT = {
+    ANTHROPIC_AUTH_TOKEN: 'ambient-bearer',
+    ANTHROPIC_BASE_URL: 'https://ambient.example',
+    CLAUDE_CODE_USE_BEDROCK: '1',
+    CLAUDE_CODE_USE_VERTEX: '1',
+    AWS_ACCESS_KEY_ID: 'AKIA-ambient',
+    CLAUDE_CODE_OAUTH_TOKEN: 'ambient-oauth',
+    ANTHROPIC_API_KEY: 'ambient-key',
+    CLAUDE_CODE_MAX_RETRIES: '10',
+  } as const;
+
+  function withAmbient<T>(fn: () => Promise<T>): Promise<T> {
+    const saved: Record<string, string | undefined> = {};
+    for (const [k, v] of Object.entries(AMBIENT)) {
+      saved[k] = process.env[k];
+      process.env[k] = v;
+    }
+    return fn().finally(() => {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    });
+  }
+
+  it('AS-AMBIENT-01: 요청 API 키만 자식 env 에 실리고 ambient 인증 경로는 하나도 도달하지 않는다', async () => {
+    const mockQuery = vi.mocked((await import('@anthropic-ai/claude-agent-sdk')).query);
+    async function* fakeStream() {
+      yield { type: 'result', subtype: 'success', session_id: 's', usage: {} } as never;
+    }
+    mockQuery.mockReturnValue(fakeStream() as unknown as ReturnType<typeof mockQuery>);
+    const { executeAgent } = await import('./agent-sdk.js');
+
+    await withAmbient(async () => {
+      for await (const _e of executeAgent({ message: 'hi', tenantId: 1, userId: 1, apiKey: 'sk-request' })) {
+        void _e;
+      }
+    });
+
+    const env = (mockQuery.mock.calls.at(-1)![0] as { options: { env: NodeJS.ProcessEnv } }).options.env;
+    expect(env.ANTHROPIC_API_KEY).toBe('sk-request');
+    for (const name of Object.keys(AMBIENT)) {
+      if (name === 'ANTHROPIC_API_KEY' || name === 'CLAUDE_CODE_MAX_RETRIES') continue;
+      expect(env[name], name).toBeUndefined();
+    }
+    // #711: 재시도 횟수는 호스트 값(10)이 아니라 코드가 정한 값이다.
+    expect(env.CLAUDE_CODE_MAX_RETRIES).toBe('2');
+  });
+
+  it('AS-AUTH-ERR: 인증 실패 assistant(error=authentication_failed) → 한국어 error 1건, text/done 없음', async () => {
+    const mockQuery = vi.mocked((await import('@anthropic-ai/claude-agent-sdk')).query);
+    async function* fakeStream() {
+      yield {
+        type: 'assistant',
+        parent_tool_use_id: null,
+        error: 'authentication_failed',
+        message: {
+          content: [{ type: 'text', text: 'Failed to authenticate. API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}' }],
+        },
+      } as never;
+      yield {
+        type: 'result',
+        subtype: 'success',
+        is_error: true,
+        result: 'Failed to authenticate. API Error: 401',
+        session_id: 's',
+        usage: {},
+      } as never;
+    }
+    mockQuery.mockReturnValue(fakeStream() as unknown as ReturnType<typeof mockQuery>);
+    const { executeAgent } = await import('./agent-sdk.js');
+
+    const events: Array<{ type: string; message?: string }> = [];
+    for await (const e of executeAgent({ message: 'hi', tenantId: 1, userId: 1, apiKey: 'sk-bad' })) {
+      events.push(e as { type: string; message?: string });
+    }
+
+    const errors = events.filter((e) => e.type === 'error');
+    expect(errors).toHaveLength(1);
+    expect(errors[0].message).toContain('API 키 또는 OAuth 토큰');
+    expect(errors[0].message).toContain('설정 › AI 에이전트');
+    // #711: 프로액티브가 502 + 이 코드로 응답하도록 기계 판독 코드를 싣는다.
+    expect((errors[0] as { code?: string }).code).toBe('AGENT_AUTH_OR_QUOTA_FAILURE');
+    expect(events.some((e) => e.type === 'text')).toBe(false);
+    expect(events.some((e) => e.type === 'done')).toBe(false);
+  });
+
+  it('AS-RESULT-ISERR: 회복 가능 오류(rate_limit) 뒤 result(success, is_error) → error 1건, done 없음', async () => {
+    const mockQuery = vi.mocked((await import('@anthropic-ai/claude-agent-sdk')).query);
+    async function* fakeStream() {
+      yield {
+        type: 'assistant',
+        parent_tool_use_id: null,
+        error: 'rate_limit',
+        message: { content: [{ type: 'text', text: 'API Error: 429 rate_limit_error' }] },
+      } as never;
+      yield {
+        type: 'result',
+        subtype: 'success',
+        is_error: true,
+        result: 'API Error: 429 rate_limit_error',
+        session_id: 's',
+        usage: {},
+      } as never;
+    }
+    mockQuery.mockReturnValue(fakeStream() as unknown as ReturnType<typeof mockQuery>);
+    const { executeAgent } = await import('./agent-sdk.js');
+
+    const events: Array<{ type: string; message?: string }> = [];
+    for await (const e of executeAgent({ message: 'hi', tenantId: 1, userId: 1, apiKey: 'sk-ok' })) {
+      events.push(e as { type: string; message?: string });
+    }
+
+    const errors = events.filter((e) => e.type === 'error');
+    expect(errors).toHaveLength(1);
+    expect(errors[0].message).toContain('요청 한도');
+    expect(events.some((e) => e.type === 'text')).toBe(false);
+    expect(events.some((e) => e.type === 'done')).toBe(false);
+  });
+});
+
+describe('processMessage — 공급자 오류 (#711)', () => {
+  it('PM-ISERR: result(success) 에 is_error=true 면 done 이 아니라 error 다', () => {
+    const events = processMessage(
+      {
+        type: 'result',
+        subtype: 'success',
+        is_error: true,
+        result: 'Invalid API key · Please run /login',
+        session_id: 's',
+        usage: {},
+      } as unknown as SDKMessage,
+      mockTag,
+      false,
+    );
+    expect(events.map((e) => e.type)).toEqual(['error']);
+    expect(String(events[0].message)).toContain('API 키 또는 OAuth 토큰');
+  });
+
+  it('PM-PENDING-ERRSUB: 억제된 공급자 오류 뒤 result 가 error_* subtype 이면 번역된 안내와 코드를 쓴다', () => {
+    const state = createDesignGuardRelayState();
+    processMessage(
+      {
+        type: 'assistant',
+        parent_tool_use_id: null,
+        error: 'rate_limit',
+        message: { content: [{ type: 'text', text: 'API Error: 429 rate_limit_error' }] },
+      } as unknown as SDKMessage,
+      mockTag,
+      false,
+      state,
+    );
+    const events = processMessage(
+      {
+        type: 'result',
+        subtype: 'error_during_execution',
+        errors: ['API Error: 429 rate_limit_error'],
+        session_id: 's',
+        usage: {},
+      } as unknown as SDKMessage,
+      mockTag,
+      false,
+      state,
+    );
+    expect(events.map((e) => e.type)).toEqual(['error']);
+    expect(String(events[0].message)).toContain('요청 한도');
+    expect(events[0].code).toBe('AGENT_AUTH_OR_QUOTA_FAILURE');
+  });
+
+  it('PM-MAXOUT: max_output_tokens 오류는 Claude Code 가 자동 회복하므로 error 로 바꾸지 않는다', () => {
+    const events = processMessage(
+      {
+        type: 'assistant',
+        parent_tool_use_id: null,
+        error: 'max_output_tokens',
+        message: { content: [{ type: 'text', text: '부분 응답' }] },
+      } as unknown as SDKMessage,
+      mockTag,
+      false,
+    );
+    expect(events.some((e) => e.type === 'error')).toBe(false);
+  });
+
+  it('PM-SUBAGENT-ERR: subagent(parent_tool_use_id 있음) 오류는 메인 error 로 바꾸지 않는다', () => {
+    const events = processMessage(
+      {
+        type: 'assistant',
+        parent_tool_use_id: 'toolu_1',
+        error: 'rate_limit',
+        message: { content: [{ type: 'text', text: 'API Error: 429' }] },
+      } as unknown as SDKMessage,
+      mockTag,
+      false,
+    );
+    expect(events.some((e) => e.type === 'error')).toBe(false);
   });
 });

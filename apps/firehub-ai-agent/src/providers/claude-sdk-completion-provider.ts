@@ -3,6 +3,8 @@ import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { CompletionOptions, CompletionProvider, CompletionResult } from './types.js';
 import { totalInputTokens } from '../agent/token-usage.js';
 import { DISALLOWED_TOOLS } from '../agent/tool-policy.js';
+import { buildClaudeChildEnv } from '../agent/claude-child-env.js';
+import { toCompletionError } from '../agent/ai-auth-failure.js';
 
 // #216 과 동일 이유의 방어: SDK 의 도구 노출 모드 판정(getExternalMcpMode)은 query() 옵션의 env 가
 // 아니라 **현재 프로세스의 process.env** 를 직접 읽는다. agent-sdk.ts 가 같은 가드를 모듈 로드
@@ -20,30 +22,17 @@ const ABORTED = Symbol('completion-aborted');
 /**
  * 자격증명을 child 프로세스 env 로 변환한다.
  *
- * 우선순위: OAuth 구독 토큰 > API 키 > 프로세스 환경 폴백 — agent-sdk.ts 의 인증 규칙과 동일하다.
- * OAuth 토큰이 있으면 SDK 가 구독 인증을 쓰도록 ANTHROPIC_API_KEY 를 반드시 제거해야 한다.
- * process.env 를 직접 변경하지 않고 복사본을 만들어, 동시 요청끼리 자격증명이 섞이지 않게 한다.
+ * 채팅 경로와 같은 공용 헬퍼(buildClaudeChildEnv)를 쓴다 — ambient 자격증명·클라우드 전환 스위치를
+ * 걷어내고 요청 자격증명 하나만 싣는다(OAuth 우선). 자격증명이 없으면 MissingAiCredentialError 로
+ * 실패한다(#708): 예전엔 프로세스 환경이나 로컬 CLI 키체인에 맡겼는데, 그러면 요청과 무관한 계정으로
+ * 조용히 인증·과금된다. 단독 스크립트도 이제 진입점에서 env 를 읽어 명시적으로 넘긴다.
+ * process.env 를 직접 변경하지 않고 새 객체를 만들어, 동시 요청끼리 자격증명이 섞이지 않게 한다.
  */
 export function buildCompletionEnv(
   credentials: { apiKey?: string; oauthToken?: string } | undefined,
   maxOutputTokens?: number,
 ): NodeJS.ProcessEnv {
-  const env = { ...process.env };
-  // 중첩 세션 방지 — agent-sdk.ts 와 동일.
-  delete env.CLAUDECODE;
-  delete env.CLAUDE_CODE_ENTRYPOINT;
-
-  // 어느 쪽을 쓰든 반대편 자격증명은 제거한다. 컨테이너 env 에 남은 낡은 값이 요청 자격증명을
-  // 이기고 조용히 선택되는 사고를 막는다(요청이 명시한 것이 항상 이겨야 한다).
-  if (credentials?.oauthToken?.trim()) {
-    delete env.ANTHROPIC_API_KEY;
-    env.CLAUDE_CODE_OAUTH_TOKEN = credentials.oauthToken;
-  } else if (credentials?.apiKey?.trim()) {
-    delete env.CLAUDE_CODE_OAUTH_TOKEN;
-    env.ANTHROPIC_API_KEY = credentials.apiKey;
-  }
-  // 둘 다 없으면 프로세스 환경(ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN) 또는
-  // 로컬 개발 시 CLI 의 macOS 키체인 인증에 맡긴다. 단독 스크립트 경로가 여기에 해당한다.
+  const env = buildClaudeChildEnv(process.env, credentials);
 
   if (maxOutputTokens !== undefined) {
     env.CLAUDE_CODE_MAX_OUTPUT_TOKENS = String(maxOutputTokens);
@@ -129,6 +118,17 @@ export class ClaudeSdkCompletionProvider implements CompletionProvider {
         for await (const msg of stream as AsyncIterable<SDKMessage>) {
           if (msg.type !== 'result') continue;
 
+          // #711: subtype 이 success 여도 is_error=true 면 API 오류로 끝난 턴이다(잘못된 키의 401 등).
+          // 그대로 돌려주면 분류·GraphRAG 가 "Failed to authenticate..." 원문을 모델 출력으로 파싱한다 —
+          // 조치 가능한 한국어 안내(인증이면 설정 › AI 에이전트)로 실패시키고 원문은 로그에만 남긴다.
+          // 두 실패 출구(success+is_error / error_*)는 같은 toCompletionError 를 거친다 — 인증·결제면
+          // AiCredentialFailureError(GraphRAG 가 삼키지 않는다), 아니면 subtype 과 안내를 담은 일반 오류.
+          if (msg.subtype === 'success' && (msg as { is_error?: boolean }).is_error === true) {
+            const raw = String(msg.result ?? '');
+            console.error(`[completion] SDK 결과 오류(success/is_error): ${raw.slice(0, 300)}`);
+            throw toCompletionError(raw, 'SDK 결과 오류 (success/is_error)');
+          }
+
           if (msg.subtype === 'success') {
             return {
               text: msg.result,
@@ -139,12 +139,10 @@ export class ClaudeSdkCompletionProvider implements CompletionProvider {
             };
           }
 
-          // error_during_execution / error_max_turns 등 — 원인 문자열을 그대로 노출한다.
+          // error_during_execution / error_max_turns 등 — 원인 문자열을 담는다(인증·결제면 한국어 안내).
           // (기존 llm-cli.ts 는 stderr 만 담아 "Not logged in" 같은 stdout 원인을 놓쳤다.)
           const errors = 'errors' in msg && Array.isArray(msg.errors) ? msg.errors.join('; ') : '';
-          throw new Error(
-            `[completion] SDK 실행 실패 (subtype=${msg.subtype})${errors ? `: ${errors}` : ''}`,
-          );
+          throw toCompletionError(errors, `SDK 실행 실패 (subtype=${msg.subtype})`);
         }
 
         throw new Error('[completion] SDK 스트림이 result 메시지 없이 종료되었습니다.');

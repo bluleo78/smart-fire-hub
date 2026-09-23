@@ -218,7 +218,9 @@ describe('Proactive routes — integration tests', () => {
     expect(calledWith.reasoningEffort).toBe('medium');
   });
 
-  it('TC-SDK01: sdk 는 apiKey 가 없으면 여전히 ambient ANTHROPIC_API_KEY 를 쓴다', async () => {
+  // TC-SDK01 (#708): ambient ANTHROPIC_API_KEY(beforeEach 가 'test-api-key' 로 설정)가 있어도 요청에
+  // apiKey 가 없으면 빈 값 그대로 팩토리에 넘긴다 — 팩토리가 "자격증명 없음"으로 크게 실패해야 한다.
+  it('TC-SDK01: sdk 는 apiKey 가 없으면 ambient ANTHROPIC_API_KEY 로 메우지 않는다', async () => {
     const { ProviderFactory } = await import('../providers/index.js');
     const mockCreateChatProvider = vi.mocked(ProviderFactory.createChatProvider);
     mockExecute.mockReturnValue(
@@ -237,13 +239,13 @@ describe('Proactive routes — integration tests', () => {
     );
 
     const calledWith = mockCreateChatProvider.mock.calls[0][0];
-    expect(calledWith.apiKey).toBe('test-api-key');
+    expect(process.env.ANTHROPIC_API_KEY).toBe('test-api-key'); // ambient 값이 실제로 존재하는 상황
+    expect(calledWith.apiKey).toBeUndefined();
   });
 
-  // TC-BOUNDARY01 (Ruling #31): sdk 뿐 아니라 cli-api 도 ambient 폴백을 유지한다는 것을 명시적으로
-  // 고정한다 — opencode 만 걷어낸 것이 우연이 아니라 "다른 provider 를 명시적으로 고른 유형만
-  // 예외"라는 의도적 경계임을 테스트로 못박는다(코멘트만으로는 리뷰가 다시 물을 수 있다).
-  it('TC-BOUNDARY01: cli-api 도 apiKey 가 없으면 여전히 ambient ANTHROPIC_API_KEY 를 쓴다 (opencode 만의 예외임을 고정)', async () => {
+  // TC-BOUNDARY01 (#708): 예전엔 sdk/cli-api 만 ambient 폴백을 유지했다(Ruling #31). 이제 모든 유형이
+  // 요청 자격증명만 쓴다 — cli-api 도 ambient 로 메우지 않는다는 것을 고정한다.
+  it('TC-BOUNDARY01: cli-api 도 apiKey 가 없으면 ambient ANTHROPIC_API_KEY 로 메우지 않는다', async () => {
     const { ProviderFactory } = await import('../providers/index.js');
     const mockCreateChatProvider = vi.mocked(ProviderFactory.createChatProvider);
     mockExecute.mockReturnValue(
@@ -262,7 +264,8 @@ describe('Proactive routes — integration tests', () => {
     );
 
     const calledWith = mockCreateChatProvider.mock.calls[0][0];
-    expect(calledWith.apiKey).toBe('test-api-key');
+    expect(process.env.ANTHROPIC_API_KEY).toBe('test-api-key'); // ambient 값이 실제로 존재하는 상황
+    expect(calledWith.apiKey).toBeUndefined();
   });
 
   // TC-SYNC01: createChatProvider 가 동기적으로 throw 해도(예: opencode 인데 apiKey 없이 sdk 로
@@ -416,6 +419,126 @@ describe('Proactive routes — integration tests', () => {
     // 오류 원문·request_id가 응답에 실려 나가면 안 된다 (로그에만 남긴다)
     expect(JSON.stringify(res.body)).not.toContain('request_id');
     expect(JSON.stringify(res.body)).not.toContain('Invalid bearer token');
+  });
+
+  // TC5-SDK (#711): SDK 경로는 이제 인증 실패를 텍스트가 아니라 error 이벤트(+code)로 알린다. 실제
+  // processMessage 가 만든 이벤트를 그대로 흘려, firehub-api 가 의존하는 502 + AGENT_AUTH_OR_QUOTA_FAILURE
+  // 계약이 유지되는지 본다(예전 텍스트 경로는 detectAgentFailure 가 이 코드를 붙였다).
+  it('TC5-SDK: SDK 인증 실패 error 이벤트는 502 + AGENT_AUTH_OR_QUOTA_FAILURE 로 응답한다 (#711)', async () => {
+    const { processMessage } = await import('../agent/process-message.js');
+    const sdkEvents = processMessage(
+      {
+        type: 'assistant',
+        parent_tool_use_id: null,
+        error: 'authentication_failed',
+        message: { content: [{ type: 'text', text: 'Failed to authenticate. API Error: 401 request_id req_x' }] },
+      } as never,
+      () => '[t]',
+      false,
+    );
+    expect(sdkEvents.map((e) => e.type)).toEqual(['error']);
+    mockExecute.mockReturnValue(
+      (async function* () {
+        yield { type: 'init', sessionId: 'test-session' };
+        yield* sdkEvents;
+      })(),
+    );
+
+    const res = await makeRequest(
+      createApp(),
+      'POST',
+      '/agent/proactive',
+      { prompt: '일간 KPI 리포트', tenantId: 1, agentType: 'sdk', apiKey: 'sk-bad', context: { value: 'test' } },
+      { Authorization: `Internal ${VALID_TOKEN}` },
+    );
+
+    expect(res.status).toBe(502);
+    expect((res.body as { code: string }).code).toBe('AGENT_AUTH_OR_QUOTA_FAILURE');
+    expect(JSON.stringify(res.body)).not.toContain('request_id');
+  });
+
+  // TC5-CLI (#711): CLI 경로(prod agent_type=cli)의 인증 실패 이벤트도 같은 코드를 싣는다.
+  it('TC5-CLI: CLI 인증 실패 error 이벤트(code 포함)도 502 + AGENT_AUTH_OR_QUOTA_FAILURE 로 응답한다 (#711)', async () => {
+    const { AUTH_FAILURE_KOREAN_MESSAGE, AGENT_AUTH_OR_QUOTA_FAILURE } = await import('../agent/ai-auth-failure.js');
+    mockExecute.mockReturnValue(
+      (async function* () {
+        yield { type: 'init', sessionId: 'test-session' };
+        yield { type: 'error', message: AUTH_FAILURE_KOREAN_MESSAGE, code: AGENT_AUTH_OR_QUOTA_FAILURE };
+      })(),
+    );
+
+    const res = await makeRequest(
+      createApp(),
+      'POST',
+      '/agent/proactive',
+      { prompt: '일간 KPI 리포트', tenantId: 1, agentType: 'cli', oauthToken: 'oat', context: { value: 'test' } },
+      { Authorization: `Internal ${VALID_TOKEN}` },
+    );
+
+    expect(res.status).toBe(502);
+    expect((res.body as { code: string }).code).toBe('AGENT_AUTH_OR_QUOTA_FAILURE');
+  });
+
+  // TC5-MISSING (#708): createChatProvider 가 자격증명 없음으로 동기적으로 던지면 502 + 코드다 —
+  // firehub-api 가 이 코드로 "AI 인증 정보 확인" 안내를 고른다(예전엔 코드 없는 500).
+  it('TC5-MISSING: 자격증명 없음(MissingAiCredentialError)은 502 + AGENT_AUTH_OR_QUOTA_FAILURE', async () => {
+    const { ProviderFactory } = await import('../providers/index.js');
+    const { MissingAiCredentialError } = await import('../agent/ai-auth-failure.js');
+    vi.mocked(ProviderFactory.createChatProvider).mockImplementationOnce(() => {
+      throw new MissingAiCredentialError();
+    });
+
+    const res = await makeRequest(
+      createApp(),
+      'POST',
+      '/agent/proactive',
+      { prompt: '일간 KPI 리포트', tenantId: 1, agentType: 'sdk', context: { value: 'test' } },
+      { Authorization: `Internal ${VALID_TOKEN}` },
+    );
+
+    expect(res.status).toBe(502);
+    expect((res.body as { code: string }).code).toBe('AGENT_AUTH_OR_QUOTA_FAILURE');
+  });
+
+  // TC5-CODE-PASS: 이벤트의 코드는 특정 상수만 매칭하지 않고 그대로 전달한다.
+  it('TC5-CODE-PASS: error 이벤트의 코드를 그대로 502 응답에 싣는다', async () => {
+    mockExecute.mockReturnValue(
+      (async function* () {
+        yield { type: 'error', message: '무언가', code: 'SOME_FUTURE_CODE' };
+      })(),
+    );
+
+    const res = await makeRequest(
+      createApp(),
+      'POST',
+      '/agent/proactive',
+      { prompt: '일간 KPI 리포트', tenantId: 1, agentType: 'sdk', apiKey: 'sk', context: { value: 'test' } },
+      { Authorization: `Internal ${VALID_TOKEN}` },
+    );
+
+    expect(res.status).toBe(502);
+    expect((res.body as { code: string }).code).toBe('SOME_FUTURE_CODE');
+  });
+
+  // TC5-GENERIC (#711): 코드가 없는 일반 error 이벤트는 기존대로 500 이다(코드 없는 502 로 뭉개지 않는다).
+  it('TC5-GENERIC: 코드 없는 일반 error 이벤트는 500 으로 응답한다', async () => {
+    mockExecute.mockReturnValue(
+      (async function* () {
+        yield { type: 'init', sessionId: 'test-session' };
+        yield { type: 'error', message: 'max_turns_exceeded' };
+      })(),
+    );
+
+    const res = await makeRequest(
+      createApp(),
+      'POST',
+      '/agent/proactive',
+      { prompt: '일간 KPI 리포트', tenantId: 1, agentType: 'sdk', apiKey: 'sk', context: { value: 'test' } },
+      { Authorization: `Internal ${VALID_TOKEN}` },
+    );
+
+    expect(res.status).toBe(500);
+    expect((res.body as { code?: string }).code).toBeUndefined();
   });
 
   it('TC6: 리포트 파일도 없고 출력 텍스트도 비면 502로 실패 처리한다 (#350)', async () => {

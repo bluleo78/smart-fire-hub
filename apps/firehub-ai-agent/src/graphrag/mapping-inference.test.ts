@@ -120,6 +120,13 @@ describe('inferMapping', () => {
     expect(res.spec.relations).toEqual([{ subjectRef: 0, relation: 'HAS_INSPECTION', objectRef: 1 }]);
   });
 
+  it('자격증명 실패는 빈 결과로 삼키지 않고 전파한다 (#711)', async () => {
+    const { AiCredentialFailureError, AUTH_FAILURE_KOREAN_MESSAGE } = await import('../agent/ai-auth-failure.js');
+    await expect(
+      inferMapping({ complete: async () => { throw new AiCredentialFailureError(AUTH_FAILURE_KOREAN_MESSAGE); } }, ontology, profiles),
+    ).rejects.toThrow(AUTH_FAILURE_KOREAN_MESSAGE);
+  });
+
   it('LLM 호출 실패 → 빈 결과', async () => {
     const res = await inferMapping({ complete: async () => { throw new Error('down'); } }, ontology, profiles);
     expect(res.spec).toEqual({ entities: [], relations: [] });

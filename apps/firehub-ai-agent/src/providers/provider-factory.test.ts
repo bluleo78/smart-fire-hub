@@ -28,6 +28,7 @@ import { ClaudeSdkChatProvider } from './claude-sdk-chat-provider.js';
 import { ClaudeCliChatProvider } from './claude-cli-chat-provider.js';
 import { ClaudeClassifyProvider } from './claude-classify-provider.js';
 import { DEFAULT_MODEL } from '../constants.js';
+import { MissingAiCredentialError } from '../agent/ai-auth-failure.js';
 
 describe('ProviderFactory opencode', () => {
   it('agentType=opencode 이면 OpenCodeChatProvider 를 생성한다', () => {
@@ -94,12 +95,23 @@ describe('ProviderFactory.createCompletionProvider (Task 8: opencode 분기)', (
     }
   });
 
-  it('config 없이 부르면 Claude SDK 로 폴백한다 (단독 스크립트용)', () => {
-    expect(ProviderFactory.createCompletionProvider().name).toBe('claude-sdk-completion');
+  // #708: 무인자 호출(ambient 폴백)은 없어졌다. 빈 자격증명으로 생성은 되지만(MCP 자식 기동 시 도구
+  // 등록이 죽지 않도록) 첫 complete() 가 ambient 값이 있어도 실패한다.
+  it('빈 자격증명 config 는 생성되지만 complete() 가 ambient 값을 쓰지 않고 실패한다', async () => {
+    const ORIGINAL = process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = 'ambient-must-not-leak';
+    try {
+      const provider = ProviderFactory.createCompletionProvider({});
+      expect(provider.name).toBe('claude-sdk-completion');
+      await expect(provider.complete('sys', 'user')).rejects.toThrow(/AI 자격증명/);
+    } finally {
+      if (ORIGINAL === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = ORIGINAL;
+    }
   });
 
-  // stdio-server.ts(CLI 자격증명은 env 로만 오가 agentType 자체가 없다)와 createCompleter()
-  // 단독 스크립트 호출부가 이 모양으로 부른다 — 여기서 거부하면 그 두 호출부가 깨진다.
+  // stdio-server.ts(CLI 자격증명은 부모가 심어 준 env 로만 오가 agentType 자체가 없다)와 단독
+  // 스크립트 호출부가 이 모양으로 부른다 — 여기서 거부하면 그 호출부가 깨진다.
   // "agentType 없는 바디를 sdk+ambient 로 취급하지 말라"는 요구는 라우트 경계(/chat, /proactive,
   // classify)가 진다 — 이 팩토리는 의도적으로 관대하다(위 클래스 docstring 참고).
   it('agentType 이 없는 config 도 Claude SDK 로 간다 (정당한 무-agentType 호출부)', () => {
@@ -174,14 +186,42 @@ describe('ProviderFactory (createChatProvider/createClassifyProvider)', () => {
     it('PF-02: SDK mode without apiKey or oauthToken throws error', () => {
       expect(() =>
         ProviderFactory.createChatProvider({ agentType: 'sdk' }),
-      ).toThrow('API key or OAuth token required for SDK mode');
+      ).toThrow(MissingAiCredentialError);
     });
 
     // PF-03: CLI mode returns ClaudeCliChatProvider with name 'claude-cli'
     it('PF-03: CLI mode returns ClaudeCliChatProvider with name claude-cli', () => {
-      const provider = ProviderFactory.createChatProvider({ agentType: 'cli' });
+      const provider = ProviderFactory.createChatProvider({ agentType: 'cli', oauthToken: 'oat-1' });
       expect(provider).toBeInstanceOf(ClaudeCliChatProvider);
       expect(provider.name).toBe('claude-cli');
+    });
+
+    // PF-03b (#708): 구독(cli) 모드도 OAuth 토큰이 필수다 — 없으면 호스트 키체인 로그인으로
+    // 조용히 인증되던 경로를 생성 단계에서 막는다(공백 토큰도 "없음").
+    it('PF-03b: CLI mode without oauthToken throws error', () => {
+      expect(() => ProviderFactory.createChatProvider({ agentType: 'cli' })).toThrow(
+        MissingAiCredentialError,
+      );
+      expect(() =>
+        ProviderFactory.createChatProvider({ agentType: 'cli', oauthToken: '  ' }),
+      ).toThrow(MissingAiCredentialError);
+    });
+
+    // PF-03c (#708): 세 Anthropic 유형 모두 한국어 안내·코드를 담은 MissingAiCredentialError 로 실패하고,
+    // 공백 자격증명도 "없음"으로 본다(자식 env 와 같은 판정).
+    it('PF-03c: 자격증명 없음은 한국어 안내와 코드를 담고, 공백 키도 거부된다', () => {
+      let err: unknown;
+      try {
+        ProviderFactory.createChatProvider({ agentType: 'sdk', apiKey: '  ' });
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeInstanceOf(MissingAiCredentialError);
+      expect((err as Error).message).toContain('설정 › AI 에이전트');
+      expect((err as MissingAiCredentialError).code).toBe('AGENT_AUTH_OR_QUOTA_FAILURE');
+      expect(() => ProviderFactory.createChatProvider({ agentType: 'cli-api', apiKey: ' ' })).toThrow(
+        MissingAiCredentialError,
+      );
     });
 
     // PF-04: CLI-API mode with apiKey returns ClaudeCliChatProvider with name 'claude-cli-api'
@@ -198,7 +238,7 @@ describe('ProviderFactory (createChatProvider/createClassifyProvider)', () => {
     it('PF-05: CLI-API mode without apiKey throws error', () => {
       expect(() =>
         ProviderFactory.createChatProvider({ agentType: 'cli-api' }),
-      ).toThrow('API key required for CLI-API mode');
+      ).toThrow(MissingAiCredentialError);
     });
 
     // PF-06: Unknown agentType throws error

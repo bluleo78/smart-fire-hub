@@ -14,8 +14,10 @@ export type CompleteFn = (systemPrompt: string, userText: string) => Promise<str
 export interface CompleterOptions {
   model?: string;
   /**
-   * 요청 자격증명. MCP 도구 경로에서는 채팅 요청의 자격증명이 전달되고, 단독 스크립트에서는
-   * 생략되어 프로세스 환경 / CLI 키체인 인증으로 폴백한다.
+   * 요청 자격증명. MCP 도구 경로에서는 채팅 요청의 자격증명이 전달되고, 단독 스크립트는 진입점에서
+   * 읽은 값을 명시적으로 넘긴다. 비어 있으면 호출 시점에 provider 가 MissingAiCredentialError 로
+   * 실패한다(#708) — 프로세스 환경이나 CLI 키체인으로 폴백하지 않는다. 생성 시점엔 던지지 않는다:
+   * createCompleter 는 MCP 자식 기동 중 도구 등록에서 불리므로 GraphRAG 와 무관한 도구까지 죽는다.
    *
    * agentType/baseUrl/providerId 를 포함하는 이유(Task 8): classification-service.ts 와 이
    * 함수(llm-completer.ts:30, 설계서가 명시한 두 completion 호출부)가 같은

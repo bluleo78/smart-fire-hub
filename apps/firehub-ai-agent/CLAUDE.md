@@ -69,7 +69,7 @@ Frontend (SSE) → POST /agent/chat → internalAuth middleware → executeAgent
 - `PORT` — 서버 포트 (기본 5020)
 - `INTERNAL_SERVICE_TOKEN` — firehub-api와 공유하는 내부 인증 토큰
 - `API_BASE_URL` — firehub-api 주소 (기본 `http://localhost:5010/api/v1`)
-- `ANTHROPIC_API_KEY` — (선택) Claude API 키 폴백. 주 설정은 관리페이지(`/admin/settings`)에서 요청별로 전달됨
+- AI 자격증명(API 키/OAuth 토큰)은 **env 로 두지 않는다** — 테넌트 설정(설정 › AI 에이전트)에서 firehub-api 가 요청마다 전달한다. ai-agent 는 `ANTHROPIC_API_KEY`·`CLAUDE_CODE_OAUTH_TOKEN` 등 ambient 값을 읽지 않고, 자식 env 에서도 걷어낸다(`src/agent/claude-child-env.ts`, #708). 요청에 자격증명이 없으면 명확한 오류로 실패한다(키체인 폴백 없음). 예외: 개발 스크립트(`graphrag/dump-extraction.ts`, `graphrag/eval/run-eval.ts`)는 진입점에서 이 두 env 를 읽는다
 - `MAX_TURNS` — 에이전트 최대 턴 수 (기본 10)
 
 ### Agent SDK Integration
@@ -78,7 +78,7 @@ Frontend (SSE) → POST /agent/chat → internalAuth middleware → executeAgent
 - `permissionMode: 'bypassPermissions'` — 도구 실행 자동 허용
 - `allowedTools: ['mcp__firehub__*']` — firehub MCP 도구만 허용
 - `mcpServers: { firehub }` — 인메모리 MCP 서버 (네트워크 없이 직접 호출)
-- 환경변수에서 `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT` 제거하여 중첩 세션 방지
+- 자식 env 는 `buildClaudeChildEnv()` 로 만든다 — ambient 자격증명·클라우드 전환 스위치·중첩 세션 변수(`CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`) 제거, 요청 자격증명 1개 + `CLAUDE_CODE_MAX_RETRIES`(채팅 2 / 검증 0, #711) 설정
 
 ## Testing
 

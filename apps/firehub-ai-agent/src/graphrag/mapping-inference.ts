@@ -6,6 +6,7 @@ import { Ontology, isEntityType, isAllowedTriple } from './ontology.js';
 import type { ColumnProfile } from './column-profiler.js';
 import type { MappingSpec } from './table-projection.js';
 import { parseJsonBlock } from './extractor.js';
+import { completeOrNull } from './complete-or-null.js';
 
 export interface InferMappingDeps {
   complete: CompleteFn;
@@ -92,13 +93,14 @@ export async function inferMapping(
   const confidences: { target: string; confidence: number }[] = [];
 
   // 1) LLM 호출(실패 시 빈 결과 — 조용히 계속하지 않고 호출부가 빈 결과를 인지).
-  let content = '';
-  try {
-    content = await deps.complete(buildInferencePrompt(ontology, profiles), '위 근거로 매핑 JSON을 출력하세요.');
-  } catch (err) {
-    console.warn('[graphrag] inferMapping LLM 호출 실패, 빈 결과 반환:', err);
-    return { spec: EMPTY, dropped, confidences };
-  }
+  // 자격증명 실패만은 전파된다(completeOrNull).
+  const content = await completeOrNull(
+    deps.complete,
+    buildInferencePrompt(ontology, profiles),
+    '위 근거로 매핑 JSON을 출력하세요.',
+    'inferMapping',
+  );
+  if (content === null) return { spec: EMPTY, dropped, confidences };
 
   const parsed = parseJsonBlock(content) as { entities?: RawEntity[]; relations?: RawRelation[] } | null;
   if (!parsed) return { spec: EMPTY, dropped, confidences };

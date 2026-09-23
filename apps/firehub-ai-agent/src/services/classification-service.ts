@@ -227,14 +227,10 @@ export async function classifyBatch(
 ): Promise<ClassifyResponse> {
   const { rows, prompt, outputColumns } = request;
 
-  // 자격증명이 비어 있어도 여기서 막지 않는다 — 단, 그 "빈 자격증명 폴백" 계약은 agentType 이
-  // sdk/cli/cli-api 이거나 아예 없을 때만 유효하다(ClaudeSdkCompletionProvider 가 프로세스 환경
-  // ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN 이나 로컬 CLI 키체인으로 폴백 — GraphRAG 경로와
-  // 동일한 계약). **agentType==='opencode' 면 이 폴백은 금지된다** — opencode 의 apiKey 는 OpenAI
-  // 호환 키라 Claude SDK 의 ambient 키로 새면 6b1c6383 과금 회귀가 재현된다. 그 경우
-  // ProviderFactory.createCompletionProvider 가 OpenAICompatCompletionProvider 로 분기해 애초에
-  // ambient 폴백 경로(buildCompletionEnv)를 타지 않는다.
-  //
+  // 자격증명이 비어 있으면 여기서 따로 검사하지 않아도 명확히 실패한다(#708): Anthropic 계열은
+  // ClaudeSdkCompletionProvider 가 자식 env 를 만들며 MissingAiCredentialError(한국어 안내)를 던지고
+  // — 프로세스 환경이나 CLI 키체인으로 폴백하지 않는다 — opencode 는 팩토리가 ambient 를 읽지 않는
+  // OpenAICompatCompletionProvider 로 보낸다.
   // 타임아웃은 CompletionProvider 안에서 abort 로 처리한다.
   // (이전에는 axios timeout 과 Promise.race 가 이중으로 걸려 race 가 이겨도 HTTP 요청이 취소되지 않았다.)
   const { items, promptTokens, completionTokens } = await callClassifyCompletion(

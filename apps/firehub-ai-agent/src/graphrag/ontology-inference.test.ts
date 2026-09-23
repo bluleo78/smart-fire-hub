@@ -188,6 +188,12 @@ describe('inferOntology', () => {
     expect(r.entities).toHaveLength(2);
   });
 
+  it('자격증명 실패는 빈 결과로 삼키지 않고 전파한다 (#711)', async () => {
+    const { AiCredentialFailureError, AUTH_FAILURE_KOREAN_MESSAGE } = await import('../agent/ai-auth-failure.js');
+    const complete = async () => { throw new AiCredentialFailureError(AUTH_FAILURE_KOREAN_MESSAGE); };
+    await expect(inferOntology({ complete }, 'd', undefined, [])).rejects.toThrow(AUTH_FAILURE_KOREAN_MESSAGE);
+  });
+
   it('LLM 호출이 실패하면 빈 결과를 반환한다(throw 하지 않는다)', async () => {
     const complete = async () => { throw new Error('cli down'); };
     const r = await inferOntology({ complete }, 'd', undefined, []);

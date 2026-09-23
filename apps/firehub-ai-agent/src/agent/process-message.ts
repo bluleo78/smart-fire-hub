@@ -2,6 +2,11 @@ import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { SSEEvent } from './agent-sdk.js';
 import { truncate } from '../utils.js';
 import { MAX_BUDGET_USD } from '../constants.js';
+import {
+  classifyAssistantError,
+  resolveResultError,
+  type PendingProviderError,
+} from './ai-auth-failure.js';
 // 지역 변수 totalInputTokens와 이름이 겹치므로 별칭으로 들여온다.
 import { totalInputTokens as sumInputTokens } from './token-usage.js';
 import {
@@ -95,6 +100,10 @@ export interface DesignGuardRelayState {
   userTextEmitted: boolean;
   /** #581: 메인 텍스트의 내부 라우팅 어휘("위임하되") 치환기 — 도구 호출 없는 되묻기 턴까지 커버 */
   routing: RoutingVocabRedactor;
+  /** #711: 즉시 종결로 판단하지 않은 메인 assistant 오류(요청 한도·서버 오류 등). 텍스트는 이미
+   *  억제했고, 이어지는 `result` 가 is_error 로 끝나면 이 종류로 한국어 안내를 만든다. Claude Code
+   *  가 스스로 회복해 정상 종료하면 그대로 무시된다. */
+  pendingProviderError?: PendingProviderError;
 }
 
 /**
@@ -187,6 +196,27 @@ export function processMessage(
     }
 
     case 'assistant': {
+      // #711: SDK 는 API 오류(401 인증 실패·크레딧 부족·요청 한도 등)를 `error` 필드가 붙은 합성
+      // assistant 메시지로 알리고, 그 본문에 영문 원문("Failed to authenticate. API Error: 401 …")을
+      // 담는다. 예전엔 이 본문이 일반 text 로 나가고 뒤이은 result(success, is_error=true)가 done 으로
+      // 끝나 사용자는 오류를 "답변"으로 받았다. 메인 메시지(parent_tool_use_id=null)의 오류는 본문을
+      // 내보내지 않는다. 판정 규칙(subagent 제외·max_output_tokens 제외·종결/보류)은 CLI 경로와 공유한다.
+      const assistantError = classifyAssistantError(
+        msg as { error?: string; message?: { content?: ReadonlyArray<{ type: string; text?: unknown }> } },
+        parentToolUseId,
+      );
+      if (assistantError) {
+        if ('terminal' in assistantError) {
+          // 설정을 고치기 전엔 회복되지 않는 오류 — 즉시 한 번 알린다(agent-sdk 가 스트림을 끊는다).
+          console.warn(`${tag()} ✗ Provider error (${assistantError.kind}): ${truncate(assistantError.text)}`);
+          events.push({ type: 'error', ...assistantError.terminal });
+        } else {
+          // 회복 가능성이 있는 오류는 result 까지 판정을 미룬다(본문만 억제).
+          console.warn(`${tag()} ✗ Provider error (${assistantError.pending.kind}, 보류): ${truncate(assistantError.pending.text)}`);
+          relayState.pendingProviderError = assistantError.pending;
+        }
+        break;
+      }
       // Normally text is streamed via stream_event (text_delta), so we skip text blocks
       // here to avoid duplication. However, in error cases (e.g. credit balance too low),
       // the SDK may return text directly in the assistant message without streaming.
@@ -404,7 +434,21 @@ export function processMessage(
           );
         }
       }
-      if (msg.subtype === 'success') {
+      // #711: subtype 이 success 여도 is_error=true 면 실패다 — Claude Code 는 API 오류로 끝난 턴을
+      // success/is_error=true 로 보고한다. done 으로 보내면 프론트가 오류를 정상 종료로 처리한다.
+      if (msg.subtype === 'success' && (msg as { is_error?: boolean }).is_error === true) {
+        const pending = relayState.pendingProviderError;
+        relayState.pendingProviderError = undefined;
+        const rawResult = String((msg as { result?: unknown }).result ?? '');
+        console.error(`${tag()} ✗ Session failed (success/is_error): ${truncate(rawResult)}`);
+        events.push({
+          type: 'error',
+          ...resolveResultError(pending, rawResult),
+          sessionId: msg.session_id,
+          inputTokens: totalInputTokens,
+          outputTokens: totalOutputTokens,
+        });
+      } else if (msg.subtype === 'success') {
         // #573: 동기 위임 tool_result 를 아무도 relay 하지 않은 채 턴이 끝나는 경우 — 시스템
         // 프롬프트 준수가 실패해도 사용자에게 완전히 빈 응답이 나가지 않도록 방어적으로 relay 한다.
         // #572 2차: 이 fallback 은 이제 (1) #573 원 케이스(텍스트 없이 종료) 와 (2)
@@ -452,13 +496,19 @@ export function processMessage(
         // #277: 예산 초과는 전용 메시지로 구분(그 외는 기존 max_turns 처리 유지)
         const isBudget = (msg.subtype as string) === 'error_max_budget_usd';
         const rawError = 'errors' in msg ? (msg as { errors: string[] }).errors.join('; ') : '';
-        const errorMsg = isBudget
-          ? `이 작업이 비용 한도($${MAX_BUDGET_USD})에 도달해 자동 중단되었습니다. 범위를 좁혀 다시 시도해 주세요.`
-          : rawError || 'max_turns_exceeded';
-        console.error(`${tag()} ✗ Session failed: ${errorMsg}`);
+        // #711: 앞서 억제해 둔 공급자 오류(요청 한도 등)가 있으면 그 번역 안내를 우선한다 — 원문 영문
+        // 대신 조치 가능한 한국어 안내와 기계 판독 코드를 싣는다.
+        const pending = relayState.pendingProviderError;
+        relayState.pendingProviderError = undefined;
+        const fields = isBudget
+          ? { message: `이 작업이 비용 한도($${MAX_BUDGET_USD})에 도달해 자동 중단되었습니다. 범위를 좁혀 다시 시도해 주세요.` }
+          : pending
+            ? resolveResultError(pending, rawError)
+            : { message: rawError || 'max_turns_exceeded' };
+        console.error(`${tag()} ✗ Session failed: ${fields.message}`);
         events.push({
           type: 'error',
-          message: errorMsg,
+          ...fields,
           sessionId: msg.session_id,
           inputTokens: totalInputTokens,
           outputTokens: totalOutputTokens,

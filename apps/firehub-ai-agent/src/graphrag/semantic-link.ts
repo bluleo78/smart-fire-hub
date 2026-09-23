@@ -5,6 +5,7 @@
 // 반환 타입이 boolean → {same, rationale}로 확장된 이유.
 import type { CompleteFn } from './llm-completer.js';
 import type { EntityType } from './ontology.js';
+import { completeOrNull } from './complete-or-null.js';
 
 export function buildLinkPrompt(nameA: string, nameB: string, entityType: EntityType): string {
   return `너는 화재조사 도메인 지식그래프의 엔티티 해소 판정자다.
@@ -43,11 +44,8 @@ export async function link(
   nameB: string,
   entityType: EntityType,
 ): Promise<LinkVerdict> {
-  try {
-    return parseLinkVerdict(
-      await complete(buildLinkPrompt(nameA, nameB, entityType), nameA),
-    );
-  } catch {
-    return { same: false, rationale: '' };
-  }
+  // LLM 호출 실패 → "병합 안 함"(보수적 폴백). 자격증명 실패만은 전파된다(completeOrNull).
+  const content = await completeOrNull(complete, buildLinkPrompt(nameA, nameB, entityType), nameA, 'link');
+  if (content === null) return { same: false, rationale: '' };
+  return parseLinkVerdict(content);
 }

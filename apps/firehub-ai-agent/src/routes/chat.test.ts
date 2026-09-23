@@ -183,6 +183,26 @@ describe('Chat routes — integration tests', () => {
     expect(calledWith.apiKey).toBe('sk-from-client');
   });
 
+  // CR-CRED (#708): 자격증명 없음은 관리자 조치 오류라 고정 문구로 뭉개지 않고 한국어 안내를 그대로 보여 준다.
+  it('CR-CRED: createChatProvider 의 MissingAiCredentialError 안내가 채팅 응답에 그대로 실린다', async () => {
+    const { ProviderFactory } = await import('../providers/index.js');
+    const { MissingAiCredentialError } = await import('../agent/ai-auth-failure.js');
+    vi.mocked(ProviderFactory.createChatProvider).mockImplementationOnce(() => {
+      throw new MissingAiCredentialError();
+    });
+
+    const res = await makeRequest(
+      createApp(),
+      'POST',
+      '/agent/chat',
+      { message: 'Hello', tenantId: 1, userId: 42, agentType: 'sdk' },
+      { Authorization: `Internal ${VALID_TOKEN}` },
+    );
+
+    expect(JSON.stringify(res.body)).toContain('설정 › AI 에이전트');
+    expect(JSON.stringify(res.body)).not.toContain('Agent 처리 중 오류가 발생했습니다');
+  });
+
   // CR-02: provider.execute() is called with correct message and userId
   it('CR-02: provider.execute() is called with message and userId', async () => {
     async function* fakeStream() {
@@ -471,6 +491,72 @@ describe('API 키 / CLI OAuth 검증 엔드포인트 — 명령어 인젝션 방
     const [, , opts] = mockExecFile.mock.calls[0] as [string, string[], { env?: NodeJS.ProcessEnv }];
     expect('ANTHROPIC_API_KEY' in (opts?.env ?? {})).toBe(false);
     expect(opts?.env?.CLAUDE_CODE_OAUTH_TOKEN).toBe('oauth-test-token');
+  });
+
+  // SEC-08 (#708/#711): 두 검증 라우트 모두 ambient 인증 경로(다른 자격증명·Bearer 토큰·BASE_URL·
+  // Bedrock 전환·AWS 체인)를 자식 env 에서 걷어내고, 재시도를 0 으로 둔다 — 기본 10회 재시도는 401 도
+  // 재시도해 30초 타임아웃까지 매달렸다. "in" 연산자로 키 자체의 부재를 확인한다.
+  const AMBIENT_FOR_VERIFY: Record<string, string> = {
+    ANTHROPIC_API_KEY: 'ambient-key',
+    CLAUDE_CODE_OAUTH_TOKEN: 'ambient-oauth',
+    ANTHROPIC_AUTH_TOKEN: 'ambient-bearer',
+    ANTHROPIC_BASE_URL: 'https://ambient.example',
+    CLAUDE_CODE_USE_BEDROCK: '1',
+    AWS_ACCESS_KEY_ID: 'AKIA-ambient',
+    CLAUDE_CODE_MAX_RETRIES: '10',
+  };
+  async function withVerifyAmbient(fn: () => Promise<void>) {
+    const saved: Record<string, string | undefined> = {};
+    for (const [k, v] of Object.entries(AMBIENT_FOR_VERIFY)) {
+      saved[k] = process.env[k];
+      process.env[k] = v;
+    }
+    try {
+      await fn();
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  }
+
+  it('SEC-08a: /api-key/verify는 ambient 인증 경로를 걷어내고 CLAUDE_CODE_MAX_RETRIES=0 으로 실행한다', async () => {
+    await withVerifyAmbient(async () => {
+      await makeRequest(
+        createApp(),
+        'POST',
+        '/agent/api-key/verify',
+        { apiKey: 'sk-request' },
+        { Authorization: `Internal ${VALID_TOKEN}` },
+      );
+    });
+    const [, , opts] = mockExecFile.mock.calls[0] as [string, string[], { env?: NodeJS.ProcessEnv }];
+    const env = opts?.env ?? {};
+    expect(env.ANTHROPIC_API_KEY).toBe('sk-request');
+    for (const name of ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'CLAUDE_CODE_USE_BEDROCK', 'AWS_ACCESS_KEY_ID']) {
+      expect(name in env, name).toBe(false);
+    }
+    expect(env.CLAUDE_CODE_MAX_RETRIES).toBe('0');
+  });
+
+  it('SEC-08b: /cli-auth/verify는 ambient 인증 경로를 걷어내고 CLAUDE_CODE_MAX_RETRIES=0 으로 실행한다', async () => {
+    await withVerifyAmbient(async () => {
+      await makeRequest(
+        createApp(),
+        'POST',
+        '/agent/cli-auth/verify',
+        { token: 'oat-request' },
+        { Authorization: `Internal ${VALID_TOKEN}` },
+      );
+    });
+    const [, , opts] = mockExecFile.mock.calls[0] as [string, string[], { env?: NodeJS.ProcessEnv }];
+    const env = opts?.env ?? {};
+    expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe('oat-request');
+    for (const name of ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'CLAUDE_CODE_USE_BEDROCK', 'AWS_ACCESS_KEY_ID']) {
+      expect(name in env, name).toBe(false);
+    }
+    expect(env.CLAUDE_CODE_MAX_RETRIES).toBe('0');
   });
 
   // SEC-06: /cli-auth/verify — token 없으면 { valid: false } 반환

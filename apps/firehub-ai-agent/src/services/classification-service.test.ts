@@ -72,18 +72,37 @@ describe('classifyBatch', () => {
     });
   });
 
-  it('자격증명이 비어 있어도 막지 않고 환경/키체인 폴백에 맡긴다', async () => {
-    // GraphRAG 경로와 동일한 계약 — 컨테이너 env 나 로컬 CLI 키체인에 인증이 있을 수 있다.
-    completeMock.mockResolvedValue(completionOf([{ source_id: 1, label: '긍정' }]));
+  // #708: 자격증명이 비어 있으면 ambient 환경·로컬 CLI 키체인에 맡기지 않고 provider 가 던진 한국어
+  // 안내가 그대로 드러난다. ambient 값이 실제로 있어도 쓰이지 않는다는 것을 보이려고 process.env 에 심어 둔다.
+  it('자격증명이 비어 있으면 ambient 값이 있어도 provider 의 자격증명 없음 오류가 그대로 드러난다', async () => {
+    const saved = { key: process.env.ANTHROPIC_API_KEY, oauth: process.env.CLAUDE_CODE_OAUTH_TOKEN };
+    process.env.ANTHROPIC_API_KEY = 'ambient-must-not-leak';
+    process.env.CLAUDE_CODE_OAUTH_TOKEN = 'ambient-oauth-must-not-leak';
+    try {
+      // 팩토리 목 대신 실제 ClaudeSdkCompletionProvider 를 쓴다 — 자격증명 검사는 이제 provider 가 자식 env 를
+      // 만들 때 한 곳에서 한다(buildClaudeChildEnv). env 조립이 query() 호출 전에 던지므로 SDK 는 뜨지 않는다.
+      const { ClaudeSdkCompletionProvider } = await vi.importActual<
+        typeof import('../providers/claude-sdk-completion-provider.js')
+      >('../providers/claude-sdk-completion-provider.js');
+      createCompletionProviderMock.mockImplementation((config?: unknown) => {
+        const c = (config ?? {}) as { apiKey?: string; oauthToken?: string };
+        return new ClaudeSdkCompletionProvider(c.apiKey, c.oauthToken) as never;
+      });
 
-    const result = await classifyBatch(validRequest, {}, MODEL);
-
-    expect(result.results[0].label).toBe('긍정');
-    expect(createCompletionProviderMock).toHaveBeenCalledWith({
-      apiKey: undefined,
-      oauthToken: undefined,
-      model: MODEL,
-    });
+      await expect(classifyBatch(validRequest, {}, MODEL)).rejects.toThrow(/AI 자격증명/);
+      await expect(
+        classifyBatch(validRequest, { agentType: 'sdk', apiKey: '  ', oauthToken: '' }, MODEL),
+      ).rejects.toThrow(/AI 자격증명/);
+    } finally {
+      createCompletionProviderMock.mockImplementation((_config?: unknown) => ({
+        name: 'mock-completion',
+        complete: completeMock,
+      }));
+      if (saved.key === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = saved.key;
+      if (saved.oauth === undefined) delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+      else process.env.CLAUDE_CODE_OAUTH_TOKEN = saved.oauth;
+    }
   });
 
   // Task 8: agentType/baseUrl/providerId/reasoningEffort 가 이 함수를 거치며 사라지지 않는지
@@ -156,6 +175,16 @@ describe('classifyBatch', () => {
     completeMock.mockRejectedValue(new Error('[completion] SDK 실행 실패'));
 
     await expect(classifyBatch(validRequest, CREDS, MODEL)).rejects.toThrow(/SDK 실행 실패/);
+  });
+
+  // #711: 인증 실패는 조치 가능한 한국어 안내 그대로 호출부(routes/classify → Spring)에 전달된다.
+  it('completion 이 인증 실패로 끝나면 그 한국어 안내를 그대로 전파한다', async () => {
+    const { AiCredentialFailureError, AUTH_FAILURE_KOREAN_MESSAGE } = await import('../agent/ai-auth-failure.js');
+    completeMock.mockRejectedValue(new AiCredentialFailureError(AUTH_FAILURE_KOREAN_MESSAGE));
+
+    await expect(classifyBatch(validRequest, { apiKey: 'sk-bad' }, MODEL)).rejects.toThrow(
+      AUTH_FAILURE_KOREAN_MESSAGE,
+    );
   });
 
   it('마크다운 코드블록으로 감싼 응답을 처리한다', async () => {

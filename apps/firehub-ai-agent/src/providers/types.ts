@@ -118,9 +118,9 @@ export const KNOWN_AGENT_TYPES: readonly AgentType[] = ['sdk', 'cli', 'cli-api',
  * (설계서 "API 인터페이스" 절), 라우트 바디에서의 누락은 버그 신호로 다뤄야 한다.
  *
  * **주의**: 이 술어는 라우트 경계 전용이다. `ProviderFactory.createCompletionProvider` 는
- * stdio-server.ts 와 `createCompleter()` 단독 스크립트 호출(설정 자체를 생략)이라는 정당한
- * 무-agentType 호출부를 가지므로 그쪽에서는 이 술어로 거부하지 않는다 — 팩토리는 여전히
- * 관대하게 Claude SDK 로 폴백한다. stdio-server.ts 는 CLI 경로에서는 여전히 agentType 이
+ * stdio-server.ts 와 단독 스크립트 호출(agentType 없이 자격증명만 전달)이라는 정당한
+ * 무-agentType 호출부를 가지므로 그쪽에서는 이 술어로 거부하지 않는다 — 팩토리는 agentType 이
+ * 없으면 Claude SDK 로 보낸다(자격증명이 비면 complete() 가 실패한다, #708). stdio-server.ts 는 CLI 경로에서는 여전히 agentType 이
  * 없지만(자격증명이 env 로만 오간다), opencode 경로에서는 `AI_CREDENTIAL_AGENT_TYPE=opencode`
  * 를 명시로 실어 보낸다(Ruling #30, resolveStdioCredentials 참고) — 어느 쪽이든 이 팩토리는
  * agentType 유무로 거부하지 않는다는 사실 자체는 변하지 않는다.

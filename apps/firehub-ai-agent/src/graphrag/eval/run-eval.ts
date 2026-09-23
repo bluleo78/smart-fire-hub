@@ -1,9 +1,10 @@
 // A1 GraphRAG 평가 CLI 셸 — 라이브 배선(Neo4j/API/claude CLI)만 담당하는 얇은 스크립트.
-// 유닛테스트 없음(전제조건: 데이터셋 적재 + Neo4j + claude CLI OAuth). `pnpm eval:a1 <datasetId> [label]`로 실행.
+// 유닛테스트 없음(전제조건: 데이터셋 적재 + Neo4j + 실행 env 의 CLAUDE_CODE_OAUTH_TOKEN 또는 ANTHROPIC_API_KEY). `pnpm eval:a1 <datasetId> [label]`로 실행.
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { createCompleter } from '../llm-completer.js';
+import { readScriptCredentials } from '../script-credentials.js';
 import { retrieve } from '../retriever.js';
 import { resolveDatasetOntology } from '../ontology-source.js';
 import { FireHubApiClient } from '../../mcp/api-client.js';
@@ -67,7 +68,8 @@ async function main(): Promise<void> {
   }
   const apiClient = new FireHubApiClient(apiBaseUrl, internalToken, evalUserId, evalTenantId);
 
-  const complete = createCompleter();
+  // #708: 개발 스크립트만 진입점에서 env 자격증명을 읽어 명시적으로 넘긴다(서버 경로는 ambient 금지).
+  const complete = createCompleter({ credentials: readScriptCredentials() });
   const sourceDocs = loadSourceDocs();
   const questions = loadQuestions();
 

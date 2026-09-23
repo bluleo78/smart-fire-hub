@@ -1957,3 +1957,221 @@ describe('executeCliAgent — #581 되묻기 턴 라우팅 어휘 치환', () =>
     expect(events.filter((e) => e.type === 'text').map((e) => e.content)).toEqual(['업무 위임 테이블을 만들까요? 컬럼을 알려주세요.']);
   });
 });
+
+/**
+ * #708: CLI 경로의 ambient 자격증명 차단. ambient 값을 process.env 에 실제로 심어 두고, spawn 에
+ * 넘어간 env 에 그 값이 없음(또는 자격증명이 없으면 spawn 자체가 없음)을 본다.
+ */
+describe('executeCliAgent — ambient 자격증명 차단 (#708)', () => {
+  const AMBIENT: Record<string, string> = {
+    ANTHROPIC_API_KEY: 'ambient-key',
+    ANTHROPIC_AUTH_TOKEN: 'ambient-bearer',
+    ANTHROPIC_BASE_URL: 'https://ambient.example',
+    CLAUDE_CODE_OAUTH_TOKEN: 'ambient-oauth',
+    CLAUDE_CODE_USE_BEDROCK: '1',
+    AWS_ACCESS_KEY_ID: 'AKIA-ambient',
+    CLAUDE_CODE_MAX_RETRIES: '10',
+  };
+  const saved: Record<string, string | undefined> = {};
+
+  beforeEach(() => {
+    spawnMock.mockReset();
+    spawnMock.mockImplementation(() => makeFakeChildWithLines([
+      JSON.stringify({ type: 'result', subtype: 'success', session_id: 's', usage: { input_tokens: 1, output_tokens: 1 } }),
+    ]));
+    for (const [k, v] of Object.entries(AMBIENT)) {
+      saved[k] = process.env[k];
+      process.env[k] = v;
+    }
+  });
+  afterEach(() => {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  });
+
+  async function drain(options: Record<string, unknown>) {
+    const events: Array<{ type: string; message?: string }> = [];
+    for await (const e of executeCliAgent({ message: 'hi', tenantId: 1, userId: 1, ...options } as never)) {
+      events.push(e as { type: string; message?: string });
+    }
+    return events;
+  }
+
+  it('CLI-NOCRED-01: 구독(cli) 모드에 OAuth 토큰이 없으면 ambient 토큰이 있어도 spawn 없이 error 1건', async () => {
+    const events = await drain({ useSubscription: true });
+    expect(spawnMock).not.toHaveBeenCalled();
+    expect(events).toHaveLength(1);
+    expect(events[0].type).toBe('error');
+    expect(events[0].message).toContain('AI 자격증명');
+    // 프로액티브가 502 + 코드로 응답할 수 있게 코드를 싣는다.
+    expect((events[0] as { code?: string }).code).toBe('AGENT_AUTH_OR_QUOTA_FAILURE');
+  });
+
+  it('CLI-NOCRED-02: API(cli-api) 모드에 API 키가 없으면 ambient 키가 있어도 spawn 없이 error 1건', async () => {
+    const events = await drain({ useSubscription: false });
+    expect(spawnMock).not.toHaveBeenCalled();
+    expect(events).toHaveLength(1);
+    expect(events[0].type).toBe('error');
+  });
+
+  it('CLI-AMBIENT-01: cli-api 모드 자식 env 에는 요청 API 키만 있고 ambient OAuth 토큰·Bearer·BASE_URL·Bedrock·AWS 는 없다', async () => {
+    await drain({ useSubscription: false, apiKey: 'sk-request' });
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+    const env = (spawnMock.mock.calls[0][2] as { env: NodeJS.ProcessEnv }).env;
+    expect(env.ANTHROPIC_API_KEY).toBe('sk-request');
+    // cli-api 에서 ambient OAuth 토큰이 남으면 claude CLI 와 stdio MCP 자식이 그 토큰을 고른다.
+    expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+    expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
+    expect(env.CLAUDE_CODE_USE_BEDROCK).toBeUndefined();
+    expect(env.AWS_ACCESS_KEY_ID).toBeUndefined();
+    // #711: 호스트 값(10)이 아니라 코드가 정한 재시도 횟수.
+    expect(env.CLAUDE_CODE_MAX_RETRIES).toBe('2');
+  });
+
+  it('CLI-AMBIENT-02: 구독 모드 자식 env 에는 요청 OAuth 토큰만 있고 ambient API 키는 없다', async () => {
+    await drain({ useSubscription: true, oauthToken: 'oat-request' });
+    const env = (spawnMock.mock.calls[0][2] as { env: NodeJS.ProcessEnv }).env;
+    expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe('oat-request');
+    expect(env.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+  });
+
+  it('CLI-AUTH-APIKEY (#711): API 키 무효 문구도 API 키·OAuth 토큰을 함께 안내하는 한국어 error 로 바뀐다', async () => {
+    spawnMock.mockImplementation(() => makeFakeChildWithLines([
+      JSON.stringify({
+        type: 'result',
+        subtype: 'error_during_execution',
+        session_id: 's',
+        result: 'Invalid API key · Fix external API key',
+        usage: { input_tokens: 1, output_tokens: 1 },
+      }),
+    ]));
+    const events = await drain({ useSubscription: false, apiKey: 'sk-bad' });
+    const errs = events.filter((e) => e.type === 'error');
+    expect(errs).toHaveLength(1);
+    expect(errs[0].message).toContain('API 키 또는 OAuth 토큰');
+    expect(errs[0].message).not.toContain('Invalid API key');
+  });
+});
+
+/**
+ * #711 (코드리뷰): prod 는 agent_type=cli 다. claude CLI stream-json 의 result 도 is_error 를 싣고,
+ * assistant 메시지에 error 종류가 붙을 수 있다 — SDK 경로와 같은 규칙으로 error 1건만 낸다.
+ */
+describe('executeCliAgent — 공급자 오류 (#711)', () => {
+  beforeEach(() => {
+    spawnMock.mockReset();
+  });
+
+  async function run(lines: unknown[]) {
+    spawnMock.mockReturnValue(makeFakeChildWithLines(lines.map((l) => JSON.stringify(l))));
+    const events: Array<{ type: string; message?: string; code?: string }> = [];
+    for await (const e of executeCliAgent({
+      message: 'hi',
+      tenantId: 1,
+      userId: 1,
+      useSubscription: true,
+      oauthToken: 'oat-test',
+    } as never)) {
+      events.push(e as { type: string; message?: string; code?: string });
+    }
+    return events;
+  }
+
+  it('CLI-RESULT-ISERR: 회복 가능 오류(rate_limit) 뒤 result(success, is_error) → error 1건(+코드), text/done 없음', async () => {
+    const events = await run([
+      {
+        type: 'assistant',
+        parent_tool_use_id: null,
+        error: 'rate_limit',
+        message: { content: [{ type: 'text', text: 'API Error: 429 rate_limit_error' }] },
+      },
+      { type: 'result', subtype: 'success', is_error: true, result: 'API Error: 429 rate_limit_error', session_id: 's', usage: { input_tokens: 1, output_tokens: 1 } },
+    ]);
+    const errors = events.filter((e) => e.type === 'error');
+    expect(errors).toHaveLength(1);
+    expect(errors[0].message).toContain('요청 한도');
+    expect(errors[0].code).toBe('AGENT_AUTH_OR_QUOTA_FAILURE');
+    expect(events.some((e) => e.type === 'text')).toBe(false);
+    expect(events.some((e) => e.type === 'done')).toBe(false);
+  });
+
+  it('CLI-RESULT-ISERR-TEXT: 구조화 종류 없이 result(success, is_error) 원문만 있어도 서명으로 인증 실패를 판정한다', async () => {
+    const events = await run([
+      { type: 'result', subtype: 'success', is_error: true, result: 'API Error: 401 {"type":"error","error":{"type":"authentication_error"}}', session_id: 's', usage: { input_tokens: 1, output_tokens: 1 } },
+    ]);
+    const errors = events.filter((e) => e.type === 'error');
+    expect(errors).toHaveLength(1);
+    expect(errors[0].message).toContain('API 키 또는 OAuth 토큰');
+    expect(errors[0].code).toBe('AGENT_AUTH_OR_QUOTA_FAILURE');
+    expect(events.some((e) => e.type === 'done')).toBe(false);
+  });
+
+  it('CLI-ASSIST-AUTH: assistant.error=authentication_failed 면 원문 없이 즉시 error 1건(+코드)', async () => {
+    const events = await run([
+      {
+        type: 'assistant',
+        parent_tool_use_id: null,
+        error: 'authentication_failed',
+        message: { content: [{ type: 'text', text: 'Credential rejected by upstream' }] },
+      },
+      { type: 'result', subtype: 'success', is_error: true, result: 'Credential rejected by upstream', session_id: 's', usage: { input_tokens: 1, output_tokens: 1 } },
+    ]);
+    const errors = events.filter((e) => e.type === 'error');
+    expect(errors).toHaveLength(1);
+    expect(errors[0].message).toContain('API 키 또는 OAuth 토큰');
+    expect(errors[0].code).toBe('AGENT_AUTH_OR_QUOTA_FAILURE');
+    expect(events.some((e) => e.type === 'text')).toBe(false);
+    expect(events.some((e) => e.type === 'done')).toBe(false);
+  });
+
+  it('CLI-AUTH-TEXT-CODE: 텍스트 서명으로 잡은 인증 실패도 코드를 싣는다', async () => {
+    const events = await run([
+      { type: 'assistant', message: { content: [{ type: 'text', text: 'Not logged in · Please run /login' }] } },
+      { type: 'result', subtype: 'success', session_id: 's', usage: { input_tokens: 1, output_tokens: 1 } },
+    ]);
+    const errors = events.filter((e) => e.type === 'error');
+    expect(errors).toHaveLength(1);
+    expect(errors[0].code).toBe('AGENT_AUTH_OR_QUOTA_FAILURE');
+  });
+
+  // 코드리뷰 회귀: 외부 API 오류를 인용하는 정상 답변이 인증 실패로 오판돼 세션이 죽으면 안 된다
+  // (AUTH_FAILURE_PATTERN 은 평범한 텍스트에 적용되므로 #410 의 좁은 서명만 둔다).
+  it('CLI-NO-FALSE-AUTH: 정상 답변이 "Invalid API key" 를 인용해도 text 가 그대로 나가고 done 으로 끝난다', async () => {
+    const quoted = "외부 연결 점검 결과 The call failed with 'Invalid API key' 오류가 반환되었습니다.";
+    const events = await run([
+      { type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'text', text: quoted }] } },
+      { type: 'result', subtype: 'success', is_error: false, result: quoted, session_id: 's', usage: { input_tokens: 1, output_tokens: 1 } },
+    ]);
+    expect(events.some((e) => e.type === 'error')).toBe(false);
+    expect(events.filter((e) => e.type === 'done')).toHaveLength(1);
+    expect(events.filter((e) => e.type === 'text').map((e) => (e as { content?: string }).content).join('')).toContain('Invalid API key');
+  });
+
+  // 델타 검사는 누적 전체가 아니라 "직전 꼬리 + 새 델타" 창만 본다 — 서명이 델타 경계에 걸쳐도,
+  // 앞에 긴 텍스트가 있어도 잡혀야 한다.
+  it('CLI-DELTA-SPLIT: 긴 앞 텍스트 뒤 델타 경계에 걸친 인증 실패 서명도 잡는다', async () => {
+    const events = await run([
+      { type: 'stream_event', delta: { type: 'text_delta', text: '가'.repeat(200) + ' Not lo' } },
+      { type: 'stream_event', delta: { type: 'text_delta', text: 'gged in · Please' } },
+      { type: 'result', subtype: 'success', session_id: 's', usage: { input_tokens: 1, output_tokens: 1 } },
+    ]);
+    const errors = events.filter((e) => e.type === 'error');
+    expect(errors).toHaveLength(1);
+    expect(errors[0].code).toBe('AGENT_AUTH_OR_QUOTA_FAILURE');
+    expect(events.some((e) => e.type === 'done')).toBe(false);
+  });
+
+  it('CLI-OK: 정상 성공(is_error=false)은 영향 없이 text + done 이다', async () => {
+    const events = await run([
+      { type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'text', text: '정상 답변입니다.' }] } },
+      { type: 'result', subtype: 'success', is_error: false, result: '정상 답변입니다.', session_id: 's', usage: { input_tokens: 1, output_tokens: 1 } },
+    ]);
+    expect(events.some((e) => e.type === 'error')).toBe(false);
+    expect(events.filter((e) => e.type === 'done')).toHaveLength(1);
+    expect(events.filter((e) => e.type === 'text').map((e) => (e as { content?: string }).content).join('')).toContain('정상 답변');
+  });
+});

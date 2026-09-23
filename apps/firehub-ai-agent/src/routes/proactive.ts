@@ -8,6 +8,11 @@ import type { AgentType, ProviderConfig } from '../providers/index.js';
 import { isKnownAgentType } from '../providers/types.js';
 import { internalAuth } from '../middleware/auth.js';
 import { isValidTenantId, proactiveReportDir } from '../agent/tenant-paths.js';
+import {
+  AGENT_AUTH_OR_QUOTA_FAILURE,
+  isAiCredentialFailure,
+  leadingProviderErrorSignature,
+} from '../agent/ai-auth-failure.js';
 
 const router = Router();
 
@@ -198,36 +203,28 @@ function getSectionTypeGuide(type?: string): string | null {
 }
 
 /**
- * 에이전트 레벨 실패(인증 만료·크레딧 소진·레이트리밋)를 나타내는 문구들.
+ * rawText가 리포트가 아니라 에이전트 실패 메시지(인증 만료·크레딧 소진·요청 한도)인지 판정한다.
  *
- * <p>왜 필요한가: CLI/SDK 경로는 이런 실패를 SSE `error` 이벤트가 아니라 **일반 assistant 텍스트**로
- * 흘려보낸 뒤 정상적으로 `done`으로 종료한다. 그 결과 오류 문자열이 rawText에 누적되어 리포트 본문으로
- * 둔갑하고, 백엔드는 이를 COMPLETED로 기록해 CHAT/EMAIL로 발송한다 (이슈 #350).
- */
-const AGENT_FAILURE_SIGNATURES = [
-  'failed to authenticate',
-  'invalid api key', // SDK가 잘못된 API 키에 대해 내는 문구: "Invalid API key · Fix external API key"
-  'invalid bearer token',
-  'authentication_error',
-  'api error: 401',
-  'api error: 403',
-  'api error: 429',
-  'credit balance is too low',
-  'oauth token has expired',
-];
-
-/**
- * rawText가 리포트가 아니라 에이전트 실패 메시지인지 판정한다.
+ * <p>왜 아직 필요한가: SDK·CLI 경로는 이제 이런 실패를 텍스트가 아니라 코드가 붙은 `error` 이벤트로
+ * 알린다(#711). 그래도 구조 신호 없이 실패 문구가 텍스트로만 흘러 `done` 으로 끝나는 경우가 남을 수
+ * 있어(예: 공급자·CLI 버전 차이) 이 게이트를 방어선으로 둔다 — 놓치면 오류 문자열이 리포트 본문으로
+ * 둔갑해 COMPLETED 로 기록되고 CHAT/EMAIL 로 발송된다(이슈 #350).
  *
- * <p>출력의 **맨 앞**에서만 매칭하는 이유: FireHub 리포트는 파이프라인/API 연결 장애를 *서술*하므로
- * 본문에 `API Error: 401` 같은 문자열이 정상적으로 등장할 수 있다(짧은 리포트에서는 앞부분에 나올
- * 수도 있다). includes()나 넉넉한 선두 윈도로 검사하면 멀쩡한 리포트를 실패로 처리하는 회귀가 생긴다.
- * 반면 에이전트 실패 메시지는 예외 없이 출력 첫 글자부터 시작하므로 startsWith가 오탐 없는 경계다.
+ * <p>서명 표는 공급자 오류 정책(ai-auth-failure.ts)과 공유하고, 여기서는 **맨 앞** 검사만 한다:
+ * FireHub 리포트는 파이프라인/API 연결 장애를 *서술*하므로 본문에 `API Error: 401` 같은 문자열이
+ * 정상적으로 등장할 수 있다. 에이전트 실패 메시지는 출력 첫 글자부터 시작하므로 startsWith 가 오탐 없는
+ * 경계다.
  */
 export function detectAgentFailure(rawText: string): string | null {
-  const head = rawText.trim().toLowerCase();
-  if (!head) return null;
-  return AGENT_FAILURE_SIGNATURES.find((sig) => head.startsWith(sig)) ?? null;
+  return leadingProviderErrorSignature(rawText);
+}
+
+/**
+ * 리포트를 만들지 못한 실행의 502 응답. firehub-api ProactiveAiClient 는 본문의 `code` 로 사용자 안내를
+ * 고른다(AGENT_AUTH_OR_QUOTA_FAILURE → "AI 인증 정보 확인"). 오류 원문은 응답에 싣지 않는다.
+ */
+function respondNoUsableReport(res: Response, code: string): void {
+  res.status(502).json({ error: 'Agent produced no usable report', code });
 }
 
 export function parseSections(text: string, template?: Template): OutputSection[] {
@@ -324,26 +321,11 @@ router.post('/proactive', express.json(), internalAuth, async (req: Request, res
   }
   const agentType: AgentType = body.agentType;
 
-  // ambient ANTHROPIC_API_KEY 폴백은 opencode 에는 **적용하지 않는다**. sdk/cli-api 는
-  // 유지한다 — 이 비대칭은 의도적인 경계다(Ruling #31), 손대지 않은 우연이 아니다.
-  //
-  // AI 자격증명은 테넌트 전용이라(#706) API 는 비밀이 없는 sdk/cli-api 자격증명으로 이 라우트를
-  // 부르지 않는다(불완전하면 호출 전에 오류로 멈춘다). 그래서 정상 경로에서 apiKey 가 빈 값으로
-  // 오는 일은 없고, 이 폴백은 컨테이너 env/로컬 keychain 에 기대는 개발 환경용으로 남아 있다
-  // (#706 잔여 — 제거는 별도 결정).
-  //
-  // opencode 는 다르다 — 그 테넌트는 Anthropic 이 아닌 **다른 provider(OpenAI 호환 호스트)**를
-  // 명시적으로 선택했다. 컨테이너의 Anthropic 키로 메우면 (a) 엉뚱한 호환 호스트에 Anthropic
-  // 키가 Bearer 로 전송되거나 (b) provider 가 그 값을 다시 무시하고 빈 키로 ambient Claude
-  // 키에 과금되는 6b1c6383 사고가 재현된다 — 이건 진짜 오분류다.
-  //
-  // 따라서 모든 유형에서 폴백을 걷어내는 안(대칭성을 위해)은 채택하지 않는다: sdk/cli-api 에서
-  // 걷어내면 컨테이너 env 에만 자격증명을 둔 정상 배포를 깬다. TC-SDK01/TC-BOUNDARY01 이 이
-  // 경계를 고정한다.
-  const apiKey =
-    agentType === 'opencode'
-      ? body.apiKey || ''
-      : body.apiKey || process.env.ANTHROPIC_API_KEY || '';
+  // 자격증명은 요청 바디가 준 것만 쓴다(#708). AI 자격증명은 테넌트 전용이라 firehub-api 가 항상
+  // 싣는다 — 예전의 ambient ANTHROPIC_API_KEY 폴백(sdk/cli-api)은 요청과 무관한 컨테이너 계정으로
+  // 조용히 과금되는 경로였으므로 걷어냈다. 비어 있으면 아래 createChatProvider 가 유형별로 크게
+  // 실패한다(sdk: 키·토큰 둘 다 없음, cli: 토큰 없음, cli-api: 키 없음).
+  const apiKey = body.apiKey || '';
 
   const model = body.model || 'claude-haiku-4-5';
   const userId = body.userId ?? (Number(req.headers['x-on-behalf-of']) || 0);
@@ -403,6 +385,15 @@ router.post('/proactive', express.json(), internalAuth, async (req: Request, res
         totalInputTokens = (event.inputTokens as number) || 0;
         totalOutputTokens = (event.outputTokens as number) || 0;
         if (event.type === 'error') {
+          // #711: 인증·결제·요청 한도 실패는 에이전트가 이벤트에 기계 판독 코드를 싣는다. 예전엔 이 실패가
+          // 텍스트로 새어 아래 detectAgentFailure 가 502 + 같은 코드를 붙였다 — firehub-api
+          // ProactiveAiClient 가 응답 본문의 이 코드로 "AI 인증 정보 확인" 안내를 고르므로, 텍스트로
+          // 새지 않게 된 지금은 이벤트의 코드로 같은 응답을 유지한다. 원문은 로그에만 남긴다.
+          if (typeof event.code === 'string' && event.code) {
+            console.error(`[Proactive] Agent failure (code=${event.code}): ${String(event.message ?? '')}`);
+            respondNoUsableReport(res, event.code);
+            return;
+          }
           throw new Error((event.message as string) || 'Agent execution failed');
         }
       }
@@ -439,10 +430,7 @@ router.post('/proactive', express.json(), internalAuth, async (req: Request, res
         console.error(
           `[Proactive] Agent produced no usable report (signature=${failureSignature ?? 'empty-output'}). raw: ${rawText.slice(0, 500)}`,
         );
-        res.status(502).json({
-          error: 'Agent produced no usable report',
-          code: failureSignature ? 'AGENT_AUTH_OR_QUOTA_FAILURE' : 'AGENT_EMPTY_OUTPUT',
-        });
+        respondNoUsableReport(res, failureSignature ? AGENT_AUTH_OR_QUOTA_FAILURE : 'AGENT_EMPTY_OUTPUT');
         return;
       }
     }
@@ -470,6 +458,12 @@ router.post('/proactive', express.json(), internalAuth, async (req: Request, res
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     console.error('[Proactive] Error:', errorMessage);
+    // 자격증명 없음(createChatProvider 가 동기적으로 던짐)·인증 실패는 이벤트 경로와 같은 502 + 코드로
+    // 응답한다 — firehub-api 가 이 코드로 "AI 인증 정보 확인" 안내를 고른다. 그 밖의 예외는 500.
+    if (isAiCredentialFailure(error)) {
+      respondNoUsableReport(res, error.code);
+      return;
+    }
     res.status(500).json({ error: 'Agent execution failed', details: errorMessage });
   } finally {
     // 임시 디렉토리 정리 (report.html + report.md + summary.md)

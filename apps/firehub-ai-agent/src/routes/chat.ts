@@ -12,6 +12,7 @@ import { readSessionTranscript } from '../agent/transcript-reader.js';
 import { checkSessionOwnership } from '../agent/session-owner.js';
 import { isValidTenantId } from '../agent/tenant-paths.js';
 import { AdminActionableError } from '../agent/admin-actionable-error.js';
+import { buildClaudeChildEnv, VERIFY_MAX_RETRIES } from '../agent/claude-child-env.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -243,8 +244,10 @@ router.post('/api-key/verify', internalAuth, async (req: Request, res: Response)
       ['-p', 'hi', '--output-format', 'json', '--no-session-persistence', '--model', 'haiku', '--disable-slash-commands'],
       {
         timeout: 30000,
-        // 현재 환경변수를 상속하되 API 키만 덮어쓴다 — 셸 인젝션 없이 안전하게 전달
-        env: { ...process.env, ANTHROPIC_API_KEY: apiKey },
+        // #708: 공용 헬퍼로 ambient 자격증명·클라우드 전환 스위치를 걷어내고 검증 대상 키 하나만 싣는다
+        // — 컨테이너에 다른 자격증명이 있으면 "아무 키나 valid" 가 될 수 있다.
+        // #711: 재시도 0 — 기본 10회 재시도는 401 까지 재시도해 30초 타임아웃에 걸린 뒤에야 실패했다.
+        env: buildClaudeChildEnv(process.env, { apiKey }, VERIFY_MAX_RETRIES),
       },
     );
     const parsed = JSON.parse(stdout) as Record<string, unknown>;
@@ -264,19 +267,16 @@ router.post('/cli-auth/verify', internalAuth, async (req: Request, res: Response
     return;
   }
   try {
-    // 컨테이너에 ambient ANTHROPIC_API_KEY 가 있으면 agent-cli.ts:509 주석대로 claude CLI 는
-    // OAuth 토큰보다 그 키를 우선한다 — 지우지 않으면 이 엔드포인트가 "아무 토큰이나 valid:true"
-    // 로 검증하고, 그 호출은 플랫폼 계정에 과금된다. 이 브랜치가 PlatformAiController.verifyCliToken()
-    // 을 통해 이 경로에 새 호출자(플랫폼 화면의 "인증 확인" 버튼)를 추가했으므로 여기서 반드시
-    // 지운다(전체 브랜치 리뷰 I4 — Ruling #33 을 뒤집는다).
-    const childEnv: NodeJS.ProcessEnv = { ...process.env, CLAUDE_CODE_OAUTH_TOKEN: token };
-    delete childEnv.ANTHROPIC_API_KEY;
+    // 컨테이너에 ambient ANTHROPIC_API_KEY 가 있으면 claude CLI 는 OAuth 토큰보다 그 키를 우선한다 —
+    // 걷어내지 않으면 이 엔드포인트가 "아무 토큰이나 valid:true" 로 검증하고 그 호출은 다른 계정에
+    // 과금된다. #708: 공용 헬퍼가 그 키와 나머지 ambient 자격증명 전부를 걷어내고 토큰 하나만 싣는다.
+    // #711: 재시도 0 — 잘못된 토큰이 401 재시도 백오프로 30초 타임아웃까지 매달리지 않게 한다.
+    const childEnv = buildClaudeChildEnv(process.env, { oauthToken: token }, VERIFY_MAX_RETRIES);
     const { stdout } = await execFileAsync(
       'claude',
       ['-p', 'hi', '--output-format', 'json', '--no-session-persistence', '--model', 'haiku', '--disable-slash-commands'],
       {
         timeout: 30000,
-        // 현재 환경변수를 상속하되 OAuth 토큰만 덮어쓴다 — 셸 인젝션 없이 안전하게 전달
         env: childEnv,
       },
     );

@@ -49,19 +49,18 @@ import {
   createRoutingVocabRedactor,
 } from './delegation-narration-guard.js';
 
-/**
- * #410: CLI OAuth 토큰 만료/무효 시 원문 영문 인증 실패 문구가 그대로 노출되던 결함의 패턴.
- *
- * 최초 수정은 `result` 메시지의 `subtype`이 `error*` 인 경로만 검사했으나, 실제로는 CLI 가
- * 인증 실패를 일반 `assistant` text 블록이나 `stream_event` text_delta 로 흘리고 세션 자체는
- * `success`(=done) 로 끝내는 경로가 있어(#410 크로스체크 회귀) 두 경로 모두에서 이 패턴을 검사한다.
- */
-const AUTH_FAILURE_PATTERN =
-  /not logged in|please run \/login|failed to authenticate|oauth access token is invalid/i;
-
-/** 인증 실패 시 사용자에게 노출할 한국어 안내. 원본 영문 문구는 서버 로그에만 남긴다. */
-const AUTH_FAILURE_KOREAN_MESSAGE =
-  'AI 에이전트 인증이 만료되었습니다. 관리자에게 문의하거나 설정 > AI 에이전트에서 OAuth 토큰을 갱신해 주세요.';
+// #410/#711: 인증 실패 판정 패턴과 한국어 안내는 SDK 경로(process-message.ts)와 공유한다 —
+// 예전엔 이 파일에만 있었고 문구가 OAuth 토큰만 안내해 API 키 테넌트(cli-api)를 다루지 못했다.
+import {
+  AUTH_FAILURE_PATTERN,
+  AUTH_FAILURE_PATTERN_MAX_SPAN,
+  MissingAiCredentialError,
+  classifyAssistantError,
+  providerErrorFields,
+  resolveResultError,
+  type PendingProviderError,
+} from './ai-auth-failure.js';
+import { buildClaudeChildEnv, resolveClaudeCredential } from './claude-child-env.js';
 
 /**
  * CLI·OpenCode 공용 트랜스크립트 파일 형식.
@@ -205,6 +204,10 @@ interface StreamJsonMessage {
     }>;
   };
   result?: string;
+  /** #711: result 가 subtype=success 여도 API 오류로 끝난 턴이면 true (verify 라우트도 같은 필드를 본다). */
+  is_error?: boolean;
+  /** #711: SDK 와 같은 assistant 오류 종류(authentication_failed/billing_error/rate_limit 등). */
+  error?: string;
   // #336: 캐시 토큰까지 담는다 — 컨텍스트 사용량 칩은 캐시분을 포함한 전체 크기를 봐야 한다.
   usage?: TokenUsageLike & { output_tokens?: number };
   delta?: { type?: string; text?: string };
@@ -244,6 +247,17 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
     abortSignal,
     useSubscription = true,
   } = options;
+
+  // #708: 자격증명이 없으면 어떤 부수효과(세션 표식·파일 다운로드·임시 파일)도 만들기 전에
+  // 실패한다. 예전엔 구독 모드가 토큰 없이도 spawn 해 호스트 키체인/~/.claude 로그인으로,
+  // API 모드는 ambient ANTHROPIC_API_KEY 로 조용히 인증됐다 — 키체인은 env 로 가릴 수 없으므로
+  // spawn 전 차단만이 유일한 방어선이다.
+  if (!resolveClaudeCredential(useSubscription ? { oauthToken } : { apiKey })) {
+    // 프로액티브가 502 + 코드로 응답할 수 있게 코드도 싣는다(채팅 웹은 message 만 쓴다).
+    const missing = new MissingAiCredentialError();
+    yield { type: 'error', message: missing.message, code: missing.code };
+    return;
+  }
 
   const apiBaseUrl = process.env.API_BASE_URL ?? 'http://localhost:8080/api/v1';
   const internalToken = process.env.INTERNAL_SERVICE_TOKEN ?? '';
@@ -352,6 +366,8 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
   // 이벤트로만 오고 세션이 done(성공)으로 끝나는 경우가 있어, 텍스트 경로에서도 검사한다.
   // 한 응답 내에서 여러 delta/블록에 걸쳐 중복 치환하지 않도록 플래그로 1회만 처리.
   let authFailureDetected = false;
+  /** #711: 즉시 종결하지 않은 메인 assistant 오류(요청 한도·서버 오류 등) — result 가 오류로 끝나면 이 종류로 안내한다. */
+  let pendingProviderError: PendingProviderError | undefined;
   // #428/#429: Agent 로 위임된 subagent(subagent_type 불문)가 이미 텍스트로 자기 턴을 마쳤는데
   // 메인(parent_tool_use_id=null)이 같은 요청 안에서 이를 재요약해 별도 텍스트를 또 출력하면
   // 사용자에게 동일 확인이 두 번 노출된다(라이브 재현으로 확인). CLI 로 스폰된 claude 프로세스의
@@ -504,22 +520,16 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
     cliArgs.push('--resume', claudeSessionId);
   }
 
-  const childEnv = { ...process.env };
-  if (useSubscription) {
-    // 구독 모드: ANTHROPIC_API_KEY를 제거하여 Claude Pro/Max 구독 인증 사용
-    delete childEnv.ANTHROPIC_API_KEY;
-    if (oauthToken) {
-      childEnv.CLAUDE_CODE_OAUTH_TOKEN = oauthToken;
-    }
-  } else {
-    // API 모드: 전달받은 API 키 사용 (종량제)
-    const effectiveApiKey = apiKey ?? process.env.ANTHROPIC_API_KEY ?? '';
-    if (!effectiveApiKey) {
-      yield { type: 'error', message: 'API key not provided' };
-      return;
-    }
-    childEnv.ANTHROPIC_API_KEY = effectiveApiKey;
-  }
+  // #708: 자식 env 는 공용 헬퍼로 만든다 — ambient 자격증명·Bedrock/Vertex 전환·AWS 체인을
+  // 전부 걷어내고 요청 자격증명 하나만 싣는다. 구독(cli) 모드는 OAuth 토큰만, API(cli-api) 모드는
+  // API 키만 넘긴다: cli-api 에서 ambient CLAUDE_CODE_OAUTH_TOKEN 이 남으면 claude CLI 와 그가 띄우는
+  // stdio MCP 자식(resolveStdioCredentials)이 요청 API 키 대신 그 토큰을 골라 버린다.
+  // 자격증명 유무는 함수 초입에서 이미 확인했다(아래 헬퍼도 없으면 throw 한다).
+  // CLAUDE_CODE_MAX_RETRIES 는 헬퍼 기본값(2)을 쓴다(#711 — 401 재시도로 3분 대기하던 문제).
+  const childEnv = buildClaudeChildEnv(
+    process.env,
+    useSubscription ? { oauthToken } : { apiKey },
+  );
 
   const child = spawn('claude', cliArgs, {
     cwd: userWorkDir,
@@ -636,16 +646,19 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
         if (!msg.parent_tool_use_id && (pendingSyncAgentResultText !== undefined || syncDelegationViolated)) {
           continue;
         }
+        // 누적 텍스트 전체를 매 델타마다 다시 검사하면 O(n²) 이다 — 새 델타와, 델타 경계에 걸친 서명을
+        // 잡을 만큼의 직전 꼬리(가장 긴 서명 길이 이상)만 검사한다.
+        const scanFrom = Math.max(0, assistantText.length - AUTH_FAILURE_PATTERN_MAX_SPAN);
         assistantText += msg.delta.text;
         // #410: 이미 이번 응답에서 인증 실패로 판정했으면 이후 델타는 원문 조각이 섞여 있을 수
         // 있으므로 더 이상 사용자에게 그대로 흘리지 않는다(한국어 안내는 아래서 1회만 emit됨).
         if (authFailureDetected) {
           continue;
         }
-        if (AUTH_FAILURE_PATTERN.test(assistantText)) {
+        if (AUTH_FAILURE_PATTERN.test(assistantText.slice(scanFrom))) {
           authFailureDetected = true;
           console.warn(`[CLI Agent] [auth-failure] stream_event text=${assistantText}`);
-          yield { type: 'error', message: AUTH_FAILURE_KOREAN_MESSAGE };
+          yield { type: 'error', ...providerErrorFields('authentication_failed', assistantText) };
           try {
             child.kill('SIGTERM');
           } catch {
@@ -679,6 +692,26 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
         noteSubagentText(narrationState);
         userTextEmitted = true;
         yield { type: 'text', content: msg.delta.text };
+        continue;
+      }
+
+      // #711: SDK 경로(process-message.ts)와 같은 판정(classifyAssistantError) — 메인 assistant 메시지에
+      // `error` 가 붙어 있으면 본문(영문 원문)을 내보내지 않는다. 종결(인증·결제)은 즉시 error 1건 후
+      // 종료, 그 외는 result 까지 미룬다.
+      const assistantError = msg.type === 'assistant' ? classifyAssistantError(msg, msg.parent_tool_use_id) : null;
+      if (assistantError) {
+        if ('terminal' in assistantError) {
+          console.warn(`[CLI Agent] [provider-error] ${assistantError.kind}: ${assistantError.text.slice(0, 200)}`);
+          yield { type: 'error', ...assistantError.terminal };
+          try {
+            child.kill('SIGTERM');
+          } catch {
+            /* ignore */
+          }
+          return;
+        }
+        console.warn(`[CLI Agent] [provider-error] ${assistantError.pending.kind}(보류): ${assistantError.pending.text.slice(0, 200)}`);
+        pendingProviderError = assistantError.pending;
         continue;
       }
 
@@ -811,7 +844,7 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
             if (AUTH_FAILURE_PATTERN.test(block.text)) {
               authFailureDetected = true;
               console.warn(`[CLI Agent] [auth-failure] assistant text=${block.text}`);
-              yield { type: 'error', message: AUTH_FAILURE_KOREAN_MESSAGE };
+              yield { type: 'error', ...providerErrorFields('authentication_failed', block.text) };
               try {
                 child.kill('SIGTERM');
               } catch {
@@ -976,7 +1009,10 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
         // 가 살아있는 것으로 판별되므로 이 블록은 변경 없이 재사용된다.
         const isBudgetError = (msg.subtype as string) === 'error_max_budget_usd';
         const isOtherError = !isBudgetError && Boolean((msg.subtype as string | undefined)?.startsWith('error'));
-        if (!isBudgetError && !isOtherError && pendingSyncAgentResultText) {
+        // #711: subtype=success 여도 is_error=true 면 API 오류로 끝난 턴이다(잘못된 키의 401 등) — done 으로
+        // 보내면 프론트가 오류를 정상 종료로 처리한다. relay/fallback 도 타지 않는다.
+        const isErrorResult = !isBudgetError && !isOtherError && msg.is_error === true;
+        if (!isBudgetError && !isOtherError && !isErrorResult && pendingSyncAgentResultText) {
           // #582: 이 relayText 는 subagent(data-analyst 등) 가 생성한 문자열이며 메인이 만든 텍스트가
           // 아니라 delegation-narration-guard 의 기존 classifyMainText 경로를 타지 않는다. subagent 가
           // 후속 안내에서 다른 subagent 코드명(예: "dataset-manager")을 언급할 수 있으므로, relay 직전에
@@ -994,7 +1030,7 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
         // #578: narration 가드가 메인 텍스트를 억제했는데 그 뒤 subagent 도 아무 텍스트를 내지 않아
         // 사용자에게 한 글자도 나가지 않은 채 성공 종료하는 경우 — 완전히 빈 응답(#573 과 같은 critical
         // 회귀)을 막기 위해 마지막으로 억제한 메인 텍스트를 코드명만 가린 채 fallback 으로 내보낸다.
-        if (!isBudgetError && !isOtherError && !userTextEmitted && narrationState.lastSuppressedMainText) {
+        if (!isBudgetError && !isOtherError && !isErrorResult && !userTextEmitted && narrationState.lastSuppressedMainText) {
           const fallback = routingRedactor.redact(redactSubagentIdentifiers(narrationState.lastSuppressedMainText, subagentNames));
           narrationState.lastSuppressedMainText = undefined;
           if (fallback) {
@@ -1017,21 +1053,17 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
           // 다른 error_* subtype 도 쓰는데, 그것들이 아래 else 로 빠지면 **빈 응답이 성공으로
           // 보고된다**. 재개 실패가 정확히 그 형태였다. 접두사로 판정해 새 subtype 이 생겨도
           // 조용히 성공으로 새지 않게 한다.
-        } else if (isOtherError) {
+        } else if (isOtherError || isErrorResult) {
           // #410: CLI OAuth 토큰 만료/무효 시 msg.result 에 "Not logged in · Please run /login" 류
           // 원문 영문 문구가 그대로 담겨 있다. 검사 없이 넘기면 이 문구가 그대로 채팅 버블에 노출된다.
-          // 원인 문자열은 서버 로그에 남기고, 사용자에게는 한국어 안내 메시지로 치환해 내보낸다.
-          const rawResult = msg.result ?? 'CLI agent returned an error';
-          const isAuthFailure = AUTH_FAILURE_PATTERN.test(rawResult);
-          if (isAuthFailure) {
-            console.warn(`[CLI Agent] [auth-failure] subtype=${msg.subtype} result=${rawResult}`);
-          }
-          yield {
-            type: 'error',
-            message: isAuthFailure ? AUTH_FAILURE_KOREAN_MESSAGE : rawResult,
-            inputTokens,
-            outputTokens,
-          };
+          // #711: error_* 와 success+is_error 는 같은 규칙(resolveResultError)으로 다룬다 — 앞서 보류한
+          // assistant 오류가 있으면 그 종류를 우선하고, 없으면 원문 서명으로 인증·결제·요청 한도·서버
+          // 오류를 한국어 안내 + 코드로 바꾼다. 알 수 없는 오류는 원문 그대로. 원문은 서버 로그에만.
+          const rawResult = msg.result || 'CLI agent returned an error';
+          console.warn(`[CLI Agent] [provider-error] subtype=${msg.subtype} is_error=${msg.is_error} result=${rawResult}`);
+          const fields = resolveResultError(pendingProviderError, rawResult);
+          pendingProviderError = undefined;
+          yield { type: 'error', ...fields, inputTokens, outputTokens };
         } else {
           yield { type: 'done', inputTokens, outputTokens };
         }

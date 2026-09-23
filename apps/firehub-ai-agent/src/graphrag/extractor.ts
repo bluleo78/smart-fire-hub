@@ -7,6 +7,7 @@ import {
 } from './ontology.js';
 import type { CompleteFn } from './llm-completer.js';
 import { normalizePropertyChecked } from './property-normalizer.js';
+import { completeOrNull } from './complete-or-null.js';
 
 export interface ExtractOptions { complete: CompleteFn; ontology: Ontology; }
 
@@ -20,14 +21,9 @@ export function parseJsonBlock(text: string): unknown | null {
 export async function extractGraph(text: string, opts: ExtractOptions): Promise<ExtractionResult> {
   // 전달된 ontology 로 시스템 프롬프트를 조립한다(정적 상수 → 동적, 소스 플립 대응).
   const systemPrompt = buildExtractionPrompt(opts.ontology);
-  let content = '';
-  try {
-    content = await opts.complete(systemPrompt, text);
-  } catch (err) {
-    // API 키 오설정/타임아웃 등을 진단할 수 있도록 경고 로그를 남기고, 배치는 계속 진행한다.
-    console.warn('[graphrag] extractGraph LLM 호출 실패, 빈 결과로 계속:', err);
-    return { entities: [], relations: [] }; // LLM 호출 실패 → 빈 결과(호출부에서 배치 계속)
-  }
+  // LLM 호출 실패 → 경고 로그 후 빈 결과(호출부에서 배치 계속). 자격증명 실패만은 전파된다.
+  const content = await completeOrNull(opts.complete, systemPrompt, text, 'extractGraph');
+  if (content === null) return { entities: [], relations: [] };
 
   const parsed = parseJsonBlock(content) as { entities?: unknown[]; relations?: unknown[] } | null;
   if (!parsed) return { entities: [], relations: [] };

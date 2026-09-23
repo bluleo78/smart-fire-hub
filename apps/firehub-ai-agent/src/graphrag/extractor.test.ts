@@ -34,6 +34,13 @@ describe('extractGraph', () => {
     expect(result).toEqual({ entities: [], relations: [] });
   });
 
+  // #711: 자격증명 실패는 청크마다 반복될 뿐이라 빈 결과로 삼키지 않고 다시 던진다(원인이 드러나게).
+  it('자격증명 실패(AiCredentialFailureError)는 빈 결과로 삼키지 않고 전파한다', async () => {
+    const { AiCredentialFailureError, AUTH_FAILURE_KOREAN_MESSAGE } = await import('../agent/ai-auth-failure.js');
+    const complete: CompleteFn = vi.fn().mockRejectedValue(new AiCredentialFailureError(AUTH_FAILURE_KOREAN_MESSAGE));
+    await expect(extractGraph('text', { complete, ontology: CORE_ONTOLOGY })).rejects.toThrow(AUTH_FAILURE_KOREAN_MESSAGE);
+  });
+
   it('complete가 예외를 던지면 빈 결과를 반환한다(fail-soft)', async () => {
     const complete: CompleteFn = vi.fn().mockRejectedValue(new Error('claude CLI 실패'));
     const result = await extractGraph('본문', { complete, ontology: CORE_ONTOLOGY });

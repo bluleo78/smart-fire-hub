@@ -11,19 +11,26 @@ import { ClaudeClassifyProvider } from './claude-classify-provider.js';
 import { OpenCodeChatProvider } from './opencode-chat-provider.js';
 import { OpenAICompatCompletionProvider } from './openai-compat-completion-provider.js';
 import { DEFAULT_MODEL } from '../constants.js';
+import { resolveClaudeCredential } from '../agent/claude-child-env.js';
+import { MissingAiCredentialError } from '../agent/ai-auth-failure.js';
 
 export class ProviderFactory {
   static createChatProvider(config: ProviderConfig): ChatProvider {
     switch (config.agentType) {
+      // Anthropic 계열 세 유형의 자격증명 검사는 자식 env 와 같은 판정(resolveClaudeCredential — 공백은
+      // "없음")을 쓰고, 한국어 안내·코드를 담은 MissingAiCredentialError 로 실패한다(#708) — 채팅은 그
+      // 안내를 그대로 보여 주고(AdminActionableError), 프로액티브는 502 + 코드로 응답한다.
       case 'sdk':
         // sdk는 API 키 또는 OAuth 토큰 중 하나만 있어도 동작(OAuth 우선).
-        if (!config.apiKey && !config.oauthToken)
-          throw new Error('API key or OAuth token required for SDK mode');
+        if (!resolveClaudeCredential(config)) throw new MissingAiCredentialError();
         return new ClaudeSdkChatProvider(config.apiKey, config.model || DEFAULT_MODEL, config.oauthToken);
       case 'cli':
+        // #708: 구독(cli) 모드도 OAuth 토큰이 필수다 — 예전엔 검사가 없어 토큰 없이 claude CLI 를
+        // 띄웠고, 그 CLI 는 호스트 키체인/~/.claude 로그인으로 조용히 인증됐다(env 로 가릴 수 없다).
+        if (!resolveClaudeCredential({ oauthToken: config.oauthToken })) throw new MissingAiCredentialError();
         return new ClaudeCliChatProvider(true, undefined, config.oauthToken);
       case 'cli-api':
-        if (!config.apiKey) throw new Error('API key required for CLI-API mode');
+        if (!resolveClaudeCredential({ apiKey: config.apiKey })) throw new MissingAiCredentialError();
         return new ClaudeCliChatProvider(false, config.apiKey);
       case 'opencode':
         // provider 자격증명(baseURL/apiKey)은 테넌트별로 갈린다(옵션 3 폐기, 2026-09-19
@@ -69,15 +76,17 @@ export class ProviderFactory {
    * **agentType 이 없거나 opencode 가 아닌 모든 값은 Claude SDK 로 간다** — 여기서 "모르는
    * agentType 은 fail-closed" 를 강제하지 않는다. 그 강제는 라우트 경계(routes/*.ts, 요청
    * 바디→ProviderConfig 매핑)의 몫이다. 이 팩토리에는 agentType 자체가 없는 정당한 호출부가
-   * 있다 — `mcp/stdio-server.ts` 는 CLI 프로세스 env(ANTHROPIC_API_KEY/CLAUDE_CODE_OAUTH_TOKEN)
-   * 만으로 자격증명을 넘기고, `graphrag/llm-completer.ts` 의 `createCompleter()` 는 단독
-   * 스크립트에서 호출을 통째로 생략한다. 여기서 엄격하게 거부하면 그 두 호출부가 깨진다.
+   * 있다 — `mcp/stdio-server.ts` 는 부모(agent-cli.ts buildMcpConfig)가 명시적으로 심어 준
+   * 프로세스 env(ANTHROPIC_API_KEY/CLAUDE_CODE_OAUTH_TOKEN)만으로 자격증명을 넘기고, 단독
+   * 스크립트는 진입점에서 읽은 자격증명만 넘긴다. 여기서 엄격하게 거부하면 그 호출부가 깨진다.
    *
-   * config 를 생략하면 자격증명 없이 생성되어 프로세스 환경(ANTHROPIC_API_KEY /
-   * CLAUDE_CODE_OAUTH_TOKEN)이나 로컬 CLI 키체인 인증으로 폴백한다 — 단독 스크립트용.
+   * config 는 필수다(#708) — 예전의 무인자 호출은 프로세스 환경이나 로컬 CLI 키체인으로 폴백했다.
+   * 자격증명이 비어 있어도 **생성은 한다**: MCP 자식(stdio-server)은 기동 시점에 도구를 등록하며
+   * 이 함수를 부르므로, 여기서 던지면 GraphRAG 와 무관한 도구까지 전부 죽는다. 대신 첫 complete()
+   * 호출이 MissingAiCredentialError 로 실패한다(ClaudeSdkCompletionProvider → buildCompletionEnv).
    */
   static createCompletionProvider(
-    config?: Partial<
+    config: Partial<
       Pick<
         ProviderConfig,
         'agentType' | 'apiKey' | 'oauthToken' | 'model' | 'baseUrl' | 'providerId' | 'reasoningEffort'
@@ -88,7 +97,7 @@ export class ProviderFactory {
     // 생성자에 넘기지 않는다. firehub-ai-agent 전체에 이 값을 실제로 쓰는 경로가 아직 없다
     // (설계서 §322, Claude 계열 추론 강도조차 전달 경로가 없어 별도 이슈로 남겨졌다). 타입에는
     // 남겨 둔다 — 그 이슈가 풀릴 때 이 시그니처를 다시 넓히지 않아도 되게 하기 위함이다.
-    if (config?.agentType === 'opencode') {
+    if (config.agentType === 'opencode') {
       // Opencode.apiKey 는 OpenAI 호환 키다. baseUrl 없이 Claude SDK 로 흘리면 위 규약대로
       // 6b1c6383 이 재현되므로, baseUrl 이 없는 opencode 설정은 여기서 크게 실패한다
       // (spec §98 "알 수 없는 agentType 은 fail-closed" 와 같은 정신 — 여기선 "불완전한
@@ -104,6 +113,6 @@ export class ProviderFactory {
         config.model ?? '',
       );
     }
-    return new ClaudeSdkCompletionProvider(config?.apiKey, config?.oauthToken, config?.model);
+    return new ClaudeSdkCompletionProvider(config.apiKey, config.oauthToken, config.model);
   }
 }
