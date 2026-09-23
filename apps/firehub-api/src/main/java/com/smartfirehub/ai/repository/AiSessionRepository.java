@@ -192,15 +192,9 @@ public class AiSessionRepository {
                     r.get(UPDATED_AT)));
   }
 
-  /**
-   * 세션을 기록한 사용자. 기록이 없으면 빈 값. RLS 로 현재 테넌트 안에서만 찾는다
-   * ({@code (tenant_id, session_id)} 유일 인덱스라 한 행뿐이다).
-   */
-  public Optional<Long> findOwnerUserId(String sessionId) {
-    return dsl.select(USER_ID)
-        .from(AI_SESSION)
-        .where(SESSION_ID.eq(sessionId))
-        .fetchOptional(USER_ID);
+  /** 이 세션이 다른 사용자에게 기록돼 있는지. RLS 로 현재 테넌트 안에서만 본다. */
+  public boolean existsForOtherUser(Long userId, String sessionId) {
+    return dsl.fetchExists(AI_SESSION, SESSION_ID.eq(sessionId).and(USER_ID.ne(userId)));
   }
 
   public AiSessionResponse create(Long userId, CreateAiSessionRequest request) {

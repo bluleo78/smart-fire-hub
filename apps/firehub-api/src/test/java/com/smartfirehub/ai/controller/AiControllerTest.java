@@ -263,23 +263,6 @@ class AiControllerTest {
         .streamChat(any(), eq("hello"), eq("my-session-id"), any(), eq(1L), any(), any());
   }
 
-  /** 새 세션(빈 sessionId)은 아직 기록이 없으므로 소유자 확인을 하지 않는다. */
-  @Test
-  void chat_newSession_skipsOwnershipCheck() throws Exception {
-    mockAuthentication("ai:write");
-
-    String body = "{\"message\":\"hello\",\"sessionId\":\"\",\"fileIds\":null}";
-
-    mockMvc
-        .perform(
-            post("/api/v1/ai/chat")
-                .header("Authorization", "Bearer valid-token")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(body))
-        .andExpect(status().isOk());
-    verify(aiSessionService, never()).verifyNotOthersSession(any(), any());
-  }
-
   @Test
   void chat_withNoMessageAndNoFileIds_returnsBadRequest() throws Exception {
     mockAuthentication("ai:write");

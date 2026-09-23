@@ -134,13 +134,8 @@ public class AiController {
     }
 
     Long userId = (Long) authentication.getPrincipal();
-    // 이어 쓰는 세션은 본인 것이어야 한다(이슈 #714). ai-agent 는 테넌트만 대조하므로, 여기서 막지
-    // 않으면 같은 워크스페이스의 다른 사용자가 세션 ID 로 남의 대화(그 사람 권한으로 본 데이터
-    // 포함)를 이어 쓸 수 있다. 기록이 빠진 본인 세션은 통과시킨다 — 이유는 verifyNotOthersSession
-    // javadoc. 새 세션(빈 값)은 검사할 것이 없다.
-    if (request.sessionId() != null && !request.sessionId().isBlank()) {
-      aiSessionService.verifyNotOthersSession(userId, request.sessionId());
-    }
+    // #714: 남의 세션 이어쓰기 차단 — ai-agent 는 테넌트만 대조한다
+    aiSessionService.verifyNotOthersSession(userId, request.sessionId());
     SseEmitter emitter = new SseEmitter(300_000L); // 5 minutes
 
     aiAgentProxyService.streamChat(

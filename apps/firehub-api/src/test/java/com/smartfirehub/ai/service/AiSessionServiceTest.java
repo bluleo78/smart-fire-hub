@@ -127,13 +127,14 @@ class AiSessionServiceTest extends IntegrationTestBase {
     aiSessionService.createSession(
         owner.id(), new CreateAiSessionRequest("session-714", null, null, "Owner Session"));
 
-    // 본인 세션은 통과
     aiSessionService.verifyNotOthersSession(owner.id(), "session-714");
-    // 남의 세션은 거절
     assertThatThrownBy(() -> aiSessionService.verifyNotOthersSession(other.id(), "session-714"))
         .isInstanceOf(AccessDeniedException.class);
     // 기록이 없는 세션(웹의 기록 실패 등)은 통과 — 막으면 그 대화를 영영 이어 쓸 수 없다
     aiSessionService.verifyNotOthersSession(other.id(), "session-714-unrecorded");
+    // 새 세션(빈 값)은 검사할 것이 없다
+    aiSessionService.verifyNotOthersSession(other.id(), "");
+    aiSessionService.verifyNotOthersSession(other.id(), null);
   }
 
   @Test
