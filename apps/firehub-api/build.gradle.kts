@@ -244,7 +244,12 @@ tasks.withType<Test> {
         environment("DOCKER_HOST", "unix://${orbStackSocket.absolutePath}")
         environment("TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE", "/var/run/docker.sock")
     }
-    systemProperty("smartfirehub.repositoryRoot", rootProject.projectDir.parentFile.parentFile.absolutePath)
+    // 저장소 루트(apps/firehub-api 의 두 단계 위). Docker 빌드(/app)처럼 조부모가 없는 경로에서도
+    // 설정 단계가 NPE 로 죽지 않도록 parentFile 체인 대신 경로 정규화로 계산한다.
+    systemProperty(
+        "smartfirehub.repositoryRoot",
+        rootProject.projectDir.toPath().resolve("../..").normalize().toFile().absolutePath
+    )
     useJUnitPlatform()
     jvmArgs(
         "--add-opens", "java.base/java.lang=ALL-UNNAMED",
