@@ -89,8 +89,9 @@ public class AiAgentClient {
    *
    * <p><b>target 에 따라 자격증명·모델 출처가 갈린다(#707).</b> {@link AiClassifyTarget.Dedicated}
    * 는 실행기가 이미 해석해 둔 분류 전용 묶음을 그대로 쓴다. {@link AiClassifyTarget.UseChat} 은
-   * 옛 코드와 같은 순서(모델 → 자격증명)로 <b>지금 이 순간</b> 채팅 설정을 해석한다 — 미설정
-   * 테넌트는 현행과 바이트 단위로 같은 바디다.
+   * 옛 코드와 같은 순서(모델 → 자격증명)로 채팅 설정을 해석한다 — 미설정 테넌트는 현행과 바이트
+   * 단위로 같은 바디다. 해석은 그 UseChat 인스턴스(= 스텝 실행 하나)의 첫 캐시 미스 배치에서 한 번만
+   * 일어나고, 성공한 결과를 같은 실행의 다음 배치가 재사용한다(#707 후속). 실패는 기억하지 않는다.
    */
   public Map<String, Object> buildClassifyBody(ClassifyRequest request, AiClassifyTarget target) {
     Map<String, Object> body = new java.util.HashMap<>();
@@ -98,38 +99,49 @@ public class AiAgentClient {
     body.put("prompt", request.prompt());
     body.put("outputColumns", request.outputColumns());
 
-    String model;
-    AiCredential rawCredential;
-    switch (target) {
-      case AiClassifyTarget.Dedicated d -> {
-        model = d.model();
-        rawCredential = d.credential();
-      }
-      case AiClassifyTarget.UseChat u -> {
-        // AI 동작 키는 테넌트 값 → 코드 기본값으로 항상 해석된다(SettingsService.getValue).
-        model = settingsService.getValue("ai.model").orElseThrow();
-        rawCredential = aiCredentialService.resolve();
-      }
-    }
-    body.put("model", model);
-
-    // 불완전(미설정 포함)이면 모델 검사보다 **먼저** 막는다 — 순서가 뒤집히면 providerId/baseUrl
-    // 이 빈 opencode 테넌트에게 "모델을 다시 선택하세요"라는 엉뚱한 안내가 나간다.
-    AiCredential credential = rawCredential.requireComplete();
+    // 모델·자격증명을 해석하고 검증까지 끝낸 묶음. UseChat 은 실행 동안 첫 성공 결과를 기억한다 —
+    // 검증까지 통과한 뒤에만 기억하므로, 해석이 던지거나 불완전하면 다음 배치가 다시 읽는다(#707 후속).
+    AiClassifyTarget.ResolvedBinding binding =
+        switch (target) {
+          case AiClassifyTarget.Dedicated d -> validated(d.model(), d.credential());
+          case AiClassifyTarget.UseChat u ->
+              u.resolveOnce(
+                  // 옛 코드와 같은 순서(모델 → 자격증명). AI 동작 키는 테넌트 값 → 코드 기본값으로
+                  // 항상 해석된다(SettingsService.getValue).
+                  () -> {
+                    String chatModel = settingsService.getValue("ai.model").orElseThrow();
+                    return validated(chatModel, aiCredentialService.resolve());
+                  });
+        };
+    // 키 집합과 put 순서가 옛 코드와 같다(model → 유형별 필드) — 미설정 테넌트의 바디가 현행과 같다.
+    body.put("model", binding.model());
 
     // 유형마다 실리는 키가 다르다 — 그 규칙은 AiCredential 의 유형별 applyTo() 하나에만 있다
     // (이슈 #695: 예전에는 여기·채팅·프로액티브에 각각 switch 가 있었고 이미 드리프트했다).
     // Opencode.apiKey 는 OpenAI 호환 키로 Sdk.apiKey(Anthropic)와 의미가 다르므로 "그냥 apiKey 를
     // 넘긴다"를 유형 전체에 일반화하면 안 된다 — applyTo() 가 유형별로 실제 쓰이는 필드만 담는다.
-    credential.applyTo(body);
-
-    // opencode 모델 형식 가드(전체 브랜치 리뷰 I3) — 위에서 "model" 에 넣은 기본값
-    // AiBehaviorDefaults.MODEL(슬래시 없음)은 opencode 형식이 아니라, 가드 없이 그대로 보내면
-    // OpenAI 호환 호스트가 이유를 알 수 없는 상류 오류로만 실패한다. 여기서 먼저 걸러 분명한
-    // 설정 오류로 바꾼다 — 검사와 문구는 AiCredential.modelProblem 하나에서 온다(세 경로 공통).
-    // 모델 제약이 없는 유형에서는 no-op 이라 여기서 유형을 따로 분기하지 않는다.
-    credential.requireModelUsable(model);
+    binding.credential().applyTo(body);
     return body;
+  }
+
+  /**
+   * 자격증명 완전성 → 모델 형식 순으로 검증하고, 통과하면 묶어 돌려준다. 실패하면 던진다.
+   *
+   * <p>예전에는 {@code applyTo()} 뒤에서 모델 형식을 검사했지만 {@code applyTo()} 는 버려질 바디만
+   * 채우므로 앞당겨도 관찰 가능한 결과가 같다. 앞당긴 이유는 UseChat 이 "검증까지 통과한 결과만"
+   * 기억하게 하기 위해서다 — 불완전한 자격증명을 기억하면 실행 도중 고쳐도 남은 배치가 전부 떨어진다.
+   */
+  private static AiClassifyTarget.ResolvedBinding validated(String model, AiCredential rawCredential) {
+    // 불완전(미설정 포함)이면 모델 검사보다 **먼저** 막는다 — 순서가 뒤집히면 providerId/baseUrl
+    // 이 빈 opencode 테넌트에게 "모델을 다시 선택하세요"라는 엉뚱한 안내가 나간다.
+    AiCredential credential = rawCredential.requireComplete();
+
+    // opencode 모델 형식 가드(전체 브랜치 리뷰 I3) — 기본값 AiBehaviorDefaults.MODEL(슬래시 없음)은
+    // opencode 형식이 아니라, 가드 없이 그대로 보내면 OpenAI 호환 호스트가 이유를 알 수 없는 상류
+    // 오류로만 실패한다. 여기서 먼저 걸러 분명한 설정 오류로 바꾼다 — 검사와 문구는
+    // AiCredential.modelProblem 하나에서 온다(세 경로 공통). 모델 제약이 없는 유형에서는 no-op 이다.
+    credential.requireModelUsable(model);
+    return new AiClassifyTarget.ResolvedBinding(model, credential);
   }
 
   /**
@@ -143,7 +155,7 @@ public class AiAgentClient {
    *
    * <p>{@code target} 은 실행기({@link AiClassifyExecutor})가 스텝 실행당 <b>한 번</b> 해석한 값이다(#707)
    * — 캐시 해시와 이 요청이 같은 인스턴스를 본다. 미설정(UseChat)이면 채팅 자격증명·모델은 여기서
-   * 바디를 조립할 때 지금처럼 해석된다.
+   * 바디를 조립할 때 해석되고, 같은 실행 안에서는 첫 성공 결과가 재사용된다.
    */
   public ClassifyResponse classify(ClassifyRequest request, AiClassifyTarget target, Long userId) {
     // buildClassifyBody() 는 try 밖에서 부른다 — 이유는 그 메서드 javadoc 참고

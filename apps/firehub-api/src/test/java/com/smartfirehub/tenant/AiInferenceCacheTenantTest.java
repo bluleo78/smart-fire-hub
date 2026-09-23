@@ -260,7 +260,7 @@ class AiInferenceCacheTenantTest extends IntegrationTestBase {
   /** 미설정 테넌트(UseChat)를 돌려주는 해석기 스텁 — 기존 캐시 키(옛 promptHash)를 그대로 쓰게 한다. */
   private static AiClassifyTargetResolver stubUseChat() {
     AiClassifyTargetResolver resolver = mock(AiClassifyTargetResolver.class);
-    when(resolver.resolve()).thenReturn(AiClassifyTarget.USE_CHAT);
+    when(resolver.resolve()).thenReturn(new AiClassifyTarget.UseChat());
     return resolver;
   }
 }

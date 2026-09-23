@@ -36,7 +36,9 @@ class AiClassifyTargetResolverTest {
 
     AiClassifyTarget target = resolver.resolve();
 
-    assertThat(target).isSameAs(AiClassifyTarget.USE_CHAT);
+    assertThat(target).isInstanceOf(AiClassifyTarget.UseChat.class);
+    // 실행마다 새 인스턴스다 — UseChat 은 채팅 해석 결과를 실행 동안 기억하므로 공유되면 안 된다(#707 후속).
+    assertThat(resolver.resolve()).isNotSameAs(target);
     assertThat(target.cacheDiscriminator()).isEmpty();
     verify(aiCredentialService, never()).resolve();
   }
@@ -68,7 +70,8 @@ class AiClassifyTargetResolverTest {
             new AiCredential.Opencode("openai", "https://gw.example/v1", "high", "sk-SECRET"),
             "openai/gpt-4o-mini");
     assertThat(opencode.cacheDiscriminator())
-        .contains("opencode|openai|https://gw.example/v1|openai/gpt-4o-mini");
+        // 칸마다 퍼센트 인코딩(값 안의 | 가 칸 경계로 읽히지 않게), 추론 강도 칸 포함(#707 후속).
+        .contains("opencode|openai|https%3A%2F%2Fgw.example%2Fv1|high|openai%2Fgpt-4o-mini");
 
     AiClassifyTarget sdk =
         new AiClassifyTarget.Dedicated(new AiCredential.Sdk("oat-SECRET", "sk-SECRET"), "claude-haiku-4-5");

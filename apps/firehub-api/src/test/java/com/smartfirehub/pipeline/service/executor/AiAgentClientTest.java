@@ -307,12 +307,47 @@ class AiAgentClientTest {
     when(settingsService.getValue("ai.model")).thenReturn(Optional.of("claude-sonnet-5"));
     when(aiCredentialService.resolve()).thenReturn(new AiCredential.Sdk("chat-oauth", ""));
 
-    Map<String, Object> body = client.buildClassifyBody(REQUEST, AiClassifyTarget.USE_CHAT);
+    Map<String, Object> body = client.buildClassifyBody(REQUEST, new AiClassifyTarget.UseChat());
 
     assertThat(body)
         .containsEntry("agentType", "sdk")
         .containsEntry("oauthToken", "chat-oauth")
         .containsEntry("model", "claude-sonnet-5")
         .doesNotContainKey("apiKey");
+  }
+
+  /**
+   * 같은 UseChat 인스턴스(= 한 실행)로 바디를 여러 번 만들면 채팅 자격증명·ai.model 은 첫 성공 때만
+   * 읽고, 이후 바디는 첫 바디와 같다(#707 후속 3).
+   */
+  @Test
+  void buildClassifyBody_같은_UseChat_이면_채팅_설정을_한_번만_읽는다() {
+    AiAgentClient client = newClient();
+    when(settingsService.getValue("ai.model")).thenReturn(Optional.of("claude-sonnet-5"));
+    when(aiCredentialService.resolve()).thenReturn(new AiCredential.Sdk("chat-oauth", ""));
+    AiClassifyTarget run = resolver.resolve();
+
+    Map<String, Object> first = client.buildClassifyBody(REQUEST, run);
+    Map<String, Object> second = client.buildClassifyBody(REQUEST, run);
+
+    assertThat(second).isEqualTo(first);
+    verify(aiCredentialService, times(1)).resolve();
+    verify(settingsService, times(1)).getValue("ai.model");
+  }
+
+  /** 해석이 던지면 기억하지 않는다 — 같은 실행의 다음 호출이 다시 읽어 성공한다(#707 후속 3). */
+  @Test
+  void buildClassifyBody_해석_실패는_기억하지_않는다() {
+    AiAgentClient client = newClient();
+    when(settingsService.getValue("ai.model")).thenReturn(Optional.of("claude-sonnet-5"));
+    when(aiCredentialService.resolve())
+        .thenThrow(new IllegalStateException("boom"))
+        .thenReturn(new AiCredential.Sdk("chat-oauth", ""));
+    AiClassifyTarget run = resolver.resolve();
+
+    assertThatThrownBy(() -> client.buildClassifyBody(REQUEST, run))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(client.buildClassifyBody(REQUEST, run)).containsEntry("oauthToken", "chat-oauth");
+    verify(aiCredentialService, times(2)).resolve();
   }
 }

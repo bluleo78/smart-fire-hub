@@ -78,7 +78,8 @@ public class AiClassifyExecutor {
   // 배치마다 진척을 남기기 위한 저장소 — 근거는 reportProgress javadoc 참고(#691).
   private final PipelineExecutionRepository executionRepository;
   // 분류 공급자 해석기(#707) — 실행당 한 번 해석한다. 분류 전용(Dedicated)이면 그 인스턴스가 캐시
-  // 해시와 ai-agent 요청에 함께 쓰이고, 미설정(UseChat)이면 채팅 설정은 요청 시점에 해석된다.
+  // 해시와 ai-agent 요청에 함께 쓰이고, 미설정(UseChat)이면 채팅 설정은 첫 캐시 미스 배치에서
+  // 해석돼 그 실행 동안 재사용된다(UseChat 인스턴스가 실행마다 새로 만들어지므로 실행 간에는 섞이지 않는다).
   private final AiClassifyTargetResolver targetResolver;
 
   public record ExecutionResult(long outputRows, String executionLog) {}

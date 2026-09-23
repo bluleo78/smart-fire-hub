@@ -118,12 +118,29 @@ public sealed interface AiCredential {
    * 분류 전용 캐시 해시에 섞을 "어느 공급자로 분류했는가" 식별자(#707). <b>비밀은 절대 담지
    * 않는다</b> — 해시는 {@code ai_inference_cache.prompt_version} 에 남는 값의 입력이다.
    *
-   * <p>형식은 {@code agentType|providerId|baseUrl} 이다. 공급자 개념이 없는 유형은 뒤 두 칸이 빈다.
+   * <p>형식은 {@code agentType|providerId|baseUrl} 이고, opencode 는 뒤에 {@code |reasoningEffort}
+   * 가 붙는다. 공급자 개념이 없는 유형은 뒤 두 칸이 빈다. 각 칸은 {@link #cacheIdentityPart} 로
+   * 인코딩한 뒤 잇는다 — 그래야 값 안의 {@code |} 가 칸 경계로 읽히지 않는다(#707 후속).
    * 소비처가 {@code instanceof} 로 꺼내 쓰지 않도록({@code AiCredentialSwitchGuardTest}) 인터페이스
    * 메서드로 둔다.
    */
   default String cacheIdentity() {
-    return agentType() + "||";
+    return cacheIdentityPart(agentType()) + "||";
+  }
+
+  /**
+   * 캐시 판별자의 한 칸을 인코딩한다(퍼센트 인코딩, UTF-8). {@code null} 은 빈 칸이다.
+   *
+   * <p>왜 필요한가(#707 후속): 칸을 이스케이프 없이 {@code |} 로 이으면 칸 경계가 다른 두 묶음이 같은
+   * 문자열이 된다 — 예컨대 providerId {@code "a|b"}·baseUrl {@code "c"} 와 providerId {@code "a"}·
+   * baseUrl {@code "b|c"} 가 둘 다 {@code opencode|a|b|c} 여서 서로의 캐시를 히트했다. 퍼센트
+   * 인코딩은 {@code |} 를 {@code %7C} 로, {@code %} 자체를 {@code %25} 로 바꾸므로 인코딩된 칸에는
+   * {@code |} 가 없고, 서로 다른 값은 서로 다른 결과가 된다 — 이어 붙여도 원래 칸이 유일하게 복원된다.
+   * {@code AiClassifyTarget.Dedicated} 가 모델 칸에도 같은 규칙을 쓴다.
+   */
+  static String cacheIdentityPart(String value) {
+    return java.net.URLEncoder.encode(
+        value == null ? "" : value, java.nio.charset.StandardCharsets.UTF_8);
   }
 
   /**
@@ -281,10 +298,20 @@ public sealed interface AiCredential {
       return configuredModel.get();
     }
 
-    /** 같은 opencode 라도 공급자·게이트웨이가 다르면 분류 결과가 다르므로 둘 다 식별자에 싣는다. */
+    /**
+     * 같은 opencode 라도 공급자·게이트웨이·추론 강도가 다르면 분류 결과가 다르므로 셋 다 식별자에
+     * 싣는다. 추론 강도가 빠져 있으면 강도를 바꾼 뒤에도 옛 강도로 만든 캐시가 계속 히트한다
+     * (#707 후속). 미설정 강도는 빈 칸이다. {@code apiKey} 는 비밀이라 싣지 않는다.
+     */
     @Override
     public String cacheIdentity() {
-      return agentType() + "|" + providerId + "|" + baseUrl;
+      return cacheIdentityPart(agentType())
+          + "|"
+          + cacheIdentityPart(providerId)
+          + "|"
+          + cacheIdentityPart(baseUrl)
+          + "|"
+          + cacheIdentityPart(reasoningEffort);
     }
 
     /** 세 경로가 같은 문구를 보여야 하므로 문구도 여기서 만든다. */

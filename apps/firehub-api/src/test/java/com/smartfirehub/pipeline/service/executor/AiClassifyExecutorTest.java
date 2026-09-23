@@ -92,7 +92,7 @@ class AiClassifyExecutorTest {
 
     // 기본은 미설정 테넌트(UseChat) — 기존 테스트 전부가 이 경로를 탄다(#707).
     targetResolver = mock(AiClassifyTargetResolver.class);
-    when(targetResolver.resolve()).thenReturn(AiClassifyTarget.USE_CHAT);
+    when(targetResolver.resolve()).thenReturn(new AiClassifyTarget.UseChat());
 
     executor =
         new AiClassifyExecutor(
@@ -1150,7 +1150,7 @@ class AiClassifyExecutorTest {
 
   @Test
   void promptHash_미설정이면_현행_고정값과_같다() {
-    assertThat(executor.buildPromptHash(FIXED_CONFIG, AiClassifyTarget.USE_CHAT))
+    assertThat(executor.buildPromptHash(FIXED_CONFIG, new AiClassifyTarget.UseChat()))
         .isEqualTo(LEGACY_PROMPT_HASH);
   }
 
@@ -1168,7 +1168,7 @@ class AiClassifyExecutorTest {
     assertThat(executor.buildPromptHash(FIXED_CONFIG, sonnet)).isNotEqualTo(h1);
     assertThat(executor.buildPromptHash(FIXED_CONFIG, haikuOtherKey)).isEqualTo(h1);
     // 해제 = UseChat 으로 돌아가면 옛 해시로 복귀한다(옛 캐시 재히트).
-    assertThat(executor.buildPromptHash(FIXED_CONFIG, AiClassifyTarget.USE_CHAT))
+    assertThat(executor.buildPromptHash(FIXED_CONFIG, new AiClassifyTarget.UseChat()))
         .isEqualTo(LEGACY_PROMPT_HASH);
   }
 
@@ -1254,5 +1254,257 @@ class AiClassifyExecutorTest {
     verify(targetResolver, times(1)).resolve();
     verify(aiAgentClient, times(2))
         .classify(any(), org.mockito.ArgumentMatchers.same(dedicated), eq(1L));
+  }
+
+  // -----------------------------------------------------------------------
+  // #707 후속 — 캐시 판별자 보강(추론 강도·단사 인코딩)과 UseChat 실행 단위 해석 메모
+  // -----------------------------------------------------------------------
+
+  /**
+   * 추론 강도가 다르면 같은 모델이라도 분류 결과가 달라질 수 있다 — 판별자에 없으면 강도를 바꾼 뒤에도
+   * 옛 강도로 만든 캐시가 계속 히트한다(#707 후속 1).
+   */
+  @Test
+  void promptHash_opencode_추론_강도만_달라도_갈린다() {
+    AiClassifyTarget low =
+        new AiClassifyTarget.Dedicated(
+            new AiCredential.Opencode("openai", "https://gw.example/v1", "low", "sk-a"),
+            "openai/gpt-4o-mini");
+    AiClassifyTarget high =
+        new AiClassifyTarget.Dedicated(
+            new AiCredential.Opencode("openai", "https://gw.example/v1", "high", "sk-a"),
+            "openai/gpt-4o-mini");
+    AiClassifyTarget unset =
+        new AiClassifyTarget.Dedicated(
+            new AiCredential.Opencode("openai", "https://gw.example/v1", "", "sk-a"),
+            "openai/gpt-4o-mini");
+
+    String hLow = executor.buildPromptHash(FIXED_CONFIG, low);
+    assertThat(executor.buildPromptHash(FIXED_CONFIG, high)).isNotEqualTo(hLow);
+    assertThat(executor.buildPromptHash(FIXED_CONFIG, unset))
+        .isNotEqualTo(hLow)
+        .isNotEqualTo(executor.buildPromptHash(FIXED_CONFIG, high));
+    // 미설정(UseChat) 해시는 이 변경과 무관하다.
+    assertThat(executor.buildPromptHash(FIXED_CONFIG, new AiClassifyTarget.UseChat()))
+        .isEqualTo(LEGACY_PROMPT_HASH);
+  }
+
+  /**
+   * 판별자 칸을 이스케이프 없이 {@code |} 로 이으면 칸 경계가 다른 두 묶음이 같은 문자열이 된다
+   * (#707 후속 2). (c, d) 는 옛 인코딩에서 실제로 겹쳤다 — 둘 다 {@code opencode|a|b|c|a/x}.
+   * (a, b) 는 추론 강도 칸만 추가하고 이스케이프를 안 했다면 새로 생겼을 충돌이다 — 둘 다
+   * {@code opencode|p|u|e|m|n}. 칸을 늘릴 때 인코딩을 빠뜨리는 회귀를 막는다.
+   */
+  @Test
+  void promptHash_구분자를_품은_값으로_칸_경계를_옮겨도_해시가_겹치지_않는다() {
+    AiClassifyTarget a =
+        new AiClassifyTarget.Dedicated(new AiCredential.Opencode("p", "u", "e|m", "sk"), "n");
+    AiClassifyTarget b =
+        new AiClassifyTarget.Dedicated(new AiCredential.Opencode("p", "u", "e", "sk"), "m|n");
+    AiClassifyTarget c =
+        new AiClassifyTarget.Dedicated(new AiCredential.Opencode("a|b", "c", "", "sk"), "a/x");
+    AiClassifyTarget d =
+        new AiClassifyTarget.Dedicated(new AiCredential.Opencode("a", "b|c", "", "sk"), "a/x");
+
+    assertThat(a.cacheDiscriminator()).isNotEqualTo(b.cacheDiscriminator());
+    assertThat(executor.buildPromptHash(FIXED_CONFIG, a))
+        .isNotEqualTo(executor.buildPromptHash(FIXED_CONFIG, b));
+    assertThat(c.cacheDiscriminator()).isNotEqualTo(d.cacheDiscriminator());
+    assertThat(executor.buildPromptHash(FIXED_CONFIG, c))
+        .isNotEqualTo(executor.buildPromptHash(FIXED_CONFIG, d));
+  }
+
+  /**
+   * HTTP 만 걷어낸 실물 AiAgentClient — {@code buildClassifyBody} 로 실제 자격증명 해석을 태우고, 받은
+   * 행을 그대로 분류된 것처럼 돌려준다. 실행기 테스트가 mock 클라이언트로는 볼 수 없는 "실행 동안 채팅
+   * 자격증명을 몇 번 읽었나"를 보기 위함이다(#707 후속 3).
+   */
+  private AiAgentClient echoingClient(
+      com.smartfirehub.settings.service.SettingsService settings,
+      AiCredentialService credentials,
+      List<Map<String, Object>> sentBodies) {
+    return new AiAgentClient("http://unused.invalid", objectMapper, settings, credentials) {
+      @Override
+      public ClassifyResponse classify(ClassifyRequest request, AiClassifyTarget target, Long uid) {
+        // 실물 classify() 와 같이 바디 조립(=자격증명 해석)은 HTTP 전에 한다.
+        sentBodies.add(buildClassifyBody(request, target));
+        List<ClassifyRowResult> results =
+            request.rows().stream()
+                .map(
+                    r ->
+                        new ClassifyRowResult(
+                            Map.<String, Object>of(
+                                "source_id", r.get("id"), "category", "a", "score", 1)))
+                .toList();
+        return new ClassifyResponse(results, results.size(), "m");
+      }
+    };
+  }
+
+  /** 실물 해석기 + echoing 클라이언트로 실행기를 만든다 — 분류 슬롯은 비어 있다(UseChat). */
+  private AiClassifyExecutor useChatExecutor(AiAgentClient client, AiCredentialService credentials) {
+    when(credentials.resolveClassify()).thenReturn(Optional.empty());
+    return new AiClassifyExecutor(
+        client,
+        dataTableRowService,
+        dataTableService,
+        datasetRepository,
+        objectMapper,
+        dsl,
+        transactionTemplate,
+        executionRepository,
+        new AiClassifyTargetResolver(credentials));
+  }
+
+  /** 행 3개·배치 크기 1 = 캐시 미스 배치 3개. */
+  @SuppressWarnings({"unchecked", "rawtypes"})
+  private void stubThreeMissRows() {
+    when(datasetRepository.findTableNameById(200L)).thenReturn(Optional.of("output_table"));
+    when(datasetRepository.findTableNameById(1L)).thenReturn(Optional.of("source_table"));
+    when(dataTableRowService.countRows("source_table")).thenReturn(3L);
+    when(dataTableRowService.queryData(anyString(), any(), any(), anyInt(), anyInt()))
+        .thenReturn(
+            List.of(
+                new HashMap<>(Map.of("id", 5L, "text", "cats")),
+                new HashMap<>(Map.of("id", 6L, "text", "dogs")),
+                new HashMap<>(Map.of("id", 7L, "text", "fish"))));
+    stubCacheMiss();
+    InsertSetStep insertSetStep = mock(InsertSetStep.class, org.mockito.Mockito.RETURNS_DEEP_STUBS);
+    when(dsl.insertInto(any(org.jooq.Table.class))).thenReturn(insertSetStep);
+  }
+
+  /**
+   * 미설정(UseChat) 실행에서 캐시 미스 배치가 여럿이어도 채팅 자격증명·{@code ai.model} 은 실행당
+   * <b>한 번</b>만 해석(복호화)한다. 바디는 배치마다 같은 자격증명·모델을 싣는다(#707 후속 3).
+   */
+  @Test
+  void UseChat_실행은_미스_배치가_여럿이어도_채팅_자격증명을_한_번만_해석한다() {
+    var settings = mock(com.smartfirehub.settings.service.SettingsService.class);
+    AiCredentialService credentials = mock(AiCredentialService.class);
+    when(settings.getValue("ai.model")).thenReturn(Optional.of("claude-sonnet-5"));
+    when(credentials.resolve()).thenReturn(new AiCredential.Sdk("chat-oauth", ""));
+    List<Map<String, Object>> bodies = new java.util.ArrayList<>();
+    AiClassifyExecutor exec =
+        useChatExecutor(echoingClient(settings, credentials, bodies), credentials);
+    stubThreeMissRows();
+
+    AiClassifyExecutor.ExecutionResult result =
+        exec.execute(buildStep("APPEND", List.of(1L), 1), 100L, 1L);
+
+    assertThat(result.outputRows()).isEqualTo(3);
+    assertThat(bodies).hasSize(3);
+    for (Map<String, Object> body : bodies) {
+      assertThat(body)
+          .containsEntry("agentType", "sdk")
+          .containsEntry("oauthToken", "chat-oauth")
+          .containsEntry("model", "claude-sonnet-5")
+          .doesNotContainKey("apiKey");
+    }
+    verify(credentials, times(1)).resolve();
+    verify(settings, times(1)).getValue("ai.model");
+  }
+
+  /**
+   * 해석 <b>실패는 기억하지 않는다</b> — 첫 배치에서 해석이 던지면(onError=CONTINUE) 다음 배치가 다시
+   * 해석해 요청을 보낸다. 성공한 뒤에는 그 값을 재사용한다(#707 후속 3).
+   */
+  @Test
+  void UseChat_첫_해석이_실패해도_다음_배치는_다시_해석해_요청을_보낸다() {
+    var settings = mock(com.smartfirehub.settings.service.SettingsService.class);
+    AiCredentialService credentials = mock(AiCredentialService.class);
+    when(settings.getValue("ai.model")).thenReturn(Optional.of("claude-sonnet-5"));
+    when(credentials.resolve())
+        .thenThrow(new IllegalStateException("일시적 복호화 실패"))
+        .thenReturn(new AiCredential.Sdk("chat-oauth", ""));
+    List<Map<String, Object>> bodies = new java.util.ArrayList<>();
+    AiClassifyExecutor exec =
+        useChatExecutor(echoingClient(settings, credentials, bodies), credentials);
+    stubThreeMissRows();
+
+    AiClassifyExecutor.ExecutionResult result =
+        exec.execute(buildStep("APPEND", List.of(1L), 1, "CONTINUE"), 100L, 1L);
+
+    // 배치 1 은 버려지고 배치 2·3 은 보내진다. 해석은 실패 1 + 성공 1 = 2회.
+    assertThat(bodies).hasSize(2);
+    assertThat(result.outputRows()).isEqualTo(2);
+    verify(credentials, times(2)).resolve();
+  }
+
+  /**
+   * 불완전한 자격증명(검증 실패)도 기억하지 않는다 — 기억하면 실행 도중 관리자가 고쳐도 남은 배치가
+   * 전부 같은 이유로 떨어진다. 오늘처럼 배치마다 다시 읽는다(#707 후속 3).
+   */
+  @Test
+  void UseChat_불완전한_자격증명은_기억하지_않고_다음_배치에서_다시_읽는다() {
+    var settings = mock(com.smartfirehub.settings.service.SettingsService.class);
+    AiCredentialService credentials = mock(AiCredentialService.class);
+    when(settings.getValue("ai.model")).thenReturn(Optional.of("claude-sonnet-5"));
+    when(credentials.resolve())
+        .thenReturn(new AiCredential.Sdk("", ""))
+        .thenReturn(new AiCredential.Sdk("chat-oauth", ""));
+    List<Map<String, Object>> bodies = new java.util.ArrayList<>();
+    AiClassifyExecutor exec =
+        useChatExecutor(echoingClient(settings, credentials, bodies), credentials);
+    stubThreeMissRows();
+
+    exec.execute(buildStep("APPEND", List.of(1L), 1, "CONTINUE"), 100L, 1L);
+
+    assertThat(bodies).hasSize(2);
+    verify(credentials, times(2)).resolve();
+  }
+
+  /**
+   * 기억은 <b>실행 단위</b>다 — 다음 실행(다른 테넌트일 수도 있다)은 채팅 자격증명을 새로 읽는다.
+   * 실행 간에 공유되면 한 테넌트의 복호화된 자격증명이 다른 실행의 요청에 실릴 수 있다.
+   */
+  @Test
+  void UseChat_해석_기억은_실행마다_새로_시작한다() {
+    var settings = mock(com.smartfirehub.settings.service.SettingsService.class);
+    AiCredentialService credentials = mock(AiCredentialService.class);
+    when(settings.getValue("ai.model")).thenReturn(Optional.of("claude-sonnet-5"));
+    when(credentials.resolve()).thenReturn(new AiCredential.Sdk("chat-oauth", ""));
+    List<Map<String, Object>> bodies = new java.util.ArrayList<>();
+    AiClassifyExecutor exec =
+        useChatExecutor(echoingClient(settings, credentials, bodies), credentials);
+    stubThreeMissRows();
+
+    exec.execute(buildStep("APPEND", List.of(1L), 1), 100L, 1L);
+    exec.execute(buildStep("APPEND", List.of(1L), 1), 100L, 1L);
+
+    assertThat(bodies).hasSize(6);
+    verify(credentials, times(2)).resolve();
+  }
+
+  /**
+   * 모델 형식 검증 실패(opencode 인데 {@code ai.model} 에 공급자 접두사가 없음)도 기억하지 않는다 —
+   * 첫 배치가 버려진 뒤 관리자가 모델을 고치면 같은 실행의 다음 배치가 다시 읽어 요청을 보낸다(#707 후속 3).
+   */
+  @Test
+  void UseChat_opencode_모델_형식_실패는_기억하지_않고_다음_배치에서_다시_읽는다() {
+    var settings = mock(com.smartfirehub.settings.service.SettingsService.class);
+    AiCredentialService credentials = mock(AiCredentialService.class);
+    when(settings.getValue("ai.model"))
+        .thenReturn(Optional.of("gpt-4o-mini"))
+        .thenReturn(Optional.of("openai/gpt-4o-mini"));
+    when(credentials.resolve())
+        .thenReturn(new AiCredential.Opencode("openai", "https://gw.example/v1", "", "sk-a"));
+    List<Map<String, Object>> bodies = new java.util.ArrayList<>();
+    AiClassifyExecutor exec =
+        useChatExecutor(echoingClient(settings, credentials, bodies), credentials);
+    stubThreeMissRows();
+
+    AiClassifyExecutor.ExecutionResult result =
+        exec.execute(buildStep("APPEND", List.of(1L), 1, "CONTINUE"), 100L, 1L);
+
+    // 배치 1 은 형식 오류로 버려지고 배치 2·3 은 올바른 모델로 보내진다. 해석은 실패 1 + 성공 1 = 2회.
+    assertThat(bodies).hasSize(2);
+    assertThat(result.outputRows()).isEqualTo(2);
+    for (Map<String, Object> body : bodies) {
+      assertThat(body)
+          .containsEntry("agentType", "opencode")
+          .containsEntry("model", "openai/gpt-4o-mini");
+    }
+    verify(credentials, times(2)).resolve();
+    verify(settings, times(2)).getValue("ai.model");
   }
 }
