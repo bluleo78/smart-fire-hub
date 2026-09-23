@@ -1,8 +1,21 @@
+import java.io.File
+import java.util.Properties
+
+buildscript {
+    repositories { mavenCentral() }
+    dependencies {
+        classpath("org.testcontainers:postgresql:1.20.4")
+        classpath("org.flywaydb:flyway-core:10.20.1")
+        classpath("org.flywaydb:flyway-database-postgresql:10.20.1")
+        classpath("org.postgresql:postgresql:42.7.4")
+        classpath("org.jooq:jooq-codegen:3.19.16")
+    }
+}
+
 plugins {
     java
     id("org.springframework.boot") version "3.4.1"
     id("io.spring.dependency-management") version "1.1.7"
-    id("nu.studer.jooq") version "9.0"
     id("com.diffplug.spotless") version "6.25.0"
     jacoco
 }
@@ -69,7 +82,6 @@ dependencies {
     runtimeOnly("io.jsonwebtoken:jjwt-jackson:0.12.6")
     // PG driver — implementation 으로 둬서 OutboxListenerLoop가 PGConnection을 직접 사용할 수 있음
     implementation("org.postgresql:postgresql")
-    jooqGenerator("org.postgresql:postgresql")
     // CSV/Excel 파싱
     implementation("org.apache.poi:poi-ooxml:5.3.0")
     implementation("org.apache.pdfbox:pdfbox:2.0.32")
@@ -107,6 +119,9 @@ dependencies {
     testImplementation("net.bytebuddy:byte-buddy:1.17.5")
     testImplementation("net.bytebuddy:byte-buddy-agent:1.17.5")
     testImplementation("org.springframework.security:spring-security-test")
+    // Testcontainers — 통합 테스트용 격리 PostgreSQL 컨테이너.
+    testImplementation("org.testcontainers:junit-jupiter")
+    testImplementation("org.testcontainers:postgresql")
     // WireMock for API call integration tests
     testImplementation("org.wiremock:wiremock-standalone:3.10.0")
     // MockWebServer for embedding provider unit tests (버전은 Spring Boot BOM이 관리)
@@ -123,42 +138,94 @@ sourceSets {
     }
 }
 
-jooq {
-    configurations {
-        create("main") {
-            jooqConfiguration.apply {
-                jdbc.apply {
-                    driver = "org.postgresql.Driver"
-                    // 기본값은 localhost(게시된 5432 포트) — OrbStack/Podman 모두에서 동작한다.
-                    // orb.local은 OrbStack 전용 호스트명이라 Podman에선 해석되지 않고, macOS 로컬 네트워크
-                    // 권한에 막히면 Java만 접속 실패한다. 다른 프로젝트 DB와 5432가 겹치면 JOOQ_DB_URL로 덮어쓴다.
-                    url = System.getenv("JOOQ_DB_URL") ?: "jdbc:postgresql://localhost:5432/smartfirehub"
-                    user = "app"
-                    password = "app"
+// 스키마 변경 시 `./gradlew generateJooq`로 생성 소스를 갱신한다. 생성 소스는 저장소에 추적한다.
+// 코드는 일회용 PostGIS + pgvector 컨테이너에 전체 Flyway 마이그레이션을 적용한 뒤 생성한다.
+// DB 접속 정보를 설정 시점에 고정하는 nu.studer 플러그인 대신 동적 JDBC URL을 받는 GenerationTool을 쓴다.
+tasks.register("generateJooq") {
+    group = "jooq"
+    description = "Testcontainers PostgreSQL에 마이그레이션 적용 후 jOOQ 소스를 생성"
+    val migrationDir = layout.projectDirectory.dir("src/main/resources/db/migration").asFile.absolutePath
+    val outputDir = layout.projectDirectory.dir("src/main/generated").asFile.absolutePath
+    val postgresDockerfile = rootProject.projectDir.toPath()
+        .resolve("../../docker/postgres/Dockerfile")
+        .normalize()
+    inputs.dir(migrationDir)
+    inputs.file(postgresDockerfile)
+    inputs.property("jooqCodegenVersion", "3.19.16")
+    outputs.dir(outputDir)
+
+    doLast {
+        System.setProperty("api.version", "1.41")
+
+        // Gradle 태스크는 테스트 JVM 밖에서 실행되므로 OrbStack 소켓을 Testcontainers 사용자 설정으로 전달한다.
+        if (System.getenv("DOCKER_HOST") == null) {
+            val orbStackSocket = File(System.getProperty("user.home"), ".orbstack/run/docker.sock")
+            if (orbStackSocket.exists()) {
+                val userConfigFile = File(System.getProperty("user.home"), ".testcontainers.properties")
+                val properties = Properties()
+                if (userConfigFile.exists()) {
+                    userConfigFile.inputStream().use { properties.load(it) }
                 }
-                generator.apply {
-                    name = "org.jooq.codegen.DefaultGenerator"
-                    database.apply {
-                        name = "org.jooq.meta.postgres.PostgresDatabase"
-                        inputSchema = "public"
-                        // 스캔 단계에서 이름 없는 파라미터로 "Missing name" 로그를 남기는
-                        // PostGIS 함수 제외 (앱 코드에서 미사용)
-                        excludes = "st_dump|st_dumppoints|st_dumprings|st_dumpsegments|st_fromflatgeobuf"
-                    }
-                    // Routine(함수) 코드젠 비활성화.
-                    // public 스키마의 함수는 대부분 PostGIS/pg_trgm/pgvector 확장이 설치한 것으로,
-                    // 파라미터에 이름이 없어 대량의 "Missing name" 정보 로그를 유발하고
-                    // 앱 코드에서는 생성된 Routine 클래스를 전혀 사용하지 않는다(테이블만 사용).
-                    generate.apply {
-                        isRoutines = false
-                        isUdts = false
-                    }
-                    target.apply {
-                        packageName = "com.smartfirehub.jooq"
-                        directory = "src/main/generated"
+                if (properties.getProperty("docker.host") == null) {
+                    properties.setProperty("docker.host", "unix://${orbStackSocket.absolutePath}")
+                    userConfigFile.outputStream().use {
+                        properties.store(it, "smart-fire-hub: OrbStack 자동 감지(generateJooq)")
                     }
                 }
             }
+        }
+
+        val imageName = org.testcontainers.images.builder.ImageFromDockerfile()
+            .withDockerfile(postgresDockerfile)
+            .get()
+        val container = org.testcontainers.containers.PostgreSQLContainer(
+            org.testcontainers.utility.DockerImageName.parse(imageName).asCompatibleSubstituteFor("postgres")
+        )
+            .withDatabaseName("smartfirehub_codegen")
+            .withUsername("app")
+            .withPassword("app")
+            .withCommand("postgres", "-c", "max_connections=200")
+
+        container.start()
+        try {
+            org.flywaydb.core.Flyway.configure()
+                .dataSource(container.jdbcUrl, container.username, container.password)
+                .locations("filesystem:$migrationDir")
+                .configuration(mapOf("flyway.postgresql.transactional.lock" to "false"))
+                .load()
+                .migrate()
+
+            val configuration = org.jooq.meta.jaxb.Configuration()
+                .withJdbc(
+                    org.jooq.meta.jaxb.Jdbc()
+                        .withDriver("org.postgresql.Driver")
+                        .withUrl(container.jdbcUrl)
+                        .withUser(container.username)
+                        .withPassword(container.password)
+                )
+                .withGenerator(
+                    org.jooq.meta.jaxb.Generator()
+                        .withName("org.jooq.codegen.DefaultGenerator")
+                        .withDatabase(
+                            org.jooq.meta.jaxb.Database()
+                                .withName("org.jooq.meta.postgres.PostgresDatabase")
+                                .withInputSchema("public")
+                                .withExcludes("st_dump|st_dumppoints|st_dumprings|st_dumpsegments|st_fromflatgeobuf")
+                        )
+                        .withGenerate(
+                            org.jooq.meta.jaxb.Generate()
+                                .withRoutines(false)
+                                .withUdts(false)
+                        )
+                        .withTarget(
+                            org.jooq.meta.jaxb.Target()
+                                .withPackageName("com.smartfirehub.jooq")
+                                .withDirectory(outputDir)
+                        )
+                )
+            org.jooq.codegen.GenerationTool.generate(configuration)
+        } finally {
+            container.stop()
         }
     }
 }
@@ -171,6 +238,13 @@ spotless {
 }
 
 tasks.withType<Test> {
+    // 로컬 OrbStack 소켓이 있으면 개별 테스트 프로세스에 Docker 연결 정보를 넘긴다.
+    val orbStackSocket = File(System.getProperty("user.home"), ".orbstack/run/docker.sock")
+    if (System.getenv("DOCKER_HOST") == null && orbStackSocket.exists()) {
+        environment("DOCKER_HOST", "unix://${orbStackSocket.absolutePath}")
+        environment("TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE", "/var/run/docker.sock")
+    }
+    systemProperty("smartfirehub.repositoryRoot", rootProject.projectDir.parentFile.parentFile.absolutePath)
     useJUnitPlatform()
     jvmArgs(
         "--add-opens", "java.base/java.lang=ALL-UNNAMED",

@@ -101,6 +101,7 @@ React / Vite / Playwright E2E / `monocart-coverage-reports`.
 cd apps/firehub-api
 ./gradlew test jacocoTestReport
 # 리포트: build/reports/jacoco/test/html/index.html
+# Testcontainers가 PostGIS + pgvector PostgreSQL을 실행하므로 Docker 데몬이 필요하다. 로컬 DB 기동은 불필요하다.
 
 # 특정 패키지만:
 ./gradlew test jacocoTestReport --tests "com.smartfirehub.dataset.*"

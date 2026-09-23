@@ -3,8 +3,8 @@
 FROM imresamu/postgis:16-3.5
 
 USER root
-# 재현성을 위해 pgvector 버전을 고정한다 (PGDG bookworm 기준 candidate).
+# 재현성을 위해 현재 PGDG bookworm에서 제공하는 pgvector 버전을 고정한다.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends postgresql-16-pgvector=0.8.2-1.pgdg12+1 \
+    && apt-get install -y --no-install-recommends postgresql-16-pgvector=0.8.6-1.pgdg12+1 \
     && rm -rf /var/lib/apt/lists/*
 USER postgres

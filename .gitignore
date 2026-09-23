@@ -57,8 +57,10 @@ SKILL.md
 # 프로젝트 로컬 스킬은 추적 (OMC 패턴 예외)
 !.claude/skills/**/SKILL.md
 
-# jOOQ generated code
+# jOOQ generated code, except the API sources tracked by this repository.
 **/src/main/generated/
+!apps/firehub-api/src/main/generated/
+!apps/firehub-api/src/main/generated/**
 
 # Logs
 logs/

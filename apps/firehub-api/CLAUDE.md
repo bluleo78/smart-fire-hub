@@ -18,11 +18,12 @@ See also the root [CLAUDE.md](../../CLAUDE.md) for monorepo-level commands and c
 ./gradlew test --tests "*.AuthServiceTest.login_success"                           # 단일 메서드
 ./gradlew test --tests "com.smartfirehub.pipeline.*"                               # 패키지 와일드카드
 
-# jOOQ (DB 실행 중이어야 함)
-./gradlew generateJooqSchemaSource   # public 스키마 → src/main/generated/
+# jOOQ (Docker 데몬 필요, 로컬 DB 실행 불필요)
+./gradlew generateJooq               # Testcontainers 마이그레이션 DB → src/main/generated/
 ```
 
-테스트 DB는 `smartfirehub_test` (로컬 DB와 별도). DB가 실행 중이어야 테스트 가능 (`pnpm db:up` 또는 `docker compose up -d`).
+통합 테스트는 JVM당 하나의 Testcontainers PostGIS + pgvector DB를 사용한다. Docker 데몬은 필요하지만 `pnpm db:up`은 필요하지 않다. 테스트용 계정(app_tenant)과 Flyway 계정(app)은 `application-test.yml` 설정을 유지하고 URL만 컨테이너 주소로 교체한다.
+일반 API 빌드와 Docker 이미지 빌드는 저장소에 추적되는 `src/main/generated/`를 사용하므로 Docker 데몬이 필요하지 않다. Flyway 스키마를 변경한 뒤 `./gradlew generateJooq`를 명시적으로 실행하고 생성 소스 변경을 함께 반영한다.
 
 ## Architecture
 
@@ -114,7 +115,7 @@ Package base: `com.smartfirehub`. Feature-sliced 도메인 모듈, 각 모듈은
 | Profile | DB | Jobrunr Dashboard | AI Agent |
 |---------|--------|-----------|----------|
 | `local` | `smartfirehub` (localhost:5432) | enabled (port 5040) | localhost:5020 |
-| `test` | `smartfirehub_test` (localhost:5432) | disabled | localhost:9999 (stub) |
+| `test` | `smartfirehub_test` (Testcontainers) | disabled | localhost:9999 (stub) |
 
 환경변수: `JWT_SECRET` (Base64 인코딩, 256비트 이상), `ENCRYPTION_MASTER_KEY` (Base64 인코딩). local 프로필은 하드코딩된 개발용 키 사용.
 

@@ -7,6 +7,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.transaction.BeforeTransaction;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -29,6 +31,12 @@ public abstract class IntegrationTestBase {
 
   /** V81 이 시드한 기본 테넌트. 대부분의 픽스처가 이 테넌트에 속한다. */
   protected static final long DEFAULT_TEST_TENANT_ID = 1L;
+
+  /** Spring DB, Flyway 소유자 DB, 파이프라인 DB를 같은 JVM 컨테이너로 연결한다. */
+  @DynamicPropertySource
+  static void postgresProperties(DynamicPropertyRegistry registry) {
+    PostgresTestContainer.registerDatabaseProperties(registry);
+  }
 
   /**
    * 두 훅이 모두 필요하다. 클래스 레벨 {@code @Transactional} 테스트에서는

@@ -1,18 +1,21 @@
 spring:
   datasource:
     # 런타임 트래픽은 비특권 app_tenant 롤로 흐른다(RLS 적용). 비번은 V83 이 만든 롤의 고정 비번과 일치해야 한다.
-    url: jdbc:postgresql://localhost:5433/smartfirehub_test
+    # IntegrationTestBase 또는 @DynamicPropertySource가 Testcontainers URL로 덮어쓴다. 누락 시 로컬 DB에 붙지 않도록 실패 주소를 둔다.
+    url: jdbc:postgresql://testcontainers-import-missing.invalid:5432/MISSING_PostgresTestContainer
     username: app_tenant
     password: app_tenant
     hikari:
-      maximum-pool-size: 10
-      minimum-idle: 1
+      # Spring 컨텍스트가 여러 개 캐시되므로 각 컨텍스트의 유휴 DB 커넥션 수를 줄인다.
+      maximum-pool-size: 2
+      minimum-idle: 0
+      idle-timeout: 10000
       # app_tenant 롤/GRANT 는 Flyway(app)가 만든다. 첫 부팅 시 마이그레이션 전 접속 실패를 피하려고
       # 시작 접속 시도를 끄고 첫 쿼리에서 지연 접속한다.
       initialization-fail-timeout: -1
   flyway:
     # 마이그레이션은 롤 생성·GRANT·백필이 필요하므로 소유자 롤(app)로 실행한다.
-    url: jdbc:postgresql://localhost:5433/smartfirehub_test
+    url: jdbc:postgresql://testcontainers-import-missing.invalid:5432/MISSING_PostgresTestContainer
     user: app
     password: app
     validate-on-migrate: false
@@ -47,14 +50,13 @@ app:
     allowed-origins: http://localhost:5173
   pipeline:
     datasource:
-      url: jdbc:postgresql://localhost:5433/smartfirehub_test
+      url: jdbc:postgresql://testcontainers-import-missing.invalid:5432/MISSING_PostgresTestContainer
       password: pipeline_exec_pwd
     # 테넌트별 파이프라인 실행 롤(pipeline_executor_t{id}) 비밀번호 파생 HMAC 키.
     # RolePasswordSyncCallback 이 이 값으로 매 기동마다 DB 쪽 비밀번호를 맞춘다(T1 TenantPipelineRole).
     role-password-secret: test-tenant-pipeline-secret
-    # 자동 롤 프로비저닝을 끈다 — pg_roles 는 DB 가 아니라 클러스터 전역이고, 공유 test DB 에는
-    # 테스트가 정리하지 않은 테넌트가 수백 개 쌓여 있어(TenantSchemaProvisioner Javadoc 실측)
-    # 켜 두면 기동 치유가 그만큼의 LOGIN 롤을 만들어 영구히 남긴다.
+    # 자동 롤 프로비저닝을 끈다 — pg_roles 는 DB가 아니라 클러스터 전역이고, 통합 테스트는
+    # JVM 내 Testcontainers DB를 공유하므로 테스트 컨텍스트마다 LOGIN 롤을 만들면 스위트 실행 중 누적된다.
     # 기계장치 자체는 꺼지지 않는다 — TenantPipelineRoleProvisioner.ensureRole 은 이 플래그와
     # 무관하게 동작하며, 통합 테스트는 그것을 직접 부른다.
     role-auto-provision: false

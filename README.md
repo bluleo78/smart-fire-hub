@@ -14,7 +14,7 @@
 - Java 25 (`brew install openjdk@25` 또는 [SDKMAN](https://sdkman.io/))
 - Node.js 24+ (`brew install node`)
 - pnpm (`corepack enable pnpm`)
-- Docker & Docker Compose (PostgreSQL 실행용)
+- Docker (Testcontainers 테스트·코드 생성용), Docker Compose (로컬 서비스 실행용)
 
 ## 시작하기
 
@@ -42,6 +42,8 @@ pnpm test             # 전체 테스트
 pnpm lint             # 전체 린트
 pnpm typecheck        # 전체 타입체크
 ```
+
+`firehub-api` 통합 테스트와 명시적 jOOQ 코드 생성(`./gradlew generateJooq`)은 Testcontainers PostgreSQL을 사용하므로 Docker 데몬이 필요하며, 로컬 DB를 미리 시작할 필요는 없습니다. 일반 빌드는 추적된 jOOQ 생성 소스를 사용합니다.
 
 ## 개별 프로젝트 명령어
 
