@@ -68,7 +68,8 @@ describe('trigger-manager prompt safeguards (#577)', () => {
 
   it('agent.md Phase 1에 get_pipeline/get_dataset 존재 확인 + 404 시 생성 금지 규칙이 있어야 한다', () => {
     expect(agentMd).toMatch(/get_pipeline\(id=pipelineId\)/);
-    expect(agentMd).toMatch(/get_dataset\(id=datasetId\)/);
+    // #599 이후 DATASET_CHANGE 는 datasetIds(배열)이므로 원소마다 get_dataset 으로 존재 확인해야 한다
+    expect(agentMd).toMatch(/`datasetIds` 배열의 \*\*각 원소마다\*\* `get_dataset\(id\)`/);
     expect(agentMd).toMatch(/404면 \*\*create_trigger\/update_trigger를 호출하지 않고\*\*/);
     // list_triggers의 [] 반환을 존재 증거로 삼지 말 것
     expect(agentMd).toMatch(/list_triggers\(pipelineId\)`는 존재하지 않는 pipelineId에도 `\[\]`를 반환/);
