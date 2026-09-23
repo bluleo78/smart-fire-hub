@@ -7,6 +7,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.smartfirehub.settings.dto.ResolvedSettingResponse;
 import com.smartfirehub.settings.dto.SettingResponse;
+import com.smartfirehub.settings.model.AiCredentialSlot;
 import com.smartfirehub.settings.repository.TenantSettingsRepository;
 import com.smartfirehub.settings.service.AiCredentialService.AiCredentialUpsert;
 import com.smartfirehub.support.IntegrationTestBase;
@@ -63,6 +64,10 @@ class AiCredentialLeakGuardTest extends IntegrationTestBase {
     // AiCredentialServiceTest 의 @AfterEach 와 같은 순서(테넌트 행 삭제 → 플랫폼 행 원복) —
     // IntegrationTestBase.clearTenantContext() 보다 먼저 실행돼야 TenantContext.require() 가 통과한다.
     tenantSettingsRepository.delete(KEY);
+    // 분류 전용 묶음도 지운다 — 공유 test DB 의 기본 테넌트에 남으면 다른 테스트의 분류 해석이
+    // "분류 전용 설정됨"으로 뒤집힌다.
+    tenantSettingsRepository.delete(AiCredentialSlot.CLASSIFY.key());
+    tenantSettingsRepository.delete(AiCredentialSlot.CLASSIFY_MODEL_KEY);
     SettingsTestSupport.restoreSystemSettingValue(dsl, KEY, platformOriginal);
   }
 
@@ -159,5 +164,29 @@ class AiCredentialLeakGuardTest extends IntegrationTestBase {
             + settingsService.getResolvedByPrefix("ai")
             + settingsService.getAsMap("ai");
     assertThat(all).doesNotContain("sk-live-secret").doesNotContain(KEY).doesNotContain("agentType");
+  }
+
+  /** #707 — 분류 전용 묶음도 범용 경로(읽기·쓰기·삭제)로 새거나 반쪽만 바뀌지 않는다. */
+  @Test
+  void 분류_전용_두_키는_범용_경로로_읽거나_쓰거나_지울_수_없다() {
+    aiCredentialService.saveClassify(
+        new AiCredentialService.AiCredentialUpsert("sdk", Map.of(), Map.of("apiKey", "sk-classify")),
+        "claude-haiku-4-5",
+        USER);
+
+    for (String key : java.util.List.of(AiCredentialSlot.CLASSIFY.key(), AiCredentialSlot.CLASSIFY_MODEL_KEY)) {
+      assertThat(settingsService.getResolvedByPrefix("ai"))
+          .extracting(com.smartfirehub.settings.dto.ResolvedSettingResponse::key)
+          .as(key)
+          .doesNotContain(key);
+      assertThat(settingsService.getAsMap("ai")).as(key).doesNotContainKey(key);
+      assertThatThrownBy(() -> settingsService.getValue(key)).as(key).isInstanceOf(IllegalArgumentException.class);
+      assertThatThrownBy(() -> settingsService.updateSettings(Map.of(key, "x"), USER))
+          .as(key)
+          .isInstanceOf(IllegalArgumentException.class);
+      assertThatThrownBy(() -> settingsService.clearOverride(key)).as(key).isInstanceOf(IllegalArgumentException.class);
+    }
+    // 범용 쓰기가 거부됐으니 모델은 그대로다.
+    assertThat(aiCredentialService.readClassify().model()).isEqualTo("claude-haiku-4-5");
   }
 }

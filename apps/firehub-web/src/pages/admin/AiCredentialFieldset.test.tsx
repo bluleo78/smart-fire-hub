@@ -51,6 +51,7 @@ function makeCred(overrides: Partial<UseAiCredentialFormResult> = {}): UseAiCred
     save: vi.fn(async () => true),
     staleNotice: null,
     reset: vi.fn(),
+    reload: vi.fn(async () => {}),
     savedAgentType: 'opencode',
     typeChanged: false,
     ...overrides,

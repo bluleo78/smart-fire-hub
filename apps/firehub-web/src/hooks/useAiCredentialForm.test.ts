@@ -8,6 +8,7 @@
  * 재구현해 그것을 검증하지 않는다.
  */
 import { act, renderHook, waitFor } from '@testing-library/react';
+import { toast } from 'sonner';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { settingsApi } from '../api/settings';
@@ -414,5 +415,81 @@ describe('useAiCredentialForm', () => {
     const { result } = await renderLoaded();
     act(() => result.current.setAgentType('opencode'));
     expect(result.current.typeChanged).toBe(false);
+  });
+});
+
+describe('useAiCredentialForm — 엔드포인트 주입(#707 분류 탭 재사용)', () => {
+  it('enabled=false 면 조회하지 않고, true 가 되는 순간 주입된 api.get 을 한 번 부른다', async () => {
+    const get = vi.fn(async () => ({
+      data: { agentType: 'cli-api', payload: {}, secretFieldNames: ['apiKey'], configured: true, model: 'm' },
+    }));
+    const api = { get, put: vi.fn(async () => ({})), probe: vi.fn() };
+    const onResponse = vi.fn();
+    const { result, rerender } = renderHook(
+      ({ enabled }) => useAiCredentialForm({ api, enabled, onResponse }),
+      { initialProps: { enabled: false } },
+    );
+    expect(get).not.toHaveBeenCalled();
+    expect(mockedGet).not.toHaveBeenCalled();
+
+    rerender({ enabled: true });
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(result.current.agentType).toBe('cli-api');
+    expect(onResponse).toHaveBeenCalledWith(expect.objectContaining({ model: 'm' }));
+  });
+
+  it('save 는 주입된 api.put 으로 가고 채팅 PUT 은 부르지 않는다', async () => {
+    const api = {
+      get: vi.fn(async () => ({ data: { agentType: 'sdk', payload: {}, secretFieldNames: [], configured: false } })),
+      put: vi.fn(async () => ({})),
+      probe: vi.fn(),
+    };
+    const { result } = renderHook(() => useAiCredentialForm({ api }));
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    act(() => result.current.setSecretInput('apiKey', 'sk-x'));
+    await act(async () => {
+      await result.current.save();
+    });
+    expect(api.put).toHaveBeenCalledWith({ agentType: 'sdk', payload: {}, secret: { apiKey: 'sk-x' } });
+    expect(mockedPut).not.toHaveBeenCalled();
+  });
+
+  it('reload 는 주입된 api.get 을 다시 불러 서버 상태로 재시드한다 — 분류 탭의 "설정 해제" 뒤 경로다', async () => {
+    // 폼 밖의 쓰기(DELETE)가 서버 문서를 바꾼 뒤, 화면이 낡은 값을 그대로 보여주면 안 된다.
+    const get = vi
+      .fn()
+      .mockResolvedValueOnce({
+        data: { agentType: 'cli-api', payload: {}, secretFieldNames: ['apiKey'], configured: true, model: 'm1' },
+      })
+      .mockResolvedValueOnce({
+        data: { agentType: 'sdk', payload: {}, secretFieldNames: [], configured: false, model: '' },
+      });
+    const onResponse = vi.fn();
+    const api = { get, put: vi.fn(async () => ({})), probe: vi.fn() };
+    const { result } = renderHook(() => useAiCredentialForm({ api, onResponse }));
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(result.current.configured).toBe(true);
+
+    await act(async () => {
+      await result.current.reload();
+    });
+    expect(get).toHaveBeenCalledTimes(2);
+    expect(result.current.configured).toBe(false);
+    expect(result.current.agentType).toBe('sdk');
+    // 폼 밖의 값(모델)도 재조회 응답으로 다시 흘러야 한다 — 분류 탭이 이 통로로만 모델을 받는다.
+    expect(onResponse).toHaveBeenLastCalledWith(expect.objectContaining({ model: '' }));
+  });
+
+  it('조회 실패 토스트는 주입된 loadErrorMessage 를 쓴다 — 탭마다 다른 자원이라 문구가 달라야 한다', async () => {
+    const api = { get: vi.fn().mockRejectedValue(new Error('network down')), put: vi.fn(), probe: vi.fn() };
+    const { result } = renderHook(() =>
+      useAiCredentialForm({ api, loadErrorMessage: 'AI 분류 설정을 불러오지 못했습니다.' }),
+    );
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.loadFailed).toBe(true);
+    expect(vi.mocked(toast.error)).toHaveBeenCalledWith('AI 분류 설정을 불러오지 못했습니다.');
+    expect(vi.mocked(toast.error)).not.toHaveBeenCalledWith('AI 자격증명을 불러오지 못했습니다.');
   });
 });

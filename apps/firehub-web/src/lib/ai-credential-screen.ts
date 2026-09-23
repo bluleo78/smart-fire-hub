@@ -107,3 +107,13 @@ export function typeChangeConfirmDescription(savedAgentType: AgentType, agentTyp
     '이전 유형의 저장된 비밀이 삭제됩니다. 복구할 수 없습니다.'
   );
 }
+
+/**
+ * sdk/cli/cli-api 에서 고를 수 있는 Claude 모델 — AI 에이전트 탭과 AI 분류 탭(#707)이 같은 목록을
+ * 쓴다(탭마다 사본을 두면 모델이 늘 때 한쪽만 고쳐진다).
+ */
+export const CLAUDE_MODEL_OPTIONS: { value: string; label: string }[] = [
+  { value: 'claude-sonnet-5', label: 'Claude Sonnet 5' },
+  { value: 'claude-opus-4-8', label: 'Claude Opus 4.8' },
+  { value: 'claude-haiku-4-5', label: 'Claude Haiku 4.5' },
+];

@@ -27,6 +27,9 @@ import com.smartfirehub.pipeline.dto.AiClassifyConfig;
 import com.smartfirehub.pipeline.dto.AiClassifyConfig.OutputColumn;
 import com.smartfirehub.pipeline.dto.PipelineStepResponse;
 import com.smartfirehub.pipeline.repository.PipelineExecutionRepository;
+import com.smartfirehub.settings.model.AiCredential;
+import com.smartfirehub.settings.model.UnknownAgentTypeException;
+import com.smartfirehub.settings.service.AiCredentialService;
 import java.lang.reflect.Method;
 import java.math.BigDecimal;
 import java.sql.Timestamp;
@@ -64,6 +67,7 @@ class AiClassifyExecutorTest {
   private DSLContext dsl;
   private TransactionTemplate transactionTemplate;
   private PipelineExecutionRepository executionRepository;
+  private AiClassifyTargetResolver targetResolver;
 
   private AiClassifyExecutor executor;
 
@@ -86,6 +90,10 @@ class AiClassifyExecutorTest {
     // processBatch 는 테넌트 컨텍스트가 없으면 즉시 실패한다(캐시가 테넌트별 파티션이므로).
     TenantContext.set(1L);
 
+    // 기본은 미설정 테넌트(UseChat) — 기존 테스트 전부가 이 경로를 탄다(#707).
+    targetResolver = mock(AiClassifyTargetResolver.class);
+    when(targetResolver.resolve()).thenReturn(AiClassifyTarget.USE_CHAT);
+
     executor =
         new AiClassifyExecutor(
             aiAgentClient,
@@ -95,7 +103,8 @@ class AiClassifyExecutorTest {
             objectMapper,
             dsl,
             transactionTemplate,
-            executionRepository);
+            executionRepository,
+            targetResolver);
   }
 
   @AfterEach
@@ -193,7 +202,7 @@ class AiClassifyExecutorTest {
 
     assertThat(result.outputRows()).isEqualTo(0);
     assertThat(result.executionLog()).contains("No input rows");
-    verify(aiAgentClient, never()).classify(any(), anyLong());
+    verify(aiAgentClient, never()).classify(any(), any(), anyLong());
     verify(dataTableRowService, never()).insertBatch(anyString(), anyList(), anyList(), anyMap());
   }
 
@@ -219,7 +228,7 @@ class AiClassifyExecutorTest {
     AiClassifyExecutor.ExecutionResult result = executor.execute(step, 100L, 1L);
 
     assertThat(result.outputRows()).isEqualTo(0);
-    verify(aiAgentClient, never()).classify(any(), anyLong());
+    verify(aiAgentClient, never()).classify(any(), any(), anyLong());
   }
 
   @Test
@@ -277,7 +286,7 @@ class AiClassifyExecutorTest {
 
     assertThat(result.outputRows()).isEqualTo(1);
     assertThat(result.executionLog()).contains("1 cached");
-    verify(aiAgentClient, never()).classify(any(), anyLong());
+    verify(aiAgentClient, never()).classify(any(), any(), anyLong());
     verify(dataTableRowService, atLeastOnce())
         .insertBatch(eq("output_table"), anyList(), anyList(), anyMap());
     // APPEND → no swap/temp table
@@ -368,7 +377,7 @@ class AiClassifyExecutorTest {
             Map.of("source_id", 5L, "category", "animal", "score", 0.95));
     AiAgentClient.ClassifyResponse aiResponse =
         new AiAgentClient.ClassifyResponse(List.of(aiRow), 1, "claude");
-    when(aiAgentClient.classify(any(), eq(1L))).thenReturn(aiResponse);
+    when(aiAgentClient.classify(any(), any(), eq(1L))).thenReturn(aiResponse);
 
     PipelineStepResponse step = buildStep("APPEND", List.of(1L));
 
@@ -378,7 +387,7 @@ class AiClassifyExecutorTest {
     assertThat(result.executionLog()).contains("1 AI-processed");
     // 정상 응답이면 누락이 0으로 남는다(#694) — source_id 가 전부 맞아떨어진 경우의 회귀 방지.
     assertThat(result.executionLog()).contains("0 rows dropped");
-    verify(aiAgentClient).classify(any(), eq(1L));
+    verify(aiAgentClient).classify(any(), any(), eq(1L));
     verify(dataTableRowService).insertBatch(eq("output_table"), anyList(), anyList(), anyMap());
   }
 
@@ -397,7 +406,7 @@ class AiClassifyExecutorTest {
 
     // cache miss
     stubCacheMiss();
-    when(aiAgentClient.classify(any(), anyLong())).thenThrow(new RuntimeException("AI agent down"));
+    when(aiAgentClient.classify(any(), any(), anyLong())).thenThrow(new RuntimeException("AI agent down"));
 
     PipelineStepResponse step = buildStep("APPEND", List.of(1L));
 
@@ -437,7 +446,7 @@ class AiClassifyExecutorTest {
         .thenReturn(List.of(sourceRow));
 
     stubCacheMiss();
-    when(aiAgentClient.classify(any(), anyLong())).thenThrow(new RuntimeException("timeout"));
+    when(aiAgentClient.classify(any(), any(), anyLong())).thenThrow(new RuntimeException("timeout"));
 
     PipelineStepResponse step = buildStep("REPLACE", List.of(1L));
 
@@ -475,7 +484,7 @@ class AiClassifyExecutorTest {
 
     stubCacheMiss();
     // 예외 없이 결과만 비어 있다 — 그 행에 대한 응답이 없었던 경우
-    when(aiAgentClient.classify(any(), anyLong()))
+    when(aiAgentClient.classify(any(), any(), anyLong()))
         .thenReturn(new AiAgentClient.ClassifyResponse(List.of(), 0, "test-model"));
 
     PipelineStepResponse step = buildStep("REPLACE", List.of(1L));
@@ -516,7 +525,7 @@ class AiClassifyExecutorTest {
     Map<String, Object> okValues = new HashMap<>();
     okValues.put("source_id", 2);
     okValues.put("category", "A");
-    when(aiAgentClient.classify(any(), anyLong()))
+    when(aiAgentClient.classify(any(), any(), anyLong()))
         .thenThrow(new RuntimeException("first batch down"))
         .thenReturn(
             new AiAgentClient.ClassifyResponse(
@@ -559,7 +568,7 @@ class AiClassifyExecutorTest {
     when(condStep2.and(any(org.jooq.Condition.class))).thenReturn(condStep2);
     when(condStep2.fetchOne()).thenReturn(null);
 
-    when(aiAgentClient.classify(any(), anyLong())).thenThrow(new RuntimeException("AI agent down"));
+    when(aiAgentClient.classify(any(), any(), anyLong())).thenThrow(new RuntimeException("AI agent down"));
 
     // onError=FAIL_STEP 설정으로 Step을 재구성
     AiClassifyConfig failConfig =
@@ -646,7 +655,7 @@ class AiClassifyExecutorTest {
         .thenReturn(List.of(sourceRow(1L, "a"), sourceRow(2L, "b"), sourceRow(3L, "c")));
 
     stubCacheMiss();
-    when(aiAgentClient.classify(any(), anyLong()))
+    when(aiAgentClient.classify(any(), any(), anyLong()))
         .thenReturn(classifyResponse(1, "A"))
         .thenReturn(classifyResponse(2, "B"))
         .thenReturn(classifyResponse(3, "C"));
@@ -680,7 +689,7 @@ class AiClassifyExecutorTest {
         .thenReturn(List.of(sourceRow(1L, "ok"), sourceRow(2L, "boom")));
 
     stubCacheMiss();
-    when(aiAgentClient.classify(any(), anyLong()))
+    when(aiAgentClient.classify(any(), any(), anyLong()))
         .thenReturn(classifyResponse(1, "A"))
         .thenThrow(new RuntimeException("AI agent down"));
 
@@ -713,7 +722,7 @@ class AiClassifyExecutorTest {
         .thenReturn(List.of(sourceRow(1L, "a"), sourceRow(2L, "b")));
 
     stubCacheMiss();
-    when(aiAgentClient.classify(any(), anyLong()))
+    when(aiAgentClient.classify(any(), any(), anyLong()))
         .thenReturn(classifyResponse(1, "A"))
         .thenReturn(classifyResponse(2, "B"));
 
@@ -743,7 +752,7 @@ class AiClassifyExecutorTest {
         .thenReturn(List.of(sourceRow(1L, "a"), sourceRow(2L, "b")));
 
     stubCacheMiss();
-    when(aiAgentClient.classify(any(), anyLong()))
+    when(aiAgentClient.classify(any(), any(), anyLong()))
         .thenReturn(classifyResponse(1, "A"))
         .thenReturn(classifyResponse(2, "B"));
     doThrow(new RuntimeException("insert failed: column mismatch"))
@@ -758,7 +767,7 @@ class AiClassifyExecutorTest {
         .hasMessageContaining("insert failed");
 
     // 첫 배치에서 곧바로 떨어졌으므로 둘째 배치의 LLM 호출은 없다.
-    verify(aiAgentClient, times(1)).classify(any(), anyLong());
+    verify(aiAgentClient, times(1)).classify(any(), any(), anyLong());
     verify(dataTableService).dropTempTable("output_table");
     verify(dataTableService, never()).swapTable(anyString());
   }
@@ -780,7 +789,7 @@ class AiClassifyExecutorTest {
         .thenReturn(List.of(sourceRow(1L, "boom")));
 
     stubCacheMiss();
-    when(aiAgentClient.classify(any(), anyLong())).thenThrow(new RuntimeException("AI agent down"));
+    when(aiAgentClient.classify(any(), any(), anyLong())).thenThrow(new RuntimeException("AI agent down"));
 
     PipelineStepResponse step = buildStep("REPLACE", List.of(1L), 1);
 
@@ -986,7 +995,7 @@ class AiClassifyExecutorTest {
 
     stubCacheMiss();
     // 2행을 보냈는데 1번 행의 결과만 돌아왔다.
-    when(aiAgentClient.classify(any(), anyLong())).thenReturn(classifyResponse(1, "A"));
+    when(aiAgentClient.classify(any(), any(), anyLong())).thenReturn(classifyResponse(1, "A"));
 
     PipelineStepResponse step = buildStep("REPLACE", List.of(1L), 2, "FAIL_STEP");
 
@@ -1018,7 +1027,7 @@ class AiClassifyExecutorTest {
 
     stubCacheMiss();
     // 1번 행을 보냈는데 999번의 결과가 돌아왔다 — 예전에는 조회가 null 이라 그 행만 조용히 빠졌다.
-    when(aiAgentClient.classify(any(), anyLong())).thenReturn(classifyResponse(999, "A"));
+    when(aiAgentClient.classify(any(), any(), anyLong())).thenReturn(classifyResponse(999, "A"));
 
     PipelineStepResponse step = buildStep("REPLACE", List.of(1L), 2, "FAIL_STEP");
 
@@ -1044,7 +1053,7 @@ class AiClassifyExecutorTest {
 
     stubCacheMiss();
     // 두 결과가 모두 1번이라고 주장한다 — 2번 행은 짝을 잃는다.
-    when(aiAgentClient.classify(any(), anyLong()))
+    when(aiAgentClient.classify(any(), any(), anyLong()))
         .thenReturn(classifyResponse(classifyRow(1, "A"), classifyRow(1, "B")));
 
     PipelineStepResponse step = buildStep("REPLACE", List.of(1L), 2, "FAIL_STEP");
@@ -1076,7 +1085,7 @@ class AiClassifyExecutorTest {
     // batchSize=2 → 배치 2개. 첫 배치가 통째로 실패하고 CONTINUE 가 건너뛴다.
     // **배치 크기를 1보다 크게 잡는 것이 이 테스트의 요점**이다 — 1이면 "배치 1개 실패"와
     // "1행 누락"이 같은 숫자라 두 지표가 구분되는지를 증명하지 못한다.
-    when(aiAgentClient.classify(any(), anyLong()))
+    when(aiAgentClient.classify(any(), any(), anyLong()))
         .thenThrow(new RuntimeException("boom"))
         .thenReturn(classifyResponse(classifyRow(3, "C"), classifyRow(4, "D")));
 
@@ -1122,8 +1131,128 @@ class AiClassifyExecutorTest {
         .hasMessageContaining("겹친 id [1]")
         .hasMessageContaining("입력 데이터셋 2개");
 
-    verify(aiAgentClient, never()).classify(any(), anyLong());
+    verify(aiAgentClient, never()).classify(any(), any(), anyLong());
     // 임시 테이블을 만들기 전에 멈춘다 — 정리할 것을 남기지 않는다.
     verify(dataTableService, never()).createTempTable(anyString());
+  }
+
+  /** 해시 회귀 가드용 고정 설정 — 프롬프트·출력 컬럼만 해시 입력이다(입력 컬럼·배치 크기·onError 는 무관). */
+  private static final AiClassifyConfig FIXED_CONFIG =
+      new AiClassifyConfig(
+          "Classify rows",
+          List.of(new OutputColumn("category", "TEXT"), new OutputColumn("score", "NUMERIC")),
+          List.of("id", "text"),
+          20,
+          "CONTINUE");
+
+  /** 미설정 테넌트의 현행 promptHash — 이 값이 바뀌면 배포 즉시 전 테넌트 캐시가 1회 전량 미스한다. */
+  private static final String LEGACY_PROMPT_HASH = "23c69372";
+
+  @Test
+  void promptHash_미설정이면_현행_고정값과_같다() {
+    assertThat(executor.buildPromptHash(FIXED_CONFIG, AiClassifyTarget.USE_CHAT))
+        .isEqualTo(LEGACY_PROMPT_HASH);
+  }
+
+  @Test
+  void promptHash_분류_전용이면_갈리고_모델만_달라도_갈리며_비밀로는_갈리지_않는다() {
+    AiClassifyTarget haiku =
+        new AiClassifyTarget.Dedicated(new AiCredential.CliApi("sk-a"), "claude-haiku-4-5");
+    AiClassifyTarget sonnet =
+        new AiClassifyTarget.Dedicated(new AiCredential.CliApi("sk-a"), "claude-sonnet-5");
+    AiClassifyTarget haikuOtherKey =
+        new AiClassifyTarget.Dedicated(new AiCredential.CliApi("sk-b"), "claude-haiku-4-5");
+
+    String h1 = executor.buildPromptHash(FIXED_CONFIG, haiku);
+    assertThat(h1).isNotEqualTo(LEGACY_PROMPT_HASH).hasSize(8);
+    assertThat(executor.buildPromptHash(FIXED_CONFIG, sonnet)).isNotEqualTo(h1);
+    assertThat(executor.buildPromptHash(FIXED_CONFIG, haikuOtherKey)).isEqualTo(h1);
+    // 해제 = UseChat 으로 돌아가면 옛 해시로 복귀한다(옛 캐시 재히트).
+    assertThat(executor.buildPromptHash(FIXED_CONFIG, AiClassifyTarget.USE_CHAT))
+        .isEqualTo(LEGACY_PROMPT_HASH);
+  }
+
+  /**
+   * 미설정 = 현행과 바이트 동일: 채팅 자격증명이 깨져 있어도(알 수 없는 agentType) 전 행이 캐시
+   * 히트면 ai-agent 를 부르지 않고 성공한다. 해석기는 <b>실물</b>을 쓴다 — 해석기가 채팅 자격증명을
+   * 미리 해석하도록 바뀌면 이 테스트가 빨개진다.
+   */
+  @Test
+  @SuppressWarnings({"unchecked", "rawtypes"})
+  void 미설정_테넌트는_채팅_자격증명이_깨져도_캐시_전량_히트면_에이전트_호출_없이_성공한다() {
+    AiCredentialService brokenChat = mock(AiCredentialService.class);
+    when(brokenChat.resolveClassify()).thenReturn(Optional.empty());
+    when(brokenChat.resolve()).thenThrow(new UnknownAgentTypeException("martian"));
+    AiClassifyExecutor realResolverExecutor =
+        new AiClassifyExecutor(
+            aiAgentClient,
+            dataTableRowService,
+            dataTableService,
+            datasetRepository,
+            objectMapper,
+            dsl,
+            transactionTemplate,
+            executionRepository,
+            new AiClassifyTargetResolver(brokenChat));
+
+    when(datasetRepository.findTableNameById(200L)).thenReturn(Optional.of("output_table"));
+    when(datasetRepository.findTableNameById(1L)).thenReturn(Optional.of("source_table"));
+    when(dataTableRowService.countRows("source_table")).thenReturn(1L);
+    when(dataTableRowService.queryData(anyString(), any(), any(), anyInt(), anyInt()))
+        .thenReturn(List.of(new HashMap<>(Map.of("id", 5L, "text", "cats"))));
+    Record1<JSONB> hit = mock(Record1.class);
+    when(hit.get(any(org.jooq.Field.class)))
+        .thenReturn(JSONB.valueOf("{\"category\":\"animal\",\"score\":0.9}"));
+    stubCacheLookup(hit);
+
+    AiClassifyExecutor.ExecutionResult result =
+        realResolverExecutor.execute(buildStep("APPEND", List.of(1L)), 100L, 1L);
+
+    assertThat(result.outputRows()).isEqualTo(1);
+    assertThat(result.executionLog()).contains("1 cached");
+    verify(aiAgentClient, never()).classify(any(), any(), anyLong());
+    verify(brokenChat, never()).resolve();
+  }
+
+  /**
+   * 분류 전용이면 해시와 요청이 같은 target 을 보도록, 배치가 여럿이어도 해석은 실행당 한 번이고
+   * 모든 배치에 같은 인스턴스가 넘어간다(#707 §4).
+   */
+  @Test
+  @SuppressWarnings({"unchecked", "rawtypes"})
+  void execute_는_target_을_한_번만_해석해_모든_배치에_같은_target_을_넘긴다() {
+    AiClassifyTarget dedicated =
+        new AiClassifyTarget.Dedicated(new AiCredential.CliApi("sk-c"), "claude-haiku-4-5");
+    when(targetResolver.resolve()).thenReturn(dedicated);
+    when(datasetRepository.findTableNameById(200L)).thenReturn(Optional.of("output_table"));
+    when(datasetRepository.findTableNameById(1L)).thenReturn(Optional.of("source_table"));
+    when(dataTableRowService.countRows("source_table")).thenReturn(2L);
+    Map<String, Object> r5 = new HashMap<>(Map.of("id", 5L, "text", "cats"));
+    Map<String, Object> r6 = new HashMap<>(Map.of("id", 6L, "text", "dogs"));
+    when(dataTableRowService.queryData(anyString(), any(), any(), anyInt(), anyInt()))
+        .thenReturn(List.of(r5, r6));
+    stubCacheMiss();
+    InsertSetStep insertSetStep = mock(InsertSetStep.class, org.mockito.Mockito.RETURNS_DEEP_STUBS);
+    when(dsl.insertInto(any(org.jooq.Table.class))).thenReturn(insertSetStep);
+    when(aiAgentClient.classify(any(), any(), anyLong()))
+        .thenReturn(
+            new AiAgentClient.ClassifyResponse(
+                List.of(
+                    new AiAgentClient.ClassifyRowResult(
+                        Map.of("source_id", 5L, "category", "a", "score", 1))),
+                1,
+                "m"),
+            new AiAgentClient.ClassifyResponse(
+                List.of(
+                    new AiAgentClient.ClassifyRowResult(
+                        Map.of("source_id", 6L, "category", "b", "score", 1))),
+                1,
+                "m"));
+
+    executor.execute(buildStep("APPEND", List.of(1L), 1), 100L, 1L);
+
+    verify(targetResolver, times(1)).resolve();
+    verify(aiAgentClient, times(2))
+        .classify(any(), org.mockito.ArgumentMatchers.same(dedicated), eq(1L));
   }
 }

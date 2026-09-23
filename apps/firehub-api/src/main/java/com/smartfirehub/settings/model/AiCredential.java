@@ -114,6 +114,28 @@ public sealed interface AiCredential {
     return null;
   }
 
+  /**
+   * 분류 전용 캐시 해시에 섞을 "어느 공급자로 분류했는가" 식별자(#707). <b>비밀은 절대 담지
+   * 않는다</b> — 해시는 {@code ai_inference_cache.prompt_version} 에 남는 값의 입력이다.
+   *
+   * <p>형식은 {@code agentType|providerId|baseUrl} 이다. 공급자 개념이 없는 유형은 뒤 두 칸이 빈다.
+   * 소비처가 {@code instanceof} 로 꺼내 쓰지 않도록({@code AiCredentialSwitchGuardTest}) 인터페이스
+   * 메서드로 둔다.
+   */
+  default String cacheIdentity() {
+    return agentType() + "||";
+  }
+
+  /**
+   * 로그용 비밀 없는 요약 {@code agentType=…, model=…}(#707). 자격증명과 모델을 함께 들고 다니는
+   * record 들({@code AiClassifyTarget.Dedicated}, {@code AiCredentialService.ClassifyBinding})의
+   * toString 이 공용으로 쓴다 — 기본 record toString 은 비밀 필드까지 찍기 때문이다.
+   * {@link #agentType()} 외의 필드는 읽지 않는다.
+   */
+  default String nonSecretSummary(String model) {
+    return "agentType=" + agentType() + ", model=" + model;
+  }
+
   /** 빈 문자열이면 키를 생략하는 put — 세 소비처가 쓰던 {@code if (!blank) put} 관용구. */
   private static void putIfPresent(Map<String, Object> body, String key, String value) {
     if (value != null && !value.isBlank()) {
@@ -257,6 +279,12 @@ public sealed interface AiCredential {
     @Override
     public String modelToSend(java.util.function.Supplier<String> configuredModel) {
       return configuredModel.get();
+    }
+
+    /** 같은 opencode 라도 공급자·게이트웨이가 다르면 분류 결과가 다르므로 둘 다 식별자에 싣는다. */
+    @Override
+    public String cacheIdentity() {
+      return agentType() + "|" + providerId + "|" + baseUrl;
     }
 
     /** 세 경로가 같은 문구를 보여야 하므로 문구도 여기서 만든다. */

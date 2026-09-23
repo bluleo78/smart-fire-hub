@@ -7,7 +7,11 @@
 import type { ApiConnectionResponse } from '@/types/api-connection';
 import type { AuditLogResponse } from '@/types/auditLog';
 import type { PermissionResponse, RoleDetailResponse } from '@/types/role';
-import type { AiCredentialResponse, ResolvedSettingResponse } from '@/types/settings';
+import type {
+  AiClassifyCredentialResponse,
+  AiCredentialResponse,
+  ResolvedSettingResponse,
+} from '@/types/settings';
 
 /** 권한(Permission) 응답 객체 생성 */
 export function createPermission(overrides?: Partial<PermissionResponse>): PermissionResponse {
@@ -143,6 +147,16 @@ export function createAiCredential(overrides?: Partial<AiCredentialResponse>): A
     configured: true,
     ...overrides,
   };
+}
+
+/**
+ * `GET /settings/ai-classify-credential` 응답(#707). 기본은 **미설정** — 배포 직후 모든 테넌트의
+ * 상태이고, 이때 AI 분류는 AI 에이전트 설정을 통째로 쓴다.
+ */
+export function createAiClassifyCredential(
+  overrides?: Partial<AiClassifyCredentialResponse>,
+): AiClassifyCredentialResponse {
+  return { agentType: 'sdk', payload: {}, secretFieldNames: [], configured: false, model: '', ...overrides };
 }
 
 /** SMTP **연결 번들** 5키 — 백엔드 `SettingsService.SMTP_CONNECTION_KEYS` 와 같은 집합이다. */

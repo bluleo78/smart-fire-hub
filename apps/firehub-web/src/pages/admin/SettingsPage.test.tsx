@@ -26,6 +26,7 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { settingsApi } from '../../api/settings';
+import type { UseAiClassifyFormResult } from '../../hooks/useAiClassifyForm';
 import type { UseAiCredentialFormResult } from '../../hooks/useAiCredentialForm';
 import { useAiCredentialForm } from '../../hooks/useAiCredentialForm';
 import { useSettingsOverrideForm } from '../../hooks/useSettingsOverrideForm';
@@ -44,6 +45,29 @@ vi.mock('../../hooks/useAiCredentialForm', async () => {
   );
   return { ...actual, useAiCredentialForm: vi.fn() };
 });
+
+// AI 분류 탭(#707)은 이 파일의 관심사가 아니다 — 실제 훅이 `aiClassifyCredentialApi` 를 부르지
+// 않도록(위 `api/settings` mock 에는 그 객체가 없다) 최소 계약만 흉내 낸다.
+vi.mock('../../hooks/useAiClassifyForm', () => ({
+  // `cred` 까지 갖춘 완전한 계약을 돌려준다 — 빠뜨리면 이 파일에서 "AI 분류" 탭을 여는 테스트가
+  // 렌더 중 undefined 접근으로 죽는다(mock 은 훅 호출 시점에 평가되므로 makeCred 를 써도 된다).
+  useAiClassifyForm: (): UseAiClassifyFormResult => ({
+    cred: makeCred({ configured: false }),
+    activated: false,
+    activate: vi.fn(),
+    editing: false,
+    startEditing: vi.fn(),
+    cancelEditing: vi.fn(),
+    model: '',
+    setModel: vi.fn(),
+    modelError: null,
+    hasUnsavedInput: false,
+    isSaving: false,
+    isClearing: false,
+    save: vi.fn(async () => true),
+    clear: vi.fn(async () => {}),
+  }),
+}));
 
 vi.mock('../../hooks/useSettingsOverrideForm', () => ({
   useSettingsOverrideForm: vi.fn(),
@@ -89,6 +113,7 @@ function makeCred(overrides: Partial<UseAiCredentialFormResult> = {}): UseAiCred
     save: vi.fn(async () => true),
     staleNotice: null,
     reset: vi.fn(),
+    reload: vi.fn(async () => {}),
     savedAgentType: 'sdk',
     typeChanged: false,
     ...overrides,

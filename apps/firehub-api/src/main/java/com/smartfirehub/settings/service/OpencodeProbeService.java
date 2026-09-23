@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.apiconnection.service.UrlUtils;
 import com.smartfirehub.pipeline.service.executor.SsrfException;
 import com.smartfirehub.pipeline.service.executor.SsrfProtectionService;
+import com.smartfirehub.settings.model.AiCredentialSlot;
 import io.netty.channel.ChannelOption;
 import java.net.InetAddress;
 import java.net.URI;
@@ -207,7 +208,20 @@ public class OpencodeProbeService {
    *     키 없이는 재사용할 수 없을 때(둘 다 요청 형태 문제 — 400)
    */
   public ProbeResult probe(String baseUrl, String apiKey) {
-    String effectiveKey = resolveApiKey(baseUrl, apiKey);
+    // 채팅 슬롯 프로브 — 기존 호출처 진입점(#707 이전 동작 그대로).
+    return probe(AiCredentialSlot.CHAT, baseUrl, apiKey);
+  }
+
+  /**
+   * {@link #probe(String, String)} 와 같되, 생략된 {@code apiKey} 를 <b>어느 슬롯의</b> 저장 키로
+   * 채울지 지정한다(#707). 슬롯을 섞지 않는다 — 분류 슬롯 프로브가 채팅 슬롯 키를 빌려 분류
+   * 게이트웨이로 보내면(또는 그 반대) 테넌트가 그 대상에 준 적 없는 키가 전송된다.
+   *
+   * @param slot 폴백 저장 키를 읽을 슬롯
+   * @throws IllegalArgumentException {@link #probe(String, String)} 과 같은 조건(그 슬롯 기준)
+   */
+  public ProbeResult probe(AiCredentialSlot slot, String baseUrl, String apiKey) {
+    String effectiveKey = resolveApiKey(slot, baseUrl, apiKey);
 
     // 가드 본체는 validateTargetOnly() 하나다 — 이 경로도 그것을 통과해야만 doRequest 에 도달한다.
     // (영어권 표현으로 나누어 복붙하지 않는다 — 두 사본이 갈라지면 한쪽에만 새 가드가 들어간다.)
@@ -237,11 +251,20 @@ public class OpencodeProbeService {
    *     키가 없거나 baseUrl 이 저장된 값과 달라 키 없이는 재사용할 수 없을 때(400 신호)
    */
   public ProbeResult probe(TargetCheck check, String apiKey) {
+    // 채팅 슬롯 — 기존 호출처 진입점.
+    return probe(AiCredentialSlot.CHAT, check, apiKey);
+  }
+
+  /**
+   * {@link #probe(TargetCheck, String)} 의 슬롯 지정판(#707). 생략된 {@code apiKey} 는 {@code slot}
+   * 의 저장 키에서만 채운다.
+   */
+  public ProbeResult probe(AiCredentialSlot slot, TargetCheck check, String apiKey) {
     if (!check.ok()) {
       throw new IllegalStateException(
           "가드에 실패한 TargetCheck 로 probe 를 부를 수 없다 — 호출부가 ok() 를 먼저 확인했어야 한다");
     }
-    String effectiveKey = resolveApiKey(check.baseUrl, apiKey);
+    String effectiveKey = resolveApiKey(slot, check.baseUrl, apiKey);
     return doRequest(check.modelsUri, effectiveKey);
   }
 
@@ -368,16 +391,18 @@ public class OpencodeProbeService {
 
   /**
    * 요청에 {@code apiKey} 가 있으면 그대로 쓴다. 없으면(생략/공백) 테넌트 자신의 저장된 opencode
-   * 자격증명으로만 폴백한다 — 유형 필터가 있는 {@link AiCredentialService#tenantOpencodeCredential()}
-   * 를 쓰고 {@link AiCredentialService#resolve()} 는 쓰지 않는다(클래스 javadoc 참고).
+   * 자격증명으로만 폴백한다 — 유형 필터가 있는 {@link
+   * AiCredentialService#tenantOpencodeCredential(AiCredentialSlot)} 를 쓰고 {@link
+   * AiCredentialService#resolve()} 는 쓰지 않는다(클래스 javadoc 참고). 폴백은 {@code slot} 의 행만
+   * 본다 — 다른 슬롯의 키는 빌리지 않는다(#707).
    */
-  private String resolveApiKey(String baseUrl, String apiKey) {
+  private String resolveApiKey(AiCredentialSlot slot, String baseUrl, String apiKey) {
     if (apiKey != null && !apiKey.isBlank()) {
       return apiKey;
     }
 
     Optional<AiCredentialService.StoredOpencodeCredential> stored =
-        aiCredentialService.tenantOpencodeCredential();
+        aiCredentialService.tenantOpencodeCredential(slot);
     if (stored.isEmpty() || stored.get().apiKey().isBlank()) {
       throw new IllegalArgumentException(MSG_NO_STORED_KEY);
     }

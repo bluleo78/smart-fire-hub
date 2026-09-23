@@ -54,10 +54,13 @@ export function OpencodeModelField({
   cred,
   modelValue,
   onModelChange,
+  id = 'ai-model',
 }: {
   cred: UseAiCredentialFormResult;
   modelValue: string;
   onModelChange: (value: string) => void;
+  /** 모델 입력 요소의 DOM id — 두 인스턴스(채팅·분류, #707)가 같은 id 를 만들지 않게 한다. */
+  id?: string;
 }) {
   const providerId = cred.payload.providerId ?? '';
   const bareModel = stripProviderPrefix(modelValue, providerId);
@@ -93,7 +96,7 @@ export function OpencodeModelField({
   if (manualOverride) {
     field = (
       <Input
-        id="ai-model"
+        id={id}
         value={bareModel}
         onChange={(e) => handleFreeInputChange(e.target.value)}
         placeholder="예: gpt-4o"
@@ -104,7 +107,7 @@ export function OpencodeModelField({
     // 실패 — 미로드와 같은 모양이 되지 않도록 오류 문구 + 전환 버튼을 반드시 함께 보여준다.
     // value 는 빈 문자열이 아니라 저장된 값(bareModel)이다(Minor #8, fix round 1) — 로딩에
     // 실패했다고 해서 이미 저장돼 있던 모델까지 화면에서 사라진 것처럼 보이면 안 된다.
-    field = <Input id="ai-model" value={bareModel} disabled placeholder="먼저 모델을 불러오세요" />;
+    field = <Input id={id} value={bareModel} disabled placeholder="먼저 모델을 불러오세요" />;
     hint = (
       <div className="space-y-1.5">
         <p className="text-sm text-destructive">{cred.modelsError}</p>
@@ -116,11 +119,11 @@ export function OpencodeModelField({
   } else if (cred.models === null) {
     // 미로드도 실패와 같은 이유로 bareModel 을 보여준다(Minor #8) — "아직 안 눌렀을 뿐"이지
     // 값이 없어진 게 아니다.
-    field = <Input id="ai-model" value={bareModel} disabled placeholder="먼저 모델을 불러오세요" />;
+    field = <Input id={id} value={bareModel} disabled placeholder="먼저 모델을 불러오세요" />;
   } else if (cred.models.length === 0) {
     field = (
       <Input
-        id="ai-model"
+        id={id}
         value={bareModel}
         onChange={(e) => handleFreeInputChange(e.target.value)}
         placeholder="예: gpt-4o"
@@ -137,7 +140,7 @@ export function OpencodeModelField({
         value={bareModel === '' ? undefined : bareModel}
         onValueChange={(v) => onModelChange(withProviderPrefix(v, providerId))}
       >
-        <SelectTrigger id="ai-model" className="w-full">
+        <SelectTrigger id={id} className="w-full">
           <SelectValue placeholder="모델을 선택하세요" />
         </SelectTrigger>
         <SelectContent>
@@ -181,10 +184,27 @@ export function OpencodeModelField({
 
 export interface AiCredentialFieldsetProps {
   cred: UseAiCredentialFormResult;
-  authStatus: { valid: boolean; email?: string; subscriptionType?: string } | null;
-  isVerifying: boolean;
-  onVerifyAuth: () => void;
+  authStatus?: { valid: boolean; email?: string; subscriptionType?: string } | null;
+  isVerifying?: boolean;
+  /** 없으면 "인증 확인" 버튼·배지를 그리지 않는다 — 분류 탭(#707)은 Anthropic 인증 상태 개념이 없다. */
+  onVerifyAuth?: () => void;
+  /** DOM id 접두어. 두 인스턴스(채팅·분류)가 같은 id 를 만들지 않게 한다(#707). */
+  idPrefix?: string;
+  /** 에이전트 유형 Select 아래 설명 문구. */
+  agentTypeDescription?: string;
+  /**
+   * 미설정(`configured:false`) 안내. 생략하면 채팅 탭의 "AI 설정이 없습니다…" 경고, `null` 이면
+   * 아무것도 그리지 않는다 — 분류 탭에서 미설정은 "채팅 설정 사용"이라 경고가 틀린 말이다.
+   */
+  unconfiguredNotice?: ReactNode;
 }
+
+/** 하위 폼들이 공유하는 인증 확인 관련 props — 본체가 기본값을 채워 넘긴다. */
+type AuthProps = {
+  authStatus: AiCredentialFieldsetProps['authStatus'];
+  isVerifying: boolean;
+  onVerifyAuth?: () => void;
+};
 
 /** OAuth 토큰/API 키 입력 옆의 "✓ 인증됨" 배지 — sdk/cli/cli-api 세 유형에서만 그린다(opencode 는
  * Anthropic 인증 개념이 없어 이 버튼·배지 자체가 없다, 설계서 §184-189 표). */
@@ -234,6 +254,9 @@ export function AiCredentialFieldset({
   authStatus,
   isVerifying,
   onVerifyAuth,
+  idPrefix = 'ai-cred',
+  agentTypeDescription = 'AI 채팅에 사용할 에이전트 유형',
+  unconfiguredNotice,
 }: AiCredentialFieldsetProps) {
   // 최초 조회(GET)가 실패하면 훅은 안전한 초기값(`configured:false, secretFieldNames:[]`)으로
   // 주저앉는다. 이 초기값을 평소 렌더 경로에 흘리면 "AI 설정이 없습니다"를 <b>사실</b>처럼
@@ -263,17 +286,23 @@ export function AiCredentialFieldset({
   return (
     <CredentialShell className="space-y-6">
       {/* 자격증명은 테넌트 전용이라(#706) 미설정은 곧 "AI 기능 중단"이다 — 입력 폼
-          바로 위에 지속 안내로 알린다(서버가 실제로 configured:false 라고 답한 경우에만 여기 온다). */}
-      {!cred.configured && (
-        <InlineBanner variant="warning" icon={<AlertTriangle />}>
-          AI 설정이 없습니다. 설정해야 AI 기능을 쓸 수 있습니다.
-        </InlineBanner>
-      )}
+          바로 위에 지속 안내로 알린다(서버가 실제로 configured:false 라고 답한 경우에만 여기 온다).
+          호출부가 `unconfiguredNotice` 를 넘기면 그것을 그린다(`null` 이면 아무것도 없음, #707). */}
+      {!cred.configured &&
+        (unconfiguredNotice === undefined ? (
+          <InlineBanner variant="warning" icon={<AlertTriangle />}>
+            AI 설정이 없습니다. 설정해야 AI 기능을 쓸 수 있습니다.
+          </InlineBanner>
+        ) : (
+          unconfiguredNotice
+        ))}
 
       <CredentialForm
         cred={cred}
-        authStatus={authStatus}
-        isVerifying={isVerifying}
+        idPrefix={idPrefix}
+        agentTypeDescription={agentTypeDescription}
+        authStatus={authStatus ?? null}
+        isVerifying={isVerifying ?? false}
         onVerifyAuth={onVerifyAuth}
       />
     </CredentialShell>
@@ -283,26 +312,27 @@ export function AiCredentialFieldset({
 /** 우리 조직 자격증명 입력 폼 — 유형(맨 앞) → 유형별 필드(설계서 §180 공통 레이아웃). */
 function CredentialForm({
   cred,
+  idPrefix,
+  agentTypeDescription,
   authStatus,
   isVerifying,
   onVerifyAuth,
-}: {
+}: AuthProps & {
   cred: UseAiCredentialFormResult;
-  authStatus: AiCredentialFieldsetProps['authStatus'];
-  isVerifying: boolean;
-  onVerifyAuth: () => void;
+  idPrefix: string;
+  agentTypeDescription: string;
 }) {
   // 잠김(403)은 상위 `AiCredentialFieldset` 이 이미 걸렀으므로 여기 도달하면 항상 편집 가능하다 —
   // 그래서 입력칸들에 disabled 분기가 없다.
   return (
     <div className="space-y-4">
       <div className="space-y-2">
-        <Label htmlFor="ai-cred-agent-type">에이전트 유형</Label>
+        <Label htmlFor={`${idPrefix}-agent-type`}>에이전트 유형</Label>
         <Select
           value={cred.agentType}
           onValueChange={(v) => cred.setAgentType(v as AgentType)}
         >
-          <SelectTrigger id="ai-cred-agent-type" className="w-full max-w-md">
+          <SelectTrigger id={`${idPrefix}-agent-type`} className="w-full max-w-md">
             <SelectValue placeholder="에이전트 유형을 선택하세요" />
           </SelectTrigger>
           <SelectContent>
@@ -313,7 +343,7 @@ function CredentialForm({
             ))}
           </SelectContent>
         </Select>
-        <p className="text-sm text-muted-foreground">AI 채팅에 사용할 에이전트 유형</p>
+        <p className="text-sm text-muted-foreground">{agentTypeDescription}</p>
         {/* 유형 전환 경고(설계서 §193) — 저장된 유형과 다를 때만, Select 바로 아래 정적 안내로. */}
         {cred.typeChanged && (
           <p className="text-sm text-destructive">
@@ -324,10 +354,11 @@ function CredentialForm({
       </div>
 
       {cred.agentType === 'opencode' ? (
-        <OpencodeFields cred={cred} />
+        <OpencodeFields cred={cred} idPrefix={idPrefix} />
       ) : (
         <ClaudeFields
           cred={cred}
+          idPrefix={idPrefix}
           authStatus={authStatus}
           isVerifying={isVerifying}
           onVerifyAuth={onVerifyAuth}
@@ -338,17 +369,17 @@ function CredentialForm({
 }
 
 /** sdk/cli/cli-api 세 유형의 입력 — OAuth 토큰(cli·sdk)·API 키(cli-api·sdk), 유지되는 "인증
- * 확인" 버튼(설계서 §184-189, 경쟁 조건 가드는 페이지가 그대로 들고 있다). */
+ * 확인" 버튼(설계서 §184-189, 경쟁 조건 가드는 페이지가 그대로 들고 있다). `onVerifyAuth` 가
+ * 없으면(분류 탭, #707) 인증 확인 버튼·배지를 그리지 않는다. */
 function ClaudeFields({
   cred,
+  idPrefix,
   authStatus,
   isVerifying,
   onVerifyAuth,
-}: {
+}: AuthProps & {
   cred: UseAiCredentialFormResult;
-  authStatus: AiCredentialFieldsetProps['authStatus'];
-  isVerifying: boolean;
-  onVerifyAuth: () => void;
+  idPrefix: string;
 }) {
   const showOauth = cred.agentType === 'cli' || cred.agentType === 'sdk';
   const showApiKey = cred.agentType === 'cli-api' || cred.agentType === 'sdk';
@@ -360,66 +391,70 @@ function ClaudeFields({
     <div className="space-y-4">
       {showOauth && (
         <div className="space-y-2">
-          <Label htmlFor="ai-cred-oauth-token">OAuth 토큰</Label>
+          <Label htmlFor={`${idPrefix}-oauth-token`}>OAuth 토큰</Label>
           <div className="flex gap-2 max-w-md">
             <Input
-              id="ai-cred-oauth-token"
+              id={`${idPrefix}-oauth-token`}
               type="password"
               className="flex-1"
               value={cred.secretInputs.oauthToken ?? ''}
               onChange={(e) => cred.setSecretInput('oauthToken', e.target.value)}
               placeholder="sk-ant-oat01-..."
-              aria-describedby="ai-cred-oauth-token-desc ai-cred-oauth-token-hint"
+              aria-describedby={`${idPrefix}-oauth-token-desc ${idPrefix}-oauth-token-hint`}
             />
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={onVerifyAuth}
-              disabled={verifyDisabled}
-              className="shrink-0"
-            >
-              <ShieldCheck className="h-3.5 w-3.5" />
-              {isVerifying ? '검증 중...' : '인증 확인'}
-            </Button>
+            {onVerifyAuth && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={onVerifyAuth}
+                disabled={verifyDisabled}
+                className="shrink-0"
+              >
+                <ShieldCheck className="h-3.5 w-3.5" />
+                {isVerifying ? '검증 중...' : '인증 확인'}
+              </Button>
+            )}
           </div>
-          <p id="ai-cred-oauth-token-desc" className="text-sm text-muted-foreground">
+          <p id={`${idPrefix}-oauth-token-desc`} className="text-sm text-muted-foreground">
             로컬에서 claude setup-token으로 발급받은 OAuth 토큰
-            <AuthBadge authStatus={authStatus} />
+            {onVerifyAuth && <AuthBadge authStatus={authStatus} />}
           </p>
-          <div id="ai-cred-oauth-token-hint">{secretHint('oauthToken', cred)}</div>
+          <div id={`${idPrefix}-oauth-token-hint`}>{secretHint('oauthToken', cred)}</div>
         </div>
       )}
       {showApiKey && (
         <div className="space-y-2">
-          <Label htmlFor="ai-cred-api-key">API 키</Label>
+          <Label htmlFor={`${idPrefix}-api-key`}>API 키</Label>
           <div className="flex gap-2 max-w-md">
             <Input
-              id="ai-cred-api-key"
+              id={`${idPrefix}-api-key`}
               type="password"
               className="flex-1"
               value={cred.secretInputs.apiKey ?? ''}
               onChange={(e) => cred.setSecretInput('apiKey', e.target.value)}
               placeholder="sk-ant-..."
-              aria-describedby="ai-cred-api-key-desc ai-cred-api-key-hint"
+              aria-describedby={`${idPrefix}-api-key-desc ${idPrefix}-api-key-hint`}
             />
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={onVerifyAuth}
-              disabled={verifyDisabled}
-              className="shrink-0"
-            >
-              <ShieldCheck className="h-3.5 w-3.5" />
-              {isVerifying ? '검증 중...' : '인증 확인'}
-            </Button>
+            {onVerifyAuth && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={onVerifyAuth}
+                disabled={verifyDisabled}
+                className="shrink-0"
+              >
+                <ShieldCheck className="h-3.5 w-3.5" />
+                {isVerifying ? '검증 중...' : '인증 확인'}
+              </Button>
+            )}
           </div>
-          <p id="ai-cred-api-key-desc" className="text-sm text-muted-foreground">
+          <p id={`${idPrefix}-api-key-desc`} className="text-sm text-muted-foreground">
             Anthropic API 키 (sk-ant-...)
-            <AuthBadge authStatus={authStatus} />
+            {onVerifyAuth && <AuthBadge authStatus={authStatus} />}
           </p>
-          <div id="ai-cred-api-key-hint">{secretHint('apiKey', cred)}</div>
+          <div id={`${idPrefix}-api-key-hint`}>{secretHint('apiKey', cred)}</div>
         </div>
       )}
     </div>
@@ -428,7 +463,7 @@ function ClaudeFields({
 
 /** opencode 전용 입력 — 공급자·기본 URL·API 키·추론 강도. 검증 수단은 "모델 불러오기"(모델
  * 칸은 `SettingsPage.tsx` 가 이 fieldset 밖에서 그린다, 이 파일 헤더 주석 참고). */
-function OpencodeFields({ cred }: { cred: UseAiCredentialFormResult }) {
+function OpencodeFields({ cred, idPrefix }: { cred: UseAiCredentialFormResult; idPrefix: string }) {
   const providerId = cred.payload.providerId ?? '';
   const providerOptions = withPreservedValue(PROVIDER_ID_CANDIDATES, providerId);
   const reasoningEffort = cred.payload.reasoningEffort ?? '';
@@ -437,12 +472,12 @@ function OpencodeFields({ cred }: { cred: UseAiCredentialFormResult }) {
   return (
     <div className="space-y-4">
       <div className="space-y-2">
-        <Label htmlFor="ai-cred-provider">공급자</Label>
+        <Label htmlFor={`${idPrefix}-provider`}>공급자</Label>
         <Select
           value={providerId === '' ? undefined : providerId}
           onValueChange={(v) => cred.setPayloadField('providerId', v)}
         >
-          <SelectTrigger id="ai-cred-provider" className="w-full max-w-md">
+          <SelectTrigger id={`${idPrefix}-provider`} className="w-full max-w-md">
             <SelectValue placeholder="공급자를 선택하세요" />
           </SelectTrigger>
           <SelectContent>
@@ -456,9 +491,9 @@ function OpencodeFields({ cred }: { cred: UseAiCredentialFormResult }) {
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="ai-cred-base-url">기본 URL</Label>
+        <Label htmlFor={`${idPrefix}-base-url`}>기본 URL</Label>
         <Input
-          id="ai-cred-base-url"
+          id={`${idPrefix}-base-url`}
           className="max-w-md"
           value={cred.payload.baseURL ?? ''}
           onChange={(e) => cred.setPayloadField('baseURL', e.target.value)}
@@ -467,27 +502,27 @@ function OpencodeFields({ cred }: { cred: UseAiCredentialFormResult }) {
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="ai-cred-opencode-api-key">API 키</Label>
+        <Label htmlFor={`${idPrefix}-opencode-api-key`}>API 키</Label>
         <Input
-          id="ai-cred-opencode-api-key"
+          id={`${idPrefix}-opencode-api-key`}
           type="password"
           className="max-w-md"
           value={cred.secretInputs.apiKey ?? ''}
           onChange={(e) => cred.setSecretInput('apiKey', e.target.value)}
-          aria-describedby="ai-cred-opencode-api-key-hint"
+          aria-describedby={`${idPrefix}-opencode-api-key-hint`}
         />
-        <div id="ai-cred-opencode-api-key-hint">{secretHint('apiKey', cred)}</div>
+        <div id={`${idPrefix}-opencode-api-key-hint`}>{secretHint('apiKey', cred)}</div>
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="ai-cred-reasoning-effort">추론 강도</Label>
+        <Label htmlFor={`${idPrefix}-reasoning-effort`}>추론 강도</Label>
         <Select
           value={reasoningEffort === '' ? REASONING_EFFORT_DEFAULT_SENTINEL : reasoningEffort}
           onValueChange={(v) =>
             cred.setPayloadField('reasoningEffort', v === REASONING_EFFORT_DEFAULT_SENTINEL ? '' : v)
           }
         >
-          <SelectTrigger id="ai-cred-reasoning-effort" className="w-full max-w-md">
+          <SelectTrigger id={`${idPrefix}-reasoning-effort`} className="w-full max-w-md">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>

@@ -7,7 +7,12 @@ import type { AgentType } from '../lib/ai-credential';
 import { AGENT_TYPES, CREDENTIAL_FIELDS } from '../lib/ai-credential';
 import { hasTypeChangedFromSaved } from '../lib/ai-credential-screen';
 import { extractApiError } from '../lib/api-error';
-import type { AiCredentialProbeRequest, AiCredentialResponse } from '../types/settings';
+import type {
+  AiCredentialProbeRequest,
+  AiCredentialProbeResponse,
+  AiCredentialResponse,
+  AiCredentialUpsertPayload,
+} from '../types/settings';
 
 /**
  * 최초 조회가 오기 전 화면이 잠깐 보여줄 기본값. `sdk` 인 이유는 백엔드
@@ -43,6 +48,38 @@ const EMPTY_ORIGINAL: OriginalSnapshot = {
   payload: {},
   configured: false,
 };
+
+/**
+ * 폼이 부르는 엔드포인트 묶음. 채팅(`ai.credential`)과 분류(`ai.classify_credential`, #707)가 같은
+ * 문서 구조라 폼 상태 기계를 그대로 공유하고 경로만 갈아 끼운다.
+ */
+export interface AiCredentialEndpoints<R extends AiCredentialResponse = AiCredentialResponse> {
+  get: () => Promise<{ data: R }>;
+  put: (data: AiCredentialUpsertPayload) => Promise<unknown>;
+  probe: (data: AiCredentialProbeRequest) => Promise<{ data: AiCredentialProbeResponse }>;
+}
+
+/**
+ * 채팅 자격증명 엔드포인트(기본값). 화살표로 감싸 호출 시점에 `settingsApi` 를 읽는다 — 테스트가
+ * `settingsApi` 를 모듈 mock 으로 갈아 끼워도 그대로 따라간다.
+ */
+export const CHAT_CREDENTIAL_ENDPOINTS: AiCredentialEndpoints = {
+  get: () => settingsApi.getAiCredential(),
+  put: (data) => settingsApi.putAiCredential(data),
+  probe: (data) => settingsApi.probeAiCredential(data),
+};
+
+/** `useAiCredentialForm` 선택 인자 — 전부 생략하면 기존 채팅 탭 동작과 같다. */
+export interface UseAiCredentialFormOptions<R extends AiCredentialResponse> {
+  /** 엔드포인트. 생략하면 채팅 자격증명. */
+  api?: AiCredentialEndpoints<R>;
+  /** 거짓이면 최초 조회를 미룬다 — 분류 탭은 처음 열릴 때만 조회한다(다른 탭 화면에 요청을 만들지 않게). */
+  enabled?: boolean;
+  /** 조회 응답마다 불린다 — 분류 탭이 이 문서 밖의 값(모델)을 받아 가는 통로. 참조를 안정적으로 넘길 것. */
+  onResponse?: (data: R) => void;
+  /** 최초 조회 실패 토스트 문구. */
+  loadErrorMessage?: string;
+}
 
 export interface UseAiCredentialFormResult {
   /** 최초 조회가 아직 끝나지 않았다. */
@@ -155,6 +192,11 @@ export interface UseAiCredentialFormResult {
    * 상태(`models`/`modelsError`)도 지금 편집과 무관해졌으니 함께 비운다.
    */
   reset: () => void;
+  /**
+   * 서버 상태로 다시 시드한다(최초 조회와 같은 경로·같은 실패 처리). 분류 탭의 "설정 해제"
+   * 뒤처럼, 폼 밖의 쓰기가 서버 문서를 바꿨을 때 쓴다.
+   */
+  reload: () => Promise<void>;
 }
 
 /**
@@ -171,8 +213,17 @@ export interface UseAiCredentialFormResult {
  *
  * 자격증명은 테넌트 전용이다(#706) — 이 폼은 항상
  * "우리 조직 자격증명" 하나만 편집하고, 저장은 언제나 PUT 이다.
+ *
+ * `options.api` 로 엔드포인트를 갈아 끼우면 같은 상태 기계를 AI 분류 전용 공급자(#707) 폼에도
+ * 쓴다 — 두 자원이 같은 문서 구조라 규칙(비밀 생략=유지, 유형 전환 초기화 등)을 한 곳에 둔다.
  */
-export function useAiCredentialForm(): UseAiCredentialFormResult {
+export function useAiCredentialForm<R extends AiCredentialResponse = AiCredentialResponse>(
+  options: UseAiCredentialFormOptions<R> = {},
+): UseAiCredentialFormResult {
+  // 기본값은 채팅 엔드포인트다. R 이 기본(AiCredentialResponse)일 때만 성립하는 좁힘이라 단언한다 —
+  // 분류 탭처럼 R 을 넓히는 호출부는 반드시 자기 api 를 넘긴다.
+  const api = options.api ?? (CHAT_CREDENTIAL_ENDPOINTS as unknown as AiCredentialEndpoints<R>);
+  const { enabled = true, onResponse, loadErrorMessage = 'AI 자격증명을 불러오지 못했습니다.' } = options;
   const [isLoading, setIsLoading] = useState(true);
   const [loadFailed, setLoadFailed] = useState(false);
   const [isLocked, setIsLocked] = useState(false);
@@ -222,9 +273,11 @@ export function useAiCredentialForm(): UseAiCredentialFormResult {
    * 재조회)가 실패를 다르게 다뤄야 해서(전자는 `loadFailed`/`isLocked`, 후자는 `staleNotice`)
    * 상태 갱신과 오류 처리를 분리한다. */
   const fetchAndApply = useCallback(async () => {
-    const { data } = await settingsApi.getAiCredential();
+    const { data } = await api.get();
     applyResponse(data);
-  }, [applyResponse]);
+    // 폼 문서 밖의 값(분류 모델 등)은 호출부가 받아 간다.
+    onResponse?.(data);
+  }, [api, applyResponse, onResponse]);
 
   const load = useCallback(async () => {
     setIsLoading(true);
@@ -241,22 +294,22 @@ export function useAiCredentialForm(): UseAiCredentialFormResult {
       } else {
         setLoadFailed(true);
         setIsLocked(false);
-        toast.error('AI 자격증명을 불러오지 못했습니다.');
+        toast.error(loadErrorMessage);
       }
     } finally {
       setIsLoading(false);
     }
-  }, [fetchAndApply]);
+  }, [fetchAndApply, loadErrorMessage]);
 
   // 최초 1회만 조회한다 — `useSettingsOverrideForm` 과 같은 가드다. StrictMode 이중 실행이나
   // `load` 참조 변동으로 재조회가 걸리면 `original` 이 다시 시드되어, 사용자가 입력 중이던
-  // payload 편집이 조용히 덮인다.
+  // payload 편집이 조용히 덮인다. `enabled` 가 거짓인 동안은 미루고, 처음 참이 되는 순간 한 번 조회한다.
   const didInitialLoad = useRef(false);
   useEffect(() => {
-    if (didInitialLoad.current) return;
+    if (!enabled || didInitialLoad.current) return;
     didInitialLoad.current = true;
     void load();
-  }, [load]);
+  }, [enabled, load]);
 
   const setAgentType = useCallback(
     (next: AgentType) => {
@@ -305,7 +358,7 @@ export function useAiCredentialForm(): UseAiCredentialFormResult {
     // 생략하면 서버가 테넌트 저장값을 재사용한다 — 타이핑한 값이 있을 때만 싣는다.
     if (typedKey !== '') body.apiKey = typedKey;
     try {
-      const { data } = await settingsApi.probeAiCredential(body);
+      const { data } = await api.probe(body);
       if (data.ok) {
         setModels(data.models);
       } else {
@@ -318,7 +371,7 @@ export function useAiCredentialForm(): UseAiCredentialFormResult {
       setModels(null);
       setModelsError(extractApiError(err, '모델 목록을 불러오지 못했습니다.'));
     }
-  }, [payload.baseURL, secretInputs.apiKey]);
+  }, [api, payload.baseURL, secretInputs.apiKey]);
 
   const hasUnsavedInput =
     agentType !== original.agentType ||
@@ -347,7 +400,7 @@ export function useAiCredentialForm(): UseAiCredentialFormResult {
         if (typed && typed.trim() !== '') secretOut[field.name] = typed;
       });
     try {
-      await settingsApi.putAiCredential({ agentType, payload: payloadOut, secret: secretOut });
+      await api.put({ agentType, payload: payloadOut, secret: secretOut });
     } catch (err) {
       // 서버 400(비밀 필수 규칙 등)의 한국어 메시지를 그대로 보여준다.
       toast.error(extractApiError(err, '저장에 실패했습니다.'));
@@ -370,7 +423,7 @@ export function useAiCredentialForm(): UseAiCredentialFormResult {
       toast.error(message);
     }
     return true;
-  }, [agentType, payload, secretInputs, fetchAndApply]);
+  }, [api, agentType, payload, secretInputs, fetchAndApply]);
 
   /**
    * 로컬 편집을 마지막 `original` 스냅샷으로 되돌린다(Ruling #41, fix round 1) — 인터페이스
@@ -406,5 +459,7 @@ export function useAiCredentialForm(): UseAiCredentialFormResult {
     save,
     staleNotice,
     reset,
+    // 최초 조회와 같은 경로(`load`)를 그대로 내준다 — 실패 처리(loadFailed/isLocked)도 같다.
+    reload: load,
   };
 }

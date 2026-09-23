@@ -10,6 +10,7 @@ import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
 import com.smartfirehub.settings.model.AiBehaviorDefaults;
 import com.smartfirehub.settings.model.AiCredential;
 import com.smartfirehub.settings.service.AiCredentialService;
+import com.smartfirehub.settings.service.AiCredentialService.ClassifyBinding;
 import com.smartfirehub.settings.service.SettingsService;
 import java.util.List;
 import java.util.Map;
@@ -55,13 +56,17 @@ class AiAgentClientTest {
 
   private SettingsService settingsService;
   private AiCredentialService aiCredentialService;
+  /** 실제 해석기 — mock 위에 세운다(#707). 기본은 분류 슬롯 없음 → UseChat. */
+  private AiClassifyTargetResolver resolver;
 
   /** WireMock 을 ai-agent 로 바라보는 클라이언트를 만든다. */
   private AiAgentClient newClient() {
     settingsService = mock(SettingsService.class);
     aiCredentialService = mock(AiCredentialService.class);
+    resolver = new AiClassifyTargetResolver(aiCredentialService);
     AiAgentClient client =
-        new AiAgentClient(wireMock.baseUrl(), new ObjectMapper(), settingsService, aiCredentialService);
+        new AiAgentClient(
+            wireMock.baseUrl(), new ObjectMapper(), settingsService, aiCredentialService);
     ReflectionTestUtils.setField(client, "internalToken", "test-internal-token");
     return client;
   }
@@ -89,7 +94,7 @@ class AiAgentClientTest {
     when(aiCredentialService.resolve()).thenReturn(new AiCredential.Sdk("oauth-token-value", ""));
     stubOk();
 
-    AiAgentClient.ClassifyResponse response = client.classify(REQUEST, 42L);
+    AiAgentClient.ClassifyResponse response = client.classify(REQUEST, resolver.resolve(), 42L);
 
     assertThat(response.results()).hasSize(1);
     wireMock.verify(
@@ -106,7 +111,7 @@ class AiAgentClientTest {
     when(aiCredentialService.resolve()).thenReturn(new AiCredential.Sdk("", "sk-test-key"));
     stubOk();
 
-    client.classify(REQUEST, 7L);
+    client.classify(REQUEST, resolver.resolve(), 7L);
 
     wireMock.verify(
         postRequestedFor(urlEqualTo("/agent/classify"))
@@ -122,7 +127,7 @@ class AiAgentClientTest {
     when(aiCredentialService.resolve()).thenReturn(new AiCredential.Sdk("oauth-x", "   "));
     stubOk();
 
-    client.classify(REQUEST, 1L);
+    client.classify(REQUEST, resolver.resolve(), 1L);
 
     wireMock.verify(
         postRequestedFor(urlEqualTo("/agent/classify"))
@@ -152,7 +157,7 @@ class AiAgentClientTest {
       when(aiCredentialService.resolve()).thenReturn(credential);
       stubOk();
 
-      assertThatThrownBy(() -> client.classify(REQUEST, 1L))
+      assertThatThrownBy(() -> client.classify(REQUEST, resolver.resolve(), 1L))
           .as(credential.agentType())
           .isInstanceOf(IllegalStateException.class)
           .hasMessage(credential.incompleteMessage());
@@ -177,7 +182,7 @@ class AiAgentClientTest {
             new AiCredential.Opencode("openai", "https://api.openai.com/v1", "", "sk-oai"));
     stubOk();
 
-    client.classify(REQUEST, 1L);
+    client.classify(REQUEST, resolver.resolve(), 1L);
 
     wireMock.verify(
         postRequestedFor(urlEqualTo("/agent/classify"))
@@ -201,7 +206,7 @@ class AiAgentClientTest {
         .thenReturn(
             new AiCredential.Opencode("openai", "https://api.openai.com/v1", "", "sk-oai"));
 
-    assertThatThrownBy(() -> client.classify(REQUEST, 1L))
+    assertThatThrownBy(() -> client.classify(REQUEST, resolver.resolve(), 1L))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("opencode 형식");
 
@@ -222,7 +227,7 @@ class AiAgentClientTest {
         .thenReturn(
             new AiCredential.Opencode("openai", "https://api.openai.com/v1", "", "sk-oai"));
 
-    assertThatThrownBy(() -> client.classify(REQUEST, 1L))
+    assertThatThrownBy(() -> client.classify(REQUEST, resolver.resolve(), 1L))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("opencode 형식");
 
@@ -242,9 +247,72 @@ class AiAgentClientTest {
     when(aiCredentialService.resolve())
         .thenThrow(new com.smartfirehub.settings.model.UnknownAgentTypeException("martian"));
 
-    assertThatThrownBy(() -> client.classify(REQUEST, 1L))
+    assertThatThrownBy(() -> client.classify(REQUEST, resolver.resolve(), 1L))
         .isInstanceOf(com.smartfirehub.settings.model.UnknownAgentTypeException.class);
 
     wireMock.verify(0, postRequestedFor(urlEqualTo("/agent/classify")));
+  }
+
+  /**
+   * #707 — 분류 전용이 설정되면 바디의 agentType/baseUrl/model/apiKey 가 전부 분류 슬롯 값이고,
+   * 채팅 자격증명은 한 칸도 섞이지 않으며 읽히지도 않는다.
+   */
+  @Test
+  void classify_분류_전용이면_바디가_분류_슬롯_값만_싣고_채팅은_읽지_않는다() {
+    AiAgentClient client = newClient();
+    when(aiCredentialService.resolveClassify())
+        .thenReturn(
+            Optional.of(
+                new ClassifyBinding(
+                    new AiCredential.Opencode("openai", "https://gw.example/v1", "", "sk-classify"),
+                    "openai/gpt-4o-mini")));
+    stubOk();
+
+    client.classify(REQUEST, resolver.resolve(), 1L);
+
+    wireMock.verify(
+        postRequestedFor(urlEqualTo("/agent/classify"))
+            .withRequestBody(matchingJsonPath("$.agentType", equalTo("opencode")))
+            .withRequestBody(matchingJsonPath("$.baseUrl", equalTo("https://gw.example/v1")))
+            .withRequestBody(matchingJsonPath("$.model", equalTo("openai/gpt-4o-mini")))
+            .withRequestBody(matchingJsonPath("$.apiKey", equalTo("sk-classify"))));
+    verify(aiCredentialService, never()).resolve();
+    verify(settingsService, never()).getValue("ai.model");
+  }
+
+  /** 분류 슬롯의 opencode 모델 형식이 틀리면 HTTP 호출 전에 실패한다(채팅 슬롯과 같은 가드). */
+  @Test
+  void classify_분류_전용_opencode_모델_형식이_틀리면_HTTP_전에_실패한다() {
+    AiAgentClient client = newClient();
+    when(aiCredentialService.resolveClassify())
+        .thenReturn(
+            Optional.of(
+                new ClassifyBinding(
+                    new AiCredential.Opencode("openai", "https://gw.example/v1", "", "sk-classify"),
+                    "gpt-4o-mini")));
+
+    assertThatThrownBy(() -> client.classify(REQUEST, resolver.resolve(), 1L))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("opencode 형식");
+    wireMock.verify(0, postRequestedFor(urlEqualTo("/agent/classify")));
+  }
+
+  /**
+   * UseChat 은 요청을 만드는 순간 채팅 자격증명·ai.model 을 해석한다 — 해석 결과가 옛
+   * buildClassifyBody 와 같은 바디를 만든다(미설정 = 현행과 바이트 동일).
+   */
+  @Test
+  void classify_UseChat_은_요청_시점에_채팅_설정으로_바디를_만든다() {
+    AiAgentClient client = newClient();
+    when(settingsService.getValue("ai.model")).thenReturn(Optional.of("claude-sonnet-5"));
+    when(aiCredentialService.resolve()).thenReturn(new AiCredential.Sdk("chat-oauth", ""));
+
+    Map<String, Object> body = client.buildClassifyBody(REQUEST, AiClassifyTarget.USE_CHAT);
+
+    assertThat(body)
+        .containsEntry("agentType", "sdk")
+        .containsEntry("oauthToken", "chat-oauth")
+        .containsEntry("model", "claude-sonnet-5")
+        .doesNotContainKey("apiKey");
   }
 }

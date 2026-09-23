@@ -1,8 +1,16 @@
 import type { Page } from '@playwright/test';
 
-import type { AiCredentialResponse, AiCredentialUpsertPayload, ResolvedSettingResponse } from '@/types/settings';
+import type {
+  AiClassifyCredentialResponse,
+  AiClassifyCredentialUpsertPayload,
+  AiCredentialProbeRequest,
+  AiCredentialResponse,
+  AiCredentialUpsertPayload,
+  ResolvedSettingResponse,
+} from '@/types/settings';
 
 import {
+  createAiClassifyCredential,
   createAiCredential,
   createAiSettings,
   createApiConnections,
@@ -233,6 +241,50 @@ export async function mockAiCredential(
         return route.fulfill({ status: 405, contentType: 'application/json', body: '{}' });
       }
       return route.fallback();
+    },
+  );
+  return calls;
+}
+
+/**
+ * `/api/v1/settings/ai-classify-credential`(GET/PUT/DELETE) + `/probe`(POST) 모킹(#707).
+ * `get` 은 고정값 또는 재평가 함수(저장·해제 뒤 재조회 응답을 바꾸려고 `calls` 를 참조할 수 있다).
+ * PUT 바디·DELETE 횟수·프로브 바디를 캡처해 화면이 **분류** 엔드포인트로 보냈는지 단언한다.
+ */
+export async function mockAiClassifyCredential(
+  page: Page,
+  get: AiClassifyCredentialResponse | (() => AiClassifyCredentialResponse) = createAiClassifyCredential(),
+  probeResponse: { ok: boolean; models: string[]; message: string | null } = { ok: true, models: [], message: null },
+): Promise<{ puts: AiClassifyCredentialUpsertPayload[]; deleteCount: number; probes: AiCredentialProbeRequest[] }> {
+  const calls = {
+    puts: [] as AiClassifyCredentialUpsertPayload[],
+    deleteCount: 0,
+    probes: [] as AiCredentialProbeRequest[],
+  };
+  await page.route(
+    (url) => url.pathname === '/api/v1/settings/ai-classify-credential',
+    (route) => {
+      const method = route.request().method();
+      if (method === 'GET') {
+        const data = typeof get === 'function' ? get() : get;
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(data) });
+      }
+      if (method === 'PUT') {
+        calls.puts.push(route.request().postDataJSON() as AiClassifyCredentialUpsertPayload);
+        return route.fulfill({ status: 204, body: '' });
+      }
+      if (method === 'DELETE') {
+        calls.deleteCount += 1;
+        return route.fulfill({ status: 204, body: '' });
+      }
+      return route.fallback();
+    },
+  );
+  await page.route(
+    (url) => url.pathname === '/api/v1/settings/ai-classify-credential/probe',
+    (route) => {
+      calls.probes.push(route.request().postDataJSON() as AiCredentialProbeRequest);
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(probeResponse) });
     },
   );
   return calls;

@@ -19,6 +19,7 @@ import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.permission.service.PermissionService;
 import com.smartfirehub.platform.repository.PlatformRoleRepository;
+import com.smartfirehub.settings.model.AiCredentialSlot;
 import com.smartfirehub.settings.service.AiCredentialService;
 import com.smartfirehub.settings.service.OpencodeProbeService;
 import com.smartfirehub.settings.service.OpencodeProbeService.ProbeResult;
@@ -51,7 +52,9 @@ import org.springframework.test.web.servlet.MockMvc;
  * 연결됐는지 보장하지 못한다).
  */
 @WebMvcTest(AiCredentialController.class)
-@Import({SecurityConfig.class, JwtAuthenticationFilter.class})
+// OpencodePutValidator 는 @Component 라 @WebMvcTest 슬라이스에 자동으로 잡히지 않는다 — 실제 검증기를
+// 올려(mock 한 OpencodeProbeService 위에서) 채팅 PUT 이 공용 검증기를 거치는 배선까지 확인한다(#707).
+@Import({SecurityConfig.class, JwtAuthenticationFilter.class, OpencodePutValidator.class})
 class AiCredentialProbeStatusMappingTest {
 
   @Autowired private MockMvc mockMvc;
@@ -113,7 +116,7 @@ class AiCredentialProbeStatusMappingTest {
   void PUT_도달불가는_502() throws Exception {
     mockAuth("ai:settings");
     when(settingsService.getValue("ai.model")).thenReturn(Optional.empty());
-    when(opencodeProbeService.probe(any(OpencodeProbeService.TargetCheck.class), any()))
+    when(opencodeProbeService.probe(eq(AiCredentialSlot.CHAT), any(OpencodeProbeService.TargetCheck.class), any()))
         .thenReturn(new ProbeResult(false, List.of(), "공급자에 연결할 수 없습니다", Reason.UNREACHABLE));
 
     mockMvc
@@ -129,7 +132,7 @@ class AiCredentialProbeStatusMappingTest {
   void PUT_타임아웃은_504() throws Exception {
     mockAuth("ai:settings");
     when(settingsService.getValue("ai.model")).thenReturn(Optional.empty());
-    when(opencodeProbeService.probe(any(OpencodeProbeService.TargetCheck.class), any()))
+    when(opencodeProbeService.probe(eq(AiCredentialSlot.CHAT), any(OpencodeProbeService.TargetCheck.class), any()))
         .thenReturn(new ProbeResult(false, List.of(), "타임아웃", Reason.TIMEOUT));
 
     mockMvc
@@ -145,7 +148,7 @@ class AiCredentialProbeStatusMappingTest {
   void PUT_공급자_거부는_422() throws Exception {
     mockAuth("ai:settings");
     when(settingsService.getValue("ai.model")).thenReturn(Optional.empty());
-    when(opencodeProbeService.probe(any(OpencodeProbeService.TargetCheck.class), any()))
+    when(opencodeProbeService.probe(eq(AiCredentialSlot.CHAT), any(OpencodeProbeService.TargetCheck.class), any()))
         .thenReturn(new ProbeResult(false, List.of(), "공급자가 거부했습니다", Reason.PROVIDER_REJECTED));
 
     mockMvc
@@ -167,7 +170,7 @@ class AiCredentialProbeStatusMappingTest {
     mockAuth("ai:settings");
     when(settingsService.getValue("ai.model")).thenReturn(Optional.empty());
 
-    when(opencodeProbeService.probe(any(OpencodeProbeService.TargetCheck.class), any()))
+    when(opencodeProbeService.probe(eq(AiCredentialSlot.CHAT), any(OpencodeProbeService.TargetCheck.class), any()))
         .thenReturn(new ProbeResult(false, List.of(), "unreachable", Reason.UNREACHABLE));
     int unreachableStatus =
         mockMvc
@@ -180,7 +183,7 @@ class AiCredentialProbeStatusMappingTest {
             .getResponse()
             .getStatus();
 
-    when(opencodeProbeService.probe(any(OpencodeProbeService.TargetCheck.class), any()))
+    when(opencodeProbeService.probe(eq(AiCredentialSlot.CHAT), any(OpencodeProbeService.TargetCheck.class), any()))
         .thenReturn(new ProbeResult(false, List.of(), "rejected", Reason.PROVIDER_REJECTED));
     int rejectedStatus =
         mockMvc
@@ -204,7 +207,7 @@ class AiCredentialProbeStatusMappingTest {
   void PUT_프로브가_성공하고_모델이_목록에_있으면_저장된다() throws Exception {
     mockAuth("ai:settings");
     when(settingsService.getValue("ai.model")).thenReturn(Optional.of("openai/gpt-4o"));
-    when(opencodeProbeService.probe(any(OpencodeProbeService.TargetCheck.class), any()))
+    when(opencodeProbeService.probe(eq(AiCredentialSlot.CHAT), any(OpencodeProbeService.TargetCheck.class), any()))
         .thenReturn(new ProbeResult(true, List.of("gpt-4o"), null, Reason.OK));
 
     mockMvc
@@ -272,7 +275,7 @@ class AiCredentialProbeStatusMappingTest {
   void PUT_모델이_목록에_없으면_422이고_저장하지_않는다() throws Exception {
     mockAuth("ai:settings");
     when(settingsService.getValue("ai.model")).thenReturn(Optional.of("openai/does-not-exist"));
-    when(opencodeProbeService.probe(any(OpencodeProbeService.TargetCheck.class), any()))
+    when(opencodeProbeService.probe(eq(AiCredentialSlot.CHAT), any(OpencodeProbeService.TargetCheck.class), any()))
         .thenReturn(new ProbeResult(true, List.of("gpt-4o"), null, Reason.OK));
 
     mockMvc

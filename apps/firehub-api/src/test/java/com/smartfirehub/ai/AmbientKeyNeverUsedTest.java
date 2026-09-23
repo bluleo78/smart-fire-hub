@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.smartfirehub.apiconnection.service.EncryptionService;
 import com.smartfirehub.pipeline.service.executor.AiAgentClient;
+import com.smartfirehub.pipeline.service.executor.AiClassifyTargetResolver;
 import com.smartfirehub.settings.model.AiCredential;
 import com.smartfirehub.settings.model.UnknownAgentTypeException;
 import com.smartfirehub.settings.repository.TenantSettingsRepository;
@@ -38,6 +39,7 @@ class AmbientKeyNeverUsedTest extends IntegrationTestBase {
   private static final String KEY = "ai.credential";
 
   @Autowired private AiAgentClient aiAgentClient;
+  @Autowired private AiClassifyTargetResolver targetResolver;
   @Autowired private AiCredentialService aiCredentialService;
   @Autowired private TenantSettingsRepository tenantSettingsRepository;
   @Autowired private DSLContext dsl;
@@ -67,6 +69,14 @@ class AmbientKeyNeverUsedTest extends IntegrationTestBase {
   }
 
   /**
+   * 실행기와 같은 경로로 바디를 조립한다 — 실제 해석기로 지금 설정을 해석한 target 을 넘긴다
+   * (해석 경로를 mock 없이 끝까지 태우기 위함).
+   */
+  private Map<String, Object> buildBody() {
+    return aiAgentClient.buildClassifyBody(classifyRequest(), targetResolver.resolve());
+  }
+
+  /**
    * 이것이 없으면 ai-agent 가 컨테이너의 ambient {@code ANTHROPIC_API_KEY} 로 폴백한다 — 이
    * 브랜치가 막으려는 과금 혼입 그 자체다. {@code Opencode.apiKey}(OpenAI 호환 키)가 바디에
    * 실려야 하고, {@code providerId}/{@code baseUrl} 도 함께 실려야 한다.
@@ -84,7 +94,7 @@ class AmbientKeyNeverUsedTest extends IntegrationTestBase {
     // 검증하려는 바디 조립까지 못 간다.
     tenantSettingsRepository.upsert("ai.model", "openai/gpt-4o", USER);
 
-    Map<String, Object> body = aiAgentClient.buildClassifyBody(classifyRequest());
+    Map<String, Object> body = buildBody();
 
     assertThat(body).containsEntry("agentType", "opencode");
     assertThat(body).containsEntry("providerId", "openai");
@@ -107,7 +117,7 @@ class AmbientKeyNeverUsedTest extends IntegrationTestBase {
         USER);
     // ai.model 미설정 — AiAgentClient 의 기본값("claude-sonnet-5")이 그대로 쓰인다.
 
-    assertThatThrownBy(() -> aiAgentClient.buildClassifyBody(classifyRequest()))
+    assertThatThrownBy(() -> buildBody())
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("opencode 형식");
   }
@@ -118,7 +128,7 @@ class AmbientKeyNeverUsedTest extends IntegrationTestBase {
         new AiCredentialUpsert("sdk", Map.of(), Map.of("oauthToken", "oat", "apiKey", "sk-ant")),
         USER);
 
-    Map<String, Object> body = aiAgentClient.buildClassifyBody(classifyRequest());
+    Map<String, Object> body = buildBody();
 
     assertThat(body).containsEntry("oauthToken", "oat").containsEntry("apiKey", "sk-ant");
     assertThat(body).doesNotContainKey("baseUrl");
@@ -135,7 +145,7 @@ class AmbientKeyNeverUsedTest extends IntegrationTestBase {
   void cli_자격증명이면_oauthToken이_실리고_apiKey는_없다() {
     aiCredentialService.save(new AiCredentialUpsert("cli", Map.of(), Map.of("oauthToken", "cli-oat")), USER);
 
-    Map<String, Object> body = aiAgentClient.buildClassifyBody(classifyRequest());
+    Map<String, Object> body = buildBody();
 
     assertThat(body).containsEntry("agentType", "cli");
     assertThat(body).containsEntry("oauthToken", "cli-oat");
@@ -152,7 +162,7 @@ class AmbientKeyNeverUsedTest extends IntegrationTestBase {
   void cliApi_자격증명이면_agentType이_cli_api이고_apiKey가_실린다() {
     aiCredentialService.save(new AiCredentialUpsert("cli-api", Map.of(), Map.of("apiKey", "sk-cliapi")), USER);
 
-    Map<String, Object> body = aiAgentClient.buildClassifyBody(classifyRequest());
+    Map<String, Object> body = buildBody();
 
     assertThat(body).containsEntry("agentType", "cli-api");
     assertThat(body).containsEntry("apiKey", "sk-cliapi");
@@ -173,7 +183,7 @@ class AmbientKeyNeverUsedTest extends IntegrationTestBase {
             + encryptionService.encrypt("sk-platform-must-not-leak")
             + "\"}}");
 
-    assertThatThrownBy(() -> aiAgentClient.buildClassifyBody(classifyRequest()))
+    assertThatThrownBy(() -> buildBody())
         .isInstanceOf(IllegalStateException.class)
         .hasMessage(new AiCredential.Sdk("", "").incompleteMessage());
   }
@@ -187,7 +197,7 @@ class AmbientKeyNeverUsedTest extends IntegrationTestBase {
     tenantSettingsRepository.upsert(
         KEY, "{\"v\":1,\"agentType\":\"martian\",\"payload\":{},\"secret\":{}}", USER);
 
-    assertThatThrownBy(() -> aiAgentClient.buildClassifyBody(classifyRequest()))
+    assertThatThrownBy(() -> buildBody())
         .isInstanceOf(UnknownAgentTypeException.class);
   }
 }

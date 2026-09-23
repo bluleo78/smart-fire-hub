@@ -10,6 +10,7 @@ import com.smartfirehub.apiconnection.service.EncryptionService;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.pipeline.service.executor.SsrfProtectionService;
 import com.smartfirehub.settings.model.AiCredentialDocument;
+import com.smartfirehub.settings.model.AiCredentialSlot;
 import com.smartfirehub.settings.repository.TenantSettingsRepository;
 import com.smartfirehub.settings.service.OpencodeProbeService.ProbeResult;
 import com.smartfirehub.settings.service.OpencodeProbeService.ProbeResult.Reason;
@@ -20,6 +21,7 @@ import java.net.URI;
 import java.net.UnknownHostException;
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
@@ -138,6 +140,20 @@ class OpencodeProbeServiceTest {
     // "enc:" 접두사를 벗기는 가짜 복호화 — 실제 AES 는 필요 없다(EncryptionService 자체의 정확성은
     // EncryptionServiceTest 가 검증한다). 이 테스트는 AiCredentialService 가 "어느 저장소에서"
     // 읽는지를 검증하는 것이지 암호화 알고리즘을 재검증하는 것이 아니다.
+    when(encryption.decrypt(anyString()))
+        .thenAnswer(inv -> ((String) inv.getArgument(0)).replaceFirst("^enc:", ""));
+    return new AiCredentialService(tenantRepo, encryption);
+  }
+
+  /**
+   * 키별 테넌트 원문을 심은 실제 AiCredentialService — 슬롯 분리 검증용(#707). 이름을 따로 둔 이유:
+   * 기존 {@code realAiCredentialService(null)} 호출이 오버로드 모호성으로 컴파일되지 않는다.
+   */
+  private AiCredentialService realAiCredentialServiceByKey(Map<String, String> rawByKey) {
+    TenantSettingsRepository tenantRepo = mock(TenantSettingsRepository.class);
+    EncryptionService encryption = mock(EncryptionService.class);
+    // 등록하지 않은 키는 Mockito 기본값 Optional.empty() — "행 없음"이다.
+    rawByKey.forEach((key, raw) -> when(tenantRepo.findValue(key)).thenReturn(Optional.of(raw)));
     when(encryption.decrypt(anyString()))
         .thenAnswer(inv -> ((String) inv.getArgument(0)).replaceFirst("^enc:", ""));
     return new AiCredentialService(tenantRepo, encryption);
@@ -646,5 +662,45 @@ class OpencodeProbeServiceTest {
       assertThat(result.message()).isEqualTo(expectedMessage);
       assertThat(result.reason()).isEqualTo(expectedReason);
     }
+  }
+
+  // ---------------------------------------------------------------------
+  // 슬롯 분리 — 분류 슬롯 프로브는 채팅 슬롯 키를 빌리지 않는다(#707)
+  // ---------------------------------------------------------------------
+
+  /** 분류 슬롯 프로브는 채팅 슬롯의 저장 키를 절대 빌리지 않는다 — 요청도 나가지 않는다. */
+  @Test
+  void 분류_슬롯_프로브는_채팅_슬롯의_저장_키를_재사용하지_않는다() {
+    TenantContext.set(1L);
+    String url = wireMockUrl("/v1");
+    AiCredentialService cred =
+        realAiCredentialServiceByKey(Map.of("ai.credential", tenantDocJson("opencode", url, "enc:chat-secret")));
+    wireMock.stubFor(get("/v1/models").willReturn(okJson("{\"data\":[]}")));
+
+    OpencodeProbeService service = wireMockService(cred);
+    assertThatThrownBy(() -> service.probe(AiCredentialSlot.CLASSIFY, url, null))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage(OpencodeProbeService.MSG_NO_STORED_KEY);
+    wireMock.verify(0, anyRequestedFor(anyUrl()));
+  }
+
+  /** 분류 슬롯에 저장된 키가 있으면 그 키(채팅 키가 아니라)를 싣는다. */
+  @Test
+  void 분류_슬롯_프로브는_분류_슬롯의_저장_키를_쓴다() {
+    TenantContext.set(1L);
+    String url = wireMockUrl("/v1");
+    AiCredentialService cred =
+        realAiCredentialServiceByKey(
+            Map.of(
+                "ai.credential", tenantDocJson("opencode", url, "enc:chat-secret"),
+                "ai.classify_credential", tenantDocJson("opencode", url, "enc:classify-secret")));
+    wireMock.stubFor(
+        get("/v1/models")
+            .withHeader("Authorization", equalTo("Bearer classify-secret"))
+            .willReturn(okJson("{\"data\":[{\"id\":\"m1\"}]}")));
+
+    var result = wireMockService(cred).probe(AiCredentialSlot.CLASSIFY, url, null);
+    assertThat(result.ok()).isTrue();
+    assertThat(result.models()).containsExactly("m1");
   }
 }

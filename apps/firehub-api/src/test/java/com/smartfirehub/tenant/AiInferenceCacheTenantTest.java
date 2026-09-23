@@ -25,6 +25,8 @@ import com.smartfirehub.pipeline.dto.PipelineStepResponse;
 import com.smartfirehub.pipeline.repository.PipelineExecutionRepository;
 import com.smartfirehub.pipeline.service.executor.AiAgentClient;
 import com.smartfirehub.pipeline.service.executor.AiClassifyExecutor;
+import com.smartfirehub.pipeline.service.executor.AiClassifyTarget;
+import com.smartfirehub.pipeline.service.executor.AiClassifyTargetResolver;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TenantRlsTestSupport;
 import java.util.HashMap;
@@ -107,7 +109,9 @@ class AiInferenceCacheTenantTest extends IntegrationTestBase {
             dsl,
             transactionTemplate,
             // 진척 기록(#691)은 이 테스트의 관심사(캐시 테넌트 격리)가 아니므로 mock 으로 둔다.
-            mock(PipelineExecutionRepository.class));
+            mock(PipelineExecutionRepository.class),
+            // 분류 공급자는 이 테스트의 관심사(테넌트 격리)가 아니다 — 미설정 테넌트로 고정한다(#707).
+            stubUseChat());
 
     when(datasetRepository.findTableNameById(200L)).thenReturn(Optional.of("output_table"));
     when(datasetRepository.findTableNameById(1L)).thenReturn(Optional.of("source_table"));
@@ -123,7 +127,7 @@ class AiInferenceCacheTenantTest extends IntegrationTestBase {
 
     AiAgentClient.ClassifyRowResult aiRow =
         new AiAgentClient.ClassifyRowResult(Map.of("source_id", 42L, "category", "animal"));
-    when(aiAgentClient.classify(any(), anyLong()))
+    when(aiAgentClient.classify(any(), any(), anyLong()))
         .thenReturn(new AiAgentClient.ClassifyResponse(List.of(aiRow), 1, "claude"));
   }
 
@@ -149,26 +153,26 @@ class AiInferenceCacheTenantTest extends IntegrationTestBase {
     AiClassifyExecutor.ExecutionResult firstA =
         TenantContext.runScopedGet(tenantA, () -> executor.execute(step, 100L, 1L));
     assertThat(firstA.executionLog()).contains("1 AI-processed");
-    verify(aiAgentClient, times(1)).classify(any(), anyLong());
+    verify(aiAgentClient, times(1)).classify(any(), any(), anyLong());
 
     // 2) 테넌트 A 두 번째 실행 — 자기 캐시를 히트해 AI 를 다시 부르지 않는다.
     AiClassifyExecutor.ExecutionResult secondA =
         TenantContext.runScopedGet(tenantA, () -> executor.execute(step, 100L, 1L));
     assertThat(secondA.executionLog()).contains("1 cached");
-    verify(aiAgentClient, times(1)).classify(any(), anyLong());
+    verify(aiAgentClient, times(1)).classify(any(), any(), anyLong());
 
     // 3) 테넌트 B 첫 실행 — 키가 A 와 완전히 같지만 A 의 캐시를 보면 안 되므로 미스여야 한다.
     //    여기서 히트가 나면 A 테넌트 행의 내용·추론 결과가 B 에게 관측된 것이다(R2 가 막으려는 것).
     AiClassifyExecutor.ExecutionResult firstB =
         TenantContext.runScopedGet(tenantB, () -> executor.execute(step, 100L, 1L));
     assertThat(firstB.executionLog()).contains("1 AI-processed");
-    verify(aiAgentClient, times(2)).classify(any(), anyLong());
+    verify(aiAgentClient, times(2)).classify(any(), any(), anyLong());
 
     // 4) 테넌트 B 두 번째 실행 — 이제는 B 자신의 캐시를 히트한다(격리가 "전부 미스"로 성립한 게 아님).
     AiClassifyExecutor.ExecutionResult secondB =
         TenantContext.runScopedGet(tenantB, () -> executor.execute(step, 100L, 1L));
     assertThat(secondB.executionLog()).contains("1 cached");
-    verify(aiAgentClient, times(2)).classify(any(), anyLong());
+    verify(aiAgentClient, times(2)).classify(any(), any(), anyLong());
 
     // 5) 실제로 키가 겹쳤는지 DB 로 확인한다. 이 단언이 없으면 "해시가 테넌트마다 달라져서" 통과하는
     //    가짜 초록을 구분할 수 없다. V103 이 유니크를 (tenant_id, row_hash, prompt_version) 으로
@@ -251,5 +255,12 @@ class AiInferenceCacheTenantTest extends IntegrationTestBase {
         aiConfig,
         null,
         null);
+  }
+
+  /** 미설정 테넌트(UseChat)를 돌려주는 해석기 스텁 — 기존 캐시 키(옛 promptHash)를 그대로 쓰게 한다. */
+  private static AiClassifyTargetResolver stubUseChat() {
+    AiClassifyTargetResolver resolver = mock(AiClassifyTargetResolver.class);
+    when(resolver.resolve()).thenReturn(AiClassifyTarget.USE_CHAT);
+    return resolver;
   }
 }

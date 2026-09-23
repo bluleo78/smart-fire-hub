@@ -1,4 +1,6 @@
 import type {
+  AiClassifyCredentialResponse,
+  AiClassifyCredentialUpsertPayload,
   AiCredentialProbeRequest,
   AiCredentialProbeResponse,
   AiCredentialResponse,
@@ -35,4 +37,17 @@ export const settingsApi = {
   // 쓰기 권한(`ai:settings`)이 필요하다 — 조회 전용처럼 보여도 GET 이 아니라 POST 인 이유다.
   probeAiCredential: (data: AiCredentialProbeRequest) =>
     client.post<AiCredentialProbeResponse>('/settings/ai-credential/probe', data),
+};
+
+/**
+ * AI 분류 전용 공급자(#707) — 채팅 자격증명과 같은 문서 구조에 모델이 더해진 별도 자원.
+ * 네 메서드 모두 `ai:settings` 권한. DELETE 는 "설정 해제"(= 채팅 설정 사용으로 복귀, 멱등).
+ * 프로브가 생략된 apiKey 를 채울 때는 분류 슬롯의 저장 키만 쓴다(채팅 키를 빌리지 않는다).
+ */
+export const aiClassifyCredentialApi = {
+  get: () => client.get<AiClassifyCredentialResponse>('/settings/ai-classify-credential'),
+  put: (data: AiClassifyCredentialUpsertPayload) => client.put('/settings/ai-classify-credential', data),
+  delete: () => client.delete('/settings/ai-classify-credential'),
+  probe: (data: AiCredentialProbeRequest) =>
+    client.post<AiCredentialProbeResponse>('/settings/ai-classify-credential/probe', data),
 };

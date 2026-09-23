@@ -76,4 +76,14 @@ class SettingsOverridePolicyTest {
     assertThat(SettingsOverridePolicy.isTenantOverridable("")).isFalse();
     assertThat(SettingsOverridePolicy.isTenantOverridable(null)).isFalse();
   }
+
+  @Test
+  void 분류_전용_두_키는_전용_서비스_소유이고_범용_쓰기_대상이_아니다() {
+    // ai.classify_model 이 "그 밖의 ai.* → TENANT_ONLY" 에 떨어지면 범용 경로가 묶음 한쪽만
+    // 건드릴 수 있게 된다 — 두 키는 AiCredentialService 만 함께 쓰고 함께 지운다(#707).
+    for (String key : java.util.List.of("ai.classify_credential", "ai.classify_model")) {
+      assertThat(SettingsOverridePolicy.planeOf(key)).as(key).isEqualTo(Plane.EXTERNAL_OWNER);
+      assertThat(SettingsOverridePolicy.isTenantOverridable(key)).as(key).isFalse();
+    }
+  }
 }

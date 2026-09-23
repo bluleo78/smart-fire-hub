@@ -1,6 +1,7 @@
 package com.smartfirehub.settings.service;
 
 import com.smartfirehub.settings.model.AiBehaviorDefaults;
+import com.smartfirehub.settings.model.AiCredentialSlot;
 import java.util.HashSet;
 import java.util.Set;
 
@@ -22,7 +23,10 @@ public final class SettingsOverridePolicy {
     TWO_PLANE,
     /** 테넌트 값 → 코드 기본값({@link AiBehaviorDefaults}). 플랫폼 행은 읽지도 쓰지도 않는다. */
     TENANT_ONLY,
-    /** 전용 서비스가 소유하는 값({@code ai.credential} → {@link AiCredentialService}). 범용 경로 금지. */
+    /**
+     * 전용 서비스가 소유하는 값({@link AiCredentialSlot#ownedKeys()} → {@link AiCredentialService}). 범용
+     * 경로 금지.
+     */
     EXTERNAL_OWNER,
     /** 분류되지 않은 키 — 플랫폼 행이 있으면 읽기만 되고, 어느 평면에서도 쓸 수 없다. */
     UNKNOWN;
@@ -70,7 +74,9 @@ public final class SettingsOverridePolicy {
   /** 키의 해석 평면. null·미등록 키는 {@link Plane#UNKNOWN}. */
   public static Plane planeOf(String key) {
     if (key == null) return Plane.UNKNOWN;
-    if (AiCredentialService.KEY.equals(key)) return Plane.EXTERNAL_OWNER;
+    // 자격증명 슬롯 소유 키(채팅·분류 자격증명 + 분류 모델, #707) — 분류 모델이 아래 "그 밖의 ai.*"
+    // 규칙에 떨어지면 범용 경로가 묶음 한쪽만 바꿀 수 있게 된다.
+    if (AiCredentialSlot.ownedKeys().contains(key)) return Plane.EXTERNAL_OWNER;
     if (TWO_PLANE.contains(key)) return Plane.TWO_PLANE;
     if (PLATFORM_ONLY.contains(key)) return Plane.PLATFORM_ONLY;
     if (key.startsWith(TENANT_NAMESPACE)) return Plane.TENANT_ONLY;

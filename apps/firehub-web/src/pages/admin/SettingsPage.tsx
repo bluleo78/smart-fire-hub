@@ -1,4 +1,4 @@
-import { Bot, Boxes, Mail, RotateCcw, Save, Settings } from 'lucide-react';
+import { Bot, Boxes, Mail, RotateCcw, Save, Settings, Tags } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
@@ -29,6 +29,7 @@ import { Separator } from '../../components/ui/separator';
 import { Skeleton } from '../../components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import { Textarea } from '../../components/ui/textarea';
+import { useAiClassifyForm } from '../../hooks/useAiClassifyForm';
 import { useAiCredentialForm } from '../../hooks/useAiCredentialForm';
 import { useSettingsOverrideForm } from '../../hooks/useSettingsOverrideForm';
 import { useSmtpSettingsForm } from '../../hooks/useSmtpSettingsForm';
@@ -36,17 +37,12 @@ import {
   useDirtyAggregator,
   useUnsavedChangesGuard,
 } from '../../hooks/useUnsavedChangesGuard';
-import { typeChangeConfirmDescription } from '../../lib/ai-credential-screen';
+import { CLAUDE_MODEL_OPTIONS, typeChangeConfirmDescription } from '../../lib/ai-credential-screen';
+import AiClassifySettingsTab from './AiClassifySettingsTab';
 import { AiCredentialFieldset, OpencodeModelField } from './AiCredentialFieldset';
 import EmbeddingSettingsTab from './EmbeddingSettingsTab';
 import { SettingFieldLabel } from './settings-lock';
 import SmtpSettingsTab from './SmtpSettingsTab';
-
-const MODEL_OPTIONS = [
-  { value: 'claude-sonnet-5', label: 'Claude Sonnet 5' },
-  { value: 'claude-opus-4-8', label: 'Claude Opus 4.8' },
-  { value: 'claude-haiku-4-5', label: 'Claude Haiku 4.5' },
-];
 
 /**
  * AI 탭의 <b>동작 설정</b> 6키 — 모델·시스템 프롬프트·Temperature·최대 턴 수·최대 응답 토큰·세션
@@ -168,6 +164,12 @@ export default function SettingsPage() {
    * 저장도 따로 간다(`performSave` 참고).
    */
   const cred = useAiCredentialForm();
+
+  /**
+   * AI 분류 전용 공급자(#707) — 페이지가 소유한다(탭 언마운트에도 편집 보존). 조회는 탭이 처음
+   * 열릴 때만 한다(`activate`) — 다른 탭 화면에서 요청을 만들지 않고, 로딩 게이트도 막지 않는다.
+   */
+  const classify = useAiClassifyForm();
 
   /** 동작 설정 6키 — 테넌트 전용 평면 설정(파일 헤더 주석 참고). */
   const behavior = useSettingsOverrideForm<AIBehaviorForm>({
@@ -326,6 +328,13 @@ export default function SettingsPage() {
   useEffect(() => {
     smtpReporter(smtpHasChanges);
   }, [smtpReporter, smtpHasChanges]);
+  // AI 분류 탭도 자기 dirty 를 따로 보고한다 — 탭이 닫혀 있어도 편집이 페이지에 살아 있으므로
+  // 이탈 가드가 그것을 알아야 한다.
+  const classifyReporter = makeReporter('ai-classify');
+  const classifyDirty = classify.hasUnsavedInput;
+  useEffect(() => {
+    classifyReporter(classifyDirty);
+  }, [classifyReporter, classifyDirty]);
   const { dialog: unsavedDialog } = useUnsavedChangesGuard(isAnyDirty);
 
   if (behaviorLoading || cred.isLoading) {
@@ -344,7 +353,13 @@ export default function SettingsPage() {
         <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">설정</h1>
       </div>
 
-      <Tabs defaultValue="ai">
+      <Tabs
+        defaultValue="ai"
+        onValueChange={(v) => {
+          // 분류 자격증명은 탭이 처음 열릴 때만 조회한다(다른 탭에서 요청을 만들지 않게).
+          if (v === 'ai-classify') classify.activate();
+        }}
+      >
         {/* overflow-x-auto만 주면 CSS 사양상 overflow-y가 visible→auto로 승격되어
             탭 콘텐츠가 고정 높이를 미세 초과할 때 유령 세로 스크롤바가 생긴다.
             가로 스크롤(좁은 화면 대응)은 유지하되 세로는 명시적으로 hidden 고정. */}
@@ -357,6 +372,10 @@ export default function SettingsPage() {
           <TabsTrigger value="ai">
             <Bot className="h-4 w-4" />
             AI 에이전트
+          </TabsTrigger>
+          <TabsTrigger value="ai-classify">
+            <Tags className="h-4 w-4" />
+            AI 분류
           </TabsTrigger>
           <TabsTrigger value="email">
             <Mail className="h-4 w-4" />
@@ -428,7 +447,7 @@ export default function SettingsPage() {
                         <SelectValue placeholder="모델을 선택하세요" />
                       </SelectTrigger>
                       <SelectContent>
-                        {MODEL_OPTIONS.map((opt) => (
+                        {CLAUDE_MODEL_OPTIONS.map((opt) => (
                           <SelectItem key={opt.value} value={opt.value}>
                             {opt.label}
                           </SelectItem>
@@ -593,6 +612,15 @@ export default function SettingsPage() {
               되돌리기
             </Button>
           </div>
+        </TabsContent>
+        {/* AI 분류 탭(#707) — 상태는 페이지 소유. 미설정 요약은 채팅 탭의 현재 값을 보여준다. */}
+        <TabsContent value="ai-classify" className="mt-6">
+          <AiClassifySettingsTab
+            state={classify}
+            chatAgentType={cred.savedAgentType}
+            chatConfigured={cred.configured}
+            chatModel={settings['ai.model']?.value ?? form['ai.model']}
+          />
         </TabsContent>
         {/* 이메일 탭 — 폼 상태는 페이지가 소유한다(탭 전환에도 편집이 살아남는다) */}
         <TabsContent value="email" className="mt-6">

@@ -2,6 +2,8 @@ package com.smartfirehub.settings.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.smartfirehub.settings.model.AiBehaviorDefaults;
+import com.smartfirehub.settings.model.AiCredentialSlot;
 import java.util.HashSet;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
@@ -65,5 +67,21 @@ class SettingsKeyWhitelistInvariantTest {
     assertThat(SettingsOverridePolicy.tenantOverridableKeys())
         .as("연결 키가 플랫폼으로 회수되면 번들 채움이 그 키를 되살려 그룹 전체가 조용히 잠긴다")
         .containsAll(SettingsService.SMTP_CONNECTION_KEYS);
+  }
+
+  /**
+   * AI 자격증명 슬롯이 소유한 키(채팅·분류 자격증명 + 분류 모델)는 전부 전용 서비스 소유이고,
+   * 코드 기본값이 없어야 한다 — 기본값이 생기면 "없음 = 채팅 설정 사용"(#707 결정 2)이 깨진다.
+   */
+  @Test
+  void 자격증명_슬롯_소유_키는_전부_EXTERNAL_OWNER_이고_기본값이_없다() {
+    assertThat(AiCredentialSlot.ownedKeys())
+        .containsExactlyInAnyOrder("ai.credential", "ai.classify_credential", "ai.classify_model");
+    for (String key : AiCredentialSlot.ownedKeys()) {
+      assertThat(SettingsOverridePolicy.planeOf(key)).as(key)
+          .isEqualTo(SettingsOverridePolicy.Plane.EXTERNAL_OWNER);
+      assertThat(AiBehaviorDefaults.isKey(key)).as(key).isFalse();
+      assertThat(SettingsOverridePolicy.tenantOverridableKeys()).as(key).doesNotContain(key);
+    }
   }
 }

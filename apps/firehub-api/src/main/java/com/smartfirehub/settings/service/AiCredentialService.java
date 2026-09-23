@@ -8,6 +8,7 @@ import com.smartfirehub.apiconnection.service.EncryptionService;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.settings.model.AiCredential;
 import com.smartfirehub.settings.model.AiCredentialDocument;
+import com.smartfirehub.settings.model.AiCredentialSlot;
 import com.smartfirehub.settings.model.UnknownAgentTypeException;
 import com.smartfirehub.settings.repository.TenantSettingsRepository;
 import java.util.List;
@@ -18,9 +19,11 @@ import java.util.function.UnaryOperator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
- * {@code ai.credential} 키의 <b>유일한 소유자</b>. 이 키를 읽고 쓰는 모든 경로가 여기를 지난다.
+ * AI 자격증명 슬롯({@link AiCredentialSlot}: {@code ai.credential}, {@code ai.classify_credential} +
+ * {@code ai.classify_model})의 <b>유일한 소유자</b>. 이 키들을 읽고 쓰는 모든 경로가 여기를 지난다.
  *
  * <p><b>왜 {@link SettingsService} 가 아닌가</b>: 범용 설정 경로는 {@code Map<String,String>} 을
  * 키마다 검증·암호화한다. 이 값은 JSON 이고 비밀이 <b>하위 필드</b>에 있어, 범용 경로에 얹으면
@@ -45,12 +48,20 @@ import org.springframework.stereotype.Service;
 public class AiCredentialService {
 
   /**
-   * 저장 키. 패키지 가시성 — 같은 패키지의 {@code AiCredentialServiceTest} 가 손으로 행을
-   * 심어(fail-closed 시나리오) 이 서비스를 우회하는 경로를 재현해야 하기 때문이고,
-   * {@code SettingsService} 도 같은 이유로(범용 경로에서 이 키를 걸러내야 한다) 이 상수를
-   * 그대로 참조한다 — 리터럴을 여러 곳에 복제하지 않는다.
+   * 채팅 슬롯 키의 별칭. 같은 패키지 테스트({@code AiCredentialServiceTest} 등)가 static import 로
+   * 행을 직접 심으므로 이름을 유지한다 — 진짜 출처는 {@link AiCredentialSlot#CHAT}.
    */
-  static final String KEY = "ai.credential";
+  static final String KEY = AiCredentialSlot.CHAT.key();
+
+  /** 분류 모델 공백 거부 문구. 컨트롤러·화면이 같은 문구를 보여야 해서 공개한다. */
+  public static final String MSG_CLASSIFY_MODEL_REQUIRED = "분류 모델을 선택하세요";
+
+  /**
+   * 분류 자격증명 행은 있는데 모델 행이 없는(묶음 불변식이 깨진 — 수동 DB 조작 등) 상태의 문구.
+   * 채팅으로 조용히 폴백하지 않고 스텝을 실패시킨다(fail-closed).
+   */
+  static final String MSG_CLASSIFY_BUNDLE_BROKEN =
+      "분류 전용 AI 설정이 손상됐습니다(분류 모델이 없습니다). 관리자 설정의 AI 분류 탭에서 다시 저장하거나 설정을 해제하세요.";
 
   /**
    * 테넌트 행이 없을 때(미설정) 쓰는 기본 유형. 빈 {@code sdk} 문서는 비밀이 없어
@@ -97,8 +108,13 @@ public class AiCredentialService {
   // 설정이 필요 없는 표준 동작이라 공유할 이유가 없다.
   private static final ObjectMapper MAPPER = new ObjectMapper();
 
+  /** 채팅 슬롯 해석 — 채팅·프로액티브·분류(미설정 시) 호출처가 쓰는 기존 진입점. */
+  public AiCredential resolve() {
+    return resolve(AiCredentialSlot.CHAT);
+  }
+
   /**
-   * 현재 테넌트의 자격증명을 타입으로 바꾼다. 테넌트 행이 없거나 테넌트 컨텍스트가 없으면
+   * 현재 테넌트의 {@code slot} 자격증명을 타입으로 바꾼다. 테넌트 행이 없거나 테넌트 컨텍스트가 없으면
    * {@link #DEFAULT_AGENT_TYPE} 빈 문서(= {@code isComplete()==false}, 미설정)다 — 플랫폼 행은
    * 절대 읽지 않는다(클래스 javadoc "테넌트 전용" 참고).
    *
@@ -106,16 +122,21 @@ public class AiCredentialService {
    * 빈 자격증명으로 조용히 넘어가지 않는다 — 소비처가 ambient 키로 떨어질 여지를 주면
    * {@code 6b1c6383} 과 같은 과금 회귀가 된다.
    */
-  public AiCredential resolve() {
+  public AiCredential resolve(AiCredentialSlot slot) {
     AiCredentialDocument doc =
-        readTenantRaw()
+        readTenantRaw(slot.key())
             .map(AiCredentialDocument::parse)
             .orElseGet(() -> AiCredentialDocument.empty(DEFAULT_AGENT_TYPE));
     return toCredential(doc);
   }
 
+  /** 채팅 슬롯 화면용 읽기. */
+  public AiCredentialView read() {
+    return read(AiCredentialSlot.CHAT);
+  }
+
   /**
-   * 화면용 읽기. <b>{@link #resolve()} 를 쓰지 않는다</b> — 알 수 없는 {@code agentType} 에서도
+   * {@code slot} 의 화면용 읽기. <b>{@link #resolve()} 를 쓰지 않는다</b> — 알 수 없는 {@code agentType} 에서도
    * 동작해야 관리자가 값을 보고 되돌릴 수 있다. {@code agentType}/{@code payload}/
    * {@code secretFieldNames} 를 문서에서 직접 뽑는다.
    *
@@ -131,12 +152,12 @@ public class AiCredentialService {
    * {@code {agentType:"sdk", payload:{}, secretFieldNames:[], configured:false}} 이고, 화면은 이
    * 값을 보고 "AI 설정이 없습니다" 안내와 직접 설정 폼을 띄운다.
    */
-  public AiCredentialView read() {
-    Optional<String> tenantRaw = readTenantRaw();
+  public AiCredentialView read(AiCredentialSlot slot) {
+    Optional<String> tenantRaw = readTenantRaw(slot.key());
     boolean configured = tenantRaw.isPresent();
     AiCredentialDocument doc =
         tenantRaw
-            .flatMap(raw -> tryParse(raw, "GET"))
+            .flatMap(raw -> tryParse(raw, slot.key(), "GET"))
             .orElseGet(() -> AiCredentialDocument.empty(DEFAULT_AGENT_TYPE));
 
     Map<String, Object> payload =
@@ -144,12 +165,18 @@ public class AiCredentialService {
     // decryptOrEmpty 가 아니라 decryptOrEmptyLenient 를 쓴다 — 손으로 고친 행이 암호문 형식이
     // 아닌 값을 담고 있어도(예: "not-a-cipher") 화면은 죽지 않고 "미설정"으로 보여야 관리자가
     // 되돌릴 수 있다(스펙 §"알 수 없는 agentType" 문단과 같은 이유, 아래 메서드 javadoc 참고).
-    List<String> secretFieldNames = doc.secretNames(this::decryptOrEmptyLenient);
+    List<String> secretFieldNames = doc.secretNames(cipher -> decryptOrEmptyLenient(cipher, slot.key()));
     return new AiCredentialView(doc.agentType(), payload, secretFieldNames, configured);
   }
 
+  /** 채팅 슬롯 저장 — 기존 호출처(채팅 PUT) 진입점. */
+  public void save(AiCredentialUpsert req, Long userId) {
+    save(AiCredentialSlot.CHAT, req, userId);
+  }
+
   /**
-   * 현재 테넌트의 {@code tenant_settings} 행에 저장한다(유일한 저장 위치).
+   * 현재 테넌트의 {@code tenant_settings} {@code slot} 행에 저장한다(유일한 저장 위치). 병합 규칙은
+   * 슬롯과 무관하다(아래 문단들, 실제 병합은 {@link #mergeForSave}).
    *
    * <p><b>payload 는 secret 과 같은 규칙으로 병합한다(요청에 있는 키만 덮어쓰고, 없는 키는
    * 그대로 둔다) — 단, 유형이 바뀌지 않았을 때만.</b> {@link AiCredentialDocument} 의 역직렬화가
@@ -186,7 +213,17 @@ public class AiCredentialService {
    * 호출은 비밀이 없어 실패하거나, 더 나쁘게는 ai-agent 컨테이너의 ambient 키로 과금되는
    * 오귀속이 생긴다 — 이 규칙이 막으려는 사고(6b1c6383)의 한 경로다.
    */
-  public void save(AiCredentialUpsert req, Long userId) {
+  public void save(AiCredentialSlot slot, AiCredentialUpsert req, Long userId) {
+    AiCredentialDocument doc = mergeForSave(slot, req);
+    tenantSettingsRepository.upsert(slot.key(), doc.toJson(), userId);
+  }
+
+  /**
+   * 요청을 검증하고 기존 문서와 병합한 결과를 돌려준다 — <b>아직 쓰지 않는다</b>. 채팅 저장과
+   * 분류 묶음 저장이 같은 병합 규칙(생략 secret=유지, ""=삭제, 유형 변경=새 문서, 비밀 필수)을
+   * 공유하되, 분류 쪽은 모델 검사를 끝낸 뒤 두 키를 한 트랜잭션에서 쓰기 위해 분리했다.
+   */
+  private AiCredentialDocument mergeForSave(AiCredentialSlot slot, AiCredentialUpsert req) {
     validate(req);
 
     // 손상된 JSON(파싱 실패)을 만나도 "행이 없다"와 똑같이 취급한다(보안 리뷰 Fix7) — typeChanged
@@ -194,8 +231,8 @@ public class AiCredentialService {
     // 기존 값을 null 로 흡수하기만 하면 자연히 같은 길을 탄다. 파싱 실패를 여기서 던지면 이 PUT 이
     // 손상을 덮어쓸 유일한 통로인데도 막혀 버린다 — 그 값은 이번 저장으로 통째로 교체되므로
     // 흡수해도 잃는 게 없다.
-    Optional<String> existingRaw = readTenantRaw();
-    AiCredentialDocument existing = existingRaw.flatMap(raw -> tryParse(raw, "PUT")).orElse(null);
+    Optional<String> existingRaw = readTenantRaw(slot.key());
+    AiCredentialDocument existing = existingRaw.flatMap(raw -> tryParse(raw, slot.key(), "PUT")).orElse(null);
     boolean typeChanged = existing == null || !req.agentType().equals(existing.agentType());
     AiCredentialDocument doc = typeChanged ? AiCredentialDocument.empty(req.agentType()) : existing;
 
@@ -210,9 +247,8 @@ public class AiCredentialService {
     req.secret().forEach((name, value) -> doc.withSecret(name, encryptionService.encrypt(value)));
 
     // 병합이 끝난 doc 을 검사한다 — 아직 DB 에 쓰기 전이라 여기서 던져도 부수효과가 없다(Fix3).
-    requireUsableSecret(doc);
-
-    tenantSettingsRepository.upsert(KEY, doc.toJson(), userId);
+    requireUsableSecret(doc, slot.key());
+    return doc;
   }
 
   /**
@@ -222,7 +258,7 @@ public class AiCredentialService {
    * 참고 — 이름이 아무거나면 안 되고 {@link #toCredential} 이 그 유형에서 실제로 읽는 필드여야
    * 한다.
    */
-  private void requireUsableSecret(AiCredentialDocument doc) {
+  private void requireUsableSecret(AiCredentialDocument doc, String key) {
     Set<String> requiredFields = REQUIRED_SECRET_FIELDS.get(doc.agentType());
     if (requiredFields == null) return; // opencode 등 이 가드 대상이 아닌 유형
 
@@ -234,7 +270,7 @@ public class AiCredentialService {
     // 더 정확하기도 하다 — 복호화되지 않는 값은 resolve() 에서 어차피 쓸 수 없으므로 "설정됨"
     // 으로 세면 안 된다. 그래서 손상 = 미설정으로 보고, 거부는 아래 한국어 안내 메시지로 낸다
     // (내부 예외 문구는 응답에 싣지 않고 로그로만 남긴다 — decryptOrEmptyLenient 참고).
-    List<String> nonBlankSecrets = doc.secretNames(this::decryptOrEmptyLenient);
+    List<String> nonBlankSecrets = doc.secretNames(cipher -> decryptOrEmptyLenient(cipher, key));
     boolean hasUsableSecret = nonBlankSecrets.stream().anyMatch(requiredFields::contains);
     if (hasUsableSecret) return;
 
@@ -252,19 +288,29 @@ public class AiCredentialService {
    * {@link #resolve} 는 쓰지 않는다: 그쪽은 화면이 아니라 실제 호출에 쓰이는
    * 값이라 손상을 감추면 안 된다(클래스 상단 javadoc "복호화는 이 서비스 한 곳에서만" 문단과
    * 같은 이유로, fail-closed 를 유지해야 하는 경로다). {@code context} 는 로그에만 쓰는 라벨이다
-   * (예: "GET"/"PUT") — 어느 호출부에서 손상을 만났는지 운영 로그로 구분하기 위해서다.
+   * (예: "GET"/"PUT") — 어느 호출부에서 손상을 만났는지 운영 로그로 구분하기 위해서다. {@code key}
+   * 는 손상된 행의 슬롯 키(채팅/분류)로, 역시 로그에만 쓴다.
    */
-  private Optional<AiCredentialDocument> tryParse(String raw, String context) {
+  private Optional<AiCredentialDocument> tryParse(String raw, String key, String context) {
     try {
       return Optional.of(AiCredentialDocument.parse(raw));
     } catch (RuntimeException e) {
-      log.warn("ai.credential 문서가 손상돼 파싱할 수 없다({}) — 미설정으로 취급한다: {}", context, e.toString());
+      // 로그에 실제 슬롯 키를 남긴다 — 채팅/분류 중 어느 행이 손상됐는지 운영에서 구분해야 한다(#707).
+      log.warn("{} 문서가 손상돼 파싱할 수 없다({}) — 미설정으로 취급한다: {}", key, context, e.toString());
       return Optional.empty();
     }
   }
 
+  /** 채팅 슬롯 프로브용 저장 키 — 기존 호출처 진입점. */
+  public Optional<StoredOpencodeCredential> tenantOpencodeCredential() {
+    return tenantOpencodeCredential(AiCredentialSlot.CHAT);
+  }
+
   /**
-   * {@code OpencodeProbeService} 전용 — 테넌트 자신의 opencode 자격증명만 읽는다.
+   * {@code OpencodeProbeService} 전용 — 테넌트 자신의 {@code slot} opencode 자격증명만 읽는다.
+   *
+   * <p><b>슬롯을 섞지 않는다</b> — 채팅 키로 분류 게이트웨이를 찌르거나 그 반대가 되면 안 된다
+   * (baseURL 일치 검사와 별개의 경계, #707).
    *
    * <p><b>{@link #resolve()} 를 쓰지 않는 이유</b>: 프로브는 인증된 외부 호출(임의 baseURL 에
    * Bearer 를 실어 보낸다)을 만드는 화면 경로라, 손상된 행에서 {@code resolve()} 처럼 던지지 않고
@@ -281,33 +327,118 @@ public class AiCredentialService {
    * @return 테넌트 컨텍스트가 없거나, 테넌트 행이 없거나, 유형이 {@code opencode} 가 아니면
    *     빈 값. 있으면 baseURL(평문)과 apiKey(복호화된 평문).
    */
-  public Optional<StoredOpencodeCredential> tenantOpencodeCredential() {
+  public Optional<StoredOpencodeCredential> tenantOpencodeCredential(AiCredentialSlot slot) {
     // 손상된 행에서 500 이 나지 않게 관용적으로 읽는다(재검토 N7). 파싱 실패는 "테넌트 행이
     // 없다"와 같게 취급하고(=빈 값), 복호화 실패는 "저장된 키가 없다"와 같게
     // 취급한다 — 둘 다 OpencodeProbeService 가 이미 한국어 400(MSG_NO_STORED_KEY)으로 다루는
     // 모양이다. 여기서 던지면 POST /ai-credential/probe 가 500 이 되어, 손상된 행을 고치려는
     // 관리자가 "연결 테스트" 버튼부터 막힌다. resolve() 와 달리 이 값은 화면이 눌러 보는
     // 프로브용이라 fail-closed 를 고집할 이유가 없다(자격증명이 비면 프로브가 거부한다).
-    return readTenantRaw()
-        .flatMap(raw -> tryParse(raw, "probe"))
+    return readTenantRaw(slot.key())
+        .flatMap(raw -> tryParse(raw, slot.key(), "probe"))
         .filter(doc -> "opencode".equals(doc.agentType()))
         .map(
             doc ->
                 new StoredOpencodeCredential(
                     doc.payload().path("baseURL").asText(""),
-                    decryptOrEmptyLenient(doc.secretCipher("apiKey"))));
+                    decryptOrEmptyLenient(doc.secretCipher("apiKey"), slot.key())));
+  }
+
+  // ---- 분류 전용 묶음(#707) ----
+
+  /**
+   * 분류 전용 묶음을 해석한다. 분류 자격증명 행이 없으면 빈 값(= 분류는 채팅 설정을 통째로 쓴다).
+   *
+   * <p>행이 있으면 {@link #resolve(AiCredentialSlot)} 와 같은 fail-closed 규칙(알 수 없는 유형·손상된
+   * 암호문은 예외)으로 타입을 만들고, 모델 행이 없거나 공백이면 {@link IllegalStateException} 을
+   * 던진다 — <b>채팅으로 폴백하지 않는다</b>. 폴백하면 테넌트가 고른 공급자가 아닌 곳으로 과금된다.
+   *
+   * <p>{@code readOnly} 트랜잭션으로 두 조회를 묶는다 — 저장소 호출마다 따로 트랜잭션이면 두 조회
+   * 사이에 동시 {@link #clearClassify} 가 끼어 "자격증명은 있고 모델은 없는" 가짜 손상으로 보인다.
+   */
+  @Transactional(readOnly = true)
+  public Optional<ClassifyBinding> resolveClassify() {
+    Optional<String> raw = readTenantRaw(AiCredentialSlot.CLASSIFY.key());
+    if (raw.isEmpty()) return Optional.empty();
+    AiCredential credential = toCredential(AiCredentialDocument.parse(raw.get()));
+    String model =
+        readTenantRaw(AiCredentialSlot.CLASSIFY_MODEL_KEY)
+            .map(String::trim)
+            .filter(m -> !m.isEmpty())
+            .orElseThrow(() -> new IllegalStateException(MSG_CLASSIFY_BUNDLE_BROKEN));
+    return Optional.of(new ClassifyBinding(credential, model));
+  }
+
+  /** 분류 탭 화면용 읽기. 규칙은 {@link #read(AiCredentialSlot)} 와 같고 모델을 덧붙인다(한 스냅샷으로 읽는다). */
+  @Transactional(readOnly = true)
+  public AiClassifyCredentialView readClassify() {
+    AiCredentialView credential = read(AiCredentialSlot.CLASSIFY);
+    String model = readTenantRaw(AiCredentialSlot.CLASSIFY_MODEL_KEY).orElse("");
+    return new AiClassifyCredentialView(
+        credential.agentType(),
+        credential.payload(),
+        credential.secretFieldNames(),
+        credential.configured(),
+        model);
+  }
+
+  /**
+   * 분류 전용 묶음(자격증명 + 모델)을 <b>한 트랜잭션에서</b> 저장한다.
+   *
+   * <p>{@code @Transactional} 이 여기 있어야 하는 이유: {@link TenantSettingsRepository} 의 클래스
+   * 레벨 애노테이션은 호출마다 따로 커밋한다 — 두 upsert 가 각자 커밋되면 두 번째가 실패할 때
+   * 모델 없는 자격증명(= {@link #resolveClassify} 가 fail-closed 로 막는 손상 상태)이 남는다.
+   *
+   * <p>검사 순서: 모델 공백(400) → 자격증명 병합·검증(채팅과 같은 규칙) → opencode 모델 형식.
+   * 전부 쓰기 전에 끝나므로 거부되면 아무 행도 바뀌지 않는다. 채팅과 달리 슬래시 없는 opencode
+   * 모델을 통과시키지 않는다 — 채팅이 그걸 허용하는 이유(자격증명 먼저 저장해야 모델을 고를 수
+   * 있는 순환 잠금)가 분류에는 없다(모델이 같은 요청에 실린다).
+   */
+  @Transactional
+  public void saveClassify(AiCredentialUpsert req, String model, Long userId) {
+    if (model == null || model.isBlank()) {
+      throw new IllegalArgumentException(MSG_CLASSIFY_MODEL_REQUIRED);
+    }
+    String trimmedModel = model.trim();
+    AiCredentialDocument doc = mergeForSave(AiCredentialSlot.CLASSIFY, req);
+    String problem = opencodeModelProblem(doc, trimmedModel);
+    if (problem != null) {
+      throw new IllegalArgumentException(problem);
+    }
+    tenantSettingsRepository.upsert(AiCredentialSlot.CLASSIFY.key(), doc.toJson(), userId);
+    tenantSettingsRepository.upsert(AiCredentialSlot.CLASSIFY_MODEL_KEY, trimmedModel, userId);
+  }
+
+  /** 분류 전용 묶음을 함께 지운다(= 채팅 설정 사용으로 복귀). 없어도 성공(멱등). */
+  @Transactional
+  public void clearClassify() {
+    tenantSettingsRepository.delete(AiCredentialSlot.CLASSIFY.key());
+    tenantSettingsRepository.delete(AiCredentialSlot.CLASSIFY_MODEL_KEY);
+  }
+
+  /**
+   * opencode 문서면 모델이 {@code providerId/모델} 형식이고 공급자가 일치하는지 본다. 판정과 문구는
+   * 실행 시점 가드({@link AiCredential#modelProblem})와 같은 한 곳에서 온다. payload 만 쓰므로
+   * 비밀을 복호화하지 않는다(손상된 옛 암호문이 저장 경로를 막지 않게).
+   */
+  private static String opencodeModelProblem(AiCredentialDocument doc, String model) {
+    if (!"opencode".equals(doc.agentType())) return null;
+    JsonNode payload = doc.payload();
+    return new AiCredential.Opencode(
+            payload.path("providerId").asText(""), payload.path("baseURL").asText(""), "", "")
+        .modelProblem(model);
   }
 
   // ---- 내부 헬퍼 ----
 
   /**
-   * 현재 테넌트의 원문. 컨텍스트가 없으면 조회 자체를 하지 않고 빈 값(= 미설정)이다 — 어느
+   * 현재 테넌트의 {@code key} 원문. 컨텍스트가 없으면 조회 자체를 하지 않고 빈 값(= 미설정)이다 — 어느
    * 테넌트의 값인지 모르는 채로 아무 행이나 읽을 수 없고, 대신 읽을 플랫폼 값도 없다. 테넌트
    * 소유 배경 작업(프로액티브 등)은 {@code TenantScopedRunner} 가 컨텍스트를 세운 뒤 부른다.
    */
-  private Optional<String> readTenantRaw() {
+  private Optional<String> readTenantRaw(String key) {
     if (TenantContext.get() == null) return Optional.empty();
-    return tenantSettingsRepository.findValue(KEY);
+    return tenantSettingsRepository.findValue(key);
   }
 
   /**
@@ -372,11 +503,12 @@ public class AiCredentialService {
    * (예: {@code "Invalid encrypted format …"})가 테넌트 관리자에게 노출되면 내부 암호화 형식을
    * 흘리는 정찰 단서가 된다. 대신 로그로만 남긴다.
    */
-  private String decryptOrEmptyLenient(String cipher) {
+  private String decryptOrEmptyLenient(String cipher, String key) {
     try {
       return decryptOrEmpty(cipher);
     } catch (RuntimeException e) {
-      log.warn("ai.credential 비밀을 복호화할 수 없다 — 미설정으로 취급한다: {}", e.toString());
+      // 비밀 값은 싣지 않고 슬롯 키만 남긴다(어느 슬롯의 암호문이 손상됐는지 구분용, #707).
+      log.warn("{} 비밀을 복호화할 수 없다 — 미설정으로 취급한다: {}", key, e.toString());
       return "";
     }
   }
@@ -436,4 +568,24 @@ public class AiCredentialService {
    * (클래스 상단 {@link #save} javadoc 참고).
    */
   public record AiCredentialUpsert(String agentType, Map<String, Object> payload, Map<String, String> secret) {}
+
+  /** {@link #resolveClassify()} 결과 — 분류가 실제로 쓸 자격증명과 모델. */
+  public record ClassifyBinding(AiCredential credential, String model) {
+    /** 기본 record toString 은 자격증명 record 의 비밀 필드까지 찍는다 — 로그 유출을 막는다(#707). */
+    @Override
+    public String toString() {
+      return "ClassifyBinding[" + credential.nonSecretSummary(model) + "]";
+    }
+  }
+
+  /**
+   * 분류 탭 화면용 읽기 결과(평평한 모양 — HTTP 응답 그대로). 미설정이면
+   * {@code configured=false, agentType="sdk", model=""}. 비밀 값은 담지 않는다.
+   */
+  public record AiClassifyCredentialView(
+      String agentType,
+      Map<String, Object> payload,
+      List<String> secretFieldNames,
+      boolean configured,
+      String model) {}
 }

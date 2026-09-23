@@ -10,8 +10,10 @@ import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.tenant.TenantScopedRunner;
 import com.smartfirehub.settings.model.AiCredential;
 import com.smartfirehub.settings.model.AiCredentialDocument;
+import com.smartfirehub.settings.model.AiCredentialSlot;
 import com.smartfirehub.settings.model.UnknownAgentTypeException;
 import com.smartfirehub.settings.repository.TenantSettingsRepository;
+import com.smartfirehub.settings.service.AiCredentialService.AiClassifyCredentialView;
 import com.smartfirehub.settings.service.AiCredentialService.AiCredentialUpsert;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.SettingsTestSupport;
@@ -20,11 +22,13 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * {@link AiCredentialService} 통합 테스트. {@code ai.credential} 은 테넌트 전용 값(#706)이라
@@ -70,6 +74,10 @@ class AiCredentialServiceTest extends IntegrationTestBase {
     // @AfterEach 뒤에 실행되므로, 이 시점에는 아직 기본 테넌트 컨텍스트가 살아 있어
     // TenantContext.require() 가 통과한다.
     tenantSettingsRepository.delete(KEY);
+    // 분류 전용 묶음도 지운다 — 공유 test DB 의 기본 테넌트에 남으면 다른 테스트의 분류 해석이
+    // "분류 전용 설정됨"으로 뒤집힌다.
+    tenantSettingsRepository.delete(AiCredentialSlot.CLASSIFY.key());
+    tenantSettingsRepository.delete(AiCredentialSlot.CLASSIFY_MODEL_KEY);
     SettingsTestSupport.restoreSystemSettingValue(dsl, KEY, platformOriginal);
     if (!createdTenants.isEmpty()) {
       TenantRlsTestSupport.deleteTenants(dsl, createdTenants.toArray(new Long[0]));
@@ -599,5 +607,140 @@ class AiCredentialServiceTest extends IntegrationTestBase {
     assertThat(resolvedByTenant)
         .containsEntry(tenantA, new AiCredential.CliApi("sk-tenant-A"))
         .containsEntry(tenantB, new AiCredential.Cli("oauth-B"));
+  }
+
+  // ---------------------------------------------------------------------
+  // #707 분류 전용 슬롯 — 채팅 슬롯과 서로를 건드리지 않고, 두 키를 함께 쓰고 함께 지운다
+  // ---------------------------------------------------------------------
+
+  private Optional<String> rawTenant(String key) {
+    return tenantSettingsRepository.findValue(key);
+  }
+
+  @Test
+  void saveClassify_는_분류_슬롯에만_쓰고_채팅_슬롯을_건드리지_않는다() {
+    service.saveClassify(upsert("sdk", Map.of(), Map.of("apiKey", "sk-classify")), "claude-haiku-4-5", USER);
+
+    AiClassifyCredentialView view = service.readClassify();
+    assertThat(view.configured()).isTrue();
+    assertThat(view.agentType()).isEqualTo("sdk");
+    assertThat(view.secretFieldNames()).containsExactly("apiKey");
+    assertThat(view.model()).isEqualTo("claude-haiku-4-5");
+    // 채팅 슬롯은 여전히 미설정이다.
+    assertThat(service.read().configured()).isFalse();
+    assertThat(rawTenant(KEY)).isEmpty();
+  }
+
+  @Test
+  void 채팅_저장과_분류_해제는_서로의_행을_건드리지_않는다() {
+    service.save(upsert("cli-api", Map.of(), Map.of("apiKey", "sk-chat")), USER);
+    service.saveClassify(upsert("sdk", Map.of(), Map.of("oauthToken", "oat-classify")), "claude-haiku-4-5", USER);
+
+    // 채팅 유형을 바꿔도 분류 묶음은 그대로다.
+    service.save(upsert("cli", Map.of(), Map.of("oauthToken", "oat-chat")), USER);
+    assertThat(((AiCredential.Sdk) service.resolve(AiCredentialSlot.CLASSIFY)).oauthToken())
+        .isEqualTo("oat-classify");
+
+    // 분류를 해제해도 채팅은 그대로다.
+    service.clearClassify();
+    assertThat(((AiCredential.Cli) service.resolve()).oauthToken()).isEqualTo("oat-chat");
+    assertThat(rawTenant(AiCredentialSlot.CLASSIFY.key())).isEmpty();
+    assertThat(rawTenant(AiCredentialSlot.CLASSIFY_MODEL_KEY)).isEmpty();
+  }
+
+  @Test
+  void saveClassify_모델이_공백이면_400_문구로_거부하고_아무_행도_쓰지_않는다() {
+    for (String blank : new String[] {null, "", "   "}) {
+      assertThatThrownBy(
+              () -> service.saveClassify(upsert("sdk", Map.of(), Map.of("apiKey", "sk")), blank, USER))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessage(AiCredentialService.MSG_CLASSIFY_MODEL_REQUIRED);
+    }
+    assertThat(rawTenant(AiCredentialSlot.CLASSIFY.key())).isEmpty();
+    assertThat(rawTenant(AiCredentialSlot.CLASSIFY_MODEL_KEY)).isEmpty();
+  }
+
+  @Test
+  void saveClassify_자격증명_검증이_실패하면_모델_행도_쓰지_않는다() {
+    // sdk 인데 비밀이 없다 → requireUsableSecret 이 거부한다. 모델만 남는 반쪽 묶음이 생기면 안 된다.
+    assertThatThrownBy(() -> service.saveClassify(upsert("sdk", Map.of(), Map.of()), "claude-haiku-4-5", USER))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThat(rawTenant(AiCredentialSlot.CLASSIFY.key())).isEmpty();
+    assertThat(rawTenant(AiCredentialSlot.CLASSIFY_MODEL_KEY)).isEmpty();
+  }
+
+  @Test
+  void saveClassify_opencode_모델이_공급자와_어긋나면_400으로_거부한다() {
+    assertThatThrownBy(
+            () ->
+                service.saveClassify(
+                    upsert(
+                        "opencode",
+                        Map.of("providerId", "openai", "baseURL", "https://api.openai.com/v1"),
+                        Map.of("apiKey", "sk-oai")),
+                    "gpt-4o-mini", // 슬래시 없음 — 분류에는 순환 잠금 이유가 없어 여기서 막는다
+                    USER))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("opencode 형식");
+    assertThat(rawTenant(AiCredentialSlot.CLASSIFY.key())).isEmpty();
+  }
+
+  @Test
+  void clearClassify_는_멱등이다() {
+    service.clearClassify();
+    service.clearClassify();
+    assertThat(service.readClassify().configured()).isFalse();
+    assertThat(service.readClassify().model()).isEmpty();
+  }
+
+  @Test
+  void resolveClassify_미설정이면_비어_있고_설정되면_묶음을_준다() {
+    assertThat(service.resolveClassify()).isEmpty();
+
+    service.saveClassify(upsert("cli-api", Map.of(), Map.of("apiKey", "sk-c")), "claude-haiku-4-5", USER);
+
+    AiCredentialService.ClassifyBinding binding = service.resolveClassify().orElseThrow();
+    assertThat(binding.credential()).isEqualTo(new AiCredential.CliApi("sk-c"));
+    assertThat(binding.model()).isEqualTo("claude-haiku-4-5");
+  }
+
+  @Test
+  void resolveClassify_자격증명_행만_있고_모델_행이_없으면_채팅으로_폴백하지_않고_던진다() {
+    // 수동 DB 조작으로 묶음 불변식이 깨진 상태를 흉내낸다.
+    tenantSettingsRepository.upsert(
+        AiCredentialSlot.CLASSIFY.key(),
+        "{\"v\":1,\"agentType\":\"cli-api\",\"payload\":{},\"secret\":{\"apiKey\":\""
+            + encryptionService.encrypt("sk-c")
+            + "\"}}",
+        USER);
+
+    assertThatThrownBy(() -> service.resolveClassify())
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("모델");
+  }
+
+  @Test
+  void saveClassify_와_clearClassify_는_한_트랜잭션으로_묶인다() throws Exception {
+    // 저장소의 클래스 레벨 @Transactional 은 호출마다 따로 커밋한다 — 두 키를 한 트랜잭션에 묶는
+    // 것은 서비스 메서드의 애노테이션이다. 지우면 두 번째 쓰기 실패 시 반쪽 묶음이 남는다.
+    assertThat(
+            AiCredentialService.class
+                .getMethod("saveClassify", AiCredentialUpsert.class, String.class, Long.class)
+                .isAnnotationPresent(Transactional.class))
+        .isTrue();
+    assertThat(AiCredentialService.class.getMethod("clearClassify").isAnnotationPresent(Transactional.class))
+        .isTrue();
+  }
+
+  /**
+   * {@link AiCredentialService.ClassifyBinding} 은 기본 record toString 이 아니다(#707) —
+   * 기본값을 쓰면 자격증명 record 의 비밀 필드가 그대로 로그에 찍힌다.
+   */
+  @Test
+  void ClassifyBinding_toString_은_비밀을_담지_않는다() {
+    AiCredentialService.ClassifyBinding binding =
+        new AiCredentialService.ClassifyBinding(new AiCredential.CliApi("sk-SECRET"), "claude-haiku-4-5");
+
+    assertThat(binding.toString()).doesNotContain("SECRET").contains("cli-api").contains("claude-haiku-4-5");
   }
 }

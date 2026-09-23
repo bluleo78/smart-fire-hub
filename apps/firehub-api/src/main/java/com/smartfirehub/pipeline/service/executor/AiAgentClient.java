@@ -86,18 +86,36 @@ public class AiAgentClient {
    * 그대로 ai-agent 에 넘기면 비밀 없는 요청이 ai-agent 컨테이너의 ambient 자격증명으로 조용히
    * 떨어질 여지가 생긴다(6b1c6383 의 모양). 이 메서드가 {@code classify()} 의 {@code try} 밖에서
    * 불리므로 HTTP 호출 전에 끝나고, 문구가 catch 에 뭉개지지 않은 채 그대로 올라간다.
+   *
+   * <p><b>target 에 따라 자격증명·모델 출처가 갈린다(#707).</b> {@link AiClassifyTarget.Dedicated}
+   * 는 실행기가 이미 해석해 둔 분류 전용 묶음을 그대로 쓴다. {@link AiClassifyTarget.UseChat} 은
+   * 옛 코드와 같은 순서(모델 → 자격증명)로 <b>지금 이 순간</b> 채팅 설정을 해석한다 — 미설정
+   * 테넌트는 현행과 바이트 단위로 같은 바디다.
    */
-  public Map<String, Object> buildClassifyBody(ClassifyRequest request) {
+  public Map<String, Object> buildClassifyBody(ClassifyRequest request, AiClassifyTarget target) {
     Map<String, Object> body = new java.util.HashMap<>();
     body.put("rows", request.rows());
     body.put("prompt", request.prompt());
     body.put("outputColumns", request.outputColumns());
-    // AI 동작 키는 테넌트 값 → 코드 기본값으로 항상 해석된다(SettingsService.getValue).
-    body.put("model", settingsService.getValue("ai.model").orElseThrow());
+
+    String model;
+    AiCredential rawCredential;
+    switch (target) {
+      case AiClassifyTarget.Dedicated d -> {
+        model = d.model();
+        rawCredential = d.credential();
+      }
+      case AiClassifyTarget.UseChat u -> {
+        // AI 동작 키는 테넌트 값 → 코드 기본값으로 항상 해석된다(SettingsService.getValue).
+        model = settingsService.getValue("ai.model").orElseThrow();
+        rawCredential = aiCredentialService.resolve();
+      }
+    }
+    body.put("model", model);
 
     // 불완전(미설정 포함)이면 모델 검사보다 **먼저** 막는다 — 순서가 뒤집히면 providerId/baseUrl
     // 이 빈 opencode 테넌트에게 "모델을 다시 선택하세요"라는 엉뚱한 안내가 나간다.
-    AiCredential credential = aiCredentialService.resolve().requireComplete();
+    AiCredential credential = rawCredential.requireComplete();
 
     // 유형마다 실리는 키가 다르다 — 그 규칙은 AiCredential 의 유형별 applyTo() 하나에만 있다
     // (이슈 #695: 예전에는 여기·채팅·프로액티브에 각각 switch 가 있었고 이미 드리프트했다).
@@ -110,7 +128,7 @@ public class AiAgentClient {
     // OpenAI 호환 호스트가 이유를 알 수 없는 상류 오류로만 실패한다. 여기서 먼저 걸러 분명한
     // 설정 오류로 바꾼다 — 검사와 문구는 AiCredential.modelProblem 하나에서 온다(세 경로 공통).
     // 모델 제약이 없는 유형에서는 no-op 이라 여기서 유형을 따로 분기하지 않는다.
-    credential.requireModelUsable((String) body.get("model"));
+    credential.requireModelUsable(model);
     return body;
   }
 
@@ -122,11 +140,15 @@ public class AiAgentClient {
    * {@code /settings/ai-api-key} 를 역호출해 스스로 키를 가져왔는데, 그 엔드포인트는
    * {@code ai:settings}(ADMIN 전용) 권한을 요구하므로 비-ADMIN 사용자의 파이프라인이 조용히 실패했고 OAuth
    * 토큰은 아예 전달되지 않았다.
+   *
+   * <p>{@code target} 은 실행기({@link AiClassifyExecutor})가 스텝 실행당 <b>한 번</b> 해석한 값이다(#707)
+   * — 캐시 해시와 이 요청이 같은 인스턴스를 본다. 미설정(UseChat)이면 채팅 자격증명·모델은 여기서
+   * 바디를 조립할 때 지금처럼 해석된다.
    */
-  public ClassifyResponse classify(ClassifyRequest request, Long userId) {
+  public ClassifyResponse classify(ClassifyRequest request, AiClassifyTarget target, Long userId) {
     // buildClassifyBody() 는 try 밖에서 부른다 — 이유는 그 메서드 javadoc 참고
     // (UnknownAgentTypeException 이 아래 catch 에 삼켜지지 않게 하기 위함).
-    Map<String, Object> body = buildClassifyBody(request);
+    Map<String, Object> body = buildClassifyBody(request, target);
     try {
       String responseBody =
           webClient

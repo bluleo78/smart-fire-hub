@@ -77,6 +77,9 @@ public class AiClassifyExecutor {
   private final TransactionTemplate transactionTemplate;
   // 배치마다 진척을 남기기 위한 저장소 — 근거는 reportProgress javadoc 참고(#691).
   private final PipelineExecutionRepository executionRepository;
+  // 분류 공급자 해석기(#707) — 실행당 한 번 해석한다. 분류 전용(Dedicated)이면 그 인스턴스가 캐시
+  // 해시와 ai-agent 요청에 함께 쓰이고, 미설정(UseChat)이면 채팅 설정은 요청 시점에 해석된다.
+  private final AiClassifyTargetResolver targetResolver;
 
   public record ExecutionResult(long outputRows, String executionLog) {}
 
@@ -94,9 +97,6 @@ public class AiClassifyExecutor {
 
     int batchSize = config.batchSize() != null ? config.batchSize() : 20;
     String onError = config.onError() != null ? config.onError() : "CONTINUE";
-
-    // prompt_hash = SHA-256(prompt + JSON(outputColumns))[:8] — changes when outputColumns change
-    String promptHash = buildPromptHash(config);
 
     // outputColumns spec for AI agent: [{name, type}, ...]
     List<Map<String, String>> outputColumnSpecs =
@@ -130,6 +130,16 @@ public class AiClassifyExecutor {
       throw new IllegalStateException(
           "테넌트 컨텍스트 없이 AI_CLASSIFY 를 실행할 수 없다(ai_inference_cache 는 테넌트별 파티션) — 배경 경로 배선 오류");
     }
+
+    // 1-2. 분류 공급자를 **한 번** 해석한다(#707). 분류 슬롯만 읽는다 — 미설정(UseChat)은 채팅
+    //      자격증명을 여기서 건드리지 않으므로, 채팅 자격증명이 깨진 테넌트도 캐시 전량 히트면 지금처럼
+    //      성공한다. 분류 전용(Dedicated)이면 이 인스턴스가 해시와 요청 양쪽에 쓰여 실행 도중 설정이
+    //      바뀌어도 어긋나지 않는다. 테넌트 가드 뒤·배치 루프 밖이어야 손상 묶음 예외가
+    //      onError=CONTINUE 에 삼켜지지 않는다. 임시 테이블 생성 전이라 정리할 것도 없다.
+    AiClassifyTarget target = targetResolver.resolve();
+
+    // prompt_hash = SHA-256(prompt + JSON(outputColumns) [+ 분류 전용 판별자])[:8]
+    String promptHash = buildPromptHash(config, target);
 
     // 2. Load strategy
     String loadStrategy = step.loadStrategy() != null ? step.loadStrategy() : "REPLACE";
@@ -185,7 +195,7 @@ public class AiClassifyExecutor {
 
         try {
           BatchResult batchResult =
-              processBatch(batch, config, promptHash, outputColumnSpecs, userId);
+              processBatch(batch, config, promptHash, target, outputColumnSpecs, userId);
           totalCached += batchResult.cached();
           totalProcessed += batchResult.processed();
           classifiedRows = batchResult.rows();
@@ -208,7 +218,7 @@ public class AiClassifyExecutor {
               try {
                 Thread.sleep((long) Math.pow(2, retry) * 1000);
                 BatchResult batchResult =
-                    processBatch(batch, config, promptHash, outputColumnSpecs, userId);
+                    processBatch(batch, config, promptHash, target, outputColumnSpecs, userId);
                 totalCached += batchResult.cached();
                 totalProcessed += batchResult.processed();
                 classifiedRows = batchResult.rows();
@@ -499,6 +509,7 @@ public class AiClassifyExecutor {
       List<Map<String, Object>> batch,
       AiClassifyConfig config,
       String promptHash,
+      AiClassifyTarget target,
       List<Map<String, String>> outputColumnSpecs,
       Long userId) {
 
@@ -576,7 +587,9 @@ public class AiClassifyExecutor {
       AiAgentClient.ClassifyRequest classifyRequest =
           new AiAgentClient.ClassifyRequest(requestRows, config.prompt(), outputColumnSpecs);
 
-      AiAgentClient.ClassifyResponse response = aiAgentClient.classify(classifyRequest, userId);
+      // target 은 execute() 가 실행당 한 번 해석한 값 — 캐시 해시와 같은 인스턴스다(#707).
+      AiAgentClient.ClassifyResponse response =
+          aiAgentClient.classify(classifyRequest, target, userId);
 
       // Map results by source_id (as String for type-safe matching: Long vs Integer)
       Map<String, AiAgentClient.ClassifyRowResult> resultBySourceId =
@@ -706,13 +719,32 @@ public class AiClassifyExecutor {
     return allRows;
   }
 
-  private String buildPromptHash(AiClassifyConfig config) {
+  /**
+   * 캐시 {@code prompt_version} 이자 {@link #rowContentHash} 의 입력. 여기 한 곳만 바꾸면 두 키가 함께
+   * 갈린다(#707 결정 5).
+   *
+   * <ul>
+   *   <li>UseChat(미설정): 입력이 옛 코드와 <b>완전히 같다</b> — 기존 캐시가 그대로 히트한다. 그래서
+   *       채팅의 {@code ai.model} 을 바꿔도 캐시가 갈리지 않는 옛 동작도 그대로다(스펙 비목표).
+   *   <li>Dedicated: 뒤에 {@code \u001f + 판별자} 를 붙여 해당 테넌트만 1회 미스. 해제하면 옛 해시로
+   *       돌아가 옛 캐시가 다시 히트한다(되돌림이 공짜).
+   * </ul>
+   *
+   * <p>package-private — 회귀 가드 테스트가 리터럴 해시를 직접 단언한다.
+   */
+  String buildPromptHash(AiClassifyConfig config, AiClassifyTarget target) {
+    String base;
     try {
-      String outputColumnsJson = objectMapper.writeValueAsString(config.outputColumns());
-      return sha256Prefix8(config.prompt() + outputColumnsJson);
+      base = config.prompt() + objectMapper.writeValueAsString(config.outputColumns());
     } catch (JsonProcessingException e) {
-      return sha256Prefix8(config.prompt());
+      // 옛 코드와 같은 폴백 — 직렬화 실패 시 프롬프트만 해시한다.
+      base = config.prompt();
     }
+    String input = base;
+    return target
+        .cacheDiscriminator()
+        .map(d -> sha256Prefix8(input + "\u001f" + d))
+        .orElseGet(() -> sha256Prefix8(input));
   }
 
   private String toJson(Map<String, Object> map) {

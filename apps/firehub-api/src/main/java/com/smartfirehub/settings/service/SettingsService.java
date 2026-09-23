@@ -450,7 +450,7 @@ public class SettingsService {
    * 저장한다 — {@code system_settings}(전역 행)는 절대 건드리지 않는다. 이 구분이 이 밴드의
    * 존재 이유다(오늘의 결함: 한 테넌트의 저장이 전 테넌트에 적용됨).
    *
-   * <p>{@link AiCredentialService#KEY} 는 <b>이 메서드로 저장할 수 없다</b> — 화이트리스트에 없고,
+   * <p>{@link com.smartfirehub.settings.model.AiCredentialSlot#ownedKeys() 자격증명 슬롯 소유 키} 는 <b>이 메서드로 저장할 수 없다</b> — 화이트리스트에 없고,
    * {@link #rejectExternalOwnerKey} 가 별도로도 막는다. 유일한 쓰기 API 는
    * {@link AiCredentialService#save} 다.
    *

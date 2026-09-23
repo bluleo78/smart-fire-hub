@@ -76,3 +76,17 @@ export interface AiCredentialProbeResponse {
   models: string[];
   message: string | null;
 }
+
+/**
+ * `GET /settings/ai-classify-credential` 응답(#707) — 백엔드 `AiClassifyCredentialView` 와 1:1.
+ * 자격증명 필드는 채팅(`AiCredentialResponse`)과 같고 분류 모델이 더해진다. 미설정이면
+ * `configured:false, model:''` — 이때 AI 분류는 AI 에이전트(채팅) 설정을 통째로 쓴다.
+ */
+export interface AiClassifyCredentialResponse extends AiCredentialResponse {
+  model: string;
+}
+
+/** `PUT /settings/ai-classify-credential` 요청 바디 — 모델 필수(서버가 공백을 400 으로 거부). */
+export interface AiClassifyCredentialUpsertPayload extends AiCredentialUpsertPayload {
+  model: string;
+}
