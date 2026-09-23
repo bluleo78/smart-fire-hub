@@ -2,10 +2,8 @@ package com.smartfirehub.dataset.search;
 
 import com.smartfirehub.embedding.EmbeddingProvider;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
+import com.smartfirehub.global.util.RankFusion;
 import java.util.List;
-import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -20,9 +18,8 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class DatasetSearchService {
 
-  // RRF 상수: 후보 풀 크기와 융합 상수 k. DocumentSearchService 와 동일(k=60 은 RRF 표준 권장값).
+  // RRF 상수: 후보 풀 크기. 융합 상수 k(=60)는 RankFusion 공통 유틸에서 관리한다.
   private static final int CANDIDATE_POOL = 50;
-  private static final int RRF_K = 60;
   // topK 정규화 경계: 미지정 시 기본 10, 최대 20.
   private static final int DEFAULT_TOP_K = 10;
   private static final int MAX_TOP_K = 20;
@@ -56,43 +53,21 @@ public class DatasetSearchService {
     return rrfFuse(List.of(semantic, keyword), topK);
   }
 
-  /**
-   * RRF 융합: 각 랭킹 리스트에서 datasetId 의 rank(0-based)로 1/(RRF_K + rank + 1)을 누적한다. 누적 점수 내림차순으로
-   * 정렬해 상위 limit 개를 반환한다. hit.score 는 RRF 점수로 대체된다. 동점은 datasetId 오름차순으로 안정 정렬(결정성 보장).
-   */
+  /** RRF 융합: {@link RankFusion} 위임. hit.score 는 RRF 점수로 대체된다. */
   static List<DatasetSearchHit> rrfFuse(List<List<DatasetSearchHit>> rankings, int limit) {
-    Map<Long, Double> scoreById = new LinkedHashMap<>();
-    Map<Long, DatasetSearchHit> hitById = new LinkedHashMap<>();
-    for (List<DatasetSearchHit> ranking : rankings) {
-      for (int rank = 0; rank < ranking.size(); rank++) {
-        DatasetSearchHit hit = ranking.get(rank);
-        double contribution = 1.0 / (RRF_K + rank + 1);
-        scoreById.merge(hit.datasetId(), contribution, Double::sum);
-        hitById.putIfAbsent(hit.datasetId(), hit);
-      }
-    }
-    List<Map.Entry<Long, Double>> entries = new ArrayList<>(scoreById.entrySet());
-    entries.sort(
-        (x, y) -> {
-          int byScore = Double.compare(y.getValue(), x.getValue()); // 점수 내림차순
-          return byScore != 0 ? byScore : Long.compare(x.getKey(), y.getKey()); // 동점 → datasetId 오름차순
-        });
-    List<DatasetSearchHit> result = new ArrayList<>();
-    for (Map.Entry<Long, Double> e : entries) {
-      if (result.size() >= limit) break;
-      DatasetSearchHit base = hitById.get(e.getKey());
-      result.add(
-          new DatasetSearchHit(
-              base.datasetId(),
-              base.name(),
-              base.description(),
-              base.storageType(),
-              base.originType(),
-              base.tableName(),
-              base.category(),
-              e.getValue()));
-    }
-    return result;
+    return RankFusion.fuse(rankings, DatasetSearchHit::datasetId, limit).stream()
+        .map(
+            f ->
+                new DatasetSearchHit(
+                    f.hit().datasetId(),
+                    f.hit().name(),
+                    f.hit().description(),
+                    f.hit().storageType(),
+                    f.hit().originType(),
+                    f.hit().tableName(),
+                    f.hit().category(),
+                    f.score()))
+        .toList();
   }
 
   /** 쿼리 1건 임베딩 — 인제스션과 동일 provider 라야 비교가 유효하다. */

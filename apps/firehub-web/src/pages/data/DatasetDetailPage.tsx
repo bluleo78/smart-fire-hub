@@ -44,6 +44,7 @@ import { DatasetInfoTab } from './tabs/DatasetInfoTab';
 import { DatasetMappingTab } from './tabs/DatasetMappingTab';
 import { DatasetMapTab } from './tabs/DatasetMapTab';
 import { DatasetObjectsTab } from './tabs/DatasetObjectsTab';
+import { DatasetSearchTab } from './tabs/DatasetSearchTab';
 
 // 백엔드 dataset_tag.tag_name 컬럼 제약(VARCHAR(50))과 동일한 길이 제한.
 // 클라이언트에서 사전에 제한하여 불필요한 400 요청/토스트 혼란을 방지한다 (#530)
@@ -76,7 +77,7 @@ export default function DatasetDetailPage() {
     ? ['info', 'documents']
     : isFile
       ? ['info', 'objects']
-      : ['info', 'columns', 'data', 'map', 'mapping', 'history'];
+      : ['info', 'columns', 'data', 'search', 'map', 'mapping', 'history'];
   const tabParam = searchParams.get('tab');
   const initialTab = tabParam && validTabs.includes(tabParam) ? tabParam : 'info';
   const [activeTab, setActiveTab] = useState(initialTab);
@@ -107,7 +108,7 @@ export default function DatasetDetailPage() {
       ? ['info', 'documents']
       : isFileType
         ? ['info', 'objects']
-        : ['info', 'columns', 'data', 'map', 'mapping', 'history'];
+        : ['info', 'columns', 'data', 'search', 'map', 'mapping', 'history'];
     const newTabParam = searchParams.get('tab');
     const newTab = newTabParam && currentValidTabs.includes(newTabParam) ? newTabParam : 'info';
     setActiveTab(newTab);
@@ -500,6 +501,7 @@ export default function DatasetDetailPage() {
             <>
               <TabsTrigger value="columns">필드</TabsTrigger>
               <TabsTrigger value="data">데이터</TabsTrigger>
+              <TabsTrigger value="search">검색</TabsTrigger>
               {hasGeometry && <TabsTrigger value="map">지도</TabsTrigger>}
               <TabsTrigger value="mapping">매핑</TabsTrigger>
               <TabsTrigger value="history">이력</TabsTrigger>
@@ -530,6 +532,11 @@ export default function DatasetDetailPage() {
         {activeTab === 'map' && hasGeometry && (
           <div className="mt-6">
             <DatasetMapTab dataset={dataset} datasetId={datasetId} />
+          </div>
+        )}
+        {activeTab === 'search' && (
+          <div className="mt-6">
+            <DatasetSearchTab dataset={dataset} datasetId={datasetId} />
           </div>
         )}
         {activeTab === 'mapping' && (

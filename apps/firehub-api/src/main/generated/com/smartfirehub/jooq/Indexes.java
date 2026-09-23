@@ -21,6 +21,7 @@ import com.smartfirehub.jooq.tables.DatasetFavorite;
 import com.smartfirehub.jooq.tables.DatasetGraphIngest;
 import com.smartfirehub.jooq.tables.DatasetMapping;
 import com.smartfirehub.jooq.tables.DatasetOntology;
+import com.smartfirehub.jooq.tables.DatasetSearchIndex;
 import com.smartfirehub.jooq.tables.DatasetTag;
 import com.smartfirehub.jooq.tables.DocumentChunk;
 import com.smartfirehub.jooq.tables.DocumentFile;
@@ -128,6 +129,7 @@ public class Indexes {
     public static final Index IDX_DATASET_MAPPING_ONTOLOGY = Internal.createIndex(DSL.name("idx_dataset_mapping_ontology"), DatasetMapping.DATASET_MAPPING, new OrderField[] { DatasetMapping.DATASET_MAPPING.ONTOLOGY_ID }, false);
     public static final Index IDX_DATASET_NAME = Internal.createIndex(DSL.name("idx_dataset_name"), Dataset.DATASET, new OrderField[] { Dataset.DATASET.TENANT_ID, Dataset.DATASET.NAME }, true);
     public static final Index IDX_DATASET_ONTOLOGY_ONTOLOGY = Internal.createIndex(DSL.name("idx_dataset_ontology_ontology"), DatasetOntology.DATASET_ONTOLOGY, new OrderField[] { DatasetOntology.DATASET_ONTOLOGY.ONTOLOGY_ID }, false);
+    public static final Index IDX_DATASET_SEARCH_INDEX_TENANT = Internal.createIndex(DSL.name("idx_dataset_search_index_tenant"), DatasetSearchIndex.DATASET_SEARCH_INDEX, new OrderField[] { DatasetSearchIndex.DATASET_SEARCH_INDEX.TENANT_ID }, false);
     public static final Index IDX_DATASET_SOURCE_PIPELINE_STEP = Internal.createIndex(DSL.name("idx_dataset_source_pipeline_step"), Dataset.DATASET, new OrderField[] { Dataset.DATASET.SOURCE_PIPELINE_STEP_ID }, false);
     public static final Index IDX_DATASET_TABLE_NAME = Internal.createIndex(DSL.name("idx_dataset_table_name"), Dataset.DATASET, new OrderField[] { Dataset.DATASET.TENANT_ID, Dataset.DATASET.TABLE_NAME }, true);
     public static final Index IDX_DATASET_TAG_DATASET = Internal.createIndex(DSL.name("idx_dataset_tag_dataset"), DatasetTag.DATASET_TAG, new OrderField[] { DatasetTag.DATASET_TAG.DATASET_ID }, false);

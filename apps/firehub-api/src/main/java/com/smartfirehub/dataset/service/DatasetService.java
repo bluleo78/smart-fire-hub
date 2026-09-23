@@ -24,11 +24,16 @@ import com.smartfirehub.dataset.repository.DatasetCategoryRepository;
 import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.repository.DatasetTagRepository;
+import com.smartfirehub.dataset.rowsearch.IndexRef;
+import com.smartfirehub.dataset.rowsearch.RowSearchIndex;
+import com.smartfirehub.dataset.rowsearch.SearchColumnRepository;
+import com.smartfirehub.dataset.rowsearch.SearchIndexSettingsService;
 import com.smartfirehub.dataset.search.DatasetChangedEvent;
 import com.smartfirehub.dataset.search.DatasetEmbeddingService;
 import com.smartfirehub.file.repository.FileDatasetConfigRepository;
 import com.smartfirehub.file.service.FileObjectStorageService;
 import com.smartfirehub.global.dto.PageResponse;
+import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.user.repository.UserRepository;
 import java.util.ArrayList;
 import java.util.List;
@@ -94,6 +99,10 @@ public class DatasetService {
   private final FileDatasetConfigRepository fileDatasetConfigRepository;
   // FILE 데이터셋 생성 시 bucket 미지정이면 기본 버킷을 조회하기 위해 사용
   private final FileObjectStorageService fileObjectStorageService;
+  // 행 검색: 삭제 시 색인 테이블 정리, 검색 대상 필드 타입 변경 차단, 마지막 검색 필드 삭제 시 검색 끄기
+  private final RowSearchIndex rowSearchIndex;
+  private final SearchColumnRepository searchColumnRepository;
+  private final SearchIndexSettingsService searchIndexSettingsService;
 
   @Transactional
   public DatasetDetailResponse createDataset(CreateDatasetRequest request, Long userId) {
@@ -357,6 +366,9 @@ public class DatasetService {
     // isTableBacked 로 통일한다.) document_file/document_chunk 행, file_dataset_config 행은
     // dataset 삭제 시 FK CASCADE 로 함께 제거된다.
     if (isTableBacked(dataset.storageType())) {
+      // 색인 테이블은 FK 가 없어 CASCADE 로 사라지지 않는다 — 원본과 함께 지운다.
+      rowSearchIndex.drop(
+          new IndexRef(TenantContext.require(), id, dataset.tableName()));
       dataTableService.dropTable(dataset.tableName());
     }
     columnRepository.deleteByDatasetId(id);
@@ -484,6 +496,12 @@ public class DatasetService {
     }
 
     if (request.dataType() != null && !request.dataType().equals(column.dataType())) {
+      // 검색 대상 필드를 TEXT/VARCHAR 밖 타입으로 바꾸면 색인 텍스트를 만들 수 없다 — 먼저 해제하게 한다(409).
+      if (!SearchIndexSettingsService.SEARCHABLE_TYPES.contains(request.dataType())
+          && searchColumnRepository.isSearchable(columnId)) {
+        throw new IllegalStateException(
+            "검색 대상 필드는 TEXT/VARCHAR 이외 타입으로 바꿀 수 없습니다. 검색 탭에서 먼저 해제하세요.");
+      }
       if (rowCount > 0) {
         throw new ColumnModificationException("Cannot change data type when dataset has data");
       }
@@ -694,8 +712,18 @@ public class DatasetService {
       throw new ColumnModificationException("Cannot delete the last column of a dataset");
     }
 
+    // 삭제 전에 검색 대상 여부를 잡아 둔다(삭제 후에는 컬럼 행이 없어 판정할 수 없다).
+    boolean wasSearchField = searchColumnRepository.isSearchable(columnId);
+
     dataTableService.dropColumn(dataset.tableName(), column.columnName());
     columnRepository.deleteById(columnId);
+
+    // 마지막 검색 대상 필드를 지웠으면 검색 탭에서 필드를 모두 해제한 것과 같게 즉시 끈다(상태 행 삭제 + 색인 테이블
+    // DROP). 그대로 두면 다음 스윕 전까지 낡은 색인이 남는다. 검색 필드가 남아 있으면 config_hash 가 바뀌어 스윕이
+    // 알아서 재색인하므로 손대지 않는다.
+    if (wasSearchField && searchColumnRepository.findConfig(datasetId).isEmpty()) {
+      searchIndexSettingsService.update(datasetId, List.of());
+    }
 
     // Recreate PK index if deleted column was a PK column
     if (column.isPrimaryKey()) {

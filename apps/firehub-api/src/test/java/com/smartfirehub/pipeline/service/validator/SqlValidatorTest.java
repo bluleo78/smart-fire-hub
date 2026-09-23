@@ -1210,4 +1210,60 @@ class SqlValidatorTest {
   void 플레이스홀더가_없으면_빈_목록이다() {
     assertThat(validator.incrementalWarnings("SELECT * FROM data.t")).isEmpty();
   }
+
+  @Test
+  void rejectsSearchIndexTables_qualifiedAndUnqualified() {
+    // 행 검색 색인은 시스템 소유 — 파이프라인·애드혹 SQL 로 읽거나 쓰지 못하게 한다
+    assertThatThrownBy(() -> validator.validate("SELECT * FROM data.\"fh_search_12\""))
+        .isInstanceOf(UnsafeSqlException.class).hasMessageContaining("검색 색인");
+    var adhoc = SqlValidator.forAdhocDataSchemaQueries();
+    assertThatThrownBy(() -> adhoc.validate("SELECT * FROM fh_search_12_prev"))
+        .isInstanceOf(UnsafeSqlException.class).hasMessageContaining("검색 색인");
+  }
+
+  @Test
+  void rejectsUnicodeEscapedSearchIndexTable_strictAndAdhoc() {
+    // U&"..." 식별자는 PostgreSQL 이 fh_search_1 로 디코딩하므로 접두사 대조를 우회할 수 있는 표기다.
+    // JSqlParser 는 테이블 위치의 U& 를 파싱 단계에서 거부한다(실측: SELECT/DELETE/
+    // INSERT/UPDATE/JOIN/CTE/서브쿼리/TABLE/ONLY/UESCAPE 18 변형 모두 "Encountered unexpected token: &").
+    // 메시지는 파서 판단에 맡기고 "거부된다"는 결과만 고정한다 — 파서가 바뀌면 아래 방어 심층 검사가 받는다.
+    assertThatThrownBy(() -> validator.validate("SELECT * FROM data.U&\"fh\\005fsearch_1\""))
+        .isInstanceOf(UnsafeSqlException.class);
+    assertThatThrownBy(() -> validator.validate("DELETE FROM data.U&\"fh\\005fsearch_1\""))
+        .isInstanceOf(UnsafeSqlException.class);
+    assertThatThrownBy(
+            () -> validator.validate("UPDATE data.U&\"fh!005fsearch_1\" UESCAPE '!' SET a = 1"))
+        .isInstanceOf(UnsafeSqlException.class);
+    var adhoc = SqlValidator.forAdhocDataSchemaQueries();
+    assertThatThrownBy(() -> adhoc.validate("SELECT * FROM U&\"fh\\005fsearch_1\""))
+        .isInstanceOf(UnsafeSqlException.class);
+    assertThatThrownBy(() -> adhoc.validate("SELECT * FROM u&\"fh\\005fsearch_1\""))
+        .isInstanceOf(UnsafeSqlException.class);
+  }
+
+  @Test
+  void rejectsUnicodeEscapeIdentifierPart_defenseInDepth() {
+    // 파서가 U& 테이블 표기를 받아들이게 바뀌어도 이름 조각의 원문이 U& 로 시작하면 거부한다
+    assertThatThrownBy(() -> SqlValidator.rejectUnicodeEscapeIdentifier("U&\"fh\\005fsearch_1\""))
+        .isInstanceOf(UnsafeSqlException.class)
+        .hasMessageContaining("유니코드 이스케이프");
+    assertThatThrownBy(() -> SqlValidator.rejectUnicodeEscapeIdentifier("u&\"d\\0061ta\""))
+        .isInstanceOf(UnsafeSqlException.class)
+        .hasMessageContaining("유니코드 이스케이프");
+    assertThatCode(() -> SqlValidator.rejectUnicodeEscapeIdentifier("\"u_table\""))
+        .doesNotThrowAnyException();
+    assertThatCode(() -> SqlValidator.rejectUnicodeEscapeIdentifier("u"))
+        .doesNotThrowAnyException();
+  }
+
+  @Test
+  void rejectsSearchIndexTables_upperCaseQuotedAndStrictUnqualified() {
+    assertThatThrownBy(() -> validator.validate("SELECT * FROM data.\"FH_SEARCH_1\""))
+        .isInstanceOf(UnsafeSqlException.class)
+        .hasMessageContaining("검색 색인");
+    // strict 모드의 미한정 이름도 (스키마 누락 메시지가 아니라) 색인 보호 메시지로 거부된다
+    assertThatThrownBy(() -> validator.validate("SELECT * FROM fh_search_1"))
+        .isInstanceOf(UnsafeSqlException.class)
+        .hasMessageContaining("검색 색인");
+  }
 }

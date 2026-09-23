@@ -593,6 +593,22 @@ describe('SL-DA: data-analyst subagent integration', () => {
     expect(prompt).toMatch(/환각/);
     expect(prompt).toContain('sourceChunks');
   });
+
+  // 행 검색: subagent tools 는 deny-by-default 화이트리스트라 frontmatter 에 없으면 호출 불가.
+  it('SL-DA-ROWSEARCH: data-analyst 가 행 검색 도구를 보유한다', () => {
+    resetSubagentCache();
+    const agents = loadSubagents(path.join(__dirname, 'subagents'));
+    expect(agents['data-analyst'].tools).toContain('mcp__firehub__search_dataset_rows');
+  });
+
+  // 행 검색 결과는 원본 행을 그대로 돌려주므로(API 는 마스킹 안 함) 서브에이전트 PII 마스킹 대상 목록에 있어야 한다.
+  it('SL-DA-ROWSEARCH-PII: 행 검색 결과가 PII 마스킹 대상 목록에 포함된다', () => {
+    resetSubagentCache();
+    const agents = loadSubagents(path.join(__dirname, 'subagents'));
+    const prompt = agents['data-analyst'].prompt;
+    const piiLine = prompt.split('\n').find((l) => l.includes('결과에 PII 시그널 컬럼'));
+    expect(piiLine).toContain('search_dataset_rows');
+  });
 });
 
 // 지식그래프 구축 파이프라인은 dataset-manager 담당. frontmatter tools 는 deny-by-default

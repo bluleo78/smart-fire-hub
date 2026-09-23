@@ -253,8 +253,11 @@ public class TenantSchemaProvisioner {
    * ({@code FlywayCallbackConfig} 에 세 번째 구현이 남아 있는 것은 그쪽이 jOOQ 가 아니라 원시
    * {@code Connection} 위에서 돌기 때문이다. 콜백에 jOOQ 를 끌어들이지 않으려고 남긴 의도적
    * 중복이며, 판정의 정본은 이 메서드다.)
+   *
+   * <p>행 검색 색인({@code PgRowSearchIndex})도 색인 테이블에서 실행 롤 권한을 회수하기 전에 이 판정을 쓰므로
+   * public 이다.
    */
-  static boolean roleExists(DSLContext dsl, String roleName) {
+  public static boolean roleExists(DSLContext dsl, String roleName) {
     return dsl.fetchExists(
         dsl.selectOne().from("pg_roles").where(field("rolname", String.class).eq(roleName)));
   }

@@ -88,6 +88,7 @@ const TOOL_LABELS: Record<string, { label: string; icon: string }> = {
   list_datasets: { label: '데이터셋 목록 조회', icon: '🗃️' },
   get_dataset: { label: '데이터셋 상세 조회', icon: '🔍' },
   query_dataset_data: { label: '데이터 조회', icon: '🔍' },
+  search_dataset_rows: { label: '데이터 행 검색', icon: '🔎' },
   get_dataset_columns: { label: '컬럼 정보 조회', icon: '🔍' },
   create_dataset: { label: '데이터셋 생성', icon: '➕' },
   update_dataset: { label: '데이터셋 수정', icon: '✏️' },

@@ -296,6 +296,71 @@ describe('Dataset MCP Tools', () => {
     });
   });
 
+  describe('search_dataset_rows', () => {
+    it('POST 본문을 그대로 넘기고 결과를 JSON 으로 반환한다', async () => {
+      const resp = { indexStatus: { status: 'IDLE', indexedRows: 3, totalRows: 3 }, degraded: false, hits: [] };
+      (client.searchDatasetRows as ReturnType<typeof vi.fn>).mockResolvedValue(resp);
+
+      const result = await invokeTool(server, 'search_dataset_rows', {
+        datasetId: 7,
+        query: '배관 누수',
+        mode: 'HYBRID',
+        filters: [{ column: 'status', op: 'eq', value: '미처리' }],
+        limit: 5,
+      });
+
+      expect(client.searchDatasetRows).toHaveBeenCalledWith(7, {
+        query: '배관 누수',
+        mode: 'HYBRID',
+        filters: [{ column: 'status', op: 'eq', value: '미처리' }],
+        limit: 5,
+      });
+      expect(JSON.parse(result.content[0].text).indexStatus.status).toBe('IDLE');
+    });
+
+    it('잘못된 mode·연산자·limit 은 스키마에서 거부한다', () => {
+      const entry = (server.instance as { _registeredTools: Record<string, { inputSchema: { safeParse: (v: unknown) => { success: boolean } } }> })
+        ._registeredTools['search_dataset_rows'];
+      expect(entry.inputSchema.safeParse({ datasetId: 1, query: 'x', mode: 'FUZZY' }).success).toBe(false);
+      expect(entry.inputSchema.safeParse({ datasetId: 1, query: 'x', filters: [{ column: 'a', op: 'like', value: 'x' }] }).success).toBe(false);
+      expect(entry.inputSchema.safeParse({ datasetId: 1, query: 'x', limit: 101 }).success).toBe(false);
+      expect(entry.inputSchema.safeParse({ datasetId: 1, query: '' }).success).toBe(false);
+    });
+  });
+
+  describe('get_dataset searchIndex 병합', () => {
+    it('TABLE 데이터셋이면 검색 색인 상태를 searchIndex 로 붙인다', async () => {
+      (client.getDataset as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 3, name: 'd', storageType: 'TABLE' });
+      (client.getDatasetSearchIndex as ReturnType<typeof vi.fn>).mockResolvedValue({ enabled: true, fields: ['content'], status: 'IDLE' });
+
+      const result = await invokeTool(server, 'get_dataset', { id: 3 });
+
+      expect(client.getDatasetSearchIndex).toHaveBeenCalledWith(3);
+      expect(JSON.parse(result.content[0].text).searchIndex).toEqual({ enabled: true, fields: ['content'], status: 'IDLE' });
+    });
+
+    it('색인 조회가 실패해도 데이터셋 상세는 반환한다(searchIndex=null)', async () => {
+      (client.getDataset as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 3, name: 'd', storageType: 'TABLE' });
+      (client.getDatasetSearchIndex as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('400'));
+
+      const result = await invokeTool(server, 'get_dataset', { id: 3 });
+
+      expect(result.isError).toBeFalsy();
+      expect(JSON.parse(result.content[0].text)).toMatchObject({ id: 3, searchIndex: null });
+    });
+
+    it.each(['DOCUMENT', 'FILE'])('%s 데이터셋은 색인 조회를 호출하지 않고 searchIndex=null 이다', async (storageType) => {
+      // 행 검색은 TABLE 전용이라 다른 저장 방식에 조회하면 매번 400 이 난다 — 아예 부르지 않는다.
+      (client.getDataset as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 4, name: 'doc', storageType });
+      (client.getDatasetSearchIndex as ReturnType<typeof vi.fn>).mockClear();
+
+      const result = await invokeTool(server, 'get_dataset', { id: 4 });
+
+      expect(client.getDatasetSearchIndex).not.toHaveBeenCalled();
+      expect(JSON.parse(result.content[0].text)).toMatchObject({ id: 4, searchIndex: null });
+    });
+  });
+
   // --- tool registration ---
   it('dataset tools are registered in the MCP server', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -309,5 +374,6 @@ describe('Dataset MCP Tools', () => {
     expect(registeredTools).toContain('add_dataset_column');
     expect(registeredTools).toContain('drop_dataset_column');
     expect(registeredTools).toContain('get_dataset_references');
+    expect(registeredTools).toContain('search_dataset_rows');
   });
 });

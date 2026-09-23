@@ -103,6 +103,7 @@ const PERMISSIONS = {
   DATASET_READ: 'dataset:read',
   DATASET_WRITE: 'dataset:write',
   DATASET_DELETE: 'dataset:delete',
+  DATA_READ: 'data:read',
   USER_READ: 'user:read',
   USER_WRITE: 'user:write',
   ROLE_READ: 'role:read',
@@ -126,6 +127,8 @@ const TOOL_PERMISSION_REQUIREMENTS: Record<string, string> = {
   list_dataset_files: PERMISSIONS.DATASET_READ,
   summarize_dataset_files: PERMISSIONS.DATASET_READ,
   get_dataset_file_url: PERMISSIONS.DATASET_READ,
+  // 행 검색은 행 데이터를 돌려준다 — 백엔드 엔드포인트와 같은 data:read 로 게이팅
+  search_dataset_rows: PERMISSIONS.DATA_READ,
   delete_dataset: PERMISSIONS.DATASET_DELETE,
   drop_dataset_column: PERMISSIONS.DATASET_DELETE,
   list_users: PERMISSIONS.USER_READ,

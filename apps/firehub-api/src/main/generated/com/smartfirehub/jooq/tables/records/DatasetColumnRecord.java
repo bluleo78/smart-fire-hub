@@ -186,6 +186,20 @@ public class DatasetColumnRecord extends UpdatableRecordImpl<DatasetColumnRecord
         return (Long) get(11);
     }
 
+    /**
+     * Setter for <code>public.dataset_column.is_searchable</code>.
+     */
+    public void setIsSearchable(Boolean value) {
+        set(12, value);
+    }
+
+    /**
+     * Getter for <code>public.dataset_column.is_searchable</code>.
+     */
+    public Boolean getIsSearchable() {
+        return (Boolean) get(12);
+    }
+
     // -------------------------------------------------------------------------
     // Primary key information
     // -------------------------------------------------------------------------
@@ -209,7 +223,7 @@ public class DatasetColumnRecord extends UpdatableRecordImpl<DatasetColumnRecord
     /**
      * Create a detached, initialised DatasetColumnRecord
      */
-    public DatasetColumnRecord(Long id, Long datasetId, String columnName, String displayName, String dataType, Boolean isNullable, Boolean isIndexed, String description, Integer columnOrder, Integer maxLength, Boolean isPrimaryKey, Long tenantId) {
+    public DatasetColumnRecord(Long id, Long datasetId, String columnName, String displayName, String dataType, Boolean isNullable, Boolean isIndexed, String description, Integer columnOrder, Integer maxLength, Boolean isPrimaryKey, Long tenantId, Boolean isSearchable) {
         super(DatasetColumn.DATASET_COLUMN);
 
         setId(id);
@@ -224,6 +238,7 @@ public class DatasetColumnRecord extends UpdatableRecordImpl<DatasetColumnRecord
         setMaxLength(maxLength);
         setIsPrimaryKey(isPrimaryKey);
         setTenantId(tenantId);
+        setIsSearchable(isSearchable);
         resetChangedOnNotNull();
     }
 }

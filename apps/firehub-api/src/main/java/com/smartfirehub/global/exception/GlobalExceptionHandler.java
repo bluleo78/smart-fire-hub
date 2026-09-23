@@ -17,6 +17,7 @@ import com.smartfirehub.dataimport.exception.ImportProcessingException;
 import com.smartfirehub.dataimport.exception.ImportValidationException;
 import com.smartfirehub.dataimport.exception.UnsupportedFileTypeException;
 import com.smartfirehub.dataset.exception.*;
+import com.smartfirehub.dataset.rowsearch.SearchIndexNotConfiguredException;
 import com.smartfirehub.embedding.EmbeddingException;
 import com.smartfirehub.file.exception.FileNotFoundException;
 import com.smartfirehub.file.exception.FileSizeLimitExceededException;
@@ -304,6 +305,14 @@ public class GlobalExceptionHandler {
   @ExceptionHandler(ColumnModificationException.class)
   public ResponseEntity<ErrorResponse> handleColumnModification(
       ColumnModificationException ex, HttpServletRequest request) {
+    ErrorResponse response = buildError(HttpStatus.BAD_REQUEST, ex.getMessage(), null, request);
+    return ResponseEntity.badRequest().body(response);
+  }
+
+  // 행 검색: 검색 대상 필드 미지정 데이터셋에 검색·재색인 요청 → 400
+  @ExceptionHandler(SearchIndexNotConfiguredException.class)
+  public ResponseEntity<ErrorResponse> handleSearchIndexNotConfigured(
+      SearchIndexNotConfiguredException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.BAD_REQUEST, ex.getMessage(), null, request);
     return ResponseEntity.badRequest().body(response);
   }

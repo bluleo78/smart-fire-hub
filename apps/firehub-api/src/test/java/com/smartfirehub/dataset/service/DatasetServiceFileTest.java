@@ -81,7 +81,12 @@ class DatasetServiceFileTest {
             datasetEmbeddingService,
             events,
             fileDatasetConfigRepository,
-            fileObjectStorageService);
+            fileObjectStorageService,
+            org.mockito.Mockito.mock(com.smartfirehub.dataset.rowsearch.RowSearchIndex.class),
+            org.mockito.Mockito.mock(
+                com.smartfirehub.dataset.rowsearch.SearchColumnRepository.class),
+            org.mockito.Mockito.mock(
+                com.smartfirehub.dataset.rowsearch.SearchIndexSettingsService.class));
   }
 
   @Test

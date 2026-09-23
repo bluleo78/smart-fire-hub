@@ -6,10 +6,8 @@ import com.smartfirehub.document.dto.SearchMode;
 import com.smartfirehub.document.repository.DocumentChunkRepository;
 import com.smartfirehub.embedding.EmbeddingProvider;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
+import com.smartfirehub.global.util.RankFusion;
 import java.util.List;
-import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -25,9 +23,8 @@ public class DocumentSearchService {
   private final EmbeddingProviderFactory embeddingProviderFactory;
   private final DocumentChunkRepository chunkRepository;
 
-  // RRF 상수: 후보 풀 크기와 융합 상수 k. k=60 은 RRF 표준 권장값.
+  // RRF 상수: 후보 풀 크기. 융합 상수 k(=60)는 RankFusion 공통 유틸에서 관리한다.
   private static final int CANDIDATE_POOL = 50;
-  private static final int RRF_K = 60;
 
   // RLS 가 걸린 document_chunk 를 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
   @Transactional(readOnly = true)
@@ -59,35 +56,19 @@ public class DocumentSearchService {
     return rrfFuse(List.of(semantic, keyword), request.topK());
   }
 
-  /**
-   * RRF 융합: 각 랭킹 리스트에서 chunkId 의 rank(0-based)로 1/(RRF_K + rank + 1)을 누적한다.
-   * 누적 점수 내림차순으로 정렬해 상위 limit 개를 반환한다. hit.score 는 RRF 점수로 대체된다.
-   * 동점은 chunkId 오름차순으로 안정 정렬(결정성 보장).
-   */
+  /** RRF 융합: {@link RankFusion} 위임. hit.score 는 RRF 점수로 대체된다. */
   static List<DocumentSearchHit> rrfFuse(List<List<DocumentSearchHit>> rankings, int limit) {
-    Map<Long, Double> scoreByChunk = new LinkedHashMap<>();
-    Map<Long, DocumentSearchHit> hitByChunk = new LinkedHashMap<>();
-    for (List<DocumentSearchHit> ranking : rankings) {
-      for (int rank = 0; rank < ranking.size(); rank++) {
-        DocumentSearchHit hit = ranking.get(rank);
-        double contribution = 1.0 / (RRF_K + rank + 1);
-        scoreByChunk.merge(hit.chunkId(), contribution, Double::sum);
-        hitByChunk.putIfAbsent(hit.chunkId(), hit);
-      }
-    }
-    List<Map.Entry<Long, Double>> entries = new ArrayList<>(scoreByChunk.entrySet());
-    entries.sort((x, y) -> {
-      int byScore = Double.compare(y.getValue(), x.getValue()); // 점수 내림차순
-      return byScore != 0 ? byScore : Long.compare(x.getKey(), y.getKey()); // 동점 → chunkId 오름차순
-    });
-    List<DocumentSearchHit> result = new ArrayList<>();
-    for (Map.Entry<Long, Double> e : entries) {
-      if (result.size() >= limit) break;
-      DocumentSearchHit base = hitByChunk.get(e.getKey());
-      result.add(new DocumentSearchHit(
-          base.chunkId(), base.documentFileId(), base.datasetId(),
-          base.fileName(), base.chunkIndex(), base.content(), e.getValue()));
-    }
-    return result;
+    return RankFusion.fuse(rankings, DocumentSearchHit::chunkId, limit).stream()
+        .map(
+            f ->
+                new DocumentSearchHit(
+                    f.hit().chunkId(),
+                    f.hit().documentFileId(),
+                    f.hit().datasetId(),
+                    f.hit().fileName(),
+                    f.hit().chunkIndex(),
+                    f.hit().content(),
+                    f.score()))
+        .toList();
   }
 }

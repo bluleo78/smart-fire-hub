@@ -75,3 +75,8 @@ agent:
 
 channel:
   internal-token: test-internal-token
+
+row-search:
+  sync:
+    # 테스트는 RowSearchSyncService 를 직접 호출한다. 백그라운드 스윕이 끼어들면 호출 횟수 단언이 흔들린다.
+    enabled: false

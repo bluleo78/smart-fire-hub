@@ -21,6 +21,7 @@ import com.smartfirehub.jooq.tables.DatasetFavorite;
 import com.smartfirehub.jooq.tables.DatasetGraphIngest;
 import com.smartfirehub.jooq.tables.DatasetMapping;
 import com.smartfirehub.jooq.tables.DatasetOntology;
+import com.smartfirehub.jooq.tables.DatasetSearchIndex;
 import com.smartfirehub.jooq.tables.DatasetTag;
 import com.smartfirehub.jooq.tables.DocumentChunk;
 import com.smartfirehub.jooq.tables.DocumentFile;
@@ -208,6 +209,11 @@ public class Public extends SchemaImpl {
      * The table <code>public.dataset_ontology</code>.
      */
     public final DatasetOntology DATASET_ONTOLOGY = DatasetOntology.DATASET_ONTOLOGY;
+
+    /**
+     * The table <code>public.dataset_search_index</code>.
+     */
+    public final DatasetSearchIndex DATASET_SEARCH_INDEX = DatasetSearchIndex.DATASET_SEARCH_INDEX;
 
     /**
      * The table <code>public.dataset_tag</code>.
@@ -968,6 +974,7 @@ public class Public extends SchemaImpl {
             DatasetGraphIngest.DATASET_GRAPH_INGEST,
             DatasetMapping.DATASET_MAPPING,
             DatasetOntology.DATASET_ONTOLOGY,
+            DatasetSearchIndex.DATASET_SEARCH_INDEX,
             DatasetTag.DATASET_TAG,
             DocumentChunk.DOCUMENT_CHUNK,
             DocumentFile.DOCUMENT_FILE,

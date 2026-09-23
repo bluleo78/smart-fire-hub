@@ -6,6 +6,7 @@ import {
   type DatasetColumnInput,
   type DatasetColumnResponse,
   type DatasetReferences,
+  type RowSearchBody,
 } from './api-client/dataset-api.js';
 import { createDataApi } from './api-client/data-api.js';
 import { createPipelineApi } from './api-client/pipeline-api.js';
@@ -215,6 +216,14 @@ export class FireHubApiClient {
     },
   ) {
     return this._datasets.queryDatasetData(id, params);
+  }
+  // 행 검색 위임 — search_dataset_rows 도구가 사용한다.
+  searchDatasetRows(id: number, body: RowSearchBody) {
+    return this._datasets.searchDatasetRows(id, body);
+  }
+  // 검색 색인 상태 위임 — get_dataset 응답에 searchIndex 로 병합된다.
+  getDatasetSearchIndex(id: number) {
+    return this._datasets.getDatasetSearchIndex(id);
   }
   // 표→그래프 매핑 조회 위임. spec/status/ontologyId를 표 투영 툴에 노출한다.
   async getDatasetMapping(id: number): Promise<{ spec: import('../graphrag/table-projection.js').MappingSpec; status: string; ontologyId: number }> {

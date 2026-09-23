@@ -4,6 +4,7 @@ import com.smartfirehub.dataset.dto.ColumnStatsResponse;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.exception.InvalidTableNameException;
+import com.smartfirehub.dataset.rowsearch.IndexRef;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantSchemaProvisioner;
 import java.util.ArrayList;
@@ -87,8 +88,17 @@ public class DataTableService {
     }
   }
 
+  /** 행 검색 색인 테이블 이름(fh_search_{datasetId})과 충돌하지 않도록 사용자 테이블 이름에서 예약한다. */
+  private void rejectReservedTableName(String tableName) {
+    if (tableName.startsWith(IndexRef.TABLE_PREFIX)) {
+      throw new InvalidTableNameException(
+          "'" + IndexRef.TABLE_PREFIX + "' 로 시작하는 이름은 시스템 예약어입니다: " + tableName);
+    }
+  }
+
   public void createTable(String tableName, List<DatasetColumnRequest> columns) {
     validateName(tableName);
+    rejectReservedTableName(tableName);
     // 스키마가 없으면 만든다 — 신규 테넌트의 첫 데이터셋 생성이 여기서 지연 생성을 트리거한다.
     // DROP TABLE IF EXISTS(바로 아래)가 대상 스키마 자체를 요구하므로 반드시 그보다 먼저다.
     schemaProvisioner.ensureCurrentTenantSchema();
@@ -530,6 +540,7 @@ public class DataTableService {
       List<DatasetColumnResponse> columnDefs) {
     validateName(sourceTable);
     validateName(targetTable);
+    rejectReservedTableName(targetTable);
     for (String col : userColumns) {
       validateName(col);
     }

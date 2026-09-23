@@ -1,5 +1,6 @@
 package com.smartfirehub.pipeline.service.validator;
 
+import com.smartfirehub.dataset.rowsearch.IndexRef;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.pipeline.exception.UnsafeSqlException;
 import com.smartfirehub.pipeline.service.LastRunAtPlaceholder;
@@ -710,7 +711,11 @@ public class SqlValidator {
       // 테이블(따옴표 안의 점)을 "스키마.이름"으로 잘못 쪼개 엉뚱한 메시지를 냈다(위 m5 후속 정정).
       int dot = indexOfUnquotedDot(fqn);
       if (dot < 0) {
+        // 유니코드 이스케이프 식별자(U&"...") 거부 — stripQuotes·접두사 대조보다 먼저, 미한정 허용보다 먼저
+        rejectUnicodeEscapeIdentifier(fqn);
         String name = stripQuotes(fqn);
+        // 행 검색 색인 보호 — 미한정 허용(애드혹) 모드의 continue 보다 먼저 검사해야 우회되지 않는다
+        rejectSearchIndexTable(name);
         if (name.toLowerCase().startsWith("pg_")) {
           throw new UnsafeSqlException(
               "테이블 참조에 스키마가 없습니다: '"
@@ -733,12 +738,42 @@ public class SqlValidator {
                 + name
                 + "\" 형식으로 명시하세요.");
       }
+      // 한정 이름도 스키마·테이블 두 조각 모두 원문 기준으로 U& 표기를 먼저 거부한다
+      rejectUnicodeEscapeIdentifier(fqn.substring(0, dot));
+      rejectUnicodeEscapeIdentifier(fqn.substring(dot + 1));
       String schema = stripQuotes(fqn.substring(0, dot));
       String name = stripQuotes(fqn.substring(dot + 1));
+      rejectSearchIndexTable(name);
       if (!allowedSchema.equalsIgnoreCase(schema)) {
         throw new UnsafeSqlException(
             "허용되지 않는 스키마 참조: '" + schema + "." + name + "'. " + allowedSchema + " 스키마만 사용할 수 있습니다.");
       }
+    }
+  }
+
+  /**
+   * 유니코드 이스케이프 식별자({@code U&"fh\005fsearch_1"}, {@code UESCAPE} 변형 포함)를 거부한다.
+   *
+   * <p>JSqlParser 는 {@code U&} 이스케이프를 디코딩하지 않으므로 원문 그대로 이름 대조를 하면 {@code u&} 로
+   * 시작해 {@code fh_search_} 접두사 검사를 빗나가지만, PostgreSQL 은 이를 {@code fh_search_1} 로 해석한다. 실측상
+   * 현재 JSqlParser 는 테이블 위치의 {@code U&} 를 파싱 단계에서 거부하므로 이 검사는 방어 심층이다 — 파서 업그레이드로
+   * 그 전제가 깨져도 색인 보호가 조용히 무너지지 않도록 표기 자체를 막는다. 정당한 사용자 테이블은
+   * {@code [a-z][a-z0-9_]*} 이름만 쓰므로 이 표기가 필요할 일이 없다.
+   *
+   * @param rawPart 따옴표를 벗기기 전 원문 이름 조각(스키마 또는 테이블)
+   */
+  static void rejectUnicodeEscapeIdentifier(String rawPart) {
+    String trimmed = rawPart.strip();
+    if (trimmed.length() >= 2 && trimmed.substring(0, 2).equalsIgnoreCase("u&")) {
+      throw new UnsafeSqlException("유니코드 이스케이프 식별자는 허용되지 않습니다: '" + rawPart + "'");
+    }
+  }
+
+  /** 행 검색 색인 테이블(fh_search_*)은 시스템 소유다 — 사용자 SQL 에서 참조를 막는다. */
+  private static void rejectSearchIndexTable(String name) {
+    // 접두사 정본은 행 검색 도메인(IndexRef)에 있다 — 파이프라인 검증기가 그 값을 그대로 참조해 어긋나지 않게 한다.
+    if (name.toLowerCase().startsWith(IndexRef.TABLE_PREFIX)) {
+      throw new UnsafeSqlException("검색 색인 테이블은 SQL 로 조회·수정할 수 없습니다: '" + name + "'");
     }
   }
 

@@ -1,5 +1,6 @@
 import { z } from 'zod/v4';
 import type { FireHubApiClient } from '../api-client.js';
+import type { RowSearchBody } from '../api-client/dataset-api.js';
 import type { SafeToolFn, JsonResultFn } from '../firehub-mcp-server.js';
 
 export function registerDatasetTools(
@@ -52,8 +53,14 @@ export function registerDatasetTools(
         id: z.number().describe('데이터셋 ID'),
       },
       async (args: { id: number }) => {
-        const result = await apiClient.getDataset(args.id);
-        return jsonResult(result);
+        const result = (await apiClient.getDataset(args.id)) as Record<string, unknown>;
+        // 행 검색 가능 여부(검색 대상 필드·색인 상태)를 함께 준다. 실패해도 상세 조회는 막지 않는다.
+        // 행 검색은 TABLE 데이터셋 전용이다 — DOCUMENT/FILE 에 조회하면 매번 400 이므로 아예 부르지 않는다.
+        const searchIndex =
+          result.storageType === 'TABLE'
+            ? await apiClient.getDatasetSearchIndex(args.id).catch(() => null)
+            : null;
+        return jsonResult({ ...result, searchIndex });
       },
     ),
 
@@ -80,6 +87,42 @@ export function registerDatasetTools(
       }) => {
         const { id, ...params } = args;
         const result = await apiClient.queryDatasetData(id, params);
+        return jsonResult(result);
+      },
+    ),
+
+    // 행 검색 — 텍스트 필드의 의미+키워드 하이브리드 검색. 결과는 원본 행이므로 PII 정책 대상이다.
+    safeTool(
+      'search_dataset_rows',
+      '데이터셋 행을 텍스트 내용으로 찾습니다(의미+키워드 하이브리드). "누수 관련 신고", "이 민원과 비슷한 건"처럼 ' +
+        '내용·의미로 찾을 때 사용합니다. 정확한 조건 조회·집계는 execute_analytics_query, 데이터셋 자체를 찾을 때는 ' +
+        'find_datasets 를 쓰세요. get_dataset 의 searchIndex.enabled 가 false 면 사용할 수 없습니다(사용자에게 ' +
+        '데이터셋 상세의 "검색" 탭에서 필드를 지정하도록 안내). indexStatus.status 가 SYNCING 이면 일부만 색인된 결과, ' +
+        'STALE 이면 원본이 방금 교체되어 잠시 후 다시 시도해야 함을, degraded 가 true 면 키워드 검색만 수행됐음을 알리세요. ' +
+        'TIMESTAMP 필터 값은 시간대(Z/+09:00) 없이 데이터에 저장된 현지 시각 그대로 보내세요.',
+      {
+        datasetId: z.number().describe('데이터셋 ID'),
+        query: z.string().min(1).describe('찾을 내용(자연어 또는 키워드)'),
+        mode: z
+          .enum(['HYBRID', 'SEMANTIC', 'KEYWORD'])
+          .optional()
+          .describe('HYBRID(기본)=의미+키워드, SEMANTIC=의미만, KEYWORD=정확 문자열(번호·코드)'),
+        filters: z
+          .array(
+            z.object({
+              column: z.string().describe('컬럼명(get_dataset 의 columnName)'),
+              op: z.enum(['eq', 'neq', 'in', 'gt', 'gte', 'lt', 'lte', 'is_null', 'is_not_null']),
+              value: z.unknown().optional().describe('비교 값. in 은 배열, is_null/is_not_null 은 생략'),
+            }),
+          )
+          .optional()
+          .describe('AND 로 결합되는 조건 필터'),
+        columns: z.array(z.string()).optional().describe('반환할 컬럼(생략 시 전체)'),
+        limit: z.number().int().min(1).max(100).optional().describe('최대 결과 수(기본 20)'),
+      },
+      async (args: RowSearchBody & { datasetId: number }) => {
+        const { datasetId, ...body } = args;
+        const result = await apiClient.searchDatasetRows(datasetId, body);
         return jsonResult(result);
       },
     ),

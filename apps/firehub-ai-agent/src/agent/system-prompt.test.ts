@@ -11,6 +11,12 @@ describe('SYSTEM_PROMPT', () => {
     expect(SYSTEM_PROMPT).toContain('도구 선택 우선순위');
   });
 
+  // 내용·의미 기반 행 찾기는 search_dataset_rows, 가능 여부는 get_dataset 의 searchIndex 로 판단
+  it('내용 기반 행 찾기는 search_dataset_rows 로 안내한다', () => {
+    expect(SYSTEM_PROMPT).toContain('search_dataset_rows');
+    expect(SYSTEM_PROMPT).toContain('searchIndex');
+  });
+
   // #276: general-purpose 위임 금지를 강한 어조 + 위반 예시로 명시해야 함 (런타임 백스톱과 1차 방어 이중화)
   it('general-purpose 위임 금지를 차단 경고와 함께 명시한다', () => {
     expect(SYSTEM_PROMPT).toContain('general-purpose');
@@ -122,6 +128,12 @@ describe('SYSTEM_PROMPT', () => {
       expect(piiSection).toBeDefined();
       expect(piiSection).toContain('query_dataset_data');
       expect(piiSection).toContain('execute_analytics_query');
+    });
+
+    // 행 검색 결과도 원본 행이므로 PII 정책 적용 대상이어야 한다
+    it('행 검색 도구(search_dataset_rows)도 PII 정책 적용 대상이다', () => {
+      const piiSection = SYSTEM_PROMPT.split('## L5. PII 마스킹')[1];
+      expect(piiSection).toContain('search_dataset_rows');
     });
 
     // show_table / show_dataset / show_chart 위젯 입력 단계도 마스킹 대상

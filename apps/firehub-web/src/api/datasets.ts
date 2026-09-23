@@ -6,7 +6,7 @@ CategoryRequest,
 ColumnStatsResponse,
   CreateDatasetRequest, DataDeleteResponse,   DataQueryResponse,   DatasetColumnResponse, DatasetDetailResponse,
   DatasetResponse,   FavoriteToggleResponse, QueryHistoryResponse,
-  RowDataResponse,   SqlQueryResponse, UpdateColumnRequest,
+  RowDataResponse,   SearchIndexStatus, SqlQueryResponse, UpdateColumnRequest,
 UpdateDatasetRequest,
 UpdateStatusRequest,
 } from '../types/dataset';
@@ -78,4 +78,10 @@ export const datasetsApi = {
   // Phase 3: API Import
   createApiImport: (datasetId: number, data: ApiImportRequest) =>
     client.post<ApiImportResponse>(`/datasets/${datasetId}/api-import`, data),
+  // 행 검색: 검색 대상 필드·색인 상태
+  getSearchIndex: (datasetId: number) =>
+    client.get<SearchIndexStatus>(`/datasets/${datasetId}/search-index`),
+  updateSearchIndex: (datasetId: number, fields: string[]) =>
+    client.put<SearchIndexStatus>(`/datasets/${datasetId}/search-index`, { fields }),
+  reindexSearchIndex: (datasetId: number) => client.post(`/datasets/${datasetId}/search-index/reindex`),
 };

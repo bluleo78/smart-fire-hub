@@ -871,4 +871,20 @@ class DataTableServiceTest extends IntegrationTestBase {
                 DataSchema.qualify(dst));
     assertThat(triggers).isEqualTo(1);
   }
+
+  @Test
+  void createTable_rejectsReservedSearchPrefix() {
+    assertThatThrownBy(() -> dataTableService.createTable("fh_search_1",
+            List.of(new DatasetColumnRequest("a", "A", "TEXT", null, true, false, null))))
+        .isInstanceOf(InvalidTableNameException.class);
+  }
+
+  @Test
+  void cloneTable_rejectsReservedSearchPrefixTarget() {
+    // 복제 대상 이름도 색인 테이블 이름 공간(fh_search_*)을 침범하지 못한다 — SQL 실행 전에 거부
+    assertThatThrownBy(
+            () -> dataTableService.cloneTable("any_source", "fh_search_2", List.of("a"), List.of()))
+        .isInstanceOf(InvalidTableNameException.class)
+        .hasMessageContaining("fh_search_");
+  }
 }

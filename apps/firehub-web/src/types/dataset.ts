@@ -250,3 +250,15 @@ export interface GeoJsonFeatureCollection {
   features: GeoJsonFeature[];
 }
 
+/** 데이터셋 행 검색 색인 상태(검색 탭). status: OFF | SYNCING | IDLE | ERROR */
+export interface SearchIndexStatus {
+  enabled: boolean;
+  fields: string[];
+  status: 'OFF' | 'SYNCING' | 'IDLE' | 'ERROR';
+  indexedRows: number;
+  totalRows: number;
+  lastSyncedAt: string | null;
+  lastError: string | null;
+  embeddingModel: string | null;
+}
+

@@ -50,6 +50,17 @@ export interface DatasetReferences {
   totalCount: number;
 }
 
+/**
+ * 행 검색 요청 본문 — 백엔드 `RowSearchRequest` 미러. api-client 위임과 search_dataset_rows 도구가 함께 쓴다.
+ */
+export interface RowSearchBody {
+  query: string;
+  mode?: 'HYBRID' | 'SEMANTIC' | 'KEYWORD';
+  filters?: { column: string; op: string; value?: unknown }[];
+  columns?: string[];
+  limit?: number;
+}
+
 export function createDatasetApi(client: AxiosInstance) {
   return {
     async listDatasets(params?: {
@@ -81,6 +92,16 @@ export function createDatasetApi(client: AxiosInstance) {
       },
     ): Promise<unknown> {
       const response = await client.get(`/datasets/${id}/data`, { params });
+      return response.data;
+    },
+    /** 행 검색(의미+키워드 하이브리드). 검색 대상 필드 미설정이면 400. */
+    async searchDatasetRows(id: number, body: RowSearchBody): Promise<unknown> {
+      const response = await client.post(`/datasets/${id}/rows/search`, body);
+      return response.data;
+    },
+    /** 검색 대상 필드·색인 상태. 에이전트가 행 검색 가능 여부를 판단하는 데 쓴다. */
+    async getDatasetSearchIndex(id: number): Promise<unknown> {
+      const response = await client.get(`/datasets/${id}/search-index`);
       return response.data;
     },
     async createDataset(data: {

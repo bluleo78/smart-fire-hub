@@ -122,6 +122,11 @@ public class DatasetColumn extends TableImpl<DatasetColumnRecord> {
      */
     public final TableField<DatasetColumnRecord, Long> TENANT_ID = createField(DSL.name("tenant_id"), SQLDataType.BIGINT.nullable(false).defaultValue(DSL.field(DSL.raw("(NULLIF(current_setting('app.tenant_id'::text, true), ''::text))::bigint"), SQLDataType.BIGINT)), this, "");
 
+    /**
+     * The column <code>public.dataset_column.is_searchable</code>.
+     */
+    public final TableField<DatasetColumnRecord, Boolean> IS_SEARCHABLE = createField(DSL.name("is_searchable"), SQLDataType.BOOLEAN.nullable(false).defaultValue(DSL.field(DSL.raw("false"), SQLDataType.BOOLEAN)), this, "");
+
     private DatasetColumn(Name alias, Table<DatasetColumnRecord> aliased) {
         this(alias, aliased, (Field<?>[]) null, null);
     }

@@ -11,6 +11,7 @@ import com.smartfirehub.jooq.tables.DatasetCategory.DatasetCategoryPath;
 import com.smartfirehub.jooq.tables.DatasetColumn.DatasetColumnPath;
 import com.smartfirehub.jooq.tables.DatasetEmbedding.DatasetEmbeddingPath;
 import com.smartfirehub.jooq.tables.DatasetFavorite.DatasetFavoritePath;
+import com.smartfirehub.jooq.tables.DatasetSearchIndex.DatasetSearchIndexPath;
 import com.smartfirehub.jooq.tables.DatasetTag.DatasetTagPath;
 import com.smartfirehub.jooq.tables.DocumentChunk.DocumentChunkPath;
 import com.smartfirehub.jooq.tables.DocumentFile.DocumentFilePath;
@@ -361,6 +362,19 @@ public class Dataset extends TableImpl<DatasetRecord> {
             _datasetFavorite = new DatasetFavoritePath(this, null, Keys.DATASET_FAVORITE__DATASET_FAVORITE_DATASET_ID_FKEY.getInverseKey());
 
         return _datasetFavorite;
+    }
+
+    private transient DatasetSearchIndexPath _datasetSearchIndex;
+
+    /**
+     * Get the implicit to-many join path to the
+     * <code>public.dataset_search_index</code> table
+     */
+    public DatasetSearchIndexPath datasetSearchIndex() {
+        if (_datasetSearchIndex == null)
+            _datasetSearchIndex = new DatasetSearchIndexPath(this, null, Keys.DATASET_SEARCH_INDEX__DATASET_SEARCH_INDEX_DATASET_ID_FKEY.getInverseKey());
+
+        return _datasetSearchIndex;
     }
 
     private transient DatasetTagPath _datasetTag;
