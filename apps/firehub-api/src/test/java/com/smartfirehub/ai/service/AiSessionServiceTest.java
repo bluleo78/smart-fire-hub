@@ -115,6 +115,27 @@ class AiSessionServiceTest extends IntegrationTestBase {
         .isInstanceOf(AccessDeniedException.class);
   }
 
+  /** 이슈 #714 — 채팅 이어쓰기는 남의 기록이 있는 세션만 거절한다. */
+  @Test
+  void verifyNotOthersSession_rejectsOnlySessionsRecordedToAnotherUser() {
+    UserResponse owner =
+        authService.signup(
+            new SignupRequest("owner714", "owner714@example.com", "Password123", "Owner"));
+    UserResponse other =
+        authService.signup(
+            new SignupRequest("other714", "other714@example.com", "Password123", "Other"));
+    aiSessionService.createSession(
+        owner.id(), new CreateAiSessionRequest("session-714", null, null, "Owner Session"));
+
+    // 본인 세션은 통과
+    aiSessionService.verifyNotOthersSession(owner.id(), "session-714");
+    // 남의 세션은 거절
+    assertThatThrownBy(() -> aiSessionService.verifyNotOthersSession(other.id(), "session-714"))
+        .isInstanceOf(AccessDeniedException.class);
+    // 기록이 없는 세션(웹의 기록 실패 등)은 통과 — 막으면 그 대화를 영영 이어 쓸 수 없다
+    aiSessionService.verifyNotOthersSession(other.id(), "session-714-unrecorded");
+  }
+
   @Test
   void updateSessionTitle_ownSession_success() {
     UserResponse user =

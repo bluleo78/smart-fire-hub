@@ -192,6 +192,17 @@ public class AiSessionRepository {
                     r.get(UPDATED_AT)));
   }
 
+  /**
+   * 세션을 기록한 사용자. 기록이 없으면 빈 값. RLS 로 현재 테넌트 안에서만 찾는다
+   * ({@code (tenant_id, session_id)} 유일 인덱스라 한 행뿐이다).
+   */
+  public Optional<Long> findOwnerUserId(String sessionId) {
+    return dsl.select(USER_ID)
+        .from(AI_SESSION)
+        .where(SESSION_ID.eq(sessionId))
+        .fetchOptional(USER_ID);
+  }
+
   public AiSessionResponse create(Long userId, CreateAiSessionRequest request) {
     Long id =
         dsl.insertInto(AI_SESSION)

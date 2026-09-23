@@ -223,6 +223,63 @@ class AiControllerTest {
         .andExpect(status().isOk());
   }
 
+  /** 이슈 #714 — 남의 세션을 이어 쓰려 하면 ai-agent 로 넘기기 전에 403. */
+  @Test
+  void chat_resumingOtherUserSession_returnsForbiddenWithoutCallingAgent() throws Exception {
+    mockAuthentication("ai:write");
+    doThrow(new AccessDeniedException("Access denied for AI session: other-session-id"))
+        .when(aiSessionService)
+        .verifyNotOthersSession(1L, "other-session-id");
+
+    String body = "{\"message\":\"hello\",\"sessionId\":\"other-session-id\",\"fileIds\":null}";
+
+    mockMvc
+        .perform(
+            post("/api/v1/ai/chat")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body))
+        .andExpect(status().isForbidden());
+    verify(aiAgentProxyService, never())
+        .streamChat(any(), any(), any(), any(), any(), any(), any());
+  }
+
+  /** 본인 세션 이어쓰기는 소유자 확인을 거쳐 그대로 진행된다. */
+  @Test
+  void chat_resumingOwnSession_verifiesOwnershipAndStreams() throws Exception {
+    mockAuthentication("ai:write");
+
+    String body = "{\"message\":\"hello\",\"sessionId\":\"my-session-id\",\"fileIds\":null}";
+
+    mockMvc
+        .perform(
+            post("/api/v1/ai/chat")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body))
+        .andExpect(status().isOk());
+    verify(aiSessionService).verifyNotOthersSession(1L, "my-session-id");
+    verify(aiAgentProxyService)
+        .streamChat(any(), eq("hello"), eq("my-session-id"), any(), eq(1L), any(), any());
+  }
+
+  /** 새 세션(빈 sessionId)은 아직 기록이 없으므로 소유자 확인을 하지 않는다. */
+  @Test
+  void chat_newSession_skipsOwnershipCheck() throws Exception {
+    mockAuthentication("ai:write");
+
+    String body = "{\"message\":\"hello\",\"sessionId\":\"\",\"fileIds\":null}";
+
+    mockMvc
+        .perform(
+            post("/api/v1/ai/chat")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body))
+        .andExpect(status().isOk());
+    verify(aiSessionService, never()).verifyNotOthersSession(any(), any());
+  }
+
   @Test
   void chat_withNoMessageAndNoFileIds_returnsBadRequest() throws Exception {
     mockAuthentication("ai:write");

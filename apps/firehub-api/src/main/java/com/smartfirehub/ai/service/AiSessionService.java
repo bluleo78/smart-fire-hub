@@ -61,6 +61,24 @@ public class AiSessionService {
         .orElseThrow(() -> new AccessDeniedException("Access denied for AI session: " + sessionId));
   }
 
+  /**
+   * 채팅으로 이어 쓰려는 세션이 다른 사용자에게 기록된 것이면 거절한다(이슈 #714).
+   *
+   * <p>{@link #verifySessionOwnership} 처럼 "본인 기록이 있어야 통과" 로 하지 않는 이유: 웹은 첫
+   * 응답의 init 에서 세션을 기록하고 그 실패를 무시한다. 기록이 빠진 본인 세션까지 막으면 그 대화는
+   * 매 턴 403 으로 영영 이어 쓸 수 없게 된다. 막아야 할 것은 남의 기록이 있는 세션이므로 그것만
+   * 거절한다.
+   */
+  public void verifyNotOthersSession(Long userId, String sessionId) {
+    aiSessionRepository
+        .findOwnerUserId(sessionId)
+        .filter(owner -> !owner.equals(userId))
+        .ifPresent(
+            owner -> {
+              throw new AccessDeniedException("Access denied for AI session: " + sessionId);
+            });
+  }
+
   @Transactional
   public void deleteSession(Long userId, Long sessionId) {
     AiSessionResponse session =
