@@ -41,8 +41,8 @@ public final class SettingsOverridePolicy {
 
   /**
    * 테넌트 전용 네임스페이스. {@code ai.*}(#706)와 {@code smtp.*}(#712)는 전부 워크스페이스 소유라
-   * 플랫폼 평면이 없다 — 목록에 없는 옛 키({@code ai.agent_type} 등)도 {@link Plane#TENANT_ONLY} 로
-   * 분류해 플랫폼 행을 읽지 않는다.
+   * 플랫폼 평면이 없다 — 목록에 없는 키도 {@link Plane#TENANT_ONLY} 로 분류해 플랫폼 행을 읽지 않는다
+   * (닫힌 쪽 기본값. 옛 평면 3키 {@code ai.agent_type} 등의 행은 V129 가 지웠다).
    *
    * <p><b>SMTP 를 위해 새 평면을 만들지 않은 이유(#712).</b> SMTP 는 "테넌트 값만, 코드 기본값
    * 없음"이다. {@link Plane#TENANT_ONLY} 의 해석(테넌트 값 → 코드 기본값)은 기본값이 없는 키에서

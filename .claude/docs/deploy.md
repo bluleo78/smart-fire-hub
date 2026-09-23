@@ -98,6 +98,24 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
 - 로컬 main 기준 운영 DB 는 V122 에 머물러 있어(2026-09-21 실측) V123~V127 과 V128 이 한 번에
   적용된다 — #706 의 V126/V127 노트(아래 OpenCode 절)와 함께 확인한다.
 
+### 옛 AI 평면 3키 삭제 (V129, 이슈 #699)
+
+`V129__drop_legacy_tenant_ai_keys.sql` 은 `tenant_settings` 의 `ai.api_key` / `ai.cli_oauth_token` /
+`ai.agent_type` 행을 지운다. V122 가 이 값을 `ai.credential`(JSON 문서)로 옮긴 뒤 아무도 읽지 않는
+사본이라 동작 변화는 없다. V129 자체에는 배포 순서 제약이 없다(첫 운영 배포는 V128 규칙을 따른다).
+
+- **V122 이전 코드로 되돌릴 여지가 사라진다.** 운영은 V122 가 적용된 채 `ai.credential` 로 돌고 있고, 옛 3키
+  행도 아직 남아 있어 지금은 V122 이전 이미지로 돌아가도 그 행을 읽는다. V129 가 그 행을 지우므로, 이후 되돌리려면
+  위 "배포 전 스냅샷"(`tenant_settings` 포함)으로 복원해야 한다.
+- 배포 전 확인(운영 DB) — **RLS 때문에 런타임 계정(`app_tenant`)으로 조회하면 0행이 나온다.** 마이그레이션을
+  돌리는 테이블 소유 계정(`POSTGRES_USER`, 기본 `app`)으로 실행한다:
+  ```sql
+  -- 옛 3키를 가진 워크스페이스 중 ai.credential 이 없는 곳 — 0행이어야 한다(V122 가 같은 단언으로 보장했다).
+  SELECT DISTINCT tenant_id FROM tenant_settings
+   WHERE key IN ('ai.api_key', 'ai.cli_oauth_token', 'ai.agent_type')
+     AND tenant_id NOT IN (SELECT tenant_id FROM tenant_settings WHERE key = 'ai.credential');
+  ```
+
 ### opencode baseURL 사설망 점검 (이슈 #698)
 
 #693 의 SSRF 가드는 **저장 시점**에만 baseURL 을 검사한다. 그 가드가 생기기 전에 저장된 행에는
