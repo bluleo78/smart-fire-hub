@@ -2,6 +2,7 @@ package com.smartfirehub.notification.inbound;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -14,6 +15,10 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.smartfirehub.ai.dto.AiSessionResponse;
 import com.smartfirehub.ai.repository.AiSessionRepository;
 import com.smartfirehub.ai.service.AiAgentBatchClient;
+import com.smartfirehub.ai.service.AiAgentBatchClient.AgentChatException;
+import com.smartfirehub.ai.service.AiAgentBatchClient.ChatReply;
+import com.smartfirehub.ai.service.AiChatRequestBuilder;
+import com.smartfirehub.ai.service.AiChatRequestBuilder.Prepared;
 import com.smartfirehub.apiconnection.service.EncryptionService;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.notification.ChannelType;
@@ -27,6 +32,7 @@ import com.smartfirehub.notification.repository.UserChannelBinding;
 import com.smartfirehub.notification.repository.UserChannelBindingRepository;
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.BeforeEach;
@@ -38,6 +44,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.dao.DuplicateKeyException;
 
 /**
  * SlackInboundService 단위 테스트.
@@ -54,6 +61,7 @@ class SlackInboundServiceTest {
   @Mock private SlackWorkspaceTenantResolver tenantResolver;
   @Mock private AiSessionRepository aiSessionRepo;
   @Mock private AiAgentBatchClient aiAgentClient;
+  @Mock private AiChatRequestBuilder chatRequestBuilder;
   @Mock private SlackApiClient slackApiClient;
   @Mock private SlackChannel slackChannel;
   @Mock private EncryptionService encryption;
@@ -71,6 +79,10 @@ class SlackInboundServiceTest {
   private static final String BOT_TOKEN = "xoxb-test-token";
   private static final String BOT_TOKEN_ENC = "enc::" + BOT_TOKEN;
   private static final long TENANT_ID = 7L;
+  /** 새 스레드(빈 sessionId)용 요청 바디 — 내용은 AiChatRequestBuilder 테스트 몫이라 표식만 둔다. */
+  private static final Map<String, Object> NEW_BODY = Map.of("marker", "new");
+  /** 기존 세션 이어쓰기용 요청 바디. */
+  private static final Map<String, Object> RESUME_BODY = Map.of("marker", "resume");
 
   /** 기본 stub 세팅 — 각 테스트에서 필요에 따라 override. */
   @BeforeEach
@@ -109,8 +121,14 @@ class SlackInboundServiceTest {
     // AI 세션 — 기본: 없음 (새로 생성)
     when(aiSessionRepo.findBySlackContext(TEAM_ID, CHANNEL, THREAD_TS))
         .thenReturn(Optional.empty());
-    when(aiAgentClient.createSession(USER_ID, "Slack " + THREAD_TS)).thenReturn(AGENT_SESSION_ID);
-    when(aiAgentClient.chat(AGENT_SESSION_ID, USER_ID, "hi")).thenReturn("AI 응답 텍스트");
+    // 새 스레드는 빈 sessionId 로, 기존 스레드는 그 세션 ID 로 바디를 만든다.
+    when(chatRequestBuilder.prepare(TENANT_ID, USER_ID, "", "hi"))
+        .thenReturn(new Prepared(NEW_BODY, null));
+    when(chatRequestBuilder.prepare(TENANT_ID, USER_ID, AGENT_SESSION_ID, "hi"))
+        .thenReturn(new Prepared(RESUME_BODY, null));
+    when(aiAgentClient.chat(NEW_BODY)).thenReturn(new ChatReply(AGENT_SESSION_ID, "AI 응답 텍스트"));
+    when(aiAgentClient.chat(RESUME_BODY))
+        .thenReturn(new ChatReply(AGENT_SESSION_ID, "AI 응답 텍스트"));
   }
 
   /** 이벤트 JSON 생성 헬퍼. */
@@ -126,7 +144,7 @@ class SlackInboundServiceTest {
   }
 
   @Test
-  @DisplayName("정상 흐름 — 새 세션 생성 후 AI 응답 replyTo 호출")
+  @DisplayName("정상 흐름 — 새 스레드는 빈 세션으로 부르고 발급된 세션을 기록한 뒤 replyTo")
   void dispatch_successfulFlow_createsSessionAndReplies() {
     // given
     when(aiSessionRepo.createSlackSession(
@@ -136,8 +154,7 @@ class SlackInboundServiceTest {
     // when
     service.dispatch(TEAM_ID, makeEvent("hi"));
 
-    // then: 새 세션 생성 확인
-    verify(aiAgentClient).createSession(USER_ID, "Slack " + THREAD_TS);
+    // then: ai-agent 가 발급한 세션 ID 를 스레드에 기록
     verify(aiSessionRepo)
         .createSlackSession(
             eq(USER_ID),
@@ -147,8 +164,8 @@ class SlackInboundServiceTest {
             eq(THREAD_TS),
             anyString());
 
-    // AI 호출 확인
-    verify(aiAgentClient).chat(AGENT_SESSION_ID, USER_ID, "hi");
+    // AI 호출 확인 — 새 스레드는 빈 sessionId 로 만든 바디
+    verify(aiAgentClient).chat(NEW_BODY);
 
     // replyTo 호출 확인 (workspaceId=1, channel, threadTs, aiResponse)
     verify(slackChannel).replyTo(1L, CHANNEL, THREAD_TS, "AI 응답 텍스트");
@@ -166,7 +183,7 @@ class SlackInboundServiceTest {
     // then: ephemeral 전송
     verify(slackApiClient).postEphemeral(eq(BOT_TOKEN), eq(CHANNEL), eq(SLACK_USER), anyString());
     // AI 호출 없음
-    verify(aiAgentClient, never()).chat(anyString(), anyLong(), anyString());
+    verify(aiAgentClient, never()).chat(any());
     // replyTo 없음
     verify(slackChannel, never()).replyTo(anyLong(), anyString(), anyString(), anyString());
   }
@@ -175,25 +192,100 @@ class SlackInboundServiceTest {
   @DisplayName("AI chat 예외 — warning reaction + ephemeral 전송")
   void dispatch_aiChatFailure_sendsWarningReaction() {
     // given: AI 호출 예외
-    when(aiAgentClient.chat(AGENT_SESSION_ID, USER_ID, "hi"))
-        .thenThrow(new RuntimeException("ai-agent timeout"));
-    when(aiSessionRepo.createSlackSession(
-            anyLong(), anyString(), anyString(), anyString(), anyString(), anyString()))
-        .thenReturn(99L);
+    when(aiAgentClient.chat(NEW_BODY)).thenThrow(new RuntimeException("ai-agent timeout"));
 
     // when
     service.dispatch(TEAM_ID, makeEvent("hi"));
 
     // then: warning reaction 추가
     verify(slackApiClient).reactionsAdd(BOT_TOKEN, CHANNEL, TS, "warning");
-    // 오류 ephemeral 전송
-    verify(slackApiClient).postEphemeral(eq(BOT_TOKEN), eq(CHANNEL), eq(SLACK_USER), anyString());
+    // 연결 실패 등은 내부 정보라 원문 대신 일반 문구로 안내한다
+    verify(slackApiClient)
+        .postEphemeral(
+            BOT_TOKEN, CHANNEL, SLACK_USER, "AI 응답 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.");
+    // 실패한 턴의 세션은 기록하지 않는다
+    verify(aiSessionRepo, never())
+        .createSlackSession(
+            anyLong(), anyString(), anyString(), anyString(), anyString(), anyString());
     // replyTo 없음
     verify(slackChannel, never()).replyTo(anyLong(), anyString(), anyString(), anyString());
   }
 
   @Test
-  @DisplayName("기존 세션 재사용 — createSession 미호출, chat은 기존 agentSessionId 사용")
+  @DisplayName("ai-agent error 이벤트 — 그 사용자용 문구를 그대로 본인에게 안내")
+  void dispatch_agentErrorEvent_postsAgentMessage() {
+    when(aiAgentClient.chat(NEW_BODY))
+        .thenThrow(new AgentChatException("AI 인증에 실패했습니다. 설정 › AI 에이전트에서 확인하세요."));
+
+    service.dispatch(TEAM_ID, makeEvent("hi"));
+
+    verify(slackApiClient).reactionsAdd(BOT_TOKEN, CHANNEL, TS, "warning");
+    verify(slackApiClient)
+        .postEphemeral(
+            BOT_TOKEN, CHANNEL, SLACK_USER, "AI 인증에 실패했습니다. 설정 › AI 에이전트에서 확인하세요.");
+    verify(slackChannel, never()).replyTo(anyLong(), anyString(), anyString(), anyString());
+  }
+
+  @Test
+  @DisplayName("다른 사용자가 시작한 스레드 — 그 세션을 이어 쓰지 않고 거절한다")
+  void dispatch_threadOwnedByAnotherUser_refusesWithoutCallingAgent() {
+    // 스레드 세션의 주인은 다른 사용자(99)다
+    AiSessionResponse othersSession =
+        new AiSessionResponse(
+            5L,
+            99L,
+            AGENT_SESSION_ID,
+            null,
+            null,
+            "Slack 대화",
+            LocalDateTime.now(),
+            LocalDateTime.now(),
+            "SLACK",
+            TEAM_ID,
+            CHANNEL,
+            THREAD_TS);
+    when(aiSessionRepo.findBySlackContext(TEAM_ID, CHANNEL, THREAD_TS))
+        .thenReturn(Optional.of(othersSession));
+
+    service.dispatch(TEAM_ID, makeEvent("hi"));
+
+    // 원래 사용자의 대화 이력이 담긴 세션으로 ai-agent 를 부르지 않는다
+    verify(aiAgentClient, never()).chat(any());
+    verify(slackApiClient).postEphemeral(eq(BOT_TOKEN), eq(CHANNEL), eq(SLACK_USER), anyString());
+    verify(slackChannel, never()).replyTo(anyLong(), anyString(), anyString(), anyString());
+  }
+
+  @Test
+  @DisplayName("AI 자격증명 미설정 — ai-agent 를 부르지 않고 안내 문구를 본인에게만 보인다")
+  void dispatch_credentialIncomplete_postsProblemWithoutCallingAgent() {
+    String problem = "AI API 키 또는 OAuth 토큰이 설정되지 않았습니다.";
+    when(chatRequestBuilder.prepare(TENANT_ID, USER_ID, "", "hi"))
+        .thenReturn(new Prepared(null, problem));
+
+    service.dispatch(TEAM_ID, makeEvent("hi"));
+
+    verify(slackApiClient).postEphemeral(BOT_TOKEN, CHANNEL, SLACK_USER, problem);
+    verify(aiAgentClient, never()).chat(any());
+    verify(aiSessionRepo, never())
+        .createSlackSession(
+            anyLong(), anyString(), anyString(), anyString(), anyString(), anyString());
+    verify(slackChannel, never()).replyTo(anyLong(), anyString(), anyString(), anyString());
+  }
+
+  @Test
+  @DisplayName("같은 새 스레드 동시 메시지 — 세션 기록 충돌이 나도 답은 보낸다")
+  void dispatch_duplicateSlackSession_stillReplies() {
+    when(aiSessionRepo.createSlackSession(
+            anyLong(), anyString(), anyString(), anyString(), anyString(), anyString()))
+        .thenThrow(new DuplicateKeyException("uk_ai_session_slack_thread"));
+
+    service.dispatch(TEAM_ID, makeEvent("hi"));
+
+    verify(slackChannel).replyTo(1L, CHANNEL, THREAD_TS, "AI 응답 텍스트");
+  }
+
+  @Test
+  @DisplayName("기존 세션 재사용 — 세션 기록 없이 기존 agentSessionId 로 chat")
   void dispatch_existingSessionReused() {
     // given: 이미 존재하는 세션
     AiSessionResponse existingSession =
@@ -216,14 +308,13 @@ class SlackInboundServiceTest {
     // when
     service.dispatch(TEAM_ID, makeEvent("hi"));
 
-    // then: 새 세션 생성 없음
-    verify(aiAgentClient, never()).createSession(anyLong(), anyString());
+    // then: 새 세션 기록 없음
     verify(aiSessionRepo, never())
         .createSlackSession(
             anyLong(), anyString(), anyString(), anyString(), anyString(), anyString());
 
-    // 기존 sessionId로 chat 호출
-    verify(aiAgentClient).chat(AGENT_SESSION_ID, USER_ID, "hi");
+    // 기존 sessionId로 만든 바디로 chat 호출
+    verify(aiAgentClient).chat(RESUME_BODY);
     verify(slackChannel).replyTo(1L, CHANNEL, THREAD_TS, "AI 응답 텍스트");
   }
 
@@ -241,7 +332,7 @@ class SlackInboundServiceTest {
         .reactionsAdd(anyString(), anyString(), anyString(), anyString());
     verify(slackApiClient, never())
         .postEphemeral(anyString(), anyString(), anyString(), anyString());
-    verify(aiAgentClient, never()).chat(anyString(), anyLong(), anyString());
+    verify(aiAgentClient, never()).chat(any());
     verify(slackChannel, never()).replyTo(anyLong(), anyString(), anyString(), anyString());
   }
 
@@ -306,7 +397,7 @@ class SlackInboundServiceTest {
    *
    * <p><b>이 단언이 없으면 가드에 판별력이 0이다.</b> {@code dispatch} 를 통해 부르는 테스트는
    * 전부 {@code runScoped} 가 컨텍스트를 세워 주므로 가드를 지워도 초록이다(리뷰 실측). 가드의
-   * 존재 이유는 "미래에 {@code slackInboundExecutor} 빈이 복원될 때의 기계적 방어" 이므로,
+   * 존재 이유는 "{@code dispatch} 의 해석·runScoped 배선이 깨졌을 때의 기계적 방어" 이므로,
    * 가장 필요한 시점에 보호가 없으면 안 된다. 그래서 {@code process} 를 직접 부른다.
    */
   @Test

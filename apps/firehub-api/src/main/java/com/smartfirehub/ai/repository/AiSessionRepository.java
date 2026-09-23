@@ -36,11 +36,10 @@ import org.springframework.transaction.annotation.Transactional;
  * 올바른 테넌트 컨텍스트를 갖고 도착한다. 이전 판정("배경 쓰기 경로에 테넌트 해석이 없는 유일한
  * 테이블")은 <b>더 이상 유효하지 않다</b>.
  *
- * <p>남은 사실 하나: {@code @Async("slackInboundExecutor")} 가 가리키는 빈은 여전히 존재하지
- * 않는다(커밋 {@code 968a28c2} 에서 삭제) — 즉 Slack inbound 경로 자체가 죽어 있고, 복원은
- * 테넌시가 아니라 기능 복구 작업이다. <b>복원 커밋이 테넌시 배선을 함께 넣어야 한다는 이전 요구는
- * 이미 갚아졌다.</b> 복원할 때 확인할 것은 {@code SlackInboundService} 클래스 javadoc 의 계약
- * 3항(특히 "{@code TenantContextTaskDecorator} 는 이 경로의 안전 조건이 아니다")이다.
+ * <p>{@code @Async("slackInboundExecutor")} 빈은 커밋 {@code 968a28c2} 에서 지워졌다가 이슈
+ * #709 에서 되살아났다 — Slack inbound 경로는 이제 실제로 돈다. 이 경로의 계약은
+ * {@code SlackInboundService} 클래스 javadoc 에 있다(특히 "{@code TenantContextTaskDecorator} 는
+ * 이 경로의 안전 조건이 아니다").
  */
 @Transactional
 @Repository

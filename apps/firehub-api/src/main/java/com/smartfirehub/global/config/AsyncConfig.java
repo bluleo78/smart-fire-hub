@@ -12,7 +12,7 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 /**
  * 비동기 실행자 정의.
  *
- * <p>여기 정의한 세 풀에 {@link TenantContextTaskDecorator} 를 붙인다 — 붙이지 않으면 그 풀에서 도는
+ * <p>여기 정의한 모든 풀에 {@link TenantContextTaskDecorator} 를 붙인다 — 붙이지 않으면 그 풀에서 도는
  * 작업이 테넌트 없이 실행돼 RLS 가 전부 차단하고 예외 없이 0행이 된다. 데코레이터는 반드시
  * {@code initialize()} <b>앞</b>에 설정해야 한다(뒤에 두면 이미 만들어진 풀에 반영되지 않는다).
  *
@@ -58,6 +58,29 @@ public class AsyncConfig {
     executor.setMaxPoolSize(4);
     executor.setQueueCapacity(500);
     executor.setThreadNamePrefix("dataset-index-");
+    executor.setTaskDecorator(new TenantContextTaskDecorator());
+    executor.initialize();
+    return executor;
+  }
+
+  /**
+   * Slack 인바운드 처리 풀({@code SlackInboundService.dispatch} 의 {@code @Async} 대상).
+   *
+   * <p>큐가 차면 <b>거절</b>한다(기본 AbortPolicy). {@code taskExecutor} 처럼 CallerRuns 로 두면
+   * 넘친 작업이 컨트롤러 스레드에서 AI 응답(최대 수 분)까지 기다려 ack 가 늦어지고, 채널
+   * 서비스가 재시도해 같은 질문에 답이 두 번 달린다. 거절되면 컨트롤러가 오류를 돌려주고 그
+   * 메시지는 답을 받지 못한다.
+   *
+   * <p>데코레이터는 다른 풀과 형태를 맞출 뿐 이 경로의 방어가 아니다 — {@code SlackInboundService}
+   * 클래스 javadoc 참고.
+   */
+  @Bean(name = "slackInboundExecutor")
+  public Executor slackInboundExecutor() {
+    ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+    executor.setCorePoolSize(3);
+    executor.setMaxPoolSize(5);
+    executor.setQueueCapacity(20);
+    executor.setThreadNamePrefix("slack-inbound-");
     executor.setTaskDecorator(new TenantContextTaskDecorator());
     executor.initialize();
     return executor;

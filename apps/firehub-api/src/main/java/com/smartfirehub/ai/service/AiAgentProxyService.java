@@ -3,13 +3,8 @@ package com.smartfirehub.ai.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.tenant.TenantContext;
-import com.smartfirehub.settings.model.AiBehaviorDefaults;
-import com.smartfirehub.settings.model.AiCredential;
-import com.smartfirehub.settings.service.AiCredentialService;
-import com.smartfirehub.settings.service.SettingsService;
 import java.io.IOException;
 import java.time.Duration;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import lombok.extern.slf4j.Slf4j;
@@ -32,8 +27,7 @@ public class AiAgentProxyService {
 
   private final WebClient webClient;
   private final ObjectMapper objectMapper;
-  private final SettingsService settingsService;
-  private final AiCredentialService aiCredentialService;
+  private final AiChatRequestBuilder chatRequestBuilder;
 
   @Value("${agent.internal-token}")
   private String internalToken;
@@ -41,8 +35,7 @@ public class AiAgentProxyService {
   public AiAgentProxyService(
       @Value("${agent.url}") String agentUrl,
       ObjectMapper objectMapper,
-      SettingsService settingsService,
-      AiCredentialService aiCredentialService) {
+      AiChatRequestBuilder chatRequestBuilder) {
     HttpClient httpClient =
         HttpClient.create().responseTimeout(Duration.ofMinutes(5)).keepAlive(true);
     this.webClient =
@@ -52,29 +45,7 @@ public class AiAgentProxyService {
             .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(10 * 1024 * 1024))
             .build();
     this.objectMapper = objectMapper;
-    this.settingsService = settingsService;
-    this.aiCredentialService = aiCredentialService;
-  }
-
-  private static int parseIntSafe(String value, int defaultValue) {
-    if (value == null) return defaultValue;
-    try {
-      return Integer.parseInt(value);
-    } catch (NumberFormatException e) {
-      log.warn("[AI Chat] Invalid int setting value '{}', using default {}", value, defaultValue);
-      return defaultValue;
-    }
-  }
-
-  private static double parseDoubleSafe(String value, double defaultValue) {
-    if (value == null) return defaultValue;
-    try {
-      return Double.parseDouble(value);
-    } catch (NumberFormatException e) {
-      log.warn(
-          "[AI Chat] Invalid double setting value '{}', using default {}", value, defaultValue);
-      return defaultValue;
-    }
+    this.chatRequestBuilder = chatRequestBuilder;
   }
 
   /**
@@ -176,6 +147,39 @@ public class AiAgentProxyService {
         .block(TIMEOUT);
   }
 
+  /**
+   * ai-agent {@code POST /agent/chat} 의 SSE 이벤트 스트림. 웹 채팅(아래 {@link #streamChat})은
+   * 이벤트를 브라우저로 중계하고, Slack 인바운드({@link AiAgentBatchClient})는 done 까지 접는다 —
+   * 호출 규약(경로·내부 인증·비 2xx 처리)을 두 곳에 따로 두지 않으려고 여기 하나로 둔다.
+   *
+   * @param requestBody {@link AiChatRequestBuilder#prepare} 가 만든 바디
+   */
+  Flux<ServerSentEvent<String>> chatEvents(Map<String, Object> requestBody) {
+    return webClient
+        .post()
+        .uri("/agent/chat")
+        .header("Authorization", "Internal " + internalToken)
+        .contentType(MediaType.APPLICATION_JSON)
+        .bodyValue(requestBody)
+        .accept(MediaType.TEXT_EVENT_STREAM)
+        .exchangeToFlux(
+            response -> {
+              if (!response.statusCode().is2xxSuccessful()) {
+                return response
+                    .bodyToMono(String.class)
+                    .defaultIfEmpty("")
+                    .flatMapMany(
+                        body ->
+                            Flux.error(
+                                new RuntimeException(
+                                    "Agent error: " + response.statusCode() + " " + body)));
+              }
+              return response.bodyToFlux(
+                  new ParameterizedTypeReference<ServerSentEvent<String>>() {});
+            })
+        .timeout(TIMEOUT);
+  }
+
   public void streamChat(
       SseEmitter emitter,
       String message,
@@ -193,49 +197,21 @@ public class AiAgentProxyService {
     // 테넌트는 API 가 멤버십에서 다시 파생한다).
     long tenantId = TenantContext.require("AI 챗 프록시");
 
-    // aiSettings 는 이후 키 단위로만 읽히고(아래 requestBody 조립) 맵 자체가 요청 바디에 실리지
-    // 않는다. ai.credential 은 이 맵에 나타나지 않는다 — SettingsService.getAsMap 이 그 키를
-    // 범용 경로에서 걸러낸다(비밀이 하위 필드에 있어 이 맵의 마스킹 계약으로는 다룰 수 없다).
-    // 비밀 값은 아래 aiCredentialService.resolve() 의 결과(AiCredential)가 credential.applyTo()
-    // 로 요청 바디에 실을 때만 들어간다 — 그 경로 하나뿐이다.
-    Map<String, String> aiSettings = settingsService.getAsMap("ai");
-
-    // agentType 의 출처는 AiCredentialService.resolve() 하나뿐이어야 한다. 예전에는
-    // aiSettings.getOrDefault("ai.agent_type", "sdk") 로 따로 읽었는데, getAsMap 은 getValue()
-    // 의 rejectBundleKey 를 거치지 않으므로 번들 단일 키 금지 규칙을 조용히 우회하는 뒷문이었다
-    // — 그리고 getOrDefault 는 키가 존재하면 빈 문자열도 그대로 돌려주므로(정규화 없음), 빈 값이
-    // 저장되면 sdk 폴백이 아니라 else 분기(cli-api)로 떨어져 엉뚱하게 API 키를 요구했다. 같은
-    // 상태를 보는 AiAgentClient.classify()/AiController.getAuthStatus() 는 타입 있는 AiCredential
-    // 을 보므로, 두 소스가 있으면 한쪽만 고쳐지는 사고가 난다. 그래서 agentType 은 아래 resolve()
-    // 결과에서만 파생한다 — 여기서 다시 aiSettings 를 읽지 말 것.
-    //
-    // resolve() 는 Flux 구독 전, 이 메서드가 아직 요청 스레드에서 동기 실행되는 동안 부른다 —
-    // 알 수 없는 agentType 이면 UnknownAgentTypeException 을 그대로 던지고, 그 예외가
-    // AiController.chat() 까지 전파돼 500 이 된다(fail-closed). 구독 콜백 안에서 불렀다면 이
-    // 예외가 리액터 에러 경로로 흘러 원인 불명의 조용한 실패가 됐을 것이다 — 6b1c6383 과 같은
-    // 모양의 회귀를 만들지 않으려면 이 위치가 중요하다.
-    AiCredential credential = aiCredentialService.resolve();
-
-    // 사용 가능 여부 판정은 전부 AiCredential 의 유형별 메서드에 있다(이슈 #695). 예전에는 여기에
-    // agentType 문자열 if-else 사슬과 opencode 전용 instanceof 가 있었는데, 그건 #693 이 걷어낸
-    // 바로 그 안티패턴이 타입 있는 분기 옆에 남아 있던 자리였다 — 유형이 늘 때 컴파일이 아무것도
-    // 막아주지 않는다. 공백 문자열을 "없음"으로 보는 정규화도 각 유형의 isComplete() 안에 있다.
-    //
-    // ai.model 은 유형과 무관하게 한 번 읽어 넘긴다 — 모델 제약이 없는 유형에서는 modelProblem 이
-    // 항상 null 이라 no-op 이다. opencode 에서 이 검사가 중요한 이유: ai.model 이 opencode 형식
-    // (providerId/modelId)이 아니면(예: sdk 시절 값 "claude-sonnet-5" 가 남아 있는 채로 opencode 로
-    // 전환) ai-agent 의 buildOpenCodeConfig 가 throw 하는데, 그 시점은 이미 SSE 헤더가 나간 뒤
-    // (chat.ts 가 헤더를 먼저 쓰고서 provider.execute() 를 부른다)라 프론트엔드는 구체적 원인 없이
-    // "Agent 처리 중 오류가 발생했습니다" 만 본다. 그래서 여기서 먼저 막는다.
-    String model = aiSettings.get("ai.model");
-    String credentialProblem =
-        credential.isComplete() ? credential.modelProblem(model) : credential.incompleteMessage();
-    if (credentialProblem != null) {
+    // 바디 조립(자격증명 해석·동작 키 기본값)은 Slack 인바운드와 공유한다(AiChatRequestBuilder,
+    // 이슈 #709). resolve() 는 Flux 구독 전, 이 메서드가 아직 요청 스레드에서 동기 실행되는 동안
+    // 돈다 — 알 수 없는 agentType 이면 UnknownAgentTypeException 이 AiController.chat() 까지
+    // 전파돼 500 이 된다(fail-closed). 구독 콜백 안에서 불렀다면 리액터 에러 경로로 흘러 원인
+    // 불명의 조용한 실패가 됐을 것이다 — 6b1c6383 과 같은 모양의 회귀를 만들지 않으려면 이 위치가
+    // 중요하다.
+    AiChatRequestBuilder.Prepared prepared =
+        chatRequestBuilder.prepare(tenantId, userId, sessionId, message);
+    if (prepared.problem() != null) {
       try {
         // 채팅은 예외가 아니라 SSE 이벤트로 오류를 내보내야 하므로 requireModelUsable 대신 문구만
         // 가져다 쓴다(분류·프로액티브는 같은 문구를 예외로 던진다).
         String errorPayload =
-            objectMapper.writeValueAsString(Map.of("type", "error", "message", credentialProblem));
+            objectMapper.writeValueAsString(
+                Map.of("type", "error", "message", prepared.problem()));
         emitter.send(SseEmitter.event().data(errorPayload));
         emitter.complete();
       } catch (IOException ignored) {
@@ -243,35 +219,10 @@ public class AiAgentProxyService {
       return;
     }
 
-    Map<String, Object> requestBody = new HashMap<>();
-    requestBody.put("message", message != null ? message : "");
-    requestBody.put("sessionId", sessionId != null ? sessionId : "");
-    requestBody.put("userId", userId);
-    requestBody.put("tenantId", tenantId);
+    Map<String, Object> requestBody = prepared.body();
     if (fileIds != null && !fileIds.isEmpty()) {
       requestBody.put("fileIds", fileIds);
     }
-    // 자격증명 필드(agentType/apiKey/oauthToken/providerId/baseUrl/reasoningEffort)는 유형별
-    // applyTo() 가 채운다 — 필드 이름은 ai-agent 가 읽는 이름이라 분류·프로액티브 경로와 같아야
-    // 하고, 그래서 세 경로가 이 메서드 하나를 공유한다(이슈 #695).
-    credential.applyTo(requestBody);
-    requestBody.put("model", model);
-    // AI 동작 키는 aiSettings 에 항상 들어 있다(SettingsService.getAsMap 이 코드 기본값을 깐다).
-    // 아래 폴백은 저장된 값이 숫자로 파싱되지 않을 때만 쓰인다.
-    requestBody.put(
-        "maxTurns", parseIntSafe(aiSettings.get("ai.max_turns"), AiBehaviorDefaults.MAX_TURNS));
-    requestBody.put(
-        "systemPrompt",
-        aiSettings.get("ai.system_prompt"));
-    requestBody.put(
-        "temperature",
-        parseDoubleSafe(aiSettings.get("ai.temperature"), AiBehaviorDefaults.TEMPERATURE));
-    requestBody.put(
-        "maxTokens", parseIntSafe(aiSettings.get("ai.max_tokens"), AiBehaviorDefaults.MAX_TOKENS));
-    requestBody.put(
-        "sessionMaxTokens",
-        parseIntSafe(
-            aiSettings.get("ai.session_max_tokens"), AiBehaviorDefaults.SESSION_MAX_TOKENS));
     if (navigationContext != null && !navigationContext.isEmpty()) {
       requestBody.put("navigationContext", navigationContext);
     }
@@ -287,29 +238,7 @@ public class AiAgentProxyService {
       return;
     }
 
-    Flux<ServerSentEvent<String>> eventStream =
-        webClient
-            .post()
-            .uri("/agent/chat")
-            .header("Authorization", "Internal " + internalToken)
-            .contentType(MediaType.APPLICATION_JSON)
-            .bodyValue(requestBody)
-            .accept(MediaType.TEXT_EVENT_STREAM)
-            .exchangeToFlux(
-                response -> {
-                  if (!response.statusCode().is2xxSuccessful()) {
-                    return response
-                        .bodyToMono(String.class)
-                        .flatMapMany(
-                            body ->
-                                Flux.error(
-                                    new RuntimeException(
-                                        "Agent error: " + response.statusCode() + " " + body)));
-                  }
-                  return response.bodyToFlux(
-                      new ParameterizedTypeReference<ServerSentEvent<String>>() {});
-                })
-            .timeout(TIMEOUT);
+    Flux<ServerSentEvent<String>> eventStream = chatEvents(requestBody);
 
     final boolean[] completed = {false};
 
