@@ -15,8 +15,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * 플랫폼 기본 설정 조회·쓰기(운영자 전용). 18키 전체를 대상으로 {@code system_settings} 를 읽고
- * 쓴다.
+ * 플랫폼 설정 조회·쓰기(운영자 전용). #712 이후 대상은 임베딩 4키뿐이다 — {@code ai.*}(#706)와
+ * {@code smtp.*}(#712)는 워크스페이스 전용이라 조회에서 빠지고 쓰기는 400 으로 거부된다.
  *
  * <p><b>쓰기(P7-b Task 6)</b>: {@code PUT} 은 {@link SettingsService#updatePlatformSettings} 로
  * 위임한다 — 검증·마스킹·암호화 로직은 Task 5 가 {@code SettingsService} 에 남겨 둔 것과
@@ -36,7 +36,7 @@ public class PlatformSettingsController {
 
   private final SettingsService settingsService;
 
-  /** 플랫폼 기본 설정 전체. 비밀값(embedding.api_key / smtp.password)은 마스킹된다. */
+  /** 플랫폼 설정 전체(임베딩 4키). 비밀값(embedding.api_key)은 마스킹된다. */
   @GetMapping
   @RequirePermission("platform:settings:read")
   public ResponseEntity<List<SettingResponse>> getAll() {
@@ -44,7 +44,7 @@ public class PlatformSettingsController {
   }
 
   /**
-   * 플랫폼 기본 설정 갱신. AI·임베딩·SMTP 키를 한 번에 받을 수 있다(부분 갱신 허용). 마스킹된
+   * 플랫폼 설정 갱신. 임베딩 키만 받는다(부분 갱신 허용) — {@code ai.*}·{@code smtp.*} 는 400. 마스킹된
    * 센티널({@code ****xxxx})은 "기존 값 유지"로 해석되어 살아 있는 자격증명을 덮어쓰지 않는다
    * ({@code SettingsService} 의 {@code dropMaskSentinels} 필터를 그대로 지난다).
    */

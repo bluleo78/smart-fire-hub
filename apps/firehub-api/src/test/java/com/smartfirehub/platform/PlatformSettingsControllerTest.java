@@ -28,7 +28,7 @@ import org.springframework.test.web.servlet.MockMvc;
  *
  * <p>이 클래스는 <b>class-level {@code @Transactional} 을 쓰지 않는다</b>(밴드 전역 규칙) —
  * 쓰기 테스트가 커밋한 값은 각 테스트가 직접 원래 값을 저장해 뒀다가 {@code finally} 에서 raw SQL
- * 로 복원한다. {@code system_settings} 는 전역 단일 행 집합이고 같은 test DB 를 AI·임베딩·SMTP
+ * 로 복원한다. {@code system_settings} 는 전역 단일 행 집합이고 같은 test DB 를 여러 설정
  * 테스트가 함께 읽으므로, 복원하지 않으면 이 테스트 실행 이후의 다른 실행이 깨진다.
  */
 @AutoConfigureMockMvc
@@ -41,15 +41,17 @@ class PlatformSettingsControllerTest extends IntegrationTestBase {
   @Autowired private DSLContext dsl;
 
   /**
-   * 운영자는 임베딩·SMTP 키를 한 번에 읽고, AI 키는 받지 않는다 — AI 설정은 테넌트 전용이다.
+   * 운영자는 임베딩 키만 읽는다 — AI(#706)·SMTP(#712) 설정은 테넌트 전용이다.
    *
-   * <p>V127 이 {@code ai.*} 플랫폼 행을 지웠으므로, 행을 <b>직접 심어 둔 채</b> 응답에서 빠지는지
-   * 본다(심지 않으면 필터가 사라져도 통과하는 공허한 단언이 된다).
+   * <p>V127·V128 이 {@code ai.*}·{@code smtp.*} 플랫폼 행을 지웠으므로, 행을 <b>직접 심어 둔 채</b>
+   * 응답에서 빠지는지 본다(심지 않으면 필터가 사라져도 통과하는 공허한 단언이 된다).
    */
   @Test
-  void getSettings_returnsPlatformKeysButNoAiKeys() throws Exception {
+  void getSettings_returnsEmbeddingKeysButNoAiOrSmtpKeys() throws Exception {
     plantPlatformRow("ai.model", "planted-platform-model");
     plantPlatformRow("ai.max_turns", "42");
+    plantPlatformRow("smtp.host", "planted-platform-smtp.example.com");
+    plantPlatformRow("smtp.password", "planted-platform-password");
     try {
       String body =
           mockMvc
@@ -61,11 +63,17 @@ class PlatformSettingsControllerTest extends IntegrationTestBase {
               .getResponse()
               .getContentAsString();
 
-      assertThat(body).contains("embedding.model", "smtp.host");
+      assertThat(body).contains("embedding.model");
       assertThat(body).doesNotContain("\"ai.").doesNotContain("planted-platform-model");
+      assertThat(body)
+          .doesNotContain("\"smtp.")
+          .doesNotContain("planted-platform-smtp.example.com")
+          .doesNotContain("planted-platform-password");
     } finally {
       deleteSystemSetting(dsl, "ai.model");
       deleteSystemSetting(dsl, "ai.max_turns");
+      deleteSystemSetting(dsl, "smtp.host");
+      deleteSystemSetting(dsl, "smtp.password");
     }
   }
 
@@ -87,7 +95,35 @@ class PlatformSettingsControllerTest extends IntegrationTestBase {
     }
   }
 
-  /** V127 이후 없는 {@code ai.*} 플랫폼 행을 직접 심는다(쓰기 API 가 없다). */
+  /**
+   * 플랫폼 PUT 은 {@code smtp.*} 를 400 으로 거부하고 아무것도 저장하지 않는다(#712). 옛 관리자 앱이
+   * SMTP 탭 값을 보내면 이 응답을 받는다 — 임베딩 키와 섞어 보내도 통째로 거부된다(부분 저장 없음).
+   */
+  @Test
+  void 운영자도_SMTP_키는_쓸_수_없다() throws Exception {
+    String modelBefore = rawSystemSettingValue(dsl, "embedding.model");
+    try {
+      mockMvc
+          .perform(
+              put("/api/platform/settings")
+                  .header("Authorization", "Bearer " + operatorToken())
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(
+                      objectMapperContent(
+                          Map.of(
+                              "smtp.host", "operator-smtp.example.com",
+                              "embedding.model", "should-not-save"))))
+          .andExpect(status().isBadRequest());
+
+      assertThat(rawSystemSettingValue(dsl, "smtp.host")).isNull();
+      assertThat(rawSystemSettingValue(dsl, "embedding.model")).isEqualTo(modelBefore);
+    } finally {
+      deleteSystemSetting(dsl, "smtp.host");
+      restoreSystemSettingValue(dsl, "embedding.model", modelBefore);
+    }
+  }
+
+  /** V127·V128 이후 없는 {@code ai.*}·{@code smtp.*} 플랫폼 행을 직접 심는다(쓰기 API 가 없다). */
   private void plantPlatformRow(String key, String value) {
     upsertSystemSetting(dsl, key, value);
   }

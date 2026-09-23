@@ -11,16 +11,17 @@ import type {
 import { client } from './client';
 
 export const settingsApi = {
-  // 해석된 값 + overridden/tenantEditable 플래그를 함께 받는다 (P7-b).
+  // 해석된 값 + overridden/tenantEditable 플래그를 함께 받는다 (P7-b). `prefix=smtp` 는 이
+  // 워크스페이스가 저장한 키만 온다(#712) — 미설정이면 빈 배열이다.
   getByPrefix: (prefix: string) =>
     client.get<ResolvedSettingResponse[]>('/settings', { params: { prefix } }),
 
   update: (data: UpdateSettingsRequest) =>
     client.put('/settings', data),
 
-  // 테넌트 오버라이드 삭제 = 플랫폼 기본값으로 복귀. 멱등(이미 상속 중이어도 204).
-  clearOverride: (key: string) =>
-    client.delete(`/settings/overrides/${encodeURIComponent(key)}`),
+  // 워크스페이스 SMTP 설정 해제(#712) — 6키(발신자 주소 포함)를 한 번에 지운다. 멱등(204).
+  // 해제 뒤에는 미설정 상태가 되어 이메일 발송이 실패한다(되돌아갈 다른 값이 없다).
+  clearSmtp: () => client.delete('/settings/smtp'),
 
   verifyAuthStatus: () =>
     client.get<{ valid: boolean; email?: string; subscriptionType?: string }>('/ai/auth-status'),

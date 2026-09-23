@@ -35,7 +35,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 /**
  * SettingsController WebMvcTest — JaCoCo LINE 커버리지 보강용. 핵심 경로(getSettings /
- * getDecryptedAiApiKey / updateSettings / clearOverride / testSmtpSettings) 각각의 성공 분기만 커버한다.
+ * getDecryptedAiApiKey / updateSettings / clearSmtpSettings / testSmtpSettings) 각각의 성공 분기만 커버한다.
  */
 @WebMvcTest(SettingsController.class)
 @Import({SecurityConfig.class, JwtAuthenticationFilter.class})
@@ -137,38 +137,52 @@ class SettingsControllerTest {
     verify(settingsService, never()).updatePlatformSettings(any(), any());
   }
 
-  /** 오버라이드가 있든 없든 204다 — "이미 상속 중"은 오류가 아니라 멱등한 성공이다. */
+  /** SMTP 설정 해제(#712)는 행이 있든 없든 204다 — 이미 미설정이어도 멱등한 성공이다. */
   @Test
-  void clearOverride_returnsNoContent() throws Exception {
+  void clearSmtpSettings_returnsNoContent() throws Exception {
     mockAuth("ai:settings");
 
     mockMvc
-        .perform(delete("/api/v1/settings/overrides/ai.model").header("Authorization", "Bearer valid-token"))
+        .perform(delete("/api/v1/settings/smtp").header("Authorization", "Bearer valid-token"))
         .andExpect(status().isNoContent());
 
-    // verify 로 호출 자체와 키 인자를 고정한다. 204 만 단언하면 핸들러에서 clearOverride 호출을
-    // 통째로 지워도(=기능이 컨트롤러에서 사라져도) 통과하고, 경로 변수 전달 회귀도 놓친다.
-    verify(settingsService).clearOverride("ai.model");
+    // verify 로 호출 자체를 고정한다. 204 만 단언하면 핸들러에서 서비스 호출을 통째로 지워도
+    // (=기능이 컨트롤러에서 사라져도) 통과한다.
+    verify(settingsService).clearSmtpSettings();
   }
 
   /**
-   * {@code ai:settings} 가 <b>없으면</b> 재정의 해제는 403 이다.
+   * {@code ai:settings} 가 <b>없으면</b> SMTP 설정 해제는 403 이다.
    *
    * <p>이 파일의 다른 모든 테스트는 필요한 권한을 항상 부여하고 시작한다. 그래서 어느 테스트도
    * "{@code @RequirePermission} 이 실제로 집행되는가"와 "애너테이션은 붙어 있지만 경로가
    * {@code PermissionInterceptor} 에 등록되지 않아 그냥 통과하는가"를 <b>구별하지 못한다</b>. P7-a 가
-   * 정확히 그 함정(인터셉터 경로 등록 누락)을 한 번 겪었으므로, 이 밴드가 새로 추가한 유일한 쓰기
-   * 경로에는 거부 쪽 단언을 하나 둔다. 여기서 204 가 나오면 애너테이션은 장식일 뿐이고, 권한 없는
-   * 테넌트 관리자가 오버라이드를 조용히 지울 수 있다는 뜻이다 — 이 밴드가 세우려는 경계가 그대로
-   * 무너진다.
+   * 정확히 그 함정(인터셉터 경로 등록 누락)을 한 번 겪었으므로, 삭제 경로에는 거부 쪽 단언을 둔다.
+   * 여기서 204 가 나오면 권한 없는 사용자가 워크스페이스 메일 설정을 조용히 지울 수 있다.
    */
   @Test
-  void clearOverride_withoutPermission_returnsForbidden() throws Exception {
+  void clearSmtpSettings_withoutPermission_returnsForbidden() throws Exception {
     mockAuth("dataset:read");
 
     mockMvc
-        .perform(delete("/api/v1/settings/overrides/ai.model").header("Authorization", "Bearer valid-token"))
+        .perform(delete("/api/v1/settings/smtp").header("Authorization", "Bearer valid-token"))
         .andExpect(status().isForbidden());
+    verify(settingsService, never()).clearSmtpSettings();
+  }
+
+  /**
+   * 키별 해제 {@code DELETE /settings/overrides/{key}} 는 삭제됐다(#712) — 404 다. SMTP 에 플랫폼
+   * 값이 없어 "되돌리기"가 성립하지 않고, AI 동작 키 화면은 키별 해제를 부르지 않는다.
+   */
+  @Test
+  void clearOverride_endpointRemoved_returnsNotFound() throws Exception {
+    mockAuth("ai:settings");
+
+    mockMvc
+        .perform(
+            delete("/api/v1/settings/overrides/smtp.host")
+                .header("Authorization", "Bearer valid-token"))
+        .andExpect(status().isNotFound());
   }
 
   /**
@@ -197,22 +211,19 @@ class SettingsControllerTest {
   }
 
   /**
-   * {@code /settings/smtp} 에는 <b>어떤 메서드의 라우트도 없다</b> — 404 다.
+   * {@code /settings/smtp} 에는 <b>DELETE(설정 해제, #712) 하나만</b> 있다 — GET·PUT 은 405 다.
    *
-   * <p>이 테스트는 네 번 바뀌었고 그 궤적이 곧 교훈이다. 처음에는 {@code doNothing()} 스텁 + 204
-   * 단언이라 서비스가 <b>항상 거부</b>하게 된 뒤에도 계속 통과했다(거짓을 고정하는 테스트).
-   * 다음에는 실제 예외를 재현해 403 을 단언했고, P7-b 가 쓰기 라우트를 지운 뒤에는 405 였다
-   * (GET 이 남아 있어 경로 자체는 매핑돼 있었기 때문이다). P7-c1 이 그 GET 마저 지워
-   * — 해석기를 타지 않아 <b>틀린 값</b>을 주면서 소비자도 0이 된 경로였다 — 이제 404 다.
+   * <p>이 테스트의 궤적: 처음에는 {@code doNothing()} 스텁 + 204 라 서비스가 항상 거부하게 된 뒤에도
+   * 통과했고, P7-b 가 쓰기 라우트를 지운 뒤 405, P7-c1 이 GET 마저 지워 404 였다. #712 가 같은 경로에
+   * DELETE 를 추가해 다시 405 가 됐다. PUT 만 405 로 단언하면 GET 이 되살아나도 조용히 통과하므로
+   * GET 과 PUT 을 <b>각각</b> 요청해 둘 다 405 인지 본다(되살아난 메서드는 405 가 아니게 된다).
+   * 옛 GET 은 해석기를 타지 않아 <b>틀린 값</b>을 주던 경로였다.
    *
-   * <p>단언값(405→404)이 바뀐 것 자체가 검증 대상이다. 405 를 그대로 두면 "경로에 무언가 매핑돼
-   * 있다"는 사실에 기대는 셈이라, GET 이 되살아나도 테스트는 조용히 통과한다.
-   *
-   * <p>{@code AccessDeniedException} → 403 매핑은 {@link #clearOverride_withoutPermission_returnsForbidden}
-   * 이 계속 지킨다 — 그 단언까지 함께 잃지 않도록 확인하고 지웠다.
+   * <p>{@code AccessDeniedException} → 403 매핑은 {@link #clearSmtpSettings_withoutPermission_returnsForbidden}
+   * 이 지킨다.
    */
   @Test
-  void smtpRoutes_removed_returnNotFound() throws Exception {
+  void smtpRoutes_onlyDeleteRemains() throws Exception {
     mockAuth("ai:settings");
 
     mockMvc
@@ -221,11 +232,11 @@ class SettingsControllerTest {
                 .header("Authorization", "Bearer valid-token")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(Map.of("smtp.host", "localhost"))))
-        .andExpect(status().isNotFound());
+        .andExpect(status().isMethodNotAllowed());
 
     mockMvc
         .perform(get("/api/v1/settings/smtp").header("Authorization", "Bearer valid-token"))
-        .andExpect(status().isNotFound());
+        .andExpect(status().isMethodNotAllowed());
   }
 
 

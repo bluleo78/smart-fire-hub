@@ -29,18 +29,15 @@ export function SaveConfirmDialog({ open, onOpenChange, diff, onConfirm }: SaveC
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>플랫폼 기본값 저장</AlertDialogTitle>
+          <AlertDialogTitle>플랫폼 설정 저장</AlertDialogTitle>
           <AlertDialogDescription>
-            {`${diff.length}개 항목을 변경합니다. 이 값은 전 테넌트에 적용되며, 해당 항목을 재정의하지 않은 모든 워크스페이스가 즉시 영향을 받습니다.`}
+            {`${diff.length}개 항목을 변경합니다. 저장하면 모든 워크스페이스에 즉시 적용됩니다.`}
           </AlertDialogDescription>
         </AlertDialogHeader>
 
         <ul className="max-h-64 space-y-1 overflow-y-auto text-sm">
           {diff.map((d) => (
             <li key={d.key} className="flex flex-wrap items-baseline gap-1">
-              {/* 탭이 다르면 카탈로그 라벨이 우연히 같을 수 있어 탭 그룹을 함께 보여준다(리뷰 L1)
-                  — 그래야 바이트까지 같은 두 줄이 안 생긴다. */}
-              <span className="text-xs text-muted-foreground">{d.group} ·</span>
               <span className="font-medium">{d.label}</span>
               <span className="text-muted-foreground">
                 {d.secret ? d.after : `${d.before || '(비어 있음)'} → ${d.after || '(비어 있음)'}`}

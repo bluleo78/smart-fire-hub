@@ -1,16 +1,6 @@
 import { Info, Save } from 'lucide-react';
 import { useState } from 'react';
 
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '../../components/ui/alert-dialog';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { InlineBanner } from '../../components/ui/inline-banner';
@@ -21,6 +11,7 @@ import type { UseAiClassifyFormResult } from '../../hooks/useAiClassifyForm';
 import type { AgentType } from '../../lib/ai-credential';
 import { AGENT_TYPE_LABELS, CLAUDE_MODEL_OPTIONS, withPreservedValue } from '../../lib/ai-credential-screen';
 import { AiCredentialFieldset, OpencodeModelField } from './AiCredentialFieldset';
+import { ClearConfirmDialog } from './ClearConfirmDialog';
 
 const CLEAR_LABEL = '분류 전용 설정 해제';
 const CLEAR_BODY =
@@ -164,26 +155,13 @@ export default function AiClassifySettingsTab({
       </CardContent>
 
       {/* 해제 확인 — 저장된 키가 복구 불가로 지워지므로 파괴적 확인 버튼을 쓴다. */}
-      <AlertDialog open={clearOpen} onOpenChange={setClearOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{CLEAR_LABEL}</AlertDialogTitle>
-            <AlertDialogDescription>{CLEAR_BODY}</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>취소</AlertDialogCancel>
-            <AlertDialogAction
-              variant="destructive"
-              onClick={() => {
-                setClearOpen(false);
-                void state.clear();
-              }}
-            >
-              {CLEAR_LABEL}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ClearConfirmDialog
+        open={clearOpen}
+        onOpenChange={setClearOpen}
+        title={CLEAR_LABEL}
+        description={CLEAR_BODY}
+        onConfirm={() => void state.clear()}
+      />
     </Card>
   );
 }

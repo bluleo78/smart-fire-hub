@@ -138,17 +138,8 @@ class AiSettingsTenantOnlyTest extends IntegrationTestBase {
     assertThat(settingsService.getAsMap("ai")).containsAllEntriesOf(AiBehaviorDefaults.all());
   }
 
-  @Test
-  void 테넌트_값을_지우면_코드_기본값으로_돌아간다() {
-    testTenant = createActiveTenant(dsl, "ai-clear");
-    TenantContext.set(testTenant);
-    settingsService.updateSettings(Map.of("ai.model", "tenant-model"), null);
-    assertThat(settingsService.getValue("ai.model")).contains("tenant-model");
-
-    settingsService.clearOverride("ai.model");
-
-    assertThat(settingsService.getValue("ai.model")).contains(AiBehaviorDefaults.MODEL);
-  }
+  // 테넌트_값을_지우면_코드_기본값으로_돌아간다 는 지웠다(#712) — 키별 해제 경로(clearOverride)가
+  // 사라졌다. 화면은 AI 동작 키를 키별로 해제하지 않는다(저장만 한다).
 
   @Test
   void 플랫폼_목록은_AI_키를_내보내지_않는다() {
@@ -164,7 +155,7 @@ class AiSettingsTenantOnlyTest extends IntegrationTestBase {
                       Map.of(key, AiBehaviorDefaults.defaultOf(key)), null))
           .as(key)
           .isInstanceOf(IllegalArgumentException.class)
-          .hasMessageContaining("AI 설정은 플랫폼 설정이 아닙니다");
+          .hasMessageContaining("워크스페이스 설정은 플랫폼 설정으로 저장할 수 없습니다");
       assertThat(rawSystemSettingValue(dsl, key)).as(key).isEqualTo(PLANTED.get(key));
     }
   }

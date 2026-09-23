@@ -4,6 +4,7 @@ import static com.smartfirehub.support.SettingsTestSupport.deleteSystemSetting;
 import static com.smartfirehub.support.SettingsTestSupport.rawSystemSettingValue;
 import static com.smartfirehub.support.SettingsTestSupport.resolvedSetting;
 import static com.smartfirehub.support.SettingsTestSupport.restoreSystemSettingValue;
+import static com.smartfirehub.support.SettingsTestSupport.upsertSystemSetting;
 import static com.smartfirehub.support.TenantRlsTestSupport.createActiveTenant;
 import static com.smartfirehub.support.TenantRlsTestSupport.deleteTenants;
 import static com.smartfirehub.support.TenantRlsTestSupport.runInTenantTransaction;
@@ -13,7 +14,6 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 
 import com.smartfirehub.apiconnection.service.EncryptionService;
 import com.smartfirehub.global.tenant.TenantContext;
-import com.smartfirehub.settings.model.AiBehaviorDefaults;
 import com.smartfirehub.settings.repository.TenantSettingsRepository;
 import com.smartfirehub.settings.service.SettingsService;
 import com.smartfirehub.support.IntegrationTestBase;
@@ -55,28 +55,36 @@ class SettingsWritePlaneTest extends IntegrationTestBase {
   /**
    * 이 단언이 이 밴드의 존재 이유다 — 저장 후 system_settings 가 변하지 않아야 한다.
    *
-   * <p>검증 키로 두 평면 키 {@code smtp.from_address} 를 쓴다 — 플랫폼 시드 행(V42)이 실재해야
-   * "그대로다" 단언이 공허하지 않다. AI 키는 V127 이후 플랫폼 행이 없어 null == null 로 통과한다.
+   * <p>검증 키로 {@code smtp.from_address} 를 쓰고, 같은 키의 플랫폼 행을 <b>직접 심는다</b> —
+   * 행이 없으면 "그대로다" 단언이 null == null 로 공허하게 통과한다. V127(ai.*)·V128(smtp.*)
+   * 이후 테넌트 쓰기 가능 키에는 플랫폼 시드 행이 하나도 없다.
    */
   @Test
   void 테넌트_쓰기는_tenant_settings_에_들어가고_system_settings_는_그대로다() {
     testTenant = createActiveTenant(dsl, "swp-write");
-    String platformValueBefore = rawSystemSettingValue(dsl, "smtp.from_address");
-    assertThat(platformValueBefore).as("전제: 플랫폼 시드 행이 있다").isNotNull();
+    upsertSystemSetting(dsl, "smtp.from_address", "planted-platform@example.com");
+    try {
+      assertThat(rawSystemSettingValue(dsl, "smtp.from_address"))
+          .as("전제: 플랫폼 행이 심어졌다")
+          .isEqualTo("planted-platform@example.com");
 
-    TenantContext.set(testTenant);
-    settingsService.updateSettings(Map.of("smtp.from_address", "tenant-only@example.com"), null);
+      TenantContext.set(testTenant);
+      settingsService.updateSettings(Map.of("smtp.from_address", "tenant-only@example.com"), null);
 
-    // tenant_settings 에 들어갔다.
-    assertThat(
-            runInTenantTransaction(
-                transactionTemplate,
-                testTenant,
-                () -> tenantSettingsRepository.findValue("smtp.from_address")))
-        .contains("tenant-only@example.com");
+      // tenant_settings 에 들어갔다.
+      assertThat(
+              runInTenantTransaction(
+                  transactionTemplate,
+                  testTenant,
+                  () -> tenantSettingsRepository.findValue("smtp.from_address")))
+          .contains("tenant-only@example.com");
 
-    // system_settings 는 이 쓰기 전후로 완전히 그대로다 — 이 밴드가 고치는 결함의 핵심.
-    assertThat(rawSystemSettingValue(dsl, "smtp.from_address")).isEqualTo(platformValueBefore);
+      // system_settings 는 이 쓰기 전후로 완전히 그대로다 — 이 밴드가 고치는 결함의 핵심.
+      assertThat(rawSystemSettingValue(dsl, "smtp.from_address"))
+          .isEqualTo("planted-platform@example.com");
+    } finally {
+      deleteSystemSetting(dsl, "smtp.from_address");
+    }
   }
 
   @Test
@@ -105,30 +113,12 @@ class SettingsWritePlaneTest extends IntegrationTestBase {
 
 
 
-  @Test
-  void 오버라이드_삭제는_상속으로_되돌린다() {
-    testTenant = createActiveTenant(dsl, "swp-clear");
-    runInTenantTransaction(
-        transactionTemplate,
-        testTenant,
-        () -> tenantSettingsRepository.upsert("ai.model", "tenant-override", null));
-
-    TenantContext.set(testTenant);
-    assertThat(settingsService.getValue("ai.model")).contains("tenant-override");
-
-    settingsService.clearOverride("ai.model");
-
-    // 삭제 후에는 코드 기본값으로 돌아간다(AI 설정은 테넌트 전용 — 플랫폼 값이 없다).
-    assertThat(settingsService.getValue("ai.model")).contains(AiBehaviorDefaults.MODEL);
-
-    // 없는 오버라이드를 지워도 예외가 없다 — "이미 상속 중"은 오류가 아니라 멱등한 성공이다
-    // (컨트롤러는 이 경우에도 204 를 돌려준다).
-    assertDoesNotThrow(() -> settingsService.clearOverride("ai.model"));
-  }
+  // 키별 삭제 후 기본값 복귀 테스트는 지웠다(#712) — 키별 해제 경로(clearOverride,
+  // DELETE /settings/overrides/{key})가 사라졌다. SMTP 묶음 해제는 SmtpSettingsTenantOnlyTest 가 본다.
 
   // 플랫폼_쓰기는_시드_행이_없는_키도_저장한다 는 지웠다 — 검증 키였던 ai.session_max_tokens 는
   // AI 설정 테넌트 전용화로 플랫폼 쓰기 자체가 거부된다(AiSettingsTenantOnlyTest). 남은 플랫폼 쓰기
-  // 키(임베딩·SMTP)는 전부 시드돼 있다. 저장소의 upsert 성질은 그대로다.
+  // 키(임베딩 4키)는 전부 시드돼 있다. 저장소의 upsert 성질은 그대로다.
 
   /**
    * {@code ai.session_max_tokens} 의 유효 범위는 <b>web 의 검증과 같아야 한다</b>(10,000~200,000).
@@ -171,9 +161,9 @@ class SettingsWritePlaneTest extends IntegrationTestBase {
     // 테스트를 돌리면 쓰기가 실제로 커밋된 뒤 단언이 실패한다** — 공유 test DB 에서는 그 순간
     // ai.model 이 "hijacked" 로 남아 무관한 테스트들이 줄줄이 깨진다(실제로 한 번 겪었다).
     // 변이 실험까지 안전하도록 값을 미리 붙잡아 두고 finally 에서 되돌린다.
-    // 검증 키는 플랫폼 쓰기가 실제로 받는 smtp.from_address 다 — ai.* 는 평면 가드가 없어도
-    // 키 거부로 막히므로 이 가드를 증명하지 못한다.
-    String original = rawSystemSettingValue(dsl, "smtp.from_address");
+    // 검증 키는 플랫폼 쓰기가 실제로 받는 embedding.model 이다 — ai.*·smtp.* 는 평면 가드가
+    // 없어도 키 거부로 막히므로 이 가드를 증명하지 못한다(#712 이전에는 smtp.from_address 였다).
+    String original = rawSystemSettingValue(dsl, "embedding.model");
     var tenantAuth =
         new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
             1L, null, java.util.List.of());
@@ -183,11 +173,11 @@ class SettingsWritePlaneTest extends IntegrationTestBase {
       assertThatThrownBy(
               () ->
                   settingsService.updatePlatformSettings(
-                      Map.of("smtp.from_address", "hijacked@example.com"), null))
+                      Map.of("embedding.model", "hijacked-model"), null))
           .isInstanceOf(AccessDeniedException.class);
     } finally {
       org.springframework.security.core.context.SecurityContextHolder.clearContext();
-      restoreSystemSettingValue(dsl, "smtp.from_address", original);
+      restoreSystemSettingValue(dsl, "embedding.model", original);
     }
   }
 

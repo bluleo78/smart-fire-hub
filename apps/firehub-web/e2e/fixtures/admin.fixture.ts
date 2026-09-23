@@ -128,7 +128,7 @@ export async function setupAuditLogMocks(page: Page, count = 5) {
 }
 
 /**
- * 목록 자체 또는 "호출 시점에 목록을 만드는 함수" 둘 다 받는다 — 재정의 해제 후 재조회처럼 응답이
+ * 목록 자체 또는 "호출 시점에 목록을 만드는 함수" 둘 다 받는다 — 저장·해제 후 재조회처럼 응답이
  * 바뀌는 경우를 위해.
  *
  * 함수형은 목록 대신 {@link SETTINGS_FETCH_ERROR} 를 돌려줄 수 있다. 조회 **실패**를 재현하는
@@ -152,8 +152,7 @@ const resolveSource = (source: SettingsSource) =>
  * 같은 경로를 서로 다른 prefix 로 호출하므로, path 만 보는 `mockApi` 로는 셋을 구분할 수 없다.
  * GET 이 아닌 메서드(PUT/DELETE)는 `route.fallback()` 으로 다음 핸들러(캡처용 모킹)에 넘긴다.
  *
- * 어느 항목에 함수를 넘기면 호출 시점마다 평가되므로, DELETE 후 재조회에서 "그 키만 상속으로
- * 돌아온" 응답을 줄 수 있다.
+ * 어느 항목에 함수를 넘기면 호출 시점마다 평가되므로, 저장·해제 후 재조회에서 바뀐 응답을 줄 수 있다.
  *
  * <b>모르는 prefix 는 던진다.</b> 예전에는 `embedding` 이 아니면 전부 AI 목록으로 흘렸는데,
  * P7-c1 에서 이메일 탭이 `prefix=smtp` 로 옮겨오자 그 폴백이 **AI 설정 6건을 SMTP 응답인 척**
@@ -332,36 +331,31 @@ export async function mockAiAuthStatus(page: Page, resolve: () => AiAuthStatus) 
 }
 
 /**
- * `DELETE /api/v1/settings/overrides/{key}` 캡처 라우트.
+ * `DELETE /api/v1/settings/smtp` 캡처 라우트(#712 — SMTP 6키 일괄 해제).
  *
- * <b>왜 `mockApi` 를 못 쓰나</b>: `mockApi` 는 pathname **완전 일치**인데 이 경로는 키가 뒤에
- * 붙는 프리픽스 매칭이고, DELETE 는 204 no-content 라 본문이 없다(`mockApi` 는 항상 JSON 본문을
- * 붙인다). 그래서 직접 라우팅해야 하는데, 그 결과 같은 블록이 `settings.spec.ts` 에 5벌 있었다.
+ * <b>왜 `mockApi` 를 못 쓰나</b>: DELETE 는 204 no-content 라 본문이 없는데 `mockApi` 는 항상 JSON
+ * 본문을 붙인다.
  *
- * @param failOn 이 키로 끝나는 DELETE 만 500 을 준다 — 번들 해제의 **부분 실패**를 재현한다.
- *   실패한 키는 `deletedPaths` 에 담기지 않는다(이름이 사실이어야 한다).
- * @returns 성공한 DELETE 의 pathname 이 순서대로 쌓이는 배열. 재조회 응답을 분기해야 하는
- *   테스트는 별도 boolean 대신 `deletedPaths.length > 0` 을 읽으면 된다 — 플래그와 배열이
- *   따로 놀 여지가 사라진다.
+ * @param fail true 면 500 을 준다 — 해제 실패 시 화면이 설정된 상태를 유지하는지 재현한다.
+ *   실패한 요청은 `deleteCount` 에 세지 않는다(이름이 사실이어야 한다).
+ * @returns 성공한 DELETE 횟수를 읽는 함수. 해제 뒤 재조회 응답을 분기해야 하는 테스트는 별도
+ *   boolean 대신 `deleteCount() > 0` 을 읽으면 된다 — 플래그와 카운터가 따로 놀 여지가 사라진다.
  */
-export async function captureOverrideDeletes(
+export async function captureSmtpClear(
   page: Page,
-  options: { failOn?: string } = {},
-): Promise<{ deletedPaths: string[] }> {
-  const deletedPaths: string[] = [];
+  options: { fail?: boolean } = {},
+): Promise<{ deleteCount: () => number }> {
+  let count = 0;
   await page.route(
-    (url) => url.pathname.startsWith('/api/v1/settings/overrides/'),
+    (url) => url.pathname === '/api/v1/settings/smtp',
     (route) => {
       if (route.request().method() !== 'DELETE') return route.fallback();
-      const pathname = new URL(route.request().url()).pathname;
-      if (options.failOn !== undefined && pathname.endsWith(options.failOn)) {
-        return route.fulfill({ status: 500 });
-      }
-      deletedPaths.push(pathname);
+      if (options.fail) return route.fulfill({ status: 500 });
+      count += 1;
       return route.fulfill({ status: 204 });
     },
   );
-  return { deletedPaths };
+  return { deleteCount: () => count };
 }
 
 /**

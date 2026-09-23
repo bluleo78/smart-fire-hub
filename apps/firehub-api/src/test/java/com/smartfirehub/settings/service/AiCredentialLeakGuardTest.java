@@ -124,21 +124,9 @@ class AiCredentialLeakGuardTest extends IntegrationTestBase {
     assertThat(tenantSettingsRepository.findValue(KEY)).isEmpty();
   }
 
-  /**
-   * #706 — 전용 {@code DELETE /settings/ai-credential} 을 없앤 뒤, 범용 오버라이드 삭제
-   * ({@code DELETE /settings/overrides/ai.credential} → {@code clearOverride})가 그 뒷문이 되면 안
-   * 된다. 테넌트 행을 실제로 만들어 두고, 거부된 뒤에도 행이 남아 있는지 본다(행이 없으면 "삭제할
-   * 게 없어서 무동작"과 구분되지 않는다).
-   */
-  @Test
-  void 범용_오버라이드_삭제로는_ai_credential_을_지울_수_없다() {
-    aiCredentialService.save(
-        new AiCredentialUpsert("sdk", Map.of(), Map.of("apiKey", "sk-tenant-secret")), USER);
-
-    assertThatThrownBy(() -> settingsService.clearOverride(KEY))
-        .isInstanceOf(IllegalArgumentException.class);
-    assertThat(tenantSettingsRepository.findValue(KEY)).isPresent();
-  }
+  // "범용 키별 삭제로 ai.credential 을 지울 수 없다" 테스트는 지웠다(#712) — 범용 키별 삭제
+  // (DELETE /settings/overrides/{key} → clearOverride) 자체가 사라져 뒷문이 될 경로가 없다. 남은
+  // 범용 삭제는 SMTP 6키 고정 묶음(clearSmtpSettings)뿐이고 키를 입력으로 받지 않는다.
 
   /**
    * {@code updatePlatformSettings} 는 {@code ai.*} 키 전부를 거부한다(AI 설정은 테넌트 전용) —
@@ -166,7 +154,7 @@ class AiCredentialLeakGuardTest extends IntegrationTestBase {
     assertThat(all).doesNotContain("sk-live-secret").doesNotContain(KEY).doesNotContain("agentType");
   }
 
-  /** #707 — 분류 전용 묶음도 범용 경로(읽기·쓰기·삭제)로 새거나 반쪽만 바뀌지 않는다. */
+  /** #707 — 분류 전용 묶음도 범용 경로(읽기·쓰기)로 새거나 반쪽만 바뀌지 않는다. */
   @Test
   void 분류_전용_두_키는_범용_경로로_읽거나_쓰거나_지울_수_없다() {
     aiCredentialService.saveClassify(
@@ -184,7 +172,6 @@ class AiCredentialLeakGuardTest extends IntegrationTestBase {
       assertThatThrownBy(() -> settingsService.updateSettings(Map.of(key, "x"), USER))
           .as(key)
           .isInstanceOf(IllegalArgumentException.class);
-      assertThatThrownBy(() -> settingsService.clearOverride(key)).as(key).isInstanceOf(IllegalArgumentException.class);
     }
     // 범용 쓰기가 거부됐으니 모델은 그대로다.
     assertThat(aiCredentialService.readClassify().model()).isEqualTo("claude-haiku-4-5");

@@ -63,9 +63,8 @@ export interface PlatformUserResponse {
 }
 
 /**
- * `GET /api/platform/settings` 응답 1건. `tenantOverridable` 도 `overridden` 도 **없다** —
- * 그건 테넌트 평면의 `ResolvedSettingResponse` 다. 재정의 가능 여부는 클라이언트 사본
- * (`lib/override-policy.ts`)이 판정한다.
+ * `GET /api/platform/settings` 응답 1건. 서버는 임베딩 4키만 돌려준다(#712 이후 SMTP 는
+ * 워크스페이스 전용). 화면은 카탈로그(`lib/settings-catalog.ts`)에 없는 키가 섞여 와도 그리지 않는다.
  */
 export interface SettingResponse {
   key: string;

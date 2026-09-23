@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -41,8 +42,29 @@ class EmailChannelTest {
 
   @InjectMocks private EmailChannel channel;
 
+  /**
+   * 워크스페이스 SMTP 미설정(#712: getSmtpConfig 가 빈 맵)이면 영구 실패이고, 사유가 등록 위치를
+   * 안내한다 — 플랫폼 폴백이 없어져 이 상태가 흔해졌으므로 사유만 보고 조치할 수 있어야 한다.
+   */
   @Test
-  void deliver_smtpHostMissing_returnsPermanentFailure() {
+  void deliver_smtpNotConfigured_returnsPermanentFailureWithGuidance() {
+    when(settingsService.getSmtpConfig()).thenReturn(Map.of());
+
+    var result = channel.deliver(ctx(1L, "to@example.com"));
+
+    assertThat(result)
+        .isInstanceOfSatisfying(
+            DeliveryResult.PermanentFailure.class,
+            pf -> {
+              assertThat(pf.reason()).isEqualTo(PermanentFailureReason.UNRECOVERABLE);
+              assertThat(pf.details()).contains("SMTP 미설정").contains("워크스페이스 설정 › 이메일");
+            });
+    verify(channelHttpClient, never()).send(any(), any(), any());
+  }
+
+  /** 호스트 키가 있어도 값이 비어 있으면 미설정과 같다. */
+  @Test
+  void deliver_smtpHostBlank_returnsPermanentFailure() {
     when(settingsService.getSmtpConfig()).thenReturn(Map.of("smtp.host", ""));
 
     var result = channel.deliver(ctx(1L, "to@example.com"));
@@ -51,6 +73,27 @@ class EmailChannelTest {
         .isInstanceOfSatisfying(
             DeliveryResult.PermanentFailure.class,
             pf -> assertThat(pf.reason()).isEqualTo(PermanentFailureReason.UNRECOVERABLE));
+  }
+
+  /**
+   * 워크스페이스가 호스트만 저장했으면 나머지 키는 맵에 <b>없다</b>(#712: 빈 값으로 채우지 않는다).
+   * 그때 포트는 587, STARTTLS 는 켜짐으로 해석돼야 한다 — 저장하지 않은 보안 토글이 꺼짐으로
+   * 읽히면 자격증명이 평문 채널로 나간다.
+   */
+  @Test
+  @SuppressWarnings("unchecked")
+  void deliver_hostOnly_usesSafeDefaultsForMissingKeys() {
+    when(settingsService.getSmtpConfig()).thenReturn(Map.of("smtp.host", "tenant-relay.example.com"));
+
+    var result = channel.deliver(ctx(null, "to@example.com"));
+
+    assertThat(result).isInstanceOf(DeliveryResult.Sent.class);
+    ArgumentCaptor<Map<String, Object>> recipientCaptor = ArgumentCaptor.forClass(Map.class);
+    verify(channelHttpClient).send(eq("EMAIL"), recipientCaptor.capture(), any(Map.class));
+    Map<String, Object> smtpConfig =
+        (Map<String, Object>) recipientCaptor.getValue().get("smtpConfig");
+    assertThat(smtpConfig.get("port")).isEqualTo(587);
+    assertThat(smtpConfig.get("secure")).isEqualTo(true);
   }
 
   @Test
@@ -118,25 +161,14 @@ class EmailChannelTest {
   }
 
   /**
-   * <b>연결 번들 규칙이 만든 새 상태</b>: 테넌트가 {@code smtp.host} 만 재정의하면 나머지 연결
-   * 4키가 <b>키는 있고 값은 빈</b> 상태로 내려온다(P7-c1 Task 5). 그 조합은 이 커밋 이전에는
-   * 존재할 수 없었다 — V42 가 {@code smtp.port='587'} 로 시드하고 쓰기 검증(1~65535)이 빈 포트를
-   * 거부하므로 발송기에 빈 포트가 도달할 길이 없었다.
-   *
-   * <p>{@code getOrDefault} 는 <b>키가 없을 때만</b> 기본값을 준다. 그래서 빈 값을 따로 걸러내지
-   * 않으면 {@code Integer.parseInt("")} 가 터지고, 그 줄은 {@code try} 블록 <b>밖</b>이라
-   * {@code DeliveryResult} 로 변환되지 못한 채 발송 워커로 튀어나간다 — 번들 규칙이 약속한
-   * "인증 없는 릴레이 시도 → 눈에 보이는 발송 실패"가 처리되지 않은 예외로 바뀐다.
-   *
-   * <p>호스트 미설정 가드는 이 경로를 막아 주지 <b>못한다</b>. 시나리오의 정의상 호스트는
-   * 테넌트가 넣은 non-blank 값이라 가드를 통과하고 포트 줄까지 내려온다.
+   * 빈 포트 방어 가드. 저장 경로는 빈 포트를 거부하지만(validateSmtpPort) 그 검증 이전에 저장된
+   * 옛 행이 있을 수 있다. {@code getOrDefault} 는 <b>키가 없을 때만</b> 기본값을 주므로 빈 값을 따로
+   * 거르지 않으면 {@code Integer.parseInt("")} 가 터지고, 그 줄은 {@code try} 블록 <b>밖</b>이라
+   * {@code DeliveryResult} 로 변환되지 못한 채 발송 워커로 튀어나간다.
    */
   @Test
   @SuppressWarnings("unchecked")
-  void deliver_번들로_비워진_포트에도_예외없이_기본포트로_발송한다() {
-    // starttls 가 "" 가 아니라 "true" 인 것은 오타가 아니다 — 번들 채움이 이 키만 "true" 로
-    // 채우므로(RULING F: 보안 토글이라 빈 값이 덜 안전한 방향) 서버가 "" 를 내려보낼 길이 없다.
-    // "" 로 두면 존재할 수 없는 응답으로 계약을 지키는 척하는 픽스처가 된다.
+  void deliver_빈_포트에도_예외없이_기본포트로_발송한다() {
     when(settingsService.getSmtpConfig())
         .thenReturn(
             Map.of(
@@ -154,11 +186,9 @@ class EmailChannelTest {
     Map<String, Object> smtpConfig =
         (Map<String, Object>) recipientCaptor.getValue().get("smtpConfig");
     assertThat(smtpConfig.get("port")).isEqualTo(587);
-    // 자격증명이 비어 있으므로 무인증 릴레이로 시도된다 — 이것이 번들 규칙이 의도한 결과다.
+    // 자격증명이 비어 있으므로 무인증 릴레이로 시도된다.
     assertThat(smtpConfig.get("user")).isEqualTo("");
     assertThat(smtpConfig.get("pass")).isEqualTo("");
-    // 번들이 채운 starttls 는 켜짐이다 — 자격증명이 비어 있어도 암호화까지 함께 꺼지지는 않는다.
-    assertThat(smtpConfig.get("secure")).isEqualTo(true);
   }
 
   /** 화이트라벨링: 제목 미지정 시 subject가 주입된 브랜드명 기반("Acme 알림")으로 구성되어야 한다. */

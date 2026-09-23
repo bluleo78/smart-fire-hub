@@ -19,9 +19,11 @@ public final class SettingsOverridePolicy {
   public enum Plane {
     /** 플랫폼만 값을 갖는다({@code embedding.*} — 모델 변경이 기존 임베딩 전량을 무효화한다). */
     PLATFORM_ONLY,
-    /** 플랫폼 기본값 + 테넌트 값(SMTP 6키). 테넌트 값이 있으면 그 값이 우선한다. */
-    TWO_PLANE,
-    /** 테넌트 값 → 코드 기본값({@link AiBehaviorDefaults}). 플랫폼 행은 읽지도 쓰지도 않는다. */
+    /**
+     * 테넌트 값 → 코드 기본값. 플랫폼 행은 읽지도 쓰지도 않는다. 코드 기본값이 있는 키는 AI 동작
+     * 6키({@link AiBehaviorDefaults})뿐이고, 기본값이 없는 키(SMTP 6키·옛 {@code ai.*})는 테넌트
+     * 값이 없으면 미설정(빈 값)이다.
+     */
     TENANT_ONLY,
     /**
      * 전용 서비스가 소유하는 값({@link AiCredentialSlot#ownedKeys()} → {@link AiCredentialService}). 범용
@@ -38,20 +40,28 @@ public final class SettingsOverridePolicy {
   }
 
   /**
-   * AI 설정 네임스페이스. {@code ai.*} 는 전부 테넌트 소유라 플랫폼 평면이 없다 — 동작 6키가 아닌
-   * 옛 키({@code ai.agent_type} 등)도 {@link Plane#TENANT_ONLY} 로 분류해 플랫폼 행을 읽지 않는다.
+   * 테넌트 전용 네임스페이스. {@code ai.*}(#706)와 {@code smtp.*}(#712)는 전부 워크스페이스 소유라
+   * 플랫폼 평면이 없다 — 목록에 없는 옛 키({@code ai.agent_type} 등)도 {@link Plane#TENANT_ONLY} 로
+   * 분류해 플랫폼 행을 읽지 않는다.
+   *
+   * <p><b>SMTP 를 위해 새 평면을 만들지 않은 이유(#712).</b> SMTP 는 "테넌트 값만, 코드 기본값
+   * 없음"이다. {@link Plane#TENANT_ONLY} 의 해석(테넌트 값 → 코드 기본값)은 기본값이 없는 키에서
+   * 그대로 "미설정"이 되므로 추가 분기가 필요 없다 — 평면을 하나 더 두면 {@code SettingsService}
+   * 의 읽기·쓰기 switch 마다 같은 동작의 가지가 하나씩 늘 뿐이다. 이 목록 한 줄이 SMTP 를 플랫폼
+   * 조회({@link #mayHavePlatformRows})·플랫폼 쓰기·플랫폼 목록에서 동시에 빼낸다.
    */
-  private static final String TENANT_NAMESPACE = "ai.";
+  private static final Set<String> TENANT_NAMESPACES = Set.of("ai.", "smtp.");
 
   /** 플랫폼 잠금 키. 모델 변경이 벡터 차원을 바꾸므로 Phase B 가 차원별 컬럼을 넣을 때까지 플랫폼이 갖는다. */
   private static final Set<String> PLATFORM_ONLY =
       Set.of("embedding.provider", "embedding.model", "embedding.base_url", "embedding.api_key");
 
   /**
-   * 두 평면 키(SMTP 6키). "자기 조직 명의로 메일을 보낸다"는 테넌트 요구가 있고, 값을 바꿔도 기존
-   * 데이터가 무효화되지 않는다. 미설정 테넌트는 플랫폼 기본값으로 폴백한다.
+   * SMTP 6키(테넌트 전용, #712). 워크스페이스가 자기 메일 서버를 등록한다. 등록하지 않은 워크스페이스는
+   * 미설정이고 발송이 명확한 오류로 실패한다 — 플랫폼 공용 서버로 폴백하지 않는다(사용자 결정
+   * 2026-09-23). 워크스페이스 "설정 해제"는 이 6키를 한 묶음으로 지운다.
    */
-  private static final Set<String> TWO_PLANE =
+  private static final Set<String> SMTP_KEYS =
       Set.of(
           "smtp.host",
           "smtp.port",
@@ -60,11 +70,11 @@ public final class SettingsOverridePolicy {
           "smtp.starttls",
           "smtp.from_address");
 
-  /** 테넌트가 쓸 수 있는 키 전체 = 두 평면 키 ∪ 테넌트 전용 AI 동작 키. */
+  /** 테넌트가 쓸 수 있는 키 전체 = SMTP 6키 ∪ AI 동작 6키. */
   private static final Set<String> TENANT_WRITABLE;
 
   static {
-    Set<String> all = new HashSet<>(TWO_PLANE);
+    Set<String> all = new HashSet<>(SMTP_KEYS);
     all.addAll(AiBehaviorDefaults.keys());
     TENANT_WRITABLE = Set.copyOf(all);
   }
@@ -77,22 +87,26 @@ public final class SettingsOverridePolicy {
     // 자격증명 슬롯 소유 키(채팅·분류 자격증명 + 분류 모델, #707) — 분류 모델이 아래 "그 밖의 ai.*"
     // 규칙에 떨어지면 범용 경로가 묶음 한쪽만 바꿀 수 있게 된다.
     if (AiCredentialSlot.ownedKeys().contains(key)) return Plane.EXTERNAL_OWNER;
-    if (TWO_PLANE.contains(key)) return Plane.TWO_PLANE;
     if (PLATFORM_ONLY.contains(key)) return Plane.PLATFORM_ONLY;
-    if (key.startsWith(TENANT_NAMESPACE)) return Plane.TENANT_ONLY;
+    if (isInTenantNamespace(key)) return Plane.TENANT_ONLY;
     return Plane.UNKNOWN;
   }
 
   /**
-   * 이 프리픽스({@code prefix + "."})에 플랫폼 행이 있을 수 있는가. {@code "ai"} 처럼 테넌트
-   * 네임스페이스 안이면 거짓이라 호출부가 {@code system_settings} 조회를 생략한다.
+   * 이 프리픽스({@code prefix + "."})에 플랫폼 행이 있을 수 있는가. {@code "ai"}·{@code "smtp"} 처럼
+   * 테넌트 네임스페이스 안이면 거짓이라 호출부가 {@code system_settings} 조회를 생략한다.
    */
   public static boolean mayHavePlatformRows(String prefix) {
-    return !(prefix + ".").startsWith(TENANT_NAMESPACE);
+    return !isInTenantNamespace(prefix + ".");
+  }
+
+  /** 키(또는 {@code prefix + "."})가 테넌트 전용 네임스페이스 안인가. */
+  private static boolean isInTenantNamespace(String keyOrPrefix) {
+    return TENANT_NAMESPACES.stream().anyMatch(keyOrPrefix::startsWith);
   }
 
   /**
-   * 이 키를 테넌트가 자기 값으로 저장할 수 있는가(두 평면 키 + AI 동작 6키). 옛 {@code ai.*} 키는
+   * 이 키를 테넌트가 자기 값으로 저장할 수 있는가(SMTP 6키 + AI 동작 6키). 옛 {@code ai.*} 키는
    * {@link Plane#TENANT_ONLY} 로 분류되지만 여기서는 거짓이다.
    */
   public static boolean isTenantOverridable(String key) {
@@ -104,9 +118,9 @@ public final class SettingsOverridePolicy {
     return TENANT_WRITABLE;
   }
 
-  /** 두 평면 키(SMTP 6키). */
-  public static Set<String> twoPlaneKeys() {
-    return TWO_PLANE;
+  /** SMTP 6키. 워크스페이스 "설정 해제"({@code SettingsService#clearSmtpSettings})가 지우는 묶음이다. */
+  public static Set<String> smtpKeys() {
+    return SMTP_KEYS;
   }
 
   /** 플랫폼 잠금 키({@code embedding.*} 4키). */

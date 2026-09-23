@@ -1,6 +1,3 @@
-import { Lock } from 'lucide-react';
-
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -12,8 +9,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Switch } from '@/components/ui/switch';
-import { badgeKindOf, type SettingSpec } from '@/lib/settings-catalog';
+import type { SettingSpec } from '@/lib/settings-catalog';
 
 import { isMaskSentinel } from './build-payload';
 
@@ -35,32 +31,11 @@ export interface SettingFieldProps {
 }
 
 /**
- * 배지 두 종류는 **항상** 렌더한다 — 배지 유무로 상태를 표현하면 사용자가 "표시가 없는 것"과
- * "재정의 가능"을 구별할 수 없다(firehub-web `SettingStateBadge` 의 규칙을 계승).
+ * 설정 필드 하나(라벨·입력·오류·서버 설명).
+ *
+ * 키별 적용 범위 배지·안내 문구는 두지 않는다(#712): 플랫폼 설정에 남은 키는 전부 모든
+ * 워크스페이스에 그대로 적용되므로 키마다 구별할 상태가 없다 — 그 사실은 화면 상단 배너가 한 번 말한다.
  */
-function OverrideBadge({ settingKey }: { settingKey: string }) {
-  if (badgeKindOf(settingKey) === 'tenant-overridable') {
-    return <Badge variant="outline">테넌트 재정의 가능</Badge>;
-  }
-  return (
-    <Badge variant="outline" aria-label="전역 고정: 모든 워크스페이스에 이 값만 적용됩니다">
-      <Lock className="h-3 w-3" />
-      전역 고정
-    </Badge>
-  );
-}
-
-/** 배지에 딸리는 정적 문구. 툴팁이 아니라 텍스트인 이유: 호버할 수 없는 사용자도 알아야 한다. */
-function OverrideNote({ settingKey }: { settingKey: string }) {
-  return (
-    <p className="text-sm text-muted-foreground">
-      {badgeKindOf(settingKey) === 'tenant-overridable'
-        ? '워크스페이스가 자기 값으로 재정의할 수 있습니다. 재정의하지 않은 워크스페이스에만 이 값이 적용됩니다.'
-        : '모든 워크스페이스에 이 값이 적용됩니다.'}
-    </p>
-  );
-}
-
 export function SettingField({
   spec,
   value,
@@ -76,10 +51,7 @@ export function SettingField({
 
   return (
     <div className="space-y-2">
-      <div className="flex flex-wrap items-center gap-2">
-        <Label htmlFor={id}>{spec.label}</Label>
-        <OverrideBadge settingKey={spec.key} />
-      </div>
+      <Label htmlFor={id}>{spec.label}</Label>
 
       {spec.kind === 'select' ? (
         <Select value={value} disabled={disabled} onValueChange={onChange}>
@@ -147,19 +119,10 @@ export function SettingField({
             </p>
           )}
         </div>
-      ) : spec.kind === 'switch' ? (
-        <Switch
-          id={id}
-          // 값은 문자열이다. 서버 `validateValues` 에 이 키의 case 가 하나도 없어 무엇이 와도
-          // 그대로 저장되므로, 렌더는 `value === 'true'` 로 좁히고 전송은 리터럴 문자열로 고정한다.
-          checked={value === 'true'}
-          disabled={disabled}
-          onCheckedChange={(checked) => onChange(checked ? 'true' : 'false')}
-        />
       ) : (
         <Input
           id={id}
-          type={spec.kind === 'number' ? 'number' : 'text'}
+          type="text"
           className="max-w-md"
           value={value}
           disabled={disabled}
@@ -169,7 +132,6 @@ export function SettingField({
 
       {error && <p className="text-sm text-destructive">{error}</p>}
       {description && <p className="text-sm text-muted-foreground">{description}</p>}
-      <OverrideNote settingKey={spec.key} />
     </div>
   );
 }

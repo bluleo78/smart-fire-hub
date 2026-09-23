@@ -130,4 +130,15 @@ public class TenantSettingsRepository {
     long tenantId = TenantContext.require("tenant_settings 오버라이드 삭제");
     return dsl.deleteFrom(TENANT_SETTINGS).where(KEY.eq(key)).and(TENANT_ID.eq(tenantId)).execute();
   }
+
+  /**
+   * 현재 테넌트의 주어진 키 행을 한 번의 DELETE 로 지운다(묶음 해제용, 예: SMTP 6키 — #712). 반환값은
+   * 삭제된 행 수다. {@link #delete} 와 같은 이유로 tenant_id 를 SQL 에 명시한다 — RLS 를 우회하는
+   * 커넥션으로 불려도 다른 테넌트의 같은 키 행을 지우지 않는다.
+   */
+  public int deleteAll(java.util.Collection<String> keys) {
+    long tenantId = TenantContext.require("tenant_settings 묶음 삭제");
+    if (keys.isEmpty()) return 0;
+    return dsl.deleteFrom(TENANT_SETTINGS).where(KEY.in(keys)).and(TENANT_ID.eq(tenantId)).execute();
+  }
 }

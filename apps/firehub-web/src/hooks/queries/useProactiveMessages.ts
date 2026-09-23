@@ -301,8 +301,9 @@ export function useDeleteProactiveTemplate() {
 
 // SMTP 조회·저장 훅은 없다. 두 조작 모두 SMTP 전용 엔드포인트가 아니라 <b>일반 설정 경로</b>를
 // 쓰기 때문이다(P7-c1): 읽기는 `settingsApi.getByPrefix('smtp')`, 저장은 `settingsApi.update`
-// (PUT /settings) 다. SMTP 전용 읽기/쓰기 경로를 되살리면 화이트리스트·마스킹·오버라이드 해석이
-// 두 벌이 되고, 실제로 그 두 벌 때문에 "메일은 테넌트 값으로 나가는데 화면은 플랫폼 값"이 생겼다.
+// (PUT /settings) 다. 폼 상태는 `useSmtpSettingsForm` 이 갖는다. SMTP 전용 읽기/쓰기 경로를
+// 되살리면 화이트리스트·마스킹 규칙이 두 벌이 되고, 실제로 그 두 벌 때문에 "메일이 나가는 값과
+// 화면이 보여주는 값이 다른" 어긋남이 생긴 전례가 있다.
 
 export function useTestSmtpSettings() {
   return useMutation({

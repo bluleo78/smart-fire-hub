@@ -74,6 +74,30 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
    (providerId/baseURL/reasoningEffort)는 스냅샷 없이는 영영 복구 불가**하다 — 자세한 이유는
    `apps/firehub-api/src/main/resources/db/migration/V122__ai_credential.sql` 헤더 주석 참고.
 
+### SMTP 테넌트 전용 전환 (V128, 이슈 #712)
+
+`V128__drop_platform_smtp_settings.sql` 은 `system_settings` 의 `smtp.%` 행(플랫폼 SMTP 6키)을
+**복사 없이 삭제**한다. 이후 메일 발송은 각 워크스페이스가 저장한 SMTP(`tenant_settings`)만 쓰고,
+플랫폼 값으로 폴백하지 않는다(테넌트 컨텍스트 없는 배경 발송 포함).
+
+- **api + web + admin 을 반드시 함께 배포한다.** 옛 web 은 삭제된 `DELETE /api/v1/settings/overrides/{key}`
+  를 부르고(404), 옛 admin 은 `PUT /api/platform/settings` 에 `smtp.*` 를 실어 보내 400 을 받는다.
+- **영향**: 자기 SMTP 를 등록하지 않은 워크스페이스는 배포 직후부터 알림 메일·프로액티브 리포트 메일이
+  실패한다(의도 — 오류 문구가 "워크스페이스 설정 › 이메일에서 등록"을 안내한다).
+- **배포 전 확인(운영 DB)**:
+  ```sql
+  -- 1) 지워질 플랫폼 값 — 필요한 워크스페이스가 다시 입력할 수 있게 기록해 둔다(비밀번호는 암호문).
+  SELECT key, value FROM system_settings WHERE key LIKE 'smtp.%' ORDER BY key;
+  -- 2) 이미 자기 SMTP 를 가진 워크스페이스(이들은 영향 없음)
+  SELECT tenant_id, array_agg(key ORDER BY key) FROM tenant_settings WHERE key LIKE 'smtp.%' GROUP BY tenant_id;
+  -- 3) 메일 채널을 쓰는 워크스페이스 중 2) 에 없는 곳 = 배포 직후 메일이 멈추는 곳
+  ```
+  1) 에 실제 호스트가 있고 3) 이 비어 있지 않으면, 배포 전에 해당 워크스페이스 관리자에게 알리거나
+  배포 직후 그 워크스페이스 설정 › 이메일에서 SMTP 를 등록한다. V128 은 되돌릴 수 없으므로 위
+  "배포 전 스냅샷"(`system_settings` 포함)을 반드시 먼저 뜬다.
+- 로컬 main 기준 운영 DB 는 V122 에 머물러 있어(2026-09-21 실측) V123~V127 과 V128 이 한 번에
+  적용된다 — #706 의 V126/V127 노트(아래 OpenCode 절)와 함께 확인한다.
+
 ### opencode baseURL 사설망 점검 (이슈 #698)
 
 #693 의 SSRF 가드는 **저장 시점**에만 baseURL 을 검사한다. 그 가드가 생기기 전에 저장된 행에는

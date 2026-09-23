@@ -30,6 +30,13 @@ public class EmailChannel implements Channel {
 
   private static final Logger log = LoggerFactory.getLogger(EmailChannel.class);
 
+  /**
+   * 워크스페이스 SMTP 미설정 사유(#712). 예전 문구 "SMTP 호스트 미설정"은 플랫폼 기본값이 있던 시절
+   * "운영자가 채울 값"을 가리켰다 — 이제는 워크스페이스 관리자가 직접 등록해야 하므로 위치를 안내한다.
+   */
+  static final String SMTP_NOT_CONFIGURED =
+      "SMTP 미설정 — 워크스페이스 설정 › 이메일에서 SMTP 서버를 등록하세요";
+
   private final SettingsService settingsService;
   private final UserRepository userRepository;
   private final ChannelHttpClient channelHttpClient;
@@ -61,9 +68,11 @@ public class EmailChannel implements Channel {
   public DeliveryResult deliver(DeliveryContext ctx) {
     Map<String, String> smtp = settingsService.getSmtpConfig();
     String host = smtp.getOrDefault("smtp.host", "");
+    // SMTP 는 워크스페이스 전용이다(#712) — 미설정이면 플랫폼 공용 서버로 폴백하지 않고, 운영자가
+    // 무엇을 해야 하는지 알 수 있게 등록 위치를 사유에 담는다(알림 전달 기록에 그대로 남는다).
     if (host.isBlank()) {
       return new DeliveryResult.PermanentFailure(
-          PermanentFailureReason.UNRECOVERABLE, "SMTP 호스트 미설정");
+          PermanentFailureReason.UNRECOVERABLE, SMTP_NOT_CONFIGURED);
     }
 
     String toAddress = resolveRecipient(ctx);
@@ -78,11 +87,9 @@ public class EmailChannel implements Channel {
     String htmlBody = buildHtmlBody(payload);
 
     // SMTP 설정 맵 구성 — firehub-channel이 사용하는 필드명으로 변환.
-    // 빈 포트를 반드시 걸러야 한다: getOrDefault 는 **키가 없을 때만** 587 을 주는데, P7-c1 Task 5 의
-    // 연결 번들 규칙이 "호스트만 재정의" 상태에서 smtp.port 를 키가 있는 채로 빈 값으로 내려보낸다.
-    // 그러면 Integer.parseInt("") 가 NumberFormatException 을 던지고, 이 줄은 아래 try 블록 밖이라
-    // 발송 워커로 그대로 튀어나간다 — 번들 규칙이 약속한 "눈에 보이는 발송 실패"가 처리되지 않은
-    // 예외로 바뀐다. 형태는 EmailDeliveryChannel:176 / SettingsController:107 과 같다.
+    // 빈 포트 가드는 방어용으로 남긴다: 저장 경로는 빈 포트를 거부하지만(validateSmtpPort) 그 검증
+    // 이전에 저장된 옛 행이 있을 수 있고, Integer.parseInt("") 는 아래 try 블록 밖이라 발송 워커로
+    // 처리되지 않은 예외가 튀어나간다. 형태는 EmailDeliveryChannel / SettingsController 와 같다.
     String portStr = smtp.getOrDefault("smtp.port", "587");
     Map<String, Object> smtpConfig =
         Map.of(

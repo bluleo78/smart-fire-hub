@@ -74,7 +74,7 @@ vi.mock('../../hooks/useSettingsOverrideForm', () => ({
 }));
 
 vi.mock('../../hooks/useSmtpSettingsForm', () => ({
-  useSmtpSettingsForm: () => ({ base: { hasChanges: false } }),
+  useSmtpSettingsForm: () => ({ hasChanges: false }),
 }));
 
 vi.mock('../../hooks/useUnsavedChangesGuard', () => ({
@@ -125,8 +125,6 @@ function makeBehavior(overrides: Partial<ReturnType<typeof useSettingsOverrideFo
   const base = {
     isLoading: false,
     loadFailed: false,
-    isClearing: false,
-    setIsClearing: vi.fn(),
     settings: {},
     form: {
       'ai.model': 'claude-sonnet-5',
@@ -137,16 +135,11 @@ function makeBehavior(overrides: Partial<ReturnType<typeof useSettingsOverrideFo
       'ai.session_max_tokens': '50000',
     },
     original: {},
-    resyncFromServer: vi.fn(),
     errors: {},
     setErrors: vi.fn(),
-    fieldState: vi.fn(() => 'inherited' as const),
-    effectiveState: vi.fn(() => 'inherited' as const),
-    isEditable: vi.fn(() => true),
     hasChanges: false,
     updateField: vi.fn(),
     handleReset: vi.fn(),
-    handleClearOverride: vi.fn(),
     buildChangedPayload: vi.fn(() => ({ payload: {}, droppedChangedKeys: [] })),
     commitSaved: vi.fn(),
     refreshMeta: vi.fn().mockResolvedValue({}),

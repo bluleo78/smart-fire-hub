@@ -14,7 +14,7 @@ class SettingsOverridePolicyTest {
 
   @Test
   void 테넌트_쓰기_허용_키는_12개다() {
-    // 테넌트 전용 ai.* 동작 6키 + 두 평면 smtp.* 6키.
+    // 테넌트 전용 ai.* 동작 6키 + 테넌트 전용 smtp.* 6키(#712).
     assertThat(SettingsOverridePolicy.tenantOverridableKeys())
         .containsExactlyInAnyOrder(
             "ai.system_prompt", "ai.model", "ai.temperature",
@@ -24,20 +24,27 @@ class SettingsOverridePolicyTest {
   }
 
   @Test
-  void AI_동작_키는_테넌트_전용이고_두_평면_키가_아니다() {
+  void AI_동작_키와_SMTP_키는_테넌트_전용이다() {
     // AI 설정은 플랫폼 기본값이 없다 — 테넌트 값이 없으면 코드 기본값이다(#706 후속).
     for (String key :
         java.util.List.of(
             "ai.system_prompt", "ai.model", "ai.temperature",
             "ai.max_turns", "ai.max_tokens", "ai.session_max_tokens")) {
       assertThat(SettingsOverridePolicy.planeOf(key)).as(key).isEqualTo(Plane.TENANT_ONLY);
-      assertThat(SettingsOverridePolicy.twoPlaneKeys()).as(key).doesNotContain(key);
+      assertThat(SettingsOverridePolicy.smtpKeys()).as(key).doesNotContain(key);
     }
-    assertThat(SettingsOverridePolicy.twoPlaneKeys())
+    // SMTP 도 플랫폼 행을 읽지 않는다 — 테넌트 값이 없으면 미설정이다(#712).
+    assertThat(SettingsOverridePolicy.smtpKeys())
         .containsExactlyInAnyOrder(
             "smtp.host", "smtp.port", "smtp.username",
             "smtp.password", "smtp.starttls", "smtp.from_address");
-    assertThat(SettingsOverridePolicy.planeOf("smtp.host")).isEqualTo(Plane.TWO_PLANE);
+    for (String key : SettingsOverridePolicy.smtpKeys()) {
+      assertThat(SettingsOverridePolicy.planeOf(key)).as(key).isEqualTo(Plane.TENANT_ONLY);
+      assertThat(SettingsOverridePolicy.planeOf(key).readsPlatformRow()).as(key).isFalse();
+    }
+    // 목록에 없는 smtp.* 도 네임스페이스로 테넌트 전용이다 — 옛 플랫폼 행이 새지 않는다.
+    assertThat(SettingsOverridePolicy.planeOf("smtp.legacy_key")).isEqualTo(Plane.TENANT_ONLY);
+    assertThat(SettingsOverridePolicy.isTenantOverridable("smtp.legacy_key")).isFalse();
   }
 
   @Test
@@ -49,7 +56,8 @@ class SettingsOverridePolicyTest {
     assertThat(SettingsOverridePolicy.planeOf("unknown.key")).isEqualTo(Plane.UNKNOWN);
     assertThat(SettingsOverridePolicy.planeOf(null)).isEqualTo(Plane.UNKNOWN);
     assertThat(SettingsOverridePolicy.mayHavePlatformRows("ai")).isFalse();
-    assertThat(SettingsOverridePolicy.mayHavePlatformRows("smtp")).isTrue();
+    assertThat(SettingsOverridePolicy.mayHavePlatformRows("smtp")).isFalse();
+    assertThat(SettingsOverridePolicy.mayHavePlatformRows("embedding")).isTrue();
   }
 
   @Test

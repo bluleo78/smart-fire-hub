@@ -3,64 +3,24 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import { settingsApi } from '../api/settings';
-import type { SettingFieldState } from '../lib/settings-fields';
-import { indexSettingsByKey, resolveSettingFieldState } from '../lib/settings-fields';
+import { indexSettingsByKey } from '../lib/settings-fields';
 import type { ResolvedSettingResponse } from '../types/settings';
 
 /** 설정 폼 한 벌 — 키는 설정 키 문자열, 값은 항상 문자열이다(입력창이 문자열만 다룬다). */
 export type SettingsFormShape = Record<string, string>;
 
 export interface UseSettingsOverrideFormOptions<F extends SettingsFormShape> {
-  /** `GET /settings?prefix=` 에 넘길 프리픽스. 'ai' / 'smtp'. */
+  /** `GET /settings?prefix=` 에 넘길 프리픽스. 지금 소비자는 AI 동작 설정('ai') 하나다. */
   prefix: string;
   /**
    * 서버 값이 없을 때 쓰는 키별 폴백. <b>모듈 레벨 상수여야 한다</b> — 인라인 객체를 넘기면
    * 렌더마다 새 참조가 되어 해제 폴백이 매번 다른 객체를 읽는다.
    *
-   * AI 탭은 전부 빈 문자열을 넘기고(서버가 저장값이 없으면 코드 기본값을 값으로 내려준다),
-   * SMTP 탭은 조회 전 초기값(starttls 만 'true')을 넘긴다.
+   * AI 탭은 전부 빈 문자열을 넘긴다(서버가 저장값이 없으면 코드 기본값을 값으로 내려준다).
    */
   defaults: F;
   /**
-   * 빈 값으로 저장해도 되는 키의 화이트리스트. 나머지 키를 비운 채 저장하면
-   * `droppedChangedKeys` 에 담겨 호출자가 거부한다 — 값의 유효성 문제가 아니라 의도 불일치다.
-   */
-  blankAllowed?: ReadonlySet<keyof F>;
-  /**
-   * <b>서버 값을 절대 폼에 시드하지 않는 키</b>(비밀 입력 전용). 이 집합의 키는 조회·재시드
-   * 모두에서 `form` 과 `original` 을 <b>둘 다 빈 문자열</b>로 맞춘다.
-   *
-   * <b>왜 필요한가</b>: 서버는 비밀을 마스크(`****ab12`)로 내려준다. 입력이 `disabled` 이던 동안은
-   * 그 마스크를 시드해도 무해했지만, 편집이 열리는 순간 <b>덧붙이기</b>가 치명적이 된다 —
-   * 사용자가 마스크 뒤에 실제 키를 이어 붙이면(`****ab12sk-ant-…`, 길이 9+) 서버의 센티널 판정
-   * (`SettingsService.isMaskSentinel`)은 <b>길이가 정확히 4 또는 8</b>인 값만 드롭하므로 이 문자열이
-   * 그대로 통과해 <b>테넌트의 진짜 자격증명으로 암호화·저장</b>된다. 저장 후 화면에는 새 마스크가
-   * 보이므로 <b>사용자가 알아챌 표면이 없다</b>. 근본 해법은 "마스크를 편집 가능한 입력에 시드하지
-   * 않는 것"이고(`SmtpSettingsTab` 의 알려진 결함 주석이 지목하는 바로 그 해법), 이 옵션이 그것을
-   * 훅 차원에서 제공한다.
-   *
-   * <b>둘 다 `''` 여야 하는 이유</b>: `original` 에만 마스크를 남기면 손대지 않은 필드가
-   * `form !== original` 이 되어 "빈 값으로 바꿨다"로 판정되고, `blankAllowed` 에 없으면 저장 자체가
-   * 거부된다. 둘 다 `''` 여야 <b>손대지 않은 비밀은 페이로드에서 빠진다</b>는 성질이 유지된다.
-   *
-   * <b>SMTP 는 넘기지 않는다</b> — `smtp.password` 의 같은 결함은 서버 계약과 함께 봐야 하고
-   * (`SmtpSettingsTab` 주석), 이 밴드의 범위 밖이다.
-   */
-  emptySeedKeys?: ReadonlySet<keyof F>;
-  /**
-   * 필드 단위 상태를 <b>다른 기준으로 치환</b>하고 싶을 때 쓴다. 지금 소비자는 SMTP 연결
-   * 5키(`useSmtpSettingsForm`) 하나다 — AI 자격증명 3키 번들(`useAiSettingsForm`)은 Task 11 에서
-   * `ai.credential` 전용 문서(`useAiCredentialForm`)로 옮겨가며 사라졌다: 문서 하나가 이미
-   * 원자적이라 "번들 상태 치환"이라는 개념 자체가 필요 없어졌다. 두 번째 인자로 훅 자신의 필드
-   * 단위 판정 함수를 넘겨 주므로, 호출자가 그룹 상태를 계산하려고 `settings` 를 다시 파헤칠
-   * 필요가 없다.
-   */
-  resolveState?: (
-    key: keyof F,
-    fieldState: (k: keyof F) => SettingFieldState,
-  ) => SettingFieldState;
-  /**
-   * 서버 메타를 실제로 다시 읽은 직후(최초 조회 성공 포함) 호출된다. SMTP 탭이 "화면이 낡았다"
+   * 서버 메타를 실제로 다시 읽은 직후(최초 조회 성공 포함) 호출된다. 호출자가 "화면이 낡았다"
    * 안내를 <b>화면이 실제로 새로워진 그 지점에서</b> 지우는 데 쓴다 — 호출부마다 지우면
    * 하나를 빠뜨리고, 실제로 빠뜨린 전례가 있다.
    */
@@ -71,40 +31,14 @@ export interface SettingsOverrideForm<F extends SettingsFormShape> {
   isLoading: boolean;
   /** 최초 조회가 실패했는가. 이것으로 무엇을 할지는 호출자가 정한다(RULING C). */
   loadFailed: boolean;
-  isClearing: boolean;
-  /**
-   * 해제 진행 중 표시를 <b>훅 밖의 해제 작업</b>도 함께 쓰기 위한 setter. 소비자는 SMTP 번들
-   * 레이어의 "연결 5키 전체 해제"다. 번들 개념이라 훅 밖에 있지만(RULING B), 화면에서 잠그는
-   * 버튼은 개별 해제와 <b>같은 것들</b>이다. 별도 플래그를 두면 두 상태가 갈라져 "해제 중인데 해제 버튼이
-   * 눌린다"가 생긴다.
-   */
-  setIsClearing: Dispatch<SetStateAction<boolean>>;
   settings: Record<string, ResolvedSettingResponse>;
   form: F;
   original: F;
-  /**
-   * 서버에서 다시 읽은 값으로 지정한 키들을 <b>확정</b>한다 — `form` 과 `original` 을 <b>같은
-   * 값으로 함께</b> 덮고 그 키의 검증 오류를 지운다.
-   *
-   * <b>왜 `setForm`/`setOriginal` 을 따로 내주지 않는가</b>: 이 둘이 갈라지는 것이 이 밴드가
-   * 막으려던 결함 그 자체다. `original` 만 새 마스크로 갱신되면 실제 편집이 "안 바뀐 키"로
-   * 조용히 누락되고, `form` 만 갱신되면 마스크가 값처럼 저장 대상에 오른다. 쌍으로만 움직이는
-   * 연산이므로 <b>쌍을 깨뜨릴 수 없는 형태로</b>만 노출한다.
-   *
-   * 값은 조회와 <b>같은 폴백</b>을 거친다(서버 값 → `defaults`) — 코드 기본값이 있는 키를
-   * 빈칸으로 만들면 실제 적용값과 화면이 어긋난다. <b>예외는 `emptySeedKeys` 하나</b>이고, 그
-   * 예외도 조회와 같다: 그 키들은 여기서도 서버 값 대신 `''` 다(이유는 그 옵션의 주석).
-   */
-  resyncFromServer: (keys: readonly (keyof F)[], byKey: Record<string, ResolvedSettingResponse>) => void;
   errors: Partial<Record<keyof F, string>>;
   setErrors: Dispatch<SetStateAction<Partial<Record<keyof F, string>>>>;
-  fieldState: (key: keyof F) => SettingFieldState;
-  effectiveState: (key: keyof F) => SettingFieldState;
-  isEditable: (key: keyof F) => boolean;
   hasChanges: boolean;
   updateField: (key: keyof F, value: string) => void;
   handleReset: () => void;
-  handleClearOverride: (key: keyof F) => Promise<void>;
   buildChangedPayload: () => {
     payload: Record<string, string>;
     droppedChangedKeys: (keyof F)[];
@@ -114,51 +48,37 @@ export interface SettingsOverrideForm<F extends SettingsFormShape> {
   refreshMeta: () => Promise<Record<string, ResolvedSettingResponse>>;
   /**
    * <b>`loadFailed` 종단 화면의 "다시 시도" 버튼 전용</b>이다. 이름이 `refetch` 가 아닌 이유:
-   * 평범한 "새로고침" 버튼에 물리면 살아 있는 편집 위로 `original` 이 새 마스크로 재시드되어
+   * 평범한 "새로고침" 버튼에 물리면 살아 있는 편집 위로 `original` 이 재시드되어
    * 저장 대상 판정이 무너진다. 잘못 쓸 자리를 이름으로 좁힌다.
    */
   retryInitialLoad: () => Promise<void>;
 }
 
 /**
- * 설정 탭 두 개(AI·SMTP)가 공유하는 <b>필드 단위</b> 폼 상태 기계.
+ * 키·값 평면 설정의 <b>필드 단위</b> 폼 상태 기계. 지금 소비자는 AI 탭의 동작 설정 6키 하나다.
  *
- * 소유하는 것: 최초 조회·폼/원본 시드, 메타 갱신, `fieldState`/`isEditable`, 개별 재정의 해제,
- * "바꾼 키만" 페이로드 diff, `hasChanges`, 되돌리기.
+ * 소유하는 것: 최초 조회·폼/원본 시드, 메타 갱신, "바꾼 키만" 페이로드 diff, `hasChanges`, 되돌리기.
  *
- * <b>소유하지 않는 것</b>(다음 사람이 여기로 밀어 넣으려 할 것이다 — 넣지 마라):
- * - <b>번들 개념 일체</b> — 번들 키 목록(`SMTP_CONNECTION_KEYS` / `AI_CREDENTIAL_BUNDLE_KEYS`),
- *   그룹 상태, 그룹 해제 버튼, "번들 안에서 비어 있음" 노트, 저장 후 번들 전환 재시드. 훅은
- *   `resolveState` 라는 <b>구멍</b> 하나만 열어 두고, 그 구멍에 무엇을 끼울지는 호출자가 정한다.
+ * <b>소유하지 않는 것</b>:
  * - <b>낡음 안내(`staleNotice`)</b> — 훅은 갱신이 실제로 일어난 지점을 `onMetaRefreshed` 로
- *   알릴 뿐, 그 사실로 어떤 배너를 세우고 지울지는 호출자의 표현 문제다(SMTP 는 탭 범위에,
- *   AI 는 그룹 범위에 그린다 — 사건 범위가 다르기 때문이고, 그 판단이 바로 호출자 몫이다).
+ *   알릴 뿐, 그 사실로 어떤 배너를 세우고 지울지는 호출자의 표현 문제다.
  * - <b>조회 실패 종단 화면</b> — `loadFailed` 를 보고만 한다(RULING C). AI 탭은 toast 만 띄우고
- *   폴백 값으로 렌더하고, SMTP 탭은 폼 자체를 그리지 않는다. 비밀번호 필드가 있는 쪽에서만
- *   "빈 폼"이 자격증명 덮어쓰기로 이어지므로 <b>이 비대칭은 의도된 것</b>이다.
- * - <b>연결 테스트 안내</b> — SMTP 전용 3단 우선순위 문자열.
+ *   폴백 값으로 렌더한다.
  *
- * <b>이 규칙의 근거는 2026-09-18 에 잠깐 더 강해졌다가(AI 자격증명 3키가 번들로 열려 소비자가
- * 둘이 됐던 시절) Task 11 에서 다시 하나로 줄었다.</b> `ai.credential` 이 전용 문서로 옮겨가며
- * AI 쪽 번들 개념 자체가 없어졌기 때문이다. 소비자가 하나뿐이어도 답은 같다 — 번들 고유 개념은
- * 이 훅의 반환값 <b>위에 얹히는 레이어</b>로 소비자 자신의 파일(`useSmtpSettingsForm`)에 남아야,
- * 다음 번들 소비자가 생겼을 때도 "어느 번들이냐"로 갈라지는 분기가 이 훅 안에 들어오지 않는다.
- *
- * (`emptySeedKeys` 는 예외가 아니다: 그것은 번들 개념이 아니라 "서버가 마스킹해 내려주는 비밀을
- * 폼에 시드하지 않는다"는 <b>시드 규칙</b>이고, 시드는 원래 이 훅의 일이다.)
+ * <b>이메일(SMTP) 탭은 더 이상 이 훅을 쓰지 않는다(#712).</b> SMTP 가 워크스페이스 전용이 되면서
+ * "바꾼 키만 보낸다"는 이 훅의 핵심 규칙이 SMTP 에는 맞지 않게 됐다(6키를 한 벌로 저장하고 한 벌로
+ * 해제한다). 그래서 `useSmtpSettingsForm` 은 `useAiClassifyForm` 처럼 자기 상태 기계를 갖고,
+ * 이 훅에서는 SMTP 전용이던 키별 해제(DELETE)·상태 치환·비밀 시드 규칙·빈 값 허용 목록을 걷어냈다.
+ * AI 동작 설정 6키는 전부 워크스페이스가 편집할 수 있고 비밀이 없으며 빈 값을 허용하지 않는다.
  */
 export function useSettingsOverrideForm<F extends SettingsFormShape>({
   prefix,
   defaults,
-  blankAllowed,
-  emptySeedKeys,
-  resolveState,
   onMetaRefreshed,
 }: UseSettingsOverrideFormOptions<F>): SettingsOverrideForm<F> {
   const [isLoading, setIsLoading] = useState(true);
   const [loadFailed, setLoadFailed] = useState(false);
-  const [isClearing, setIsClearing] = useState(false);
-  // 서버 응답을 키로 인덱싱해 보관한다 — 배지 상태(overridden/tenantEditable)와 description 폴백의 근거.
+  // 서버 응답을 키로 인덱싱해 보관한다 — 기본값 힌트(overridden)의 근거.
   const [settings, setSettings] = useState<Record<string, ResolvedSettingResponse>>({});
   const [form, setForm] = useState<F>(defaults);
   const [original, setOriginal] = useState<F>(defaults);
@@ -167,8 +87,6 @@ export function useSettingsOverrideForm<F extends SettingsFormShape>({
   // 콜백·상수를 effect 의존성에서 떼어 낸다 — 호출부의 참조가 바뀌어도 조회가 다시 돌지 않는다.
   const defaultsRef = useRef(defaults);
   defaultsRef.current = defaults;
-  const emptySeedKeysRef = useRef(emptySeedKeys);
-  emptySeedKeysRef.current = emptySeedKeys;
   const metaRefreshedRef = useRef(onMetaRefreshed);
   metaRefreshedRef.current = onMetaRefreshed;
 
@@ -182,10 +100,7 @@ export function useSettingsOverrideForm<F extends SettingsFormShape>({
       // 입력창에 렌더되는 일은 없다.
       const values = { ...base } as Record<keyof F, string>;
       (Object.keys(values) as (keyof F)[]).forEach((key) => {
-        // 비밀 키는 서버 값(마스크)을 시드하지 않는다 — `emptySeedKeys` javadoc 참고.
-        values[key] = emptySeedKeysRef.current?.has(key)
-          ? ''
-          : (byKey[key as string]?.value ?? base[key]);
+        values[key] = byKey[key as string]?.value ?? base[key];
       });
       setSettings(byKey);
       setForm(values as F);
@@ -202,9 +117,8 @@ export function useSettingsOverrideForm<F extends SettingsFormShape>({
 
   /**
    * <b>최초 1회만 조회한다.</b> 재조회가 `original` 을 새 서버 값으로 다시 시드하면,
-   * 사용자가 입력한 진짜 비밀번호가 있는 `form` 과 마스크(`****3f2a`)로 갱신된 `original` 이
-   * 갈라져 저장 대상 판정(`form[key] === original[key]` → 제외)이 무너진다 — 실제 편집이
-   * "안 바뀐 키"로 조용히 누락되거나, 반대 순서면 마스크가 값처럼 저장 대상에 오른다.
+   * 사용자가 편집 중인 `form` 과 새 서버 값으로 갱신된 `original` 이 갈라져 저장 대상 판정
+   * (`form[key] === original[key]` → 제외)이 무너진다 — 실제 편집이 "안 바뀐 키"로 조용히 누락된다.
    *
    * 오늘 이 가드가 실제로 막는 것은 개발 모드 StrictMode 의 effect 이중 실행과 `load` 참조
    * 변동뿐이다(훅 인스턴스는 언마운트되지 않는 `SettingsPage` 가 소유한다). 그래도 둔다 —
@@ -218,9 +132,9 @@ export function useSettingsOverrideForm<F extends SettingsFormShape>({
   }, [load]);
 
   /**
-   * 배지 상태(플래그)만 다시 읽고 인덱싱된 맵을 돌려준다 — 폼 값은 건드리지 않으므로 입력 중인
-   * 내용이 사라지지 않는다. 실패를 여기서 삼키지 않는다: 재정의 해제는 이 조회로 결과를
-   * 확정하므로 삼키면 해제가 "성공처럼 보이는 무동작"이 된다. 삼킴 여부는 호출부가 정한다.
+   * 플래그만 다시 읽고 인덱싱된 맵을 돌려준다 — 폼 값은 건드리지 않으므로 입력 중인 내용이
+   * 사라지지 않는다. 실패를 여기서 삼키지 않는다: 저장 후 재조회 실패를 삼키면 화면이 낡았다는
+   * 사실이 조용히 묻힌다. 삼킴 여부는 호출부가 정한다.
    */
   const refreshMeta = useCallback(async () => {
     const { data } = await settingsApi.getByPrefix(prefix);
@@ -229,16 +143,6 @@ export function useSettingsOverrideForm<F extends SettingsFormShape>({
     metaRefreshedRef.current?.();
     return byKey;
   }, [prefix]);
-
-  // 필드 상태 판정 — 배지·disabled·검증·저장 대상이 모두 이 한 곳을 거쳐 서로 어긋나지 않게 한다.
-  const fieldState = (key: keyof F) =>
-    resolveSettingFieldState(key as string, settings[key as string]);
-
-  // 호출자가 그룹 판정을 얹으면 그것이 이긴다 — 배지·disabled·저장 대상·dirty 가 모두 이 하나를 지난다.
-  const effectiveState = (key: keyof F) =>
-    resolveState ? resolveState(key, fieldState) : fieldState(key);
-
-  const isEditable = (key: keyof F) => effectiveState(key) !== 'locked';
 
   const updateField = (key: keyof F, value: string) => {
     setForm((prev) => ({ ...prev, [key]: value }) as F);
@@ -257,65 +161,20 @@ export function useSettingsOverrideForm<F extends SettingsFormShape>({
   };
 
   /**
-   * 재정의 해제 — DELETE 후 해당 키 하나만 서버 값으로 되돌린다.
-   * 전체 폼을 다시 시드하지 않는 이유: 다른 필드에 입력 중이던 미저장 변경을 조용히 날려버린다.
-   */
-  /** 서버 값으로 지정 키들을 확정한다. `form`·`original` 을 같은 값으로 함께 덮는다. */
-  const resyncFromServer = (
-    keys: readonly (keyof F)[],
-    byKey: Record<string, ResolvedSettingResponse>,
-  ) => {
-    const patch = {} as Partial<Record<keyof F, string>>;
-    keys.forEach((key) => {
-      // 재시드도 조회와 <b>같은 규칙</b>을 따라야 한다. 여기만 서버 값을 넣으면 저장 직후
-      // 비밀 입력에 새 마스크가 다시 들어앉아, 조회 경로에서 막은 덧붙이기 결함이 저장 경로로
-      // 되살아난다.
-      patch[key] = emptySeedKeysRef.current?.has(key)
-        ? ''
-        : (byKey[key as string]?.value ?? defaultsRef.current[key]);
-    });
-    setForm((prev) => ({ ...prev, ...patch }) as F);
-    setOriginal((prev) => ({ ...prev, ...patch }) as F);
-    setErrors((prev) => {
-      const next = { ...prev };
-      keys.forEach((key) => delete next[key]);
-      return next;
-    });
-  };
-
-  const handleClearOverride = async (key: keyof F) => {
-    setIsClearing(true);
-    try {
-      await settingsApi.clearOverride(key as string);
-      const byKey = await refreshMeta();
-      resyncFromServer([key], byKey);
-      toast.success('플랫폼 기본값으로 되돌렸습니다.');
-    } catch {
-      toast.error('재정의 해제에 실패했습니다.');
-    } finally {
-      setIsClearing(false);
-    }
-  };
-
-  /**
    * 저장 페이로드는 <b>이번에 바꾼 키만</b> 담는다. 전 키를 보내면 사용자가 한 필드를 고쳐도
-   * 나머지가 같은 값으로 tenant_settings 에 기록되어 <b>상속이 조용히 끊긴다</b> — 그 뒤로는
-   * 플랫폼이 기본값을 바꿔도 이 테넌트에는 영원히 전파되지 않는다.
-   *
-   * 저장 대상 판정의 권위는 <b>서버 플래그</b>(`effectiveState`)다. web 상수로 거르면 표시는
-   * 서버가, 저장은 web 사본이 구동해 둘이 갈라진다.
+   * 나머지가 같은 값으로 tenant_settings 에 기록되어 <b>코드 기본값 추종이 조용히 끊긴다</b> —
+   * 그 뒤로는 기본값이 바뀌어도 이 워크스페이스에는 전파되지 않는다.
    *
    * 사용자가 방금 <b>비운</b> 키는 페이로드에서 빼는 대신 `droppedChangedKeys` 로 돌려준다.
    * 그냥 빼면 "저장했다"면서 아무것도 쓰지 않고 dirty 까지 지워, 사용자는 반영된 줄 알고
-   * 떠나는데 옛 오버라이드가 그대로 적용된다.
+   * 떠나는데 옛 저장값이 그대로 적용된다.
    */
   const buildChangedPayload = () => {
     const payload: Record<string, string> = {};
     const droppedChangedKeys: (keyof F)[] = [];
     (Object.keys(form) as (keyof F)[]).forEach((key) => {
-      if (effectiveState(key) === 'locked') return;
       if (form[key] === original[key]) return;
-      if (form[key].trim() !== '' || blankAllowed?.has(key)) {
+      if (form[key].trim() !== '') {
         payload[key as string] = form[key];
       } else {
         droppedChangedKeys.push(key);
@@ -326,30 +185,20 @@ export function useSettingsOverrideForm<F extends SettingsFormShape>({
 
   const commitSaved = () => setOriginal({ ...form });
 
-  // dirty 판정도 저장 대상과 같은 기준을 쓴다 — 두 기준이 갈리면 "저장 버튼은 활성인데 보낼
-  // 것이 없다"(또는 그 반대)가 생긴다.
-  const hasChanges = (Object.keys(form) as (keyof F)[]).some(
-    (key) => effectiveState(key) !== 'locked' && form[key] !== original[key],
-  );
+  // dirty 판정도 저장 대상과 같은 기준(원본과 다른 키)을 쓴다.
+  const hasChanges = (Object.keys(form) as (keyof F)[]).some((key) => form[key] !== original[key]);
 
   return {
     isLoading,
     loadFailed,
-    isClearing,
-    setIsClearing,
     settings,
     form,
     original,
-    resyncFromServer,
     errors,
     setErrors,
-    fieldState,
-    effectiveState,
-    isEditable,
     hasChanges,
     updateField,
     handleReset,
-    handleClearOverride,
     buildChangedPayload,
     commitSaved,
     refreshMeta,

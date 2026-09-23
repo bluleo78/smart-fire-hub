@@ -9,13 +9,12 @@ import { Card, CardContent } from '@/components/ui/card';
 import { InlineBanner } from '@/components/ui/inline-banner';
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAuth } from '@/hooks/useAuth';
 import { formatDateTimeMinute } from '@/lib/formatters';
 import { isForbidden, serverMessage } from '@/lib/http-errors';
 // `validateSettingValue` 는 여기서 import 하지 않는다 — 그것을 쓰는 `validateForm` 은
 // `@/lib/settings-form` 으로 옮겨졌다(react-refresh/only-export-components).
-import { ALL_SETTING_KEYS, SETTING_CATALOG, SETTINGS_TABS } from '@/lib/settings-catalog';
+import { ALL_SETTING_KEYS, SETTING_CATALOG } from '@/lib/settings-catalog';
 import { validateForm } from '@/lib/settings-form';
 import type { SettingResponse } from '@/types/platform';
 
@@ -92,13 +91,11 @@ export default function SettingsPage() {
     [data],
   );
 
-  const lastUpdatedOf = (keys: string[]): string | null => {
-    const stamps = keys
-      .map((k) => byKey[k]?.updatedAt)
-      .filter((v): v is string => Boolean(v))
-      .sort();
-    return stamps.length > 0 ? stamps[stamps.length - 1] : null;
-  };
+  /** 카드 하단 "마지막 변경" — 화면에 그리는 키 중 가장 최근 `updatedAt`. 서버가 섞어 보낸 다른 키는 보지 않는다. */
+  const stamps = ALL_SETTING_KEYS.map((k) => byKey[k]?.updatedAt)
+    .filter((v): v is string => Boolean(v))
+    .sort();
+  const updatedAt = stamps.length > 0 ? stamps[stamps.length - 1] : null;
 
   const setValue = (key: string, value: string) => {
     setForm((prev) => ({ ...(prev ?? {}), [key]: value }));
@@ -115,7 +112,7 @@ export default function SettingsPage() {
   const saveMutation = useMutation({
     mutationFn: (payload: Record<string, string>) => settingsApi.update(payload),
     onSuccess: () => {
-      toast.success('플랫폼 기본값이 저장되었습니다.');
+      toast.success('플랫폼 설정이 저장되었습니다.');
       // 폼을 여기서 손대지 않는다. Task 9 의 `seededFrom` 정체성 비교가 **새 응답이 도착한
       // 순간** 폼·original·cleared·errors 를 한 번에 다시 세운다. 여기서 setForm(null) 이나
       // setCleared(new Set()) 를 하면 refetch 가 오기 전 낡은 data 로 폼이 세워져 방금 저장한
@@ -190,7 +187,6 @@ export default function SettingsPage() {
     return (
       <div className="space-y-6">
         <Skeleton className="h-9 w-48" />
-        <Skeleton className="h-10 w-96" />
         <Skeleton className="h-96 w-full" />
       </div>
     );
@@ -202,8 +198,9 @@ export default function SettingsPage() {
 
       {/* info 이지 warning 이 아니다 — 이 화면의 정상 동작이지 이상 징후가 아니다(D-4). */}
       {/* AI 설정은 이 화면에 없다 — 워크스페이스별 설정이라 운영자가 찾지 않도록 위치를 알린다. */}
+      {/* 이메일(SMTP)도 AI 와 같이 워크스페이스 전용이 됐다(#712) — 같은 문장으로 위치를 알린다. */}
       <InlineBanner variant="info">
-        여기서 저장한 값은 모든 워크스페이스에 적용되는 기본값입니다. AI 설정은 각 워크스페이스의
+        여기서 저장한 값은 모든 워크스페이스에 적용됩니다. AI·이메일 설정은 각 워크스페이스의
         설정 화면에서 관리합니다.
       </InlineBanner>
 
@@ -213,57 +210,44 @@ export default function SettingsPage() {
         </InlineBanner>
       )}
 
-      <Tabs defaultValue="smtp">
-        <TabsList className="overflow-x-auto overflow-y-hidden flex-nowrap">
-          {SETTINGS_TABS.map((tab) => (
-            <TabsTrigger key={tab.id} value={tab.id}>
-              {tab.label}
-            </TabsTrigger>
+      {/*
+        탭바를 두지 않는다(#712): SMTP 가 워크스페이스 전용으로 빠진 뒤 남은 그룹이 임베딩
+        하나뿐이라, 탭 하나짜리 탭바는 고를 것이 없는 조작부만 늘린다. 카드 하나로 바로 그린다.
+      */}
+      <Card>
+        <CardContent className="space-y-6 pt-6">
+          {ALL_SETTING_KEYS.map((key, index) => (
+            <div key={key} className="space-y-6">
+              {index > 0 && <Separator />}
+              <SettingField
+                spec={SETTING_CATALOG[key]}
+                value={form[key] ?? ''}
+                onChange={(value) => setValue(key, value)}
+                disabled={!canWrite}
+                error={errors[key]}
+                description={byKey[key]?.description ?? null}
+                maskedValue={byKey[key]?.value ?? null}
+                cleared={cleared.has(key)}
+                onClear={
+                  SETTING_CATALOG[key].clearable
+                    ? () =>
+                        setCleared((prev) => {
+                          const next = new Set(prev);
+                          next.add(key);
+                          return next;
+                        })
+                    : undefined
+                }
+              />
+            </div>
           ))}
-        </TabsList>
-
-        {SETTINGS_TABS.map((tab) => {
-          const updatedAt = lastUpdatedOf(tab.keys);
-          return (
-            <TabsContent key={tab.id} value={tab.id}>
-              <Card>
-                <CardContent className="space-y-6 pt-6">
-                  {tab.keys.map((key, index) => (
-                    <div key={key} className="space-y-6">
-                      {index > 0 && <Separator />}
-                      <SettingField
-                        spec={SETTING_CATALOG[key]}
-                        value={form[key] ?? ''}
-                        onChange={(value) => setValue(key, value)}
-                        disabled={!canWrite}
-                        error={errors[key]}
-                        description={byKey[key]?.description ?? null}
-                        maskedValue={byKey[key]?.value ?? null}
-                        cleared={cleared.has(key)}
-                        onClear={
-                          SETTING_CATALOG[key].clearable
-                            ? () =>
-                                setCleared((prev) => {
-                                  const next = new Set(prev);
-                                  next.add(key);
-                                  return next;
-                                })
-                            : undefined
-                        }
-                      />
-                    </div>
-                  ))}
-                  {updatedAt && (
-                    <p className="text-sm text-muted-foreground">
-                      마지막 변경: {formatDateTimeMinute(updatedAt)}
-                    </p>
-                  )}
-                </CardContent>
-              </Card>
-            </TabsContent>
-          );
-        })}
-      </Tabs>
+          {updatedAt && (
+            <p className="text-sm text-muted-foreground">
+              마지막 변경: {formatDateTimeMinute(updatedAt)}
+            </p>
+          )}
+        </CardContent>
+      </Card>
 
       {canWrite && (
         <div className="flex justify-end gap-2">

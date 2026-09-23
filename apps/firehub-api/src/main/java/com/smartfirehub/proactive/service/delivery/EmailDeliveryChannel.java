@@ -64,17 +64,15 @@ public class EmailDeliveryChannel implements DeliveryChannel {
    * 저장된다 — <b>한 통도 안 나갔는데 실행 기록은 "EMAIL 로 전달됨"이라고 남는다.</b> 로그가 안
    * 보이는 정도가 아니라 기록이 적극적으로 거짓말을 한다.
    *
-   * <p>같은 상태에서 {@code EmailChannel} 은 {@code PermanentFailure(UNRECOVERABLE, "SMTP 호스트
-   * 미설정")} 을 돌려주므로 실제로 보인다. 두 소비자가 같은 조건에 대해 가시성이 달랐고, 밴드의
+   * <p>같은 상태에서 {@code EmailChannel} 은 {@code PermanentFailure(UNRECOVERABLE, "SMTP 미설정 …")}
+   * 을 돌려주므로 실제로 보인다. 두 소비자가 같은 조건에 대해 가시성이 달랐고, 밴드의
    * 안전 성질이 "미설정 연결은 <b>눈에 보이게</b> 실패한다"인데 이 경로에서만 보이지 않았다.
    *
-   * <p><b>이 상태는 드물지 않다 — 이 변경의 영향 범위를 낮게 잡지 말 것.</b>
-   * {@code V42__create_proactive_tables.sql:108} 이 {@code smtp.host} 를 <b>빈 문자열로 시드</b>하므로,
-   * 운영자가 SMTP 를 한 번도 설정하지 않은 <b>모든 배포</b>가 이미 이 경로를 지난다. P7-c1 의
-   * 원자 해석은 도달 경로를 <b>하나 더</b> 만들었을 뿐이다(포트만·비밀번호만 재정의하면 번들이
-   * 호스트를 빈 값으로 채운다) — 첫 번째 경로를 만든 것이 아니다.
+   * <p><b>이 상태는 드물지 않다 — 이 변경의 영향 범위를 낮게 잡지 말 것.</b> #712 로 SMTP 가
+   * 워크스페이스 전용이 되어, 자기 SMTP 를 등록하지 않은 <b>모든 워크스페이스</b>가 이 경로를
+   * 지난다(플랫폼 공용 서버로 폴백하지 않는다). 그래서 예외 문구가 등록 위치를 안내한다.
    *
-   * <p>따라서 이 변경은 새 번들 상태에 국한되지 않는다: SMTP 미설정 상태로 프로액티브 이메일
+   * <p>SMTP 미설정 상태로 프로액티브 이메일
    * 리포트를 돌리던 기존 배포가 전부 "EMAIL 이 조용히 전달됨으로 기록"에서 "warn 로그 + EMAIL 이
    * {@code deliveredChannels} 에서 제외"로 바뀐다. <b>의도한 개선</b>이다 — 그 기록은 처음부터
    * 거짓이었다.
@@ -91,7 +89,8 @@ public class EmailDeliveryChannel implements DeliveryChannel {
     Map<String, String> smtp = settingsService.getSmtpConfig();
     String host = smtp.getOrDefault("smtp.host", "");
     if (host.isBlank()) {
-      throw new IllegalStateException("SMTP 호스트 미설정 — 이메일 리포트를 발송할 수 없습니다");
+      throw new IllegalStateException(
+          "SMTP 미설정 — 이메일 리포트를 발송할 수 없습니다. 워크스페이스 설정 › 이메일에서 SMTP 서버를 등록하세요");
     }
 
     try {

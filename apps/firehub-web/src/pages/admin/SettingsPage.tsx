@@ -320,7 +320,7 @@ export default function SettingsPage() {
   const { isAnyDirty, makeReporter } = useDirtyAggregator();
   const aiReporter = makeReporter('ai');
   const smtpReporter = makeReporter('smtp');
-  const smtpHasChanges = smtp.base.hasChanges;
+  const smtpHasChanges = smtp.hasChanges;
   const credDirty = cred.hasUnsavedInput;
   useEffect(() => {
     aiReporter(behaviorHasChanges || credDirty);

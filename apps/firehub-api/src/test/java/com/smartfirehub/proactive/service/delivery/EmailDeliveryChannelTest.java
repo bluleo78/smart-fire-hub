@@ -47,8 +47,8 @@ class EmailDeliveryChannelTest {
 
   @BeforeEach
   void setup() {
-    // Default: SMTP not configured -> deliver() returns early
-    when(settingsService.getSmtpConfig()).thenReturn(Map.of("smtp.host", ""));
+    // 기본값: 워크스페이스 SMTP 미설정 — #712 이후 getSmtpConfig 는 미설정이면 빈 맵을 준다.
+    when(settingsService.getSmtpConfig()).thenReturn(Map.of());
     // Default: return empty lists so deliver() doesn't NPE when SMTP is configured
     when(reportRenderUtils.buildTemplateSections(any())).thenReturn(List.of());
     when(reportRenderUtils.renderChartImages(any())).thenReturn(List.of());
@@ -91,10 +91,9 @@ class EmailDeliveryChannelTest {
    * 한 통도 안 나갔는데. 같은 상태에서 {@code EmailChannel} 은 {@code PermanentFailure} 를
    * 돌려주므로 두 소비자의 가시성이 어긋나 있었다.
    *
-   * <p><b>흔한 상태다.</b> {@code V42:108} 이 {@code smtp.host} 를 빈 문자열로 시드하므로 운영자가
-   * SMTP 를 설정하지 않은 <b>모든 배포</b>가 이미 여기를 지난다. P7-c1 의 원자 해석은 도달 경로를
-   * 하나 더 얹었을 뿐이다(포트만·비밀번호만 재정의하면 번들이 호스트를 빈 값으로 채운다).
-   * 그래서 이 계약 변경의 영향은 새 번들 상태가 아니라 <b>기존 미설정 배포 전체</b>에 미친다.
+   * <p><b>흔한 상태다.</b> #712 로 SMTP 가 워크스페이스 전용이 되어, 자기 SMTP 를 등록하지 않은
+   * <b>모든 워크스페이스</b>가 여기를 지난다(플랫폼 폴백 없음). 그래서 예외 문구가 등록 위치
+   * (워크스페이스 설정 › 이메일)를 안내하는지까지 본다.
    */
   @Test
   void deliver_smtpNotConfigured_throwsSoRunnerDoesNotRecordDelivery() {
@@ -103,7 +102,8 @@ class EmailDeliveryChannelTest {
 
     assertThatThrownBy(() -> emailDeliveryChannel.deliver(job, 1L, makeResult()))
         .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("SMTP 호스트 미설정");
+        .hasMessageContaining("SMTP 미설정")
+        .hasMessageContaining("워크스페이스 설정 › 이메일");
 
     // 던지기 전에 아무 일도 하지 않는다 — 수신자 조회조차 가지 않는다.
     verify(userRepository, never()).findById(anyLong());

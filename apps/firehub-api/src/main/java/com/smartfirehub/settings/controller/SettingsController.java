@@ -23,7 +23,8 @@ public class SettingsController {
 
   /**
    * 테넌트 화면용 설정 조회. <b>해석된</b> 값(오버라이드가 있으면 그 값)과 함께
-   * {@code overridden}/{@code tenantEditable} 플래그를 돌려준다.
+   * {@code overridden}/{@code tenantEditable} 플래그를 돌려준다. {@code prefix=smtp} 는 워크스페이스가
+   * 저장한 키만 나온다 — 미설정이면 빈 목록이다(#712).
    *
    * <p>P7-b 이전에는 {@code getByPrefix} 를 불러 <b>플랫폼 기본값만</b> 돌려줬다. 그대로 두면
    * 테넌트가 오버라이드를 저장한 뒤 화면을 다시 불러도 예전 값이 그대로 보여서 <b>저장이 아무
@@ -57,22 +58,17 @@ public class SettingsController {
   }
 
   /**
-   * 테넌트 값을 지워 플랫폼 값(AI 설정은 코드 기본값)으로 되돌린다. <b>멱등</b> — 오버라이드가 이미 없어도(=이미
-   * 상속 중) 204 다. "상속 중" 은 오류 상태가 아니므로 404 로 만들지 않는다.
+   * 워크스페이스 SMTP 설정 해제(#712) — SMTP 6키(발신자 주소 포함)를 한 번에 지운다. <b>멱등</b>이라
+   * 이미 미설정이어도 204 다. 권한은 같은 탭의 저장·테스트와 같은 {@code ai:settings} 다.
    *
-   * <p><b>경로가 {@code /overrides/{key}} 인 이유.</b> 처음에는 {@code /{key}} 였는데, 그러면 이
-   * 컨트롤러의 <b>미매핑 하위 경로를 전부 삼키는 catch-all</b> 이 된다. 실제로 {@code DELETE
-   * /settings/smtp} 가 {@code key="smtp"} 로 흡수됐고, Task 7 에서 삭제한 {@code GET /ai-api-key} 가
-   * 404 가 아니라 405 가 된 것도 같은 흡수였다. 무해한 사례만 있었지만 위험은 구조적이다 —
-   * 이 컨트롤러에 하위 경로를 추가하는 사람이 <b>매번</b> 그 흡수를 기억해야 하고, 잊으면 새 경로가
-   * 조용히 {@code ai:settings} 권한 게이트를 물려받는다(P7-a 의 "인터셉터 경로 등록 누락"과 같은
-   * 계열). 세그먼트를 하나 두면 흡수가 <b>불가능</b>해지므로, 사람의 주의력에 맡기던 것을 라우팅으로
-   * 옮긴다.
+   * <p>이 자리에 있던 {@code DELETE /overrides/{key}}(키 하나를 지워 플랫폼 값으로 되돌리기)는
+   * 삭제했다. SMTP 에 플랫폼 값이 없어져 "되돌리기"가 성립하지 않고, 유일한 다른 대상이던 AI 동작
+   * 키는 화면에서 키별 해제를 부르지 않는다(사용처 0). 묶음 해제는 이 엔드포인트 하나로 한다.
    */
-  @DeleteMapping("/overrides/{key}")
+  @DeleteMapping("/smtp")
   @RequirePermission("ai:settings")
-  public ResponseEntity<Void> clearOverride(@PathVariable String key) {
-    settingsService.clearOverride(key);
+  public ResponseEntity<Void> clearSmtpSettings() {
+    settingsService.clearSmtpSettings();
     return ResponseEntity.noContent().build();
   }
 
@@ -85,12 +81,12 @@ public class SettingsController {
   //
   // PUT /smtp 도 삭제돼 있다(P7-b). SMTP 6키가 전부 플랫폼 소유이던 시절 테넌트 평면에서 항상
   // 거부였고, "항상 던지는 서비스 메서드 + 그것을 부르는 라우트"는 거부를 런타임 예외로만 남긴다.
-  // 지금 SMTP 쓰기는 다른 키들과 같은 PUT /settings(테넌트) / PUT /api/platform/settings(플랫폼)다.
+  // 지금 SMTP 쓰기는 다른 키들과 같은 PUT /settings(테넌트)뿐이다 — #712 로 플랫폼 평면이 없어졌다.
   //
   // POST /smtp/test 는 남는다 — 값을 노출하지 않는 진단 액션이고 저장된 설정으로 접속한다.
 
   /**
-   * SMTP 연결 테스트. <b>권한은 이 컨트롤러의 나머지 세 라우트와 같은 {@code ai:settings} 다.</b>
+   * SMTP 연결 테스트. <b>권한은 이 컨트롤러의 나머지 라우트와 같은 {@code ai:settings} 다.</b>
    *
    * <p>P7-c1 이전에는 이 라우트만 {@code settings:write} 를 요구했다. 당시에는 SMTP 쓰기가
    * {@code PUT /settings/smtp}(같은 권한)였으므로 짝이 맞았는데, Task 4 가 SMTP 쓰기를
@@ -112,7 +108,7 @@ public class SettingsController {
       Map<String, String> config = settingsService.getSmtpConfig();
       String host = config.getOrDefault("smtp.host", "");
       if (host.isBlank()) {
-        return ResponseEntity.ok(Map.of("success", false, "message", "SMTP 호스트가 설정되지 않았습니다"));
+        return ResponseEntity.ok(Map.of("success", false, "message", "SMTP 가 설정되지 않았습니다. 호스트를 입력하고 저장한 뒤 다시 테스트하세요"));
       }
 
       JavaMailSenderImpl sender = new JavaMailSenderImpl();

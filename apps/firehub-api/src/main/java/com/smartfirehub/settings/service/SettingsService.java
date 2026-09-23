@@ -37,56 +37,12 @@ public class SettingsService {
   private static final Set<String> SECRET_KEYS =
       Set.of("embedding.api_key", "smtp.password");
 
-  /**
-   * SMTP <b>연결 번들</b> 5키. 두 평면 SMTP 6키({@link SettingsOverridePolicy#twoPlaneKeys})에서
-   * {@code smtp.from_address} 를 뺀 나머지다.
-   *
-   * <p><b>왜 원자적인가.</b> {@code {host, port, username, password, starttls}} 는 <b>한 서버에
-   * 대한 한 벌의 접속 정보</b>다. 이것을 키 단위로 상속하면 A 서버의 주소와 B 서버의 자격증명이
-   * 섞인다 — 테넌트 ADMIN 이 {@code smtp.host} 한 필드만 자기가 통제하는 서버로 바꿔 저장하면,
-   * {@code username}/{@code password} 는 여전히 플랫폼 값으로 해석되고 {@link #getSmtpConfig} 가
-   * 그것을 평문 복호화해 그 호스트로 SMTP AUTH 를 보낸다. <b>전 테넌트 공용 SMTP 계정의
-   * 자격증명이 테넌트가 지정한 서버로 전달된다.</b> {@code smtp.starttls=false} 만 재정의하는
-   * 약한 변종도 뿌리가 같다 — 공용 자격증명이 평문 채널로 나간다.
-   *
-   * <p><b>왜 {@code smtp.from_address} 는 예외인가.</b> 접속과 무관한 <b>표시 값</b>이라 자격증명
-   * 묶음에 속하지 않는다. 6키 전부를 묶으면 "발신자 주소만 바꾸고 싶다"는 정당한 사용이 5키
-   * 전체 재정의를 강요당한다.
-   */
-  // 패키지 가시성: SettingsKeyWhitelistInvariantTest 가 "연결 5키 ⊆ 테넌트 허용 키" 불변식을
-  // 실행 가능한 단언으로 고정한다.
-  static final Set<String> SMTP_CONNECTION_KEYS =
-      Set.of("smtp.host", "smtp.port", "smtp.username", "smtp.password", "smtp.starttls");
-
-  /**
-   * 번들 채움 값이 <b>빈 문자열이 아닌</b> 키. {@link #applySmtpConnectionBundle} 이 쓴다 — 여기
-   * 없는 번들 키는 전부 {@code ""} 로 채운다.
-   *
-   * <p><b>{@code smtp.starttls} 만 {@code "true"} 인 이유(밴드 리뷰 RULING F).</b> SMTP 연결 5키
-   * 중 나머지 네 키는 <b>자격증명이거나 주소</b>라 "비어 있음 = 설정되지 않음"이고, 이 태스크가
-   * 얻어낸 안전 성질은 정확히 그 미설정이 <b>눈에 보이게 실패</b>한다는 것이다. {@code smtp.starttls}
-   * 는 자격증명이 아니라 <b>보안 토글</b>이고, 이 키에서만 빈 값이 <b>덜</b> 안전한 방향이다 —
-   * 발송은 그대로 성공하면서 암호화만 조용히 꺼진다("조용한 노출").
-   *
-   * <p>구체적으로 막는 시나리오: 테넌트 ADMIN 이 호스트·사용자 이름·비밀번호를 자기 회사 값으로
-   * 채워 저장한다. STARTTLS 스위치는 화면에 <b>켜짐</b>으로 보이므로(플랫폼 값 {@code 'true'} 가
-   * 폼에 시드된다) 손댈 이유가 없고, web 은 바뀐 키만 보내므로 {@code smtp.starttls} 행이 생기지
-   * 않는다. 빈 값으로 채우면 <b>테넌트가 방금 입력한 자격증명이 평문 채널로</b> 나간다 — 브리프
-   * §1-4 가 원 결함의 "약한 이면"으로 지목한 형태를, 관측자만 플랫폼에서 테넌트로 바꿔 재생산하는
-   * 셈이다.
-   *
-   * <p>"플랫폼 값을 쓰지 않는다"는 목적이 이 키에서는 빈 값을 요구하지 않는다 — <b>withhold 할
-   * 비밀이 없고</b>, 플랫폼 값 자체도 {@code 'true'}(V42 시드)다. TLS 를 정말 끄려는 테넌트는
-   * 스위치를 내려 {@code 'false'} 행을 만들면 되고, 그것은 명시적 조작이라 조용하지 않다.
-   */
-  private static final Map<String, String> BUNDLE_FILL_VALUES = Map.of("smtp.starttls", "true");
-
   private final SettingsRepository settingsRepository;
   private final EncryptionService encryptionService;
   private final TenantSettingsRepository tenantSettingsRepository;
 
   /**
-   * 플랫폼 설정 전체(임베딩·SMTP, {@code ai.*} 제외). 운영자 평면({@code GET /api/platform/settings})이 플랫폼 기본값을 한 화면에
+   * 플랫폼 설정 전체(임베딩만 — {@code ai.*}·{@code smtp.*} 는 테넌트 전용이라 제외). 운영자 평면({@code GET /api/platform/settings})이 플랫폼 기본값을 한 화면에
    * 보여 주기 위해 쓴다.
    *
    * <p>P7-c1 이전 이 위에 {@code getByPrefix(prefix)} 가 있었다. 마지막 실사용 호출자였던
@@ -99,7 +55,7 @@ public class SettingsService {
    * <p>되살리고 싶어지면 <b>{@link #getResolvedByPrefix} 로 충분한지 먼저 묻는다.</b> 플랫폼 평면
    * 전용 프리픽스 조회가 정말 필요한 날 다시 만드는 비용은 네 줄이고, 그때는 호출자가 있다.
    *
-   * <p>플랫폼 평면이 없는 키({@code ai.*}, {@link SettingsOverridePolicy.Plane#readsPlatformRow})의
+   * <p>플랫폼 평면이 없는 키({@code ai.*}·{@code smtp.*}, {@link SettingsOverridePolicy.Plane#readsPlatformRow})의
    * 행은 뺀다 — 남은 행을 내보내면 운영자가 "플랫폼 기본값"으로 오해하고, {@code ai.credential}
    * 은 {@link #maskSecret} 이 모르는 비밀 하위 필드 암호문이 그대로 나간다.
    */
@@ -112,7 +68,7 @@ public class SettingsService {
   }
 
   /**
-   * 프리픽스에 속한 플랫폼 행 중 플랫폼 평면이 있는 키만. 테넌트 네임스페이스({@code "ai"})면
+   * 프리픽스에 속한 플랫폼 행 중 플랫폼 평면이 있는 키만. 테넌트 네임스페이스({@code "ai"}·{@code "smtp"})면
    * 조회 자체를 생략한다.
    */
   private List<SettingResponse> platformRows(String prefix) {
@@ -158,8 +114,9 @@ public class SettingsService {
    *
    * <p><b>테넌트 전용 키({@link SettingsOverridePolicy.Plane#TENANT_ONLY})는 다르다</b> — 테넌트 값이
    * 없으면 {@code system_settings} 가 아니라 코드 기본값({@link AiBehaviorDefaults})이다. 그래서
-   * 이 키들은 항상 값이 있는 {@code Optional} 을 돌려준다. 테넌트 컨텍스트가 없는 호출(배경
-   * 경로)도 코드 기본값이다 — 플랫폼 행은 어느 경우에도 읽지 않는다.
+   * AI 동작 6키는 항상 값이 있는 {@code Optional} 을 돌려준다. 코드 기본값이 없는 SMTP 6키(#712)는
+   * 테넌트 값이 없으면 empty(미설정)다. 테넌트 컨텍스트가 없는 호출(배경 경로)도 같다 — 플랫폼 행은
+   * 어느 경우에도 읽지 않는다.
    *
    * <p><b>컨텍스트가 없으면 예외를 던지지 않는다.</b> {@code TenantContext.require()} 를 쓰면
    * JobRunr {@code @Job}·{@code @Async}·{@code @Scheduled} 배경 경로가 전멸한다(설계서 §4.5,
@@ -174,14 +131,16 @@ public class SettingsService {
    */
   @Transactional(readOnly = true)
   public Optional<String> getValue(String key) {
-    rejectBundleKey(key);
+    rejectExternalOwnerKey(key);
     return switch (planeOf(key)) {
-      // 테넌트 값 → 코드 기본값. system_settings 에 남은 옛 행이 있어도 보지 않는다. 동작 6키가
-      // 아닌 옛 ai.* 키는 기본값이 없어 empty 다.
+      // 테넌트 값 → 코드 기본값. system_settings 에 남은 옛 행이 있어도 보지 않는다. 기본값이 없는
+      // 키(SMTP 6키·옛 ai.*)는 empty = 미설정이다.
       case TENANT_ONLY ->
           tenantValue(key).or(() -> Optional.ofNullable(AiBehaviorDefaults.defaultOf(key)));
-      case EXTERNAL_OWNER -> throw externalOwnerKey(key); // rejectBundleKey 가 이미 막는다
-      default -> tenantValue(key).or(() -> settingsRepository.getValue(key));
+      case EXTERNAL_OWNER -> throw externalOwnerKey(key); // rejectExternalOwnerKey 가 이미 막는다
+      // PLATFORM_ONLY·UNKNOWN: 테넌트 쓰기 가능 키(SMTP·AI 동작)가 전부 TENANT_ONLY 라 이 평면에는
+      // 테넌트 값이 존재할 수 없다(tenantValue 는 화이트리스트 밖이라 항상 empty 였다). 플랫폼 행만 본다.
+      default -> settingsRepository.getValue(key);
     };
   }
 
@@ -198,51 +157,10 @@ public class SettingsService {
   }
 
   /**
-   * <b>단일 키 조회({@link #getValue})로는 해석할 수 없는 키를 거부한다.</b> 대상은 둘이다:
-   * SMTP 연결 5키(함께 해석돼야 하는 번들)와 {@link SettingsOverridePolicy.Plane#EXTERNAL_OWNER}
-   * 키(비밀이 하위 필드에 있는 JSON 블롭, 유일한 소유자가 따로 있는 값).
-   *
-   * <p><b>SMTP 연결 5키.</b> 해석 진입점은 둘이다 — {@link #getValue}(키 하나)와
-   * {@link #resolveOverridesByPrefix}(프리픽스 통째). 원자 해석 규칙은 <b>뒤쪽에만</b> 있고,
-   * 있을 수 있는 자리도 거기뿐이다: "5키가 함께 움직인다"는 규칙은 5키를 한꺼번에 봐야 판정할 수
-   * 있어서, 키 하나만 받는 이 경로는 원리적으로 그 규칙을 지킬 수 없다. 실제로 호스트만
-   * 재정의된 테넌트에서 {@code getAsMap("smtp").get("smtp.password")} 는 {@code ""}(안전)를
-   * 주는데 {@code getValue("smtp.password")} 는 <b>플랫폼 암호문</b>(상속 폴백)을 준다.
-   *
-   * <p><b>오늘 이 경로로 SMTP 키가 들어오는 프로덕션 호출부는 없다</b>(전수 실측: 호출부 4곳이
-   * 전부 {@code ai.*}/{@code embedding.*} 리터럴). 그런데도 막는 이유는 "오늘은 그런 호출부가
-   * 없다"가 <b>이 밴드가 방금 죽인 문장</b>이기 때문이다 — 도달 불가에 기댄 안전이 이 코드베이스에서
-   * 이미 여러 번 배신했고, 이 밴드의 원 결함 자체가 그 형태였다.
-   *
-   * <p><b>SMTP 5키는 여기(읽기)만 막는다 — 쓰기는 막지 않는다.</b> {@link #updateSettings}/
-   * {@link #updatePlatformSettings} 는 5키를 <b>키 단위로 저장하는 것이 정상 동작</b>이다
-   * (운영자가 호스트만 바꾸는 등). "함께 해석돼야 한다"는 규칙은 <b>읽을 때</b>만 성립하는
-   * 제약이지 쓰기에는 적용되지 않는다 — {@link #encryptIfSecret}/{@link #dropMaskSentinels} 가
-   * 키 단위로 이미 안전하게 처리한다. 그래서 두 쓰기 경로는 이 메서드가 아니라
-   * {@link #rejectExternalOwnerKey} 만 부른다.
-   *
-   * <p><b>왜 {@code getAsMap} 으로 조용히 위임하지 않는가.</b> 위임하면 {@code getValue("smtp.password")}
-   * 가 "동작하게" 되고, 다음 사람은 그 위에 키 단위 읽기 경로를 짓는다 — 번들 규칙이 존재하는
-   * 이유가 정확히 "번들 키를 키 단위로 해석하지 않는다"인데, API 표면이 그 반대를 허락하게 된다.
-   * 거부하면 불변식이 호출 시점에 보인다. 모호하면 fail-closed 다.
-   *
-   * <p>{@code smtp.from_address}/{@code ai.model} 등은 <b>막지 않는다</b> — 번들도 아니고 별도
-   * 소유자도 없는 평범한 키 단위 해석이므로 {@link #getValue} 가 옳은 답을 준다.
-   */
-  private static void rejectBundleKey(String key) {
-    if (SMTP_CONNECTION_KEYS.contains(key)) {
-      throw new IllegalArgumentException(
-          "SMTP 연결 설정은 단일 키로 해석할 수 없습니다(연결 5키는 함께 해석된다). getSmtpConfig() 를 쓰세요: " + key);
-    }
-    rejectExternalOwnerKey(key);
-  }
-
-  /**
    * <b>전용 서비스 소유 키({@link SettingsOverridePolicy.Plane#EXTERNAL_OWNER})를 범용 경로(읽기·쓰기
-   * 전부)로 못 쓰게 막는 단일 관문.</b> {@link #getValue}·{@link #updateSettings}·
-   * {@link #clearOverride} 가 공유하고, {@link #resolveOverridesByPrefix} 도 같은 판정으로 뺀다.
+   * 전부)로 못 쓰게 막는 단일 관문.</b> {@link #getValue}·{@link #updateSettings} 가 공유하고, {@link #resolveOverridesByPrefix} 도 같은 판정으로 뺀다.
    *
-   * <p>SMTP 5키와 달리 쓰기도 막는 이유: 값이 JSON 이고 비밀이 <b>하위 필드</b>에 있어, 범용 쓰기가
+   * <p>읽기뿐 아니라 쓰기도 막는 이유: 값이 JSON 이고 비밀이 <b>하위 필드</b>에 있어, 범용 쓰기가
    * 받으면 {@link AiCredentialService} 의 유형별 검증·하위 필드 암호화·비밀 필수 규칙을 전부
    * 건너뛴 미검증 문서가 저장된다. 화이트리스트에도 없지만, 그것이 실수로 넓어져도 이 관문이
    * 별도로 막는다.
@@ -272,6 +190,12 @@ public class SettingsService {
    * ({@link #aiDefaultsForPrefix})을 바닥에 깔고 테넌트 값으로 덮는다 — 그래서 {@code getAsMap("ai")}
    * 는 테넌트가 아무것도 저장하지 않았어도 6키를 전부 담는다. {@code ai.credential} 은 어느
    * 쪽에도 실리지 않는다(실리면 비밀 하위 필드 암호문이 새어 나간다).
+   *
+   * <p><b>{@code smtp.*} 도 플랫폼 행을 읽지 않고(#712), 코드 기본값도 없다.</b> 그래서
+   * {@code getAsMap("smtp")} 는 테넌트가 저장한 키만 담고, 미설정 워크스페이스·컨텍스트 없는 호출은
+   * 빈 맵이다. 빈 값을 채워 넣지 않는 이유: 소비자는 키가 <b>없을 때</b> 안전한 기본값
+   * ({@code smtp.starttls → true}, {@code smtp.port → 587})을 쓰는데, 빈 문자열이 들어 있으면
+   * STARTTLS 가 조용히 꺼진다.
    */
   @Transactional(readOnly = true)
   public Map<String, String> getAsMap(String prefix) {
@@ -316,6 +240,11 @@ public class SettingsService {
    * AI 동작 6키는 항상 전부 나오고, {@code value} 는 테넌트 값 또는 코드 기본값,
    * {@code overridden} 은 "테넌트가 저장한 값이 있음", {@code description}/{@code updatedAt} 은
    * {@code null} 이다 — 화면은 이 플래그로 "저장된 값"과 "기본값"을 구분한다.
+   *
+   * <p><b>{@code smtp.*} 는 테넌트가 저장한 키만 나온다(#712).</b> 플랫폼 행도 코드 기본값도 없으므로
+   * 미설정 워크스페이스는 빈 목록이고, 나오는 행은 전부 {@code overridden=true}·
+   * {@code tenantEditable=true}·{@code description/updatedAt=null} 이다. {@code smtp.password} 는
+   * 마스킹된다.
    */
   @Transactional(readOnly = true)
   public List<ResolvedSettingResponse> getResolvedByPrefix(String prefix) {
@@ -376,14 +305,12 @@ public class SettingsService {
    * 가져온 뒤 화이트리스트로 걸러낸다 — 키마다 {@code findValue} 를 부르던 이전 구현은 프리픽스당
    * N+1 쿼리를 냈다.
    *
-   * <p>컨텍스트가 없으면 즉시 빈 맵(쿼리 없음) — {@link #resolveOverrides} 와 같은 계약이다.
-   * 배경 경로(JobRunr·{@code @Scheduled})는 이 분기로 나가므로 아래 번들 규칙도 함께 건너뛴다 —
-   * 오버라이드가 없으면 애초에 섞일 자격증명이 없다.
+   * <p>컨텍스트가 없으면 즉시 빈 맵(쿼리 없음) — 배경 경로(JobRunr·{@code @Scheduled})는 이
+   * 분기로 나간다. SMTP 는 이 경로에서 "미설정"이 된다(#712: 플랫폼 폴백 없음).
    *
-   * <p><b>SMTP 연결 번들 규칙이 여기 한 곳에 있는 이유.</b> 오버라이드 맵을 돌려주기 직전에
-   * 적용하면 {@link #getAsMap}(발송 경로)과 {@link #getResolvedByPrefix}(화면 경로)가 <b>같은
-   * 해석</b>을 자동으로 공유한다. 두 곳에 각각 넣으면 한쪽만 고쳐질 때 "화면은 상속이라는데
-   * 발송은 테넌트 값"(또는 그 반대)이 되고, 그것이 이 밴드가 반복해서 잡아 온 실패 유형이다.
+   * <p>예전에는 여기서 SMTP 연결 5키를 원자적으로 채우는 번들 규칙이 돌았다. 그 규칙은 테넌트 값과
+   * 플랫폼 값이 섞여 "테넌트 호스트 + 플랫폼 자격증명"이 되는 것을 막기 위한 것이었는데, #712 로
+   * 플랫폼 평면이 사라져 섞일 상대가 없으므로 삭제했다.
    *
    * <p><b>{@link SettingsOverridePolicy.Plane#EXTERNAL_OWNER} 키도 여기서 뺀다(방어적 중복).</b>
    * {@code ai.credential} 은 {@code tenant_settings} 에 실재하지만 화이트리스트에 없어 이미
@@ -397,54 +324,12 @@ public class SettingsService {
         key ->
             !SettingsOverridePolicy.isTenantOverridable(key)
                 || planeOf(key) == SettingsOverridePolicy.Plane.EXTERNAL_OWNER);
-    applySmtpConnectionBundle(candidates);
     return candidates;
   }
 
   /**
-   * SMTP 연결 5키를 <b>원자적으로</b> 해석한다: {@link #SMTP_CONNECTION_KEYS} 중 <b>하나라도</b>
-   * 테넌트 행이 있으면 5키 <b>전부</b>를 테넌트 평면에서 해석한다. 행이 없는 키는 <b>빈 문자열</b>로
-   * 채우되, {@link #BUNDLE_FILL_VALUES} 에 있는 키({@code smtp.starttls} → {@code "true"})만
-   * 예외다 — 그 키는 자격증명이 아니라 보안 토글이라 빈 값이 <b>덜</b> 안전한 방향이기 때문이고,
-   * 근거는 그 상수의 javadoc 에 있다. 하나도 없으면 아무것도 하지 않는다(5키 전부 플랫폼 상속).
-   *
-   * <p><b>왜 플랫폼 폴백이 아니라 빈 값인가.</b> 채우지 않고 두면 상위 {@code putAll} 이 플랫폼
-   * 값을 그대로 남기므로 <b>유출이 그대로 남는다</b> — 이 규칙이 막으려던 바로 그 상태다. 빈 값으로
-   * 채워야 "호스트만 바꾸고 자격증명은 안 넣음"의 결과가 플랫폼 비밀번호 유출이 아니라
-   * <b>인증 없는 릴레이 시도 → 눈에 보이는 발송 실패</b>가 된다. 기본값이 안전한 쪽으로 뒤집힌다.
-   * {@code null} 이 아니라 빈 문자열인 것도 필수다 — {@link #getSmtpConfig} 의
-   * {@code Collectors.toMap} 은 null 값에 NPE 를 내고, 그러면 유출 대신 발송 경로 전체가 500 이 된다.
-   *
-   * <p><b>부수 효과: {@link #getResolvedByPrefix} 의 {@code overridden} 플래그가 5키 모두 참이
-   * 된다. 그것이 의도다.</b> 이 플래그의 뜻은 "이 키는 테넌트 평면에서 해석된다"이고, 채워 넣지
-   * 않으면 화면이 행 없는 키에 {@code 기본값 사용 중} 배지를 다는데 그 플랫폼 값은 실제로 쓰이지
-   * 않는다 — 원 결함의 거짓말을 화면에 재생산하는 셈이다. 서버가 단일 권위여야 web 이 파생을
-   * 틀려도 거짓말이 나가지 않는다.
-   *
-   * <p>맵을 제자리에서 고친다. 호출부가 넘기는 것은 {@link TenantSettingsRepository#findByPrefix}
-   * 가 새로 만든 가변 {@code LinkedHashMap} 이고, {@code prefix} 판정이 이미 그 위에서 끝났다 —
-   * SMTP 아닌 프리픽스 조회에는 애초에 이 키들이 들어 있을 수 없다(패턴이 {@code prefix + ".%"}).
-   *
-   * <p><b>채움은 화이트리스트를 다시 보지 않는다 — 의도적이고, 그 대가는 테스트가 진다.</b>
-   * 이 메서드는 호출부가 {@code isTenantOverridable} 로 거른 <b>뒤에</b> 돌면서 5키를 무조건
-   * 채우므로, 연결 키 하나가 플랫폼으로 <b>회수</b>되면 방금 걸러낸 키가 되살아난다. 여기서
-   * 거르는 쪽이 자연스러워 보이지만 <b>더 위험하다</b>: 회수된 키를 빼면 그 키가 상속 폴백으로
-   * 플랫폼 값이 되어 "테넌트 호스트 + 플랫폼 자격증명"이라는 이 태스크가 닫은 유출이 되살아난다.
-   * 지금 동작(빈 값 + web 의 그룹 fail-closed 잠금)은 안전한 쪽 실패이고, 진짜 문제는 그 상태가
-   * <b>조용히</b> 배포될 수 있다는 것뿐이라 <b>{@code test} 태스크를 깨뜨리는 쪽</b>으로 막는다
-   * (컴파일 에러가 아니다) —
-   * {@code SettingsKeyWhitelistInvariantTest.연결_번들_5키는_전부_테넌트_오버라이드_허용키다}.
-   */
-  private static void applySmtpConnectionBundle(Map<String, String> overrides) {
-    boolean bundleOverridden = overrides.keySet().stream().anyMatch(SMTP_CONNECTION_KEYS::contains);
-    if (!bundleOverridden) return;
-    SMTP_CONNECTION_KEYS.forEach(
-        key -> overrides.putIfAbsent(key, BUNDLE_FILL_VALUES.getOrDefault(key, "")));
-  }
-
-  /**
    * <b>테넌트 평면</b> 쓰기. {@link SettingsOverridePolicy#isTenantOverridable} 화이트리스트
-   * (12키: 테넌트 전용 {@code ai.*} 동작 키 6 + 두 평면 {@code smtp.*} 6. AI 자격증명은
+   * (12키: 테넌트 전용 {@code ai.*} 동작 키 6 + 테넌트 전용 {@code smtp.*} 6. AI 자격증명은
    * 이 화이트리스트가 아니라 {@link AiCredentialService} 로만 쓴다)만 받아
    * {@code tenant_settings} 에
    * 저장한다 — {@code system_settings}(전역 행)는 절대 건드리지 않는다. 이 구분이 이 밴드의
@@ -478,7 +363,6 @@ public class SettingsService {
     rejectNullValues(settings);
     for (String key : settings.keySet()) {
       // 화이트리스트보다 먼저 불러 "AiCredentialService 를 쓰라"는 정확한 안내로 거부한다.
-      // rejectBundleKey 가 아닌 이유: SMTP 5키는 여기서 키 단위로 저장되는 것이 정상 동작이다.
       rejectExternalOwnerKey(key);
       if (!SettingsOverridePolicy.isTenantOverridable(key)) {
         throw new IllegalArgumentException("플랫폼 관리자만 변경할 수 있는 설정입니다: " + key);
@@ -489,8 +373,7 @@ public class SettingsService {
     // 포트 검증은 smtp.port 유무) SMTP 부분맵을 떼었다 다시 합칠 이유가 없다 — 그 분리·재병합은
     // 하지 않아도 되는 일을 열 줄로 하고 있었다. 프리픽스로 미리 갈라 놓으면 "이 변환 대상인가"의
     // 답이 키가 아니라 프리픽스에서 나오고, SMTP 아닌 비밀 키가 테넌트에 열리는 순간 평문으로
-    // 저장된다(BYO 키 정책으로 비밀 키 하나를 화이트리스트에 여는 한 줄). 아래 applyPlatformSmtpSettings 도
-    // 같은 형태다.
+    // 저장된다(BYO 키 정책으로 비밀 키 하나를 화이트리스트에 여는 한 줄).
     Map<String, String> payload = dropMaskSentinels(settings);
     validateValues(payload);
     validateSmtpPort(payload);
@@ -502,17 +385,13 @@ public class SettingsService {
   }
 
   /**
-   * <b>플랫폼 평면</b> 쓰기(운영자 전용, Task 6). 임베딩·SMTP 10키를 대상으로 하고
-   * {@code system_settings} 에 쓴다. 키의 평면({@link SettingsOverridePolicy#planeOf})이
-   * {@code PLATFORM_ONLY}/{@code TWO_PLANE} 이 아니면 즉시 거부한다.
+   * <b>플랫폼 평면</b> 쓰기(운영자 전용, Task 6). 임베딩 4키만 대상으로 하고 {@code system_settings}
+   * 에 쓴다. 키의 평면({@link SettingsOverridePolicy#planeOf})이 {@code PLATFORM_ONLY} 가 아니면
+   * 즉시 거부한다.
    *
-   * <p><b>{@code ai.*} 는 전부 거부한다.</b> 플랫폼 평면이 없어 여기서 쓰면 아무도 읽지 않는
-   * 값이 "저장됨"으로 보이는 무동작이 된다.
-   *
-   * <p>키를 두 그룹(임베딩 / SMTP)으로 나눠 각자의 검증·마스킹·암호화 로직에 위임한다 — 그
-   * 로직은 Task 5 이전에 {@link #updateSettings} 와 옛 테넌트 평면 SMTP 쓰기가 쓰던 것과
-   * <b>동일한 코드</b>다({@link #applyPlatformEmbeddingSettings}, {@link #applyPlatformSmtpSettings}). 플랫폼 경로가 검증을 다시 구현하면 두 평면(테넌트/플랫폼)의 "유효한 값"
-   * 판정이 갈라진다.
+   * <p><b>{@code ai.*}(#706)·{@code smtp.*}(#712)는 전부 거부한다.</b> 플랫폼 평면이 없어 여기서
+   * 쓰면 아무도 읽지 않는 값이 "저장됨"으로 보이는 무동작이 된다. 거부 메시지는 워크스페이스
+   * 설정에서 바꾸라고 안내한다.
    */
   @Transactional
   public void updatePlatformSettings(Map<String, String> settings, Long userId) {
@@ -520,26 +399,22 @@ public class SettingsService {
     rejectNullValues(settings);
     for (String key : settings.keySet()) {
       switch (planeOf(key)) {
-        case PLATFORM_ONLY, TWO_PLANE -> {}
-        case TENANT_ONLY, EXTERNAL_OWNER ->
-            throw new IllegalArgumentException("AI 설정은 플랫폼 설정이 아닙니다(워크스페이스별 설정): " + key);
+        case PLATFORM_ONLY -> {}
+        case TENANT_ONLY, EXTERNAL_OWNER -> throw notPlatformSetting(key);
         case UNKNOWN -> throw new IllegalArgumentException("허용되지 않는 설정 키: " + key);
       }
     }
 
-    Map<String, String> embedding = keysOfPlane(settings, SettingsOverridePolicy.Plane.PLATFORM_ONLY);
-    Map<String, String> smtp = keysOfPlane(settings, SettingsOverridePolicy.Plane.TWO_PLANE);
-
-    if (!embedding.isEmpty()) applyPlatformEmbeddingSettings(embedding, userId);
-    if (!smtp.isEmpty()) applyPlatformSmtpSettings(smtp, userId);
+    if (!settings.isEmpty()) applyPlatformEmbeddingSettings(settings, userId);
   }
 
-  /** 주어진 평면에 속한 키만 남긴 부분맵. */
-  private static Map<String, String> keysOfPlane(
-      Map<String, String> settings, SettingsOverridePolicy.Plane plane) {
-    return settings.entrySet().stream()
-        .filter(e -> planeOf(e.getKey()) == plane)
-        .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+  /**
+   * 테넌트 전용 키를 플랫폼 쓰기로 보냈을 때의 거부(400). 네임스페이스별 이름을 여기 따로 두지 않고
+   * 한 문구로 통일한다 — 이름 목록을 두면 {@code SettingsOverridePolicy} 의 테넌트 네임스페이스 목록과
+   * 이중 관리가 된다. 어느 키인지는 메시지 끝의 키 이름이 알려 준다.
+   */
+  private static IllegalArgumentException notPlatformSetting(String key) {
+    return new IllegalArgumentException("워크스페이스 설정은 플랫폼 설정으로 저장할 수 없습니다: " + key);
   }
 
   /**
@@ -562,16 +437,22 @@ public class SettingsService {
   }
 
   /**
-   * 테넌트 오버라이드를 지운다 = 상속 복귀(AI 동작 키는 코드 기본값 복귀). {@code tenant_settings} 에 행이 있으면 지우고, 없으면
-   * 아무 일도 하지 않는다 — "이미 상속 중"은 오류가 아니라 멱등한 성공이다(호출부인
-   * {@code DELETE /api/v1/settings/{key}} 는 있든 없든 204 를 돌려준다).
+   * 워크스페이스 SMTP 설정을 해제한다 — SMTP 6키({@link SettingsOverridePolicy#smtpKeys}) 행을 한
+   * 번에 지운다(#712). 발신자 주소도 포함한다. 지운 뒤 워크스페이스는 미설정이 되어 메일 발송이
+   * 명확한 오류로 실패한다(플랫폼 폴백 없음).
+   *
+   * <p><b>왜 키 하나씩이 아니라 묶음인가.</b> 플랫폼 기본값이 없어진 지금 키 하나를 지우는 것은
+   * "기본값으로 돌아간다"가 아니라 "그 칸만 비운다"이고, 호스트만 남은 반쪽 설정이 조용히 생긴다.
+   * 사용자 결정(2026-09-23)대로 해제는 6칸을 한 묶음으로 한다.
+   *
+   * <p><b>멱등</b> — 행이 하나도 없어도 성공이다. {@code @Transactional} 이 필수다 —
+   * {@code tenant_settings} 는 RLS 테이블이라 GUC 가 트랜잭션이 열릴 때만 주입된다
+   * ({@link #updateSettings} javadoc 과 같은 이유).
    */
   @Transactional
-  public void clearOverride(String key) {
-    // ai.credential 은 "지우고 상속 복귀"가 성립하지 않는다(플랫폼 값이 없다). 값을 바꾸려면
-    // AiCredentialService.save(PUT /settings/ai-credential)로 덮어쓴다.
-    rejectExternalOwnerKey(key);
-    tenantSettingsRepository.delete(key);
+  public void clearSmtpSettings() {
+    // 6키를 한 문장으로 지운다 — 키마다 DELETE 를 보내면 왕복만 늘고 원자성은 트랜잭션이 이미 준다.
+    tenantSettingsRepository.deleteAll(SettingsOverridePolicy.smtpKeys());
   }
 
   /**
@@ -583,7 +464,7 @@ public class SettingsService {
    * {@code validateValues} 는 {@code ai.model} 같은 free-form 키를 그냥 통과시키므로
    * {@code {"ai.model": null}} 이 실제로 거기까지 도달한다.
    *
-   * <p>저장 계층의 fail-fast 자체는 옳다 — "오버라이드 삭제는 {@code delete} 로"라는 통로 분리를
+   * <p>저장 계층의 fail-fast 자체는 옳다 — "행 삭제는 {@code delete} 로"라는 통로 분리를
    * 강제한다. 여기서 미리 거르는 것은 그 fail-fast 를 없애려는 게 아니라, <b>같은 실수가 400 으로
    * 보고되게</b> 하려는 것이다.
    */
@@ -682,38 +563,14 @@ public class SettingsService {
    *
    * <p>{@code embedding.*} 4키도 화이트리스트에 없는 플랫폼 잠금 키다(모델 교체가 벡터 차원을 바꿔
    * 기존 임베딩을 무효화하므로 테넌트별로 다를 수 없다). 다만
-   * 이쪽은 번들이 아니라 <b>단독</b> 잠금 키라({@code embedding.provider}/{@code model}/
-   * {@code base_url} 과 원자적으로 묶이지 않는다) {@link #getValue} 로 조회해도 안전하다.
+   * 이쪽은 <b>단독</b> 잠금 키라({@code embedding.provider}/{@code model}/{@code base_url} 과
+   * 원자적으로 묶이지 않는다) {@link #getValue} 로 조회해도 안전하다.
    */
   @Transactional(readOnly = true)
   public Optional<String> getDecryptedEmbeddingApiKey() {
     return getValue("embedding.api_key").filter(v -> !v.isBlank()).map(encryptionService::decrypt);
   }
 
-
-  /**
-   * P7-b 이전 테넌트 평면 SMTP 쓰기가 하던 로직 그대로다. 이름만 "플랫폼 쓰기 본체"로 옮겼고,
-   * {@link #updatePlatformSettings}(Task 6) 가 테넌트 평면 가드 없이 바로 이 메서드를 부른다.
-   *
-   * <p>검증·센티널·암호화는 {@link #validateValues}·{@link #validateSmtpPort}·
-   * {@link #dropMaskSentinels}·{@link #encryptSecrets} 로 빠졌고 — 넷 다 {@link #updateSettings}
-   * (테넌트 평면)와 <b>같은 순서로</b> 지난다 — 여기 남은 것은 <b>플랫폼 전용</b>인
-   * {@code system_settings} 쓰기다(키 판정은 호출부가 평면으로 이미 끝냈다).
-   */
-  private void applyPlatformSmtpSettings(Map<String, String> settings, Long userId) {
-    // validateValues 를 여기서도 부른다. 예전에는 플랫폼 경로에서 AI/임베딩 그룹만 검증을
-    // 지나고 SMTP 그룹은 건너뛰었는데, 테넌트 경로는 전체 키를 지나므로 두 평면의 "유효한 값"
-    // 판정이 비대칭이었다. validateValues 에 smtp case 가 하나도 없어 오늘은 공허하지만, 누가
-    // smtp case 를 추가하는 날 **플랫폼 경로만** 조용히 검증을 건너뛴다.
-    Map<String, String> payload = dropMaskSentinels(settings);
-    validateValues(payload);
-    validateSmtpPort(payload);
-    Map<String, String> toUpdate = encryptSecrets(payload);
-
-    if (!toUpdate.isEmpty()) {
-      settingsRepository.updateSettings(toUpdate, userId);
-    }
-  }
 
   /**
    * 화면이 돌려보낸 <b>마스크 센티널</b>을 페이로드에서 떨어뜨린다 — 두 쓰기 평면이 공유한다.
@@ -751,15 +608,12 @@ public class SettingsService {
   }
 
   /**
-   * {@code smtp.port} 범위 검증(1~65535) — 두 쓰기 평면이 공유한다. 키가 없으면 아무것도 하지
-   * 않으므로 <b>어떤 맵에 적용해도 무해</b>하다.
+   * {@code smtp.port} 범위 검증(1~65535). #712 이후 SMTP 쓰기는 테넌트 경로({@link #updateSettings})
+   * 하나뿐이다. 키가 없으면 아무것도 하지 않으므로 <b>어떤 맵에 적용해도 무해</b>하다.
    *
    * <p>검증이 플랫폼 경로에만 있던 동안 테넌트는 {@code 99999} 를 저장할 수 있었다 — 저장은
-   * 성공하고 실패는 한참 뒤 메일 발송에서 드러난다.
-   *
-   * <p><b>쓰기는 일부러 여기 없다.</b> 두 평면은 저장소가 다르고, 저장 대상까지 공유하면 한쪽이
-   * 바뀔 때 다른 쪽이 조용히 따라가거나 조용히 어긋난다. 실제로 이 밴드의 결함 자체가 "플랫폼
-   * 경로에만 있던 검증·암호화가 새로 열린 테넌트 경로에 없었던 것"이다.
+   * 성공하고 실패는 한참 뒤 메일 발송에서 드러난다. 빈 문자열도 여기서 거부되므로 저장된
+   * {@code smtp.port} 는 항상 유효한 숫자다.
    */
   private static void validateSmtpPort(Map<String, String> settings) {
     if (!settings.containsKey("smtp.port")) return;
@@ -775,29 +629,19 @@ public class SettingsService {
   }
 
   /**
-   * 실제 메일 발송이 쓰는 SMTP 접속 정보. <b>테넌트 오버라이드를 해석</b>하고 비밀값을
-   * <b>복호화</b>해서 돌려준다.
+   * 실제 메일 발송이 쓰는 SMTP 접속 정보. <b>현재 워크스페이스가 저장한 값만</b> 읽고 비밀값을
+   * <b>복호화</b>해서 돌려준다(#712: 테넌트 전용).
    *
-   * <p>P7-c1 이전 이 자리에는 "SMTP 6키는 전부 플랫폼 잠금이라 해석기를 타지 않아도 무해하지만,
-   * 장래에 SMTP 가 테넌트별로 열리면 이 메서드도 해석기를 타도록 바뀌어야 한다"고 적혀 있었다.
-   * Task 1 이 6키를 열었고 이 태스크가 그 전환을 마쳤다 — 이제 테넌트가 저장한 SMTP 로 실제
-   * 메일이 나간다. 그 전까지는 저장도 되고 화면도 {@code overridden=true} 라고 보고하는데 발송만
-   * 플랫폼 자격증명으로 나가는, <b>저장·표시·동작 셋 중 둘만 맞는 무동작</b>이었다.
+   * <p><b>미설정이면 빈 맵이다.</b> 워크스페이스가 SMTP 를 등록하지 않았거나 테넌트 컨텍스트가 없는
+   * 호출이면 플랫폼 값으로 폴백하지 않는다 — 소비자({@code EmailChannel}·{@code EmailDeliveryChannel}·
+   * 연결 테스트)가 {@code smtp.host} 공백을 보고 "워크스페이스 설정 › 이메일에서 등록하라"는 오류로
+   * 멈춘다. 옛 플랫폼 행이 {@code system_settings} 에 남아 있어도 읽지 않는다(V128 이 지운다).
    *
    * <p><b>화면용 읽기와 발송용 읽기는 요구가 정반대다.</b> {@link #getResolvedByPrefix} 는 같은
-   * 데이터를 <b>마스킹</b>해서 내보내고(응답에 평문도 암호문도
-   * 실리면 안 된다), 이 메서드는 <b>복호화</b>해서 내보낸다(SMTP 인증에 평문이 필요하다). 그래서
-   * 마스킹을 타는 {@link #getResolvedByPrefix} 를 재사용할 수 없고, 마스킹 없는 해석 경로인
-   * {@link #getAsMap} 위에 복호화를 얹는다.
-   *
-   * <p>복호화가 오버라이드 값에도 걸려야 하는 이유: Task 2 가 테넌트 오버라이드
-   * {@code smtp.password} 도 암호화해 저장하게 만들었다. 해석기만 태우고 복호화를 플랫폼 값에만
-   * 남겨 두면 테넌트 SMTP 인증이 <b>암호문으로</b> 시도돼 발송이 조용히 실패한다.
-   *
-   * <p><b>연결 5키는 원자적으로 해석된다</b> — {@link #applySmtpConnectionBundle} 참고. 그 규칙이
-   * 없으면 이 메서드가 "테넌트가 지정한 호스트 + 플랫폼 공용 자격증명"을 조합해 내보내고, 그
-   * 조합이 곧 이 태스크가 닫은 보안 결함이다. 규칙은 여기가 아니라 {@link #resolveOverridesByPrefix}
-   * 한 곳에 있다 — 화면 경로와 해석이 갈라지지 않게 하기 위해서다.
+   * 데이터를 <b>마스킹</b>해서 내보내고(응답에 평문도 암호문도 실리면 안 된다), 이 메서드는
+   * <b>복호화</b>해서 내보낸다(SMTP 인증에 평문이 필요하다). 그래서 마스킹 없는 해석 경로인
+   * {@link #getAsMap} 위에 복호화를 얹는다. 테넌트 {@code smtp.password} 는 저장 시 암호화되므로
+   * 복호화를 빼면 SMTP 인증이 <b>암호문으로</b> 시도돼 발송이 조용히 실패한다.
    *
    * <p>{@code @Transactional} 을 떼지 말 것 — {@link #getAsMap} 을 자기 호출로 부르므로 프록시를
    * 지나지 않는다. {@code tenant_settings}(RLS) 조회에 GUC 를 주입하는 트랜잭션은 <b>이 애노테이션</b>이 연다.

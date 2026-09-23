@@ -49,7 +49,7 @@ class SettingsServiceTest extends IntegrationTestBase {
                       null))
           .as(key)
           .isInstanceOf(IllegalArgumentException.class)
-          .hasMessageContaining("AI 설정은 플랫폼 설정이 아닙니다");
+          .hasMessageContaining("워크스페이스 설정은 플랫폼 설정으로 저장할 수 없습니다");
       assertThat(rawSystemSettingValue(dsl, key)).as(key).isNull();
     }
   }
@@ -116,7 +116,7 @@ class SettingsServiceTest extends IntegrationTestBase {
       assertThatThrownBy(() -> settingsService.updatePlatformSettings(Map.of(legacyKey, "x"), null))
           .as(legacyKey)
           .isInstanceOf(IllegalArgumentException.class)
-          .hasMessageContaining("AI 설정은 플랫폼 설정이 아닙니다");
+          .hasMessageContaining("워크스페이스 설정은 플랫폼 설정으로 저장할 수 없습니다");
     }
     assertThat(rawSystemSettingValue(dsl, "ai.api_key")).isNull();
   }
