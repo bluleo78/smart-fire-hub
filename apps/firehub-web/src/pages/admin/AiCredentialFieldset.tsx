@@ -221,6 +221,25 @@ function AuthBadge({ authStatus }: { authStatus: AiCredentialFieldsetProps['auth
   );
 }
 
+/**
+ * "인증 확인"이 실제로 검증한 비밀 필드. 서버 `AiController.getAuthStatus` 의 switch 와 **같은
+ * 규칙**이어야 한다 — cli 는 OAuth, cli-api 는 API 키, sdk 는 저장된 OAuth 가 있으면 OAuth·없으면
+ * API 키. 결과 배지를 두 칸에 모두 붙이면 비어 있는 칸까지 "✗ 유효하지 않음"으로 보여 무엇이
+ * 틀렸는지 알 수 없었다. 서버 규칙이 바뀌면 여기도 함께 바꾼다.
+ */
+function verifiedSecretField(cred: UseAiCredentialFormResult): 'oauthToken' | 'apiKey' | null {
+  switch (cred.agentType) {
+    case 'cli':
+      return 'oauthToken';
+    case 'cli-api':
+      return 'apiKey';
+    case 'sdk':
+      return cred.secretFieldNames.includes('oauthToken') ? 'oauthToken' : 'apiKey';
+    default:
+      return null;
+  }
+}
+
 /** 비밀 필드 입력 밑의 상태 힌트 — "사실"(설정됨)과 "할 일"(바꾸려면 입력)을 분리한다(설계서
  * §191). `cred.secretFieldNames` 는 훅이 이미 유형 불일치를 걸러 낸 값이다 — 여기서 다시 거르지
  * 않는다. */
@@ -386,6 +405,7 @@ function ClaudeFields({
   // 타이핑 중인 값이 아직 저장되지 않았으면 "인증 확인"은 낡은(저장된) 값을 검증한다 —
   // 클릭 가능해도 사용자가 방금 친 값을 확인하는 게 아니라는 뜻이라 잠근다.
   const verifyDisabled = isVerifying || cred.hasUnsavedInput;
+  const verifiedField = verifiedSecretField(cred);
 
   return (
     <div className="space-y-4">
@@ -418,7 +438,7 @@ function ClaudeFields({
           </div>
           <p id={`${idPrefix}-oauth-token-desc`} className="text-sm text-muted-foreground">
             로컬에서 claude setup-token으로 발급받은 OAuth 토큰
-            {onVerifyAuth && <AuthBadge authStatus={authStatus} />}
+            {onVerifyAuth && verifiedField === 'oauthToken' && <AuthBadge authStatus={authStatus} />}
           </p>
           <div id={`${idPrefix}-oauth-token-hint`}>{secretHint('oauthToken', cred)}</div>
         </div>
@@ -452,7 +472,7 @@ function ClaudeFields({
           </div>
           <p id={`${idPrefix}-api-key-desc`} className="text-sm text-muted-foreground">
             Anthropic API 키 (sk-ant-...)
-            {onVerifyAuth && <AuthBadge authStatus={authStatus} />}
+            {onVerifyAuth && verifiedField === 'apiKey' && <AuthBadge authStatus={authStatus} />}
           </p>
           <div id={`${idPrefix}-api-key-hint`}>{secretHint('apiKey', cred)}</div>
         </div>

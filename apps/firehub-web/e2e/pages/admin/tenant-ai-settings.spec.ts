@@ -607,6 +607,32 @@ test.describe('테넌트별 AI 자격증명 — 유형별 화면과 미설정 �
    * 보강 — 자격증명 그룹에 옛 배지·[재정의 해제] 버튼·라디오가 없다. 폼 자체가 그려져 있음을 함께
    * 단언해 "그룹이 비어서" 공허하게 통과하지 않게 한다.
    */
+  /**
+   * 인증 배지는 서버가 **실제로 검증한 칸**에만 붙는다(`AiController.getAuthStatus` 와 같은 규칙).
+   * 예전엔 결과 하나를 두 칸에 모두 붙여, 비어 있는 OAuth 칸까지 "✗ 유효하지 않음"으로 보였다
+   * (2026-09-27 라이브 검증).
+   *
+   * <b>뮤테이션 대상</b>: `verifiedSecretField` 조건을 지우면(두 칸 모두 배지) 각 경우의 "다른
+   * 칸엔 배지 없음" 단언이 빨개진다.
+   */
+  for (const c of [
+    { name: 'sdk + API 키만 저장 → API 키 칸', agentType: 'sdk', saved: ['apiKey'], on: 'ai-cred-api-key', off: 'ai-cred-oauth-token' },
+    { name: 'sdk + 둘 다 저장 → OAuth 칸(OAuth 우선)', agentType: 'sdk', saved: ['oauthToken', 'apiKey'], on: 'ai-cred-oauth-token', off: 'ai-cred-api-key' },
+    { name: 'cli-api → API 키 칸', agentType: 'cli-api', saved: ['apiKey'], on: 'ai-cred-api-key', off: null },
+  ] as const) {
+    test(`인증 배지는 검증된 칸에만 붙는다 — ${c.name}`, async ({ authenticatedPage: page }) => {
+      await mockAiCredential(page, createAiCredential({ agentType: c.agentType, secretFieldNames: [...c.saved] }));
+      await mockAiAuthStatus(page, () => ({ valid: false }));
+
+      await page.goto('/admin/settings');
+      await fieldBox(page, c.on).getByRole('button', { name: '인증 확인' }).click();
+
+      await expect(fieldBox(page, c.on).getByText('✗ 유효하지 않음')).toBeVisible();
+      await expect(aiPanel(page).getByText('✗ 유효하지 않음')).toHaveCount(1);
+      if (c.off) await expect(fieldBox(page, c.off).getByText('✗ 유효하지 않음')).toHaveCount(0);
+    });
+  }
+
   test('자격증명 그룹엔 상태 배지도 [재정의 해제] 버튼도 라디오도 없다', async ({ authenticatedPage: page }) => {
     await mockAiCredential(
       page,
