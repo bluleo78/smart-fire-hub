@@ -89,10 +89,14 @@ describe('classifyBatch', () => {
         return new ClaudeSdkCompletionProvider(c.apiKey, c.oauthToken) as never;
       });
 
-      await expect(classifyBatch(validRequest, {}, MODEL)).rejects.toThrow(/AI 자격증명/);
-      await expect(
-        classifyBatch(validRequest, { agentType: 'sdk', apiKey: '  ', oauthToken: '' }, MODEL),
-      ).rejects.toThrow(/AI 자격증명/);
+      // 부분 일치가 아니라 메시지 전체·타입으로 단언한다 — 부분 일치는 뒤에 batchSize 안내가 붙어도
+      // 통과해서, 인증 문제를 배치 크기 문제처럼 안내하던 결함을 놓쳤다.
+      const { MissingAiCredentialError, AI_CREDENTIAL_MISSING_MESSAGE } = await import('../agent/ai-auth-failure.js');
+      for (const creds of [{}, { agentType: 'sdk' as const, apiKey: '  ', oauthToken: '' }]) {
+        const err = await classifyBatch(validRequest, creds, MODEL).catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(MissingAiCredentialError);
+        expect((err as Error).message).toBe(AI_CREDENTIAL_MISSING_MESSAGE);
+      }
     } finally {
       createCompletionProviderMock.mockImplementation((_config?: unknown) => ({
         name: 'mock-completion',
@@ -182,8 +186,18 @@ describe('classifyBatch', () => {
     const { AiCredentialFailureError, AUTH_FAILURE_KOREAN_MESSAGE } = await import('../agent/ai-auth-failure.js');
     completeMock.mockRejectedValue(new AiCredentialFailureError(AUTH_FAILURE_KOREAN_MESSAGE));
 
-    await expect(classifyBatch(validRequest, { apiKey: 'sk-bad' }, MODEL)).rejects.toThrow(
-      AUTH_FAILURE_KOREAN_MESSAGE,
+    const err = await classifyBatch(validRequest, { apiKey: 'sk-bad' }, MODEL).catch((e: unknown) => e);
+    // 타입(code 포함)과 메시지 전체가 그대로여야 한다 — batchSize 안내가 붙으면 안 된다.
+    expect(err).toBeInstanceOf(AiCredentialFailureError);
+    expect((err as Error).message).toBe(AUTH_FAILURE_KOREAN_MESSAGE);
+  });
+
+  // 시간 초과 등 그 밖의 실패에는 배치 규모와 batchSize 안내를 덧붙인다(#686).
+  it('인증과 무관한 실패에는 배치 규모와 batchSize 안내를 덧붙인다', async () => {
+    completeMock.mockRejectedValue(new Error('[completion] 호출이 38000ms 내에 끝나지 않아 중단했습니다.'));
+
+    await expect(classifyBatch(validRequest, CREDS, MODEL)).rejects.toThrow(
+      /중단했습니다\. \(배치 2행 × 출력 컬럼 3개, 상한 \d+ms\)\. 스텝의 batchSize 를 줄이면/,
     );
   });
 

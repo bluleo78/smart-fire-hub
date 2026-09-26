@@ -1,5 +1,6 @@
 import { ProviderFactory } from '../providers/provider-factory.js';
 import type { ProviderConfig } from '../providers/types.js';
+import { isAiCredentialFailure } from '../agent/ai-auth-failure.js';
 
 export interface OutputColumn {
   name: string;
@@ -154,6 +155,10 @@ Rules:
       maxOutputTokens: CLASSIFY_MAX_OUTPUT_TOKENS,
     });
   } catch (e) {
+    // 자격증명 없음·인증/결제 실패는 배치 크기와 무관하다 — batchSize 안내를 붙이면 관리자가 엉뚱한
+    // 곳(스텝 설정)을 고치게 된다. 타입·code 도 그대로 살려야 호출부가 조치 안내를 고를 수 있으므로
+    // 원래 오류를 감싸지 않고 다시 던진다.
+    if (isAiCredentialFailure(e)) throw e;
     // 공급자의 타임아웃 메시지는 범용이라(채팅·GraphRAG 와 공유) 왜 이 배치가 오래 걸렸는지 말해
     // 주지 않는다. 배치 규모와 해결책을 실어 실패가 스스로 원인을 설명하게 한다 — 운영에서 이
     // 실패를 받은 쪽이 다음에 무엇을 바꿔야 하는지 로그만 보고 알 수 있어야 한다.
