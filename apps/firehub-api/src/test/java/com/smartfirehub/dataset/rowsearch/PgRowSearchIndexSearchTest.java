@@ -6,9 +6,11 @@ import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.support.IntegrationTestBase;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import org.jooq.DSLContext;
+import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -98,6 +100,50 @@ class PgRowSearchIndexSearchTest extends IntegrationTestBase {
     List<RowHit> hits = index.semantic(ref, axis(0), filter, 5);
 
     assertThat(hits).extracting(RowHit::rowId).containsExactlyInAnyOrder(1L, 3L);
+  }
+
+  /**
+   * 정확 스캔 SQL 은 HNSW 인덱스로 정렬하지 못하고, 필터 조인은 여전히 원본 PK 인덱스를 쓴다. 행 3개라 플래너가
+   * 원래도 순차 스캔을 고를 수 있으므로 enable_seqscan 을 꺼서 "인덱스를 쓸 수 있으면 쓰는" 상태로 비교한다.
+   *
+   * <p>뮤테이션: 정렬식의 {@code + 0} 감싸기를 지우면 exact 계획에도 embedding 인덱스가 나타나 빨개진다.
+   */
+  @Test
+  void semanticSql_exactBypassesHnswButFilterJoinKeepsPk() {
+    var filter =
+        RowFilterCompiler.compile(
+            new RowFilter(List.of(new RowFilter.Condition("status", "eq", "완료"))),
+            Map.of("content", "TEXT", "status", "VARCHAR"));
+    String vec = com.smartfirehub.dataset.search.VectorLiterals.toVectorLiteral(axis(0));
+
+    // 필터가 없으면 정렬만 남아 두 경로의 차이가 그대로 드러난다(필터가 있으면 작은 표에선 HNSW 경로도 조인을 고른다).
+    assertThat(explain(CompiledFilter.none(), false, vec)).contains("embedding_idx");
+    assertThat(explain(CompiledFilter.none(), true, vec)).doesNotContain("embedding_idx");
+    // 필터가 있어도 정확 스캔은 embedding 인덱스를 쓰지 않고, 조인은 원본 PK 인덱스를 그대로 쓴다.
+    assertThat(explain(filter, true, vec)).doesNotContain("embedding_idx").contains("rs_search_src_pkey");
+  }
+
+  /** 행 수가 임계값 이하면 정확 스캔, 넘으면 HNSW. 통계가 없을 때(-1)와 ANALYZE 뒤 모두 같은 판정이어야 한다. */
+  @Test
+  void useExactScan_comparesRowCountWithThreshold() {
+    assertThat(new PgRowSearchIndex(dsl, 3).useExactScan(ref)).isTrue();
+    assertThat(new PgRowSearchIndex(dsl, 2).useExactScan(ref)).isFalse();
+
+    dsl.execute("ANALYZE " + DataSchema.qualify(ref.indexTable()));
+    assertThat(new PgRowSearchIndex(dsl, 3).useExactScan(ref)).isTrue();
+    assertThat(new PgRowSearchIndex(dsl, 2).useExactScan(ref)).isFalse();
+  }
+
+  private String explain(CompiledFilter filter, boolean exact, String vec) {
+    List<Object> params = new ArrayList<>();
+    String sql = index.semanticSql(ref, filter, exact, vec, 5, params);
+    return dsl.transactionResult(
+        cfg -> {
+          var tx = DSL.using(cfg);
+          tx.execute("SET LOCAL enable_seqscan = off");
+          return String.join(
+              "\n", tx.fetch("EXPLAIN " + sql, params.toArray()).getValues(0, String.class));
+        });
   }
 
   @Test

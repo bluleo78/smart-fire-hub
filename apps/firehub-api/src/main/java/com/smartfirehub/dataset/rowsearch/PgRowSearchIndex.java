@@ -11,9 +11,9 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
 import org.jooq.impl.DSL;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -26,10 +26,28 @@ import org.springframework.transaction.annotation.Transactional;
  */
 @Repository
 @Transactional
-@RequiredArgsConstructor
 public class PgRowSearchIndex implements RowSearchIndex {
 
   private final DSLContext dsl;
+
+  /**
+   * 색인 테이블(청크 단위) 행 수가 이 값 이하면 의미 검색을 HNSW 대신 **정확 스캔**으로 한다.
+   *
+   * <p>왜: 비슷한 문장이 대부분인 데이터셋(템플릿성 민원 등)에서는 HNSW 그래프가 튀는 행으로 잘 이어지지 않아, 정확
+   * 계산으로는 1위인 행이 상위 결과에서 통째로 빠졌다(2026-09-27 라이브 검증 — 1.2만 행에서 ef_search 400, m=32 도
+   * 놓침). 근사 검색의 이득은 규모가 클 때만 의미가 있으므로 작은 색인은 정확도를 택한다. 실측 비용: 1.2만 행 약
+   * 54ms, 10만 행 warm 약 160ms·cold 약 1s(1024차원).
+   */
+  private final long exactScanMaxRows;
+
+  /** HNSW 경로의 후보 폭. pgvector 기본 40 은 비슷한 벡터가 몰린 색인에서 재현율이 낮다. */
+  static final int HNSW_EF_SEARCH = 200;
+
+  public PgRowSearchIndex(
+      DSLContext dsl, @Value("${row-search.search.exact-scan-max-rows:100000}") long exactScanMaxRows) {
+    this.dsl = dsl;
+    this.exactScanMaxRows = exactScanMaxRows;
+  }
 
   /** HNSW 가 지원하는 최대 차원(pgvector 0.8). */
   public static final int MAX_DIM = 2000;
@@ -173,26 +191,60 @@ public class PgRowSearchIndex implements RowSearchIndex {
   public List<RowHit> semantic(IndexRef ref, float[] queryVec, CompiledFilter filter, int limit) {
     requireCurrentTenant(ref);
     String vector = VectorLiterals.toVectorLiteral(queryVec);
+    boolean exact = useExactScan(ref);
+    List<Object> params = new ArrayList<>();
+    String sql = semanticSql(ref, filter, exact, vector, limit, params);
+    return dsl.transactionResult(
+        cfg -> {
+          var tx = DSL.using(cfg);
+          if (!exact) {
+            // 필터로 후보가 걸러져도 limit 을 채우도록 HNSW 가 반복 탐색한다(pgvector 0.8+).
+            // relaxed_order 는 순서가 약간 어긋날 수 있어 아래에서 점수로 다시 정렬한다.
+            tx.execute("SET LOCAL hnsw.iterative_scan = relaxed_order");
+            tx.execute("SET LOCAL hnsw.ef_search = " + HNSW_EF_SEARCH);
+          }
+          List<RowHit> hits = new ArrayList<>(tx.fetch(sql, params.toArray()).map(PgRowSearchIndex::toHit));
+          hits.sort((a, b) -> Double.compare(b.score(), a.score()));
+          return hits;
+        });
+  }
+
+  /**
+   * 의미 검색 SQL. {@code exact} 이면 정렬식을 {@code (거리) + 0} 으로 감싸 HNSW 인덱스가 정렬을 맡지 못하게 한다 —
+   * {@code enable_indexscan} 을 끄면 필터 조인이 쓰는 원본 PK 인덱스까지 막히므로 정렬식만 비튼다.
+   * package-private — 실행 계획 단언 테스트가 쓴다.
+   */
+  String semanticSql(
+      IndexRef ref, CompiledFilter filter, boolean exact, String vector, int limit, List<Object> params) {
     StringBuilder sql =
         new StringBuilder("SELECT s.row_id, 1 - (s.embedding <=> ?::public.vector) AS score FROM ")
             .append(DataSchema.qualify(ref.indexTable()))
             .append(" s");
-    List<Object> params = new ArrayList<>();
     params.add(vector);
     appendFilter(ref, filter, sql, params, " WHERE s.embedding IS NOT NULL");
-    sql.append(" ORDER BY s.embedding <=> ?::public.vector LIMIT ?");
+    sql.append(exact ? " ORDER BY (s.embedding <=> ?::public.vector) + 0" : " ORDER BY s.embedding <=> ?::public.vector");
+    sql.append(" LIMIT ?");
     params.add(vector);
     params.add(limit);
-    return dsl.transactionResult(
-        cfg -> {
-          var tx = DSL.using(cfg);
-          // 필터로 후보가 걸러져도 limit 을 채우도록 HNSW 가 반복 탐색한다(pgvector 0.8+).
-          // relaxed_order 는 순서가 약간 어긋날 수 있어 아래에서 점수로 다시 정렬한다.
-          tx.execute("SET LOCAL hnsw.iterative_scan = relaxed_order");
-          List<RowHit> hits = new ArrayList<>(tx.fetch(sql.toString(), params.toArray()).map(PgRowSearchIndex::toHit));
-          hits.sort((a, b) -> Double.compare(b.score(), a.score()));
-          return hits;
-        });
+    return sql.toString();
+  }
+
+  /**
+   * 정확 스캔 여부. 행 수는 매 질의 {@code count(*)} 대신 통계({@code reltuples})로 본다. 한 번도 ANALYZE 되지
+   * 않아 통계가 없으면(-1) 임계값+1 행까지만 세는 상한 카운트로 판정한다 — 큰 색인에서도 비용이 임계값에 묶인다.
+   */
+  boolean useExactScan(IndexRef ref) {
+    String table = DataSchema.qualify(ref.indexTable());
+    Long estimate =
+        dsl.fetchOne("SELECT reltuples::bigint FROM pg_class WHERE oid = to_regclass(?)", table)
+            .get(0, Long.class);
+    long rows =
+        estimate != null && estimate >= 0
+            ? estimate
+            : dsl.fetchOne(
+                    "SELECT count(*) FROM (SELECT 1 FROM " + table + " LIMIT ?) x", exactScanMaxRows + 1)
+                .get(0, Long.class);
+    return rows <= exactScanMaxRows;
   }
 
   @Override
