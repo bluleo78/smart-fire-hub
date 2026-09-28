@@ -33,8 +33,11 @@ test.describe('임베딩 설정 탭', () => {
     });
     await openTab(page);
 
-    // 미설정 배너: 무엇이 멈췄는지 알린다.
+    // 미설정 배너: 무엇이 멈췄는지 알린다. 검색이 멈춘 상태라 가장 강한 주의(caution) 변형이다(스펙 §6.1).
     await expect(page.getByText('임베딩이 설정되지 않았습니다')).toBeVisible();
+    await expect(
+      page.locator('[data-variant="caution"]', { hasText: '임베딩이 설정되지 않았습니다' }),
+    ).toBeVisible();
     await expect(page.getByText(/문서 검색·데이터셋 탐색·행 검색이 동작하지 않습니다/)).toBeVisible();
     await expect(page.getByRole('button', { name: '전체 재임베딩 실행' })).toBeDisabled();
 
@@ -150,8 +153,112 @@ test.describe('임베딩 설정 탭', () => {
     await openTab(page);
     await page.getByLabel('모델').fill('nomic-embed-text');
     await page.getByRole('button', { name: '저장', exact: true }).click();
-    await expect(page.getByText('지원하지 않는 차원 768 (지원: 1024, 1536)')).toBeVisible();
+    // 저장 흐름의 probe 실패는 연결 테스트 결과 줄에도, 저장 실패 토스트에도 같은 서버 문구로 뜬다.
+    await expect(page.locator('p[role="status"]')).toHaveText('지원하지 않는 차원 768 (지원: 1024, 1536)');
+    await expect(
+      page.locator('[data-sonner-toast]', { hasText: '지원하지 않는 차원 768 (지원: 1024, 1536)' }),
+    ).toBeVisible();
     expect(save.requests).toHaveLength(0);
+  });
+
+  test('입력을 바꾸면 직전 연결 테스트 결과를 지운다', async ({ authenticatedPage: page }) => {
+    // 남겨 두면 "연결 성공 · 1024차원" 이 바뀐 모델·주소에 대한 결과처럼 보인다.
+    await setupEmbeddingMocks(page, { probe: { body: { dimension: 1024 } } });
+    await openTab(page);
+    await page.getByRole('button', { name: '연결 테스트' }).click();
+    await expect(page.getByText('연결 성공 · 1024차원')).toBeVisible();
+
+    await page.getByLabel('모델').fill('bge-m3-v2');
+    await expect(page.locator('p[role="status"]')).toHaveCount(0);
+  });
+
+  test('저장 PUT 이 400 이면 서버 문구를 토스트로 보여준다', async ({ authenticatedPage: page }) => {
+    // probe·영향도는 통과(영향 0 → 확인 창 없이 PUT)했는데 서버가 저장 시 다시 probe 해 거부한 경우.
+    const { save } = await setupEmbeddingMocks(page, {
+      save: { status: 400, body: { message: '임베딩 연결 테스트 실패: Ollama 임베딩 호출 실패: 503' } },
+    });
+    await openTab(page);
+    await page.getByLabel('모델').fill('bge-m3-v2');
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+
+    const req = await save.waitForRequest();
+    expect(req.payload).toMatchObject({ model: 'bge-m3-v2' });
+    await expect(
+      page.locator('[data-sonner-toast]', { hasText: '임베딩 연결 테스트 실패: Ollama 임베딩 호출 실패: 503' }),
+    ).toBeVisible();
+    await expect(page.getByText('임베딩 설정을 저장했습니다')).toHaveCount(0);
+  });
+
+  test('Base URL 을 바꾸면 키 안내가 바뀌고, 키 없이 저장하면 서버 400 문구를 보여준다', async ({
+    authenticatedPage: page,
+  }) => {
+    // 저장된 OpenAI 키는 저장된 Base URL 에만 쓸 수 있다(서버가 주소만 바꾼 저장의 키 재사용을 거부한다).
+    const { probe, save } = await setupEmbeddingMocks(page, {
+      config: createEmbeddingConfig({
+        provider: 'OPENAI',
+        model: 'text-embedding-3-small',
+        baseUrl: 'https://api.openai.com',
+        dimension: 1536,
+        apiKeyMasked: '****ab12',
+      }),
+      probe: { status: 400, body: { message: 'Base URL 을 바꾸면 API 키를 다시 입력해야 합니다' } },
+    });
+    await openTab(page);
+    await expect(page.getByText('저장된 키 ****ab12 — 비우면 유지됩니다')).toBeVisible();
+
+    // 끝 슬래시만 다른 주소는 서버 정규화상 같은 주소다 — 안내를 바꾸지 않는다.
+    await page.getByLabel('Base URL').fill('https://api.openai.com/');
+    await expect(page.getByText('저장된 키 ****ab12 — 비우면 유지됩니다')).toBeVisible();
+
+    await page.getByLabel('Base URL').fill('https://proxy.example.com');
+    await expect(page.getByText('Base URL 을 바꾸면 API 키를 다시 입력해야 합니다')).toBeVisible();
+    await expect(page.getByText('저장된 키 ****ab12 — 비우면 유지됩니다')).toHaveCount(0);
+
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+    const req = await probe.waitForRequest();
+    // 키 칸이 비었으므로 apiKey 는 보내지 않는다(서버가 저장된 키 재사용 여부를 판정한다).
+    expect(req.payload).toEqual({
+      provider: 'OPENAI',
+      model: 'text-embedding-3-small',
+      baseUrl: 'https://proxy.example.com',
+    });
+    await expect(page.locator('p[role="status"]')).toHaveText('Base URL 을 바꾸면 API 키를 다시 입력해야 합니다');
+    await expect(
+      page.locator('[data-sonner-toast]', { hasText: 'Base URL 을 바꾸면 API 키를 다시 입력해야 합니다' }),
+    ).toBeVisible();
+    expect(save.requests).toHaveLength(0);
+  });
+
+  test('확인 뒤 저장 PUT 이 도는 동안에는 연결 테스트도 누를 수 없다', async ({ authenticatedPage: page }) => {
+    await setupEmbeddingMocks(page, {
+      probe: { body: { dimension: 1536 } },
+      impact: { body: { chunks: 3, datasets: 0, rowSearchIndexes: 0 } },
+    });
+    // PUT 을 붙잡아 두는 라우트(나중 등록이 우선). release() 전까지 응답하지 않는다.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    await page.route(
+      (url) => url.pathname === '/api/v1/settings/embedding',
+      async (route) => {
+        if (route.request().method() !== 'PUT') return route.fallback();
+        await gate;
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(createEmbeddingConfig({ model: 'm2', dimension: 1536 })),
+        });
+      },
+    );
+    await openTab(page);
+    await page.getByLabel('모델').fill('m2');
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+    await page.getByRole('alertdialog').getByRole('button', { name: '저장하고 재임베딩' }).click();
+
+    await expect(page.getByRole('button', { name: '연결 테스트' })).toBeDisabled();
+    await expect(page.getByRole('button', { name: '저장', exact: true })).toBeDisabled();
+    release();
+    await expect(page.getByText('임베딩 설정을 저장했습니다')).toBeVisible();
+    await expect(page.getByRole('button', { name: '연결 테스트' })).toBeEnabled();
   });
 
   test('설정 탭 스트립에 유령 세로 스크롤바가 없다', async ({ authenticatedPage: page }) => {
@@ -246,6 +353,18 @@ test.describe('재임베딩 카드', () => {
     await expect(page.getByText('340 / 500')).toBeVisible();
     await expect(page.getByText('재임베딩 실패')).toBeVisible();
     await expect(page.getByText('OpenAI 임베딩 호출 실패: 401 Unauthorized')).toBeVisible();
+  });
+
+  test('잡 실패 사유가 비어 있으면 대체 안내 문구를 보여준다', async ({ authenticatedPage: page }) => {
+    await setupEmbeddingMocks(page, {
+      status: createEmbeddingStatus({
+        job: { status: 'FAILED', lastError: null, updatedAt: '2026-09-28T10:00:00Z' },
+      }),
+    });
+    await openTab(page);
+
+    await expect(page.getByText('재임베딩 실패')).toBeVisible();
+    await expect(page.getByText('재임베딩이 실패했습니다. 다시 시도하세요.')).toBeVisible();
   });
 
   test('전체 재임베딩 실행 시 대상 건수를 토스트로 알린다', { tag: '@smoke' }, async ({

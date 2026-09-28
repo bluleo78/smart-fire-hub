@@ -111,13 +111,21 @@ export default function EmbeddingSettingsTab({ state }: { state: EmbeddingSettin
     );
   }
 
+  // 저장된 키는 저장된 Base URL 에만 쓸 수 있다(서버가 주소가 바뀐 저장의 키 재사용을 거부한다). 비교는 서버
+  // 정규화(앞뒤 공백 제거 + UrlUtils.normalizeBaseUrl 의 끝 슬래시 1개 제거)와 맞춘다.
+  const normalizeUrl = (u: string) => u.trim().replace(/\/$/, '');
+  const baseUrlChanged =
+    !!config?.configured && normalizeUrl(form.baseUrl) !== normalizeUrl(config.baseUrl ?? '');
+
   const fromLabel =
     config?.configured && config.model ? `${config.model} (${config.dimension})` : '미설정';
 
   return (
     <div className="space-y-6">
+      {/* 미설정은 검색 기능이 멈춘 상태라 스펙 §6.1 은 오류 배너를 요구한다. InlineBanner 에는 오류 변형이 없어
+          (디자인 시스템 04 §7 — warning/info/success/caution) 가장 강한 주의인 caution 을 쓴다. */}
       {config && !config.configured && (
-        <InlineBanner variant="warning" title="임베딩이 설정되지 않았습니다">
+        <InlineBanner variant="caution" title="임베딩이 설정되지 않았습니다">
           문서 검색·데이터셋 탐색·행 검색이 동작하지 않습니다. 아래에서 임베딩 provider 를 설정하고
           저장하세요.
         </InlineBanner>
@@ -197,7 +205,9 @@ export default function EmbeddingSettingsTab({ state }: { state: EmbeddingSettin
                 />
                 {config?.apiKeyMasked ? (
                   <p className="text-sm text-muted-foreground">
-                    저장된 키 {config.apiKeyMasked} — 비우면 유지됩니다
+                    {baseUrlChanged
+                      ? 'Base URL 을 바꾸면 API 키를 다시 입력해야 합니다'
+                      : `저장된 키 ${config.apiKeyMasked} — 비우면 유지됩니다`}
                   </p>
                 ) : null}
               </div>
@@ -214,7 +224,8 @@ export default function EmbeddingSettingsTab({ state }: { state: EmbeddingSettin
           )}
 
           <div className="flex gap-2">
-            <Button variant="outline" onClick={handleTest} disabled={busy}>
+            {/* 확인 뒤 PUT 이 도는 동안(isSaving)에도 막는다 — 저장 중 다른 값으로 외부 호출을 겹치지 않게. */}
+            <Button variant="outline" onClick={handleTest} disabled={busy || isSaving}>
               <PlugZap className="h-4 w-4" />
               연결 테스트
             </Button>
@@ -269,7 +280,8 @@ export default function EmbeddingSettingsTab({ state }: { state: EmbeddingSettin
 
           {status?.job?.status === 'FAILED' && (
             <InlineBanner variant="warning" title="재임베딩 실패">
-              {status.job.lastError}
+              {/* 사유가 비어 있으면 빈 배너 대신 다음 행동을 안내한다. */}
+              {status.job.lastError || '재임베딩이 실패했습니다. 다시 시도하세요.'}
             </InlineBanner>
           )}
 

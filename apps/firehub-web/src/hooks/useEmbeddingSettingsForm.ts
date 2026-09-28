@@ -102,8 +102,11 @@ export function useEmbeddingSettingsForm(): EmbeddingSettingsFormState {
     setOriginal(seeded);
   }, [config]);
 
+  // 입력이 바뀌면 직전 연결 테스트 결과는 더 이상 이 폼 값의 결과가 아니다 — 지워서 "연결 성공 · N차원"이
+  // 바뀐 주소·모델에 대한 것처럼 보이지 않게 한다.
   const setField = useCallback((patch: Partial<EmbeddingForm>) => {
     setForm((f) => ({ ...f, ...patch }));
+    setTestState(null);
   }, []);
 
   const hasChanges =
@@ -151,7 +154,14 @@ export function useEmbeddingSettingsForm(): EmbeddingSettingsFormState {
     const request = buildRequest();
     setBusy(true);
     try {
-      const { data: probe } = await embeddingApi.testConfig(request);
+      const probe = await embeddingApi.testConfig(request).then(
+        (r) => r.data,
+        (e: unknown) => {
+          // 저장 흐름의 probe 실패도 연결 테스트 실패다 — 결과 줄을 실패로 바꿔 직전 "연결 성공"이 남지 않게 한다.
+          setTestState({ ok: false, message: extractApiError(e, '연결 테스트에 실패했습니다.') });
+          throw e;
+        },
+      );
       setTestState({ ok: true, dimension: probe.dimension });
       const { data: impact } = await embeddingApi.getImpact({
         model: request.model,

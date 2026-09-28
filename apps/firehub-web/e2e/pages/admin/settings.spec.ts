@@ -15,7 +15,7 @@ import { expect, test } from '../../fixtures/auth.fixture';
  *  - 이메일 탭(SMTP 6키, #712 워크스페이스 전용): 미설정(`[]`)이면 안내 + 빈 폼, 저장은 6키를 한 벌로
  *    `PUT /settings`, "설정 해제"는 확인 뒤 `DELETE /settings/smtp` 한 번. 비밀번호 마스크가 입력에
  *    들어가지 않고 빈 칸이면 키가 빠져 서버가 유지하는가, 필수 키 규칙이 지켜지는가가 이 탭 고유의 경계다.
- *  - 임베딩 탭이 전면 잠금이고 저장 경로가 화면에서 사라졌는가
+ *  - 임베딩 탭은 탭 존재만 본다 — 테넌트 전용 편집(#713)의 저장·연결 테스트·재임베딩 계약은 `embedding-settings.spec.ts` 가 맡는다.
  *
  * AdminRoute 통과를 위해 ADMIN 역할로 users/me 를 오버라이드한다.
  */
