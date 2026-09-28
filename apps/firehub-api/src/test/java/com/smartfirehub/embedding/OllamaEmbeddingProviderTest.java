@@ -71,4 +71,18 @@ class OllamaEmbeddingProviderTest {
     assertThatThrownBy(() -> provider(2).embed(List.of("a")))
         .isInstanceOf(EmbeddingException.class);
   }
+
+  @Test
+  void uncheckedDimensionAcceptsAnyLength() {
+    server.enqueue(
+        new MockResponse()
+            .setHeader("Content-Type", "application/json")
+            .setBody("{\"embeddings\":[[0.1,0.2,0.3]]}"));
+    OllamaEmbeddingProvider p =
+        new OllamaEmbeddingProvider(
+            WebClient.builder().baseUrl(server.url("/").toString()).build(),
+            "bge-m3",
+            EmbeddingProviderFactory.UNCHECKED_DIMENSION);
+    assertThat(p.embed(List.of("a")).get(0)).hasSize(3);
+  }
 }

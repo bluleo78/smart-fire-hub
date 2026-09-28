@@ -1,6 +1,8 @@
 package com.smartfirehub.embedding;
 
+import com.smartfirehub.embedding.config.EmbeddingConfig;
 import com.smartfirehub.settings.service.SettingsService;
+import java.util.List;
 import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
@@ -83,5 +85,37 @@ public class EmbeddingProviderFactory {
 
   public int dimension() {
     return DIMENSION;
+  }
+
+  /** probe 전용 "차원 미검증" 표식. provider 는 dimension <= 0 이면 응답 길이를 비교하지 않는다. */
+  public static final int UNCHECKED_DIMENSION = 0;
+
+  /**
+   * 설정 문서 하나로 provider 를 만든다. {@code expectedDimension} 은 응답 차원 검증 기준이다
+   * ({@link #UNCHECKED_DIMENSION} 이면 검증하지 않음 — probe 용).
+   */
+  public EmbeddingProvider create(EmbeddingConfig cfg, int expectedDimension) {
+    return switch (cfg.provider()) {
+      case OLLAMA ->
+          new OllamaEmbeddingProvider(
+              embeddingWebClient(cfg.baseUrl()).build(), cfg.model(), expectedDimension);
+      case OPENAI -> {
+        // OpenAI 는 Bearer 인증 필수 — 키 없이 호출하면 공급자 401 보다 먼저 명확히 멈춘다.
+        if (cfg.apiKey() == null || cfg.apiKey().isBlank()) {
+          throw new EmbeddingException("OpenAI 임베딩 provider 에는 API 키가 필요합니다");
+        }
+        yield new OpenAiEmbeddingProvider(
+            embeddingWebClient(cfg.baseUrl())
+                .defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer " + cfg.apiKey())
+                .build(),
+            cfg.model(),
+            expectedDimension);
+      }
+    };
+  }
+
+  /** 실제 임베딩 1건을 호출해 차원을 잰다(저장 전 검증·연결 테스트). 실패는 EmbeddingException. */
+  public int probeDimension(EmbeddingConfig cfg) {
+    return create(cfg, UNCHECKED_DIMENSION).embed(List.of("probe")).get(0).length;
   }
 }

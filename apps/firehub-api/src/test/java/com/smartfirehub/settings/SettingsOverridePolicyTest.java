@@ -48,6 +48,13 @@ class SettingsOverridePolicyTest {
   }
 
   @Test
+  void 임베딩_설정_문서는_전용_서비스_소유다() {
+    // embedding.config 는 비밀이 하위 필드에 있는 JSON 이라 범용 경로(키·값 문자열)로 읽거나 쓰면 안 된다.
+    assertThat(SettingsOverridePolicy.planeOf("embedding.config")).isEqualTo(Plane.EXTERNAL_OWNER);
+    assertThat(SettingsOverridePolicy.isTenantOverridable("embedding.config")).isFalse();
+  }
+
+  @Test
   void 평면_분류() {
     // ai.credential 은 AiCredentialService 소유, 옛 ai.* 키도 플랫폼 행을 읽지 않는다.
     assertThat(SettingsOverridePolicy.planeOf("ai.credential")).isEqualTo(Plane.EXTERNAL_OWNER);

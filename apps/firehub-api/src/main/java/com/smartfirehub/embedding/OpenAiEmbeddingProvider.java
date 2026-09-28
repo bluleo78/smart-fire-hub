@@ -8,9 +8,8 @@ import org.springframework.web.reactive.function.client.WebClient;
 /**
  * OpenAI 임베딩 API(/v1/embeddings)를 호출하는 provider.
  *
- * <p>WebClient 에는 팩토리에서 baseUrl 과 {@code Authorization: Bearer <api_key>} 헤더가 이미 주입돼 있다. pgvector
- * 컬럼(vector(1024))과 차원을 맞추기 위해 요청 body 에 {@code dimensions} 를 명시해 축소를 강제한다 —
- * text-embedding-3-* 계열만 dimensions 를 지원하며, ada-002(1536 고정)는 사용할 수 없다.
+ * <p>WebClient 에는 팩토리에서 baseUrl 과 {@code Authorization: Bearer <api_key>} 헤더가 이미 주입돼 있다.
+ * native 차원 그대로 받는다(#713) — 차원은 저장 시 probe 로 측정해 설정 문서에 기록한다.
  */
 public class OpenAiEmbeddingProvider implements EmbeddingProvider {
   private final WebClient webClient;
@@ -27,8 +26,9 @@ public class OpenAiEmbeddingProvider implements EmbeddingProvider {
   @Override
   @SuppressWarnings("unchecked")
   public List<float[]> embed(List<String> texts) {
-    // dimensions 를 명시해 응답 벡터를 pgvector 컬럼 차원(1024)으로 축소 요청한다.
-    Map<String, Object> body = Map.of("model", model, "input", texts, "dimensions", dimension);
+    // dimensions 를 보내지 않는다 — native 차원(3-small=1536, ada-002=1536)을 그대로 받는다(#713).
+    // 기대 차원은 저장 시 probe 로 측정해 설정 문서에 기록한 값이다.
+    Map<String, Object> body = Map.of("model", model, "input", texts);
     Map<String, Object> resp;
     try {
       resp =
@@ -70,7 +70,8 @@ public class OpenAiEmbeddingProvider implements EmbeddingProvider {
 
   /** 응답 한 행을 float[] 로 변환하며 차원 일치를 검증한다 (pgvector 컬럼과 불일치 시 조기 실패). */
   private float[] toFloatArray(List<Number> row) {
-    if (row == null || row.size() != dimension) {
+    // dimension <= 0 은 probe(미검증) 모드 — 차원을 재러 부른 것이라 길이를 비교하지 않는다.
+    if (row == null || (dimension > 0 && row.size() != dimension)) {
       throw new EmbeddingException(
           "임베딩 dimension 불일치: expected="
               + dimension

@@ -54,13 +54,24 @@ class OpenAiEmbeddingProviderTest {
     assertThat(out.get(0)).containsExactly(0.1f, 0.2f);
     assertThat(out.get(1)).containsExactly(0.3f, 0.4f);
 
-    // 요청 검증: /v1/embeddings, Bearer 헤더, dimensions 축소 파라미터 포함
+    // 요청 검증: /v1/embeddings, Bearer 헤더, dimensions 파라미터는 보내지 않는다(native 차원, #713)
     RecordedRequest req = server.takeRequest();
     assertThat(req.getPath()).isEqualTo("/v1/embeddings");
     assertThat(req.getHeader(HttpHeaders.AUTHORIZATION)).isEqualTo("Bearer sk-test");
     String body = req.getBody().readUtf8();
-    assertThat(body).contains("\"dimensions\":2");
+    assertThat(body).doesNotContain("dimensions");
     assertThat(body).contains("text-embedding-3-small");
+  }
+
+  @Test
+  void uncheckedDimensionAcceptsAnyLength() {
+    // probe 는 차원을 모르는 채 부른다 — UNCHECKED_DIMENSION(0) 이면 길이 검증을 건너뛴다.
+    server.enqueue(
+        new MockResponse()
+            .setHeader("Content-Type", "application/json")
+            .setBody("{\"data\":[{\"index\":0,\"embedding\":[0.1,0.2,0.3]}]}"));
+    assertThat(provider(EmbeddingProviderFactory.UNCHECKED_DIMENSION).embed(List.of("a")).get(0))
+        .hasSize(3);
   }
 
   @Test

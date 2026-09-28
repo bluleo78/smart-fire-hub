@@ -26,8 +26,8 @@ public final class SettingsOverridePolicy {
      */
     TENANT_ONLY,
     /**
-     * 전용 서비스가 소유하는 값({@link AiCredentialSlot#ownedKeys()} → {@link AiCredentialService}). 범용
-     * 경로 금지.
+     * 전용 서비스가 소유하는 값({@link AiCredentialSlot#ownedKeys()} → {@link AiCredentialService}) 및
+     * {@code embedding.config}({@code EmbeddingConfigService}). 범용 경로 금지.
      */
     EXTERNAL_OWNER,
     /** 분류되지 않은 키 — 플랫폼 행이 있으면 읽기만 되고, 어느 평면에서도 쓸 수 없다. */
@@ -51,6 +51,13 @@ public final class SettingsOverridePolicy {
    * 조회({@link #mayHavePlatformRows})·플랫폼 쓰기·플랫폼 목록에서 동시에 빼낸다.
    */
   private static final Set<String> TENANT_NAMESPACES = Set.of("ai.", "smtp.");
+
+  /**
+   * 테넌트 임베딩 설정 문서(#713) — {@code EmbeddingConfigService} 전용. 비밀이 하위 필드에 있어 범용 경로
+   * 금지. 값은 {@code EmbeddingConfigService.KEY} 와 같지만, settings 패키지가 embedding 패키지에
+   * 의존하지 않도록 리터럴로 둔다.
+   */
+  private static final String EMBEDDING_CONFIG_KEY = "embedding.config";
 
   /** 플랫폼 잠금 키. 모델 변경이 벡터 차원을 바꾸므로 Phase B 가 차원별 컬럼을 넣을 때까지 플랫폼이 갖는다. */
   private static final Set<String> PLATFORM_ONLY =
@@ -87,6 +94,8 @@ public final class SettingsOverridePolicy {
     // 자격증명 슬롯 소유 키(채팅·분류 자격증명 + 분류 모델, #707) — 분류 모델이 아래 "그 밖의 ai.*"
     // 규칙에 떨어지면 범용 경로가 묶음 한쪽만 바꿀 수 있게 된다.
     if (AiCredentialSlot.ownedKeys().contains(key)) return Plane.EXTERNAL_OWNER;
+    // 테넌트 임베딩 설정 문서(#713) — EmbeddingConfigService 전용. 비밀이 하위 필드에 있어 범용 경로 금지.
+    if (EMBEDDING_CONFIG_KEY.equals(key)) return Plane.EXTERNAL_OWNER;
     if (PLATFORM_ONLY.contains(key)) return Plane.PLATFORM_ONLY;
     if (isInTenantNamespace(key)) return Plane.TENANT_ONLY;
     return Plane.UNKNOWN;

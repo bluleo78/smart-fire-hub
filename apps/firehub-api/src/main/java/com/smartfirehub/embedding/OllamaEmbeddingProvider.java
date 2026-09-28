@@ -50,7 +50,8 @@ public class OllamaEmbeddingProvider implements EmbeddingProvider {
 
   /** 응답 한 행을 float[] 로 변환하며 차원 일치를 검증한다 (pgvector 컬럼과 불일치 시 조기 실패). */
   private float[] toFloatArray(List<Number> row) {
-    if (row.size() != dimension) {
+    // dimension <= 0 은 probe(미검증) 모드 — 차원을 재러 부른 것이라 길이를 비교하지 않는다.
+    if (dimension > 0 && row.size() != dimension) {
       throw new EmbeddingException(
           "임베딩 dimension 불일치: expected=" + dimension + " actual=" + row.size());
     }

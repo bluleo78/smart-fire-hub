@@ -36,6 +36,8 @@ app:
       password: pipeline_exec_pwd
   executor:
     enabled: false  # local dev: direct execution (no executor service needed)
+  embedding:
+    ollama-allowed-base-urls: http://host.docker.internal:11434,http://localhost:11434
 
 agent:
   url: http://127.0.0.1:5020
