@@ -1,13 +1,6 @@
-import { Boxes, PlugZap, RefreshCw, Save } from 'lucide-react';
-import { useEffect, useState } from 'react';
-import { toast } from 'sonner';
+import { Boxes, PlugZap, RefreshCw, RotateCcw, Save } from 'lucide-react';
 
-import {
-  embeddingApi,
-  type EmbeddingConfigRequest,
-  type EmbeddingImpact,
-  type EmbeddingProviderType,
-} from '../../api/embedding';
+import type { EmbeddingProviderType } from '../../api/embedding';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -32,34 +25,13 @@ import {
   SelectValue,
 } from '../../components/ui/select';
 import { Separator } from '../../components/ui/separator';
-import { useEmbeddingStatus, useReindexAllEmbeddings } from '../../hooks/queries/useEmbedding';
-import { useEmbeddingConfig, useSaveEmbeddingConfig } from '../../hooks/queries/useEmbeddingSettings';
-import { extractApiError } from '../../lib/api-error';
-
-interface EmbeddingForm {
-  provider: EmbeddingProviderType;
-  model: string;
-  baseUrl: string;
-  apiKey: string;
-}
-
-// 미설정 테넌트의 시작 폼. 기본값을 "적용 중인 값"처럼 보이지 않게 모델·주소는 비워 둔다.
-const EMPTY: EmbeddingForm = { provider: 'OLLAMA', model: '', baseUrl: '', apiKey: '' };
+import type { EmbeddingSettingsFormState } from '../../hooks/useEmbeddingSettingsForm';
 
 // VOYAGE 는 팩토리가 거부하던 죽은 선택지라 제거했다(#713).
 const PROVIDER_OPTIONS: { value: EmbeddingProviderType; label: string }[] = [
   { value: 'OLLAMA', label: 'Ollama' },
   { value: 'OPENAI', label: 'OpenAI' },
 ];
-
-type TestState = { ok: true; dimension: number } | { ok: false; message: string } | null;
-
-/** 저장 확인 창에 필요한 값 — 클라이언트가 먼저 잰 차원과 영향도(서버 PUT 은 다시 probe 한다). */
-interface PendingSave {
-  request: EmbeddingConfigRequest;
-  dimension: number;
-  impact: EmbeddingImpact;
-}
 
 // 재임베딩 진행 현황 한 줄(라벨 + 카운트 + 진행 바)을 렌더링한다.
 // shadcn Progress 컴포넌트가 없어 muted/primary div 바로 직접 구성한다.
@@ -90,89 +62,54 @@ function ReindexProgressRow({
 }
 
 /**
- * 임베딩 설정 탭(#713) — 테넌트가 provider·모델·Base URL·키를 직접 저장한다(플랫폼 값·폴백 없음).
+ * 임베딩 설정 탭(#713) — <b>표현 전용</b> 컴포넌트다. 폼 상태는 `useEmbeddingSettingsForm` 이 갖고
+ * 그 인스턴스는 `SettingsPage` 가 소유한다(탭 전환에도 편집이 살아남고, 이탈 가드에 dirty 를
+ * 보고할 수 있다 — SmtpSettingsTab 과 같은 패턴, 리뷰 fix round 1).
  *
  * 저장 흐름: 연결 테스트로 차원 측정 → 그 (모델, 차원)의 재임베딩 대상 수 조회 → 0 보다 크면 확인 창 → PUT.
  * 서버 PUT 은 클라이언트 측정값을 믿지 않고 다시 probe 하며, 판정식이 참이면 재임베딩 잡을 스스로 투입한다.
  */
-export default function EmbeddingSettingsTab() {
-  const { data: config, isLoading } = useEmbeddingConfig();
-  const save = useSaveEmbeddingConfig();
-  const { data: status } = useEmbeddingStatus();
-  const reindex = useReindexAllEmbeddings();
-
-  const [form, setForm] = useState<EmbeddingForm>(EMPTY);
-  const [testState, setTestState] = useState<TestState>(null);
-  const [pending, setPending] = useState<PendingSave | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  // 서버 설정 → 폼. 키는 값으로 내려오지 않으므로 항상 빈 칸에서 시작한다(비우면 유지).
-  useEffect(() => {
-    if (!config) return;
-    setForm(
-      config.configured
-        ? {
-            provider: config.provider ?? 'OLLAMA',
-            model: config.model ?? '',
-            baseUrl: config.baseUrl ?? '',
-            apiKey: '',
-          }
-        : EMPTY,
-    );
-  }, [config]);
+export default function EmbeddingSettingsTab({ state }: { state: EmbeddingSettingsFormState }) {
+  const {
+    isLoading,
+    isError,
+    retryLoad,
+    config,
+    status,
+    form,
+    testState,
+    pending,
+    busy,
+    isSaving,
+    isReindexing,
+    setField,
+    handleTest,
+    handleSave,
+    confirmPendingSave,
+    cancelPendingSave,
+    handleReindexAll,
+  } = state;
 
   if (isLoading) {
     return <div className="py-8 text-center text-muted-foreground text-sm">불러오는 중...</div>;
   }
 
-  // 빈 키는 보내지 않는다 — 서버 계약상 "생략 = 기존 키 유지"다.
-  const buildRequest = (): EmbeddingConfigRequest => ({
-    provider: form.provider,
-    model: form.model.trim(),
-    baseUrl: form.baseUrl.trim(),
-    ...(form.provider === 'OPENAI' && form.apiKey ? { apiKey: form.apiKey } : {}),
-  });
-
-  const handleTest = async () => {
-    setBusy(true);
-    try {
-      const { data } = await embeddingApi.testConfig(buildRequest());
-      setTestState({ ok: true, dimension: data.dimension });
-    } catch (e) {
-      setTestState({ ok: false, message: extractApiError(e, '연결 테스트에 실패했습니다.') });
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const commitSave = async (request: EmbeddingConfigRequest) => {
-    await save.mutateAsync(request);
-    toast.success('임베딩 설정을 저장했습니다');
-    setPending(null);
-    setForm((f) => ({ ...f, apiKey: '' }));
-  };
-
-  const handleSave = async () => {
-    const request = buildRequest();
-    setBusy(true);
-    try {
-      const { data: probe } = await embeddingApi.testConfig(request);
-      setTestState({ ok: true, dimension: probe.dimension });
-      const { data: impact } = await embeddingApi.getImpact({
-        model: request.model,
-        dimension: probe.dimension,
-      });
-      if (impact.chunks + impact.datasets + impact.rowSearchIndexes > 0) {
-        setPending({ request, dimension: probe.dimension, impact });
-      } else {
-        await commitSave(request);
-      }
-    } catch (e) {
-      toast.error(extractApiError(e, '임베딩 설정을 저장하지 못했습니다.'));
-    } finally {
-      setBusy(false);
-    }
-  };
+  // 조회 실패는 종단 상태다. 편집 가능한 빈 폼을 그리면 "미설정"으로 오인해 저장(연결 테스트도
+  // 지금 폼 값으로 외부를 호출한다)으로 기존 설정을 덮어쓸 수 있으므로 원인과 재시도만 보여준다
+  // (SmtpSettingsTab 과 같은 패턴).
+  if (isError) {
+    return (
+      <div className="space-y-4 py-8 text-center">
+        <InlineBanner variant="warning" title="임베딩 설정을 불러오지 못했습니다" className="text-left">
+          지금 저장된 값을 확인할 수 없어 편집을 열지 않습니다.
+        </InlineBanner>
+        <Button variant="outline" onClick={retryLoad}>
+          <RotateCcw className="h-4 w-4" />
+          다시 시도
+        </Button>
+      </div>
+    );
+  }
 
   const fromLabel =
     config?.configured && config.model ? `${config.model} (${config.dimension})` : '미설정';
@@ -198,7 +135,7 @@ export default function EmbeddingSettingsTab() {
             <Label htmlFor="embedding-provider">Provider</Label>
             <Select
               value={form.provider}
-              onValueChange={(v) => setForm((f) => ({ ...f, provider: v as EmbeddingProviderType }))}
+              onValueChange={(v) => setField({ provider: v as EmbeddingProviderType })}
             >
               <SelectTrigger id="embedding-provider" className="w-full max-w-md">
                 <SelectValue placeholder="Provider를 선택하세요" />
@@ -221,7 +158,7 @@ export default function EmbeddingSettingsTab() {
               id="embedding-model"
               className="max-w-md"
               value={form.model}
-              onChange={(e) => setForm((f) => ({ ...f, model: e.target.value }))}
+              onChange={(e) => setField({ model: e.target.value })}
               placeholder={form.provider === 'OPENAI' ? 'text-embedding-3-small' : 'bge-m3'}
             />
             <p className="text-sm text-muted-foreground">
@@ -237,7 +174,7 @@ export default function EmbeddingSettingsTab() {
               id="embedding-base-url"
               className="max-w-md"
               value={form.baseUrl}
-              onChange={(e) => setForm((f) => ({ ...f, baseUrl: e.target.value }))}
+              onChange={(e) => setField({ baseUrl: e.target.value })}
               placeholder={
                 form.provider === 'OPENAI' ? 'https://api.openai.com' : 'http://host.docker.internal:11434'
               }
@@ -255,7 +192,7 @@ export default function EmbeddingSettingsTab() {
                   autoComplete="off"
                   className="max-w-md"
                   value={form.apiKey}
-                  onChange={(e) => setForm((f) => ({ ...f, apiKey: e.target.value }))}
+                  onChange={(e) => setField({ apiKey: e.target.value })}
                   placeholder="OpenAI API 키"
                 />
                 {config?.apiKeyMasked ? (
@@ -281,7 +218,7 @@ export default function EmbeddingSettingsTab() {
               <PlugZap className="h-4 w-4" />
               연결 테스트
             </Button>
-            <Button onClick={handleSave} disabled={busy || save.isPending}>
+            <Button onClick={handleSave} disabled={busy || isSaving}>
               <Save className="h-4 w-4" />
               저장
             </Button>
@@ -290,7 +227,7 @@ export default function EmbeddingSettingsTab() {
       </Card>
 
       {/* 재임베딩 확인 창 — 영향도가 0 보다 클 때만. 외부 API 비용과 검색 공백을 먼저 알린다. */}
-      <AlertDialog open={pending !== null} onOpenChange={(open) => !open && setPending(null)}>
+      <AlertDialog open={pending !== null} onOpenChange={(open) => !open && cancelPendingSave()}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>임베딩 모델 변경</AlertDialogTitle>
@@ -309,16 +246,7 @@ export default function EmbeddingSettingsTab() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>취소</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => {
-                if (!pending) return;
-                commitSave(pending.request).catch((e) =>
-                  toast.error(extractApiError(e, '임베딩 설정을 저장하지 못했습니다.')),
-                );
-              }}
-            >
-              저장하고 재임베딩
-            </AlertDialogAction>
+            <AlertDialogAction onClick={confirmPendingSave}>저장하고 재임베딩</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -362,9 +290,9 @@ export default function EmbeddingSettingsTab() {
 
           <AlertDialog>
             <AlertDialogTrigger asChild>
-              <Button variant="outline" disabled={reindex.isPending || !status?.configured}>
+              <Button variant="outline" disabled={isReindexing || !status?.configured}>
                 <RefreshCw className="h-4 w-4" />
-                {reindex.isPending ? '시작 중...' : '전체 재임베딩 실행'}
+                {isReindexing ? '시작 중...' : '전체 재임베딩 실행'}
               </Button>
             </AlertDialogTrigger>
             <AlertDialogContent>
@@ -377,7 +305,7 @@ export default function EmbeddingSettingsTab() {
               </AlertDialogHeader>
               <AlertDialogFooter>
                 <AlertDialogCancel>취소</AlertDialogCancel>
-                <AlertDialogAction onClick={() => reindex.mutate()}>실행</AlertDialogAction>
+                <AlertDialogAction onClick={handleReindexAll}>실행</AlertDialogAction>
               </AlertDialogFooter>
             </AlertDialogContent>
           </AlertDialog>

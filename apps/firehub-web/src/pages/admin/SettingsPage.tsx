@@ -31,6 +31,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/ta
 import { Textarea } from '../../components/ui/textarea';
 import { useAiClassifyForm } from '../../hooks/useAiClassifyForm';
 import { useAiCredentialForm } from '../../hooks/useAiCredentialForm';
+import { useEmbeddingSettingsForm } from '../../hooks/useEmbeddingSettingsForm';
 import { useSettingsOverrideForm } from '../../hooks/useSettingsOverrideForm';
 import { useSmtpSettingsForm } from '../../hooks/useSmtpSettingsForm';
 import {
@@ -314,6 +315,12 @@ export default function SettingsPage() {
    */
   const smtp = useSmtpSettingsForm();
 
+  /**
+   * 임베딩 탭도 같은 이유로 페이지가 소유한다(#713 리뷰 fix round 1) — 편집 가능한 폼이 된
+   * 뒤에도 이 훅이 빠져 있어 탭 전환 시 입력한 모델·키가 경고 없이 사라지고 있었다.
+   */
+  const embedding = useEmbeddingSettingsForm();
+
   // 탭별 dirty 상태를 합산해 페이지 전체 dirty 여부를 결정한다(이슈 #86). AI 탭은 이제 두 독립
   // 자원(동작 설정 6키 + 자격증명)을 갖고 있어 `cred.hasUnsavedInput` 도 함께 보고해야 한다 —
   // 빠뜨리면 자격증명만 입력하고 떠나는 이탈이 조용히 통과한다.
@@ -335,6 +342,12 @@ export default function SettingsPage() {
   useEffect(() => {
     classifyReporter(classifyDirty);
   }, [classifyReporter, classifyDirty]);
+  // 임베딩 탭도 같은 방식으로 보고한다.
+  const embeddingReporter = makeReporter('embedding');
+  const embeddingDirty = embedding.hasChanges;
+  useEffect(() => {
+    embeddingReporter(embeddingDirty);
+  }, [embeddingReporter, embeddingDirty]);
   const { dialog: unsavedDialog } = useUnsavedChangesGuard(isAnyDirty);
 
   if (behaviorLoading || cred.isLoading) {
@@ -626,11 +639,10 @@ export default function SettingsPage() {
         <TabsContent value="email" className="mt-6">
           <SmtpSettingsTab state={smtp} />
         </TabsContent>
-        {/* 임베딩 탭 — 자체 폼 상태를 갖고 저장 흐름을 스스로 처리한다(#713). 다른 탭과 달리
-            페이지에 dirty 를 보고하지 않는다 — 이탈 경고가 필요해지면 이 탭도 SmtpSettingsTab 처럼
-            상태를 끌어올려야 한다. */}
+        {/* 임베딩 탭 — 폼 상태는 페이지가 소유한다(탭 전환에도 편집이 살아남고 이탈 가드에 dirty 를
+            보고한다, #713 리뷰 fix round 1) */}
         <TabsContent value="embedding" className="mt-6">
-          <EmbeddingSettingsTab />
+          <EmbeddingSettingsTab state={embedding} />
         </TabsContent>
       </Tabs>
 

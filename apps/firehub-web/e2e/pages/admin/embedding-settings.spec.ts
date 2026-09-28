@@ -162,6 +162,67 @@ test.describe('임베딩 설정 탭', () => {
     await expect(tablist).toBeVisible();
     expect(await tablist.evaluate((el) => getComputedStyle(el).overflowY)).toBe('hidden');
   });
+
+  test('설정 조회가 실패하면 편집 가능한 빈 폼 대신 재시도 화면이 뜬다', async ({ authenticatedPage: page }) => {
+    // 빈 폼을 그리면 "미설정"과 구별되지 않고, 거기서 저장·연결 테스트를 누르면 기존 설정(키 포함)을
+    // 덮어쓸 수 있다(리뷰 fix round 1, Important 1). SmtpSettingsTab 의 재시도 화면과 같은 패턴.
+    await setupEmbeddingMocks(page);
+    let failing = true;
+    // setupEmbeddingMocks 가 먼저 등록한 GET 라우트보다 나중에 등록해 우선 적용하고, failing 이
+    // 풀리면 route.fallback() 으로 원래(200) 핸들러에 넘긴다.
+    await page.route(
+      (url) => url.pathname === '/api/v1/settings/embedding',
+      (route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        if (failing) {
+          return route.fulfill({
+            status: 500,
+            contentType: 'application/json',
+            body: JSON.stringify({ message: '임베딩 설정 조회 실패' }),
+          });
+        }
+        return route.fallback();
+      },
+    );
+
+    await page.goto('/admin/settings');
+    await page.getByRole('tab', { name: '임베딩' }).click();
+
+    await expect(page.getByText('임베딩 설정을 불러오지 못했습니다')).toBeVisible();
+    // 저장 폼(저장·연결 테스트) 자체가 없어야 한다 — 비활성이 아니라 부재.
+    await expect(page.getByLabel('모델')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '저장', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '연결 테스트' })).toHaveCount(0);
+
+    failing = false;
+    await page.getByRole('button', { name: '다시 시도' }).click();
+    await expect(page.getByLabel('모델')).toHaveValue('bge-m3');
+    await expect(page.getByRole('button', { name: '저장', exact: true })).toBeVisible();
+  });
+
+  test('임베딩 탭의 미저장 편집은 다른 탭으로 옮긴 뒤에도 이탈 가드에 잡힌다', async ({
+    authenticatedPage: page,
+  }) => {
+    // 리뷰 fix round 1, Important 2 — 폼 상태가 탭 자신 소유였을 때는 탭을 바꾸는 순간 입력이
+    // 경고 없이 사라졌다. 이제 SettingsPage 가 상태를 갖고 이탈 가드에 dirty 를 보고한다
+    // (이메일 탭의 동일 회귀 테스트, settings.spec.ts:810 부근 과 같은 패턴).
+    await setupEmbeddingMocks(page);
+    await openTab(page);
+    await page.getByLabel('모델').fill('bge-m3-v2');
+
+    await page.getByRole('tab', { name: 'AI 에이전트' }).click();
+    await expect(page.locator('#ai-max-turns')).toBeVisible();
+    // 임베딩 탭으로 돌아오면 입력이 살아 있다 — 탭 언마운트로 유실되지 않았다는 직접 증거.
+    await page.getByRole('tab', { name: '임베딩' }).click();
+    await expect(page.getByLabel('모델')).toHaveValue('bge-m3-v2');
+
+    await page.getByRole('navigation').getByRole('link', { name: '홈' }).click();
+    await expect(page.getByRole('alertdialog')).toBeVisible();
+    await expect(
+      page.getByText('저장하지 않은 변경사항이 있습니다. 이탈하시겠습니까?'),
+    ).toBeVisible();
+    expect(new URL(page.url()).pathname).toBe('/admin/settings');
+  });
 });
 
 test.describe('재임베딩 카드', () => {
