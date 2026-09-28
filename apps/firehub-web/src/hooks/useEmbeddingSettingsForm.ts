@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import {
@@ -82,8 +82,14 @@ export function useEmbeddingSettingsForm(): EmbeddingSettingsFormState {
   const [busy, setBusy] = useState(false);
 
   // 서버 설정 → 폼. 키는 값으로 내려오지 않으므로 항상 빈 칸에서 시작한다(비우면 유지).
+  // 최초 성공 로드 때 한 번만 시드한다(useSmtpSettingsForm 의 didInitialLoad 와 같은 규칙) — config 가 바뀔
+  // 때마다 시드하면 백그라운드 재조회(창 포커스·무효화)가 편집 중인 입력과 dirty 를 조용히 덮어쓴다. 저장 성공
+  // 뒤의 폼·기준값은 commitSave 가 직접 갱신한다. 데이터가 있을 때만 표식을 세우므로 조회 실패 → 재시도로
+  // 처음 성공한 로드도 시드된다.
+  const didInitialLoad = useRef(false);
   useEffect(() => {
-    if (!config) return;
+    if (!config || didInitialLoad.current) return;
+    didInitialLoad.current = true;
     const seeded: EmbeddingForm = config.configured
       ? {
           provider: config.provider ?? 'OLLAMA',
