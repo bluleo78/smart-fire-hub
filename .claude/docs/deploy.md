@@ -180,7 +180,8 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
   **실데이터 규모에서 HNSW 인덱스가 실제로 쓰이는지 EXPLAIN 으로 확인한다** — 테스트는 소수 행이라
   `EmbeddingVectorTablesMigrationTest`/검색 테스트가 `enable_sort=off` 로 HNSW 를 강제했을 뿐, 운영 규모에서
   플래너가 실제로 HNSW 를 고르는지는 이번 계획에서 검증하지 못했다. `app_tenant` 롤로(RLS 를 실제로 태우기
-  위해 `app` 으로 하지 않는다) 실 테넌트 컨텍스트에서, 실제 검색 SQL(`DocumentChunkRepository.semanticSql`)과
+  위해 `app` 으로 하지 않는다 — 전 테넌트 합계를 보는 사전 점검은 RLS 를 우회하는 `app`, 운영 검색과 같은
+  RLS 조건이 붙은 계획을 봐야 하는 이 EXPLAIN 은 `app_tenant` 라 롤이 서로 반대다) 실 테넌트 컨텍스트에서, 실제 검색 SQL(`DocumentChunkRepository.semanticSql`)과
   같은 모양으로 확인한다 — 벡터 1024차원 리터럴은 손으로 못 치므로 psql `\gset` 로 실제 행에서 뽑아 쓴다:
   ```sql
   BEGIN;
