@@ -12,7 +12,6 @@ const LoginPage = lazy(() => import('./pages/LoginPage'));
 const TenantListPage = lazy(() => import('./pages/TenantListPage'));
 const TenantCreatePage = lazy(() => import('./pages/TenantCreatePage'));
 const TenantDetailPage = lazy(() => import('./pages/TenantDetailPage'));
-const SettingsPage = lazy(() => import('./pages/SettingsPage'));
 
 function App() {
   return (
@@ -60,13 +59,8 @@ function App() {
                 >
                   <Route path="/tenants/new" element={<TenantCreatePage />} />
                 </Route>
-                <Route
-                  element={
-                    <ProtectedRoute requiredPermission="platform:settings:read" deniedTitle="플랫폼 설정" />
-                  }
-                >
-                  <Route path="/settings" element={<SettingsPage />} />
-                </Route>
+                {/* 알 수 없는 경로(옛 /settings 포함, #713 에서 플랫폼 설정 제거)는 테넌트 목록으로 보낸다. */}
+                <Route path="*" element={<Navigate to="/tenants" replace />} />
               </Route>
             </Route>
           </Routes>

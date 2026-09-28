@@ -31,9 +31,8 @@ export function isNotFound(error: unknown): boolean {
 
 /**
  * axios 400 에러에서 서버 메시지를 뽑는다. 서버가 프런트가 재현할 수 없는 교차검증을
- * 하는 경우(예: "존재하지 않는 사용자입니다", "OpenAI 임베딩 provider 에는 API 키가
- * 필요합니다") 그 문구를 그대로 실어야 하는데, 이 추출 로직이 `SettingsPage`/
- * `TenantCreatePage` 두 화면에 축어적으로 복제돼 있었다 — `isForbidden`/`isNotFound` 와
+ * 하는 경우(예: "존재하지 않는 사용자입니다") 그 문구를 그대로 실어야 하는데, 이 추출
+ * 로직이 `TenantCreatePage` 등 화면에 축어적으로 복제돼 있었다 — `isForbidden`/`isNotFound` 와
  * 같은 층으로 옮긴다. 400 이 아니거나 메시지가 없으면 `undefined`.
  */
 export function serverMessage(error: unknown): string | undefined {

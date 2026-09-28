@@ -17,7 +17,7 @@ import { cn } from '@/lib/utils';
 /**
  * 운영자 콘솔 셸 — 사이드바가 아니라 상단 바다(D-5).
  *
- * 목적지가 2개뿐이라 240px 사이드바는 링크 두 개와 여백이 되고, 그 하단의 테넌트 스위처는
+ * 목적지가 1개뿐이라 240px 사이드바는 링크 하나와 여백이 되고, 그 하단의 테넌트 스위처는
  * 운영자 토큰에 테넌트가 없어 **구조적으로 렌더될 수 없다**. 두 앱을 나란히 열었을 때
  * 셸 형태가 다르다는 것 자체가 평면 칩보다 강한 구분 신호이기도 하다.
  */
@@ -26,7 +26,6 @@ export function AdminShell() {
 
   const destinations = [
     { to: '/tenants', label: '테넌트', permission: 'platform:tenant:read' },
-    { to: '/settings', label: '플랫폼 설정', permission: 'platform:settings:read' },
   ].filter((d) => hasPermission(d.permission));
 
   return (

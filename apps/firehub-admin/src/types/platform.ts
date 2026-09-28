@@ -62,17 +62,6 @@ export interface PlatformUserResponse {
   name: string;
 }
 
-/**
- * `GET /api/platform/settings` 응답 1건. 서버는 임베딩 4키만 돌려준다(#712 이후 SMTP 는
- * 워크스페이스 전용). 화면은 카탈로그(`lib/settings-catalog.ts`)에 없는 키가 섞여 와도 그리지 않는다.
- */
-export interface SettingResponse {
-  key: string;
-  value: string | null;
-  description: string | null;
-  updatedAt: string | null;
-}
-
 export interface ErrorResponse {
   status: number;
   error: string;

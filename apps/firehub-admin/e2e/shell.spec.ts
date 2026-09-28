@@ -4,7 +4,7 @@ import { mockApi } from './fixtures/api-mock';
 import { expect, loginAs, test } from './fixtures/auth.fixture';
 
 test.describe('운영자 콘솔 셸', () => {
-  test('상단 바에 평면 칩과 목적지 2개, 계정 메뉴가 있다', async ({ authenticatedPage: page }) => {
+  test('상단 바에 평면 칩과 목적지 1개, 계정 메뉴가 있다', async ({ authenticatedPage: page }) => {
     await page.goto('/tenants');
 
     await expect(page.getByText('Smart Fire Hub')).toBeVisible();
@@ -12,15 +12,20 @@ test.describe('운영자 콘솔 셸', () => {
 
     const nav = page.getByRole('navigation', { name: '주요 메뉴' });
     await expect(nav.getByRole('link', { name: '테넌트' })).toBeVisible();
-    await expect(nav.getByRole('link', { name: '플랫폼 설정' })).toBeVisible();
-    // 목적지는 정확히 2개다 — 사이드바를 버린 이유가 여기 고정된다.
-    await expect(nav.getByRole('link')).toHaveCount(2);
+    // 플랫폼 설정은 #713 에서 사라졌다(임베딩이 마지막 그룹이었다 — 이제 테넌트 전용).
+    await expect(nav.getByRole('link', { name: '플랫폼 설정' })).toHaveCount(0);
+    await expect(nav.getByRole('link')).toHaveCount(1);
 
-    // 활성 링크는 aria-current="page"
     await expect(nav.getByRole('link', { name: '테넌트' })).toHaveAttribute('aria-current', 'page');
 
     await page.getByRole('button', { name: '김운영' }).click();
     await expect(page.getByRole('menuitem', { name: '로그아웃' })).toBeVisible();
+  });
+
+  test('옛 플랫폼 설정 주소는 테넌트 목록으로 보낸다', async ({ authenticatedPage: page }) => {
+    await page.goto('/settings');
+    await expect(page).toHaveURL('/tenants');
+    await expect(page.getByRole('heading', { name: '플랫폼 설정' })).toHaveCount(0);
   });
 
   test('루트 경로는 /tenants 로 보낸다', async ({ authenticatedPage: page }) => {
