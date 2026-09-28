@@ -146,9 +146,8 @@ public class TenantReembedJob {
       List<SourceTextRow> batch = datasetRepository.findMissing(space, afterId, BATCH);
       if (batch.isEmpty()) return Outcome.COMPLETED;
       List<float[]> vectors = provider.embed(batch.stream().map(SourceTextRow::sourceText).toList());
-      for (int i = 0; i < batch.size(); i++) {
-        datasetRepository.upsertEmbedding(space, batch.get(i).datasetId(), vectors.get(i));
-      }
+      // 배치당 한 번(한 트랜잭션) — 행마다 부르면 트랜잭션이 BATCH 회 열린다.
+      datasetRepository.upsertEmbeddings(space, batch.stream().map(SourceTextRow::datasetId).toList(), vectors);
       afterId = batch.get(batch.size() - 1).datasetId();
       stateRepository.renewLease(LEASE);
     }

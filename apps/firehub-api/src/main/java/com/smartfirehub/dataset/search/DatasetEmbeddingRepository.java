@@ -45,20 +45,40 @@ public class DatasetEmbeddingRepository {
   public record SourceTextRow(long datasetId, String sourceText) {}
 
   /**
-   * 카탈로그 벡터를 {@code space} 로 쓴다: 다른 차원 행 DELETE + 현재 차원 UPSERT(한 트랜잭션). 부모
-   * dataset_embedding 행이 없으면(삭제 경합) INSERT…SELECT 가 0행이라 조용히 건너뛴다 — 옛 UPDATE 0행과 같은 의미.
+   * 카탈로그 벡터 1건을 {@code space} 로 쓴다 — {@link #upsertEmbeddings} 의 단건 편의(적재 경로
+   * DatasetEmbeddingService 가 쓴다).
    */
   public void upsertEmbedding(EmbeddingSpace space, long datasetId, float[] embedding) {
+    upsertEmbeddings(space, List.of(datasetId), List.of(embedding));
+  }
+
+  /**
+   * 카탈로그 벡터 여러 건을 {@code space} 로 쓴다: 다른 차원 행 DELETE(차원마다 {@code dataset_id = ANY(?)} 1회) +
+   * 현재 차원 UPSERT(JDBC 배치 1회) — 한 트랜잭션. 재임베딩 잡이 배치(64건)마다 한 번 부른다(행마다 부르면 배치당
+   * 트랜잭션이 64회 열린다 — DocumentChunkRepository.upsertEmbeddings 와 같은 형태). 부모 dataset_embedding 행이
+   * 없으면(삭제 경합) INSERT…SELECT 가 0행이라 그 건만 조용히 건너뛴다 — 옛 UPDATE 0행과 같은 의미.
+   */
+  public void upsertEmbeddings(EmbeddingSpace space, List<Long> datasetIds, List<float[]> embeddings) {
+    if (datasetIds.size() != embeddings.size()) {
+      throw new IllegalArgumentException(
+          "데이터셋 수와 임베딩 수 불일치: " + datasetIds.size() + " vs " + embeddings.size());
+    }
+    if (datasetIds.isEmpty()) return;
+    Long[] ids = datasetIds.toArray(Long[]::new);
     for (EmbeddingDimension d : EmbeddingDimension.values()) {
       if (d == space.dimension()) continue;
-      dsl.execute("DELETE FROM " + d.datasetTable() + " WHERE dataset_id = ?", datasetId);
+      dsl.execute("DELETE FROM " + d.datasetTable() + " WHERE dataset_id = ANY(?)", (Object) ids);
     }
-    dsl.execute(
-        "INSERT INTO " + space.dimension().datasetTable() + " (dataset_id, embedding, embedding_model, updated_at)"
-            + " SELECT de.dataset_id, ?::vector, ?, now() FROM dataset_embedding de WHERE de.dataset_id = ?"
-            + " ON CONFLICT (dataset_id) DO UPDATE SET embedding = EXCLUDED.embedding,"
-            + " embedding_model = EXCLUDED.embedding_model, updated_at = now()",
-        VectorLiterals.toVectorLiteral(embedding), space.model(), datasetId);
+    org.jooq.BatchBindStep batch =
+        dsl.batch(
+            "INSERT INTO " + space.dimension().datasetTable() + " (dataset_id, embedding, embedding_model, updated_at)"
+                + " SELECT de.dataset_id, ?::vector, ?, now() FROM dataset_embedding de WHERE de.dataset_id = ?"
+                + " ON CONFLICT (dataset_id) DO UPDATE SET embedding = EXCLUDED.embedding,"
+                + " embedding_model = EXCLUDED.embedding_model, updated_at = now()");
+    for (int i = 0; i < datasetIds.size(); i++) {
+      batch = batch.bind(VectorLiterals.toVectorLiteral(embeddings.get(i)), space.model(), datasetIds.get(i));
+    }
+    batch.execute();
   }
 
   /** 데이터셋 삭제 시 인덱스 행 제거(FK CASCADE 와 별개로 명시 호출 경로 제공). */

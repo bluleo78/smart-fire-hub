@@ -38,6 +38,8 @@ class DatasetEmbeddingVectorStoreTest extends IntegrationTestBase {
 
   private long tenant;
   private DocFixture doc;
+  // 테스트가 더 만든 픽스처 사용자 — 데이터셋이 사용자를 참조하므로 데이터셋 정리 뒤에 지운다.
+  private final List<Long> extraUsers = new ArrayList<>();
 
   @BeforeEach
   void seed() {
@@ -52,6 +54,7 @@ class DatasetEmbeddingVectorStoreTest extends IntegrationTestBase {
     TenantRlsTestSupport.deleteOwnDatasetRows(dsl, fixtureTransactionTemplate, tenant);
     TenantRlsTestSupport.deleteTenants(dsl, tenant);
     TenantRlsTestSupport.deleteUser(dsl, doc.userId());
+    extraUsers.forEach(u -> TenantRlsTestSupport.deleteUser(dsl, u));
   }
 
   @Test
@@ -59,6 +62,32 @@ class DatasetEmbeddingVectorStoreTest extends IntegrationTestBase {
     TenantContext.runScoped(tenant, () -> repo.upsertEmbedding(S1536, doc.datasetId(), axis(1536, 0)));
     assertThat(TenantContext.runScopedGet(tenant, () -> repo.countEmbedded(S1024))).isZero();
     assertThat(TenantContext.runScopedGet(tenant, () -> repo.countEmbedded(S1536))).isEqualTo(1);
+  }
+
+  @Test
+  void batchUpsertMovesEveryRowAndSkipsMissingParent() {
+    // B1: 배치 한 번에 여러 데이터셋 — 첫 행만 처리하는 구현을 배제하려고 두 번째 데이터셋에도 옛 차원 행을 둔다.
+    DocFixture doc2 = inTenantFixture(tenant, () -> EmbeddingTestFixtures.createDocumentDataset(dsl, "dsvec2"));
+    extraUsers.add(doc2.userId());
+    TenantContext.runScoped(
+        tenant,
+        () -> {
+          repo.upsertSourceText(doc2.datasetId(), "소방 점검");
+          repo.upsertEmbedding(S1024, doc2.datasetId(), axis(1024, 1));
+        });
+    assertThat(TenantContext.runScopedGet(tenant, () -> repo.countEmbedded(S1024))).isEqualTo(2);
+
+    TenantContext.runScoped(
+        tenant,
+        () ->
+            repo.upsertEmbeddings(
+                S1536,
+                List.of(doc.datasetId(), Long.MAX_VALUE, doc2.datasetId()),
+                List.of(axis(1536, 0), axis(1536, 1), axis(1536, 2))));
+
+    assertThat(TenantContext.runScopedGet(tenant, () -> repo.countEmbedded(S1024))).isZero();
+    assertThat(TenantContext.runScopedGet(tenant, () -> repo.countEmbedded(S1536))).isEqualTo(2);
+    assertThat(TenantContext.runScopedGet(tenant, () -> repo.countMissing(S1536))).isZero();
   }
 
   @Test
