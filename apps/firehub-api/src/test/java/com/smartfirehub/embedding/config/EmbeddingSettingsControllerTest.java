@@ -110,4 +110,19 @@ class EmbeddingSettingsControllerTest {
         .perform(get("/api/v1/settings/embedding").header("Authorization", "Bearer viewer"))
         .andExpect(status().isForbidden());
   }
+
+  @Test
+  void impactPassesQueryParams() throws Exception {
+    when(settingsService.impact("bge-m3", 1536))
+        .thenReturn(new com.smartfirehub.embedding.config.dto.EmbeddingImpact(10, 2, 1));
+    mockMvc
+        .perform(
+            get("/api/v1/settings/embedding/impact")
+                .param("model", "bge-m3")
+                .param("dimension", "1536")
+                .header("Authorization", "Bearer admin"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.chunks").value(10))
+        .andExpect(jsonPath("$.rowSearchIndexes").value(1));
+  }
 }

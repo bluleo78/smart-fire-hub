@@ -1,54 +1,72 @@
 package com.smartfirehub.admin.embedding;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.smartfirehub.dataset.search.DatasetEmbeddingRepository;
 import com.smartfirehub.document.repository.DocumentChunkRepository;
 import com.smartfirehub.embedding.EmbeddingDimension;
-import com.smartfirehub.embedding.EmbeddingProvider;
-import com.smartfirehub.embedding.EmbeddingProviderFactory;
 import com.smartfirehub.embedding.EmbeddingSpace;
+import com.smartfirehub.embedding.config.EmbeddingConfigService;
+import com.smartfirehub.embedding.reembed.EmbeddingReembedStateRepository;
+import com.smartfirehub.embedding.reembed.ReembedState;
+import java.time.OffsetDateTime;
+import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-/** 순수 단위 테스트: 두 레포지토리/팩토리/프로바이더를 mock 하여 집계 로직만 검증. */
+/** 현황 집계: 현재 공간 기준 분자, 미설정이면 409 가 아니라 configured=false, 잡 FAILED 사유 노출. */
 @ExtendWith(MockitoExtension.class)
 class EmbeddingStatusServiceTest {
 
-  /** 현재 provider(bge-m3, 1024)의 임베딩 공간 — 카운트 stub 의 키. */
-  private static final EmbeddingSpace SPACE = new EmbeddingSpace(EmbeddingDimension.D1024, "bge-m3");
+  @Mock private DatasetEmbeddingRepository datasetRepo;
+  @Mock private DocumentChunkRepository chunkRepo;
+  @Mock private EmbeddingConfigService configService;
+  @Mock private EmbeddingReembedStateRepository stateRepo;
 
-  @Mock private DatasetEmbeddingRepository datasetEmbeddingRepository;
-  @Mock private DocumentChunkRepository documentChunkRepository;
-  @Mock private EmbeddingProviderFactory embeddingFactory;
-  @Mock private EmbeddingProvider provider;
+  private EmbeddingStatusService service() {
+    return new EmbeddingStatusService(datasetRepo, chunkRepo, configService, stateRepo);
+  }
 
-  /** 현재 모델 기준으로 데이터셋/문서청크 총계·임베딩 완료 수를 올바르게 조립하는지 확인. */
   @Test
-  void status_aggregatesCurrentModelCounts() {
-    // 현재 활성 모델은 bge-m3
-    when(embeddingFactory.current()).thenReturn(provider);
-    when(provider.modelId()).thenReturn("bge-m3");
-    when(provider.dimension()).thenReturn(1024);
-    // 두 레포지토리 모두 countEmbedded(space) 를 갖고 있으므로 올바른 mock 인스턴스에 stub
-    when(datasetEmbeddingRepository.countAll()).thenReturn(28L);
-    when(datasetEmbeddingRepository.countEmbedded(SPACE)).thenReturn(28L);
-    when(documentChunkRepository.countAllChunks()).thenReturn(500L);
-    when(documentChunkRepository.countEmbedded(SPACE)).thenReturn(340L);
+  void statusAggregatesCurrentSpaceCountsAndJob() {
+    EmbeddingSpace space = new EmbeddingSpace(EmbeddingDimension.D1536, "text-embedding-3-small");
+    when(configService.currentSpace()).thenReturn(Optional.of(space));
+    when(datasetRepo.countAll()).thenReturn(28L);
+    when(datasetRepo.countEmbedded(space)).thenReturn(20L);
+    when(chunkRepo.countAllChunks()).thenReturn(500L);
+    when(chunkRepo.countEmbedded(space)).thenReturn(340L);
+    OffsetDateTime at = OffsetDateTime.parse("2026-09-28T10:00:00Z");
+    when(stateRepo.find()).thenReturn(Optional.of(new ReembedState("FAILED", space.model(), 1536, "401 Unauthorized", at)));
 
-    EmbeddingStatusService service =
-        new EmbeddingStatusService(
-            datasetEmbeddingRepository, documentChunkRepository, embeddingFactory);
+    EmbeddingStatusResponse r = service().status();
 
-    EmbeddingStatusResponse response = service.status();
+    assertThat(r.configured()).isTrue();
+    assertThat(r.model()).isEqualTo("text-embedding-3-small");
+    assertThat(r.dimension()).isEqualTo(1536);
+    assertThat(r.datasets()).isEqualTo(new EmbeddingStatusResponse.Counts(28, 20));
+    assertThat(r.documentChunks()).isEqualTo(new EmbeddingStatusResponse.Counts(500, 340));
+    assertThat(r.job().status()).isEqualTo("FAILED");
+    assertThat(r.job().lastError()).isEqualTo("401 Unauthorized");
+  }
 
-    assertThat(response.model()).isEqualTo("bge-m3");
-    assertThat(response.datasets().total()).isEqualTo(28L);
-    assertThat(response.datasets().embedded()).isEqualTo(28L);
-    assertThat(response.documentChunks().total()).isEqualTo(500L);
-    assertThat(response.documentChunks().embedded()).isEqualTo(340L);
+  @Test
+  void statusForUnconfiguredTenant() {
+    // Review Focus: 배포 직후 모든 테넌트가 이 상태 — 탭이 그려져야 설정을 저장할 수 있다.
+    when(configService.currentSpace()).thenReturn(Optional.empty());
+    when(datasetRepo.countAll()).thenReturn(3L);
+    when(chunkRepo.countAllChunks()).thenReturn(7L);
+    when(stateRepo.find()).thenReturn(Optional.empty());
+
+    EmbeddingStatusResponse r = service().status();
+
+    assertThat(r.configured()).isFalse();
+    assertThat(r.model()).isNull();
+    assertThat(r.datasets()).isEqualTo(new EmbeddingStatusResponse.Counts(3, 0));
+    assertThat(r.documentChunks()).isEqualTo(new EmbeddingStatusResponse.Counts(7, 0));
+    assertThat(r.job()).isNull();
   }
 }

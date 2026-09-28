@@ -1,13 +1,12 @@
 package com.smartfirehub.admin.embedding;
 
-import com.smartfirehub.dataset.search.DatasetEmbeddingBackfillService;
-import com.smartfirehub.document.service.DocumentChunkReembedService;
 import com.smartfirehub.embedding.EmbeddingProvider;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
+import com.smartfirehub.embedding.config.dto.EmbeddingImpact;
+import com.smartfirehub.embedding.reembed.TenantReembedJob;
 import com.smartfirehub.global.security.RequirePermission;
 import jakarta.validation.Valid;
 import java.util.List;
-import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -23,8 +22,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class EmbeddingAdminController {
 
   private final EmbeddingStatusService statusService;
-  private final DatasetEmbeddingBackfillService datasetBackfillService;
-  private final DocumentChunkReembedService documentReembedService;
+  private final TenantReembedJob tenantReembedJob;
   private final EmbeddingProviderFactory embeddingProviderFactory;
 
   /** 현재 모델 기준 임베딩 진행 상태. 조회만 하므로 dataset:read 권한을 요구한다. */
@@ -35,17 +33,13 @@ public class EmbeddingAdminController {
   }
 
   /**
-   * 데이터셋 카탈로그 + 문서 청크를 현재 모델로 전체 재임베딩(비동기 잡으로 분산). 인덱스를 변경하므로 dataset:write 권한을 요구한다.
-   *
-   * @return 202 Accepted + 예약된 데이터셋 수({@code datasets}: 카탈로그, {@code documentDatasets}: 문서 청크 보유 데이터셋)
+   * 현재 설정 공간으로 전체 재임베딩(#713). source_text 를 먼저 채우고, 판정식 대상 수를 돌려준 뒤 TenantReembedJob 을
+   * 투입한다(임대 행이 중복 실행을 막는다). 미설정이면 409. 인덱스를 바꾸므로 dataset:write.
    */
   @PostMapping("/reindex-all")
   @RequirePermission("dataset:write")
-  public ResponseEntity<Map<String, Integer>> reindexAll() {
-    int datasets = datasetBackfillService.backfillAll();
-    int documentDatasets = documentReembedService.reembedAll();
-    return ResponseEntity.accepted()
-        .body(Map.of("datasets", datasets, "documentDatasets", documentDatasets));
+  public ResponseEntity<EmbeddingImpact> reindexAll() {
+    return ResponseEntity.accepted().body(tenantReembedJob.requestReindexAll());
   }
 
   /**

@@ -2,6 +2,7 @@ package com.smartfirehub.embedding.config;
 
 import com.smartfirehub.embedding.config.dto.EmbeddingConfigRequest;
 import com.smartfirehub.embedding.config.dto.EmbeddingConfigView;
+import com.smartfirehub.embedding.config.dto.EmbeddingImpact;
 import com.smartfirehub.embedding.config.dto.EmbeddingProbeResponse;
 import com.smartfirehub.global.security.RequirePermission;
 import lombok.RequiredArgsConstructor;
@@ -11,6 +12,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -36,6 +38,13 @@ public class EmbeddingSettingsController {
   @RequirePermission("ai:settings")
   public EmbeddingProbeResponse test(@RequestBody EmbeddingConfigRequest request) {
     return settingsService.test(request);
+  }
+
+  /** 그 설정으로 저장했을 때의 재임베딩 대상 수(확인 창). 차원이 미지원이면 400. */
+  @GetMapping("/impact")
+  @RequirePermission("ai:settings")
+  public EmbeddingImpact impact(@RequestParam String model, @RequestParam int dimension) {
+    return settingsService.impact(model, dimension);
   }
 
   @PutMapping

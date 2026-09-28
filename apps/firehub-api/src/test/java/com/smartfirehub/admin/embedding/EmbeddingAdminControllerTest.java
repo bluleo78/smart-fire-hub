@@ -7,11 +7,11 @@ import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-import com.smartfirehub.dataset.search.DatasetEmbeddingBackfillService;
-import com.smartfirehub.document.service.DocumentChunkReembedService;
 import com.smartfirehub.embedding.EmbeddingNotConfiguredException;
 import com.smartfirehub.embedding.EmbeddingProvider;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
+import com.smartfirehub.embedding.config.dto.EmbeddingImpact;
+import com.smartfirehub.embedding.reembed.TenantReembedJob;
 import com.smartfirehub.global.config.SecurityConfig;
 import com.smartfirehub.global.security.JwtAuthenticationFilter;
 import com.smartfirehub.global.security.JwtProperties;
@@ -36,12 +36,10 @@ class EmbeddingAdminControllerTest {
 
   @Autowired private MockMvc mockMvc;
 
-  // 컨트롤러가 의존하는 3개 서비스 — 모두 mock 으로 대체해 컨트롤러 매핑/권한만 검증
+  // 컨트롤러가 의존하는 3개 빈 — 모두 mock 으로 대체해 컨트롤러 매핑/권한만 검증
   @MockitoBean private EmbeddingStatusService embeddingStatusService;
 
-  @MockitoBean private DatasetEmbeddingBackfillService datasetEmbeddingBackfillService;
-
-  @MockitoBean private DocumentChunkReembedService documentChunkReembedService;
+  @MockitoBean private TenantReembedJob tenantReembedJob;
 
   @MockitoBean private EmbeddingProviderFactory embeddingProviderFactory;
 
@@ -66,9 +64,12 @@ class EmbeddingAdminControllerTest {
     when(embeddingStatusService.status())
         .thenReturn(
             new EmbeddingStatusResponse(
+                true,
                 "bge-m3",
+                1024,
                 new EmbeddingStatusResponse.Counts(28, 20),
-                new EmbeddingStatusResponse.Counts(500, 340)));
+                new EmbeddingStatusResponse.Counts(500, 340),
+                null));
 
     mockMvc
         .perform(get("/api/v1/admin/embedding/status").header("Authorization", "Bearer test-token"))
@@ -79,21 +80,16 @@ class EmbeddingAdminControllerTest {
   }
 
   @Test
-  void reindexAll_withPermission_returnsAcceptedWithScheduledCounts() throws Exception {
-    // dataset:write 권한으로 전체 재색인 트리거 시 202 + 예약 데이터셋 수 반환, 두 서비스 호출 검증
-    when(datasetEmbeddingBackfillService.backfillAll()).thenReturn(28);
-    when(documentChunkReembedService.reembedAll()).thenReturn(4);
-
+  void reindexAll_withPermission_returnsAcceptedWithImpact() throws Exception {
+    // dataset:write 권한으로 전체 재임베딩 요청 시 202 + 요청 시점 대상 수(판정식) 반환
+    when(tenantReembedJob.requestReindexAll()).thenReturn(new EmbeddingImpact(340, 28, 2));
     mockMvc
-        .perform(
-            post("/api/v1/admin/embedding/reindex-all")
-                .header("Authorization", "Bearer test-token"))
+        .perform(post("/api/v1/admin/embedding/reindex-all").header("Authorization", "Bearer test-token"))
         .andExpect(status().isAccepted())
+        .andExpect(jsonPath("$.chunks").value(340))
         .andExpect(jsonPath("$.datasets").value(28))
-        .andExpect(jsonPath("$.documentDatasets").value(4));
-
-    verify(datasetEmbeddingBackfillService).backfillAll();
-    verify(documentChunkReembedService).reembedAll();
+        .andExpect(jsonPath("$.rowSearchIndexes").value(2));
+    verify(tenantReembedJob).requestReindexAll();
   }
 
   @Test

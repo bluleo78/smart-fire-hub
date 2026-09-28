@@ -20,7 +20,7 @@ class BackgroundTenantPropagationTest {
   void jobMethodsAcceptTenantIdAsLastParameter() throws Exception {
     assertLastParamIsTenantId(DocumentIngestionService.class, "processIngestion");
     assertLastParamIsTenantId(
-        com.smartfirehub.document.service.DocumentChunkReembedService.class, "reembedDataset");
+        com.smartfirehub.embedding.reembed.TenantReembedJob.class, "run");
     assertLastParamIsTenantId(
         com.smartfirehub.dataset.search.DatasetEmbeddingService.class, "reindexEmbedding");
     assertLastParamIsTenantId(
@@ -30,7 +30,12 @@ class BackgroundTenantPropagationTest {
   @Test
   void jobMethodsAreNotTransactional() {
     // @Transactional 이 잡 메서드에 붙으면 본문 시작 전에 트랜잭션이 열려 GUC 주입 시점을 놓친다.
-    for (Method m : DocumentIngestionService.class.getDeclaredMethods()) {
+    for (Method m :
+        java.util.stream.Stream.of(
+                DocumentIngestionService.class,
+                com.smartfirehub.embedding.reembed.TenantReembedJob.class)
+            .flatMap(c -> java.util.Arrays.stream(c.getDeclaredMethods()))
+            .toList()) {
       if (m.isAnnotationPresent(Job.class)) {
         assertThat(m.isAnnotationPresent(org.springframework.transaction.annotation.Transactional.class))
             .as("@Job 메서드 %s 에 @Transactional 이 붙으면 테넌트 주입 시점을 놓친다", m.getName())

@@ -30,6 +30,19 @@ public class DatasetEmbeddingBackfillService {
   private final JobScheduler jobScheduler;
 
   /**
+   * 모든 데이터셋의 source_text 만 동기 적재한다. 재임베딩 판정식의 모집단(dataset_embedding 행)을 채워, 행이 없던
+   * 데이터셋도 전체 재임베딩 대상이 되게 한다(reindex-all 전용 — 벡터는 TenantReembedJob 이 만든다).
+   */
+  @Transactional
+  public int syncAllSourceText() {
+    List<Long> ids = metaReader.findAllIds();
+    for (Long id : ids) {
+      embeddingService.syncSourceText(id);
+    }
+    return ids.size();
+  }
+
+  /**
    * 전체 데이터셋 인덱스 백필을 시작한다.
    *
    * @return 처리 대상 데이터셋 수

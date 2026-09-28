@@ -67,6 +67,15 @@ public class SearchIndexStateRepository {
         .map(r -> r.get(0, Long.class));
   }
 
+  /** 이 공간과 다른(또는 아직 없는) 모델·차원으로 만들어진 행 검색 색인 수. 저장 전 비용 안내용(스윕이 스스로 재색인한다). */
+  public long countStale(String model, int dim) {
+    return dsl.fetchOne(
+            "SELECT count(*) FROM dataset_search_index"
+                + " WHERE embedding_model IS DISTINCT FROM ? OR embedding_dim IS DISTINCT FROM ?",
+            model, dim)
+        .get(0, Long.class);
+  }
+
   /**
    * 동기화 임대를 잡는다. 성공하면 true.
    *

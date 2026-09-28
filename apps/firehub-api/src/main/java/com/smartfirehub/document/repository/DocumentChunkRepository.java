@@ -226,12 +226,6 @@ public class DocumentChunkRepository {
     });
   }
 
-  /** 청크가 존재하는 모든 데이터셋 id 목록(중복 제거). 재임베딩 시 데이터셋 단위로 순회하기 위함. */
-  public List<Long> findDocumentDatasetIds() {
-    return dsl.fetch("SELECT DISTINCT dataset_id FROM document_chunk ORDER BY dataset_id")
-        .map(r -> r.get("dataset_id", Long.class));
-  }
-
   /** 해당 데이터셋의 청크 (id, content) 를 id 오름차순으로 조회. 검수·청크 목록·데이터셋 단위 재임베딩이 쓴다. */
   public List<ChunkContent> findChunkContentsByDataset(long datasetId) {
     return dsl.fetch(

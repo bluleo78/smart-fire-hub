@@ -52,14 +52,6 @@ class DocumentChunkReembedRepositoryTest extends IntegrationTestBase {
   }
 
   @Test
-  void findDocumentDatasetIdsReturnsNonNull() {
-    seedDataset("reembedids");
-    List<Long> ids = chunkRepository.findDocumentDatasetIds();
-    assertThat(ids).isNotNull();
-    assertThat(ids).isNotEmpty();
-  }
-
-  @Test
   void findChunkContentsByDatasetReturnsRows() {
     long datasetId = seedDataset("reembedcontents");
     List<ChunkContent> rows = chunkRepository.findChunkContentsByDataset(datasetId);

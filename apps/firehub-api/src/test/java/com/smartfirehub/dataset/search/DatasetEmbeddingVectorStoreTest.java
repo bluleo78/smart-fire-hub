@@ -12,13 +12,17 @@ import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TenantRlsTestSupport;
 import java.util.ArrayList;
 import java.util.List;
+import javax.sql.DataSource;
 import org.jooq.DSLContext;
+import org.jooq.SQLDialect;
+import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 
-/** 데이터셋 카탈로그 벡터: 차원 이동, #392 모델 필터, 부모 행 없으면 no-op, 차원별 HNSW. */
+/** 데이터셋 카탈로그 벡터: 차원 이동, #392 모델 필터, 부모 행 없으면 no-op, 차원별 HNSW, 다른 차원 정리의 테넌트 범위. */
 class DatasetEmbeddingVectorStoreTest extends IntegrationTestBase {
 
   private static final EmbeddingSpace S1024 = new EmbeddingSpace(EmbeddingDimension.D1024, "bge-m3");
@@ -27,6 +31,10 @@ class DatasetEmbeddingVectorStoreTest extends IntegrationTestBase {
   @Autowired private DatasetEmbeddingRepository repo;
   @Autowired private DatasetSearchRepository searchRepo;
   @Autowired private DSLContext dsl;
+
+  @Autowired
+  @Qualifier("schemaOwnerDataSource")
+  private DataSource ownerDataSource;
 
   private long tenant;
   private DocFixture doc;
@@ -73,6 +81,39 @@ class DatasetEmbeddingVectorStoreTest extends IntegrationTestBase {
     assertThat(TenantContext.runScopedGet(tenant, () -> repo.findMissing(otherModel, 0L, 10)))
         .extracting(DatasetEmbeddingRepository.SourceTextRow::sourceText)
         .containsExactly("화재 통계");
+  }
+
+  @Test
+  void deleteOtherDimensionsRemovesOnlyCurrentTenantRows() {
+    // 시드: A(=tenant) 는 1024 테이블에만 1행. 이 테스트에서만 B 를 만들어 1536 테이블에만 1행을 둔다.
+    long tenantB = TenantRlsTestSupport.createActiveTenant(dsl, "dsvec-b");
+    DocFixture docB = inTenantFixture(tenantB, () -> EmbeddingTestFixtures.createDocumentDataset(dsl, "dsvecb"));
+    try {
+      TenantContext.runScoped(tenantB, () -> repo.upsertSourceText(docB.datasetId(), "B 카탈로그"));
+      TenantContext.runScoped(tenantB, () -> repo.upsertEmbedding(S1536, docB.datasetId(), axis(1536, 0)));
+
+      // (1) 소유자 커넥션(RLS 우회)에서 B 가 1536 을 남기라고 하면 DELETE 는 1024 테이블로 간다 — 거기엔 A 의 행만
+      //     있다. 이 경로에선 RLS 가 막아 주지 않으므로 명시적 WHERE tenant_id = ? 만이 보호막이다. 스프링 빈이 아닌
+      //     인스턴스라 @Transactional 없이 소유자 DSL 로 자동 커밋된다.
+      DatasetEmbeddingRepository ownerRepo =
+          new DatasetEmbeddingRepository(DSL.using(ownerDataSource, SQLDialect.POSTGRES));
+      int deletedByOwner =
+          TenantContext.runScopedGet(tenantB, () -> ownerRepo.deleteOtherDimensions(EmbeddingDimension.D1536));
+      assertThat(deletedByOwner).isZero();
+      assertThat(TenantContext.runScopedGet(tenant, () -> repo.countEmbedded(S1024))).isEqualTo(1);
+      assertThat(TenantContext.runScopedGet(tenantB, () -> repo.countEmbedded(S1536))).isEqualTo(1);
+
+      // (2) 양성 대조군 — 같은 소유자 경로로 자기 테넌트 행은 실제로 지운다(아무것도 안 지우는 구현 배제).
+      int deletedOwn =
+          TenantContext.runScopedGet(tenantB, () -> ownerRepo.deleteOtherDimensions(EmbeddingDimension.D1024));
+      assertThat(deletedOwn).isEqualTo(1);
+      assertThat(TenantContext.runScopedGet(tenantB, () -> repo.countEmbedded(S1536))).isZero();
+      assertThat(TenantContext.runScopedGet(tenant, () -> repo.countEmbedded(S1024))).isEqualTo(1);
+    } finally {
+      TenantRlsTestSupport.deleteOwnDatasetRows(dsl, fixtureTransactionTemplate, tenantB);
+      TenantRlsTestSupport.deleteTenants(dsl, tenantB);
+      TenantRlsTestSupport.deleteUser(dsl, docB.userId());
+    }
   }
 
   @Test
