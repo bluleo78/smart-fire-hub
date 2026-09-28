@@ -141,24 +141,8 @@ class AiSettingsTenantOnlyTest extends IntegrationTestBase {
   // 테넌트_값을_지우면_코드_기본값으로_돌아간다 는 지웠다(#712) — 키별 해제 경로(clearOverride)가
   // 사라졌다. 화면은 AI 동작 키를 키별로 해제하지 않는다(저장만 한다).
 
-  @Test
-  void 플랫폼_목록은_AI_키를_내보내지_않는다() {
-    assertThat(settingsService.getAll()).noneMatch(s -> s.key().startsWith("ai."));
-  }
-
-  @Test
-  void 플랫폼_쓰기는_AI_키를_거부하고_행을_바꾸지_않는다() {
-    for (String key : AiBehaviorDefaults.keys()) {
-      assertThatThrownBy(
-              () ->
-                  settingsService.updatePlatformSettings(
-                      Map.of(key, AiBehaviorDefaults.defaultOf(key)), null))
-          .as(key)
-          .isInstanceOf(IllegalArgumentException.class)
-          .hasMessageContaining("워크스페이스 설정은 플랫폼 설정으로 저장할 수 없습니다");
-      assertThat(rawSystemSettingValue(dsl, key)).as(key).isEqualTo(PLANTED.get(key));
-    }
-  }
+  // 플랫폼_목록은_AI_키를_내보내지_않는다, 플랫폼_쓰기는_AI_키를_거부하고_행을_바꾸지_않는다 는
+  // 지웠다 — 플랫폼 설정 쓰기·목록 경로 자체가 #713 에서 사라졌다.
 
   private Map<String, ResolvedSettingResponse> resolvedAi() {
     return settingsService.getResolvedByPrefix("ai").stream()

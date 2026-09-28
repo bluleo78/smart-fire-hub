@@ -2,6 +2,7 @@ package com.smartfirehub.dataset.rowsearch;
 
 import com.smartfirehub.dataset.dto.DatasetResponse;
 import com.smartfirehub.dataset.repository.DatasetRepository;
+import com.smartfirehub.embedding.EmbeddingNotConfiguredException;
 import com.smartfirehub.embedding.EmbeddingProvider;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
 import com.smartfirehub.global.tenant.TenantContext;
@@ -40,6 +41,8 @@ public class RowSearchSyncService {
 
   private static final Duration LEASE = Duration.ofMinutes(10);
   private static final Duration MAX_BACKOFF = Duration.ofMinutes(30);
+  // 미설정은 실패가 아니라 대기다 — 백오프 없이 1분 뒤 다시 본다(설정 저장 직후 바로 색인 재개).
+  private static final Duration NOT_CONFIGURED_RETRY = Duration.ofMinutes(1);
 
   /**
    * 임베딩 서버 한 번 호출에 보내는 최대 텍스트 수. 배치(기본 200행 × 최대 8000자)를 통째로 보내면 느린 서버(Ollama 는
@@ -123,7 +126,14 @@ public class RowSearchSyncService {
       states.delete(datasetId);
       return Outcome.SKIPPED;
     }
-    EmbeddingProvider provider = embeddingFactory.current();
+    EmbeddingProvider provider;
+    try {
+      provider = embeddingFactory.current();
+    } catch (EmbeddingNotConfiguredException e) {
+      // 미설정은 실패가 아니라 대기다 — 백오프 없이 1분 뒤 다시 본다(설정 저장 직후 바로 색인 재개).
+      states.markWaiting(datasetId, e.getMessage(), OffsetDateTime.now().plus(NOT_CONFIGURED_RETRY));
+      return Outcome.SKIPPED;
+    }
     String model = provider.modelId();
     int dim = provider.dimension();
     long oid = reader.currentOid(ref.sourceTable());

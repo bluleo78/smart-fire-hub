@@ -59,12 +59,12 @@ class SettingsOverridePolicyTest {
     // ai.credential 은 AiCredentialService 소유, 옛 ai.* 키도 플랫폼 행을 읽지 않는다.
     assertThat(SettingsOverridePolicy.planeOf("ai.credential")).isEqualTo(Plane.EXTERNAL_OWNER);
     assertThat(SettingsOverridePolicy.planeOf("ai.agent_type")).isEqualTo(Plane.TENANT_ONLY);
-    assertThat(SettingsOverridePolicy.planeOf("embedding.model")).isEqualTo(Plane.PLATFORM_ONLY);
+    assertThat(SettingsOverridePolicy.planeOf("embedding.model")).isEqualTo(Plane.TENANT_ONLY);
     assertThat(SettingsOverridePolicy.planeOf("unknown.key")).isEqualTo(Plane.UNKNOWN);
     assertThat(SettingsOverridePolicy.planeOf(null)).isEqualTo(Plane.UNKNOWN);
     assertThat(SettingsOverridePolicy.mayHavePlatformRows("ai")).isFalse();
     assertThat(SettingsOverridePolicy.mayHavePlatformRows("smtp")).isFalse();
-    assertThat(SettingsOverridePolicy.mayHavePlatformRows("embedding")).isTrue();
+    assertThat(SettingsOverridePolicy.mayHavePlatformRows("embedding")).isFalse();
   }
 
   @Test
@@ -77,9 +77,7 @@ class SettingsOverridePolicyTest {
   }
 
   @Test
-  void 플랫폼_잠금_키는_거부된다() {
-    // 이제 플랫폼 잠금은 embedding.* 4키뿐이다. embedding.model 은 벡터 차원을 바꿔 기존
-    // 임베딩을 무효화하므로 Phase B 가 차원별 컬럼을 넣을 때까지 잠겨 있다.
+  void 임베딩_키는_범용_쓰기_대상이_아니다() {
     assertThat(SettingsOverridePolicy.isTenantOverridable("embedding.model")).isFalse();
     assertThat(SettingsOverridePolicy.isTenantOverridable("embedding.api_key")).isFalse();
   }

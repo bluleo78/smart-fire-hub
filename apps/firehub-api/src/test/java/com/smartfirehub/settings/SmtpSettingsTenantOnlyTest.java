@@ -198,32 +198,8 @@ class SmtpSettingsTenantOnlyTest extends IntegrationTestBase {
     }
   }
 
-  @Test
-  void 플랫폼_목록은_SMTP_키를_내보내지_않는다() {
-    // 전제는 @BeforeEach 가 보장한다 — 6키 플랫폼 행이 실재하는데도 목록에 없어야 한다.
-    assertThat(settingsService.getAll()).noneMatch(s -> s.key().startsWith("smtp."));
-  }
-
-  @Test
-  void 플랫폼_쓰기는_SMTP_키를_거부하고_행을_바꾸지_않는다() {
-    for (String key : PLANTED.keySet()) {
-      assertThatThrownBy(
-              () -> settingsService.updatePlatformSettings(Map.of(key, "overwrite-attempt"), null))
-          .as(key)
-          .isInstanceOf(IllegalArgumentException.class)
-          .hasMessageContaining("워크스페이스 설정은 플랫폼 설정으로 저장할 수 없습니다")
-          .hasMessageContaining(key);
-      assertThat(rawSystemSettingValue(dsl, key)).as(key).isEqualTo(PLANTED.get(key));
-    }
-    // 임베딩 키와 섞어 보내도 통째로 거부된다(부분 저장 없음).
-    String modelBefore = rawSystemSettingValue(dsl, "embedding.model");
-    assertThatThrownBy(
-            () ->
-                settingsService.updatePlatformSettings(
-                    Map.of("embedding.model", "should-not-save", "smtp.host", "x"), null))
-        .isInstanceOf(IllegalArgumentException.class);
-    assertThat(rawSystemSettingValue(dsl, "embedding.model")).isEqualTo(modelBefore);
-  }
+  // 플랫폼_목록은_SMTP_키를_내보내지_않는다, 플랫폼_쓰기는_SMTP_키를_거부하고_행을_바꾸지_않는다 는
+  // 지웠다 — 플랫폼 설정 쓰기·목록 경로 자체가 #713 에서 사라졌다.
 
   /** 현재 테스트 테넌트의 {@code smtp.*} 원시 행(RLS GUC 를 주입한 트랜잭션에서 읽는다). */
   private Map<String, String> tenantRows() {

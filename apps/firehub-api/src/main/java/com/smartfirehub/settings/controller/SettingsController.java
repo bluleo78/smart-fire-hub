@@ -30,10 +30,8 @@ public class SettingsController {
    * 테넌트가 오버라이드를 저장한 뒤 화면을 다시 불러도 예전 값이 그대로 보여서 <b>저장이 아무
    * 일도 하지 않은 것처럼</b> 보인다 — 쓰기 경로만 고치고 읽기 경로를 잊으면 생기는 어긋남이다.
    *
-   * <p>엔드포인트를 새로 만들지 않고 이 자리를 교체한 이유: 소비자가 web 설정 화면 하나뿐이고,
-   * 운영자 평면은 이미 {@code GET /api/platform/settings}({@code getAll}) 를 쓴다. 두 개를 두면
-   * "어느 쪽이 진짜 화면용인가"가 계속 갈린다. 대신 응답 형태가 바뀌므로 web 의 타입 정의와
-   * Playwright 스펙이 함께 바뀐다.
+   * <p>엔드포인트를 새로 만들지 않고 이 자리를 교체한 이유: 소비자가 web 설정 화면 하나뿐이다.
+   * 대신 응답 형태가 바뀌므로 web 의 타입 정의와 Playwright 스펙이 함께 바뀐다.
    */
   @GetMapping
   @RequirePermission("ai:settings")

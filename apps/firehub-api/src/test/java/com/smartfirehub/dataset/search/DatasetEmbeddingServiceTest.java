@@ -6,6 +6,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.smartfirehub.embedding.EmbeddingNotConfiguredException;
 import com.smartfirehub.embedding.EmbeddingProvider;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
 import java.util.List;
@@ -64,6 +65,17 @@ class DatasetEmbeddingServiceTest {
         .reindexEmbedding(99L, 1L);
     // 메타가 없으면 임베딩 생성·갱신을 시도하지 않는다(동기 경로에서 이미 제거됨).
     verifyNoInteractions(embeddingFactory);
+    verifyNoInteractions(embeddingRepo);
+  }
+
+  @Test
+  void reindexEmbedding_임베딩_미설정이면_건너뛴다() {
+    when(metaReader.read(7L))
+        .thenReturn(
+            new DatasetSourceTextBuilder.Input(
+                "화재", "설명", "fire", List.of("col"), List.of("tag"), "안전"));
+    when(embeddingFactory.current()).thenThrow(new EmbeddingNotConfiguredException());
+    new DatasetEmbeddingService(embeddingRepo, metaReader, embeddingFactory).reindexEmbedding(7L, 1L);
     verifyNoInteractions(embeddingRepo);
   }
 }

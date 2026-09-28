@@ -17,8 +17,6 @@ public final class SettingsOverridePolicy {
 
   /** 키의 해석 평면. */
   public enum Plane {
-    /** 플랫폼만 값을 갖는다({@code embedding.*} — 모델 변경이 기존 임베딩 전량을 무효화한다). */
-    PLATFORM_ONLY,
     /**
      * 테넌트 값 → 코드 기본값. 플랫폼 행은 읽지도 쓰지도 않는다. 코드 기본값이 있는 키는 AI 동작
      * 6키({@link AiBehaviorDefaults})뿐이고, 기본값이 없는 키(SMTP 6키·옛 {@code ai.*})는 테넌트
@@ -49,8 +47,11 @@ public final class SettingsOverridePolicy {
    * 그대로 "미설정"이 되므로 추가 분기가 필요 없다 — 평면을 하나 더 두면 {@code SettingsService}
    * 의 읽기·쓰기 switch 마다 같은 동작의 가지가 하나씩 늘 뿐이다. 이 목록 한 줄이 SMTP 를 플랫폼
    * 조회({@link #mayHavePlatformRows})·플랫폼 쓰기·플랫폼 목록에서 동시에 빼낸다.
+   *
+   * <p>{@code embedding.*}(#713): 설정 문서 {@code embedding.config} 만 존재하고 {@link Plane#EXTERNAL_OWNER}
+   * 로 먼저 분류된다.
    */
-  private static final Set<String> TENANT_NAMESPACES = Set.of("ai.", "smtp.");
+  private static final Set<String> TENANT_NAMESPACES = Set.of("ai.", "smtp.", "embedding.");
 
   /**
    * 테넌트 임베딩 설정 문서(#713) — {@code EmbeddingConfigService} 전용. 비밀이 하위 필드에 있어 범용 경로
@@ -58,10 +59,6 @@ public final class SettingsOverridePolicy {
    * 의존하지 않도록 리터럴로 둔다.
    */
   private static final String EMBEDDING_CONFIG_KEY = "embedding.config";
-
-  /** 플랫폼 잠금 키. 모델 변경이 벡터 차원을 바꾸므로 Phase B 가 차원별 컬럼을 넣을 때까지 플랫폼이 갖는다. */
-  private static final Set<String> PLATFORM_ONLY =
-      Set.of("embedding.provider", "embedding.model", "embedding.base_url", "embedding.api_key");
 
   /**
    * SMTP 6키(테넌트 전용, #712). 워크스페이스가 자기 메일 서버를 등록한다. 등록하지 않은 워크스페이스는
@@ -96,7 +93,6 @@ public final class SettingsOverridePolicy {
     if (AiCredentialSlot.ownedKeys().contains(key)) return Plane.EXTERNAL_OWNER;
     // 테넌트 임베딩 설정 문서(#713) — EmbeddingConfigService 전용. 비밀이 하위 필드에 있어 범용 경로 금지.
     if (EMBEDDING_CONFIG_KEY.equals(key)) return Plane.EXTERNAL_OWNER;
-    if (PLATFORM_ONLY.contains(key)) return Plane.PLATFORM_ONLY;
     if (isInTenantNamespace(key)) return Plane.TENANT_ONLY;
     return Plane.UNKNOWN;
   }
@@ -130,10 +126,5 @@ public final class SettingsOverridePolicy {
   /** SMTP 6키. 워크스페이스 "설정 해제"({@code SettingsService#clearSmtpSettings})가 지우는 묶음이다. */
   public static Set<String> smtpKeys() {
     return SMTP_KEYS;
-  }
-
-  /** 플랫폼 잠금 키({@code embedding.*} 4키). */
-  public static Set<String> platformOnlyKeys() {
-    return PLATFORM_ONLY;
   }
 }

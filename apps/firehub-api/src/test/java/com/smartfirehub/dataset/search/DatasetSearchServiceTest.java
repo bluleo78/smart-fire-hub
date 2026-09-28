@@ -1,9 +1,12 @@
 package com.smartfirehub.dataset.search;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.within;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.smartfirehub.embedding.EmbeddingNotConfiguredException;
 import com.smartfirehub.embedding.EmbeddingProvider;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
 import java.util.List;
@@ -169,6 +172,22 @@ class DatasetSearchServiceTest {
     Mockito.verify(repository)
         .searchByTrigram(
             ArgumentMatchers.eq("x"), ArgumentMatchers.eq("TABLE"), ArgumentMatchers.anyInt());
+  }
+
+  @Test
+  void semantic_임베딩_미설정이면_미설정_예외() {
+    when(embeddingFactory.current()).thenThrow(new EmbeddingNotConfiguredException());
+    assertThatThrownBy(
+            () -> service().search(new DatasetSearchRequest("화재", 10, DatasetSearchMode.SEMANTIC, null)))
+        .isInstanceOf(EmbeddingNotConfiguredException.class);
+  }
+
+  @Test
+  void keyword_임베딩_미설정이어도_동작한다() {
+    when(repository.searchByTrigram("화재", null, 10)).thenReturn(List.of(hit(1L)));
+    assertThat(service().search(new DatasetSearchRequest("화재", 10, DatasetSearchMode.KEYWORD, null)))
+        .hasSize(1);
+    verifyNoInteractions(embeddingFactory);
   }
 
   private static DatasetSearchHit hit(long id) {

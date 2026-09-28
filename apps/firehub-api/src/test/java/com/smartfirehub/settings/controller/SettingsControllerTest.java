@@ -114,11 +114,8 @@ class SettingsControllerTest {
    *
    * <p>이전 버전은 {@code doNothing()} 스텁 + 204 단언뿐이었다. void 메서드의 mock 은 원래
    * 아무것도 하지 않으므로 그 스텁은 의미가 없고, {@code verify} 가 없으니 <b>핸들러가 어느
-   * 서비스 메서드를 부르는지가 전혀 고정되지 않았다</b>. 그 상태에서 핸들러를
-   * {@code updatePlatformSettings} 로 바꾸면 — 즉 한 테넌트의 저장이 전역 18행을 덮어쓰는,
-   * 이 밴드가 없애려는 바로 그 결함으로 되돌아가면 — mock 이 삼키고 204 가 나가며 저장소의
-   * 모든 테스트가 녹색으로 남는다. 그래서 호출 대상과 인자를 명시적으로 검증하고, 플랫폼
-   * 경로가 호출되지 <b>않는다</b>는 음성 단언까지 둔다.
+   * 서비스 메서드를 부르는지가 전혀 고정되지 않았다</b>. 그래서 호출 대상과 인자를 명시적으로
+   * 검증한다. 플랫폼 쓰기 경로({@code updatePlatformSettings})는 #713 에서 아예 사라졌다.
    */
   @Test
   void updateSettings_validBody_routesToTenantPlaneService() throws Exception {
@@ -134,7 +131,6 @@ class SettingsControllerTest {
         .andExpect(status().isNoContent());
 
     verify(settingsService).updateSettings(Map.of("ai.max_turns", "10"), 1L);
-    verify(settingsService, never()).updatePlatformSettings(any(), any());
   }
 
   /** SMTP 설정 해제(#712)는 행이 있든 없든 204다 — 이미 미설정이어도 멱등한 성공이다. */

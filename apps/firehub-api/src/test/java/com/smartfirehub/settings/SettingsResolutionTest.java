@@ -1,8 +1,5 @@
 package com.smartfirehub.settings;
 
-import static com.smartfirehub.support.SettingsTestSupport.rawSystemSettingValue;
-import static com.smartfirehub.support.SettingsTestSupport.resolvedSetting;
-import static com.smartfirehub.support.SettingsTestSupport.restoreSystemSettingValue;
 import static com.smartfirehub.support.TenantRlsTestSupport.createActiveTenant;
 import static com.smartfirehub.support.TenantRlsTestSupport.deleteTenants;
 import static com.smartfirehub.support.TenantRlsTestSupport.runInTenantTransaction;
@@ -74,17 +71,18 @@ class SettingsResolutionTest extends IntegrationTestBase {
   @Test
   void 플랫폼_잠금_키는_오버라이드_행이_있어도_무시한다() {
     // 방어적 계약. 화이트리스트가 나중에 좁아지거나 누가 직접 SQL 로 행을 넣어도, 읽기는
-    // 화이트리스트를 다시 확인하므로 잠긴 키가 테넌트 값으로 해석되지 않는다.
+    // 화이트리스트를 다시 확인하므로 쓰기 허용 목록 밖의 테넌트 네임스페이스 키가 테넌트 값으로
+    // 해석되지 않는다.
     //
     // 검증 키로 ai.api_key 대신 embedding.model 을 쓴다(Task 2). ai.api_key 는 타입형 전환
     // (2026-09)으로 테넌트 오버라이드 허용 키에서 빠졌다 — 이 테스트가 지키려는 "단일 키
     // 경로가 화이트리스트를 다시 확인한다"는 성질을 더 이상 그 키로는 관측할 수 없다(오버라이드
-    // 행 자체를 만들 수 없다). embedding.model 은 화이트리스트 밖(플랫폼 잠금)이면서 번들도
+    // 행 자체를 만들 수 없다). embedding.model 은 화이트리스트 밖(쓰기 허용 목록 밖)이면서 번들도
     // 아니라 getValue 로 안전하게 조회되므로 같은 불변식을 계속 지킨다.
     testTenant = createActiveTenant(dsl, "sr-locked");
-    // embedding.model 은 SettingsOverridePolicy 화이트리스트에 없는 플랫폼 잠금 키다. 정상 upsert
-    // 경로로는 만들 수 없는 상태(직접 SQL 로 밀어넣은 것)를 재현하기 위해 저장소 자체가 아니라
-    // 직접 DML 을 쓴다.
+    // embedding.model 은 SettingsOverridePolicy 화이트리스트에 없는 쓰기 허용 목록 밖의 키다. 정상
+    // upsert 경로로는 만들 수 없는 상태(직접 SQL 로 밀어넣은 것)를 재현하기 위해 저장소 자체가
+    // 아니라 직접 DML 을 쓴다.
     runInTenantTransaction(
         transactionTemplate,
         testTenant,
@@ -94,9 +92,9 @@ class SettingsResolutionTest extends IntegrationTestBase {
                 testTenant));
 
     TenantContext.set(testTenant);
-    // 플랫폼 값(seed 값)으로 폴백해야 한다 — 절대 'sneaky-model' 이 아니다.
-    assertThat(settingsService.getValue("embedding.model"))
-        .isNotEqualTo(java.util.Optional.of("sneaky-model"));
+    // #713: embedding.* 는 테넌트 네임스페이스지만 쓰기 허용 키가 아니라 심은 행을 읽지 않고,
+    // 플랫폼 값도 없다 — 결과는 empty 다.
+    assertThat(settingsService.getValue("embedding.model")).isEmpty();
   }
 
   @Test
@@ -105,8 +103,7 @@ class SettingsResolutionTest extends IntegrationTestBase {
     // @Job·@Async·@Scheduled 배경 경로에서 정상적으로 일어난다. require() 를 쓰면 임베딩 백필과
     // 문서 인제스션이 영구 무동작이 된다(P3-a·P2-g 전례).
     TenantContext.clear();
-    // 플랫폼 키는 플랫폼 값, AI 키는 코드 기본값.
-    assertThat(settingsService.getValue("embedding.model")).isPresent();
+    assertThat(settingsService.getValue("embedding.model")).isEmpty(); // 플랫폼 값이 없다(#713) — 예외도 아니다
     assertThat(settingsService.getValue("ai.model")).contains(AiBehaviorDefaults.MODEL);
   }
 
@@ -185,13 +182,10 @@ class SettingsResolutionTest extends IntegrationTestBase {
       TenantContext.set(testTenant);
 
       var asMap = settingsService.getAsMap("embedding");
-      assertThat(asMap.get("embedding.model")).isNotEqualTo("sneaky-model");
+      assertThat(asMap).doesNotContainKey("embedding.model");
 
       var resolved = settingsService.getResolvedByPrefix("embedding");
-      var modelEntry =
-          resolved.stream().filter(r -> r.key().equals("embedding.model")).findFirst().orElseThrow();
-      assertThat(modelEntry.overridden()).isFalse();
-      assertThat(modelEntry.value()).isNotEqualTo("sneaky-model");
+      assertThat(resolved).noneMatch(r -> r.key().equals("embedding.model"));
     } finally {
       // upsert 로 심은 오버라이드 행을 명시적으로 정리한다(deleteTenants 가 tenant_settings 를
       // cascade 로 지우긴 하지만, 여기서 직접 지워 이 테스트의 의도를 코드로 남긴다).
@@ -216,60 +210,15 @@ class SettingsResolutionTest extends IntegrationTestBase {
       assertThat(settingsService.getValue("ai.model")).contains("model-a");
 
       TenantContext.set(tenantB);
-      assertThat(settingsService.getValue("ai.model")).contains("claude-sonnet-5");
+      assertThat(settingsService.getValue("ai.model")).contains(AiBehaviorDefaults.MODEL);
     } finally {
       deleteTenants(dsl, tenantA, tenantB);
     }
   }
 
-  /**
-   * {@code getResolvedByPrefix} 도 비밀 키를 마스킹한다.
-   *
-   * <p>이 경로는 web 설정 화면이 실제로 부르는 경로다({@code GET /api/v1/settings?prefix=...}).
-   * 마스킹을 빠뜨리면 비밀 키(여기서는 {@code embedding.api_key})의 <b>AES 암호문이 그대로</b>
-   * 응답에 실린다. (예전 검증 키 {@code ai.api_key} 는 #706 으로 사라졌다.) 이 프로젝트는
-   * 정확히 그 사고를 이미 한 번 냈다 — SMTP 전용 읽기 메서드만 마스킹하고 {@code getAll} 은
-   * 빠뜨려서 암호문이 나갔다. 읽기 경로를 새로 만들 때마다 같은 실수가 가능하므로 경로별로 단언한다.
-   *
-   * <p><b>여기서는</b> 오버라이드 값 쪽을 검사하지 않는다. 예전에는 그 근거가 "비밀 키는 전부
-   * 플랫폼 잠금이라 오버라이드 행으로 존재할 수 없다"였고, 그 사실이 곧 "이 누락이 어떤 기존
-   * 테스트에도 걸리지 않은" 이유였다. <b>P7-c1 이 그 전제를 죽였다</b> — {@code smtp.*} 6키가
-   * 테넌트에 열리면서(#712 이후 테넌트 전용) {@code SECRET_KEYS} 의 원소인
-   * {@code smtp.password} 가 실제로 테넌트 행으로 존재한다. 그 경로의 마스킹은
-   * {@code SettingsWritePlaneTest.테넌트_SMTP_비밀번호는_암호화_저장되고_마스킹되어_읽힌다} 가
-   * 조건 없이 단언한다(평문도 암호문도 아님까지). 이 문단을 "존재할 수 없다"로 되돌리지 마라 —
-   * 노출 안전성에 대한 거짓 안심이 되고, 그것을 믿고 어떤 읽기 경로의 오버라이드 마스킹을
-   * 생략하면 테넌트 비밀번호 암호문이 나간다.
-   *
-   * <p><b>먼저 진짜 키를 저장한다.</b> 테스트 DB 의 {@code embedding.api_key} 시드 값은 빈 문자열이라,
-   * 값이 있을 때만 단언하는 형태로 두면 <b>단언이 한 줄도 실행되지 않는</b> 공허한 테스트가 된다
-   * (실제로 그렇게 쓰여 있었다). 그 상태에서는 {@code getResolvedByPrefix} 의 {@code maskSecret}
-   * 을 통째로 지워도 이 테스트가 녹색으로 남는다 — 즉 막으려던 유출을 전혀 막지 못한다.
-   * 조건부 가드 대신 값을 만들어 두고 <b>무조건</b> 단언한다.
-   *
-   * <p>공유 테스트 DB 이므로 원래 값을 저장했다가 {@code finally} 에서 그대로 되돌린다.
-   */
-  @Test
-  void getResolvedByPrefix_는_비밀_키를_마스킹한다() {
-    String original = rawSystemSettingValue(dsl, "embedding.api_key");
-    try {
-      // 평문을 넣으면 서비스가 암호화해 저장한다 — 마스킹이 없으면 이 암호문이 그대로 응답에 실린다.
-      settingsService.updatePlatformSettings(
-          java.util.Map.of("embedding.api_key", "sk-real-secret"), null);
-      // 전제 확인: 저장된 원문이 실제로 암호문("iv:ciphertext")이어야 이 테스트가 의미를 갖는다.
-      assertThat(rawSystemSettingValue(dsl, "embedding.api_key")).contains(":");
-
-      var apiKey = resolvedSetting(settingsService, "embedding", "embedding.api_key");
-
-      assertThat(apiKey.value()).startsWith("****");
-      // 암호문은 "iv:ciphertext" 형태이므로 콜론이 없다는 것이 곧 암호문이 아니라는 뜻이다.
-      assertThat(apiKey.value()).doesNotContain(":");
-      assertThat(apiKey.value()).doesNotContain("sk-real-secret");
-    } finally {
-      restoreSystemSettingValue(dsl, "embedding.api_key", original);
-    }
-  }
-
+  // getResolvedByPrefix_는_비밀_키를_마스킹한다 는 지웠다 — 플랫폼 비밀 행이 더는 없다(#713 이 플랫폼
+  // 평면 자체를 없앴다). 테넌트 비밀 마스킹은 SettingsWritePlaneTest.테넌트_SMTP_비밀번호는_암호화_저장되고_마스킹되어_읽힌다
+  // 가 지킨다.
 
   /**
    * 프리픽스에 마침표를 붙이면 아무것도 매칭하지 않는다 — {@code ProactiveJobAsyncRunner} 가 빠졌던

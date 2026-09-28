@@ -169,6 +169,18 @@ public class SearchIndexStateRepository {
         error, nextAttemptAt, datasetId);
   }
 
+  /**
+   * 대기: 사유만 남기고 잠시 뒤 다시 due 가 되게 한다. {@link #markFailed} 와 달리 실패 횟수를 올리지 않는다 —
+   * 임베딩 미설정(#713)은 장애가 아니라 설정 대기라, 지수 백오프(최대 30분)에 빠지면 설정 저장 뒤에도 한참
+   * degraded 로 남는다.
+   */
+  public void markWaiting(long datasetId, String reason, OffsetDateTime nextAttemptAt) {
+    dsl.execute(
+        "UPDATE dataset_search_index SET status = 'ERROR', last_error = ?,"
+            + " next_attempt_at = ?::timestamptz, updated_at = now() WHERE dataset_id = ?",
+        reason, nextAttemptAt, datasetId);
+  }
+
   private static SearchIndexState toState(Record r) {
     return new SearchIndexState(
         r.get("dataset_id", Long.class),

@@ -6,6 +6,7 @@ import static org.mockito.Mockito.when;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.embedding.EmbeddingException;
+import com.smartfirehub.embedding.EmbeddingNotConfiguredException;
 import com.smartfirehub.embedding.EmbeddingProvider;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
 import com.smartfirehub.global.tenant.DataSchema;
@@ -235,5 +236,26 @@ class RowSearchSyncServiceTest extends IntegrationTestBase {
     assertThat(s.status()).isEqualTo("ERROR");
     assertThat(s.syncCursor()).isEqualTo(before);
     assertThat(states.findDueDatasetIds()).doesNotContain(datasetId);
+  }
+
+  @Test
+  void notConfiguredSkipsWithoutBackoff() {
+    when(embeddingFactory.current()).thenThrow(new EmbeddingNotConfiguredException());
+
+    assertThat(sync.sync(datasetId)).isEqualTo(RowSearchSyncService.Outcome.SKIPPED);
+
+    var s = states.find(datasetId).orElseThrow();
+    assertThat(s.lastError()).isEqualTo(EmbeddingNotConfiguredException.MESSAGE);
+    assertThat(s.consecutiveFailures()).isZero(); // 30분 백오프로 번지지 않는다
+    assertThat(embedded).isEmpty();
+    // 1분 뒤 다시 due 가 된다 — 설정을 저장하면 곧 색인이 재개된다.
+    Long waitSeconds =
+        inTenantFixture(
+            () ->
+                dsl.fetchOne(
+                        "SELECT EXTRACT(EPOCH FROM (next_attempt_at - now()))::bigint FROM dataset_search_index WHERE dataset_id = ?",
+                        datasetId)
+                    .get(0, Long.class));
+    assertThat(waitSeconds).isBetween(0L, 61L);
   }
 }

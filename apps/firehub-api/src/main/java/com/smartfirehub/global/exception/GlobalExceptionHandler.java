@@ -500,6 +500,14 @@ public class GlobalExceptionHandler {
     return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(response);
   }
 
+  /** 임베딩 미설정(#713) — 공급자 장애(502)가 아니라 설정 부재라 409 로 알린다. */
+  @ExceptionHandler(com.smartfirehub.embedding.EmbeddingNotConfiguredException.class)
+  public ResponseEntity<ErrorResponse> handleEmbeddingNotConfigured(
+      com.smartfirehub.embedding.EmbeddingNotConfiguredException ex, HttpServletRequest request) {
+    ErrorResponse response = buildError(HttpStatus.CONFLICT, ex.getMessage(), null, request);
+    return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
+  }
+
   /** 임베딩 서비스(Ollama 등) 장애·미지원 provider 설정 시 외부 서비스 실패로 보고 502 반환. */
   @ExceptionHandler(EmbeddingException.class)
   public ResponseEntity<ErrorResponse> handleEmbedding(

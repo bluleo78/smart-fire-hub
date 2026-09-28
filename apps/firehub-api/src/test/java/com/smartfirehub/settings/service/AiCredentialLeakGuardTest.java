@@ -6,7 +6,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.smartfirehub.settings.dto.ResolvedSettingResponse;
-import com.smartfirehub.settings.dto.SettingResponse;
 import com.smartfirehub.settings.model.AiCredentialSlot;
 import com.smartfirehub.settings.repository.TenantSettingsRepository;
 import com.smartfirehub.settings.service.AiCredentialService.AiCredentialUpsert;
@@ -71,10 +70,8 @@ class AiCredentialLeakGuardTest extends IntegrationTestBase {
     SettingsTestSupport.restoreSystemSettingValue(dsl, KEY, platformOriginal);
   }
 
-  @Test
-  void getAll_은_ai_credential_을_내보내지_않는다() {
-    assertThat(settingsService.getAll()).extracting(SettingResponse::key).doesNotContain(KEY);
-  }
+  // getAll_은_ai_credential_을_내보내지_않는다 는 지웠다 — SettingsService.getAll() 자체가 #713 에서
+  // 사라졌다(플랫폼 설정 평면 제거).
 
   @Test
   void prefix_조회는_ai_credential_을_내보내지_않는다() {
@@ -128,16 +125,8 @@ class AiCredentialLeakGuardTest extends IntegrationTestBase {
   // (DELETE /settings/overrides/{key} → clearOverride) 자체가 사라져 뒷문이 될 경로가 없다. 남은
   // 범용 삭제는 SMTP 6키 고정 묶음(clearSmtpSettings)뿐이고 키를 입력으로 받지 않는다.
 
-  /**
-   * {@code updatePlatformSettings} 는 {@code ai.*} 키 전부를 거부한다(AI 설정은 테넌트 전용) —
-   * 이 키도 그 검사에 걸린다. 범용 쓰기로 플랫폼 평면에 이 키를 저장할 수 없다는 계약을 실행 가능한
-   * 단언으로 고정해 둔다.
-   */
-  @Test
-  void 범용_쓰기로는_플랫폼_평면에도_저장할_수_없다() {
-    assertThatThrownBy(() -> settingsService.updatePlatformSettings(Map.of(KEY, "{}"), USER))
-        .isInstanceOf(IllegalArgumentException.class);
-  }
+  // 범용_쓰기로는_플랫폼_평면에도_저장할_수_없다 는 지웠다 — updatePlatformSettings 자체가 #713 에서
+  // 사라졌다(플랫폼 설정 평면 제거).
 
   /**
    * 위 테스트들이 키 이름만 본다면 이 테스트는 값 전체를 본다 — 나중에 키 이름이 바뀌어도
@@ -148,9 +137,7 @@ class AiCredentialLeakGuardTest extends IntegrationTestBase {
   @Test
   void 어떤_범용_경로에도_문서_구조가_섞이지_않는다() {
     String all =
-        settingsService.getAll().toString()
-            + settingsService.getResolvedByPrefix("ai")
-            + settingsService.getAsMap("ai");
+        settingsService.getResolvedByPrefix("ai").toString() + settingsService.getAsMap("ai");
     assertThat(all).doesNotContain("sk-live-secret").doesNotContain(KEY).doesNotContain("agentType");
   }
 

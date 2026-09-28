@@ -9,6 +9,7 @@ import static org.mockito.Mockito.when;
 import com.smartfirehub.document.dto.DocumentSearchHit;
 import com.smartfirehub.document.dto.DocumentSearchRequest;
 import com.smartfirehub.document.repository.DocumentChunkRepository;
+import com.smartfirehub.embedding.EmbeddingNotConfiguredException;
 import com.smartfirehub.embedding.EmbeddingProvider;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
 import java.util.List;
@@ -112,5 +113,19 @@ class DocumentSearchServiceTest {
 
     verify(repo).searchByCosine(Mockito.any(), Mockito.any(), Mockito.anyInt());
     verify(repo).searchByTrigram(Mockito.any(), Mockito.any(), Mockito.anyInt());
+  }
+
+  @Test
+  void semanticSearchWhenNotConfiguredThrowsNotConfigured() {
+    var factory = Mockito.mock(EmbeddingProviderFactory.class);
+    var repo = Mockito.mock(DocumentChunkRepository.class);
+    when(factory.current()).thenThrow(new EmbeddingNotConfiguredException());
+    var service = new DocumentSearchService(factory, repo);
+    assertThatThrownBy(
+            () ->
+                service.search(
+                    new DocumentSearchRequest(
+                        "화재", List.of(3L), 5, com.smartfirehub.document.dto.SearchMode.SEMANTIC)))
+        .isInstanceOf(EmbeddingNotConfiguredException.class);
   }
 }

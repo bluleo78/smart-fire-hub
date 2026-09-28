@@ -8,6 +8,7 @@ import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.rowsearch.dto.RowSearchRequest;
 import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.embedding.EmbeddingException;
+import com.smartfirehub.embedding.EmbeddingNotConfiguredException;
 import com.smartfirehub.embedding.EmbeddingProvider;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
 import com.smartfirehub.global.tenant.DataSchema;
@@ -127,6 +128,15 @@ class RowSearchServiceTest extends IntegrationTestBase {
     assertThat(res.degraded()).isTrue();
     assertThat(res.hits()).isNotEmpty();
     assertThatThrownBy(() -> service.search(datasetId, req("누수", "SEMANTIC", null))).isInstanceOf(EmbeddingException.class);
+  }
+
+  @Test
+  void notConfigured_hybridDegradesToKeyword_semanticFails() {
+    when(embeddingFactory.current()).thenThrow(new EmbeddingNotConfiguredException());
+    var res = service.search(datasetId, req("누수", "HYBRID", null));
+    assertThat(res.degraded()).isTrue();
+    assertThatThrownBy(() -> service.search(datasetId, req("누수", "SEMANTIC", null)))
+        .isInstanceOf(EmbeddingNotConfiguredException.class);
   }
 
   @Test

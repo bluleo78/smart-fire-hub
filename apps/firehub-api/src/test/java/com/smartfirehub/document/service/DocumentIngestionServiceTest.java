@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
 import com.smartfirehub.document.repository.DocumentFileRepository;
+import com.smartfirehub.embedding.EmbeddingNotConfiguredException;
 import com.smartfirehub.embedding.EmbeddingProvider;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
 import com.smartfirehub.global.tenant.TenantContext;
@@ -87,5 +88,31 @@ class DocumentIngestionServiceTest extends IntegrationTestBase {
     int chunks =
         dsl.fetchCount(dsl.selectFrom("document_chunk").where("document_file_id = ?", fileId));
     assertThat(chunks).isEqualTo(file.chunkCount());
+  }
+
+  @Test
+  void processIngestionMarksFailedWithNotConfiguredReason() {
+    when(embeddingProviderFactory.current()).thenThrow(new EmbeddingNotConfiguredException());
+    Long userId =
+        dsl.fetchOne(
+                "INSERT INTO \"user\"(username, password, name, email) VALUES"
+                    + " ('docing_nc','x','Doc NC','docing_nc@example.com') RETURNING id")
+            .get(0, Long.class);
+    Long datasetId =
+        dsl.fetchOne(
+                "INSERT INTO dataset(name, table_name, storage_type, origin_type, created_by) VALUES"
+                    + " ('docing-nc-set','data.docing_nc_set','DOCUMENT', 'SOURCE', ?) RETURNING id",
+                userId)
+            .get(0, Long.class);
+    Long fileId =
+        ingestionService
+            .upload(datasetId, "화재 점검".repeat(40).getBytes(), "nc.txt", "text/plain", userId)
+            .id();
+
+    ingestionService.processIngestion(fileId, 1L);
+
+    var file = fileRepository.findById(fileId).orElseThrow();
+    assertThat(file.status()).isEqualTo("FAILED");
+    assertThat(file.errorDetail()).isEqualTo(EmbeddingNotConfiguredException.MESSAGE);
   }
 }

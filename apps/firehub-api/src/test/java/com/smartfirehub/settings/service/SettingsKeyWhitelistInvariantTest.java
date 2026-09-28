@@ -17,17 +17,8 @@ import org.junit.jupiter.api.Test;
  */
 class SettingsKeyWhitelistInvariantTest {
 
-  /**
-   * <b>AI 키는 플랫폼 평면에 쓸 수 없다</b> — AI 설정은 테넌트 전용이다. 누가 플랫폼 평면 키
-   * 목록에 {@code ai.*} 를 넣으면, 아무도 읽지 않는 플랫폼 값이 "저장됨"으로 보이는 무동작이
-   * 생긴다.
-   */
-  @Test
-  void AI_키와_SMTP_키는_플랫폼_쓰기가능키와_겹치지_않는다() {
-    // #712: SMTP 도 테넌트 전용이다 — 플랫폼 쓰기 가능 키는 임베딩 4키뿐이다.
-    assertThat(SettingsOverridePolicy.platformOnlyKeys())
-        .noneMatch(k -> k.startsWith("ai.") || k.startsWith("smtp."));
-  }
+  // AI_키와_SMTP_키는_플랫폼_쓰기가능키와_겹치지_않는다 는 지웠다 — 플랫폼 쓰기 가능 키 집합
+  // (SettingsOverridePolicy.platformOnlyKeys/Plane.PLATFORM_ONLY) 자체가 #713 에서 사라졌다.
 
   /** 테넌트가 저장할 수 있는 키 = SMTP 6키 ∪ 테넌트 전용 AI 동작 키 — 빠짐도 초과도 없다. */
   @Test

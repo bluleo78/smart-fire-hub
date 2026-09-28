@@ -5,7 +5,6 @@ import static com.smartfirehub.settings.service.SettingsOverridePolicy.planeOf;
 import com.smartfirehub.apiconnection.service.EncryptionService;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.settings.dto.ResolvedSettingResponse;
-import com.smartfirehub.global.security.PlatformAuthentication;
 import com.smartfirehub.settings.dto.SettingResponse;
 import com.smartfirehub.settings.model.AiBehaviorDefaults;
 import com.smartfirehub.settings.repository.SettingsRepository;
@@ -17,8 +16,6 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
-import org.springframework.security.access.AccessDeniedException;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -34,38 +31,11 @@ public class SettingsService {
    * <b>암호문을 그대로</b> 내보낸다(당시 SMTP 전용 읽기 메서드만 별도로 마스킹하고 있었다 — 즉 이
    * 목록은 이미 한 번 어긋난 상태였다). 새 비밀 키를 추가할 때는 <b>여기만</b> 고친다.
    */
-  private static final Set<String> SECRET_KEYS =
-      Set.of("embedding.api_key", "smtp.password");
+  private static final Set<String> SECRET_KEYS = Set.of("smtp.password");
 
   private final SettingsRepository settingsRepository;
   private final EncryptionService encryptionService;
   private final TenantSettingsRepository tenantSettingsRepository;
-
-  /**
-   * 플랫폼 설정 전체(임베딩만 — {@code ai.*}·{@code smtp.*} 는 테넌트 전용이라 제외). 운영자 평면({@code GET /api/platform/settings})이 플랫폼 기본값을 한 화면에
-   * 보여 주기 위해 쓴다.
-   *
-   * <p>P7-c1 이전 이 위에 {@code getByPrefix(prefix)} 가 있었다. 마지막 실사용 호출자였던
-   * {@code getSmtpSettings()} 를 Task 4 가 지우면서 프로덕션 호출자가 0이 됐고, 이 밴드가 죽인
-   * 코드를 이 밴드가 치운다. 남은 프리픽스 읽기는 <b>{@link #getResolvedByPrefix}</b> 다 —
-   * 테넌트 화면이 실제로 부르는 경로이고, 오버라이드를 해석하지 않는 {@code getByPrefix} 를
-   * 그 자리에 쓰는 것이 정확히 Task 4 가 고친 결함이었다(화면은 플랫폼 값을 보여주는데 메일은
-   * 테넌트 값으로 나가는 어긋남).
-   *
-   * <p>되살리고 싶어지면 <b>{@link #getResolvedByPrefix} 로 충분한지 먼저 묻는다.</b> 플랫폼 평면
-   * 전용 프리픽스 조회가 정말 필요한 날 다시 만드는 비용은 네 줄이고, 그때는 호출자가 있다.
-   *
-   * <p>플랫폼 평면이 없는 키({@code ai.*}·{@code smtp.*}, {@link SettingsOverridePolicy.Plane#readsPlatformRow})의
-   * 행은 뺀다 — 남은 행을 내보내면 운영자가 "플랫폼 기본값"으로 오해하고, {@code ai.credential}
-   * 은 {@link #maskSecret} 이 모르는 비밀 하위 필드 암호문이 그대로 나간다.
-   */
-  @Transactional(readOnly = true)
-  public List<SettingResponse> getAll() {
-    return settingsRepository.findAll().stream()
-        .filter(s -> planeOf(s.key()).readsPlatformRow())
-        .map(this::maskSecret)
-        .collect(Collectors.toList());
-  }
 
   /**
    * 프리픽스에 속한 플랫폼 행 중 플랫폼 평면이 있는 키만. 테넌트 네임스페이스({@code "ai"}·{@code "smtp"})면
@@ -138,7 +108,7 @@ public class SettingsService {
       case TENANT_ONLY ->
           tenantValue(key).or(() -> Optional.ofNullable(AiBehaviorDefaults.defaultOf(key)));
       case EXTERNAL_OWNER -> throw externalOwnerKey(key); // rejectExternalOwnerKey 가 이미 막는다
-      // PLATFORM_ONLY·UNKNOWN: 테넌트 쓰기 가능 키(SMTP·AI 동작)가 전부 TENANT_ONLY 라 이 평면에는
+      // UNKNOWN: 테넌트 쓰기 가능 키(SMTP·AI 동작)가 전부 TENANT_ONLY 라 이 평면에는
       // 테넌트 값이 존재할 수 없다(tenantValue 는 화이트리스트 밖이라 항상 empty 였다). 플랫폼 행만 본다.
       default -> settingsRepository.getValue(key);
     };
@@ -340,8 +310,7 @@ public class SettingsService {
    * {@link AiCredentialService#save} 다.
    *
    * <p>거부 메시지에 키 이름을 넣는다 — web 이 어느 필드가 잠겼는지 사용자에게 보여줄 수 있어야
-   * 하기 때문이다. 플랫폼 잠금 키({@code embedding.*}) 는 {@link #updatePlatformSettings} 로만
-   * 바뀐다.
+   * 하기 때문이다. 임베딩 설정은 {@code EmbeddingConfigService} 전용이다(#713).
    *
    * <p>{@link #validateValues} 는 그대로 지난다 — 범위 검증(예: max_turns 1~50)은 값이
    * {@code tenant_settings} 로 가든 {@code system_settings} 로 가든 똑같이 필요하다.
@@ -385,58 +354,6 @@ public class SettingsService {
   }
 
   /**
-   * <b>플랫폼 평면</b> 쓰기(운영자 전용, Task 6). 임베딩 4키만 대상으로 하고 {@code system_settings}
-   * 에 쓴다. 키의 평면({@link SettingsOverridePolicy#planeOf})이 {@code PLATFORM_ONLY} 가 아니면
-   * 즉시 거부한다.
-   *
-   * <p><b>{@code ai.*}(#706)·{@code smtp.*}(#712)는 전부 거부한다.</b> 플랫폼 평면이 없어 여기서
-   * 쓰면 아무도 읽지 않는 값이 "저장됨"으로 보이는 무동작이 된다. 거부 메시지는 워크스페이스
-   * 설정에서 바꾸라고 안내한다.
-   */
-  @Transactional
-  public void updatePlatformSettings(Map<String, String> settings, Long userId) {
-    requirePlatformPlane();
-    rejectNullValues(settings);
-    for (String key : settings.keySet()) {
-      switch (planeOf(key)) {
-        case PLATFORM_ONLY -> {}
-        case TENANT_ONLY, EXTERNAL_OWNER -> throw notPlatformSetting(key);
-        case UNKNOWN -> throw new IllegalArgumentException("허용되지 않는 설정 키: " + key);
-      }
-    }
-
-    if (!settings.isEmpty()) applyPlatformEmbeddingSettings(settings, userId);
-  }
-
-  /**
-   * 테넌트 전용 키를 플랫폼 쓰기로 보냈을 때의 거부(400). 네임스페이스별 이름을 여기 따로 두지 않고
-   * 한 문구로 통일한다 — 이름 목록을 두면 {@code SettingsOverridePolicy} 의 테넌트 네임스페이스 목록과
-   * 이중 관리가 된다. 어느 키인지는 메시지 끝의 키 이름이 알려 준다.
-   */
-  private static IllegalArgumentException notPlatformSetting(String key) {
-    return new IllegalArgumentException("워크스페이스 설정은 플랫폼 설정으로 저장할 수 없습니다: " + key);
-  }
-
-  /**
-   * 임베딩 키의 검증·마스킹·암호화 후 {@code system_settings} 갱신. {@link #updatePlatformSettings}
-   * 만 부른다.
-   */
-  private void applyPlatformEmbeddingSettings(Map<String, String> settings, Long userId) {
-    // 센티널 드롭은 검증보다 **먼저**다 — 사용자가 안 고친 비밀 키의 마스크 문자열이 값 검증에
-    // 걸리거나 그대로 저장되지 않게 한다. 키를 나열하던 boolean+filter 세 벌은 dropMaskSentinels 가
-    // SECRET_KEYS 로 대신한다.
-    Map<String, String> filtered = dropMaskSentinels(settings);
-    validateValues(filtered);
-    validateEmbeddingConsistency(filtered);
-
-    Map<String, String> toUpdate = encryptSecrets(filtered);
-
-    if (!toUpdate.isEmpty()) {
-      settingsRepository.updateSettings(toUpdate, userId);
-    }
-  }
-
-  /**
    * 워크스페이스 SMTP 설정을 해제한다 — SMTP 6키({@link SettingsOverridePolicy#smtpKeys}) 행을 한
    * 번에 지운다(#712). 발신자 주소도 포함한다. 지운 뒤 워크스페이스는 미설정이 되어 메일 발송이
    * 명확한 오류로 실패한다(플랫폼 폴백 없음).
@@ -477,28 +394,6 @@ public class SettingsService {
   }
 
   /**
-   * 플랫폼 평면에서 호출됐는지 <b>서비스 레벨에서</b> 확인한다.
-   *
-   * <p>이 밴드는 "컨트롤러가 아니라 서비스에서 막는다 — 애노테이션
-   * 하나만 지우면 뚫리는 방식보다 안전하다"고 선언해 놓고, 정작 <b>전 테넌트가 공유하는 플랫폼 설정 행을
-   * 쓰는 가장 위험한 메서드</b>는 컨트롤러 애노테이션과 {@code PlatformPlaneFilter} 에만 기대고
-   * 있었다. {@code /api/v1/**} 경로에 이 메서드를 부르는 호출자가 하나 생기면 필터는 그 경로를
-   * 보지 않고 메서드는 평면을 묻지 않는다.
-   *
-   * <p><b>평면은 인증 "타입"으로 판정한다</b>({@link PlatformAuthentication} 인가) — 표식의 부재로
-   * 판정하지 않는다(P7-a 의 양방향 함정). 인증이 <b>아예 없는</b> 경우는 통과시킨다: 테넌트 HTTP
-   * 요청은 {@code JwtAuthenticationFilter} 가 반드시 인증을 채우므로 "인증 없음"은 테넌트일 수
-   * 없고, 배경 잡·부트스트랩·서비스 직접 호출이 여기 해당한다. 없음을 거부로 바꾸면
-   * {@code TenantContext.get() != null} 로 평면을 판정하다 실패했던 것과 같은 종류의 오판이 된다.
-   */
-  private void requirePlatformPlane() {
-    var auth = SecurityContextHolder.getContext().getAuthentication();
-    if (auth != null && !PlatformAuthentication.isCurrent()) {
-      throw new AccessDeniedException("플랫폼 설정은 플랫폼 운영자만 변경할 수 있습니다");
-    }
-  }
-
-  /**
    * 값이 <b>우리가 만든 마스크 그 자체</b>인지 판정한다 — "화면이 받은 마스크를 그대로 돌려보냈다
    * = 사용자가 안 고쳤다"의 근거이고, 참이면 그 키를 페이로드에서 통째로 드롭한다.
    *
@@ -518,9 +413,6 @@ public class SettingsService {
    *
    * <p><b>남는 잔여 위험</b>: 진짜 비밀번호가 우연히 길이 8 이고 {@code ****} 로 시작하면 여전히
    * 조용히 드롭된다. 저장소를 읽지 않는 한 닫을 수 없는 구멍이고, 확률이 무시할 만하다.
-   *
-   * <p>{@code embedding.api_key} 도 같은 판정을 공유하므로 플랫폼 평면 동작이 함께 좁아진다 —
-   * <b>의도된 개선이다</b>(같은 결함이 그 키에도 있었다).
    */
   private static boolean isMaskSentinel(String value) {
     return value != null
@@ -529,9 +421,9 @@ public class SettingsService {
   }
 
   /**
-   * 비밀 값(embedding.api_key, smtp.password)은 저장 전 암호화한다.
-   * embedding.api_key 는 Ollama 로컬 등 키가 불필요한 경우, smtp.password 는 인증 없는 릴레이를 쓰는 경우
-   * 빈 문자열일 수 있으므로, 빈 값은 암호화하지 않고 그대로 둔다(빈 ciphertext 복호화 실패 방지).
+   * 비밀 값({@link #SECRET_KEYS} — 현재 {@code smtp.password} 뿐, #713 이후 임베딩 키는 여기서 다루지
+   * 않는다)은 저장 전 암호화한다. {@code smtp.password} 는 인증 없는 릴레이를 쓰는 경우 빈 문자열일
+   * 수 있으므로, 빈 값은 암호화하지 않고 그대로 둔다(빈 ciphertext 복호화 실패 방지).
    *
    * <p><b>암호화 판정은 여기 하나뿐이다.</b> P7-c1 이전에는 {@code smtp.password} 암호화가
    * {@code applyPlatformSmtpSettings} 안에 따로 있었고(같은 판정의 두 번째 자리), 테넌트 평면이
@@ -556,21 +448,6 @@ public class SettingsService {
         .collect(
             Collectors.toMap(Map.Entry::getKey, e -> encryptIfSecret(e.getKey(), e.getValue())));
   }
-
-  /**
-   * 임베딩 provider 인증용 복호화된 API 키. OpenAI 등 인증이 필요한 provider 에서만 사용하며, Ollama(로컬)는 빈 값이라
-   * empty 를 반환한다. 키는 절대 ai-agent 로 내려보내지 않고 api 내부(EmbeddingProviderFactory)에서만 쓴다.
-   *
-   * <p>{@code embedding.*} 4키도 화이트리스트에 없는 플랫폼 잠금 키다(모델 교체가 벡터 차원을 바꿔
-   * 기존 임베딩을 무효화하므로 테넌트별로 다를 수 없다). 다만
-   * 이쪽은 <b>단독</b> 잠금 키라({@code embedding.provider}/{@code model}/{@code base_url} 과
-   * 원자적으로 묶이지 않는다) {@link #getValue} 로 조회해도 안전하다.
-   */
-  @Transactional(readOnly = true)
-  public Optional<String> getDecryptedEmbeddingApiKey() {
-    return getValue("embedding.api_key").filter(v -> !v.isBlank()).map(encryptionService::decrypt);
-  }
-
 
   /**
    * 화면이 돌려보낸 <b>마스크 센티널</b>을 페이로드에서 떨어뜨린다 — 두 쓰기 평면이 공유한다.
@@ -701,11 +578,6 @@ public class SettingsService {
               if (value == null || value.isBlank())
                 throw new IllegalArgumentException("시스템 프롬프트는 비어있을 수 없습니다");
             }
-            case "embedding.provider" -> {
-              if (!Set.of("OLLAMA", "VOYAGE", "OPENAI").contains(value))
-                throw new IllegalArgumentException(
-                    "임베딩 provider 는 OLLAMA, VOYAGE, OPENAI 중 하나여야 합니다");
-            }
             default -> {
               /* ai.model is a free-form string, validated by frontend dropdown */
             }
@@ -713,73 +585,4 @@ public class SettingsService {
         });
   }
 
-  /**
-   * 임베딩 설정의 항목 간 정합성을 검증한다 (이슈 #322, #323).
-   *
-   * <p>키를 하나씩 보는 {@link #validateValues}로는 "provider 는 OPENAI 인데 base_url 이 Ollama 주소"
-   * 같은 조합 오류를 잡을 수 없다. 잘못된 조합이 저장되면 실패가 설정 화면이 아니라 한참 뒤
-   * {@code EmbeddingProviderFactory} 런타임에야 드러나므로, 저장 시점에 막는다.
-   *
-   * <p><b>유효값 해석 규칙</b>: 페이로드에 <b>키가 없으면</b> 저장된 값으로 폴백하고, <b>키가 있으면
-   * 빈 문자열이라도 그 값을 그대로</b> 쓴다. 마스킹된 api_key 는 호출부에서 이미 제거되므로 "키 없음"
-   * = "기존 키 유지"로 해석되어, 저장된 키가 있는데 페이로드에 없다는 이유로 거부하는 회귀가 나지 않는다.
-   * 반대로 사용자가 명시적으로 비운 빈 문자열은 그대로 "빈 값"으로 취급해 거부한다.
-   */
-  private void validateEmbeddingConsistency(Map<String, String> settings) {
-    // 임베딩 키가 하나도 없는 저장(예: AI 탭 저장)은 검증 대상이 아니다.
-    if (settings.keySet().stream()
-        .noneMatch(SettingsOverridePolicy.platformOnlyKeys()::contains)) return;
-
-    String provider = effectiveValue(settings, "embedding.provider").orElse("OLLAMA");
-    String model = effectiveValue(settings, "embedding.model").orElse("");
-    String baseUrl = effectiveValue(settings, "embedding.base_url").orElse("");
-
-    // 모델/base_url 은 어떤 provider 든 비어 있으면 안 된다 (페이로드에 명시된 경우에 한해 검사).
-    if (settings.containsKey("embedding.model") && model.isBlank())
-      throw new IllegalArgumentException("임베딩 모델은 비어있을 수 없습니다");
-    if (settings.containsKey("embedding.base_url") && baseUrl.isBlank())
-      throw new IllegalArgumentException("임베딩 Base URL 은 비어있을 수 없습니다");
-
-    // base_url 형식 — http/https 스킴과 호스트를 갖춘 절대 URL 이어야 한다.
-    if (!baseUrl.isBlank() && embeddingUrlScheme(baseUrl).isEmpty())
-      throw new IllegalArgumentException(
-          "임베딩 Base URL 은 http:// 또는 https:// 로 시작하는 올바른 주소여야 합니다: " + baseUrl);
-
-    if (!"OPENAI".equals(provider)) return;
-
-    // OPENAI 는 공개 API/프록시 모두 TLS 를 쓴다. http 주소가 남아 있다는 것은 Ollama 등 다른
-    // provider 주소가 그대로 남은 불일치 신호이므로 거부한다 (평문 http 자체 호스팅 프록시는 미지원).
-    if (!baseUrl.isBlank() && !"https".equals(embeddingUrlScheme(baseUrl).orElse("")))
-      throw new IllegalArgumentException(
-          "OpenAI 임베딩 provider 의 Base URL 은 https 주소여야 합니다. 현재 값: "
-              + baseUrl
-              + " (provider 를 변경했다면 Base URL 도 함께 변경하세요)");
-
-    // OPENAI 는 Bearer 인증 필수 — 저장된 키도 없고 새 키도 없으면 저장을 막는다.
-    boolean hasStoredKey =
-        settingsRepository.getValue("embedding.api_key").filter(v -> !v.isBlank()).isPresent();
-    String submittedKey = settings.get("embedding.api_key");
-    boolean keyAvailable =
-        submittedKey != null ? !submittedKey.isBlank() : hasStoredKey;
-    if (!keyAvailable) throw new IllegalArgumentException("OpenAI 임베딩 provider 에는 API 키가 필요합니다");
-  }
-
-  /** 페이로드에 키가 있으면 그 값(빈 문자열 포함), 없으면 저장된 값을 반환한다. */
-  private Optional<String> effectiveValue(Map<String, String> settings, String key) {
-    if (settings.containsKey(key)) return Optional.ofNullable(settings.get(key));
-    return settingsRepository.getValue(key);
-  }
-
-  /** base_url 의 http/https 스킴을 반환한다. 절대 URL 이 아니거나 호스트가 없으면 empty. */
-  private Optional<String> embeddingUrlScheme(String baseUrl) {
-    try {
-      java.net.URI uri = java.net.URI.create(baseUrl.trim());
-      String scheme = uri.getScheme();
-      if (uri.getHost() == null || scheme == null) return Optional.empty();
-      String lower = scheme.toLowerCase(java.util.Locale.ROOT);
-      return "http".equals(lower) || "https".equals(lower) ? Optional.of(lower) : Optional.empty();
-    } catch (IllegalArgumentException e) {
-      return Optional.empty();
-    }
-  }
 }

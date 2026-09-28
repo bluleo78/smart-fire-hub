@@ -1,10 +1,12 @@
 package com.smartfirehub.dataset.search;
 
+import com.smartfirehub.embedding.EmbeddingNotConfiguredException;
 import com.smartfirehub.embedding.EmbeddingProvider;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
 import com.smartfirehub.global.tenant.TenantContext;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 /**
@@ -18,6 +20,7 @@ import org.springframework.stereotype.Service;
  * <p>주의: 생성자 인자 순서는 {@code @RequiredArgsConstructor} 가 필드 선언 순서대로 생성한다
  * (embeddingRepo, metaReader, embeddingFactory). 단위 테스트가 이 3-arg 시그니처에 의존한다.
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class DatasetEmbeddingService {
@@ -56,7 +59,14 @@ public class DatasetEmbeddingService {
             return;
           }
           String sourceText = DatasetSourceTextBuilder.build(meta);
-          EmbeddingProvider provider = embeddingFactory.current();
+          EmbeddingProvider provider;
+          try {
+            provider = embeddingFactory.current();
+          } catch (EmbeddingNotConfiguredException e) {
+            // 미설정 테넌트(#713): 카탈로그 벡터만 건너뛴다. 키워드용 source_text 는 syncSourceText 가 이미 갱신했다.
+            log.info("임베딩 미설정 — 데이터셋 {} 카탈로그 임베딩을 건너뛴다", datasetId);
+            return;
+          }
           float[] embedding = provider.embed(List.of(sourceText)).get(0);
           embeddingRepo.updateEmbedding(datasetId, embedding, provider.modelId());
         });

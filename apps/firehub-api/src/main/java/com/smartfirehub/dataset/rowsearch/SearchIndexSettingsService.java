@@ -6,7 +6,6 @@ import com.smartfirehub.dataset.exception.DatasetNotFoundException;
 import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.rowsearch.dto.SearchIndexStatusResponse;
-import com.smartfirehub.embedding.EmbeddingProviderFactory;
 import com.smartfirehub.global.tenant.TenantContext;
 import java.util.HashSet;
 import java.util.List;
@@ -31,7 +30,6 @@ public class SearchIndexSettingsService {
   private final SearchColumnRepository searchColumns;
   private final SearchIndexStateRepository states;
   private final RowSearchIndex index;
-  private final EmbeddingProviderFactory embeddingFactory;
 
   /**
    * 현재 검색 설정·색인 진행 상태. 색인 상태 행이 없으면 OFF.
@@ -85,16 +83,8 @@ public class SearchIndexSettingsService {
       index.drop(new IndexRef(TenantContext.require(), datasetId, dataset.tableName()));
       return SearchIndexStatusResponse.off();
     }
-    // 색인 테이블의 vector 컬럼 차원 상한을 넘는 모델이면 켜는 시점에 거절한다(스윕에서 조용히 실패하지 않도록).
-    int dim = embeddingFactory.current().dimension();
-    if (dim > PgRowSearchIndex.MAX_DIM) {
-      throw new IllegalArgumentException(
-          "현재 임베딩 모델 차원("
-              + dim
-              + ")은 검색 색인이 지원하는 최대 "
-              + PgRowSearchIndex.MAX_DIM
-              + " 을 넘습니다");
-    }
+    // 차원 상한 검사는 두지 않는다 — 지원 차원(EmbeddingDimension: 1024·1536)이 MAX_DIM(2000) 아래이고,
+    // 미설정 테넌트도 검색을 켤 수 있어야 한다(#713).
     states.createIfAbsent(datasetId); // 설정이 바뀌면 스윕이 config_hash 차이로 전체 재색인한다
     // 확인 창이 "다시 색인"을 약속했으니 스윕 전까지도 "사용 가능"이 아닌 "색인 중"으로 보여준다.
     // 이전 실패의 백오프도 풀어 다음 스윕이 바로 집어 가게 한다.

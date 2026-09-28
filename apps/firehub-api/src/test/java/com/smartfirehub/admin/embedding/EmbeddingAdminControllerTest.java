@@ -9,6 +9,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.smartfirehub.dataset.search.DatasetEmbeddingBackfillService;
 import com.smartfirehub.document.service.DocumentChunkReembedService;
+import com.smartfirehub.embedding.EmbeddingNotConfiguredException;
 import com.smartfirehub.embedding.EmbeddingProvider;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
 import com.smartfirehub.global.config.SecurityConfig;
@@ -136,5 +137,18 @@ class EmbeddingAdminControllerTest {
         .andExpect(jsonPath("$.embeddings").isEmpty());
 
     verify(provider, never()).embed(org.mockito.ArgumentMatchers.anyList());
+  }
+
+  @Test
+  void embed_whenNotConfigured_returns409WithMessage() throws Exception {
+    when(embeddingProviderFactory.current()).thenThrow(new EmbeddingNotConfiguredException());
+    mockMvc
+        .perform(
+            post("/api/v1/admin/embedding/embed")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"texts\":[\"a\"]}"))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.message").value("임베딩이 설정되지 않았습니다 (설정 > 임베딩)"));
   }
 }

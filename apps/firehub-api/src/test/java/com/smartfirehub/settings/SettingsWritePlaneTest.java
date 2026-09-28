@@ -23,7 +23,6 @@ import org.jooq.DSLContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.security.access.AccessDeniedException;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
@@ -88,10 +87,8 @@ class SettingsWritePlaneTest extends IntegrationTestBase {
   }
 
   @Test
-  void 플랫폼_잠금_키를_쓰면_거부된다() {
-    // 검증 키로 embedding.api_key 를 쓴다 — 예전 검증 키 ai.api_key 는 #706 으로 설정 키 자체가
-    // 사라졌다. embedding.* 4키는 여전히 플랫폼 잠금이라 "플랫폼 잠금 키는 테넌트 쓰기를
-    // 거부한다"는 불변식을 계속 지킨다.
+  void 쓰기_허용_목록_밖의_키를_쓰면_거부된다() {
+    // #713 이후 embedding.* 는 EmbeddingConfigService 전용 — 범용 테넌트 쓰기는 여전히 거부
     testTenant = createActiveTenant(dsl, "swp-locked");
     TenantContext.set(testTenant);
 
@@ -105,11 +102,14 @@ class SettingsWritePlaneTest extends IntegrationTestBase {
             () -> settingsService.updateSettings(Map.of("embedding.model", "sneaky-model"), null))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("플랫폼 관리자만 변경할 수 있는 설정입니다: embedding.model");
+
+    // embedding.config 는 EXTERNAL_OWNER 라 화이트리스트 검사보다 먼저 "전용 서비스를 쓰라"로 거부된다.
+    assertThatThrownBy(() -> settingsService.updateSettings(Map.of("embedding.config", "{}"), null))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("범용 설정 경로");
   }
 
   // SMTP 쓰기 거부 테스트는 삭제했다 — 테넌트 평면 SMTP 쓰기 메서드 자체가 사라졌다.
-  // 이 테스트의 핵심 단언("컨텍스트 없음을 플랫폼으로 오인하지 않는다")은
-  // 플랫폼_쓰기는_테넌트_인증이_놓여_있으면_거부된다 가 인증 타입 기준으로 이어받는다.
 
 
 
@@ -143,43 +143,8 @@ class SettingsWritePlaneTest extends IntegrationTestBase {
     assertThat(tenantRawValue("ai.session_max_tokens")).contains("10000");
   }
 
-  /**
-   * 플랫폼 쓰기는 <b>서비스 레벨에서도</b> 평면을 확인한다.
-   *
-   * <p>이 메서드는 전 테넌트가 공유하는 {@code system_settings} 18행을 쓴다 — 이 밴드에서 가장
-   * 위험한 쓰기다. 그런데 보호가 컨트롤러 애노테이션과 {@code PlatformPlaneFilter} 에만 있었다:
-   * {@code /api/v1/**} 경로에 이 메서드를 부르는 호출자가 하나 생기면 필터는 그 경로를 보지 않고
-   * 메서드는 아무것도 묻지 않는다. {@code updateSmtpSettings} 는 이미 서비스에서 막고 있었으므로
-   * 원칙은 있었고 적용만 빠져 있었다.
-   *
-   * <p>판정은 인증 <b>타입</b>으로 한다 — 테넌트 인증이 놓여 있으면 거부. "인증 없음"은 거부하지
-   * 않는다(배경 잡·직접 호출이 그 상태이고, 테넌트 HTTP 요청은 반드시 인증이 채워진다).
-   */
-  @Test
-  void 플랫폼_쓰기는_테넌트_인증이_놓여_있으면_거부된다() {
-    // 원복 준비: 이 테스트가 성공하면 아무것도 쓰이지 않는다. 그러나 **가드를 제거하는 변이
-    // 테스트를 돌리면 쓰기가 실제로 커밋된 뒤 단언이 실패한다** — 공유 test DB 에서는 그 순간
-    // ai.model 이 "hijacked" 로 남아 무관한 테스트들이 줄줄이 깨진다(실제로 한 번 겪었다).
-    // 변이 실험까지 안전하도록 값을 미리 붙잡아 두고 finally 에서 되돌린다.
-    // 검증 키는 플랫폼 쓰기가 실제로 받는 embedding.model 이다 — ai.*·smtp.* 는 평면 가드가
-    // 없어도 키 거부로 막히므로 이 가드를 증명하지 못한다(#712 이전에는 smtp.from_address 였다).
-    String original = rawSystemSettingValue(dsl, "embedding.model");
-    var tenantAuth =
-        new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
-            1L, null, java.util.List.of());
-    org.springframework.security.core.context.SecurityContextHolder.getContext()
-        .setAuthentication(tenantAuth);
-    try {
-      assertThatThrownBy(
-              () ->
-                  settingsService.updatePlatformSettings(
-                      Map.of("embedding.model", "hijacked-model"), null))
-          .isInstanceOf(AccessDeniedException.class);
-    } finally {
-      org.springframework.security.core.context.SecurityContextHolder.clearContext();
-      restoreSystemSettingValue(dsl, "embedding.model", original);
-    }
-  }
+  // 플랫폼_쓰기는_테넌트_인증이_놓여_있으면_거부된다 는 지웠다 — 가드 대상 메서드
+  // (updatePlatformSettings)가 #713 에서 사라졌다.
 
   /**
    * 값이 {@code null} 이면 500 이 아니라 400 계열(IllegalArgumentException)이어야 한다.
