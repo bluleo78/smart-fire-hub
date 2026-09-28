@@ -77,6 +77,17 @@ public class EmbeddingReembedStateRepository {
     dsl.execute("UPDATE embedding_reembed_state SET lease_until = NULL WHERE tenant_id = ?", tenant());
   }
 
+  /**
+   * 지금 재임베딩 잡이 유효한 임대를 쥐고 돌고 있는가(RUNNING + 임대 미만료). 백로그 스윕이 "이미 도는 잡"에 새 잡을
+   * 겹쳐 투입하지 않으려고 본다. 만료 판정은 {@link #tryAcquire} 와 같이 DB {@code now()} 기준이다(앱 시계 어긋남 배제).
+   */
+  public boolean hasActiveLease() {
+    return dsl.fetchExists(
+        dsl.selectOne()
+            .from("embedding_reembed_state")
+            .where("tenant_id = ? AND status = 'RUNNING' AND lease_until > now()", tenant()));
+  }
+
   /** 현재 테넌트의 마지막 재임베딩 상태. 한 번도 돌지 않았으면 빈 값. */
   public Optional<ReembedState> find() {
     return dsl.fetchOptional(

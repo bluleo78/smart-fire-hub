@@ -68,6 +68,9 @@ app:
       idle-timeout-ms: 600000
   executor:
     enabled: false  # tests use direct execution
+  embedding:
+    # 재임베딩 백로그 스윕은 테스트가 직접 sweep() 을 부른다 — 배경 투입이 끼어들면 잡 투입 단언이 흔들린다.
+    backlog-sweep-enabled: false
 
 agent:
   url: http://localhost:9999

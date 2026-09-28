@@ -87,6 +87,10 @@ app:
     # 공개 https 여야 한다(SSRF 가드 — EmbeddingTargetGuard). 운영 Ollama 주소가 기본값과 다르면
     # docker-compose 의 api 환경변수로 반드시 넘긴다(.env 만으로는 주입되지 않는다).
     ollama-allowed-base-urls: ${EMBEDDING_OLLAMA_ALLOWED_BASE_URLS:http://host.docker.internal:11434}
+    # 재임베딩 백로그 스윕(EmbeddingBacklogSweepScheduler): 설정 변경 중 늦게 끝난 쓰기가 남긴 옛 공간 벡터를
+    # 주기적으로 찾아 재임베딩 잡을 다시 투입한다(저장 시 투입만으로는 영구 누락될 수 있다). 기본 5분.
+    backlog-sweep-enabled: true
+    backlog-sweep-interval-ms: 300000
 
 firehub:
   file:
