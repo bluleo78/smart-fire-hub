@@ -8,6 +8,8 @@ import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
+import com.smartfirehub.dataset.rowsearch.SearchIndexStateRepository;
+import com.smartfirehub.dataset.search.DatasetEmbeddingRepository;
 import com.smartfirehub.document.dto.Chunk;
 import com.smartfirehub.document.repository.DocumentChunkRepository;
 import com.smartfirehub.embedding.EmbeddingDimension;
@@ -47,6 +49,8 @@ class EmbeddingSaveReembedTriggerTest extends IntegrationTestBase {
 
   @Autowired private EmbeddingSettingsService settingsService;
   @Autowired private DocumentChunkRepository chunks;
+  @Autowired private DatasetEmbeddingRepository datasets;
+  @Autowired private SearchIndexStateRepository searchIndexStates;
   @Autowired private DSLContext dsl;
   @MockitoSpyBean private EmbeddingProviderFactory providerFactory;
   @MockitoBean private TenantReembedJob reembedJob;
@@ -124,10 +128,28 @@ class EmbeddingSaveReembedTriggerTest extends IntegrationTestBase {
   }
 
   @Test
+  void datasetOnlyBacklogEnqueues() {
+    // 판정식의 데이터셋 절반: 청크는 전부 현재 공간인데 카탈로그 행만 벡터가 없다 — 그래도 투입해야 한다.
+    datasets.upsertSourceText(doc.datasetId(), "화재 카탈로그");
+    save(OLLAMA_A, "bge-m3", 1024);
+    verify(reembedJob).enqueue(tenant);
+  }
+
+  @Test
   void impactCountsWhatTheJudgementCounts() {
+    // 세 항목을 모두 채운다: 청크 2(시드), 카탈로그 1(bge-m3/1024), 행 검색 색인 1(bge-m3/1024 로 색인됨).
+    datasets.upsertSourceText(doc.datasetId(), "화재 카탈로그");
+    datasets.upsertEmbedding(new EmbeddingSpace(EmbeddingDimension.D1024, "bge-m3"), doc.datasetId(), axis(1024, 0));
+    searchIndexStates.createIfAbsent(doc.datasetId());
+    searchIndexStates.resetForFullPass(doc.datasetId(), "h", "bge-m3", 1024, 0L);
+
     var sameSpace = settingsService.impact("bge-m3", 1024);
     assertThat(sameSpace.chunks()).isZero();
+    assertThat(sameSpace.datasets()).isZero();
+    assertThat(sameSpace.rowSearchIndexes()).isZero();
     var otherSpace = settingsService.impact("text-embedding-3-small", 1536);
     assertThat(otherSpace.chunks()).isEqualTo(2);
+    assertThat(otherSpace.datasets()).isEqualTo(1);
+    assertThat(otherSpace.rowSearchIndexes()).isEqualTo(1);
   }
 }

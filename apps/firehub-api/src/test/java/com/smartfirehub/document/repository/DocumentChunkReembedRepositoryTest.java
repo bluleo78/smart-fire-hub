@@ -79,9 +79,14 @@ class DocumentChunkReembedRepositoryTest extends IntegrationTestBase {
   }
 
   @Test
-  void countAllChunksAndCountEmbeddedByModelAreNonNegative() {
+  void countAllChunksAndCountEmbeddedByModelCountSeededChunks() {
+    // 공유 테스트 DB 의 같은 테넌트에 다른 테스트 행이 있을 수 있어 절대값 대신 시드 전후 증가분(청크 2건)을 본다 —
+    // ">= 0" 은 어떤 구현에서도 참이라 아무것도 검증하지 않았다.
+    EmbeddingSpace bge = new EmbeddingSpace(EmbeddingDimension.D1024, "bge-m3");
+    long allBefore = chunkRepository.countAllChunks();
+    long embeddedBefore = chunkRepository.countEmbedded(bge);
     seedDataset("reembedcount");
-    assertThat(chunkRepository.countAllChunks()).isGreaterThanOrEqualTo(0);
-    assertThat(chunkRepository.countEmbedded(new EmbeddingSpace(EmbeddingDimension.D1024, "bge-m3"))).isGreaterThanOrEqualTo(0);
+    assertThat(chunkRepository.countAllChunks() - allBefore).isEqualTo(2);
+    assertThat(chunkRepository.countEmbedded(bge) - embeddedBefore).isEqualTo(2);
   }
 }

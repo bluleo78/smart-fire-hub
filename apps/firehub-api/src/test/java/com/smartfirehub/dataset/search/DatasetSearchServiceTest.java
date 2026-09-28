@@ -7,9 +7,11 @@ import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.smartfirehub.embedding.EmbeddingDimension;
 import com.smartfirehub.embedding.EmbeddingNotConfiguredException;
 import com.smartfirehub.embedding.EmbeddingProvider;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
+import com.smartfirehub.embedding.EmbeddingSpace;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -45,8 +47,9 @@ class DatasetSearchServiceTest {
     var dsA = hit(1L);
     var dsB = hit(2L);
     var dsC = hit(3L);
+    // 검색 공간을 provider 의 (차원, 모델)로 고정한다 — 다른 공간으로 부르면 스텁이 맞지 않아 실패한다.
     when(repository.searchByCosine(
-            ArgumentMatchers.any(),
+            ArgumentMatchers.eq(new EmbeddingSpace(EmbeddingDimension.D1024, "bge-m3")),
             ArgumentMatchers.any(),
             ArgumentMatchers.isNull(), ArgumentMatchers.anyInt()))
         .thenReturn(List.of(dsA, dsC)); // 코사인: dsA(rank0), dsC(rank1)

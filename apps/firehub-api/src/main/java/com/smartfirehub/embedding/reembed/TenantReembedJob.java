@@ -85,6 +85,8 @@ public class TenantReembedJob {
   private void runInTenant(long tenantId) {
     if (!stateRepository.tryAcquire(LEASE)) throw new ReembedBusyException(tenantId);
     boolean superseded = false;
+    // 재시도로 넘길 원래 예외. 실패 기록·임대 해제가 또 던져도 이것을 가리지 않게 붙들어 둔다(아래 finally).
+    RuntimeException primary = null;
     try {
       EmbeddingProvider provider = providerFactory.current();
       EmbeddingSpace space = EmbeddingSpace.of(provider);
@@ -107,12 +109,29 @@ public class TenantReembedJob {
       }
     } catch (EmbeddingNotConfiguredException e) {
       // 재시도해도 결과가 같다 — 사유만 남기고 삼킨다(재시도 소진까지 JobRunr 대시보드를 어지럽히지 않게).
-      stateRepository.markFailed(e.getMessage());
+      try {
+        stateRepository.markFailed(e.getMessage());
+      } catch (RuntimeException m) {
+        m.addSuppressed(e); // 기록 실패가 올라가더라도 원인(미설정)은 남긴다
+        primary = m;
+        throw m;
+      }
     } catch (RuntimeException e) {
-      stateRepository.markFailed(Objects.toString(e.getMessage(), e.getClass().getName()));
+      primary = e;
+      try {
+        stateRepository.markFailed(Objects.toString(e.getMessage(), e.getClass().getName()));
+      } catch (RuntimeException m) {
+        e.addSuppressed(m); // 기록 실패가 원래 실패(재시도 대상)를 가리지 않게
+      }
       throw e; // JobRunr 백오프 재시도
     } finally {
-      stateRepository.release();
+      try {
+        stateRepository.release();
+      } catch (RuntimeException r) {
+        // finally 에서 던지면 진행 중인 원래 예외가 사라진다 — 있으면 거기에 붙이고, 없으면 그대로 던진다.
+        if (primary == null) throw r;
+        primary.addSuppressed(r);
+      }
     }
     if (superseded) {
       // 새 설정 저장이 잡을 투입했다고 믿을 수 없다: A→B→A 로 되돌리면 저장 시점엔 hasWork(A)=false 라 투입이

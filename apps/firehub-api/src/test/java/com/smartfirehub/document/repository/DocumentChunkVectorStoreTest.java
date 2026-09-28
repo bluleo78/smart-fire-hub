@@ -197,8 +197,8 @@ class DocumentChunkVectorStoreTest extends IntegrationTestBase {
             tenantA,
             () -> {
               dsl.execute("SET LOCAL enable_seqscan = off");
-          // 테넌트 btree 로 몇 행을 읽고 Sort 하는 계획도 막는다 — 정렬을 HNSW 가 맡는 계획만 남긴다.
-          dsl.execute("SET LOCAL enable_sort = off");
+              // 테넌트 btree 로 몇 행을 읽고 Sort 하는 계획도 막는다 — 정렬을 HNSW 가 맡는 계획만 남긴다.
+              dsl.execute("SET LOCAL enable_sort = off");
               dsl.execute("SET LOCAL hnsw.ef_search = 10");
               return dsl.fetch(sql, params.toArray()).size();
             });
@@ -207,8 +207,8 @@ class DocumentChunkVectorStoreTest extends IntegrationTestBase {
             tenantA,
             () -> {
               dsl.execute("SET LOCAL enable_seqscan = off");
-          // 테넌트 btree 로 몇 행을 읽고 Sort 하는 계획도 막는다 — 정렬을 HNSW 가 맡는 계획만 남긴다.
-          dsl.execute("SET LOCAL enable_sort = off");
+              // 테넌트 btree 로 몇 행을 읽고 Sort 하는 계획도 막는다 — 정렬을 HNSW 가 맡는 계획만 남긴다.
+              dsl.execute("SET LOCAL enable_sort = off");
               com.smartfirehub.embedding.HnswSearch.relaxIterativeScan(dsl);
               dsl.execute("SET LOCAL hnsw.ef_search = 10"); // relax 가 200 으로 올린 값을 다시 낮춘다
               return dsl.fetch(sql, params.toArray()).size();

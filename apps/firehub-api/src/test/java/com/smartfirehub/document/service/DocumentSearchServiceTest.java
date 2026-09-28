@@ -9,9 +9,11 @@ import static org.mockito.Mockito.when;
 import com.smartfirehub.document.dto.DocumentSearchHit;
 import com.smartfirehub.document.dto.DocumentSearchRequest;
 import com.smartfirehub.document.repository.DocumentChunkRepository;
+import com.smartfirehub.embedding.EmbeddingDimension;
 import com.smartfirehub.embedding.EmbeddingNotConfiguredException;
 import com.smartfirehub.embedding.EmbeddingProvider;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
+import com.smartfirehub.embedding.EmbeddingSpace;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -34,7 +36,12 @@ class DocumentSearchServiceTest {
     var repo = Mockito.mock(DocumentChunkRepository.class);
     when(factory.current()).thenReturn(fakeProvider(1024));
     var hit = new DocumentSearchHit(1L, 2L, 3L, "f.txt", 0, "내용", 0.9);
-    when(repo.searchByCosine(Mockito.any(), Mockito.any(), Mockito.eq(List.of(3L)), Mockito.eq(5)))
+    // 검색 공간은 provider 의 (차원, 모델)이어야 한다 — 다른 공간이면 차원 테이블·모델 필터가 어긋난다.
+    when(repo.searchByCosine(
+            Mockito.eq(new EmbeddingSpace(EmbeddingDimension.D1024, "fake")),
+            Mockito.any(),
+            Mockito.eq(List.of(3L)),
+            Mockito.eq(5)))
         .thenReturn(List.of(hit));
 
     var service = new DocumentSearchService(factory, repo);

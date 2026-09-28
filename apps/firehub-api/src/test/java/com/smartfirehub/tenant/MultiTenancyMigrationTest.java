@@ -191,10 +191,11 @@ class MultiTenancyMigrationTest extends IntegrationTestBase {
     // 실제로 행을 볼 수 있다"의 증거이고, 그래서 위 0 은 "안 보인다"가 아니라 "없다"를 뜻한다.
     assertThat(permissionCount("ai:settings")).isEqualTo(1);
 
-    // 플랫폼 평면 권한은 V116 의 코드 완전 일치 DELETE 에 닿지 않아야 한다 — 프리픽스만 다른
-    // 코드를 섞어 지우는 사고를 여기서 막는다. 예전에는 'platform:settings:write' 로 확인했지만
-    // 그 권한은 V131(#713)이 게이팅하던 PlatformSettingsController 삭제에 맞춰 의도적으로 지웠다
-    // (EmbeddingVectorTablesMigrationTest 가 그 삭제를 단언한다). 살아 있는 플랫폼 권한으로 옮긴다.
+    // 플랫폼 평면 권한은 V116 의 DELETE 에 닿지 않아야 한다. 예전에는 'platform:settings:write'
+    // (접미사가 'settings:write' 와 같은 코드)로 "완전 일치가 아니라 LIKE 로 섞어 지우는 사고"를 막았지만,
+    // 그 권한은 V131(#713)이 PlatformSettingsController 삭제에 맞춰 의도적으로 지웠고
+    // (EmbeddingVectorTablesMigrationTest 가 단언한다) 접미사가 겹치는 살아 있는 코드는 더 이상 없다.
+    // 그래서 접미사 혼동 가드는 사라졌고, 아래 단언은 "플랫폼 권한이 함께 지워지지 않았다"는 약한 대조만 한다.
     assertThat(permissionCount("platform:tenant:create")).isEqualTo(1);
   }
 
