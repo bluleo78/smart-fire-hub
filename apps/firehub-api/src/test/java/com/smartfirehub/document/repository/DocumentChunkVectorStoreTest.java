@@ -138,6 +138,24 @@ class DocumentChunkVectorStoreTest extends IntegrationTestBase {
 
   @Test
   void deleteOtherDimensionsRemovesOnlyCurrentTenantRows() {
+    // 시드: A 는 1024 테이블에만 2행, B 는 1536 테이블에만 1행.
+    // (1) 교차 테넌트: B 가 1536 을 남기라고 하면 DELETE 는 1024 테이블에 간다 — 거기엔 A 의 행만 있다.
+    //     테넌트 필터가 없으면 A 의 2행이 사라진다.
+    TenantContext.runScoped(tenantB, () -> repo.deleteOtherDimensions(EmbeddingDimension.D1536));
+    assertThat(TenantContext.runScopedGet(tenantA, () -> repo.countEmbedded(S1024))).isEqualTo(2);
+    assertThat(TenantContext.runScopedGet(tenantB, () -> repo.countEmbedded(S1536))).isEqualTo(1);
+
+    // (2) 소유자 커넥션(RLS 우회)에서도 남의 행을 지우지 않는다 — 이 경로에선 RLS 가 막아 주지 않으므로
+    //     명시적 WHERE tenant_id = ? 만이 보호막이다(javadoc 의 주장). 스프링 빈이 아닌 인스턴스라
+    //     @Transactional 없이 소유자 DSL 로 자동 커밋된다.
+    DocumentChunkRepository ownerRepo =
+        new DocumentChunkRepository(DSL.using(ownerDataSource, SQLDialect.POSTGRES));
+    int deletedByOwner =
+        TenantContext.runScopedGet(tenantB, () -> ownerRepo.deleteOtherDimensions(EmbeddingDimension.D1536));
+    assertThat(deletedByOwner).isZero();
+    assertThat(TenantContext.runScopedGet(tenantA, () -> repo.countEmbedded(S1024))).isEqualTo(2);
+
+    // (3) 양성 대조군 — 자기 테넌트 행은 실제로 지운다(아무것도 안 지우는 구현이 위 단언을 통과하지 못하게).
     TenantContext.runScoped(tenantB, () -> repo.deleteOtherDimensions(EmbeddingDimension.D1024));
     assertThat(TenantContext.runScopedGet(tenantB, () -> repo.countEmbedded(S1536))).isZero();
     assertThat(TenantContext.runScopedGet(tenantA, () -> repo.countEmbedded(S1024))).isEqualTo(2);
