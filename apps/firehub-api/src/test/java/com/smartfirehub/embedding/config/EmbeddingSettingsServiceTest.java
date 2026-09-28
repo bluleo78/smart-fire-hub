@@ -131,9 +131,13 @@ class EmbeddingSettingsServiceTest extends IntegrationTestBase {
   @Test
   void openAiWithoutAnyKeyIsRejected() {
     // Review Focus: OLLAMA→OPENAI 로 바꾸면서 키를 비우면(저장된 OpenAI 키 없음) 거부한다.
+    // settingsService.test(...) 를 쓰면 prepare() 가 키 병합보다 먼저 EmbeddingTargetGuard 를 돌려
+    // validateTargetOnly("https://api.openai.com") 가 실제 DNS 해석을 시도한다 — 네트워크/DNS 가 없는
+    // CI 에서는 "API 키가 필요합니다" 대신 가드 실패 문구로 어긋난다. 바로 아래 테스트들처럼
+    // prepareForTest(가드 제외, 병합 규칙 동일)로 키 병합만 검증한다.
     assertThatThrownBy(
             () ->
-                settingsService.test(
+                configService.prepareForTest(
                     new EmbeddingConfigRequest(
                         "OPENAI", "text-embedding-3-small", "https://api.openai.com", "")))
         .isInstanceOf(IllegalArgumentException.class)
