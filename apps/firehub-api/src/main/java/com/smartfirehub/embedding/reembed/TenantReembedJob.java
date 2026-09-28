@@ -32,7 +32,7 @@ import org.springframework.stereotype.Service;
  * {@link ReembedBusyException} 으로 실패해 JobRunr 재시도가 이어받는다.
  *
  * <p><b>멱등.</b> "현재 모델 벡터 없음" 기준이라 중단 뒤 다시 돌면 남은 것만 처리한다. 배치마다 설정을 다시 읽어
- * 공간이 바뀌었으면 SUPERSEDED 로 멈춘다(새 설정 저장이 투입한 잡이 이어받는다).
+ * 공간이 바뀌었으면 SUPERSEDED 로 멈추고 임대를 푼 뒤 자기 자신을 다시 투입한다(새 설정 공간으로 이어받는다).
  */
 @Slf4j
 @Service
@@ -83,21 +83,27 @@ public class TenantReembedJob {
 
   private void runInTenant(long tenantId) {
     if (!stateRepository.tryAcquire(LEASE)) throw new ReembedBusyException(tenantId);
+    boolean superseded = false;
     try {
       EmbeddingProvider provider = providerFactory.current();
       EmbeddingSpace space = EmbeddingSpace.of(provider);
       stateRepository.markRunning(space);
+      // 완료 정리 직전에도 설정을 다시 본다 — 마지막 배치 도중 바뀌었다면 옛 차원(=새 설정 공간일 수 있다)을
+      // 지우면 안 된다.
       if (reembedChunks(provider, space) == Outcome.SUPERSEDED
-          || reembedDatasets(provider, space) == Outcome.SUPERSEDED) {
+          || reembedDatasets(provider, space) == Outcome.SUPERSEDED
+          || superseded(space)) {
+        // return 하지 않는다 — 아래 재투입이 try 뒤에 있으므로 흐름을 끝까지 흘려보낸다.
         stateRepository.markSuperseded();
+        superseded = true;
         log.info("재임베딩 중단(설정 변경): tenant={}, space={}", tenantId, space);
-        return;
+      } else {
+        // 완료 — 다른 차원 테이블 잔여 행을 한 번 더 정리한다(쓰기 경로가 이미 옮겼지만 늦게 쓴 행 대비).
+        chunkRepository.deleteOtherDimensions(space.dimension());
+        datasetRepository.deleteOtherDimensions(space.dimension());
+        stateRepository.markDone();
+        log.info("재임베딩 완료: tenant={}, space={}", tenantId, space);
       }
-      // 완료 — 다른 차원 테이블 잔여 행을 한 번 더 정리한다(쓰기 경로가 이미 옮겼지만 늦게 쓴 행 대비).
-      chunkRepository.deleteOtherDimensions(space.dimension());
-      datasetRepository.deleteOtherDimensions(space.dimension());
-      stateRepository.markDone();
-      log.info("재임베딩 완료: tenant={}, space={}", tenantId, space);
     } catch (EmbeddingNotConfiguredException e) {
       // 재시도해도 결과가 같다 — 사유만 남기고 삼킨다(재시도 소진까지 JobRunr 대시보드를 어지럽히지 않게).
       stateRepository.markFailed(e.getMessage());
@@ -106,6 +112,12 @@ public class TenantReembedJob {
       throw e; // JobRunr 백오프 재시도
     } finally {
       stateRepository.release();
+    }
+    if (superseded) {
+      // 새 설정 저장이 잡을 투입했다고 믿을 수 없다: A→B→A 로 되돌리면 저장 시점엔 hasWork(A)=false 라 투입이
+      // 없는데, 이 잡이 도중 배치를 B 로 옮겨 A 벡터가 빠진 채 남는다. 임대를 푼 뒤 무조건 다시 투입한다 —
+      // 잡은 멱등이고 할 일이 없으면 외부 호출 없이 끝난다.
+      enqueue(tenantId);
     }
   }
 

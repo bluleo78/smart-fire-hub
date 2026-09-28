@@ -4,6 +4,7 @@ import static com.smartfirehub.support.EmbeddingTestFixtures.axis;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -196,6 +197,39 @@ class TenantReembedJobTest extends IntegrationTestBase {
     assertThat(inTenant(() -> states.find()).orElseThrow().status()).isEqualTo("SUPERSEDED");
     // 임대는 풀려 있어 새 설정의 잡이 곧바로 잡을 수 있다.
     assertThat(inTenant(() -> states.tryAcquire(Duration.ofMinutes(1)))).isTrue();
+  }
+
+  @Test
+  void revertMidwayReenqueuesSoRevertedSpaceIsRestored() {
+    // 리뷰 지적(A→B→A): OLD 로 전부 임베딩된 테넌트에서 NEW 저장 → 잡 NEW 의 첫 배치 임베딩 도중 OLD 로 되돌림.
+    // 되돌린 저장 시점엔 hasWork(OLD)=false 라 저장 경로는 잡을 투입하지 않는다. 그런데 잡이 그 배치를 NEW 로
+    // 옮기면(OLD 벡터 삭제) 대기 잡 없이 OLD 벡터가 빠진 채 남는다 — 잡이 스스로 다시 투입해야 한다.
+    seedChunks(3); // 전부 OLD
+    storeConfig(OLD);
+    storeConfig(NEW); // 관리자가 NEW 로 저장(이 테스트에선 잡을 직접 부른다)
+    onFirstEmbed = () -> storeConfig(OLD);
+
+    job.run(tenant);
+
+    assertThat(inTenant(() -> chunks.countEmbedded(NEW))).isEqualTo(3); // 첫 배치는 NEW 로 옮겨졌다
+    assertThat(inTenant(() -> chunks.countEmbedded(OLD))).isZero();
+    assertThat(inTenant(() -> states.find()).orElseThrow().status()).isEqualTo("SUPERSEDED");
+    verify(jobScheduler).enqueue(any(JobLambda.class)); // 이어받을 잡을 스스로 투입했다
+
+    // 투입된 잡(= 같은 run) 을 되돌린 설정의 provider 로 실행하면 OLD 벡터가 복구된다.
+    when(providerFactory.current()).thenAnswer(inv -> fake(OLD));
+    job.run(tenant);
+    assertThat(inTenant(() -> chunks.countEmbedded(OLD))).isEqualTo(3);
+    assertThat(inTenant(() -> chunks.countEmbedded(NEW))).isZero();
+    assertThat(inTenant(() -> states.find()).orElseThrow().status()).isEqualTo("DONE");
+  }
+
+  @Test
+  void completedRunDoesNotReenqueue() {
+    seedChunks(1);
+    job.run(tenant);
+    assertThat(inTenant(() -> states.find()).orElseThrow().status()).isEqualTo("DONE");
+    verify(jobScheduler, never()).enqueue(any(JobLambda.class)); // 무한 재투입 방지
   }
 
   @Test

@@ -62,7 +62,7 @@ public class EmbeddingReembedStateRepository {
     setStatus("DONE", null);
   }
 
-  /** 도중 설정이 바뀌어 멈춤 — 새 설정 저장이 투입한 잡이 이어받는다. */
+  /** 도중 설정이 바뀌어 멈춤 — 잡이 스스로 다시 투입한 실행이 새 설정으로 이어받는다. */
   public void markSuperseded() {
     setStatus("SUPERSEDED", null);
   }
