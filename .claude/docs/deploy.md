@@ -116,6 +116,84 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
      AND tenant_id NOT IN (SELECT tenant_id FROM tenant_settings WHERE key = 'ai.credential');
   ```
 
+### 임베딩 차원별 테이블 + 테넌트 전용 임베딩 설정 (V131, 이슈 #713·#392)
+
+`V131__embedding_dimension_tables.sql` 은 `document_chunk`/`dataset_embedding` 의 `embedding`·`embedding_model`
+컬럼을 `document_chunk_vec_1024`/`document_chunk_vec_1536`/`dataset_embedding_vec_1024`/`dataset_embedding_vec_1536`
+네 테이블로 옮긴 뒤 **옛 컬럼을 DROP 한다(비가역)**. `system_settings` 의 `embedding.*` 4행도 지운다
+(테넌트로 복사하지 않는다 — 의도, `feedback_no_protective_data_copy` 규율과 동일).
+
+- **api + web + admin 을 함께 배포한다.** `./scripts/deploy.sh all` 은 `api + executor + web + ai-agent + channel`
+  만 묶고 **admin 은 의도적으로 뺀다**(위 "운영 환경" 표 참고) — **`./scripts/deploy.sh admin` 을 따로** 실행해야
+  한다. 빠뜨리면 옛 admin 이미지가 이미 삭제된 `/api/platform/settings` 를 계속 부른다(#706·#713 로 제거됨).
+  ai-agent 는 이번 마이그레이션과 무관해 무변경(2026-09-28 `grep -rn "1024\|1536" apps/firehub-ai-agent/src`
+  결과 벡터 차원 가정 없음 — `/admin/embedding/embed` 계약 `{model, dimension, embeddings}` 그대로).
+- **배포 직후 모든 테넌트가 "임베딩 미설정"이다** → `임베딩이 설정되지 않았습니다 (설정 > 임베딩)` 문구가 뜨고
+  문서 검색·데이터셋 의미 검색·데이터셋 행 검색의 HYBRID 의미 부분이 멈춘다(`degraded`). 테넌트마다 설정 › 임베딩
+  화면에서 Ollama · bge-m3 · 기존 Base URL 을 저장해야 정상화된다. 현재 모델 벡터는 이미 `_vec_1024` 에 있으므로
+  저장 후 재임베딩은 모델이 NULL(`<unknown>`, 옛 스키마에 `embedding_model` 이 없던 시절 적재분)이던 벡터만 돈다.
+- **Ollama 주소 허용 목록은 이미 배선돼 있다 — prod `.env` 변경 불필요.** `app.embedding.ollama-allowed-base-urls`
+  (`apps/firehub-api/src/main/resources/application.yml:89`)는
+  `${EMBEDDING_OLLAMA_ALLOWED_BASE_URLS:http://host.docker.internal:11434}` 로 기본값이 이미 운영이 쓰는 주소와
+  같다(`EmbeddingTargetGuard` 가 이 값과 **정확히 일치**하는 사설망 주소만 통과시킨다 — SSRF 가드). 아래 사전
+  점검 1) 의 `embedding.base_url` 이 이 기본값과 다를 때만 운영 compose 의 api `environment:` 에
+  `EMBEDDING_OLLAMA_ALLOWED_BASE_URLS` 를 추가한다(`.env` 만으로는 컨테이너에 주입되지 않는다, 2026-08-31 전례).
+- **JobRunr 에 옛 `DocumentChunkReembedService.reembedDataset` 잡이 남아 있으면 배포 후 실패한다.** 이 클래스는
+  이번 브랜치에서 삭제됐다(`com.smartfirehub.document.service.DocumentChunkReembedService`, main 에는 존재).
+  큐에 SCHEDULED/ENQUEUED/PROCESSING/FAILED(재시도 대기) 상태로 남아 있으면 배포 후 클래스를 못 찾아
+  실패한다 — 배포 전 확인·정리 필수(아래 0-1).
+- **배포 전 확인(운영 DB, 소유자 롤 `app` 으로 — `app_tenant` 는 RLS 때문에 0행)**:
+  ```sql
+  -- 0) 최신 마이그레이션이 V130 인가
+  SELECT version, success FROM flyway_schema_history ORDER BY installed_rank DESC LIMIT 3;
+  -- 0-1) 옛 재임베딩 잡이 큐에 남아 있는가 — 0행이어야 한다(있으면 DELETE 로 정리하거나
+  --     enqueue 한 관리자 화면에서 재시도를 기다린 뒤 재확인)
+  SELECT id, state, scheduledat FROM jobrunr_jobs
+   WHERE jobsignature LIKE '%DocumentChunkReembedService%'
+     AND state NOT IN ('SUCCEEDED', 'DELETED');
+  SELECT id, jobsignature FROM jobrunr_recurring_jobs WHERE jobsignature LIKE '%DocumentChunkReembedService%';
+  -- 1) 지워질 플랫폼 값 — 테넌트가 다시 입력할 값이다(baseUrl 이 기본값과 다르면 위 허용목록에 추가)
+  SELECT key, value FROM system_settings WHERE key LIKE 'embedding.%' ORDER BY key;
+  -- 2) 옮겨질 벡터 규모와 차원(전부 1024 여야 한다 — 아니면 V131 이 RAISE 로 멈춘다)
+  SELECT count(*), count(*) FILTER (WHERE vector_dims(embedding) <> 1024) FROM document_chunk WHERE embedding IS NOT NULL;
+  SELECT count(*), count(*) FILTER (WHERE vector_dims(embedding) <> 1024) FROM dataset_embedding WHERE embedding IS NOT NULL;
+  -- 3) 모델 NULL 벡터(설정 저장 뒤 재임베딩 대상)
+  SELECT count(*) FROM document_chunk WHERE embedding IS NOT NULL AND embedding_model IS NULL;
+  SELECT count(*) FROM dataset_embedding WHERE embedding IS NOT NULL AND embedding_model IS NULL;
+  ```
+- **배포 직전 DB 전체 덤프 필수**(컬럼 DROP 은 스냅샷 말고 복구 수단이 없다 — V122 절의 테이블 한정 덤프와
+  달리 여기는 전체 덤프다):
+  ```bash
+  pg_dump -h <host> -U app -d smartfirehub -f "snapshot-pre-v131-$(date +%Y%m%d%H%M%S).sql"
+  ```
+- **배포 순서**: `./scripts/deploy.sh api` → `./scripts/deploy.sh web` → `./scripts/deploy.sh admin`
+  (V131 적용 확인: `flyway_schema_history` 최신 = 131, success=t). 벡터 건수가 크면 `ALTER TABLE ... ADD COLUMN`
+  +백필+HNSW 인덱스 생성이 시간이 걸릴 수 있다 — `api` 기동이 느려도 곧바로 헬스체크 실패로 판단하지 말고
+  Flyway 로그를 먼저 본다.
+- **라이브 검증**: 테넌트 설정 저장 → 재임베딩 카드 `bge-m3 · 1024차원`·진행률 100% → 문서 검색, 채팅의
+  find_datasets, 데이터셋 행 검색(HYBRID 가 degraded 아님) 확인.
+  **실데이터 규모에서 HNSW 인덱스가 실제로 쓰이는지 EXPLAIN 으로 확인한다** — 테스트는 소수 행이라
+  `EmbeddingVectorTablesMigrationTest`/검색 테스트가 `enable_sort=off` 로 HNSW 를 강제했을 뿐, 운영 규모에서
+  플래너가 실제로 HNSW 를 고르는지는 이번 계획에서 검증하지 못했다. `app_tenant` 롤로(RLS 를 실제로 태우기
+  위해 `app` 으로 하지 않는다) 실 테넌트 컨텍스트에서 확인한다:
+  ```sql
+  BEGIN;
+  SET LOCAL app.tenant_id = '<실 테넌트 id>';
+  SET LOCAL hnsw.iterative_scan = relaxed_order;
+  SET LOCAL hnsw.ef_search = 200;
+  EXPLAIN ANALYZE
+  SELECT c.id, 1 - (v.embedding <=> '<쿼리 벡터>'::vector) AS score
+    FROM document_chunk_vec_1024 v
+    JOIN document_chunk c ON c.id = v.chunk_id
+    JOIN document_file df ON df.id = c.document_file_id
+   WHERE df.status = 'COMPLETED' AND v.embedding_model = '<현재 모델>'
+   ORDER BY v.embedding <=> '<쿼리 벡터>'::vector
+   LIMIT 20;
+  ROLLBACK;
+  ```
+  플랜에 `Index Scan using ... hnsw` 가 나와야 한다 — `Seq Scan` + `Sort` 로 떨어지면 통계 재계산
+  (`ANALYZE document_chunk_vec_1024;`)이나 `ef_search` 조정을 검토한다. 확인 후 #713, #392 닫기.
+
 ### opencode baseURL 사설망 점검 (이슈 #698)
 
 #693 의 SSRF 가드는 **저장 시점**에만 baseURL 을 검사한다. 그 가드가 생기기 전에 저장된 행에는
