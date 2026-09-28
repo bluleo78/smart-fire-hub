@@ -74,7 +74,8 @@ public class TenantReembedJob {
 
   /**
    * 잡 진입점. {@code @Transactional} 을 붙이지 않는다 — 본문 전에 트랜잭션이 열리면 GUC 가 이미 늦고, 외부 임베딩
-   * 호출 동안 커넥션을 쥔다. 테넌트는 페이로드로 받아 여기서 세운다(reembedDataset(datasetId, tenantId) 선례).
+   * 호출 동안 커넥션을 쥔다. 테넌트는 페이로드로 받아 여기서 세운다
+   * (DatasetEmbeddingService.reindexEmbedding(datasetId, tenantId) 선례).
    */
   @Job(name = "Tenant embedding reembed: tenant %0")
   public void run(long tenantId) {

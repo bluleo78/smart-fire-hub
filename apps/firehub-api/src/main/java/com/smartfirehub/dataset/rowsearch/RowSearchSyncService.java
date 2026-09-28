@@ -41,7 +41,7 @@ public class RowSearchSyncService {
 
   private static final Duration LEASE = Duration.ofMinutes(10);
   private static final Duration MAX_BACKOFF = Duration.ofMinutes(30);
-  // 미설정은 실패가 아니라 대기다 — 백오프 없이 1분 뒤 다시 본다(설정 저장 직후 바로 색인 재개).
+  /** 미설정은 실패가 아니라 대기다 — 백오프 없이 1분 뒤 다시 본다(설정 저장 직후 바로 색인 재개). */
   private static final Duration NOT_CONFIGURED_RETRY = Duration.ofMinutes(1);
 
   /**
@@ -130,7 +130,7 @@ public class RowSearchSyncService {
     try {
       provider = embeddingFactory.current();
     } catch (EmbeddingNotConfiguredException e) {
-      // 미설정은 실패가 아니라 대기다 — 백오프 없이 1분 뒤 다시 본다(설정 저장 직후 바로 색인 재개).
+      // 미설정 = 대기(이유는 {@link #NOT_CONFIGURED_RETRY}).
       states.markWaiting(datasetId, e.getMessage(), OffsetDateTime.now().plus(NOT_CONFIGURED_RETRY));
       return Outcome.SKIPPED;
     }

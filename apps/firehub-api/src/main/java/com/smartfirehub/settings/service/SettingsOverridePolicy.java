@@ -10,8 +10,8 @@ import java.util.Set;
  * {@link Plane} 을 정하고, {@code SettingsService} 의 읽기·쓰기 경로는 전부 그 값으로 분기한다.
  *
  * <p><b>왜 deny-list 가 아니라 allow-list 인가</b>: 목록에 없는 키는 {@link Plane#UNKNOWN} 이 되어
- * 테넌트 쓰기에도 플랫폼 쓰기에도 열리지 않는다 — 장래에 누가 키를 추가하고 이 파일을 잊어도
- * fail-closed 다.
+ * 테넌트 쓰기에 열리지 않는다(범용 플랫폼 쓰기 경로는 #713 에서 없어졌다 — 남은 쓰기는 테넌트 쓰기뿐이다) —
+ * 장래에 누가 키를 추가하고 이 파일을 잊어도 fail-closed 다.
  */
 public final class SettingsOverridePolicy {
 
@@ -29,12 +29,7 @@ public final class SettingsOverridePolicy {
      */
     EXTERNAL_OWNER,
     /** 분류되지 않은 키 — 플랫폼 행이 있으면 읽기만 되고, 어느 평면에서도 쓸 수 없다. */
-    UNKNOWN;
-
-    /** {@code system_settings} 행이 이 키의 값으로 쓰일 수 있는가. */
-    public boolean readsPlatformRow() {
-      return this != TENANT_ONLY && this != EXTERNAL_OWNER;
-    }
+    UNKNOWN
   }
 
   /**
@@ -46,7 +41,7 @@ public final class SettingsOverridePolicy {
    * 없음"이다. {@link Plane#TENANT_ONLY} 의 해석(테넌트 값 → 코드 기본값)은 기본값이 없는 키에서
    * 그대로 "미설정"이 되므로 추가 분기가 필요 없다 — 평면을 하나 더 두면 {@code SettingsService}
    * 의 읽기·쓰기 switch 마다 같은 동작의 가지가 하나씩 늘 뿐이다. 이 목록 한 줄이 SMTP 를 플랫폼
-   * 조회({@link #mayHavePlatformRows})·플랫폼 쓰기·플랫폼 목록에서 동시에 빼낸다.
+   * 조회({@link #mayHavePlatformRows})·플랫폼 목록에서 동시에 빼낸다.
    *
    * <p>{@code embedding.*}(#713): 설정 문서 {@code embedding.config} 만 존재하고 {@link Plane#EXTERNAL_OWNER}
    * 로 먼저 분류된다.

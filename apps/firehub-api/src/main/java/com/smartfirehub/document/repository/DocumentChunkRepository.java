@@ -9,6 +9,7 @@ import com.smartfirehub.document.dto.DocumentSearchHit;
 import com.smartfirehub.embedding.EmbeddingDimension;
 import com.smartfirehub.embedding.EmbeddingSpace;
 import com.smartfirehub.embedding.HnswSearch;
+import com.smartfirehub.embedding.VectorTables;
 import com.smartfirehub.global.tenant.TenantContext;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -138,15 +139,7 @@ public class DocumentChunkRepository {
       EmbeddingSpace space, float[] queryEmbedding, List<Long> datasetIds, int topK) {
     List<Object> params = new ArrayList<>();
     String sql = semanticSql(space, datasetIds, toVectorLiteral(queryEmbedding), topK, params);
-    return dsl.transactionResult(
-        cfg -> {
-          DSLContext tx = DSL.using(cfg);
-          HnswSearch.relaxIterativeScan(tx);
-          List<DocumentSearchHit> hits =
-              new ArrayList<>(tx.fetch(sql, params.toArray()).map(DocumentChunkRepository::toHit));
-          hits.sort((a, b) -> Double.compare(b.score(), a.score()));
-          return hits;
-        });
+    return HnswSearch.search(dsl, sql, params, DocumentChunkRepository::toHit, DocumentSearchHit::score);
   }
 
   /** 의미 검색 SQL. package-private — 실행 계획(EXPLAIN) 단언 테스트가 쓴다. */
@@ -266,13 +259,8 @@ public class DocumentChunkRepository {
    * {@code WHERE tenant_id = ?} 를 명시한다 — 소유자 커넥션에서 불려도 남의 행을 지우지 않게(조건 없는 DELETE 금지 규율).
    */
   public int deleteOtherDimensions(EmbeddingDimension keep) {
-    long tenantId = TenantContext.require("다른 차원 벡터 정리");
-    int deleted = 0;
-    for (EmbeddingDimension d : EmbeddingDimension.values()) {
-      if (d == keep) continue;
-      deleted += dsl.execute("DELETE FROM " + d.chunkTable() + " WHERE tenant_id = ?", tenantId);
-    }
-    return deleted;
+    return VectorTables.deleteOtherDimensions(
+        dsl, keep, EmbeddingDimension::chunkTable, TenantContext.require("다른 차원 벡터 정리"));
   }
 
   private static String missingPredicate(EmbeddingSpace space) {

@@ -3,7 +3,6 @@ package com.smartfirehub.settings;
 import static com.smartfirehub.support.SettingsTestSupport.deleteSystemSetting;
 import static com.smartfirehub.support.SettingsTestSupport.rawSystemSettingValue;
 import static com.smartfirehub.support.SettingsTestSupport.resolvedSetting;
-import static com.smartfirehub.support.SettingsTestSupport.restoreSystemSettingValue;
 import static com.smartfirehub.support.SettingsTestSupport.upsertSystemSetting;
 import static com.smartfirehub.support.TenantRlsTestSupport.createActiveTenant;
 import static com.smartfirehub.support.TenantRlsTestSupport.deleteTenants;

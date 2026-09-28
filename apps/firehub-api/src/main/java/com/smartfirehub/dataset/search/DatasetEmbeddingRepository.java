@@ -2,6 +2,7 @@ package com.smartfirehub.dataset.search;
 
 import com.smartfirehub.embedding.EmbeddingDimension;
 import com.smartfirehub.embedding.EmbeddingSpace;
+import com.smartfirehub.embedding.VectorTables;
 import com.smartfirehub.global.tenant.TenantContext;
 import java.util.List;
 import org.jooq.DSLContext;
@@ -117,13 +118,8 @@ public class DatasetEmbeddingRepository {
 
   /** 현재 차원이 아닌 테이블의 이 테넌트 카탈로그 벡터 삭제(WHERE tenant_id 명시 — 문서 청크 쪽과 같은 규율). */
   public int deleteOtherDimensions(EmbeddingDimension keep) {
-    long tenantId = TenantContext.require("다른 차원 카탈로그 벡터 정리");
-    int deleted = 0;
-    for (EmbeddingDimension d : EmbeddingDimension.values()) {
-      if (d == keep) continue;
-      deleted += dsl.execute("DELETE FROM " + d.datasetTable() + " WHERE tenant_id = ?", tenantId);
-    }
-    return deleted;
+    return VectorTables.deleteOtherDimensions(
+        dsl, keep, EmbeddingDimension::datasetTable, TenantContext.require("다른 차원 카탈로그 벡터 정리"));
   }
 
   private static String missingPredicate(EmbeddingSpace space) {

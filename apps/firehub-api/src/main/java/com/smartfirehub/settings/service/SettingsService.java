@@ -44,7 +44,8 @@ public class SettingsService {
   private List<SettingResponse> platformRows(String prefix) {
     if (!SettingsOverridePolicy.mayHavePlatformRows(prefix)) return List.of();
     return settingsRepository.findByPrefix(prefix).stream()
-        .filter(s -> planeOf(s.key()).readsPlatformRow())
+        // system_settings 행을 값으로 쓰는 평면은 UNKNOWN 뿐이다(TENANT_ONLY·EXTERNAL_OWNER 는 플랫폼 행을 읽지 않는다).
+        .filter(s -> planeOf(s.key()) == SettingsOverridePolicy.Plane.UNKNOWN)
         .toList();
   }
 
@@ -193,8 +194,8 @@ public class SettingsService {
    * {@code null} 이다({@link TenantSettingsRepository#findByPrefix} 가 값만 주고 갱신 시각은 주지
    * 않아 오버라이드 쪽에서도 채울 수 없다).
    *
-   * <p><b>플랫폼 행은 {@link #maskSecret} 을 지난다.</b> 이 경로만 빠뜨리면 비밀 키(예:
-   * {@code embedding.api_key}) 조회가 <b>AES 암호문을 그대로</b> 내보낸다 — {@link #SECRET_KEYS} javadoc 이
+   * <p><b>플랫폼 행은 {@link #maskSecret} 을 지난다.</b> 이 경로만 빠뜨리면 비밀 키(오늘은
+   * {@code smtp.password} 하나 — {@link #SECRET_KEYS}) 조회가 <b>AES 암호문을 그대로</b> 내보낸다 — {@link #SECRET_KEYS} javadoc 이
    * 기록하듯 이 프로젝트는 정확히 그 사고를 이미 한 번 냈다(SMTP 전용 읽기 메서드만 마스킹하고
    * {@code getAll} 은 빠뜨렸던 건).
    *

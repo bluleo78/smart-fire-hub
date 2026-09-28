@@ -35,11 +35,7 @@ public class DatasetEmbeddingBackfillService {
    */
   @Transactional
   public int syncAllSourceText() {
-    List<Long> ids = metaReader.findAllIds();
-    for (Long id : ids) {
-      embeddingService.syncSourceText(id);
-    }
-    return ids.size();
+    return syncSourceTextOfAll().size();
   }
 
   /**
@@ -51,12 +47,8 @@ public class DatasetEmbeddingBackfillService {
   // GUC 미설정으로 조용히 0행이 된다.
   @Transactional
   public int backfillAll() {
-    List<Long> ids = metaReader.findAllIds();
-
     // (1) source_text 를 전부 먼저 동기 적재 → 임베딩 생성 전에도 키워드 검색에 즉시 노출.
-    for (Long id : ids) {
-      embeddingService.syncSourceText(id);
-    }
+    List<Long> ids = syncSourceTextOfAll();
 
     // (2) 임베딩 재색인은 데이터셋별 잡으로 분산 enqueue(외부 호출 비용을 백그라운드로 이전).
     // 배경 잡에는 요청 스코프의 테넌트가 승계되지 않으므로 페이로드에 실어 보낸다.
@@ -74,5 +66,17 @@ public class DatasetEmbeddingBackfillService {
 
     log.info("Dataset embedding backfill scheduled: count={}", ids.size());
     return ids.size();
+  }
+
+  /**
+   * 모든 데이터셋의 source_text 를 동기 적재하고 처리한 id 목록을 돌려준다 — 두 공개 메서드의 공통 루프. 호출자의
+   * 트랜잭션 안에서 돈다(자기 호출이라 별도 프록시 경계 없음).
+   */
+  private List<Long> syncSourceTextOfAll() {
+    List<Long> ids = metaReader.findAllIds();
+    for (Long id : ids) {
+      embeddingService.syncSourceText(id);
+    }
+    return ids;
   }
 }

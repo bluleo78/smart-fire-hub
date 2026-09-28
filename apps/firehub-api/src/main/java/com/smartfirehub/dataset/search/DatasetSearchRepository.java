@@ -32,15 +32,7 @@ public class DatasetSearchRepository {
       EmbeddingSpace space, float[] queryEmbedding, String storageType, int topK) {
     List<Object> params = new java.util.ArrayList<>();
     String sql = semanticSql(space, storageType, VectorLiterals.toVectorLiteral(queryEmbedding), topK, params);
-    return dsl.transactionResult(
-        cfg -> {
-          DSLContext tx = DSL.using(cfg);
-          HnswSearch.relaxIterativeScan(tx);
-          List<DatasetSearchHit> hits =
-              new java.util.ArrayList<>(tx.fetch(sql, params.toArray()).map(DatasetSearchRepository::toHit));
-          hits.sort((a, b) -> Double.compare(b.score(), a.score()));
-          return hits;
-        });
+    return HnswSearch.search(dsl, sql, params, DatasetSearchRepository::toHit, DatasetSearchHit::score);
   }
 
   /** 의미 검색 SQL. package-private — EXPLAIN 단언 테스트가 쓴다. */

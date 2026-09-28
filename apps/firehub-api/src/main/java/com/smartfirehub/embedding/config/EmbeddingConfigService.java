@@ -90,18 +90,20 @@ public class EmbeddingConfigService {
    * model → Base URL 가드(형식·SSRF) → 키 병합.
    */
   public EmbeddingConfig prepare(EmbeddingConfigRequest req) {
-    EmbeddingProviderType provider = EmbeddingProviderType.parse(req.provider());
-    String model = requireModel(req.model());
-    String baseUrl = req.baseUrl() == null ? "" : req.baseUrl().trim();
-    targetGuard.check(provider, baseUrl);
-    return merge(provider, model, UrlUtils.normalizeBaseUrl(baseUrl), req.apiKey());
+    return prepareInternal(req, true);
   }
 
   /** 테스트 전용 — SSRF 가드(DNS 해석)만 건너뛰고 {@link #prepare} 와 같은 병합 규칙을 탄다. */
   EmbeddingConfig prepareForTest(EmbeddingConfigRequest req) {
+    return prepareInternal(req, false);
+  }
+
+  /** {@link #prepare} 본체. {@code checkTarget=false} 는 테스트 전용 경로뿐이다(가드 외 규칙은 동일). */
+  private EmbeddingConfig prepareInternal(EmbeddingConfigRequest req, boolean checkTarget) {
     EmbeddingProviderType provider = EmbeddingProviderType.parse(req.provider());
     String model = requireModel(req.model());
     String baseUrl = req.baseUrl() == null ? "" : req.baseUrl().trim();
+    if (checkTarget) targetGuard.check(provider, baseUrl);
     return merge(provider, model, UrlUtils.normalizeBaseUrl(baseUrl), req.apiKey());
   }
 

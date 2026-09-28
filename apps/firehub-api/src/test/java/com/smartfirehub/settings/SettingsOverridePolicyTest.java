@@ -39,8 +39,8 @@ class SettingsOverridePolicyTest {
             "smtp.host", "smtp.port", "smtp.username",
             "smtp.password", "smtp.starttls", "smtp.from_address");
     for (String key : SettingsOverridePolicy.smtpKeys()) {
+      // TENANT_ONLY 는 플랫폼 행을 읽지 않는 평면이다(플랫폼 행을 읽는 평면은 UNKNOWN 뿐).
       assertThat(SettingsOverridePolicy.planeOf(key)).as(key).isEqualTo(Plane.TENANT_ONLY);
-      assertThat(SettingsOverridePolicy.planeOf(key).readsPlatformRow()).as(key).isFalse();
     }
     // 목록에 없는 smtp.* 도 네임스페이스로 테넌트 전용이다 — 옛 플랫폼 행이 새지 않는다.
     assertThat(SettingsOverridePolicy.planeOf("smtp.legacy_key")).isEqualTo(Plane.TENANT_ONLY);
