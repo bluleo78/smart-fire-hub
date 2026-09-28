@@ -2,11 +2,13 @@ package com.smartfirehub.embedding;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.when;
 
 import com.smartfirehub.embedding.config.EmbeddingConfig;
 import com.smartfirehub.embedding.config.EmbeddingConfigService;
 import com.smartfirehub.embedding.config.EmbeddingProviderType;
+import com.smartfirehub.embedding.config.EmbeddingTargetGuard;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -24,11 +26,27 @@ import org.springframework.web.reactive.function.client.WebClient;
 class EmbeddingProviderFactoryTest {
 
   @Mock private EmbeddingConfigService configService;
+  // 가드는 스텁한다(기본 통과) — DNS 해석·허용 목록 판정은 EmbeddingTargetGuardTest 와 통합 테스트가 본다.
+  @Mock private EmbeddingTargetGuard targetGuard;
   private EmbeddingProviderFactory factory;
 
   @BeforeEach
   void setUp() {
-    factory = new EmbeddingProviderFactory(configService, WebClient.builder());
+    factory = new EmbeddingProviderFactory(configService, WebClient.builder(), targetGuard);
+  }
+
+  @Test
+  void guardRejectionAtCallTimeBecomesEmbeddingException() {
+    // A2: 저장 뒤 가드를 통과하지 못하게 된 주소는 provider 를 만들기 전에 거부한다(원인 보존).
+    EmbeddingConfig cfg = new EmbeddingConfig(EmbeddingProviderType.OLLAMA, "bge-m3", "http://10.0.0.1:11434", "", 1024);
+    when(configService.resolve()).thenReturn(Optional.of(cfg));
+    IllegalArgumentException denied = new IllegalArgumentException("차단된 주소");
+    doThrow(denied).when(targetGuard).check(EmbeddingProviderType.OLLAMA, "http://10.0.0.1:11434");
+
+    assertThatThrownBy(() -> factory.current())
+        .isInstanceOf(EmbeddingException.class)
+        .hasMessageContaining("차단된 주소")
+        .hasCause(denied);
   }
 
   @Test

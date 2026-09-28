@@ -2,6 +2,7 @@ package com.smartfirehub.embedding;
 
 import static com.smartfirehub.support.EmbeddingTestFixtures.axis;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.smartfirehub.document.dto.Chunk;
 import com.smartfirehub.document.repository.DocumentChunkRepository;
@@ -132,5 +133,23 @@ class EmbeddingTenantContextTest extends IntegrationTestBase {
     assertThat(req).isNotNull();
     assertThat(req.getBody().readUtf8()).contains("\"model-b\"");
     assertThat(SERVER_A.getRequestCount()).isEqualTo(aBefore);
+  }
+
+  @Test
+  void currentRejectsStoredBaseUrlThatNoLongerPassesGuard() {
+    // 저장 시점 가드만으로는 부족하다(A2): 문서가 가드를 거치지 않고 바뀌었거나(직접 조작·허용 목록 축소) DNS 가
+    // 바뀐 경우에도 실제 호출 직전에 다시 막아야 한다. 허용 목록 밖 사설 http 주소를 문서에 직접 써 넣는다 —
+    // current() 는 네트워크 호출을 하지 않으므로 여기서 나는 예외는 가드에서만 나올 수 있다.
+    TenantContext.runScoped(
+        tenantA,
+        () ->
+            configService.store(
+                new EmbeddingConfig(EmbeddingProviderType.OLLAMA, "model-a", "http://127.0.0.1:9", "", 0),
+                EmbeddingDimension.D1024,
+                null));
+
+    assertThatThrownBy(() -> TenantContext.runScoped(tenantA, () -> providerFactory.current()))
+        .isInstanceOf(EmbeddingException.class)
+        .hasMessageContaining("운영자가 허용한 주소");
   }
 }

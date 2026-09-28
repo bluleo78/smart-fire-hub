@@ -2,6 +2,7 @@ package com.smartfirehub.embedding;
 
 import com.smartfirehub.embedding.config.EmbeddingConfig;
 import com.smartfirehub.embedding.config.EmbeddingConfigService;
+import com.smartfirehub.embedding.config.EmbeddingTargetGuard;
 import java.util.List;
 import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Component;
@@ -21,11 +22,15 @@ public class EmbeddingProviderFactory {
 
   private final EmbeddingConfigService configService;
   private final WebClient.Builder webClientBuilder;
+  private final EmbeddingTargetGuard targetGuard;
 
   public EmbeddingProviderFactory(
-      EmbeddingConfigService configService, WebClient.Builder webClientBuilder) {
+      EmbeddingConfigService configService,
+      WebClient.Builder webClientBuilder,
+      EmbeddingTargetGuard targetGuard) {
     this.configService = configService;
     this.webClientBuilder = webClientBuilder;
+    this.targetGuard = targetGuard;
   }
 
   /**
@@ -56,6 +61,7 @@ public class EmbeddingProviderFactory {
    * ({@link #UNCHECKED_DIMENSION} 이면 검증하지 않음 — probe 용).
    */
   public EmbeddingProvider create(EmbeddingConfig cfg, int expectedDimension) {
+    checkTarget(cfg);
     return switch (cfg.provider()) {
       case OLLAMA ->
           new OllamaEmbeddingProvider(
@@ -73,6 +79,20 @@ public class EmbeddingProviderFactory {
             expectedDimension);
       }
     };
+  }
+
+  /**
+   * 호출 직전 SSRF 가드 재검사. 저장 시점 가드만으로는 저장 뒤의 변화(DNS 재바인딩, 운영자의 허용 목록 축소, 문서 직접
+   * 조작)를 막지 못한다 — ApiCallExecutor 가 실행마다 URL 을 다시 검증하는 것과 같은 이유다. provider 를 만드는 유일한
+   * 지점이라 적재·재임베딩·검색·probe 가 모두 여기를 지난다. 거부는 EmbeddingException(원인 보존)으로 바꿔 호출 경로의
+   * 기존 실패 처리(적재 FAILED, 검색 오류, 연결 테스트 400)를 그대로 탄다.
+   */
+  private void checkTarget(EmbeddingConfig cfg) {
+    try {
+      targetGuard.check(cfg.provider(), cfg.baseUrl());
+    } catch (IllegalArgumentException e) {
+      throw new EmbeddingException("임베딩 Base URL 이 허용되지 않습니다: " + e.getMessage(), e);
+    }
   }
 
   /** 실제 임베딩 1건을 호출해 차원을 잰다(저장 전 검증·연결 테스트). 실패는 EmbeddingException. */
