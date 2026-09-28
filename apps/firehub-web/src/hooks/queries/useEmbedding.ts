@@ -3,7 +3,7 @@ import { toast } from 'sonner';
 
 import { embeddingApi, type EmbeddingStatus } from '../../api/embedding';
 
-const STATUS_KEY = ['admin', 'embedding', 'status'];
+export const EMBEDDING_STATUS_KEY = ['admin', 'embedding', 'status'] as const;
 
 /**
  * 임베딩 현황 조회
@@ -12,15 +12,17 @@ const STATUS_KEY = ['admin', 'embedding', 'status'];
  */
 export function useEmbeddingStatus() {
   return useQuery({
-    queryKey: STATUS_KEY,
+    queryKey: EMBEDDING_STATUS_KEY,
     queryFn: () => embeddingApi.getStatus().then((r) => r.data),
     // v5 refetchInterval 콜백은 query 객체를 받는다 — query.state.data로 최신 데이터 접근.
     refetchInterval: (query) => {
       const data = query.state.data as EmbeddingStatus | undefined;
       if (!data) return 3000;
+      if (!data.configured) return false; // 미설정이면 진행할 잡이 없다
       const done =
         data.datasets.embedded >= data.datasets.total &&
-        data.documentChunks.embedded >= data.documentChunks.total;
+        data.documentChunks.embedded >= data.documentChunks.total &&
+        data.job?.status !== 'RUNNING';
       return done ? false : 3000;
     },
   });
@@ -36,9 +38,9 @@ export function useReindexAllEmbeddings() {
     mutationFn: () => embeddingApi.reindexAll().then((r) => r.data),
     onSuccess: (result) => {
       toast.success(
-        `재임베딩을 시작했습니다 (데이터셋 ${result.datasets}, 문서셋 ${result.documentDatasets}).`,
+        `재임베딩을 시작했습니다 (문서 청크 ${result.chunks}, 데이터셋 ${result.datasets}).`,
       );
-      queryClient.invalidateQueries({ queryKey: STATUS_KEY });
+      queryClient.invalidateQueries({ queryKey: EMBEDDING_STATUS_KEY });
     },
     onError: () => toast.error('재임베딩 시작에 실패했습니다.'),
   });

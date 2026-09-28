@@ -13,6 +13,8 @@ import type {
   ResolvedSettingResponse,
 } from '@/types/settings';
 
+import type { EmbeddingConfigView, EmbeddingStatus } from '../../src/api/embedding';
+
 /** 권한(Permission) 응답 객체 생성 */
 export function createPermission(overrides?: Partial<PermissionResponse>): PermissionResponse {
   return {
@@ -186,25 +188,40 @@ export function createSmtpSettings(
   return base.map((s) => (patch[s.key] ? { ...s, ...patch[s.key] } : s));
 }
 
-/**
- * 임베딩 설정 4키 — P7-b 이후 전부 플랫폼 전용이라 `tenantEditable: false` 로 내려온다.
- * `api_key` 는 백엔드가 마스킹해서 준다.
- */
-export function createEmbeddingSettings(
-  patch: Partial<Record<string, Partial<ResolvedSettingResponse>>> = {},
-): ResolvedSettingResponse[] {
-  const base: ResolvedSettingResponse[] = [
-    createResolvedSetting({ key: 'embedding.provider', value: 'OLLAMA', description: 'provider', tenantEditable: false }),
-    createResolvedSetting({ key: 'embedding.model', value: 'bge-m3', description: '모델', tenantEditable: false }),
-    createResolvedSetting({
-      key: 'embedding.base_url',
-      value: 'http://host.docker.internal:11434',
-      description: 'base url',
-      tenantEditable: false,
-    }),
-    createResolvedSetting({ key: 'embedding.api_key', value: '****masked****', description: 'API 키', tenantEditable: false }),
-  ];
-  return base.map((s) => (patch[s.key] ? { ...s, ...patch[s.key] } : s));
+/** GET /settings/embedding 응답(#713 테넌트 전용). 기본은 설정된 Ollama bge-m3·1024. */
+export function createEmbeddingConfig(patch: Partial<EmbeddingConfigView> = {}): EmbeddingConfigView {
+  return {
+    configured: true,
+    provider: 'OLLAMA',
+    model: 'bge-m3',
+    baseUrl: 'http://host.docker.internal:11434',
+    dimension: 1024,
+    apiKeyMasked: '',
+    ...patch,
+  };
+}
+
+/** 미설정 테넌트(배포 직후 모든 테넌트의 상태). */
+export const UNCONFIGURED_EMBEDDING: EmbeddingConfigView = {
+  configured: false,
+  provider: null,
+  model: null,
+  baseUrl: null,
+  dimension: null,
+  apiKeyMasked: '',
+};
+
+/** GET /admin/embedding/status 응답. */
+export function createEmbeddingStatus(patch: Partial<EmbeddingStatus> = {}): EmbeddingStatus {
+  return {
+    configured: true,
+    model: 'bge-m3',
+    dimension: 1024,
+    datasets: { total: 28, embedded: 28 },
+    documentChunks: { total: 500, embedded: 500 },
+    job: null,
+    ...patch,
+  };
 }
 
 /** AuditLogResponse 여러 개를 한 번에 생성 */

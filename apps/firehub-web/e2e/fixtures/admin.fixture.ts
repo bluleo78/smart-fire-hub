@@ -9,13 +9,15 @@ import type {
   ResolvedSettingResponse,
 } from '@/types/settings';
 
+import type { EmbeddingConfigView, EmbeddingStatus } from '../../src/api/embedding';
 import {
   createAiClassifyCredential,
   createAiCredential,
   createAiSettings,
   createApiConnections,
   createAuditLogs,
-  createEmbeddingSettings,
+  createEmbeddingConfig,
+  createEmbeddingStatus,
   createPermissions,
   createRoleDetail,
   createSmtpSettings,
@@ -158,14 +160,16 @@ const resolveSource = (source: SettingsSource) =>
  * P7-c1 에서 이메일 탭이 `prefix=smtp` 로 옮겨오자 그 폴백이 **AI 설정 6건을 SMTP 응답인 척**
  * 돌려주게 됐다 — 스펙은 "SMTP 필드가 비어 있다"로 실패하고, 원인은 화면이 아니라 픽스처다.
  * 라우팅되지 않은 prefix 를 조용히 다른 목록으로 대체하면 그 진단이 매번 늦어진다.
+ *
+ * 임베딩 탭은 #713 부터 이 엔드포인트를 쓰지 않는다(`/settings/embedding` 전용 API) — 그래서
+ * `embedding` prefix 는 여기서 뺐다. 실수로 그 prefix 를 부르면 기존처럼 500 으로 드러난다.
  */
 export async function setupSettingsMocks(
   page: Page,
-  options: { ai?: SettingsSource; embedding?: SettingsSource; smtp?: SettingsSource } = {},
+  options: { ai?: SettingsSource; smtp?: SettingsSource } = {},
 ) {
   const sources: Record<string, SettingsSource> = {
     ai: options.ai ?? createAiSettings(),
-    embedding: options.embedding ?? createEmbeddingSettings(),
     smtp: options.smtp ?? createSmtpSettings(),
   };
   await page.route(
@@ -518,4 +522,45 @@ export async function setupOntologyGraphRetryMock(page: Page) {
     errorBody: { message: '그래프 조회 실패' },
     okBody: createOntologyGraph(),
   });
+}
+
+/**
+ * 임베딩 탭 API 모킹(#713). 설정·현황 GET 은 고정 응답, 연결 테스트·영향도·저장·재임베딩은 캡처해 페이로드·쿼리를
+ * 단언할 수 있게 돌려준다. `probe`/`impact`/`save` 에 status 를 주면 그 상태 코드로 오류를 흉내 낸다.
+ */
+export async function setupEmbeddingMocks(
+  page: Page,
+  opts: {
+    config?: EmbeddingConfigView;
+    status?: EmbeddingStatus;
+    probe?: { status?: number; body: unknown };
+    impact?: { status?: number; body: unknown };
+    save?: { status?: number; body?: unknown };
+  } = {},
+) {
+  const config = opts.config ?? createEmbeddingConfig();
+  await mockApi(page, 'GET', '/api/v1/settings/embedding', config);
+  await mockApi(page, 'GET', '/api/v1/admin/embedding/status', opts.status ?? createEmbeddingStatus());
+  const probe = await mockApi(
+    page,
+    'POST',
+    '/api/v1/settings/embedding/test',
+    opts.probe?.body ?? { dimension: config.dimension ?? 1024 },
+    { status: opts.probe?.status ?? 200, capture: true },
+  );
+  const impact = await mockApi(
+    page,
+    'GET',
+    '/api/v1/settings/embedding/impact',
+    opts.impact?.body ?? { chunks: 0, datasets: 0, rowSearchIndexes: 0 },
+    { status: opts.impact?.status ?? 200, capture: true },
+  );
+  const save = await mockApi(
+    page,
+    'PUT',
+    '/api/v1/settings/embedding',
+    opts.save?.body ?? config,
+    { status: opts.save?.status ?? 200, capture: true },
+  );
+  return { probe, impact, save };
 }

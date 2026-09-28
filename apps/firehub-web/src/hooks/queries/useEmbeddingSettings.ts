@@ -1,24 +1,33 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
-import { settingsApi } from '../../api/settings';
-import type { ResolvedSettingResponse } from '../../types/settings';
+import { embeddingApi, type EmbeddingConfigRequest } from '../../api/embedding';
+import { EMBEDDING_STATUS_KEY } from './useEmbedding';
 
-// 임베딩 설정 쿼리 키.
-const EMBEDDING_SETTINGS_KEY = ['settings', 'embedding'] as const;
+/** 임베딩 설정 쿼리 키. */
+export const EMBEDDING_CONFIG_KEY = ['settings', 'embedding'] as const;
 
 /**
- * 문서 RAG 임베딩 provider 설정을 조회한다.
- * - GET /settings?prefix=embedding 으로 embedding.* 키 목록을 가져온다.
- * - api_key는 백엔드에서 마스킹(****...)되어 내려온다.
- * - 응답에는 overridden/tenantEditable 플래그가 함께 온다(P7-b). embedding.* 4키는 전부
- *   플랫폼 잠금이므로 tenantEditable=false 로 내려오고, 화면은 그 플래그로 읽기 전용을 표시한다.
- *
- * 저장 훅은 없다 — P7-b 에서 임베딩 4키가 플랫폼 소유로 확정되어 테넌트 평면의 저장 경로가
- * 서버에서 거부되기 때문에 화면과 함께 제거했다.
+ * 테넌트 임베딩 설정 조회(#713). 설정은 테넌트 전용이라 미설정이면 `configured=false` 가 온다.
+ * 키는 마스킹(`apiKeyMasked`)만 내려오고 폼 값으로는 쓰지 않는다.
  */
-export function useEmbeddingSettings() {
-  return useQuery<ResolvedSettingResponse[]>({
-    queryKey: EMBEDDING_SETTINGS_KEY,
-    queryFn: () => settingsApi.getByPrefix('embedding').then((r) => r.data),
+export function useEmbeddingConfig() {
+  return useQuery({
+    queryKey: EMBEDDING_CONFIG_KEY,
+    queryFn: () => embeddingApi.getConfig().then((r) => r.data),
+  });
+}
+
+/**
+ * 설정 저장. 서버가 다시 probe 해 차원을 확정하고, 재임베딩이 필요하면 스스로 잡을 투입한다 — 그래서 성공 시
+ * 설정과 함께 현황도 무효화해 진행률 폴링을 다시 켠다.
+ */
+export function useSaveEmbeddingConfig() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (req: EmbeddingConfigRequest) => embeddingApi.saveConfig(req).then((r) => r.data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: EMBEDDING_CONFIG_KEY });
+      queryClient.invalidateQueries({ queryKey: EMBEDDING_STATUS_KEY });
+    },
   });
 }

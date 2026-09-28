@@ -1,6 +1,13 @@
-import { Boxes, RefreshCw } from 'lucide-react';
+import { Boxes, PlugZap, RefreshCw, Save } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { toast } from 'sonner';
 
+import {
+  embeddingApi,
+  type EmbeddingConfigRequest,
+  type EmbeddingImpact,
+  type EmbeddingProviderType,
+} from '../../api/embedding';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -14,7 +21,9 @@ import {
 } from '../../components/ui/alert-dialog';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
+import { InlineBanner } from '../../components/ui/inline-banner';
 import { Input } from '../../components/ui/input';
+import { Label } from '../../components/ui/label';
 import {
   Select,
   SelectContent,
@@ -23,35 +32,34 @@ import {
   SelectValue,
 } from '../../components/ui/select';
 import { Separator } from '../../components/ui/separator';
-import {
-  useEmbeddingStatus,
-  useReindexAllEmbeddings,
-} from '../../hooks/queries/useEmbedding';
-import { useEmbeddingSettings } from '../../hooks/queries/useEmbeddingSettings';
-import { PlatformLockedBanner, PlatformLockedNote, SettingFieldLabel } from './settings-lock';
+import { useEmbeddingStatus, useReindexAllEmbeddings } from '../../hooks/queries/useEmbedding';
+import { useEmbeddingConfig, useSaveEmbeddingConfig } from '../../hooks/queries/useEmbeddingSettings';
+import { extractApiError } from '../../lib/api-error';
 
 interface EmbeddingForm {
-  'embedding.provider': string;
-  'embedding.model': string;
-  'embedding.base_url': string;
-  'embedding.api_key': string;
+  provider: EmbeddingProviderType;
+  model: string;
+  baseUrl: string;
+  apiKey: string;
 }
 
-// 폼 초기값은 비워 둔다 — 값은 서버 응답만이 채운다. 하드코딩 기본값을 시드하면 서버에 행이
-// 없을 때도 실제 적용값처럼 보인다(읽기 전용 화면에서는 특히 오해가 크다).
-const EMPTY: EmbeddingForm = {
-  'embedding.provider': '',
-  'embedding.model': '',
-  'embedding.base_url': '',
-  'embedding.api_key': '',
-};
+// 미설정 테넌트의 시작 폼. 기본값을 "적용 중인 값"처럼 보이지 않게 모델·주소는 비워 둔다.
+const EMPTY: EmbeddingForm = { provider: 'OLLAMA', model: '', baseUrl: '', apiKey: '' };
 
-// provider 옵션 — 읽기 전용이 된 뒤에도 서버 값(코드)을 사람이 읽는 라벨로 보여주기 위해 유지한다.
-const PROVIDER_OPTIONS: { value: string; label: string }[] = [
+// VOYAGE 는 팩토리가 거부하던 죽은 선택지라 제거했다(#713).
+const PROVIDER_OPTIONS: { value: EmbeddingProviderType; label: string }[] = [
   { value: 'OLLAMA', label: 'Ollama' },
   { value: 'OPENAI', label: 'OpenAI' },
-  { value: 'VOYAGE', label: 'Voyage (준비 중)' },
 ];
+
+type TestState = { ok: true; dimension: number } | { ok: false; message: string } | null;
+
+/** 저장 확인 창에 필요한 값 — 클라이언트가 먼저 잰 차원과 영향도(서버 PUT 은 다시 probe 한다). */
+interface PendingSave {
+  request: EmbeddingConfigRequest;
+  dimension: number;
+  impact: EmbeddingImpact;
+}
 
 // 재임베딩 진행 현황 한 줄(라벨 + 카운트 + 진행 바)을 렌더링한다.
 // shadcn Progress 컴포넌트가 없어 muted/primary div 바로 직접 구성한다.
@@ -82,47 +90,101 @@ function ReindexProgressRow({
 }
 
 /**
- * 임베딩 설정 탭 — P7-b 이후 **provider 폼 전 필드가 플랫폼 전용(읽기 전용)**.
+ * 임베딩 설정 탭(#713) — 테넌트가 provider·모델·Base URL·키를 직접 저장한다(플랫폼 값·폴백 없음).
  *
- * `embedding.*` 4키는 모델이 바뀌면 벡터 차원이 바뀌어 **기존 임베딩 전량이 무효화**되므로
- * 플랫폼이 소유한다. 백엔드가 이 키들의 저장을 거부하기 때문에 저장/되돌리기 버튼과 클라이언트
- * 검증(서버 규칙 미러링)을 함께 제거했다 — 값을 바꿀 수 없으면 검증할 대상도 없다.
- *
- * 반면 아래 **재임베딩 카드는 그대로 유지**한다. 현재 설정으로 다시 임베딩하는 운영 액션이지
- * 설정 변경이 아니다.
+ * 저장 흐름: 연결 테스트로 차원 측정 → 그 (모델, 차원)의 재임베딩 대상 수 조회 → 0 보다 크면 확인 창 → PUT.
+ * 서버 PUT 은 클라이언트 측정값을 믿지 않고 다시 probe 하며, 판정식이 참이면 재임베딩 잡을 스스로 투입한다.
  */
 export default function EmbeddingSettingsTab() {
-  const { data: settings, isLoading } = useEmbeddingSettings();
-
-  // 재임베딩 카드용 — 현황 폴링 조회 및 전체 재임베딩 실행 mutation
+  const { data: config, isLoading } = useEmbeddingConfig();
+  const save = useSaveEmbeddingConfig();
   const { data: status } = useEmbeddingStatus();
   const reindex = useReindexAllEmbeddings();
 
   const [form, setForm] = useState<EmbeddingForm>(EMPTY);
+  const [testState, setTestState] = useState<TestState>(null);
+  const [pending, setPending] = useState<PendingSave | null>(null);
+  const [busy, setBusy] = useState(false);
 
-  // 서버에서 settings가 로드되면 폼 상태에 반영 — 서버 데이터 → 폼 state 초기화 패턴
+  // 서버 설정 → 폼. 키는 값으로 내려오지 않으므로 항상 빈 칸에서 시작한다(비우면 유지).
   useEffect(() => {
-    if (!settings) return;
-    const values = { ...EMPTY };
-    settings.forEach((s) => {
-      const key = s.key as keyof EmbeddingForm;
-      if (key in values) values[key] = s.value ?? '';
-    });
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setForm(values);
-  }, [settings]);
+    if (!config) return;
+    setForm(
+      config.configured
+        ? {
+            provider: config.provider ?? 'OLLAMA',
+            model: config.model ?? '',
+            baseUrl: config.baseUrl ?? '',
+            apiKey: '',
+          }
+        : EMPTY,
+    );
+  }, [config]);
 
   if (isLoading) {
     return <div className="py-8 text-center text-muted-foreground text-sm">불러오는 중...</div>;
   }
 
+  // 빈 키는 보내지 않는다 — 서버 계약상 "생략 = 기존 키 유지"다.
+  const buildRequest = (): EmbeddingConfigRequest => ({
+    provider: form.provider,
+    model: form.model.trim(),
+    baseUrl: form.baseUrl.trim(),
+    ...(form.provider === 'OPENAI' && form.apiKey ? { apiKey: form.apiKey } : {}),
+  });
+
+  const handleTest = async () => {
+    setBusy(true);
+    try {
+      const { data } = await embeddingApi.testConfig(buildRequest());
+      setTestState({ ok: true, dimension: data.dimension });
+    } catch (e) {
+      setTestState({ ok: false, message: extractApiError(e, '연결 테스트에 실패했습니다.') });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const commitSave = async (request: EmbeddingConfigRequest) => {
+    await save.mutateAsync(request);
+    toast.success('임베딩 설정을 저장했습니다');
+    setPending(null);
+    setForm((f) => ({ ...f, apiKey: '' }));
+  };
+
+  const handleSave = async () => {
+    const request = buildRequest();
+    setBusy(true);
+    try {
+      const { data: probe } = await embeddingApi.testConfig(request);
+      setTestState({ ok: true, dimension: probe.dimension });
+      const { data: impact } = await embeddingApi.getImpact({
+        model: request.model,
+        dimension: probe.dimension,
+      });
+      if (impact.chunks + impact.datasets + impact.rowSearchIndexes > 0) {
+        setPending({ request, dimension: probe.dimension, impact });
+      } else {
+        await commitSave(request);
+      }
+    } catch (e) {
+      toast.error(extractApiError(e, '임베딩 설정을 저장하지 못했습니다.'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const fromLabel =
+    config?.configured && config.model ? `${config.model} (${config.dimension})` : '미설정';
+
   return (
     <div className="space-y-6">
-      {/* 탭 상단 배너 — 스크롤하지 않아도 편집 불가를 먼저 알린다 */}
-      <PlatformLockedBanner>
-        임베딩 설정은 플랫폼 운영자가 관리합니다. 이 화면에서는 현재 적용된 값을 확인할 수만 있고,
-        테넌트에서 변경할 수 없습니다.
-      </PlatformLockedBanner>
+      {config && !config.configured && (
+        <InlineBanner variant="warning" title="임베딩이 설정되지 않았습니다">
+          문서 검색·데이터셋 탐색·행 검색이 동작하지 않습니다. 아래에서 임베딩 provider 를 설정하고
+          저장하세요.
+        </InlineBanner>
+      )}
 
       <Card className="card-hover">
         <CardHeader>
@@ -132,20 +194,12 @@ export default function EmbeddingSettingsTab() {
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-6">
-          {/* 아래 4필드의 `locked` 는 의도적인 하드코딩이다.
-              `embedding.*` 4키는 정책상 전부 균일하게 플랫폼 잠금이라 데이터로 구동할 편차가 없다 —
-              서버 플래그를 읽어도 항상 같은 답이 오고, 입력은 어차피 `disabled` 로 고정돼 있어
-              "서버가 정한다"는 말만 남고 실제로 정하는 것은 아무것도 없었다.
-              대가: 정책이 바뀌어 `embedding.*` 중 하나라도 테넌트에 열리면 이 탭은 따라가지 않는다.
-              그때는 서버 `tenantEditable` 플래그로 잠금을 구동하고 `disabled` 도 함께
-              풀어야 한다(한쪽만 고치면 배지와 조작 가능 여부가 어긋난다). */}
-          {/* Provider — 읽기 전용. Select 를 유지하는 이유는 저장된 코드값(OLLAMA)을 사람이 읽는
-              라벨(Ollama)로 보여주기 위해서다. */}
           <div className="space-y-2">
-            <SettingFieldLabel htmlFor="embedding-provider" locked>
-              Provider
-            </SettingFieldLabel>
-            <Select value={form['embedding.provider']} disabled>
+            <Label htmlFor="embedding-provider">Provider</Label>
+            <Select
+              value={form.provider}
+              onValueChange={(v) => setForm((f) => ({ ...f, provider: v as EmbeddingProviderType }))}
+            >
               <SelectTrigger id="embedding-provider" className="w-full max-w-md">
                 <SelectValue placeholder="Provider를 선택하세요" />
               </SelectTrigger>
@@ -157,84 +211,119 @@ export default function EmbeddingSettingsTab() {
                 ))}
               </SelectContent>
             </Select>
-            <p className="text-sm text-muted-foreground">임베딩 생성에 사용할 provider</p>
-            <PlatformLockedNote />
           </div>
 
           <Separator />
 
-          {/* Model */}
           <div className="space-y-2">
-            <SettingFieldLabel htmlFor="embedding-model" locked>
-              모델
-            </SettingFieldLabel>
+            <Label htmlFor="embedding-model">모델</Label>
             <Input
               id="embedding-model"
               className="max-w-md"
-              value={form['embedding.model']}
-              disabled
-              placeholder="bge-m3"
+              value={form.model}
+              onChange={(e) => setForm((f) => ({ ...f, model: e.target.value }))}
+              placeholder={form.provider === 'OPENAI' ? 'text-embedding-3-small' : 'bge-m3'}
             />
-            <p className="text-sm text-muted-foreground">임베딩 모델 이름</p>
-            <PlatformLockedNote />
+            <p className="text-sm text-muted-foreground">
+              지원 차원은 1024, 1536 입니다. 차원은 연결 테스트로 자동 측정됩니다.
+            </p>
           </div>
 
           <Separator />
 
-          {/* Base URL */}
           <div className="space-y-2">
-            <SettingFieldLabel htmlFor="embedding-base-url" locked>
-              Base URL
-            </SettingFieldLabel>
+            <Label htmlFor="embedding-base-url">Base URL</Label>
             <Input
               id="embedding-base-url"
               className="max-w-md"
-              value={form['embedding.base_url']}
-              disabled
-              placeholder="http://host.docker.internal:11434"
+              value={form.baseUrl}
+              onChange={(e) => setForm((f) => ({ ...f, baseUrl: e.target.value }))}
+              placeholder={
+                form.provider === 'OPENAI' ? 'https://api.openai.com' : 'http://host.docker.internal:11434'
+              }
             />
-            <p className="text-sm text-muted-foreground">provider API 엔드포인트 주소</p>
-            <PlatformLockedNote />
           </div>
 
-          <Separator />
+          {form.provider === 'OPENAI' && (
+            <>
+              <Separator />
+              <div className="space-y-2">
+                <Label htmlFor="embedding-api-key">API 키</Label>
+                <Input
+                  id="embedding-api-key"
+                  type="password"
+                  autoComplete="off"
+                  className="max-w-md"
+                  value={form.apiKey}
+                  onChange={(e) => setForm((f) => ({ ...f, apiKey: e.target.value }))}
+                  placeholder="OpenAI API 키"
+                />
+                {config?.apiKeyMasked ? (
+                  <p className="text-sm text-muted-foreground">
+                    저장된 키 {config.apiKeyMasked} — 비우면 유지됩니다
+                  </p>
+                ) : null}
+              </div>
+            </>
+          )}
 
-          {/* API Key — 서버에서 **** 로 마스킹되어 내려오고 편집도 불가하므로 표시/숨기기 토글을 두지 않는다 */}
-          <div className="space-y-2">
-            <SettingFieldLabel htmlFor="embedding-api-key" locked>
-              API 키
-            </SettingFieldLabel>
-            <Input
-              id="embedding-api-key"
-              type="password"
-              className="max-w-md"
-              value={form['embedding.api_key']}
-              disabled
-              placeholder="provider API 키 (Ollama는 불필요)"
-            />
-            <p className="text-sm text-muted-foreground">
-              Voyage/OpenAI 사용 시 필요. Ollama는 비워둡니다.
+          {testState && (
+            <p
+              role="status"
+              className={testState.ok ? 'text-sm text-success' : 'text-sm text-destructive'}
+            >
+              {testState.ok ? `연결 성공 · ${testState.dimension}차원` : testState.message}
             </p>
-            <PlatformLockedNote />
+          )}
+
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={handleTest} disabled={busy}>
+              <PlugZap className="h-4 w-4" />
+              연결 테스트
+            </Button>
+            <Button onClick={handleSave} disabled={busy || save.isPending}>
+              <Save className="h-4 w-4" />
+              저장
+            </Button>
           </div>
-
-          <Separator />
-
-          {/* 차원 안내 — 1024 고정값이며 설정 항목이 아니므로 읽기 전용 안내만 표시 */}
-          <p className="text-sm text-muted-foreground">
-            임베딩 차원은 1024로 고정됩니다. provider/모델 변경 시 기존 문서를 전체 재임베딩해야 합니다.
-          </p>
         </CardContent>
       </Card>
 
-      {/* 원래 저장/되돌리기 버튼 행이 있던 자리 — 배너로 대체한다 */}
-      <PlatformLockedBanner>
-        임베딩 설정은 플랫폼 운영자가 관리합니다. 이 화면에서는 현재 적용된 값을 확인할 수만 있고,
-        테넌트에서 변경할 수 없습니다.
-      </PlatformLockedBanner>
+      {/* 재임베딩 확인 창 — 영향도가 0 보다 클 때만. 외부 API 비용과 검색 공백을 먼저 알린다. */}
+      <AlertDialog open={pending !== null} onOpenChange={(open) => !open && setPending(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>임베딩 모델 변경</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2">
+                <p>
+                  {fromLabel} → {pending?.request.model} ({pending?.dimension})
+                </p>
+                <p>
+                  문서 청크 {pending?.impact.chunks} · 데이터셋 {pending?.impact.datasets} · 행 검색
+                  색인 {pending?.impact.rowSearchIndexes} 개를 다시 임베딩합니다. 외부 API 는 비용이
+                  발생합니다. 완료 전까지 의미 검색은 새로 임베딩된 부분만 찾습니다.
+                </p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>취소</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (!pending) return;
+                commitSave(pending.request).catch((e) =>
+                  toast.error(extractApiError(e, '임베딩 설정을 저장하지 못했습니다.')),
+                );
+              }}
+            >
+              저장하고 재임베딩
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
-      {/* 재임베딩 — 현재 모델 기준 데이터셋·문서 청크 임베딩 진행 현황 및 전체 재임베딩 실행.
-          provider 폼(카드+저장/되돌리기) 아래에 별도 카드로 배치한다. */}
+      {/* 재임베딩 — 현재 공간 기준 진행률 + 잡 상태 + 전체 재임베딩 실행 */}
       <Card className="card-hover">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -243,13 +332,19 @@ export default function EmbeddingSettingsTab() {
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-6">
-          {/* 현재 임베딩 모델 — status 로딩 전에는 dash 표시 */}
           <div className="text-sm">
             <span className="text-muted-foreground">현재 모델: </span>
-            <span className="font-medium">{status?.model ?? '—'}</span>
+            <span className="font-medium">
+              {status?.configured ? `${status.model} · ${status.dimension}차원` : '—'}
+            </span>
           </div>
 
-          {/* 진행 현황 두 줄 — 데이터셋 카탈로그 / 문서 청크 */}
+          {status?.job?.status === 'FAILED' && (
+            <InlineBanner variant="warning" title="재임베딩 실패">
+              {status.job.lastError}
+            </InlineBanner>
+          )}
+
           <div className="space-y-4">
             <ReindexProgressRow
               label="데이터셋 카탈로그"
@@ -265,10 +360,9 @@ export default function EmbeddingSettingsTab() {
 
           <Separator />
 
-          {/* 전체 재임베딩 실행 — 비용/시간이 큰 작업이므로 AlertDialog로 한 번 더 확인 */}
           <AlertDialog>
             <AlertDialogTrigger asChild>
-              <Button variant="outline" disabled={reindex.isPending}>
+              <Button variant="outline" disabled={reindex.isPending || !status?.configured}>
                 <RefreshCw className="h-4 w-4" />
                 {reindex.isPending ? '시작 중...' : '전체 재임베딩 실행'}
               </Button>
@@ -277,8 +371,8 @@ export default function EmbeddingSettingsTab() {
               <AlertDialogHeader>
                 <AlertDialogTitle>전체 재임베딩 실행</AlertDialogTitle>
                 <AlertDialogDescription>
-                  모든 데이터셋·문서를 현재 모델({status?.model ?? '—'})로 다시 임베딩합니다. 데이터
-                  양에 따라 시간이 걸릴 수 있습니다.
+                  현재 모델({status?.model ?? '—'})로 아직 임베딩되지 않은 데이터셋·문서를 다시
+                  임베딩합니다. 데이터 양에 따라 시간이 걸릴 수 있습니다.
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>

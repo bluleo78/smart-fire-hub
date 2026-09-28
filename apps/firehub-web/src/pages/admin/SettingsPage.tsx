@@ -626,7 +626,9 @@ export default function SettingsPage() {
         <TabsContent value="email" className="mt-6">
           <SmtpSettingsTab state={smtp} />
         </TabsContent>
-        {/* 임베딩 탭 — 전면 잠금이라 dirty 보고자가 없다 */}
+        {/* 임베딩 탭 — 자체 폼 상태를 갖고 저장 흐름을 스스로 처리한다(#713). 다른 탭과 달리
+            페이지에 dirty 를 보고하지 않는다 — 이탈 경고가 필요해지면 이 탭도 SmtpSettingsTab 처럼
+            상태를 끌어올려야 한다. */}
         <TabsContent value="embedding" className="mt-6">
           <EmbeddingSettingsTab />
         </TabsContent>
