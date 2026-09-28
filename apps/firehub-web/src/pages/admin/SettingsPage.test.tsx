@@ -17,9 +17,11 @@
  * `useAiCredentialForm`/`useSettingsOverrideForm`/`useSmtpSettingsForm`/
  * `useUnsavedChangesGuard` 를 전부 모킹한다 — 네트워크·Radix Select 팝오버 상호작용 없이
  * 오케스트레이션 로직만 격리해서 본다(이 코드베이스에 `SettingsPage` 전체를 렌더하는 기존
- * 선례가 없어, 모킹 폭을 최소로 유지했다: 이메일/임베딩 탭은 Radix `TabsContent` 가 비활성
- * 탭을 언마운트하므로 `defaultValue="ai"` 에서는 실제로 마운트되지 않는다 — 별도로 모킹하지
- * 않는다).
+ * 선례가 없어, 모킹 폭을 최소로 유지했다). 이메일/임베딩 탭 폼은 `useSmtpSettingsForm`/
+ * `useEmbeddingSettingsForm` 을 최소 계약(`hasChanges`)으로만 모킹한다 — 두 훅 모두
+ * `defaultValue="ai"` 여부와 무관하게 <b>페이지 레벨에서 항상 호출</b>되므로(탭 전환에 편집이
+ * 죽지 않도록 이슈 #86 재발 방지, dbdaf75a), 모킹하지 않으면 실제 API·react-query 훅이 돌아
+ * `QueryClientProvider` 없이 렌더가 죽는다.
  */
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -75,6 +77,12 @@ vi.mock('../../hooks/useSettingsOverrideForm', () => ({
 
 vi.mock('../../hooks/useSmtpSettingsForm', () => ({
   useSmtpSettingsForm: () => ({ hasChanges: false }),
+}));
+
+// 임베딩 탭도 SMTP 탭과 같은 이유로 페이지가 소유한다(#713 리뷰 fix round 1, dbdaf75a) —
+// react-query 의 useEmbeddingConfig 를 실제로 부르면 QueryClientProvider 가 없어 렌더가 죽는다.
+vi.mock('../../hooks/useEmbeddingSettingsForm', () => ({
+  useEmbeddingSettingsForm: () => ({ hasChanges: false }),
 }));
 
 vi.mock('../../hooks/useUnsavedChangesGuard', () => ({
