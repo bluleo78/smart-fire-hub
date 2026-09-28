@@ -3,6 +3,7 @@ package com.smartfirehub.dataset.search;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.within;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
@@ -33,6 +34,9 @@ class DatasetSearchServiceTest {
   @Test
   void hybrid_양쪽_등장_데이터셋이_한쪽만_등장보다_상위로_융합되고_RRF_점수가_정확하다() {
     when(embeddingFactory.current()).thenReturn(embeddingProvider);
+    // 검색 공간(차원 테이블·모델 필터)을 정하려면 provider 의 차원·모델이 필요하다(#713).
+    lenient().when(embeddingProvider.dimension()).thenReturn(1024);
+    lenient().when(embeddingProvider.modelId()).thenReturn("bge-m3");
     when(embeddingProvider.embed(List.of("화재"))).thenReturn(List.of(new float[1024]));
 
     // 비대칭 시나리오: dsA 는 양쪽 rank0, dsB·dsC 는 각각 한쪽만 rank1.
@@ -42,7 +46,9 @@ class DatasetSearchServiceTest {
     var dsB = hit(2L);
     var dsC = hit(3L);
     when(repository.searchByCosine(
-            ArgumentMatchers.any(), ArgumentMatchers.isNull(), ArgumentMatchers.anyInt()))
+            ArgumentMatchers.any(),
+            ArgumentMatchers.any(),
+            ArgumentMatchers.isNull(), ArgumentMatchers.anyInt()))
         .thenReturn(List.of(dsA, dsC)); // 코사인: dsA(rank0), dsC(rank1)
     when(repository.searchByTrigram(
             ArgumentMatchers.eq("화재"), ArgumentMatchers.isNull(), ArgumentMatchers.anyInt()))
@@ -83,9 +89,14 @@ class DatasetSearchServiceTest {
   @Test
   void semantic_모드는_트라이그램을_호출하지_않는다() {
     when(embeddingFactory.current()).thenReturn(embeddingProvider);
+    // 검색 공간(차원 테이블·모델 필터)을 정하려면 provider 의 차원·모델이 필요하다(#713).
+    lenient().when(embeddingProvider.dimension()).thenReturn(1024);
+    lenient().when(embeddingProvider.modelId()).thenReturn("bge-m3");
     when(embeddingProvider.embed(List.of("화재"))).thenReturn(List.of(new float[1024]));
     when(repository.searchByCosine(
-            ArgumentMatchers.any(), ArgumentMatchers.isNull(), ArgumentMatchers.anyInt()))
+            ArgumentMatchers.any(),
+            ArgumentMatchers.any(),
+            ArgumentMatchers.isNull(), ArgumentMatchers.anyInt()))
         .thenReturn(List.of(hit(1L)));
     var req = new DatasetSearchRequest("화재", 10, DatasetSearchMode.SEMANTIC, null);
     assertThat(service().search(req)).hasSize(1);
@@ -97,9 +108,14 @@ class DatasetSearchServiceTest {
   @Test
   void mode가_null이면_HYBRID로_동작한다() {
     when(embeddingFactory.current()).thenReturn(embeddingProvider);
+    // 검색 공간(차원 테이블·모델 필터)을 정하려면 provider 의 차원·모델이 필요하다(#713).
+    lenient().when(embeddingProvider.dimension()).thenReturn(1024);
+    lenient().when(embeddingProvider.modelId()).thenReturn("bge-m3");
     when(embeddingProvider.embed(List.of("화재"))).thenReturn(List.of(new float[1024]));
     when(repository.searchByCosine(
-            ArgumentMatchers.any(), ArgumentMatchers.isNull(), ArgumentMatchers.anyInt()))
+            ArgumentMatchers.any(),
+            ArgumentMatchers.any(),
+            ArgumentMatchers.isNull(), ArgumentMatchers.anyInt()))
         .thenReturn(List.of(hit(1L)));
     when(repository.searchByTrigram(
             ArgumentMatchers.eq("화재"), ArgumentMatchers.isNull(), ArgumentMatchers.anyInt()))
@@ -112,9 +128,14 @@ class DatasetSearchServiceTest {
   @Test
   void hybrid_후보풀은_CANDIDATE_POOL_크기로_조회된다() {
     when(embeddingFactory.current()).thenReturn(embeddingProvider);
+    // 검색 공간(차원 테이블·모델 필터)을 정하려면 provider 의 차원·모델이 필요하다(#713).
+    lenient().when(embeddingProvider.dimension()).thenReturn(1024);
+    lenient().when(embeddingProvider.modelId()).thenReturn("bge-m3");
     when(embeddingProvider.embed(List.of("화재"))).thenReturn(List.of(new float[1024]));
     when(repository.searchByCosine(
-            ArgumentMatchers.any(), ArgumentMatchers.isNull(), ArgumentMatchers.anyInt()))
+            ArgumentMatchers.any(),
+            ArgumentMatchers.any(),
+            ArgumentMatchers.isNull(), ArgumentMatchers.anyInt()))
         .thenReturn(List.of(hit(1L)));
     when(repository.searchByTrigram(
             ArgumentMatchers.eq("화재"), ArgumentMatchers.isNull(), ArgumentMatchers.anyInt()))
@@ -126,7 +147,11 @@ class DatasetSearchServiceTest {
     ArgumentCaptor<Integer> cosineLimit = ArgumentCaptor.forClass(Integer.class);
     ArgumentCaptor<Integer> trigramLimit = ArgumentCaptor.forClass(Integer.class);
     Mockito.verify(repository)
-        .searchByCosine(ArgumentMatchers.any(), ArgumentMatchers.isNull(), cosineLimit.capture());
+        .searchByCosine(
+            ArgumentMatchers.any(),
+            ArgumentMatchers.any(),
+            ArgumentMatchers.isNull(),
+            cosineLimit.capture());
     Mockito.verify(repository)
         .searchByTrigram(
             ArgumentMatchers.eq("화재"), ArgumentMatchers.isNull(), trigramLimit.capture());

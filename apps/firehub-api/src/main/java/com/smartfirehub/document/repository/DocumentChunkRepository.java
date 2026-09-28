@@ -6,14 +6,26 @@ import static org.jooq.impl.DSL.table;
 
 import com.smartfirehub.document.dto.Chunk;
 import com.smartfirehub.document.dto.DocumentSearchHit;
+import com.smartfirehub.embedding.EmbeddingDimension;
+import com.smartfirehub.embedding.EmbeddingSpace;
+import com.smartfirehub.embedding.HnswSearch;
+import com.smartfirehub.global.tenant.TenantContext;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
 import org.jooq.impl.DSL;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
-/** document_chunk 벡터 배치 적재. embedding 은 '[..]'::vector 문자열 캐스팅으로 바인딩한다. */
+/**
+ * document_chunk 본문 + 차원별 벡터 테이블(document_chunk_vec_N) 적재·검색(#713).
+ *
+ * <p>벡터는 '[..]'::vector 문자열 캐스팅으로 바인딩한다. 테이블명은 {@link EmbeddingDimension} 에서만 나온다.
+ */
 @Repository
 @RequiredArgsConstructor
 // 배경 잡(JobRunr/@Async/@Scheduled)은 앰비언트 트랜잭션이 없다. RLS GUC 는 트랜잭션 시작
@@ -35,10 +47,14 @@ public class DocumentChunkRepository {
         .execute();
   }
 
-  /** 청크와 임베딩을 같은 순서로 매칭해 배치 insert. chunks.size() == embeddings.size() 전제. */
+  /**
+   * 청크 본문은 부모 테이블에, 벡터는 {@code space} 의 차원 테이블에 넣는다(한 트랜잭션 — 클래스 레벨 @Transactional).
+   * 새 청크라 다른 차원 행이 있을 수 없으므로 삭제 없이 INSERT 한다. 벡터 행은 {@code RETURNING id, chunk_index} 의
+   * <b>chunk_index 로</b> 매핑한다(RETURNING 순서는 VALUES 순서를 보장하지 않는다).
+   */
   public void insertBatch(
       Long documentFileId, Long datasetId, List<Chunk> chunks,
-      List<float[]> embeddings, String embeddingModel) {
+      List<float[]> embeddings, EmbeddingSpace space) {
     if (chunks.size() != embeddings.size()) {
       throw new IllegalArgumentException(
           "청크 수와 임베딩 수 불일치: " + chunks.size() + " vs " + embeddings.size());
@@ -47,61 +63,113 @@ public class DocumentChunkRepository {
       int end = Math.min(start + BATCH_SIZE, chunks.size());
       StringBuilder sql =
           new StringBuilder(
-              "INSERT INTO document_chunk(document_file_id, dataset_id, chunk_index,"
-                  + " content, token_count, embedding, embedding_model) VALUES ");
-      List<Object> params = new java.util.ArrayList<>();
+              "INSERT INTO document_chunk(document_file_id, dataset_id, chunk_index, content, token_count) VALUES ");
+      List<Object> params = new ArrayList<>();
       for (int i = start; i < end; i++) {
         if (i > start) sql.append(',');
-        sql.append("(?,?,?,?,?,?::vector,?)");
+        sql.append("(?,?,?,?,?)");
         Chunk c = chunks.get(i);
         params.add(documentFileId);
         params.add(datasetId);
         params.add(c.index());
         params.add(c.content());
         params.add(c.tokenCount());
-        params.add(toVectorLiteral(embeddings.get(i)));
-        params.add(embeddingModel);
       }
-      dsl.execute(sql.toString(), params.toArray());
+      sql.append(" RETURNING id, chunk_index");
+      Map<Integer, Long> idByIndex = new HashMap<>();
+      dsl.fetch(sql.toString(), params.toArray())
+          .forEach(r -> idByIndex.put(r.get("chunk_index", Integer.class), r.get("id", Long.class)));
+
+      StringBuilder vsql =
+          new StringBuilder("INSERT INTO ")
+              .append(space.dimension().chunkTable())
+              .append(" (chunk_id, dataset_id, embedding, embedding_model) VALUES ");
+      List<Object> vparams = new ArrayList<>();
+      for (int i = start; i < end; i++) {
+        if (i > start) vsql.append(',');
+        vsql.append("(?,?,?::vector,?)");
+        vparams.add(idByIndex.get(chunks.get(i).index()));
+        vparams.add(datasetId);
+        vparams.add(toVectorLiteral(embeddings.get(i)));
+        vparams.add(space.model());
+      }
+      dsl.execute(vsql.toString(), vparams.toArray());
     }
   }
 
   /**
-   * 쿼리 벡터와의 코사인 거리 기준 top-K 청크 조회. 완료된 문서(status='COMPLETED')만 검색한다.
-   * datasetIds 가 비어있으면 전체 DOCUMENT 청크를 대상으로 한다(전역 검색).
-   * score = 1 - (embedding <=> query) (코사인 유사도, 1에 가까울수록 유사).
+   * 기존 청크의 벡터를 {@code space} 로 옮긴다: 다른 차원 테이블의 같은 청크 행 DELETE + 현재 차원 테이블 UPSERT
+   * (같은 차원 안의 모델 교체도 ON CONFLICT 로 처리). 불변식 "한 청크의 벡터는 차원 테이블 전체에서 최대 1행"을 이
+   * 트랜잭션이 지킨다. 부모가 사라진 id 는 INSERT…SELECT 가 0행이라 조용히 건너뛴다(재임베딩 중 문서 삭제 경합).
+   */
+  public void upsertEmbeddings(EmbeddingSpace space, List<Long> chunkIds, List<float[]> embeddings) {
+    if (chunkIds.size() != embeddings.size()) {
+      throw new IllegalArgumentException(
+          "청크 수와 임베딩 수 불일치: " + chunkIds.size() + " vs " + embeddings.size());
+    }
+    if (chunkIds.isEmpty()) return;
+    for (EmbeddingDimension d : EmbeddingDimension.values()) {
+      if (d == space.dimension()) continue;
+      dsl.execute(
+          "DELETE FROM " + d.chunkTable() + " WHERE chunk_id IN (" + placeholders(chunkIds.size()) + ")",
+          chunkIds.toArray());
+    }
+    String sql =
+        "INSERT INTO " + space.dimension().chunkTable()
+            + " (chunk_id, dataset_id, embedding, embedding_model)"
+            + " SELECT c.id, c.dataset_id, ?::vector, ? FROM document_chunk c WHERE c.id = ?"
+            + " ON CONFLICT (chunk_id) DO UPDATE SET embedding = EXCLUDED.embedding,"
+            + " embedding_model = EXCLUDED.embedding_model, created_at = now()";
+    for (int start = 0; start < chunkIds.size(); start += BATCH_SIZE) {
+      int end = Math.min(start + BATCH_SIZE, chunkIds.size());
+      org.jooq.BatchBindStep batch = dsl.batch(sql);
+      for (int i = start; i < end; i++) {
+        batch = batch.bind(toVectorLiteral(embeddings.get(i)), space.model(), chunkIds.get(i));
+      }
+      batch.execute();
+    }
+  }
+
+  /**
+   * 코사인 top-K. 한 차원 테이블만 쓰고 현재 모델 벡터만 본다(#392). COMPLETED 문서만. score = 1 - 거리.
+   * iterative scan 을 켜고({@link HnswSearch}) relaxed_order 라 바깥에서 점수로 재정렬한다.
    */
   public List<DocumentSearchHit> searchByCosine(
-      float[] queryEmbedding, List<Long> datasetIds, int topK) {
-    String vectorLiteral = toVectorLiteral(queryEmbedding);
+      EmbeddingSpace space, float[] queryEmbedding, List<Long> datasetIds, int topK) {
+    List<Object> params = new ArrayList<>();
+    String sql = semanticSql(space, datasetIds, toVectorLiteral(queryEmbedding), topK, params);
+    return dsl.transactionResult(
+        cfg -> {
+          DSLContext tx = DSL.using(cfg);
+          HnswSearch.relaxIterativeScan(tx);
+          List<DocumentSearchHit> hits =
+              new ArrayList<>(tx.fetch(sql, params.toArray()).map(DocumentChunkRepository::toHit));
+          hits.sort((a, b) -> Double.compare(b.score(), a.score()));
+          return hits;
+        });
+  }
+
+  /** 의미 검색 SQL. package-private — 실행 계획(EXPLAIN) 단언 테스트가 쓴다. */
+  String semanticSql(
+      EmbeddingSpace space, List<Long> datasetIds, String vector, int topK, List<Object> params) {
     StringBuilder sql =
         new StringBuilder(
-            "SELECT dc.id, dc.document_file_id, dc.dataset_id, df.original_name,"
-                + " dc.chunk_index, dc.content, 1 - (dc.embedding <=> ?::vector) AS score"
-                + " FROM document_chunk dc"
-                + " JOIN document_file df ON df.id = dc.document_file_id"
-                + " WHERE df.status = 'COMPLETED'");
-    List<Object> params = new java.util.ArrayList<>();
-    params.add(vectorLiteral);
+                "SELECT c.id, c.document_file_id, c.dataset_id, df.original_name, c.chunk_index, c.content,"
+                    + " 1 - (v.embedding <=> ?::vector) AS score FROM ")
+            .append(space.dimension().chunkTable())
+            .append(" v JOIN document_chunk c ON c.id = v.chunk_id")
+            .append(" JOIN document_file df ON df.id = c.document_file_id")
+            .append(" WHERE df.status = 'COMPLETED' AND v.embedding_model = ?");
+    params.add(vector);
+    params.add(space.model());
     if (datasetIds != null && !datasetIds.isEmpty()) {
-      sql.append(" AND dc.dataset_id IN (")
-          .append(datasetIds.stream().map(x -> "?").collect(java.util.stream.Collectors.joining(",")))
-          .append(")");
+      sql.append(" AND v.dataset_id IN (").append(placeholders(datasetIds.size())).append(")");
       params.addAll(datasetIds);
     }
-    sql.append(" ORDER BY dc.embedding <=> ?::vector LIMIT ?");
-    params.add(vectorLiteral);
+    sql.append(" ORDER BY v.embedding <=> ?::vector LIMIT ?");
+    params.add(vector);
     params.add(topK);
-
-    return dsl.fetch(sql.toString(), params.toArray())
-        .map(r -> new DocumentSearchHit(
-            r.get("id", Long.class),
-            r.get("document_file_id", Long.class),
-            r.get("dataset_id", Long.class),
-            r.get("original_name", String.class),
-            r.get("chunk_index", Integer.class),
-            r.get("content", String.class),
-            r.get("score", Double.class)));
+    return sql.toString();
   }
 
   /**
@@ -164,32 +232,11 @@ public class DocumentChunkRepository {
         .map(r -> r.get("dataset_id", Long.class));
   }
 
-  /** 해당 데이터셋의 청크 (id, content) 를 id 오름차순으로 조회. updateEmbeddingBatch 와 순서를 맞춰 사용. */
+  /** 해당 데이터셋의 청크 (id, content) 를 id 오름차순으로 조회. 검수·청크 목록·데이터셋 단위 재임베딩이 쓴다. */
   public List<ChunkContent> findChunkContentsByDataset(long datasetId) {
     return dsl.fetch(
             "SELECT id, content FROM document_chunk WHERE dataset_id = ? ORDER BY id", datasetId)
         .map(r -> new ChunkContent(r.get("id", Long.class), r.get("content", String.class)));
-  }
-
-  /**
-   * 청크 임베딩을 id 기준으로 배치 갱신. chunkIds.get(i) 의 행에 embeddings.get(i) 를 적용한다.
-   * 벡터는 insertBatch 와 동일하게 텍스트 리터럴 + {@code ?::vector} 캐스팅으로 바인딩하고,
-   * jOOQ batch API 로 BATCH_SIZE 단위 묶음 전송해 왕복을 줄인다.
-   */
-  public void updateEmbeddingBatch(List<Long> chunkIds, List<float[]> embeddings, String model) {
-    if (chunkIds.size() != embeddings.size()) {
-      throw new IllegalArgumentException(
-          "청크 수와 임베딩 수 불일치: " + chunkIds.size() + " vs " + embeddings.size());
-    }
-    String sql = "UPDATE document_chunk SET embedding = ?::vector, embedding_model = ? WHERE id = ?";
-    for (int start = 0; start < chunkIds.size(); start += BATCH_SIZE) {
-      int end = Math.min(start + BATCH_SIZE, chunkIds.size());
-      org.jooq.BatchBindStep batch = dsl.batch(sql);
-      for (int i = start; i < end; i++) {
-        batch = batch.bind(toVectorLiteral(embeddings.get(i)), model, chunkIds.get(i));
-      }
-      batch.execute();
-    }
   }
 
   /** 전체 청크 수. 재임베딩 진행률 계산의 분모. */
@@ -197,12 +244,61 @@ public class DocumentChunkRepository {
     return dsl.fetchOne("SELECT COUNT(*) FROM document_chunk").get(0, Long.class);
   }
 
-  /** 특정 모델로 임베딩이 채워진 청크 수. 재임베딩 진행/완료 판단에 사용. */
-  public long countEmbeddedByModel(String model) {
+  /** {@code space} 로 임베딩된 청크 수(RLS 로 현재 테넌트). 진행률 분자. */
+  public long countEmbedded(EmbeddingSpace space) {
     return dsl.fetchOne(
-            "SELECT COUNT(*) FROM document_chunk WHERE embedding IS NOT NULL AND embedding_model = ?",
-            model)
+            "SELECT count(*) FROM " + space.dimension().chunkTable() + " WHERE embedding_model = ?",
+            space.model())
         .get(0, Long.class);
+  }
+
+  /** 재임베딩 판정식: 현재 차원 테이블에 현재 모델 벡터가 없는 청크 수. 영향도·저장 시 투입·잡이 같은 식을 쓴다. */
+  public long countMissing(EmbeddingSpace space) {
+    return dsl.fetchOne("SELECT count(*) FROM document_chunk c WHERE " + missingPredicate(space), space.model())
+        .get(0, Long.class);
+  }
+
+  /** 판정식을 만족하는 청크를 id 순으로 {@code limit} 건(키셋 {@code afterChunkId} 이후). */
+  public List<ChunkContent> findMissing(EmbeddingSpace space, long afterChunkId, int limit) {
+    return dsl.fetch(
+            "SELECT c.id, c.content FROM document_chunk c WHERE c.id > ? AND " + missingPredicate(space)
+                + " ORDER BY c.id LIMIT ?",
+            afterChunkId, space.model(), limit)
+        .map(r -> new ChunkContent(r.get("id", Long.class), r.get("content", String.class)));
+  }
+
+  /**
+   * 현재 차원이 아닌 테이블의 이 테넌트 벡터를 지운다(재임베딩 완료 뒤 잔여 정리). RLS 만으로도 테넌트 범위지만
+   * {@code WHERE tenant_id = ?} 를 명시한다 — 소유자 커넥션에서 불려도 남의 행을 지우지 않게(조건 없는 DELETE 금지 규율).
+   */
+  public int deleteOtherDimensions(EmbeddingDimension keep) {
+    long tenantId = TenantContext.require("다른 차원 벡터 정리");
+    int deleted = 0;
+    for (EmbeddingDimension d : EmbeddingDimension.values()) {
+      if (d == keep) continue;
+      deleted += dsl.execute("DELETE FROM " + d.chunkTable() + " WHERE tenant_id = ?", tenantId);
+    }
+    return deleted;
+  }
+
+  private static String missingPredicate(EmbeddingSpace space) {
+    return "NOT EXISTS (SELECT 1 FROM " + space.dimension().chunkTable()
+        + " v WHERE v.chunk_id = c.id AND v.embedding_model = ?)";
+  }
+
+  private static String placeholders(int n) {
+    return java.util.stream.IntStream.range(0, n).mapToObj(i -> "?").collect(Collectors.joining(","));
+  }
+
+  private static DocumentSearchHit toHit(org.jooq.Record r) {
+    return new DocumentSearchHit(
+        r.get("id", Long.class),
+        r.get("document_file_id", Long.class),
+        r.get("dataset_id", Long.class),
+        r.get("original_name", String.class),
+        r.get("chunk_index", Integer.class),
+        r.get("content", String.class),
+        r.get("score", Double.class));
   }
 
   /** float[] → pgvector 텍스트 리터럴 "[v1,v2,...]". */

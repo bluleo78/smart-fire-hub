@@ -19,6 +19,8 @@ import com.smartfirehub.jooq.tables.Dataset.DatasetPath;
 import com.smartfirehub.jooq.tables.DatasetCategory.DatasetCategoryPath;
 import com.smartfirehub.jooq.tables.DatasetColumn.DatasetColumnPath;
 import com.smartfirehub.jooq.tables.DatasetEmbedding.DatasetEmbeddingPath;
+import com.smartfirehub.jooq.tables.DatasetEmbeddingVec_1024.DatasetEmbeddingVec_1024Path;
+import com.smartfirehub.jooq.tables.DatasetEmbeddingVec_1536.DatasetEmbeddingVec_1536Path;
 import com.smartfirehub.jooq.tables.DatasetFavorite.DatasetFavoritePath;
 import com.smartfirehub.jooq.tables.DatasetGraphIngest.DatasetGraphIngestPath;
 import com.smartfirehub.jooq.tables.DatasetMapping.DatasetMappingPath;
@@ -26,7 +28,10 @@ import com.smartfirehub.jooq.tables.DatasetOntology.DatasetOntologyPath;
 import com.smartfirehub.jooq.tables.DatasetSearchIndex.DatasetSearchIndexPath;
 import com.smartfirehub.jooq.tables.DatasetTag.DatasetTagPath;
 import com.smartfirehub.jooq.tables.DocumentChunk.DocumentChunkPath;
+import com.smartfirehub.jooq.tables.DocumentChunkVec_1024.DocumentChunkVec_1024Path;
+import com.smartfirehub.jooq.tables.DocumentChunkVec_1536.DocumentChunkVec_1536Path;
 import com.smartfirehub.jooq.tables.DocumentFile.DocumentFilePath;
+import com.smartfirehub.jooq.tables.EmbeddingReembedState.EmbeddingReembedStatePath;
 import com.smartfirehub.jooq.tables.FileDatasetConfig.FileDatasetConfigPath;
 import com.smartfirehub.jooq.tables.GraphReviewItem.GraphReviewItemPath;
 import com.smartfirehub.jooq.tables.Membership.MembershipPath;
@@ -260,6 +265,32 @@ public class Tenant extends TableImpl<TenantRecord> {
         return _anomalyEvent;
     }
 
+    private transient DatasetEmbeddingVec_1024Path _datasetEmbeddingVec_1024;
+
+    /**
+     * Get the implicit to-many join path to the
+     * <code>public.dataset_embedding_vec_1024</code> table
+     */
+    public DatasetEmbeddingVec_1024Path datasetEmbeddingVec_1024() {
+        if (_datasetEmbeddingVec_1024 == null)
+            _datasetEmbeddingVec_1024 = new DatasetEmbeddingVec_1024Path(this, null, Keys.DATASET_EMBEDDING_VEC_1024__DATASET_EMBEDDING_VEC_1024_TENANT_ID_FKEY.getInverseKey());
+
+        return _datasetEmbeddingVec_1024;
+    }
+
+    private transient DatasetEmbeddingVec_1536Path _datasetEmbeddingVec_1536;
+
+    /**
+     * Get the implicit to-many join path to the
+     * <code>public.dataset_embedding_vec_1536</code> table
+     */
+    public DatasetEmbeddingVec_1536Path datasetEmbeddingVec_1536() {
+        if (_datasetEmbeddingVec_1536 == null)
+            _datasetEmbeddingVec_1536 = new DatasetEmbeddingVec_1536Path(this, null, Keys.DATASET_EMBEDDING_VEC_1536__DATASET_EMBEDDING_VEC_1536_TENANT_ID_FKEY.getInverseKey());
+
+        return _datasetEmbeddingVec_1536;
+    }
+
     private transient DatasetGraphIngestPath _datasetGraphIngest;
 
     /**
@@ -310,6 +341,45 @@ public class Tenant extends TableImpl<TenantRecord> {
             _datasetSearchIndex = new DatasetSearchIndexPath(this, null, Keys.DATASET_SEARCH_INDEX__DATASET_SEARCH_INDEX_TENANT_ID_FKEY.getInverseKey());
 
         return _datasetSearchIndex;
+    }
+
+    private transient DocumentChunkVec_1024Path _documentChunkVec_1024;
+
+    /**
+     * Get the implicit to-many join path to the
+     * <code>public.document_chunk_vec_1024</code> table
+     */
+    public DocumentChunkVec_1024Path documentChunkVec_1024() {
+        if (_documentChunkVec_1024 == null)
+            _documentChunkVec_1024 = new DocumentChunkVec_1024Path(this, null, Keys.DOCUMENT_CHUNK_VEC_1024__DOCUMENT_CHUNK_VEC_1024_TENANT_ID_FKEY.getInverseKey());
+
+        return _documentChunkVec_1024;
+    }
+
+    private transient DocumentChunkVec_1536Path _documentChunkVec_1536;
+
+    /**
+     * Get the implicit to-many join path to the
+     * <code>public.document_chunk_vec_1536</code> table
+     */
+    public DocumentChunkVec_1536Path documentChunkVec_1536() {
+        if (_documentChunkVec_1536 == null)
+            _documentChunkVec_1536 = new DocumentChunkVec_1536Path(this, null, Keys.DOCUMENT_CHUNK_VEC_1536__DOCUMENT_CHUNK_VEC_1536_TENANT_ID_FKEY.getInverseKey());
+
+        return _documentChunkVec_1536;
+    }
+
+    private transient EmbeddingReembedStatePath _embeddingReembedState;
+
+    /**
+     * Get the implicit to-many join path to the
+     * <code>public.embedding_reembed_state</code> table
+     */
+    public EmbeddingReembedStatePath embeddingReembedState() {
+        if (_embeddingReembedState == null)
+            _embeddingReembedState = new EmbeddingReembedStatePath(this, null, Keys.EMBEDDING_REEMBED_STATE__EMBEDDING_REEMBED_STATE_TENANT_ID_FKEY.getInverseKey());
+
+        return _embeddingReembedState;
     }
 
     private transient ApiConnectionPath _apiConnection;

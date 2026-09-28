@@ -57,24 +57,34 @@ class DocumentSchemaIntegrationTest extends IntegrationTestBase {
 
     // 청크 2건 적재: 'hello'(축1) / 'world'(축2, 프로브와 직교)
     // → 코사인 랭킹이 실제로 동작하는지 검증하기 위해 서로 다른 방향의 임베딩을 사용한다.
-    dsl.execute(
-        "INSERT INTO document_chunk(document_file_id, dataset_id, chunk_index, content,"
-            + " embedding, embedding_model) VALUES (?, ?, 0, 'hello', ?::vector,'bge-m3')",
-        fileId, datasetId, vec1024());
-    dsl.execute(
-        "INSERT INTO document_chunk(document_file_id, dataset_id, chunk_index, content,"
-            + " embedding, embedding_model) VALUES (?, ?, 1, 'world', ?::vector,'bge-m3')",
-        fileId, datasetId, vec1024Axis2());
+    // 본문은 부모 document_chunk 에, 벡터는 차원 테이블 document_chunk_vec_1024 에(#713).
+    insertChunkWithVector(fileId, datasetId, 0, "hello", vec1024());
+    insertChunkWithVector(fileId, datasetId, 1, "world", vec1024Axis2());
 
     // 축1 벡터로 프로브 → 동일 방향인 'hello'가 직교하는 'world'보다 가까워 1순위여야 한다.
     String probe = vec1024();
     String content =
         dsl.fetchOne(
-                "SELECT content FROM document_chunk WHERE dataset_id = ? "
-                    + "ORDER BY embedding <=> ?::vector LIMIT 1",
+                "SELECT c.content FROM document_chunk_vec_1024 v JOIN document_chunk c ON c.id = v.chunk_id"
+                    + " WHERE v.dataset_id = ? ORDER BY v.embedding <=> ?::vector LIMIT 1",
                 datasetId, probe)
             .get(0, String.class);
 
     assertThat(content).isEqualTo("hello");
+  }
+
+  /** 부모 청크 행을 넣고 그 id 로 1024 벡터 행을 넣는다. */
+  private void insertChunkWithVector(
+      Long fileId, Long datasetId, int chunkIndex, String content, String vector) {
+    Long chunkId =
+        dsl.fetchOne(
+                "INSERT INTO document_chunk(document_file_id, dataset_id, chunk_index, content)"
+                    + " VALUES (?, ?, ?, ?) RETURNING id",
+                fileId, datasetId, chunkIndex, content)
+            .get(0, Long.class);
+    dsl.execute(
+        "INSERT INTO document_chunk_vec_1024(chunk_id, dataset_id, embedding, embedding_model)"
+            + " VALUES (?, ?, ?::vector, 'bge-m3')",
+        chunkId, datasetId, vector);
   }
 }

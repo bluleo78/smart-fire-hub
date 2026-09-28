@@ -8,6 +8,8 @@ import com.smartfirehub.jooq.Indexes;
 import com.smartfirehub.jooq.Keys;
 import com.smartfirehub.jooq.Public;
 import com.smartfirehub.jooq.tables.Dataset.DatasetPath;
+import com.smartfirehub.jooq.tables.DocumentChunkVec_1024.DocumentChunkVec_1024Path;
+import com.smartfirehub.jooq.tables.DocumentChunkVec_1536.DocumentChunkVec_1536Path;
 import com.smartfirehub.jooq.tables.DocumentFile.DocumentFilePath;
 import com.smartfirehub.jooq.tables.Tenant.TenantPath;
 import com.smartfirehub.jooq.tables.records.DocumentChunkRecord;
@@ -38,7 +40,6 @@ import org.jooq.TableField;
 import org.jooq.TableOptions;
 import org.jooq.UniqueKey;
 import org.jooq.impl.DSL;
-import org.jooq.impl.DefaultDataType;
 import org.jooq.impl.SQLDataType;
 import org.jooq.impl.TableImpl;
 
@@ -93,22 +94,6 @@ public class DocumentChunk extends TableImpl<DocumentChunkRecord> {
      * The column <code>public.document_chunk.token_count</code>.
      */
     public final TableField<DocumentChunkRecord, Integer> TOKEN_COUNT = createField(DSL.name("token_count"), SQLDataType.INTEGER, this, "");
-
-    /**
-     * @deprecated Unknown data type. If this is a qualified, user-defined type,
-     * it may have been excluded from code generation. If this is a built-in
-     * type, you can define an explicit {@link org.jooq.Binding} to specify how
-     * this type should be handled. Deprecation can be turned off using
-     * {@literal <deprecationOnUnknownTypes/>} in your code generator
-     * configuration.
-     */
-    @Deprecated
-    public final TableField<DocumentChunkRecord, Object> EMBEDDING = createField(DSL.name("embedding"), DefaultDataType.getDefaultDataType("\"public\".\"vector\""), this, "");
-
-    /**
-     * The column <code>public.document_chunk.embedding_model</code>.
-     */
-    public final TableField<DocumentChunkRecord, String> EMBEDDING_MODEL = createField(DSL.name("embedding_model"), SQLDataType.VARCHAR(100), this, "");
 
     /**
      * The column <code>public.document_chunk.metadata</code>.
@@ -194,7 +179,7 @@ public class DocumentChunk extends TableImpl<DocumentChunkRecord> {
 
     @Override
     public List<Index> getIndexes() {
-        return Arrays.asList(Indexes.IDX_DOCUMENT_CHUNK_CONTENT_TRGM, Indexes.IDX_DOCUMENT_CHUNK_DATASET, Indexes.IDX_DOCUMENT_CHUNK_EMBEDDING, Indexes.IDX_DOCUMENT_CHUNK_FILE, Indexes.IDX_DOCUMENT_CHUNK_TENANT);
+        return Arrays.asList(Indexes.IDX_DOCUMENT_CHUNK_CONTENT_TRGM, Indexes.IDX_DOCUMENT_CHUNK_DATASET, Indexes.IDX_DOCUMENT_CHUNK_FILE, Indexes.IDX_DOCUMENT_CHUNK_TENANT);
     }
 
     @Override
@@ -205,6 +190,11 @@ public class DocumentChunk extends TableImpl<DocumentChunkRecord> {
     @Override
     public UniqueKey<DocumentChunkRecord> getPrimaryKey() {
         return Keys.DOCUMENT_CHUNK_PKEY;
+    }
+
+    @Override
+    public List<UniqueKey<DocumentChunkRecord>> getUniqueKeys() {
+        return Arrays.asList(Keys.UQ_DOCUMENT_CHUNK_ID_TENANT);
     }
 
     @Override
@@ -247,6 +237,32 @@ public class DocumentChunk extends TableImpl<DocumentChunkRecord> {
             _tenant = new TenantPath(this, Keys.DOCUMENT_CHUNK__FK_DOCUMENT_CHUNK_TENANT, null);
 
         return _tenant;
+    }
+
+    private transient DocumentChunkVec_1024Path _documentChunkVec_1024;
+
+    /**
+     * Get the implicit to-many join path to the
+     * <code>public.document_chunk_vec_1024</code> table
+     */
+    public DocumentChunkVec_1024Path documentChunkVec_1024() {
+        if (_documentChunkVec_1024 == null)
+            _documentChunkVec_1024 = new DocumentChunkVec_1024Path(this, null, Keys.DOCUMENT_CHUNK_VEC_1024__FK_DOCUMENT_CHUNK_VEC_1024_PARENT.getInverseKey());
+
+        return _documentChunkVec_1024;
+    }
+
+    private transient DocumentChunkVec_1536Path _documentChunkVec_1536;
+
+    /**
+     * Get the implicit to-many join path to the
+     * <code>public.document_chunk_vec_1536</code> table
+     */
+    public DocumentChunkVec_1536Path documentChunkVec_1536() {
+        if (_documentChunkVec_1536 == null)
+            _documentChunkVec_1536 = new DocumentChunkVec_1536Path(this, null, Keys.DOCUMENT_CHUNK_VEC_1536__FK_DOCUMENT_CHUNK_VEC_1536_PARENT.getInverseKey());
+
+        return _documentChunkVec_1536;
     }
 
     @Override

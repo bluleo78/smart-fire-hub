@@ -8,6 +8,8 @@ import com.smartfirehub.jooq.Indexes;
 import com.smartfirehub.jooq.Keys;
 import com.smartfirehub.jooq.Public;
 import com.smartfirehub.jooq.tables.Dataset.DatasetPath;
+import com.smartfirehub.jooq.tables.DatasetEmbeddingVec_1024.DatasetEmbeddingVec_1024Path;
+import com.smartfirehub.jooq.tables.DatasetEmbeddingVec_1536.DatasetEmbeddingVec_1536Path;
 import com.smartfirehub.jooq.tables.Tenant.TenantPath;
 import com.smartfirehub.jooq.tables.records.DatasetEmbeddingRecord;
 
@@ -35,7 +37,6 @@ import org.jooq.TableField;
 import org.jooq.TableOptions;
 import org.jooq.UniqueKey;
 import org.jooq.impl.DSL;
-import org.jooq.impl.DefaultDataType;
 import org.jooq.impl.SQLDataType;
 import org.jooq.impl.TableImpl;
 
@@ -70,22 +71,6 @@ public class DatasetEmbedding extends TableImpl<DatasetEmbeddingRecord> {
      * The column <code>public.dataset_embedding.source_text</code>.
      */
     public final TableField<DatasetEmbeddingRecord, String> SOURCE_TEXT = createField(DSL.name("source_text"), SQLDataType.CLOB.nullable(false), this, "");
-
-    /**
-     * @deprecated Unknown data type. If this is a qualified, user-defined type,
-     * it may have been excluded from code generation. If this is a built-in
-     * type, you can define an explicit {@link org.jooq.Binding} to specify how
-     * this type should be handled. Deprecation can be turned off using
-     * {@literal <deprecationOnUnknownTypes/>} in your code generator
-     * configuration.
-     */
-    @Deprecated
-    public final TableField<DatasetEmbeddingRecord, Object> EMBEDDING = createField(DSL.name("embedding"), DefaultDataType.getDefaultDataType("\"public\".\"vector\""), this, "");
-
-    /**
-     * The column <code>public.dataset_embedding.embedding_model</code>.
-     */
-    public final TableField<DatasetEmbeddingRecord, String> EMBEDDING_MODEL = createField(DSL.name("embedding_model"), SQLDataType.VARCHAR(100), this, "");
 
     /**
      * The column <code>public.dataset_embedding.updated_at</code>.
@@ -166,12 +151,17 @@ public class DatasetEmbedding extends TableImpl<DatasetEmbeddingRecord> {
 
     @Override
     public List<Index> getIndexes() {
-        return Arrays.asList(Indexes.IDX_DATASET_EMBEDDING_SOURCE_TRGM, Indexes.IDX_DATASET_EMBEDDING_TENANT, Indexes.IDX_DATASET_EMBEDDING_VECTOR);
+        return Arrays.asList(Indexes.IDX_DATASET_EMBEDDING_SOURCE_TRGM, Indexes.IDX_DATASET_EMBEDDING_TENANT);
     }
 
     @Override
     public UniqueKey<DatasetEmbeddingRecord> getPrimaryKey() {
         return Keys.DATASET_EMBEDDING_PKEY;
+    }
+
+    @Override
+    public List<UniqueKey<DatasetEmbeddingRecord>> getUniqueKeys() {
+        return Arrays.asList(Keys.UQ_DATASET_EMBEDDING_ID_TENANT);
     }
 
     @Override
@@ -201,6 +191,32 @@ public class DatasetEmbedding extends TableImpl<DatasetEmbeddingRecord> {
             _tenant = new TenantPath(this, Keys.DATASET_EMBEDDING__FK_DATASET_EMBEDDING_TENANT, null);
 
         return _tenant;
+    }
+
+    private transient DatasetEmbeddingVec_1024Path _datasetEmbeddingVec_1024;
+
+    /**
+     * Get the implicit to-many join path to the
+     * <code>public.dataset_embedding_vec_1024</code> table
+     */
+    public DatasetEmbeddingVec_1024Path datasetEmbeddingVec_1024() {
+        if (_datasetEmbeddingVec_1024 == null)
+            _datasetEmbeddingVec_1024 = new DatasetEmbeddingVec_1024Path(this, null, Keys.DATASET_EMBEDDING_VEC_1024__FK_DATASET_EMBEDDING_VEC_1024_PARENT.getInverseKey());
+
+        return _datasetEmbeddingVec_1024;
+    }
+
+    private transient DatasetEmbeddingVec_1536Path _datasetEmbeddingVec_1536;
+
+    /**
+     * Get the implicit to-many join path to the
+     * <code>public.dataset_embedding_vec_1536</code> table
+     */
+    public DatasetEmbeddingVec_1536Path datasetEmbeddingVec_1536() {
+        if (_datasetEmbeddingVec_1536 == null)
+            _datasetEmbeddingVec_1536 = new DatasetEmbeddingVec_1536Path(this, null, Keys.DATASET_EMBEDDING_VEC_1536__FK_DATASET_EMBEDDING_VEC_1536_PARENT.getInverseKey());
+
+        return _datasetEmbeddingVec_1536;
     }
 
     @Override

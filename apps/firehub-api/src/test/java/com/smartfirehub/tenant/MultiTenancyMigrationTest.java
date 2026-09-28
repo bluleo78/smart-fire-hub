@@ -136,9 +136,10 @@ class MultiTenancyMigrationTest extends IntegrationTestBase {
             .get(0, Integer.class);
 
     // V82 가 4건(tenant:create/read/suspend, member:read), V113 이 2건
-    // (settings:read/write)을 추가해 6건이다. 이 숫자를 고정해 두는 이유는 카탈로그에 권한을
+    // (settings:read/write)을 추가해 6건이었고, V131(#713)이 게이팅하던 PlatformSettingsController
+    // 삭제에 맞춰 settings 2건을 지워 4건이다. 이 숫자를 고정해 두는 이유는 카탈로그에 권한을
     // 추가하면서 SUPER_ADMIN 연결을 빼먹는 실수를 잡기 위함이다 — 아래 단언이 그 짝이다.
-    assertThat(platformPermissions).isEqualTo(6);
+    assertThat(platformPermissions).isEqualTo(4);
     assertThat(grantedToSuperAdmin).isEqualTo(platformPermissions);
   }
 
@@ -190,10 +191,11 @@ class MultiTenancyMigrationTest extends IntegrationTestBase {
     // 실제로 행을 볼 수 있다"의 증거이고, 그래서 위 0 은 "안 보인다"가 아니라 "없다"를 뜻한다.
     assertThat(permissionCount("ai:settings")).isEqualTo(1);
 
-    // 플랫폼 평면의 'platform:settings:write' 는 전혀 다른 권한이며 살아 있어야 한다
-    // (V113 이 시드했고 PlatformSettingsController 가 실제로 요구한다). 프리픽스만 다른
-    // 두 코드를 섞어 지우는 사고를 여기서 막는다.
-    assertThat(permissionCount("platform:settings:write")).isEqualTo(1);
+    // 플랫폼 평면 권한은 V116 의 코드 완전 일치 DELETE 에 닿지 않아야 한다 — 프리픽스만 다른
+    // 코드를 섞어 지우는 사고를 여기서 막는다. 예전에는 'platform:settings:write' 로 확인했지만
+    // 그 권한은 V131(#713)이 게이팅하던 PlatformSettingsController 삭제에 맞춰 의도적으로 지웠다
+    // (EmbeddingVectorTablesMigrationTest 가 그 삭제를 단언한다). 살아 있는 플랫폼 권한으로 옮긴다.
+    assertThat(permissionCount("platform:tenant:create")).isEqualTo(1);
   }
 
   /**

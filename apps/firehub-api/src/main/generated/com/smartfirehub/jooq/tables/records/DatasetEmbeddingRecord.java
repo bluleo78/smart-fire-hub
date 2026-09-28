@@ -49,71 +49,31 @@ public class DatasetEmbeddingRecord extends UpdatableRecordImpl<DatasetEmbedding
     }
 
     /**
-     * @deprecated Unknown data type. If this is a qualified, user-defined type,
-     * it may have been excluded from code generation. If this is a built-in
-     * type, you can define an explicit {@link org.jooq.Binding} to specify how
-     * this type should be handled. Deprecation can be turned off using
-     * {@literal <deprecationOnUnknownTypes/>} in your code generator
-     * configuration.
-     */
-    @Deprecated
-    public void setEmbedding(Object value) {
-        set(2, value);
-    }
-
-    /**
-     * @deprecated Unknown data type. If this is a qualified, user-defined type,
-     * it may have been excluded from code generation. If this is a built-in
-     * type, you can define an explicit {@link org.jooq.Binding} to specify how
-     * this type should be handled. Deprecation can be turned off using
-     * {@literal <deprecationOnUnknownTypes/>} in your code generator
-     * configuration.
-     */
-    @Deprecated
-    public Object getEmbedding() {
-        return get(2);
-    }
-
-    /**
-     * Setter for <code>public.dataset_embedding.embedding_model</code>.
-     */
-    public void setEmbeddingModel(String value) {
-        set(3, value);
-    }
-
-    /**
-     * Getter for <code>public.dataset_embedding.embedding_model</code>.
-     */
-    public String getEmbeddingModel() {
-        return (String) get(3);
-    }
-
-    /**
      * Setter for <code>public.dataset_embedding.updated_at</code>.
      */
     public void setUpdatedAt(OffsetDateTime value) {
-        set(4, value);
+        set(2, value);
     }
 
     /**
      * Getter for <code>public.dataset_embedding.updated_at</code>.
      */
     public OffsetDateTime getUpdatedAt() {
-        return (OffsetDateTime) get(4);
+        return (OffsetDateTime) get(2);
     }
 
     /**
      * Setter for <code>public.dataset_embedding.tenant_id</code>.
      */
     public void setTenantId(Long value) {
-        set(5, value);
+        set(3, value);
     }
 
     /**
      * Getter for <code>public.dataset_embedding.tenant_id</code>.
      */
     public Long getTenantId() {
-        return (Long) get(5);
+        return (Long) get(3);
     }
 
     // -------------------------------------------------------------------------
@@ -139,13 +99,11 @@ public class DatasetEmbeddingRecord extends UpdatableRecordImpl<DatasetEmbedding
     /**
      * Create a detached, initialised DatasetEmbeddingRecord
      */
-    public DatasetEmbeddingRecord(Long datasetId, String sourceText, Object embedding, String embeddingModel, OffsetDateTime updatedAt, Long tenantId) {
+    public DatasetEmbeddingRecord(Long datasetId, String sourceText, OffsetDateTime updatedAt, Long tenantId) {
         super(DatasetEmbedding.DATASET_EMBEDDING);
 
         setDatasetId(datasetId);
         setSourceText(sourceText);
-        setEmbedding(embedding);
-        setEmbeddingModel(embeddingModel);
         setUpdatedAt(updatedAt);
         setTenantId(tenantId);
         resetChangedOnNotNull();

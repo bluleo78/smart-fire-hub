@@ -10,8 +10,10 @@ import static org.mockito.Mockito.when;
 
 import com.smartfirehub.document.repository.DocumentChunkRepository;
 import com.smartfirehub.document.repository.DocumentChunkRepository.ChunkContent;
+import com.smartfirehub.embedding.EmbeddingDimension;
 import com.smartfirehub.embedding.EmbeddingProvider;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
+import com.smartfirehub.embedding.EmbeddingSpace;
 import com.smartfirehub.global.tenant.TenantContext;
 import java.util.List;
 import org.jobrunr.jobs.lambdas.JobLambda;
@@ -62,6 +64,7 @@ class DocumentChunkReembedServiceTest {
         .thenReturn(List.of(new ChunkContent(10L, "내용A"), new ChunkContent(11L, "내용B")));
     when(embeddingFactory.current()).thenReturn(provider);
     when(provider.modelId()).thenReturn("bge-m3");
+    when(provider.dimension()).thenReturn(1024);
     when(provider.embed(List.of("내용A", "내용B")))
         .thenReturn(List.of(new float[1024], new float[1024]));
 
@@ -70,7 +73,9 @@ class DocumentChunkReembedServiceTest {
     service.reembedDataset(7L, 1L);
 
     // 청크 id 순서를 유지한 채 현재 모델 식별자로 임베딩 배치 갱신이 호출된다.
-    verify(repository).updateEmbeddingBatch(eq(List.of(10L, 11L)), any(), eq("bge-m3"));
+    verify(repository)
+        .upsertEmbeddings(
+            eq(new EmbeddingSpace(EmbeddingDimension.D1024, "bge-m3")), eq(List.of(10L, 11L)), any());
   }
 
   @Test
@@ -82,6 +87,6 @@ class DocumentChunkReembedServiceTest {
     service.reembedDataset(7L, 1L);
 
     // 빈 데이터셋은 provider 호출/배치 갱신 없이 조기 반환한다.
-    verify(repository, never()).updateEmbeddingBatch(any(), any(), any());
+    verify(repository, never()).upsertEmbeddings(any(), any(), any());
   }
 }

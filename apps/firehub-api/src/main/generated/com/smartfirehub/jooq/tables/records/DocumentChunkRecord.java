@@ -106,85 +106,45 @@ public class DocumentChunkRecord extends UpdatableRecordImpl<DocumentChunkRecord
     }
 
     /**
-     * @deprecated Unknown data type. If this is a qualified, user-defined type,
-     * it may have been excluded from code generation. If this is a built-in
-     * type, you can define an explicit {@link org.jooq.Binding} to specify how
-     * this type should be handled. Deprecation can be turned off using
-     * {@literal <deprecationOnUnknownTypes/>} in your code generator
-     * configuration.
-     */
-    @Deprecated
-    public void setEmbedding(Object value) {
-        set(6, value);
-    }
-
-    /**
-     * @deprecated Unknown data type. If this is a qualified, user-defined type,
-     * it may have been excluded from code generation. If this is a built-in
-     * type, you can define an explicit {@link org.jooq.Binding} to specify how
-     * this type should be handled. Deprecation can be turned off using
-     * {@literal <deprecationOnUnknownTypes/>} in your code generator
-     * configuration.
-     */
-    @Deprecated
-    public Object getEmbedding() {
-        return get(6);
-    }
-
-    /**
-     * Setter for <code>public.document_chunk.embedding_model</code>.
-     */
-    public void setEmbeddingModel(String value) {
-        set(7, value);
-    }
-
-    /**
-     * Getter for <code>public.document_chunk.embedding_model</code>.
-     */
-    public String getEmbeddingModel() {
-        return (String) get(7);
-    }
-
-    /**
      * Setter for <code>public.document_chunk.metadata</code>.
      */
     public void setMetadata(JSONB value) {
-        set(8, value);
+        set(6, value);
     }
 
     /**
      * Getter for <code>public.document_chunk.metadata</code>.
      */
     public JSONB getMetadata() {
-        return (JSONB) get(8);
+        return (JSONB) get(6);
     }
 
     /**
      * Setter for <code>public.document_chunk.created_at</code>.
      */
     public void setCreatedAt(OffsetDateTime value) {
-        set(9, value);
+        set(7, value);
     }
 
     /**
      * Getter for <code>public.document_chunk.created_at</code>.
      */
     public OffsetDateTime getCreatedAt() {
-        return (OffsetDateTime) get(9);
+        return (OffsetDateTime) get(7);
     }
 
     /**
      * Setter for <code>public.document_chunk.tenant_id</code>.
      */
     public void setTenantId(Long value) {
-        set(10, value);
+        set(8, value);
     }
 
     /**
      * Getter for <code>public.document_chunk.tenant_id</code>.
      */
     public Long getTenantId() {
-        return (Long) get(10);
+        return (Long) get(8);
     }
 
     // -------------------------------------------------------------------------
@@ -210,7 +170,7 @@ public class DocumentChunkRecord extends UpdatableRecordImpl<DocumentChunkRecord
     /**
      * Create a detached, initialised DocumentChunkRecord
      */
-    public DocumentChunkRecord(Long id, Long documentFileId, Long datasetId, Integer chunkIndex, String content, Integer tokenCount, Object embedding, String embeddingModel, JSONB metadata, OffsetDateTime createdAt, Long tenantId) {
+    public DocumentChunkRecord(Long id, Long documentFileId, Long datasetId, Integer chunkIndex, String content, Integer tokenCount, JSONB metadata, OffsetDateTime createdAt, Long tenantId) {
         super(DocumentChunk.DOCUMENT_CHUNK);
 
         setId(id);
@@ -219,8 +179,6 @@ public class DocumentChunkRecord extends UpdatableRecordImpl<DocumentChunkRecord
         setChunkIndex(chunkIndex);
         setContent(content);
         setTokenCount(tokenCount);
-        setEmbedding(embedding);
-        setEmbeddingModel(embeddingModel);
         setMetadata(metadata);
         setCreatedAt(createdAt);
         setTenantId(tenantId);

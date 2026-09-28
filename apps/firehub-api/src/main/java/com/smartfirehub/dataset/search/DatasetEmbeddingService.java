@@ -3,6 +3,7 @@ package com.smartfirehub.dataset.search;
 import com.smartfirehub.embedding.EmbeddingNotConfiguredException;
 import com.smartfirehub.embedding.EmbeddingProvider;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
+import com.smartfirehub.embedding.EmbeddingSpace;
 import com.smartfirehub.global.tenant.TenantContext;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
@@ -68,7 +69,7 @@ public class DatasetEmbeddingService {
             return;
           }
           float[] embedding = provider.embed(List.of(sourceText)).get(0);
-          embeddingRepo.updateEmbedding(datasetId, embedding, provider.modelId());
+          embeddingRepo.upsertEmbedding(EmbeddingSpace.of(provider), datasetId, embedding);
         });
   }
 }

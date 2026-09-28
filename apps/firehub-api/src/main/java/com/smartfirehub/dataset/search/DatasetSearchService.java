@@ -2,6 +2,7 @@ package com.smartfirehub.dataset.search;
 
 import com.smartfirehub.embedding.EmbeddingProvider;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
+import com.smartfirehub.embedding.EmbeddingSpace;
 import com.smartfirehub.global.util.RankFusion;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
@@ -39,15 +40,19 @@ public class DatasetSearchService {
     String storageType = req.storageType();
     return switch (mode) {
       case KEYWORD -> repository.searchByTrigram(req.query(), storageType, topK);
-      case SEMANTIC -> repository.searchByCosine(embed(req.query()), storageType, topK);
+      case SEMANTIC -> {
+        QueryVector q = embed(req.query());
+        yield repository.searchByCosine(q.space(), q.vector(), storageType, topK);
+      }
       case HYBRID -> hybrid(req.query(), storageType, topK);
     };
   }
 
   /** 시맨틱·키워드 후보 풀(CANDIDATE_POOL)을 RRF 로 융합해 상위 topK 를 반환한다. */
   private List<DatasetSearchHit> hybrid(String query, String storageType, int topK) {
+    QueryVector q = embed(query);
     List<DatasetSearchHit> semantic =
-        repository.searchByCosine(embed(query), storageType, CANDIDATE_POOL);
+        repository.searchByCosine(q.space(), q.vector(), storageType, CANDIDATE_POOL);
     List<DatasetSearchHit> keyword =
         repository.searchByTrigram(query, storageType, CANDIDATE_POOL);
     return rrfFuse(List.of(semantic, keyword), topK);
@@ -70,10 +75,13 @@ public class DatasetSearchService {
         .toList();
   }
 
+  /** 질의 임베딩 + 그 공간(검색할 차원 테이블·모델 필터). */
+  private record QueryVector(EmbeddingSpace space, float[] vector) {}
+
   /** 쿼리 1건 임베딩 — 인제스션과 동일 provider 라야 비교가 유효하다. */
-  private float[] embed(String query) {
+  private QueryVector embed(String query) {
     EmbeddingProvider provider = embeddingFactory.current();
-    return provider.embed(List.of(query)).get(0);
+    return new QueryVector(EmbeddingSpace.of(provider), provider.embed(List.of(query)).get(0));
   }
 
   /** topK 정규화: null → 기본 10, 1 미만 → 1, 20 초과 → 20. */

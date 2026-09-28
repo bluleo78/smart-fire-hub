@@ -34,7 +34,7 @@ class DocumentSearchServiceTest {
     var repo = Mockito.mock(DocumentChunkRepository.class);
     when(factory.current()).thenReturn(fakeProvider(1024));
     var hit = new DocumentSearchHit(1L, 2L, 3L, "f.txt", 0, "내용", 0.9);
-    when(repo.searchByCosine(Mockito.any(), Mockito.eq(List.of(3L)), Mockito.eq(5)))
+    when(repo.searchByCosine(Mockito.any(), Mockito.any(), Mockito.eq(List.of(3L)), Mockito.eq(5)))
         .thenReturn(List.of(hit));
 
     var service = new DocumentSearchService(factory, repo);
@@ -83,7 +83,7 @@ class DocumentSearchServiceTest {
     var a = new DocumentSearchHit(10L, 1L, 3L, "f", 0, "A", 0.9);
     var b = new DocumentSearchHit(11L, 1L, 3L, "f", 1, "B", 0.8);
     var c = new DocumentSearchHit(12L, 1L, 3L, "f", 2, "C", 0.7);
-    when(repo.searchByCosine(Mockito.any(), Mockito.eq(List.of(3L)), Mockito.eq(50)))
+    when(repo.searchByCosine(Mockito.any(), Mockito.any(), Mockito.eq(List.of(3L)), Mockito.eq(50)))
         .thenReturn(List.of(a, b));
     when(repo.searchByTrigram(Mockito.eq("질의"), Mockito.eq(List.of(3L)), Mockito.eq(50)))
         .thenReturn(List.of(b, c));
@@ -104,14 +104,14 @@ class DocumentSearchServiceTest {
     var factory = Mockito.mock(EmbeddingProviderFactory.class);
     var repo = Mockito.mock(DocumentChunkRepository.class);
     when(factory.current()).thenReturn(fakeProvider(1024));
-    when(repo.searchByCosine(Mockito.any(), Mockito.any(), Mockito.anyInt())).thenReturn(List.of());
+    when(repo.searchByCosine(Mockito.any(), Mockito.any(), Mockito.any(), Mockito.anyInt())).thenReturn(List.of());
     when(repo.searchByTrigram(Mockito.any(), Mockito.any(), Mockito.anyInt())).thenReturn(List.of());
 
     var service = new DocumentSearchService(factory, repo);
     // 3-인자 생성자 → mode 미지정 → HYBRID → 양쪽 repo 호출돼야 함.
     service.search(new DocumentSearchRequest("질의", List.of(3L), 5));
 
-    verify(repo).searchByCosine(Mockito.any(), Mockito.any(), Mockito.anyInt());
+    verify(repo).searchByCosine(Mockito.any(), Mockito.any(), Mockito.any(), Mockito.anyInt());
     verify(repo).searchByTrigram(Mockito.any(), Mockito.any(), Mockito.anyInt());
   }
 

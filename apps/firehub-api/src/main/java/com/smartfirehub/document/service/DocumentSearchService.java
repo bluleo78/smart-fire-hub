@@ -6,6 +6,7 @@ import com.smartfirehub.document.dto.SearchMode;
 import com.smartfirehub.document.repository.DocumentChunkRepository;
 import com.smartfirehub.embedding.EmbeddingProvider;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
+import com.smartfirehub.embedding.EmbeddingSpace;
 import com.smartfirehub.global.util.RankFusion;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
@@ -35,22 +36,28 @@ public class DocumentSearchService {
     return switch (request.mode()) {
       case KEYWORD -> chunkRepository.searchByTrigram(
           request.query(), request.datasetIds(), request.topK());
-      case SEMANTIC -> chunkRepository.searchByCosine(
-          embedQuery(request.query()), request.datasetIds(), request.topK());
+      case SEMANTIC -> {
+        QueryVector q = embedQuery(request.query());
+        yield chunkRepository.searchByCosine(q.space(), q.vector(), request.datasetIds(), request.topK());
+      }
       case HYBRID -> hybridSearch(request);
     };
   }
 
+  /** 질의 임베딩 + 그 공간. 공간이 검색할 차원 테이블·모델 필터를 정한다(인제스션과 같은 provider). */
+  private record QueryVector(EmbeddingSpace space, float[] vector) {}
+
   /** 쿼리 1건 임베딩 — 인제스션과 동일 provider 라야 비교가 유효하다. */
-  private float[] embedQuery(String query) {
+  private QueryVector embedQuery(String query) {
     EmbeddingProvider provider = embeddingProviderFactory.current();
-    return provider.embed(List.of(query)).get(0);
+    return new QueryVector(EmbeddingSpace.of(provider), provider.embed(List.of(query)).get(0));
   }
 
   /** 시맨틱·키워드 후보 풀을 RRF 로 융합해 상위 topK 를 반환한다. */
   private List<DocumentSearchHit> hybridSearch(DocumentSearchRequest request) {
-    List<DocumentSearchHit> semantic = chunkRepository.searchByCosine(
-        embedQuery(request.query()), request.datasetIds(), CANDIDATE_POOL);
+    QueryVector q = embedQuery(request.query());
+    List<DocumentSearchHit> semantic =
+        chunkRepository.searchByCosine(q.space(), q.vector(), request.datasetIds(), CANDIDATE_POOL);
     List<DocumentSearchHit> keyword = chunkRepository.searchByTrigram(
         request.query(), request.datasetIds(), CANDIDATE_POOL);
     return rrfFuse(List.of(semantic, keyword), request.topK());

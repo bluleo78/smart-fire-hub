@@ -5,8 +5,10 @@ import static org.mockito.Mockito.when;
 
 import com.smartfirehub.dataset.search.DatasetEmbeddingRepository;
 import com.smartfirehub.document.repository.DocumentChunkRepository;
+import com.smartfirehub.embedding.EmbeddingDimension;
 import com.smartfirehub.embedding.EmbeddingProvider;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
+import com.smartfirehub.embedding.EmbeddingSpace;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -15,6 +17,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
 /** 순수 단위 테스트: 두 레포지토리/팩토리/프로바이더를 mock 하여 집계 로직만 검증. */
 @ExtendWith(MockitoExtension.class)
 class EmbeddingStatusServiceTest {
+
+  /** 현재 provider(bge-m3, 1024)의 임베딩 공간 — 카운트 stub 의 키. */
+  private static final EmbeddingSpace SPACE = new EmbeddingSpace(EmbeddingDimension.D1024, "bge-m3");
 
   @Mock private DatasetEmbeddingRepository datasetEmbeddingRepository;
   @Mock private DocumentChunkRepository documentChunkRepository;
@@ -27,11 +32,12 @@ class EmbeddingStatusServiceTest {
     // 현재 활성 모델은 bge-m3
     when(embeddingFactory.current()).thenReturn(provider);
     when(provider.modelId()).thenReturn("bge-m3");
-    // 두 레포지토리 모두 countEmbeddedByModel 를 갖고 있으므로 올바른 mock 인스턴스에 stub
-    when(datasetEmbeddingRepository.countAllDatasets()).thenReturn(28L);
-    when(datasetEmbeddingRepository.countEmbeddedByModel("bge-m3")).thenReturn(28L);
+    when(provider.dimension()).thenReturn(1024);
+    // 두 레포지토리 모두 countEmbedded(space) 를 갖고 있으므로 올바른 mock 인스턴스에 stub
+    when(datasetEmbeddingRepository.countAll()).thenReturn(28L);
+    when(datasetEmbeddingRepository.countEmbedded(SPACE)).thenReturn(28L);
     when(documentChunkRepository.countAllChunks()).thenReturn(500L);
-    when(documentChunkRepository.countEmbeddedByModel("bge-m3")).thenReturn(340L);
+    when(documentChunkRepository.countEmbedded(SPACE)).thenReturn(340L);
 
     EmbeddingStatusService service =
         new EmbeddingStatusService(

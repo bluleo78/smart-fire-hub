@@ -7,8 +7,10 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.smartfirehub.embedding.EmbeddingNotConfiguredException;
+import com.smartfirehub.embedding.EmbeddingDimension;
 import com.smartfirehub.embedding.EmbeddingProvider;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
+import com.smartfirehub.embedding.EmbeddingSpace;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -52,10 +54,13 @@ class DatasetEmbeddingServiceTest {
                 "화재", "설명", "fire", List.of("col"), List.of("tag"), "안전"));
     when(embeddingFactory.current()).thenReturn(provider);
     when(provider.modelId()).thenReturn("bge-m3");
+    when(provider.dimension()).thenReturn(1024);
     when(provider.embed(any())).thenReturn(List.of(new float[1024]));
     new DatasetEmbeddingService(embeddingRepo, metaReader, embeddingFactory)
         .reindexEmbedding(7L, 1L);
-    verify(embeddingRepo).updateEmbedding(eq(7L), any(float[].class), eq("bge-m3"));
+    verify(embeddingRepo)
+        .upsertEmbedding(
+            eq(new EmbeddingSpace(EmbeddingDimension.D1024, "bge-m3")), eq(7L), any(float[].class));
   }
 
   @Test

@@ -51,14 +51,7 @@ class PermissionCatalogUsageTest extends IntegrationTestBase {
    * 왜 남기는지와 언제 없앨 수 있는지를 함께 적어라. 근거 없이 추가하면 이 테스트는 다시
    * 사람의 주의에 의존하는 장식이 된다.
    */
-  private static final Set<String> ALLOWED_UNREFERENCED =
-      Set.of(
-          // #713 이 PlatformSettingsController(임베딩 설정 전용 엔드포인트)를 지우면서 두 권한의
-          // 유일한 게이팅 지점이 사라졌다. 이 권한들은 임베딩 태스크 범위 밖이라 여기서 카탈로그
-          // 정리(신규 마이그레이션)까지 하지 않는다 — 다음에 이 권한을 실제로 지울 때(또는 다른
-          // 라우트에 다시 배선할 때) 이 항목도 함께 지워라.
-          "platform:settings:read",
-          "platform:settings:write");
+  private static final Set<String> ALLOWED_UNREFERENCED = Set.of();
 
   @Test
   @DisplayName("카탈로그의 모든 권한은 소스에서 참조된다 — 고아 권한이 쌓이지 않는다")

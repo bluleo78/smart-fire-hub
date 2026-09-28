@@ -84,7 +84,7 @@ class PlatformTokenPlaneTest extends IntegrationTestBase {
 
     assertThat(platformRoleRepository.hasAnyPlatformRole(userId)).isTrue();
     assertThat(platformRoleRepository.findPlatformPermissionCodes(userId))
-        .contains("platform:tenant:create", "platform:settings:write");
+        .contains("platform:tenant:create", "platform:tenant:read");
   }
 
   /** 플랫폼 롤이 없는 사용자는 빈 집합을 받는다(예외가 아니라 빈 집합 — 호출처가 403 으로 처리한다). */
@@ -131,7 +131,7 @@ class PlatformTokenPlaneTest extends IntegrationTestBase {
     assertThat(captured.get().getPrincipal()).isEqualTo(userId);
     assertThat(captured.get().getAuthorities())
         .extracting(GrantedAuthority::getAuthority)
-        .contains("platform:tenant:create", "platform:settings:write");
+        .contains("platform:tenant:create", "platform:tenant:read");
   }
 
   /**

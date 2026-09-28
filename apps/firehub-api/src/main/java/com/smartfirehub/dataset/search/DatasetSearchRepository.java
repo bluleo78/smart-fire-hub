@@ -1,5 +1,7 @@
 package com.smartfirehub.dataset.search;
 
+import com.smartfirehub.embedding.EmbeddingSpace;
+import com.smartfirehub.embedding.HnswSearch;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
@@ -13,9 +15,8 @@ import org.springframework.stereotype.Repository;
  * embedding 은 '[..]'::vector 텍스트 리터럴 캐스팅으로 바인딩하고, 트라이그램은 {@code source_text %> ?}
  * 교환 연산자로 GIN 인덱스를 태우며 같은 트랜잭션에서 SET LOCAL 로 임계값을 0.1 로 낮춘다.
  *
- * <p>A8 설계상 source_text 는 동기 저장되지만 embedding 은 비동기로 채워지므로 embedding 이 NULL 인 행이
- * 정상적으로 존재한다. 따라서 코사인 검색은 {@code de.embedding IS NOT NULL} 로 NULL 행을 제외하고,
- * 트라이그램은 source_text 만 보므로 NULL embedding 행도 검색되어 가시성을 보장한다.
+ * <p>코사인 검색은 현재 공간의 차원 테이블만 보고(모델 필터), 트라이그램은 부모 source_text 그대로라 벡터가 없는
+ * 행도 키워드로 보인다(#713).
  */
 @Repository
 @RequiredArgsConstructor
@@ -24,32 +25,45 @@ public class DatasetSearchRepository {
   private final DSLContext dsl;
 
   /**
-   * 쿼리 벡터와의 코사인 거리 기준 top-K 데이터셋 조회. HNSW 인덱스(vector_cosine_ops)를 사용한다.
-   * score = 1 - (embedding <=> query) (코사인 유사도, 1에 가까울수록 유사).
-   * embedding 이 NULL 인 행(임베딩 미생성)은 제외한다. storageType 이 null 이면 저장유형 필터를 적용하지 않는다.
+   * 코사인 top-K 데이터셋. 현재 공간의 차원 테이블 한 개 + 현재 모델 벡터만(#392). storageType 이 null 이면 필터 없음.
+   * iterative scan + 바깥 재정렬({@link HnswSearch}).
    */
   public List<DatasetSearchHit> searchByCosine(
-      float[] queryEmbedding, String storageType, int topK) {
-    String vectorLiteral = VectorLiterals.toVectorLiteral(queryEmbedding);
+      EmbeddingSpace space, float[] queryEmbedding, String storageType, int topK) {
+    List<Object> params = new java.util.ArrayList<>();
+    String sql = semanticSql(space, storageType, VectorLiterals.toVectorLiteral(queryEmbedding), topK, params);
+    return dsl.transactionResult(
+        cfg -> {
+          DSLContext tx = DSL.using(cfg);
+          HnswSearch.relaxIterativeScan(tx);
+          List<DatasetSearchHit> hits =
+              new java.util.ArrayList<>(tx.fetch(sql, params.toArray()).map(DatasetSearchRepository::toHit));
+          hits.sort((a, b) -> Double.compare(b.score(), a.score()));
+          return hits;
+        });
+  }
+
+  /** 의미 검색 SQL. package-private — EXPLAIN 단언 테스트가 쓴다. */
+  String semanticSql(
+      EmbeddingSpace space, String storageType, String vector, int topK, List<Object> params) {
     StringBuilder sql =
         new StringBuilder(
-            "SELECT d.id, d.name, d.description, d.storage_type, d.origin_type, d.table_name,"
-                + " c.name AS category_name, 1 - (de.embedding <=> ?::vector) AS score"
-                + " FROM dataset_embedding de"
-                + " JOIN dataset d ON d.id = de.dataset_id"
-                + " LEFT JOIN dataset_category c ON c.id = d.category_id"
-                + " WHERE de.embedding IS NOT NULL");
-    List<Object> params = new java.util.ArrayList<>();
-    params.add(vectorLiteral); // SELECT score 의 코사인 거리 인자
+                "SELECT d.id, d.name, d.description, d.storage_type, d.origin_type, d.table_name,"
+                    + " c.name AS category_name, 1 - (v.embedding <=> ?::vector) AS score FROM ")
+            .append(space.dimension().datasetTable())
+            .append(" v JOIN dataset d ON d.id = v.dataset_id")
+            .append(" LEFT JOIN dataset_category c ON c.id = d.category_id")
+            .append(" WHERE v.embedding_model = ?");
+    params.add(vector);
+    params.add(space.model());
     if (storageType != null) {
       sql.append(" AND d.storage_type = ?");
       params.add(storageType);
     }
-    sql.append(" ORDER BY de.embedding <=> ?::vector LIMIT ?");
-    params.add(vectorLiteral); // ORDER BY 거리 정렬 인자
+    sql.append(" ORDER BY v.embedding <=> ?::vector LIMIT ?");
+    params.add(vector);
     params.add(topK);
-
-    return dsl.fetch(sql.toString(), params.toArray()).map(DatasetSearchRepository::toHit);
+    return sql.toString();
   }
 
   /**
@@ -60,7 +74,7 @@ public class DatasetSearchRepository {
    * (idx_dataset_embedding_source_trgm)를 타게 한다(컬럼이 좌변이어야 인덱스 사용).
    * {@code %>} 는 pg_trgm.word_similarity_threshold GUC(기본 0.6)를 임계값으로 쓰므로,
    * DocumentChunkRepository 와 동일하게 같은 트랜잭션에서 SET LOCAL 로 0.1 로 낮춘다(LOCAL 은 tx 종료 시 자동 복원).
-   * source_text 만 보므로 embedding 이 NULL 인 행도 검색되어 가시성이 보장된다.
+   * source_text 만 보므로 벡터가 없는 행도 검색되어 가시성이 보장된다.
    * storageType 이 null 이면 저장유형 필터를 적용하지 않는다.
    */
   public List<DatasetSearchHit> searchByTrigram(String query, String storageType, int topK) {

@@ -2,6 +2,8 @@ package com.smartfirehub.dataset.search;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.smartfirehub.embedding.EmbeddingDimension;
+import com.smartfirehub.embedding.EmbeddingSpace;
 import com.smartfirehub.support.IntegrationTestBase;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
@@ -46,18 +48,18 @@ class DatasetSearchRepositoryTest extends IntegrationTestBase {
         name, tableName, storageType, originType, userId).get(0, Long.class);
   }
 
-  /** source_text + embedding(있으면)을 dataset_embedding 에 시드. embedLiteral 이 null 이면 embedding 컬럼을 생략. */
+  /**
+   * source_text 를 dataset_embedding 에, 벡터(있으면)를 dataset_embedding_vec_1024 에 시드(#713 — 벡터는 차원
+   * 테이블에 따로 있다). embedLiteral 이 null 이면 벡터 행을 만들지 않는다(비동기 임베딩 대기 상태).
+   */
   private void seedEmbedding(Long datasetId, String sourceText, String embedLiteral) {
-    if (embedLiteral == null) {
-      // embedding 미생성(비동기 대기) 행: NULL 을 ?::vector 로 캐스팅하지 않고 컬럼 자체를 생략한다.
+    dsl.execute(
+        "INSERT INTO dataset_embedding(dataset_id, source_text) VALUES (?,?)", datasetId, sourceText);
+    if (embedLiteral != null) {
       dsl.execute(
-          "INSERT INTO dataset_embedding(dataset_id, source_text, embedding_model) VALUES (?,?,?)",
-          datasetId, sourceText, "bge-m3");
-    } else {
-      dsl.execute(
-          "INSERT INTO dataset_embedding(dataset_id, source_text, embedding, embedding_model)"
-              + " VALUES (?,?,?::vector,?)",
-          datasetId, sourceText, embedLiteral, "bge-m3");
+          "INSERT INTO dataset_embedding_vec_1024(dataset_id, embedding, embedding_model)"
+              + " VALUES (?, ?::vector, 'bge-m3')",
+          datasetId, embedLiteral);
     }
   }
 
@@ -108,7 +110,7 @@ class DatasetSearchRepositoryTest extends IntegrationTestBase {
     seedEmbedding(far, "원거리 본문", literal(0, 1)); // 직교
     seedEmbedding(pending, "임베딩 미생성 본문", null); // embedding NULL — 코사인 결과에서 제외되어야 함
 
-    var hits = searchRepository.searchByCosine(vec(1f, 0f), null, 10);
+    var hits = searchRepository.searchByCosine(new EmbeddingSpace(EmbeddingDimension.D1024, "bge-m3"), vec(1f, 0f), null, 10);
 
     assertThat(hits).isNotEmpty();
     // (a) near 가 first, score 내림차순.
@@ -134,7 +136,7 @@ class DatasetSearchRepositoryTest extends IntegrationTestBase {
     seedEmbedding(doc, "문서 본문", literal(1, 0));
     seedEmbedding(table, "테이블 본문", literal(1, 0));
 
-    var hits = searchRepository.searchByCosine(vec(1f, 0f), "DOCUMENT", 10);
+    var hits = searchRepository.searchByCosine(new EmbeddingSpace(EmbeddingDimension.D1024, "bge-m3"), vec(1f, 0f), "DOCUMENT", 10);
 
     assertThat(hits).isNotEmpty();
     assertThat(hits).allMatch(h -> h.storageType().equals("DOCUMENT"));

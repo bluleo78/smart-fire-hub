@@ -3,6 +3,8 @@ package com.smartfirehub.document.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.smartfirehub.document.dto.Chunk;
+import com.smartfirehub.embedding.EmbeddingDimension;
+import com.smartfirehub.embedding.EmbeddingSpace;
 import com.smartfirehub.support.IntegrationTestBase;
 import java.util.List;
 import org.jooq.DSLContext;
@@ -13,6 +15,9 @@ import org.springframework.transaction.annotation.Transactional;
 /** 벡터 배치 insert + 코사인 검색이 동작하는지 검증. */
 @Transactional
 class DocumentChunkRepositoryTest extends IntegrationTestBase {
+
+  /** 모든 적재·검색이 쓰는 임베딩 공간(1024 차원 테이블 + bge-m3 모델). */
+  private static final EmbeddingSpace SPACE = new EmbeddingSpace(EmbeddingDimension.D1024, "bge-m3");
 
   @Autowired private DocumentChunkRepository chunkRepository;
   @Autowired private DSLContext dsl;
@@ -46,11 +51,10 @@ class DocumentChunkRepositoryTest extends IntegrationTestBase {
     chunkRepository.insertBatch(
         fileId, datasetId,
         List.of(new Chunk(0, "near", 1), new Chunk(1, "far", 1)),
-        List.of(vec(1f, 0f), vec(0f, 1f)),
-        "bge-m3");
+        List.of(vec(1f, 0f), vec(0f, 1f)), SPACE);
 
     String nearest = dsl.fetchOne(
-        "SELECT content FROM document_chunk WHERE dataset_id = ? ORDER BY embedding <=> ?::vector LIMIT 1",
+        "SELECT c.content FROM document_chunk_vec_1024 v JOIN document_chunk c ON c.id = v.chunk_id WHERE v.dataset_id = ? ORDER BY v.embedding <=> ?::vector LIMIT 1",
         datasetId, probe()).get(0, String.class);
     assertThat(nearest).isEqualTo("near");
 
@@ -78,7 +82,7 @@ class DocumentChunkRepositoryTest extends IntegrationTestBase {
       chunks.add(new Chunk(i, "c" + i, 1));
       embeddings.add(vec(1f, 0f));
     }
-    chunkRepository.insertBatch(fileId, datasetId, chunks, embeddings, "bge-m3");
+    chunkRepository.insertBatch(fileId, datasetId, chunks, embeddings, SPACE);
 
     int count = dsl.fetchCount(dsl.selectFrom("document_chunk").where("dataset_id = ?", datasetId));
     assertThat(count).isEqualTo(n);
@@ -100,10 +104,9 @@ class DocumentChunkRepositoryTest extends IntegrationTestBase {
     chunkRepository.insertBatch(
         fileId, datasetId,
         List.of(new Chunk(0, "near", 1), new Chunk(1, "far", 1)),
-        List.of(vec(1f, 0f), vec(0f, 1f)),
-        "bge-m3");
+        List.of(vec(1f, 0f), vec(0f, 1f)), SPACE);
 
-    var hits = chunkRepository.searchByCosine(vec(1f, 0f), List.of(datasetId), 5);
+    var hits = chunkRepository.searchByCosine(SPACE, vec(1f, 0f), List.of(datasetId), 5);
 
     assertThat(hits).isNotEmpty();
     assertThat(hits.get(0).content()).isEqualTo("near");
@@ -124,9 +127,9 @@ class DocumentChunkRepositoryTest extends IntegrationTestBase {
             + " storage_path, status, uploaded_by) VALUES (?, 'p.txt','text/plain',3,'/tmp/p','PARSING', ?)"
             + " RETURNING id", datasetId, userId).get(0, Long.class);
     chunkRepository.insertBatch(fileId, datasetId,
-        List.of(new Chunk(0, "hidden", 1)), List.of(vec(1f, 0f)), "bge-m3");
+        List.of(new Chunk(0, "hidden", 1)), List.of(vec(1f, 0f)), SPACE);
 
-    var hits = chunkRepository.searchByCosine(vec(1f, 0f), List.of(datasetId), 5);
+    var hits = chunkRepository.searchByCosine(SPACE, vec(1f, 0f), List.of(datasetId), 5);
     assertThat(hits).isEmpty();
   }
 
@@ -148,8 +151,7 @@ class DocumentChunkRepositoryTest extends IntegrationTestBase {
         fileId, datasetId,
         List.of(new Chunk(0, "재난번호 UR4206974320 강릉 산불 피해", 1),
                 new Chunk(1, "전혀 무관한 일반 텍스트입니다", 1)),
-        List.of(vec(1f, 0f), vec(0f, 1f)),
-        "bge-m3");
+        List.of(vec(1f, 0f), vec(0f, 1f)), SPACE);
 
     var hits = chunkRepository.searchByTrigram("UR4206974320", List.of(datasetId), 5);
 
@@ -177,8 +179,7 @@ class DocumentChunkRepositoryTest extends IntegrationTestBase {
     chunkRepository.insertBatch(
         fileId, datasetId,
         List.of(new Chunk(0, "annual wildfire damage summary 2026", 1)),
-        List.of(vec(1f, 0f)),
-        "bge-m3");
+        List.of(vec(1f, 0f)), SPACE);
 
     var hits = chunkRepository.searchByTrigram("fire statistics report", List.of(datasetId), 5);
 
@@ -199,7 +200,7 @@ class DocumentChunkRepositoryTest extends IntegrationTestBase {
             + " storage_path, status, uploaded_by) VALUES (?, 'pp.txt','text/plain',3,'/tmp/pp','PARSING', ?)"
             + " RETURNING id", datasetId, userId).get(0, Long.class);
     chunkRepository.insertBatch(fileId, datasetId,
-        List.of(new Chunk(0, "UR4206974320 숨김", 1)), List.of(vec(1f, 0f)), "bge-m3");
+        List.of(new Chunk(0, "UR4206974320 숨김", 1)), List.of(vec(1f, 0f)), SPACE);
 
     var hits = chunkRepository.searchByTrigram("UR4206974320", List.of(datasetId), 5);
     assertThat(hits).isEmpty();

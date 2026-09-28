@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.smartfirehub.document.dto.Chunk;
 import com.smartfirehub.document.repository.DocumentChunkRepository.ChunkContent;
+import com.smartfirehub.embedding.EmbeddingDimension;
+import com.smartfirehub.embedding.EmbeddingSpace;
 import com.smartfirehub.support.IntegrationTestBase;
 import java.util.List;
 import org.jooq.DSLContext;
@@ -45,7 +47,7 @@ class DocumentChunkReembedRepositoryTest extends IntegrationTestBase {
         fileId, datasetId,
         List.of(new Chunk(0, "near", 1), new Chunk(1, "far", 1)),
         List.of(vec(1f, 0f), vec(0f, 1f)),
-        "bge-m3");
+        new EmbeddingSpace(EmbeddingDimension.D1024, "bge-m3"));
     return datasetId;
   }
 
@@ -77,9 +79,10 @@ class DocumentChunkReembedRepositoryTest extends IntegrationTestBase {
     List<Long> chunkIds = rows.stream().map(ChunkContent::chunkId).toList();
     List<float[]> embeddings = List.of(vec(0.5f, 0.5f), vec(0.25f, 0.75f));
 
-    chunkRepository.updateEmbeddingBatch(chunkIds, embeddings, "test-model");
+    chunkRepository.upsertEmbeddings(
+        new EmbeddingSpace(EmbeddingDimension.D1024, "test-model"), chunkIds, embeddings);
 
-    long embedded = chunkRepository.countEmbeddedByModel("test-model");
+    long embedded = chunkRepository.countEmbedded(new EmbeddingSpace(EmbeddingDimension.D1024, "test-model"));
     assertThat(embedded).isGreaterThanOrEqualTo(2);
   }
 
@@ -87,6 +90,6 @@ class DocumentChunkReembedRepositoryTest extends IntegrationTestBase {
   void countAllChunksAndCountEmbeddedByModelAreNonNegative() {
     seedDataset("reembedcount");
     assertThat(chunkRepository.countAllChunks()).isGreaterThanOrEqualTo(0);
-    assertThat(chunkRepository.countEmbeddedByModel("bge-m3")).isGreaterThanOrEqualTo(0);
+    assertThat(chunkRepository.countEmbedded(new EmbeddingSpace(EmbeddingDimension.D1024, "bge-m3"))).isGreaterThanOrEqualTo(0);
   }
 }

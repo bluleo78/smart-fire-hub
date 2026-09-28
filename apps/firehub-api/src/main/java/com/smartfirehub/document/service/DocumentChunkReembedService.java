@@ -4,6 +4,7 @@ import com.smartfirehub.document.repository.DocumentChunkRepository;
 import com.smartfirehub.document.repository.DocumentChunkRepository.ChunkContent;
 import com.smartfirehub.embedding.EmbeddingProvider;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
+import com.smartfirehub.embedding.EmbeddingSpace;
 import com.smartfirehub.global.tenant.TenantContext;
 import java.util.ArrayList;
 import java.util.List;
@@ -64,7 +65,7 @@ public class DocumentChunkReembedService {
             return;
           }
           EmbeddingProvider provider = embeddingFactory.current();
-          String model = provider.modelId();
+          EmbeddingSpace space = EmbeddingSpace.of(provider);
           for (int from = 0; from < chunks.size(); from += EMBED_BATCH) {
             List<ChunkContent> batch =
                 chunks.subList(from, Math.min(from + EMBED_BATCH, chunks.size()));
@@ -75,7 +76,7 @@ public class DocumentChunkReembedService {
               contents.add(c.content());
             }
             List<float[]> embeddings = provider.embed(contents);
-            repository.updateEmbeddingBatch(ids, embeddings, model);
+            repository.upsertEmbeddings(space, ids, embeddings);
           }
           log.info(
               "Document chunk reembedding done: datasetId={}, chunks={}", datasetId, chunks.size());

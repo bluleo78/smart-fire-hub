@@ -10,6 +10,7 @@ import com.smartfirehub.document.repository.DocumentChunkRepository;
 import com.smartfirehub.document.repository.DocumentFileRepository;
 import com.smartfirehub.embedding.EmbeddingProvider;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
+import com.smartfirehub.embedding.EmbeddingSpace;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.transaction.AfterCommitRunner;
 import com.smartfirehub.notification.service.NotificationService;
@@ -113,7 +114,7 @@ public class DocumentIngestionService {
               provider.embed(chunks.stream().map(Chunk::content).toList());
 
           chunkRepository.insertBatch(
-              documentFileId, file.datasetId(), chunks, embeddings, provider.modelId());
+              documentFileId, file.datasetId(), chunks, embeddings, EmbeddingSpace.of(provider));
           fileRepository.markCompleted(documentFileId, extracted.pageCount(), chunks.size());
           log.info("Document ingested: file={} chunks={}", documentFileId, chunks.size());
         }

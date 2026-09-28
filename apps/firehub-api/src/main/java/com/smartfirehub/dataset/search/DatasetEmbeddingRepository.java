@@ -1,5 +1,9 @@
 package com.smartfirehub.dataset.search;
 
+import com.smartfirehub.embedding.EmbeddingDimension;
+import com.smartfirehub.embedding.EmbeddingSpace;
+import com.smartfirehub.global.tenant.TenantContext;
+import java.util.List;
 import org.jooq.DSLContext;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
@@ -7,8 +11,10 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * dataset_embedding upsert/update/delete.
  *
- * <p>가시성 설계상 source_text(동기, 외부호출 없음)와 embedding(비동기) 경로를 분리한다. 신규 행은 embedding=null 로
+ * <p>가시성 설계상 source_text(동기, 외부호출 없음)와 embedding(비동기) 경로를 분리한다. 신규 행은 벡터 없이
  * 시작해도 키워드(트라이그램) 검색에는 즉시 노출된다.
+ *
+ * <p>벡터는 차원별 테이블(dataset_embedding_vec_N)에 둔다(#713).
  */
 @Repository
 // 배경 잡(JobRunr/@Async/@Scheduled)은 앰비언트 트랜잭션이 없다. RLS GUC 는 트랜잭션 시작
@@ -23,7 +29,10 @@ public class DatasetEmbeddingRepository {
     this.dsl = dsl;
   }
 
-  /** source_text 만 동기 upsert(외부 호출 없음). embedding 은 건드리지 않음(신규행 embedding=null 로 시작). */
+  /**
+   * source_text 만 동기 upsert(외부 호출 없음). 벡터는 차원 테이블에 따로 있다 — 새 행은 벡터 없이 시작해 키워드
+   * 검색에는 즉시 노출된다.
+   */
   public void upsertSourceText(long datasetId, String sourceText) {
     String sql =
         "INSERT INTO dataset_embedding(dataset_id, source_text, updated_at) "
@@ -32,12 +41,24 @@ public class DatasetEmbeddingRepository {
     dsl.execute(sql, datasetId, sourceText);
   }
 
-  /** embedding 만 비동기 갱신. 벡터는 A4 와 동일하게 텍스트 리터럴 + {@code ?::vector} 캐스팅으로 바인딩한다. */
-  public void updateEmbedding(long datasetId, float[] embedding, String model) {
-    String sql =
-        "UPDATE dataset_embedding SET embedding = ?::vector, embedding_model = ?, updated_at = NOW() "
-            + "WHERE dataset_id = ?";
-    dsl.execute(sql, VectorLiterals.toVectorLiteral(embedding), model, datasetId);
+  /** 재임베딩 대상 데이터셋의 (id, source_text). source_text 를 그대로 임베딩한다. */
+  public record SourceTextRow(long datasetId, String sourceText) {}
+
+  /**
+   * 카탈로그 벡터를 {@code space} 로 쓴다: 다른 차원 행 DELETE + 현재 차원 UPSERT(한 트랜잭션). 부모
+   * dataset_embedding 행이 없으면(삭제 경합) INSERT…SELECT 가 0행이라 조용히 건너뛴다 — 옛 UPDATE 0행과 같은 의미.
+   */
+  public void upsertEmbedding(EmbeddingSpace space, long datasetId, float[] embedding) {
+    for (EmbeddingDimension d : EmbeddingDimension.values()) {
+      if (d == space.dimension()) continue;
+      dsl.execute("DELETE FROM " + d.datasetTable() + " WHERE dataset_id = ?", datasetId);
+    }
+    dsl.execute(
+        "INSERT INTO " + space.dimension().datasetTable() + " (dataset_id, embedding, embedding_model, updated_at)"
+            + " SELECT de.dataset_id, ?::vector, ?, now() FROM dataset_embedding de WHERE de.dataset_id = ?"
+            + " ON CONFLICT (dataset_id) DO UPDATE SET embedding = EXCLUDED.embedding,"
+            + " embedding_model = EXCLUDED.embedding_model, updated_at = now()",
+        VectorLiterals.toVectorLiteral(embedding), space.model(), datasetId);
   }
 
   /** 데이터셋 삭제 시 인덱스 행 제거(FK CASCADE 와 별개로 명시 호출 경로 제공). */
@@ -45,16 +66,48 @@ public class DatasetEmbeddingRepository {
     dsl.execute("DELETE FROM dataset_embedding WHERE dataset_id = ?", datasetId);
   }
 
-  /** 전체 데이터셋 수. 임베딩 진행률 계산의 분모. */
-  public long countAllDatasets() {
-    return dsl.fetchOne("SELECT COUNT(*) FROM dataset").get(0, Long.class);
+  /** 카탈로그 행 수(dataset_embedding). 진행률 분모 — 판정식과 같은 모집단이어야 100% 에 닿는다. */
+  public long countAll() {
+    return dsl.fetchOne("SELECT count(*) FROM dataset_embedding").get(0, Long.class);
   }
 
-  /** 특정 모델로 임베딩이 채워진 데이터셋 수. 임베딩 진행/완료 판단에 사용. */
-  public long countEmbeddedByModel(String model) {
+  /** {@code space} 로 임베딩된 데이터셋 수. */
+  public long countEmbedded(EmbeddingSpace space) {
     return dsl.fetchOne(
-            "SELECT COUNT(*) FROM dataset_embedding WHERE embedding IS NOT NULL AND embedding_model = ?",
-            model)
+            "SELECT count(*) FROM " + space.dimension().datasetTable() + " WHERE embedding_model = ?",
+            space.model())
         .get(0, Long.class);
+  }
+
+  /** 재임베딩 판정식(현재 차원 테이블에 현재 모델 벡터가 없는 카탈로그 행 수). */
+  public long countMissing(EmbeddingSpace space) {
+    return dsl.fetchOne(
+            "SELECT count(*) FROM dataset_embedding de WHERE " + missingPredicate(space), space.model())
+        .get(0, Long.class);
+  }
+
+  /** 판정식을 만족하는 행을 dataset_id 순으로 {@code limit} 건(키셋). */
+  public List<SourceTextRow> findMissing(EmbeddingSpace space, long afterDatasetId, int limit) {
+    return dsl.fetch(
+            "SELECT de.dataset_id, de.source_text FROM dataset_embedding de WHERE de.dataset_id > ? AND "
+                + missingPredicate(space) + " ORDER BY de.dataset_id LIMIT ?",
+            afterDatasetId, space.model(), limit)
+        .map(r -> new SourceTextRow(r.get("dataset_id", Long.class), r.get("source_text", String.class)));
+  }
+
+  /** 현재 차원이 아닌 테이블의 이 테넌트 카탈로그 벡터 삭제(WHERE tenant_id 명시 — 문서 청크 쪽과 같은 규율). */
+  public int deleteOtherDimensions(EmbeddingDimension keep) {
+    long tenantId = TenantContext.require("다른 차원 카탈로그 벡터 정리");
+    int deleted = 0;
+    for (EmbeddingDimension d : EmbeddingDimension.values()) {
+      if (d == keep) continue;
+      deleted += dsl.execute("DELETE FROM " + d.datasetTable() + " WHERE tenant_id = ?", tenantId);
+    }
+    return deleted;
+  }
+
+  private static String missingPredicate(EmbeddingSpace space) {
+    return "NOT EXISTS (SELECT 1 FROM " + space.dimension().datasetTable()
+        + " v WHERE v.dataset_id = de.dataset_id AND v.embedding_model = ?)";
   }
 }

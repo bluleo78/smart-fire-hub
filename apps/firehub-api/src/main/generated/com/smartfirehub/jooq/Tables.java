@@ -17,6 +17,8 @@ import com.smartfirehub.jooq.tables.Dataset;
 import com.smartfirehub.jooq.tables.DatasetCategory;
 import com.smartfirehub.jooq.tables.DatasetColumn;
 import com.smartfirehub.jooq.tables.DatasetEmbedding;
+import com.smartfirehub.jooq.tables.DatasetEmbeddingVec_1024;
+import com.smartfirehub.jooq.tables.DatasetEmbeddingVec_1536;
 import com.smartfirehub.jooq.tables.DatasetFavorite;
 import com.smartfirehub.jooq.tables.DatasetGraphIngest;
 import com.smartfirehub.jooq.tables.DatasetMapping;
@@ -24,7 +26,10 @@ import com.smartfirehub.jooq.tables.DatasetOntology;
 import com.smartfirehub.jooq.tables.DatasetSearchIndex;
 import com.smartfirehub.jooq.tables.DatasetTag;
 import com.smartfirehub.jooq.tables.DocumentChunk;
+import com.smartfirehub.jooq.tables.DocumentChunkVec_1024;
+import com.smartfirehub.jooq.tables.DocumentChunkVec_1536;
 import com.smartfirehub.jooq.tables.DocumentFile;
+import com.smartfirehub.jooq.tables.EmbeddingReembedState;
 import com.smartfirehub.jooq.tables.FileDatasetConfig;
 import com.smartfirehub.jooq.tables.FlywaySchemaHistory;
 import com.smartfirehub.jooq.tables.GeographyColumns;
@@ -178,6 +183,16 @@ public class Tables {
     public static final DatasetEmbedding DATASET_EMBEDDING = DatasetEmbedding.DATASET_EMBEDDING;
 
     /**
+     * The table <code>public.dataset_embedding_vec_1024</code>.
+     */
+    public static final DatasetEmbeddingVec_1024 DATASET_EMBEDDING_VEC_1024 = DatasetEmbeddingVec_1024.DATASET_EMBEDDING_VEC_1024;
+
+    /**
+     * The table <code>public.dataset_embedding_vec_1536</code>.
+     */
+    public static final DatasetEmbeddingVec_1536 DATASET_EMBEDDING_VEC_1536 = DatasetEmbeddingVec_1536.DATASET_EMBEDDING_VEC_1536;
+
+    /**
      * The table <code>public.dataset_favorite</code>.
      */
     public static final DatasetFavorite DATASET_FAVORITE = DatasetFavorite.DATASET_FAVORITE;
@@ -213,9 +228,24 @@ public class Tables {
     public static final DocumentChunk DOCUMENT_CHUNK = DocumentChunk.DOCUMENT_CHUNK;
 
     /**
+     * The table <code>public.document_chunk_vec_1024</code>.
+     */
+    public static final DocumentChunkVec_1024 DOCUMENT_CHUNK_VEC_1024 = DocumentChunkVec_1024.DOCUMENT_CHUNK_VEC_1024;
+
+    /**
+     * The table <code>public.document_chunk_vec_1536</code>.
+     */
+    public static final DocumentChunkVec_1536 DOCUMENT_CHUNK_VEC_1536 = DocumentChunkVec_1536.DOCUMENT_CHUNK_VEC_1536;
+
+    /**
      * The table <code>public.document_file</code>.
      */
     public static final DocumentFile DOCUMENT_FILE = DocumentFile.DOCUMENT_FILE;
+
+    /**
+     * The table <code>public.embedding_reembed_state</code>.
+     */
+    public static final EmbeddingReembedState EMBEDDING_REEMBED_STATE = EmbeddingReembedState.EMBEDDING_REEMBED_STATE;
 
     /**
      * FILE 데이터셋 → MinIO 버킷/프리픽스 매핑
