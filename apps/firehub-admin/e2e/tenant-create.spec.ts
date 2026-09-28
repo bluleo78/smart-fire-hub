@@ -252,7 +252,7 @@ test.describe('테넌트 생성', () => {
     await page.goto('/tenants/new');
 
     await expect(page.getByRole('heading', { name: '테넌트 생성' })).toBeVisible();
-    // role 까지 고정한다 — TenantListPage/SettingsPage 의 403 테스트와 같은 근거.
+    // role 까지 고정한다 — TenantListPage 의 403 테스트와 같은 근거.
     await expect(
       page.getByRole('status').filter({ hasText: '이 작업을 수행할 권한이 없습니다.' }),
     ).toBeVisible();

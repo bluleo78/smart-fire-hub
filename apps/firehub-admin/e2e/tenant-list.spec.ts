@@ -104,7 +104,7 @@ test.describe('테넌트 목록', () => {
   });
 
   test('생성 권한이 없으면 생성 버튼을 렌더하지 않는다', async ({ page }) => {
-    await loginAs(page, ['platform:tenant:read', 'platform:settings:read']);
+    await loginAs(page, ['platform:tenant:read', 'platform:member:read']);
     await mockApi(page, 'GET', '/api/platform/tenants', TENANTS);
     await page.goto('/tenants');
 

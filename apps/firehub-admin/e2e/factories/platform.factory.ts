@@ -12,8 +12,6 @@ export const ALL_PLATFORM_PERMISSIONS = [
   'platform:tenant:read',
   'platform:tenant:suspend',
   'platform:member:read',
-  'platform:settings:read',
-  'platform:settings:write',
 ];
 
 export function createPlatformMe(overrides: Partial<PlatformMeResponse> = {}): PlatformMeResponse {
