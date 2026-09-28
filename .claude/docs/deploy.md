@@ -121,7 +121,7 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
 `V131__embedding_dimension_tables.sql` 은 `document_chunk`/`dataset_embedding` 의 `embedding`·`embedding_model`
 컬럼을 `document_chunk_vec_1024`/`document_chunk_vec_1536`/`dataset_embedding_vec_1024`/`dataset_embedding_vec_1536`
 네 테이블로 옮긴 뒤 **옛 컬럼을 DROP 한다(비가역)**. `system_settings` 의 `embedding.*` 4행도 지운다
-(테넌트로 복사하지 않는다 — 의도, `feedback_no_protective_data_copy` 규율과 동일).
+(테넌트로 복사하지 않는다 — 의도).
 
 - **api + web + admin 을 함께 배포한다.** `./scripts/deploy.sh all` 은 `api + executor + web + ai-agent + channel`
   만 묶고 **admin 은 의도적으로 뺀다**(위 "운영 환경" 표 참고) — **`./scripts/deploy.sh admin` 을 따로** 실행해야
@@ -140,18 +140,22 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
   `EMBEDDING_OLLAMA_ALLOWED_BASE_URLS` 를 추가한다(`.env` 만으로는 컨테이너에 주입되지 않는다, 2026-08-31 전례).
 - **JobRunr 에 옛 `DocumentChunkReembedService.reembedDataset` 잡이 남아 있으면 배포 후 실패한다.** 이 클래스는
   이번 브랜치에서 삭제됐다(`com.smartfirehub.document.service.DocumentChunkReembedService`, main 에는 존재).
-  큐에 SCHEDULED/ENQUEUED/PROCESSING/FAILED(재시도 대기) 상태로 남아 있으면 배포 후 클래스를 못 찾아
-  실패한다 — 배포 전 확인·정리 필수(아래 0-1).
+  `reembedAll()` 이 `jobScheduler.enqueue(...)` 로만 넣었을 뿐 recurring 등록은 없으므로 `jobrunr_jobs`
+  큐(옛 클래스 참조)만 보면 된다 — `jobrunr_recurring_jobs` 테이블에는 애초에 `jobsignature` 컬럼이 없다
+  (`V85__jobrunr_tables.sql`: `id, version, jobasjson, createdat` 뿐이라 조회할 필요도 없다).
+  상태별 조치: **ENQUEUED/PROCESSING** 은 배포 전 옛 api 이미지가 클래스를 가진 채로 마저 처리되길
+  기다린다(급하면 배포를 잠깐 미룬다). **SCHEDULED**(재시도 대기)는 배포 전에 `DELETE` 한다 — 배포 후엔
+  옛 클래스를 못 찾아 영구 실패한다. 이미 **FAILED**(재시도 소진)로 끝난 것은 무해하니 그대로 둬도 된다.
+  대시보드는 꺼져 있으므로(`org.jobrunr.dashboard.enabled: false`) SQL 로만 확인·정리한다.
 - **배포 전 확인(운영 DB, 소유자 롤 `app` 으로 — `app_tenant` 는 RLS 때문에 0행)**:
   ```sql
   -- 0) 최신 마이그레이션이 V130 인가
   SELECT version, success FROM flyway_schema_history ORDER BY installed_rank DESC LIMIT 3;
-  -- 0-1) 옛 재임베딩 잡이 큐에 남아 있는가 — 0행이어야 한다(있으면 DELETE 로 정리하거나
-  --     enqueue 한 관리자 화면에서 재시도를 기다린 뒤 재확인)
+  -- 0-1) 옛 재임베딩 잡 — ENQUEUED/PROCESSING 은 옛 api 가 마저 처리하게 두고, SCHEDULED 는 DELETE,
+  --     FAILED(재시도 소진)는 무해하니 무시해도 된다
   SELECT id, state, scheduledat FROM jobrunr_jobs
-   WHERE jobsignature LIKE '%DocumentChunkReembedService%'
+   WHERE jobasjson LIKE '%DocumentChunkReembedService%'
      AND state NOT IN ('SUCCEEDED', 'DELETED');
-  SELECT id, jobsignature FROM jobrunr_recurring_jobs WHERE jobsignature LIKE '%DocumentChunkReembedService%';
   -- 1) 지워질 플랫폼 값 — 테넌트가 다시 입력할 값이다(baseUrl 이 기본값과 다르면 위 허용목록에 추가)
   SELECT key, value FROM system_settings WHERE key LIKE 'embedding.%' ORDER BY key;
   -- 2) 옮겨질 벡터 규모와 차원(전부 1024 여야 한다 — 아니면 V131 이 RAISE 로 멈춘다)
@@ -167,27 +171,31 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
   pg_dump -h <host> -U app -d smartfirehub -f "snapshot-pre-v131-$(date +%Y%m%d%H%M%S).sql"
   ```
 - **배포 순서**: `./scripts/deploy.sh api` → `./scripts/deploy.sh web` → `./scripts/deploy.sh admin`
-  (V131 적용 확인: `flyway_schema_history` 최신 = 131, success=t). 벡터 건수가 크면 `ALTER TABLE ... ADD COLUMN`
-  +백필+HNSW 인덱스 생성이 시간이 걸릴 수 있다 — `api` 기동이 느려도 곧바로 헬스체크 실패로 판단하지 말고
-  Flyway 로그를 먼저 본다.
+  (V131 적용 확인: `flyway_schema_history` 최신 = 131, success=t). V131 은 네 벡터 테이블을 만들고
+  `INSERT INTO ... SELECT`(백필) 한 뒤 각 테이블에 HNSW 인덱스(`CREATE INDEX ... USING hnsw`)를 만들고
+  나서야 옛 컬럼을 `DROP` 한다 — 벡터 건수가 크면 백필 + HNSW 빌드가 시간이 걸릴 수 있다. `api` 기동이
+  느려도 곧바로 헬스체크 실패로 판단하지 말고 Flyway 로그를 먼저 본다.
 - **라이브 검증**: 테넌트 설정 저장 → 재임베딩 카드 `bge-m3 · 1024차원`·진행률 100% → 문서 검색, 채팅의
   find_datasets, 데이터셋 행 검색(HYBRID 가 degraded 아님) 확인.
   **실데이터 규모에서 HNSW 인덱스가 실제로 쓰이는지 EXPLAIN 으로 확인한다** — 테스트는 소수 행이라
   `EmbeddingVectorTablesMigrationTest`/검색 테스트가 `enable_sort=off` 로 HNSW 를 강제했을 뿐, 운영 규모에서
   플래너가 실제로 HNSW 를 고르는지는 이번 계획에서 검증하지 못했다. `app_tenant` 롤로(RLS 를 실제로 태우기
-  위해 `app` 으로 하지 않는다) 실 테넌트 컨텍스트에서 확인한다:
+  위해 `app` 으로 하지 않는다) 실 테넌트 컨텍스트에서, 실제 검색 SQL(`DocumentChunkRepository.semanticSql`)과
+  같은 모양으로 확인한다 — 벡터 1024차원 리터럴은 손으로 못 치므로 psql `\gset` 로 실제 행에서 뽑아 쓴다:
   ```sql
   BEGIN;
   SET LOCAL app.tenant_id = '<실 테넌트 id>';
   SET LOCAL hnsw.iterative_scan = relaxed_order;
   SET LOCAL hnsw.ef_search = 200;
+  SELECT embedding::text AS qv, embedding_model AS qm
+    FROM document_chunk_vec_1024 WHERE tenant_id = '<실 테넌트 id>' LIMIT 1 \gset
   EXPLAIN ANALYZE
-  SELECT c.id, 1 - (v.embedding <=> '<쿼리 벡터>'::vector) AS score
+  SELECT c.id, 1 - (v.embedding <=> :'qv'::vector) AS score
     FROM document_chunk_vec_1024 v
     JOIN document_chunk c ON c.id = v.chunk_id
     JOIN document_file df ON df.id = c.document_file_id
-   WHERE df.status = 'COMPLETED' AND v.embedding_model = '<현재 모델>'
-   ORDER BY v.embedding <=> '<쿼리 벡터>'::vector
+   WHERE df.status = 'COMPLETED' AND v.embedding_model = :'qm'
+   ORDER BY v.embedding <=> :'qv'::vector
    LIMIT 20;
   ROLLBACK;
   ```
