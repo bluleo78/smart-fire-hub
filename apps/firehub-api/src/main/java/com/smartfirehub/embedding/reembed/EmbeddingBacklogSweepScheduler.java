@@ -16,7 +16,8 @@ import org.springframework.stereotype.Component;
  * 영구 방치된다(검색 누락, 진행률 100% 미도달). 저장 시 투입·SUPERSEDED 재투입(edge-trigger)은 지연 단축용으로 두고,
  * 이 스윕이 최종 수렴을 보장한다.
  *
- * <p>미설정 테넌트는 건너뛴다(옮길 대상 공간이 없다). 판정은 {@link EmbeddingBacklogService#hasWork} 한 규칙만 쓴다.
+ * <p>미설정 테넌트, 그리고 마지막 잡이 FAILED 인데 그 뒤로 설정이 다시 저장되지 않은 테넌트는 건너뛴다(옮길 대상
+ * 공간이 없거나, 다시 돌려도 같은 이유로 실패한다). 판정은 {@link EmbeddingBacklogService#hasWork} 한 규칙만 쓴다.
  */
 @Slf4j
 @Component
@@ -64,6 +65,9 @@ public class EmbeddingBacklogSweepScheduler {
         .ifPresent(
             space -> {
               if (stateRepository.hasActiveLease()) return; // 도는 잡이 끝에서 스스로 수렴·재투입한다
+              // 결정적 실패(잘못된 키·가드 거부)는 설정이 바뀌기 전까지 다시 돌려도 같다 — 재투입하면 시간당 12잡 ×
+              // JobRunr 재시도가 쌓인다. 설정을 다시 저장하면 이 조건이 풀린다(저장 시 투입도 따로 있다).
+              if (stateRepository.isFailedSinceLastConfigSave()) return;
               if (!backlogService.hasWork(space)) return;
               log.info("재임베딩 백로그 발견 — 잡 재투입: tenant={}, space={}", tenantId, space);
               reembedJob.enqueue(tenantId);

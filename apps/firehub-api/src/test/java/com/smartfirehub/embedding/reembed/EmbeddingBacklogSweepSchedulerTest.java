@@ -138,6 +138,43 @@ class EmbeddingBacklogSweepSchedulerTest extends IntegrationTestBase {
     verify(job).enqueue(tenant);
   }
 
+  /** 잡이 결정적으로 실패한 뒤의 상태(FAILED, 임대 해제) — runInTenant 의 catch/finally 와 같은 순서. */
+  private void markJobFailed() {
+    TenantContext.runScoped(
+        tenant,
+        () -> {
+          states.tryAcquire(Duration.ofMinutes(10));
+          states.markFailed("OpenAI 임베딩 호출 실패: 401 Unauthorized");
+          states.release();
+        });
+  }
+
+  @Test
+  void failedWithoutConfigChange_isNotEnqueued() {
+    // 결정적 실패(잘못된 키·가드 거부)는 설정이 바뀌기 전까지 다시 돌려도 같다 — 5분마다 재투입하면 잡·401·로그가 쌓인다.
+    configure(NEW);
+    lateWriteOldVector();
+    markJobFailed();
+
+    scheduler.sweep();
+
+    verify(job, never()).enqueue(tenant);
+  }
+
+  @Test
+  void failedThenConfigSaved_isEnqueued() throws InterruptedException {
+    configure(NEW);
+    lateWriteOldVector();
+    markJobFailed();
+    // 설정 저장 시각(앱 시계)이 실패 기록 시각(DB now())보다 확실히 뒤가 되게 한다.
+    Thread.sleep(50);
+    configure(NEW); // 관리자가 키 등을 고쳐 다시 저장(공간은 같다)
+
+    scheduler.sweep();
+
+    verify(job).enqueue(tenant);
+  }
+
   @Test
   void unconfiguredTenant_isSkipped() {
     lateWriteOldVector();

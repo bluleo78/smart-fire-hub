@@ -88,6 +88,26 @@ public class EmbeddingReembedStateRepository {
             .where("tenant_id = ? AND status = 'RUNNING' AND lease_until > now()", tenant()));
   }
 
+  /**
+   * 마지막 잡이 FAILED 로 끝났고 그 뒤로 임베딩 설정({@code tenant_settings.embedding.config})이 다시 저장되지
+   * 않았는가. 백로그 스윕이 결정적 실패(잘못된 키·가드 거부 주소)를 5분마다 되풀이하지 않게 하는 판정이다 — 설정을
+   * 고쳐 저장하면(updated_at 이 실패 기록 뒤) 거짓이 되어 다시 투입된다. 설정 행이 없으면 참(미설정은 스윕이 먼저
+   * 걸러 낸다).
+   *
+   * <p>시각 비교: 설정 행 updated_at 은 TIMESTAMP(앱이 LocalDateTime.now() 로 씀), 상태 행은 TIMESTAMPTZ(DB now()).
+   * PostgreSQL 은 세션 TimeZone 으로 TIMESTAMP 를 TIMESTAMPTZ 로 올려 비교하고, pgjdbc 는 세션 TimeZone 을 JVM
+   * 기본 시간대로 맞추므로 두 값은 같은 기준이다. 둘 다 WHERE tenant_id 를 명시한다.
+   */
+  public boolean isFailedSinceLastConfigSave() {
+    return dsl.fetchExists(
+        dsl.selectOne()
+            .from("embedding_reembed_state s")
+            .where(
+                "s.tenant_id = ? AND s.status = 'FAILED' AND NOT EXISTS (SELECT 1 FROM tenant_settings t"
+                    + " WHERE t.tenant_id = s.tenant_id AND t.key = 'embedding.config' AND t.updated_at > s.updated_at)",
+                tenant()));
+  }
+
   /** 현재 테넌트의 마지막 재임베딩 상태. 한 번도 돌지 않았으면 빈 값. */
   public Optional<ReembedState> find() {
     return dsl.fetchOptional(
