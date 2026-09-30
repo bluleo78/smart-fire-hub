@@ -233,4 +233,31 @@ class RowSearchServiceTest extends IntegrationTestBase {
     assertThatThrownBy(() -> service.search(datasetId, req("누수", null, null)))
         .isInstanceOf(SearchIndexNotConfiguredException.class);
   }
+
+  @Test
+  void nullFilterElement_isIllegalArgument_not500() {
+    // #719: "filters":[null] — 전역 핸들러가 IllegalArgumentException 을 400 으로 바꾼다(NPE 면 500).
+    List<RowFilter.Condition> filters = new java.util.ArrayList<>();
+    filters.add(null);
+    assertThatThrownBy(() -> service.search(datasetId, req("누수", "KEYWORD", filters)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("filters[0]: 조건이 비어 있습니다");
+  }
+
+  @Test
+  void nulInQueryOrFilterValue_isIllegalArgument_not409() {
+    // #719: NUL 이 DB 까지 가면 DataIntegrityViolationException(409)이 된다 — 모든 모드에서 진입부가 400 으로 막는다.
+    for (String mode : List.of("KEYWORD", "SEMANTIC", "HYBRID")) {
+      assertThatThrownBy(() -> service.search(datasetId, req("누수\u0000신고", mode, null)))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessage("검색어에 사용할 수 없는 문자(NUL)가 있습니다");
+    }
+    assertThatThrownBy(
+            () -> service.search(datasetId, req("누수", "KEYWORD", List.of(new RowFilter.Condition("status", "eq", "완\u0000료")))))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("filters[0]")
+        .hasMessageContaining("NUL");
+    // 회귀 가드: NUL 이 없는 같은 요청은 그대로 동작한다.
+    assertThat(service.search(datasetId, req("누수", "KEYWORD", null)).hits()).isNotEmpty();
+  }
 }

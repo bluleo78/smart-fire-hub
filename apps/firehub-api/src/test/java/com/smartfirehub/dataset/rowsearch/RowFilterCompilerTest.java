@@ -97,6 +97,33 @@ class RowFilterCompilerTest {
     assertThatThrownBy(() -> one("cnt", "eq", "1e400")).hasMessageContaining("INTEGER");
   }
 
+  @Test
+  void nullCondition_isRejectedWithIndex_notNpe() {
+    // #719: "filters":[null] 은 NPE(500)가 아니라 몇 번째 조건인지 알려주는 IllegalArgumentException(400)이어야 한다.
+    List<RowFilter.Condition> conds = new java.util.ArrayList<>();
+    conds.add(new RowFilter.Condition("status", "eq", "a"));
+    conds.add(null);
+    assertThatThrownBy(() -> RowFilterCompiler.compile(new RowFilter(conds), types))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("filters[1]: 조건이 비어 있습니다");
+  }
+
+  @Test
+  void nulCharacterInValue_isRejected_withoutEchoingIt() {
+    // #719: NUL 은 PostgreSQL text 바인딩에서 거부돼 409 로 새어 나간다 — 컴파일 단계에서 막는다(스칼라·in 목록 모두).
+    assertThatThrownBy(() -> one("status", "eq", "a\u0000b"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("filters[0]: 값에 사용할 수 없는 문자(NUL)가 있습니다");
+    assertThatThrownBy(() -> one("status", "in", List.of("ok", "a\u0000b")))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("NUL");
+    // 숫자 컬럼도 타입 오류 메시지에 NUL 을 그대로 싣지 않는다.
+    assertThatThrownBy(() -> one("cnt", "eq", "1\u0000"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("NUL")
+        .hasMessageNotContaining("\u0000");
+  }
+
   private CompiledFilter one(String col, String op, Object v) {
     return RowFilterCompiler.compile(new RowFilter(List.of(new RowFilter.Condition(col, op, v))), types);
   }

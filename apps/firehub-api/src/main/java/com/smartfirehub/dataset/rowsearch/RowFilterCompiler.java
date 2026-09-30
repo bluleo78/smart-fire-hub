@@ -26,6 +26,12 @@ public final class RowFilterCompiler {
       Set.of("eq", "neq", "in", "gt", "gte", "lt", "lte", "is_null", "is_not_null");
   private static final int MAX_IN = 100;
 
+  /**
+   * NUL(0x00) 문자. PostgreSQL text 는 NUL 을 담을 수 없어 바인딩 단계에서 오류가 나고, 그 오류는
+   * DataIntegrityViolationException 으로 번역돼 읽기 요청인데도 409 로 응답된다 — 입력 검증에서 먼저 막는다.
+   */
+  static final char NUL = '\u0000';
+
   /** 공백 구분 날짜시간(yyyy-MM-dd HH:mm[:ss]) — 임포트·UI 에서 흔히 쓰는 표기. */
   private static final DateTimeFormatter SPACE_DATE_TIME =
       new DateTimeFormatterBuilder()
@@ -52,6 +58,11 @@ public final class RowFilterCompiler {
     for (int i = 0; i < conds.size(); i++) {
       RowFilter.Condition c = conds.get(i);
       String at = "filters[" + i + "]: ";
+      // JSON 배열에 null 원소가 오면(예: "filters":[null]) 아래 c.column() 에서 NPE → 500 이 된다. 다른 잘못된
+      // 입력과 같이 몇 번째 조건인지 알려주는 400 으로 거부한다.
+      if (c == null) {
+        throw new IllegalArgumentException(at + "조건이 비어 있습니다");
+      }
       String type = c.column() == null ? null : columnTypes.get(c.column());
       if (type == null) {
         throw new IllegalArgumentException(at + "알 수 없는 컬럼 '" + c.column() + "'");
@@ -139,6 +150,11 @@ public final class RowFilterCompiler {
   private static Object convert(Object v, String type, String at) {
     if (v == null) throw new IllegalArgumentException(at + "값이 비어 있습니다(null 비교는 is_null 사용)");
     String s = v.toString();
+    // NUL 은 어떤 타입으로도 해석되지 않지만 TEXT/VARCHAR 는 그대로 바인딩돼 PostgreSQL 이 거부한다(→ 409).
+    // 아래 타입 오류 메시지는 값을 그대로 싣기 때문에, NUL 이 응답에 섞이지 않도록 변환 전에 따로 거부한다.
+    if (s.indexOf(NUL) >= 0) {
+      throw new IllegalArgumentException(at + "값에 사용할 수 없는 문자(NUL)가 있습니다");
+    }
     try {
       return switch (type) {
         case "TEXT", "VARCHAR" -> s;
