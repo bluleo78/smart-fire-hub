@@ -39,6 +39,8 @@ import {
   useUnsavedChangesGuard,
 } from '../../hooks/useUnsavedChangesGuard';
 import { CLAUDE_MODEL_OPTIONS, typeChangeConfirmDescription, withPreservedValue } from '../../lib/ai-credential-screen';
+import { extractApiError } from '../../lib/api-error';
+import { isDecimalSyntax, isIntegerSyntax } from '../../lib/settings-number';
 import AiClassifySettingsTab from './AiClassifySettingsTab';
 import { AiCredentialFieldset, OpencodeModelField } from './AiCredentialFieldset';
 import EmbeddingSettingsTab from './EmbeddingSettingsTab';
@@ -210,13 +212,11 @@ export default function SettingsPage() {
     NUMBER_RULES.forEach(({ key, min, max, integer, message }) => {
       const raw = form[key];
       const n = Number(raw);
-      if (
-        raw.trim() === '' ||
-        isNaN(n) ||
-        n < min ||
-        n > max ||
-        (integer && !Number.isInteger(n))
-      ) {
+      // 표기부터 본다 — 원문 문자열이 그대로 서버로 가므로 서버(Java)가 읽는 표기만 통과시킨다.
+      // `Number()` 만으로 판정하면 `1e1`·`5.0`·`0x10` 이 통과하고 서버가 400 으로 거부한다(#727).
+      // 빈 값·공백이 섞인 값도 여기서 걸린다.
+      const syntaxOk = integer ? isIntegerSyntax(raw) : isDecimalSyntax(raw);
+      if (!syntaxOk || n < min || n > max) {
         newErrors[key] = message;
       }
     });
@@ -326,9 +326,10 @@ export default function SettingsPage() {
               toast.success('설정이 저장되었습니다.');
               refreshBehaviorMeta();
             }
-          } catch {
+          } catch (err) {
             // 동작 설정 저장 실패 — 자격증명은 별도 자원이므로 아래에서 계속 시도한다(주석 참고).
-            toast.error('설정 저장에 실패했습니다.');
+            // 서버가 알려준 거부 사유를 그대로 보여준다(#727).
+            toast.error(extractApiError(err, '설정 저장에 실패했습니다.'));
           }
         }
       }

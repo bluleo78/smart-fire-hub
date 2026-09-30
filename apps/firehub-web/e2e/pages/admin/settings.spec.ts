@@ -217,6 +217,106 @@ test.describe('설정 페이지', () => {
   });
 
   /**
+   * #727 — 숫자 칸의 표기 검증이 서버와 같은 문법을 쓰고, 서버가 거부하면 그 사유가 화면에 보인다.
+   *
+   * 예전에는 `Number(raw)` 로 판정해 `1e1`·`5.0` 같은 "JS 로는 정수인" 표기가 통과했고, 원문이 그대로
+   * 서버로 가서 400 이 됐다. 화면에는 어느 칸이 왜 틀렸는지 없이 "설정 저장에 실패했습니다."만 떴다.
+   */
+  test.describe('#727 — 숫자 표기 검증과 서버 거부 사유', () => {
+    for (const c of [
+      { id: 'ai-max-turns', value: '1e1', message: '1~50 사이의 정수를 입력하세요' },
+      { id: 'ai-max-turns', value: '5.0', message: '1~50 사이의 정수를 입력하세요' },
+      { id: 'ai-max-tokens', value: '1e3', message: '1~65536 사이의 정수를 입력하세요' },
+      { id: 'ai-session-max-tokens', value: '5e4', message: '10,000~200,000 사이의 정수를 입력하세요' },
+      { id: 'ai-temperature', value: '1e-1', message: '0.0~1.0 사이의 값을 입력하세요' },
+    ]) {
+      test(`AI 탭 ${c.id} 에 ${c.value} 를 넣으면 그 칸에 오류가 붙고 PUT 이 나가지 않는다`, async ({
+        authenticatedPage: page,
+      }) => {
+        await setupSettingsMocks(page);
+        const saveCapture = await mockApi(page, 'PUT', '/api/v1/settings', {}, { capture: true });
+
+        await page.goto('/admin/settings');
+        await page.locator(`#${c.id}`).fill(c.value);
+        await page.getByRole('button', { name: '저장' }).click();
+
+        await expect(fieldBox(page, c.id).getByText(c.message)).toBeVisible();
+        await expect(page.getByText('입력값을 확인하세요.')).toBeVisible({ timeout: 5000 });
+        await expect(page.getByText('설정이 저장되었습니다.')).toHaveCount(0);
+        expect(saveCapture.lastRequest()).toBeUndefined();
+      });
+    }
+
+    for (const value of ['587.0', '5e2']) {
+      test(`이메일 탭 포트에 ${value} 를 넣으면 포트 칸에 오류가 붙고 PUT 이 나가지 않는다`, async ({
+        authenticatedPage: page,
+      }) => {
+        await setupSettingsMocks(page);
+        const saveCapture = await mockApi(page, 'PUT', '/api/v1/settings', {}, { capture: true });
+
+        await page.goto('/admin/settings');
+        await page.getByRole('tab', { name: '이메일' }).click();
+        await expect(page.locator('#smtp-host')).toHaveValue('smtp.gmail.com');
+        await page.locator('#smtp-port').fill(value);
+        await page.getByRole('button', { name: '저장' }).click();
+
+        await expect(
+          page.getByRole('tabpanel', { name: '이메일' }).getByText('1~65535 사이의 정수를 입력하세요'),
+        ).toBeVisible();
+        await expect(page.getByText('입력값을 확인하세요.')).toBeVisible({ timeout: 5000 });
+        expect(saveCapture.lastRequest()).toBeUndefined();
+      });
+    }
+
+    test('AI 탭 저장을 서버가 400 으로 거부하면 서버가 준 사유를 그대로 보여준다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupSettingsMocks(page);
+      const SERVER_REASON = '최대 턴 수는 1에서 50 사이여야 합니다';
+      const saveCapture = await mockApi(
+        page,
+        'PUT',
+        '/api/v1/settings',
+        { status: 400, error: 'Bad Request', message: SERVER_REASON, errors: null },
+        { status: 400, capture: true },
+      );
+
+      await page.goto('/admin/settings');
+      await page.locator('#ai-max-turns').fill('20');
+      await page.getByRole('button', { name: '저장' }).click();
+
+      // 요청은 나갔고(클라이언트 검증 통과), 서버 사유가 토스트로 보인다 — 뭉뚱그린 문구가 아니다.
+      await expect(page.getByText(SERVER_REASON)).toBeVisible({ timeout: 5000 });
+      await expect(page.getByText('설정 저장에 실패했습니다.')).toHaveCount(0);
+      expect(saveCapture.lastRequest()).toBeDefined();
+    });
+
+    test('이메일 탭 저장을 서버가 400 으로 거부하면 서버가 준 사유를 그대로 보여준다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupSettingsMocks(page);
+      const SERVER_REASON = 'SMTP 포트 번호가 유효하지 않습니다: 2525';
+      const saveCapture = await mockApi(
+        page,
+        'PUT',
+        '/api/v1/settings',
+        { status: 400, error: 'Bad Request', message: SERVER_REASON, errors: null },
+        { status: 400, capture: true },
+      );
+
+      await page.goto('/admin/settings');
+      await page.getByRole('tab', { name: '이메일' }).click();
+      await expect(page.locator('#smtp-host')).toHaveValue('smtp.gmail.com');
+      await page.locator('#smtp-port').fill('2525');
+      await page.getByRole('button', { name: '저장' }).click();
+
+      await expect(page.getByText(SERVER_REASON)).toBeVisible({ timeout: 5000 });
+      await expect(page.getByText('설정 저장에 실패했습니다.')).toHaveCount(0);
+      expect(saveCapture.lastRequest()).toBeDefined();
+    });
+  });
+
+  /**
    * 계약(#712): 이메일 탭은 <b>워크스페이스 전용</b> SMTP 6키 편집 화면이다.
    *
    * 서버는 저장된 키만 내려주고(미설정이면 `[]`), 저장은 6키를 한 벌로 보내며, "설정 해제"는

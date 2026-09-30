@@ -2,7 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import { settingsApi } from '../api/settings';
+import { extractApiError } from '../lib/api-error';
 import { indexSettingsByKey } from '../lib/settings-fields';
+import { isIntegerSyntax } from '../lib/settings-number';
 import type { ResolvedSettingResponse } from '../types/settings';
 
 /**
@@ -201,8 +203,9 @@ export function useSmtpSettingsForm(): SmtpSettingsFormState {
     });
     const port = form['smtp.port'].trim();
     if (port !== '') {
+      // 표기부터 본다 — `587.0`·`5e2` 는 JS 로는 정수지만 서버(Java)는 못 읽는다(#727).
       const n = Number(port);
-      if (isNaN(n) || !Number.isInteger(n) || n < PORT_MIN || n > PORT_MAX) {
+      if (!isIntegerSyntax(port) || n < PORT_MIN || n > PORT_MAX) {
         next['smtp.port'] = `${PORT_MIN}~${PORT_MAX} 사이의 정수를 입력하세요`;
       }
     }
@@ -215,7 +218,9 @@ export function useSmtpSettingsForm(): SmtpSettingsFormState {
       toast.error('입력값을 확인하세요.');
       return;
     }
-    const submitted: SmtpForm = { ...form };
+    // 포트는 검증한 값(앞뒤 공백 제거)을 그대로 보낸다 — 검증한 문자열과 보내는 문자열이 다르면
+    // 서버가 다른 판정을 내린다(#727).
+    const submitted: SmtpForm = { ...form, 'smtp.port': form['smtp.port'].trim() };
     const payload: Record<string, string> = { ...submitted };
     // 저장된 비밀번호가 있고 칸이 비었으면 키를 뺀다 → 서버가 기존 비밀번호를 유지한다(훅 주석).
     if (passwordSaved && submitted['smtp.password'] === '') delete payload['smtp.password'];
@@ -226,8 +231,9 @@ export function useSmtpSettingsForm(): SmtpSettingsFormState {
       // 저장 성공 — 우선 보낸 값을 원본으로 확정해 dirty 를 푼다(재조회가 실패해도 참인 사실).
       setOriginal(submitted);
       toast.success('설정이 저장되었습니다.');
-    } catch {
-      toast.error('설정 저장에 실패했습니다.');
+    } catch (err) {
+      // 서버가 알려준 거부 사유(어느 값이 왜 틀렸는지)를 그대로 보여준다(#727).
+      toast.error(extractApiError(err, '설정 저장에 실패했습니다.'));
       setIsSaving(false);
       return;
     }

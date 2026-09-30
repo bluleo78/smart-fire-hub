@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -506,12 +507,18 @@ public class SettingsService {
   private static void validateSmtpPort(Map<String, String> settings) {
     if (!settings.containsKey("smtp.port")) return;
     String portStr = settings.get("smtp.port");
+    // 표기 검사는 AI 정수 키와 같은 문법을 쓴다(#727) — 예전 Integer.parseInt 는 "+25" 를 받아
+    // 그대로 저장했다.
+    if (!INTEGER_SYNTAX.matcher(portStr).matches()) {
+      throw new IllegalArgumentException("SMTP 포트 번호가 유효하지 않습니다: " + portStr);
+    }
     try {
       int port = Integer.parseInt(portStr);
       if (port < 1 || port > 65535) {
         throw new IllegalArgumentException("SMTP 포트 번호는 1에서 65535 사이여야 합니다. 입력값: " + port);
       }
     } catch (NumberFormatException e) {
+      // 문법은 맞지만 int 범위를 넘는 자릿수(예: 99999999999).
       throw new IllegalArgumentException("SMTP 포트 번호가 유효하지 않습니다: " + portStr);
     }
   }
@@ -556,26 +563,69 @@ public class SettingsService {
     return value == null || value.isBlank() ? "" : encryptionService.decrypt(value);
   }
 
+  /**
+   * 정수 설정 값의 표기 — ASCII 숫자만(선택적 {@code -}). web 의 {@code lib/settings-number.ts} 와
+   * <b>같은 문법</b>이어야 한다(#727).
+   *
+   * <p>{@code Integer.parseInt} 만 쓰면 문법이 web 과 어긋난다: {@code "+5"} 와 비-ASCII 숫자는
+   * 받아서 <b>그 원문 그대로</b> 저장하고, web 의 {@code Number()} 가 정수로 보는 {@code "1e1"}·
+   * {@code "5.0"} 은 {@code NumberFormatException} 원문({@code For input string: "1e1"})으로
+   * 거부한다. {@code -} 를 문법에 남겨 두는 이유는 음수를 "표기 오류"가 아니라 "범위 오류"로
+   * 알리기 위해서다(범위 검사가 곧바로 거부한다).
+   */
+  private static final Pattern INTEGER_SYNTAX = Pattern.compile("-?[0-9]+");
+
+  /**
+   * 소수 설정 값의 표기 — {@code 0}, {@code 1.0}, {@code 0.75} 같은 평범한 십진 표기만.
+   *
+   * <p>{@code Double.parseDouble} 은 {@code "NaN"}·{@code "0.5d"}·{@code "0x1p-1"}·{@code "1e-1"}
+   * 을 전부 받는다. 특히 {@code NaN} 은 {@code v < 0 || v > 1} 을 <b>둘 다 거짓으로</b> 통과해
+   * 범위 검사가 있는데도 저장됐다(#727).
+   */
+  private static final Pattern DECIMAL_SYNTAX = Pattern.compile("[0-9]+(\\.[0-9]+)?");
+
+  /**
+   * 정수 설정 값을 읽는다. 표기가 틀리거나 {@code int} 를 넘치면 <b>필드 이름을 담은</b> 메시지로
+   * 거부한다 — 이 메시지는 화면 토스트에 그대로 나간다.
+   */
+  private static int parseIntSetting(String label, String value) {
+    if (value == null || !INTEGER_SYNTAX.matcher(value).matches()) {
+      throw new IllegalArgumentException(label + "는 정수로 입력해야 합니다. 입력값: " + value);
+    }
+    try {
+      return Integer.parseInt(value);
+    } catch (NumberFormatException e) {
+      // 문법은 맞지만 int 범위를 넘는 자릿수.
+      throw new IllegalArgumentException(label + "가 너무 큽니다. 입력값: " + value);
+    }
+  }
+
   private void validateValues(Map<String, String> settings) {
     settings.forEach(
         (key, value) -> {
           switch (key) {
             case "ai.max_turns" -> {
-              int v = Integer.parseInt(value);
+              int v = parseIntSetting("최대 턴 수", value);
               if (v < 1 || v > 50) throw new IllegalArgumentException("최대 턴 수는 1에서 50 사이여야 합니다");
             }
             case "ai.temperature" -> {
+              if (value == null || !DECIMAL_SYNTAX.matcher(value).matches()) {
+                throw new IllegalArgumentException(
+                    "Temperature는 0.0에서 1.0 사이의 숫자로 입력해야 합니다. 입력값: " + value);
+              }
               double v = Double.parseDouble(value);
-              if (v < 0 || v > 1)
+              // 문법이 이미 NaN·Infinity 표기를 막지만, 아주 긴 자릿수가 무한대로 읽히는 경우까지
+              // 범위 검사 앞에서 닫아 둔다(NaN 은 아래 비교를 둘 다 통과한다).
+              if (!Double.isFinite(v) || v < 0 || v > 1)
                 throw new IllegalArgumentException("Temperature는 0.0에서 1.0 사이여야 합니다");
             }
             case "ai.max_tokens" -> {
-              int v = Integer.parseInt(value);
+              int v = parseIntSetting("최대 토큰 수", value);
               if (v < 1 || v > 65536)
                 throw new IllegalArgumentException("최대 토큰 수는 1에서 65536 사이여야 합니다");
             }
             case "ai.session_max_tokens" -> {
-              int v = Integer.parseInt(value);
+              int v = parseIntSetting("세션 최대 토큰 수", value);
               // 하한은 web 의 검증(10,000~200,000)과 반드시 같아야 한다. 예전 값은 1000 이었고,
               // 그 차이는 이 키를 아무도 저장할 수 없던 동안(시드 행 없음 + UPDATE-only) 도달
               // 불가라 드러나지 않았다. 저장소를 upsert 로 고쳐 경로가 열리는 순간, 운영자가
@@ -589,8 +639,16 @@ public class SettingsService {
               if (value == null || value.isBlank())
                 throw new IllegalArgumentException("시스템 프롬프트는 비어있을 수 없습니다");
             }
+            case "ai.model" -> {
+              // 모델 이름 자체는 자유 형식이다(목록 대조는 화면·자격증명 검증이 한다). 다만 빈 값은
+              // 저장하지 않는다 — AI 동작 6키는 빈 값을 허용하지 않는다는 것이 web 의 기존 계약이고
+              // (빈 칸은 페이로드에서 빼고 저장을 막는다), 빈 모델이 저장되면 채팅 요청이 모델 없이
+              // 나간다. API 직접 호출로만 도달하던 구멍이다(#727).
+              if (value == null || value.isBlank())
+                throw new IllegalArgumentException("모델은 비어있을 수 없습니다");
+            }
             default -> {
-              /* ai.model is a free-form string, validated by frontend dropdown */
+              /* 값 검증이 없는 키(SMTP 문자열 키 등) */
             }
           }
         });
