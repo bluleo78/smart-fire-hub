@@ -400,7 +400,16 @@ public class PipelineService {
         if (c != null
             && c.outputDatasetId() != null
             && java.util.Objects.equals(c.outputDatasetId(), s.outputDatasetId())) {
-          stepRepository.restoreCursor(id, s.name(), c.lastRunAt(), c.fullRebuildPending());
+          // 재생성 예약은 새 스텝이 증분 스텝일 때만 이월한다(#734). 실행기(PipelineAsyncRunner)는
+          // "SQL 스텝 + {{last_run_at}} 사용"일 때만 증분 경로를 타며 그 경로에서만 예약을 소비·해제한다.
+          // 그래서 예약 API(setFullRebuildPending)도 비증분 스텝의 예약을 거부한다 — 저장 경로로 같은
+          // 상태를 만들면 화면에 안 보이고 취소도 못 하는 예약이 남았다가, 나중에 {{last_run_at}} 을 다시
+          // 넣는 순간 확인 없이 출력 전체를 지운다. 비증분으로 저장하면 예약은 버린다(다시 증분으로
+          // 되돌려도 되살아나지 않는다). 책갈피(lastRunAt) 이월 여부는 별개 사안이라 기존대로 둔다.
+          boolean newStepIncremental =
+              "SQL".equals(s.scriptType()) && LastRunAtPlaceholder.isUsedIn(s.scriptContent());
+          stepRepository.restoreCursor(
+              id, s.name(), c.lastRunAt(), c.fullRebuildPending() && newStepIncremental);
         }
       }
     }

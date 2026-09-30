@@ -1093,6 +1093,72 @@ class PipelineServiceTest extends IntegrationTestBase {
   }
 
   /**
+   * #734 — 재생성 예약은 "{{last_run_at}} 을 쓰는 SQL 스텝"에만 존재할 수 있다(예약 API 와 실행기의 불변식).
+   * 예약된 증분 스텝을 비증분 SQL 로 바꿔 저장하면 예약은 이월되지 않아야 한다. 이월되면 화면에 안 보이고
+   * 취소도 못 하는 예약이 남았다가, 나중에 {{last_run_at}} 을 다시 넣는 순간 확인 없이 출력 전체가 지워진다.
+   * 책갈피(lastRunAt) 이월은 이 수정의 범위가 아니므로 기존대로 유지됨을 함께 고정한다.
+   */
+  @Test
+  void updatePipeline_incrementalToNonIncremental_dropsFullRebuildReservation() {
+    java.time.OffsetDateTime bookmark = java.time.OffsetDateTime.parse("2026-09-19T01:02:03Z");
+
+    PipelineDetailResponse created =
+        pipelineService.createPipeline(
+            new CreatePipelineRequest(
+                "Rebuild Drop Pipeline",
+                "test",
+                List.of(
+                    new PipelineStepRequest(
+                        "stepA", "a", "SQL", INCREMENTAL_SQL, pkOutputDatasetId, null, null,
+                        "MERGE"))),
+            testUserId);
+
+    Long oldStepId = stepRepository.findStepIdByPipelineAndName(created.id(), "stepA").orElseThrow();
+    stepRepository.advanceCursor(oldStepId, bookmark, true);
+    pipelineService.setFullRebuildPending(created.id(), oldStepId, true);
+
+    // {{last_run_at}} 을 뺀 SQL 로 저장 — 실행기가 더 이상 증분 경로를 타지 않는 스텝이 된다.
+    pipelineService.updatePipeline(
+        created.id(),
+        new UpdatePipelineRequest(
+            "Rebuild Drop Pipeline",
+            "test",
+            null,
+            List.of(
+                new PipelineStepRequest(
+                    "stepA", "a", "SQL", "SELECT code, name FROM data.src_table WHERE 1=0",
+                    pkOutputDatasetId, null, null, "MERGE"))),
+        testUserId);
+
+    Long nonIncStepId =
+        stepRepository.findStepIdByPipelineAndName(created.id(), "stepA").orElseThrow();
+    StepCursor afterNonInc = stepRepository.findCursor(nonIncStepId).orElseThrow();
+    assertThat(afterNonInc.fullRebuildPending())
+        .as("비증분 스텝에는 재생성 예약이 이월되지 않는다")
+        .isFalse();
+    assertThat(afterNonInc.lastRunAt()).as("책갈피 이월은 기존대로 유지(범위 밖)").isEqualTo(bookmark);
+
+    // 다시 증분 SQL 로 되돌려도 옛 예약이 되살아나지 않아야 한다(확인 없는 출력 삭제 방지).
+    pipelineService.updatePipeline(
+        created.id(),
+        new UpdatePipelineRequest(
+            "Rebuild Drop Pipeline",
+            "test",
+            null,
+            List.of(
+                new PipelineStepRequest(
+                    "stepA", "a", "SQL", INCREMENTAL_SQL, pkOutputDatasetId, null, null,
+                    "MERGE"))),
+        testUserId);
+
+    Long reIncStepId =
+        stepRepository.findStepIdByPipelineAndName(created.id(), "stepA").orElseThrow();
+    assertThat(stepRepository.findCursor(reIncStepId).orElseThrow().fullRebuildPending())
+        .as("증분으로 되돌려도 옛 예약이 되살아나지 않는다")
+        .isFalse();
+  }
+
+  /**
    * 출력이 null(임시 데이터셋 자동 생성)인 스텝은 이월하지 않는다 — {@code null == null} 을 "같은
    * 출력"으로 보면 안 된다. 임시 데이터셋은 {@code source_pipeline_step_id} = 스텝 id 로 묶여 있어,
    * 재저장으로 id 가 바뀌면 러너가 빈 임시 데이터셋을 새로 만든다. 거기에 책갈피만 이어받으면 이전
