@@ -50,7 +50,7 @@ def validate(script_content: str) -> None:
 # 출력 비우기 선행 문장(pre-statement)이 가질 수 있는 유일한 형태.
 # 스키마는 테넌트 데이터 스키마(data, data_t<번호>)만 허용하고, 테이블명 문자 집합은
 # API DataTableService.validateName(`[a-z][a-z0-9_]*`)의 소문자 규칙과 맞춘다.
-_PRE_STATEMENT_PATTERN = re.compile(r'^DELETE FROM "(data|data_t\d+)"\."[a-z0-9_]+"$')
+_PRE_STATEMENT_PATTERN = re.compile(r'^DELETE FROM "(data|data_t\d+)"\."([a-z0-9_]+)"$')
 
 
 def validate_pre_statement(stmt: str) -> None:
@@ -66,3 +66,18 @@ def validate_pre_statement(stmt: str) -> None:
     # `DELETE FROM "data"."out"\n` 같은 형태가 통과하기 때문이다(정확한 형태만 허용한다는 취지에 어긋남).
     if not _PRE_STATEMENT_PATTERN.fullmatch(stmt or ""):
         raise SqlValidationError(f"허용되지 않은 선행 문장입니다: {stmt}")
+
+
+def output_lock_key(stmt: str) -> str:
+    """선행 문장(출력 비우기 DELETE)이 가리키는 테이블의 직렬화 잠금 키 ``"<스키마>"."<테이블>"``.
+
+    선행 문장에 적힌 한정 이름을 따옴표까지 그대로 쓴다 — API(SqlScriptExecutor.outputLockKey)와 같은 키다.
+
+    advisory 잠금 키 공간은 데이터베이스 전체가 공유하므로 스키마(테넌트)까지 포함한다.
+    형태가 맞지 않는 문장은 validate_pre_statement 와 같은 오류로 거부한다 — 검증을 거치지 않은
+    문자열에서 키를 뽑는 일이 없게 한다.
+    """
+    match = _PRE_STATEMENT_PATTERN.fullmatch(stmt or "")
+    if not match:
+        raise SqlValidationError(f"허용되지 않은 선행 문장입니다: {stmt}")
+    return f'"{match.group(1)}"."{match.group(2)}"'

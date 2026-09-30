@@ -78,19 +78,55 @@ def test_pre_statements_run_before_query_in_same_transaction():
     )
 
     assert result.success
+    # 출력 테이블 직렬화 잠금(#731)이 DELETE **앞에, 별도 문장으로** 실행돼야 한다 — 같은 문장이거나
+    # DELETE 뒤라면 겹친 실행의 미커밋 행을 지우지 못해 행이 중복된다. 키는 스키마까지 포함한다.
+    assert cursor.execute.call_args_list[0].args == (
+        "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+        ('"data"."out"',),
+    )
     executed = [c.args[0] for c in cursor.execute.call_args_list]
-    assert executed == [
+    assert executed[1:] == [
         'DELETE FROM "data"."out"',
         'INSERT INTO "data"."out" ("a") SELECT 1',
     ]
     conn.commit.assert_called_once()
 
 
+def test_output_lock_key_is_scoped_to_tenant_schema():
+    # advisory 키 공간은 DB 전체가 공유한다 — 같은 테이블명이라도 테넌트 스키마가 다르면 키가 달라야
+    # 서로 무관한 테넌트의 실행이 직렬화되지 않는다.
+    cursor = MagicMock()
+    cursor.rowcount = 1
+    conn = make_conn(cursor)
+
+    execute_sql(
+        'INSERT INTO "data_t7"."out" ("a") SELECT 1',
+        conn,
+        pre_statements=['DELETE FROM "data_t7"."out"'],
+    )
+
+    assert cursor.execute.call_args_list[0].args[1] == ('"data_t7"."out"',)
+
+
+def test_no_lock_without_pre_statements():
+    # 선행 문장이 없는 실행(APPEND·MERGE·사용자 DML)은 잠금을 잡지 않는다.
+    cursor = MagicMock()
+    cursor.rowcount = 1
+    conn = make_conn(cursor)
+
+    execute_sql('INSERT INTO "data"."out" ("a") SELECT 1', conn)
+
+    assert [c.args[0] for c in cursor.execute.call_args_list] == [
+        'INSERT INTO "data"."out" ("a") SELECT 1'
+    ]
+
+
 def test_query_failure_rolls_back_pre_statements():
     # 본 쿼리가 실패하면 이미 실행한 pre-statement 도 같은 트랜잭션이므로 롤백돼야 한다 —
     # 그렇지 않으면 DELETE 만 반영되고 INSERT 는 실패해 출력 테이블이 비게 된다(원자성 붕괴).
     cursor = MagicMock()
-    cursor.execute.side_effect = [None, Exception("boom")]
+    # 실행 순서: 직렬화 잠금 → DELETE → 본 쿼리(실패)
+    cursor.execute.side_effect = [None, None, Exception("boom")]
     conn = make_conn(cursor)
 
     result = execute_sql(

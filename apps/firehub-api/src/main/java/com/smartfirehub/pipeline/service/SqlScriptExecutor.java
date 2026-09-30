@@ -28,6 +28,47 @@ public class SqlScriptExecutor {
   private static final Pattern PRE_STATEMENT_TABLE_PATTERN = Pattern.compile("^[a-z0-9_]+\"$");
 
   /**
+   * 출력 테이블 단위 직렬화 잠금(#731). 선행 DELETE(출력 비우기) <b>직전에, 별도 문장으로</b> 실행한다.
+   *
+   * <p><b>왜 필요한가.</b> 같은 출력 테이블에 "비우기 + 적재"를 하는 두 실행이 겹치면(실행 버튼
+   * 더블클릭, 수동 실행과 다른 실행의 겹침, 서로 다른 파이프라인이 같은 출력에 쓰는 경우), READ
+   * COMMITTED 에서 뒤 실행의 DELETE 는 앞 실행이 아직 커밋하지 않은 새 행을 보지 못해 지우지
+   * 못한다 — 두 실행의 INSERT 가 모두 남아 모든 행이 두 번 들어가고 둘 다 성공으로 끝난다. 이 잠금은
+   * 트랜잭션이 끝날 때(커밋·롤백) 자동으로 풀리므로, 뒤 실행은 앞 실행이 커밋한 <b>뒤에</b> 비우기를
+   * 시작한다. 뒤 실행은 거부되지 않고 기다렸다가 그대로 실행된다(기존 의미 유지).
+   *
+   * <p><b>왜 DELETE 와 다른 문장이어야 하는가.</b> READ COMMITTED 의 스냅샷은 문장 시작 시점에
+   * 잡힌다. 잠금 대기가 DELETE 와 같은 문장 안에서 일어나면 대기가 풀린 뒤에도 옛 스냅샷으로
+   * 지우므로 앞 실행의 행이 그대로 남는다. 잠금 문장이 끝난 다음에 시작하는 DELETE 만이 앞 실행이
+   * 커밋한 행을 본다.
+   *
+   * <p><b>왜 LOCK TABLE 이 아니라 advisory 잠금인가.</b> 테이블 잠금(SHARE ROW EXCLUSIVE)은 파이프라인과
+   * 무관한 쓰기(화면의 행 편집·임포트)까지 스텝이 끝날 때까지 막고, 그 쓰기들이 끝나기를 기다리기도
+   * 한다. 이 결함에 필요한 것은 "비우기 + 적재" 트랜잭션끼리의 상호 배제뿐이다. APPEND·MERGE 처럼
+   * 선행 문장이 없는 실행은 잠금을 잡지 않는다 — 비우기와 겹쳐도 결과가 어느 한 순서로 직렬
+   * 실행한 것과 같다.
+   *
+   * <p>키는 선행 문장에 적힌 한정 이름({@code "<스키마>"."<테이블>"}, 따옴표 포함) 문자열의 64비트 해시다. advisory 키 공간은 데이터베이스 전체가
+   * 공유하므로 테넌트 스키마를 반드시 포함한다(테넌트마다 같은 테이블명이 있을 수 있다). 해시가
+   * 우연히 충돌해도 무관한 두 실행이 잠깐 직렬화될 뿐 정확성에는 영향이 없다. firehub-executor
+   * (sql_executor.py)도 같은 키·같은 문장을 쓴다 — 실행기를 켠 경로와 끈 경로가 같은 계약을 따른다.
+   * lock_timeout 은 걸지 않는다 — 걸면 뒤 실행이 실패로 바뀌는데, 그것은 제품 정책 변경이다.
+   */
+  static final String OUTPUT_LOCK_SQL = "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))";
+
+  /** 선행 문장에서 잠금 키(대상 테이블의 한정 이름)를 잘라낼 때 건너뛸 접두어. */
+  private static final String CLEAR_VERB = "DELETE FROM ";
+
+  /**
+   * {@link #OUTPUT_LOCK_SQL} 에 바인딩할 키 — 검증을 통과한 선행 문장이 가리키는 대상을 <b>적힌 그대로</b>
+   * ({@code "<스키마>"."<테이블>"}) 쓴다. 스키마명을 여기서 다시 조립하지 않으므로 선행 문장과 잠금
+   * 대상이 어긋날 수 없다.
+   */
+  static String outputLockKey(String preStatement) {
+    return preStatement.substring(CLEAR_VERB.length());
+  }
+
+  /**
    * 테넌트별 파이프라인 실행 커넥션 풀의 레지스트리.
    *
    * <p><b>왜 단일 {@code pipelineDslContext} 빈을 주입받지 않는가(P3-b1 R2).</b> 그 빈은 공용
@@ -130,6 +171,9 @@ public class SqlScriptExecutor {
                   // 커밋되기 전까지는 DELETE 도 INSERT 도 밖에서 보이지 않고(MVCC), 실패하면 둘 다
                   // 롤백된다.
                   for (String preStatement : preStatements) {
+                    // 출력 테이블 단위 직렬화(#731) — 비우기(DELETE) 전에 이 테이블의 advisory 잠금을
+                    // 잡는다. 이유는 OUTPUT_LOCK_SQL 의 Javadoc 참조.
+                    cfg.dsl().fetch(OUTPUT_LOCK_SQL, outputLockKey(preStatement));
                     cfg.dsl().execute(preStatement);
                   }
                   cfg.dsl().execute(scriptContent);
