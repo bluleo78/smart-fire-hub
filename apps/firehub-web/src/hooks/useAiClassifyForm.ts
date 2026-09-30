@@ -12,7 +12,10 @@ import { useAiCredentialForm } from './useAiCredentialForm';
 export const CLASSIFY_MODEL_REQUIRED = '분류 모델을 선택하세요';
 
 export interface UseAiClassifyFormResult {
-  /** 분류 자격증명 폼(채팅과 같은 상태 기계). `setAgentType` 은 모델도 함께 비우도록 감싼 것이다. */
+  /**
+   * 분류 자격증명 폼(채팅과 같은 상태 기계). `setAgentType` 은 모델도 함께 다루도록 감싼 것이다 —
+   * 다른 유형으로 가면 모델을 비우고, 저장된 유형으로 돌아오면 저장된 모델·payload 를 복원한다(#724).
+   */
   cred: UseAiCredentialFormResult;
   /** 탭이 한 번이라도 열렸는가 — 열리기 전에는 조회하지 않는다. */
   activated: boolean;
@@ -29,6 +32,14 @@ export interface UseAiClassifyFormResult {
    * 되돌릴 로컬 입력도 없다(방금 쓴 값이 서버 값이다). 화면도 이때는 "취소"를 내주지 않는다.
    */
   cancelEditing: () => void;
+  /**
+   * 폼을 접지 않고 로컬 편집(유형·payload·비밀 입력·모델)만 저장값으로 되돌린다(#724) — 설정된
+   * 상태의 "되돌리기" 버튼용. 네트워크 호출은 없다.
+   *
+   * `cancelEditing` 과 같은 이유로 <b>저장 후 재조회가 실패한 상태에서는 아무것도 하지 않는다</b> —
+   * 그때의 `savedModel` 은 저장 전 값이라, 되돌리면 방금 저장한 값을 화면에서 지운다.
+   */
+  revert: () => void;
   model: string;
   setModel: (value: string) => void;
   modelError: string | null;
@@ -95,21 +106,38 @@ export function useAiClassifyForm(): UseAiClassifyFormResult {
     reload,
     save: baseSave,
     staleNotice,
+    savedAgentType,
   } = base;
 
   // 유형을 바꾸면 모델도 비운다 — 유형마다 모델 형식이 달라(opencode 는 공급자/모델) 옛 값이 새
   // 유형에서 형식 위반이 된다.
+  //
+  // 단, <b>저장된 유형으로 돌아올 때</b>는 비우지 않고 저장값 전체(유형·payload·모델)를 복원한다
+  // (#724). 저장된 유형에서는 저장된 모델이 곧 유효한 형식이고, 비워 두면 "다른 유형에 어떤 칸이
+  // 있나" 눌러 본 것만으로 폼이 dirty 로 남아 원래 모델을 기억해 다시 골라야 한다. payload 까지
+  // 되돌리는 이유: base 의 setAgentType 은 돌아올 때도 payload 를 비우므로(opencode 의 공급자·
+  // 기본 URL), 모델만 복원하면 여전히 저장값과 다른 화면이 된다. 그래서 base 의 `reset` 을 쓴다 —
+  // 그 안에서 모델 목록 세대도 함께 무효화된다(#721).
+  // 저장 후 재조회 실패 상태(`staleNotice`)는 예외다 — 그때의 savedModel·원본 스냅샷은 저장 전
+  // 값이라 복원하면 옛 값을 되살린다. 예전처럼 비우기만 한다.
   const setAgentType = useCallback(
     (next: AgentType) => {
-      if (next !== agentType) {
-        setModelState('');
-        // 모델 입력 자체가 새로 시작하므로 옛 모델 오류도 함께 지운다 — 남기면 사용자가 건드리지도
-        // 않은 새 입력칸 아래 "분류 모델을 선택하세요" 가 떠 있게 된다.
-        setModelError(null);
+      if (next === agentType) {
+        baseSetAgentType(next);
+        return;
       }
+      // 모델 입력 자체가 새로 시작하므로 옛 모델 오류도 함께 지운다 — 남기면 사용자가 건드리지도
+      // 않은 새 입력칸 아래 "분류 모델을 선택하세요" 가 떠 있게 된다.
+      setModelError(null);
+      if (next === savedAgentType && staleNotice === null) {
+        baseReset();
+        setModelState(savedModel);
+        return;
+      }
+      setModelState('');
       baseSetAgentType(next);
     },
-    [agentType, baseSetAgentType],
+    [agentType, baseSetAgentType, baseReset, savedAgentType, savedModel, staleNotice],
   );
   // base 는 매 렌더 새 객체라 메모할 이유가 없다 — setAgentType 만 감싼 사본을 넘긴다.
   const cred: UseAiCredentialFormResult = { ...base, setAgentType };
@@ -165,6 +193,15 @@ export function useAiClassifyForm(): UseAiClassifyFormResult {
     setEditingUnconfigured(false);
   }, [baseReset, savedModel, staleNotice]);
 
+  // 설정된 상태의 "되돌리기"(#724) — cancelEditing 에서 "폼 접기"만 뺀 것이다.
+  const revert = useCallback(() => {
+    // 재조회 실패 상태의 savedModel 은 저장 전 값이다(cancelEditing 주석과 같은 이유).
+    if (staleNotice !== null) return;
+    baseReset();
+    setModelState(savedModel);
+    setModelError(null);
+  }, [baseReset, savedModel, staleNotice]);
+
   // 훅 호출은 반환 객체 리터럴 안에 두지 않는다(rules-of-hooks).
   const activate = useCallback(() => setActivated(true), []);
   const startEditing = useCallback(() => setEditingUnconfigured(true), []);
@@ -176,6 +213,7 @@ export function useAiClassifyForm(): UseAiClassifyFormResult {
     editing,
     startEditing,
     cancelEditing,
+    revert,
     model,
     setModel,
     modelError,

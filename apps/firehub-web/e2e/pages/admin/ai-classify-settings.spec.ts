@@ -205,6 +205,87 @@ test.describe('AI 분류 전용 공급자 탭(#707)', () => {
     await expect(panel.getByText(USING_CHAT, { exact: true })).toHaveCount(0);
   });
 
+  /**
+   * #724 — 설정된 탭에서 유형을 "구경만" 하고 저장된 유형으로 돌아오면 저장된 모델·payload 가
+   * 그대로 돌아와야 한다. 예전에는 돌아올 때도 모델을 비워서, 아무것도 바꾸지 않았는데 폼이 dirty
+   * 로 남고(저장 활성) 원래 모델을 기억해 다시 골라야 했다.
+   */
+  test('설정된 상태에서 유형을 바꿨다 저장된 유형으로 돌아오면 저장된 모델이 복원되고 dirty 가 풀린다(#724)', async ({
+    authenticatedPage: page,
+  }) => {
+    const calls = await mockAiClassifyCredential(
+      page,
+      createAiClassifyCredential({ configured: true, secretFieldNames: ['oauthToken'], model: 'claude-haiku-4-5' }),
+    );
+    await openClassifyTab(page);
+    const panel = classifyPanel(page);
+    const model = panel.locator('#ai-classify-model');
+    const save = panel.getByRole('button', { name: '저장' });
+    await expect(model).toHaveText('Claude Haiku 4.5');
+    await expect(save).toBeDisabled();
+
+    // 다른 유형으로 — 모델 형식이 달라질 수 있으므로 비우는 것은 의도된 동작이다.
+    await panel.locator('#ai-classify-agent-type').click();
+    await page.getByRole('option', { name: 'Claude API', exact: true }).click();
+    await expect(model).toHaveText('모델을 선택하세요');
+    await expect(save).toBeEnabled();
+
+    // 저장된 유형으로 복귀 — 저장값과 같은 화면이어야 한다.
+    await panel.locator('#ai-classify-agent-type').click();
+    await page.getByRole('option', { name: 'Claude Agent SDK', exact: true }).click();
+    await expect(model).toHaveText('Claude Haiku 4.5');
+    await expect(save).toBeDisabled();
+    await expect(panel.getByRole('button', { name: '되돌리기' })).toBeDisabled();
+    expect(calls.puts).toHaveLength(0);
+  });
+
+  /**
+   * #724 — 설정된 탭에도 편집을 버릴 수단(되돌리기)이 있어야 한다. 되돌리기는 네트워크 없이 유형·
+   * 비밀 입력·모델을 저장값으로 돌리고, 돌린 뒤에는 저장·되돌리기 모두 비활성이다.
+   */
+  test('설정된 상태의 되돌리기는 유형·비밀 입력·모델 편집을 저장값으로 돌린다(#724)', async ({
+    authenticatedPage: page,
+  }) => {
+    const calls = await mockAiClassifyCredential(
+      page,
+      createAiClassifyCredential({ configured: true, secretFieldNames: ['oauthToken'], model: 'claude-haiku-4-5' }),
+    );
+    await openClassifyTab(page);
+    const panel = classifyPanel(page);
+    const model = panel.locator('#ai-classify-model');
+    const save = panel.getByRole('button', { name: '저장' });
+    const revert = panel.getByRole('button', { name: '되돌리기' });
+    // 편집이 없으면 되돌릴 것도 없다.
+    await expect(revert).toBeDisabled();
+
+    // 유형 전환 + 새 유형의 비밀 입력 — 저장값과 전혀 다른 화면을 만든다.
+    await panel.locator('#ai-classify-agent-type').click();
+    await page.getByRole('option', { name: 'Claude API', exact: true }).click();
+    await panel.locator('#ai-classify-api-key').fill('sk-ant-api03-discard');
+    await expect(revert).toBeEnabled();
+    await revert.click();
+
+    await expect(panel.locator('#ai-classify-agent-type')).toHaveText('Claude Agent SDK');
+    // sdk 유형에도 API 키 칸이 있다 — 되돌린 뒤에는 방금 친 값이 남아 있으면 안 된다.
+    await expect(panel.locator('#ai-classify-api-key')).toHaveValue('');
+    await expect(model).toHaveText('Claude Haiku 4.5');
+    await expect(save).toBeDisabled();
+    await expect(revert).toBeDisabled();
+
+    // 모델만 바꾼 편집도 되돌린다.
+    await model.click();
+    await page.getByRole('option', { name: 'Claude Sonnet 5' }).click();
+    await expect(save).toBeEnabled();
+    await revert.click();
+    await expect(model).toHaveText('Claude Haiku 4.5');
+    await expect(save).toBeDisabled();
+    // 해제 버튼은 그대로 좌측에 남아 있고, 서버로는 아무것도 가지 않았다.
+    await expect(panel.getByRole('button', { name: CLEAR_LABEL })).toBeVisible();
+    expect(calls.puts).toHaveLength(0);
+    expect(calls.deleteCount).toBe(0);
+    await page.screenshot({ path: screenshotPath('classify-configured-revert.png'), fullPage: true });
+  });
+
   test('서버 400 메시지를 그대로 보여준다', async ({ authenticatedPage: page }) => {
     await mockAiClassifyCredential(page);
     const rejection = 'AI 모델(gpt)이 opencode 형식(공급자/모델)이 아니거나 선택한 공급자와 일치하지 않습니다. 관리자 설정에서 모델을 다시 선택하세요.';

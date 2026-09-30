@@ -61,6 +61,7 @@ vi.mock('../../hooks/useAiClassifyForm', () => ({
     editing: false,
     startEditing: vi.fn(),
     cancelEditing: vi.fn(),
+    revert: vi.fn(),
     model: '',
     setModel: vi.fn(),
     modelError: null,

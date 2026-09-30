@@ -168,4 +168,87 @@ describe('useAiClassifyForm', () => {
     expect(view.result.current.model).toBe('');
     expect(view.result.current.modelError).toBeNull();
   });
+
+  /**
+   * #724 — <b>변종: 저장된 유형으로 돌아올 때도 모델을 비운다(옛 동작).</b> 유형을 눌러 보기만
+   * 했는데 저장된 모델이 사라지고 폼이 dirty 로 남는다. opencode 로 고정한 이유: base 의
+   * setAgentType 이 payload(공급자·기본 URL)도 비우므로, <b>모델만 복원하는 변종</b>도
+   * `hasUnsavedInput` 단언에서 걸린다.
+   */
+  it('저장된 유형으로 돌아오면 저장된 모델·payload 가 복원되고 dirty 가 풀린다', async () => {
+    const payload = { providerId: 'openai', baseURL: 'https://gw.example/v1' };
+    mockedGet.mockResolvedValue({
+      data: makeResponse({
+        agentType: 'opencode',
+        payload,
+        secretFieldNames: ['apiKey'],
+        configured: true,
+        model: 'openai/gpt-4o-mini',
+      }),
+    } as never);
+    const view = await renderActivated();
+    expect(view.result.current.hasUnsavedInput).toBe(false);
+
+    // 다른 유형으로 가면 모델을 비운다(의도된 동작 — 유형마다 모델 형식이 다르다).
+    act(() => view.result.current.cred.setAgentType('sdk'));
+    expect(view.result.current.model).toBe('');
+    expect(view.result.current.hasUnsavedInput).toBe(true);
+
+    act(() => view.result.current.cred.setAgentType('opencode'));
+
+    expect(view.result.current.model).toBe('openai/gpt-4o-mini');
+    expect(view.result.current.cred.payload).toEqual(payload);
+    expect(view.result.current.hasUnsavedInput).toBe(false);
+  });
+
+  /**
+   * #724 — <b>변종: revert 가 cancelEditing 을 그대로 부른다 / 모델을 안 되돌린다.</b> 되돌리기는
+   * 유형·비밀 입력·모델을 저장값으로 돌리되 폼은 펼쳐 둔다. 서버는 건드리지 않는다.
+   */
+  it('revert 는 유형·비밀 입력·모델을 저장값으로 되돌리고 서버를 부르지 않는다', async () => {
+    mockedGet.mockResolvedValue({
+      data: makeResponse({ configured: true, secretFieldNames: ['oauthToken'], model: 'claude-haiku-4-5' }),
+    } as never);
+    const view = await renderActivated();
+    const getsBefore = mockedGet.mock.calls.length;
+
+    act(() => view.result.current.cred.setAgentType('cli-api'));
+    act(() => view.result.current.cred.setSecretInput('apiKey', 'sk-ant-api03-discard'));
+    act(() => view.result.current.setModel('claude-sonnet-5'));
+    expect(view.result.current.hasUnsavedInput).toBe(true);
+
+    act(() => view.result.current.revert());
+
+    expect(view.result.current.cred.agentType).toBe('sdk');
+    expect(view.result.current.cred.secretInputs).toEqual({});
+    expect(view.result.current.model).toBe('claude-haiku-4-5');
+    expect(view.result.current.hasUnsavedInput).toBe(false);
+    expect(view.result.current.editing).toBe(true);
+    expect(mockedGet.mock.calls.length).toBe(getsBefore);
+    expect(mockedPut).not.toHaveBeenCalled();
+  });
+
+  /**
+   * #724 — <b>변종: 재조회 실패 상태 가드를 뺀다.</b> 그때의 savedModel 은 저장 전 값이라, revert 나
+   * "저장된 유형으로 복귀"가 그 값을 되살리면 방금 저장한 모델이 화면에서 옛 모델로 바뀐다.
+   */
+  it('저장 후 재조회 실패 상태에서는 revert 도 유형 복귀도 저장 전 모델을 되살리지 않는다', async () => {
+    mockedGet.mockResolvedValue({
+      data: makeResponse({ configured: true, secretFieldNames: ['oauthToken'], model: 'claude-haiku-4-5' }),
+    } as never);
+    const view = await renderActivated();
+    act(() => view.result.current.setModel('claude-sonnet-5'));
+    mockedGet.mockRejectedValueOnce(new Error('network down'));
+    await act(async () => {
+      await view.result.current.save();
+    });
+    expect(view.result.current.cred.staleNotice).not.toBeNull();
+
+    act(() => view.result.current.revert());
+    expect(view.result.current.model).toBe('claude-sonnet-5');
+
+    act(() => view.result.current.cred.setAgentType('cli-api'));
+    act(() => view.result.current.cred.setAgentType('sdk'));
+    expect(view.result.current.model).toBe('');
+  });
 });

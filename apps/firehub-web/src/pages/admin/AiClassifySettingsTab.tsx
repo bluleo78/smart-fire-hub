@@ -1,4 +1,4 @@
-import { Info, Save } from 'lucide-react';
+import { Info, RotateCcw, Save } from 'lucide-react';
 import { useState } from 'react';
 
 import { Button } from '../../components/ui/button';
@@ -23,7 +23,8 @@ const CLEAR_BODY =
  *
  * - 미설정: AI 에이전트(채팅) 설정을 통째로 쓰고 있다는 배너 + 그 유형·모델 + "분류 전용 설정하기".
  * - 설정/편집: 자격증명 fieldset(채팅 탭과 같은 컴포넌트, id 접두어 `ai-classify`) + 모델(필수).
- *   설정된 상태에서만 하단 좌측에 "분류 전용 설정 해제"(되돌릴 수 없으므로 확인창).
+ *   설정된 상태에서만 하단 좌측에 "분류 전용 설정 해제"(되돌릴 수 없으므로 확인창), 우측에
+ *   "되돌리기"(#724 — 미저장 편집을 저장값으로. 미설정 편집에서는 "취소"가 그 역할이다).
  * - 저장 후 재조회 실패(`cred.staleNotice`): 저장은 됐지만 서버 `configured` 를 아직 못 읽은
  *   상태라 좌측에는 "해제"도 "취소"도 내주지 않는다(아래 주석 참고).
  */
@@ -139,14 +140,33 @@ export default function AiClassifySettingsTab({
 
                 <div className="flex items-center justify-between gap-3">
                   {renderFooterLeft()}
-                  <Button
-                    type="button"
-                    onClick={() => void state.save()}
-                    disabled={state.isSaving || state.isClearing || !state.hasUnsavedInput}
-                  >
-                    <Save className="h-4 w-4" />
-                    {state.isSaving ? '저장 중...' : '저장'}
-                  </Button>
+                  <div className="flex items-center gap-3">
+                    {/* 되돌리기(#724) — 이메일 탭과 같은 배치·모양. 설정된 상태에서만 낸다: 미설정
+                        편집은 좌측 "취소"가 입력을 버리고, 재조회 실패 상태(cred.configured 가
+                        아직 false)는 되돌릴 기준값을 모른다. 설정된 뒤의 재조회 실패는 버튼을
+                        잠근다(훅의 revert 도 그때는 아무것도 하지 않는다). */}
+                    {cred.configured && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={state.revert}
+                        disabled={
+                          !state.hasUnsavedInput || state.isSaving || state.isClearing || cred.staleNotice !== null
+                        }
+                      >
+                        <RotateCcw className="h-4 w-4" />
+                        되돌리기
+                      </Button>
+                    )}
+                    <Button
+                      type="button"
+                      onClick={() => void state.save()}
+                      disabled={state.isSaving || state.isClearing || !state.hasUnsavedInput}
+                    >
+                      <Save className="h-4 w-4" />
+                      {state.isSaving ? '저장 중...' : '저장'}
+                    </Button>
+                  </div>
                 </div>
               </>
             )}
