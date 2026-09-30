@@ -207,6 +207,12 @@ export function useEmbeddingSettingsForm(): EmbeddingSettingsFormState {
         await commitSave(request, seq);
       }
     } catch (e) {
+      // probe·영향도·PUT 어느 단계가 실패했든, 요청 뒤 입력이 바뀌었으면 그 실패 사유는 옛 값의 것이다 — 서버
+      // 문구를 지금 화면의 입력 옆에 띄우지 않고, 성공 분기와 같은 재저장 안내로 통일한다(#716 회귀).
+      if (isStale()) {
+        toast.info(STALE_SAVE_MESSAGE);
+        return;
+      }
       toast.error(extractApiError(e, '임베딩 설정을 저장하지 못했습니다.'));
     } finally {
       setBusy(false);

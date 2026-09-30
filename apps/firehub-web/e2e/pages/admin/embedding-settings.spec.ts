@@ -269,6 +269,70 @@ test.describe('임베딩 설정 탭', () => {
     await expect(page.locator('p[role="status"]')).toHaveCount(0);
   });
 
+  test('저장 probe 가 실패하는 동안 입력을 바꾸면 옛 값의 실패 사유 대신 재저장 안내만 보여준다(#716)', async ({
+    authenticatedPage: page,
+  }) => {
+    const { impact, save } = await setupEmbeddingMocks(page, {});
+    const probe = await gateProbe(page, {
+      status: 400,
+      body: { message: '임베딩 연결 테스트 실패: OpenAI 임베딩 호출 실패: connection timed out' },
+    });
+    await openTab(page);
+
+    await page.getByLabel('모델').fill('old-model');
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+    await expect.poll(probe.hits).toBe(1);
+    // probe 가 도는 동안 입력을 고친다 — 뒤늦은 400 은 옛 값의 실패다.
+    await page.getByLabel('모델').fill('edited-model');
+    probe.release();
+
+    // 멈춘 이유는 재저장 안내로 알리고, 옛 값의 서버 실패 문구는 토스트·결과 줄 어디에도 띄우지 않는다.
+    await expect(page.getByText('저장 중 입력이 바뀌어 저장하지 않았습니다. 다시 저장하세요.')).toBeVisible();
+    await expect(page.getByRole('button', { name: '저장', exact: true })).toBeEnabled();
+    await expect(page.getByText(/connection timed out/)).toHaveCount(0);
+    await expect(page.locator('p[role="status"]')).toHaveCount(0);
+    expect(impact.requests).toHaveLength(0);
+    expect(save.requests).toHaveLength(0);
+    await expect(page.getByLabel('모델')).toHaveValue('edited-model');
+  });
+
+  test('저장 PUT 이 실패하는 동안 입력을 바꾸면 옛 값의 실패 사유 대신 재저장 안내만 보여준다(#716)', async ({
+    authenticatedPage: page,
+  }) => {
+    // probe·영향도는 통과(영향 0 → 확인 창 없이 PUT). PUT 을 붙잡아 두는 동안 입력을 고친다.
+    await setupEmbeddingMocks(page, {
+      impact: { body: { chunks: 0, datasets: 0, rowSearchIndexes: 0 } },
+    });
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let puts = 0;
+    await page.route(
+      (url) => url.pathname === '/api/v1/settings/embedding',
+      async (route) => {
+        if (route.request().method() !== 'PUT') return route.fallback();
+        puts += 1;
+        await gate;
+        return route.fulfill({
+          status: 400,
+          contentType: 'application/json',
+          body: JSON.stringify({ message: '임베딩 연결 테스트 실패: Ollama 임베딩 호출 실패: 503' }),
+        });
+      },
+    );
+    await openTab(page);
+
+    await page.getByLabel('모델').fill('old-model');
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+    await expect.poll(() => puts).toBe(1);
+    await page.getByLabel('모델').fill('edited-model');
+    release();
+
+    await expect(page.getByText('저장 중 입력이 바뀌어 저장하지 않았습니다. 다시 저장하세요.')).toBeVisible();
+    await expect(page.getByRole('button', { name: '저장', exact: true })).toBeEnabled();
+    await expect(page.getByText(/Ollama 임베딩 호출 실패: 503/)).toHaveCount(0);
+    await expect(page.getByLabel('모델')).toHaveValue('edited-model');
+  });
+
   test('저장 PUT 이 400 이면 서버 문구를 토스트로 보여준다', async ({ authenticatedPage: page }) => {
     // probe·영향도는 통과(영향 0 → 확인 창 없이 PUT)했는데 서버가 저장 시 다시 probe 해 거부한 경우.
     const { save } = await setupEmbeddingMocks(page, {
