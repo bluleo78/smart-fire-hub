@@ -57,10 +57,15 @@ export default function ScriptEditor({ value, onChange, language, readOnly = fal
   const readOnlyCompartment = useRef(new Compartment());
   const themeCompartment = useRef(new Compartment());
   const onChangeRef = useRef(onChange);
+  // 에디터는 마운트 시 한 번만 만들어지므로, updateListener 가 readOnly 를 클로저로 잡으면
+  // 보기 모드(readOnly=true)로 마운트된 뒤 수정 모드로 바뀌어도 계속 true 로 판단해 onChange 를 삼킨다(#740).
+  // onChange 와 마찬가지로 ref 로 최신 값을 읽게 한다.
+  const readOnlyRef = useRef(readOnly);
   const { resolvedTheme } = useTheme();
 
   // Keep onChange ref current without recreating editor
   onChangeRef.current = onChange;
+  readOnlyRef.current = readOnly;
 
   // Create editor on mount
   useEffect(() => {
@@ -82,7 +87,8 @@ export default function ScriptEditor({ value, onChange, language, readOnly = fal
         ]),
         stepRefHighlighter,
         EditorView.updateListener.of((update) => {
-          if (!readOnly && update.docChanged) {
+          // 마운트 시점 값이 아니라 현재 readOnly 로 판정한다 — 보기→수정 전환 후 입력도 편집 상태에 반영된다
+          if (!readOnlyRef.current && update.docChanged) {
             onChangeRef.current(update.state.doc.toString());
           }
         }),
