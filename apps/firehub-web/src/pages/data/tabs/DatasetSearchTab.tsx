@@ -104,7 +104,17 @@ export function DatasetSearchTab({ dataset, datasetId }: DatasetSearchTabProps) 
   }
 
   const label = STATUS_LABEL[status.status];
-  const percent = status.totalRows > 0 ? Math.round((status.indexedRows / status.totalRows) * 100) : 0;
+  // 색인 완료(IDLE) 여부. 검색 대상 필드가 모두 빈 행은 설계상 색인에 넣지 않으므로
+  // 완료 후에도 indexedRows < totalRows 일 수 있다 — 그 차이를 "미완료"로 보여주면 안 된다(#717).
+  const completed = status.status === 'IDLE';
+  // 완료 시점의 (전체 행 − 색인 행) = 검색 필드가 비어 색인에서 제외된 행 수
+  const skippedRows = completed ? Math.max(status.totalRows - status.indexedRows, 0) : 0;
+  // 완료면 항상 100%, 진행 중이면 비율(행 삭제 등으로 분모가 줄어도 100% 를 넘지 않게 제한)
+  const percent = completed
+    ? 100
+    : status.totalRows > 0
+      ? Math.min(Math.round((status.indexedRows / status.totalRows) * 100), 100)
+      : 0;
 
   return (
     <div className="space-y-4" data-testid="search-tab">
@@ -127,10 +137,23 @@ export function DatasetSearchTab({ dataset, datasetId }: DatasetSearchTabProps) 
           </StatusBadge>
           {status.enabled && (
             <>
-              <Progress value={percent} className="w-48" aria-label="색인 진행률" />
-              <span>
-                {status.indexedRows.toLocaleString()} / {status.totalRows.toLocaleString()}행
-              </span>
+              <Progress value={percent} className="w-48" aria-label="색인 진행률" data-testid="search-index-progress" />
+              {completed ? (
+                // 완료: 분수 대신 색인된 행 수를 보여주고, 빈 행이 있으면 제외 건수를 따로 밝힌다
+                <span data-testid="search-index-rows">
+                  {status.indexedRows.toLocaleString()}행 색인됨
+                  {skippedRows > 0 && (
+                    <span className="text-muted-foreground">
+                      {' '}
+                      · 검색 필드가 빈 {skippedRows.toLocaleString()}행 제외
+                    </span>
+                  )}
+                </span>
+              ) : (
+                <span data-testid="search-index-rows">
+                  {status.indexedRows.toLocaleString()} / {status.totalRows.toLocaleString()}행
+                </span>
+              )}
               {status.lastSyncedAt && (
                 <span className="text-muted-foreground">
                   · 마지막 동기화 {formatDate(status.lastSyncedAt)}

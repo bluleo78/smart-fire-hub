@@ -69,12 +69,53 @@ test.describe('데이터셋 검색 탭', () => {
     await page.goto(URL);
 
     await expect(page.getByTestId('search-index-status')).toHaveText(/사용 가능/);
-    await expect(page.getByText('10,000 / 10,000행')).toBeVisible();
+    // 완료 상태는 분수가 아니라 색인된 행 수로 보여주고, 빈 행이 없으면 제외 문구가 없다
+    await expect(page.getByTestId('search-index-rows')).toHaveText('10,000행 색인됨');
     await expect(page.getByText(/bge-m3/)).toBeVisible();
     await expect(page.getByRole('checkbox', { name: '내용' })).toBeChecked();
 
     await page.getByRole('button', { name: '다시 색인' }).click();
     await reindex.waitForRequest();
+  });
+
+  // #717 회귀: 검색 필드가 모두 빈 행은 색인에서 제외되므로 완료 후에도 indexedRows < totalRows 다.
+  // 그 차이를 미완료(50%)로 보여주면 안 되고, 100% + 제외 건수로 표시해야 한다.
+  test('완료 상태는 빈 행이 있어도 진행률 100% 와 제외 건수를 표시한다', async ({ authenticatedPage: page }) => {
+    await setupDataset(page);
+    await mockApi(
+      page,
+      'GET',
+      `/api/v1/datasets/${DATASET_ID}/search-index`,
+      createSearchIndexStatus({ enabled: true, fields: ['content'], status: 'IDLE', indexedRows: 1, totalRows: 2, embeddingModel: 'bge-m3', lastSyncedAt: new Date().toISOString() }),
+    );
+    await page.goto(URL);
+
+    await expect(page.getByTestId('search-index-status')).toHaveText(/사용 가능/);
+    await expect(page.getByTestId('search-index-rows')).toHaveText('1행 색인됨 · 검색 필드가 빈 1행 제외');
+    // 막대가 끝까지 찼는지: 인디케이터의 translateX 가 0% (= 100%). 브라우저가 -0% 를 0% 로 정규화한다.
+    await expect(page.getByTestId('search-index-progress').locator('[data-slot="progress-indicator"]')).toHaveAttribute(
+      'style',
+      /translateX\(-?0%\)/,
+    );
+  });
+
+  // 색인 중에는 실제 비율을 그대로 보여준다(완료 처리로 진행 상황을 가리지 않는다).
+  test('색인 중 상태는 실제 비율과 분수를 표시한다', async ({ authenticatedPage: page }) => {
+    await setupDataset(page);
+    await mockApi(
+      page,
+      'GET',
+      `/api/v1/datasets/${DATASET_ID}/search-index`,
+      createSearchIndexStatus({ enabled: true, fields: ['content'], status: 'SYNCING', indexedRows: 5, totalRows: 10 }),
+    );
+    await page.goto(URL);
+
+    await expect(page.getByTestId('search-index-status')).toHaveText(/색인 중/);
+    await expect(page.getByTestId('search-index-rows')).toHaveText('5 / 10행');
+    await expect(page.getByTestId('search-index-progress').locator('[data-slot="progress-indicator"]')).toHaveAttribute(
+      'style',
+      /translateX\(-50%\)/,
+    );
   });
 
   test('오류 상태는 메시지를 보여준다', async ({ authenticatedPage: page }) => {
