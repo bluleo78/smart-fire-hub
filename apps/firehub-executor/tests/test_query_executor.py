@@ -554,3 +554,87 @@ def test_geometry_detect_sql_survives_trailing_line_comment():
     assert effective.rstrip().endswith(") _geom_detect LIMIT 0"), (
         f"닫는 괄호/LIMIT 0 이 주석에 먹혔다: {detect_sql!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# #745 — 끝 주석·세미콜론이 max_rows LIMIT 을 삼키지 않는다 (#746 블록 주석·달러 인용 포함)
+# ---------------------------------------------------------------------------
+
+def _capture_select_sql(query: str, max_rows: int = 1) -> list[str]:
+    """execute_query 가 실제로 DB 에 보낸 사용자 SELECT 문(SET/SAVEPOINT/pg_type 제외)을 모은다."""
+    executed: list[str] = []
+    cursor = MagicMock()
+    cursor.description = [("v", 23, None, None, None, None, None)]
+    cursor.fetchall.return_value = [(1,)]
+    cursor.execute.side_effect = lambda sql, *a, **k: executed.append(sql)
+    conn = MagicMock()
+    conn.cursor.return_value = cursor
+    cursor.connection = conn
+    result = execute_query(query, max_rows=max_rows, read_only=True, conn=conn, tenant_id=1)
+    assert result.success is True, result.error
+    return [
+        s for s in executed
+        if not s.startswith(("SET ", "SAVEPOINT", "RELEASE", "ROLLBACK")) and "pg_type" not in s
+    ]
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "SELECT g FROM generate_series(1,5000) g -- note",
+        "SELECT g FROM generate_series(1,5000) g; -- note",
+        "SELECT g FROM generate_series(1,5000) g /* note */",
+        "SELECT g FROM generate_series(1,5000) g; /* a */ -- b\n",
+        "SELECT g FROM generate_series(1,5000) g /* outer /* nested */ still comment */",
+        "SELECT g FROM generate_series(1,5000) g;;  \n",
+    ],
+)
+def test_trailing_comment_and_semicolon_do_not_swallow_limit(query):
+    """끝 주석/세미콜론이 있어도 DB 에 가는 문장은 주석·세미콜론 없이 LIMIT 으로 끝난다(#745)."""
+    sqls = _capture_select_sql(query, max_rows=1)
+    assert len(sqls) == 1, sqls
+    sql = sqls[0]
+    assert sql.rstrip().endswith("LIMIT 1"), f"LIMIT 이 문장 끝에 오지 않는다: {sql!r}"
+    assert "--" not in sql and "/*" not in sql and ";" not in sql, f"끝 주석/세미콜론이 남았다: {sql!r}"
+
+
+@pytest.mark.parametrize(
+    "query, expected_prefix",
+    [
+        # 문자열·식별자·달러 인용 안의 ; -- /* 는 끝 주석·세미콜론이 아니다 — 지우면 안 된다.
+        ("SELECT 'a;--b' AS v", "SELECT 'a;--b' AS v"),
+        ("SELECT 'it''s;' AS v; -- c", "SELECT 'it''s;' AS v"),
+        ('SELECT 1 AS "x;--/*"', 'SELECT 1 AS "x;--/*"'),
+        ("SELECT $$;-- /*$$ AS v;", "SELECT $$;-- /*$$ AS v"),
+        ("SELECT $t$ ; $$ -- $t$ AS v /* c */", "SELECT $t$ ; $$ -- $t$ AS v"),
+        ("SELECT E'a\\';--' AS v -- c", "SELECT E'a\\';--' AS v"),
+    ],
+)
+def test_quoted_semicolons_and_comment_markers_are_preserved(query, expected_prefix):
+    """따옴표·식별자·달러 인용 속 기호는 보존하고 진짜 끝 주석/세미콜론만 걷어낸다(#745/#746)."""
+    sql = _capture_select_sql(query, max_rows=1)[0]
+    assert sql == f"{expected_prefix}\nLIMIT 1", sql
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "SELECT g FROM generate_series(1,5000) g -- LIMIT 5",
+        "SELECT g FROM generate_series(1,5000) g /* LIMIT 5 */",
+        "SELECT 'LIMIT 5' AS v FROM generate_series(1,5000) g",
+        "SELECT g, (SELECT 1 LIMIT 1) AS s FROM generate_series(1,5000) g",
+        "SELECT g FROM (SELECT * FROM generate_series(1,5000) LIMIT 4000) AS g(g)",
+    ],
+)
+def test_limit_in_comment_literal_or_subquery_does_not_bypass_max_rows(query):
+    """주석·문자열·서브쿼리 속 LIMIT 은 최상위 LIMIT 이 아니므로 max_rows LIMIT 이 붙어야 한다(#745)."""
+    sql = _capture_select_sql(query, max_rows=1)[0]
+    assert sql.endswith("\nLIMIT 1"), f"max_rows LIMIT 이 빠졌다: {sql!r}"
+
+
+def test_comment_only_query_is_rejected_as_empty():
+    """주석만 있는 쿼리는 걷어내면 빈 문장이다 — 빈 쿼리 오류로 끝나야 한다."""
+    conn = MagicMock()
+    result = execute_query("-- only\n/* comment */ ;", max_rows=1, read_only=True, conn=conn, tenant_id=1)
+    assert result.success is False
+    assert result.error == "Query must not be empty"

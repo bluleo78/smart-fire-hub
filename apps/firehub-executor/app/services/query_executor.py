@@ -63,13 +63,134 @@ def _build_geojson_wrapped_sql(
 
 
 
+# 달러 인용 여는 태그: $$ 또는 $tag$ (tag 는 문자/밑줄로 시작). $1 같은 위치 파라미터는 인용이 아니다.
+_DOLLAR_TAG = re.compile(r"\$(?:[A-Za-z_\x80-\U0010FFFF][A-Za-z0-9_\x80-\U0010FFFF]*)?\$")
+# 마스크 위에서 찾는 최상위 LIMIT n (주석·리터럴은 이미 가려져 있다).
+_LIMIT_CLAUSE = re.compile(r"(?i)\bLIMIT\s+\d+")
+
+
+def _mask_sql(sql: str) -> str:
+    """주석을 공백으로, 리터럴(문자열·따옴표 식별자·달러 인용) 내용을 ``x`` 로 가린 같은 길이 문자열을 만든다.
+
+    왜: 끝 주석·세미콜론 제거와 최상위 LIMIT 판정은 "진짜 SQL 코드"만 봐야 한다. ``'a;--b'`` 속 ``;``,
+    ``$$ -- $$`` 속 ``--``, ``/* LIMIT 5 */`` 속 LIMIT 을 코드로 오인하면 LIMIT 이 주석에 묻히거나(#745)
+    가짜 LIMIT 에 속아 max_rows 가 빠진다. 인덱스를 보존하므로 마스크에서 찾은 위치로 원문을 자를 수 있다.
+
+    인지하는 PostgreSQL 어휘: ``--`` 줄 주석, 중첩 가능한 ``/* */`` 블록 주석, ``'...'``(``''`` 이스케이프,
+    ``E'...'`` 의 백슬래시 이스케이프), ``"..."`` 식별자(``""`` 이스케이프), ``$tag$...$tag$`` 달러 인용(#746).
+    닫히지 않은 리터럴/주석은 끝까지 그 상태로 본다(DB 가 어차피 문법 오류로 거부한다).
+    """
+    out = list(sql)
+    n = len(sql)
+    i = 0
+    while i < n:
+        c = sql[i]
+        nxt = sql[i + 1] if i + 1 < n else ""
+        if c == "-" and nxt == "-":
+            # 줄 주석: 개행 직전까지 가린다(개행 자체는 남긴다).
+            j = sql.find("\n", i)
+            j = n if j < 0 else j
+            for k in range(i, j):
+                out[k] = " "
+            i = j
+        elif c == "/" and nxt == "*":
+            # 블록 주석: PostgreSQL 은 중첩을 허용하므로 깊이를 센다.
+            depth = 1
+            j = i + 2
+            while j < n and depth > 0:
+                if sql.startswith("/*", j):
+                    depth += 1
+                    j += 2
+                elif sql.startswith("*/", j):
+                    depth -= 1
+                    j += 2
+                else:
+                    j += 1
+            for k in range(i, j):
+                out[k] = " "
+            i = j
+        elif c == "'" or c == '"':
+            # E'...' 는 백슬래시 이스케이프를 쓴다(표준 문자열은 '' 만).
+            backslash_escapes = (
+                c == "'"
+                and i > 0
+                and sql[i - 1] in "eE"
+                and (i < 2 or not (sql[i - 2].isalnum() or sql[i - 2] == "_"))
+            )
+            j = i + 1
+            while j < n:
+                if backslash_escapes and sql[j] == "\\":
+                    j += 2
+                    continue
+                if sql[j] == c:
+                    if j + 1 < n and sql[j + 1] == c:  # '' / "" 이스케이프
+                        j += 2
+                        continue
+                    break
+                j += 1
+            for k in range(i + 1, min(j, n)):
+                out[k] = "x"
+            i = j + 1
+        elif c == "$" and not (i > 0 and (sql[i - 1].isalnum() or sql[i - 1] == "_")):
+            # 식별자 중간의 $ (예: a$b) 는 달러 인용이 아니다.
+            m = _DOLLAR_TAG.match(sql, i)
+            if not m:
+                i += 1
+                continue
+            tag = m.group(0)
+            end = sql.find(tag, m.end())
+            end = n if end < 0 else end + len(tag)
+            for k in range(i, end):
+                out[k] = "x"
+            i = end
+        else:
+            i += 1
+    return "".join(out)
+
+
+def _normalize_sql(sql: str) -> str:
+    """끝의 공백·주석·세미콜론을 (여러 개여도) 걷어낸 SQL 을 돌려준다. 주석만 있으면 빈 문자열.
+
+    #745: 끝 주석을 남긴 채 ``LIMIT`` 을 덧붙이면 LIMIT 이 주석에 묻혀 max_rows 가 무시되고, 단순히
+    개행을 넣어 붙이면 ``SELECT …; -- note`` 가 두 문장이 된다. 그래서 주석·리터럴을 인지해 **진짜 끝**
+    (마지막 코드 문자)까지만 남긴다. API 의 ``MergeSqlBuilder.stripTrailingSemicolon`` 과 같은 목적이되
+    블록 주석·달러 인용까지 인지한다(#746). 중간의 세미콜론(여러 문장)은 건드리지 않는다 — 다중 문장
+    거부는 API 쪽 검증의 몫이다.
+    """
+    masked = _mask_sql(sql)
+    end = len(masked.rstrip())
+    while end > 0 and masked[end - 1] == ";":
+        end = len(masked[: end - 1].rstrip())
+    return sql[:end].lstrip()
+
+
 def _has_limit(sql: str) -> bool:
-    """Return True if the SQL already contains a LIMIT clause."""
-    return bool(re.match(r"(?si).*\bLIMIT\s+\d+", sql))
+    """괄호 깊이 0(최상위)에 ``LIMIT n`` 이 있으면 True.
+
+    주석·문자열 속 LIMIT 이나 서브쿼리 속 LIMIT 은 결과 행 수를 제한하지 않으므로 무시한다 — 예전 정규식은
+    ``-- LIMIT 5``/``(SELECT … LIMIT 1)`` 에 속아 max_rows LIMIT 을 빼먹었다(#745). 사용자가 최상위에 직접
+    쓴 LIMIT 은 지금처럼 존중한다(API 직접 실행 경로와 같은 규칙).
+    """
+    masked = _mask_sql(sql)
+    depth_at: list[int] = []
+    depth = 0
+    for ch in masked:
+        if ch == "(":
+            depth += 1
+        depth_at.append(depth)
+        if ch == ")":
+            depth = max(0, depth - 1)
+    return any(depth_at[m.start()] == 0 for m in _LIMIT_CLAUSE.finditer(masked))
 
 
 def _add_limit(sql: str, max_rows: int) -> str:
-    return f"{sql} LIMIT {max_rows}"
+    """정규화된(끝 주석·세미콜론이 없는) SQL 뒤에 LIMIT 을 붙인다.
+
+    개행으로 띄우는 것은 방어적 이중 안전장치다 — 혹시 끝에 줄 주석이 남아 있더라도 LIMIT 은 다음 줄이라
+    주석에 먹히지 않는다. 서브쿼리 래핑 대신 덧붙이기를 택한 이유: 입력이 이미 정규화돼 있어 충분하고,
+    래핑은 ``SELECT … INTO``·서브쿼리 ORDER BY 해석 등 원문 의미를 바꿀 여지가 있다.
+    """
+    return f"{sql}\nLIMIT {max_rows}"
 
 
 def execute_query(
@@ -85,7 +206,9 @@ def execute_query(
     schema = resolve_schema(tenant_id)
 
     # 1. Validate
-    clean_sql = query.strip().rstrip(";").strip()
+    # 끝의 주석·세미콜론을 주석/리터럴 인지로 걷어낸다(#745). 이후 모든 소비처(LIMIT 부착, geometry
+    # 감지·래핑, DML 실행)가 같은 정규화 SQL 을 쓴다 — 그러지 않으면 래핑 괄호 안에 ; 가 남는다.
+    clean_sql = _normalize_sql(query)
     if not clean_sql:
         return QueryExecuteResponse(
             success=False,
@@ -149,7 +272,9 @@ def execute_query(
 
                     if has_geom:
                         wrapped_sql = _build_geojson_wrapped_sql(clean_sql, column_metas)
-                        if not _has_limit(wrapped_sql):
+                        # 판정은 사용자 SQL 로 한다 — 래핑 CTE 안의 LIMIT 은 최상위가 아니라서
+                        # wrapped_sql 로 보면 항상 False 가 되어 주 경로와 규칙이 갈린다.
+                        if not _has_limit(clean_sql):
                             wrapped_sql = _add_limit(wrapped_sql, max_rows)
                         cursor.execute(wrapped_sql)
                         columns = [desc[0] for desc in cursor.description] if cursor.description else []
@@ -173,7 +298,9 @@ def execute_query(
                     orig_columns, orig_rows = columns, rows
                     try:
                         wrapped_sql = _build_geojson_wrapped_sql(clean_sql, column_metas)
-                        if not _has_limit(wrapped_sql):
+                        # 판정은 사용자 SQL 로 한다 — 래핑 CTE 안의 LIMIT 은 최상위가 아니라서
+                        # wrapped_sql 로 보면 항상 False 가 되어 주 경로와 규칙이 갈린다.
+                        if not _has_limit(clean_sql):
                             wrapped_sql = _add_limit(wrapped_sql, max_rows)
                         cursor.execute("ROLLBACK TO SAVEPOINT analytics_query")
                         cursor.execute("SAVEPOINT analytics_query")

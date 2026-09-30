@@ -5,6 +5,10 @@ import static com.smartfirehub.jooq.Tables.USER;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.smartfirehub.pipeline.service.executor.ExecutorClient;
@@ -227,6 +231,55 @@ class MetricPollerServiceTest extends IntegrationTestBase {
     insertAnomalyJob(config, "ANOMALY");
 
     metricPollerService.poll();
+  }
+
+  /**
+   * #745 — 끝이 줄 주석(--)·블록 주석·세미콜론인 메트릭 SQL 은 주석·세미콜론을 걷어낸 채 executor 로 간다.
+   * 원문을 그대로 보내면 executor 가 붙이는 LIMIT 1 이 끝 주석에 묻혀 결과 전체를 가져왔다.
+   */
+  @Test
+  void poll_withDatasetMetric_trailingComment_sendsStrippedSqlToExecutor() {
+    when(executorClient.executeQuery(any(), anyInt(), anyBoolean()))
+        .thenReturn(
+            new QueryExecuteResult(
+                true, "SELECT", List.of("v"), List.of(Map.of("v", 1)), 1, 0, 0L, true, null));
+
+    String config =
+        "{\"anomaly\": {\"sensitivity\": \"medium\", \"metrics\": [{\"id\": \"m745\","
+            + " \"source\": \"dataset\", \"query\":"
+            + " \"SELECT 1 AS v FROM generate_series(1,5000) g /* blk */; -- note\"}]}}";
+    insertAnomalyJob(config, "ANOMALY");
+
+    metricPollerService.poll();
+
+    verify(executorClient)
+        .executeQuery(eq("SELECT 1 AS v FROM generate_series(1,5000) g"), eq(1), eq(true));
+  }
+
+  /** #745 — 애드혹 쿼리 검증기(차단 함수 등)를 통과하지 못하는 메트릭 SQL 은 executor 로 보내지 않는다. */
+  @Test
+  void poll_withDatasetMetric_unsafeQuery_skipsWithoutCallingExecutor() {
+    String config =
+        "{\"anomaly\": {\"sensitivity\": \"medium\", \"metrics\": [{\"id\": \"m745u\","
+            + " \"source\": \"dataset\", \"query\": \"SELECT pg_read_file('/etc/passwd')\"}]}}";
+    insertAnomalyJob(config, "ANOMALY");
+
+    metricPollerService.poll();
+
+    verify(executorClient, never()).executeQuery(anyString(), anyInt(), anyBoolean());
+  }
+
+  /** #745 — 여러 문장(세미콜론 뒤 코드)은 애드혹 경로처럼 거부되어 executor 로 가지 않는다. */
+  @Test
+  void poll_withDatasetMetric_multiStatement_skipsWithoutCallingExecutor() {
+    String config =
+        "{\"anomaly\": {\"sensitivity\": \"medium\", \"metrics\": [{\"id\": \"m745m\","
+            + " \"source\": \"dataset\", \"query\": \"SELECT 1; SELECT 2\"}]}}";
+    insertAnomalyJob(config, "ANOMALY");
+
+    metricPollerService.poll();
+
+    verify(executorClient, never()).executeQuery(anyString(), anyInt(), anyBoolean());
   }
 
   // V103 이후 proactive_job.tenant_id 는 NOT NULL + GUC 파생 DEFAULT 다. 픽스처 삽입은

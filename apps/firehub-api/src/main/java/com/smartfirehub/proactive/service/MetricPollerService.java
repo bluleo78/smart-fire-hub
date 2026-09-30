@@ -7,6 +7,10 @@ import static com.smartfirehub.jooq.Tables.PROACTIVE_JOB;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartfirehub.dataset.exception.SqlQueryException;
+import com.smartfirehub.global.util.SqlValidationUtils;
+import com.smartfirehub.pipeline.exception.UnsafeSqlException;
+import com.smartfirehub.pipeline.service.validator.SqlValidator;
 import com.smartfirehub.global.tenant.TenantScopedRunner;
 import com.smartfirehub.proactive.dto.AnomalyEvent;
 import com.smartfirehub.proactive.repository.MetricSnapshotRepository;
@@ -40,6 +44,13 @@ public class MetricPollerService {
   private final TransactionTemplate transactionTemplate;
   // 데이터셋 메트릭 수집을 위한 SQL 실행 클라이언트
   private final com.smartfirehub.pipeline.service.executor.ExecutorClient executorClient;
+
+  /**
+   * 데이터셋 메트릭 SQL 검증기 — 애드혹 분석 쿼리({@code AnalyticsQueryExecutionService})와 같은 정책(현재 테넌트
+   * 데이터 스키마만, 미한정 이름 허용)이다. 메트릭 SQL 은 사용자가 애드혹 쿼리처럼 직접 쓰는 SELECT 이므로 같은
+   * 문을 통과해야 한다. 스프링 빈(파이프라인 정책)이 아니라 팩터리 인스턴스를 쓰는 이유는 그 팩터리 주석 참조.
+   */
+  private final SqlValidator metricSqlValidator = SqlValidator.forAdhocDataSchemaQueries();
 
   // Track last poll time per job+metric to respect pollingInterval
   private final Map<String, LocalDateTime> lastPollTime = new ConcurrentHashMap<>();
@@ -174,9 +185,25 @@ public class MetricPollerService {
         log.warn("MetricPollerService: dataset metric '{}' has no query, skipping", metricId);
         return;
       }
+      // 애드혹 쿼리 경로와 같은 정규화·검증을 거친다(#745) — 원문을 그대로 보내면 끝의 "-- 주석"이
+      // executor 가 붙이는 LIMIT 1 을 삼켜 결과 전체를 가져오고(수백만 행·수십 MB), 응답이 WebClient 버퍼
+      // 한도를 넘어 수집이 매번 실패했다. 주석을 걷어내고 끝 세미콜론을 지운 뒤 스키마/함수 검증까지 한다.
+      String cleanSql;
+      try {
+        cleanSql =
+            SqlValidationUtils.removeTrailingSemicolon(SqlValidationUtils.stripAndValidate(query))
+                .strip();
+        metricSqlValidator.validate(cleanSql);
+      } catch (SqlQueryException | UnsafeSqlException e) {
+        log.warn(
+            "MetricPollerService: dataset metric '{}' has invalid query, skipping: {}",
+            metricId,
+            e.getMessage());
+        return;
+      }
       try {
         // readOnly=true로 SELECT 쿼리만 허용하고, 결과 행 수를 1로 제한한다
-        var result = executorClient.executeQuery(query, 1, true);
+        var result = executorClient.executeQuery(cleanSql, 1, true);
         if (result.rows() != null
             && !result.rows().isEmpty()
             && result.rows().get(0) != null
