@@ -737,3 +737,135 @@ test.describe('AI 동작 설정 — 테넌트 전용 평면 설정', () => {
     await expect(defaultHint(fieldBox(page, 'ai-temperature'))).toBeVisible();
   });
 });
+
+/**
+ * 이슈 #720 — 모델(`ai.model`, `PUT /settings`)과 자격증명(`PUT /settings/ai-credential`)은 별도
+ * 요청으로 순서대로 저장된다. 앞의 것이 성공하고 뒤의 것이 거부되면 "새 유형 형식의 모델 + 옛 유형
+ * 자격증명"이 남아 AI 채팅이 깨졌다. 화면은 자격증명이 거부되면 방금 저장한 모델을 저장 전 값으로
+ * 되돌리는 보상 PUT 을 보내야 한다.
+ */
+test.describe('AI 설정 저장 — 자격증명이 거부되면 모델도 되돌린다(#720)', () => {
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await setupAdminAuth(page);
+  });
+
+  /**
+   * 이슈의 재현 경로 그대로다: Claude → OpenCode 전환 + 프로브 실패 → 직접 입력 → 저장 → 자격증명 502.
+   *
+   * <b>서버 상태를 흉내 낸다</b> — `PUT /settings` 가 `serverModel` 을 실제로 바꾸고 GET 이 그 값을
+   * 돌려준다. 단언의 중심은 토스트가 아니라 <b>끝났을 때 서버에 남은 `ai.model`</b> 과 두 번째 PUT 의
+   * 본문이다(토스트만 보면 보상이 빠져도 초록이다).
+   *
+   * <b>뮤테이션 대상</b>: `SettingsPage.performSave` 의 `rollbackModel` 호출을 지우면 `settingsPuts`
+   * 길이·`serverModel` 단언이 빨개진다(수정 전 동작: 서버에 `openai/gpt-4o` 가 남는다).
+   */
+  test('자격증명 PUT 이 502 로 거부되면 ai.model 을 저장 전 값으로 되돌리는 PUT 을 보내고 편집은 남긴다', async ({
+    authenticatedPage: page,
+  }) => {
+    // 서버가 들고 있는 ai.model — 저장한 적 없는(기본값) 상태에서 시작한다.
+    let serverModel = { value: 'claude-sonnet-5', overridden: false };
+    const settingsPuts: Record<string, string>[] = [];
+    await page.route(
+      (url) => url.pathname === '/api/v1/settings',
+      (route) => {
+        if (route.request().method() !== 'PUT') return route.fallback();
+        const { settings } = route.request().postDataJSON() as { settings: Record<string, string> };
+        settingsPuts.push(settings);
+        if (settings['ai.model'] !== undefined) serverModel = { value: settings['ai.model'], overridden: true };
+        return route.fulfill({ status: 204, body: '' });
+      },
+    );
+    await setupSettingsMocks(page, { ai: () => createAiSettings({ 'ai.model': serverModel }) });
+
+    const calls = await mockAiCredential(
+      page,
+      createAiCredential({ agentType: 'sdk', configured: true, payload: {}, secretFieldNames: ['oauthToken'] }),
+    );
+    // 나중에 등록한 라우트가 먼저 잡는다 — 자격증명 PUT 만 502 로 거부한다(서버의 저장 시 재프로브 실패).
+    const rejection = '호스트를 확인할 수 없습니다';
+    let rejectedCredPuts = 0;
+    await page.route(
+      (url) => url.pathname === '/api/v1/settings/ai-credential',
+      (route) => {
+        if (route.request().method() !== 'PUT') return route.fallback();
+        rejectedCredPuts += 1;
+        return route.fulfill({
+          status: 502,
+          contentType: 'application/json',
+          body: JSON.stringify({ status: 502, error: 'Bad Gateway', message: rejection }),
+        });
+      },
+    );
+    await mockApi(page, 'POST', '/api/v1/settings/ai-credential/probe', {
+      ok: false,
+      models: [],
+      message: rejection,
+    });
+
+    await page.goto('/admin/settings');
+
+    // Claude → OpenCode 전환, 공급자·URL·키 입력, 프로브 실패 → 직접 입력으로 모델 지정
+    await page.locator('#ai-cred-agent-type').click();
+    await page.getByRole('option', { name: 'OpenCode', exact: true }).click();
+    await credentialGroup(page).getByRole('combobox', { name: '공급자' }).click();
+    await page.getByRole('option', { name: 'OpenAI', exact: true }).click();
+    await credentialGroup(page).getByRole('textbox', { name: '기본 URL' }).fill('https://gateway-b.example.com/v1');
+    await credentialGroup(page).getByRole('textbox', { name: 'API 키' }).fill('sk-test-720');
+    await page.getByRole('button', { name: '모델 불러오기' }).click();
+    await page.getByRole('button', { name: '직접 입력으로 전환' }).click();
+    await page.getByPlaceholder('예: gpt-4o').fill('gpt-4o');
+
+    await page.getByRole('button', { name: '저장' }).click();
+    await page.getByRole('alertdialog').getByRole('button', { name: '저장' }).click();
+
+    // 1) 모델 저장 → 2) 자격증명 거부 → 3) 모델 보상(저장 전 값, 모델 한 키만)
+    await expect.poll(() => settingsPuts.length).toBe(2);
+    expect(rejectedCredPuts).toBe(1);
+    expect(calls.puts).toHaveLength(0);
+    expect(settingsPuts[0]).toEqual({ 'ai.model': 'openai/gpt-4o' });
+    expect(settingsPuts[1]).toEqual({ 'ai.model': 'claude-sonnet-5' });
+    // 서버에 남은 모델은 옛 유형(Claude) 자격증명과 맞는 값이다 — 이것이 결함의 본체다.
+    expect(serverModel.value).toBe('claude-sonnet-5');
+
+    // 거부 사유와 "모델도 저장하지 않았다"는 안내가 뜨고, 모순되는 성공 토스트는 없다.
+    await expect(page.getByText(rejection).first()).toBeVisible();
+    await expect(page.getByText('자격증명 저장이 거부되어 모델 변경도 저장하지 않았습니다.', { exact: false })).toBeVisible();
+    await expect(page.getByText('설정이 저장되었습니다.')).toHaveCount(0);
+
+    // 편집은 그대로 남아 다시 저장할 수 있다(모델 입력 유지, 저장 버튼 활성).
+    await expect(page.getByPlaceholder('예: gpt-4o')).toHaveValue('gpt-4o');
+    await expect(page.getByRole('button', { name: '저장' })).toBeEnabled();
+
+    await page.screenshot({ path: screenshotPath('credential-rejected-model-rolled-back.png'), fullPage: true });
+
+    // 되돌리기 → 저장된 상태(Claude SDK + claude-sonnet-5)로 온전히 돌아온다. 모델 칸은 빈 칸이 아니다.
+    await page.getByRole('button', { name: '되돌리기' }).click();
+    await expect(page.locator('#ai-cred-agent-type')).toContainText('Claude Agent SDK');
+    await expect(page.locator('#ai-model')).toContainText('Claude Sonnet 5');
+    await expect(page.getByRole('button', { name: '저장' })).toBeDisabled();
+  });
+
+  /**
+   * 방어선 — 이미 어긋난 상태(Claude 유형 자격증명 + `공급자/모델` 형식 모델)로 들어온 화면은 모델
+   * Select 를 빈 칸으로 그리지 않고 저장값을 그대로 보여 주며, 다시 고르라고 안내한다.
+   *
+   * <b>뮤테이션 대상</b>: Select 옵션의 `withPreservedValue` 를 빼면 `#ai-model` 단언이 빨개진다.
+   */
+  test('Claude 유형인데 저장된 모델이 목록 밖이면 그 값을 보여 주고 다시 선택하라고 안내한다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupSettingsMocks(page, {
+      ai: createAiSettings({ 'ai.model': { value: 'openai/gpt-4o', overridden: true } }),
+    });
+    await mockAiCredential(page, createAiCredential({ agentType: 'sdk', configured: true }));
+    await page.goto('/admin/settings');
+
+    await expect(page.locator('#ai-model')).toContainText('openai/gpt-4o');
+    await expect(aiPanel(page).getByText('Claude 모델 목록에 없는 값입니다.', { exact: false })).toBeVisible();
+
+    // 목록의 모델을 다시 고르면 안내가 사라진다.
+    await page.locator('#ai-model').click();
+    await page.getByRole('option', { name: 'Claude Sonnet 5', exact: true }).click();
+    await expect(aiPanel(page).getByText('Claude 모델 목록에 없는 값입니다.', { exact: false })).toHaveCount(0);
+  });
+});

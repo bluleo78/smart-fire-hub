@@ -45,6 +45,12 @@ export interface SettingsOverrideForm<F extends SettingsFormShape> {
   };
   /** 저장 성공 후 `original` 을 현재 폼으로 확정한다. */
   commitSaved: () => void;
+  /**
+   * 한 키의 `original` 만 주어진 값으로 되돌린다(폼 값은 건드리지 않는다, #720). 저장해 둔 키를
+   * 서버에서 이전 값으로 되돌렸을 때(보상 저장) 쓴다 — 그 키가 다시 "아직 저장하지 않은 변경"으로
+   * 판정되어 사용자가 입력을 잃지 않고 재시도할 수 있다.
+   */
+  restoreOriginal: (key: keyof F, value: string) => void;
   refreshMeta: () => Promise<Record<string, ResolvedSettingResponse>>;
   /**
    * <b>`loadFailed` 종단 화면의 "다시 시도" 버튼 전용</b>이다. 이름이 `refetch` 가 아닌 이유:
@@ -185,6 +191,11 @@ export function useSettingsOverrideForm<F extends SettingsFormShape>({
 
   const commitSaved = () => setOriginal({ ...form });
 
+  // 함수형 갱신이어야 한다 — 같은 저장 흐름에서 먼저 부른 `commitSaved` 의 결과 위에 얹힌다.
+  const restoreOriginal = useCallback((key: keyof F, value: string) => {
+    setOriginal((prev) => ({ ...prev, [key]: value }) as F);
+  }, []);
+
   // dirty 판정도 저장 대상과 같은 기준(원본과 다른 키)을 쓴다.
   const hasChanges = (Object.keys(form) as (keyof F)[]).some((key) => form[key] !== original[key]);
 
@@ -201,6 +212,7 @@ export function useSettingsOverrideForm<F extends SettingsFormShape>({
     handleReset,
     buildChangedPayload,
     commitSaved,
+    restoreOriginal,
     refreshMeta,
     retryInitialLoad: load,
   };
