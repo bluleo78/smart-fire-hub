@@ -61,11 +61,14 @@ export default function ScriptEditor({ value, onChange, language, readOnly = fal
   // 보기 모드(readOnly=true)로 마운트된 뒤 수정 모드로 바뀌어도 계속 true 로 판단해 onChange 를 삼킨다(#740).
   // onChange 와 마찬가지로 ref 로 최신 값을 읽게 한다.
   const readOnlyRef = useRef(readOnly);
+  // readOnly 전환 시 뷰 문서를 편집 상태(value)와 맞추기 위해 최신 value 를 ref 로 둔다(#751).
+  const valueRef = useRef(value);
   const { resolvedTheme } = useTheme();
 
   // Keep onChange ref current without recreating editor
   onChangeRef.current = onChange;
   readOnlyRef.current = readOnly;
+  valueRef.current = value;
 
   // Create editor on mount
   useEffect(() => {
@@ -112,6 +115,10 @@ export default function ScriptEditor({ value, onChange, language, readOnly = fal
     insertTextRef.current = (text: string) => {
       const view = viewRef.current;
       if (!view) return;
+      // EditorState.readOnly/editable 은 사용자 입력만 막고 프로그램적 dispatch 는 막지 않는다.
+      // 읽기 전용에서 삽입하면 updateListener 가 onChange 를 부르지 않아 뷰 문서만 바뀌고 편집 상태와 어긋나,
+      // 수정 모드 전환 후 첫 입력 때 유령 텍스트까지 저장된다(#751). 읽기 전용이면 아무것도 하지 않는다.
+      if (readOnlyRef.current) return;
       // changes 만 dispatch 하면 CodeMirror 가 커서를 삽입 "앞"에 매핑해, 이어서 입력한 글자가
       // 삽입한 {{#N}} 앞에 들어간다(#743). replaceSelection 은 선택 영역을 교체(선택 없으면 커서에 삽입)하고
       // 커서를 삽입 끝으로 옮긴 트랜잭션 스펙을 만들어 준다. 버튼 클릭으로 잃은 포커스도 돌려준다.
@@ -144,6 +151,12 @@ export default function ScriptEditor({ value, onChange, language, readOnly = fal
         EditorState.readOnly.of(!!readOnly),
       ]),
     });
+    // 방어적 동기화(#751): 읽기 전용 동안 프로그램적 경로로 뷰 문서가 편집 상태와 어긋났다면,
+    // 모드가 바뀌는 시점에 편집 상태(value) 기준으로 되돌려 유령 텍스트가 저장으로 이어지지 않게 한다.
+    const current = view.state.doc.toString();
+    if (current !== valueRef.current) {
+      view.dispatch({ changes: { from: 0, to: current.length, insert: valueRef.current } });
+    }
   }, [readOnly]);
 
   // Reconfigure theme when dark/light changes

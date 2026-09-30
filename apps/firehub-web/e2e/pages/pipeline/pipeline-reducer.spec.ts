@@ -221,6 +221,9 @@ test.describe('pipelineEditorReducer — cycle detection (ADD_EDGE)', () => {
     await page.goto('/pipelines/1');
     await expect(page.getByRole('tab', { name: '개요' })).toBeVisible({ timeout: 10000 });
 
+    // 스텝 참조 버튼은 편집 전용 컨트롤이라 보기 모드에서는 숨겨진다(#751) — 수정 모드로 전환한다
+    await page.getByRole('button', { name: '수정' }).click();
+
     // 캔버스에서 "D" 스텝 노드를 선택
     const stepDNode = page.locator('.react-flow__node', { hasText: 'D' });
     await expect(stepDNode).toBeVisible({ timeout: 10000 });

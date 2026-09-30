@@ -424,7 +424,12 @@ export default function StepConfigPanel({
                 >
                   스크립트
                 </span>
-                {otherSteps.length > 0 && (
+                {/*
+                  스텝 참조 버튼은 스크립트에 {{#N}} 을 삽입하는 편집 전용 컨트롤이다.
+                  보기 모드(readOnly)에서 노출하면 읽기 전용 에디터에 화면만 바뀌는 유령 텍스트가 들어가
+                  이후 수정·저장 시 함께 저장된다(#751). 주변 편집 전용 액션처럼 보기 모드에서는 숨긴다.
+                */}
+                {!readOnly && otherSteps.length > 0 && (
                   <div className="space-y-1.5">
                     <div className="flex flex-wrap items-center gap-1.5">
                       <span className="text-xs text-muted-foreground shrink-0">스텝 참조:</span>
