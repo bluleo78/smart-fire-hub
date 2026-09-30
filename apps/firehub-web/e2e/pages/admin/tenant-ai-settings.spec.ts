@@ -869,3 +869,176 @@ test.describe('AI 설정 저장 — 자격증명이 거부되면 모델도 되�
     await expect(aiPanel(page).getByText('Claude 모델 목록에 없는 값입니다.', { exact: false })).toHaveCount(0);
   });
 });
+
+/**
+ * #721 — OpenCode `모델 불러오기` 가 도는 동안 기본 URL·유형을 바꾸면, 늦게 도착한 <b>옛 요청의 응답</b>
+ * (성공·실패 모두)을 지금 폼의 결과로 쓰지 않는다. 진행 중에는 버튼을 잠가 프로브가 두 번 나가지 않는다.
+ *
+ * `setPayloadField`/`setAgentType` 의 `setModels(null)` 은 이미 도착한 결과만 지울 수 있어, 수정 전에는
+ * 옛 URL 의 목록이 새 URL 옆에 "✓ 모델 N개"로 되살아났다(#716 임베딩 탭과 같은 패턴).
+ */
+test.describe('OpenCode 모델 불러오기 — 요청 중 입력이 바뀌면 늦은 옛 응답을 버린다(#721)', () => {
+  const PROBE_PATH = '/api/v1/settings/ai-credential/probe';
+  const OLD_URL = 'https://gateway-a.example.com/v1';
+  const NEW_URL = 'https://gateway-b.example.com/v1';
+  const OLD_FAILURE = '게이트웨이 A 가 자격증명을 거부했습니다.';
+
+  /**
+   * 프로브 응답을 `release()` 전까지 붙잡아 두는 라우트 — "입력을 바꾼 뒤 응답 도착" 순서를 결정적으로 만든다.
+   * `hits` 는 실제로 나간 프로브 수(중복 전송 단언용)다.
+   */
+  async function gateProbe(page: Page, response: { status: number; body: unknown }) {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let hits = 0;
+    await page.route(
+      (url) => url.pathname === PROBE_PATH,
+      async (route) => {
+        hits += 1;
+        await gate;
+        return route.fulfill({
+          status: response.status,
+          contentType: 'application/json',
+          body: JSON.stringify(response.body),
+        });
+      },
+    );
+    return { release, hits: () => hits };
+  }
+
+  /**
+   * 붙잡아 둔 응답을 풀고, 화면이 그 응답을 처리할 시간을 준다. 기대 결과가 "아무것도 나타나지 않음"이라
+   * 기다릴 양성 신호가 없다 — 응답 도착 뒤 잠깐 기다려야 부재 단언이 렌더 전에 공허하게 통과하지 않는다.
+   */
+  async function releaseAndSettle(page: Page, probe: { release: () => void }) {
+    const responded = page.waitForResponse((r) => new URL(r.url()).pathname === PROBE_PATH);
+    probe.release();
+    await responded;
+    await page.waitForTimeout(300);
+  }
+
+  /** 저장된 opencode 자격증명(옛 URL)으로 화면을 열고 새 API 키를 입력해 둔다 — URL 을 바꿔도 버튼이 활성이게. */
+  async function openWithOpencode(page: Page) {
+    await mockAiCredential(
+      page,
+      createAiCredential({
+        agentType: 'opencode',
+        configured: true,
+        payload: { providerId: 'openai', baseURL: OLD_URL },
+        secretFieldNames: ['apiKey'],
+      }),
+    );
+    await page.goto('/admin/settings');
+    await page.locator('#ai-cred-opencode-api-key').fill('sk-typed');
+  }
+
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await setupAdminAuth(page);
+    await setupSettingsMocks(page, { ai: createAiSettings() });
+  });
+
+  test('요청 중 기본 URL 을 바꾸면 늦게 도착한 옛 URL 의 모델 목록을 채우지 않는다', async ({
+    authenticatedPage: page,
+  }) => {
+    const probe = await gateProbe(page, {
+      status: 200,
+      body: { ok: true, models: ['a-model-1', 'a-model-2', 'a-model-3'], message: null },
+    });
+    await openWithOpencode(page);
+
+    await page.getByRole('button', { name: '모델 불러오기' }).click();
+    await expect.poll(probe.hits).toBe(1);
+
+    // 요청이 도는 동안 기본 URL 을 바꾼다 — 옛 요청은 버려지므로 버튼은 곧바로 새 URL 용으로 되돌아온다.
+    await page.locator('#ai-cred-base-url').fill(NEW_URL);
+    await expect(page.getByRole('button', { name: '모델 불러오기' })).toBeEnabled();
+
+    await releaseAndSettle(page, probe);
+
+    await expect(page.getByText(/✓ 모델 \d+개/)).toHaveCount(0);
+    await expect(page.getByPlaceholder('먼저 모델을 불러오세요')).toBeVisible();
+    await expect(page.locator('#ai-cred-base-url')).toHaveValue(NEW_URL);
+    await expect(page.getByRole('button', { name: '모델 불러오기' })).toBeEnabled();
+  });
+
+  test('요청 중 기본 URL 을 바꾸면 늦게 도착한 옛 URL 의 실패(ok:false)를 붙이지 않는다', async ({
+    authenticatedPage: page,
+  }) => {
+    const probe = await gateProbe(page, { status: 200, body: { ok: false, models: [], message: OLD_FAILURE } });
+    await openWithOpencode(page);
+
+    await page.getByRole('button', { name: '모델 불러오기' }).click();
+    await expect.poll(probe.hits).toBe(1);
+    await page.locator('#ai-cred-base-url').fill(NEW_URL);
+
+    await releaseAndSettle(page, probe);
+
+    await expect(page.getByText(OLD_FAILURE)).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '직접 입력으로 전환' })).toHaveCount(0);
+    await expect(page.getByPlaceholder('먼저 모델을 불러오세요')).toBeVisible();
+  });
+
+  test('요청 중 기본 URL 을 바꾸면 늦게 도착한 옛 URL 의 HTTP 400 도 붙이지 않는다', async ({
+    authenticatedPage: page,
+  }) => {
+    const probe = await gateProbe(page, { status: 400, body: { message: OLD_FAILURE } });
+    await openWithOpencode(page);
+
+    await page.getByRole('button', { name: '모델 불러오기' }).click();
+    await expect.poll(probe.hits).toBe(1);
+    await page.locator('#ai-cred-base-url').fill(NEW_URL);
+
+    await releaseAndSettle(page, probe);
+
+    await expect(page.getByText(OLD_FAILURE)).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '직접 입력으로 전환' })).toHaveCount(0);
+  });
+
+  test('요청 중 유형을 바꿨다 돌아와도 늦게 도착한 옛 목록을 채우지 않는다', async ({ authenticatedPage: page }) => {
+    const probe = await gateProbe(page, {
+      status: 200,
+      body: { ok: true, models: ['a-model-1', 'a-model-2', 'a-model-3'], message: null },
+    });
+    await openWithOpencode(page);
+
+    await page.getByRole('button', { name: '모델 불러오기' }).click();
+    await expect.poll(probe.hits).toBe(1);
+
+    await page.locator('#ai-cred-agent-type').click();
+    await page.getByRole('option', { name: 'Claude Agent SDK', exact: true }).click();
+    await page.locator('#ai-cred-agent-type').click();
+    await page.getByRole('option', { name: 'OpenCode', exact: true }).click();
+    // 유형 전환은 payload 를 비운다 — 기본 URL 이 빈 새 폼이다.
+    await expect(page.locator('#ai-cred-base-url')).toHaveValue('');
+
+    await releaseAndSettle(page, probe);
+
+    await expect(page.getByText(/✓ 모델 \d+개/)).toHaveCount(0);
+    await expect(page.getByPlaceholder('먼저 모델을 불러오세요')).toBeVisible();
+  });
+
+  test('불러오는 동안 버튼이 "불러오는 중..."으로 잠겨 프로브가 한 번만 나가고, 응답이 오면 목록을 채운다', async ({
+    authenticatedPage: page,
+  }) => {
+    const probe = await gateProbe(page, {
+      status: 200,
+      body: { ok: true, models: ['a-model-1', 'a-model-2', 'a-model-3'], message: null },
+    });
+    await openWithOpencode(page);
+
+    await page.getByRole('button', { name: '모델 불러오기' }).click();
+    await expect.poll(probe.hits).toBe(1);
+
+    const busy = page.getByRole('button', { name: '불러오는 중...' });
+    await expect(busy).toBeVisible();
+    await expect(busy).toBeDisabled();
+    await expect(page.getByRole('button', { name: '모델 불러오기' })).toHaveCount(0);
+
+    await releaseAndSettle(page, probe);
+
+    // 입력을 바꾸지 않았으니 이 응답은 지금 폼의 것이다 — 정상 경로가 막히지 않았음을 함께 고정한다.
+    await expect(page.getByText('✓ 모델 3개')).toBeVisible();
+    await expect(page.getByRole('button', { name: '모델 불러오기' })).toBeEnabled();
+    expect(probe.hits()).toBe(1);
+  });
+});

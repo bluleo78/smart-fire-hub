@@ -47,6 +47,7 @@ function makeCred(overrides: Partial<UseAiCredentialFormResult> = {}): UseAiCred
     loadModels: vi.fn(),
     modelsError: null,
     canLoadModels: true,
+    isLoadingModels: false,
     hasUnsavedInput: false,
     save: vi.fn(async () => true),
     staleNotice: null,
@@ -373,6 +374,18 @@ describe('OpencodeModelField — 모델 칸 4상태(설계서 §195)', () => {
     expect(button).toBeEnabled();
     await user.click(button);
     expect(cred.loadModels).toHaveBeenCalledOnce();
+  });
+
+  /** #721 — 진행 중에는 버튼을 잠그고 진행 문구를 보여 준다(중복 프로브 방지). */
+  it('isLoadingModels=true 면 버튼이 "불러오는 중..."으로 비활성이고 클릭해도 loadModels 를 부르지 않는다', async () => {
+    const user = userEvent.setup();
+    const cred = makeCred({ canLoadModels: true, isLoadingModels: true });
+    renderModel(cred);
+    const button = screen.getByRole('button', { name: '불러오는 중...' });
+    expect(button).toBeDisabled();
+    expect(screen.queryByRole('button', { name: '모델 불러오기' })).not.toBeInTheDocument();
+    await user.click(button);
+    expect(cred.loadModels).not.toHaveBeenCalled();
   });
 
   /**

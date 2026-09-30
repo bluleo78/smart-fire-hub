@@ -166,10 +166,11 @@ export function OpencodeModelField({
           variant="outline"
           size="sm"
           onClick={handleLoadModels}
-          disabled={!cred.canLoadModels}
+          // 진행 중에는 잠근다(#721) — 막지 않으면 같은 프로브가 여러 번 나가고 진행 여부도 알 수 없다.
+          disabled={!cred.canLoadModels || cred.isLoadingModels}
           className="shrink-0"
         >
-          모델 불러오기
+          {cred.isLoadingModels ? '불러오는 중...' : '모델 불러오기'}
         </Button>
       </div>
       {!cred.canLoadModels && (

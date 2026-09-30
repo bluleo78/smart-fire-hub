@@ -194,6 +194,171 @@ describe('useAiCredentialForm', () => {
     expect(result.current.models).toBeNull();
   });
 
+  /**
+   * #721 — 요청이 도는 동안 목록을 무효화하는 입력이 있으면, 늦게 도착한 옛 요청의 응답은 버린다.
+   * 성공·ok:false·HTTP 오류 세 분기를 모두 고정한다(#716 은 실패 분기를 놓쳐 회귀가 났다).
+   */
+  describe('늦게 도착한 옛 프로브 응답(#721)', () => {
+    /** 테스트가 원하는 순간에 풀거나 거절할 수 있는 프로브. */
+    function deferProbe() {
+      let resolve!: (value: unknown) => void;
+      let reject!: (reason: unknown) => void;
+      mockedProbe.mockImplementationOnce(
+        () =>
+          new Promise((res, rej) => {
+            resolve = res;
+            reject = rej;
+          }) as never,
+      );
+      return {
+        resolve: (data: unknown) => resolve({ data }),
+        reject: (err: unknown) => reject(err),
+      };
+    }
+    const OK = { ok: true, models: ['a-model-1', 'a-model-2'], message: null };
+
+    it('요청 중 기본 URL 을 바꾸면 늦은 성공 응답으로 models 를 채우지 않는다', async () => {
+      const probe = deferProbe();
+      const { result } = await renderLoaded();
+      let pending!: Promise<void>;
+      act(() => {
+        pending = result.current.loadModels();
+      });
+      expect(result.current.isLoadingModels).toBe(true);
+
+      act(() => result.current.setPayloadField('baseURL', 'https://other.example/v1'));
+      // 옛 요청은 버려졌다 — 새 URL 로 곧바로 다시 불러올 수 있어야 한다.
+      expect(result.current.isLoadingModels).toBe(false);
+
+      await act(async () => {
+        probe.resolve(OK);
+        await pending;
+      });
+      expect(result.current.models).toBeNull();
+      expect(result.current.modelsError).toBeNull();
+    });
+
+    it('요청 중 기본 URL 을 바꾸면 늦은 ok:false 응답을 modelsError 에 붙이지 않는다', async () => {
+      const probe = deferProbe();
+      const { result } = await renderLoaded();
+      let pending!: Promise<void>;
+      act(() => {
+        pending = result.current.loadModels();
+      });
+      act(() => result.current.setPayloadField('baseURL', 'https://other.example/v1'));
+      await act(async () => {
+        probe.resolve({ ok: false, models: [], message: '옛 URL 의 실패' });
+        await pending;
+      });
+      expect(result.current.modelsError).toBeNull();
+      expect(result.current.models).toBeNull();
+    });
+
+    it('요청 중 기본 URL 을 바꾸면 늦은 HTTP 오류를 modelsError 에 붙이지 않는다', async () => {
+      const probe = deferProbe();
+      const { result } = await renderLoaded();
+      let pending!: Promise<void>;
+      act(() => {
+        pending = result.current.loadModels();
+      });
+      act(() => result.current.setPayloadField('baseURL', 'https://other.example/v1'));
+      await act(async () => {
+        probe.reject(
+          Object.assign(new Error('bad request'), {
+            isAxiosError: true,
+            response: { status: 400, data: { message: '옛 URL 의 실패' } },
+          }),
+        );
+        await pending;
+      });
+      expect(result.current.modelsError).toBeNull();
+    });
+
+    it.each([
+      ['유형 전환', (r: { current: ReturnType<typeof useAiCredentialForm> }) => r.current.setAgentType('sdk')],
+      ['reset', (r: { current: ReturnType<typeof useAiCredentialForm> }) => r.current.reset()],
+    ])('요청 중 %s 이 있으면 늦은 성공 응답을 버린다', async (_name, mutate) => {
+      const probe = deferProbe();
+      const { result } = await renderLoaded();
+      let pending!: Promise<void>;
+      act(() => {
+        pending = result.current.loadModels();
+      });
+      act(() => mutate(result));
+      await act(async () => {
+        probe.resolve(OK);
+        await pending;
+      });
+      expect(result.current.models).toBeNull();
+      expect(result.current.isLoadingModels).toBe(false);
+    });
+
+    it('요청 중 저장 후 재조회(재시드)가 끝나면 늦은 성공 응답을 버린다', async () => {
+      const probe = deferProbe();
+      const { result } = await renderLoaded();
+      let pending!: Promise<void>;
+      act(() => {
+        pending = result.current.loadModels();
+      });
+      await act(() => result.current.save());
+      await act(async () => {
+        probe.resolve(OK);
+        await pending;
+      });
+      expect(result.current.models).toBeNull();
+    });
+
+    it('진행 중에 loadModels 를 또 불러도 프로브는 한 번만 나간다', async () => {
+      const probe = deferProbe();
+      const { result } = await renderLoaded();
+      let first!: Promise<void>;
+      act(() => {
+        first = result.current.loadModels();
+        void result.current.loadModels(); // 같은 틱의 연속 호출(더블 클릭)
+      });
+      await act(() => result.current.loadModels()); // 렌더 뒤의 재호출
+      expect(mockedProbe).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        probe.resolve(OK);
+        await first;
+      });
+      expect(result.current.models).toEqual(OK.models);
+      expect(result.current.isLoadingModels).toBe(false);
+    });
+
+    it('버려진 옛 요청이 끝나도, 그 사이 시작된 새 요청의 진행 표시와 결과를 건드리지 않는다', async () => {
+      const oldProbe = deferProbe();
+      const newProbe = deferProbe();
+      const { result } = await renderLoaded();
+      let oldPending!: Promise<void>;
+      let newPending!: Promise<void>;
+      act(() => {
+        oldPending = result.current.loadModels();
+      });
+      act(() => result.current.setPayloadField('baseURL', 'https://other.example/v1'));
+      act(() => {
+        newPending = result.current.loadModels();
+      });
+      expect(mockedProbe).toHaveBeenCalledTimes(2);
+
+      // 옛 요청이 실패로 먼저 끝난다 — 새 요청은 아직 돌고 있다.
+      await act(async () => {
+        oldProbe.resolve({ ok: false, models: [], message: '옛 URL 의 실패' });
+        await oldPending;
+      });
+      expect(result.current.isLoadingModels).toBe(true);
+      expect(result.current.modelsError).toBeNull();
+
+      await act(async () => {
+        newProbe.resolve({ ok: true, models: ['b-model'], message: null });
+        await newPending;
+      });
+      expect(result.current.models).toEqual(['b-model']);
+      expect(result.current.isLoadingModels).toBe(false);
+    });
+  });
+
   it('프로브가 4xx(요청 형태 오류)로 응답하면 modelsError 에 서버 메시지를 담는다', async () => {
     // ok:false 는 200 으로 오는 upstream 실패이고, 이것은 별개 경로다 — 요청 형태 자체가
     // 잘못됐을 때(예: 저장된 키가 없는데 secret 생략) HTTP 오류로 온다(설계서 "프로브" 절).

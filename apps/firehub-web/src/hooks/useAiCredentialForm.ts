@@ -161,6 +161,12 @@ export interface UseAiCredentialFormResult {
    */
   canLoadModels: boolean;
   /**
+   * `loadModels` 요청이 <b>지금 폼 값에 대해</b> 진행 중인가(#721). 버튼을 "불러오는 중..."으로 잠가
+   * 프로브가 두 번 나가지 않게 한다. 요청 중 기본 URL·유형이 바뀌면 그 요청은 버려지므로 즉시 false 로
+   * 돌아간다 — 새 값으로 곧바로 다시 불러올 수 있어야 한다.
+   */
+  isLoadingModels: boolean;
+  /**
    * 유형·payload·비밀 입력 중 <b>아직 저장하지 않은 변경</b>이 있는가. 저장 확인 다이얼로그가
    * 페이지의 "저장" 활성화·dirty 보고·이탈 가드와 "인증 확인" 버튼 잠금에 쓴다.
    */
@@ -235,7 +241,30 @@ export function useAiCredentialForm<R extends AiCredentialResponse = AiCredentia
   const [secretFieldNames, setSecretFieldNames] = useState<string[]>([]);
   const [models, setModels] = useState<string[] | null>(null);
   const [modelsError, setModelsError] = useState<string | null>(null);
+  const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [original, setOriginal] = useState<OriginalSnapshot>(EMPTY_ORIGINAL);
+
+  /**
+   * 모델 목록 세대(#721). `loadModels` 가 시작할 때 올리고 자기 번호를 기억했다가, 응답이 도착했을 때
+   * 번호가 달라졌으면(=그 사이 기본 URL·유형이 바뀌었거나 폼이 다시 시드됐으면) 그 응답을 버린다.
+   * `setModels(null)` 은 이미 도착한 결과만 지울 수 있고, 진행 중 요청의 늦은 응답은 막지 못하기 때문이다
+   * (#716 임베딩 탭과 같은 처방).
+   */
+  const modelsSeqRef = useRef(0);
+  /** 지금 세대에서 진행 중인 요청의 번호 — 렌더를 기다리지 않고 같은 틱의 중복 호출을 막는다. */
+  const inFlightModelsSeqRef = useRef<number | null>(null);
+
+  /**
+   * 모델 목록을 미로드로 되돌리고 진행 중 요청을 버린다. 목록을 무효화하는 <b>모든</b> 경로(기본 URL 변경,
+   * 유형 전환, 재시드, 되돌리기)가 이 함수 하나를 쓴다 — 한 곳만 세대를 안 올리면 그 경로로 옛 응답이 샌다.
+   */
+  const invalidateModels = useCallback(() => {
+    modelsSeqRef.current += 1;
+    inFlightModelsSeqRef.current = null;
+    setModels(null);
+    setModelsError(null);
+    setIsLoadingModels(false);
+  }, []);
 
   /**
    * GET 응답을 모든 폼 상태에 반영한다. 최초 조회와 저장 후 재조회가 둘 다 쓴다 — 두 경로가
@@ -260,14 +289,13 @@ export function useAiCredentialForm<R extends AiCredentialResponse = AiCredentia
     setPayloadState(nextPayload);
     setSecretInputsState({});
     setSecretFieldNames(data.secretFieldNames);
-    setModels(null);
-    setModelsError(null);
+    invalidateModels();
     setOriginal({
       agentType: nextAgentType,
       payload: nextPayload,
       configured: data.configured,
     });
-  }, []);
+  }, [invalidateModels]);
 
   /** 순수 네트워크 호출 — 실패를 <b>호출자에게</b> 던진다. `load`(최초 조회)와 `save`(저장 후
    * 재조회)가 실패를 다르게 다뤄야 해서(전자는 `loadFailed`/`isLocked`, 후자는 `staleNotice`)
@@ -320,20 +348,19 @@ export function useAiCredentialForm<R extends AiCredentialResponse = AiCredentia
       // 유형이 바뀌면 payload/secret 모두 새로 시작한다 — 위 인터페이스 setAgentType 주석 참고.
       setPayloadState({});
       setSecretInputsState({});
-      setModels(null);
-      setModelsError(null);
+      invalidateModels();
     },
-    [agentType],
+    [agentType, invalidateModels],
   );
 
   const setPayloadField = useCallback((name: string, value: string) => {
     setPayloadState((prev) => ({ ...prev, [name]: value }));
     if (name === 'baseURL') {
-      // 기본 URL 이 바뀌면 그 URL 로 불러온 모델 목록은 더 이상 유효하지 않다.
-      setModels(null);
-      setModelsError(null);
+      // 기본 URL 이 바뀌면 그 URL 로 불러온 모델 목록은 더 이상 유효하지 않다 — 진행 중 요청의
+      // 늦은 응답도 함께 버린다(#721).
+      invalidateModels();
     }
-  }, []);
+  }, [invalidateModels]);
 
   const setSecretInput = useCallback((name: string, value: string) => {
     setSecretInputsState((prev) => ({ ...prev, [name]: value }));
@@ -352,6 +379,14 @@ export function useAiCredentialForm<R extends AiCredentialResponse = AiCredentia
     (Boolean((secretInputs.apiKey ?? '').trim()) || hasStoredApiKey);
 
   const loadModels = useCallback(async () => {
+    // 지금 폼 값에 대한 요청이 이미 돌고 있으면 또 보내지 않는다(#721) — 버튼 비활성은 다음 렌더에야
+    // 반영되므로, 같은 틱의 연속 호출은 ref 로 막는다.
+    if (inFlightModelsSeqRef.current !== null) return;
+    const seq = ++modelsSeqRef.current;
+    inFlightModelsSeqRef.current = seq;
+    // 응답이 도착했을 때 이 요청이 여전히 지금 폼의 것인가 — 아니면 성공·실패 어느 쪽도 반영하지 않는다.
+    const isCurrent = () => seq === modelsSeqRef.current;
+    setIsLoadingModels(true);
     setModelsError(null);
     const body: AiCredentialProbeRequest = { baseURL: payload.baseURL ?? '' };
     const typedKey = (secretInputs.apiKey ?? '').trim();
@@ -359,6 +394,7 @@ export function useAiCredentialForm<R extends AiCredentialResponse = AiCredentia
     if (typedKey !== '') body.apiKey = typedKey;
     try {
       const { data } = await api.probe(body);
+      if (!isCurrent()) return;
       if (data.ok) {
         setModels(data.models);
       } else {
@@ -367,9 +403,18 @@ export function useAiCredentialForm<R extends AiCredentialResponse = AiCredentia
         setModelsError(data.message ?? '모델 목록을 불러오지 못했습니다.');
       }
     } catch (err) {
+      // 옛 값의 실패를 새 입력 옆에 붙이지 않는다 — 성공 분기와 똑같이 걸러야 한다(#716 회귀 전례).
+      if (!isCurrent()) return;
       // 요청 형태 오류(4xx) — ok:false 로 오지 않고 HTTP 오류로 온다.
       setModels(null);
       setModelsError(extractApiError(err, '모델 목록을 불러오지 못했습니다.'));
+    } finally {
+      // 버려진 요청은 진행 표시를 건드리지 않는다 — 그 사이 시작된 새 요청의 "불러오는 중"을 끄면
+      // 버튼이 다시 열려 중복 전송이 가능해진다(무효화 시점에 이미 꺼 두었다).
+      if (isCurrent()) {
+        inFlightModelsSeqRef.current = null;
+        setIsLoadingModels(false);
+      }
     }
   }, [api, payload.baseURL, secretInputs.apiKey]);
 
@@ -433,9 +478,8 @@ export function useAiCredentialForm<R extends AiCredentialResponse = AiCredentia
     setAgentTypeState(original.agentType);
     setPayloadState(original.payload);
     setSecretInputsState({});
-    setModels(null);
-    setModelsError(null);
-  }, [original]);
+    invalidateModels();
+  }, [original, invalidateModels]);
 
   return {
     isLoading,
@@ -455,6 +499,7 @@ export function useAiCredentialForm<R extends AiCredentialResponse = AiCredentia
     loadModels,
     modelsError,
     canLoadModels,
+    isLoadingModels,
     hasUnsavedInput,
     save,
     staleNotice,

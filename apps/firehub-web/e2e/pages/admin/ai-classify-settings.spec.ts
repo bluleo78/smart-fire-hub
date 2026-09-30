@@ -224,4 +224,84 @@ test.describe('AI 분류 전용 공급자 탭(#707)', () => {
     await panel.getByRole('button', { name: '저장' }).click();
     await expect(page.getByText(rejection)).toBeVisible();
   });
+
+  /**
+   * #721 — 분류 탭도 같은 훅(`useAiCredentialForm`)·같은 모델 칸을 쓴다. 분류 probe 응답을 `release()` 전까지
+   * 붙잡아 "입력을 바꾼 뒤 응답 도착" 순서를 결정적으로 만든다(나중에 등록한 route 가 fixture 의 probe 를 덮는다).
+   */
+  async function gateClassifyProbe(page: Page, body: unknown) {
+    const probePath = '/api/v1/settings/ai-classify-credential/probe';
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let hits = 0;
+    await page.route(
+      (url) => url.pathname === probePath,
+      async (route) => {
+        hits += 1;
+        await gate;
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+      },
+    );
+    return {
+      hits: () => hits,
+      /** 응답을 풀고 화면이 처리할 시간을 준다 — 기대가 "아무것도 안 나타남"이라 기다릴 양성 신호가 없다. */
+      releaseAndSettle: async () => {
+        const responded = page.waitForResponse((r) => new URL(r.url()).pathname === probePath);
+        release();
+        await responded;
+        await page.waitForTimeout(300);
+      },
+    };
+  }
+
+  /** 분류 전용 설정을 opencode + 옛 URL + 키로 채우고 `모델 불러오기` 를 누른 상태까지 간다. */
+  async function startClassifyProbe(page: Page) {
+    await openClassifyTab(page);
+    const panel = classifyPanel(page);
+    await panel.getByRole('button', { name: '분류 전용 설정하기' }).click();
+    await panel.locator('#ai-classify-agent-type').click();
+    await page.getByRole('option', { name: 'OpenCode', exact: true }).click();
+    await panel.locator('#ai-classify-provider').click();
+    await page.getByRole('option', { name: 'OpenAI', exact: true }).click();
+    await panel.locator('#ai-classify-base-url').fill('https://gateway-a.example.com/v1');
+    await panel.locator('#ai-classify-opencode-api-key').fill('sk-classify');
+    await panel.getByRole('button', { name: '모델 불러오기' }).click();
+    return panel;
+  }
+
+  test('모델 불러오기 중 기본 URL 을 바꾸면 늦게 도착한 옛 URL 의 목록을 채우지 않고, 진행 중엔 버튼이 잠긴다(#721)', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockAiClassifyCredential(page, createAiClassifyCredential());
+    const probe = await gateClassifyProbe(page, { ok: true, models: ['a-model-1', 'a-model-2'], message: null });
+    const panel = await startClassifyProbe(page);
+    await expect.poll(probe.hits).toBe(1);
+    await expect(panel.getByRole('button', { name: '불러오는 중...' })).toBeDisabled();
+
+    await panel.locator('#ai-classify-base-url').fill('https://gateway-b.example.com/v1');
+    // 옛 요청은 버려졌다 — 버튼은 곧바로 새 URL 용으로 되돌아온다.
+    await expect(panel.getByRole('button', { name: '모델 불러오기' })).toBeEnabled();
+    await probe.releaseAndSettle();
+
+    await expect(panel.getByText(/✓ 모델 \d+개/)).toHaveCount(0);
+    await expect(panel.getByPlaceholder('먼저 모델을 불러오세요')).toBeVisible();
+    expect(probe.hits()).toBe(1);
+  });
+
+  test('모델 불러오기 중 기본 URL 을 바꾸면 늦게 도착한 옛 URL 의 실패를 붙이지 않는다(#721)', async ({
+    authenticatedPage: page,
+  }) => {
+    const failure = '게이트웨이 A 가 자격증명을 거부했습니다.';
+    await mockAiClassifyCredential(page, createAiClassifyCredential());
+    const probe = await gateClassifyProbe(page, { ok: false, models: [], message: failure });
+    const panel = await startClassifyProbe(page);
+    await expect.poll(probe.hits).toBe(1);
+
+    await panel.locator('#ai-classify-base-url').fill('https://gateway-b.example.com/v1');
+    await probe.releaseAndSettle();
+
+    await expect(panel.getByText(failure)).toHaveCount(0);
+    await expect(panel.getByRole('button', { name: '직접 입력으로 전환' })).toHaveCount(0);
+    await expect(panel.getByPlaceholder('먼저 모델을 불러오세요')).toBeVisible();
+  });
 });

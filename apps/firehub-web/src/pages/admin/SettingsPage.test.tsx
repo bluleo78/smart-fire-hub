@@ -118,6 +118,7 @@ function makeCred(overrides: Partial<UseAiCredentialFormResult> = {}): UseAiCred
     loadModels: vi.fn(),
     modelsError: null,
     canLoadModels: false,
+    isLoadingModels: false,
     hasUnsavedInput: false,
     save: vi.fn(async () => true),
     staleNotice: null,
