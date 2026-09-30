@@ -112,8 +112,13 @@ export default function ScriptEditor({ value, onChange, language, readOnly = fal
     insertTextRef.current = (text: string) => {
       const view = viewRef.current;
       if (!view) return;
-      const cursor = view.state.selection.main.head;
-      view.dispatch({ changes: { from: cursor, insert: text } });
+      // changes 만 dispatch 하면 CodeMirror 가 커서를 삽입 "앞"에 매핑해, 이어서 입력한 글자가
+      // 삽입한 {{#N}} 앞에 들어간다(#743). replaceSelection 은 선택 영역을 교체(선택 없으면 커서에 삽입)하고
+      // 커서를 삽입 끝으로 옮긴 트랜잭션 스펙을 만들어 준다. 버튼 클릭으로 잃은 포커스도 돌려준다.
+      view.dispatch({
+        ...view.state.replaceSelection(text),
+        scrollIntoView: true,
+      });
       view.focus();
     };
     return () => {
