@@ -93,12 +93,15 @@ export default function PipelineEditorPage() {
     navigate(`/pipelines/${pipelineId}`);
   }, [executionError, navigate, pipelineId]);
 
-  // Load pipeline data from API only once
-  const loadedRef = useRef(false);
+  // 서버 상세를 받을 때마다(최초 로드 + 저장/실행 완료 후 재조회) 편집기에 반영한다 (#742).
+  // 미저장 변경이 있으면 화면은 그대로 두고 취소 기준만 갱신한다(usePipelineEditor.loadFromApi 참고).
+  // 같은 응답 객체를 다시 반영하지 않도록 마지막으로 반영한 참조를 기억한다 — react-query 는 내용이
+  // 같으면 같은 참조를 돌려주므로(structural sharing) 실제로 바뀐 재조회만 반영된다.
+  const appliedDataRef = useRef<typeof pipelineData>(undefined);
   useEffect(() => {
-    if (pipelineData && !loadedRef.current) {
+    if (pipelineData && appliedDataRef.current !== pipelineData) {
+      appliedDataRef.current = pipelineData;
       loadFromApi(pipelineData);
-      loadedRef.current = true;
     }
   }, [pipelineData, loadFromApi]);
 

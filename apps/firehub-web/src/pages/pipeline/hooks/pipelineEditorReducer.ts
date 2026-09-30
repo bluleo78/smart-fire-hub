@@ -60,6 +60,10 @@ export type EditorAction =
   | { type: 'AUTO_LAYOUT' }
   | { type: 'LOAD_FROM_API'; payload: PipelineDetailResponse }
   | { type: 'MARK_SAVED'; payload?: { pipelineId: number } }
+  // 취소 기준(마지막으로 서버와 일치했던 상태)으로 무조건 되돌린다 — 편집 취소용 (#742)
+  | { type: 'RESTORE_SNAPSHOT'; payload: PipelineEditorState }
+  // 서버에서 다시 불러온 상태를 반영하되, 미저장 변경이 있으면 무시한다 — 재조회용 (#742)
+  | { type: 'SYNC_FROM_SERVER'; payload: PipelineEditorState }
   | { type: 'SET_VALIDATION_ERRORS'; payload: ValidationError[] };
 
 // === 초기 상태 ===
@@ -119,6 +123,56 @@ export function applyAutoLayout(state: PipelineEditorState): PipelineEditorState
       return layouted ? { ...step, position: layouted.position } : step;
     }),
   };
+}
+
+/**
+ * 서버 상세 응답을 편집기 상태로 변환한다 (의존 관계는 스텝 이름 → tempId 로 다시 잇고 자동 배치한다).
+ * LOAD_FROM_API 와, 취소 기준 스냅샷을 만드는 usePipelineEditor 가 함께 쓴다 (#742).
+ */
+export function buildStateFromDetail(detail: PipelineDetailResponse): PipelineEditorState {
+  const tempIdMap = new Map<string, string>();
+  const steps: EditorStep[] = detail.steps.map((step) => {
+    const tempId = generateId();
+    tempIdMap.set(step.name, tempId);
+    return {
+      tempId,
+      name: step.name,
+      description: step.description ?? '',
+      scriptType: step.scriptType as EditorStep['scriptType'],
+      scriptContent: step.scriptContent ?? '',
+      outputDatasetId: step.outputDatasetId,
+      inputDatasetIds: step.inputDatasetIds,
+      dependsOnTempIds: [],
+      position: { x: 0, y: 0 },
+      loadStrategy: step.loadStrategy ?? 'REPLACE',
+      apiConfig: step.apiConfig ?? undefined,
+      aiConfig: step.aiConfig as AiClassifyConfig | undefined,
+      pythonConfig: step.pythonConfig ?? undefined,
+      apiConnectionId: step.apiConnectionId ?? undefined,
+    };
+  });
+
+  for (const step of steps) {
+    const originalStep = detail.steps.find((s) => tempIdMap.get(s.name) === step.tempId);
+    if (originalStep) {
+      step.dependsOnTempIds = originalStep.dependsOnStepNames
+        .map((name) => tempIdMap.get(name))
+        .filter((id): id is string => id !== undefined);
+    }
+  }
+
+  const newState: PipelineEditorState = {
+    name: detail.name,
+    description: detail.description ?? '',
+    isActive: detail.isActive,
+    pipelineId: detail.id,
+    steps,
+    selectedStepId: null,
+    isDirty: false,
+    validationErrors: [],
+  };
+
+  return applyAutoLayout(newState);
 }
 
 // === 리듀서 ===
@@ -303,52 +357,8 @@ export function pipelineEditorReducer(
     case 'AUTO_LAYOUT':
       return applyAutoLayout(state);
 
-    case 'LOAD_FROM_API': {
-      const detail = action.payload;
-      const tempIdMap = new Map<string, string>();
-      const steps: EditorStep[] = detail.steps.map((step) => {
-        const tempId = generateId();
-        tempIdMap.set(step.name, tempId);
-        return {
-          tempId,
-          name: step.name,
-          description: step.description ?? '',
-          scriptType: step.scriptType as EditorStep['scriptType'],
-          scriptContent: step.scriptContent ?? '',
-          outputDatasetId: step.outputDatasetId,
-          inputDatasetIds: step.inputDatasetIds,
-          dependsOnTempIds: [],
-          position: { x: 0, y: 0 },
-          loadStrategy: step.loadStrategy ?? 'REPLACE',
-          apiConfig: step.apiConfig ?? undefined,
-          aiConfig: step.aiConfig as AiClassifyConfig | undefined,
-          pythonConfig: step.pythonConfig ?? undefined,
-          apiConnectionId: step.apiConnectionId ?? undefined,
-        };
-      });
-
-      for (const step of steps) {
-        const originalStep = detail.steps.find((s) => tempIdMap.get(s.name) === step.tempId);
-        if (originalStep) {
-          step.dependsOnTempIds = originalStep.dependsOnStepNames
-            .map((name) => tempIdMap.get(name))
-            .filter((id): id is string => id !== undefined);
-        }
-      }
-
-      const newState: PipelineEditorState = {
-        name: detail.name,
-        description: detail.description ?? '',
-        isActive: detail.isActive,
-        pipelineId: detail.id,
-        steps,
-        selectedStepId: null,
-        isDirty: false,
-        validationErrors: [],
-      };
-
-      return applyAutoLayout(newState);
-    }
+    case 'LOAD_FROM_API':
+      return buildStateFromDetail(action.payload);
 
     case 'MARK_SAVED':
       return {
@@ -357,6 +367,23 @@ export function pipelineEditorReducer(
         validationErrors: [],
         pipelineId: action.payload?.pipelineId ?? state.pipelineId,
       };
+
+    case 'RESTORE_SNAPSHOT':
+      // 편집 취소 — 스냅샷을 그대로 복원하고 선택·검증 오류는 비운다(기존 취소 동작과 동일)
+      return { ...action.payload, selectedStepId: null, isDirty: false, validationErrors: [] };
+
+    case 'SYNC_FROM_SERVER': {
+      // 미저장 변경이 있으면 서버 재조회가 사용자의 편집을 덮지 않는다.
+      // 판단을 리듀서에서 하는 이유: 렌더 시점의 isDirty 로 판단하면 그 사이 입력된 변경을 덮을 수 있다.
+      if (state.isDirty) return state;
+      // 재조회로 tempId 가 새로 만들어지므로 선택된 스텝은 이름으로 다시 찾아 패널이 닫히지 않게 한다
+      const selectedName = state.steps.find((s) => s.tempId === state.selectedStepId)?.name;
+      const selectedStepId =
+        selectedName !== undefined
+          ? (action.payload.steps.find((s) => s.name === selectedName)?.tempId ?? null)
+          : null;
+      return { ...action.payload, selectedStepId, isDirty: false, validationErrors: [] };
+    }
 
     case 'SET_VALIDATION_ERRORS':
       return { ...state, validationErrors: action.payload };

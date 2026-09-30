@@ -422,4 +422,38 @@ describe('pipelineEditorReducer', () => {
       expect(next).toBe(state);
     });
   });
+  // #742 — 서버 재조회 반영(SYNC_FROM_SERVER)과 편집 취소 복원(RESTORE_SNAPSHOT)
+  describe('SYNC_FROM_SERVER / RESTORE_SNAPSHOT (#742)', () => {
+    const snapshotWith = (desc: string): PipelineEditorState => ({
+      ...initialState,
+      pipelineId: 1,
+      steps: [{ ...createDefaultStep({ x: 0, y: 0 }), tempId: `new-${desc}`, name: 'sql1', description: desc }],
+    });
+
+    it('미저장 변경이 있으면 서버 재조회를 무시한다 — 편집 중 입력을 덮지 않는다', () => {
+      const dirty: PipelineEditorState = { ...snapshotWith('my-edit'), isDirty: true };
+      const next = dispatch(dirty, { type: 'SYNC_FROM_SERVER', payload: snapshotWith('server') });
+      expect(next).toBe(dirty);
+    });
+
+    it('미저장 변경이 없으면 서버 상태를 반영하고, 선택된 스텝은 이름으로 다시 찾아 유지한다', () => {
+      const clean: PipelineEditorState = {
+        ...snapshotWith('old'),
+        steps: [{ ...snapshotWith('old').steps[0], tempId: 'old-id' }],
+        selectedStepId: 'old-id',
+      };
+      const next = dispatch(clean, { type: 'SYNC_FROM_SERVER', payload: snapshotWith('server') });
+      expect(next.steps[0].description).toBe('server');
+      expect(next.selectedStepId).toBe('new-server');
+      expect(next.isDirty).toBe(false);
+    });
+
+    it('RESTORE_SNAPSHOT 은 미저장 변경이 있어도 스냅샷으로 되돌리고 선택을 비운다', () => {
+      const dirty: PipelineEditorState = { ...snapshotWith('my-edit'), isDirty: true, selectedStepId: 'new-my-edit' };
+      const next = dispatch(dirty, { type: 'RESTORE_SNAPSHOT', payload: snapshotWith('saved') });
+      expect(next.steps[0].description).toBe('saved');
+      expect(next.isDirty).toBe(false);
+      expect(next.selectedStepId).toBeNull();
+    });
+  });
 });
