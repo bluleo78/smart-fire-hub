@@ -174,6 +174,29 @@ test.describe('파이프라인 SQL 스텝 증분 처리', () => {
       { status: 204, capture: true },
     );
 
+    // 상세 조회는 서버처럼 "예약 상태"를 따라가야 한다 — 예약 POST가 취소 DELETE보다 많이 온 동안에만
+    // fullRebuildPending: true 를 돌려준다. 예전에는 POST를 기다린 **뒤에** pending 응답을 재모킹했는데,
+    // 그 사이에 mutation onSuccess의 invalidate 재조회가 먼저 나가 옛 응답(pending=false)을 받으면
+    // 다시 조회할 계기가 없어 "재생성 예정" 문구가 끝내 안 떴다(병렬 부하에서 간헐 실패, #729).
+    // capture는 응답을 돌려주기 전에 요청을 기록하므로, POST 응답 이후에 나가는 재조회는 항상 pending을 본다.
+    const pendingDetail = createPipelineDetail({
+      id: 1,
+      steps: [{ ...step, fullRebuildPending: true }],
+    });
+    await page.route(
+      (url) => url.pathname === '/api/v1/pipelines/1',
+      (route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        // 예약 전·취소 후에는 setupMocks가 깐 기본 상세(pending=false)로 넘긴다.
+        if (reservePost.requests.length <= cancelDelete.requests.length) return route.fallback();
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(pendingDetail),
+        });
+      },
+    );
+
     await page.goto('/pipelines/1');
     // 예약은 조회 모드에서도 가능한 운영 동작이라 "수정" 클릭 없이 스텝만 선택한다.
     await page.locator('.react-flow__node').first().click();
@@ -189,14 +212,7 @@ test.describe('파이프라인 SQL 스텝 증분 처리', () => {
     const postReq = await reservePost.waitForRequest();
     expect(postReq.url.pathname).toBe('/api/v1/pipelines/1/steps/5/full-rebuild');
 
-    // 예약 후 재조회(invalidate) 시 fullRebuildPending: true 를 돌려주도록 재모킹한다.
-    // page.route는 나중에 등록한 핸들러가 먼저 매칭되므로, 클릭 이후 등록해도 다음 refetch부터 반영된다.
-    const pendingDetail = createPipelineDetail({
-      id: 1,
-      steps: [{ ...step, fullRebuildPending: true }],
-    });
-    await mockApi(page, 'GET', '/api/v1/pipelines/1', pendingDetail);
-
+    // 예약 후 재조회(invalidate)는 위 상태형 모킹이 pending=true 로 답한다.
     await expect(page.getByText('다음 실행 시 전체 재생성 예정')).toBeVisible();
     const cancelButton = page.getByRole('button', { name: '예약 취소' });
     await expect(cancelButton).toBeVisible();

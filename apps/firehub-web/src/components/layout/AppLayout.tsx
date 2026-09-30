@@ -493,10 +493,16 @@ function AppLayoutInner() {
 
           {/* Side panel mode
                모바일에서는 AISidePanel이 fixed overlay로 렌더링되므로
-               Suspense fallback도 lg 이상에서만 너비를 차지하도록 처리 */}
+               Suspense fallback도 lg 이상에서만 너비를 차지하도록 처리.
+               fallback은 패널이 **열려 있을 때만** 자리를 잡는다(#729) — 패널은 기본이 닫힘(폭 0)인데
+               fallback이 열림 여부와 무관하게 320px를 차지하면, lazy 청크가 도착하기 전까지 본문이
+               320px 좁게 그려졌다가 도착 순간 넓어지는 레이아웃 시프트가 모든 라우트 첫 로드에서 생긴다.
+               열린 상태의 자리 폭은 AISidePanel의 기본 폭(DEFAULT_WIDTH=380px)과 맞춰 교체 시 움직이지 않게 한다. */}
           {aiMode === 'side' && (
             <Suspense
-              fallback={<div className="hidden lg:block lg:w-80 border-l bg-background" />}
+              fallback={
+                aiOpen ? <div className="hidden lg:block lg:w-[380px] shrink-0 border-l bg-background" /> : null
+              }
             >
               <AISidePanel />
             </Suspense>

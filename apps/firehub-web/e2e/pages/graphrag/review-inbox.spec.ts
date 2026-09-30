@@ -78,7 +78,10 @@ test.describe('AI 검수 인박스', () => {
       await page.getByRole('tab', { name: '속성' }).click();
       await expect(page.getByRole('tab', { name: '속성' })).toHaveAttribute('aria-selected', 'true');
       await expect.poll(() => new URL(page.url()).searchParams.get('type')).toBe('property_normalization');
-      expect(requestedItemTypes).toContain('property_normalization');
+      // 재조회 요청은 URL 갱신과 같은 틱에 route 핸들러까지 도착하지 않는다(요청 발행 → 브라우저 →
+      // Playwright 라우팅은 비동기) — URL만 보고 곧바로 단언하면 부하 시 아직 [null]뿐이다(#729).
+      // 요청이 실제로 관찰될 때까지 기다린다.
+      await expect.poll(() => requestedItemTypes).toContain('property_normalization');
     });
 
     test('속성 탭 선택 후 다른 페이지로 이동했다가 뒤로가기하면 속성 탭이 그대로 선택되어 있다', async ({ authenticatedPage: page }) => {

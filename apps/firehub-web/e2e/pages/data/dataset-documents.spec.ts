@@ -342,6 +342,22 @@ test.describe('문서 데이터셋 상세', () => {
         capture: true,
       });
 
+      // 바인딩 조회는 서버처럼 상태를 따라간다 — 연결 PUT이 들어온 뒤의 조회에만 "연결됨"을 돌려준다.
+      // 예전에는 PUT을 기다린 **뒤에** 연결됨 응답을 재모킹했는데, 그 사이 mutation onSuccess의 재조회가
+      // 먼저 나가 옛 응답(미바인딩)을 받으면 다시 조회할 계기가 없어 카드가 끝내 남았다(병렬 부하에서
+      // 간헐 실패, #729). capture는 응답 전에 요청을 기록하므로 PUT 응답 이후의 재조회는 항상 연결됨을 본다.
+      await page.route(
+        (url) => url.pathname === `/api/v1/datasets/${DATASET_ID}/ontology`,
+        (route) => {
+          if (route.request().method() !== 'GET' || capture.requests.length === 0) return route.fallback();
+          return route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify(createBinding(1)),
+          });
+        },
+      );
+
       await page.goto(`/data/datasets/${DATASET_ID}?tab=documents`);
 
       const card = page.getByTestId('ontology-binding-card');
@@ -355,8 +371,7 @@ test.describe('문서 데이터셋 상세', () => {
       const req = await capture.waitForRequest();
       expect(req.payload).toEqual({ ontologyId: 1 });
 
-      // 연결 성공 후 바인딩 재조회 응답을 연결됨으로 갱신하면 카드가 사라지고 상태 문구가 뜬다.
-      await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}/ontology`, createBinding(1));
+      // 연결 성공 후 재조회는 위 상태형 모킹이 연결됨으로 답하므로 카드가 사라지고 상태 문구가 뜬다.
       await expect(card).not.toBeVisible();
       await expect(page.getByText('연결된 온톨로지: 화재조사 보고서')).toBeVisible();
     });

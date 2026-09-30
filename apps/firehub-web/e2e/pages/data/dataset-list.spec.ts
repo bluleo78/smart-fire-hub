@@ -1,5 +1,5 @@
 import { createCategories, createDataset, createDatasets } from '../../factories/dataset.factory';
-import { createPageResponse, mockApi } from '../../fixtures/api-mock';
+import { createPageResponse, mockApi, type MockApiCapture } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { setupDatasetMocks } from '../../fixtures/dataset.fixture';
 
@@ -9,6 +9,18 @@ import { setupDatasetMocks } from '../../fixtures/dataset.fixture';
  * - 단순 가시성 확인을 넘어 셀 단위 데이터 검증, API 파라미터 검증,
  *   비즈니스 로직(즐겨찾기 토글, 페이지네이션 등)까지 검증한다.
  */
+/**
+ * 캡처된 목록 요청 중에 `key=value` 가 실린 것이 나타날 때까지 기다린다.
+ *
+ * `capture.waitForRequest()` 는 이미 캡처된 요청이 있으면 그 마지막 것을 즉시 돌려준다. 이 스펙은
+ * 제목이 보인 뒤에 캡처 모킹을 거는데, 제목은 목록 조회와 무관하게 먼저 뜨므로 부하가 걸리면 필터가
+ * 없는 **초기 목록 조회**가 캡처에 먼저 잡힌다 — 그러면 필터 조작 뒤의 재요청이 아니라 그 초기 요청을
+ * 받아 파라미터가 null로 단언 실패했다(병렬 부하에서 간헐 실패, #729). "다음 요청"이 아니라
+ * "기대한 파라미터가 실린 요청"을 조건으로 기다려 초기 요청이 끼어도 영향받지 않게 한다.
+ */
+const expectListRequestWith = (capture: MockApiCapture, key: string, value: string) =>
+  expect.poll(() => capture.requests.map((r) => r.searchParams.get(key))).toContain(value);
+
 test.describe('데이터셋 목록 페이지', () => {
   test('데이터셋 목록이 올바르게 렌더링된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     // 5개 데이터셋 목록을 모킹한 후 목록 페이지 접근
@@ -90,11 +102,8 @@ test.describe('데이터셋 목록 페이지', () => {
     // 검색 입력 필드에 텍스트 입력
     await page.getByPlaceholder('데이터셋 검색...').fill('소방');
 
-    // debounce 처리 후 검색 재요청이 발생할 때까지 대기 (최대 10초)
-    const req = await capture.waitForRequest();
-
-    // API 요청의 search 쿼리 파라미터가 올바르게 전달되는지 검증
-    expect(req.searchParams.get('search')).toBe('소방');
+    // debounce 처리 후 search 쿼리 파라미터가 실린 재요청이 나가는지 검증
+    await expectListRequestWith(capture, 'search', '소방');
 
     // 검색 필드에 입력값이 유지되는지 확인
     await expect(page.getByPlaceholder('데이터셋 검색...')).toHaveValue('소방');
@@ -118,8 +127,7 @@ test.describe('데이터셋 목록 페이지', () => {
     await page.getByText('소방 데이터').first().click();
 
     // API 요청에 categoryId=1이 전달되는지 검증
-    const req = await capture.waitForRequest();
-    expect(req.searchParams.get('categoryId')).toBe('1');
+    await expectListRequestWith(capture, 'categoryId', '1');
   });
 
   test('즐겨찾기 토글 버튼이 렌더링된다', async ({ authenticatedPage: page }) => {
@@ -190,8 +198,7 @@ test.describe('데이터셋 목록 페이지', () => {
     await page.getByRole('option', { name: '원본' }).click();
 
     // API 요청에 originType=SOURCE 가 전달되는지 검증
-    const req = await capture.waitForRequest();
-    expect(req.searchParams.get('originType')).toBe('SOURCE');
+    await expectListRequestWith(capture, 'originType', 'SOURCE');
   });
 
   test('삭제 버튼 클릭 시 삭제 확인 AlertDialog가 열린다', async ({ authenticatedPage: page }) => {
@@ -280,8 +287,7 @@ test.describe('데이터셋 목록 페이지', () => {
     await statusCombobox.click();
     await page.getByRole('option', { name: '인증됨' }).click();
 
-    const req = await capture.waitForRequest();
-    expect(req.searchParams.get('status')).toBe('CERTIFIED');
+    await expectListRequestWith(capture, 'status', 'CERTIFIED');
   });
 
   test('데이터셋 목록에 페이지네이션이 렌더링된다', async ({ authenticatedPage: page }) => {
@@ -354,6 +360,7 @@ test.describe('데이터셋 목록 페이지', () => {
   test('최근 접근 데이터셋에 상대적 시간이 표시된다 (getRelativeTime)', async ({ authenticatedPage: page }) => {
     // 60일 전 날짜를 localStorage에 주입 → getRelativeTime 실행 (lines 33-43 커버)
     // 60일 = 2개월 → '2개월 전' 텍스트가 표시되어야 한다
+    // eslint-disable-next-line no-restricted-syntax -- 인자가 서버 날짜 문자열이 아니라 epoch 숫자다(#691 규칙의 예외 대상)
     const oldDate = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString();
     await page.addInitScript((date: string) => {
       localStorage.setItem(
