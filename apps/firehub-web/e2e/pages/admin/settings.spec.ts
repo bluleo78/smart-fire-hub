@@ -635,6 +635,32 @@ test.describe('설정 페이지', () => {
       expect(saveCapture.lastRequest()).toBeUndefined();
     });
 
+    /**
+     * #728 회귀 — 서버만 거부하던 발신자 주소.
+     *
+     * 도메인에 `_`·`?` 가 든 주소는 칸 검증을 통과해 PUT 이 나갔고, 서버가 400 으로 돌려보내 칸 오류
+     * 없이 토스트로만 사유가 나왔다. 이제 웹과 서버가 같은 문법이므로 칸에서 막힌다.
+     */
+    for (const from of ['a@b_c.com', 'noreply@example.com?x=1', 'Fire Hub <noreply@exam_ple.com>']) {
+      test(`도메인에 허용되지 않는 문자가 든 발신자(${from})는 그 칸에 오류가 붙고 PUT 이 나가지 않는다`, async ({
+        authenticatedPage: page,
+      }) => {
+        await setupSettingsMocks(page);
+        const saveCapture = await mockApi(page, 'PUT', '/api/v1/settings', {}, { capture: true });
+        await openEmailTab(page);
+
+        await page.locator('#smtp-from').fill(from);
+        await page.getByRole('button', { name: '저장' }).click();
+
+        await expect(
+          emailPanel(page).getByText('올바른 이메일 주소를 입력하세요', { exact: false }),
+        ).toBeVisible();
+        await expect(page.locator('#smtp-from')).toHaveAttribute('aria-invalid', 'true');
+        await expect(page.getByText('입력값을 확인하세요.')).toBeVisible({ timeout: 5000 });
+        expect(saveCapture.lastRequest()).toBeUndefined();
+      });
+    }
+
     test('포트를 비우면 조사가 맞는 문구("포트를")로 오류가 붙는다', async ({
       authenticatedPage: page,
     }) => {

@@ -256,6 +256,28 @@ describe('useSmtpSettingsForm', () => {
     expect(result.current.errors['smtp.host']).toBe('SMTP 호스트에는 공백을 넣을 수 없습니다');
   });
 
+  // #728 회귀 — 서버만 거부하던 값(도메인의 `_`·`?`)과 `\\s` 가 놓치던 보이지 않는 문자.
+  // 문법 전체의 대조는 lib/smtp-address.test.ts 가 서버와 함께 읽는 픽스처로 한다 — 여기서는 그
+  // 문법이 저장 경로에 배선돼 있는지만 본다.
+  it.each([
+    ['smtp.from_address', 'a@b_c.com'],
+    ['smtp.from_address', 'noreply@example.com?x=1'],
+    ['smtp.from_address', 'Fire Hub <noreply@exam_ple.com>'],
+    ['smtp.from_address', 'a\u200Bb@example.com'],
+    ['smtp.host', 'smtp\u200Bexample.com'],
+    ['smtp.host', 'smtp\u00A0example.com'],
+  ] as const)('%s = %j 은 칸 오류로 막고 PUT 을 보내지 않는다(#728)', async (key, value) => {
+    const { result } = await renderLoaded();
+
+    act(() => result.current.updateField(key, value));
+    await act(async () => {
+      await result.current.handleSave();
+    });
+
+    expect(mockedUpdate).not.toHaveBeenCalled();
+    expect(Object.keys(result.current.errors)).toEqual([key]);
+  });
+
   it('호스트·발신자 주소는 앞뒤 공백을 떼어 보내고, 사용자 이름은 입력 그대로 보낸다(#728)', async () => {
     const { result } = await renderLoaded();
 

@@ -9,12 +9,15 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.support.IntegrationTestBase;
 import java.util.Map;
+import java.util.stream.Stream;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.mail.javamail.JavaMailSenderImpl;
 import org.springframework.mail.javamail.MimeMessageHelper;
@@ -100,6 +103,42 @@ class SmtpHostAndFromAddressValidationTest extends IntegrationTestBase {
         .hasMessageNotContaining("Illegal");
 
     // 거부는 저장 전에 일어난다 — 행이 생기지 않는다.
+    assertThat(settingsService.getSmtpConfig()).doesNotContainKey(key);
+  }
+
+  /**
+   * #728 회귀 — web 과 서버의 판정이 갈렸던 값들이 저장 경로에서도 거부되는지 본다. 문법 전체의
+   * 대조는 {@link SmtpAddressGrammarTest} 가 web 과 함께 읽는 픽스처로 하고, 여기서는 그 문법이
+   * {@code updateSettings} 에 실제로 배선돼 있는지만 확인한다.
+   *
+   * <ul>
+   *   <li>도메인의 {@code _}·{@code ?}: web 칸은 통과, 서버는 파서 단계에서만 400 이었다 —
+   *       이제 양쪽 문법이 같이 막는다.
+   *   <li>줄바꿈 없는 공백(U+00A0)·BOM(U+FEFF)·폭 없는 공백(U+200B): {@code isBlank}·{@code \s} 가
+   *       공백으로 보지 않아 API 직접 호출로 204 저장됐다.
+   * </ul>
+   */
+  static Stream<Arguments> web_과_판정이_갈렸던_값() {
+    return Stream.of(
+        Arguments.of("smtp.from_address", "a@b_c.com", "발신자 주소"),
+        Arguments.of("smtp.from_address", "noreply@example.com?x=1", "발신자 주소"),
+        Arguments.of("smtp.from_address", "Fire Hub <noreply@exam_ple.com>", "발신자 주소"),
+        Arguments.of("smtp.from_address", "a\u00A0b@example.com", "발신자 주소"),
+        Arguments.of("smtp.from_address", "\u00A0", "발신자 주소"),
+        Arguments.of("smtp.from_address", "noreply@example.com\uFEFF", "발신자 주소"),
+        Arguments.of("smtp.from_address", "Fire\r\nBcc: x@example.com <noreply@example.com>", "발신자 주소"),
+        Arguments.of("smtp.host", "\u00A0", "SMTP 호스트"),
+        Arguments.of("smtp.host", "\uFEFF", "SMTP 호스트"),
+        Arguments.of("smtp.host", "smtp\u00A0example.com", "SMTP 호스트"),
+        Arguments.of("smtp.host", "smtp\u200Bexample.com", "SMTP 호스트"));
+  }
+
+  @ParameterizedTest(name = "{0} = [{1}] 은 거부된다")
+  @MethodSource("web_과_판정이_갈렸던_값")
+  void web_과_판정이_갈렸던_값은_저장_전에_거부된다(String key, String value, String fieldName) {
+    assertThatThrownBy(() -> settingsService.updateSettings(Map.of(key, value), null))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining(fieldName);
     assertThat(settingsService.getSmtpConfig()).doesNotContainKey(key);
   }
 

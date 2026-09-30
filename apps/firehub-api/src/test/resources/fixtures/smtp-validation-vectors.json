@@ -1,0 +1,254 @@
+{
+  "_설명": [
+    "SMTP 호스트·발신자 주소 문법의 단일 시험 벡터(#728).",
+    "web(src/lib/smtp-address.test.ts)과 api(SmtpAddressGrammarTest)가 이 파일 하나를 읽는다 — 두 구현이 같은 값에 다른 판정을 내리면 어느 한쪽 테스트가 깨진다.",
+    "accept/reject: 값 그대로의 판정. charSweep: template 의 {c} 자리에 U+0000~U+FFFF 를 하나씩 넣었을 때 통과하는 코드 단위의 16진 범위 목록.",
+    "보이지 않는 문자는 \\uXXXX 로 적는다."
+  ],
+  "fromAddress": {
+    "accept": [
+      "noreply@example.com",
+      "first.last+tag@mail.ourcompany.co.kr",
+      "alerts@mailhost",
+      "Fire Hub <noreply@example.com>",
+      "스마트 파이어 허브 <noreply@example.com>",
+      "\"Hub, Fire\" <noreply@example.com>",
+      "\"Fire Hub (알림)\" <noreply@example.com>",
+      "Fire.Hub <noreply@example.com>",
+      "사용자@example.com",
+      "<noreply@example.com>",
+      "user@127.0.0.1",
+      "user@localhost",
+      "소방 허브 <noreply@example.com>",
+      "\"소방, 허브\" <no.reply+tag@mail.sub.example.co.kr>",
+      "a@xn--3e0b707e.kr",
+      "o'brien@example.com",
+      "a_b@example.com",
+      "a!#$%&*+/=?^`{|}~-b@example.com",
+      "a@b-c.com",
+      "A@EXAMPLE.COM",
+      "a@b.c1",
+      "\"Fire Hub\"<noreply@example.com>",
+      "Fire Hub<noreply@example.com>",
+      "\"Fire Hub\"  <noreply@example.com>",
+      "Fire  Hub  <noreply@example.com>",
+      "Fire-Hub_알림! <noreply@example.com>",
+      "\"\" <noreply@example.com>"
+    ],
+    "reject": [
+      "not-an-email",
+      "",
+      " ",
+      "   ",
+      " noreply@example.com",
+      "noreply@example.com ",
+      "@example.com",
+      "noreply@",
+      "a@b@example.com",
+      "no reply@example.com",
+      "a@example.com, b@example.com",
+      "Fire Hub <not-an-email>",
+      "Fire Hub <noreply@example.com",
+      "team: a@example.com;",
+      "Hub, Fire <noreply@example.com>",
+      "Hub; Fire <noreply@example.com>",
+      "Fire (Hub <noreply@example.com>",
+      "Team@Home <noreply@example.com>",
+      "\"Unbalanced <noreply@example.com>",
+      "Fire Hub <noreply@example.com> x",
+      "x <a@example.com> <b@example.com>",
+      "a..b@example.com",
+      ".a@example.com",
+      "a.@example.com",
+      "a@example..com",
+      "a@example.com.",
+      "a@.example.com",
+      "a(c)@example.com",
+      "a,b@example.com",
+      "a@[127.0.0.1]",
+      "\"a b\"@example.com",
+      "<>",
+      "Fire Hub <>",
+      "a@b_c.com",
+      "noreply@example.com?x=1",
+      "Fire Hub <noreply@exam_ple.com>",
+      "a@exa!mple.com",
+      "a@b#c.com",
+      "a@ex'ample.com",
+      "a@b/c.com",
+      "a@%.com",
+      "a@b.c$",
+      "a@b。com",
+      "a@한글.com",
+      "a@exämple.com",
+      "a@b+c.com",
+      "a@b:25",
+      "a@b c.com",
+      "a\u0001b@example.com",
+      "a\u007fb@example.com",
+      "a\u0085b@example.com",
+      "a\u00a0b@example.com",
+      "a\u200bb@example.com",
+      "a\ufeffb@example.com",
+      "a\u3000b@example.com",
+      "a\tb@example.com",
+      "a\nb@example.com",
+      "\u00a0",
+      "\ufeff",
+      "\u00a0noreply@example.com",
+      "noreply@example.com\u00a0",
+      "\ufeffnoreply@example.com",
+      "noreply@example.com\u200b",
+      "noreply@example.com\n",
+      "a@exam\u00a0ple.com",
+      "a@exam\u200bple.com",
+      " <noreply@example.com>",
+      " Fire Hub <noreply@example.com>",
+      "<noreply@example.com> ",
+      "Fire\tHub <noreply@example.com>",
+      "Fire\nHub <noreply@example.com>",
+      "Fire\u00a0Hub <noreply@example.com>",
+      "Fire\u3000Hub <noreply@example.com>",
+      "Fire\u200bHub <noreply@example.com>",
+      "\u202eFire Hub <noreply@example.com>",
+      "\"Fire\r\nBcc: x@example.com\" <noreply@example.com>",
+      "\"Fire\u00a0Hub\" <noreply@example.com>",
+      "\"Fire\"\u00a0<noreply@example.com>",
+      "\"Fire\"\t<noreply@example.com>",
+      "\"Fire \\\" Hub\" <noreply@example.com>",
+      "Fire Hub < noreply@example.com>",
+      "Fire Hub <noreply@example.com >"
+    ]
+  },
+  "host": {
+    "accept": [
+      "smtp.example.com",
+      "relay.internal",
+      "localhost",
+      "127.0.0.1",
+      "[::1]",
+      "mail-01.sub.example.co.kr",
+      "smtp_relay"
+    ],
+    "reject": [
+      "",
+      " ",
+      "  ",
+      " smtp.example.com",
+      "smtp.example.com ",
+      "smtp example.com",
+      "smtp .example.com",
+      "\u00a0",
+      "\ufeff",
+      "\u3000",
+      "\u200b",
+      "\t",
+      "\u00a0 \ufeff",
+      "smtp\u00a0example.com",
+      "smtp\u200bexample.com",
+      "smtp\u001fexample.com",
+      "smtp\u0000example.com",
+      "smtp.example.com\n",
+      "\ufeffsmtp.example.com",
+      "smtp.example.com\u00a0"
+    ]
+  },
+  "charSweep": [
+    {
+      "field": "fromAddress",
+      "name": "로컬 파트 가운데",
+      "template": "a{c}b@example.com",
+      "accepted": "21,23-27,2a-2b,2d-39,3d,3f,41-5a,5e-7e,a1-ac,ae-61b,61d-115e,1161-167f,1681-180d,180f-1fff,2010-2027,2030-205e,2070-2fff,3001-3163,3165-fefe,ff00-ff9f,ffa1-fff8,fffc-ffff"
+    },
+    {
+      "field": "fromAddress",
+      "name": "로컬 파트 맨 앞",
+      "template": "{c}a@example.com",
+      "accepted": "21,23-27,2a-2b,2d,2f-39,3d,3f,41-5a,5e-7e,a1-ac,ae-61b,61d-115e,1161-167f,1681-180d,180f-1fff,2010-2027,2030-205e,2070-2fff,3001-3163,3165-fefe,ff00-ff9f,ffa1-fff8,fffc-ffff"
+    },
+    {
+      "field": "fromAddress",
+      "name": "로컬 파트 맨 뒤",
+      "template": "a{c}@example.com",
+      "accepted": "21,23-27,2a-2b,2d,2f-39,3d,3f,41-5a,5e-7e,a1-ac,ae-61b,61d-115e,1161-167f,1681-180d,180f-1fff,2010-2027,2030-205e,2070-2fff,3001-3163,3165-fefe,ff00-ff9f,ffa1-fff8,fffc-ffff"
+    },
+    {
+      "field": "fromAddress",
+      "name": "도메인 토막 가운데",
+      "template": "a@ex{c}ample.com",
+      "accepted": "2d-2e,30-39,41-5a,61-7a"
+    },
+    {
+      "field": "fromAddress",
+      "name": "도메인 맨 앞",
+      "template": "a@{c}example.com",
+      "accepted": "2d,30-39,41-5a,61-7a"
+    },
+    {
+      "field": "fromAddress",
+      "name": "도메인 맨 뒤",
+      "template": "a@example.com{c}",
+      "accepted": "2d,30-39,41-5a,61-7a"
+    },
+    {
+      "field": "fromAddress",
+      "name": "표시명 맨 앞",
+      "template": "{c}Fire <a@example.com>",
+      "accepted": "21,23-27,2a-2b,2d-39,3d,3f,41-5a,5e-7e,a1-ac,ae-61b,61d-115e,1161-167f,1681-180d,180f-1fff,2010-2027,2030-205e,2070-2fff,3001-3163,3165-fefe,ff00-ff9f,ffa1-fff8,fffc-ffff"
+    },
+    {
+      "field": "fromAddress",
+      "name": "표시명 가운데",
+      "template": "Fire{c}Hub <a@example.com>",
+      "accepted": "20-21,23-27,2a-2b,2d-39,3d,3f,41-5a,5e-7e,a1-ac,ae-61b,61d-115e,1161-167f,1681-180d,180f-1fff,2010-2027,2030-205e,2070-2fff,3001-3163,3165-fefe,ff00-ff9f,ffa1-fff8,fffc-ffff"
+    },
+    {
+      "field": "fromAddress",
+      "name": "표시명과 < 사이",
+      "template": "Fire{c}<a@example.com>",
+      "accepted": "20-21,23-27,2a-2b,2d-39,3d,3f,41-5a,5e-7e,a1-ac,ae-61b,61d-115e,1161-167f,1681-180d,180f-1fff,2010-2027,2030-205e,2070-2fff,3001-3163,3165-fefe,ff00-ff9f,ffa1-fff8,fffc-ffff"
+    },
+    {
+      "field": "fromAddress",
+      "name": "따옴표 표시명 안",
+      "template": "\"Fire{c}Hub\" <a@example.com>",
+      "accepted": "20-21,23-5b,5d-7e,a1-ac,ae-61b,61d-115e,1161-167f,1681-180d,180f-1fff,2010-2027,2030-205e,2070-2fff,3001-3163,3165-fefe,ff00-ff9f,ffa1-fff8,fffc-ffff"
+    },
+    {
+      "field": "fromAddress",
+      "name": "따옴표와 < 사이",
+      "template": "\"Fire\"{c}<a@example.com>",
+      "accepted": "20"
+    },
+    {
+      "field": "fromAddress",
+      "name": "꺾쇠 안 주소의 로컬 파트",
+      "template": "Fire <a{c}b@example.com>",
+      "accepted": "21,23-27,2a-2b,2d-39,3d,3f,41-5a,5e-7e,a1-ac,ae-61b,61d-115e,1161-167f,1681-180d,180f-1fff,2010-2027,2030-205e,2070-2fff,3001-3163,3165-fefe,ff00-ff9f,ffa1-fff8,fffc-ffff"
+    },
+    {
+      "field": "fromAddress",
+      "name": "꺾쇠 안 주소의 도메인",
+      "template": "Fire <a@ex{c}ample.com>",
+      "accepted": "2d-2e,30-39,41-5a,61-7a"
+    },
+    {
+      "field": "fromAddress",
+      "name": "> 뒤",
+      "template": "Fire <a@example.com>{c}",
+      "accepted": ""
+    },
+    {
+      "field": "host",
+      "name": "호스트 가운데",
+      "template": "smtp{c}example.com",
+      "accepted": "21-7e,a1-ac,ae-61b,61d-115e,1161-167f,1681-180d,180f-1fff,2010-2027,2030-205e,2070-2fff,3001-3163,3165-fefe,ff00-ff9f,ffa1-fff8,fffc-ffff"
+    },
+    {
+      "field": "host",
+      "name": "한 글자 호스트",
+      "template": "{c}",
+      "accepted": "21-7e,a1-ac,ae-61b,61d-115e,1161-167f,1681-180d,180f-1fff,2010-2027,2030-205e,2070-2fff,3001-3163,3165-fefe,ff00-ff9f,ffa1-fff8,fffc-ffff"
+    }
+  ]
+}

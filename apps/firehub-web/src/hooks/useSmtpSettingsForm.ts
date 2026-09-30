@@ -5,7 +5,7 @@ import { settingsApi } from '../api/settings';
 import { extractApiError } from '../lib/api-error';
 import { indexSettingsByKey } from '../lib/settings-fields';
 import { isIntegerSyntax } from '../lib/settings-number';
-import { isSenderAddressSyntax } from '../lib/smtp-address';
+import { isSenderAddressSyntax, isSmtpHostSyntax } from '../lib/smtp-address';
 import { eulReul } from '../lib/utils';
 import type { ResolvedSettingResponse } from '../types/settings';
 
@@ -228,7 +228,7 @@ export function useSmtpSettingsForm(): SmtpSettingsFormState {
     });
     // 호스트 중간의 공백은 다듬어도 남는다 — 그대로 저장되면 발송 시점의 접속 실패로만 드러난다(#728).
     const host = form['smtp.host'].trim();
-    if (host !== '' && /\s/.test(host)) {
+    if (host !== '' && !isSmtpHostSyntax(host)) {
       next['smtp.host'] = 'SMTP 호스트에는 공백을 넣을 수 없습니다';
     }
     // 발신자 주소 형식 — 연결 테스트는 접속만 확인하므로 여기서 막지 않으면 실제 메일이 나갈 때에야

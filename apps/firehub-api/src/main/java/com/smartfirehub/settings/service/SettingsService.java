@@ -537,51 +537,101 @@ public class SettingsService {
    * 저장은 성공했는데 화면은 미설정이라고 말하는 상태다. 빈 문자열도 같은 상태를 만들므로 함께
    * 막는다: 설정을 지우는 통로는 {@link #clearSmtpSettings} 하나다. 앞뒤·중간 공백이 섞인 호스트는
    * 그대로 저장되면 발송 시점의 DNS 실패로만 드러나므로 다듬지 않고 거부한다(web 이 다듬어 보낸다).
+   *
+   * <p>"공백"은 {@link #SMTP_BLANK} 집합으로 판정한다 — {@code isBlank()}·{@code
+   * Character.isWhitespace} 는 줄바꿈 없는 공백(U+00A0)·BOM(U+FEFF)을 공백으로 보지 않아, 눈에는
+   * 빈 호스트가 204 로 저장됐다(#728 회귀).
    */
   private static void validateSmtpHost(Map<String, String> settings) {
     if (!settings.containsKey("smtp.host")) return;
     String host = settings.get("smtp.host");
-    if (host.isBlank()) {
+    if (SMTP_ONLY_BLANK.matcher(host).matches()) {
       throw new IllegalArgumentException("SMTP 호스트는 비어 있을 수 없습니다");
     }
-    if (host.chars().anyMatch(Character::isWhitespace)) {
+    if (!isSmtpHostSyntax(host)) {
       throw new IllegalArgumentException("SMTP 호스트에는 공백을 넣을 수 없습니다. 입력값: " + host);
     }
   }
 
-  /** 주소의 한 토막 — 공백·{@code @}·점과 RFC 5322 특수문자({@code <>()[]\,;:"})가 없는 글자들. */
-  private static final String SMTP_ATOM = "[^\\s@<>()\\[\\]\\\\,;:\".]+";
-
-  /** 점으로 이은 토막들 — 점이 맨 앞·맨 뒤에 오거나 연달아 오지 않는다. */
-  private static final String SMTP_DOTTED = SMTP_ATOM + "(?:\\." + SMTP_ATOM + ")*";
-
-  /** {@code 로컬@도메인}. */
-  private static final String SMTP_ADDR = SMTP_DOTTED + "@" + SMTP_DOTTED;
+  /*
+   * ── SMTP 호스트·발신자 주소의 표기 문법(#728) ─────────────────────────────────────────────
+   *
+   * web 의 lib/smtp-address.ts 와 **글자 그대로 같은 문법**이다. 한쪽만 넓으면 "칸 검증은 통과하고
+   * 저장은 400"(#727) 이 다시 생긴다 — 실제로 두 번 어긋났다:
+   *   1) 서버만 파서(InternetAddress.validate)를 더 돌려 도메인의 `_`·`?`·`。` 를 서버만 거부했다.
+   *   2) `\s`·trim/strip·isBlank 가 언어마다 다른 문자를 공백으로 봐 NBSP·BOM 을 서버만 통과시켰다.
+   * 그래서 이 문법은 (a) `\s`·`\p{..}` 같은 **엔진이 뜻을 정하는 클래스를 쓰지 않고** 코드 단위를
+   * 명시한 범위만 쓰며(유니코드 판 차이에도 같다), (b) 파서가 받는 것의 **부분집합**이다.
+   * (b) 는 SmtpAddressGrammarTest 가 BMP 전 문자를 자리마다 넣어 증명하고, web 과의 일치는 두 앱이
+   * 함께 읽는 픽스처(src/test/resources/fixtures/smtp-validation-vectors.json)가 증명한다.
+   * 아래 조각을 고치면 web 의 같은 이름 조각과 픽스처를 함께 고쳐야 한다.
+   */
 
   /**
-   * 발신자 주소의 표기 — {@code 주소} 또는 {@code 표시명 <주소>}. web 의
-   * {@code lib/smtp-address.ts} 와 <b>글자 그대로 같은 문법</b>이어야 한다(#728) — 한쪽만 넓으면
-   * "칸 검증은 통과하고 저장은 400"(#727) 이 다시 생긴다.
+   * 공백·제어문자·보이지 않는 문자. C0·C1 제어문자와 DEL, 유니코드 공백(U+00A0·U+1680·
+   * U+2000~200A·U+2028·U+2029·U+202F·U+205F·U+3000), 폭 없는 문자·방향 제어·BOM(U+00AD·U+061C·
+   * U+180E·U+200B~200F·U+202A~202E·U+2060~206F·U+FEFF·U+FFF9~FFFB), 한글 채움 문자(U+115F·
+   * U+1160·U+3164·U+FFA0). ASCII 공백(U+0020)은 {@link #SMTP_BLANK} 에만 들어 있다.
+   */
+  private static final String SMTP_INVISIBLE =
+      "\\u0000-\\u001F\\u007F-\\u00A0\\u00AD\\u061C\\u115F\\u1160\\u1680\\u180E\\u2000-\\u200F"
+          + "\\u2028-\\u202F\\u205F-\\u206F\\u3000\\u3164\\uFEFF\\uFFA0\\uFFF9-\\uFFFB";
+
+  /** {@link #SMTP_INVISIBLE} 에 ASCII 공백을 더한 것 — 호스트와 주소에는 하나도 올 수 없다. */
+  private static final String SMTP_BLANK = "\\u0020" + SMTP_INVISIBLE;
+
+  /** 로컬 파트의 한 토막 — 공백류·{@code @}·점과 RFC 5322 특수문자({@code <>()[]\,;:"})가 없는 글자들. */
+  private static final String SMTP_ATOM = "[^" + SMTP_BLANK + "@<>()\\[\\]\\\\,;:\".]+";
+
+  /** 도메인의 한 토막 — ASCII 글자·숫자·하이픈만. */
+  private static final String SMTP_LABEL = "[A-Za-z0-9-]+";
+
+  /** {@code 로컬@도메인}. 점이 맨 앞·맨 뒤에 오거나 연달아 오지 않는다. */
+  private static final String SMTP_ADDR =
+      SMTP_ATOM + "(?:\\." + SMTP_ATOM + ")*@" + SMTP_LABEL + "(?:\\." + SMTP_LABEL + ")*";
+
+  /**
+   * 발신자 주소의 표기 — {@code 주소} 또는 {@code 표시명 <주소>}.
    *
    * <ul>
-   *   <li>주소: 점으로 이은 토막 {@code @} 점으로 이은 토막. 도메인에 점을 요구하지 않는다 —
-   *       사내 릴레이에서는 {@code alerts@mailhost} 가 합법적인 발신자다.
+   *   <li>로컬 파트: 점으로 이은 토막. 한글 등 비ASCII 글자는 받는다.
+   *   <li>도메인: 점으로 이은 ASCII 글자·숫자·하이픈 토막. 점을 요구하지 않는다 — 사내 릴레이에서는
+   *       {@code alerts@mailhost} 가 합법적인 발신자다. {@code _}·{@code ?}·전각 마침표 등은 발송
+   *       파서가 거부하므로 여기서 막는다. 한글 도메인은 퓨니코드({@code xn--…})로 적는다.
    *   <li>표시명: 특수문자({@code <>()[]\,;:"@})가 없는 글자들이거나, 큰따옴표로 감싼 문자열.
    *       쉼표·괄호가 든 표시명은 따옴표로 감싸야 한다 — 메일 주소 파서가 따옴표 없는 쉼표를
-   *       주소 구분자로, 괄호를 주석으로 읽기 때문이다.
+   *       주소 구분자로, 괄호를 주석으로 읽기 때문이다. 공백은 ASCII 공백만 받는다(줄바꿈·탭·
+   *       보이지 않는 문자는 헤더를 깨뜨린다).
+   *   <li>맨 앞은 공백이 아니다(web 이 다듬어 보낸다). 맨 뒤는 문법상 공백일 수 없다.
    * </ul>
-   *
-   * <p>파서({@link InternetAddress})가 받는 것보다 일부러 좁다(도메인 리터럴 {@code a@[127.0.0.1]},
-   * 따옴표 로컬 파트 등 제외). 파서의 문법을 web 에 그대로 옮길 수 없으므로, 양쪽이 똑같이 구현할
-   * 수 있는 이 문법을 기준으로 삼고 파서는 그 위의 확인으로만 쓴다.
    */
   private static final Pattern SMTP_SENDER_SYNTAX =
       Pattern.compile(
-          "(?:"
+          "(?! )(?:"
               + SMTP_ADDR
-              + "|(?:\"[^\"\\\\]*\"\\s*|[^<>()\\[\\]\\\\,;:\"@]*)<"
+              + "|(?:\"[^"
+              + SMTP_INVISIBLE
+              + "\"\\\\]*\" *|[^"
+              + SMTP_INVISIBLE
+              + "<>()\\[\\]\\\\,;:\"@]*)<"
               + SMTP_ADDR
               + ">)");
+
+  /** 호스트의 표기 — 비어 있지 않고 {@link #SMTP_BLANK} 문자가 하나도 없다. */
+  private static final Pattern SMTP_HOST_SYNTAX = Pattern.compile("[^" + SMTP_BLANK + "]+");
+
+  /** {@link #SMTP_BLANK} 문자만 있는(또는 빈) 값 — "눈에는 빈 값". */
+  private static final Pattern SMTP_ONLY_BLANK = Pattern.compile("[" + SMTP_BLANK + "]*");
+
+  /** 호스트 표기 판정 — web 의 {@code isSmtpHostSyntax} 와 같은 판정이다. */
+  static boolean isSmtpHostSyntax(String value) {
+    return SMTP_HOST_SYNTAX.matcher(value).matches();
+  }
+
+  /** 발신자 주소 표기 판정(문법만) — web 의 {@code isSenderAddressSyntax} 와 같은 판정이다. */
+  static boolean isSmtpSenderSyntax(String value) {
+    return SMTP_SENDER_SYNTAX.matcher(value).matches();
+  }
 
   /**
    * {@code smtp.from_address} 형식 검증(#728). 키가 없으면 아무것도 하지 않는다.
@@ -592,12 +642,12 @@ public class SettingsService {
    * <p><b>받는 형태</b>: {@code 주소} 또는 {@code 표시명 <주소>} 하나({@link #SMTP_SENDER_SYNTAX}).
    * {@code EmailDeliveryChannel} 은 저장된 문자열을 {@code helper.setFrom(String)} 에 그대로 넘기고
    * 그 메서드는 {@link InternetAddress#parse} 로 <b>정확히 한 개</b>의 주소를 요구하므로, 표시명
-   * 형태를 막으면 과잉 차단이다. 문법을 통과한 값은 같은 파서로 한 번 더 읽어, 저장을 허용한 값이
-   * 발송에서 거부되는 일이 없게 한다.
+   * 형태를 막으면 과잉 차단이다. 문법은 그 파서가 받는 것의 부분집합이다({@link
+   * #isSingleMailAddress}).
    *
    * <p><b>빈 문자열은 그대로 통과시킨다.</b> {@code EmailDeliveryChannel} 이 빈 발신자를 기본
    * 발신자로 바꿔 보내므로 동작하는 상태이고, 필수 여부는 화면(web)의 규칙이다. 공백만 있는 값과
-   * 앞뒤 공백은 거부한다(web 이 다듬어 보낸다).
+   * 앞뒤 공백·보이지 않는 문자는 거부한다(web 이 다듬어 보낸다).
    *
    * <p>파서 예외 원문({@code Missing final '@domain'} 등)은 사용자에게 내보내지 않는다 —
    * 이 메시지는 화면 토스트에 그대로 나간다.
@@ -614,12 +664,17 @@ public class SettingsService {
     }
   }
 
-  /** {@code 주소} 또는 {@code 표시명 <주소>} 하나인가 — {@link #validateSmtpFromAddress} 의 판정. */
-  private static boolean isSingleMailAddress(String value) {
-    if (!value.equals(value.strip())) return false;
-    if (!SMTP_SENDER_SYNTAX.matcher(value).matches()) return false;
+  /**
+   * {@code 주소} 또는 {@code 표시명 <주소>} 하나인가 — {@link #validateSmtpFromAddress} 의 판정.
+   *
+   * <p>판정은 {@link #isSmtpSenderSyntax 문법}이 한다. 뒤의 파서 단계는 문법이 통과시킨 값을 다시
+   * 거부하지 <b>않는다</b>(SmtpAddressGrammarTest 가 지킨다) — 문법을 넓히다 "저장은 되고 발송에서
+   * 실패"가 생기는 것을 막는 안전망일 뿐이다. 파서가 거부하는 값이 생기면 파서에 기대지 말고
+   * 문법(과 web)을 좁혀야 한다: 파서 단계는 web 에 없어서 그만큼 "칸은 통과, 저장은 400"이 된다.
+   */
+  static boolean isSingleMailAddress(String value) {
+    if (!isSmtpSenderSyntax(value)) return false;
     try {
-      // 발송 코드와 같은 파서 — 문법이 놓친 것이 있어도 "저장은 되고 발송에서 실패"는 막는다.
       InternetAddress[] parsed = InternetAddress.parse(value, true);
       if (parsed.length != 1 || parsed[0].isGroup()) return false;
       parsed[0].validate();
