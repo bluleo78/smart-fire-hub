@@ -286,6 +286,76 @@ test.describe('AI 분류 전용 공급자 탭(#707)', () => {
     await page.screenshot({ path: screenshotPath('classify-configured-revert.png'), fullPage: true });
   });
 
+  /**
+   * #730 — 분류 모델 Select 는 폼의 모델이 빈 값이 되면 반드시 placeholder 로 돌아가야 한다.
+   * 예전에는 빈 값일 때 `value={undefined}` 를 넘겨 Radix Select 가 비제어 모드로 바뀌었고, 그
+   * 사이에 고른 모델이 Radix 내부 상태에 남아 이후 모델이 비워질 때마다 옛 이름이 다시 나타났다
+   * (화면은 "Claude Sonnet 5", 저장하면 "분류 모델을 선택하세요").
+   */
+  test('빈 상태에서 골랐던 모델이, 유형을 오간 뒤 모델이 비워졌을 때 다시 나타나지 않는다(#730)', async ({
+    authenticatedPage: page,
+  }) => {
+    const calls = await mockAiClassifyCredential(
+      page,
+      createAiClassifyCredential({ configured: true, secretFieldNames: ['oauthToken'], model: 'claude-haiku-4-5' }),
+    );
+    await openClassifyTab(page);
+    const panel = classifyPanel(page);
+    const model = panel.locator('#ai-classify-model');
+    const agentType = panel.locator('#ai-classify-agent-type');
+    await expect(model).toHaveText('Claude Haiku 4.5');
+
+    // 다른 유형으로 가서(모델 비워짐) 모델을 하나 고른다 — 이때 고른 값이 남는 것이 결함이었다.
+    await agentType.click();
+    await page.getByRole('option', { name: 'Claude API', exact: true }).click();
+    await expect(model).toHaveText('모델을 선택하세요');
+    await model.click();
+    await page.getByRole('option', { name: 'Claude Sonnet 5' }).click();
+    await expect(model).toHaveText('Claude Sonnet 5');
+
+    // 저장된 유형으로 복귀(저장값 복원) 후 다시 다른 유형으로 — 모델은 비워져 있어야 한다.
+    await agentType.click();
+    await page.getByRole('option', { name: 'Claude Agent SDK', exact: true }).click();
+    await expect(model).toHaveText('Claude Haiku 4.5');
+    await agentType.click();
+    await page.getByRole('option', { name: 'Claude API', exact: true }).click();
+    await expect(model).toHaveText('모델을 선택하세요');
+
+    // 화면과 폼 상태가 같다 — 저장은 모델 필수 오류로 막히고, 그때도 칸은 placeholder 다.
+    await panel.getByRole('button', { name: '저장' }).click();
+    await expect(panel.getByText('분류 모델을 선택하세요', { exact: true })).toBeVisible();
+    await expect(model).toHaveText('모델을 선택하세요');
+    expect(calls.puts).toHaveLength(0);
+    await page.screenshot({ path: screenshotPath('classify-model-cleared-placeholder.png'), fullPage: true });
+  });
+
+  /**
+   * #730 변형 — 미설정 편집에서도 같다. 다른 유형에서 고른 모델이, 처음 유형으로 돌아와 모델이
+   * 비워진 뒤에도 보이면 "모델이 골라져 있는데 저장이 비활성"인 모순된 화면이 된다.
+   */
+  test('미설정 편집에서 다른 유형에서 고른 모델이 유형 복귀 뒤 남아 보이지 않는다(#730)', async ({
+    authenticatedPage: page,
+  }) => {
+    const calls = await mockAiClassifyCredential(page);
+    await openClassifyTab(page);
+    const panel = classifyPanel(page);
+    await panel.getByRole('button', { name: '분류 전용 설정하기' }).click();
+    const model = panel.locator('#ai-classify-model');
+    const agentType = panel.locator('#ai-classify-agent-type');
+    await expect(model).toHaveText('모델을 선택하세요');
+
+    await agentType.click();
+    await page.getByRole('option', { name: 'Claude API', exact: true }).click();
+    await model.click();
+    await page.getByRole('option', { name: 'Claude Sonnet 5' }).click();
+    await expect(model).toHaveText('Claude Sonnet 5');
+
+    await agentType.click();
+    await page.getByRole('option', { name: 'Claude Agent SDK', exact: true }).click();
+    await expect(model).toHaveText('모델을 선택하세요');
+    expect(calls.puts).toHaveLength(0);
+  });
+
   test('서버 400 메시지를 그대로 보여준다', async ({ authenticatedPage: page }) => {
     await mockAiClassifyCredential(page);
     const rejection = 'AI 모델(gpt)이 opencode 형식(공급자/모델)이 아니거나 선택한 공급자와 일치하지 않습니다. 관리자 설정에서 모델을 다시 선택하세요.';

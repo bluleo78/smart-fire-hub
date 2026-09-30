@@ -119,7 +119,10 @@ export default function AiClassifySettingsTab({
                       onModelChange={state.setModel}
                     />
                   ) : (
-                    <Select value={state.model === '' ? undefined : state.model} onValueChange={state.setModel}>
+                    // 빈 값도 그대로 넘겨 항상 제어 모드로 둔다(#730) — `undefined` 를 넘기면 Radix
+                    // Select 가 비제어 모드가 되어, 그때 고른 모델이 내부 상태에 남았다가 폼의 모델이
+                    // 다시 비워질 때마다 옛 이름으로 나타난다. 빈 문자열이면 Radix 가 placeholder 를 그린다.
+                    <Select value={state.model} onValueChange={state.setModel}>
                       <SelectTrigger id="ai-classify-model" className="w-full max-w-md">
                         <SelectValue placeholder="모델을 선택하세요" />
                       </SelectTrigger>
