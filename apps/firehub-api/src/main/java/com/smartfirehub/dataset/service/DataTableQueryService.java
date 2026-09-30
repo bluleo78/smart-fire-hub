@@ -1,7 +1,9 @@
 package com.smartfirehub.dataset.service;
 
 import com.smartfirehub.dataset.dto.SqlQueryResponse;
+import com.smartfirehub.dataset.exception.SqlQueryException;
 import com.smartfirehub.global.tenant.DataSchema;
+import com.smartfirehub.global.util.AdhocSqlStatements;
 import com.smartfirehub.global.util.SqlLexicalMask;
 import com.smartfirehub.global.util.SqlValidationUtils;
 import com.smartfirehub.pipeline.service.validator.SqlValidator;
@@ -53,6 +55,14 @@ public class DataTableQueryService {
     // 검증 우회 가능성보다 낫다고 판단했다.
     sqlValidator.validate(cleanSql);
 
+    // 위치 파라미터($1 …)는 실행 전에 원인 메시지로 거부한다(#753). 바인드 값이 없으니 서버가 Bind 단계에서
+    // 08P01(프로토콜 위반)로 거부하고, Hikari 가 SQLSTATE 08 계열을 깨진 커넥션으로 보아 폐기해 이 요청의
+    // 트랜잭션(query_history 저장 포함)까지 잃는다. savepoint 로는 막을 수 없으므로 SAVEPOINT 전에 거른다.
+    String paramMessage = AdhocSqlStatements.positionalParameterMessage(cleanSql);
+    if (paramMessage != null) {
+      throw new SqlQueryException(paramMessage);
+    }
+
     long startTime = System.currentTimeMillis();
 
     // 스키마명은 한 번만 해석해 설정과 복원(finally)이 반드시 같은 값을 쓰게 한다. 여기서 미리
@@ -82,7 +92,9 @@ public class DataTableQueryService {
         // 존중하고, 서브쿼리·CTE·문자열 속 LIMIT 에는 속지 않는다). 애드혹 분석 경로와 같은 공용 판정.
         String limitedSql = SqlLexicalMask.applyRowLimit(cleanSql, maxRows);
 
-        var result = dsl.fetch(limitedSql);
+        // 정적 Statement 로 원문 그대로 실행한다(#753) — PreparedStatement 는 jsonb ? 연산자를 바인드
+        // 자리로 오해한다. 실행 문자열 = 위에서 검증한 문자열 + 행 제한이다(AdhocSqlStatements 참고).
+        var result = AdhocSqlStatements.fetch(dsl, limitedSql);
         long executionTimeMs = System.currentTimeMillis() - startTime;
 
         // Filter out system columns (id, import_id, created_at, _updated_at)
@@ -111,7 +123,7 @@ public class DataTableQueryService {
             new SqlQueryResponse(queryType, columns, rows, rows.size(), executionTimeMs, null);
       } else {
         // DML: INSERT, UPDATE, DELETE
-        int affectedRows = dsl.execute(cleanSql);
+        int affectedRows = AdhocSqlStatements.execute(dsl, cleanSql);
         long executionTimeMs = System.currentTimeMillis() - startTime;
         response =
             new SqlQueryResponse(
@@ -122,7 +134,8 @@ public class DataTableQueryService {
     } catch (Exception e) {
       long executionTimeMs = System.currentTimeMillis() - startTime;
       // Rollback to savepoint to clear the aborted transaction state
-      dsl.execute("ROLLBACK TO SAVEPOINT user_query");
+      // 되돌리기마저 실패하면 원래 SQL 오류를 덮지 않도록 suppressed 로 붙여 원래 예외를 던진다(#753).
+      AdhocSqlStatements.rollbackToSavepointOrRethrow(dsl, "user_query", e);
       String errorMessage = e.getMessage();
       return new SqlQueryResponse(
           queryType, List.of(), List.of(), 0, executionTimeMs, errorMessage);

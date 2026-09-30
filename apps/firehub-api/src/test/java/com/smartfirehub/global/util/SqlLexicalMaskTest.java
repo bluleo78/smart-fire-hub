@@ -106,4 +106,44 @@ class SqlLexicalMaskTest {
     assertThat(FIXTURE.get("stripTrailing").size()).isGreaterThanOrEqualTo(20);
     assertThat(FIXTURE.get("rowLimit").size()).isGreaterThanOrEqualTo(20);
   }
+
+  // ---------------------------------------------------------------------------------------------
+  // #753 — 위치 파라미터($n) 탐지. Java 전용 규칙이라 공용 픽스처에는 넣지 않는다(executor 는 서버가
+  // "there is no parameter $1" 로 답하므로 짝 함수가 없다).
+  // ---------------------------------------------------------------------------------------------
+
+  static Stream<Arguments> positionalParameterVectors() {
+    return Stream.of(
+        // 코드 속 $n 은 파라미터다.
+        Arguments.of("SELECT * FROM t WHERE a = $1", 26),
+        Arguments.of("SELECT $12", 7),
+        Arguments.of("SELECT \"x\"$1", 10),
+        Arguments.of("SELECT 1$2", 8),
+        Arguments.of("SELECT $$a$$$1", 12),
+        Arguments.of("SELECT '$1', $2", 13),
+        // 리터럴·주석·따옴표 식별자·달러 인용·식별자 속 $n 은 아니다.
+        Arguments.of("SELECT '$1'", -1),
+        Arguments.of("SELECT E'\\'$1'", -1),
+        Arguments.of("SELECT \"$1\"", -1),
+        Arguments.of("SELECT 1 -- $1", -1),
+        Arguments.of("SELECT 1 /* /* $1 */ $2 */", -1),
+        Arguments.of("SELECT $$ $1 $$", -1),
+        Arguments.of("SELECT $tag$ $1 $tag$", -1),
+        Arguments.of("SELECT a$1 FROM t", -1),
+        Arguments.of("SELECT '{\"a\":1}'::jsonb ? 'a'", -1),
+        Arguments.of("SELECT $ 1", -1));
+  }
+
+  @ParameterizedTest
+  @MethodSource("positionalParameterVectors")
+  void 위치_파라미터를_리터럴_주석_밖에서만_찾는다(String sql, int expected) {
+    assertThat(SqlLexicalMask.findPositionalParameter(sql)).isEqualTo(expected);
+  }
+
+  @Test
+  void 위치_파라미터_탐지는_마스크_결과를_바꾸지_않는다() {
+    String sql = "SELECT '$1', $2 -- $3";
+    SqlLexicalMask.findPositionalParameter(sql);
+    assertThat(SqlLexicalMask.mask(sql)).isEqualTo("SELECT 'xx', $2" + " ".repeat(6));
+  }
 }

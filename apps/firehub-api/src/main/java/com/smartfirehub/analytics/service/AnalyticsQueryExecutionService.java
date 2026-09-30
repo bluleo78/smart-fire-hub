@@ -6,6 +6,7 @@ import com.smartfirehub.analytics.dto.AnalyticsQueryResponse;
 import com.smartfirehub.analytics.dto.SchemaInfoResponse;
 import com.smartfirehub.dataset.exception.SqlQueryException;
 import com.smartfirehub.global.tenant.DataSchema;
+import com.smartfirehub.global.util.AdhocSqlStatements;
 import com.smartfirehub.global.util.SqlLexicalMask;
 import com.smartfirehub.global.util.SqlValidationUtils;
 import com.smartfirehub.pipeline.exception.UnsafeSqlException;
@@ -105,6 +106,14 @@ public class AnalyticsQueryExecutionService {
       return errorResponse(e.getMessage());
     }
 
+    // 위치 파라미터($1 …)는 실행 경로와 무관하게 같은 메시지로 거부한다(#753). 직접 경로에서는 바인드 값이
+    // 없어 서버가 08P01(프로토콜 위반)로 거부하고 Hikari 가 커넥션을 폐기해 트랜잭션을 잃었고(500), executor
+    // 경로는 "there is no parameter $1" 로 답해 두 경로가 달랐다. 다른 검증 실패와 같은 error 응답으로 돌린다.
+    String paramMessage = AdhocSqlStatements.positionalParameterMessage(cleanSql);
+    if (paramMessage != null) {
+      return errorResponse(paramMessage);
+    }
+
     if (executorEnabled) {
       return executeViaExecutor(cleanSql, maxRows, readOnly);
     }
@@ -187,12 +196,15 @@ public class AnalyticsQueryExecutionService {
 
         org.jooq.Result<?> result;
         try {
-          result = dsl.fetch(limitedSql);
+          // 정적 Statement 로 원문 그대로 실행한다(#753) — PreparedStatement 는 jsonb ? 연산자를 바인드
+          // 자리로 오해한다. 실행 문자열 = 위에서 검증한 문자열 + 행 제한이다(AdhocSqlStatements 참고).
+          result = AdhocSqlStatements.fetch(dsl, limitedSql);
         } catch (Exception fetchEx) {
           // jOOQ/JDBC may fail to read raw GEOMETRY/GEOGRAPHY binary data.
           // Rollback to savepoint, detect geometry columns via JDBC metadata, wrap with
           // ST_AsGeoJSON, and retry.
-          dsl.execute("ROLLBACK TO SAVEPOINT analytics_query");
+          // 되돌리기마저 실패하면(커넥션 끊김) 원래 오류를 보존해 던진다(#753).
+          AdhocSqlStatements.rollbackToSavepointOrRethrow(dsl, "analytics_query", fetchEx);
           dsl.execute("SAVEPOINT analytics_query");
 
           List<ColumnMeta> columnMetas;
@@ -213,7 +225,7 @@ public class AnalyticsQueryExecutionService {
           if (!SqlLexicalMask.hasTopLevelRowLimit(cleanSql)) {
             wrappedSql = wrappedSql + "\nLIMIT " + maxRows;
           }
-          result = dsl.fetch(wrappedSql);
+          result = AdhocSqlStatements.fetch(dsl, wrappedSql);
         }
 
         // Detect GEOMETRY/GEOGRAPHY columns from successfully fetched PGobject data
@@ -230,7 +242,7 @@ public class AnalyticsQueryExecutionService {
           if (!SqlLexicalMask.hasTopLevelRowLimit(cleanSql)) {
             wrappedSql = wrappedSql + "\nLIMIT " + maxRows;
           }
-          result = dsl.fetch(wrappedSql);
+          result = AdhocSqlStatements.fetch(dsl, wrappedSql);
         }
 
         long executionTimeMs = System.currentTimeMillis() - startTime;
@@ -261,7 +273,7 @@ public class AnalyticsQueryExecutionService {
                 truncated,
                 null);
       } else {
-        int affectedRows = dsl.execute(cleanSql);
+        int affectedRows = AdhocSqlStatements.execute(dsl, cleanSql);
         long executionTimeMs = System.currentTimeMillis() - startTime;
         response =
             new AnalyticsQueryResponse(
@@ -273,7 +285,8 @@ public class AnalyticsQueryExecutionService {
 
     } catch (Exception e) {
       long executionTimeMs = System.currentTimeMillis() - startTime;
-      dsl.execute("ROLLBACK TO SAVEPOINT analytics_query");
+      // 되돌리기마저 실패하면 원래 SQL 오류를 덮지 않도록 suppressed 로 붙여 원래 예외를 던진다(#753).
+      AdhocSqlStatements.rollbackToSavepointOrRethrow(dsl, "analytics_query", e);
       return new AnalyticsQueryResponse(
           queryType, List.of(), List.of(), 0, executionTimeMs, 0, false, formatExecutionError(e));
     } finally {
@@ -494,8 +507,10 @@ public class AnalyticsQueryExecutionService {
     String metaSql = "SELECT * FROM (" + sql + ") _geom_detect LIMIT 0";
     dsl.connection(
         conn -> {
-          try (var ps = conn.prepareStatement(metaSql);
-              var rs = ps.executeQuery()) {
+          // 사용자 SQL 이 들어가므로 정적 Statement 로 원문 그대로 보낸다(#753 — ? 를 바인드 자리로 오해하지 않게).
+          try (var st = conn.createStatement()) {
+            st.setEscapeProcessing(false);
+            var rs = st.executeQuery(metaSql);
             var meta = rs.getMetaData();
             for (int i = 1; i <= meta.getColumnCount(); i++) {
               String typeName = meta.getColumnTypeName(i);

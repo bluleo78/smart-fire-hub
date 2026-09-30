@@ -51,6 +51,33 @@ public final class SqlLexicalMask {
    */
   public static String mask(String sql) {
     char[] out = sql.toCharArray();
+    scan(sql, out);
+    return new String(out);
+  }
+
+  /**
+   * 주석·리터럴·따옴표 식별자·달러 인용 <b>밖</b>에 있는 첫 위치 파라미터({@code $1}, {@code $12} …)의 시작
+   * 인덱스를 돌려준다. 없으면 -1(#753).
+   *
+   * <p><b>왜 필요한가.</b> 애드혹 SQL 은 바인드 값 없이 실행하므로 {@code $n} 은 채울 값이 없다. pgjdbc 는 확장
+   * 프로토콜로 보내는데, 서버는 Parse 단계에서 {@code $1} 을 선언되지 않은 파라미터로 추론해 두고 Bind(값 0개)
+   * 에서 {@code 08P01}(프로토콜 위반)로 거부한다. Hikari 는 SQLSTATE 08 계열을 "깨진 커넥션"으로 보고 폐기해
+   * 진행 중이던 트랜잭션까지 잃는다 — 그래서 실행 전에 이 함수로 걸러 원인 메시지로 거부한다.
+   *
+   * <p>판정은 {@link #mask} 와 같은 스캔 상태로 한다(마스크 결과 문자열이 아니라). 식별자 속 {@code $}({@code a$1})
+   * 는 식별자 글자라 파라미터가 아니고, 따옴표 식별자·달러 인용 바로 뒤의 {@code $1}({@code "x"$1},
+   * {@code $$a$$$1}) 과 숫자 바로 뒤의 {@code $2}({@code 1$2}) 는 PostgreSQL 스캐너에서도 파라미터다.
+   */
+  public static int findPositionalParameter(String sql) {
+    return scan(sql, sql.toCharArray());
+  }
+
+  /**
+   * {@link #mask} 의 본체. {@code out}(원문 복사본)에 주석·리터럴을 가리고, 스캔 중 만난 첫 위치 파라미터의
+   * 인덱스(없으면 -1)를 돌려준다. 두 공개 함수가 같은 토큰 규칙을 쓰도록 한 곳에 둔다.
+   */
+  private static int scan(String sql, char[] out) {
+    int firstParam = -1;
     int n = sql.length();
     int i = 0;
     while (i < n) {
@@ -98,6 +125,10 @@ public final class SqlLexicalMask {
         // 식별자 밖의 $ 만 여기 온다. $1 같은 위치 파라미터는 태그 모양이 아니라 그냥 지나간다.
         int tagEnd = dollarTagEnd(sql, i);
         if (tagEnd < 0) {
+          // 태그 모양이 아닌 $ 뒤에 숫자가 오면 위치 파라미터다(PostgreSQL scan.l 의 param: \${decinteger}).
+          if (firstParam < 0 && i + 1 < n && isAsciiDigit(sql.charAt(i + 1))) {
+            firstParam = i;
+          }
           i++;
           continue;
         }
@@ -110,7 +141,7 @@ public final class SqlLexicalMask {
         i++;
       }
     }
-    return new String(out);
+    return firstParam;
   }
 
   /**

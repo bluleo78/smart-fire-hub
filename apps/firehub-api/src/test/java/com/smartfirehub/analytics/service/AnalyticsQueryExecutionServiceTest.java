@@ -356,4 +356,64 @@ class AnalyticsQueryExecutionServiceTest extends IntegrationTestBase {
     SchemaInfoResponse res = executionService.getSchemaInfo(List.of(9_999_999L));
     assertThat(res.tables()).isEmpty();
   }
+
+  // =========================================================================
+  // #753 — 위치 파라미터($n)·JDBC 자리표시자(?) 처리 (직접 실행 경로)
+  // =========================================================================
+
+  /**
+   * $1 은 예전에 08P01 로 커넥션이 폐기되고 savepoint 롤백 예외가 원래 오류를 덮어 500 이 됐다(#753). 이제 실행 전에
+   * 원인 메시지로 거부하고(다른 검증 실패와 같은 error 응답), 같은 트랜잭션의 다음 쿼리가 정상이어야 한다.
+   */
+  @Test
+  void execute_positionalParameter_returnsClearError_andConnectionSurvives() {
+    AnalyticsQueryResponse response =
+        executionService.execute(
+            "SELECT g FROM generate_series(1,5) g WHERE g = $1", 10, true);
+    assertThat(response.error()).contains("$1");
+
+    AnalyticsQueryResponse next =
+        executionService.execute("SELECT name FROM data.exec_test ORDER BY name", 10, true);
+    assertThat(next.error()).isNull();
+    assertThat(next.rows()).hasSize(2);
+  }
+
+  /** jsonb ?, ?|, ?& 연산자는 원문 그대로 실행돼 정상 결과를 준다(executor 경로와 같은 결과). */
+  @Test
+  void execute_jsonbQuestionOperators_work() {
+    AnalyticsQueryResponse response =
+        executionService.execute(
+            "SELECT '{\"a\":1}'::jsonb ? 'a' AS has, "
+                + "'{\"a\":1}'::jsonb ?| array['a','z'] AS any_, "
+                + "'{\"a\":1}'::jsonb ?& array['a','z'] AS all_",
+            10,
+            true);
+    assertThat(response.error()).isNull();
+    assertThat(response.rows()).hasSize(1);
+    assertThat(response.rows().get(0))
+        .containsEntry("has", true)
+        .containsEntry("any_", true)
+        .containsEntry("all_", false);
+  }
+
+  /** ? 연산자 피연산자 서브쿼리로 public 스키마를 읽으려는 시도는 여전히 검증 단계에서 거부된다(#385 가드 유지). */
+  @Test
+  void execute_jsonbQuestionOperator_withPublicSubquery_isStillRejected() {
+    AnalyticsQueryResponse r1 =
+        executionService.execute(
+            "SELECT '{}'::jsonb ? (SELECT username FROM public.\"user\" LIMIT 1) AS x", 10, true);
+    assertThat(r1.error()).isNotNull();
+    assertThat(r1.rows()).isEmpty();
+    AnalyticsQueryResponse r2 =
+        executionService.execute(
+            "SELECT '{}'::jsonb ?& array(SELECT name FROM public.role) AS x", 10, true);
+    assertThat(r2.error()).isNotNull();
+    assertThat(r2.rows()).isEmpty();
+    // 미한정 이름이 public 에만 있는 그림자 경로도 ? 피연산자 속에서 막힌다.
+    AnalyticsQueryResponse r3 =
+        executionService.execute(
+            "SELECT '{}'::jsonb ? (SELECT name FROM role LIMIT 1) AS x", 10, true);
+    assertThat(r3.error()).isNotNull();
+    assertThat(r3.rows()).isEmpty();
+  }
 }

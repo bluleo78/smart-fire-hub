@@ -504,4 +504,90 @@ class DataTableQueryServiceTest extends IntegrationTestBase {
         dataTableQueryService.executeQuery("SELECT * FROM non_existent_table_xyz", 100);
     assertThat(error.executionTimeMs()).isGreaterThanOrEqualTo(0);
   }
+
+  // =========================================================================
+  // #753 — 위치 파라미터($n)·JDBC 자리표시자(?) 처리
+  // =========================================================================
+
+  /**
+   * $1 이 든 SQL 은 서버가 bind 개수 불일치(08P01, 프로토콜 오류)로 거부해 Hikari 가 커넥션을 폐기하고, 뒤이은
+   * savepoint 롤백이 "Connection is closed" 로 원래 오류를 덮어 500 이 됐다(#753). 이제 실행 전에 원인 메시지와
+   * 함께 거부하고(400), 커넥션·트랜잭션은 멀쩡해 같은 트랜잭션의 다음 쿼리가 정상이어야 한다.
+   */
+  @Test
+  void executeQuery_positionalParameter_rejectedWithClearMessage_andConnectionSurvives() {
+    assertThatThrownBy(
+            () ->
+                dataTableQueryService.executeQuery(
+                    "SELECT value FROM " + testTableName + " WHERE value = $1", 10))
+        .isInstanceOf(SqlQueryException.class)
+        .hasMessageContaining("$1");
+
+    // 같은 트랜잭션(=같은 커넥션)에서 다음 쿼리가 정상이어야 한다 — 수정 전에는 "Connection is closed".
+    SqlQueryResponse next =
+        dataTableQueryService.executeQuery("SELECT value FROM " + testTableName, 10);
+    assertThat(next.error()).isNull();
+    assertThat(next.rows()).hasSize(3);
+    assertThat(dsl.fetchValue("SELECT 1", Integer.class)).isEqualTo(1);
+  }
+
+  /** 리터럴·주석·따옴표 식별자 속의 $1 은(달러 인용은 JSqlParser 가 못 읽어 SqlLexicalMaskTest 에서 본다) 위치 파라미터가 아니다 — 거부하지 않고 그대로 실행한다. */
+  @Test
+  void executeQuery_dollarDigitInsideLiteralOrComment_isNotRejected() {
+    SqlQueryResponse response =
+        dataTableQueryService.executeQuery(
+            "SELECT '$1' AS a, E'$2' AS \"$b\" /* $3 */ -- $4\n", 10);
+    assertThat(response.error()).isNull();
+    assertThat(response.rows()).hasSize(1);
+    assertThat(response.rows().get(0)).containsEntry("a", "$1").containsEntry("$b", "$2");
+  }
+
+  /**
+   * jsonb 키 존재 연산자 ?, ?|, ?& 는 유효한 PostgreSQL 이다. 예전에는 PreparedStatement 가 ? 를 바인드 자리로
+   * 해석해 "No value specified for parameter 1" 로 실패했다(#753). 이제 원문 그대로 정적 Statement 로 실행한다.
+   */
+  @Test
+  void executeQuery_jsonbQuestionOperators_work() {
+    SqlQueryResponse response =
+        dataTableQueryService.executeQuery(
+            "SELECT '{\"a\":1}'::jsonb ? 'a' AS has, "
+                + "'{\"a\":1}'::jsonb ?| array['a','z'] AS any_, "
+                + "'{\"a\":1}'::jsonb ?& array['a','z'] AS all_",
+            10);
+    assertThat(response.error()).isNull();
+    assertThat(response.rows()).hasSize(1);
+    assertThat(response.rows().get(0))
+        .containsEntry("has", true)
+        .containsEntry("any_", true)
+        .containsEntry("all_", false);
+  }
+
+  /**
+   * ? 연산자를 실행 가능하게 만들면서 SQL 가드(#385)의 사각이 생기지 않는지 — ? 피연산자 서브쿼리로 public
+   * 스키마를 읽으려는 시도는 여전히 실행 전에 거부돼야 한다.
+   */
+  @Test
+  void executeQuery_jsonbQuestionOperator_withPublicSubquery_isStillRejected() {
+    assertThatThrownBy(
+            () ->
+                dataTableQueryService.executeQuery(
+                    "SELECT '{}'::jsonb ? (SELECT username FROM public.\"user\" LIMIT 1) AS x", 10))
+        .isInstanceOfAny(
+            com.smartfirehub.pipeline.exception.UnsafeSqlException.class, SqlQueryException.class);
+    assertThatThrownBy(
+            () ->
+                dataTableQueryService.executeQuery(
+                    "SELECT '{}'::jsonb ?| array(SELECT name FROM public.role) AS x", 10))
+        .isInstanceOfAny(
+            com.smartfirehub.pipeline.exception.UnsafeSqlException.class, SqlQueryException.class);
+  }
+
+  /** 실행 단계 SQL 오류는 여전히 error 필드에 DB 원인 메시지로 돌아온다(정적 Statement 전환 후에도). */
+  @Test
+  void executeQuery_executionError_keepsDatabaseMessage() {
+    SqlQueryResponse response =
+        dataTableQueryService.executeQuery("SELECT * FROM non_existent_table_xyz", 10);
+    assertThat(response.error()).contains("non_existent_table_xyz").contains("does not exist");
+    assertThat(dsl.fetchValue("SELECT 1", Integer.class)).isEqualTo(1);
+  }
 }
