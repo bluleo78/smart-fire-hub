@@ -1,12 +1,34 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { pipelinesApi } from '../../api/pipelines';
+import { fetchAllPages } from '../../lib/fetch-all-pages';
 import type { CreateTriggerRequest, PipelineExecutionResponse, UpdatePipelineRequest, UpdateTriggerRequest } from '../../types/pipeline';
 
 export function usePipelines(params: { page?: number; size?: number }) {
   return useQuery({
     queryKey: ['pipelines', params],
     queryFn: () => pipelinesApi.getPipelines(params).then(r => r.data),
+  });
+}
+
+/** 서버가 목록 조회 size 에 @Max(200) 을 걸어 초과 시 400 을 주므로(PipelineController) 이 크기로 페이지를 순회한다. */
+const ALL_PIPELINES_PAGE_SIZE = 200;
+
+/**
+ * 선택 목록(연쇄 트리거의 선행 파이프라인 등)용 전체 파이프라인 조회 (#737).
+ *
+ * 왜: `size: 1000` 한 번으로 받으려 하면 서버가 400 을 돌려 목록이 항상 비었다.
+ * 서버 상한 이하 크기로 전 페이지를 순회해 모은다. queryKey 가 'pipelines' 로 시작하므로
+ * 파이프라인 생성·삭제·수정 시의 기존 무효화에 함께 걸린다.
+ */
+export function useAllPipelines() {
+  return useQuery({
+    queryKey: ['pipelines', 'all'],
+    queryFn: () =>
+      fetchAllPages(
+        (page, size) => pipelinesApi.getPipelines({ page, size }).then((r) => r.data),
+        ALL_PIPELINES_PAGE_SIZE,
+      ),
   });
 }
 

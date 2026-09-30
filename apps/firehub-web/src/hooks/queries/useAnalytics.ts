@@ -1,6 +1,7 @@
 import { useInfiniteQuery,useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { analyticsApi } from '../../api/analytics';
+import { fetchAllPages } from '../../lib/fetch-all-pages';
 import type {
   AddWidgetRequest,
   AnalyticsQueryRequest,
@@ -27,6 +28,27 @@ export function useSavedQueries(params: {
   return useQuery({
     queryKey: ['analytics', 'queries', params],
     queryFn: () => analyticsApi.listQueries(params).then((r) => r.data),
+  });
+}
+
+/** 서버가 저장 쿼리·대시보드 목록 size 를 100 으로 자르므로(SavedQueryController·AnalyticsDashboardController) 이 크기로 순회한다. */
+const ANALYTICS_LIST_MAX_SIZE = 100;
+
+/**
+ * 선택 목록(차트 빌더의 저장 쿼리 드롭다운)용 전체 저장 쿼리 조회 (#737).
+ *
+ * 왜: `size: 100` 첫 페이지만 쓰면 101번째 이후 쿼리가 드롭다운에서 조용히 빠지고,
+ * 그 쿼리를 쓰는 기존 차트를 열면 쿼리 칸이 빈 칸으로 보인다. 전 페이지를 순회해 모은다.
+ * queryKey 가 ['analytics', 'queries'] 로 시작하므로 저장 쿼리 생성·수정·삭제 무효화에 함께 걸린다.
+ */
+export function useAllSavedQueries() {
+  return useQuery({
+    queryKey: ['analytics', 'queries', 'all'],
+    queryFn: () =>
+      fetchAllPages(
+        (page, size) => analyticsApi.listQueries({ page, size }).then((r) => r.data),
+        ANALYTICS_LIST_MAX_SIZE,
+      ),
   });
 }
 
@@ -225,6 +247,23 @@ export function useDashboards(params: {
   return useQuery({
     queryKey: ['analytics', 'dashboards', params],
     queryFn: () => analyticsApi.listDashboards(params).then((r) => r.data),
+  });
+}
+
+/**
+ * 선택 목록(차트 빌더의 "대시보드에 추가" 다이얼로그)용 전체 대시보드 조회 (#737).
+ *
+ * 왜: `size: 100` 첫 페이지만 쓰면 101번째 이후 대시보드가 조용히 빠져 고를 수 없다. 전 페이지를 순회해 모은다.
+ * queryKey 가 ['analytics', 'dashboards'] 로 시작하므로 대시보드 생성·수정·삭제 무효화에 함께 걸린다.
+ */
+export function useAllDashboards() {
+  return useQuery({
+    queryKey: ['analytics', 'dashboards', 'all'],
+    queryFn: () =>
+      fetchAllPages(
+        (page, size) => analyticsApi.listDashboards({ page, size }).then((r) => r.data),
+        ANALYTICS_LIST_MAX_SIZE,
+      ),
   });
 }
 

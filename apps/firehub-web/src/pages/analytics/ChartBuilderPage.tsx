@@ -46,11 +46,11 @@ import { Skeleton } from '../../components/ui/skeleton';
 import { Switch } from '../../components/ui/switch';
 import {
   useAddWidget,
+  useAllDashboards,
+  useAllSavedQueries,
   useChart,
   useCreateChart,
-  useDashboards,
   useExecuteSavedQuery,
-  useSavedQueries,
   useUpdateChart,
 } from '../../hooks/queries/useAnalytics';
 import { handleApiError } from '../../lib/api-error';
@@ -325,8 +325,9 @@ function AddToDashboardDialog({
 }: AddToDashboardDialogProps) {
   const navigate = useNavigate();
   const [selectedDashboardId, setSelectedDashboardId] = useState<number | null>(null);
-  const { data: dashboardsData, isLoading } = useDashboards({ size: 100 });
-  const dashboards = dashboardsData?.content ?? [];
+  // 첫 페이지(100개)만 쓰면 101번째 이후 대시보드가 조용히 빠지므로 전 페이지를 모은다 (#737)
+  const { data: allDashboards, isLoading, isError } = useAllDashboards();
+  const dashboards = allDashboards ?? [];
 
   // 다이얼로그를 열 때마다 선택 초기화 — state-based tracking으로 cascading render 방지
   const [openTracker, setOpenTracker] = useState(false);
@@ -371,6 +372,9 @@ function AddToDashboardDialog({
         <div className="space-y-2 py-2 max-h-80 overflow-y-auto">
           {isLoading ? (
             <p className="text-sm text-muted-foreground">대시보드 목록을 불러오는 중...</p>
+          ) : isError ? (
+            // 조회 실패를 "대시보드 없음"으로 위장하지 않는다 (#737)
+            <p role="alert" className="text-sm text-destructive">대시보드 목록을 불러오지 못했습니다.</p>
           ) : dashboards.length === 0 ? (
             <p className="text-sm text-muted-foreground">
               사용 가능한 대시보드가 없습니다. 먼저 대시보드를 생성해 주세요.
@@ -458,8 +462,9 @@ export default function ChartBuilderPage() {
   });
 
   // Queries list for dropdown
-  const { data: queriesData } = useSavedQueries({ size: 100 });
-  const queries = queriesData?.content ?? [];
+  // 첫 페이지(100개)만 쓰면 101번째 이후 저장 쿼리가 빠지고, 그 쿼리를 쓰는 기존 차트의 쿼리 칸이 비므로 전 페이지를 모은다 (#737)
+  const { data: allQueries } = useAllSavedQueries();
+  const queries = allQueries ?? [];
 
   // Existing chart (edit mode) — isError: 존재하지 않는 차트 ID(404 등) 접근 시 에러 감지
   const { data: existingChart, isLoading: chartLoading, isError: chartError } = useChart(chartId);

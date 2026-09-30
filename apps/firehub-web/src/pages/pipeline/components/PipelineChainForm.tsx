@@ -13,7 +13,7 @@ import {
 import { Label } from '@/components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import { usePipelines } from '@/hooks/queries/usePipelines';
+import { useAllPipelines } from '@/hooks/queries/usePipelines';
 import { cn } from '@/lib/utils';
 import type { TriggerCondition } from '@/types/pipeline';
 
@@ -29,14 +29,15 @@ interface PipelineChainFormProps {
 
 export default function PipelineChainForm({ pipelineId, config, onChange, errors }: PipelineChainFormProps) {
   const [open, setOpen] = useState(false);
-  const { data: pipelinesData } = usePipelines({ size: 1000 });
+  // 서버 상한(200) 이하 크기로 전 페이지를 모은다 — size=1000 한 번 조회는 400 이라 목록이 항상 비었다 (#737)
+  const { data: allPipelines, isLoading, isError } = useAllPipelines();
   // 접근성: 라벨↔컨트롤 연결용 id 접두사 (#432). 추가/수정 다이얼로그 양쪽에서 렌더되므로 useId.
   const baseId = useId();
   const upstreamId = `${baseId}-upstream`;
   const upstreamErrorId = `${baseId}-upstream-error`;
   const conditionLabelId = `${baseId}-condition-label`;
 
-  const pipelines = (pipelinesData?.content ?? []).filter((p) => p.id !== pipelineId);
+  const pipelines = (allPipelines ?? []).filter((p) => p.id !== pipelineId);
   const selected = pipelines.find((p) => p.id === config.upstreamPipelineId);
 
   return (
@@ -67,7 +68,19 @@ export default function PipelineChainForm({ pipelineId, config, onChange, errors
             <Command>
               <CommandInput placeholder="파이프라인 검색..." />
               <CommandList>
-                <CommandEmpty>파이프라인을 찾을 수 없습니다.</CommandEmpty>
+                {/*
+                  조회 실패·로딩을 "없음"으로 위장하지 않는다 (#737) — 예전에는 400 오류를 빈 목록으로 삼켜
+                  파이프라인이 있어도 "찾을 수 없습니다"만 보였다. 목록을 받은 뒤에만 빈 결과 안내를 띄운다.
+                */}
+                {isError ? (
+                  <p role="alert" className="py-6 text-center text-sm text-destructive">
+                    파이프라인 목록을 불러오지 못했습니다.
+                  </p>
+                ) : isLoading ? (
+                  <p className="py-6 text-center text-sm text-muted-foreground">파이프라인 목록을 불러오는 중...</p>
+                ) : (
+                  <CommandEmpty>파이프라인을 찾을 수 없습니다.</CommandEmpty>
+                )}
                 <CommandGroup>
                   {pipelines.map((p) => (
                     <CommandItem
