@@ -86,7 +86,15 @@ public class SqlColumnProbe {
    * TenantContextTaskDecorator} 로 승계받은 값이다.
    */
   private Result<Record> fetchProbe(long tenantId, String sql) {
-    String probeSql = "SELECT * FROM (" + sql + ") AS _probe LIMIT 0";
+    // 사용자 SQL 을 자기 줄에 얹는다(#741). SqlValidator 는 끝의 한 줄 주석(--)과 후행 세미콜론을 모두
+    // 허용하는데, 예전처럼 개행 없이 ") AS _probe LIMIT 0" 을 붙이면 끝의 "--" 가 닫는 괄호까지 주석으로
+    // 만들어 "syntax error at end of input" 이 났고, 세미콜론은 괄호 안에 들어가 "syntax error at or near
+    // ;" 가 났다. 세미콜론은 MergeSqlBuilder 와 같은 규칙(따옴표·주석 인지)으로 지우고, 앞뒤에 개행을 넣어
+    // 한 줄 주석이 서브쿼리 내용 줄에서 끝나게 한다 — MergeSqlBuilder.build 의 래핑과 같은 형태다.
+    String probeSql =
+        "SELECT * FROM (\n"
+            + MergeSqlBuilder.stripTrailingSemicolon(sql)
+            + "\n) AS _probe LIMIT 0";
     return tenantPipelineDataSources.withTenantDsl(
         tenantId,
         tenantDsl ->

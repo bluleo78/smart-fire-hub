@@ -98,8 +98,12 @@ public final class MergeSqlBuilder {
    * 파이프라인 SELECT 스텝이 함수 본문을 담는 경우는 없다고 보고 받아들인 한계다. 여러 statement 가
    * 섞인 입력(세미콜론 뒤에 코드가 더 있는 경우)은 애초에 SqlValidator 가 저장 시점에 거부하므로,
    * 여기서는 "뒤에 코드가 있으면 아무것도 지우지 않는다"로 보수적으로 둔다.
+   *
+   * <p>패키지 전용 — {@code SqlColumnProbe} 도 사용자 SELECT 를 괄호로 감싸므로 같은 규칙으로 세미콜론을
+   * 지운다(#741). 두 래핑이 서로 다른 규칙을 쓰면 probe 는 통과했는데 MERGE 가 깨지는(또는 그 반대) 틈이
+   * 생긴다.
    */
-  private static String stripTrailingSemicolon(String sql) {
+  static String stripTrailingSemicolon(String sql) {
     int lastSemicolon = -1; // top-level(따옴표·주석 밖) 마지막 세미콜론 위치
     boolean codeAfterSemicolon = false; // 그 세미콜론 뒤에 코드(공백·주석이 아닌 문자)가 있는가
     boolean inQuotes = false;

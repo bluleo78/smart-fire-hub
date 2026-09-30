@@ -457,7 +457,7 @@ def test_build_geojson_wrapped_sql():
     column_metas = [("id", False), ("geom", True), ("name", False)]
     result = _build_geojson_wrapped_sql("SELECT id, geom, name FROM t", column_metas)
 
-    assert result.startswith("WITH _src AS (SELECT id, geom, name FROM t) SELECT")
+    assert result.startswith("WITH _src AS (\nSELECT id, geom, name FROM t\n) SELECT")
     assert 'public.ST_AsGeoJSON("geom") AS "geom"' in result
     assert '"id"' in result
     assert '"name"' in result
@@ -506,3 +506,51 @@ def test_truncated_flag_false_when_fewer_rows():
     result = execute_query("SELECT id FROM t LIMIT 10", max_rows=max_rows, read_only=False, conn=conn, tenant_id=1)
 
     assert result.truncated is False
+
+
+# ---------------------------------------------------------------------------
+# #741 — 끝의 한 줄 주석(--)이 래핑의 닫는 괄호를 삼키지 않는다
+# ---------------------------------------------------------------------------
+
+def _strip_line_comments(sql: str) -> str:
+    """PostgreSQL 이 한 줄 주석을 해석하는 방식(-- 부터 줄 끝까지 무시)을 흉내 낸다.
+
+    목 커서는 문법을 검사하지 않으므로, 주석을 걷어낸 뒤에도 래핑 뼈대(닫는 괄호 등)가 살아 있는지로
+    "DB 가 실제로 보는 문장"을 판정한다.
+    """
+    import re
+
+    return re.sub(r"--[^\n]*", "", sql)
+
+
+def test_build_geojson_wrapped_sql_survives_trailing_line_comment():
+    """사용자 SQL 이 -- 주석으로 끝나도 CTE 의 닫는 괄호와 바깥 SELECT 가 주석에 먹히지 않는다(#741)."""
+    result = _build_geojson_wrapped_sql(
+        "SELECT id, geom FROM t -- note", [("id", False), ("geom", True)]
+    )
+
+    effective = _strip_line_comments(result)
+    assert ") SELECT" in effective, f"닫는 괄호가 주석에 먹혔다: {result!r}"
+    assert effective.rstrip().endswith("FROM _src"), f"바깥 SELECT 가 주석에 먹혔다: {result!r}"
+
+
+def test_geometry_detect_sql_survives_trailing_line_comment():
+    """geometry 감지용 LIMIT 0 래핑도 끝의 -- 주석에 닫는 괄호를 잃지 않는다(#741)."""
+    from app.services.query_executor import _detect_geometry_columns
+
+    meta_cursor = MagicMock()
+    meta_cursor.description = []
+    oid_cursor = MagicMock()
+    oid_cursor.fetchall.return_value = []
+    conn = MagicMock()
+    conn.cursor.side_effect = [meta_cursor, oid_cursor]
+    cursor = MagicMock()
+    cursor.connection = conn
+
+    _detect_geometry_columns(cursor, "SELECT geom FROM shapes -- note")
+
+    detect_sql = meta_cursor.execute.call_args.args[0]
+    effective = _strip_line_comments(detect_sql)
+    assert effective.rstrip().endswith(") _geom_detect LIMIT 0"), (
+        f"닫는 괄호/LIMIT 0 이 주석에 먹혔다: {detect_sql!r}"
+    )

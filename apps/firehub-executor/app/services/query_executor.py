@@ -29,7 +29,9 @@ def _detect_geometry_columns(cursor, sql: str) -> List[Tuple[str, bool]]:
     conn = cursor.connection
     # meta_cursor 를 먼저 연다 (커서 오픈 순서 보존).
     meta_cursor = conn.cursor()
-    meta_cursor.execute(f"SELECT * FROM ({sql}) _geom_detect LIMIT 0")
+    # 사용자 SQL 을 자기 줄에 얹는다(#741) — 끝이 한 줄 주석(--)이면 개행 없이 붙인 닫는 괄호까지
+    # 주석이 되어 syntax error at end of input 이 난다. API 의 SqlColumnProbe·MergeSqlBuilder 와 같은 형태.
+    meta_cursor.execute(f"SELECT * FROM (\n{sql}\n) _geom_detect LIMIT 0")
 
     geom_oids = _fetch_geom_oids(conn)
 
@@ -56,7 +58,8 @@ def _build_geojson_wrapped_sql(
             )
         else:
             select_parts.append(f'"{escaped}"')
-    return f"WITH _src AS ({original_sql}) SELECT {', '.join(select_parts)} FROM _src"
+    # 사용자 SQL 을 자기 줄에 얹는다(#741) — 위 _detect_geometry_columns 와 같은 이유.
+    return f"WITH _src AS (\n{original_sql}\n) SELECT {', '.join(select_parts)} FROM _src"
 
 
 

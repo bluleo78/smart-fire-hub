@@ -457,6 +457,56 @@ class PipelineIncrementalIntegrationTest extends IntegrationTestBase {
   }
 
   // ------------------------------------------------------------------ //
+  // 시나리오 6: SQL 끝의 한 줄 주석·세미콜론 (#741)
+  // ------------------------------------------------------------------ //
+
+  /**
+   * SQL 끝의 한 줄 주석({@code -- ...})·세미콜론이 러너의 래핑(컬럼 probe·MERGE 서브쿼리)을 깨지 않는다(#741).
+   *
+   * <p>예전 probe 는 사용자 SQL 뒤에 개행 없이 {@code ) AS _probe LIMIT 0} 을 붙여, 끝의 {@code --} 가
+   * 닫는 괄호까지 주석으로 만들어 {@code syntax error at end of input} 으로 실패했다. 세미콜론도 괄호
+   * 안에 그대로 들어가 같은 식으로 깨졌다. REPLACE(probe → INSERT … SELECT)와 MERGE(probe →
+   * {@code MergeSqlBuilder} 서브쿼리) 두 경로를 러너부터 실제 테이블까지 관통해 확인한다 — MERGE 의
+   * 개행 처리는 probe 가 먼저 실패해 지금까지 끝까지 실행된 적이 없었다.
+   */
+  @org.junit.jupiter.params.ParameterizedTest(name = "[{index}] {0} / {1}")
+  @org.junit.jupiter.params.provider.MethodSource("trailingCommentCases")
+  void 끝이_한줄_주석이나_세미콜론인_SELECT_스텝도_실행된다(String strategy, String tail) {
+    seedSource(1, 10);
+    String where = "MERGE".equals(strategy) ? " WHERE _updated_at >= {{last_run_at}}" : "";
+    pipelineService.updatePipeline(
+        pipelineId,
+        new UpdatePipelineRequest(
+            "Inc Pipeline " + suffix,
+            "끝 주석",
+            null,
+            List.of(
+                new PipelineStepRequest(
+                    STEP_NAME,
+                    "끝 주석 " + strategy,
+                    "SQL",
+                    "SELECT code, name FROM " + DataSchema.qualify(srcTable) + where + tail,
+                    outDatasetId,
+                    null,
+                    null,
+                    strategy))),
+        userId);
+
+    runAndWait("COMPLETED");
+
+    assertThat(outCount()).as("끝 주석/세미콜론이 있어도 원천 10행이 그대로 적재돼야 한다").isEqualTo(10);
+  }
+
+  static java.util.stream.Stream<org.junit.jupiter.params.provider.Arguments> trailingCommentCases() {
+    return java.util.stream.Stream.of(
+        org.junit.jupiter.params.provider.Arguments.of("REPLACE", " -- note"),
+        org.junit.jupiter.params.provider.Arguments.of("REPLACE", ";"),
+        org.junit.jupiter.params.provider.Arguments.of("REPLACE", "; -- note"),
+        org.junit.jupiter.params.provider.Arguments.of("MERGE", " -- note"),
+        org.junit.jupiter.params.provider.Arguments.of("MERGE", "; -- note"));
+  }
+
+  // ------------------------------------------------------------------ //
   // Helpers
   // ------------------------------------------------------------------ //
 
