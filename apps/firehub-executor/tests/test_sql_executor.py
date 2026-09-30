@@ -109,7 +109,8 @@ def test_output_lock_key_is_scoped_to_tenant_schema():
 
 
 def test_no_lock_without_pre_statements():
-    # 선행 문장이 없는 실행(APPEND·MERGE·사용자 DML)은 잠금을 잡지 않는다.
+    # 선행 문장이 없는 실행(APPEND·MERGE)은 잠금을 잡지 않는다. 사용자가 직접 쓴 DML 도 REPLACE 면
+    # API 가 출력 비우기 선행 문장을 함께 보내므로(#735) 위 선행 문장 테스트와 같은 경로를 탄다.
     cursor = MagicMock()
     cursor.rowcount = 1
     conn = make_conn(cursor)
@@ -119,6 +120,31 @@ def test_no_lock_without_pre_statements():
     assert [c.args[0] for c in cursor.execute.call_args_list] == [
         'INSERT INTO "data"."out" ("a") SELECT 1'
     ]
+
+
+def test_user_dml_update_with_pre_statement_locks_clears_then_commits_once():
+    # #735 — 사용자가 직접 쓴 비SELECT DML(여기서는 UPDATE)도 REPLACE 면 비우기 선행 문장과 함께 온다.
+    # 잠금 → 비우기 → 사용자 DML 이 한 트랜잭션에서 순서대로 돌고 한 번만 커밋돼야, 겹친 실행이
+    # 서로의 비우기와 적재 사이에 끼어들지 못한다. 결과 행을 읽으려 하지 않는다(SELECT 로 오판 금지).
+    cursor = MagicMock()
+    cursor.rowcount = 3
+    conn = make_conn(cursor)
+
+    result = execute_sql(
+        'UPDATE "data"."out" SET "a" = 1',
+        conn,
+        pre_statements=['DELETE FROM "data"."out"'],
+    )
+
+    assert result.success
+    assert result.row_count == 3
+    assert [c.args[0] for c in cursor.execute.call_args_list] == [
+        "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+        'DELETE FROM "data"."out"',
+        'UPDATE "data"."out" SET "a" = 1',
+    ]
+    cursor.fetchall.assert_not_called()
+    conn.commit.assert_called_once()
 
 
 def test_query_failure_rolls_back_pre_statements():

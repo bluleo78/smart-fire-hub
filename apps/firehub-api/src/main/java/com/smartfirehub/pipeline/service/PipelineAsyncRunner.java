@@ -82,6 +82,7 @@ public class PipelineAsyncRunner {
   private final SqlValidator sqlValidator;
   private final PythonScriptValidator pythonScriptValidator;
   private final IncrementalCursorService incrementalCursorService;
+  private final OutputTableSessionLock outputTableSessionLock;
 
 
   /**
@@ -331,19 +332,23 @@ public class PipelineAsyncRunner {
 
       // 여기서 로드 전략을 직접 처리하는 유일한 경우는 <b>실행기를 끈 PYTHON 스텝</b>뿐이다.
       // API_CALL·AI_CLASSIFY·실행기 켠 PYTHON 은 각 실행기가 임시 테이블 맞바꿈으로 직접 처리하고,
-      // SQL 스텝은 REPLACE 비우기를 즉시 truncate 할지 INSERT 와 같은 트랜잭션으로 보낼 DELETE 선행
-      // 문장으로 만들지를 SQL 분기(isSelect 판단 이후)에서 결정한다(Task 4, 원자성). 스크립트 타입은
-      // 이 네 가지가 전부다(DB CHECK 제약 pipeline_step_script_type_check, V35).
-      if ("PYTHON".equals(step.scriptType()) && !executorEnabled) {
-        // 위에서 이미 MERGE+비SQL 조합을 걸렀으므로 여기 도달하는 전략은 REPLACE/APPEND 뿐이다
-        // (알 수 없는 값은 이미 REPLACE 로 폴백됐다).
-        if (strategy == LoadStrategy.APPEND) {
-          log.info("APPEND strategy: Skipping truncation for output table: {}", outputTableName);
-        } else if (outputTableName != null) {
-          log.info("REPLACE strategy: Truncating output table: {}", outputTableName);
-          dataTableRowService.truncateTable(outputTableName);
-        }
-      }
+      // SQL 스텝은 REPLACE 비우기를 본 문장과 같은 트랜잭션으로 보낼 DELETE 선행 문장으로 만든다
+      // (SQL 분기, Task 4 원자성 · #731/#735 직렬화). 스크립트 타입은 이 네 가지가 전부다(DB CHECK
+      // 제약 pipeline_step_script_type_check, V35).
+      //
+      // 실행기를 끈 PYTHON + REPLACE 는 여기서 <b>비울 대상만 정해 두고</b>, 실제 비우기는 아래 PYTHON
+      // 분기에서 자식 프로세스 실행 직전에 출력 테이블 세션 잠금 아래에서 한다(#735). 예전에는 여기서
+      // 바로 truncate 했는데, 그러면 같은 출력에 실행이 겹칠 때 두 실행이 각자 비운 뒤 각자 적재해
+      // 행이 중복된다. 대상은 예전과 같다 — 이 시점에 정해진(사용자가 지정한) 출력 테이블뿐이고,
+      // 아래에서 자동 생성되는 임시 데이터셋은 포함하지 않는다.
+      // 위에서 이미 MERGE+비SQL 조합을 걸렀으므로 여기 도달하는 전략은 REPLACE/APPEND 뿐이다
+      // (알 수 없는 값은 이미 REPLACE 로 폴백됐다).
+      final String localPythonReplaceTable =
+          "PYTHON".equals(step.scriptType())
+                  && !executorEnabled
+                  && strategy != LoadStrategy.APPEND
+              ? outputTableName
+              : null;
 
       // 증분 처리 상태 — SQL 분기 안에서 정해지지만, 책갈피 전진은 실행 성공 이후(분기 밖)에 하므로
       // 메서드 스코프에 둔다.
@@ -449,10 +454,17 @@ public class PipelineAsyncRunner {
           // 아래 REPLACE 판단 블록에서 DELETE 선행 문장으로 통일해 처리한다(Task 4).
         }
 
-        // 출력 비우기 결정 — SELECT(자동 적재)는 DELETE 를 INSERT 와 같은 트랜잭션으로 보낼 선행 문장으로
-        // 쌓고, 비SELECT(사용자가 직접 쓴 INSERT/UPDATE/DELETE)는 기존처럼 별도 트랜잭션으로 즉시
-        // truncate 한다 — 사용자 DML 자체가 이미 트랜잭션 원자성을 스스로 책임지는 영역이라 기존 동작을
-        // 바꾸지 않는다.
+        // 출력 비우기 결정 — REPLACE 는 SELECT(자동 적재)든 비SELECT(사용자가 직접 쓴
+        // INSERT/UPDATE/DELETE)든 DELETE 를 본 문장과 <b>같은 트랜잭션</b>으로 보낼 선행 문장으로 쌓는다.
+        //
+        // 예전에는 비SELECT 만 여기서 별도 트랜잭션으로 즉시 truncate 했다. 그러면 (1) 선행 문장이 없어
+        // 출력 테이블 단위 직렬화 잠금(#731, SqlScriptExecutor.OUTPUT_LOCK_SQL)이 걸리지 않고, (2) 비우기가
+        // 먼저 커밋되므로, 같은 출력에 실행이 겹치면 두 실행이 각자 비운 뒤 각자 적재해 모든 행이 두 번
+        // 들어갔다(#735 — 둘 다 완료로 끝난다). 선행 문장으로 통일하면 실행기를 끈 경로(sqlExecutor)와
+        // 켠 경로(firehub-executor) 모두 "잠금 → 비우기 → 사용자 DML → 커밋"이 한 트랜잭션이 되고,
+        // 잠금 키가 같은 선행 문장에서 나오므로 SELECT 자동 적재 실행과도 서로 배타다. 덤으로 사용자
+        // DML 이 실패하면 비우기도 함께 롤백되어 이전 출력이 남는다(SELECT 경로와 같은 계약).
+        // 여기에 truncateTable 을 다시 넣지 말 것.
         //
         // 알 수 없는 loadStrategy 는 이미 위(메서드 상단)에서 경고와 함께 REPLACE 로 해석됐으므로, 여기는
         // REPLACE/APPEND/MERGE 세 가지만 본다 — 알 수 없는 값이 조용히 아무것도 비우지 않고 매 실행마다
@@ -465,12 +477,7 @@ public class PipelineAsyncRunner {
         boolean isMerge = strategy == LoadStrategy.MERGE;
         if (strategy == LoadStrategy.REPLACE) {
           if (outputTableName != null) {
-            if (isSelect) {
-              preStatements.add(OutputClearStatement.deleteAll(outputTableName));
-            } else {
-              log.info("REPLACE strategy: Truncating output table: {}", outputTableName);
-              dataTableRowService.truncateTable(outputTableName);
-            }
+            preStatements.add(OutputClearStatement.deleteAll(outputTableName));
           }
         }
 
@@ -600,9 +607,10 @@ public class PipelineAsyncRunner {
             }
           }
         } else {
-          // 기존 INSERT/UPDATE/DELETE는 그대로 실행. 이 경로의 preStatements 는 항상 빈 목록이다
-          // (사용자 DML 은 위 REPLACE 판단에서 즉시 truncate 로 처리했고, 증분 전체 재생성 DELETE 도
-          // isSelect 게이트가 걸려 여기로 오지 않는다) — 그래도 시그니처를 맞추기 위해 그대로 넘긴다.
+          // 기존 INSERT/UPDATE/DELETE는 그대로 실행한다. REPLACE 면 preStatements 에 출력 비우기
+          // DELETE 가 들어 있어 사용자 DML 과 같은 트랜잭션·같은 출력 잠금 아래에서 실행된다(#735).
+          // APPEND/MERGE 면 빈 목록이다(증분 전체 재생성 DELETE 는 isSelect 게이트가 걸려 여기로 오지
+          // 않는다).
           if (executorEnabled) {
             var result = executorClient.executeSql(sql, preStatements);
             if (!result.success()) {
@@ -711,6 +719,20 @@ public class PipelineAsyncRunner {
             }
             throw e;
           }
+        } else if (localPythonReplaceTable != null) {
+          // REPLACE: 출력 비우기와 자식 프로세스의 적재를 출력 테이블 세션 잠금 아래에서 한다(#735).
+          // 자식은 자기 커넥션으로 적재하므로 SQL 스텝처럼 한 트랜잭션으로 묶을 수 없다 — 대신 같은
+          // 키의 세션 잠금으로 "비우기~적재 종료" 구간을 덮는다. 같은 출력에 대한 다른 실행(PYTHON 이든
+          // SQL 스텝의 비우기+적재든)은 이 구간이 끝난 뒤에 자기 비우기를 시작한다. 잠금은 성공·실패와
+          // 무관하게 callLocked 가 푼다.
+          log.info("REPLACE strategy: Truncating output table: {}", localPythonReplaceTable);
+          executionLog =
+              outputTableSessionLock.callLocked(
+                  localPythonReplaceTable,
+                  () -> {
+                    dataTableRowService.truncateTable(localPythonReplaceTable);
+                    return pythonExecutor.execute(step.scriptContent());
+                  });
         } else {
           executionLog = pythonExecutor.execute(step.scriptContent());
         }

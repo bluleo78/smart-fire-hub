@@ -73,6 +73,7 @@ class PipelineAsyncRunnerTest {
   @Mock SqlValidator sqlValidator;
   @Mock PythonScriptValidator pythonScriptValidator;
   @Mock IncrementalCursorService incrementalCursorService;
+  @Mock OutputTableSessionLock outputTableSessionLock;
 
   @InjectMocks PipelineAsyncRunner runner;
 
@@ -835,6 +836,148 @@ class PipelineAsyncRunnerTest {
     verify(sqlExecutor)
         .execute(
             eq(List.of("DELETE FROM \"data\".\"" + outputTable + "\"")), startsWith("INSERT INTO"));
+  }
+
+  // ------------------------------------------------------------------ //
+  // #735 — 사용자가 직접 쓴 DML(비SELECT) + REPLACE 도 같은 선행 문장 경로를 탄다
+  // ------------------------------------------------------------------ //
+
+  /** REPLACE 전략의 스텝 픽스처(출력 데이터셋 지정). */
+  private PipelineStepResponse replaceStep(
+      Long id, String scriptType, String scriptContent, Long outputDatasetId) {
+    return new PipelineStepResponse(
+        id,
+        "replace-step",
+        null,
+        scriptType,
+        scriptContent,
+        outputDatasetId,
+        null,
+        List.of(),
+        List.of(),
+        0,
+        "REPLACE",
+        null,
+        null,
+        null,
+        null);
+  }
+
+  /**
+   * 사용자가 직접 쓴 INSERT + REPLACE 는 즉시 커밋되는 truncate 를 하지 않고, SELECT 자동 적재와 같은
+   * DELETE 선행 문장을 사용자 DML 과 <b>같은 요청</b>으로 보낸다(#735). 선행 문장이 있어야 실행기가
+   * 출력 테이블 잠금(#731)을 잡고, 비우기와 적재가 한 트랜잭션이 된다 — 예전처럼 truncate 가 먼저
+   * 커밋되면 겹친 두 실행이 각자 비운 뒤 각자 적재해 행이 두 배가 된다. 사용자 SQL 은 고치지 않는다.
+   */
+  @Test
+  void REPLACE_사용자_INSERT_SQL은_truncate하지_않고_DELETE를_선행문장으로_같은_요청에_보낸다() {
+    Long outputDatasetId = 735L;
+    String insertSql = "INSERT INTO data.\"out735\" (val) VALUES (1)";
+    PipelineStepResponse step = replaceStep(7350L, "SQL", insertSql, outputDatasetId);
+
+    when(datasetRepository.findTableNameById(outputDatasetId)).thenReturn(Optional.of("out735"));
+    when(executorClient.executeSql(anyString(), anyList()))
+        .thenReturn(
+            new ExecutorClient.SqlExecuteResult(
+                true, List.of(), List.of(), 1, "1 row(s) affected", null));
+
+    String status = runner.executeStep(7351L, step, 73L, "TestPipeline", 1L, true);
+
+    assertThat(status).isEqualTo("COMPLETED");
+    verify(dataTableRowService, never()).truncateTable(anyString());
+    // SELECT 경로 테스트와 같은 리터럴 — 두 경로의 선행 문장(=잠금 키)이 글자 단위로 같아야 서로 배타다.
+    verify(executorClient)
+        .executeSql(eq(insertSql), eq(List.of("DELETE FROM \"data\".\"out735\"")));
+    verifyNoInteractions(sqlColumnProbe);
+  }
+
+  /** 실행기를 끈 경로({@code sqlExecutor})도 같은 계약이다(#735 — 이슈가 재현된 두 경로 중 하나). */
+  @Test
+  void REPLACE_사용자_INSERT_SQL_실행기_꺼진_경로도_DELETE를_선행문장으로_같은_요청에_보낸다() {
+    Long outputDatasetId = 736L;
+    String insertSql = "INSERT INTO data.\"out735_off\" (val) VALUES (1)";
+    PipelineStepResponse step = replaceStep(7360L, "SQL", insertSql, outputDatasetId);
+
+    when(datasetRepository.findTableNameById(outputDatasetId))
+        .thenReturn(Optional.of("out735_off"));
+    when(sqlExecutor.execute(anyList(), anyString())).thenReturn("SQL executed successfully");
+
+    String status = runner.executeStep(7361L, step, 73L, "TestPipeline", 1L, false);
+
+    assertThat(status).isEqualTo("COMPLETED");
+    verify(dataTableRowService, never()).truncateTable(anyString());
+    verify(sqlExecutor).execute(List.of("DELETE FROM \"data\".\"out735_off\""), insertSql);
+  }
+
+  /**
+   * 실행기를 끈 PYTHON + REPLACE 는 출력 테이블 세션 잠금 <b>안에서</b> 비우고 실행한다(#735). 자식
+   * 프로세스가 자기 커넥션으로 적재해 한 트랜잭션으로 묶을 수 없으므로, 비우기와 적재가 잠금 밖으로
+   * 새면 겹친 실행이 각자 비운 뒤 각자 적재한다. 잠금 목이 본문을 실행하지 않게 해 "잠금 밖에서는
+   * 아무것도 하지 않는다"를 먼저 고정하고, 이어서 본문을 돌려 순서(비우기 → 실행)를 확인한다.
+   */
+  @Test
+  void 실행기_꺼진_PYTHON_REPLACE는_출력_잠금_안에서만_비우고_실행한다() {
+    Long outputDatasetId = 737L;
+    Long userId = 1L;
+    PipelineStepResponse step = replaceStep(7370L, "PYTHON", "print('x')", outputDatasetId);
+
+    when(permissionChecker.hasPermission(userId, "pipeline:python_execute")).thenReturn(true);
+    when(datasetRepository.findTableNameById(outputDatasetId)).thenReturn(Optional.of("out735_py"));
+    @SuppressWarnings("unchecked")
+    ArgumentCaptor<java.util.function.Supplier<String>> body =
+        ArgumentCaptor.forClass(java.util.function.Supplier.class);
+    when(outputTableSessionLock.callLocked(eq("out735_py"), body.capture())).thenReturn("py-log");
+
+    String status = runner.executeStep(7371L, step, 73L, "TestPipeline", userId, false);
+
+    // 잠금 목은 본문을 실행하지 않았다 — 잠금 밖에서는 비우기도 실행도 일어나지 않아야 한다.
+    assertThat(status).isEqualTo("COMPLETED");
+    verify(dataTableRowService, never()).truncateTable(anyString());
+    verifyNoInteractions(pythonExecutor);
+
+    // 본문(잠금 안)은 비우기 → 자식 실행 순서다.
+    when(pythonExecutor.execute("print('x')")).thenReturn("child-log");
+    assertThat(body.getValue().get()).isEqualTo("child-log");
+    var order = org.mockito.Mockito.inOrder(dataTableRowService, pythonExecutor);
+    order.verify(dataTableRowService).truncateTable("out735_py");
+    order.verify(pythonExecutor).execute("print('x')");
+  }
+
+  /** 권한이 없어 거부되는 PYTHON 스텝은 출력을 비우지 않는다 — 비우기가 실행 직전으로 옮겨졌다(#735). */
+  @Test
+  void 실행기_꺼진_PYTHON_REPLACE가_권한_없음으로_거부되면_출력을_비우지_않는다() {
+    Long outputDatasetId = 738L;
+    Long userId = 1L;
+    PipelineStepResponse step = replaceStep(7380L, "PYTHON", "print('x')", outputDatasetId);
+
+    when(permissionChecker.hasPermission(userId, "pipeline:python_execute")).thenReturn(false);
+    when(datasetRepository.findTableNameById(outputDatasetId)).thenReturn(Optional.of("out735_np"));
+
+    String status = runner.executeStep(7381L, step, 73L, "TestPipeline", userId, false);
+
+    assertThat(status).isEqualTo("FAILED");
+    verify(dataTableRowService, never()).truncateTable(anyString());
+    verifyNoInteractions(outputTableSessionLock, pythonExecutor);
+  }
+
+  /** 실행기를 끈 PYTHON + APPEND 는 비우지 않으므로 잠금도 잡지 않는다. */
+  @Test
+  void 실행기_꺼진_PYTHON_APPEND는_잠금도_비우기도_없이_실행한다() {
+    Long outputDatasetId = 739L;
+    Long userId = 1L;
+    PipelineStepResponse step =
+        stepResponseWithOutput(7390L, "py-append", "PYTHON", "print('x')", outputDatasetId, List.of());
+
+    when(permissionChecker.hasPermission(userId, "pipeline:python_execute")).thenReturn(true);
+    when(datasetRepository.findTableNameById(outputDatasetId)).thenReturn(Optional.of("out735_ap"));
+    when(pythonExecutor.execute("print('x')")).thenReturn("child-log");
+
+    String status = runner.executeStep(7391L, step, 73L, "TestPipeline", userId, false);
+
+    assertThat(status).isEqualTo("COMPLETED");
+    verify(pythonExecutor).execute("print('x')");
+    verify(dataTableRowService, never()).truncateTable(anyString());
+    verifyNoInteractions(outputTableSessionLock);
   }
 
   /**
