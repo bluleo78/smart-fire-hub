@@ -17,6 +17,18 @@ class LastRunAtPlaceholderTest {
     assertThat(LastRunAtPlaceholder.isUsedIn(null)).isFalse();
   }
 
+  /** #739 — 증분 스텝 판정은 "SQL 타입 + 플레이스홀더"다. 비SQL 스크립트의 문자열은 증분이 아니다. */
+  @Test
+  void 증분_스텝_판정은_SQL_타입과_플레이스홀더를_모두_요구한다() {
+    assertThat(LastRunAtPlaceholder.isIncrementalStep("SQL", "select 1 where x >= {{last_run_at}}"))
+        .isTrue();
+    assertThat(LastRunAtPlaceholder.isIncrementalStep("PYTHON", "print(1)  # {{last_run_at}}"))
+        .isFalse();
+    assertThat(LastRunAtPlaceholder.isIncrementalStep("SQL", "select 1")).isFalse();
+    assertThat(LastRunAtPlaceholder.isIncrementalStep(null, "{{last_run_at}}")).isFalse();
+    assertThat(LastRunAtPlaceholder.isIncrementalStep("SQL", null)).isFalse();
+  }
+
   @Test
   void null이면_negative_infinity로_치환한다() {
     assertThat(LastRunAtPlaceholder.substitute("a >= {{last_run_at}}", null))

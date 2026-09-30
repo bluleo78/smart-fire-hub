@@ -370,7 +370,8 @@ public class PipelineAsyncRunner {
         // (_updated_at = 그 트랜잭션 시작 시각)을 다음 실행이 놓치지 않기 위해서다. 실행 후에 잡으면
         // 그 구간이 영원히 비어 버린다. 값 자체의 안전한 계산(시각 먼저 → 활성 트랜잭션 최소값)은
         // V123 의 DB 함수가 책임진다.
-        incrementalStep = LastRunAtPlaceholder.isUsedIn(sql);
+        // 판정은 저장·예약 API 와 공유하는 단일 헬퍼로 내린다(#739) — 세 곳이 어긋나면 소비되지 않는 예약이 생긴다.
+        incrementalStep = LastRunAtPlaceholder.isIncrementalStep(step.scriptType(), sql);
         if (incrementalStep) {
           // 저장 시점(PipelineService.saveSteps)이 이미 REPLACE+증분을 거부하지만, 그 검증을 우회해
           // 저장된 레거시 행에 대한 2차 방어를 둔다 — REPLACE 로 돌면 매 실행 출력에 변경분만 남는다.

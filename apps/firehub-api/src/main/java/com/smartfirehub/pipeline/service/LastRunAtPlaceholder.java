@@ -31,6 +31,21 @@ public final class LastRunAtPlaceholder {
   }
 
   /**
+   * 스텝이 증분 스텝인지 판정한다 — "SQL 스텝이면서 {@code {{last_run_at}}} 을 쓴다".
+   *
+   * <p>실행기(PipelineAsyncRunner)는 이 조건일 때만 증분 경로를 타고 그 경로에서만 전체 재생성 예약을
+   * 소비·해제한다. 그래서 저장 검증·예약 이월(updatePipeline)·예약 API(setFullRebuildPending)가 모두 이
+   * 한 판정을 써야 한다(#739). 판정이 어긋나면(예: PYTHON 스크립트 주석 속 {@code {{last_run_at}}}) 화면에
+   * 안 보이고 해제도 안 되는 예약이 생겼다가, 나중에 증분 SQL 로 바꾸는 순간 이월되어 확인 없이 출력을 지운다.
+   *
+   * @param scriptType 스텝 스크립트 타입(SQL/PYTHON/API_CALL 등)
+   * @param scriptContent 스크립트 본문(실행기에서는 스텝 참조 치환 후 SQL — 플레이스홀더 유무는 치환과 무관)
+   */
+  public static boolean isIncrementalStep(String scriptType, String scriptContent) {
+    return "SQL".equals(scriptType) && isUsedIn(scriptContent);
+  }
+
+  /**
    * 플레이스홀더를 타임스탬프 리터럴로 모두 치환한다.
    *
    * @param value 책갈피 값. {@code null} 이면 {@code '-infinity'::timestamptz}(전체 읽기).

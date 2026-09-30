@@ -1443,6 +1443,43 @@ class PipelineServiceTest extends IntegrationTestBase {
   }
 
   /**
+   * #739 — 예약 API 는 실행기와 같은 판정("SQL 스텝 + {{last_run_at}} 사용")으로 증분 스텝을 가려야 한다.
+   * PYTHON 스텝은 스크립트에 {{last_run_at}} 문자열(주석 등)이 있어도 실행기가 증분 경로를 타지 않으므로
+   * 예약을 거부해야 한다. 받아들이면 화면에 안 보이고 해제도 안 되는 예약이 남았다가, 같은 이름·출력의
+   * 증분 SQL 로 바꿔 저장하는 순간 이월되어 다음 실행이 확인 없이 출력 전체를 지운다.
+   */
+  @Test
+  void 전체재생성_예약_플레이스홀더를_담은_PYTHON_스텝은_IllegalArgumentException이다() {
+    PipelineDetailResponse created =
+        pipelineService.createPipeline(
+            new CreatePipelineRequest(
+                "Python Placeholder Pipeline",
+                "test",
+                List.of(
+                    new PipelineStepRequest(
+                        "stepA",
+                        "a",
+                        "PYTHON",
+                        "print(1)  # {{last_run_at}}",
+                        outputDatasetId,
+                        null,
+                        null,
+                        "REPLACE"))),
+            testUserId);
+    Long stepId = stepRepository.findStepIdByPipelineAndName(created.id(), "stepA").orElseThrow();
+
+    assertThatThrownBy(() -> pipelineService.setFullRebuildPending(created.id(), stepId, true))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("{{last_run_at}} 을 쓰는 SQL 스텝만");
+    assertThat(stepRepository.findCursor(stepId).orElseThrow().fullRebuildPending())
+        .as("거부된 예약은 DB 에 남지 않는다")
+        .isFalse();
+
+    // 예약 해제(pending=false)는 스텝 종류와 무관하게 허용한다 — 남아 있는 예약을 치울 수 있어야 한다.
+    pipelineService.setFullRebuildPending(created.id(), stepId, false);
+  }
+
+  /**
    * {@code fullRebuildMode} 세 가지 형태를 실측한다 — 웹 UI(Task 8)가 이 필드로 "전체 재생성"(출력
    * 재작성) vs "전체 재읽기"(입력만 전체, 출력 재작성 보장 없음) 라벨을 정확히 가른다.
    */

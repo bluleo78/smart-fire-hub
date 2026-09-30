@@ -127,8 +127,8 @@ public class PipelineService {
       // SELECT 와 합치면 출력에 "이번에 바뀐 행"만 남고 나머지가 전부 사라진다(조용한 데이터 손실).
       // MERGE(권장) 또는 APPEND 를 쓰게 한다.
       if (ls == LoadStrategy.REPLACE
-          && "SQL".equals(stepRequest.scriptType())
-          && LastRunAtPlaceholder.isUsedIn(stepRequest.scriptContent())) {
+          && LastRunAtPlaceholder.isIncrementalStep(
+              stepRequest.scriptType(), stepRequest.scriptContent())) {
         throw new IllegalArgumentException(
             "{{last_run_at}} 은 REPLACE 와 함께 쓸 수 없습니다(매 실행 출력이 변경분만 남습니다). MERGE 를 사용하세요: "
                 + stepRequest.name());
@@ -294,11 +294,9 @@ public class PipelineService {
    * #isSelectAsRunnerWouldJudge}로 내린다.
    */
   private PipelineStepResponse attachIncrementalMeta(PipelineStepResponse step) {
-    if (!"SQL".equals(step.scriptType()) || step.scriptContent() == null) {
+    // 증분 스텝이 아니면 경고도 재생성 모드도 없다(둘 다 기본값 유지) — 판정은 실행기와 같은 헬퍼(#739).
+    if (!LastRunAtPlaceholder.isIncrementalStep(step.scriptType(), step.scriptContent())) {
       return step;
-    }
-    if (!LastRunAtPlaceholder.isUsedIn(step.scriptContent())) {
-      return step; // 증분 스텝이 아니면 경고도 재생성 모드도 없다(둘 다 기본값 유지).
     }
     // 스텝 참조({{#N}})를 먼저 치환하고 넘긴다 — 원문 그대로 넘기면 JSqlParser 가 파싱에 실패하고
     // incrementalWarnings 가 그 RuntimeException 을 삼켜 항상 빈 목록을 돌려준다(코드리뷰 MEDIUM).
@@ -345,7 +343,12 @@ public class PipelineService {
                 () ->
                     new PipelineNotFoundException(
                         "Step not found in pipeline " + pipelineId + ": " + stepId));
-    if (pending && !LastRunAtPlaceholder.isUsedIn(step.scriptContent())) {
+    // 실행기와 같은 판정("SQL 스텝 + {{last_run_at}}")으로 거른다(#739). 플레이스홀더만 보면 PYTHON 스텝
+    // 스크립트 주석 속 문자열에도 예약이 들어가, 실행기가 소비하지 않는(화면에도 안 보이는) 예약이 남았다가
+    // 같은 이름·출력의 증분 SQL 로 바꿔 저장하는 순간 이월되어 확인 없이 출력을 지운다.
+    // 해제(pending=false)는 스텝 종류와 무관하게 허용한다 — 이미 남은 예약을 치울 수 있어야 한다.
+    if (pending
+        && !LastRunAtPlaceholder.isIncrementalStep(step.scriptType(), step.scriptContent())) {
       throw new IllegalArgumentException(
           "{{last_run_at}} 을 쓰는 SQL 스텝만 전체 재생성을 예약할 수 있습니다.");
     }
@@ -407,7 +410,7 @@ public class PipelineService {
           // 넣는 순간 확인 없이 출력 전체를 지운다. 비증분으로 저장하면 예약은 버린다(다시 증분으로
           // 되돌려도 되살아나지 않는다). 책갈피(lastRunAt) 이월 여부는 별개 사안이라 기존대로 둔다.
           boolean newStepIncremental =
-              "SQL".equals(s.scriptType()) && LastRunAtPlaceholder.isUsedIn(s.scriptContent());
+              LastRunAtPlaceholder.isIncrementalStep(s.scriptType(), s.scriptContent());
           stepRepository.restoreCursor(
               id, s.name(), c.lastRunAt(), c.fullRebuildPending() && newStepIncremental);
         }
