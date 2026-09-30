@@ -135,8 +135,9 @@ class SmtpSettingsTenantOnlyTest extends IntegrationTestBase {
           assertThat(r.overridden()).as(key).isTrue();
           assertThat(r.tenantEditable()).as(key).isTrue();
         });
+    // #725: 마스크는 고정 표식이다 — 평문 끝 4자가 붙지 않는다(정확 일치로 고정).
     assertThat(resolved.get("smtp.password").value())
-        .startsWith("****")
+        .isEqualTo("****")
         .doesNotContain("tenant-secret-password")
         .doesNotContain(":");
     assertThat(resolved.values().stream().map(ResolvedSettingResponse::value))

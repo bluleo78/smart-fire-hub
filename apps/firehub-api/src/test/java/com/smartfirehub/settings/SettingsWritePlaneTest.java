@@ -17,6 +17,7 @@ import com.smartfirehub.settings.repository.TenantSettingsRepository;
 import com.smartfirehub.settings.service.SettingsService;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.SettingsTestSupport;
+import java.util.List;
 import java.util.Map;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.AfterEach;
@@ -173,10 +174,12 @@ class SettingsWritePlaneTest extends IntegrationTestBase {
    * 복호화가 터지고, 암호화만 먼저 고치면 암호문이 그대로 새어 나간다. 따로 두면 한쪽만
    * 고쳐진 창을 아무도 못 본다.
    *
-   * <p>평문을 {@code :} 없이·8자보다 길게 고른 것은 의도적이다. {@code :} 가 들어 있으면
-   * "암호문은 {@code iv:ciphertext} 라 {@code :} 를 포함한다"는 전제 확인이 공허해지고, 8자보다
-   * 짧으면 마스킹 결과({@code "****" + 뒤 4글자})가 평문을 통째로 포함해 "평문이 안 실린다"는
-   * 단언이 올바른 코드에서도 실패한다.
+   * <p>평문을 {@code :} 없이 고른 것은 의도적이다. {@code :} 가 들어 있으면 "암호문은
+   * {@code iv:ciphertext} 라 {@code :} 를 포함한다"는 전제 확인이 공허해진다.
+   *
+   * <p>#725 이후 마스크는 <b>고정 표식 {@code ****}</b> 다(예전에는 {@code ****} + 평문 끝 4자).
+   * 그래서 읽은 값은 {@code startsWith} 가 아니라 <b>정확 일치</b>로 못 박는다 — 접두사 단언은
+   * 끝 4자가 다시 붙어도 통과한다.
    */
   @Test
   void 테넌트_SMTP_비밀번호는_암호화_저장되고_마스킹되어_읽힌다() {
@@ -194,17 +197,42 @@ class SettingsWritePlaneTest extends IntegrationTestBase {
 
     // (2) 읽기 경로는 마스킹한다 — 평문도, 암호문도 응답에 실리지 않는다.
     String read = resolvedSmtpValue("smtp.password");
-    assertThat(read).startsWith("****");
+    assertThat(read).isEqualTo("****");
     assertThat(read).doesNotContain(plain);
     assertThat(read).doesNotContain(stored);
   }
 
   /**
+   * 읽기 응답에는 비밀번호의 <b>어떤 평문 조각도</b> 실리지 않는다 — 길이와 무관하게 (#725).
+   *
+   * <p>예전 마스크는 {@code ****} + 평문 끝 4자였다. 4자 비밀번호는 <b>전체</b>가, 5자는 80% 가
+   * 응답에 실려 브라우저·프록시 로그에 남았다. 화면은 이 값을 "저장됨 여부"(빈 문자열인가)로만
+   * 쓰므로 끝 4자는 아무도 쓰지 않는 누출이었다.
+   *
+   * <p>긴 값만 쓰는 테스트로는 이 결함이 안 걸린다(끝 4자가 평문 "전체"가 아니라서
+   * {@code doesNotContain(plain)} 이 통과한다). 그래서 4자·5자·16자를 모두 지나가게 하고, 평문
+   * 전체뿐 아니라 <b>끝 4자</b>가 없는지도 본다.
+   */
+  @Test
+  void 테넌트_SMTP_비밀번호는_길이와_무관하게_평문_조각_없이_고정_표식으로_읽힌다() {
+    testTenant = createActiveTenant(dsl, "swp-smtp-mask-len");
+    TenantContext.set(testTenant);
+
+    for (String plain : List.of("abcd", "abcde", "sixteen-char-pw9")) {
+      settingsService.updateSettings(Map.of("smtp.password", plain), null);
+
+      String read = resolvedSmtpValue("smtp.password");
+      assertThat(read).as("plain=%s", plain).isEqualTo("****");
+      assertThat(read).as("plain=%s", plain).doesNotContain(plain.substring(plain.length() - 4));
+    }
+  }
+
+  /**
    * 마스킹된 센티널을 그대로 PUT 해도 살아 있는 테넌트 비밀번호를 덮어쓰지 않는다.
    *
-   * <p>실제 UI 흐름이다: 화면은 {@code GET} 으로 {@code ****abcd} 를 받아 폼에 채우고, 사용자가
-   * 다른 필드만 고쳐 폼 전체를 다시 보낸다. 방어가 없으면 비밀번호가 문자열 {@code ****abcd} 로
-   * 덮어써져 "아무것도 안 바꿨는데 메일이 안 나간다"가 된다.
+   * <p>웹 화면은 이제 마스크를 되보내지 않지만(빈 칸 = 변경 없음), {@code GET} 응답을 그대로
+   * {@code PUT} 하는 다른 클라이언트·스크립트가 있을 수 있다. 방어가 없으면 비밀번호가 문자열
+   * {@code ****} 로 덮어써져 "아무것도 안 바꿨는데 메일이 안 나간다"가 된다.
    */
   @Test
   void 테넌트_마스킹된_SMTP_비밀번호는_저장되지_않는다() {
@@ -218,7 +246,8 @@ class SettingsWritePlaneTest extends IntegrationTestBase {
     String fromScreen = resolvedSmtpValue("smtp.password");
     // 되돌려 보내는 값이 정말 센티널인지 **먼저** 못 박는다. 이 단언이 없으면 마스킹이 없는
     // 상태에서도 "평문을 다시 저장했더니 값이 그대로다"로 통과해 버리는 공허한 테스트가 된다.
-    assertThat(fromScreen).startsWith("****");
+    // #725 이후 마스크는 고정 표식이다 — 정확 일치로 못 박아야 끝 4자가 되살아나면 걸린다.
+    assertThat(fromScreen).isEqualTo("****");
 
     settingsService.updateSettings(
         Map.of("smtp.host", "smtp.tenant.example.com", "smtp.password", fromScreen), null);
@@ -240,26 +269,26 @@ class SettingsWritePlaneTest extends IntegrationTestBase {
    * 204 가 나가 화면이 "설정이 저장되었습니다" 토스트를 띄운다 — 저장된 것은 없고 메일은 옛
    * 비밀번호로 계속 나간다. 전형적인 "성공처럼 보이는 무동작"이다.
    *
-   * <p>판정을 {@code EncryptionService.maskValue} 가 만드는 <b>형태</b>(길이 4 또는 8)로 좁혀서
-   * 닫았다. 여기 평문은 길이 14 라 두 형태 어디에도 해당하지 않는다.
+   * <p>#725 이후 센티널은 서버가 내보내는 고정 표식 {@code ****} <b>정확히 그 문자열 하나</b>다.
+   * 그 전에는 "길이 4 또는 8" 형태 판정이라 {@code ****abcd} 같은 <b>8자</b> 비밀번호가 여전히
+   * 204 와 함께 조용히 버려졌다 — 그래서 14자뿐 아니라 8자도 지나가게 한다(8자가 회귀 가드다).
    *
    * <p>같은 요청에 <b>진짜 센티널</b>도 한 번 더 태우지 않는 이유: 그 계약은 바로 위
-   * {@link #테넌트_마스킹된_SMTP_비밀번호는_저장되지_않는다} 가 실제 마스크(길이 8)로 고정한다.
+   * {@link #테넌트_마스킹된_SMTP_비밀번호는_저장되지_않는다} 가 실제 마스크로 고정한다.
    * 두 테스트가 각자 한 방향씩 맡아야 좁히기가 <b>너무 많이</b> 좁혔을 때도 걸린다.
    */
   @Test
   void 마스크_형태가_아닌_별표_시작_비밀번호는_실제로_저장된다() {
     testTenant = createActiveTenant(dsl, "swp-smtp-not-sentinel");
     TenantContext.set(testTenant);
-    // 길이 14 — maskValue 가 만드는 4/8 어디에도 해당하지 않으므로 센티널이 아니다.
-    String plain = "****Str0ngPass";
-    assertThat(plain.length()).isNotIn(4, 8);
+    // 길이 14 와 길이 8 — 어느 쪽도 고정 표식 "****" 그 자체가 아니므로 센티널이 아니다.
+    for (String plain : List.of("****Str0ngPass", "****abcd")) {
+      settingsService.updateSettings(Map.of("smtp.password", plain), null);
 
-    settingsService.updateSettings(Map.of("smtp.password", plain), null);
-
-    // 드롭되지 않고 실제로 행이 생겼고, 암호화된 원문을 복호화하면 사용자가 입력한 그 값이다.
-    String stored = tenantRawValue("smtp.password").orElseThrow();
-    assertThat(encryptionService.decrypt(stored)).isEqualTo(plain);
+      // 드롭되지 않고 실제로 저장됐고, 암호화된 원문을 복호화하면 사용자가 입력한 그 값이다.
+      String stored = tenantRawValue("smtp.password").orElseThrow();
+      assertThat(encryptionService.decrypt(stored)).as("plain=%s", plain).isEqualTo(plain);
+    }
   }
 
   /**

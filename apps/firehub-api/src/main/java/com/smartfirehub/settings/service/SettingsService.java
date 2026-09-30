@@ -50,7 +50,18 @@ public class SettingsService {
   }
 
   /**
-   * 비밀값은 복호화 후 마스킹해서 내보낸다. 평문도, 암호문도 응답에 실리지 않는다.
+   * 읽기 응답에서 비밀 값 자리에 싣는 <b>고정 표식</b>. "값이 저장돼 있다"는 사실만 알린다.
+   *
+   * <p>예전에는 {@code EncryptionService.maskValue} 로 {@code ****} + <b>평문 끝 4자</b>를
+   * 내보냈다(#725). 4자 비밀번호는 전체가, 5자는 80% 가 응답에 실려 브라우저·프록시 로그에
+   * 남았는데, 화면은 이 값을 "빈 문자열인가"로만 쓴다 — 아무도 쓰지 않는 누출이었다.
+   * {@code maskValue} 자체는 API 연결·임베딩 키 표시가 계속 쓰므로 건드리지 않는다.
+   */
+  static final String SECRET_MASK = "****";
+
+  /**
+   * 비밀값은 고정 표식({@link #SECRET_MASK})으로 바꿔 내보낸다. 평문도, 평문 조각도, 암호문도
+   * 응답에 실리지 않는다.
    *
    * <p>"마스킹이 일어났는가"를 <b>키로</b> 판정한다. 예전에는 {@code maskIfSecret} 의 반환 참조가
    * 입력과 같은지(`==`)로 판정했는데, 그 성질은 정작 노리던 자리에서 성립하지 않았다 — 비밀 키의
@@ -75,9 +86,9 @@ public class SettingsService {
    */
   private String maskIfSecret(String key, String value) {
     if (!SECRET_KEYS.contains(key)) return value;
-    return value == null || value.isBlank()
-        ? ""
-        : encryptionService.maskValue(encryptionService.decrypt(value));
+    // 복호화하지 않는다 — 읽기 경로는 평문을 만들 이유가 없고, 표식은 값과 무관하게 같다(#725).
+    // 빈 값(인증 없는 릴레이)은 빈 문자열 그대로: 화면이 "저장된 비밀번호 없음"으로 읽는다.
+    return value == null || value.isBlank() ? "" : SECRET_MASK;
   }
 
   /**
@@ -403,22 +414,21 @@ public class SettingsService {
    * 나가 화면이 "설정이 저장되었습니다" 토스트를 띄운다 — 저장된 것은 없고 메일은 옛 비밀번호로
    * 계속 나간다. 전형적인 "성공처럼 보이는 무동작"이다.
    *
-   * <p>그래서 판정을 <b>형태</b>로 좁힌다. {@link EncryptionService#maskValue} 가 만드는 마스크는
-   * 두 형태뿐이다: 원본이 4글자 미만이면 {@code ****}(길이 4), 아니면 {@code ****} + 마지막 4글자
-   * (길이 8). 그 밖의 길이는 우리 마스크일 수 없다.
+   * <p>그래서 판정은 <b>정확 일치</b>다. 읽기 경로가 내보내는 마스크는 고정 표식
+   * {@link #SECRET_MASK} 하나뿐이므로, 그 문자열 그 자체만 센티널이다. #725 이전에는 마스크가
+   * {@code ****} + 평문 끝 4자(길이 8)이기도 해서 "길이 4 또는 8" 로 판정했고, 그 탓에
+   * {@code ****abcd} 같은 <b>8자 비밀번호</b>가 조용히 버려졌다 — 마스크가 한 형태가 되면서 그
+   * 구멍도 함께 닫혔다.
    *
-   * <p><b>저장소를 읽어 현재 값과 비교하지 않는 이유</b>: 그러려면 이 판정이 <b>어느 평면</b>
-   * (플랫폼 {@code system_settings} / 테넌트 {@code tenant_settings})을 읽어야 하는지 알아야 하고,
-   * Task 2 가 의도적으로 밀어낸 평면 지식이 읽기 쪽 문으로 다시 들어온다
-   * ({@link #dropMaskSentinels} javadoc 참고).
+   * <p>웹 화면은 이제 마스크를 되보내지 않는다(빈 칸 = 변경 없음으로 키를 뺀다). 그래도 이 판정을
+   * 남기는 이유는 {@code GET} 응답을 그대로 {@code PUT} 하는 다른 클라이언트가 살아 있는 비밀번호를
+   * 문자열 {@code ****} 로 덮어쓰지 못하게 하기 위해서다.
    *
-   * <p><b>남는 잔여 위험</b>: 진짜 비밀번호가 우연히 길이 8 이고 {@code ****} 로 시작하면 여전히
-   * 조용히 드롭된다. 저장소를 읽지 않는 한 닫을 수 없는 구멍이고, 확률이 무시할 만하다.
+   * <p><b>남는 잔여 위험</b>: 진짜 비밀번호가 정확히 {@code ****} 이면 조용히 드롭된다. 서버가
+   * 내보낸 표식과 구분할 방법이 원리적으로 없다.
    */
   private static boolean isMaskSentinel(String value) {
-    return value != null
-        && value.startsWith("****")
-        && (value.length() == 4 || value.length() == 8);
+    return SECRET_MASK.equals(value);
   }
 
   /**
@@ -458,7 +468,7 @@ public class SettingsService {
    * {@code embedding.api_key} 를 {@code boolean} 세 벌 + {@code filter} 세 벌로, SMTP 경로는
    * {@code normalizeSmtpPayload} 안에서 {@code "smtp.password".equals(key)} 로. 그래서
    * {@link #SECRET_KEYS} 에 다섯 번째 키를 추가하면 암호화·복호화·마스킹은 <b>자동으로</b> 맞는데
-   * 센티널 드롭만 따라오지 않았다 — 화면이 돌려보낸 {@code ****ab3f} 가 살아 있는 비밀 위에
+   * 센티널 드롭만 따라오지 않았다 — 화면이 돌려보낸 마스크 문자열이 살아 있는 비밀 위에
    * 암호화되어 저장된다. {@link #encryptIfSecret} javadoc 이 "이 밴드가 고친 결함이 정확히 그
    * 형태였다"고 적어 둔 그 모양이, 같은 파일 안에서 한 자리만 옮겨 살아남아 있었다.
    *
@@ -478,7 +488,7 @@ public class SettingsService {
     settings.forEach(
         (key, value) -> {
           // 드롭하면 그 키는 저장 대상에서 통째로 빠진다 — 저장하면 살아 있는 비밀번호가 문자열
-          // "****abcd" 로 덮어써져 "아무것도 안 바꿨는데 메일이 안 나간다"가 된다.
+          // "****" 로 덮어써져 "아무것도 안 바꿨는데 메일이 안 나간다"가 된다.
           if (SECRET_KEYS.contains(key) && isMaskSentinel(value)) return;
           kept.put(key, value);
         });

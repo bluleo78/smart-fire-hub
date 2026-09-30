@@ -75,8 +75,8 @@ class SmtpSettingsServiceTest extends IntegrationTestBase {
     // 발송 설정에서는 복호화된 평문이다.
     assertThat(settingsService.getSmtpConfig().get("smtp.password")).isEqualTo("real-smtp-password");
 
-    // 화면이 안 고친 비밀번호의 마스크(= maskValue("real-smtp-password") == "****word")를 되돌려 보낸다.
-    settingsService.updateSettings(Map.of("smtp.password", "****word"), null);
+    // 서버가 내려준 마스크(#725 이후 고정 표식 "****")를 그대로 되돌려 보낸다 — 기존 값 유지.
+    settingsService.updateSettings(Map.of("smtp.password", "****"), null);
 
     assertThat(settingsService.getSmtpConfig().get("smtp.password")).isEqualTo("real-smtp-password");
   }
