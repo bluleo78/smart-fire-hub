@@ -172,6 +172,103 @@ test.describe('임베딩 설정 탭', () => {
     await expect(page.locator('p[role="status"]')).toHaveCount(0);
   });
 
+  /**
+   * 연결 테스트(probe) 응답을 release() 전까지 붙잡아 두는 라우트(#716). 나중에 등록한 route 가 우선하므로
+   * setupEmbeddingMocks 의 probe 모킹을 덮는다. 응답이 "입력을 바꾼 뒤" 도착하는 순서를 결정적으로 만든다.
+   */
+  async function gateProbe(
+    page: import('@playwright/test').Page,
+    response: { status: number; body: unknown },
+  ) {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let hits = 0;
+    await page.route(
+      (url) => url.pathname === '/api/v1/settings/embedding/test',
+      async (route) => {
+        hits += 1;
+        await gate;
+        return route.fulfill({
+          status: response.status,
+          contentType: 'application/json',
+          body: JSON.stringify(response.body),
+        });
+      },
+    );
+    return { release, hits: () => hits };
+  }
+
+  test('연결 테스트 중 입력을 바꾸면 늦게 도착한 옛 값의 실패를 결과 줄에 붙이지 않는다(#716)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupEmbeddingMocks(page, {});
+    const probe = await gateProbe(page, {
+      status: 400,
+      body: { message: '임베딩 연결 테스트 실패: OpenAI 임베딩 호출 실패: connection timed out' },
+    });
+    await openTab(page);
+
+    await page.getByLabel('모델').fill('old-model');
+    await page.getByRole('button', { name: '연결 테스트' }).click();
+    await expect.poll(probe.hits).toBe(1);
+    await expect(page.getByRole('button', { name: '연결 테스트' })).toBeDisabled();
+
+    // 요청이 도는 동안 입력을 바꾼다 — 이제 결과 줄은 새 입력의 것이어야 한다.
+    await page.getByLabel('모델').fill('new-model');
+    const responded = page.waitForResponse((r) => r.url().includes('/api/v1/settings/embedding/test'));
+    probe.release();
+    await responded;
+
+    // 응답 처리가 끝났다(busy 해제)는 것을 확인한 뒤에야 "결과 줄 없음" 단언이 의미를 가진다.
+    await expect(page.getByRole('button', { name: '연결 테스트' })).toBeEnabled();
+    await expect(page.locator('p[role="status"]')).toHaveCount(0);
+    await expect(page.getByText(/connection timed out/)).toHaveCount(0);
+    await expect(page.getByLabel('모델')).toHaveValue('new-model');
+  });
+
+  test('연결 테스트 중 입력을 바꾸면 늦게 도착한 옛 값의 성공도 새 입력의 결과처럼 보이지 않는다(#716)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupEmbeddingMocks(page, {});
+    const probe = await gateProbe(page, { status: 200, body: { dimension: 1024 } });
+    await openTab(page);
+
+    await page.getByRole('button', { name: '연결 테스트' }).click();
+    await expect.poll(probe.hits).toBe(1);
+    await page.getByLabel('Base URL').fill('http://wrong-host:11434');
+    const responded = page.waitForResponse((r) => r.url().includes('/api/v1/settings/embedding/test'));
+    probe.release();
+    await responded;
+
+    await expect(page.getByRole('button', { name: '연결 테스트' })).toBeEnabled();
+    await expect(page.getByText('연결 성공 · 1024차원')).toHaveCount(0);
+    await expect(page.locator('p[role="status"]')).toHaveCount(0);
+  });
+
+  test('저장 probe 중 입력을 바꾸면 옛 값으로 저장하지 않고 고친 입력을 지킨다(#716)', async ({
+    authenticatedPage: page,
+  }) => {
+    const { impact, save } = await setupEmbeddingMocks(page, {
+      impact: { body: { chunks: 0, datasets: 0, rowSearchIndexes: 0 } },
+    });
+    const probe = await gateProbe(page, { status: 200, body: { dimension: 1024 } });
+    await openTab(page);
+
+    await page.getByLabel('모델').fill('old-model');
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+    await expect.poll(probe.hits).toBe(1);
+    await page.getByLabel('모델').fill('edited-model');
+    probe.release();
+
+    // 멈춘 이유를 알린다(조용한 무동작 금지) — 옛 값은 저장되지 않고 고친 입력은 그대로 남는다.
+    await expect(page.getByText('저장 중 입력이 바뀌어 저장하지 않았습니다. 다시 저장하세요.')).toBeVisible();
+    await expect(page.getByRole('button', { name: '저장', exact: true })).toBeEnabled();
+    expect(impact.requests).toHaveLength(0);
+    expect(save.requests).toHaveLength(0);
+    await expect(page.getByLabel('모델')).toHaveValue('edited-model');
+    await expect(page.locator('p[role="status"]')).toHaveCount(0);
+  });
+
   test('저장 PUT 이 400 이면 서버 문구를 토스트로 보여준다', async ({ authenticatedPage: page }) => {
     // probe·영향도는 통과(영향 0 → 확인 창 없이 PUT)했는데 서버가 저장 시 다시 probe 해 거부한 경우.
     const { save } = await setupEmbeddingMocks(page, {
