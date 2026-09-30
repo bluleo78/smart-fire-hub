@@ -67,6 +67,19 @@ def _build_geojson_wrapped_sql(
 _DOLLAR_TAG = re.compile(r"\$(?:[A-Za-z_\x80-\U0010FFFF][A-Za-z0-9_\x80-\U0010FFFF]*)?\$")
 # 마스크 위에서 찾는 최상위 LIMIT n (주석·리터럴은 이미 가려져 있다).
 _LIMIT_CLAUSE = re.compile(r"(?i)\bLIMIT\s+\d+")
+# PostgreSQL 스캐너가 공백으로 보는 문자(scan.l 의 space). str.strip() 의 유니코드 공백(NBSP 등)은
+# PostgreSQL 에선 식별자 문자라서 쓰지 않는다 — Java SqlLexicalMask 와 같은 집합이어야 결과가 같다(#746).
+_PG_WHITESPACE = " \t\n\r\f\v"
+
+
+def _is_ident_start(ch: str) -> bool:
+    """PostgreSQL 식별자 첫 글자(ident_start): ASCII 글자·밑줄·0x80 이상 문자."""
+    return ("a" <= ch <= "z") or ("A" <= ch <= "Z") or ch == "_" or ord(ch) >= 0x80
+
+
+def _is_ident_cont(ch: str) -> bool:
+    """PostgreSQL 식별자 이어지는 글자(ident_cont): ident_start + 숫자 + ``$``."""
+    return _is_ident_start(ch) or ("0" <= ch <= "9") or ch == "$"
 
 
 def _mask_sql(sql: str) -> str:
@@ -76,20 +89,46 @@ def _mask_sql(sql: str) -> str:
     ``$$ -- $$`` 속 ``--``, ``/* LIMIT 5 */`` 속 LIMIT 을 코드로 오인하면 LIMIT 이 주석에 묻히거나(#745)
     가짜 LIMIT 에 속아 max_rows 가 빠진다. 인덱스를 보존하므로 마스크에서 찾은 위치로 원문을 자를 수 있다.
 
-    인지하는 PostgreSQL 어휘: ``--`` 줄 주석, 중첩 가능한 ``/* */`` 블록 주석, ``'...'``(``''`` 이스케이프,
-    ``E'...'`` 의 백슬래시 이스케이프), ``"..."`` 식별자(``""`` 이스케이프), ``$tag$...$tag$`` 달러 인용(#746).
+    인지하는 PostgreSQL 어휘: ``--`` 줄 주석(``\n``/``\r`` 에서 끝), 중첩 가능한 ``/* */`` 블록 주석,
+    ``'...'``(``''`` 이스케이프, ``E'...'`` 의 백슬래시 이스케이프), ``"..."`` 식별자(``""`` 이스케이프),
+    ``$tag$...$tag$`` 달러 인용. 식별자는 한 덩어리로 건너뛴다 — ``a$$b`` 의 ``$`` 는 식별자 글자라 달러
+    인용이 아니고, ``E'`` 는 식별자가 정확히 ``E`` 일 때만 이스케이프 문자열이다.
     닫히지 않은 리터럴/주석은 끝까지 그 상태로 본다(DB 가 어차피 문법 오류로 거부한다).
+
+    **Java ``SqlLexicalMask.mask`` 와 짝이다(#746).** 두 구현은 공용 픽스처
+    ``firehub-api/src/test/resources/fixtures/sql-lexical-vectors.json`` 으로 같은 결과를 검증한다 —
+    한쪽 규칙만 고치지 말 것.
     """
     out = list(sql)
     n = len(sql)
     i = 0
+
+    def mask_quoted(q: int, backslash_escapes: bool) -> int:
+        """sql[q] 의 따옴표로 시작하는 리터럴 내용을 가리고 닫는 따옴표 다음 위치를 돌려준다."""
+        c = sql[q]
+        j = q + 1
+        while j < n:
+            if backslash_escapes and sql[j] == "\\":
+                j += 2
+                continue
+            if sql[j] == c:
+                if j + 1 < n and sql[j + 1] == c:  # '' / "" 이스케이프
+                    j += 2
+                    continue
+                break
+            j += 1
+        for k in range(q + 1, min(j, n)):
+            out[k] = "x"
+        return j + 1
+
     while i < n:
         c = sql[i]
         nxt = sql[i + 1] if i + 1 < n else ""
         if c == "-" and nxt == "-":
-            # 줄 주석: 개행 직전까지 가린다(개행 자체는 남긴다).
-            j = sql.find("\n", i)
-            j = n if j < 0 else j
+            # 줄 주석: 개행(\n 또는 \r) 직전까지 가린다(개행 자체는 남긴다).
+            j = i
+            while j < n and sql[j] not in "\n\r":
+                j += 1
             for k in range(i, j):
                 out[k] = " "
             i = j
@@ -106,33 +145,22 @@ def _mask_sql(sql: str) -> str:
                     j += 2
                 else:
                     j += 1
-            for k in range(i, j):
+            for k in range(i, min(j, n)):
                 out[k] = " "
             i = j
         elif c == "'" or c == '"':
-            # E'...' 는 백슬래시 이스케이프를 쓴다(표준 문자열은 '' 만).
-            backslash_escapes = (
-                c == "'"
-                and i > 0
-                and sql[i - 1] in "eE"
-                and (i < 2 or not (sql[i - 2].isalnum() or sql[i - 2] == "_"))
-            )
+            i = mask_quoted(i, False)
+        elif _is_ident_start(c):
+            # 식별자/키워드 한 덩어리. 정확히 E 이고 바로 ' 가 오면 백슬래시 이스케이프 문자열이다.
             j = i + 1
-            while j < n:
-                if backslash_escapes and sql[j] == "\\":
-                    j += 2
-                    continue
-                if sql[j] == c:
-                    if j + 1 < n and sql[j + 1] == c:  # '' / "" 이스케이프
-                        j += 2
-                        continue
-                    break
+            while j < n and _is_ident_cont(sql[j]):
                 j += 1
-            for k in range(i + 1, min(j, n)):
-                out[k] = "x"
-            i = j + 1
-        elif c == "$" and not (i > 0 and (sql[i - 1].isalnum() or sql[i - 1] == "_")):
-            # 식별자 중간의 $ (예: a$b) 는 달러 인용이 아니다.
+            if j - i == 1 and c in "eE" and j < n and sql[j] == "'":
+                i = mask_quoted(j, True)
+            else:
+                i = j
+        elif c == "$":
+            # 식별자 밖의 $ 만 여기 온다. $1 같은 위치 파라미터는 태그 모양이 아니라 그냥 지나간다.
             m = _DOLLAR_TAG.match(sql, i)
             if not m:
                 i += 1
@@ -153,15 +181,17 @@ def _normalize_sql(sql: str) -> str:
 
     #745: 끝 주석을 남긴 채 ``LIMIT`` 을 덧붙이면 LIMIT 이 주석에 묻혀 max_rows 가 무시되고, 단순히
     개행을 넣어 붙이면 ``SELECT …; -- note`` 가 두 문장이 된다. 그래서 주석·리터럴을 인지해 **진짜 끝**
-    (마지막 코드 문자)까지만 남긴다. API 의 ``MergeSqlBuilder.stripTrailingSemicolon`` 과 같은 목적이되
-    블록 주석·달러 인용까지 인지한다(#746). 중간의 세미콜론(여러 문장)은 건드리지 않는다 — 다중 문장
+    (마지막 코드 문자)까지만 남긴다. 중간의 세미콜론(여러 문장)은 건드리지 않는다 — 다중 문장
     거부는 API 쪽 검증의 몫이다.
+
+    **Java ``SqlLexicalMask.stripTrailingCommentsAndSemicolons`` 와 짝이다(#746)** — 공용 픽스처로 같은
+    결과를 검증한다. 공백은 PostgreSQL 공백 집합(``_PG_WHITESPACE``)만 걷는다.
     """
     masked = _mask_sql(sql)
-    end = len(masked.rstrip())
+    end = len(masked.rstrip(_PG_WHITESPACE))
     while end > 0 and masked[end - 1] == ";":
-        end = len(masked[: end - 1].rstrip())
-    return sql[:end].lstrip()
+        end = len(masked[: end - 1].rstrip(_PG_WHITESPACE))
+    return sql[:end].lstrip(_PG_WHITESPACE)
 
 
 def _has_limit(sql: str) -> bool:

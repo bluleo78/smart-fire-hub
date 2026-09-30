@@ -506,6 +506,60 @@ class PipelineIncrementalIntegrationTest extends IntegrationTestBase {
         org.junit.jupiter.params.provider.Arguments.of("MERGE", "; -- note"));
   }
 
+  /**
+   * 세미콜론 뒤 블록 주석, 달러 인용·E 문자열 안의 {@code --}/{@code '}/{@code ;} 가 있는 SELECT 스텝도
+   * 러너의 래핑(컬럼 probe·MERGE 서브쿼리)을 깨지 않는다(#746).
+   *
+   * <p>예전 {@code stripTrailingSemicolon} 은 작은따옴표와 {@code --} 만 추적해서, {@code ; /* note *}{@code /}
+   * 는 주석을 "세미콜론 뒤 코드"로 봐 세미콜론을 남겼고, {@code $$--y;$$} 는 달러 인용 속 {@code --} 를 주석
+   * 시작으로 봐 진짜 {@code ;} 까지 건너뛰었고, {@code $$it's$$} 는 달러 인용 속 {@code '} 로 따옴표 상태에
+   * 갇혔다 — 셋 다 probe 가 {@code syntax error at or near ";"} 로 실패했다. REPLACE 는 probe 경로, MERGE 는
+   * probe + {@code MergeSqlBuilder} 서브쿼리 경로를 러너부터 실제 테이블까지 관통해 확인한다.
+   *
+   * <p>WHERE 절은 항상 붙인다(REPLACE 는 {@code WHERE true}, MERGE 는 증분 책갈피) — 꼬리의 {@code AND ...}
+   * 가 두 전략에 같은 모양으로 붙게 하려는 것이다. 비교 대상 문자열은 원천에 없는 값이라 행을 거르지 않는다.
+   */
+  @org.junit.jupiter.params.ParameterizedTest(name = "[{index}] {0} / {1}")
+  @org.junit.jupiter.params.provider.MethodSource("lexicalTailCases")
+  void 블록_주석이나_달러_인용이_든_SELECT_스텝도_실행된다(String strategy, String tail) {
+    seedSource(1, 10);
+    String where =
+        "MERGE".equals(strategy) ? " WHERE _updated_at >= {{last_run_at}}" : " WHERE true";
+    pipelineService.updatePipeline(
+        pipelineId,
+        new UpdatePipelineRequest(
+            "Inc Pipeline " + suffix,
+            "어휘 꼬리",
+            null,
+            List.of(
+                new PipelineStepRequest(
+                    STEP_NAME,
+                    "어휘 꼬리 " + strategy,
+                    "SQL",
+                    "SELECT code, name FROM " + DataSchema.qualify(srcTable) + where + tail,
+                    outDatasetId,
+                    null,
+                    null,
+                    strategy))),
+        userId);
+
+    runAndWait("COMPLETED");
+
+    assertThat(outCount()).as("블록 주석/달러 인용 꼬리가 있어도 원천 10행이 그대로 적재돼야 한다").isEqualTo(10);
+  }
+
+  static java.util.stream.Stream<org.junit.jupiter.params.provider.Arguments> lexicalTailCases() {
+    List<String> tails =
+        List.of(
+            "; /* note */",
+            " AND code <> $$--y;$$;",
+            " AND code <> $$it's$$;",
+            " AND code <> E'\\'--;'; /* a /* nested */ b */ -- z\n");
+    return java.util.stream.Stream.of("REPLACE", "MERGE")
+        .flatMap(
+            s -> tails.stream().map(t -> org.junit.jupiter.params.provider.Arguments.of(s, t)));
+  }
+
   // ------------------------------------------------------------------ //
   // Helpers
   // ------------------------------------------------------------------ //

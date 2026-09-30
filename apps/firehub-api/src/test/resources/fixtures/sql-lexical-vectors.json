@@ -1,0 +1,181 @@
+{
+  "_설명": [
+    "PostgreSQL 어휘(주석·리터럴) 인지 SQL 스캐너의 단일 시험 벡터(#746).",
+    "api(SqlLexicalMaskTest)와 executor(tests/test_sql_lexical_vectors.py)가 이 파일 하나를 읽는다 — Java SqlLexicalMask 와 Python query_executor._mask_sql/_normalize_sql 가 같은 값에 다른 결과를 내면 어느 한쪽 테스트가 깨진다.",
+    "mask: 주석은 공백, 리터럴(문자열 내용·따옴표 식별자 내용·달러 인용 전체)은 x 로 가린 같은 길이 문자열. 길이 단위가 Java(UTF-16)와 Python(코드 포인트)에서 달라지지 않게 BMP 문자만 쓴다.",
+    "stripTrailing: 끝의 공백(PostgreSQL 공백 집합만)·주석·세미콜론을 걷어내고 앞 공백을 뗀 결과. 원문의 부분 문자열이라 BMP 밖 문자도 쓸 수 있다.",
+    "보이지 않는 문자는 \\uXXXX 로 적는다."
+  ],
+  "mask": [
+    {
+      "sql": "SELECT a -- c ; x\nFROM t",
+      "mask": "SELECT a         \nFROM t"
+    },
+    {
+      "sql": "SELECT a -- c\rFROM t",
+      "mask": "SELECT a     \rFROM t"
+    },
+    {
+      "sql": "SELECT /* a /* b */ c */ 1",
+      "mask": "SELECT                   1"
+    },
+    {
+      "sql": "SELECT 'a;--b', 'it''s'",
+      "mask": "SELECT 'xxxxx', 'xxxxx'"
+    },
+    {
+      "sql": "SELECT E'a\\';--' , e'\\\\'",
+      "mask": "SELECT E'xxxxxx' , e'xx'"
+    },
+    {
+      "sql": "SELECT xE'a\\'b'",
+      "mask": "SELECT xE'xx'b'"
+    },
+    {
+      "sql": "SELECT \"x;\"\"--\" FROM t",
+      "mask": "SELECT \"xxxxxx\" FROM t"
+    },
+    {
+      "sql": "SELECT $$it's -- $$, $t$ $$ ; $t$",
+      "mask": "SELECT xxxxxxxxxxxx, xxxxxxxxxxxx"
+    },
+    {
+      "sql": "SELECT a$$b, $1, x$y$ FROM t",
+      "mask": "SELECT a$$b, $1, x$y$ FROM t"
+    },
+    {
+      "sql": "SELECT 한$$x$$ FROM t",
+      "mask": "SELECT 한$$x$$ FROM t"
+    },
+    {
+      "sql": "SELECT $$ 열린 채 끝남",
+      "mask": "SELECT xxxxxxxxxx"
+    },
+    {
+      "sql": "SELECT 'open",
+      "mask": "SELECT 'xxxx"
+    },
+    {
+      "sql": "SELECT 1 /* open",
+      "mask": "SELECT 1        "
+    }
+  ],
+  "stripTrailing": [
+    {
+      "sql": "SELECT 1",
+      "expected": "SELECT 1"
+    },
+    {
+      "sql": "SELECT 1;",
+      "expected": "SELECT 1"
+    },
+    {
+      "sql": "  SELECT 1 ;  \n",
+      "expected": "SELECT 1"
+    },
+    {
+      "sql": "SELECT 1; -- note",
+      "expected": "SELECT 1"
+    },
+    {
+      "sql": "SELECT 1;\n-- n1\n-- n2\n",
+      "expected": "SELECT 1"
+    },
+    {
+      "sql": "SELECT 1; /* note */",
+      "expected": "SELECT 1"
+    },
+    {
+      "sql": "SELECT 1 /* ; */ ;",
+      "expected": "SELECT 1"
+    },
+    {
+      "sql": "SELECT 1 /* a /* b */ c */;",
+      "expected": "SELECT 1"
+    },
+    {
+      "sql": "SELECT 1;;  ;",
+      "expected": "SELECT 1"
+    },
+    {
+      "sql": "SELECT $$--y;$$ AS v;",
+      "expected": "SELECT $$--y;$$ AS v"
+    },
+    {
+      "sql": "SELECT $$it's$$ AS v;",
+      "expected": "SELECT $$it's$$ AS v"
+    },
+    {
+      "sql": "SELECT $t$ $$ ; ' -- $t$ AS v; /* a /* b */ c */ -- z\n",
+      "expected": "SELECT $t$ $$ ; ' -- $t$ AS v"
+    },
+    {
+      "sql": "SELECT E'\\'--;' AS v;",
+      "expected": "SELECT E'\\'--;' AS v"
+    },
+    {
+      "sql": "SELECT 'x;\n-- y' AS v",
+      "expected": "SELECT 'x;\n-- y' AS v"
+    },
+    {
+      "sql": "SELECT \"v;\" FROM t;",
+      "expected": "SELECT \"v;\" FROM t"
+    },
+    {
+      "sql": "SELECT a$$b FROM t; -- $$",
+      "expected": "SELECT a$$b FROM t"
+    },
+    {
+      "sql": "SELECT 1; SELECT 2;",
+      "expected": "SELECT 1; SELECT 2"
+    },
+    {
+      "sql": "SELECT 1; SELECT 2",
+      "expected": "SELECT 1; SELECT 2"
+    },
+    {
+      "sql": "SELECT 1 -- c\rFROM t;",
+      "expected": "SELECT 1 -- c\rFROM t"
+    },
+    {
+      "sql": "SELECT 1;\u00a0",
+      "expected": "SELECT 1;\u00a0"
+    },
+    {
+      "sql": "\u00a0SELECT 1;\u3000",
+      "expected": "\u00a0SELECT 1;\u3000"
+    },
+    {
+      "sql": "SELECT '😀;--' AS v; -- 😀",
+      "expected": "SELECT '😀;--' AS v"
+    },
+    {
+      "sql": "/* head */ SELECT 1; -- tail",
+      "expected": "/* head */ SELECT 1"
+    },
+    {
+      "sql": "SELECT 1;\f\u000b",
+      "expected": "SELECT 1"
+    },
+    {
+      "sql": "SELECT code, val FROM data.\"t\"; /* note */",
+      "expected": "SELECT code, val FROM data.\"t\""
+    },
+    {
+      "sql": "SELECT code || $$--y;$$ AS code, val FROM data.\"t\";",
+      "expected": "SELECT code || $$--y;$$ AS code, val FROM data.\"t\""
+    },
+    {
+      "sql": "SELECT code || $$it's$$ AS code, val FROM data.\"t\";",
+      "expected": "SELECT code || $$it's$$ AS code, val FROM data.\"t\""
+    },
+    {
+      "sql": "-- only\n/* comment */ ;",
+      "expected": ""
+    },
+    {
+      "sql": "",
+      "expected": ""
+    }
+  ]
+}

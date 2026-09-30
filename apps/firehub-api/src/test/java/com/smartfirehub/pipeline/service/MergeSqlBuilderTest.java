@@ -59,7 +59,8 @@ class MergeSqlBuilderTest {
    * Fix round 2, must 1 — 세미콜론 없이 후행 한 줄 주석만 있는 경우("SELECT a FROM x -- note")는
    * 예전(서브쿼리가 한 줄이던) 방식에서는 "--"가 줄 끝까지(닫는 괄호·ON CONFLICT 까지) 통째로
    * 주석 처리해 문법 오류가 났다. 서브쿼리를 자기 줄에 얹으면 주석은 그 줄에서만 끝나고 닫는 괄호는
-   * 다음 줄이라 살아남는다 — 이 문자열 형태 테스트는 "생성되는 SQL 모양"만 고정한다. 실제로
+   * 다음 줄이라 살아남는다. #746 부터는 끝 주석 자체를 걷어내므로(SqlLexicalMask) 주석이 서브쿼리에 남지
+   * 않고, 개행은 방어적 이중 안전장치로 남는다 — 이 문자열 형태 테스트는 "생성되는 SQL 모양"만 고정한다. 실제로
    * PostgreSQL 이 이 형태를 받아들이는지는 {@code MergeSqlBuilderIntegrationTest}가 실행으로 증명한다.
    */
   @Test
@@ -69,13 +70,13 @@ class MergeSqlBuilderTest {
             "\"data\".\"out\"", List.of("code"), List.of("code"), "SELECT code FROM src -- note");
     assertThat(sql)
         .isEqualTo(
-            "INSERT INTO \"data\".\"out\" AS t (\"code\") SELECT \"code\" FROM (\nSELECT code FROM src -- note\n) AS _src ON CONFLICT (\"code\") DO NOTHING");
+            "INSERT INTO \"data\".\"out\" AS t (\"code\") SELECT \"code\" FROM (\nSELECT code FROM src\n) AS _src ON CONFLICT (\"code\") DO NOTHING");
   }
 
   /**
    * Fix round 2, must 1 — 세미콜론과 후행 주석이 함께 있는 경우("SELECT a FROM x; -- note")는
    * {@code stripTrailing()} 만으로는 문자열 끝이 ";"가 아니라("--"뒤 텍스트) 세미콜론이 안 지워졌다.
-   * 주석보다 앞의 세미콜론을 찾아 지우고 주석은 그대로 살려 되붙여야 한다.
+   * 주석보다 앞의 세미콜론을 찾아 지워야 한다(#746 부터는 실행에 의미 없는 끝 주석도 함께 걷는다).
    */
   @Test
   void 세미콜론_뒤_후행_주석도_세미콜론이_제거된다() {
@@ -84,7 +85,7 @@ class MergeSqlBuilderTest {
             "\"data\".\"out\"", List.of("code"), List.of("code"), "SELECT code FROM src; -- note");
     assertThat(sql)
         .isEqualTo(
-            "INSERT INTO \"data\".\"out\" AS t (\"code\") SELECT \"code\" FROM (\nSELECT code FROM src -- note\n) AS _src ON CONFLICT (\"code\") DO NOTHING");
+            "INSERT INTO \"data\".\"out\" AS t (\"code\") SELECT \"code\" FROM (\nSELECT code FROM src\n) AS _src ON CONFLICT (\"code\") DO NOTHING");
   }
 
   /**
@@ -100,7 +101,7 @@ class MergeSqlBuilderTest {
             "\"data\".\"out\"", List.of("code"), List.of("code"), "SELECT code FROM src;\n-- note");
     assertThat(sql)
         .isEqualTo(
-            "INSERT INTO \"data\".\"out\" AS t (\"code\") SELECT \"code\" FROM (\nSELECT code FROM src\n-- note\n) AS _src ON CONFLICT (\"code\") DO NOTHING");
+            "INSERT INTO \"data\".\"out\" AS t (\"code\") SELECT \"code\" FROM (\nSELECT code FROM src\n) AS _src ON CONFLICT (\"code\") DO NOTHING");
   }
 
   /** 주석이 여러 줄이어도(코드 줄이 더 앞) 마지막 코드 줄의 세미콜론을 찾아야 한다. */
@@ -114,7 +115,7 @@ class MergeSqlBuilderTest {
             "SELECT code\nFROM src;\n-- note1\n-- note2\n");
     assertThat(sql)
         .isEqualTo(
-            "INSERT INTO \"data\".\"out\" AS t (\"code\") SELECT \"code\" FROM (\nSELECT code\nFROM src\n-- note1\n-- note2\n) AS _src ON CONFLICT (\"code\") DO NOTHING");
+            "INSERT INTO \"data\".\"out\" AS t (\"code\") SELECT \"code\" FROM (\nSELECT code\nFROM src\n) AS _src ON CONFLICT (\"code\") DO NOTHING");
   }
 
   /**
@@ -130,13 +131,7 @@ class MergeSqlBuilderTest {
   }
 
   /**
-   * 기존 보장 유지 — 달러 인용({@code $$...$$}) 본문의 세미콜론도 문장 끝이 아니다. 여기서는 세미콜론
-   * 뒤에 코드({@code $$ AS code FROM src})가 이어지므로 "뒤가 공백·주석뿐일 때만 제거" 규칙이 이를
-   * 그대로 살린다.
-   *
-   * <p>한계(신구 구현 공통, 회귀 아님): {@code SELECT $$a; -- b$$ AS x} 처럼 달러 인용 본문 안에
-   * {@code --} 가 있으면 그 뒤가 주석으로 보여 세미콜론을 잘못 지운다. 파이프라인 SELECT 스텝이 함수
-   * 본문을 담는 경우는 없다고 보고 수용한 한계다(MergeSqlBuilder Javadoc 참고).
+   * 기존 보장 유지 — 달러 인용({@code $$...$$}) 본문의 세미콜론도 문장 끝이 아니다.
    */
   @Test
   void 달러_인용_본문_안의_세미콜론은_보존된다() {
@@ -157,5 +152,47 @@ class MergeSqlBuilderTest {
     String sql =
         MergeSqlBuilder.build("\"data\".\"out\"", List.of("code"), List.of("code"), selectSql);
     assertThat(sql).contains(selectSql);
+  }
+
+  /**
+   * #746 — 세미콜론 뒤의 <b>블록 주석</b>. 예전 헬퍼는 블록 주석을 "세미콜론 뒤 코드"로 봐서 세미콜론을
+   * 남겼고, 서브쿼리 괄호 안의 {@code ;} 가 구문 오류가 됐다.
+   */
+  @Test
+  void 세미콜론_뒤_블록_주석이어도_세미콜론이_제거된다() {
+    assertThat(buildSubquery("SELECT code FROM src; /* note */")).isEqualTo("SELECT code FROM src");
+    assertThat(buildSubquery("SELECT code FROM src /* ; */ ;")).isEqualTo("SELECT code FROM src");
+    assertThat(buildSubquery("SELECT code FROM src; /* a /* 중첩 */ b */ -- z\n"))
+        .isEqualTo("SELECT code FROM src");
+  }
+
+  /**
+   * #746 — 달러 인용 안의 {@code --}·{@code '} 는 주석·따옴표가 아니다. 예전 헬퍼는 {@code $$--y;$$} 의
+   * {@code --} 를 주석 시작으로 봐 진짜 {@code ;} 까지 건너뛰었고, {@code $$it's$$} 의 {@code '} 로 따옴표
+   * 상태에 갇혀 세미콜론을 지우지 못했다.
+   */
+  @Test
+  void 달러_인용_안의_주석_기호나_따옴표가_있어도_끝_세미콜론이_제거된다() {
+    assertThat(buildSubquery("SELECT code || $$--y;$$ AS code FROM src;"))
+        .isEqualTo("SELECT code || $$--y;$$ AS code FROM src");
+    assertThat(buildSubquery("SELECT code || $$it's$$ AS code FROM src;"))
+        .isEqualTo("SELECT code || $$it's$$ AS code FROM src");
+    assertThat(buildSubquery("SELECT code || $t$ $$ ; ' -- $t$ AS code FROM src;"))
+        .isEqualTo("SELECT code || $t$ $$ ; ' -- $t$ AS code FROM src");
+  }
+
+  /** #746 — E 문자열의 백슬래시 이스케이프({@code \'})는 문자열을 닫지 않는다. */
+  @Test
+  void E_문자열_안의_이스케이프된_따옴표가_있어도_끝_세미콜론이_제거된다() {
+    assertThat(buildSubquery("SELECT E'\\'--;' AS code FROM src;"))
+        .isEqualTo("SELECT E'\\'--;' AS code FROM src");
+  }
+
+  /** build() 결과에서 서브쿼리 괄호 안의 사용자 SELECT 부분만 떼어 낸다. */
+  private static String buildSubquery(String selectSql) {
+    String sql = MergeSqlBuilder.build("\"data\".\"out\"", List.of("code"), List.of("code"), selectSql);
+    int start = sql.indexOf("FROM (\n") + "FROM (\n".length();
+    int end = sql.lastIndexOf("\n) AS _src ");
+    return sql.substring(start, end);
   }
 }
