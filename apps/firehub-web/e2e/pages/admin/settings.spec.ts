@@ -554,7 +554,7 @@ test.describe('설정 페이지', () => {
       await page.getByRole('button', { name: '저장' }).click();
 
       await expect(
-        emailPanel(page).getByText('올바른 이메일 주소를 입력하세요 (예: noreply@example.com)'),
+        emailPanel(page).getByText('올바른 이메일 주소를 입력하세요 (예: noreply@example.com 또는 표시명 <noreply@example.com>)'),
       ).toBeVisible();
       // 오류는 시각 표시뿐 아니라 보조 기술에도 전달된다 — 오류가 난 칸만.
       await expect(page.locator('#smtp-from')).toHaveAttribute('aria-invalid', 'true');

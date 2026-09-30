@@ -549,14 +549,39 @@ public class SettingsService {
     }
   }
 
+  /** 주소의 한 토막 — 공백·{@code @}·점과 RFC 5322 특수문자({@code <>()[]\,;:"})가 없는 글자들. */
+  private static final String SMTP_ATOM = "[^\\s@<>()\\[\\]\\\\,;:\".]+";
+
+  /** 점으로 이은 토막들 — 점이 맨 앞·맨 뒤에 오거나 연달아 오지 않는다. */
+  private static final String SMTP_DOTTED = SMTP_ATOM + "(?:\\." + SMTP_ATOM + ")*";
+
+  /** {@code 로컬@도메인}. */
+  private static final String SMTP_ADDR = SMTP_DOTTED + "@" + SMTP_DOTTED;
+
   /**
-   * 발신자 주소에서 <b>주소 부분</b>의 표기 — {@code 로컬@도메인}, 공백·꺾쇠·두 번째 {@code @} 없음.
-   * web 의 {@code lib/smtp-address.ts} 와 <b>같은 문법</b>이어야 한다(#728).
+   * 발신자 주소의 표기 — {@code 주소} 또는 {@code 표시명 <주소>}. web 의
+   * {@code lib/smtp-address.ts} 와 <b>글자 그대로 같은 문법</b>이어야 한다(#728) — 한쪽만 넓으면
+   * "칸 검증은 통과하고 저장은 400"(#727) 이 다시 생긴다.
    *
-   * <p>도메인에 점을 요구하지 않는다 — 사내 릴레이에서는 {@code alerts@mailhost} 가 합법적인
-   * 발신자이고, 발송 코드({@code InternetAddress})도 받는다.
+   * <ul>
+   *   <li>주소: 점으로 이은 토막 {@code @} 점으로 이은 토막. 도메인에 점을 요구하지 않는다 —
+   *       사내 릴레이에서는 {@code alerts@mailhost} 가 합법적인 발신자다.
+   *   <li>표시명: 특수문자({@code <>()[]\,;:"@})가 없는 글자들이거나, 큰따옴표로 감싼 문자열.
+   *       쉼표·괄호가 든 표시명은 따옴표로 감싸야 한다 — 메일 주소 파서가 따옴표 없는 쉼표를
+   *       주소 구분자로, 괄호를 주석으로 읽기 때문이다.
+   * </ul>
+   *
+   * <p>파서({@link InternetAddress})가 받는 것보다 일부러 좁다(도메인 리터럴 {@code a@[127.0.0.1]},
+   * 따옴표 로컬 파트 등 제외). 파서의 문법을 web 에 그대로 옮길 수 없으므로, 양쪽이 똑같이 구현할
+   * 수 있는 이 문법을 기준으로 삼고 파서는 그 위의 확인으로만 쓴다.
    */
-  private static final Pattern SMTP_ADDRESS_SYNTAX = Pattern.compile("[^\\s@<>]+@[^\\s@<>]+");
+  private static final Pattern SMTP_SENDER_SYNTAX =
+      Pattern.compile(
+          "(?:"
+              + SMTP_ADDR
+              + "|(?:\"[^\"\\\\]*\"\\s*|[^<>()\\[\\]\\\\,;:\"@]*)<"
+              + SMTP_ADDR
+              + ">)");
 
   /**
    * {@code smtp.from_address} 형식 검증(#728). 키가 없으면 아무것도 하지 않는다.
@@ -564,17 +589,17 @@ public class SettingsService {
    * <p>검증이 없던 동안 {@code not-an-email} 이 204 로 저장됐고, 연결 테스트는 접속만 확인하므로
    * 실패는 실제 메일이 나갈 때({@code MimeMessageHelper.setFrom}) 에야 드러났다.
    *
-   * <p><b>받는 형태는 발송 코드가 받는 형태와 같다</b>: {@code 주소} 또는 {@code 표시명 <주소>} 하나.
-   * {@code EmailDeliveryChannel} 은 저장된 문자열을 {@code helper.setFrom(String)} 에 그대로 넘기고,
-   * 그 메서드는 {@link InternetAddress#parse} 로 <b>정확히 한 개</b>의 주소를 요구한다 — 그래서
-   * 여기서도 같은 파서로 읽고(쉼표로 이은 두 주소·그룹 표기는 거부), 주소 부분에 web 과 같은
-   * {@link #SMTP_ADDRESS_SYNTAX} 를 적용한다.
+   * <p><b>받는 형태</b>: {@code 주소} 또는 {@code 표시명 <주소>} 하나({@link #SMTP_SENDER_SYNTAX}).
+   * {@code EmailDeliveryChannel} 은 저장된 문자열을 {@code helper.setFrom(String)} 에 그대로 넘기고
+   * 그 메서드는 {@link InternetAddress#parse} 로 <b>정확히 한 개</b>의 주소를 요구하므로, 표시명
+   * 형태를 막으면 과잉 차단이다. 문법을 통과한 값은 같은 파서로 한 번 더 읽어, 저장을 허용한 값이
+   * 발송에서 거부되는 일이 없게 한다.
    *
    * <p><b>빈 문자열은 그대로 통과시킨다.</b> {@code EmailDeliveryChannel} 이 빈 발신자를 기본
    * 발신자로 바꿔 보내므로 동작하는 상태이고, 필수 여부는 화면(web)의 규칙이다. 공백만 있는 값과
    * 앞뒤 공백은 거부한다(web 이 다듬어 보낸다).
    *
-   * <p>{@link AddressException} 원문({@code Missing final '@domain'} 등)은 사용자에게 내보내지 않는다 —
+   * <p>파서 예외 원문({@code Missing final '@domain'} 등)은 사용자에게 내보내지 않는다 —
    * 이 메시지는 화면 토스트에 그대로 나간다.
    */
   private static void validateSmtpFromAddress(Map<String, String> settings) {
@@ -583,19 +608,22 @@ public class SettingsService {
     if (from.isEmpty()) return;
     if (!isSingleMailAddress(from)) {
       throw new IllegalArgumentException(
-          "발신자 주소 형식이 올바르지 않습니다(예: noreply@example.com). 입력값: " + from);
+          "발신자 주소 형식이 올바르지 않습니다(예: noreply@example.com 또는 표시명 <noreply@example.com>)."
+              + " 입력값: "
+              + from);
     }
   }
 
   /** {@code 주소} 또는 {@code 표시명 <주소>} 하나인가 — {@link #validateSmtpFromAddress} 의 판정. */
   private static boolean isSingleMailAddress(String value) {
     if (!value.equals(value.strip())) return false;
+    if (!SMTP_SENDER_SYNTAX.matcher(value).matches()) return false;
     try {
+      // 발송 코드와 같은 파서 — 문법이 놓친 것이 있어도 "저장은 되고 발송에서 실패"는 막는다.
       InternetAddress[] parsed = InternetAddress.parse(value, true);
       if (parsed.length != 1 || parsed[0].isGroup()) return false;
       parsed[0].validate();
-      String address = parsed[0].getAddress();
-      return address != null && SMTP_ADDRESS_SYNTAX.matcher(address).matches();
+      return true;
     } catch (AddressException e) {
       return false;
     }

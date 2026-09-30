@@ -227,7 +227,7 @@ describe('useSmtpSettingsForm', () => {
 
     expect(mockedUpdate).not.toHaveBeenCalled();
     expect(result.current.errors).toEqual({
-      'smtp.from_address': '올바른 이메일 주소를 입력하세요 (예: noreply@example.com)',
+      'smtp.from_address': '올바른 이메일 주소를 입력하세요 (예: noreply@example.com 또는 표시명 <noreply@example.com>)',
     });
   });
 

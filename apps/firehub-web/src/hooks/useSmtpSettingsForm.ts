@@ -235,7 +235,7 @@ export function useSmtpSettingsForm(): SmtpSettingsFormState {
     // 실패한다(#728).
     const from = form['smtp.from_address'].trim();
     if (from !== '' && !isSenderAddressSyntax(from)) {
-      next['smtp.from_address'] = '올바른 이메일 주소를 입력하세요 (예: noreply@example.com)';
+      next['smtp.from_address'] = '올바른 이메일 주소를 입력하세요 (예: noreply@example.com 또는 표시명 <noreply@example.com>)';
     }
     const port = form['smtp.port'].trim();
     if (port !== '') {

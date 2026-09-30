@@ -47,7 +47,12 @@ class SmtpHostAndFromAddressValidationTest extends IntegrationTestBase {
     TenantContext.set(DEFAULT_TEST_TENANT_ID);
   }
 
-  /** 거부돼야 하는 값. 메시지에는 필드 이름이 들어 있어야 한다(화면 토스트에 그대로 나간다). */
+  /**
+   * 거부돼야 하는 값. 메시지에는 필드 이름이 들어 있어야 한다(화면 토스트에 그대로 나간다).
+   *
+   * <p>발신자 주소 행은 web 의 {@code smtp-address.test.ts} 거부 목록과 <b>같은 값</b>이다 — 두 목록이
+   * 갈라지면 "칸 검증은 통과하고 저장은 400" 이 다시 생긴다.
+   */
   @ParameterizedTest(name = "{0} = [{1}] 은 거부된다")
   @CsvSource(
       delimiter = '|',
@@ -66,6 +71,20 @@ class SmtpHostAndFromAddressValidationTest extends IntegrationTestBase {
           smtp.from_address|Fire Hub <not-an-email>|발신자 주소
           smtp.from_address|Fire Hub <noreply@example.com|발신자 주소
           smtp.from_address|team: a@example.com;|발신자 주소
+          smtp.from_address|Hub, Fire <noreply@example.com>|발신자 주소
+          smtp.from_address|Hub; Fire <noreply@example.com>|발신자 주소
+          smtp.from_address|Fire (Hub <noreply@example.com>|발신자 주소
+          smtp.from_address|Team@Home <noreply@example.com>|발신자 주소
+          smtp.from_address|'"Unbalanced <noreply@example.com>'|발신자 주소
+          smtp.from_address|Fire Hub <noreply@example.com> x|발신자 주소
+          smtp.from_address|x <a@example.com> <b@example.com>|발신자 주소
+          smtp.from_address|a..b@example.com|발신자 주소
+          smtp.from_address|.a@example.com|발신자 주소
+          smtp.from_address|a@example..com|발신자 주소
+          smtp.from_address|a@example.com.|발신자 주소
+          smtp.from_address|a(c)@example.com|발신자 주소
+          smtp.from_address|a,b@example.com|발신자 주소
+          smtp.from_address|a@[127.0.0.1]|발신자 주소
           smtp.host|''|SMTP 호스트
           smtp.host|'  '|SMTP 호스트
           smtp.host|' smtp.example.com'|SMTP 호스트
@@ -87,6 +106,7 @@ class SmtpHostAndFromAddressValidationTest extends IntegrationTestBase {
   /**
    * 정상 값은 그대로 저장된다 — 검증을 넣다가 멀쩡한 발신자를 막지 않았는지 본다. 표시명 형태는
    * 발송 코드({@code EmailDeliveryChannel} 의 {@code helper.setFrom(String)})가 받는 형태다.
+   * web 의 {@code smtp-address.test.ts} 수용 목록과 같은 값이다.
    */
   @ParameterizedTest(name = "smtp.from_address = [{0}] 은 저장되고 발송 코드가 From 으로 받는다")
   @CsvSource(
@@ -99,6 +119,9 @@ class SmtpHostAndFromAddressValidationTest extends IntegrationTestBase {
           Fire Hub <noreply@example.com>
           스마트 파이어 허브 <noreply@example.com>
           "Hub, Fire" <noreply@example.com>
+          "Fire Hub (알림)" <noreply@example.com>
+          Fire.Hub <noreply@example.com>
+          사용자@example.com
           <noreply@example.com>
           """)
   void 정상_발신자_주소는_저장되고_발송_코드가_받는다(String value) throws Exception {
