@@ -101,6 +101,14 @@ class ProactiveContextCollectorTest extends IntegrationTestBase {
     Long ownerUserId =
         inTenantFixture(() -> TenantRlsTestSupport.insertUser(dsl, "proactive_guard_"));
     Long datasetId = inTenantFixture(() -> insertDataset(ownerUserId));
+    // 활동 건수도 같은 이유로 픽스처로 보장한다. 피드는 기본 테넌트의 pipeline_execution 과
+    // audit_log(CREATE/IMPORT)에서 만들어지는데, JVM 마다 새로 뜨는 Testcontainers DB 에서는 이 행들이
+    // 앞서 돈 다른 테스트 클래스의 잔여물로만 존재한다 — 클래스를 단독 실행하면 0건이 되어 실패했고,
+    // 전체 스위트에서도 실행 순서·다른 테스트의 전역 삭제(DashboardStatsServiceTest 등)에 따라 흔들렸다.
+    // 그래서 기본 테넌트 컨텍스트로 "데이터셋 생성" 감사 행을 직접 심는다(tenant_id 는 GUC 파생 DEFAULT).
+    // resource_id 는 방금 만든 데이터셋 ID 라 다른 테스트의 감사 행과 겹치지 않고, 정리도 이 행만 지운다.
+    String tenantActivityResourceId = String.valueOf(datasetId);
+    inTenantFixture(() -> insertDatasetCreateAudit(tenantActivityResourceId));
     try {
       String context = contextCollector.collectContext(Map.of(), null);
 
@@ -116,12 +124,14 @@ class ProactiveContextCollectorTest extends IntegrationTestBase {
           .as("기본 테넌트의 데이터셋 건수 — 엉뚱한(빈) 테넌트로 돌면 0 이 된다")
           .isPositive();
       assertThat(root.path("activityFeed").path("totalCount").asLong())
-          .as("기본 테넌트의 활동 건수 — 빈 테넌트·빈 GUC 로 돌면 0 이 된다")
+          .as("기본 테넌트의 활동 건수 — 빈 테넌트·빈 GUC 로 돌면 0 이 된다(픽스처로 1건 이상 보장)")
           .isPositive();
     } finally {
       // 정리도 null 컨텍스트여야 한다. 테넌트 1 로 지우면 RLS 가 이 행을 보지 못해 0행 삭제로
       // 끝나고, NULL 행이 공유 테스트 DB 에 영구히 남아 뒤따르는 무컨텍스트 테스트를 오염시킨다.
       inTenantFixture(null, () -> deleteAuditByResourceId(nullTenantMarker));
+      // 기본 테넌트 감사 행은 테넌트 1 컨텍스트여야 RLS 가 보여 줘 실제로 지워진다.
+      inTenantFixture(() -> deleteAuditByResourceId(tenantActivityResourceId));
       inTenantFixture(
           () -> {
             dsl.deleteFrom(DATASET).where(DATASET.ID.eq(datasetId)).execute();
