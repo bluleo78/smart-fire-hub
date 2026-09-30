@@ -526,15 +526,128 @@ test.describe('설정 페이지', () => {
       await page.locator('#smtp-from').fill('');
       await page.getByRole('button', { name: '저장' }).click();
 
-      await expect(emailPanel(page).getByText('SMTP 호스트을(를) 입력하세요')).toBeVisible();
-      await expect(emailPanel(page).getByText('발신자 주소을(를) 입력하세요')).toBeVisible();
+      await expect(emailPanel(page).getByText('SMTP 호스트를 입력하세요')).toBeVisible();
+      await expect(emailPanel(page).getByText('발신자 주소를 입력하세요')).toBeVisible();
       await expect(page.getByText('입력값을 확인하세요.')).toBeVisible({ timeout: 5000 });
       await expect(page.getByText('설정이 저장되었습니다.')).toHaveCount(0);
       expect(saveCapture.lastRequest()).toBeUndefined();
 
       // 오류는 그 칸을 고치면 사라진다.
       await page.locator('#smtp-host').fill('smtp.ourcompany.com');
-      await expect(emailPanel(page).getByText('SMTP 호스트을(를) 입력하세요')).toHaveCount(0);
+      await expect(emailPanel(page).getByText('SMTP 호스트를 입력하세요')).toHaveCount(0);
+    });
+
+    /**
+     * #728 — 발신자 주소 형식과 호스트 공백.
+     *
+     * 예전에는 `not-an-email` 이 "설정이 저장되었습니다."와 함께 저장됐다. 연결 테스트는 접속만
+     * 확인하므로 잘못된 발신자는 실제 메일이 나갈 때에야 실패했다.
+     */
+    test('발신자 주소가 이메일 형식이 아니면 그 칸에 오류가 붙고 PUT 이 나가지 않는다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupSettingsMocks(page);
+      const saveCapture = await mockApi(page, 'PUT', '/api/v1/settings', {}, { capture: true });
+      await openEmailTab(page);
+
+      await page.locator('#smtp-from').fill('not-an-email');
+      await page.getByRole('button', { name: '저장' }).click();
+
+      await expect(
+        emailPanel(page).getByText('올바른 이메일 주소를 입력하세요 (예: noreply@example.com)'),
+      ).toBeVisible();
+      // 오류는 시각 표시뿐 아니라 보조 기술에도 전달된다 — 오류가 난 칸만.
+      await expect(page.locator('#smtp-from')).toHaveAttribute('aria-invalid', 'true');
+      await expect(page.locator('#smtp-host')).not.toHaveAttribute('aria-invalid', 'true');
+      await expect(page.getByText('입력값을 확인하세요.')).toBeVisible({ timeout: 5000 });
+      await expect(page.getByText('설정이 저장되었습니다.')).toHaveCount(0);
+      expect(saveCapture.lastRequest()).toBeUndefined();
+
+      // 고치면 오류가 사라지고 저장된다.
+      await page.locator('#smtp-from').fill('alerts@ourcompany.com');
+      await expect(emailPanel(page).getByText('올바른 이메일 주소를 입력하세요', { exact: false })).toHaveCount(0);
+      await page.getByRole('button', { name: '저장' }).click();
+      expect(payloadOf(await saveCapture.waitForRequest())['smtp.from_address']).toBe(
+        'alerts@ourcompany.com',
+      );
+    });
+
+    test('"표시명 <주소>" 형태의 발신자는 막지 않고 그대로 저장한다', async ({
+      authenticatedPage: page,
+    }) => {
+      // 발송 코드(EmailDeliveryChannel 의 helper.setFrom)가 받는 형태다 — 막으면 과잉 차단이다.
+      await setupSettingsMocks(page);
+      const saveCapture = await mockApi(page, 'PUT', '/api/v1/settings', {}, { capture: true });
+      await openEmailTab(page);
+
+      await page.locator('#smtp-from').fill('Fire Hub <noreply@ourcompany.com>');
+      await page.getByRole('button', { name: '저장' }).click();
+
+      expect(payloadOf(await saveCapture.waitForRequest())['smtp.from_address']).toBe(
+        'Fire Hub <noreply@ourcompany.com>',
+      );
+      await expect(page.getByText('설정이 저장되었습니다.')).toBeVisible({ timeout: 5000 });
+    });
+
+    test('호스트·발신자 주소의 앞뒤 공백은 떼어 보내고, 저장 뒤 폼은 clean 이다', async ({
+      authenticatedPage: page,
+    }) => {
+      const saveCapture = await mockApi(page, 'PUT', '/api/v1/settings', {}, { capture: true });
+      // 저장 뒤 재조회는 서버가 저장한(다듬어진) 값을 돌려준다.
+      await setupSettingsMocks(page, {
+        smtp: () =>
+          saveCapture.lastRequest() === undefined
+            ? createSmtpSettings()
+            : createSmtpSettings({
+                'smtp.host': { value: 'smtp.ourcompany.com' },
+                'smtp.from_address': { value: 'alerts@ourcompany.com' },
+              }),
+      });
+      await openEmailTab(page);
+
+      await page.locator('#smtp-host').fill('  smtp.ourcompany.com ');
+      await page.locator('#smtp-from').fill(' alerts@ourcompany.com  ');
+      await page.getByRole('button', { name: '저장' }).click();
+
+      const settings = payloadOf(await saveCapture.waitForRequest());
+      expect(settings['smtp.host']).toBe('smtp.ourcompany.com');
+      expect(settings['smtp.from_address']).toBe('alerts@ourcompany.com');
+
+      await expect(page.getByText('설정이 저장되었습니다.')).toBeVisible({ timeout: 5000 });
+      // 칸에 다듬기 전 문자열이 남으면 저장 직후에도 dirty 로 남는다(저장 버튼·이탈 가드).
+      await expect(page.locator('#smtp-host')).toHaveValue('smtp.ourcompany.com');
+      await expect(page.locator('#smtp-from')).toHaveValue('alerts@ourcompany.com');
+      await expect(page.getByRole('button', { name: '저장' })).toBeDisabled();
+    });
+
+    test('호스트 중간에 공백이 있으면 그 칸에 오류가 붙고 PUT 이 나가지 않는다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupSettingsMocks(page);
+      const saveCapture = await mockApi(page, 'PUT', '/api/v1/settings', {}, { capture: true });
+      await openEmailTab(page);
+
+      await page.locator('#smtp-host').fill('smtp ourcompany.com');
+      await page.getByRole('button', { name: '저장' }).click();
+
+      await expect(emailPanel(page).getByText('SMTP 호스트에는 공백을 넣을 수 없습니다')).toBeVisible();
+      await expect(page.locator('#smtp-host')).toHaveAttribute('aria-invalid', 'true');
+      expect(saveCapture.lastRequest()).toBeUndefined();
+    });
+
+    test('포트를 비우면 조사가 맞는 문구("포트를")로 오류가 붙는다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupSettingsMocks(page);
+      const saveCapture = await mockApi(page, 'PUT', '/api/v1/settings', {}, { capture: true });
+      await openEmailTab(page);
+
+      await page.locator('#smtp-port').fill('');
+      await page.getByRole('button', { name: '저장' }).click();
+
+      await expect(emailPanel(page).getByText('포트를 입력하세요')).toBeVisible();
+      await expect(emailPanel(page).getByText('을(를)', { exact: false })).toHaveCount(0);
+      expect(saveCapture.lastRequest()).toBeUndefined();
     });
 
     test('포트가 범위를 벗어나면 저장이 거부된다', async ({ authenticatedPage: page }) => {

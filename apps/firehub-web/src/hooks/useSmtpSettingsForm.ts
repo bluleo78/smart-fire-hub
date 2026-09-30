@@ -5,6 +5,8 @@ import { settingsApi } from '../api/settings';
 import { extractApiError } from '../lib/api-error';
 import { indexSettingsByKey } from '../lib/settings-fields';
 import { isIntegerSyntax } from '../lib/settings-number';
+import { isSenderAddressSyntax } from '../lib/smtp-address';
+import { eulReul } from '../lib/utils';
 import type { ResolvedSettingResponse } from '../types/settings';
 
 /**
@@ -48,6 +50,24 @@ const EMPTY = Object.fromEntries(SMTP_FIELDS.map((f) => [f.key, f.initial])) as 
 // 어긋나면 한쪽이 통과시킨 값을 다른 쪽이 거부해 "저장했는데 400" 또는 그 반대가 된다.
 export const PORT_MIN = 1;
 export const PORT_MAX = 65535;
+
+/**
+ * 저장할 때 앞뒤 공백을 다듬어 보내는 키(#728). 검증도 다듬은 값으로 한다 — 검증한 문자열과
+ * 보내는 문자열이 다르면 서버가 다른 판정을 내린다(#727).
+ *
+ * 사용자 이름·비밀번호는 넣지 않는다: 공백만 입력한 값이 빈 문자열로 바뀌면 "빈 값"의 의미가
+ * 달라지고(선택 칸의 빈 값 의미는 #661 소관), 비밀번호는 공백도 값의 일부다.
+ */
+const TRIMMED_KEYS: readonly SmtpKey[] = ['smtp.host', 'smtp.port', 'smtp.from_address'];
+
+/** 보낼 값 — {@link TRIMMED_KEYS} 만 앞뒤 공백을 뗀다. */
+function normalize(form: SmtpForm): SmtpForm {
+  const next = { ...form };
+  TRIMMED_KEYS.forEach((key) => {
+    next[key] = form[key].trim();
+  });
+  return next;
+}
 
 /**
  * 서버 응답으로 폼 값을 만든다. 응답에 없는 키(또는 null)는 초기값으로 채운다.
@@ -195,12 +215,28 @@ export function useSmtpSettingsForm(): SmtpSettingsFormState {
     setErrors({});
   };
 
-  /** 필수 키 공백과 포트 범위를 검사한다. 오류는 필드 아래에 그린다. */
+  /**
+   * 필수 키 공백, 포트 범위, 호스트·발신자 주소 형식을 검사한다. 오류는 필드 아래에 그린다.
+   * 서버(`SettingsService` 의 `validateSmtpPort`·`validateSmtpHost`·`validateSmtpFromAddress`)와
+   * 같은 규칙이어야 한다.
+   */
   const validate = (): boolean => {
     const next: Partial<Record<SmtpKey, string>> = {};
     SMTP_FIELDS.forEach(({ key, label, required }) => {
-      if (required && form[key].trim() === '') next[key] = `${label}을(를) 입력하세요`;
+      // 조사는 라벨의 받침에 맞춘다 — "포트을(를)" 같은 병기 표기를 쓰지 않는다.
+      if (required && form[key].trim() === '') next[key] = `${label}${eulReul(label)} 입력하세요`;
     });
+    // 호스트 중간의 공백은 다듬어도 남는다 — 그대로 저장되면 발송 시점의 접속 실패로만 드러난다(#728).
+    const host = form['smtp.host'].trim();
+    if (host !== '' && /\s/.test(host)) {
+      next['smtp.host'] = 'SMTP 호스트에는 공백을 넣을 수 없습니다';
+    }
+    // 발신자 주소 형식 — 연결 테스트는 접속만 확인하므로 여기서 막지 않으면 실제 메일이 나갈 때에야
+    // 실패한다(#728).
+    const from = form['smtp.from_address'].trim();
+    if (from !== '' && !isSenderAddressSyntax(from)) {
+      next['smtp.from_address'] = '올바른 이메일 주소를 입력하세요 (예: noreply@example.com)';
+    }
     const port = form['smtp.port'].trim();
     if (port !== '') {
       // 표기부터 본다 — `587.0`·`5e2` 는 JS 로는 정수지만 서버(Java)는 못 읽는다(#727).
@@ -218,9 +254,10 @@ export function useSmtpSettingsForm(): SmtpSettingsFormState {
       toast.error('입력값을 확인하세요.');
       return;
     }
-    // 포트는 검증한 값(앞뒤 공백 제거)을 그대로 보낸다 — 검증한 문자열과 보내는 문자열이 다르면
-    // 서버가 다른 판정을 내린다(#727).
-    const submitted: SmtpForm = { ...form, 'smtp.port': form['smtp.port'].trim() };
+    // 호스트·포트·발신자 주소는 검증한 값(앞뒤 공백 제거)을 그대로 보낸다 — 검증한 문자열과 보내는
+    // 문자열이 다르면 서버가 다른 판정을 내린다(#727·#728).
+    const typed = form;
+    const submitted = normalize(typed);
     const payload: Record<string, string> = { ...submitted };
     // 저장된 비밀번호가 있고 칸이 비었으면 키를 뺀다 → 서버가 기존 비밀번호를 유지한다(훅 주석).
     if (passwordSaved && submitted['smtp.password'] === '') delete payload['smtp.password'];
@@ -230,6 +267,16 @@ export function useSmtpSettingsForm(): SmtpSettingsFormState {
       await settingsApi.update({ settings: payload });
       // 저장 성공 — 우선 보낸 값을 원본으로 확정해 dirty 를 푼다(재조회가 실패해도 참인 사실).
       setOriginal(submitted);
+      // 화면의 칸도 보낸 값으로 맞춘다. 다듬기 전 문자열(`" smtp.x.com "`)이 칸에 남으면 원본(다듬은
+      // 값)과 달라 저장 직후에도 dirty 로 남고(저장 버튼·이탈 가드), 아래 재조회가 "보낸 값 그대로인
+      // 칸"을 찾지 못해 그 칸을 서버 값으로 맞추지 못한다. 요청이 도는 사이 다시 고친 칸은 건드리지 않는다.
+      setForm((prev) => {
+        const next = { ...prev };
+        TRIMMED_KEYS.forEach((key) => {
+          if (prev[key] === typed[key]) next[key] = submitted[key];
+        });
+        return next;
+      });
       toast.success('설정이 저장되었습니다.');
     } catch (err) {
       // 서버가 알려준 거부 사유(어느 값이 왜 틀렸는지)를 그대로 보여준다(#727).

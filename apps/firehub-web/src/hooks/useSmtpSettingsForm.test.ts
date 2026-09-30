@@ -211,6 +211,74 @@ describe('useSmtpSettingsForm', () => {
       'smtp.host',
       'smtp.port',
     ]);
+    // 조사는 라벨의 받침에 맞는다 — "포트을(를)" 같은 병기 표기가 아니다(#728 겸사 수정).
+    expect(result.current.errors['smtp.host']).toBe('SMTP 호스트를 입력하세요');
+    expect(result.current.errors['smtp.port']).toBe('포트를 입력하세요');
+    expect(result.current.errors['smtp.from_address']).toBe('발신자 주소를 입력하세요');
+  });
+
+  it('발신자 주소가 이메일 형식이 아니면 PUT 을 보내지 않고 그 칸에 오류를 단다(#728)', async () => {
+    const { result } = await renderLoaded();
+
+    act(() => result.current.updateField('smtp.from_address', 'not-an-email'));
+    await act(async () => {
+      await result.current.handleSave();
+    });
+
+    expect(mockedUpdate).not.toHaveBeenCalled();
+    expect(result.current.errors).toEqual({
+      'smtp.from_address': '올바른 이메일 주소를 입력하세요 (예: noreply@example.com)',
+    });
+  });
+
+  it('"표시명 <주소>" 형태의 발신자는 그대로 저장된다 — 발송 코드가 받는 형태다(#728)', async () => {
+    const { result } = await renderLoaded();
+
+    act(() => result.current.updateField('smtp.from_address', 'Fire Hub <noreply@example.com>'));
+    await act(async () => {
+      await result.current.handleSave();
+    });
+
+    expect(mockedUpdate.mock.calls[0][0].settings['smtp.from_address']).toBe(
+      'Fire Hub <noreply@example.com>',
+    );
+  });
+
+  it('호스트 중간에 공백이 있으면 PUT 을 보내지 않는다(#728)', async () => {
+    const { result } = await renderLoaded();
+
+    act(() => result.current.updateField('smtp.host', 'smtp example.com'));
+    await act(async () => {
+      await result.current.handleSave();
+    });
+
+    expect(mockedUpdate).not.toHaveBeenCalled();
+    expect(result.current.errors['smtp.host']).toBe('SMTP 호스트에는 공백을 넣을 수 없습니다');
+  });
+
+  it('호스트·발신자 주소는 앞뒤 공백을 떼어 보내고, 사용자 이름은 입력 그대로 보낸다(#728)', async () => {
+    const { result } = await renderLoaded();
+
+    act(() => {
+      result.current.updateField('smtp.host', '  smtp.ourcompany.com ');
+      result.current.updateField('smtp.from_address', ' noreply@ourcompany.com  ');
+      // 음성 대조군: 선택 칸의 빈 값 의미(#661)를 건드리지 않으려고 다듬지 않는다.
+      result.current.updateField('smtp.username', ' mailer ');
+    });
+    // 재조회가 실패해도(서버 값으로 덮어 주지 않아도) 칸과 원본이 보낸 값으로 맞아야 한다 —
+    // 다듬기 전 문자열이 칸에 남으면 저장 직후에도 dirty 로 남는다.
+    mockedGet.mockRejectedValue(new Error('boom'));
+    await act(async () => {
+      await result.current.handleSave();
+    });
+
+    const sent = mockedUpdate.mock.calls[0][0].settings;
+    expect(sent['smtp.host']).toBe('smtp.ourcompany.com');
+    expect(sent['smtp.from_address']).toBe('noreply@ourcompany.com');
+    expect(sent['smtp.username']).toBe(' mailer ');
+    expect(result.current.form['smtp.host']).toBe('smtp.ourcompany.com');
+    expect(result.current.form['smtp.from_address']).toBe('noreply@ourcompany.com');
+    expect(result.current.hasChanges).toBe(false);
   });
 
   it('포트가 범위를 벗어나면 PUT 을 보내지 않는다', async () => {

@@ -9,6 +9,8 @@ import com.smartfirehub.settings.dto.SettingResponse;
 import com.smartfirehub.settings.model.AiBehaviorDefaults;
 import com.smartfirehub.settings.repository.SettingsRepository;
 import com.smartfirehub.settings.repository.TenantSettingsRepository;
+import jakarta.mail.internet.AddressException;
+import jakarta.mail.internet.InternetAddress;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -328,8 +330,9 @@ public class SettingsService {
    * <p>{@link #validateValues} 는 그대로 지난다 — 범위 검증(예: max_turns 1~50)은 값이
    * {@code tenant_settings} 로 가든 {@code system_settings} 로 가든 똑같이 필요하다.
    *
-   * <p><b>모든 키가 {@link #dropMaskSentinels}·{@link #validateSmtpPort}·{@link #encryptSecrets} 를
-   * 지난다</b>(셋 다 키로 스스로 가드하므로 SMTP 부분맵을 떼어낼 필요가 없다). P7-c1 이전 이 자리에는
+   * <p><b>모든 키가 {@link #dropMaskSentinels}·{@link #validateSmtpPort}·{@link #validateSmtpHost}·
+   * {@link #validateSmtpFromAddress}·{@link #encryptSecrets} 를
+   * 지난다</b>(모두 키로 스스로 가드하므로 SMTP 부분맵을 떼어낼 필요가 없다). P7-c1 이전 이 자리에는
    * "마스킹 필터·{@link #encryptIfSecret} 는 여기서 쓰지 않는다 — 허용 키 중 {@link #SECRET_KEYS}
    * 에 속하는 키가 하나도 없다"고 적혀 있었고, Task 1 이 {@code smtp.*} 를 열면서 그 근거가
    * 죽었다({@code smtp.password} 는 {@link #SECRET_KEYS} 의 원소다). 그 한 줄이 세 결함을 동시에
@@ -359,6 +362,8 @@ public class SettingsService {
     Map<String, String> payload = dropMaskSentinels(settings);
     validateValues(payload);
     validateSmtpPort(payload);
+    validateSmtpHost(payload);
+    validateSmtpFromAddress(payload);
     Map<String, String> toWrite = encryptSecrets(payload);
 
     // 저장 대상은 **여기서만** 정한다 — 쓰기까지 공유 헬퍼에 넣으면 두 평면이 저장 대상에서
@@ -520,6 +525,79 @@ public class SettingsService {
     } catch (NumberFormatException e) {
       // 문법은 맞지만 int 범위를 넘는 자릿수(예: 99999999999).
       throw new IllegalArgumentException("SMTP 포트 번호가 유효하지 않습니다: " + portStr);
+    }
+  }
+
+  /**
+   * {@code smtp.host} 는 비어 있거나 공백을 담을 수 없다(#728). 키가 없으면 아무것도 하지 않는다
+   * (부분 PUT 에서 "키 없음 = 손대지 않음").
+   *
+   * <p>공백만 있는 호스트({@code "  "})가 204 로 저장되던 동안, 소비자({@code EmailChannel}·
+   * {@code EmailDeliveryChannel}·연결 테스트)는 {@code isBlank()} 로 그것을 "미설정"으로 읽었다 —
+   * 저장은 성공했는데 화면은 미설정이라고 말하는 상태다. 빈 문자열도 같은 상태를 만들므로 함께
+   * 막는다: 설정을 지우는 통로는 {@link #clearSmtpSettings} 하나다. 앞뒤·중간 공백이 섞인 호스트는
+   * 그대로 저장되면 발송 시점의 DNS 실패로만 드러나므로 다듬지 않고 거부한다(web 이 다듬어 보낸다).
+   */
+  private static void validateSmtpHost(Map<String, String> settings) {
+    if (!settings.containsKey("smtp.host")) return;
+    String host = settings.get("smtp.host");
+    if (host.isBlank()) {
+      throw new IllegalArgumentException("SMTP 호스트는 비어 있을 수 없습니다");
+    }
+    if (host.chars().anyMatch(Character::isWhitespace)) {
+      throw new IllegalArgumentException("SMTP 호스트에는 공백을 넣을 수 없습니다. 입력값: " + host);
+    }
+  }
+
+  /**
+   * 발신자 주소에서 <b>주소 부분</b>의 표기 — {@code 로컬@도메인}, 공백·꺾쇠·두 번째 {@code @} 없음.
+   * web 의 {@code lib/smtp-address.ts} 와 <b>같은 문법</b>이어야 한다(#728).
+   *
+   * <p>도메인에 점을 요구하지 않는다 — 사내 릴레이에서는 {@code alerts@mailhost} 가 합법적인
+   * 발신자이고, 발송 코드({@code InternetAddress})도 받는다.
+   */
+  private static final Pattern SMTP_ADDRESS_SYNTAX = Pattern.compile("[^\\s@<>]+@[^\\s@<>]+");
+
+  /**
+   * {@code smtp.from_address} 형식 검증(#728). 키가 없으면 아무것도 하지 않는다.
+   *
+   * <p>검증이 없던 동안 {@code not-an-email} 이 204 로 저장됐고, 연결 테스트는 접속만 확인하므로
+   * 실패는 실제 메일이 나갈 때({@code MimeMessageHelper.setFrom}) 에야 드러났다.
+   *
+   * <p><b>받는 형태는 발송 코드가 받는 형태와 같다</b>: {@code 주소} 또는 {@code 표시명 <주소>} 하나.
+   * {@code EmailDeliveryChannel} 은 저장된 문자열을 {@code helper.setFrom(String)} 에 그대로 넘기고,
+   * 그 메서드는 {@link InternetAddress#parse} 로 <b>정확히 한 개</b>의 주소를 요구한다 — 그래서
+   * 여기서도 같은 파서로 읽고(쉼표로 이은 두 주소·그룹 표기는 거부), 주소 부분에 web 과 같은
+   * {@link #SMTP_ADDRESS_SYNTAX} 를 적용한다.
+   *
+   * <p><b>빈 문자열은 그대로 통과시킨다.</b> {@code EmailDeliveryChannel} 이 빈 발신자를 기본
+   * 발신자로 바꿔 보내므로 동작하는 상태이고, 필수 여부는 화면(web)의 규칙이다. 공백만 있는 값과
+   * 앞뒤 공백은 거부한다(web 이 다듬어 보낸다).
+   *
+   * <p>{@link AddressException} 원문({@code Missing final '@domain'} 등)은 사용자에게 내보내지 않는다 —
+   * 이 메시지는 화면 토스트에 그대로 나간다.
+   */
+  private static void validateSmtpFromAddress(Map<String, String> settings) {
+    if (!settings.containsKey("smtp.from_address")) return;
+    String from = settings.get("smtp.from_address");
+    if (from.isEmpty()) return;
+    if (!isSingleMailAddress(from)) {
+      throw new IllegalArgumentException(
+          "발신자 주소 형식이 올바르지 않습니다(예: noreply@example.com). 입력값: " + from);
+    }
+  }
+
+  /** {@code 주소} 또는 {@code 표시명 <주소>} 하나인가 — {@link #validateSmtpFromAddress} 의 판정. */
+  private static boolean isSingleMailAddress(String value) {
+    if (!value.equals(value.strip())) return false;
+    try {
+      InternetAddress[] parsed = InternetAddress.parse(value, true);
+      if (parsed.length != 1 || parsed[0].isGroup()) return false;
+      parsed[0].validate();
+      String address = parsed[0].getAddress();
+      return address != null && SMTP_ADDRESS_SYNTAX.matcher(address).matches();
+    } catch (AddressException e) {
+      return false;
     }
   }
 
