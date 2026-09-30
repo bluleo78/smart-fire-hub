@@ -154,6 +154,9 @@ export default function SettingsPage() {
   const verifyAuth = useCallback(async () => {
     const seq = ++verifySeqRef.current;
     setIsVerifying(true);
+    // 직전 결과는 새 검증이 끝날 때까지 지운다(#722) — 저장 직후 자동 검증에서는 직전 결과가 **이전**
+    // 자격증명의 것이라, 남겨 두면 응답을 기다리는 동안 방금 저장한 새 칸 옆에 옛 배지가 붙는다.
+    setAuthStatus(null);
     try {
       const { data } = await settingsApi.verifyAuthStatus();
       if (seq !== verifySeqRef.current) return;

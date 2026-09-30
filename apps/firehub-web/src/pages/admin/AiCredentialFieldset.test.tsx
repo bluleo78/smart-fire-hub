@@ -257,6 +257,51 @@ describe('AiCredentialFieldset — opencode 는 "인증 확인" 을 숨긴다', 
   });
 });
 
+/**
+ * #722 — 인증 배지는 서버가 검증한 <b>저장된</b> 자격증명에 대한 결과다. 화면이 저장값과 다르면
+ * (유형 전환·비밀 타이핑) 지금 보이는 칸에 대한 말이 아니므로 그리지 않는다.
+ *
+ * 뮤턴트: `verifiedSecretField` 의 `hasUnsavedInput` 가드를 지우면 "없다" 테스트들이 RED 가 된다.
+ * 첫 테스트(배지가 보인다)는 부재 단언이 "애초에 배지가 안 그려져서" 공허하게 통과하는 것을 막는다.
+ */
+describe('AiCredentialFieldset — 인증 배지는 미저장 편집 중에는 숨긴다(#722)', () => {
+  const renderWithAuth = (cred: UseAiCredentialFormResult, valid = true) =>
+    render(
+      <AiCredentialFieldset cred={cred} authStatus={{ valid }} isVerifying={false} onVerifyAuth={vi.fn()} />,
+    );
+  const badge = () => screen.queryByText(/✓ 인증됨|✗ 유효하지 않음/);
+  /** 저장된 상태: sdk + OAuth 토큰. */
+  const savedSdk = { agentType: 'sdk', savedAgentType: 'sdk', payload: {}, secretFieldNames: ['oauthToken'] } as const;
+
+  it('화면이 저장값과 같으면 검증된 칸(OAuth)에 배지가 보인다', () => {
+    renderWithAuth(makeCred({ ...savedSdk, secretFieldNames: ['oauthToken'] }));
+    expect(screen.getByText('✓ 인증됨')).toBeInTheDocument();
+  });
+
+  it('저장 없이 유형을 cli-api 로 바꾸면 빈 API 키 칸에 배지가 없다', () => {
+    renderWithAuth(
+      makeCred({ agentType: 'cli-api', savedAgentType: 'sdk', payload: {}, secretFieldNames: [], hasUnsavedInput: true }),
+    );
+    expect(screen.getByText('설정된 값이 없습니다.')).toBeInTheDocument();
+    expect(badge()).not.toBeInTheDocument();
+  });
+
+  it('저장 없이 유형을 cli 로 바꿔도 OAuth 칸에 배지가 없다 — "✗ 유효하지 않음"도 마찬가지다', () => {
+    renderWithAuth(
+      makeCred({ agentType: 'cli', savedAgentType: 'sdk', payload: {}, secretFieldNames: [], hasUnsavedInput: true }),
+      false,
+    );
+    expect(badge()).not.toBeInTheDocument();
+  });
+
+  it('같은 유형에서 새 비밀을 타이핑하는 중이면 배지가 없다 — 방금 친 값은 검증된 적이 없다', () => {
+    renderWithAuth(
+      makeCred({ ...savedSdk, secretFieldNames: ['oauthToken'], secretInputs: { oauthToken: 'new' }, hasUnsavedInput: true }),
+    );
+    expect(badge()).not.toBeInTheDocument();
+  });
+});
+
 describe('withProviderPrefix / stripProviderPrefix — 모델 접두사 단일 지점', () => {
   it('providerId 가 있으면 접두사를 붙인다', () => {
     expect(withProviderPrefix('gpt-4o', 'openai')).toBe('openai/gpt-4o');

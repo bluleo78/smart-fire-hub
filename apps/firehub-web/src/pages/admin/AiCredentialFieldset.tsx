@@ -227,9 +227,15 @@ function AuthBadge({ authStatus }: { authStatus: AiCredentialFieldsetProps['auth
  * 규칙**이어야 한다 — cli 는 OAuth, cli-api 는 API 키, sdk 는 저장된 OAuth 가 있으면 OAuth·없으면
  * API 키. 결과 배지를 두 칸에 모두 붙이면 비어 있는 칸까지 "✗ 유효하지 않음"으로 보여 무엇이
  * 틀렸는지 알 수 없었다. 서버 규칙이 바뀌면 여기도 함께 바꾼다.
+ *
+ * <b>미저장 편집이 있으면 `null`(#722)</b> — 검증 결과는 저장된 값에 대한 것이라, 유형을 바꿨거나
+ * 비밀을 타이핑하는 중이면 지금 보이는 칸(빈 칸·방금 친 값)에 대한 말이 아니다. 결과 자체는 지우지
+ * 않으므로 편집을 되돌려 화면이 저장값과 같아지면 배지가 다시 보인다.
  */
 function verifiedSecretField(cred: UseAiCredentialFormResult): 'oauthToken' | 'apiKey' | null {
-  switch (cred.agentType) {
+  if (cred.hasUnsavedInput) return null;
+  // 서버는 폼이 아니라 **저장된** 자격증명을 검증한다 — 기준도 저장된 유형이다(#722).
+  switch (cred.savedAgentType) {
     case 'cli':
       return 'oauthToken';
     case 'cli-api':

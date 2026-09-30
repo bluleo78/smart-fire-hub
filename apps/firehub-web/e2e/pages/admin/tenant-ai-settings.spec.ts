@@ -647,6 +647,201 @@ test.describe('테넌트별 AI 자격증명 — 유형별 화면과 미설정 �
   });
 });
 
+/**
+ * #722 — 인증 배지는 <b>저장된 자격증명</b>을 검증한 결과다(`AiController.getAuthStatus` 는 폼 입력이
+ * 아니라 저장값을 읽는다). 화면이 저장된 상태와 달라지면(유형 전환·비밀 타이핑) 그 결과는 지금
+ * 보이는 칸에 대한 말이 아니므로 배지를 숨긴다. 편집을 되돌려 화면이 다시 저장값과 같아지면 결과도
+ * 다시 유효하므로 배지가 돌아온다.
+ *
+ * <b>뮤테이션 대상</b>: `AiCredentialFieldset.tsx` `ClaudeFields` 의 `!cred.hasUnsavedInput` 조건을
+ * 지우면 아래 "배지 없음" 단언이 전부 빨개진다. `SettingsPage.tsx` `verifyAuth` 시작의
+ * `setAuthStatus(null)` 을 지우면 마지막(저장 직후) 테스트가 빨개진다.
+ */
+test.describe('인증 배지 — 미저장 편집 중에는 숨긴다(#722)', () => {
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await setupAdminAuth(page);
+    await setupSettingsMocks(page, { ai: createAiSettings() });
+  });
+
+  /**
+   * AI 탭 어디에도 인증 결과 배지(성공·실패)가 없다. 패널이 보이는지 먼저 확인한다 — 확인 다이얼로그가
+   * 닫히는 동안에는 패널이 접근성 트리에서 숨겨져(`aria-hidden`) 부재 단언이 공허하게 통과한다.
+   */
+  const expectNoBadge = async (page: Page) => {
+    await expect(aiPanel(page)).toBeVisible();
+    await expect(aiPanel(page).getByText(/✓ 인증됨|✗ 유효하지 않음/)).toHaveCount(0);
+  };
+
+  const pickAgentType = async (page: Page, label: string) => {
+    await page.locator('#ai-cred-agent-type').click();
+    await page.getByRole('option', { name: label, exact: true }).click();
+  };
+
+  test('인증 확인 뒤 저장 없이 유형을 바꾸면 새 유형의 칸에 배지가 옮겨 붙지 않고, 되돌리면 다시 보인다', async ({
+    authenticatedPage: page,
+  }) => {
+    // 저장된 값은 sdk + OAuth 토큰뿐 — API 키는 저장된 적도 검증된 적도 없다.
+    await mockAiCredential(
+      page,
+      createAiCredential({ agentType: 'sdk', configured: true, secretFieldNames: ['oauthToken'] }),
+    );
+    await mockAiAuthStatus(page, () => ({ valid: true, email: 'tenant@example.com' }));
+    await page.goto('/admin/settings');
+
+    await fieldBox(page, 'ai-cred-oauth-token').getByRole('button', { name: '인증 확인' }).click();
+    await expect(fieldBox(page, 'ai-cred-oauth-token').getByText('✓ 인증됨', { exact: false })).toBeVisible();
+
+    // Claude API — 빈 API 키 칸("설정된 값이 없습니다.")에 배지가 붙으면 안 된다.
+    await pickAgentType(page, 'Claude API');
+    await expect(fieldBox(page, 'ai-cred-api-key').getByText('설정된 값이 없습니다.')).toBeVisible();
+    await expectNoBadge(page);
+
+    // Claude Code CLI — OAuth 칸이 다시 보이지만 이 유형의 비밀은 저장된 적이 없다.
+    await pickAgentType(page, 'Claude Code CLI');
+    await expect(fieldBox(page, 'ai-cred-oauth-token').getByText('설정된 값이 없습니다.')).toBeVisible();
+    await expectNoBadge(page);
+
+    // 저장된 유형으로 되돌리면 화면이 저장값과 같아진다 — 검증 결과가 다시 유효하다.
+    await pickAgentType(page, 'Claude Agent SDK');
+    await expect(fieldBox(page, 'ai-cred-oauth-token').getByText('✓ 인증됨', { exact: false })).toBeVisible();
+    await expect(aiPanel(page).getByText('✓ 인증됨', { exact: false })).toHaveCount(1);
+  });
+
+  test('인증 확인 뒤 새 토큰을 타이핑하면 배지가 사라지고, 입력을 지우거나 되돌리기를 누르면 다시 보인다', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockAiCredential(
+      page,
+      createAiCredential({ agentType: 'sdk', configured: true, secretFieldNames: ['oauthToken'] }),
+    );
+    await mockAiAuthStatus(page, () => ({ valid: true, email: 'tenant@example.com' }));
+    await page.goto('/admin/settings');
+
+    await fieldBox(page, 'ai-cred-oauth-token').getByRole('button', { name: '인증 확인' }).click();
+    const badge = fieldBox(page, 'ai-cred-oauth-token').getByText('✓ 인증됨', { exact: false });
+    await expect(badge).toBeVisible();
+
+    // 방금 친 미저장 값은 검증된 적이 없다.
+    await page.locator('#ai-cred-oauth-token').fill('sk-ant-oat01-unsaved');
+    await expectNoBadge(page);
+    await page.locator('#ai-cred-oauth-token').fill('');
+    await expect(badge).toBeVisible();
+
+    // 검증되지 않는 다른 칸(API 키)에 타이핑해도 화면은 저장값과 다르다 — 저장하면 자격증명이 바뀐다.
+    await page.locator('#ai-cred-api-key').fill('sk-ant-unsaved');
+    await expectNoBadge(page);
+    await page.getByRole('button', { name: '되돌리기' }).click();
+    await expect(page.locator('#ai-cred-api-key')).toHaveValue('');
+    await expect(badge).toBeVisible();
+  });
+
+  test('"✗ 유효하지 않음"도 유형을 바꾸면 새 유형의 빈 칸에 옮겨 붙지 않는다', async ({ authenticatedPage: page }) => {
+    await mockAiCredential(
+      page,
+      createAiCredential({ agentType: 'sdk', configured: true, secretFieldNames: ['oauthToken'] }),
+    );
+    await mockAiAuthStatus(page, () => ({ valid: false }));
+    await page.goto('/admin/settings');
+
+    await fieldBox(page, 'ai-cred-oauth-token').getByRole('button', { name: '인증 확인' }).click();
+    await expect(fieldBox(page, 'ai-cred-oauth-token').getByText('✗ 유효하지 않음')).toBeVisible();
+
+    await pickAgentType(page, 'Claude API');
+    await expect(fieldBox(page, 'ai-cred-api-key').getByText('설정된 값이 없습니다.')).toBeVisible();
+    await expectNoBadge(page);
+  });
+
+  test('인증 확인이 진행 중일 때 토큰을 타이핑하면, 늦게 도착한 결과가 새 입력 옆에 붙지 않는다', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockAiCredential(
+      page,
+      createAiCredential({ agentType: 'sdk', configured: true, secretFieldNames: ['oauthToken'] }),
+    );
+    let authCalls = 0;
+    let release = false;
+    let fulfilled = false;
+    await page.route(
+      (url) => url.pathname === AI_AUTH_STATUS_PATH,
+      async (route) => {
+        authCalls += 1;
+        // 고정 대기가 아니라 인과적 배리어 — 타이핑이 끝난 뒤에야 응답을 풀어 준다.
+        const deadline = Date.now() + 15_000;
+        while (!release && Date.now() < deadline) {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        await route.fulfill(aiAuthStatusResponse({ valid: true, email: 'tenant@example.com' }));
+        fulfilled = true;
+      },
+    );
+    await page.goto('/admin/settings');
+
+    await fieldBox(page, 'ai-cred-oauth-token').getByRole('button', { name: '인증 확인' }).click();
+    await expect.poll(() => authCalls).toBe(1);
+    await page.locator('#ai-cred-oauth-token').fill('sk-ant-oat01-typed-while-verifying');
+
+    const response = page.waitForResponse((res) => res.url().includes(AI_AUTH_STATUS_PATH));
+    release = true;
+    await expect.poll(() => fulfilled).toBe(true);
+    await response;
+    // 응답이 화면에 반영됐다는 신호 — 버튼이 "검증 중..."에서 돌아온다(미저장 입력이라 잠긴 채로).
+    await expect(fieldBox(page, 'ai-cred-oauth-token').getByRole('button', { name: '인증 확인' })).toBeVisible();
+
+    // 핵심: 늦게 온 결과는 저장된 토큰에 대한 것이다 — 방금 친 값 옆에 붙지 않는다.
+    await expectNoBadge(page);
+    // 입력을 지워 저장값으로 돌아오면 그 결과가 보인다(결과 자체는 버려지지 않았다).
+    await page.locator('#ai-cred-oauth-token').fill('');
+    await expect(fieldBox(page, 'ai-cred-oauth-token').getByText('✓ 인증됨', { exact: false })).toBeVisible();
+  });
+
+  test('유형을 바꿔 저장하면, 새 자격증명의 검증 결과가 오기 전까지 옛 유형의 배지가 새 칸에 붙지 않는다', async ({
+    authenticatedPage: page,
+  }) => {
+    const calls = await mockAiCredential(page, () =>
+      calls.puts.length > 0
+        ? createAiCredential({ agentType: 'cli-api', configured: true, secretFieldNames: ['apiKey'] })
+        : createAiCredential({ agentType: 'sdk', configured: true, secretFieldNames: ['oauthToken'] }),
+    );
+    let authCalls = 0;
+    let release = false;
+    await page.route(
+      (url) => url.pathname === AI_AUTH_STATUS_PATH,
+      async (route) => {
+        authCalls += 1;
+        // 첫 호출(저장 전 sdk OAuth 검증)은 즉시 성공한다.
+        if (authCalls === 1) return route.fulfill(aiAuthStatusResponse({ valid: true, email: 'old@example.com' }));
+        // 둘째 호출(저장 뒤 자동 검증)은 붙잡아 둔다 — 그 사이 화면에 옛 배지가 남는지 본다.
+        const deadline = Date.now() + 15_000;
+        while (!release && Date.now() < deadline) {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        return route.fulfill(aiAuthStatusResponse({ valid: false }));
+      },
+    );
+    await page.goto('/admin/settings');
+
+    await fieldBox(page, 'ai-cred-oauth-token').getByRole('button', { name: '인증 확인' }).click();
+    await expect(fieldBox(page, 'ai-cred-oauth-token').getByText('✓ 인증됨', { exact: false })).toBeVisible();
+
+    await pickAgentType(page, 'Claude API');
+    await page.locator('#ai-cred-api-key').fill('sk-ant-new-key');
+    await page.getByRole('button', { name: '저장' }).click();
+    await page.getByRole('alertdialog').getByRole('button', { name: '저장' }).click();
+    await expect(page.getByText('저장했습니다.')).toBeVisible({ timeout: 8000 });
+    await expect.poll(() => authCalls).toBe(2);
+    // 재조회가 끝나 화면이 새 저장값(cli-api + API 키 있음)을 보여 준다 — 이제 미저장 입력이 없다.
+    await expect(
+      fieldBox(page, 'ai-cred-api-key').getByText('현재 값이 설정되어 있습니다.', { exact: false }),
+    ).toBeVisible();
+
+    // 핵심: 새 API 키는 아직 검증되지 않았다 — 옛 sdk OAuth 의 "✓ 인증됨"이 붙으면 안 된다.
+    await expectNoBadge(page);
+
+    release = true;
+    await expect(fieldBox(page, 'ai-cred-api-key').getByText('✗ 유효하지 않음')).toBeVisible({ timeout: 8000 });
+  });
+});
+
 /** 기본값 힌트 — 라벨 옆의 작은 배지. 옵션 이름 등과 섞이지 않게 전체 문자열로 찾는다. */
 const defaultHint = (scope: ReturnType<Page['locator']>) => scope.getByText('기본값', { exact: true });
 
