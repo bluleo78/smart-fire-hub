@@ -463,7 +463,12 @@ export default function ChartBuilderPage() {
 
   // Queries list for dropdown
   // 첫 페이지(100개)만 쓰면 101번째 이후 저장 쿼리가 빠지고, 그 쿼리를 쓰는 기존 차트의 쿼리 칸이 비므로 전 페이지를 모은다 (#737)
-  const { data: allQueries } = useAllSavedQueries();
+  // isError: 조회 실패를 빈 목록으로 위장하지 않고 드롭다운 아래에 오류로 드러낸다 (#738)
+  const {
+    data: allQueries,
+    isLoading: queriesLoading,
+    isError: queriesError,
+  } = useAllSavedQueries();
   const queries = allQueries ?? [];
 
   // Existing chart (edit mode) — isError: 존재하지 않는 차트 ID(404 등) 접근 시 에러 감지
@@ -848,6 +853,8 @@ export default function ChartBuilderPage() {
                 <Select
                   value={selectedQueryId ? String(selectedQueryId) : NO_QUERY}
                   onValueChange={handleQueryChange}
+                  // 목록을 모르는 상태(로딩·실패)에서 다른 쿼리로 덮어쓰지 못하도록 선택을 막는다 (#738)
+                  disabled={queriesLoading || queriesError}
                 >
                   <SelectTrigger
                     id={`${baseId}-saved-query`}
@@ -862,8 +869,22 @@ export default function ChartBuilderPage() {
                         {q.name}
                       </SelectItem>
                     ))}
+                    {/* 목록에 없는(조회 실패·로딩 중) 기존 차트의 쿼리도 칸이 비지 않도록 차트가 가진 이름으로 항목을 둔다 (#738) */}
+                    {existingChart &&
+                      selectedQueryId === existingChart.savedQueryId &&
+                      !queries.some((q) => q.id === existingChart.savedQueryId) && (
+                        <SelectItem value={String(existingChart.savedQueryId)}>
+                          {existingChart.savedQueryName}
+                        </SelectItem>
+                      )}
                   </SelectContent>
                 </Select>
+                {queriesError && (
+                  // 조회 실패를 "쿼리 없음"으로 위장하지 않는다 — 대시보드 추가 다이얼로그와 같은 방식 (#737, #738)
+                  <p role="alert" className="text-xs text-destructive">
+                    저장 쿼리 목록을 불러오지 못했습니다.
+                  </p>
+                )}
               </div>
               <Button
                 size="sm"
