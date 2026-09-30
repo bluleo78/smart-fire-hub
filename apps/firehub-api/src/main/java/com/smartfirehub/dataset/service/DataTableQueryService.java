@@ -2,6 +2,7 @@ package com.smartfirehub.dataset.service;
 
 import com.smartfirehub.dataset.dto.SqlQueryResponse;
 import com.smartfirehub.global.tenant.DataSchema;
+import com.smartfirehub.global.util.SqlLexicalMask;
 import com.smartfirehub.global.util.SqlValidationUtils;
 import com.smartfirehub.pipeline.service.validator.SqlValidator;
 import java.util.ArrayList;
@@ -77,11 +78,9 @@ public class DataTableQueryService {
     try {
       SqlQueryResponse response;
       if ("SELECT".equals(queryType)) {
-        // Apply LIMIT for SELECT queries (check for actual LIMIT clause, not substring match)
-        String limitedSql = cleanSql;
-        if (!limitedSql.toUpperCase().matches("(?s).*\\bLIMIT\\s+\\d+.*")) {
-          limitedSql = limitedSql + " LIMIT " + maxRows;
-        }
+        // 최상위 행 제한이 없거나 LIMIT ALL 이면 maxRows 를 적용한다(#749 — FETCH FIRST 도 사용자 제한으로
+        // 존중하고, 서브쿼리·CTE·문자열 속 LIMIT 에는 속지 않는다). 애드혹 분석 경로와 같은 공용 판정.
+        String limitedSql = SqlLexicalMask.applyRowLimit(cleanSql, maxRows);
 
         var result = dsl.fetch(limitedSql);
         long executionTimeMs = System.currentTimeMillis() - startTime;

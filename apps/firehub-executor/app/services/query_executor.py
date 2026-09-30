@@ -65,8 +65,6 @@ def _build_geojson_wrapped_sql(
 
 # 달러 인용 여는 태그: $$ 또는 $tag$ (tag 는 문자/밑줄로 시작). $1 같은 위치 파라미터는 인용이 아니다.
 _DOLLAR_TAG = re.compile(r"\$(?:[A-Za-z_\x80-\U0010FFFF][A-Za-z0-9_\x80-\U0010FFFF]*)?\$")
-# 마스크 위에서 찾는 최상위 LIMIT n (주석·리터럴은 이미 가려져 있다).
-_LIMIT_CLAUSE = re.compile(r"(?i)\bLIMIT\s+\d+")
 # PostgreSQL 스캐너가 공백으로 보는 문자(scan.l 의 space). str.strip() 의 유니코드 공백(NBSP 등)은
 # PostgreSQL 에선 식별자 문자라서 쓰지 않는다 — Java SqlLexicalMask 와 같은 집합이어야 결과가 같다(#746).
 _PG_WHITESPACE = " \t\n\r\f\v"
@@ -194,23 +192,135 @@ def _normalize_sql(sql: str) -> str:
     return sql[:end].lstrip(_PG_WHITESPACE)
 
 
-def _has_limit(sql: str) -> bool:
-    """괄호 깊이 0(최상위)에 ``LIMIT n`` 이 있으면 True.
+def _tokenize_masked(masked: str) -> list[tuple[str, int, int, int]]:
+    """마스크 위의 토큰을 ``(대문자 텍스트, 시작, 끝, 괄호 깊이)`` 로 나눈다.
 
-    주석·문자열 속 LIMIT 이나 서브쿼리 속 LIMIT 은 결과 행 수를 제한하지 않으므로 무시한다 — 예전 정규식은
-    ``-- LIMIT 5``/``(SELECT … LIMIT 1)`` 에 속아 max_rows LIMIT 을 빼먹었다(#745). 사용자가 최상위에 직접
-    쓴 LIMIT 은 지금처럼 존중한다(API 직접 실행 경로와 같은 규칙).
+    식별자/키워드는 PostgreSQL 규칙(ident_start + ident_cont*, ``$`` 포함)으로 한 덩어리로 자른다 — 정규식
+    ``\\b`` 는 ``a$limit``·``한limit`` 을 경계로 쪼개 가짜 LIMIT 을 만들고, Java 와 Python 의 ``\\b`` 정의도
+    달라 두 구현이 갈린다(#749). ``(`` 는 여는 쪽 깊이, ``)`` 는 닫힌 뒤 깊이로 기록한다.
+    **Java ``SqlLexicalMask.tokenize`` 와 짝이다.**
     """
-    masked = _mask_sql(sql)
-    depth_at: list[int] = []
+    tokens: list[tuple[str, int, int, int]] = []
+    n = len(masked)
     depth = 0
-    for ch in masked:
-        if ch == "(":
+    i = 0
+    while i < n:
+        c = masked[i]
+        if c in _PG_WHITESPACE:
+            i += 1
+        elif _is_ident_start(c) or ("0" <= c <= "9") or (c == "$" and i + 1 < n and "0" <= masked[i + 1] <= "9"):
+            # 식별자·키워드·숫자(1.5e3 포함)·위치 파라미터($1)를 한 토큰으로.
+            j = i + 1
+            while j < n and (_is_ident_cont(masked[j]) or masked[j] == "."):
+                j += 1
+            # 대문자화는 ASCII 토큰만 — PostgreSQL 은 키워드 판정 때 ASCII 만 접는다. 유니코드 대문자화는
+            # lımıt(점 없는 ı) 을 LIMIT 으로 만들어 가짜 제한에 속는다.
+            word = masked[i:j]
+            tokens.append((word.upper() if word.isascii() else word, i, j, depth))
+            i = j
+        elif c == "(":
+            tokens.append((c, i, i + 1, depth))
             depth += 1
-        depth_at.append(depth)
-        if ch == ")":
+            i += 1
+        elif c == ")":
             depth = max(0, depth - 1)
-    return any(depth_at[m.start()] == 0 for m in _LIMIT_CLAUSE.finditer(masked))
+            tokens.append((c, i, i + 1, depth))
+            i += 1
+        else:
+            tokens.append((c, i, i + 1, depth))
+            i += 1
+    return tokens
+
+
+def _is_word_token(text: str) -> bool:
+    """식별자·키워드·숫자·``$n`` 토큰인지(구두점 토큰이 아닌지)."""
+    c = text[0]
+    return _is_ident_start(c) or ("0" <= c <= "9") or c == "$"
+
+
+def _is_fetch_clause(tokens: list[tuple[str, int, int, int]], k: int) -> bool:
+    """``tokens[k]`` 의 FETCH 가 ``FETCH {FIRST|NEXT} [count] {ROW|ROWS} {ONLY|WITH TIES}`` 절인지.
+
+    FETCH/FIRST/NEXT/ROWS 는 PostgreSQL 비예약어라 컬럼명·별칭이 될 수 있다(``SELECT fetch first FROM t``).
+    절 모양 전체를 확인하지 않으면 가짜 FETCH 에 속아 max_rows 가 빠진다. count 는 단일 토큰(숫자·$n·
+    식별자, 앞 부호 허용) 또는 괄호 묶음만 인정한다(PostgreSQL select_fetch_first_value 문법).
+    """
+    n = len(tokens)
+    j = k + 1
+    if j >= n or tokens[j][0] not in ("FIRST", "NEXT"):
+        return False
+    j += 1
+    if j < n and tokens[j][0] not in ("ROW", "ROWS"):
+        if tokens[j][0] in ("+", "-"):
+            j += 1
+        if j < n and tokens[j][0] == "(":
+            open_depth = tokens[j][3]
+            j += 1
+            while j < n and not (tokens[j][0] == ")" and tokens[j][3] == open_depth):
+                j += 1
+            j += 1
+        elif j < n and _is_word_token(tokens[j][0]):
+            j += 1
+        else:
+            return False
+    if j >= n or tokens[j][0] not in ("ROW", "ROWS"):
+        return False
+    j += 1
+    if j < n and tokens[j][0] == "ONLY":
+        return True
+    return j + 1 < n and tokens[j][0] == "WITH" and tokens[j + 1][0] == "TIES"
+
+
+def _top_level_row_limit(sql: str) -> tuple[str, int, int]:
+    """최상위(괄호 깊이 0) 행 수 제한 상태를 ``(종류, 시작, 끝)`` 으로 돌려준다.
+
+    - ``"limited"``: 사용자가 ``LIMIT <값>`` 또는 ``FETCH {FIRST|NEXT} … ROW(S) {ONLY|WITH TIES}`` 로 직접 제한.
+    - ``"unlimited"``: ``LIMIT ALL``/``LIMIT NULL`` — "제한 없음"의 명시라 LIMIT 을 안 쓴 것과 같다.
+      (시작, 끝)은 그 ``ALL``/``NULL`` 토큰 위치(원문 기준)다.
+    - ``"none"``: 최상위 행 제한 없음.
+
+    주석·리터럴은 마스크로 가리고 서브쿼리·CTE 속 절은 결과 행 수를 제한하지 않으므로 보지 않는다(#745/#750).
+    LIMIT 은 PostgreSQL 예약어라 최상위에 나오면 항상 LIMIT 절이다.
+    """
+    tokens = _tokenize_masked(_mask_sql(sql))
+    for k, (text, start, end, depth) in enumerate(tokens):
+        if depth != 0:
+            continue
+        if text == "LIMIT":
+            if k + 1 < len(tokens) and tokens[k + 1][0] in ("ALL", "NULL"):
+                return ("unlimited", tokens[k + 1][1], tokens[k + 1][2])
+            return ("limited", start, end)
+        if text == "FETCH" and _is_fetch_clause(tokens, k):
+            return ("limited", start, end)
+    return ("none", -1, -1)
+
+
+def _has_limit(sql: str) -> bool:
+    """최상위에 사용자 행 제한(``LIMIT n`` 또는 ``FETCH FIRST|NEXT …``)이 있으면 True.
+
+    주석·문자열 속 LIMIT 이나 서브쿼리 속 LIMIT 은 결과 행 수를 제한하지 않으므로 무시한다(#745). 사용자가
+    최상위에 직접 쓴 제한은 존중한다(API 직접 실행 경로와 같은 규칙). ``LIMIT ALL``/``LIMIT NULL`` 은 제한이
+    아니므로 False 다 — 그대로 두면 max_rows 보호가 빠진다(#749).
+    **Java ``SqlLexicalMask.hasTopLevelRowLimit`` 와 짝이다** — 공용 픽스처 rowLimit 으로 같은 판정을 검증한다.
+    """
+    return _top_level_row_limit(sql)[0] == "limited"
+
+
+def _apply_row_limit(sql: str, max_rows: int) -> str:
+    """정규화된 SELECT 에 max_rows 행 제한을 적용한 SQL 을 돌려준다(#749).
+
+    - 사용자 최상위 제한(``LIMIT n``·``FETCH FIRST n``)이 있으면 그대로 둔다(존중 규칙).
+    - 최상위 ``LIMIT ALL``/``LIMIT NULL`` 이면 그 값 토큰만 max_rows 로 바꾼다 — 뒤에 LIMIT 을 또 붙이면
+      구문 오류이고, "제한 없음"은 LIMIT 을 안 쓴 것과 같으므로 max_rows 를 적용한다. ``OFFSET`` 순서·주석은 보존된다.
+    - 없으면 뒤에 LIMIT 을 덧붙인다.
+    **Java ``SqlLexicalMask.applyRowLimit`` 와 짝이다.**
+    """
+    kind, start, end = _top_level_row_limit(sql)
+    if kind == "limited":
+        return sql
+    if kind == "unlimited":
+        return f"{sql[:start]}{max_rows}{sql[end:]}"
+    return _add_limit(sql, max_rows)
 
 
 def _add_limit(sql: str, max_rows: int) -> str:
@@ -278,8 +388,8 @@ def execute_query(
         cursor.execute("SAVEPOINT analytics_query")
 
         if is_select:
-            # Add LIMIT if not present
-            sql_to_run = clean_sql if _has_limit(clean_sql) else _add_limit(clean_sql, max_rows)
+            # 최상위 행 제한이 없거나 LIMIT ALL 이면 max_rows 를 적용한다(#749 — FETCH FIRST 도 사용자 제한).
+            sql_to_run = _apply_row_limit(clean_sql, max_rows)
 
             columns: List[str] = []
             rows: List[Dict[str, Any]] = []

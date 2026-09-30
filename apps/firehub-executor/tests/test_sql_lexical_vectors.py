@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from app.services.query_executor import _mask_sql, _normalize_sql
+from app.services.query_executor import _apply_row_limit, _has_limit, _mask_sql, _normalize_sql
 
 # tests → firehub-executor → apps
 _FIXTURE = (
@@ -28,6 +28,7 @@ def test_fixture_has_vectors():
     """픽스처가 비면 아래 파라미터 테스트가 공허하게 통과한다 — 벡터가 실제로 읽혔는지 확인한다."""
     assert len(_VECTORS["mask"]) >= 10
     assert len(_VECTORS["stripTrailing"]) >= 20
+    assert len(_VECTORS["rowLimit"]) >= 20
 
 
 @pytest.mark.parametrize("case", _VECTORS["mask"], ids=lambda c: repr(c["sql"]))
@@ -38,3 +39,19 @@ def test_mask_matches_fixture(case):
 @pytest.mark.parametrize("case", _VECTORS["stripTrailing"], ids=lambda c: repr(c["sql"]))
 def test_strip_trailing_matches_fixture(case):
     assert _normalize_sql(case["sql"]) == case["expected"]
+
+
+# 픽스처의 applied 는 maxRows=10 기준이다(픽스처 _설명 참조).
+_ROW_LIMIT_MAX_ROWS = 10
+
+
+@pytest.mark.parametrize("case", _VECTORS["rowLimit"], ids=lambda c: repr(c["sql"]))
+def test_top_level_row_limit_detection_matches_fixture(case):
+    """최상위 LIMIT n / FETCH FIRST 만 사용자 행 제한으로 본다(#749) — Java 와 같은 판정."""
+    assert _has_limit(case["sql"]) is case["hasLimit"]
+
+
+@pytest.mark.parametrize("case", _VECTORS["rowLimit"], ids=lambda c: repr(c["sql"]))
+def test_apply_row_limit_matches_fixture(case):
+    """사용자 제한은 존중, LIMIT ALL/NULL 은 max_rows 로 치환, 없으면 덧붙인다(#749)."""
+    assert _apply_row_limit(case["sql"], _ROW_LIMIT_MAX_ROWS) == case["applied"]

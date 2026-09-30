@@ -4,7 +4,8 @@
     "api(SqlLexicalMaskTest)와 executor(tests/test_sql_lexical_vectors.py)가 이 파일 하나를 읽는다 — Java SqlLexicalMask 와 Python query_executor._mask_sql/_normalize_sql 가 같은 값에 다른 결과를 내면 어느 한쪽 테스트가 깨진다.",
     "mask: 주석은 공백, 리터럴(문자열 내용·따옴표 식별자 내용·달러 인용 전체)은 x 로 가린 같은 길이 문자열. 길이 단위가 Java(UTF-16)와 Python(코드 포인트)에서 달라지지 않게 BMP 문자만 쓴다.",
     "stripTrailing: 끝의 공백(PostgreSQL 공백 집합만)·주석·세미콜론을 걷어내고 앞 공백을 뗀 결과. 원문의 부분 문자열이라 BMP 밖 문자도 쓸 수 있다.",
-    "보이지 않는 문자는 \\uXXXX 로 적는다."
+    "보이지 않는 문자는 \\uXXXX 로 적는다.",
+    "rowLimit: 최상위(괄호 깊이 0) 행 수 제한 판정과 부착(#749). hasLimit = 사용자가 최상위에 LIMIT n(ALL/NULL 제외) 또는 FETCH {FIRST|NEXT} … ROW(S) {ONLY|WITH TIES} 를 썼는가. applied = maxRows=10 을 적용한 SQL — 사용자 제한이 있으면 그대로, 최상위 LIMIT ALL/NULL 이면 그 값 토큰만 10 으로 바꾸고, 없으면 '\\nLIMIT 10' 을 덧붙인다. 입력은 끝 주석·세미콜론이 이미 걷힌 SQL 이다."
   ],
   "mask": [
     {
@@ -176,6 +177,173 @@
     {
       "sql": "",
       "expected": ""
+    }
+  ],
+  "rowLimit": [
+    {
+      "sql": "SELECT g FROM t",
+      "hasLimit": false,
+      "applied": "SELECT g FROM t\nLIMIT 10"
+    },
+    {
+      "sql": "SELECT g FROM t LIMIT 7",
+      "hasLimit": true,
+      "applied": "SELECT g FROM t LIMIT 7"
+    },
+    {
+      "sql": "SELECT g FROM t limit 7 offset 3",
+      "hasLimit": true,
+      "applied": "SELECT g FROM t limit 7 offset 3"
+    },
+    {
+      "sql": "SELECT g FROM t OFFSET 100",
+      "hasLimit": false,
+      "applied": "SELECT g FROM t OFFSET 100\nLIMIT 10"
+    },
+    {
+      "sql": "SELECT g FROM t FETCH FIRST 20 ROWS ONLY",
+      "hasLimit": true,
+      "applied": "SELECT g FROM t FETCH FIRST 20 ROWS ONLY"
+    },
+    {
+      "sql": "SELECT g FROM t fetch next 1 row only",
+      "hasLimit": true,
+      "applied": "SELECT g FROM t fetch next 1 row only"
+    },
+    {
+      "sql": "SELECT g FROM t FETCH FIRST ROW ONLY",
+      "hasLimit": true,
+      "applied": "SELECT g FROM t FETCH FIRST ROW ONLY"
+    },
+    {
+      "sql": "SELECT g FROM t ORDER BY g FETCH FIRST 2 ROWS WITH TIES",
+      "hasLimit": true,
+      "applied": "SELECT g FROM t ORDER BY g FETCH FIRST 2 ROWS WITH TIES"
+    },
+    {
+      "sql": "SELECT g FROM t OFFSET 5 ROWS FETCH NEXT 3 ROWS ONLY",
+      "hasLimit": true,
+      "applied": "SELECT g FROM t OFFSET 5 ROWS FETCH NEXT 3 ROWS ONLY"
+    },
+    {
+      "sql": "SELECT g FROM t FETCH FIRST (2 + 1) ROWS ONLY",
+      "hasLimit": true,
+      "applied": "SELECT g FROM t FETCH FIRST (2 + 1) ROWS ONLY"
+    },
+    {
+      "sql": "SELECT g FROM t FETCH /* c */ FIRST $1 ROWS -- c\n ONLY",
+      "hasLimit": true,
+      "applied": "SELECT g FROM t FETCH /* c */ FIRST $1 ROWS -- c\n ONLY"
+    },
+    {
+      "sql": "SELECT g FROM t LIMIT ALL",
+      "hasLimit": false,
+      "applied": "SELECT g FROM t LIMIT 10"
+    },
+    {
+      "sql": "SELECT g FROM t limit all",
+      "hasLimit": false,
+      "applied": "SELECT g FROM t limit 10"
+    },
+    {
+      "sql": "SELECT g FROM t LIMIT /* c */ ALL OFFSET 5",
+      "hasLimit": false,
+      "applied": "SELECT g FROM t LIMIT /* c */ 10 OFFSET 5"
+    },
+    {
+      "sql": "SELECT g FROM t OFFSET 5 LIMIT ALL",
+      "hasLimit": false,
+      "applied": "SELECT g FROM t OFFSET 5 LIMIT 10"
+    },
+    {
+      "sql": "SELECT g FROM t LIMIT NULL",
+      "hasLimit": false,
+      "applied": "SELECT g FROM t LIMIT 10"
+    },
+    {
+      "sql": "(SELECT g FROM t) LIMIT ALL",
+      "hasLimit": false,
+      "applied": "(SELECT g FROM t) LIMIT 10"
+    },
+    {
+      "sql": "SELECT 1 UNION ALL SELECT 2",
+      "hasLimit": false,
+      "applied": "SELECT 1 UNION ALL SELECT 2\nLIMIT 10"
+    },
+    {
+      "sql": "SELECT g, 'limit 5' AS s FROM t",
+      "hasLimit": false,
+      "applied": "SELECT g, 'limit 5' AS s FROM t\nLIMIT 10"
+    },
+    {
+      "sql": "SELECT g /* LIMIT 5 */ FROM t",
+      "hasLimit": false,
+      "applied": "SELECT g /* LIMIT 5 */ FROM t\nLIMIT 10"
+    },
+    {
+      "sql": "SELECT g AS \"limit\" FROM t",
+      "hasLimit": false,
+      "applied": "SELECT g AS \"limit\" FROM t\nLIMIT 10"
+    },
+    {
+      "sql": "SELECT $$ LIMIT 5 $$ AS v FROM t",
+      "hasLimit": false,
+      "applied": "SELECT $$ LIMIT 5 $$ AS v FROM t\nLIMIT 10"
+    },
+    {
+      "sql": "WITH a AS (SELECT g FROM t LIMIT 4000) SELECT * FROM a",
+      "hasLimit": false,
+      "applied": "WITH a AS (SELECT g FROM t LIMIT 4000) SELECT * FROM a\nLIMIT 10"
+    },
+    {
+      "sql": "SELECT g FROM t WHERE g > (SELECT 0 LIMIT 1)",
+      "hasLimit": false,
+      "applied": "SELECT g FROM t WHERE g > (SELECT 0 LIMIT 1)\nLIMIT 10"
+    },
+    {
+      "sql": "SELECT * FROM (SELECT g FROM t FETCH FIRST 3 ROWS ONLY) s",
+      "hasLimit": false,
+      "applied": "SELECT * FROM (SELECT g FROM t FETCH FIRST 3 ROWS ONLY) s\nLIMIT 10"
+    },
+    {
+      "sql": "SELECT * FROM (SELECT g FROM t LIMIT ALL) s",
+      "hasLimit": false,
+      "applied": "SELECT * FROM (SELECT g FROM t LIMIT ALL) s\nLIMIT 10"
+    },
+    {
+      "sql": "SELECT a$limit FROM t",
+      "hasLimit": false,
+      "applied": "SELECT a$limit FROM t\nLIMIT 10"
+    },
+    {
+      "sql": "SELECT 한limit FROM t",
+      "hasLimit": false,
+      "applied": "SELECT 한limit FROM t\nLIMIT 10"
+    },
+    {
+      "sql": "SELECT fetch first FROM t",
+      "hasLimit": false,
+      "applied": "SELECT fetch first FROM t\nLIMIT 10"
+    },
+    {
+      "sql": "SELECT fetch next, rows only FROM t",
+      "hasLimit": false,
+      "applied": "SELECT fetch next, rows only FROM t\nLIMIT 10"
+    },
+    {
+      "sql": "SELECT $$x$$ AS v LIMIT 5",
+      "hasLimit": true,
+      "applied": "SELECT $$x$$ AS v LIMIT 5"
+    },
+    {
+      "sql": "SELECT 'a'LIMIT 5",
+      "hasLimit": true,
+      "applied": "SELECT 'a'LIMIT 5"
+    },
+    {
+      "sql": "SELECT g FROM t WHERE lımıt > 5",
+      "hasLimit": false,
+      "applied": "SELECT g FROM t WHERE lımıt > 5\nLIMIT 10"
     }
   ]
 }

@@ -1,5 +1,9 @@
 package com.smartfirehub.global.util;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+
 /**
  * PostgreSQL 어휘(주석·리터럴)를 인지하는 SQL 스캐너(순수 함수). 사용자 SQL 을 괄호로 감싸거나 뒤에 무언가를
  * 붙이기 전에 "진짜 코드"와 "주석·리터럴 속 글자"를 구분하는 데 쓴다.
@@ -127,6 +131,185 @@ public final class SqlLexicalMask {
       start++;
     }
     return sql.substring(start, end);
+  }
+
+  /**
+   * 최상위(괄호 깊이 0)에 사용자 행 제한({@code LIMIT n} 또는 {@code FETCH {FIRST|NEXT} … ROW(S) {ONLY|WITH
+   * TIES}})이 있으면 true(#749).
+   *
+   * <p>주석·리터럴 속, 서브쿼리·CTE 속 절은 결과 행 수를 제한하지 않으므로 보지 않는다(#750 — 예전 정규식
+   * {@code (?s).*\\bLIMIT\\s+\\d+.*} 은 문자열 {@code 'limit 5'}·CTE 속 LIMIT 에 속아 maxRows 를 빼먹었다). 사용자가
+   * 최상위에 직접 쓴 제한은 존중한다. {@code LIMIT ALL}/{@code LIMIT NULL} 은 "제한 없음"이라 false 다.
+   *
+   * <p><b>Python {@code query_executor._has_limit} 와 짝이다</b> — 공용 픽스처 {@code rowLimit} 으로 같은
+   * 판정을 검증한다.
+   */
+  public static boolean hasTopLevelRowLimit(String sql) {
+    return topLevelRowLimit(sql).kind == RowLimitKind.LIMITED;
+  }
+
+  /**
+   * 끝 주석·세미콜론이 걷힌 SELECT 에 {@code maxRows} 행 제한을 적용한 SQL 을 돌려준다(#749).
+   *
+   * <ul>
+   *   <li>최상위 사용자 제한({@code LIMIT n}·{@code FETCH FIRST n})이 있으면 그대로 둔다(존중 규칙).
+   *   <li>최상위 {@code LIMIT ALL}/{@code LIMIT NULL} 이면 그 값 토큰만 {@code maxRows} 로 바꾼다 — 뒤에 LIMIT 을
+   *       또 붙이면 구문 오류이고, "제한 없음"은 LIMIT 을 안 쓴 것과 같으므로 maxRows 를 적용한다.
+   *   <li>없으면 {@code \nLIMIT maxRows} 를 덧붙인다(개행: 혹시 끝에 줄 주석이 남아도 묻히지 않게).
+   * </ul>
+   *
+   * <p><b>Python {@code query_executor._apply_row_limit} 와 짝이다.</b>
+   */
+  public static String applyRowLimit(String sql, int maxRows) {
+    RowLimit state = topLevelRowLimit(sql);
+    return switch (state.kind) {
+      case LIMITED -> sql;
+      case UNLIMITED -> sql.substring(0, state.start) + maxRows + sql.substring(state.end);
+      case NONE -> sql + "\nLIMIT " + maxRows;
+    };
+  }
+
+  /** 최상위 행 제한 종류. */
+  private enum RowLimitKind {
+    /** 사용자가 LIMIT n / FETCH FIRST 로 직접 제한. */
+    LIMITED,
+    /** LIMIT ALL / LIMIT NULL — start/end 는 ALL/NULL 토큰 위치. */
+    UNLIMITED,
+    /** 최상위 행 제한 없음. */
+    NONE
+  }
+
+  private record RowLimit(RowLimitKind kind, int start, int end) {}
+
+  /** 마스크 위 토큰: 대문자 텍스트, 원문 기준 [start, end), 괄호 깊이. */
+  private record Token(String text, int start, int end, int depth) {}
+
+  /**
+   * 최상위 행 제한 상태. LIMIT 은 PostgreSQL 예약어라 최상위에 나오면 항상 LIMIT 절이다. FETCH 는 비예약어라
+   * 절 모양 전체({@link #isFetchClause})를 확인한다.
+   */
+  private static RowLimit topLevelRowLimit(String sql) {
+    List<Token> tokens = tokenize(mask(sql));
+    for (int k = 0; k < tokens.size(); k++) {
+      Token t = tokens.get(k);
+      if (t.depth != 0) {
+        continue;
+      }
+      if (t.text.equals("LIMIT")) {
+        if (k + 1 < tokens.size()
+            && (tokens.get(k + 1).text.equals("ALL") || tokens.get(k + 1).text.equals("NULL"))) {
+          return new RowLimit(RowLimitKind.UNLIMITED, tokens.get(k + 1).start, tokens.get(k + 1).end);
+        }
+        return new RowLimit(RowLimitKind.LIMITED, t.start, t.end);
+      }
+      if (t.text.equals("FETCH") && isFetchClause(tokens, k)) {
+        return new RowLimit(RowLimitKind.LIMITED, t.start, t.end);
+      }
+    }
+    return new RowLimit(RowLimitKind.NONE, -1, -1);
+  }
+
+  /**
+   * 마스크를 토큰으로 나눈다. 식별자/키워드는 PostgreSQL 규칙(ident_start + ident_cont*, {@code $} 포함)으로 한
+   * 덩어리로 자른다 — 정규식 {@code \\b} 는 {@code a$limit}·{@code 한limit} 을 쪼개 가짜 LIMIT 을 만들고 Java 와
+   * Python 의 {@code \\b} 정의도 다르다. {@code (} 는 여는 쪽 깊이, {@code )} 는 닫힌 뒤 깊이로 기록한다.
+   * <b>Python {@code _tokenize_masked} 와 짝이다.</b>
+   */
+  private static List<Token> tokenize(String masked) {
+    List<Token> tokens = new ArrayList<>();
+    int n = masked.length();
+    int depth = 0;
+    int i = 0;
+    while (i < n) {
+      char c = masked.charAt(i);
+      if (isPgWhitespace(c)) {
+        i++;
+      } else if (isIdentStart(c)
+          || isAsciiDigit(c)
+          || (c == '$' && i + 1 < n && isAsciiDigit(masked.charAt(i + 1)))) {
+        // 식별자·키워드·숫자(1.5e3 포함)·위치 파라미터($1)를 한 토큰으로.
+        int j = i + 1;
+        while (j < n && (isIdentCont(masked.charAt(j)) || masked.charAt(j) == '.')) {
+          j++;
+        }
+        // 대문자화는 ASCII 토큰만 — PostgreSQL 은 키워드 판정 때 ASCII 만 접는다. 유니코드 대문자화는
+        // lımıt(점 없는 ı) 을 LIMIT 으로 만들어 가짜 제한에 속는다.
+        String word = masked.substring(i, j);
+        tokens.add(new Token(isAscii(word) ? word.toUpperCase(Locale.ROOT) : word, i, j, depth));
+        i = j;
+      } else if (c == '(') {
+        tokens.add(new Token("(", i, i + 1, depth));
+        depth++;
+        i++;
+      } else if (c == ')') {
+        depth = Math.max(0, depth - 1);
+        tokens.add(new Token(")", i, i + 1, depth));
+        i++;
+      } else {
+        tokens.add(new Token(String.valueOf(c), i, i + 1, depth));
+        i++;
+      }
+    }
+    return tokens;
+  }
+
+  private static boolean isAscii(String s) {
+    for (int k = 0; k < s.length(); k++) {
+      if (s.charAt(k) >= 0x80) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /** 식별자·키워드·숫자·{@code $n} 토큰인지(구두점 토큰이 아닌지). */
+  private static boolean isWordToken(String text) {
+    char c = text.charAt(0);
+    return isIdentStart(c) || isAsciiDigit(c) || c == '$';
+  }
+
+  /**
+   * {@code tokens[k]} 의 FETCH 가 {@code FETCH {FIRST|NEXT} [count] {ROW|ROWS} {ONLY|WITH TIES}} 절인지.
+   * FETCH/FIRST/NEXT/ROWS 는 비예약어라 컬럼명·별칭이 될 수 있다({@code SELECT fetch first FROM t}) — 절 모양
+   * 전체를 보지 않으면 가짜 FETCH 에 속아 maxRows 가 빠진다. count 는 단일 토큰(앞 부호 허용) 또는 괄호 묶음만
+   * 인정한다(PostgreSQL select_fetch_first_value 문법). <b>Python {@code _is_fetch_clause} 와 짝이다.</b>
+   */
+  private static boolean isFetchClause(List<Token> tokens, int k) {
+    int n = tokens.size();
+    int j = k + 1;
+    if (j >= n || !(tokens.get(j).text.equals("FIRST") || tokens.get(j).text.equals("NEXT"))) {
+      return false;
+    }
+    j++;
+    if (j < n && !isRowKeyword(tokens.get(j).text)) {
+      if (tokens.get(j).text.equals("+") || tokens.get(j).text.equals("-")) {
+        j++;
+      }
+      if (j < n && tokens.get(j).text.equals("(")) {
+        int openDepth = tokens.get(j).depth;
+        j++;
+        while (j < n && !(tokens.get(j).text.equals(")") && tokens.get(j).depth == openDepth)) {
+          j++;
+        }
+        j++;
+      } else if (j < n && isWordToken(tokens.get(j).text)) {
+        j++;
+      } else {
+        return false;
+      }
+    }
+    if (j >= n || !isRowKeyword(tokens.get(j).text)) {
+      return false;
+    }
+    j++;
+    if (j < n && tokens.get(j).text.equals("ONLY")) {
+      return true;
+    }
+    return j + 1 < n && tokens.get(j).text.equals("WITH") && tokens.get(j + 1).text.equals("TIES");
+  }
+
+  private static boolean isRowKeyword(String text) {
+    return text.equals("ROW") || text.equals("ROWS");
   }
 
   /** {@code s[0, end)} 끝의 PostgreSQL 공백을 뗀 뒤의 끝 위치. */

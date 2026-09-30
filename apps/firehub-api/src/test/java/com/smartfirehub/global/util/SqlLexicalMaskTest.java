@@ -49,6 +49,23 @@ class SqlLexicalMaskTest {
     return rows.stream();
   }
 
+  static Stream<Arguments> rowLimitVectors() {
+    List<Arguments> rows = new ArrayList<>();
+    FIXTURE
+        .get("rowLimit")
+        .forEach(
+            v ->
+                rows.add(
+                    Arguments.of(
+                        v.get("sql").asText(),
+                        v.get("hasLimit").asBoolean(),
+                        v.get("applied").asText())));
+    return rows.stream();
+  }
+
+  /** 픽스처의 applied 는 maxRows=10 기준이다(픽스처 _설명 참조). */
+  private static final int ROW_LIMIT_MAX_ROWS = 10;
+
   @ParameterizedTest(name = "[{index}] {0}")
   @MethodSource("maskVectors")
   void 마스크가_픽스처와_같다(String sql, String expected) {
@@ -68,10 +85,25 @@ class SqlLexicalMaskTest {
     assertThat(SqlLexicalMask.mask(sql)).hasSameSizeAs(sql);
   }
 
+  /** 최상위 LIMIT n / FETCH FIRST 만 사용자 행 제한으로 본다(#749) — Python 과 같은 판정. */
+  @ParameterizedTest(name = "[{index}] {0}")
+  @MethodSource("rowLimitVectors")
+  void 최상위_행_제한_판정이_픽스처와_같다(String sql, boolean hasLimit, String ignored) {
+    assertThat(SqlLexicalMask.hasTopLevelRowLimit(sql)).isEqualTo(hasLimit);
+  }
+
+  /** 사용자 제한은 존중, LIMIT ALL/NULL 은 maxRows 로 치환, 없으면 덧붙인다(#749). */
+  @ParameterizedTest(name = "[{index}] {0}")
+  @MethodSource("rowLimitVectors")
+  void 행_제한_적용이_픽스처와_같다(String sql, boolean ignored, String applied) {
+    assertThat(SqlLexicalMask.applyRowLimit(sql, ROW_LIMIT_MAX_ROWS)).isEqualTo(applied);
+  }
+
   /** 픽스처가 비어 있으면 위 테스트는 공허하게 통과한다 — 벡터가 실제로 읽혔는지 확인한다. */
   @Test
   void 픽스처에_벡터가_있다() {
     assertThat(FIXTURE.get("mask").size()).isGreaterThanOrEqualTo(10);
     assertThat(FIXTURE.get("stripTrailing").size()).isGreaterThanOrEqualTo(20);
+    assertThat(FIXTURE.get("rowLimit").size()).isGreaterThanOrEqualTo(20);
   }
 }

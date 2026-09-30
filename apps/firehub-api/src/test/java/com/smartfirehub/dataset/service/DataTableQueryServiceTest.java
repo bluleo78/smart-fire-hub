@@ -136,6 +136,38 @@ class DataTableQueryServiceTest extends IntegrationTestBase {
     assertThat(response.rows()).hasSize(2);
   }
 
+  /** 정상: FETCH FIRST n 은 사용자 제한으로 존중 — LIMIT 을 또 붙여 구문 오류가 나지 않는다(#749) */
+  @Test
+  void executeQuery_select_withFetchFirst_preservesUserLimit() {
+    SqlQueryResponse response =
+        dataTableQueryService.executeQuery(
+            "SELECT * FROM " + testTableName + " FETCH FIRST 2 ROWS ONLY", 1);
+
+    assertThat(response.error()).isNull();
+    assertThat(response.rows()).hasSize(2);
+  }
+
+  /** 정상: LIMIT ALL 은 "제한 없음"이라 maxRows 로 치환된다(#749) */
+  @Test
+  void executeQuery_select_withLimitAll_capsAtMaxRows() {
+    SqlQueryResponse response =
+        dataTableQueryService.executeQuery("SELECT * FROM " + testTableName + " LIMIT ALL", 2);
+
+    assertThat(response.error()).isNull();
+    assertThat(response.rows()).hasSize(2);
+  }
+
+  /** 정상: 서브쿼리 속 LIMIT 은 최상위 제한이 아니므로 maxRows 가 적용된다(#749 공용 판정) */
+  @Test
+  void executeQuery_select_withSubqueryLimit_stillInjectsMaxRows() {
+    SqlQueryResponse response =
+        dataTableQueryService.executeQuery(
+            "SELECT * FROM " + testTableName + " WHERE id > (SELECT 0 LIMIT 1)", 2);
+
+    assertThat(response.error()).isNull();
+    assertThat(response.rows()).hasSize(2);
+  }
+
   /** 정상: WHERE 조건으로 필터링하면 조건에 맞는 행만 반환 */
   @Test
   void executeQuery_select_withWhereClause_returnsFilteredRows() {

@@ -178,6 +178,71 @@ class AnalyticsQueryExecutionServiceTest extends IntegrationTestBase {
   }
 
   // =========================================================================
+  // 행 수 제한(maxRows) — executor 를 끈 직접 실행 경로 (#749/#750)
+  // =========================================================================
+
+  /** FETCH FIRST n 은 사용자 LIMIT 과 같은 규칙(존중) — LIMIT 을 또 붙여 구문 오류가 나면 안 된다(#749). */
+  @Test
+  void execute_fetchFirst_isRespectedWithoutSecondLimit() {
+    AnalyticsQueryResponse response =
+        executionService.execute(
+            "SELECT g FROM generate_series(1,5000) g FETCH FIRST 20 ROWS ONLY", 10, true);
+
+    assertThat(response.error()).isNull();
+    assertThat(response.rows()).hasSize(20);
+  }
+
+  /** OFFSET … FETCH NEXT 조합도 사용자 제한이다(#749). */
+  @Test
+  void execute_offsetFetchNext_isRespected() {
+    AnalyticsQueryResponse response =
+        executionService.execute(
+            "SELECT g FROM generate_series(1,5000) g ORDER BY g OFFSET 5 ROWS FETCH NEXT 3 ROWS ONLY",
+            10,
+            true);
+
+    assertThat(response.error()).isNull();
+    assertThat(response.rows()).extracting(r -> ((Number) r.get("g")).intValue()).containsExactly(6, 7, 8);
+  }
+
+  /** LIMIT ALL 은 "제한 없음" — maxRows 로 치환해 보호가 빠지지 않는다(#749). */
+  @Test
+  void execute_limitAll_isCappedAtMaxRows() {
+    AnalyticsQueryResponse response =
+        executionService.execute("SELECT g FROM generate_series(1,5000) g LIMIT ALL", 10, true);
+
+    assertThat(response.error()).isNull();
+    assertThat(response.rows()).hasSize(10);
+  }
+
+  /** OFFSET 뒤의 LIMIT ALL 도 값만 치환한다 — OFFSET 은 보존(#749). */
+  @Test
+  void execute_offsetThenLimitAll_keepsOffsetAndCapsRows() {
+    AnalyticsQueryResponse response =
+        executionService.execute(
+            "SELECT g FROM generate_series(1,5000) g ORDER BY g OFFSET 5 LIMIT ALL", 10, true);
+
+    assertThat(response.error()).isNull();
+    assertThat(response.rows()).hasSize(10);
+    assertThat(((Number) response.rows().get(0).get("g")).intValue()).isEqualTo(6);
+  }
+
+  /** 문자열·CTE·스칼라 서브쿼리 속 LIMIT 은 최상위 제한이 아니다 — maxRows 가 적용돼야 한다(#750). */
+  @Test
+  void execute_limitInsideLiteralCteOrSubquery_doesNotBypassMaxRows() {
+    for (String sql :
+        List.of(
+            "SELECT g, 'limit 5' AS s FROM generate_series(1,5000) g",
+            "WITH a AS (SELECT g FROM generate_series(1,5000) g LIMIT 4000) SELECT * FROM a",
+            "SELECT g FROM generate_series(1,5000) g WHERE g > (SELECT 0 LIMIT 1)")) {
+      AnalyticsQueryResponse response = executionService.execute(sql, 10, true);
+
+      assertThat(response.error()).as(sql).isNull();
+      assertThat(response.rows()).as(sql).hasSize(10);
+    }
+  }
+
+  // =========================================================================
   // getSchemaInfo
   // =========================================================================
 

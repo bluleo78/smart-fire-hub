@@ -638,3 +638,33 @@ def test_comment_only_query_is_rejected_as_empty():
     result = execute_query("-- only\n/* comment */ ;", max_rows=1, read_only=True, conn=conn, tenant_id=1)
     assert result.success is False
     assert result.error == "Query must not be empty"
+
+
+# #749 — FETCH FIRST / LIMIT ALL 로 끝나는 SELECT 에 LIMIT 을 한 번 더 붙이지 않는다
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "SELECT g FROM generate_series(1,5000) g FETCH FIRST 20 ROWS ONLY",
+        "SELECT g FROM generate_series(1,5000) g OFFSET 5 ROWS FETCH NEXT 3 ROWS ONLY",
+        "SELECT g FROM generate_series(1,5000) g ORDER BY g FETCH FIRST 2 ROWS WITH TIES;",
+    ],
+)
+def test_fetch_first_is_respected_as_user_row_limit(query):
+    """FETCH FIRST|NEXT 는 사용자 LIMIT 과 같은 규칙(존중) — 두 번째 LIMIT 을 붙이지 않는다(#749)."""
+    sql = _capture_select_sql(query, max_rows=10)[0]
+    assert "LIMIT" not in sql.upper(), f"FETCH 뒤에 LIMIT 이 붙었다: {sql!r}"
+
+
+@pytest.mark.parametrize(
+    "query, expected",
+    [
+        ("SELECT g FROM generate_series(1,5000) g LIMIT ALL", "SELECT g FROM generate_series(1,5000) g LIMIT 10"),
+        ("SELECT g FROM generate_series(1,5000) g limit all offset 5; -- c", "SELECT g FROM generate_series(1,5000) g limit 10 offset 5"),
+        ("SELECT g FROM generate_series(1,5000) g OFFSET 5 LIMIT NULL", "SELECT g FROM generate_series(1,5000) g OFFSET 5 LIMIT 10"),
+    ],
+)
+def test_limit_all_is_replaced_by_max_rows(query, expected):
+    """LIMIT ALL/NULL 은 '제한 없음' — 값만 max_rows 로 바꿔 LIMIT 이 두 번 나오지 않게 한다(#749)."""
+    assert _capture_select_sql(query, max_rows=10) == [expected]
