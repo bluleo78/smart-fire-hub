@@ -2,7 +2,7 @@ import { useId, useMemo } from 'react';
 
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { useDatasets } from '@/hooks/queries/useDatasets';
+import { useAllDatasets } from '@/hooks/queries/useDatasets';
 
 import DatasetCombobox from './DatasetCombobox';
 
@@ -17,7 +17,8 @@ interface DatasetChangeTriggerFormProps {
 }
 
 export default function DatasetChangeTriggerForm({ config, onChange, errors }: DatasetChangeTriggerFormProps) {
-  const { data: datasetsData } = useDatasets({ size: 1000 });
+  // 서버 목록 상한(100)을 넘어도 전부 보이도록 전 페이지를 모은다 (#732)
+  const { data: allDatasets } = useAllDatasets();
   // 접근성: 라벨↔입력 연결용 id 접두사 (#432). 추가/수정 다이얼로그 양쪽에서 렌더되므로 useId.
   const baseId = useId();
   // DatasetCombobox 는 Popover 트리거 버튼(labelable)에 id 를 심어 라벨과 연결한다.
@@ -31,12 +32,12 @@ export default function DatasetChangeTriggerForm({ config, onChange, errors }: D
 
   const datasetOptions = useMemo(
     () =>
-      datasetsData?.content?.map((d) => ({
+      allDatasets?.map((d) => ({
         id: d.id,
         name: d.name,
         tableName: d.tableName,
       })) ?? [],
-    [datasetsData],
+    [allDatasets],
   );
 
   return (

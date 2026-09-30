@@ -27,7 +27,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Tabs, TabsContent,TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { useDatasets } from '@/hooks/queries/useDatasets';
+import { useAllDatasets } from '@/hooks/queries/useDatasets';
 import { useExecutePipeline, useExecution, useExecutions,usePipeline } from '@/hooks/queries/usePipelines';
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import { formatDate, getStatusBadgeVariant, getStatusLabel } from '@/lib/formatters';
@@ -82,7 +82,8 @@ export default function PipelineEditorPage() {
   // isError: 존재하지 않는 실행 ID(400 등) 접근 시 에러 상태를 감지한다.
   const { data: executionData, isError: executionError } = useExecution(pipelineId!, executionId!);
   const executeMutation = useExecutePipeline(pipelineId!);
-  const { data: datasetsData } = useDatasets({ size: 1000 });
+  // 서버 목록 상한(100)을 넘어도 전부 보이도록 전 페이지를 모은다 (#732)
+  const { data: allDatasets } = useAllDatasets();
   const { data: executions } = useExecutions(pipelineId ?? 0);
 
   /** 존재하지 않는 실행 ID 접근 시 toast 알림 후 파이프라인 페이지로 리다이렉트 — ApiConnectionDetailPage와 동일 패턴 */
@@ -166,12 +167,12 @@ export default function PipelineEditorPage() {
 
   const datasetOptions = useMemo(
     () =>
-      datasetsData?.content?.map((d) => ({
+      allDatasets?.map((d) => ({
         id: d.id,
         name: d.name,
         tableName: d.tableName,
       })) ?? [],
-    [datasetsData],
+    [allDatasets],
   );
 
   const selectedStepName = state.selectedStepId

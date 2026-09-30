@@ -33,7 +33,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Textarea } from '@/components/ui/textarea';
-import { useDatasets } from '@/hooks/queries/useDatasets';
+import { useAllDatasets } from '@/hooks/queries/useDatasets';
 import { useAnomalyEvents } from '@/hooks/queries/useProactiveMessages';
 import { parseUtcDate } from '@/lib/formatters';
 import type { ProactiveJobFormValues } from '@/lib/validations/proactive-job';
@@ -158,8 +158,9 @@ export default function JobMonitoringTab({ form, isEditing, jobId = 0, onChange 
   const [customForm, setCustomForm] = useState<CustomMetricForm>(DEFAULT_CUSTOM_FORM);
 
   // 데이터셋 목록 — 커스텀 메트릭의 소스 선택에 사용
-  const { data: datasetsPage } = useDatasets({ size: 100 });
-  const datasets = datasetsPage?.content ?? [];
+  // 서버 목록 상한(100)을 넘어도 전부 고를 수 있도록 전 페이지를 모은다 (#732)
+  const { data: allDatasets } = useAllDatasets();
+  const datasets = allDatasets ?? [];
 
   const updateAnomaly = (patch: Partial<AnomalyConfig>) => {
     // 이상 탐지 설정 변경 시 이탈 가드용 dirty 마킹 (이슈 #59)

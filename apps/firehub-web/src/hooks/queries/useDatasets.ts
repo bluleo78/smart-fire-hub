@@ -19,6 +19,40 @@ export function useDatasets(params: { categoryId?: number; storageType?: string;
   });
 }
 
+/** 서버가 목록 조회 size 를 100 으로 자르므로(DatasetController) 선택 목록은 이 크기로 페이지를 순회한다. */
+const ALL_DATASETS_PAGE_SIZE = 100;
+/** 무한 순회 방지용 안전 상한 — 100 × 100 = 1만 건까지. */
+const ALL_DATASETS_MAX_PAGES = 100;
+
+/**
+ * 선택 목록(파이프라인 편집기 출력/입력, 트리거 감시 대상 등)용 전체 데이터셋 조회 (#732).
+ *
+ * 왜: `size: 1000` 으로 한 번에 받으려 해도 서버는 조용히 100 건으로 자르므로
+ * 101 번째 이후 데이터셋이 목록에서 빠지고, 그 데이터셋을 이미 참조하는 스텝은 빈 칸으로 보였다.
+ * 서버 상한(보호 장치)은 그대로 두고, `totalPages` 만큼 페이지를 순회해 전부 모은다.
+ * queryKey 가 'datasets' 로 시작하므로 데이터셋 생성·삭제 시의 기존 무효화에 함께 걸린다.
+ */
+export function useAllDatasets() {
+  return useQuery({
+    queryKey: ['datasets', 'all'],
+    queryFn: async () => {
+      const first = (await datasetsApi.getDatasets({ page: 0, size: ALL_DATASETS_PAGE_SIZE })).data;
+      const content = [...first.content];
+      const lastPage = Math.min(first.totalPages, ALL_DATASETS_MAX_PAGES);
+      // 두 번째 페이지부터는 서로 독립이므로 병렬로 받아 원래 순서대로 이어 붙인다
+      const rest = await Promise.all(
+        Array.from({ length: Math.max(0, lastPage - 1) }, (_, i) =>
+          datasetsApi.getDatasets({ page: i + 1, size: ALL_DATASETS_PAGE_SIZE }).then((r) => r.data.content),
+        ),
+      );
+      for (const pageContent of rest) content.push(...pageContent);
+      // 페이지 사이에 생성·삭제가 끼면 경계에서 같은 항목이 두 번 올 수 있어 id 로 중복 제거
+      const seen = new Set<number>();
+      return content.filter((d) => (seen.has(d.id) ? false : (seen.add(d.id), true)));
+    },
+  });
+}
+
 export function useDataset(id: number) {
   return useQuery({
     queryKey: ['datasets', id],
