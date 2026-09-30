@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useRef } from 'react';
 
 import { pipelinesApi } from '../../api/pipelines';
 import { fetchAllPages } from '../../lib/fetch-all-pages';
@@ -100,8 +101,25 @@ export function useCancelFullRebuild(pipelineId: number) {
   });
 }
 
+/** 실행이 끝난 상태(더 이상 바뀌지 않는 상태)인지 — PENDING/RUNNING 이 아니면 종료로 본다. */
+function isTerminalExecution(e: PipelineExecutionResponse) {
+  return e.status !== 'PENDING' && e.status !== 'RUNNING';
+}
+
+/**
+ * 실행 이력 조회 + 실행 종료 시 파이프라인 상세 무효화 (#733).
+ *
+ * 왜: 증분 스텝의 lastRunAt/fullRebuildPending 은 파이프라인 상세(['pipelines', id])의 steps 에서 오는데,
+ * 실행은 비동기로 끝나고 서버가 그때 책갈피를 전진시키고 재생성 예약을 소비한다. 실행 목록만 다시 불러오면
+ * 소비된 예약이 "다음 실행 시 전체 재생성 예정" 으로 남는다.
+ *
+ * 무엇을: "종료된 실행 목록"의 서명(id:status)이 바뀌는 순간 상세를 무효화한다. RUNNING → COMPLETED 전이뿐
+ * 아니라, 실행이 너무 빨리 끝나 재조회가 곧바로 COMPLETED 를 받는(RUNNING 을 한 번도 못 본) 경우도
+ * 새 종료 실행이 서명에 추가되므로 함께 잡힌다. 첫 로드는 기준값만 잡고 무효화하지 않는다.
+ */
 export function useExecutions(pipelineId: number) {
-  return useQuery({
+  const queryClient = useQueryClient();
+  const query = useQuery({
     queryKey: ['pipelines', pipelineId, 'executions'],
     queryFn: () => pipelinesApi.getExecutions(pipelineId).then(r => r.data),
     enabled: !!pipelineId,
@@ -111,6 +129,23 @@ export function useExecutions(pipelineId: number) {
       return hasActive ? 5000 : false;
     },
   });
+
+  const terminalSignature = query.data
+    ?.filter(isTerminalExecution)
+    .map((e) => `${e.id}:${e.status}`)
+    .join(',');
+  // 이전 서명 — undefined 면 아직 기준값이 없는 상태(첫 로드 전)다. 파이프라인이 바뀌면 기준을 다시 잡는다.
+  const prevSignatureRef = useRef<{ pipelineId: number; signature: string } | undefined>(undefined);
+  useEffect(() => {
+    if (terminalSignature === undefined) return;
+    const prev = prevSignatureRef.current;
+    prevSignatureRef.current = { pipelineId, signature: terminalSignature };
+    if (!prev || prev.pipelineId !== pipelineId || prev.signature === terminalSignature) return;
+    // exact: 실행 목록(['pipelines', id, 'executions'])까지 prefix 로 다시 불러오지 않도록 상세만 무효화한다.
+    queryClient.invalidateQueries({ queryKey: ['pipelines', pipelineId], exact: true });
+  }, [terminalSignature, pipelineId, queryClient]);
+
+  return query;
 }
 
 export function useExecution(pipelineId: number, execId: number) {

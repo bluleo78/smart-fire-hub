@@ -7,7 +7,7 @@
  */
 
 import { createColumn, createDatasetDetail } from '../../factories/dataset.factory';
-import { createPipelineDetail, createStep } from '../../factories/pipeline.factory';
+import { createExecution, createPipelineDetail, createStep } from '../../factories/pipeline.factory';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 
@@ -307,5 +307,120 @@ test.describe('파이프라인 SQL 스텝 증분 처리', () => {
     // 출력이 지워지지 않는다는 문구가 있어야 하고, REBUILD_OUTPUT의 "모든 행을 지우고" 약속이 섞여 들어오면 안 된다
     await expect(dialog.getByText(/지워지지 않으며/)).toBeVisible();
     await expect(dialog.getByText(/모든 행을 지우고/)).not.toBeVisible();
+  });
+
+  /**
+   * 회귀 테스트 (#733): 실행이 끝나면 증분 섹션이 서버의 새 상태(예약 소비·책갈피 전진)를 보여줘야 한다.
+   * 예전에는 실행 버튼이 실행 목록만 무효화하고 파이프라인 상세(steps 의 lastRunAt/fullRebuildPending)는
+   * 다시 불러오지 않아, 이미 소비된 예약이 "다음 실행 시 전체 재생성 예정" + "예약 취소" 로 남았다.
+   * 실행이 빨리 끝나 실행 목록 재조회가 곧바로 COMPLETED 를 받는(RUNNING 을 한 번도 못 보는) 경우를 재현한다.
+   */
+  test('실행이 곧바로 끝나도 소비된 재생성 예약이 사라지고 마지막 처리 시점이 갱신된다', async ({
+    authenticatedPage: page,
+  }) => {
+    const pendingStep = createStep({
+      id: 5,
+      scriptContent: SQL,
+      loadStrategy: 'MERGE',
+      outputDatasetId: OUTPUT_DATASET_ID,
+      outputDatasetName: '출력 데이터셋',
+      lastRunAt: '2026-09-19T01:00:00Z',
+      fullRebuildPending: true,
+      fullRebuildMode: 'REBUILD_OUTPUT',
+    });
+    await setupMocks(page, pendingStep, [
+      createColumn({ id: 1, columnName: 'code', isPrimaryKey: true, columnOrder: 0 }),
+    ]);
+
+    // 실행 POST 이후에는 서버처럼 "실행이 끝난 상태"를 돌려준다 — 실행 목록은 COMPLETED 1건,
+    // 상세는 예약이 소비되고(pending=false) 책갈피가 전진한 스텝.
+    const executePost = await mockApi(
+      page,
+      'POST',
+      '/api/v1/pipelines/1/execute',
+      createExecution({ id: 474, status: 'PENDING', startedAt: null, completedAt: null }),
+      { capture: true },
+    );
+    const doneDetail = createPipelineDetail({
+      id: 1,
+      steps: [{ ...pendingStep, fullRebuildPending: false, lastRunAt: '2026-10-01T00:53:17Z' }],
+    });
+    await page.route(
+      (url) => url.pathname === '/api/v1/pipelines/1' || url.pathname === '/api/v1/pipelines/1/executions',
+      (route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        if (executePost.requests.length === 0) return route.fallback();
+        const isList = new URL(route.request().url()).pathname.endsWith('/executions');
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(isList ? [createExecution({ id: 474, status: 'COMPLETED' })] : doneDetail),
+        });
+      },
+    );
+
+    await page.goto('/pipelines/1');
+    await page.locator('.react-flow__node').first().click();
+    await expect(page.getByText('다음 실행 시 전체 재생성 예정')).toBeVisible();
+
+    await page.getByRole('button', { name: '실행', exact: true }).click();
+    await executePost.waitForRequest();
+
+    // 소비된 예약 표시가 사라지고, 전진한 책갈피가 보여야 한다
+    await expect(page.getByText('다음 실행 시 전체 재생성 예정')).not.toBeVisible();
+    await expect(page.getByRole('button', { name: '예약 취소' })).not.toBeVisible();
+    await expect(page.getByText(/마지막 처리 시점: 2026-10-01/)).toBeVisible();
+  });
+
+  /**
+   * 회귀 테스트 (#733): 실행 목록 폴링이 RUNNING → COMPLETED 전이를 보면 상세를 다시 불러와야 한다.
+   * (페이지에 들어왔을 때 이미 실행 중이던 경우 — 실행 버튼 mutation 을 거치지 않는다.)
+   */
+  test('실행 중이던 실행이 폴링으로 끝나면 증분 섹션이 갱신된다', async ({ authenticatedPage: page }) => {
+    const step = createStep({
+      id: 5,
+      scriptContent: SQL,
+      loadStrategy: 'MERGE',
+      outputDatasetId: OUTPUT_DATASET_ID,
+      outputDatasetName: '출력 데이터셋',
+      lastRunAt: '2026-09-19T01:00:00Z',
+      fullRebuildPending: false,
+      fullRebuildMode: 'REBUILD_OUTPUT',
+    });
+    await setupMocks(page, step, [
+      createColumn({ id: 1, columnName: 'code', isPrimaryKey: true, columnOrder: 0 }),
+    ]);
+
+    // 실행 목록: 첫 조회는 RUNNING, 그다음부터는 COMPLETED. 상세는 COMPLETED 를 돌려준 뒤부터 새 책갈피.
+    let listCalls = 0;
+    const doneDetail = createPipelineDetail({
+      id: 1,
+      steps: [{ ...step, lastRunAt: '2026-10-01T00:52:44Z' }],
+    });
+    await page.route(
+      (url) => url.pathname === '/api/v1/pipelines/1' || url.pathname === '/api/v1/pipelines/1/executions',
+      (route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        const isList = new URL(route.request().url()).pathname.endsWith('/executions');
+        if (isList) {
+          listCalls += 1;
+          const status = listCalls === 1 ? 'RUNNING' : 'COMPLETED';
+          return route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify([createExecution({ id: 475, status })]),
+          });
+        }
+        if (listCalls < 2) return route.fallback();
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(doneDetail) });
+      },
+    );
+
+    await page.goto('/pipelines/1');
+    await page.locator('.react-flow__node').first().click();
+    await expect(page.getByText(/마지막 처리 시점: 2026-09-19/)).toBeVisible();
+
+    // 폴링 주기(5초) 뒤 COMPLETED 를 받으면 상세가 다시 조회되어 새 책갈피가 보여야 한다
+    await expect(page.getByText(/마지막 처리 시점: 2026-10-01/)).toBeVisible({ timeout: 15_000 });
   });
 });
