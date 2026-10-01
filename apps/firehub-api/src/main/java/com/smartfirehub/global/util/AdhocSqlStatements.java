@@ -39,8 +39,9 @@ public final class AdhocSqlStatements {
           try (Statement st = conn.createStatement()) {
             st.setEscapeProcessing(false);
             try (ResultSet rs = st.executeQuery(sql)) {
-              // 다차원 배열은 jOOQ 가 1차원으로 읽다 null 로 잃으므로 가로채 중첩 리스트로 살린다(#757)
-              AdhocMultiDimArrays multiDim = new AdhocMultiDimArrays(rs);
+              // 다차원 배열은 jOOQ 가 1차원으로 읽다 null 로 잃으므로 가로채 중첩 리스트로 살린다(#757).
+              // PostGIS 타입 이름은 커넥션 캐시 상태와 무관하게 한 표기로 고정해 jOOQ 가 늘 PGobject 로 읽게 한다(#759)
+              AdhocMultiDimArrays multiDim = new AdhocMultiDimArrays(AdhocSpatialTypeNames.wrap(rs));
               return multiDim.apply(dsl, dsl.fetch(multiDim.proxy()));
             }
           } catch (SQLException e) {
