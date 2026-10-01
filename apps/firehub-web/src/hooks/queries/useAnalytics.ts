@@ -1,4 +1,5 @@
 import { useInfiniteQuery,useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useState } from 'react';
 
 import { analyticsApi } from '../../api/analytics';
 import { fetchAllPages } from '../../lib/fetch-all-pages';
@@ -185,16 +186,16 @@ export function useChartData(id: number | null | undefined, options?: {
   refetchInterval?: number;
   enabled?: boolean;
 }) {
+  // 위젯들이 동시에 재조회하지 않도록 주기에 ±10% 지터를 준다. 지터는 마운트당 한 번만 정한다(#778):
+  // 과거엔 렌더마다 Math.random() 으로 다른 주기를 계산해, TanStack 이 "주기가 바뀌었다"고 보고
+  // 컴포넌트가 다시 렌더될 때마다 타이머를 처음부터 재시작했다. 주기보다 자주 렌더되면 자동 새로고침이 영영 발화하지 않는다.
+  const [jitterFactor] = useState(() => 1 + (Math.random() - 0.5) * 0.2);
   return useQuery({
     queryKey: ['analytics', 'charts', id, 'data'],
     queryFn: () => analyticsApi.getChartData(id!).then((r) => r.data),
     enabled: options?.enabled !== false && !!id,
     refetchInterval: options?.refetchInterval
-      ? () => {
-          const base = options.refetchInterval!;
-          const jitter = (Math.random() - 0.5) * 0.2 * base; // ±10%
-          return base + jitter;
-        }
+      ? Math.round(options.refetchInterval * jitterFactor)
       : undefined,
     refetchIntervalInBackground: false,
     refetchOnWindowFocus: false,
@@ -272,16 +273,6 @@ export function useDashboard(id: number | null) {
     queryKey: ['analytics', 'dashboards', id],
     queryFn: () => analyticsApi.getDashboard(id!).then((r) => r.data),
     enabled: !!id,
-  });
-}
-
-export function useDashboardData(dashboardId: number | undefined) {
-  return useQuery({
-    queryKey: ['analytics', 'dashboards', dashboardId, 'data'],
-    queryFn: () => analyticsApi.getDashboardData(dashboardId!).then((r) => r.data),
-    enabled: !!dashboardId,
-    // refetch 중 data가 undefined로 초기화되지 않도록 이전 데이터 유지 → N+1 개별 차트 fetch 방지
-    placeholderData: (previousData) => previousData,
   });
 }
 

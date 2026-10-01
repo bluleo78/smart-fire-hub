@@ -259,14 +259,19 @@ export interface UpdateWidgetRequest {
 // Phase 4: Dashboard Batch Data
 // ============================================================
 
+/**
+ * `GET /analytics/dashboards/{id}/data` 의 실제 API 계약 (#778).
+ * API: `DashboardDataResponse(DashboardResponse dashboard, List<WidgetData> widgetData)`,
+ * `WidgetData(Long widgetId, ChartDataResponse chartData)` 와 1:1 로 맞춘다.
+ * 과거 프론트 타입(`dashboardId`/`widgets[].queryResult`)이 실제 응답과 달라 일괄 응답이 한 번도 쓰이지 못했다.
+ * 현재 대시보드 화면은 위젯별 `/charts/{id}/data` 로 데이터를 가져오므로 이 엔드포인트를 호출하지 않는다.
+ */
 export interface WidgetData {
   widgetId: number;
-  chartId: number;
-  queryResult: AnalyticsQueryResult | null;
-  error?: string;
+  chartData: ChartDataResponse;
 }
 
 export interface DashboardDataResponse {
-  dashboardId: number;
-  widgets: WidgetData[];
+  dashboard: Dashboard;
+  widgetData: WidgetData[];
 }

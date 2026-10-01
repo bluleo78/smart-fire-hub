@@ -72,7 +72,6 @@ test.describe('대시보드 목록 페이지', () => {
 
     // 생성 후 에디터 이동을 위한 추가 API 모킹
     await mockApi(page, 'GET', '/api/v1/analytics/dashboards/10', newDashboard);
-    await mockApi(page, 'GET', '/api/v1/analytics/dashboards/10/data', { dashboardId: 10, widgets: [] });
     await mockApi(page, 'GET', '/api/v1/analytics/charts', { content: [], page: 0, size: 20, totalElements: 0, totalPages: 0 });
 
     // "새 대시보드" 버튼 클릭
@@ -114,7 +113,6 @@ test.describe('대시보드 목록 페이지', () => {
       },
     );
     await mockApi(page, 'GET', '/api/v1/analytics/dashboards/10', createDashboard({ id: 10, name: '더블클릭 대시보드' }));
-    await mockApi(page, 'GET', '/api/v1/analytics/dashboards/10/data', { dashboardId: 10, widgets: [] });
     await mockApi(page, 'GET', '/api/v1/analytics/charts', { content: [], page: 0, size: 20, totalElements: 0, totalPages: 0 });
 
     await page.getByRole('button', { name: '새 대시보드' }).click();

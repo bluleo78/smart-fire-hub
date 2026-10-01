@@ -93,7 +93,6 @@ test.describe('차트 빌더 — 저장 쿼리·대시보드 100개 초과 (#737
       createdAt: '2024-01-01T00:00:00Z',
       updatedAt: '2024-01-01T00:00:00Z',
     });
-    await mockApi(page, 'GET', '/api/v1/analytics/dashboards/101/data', { dashboardId: 101, widgets: [] });
 
     await page.goto('/analytics/charts/1');
     await page.getByRole('button', { name: '대시보드에 추가' }).click();

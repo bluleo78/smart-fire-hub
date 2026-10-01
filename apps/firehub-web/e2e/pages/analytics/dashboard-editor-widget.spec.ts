@@ -18,10 +18,6 @@ test.describe('대시보드 에디터 — 위젯 CRUD', () => {
     const chart = createChartListItem({ id: 42, name: '검색용 테스트 차트', chartType: 'BAR' });
 
     await mockApi(page, 'GET', '/api/v1/analytics/dashboards/1', dashboard);
-    await mockApi(page, 'GET', '/api/v1/analytics/dashboards/1/data', {
-      dashboardId: 1,
-      widgets: [],
-    });
     await mockApi(page, 'GET', '/api/v1/analytics/charts', {
       content: [chart],
       page: 0,
@@ -82,10 +78,6 @@ test.describe('대시보드 에디터 — 위젯 CRUD', () => {
 
   test('차트 추가 다이얼로그에서 차트가 없으면 빈 상태 메시지가 표시된다', async ({ authenticatedPage: page }) => {
     await mockApi(page, 'GET', '/api/v1/analytics/dashboards/1', createDashboard({ id: 1, widgets: [] }));
-    await mockApi(page, 'GET', '/api/v1/analytics/dashboards/1/data', {
-      dashboardId: 1,
-      widgets: [],
-    });
     await mockApi(page, 'GET', '/api/v1/analytics/charts', {
       content: [],
       page: 0,
@@ -117,13 +109,6 @@ test.describe('대시보드 에디터 — 위젯 CRUD', () => {
       page,
       'GET',
       '/api/v1/analytics/dashboards/999',
-      { message: 'Not Found' },
-      { status: 404 },
-    );
-    await mockApi(
-      page,
-      'GET',
-      '/api/v1/analytics/dashboards/999/data',
       { message: 'Not Found' },
       { status: 404 },
     );
@@ -292,7 +277,6 @@ test.describe('대시보드 에디터 — 위젯 CRUD', () => {
 
     // 초기 모킹만 등록 — refetch도 동일 모킹을 재사용 (LIFO 충돌 방지)
     await mockApi(page, 'GET', '/api/v1/analytics/dashboards/1', dashboard);
-    await mockApi(page, 'GET', '/api/v1/analytics/dashboards/1/data', { dashboardId: 1, widgets: [] });
     await mockApi(page, 'GET', '/api/v1/analytics/charts', {
       content: [chart], page: 0, size: 20, totalElements: 1, totalPages: 1,
     });
@@ -327,10 +311,6 @@ test.describe('대시보드 에디터 — 위젯 CRUD', () => {
     const chart = createChartListItem({ id: 1, name: '기존 차트', chartType: 'BAR' });
 
     await mockApi(page, 'GET', '/api/v1/analytics/dashboards/1', dashboard);
-    await mockApi(page, 'GET', '/api/v1/analytics/dashboards/1/data', {
-      dashboardId: 1,
-      widgets: [existingWidget],
-    });
     await mockApi(page, 'GET', '/api/v1/analytics/charts', {
       content: [chart],
       page: 0,
@@ -385,7 +365,6 @@ test.describe('대시보드 에디터 — 위젯 CRUD', () => {
     )];
 
     await mockApi(page, 'GET', '/api/v1/analytics/dashboards/1', dashboard);
-    await mockApi(page, 'GET', '/api/v1/analytics/dashboards/1/data', { dashboardId: 1, widgets: [] });
 
     await page.route('**/api/v1/analytics/charts*', (route) => {
       if (route.request().method() !== 'GET') return route.fallback();
@@ -439,10 +418,6 @@ test.describe('대시보드 에디터 — 위젯 CRUD', () => {
       widgets: [],
     });
     await mockApi(page, 'GET', '/api/v1/analytics/dashboards/2', dashboard);
-    await mockApi(page, 'GET', '/api/v1/analytics/dashboards/2/data', {
-      dashboardId: 2,
-      widgets: [],
-    });
     await mockApi(page, 'GET', '/api/v1/analytics/charts', {
       content: [],
       page: 0,
@@ -521,6 +496,9 @@ test.describe('대시보드 에디터 — 위젯 CRUD', () => {
     await setupDashboardEditorMocks(page, 1);
     await page.goto('/analytics/dashboards/1');
     await expect(page.getByText('테스트 차트')).toBeVisible();
+    // 실패 전 정상 상태를 먼저 단언 — 첫 로드부터 실패해 배지가 떠 있으면 이 테스트가 공허해진다(#778)
+    await expect(page.getByText('항목 A')).toBeVisible();
+    await expect(page.getByText('새로고침 실패')).toHaveCount(0);
 
     await page.route('**/api/v1/analytics/**', (route) =>
       route.fulfill({
@@ -543,5 +521,6 @@ test.describe('대시보드 에디터 — 위젯 CRUD', () => {
 
     // 이전 데이터(placeholderData)는 여전히 표시된다 — 깜빡임 방지 의도는 유지
     await expect(page.getByText('테스트 차트')).toBeVisible();
+    await expect(page.getByText('항목 A')).toBeVisible();
   });
 });

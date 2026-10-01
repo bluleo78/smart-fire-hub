@@ -1,9 +1,10 @@
 import { AlertTriangle, Loader2, X } from 'lucide-react';
-import { useRef } from 'react';
+import { useCallback, useRef } from 'react';
 
 import { useChart, useChartData } from '../../hooks/queries/useAnalytics';
 import { useWidgetVisibility } from '../../hooks/useWidgetVisibility';
-import type { DashboardWidget, WidgetData } from '../../types/analytics';
+import { handleApiError } from '../../lib/api-error';
+import type { ChartDataResponse, DashboardWidget } from '../../types/analytics';
 import { Button } from '../ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Separator } from '../ui/separator';
@@ -13,43 +14,27 @@ import { WidgetFreshnessBar } from './WidgetFreshnessBar';
 
 interface DashboardWidgetCardProps {
   widget: DashboardWidget;
-  batchData?: WidgetData;
   isEditing: boolean;
   onRemove?: (widgetId: number) => void;
   autoRefreshSeconds?: number | null;
-  dataUpdatedAt?: number;
-  isFetching?: boolean;
-  isError?: boolean;
-  onRefresh?: () => void;
 }
 
 interface WidgetContentProps {
   widget: DashboardWidget;
-  batchData?: WidgetData;
-  autoRefreshSeconds?: number | null;
-  isVisible: boolean;
+  chartData?: ChartDataResponse;
+  dataLoading: boolean;
+  dataFetching: boolean;
 }
 
-function WidgetContent({ widget, batchData, autoRefreshSeconds, isVisible }: WidgetContentProps) {
+/**
+ * 위젯 본문 — 카드가 조회한 이 위젯의 단건 차트 데이터(`/charts/{id}/data`)를 렌더링한다.
+ * 데이터 조회·새로고침 상태는 카드가 소유하고(신선도 바와 같은 쿼리를 보도록), 본문은 표시만 한다.
+ */
+function WidgetContent({ widget, chartData, dataLoading, dataFetching }: WidgetContentProps) {
   const { data: chart, isLoading: chartLoading } = useChart(widget.chartId);
 
-  // Only fetch individual chart data when no batch data is provided
-  const refetchInterval =
-    !batchData && autoRefreshSeconds && autoRefreshSeconds > 0
-      ? autoRefreshSeconds * 1000
-      : undefined;
-
-  const {
-    data: chartData,
-    isLoading: dataLoading,
-    isFetching: chartFetching,
-  } = useChartData(batchData ? undefined : widget.chartId, {
-    refetchInterval,
-    enabled: isVisible,
-  });
-
-  const isInitialLoading = chartLoading || (!batchData && dataLoading && !chartData);
-  const isBackgroundFetching = !isInitialLoading && !batchData && chartFetching;
+  const isInitialLoading = chartLoading || (dataLoading && !chartData);
+  const isBackgroundFetching = !isInitialLoading && dataFetching;
 
   if (isInitialLoading) {
     return (
@@ -59,21 +44,12 @@ function WidgetContent({ widget, batchData, autoRefreshSeconds, isVisible }: Wid
     );
   }
 
-  if (batchData?.error) {
-    return (
-      <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
-        {batchData.error}
-      </div>
-    );
-  }
-
-  // Use batch query result if available, else fall back to individual fetch
-  const queryResult = batchData?.queryResult ?? chartData?.queryResult ?? null;
+  const queryResult = chartData?.queryResult ?? null;
 
   // 저장 쿼리 실패(#764): API는 HTTP 200 + queryResult.error 로 사유(division by zero,
   // 결과 32MB 초과 안내 등)를 준다. 빈 rows 를 그대로 ChartRenderer 에 넘기면
-  // "데이터가 없습니다." 로 보여 정상 0행과 구분되지 않으므로, 배치·단건 경로 공통으로
-  // 해석된 queryResult 에서 error 를 먼저 검사해 오류 상태와 사유 원문을 표시한다.
+  // "데이터가 없습니다." 로 보여 정상 0행과 구분되지 않으므로,
+  // queryResult 에서 error 를 먼저 검사해 오류 상태와 사유 원문을 표시한다.
   // 표시 형식은 쿼리 편집기 결과 영역(ResultTable)의 "쿼리 오류" 박스와 맞춘다.
   if (queryResult?.error) {
     return (
@@ -102,7 +78,8 @@ function WidgetContent({ widget, batchData, autoRefreshSeconds, isVisible }: Wid
     );
   }
 
-  const effectiveChart = batchData ? chart : (chartData?.chart ?? chart);
+  // 데이터 응답에 실린 차트 정의가 최신이므로 우선 사용하고, 없으면 메타 조회 결과로 폴백
+  const effectiveChart = chartData?.chart ?? chart;
 
   return (
     <div className="relative h-full">
@@ -122,24 +99,49 @@ function WidgetContent({ widget, batchData, autoRefreshSeconds, isVisible }: Wid
   );
 }
 
+/**
+ * 대시보드 위젯 카드.
+ *
+ * 왜 카드가 데이터 쿼리를 소유하나(#778): 과거엔 신선도 바("방금"/"새로고침 실패")와 새로고침 버튼이
+ * 페이지의 일괄 쿼리(`/dashboards/{id}/data`) 상태를 따랐는데, 그 응답은 계약 불일치로 버려지고 실제 표시
+ * 데이터는 위젯별 단건 쿼리에서 왔다. 그래서 새로고침이 화면 데이터를 바꾸지 않으면서 "방금"으로 표시되고,
+ * 일괄 요청 하나가 500 이면 정상 위젯까지 "새로고침 실패"가 붙었다. 이제 표시 데이터·신선도·새로고침이
+ * 모두 이 위젯의 단건 쿼리 하나를 보므로, "방금"은 실제 재조회 성공 시각이고 실패도 이 위젯에만 표시된다.
+ */
 export function DashboardWidgetCard({
   widget,
-  batchData,
   isEditing,
   onRemove,
   autoRefreshSeconds,
-  dataUpdatedAt,
-  isFetching,
-  isError,
-  onRefresh,
 }: DashboardWidgetCardProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const isVisible = useWidgetVisibility(containerRef);
 
-  const effectiveDataUpdatedAt = dataUpdatedAt ?? 0;
-  const effectiveIsFetching = isFetching ?? false;
-  const effectiveIsError = isError ?? false;
-  const effectiveOnRefresh = onRefresh ?? (() => undefined);
+  // 대시보드 자동 새로고침 주기를 위젯 단건 쿼리의 refetchInterval 로 적용한다(기존 자동 새로고침 경로 유지)
+  const refetchInterval =
+    autoRefreshSeconds && autoRefreshSeconds > 0 ? autoRefreshSeconds * 1000 : undefined;
+
+  const {
+    data: chartData,
+    isLoading: dataLoading,
+    isFetching: dataFetching,
+    isError: dataError,
+    dataUpdatedAt,
+    refetch,
+  } = useChartData(widget.chartId, {
+    refetchInterval,
+    enabled: isVisible,
+  });
+
+  // 수동 새로고침 — 이 위젯의 데이터를 실제로 다시 조회하고, 실패하면 1회 토스트로 알린다(#566).
+  // 자동 새로고침 실패는 위젯마다 토스트가 쏟아지지 않도록 신선도 바 배지로만 알린다.
+  const handleRefresh = useCallback(() => {
+    void refetch().then((result) => {
+      if (result.isError) {
+        handleApiError(result.error, '위젯 데이터를 불러오지 못했습니다.');
+      }
+    });
+  }, [refetch]);
 
   return (
     <Card ref={containerRef} className="h-full py-2 gap-1 overflow-hidden flex flex-col">
@@ -167,18 +169,18 @@ export function DashboardWidgetCard({
         <WidgetErrorBoundary widgetName={widget.chartName}>
           <WidgetContent
             widget={widget}
-            batchData={batchData}
-            autoRefreshSeconds={autoRefreshSeconds}
-            isVisible={isVisible}
+            chartData={chartData}
+            dataLoading={dataLoading}
+            dataFetching={dataFetching}
           />
         </WidgetErrorBoundary>
       </CardContent>
       <WidgetFreshnessBar
-        dataUpdatedAt={effectiveDataUpdatedAt}
-        isFetching={effectiveIsFetching}
-        isError={effectiveIsError}
+        dataUpdatedAt={dataUpdatedAt}
+        isFetching={dataFetching}
+        isError={dataError}
         refreshSeconds={autoRefreshSeconds ?? undefined}
-        onRefresh={effectiveOnRefresh}
+        onRefresh={handleRefresh}
       />
     </Card>
   );

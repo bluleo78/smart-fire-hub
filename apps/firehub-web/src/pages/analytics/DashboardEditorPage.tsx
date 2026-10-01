@@ -48,12 +48,11 @@ import {
   useAddWidget,
   useChartsInfinite,
   useDashboard,
-  useDashboardData,
   useRemoveWidget,
   useUpdateWidget,
 } from '../../hooks/queries/useAnalytics';
 import { handleApiError } from '../../lib/api-error';
-import type { ChartListItem, DashboardWidget, WidgetData } from '../../types/analytics';
+import type { ChartListItem, DashboardWidget } from '../../types/analytics';
 
 // Sub-component that owns width measurement for ResponsiveGridLayout
 interface GridAreaProps {
@@ -62,12 +61,7 @@ interface GridAreaProps {
   layouts: ResponsiveLayouts;
   onLayoutChange: (layout: readonly LayoutItem[], allLayouts: ResponsiveLayouts) => void;
   onRemove: (widgetId: number) => void;
-  batchDataMap: Map<number, WidgetData>;
   autoRefreshSeconds?: number | null;
-  dataUpdatedAt?: number;
-  isFetching?: boolean;
-  isError?: boolean;
-  onRefresh?: () => void;
 }
 
 function GridArea({
@@ -76,12 +70,7 @@ function GridArea({
   layouts,
   onLayoutChange,
   onRemove,
-  batchDataMap,
   autoRefreshSeconds,
-  dataUpdatedAt,
-  isFetching,
-  isError,
-  onRefresh,
 }: GridAreaProps) {
   const { width, containerRef: gridRef } = useContainerWidth({ initialWidth: 1280 });
 
@@ -110,14 +99,9 @@ function GridArea({
           <div key={String(widget.id)}>
             <DashboardWidgetCard
               widget={widget}
-              batchData={batchDataMap.get(widget.id)}
               isEditing={isEditing}
               onRemove={onRemove}
               autoRefreshSeconds={autoRefreshSeconds}
-              dataUpdatedAt={dataUpdatedAt}
-              isFetching={isFetching}
-              isError={isError}
-              onRefresh={onRefresh}
             />
           </div>
         ))}
@@ -260,14 +244,6 @@ export default function DashboardEditorPage() {
     error: dashboardError,
     refetch,
   } = useDashboard(dashboardId);
-  const {
-    data: dashboardData,
-    dataUpdatedAt: dashboardDataUpdatedAt,
-    isFetching: dashboardDataFetching,
-    isError: isDashboardDataError,
-    error: dashboardDataError,
-    refetch: refetchDashboardData,
-  } = useDashboardData(dashboardId ?? undefined);
 
   // 새로고침(또는 최초 로드) 실패를 1회성 토스트로 알린다.
   // placeholderData가 이전 데이터를 유지하기 때문에 화면상 아무 변화가 없어 실패가
@@ -278,22 +254,9 @@ export default function DashboardEditorPage() {
     }
   }, [isDashboardError, dashboardError]);
 
-  useEffect(() => {
-    if (isDashboardDataError && dashboardDataError) {
-      handleApiError(dashboardDataError, '위젯 데이터를 불러오지 못했습니다.');
-    }
-  }, [isDashboardDataError, dashboardDataError]);
   const addWidgetMutation = useAddWidget(dashboardId!);
   const removeWidgetMutation = useRemoveWidget(dashboardId!);
   const updateWidgetMutation = useUpdateWidget(dashboardId!);
-
-  // Build a map from widgetId → WidgetData for O(1) lookup in GridArea
-  const batchDataMap = useMemo(
-    () => new Map<number, WidgetData>(
-      (dashboardData?.widgets ?? []).map((w) => [w.widgetId, w])
-    ),
-    [dashboardData?.widgets]
-  );
 
   const [isEditing, setIsEditing] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -318,16 +281,33 @@ export default function DashboardEditorPage() {
     setLocalLayouts({ lg: items, md: items, sm: items });
   }
 
-  // Auto-refresh: invalidate batch data query so all widget data refreshes together
-  useEffect(() => {
-    if (!dashboard?.autoRefreshSeconds) return;
-    const interval = setInterval(() => {
-      void queryClient.invalidateQueries({
-        queryKey: ['analytics', 'dashboards', dashboardId, 'data'],
-      });
-    }, dashboard.autoRefreshSeconds * 1000);
-    return () => clearInterval(interval);
-  }, [dashboard?.autoRefreshSeconds, dashboardId, queryClient]);
+  // 자동 새로고침은 각 위젯의 단건 쿼리(useChartData)의 refetchInterval 이 담당한다(DashboardWidgetCard).
+  // 과거 여기서 일괄 쿼리(`/dashboards/{id}/data`)를 주기적으로 무효화했지만, 그 응답은 계약 불일치로
+  // 화면에 쓰이지 않으면서 서버에서 모든 저장 쿼리를 한 번 더 실행시켰다(#778) — 일괄 호출 자체를 제거했다.
+
+  /**
+   * 헤더 새로고침 — 대시보드 메타와 이 대시보드 모든 위젯의 표시 데이터(`/charts/{id}/data`)를 실제로 다시 조회한다.
+   * 과거엔 메타(`/dashboards/{id}`)만 다시 불러 위젯 데이터는 그대로였다(#778).
+   * 보이지 않아 비활성인 위젯 쿼리는 무효화만 되어, 화면에 들어올 때 새로 조회된다.
+   * 실패한 위젯은 각 카드의 신선도 바에 "새로고침 실패"로 남고, 여기서는 1회 토스트로만 알린다(#566).
+   */
+  const handleRefreshAll = useCallback(async () => {
+    const chartIds = [...new Set((dashboard?.widgets ?? []).map((w) => w.chartId))];
+    try {
+      await Promise.all([
+        // 메타 조회 실패는 위쪽 useEffect 가 이미 토스트하므로 여기서 다시 throw 하지 않는다(중복 토스트 방지)
+        refetch(),
+        ...chartIds.map((chartId) =>
+          queryClient.invalidateQueries(
+            { queryKey: ['analytics', 'charts', chartId, 'data'] },
+            { throwOnError: true },
+          ),
+        ),
+      ]);
+    } catch (err) {
+      handleApiError(err, '위젯 데이터를 불러오지 못했습니다.');
+    }
+  }, [dashboard?.widgets, queryClient, refetch]);
 
   // Fullscreen API
   const containerRef = useRef<HTMLDivElement>(null);
@@ -605,7 +585,7 @@ export default function DashboardEditorPage() {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => void refetch()}
+            onClick={() => void handleRefreshAll()}
             title="새로고침"
             className="h-8"
           >
@@ -692,12 +672,7 @@ export default function DashboardEditorPage() {
             layouts={currentLayouts}
             onLayoutChange={handleLayoutChange}
             onRemove={handleRemoveWidget}
-            batchDataMap={batchDataMap}
             autoRefreshSeconds={dashboard.autoRefreshSeconds}
-            dataUpdatedAt={dashboardDataUpdatedAt}
-            isFetching={dashboardDataFetching}
-            isError={isDashboardDataError}
-            onRefresh={() => void refetchDashboardData()}
           />
         )}
       </div>

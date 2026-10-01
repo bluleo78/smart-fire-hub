@@ -53,10 +53,6 @@ test.describe('분석 플로우', () => {
 
     // 생성 후 에디터 페이지 모킹
     await mockApi(page, 'GET', '/api/v1/analytics/dashboards/99', newDashboard);
-    await mockApi(page, 'GET', '/api/v1/analytics/dashboards/99/data', {
-      dashboardId: 99,
-      widgets: [],
-    });
     await mockApi(page, 'GET', '/api/v1/analytics/charts', {
       content: [],
       page: 0,

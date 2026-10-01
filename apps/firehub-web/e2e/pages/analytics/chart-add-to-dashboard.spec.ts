@@ -71,10 +71,6 @@ test.describe('차트 — 대시보드에 추가 단축 액션 (#97)', () => {
       createdAt: '2024-01-01T00:00:00Z',
       updatedAt: '2024-01-01T00:00:00Z',
     });
-    await mockApi(page, 'GET', '/api/v1/analytics/dashboards/10/data', {
-      dashboardId: 10,
-      widgets: [],
-    });
     await mockApi(page, 'GET', '/api/v1/analytics/charts', createPageResponse([]));
 
     await page.goto('/analytics/charts/1');

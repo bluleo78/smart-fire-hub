@@ -36,20 +36,14 @@ async function setupPieDashboardMocks(page: import('@playwright/test').Page, wid
   });
 
   await mockApi(page, 'GET', '/api/v1/analytics/dashboards/1', dashboard);
-  await mockApi(page, 'GET', '/api/v1/analytics/dashboards/1/data', {
-    dashboardId: 1,
-    widgets: [
-      {
-        widgetId: 1,
-        chartId: 1,
-        queryResult: createQueryResult({
-          columns: PIE_COLUMNS,
-          rows: PIE_ROWS,
-          totalRows: PIE_ROWS.length,
-        }),
-        error: null,
-      },
-    ],
+  // 위젯 표시 데이터는 단건 `/charts/{id}/data`(실제 ChartDataResponse 형태)로 온다(#778)
+  await mockApi(page, 'GET', '/api/v1/analytics/charts/1/data', {
+    chart,
+    queryResult: createQueryResult({
+      columns: PIE_COLUMNS,
+      rows: PIE_ROWS,
+      totalRows: PIE_ROWS.length,
+    }),
   });
   await mockApi(page, 'GET', '/api/v1/analytics/charts/1', chart);
   await mockApi(page, 'GET', '/api/v1/analytics/charts', {

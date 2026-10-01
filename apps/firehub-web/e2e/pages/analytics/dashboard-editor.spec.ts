@@ -31,10 +31,6 @@ test.describe('대시보드 에디터 페이지', () => {
       '/api/v1/analytics/dashboards/1',
       createDashboard({ id: 1, widgets: [] }),
     );
-    await mockApi(page, 'GET', '/api/v1/analytics/dashboards/1/data', {
-      dashboardId: 1,
-      widgets: [],
-    });
     await mockApi(page, 'GET', '/api/v1/analytics/charts', { content: [], page: 0, size: 20, totalElements: 0, totalPages: 0 });
 
     await page.goto('/analytics/dashboards/1');
@@ -102,7 +98,6 @@ test.describe('대시보드 에디터 페이지', () => {
   test('대시보드를 찾을 수 없을 때 오류 메시지가 표시된다', async ({ authenticatedPage: page }) => {
     // 존재하지 않는 대시보드 ID 요청 — 404 응답 모킹
     await mockApi(page, 'GET', '/api/v1/analytics/dashboards/999', {}, { status: 404 });
-    await mockApi(page, 'GET', '/api/v1/analytics/dashboards/999/data', {}, { status: 404 });
     await mockApi(page, 'GET', '/api/v1/analytics/charts', { content: [], page: 0, size: 20, totalElements: 0, totalPages: 0 });
 
     await page.goto('/analytics/dashboards/999');

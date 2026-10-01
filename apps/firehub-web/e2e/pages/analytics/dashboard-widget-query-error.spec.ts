@@ -9,9 +9,8 @@ import { expect, test } from '../../fixtures/auth.fixture';
  * 결과 32MB 초과 안내)로 사유를 돌려준다. 과거 위젯은 이 사유를 버리고 빈 rows를
  * ChartRenderer에 넘겨 "데이터가 없습니다." 만 표시했다 — 실패와 정상 0행을 구분할 수 없었다.
  *
- * 실제 운영 경로를 그대로 타도록 `/dashboards/{id}/data` 는 API의 실제 응답 형태
- * (`widgetData[].chartData`)로 모킹한다. 현재 프론트는 배치 응답의 `widgets` 필드를 읽으므로
- * 배치 맵이 비고, 위젯은 차트 단건 `/charts/{id}/data` 폴백 경로로 데이터를 가져온다.
+ * 대시보드 위젯은 차트 단건 `/charts/{id}/data`(실제 ChartDataResponse 형태 `{chart, queryResult}`)로
+ * 표시 데이터를 가져온다(#778 — 일괄 `/dashboards/{id}/data` 는 호출하지 않는다).
  */
 
 const DIV_ZERO_ERROR = 'ERROR: division by zero\nSQLState: 22012';
@@ -31,34 +30,14 @@ async function setupMocks(page: import('@playwright/test').Page) {
   const emptyChart = createChart({ id: 2, name: '빈 결과 차트', config: { xAxis: 'cat', yAxis: ['v'] } });
 
   await mockApi(page, 'GET', '/api/v1/analytics/dashboards/1', dashboard);
-  // 실제 API 응답 형태(widgetData[].chartData) — 위젯 수준 error 필드는 없다
-  await mockApi(page, 'GET', '/api/v1/analytics/dashboards/1/data', {
-    dashboard,
-    widgetData: [
-      {
-        widgetId: 1,
-        chartData: {
-          chart: errChart,
-          queryResult: createQueryResult({ columns: [], rows: [], totalRows: 0, error: DIV_ZERO_ERROR }),
-        },
-      },
-      {
-        widgetId: 2,
-        chartData: {
-          chart: emptyChart,
-          queryResult: createQueryResult({ columns: ['cat', 'v'], rows: [], totalRows: 0 }),
-        },
-      },
-    ],
-  });
   await mockApi(page, 'GET', '/api/v1/analytics/charts/1', errChart);
   await mockApi(page, 'GET', '/api/v1/analytics/charts/2', emptyChart);
-  // 단건 폴백 경로 — 실패 차트는 200 + queryResult.error
+  // 단건 경로 — 실패 차트는 200 + queryResult.error
   await mockApi(page, 'GET', '/api/v1/analytics/charts/1/data', {
     chart: errChart,
     queryResult: createQueryResult({ columns: [], rows: [], totalRows: 0, error: DIV_ZERO_ERROR }),
   });
-  // 단건 폴백 경로 — 정상 0행
+  // 단건 경로 — 정상 0행
   await mockApi(page, 'GET', '/api/v1/analytics/charts/2/data', {
     chart: emptyChart,
     queryResult: createQueryResult({ columns: ['cat', 'v'], rows: [], totalRows: 0 }),
