@@ -731,7 +731,7 @@ def test_wrap_failure_on_one_column_does_not_revert_other_geometry_columns():
     def execute_side(sql, *args, **kwargs):
         executed_sqls.append(sql)
         if 'ST_AsGeoJSON("e")' in sql:
-            raise Exception("function public.st_asgeojson(zz.geometry) does not exist")
+            raise _PgError("function public.st_asgeojson(zz.geometry) does not exist", "42883")
         if 'ST_AsGeoJSON("g")' in sql:
             state["mode"] = "wrapped"
             cursor.description = [("e", 25, None, None, None, None, None), ("g", 25, None, None, None, None, None)]
@@ -761,3 +761,136 @@ def test_wrap_failure_on_one_column_does_not_revert_other_geometry_columns():
     final_sql = [s for s in executed_sqls if "WITH _src" in s and "_geom_probe" not in s][-1]
     assert 'ST_AsGeoJSON("g")' in final_sql
     assert 'ST_AsGeoJSON("e")' not in final_sql
+
+
+# ---------------------------------------------------------------------------
+# #779 — 실행 중 오류에서 사용자 SQL 을 재실행하지 않는다
+# ---------------------------------------------------------------------------
+
+class _PgError(Exception):
+    """서버가 보낸 오류처럼 SQLSTATE(pgcode)를 가진 가짜 예외.
+
+    psycopg2.errors.DivisionByZero(...) 를 직접 만들면 pgcode 가 None 이라(서버가 채우는 값) SQLSTATE
+    판정 경로를 타지 않는다 — 그래서 pgcode 를 명시적으로 단 예외를 쓴다.
+    """
+
+    def __init__(self, msg: str, pgcode: str):
+        super().__init__(msg)
+        self.pgcode = pgcode
+
+
+def _geom_cursor(fail_on, *, raw_ok: bool = False):
+    """geometry 컬럼 g 하나를 돌려주는 사용자 SQL(테이블 zz_t)용 모의 커서.
+
+    fail_on(sql) 이 예외를 돌려주면 그 SQL 실행에서 던진다. 실행된 SQL 은 executed 리스트에 쌓는다.
+    raw_ok 이면 래핑 전 원 쿼리는 성공한다(성공 경로 → 래핑 단계 실패 시나리오).
+    """
+    GEOM_OID = 16000
+    executed: list = []
+    cursor = MagicMock()
+    cursor.rowcount = 0
+    cursor.description = [("g", GEOM_OID, None, None, None, None, None), ("z", 23, None, None, None, None, None)]
+    cursor.fetchall.return_value = [("0101000020E6100000", 1)]
+
+    def execute_side(sql, *args, **kwargs):
+        executed.append(sql)
+        err = fail_on(sql)
+        if err is not None:
+            raise err
+
+    cursor.execute.side_effect = execute_side
+
+    # _detect_geometry_columns·_fetch_geom_oids 는 cursor.connection.cursor() 로 별도 커서를 연다.
+    side_cursor = MagicMock()
+    side_cursor.description = [("g", GEOM_OID, None, None, None, None, None), ("z", 23, None, None, None, None, None)]
+    side_cursor.fetchall.return_value = [(GEOM_OID,)]
+    side_conn = MagicMock()
+    side_conn.cursor.return_value = side_cursor
+    cursor.connection = side_conn
+
+    conn = MagicMock()
+    conn.cursor.return_value = cursor
+    return conn, executed
+
+
+def _user_sql_runs(executed) -> int:
+    """사용자 SQL 본문(zz_t)을 실제로 실행한 횟수 — 행을 읽지 않는 LIMIT 0 시험은 빼고 센다."""
+    return sum(1 for s in executed if "zz_t" in s and "LIMIT 0" not in s)
+
+
+@pytest.mark.parametrize(
+    "msg, pgcode",
+    [
+        ("division by zero", "22012"),
+        ("canceling statement due to statement timeout", "57014"),
+        ("invalid input syntax for type integer", "22P02"),
+    ],
+)
+def test_runtime_error_with_geometry_column_runs_user_sql_once(msg, pgcode):
+    """geometry 컬럼이 있는 쿼리가 실행 중 오류로 실패하면 래핑 재시도 없이 원 오류를 1회 실행으로 돌려준다(#779).
+
+    수정 전에는 원 쿼리 → 래핑 → (컬럼 격리 후) 같은 래핑 재실행으로 사용자 SQL 이 3회 돌았다.
+    """
+    conn, executed = _geom_cursor(lambda sql: _PgError(msg, pgcode) if "zz_t" in sql and "LIMIT 0" not in sql else None)
+
+    result = execute_query("SELECT g, 1/(id-1) AS z FROM zz_t", max_rows=100, read_only=True, conn=conn, tenant_id=1)
+
+    assert result.success is False
+    assert result.error == msg
+    assert _user_sql_runs(executed) == 1, executed
+    assert not any("ST_AsGeoJSON" in s for s in executed), executed
+
+
+def test_wrap_runtime_error_on_success_path_falls_back_without_isolation_retry():
+    """원 쿼리는 성공했지만 래핑 실행이 statement_timeout 으로 실패하면 격리·재실행 없이 원본 결과로 폴백한다(#779).
+
+    수정 전에는 LIMIT 0 격리 시험이 모두 통과해 같은 래핑 SQL 을 한 번 더 실행했다(사용자 SQL 3회).
+    """
+    timeout = _PgError("canceling statement due to statement timeout", "57014")
+    conn, executed = _geom_cursor(lambda sql: timeout if "ST_AsGeoJSON" in sql and "LIMIT 0" not in sql else None)
+
+    result = execute_query("SELECT g, 1 AS z FROM zz_t", max_rows=100, read_only=True, conn=conn, tenant_id=1)
+
+    assert result.success is True
+    assert result.rows == [{"g": "0101000020E6100000", "z": 1}]
+    assert _user_sql_runs(executed) == 2, executed
+    assert not any("_geom_probe" in s for s in executed), executed
+
+
+def test_wrap_failure_without_sqlstate_does_not_isolate():
+    """SQLSTATE 가 없는 래핑 실패(파이썬 쪽 오류)에는 컬럼 격리 재시도를 하지 않는다(#779 — 격리는 클래스 42 만)."""
+    conn, executed = _geom_cursor(lambda sql: RuntimeError("boom") if "ST_AsGeoJSON" in sql and "LIMIT 0" not in sql else None)
+
+    result = execute_query("SELECT g, 1 AS z FROM zz_t", max_rows=100, read_only=True, conn=conn, tenant_id=1)
+
+    assert result.success is True
+    assert _user_sql_runs(executed) == 2, executed
+    assert not any("_geom_probe" in s for s in executed), executed
+
+
+def test_isolation_that_drops_no_column_does_not_rerun_same_wrap():
+    """해석 단계 오류(42xxx)라도 격리 결과가 원래 컬럼 구성과 같으면 같은 래핑 SQL 을 재실행하지 않는다(#779)."""
+    err = _PgError("operator does not exist", "42883")
+    # 래핑 실행만 실패하고 LIMIT 0 격리 시험은 통과 → 빠지는 컬럼이 없다.
+    conn, executed = _geom_cursor(lambda sql: err if "ST_AsGeoJSON" in sql and "_geom_probe" not in sql else None)
+
+    result = execute_query("SELECT g, 1 AS z FROM zz_t", max_rows=100, read_only=True, conn=conn, tenant_id=1)
+
+    assert result.success is True  # 원본 결과로 폴백
+    assert any("_geom_probe" in s for s in executed), executed  # 격리 시험은 했다
+    assert _user_sql_runs(executed) == 2, executed
+
+
+def test_original_failure_without_sqlstate_still_retries_with_wrap():
+    """원 쿼리 실패에 SQLSTATE 가 없으면(파이썬 쪽 변환 오류 등) 기존대로 geometry 래핑으로 구제한다(#779 회귀 가드)."""
+    def fail_on(sql):
+        if "zz_t" in sql and "ST_AsGeoJSON" not in sql and "LIMIT 0" not in sql:
+            return ValueError("could not decode geometry value")
+        return None
+
+    conn, executed = _geom_cursor(fail_on)
+
+    result = execute_query("SELECT g, 1 AS z FROM zz_t", max_rows=100, read_only=True, conn=conn, tenant_id=1)
+
+    assert result.success is True
+    assert any("ST_AsGeoJSON" in s for s in executed), executed

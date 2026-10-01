@@ -104,6 +104,38 @@ def _exec_geojson_wrapped(
     return columns, [dict(zip(columns, row)) for row in raw_rows]
 
 
+# 사용자 SQL 자체의 "실행 중" 오류(#779). 데이터 예외(클래스 22 — 0 나누기·형변환 실패 등)와
+# query_canceled(57014 — statement_timeout 포함)는 같은 SQL 을 다시 돌려도 같은 오류가 난다.
+# geometry 래핑으로 재시도하면 사용자 SQL 이 한 번 더 실행될 뿐(timeout 이면 30초 추가 점유) 결과는 같다.
+# 40(교착·직렬화)은 재시도로 풀릴 수 있어 넣지 않는다. 메시지가 아니라 SQLSTATE 로만 판정한다.
+_RUNTIME_SQLSTATE_CLASSES = ("22",)
+_RUNTIME_SQLSTATES = frozenset({"57014"})
+
+
+def _sqlstate(exc: BaseException) -> str | None:
+    """psycopg2 예외의 SQLSTATE(pgcode). 서버가 준 오류가 아니면(파이썬 쪽 변환 오류 등) None."""
+    code = getattr(exc, "pgcode", None)
+    return code if isinstance(code, str) else None
+
+
+def _is_user_sql_runtime_error(exc: BaseException) -> bool:
+    """사용자 SQL 실행 중에 난 오류라서 geometry 래핑 재시도로 결과가 바뀌지 않는 경우 True(#779)."""
+    code = _sqlstate(exc)
+    if code is None:
+        return False
+    return code in _RUNTIME_SQLSTATES or code[:2] in _RUNTIME_SQLSTATE_CLASSES
+
+
+def _is_wrap_analysis_error(exc: BaseException) -> bool:
+    """래핑 SQL 의 해석(계획) 단계 오류 — 클래스 42(함수 없음 42883·타입 불일치 42804/42846 등)면 True(#779).
+
+    컬럼 단위 격리 시험은 LIMIT 0 이라 이런 해석 단계 오류만 가려낼 수 있다. 실행 중 오류나 SQLSTATE 가
+    없는 오류에서 격리를 돌리면 모든 컬럼이 시험을 통과해 방금 실패한 같은 래핑 SQL 을 또 실행하게 된다.
+    """
+    code = _sqlstate(exc)
+    return code is not None and code[:2] == "42"
+
+
 def _isolate_wrappable_columns(
     cursor, clean_sql: str, column_metas: List[Tuple[str, bool]]
 ) -> List[Tuple[str, bool]]:
@@ -138,16 +170,23 @@ def _run_geojson_wrapped(
 
     감쌀 수 있는 geometry 컬럼이 하나도 남지 않거나 재시도도 실패하면 예외를 그대로 올린다 —
     호출부가 원본 결과 유지(성공 경로) 또는 원래 오류 보고(에러 경로)로 처리한다.
+
+    격리는 래핑 때문에 생긴 해석 단계 오류(SQLSTATE 클래스 42)일 때만 한다(#779). 0 나누기·statement_timeout
+    같은 실행 중 오류에서 격리하면 사용자 SQL 이 한 번 더 실행될 뿐이다. 격리로 빠진 컬럼이 없을 때도
+    같은 래핑 SQL 을 다시 돌리지 않는다.
     """
     try:
         return _exec_geojson_wrapped(cursor, clean_sql, column_metas, max_rows)
     except Exception as exc:
+        if not _is_wrap_analysis_error(exc):
+            raise
         logger.warning("geometry GeoJSON wrap failed, isolating per column: %s", exc)
         cursor.execute("ROLLBACK TO SAVEPOINT analytics_query")
         cursor.execute("SAVEPOINT analytics_query")
         isolated = _isolate_wrappable_columns(cursor, clean_sql, column_metas)
-        if not any(is_geom for _, is_geom in isolated):
-            raise
+        # 감쌀 컬럼이 없거나, 빠진 컬럼이 없어 방금 실패한 SQL 과 똑같다면 재실행하지 않는다.
+        if not any(is_geom for _, is_geom in isolated) or isolated == column_metas:
+            raise exc
         return _exec_geojson_wrapped(cursor, clean_sql, isolated, max_rows)
 
 
@@ -491,6 +530,11 @@ def execute_query(
                 rows = [dict(zip(columns, row)) for row in raw_rows]
             except Exception as exc:
                 original_error = exc
+                # 사용자 SQL 자체의 실행 중 오류(0 나누기·statement_timeout 등)는 래핑해 다시 돌려도 같은 오류다(#779).
+                # 재시도 없이 그대로 올려 사용자 SQL 을 한 번만 실행한다 — 바깥 except 가 세이브포인트를
+                # 되돌리고 같은 str(exc) 로 오류 응답을 만든다(재시도 후 raise original_error 와 같은 메시지).
+                if _is_user_sql_runtime_error(exc):
+                    raise
                 # Rollback to savepoint and retry with geometry wrapping
                 cursor.execute("ROLLBACK TO SAVEPOINT analytics_query")
                 cursor.execute("SAVEPOINT analytics_query")
