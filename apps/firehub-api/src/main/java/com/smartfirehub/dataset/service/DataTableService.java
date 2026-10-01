@@ -680,6 +680,17 @@ public class DataTableService {
         continue;
       }
 
+      // 최솟값·최댓값은 컬럼의 실제 타입 순서로 집계한 뒤 텍스트로 바꾼다(#773).
+      // 집계 전에 ::text 로 바꾸면 사전순(collation) 비교가 되어 INTEGER 가 "10 ~ 9" 가 되고,
+      // 음수 부호·5자리 연도·'-infinity' 가 범위에서 빠진다. 집계 후 ::text 는 PG 원문 출력이라
+      // 범위 밖 날짜(BC·±infinity·10000년)도 그대로 보존된다(#768/#769 원칙).
+      // 단, BOOLEAN 은 PG 에 MIN/MAX 집계가 없으므로 기존처럼 텍스트로 집계한다('false' < 'true').
+      boolean aggregateAsText = "BOOLEAN".equalsIgnoreCase(dataType);
+      String minExpr =
+          aggregateAsText ? "MIN(\"" + colName + "\"::text)" : "MIN(\"" + colName + "\")::text";
+      String maxExpr =
+          aggregateAsText ? "MAX(\"" + colName + "\"::text)" : "MAX(\"" + colName + "\")::text";
+
       // Build aggregate stats query
       StringBuilder statsSql = new StringBuilder();
       statsSql
@@ -690,12 +701,12 @@ public class DataTableService {
           .append(" COUNT(DISTINCT \"")
           .append(colName)
           .append("\") AS distinct_count,")
-          .append(" MIN(\"")
-          .append(colName)
-          .append("\"::text) AS min_val,")
-          .append(" MAX(\"")
-          .append(colName)
-          .append("\"::text) AS max_val");
+          .append(" ")
+          .append(minExpr)
+          .append(" AS min_val,")
+          .append(" ")
+          .append(maxExpr)
+          .append(" AS max_val");
 
       if (NUMERIC_TYPES.contains(dataType)) {
         statsSql.append(", AVG(\"").append(colName).append("\"::numeric) AS avg_val");

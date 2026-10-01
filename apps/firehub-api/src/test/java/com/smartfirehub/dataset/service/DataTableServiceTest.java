@@ -3,6 +3,7 @@ package com.smartfirehub.dataset.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.smartfirehub.dataset.dto.ColumnStatsResponse;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.dto.SqlQueryResponse;
@@ -886,5 +887,80 @@ class DataTableServiceTest extends IntegrationTestBase {
             () -> dataTableService.cloneTable("any_source", "fh_search_2", List.of("a"), List.of()))
         .isInstanceOf(InvalidTableNameException.class)
         .hasMessageContaining("fh_search_");
+  }
+
+  // =========================================================================
+  // 컬럼 통계 min/max (#773)
+  // =========================================================================
+
+  /**
+   * #773 회귀: 컬럼 통계의 최솟값·최댓값은 값의 텍스트 사전순이 아니라 컬럼 실제 타입의 순서로 구해야 한다.
+   * 음수·자릿수가 다른 정수·5자리 연도·±infinity·BC 날짜를 섞어 넣고, 기대값은 PG 가 같은 컬럼을 원래 타입으로
+   * 집계한 결과(MIN(col)::text)와 직접 비교한다 — 텍스트 순서로 집계하면 INTEGER 가 "10 ~ 9" 가 된다.
+   */
+  @Test
+  void getColumnStats_minMax_usesNativeTypeOrderNotTextOrder() {
+    String tableName = "test_stats_minmax_773";
+    tablesToCleanup.add(tableName);
+    dataTableService.createTable(
+        tableName,
+        List.of(
+            new DatasetColumnRequest("n", "N", "INTEGER", null, true, false, null),
+            new DatasetColumnRequest("x", "X", "DECIMAL", null, true, false, null),
+            new DatasetColumnRequest("d", "D", "DATE", null, true, false, null),
+            new DatasetColumnRequest("ts", "TS", "TIMESTAMP", null, true, false, null),
+            new DatasetColumnRequest("b", "B", "BOOLEAN", null, true, false, null),
+            new DatasetColumnRequest("t", "T", "TEXT", null, true, false, null)));
+    dsl.execute(
+        "INSERT INTO "
+            + DataSchema.qualify(tableName)
+            + "(n, x, d, ts, b, t) VALUES"
+            + " (9, 9.5, '2024-01-01', '-infinity', true, 'b'),"
+            + " (10, 10.25, '10000-01-01', '2024-01-01 10:00', false, 'a'),"
+            + " (100, -3.5, '2023-12-31', '0044-03-15 10:00 BC', true, 'c'),"
+            + " (-5, 0.1, '-infinity', 'infinity', NULL, NULL),"
+            + " (NULL, NULL, '0044-03-15 BC', NULL, NULL, NULL)");
+
+    List<DatasetColumnResponse> columnDefs =
+        List.of(
+            new DatasetColumnResponse(1L, "n", "N", "INTEGER", null, true, false, null, 0, false),
+            new DatasetColumnResponse(2L, "x", "X", "DECIMAL", null, true, false, null, 1, false),
+            new DatasetColumnResponse(3L, "d", "D", "DATE", null, true, false, null, 2, false),
+            new DatasetColumnResponse(
+                4L, "ts", "TS", "TIMESTAMP", null, true, false, null, 3, false),
+            new DatasetColumnResponse(5L, "b", "B", "BOOLEAN", null, true, false, null, 4, false),
+            new DatasetColumnResponse(6L, "t", "T", "TEXT", null, true, false, null, 5, false));
+
+    Map<String, ColumnStatsResponse> stats =
+        dataTableService.getColumnStats(tableName, columnDefs).stream()
+            .collect(
+                java.util.stream.Collectors.toMap(ColumnStatsResponse::columnName, s -> s));
+
+    // 기대값을 하드코딩된 문자열로 단언 — 값 자체가 결함 여부의 증거다.
+    assertThat(stats.get("n").minValue()).isEqualTo("-5");
+    assertThat(stats.get("n").maxValue()).isEqualTo("100");
+    assertThat(stats.get("x").minValue()).isEqualTo("-3.500000");
+    assertThat(stats.get("x").maxValue()).isEqualTo("10.250000");
+    assertThat(stats.get("d").minValue()).isEqualTo("-infinity");
+    assertThat(stats.get("d").maxValue()).isEqualTo("10000-01-01");
+    assertThat(stats.get("ts").minValue()).isEqualTo("-infinity");
+    assertThat(stats.get("ts").maxValue()).isEqualTo("infinity");
+    // BOOLEAN 은 PG 에 MIN/MAX 가 없어 텍스트로 집계(false < true)하던 동작을 유지한다.
+    assertThat(stats.get("b").minValue()).isEqualTo("false");
+    assertThat(stats.get("b").maxValue()).isEqualTo("true");
+    assertThat(stats.get("t").minValue()).isEqualTo("a");
+    assertThat(stats.get("t").maxValue()).isEqualTo("c");
+
+    // 교차 확인: PG 가 원래 타입으로 집계한 결과와도 같아야 한다(정수·숫자·날짜·시각).
+    var native_ =
+        dsl.fetchOne(
+            "SELECT MIN(n)::text AS n_min, MAX(n)::text AS n_max, MIN(x)::text AS x_min,"
+                + " MAX(x)::text AS x_max, MIN(d)::text AS d_min, MAX(d)::text AS d_max,"
+                + " MIN(ts)::text AS ts_min, MAX(ts)::text AS ts_max FROM "
+                + DataSchema.qualify(tableName));
+    for (String c : List.of("n", "x", "d", "ts")) {
+      assertThat(stats.get(c).minValue()).isEqualTo(native_.get(c + "_min", String.class));
+      assertThat(stats.get(c).maxValue()).isEqualTo(native_.get(c + "_max", String.class));
+    }
   }
 }
