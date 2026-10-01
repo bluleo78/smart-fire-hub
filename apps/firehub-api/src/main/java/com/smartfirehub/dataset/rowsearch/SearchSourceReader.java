@@ -2,6 +2,7 @@ package com.smartfirehub.dataset.rowsearch;
 
 import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.global.tenant.DataSchema;
+import com.smartfirehub.global.util.TemporalSafeFetch;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -61,13 +62,20 @@ public class SearchSourceReader {
     return dataTableRowService.countRows(table);
   }
 
-  /** 검색 결과 원본 조회: id → {컬럼: 값}. 없는 id 는 결과에 없다. */
+  /**
+   * 검색 결과 원본 조회: id → {컬럼: 값}. 없는 id 는 결과에 없다.
+   *
+   * <p>반환 컬럼에는 DATE/TIMESTAMP 도 들어올 수 있다(검색 대상 필드와 달리 제한 없음). {@code dsl.fetch} 로 읽으면 Java
+   * 날짜 객체가 표현 못 하는 값(±infinity·BC·10000년·1582/DST 공백)이 오류 없이 다른 날짜가 되므로, 데이터 탭과 같은
+   * {@link TemporalSafeFetch} 로 읽어 이상 값은 PG 원문 텍스트, 정상 값은 예전과 같은 타입으로 둔다(#775, #769 와 같은 원인).
+   */
   public Map<Long, Map<String, Object>> fetchRows(
       String table, List<String> columns, Collection<Long> ids) {
     Map<Long, Map<String, Object>> result = new HashMap<>();
     if (ids.isEmpty()) return result;
     String cols = quotedColumns(columns);
-    dsl.fetch(
+    TemporalSafeFetch.fetch(
+            dsl,
             "SELECT id" + (cols.isEmpty() ? "" : ", " + cols) + " FROM " + DataSchema.qualify(table)
                 + " WHERE id = ANY(?)",
             (Object) ids.toArray(Long[]::new))
