@@ -160,7 +160,7 @@ export function getRawCellValue(value: unknown): string {
  * `infinity` 같은 값은 모양에서 걸러 원문을 그대로 보여준다.
  */
 const CELL_DATETIME_SHAPE_RE =
-  /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(?:Z|[+-]\d{2}(?::?\d{2})?)?)?$/;
+  /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(Z|[+-]\d{2}(?::?\d{2})?)?)?$/;
 
 /**
  * 셀 값 문자열이 "안전하게 날짜로 포맷해도 되는" 값인지 검사한다 (#770).
@@ -195,13 +195,45 @@ function truncateCellText(str: string): string {
 }
 
 /**
+ * (#774) 셀 날짜 문자열을 데이터 탭 셀 표시와 같은 방식(`new Date(str)` → 브라우저 시간대)으로 해석하고,
+ * 해석 결과가 **원문의 날짜·시각 성분을 그대로 보존하는지** 왕복 검증한다.
+ *
+ * 시간대(오프셋) 없는 벽시계 문자열은 브라우저 시간대에 그 시각이 존재하지 않으면 `Date` 가 조용히
+ * 다른 시각으로 옮긴다 — 예: 서울 서머타임 시작 공백 `1988-05-08 02:30` → 03:30, 표준시 전환
+ * `1908-04-01 00:00` → 00:02. 사용자 데이터를 다른 시각으로 보여주는 결함이므로, 해석 결과의 로컬
+ * 연·월·일(·시·분·초)이 원문과 하나라도 다르면 null 을 돌려 호출부가 원문을 그대로 쓰게 한다.
+ * DST 공백뿐 아니라 그 밖의 브라우저 정규화 차이(날짜만 있는 값이 UTC 로 해석돼 음수 시간대에서
+ * 전날이 되는 경우 등)도 같은 판정으로 걸러진다.
+ * 오프셋(`Z`, `+00:00`)이 붙은 값은 시점(instant)이라 로컬 시각으로 바꿔 보여주는 것이 의도이므로
+ * 왕복 검증 대상이 아니다.
+ * 모양·필드 범위 검사(isFormattableDateString)에 실패하거나 Invalid Date 여도 null.
+ */
+function parseCellDateLocal(str: string): Date | null {
+  if (!isFormattableDateString(str)) return null;
+  const d = new Date(str);
+  if (Number.isNaN(d.getTime())) return null;
+  const m = CELL_DATETIME_SHAPE_RE.exec(str);
+  if (!m) return null;
+  const [, y, mo, day, h, mi, sec, offset] = m;
+  if (offset !== undefined) return d;
+  // 원문 성분 vs 브라우저 로컬 해석 성분 — 시각이 없는 값은 날짜만, 초가 없는 값은 0초로 비교
+  const expected = [Number(y), Number(mo), Number(day)];
+  const actual = [d.getFullYear(), d.getMonth() + 1, d.getDate()];
+  if (h !== undefined) {
+    expected.push(Number(h), Number(mi), Number(sec ?? 0));
+    actual.push(d.getHours(), d.getMinutes(), d.getSeconds());
+  }
+  return expected.every((v, i) => v === actual[i]) ? d : null;
+}
+
+/**
  * 날짜 셀 포맷. 포맷할 수 없는 값은 **절대 throw 하지 않고** 원문을 그대로 돌려준다 (#770).
  * 셀 값은 사용자 데이터라 UTC 계약(parseUtcDate)을 적용하지 않고 기존처럼 `new Date(str)` 로 해석한다.
+ * 해석 결과가 원문 벽시계와 다르면(DST 공백 등, #774) 원문을 그대로 보여준다.
  */
 function formatDateCell(str: string, options: Intl.DateTimeFormatOptions): string {
-  if (!isFormattableDateString(str)) return truncateCellText(str);
-  const d = new Date(str);
-  if (Number.isNaN(d.getTime())) return truncateCellText(str);
+  const d = parseCellDateLocal(str);
+  if (d === null) return truncateCellText(str);
   try {
     return new Intl.DateTimeFormat('ko-KR', options).format(d);
   } catch {
@@ -217,9 +249,9 @@ function formatDateCell(str: string, options: Intl.DateTimeFormatOptions): strin
  * 입력란이 담을 수 없는 값(모양 불일치·Invalid Date·변환 후 연도 0001~9999 밖)은 null.
  */
 export function cellTimestampToLocalInput(str: string): string | null {
-  if (!isFormattableDateString(str)) return null;
-  const d = new Date(str);
-  if (Number.isNaN(d.getTime())) return null;
+  // (#774) 브라우저 시간대에 존재하지 않는 벽시계 시각(DST 공백 등)은 null → 원문 텍스트 입력으로 보여 준다
+  const d = parseCellDateLocal(str);
+  if (d === null) return null;
   const year = d.getFullYear();
   if (year < 1 || year > 9999) return null;
   const p2 = (n: number) => String(n).padStart(2, '0');

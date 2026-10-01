@@ -1164,3 +1164,89 @@ test.describe('데이터셋 상세 — 행 편집 날짜/시각 값 보존 (#772
     expect(payload.data).toEqual({ d: null });
   });
 });
+
+/**
+ * (#774) 브라우저 시간대에 존재하지 않는 벽시계 시각(서울 서머타임 시작 공백 `1988-05-08 02:30`,
+ * 표준시 전환 `1908-04-01 00:00`) 회귀 테스트.
+ *
+ * 수정 전 결함: API(#769)는 이런 값을 PG 원문 `1988-05-08 02:30:00` 으로 주는데, 데이터 탭 셀과 행 편집
+ * 다이얼로그가 `new Date(str)`(브라우저 로컬)로 해석하면서 시각이 밀려 `오전 3:30`·`03:30` 으로 보였다.
+ * 수정 후: 해석 결과가 원문 날짜·시각 성분과 다르면 셀은 원문을, 편집 폼은 원문 텍스트 입력을 쓴다.
+ * 공백 여부는 브라우저 시간대에 달려 있어 시간대를 서울로 고정한다.
+ */
+test.describe('데이터셋 상세 — 시간대에 없는 벽시계 시각 표시 (#774)', () => {
+  test.use({ timezoneId: 'Asia/Seoul' });
+
+  const dstDataset = createDatasetDetail({
+    id: 10,
+    rowCount: 3,
+    columns: [
+      createColumn({ id: 1, columnName: 'label', displayName: 'label', dataType: 'TEXT', isPrimaryKey: false, isNullable: true, columnOrder: 0 }),
+      createColumn({ id: 2, columnName: 'ts', displayName: 'ts', dataType: 'TIMESTAMP', isPrimaryKey: false, isNullable: true, columnOrder: 1 }),
+    ],
+  });
+
+  // 실제 데이터 탭 API 응답 모양 — 정상 값은 UTC ISO, 다른 시각으로 바뀌는 값은 PG 원문(#769)
+  const rows = [
+    { id: 1, label: 'dst', ts: '1988-05-08 02:30:00' },
+    { id: 2, label: 'std', ts: '1908-04-01 00:00:00' },
+    { id: 3, label: 'normal', ts: '2024-01-02T01:15:00.000+00:00' },
+  ];
+
+  async function openDataTab(page: import('@playwright/test').Page) {
+    await mockApi(page, 'GET', '/api/v1/datasets/10', dstDataset);
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', createCategories());
+    await mockApi(page, 'GET', '/api/v1/datasets/10/queries', createPageResponse([]));
+    await mockApi(page, 'GET', '/api/v1/datasets/tags', []);
+    await mockApi(page, 'GET', '/api/v1/datasets/10/stats', []);
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets/10/data',
+      (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ columns: dstDataset.columns, rows, page: 0, size: 50, totalElements: 3, totalPages: 1 }),
+        }),
+    );
+    await page.goto('/data/datasets/10');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible({ timeout: 10000 });
+    await page.getByRole('tab', { name: '데이터' }).click();
+  }
+
+  test('DST 공백·표준시 전환 시각은 셀에 원문 그대로, 정상 값은 기존처럼 로컬 포맷으로 보인다', async ({
+    authenticatedPage: page,
+  }) => {
+    await openDataTab(page);
+
+    // 수정 전에는 '1988. 5. 8. 오전 3:30' / '1908. 4. 1. 오전 12:02' 로 보였다
+    await expect(page.getByRole('row', { name: /dst/ }).getByRole('cell', { name: '1988-05-08 02:30:00', exact: true })).toBeVisible();
+    await expect(page.getByRole('row', { name: /std/ }).getByRole('cell', { name: '1908-04-01 00:00:00', exact: true })).toBeVisible();
+    await expect(page.getByRole('cell', { name: /오전 3:30/ })).toHaveCount(0);
+    // 정상 값(UTC 01:15 = 서울 10:15)은 기존 포맷 그대로
+    await expect(page.getByRole('row', { name: /normal/ }).getByRole('cell', { name: '2024. 1. 2. 오전 10:15', exact: true })).toBeVisible();
+  });
+
+  test('행 편집 다이얼로그는 DST 공백 시각을 원문 텍스트로 보이고, 손대지 않으면 전송하지 않는다', async ({
+    authenticatedPage: page,
+  }) => {
+    await openDataTab(page);
+    const capture = await mockApi(page, 'PUT', '/api/v1/datasets/10/data/rows/1', {}, { capture: true });
+
+    await page.getByRole('cell', { name: 'dst', exact: true }).dblclick();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByRole('heading', { name: /행 편집 \(ID: 1\)/ })).toBeVisible();
+
+    // 수정 전에는 datetime-local 입력에 '1988-05-08T03:30' 이 담겼다(다른 시각)
+    const ts = page.locator('#edit-ts');
+    await expect(ts).toHaveAttribute('type', 'text');
+    await expect(ts).toHaveValue('1988-05-08 02:30:00');
+
+    await ts.click();
+    await page.keyboard.press('Tab');
+    await page.locator('#edit-label').fill('dst_e');
+    await dialog.getByRole('button', { name: '저장' }).click();
+
+    const payload = (await capture.waitForRequest()).payload as { data: Record<string, unknown> };
+    expect(payload.data).toEqual({ label: 'dst_e' });
+  });
+});

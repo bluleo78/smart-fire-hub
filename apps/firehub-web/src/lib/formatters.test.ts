@@ -191,6 +191,37 @@ describe('formatCellValue', () => {
       expect(formatCellValue('2026-04-11T12:00:00')).toBe(tsFmt.format(new Date('2026-04-11T12:00:00')));
     });
   });
+
+  // (#774) 브라우저 시간대(vitest TZ=Asia/Seoul)에 존재하지 않는 벽시계 시각은 Date 가 다른 시각으로 옮긴다.
+  // 해석 결과가 원문 날짜·시각 성분과 다르면 원문을 그대로 보여야 한다.
+  describe('브라우저 시간대에 없는 벽시계 시각은 원문 표시 (#774)', () => {
+    it.each([
+      // 서울 서머타임 시작 공백(02:00~03:00) — Date 는 03:30 으로 민다
+      '1988-05-08 02:30:00',
+      '1988-05-08 02:30',
+      '1987-05-10 02:30',
+      '1988-05-08T02:30:00',
+      // 표준시 전환(1908-04-01 00:00 이전 LMT) — Date 는 00:02:08 로 민다
+      '1908-04-01 00:00:00',
+    ])('TIMESTAMP %s → 원문', (v) => {
+      expect(formatCellValue(v, 'TIMESTAMP')).toBe(v);
+    });
+
+    it('dataType 없이 ISO 모양으로 온 DST 공백 시각도 원문', () => {
+      expect(formatCellValue('1988-05-08T02:30:00')).toBe('1988-05-08T02:30:00');
+    });
+
+    it('공백 바로 앞뒤의 실재 시각·오프셋 붙은 시점 값은 기존처럼 포맷한다', () => {
+      const tsFmt = new Intl.DateTimeFormat('ko-KR', { dateStyle: 'medium', timeStyle: 'short' });
+      for (const v of ['1988-05-08 01:59:00', '1988-05-08 03:00:00', '2024-01-02 10:15:00', '1900-01-01 00:00']) {
+        expect(formatCellValue(v, 'TIMESTAMP')).toBe(tsFmt.format(new Date(v)));
+      }
+      // 오프셋 붙은 값은 시점이므로 로컬 시각으로 바꿔 보여주는 것이 의도 (1988-05-07T17:30Z = 서울 03:30)
+      expect(formatCellValue('1988-05-07T17:30:00.000+00:00', 'TIMESTAMP')).toBe(
+        tsFmt.format(new Date('1988-05-07T17:30:00.000+00:00')),
+      );
+    });
+  });
 });
 
 describe('formatFileSize', () => {

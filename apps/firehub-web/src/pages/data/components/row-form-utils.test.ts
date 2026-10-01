@@ -31,6 +31,17 @@ describe('toTemporalFormValue', () => {
       expect(toTemporalFormValue(v, 'TIMESTAMP')).toEqual({ value: v, raw: true });
     }
   });
+
+  it('(#774) 브라우저 시간대에 없는 벽시계 시각(DST 공백)은 다른 시각으로 바꾸지 않고 원문(raw)으로 둔다', () => {
+    for (const v of ['1988-05-08 02:30:00', '1987-05-10 02:30', '1908-04-01 00:00:00']) {
+      expect(toTemporalFormValue(v, 'TIMESTAMP')).toEqual({ value: v, raw: true });
+    }
+    // 실재하는 오프셋 없는 벽시계 값은 그대로 datetime-local 값이 된다
+    expect(toTemporalFormValue('1988-05-08 03:00:00', 'TIMESTAMP')).toEqual({
+      value: '1988-05-08T03:00:00',
+      raw: false,
+    });
+  });
 });
 
 describe('computeChangedFields / pickChangedValues', () => {

@@ -129,6 +129,8 @@ export interface TemporalFormValue {
  * - 그 밖의 값(±infinity, BC, 5자리 연도 등 #769 이후 PG 원문으로 오는 값)은 입력란이 거부해
  *   빈칸이 되고, 빈칸이 저장 시 NULL 로 바뀌어 기존 값을 덮었다. 그래서 raw=true 로 표시해
  *   원문 텍스트 입력으로 보여 준다(손대지 않으면 전송하지 않아 그대로 보존된다).
+ * - (#774) 브라우저 시간대에 존재하지 않는 벽시계 시각(서머타임 공백 `1988-05-08 02:30` 등)도
+ *   `new Date` 가 다른 시각으로 옮기므로 같은 raw 경로로 원문 그대로 둔다(셀 표시와 같은 판정).
  */
 export function toTemporalFormValue(value: string, dataType: 'DATE' | 'TIMESTAMP'): TemporalFormValue {
   if (dataType === 'DATE') {
