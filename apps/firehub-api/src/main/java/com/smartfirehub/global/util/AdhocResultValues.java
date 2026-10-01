@@ -7,6 +7,7 @@ import org.jooq.types.DayToSecond;
 import org.jooq.types.Interval;
 import org.jooq.types.YearToMonth;
 import org.jooq.types.YearToSecond;
+import org.postgresql.util.PGobject;
 
 /**
  * 애드혹 SQL 결과 값을 <b>Jackson 이 직렬화할 수 있는 형태</b>로 바꾸는 헬퍼(#756).
@@ -27,8 +28,8 @@ import org.jooq.types.YearToSecond;
  * <p><b>응답 형태 = 텍스트.</b> 위 값은 PostgreSQL 이 내보내는 텍스트 표현(문자열)으로 준다. geometry 를
  * {@code ST_AsGeoJSON} <b>텍스트</b>로 주는 기존 관례와 같고, 데이터셋 SQL 탭 표({@code String(value)})·애드혹 분석 표
  * 모두 문자열을 그대로 그린다 — 파싱된 객체를 주면 SQL 탭이 {@code [object Object]} 로 그린다. 배열은 원소 단위로
- * 바꾸므로 {@code jsonb[]} 는 JSON 텍스트 원소의 배열이 된다. 그 밖의 값(숫자·문자열·날짜·UUID·bytea·단일 PGobject
- * 등)은 이미 직렬화되므로 손대지 않는다.
+ * 바꾸므로 {@code jsonb[]} 는 JSON 텍스트 원소의 배열이 된다. 단일 PGobject(range·inet·point 등)도 PG 텍스트로
+ * 바꾼다(#776, geometry/geography 제외). 그 밖의 값(숫자·문자열·날짜·UUID·bytea 등)은 이미 직렬화되므로 손대지 않는다.
  *
  * <p><b>날짜·시각은 여기 오기 전에 걸러진다.</b> 범위 밖(10000년 이후·BC·infinity·24:00)이거나 Java 날짜 객체가 PG
  * 값을 재현하지 못하는 date/timestamp/timestamptz/time/timetz 와 interval 은 {@link AdhocTemporalValues} 가 읽는
@@ -55,6 +56,14 @@ public final class AdhocResultValues {
     if (value instanceof Interval interval) {
       return formatInterval(interval);
     }
+    if (value instanceof PGobject pg) {
+      // range·multirange·inet·cidr·macaddr·기하 타입 등 jOOQ 가 모르는 PG 타입(#776). 그대로 두면 Jackson 이 pgjdbc
+      // 내부 프로퍼티({type,value,null}, point 는 x·y·isNull 까지)를 객체로 써서 SQL 탭이 [object Object] 로 그린다.
+      // executor 경로(#763)와 같이 PG 텍스트 원문(getValue)으로 준다 — 기하 타입은 AdhocGeometricValues 가 읽을 때
+      // 원문 텍스트를 담아 둔다. 단 PostGIS geometry/geography 는 제외(현행 유지): 애드혹 분석은 이 PGobject 를 보고
+      // GeoJSON 으로 다시 감싸고(#741, detectGeometryColumns 와 같은 판정 규칙), 데이터셋 SQL 탭 형태는 #767 결정 대기다.
+      return isSpatial(pg.getType()) ? value : pg.getValue();
+    }
     if (value instanceof java.sql.Array sqlArray) {
       // jOOQ 가 원소 타입을 몰라 pgjdbc 배열을 그대로 둔 경우(point[]·inet[] 등). toString() 은 PG 배열 리터럴
       // 텍스트({"(1,2)"})를 커넥션 없이 돌려준다 — 결과를 다 읽은 뒤라 getArray() 로 다시 파싱하지 않는다.
@@ -77,6 +86,18 @@ public final class AdhocResultValues {
       return converted;
     }
     return value;
+  }
+
+  /**
+   * PostGIS 공간 타입 PGobject 인가 — 타입 이름(스키마 한정 {@code "public"."geometry"} 포함)에 geometry/geography 가
+   * 들어 있으면 그렇다고 본다. 애드혹 분석의 {@code detectGeometryColumns} 와 같은 규칙이다.
+   */
+  private static boolean isSpatial(String type) {
+    if (type == null) {
+      return false;
+    }
+    String lower = type.toLowerCase(java.util.Locale.ROOT);
+    return lower.contains("geometry") || lower.contains("geography");
   }
 
   /**

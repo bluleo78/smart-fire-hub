@@ -43,8 +43,10 @@ public final class AdhocSqlStatements {
               // PostGIS 타입 이름은 커넥션 캐시 상태와 무관하게 한 표기로 고정해 jOOQ 가 늘 PGobject 로 읽게 한다(#759)
               // 범위 밖 날짜·시각(10000년·BC·infinity·24:00 등)은 Java 날짜 객체로 바뀌며 다른 값이 되므로 PG 텍스트
               // 원문으로 둔다(#768). 다차원 배열 래퍼보다 안쪽이어야 다차원 날짜 배열도 먼저 보고 폴백한다.
+              // 기하 타입(point 등)은 pgjdbc 가 double 로 다시 포맷하므로 읽는 시점에 서버 원문 텍스트로 둔다(#776).
               AdhocTemporalValues temporal =
-                  new AdhocTemporalValues(AdhocSpatialTypeNames.wrap(rs));
+                  new AdhocTemporalValues(
+                      AdhocGeometricValues.wrap(AdhocSpatialTypeNames.wrap(rs)));
               AdhocMultiDimArrays multiDim = new AdhocMultiDimArrays(temporal.proxy());
               return temporal.apply(dsl, multiDim.apply(dsl, dsl.fetch(multiDim.proxy())));
             }

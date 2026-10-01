@@ -330,4 +330,80 @@ class AdhocResultSerializationTest extends IntegrationTestBase {
       assertThat(d.get("rows").get(i).get("v").toString()).as("dataset row %d", i).isEqualTo(expected[i]);
     }
   }
+
+  // ---- #776 PGobject(range·multirange·inet·macaddr·기하 타입) ----
+
+  @Test
+  void pgObjectScalars_areReturnedAsPgTextNotPgjdbcInternals() throws Exception {
+    // 수정 전: pgjdbc PGobject 가 그대로 담겨 Jackson 이 {"type":..,"value":..,"null":false} 같은 내부 구조를
+    // 직렬화했다(데이터셋 SQL 탭은 [object Object]). executor 경로(#763)처럼 PG 텍스트 원문이어야 한다.
+    for (String expr :
+        java.util.List.of(
+            "'[1,5)'::int4range",
+            "'empty'::numrange",
+            "'(,)'::int4range",
+            "'[10,20]'::int8range",
+            "'[1.5,2.5)'::numrange",
+            "'[2024-01-01,)'::daterange",
+            "'[2024-01-01 00:00,2024-01-02 00:00)'::tsrange",
+            "'[2024-01-01 00:00+09,2024-01-02 00:00+09)'::tstzrange",
+            "'{[1,2),[5,6)}'::int4multirange",
+            "'{}'::nummultirange",
+            "'192.168.0.1/24'::inet",
+            "'10.0.0.0/8'::cidr",
+            "'08:00:2b:01:02:03'::macaddr",
+            "'08:00:2b:01:02:03:04:05'::macaddr8",
+            // 기하 타입은 pgjdbc 하위 클래스(PGpoint 등)가 double 로 다시 포맷(1.0)하므로 원문 텍스트를 써야 PG 와 같다
+            "point(1,2)",
+            "'(1.5,-2.25)'::point",
+            "box(point(0,0),point(1,1))",
+            "'<(1,2),3>'::circle",
+            "'[(0,0),(1,1)]'::lseg",
+            "'{1,-1,0}'::line",
+            "'((0,0),(1,1),(2,0))'::\"path\"",
+            "'[(0,0),(1,1)]'::\"path\"",
+            "'((0,0),(1,1),(1,0))'::polygon")) {
+      assertTextOnBothPaths(expr);
+    }
+  }
+
+  @Test
+  void nullPgObject_isJsonNull() throws Exception {
+    for (String expr : java.util.List.of("NULL::int4range", "NULL::inet", "NULL::point")) {
+      assertThat(analyticsValue(expr).isNull()).as("analytics %s", expr).isTrue();
+      assertThat(datasetValue(expr).isNull()).as("dataset %s", expr).isTrue();
+    }
+  }
+
+  @Test
+  void geometryPgObject_keepsItsShape() throws Exception {
+    // 회귀 가드 — geometry/geography 는 이 수정 범위 밖이다. 애드혹 분석은 GeoJSON 문자열(#741), 데이터셋 SQL
+    // 탭은 기존 형태(타입 + WKB 16진수 객체, #767 결정 대기) 그대로여야 한다.
+    for (String expr :
+        java.util.List.of("public.ST_MakePoint(1,2)", "public.ST_MakePoint(1,2)::public.geography")) {
+      JsonNode d = datasetValue(expr);
+      assertThat(d.isObject()).as("dataset %s", expr).isTrue();
+      assertThat(d.get("type").asText()).containsAnyOf("geometry", "geography");
+      assertThat(d.get("value").asText()).matches("[0-9A-F]+");
+      JsonNode a = analyticsValue(expr);
+      assertThat(a.isTextual()).as("analytics %s", expr).isTrue();
+      assertThat(objectMapper.readTree(a.asText()).get("type").asText()).isEqualTo("Point");
+    }
+  }
+
+  @Test
+  void pgObjectArrays_keepTheirShapeAndLeakNoInternals() throws Exception {
+    // 1차원 확장 타입 배열은 예전처럼 PG 배열 리터럴 텍스트(형태 차이는 #758 소관)
+    assertTextOnBothPaths("ARRAY['[1,2)'::int4range, 'empty']");
+    assertTextOnBothPaths("ARRAY['(1,2)'::point]");
+    // 다차원 배열도 pgjdbc 내부 필드(type/null/isNull)가 새지 않는다
+    for (String expr :
+        java.util.List.of("ARRAY[['[1,2)'::int4range]]", "ARRAY[['(1,2)'::point]]", "ARRAY[['1.1.1.1'::inet]]")) {
+      String a = analyticsValue(expr).toString();
+      String d = datasetValue(expr).toString();
+      for (String json : java.util.List.of(a, d)) {
+        assertThat(json).as(expr).doesNotContain("\"type\"").doesNotContain("isNull").doesNotContain("\"null\"");
+      }
+    }
+  }
 }
