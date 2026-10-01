@@ -590,4 +590,134 @@ class DataTableQueryServiceTest extends IntegrationTestBase {
     assertThat(response.error()).contains("non_existent_table_xyz").contains("does not exist");
     assertThat(dsl.fetchValue("SELECT 1", Integer.class)).isEqualTo(1);
   }
+
+  // =========================================================================
+  // #754 — DML … RETURNING
+  // =========================================================================
+
+  /** 테이블의 현재 value 목록(정렬) — search_path 와 무관하게 data 스키마로 직접 읽는다. */
+  private List<Integer> currentValues() {
+    return dsl.fetch("SELECT value FROM data." + testTableName + " ORDER BY value")
+        .getValues(0, Integer.class);
+  }
+
+  /**
+   * INSERT … RETURNING 은 결과 집합을 돌려주므로 executeUpdate 로 실행하면 pgjdbc 가 "A result was returned when
+   * none was expected" 로 실패하고 롤백됐다(#754). 이제 성공하고 영향 행 수가 실제 삽입 행 수와 같아야 한다.
+   */
+  @Test
+  void executeQuery_insertReturning_succeedsWithActualAffectedRows() {
+    SqlQueryResponse response =
+        dataTableQueryService.executeQuery(
+            "INSERT INTO "
+                + testTableName
+                + " (name, value) VALUES ('R4', 40), ('R5', 50) RETURNING value",
+            100);
+    assertThat(response.error()).isNull();
+    assertThat(response.queryType()).isEqualTo("INSERT");
+    assertThat(response.affectedRows()).isEqualTo(2);
+    assertThat(currentValues()).containsExactly(10, 20, 30, 40, 50);
+  }
+
+  /** UPDATE … RETURNING — 갱신된 행 수가 그대로 보고되고 실제로 갱신돼야 한다(#754). */
+  @Test
+  void executeQuery_updateReturning_succeedsWithActualAffectedRows() {
+    SqlQueryResponse response =
+        dataTableQueryService.executeQuery(
+            "UPDATE " + testTableName + " SET value = value + 1 WHERE value >= 20 RETURNING value",
+            100);
+    assertThat(response.error()).isNull();
+    assertThat(response.affectedRows()).isEqualTo(2);
+    assertThat(currentValues()).containsExactly(10, 21, 31);
+  }
+
+  /**
+   * DELETE … RETURNING — 삭제된 행 수가 보고돼야 한다. maxRows(1) 보다 많은 행을 돌려줘도 영향 행 수는 잘리지 않는다
+   * (행 제한은 SELECT 결과 표시용이지 DML 영향 행 수와 무관하다).
+   */
+  @Test
+  void executeQuery_deleteReturning_countsAllRowsRegardlessOfMaxRows() {
+    SqlQueryResponse response =
+        dataTableQueryService.executeQuery("DELETE FROM " + testTableName + " RETURNING *", 1);
+    assertThat(response.error()).isNull();
+    assertThat(response.queryType()).isEqualTo("DELETE");
+    assertThat(response.affectedRows()).isEqualTo(3);
+    assertThat(currentValues()).isEmpty();
+  }
+
+  /** 데이터 수정 CTE 를 앞에 둔 WITH … INSERT … RETURNING 도 성공하고 삽입 행 수가 보고돼야 한다. */
+  @Test
+  void executeQuery_withCteInsertReturning_succeeds() {
+    SqlQueryResponse response =
+        dataTableQueryService.executeQuery(
+            "WITH src AS (SELECT 70 AS v UNION ALL SELECT 80) INSERT INTO "
+                + testTableName
+                + " (name, value) SELECT 'cte', v FROM src RETURNING value",
+            100);
+    assertThat(response.error()).isNull();
+    assertThat(response.queryType()).isEqualTo("INSERT");
+    assertThat(response.affectedRows()).isEqualTo(2);
+    assertThat(currentValues()).containsExactly(10, 20, 30, 70, 80);
+  }
+
+  /**
+   * 본문이 SELECT 인 데이터 수정 CTE({@code WITH d AS (DELETE … RETURNING …) SELECT …})는 현재 SQL 가드(JSqlParser)가
+   * 파싱하지 못해 실행 전에 거부된다(#385 — 파싱 실패 시 폴백 없음). execute() 가 다중 결과를 소비하게 바뀌어도 이
+   * 경계는 그대로이며 아무것도 삭제되지 않는다(#754 에서 확인·고정).
+   */
+  @Test
+  void executeQuery_dataModifyingCteWithSelectBody_isRejectedBeforeExecution() {
+    assertThatThrownBy(
+            () ->
+                dataTableQueryService.executeQuery(
+                    "WITH d AS (DELETE FROM "
+                        + testTableName
+                        + " WHERE value >= 20 RETURNING value) SELECT value FROM d",
+                    100))
+        .isInstanceOfAny(
+            com.smartfirehub.pipeline.exception.UnsafeSqlException.class, SqlQueryException.class);
+    assertThat(currentValues()).containsExactly(10, 20, 30);
+  }
+
+  /** RETURNING 이 없는 일반 DML 의 영향 행 수는 예전과 같다(execute() 루프 전환 후에도). */
+  @Test
+  void executeQuery_plainDml_affectedRowsUnchanged() {
+    SqlQueryResponse response =
+        dataTableQueryService.executeQuery(
+            "UPDATE " + testTableName + " SET value = 0 WHERE value <= 20", 100);
+    assertThat(response.error()).isNull();
+    assertThat(response.affectedRows()).isEqualTo(2);
+    assertThat(currentValues()).containsExactly(0, 0, 30);
+  }
+
+  /**
+   * 다중 결과를 다루는 execute() 로 바꿔도 다중 문장은 실행 전 검증에서 거부돼야 한다 — 첫 문장도 실행되지 않는다
+   * (#754 보안 경계: 검증 문자열 = 실행 문자열, 단일 문장만).
+   */
+  @Test
+  void executeQuery_multiStatementWithReturning_isRejectedBeforeExecution() {
+    assertThatThrownBy(
+            () ->
+                dataTableQueryService.executeQuery(
+                    "DELETE FROM "
+                        + testTableName
+                        + " WHERE value = 10 RETURNING value; DELETE FROM "
+                        + testTableName
+                        + " RETURNING value",
+                    100))
+        .isInstanceOf(SqlQueryException.class);
+    assertThat(currentValues()).containsExactly(10, 20, 30);
+  }
+
+  /** RETURNING DML 의 실행 오류도 error 필드로 돌아오고 savepoint 로 되돌려져 트랜잭션이 계속된다. */
+  @Test
+  void executeQuery_returningDmlError_rollsBackAndKeepsTransaction() {
+    SqlQueryResponse response =
+        dataTableQueryService.executeQuery(
+            "INSERT INTO " + testTableName + " (name, value) VALUES ('bad', 'x') RETURNING value",
+            100);
+    assertThat(response.error()).isNotNull();
+    assertThat(currentValues()).containsExactly(10, 20, 30);
+    assertThat(dsl.fetchValue("SELECT 1", Integer.class)).isEqualTo(1);
+  }
 }

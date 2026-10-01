@@ -47,13 +47,58 @@ public final class AdhocSqlStatements {
         });
   }
 
-  /** DML 을 정적 Statement 로 실행해 영향 행 수를 돌려준다. */
+  /**
+   * DML 을 정적 Statement 로 실행해 영향 행 수를 돌려준다.
+   *
+   * <p><b>왜 {@code executeUpdate} 가 아니라 {@code execute} 인가(#754).</b> pgjdbc 의 {@code executeUpdate} 는
+   * 결과 집합이 돌아오면 "A result was returned when none was expected" 로 예외를 던진다 — {@code INSERT/UPDATE/
+   * DELETE … RETURNING} 이 전부 실패·롤백됐다. {@code execute} 후 {@code getMoreResults}/{@code getUpdateCount}
+   * 로 모든 결과를 소비하며 센다:
+   *
+   * <ul>
+   *   <li>결과 집합(RETURNING) → 행 수. RETURNING 은 영향받은 행마다 한 행을 돌려주므로 이것이 곧 영향 행 수다
+   *       (pgjdbc 는 {@code execute} 경로에서 결과 집합과 명령 태그의 갱신 수를 함께 주지 않는다).
+   *   <li>갱신 수(일반 DML) → 그 값. 예전 {@code executeUpdate} 와 같은 값이다.
+   * </ul>
+   *
+   * <p><b>반환 행 자체는 돌려주지 않는다(의도한 선택).</b> 응답 레코드에 {@code columns/rows} 자리는 있지만 웹 SQL
+   * 편집기는 SELECT 일 때만 행 표를 그리고 그 밖에는 영향 행 수만 보여 준다. 여기서는 영향 행 수만 정확히 한다.
+   *
+   * <p><b>한계.</b> 본문이 SELECT 인 데이터 수정 CTE({@code WITH d AS (DELETE … RETURNING …) SELECT … FROM d})는
+   * PostgreSQL 이 CTE 안 DML 의 행 수를 보고하지 않는다(명령 태그가 {@code SELECT n}). 이 경우 돌려주는 값은 최종
+   * SELECT 가 돌려준 행 수다 — {@code SELECT value FROM d} 처럼 CTE 결과를 그대로 내면 영향 행 수와 같지만
+   * {@code SELECT count(*) FROM d} 면 1 이다. (현재는 SQL 가드가 이 형태를 파싱하지 못해 실행 전에 거부한다 — 가드가
+   * 허용하게 되면 이 한계가 드러난다.)
+   *
+   * <p><b>다중 문장은 여기서 막지 않는다.</b> {@code execute} 는 여러 결과를 소비할 수 있지만, 단일 문장 강제는
+   * 호출자의 사전 검증(SqlValidationUtils·SqlValidator)이 실행 전에 한다 — 이 헬퍼는 검증된 문자열을 바이트 그대로
+   * 실행할 뿐이다.
+   */
   public static int execute(DSLContext dsl, String sql) {
     return dsl.connectionResult(
         conn -> {
           try (Statement st = conn.createStatement()) {
             st.setEscapeProcessing(false);
-            return st.executeUpdate(sql);
+            long affected = 0;
+            boolean isResultSet = st.execute(sql);
+            // JDBC 표준 종료 조건: 결과 집합이 아니고 갱신 수가 -1 이면 더 이상 결과가 없다.
+            while (true) {
+              if (isResultSet) {
+                try (ResultSet rs = st.getResultSet()) {
+                  while (rs.next()) {
+                    affected++;
+                  }
+                }
+              } else {
+                int updateCount = st.getUpdateCount();
+                if (updateCount == -1) {
+                  break;
+                }
+                affected += updateCount;
+              }
+              isResultSet = st.getMoreResults();
+            }
+            return (int) Math.min(affected, Integer.MAX_VALUE);
           } catch (SQLException e) {
             throw translate(sql, e);
           }

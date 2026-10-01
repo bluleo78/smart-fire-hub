@@ -416,4 +416,19 @@ class AnalyticsQueryExecutionServiceTest extends IntegrationTestBase {
     assertThat(r3.error()).isNotNull();
     assertThat(r3.rows()).isEmpty();
   }
+
+  /**
+   * 애드혹 분석 쓰기 허용(readOnly=false) 경로도 같은 헬퍼를 쓴다 — DML … RETURNING 이 "A result was returned when
+   * none was expected" 로 실패하지 않고 실제 영향 행 수를 보고해야 한다(#754).
+   */
+  @Test
+  void execute_deleteReturning_readOnlyFalse_reportsActualAffectedRows() {
+    AnalyticsQueryResponse response =
+        executionService.execute("DELETE FROM data.exec_test RETURNING name", 100, false);
+
+    assertThat(response.error()).isNull();
+    assertThat(response.queryType()).isEqualTo("DELETE");
+    assertThat(response.affectedRows()).isEqualTo(2);
+    assertThat(dsl.fetchValue("SELECT count(*) FROM data.exec_test")).isEqualTo(0L);
+  }
 }
