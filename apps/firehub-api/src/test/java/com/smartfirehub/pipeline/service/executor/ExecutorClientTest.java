@@ -52,8 +52,12 @@ class ExecutorClientTest {
   }
 
   private ExecutorClient executorClient() {
+    // 운영과 같은 기본 한도를 쓴다 — 256KB 초과 회귀 가드가 실제 기본값을 지키도록(#761).
     return new ExecutorClient(
-        WebClient.builder(), "http://localhost:" + wireMock.port(), "test-token");
+        WebClient.builder(),
+        "http://localhost:" + wireMock.port(),
+        "test-token",
+        ExecutorClient.DEFAULT_MAX_RESPONSE_BYTES);
   }
 
   // -------------------------------------------------------------------------
@@ -467,6 +471,96 @@ class ExecutorClientTest {
     assertThatThrownBy(() -> executorClient().executeSql("SELECT 1"))
         .isInstanceOf(MissingTenantScopeException.class);
     wireMock.verify(0, postRequestedFor(urlEqualTo("/execute/sql")));
+  }
+
+  // -------------------------------------------------------------------------
+  // 응답 크기 한도 (#761)
+  // -------------------------------------------------------------------------
+
+  /**
+   * 1000행 × md5 8컬럼 ≈ 330KB 응답 — Spring WebClient 기본 버퍼 한도(256KB)를 넘는다. 운영 기본 경로
+   * (executor 켬)에서 기본 maxRows=1000 조회가 DataBufferLimitException 으로 실패하던 결함(#761)의 회귀 가드.
+   */
+  @Test
+  void executeQuery_responseLargerThan256Kb_isDecoded() {
+    String body = queryResponseJson(1000, 8);
+    assertThat(body.length()).isGreaterThan(256 * 1024);
+    stubOkFor("/execute/query", body);
+
+    var result = executorClient().executeQuery("SELECT * FROM wide", 1000, true);
+
+    assertThat(result.success()).isTrue();
+    assertThat(result.rows()).hasSize(1000);
+    assertThat(result.rows().get(999)).containsEntry("g", 1000);
+  }
+
+  /**
+   * 응답이 설정 한도를 넘으면 원인 사슬의 DataBufferLimitException 을 찾아
+   * ExecutorResponseTooLargeException(한도 표기 포함 안내 메시지)으로 바꿔 던진다 — "연결 실패" 로 오인되지 않게.
+   */
+  @Test
+  void executeQuery_responseOverConfiguredLimit_throwsTooLarge() {
+    stubOkFor("/execute/query", queryResponseJson(100, 8));
+    ExecutorClient smallLimit = smallLimitClient(4 * 1024);
+
+    assertThatThrownBy(() -> smallLimit.executeQuery("SELECT * FROM wide", 100, true))
+        .isInstanceOf(ExecutorResponseTooLargeException.class)
+        .hasMessageStartingWith("결과가 너무 큽니다(응답 한도 4KB 초과)")
+        .hasRootCauseInstanceOf(org.springframework.core.io.buffer.DataBufferLimitException.class);
+  }
+
+  /** 다른 엔드포인트(Python stdout 등)도 같은 한도·같은 예외 변환을 받는다. */
+  @Test
+  void executePython_outputOverConfiguredLimit_throwsTooLarge() {
+    stubOkFor(
+        "/execute/python",
+        "{\"success\":true,\"output\":\""
+            + "x".repeat(8 * 1024)
+            + "\",\"exit_code\":0,\"error\":null,\"execution_time_ms\":1,\"rows_loaded\":0}");
+    ExecutorClient smallLimit = smallLimitClient(4 * 1024);
+
+    assertThatThrownBy(() -> smallLimit.executePython(Map.of("script", "print('x')")))
+        .isInstanceOf(ExecutorResponseTooLargeException.class);
+  }
+
+  /** 무제한(-1)·0 은 메모리 보호를 없애거나 모든 응답을 실패시키므로 생성 시점에 거부한다. */
+  @Test
+  void constructor_nonPositiveLimit_isRejected() {
+    assertThatThrownBy(() -> smallLimitClient(-1)).isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> smallLimitClient(0)).isInstanceOf(IllegalArgumentException.class);
+  }
+
+  private ExecutorClient smallLimitClient(int maxResponseBytes) {
+    return new ExecutorClient(
+        WebClient.builder(), "http://localhost:" + wireMock.port(), "test-token", maxResponseBytes);
+  }
+
+  /** 행 수 n, md5 텍스트 컬럼 수 cols 인 executor /execute/query 성공 응답 JSON 을 만든다. */
+  private static String queryResponseJson(int n, int cols) {
+    StringBuilder rows = new StringBuilder();
+    for (int g = 1; g <= n; g++) {
+      if (g > 1) {
+        rows.append(',');
+      }
+      rows.append("{\"g\":").append(g);
+      for (int c = 0; c < cols; c++) {
+        // md5 결과와 같은 32자 16진 문자열
+        String hex = String.format("%032x", (long) g * 31 + c);
+        rows.append(",\"h").append(c).append("\":\"").append(hex).append('"');
+      }
+      rows.append('}');
+    }
+    StringBuilder columns = new StringBuilder("\"g\"");
+    for (int c = 0; c < cols; c++) {
+      columns.append(",\"h").append(c).append('"');
+    }
+    return "{\"success\":true,\"query_type\":\"SELECT\",\"columns\":["
+        + columns
+        + "],\"rows\":["
+        + rows
+        + "],\"row_count\":"
+        + n
+        + ",\"affected_rows\":0,\"execution_time_ms\":5,\"truncated\":true,\"error\":null}";
   }
 
   private void stubOkFor(String path, String body) {

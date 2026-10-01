@@ -12,6 +12,7 @@ import com.smartfirehub.global.util.SqlLexicalMask;
 import com.smartfirehub.global.util.SqlValidationUtils;
 import com.smartfirehub.pipeline.exception.UnsafeSqlException;
 import com.smartfirehub.pipeline.service.executor.ExecutorClient;
+import com.smartfirehub.pipeline.service.executor.ExecutorResponseTooLargeException;
 import com.smartfirehub.pipeline.service.validator.SqlValidator;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -136,6 +137,11 @@ public class AnalyticsQueryExecutionService {
           result.rows().size(),
           result.truncated(),
           null);
+    } catch (ExecutorResponseTooLargeException e) {
+      // 결과가 응답 버퍼 한도를 넘은 것은 연결 장애가 아니라 사용자가 줄일 수 있는 조건이다(#761) —
+      // "Executor 연결 실패" 로 뭉뚱그리지 않고 LIMIT·컬럼을 줄이라는 안내를 그대로 돌려준다.
+      log.warn("Executor query result exceeded response size limit: {}", e.getMessage());
+      return errorResponse(e.getMessage());
     } catch (Exception e) {
       log.error("Executor query execution failed", e);
       return errorResponse("Executor 연결 실패: " + e.getMessage());

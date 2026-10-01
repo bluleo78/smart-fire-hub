@@ -372,6 +372,32 @@ class AnalyticsQueryExecutionServiceExtTest extends IntegrationTestBase {
     }
   }
 
+  /**
+   * 결과가 executor 응답 한도를 넘으면 "Executor 연결 실패" 가 아니라 결과를 줄이라는 안내를 돌려준다(#761).
+   * 차트·저장 쿼리도 같은 execute() 를 거치므로 같은 메시지를 받는다.
+   */
+  @Test
+  void executeViaExecutor_responseTooLarge_returnsResultTooLargeMessage() {
+    when(executorClient.executeQuery(anyString(), anyInt(), anyBoolean()))
+        .thenThrow(
+            new com.smartfirehub.pipeline.service.executor.ExecutorResponseTooLargeException(
+                32 * 1024 * 1024, new RuntimeException("DataBufferLimitException")));
+
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        executionService, "executorEnabled", true);
+
+    try {
+      AnalyticsQueryResponse res = executionService.execute("SELECT 1", 10000, true);
+
+      assertThat(res.error()).startsWith("결과가 너무 큽니다(응답 한도 32MB 초과)");
+      assertThat(res.error()).doesNotContain("Executor 연결 실패");
+      assertThat(res.rows()).isEmpty();
+    } finally {
+      org.springframework.test.util.ReflectionTestUtils.setField(
+          executionService, "executorEnabled", false);
+    }
+  }
+
   @Test
   void executeDirectly_validationFailure_doesNotEchoSql() {
     // DROP 은 SqlValidationUtils 가 차단 → SqlQueryException 한국어 메시지 (SQL 본문 비포함)
