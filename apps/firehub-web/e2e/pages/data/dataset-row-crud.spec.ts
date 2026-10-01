@@ -599,9 +599,11 @@ test.describe('데이터셋 상세 — 행 추가/편집', () => {
     // 아무것도 바꾸지 않고 저장
     await dialog.getByRole('button', { name: '저장' }).click();
 
+    // (#772) 바뀐 칸만 전송한다 — 아무것도 바꾸지 않았으므로 is_active 는 페이로드에 없고(서버가 기존
+    // NULL 을 유지), 무엇보다 false 로 왜곡된 값이 전송되지 않아야 한다.
     const captured = await updateCapture.waitForRequest();
     const payload = captured.payload as { data: Record<string, unknown> };
-    expect(payload.data.is_active).toBeNull();
+    expect(payload.data).toEqual({});
   });
 
   test('NOT NULL BOOLEAN 컬럼은 기존과 동일하게 이진 Switch로 동작한다', async ({
@@ -914,11 +916,11 @@ test.describe('데이터셋 상세 — 행 추가/편집', () => {
     await page.locator('#edit-label').fill('새라벨');
     await dialog.getByRole('button', { name: '저장' }).click();
 
-    // PUT payload에 PK(row_key)가 기존 값 그대로 포함되어야 한다 — 누락되면 백엔드가 400 반환
+    // (#772) 바뀐 칸(label)만 전송한다 — PK(row_key)는 페이로드에 없고 서버 부분 업데이트(#672)가
+    // 기존 값을 유지한다.
     const captured = await updateCapture.waitForRequest();
     const payload = captured.payload as { data: Record<string, unknown> };
-    expect(payload.data.row_key).toBe(42);
-    expect(payload.data.label).toBe('새라벨');
+    expect(payload.data).toEqual({ label: '새라벨' });
   });
 
   test('사용자 정의 PK(NOT NULL) 컬럼이 있는 데이터셋 — 행 추가 시 PK 입력 필드가 노출되고 값이 페이로드에 포함된다', async ({
@@ -1023,5 +1025,142 @@ test.describe('데이터셋 상세 — 행 추가/편집', () => {
     // Escape 키로 다이얼로그 닫기 (EditRowDialog 에는 취소 버튼이 없으므로 Escape 사용)
     await page.keyboard.press('Escape');
     await expect(page.getByRole('dialog')).not.toBeVisible({ timeout: 3000 });
+  });
+});
+
+/**
+ * (#772) 행 편집 다이얼로그 — DATE/TIMESTAMP 기존 값 보존 회귀 테스트.
+ *
+ * 수정 전 결함:
+ * 1. 데이터 탭 API 는 TIMESTAMP 를 오프셋 붙은 ISO(`…+00:00`)로 주는데 폼이 그 문자열을 그대로
+ *    datetime-local 입력에 넣어 빈칸으로 보이고, 손대지 않으면 그 문자열이 그대로 PUT 되어 서버가 400.
+ * 2. 빈칸으로 보이는 날짜 칸을 클릭/Tab 으로 지나가기만 해도 DOM 값 '' 이 폼에 들어가 NULL 로 저장.
+ * 3. date 입력이 담을 수 없는 값(`infinity`, BC 등)도 같은 경로로 NULL 로 덮였다.
+ * 수정 후: 바뀐 칸만 PUT 하고, 표현 불가 값은 원문 텍스트 입력으로 보여준다.
+ * 브라우저 시간대에 따라 datetime-local 값이 달라지므로 시간대를 고정한다.
+ */
+test.describe('데이터셋 상세 — 행 편집 날짜/시각 값 보존 (#772)', () => {
+  test.use({ timezoneId: 'Asia/Seoul' });
+
+  const temporalDataset = createDatasetDetail({
+    id: 9,
+    rowCount: 3,
+    columns: [
+      createColumn({ id: 1, columnName: 'label', displayName: 'label', dataType: 'TEXT', isPrimaryKey: false, isNullable: true, columnOrder: 0 }),
+      createColumn({ id: 2, columnName: 'd', displayName: 'd', dataType: 'DATE', isPrimaryKey: false, isNullable: true, columnOrder: 1 }),
+      createColumn({ id: 3, columnName: 'ts', displayName: 'ts', dataType: 'TIMESTAMP', isPrimaryKey: false, isNullable: true, columnOrder: 2 }),
+    ],
+  });
+
+  // 실제 데이터 탭 API 응답 모양 — 정상 TIMESTAMP 는 UTC ISO(오프셋 포함), 범위 밖 값은 PG 원문(#769)
+  const rows = [
+    { id: 1, label: 'n002', d: '2020-01-03', ts: '2020-01-03T01:15:30.500+00:00' },
+    { id: 2, label: 'x', d: 'infinity', ts: null },
+    { id: 3, label: 'bc', d: '0044-03-15 BC', ts: '0044-03-15 10:00:00 BC' },
+  ];
+
+  async function openEditDialog(page: import('@playwright/test').Page, rowId: number, cellText: string) {
+    await mockApi(page, 'GET', '/api/v1/datasets/9', temporalDataset);
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', createCategories());
+    await mockApi(page, 'GET', '/api/v1/datasets/9/queries', createPageResponse([]));
+    await mockApi(page, 'GET', '/api/v1/datasets/tags', []);
+    await mockApi(page, 'GET', '/api/v1/datasets/9/stats', []);
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets/9/data',
+      (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ columns: temporalDataset.columns, rows, page: 0, size: 50, totalElements: 3, totalPages: 1 }),
+        }),
+    );
+    const capture = await mockApi(page, 'PUT', `/api/v1/datasets/9/data/rows/${rowId}`, {}, { capture: true });
+
+    await page.goto('/data/datasets/9');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible({ timeout: 10000 });
+    await page.getByRole('tab', { name: '데이터' }).click();
+    await page.getByRole('cell', { name: cellText, exact: true }).dblclick();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByRole('heading', { name: new RegExp(`행 편집 \\(ID: ${rowId}\\)`) })).toBeVisible();
+    return { dialog, capture };
+  }
+
+  test('정상 TIMESTAMP 행 — 기존 시각이 입력란에 담기고, label 만 바꿔 저장하면 날짜·시각 칸은 전송되지 않는다', async ({
+    authenticatedPage: page,
+  }) => {
+    const { dialog, capture } = await openEditDialog(page, 1, 'n002');
+
+    // UTC 01:15:30.5 = 서울 10:15:30.5 — 데이터 탭 셀과 같은 벽시계 시각(브라우저가 .500 → .5 로 정규화)
+    await expect(page.locator('#edit-ts')).toHaveValue(/^2020-01-03T10:15:30\.50*$/);
+    await expect(page.locator('#edit-d')).toHaveValue('2020-01-03');
+
+    await page.locator('#edit-label').fill('n002_e');
+    await dialog.getByRole('button', { name: '저장' }).click();
+
+    const payload = (await capture.waitForRequest()).payload as { data: Record<string, unknown> };
+    expect(payload.data).toEqual({ label: 'n002_e' });
+    await expect(page.getByText('행이 수정되었습니다.')).toBeVisible();
+  });
+
+  test('날짜·시각 칸을 클릭 후 Tab 으로 지나가기만 하면 값이 바뀌지 않고 전송되지 않는다', async ({
+    authenticatedPage: page,
+  }) => {
+    const { dialog, capture } = await openEditDialog(page, 1, 'n002');
+
+    await page.locator('#edit-d').click();
+    await page.keyboard.press('Tab');
+    await page.locator('#edit-ts').click();
+    await page.keyboard.press('Tab');
+    await page.locator('#edit-label').fill('n002_t');
+    await dialog.getByRole('button', { name: '저장' }).click();
+
+    const payload = (await capture.waitForRequest()).payload as { data: Record<string, unknown> };
+    expect(payload.data).toEqual({ label: 'n002_t' });
+  });
+
+  test('TIMESTAMP 를 직접 바꾸면 오프셋 없는 로컬 날짜시각(서버 LocalDateTime 형식)으로 전송된다', async ({
+    authenticatedPage: page,
+  }) => {
+    const { dialog, capture } = await openEditDialog(page, 1, 'n002');
+
+    await page.locator('#edit-ts').fill('2021-06-01T09:30');
+    await dialog.getByRole('button', { name: '저장' }).click();
+
+    const payload = (await capture.waitForRequest()).payload as { data: Record<string, unknown> };
+    expect(Object.keys(payload.data)).toEqual(['ts']);
+    expect(payload.data.ts).toMatch(/^2021-06-01T09:30(:00(\.0+)?)?$/);
+  });
+
+  test('date 입력이 담을 수 없는 값(infinity)은 원문 텍스트로 보이고, 지나가기만 하면 전송되지 않는다', async ({
+    authenticatedPage: page,
+  }) => {
+    const { dialog, capture } = await openEditDialog(page, 2, 'x');
+
+    const d = page.locator('#edit-d');
+    await expect(d).toHaveAttribute('type', 'text');
+    await expect(d).toHaveValue('infinity');
+
+    await d.click();
+    await page.keyboard.press('Tab');
+    await page.locator('#edit-label').fill('x_e');
+    await dialog.getByRole('button', { name: '저장' }).click();
+
+    const payload = (await capture.waitForRequest()).payload as { data: Record<string, unknown> };
+    expect(payload.data).toEqual({ label: 'x_e' });
+  });
+
+  test('BC 값 칸을 사용자가 명시적으로 지운 경우에만 NULL 로 전송된다(손대지 않은 BC 시각은 미전송)', async ({
+    authenticatedPage: page,
+  }) => {
+    const { dialog, capture } = await openEditDialog(page, 3, 'bc');
+
+    await expect(page.locator('#edit-d')).toHaveValue('0044-03-15 BC');
+    await expect(page.locator('#edit-ts')).toHaveValue('0044-03-15 10:00:00 BC');
+
+    await page.locator('#edit-d').fill('');
+    await dialog.getByRole('button', { name: '저장' }).click();
+
+    const payload = (await capture.waitForRequest()).payload as { data: Record<string, unknown> };
+    expect(payload.data).toEqual({ d: null });
   });
 });

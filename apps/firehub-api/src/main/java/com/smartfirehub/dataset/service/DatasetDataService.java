@@ -325,26 +325,31 @@ public class DatasetDataService {
     List<String> columnNames = columns.stream().map(DatasetColumnResponse::columnName).toList();
     Map<String, String> columnTypes = buildColumnTypes(columns);
 
-    // (#672) 부분 업데이트(merge-then-validate): 사용자 정의 PK 컬럼처럼 프론트 편집 폼에서
-    // 읽기 전용으로 제외되어 요청 바디에 아예 포함되지 않는 컬럼이 있을 수 있다.
-    // 요청에 없는 컬럼은 기존 DB 값을 그대로 유지하도록 먼저 조회해 병합한 뒤,
-    // 요청에 "명시적으로 포함된" 컬럼(값이 null이어도 포함)만 재검증한다.
-    Map<String, Object> existingRow =
-        dataTableRowService.getRow(dataset.tableName(), columnNames, rowId, columnTypes);
+    // (#672·#772) 부분 업데이트: 요청 바디에 없는 컬럼은 DB 값을 그대로 유지한다.
+    // 예전에는 행 전체를 읽어 요청 값과 병합한 뒤 "모든" 컬럼을 다시 UPDATE 했는데, 그 왕복이
+    // 값을 바꿨다 — GEOMETRY 는 ST_AsGeoJSON(소수 9자리)으로 읽혀 좌표가 반올림됐고, 날짜·시각은
+    // 읽기 표현(#769 PG 원문 등)에 보존이 기대야 했다. 이제 요청에 "명시적으로 포함된" 컬럼(값이
+    // null 이어도 포함)만 검증해 SET 하고, 나머지 컬럼은 UPDATE 문에 아예 넣지 않는다.
+    List<String> requestedColumns =
+        columnNames.stream().filter(request.data()::containsKey).toList();
 
-    Map<String, Object> mergedData = new HashMap<>();
-    for (String columnName : columnNames) {
-      if (request.data().containsKey(columnName)) {
-        mergedData.put(columnName, request.data().get(columnName));
-      } else {
-        mergedData.put(columnName, existingRow.get(columnName));
-      }
+    if (requestedColumns.isEmpty()) {
+      // 바꿀 컬럼이 없으면 쓰기 없이 행 존재만 확인한다(없는 행은 기존과 같이 RowNotFound).
+      dataTableRowService.getRow(dataset.tableName(), columnNames, rowId, columnTypes);
+      return;
+    }
+
+    List<DatasetColumnResponse> requestedColumnDefs =
+        columns.stream().filter(c -> request.data().containsKey(c.columnName())).toList();
+    Map<String, Object> requestedData = new HashMap<>();
+    for (String columnName : requestedColumns) {
+      requestedData.put(columnName, request.data().get(columnName));
     }
 
     Map<String, Object> validatedData =
-        validateAndConvertRowData(columns, mergedData, request.data().keySet());
+        validateAndConvertRowData(requestedColumnDefs, requestedData, request.data().keySet());
     dataTableRowService.updateRow(
-        dataset.tableName(), rowId, columnNames, validatedData, columnTypes);
+        dataset.tableName(), rowId, requestedColumns, validatedData, columnTypes);
   }
 
   @Transactional(readOnly = true)

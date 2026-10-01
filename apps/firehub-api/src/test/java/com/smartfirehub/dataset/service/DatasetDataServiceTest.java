@@ -923,4 +923,94 @@ class DatasetDataServiceTest extends IntegrationTestBase {
             () -> datasetDataService.updateRow(dataset.id(), added.id(), new RowDataRequest(invalid)))
         .isInstanceOf(IllegalArgumentException.class);
   }
+
+  // =========================================================================
+  // updateRow — 요청에 없는 컬럼은 UPDATE 대상에서 빠진다 (#772)
+  // =========================================================================
+
+  /** label(TEXT) + d(DATE) + ts(TIMESTAMP) + geom(GEOMETRY) 데이터셋을 만들고 행 하나를 직접 SQL 로 넣는다. */
+  private Object[] createTemporalGeomRow(String tableName, String d, String ts, String geomWkt) {
+    List<DatasetColumnRequest> columns =
+        List.of(
+            new DatasetColumnRequest("label", "label", "TEXT", null, true, false, null),
+            new DatasetColumnRequest("d", "d", "DATE", null, true, false, null),
+            new DatasetColumnRequest("ts", "ts", "TIMESTAMP", null, true, false, null),
+            new DatasetColumnRequest("geom", "geom", "GEOMETRY", null, true, false, null));
+    DatasetDetailResponse dataset =
+        datasetService.createDataset(
+            new CreateDatasetRequest(tableName, tableName, null, null, "TABLE", "SOURCE", columns, null),
+            testUserId);
+    // API 경로(addRow)는 ±infinity·BC·9자리 넘는 좌표를 만들 수 없으므로 PG 에 직접 넣는다
+    Long rowId =
+        dsl.fetchOne(
+                "INSERT INTO data.\"" + dataset.tableName() + "\" (label, d, ts, geom)"
+                    + " VALUES ('before', ?::date, ?::timestamp, ST_GeomFromText(?, 4326)) RETURNING id",
+                d,
+                ts,
+                geomWkt)
+            .get(0, Long.class);
+    return new Object[] {dataset, rowId};
+  }
+
+  private Map<String, Object> readRawRow(String tableName, Long rowId) {
+    return dsl.fetchOne(
+            "SELECT label, d::text AS d, ts::text AS ts, ST_AsEWKT(geom) AS geom FROM data.\""
+                + tableName
+                + "\" WHERE id = ?",
+            rowId)
+        .intoMap();
+  }
+
+  /**
+   * 회귀(#772): 한 컬럼만 바꾸는 부분 업데이트가 손대지 않은 GEOMETRY 를 다시 쓰면 안 된다.
+   *
+   * <p>수정 전에는 행 전체를 읽어(ST_AsGeoJSON, 소수 9자리) 모든 컬럼을 다시 UPDATE 해, label 만 바꿔도
+   * 9자리를 넘는 좌표가 조용히 반올림됐다. 이제는 요청에 포함된 컬럼만 SET 한다.
+   */
+  @Test
+  void updateRow_partialUpdate_untouchedGeometry_keepsFullPrecision() {
+    Object[] created =
+        createTemporalGeomRow(
+            "geom_precision_keep", "2020-01-03", "2020-01-03 10:15:30.5",
+            "POINT(126.978123456789012 37.566512345678901)");
+    DatasetDetailResponse dataset = (DatasetDetailResponse) created[0];
+    Long rowId = (Long) created[1];
+    Map<String, Object> before = readRawRow(dataset.tableName(), rowId);
+
+    datasetDataService.updateRow(dataset.id(), rowId, new RowDataRequest(Map.of("label", "after")));
+
+    Map<String, Object> after = readRawRow(dataset.tableName(), rowId);
+    assertThat(after.get("label")).isEqualTo("after");
+    assertThat(after.get("geom")).isEqualTo(before.get("geom"));
+    assertThat(after.get("d")).isEqualTo("2020-01-03");
+    assertThat(after.get("ts")).isEqualTo("2020-01-03 10:15:30.5");
+  }
+
+  /**
+   * 회귀(#772): 입력란이 표현할 수 없는 날짜·시각(infinity, BC)이 있는 행에서 다른 컬럼만 바꿔도 그 값이
+   * 그대로 남아야 한다(요청에 없는 컬럼은 다시 쓰지 않는다).
+   */
+  @Test
+  void updateRow_partialUpdate_untouchedOutOfRangeTemporal_keepsPgValue() {
+    Object[] created =
+        createTemporalGeomRow("temporal_odd_keep", "infinity", "0044-03-15 10:00:00 BC", "POINT(1 2)");
+    DatasetDetailResponse dataset = (DatasetDetailResponse) created[0];
+    Long rowId = (Long) created[1];
+
+    datasetDataService.updateRow(dataset.id(), rowId, new RowDataRequest(Map.of("label", "after")));
+
+    Map<String, Object> after = readRawRow(dataset.tableName(), rowId);
+    assertThat(after.get("label")).isEqualTo("after");
+    assertThat(after.get("d")).isEqualTo("infinity");
+    assertThat(after.get("ts")).isEqualTo("0044-03-15 10:00:00 BC");
+  }
+
+  /** 예외(#772): 요청 컬럼이 하나도 없어도 없는 행이면 여전히 RowNotFound 로 거절된다. */
+  @Test
+  void updateRow_emptyRequest_missingRow_throwsRowNotFound() {
+    DatasetDetailResponse dataset = createSimpleDataset("Update Empty Missing", "update_empty_missing");
+    assertThatThrownBy(
+            () -> datasetDataService.updateRow(dataset.id(), 999_999L, new RowDataRequest(Map.of())))
+        .isInstanceOf(com.smartfirehub.dataset.exception.RowNotFoundException.class);
+  }
 }

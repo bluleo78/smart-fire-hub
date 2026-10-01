@@ -30,9 +30,19 @@ interface RowFormFieldsProps {
   // (#673) 'add'에서는 PK도 입력 가능한 필드로 렌더링한다(자동생성 옵션이 없어 사용자가 직접 값을 채워야 함).
   // 'edit'(기본값)에서는 PK를 여기서 렌더링하지 않는다 — EditRowDialog가 읽기 전용으로 별도 렌더링한다.
   mode?: 'add' | 'edit';
+  // (#772) date/datetime-local 입력이 담을 수 없는 기존 값을 가진 DATE/TIMESTAMP 컬럼(편집 전용).
+  // 이 컬럼들은 원문 텍스트 입력으로 렌더링한다 — 손대지 않으면 전송되지 않아 값이 보존된다.
+  rawTemporalColumns?: Set<string>;
 }
 
-export function RowFormFields({ columns, form, idPrefix, changedFields, mode = 'edit' }: RowFormFieldsProps) {
+export function RowFormFields({
+  columns,
+  form,
+  idPrefix,
+  changedFields,
+  mode = 'edit',
+  rawTemporalColumns,
+}: RowFormFieldsProps) {
   const editableColumns = mode === 'add' ? columns : columns.filter((c) => !c.isPrimaryKey);
 
   return (
@@ -99,6 +109,23 @@ export function RowFormFields({ columns, form, idPrefix, changedFields, mode = '
                   </div>
                 )}
               />
+            ) : (col.dataType === 'DATE' || col.dataType === 'TIMESTAMP') &&
+              rawTemporalColumns?.has(col.columnName) ? (
+              // (#772) 입력란이 표현할 수 없는 값(±infinity·BC 등) — 빈칸 대신 원문을 보여 준다.
+              // 바꾸지 않으면 전송되지 않고, 사용자가 지운 경우에만 NULL 이 된다.
+              <>
+                <Input
+                  id={`${idPrefix}-${col.columnName}`}
+                  type="text"
+                  aria-describedby={`${idPrefix}-${col.columnName}-raw-hint`}
+                  {...form.register(col.columnName)}
+                />
+                <p id={`${idPrefix}-${col.columnName}-raw-hint`} className="text-xs text-muted-foreground">
+                  날짜 입력란으로 표시할 수 없는 값이라 원문 그대로 보여 줍니다. 바꾸지 않으면 그대로
+                  유지됩니다. 새 값은 {col.dataType === 'DATE' ? 'YYYY-MM-DD' : 'YYYY-MM-DDTHH:mm:ss'} 형식으로
+                  입력하세요.
+                </p>
+              </>
             ) : col.dataType === 'DATE' ? (
               <Input
                 id={`${idPrefix}-${col.columnName}`}
@@ -109,6 +136,9 @@ export function RowFormFields({ columns, form, idPrefix, changedFields, mode = '
               <Input
                 id={`${idPrefix}-${col.columnName}`}
                 type="datetime-local"
+                // (#772) 기본 step(60초)이면 초·밀리초가 있는 기존 값이 stepMismatch 로 브라우저 검증에
+                // 걸려 제출이 막힌다. 'any' 로 초 단위 값을 그대로 담고 제출되게 한다.
+                step="any"
                 {...form.register(col.columnName)}
               />
             ) : col.dataType === 'INTEGER' ? (

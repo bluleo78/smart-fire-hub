@@ -11,7 +11,13 @@ import { Label } from '../../../components/ui/label';
 import { useUpdateRow } from '../../../hooks/queries/useDatasets';
 import { handleApiError } from '../../../lib/api-error';
 import type { DatasetColumnResponse } from '../../../types/dataset';
-import { buildRowZodSchema, cleanFormValues } from './row-form-utils';
+import {
+  buildRowZodSchema,
+  cleanFormValues,
+  computeChangedFields,
+  pickChangedValues,
+  toTemporalFormValue,
+} from './row-form-utils';
 import { RowFormFields } from './RowFormFields';
 
 interface EditRowDialogProps {
@@ -31,6 +37,8 @@ function toFormValue(value: unknown, dataType: string, isNullable: boolean): unk
     return '';
   }
   if (dataType === 'BOOLEAN') return value === true || value === 'true';
+  // (#772) DATE/TIMESTAMP 는 입력란 형식으로 변환한다(표현 불가 값은 원문 그대로 — 텍스트 입력으로 렌더링)
+  if (dataType === 'DATE' || dataType === 'TIMESTAMP') return toTemporalFormValue(String(value), dataType).value;
   return String(value);
 }
 
@@ -40,19 +48,28 @@ export function EditRowDialog({ open, onOpenChange, datasetId, columns, rowId, i
   const primaryKeyColumns = useMemo(() => columns.filter((c) => c.isPrimaryKey), [columns]);
   const schema = useMemo(() => buildRowZodSchema(columns), [columns]);
 
+  // (#672·#772) PK 컬럼은 폼 상태에 싣지 않는다 — 저장은 바뀐 칸만 보내고, 서버 부분 업데이트가
+  // 요청에 없는 컬럼(PK 포함)의 DB 값을 그대로 유지한다.
   const defaultValues = useMemo(() => {
     const vals: Record<string, unknown> = {};
     for (const col of editableColumns) {
       vals[col.columnName] = toFormValue(initialData[col.columnName], col.dataType, col.isNullable);
     }
-    // (#672) PK 컬럼은 입력 필드로 렌더링하지 않지만, 기존 값을 폼 상태에 그대로 실어 두어
-    // 저장 시 PUT 페이로드에 값이 유지되도록 한다(백엔드 부분 업데이트 병합의 보조 안전장치).
-    // 표시용 문자열이 아니라 원본 값(숫자/불리언 등)을 그대로 사용해야 백엔드 타입 검증을 통과한다.
-    for (const col of primaryKeyColumns) {
-      vals[col.columnName] = initialData[col.columnName];
-    }
     return vals;
-  }, [editableColumns, primaryKeyColumns, initialData]);
+  }, [editableColumns, initialData]);
+
+  // (#772) date/datetime-local 입력이 담을 수 없는 기존 값(±infinity·BC·5자리 연도 등)을 가진 컬럼 —
+  // 원문 텍스트 입력으로 렌더링해 빈칸으로 보이거나 빈칸이 NULL 로 저장되는 일을 막는다.
+  const rawTemporalColumns = useMemo(() => {
+    const set = new Set<string>();
+    for (const col of editableColumns) {
+      const v = initialData[col.columnName];
+      if ((col.dataType === 'DATE' || col.dataType === 'TIMESTAMP') && v !== null && v !== undefined) {
+        if (toTemporalFormValue(String(v), col.dataType).raw) set.add(col.columnName);
+      }
+    }
+    return set;
+  }, [editableColumns, initialData]);
 
   const form = useForm({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -69,22 +86,18 @@ export function EditRowDialog({ open, onOpenChange, datasetId, columns, rowId, i
 
   // Track which fields have been changed
   const watchedValues = form.watch();
-  const changedFields = useMemo(() => {
-    const changed = new Set<string>();
-    for (const col of editableColumns) {
-      const initial = toFormValue(initialData[col.columnName], col.dataType, col.isNullable);
-      const current = watchedValues[col.columnName];
-      if (String(initial) !== String(current)) {
-        changed.add(col.columnName);
-      }
-    }
-    return changed;
-  }, [editableColumns, initialData, watchedValues]);
+  const changedFields = useMemo(
+    () => computeChangedFields(editableColumns, defaultValues, watchedValues),
+    [editableColumns, defaultValues, watchedValues],
+  );
 
   const onSubmit = async (data: Record<string, unknown>) => {
-    const cleaned = cleanFormValues(data, columns);
+    // (#772) 사용자가 실제로 바꾼 칸만 전송한다. 판정은 zod 변환 전 원시 폼 값으로 한다
+    // (zod 결과는 숫자 coerce 등으로 모양이 달라 기본값과 비교할 수 없다).
+    const changed = computeChangedFields(editableColumns, defaultValues, form.getValues());
+    const payload = pickChangedValues(cleanFormValues(data, columns), changed);
     try {
-      await updateRow.mutateAsync({ rowId, data: cleaned });
+      await updateRow.mutateAsync({ rowId, data: payload });
       toast.success('행이 수정되었습니다.');
       onOpenChange(false);
     } catch (error) {
@@ -100,8 +113,8 @@ export function EditRowDialog({ open, onOpenChange, datasetId, columns, rowId, i
           <DialogDescription className="sr-only">선택한 행의 데이터를 편집합니다.</DialogDescription>
         </DialogHeader>
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-          {/* (#672) PK 컬럼은 수정 불가 — 읽기 전용으로 값만 보여준다. 폼 상태(defaultValues)에는
-              값이 유지되어 있어 저장 시 페이로드에서 값이 사라지지 않는다. */}
+          {/* (#672) PK 컬럼은 수정 불가 — 읽기 전용으로 값만 보여준다. 페이로드에 싣지 않아도
+              서버 부분 업데이트가 DB 값을 그대로 유지한다(#772). */}
           {primaryKeyColumns.map((col) => {
             const label = col.displayName || col.columnName;
             const rawValue = initialData[col.columnName];
@@ -117,7 +130,13 @@ export function EditRowDialog({ open, onOpenChange, datasetId, columns, rowId, i
             );
           })}
 
-          <RowFormFields columns={columns} form={form} idPrefix="edit" changedFields={changedFields} />
+          <RowFormFields
+            columns={columns}
+            form={form}
+            idPrefix="edit"
+            changedFields={changedFields}
+            rawTemporalColumns={rawTemporalColumns}
+          />
 
           <Button type="submit" className="w-full" disabled={form.formState.isSubmitting}>
             {form.formState.isSubmitting ? (

@@ -171,8 +171,9 @@ const CELL_DATETIME_SHAPE_RE =
  * 2. 조용한 굴림(roll-over) — `2024-02-30` → 3월 1일, `T24:00:00` → 다음날, `10000-01-01` → 해석은
  *    되지만 원문과 다른 값. 사용자 데이터를 다른 날짜로 보여주는 것도 결함이다.
  * 그래서 모양·필드 범위(월 1~12, 실재하는 일자, 시 0~23, 분·초 0~59, 연도 ≥ 1)를 먼저 확인한다.
+ * 행 편집 다이얼로그(#772)도 "date/datetime-local 입력이 담을 수 있는 값인가" 판정에 같은 규칙을 쓴다.
  */
-function isFormattableDateString(str: string): boolean {
+export function isFormattableDateString(str: string): boolean {
   const m = CELL_DATETIME_SHAPE_RE.exec(str);
   if (!m) return false;
   const [, y, mo, d, h, mi, sec] = m;
@@ -207,6 +208,27 @@ function formatDateCell(str: string, options: Intl.DateTimeFormatOptions): strin
     // 방어: 어떤 경우에도 셀 렌더 예외가 탭 전체(PageErrorBoundary)를 무너뜨리지 않게 한다
     return truncateCellText(str);
   }
+}
+
+/**
+ * (#772) 데이터 셀 TIMESTAMP 값을 `type=datetime-local` 입력값 `YYYY-MM-DDTHH:mm:ss[.SSS]` 로 바꾼다.
+ * 데이터 탭 셀 표시(formatDateCell)와 **같은 해석**(`new Date(str)` → 브라우저 시간대 벽시계)을 써야
+ * 행 편집 다이얼로그가 셀과 같은 시각을 보여 준다. 이 형식은 서버 `LocalDateTime.parse` 가 그대로 받는다.
+ * 입력란이 담을 수 없는 값(모양 불일치·Invalid Date·변환 후 연도 0001~9999 밖)은 null.
+ */
+export function cellTimestampToLocalInput(str: string): string | null {
+  if (!isFormattableDateString(str)) return null;
+  const d = new Date(str);
+  if (Number.isNaN(d.getTime())) return null;
+  const year = d.getFullYear();
+  if (year < 1 || year > 9999) return null;
+  const p2 = (n: number) => String(n).padStart(2, '0');
+  let local =
+    `${String(year).padStart(4, '0')}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}` +
+    `T${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}`;
+  const ms = d.getMilliseconds();
+  if (ms) local += `.${String(ms).padStart(3, '0')}`;
+  return local;
 }
 
 export function formatCellValue(value: unknown, dataType?: string): string {
