@@ -4,6 +4,7 @@ import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.dto.SpatialFilter;
 import com.smartfirehub.dataset.exception.RowNotFoundException;
 import com.smartfirehub.global.tenant.DataSchema;
+import com.smartfirehub.global.util.TemporalSafeFetch;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -124,7 +125,9 @@ public class DataTableRowService {
     sql.append(" LIMIT ").append(size);
     sql.append(" OFFSET ").append(page * size);
 
-    var result = params.length > 0 ? dsl.fetch(sql.toString(), params) : dsl.fetch(sql.toString());
+    // 범위 밖 날짜·시각(10000년·BC·infinity·1582/DST 공백)은 Java 날짜 객체를 거치며 다른 값이 되므로 그 셀만 PG
+    // 텍스트 원문으로 읽는다(#769). 정상 값은 예전과 같은 Java 값이라 응답·내보내기 형태가 같다.
+    var result = TemporalSafeFetch.fetch(dsl, sql.toString(), params);
     List<Map<String, Object>> rows = new ArrayList<>();
 
     for (var record : result) {
@@ -294,7 +297,9 @@ public class DataTableRowService {
     sql.append(" OFFSET ").append(page * size);
 
     Object[] params = paramList.toArray();
-    var result = params.length > 0 ? dsl.fetch(sql.toString(), params) : dsl.fetch(sql.toString());
+    // 범위 밖 날짜·시각(10000년·BC·infinity·1582/DST 공백)은 Java 날짜 객체를 거치며 다른 값이 되므로 그 셀만 PG
+    // 텍스트 원문으로 읽는다(#769). 정상 값은 예전과 같은 Java 값이라 응답·내보내기 형태가 같다.
+    var result = TemporalSafeFetch.fetch(dsl, sql.toString(), params);
     List<Map<String, Object>> rows = new ArrayList<>();
 
     for (var record : result) {
@@ -493,7 +498,8 @@ public class DataTableRowService {
     }
     sql.append(" HAVING COUNT(*) > 1 LIMIT ").append(limit);
 
-    var result = dsl.fetch(sql.toString());
+    // 중복 키가 DATE/TIMESTAMP 면 범위 밖 값이 다른 날짜로 보이지 않도록 PG 원문으로 읽는다(#769)
+    var result = TemporalSafeFetch.fetch(dsl, sql.toString());
     List<Map<String, Object>> rows = new ArrayList<>();
     for (var record : result) {
       Map<String, Object> row = new HashMap<>();
@@ -1134,7 +1140,8 @@ public class DataTableRowService {
         .append(DataSchema.qualify(tableName))
         .append(" WHERE id = ?");
 
-    var record = dsl.fetchOne(sql.toString(), rowId);
+    // 단건 조회도 데이터 탭과 같은 계약 — 범위 밖 날짜·시각은 PG 원문(#769)
+    var record = TemporalSafeFetch.fetchOne(dsl, sql.toString(), rowId);
     if (record == null) {
       throw new RowNotFoundException("Row not found: " + rowId);
     }
