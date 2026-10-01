@@ -484,4 +484,72 @@ test.describe('데이터셋 상세 — 데이터 탭', () => {
     const dashCells = page.locator('span.italic.text-xs').filter({ hasText: '-' });
     await expect(dashCells.first()).toBeVisible();
   });
+  // (#770) DATE/TIMESTAMP 컬럼에 JS Date 가 해석 못 하는 값(±infinity, BC, 연도 10000 등)이 한 행만
+  // 있어도 formatCellValue 가 RangeError 를 던져 데이터 탭 전체가 PageErrorBoundary 에러 화면이 됐다.
+  // 지금 API 가 주는 문자열과 #769 이후 PG 원문 문자열을 모두 넣어, 탭이 살아 있고 원문이 그대로
+  // 보이며 정상 행은 여전히 포맷되고 SQL 편집기로 고칠 수 있는지 검증한다.
+  test('±infinity·BC 등 파싱 불가 날짜가 있어도 탭이 렌더되고 원문이 표시된다 (#770)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDataTabMocks(page);
+    const dateDetail = createDatasetDetail({
+      id: 1,
+      rowCount: 4,
+      columns: [
+        createColumn({ id: 1, columnName: 'id', displayName: 'ID', dataType: 'INTEGER', isPrimaryKey: true }),
+        createColumn({ id: 2, columnName: 'label', displayName: '라벨', dataType: 'TEXT', columnOrder: 1 }),
+        createColumn({ id: 3, columnName: 'ts', displayName: '시각', dataType: 'TIMESTAMP', columnOrder: 2 }),
+        createColumn({ id: 4, columnName: 'd', displayName: '일자', dataType: 'DATE', columnOrder: 3 }),
+      ],
+    });
+    // 나중에 등록한 라우트가 우선 — 날짜 컬럼이 있는 상세로 덮어쓴다
+    await mockApi(page, 'GET', '/api/v1/datasets/1', dateDetail);
+
+    const rows = [
+      { _id: 101, id: 1, label: 'normal', ts: '2024-05-01T01:00:00.000+00:00', d: '2024-05-01' },
+      // 현재 API(#769 미수정) 응답 형태
+      { _id: 102, id: 2, label: 'cur-neg-inf', ts: '-292269054-12-02T23:00:00.000+00:00', d: '0000-01-01' },
+      { _id: 103, id: 3, label: 'cur-bc', ts: '-0043-03-15T01:00:00.000+00:00', d: '2024-02-30' },
+      // #769 이후 예상되는 PG 원문 형태
+      { _id: 104, id: 4, label: 'pg-raw', ts: '0044-03-15 10:00:00 BC', d: 'infinity' },
+    ];
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets/1/data',
+      (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ columns: dateDetail.columns, rows, page: 0, size: 50, totalElements: 4, totalPages: 1 }),
+        }),
+    );
+
+    await page.goto('/data/datasets/1');
+    await page.getByRole('tab', { name: '데이터' }).click();
+
+    // 탭 전체 에러 화면이 아니어야 한다
+    await expect(page.getByRole('heading', { name: /데이터 \(4행\)/ })).toBeVisible();
+    await expect(page.getByRole('heading', { name: '페이지를 불러오는 중 문제가 발생했습니다' })).toHaveCount(0);
+
+    // 파싱 불가 값은 원문 그대로 표시
+    const table = page.locator('table');
+    for (const raw of [
+      '-292269054-12-02T23:00:00.000+00:00',
+      '0000-01-01',
+      '-0043-03-15T01:00:00.000+00:00',
+      '2024-02-30',
+      '0044-03-15 10:00:00 BC',
+      'infinity',
+    ]) {
+      await expect(table.getByRole('cell', { name: raw, exact: true })).toBeVisible();
+    }
+
+    // 정상 행은 기존처럼 로케일 포맷(원문 ISO 문자열이 아님)
+    const normalRow = table.getByRole('row').filter({ hasText: 'normal' });
+    await expect(normalRow).toContainText('2024. 5. 1.');
+    await expect(normalRow).not.toContainText('2024-05-01');
+
+    // SQL 편집기로 문제 행을 고칠 수 있어야 한다
+    await page.getByRole('button', { name: /SQL/ }).click();
+    await expect(page.getByRole('button', { name: /실행|Run/ }).first()).toBeVisible();
+  });
 });

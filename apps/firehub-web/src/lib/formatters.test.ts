@@ -130,6 +130,67 @@ describe('formatCellValue', () => {
     expect(formatCellValue('hello')).toBe('hello');
     expect(formatCellValue(42)).toBe('42');
   });
+
+  // (#770) JS Date 가 해석하지 못하거나(Invalid Date → Intl.format 이 RangeError) 다른 날짜로
+  // 굴려 버리는(roll-over) 값은 포맷하지 않고 원문 그대로 보여야 한다. 셀 하나의 예외가
+  // 데이터 탭 전체를 에러 화면으로 만들었다.
+  describe('파싱 불가·범위 밖 날짜는 크래시 없이 원문 반환 (#770)', () => {
+    it.each([
+      'infinity',
+      '-infinity',
+      '0044-03-15 BC',
+      '10000-01-01',
+      '0000-01-01',
+      '2024-02-30',
+      'not-a-date',
+    ])('DATE %s → 원문', (v) => {
+      expect(formatCellValue(v, 'DATE')).toBe(v);
+    });
+
+    it.each([
+      'infinity',
+      '-infinity',
+      '0044-03-15 10:00:00 BC',
+      // 현재 API(#769 미수정)가 ±infinity·BC 에 대해 내려주는 문자열
+      '-0043-03-15T01:00:00.000+00:00',
+      '-292269054-12-02T23:00:00.000+00:00',
+      '+292278994-08-16T23:00:00.000+00:00',
+      '10000-01-01 00:00:00',
+      '2024-01-01T24:00:00',
+      '2024-02-30T10:00:00',
+      '24:00:00',
+      'garbage',
+    ])('TIMESTAMP %s → 원문', (v) => {
+      expect(formatCellValue(v, 'TIMESTAMP')).toBe(v);
+    });
+
+    it('TIMESTAMP 컬럼의 숫자(epoch 등)는 epoch 로 해석하지 않고 숫자 원문', () => {
+      expect(formatCellValue(1700000000000, 'TIMESTAMP')).toBe('1700000000000');
+    });
+
+    it('dataType 없이 ISO 처럼 생긴 잘못된 문자열(TEXT 컬럼 등)도 원문', () => {
+      expect(formatCellValue('2024-99-99T00:00:00')).toBe('2024-99-99T00:00:00');
+      expect(formatCellValue('2024-01-01T24:00:00')).toBe('2024-01-01T24:00:00');
+    });
+
+    it('원문이 200자를 넘으면 기존 규칙대로 절삭', () => {
+      const long = 'infinity' + 'x'.repeat(300);
+      expect(formatCellValue(long, 'TIMESTAMP')).toBe(long.slice(0, 200) + '…');
+    });
+
+    it('정상 값의 포맷은 기존과 동일하다', () => {
+      const dateFmt = new Intl.DateTimeFormat('ko-KR', { dateStyle: 'medium' });
+      const tsFmt = new Intl.DateTimeFormat('ko-KR', { dateStyle: 'medium', timeStyle: 'short' });
+      expect(formatCellValue('2024-05-01', 'DATE')).toBe(dateFmt.format(new Date('2024-05-01')));
+      expect(formatCellValue('2024-05-01T01:00:00.000+00:00', 'TIMESTAMP')).toBe(
+        tsFmt.format(new Date('2024-05-01T01:00:00.000+00:00')),
+      );
+      expect(formatCellValue('9999-12-31T15:00:00.000+00:00', 'TIMESTAMP')).toBe(
+        tsFmt.format(new Date('9999-12-31T15:00:00.000+00:00')),
+      );
+      expect(formatCellValue('2026-04-11T12:00:00')).toBe(tsFmt.format(new Date('2026-04-11T12:00:00')));
+    });
+  });
 });
 
 describe('formatFileSize', () => {

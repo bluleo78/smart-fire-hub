@@ -153,6 +153,62 @@ export function getRawCellValue(value: unknown): string {
   return String(value);
 }
 
+/**
+ * 셀 날짜 포맷 대상인지 판별하는 모양 정규식 (#770).
+ * `YYYY-MM-DD` 또는 `YYYY-MM-DD[T ]HH:mm[:ss[.fff]][Z|±HH[:mm]]` 만 허용한다.
+ * 연도는 4자리(0001~9999)만 — 5자리 연도·부호 붙은 연도(`-0043-…`, `+292278994-…`)·`BC` 접미·
+ * `infinity` 같은 값은 모양에서 걸러 원문을 그대로 보여준다.
+ */
+const CELL_DATETIME_SHAPE_RE =
+  /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(?:Z|[+-]\d{2}(?::?\d{2})?)?)?$/;
+
+/**
+ * 셀 값 문자열이 "안전하게 날짜로 포맷해도 되는" 값인지 검사한다 (#770).
+ *
+ * JS `Date` 는 두 가지 방식으로 셀을 망친다.
+ * 1. 해석 불가(Invalid Date) — `Intl.DateTimeFormat.format` 이 RangeError 를 던져 셀 하나의 예외가
+ *    데이터 탭 전체를 에러 화면으로 만든다(`-infinity`, BC, 부호 붙은 연도 등).
+ * 2. 조용한 굴림(roll-over) — `2024-02-30` → 3월 1일, `T24:00:00` → 다음날, `10000-01-01` → 해석은
+ *    되지만 원문과 다른 값. 사용자 데이터를 다른 날짜로 보여주는 것도 결함이다.
+ * 그래서 모양·필드 범위(월 1~12, 실재하는 일자, 시 0~23, 분·초 0~59, 연도 ≥ 1)를 먼저 확인한다.
+ */
+function isFormattableDateString(str: string): boolean {
+  const m = CELL_DATETIME_SHAPE_RE.exec(str);
+  if (!m) return false;
+  const [, y, mo, d, h, mi, sec] = m;
+  const year = Number(y);
+  const month = Number(mo);
+  const day = Number(d);
+  if (year < 1 || month < 1 || month > 12 || day < 1) return false;
+  // 해당 월의 실제 마지막 날 — Date.UTC(year, month, 0) 은 month 월의 말일 (#770: 2월 30일 굴림 방지)
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  if (day > lastDay) return false;
+  if (h !== undefined && (Number(h) > 23 || Number(mi) > 59)) return false;
+  if (sec !== undefined && Number(sec) > 59) return false;
+  return true;
+}
+
+/** 셀 원문 표시 — 200자 초과 시 절삭. */
+function truncateCellText(str: string): string {
+  return str.length > 200 ? str.slice(0, 200) + '…' : str;
+}
+
+/**
+ * 날짜 셀 포맷. 포맷할 수 없는 값은 **절대 throw 하지 않고** 원문을 그대로 돌려준다 (#770).
+ * 셀 값은 사용자 데이터라 UTC 계약(parseUtcDate)을 적용하지 않고 기존처럼 `new Date(str)` 로 해석한다.
+ */
+function formatDateCell(str: string, options: Intl.DateTimeFormatOptions): string {
+  if (!isFormattableDateString(str)) return truncateCellText(str);
+  const d = new Date(str);
+  if (Number.isNaN(d.getTime())) return truncateCellText(str);
+  try {
+    return new Intl.DateTimeFormat('ko-KR', options).format(d);
+  } catch {
+    // 방어: 어떤 경우에도 셀 렌더 예외가 탭 전체(PageErrorBoundary)를 무너뜨리지 않게 한다
+    return truncateCellText(str);
+  }
+}
+
 export function formatCellValue(value: unknown, dataType?: string): string {
   if (value === null || value === undefined) return 'NULL';
 
@@ -164,18 +220,14 @@ export function formatCellValue(value: unknown, dataType?: string): string {
   const str = String(value);
 
   if (dataType === 'DATE') {
-    return new Intl.DateTimeFormat('ko-KR', { dateStyle: 'medium' }).format(new Date(str));
+    return formatDateCell(str, { dateStyle: 'medium' });
   }
 
   if (dataType === 'TIMESTAMP' || ISO_DATETIME_RE.test(str)) {
-    return new Intl.DateTimeFormat('ko-KR', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(str));
+    return formatDateCell(str, { dateStyle: 'medium', timeStyle: 'short' });
   }
 
-  if (str.length > 200) {
-    return str.slice(0, 200) + '…';
-  }
-
-  return str;
+  return truncateCellText(str);
 }
 
 export function formatFileSize(bytes: number): string {

@@ -47,7 +47,9 @@ export default defineConfig([
     // 규칙 예외. formatters.ts 는 parseUtcDate 자신과 데이터셋 셀 포맷터가 사는 곳이고(셀 값은
     // 사용자 데이터라 UTC 계약이 적용되지 않는다), 테스트는 타임존을 명시한 고정 문자열로 값을
     // 만들므로 계약 위반이 아니다.
-    files: ['src/lib/formatters.ts', '**/*.test.ts', '**/*.test.tsx'],
+    // (#770) 경로는 `**/` 로 시작해야 한다 — lint-staged 는 저장소 루트에서 `--config` 로 실행하므로
+    // 패턴이 루트 기준으로 해석돼 'src/lib/formatters.ts' 로는 이 예외가 적용되지 않았다.
+    files: ['**/src/lib/formatters.ts', '**/*.test.ts', '**/*.test.tsx'],
     rules: { 'no-restricted-syntax': 'off' },
   },
 ])
