@@ -38,11 +38,13 @@ import net.sf.jsqlparser.schema.Column;
 import net.sf.jsqlparser.schema.Table;
 import net.sf.jsqlparser.statement.Statement;
 import net.sf.jsqlparser.statement.Statements;
+import net.sf.jsqlparser.statement.create.table.ColDataType;
 import net.sf.jsqlparser.statement.delete.Delete;
 import net.sf.jsqlparser.statement.insert.Insert;
 import net.sf.jsqlparser.statement.select.AllTableColumns;
 import net.sf.jsqlparser.statement.select.PlainSelect;
 import net.sf.jsqlparser.statement.select.Select;
+import net.sf.jsqlparser.statement.select.SelectItem;
 import net.sf.jsqlparser.statement.select.WithItem;
 import net.sf.jsqlparser.statement.update.Update;
 import org.springframework.stereotype.Component;
@@ -81,6 +83,13 @@ import org.springframework.stereotype.Component;
  * 참조가 아니다). 이런 함수는 **deny-list({@link #BLOCKED_FUNCTIONS})가 유일한 방어**다 — 스키마 화이트리스트로
  * 막을 수 있다고 가정하고 함수를 빠뜨리면 그 함수가 곧 우회 경로가 된다. 새 함수를 검토할 때 "인자가 문자열이고 그 문자열이 SQL
  * 조각으로 재해석되는가"를 반드시 확인하라.
+ *
+ * <p><b>캐스트의 대상 타입도 같은 사각이었다(#755).</b> 위의 {@code 'public.v'::regclass} 형태는 이름을 추측해야
+ * 하고 권한 없는 스키마에서는 {@code permission denied} 로 막혔지만, <b>정수 OID → reg* 캐스트</b>
+ * ({@code g::regclass}, 타입 리터럴 {@code regclass '16384'})는 출력 함수가 권한 검사 없이 이름을 돌려줘
+ * {@code generate_series} 범위 스캔만으로 다른 테넌트의 스키마·테이블·롤 이름이 전부 열거됐다. 이제
+ * {@link #requireNoOidAliasTypes}가 문자열 리터럴 형태까지 포함해 reg* 타입으로의 변환 자체를 거부한다 —
+ * 새 규칙을 볼 때 "함수 노드·테이블 노드가 아닌 곳(타입 이름, 별칭 자리)에서 카탈로그가 읽히는가"도 확인하라.
  *
  * <p><b>또 다른 심층 방어 손실 — 한정된 컬럼 참조({@code SELECT public.usr.email FROM data.t})는 이 검증기를
  * 통과한다(#385 재재재리뷰 minor 2, 코드 변경 없이 기록만).</b> {@code public.usr.email} 은 {@link
@@ -280,7 +289,13 @@ public class SqlValidator {
           "schema_to_xml",
           "schema_to_xmlschema",
           "schema_to_xml_and_xmlschema",
-          "pg_get_viewdef");
+          "pg_get_viewdef",
+          // #755: 인자 타입이 regclass 라 정수 OID 를 넘기면 PG 가 int→regclass 암묵 캐스트로 받아들인다 —
+          // 캐스트 토큰이 전혀 없어 OID 별칭 타입 검사(requireNoOidAliasTypes)를 피해 가고, USAGE 권한이 없는
+          // 다른 테넌트 테이블의 공간 인덱스 범위(행 데이터에서 유래한 값)를 그대로 돌려줬다(dev 실측). PostGIS
+          // 허용목록은 카탈로그 스냅샷 파일이라(PostgisSafeFunctionsConformanceTest 가 파일=카탈로그를 강제)
+          // 거기서 빼지 않고 이 deny-list 로 덮는다 — 이 검사가 허용목록 검사보다 먼저 돈다.
+          "_postgis_index_extent");
 
   /**
    * 표준 SQL 내장 함수(집계/윈도/수학/문자열/날짜·시간/JSON/배열) — 손으로 큐레이션(아래 {@link
@@ -569,6 +584,7 @@ public class SqlValidator {
     requireNoBlockedFunctions(collected.functions(), collected.analyticFunctionNames());
     requireOnlyKnownFunctions(collected.functions(), collected.analyticFunctionNames());
     requireNoReservedPseudoColumns(collected.columns());
+    requireNoOidAliasTypes(collected.colDataTypes(), collected.selectItems());
     requireNoSelectInto(collected.plainSelects());
   }
 
@@ -1035,6 +1051,133 @@ public class SqlValidator {
   }
 
   /**
+   * 카탈로그 OID 별칭 타입({@code regclass}/{@code regnamespace}/{@code regrole}/{@code regtype}/{@code
+   * regproc} … 및 그 배열)으로의 변환을 거부한다(#755).
+   *
+   * <p><b>왜 막는가.</b> 이 타입들의 출력 함수({@code regclassout} 등)는 OID 를 이름으로 바꿀 때 <b>권한 검사를
+   * 하지 않는다</b>. 그래서 {@code SELECT g::regclass::text FROM generate_series(…) g} 한 줄로 USAGE 권한이 없는
+   * 다른 테넌트의 데이터 스키마·데이터셋 테이블·테넌트 롤 이름이 추측 없이 전부 열거됐다(dev API 데이터셋·애널리틱스
+   * 경로 실측 — 행 데이터는 아니지만 테넌트 수·ID·테이블명 노출). {@link #requireDataSchemaOnly}의 스키마
+   * 화이트리스트는 테이블 참조 노드만 보고, 함수 허용목록은 {@link Function} 노드만 보므로 <b>캐스트의 대상 타입은
+   * 아무 검사도 받지 않았다</b>. DB 권한으로는 닫을 수 없다 — {@code pg_catalog} 는 PUBLIC 읽기이고 reg* 출력
+   * 함수는 ACL 을 보지 않는다(이슈 코멘트 참고).
+   *
+   * <p><b>세 형태를 본다(전부 psql 에서 {@code app_tenant} 로 실측해 이름이 반환됨을 확인했다).</b>
+   *
+   * <ol>
+   *   <li><b>타입 이름 노드</b>({@link ColDataType}) — {@code ::}, {@code CAST(… AS …)}, 배열 캐스트가 모두 이
+   *       노드를 만든다. 순회가 절을 모르는 전수 방문이라 ORDER BY·서브쿼리·CTE 어디에 있어도 잡힌다.
+   *   <li><b>{@code U&"…"} 타입 이름</b> — JSqlParser 는 {@code g::U&"reg\0063lass"} 를 "타입 {@code U} 로
+   *       캐스트한 뒤 컬럼과 비트 AND" 로 잘못 읽지만 PG 는 이를 {@code regclass} 로 해석한다. 이름 대조는 이스케이프
+   *       표기 앞에서 원리적으로 무너지므로(#385 — 함수 허용목록 전환의 근거) 디코딩하지 않고 그 표기 자체를 거부한다.
+   *   <li><b>타입 리터럴</b>({@code regclass '16384'}) — 캐스트 토큰이 없다. JSqlParser 는 이를 "컬럼 {@code
+   *       regclass} + 문자열 별칭 {@code '16384'}" 로 읽는다. PG 에서 별칭은 반드시 식별자라 문자열 별칭은 존재할
+   *       수 없으므로, 그 자리에 문자열이 오면 PG 는 앞 토큰을 타입 이름으로 읽는다 — 그 "컬럼" 이름을 타입 이름으로
+   *       보고 같은 규칙을 적용한다. 앞이 컬럼이 아니면(예: {@code U&"…" '…'}) 타입 이름을 확정할 수 없으므로 거부한다.
+   * </ol>
+   *
+   * <p><b>정당한 사용을 막지 않는가.</b> dev 의 파이프라인 스텝·저장 쿼리·쿼리 이력에 reg* 타입 사용은 0건이었다
+   * (이번 재현 쿼리 제외). 데이터셋 컬럼 타입은 닫힌 열거(TEXT/VARCHAR/…/GEOMETRY)라 reg* 타입 컬럼이 생길 수
+   * 없다 — 캐스트 없이 reg* 값을 출력할 경로가 없다는 뜻이다. {@code ::oid} 는 숫자를 그대로 출력하므로 막지 않는다.
+   */
+  private void requireNoOidAliasTypes(List<ColDataType> colDataTypes, List<SelectItem<?>> selectItems) {
+    for (ColDataType colDataType : colDataTypes) {
+      requireNotOidAliasTypeName(colDataType.getDataType());
+    }
+    for (SelectItem<?> item : selectItems) {
+      if (item.getAlias() == null || !isStringLiteralToken(item.getAlias().getName())) {
+        continue; // 일반 식별자 별칭 — 타입 리터럴이 아니다.
+      }
+      if (item.getExpression() instanceof Column typeNameAsColumn) {
+        // 타입 리터럴: 컬럼으로 오독된 이름(스키마 한정 포함)이 곧 타입 이름이다.
+        requireNotOidAliasTypeName(typeNameAsColumn.getFullyQualifiedName());
+      } else {
+        throw new UnsafeSqlException(
+            "허용되지 않는 표현: 문자열 리터럴 별칭 '"
+                + item.getAlias().getName()
+                + "'. 별칭은 식별자여야 합니다(타입 리터럴로 해석될 수 있는 형태는 거부됩니다).");
+      }
+    }
+  }
+
+  /**
+   * 별칭 자리의 토큰이 문자열 리터럴인가 — {@code '…'}, 달러 인용 {@code $$…$$}/{@code $tag$…$tag$}, 접두
+   * 문자열({@code E'…'}, {@code B'…'}, {@code X'…'}, {@code N'…'}). 식별자는 {@code '}·{@code $} 로 시작할 수
+   * 없고, 한 글자 뒤 바로 {@code '} 가 오는 식별자도 없다.
+   */
+  private static boolean isStringLiteralToken(String token) {
+    if (token == null || token.isEmpty()) {
+      return false;
+    }
+    char first = token.charAt(0);
+    return first == '\'' || first == '$' || (token.length() >= 2 && token.charAt(1) == '\'');
+  }
+
+  /**
+   * 타입 이름(스키마 한정·인용·타입 수식자·배열 접미 포함 가능)이 OID 별칭 타입이면 거부한다.
+   *
+   * <p>정규화: 인용 밖 마지막 점 뒤의 부분만 본다(스키마는 무관 — {@code pg_catalog.regclass} 와 {@code regclass}
+   * 는 같다). 인용 부분은 대소문자를 보존하고({@code "RegClass"} 는 다른 타입), 미인용 부분은 첫 공백·괄호·대괄호
+   * 앞까지를 소문자로 접는다({@code numeric (10, 2)}, {@code timestamp with time zone}). 배열 타입의 내부 이름
+   * ({@code _regclass})도 출력이 이름이므로 앞의 밑줄을 걷어 같은 규칙을 적용한다. {@code reg} 접두로 판정한다 —
+   * PG 의 OID 별칭 타입은 전부 {@code reg} 로 시작하고(PG16 기준 11종) 그 외 {@code reg} 로 시작하는 내장 타입은
+   * 없으므로, 새 OID 별칭 타입이 추가돼도 자동으로 막힌다(fail-closed).
+   */
+  private static void requireNotOidAliasTypeName(String rawTypeName) {
+    if (rawTypeName == null || rawTypeName.isBlank()) {
+      return;
+    }
+    String trimmed = rawTypeName.strip();
+    int lastDot = indexOfLastUnquotedDot(trimmed);
+    String lastPart = trimmed.substring(lastDot + 1).strip();
+    String name;
+    if (lastPart.startsWith("\"")) {
+      int close = lastPart.indexOf('"', 1);
+      name = close > 0 ? lastPart.substring(1, close) : lastPart.substring(1);
+    } else {
+      int end = 0;
+      while (end < lastPart.length()
+          && !Character.isWhitespace(lastPart.charAt(end))
+          && lastPart.charAt(end) != '('
+          && lastPart.charAt(end) != '[') {
+        end++;
+      }
+      name = lastPart.substring(0, end).toLowerCase();
+      if (name.equals("u")) {
+        // U&"…" 유니코드 이스케이프 타입 이름의 파서 오독 흔적 — PG 에 "u" 라는 타입은 없다.
+        throw new UnsafeSqlException(
+            "허용되지 않는 타입 이름 표기: '" + rawTypeName + "'. 유니코드 이스케이프 등 비표준 식별자 표기는 거부됩니다.");
+      }
+    }
+    String base = name;
+    while (base.startsWith("_")) {
+      base = base.substring(1);
+    }
+    if (base.startsWith("reg")) {
+      throw new UnsafeSqlException(
+          "허용되지 않는 타입: '"
+              + rawTypeName
+              + "'. 카탈로그 OID 별칭 타입(regclass/regnamespace/regrole 등)으로의 변환은 권한 밖 객체 이름을"
+              + " 노출하므로 차단됩니다.");
+    }
+  }
+
+  /** 인용({@code "…"}) 밖의 마지막 점 위치(없으면 -1) — 타입 이름의 스키마 한정자 분리용. */
+  private static int indexOfLastUnquotedDot(String s) {
+    boolean inQuote = false;
+    int last = -1;
+    for (int i = 0; i < s.length(); i++) {
+      char c = s.charAt(i);
+      if (c == '"') {
+        inQuote = !inQuote;
+      } else if (c == '.' && !inQuote) {
+        last = i;
+      }
+    }
+    return last;
+  }
+
+  /**
    * {@code nextval}/{@code currval} 의 인자가 안전한지 검사한다 — {@link #SEQUENCE_FUNCTIONS} 참고. 인자가
    * 정확히 하나의 문자열 리터럴이어야 하고(계산된 표현식이면 정적 검증이 불가능하므로 거부), 그 리터럴을 스키마
    * 한정 이름으로 파싱해 {@link #allowedSchema}인지 확인한다. 미한정 시퀀스는 {@link
@@ -1174,6 +1317,10 @@ public class SqlValidator {
     private final List<String> analyticFunctionNames = new ArrayList<>();
     private final List<Column> columns = new ArrayList<>();
     private final List<PlainSelect> plainSelects = new ArrayList<>();
+    /** 캐스트·배열 캐스트·타입 리터럴 등 AST 어디에 있든 모든 타입 이름 노드(#755). */
+    private final List<ColDataType> colDataTypes = new ArrayList<>();
+    /** 모든 SELECT 목록 항목 — 타입 리터럴이 "컬럼 + 문자열 별칭"으로 오독되는 형태를 잡기 위함(#755). */
+    private final List<SelectItem<?>> selectItems = new ArrayList<>();
 
     /** 현재 방문 지점에서 유효한 CTE 별칭 스코프 스택 — 스코프 단위 처리 근거는 {@link #tableFqns} 문서 참고. */
     private final Deque<Set<String>> cteScopeStack = new ArrayDeque<>();
@@ -1204,6 +1351,14 @@ public class SqlValidator {
 
     List<PlainSelect> plainSelects() {
       return plainSelects;
+    }
+
+    List<ColDataType> colDataTypes() {
+      return colDataTypes;
+    }
+
+    List<SelectItem<?>> selectItems() {
+      return selectItems;
     }
 
     /**
@@ -1344,6 +1499,10 @@ public class SqlValidator {
         plainSelects.add(plainSelect);
       } else if (node instanceof Column column) {
         columns.add(column);
+      } else if (node instanceof ColDataType colDataType) {
+        colDataTypes.add(colDataType);
+      } else if (node instanceof SelectItem<?> selectItem) {
+        selectItems.add(selectItem);
       }
 
       // Column("t.id")/AllTableColumns("t.*") 의 getTable() 은 FROM/JOIN 소스가 아니라 이미 FROM/JOIN 이
