@@ -1,4 +1,4 @@
-import { Loader2, X } from 'lucide-react';
+import { AlertTriangle, Loader2, X } from 'lucide-react';
 import { useRef } from 'react';
 
 import { useChart, useChartData } from '../../hooks/queries/useAnalytics';
@@ -69,6 +69,30 @@ function WidgetContent({ widget, batchData, autoRefreshSeconds, isVisible }: Wid
 
   // Use batch query result if available, else fall back to individual fetch
   const queryResult = batchData?.queryResult ?? chartData?.queryResult ?? null;
+
+  // 저장 쿼리 실패(#764): API는 HTTP 200 + queryResult.error 로 사유(division by zero,
+  // 결과 32MB 초과 안내 등)를 준다. 빈 rows 를 그대로 ChartRenderer 에 넘기면
+  // "데이터가 없습니다." 로 보여 정상 0행과 구분되지 않으므로, 배치·단건 경로 공통으로
+  // 해석된 queryResult 에서 error 를 먼저 검사해 오류 상태와 사유 원문을 표시한다.
+  // 표시 형식은 쿼리 편집기 결과 영역(ResultTable)의 "쿼리 오류" 박스와 맞춘다.
+  if (queryResult?.error) {
+    return (
+      <div className="h-full overflow-auto py-1">
+        <div
+          role="alert"
+          className="rounded-md border border-destructive/50 bg-destructive/10 p-3"
+        >
+          <p className="flex items-center gap-1.5 text-sm font-medium text-destructive">
+            <AlertTriangle className="h-4 w-4 shrink-0" />
+            쿼리 오류
+          </p>
+          <p className="text-xs text-destructive/80 mt-1 font-mono whitespace-pre-wrap break-words">
+            {queryResult.error}
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   if (!chart || !queryResult) {
     return (
