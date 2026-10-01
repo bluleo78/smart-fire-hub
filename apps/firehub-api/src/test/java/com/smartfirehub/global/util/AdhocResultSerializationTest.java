@@ -190,6 +190,9 @@ class AdhocResultSerializationTest extends IntegrationTestBase {
     assertJsonOnBothPaths("'{}'::int[]", "[]");
     assertJsonOnBothPaths("'[0:1]={1,2}'::int[]", "[1,2]");
     assertJsonOnBothPaths("ARRAY['a',NULL]", "[\"a\",null]");
+    // 1차원 bytea[] 는 pgjdbc 가 byte[][] 로 준다 — 다차원으로 오판하지 않고 예전처럼 base64 원소 배열
+    assertJsonOnBothPaths("ARRAY['\\x0102'::bytea, NULL]", "[\"AQI=\",null]");
+    assertJsonOnBothPaths("'{}'::bytea[]", "[]");
   }
 
   @Test

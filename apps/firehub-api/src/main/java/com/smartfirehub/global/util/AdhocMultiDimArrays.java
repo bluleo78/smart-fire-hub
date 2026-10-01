@@ -99,7 +99,7 @@ final class AdhocMultiDimArrays {
     }
     try {
       Object javaArray = array.getArray();
-      if (javaArray instanceof Object[] outer && outer.getClass().getComponentType().isArray()) {
+      if (javaArray instanceof Object[] outer && isOuterLevel(outer)) {
         captured
             .computeIfAbsent(row, r -> new HashMap<>())
             .put(idx, new Captured(javaArray, array.toString()));
@@ -173,7 +173,7 @@ final class AdhocMultiDimArrays {
     if (!(value instanceof Object[] array)) {
       return value; // 빈 하위 배열 등 — 조각이 아닌 값은 그대로
     }
-    if (array.getClass().getComponentType().isArray()) {
+    if (isOuterLevel(array)) {
       List<Object> list = new ArrayList<>(array.length);
       for (Object element : array) {
         list.add(nest(element, sliceType));
@@ -226,5 +226,13 @@ final class AdhocMultiDimArrays {
       out[i] = v;
     }
     return out;
+  }
+
+  /**
+   * 이 배열이 다른 배열을 원소로 담는 바깥 차원인가. 원소 타입이 {@code Object[]} 계열일 때만 그렇다 — 1차원
+   * {@code bytea[]} 는 pgjdbc 가 {@code byte[][]} 로 주므로 "원소가 배열인가"로 보면 다차원으로 오판한다.
+   */
+  private static boolean isOuterLevel(Object[] array) {
+    return Object[].class.isAssignableFrom(array.getClass().getComponentType());
   }
 }
