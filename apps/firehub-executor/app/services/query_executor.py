@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import re
 import time
+import weakref
 from typing import Any, Dict, List, Tuple
 
 from app.schemas.responses import QueryExecuteResponse
@@ -11,16 +12,42 @@ from app.tenant import resolve_schema
 logger = logging.getLogger(__name__)
 
 
-def _fetch_geom_oids(conn) -> set[int]:
-    """geometry/geography 타입의 OID 집합을 pg_type 에서 조회한다.
+# 커넥션별 PostGIS 공간 타입 OID 캐시(#766). 키를 약한 참조로 둬서 풀이 커넥션을 닫으면 항목도 사라진다.
+# OID 는 확장을 재설치하지 않는 한 커넥션 수명 동안 바뀌지 않으므로 매 쿼리마다 카탈로그를 다시 읽지 않는다.
+_GEOM_OID_CACHE: "weakref.WeakKeyDictionary[Any, frozenset[int]]" = weakref.WeakKeyDictionary()
+
+# PostGIS 확장이 설치된 스키마의 geometry/geography 타입만 고른다(#766). 타입 이름만으로 고르면 다른 스키마에
+# 같은 이름으로 만든 사용자 타입(enum·domain 등)까지 geometry 로 오판해 ST_AsGeoJSON 래핑이 실패한다.
+# 카탈로그를 pg_catalog 로 한정해 search_path(테넌트 스키마 + public)에 같은 이름 테이블이 있어도 가려지지 않고,
+# pg_type·pg_extension 은 모든 롤이 읽을 수 있어 테넌트 롤 권한에도 영향받지 않는다. 직접 경로(Java,
+# AdhocSpatialTypeNames #759)가 PostGIS 타입을 "설치 스키마(public)의 타입" 으로 보는 것과 같은 기준이다.
+_GEOM_OID_SQL = (
+    "SELECT t.oid FROM pg_catalog.pg_type t"
+    " JOIN pg_catalog.pg_extension e ON e.extnamespace = t.typnamespace"
+    " WHERE e.extname = 'postgis' AND t.typname IN ('geometry', 'geography')"
+)
+
+
+def _fetch_geom_oids(conn) -> frozenset[int]:
+    """PostGIS 확장 스키마의 geometry/geography 타입 OID 집합을 돌려준다(커넥션 단위 캐시).
 
     성공 경로와 에러 fallback 경로가 공유한다. 값이 아니라 컬럼의 선언된
     타입 OID로 geometry 여부를 판정하기 위한 근거를 제공한다.
     """
+    try:
+        cached = _GEOM_OID_CACHE.get(conn)
+    except TypeError:  # 약한 참조를 지원하지 않는 커넥션 객체 — 캐시 없이 매번 조회한다
+        cached = None
+    if cached is not None:
+        return cached
     cur = conn.cursor()
-    cur.execute("SELECT oid FROM pg_type WHERE typname IN ('geometry', 'geography')")
-    oids = {row[0] for row in cur.fetchall()}
+    cur.execute(_GEOM_OID_SQL)
+    oids = frozenset(row[0] for row in cur.fetchall())
     cur.close()
+    try:
+        _GEOM_OID_CACHE[conn] = oids
+    except TypeError:
+        pass
     return oids
 
 
@@ -60,6 +87,68 @@ def _build_geojson_wrapped_sql(
             select_parts.append(f'"{escaped}"')
     # 사용자 SQL 을 자기 줄에 얹는다(#741) — 위 _detect_geometry_columns 와 같은 이유.
     return f"WITH _src AS (\n{original_sql}\n) SELECT {', '.join(select_parts)} FROM _src"
+
+
+def _exec_geojson_wrapped(
+    cursor, clean_sql: str, column_metas: List[Tuple[str, bool]], max_rows: int
+) -> Tuple[List[str], List[Dict[str, Any]]]:
+    """geometry 컬럼을 ST_AsGeoJSON 으로 감싼 SQL 을 실행해 (컬럼, 행) 을 돌려준다."""
+    wrapped_sql = _build_geojson_wrapped_sql(clean_sql, column_metas)
+    # 판정은 사용자 SQL 로 한다 — 래핑 CTE 안의 LIMIT 은 최상위가 아니라서
+    # wrapped_sql 로 보면 항상 False 가 되어 주 경로와 규칙이 갈린다.
+    if not _has_limit(clean_sql):
+        wrapped_sql = _add_limit(wrapped_sql, max_rows)
+    cursor.execute(wrapped_sql)
+    columns = [d[0] for d in cursor.description] if cursor.description else []
+    raw_rows = cursor.fetchall()
+    return columns, [dict(zip(columns, row)) for row in raw_rows]
+
+
+def _isolate_wrappable_columns(
+    cursor, clean_sql: str, column_metas: List[Tuple[str, bool]]
+) -> List[Tuple[str, bool]]:
+    """geometry 컬럼마다 따로 래핑을 시험해(LIMIT 0) 감쌀 수 없는 컬럼만 래핑 대상에서 뺀다(#766).
+
+    한 컬럼의 변환 실패가 같은 결과의 다른 geometry 컬럼까지 원본(WKB 16진수)으로 되돌리지 않게
+    하려는 것이다. LIMIT 0 이라 실제 행은 읽지 않고 함수 해석(계획 단계) 오류만 걸러진다.
+    호출 전후로 세이브포인트 analytics_query 가 살아 있어야 한다.
+    """
+    result: List[Tuple[str, bool]] = []
+    for col_name, is_geom in column_metas:
+        if not is_geom:
+            result.append((col_name, False))
+            continue
+        only_this = [(c, c == col_name and g) for c, g in column_metas]
+        probe = f"SELECT * FROM (\n{_build_geojson_wrapped_sql(clean_sql, only_this)}\n) _geom_probe LIMIT 0"
+        try:
+            cursor.execute(probe)
+            result.append((col_name, True))
+        except Exception as exc:
+            logger.warning("geometry GeoJSON wrap failed for column %r, keeping raw: %s", col_name, exc)
+            cursor.execute("ROLLBACK TO SAVEPOINT analytics_query")
+            cursor.execute("SAVEPOINT analytics_query")
+            result.append((col_name, False))
+    return result
+
+
+def _run_geojson_wrapped(
+    cursor, clean_sql: str, column_metas: List[Tuple[str, bool]], max_rows: int
+) -> Tuple[List[str], List[Dict[str, Any]]]:
+    """GeoJSON 래핑 실행. 전체 래핑이 실패하면 컬럼 단위로 격리해 감쌀 수 있는 컬럼만 다시 감싼다(#766).
+
+    감쌀 수 있는 geometry 컬럼이 하나도 남지 않거나 재시도도 실패하면 예외를 그대로 올린다 —
+    호출부가 원본 결과 유지(성공 경로) 또는 원래 오류 보고(에러 경로)로 처리한다.
+    """
+    try:
+        return _exec_geojson_wrapped(cursor, clean_sql, column_metas, max_rows)
+    except Exception as exc:
+        logger.warning("geometry GeoJSON wrap failed, isolating per column: %s", exc)
+        cursor.execute("ROLLBACK TO SAVEPOINT analytics_query")
+        cursor.execute("SAVEPOINT analytics_query")
+        isolated = _isolate_wrappable_columns(cursor, clean_sql, column_metas)
+        if not any(is_geom for _, is_geom in isolated):
+            raise
+        return _exec_geojson_wrapped(cursor, clean_sql, isolated, max_rows)
 
 
 
@@ -411,15 +500,7 @@ def execute_query(
                     has_geom = any(is_geom for _, is_geom in column_metas)
 
                     if has_geom:
-                        wrapped_sql = _build_geojson_wrapped_sql(clean_sql, column_metas)
-                        # 판정은 사용자 SQL 로 한다 — 래핑 CTE 안의 LIMIT 은 최상위가 아니라서
-                        # wrapped_sql 로 보면 항상 False 가 되어 주 경로와 규칙이 갈린다.
-                        if not _has_limit(clean_sql):
-                            wrapped_sql = _add_limit(wrapped_sql, max_rows)
-                        cursor.execute(wrapped_sql)
-                        columns = [desc[0] for desc in cursor.description] if cursor.description else []
-                        raw_rows = cursor.fetchall()
-                        rows = [dict(zip(columns, row)) for row in raw_rows]
+                        columns, rows = _run_geojson_wrapped(cursor, clean_sql, column_metas, max_rows)
                         original_error = None
                     else:
                         raise original_error
@@ -437,17 +518,10 @@ def execute_query(
                 if any(is_geom for _, is_geom in column_metas):
                     orig_columns, orig_rows = columns, rows
                     try:
-                        wrapped_sql = _build_geojson_wrapped_sql(clean_sql, column_metas)
-                        # 판정은 사용자 SQL 로 한다 — 래핑 CTE 안의 LIMIT 은 최상위가 아니라서
-                        # wrapped_sql 로 보면 항상 False 가 되어 주 경로와 규칙이 갈린다.
-                        if not _has_limit(clean_sql):
-                            wrapped_sql = _add_limit(wrapped_sql, max_rows)
                         cursor.execute("ROLLBACK TO SAVEPOINT analytics_query")
                         cursor.execute("SAVEPOINT analytics_query")
-                        cursor.execute(wrapped_sql)
-                        columns = [d[0] for d in cursor.description] if cursor.description else []
-                        raw_rows = cursor.fetchall()
-                        rows = [dict(zip(columns, row)) for row in raw_rows]
+                        # 컬럼 단위 격리 포함(#766) — 한 컬럼 실패가 다른 geometry 컬럼까지 raw 로 되돌리지 않는다.
+                        columns, rows = _run_geojson_wrapped(cursor, clean_sql, column_metas, max_rows)
                     except Exception as exc:
                         # 방어적 폴백: GeoJSON 변환 실패 시 원본 성공 결과를 유지한다
                         # (연결이 정상일 때. 연결 사망 등으로 아래 rollback 도 실패하면

@@ -668,3 +668,96 @@ def test_fetch_first_is_respected_as_user_row_limit(query):
 def test_limit_all_is_replaced_by_max_rows(query, expected):
     """LIMIT ALL/NULL 은 '제한 없음' — 값만 max_rows 로 바꿔 LIMIT 이 두 번 나오지 않게 한다(#749)."""
     assert _capture_select_sql(query, max_rows=10) == [expected]
+
+
+# ---------------------------------------------------------------------------
+# #766 — 동명 사용자 타입 오판 방지 + 컬럼 단위 격리
+# ---------------------------------------------------------------------------
+
+def test_fetch_geom_oids_limited_to_postgis_extension_schema():
+    """OID 조회는 이름만이 아니라 PostGIS 확장 스키마로 한정하고, 카탈로그를 pg_catalog 로 한정한다(#766).
+
+    다른 스키마의 `geometry` 이름 enum 이 geometry 로 판정되면 래핑이 실패해 진짜 geometry 까지 raw 로 나간다.
+    """
+    from app.services.query_executor import _fetch_geom_oids
+
+    cur = MagicMock()
+    cur.fetchall.return_value = [(16000,)]
+    conn = MagicMock()
+    conn.cursor.return_value = cur
+
+    _fetch_geom_oids(conn)
+
+    sql = cur.execute.call_args_list[0].args[0]
+    assert "pg_catalog.pg_extension" in sql
+    assert "extname = 'postgis'" in sql
+    assert "e.extnamespace = t.typnamespace" in sql
+    assert "pg_catalog.pg_type" in sql
+
+
+def test_fetch_geom_oids_cached_per_connection():
+    """같은 커넥션에서는 카탈로그를 한 번만 읽고, 다른 커넥션은 따로 읽는다(#766)."""
+    from app.services.query_executor import _fetch_geom_oids
+
+    def make():
+        cur = MagicMock()
+        cur.fetchall.return_value = [(16000,)]
+        conn = MagicMock()
+        conn.cursor.return_value = cur
+        return conn, cur
+
+    conn1, cur1 = make()
+    conn2, cur2 = make()
+
+    assert _fetch_geom_oids(conn1) == {16000}
+    assert _fetch_geom_oids(conn1) == {16000}
+    assert _fetch_geom_oids(conn2) == {16000}
+
+    assert cur1.execute.call_count == 1
+    assert cur2.execute.call_count == 1
+
+
+def test_wrap_failure_on_one_column_does_not_revert_other_geometry_columns():
+    """한 컬럼의 ST_AsGeoJSON 래핑이 실패해도 다른 geometry 컬럼은 GeoJSON 으로 나온다(#766 컬럼 단위 격리)."""
+    GEOM_OID = 16000
+    executed_sqls = []
+    state = {"mode": "raw"}
+
+    cursor = MagicMock()
+    cursor.rowcount = 0
+    raw_desc = [("e", GEOM_OID, None, None, None, None, None), ("g", GEOM_OID, None, None, None, None, None)]
+    cursor.description = raw_desc
+
+    def execute_side(sql, *args, **kwargs):
+        executed_sqls.append(sql)
+        if 'ST_AsGeoJSON("e")' in sql:
+            raise Exception("function public.st_asgeojson(zz.geometry) does not exist")
+        if 'ST_AsGeoJSON("g")' in sql:
+            state["mode"] = "wrapped"
+            cursor.description = [("e", 25, None, None, None, None, None), ("g", 25, None, None, None, None, None)]
+
+    def fetchall_side():
+        if state["mode"] == "wrapped":
+            return [("a", '{"type":"Point","coordinates":[1,2]}')]
+        return [("a", "0101000020E6100000")]
+
+    cursor.execute.side_effect = execute_side
+    cursor.fetchall.side_effect = fetchall_side
+
+    geom_cursor = MagicMock()
+    geom_cursor.fetchall.return_value = [(GEOM_OID,)]
+    side_conn = MagicMock()
+    side_conn.cursor.return_value = geom_cursor
+    cursor.connection = side_conn
+
+    conn = MagicMock()
+    conn.cursor.return_value = cursor
+
+    result = execute_query("SELECT e, g FROM t", max_rows=1000, read_only=False, conn=conn, tenant_id=1)
+
+    assert result.success is True
+    assert result.rows == [{"e": "a", "g": '{"type":"Point","coordinates":[1,2]}'}]
+    # 마지막 실행 SQL 은 g 만 감싸고 e 는 그대로 둔다.
+    final_sql = [s for s in executed_sqls if "WITH _src" in s and "_geom_probe" not in s][-1]
+    assert 'ST_AsGeoJSON("g")' in final_sql
+    assert 'ST_AsGeoJSON("e")' not in final_sql
