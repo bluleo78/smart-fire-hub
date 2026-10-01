@@ -3,6 +3,7 @@ package com.smartfirehub.dataset.service;
 import com.smartfirehub.dataset.dto.SqlQueryResponse;
 import com.smartfirehub.dataset.exception.SqlQueryException;
 import com.smartfirehub.global.tenant.DataSchema;
+import com.smartfirehub.global.util.AdhocResultValues;
 import com.smartfirehub.global.util.AdhocSqlStatements;
 import com.smartfirehub.global.util.SqlLexicalMask;
 import com.smartfirehub.global.util.SqlValidationUtils;
@@ -114,7 +115,9 @@ public class DataTableQueryService {
         for (var record : result) {
           Map<String, Object> row = new HashMap<>();
           for (int idx : visibleIndices) {
-            row.put(record.field(idx).getName(), record.get(idx));
+            // jsonb/json/xml/interval 등 Jackson 이 못 쓰는 값은 PG 텍스트로 바꾼다(#756)
+            row.put(
+                record.field(idx).getName(), AdhocResultValues.toResponseValue(record.get(idx)));
           }
           rows.add(row);
         }

@@ -6,6 +6,7 @@ import com.smartfirehub.analytics.dto.AnalyticsQueryResponse;
 import com.smartfirehub.analytics.dto.SchemaInfoResponse;
 import com.smartfirehub.dataset.exception.SqlQueryException;
 import com.smartfirehub.global.tenant.DataSchema;
+import com.smartfirehub.global.util.AdhocResultValues;
 import com.smartfirehub.global.util.AdhocSqlStatements;
 import com.smartfirehub.global.util.SqlLexicalMask;
 import com.smartfirehub.global.util.SqlValidationUtils;
@@ -256,7 +257,8 @@ public class AnalyticsQueryExecutionService {
         for (var record : result) {
           Map<String, Object> row = new HashMap<>();
           for (var field : result.fields()) {
-            row.put(field.getName(), record.get(field));
+            // jsonb/json/xml/interval 등 Jackson 이 못 쓰는 값은 PG 텍스트로 바꾼다(#756)
+            row.put(field.getName(), AdhocResultValues.toResponseValue(record.get(field)));
           }
           rows.add(row);
         }
