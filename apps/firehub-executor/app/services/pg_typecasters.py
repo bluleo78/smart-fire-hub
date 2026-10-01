@@ -1,0 +1,92 @@
+"""psycopg2 타입 캐스터 보강 — 한 값의 파싱 실패가 쿼리 전체를 실패시키지 않게 한다(#762).
+
+왜 필요한가:
+- psycopg2(2.9) 의 C 배열 캐스터는 하한이 지정된 **다차원** 배열 텍스트(``[0:1][0:1]={{1,2},{3,4}}``)의
+  차원 장식을 걷어내지 못해 ``array does not start with '{'`` (DataError) 를 던진다(1차원 ``[2:3]=`` 는 처리).
+  이 예외는 ``cursor.fetchall()`` 에서 나므로 그 값 하나 때문에 쿼리 전체가 실패한다.
+- 범위를 벗어난 날짜/시각(``10000-01-01``, ``BC``)·거대한 interval 도 Python 객체로 바꿀 수 없어
+  ``ValueError``/``OverflowError`` 로 같은 방식으로 쿼리 전체를 실패시킨다.
+
+계약(API 직접 경로 ``AdhocMultiDimArrays`` 와 같다):
+- 하한 장식은 버리고 중첩 리스트로 준다(직접 경로도 하한을 버린다).
+- 그래도 변환할 수 없는 값은 **그 값만** PG 리터럴 텍스트(장식 포함 원문)로 폴백한다.
+
+등록은 프로세스 전역(``register_type`` 의 전역 형태)이다 — 애드혹 분석(query_executor)과 파이프라인
+SQL 스텝 SELECT(sql_executor) 가 같은 연결 풀을 쓰므로 두 경로가 함께 고쳐진다. 커넥션 단위 등록이 없으므로
+(앱 어디에서도 캐스터를 등록하지 않는다) 전역 등록이 가려지지 않는다.
+"""
+
+from __future__ import annotations
+
+import logging
+import re
+import threading
+from typing import Any, Callable, Optional
+
+import psycopg2.extensions as ext
+
+logger = logging.getLogger(__name__)
+
+# 배열 텍스트 앞의 차원 장식: ``[하한:상한]`` 이 1개 이상 이어지고 ``=`` 로 끝난다(음수 하한 허용).
+_BOUNDS_PREFIX = re.compile(r"^(?:\[-?\d+:-?\d+\])+=")
+
+# 범위 초과로 Python 변환이 실패할 수 있는 스칼라 타입 OID — date, timestamp, timestamptz, interval.
+# 스칼라는 값마다 Python 호출이 끼므로 실제로 실패가 관측된 타입만 감싼다(전 타입 래핑은 하지 않는다).
+_FALLBACK_SCALAR_OIDS = (1082, 1114, 1184, 1186)
+
+_installed = False
+_install_lock = threading.Lock()
+
+
+def make_array_caster(orig: Callable[[Optional[str], Any], Any]) -> Callable[[Optional[str], Any], Any]:
+    """원래 배열 캐스터를 감싸 하한 장식을 걷어내고, 실패하면 원문 텍스트로 폴백하는 함수를 만든다.
+
+    장식을 걷어도 의미가 바뀌지 않는 이유: 장식은 첨자 시작값일 뿐이고 원소·중첩 구조는 ``=`` 뒤에 그대로
+    있다. 직접 경로도 하한을 버린 중첩 리스트를 준다.
+    """
+
+    def cast(value: Optional[str], cur: Any) -> Any:
+        if value is None:
+            return None
+        body = value
+        m = _BOUNDS_PREFIX.match(value)
+        if m:
+            body = value[m.end():]
+        try:
+            return orig(body, cur)
+        except Exception as exc:  # noqa: BLE001 — 어떤 파싱 실패든 값 단위 폴백이 계약이다
+            logger.debug("array typecast failed, falling back to literal text: %s", exc)
+            return value
+
+    return cast
+
+
+def make_fallback_caster(orig: Callable[[Optional[str], Any], Any]) -> Callable[[Optional[str], Any], Any]:
+    """원래 스칼라 캐스터를 감싸 변환 실패(범위 초과 등) 시 원문 텍스트로 폴백하는 함수를 만든다."""
+
+    def cast(value: Optional[str], cur: Any) -> Any:
+        if value is None:
+            return None
+        try:
+            return orig(value, cur)
+        except Exception as exc:  # noqa: BLE001 — 값 단위 폴백이 계약이다
+            logger.debug("scalar typecast failed, falling back to literal text: %s", exc)
+            return value
+
+    return cast
+
+
+def install_safe_typecasters() -> None:
+    """psycopg2 전역 캐스터를 보강한다. 여러 번 불려도 한 번만 감싼다(이중 래핑 방지)."""
+    global _installed
+    with _install_lock:
+        if _installed:
+            return
+        # 등록 중 string_types 가 바뀌므로 스냅샷을 순회한다.
+        for oid, orig in list(ext.string_types.items()):
+            name = orig.name
+            if name.endswith("ARRAY"):
+                ext.register_type(ext.new_type((oid,), name, make_array_caster(orig)))
+            elif oid in _FALLBACK_SCALAR_OIDS:
+                ext.register_type(ext.new_type((oid,), name, make_fallback_caster(orig)))
+        _installed = True

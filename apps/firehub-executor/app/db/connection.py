@@ -7,9 +7,15 @@ from typing import Dict, Generator, Optional
 from psycopg2 import pool as pg_pool
 
 from app.config import Settings
+from app.services.pg_typecasters import install_safe_typecasters
 from app.tenant import resolve_password, resolve_role, resolve_schema
 
 logger = logging.getLogger(__name__)
+
+# 이 모듈이 모든 실행 경로(애드혹 분석·파이프라인 SQL 스텝)의 연결을 내주므로, 여기서 psycopg2 전역 캐스터를
+# 보강한다(#762) — 하한 지정 다차원 배열·범위 초과 날짜가 쿼리 전체를 실패시키지 않게. 워커 프로세스마다
+# 이 모듈이 임포트되므로 각 워커에 한 번씩 설치된다(멱등).
+install_safe_typecasters()
 
 # 레거시 공유 롤(pipeline_executor) 풀.
 # **실행 경로는 더 이상 이 풀을 쓰지 않는다** — readiness 프로브(/health)가 "DB 에 붙을 수 있는가"
