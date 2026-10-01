@@ -64,6 +64,14 @@ public final class AdhocResultValues {
       }
       return converted;
     }
+    if (value instanceof java.util.List<?> list) {
+      // 다차원 배열을 펼친 중첩 리스트(#757, AdhocMultiDimArrays) — 1차원 배열과 같은 원소 단위 변환을 적용한다.
+      java.util.List<Object> converted = new java.util.ArrayList<>(list.size());
+      for (Object element : list) {
+        converted.add(toResponseValue(element));
+      }
+      return converted;
+    }
     return value;
   }
 

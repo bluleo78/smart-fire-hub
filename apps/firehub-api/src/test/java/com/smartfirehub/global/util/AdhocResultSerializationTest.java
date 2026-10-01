@@ -130,4 +130,77 @@ class AdhocResultSerializationTest extends IntegrationTestBase {
     assertThat(datasetValue("42").asInt()).isEqualTo(42);
     assertThat(analyticsValue("'abc'::text").asText()).isEqualTo("abc");
   }
+
+  // ---- #757 다차원 배열 ----
+
+  /** 두 경로 모두에서 값이 기대 JSON(중첩 배열)과 같은지 확인한다 — executor(psycopg2) 경로와 같은 형태. */
+  private void assertJsonOnBothPaths(String expr, String expectedJson) throws Exception {
+    JsonNode expected = objectMapper.readTree(expectedJson);
+    assertThat(analyticsValue(expr)).as("analytics %s", expr).isEqualTo(expected);
+    assertThat(datasetValue(expr)).as("dataset %s", expr).isEqualTo(expected);
+  }
+
+  @Test
+  void multiDimensionalArrays_areNestedListsNotNull() throws Exception {
+    // 수정 전: int/numeric/bool 다차원은 null(조용한 손실), text 는 안쪽 배열이 PG 리터럴 문자열로 뭉개졌다
+    assertJsonOnBothPaths("ARRAY[[1,2],[3,4]]", "[[1,2],[3,4]]");
+    assertJsonOnBothPaths("ARRAY[['a','b'],['c','d']]", "[[\"a\",\"b\"],[\"c\",\"d\"]]");
+    assertJsonOnBothPaths("ARRAY[[NULL,2]]", "[[null,2]]");
+    assertJsonOnBothPaths("ARRAY[[[1,2]],[[3,4]]]", "[[[1,2]],[[3,4]]]");
+    assertJsonOnBothPaths("ARRAY[[true,false]]", "[[true,false]]");
+    // numeric 원소는 같은 경로의 1차원 numeric 원소와 같은 형태(JSON 숫자)
+    assertJsonOnBothPaths("ARRAY[[1.5,NULL],[2,3]]::numeric[]", "[[1.5,null],[2,3]]");
+    // 하한이 1 이 아닌 배열 — executor 처럼 하한은 버리고 값은 보존
+    assertJsonOnBothPaths("'[0:1][0:1]={{1,2},{3,4}}'::int[]", "[[1,2],[3,4]]");
+    // 원소 형태는 같은 경로의 1차원 배열 원소와 같다(날짜·시각·uuid·bytea·jsonb·interval 등)
+    for (String elem :
+        java.util.List.of(
+            "'2024-01-02'::date",
+            "'2024-01-02 03:04:05+09'::timestamptz",
+            "'2024-01-02 03:04:05'::timestamp",
+            "'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'::uuid",
+            "'\\x0102'::bytea",
+            "'{\"k\":1}'::jsonb",
+            "interval '1 year 2 days'",
+            "1.25::numeric")) {
+      JsonNode oneDim = analyticsValue("ARRAY[" + elem + "]").get(0);
+      JsonNode expected = objectMapper.createArrayNode().add(objectMapper.createArrayNode().add(oneDim));
+      assertThat(analyticsValue("ARRAY[[" + elem + "]]")).as("analytics 2D %s", elem).isEqualTo(expected);
+      assertThat(datasetValue("ARRAY[[" + elem + "]]")).as("dataset 2D %s", elem).isEqualTo(expected);
+    }
+    assertJsonOnBothPaths("ARRAY[['{\"k\":1}'::jsonb]]", "[[\"{\\\"k\\\": 1}\"]]");
+    assertJsonOnBothPaths("ARRAY[[interval '1 day']]", "[[\"1 day\"]]");
+    // 여러 행·여러 컬럼이 섞여도 각 셀이 제자리에 들어간다
+    var res =
+        analyticsService.execute(
+            "SELECT g AS n, ARRAY[[g, g+1]] AS m, ARRAY[g] AS a FROM generate_series(1,3) g", 10, true);
+    JsonNode rows = objectMapper.readTree(objectMapper.writeValueAsString(res)).get("rows");
+    for (int i = 0; i < 3; i++) {
+      int g = i + 1;
+      assertThat(rows.get(i).get("n").asInt()).isEqualTo(g);
+      assertThat(rows.get(i).get("m")).isEqualTo(objectMapper.readTree("[[" + g + "," + (g + 1) + "]]"));
+      assertThat(rows.get(i).get("a")).isEqualTo(objectMapper.readTree("[" + g + "]"));
+    }
+  }
+
+  @Test
+  void oneDimensionalArrays_keepTheirShapeAlongsideMultiDim() throws Exception {
+    // 회귀 가드 — 1차원·빈·하한 있는 1차원 배열은 예전 그대로
+    assertJsonOnBothPaths("ARRAY[1,2]", "[1,2]");
+    assertJsonOnBothPaths("'{}'::int[]", "[]");
+    assertJsonOnBothPaths("'[0:1]={1,2}'::int[]", "[1,2]");
+    assertJsonOnBothPaths("ARRAY['a',NULL]", "[\"a\",null]");
+  }
+
+  @Test
+  void multiDimensionalArray_unconvertibleElement_fallsBackToPgLiteralNotNull() {
+    // 원소 변환이 실패하면(jOOQ Convert 가 null/예외) 셀은 null 이 아니라 PG 배열 리터럴 텍스트다 — 손실 금지
+    Object v =
+        AdhocMultiDimArrays.toNested(
+            new Object[][] {{"not-a-number"}}, "{{not-a-number}}", Integer[].class);
+    assertThat(v).isEqualTo("{{not-a-number}}");
+    // 변환 가능한 값은 중첩 리스트
+    assertThat(AdhocMultiDimArrays.toNested(new Integer[][] {{1, null}}, "{{1,NULL}}", Integer[].class))
+        .isEqualTo(java.util.List.of(java.util.Arrays.asList(1, null)));
+  }
 }

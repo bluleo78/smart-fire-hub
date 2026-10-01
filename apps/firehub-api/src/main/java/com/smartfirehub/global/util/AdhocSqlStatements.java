@@ -39,7 +39,9 @@ public final class AdhocSqlStatements {
           try (Statement st = conn.createStatement()) {
             st.setEscapeProcessing(false);
             try (ResultSet rs = st.executeQuery(sql)) {
-              return dsl.fetch(rs);
+              // 다차원 배열은 jOOQ 가 1차원으로 읽다 null 로 잃으므로 가로채 중첩 리스트로 살린다(#757)
+              AdhocMultiDimArrays multiDim = new AdhocMultiDimArrays(rs);
+              return multiDim.apply(dsl, dsl.fetch(multiDim.proxy()));
             }
           } catch (SQLException e) {
             throw translate(sql, e);
