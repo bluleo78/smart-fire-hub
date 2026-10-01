@@ -29,6 +29,10 @@ import org.jooq.types.YearToSecond;
  * 모두 문자열을 그대로 그린다 — 파싱된 객체를 주면 SQL 탭이 {@code [object Object]} 로 그린다. 배열은 원소 단위로
  * 바꾸므로 {@code jsonb[]} 는 JSON 텍스트 원소의 배열이 된다. 그 밖의 값(숫자·문자열·날짜·UUID·bytea·단일 PGobject
  * 등)은 이미 직렬화되므로 손대지 않는다.
+ *
+ * <p><b>날짜·시각은 여기 오기 전에 걸러진다.</b> 범위 밖(10000년 이후·BC·infinity·24:00)이거나 Java 날짜 객체가 PG
+ * 값을 재현하지 못하는 date/timestamp/timestamptz/time/timetz 와 interval 은 {@link AdhocTemporalValues} 가 읽는
+ * 시점에 PG 텍스트 원문으로 바꿔 둔다(#768). 여기 도달하는 날짜 객체는 정상 범위 값이라 Jackson 이 그대로 쓴다.
  */
 public final class AdhocResultValues {
 

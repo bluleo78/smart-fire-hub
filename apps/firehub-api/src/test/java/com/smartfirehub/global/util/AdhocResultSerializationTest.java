@@ -206,4 +206,128 @@ class AdhocResultSerializationTest extends IntegrationTestBase {
     assertThat(AdhocMultiDimArrays.toNested(new Integer[][] {{1, null}}, "{{1,NULL}}", Integer[].class))
         .isEqualTo(java.util.List.of(java.util.Arrays.asList(1, null)));
   }
+
+  // ---- #768 범위 밖 날짜·시각 ----
+
+  @Test
+  void outOfRangeTemporalScalars_areReturnedAsPgTextNotOtherDates() throws Exception {
+    // 수정 전: 10000년 → 0000, 12345 → 2345, BC 소실, infinity → 8994-08-17 등 오류 없이 다른 날짜가 나왔고
+    // timestamptz infinity 는 쿼리 전체가 실패했다. executor 경로(#762)처럼 PG 텍스트 원문이어야 한다.
+    for (String expr :
+        java.util.List.of(
+            "'10000-01-01'::date",
+            "'12345-06-07'::date",
+            "'0044-03-15 BC'::date",
+            "'infinity'::date",
+            "'-infinity'::date",
+            "'10000-01-01 00:00'::timestamp",
+            "'10000-01-01 00:00:00.5'::timestamp",
+            "'0044-03-15 10:00 BC'::timestamp",
+            "'infinity'::timestamp",
+            "'-infinity'::timestamp",
+            "'10000-01-01 00:00+00'::timestamptz",
+            "'0044-03-15 10:00+00 BC'::timestamptz",
+            "'infinity'::timestamptz",
+            "'-infinity'::timestamptz",
+            "'24:00:00'::time",
+            "'24:00:00+00'::timetz",
+            // Java 혼합 달력의 율리우스→그레고리력 전환 공백(1582-10-05~14) — 10일 밀린 날짜가 나왔다
+            "DATE '1582-10-10'",
+            // jOOQ 가 읽지 못해 쿼리 전체가 실패하던 거대 interval(시간이 int 범위 초과)
+            "interval '2562047788:00:54.775807'")) {
+      assertTextOnBothPaths(expr);
+    }
+  }
+
+  @Test
+  void dstGapLocalTimestamp_isNotShiftedByJvmTimeZone() throws Exception {
+    // JVM 시간대의 DST 공백에 떨어지는 timestamp(시간대 없음)는 java.sql.Timestamp 가 한 시간 밀어 버린다.
+    // Asia/Seoul 은 1988-05-08 02:00~03:00 이 공백이다 — 다른 시간대에서는 해당 없음.
+    org.junit.jupiter.api.Assumptions.assumeTrue(
+        "Asia/Seoul".equals(java.util.TimeZone.getDefault().getID()));
+    assertTextOnBothPaths("'1988-05-08 02:30'::timestamp");
+  }
+
+  @Test
+  void arraysWithOutOfRangeTemporalElement_fallBackToPgArrayLiteral() throws Exception {
+    // 원소 하나라도 Java 로 표현할 수 없으면 셀 전체를 PG 배열 리터럴로 준다 — executor(#762)와 같은 계약
+    for (String expr :
+        java.util.List.of(
+            "ARRAY['10000-01-01'::date, DATE '2024-01-01']",
+            "ARRAY['0044-03-15 BC'::date, NULL]",
+            "ARRAY['infinity'::timestamp]",
+            "ARRAY['infinity'::timestamptz]",
+            "ARRAY['24:00:00'::time]",
+            "ARRAY[DATE '1582-10-10']",
+            "ARRAY[['10000-01-01'::date]]",
+            "ARRAY[['0044-03-15 BC'::date, DATE '2024-01-01']]",
+            "'[0:0]={infinity}'::date[]")) {
+      assertTextOnBothPaths(expr);
+    }
+    // interval 배열은 원래 원소가 PG 텍스트 — jOOQ 가 읽지 못하던 거대 interval 원소도 원소 텍스트로 준다
+    assertJsonOnBothPaths(
+        "ARRAY[interval '2562047788:00:54.775807', NULL]", "[\"2562047788:00:54.775807\",null]");
+    // 시간대 있는 배열의 정상 값은 범위 밖으로 오판하지 않는다(예전 형태 그대로)
+    assertThat(analyticsValue("ARRAY['2024-01-02 03:04:05+09'::timestamptz]").isArray()).isTrue();
+    assertThat(datasetValue("ARRAY['03:04:05+09'::timetz]").isArray()).isTrue();
+  }
+
+  /** 수정 전 응답 형태 = jOOQ 가 같은 타입으로 읽은 Java 값을 Spring ObjectMapper 로 쓴 JSON. */
+  private JsonNode preFixJson(String expr, Class<?> type) {
+    Object v = dsl.fetchValue(org.jooq.impl.DSL.field(expr, type));
+    return objectMapper.valueToTree(v);
+  }
+
+  @Test
+  void normalTemporalValues_keepTheirPreviousShape() throws Exception {
+    // 회귀 가드 — 정상 범위 값은 예전과 바이트 단위로 같은 JSON(타임존 처리 포함)
+    java.util.Map<String, Class<?>> cases = new java.util.LinkedHashMap<>();
+    cases.put("DATE '2024-02-29'", java.sql.Date.class);
+    cases.put("DATE '0001-01-01'", java.sql.Date.class);
+    cases.put("DATE '0500-01-01'", java.sql.Date.class);
+    cases.put("DATE '9999-12-31'", java.sql.Date.class);
+    cases.put("'2024-01-02 03:04:05.123456'::timestamp", java.sql.Timestamp.class);
+    cases.put("'2024-01-02 03:04:05'::timestamp", java.sql.Timestamp.class);
+    cases.put("'0999-01-02 03:04:05'::timestamp", java.sql.Timestamp.class);
+    cases.put("'1900-01-01 10:00'::timestamp", java.sql.Timestamp.class);
+    cases.put("'2024-01-02 03:04:05.123456+09'::timestamptz", java.time.OffsetDateTime.class);
+    cases.put("'1900-01-01 10:00'::timestamptz", java.time.OffsetDateTime.class);
+    cases.put("'03:04:05.5'::time", java.sql.Time.class);
+    cases.put("'03:04:05+09'::timetz", java.time.OffsetTime.class);
+    for (var e : cases.entrySet()) {
+      JsonNode expected = preFixJson(e.getKey(), e.getValue());
+      assertThat(analyticsValue(e.getKey())).as("analytics %s", e.getKey()).isEqualTo(expected);
+      assertThat(datasetValue(e.getKey())).as("dataset %s", e.getKey()).isEqualTo(expected);
+    }
+    // 시간대와 무관한 값은 리터럴로도 고정한다
+    assertThat(analyticsValue("DATE '2024-02-29'").asText()).isEqualTo("2024-02-29");
+    assertThat(datasetValue("'03:04:05'::time").asText()).isEqualTo("03:04:05");
+    // interval 은 PG 텍스트 — jOOQ 가 시간을 일로 정규화하던 값(24:00:00 → "1 day")도 원문 그대로
+    assertTextOnBothPaths("interval '24:00:00'");
+    assertTextOnBothPaths("interval '1 day -1 hour'");
+    assertJsonOnBothPaths("ARRAY[interval '24:00:00', NULL]", "[\"24:00:00\",null]");
+    assertJsonOnBothPaths("ARRAY[[interval '24:00:00']]", "[[\"24:00:00\"]]");
+    // 정상 1차원 배열은 예전처럼 원소 JSON 배열
+    assertJsonOnBothPaths("ARRAY[DATE '2024-01-01', NULL]", "[\"2024-01-01\",null]");
+    assertJsonOnBothPaths("ARRAY['03:04:05'::time]", "[\"03:04:05\"]");
+  }
+
+  @Test
+  void sameColumn_mixesNormalOutOfRangeAndNullRowsCellByCell() throws Exception {
+    // 한 컬럼에 정상·범위 밖·NULL 이 섞여도 범위 밖 셀만 텍스트가 되고 나머지는 예전 형태 그대로다
+    String sql =
+        "SELECT v, n FROM (VALUES (1, DATE '2024-01-01'), (2, '10000-01-01'::date), (3, NULL::date),"
+            + " (4, 'infinity'::date), (5, DATE '2024-12-31')) t(n, v) ORDER BY n";
+    String[] expected = {"\"2024-01-01\"", "\"10000-01-01\"", "null", "\"infinity\"", "\"2024-12-31\""};
+    JsonNode a =
+        objectMapper.readTree(objectMapper.writeValueAsString(analyticsService.execute(sql, 10, true)));
+    JsonNode d =
+        objectMapper.readTree(
+            objectMapper.writeValueAsString(dataTableQueryService.executeQuery(sql, 10)));
+    for (int i = 0; i < expected.length; i++) {
+      assertThat(a.get("rows").get(i).get("v").toString()).as("analytics row %d", i).isEqualTo(expected[i]);
+      assertThat(a.get("rows").get(i).get("n").asInt()).isEqualTo(i + 1);
+      assertThat(d.get("rows").get(i).get("v").toString()).as("dataset row %d", i).isEqualTo(expected[i]);
+    }
+  }
 }

@@ -111,25 +111,40 @@ final class AdhocMultiDimArrays {
     return array;
   }
 
-  /**
-   * 가로챈 셀을 결과에 채운다. 가로챈 것이 없으면 결과를 그대로 돌려준다. 있으면 해당 컬럼만 {@code OTHER}(Object)
-   * 타입으로 바꾼 새 결과를 만든다 — 원래 타입({@code Integer[]})에는 중첩 리스트를 담을 수 없다. 호출자는 컬럼
-   * 이름과 값만 쓰므로 타입 변경은 응답에 드러나지 않는다.
-   */
+  /** 가로챈 다차원 셀을 중첩 리스트로 바꿔 결과에 채운다({@link #replaceCells}). 가로챈 것이 없으면 그대로 돌려준다. */
   Result<Record> apply(DSLContext dsl, Result<Record> result) {
-    if (captured.isEmpty()) {
+    Field<?>[] fields = result.fields();
+    // 가장 안쪽 1차원 조각의 변환 대상 = jOOQ 가 이 컬럼에 고른 1차원 배열 타입(예: Integer[], YearToSecond[])
+    Map<Integer, Map<Integer, Object>> cells = new HashMap<>();
+    for (Map.Entry<Integer, Map<Integer, Captured>> r : captured.entrySet()) {
+      Map<Integer, Object> cols = new HashMap<>();
+      for (Map.Entry<Integer, Captured> e : r.getValue().entrySet()) {
+        Class<?> type = fields[e.getKey() - 1].getType();
+        Class<?> sliceType = type.isArray() ? type : Object.class;
+        cols.put(e.getKey(), toNested(e.getValue().javaArray(), e.getValue().literal(), sliceType));
+      }
+      cells.put(r.getKey(), cols);
+    }
+    return replaceCells(dsl, result, cells);
+  }
+
+  /**
+   * (행 → (1-based 컬럼 인덱스 → 값)) 의 셀을 결과에 채운다. 채울 것이 없으면 결과를 그대로 돌려준다. 있으면 해당
+   * 컬럼만 {@code OTHER}(Object) 타입으로 바꾼 새 결과를 만든다 — 원래 타입({@code Integer[]}·{@code Date})에는 중첩
+   * 리스트·텍스트를 담을 수 없다. 호출자는 컬럼 이름과 값만 쓰므로 타입 변경은 응답에 드러나지 않는다.
+   * 다차원 배열(#757)과 범위 밖 날짜·시각({@link AdhocTemporalValues}, #768)이 함께 쓴다.
+   */
+  static Result<Record> replaceCells(
+      DSLContext dsl, Result<Record> result, Map<Integer, Map<Integer, Object>> cells) {
+    if (cells.isEmpty()) {
       return result;
     }
     Field<?>[] fields = result.fields();
-    // 가장 안쪽 1차원 조각의 변환 대상 = jOOQ 가 이 컬럼에 고른 1차원 배열 타입(예: Integer[], YearToSecond[])
-    Map<Integer, Class<?>> sliceTypes = new HashMap<>();
     Field<?>[] newFields = fields.clone();
-    for (Map<Integer, Captured> cols : captured.values()) {
+    for (Map<Integer, Object> cols : cells.values()) {
       for (int idx : cols.keySet()) {
         int i = idx - 1;
-        if (!sliceTypes.containsKey(idx)) {
-          Class<?> type = fields[i].getType();
-          sliceTypes.put(idx, type.isArray() ? type : Object.class);
+        if (newFields[i] == fields[i]) {
           newFields[i] = DSL.field(DSL.name(fields[i].getName()), SQLDataType.OTHER);
         }
       }
@@ -137,10 +152,10 @@ final class AdhocMultiDimArrays {
     Result<Record> out = dsl.newResult(newFields);
     for (int r = 0; r < result.size(); r++) {
       Object[] values = result.get(r).intoArray();
-      Map<Integer, Captured> cols = captured.get(r);
+      Map<Integer, Object> cols = cells.get(r);
       if (cols != null) {
-        for (Map.Entry<Integer, Captured> e : cols.entrySet()) {
-          values[e.getKey() - 1] = toNested(e.getValue().javaArray(), e.getValue().literal(), sliceTypes.get(e.getKey()));
+        for (Map.Entry<Integer, Object> e : cols.entrySet()) {
+          values[e.getKey() - 1] = e.getValue();
         }
       }
       Record rec = dsl.newRecord(newFields);

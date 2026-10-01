@@ -41,8 +41,12 @@ public final class AdhocSqlStatements {
             try (ResultSet rs = st.executeQuery(sql)) {
               // 다차원 배열은 jOOQ 가 1차원으로 읽다 null 로 잃으므로 가로채 중첩 리스트로 살린다(#757).
               // PostGIS 타입 이름은 커넥션 캐시 상태와 무관하게 한 표기로 고정해 jOOQ 가 늘 PGobject 로 읽게 한다(#759)
-              AdhocMultiDimArrays multiDim = new AdhocMultiDimArrays(AdhocSpatialTypeNames.wrap(rs));
-              return multiDim.apply(dsl, dsl.fetch(multiDim.proxy()));
+              // 범위 밖 날짜·시각(10000년·BC·infinity·24:00 등)은 Java 날짜 객체로 바뀌며 다른 값이 되므로 PG 텍스트
+              // 원문으로 둔다(#768). 다차원 배열 래퍼보다 안쪽이어야 다차원 날짜 배열도 먼저 보고 폴백한다.
+              AdhocTemporalValues temporal =
+                  new AdhocTemporalValues(AdhocSpatialTypeNames.wrap(rs));
+              AdhocMultiDimArrays multiDim = new AdhocMultiDimArrays(temporal.proxy());
+              return temporal.apply(dsl, multiDim.apply(dsl, dsl.fetch(multiDim.proxy())));
             }
           } catch (SQLException e) {
             throw translate(sql, e);
