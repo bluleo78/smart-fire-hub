@@ -45,6 +45,8 @@ export async function setupAdminAuth(page: Page) {
   // 기본 빈 목록을 모킹해 unhandled request로 실네트워크에 빠지지 않도록 한다. 개별 테스트는
   // 필요시 setupUserListMocks 등으로 오버라이드한다.
   await mockApi(page, 'GET', '/api/v1/users', createPageResponse([]));
+  // 멤버 추가 버튼(user:write)·역할 지정(role:assign) 노출 판단용(WD-2). 개별 테스트가 덮어쓴다.
+  await mockApi(page, 'GET', '/api/v1/auth/me/permissions', ['user:read', 'user:write', 'role:assign']);
 }
 
 /**

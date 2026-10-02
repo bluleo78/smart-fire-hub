@@ -57,6 +57,15 @@ public class AuthService {
         MembershipRepository.DEFAULT_TENANT_ID, () -> signupTransaction.execute(request));
   }
 
+  /**
+   * 공개 가입이 열려 있는가 = 사용자가 한 명도 없는가. 로그인 화면이 가입 링크를 숨길지 정한다. 잠금 없이
+   * 읽는다 — 표시용 힌트일 뿐이고 최종 판정은 {@link SignupTransaction} 이 잠금 안에서 한다.
+   */
+  @Transactional(readOnly = true)
+  public boolean isSignupOpen() {
+    return !userRepository.existsAnyUser();
+  }
+
   @Transactional
   public TokenResponse login(LoginRequest request) {
     if (loginAttemptService.isBlocked(request.username())) {
@@ -103,7 +112,13 @@ public class AuthService {
 
     // 로그인은 새 리프레시 토큰 패밀리를 시작한다.
     TokenResponse tokenResponse =
-        issueTokenPair(user.id(), user.username(), activeTenantId, UUID.randomUUID(), memberships);
+        issueTokenPair(
+            user.id(),
+            user.username(),
+            activeTenantId,
+            UUID.randomUUID(),
+            memberships,
+            user.mustChangePassword());
 
     // 로그인 감사 로그 (#60/#92).
     //
@@ -182,7 +197,14 @@ public class AuthService {
     List<MembershipResponse> memberships = membershipRepository.findActiveByUser(user.id());
 
     // 갱신은 기존 패밀리를 이어간다(재사용 탐지가 패밀리 단위로 이루어지므로).
-    return issueTokenPair(user.id(), user.username(), activeTenantId, familyId, memberships);
+    // pwc 는 방금 읽은 DB 값 — 비밀번호를 바꾼 뒤 refresh 하면 표식이 꺼진 토큰이 나온다(WD-2).
+    return issueTokenPair(
+        user.id(),
+        user.username(),
+        activeTenantId,
+        familyId,
+        memberships,
+        user.mustChangePassword());
   }
 
   @Transactional
@@ -244,7 +266,39 @@ public class AuthService {
     }
 
     // 테넌트 전환 시 새 리프레시 토큰 패밀리를 시작한다(이전 패밀리와 섞이지 않게).
-    return issueTokenPair(userId, user.username(), tenantId, UUID.randomUUID(), List.of());
+    // pwc 를 여기서도 DB 값으로 싣는다 — 빠지면 "워크스페이스 선택" 이 비밀번호 변경 게이트 우회 구멍이
+    // 된다(WD-2).
+    return issueTokenPair(
+        userId, user.username(), tenantId, UUID.randomUUID(), List.of(), user.mustChangePassword());
+  }
+
+  /**
+   * 비밀번호 변경 직후 호출자의 세션을 새 refresh 패밀리로 다시 세운다(WD-2 리뷰 지적 2).
+   *
+   * <p>{@code UserService.changePassword} 가 이 사용자의 refresh 토큰을 전부 폐기하므로, 호출자(웹)가 쥔 옛
+   * 쿠키로는 refresh 가 401 이다. 컨트롤러가 여기서 받은 refresh 토큰을 쿠키로 내려 주면 웹의
+   * {@code completePasswordChange} → {@code /auth/refresh} 가 그대로 동작한다.
+   *
+   * <p>테넌트는 호출 시점 access token 의 클레임이다. refresh 와 같은 규칙으로 멤버십을 재검증해 정지됐으면
+   * 미선택(null)으로 강등한다. pwc 는 방금 커밋된 DB 값(꺼짐)을 읽는다.
+   */
+  @Transactional
+  public TokenResponse startSessionAfterPasswordChange(Long userId, Long claimedTenantId) {
+    UserResponse user =
+        userRepository
+            .findById(userId)
+            .orElseThrow(() -> new InvalidTokenException("사용자를 찾을 수 없습니다. 다시 로그인해 주세요."));
+    Long tenantId =
+        (claimedTenantId != null && membershipRepository.hasActiveMembership(userId, claimedTenantId))
+            ? claimedTenantId
+            : null;
+    return issueTokenPair(
+        userId,
+        user.username(),
+        tenantId,
+        UUID.randomUUID(),
+        membershipRepository.findActiveByUser(userId),
+        user.mustChangePassword());
   }
 
   /**
@@ -259,8 +313,10 @@ public class AuthService {
       String username,
       Long tenantId,
       UUID familyId,
-      List<MembershipResponse> memberships) {
-    String accessToken = jwtTokenProvider.generateAccessToken(userId, username, tenantId);
+      List<MembershipResponse> memberships,
+      boolean mustChangePassword) {
+    String accessToken =
+        jwtTokenProvider.generateAccessToken(userId, username, tenantId, mustChangePassword);
     String refreshToken = jwtTokenProvider.generateRefreshToken(userId, tenantId);
 
     storeRefreshToken(userId, refreshToken, familyId);
@@ -271,7 +327,8 @@ public class AuthService {
         "Bearer",
         jwtProperties.accessExpiration() / 1000,
         tenantId,
-        memberships);
+        memberships,
+        mustChangePassword);
   }
 
   private void storeRefreshToken(Long userId, String refreshToken, UUID familyId) {

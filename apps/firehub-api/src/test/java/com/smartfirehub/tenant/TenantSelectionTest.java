@@ -7,12 +7,12 @@ import static org.jooq.impl.DSL.name;
 import static org.jooq.impl.DSL.table;
 
 import com.smartfirehub.auth.dto.LoginRequest;
-import com.smartfirehub.auth.dto.SignupRequest;
 import com.smartfirehub.auth.dto.TokenResponse;
 import com.smartfirehub.auth.exception.TenantAccessDeniedException;
 import com.smartfirehub.auth.service.AuthService;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.support.IntegrationTestBase;
+import com.smartfirehub.support.TestUsers;
 import com.smartfirehub.tenant.dto.MembershipResponse;
 import com.smartfirehub.tenant.repository.MembershipRepository;
 import com.smartfirehub.user.dto.UserResponse;
@@ -21,31 +21,35 @@ import org.jooq.DSLContext;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.crypto.password.PasswordEncoder;
 
 /** 멤버십 조회와 테넌트 선택/전환 동작을 검증한다. */
 class TenantSelectionTest extends IntegrationTestBase {
 
   @Autowired private DSLContext dsl;
   @Autowired private AuthService authService;
+  @Autowired private PasswordEncoder passwordEncoder;
   @Autowired private MembershipRepository membershipRepository;
   @Autowired private JwtTokenProvider jwtTokenProvider;
 
   /**
-   * 이 테스트 전용 픽스처 사용자를 회원가입으로 새로 만든다. 공유 테스트 DB의 기존 사용자에
-   * 의존하면(예: id 최솟값 조회) 신선한 DB(사전 사용자 0명)에서 null 을 반환해 테스트가
-   * 깨지고, 공유 DB에서는 다른 테스트가 만든 사용자 상태에 우연히 의존하게 된다.
-   * signupGrantsDefaultTenantMembership 과 동일한 패턴 — nanoTime 접미사로 고유 아이디를 써서
-   * 매 실행이 독립적인 사용자를 갖게 하고, 가입 시점에 기본 테넌트 1번 ACTIVE 멤버십이
-   * 보장된다(백필이 아니라 signup 경로에서).
+   * 이 테스트 전용 픽스처 사용자를 직접 삽입(TestUsers)으로 새로 만든다 — 공개 가입은 첫
+   * 사용자만 열려 있다(WD-2). 공유 테스트 DB의 기존 사용자에 의존하면(예: id 최솟값 조회)
+   * 신선한 DB(사전 사용자 0명)에서 null 을 반환해 테스트가 깨지고, 공유 DB에서는 다른 테스트가
+   * 만든 사용자 상태에 우연히 의존하게 된다. nanoTime 접미사로 고유 아이디를 써서 매 실행이
+   * 독립적인 사용자를 갖게 하고, 픽스처가 삽입과 동시에 기본 테넌트 1번 ACTIVE 멤버십을 만든다
+   * (백필이나 signup 경로가 아니라 직접 삽입 픽스처에서).
    */
   private Long createFixtureUserId() {
     String username = "tenant-selection-" + System.nanoTime() + "@example.com";
-    SignupRequest request = new SignupRequest(username, username, "Password123!", "테넌트선택테스트");
-    return authService.signup(request).id();
+    return TestUsers.createMember(
+            dsl, fixtureTransactionTemplate, passwordEncoder, username, username, "Password123!",
+            "테넌트선택테스트", DEFAULT_TEST_TENANT_ID)
+        .id();
   }
 
   @Test
-  @DisplayName("가입한 사용자는 기본 테넌트 멤버십을 조회할 수 있다")
+  @DisplayName("직접 삽입 픽스처로 만든 사용자는 기본 테넌트 멤버십을 조회할 수 있다")
   void backfilledUserHasDefaultMembership() {
     List<MembershipResponse> memberships = membershipRepository.findActiveByUser(createFixtureUserId());
 
@@ -85,27 +89,13 @@ class TenantSelectionTest extends IntegrationTestBase {
   }
 
   @Test
-  @DisplayName("회원가입한 사용자는 기본 테넌트에 ACTIVE 멤버십을 자동으로 갖는다")
-  void signupGrantsDefaultTenantMembership() {
-    // 공유 테스트 DB에서 반복 실행 시 충돌하지 않도록 고유한 아이디를 사용한다.
-    String username = "tenant-signup-" + System.nanoTime() + "@example.com";
-    SignupRequest request = new SignupRequest(username, username, "Password123!", "테넌트가입테스트");
-
-    UserResponse user = authService.signup(request);
-
-    List<MembershipResponse> memberships = membershipRepository.findActiveByUser(user.id());
-    assertThat(memberships).hasSize(1);
-    assertThat(memberships.get(0).tenantId()).isEqualTo(1L);
-    assertThat(memberships.get(0).tenantSlug()).isEqualTo("default");
-    assertThat(membershipRepository.hasActiveMembership(user.id(), 1L)).isTrue();
-  }
-
-  @Test
   @DisplayName("갱신 시 소속이 정지된 테넌트는 강등되지만 다른 활성 멤버십 목록은 그대로 내려간다")
   void refreshWithSuspendedTenantDowngradesButKeepsMemberships() {
     String username = "tenant-refresh-" + System.nanoTime() + "@example.com";
     String password = "Password123!";
-    UserResponse user = authService.signup(new SignupRequest(username, username, password, "테넌트갱신테스트"));
+    UserResponse user = TestUsers.createMember(
+            dsl, fixtureTransactionTemplate, passwordEncoder, username, username, password,
+            "테넌트갱신테스트", DEFAULT_TEST_TENANT_ID);
 
     // 로그인 시점에는 소속이 tenant 1(default) 하나뿐이므로 자동 선택되어, 리프레시 토큰이
     // tenant 1 클레임을 담은 채 발급된다.

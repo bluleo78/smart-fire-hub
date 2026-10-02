@@ -3,9 +3,10 @@ package com.smartfirehub.auth.controller;
 import com.smartfirehub.auth.dto.LoginRequest;
 import com.smartfirehub.auth.dto.SelectTenantRequest;
 import com.smartfirehub.auth.dto.SignupRequest;
+import com.smartfirehub.auth.dto.SignupStatusResponse;
 import com.smartfirehub.auth.dto.TokenResponse;
 import com.smartfirehub.auth.service.AuthService;
-import com.smartfirehub.global.security.JwtProperties;
+import com.smartfirehub.global.security.AllowedDuringPasswordChange;
 import com.smartfirehub.permission.service.PermissionService;
 import com.smartfirehub.tenant.dto.MembershipResponse;
 import com.smartfirehub.user.dto.UserResponse;
@@ -13,11 +14,8 @@ import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import java.util.List;
 import java.util.Set;
-import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
-import org.springframework.lang.NonNull;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
@@ -25,49 +23,48 @@ import org.springframework.web.bind.annotation.*;
 @RequestMapping("/api/v1/auth")
 public class AuthController {
 
-  private static final String REFRESH_TOKEN_COOKIE = "refreshToken";
-  private static final String REFRESH_TOKEN_PATH = "/api/v1/auth";
+  private static final String REFRESH_TOKEN_COOKIE = RefreshTokenCookies.NAME;
 
   private final AuthService authService;
-  private final JwtProperties jwtProperties;
   private final PermissionService permissionService;
-  private final boolean cookieSecure;
+  private final RefreshTokenCookies refreshTokenCookies;
 
   public AuthController(
       AuthService authService,
-      JwtProperties jwtProperties,
       PermissionService permissionService,
-      @org.springframework.beans.factory.annotation.Value("${app.cookie.secure:true}")
-          boolean cookieSecure) {
+      RefreshTokenCookies refreshTokenCookies) {
     this.authService = authService;
-    this.cookieSecure = cookieSecure;
-    this.jwtProperties = jwtProperties;
     this.permissionService = permissionService;
+    this.refreshTokenCookies = refreshTokenCookies;
   }
 
   @PostMapping("/signup")
+  @AllowedDuringPasswordChange
   public ResponseEntity<UserResponse> signup(@Valid @RequestBody SignupRequest request) {
     UserResponse user = authService.signup(request);
     return ResponseEntity.status(HttpStatus.CREATED).body(user);
   }
 
+  /** 공개 가입 열림 여부. 로그인 전 화면이 호출하므로 permitAll 이다(SecurityConfig). */
+  @GetMapping("/signup-status")
+  @AllowedDuringPasswordChange
+  public ResponseEntity<SignupStatusResponse> signupStatus() {
+    return ResponseEntity.ok(new SignupStatusResponse(authService.isSignupOpen()));
+  }
+
   @PostMapping("/login")
+  @AllowedDuringPasswordChange
   public ResponseEntity<TokenResponse> login(
       @Valid @RequestBody LoginRequest request, HttpServletResponse response) {
     TokenResponse token = authService.login(request);
-    addRefreshTokenCookie(response, token.refreshToken());
-    TokenResponse body =
-        new TokenResponse(
-            token.accessToken(),
-            null,
-            token.tokenType(),
-            token.expiresIn(),
-            token.activeTenantId(),
-            token.memberships());
+    refreshTokenCookies.set(response, token.refreshToken());
+    // 필드를 다시 조립하지 않는다 — 새 필드(mustChangePassword)가 조용히 빠지는 것을 막는다.
+    TokenResponse body = token.withoutRefreshToken();
     return ResponseEntity.ok(body);
   }
 
   @PostMapping("/refresh")
+  @AllowedDuringPasswordChange
   public ResponseEntity<TokenResponse> refresh(
       @CookieValue(name = REFRESH_TOKEN_COOKIE, required = false) String refreshToken,
       HttpServletResponse response) {
@@ -75,27 +72,23 @@ public class AuthController {
       return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
     }
     TokenResponse token = authService.refresh(refreshToken);
-    addRefreshTokenCookie(response, token.refreshToken());
-    TokenResponse body =
-        new TokenResponse(
-            token.accessToken(),
-            null,
-            token.tokenType(),
-            token.expiresIn(),
-            token.activeTenantId(),
-            token.memberships());
+    refreshTokenCookies.set(response, token.refreshToken());
+    // 필드를 다시 조립하지 않는다 — 새 필드(mustChangePassword)가 조용히 빠지는 것을 막는다.
+    TokenResponse body = token.withoutRefreshToken();
     return ResponseEntity.ok(body);
   }
 
   @PostMapping("/logout")
+  @AllowedDuringPasswordChange
   public ResponseEntity<Void> logout(Authentication authentication, HttpServletResponse response) {
     Long userId = (Long) authentication.getPrincipal();
     authService.logout(userId);
-    clearRefreshTokenCookie(response);
+    refreshTokenCookies.clear(response);
     return ResponseEntity.noContent().build();
   }
 
   @GetMapping("/me")
+  @AllowedDuringPasswordChange
   public ResponseEntity<UserResponse> me(Authentication authentication) {
     Long userId = (Long) authentication.getPrincipal();
     UserResponse user = authService.getCurrentUser(userId);
@@ -120,6 +113,7 @@ public class AuthController {
    * 선택 가능한 테넌트 목록. 테넌트 미선택 토큰으로도 호출할 수 있어야 하므로 권한을 요구하지 않는다.
    */
   @GetMapping("/memberships")
+  @AllowedDuringPasswordChange
   public ResponseEntity<List<MembershipResponse>> memberships(Authentication authentication) {
     Long userId = (Long) authentication.getPrincipal();
     return ResponseEntity.ok(authService.getMemberships(userId));
@@ -131,45 +125,16 @@ public class AuthController {
    * <p>테넌트 미선택 토큰으로도 호출할 수 있어야 하므로 권한을 요구하지 않는다.
    */
   @PostMapping("/select-tenant")
+  @AllowedDuringPasswordChange
   public ResponseEntity<TokenResponse> selectTenant(
       Authentication authentication,
       @Valid @RequestBody SelectTenantRequest request,
       HttpServletResponse response) {
     Long userId = (Long) authentication.getPrincipal();
     TokenResponse token = authService.selectTenant(userId, request.tenantId());
-    addRefreshTokenCookie(response, token.refreshToken());
-    TokenResponse body =
-        new TokenResponse(
-            token.accessToken(),
-            null,
-            token.tokenType(),
-            token.expiresIn(),
-            token.activeTenantId(),
-            token.memberships());
+    refreshTokenCookies.set(response, token.refreshToken());
+    // 필드를 다시 조립하지 않는다 — 새 필드(mustChangePassword)가 조용히 빠지는 것을 막는다.
+    TokenResponse body = token.withoutRefreshToken();
     return ResponseEntity.ok(body);
-  }
-
-  private void addRefreshTokenCookie(HttpServletResponse response, @NonNull String refreshToken) {
-    ResponseCookie cookie =
-        ResponseCookie.from(REFRESH_TOKEN_COOKIE, refreshToken)
-            .httpOnly(true)
-            .secure(cookieSecure)
-            .sameSite("Lax")
-            .path(REFRESH_TOKEN_PATH)
-            .maxAge(jwtProperties.refreshExpiration() / 1000)
-            .build();
-    response.addHeader(HttpHeaders.SET_COOKIE, cookie.toString());
-  }
-
-  private void clearRefreshTokenCookie(HttpServletResponse response) {
-    ResponseCookie cookie =
-        ResponseCookie.from(REFRESH_TOKEN_COOKIE, "")
-            .httpOnly(true)
-            .secure(cookieSecure)
-            .sameSite("Lax")
-            .path(REFRESH_TOKEN_PATH)
-            .maxAge(0)
-            .build();
-    response.addHeader(HttpHeaders.SET_COOKIE, cookie.toString());
   }
 }

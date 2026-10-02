@@ -8,11 +8,14 @@ import com.smartfirehub.auth.exception.EmailAlreadyExistsException;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TenantRlsTestSupport;
+import com.smartfirehub.support.TestUsers;
+import com.smartfirehub.tenant.repository.MembershipRepository;
 import com.smartfirehub.user.dto.UserDetailResponse;
 import com.smartfirehub.user.dto.UserListResponse;
 import com.smartfirehub.user.exception.UserNotFoundException;
 import java.util.List;
 import org.jooq.DSLContext;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -28,7 +31,12 @@ class UserServiceTest extends IntegrationTestBase {
 
   @Autowired private DSLContext dsl;
 
+  @Autowired private MembershipRepository membershipRepository;
+
   private Long testUserId;
+
+  /** 감사 로그 행위자 — audit_log.user_id 는 "user"(id) FK 라 실제 사용자여야 한다(WD-2). */
+  private Long callerId;
 
   @BeforeEach
   void setUp() {
@@ -42,6 +50,23 @@ class UserServiceTest extends IntegrationTestBase {
             .fetchOne()
             .getId();
     joinDefaultTenant(testUserId);
+    callerId =
+        TestUsers.createMember(
+                dsl,
+                fixtureTransactionTemplate,
+                passwordEncoder,
+                "caller@example.com",
+                "caller@example.com",
+                "Password123",
+                "Caller",
+                DEFAULT_TEST_TENANT_ID)
+            .id();
+  }
+
+  @AfterEach
+  void tearDownCaller() {
+    // 클래스가 @Transactional 이라 testUser 는 롤백되지만 callerId 는 별도 커밋 트랜잭션으로 만들었다.
+    TestUsers.cleanup(dsl, fixtureTransactionTemplate, callerId, DEFAULT_TEST_TENANT_ID);
   }
 
   /**
@@ -162,7 +187,7 @@ class UserServiceTest extends IntegrationTestBase {
     Long userRoleId = dsl.select(ROLE.ID).from(ROLE).where(ROLE.NAME.eq("USER")).fetchOne(ROLE.ID);
 
     // callerId를 testUserId와 다르게 설정하여 자기 자신 역할 제거 보호 로직 비활성화
-    userService.setUserRoles(testUserId, List.of(adminRoleId, userRoleId), testUserId + 1000);
+    userService.setUserRoles(testUserId, List.of(adminRoleId, userRoleId), callerId);
 
     UserDetailResponse detail = userService.getUserById(testUserId);
     assertThat(detail.roles()).hasSize(2);
@@ -171,10 +196,21 @@ class UserServiceTest extends IntegrationTestBase {
   @Test
   void setUserActive_success() {
     // 일반 유저(ADMIN 아님) 비활성화는 정상 동작 — callerId를 대상과 다르게 설정
-    userService.setUserActive(testUserId, false, testUserId + 1000);
+    userService.setUserActive(testUserId, false, callerId);
 
-    UserDetailResponse detail = userService.getUserById(testUserId);
-    assertThat(detail.isActive()).isFalse();
+    // 멤버십만 정지되고 전역 계정 활성은 그대로다(WD-2).
+    assertThat(
+            membershipRepository
+                .findInTenant(testUserId, DEFAULT_TEST_TENANT_ID)
+                .orElseThrow()
+                .status())
+        .isEqualTo("SUSPENDED");
+    assertThat(
+            dsl.select(USER.IS_ACTIVE)
+                .from(USER)
+                .where(USER.ID.eq(testUserId))
+                .fetchOne(USER.IS_ACTIVE))
+        .isTrue();
   }
 
   @Test
@@ -183,7 +219,7 @@ class UserServiceTest extends IntegrationTestBase {
     // 이를 실행해버린 사고(#585)에 대한 서버측 방어선. callerId == 대상 userId 면 거부.
     assertThatThrownBy(() -> userService.setUserActive(testUserId, false, testUserId))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("자기 자신");
+        .hasMessage("자기 자신은 정지하거나 제거할 수 없습니다");
 
     UserDetailResponse detail = userService.getUserById(testUserId);
     assertThat(detail.isActive()).isTrue();
@@ -198,24 +234,9 @@ class UserServiceTest extends IntegrationTestBase {
     assertThat(detail.isActive()).isTrue();
   }
 
-  @Test
-  void setUserActive_lastAdmin_throwsException() {
-    // 유일한 활성 ADMIN 계정을 비활성화하면 IllegalStateException (#146)
-    Long adminRoleId =
-        dsl.select(ROLE.ID).from(ROLE).where(ROLE.NAME.eq("ADMIN")).fetchOne(ROLE.ID);
-
-    // testUserId에게 ADMIN 역할 부여
-    dsl.insertInto(USER_ROLE)
-        .set(USER_ROLE.USER_ID, testUserId)
-        .set(USER_ROLE.ROLE_ID, adminRoleId)
-        .execute();
-
-    // 시스템에 활성 ADMIN이 testUserId 하나뿐인 상태에서 비활성화 시도
-    // (setUp의 testUserId 외 다른 ADMIN이 없는 경우를 가정 — IntegrationTestBase 격리 환경)
-    assertThatThrownBy(() -> userService.setUserActive(testUserId, false, testUserId + 1000))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("마지막 활성 ADMIN");
-  }
+  // setUserActive_lastAdmin_throwsException 삭제: 공유 기본 테넌트에는 다른 테스트의 ADMIN 이 섞여 판정이
+  // 오염된다. MembershipLifecycleServiceTest.lastActiveAdmin_rejected_whenOtherAdminSuspendedInThisTenant
+  // (전용 테넌트)로 대체했다.
 
   @Test
   void setUserActive_lastAdmin_allowActivation() {
@@ -235,11 +256,11 @@ class UserServiceTest extends IntegrationTestBase {
             .set(USER.PASSWORD, passwordEncoder.encode("Password123"))
             .set(USER.NAME, "Admin 2")
             .set(USER.EMAIL, "admin2@example.com")
-            .set(USER.IS_ACTIVE, false)
             .returning(USER.ID)
             .fetchOne()
             .getId();
     joinDefaultTenant(adminUserId);
+    membershipRepository.updateStatus(adminUserId, DEFAULT_TEST_TENANT_ID, "SUSPENDED");
 
     dsl.insertInto(USER_ROLE)
         .set(USER_ROLE.USER_ID, adminUserId)
@@ -247,10 +268,14 @@ class UserServiceTest extends IntegrationTestBase {
         .execute();
 
     // 비활성 ADMIN 계정 활성화 — 예외 없이 성공해야 함
-    userService.setUserActive(adminUserId, true, adminUserId + 1000);
+    userService.setUserActive(adminUserId, true, callerId);
 
-    UserDetailResponse detail = userService.getUserById(adminUserId);
-    assertThat(detail.isActive()).isTrue();
+    assertThat(
+            membershipRepository
+                .findInTenant(adminUserId, DEFAULT_TEST_TENANT_ID)
+                .orElseThrow()
+                .isActive())
+        .isTrue();
   }
 
   @Test
@@ -281,9 +306,13 @@ class UserServiceTest extends IntegrationTestBase {
         .execute();
 
     // 2명의 활성 ADMIN 중 한 명 비활성화 — 예외 없이 성공해야 함
-    userService.setUserActive(testUserId, false, testUserId + 1000);
+    userService.setUserActive(testUserId, false, callerId);
 
-    UserDetailResponse detail = userService.getUserById(testUserId);
-    assertThat(detail.isActive()).isFalse();
+    assertThat(
+            membershipRepository
+                .findInTenant(testUserId, DEFAULT_TEST_TENANT_ID)
+                .orElseThrow()
+                .status())
+        .isEqualTo("SUSPENDED");
   }
 }

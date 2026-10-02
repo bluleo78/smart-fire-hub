@@ -8,6 +8,8 @@ import { expect, test } from '../fixtures/auth.fixture';
  */
 test.describe('인증 전체 플로우', () => {
   test('회원가입 후 홈에 도달한다', { tag: '@smoke' }, async ({ authMockedPage: page }) => {
+    // 공개 가입은 첫 사용자 경로에서만 열린다(WD-2)
+    await mockApi(page, 'GET', '/api/v1/auth/signup-status', { open: true });
     // 회원가입 API 성공 응답 모킹 — capture: true로 요청 payload를 캡처한다
     // signup() 내부에서 login()이 자동 호출되므로 회원가입 성공 시 '/'로 바로 이동한다
     const capture = await mockApi(page, 'POST', '/api/v1/auth/signup', createUser(), { capture: true });

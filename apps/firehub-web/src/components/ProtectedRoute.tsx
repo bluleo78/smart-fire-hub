@@ -4,7 +4,7 @@ import { useAuth } from '../hooks/useAuth';
 import { SelectTenantPage } from '../pages/SelectTenantPage';
 
 export function ProtectedRoute() {
-  const { isLoading, isAuthenticated, activeTenantId } = useAuth();
+  const { isLoading, isAuthenticated, activeTenantId, mustChangePassword } = useAuth();
   const location = useLocation();
 
   if (isLoading) {
@@ -19,6 +19,13 @@ export function ProtectedRoute() {
     // 딥링크 보존(#675): 로그인 후 원래 접근하려던 경로로 되돌아갈 수 있도록
     // 현재 location을 state.from에 실어 전달한다. LoginPage가 로그인 성공 시 이를 읽는다.
     return <Navigate to="/login" state={{ from: location }} replace />;
+  }
+
+  // 비밀번호 변경 강제(WD-2): 임시 비밀번호를 아직 안 바꿨다. 테넌트 선택보다 먼저다(스펙 순서: 인증 →
+  // 비밀번호 → 테넌트). 비밀번호 변경 API 는 인증만 요구하므로 테넌트 미선택 토큰으로도 된다.
+  // 변경 전에는 AppLayout 이 부르는 API 가 전부 403 이므로 레이아웃을 그리기 전에 여기서 보낸다.
+  if (mustChangePassword) {
+    return <Navigate to="/change-password" replace />;
   }
 
   // 세 번째 상태: 인증됐지만 테넌트 미선택. 여기서 막지 않으면 GUC 가 비어 있어 모든 API 가 403 이

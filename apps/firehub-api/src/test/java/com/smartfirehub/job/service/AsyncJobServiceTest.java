@@ -7,20 +7,21 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
-import com.smartfirehub.auth.dto.SignupRequest;
-import com.smartfirehub.auth.service.AuthService;
 import com.smartfirehub.job.dto.AsyncJobStatusResponse;
 import com.smartfirehub.support.IntegrationTestBase;
+import com.smartfirehub.support.TestUsers;
 import com.smartfirehub.user.dto.UserResponse;
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import org.jooq.DSLContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -33,7 +34,8 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 class AsyncJobServiceTest extends IntegrationTestBase {
 
   @Autowired private AsyncJobService asyncJobService;
-  @Autowired private AuthService authService;
+  @Autowired private DSLContext dsl;
+  @Autowired private PasswordEncoder passwordEncoder;
 
   private Long userId;
 
@@ -41,8 +43,15 @@ class AsyncJobServiceTest extends IntegrationTestBase {
   @BeforeEach
   void setUp() {
     UserResponse user =
-        authService.signup(
-            new SignupRequest("jobTestUser", "jobtest@example.com", "Password123", "Job Tester"));
+        TestUsers.createMember(
+            dsl,
+            fixtureTransactionTemplate,
+            passwordEncoder,
+            "jobTestUser",
+            "jobtest@example.com",
+            "Password123",
+            "Job Tester",
+            DEFAULT_TEST_TENANT_ID);
     userId = user.id();
   }
 
@@ -192,8 +201,15 @@ class AsyncJobServiceTest extends IntegrationTestBase {
   @Test
   void subscribe_otherUsersJob_throwsAccessDenied() {
     UserResponse otherUser =
-        authService.signup(
-            new SignupRequest("other", "other@example.com", "Password123", "Other User"));
+        TestUsers.createMember(
+            dsl,
+            fixtureTransactionTemplate,
+            passwordEncoder,
+            "other",
+            "other@example.com",
+            "Password123",
+            "Other User",
+            DEFAULT_TEST_TENANT_ID);
 
     String jobId = asyncJobService.createJob("IMPORT", "dataset", "ds-9", otherUser.id(), null);
 
@@ -229,8 +245,15 @@ class AsyncJobServiceTest extends IntegrationTestBase {
   @Test
   void getJobStatus_otherUsersJob_throwsAccessDenied() {
     UserResponse otherUser =
-        authService.signup(
-            new SignupRequest("other2", "other2@example.com", "Password123", "Other2"));
+        TestUsers.createMember(
+            dsl,
+            fixtureTransactionTemplate,
+            passwordEncoder,
+            "other2",
+            "other2@example.com",
+            "Password123",
+            "Other2",
+            DEFAULT_TEST_TENANT_ID);
 
     String jobId = asyncJobService.createJob("IMPORT", "dataset", "ds-10", otherUser.id(), null);
 

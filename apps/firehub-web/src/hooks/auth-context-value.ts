@@ -29,6 +29,10 @@ export interface AuthContextValue {
    * <p>성공하면 **되돌아오지 않는다** — 하드 리로드를 걸기 때문이다.
    */
   selectTenant: (tenantId: number) => Promise<void>;
+  /** 임시 비밀번호 계정이 아직 비밀번호를 바꾸지 않았다 — ProtectedRoute 가 /change-password 로 보낸다(WD-2). */
+  mustChangePassword: boolean;
+  /** 비밀번호 변경 성공 후 호출: refresh 로 표식이 꺼진 토큰을 받고 사용자·역할을 다시 읽는다. */
+  completePasswordChange: () => Promise<void>;
 }
 
 export const AuthContext = createContext<AuthContextValue | null>(null);

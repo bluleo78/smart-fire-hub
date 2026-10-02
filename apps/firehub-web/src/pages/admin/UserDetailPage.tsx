@@ -1,3 +1,4 @@
+import { useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
 import { ArrowLeft } from 'lucide-react';
 import { useEffect,useId,useMemo,useState } from 'react';
@@ -24,16 +25,21 @@ import { Label } from '../../components/ui/label';
 import { Separator } from '../../components/ui/separator';
 import { Skeleton } from '../../components/ui/skeleton';
 import { Switch } from '../../components/ui/switch';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../components/ui/tooltip';
 import { useAuth } from '../../hooks/useAuth';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
+import { handleApiError } from '../../lib/api-error';
 import { formatDateShort } from '../../lib/formatters';
 import type { ErrorResponse } from '../../types/auth';
 import type { RoleResponse } from '../../types/role';
 import type { UserDetailResponse } from '../../types/user';
+import { MemberDangerZone } from './components/MemberDangerZone';
+import { memberLockReason } from './components/memberLockReason';
 
 export default function UserDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { user: currentUser } = useAuth();
   const [user, setUser] = useState<UserDetailResponse | null>(null);
   const [allRoles, setAllRoles] = useState<RoleResponse[]>([]);
@@ -135,23 +141,20 @@ export default function UserDetailPage() {
    */
   const handleToggleActive = async () => {
     if (!user) return;
-    // 자기 자신의 계정 비활성화 차단 (#73)
+    // 자기 자신의 멤버십 정지 차단 (#73)
     if (currentUser?.id === user.id && user.isActive) {
-      toast.error('자신의 계정을 비활성화할 수 없습니다.');
+      toast.error('자기 자신은 정지할 수 없습니다');
       return;
     }
     setIsTogglingActive(true);
     try {
       await usersApi.setUserActive(user.id, { active: !user.isActive });
       setUser({ ...user, isActive: !user.isActive });
-      toast.success(user.isActive ? '사용자가 비활성화되었습니다.' : '사용자가 활성화되었습니다.');
+      // 목록 캐시(staleTime 30s)의 상태 열이 낡지 않도록 무효화
+      await queryClient.invalidateQueries({ queryKey: ['users'] });
+      toast.success(user.isActive ? '멤버십이 정지되었습니다' : '멤버십이 재활성화되었습니다');
     } catch (error) {
-      if (axios.isAxiosError(error) && error.response?.data) {
-        const errData = error.response.data as ErrorResponse;
-        toast.error(errData.message || '상태 변경에 실패했습니다.');
-      } else {
-        toast.error('상태 변경에 실패했습니다.');
-      }
+      handleApiError(error, '상태 변경에 실패했습니다.');
     } finally {
       setIsTogglingActive(false);
     }
@@ -189,6 +192,10 @@ export default function UserDetailPage() {
 
   if (!user) return null;
 
+  // 정지·제거 잠금 사유(자기 자신/OWNER/마지막 활성 ADMIN) — 표시용 안내이며 최종 판정은 서버
+  const suspendLock = memberLockReason(user, currentUser?.id, '정지');
+  const removeLock = memberLockReason(user, currentUser?.id, '제거');
+
   return (
     <div className="mx-auto max-w-2xl space-y-6">
       <div className="flex items-center gap-4">
@@ -216,9 +223,8 @@ export default function UserDetailPage() {
             <span>{formatDateShort(user.createdAt)}</span>
             <span className="text-muted-foreground">상태</span>
             <span>
-              <Badge variant={user.isActive ? 'default' : 'secondary'}>
-                {user.isActive ? '활성' : '비활성'}
-              </Badge>
+              {/* 목록과 같은 멤버십 상태 표기(활성/정지, WD-2) — 화면마다 다른 말을 쓰지 않는다. */}
+              <Badge variant={user.isActive ? 'success' : 'secondary'}>{user.isActive ? '활성' : '정지'}</Badge>
             </span>
           </div>
         </CardContent>
@@ -228,9 +234,9 @@ export default function UserDetailPage() {
       <AlertDialog open={isDeactivateDialogOpen} onOpenChange={setIsDeactivateDialogOpen}>
         <AlertDialogContent size="sm">
           <AlertDialogHeader>
-            <AlertDialogTitle>사용자 비활성화</AlertDialogTitle>
+            <AlertDialogTitle className="text-xl leading-7">멤버십 정지</AlertDialogTitle>
             <AlertDialogDescription>
-              이 사용자를 비활성화하면 로그인이 불가합니다. 계속하시겠습니까?
+              이 워크스페이스에서만 접근이 막힙니다. 다른 워크스페이스와 계정은 영향이 없습니다. 계속하시겠습니까?
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -242,7 +248,7 @@ export default function UserDetailPage() {
                 void handleToggleActive();
               }}
             >
-              비활성화
+              정지
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -250,18 +256,43 @@ export default function UserDetailPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>활성 상태</CardTitle>
+          <CardTitle>이 워크스페이스에서 활성</CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-2">
           <div className="flex items-center gap-3">
-            <Switch
-              id={activeSwitchId}
-              checked={user.isActive}
-              onCheckedChange={handleSwitchChange}
-              disabled={isTogglingActive}
-            />
-            <Label htmlFor={activeSwitchId}>{user.isActive ? '활성' : '비활성'}</Label>
+            {/* 끄는 방향만 잠근다 — 정지된 사람을 다시 켜는 건 언제나 허용(잠금 규칙은 정지·제거에만 적용).
+                disabled 스위치는 포인터/포커스 이벤트를 못 받으므로 span(tabIndex=0)으로 감싸 툴팁을 띄운다.
+                포커스 가능한 래퍼라 이름(잠금 사유)이 필요하고, role 없는 span 엔 aria-label 이 금지라 group 으로 단다. */}
+            {user.isActive && suspendLock ? (
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span
+                      tabIndex={0}
+                      role="group"
+                      aria-label={suspendLock}
+                      data-testid="suspend-lock-trigger"
+                      className="inline-flex rounded-full focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring">
+                      <Switch id={activeSwitchId} checked disabled aria-label="이 워크스페이스에서 활성" />
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>{suspendLock}</TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            ) : (
+              <Switch
+                id={activeSwitchId}
+                checked={user.isActive}
+                onCheckedChange={handleSwitchChange}
+                disabled={isTogglingActive}
+                aria-label="이 워크스페이스에서 활성"
+              />
+            )}
+            <Label htmlFor={activeSwitchId}>{user.isActive ? '활성' : '정지'}</Label>
           </div>
+          <p className="text-[13px] text-muted-foreground">
+            끄면 이 워크스페이스에만 접근할 수 없습니다. 다른 워크스페이스와 계정 자체는 영향 없음.
+          </p>
         </CardContent>
       </Card>
 
@@ -327,6 +358,23 @@ export default function UserDetailPage() {
           </Button>
         </CardContent>
       </Card>
+
+      {/* 위험 구역 — 제거 후엔 저장할 역할 변경이 무의미하므로 이탈 가드(requestNavigate) 대신 navigate 직접 사용 */}
+      <MemberDangerZone
+        user={user}
+        lockReason={removeLock}
+        onConfirm={async () => {
+          try {
+            await usersApi.removeMember(user.id);
+            // 이동 전에 목록 캐시를 무효화해 제거된 멤버가 30초간 남아 보이지 않게 한다
+            await queryClient.invalidateQueries({ queryKey: ['users'] });
+            toast.success('워크스페이스에서 제거되었습니다');
+            navigate('/admin/users');
+          } catch (error) {
+            handleApiError(error, '제거하지 못했습니다');
+          }
+        }}
+      />
 
       {/* 미저장 변경 이탈 확인 다이얼로그 (#636) */}
       {unsavedChangesDialog}

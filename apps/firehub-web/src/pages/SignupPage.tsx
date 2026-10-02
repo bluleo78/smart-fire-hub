@@ -1,17 +1,20 @@
 import { zodResolver } from '@hookform/resolvers/zod';
+import { useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { Link, Navigate } from 'react-router-dom';
 
 import { FormField } from '@/components/ui/form-field';
+import { Skeleton } from '@/components/ui/skeleton';
 import { extractApiError } from '@/lib/api-error';
 import type { ErrorResponse } from '@/types/auth';
 
 import { Button } from '../components/ui/button';
-import { Card, CardContent, CardHeader } from '../components/ui/card';
+import { Card, CardContent, CardDescription, CardFooter, CardHeader } from '../components/ui/card';
 import { Input } from '../components/ui/input';
 import { PasswordInput } from '../components/ui/password-input';
+import { useSignupStatus } from '../hooks/queries/useSignupStatus';
 import { useAuth } from '../hooks/useAuth';
 import type { SignupFormData } from '../lib/validations/auth';
 import { signupSchema } from '../lib/validations/auth';
@@ -19,6 +22,9 @@ import { signupSchema } from '../lib/validations/auth';
 export default function SignupPage() {
   const { signup, isAuthenticated } = useAuth();
   const [serverError, setServerError] = useState('');
+  // 공개 가입 열림 여부 — 훅은 모든 조기 return 보다 앞에 둔다(훅 규칙)
+  const signupStatus = useSignupStatus();
+  const queryClient = useQueryClient();
 
   const {
     register,
@@ -33,11 +39,55 @@ export default function SignupPage() {
     return <Navigate to="/" replace />;
   }
 
+  // 열림 여부를 확인하는 동안 폼/안내가 번쩍이지 않도록 카드 골격만 보인다(레이아웃 점프 방지).
+  if (signupStatus.isLoading) {
+    return (
+      <div className="flex min-h-dvh items-center justify-center px-4">
+        <Card className="w-full max-w-md">
+          <CardContent className="space-y-4 p-6">
+            <Skeleton className="h-8 w-40" />
+            <Skeleton className="h-24 w-full" />
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  // 닫힘(또는 조회 실패) — 와이어프레임 ⑥: 안내 + 로그인 링크만.
+  if (!signupStatus.data?.open) {
+    return (
+      <div className="flex min-h-dvh items-center justify-center px-4">
+        <Card className="w-full max-w-md">
+          <CardHeader className="space-y-1 text-center">
+            <h1 className="text-2xl leading-8 font-semibold tracking-tight">회원가입</h1>
+            <CardDescription className="break-keep">
+              계정은 워크스페이스 관리자가 추가합니다. 관리자에게 계정 발급을 요청하세요.
+            </CardDescription>
+          </CardHeader>
+          <CardFooter className="flex justify-center">
+            <Button asChild variant="outline">
+              <Link to="/login">로그인으로 이동</Link>
+            </Button>
+          </CardFooter>
+        </Card>
+      </div>
+    );
+  }
+
   const onSubmit = async (data: SignupFormData) => {
     try {
       setServerError('');
       await signup(data);
     } catch (error) {
+      // 열림을 보고 들어왔지만 그 사이 첫 사용자가 생겼다 — 서버가 이미 "닫힘" 을 알려 줬으므로 다시 묻지 않고
+      // 캐시를 닫힘으로 바꿔 안내 화면으로 전환한다(재조회에 기대면 그 조회가 실패할 때 폼이 아무 안내 없이 남는다).
+      if (
+        axios.isAxiosError(error) &&
+        (error.response?.data as ErrorResponse | undefined)?.code === 'SIGNUP_DISABLED'
+      ) {
+        queryClient.setQueryData(['auth', 'signup-status'], { open: false });
+        return;
+      }
       // 서버가 필드별 errors 맵을 반환하면 각 필드에 인라인으로 표시
       if (axios.isAxiosError(error) && error.response?.data) {
         const errData = error.response.data as ErrorResponse;

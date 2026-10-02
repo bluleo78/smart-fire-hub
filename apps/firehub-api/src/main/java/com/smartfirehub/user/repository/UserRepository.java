@@ -2,8 +2,10 @@ package com.smartfirehub.user.repository;
 
 import static com.smartfirehub.jooq.Tables.*;
 import static org.jooq.impl.DSL.count;
+import static org.jooq.impl.DSL.countDistinct;
 import static org.jooq.impl.DSL.exists;
 import static org.jooq.impl.DSL.field;
+import static org.jooq.impl.DSL.lower;
 import static org.jooq.impl.DSL.name;
 import static org.jooq.impl.DSL.selectOne;
 import static org.jooq.impl.DSL.table;
@@ -13,12 +15,14 @@ import com.smartfirehub.global.util.LikePatternUtils;
 import com.smartfirehub.user.dto.UserResponse;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import org.jooq.Condition;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Record;
+import org.jooq.SelectField;
 import org.jooq.Table;
 import org.springframework.stereotype.Repository;
 
@@ -64,6 +68,31 @@ public class UserRepository {
             .and(M_STATUS.eq("ACTIVE")));
   }
 
+  /**
+   * "이 사용자가 주어진 테넌트의 멤버인가(ACTIVE·SUSPENDED 모두)" — 관리 목록 전용 술어.
+   *
+   * <p>정지(SUSPENDED) 멤버도 관리자 목록에 보여야 재활성·제거할 수 있다(WD-2). 메시지 수신자 해석처럼
+   * "지금 활동 중인 멤버" 가 필요한 경로는 {@link #memberOfTenant} 를 계속 쓴다.
+   */
+  private Condition inTenant(long tenantId) {
+    return exists(
+        selectOne().from(MEMBERSHIP).where(M_USER_ID.eq(USER.ID)).and(M_TENANT_ID.eq(tenantId)));
+  }
+
+  /**
+   * {@link #mapToUserResponse} 가 읽는 컬럼 목록 — select·returning 이 공유한다. 한 곳만 컬럼이 빠지면
+   * 매퍼에서 런타임 오류가 나므로 목록을 하나로 둔다.
+   */
+  private static final List<SelectField<?>> USER_FIELDS =
+      List.of(
+          USER.ID,
+          USER.USERNAME,
+          USER.EMAIL,
+          USER.NAME,
+          USER.IS_ACTIVE,
+          USER.CREATED_AT,
+          USER.MUST_CHANGE_PASSWORD);
+
   private UserResponse mapToUserResponse(Record r) {
     return new UserResponse(
         r.get(USER.ID),
@@ -71,20 +100,19 @@ public class UserRepository {
         r.get(USER.EMAIL),
         r.get(USER.NAME),
         r.get(USER.IS_ACTIVE),
-        r.get(USER.CREATED_AT));
+        r.get(USER.CREATED_AT),
+        Boolean.TRUE.equals(r.get(USER.MUST_CHANGE_PASSWORD)));
   }
 
   public Optional<UserResponse> findByUsername(String username) {
-    return dsl.select(
-            USER.ID, USER.USERNAME, USER.EMAIL, USER.NAME, USER.IS_ACTIVE, USER.CREATED_AT)
+    return dsl.select(USER_FIELDS)
         .from(USER)
         .where(USER.USERNAME.eq(username))
         .fetchOptional(this::mapToUserResponse);
   }
 
   public Optional<UserResponse> findById(Long id) {
-    return dsl.select(
-            USER.ID, USER.USERNAME, USER.EMAIL, USER.NAME, USER.IS_ACTIVE, USER.CREATED_AT)
+    return dsl.select(USER_FIELDS)
         .from(USER)
         .where(USER.ID.eq(id))
         .fetchOptional(this::mapToUserResponse);
@@ -110,6 +138,20 @@ public class UserRepository {
 
   public boolean existsByEmail(String email) {
     return dsl.fetchExists(dsl.selectOne().from(USER).where(USER.EMAIL.eq(email)));
+  }
+
+  /**
+   * 이메일 대소문자 무시 존재 검사 — 멤버 추가 전용(WD-2 리뷰 지적 4).
+   *
+   * <p>과거 계정은 이메일을 대소문자 섞어 저장했을 수 있다(username 은 다른 값). 정확 일치만 보면 관리자가
+   * 소문자로 추가할 때 같은 사람의 두 번째 계정이 생긴다. 가입 경로({@code existsByEmail})는 의미를 바꾸지
+   * 않으려 별도 메서드로 둔다.
+   *
+   * @param email 소문자로 정규화된 이메일
+   */
+  public boolean existsByEmailIgnoreCase(String email) {
+    return dsl.fetchExists(
+        dsl.selectOne().from(USER).where(lower(USER.EMAIL).eq(email.toLowerCase(Locale.ROOT))));
   }
 
   public boolean existsByEmailExcludingUser(String email, Long excludeUserId) {
@@ -138,18 +180,60 @@ public class UserRepository {
     dsl.execute("SELECT pg_advisory_xact_lock({0})", val(1L));
   }
 
+  /**
+   * 테넌트 단위 "마지막 활성 ADMIN" 판정 직렬화 잠금(트랜잭션 범위, WD-2 리뷰 지적 3).
+   *
+   * <p>두 관리자가 서로를 동시에 정지·제거하면 각자 "활성 ADMIN 2명" 을 보고 통과해 0 명이 될 수 있다.
+   * 판정 전에 이 잠금을 잡으면 두 번째 트랜잭션은 첫 번째 커밋 뒤의 수를 본다(READ COMMITTED).
+   * 키는 접두어를 붙인 문자열 해시다 — 가입 잠금({@link #acquireFirstUserLock} 의 키 1)과 같은 숫자 키 공간을
+   * 쓰지만 테넌트 id 를 그대로 키로 쓰면 테넌트 1 이 가입 잠금과 충돌하므로 네임스페이스를 나눈다.
+   */
+  public void acquireMemberAdminGuardLock(long tenantId) {
+    dsl.execute(
+        "SELECT pg_advisory_xact_lock(hashtextextended({0}, 0))",
+        val("member-admin-guard:" + tenantId));
+  }
+
   public UserResponse save(String username, String email, String password, String name) {
+    return insert(username, email, password, name, false);
+  }
+
+  /** 계정 삽입 공통부. mustChangePassword 만 경로(가입 vs 관리자 임시 비밀번호)마다 다르다. */
+  private UserResponse insert(
+      String username, String email, String password, String name, boolean mustChangePassword) {
     return dsl.insertInto(USER)
         .set(USER.USERNAME, username)
         .set(USER.EMAIL, email)
         .set(USER.PASSWORD, password)
         .set(USER.NAME, name)
-        .returning(USER.ID, USER.USERNAME, USER.EMAIL, USER.NAME, USER.IS_ACTIVE, USER.CREATED_AT)
+        .set(USER.MUST_CHANGE_PASSWORD, mustChangePassword)
+        .returning(USER_FIELDS)
         .fetchOne(this::mapToUserResponse);
   }
 
   /**
-   * 사용자 목록 — <b>현재 테넌트에 ACTIVE 멤버십이 있는 사용자만</b>.
+   * username 대소문자 무시 조회 — 멤버 추가 시 "이미 가입된 계정인가" 판정용.
+   *
+   * <p>username 은 이메일이고 사람마다 대소문자를 섞어 입력한다. 정확 일치만 보면 같은 사람의 두 번째
+   * 계정이 생긴다. 같은 값이 대소문자만 달리 두 행 있는 과거 데이터는 id 가 작은 쪽을 쓴다.
+   */
+  public Optional<UserResponse> findByUsernameIgnoreCase(String username) {
+    return dsl.select(USER_FIELDS)
+        .from(USER)
+        .where(lower(USER.USERNAME).eq(username.toLowerCase(Locale.ROOT)))
+        .orderBy(USER.ID.asc())
+        .limit(1)
+        .fetchOptional(this::mapToUserResponse);
+  }
+
+  /** 관리자가 임시 비밀번호로 만드는 계정 — 첫 로그인 시 변경 강제 표식을 켠 채 저장한다. */
+  public UserResponse saveWithTemporaryPassword(
+      String username, String email, String encodedPassword, String name) {
+    return insert(username, email, encodedPassword, name, true);
+  }
+
+  /**
+   * 사용자 목록 — <b>현재 테넌트의 멤버(ACTIVE·SUSPENDED 모두)</b>. 정지 멤버도 보여야 재활성·제거할 수 있다.
    *
    * <p>tenantId 를 인자로 받는 이유: 이 코드베이스의 리포지토리는 {@code TenantContext} 를 직접
    * 읽지 않는다({@code MembershipRepository} 도 인자로 받는다). ThreadLocal 과 트랜잭션 GUC 가
@@ -157,7 +241,7 @@ public class UserRepository {
    * 트랜잭션 경계를 아는 서비스 레이어에서 한 번만 한다.
    */
   public List<UserResponse> findAllPaginated(long tenantId, String search, int page, int size) {
-    Condition condition = memberOfTenant(tenantId);
+    Condition condition = inTenant(tenantId);
 
     if (search != null && !search.isBlank()) {
       String pattern = LikePatternUtils.containsPattern(search);
@@ -169,8 +253,7 @@ public class UserRepository {
                   .or(USER.EMAIL.likeIgnoreCase(pattern, '\\')));
     }
 
-    return dsl.select(
-            USER.ID, USER.USERNAME, USER.EMAIL, USER.NAME, USER.IS_ACTIVE, USER.CREATED_AT)
+    return dsl.select(USER_FIELDS)
         .from(USER)
         .where(condition)
         .orderBy(USER.ID.asc())
@@ -190,8 +273,7 @@ public class UserRepository {
       return List.of();
     }
     Condition condition = memberOfTenant(tenantId).and(USER.ID.in(ids));
-    return dsl.select(
-            USER.ID, USER.USERNAME, USER.EMAIL, USER.NAME, USER.IS_ACTIVE, USER.CREATED_AT)
+    return dsl.select(USER_FIELDS)
         .from(USER)
         .where(condition)
         .fetch(this::mapToUserResponse);
@@ -199,7 +281,7 @@ public class UserRepository {
 
   /** {@link #findAllPaginated} 의 총건수. 같은 테넌트 술어를 반드시 함께 적용해야 페이지가 맞는다. */
   public long countAll(long tenantId, String search) {
-    Condition condition = memberOfTenant(tenantId);
+    Condition condition = inTenant(tenantId);
 
     if (search != null && !search.isBlank()) {
       String pattern = LikePatternUtils.containsPattern(search);
@@ -223,14 +305,17 @@ public class UserRepository {
         .execute();
   }
 
+  /** 비밀번호를 바꾸고, 임시 비밀번호 표식도 내린다(본인 변경이 유일한 호출처). */
   public void updatePassword(Long id, String encodedPassword) {
     dsl.update(USER)
         .set(USER.PASSWORD, encodedPassword)
+        .set(USER.MUST_CHANGE_PASSWORD, false)
         .set(USER.UPDATED_AT, LocalDateTime.now())
         .where(USER.ID.eq(id))
         .execute();
   }
 
+  // 전역 계정 활성 플래그 — WD-2 이후 main 경로에선 쓰지 않는다(테넌트 정지는 멤버십). 후속 운영자 콘솔의 계정 잠금용으로 남긴다.
   public void setActive(Long id, boolean active) {
     dsl.update(USER)
         .set(USER.IS_ACTIVE, active)
@@ -240,19 +325,32 @@ public class UserRepository {
   }
 
   /**
-   * 활성 ADMIN 사용자 수를 반환한다. 마지막 ADMIN 비활성화 방지 체크에 사용 (#146).
+   * 이 테넌트의 "활성 ADMIN" 수 — 잠금 방지(마지막 ADMIN 정지·제거 금지) 판정용 (#146, WD-2).
    *
-   * @return is_active=true 이고 ADMIN 역할을 가진 사용자 수
+   * <p>활성 = 이 테넌트 멤버십 ACTIVE + 이 테넌트 ADMIN 역할 + 전역 계정 활성. 예전 구현은 전역
+   * {@code user.is_active} 만 봐서, 이 테넌트에서 정지된 ADMIN 도 "활성" 으로 세어 마지막 활성 ADMIN
+   * 정지를 허용했다. RLS 에 기대지 않고 tenant_id 를 명시하는 이유: membership 은 RLS 가 없다.
    */
-  public int countActiveAdmins() {
-    return dsl.select(count())
+  public int countActiveAdmins(long tenantId) {
+    return dsl.select(countDistinct(USER.ID))
         .from(USER)
         .join(USER_ROLE)
-        .on(USER_ROLE.USER_ID.eq(USER.ID))
+        .on(USER_ROLE.USER_ID.eq(USER.ID).and(USER_ROLE.TENANT_ID.eq(tenantId)))
         .join(ROLE)
-        .on(ROLE.ID.eq(USER_ROLE.ROLE_ID))
-        .where(ROLE.NAME.eq("ADMIN").and(USER.IS_ACTIVE.isTrue()))
+        .on(ROLE.ID.eq(USER_ROLE.ROLE_ID).and(ROLE.TENANT_ID.eq(tenantId)))
+        .join(MEMBERSHIP)
+        .on(M_USER_ID.eq(USER.ID).and(M_TENANT_ID.eq(tenantId)))
+        .where(ROLE.NAME.eq("ADMIN"))
+        .and(M_STATUS.eq("ACTIVE"))
+        .and(USER.IS_ACTIVE.isTrue())
         .fetchOne(0, Integer.class);
+  }
+
+  /** 이 테넌트에서 사용자의 역할 배정을 모두 지운다(멤버 제거). RLS 와 별개로 tenant_id 를 명시한다. */
+  public int deleteRolesInTenant(Long userId, long tenantId) {
+    return dsl.deleteFrom(USER_ROLE)
+        .where(USER_ROLE.USER_ID.eq(userId).and(USER_ROLE.TENANT_ID.eq(tenantId)))
+        .execute();
   }
 
   /**

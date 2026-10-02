@@ -132,6 +132,12 @@ public class User extends TableImpl<UserRecord> {
      */
     public final TableField<UserRecord, LocalDateTime> UPDATED_AT = createField(DSL.name("updated_at"), SQLDataType.LOCALDATETIME(6).defaultValue(DSL.field(DSL.raw("now()"), SQLDataType.LOCALDATETIME)), this, "");
 
+    /**
+     * The column <code>public.user.must_change_password</code>. 관리자가 임시 비밀번호로
+     * 생성한 계정 — 본인이 비밀번호를 바꾸기 전까지 true (access token 클레임 pwc 의 원천)
+     */
+    public final TableField<UserRecord, Boolean> MUST_CHANGE_PASSWORD = createField(DSL.name("must_change_password"), SQLDataType.BOOLEAN.nullable(false).defaultValue(DSL.field(DSL.raw("false"), SQLDataType.BOOLEAN)), this, "관리자가 임시 비밀번호로 생성한 계정 — 본인이 비밀번호를 바꾸기 전까지 true (access token 클레임 pwc 의 원천)");
+
     private User(Name alias, Table<UserRecord> aliased) {
         this(alias, aliased, (Field<?>[]) null, null);
     }

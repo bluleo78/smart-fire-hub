@@ -67,7 +67,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     try {
       if (token != null) {
-        authenticateWithJwt(token);
+        authenticateWithJwt(token, request);
       } else if (StringUtils.hasText(authHeader) && authHeader.startsWith("Internal ")) {
         authenticateWithInternalToken(authHeader.substring(9), request);
       }
@@ -80,7 +80,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     }
   }
 
-  private void authenticateWithJwt(String token) {
+  private void authenticateWithJwt(String token, HttpServletRequest request) {
     // validate/getUserId/getTenantId 를 각각 호출하면 같은 토큰을 3번 파싱(서명 검증 포함)하게
     // 되므로, 요청마다 타는 이 경로에서는 1회 파싱 메서드로 합쳐서 호출한다.
     jwtTokenProvider
@@ -94,12 +94,19 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 setPlatformSecurityContext(principal.userId());
                 return;
               }
-              // 서명된 tenant 클레임을 신뢰한다(요청마다 멤버십을 재조회하지 않는다). 멤버십/테넌트
-              // 정지는 select-tenant 와 refresh 에서 재검증되므로, 최대 액세스 토큰 만료 시간만큼
-              // 지연 반영된다. 클레임이 없으면 테넌트 미선택 토큰 — GUC 미설정으로 RLS 가
-              // fail-closed 한다.
+              // 서명된 tenant 클레임을 신뢰한다(요청마다 멤버십을 재조회하지 않는다). 그래도 멤버십
+              // 정지는 즉시 반영된다(WD-2): 아래 setSecurityContext 의 권한 조회가 "같은 테넌트의
+              // ACTIVE 멤버십" 을 조인하므로 정지 직후 그 테넌트 권한이 0 이 되어 @RequirePermission
+              // 엔드포인트가 바로 403 이 된다. 멤버십 자체의 재검증은 select-tenant 와 refresh 가 한다.
+              // 클레임이 없으면 테넌트 미선택 토큰 — GUC 미설정으로 RLS 가 fail-closed 한다.
               TenantContext.set(principal.tenantId());
               setSecurityContext(principal.userId());
+              // 비밀번호 변경 강제(WD-2): 판정은 핸들러가 정해진 뒤 PasswordChangeInterceptor 가 한다.
+              // 여기서 바로 403 을 쓰지 않는 이유 — 필터 단계에서는 허용 핸들러를 알 수 없다.
+              if (principal.mustChangePassword()) {
+                request.setAttribute(
+                    PasswordChangeInterceptor.MUST_CHANGE_PASSWORD_ATTR, Boolean.TRUE);
+              }
             });
   }
 

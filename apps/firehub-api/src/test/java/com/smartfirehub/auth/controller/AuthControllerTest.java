@@ -15,6 +15,7 @@ import com.smartfirehub.auth.dto.TokenResponse;
 import com.smartfirehub.auth.exception.AccountLockedException;
 import com.smartfirehub.auth.service.AuthService;
 import com.smartfirehub.global.config.SecurityConfig;
+import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.security.JwtAuthenticationFilter;
 import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.JwtTokenProvider;
@@ -28,13 +29,14 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 @SuppressWarnings("null")
 @WebMvcTest(AuthController.class)
-@Import({SecurityConfig.class, JwtAuthenticationFilter.class})
+@Import({SecurityConfig.class, JwtAuthenticationFilter.class, RefreshTokenCookies.class})
 class AuthControllerTest {
 
   @Autowired private MockMvc mockMvc;
@@ -48,6 +50,34 @@ class AuthControllerTest {
   @MockitoBean private JwtProperties jwtProperties;
 
   @MockitoBean private PermissionService permissionService;
+
+  /** 공개 엔드포인트 — 인증 없이 열림 여부를 돌려준다(로그인 화면이 가입 링크를 숨길지 정한다). */
+  @Test
+  void signupStatus_isPublic() throws Exception {
+    when(authService.isSignupOpen()).thenReturn(false);
+
+    mockMvc
+        .perform(get("/api/v1/auth/signup-status"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.open").value(false));
+  }
+
+  /** 가입이 닫혔을 때 403 + 기계 판독용 code 가 응답 본문에 실린다. */
+  @Test
+  void signup_closed_returnsForbiddenWithCode() throws Exception {
+    when(authService.signup(any()))
+        .thenThrow(
+            new CodedApiException(
+                HttpStatus.FORBIDDEN, "SIGNUP_DISABLED", "계정은 워크스페이스 관리자가 추가합니다"));
+
+    mockMvc
+        .perform(
+            post("/api/v1/auth/signup")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"username\":\"a@b.io\",\"password\":\"Password123\",\"name\":\"A\"}"))
+        .andExpect(status().isForbidden())
+        .andExpect(jsonPath("$.code").value("SIGNUP_DISABLED"));
+  }
 
   @Test
   void signup_returnsCreated() throws Exception {

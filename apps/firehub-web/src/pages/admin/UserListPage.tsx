@@ -16,10 +16,14 @@ import {
   TableHeader,
   TableRow,
 } from '../../components/ui/table';
+import { useMyPermissions } from '../../hooks/queries/useMyPermissions';
 import { useUsers } from '../../hooks/queries/useUsers';
+import { AddMemberDialog } from './components/AddMemberDialog';
 
 export default function UserListPage() {
   const navigate = useNavigate();
+  // 멤버 추가 버튼 노출(user:write)·역할 지정 가능 여부(role:assign) — 최종 판정은 서버(WD-2).
+  const { permissions } = useMyPermissions();
   const [search, setSearch] = useState('');
   const debouncedSearch = useDebounceValue(search, 300);
   const [page, setPage] = useState(0);
@@ -38,7 +42,11 @@ export default function UserListPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">사용자 관리</h1>
+      {/* 제목 행 오른쪽 주 액션 — RoleListPage 와 같은 배치(와이어프레임 ①). user:write 보유 시만. */}
+      <div className="flex items-center justify-between">
+        <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">사용자 관리</h1>
+        {permissions.has('user:write') && <AddMemberDialog canAssignRoles={permissions.has('role:assign')} />}
+      </div>
 
       <SearchInput
         placeholder="이름 또는 아이디로 검색..."
@@ -53,7 +61,7 @@ export default function UserListPage() {
               <TableHead>이름</TableHead>
               <TableHead>아이디</TableHead>
               <TableHead>이메일</TableHead>
-              <TableHead>상태</TableHead>
+              <TableHead>상태 (이 워크스페이스)</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -78,13 +86,17 @@ export default function UserListPage() {
                   // Enter/Space 키로 행 클릭과 동일한 네비게이션 동작 수행
                   onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') navigate(`/admin/users/${u.id}`); }}
                 >
-                  <TableCell>{u.name}</TableCell>
+                  <TableCell>
+                    <span className="inline-flex items-center gap-2">
+                      {u.name}
+                      {u.membershipRole === 'OWNER' && <Badge variant="outline">OWNER</Badge>}
+                    </span>
+                  </TableCell>
                   <TableCell className="font-medium">{u.username}</TableCell>
                   <TableCell>{u.email ?? '-'}</TableCell>
                   <TableCell>
-                    <Badge variant={u.isActive ? 'default' : 'secondary'}>
-                      {u.isActive ? '활성' : '비활성'}
-                    </Badge>
+                    {/* 이 워크스페이스 멤버십 상태(전역 계정 아님, WD-2). 색만으로 구분하지 않도록 문구가 다르다. */}
+                    <Badge variant={u.isActive ? 'success' : 'secondary'}>{u.isActive ? '활성' : '정지'}</Badge>
                   </TableCell>
                 </TableRow>
               ))

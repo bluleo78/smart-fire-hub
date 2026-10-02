@@ -71,13 +71,24 @@ public class GlobalExceptionHandler {
 
   private ErrorResponse buildError(
       HttpStatus status, String message, Map<String, String> errors, HttpServletRequest request) {
+    return buildError(status, message, errors, request, null);
+  }
+
+  /** 기계용 코드까지 싣는 버전 — 코드가 null 이면 JSON 에서 생략된다(ErrorResponse 참고). */
+  private ErrorResponse buildError(
+      HttpStatus status,
+      String message,
+      Map<String, String> errors,
+      HttpServletRequest request,
+      String code) {
     return new ErrorResponse(
         status.value(),
         status.getReasonPhrase(),
         message,
         errors,
         Instant.now().toString(),
-        request.getRequestURI());
+        request.getRequestURI(),
+        code);
   }
 
   @ExceptionHandler(MethodArgumentNotValidException.class)
@@ -436,6 +447,20 @@ public class GlobalExceptionHandler {
       com.smartfirehub.platform.exception.TenantNotFoundException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.NOT_FOUND, ex.getMessage(), null, request);
     return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
+  }
+
+  /**
+   * 기계용 코드가 있는 예외. 상태는 예외가 정하고 본문에 {@code code} 를 싣는다.
+   *
+   * <p>인터셉터({@code PasswordChangeInterceptor}) 의 preHandle 에서 던져도 DispatcherServlet 의
+   * 예외 해석을 거쳐 여기로 온다 — PermissionInterceptor 의 AccessDeniedException 과 같은 경로.
+   */
+  @ExceptionHandler(CodedApiException.class)
+  public ResponseEntity<ErrorResponse> handleCodedApiException(
+      CodedApiException ex, HttpServletRequest request) {
+    ErrorResponse response =
+        buildError(ex.status(), ex.getMessage(), ex.details(), request, ex.code());
+    return ResponseEntity.status(ex.status()).body(response);
   }
 
   @ExceptionHandler(IllegalArgumentException.class)

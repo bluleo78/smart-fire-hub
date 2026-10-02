@@ -4,18 +4,18 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.smartfirehub.auth.dto.LoginRequest;
-import com.smartfirehub.auth.dto.SignupRequest;
 import com.smartfirehub.auth.dto.TokenResponse;
-import com.smartfirehub.auth.exception.EmailAlreadyExistsException;
 import com.smartfirehub.auth.exception.InvalidCredentialsException;
 import com.smartfirehub.auth.exception.InvalidTokenException;
-import com.smartfirehub.auth.exception.UsernameAlreadyExistsException;
 import com.smartfirehub.support.IntegrationTestBase;
+import com.smartfirehub.support.TestUsers;
 import com.smartfirehub.user.dto.UserResponse;
 import com.smartfirehub.user.exception.UserDeactivatedException;
 import com.smartfirehub.user.repository.UserRepository;
+import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.jdbc.Sql;
 import org.springframework.test.context.jdbc.SqlConfig;
 import org.springframework.transaction.annotation.Transactional;
@@ -34,71 +34,24 @@ import org.springframework.transaction.annotation.Transactional;
 class AuthServiceTest extends IntegrationTestBase {
 
   @Autowired private AuthService authService;
+  @Autowired private DSLContext dsl;
+  @Autowired private PasswordEncoder passwordEncoder;
 
   @Autowired private UserRepository userRepository;
 
-  @Test
-  void signup_firstUser_assignsAdminAndUserRoles() {
-    SignupRequest request =
-        new SignupRequest("test@example.com", "test@example.com", "Password123", "Test User");
-
-    UserResponse result = authService.signup(request);
-
-    assertThat(result.username()).isEqualTo("test@example.com");
-    assertThat(result.id()).isNotNull();
-  }
-
-  @Test
-  void signup_subsequentUser_assignsUserRoleOnly() {
-    authService.signup(
-        new SignupRequest("first@example.com", "first@example.com", "Password123", "First User"));
-
-    SignupRequest request =
-        new SignupRequest("second@example.com", "second@example.com", "Password123", "Second User");
-    UserResponse result = authService.signup(request);
-
-    assertThat(result.username()).isEqualTo("second@example.com");
-  }
-
-  @Test
-  void signup_duplicateUsername_throws() {
-    authService.signup(
-        new SignupRequest("test@example.com", "test1@example.com", "Password123", "Test User"));
-
-    assertThatThrownBy(
-            () ->
-                authService.signup(
-                    new SignupRequest(
-                        "test@example.com", "test2@example.com", "Password123", "Test User 2")))
-        .isInstanceOf(UsernameAlreadyExistsException.class);
-  }
-
-  @Test
-  void signup_duplicateEmail_throws() {
-    authService.signup(
-        new SignupRequest("user1@example.com", "same@example.com", "Password123", "User 1"));
-
-    assertThatThrownBy(
-            () ->
-                authService.signup(
-                    new SignupRequest(
-                        "user2@example.com", "same@example.com", "Password123", "User 2")))
-        .isInstanceOf(EmailAlreadyExistsException.class);
-  }
-
-  @Test
-  void signup_nullEmail_success() {
-    SignupRequest request = new SignupRequest("test@example.com", null, "Password123", "Test User");
-
-    UserResponse result = authService.signup(request);
-
-    assertThat(result.username()).isEqualTo("test@example.com");
-  }
+  // 가입 규칙은 SignupClosureTest 가 소유한다(WD-2 — 첫 사용자 전용).
 
   @Test
   void login_success() {
-    authService.signup(
-        new SignupRequest("test@example.com", "test@example.com", "Password123", "Test User"));
+    TestUsers.createMember(
+        dsl,
+        fixtureTransactionTemplate,
+        passwordEncoder,
+        "test@example.com",
+        "test@example.com",
+        "Password123",
+        "Test User",
+        DEFAULT_TEST_TENANT_ID);
 
     TokenResponse result = authService.login(new LoginRequest("test@example.com", "Password123"));
 
@@ -108,10 +61,29 @@ class AuthServiceTest extends IntegrationTestBase {
     assertThat(result.expiresIn()).isGreaterThan(0);
   }
 
+  /** 로그인 응답에 비밀번호 변경 강제 표식이 DB 값 그대로 실린다(WD-2) — 웹이 변경 화면으로 보낼 근거. */
+  @Test
+  void login_returnsMustChangePasswordFlag() {
+    var u =
+        TestUsers.createMember(
+            dsl, fixtureTransactionTemplate, passwordEncoder,
+            "pwc@example.com", "pwc@example.com", "Password123", "PWC", DEFAULT_TEST_TENANT_ID);
+    dsl.execute("update \"user\" set must_change_password = true where id = ?", u.id());
+    var token = authService.login(new LoginRequest("pwc@example.com", "Password123"));
+    assertThat(token.mustChangePassword()).isTrue();
+  }
+
   @Test
   void login_wrongPassword_throws() {
-    authService.signup(
-        new SignupRequest("test@example.com", "test@example.com", "Password123", "Test User"));
+    TestUsers.createMember(
+        dsl,
+        fixtureTransactionTemplate,
+        passwordEncoder,
+        "test@example.com",
+        "test@example.com",
+        "Password123",
+        "Test User",
+        DEFAULT_TEST_TENANT_ID);
 
     assertThatThrownBy(
             () -> authService.login(new LoginRequest("test@example.com", "wrongpassword")))
@@ -126,8 +98,15 @@ class AuthServiceTest extends IntegrationTestBase {
 
   @Test
   void refresh_success() throws InterruptedException {
-    authService.signup(
-        new SignupRequest("test@example.com", "test@example.com", "Password123", "Test User"));
+    TestUsers.createMember(
+        dsl,
+        fixtureTransactionTemplate,
+        passwordEncoder,
+        "test@example.com",
+        "test@example.com",
+        "Password123",
+        "Test User",
+        DEFAULT_TEST_TENANT_ID);
     TokenResponse loginResult =
         authService.login(new LoginRequest("test@example.com", "Password123"));
 
@@ -149,8 +128,15 @@ class AuthServiceTest extends IntegrationTestBase {
   @Test
   void refresh_revokedToken_throws() {
     UserResponse user =
-        authService.signup(
-            new SignupRequest("test@example.com", "test@example.com", "Password123", "Test User"));
+        TestUsers.createMember(
+            dsl,
+            fixtureTransactionTemplate,
+            passwordEncoder,
+            "test@example.com",
+            "test@example.com",
+            "Password123",
+            "Test User",
+            DEFAULT_TEST_TENANT_ID);
     TokenResponse loginResult =
         authService.login(new LoginRequest("test@example.com", "Password123"));
 
@@ -165,8 +151,15 @@ class AuthServiceTest extends IntegrationTestBase {
 
   @Test
   void refresh_reusedToken_revokesEntireFamily() throws InterruptedException {
-    authService.signup(
-        new SignupRequest("test@example.com", "test@example.com", "Password123", "Test User"));
+    TestUsers.createMember(
+        dsl,
+        fixtureTransactionTemplate,
+        passwordEncoder,
+        "test@example.com",
+        "test@example.com",
+        "Password123",
+        "Test User",
+        DEFAULT_TEST_TENANT_ID);
     TokenResponse loginResult =
         authService.login(new LoginRequest("test@example.com", "Password123"));
 
@@ -192,8 +185,15 @@ class AuthServiceTest extends IntegrationTestBase {
   @Test
   void logout_revokesAllTokens() {
     UserResponse user =
-        authService.signup(
-            new SignupRequest("test@example.com", "test@example.com", "Password123", "Test User"));
+        TestUsers.createMember(
+            dsl,
+            fixtureTransactionTemplate,
+            passwordEncoder,
+            "test@example.com",
+            "test@example.com",
+            "Password123",
+            "Test User",
+            DEFAULT_TEST_TENANT_ID);
     TokenResponse loginResult =
         authService.login(new LoginRequest("test@example.com", "Password123"));
 
@@ -206,8 +206,15 @@ class AuthServiceTest extends IntegrationTestBase {
   @Test
   void refresh_deactivatedUser_throws() {
     UserResponse user =
-        authService.signup(
-            new SignupRequest("test@example.com", "test@example.com", "Password123", "Test User"));
+        TestUsers.createMember(
+            dsl,
+            fixtureTransactionTemplate,
+            passwordEncoder,
+            "test@example.com",
+            "test@example.com",
+            "Password123",
+            "Test User",
+            DEFAULT_TEST_TENANT_ID);
     TokenResponse loginResult =
         authService.login(new LoginRequest("test@example.com", "Password123"));
 
@@ -221,8 +228,15 @@ class AuthServiceTest extends IntegrationTestBase {
   @Test
   void getCurrentUser_success() {
     UserResponse created =
-        authService.signup(
-            new SignupRequest("test@example.com", "test@example.com", "Password123", "Test User"));
+        TestUsers.createMember(
+            dsl,
+            fixtureTransactionTemplate,
+            passwordEncoder,
+            "test@example.com",
+            "test@example.com",
+            "Password123",
+            "Test User",
+            DEFAULT_TEST_TENANT_ID);
 
     UserResponse result = authService.getCurrentUser(created.id());
 

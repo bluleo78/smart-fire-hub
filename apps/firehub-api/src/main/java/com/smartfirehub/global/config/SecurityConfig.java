@@ -50,7 +50,10 @@ public class SecurityConfig {
                 auth.dispatcherTypeMatchers(DispatcherType.ASYNC)
                     .permitAll()
                     .requestMatchers(
-                        "/api/v1/auth/signup", "/api/v1/auth/login", "/api/v1/auth/refresh")
+                        "/api/v1/auth/signup",
+                        "/api/v1/auth/signup-status",
+                        "/api/v1/auth/login",
+                        "/api/v1/auth/refresh")
                     .permitAll()
                     .requestMatchers("/api/v1/triggers/api/**", "/api/v1/triggers/webhook/**")
                     .permitAll()

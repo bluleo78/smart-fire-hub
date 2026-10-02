@@ -29,7 +29,7 @@ test.describe('사용자 관리 페이지', () => {
     await expect(page.getByRole('columnheader', { name: '이름' })).toBeVisible();
     await expect(page.getByRole('columnheader', { name: '아이디' })).toBeVisible();
     await expect(page.getByRole('columnheader', { name: '이메일' })).toBeVisible();
-    await expect(page.getByRole('columnheader', { name: '상태' })).toBeVisible();
+    await expect(page.getByRole('columnheader', { name: '상태 (이 워크스페이스)' })).toBeVisible();
 
     // 행 개수 확인: 헤더 row 1개 + 데이터 button 행 3개
     // 데이터 행은 role="button" (#29 키보드 접근성 수정으로 변경됨)이므로 별도 카운트
@@ -161,7 +161,7 @@ test.describe('사용자 관리 페이지', () => {
     await page.goto('/admin/users/1');
 
     // 활성 상태 카드 확인
-    await expect(page.getByText('활성 상태')).toBeVisible();
+    await expect(page.getByText('이 워크스페이스에서 활성', { exact: true })).toBeVisible();
 
     // Switch 컴포넌트가 렌더링되는지 확인 (role="switch")
     const toggle = page.getByRole('switch');
@@ -190,10 +190,10 @@ test.describe('사용자 관리 페이지', () => {
 
     // AlertDialog가 열려야 한다 — 즉시 API가 호출되면 안 된다
     await expect(page.getByRole('alertdialog')).toBeVisible();
-    await expect(page.getByText('이 사용자를 비활성화하면 로그인이 불가합니다. 계속하시겠습니까?')).toBeVisible();
+    await expect(page.getByText('이 워크스페이스에서만 접근이 막힙니다. 다른 워크스페이스와 계정은 영향이 없습니다. 계속하시겠습니까?')).toBeVisible();
 
     // 확인 버튼 클릭 → PUT /api/v1/users/1/active 호출 확인
-    await page.getByRole('button', { name: '비활성화' }).click();
+    await page.getByRole('button', { name: '정지' }).click();
     const req = await capture.waitForRequest();
     expect(req.payload).toMatchObject({ active: false });
   });
@@ -297,7 +297,7 @@ test.describe('사용자 관리 페이지', () => {
 
     // AlertDialog 확인
     await expect(page.getByRole('alertdialog')).toBeVisible();
-    await page.getByRole('button', { name: '비활성화' }).click();
+    await page.getByRole('button', { name: '정지' }).click();
 
     // PUT API payload 검증 — active: false 가 전달되어야 한다 (현재 isActive=true → 반전)
     const req = await capture.waitForRequest();

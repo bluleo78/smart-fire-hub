@@ -1,5 +1,6 @@
 package com.smartfirehub.global.config;
 
+import com.smartfirehub.global.security.PasswordChangeInterceptor;
 import com.smartfirehub.global.security.PermissionInterceptor;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Configuration;
@@ -13,6 +14,7 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 public class WebMvcConfig implements WebMvcConfigurer {
 
   private final PermissionInterceptor permissionInterceptor;
+  private final PasswordChangeInterceptor passwordChangeInterceptor;
 
   /**
    * 권한 인터셉터 등록.
@@ -25,6 +27,9 @@ public class WebMvcConfig implements WebMvcConfigurer {
    */
   @Override
   public void addInterceptors(@NonNull InterceptorRegistry registry) {
+    // 비밀번호 변경 강제 게이트(WD-2)를 권한 검사보다 먼저 — 등록 순서가 곧 실행 순서다. 운영자 평면은
+    // 이 사용자 계정 흐름과 무관하고 pwc 는 테넌트 평면 토큰에만 실리므로 /api/v1/** 에만 건다.
+    registry.addInterceptor(passwordChangeInterceptor).addPathPatterns("/api/v1/**");
     registry
         .addInterceptor(permissionInterceptor)
         .addPathPatterns("/api/v1/**", "/api/platform/**");

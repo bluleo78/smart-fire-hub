@@ -51,7 +51,13 @@ class PermissionCatalogUsageTest extends IntegrationTestBase {
    * 왜 남기는지와 언제 없앨 수 있는지를 함께 적어라. 근거 없이 추가하면 이 테스트는 다시
    * 사람의 주의에 의존하는 장식이 된다.
    */
-  private static final Set<String> ALLOWED_UNREFERENCED = Set.of();
+  private static final Set<String> ALLOWED_UNREFERENCED =
+      Set.of(
+          // WD-2(2026-10-02 사용자 결정): PUT /users/me·/me/password 가 인증만 요구하도록 바뀌어 이 코드를
+          // 게이트로 쓰는 곳이 없어졌다. 카탈로그 삭제는 이번 범위 밖이라 남긴다고 결정했다. 주의: 이 코드는
+          // V1 시드로 모든 테넌트의 USER 롤에 부여돼 있다 — 본인 계정 외 라우트에 붙이면 그 라우트가 전원에게
+          // 즉시 열린다. 없앨 때: 카탈로그에서 지우는 후속 마이그레이션을 추가하면서 이 줄도 지운다.
+          "user:write:self");
 
   @Test
   @DisplayName("카탈로그의 모든 권한은 소스에서 참조된다 — 고아 권한이 쌓이지 않는다")

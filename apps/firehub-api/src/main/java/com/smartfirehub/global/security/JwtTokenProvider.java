@@ -33,6 +33,19 @@ public class JwtTokenProvider {
    * RLS 가 모든 행을 차단한다(fail-closed).
    */
   public String generateAccessToken(Long userId, String username, Long tenantId) {
+    // 기존 호출처(테스트 다수)용 — 비밀번호 변경 강제 없음.
+    return generateAccessToken(userId, username, tenantId, false);
+  }
+
+  /**
+   * 테넌트 평면 access token.
+   *
+   * @param mustChangePassword true 면 클레임 {@code pwc=true} 를 싣는다. 필터가 이를 요청 속성으로 옮기고
+   *     {@link PasswordChangeInterceptor} 가 허용 핸들러 외 요청을 403 으로 막는다. 요청마다 DB 를 보지
+   *     않기 위해 토큰에 싣고, 토큰을 만드는 세 경로(login/refresh/selectTenant)가 DB 값을 다시 읽는다.
+   */
+  public String generateAccessToken(
+      Long userId, String username, Long tenantId, boolean mustChangePassword) {
     Date now = new Date();
     var builder =
         Jwts.builder()
@@ -43,6 +56,10 @@ public class JwtTokenProvider {
             .expiration(new Date(now.getTime() + accessExpiration));
     if (tenantId != null) {
       builder.claim("tenant", tenantId);
+    }
+    // true 일 때만 싣는다 — 클레임이 없으면 강제 대상이 아니다(옛 토큰과 같은 형태).
+    if (mustChangePassword) {
+      builder.claim("pwc", true);
     }
     return builder.signWith(key).compact();
   }
@@ -177,7 +194,16 @@ public class JwtTokenProvider {
    * 두 곳에 존재하게 되고, 운영자 평면 검증을 쓰려던 호출처가 평면을 빼먹은 채 조용히 테넌트 평면을
    * 받는다. 모든 생성 지점이 평면을 명시하게 해서 그 실수를 컴파일 단계에서 막는다.
    */
-  public record AccessTokenPrincipal(Long userId, Long tenantId, boolean platform) {}
+  public record AccessTokenPrincipal(
+      Long userId, Long tenantId, boolean platform, boolean mustChangePassword) {
+    /**
+     * 평면은 여전히 명시해야 한다(위 Javadoc 의 이유). 비밀번호 강제 표식만 기본 false 로 두는 보조
+     * 생성자 — 테스트 40여 곳이 이 형태로 만든다.
+     */
+    public AccessTokenPrincipal(Long userId, Long tenantId, boolean platform) {
+      this(userId, tenantId, platform, false);
+    }
+  }
 
   /**
    * 액세스 토큰을 1회 파싱해 userId 와 tenantId 를 함께 추출한다.
@@ -199,7 +225,9 @@ public class JwtTokenProvider {
       // 클레임이 없거나 true 가 아니면 테넌트 평면이다 — 기본값을 false 로 둬야 평면 가드가
       // 알 수 없는 토큰 형태에 대해 fail-closed 한다.
       boolean platform = Boolean.TRUE.equals(claims.get("platform", Boolean.class));
-      return Optional.of(new AccessTokenPrincipal(userId, tenantId, platform));
+      // pwc 도 기본 false — 클레임이 없는 옛 토큰은 강제 대상이 아니다.
+      boolean mustChangePassword = Boolean.TRUE.equals(claims.get("pwc", Boolean.class));
+      return Optional.of(new AccessTokenPrincipal(userId, tenantId, platform, mustChangePassword));
     } catch (JwtException | IllegalArgumentException e) {
       return Optional.empty();
     }

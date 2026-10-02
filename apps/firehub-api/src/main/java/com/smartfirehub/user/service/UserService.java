@@ -1,19 +1,32 @@
 package com.smartfirehub.user.service;
 
+import com.smartfirehub.audit.service.AuditLogService;
 import com.smartfirehub.auth.exception.EmailAlreadyExistsException;
+import com.smartfirehub.auth.repository.RefreshTokenRepository;
 import com.smartfirehub.global.dto.PageResponse;
+import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.role.dto.RoleResponse;
+import com.smartfirehub.role.exception.RoleNotFoundException;
 import com.smartfirehub.role.repository.RoleRepository;
+import com.smartfirehub.tenant.dto.TenantMembership;
 import com.smartfirehub.tenant.repository.MembershipRepository;
+import com.smartfirehub.user.dto.AddMemberRequest;
+import com.smartfirehub.user.dto.AddMemberResponse;
 import com.smartfirehub.user.dto.UserDetailResponse;
 import com.smartfirehub.user.dto.UserListResponse;
 import com.smartfirehub.user.dto.UserResponse;
 import com.smartfirehub.user.exception.UserNotFoundException;
 import com.smartfirehub.user.repository.UserRepository;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DuplicateKeyException;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -23,7 +36,8 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <p><b>테넌트 경계에 대하여.</b> {@code "user"} 는 전역 테이블(tenant_id 없음, RLS 없음)이라 다른
  * 도메인처럼 RLS 가 알아서 격리해 주지 않는다. 그래서 <b>관리 경로</b>(목록·상세·역할부여·활성화)는
- * 여기서 명시적으로 "현재 테넌트의 ACTIVE 멤버" 로 좁힌다. 반면 <b>자기 자신 경로</b>
+ * 여기서 명시적으로 "현재 테넌트의 멤버(ACTIVE·SUSPENDED 모두)" 로 좁힌다 — 정지 멤버를 제외하면
+ * 재활성·제거 수단이 사라지기 때문이다. 반면 <b>자기 자신 경로</b>
  * ({@code getMyProfile}, {@code updateProfile}, {@code changePassword})는 전역 정체성이므로 좁히지
  * 않는다 — 사용자는 여러 테넌트에 속할 수 있고, 자기 이름·비밀번호는 테넌트에 딸린 속성이 아니다.
  */
@@ -35,6 +49,8 @@ public class UserService {
   private final RoleRepository roleRepository;
   private final PasswordEncoder passwordEncoder;
   private final MembershipRepository membershipRepository;
+  private final AuditLogService auditLogService;
+  private final RefreshTokenRepository refreshTokenRepository;
 
   /**
    * 사용자 목록 조회. 각 사용자의 역할도 함께 내려준다(#586).
@@ -50,9 +66,19 @@ public class UserService {
     List<UserResponse> content = userRepository.findAllPaginated(tenantId, search, page, size);
     List<Long> userIds = content.stream().map(UserResponse::id).toList();
     Map<Long, List<RoleResponse>> rolesByUserId = roleRepository.findByUserIds(userIds);
+    // 활성 열 = 이 워크스페이스 멤버십 상태(전역 계정 활성 아님, WD-2).
+    Map<Long, TenantMembership> memberships = membershipRepository.findInTenant(tenantId, userIds);
     List<UserListResponse> withRoles =
         content.stream()
-            .map(user -> UserListResponse.of(user, rolesByUserId.getOrDefault(user.id(), List.of())))
+            .map(
+                user -> {
+                  TenantMembership m = memberships.get(user.id());
+                  UserResponse shown = user.withActive(m != null && m.isActive());
+                  return UserListResponse.of(
+                      shown,
+                      rolesByUserId.getOrDefault(user.id(), List.of()),
+                      m == null ? null : m.role());
+                })
             .toList();
     long totalElements = userRepository.countAll(tenantId, search);
     int totalPages = (int) Math.ceil((double) totalElements / size);
@@ -68,8 +94,44 @@ public class UserService {
    */
   @Transactional(readOnly = true)
   public UserDetailResponse getUserById(Long id) {
-    requireTenantMember(id);
-    return loadDetail(id);
+    long tenantId = TenantContext.require("사용자 상세");
+    TenantMembership membership = requireTenantMember(id);
+    UserDetailResponse base = loadDetail(id);
+    return new UserDetailResponse(
+        base.id(),
+        base.username(),
+        base.email(),
+        base.name(),
+        membership.isActive(),
+        base.createdAt(),
+        base.roles(),
+        membership.role(),
+        isLastActiveAdmin(id, membership, tenantId));
+  }
+
+  /** 대상이 지금 이 테넌트의 마지막 활성 ADMIN 인가(정지·제거하면 활성 ADMIN 이 0 이 되는가). */
+  private boolean isLastActiveAdmin(Long userId, TenantMembership membership, long tenantId) {
+    return membership.isActive()
+        && userRepository.hasAdminRole(userId)
+        && userRepository.countActiveAdmins(tenantId) <= 1;
+  }
+
+  /**
+   * 정지·제거 공통 잠금 방지 규칙. 서버가 최종 판정한다(웹의 비활성 버튼은 안내일 뿐).
+   * 순서: 자기 자신(400) → OWNER(409) → 마지막 활성 ADMIN(409).
+   * 서버 가드인 이유: AI 에이전트가 자기 계정을 비활성화한 사고(#585)와 마지막 관리자 잠금(#146) 재발 방지.
+   */
+  private void assertRemovable(
+      Long userId, Long callerId, TenantMembership membership, long tenantId) {
+    if (userId.equals(callerId)) {
+      throw new IllegalArgumentException("자기 자신은 정지하거나 제거할 수 없습니다");
+    }
+    if (membership.isOwner()) {
+      throw new IllegalStateException("워크스페이스 소유자는 정지하거나 제거할 수 없습니다");
+    }
+    if (isLastActiveAdmin(userId, membership, tenantId)) {
+      throw new IllegalStateException("이 워크스페이스의 마지막 활성 ADMIN 은 정지하거나 제거할 수 없습니다");
+    }
   }
 
   /**
@@ -102,16 +164,16 @@ public class UserService {
   }
 
   /**
-   * 대상 사용자가 현재 테넌트의 ACTIVE 멤버가 아니면 {@link UserNotFoundException}(→ 404).
+   * 대상이 현재 테넌트의 멤버(ACTIVE·SUSPENDED)가 아니면 {@link UserNotFoundException}(→ 404).
    *
-   * <p>존재하지 않는 사용자와 남의 테넌트 사용자가 <b>같은 응답</b>이 되도록 일부러 하나의 검사로
-   * 합쳤다. 두 경우를 다르게 응답하면 그 차이가 곧 계정 열거 채널이 된다.
+   * <p>정지 멤버도 통과시키는 이유(WD-2): 정지 멤버를 404 로 만들면 재활성·제거·역할 변경이 불가능하다.
+   * 존재하지 않는 사용자와 남의 테넌트 사용자가 같은 404 인 것은 그대로다(계정 열거 방지).
    */
-  private void requireTenantMember(Long userId) {
+  private TenantMembership requireTenantMember(Long userId) {
     long tenantId = TenantContext.require("사용자 관리 대상 확인");
-    if (!membershipRepository.hasActiveMembership(userId, tenantId)) {
-      throw new UserNotFoundException("User not found: " + userId);
-    }
+    return membershipRepository
+        .findInTenant(userId, tenantId)
+        .orElseThrow(() -> new UserNotFoundException("User not found: " + userId));
   }
 
   @Transactional
@@ -130,6 +192,133 @@ public class UserService {
     userRepository.update(userId, name, email);
   }
 
+  /**
+   * 현재 테넌트에 멤버를 추가한다(WD-2). 단일 트랜잭션.
+   *
+   * <ul>
+   *   <li>계정 없음 → 임시 비밀번호로 계정 생성(변경 강제 표식 on) + 이 테넌트 멤버십 + 역할. 기본 테넌트
+   *       자동 소속은 하지 않는다(가입 경로와 다름).
+   *   <li>계정 있음 + 비멤버 → 멤버십·역할만. 비밀번호·이름 불변, temporaryPassword 무시.
+   *   <li>이미 멤버(ACTIVE/SUSPENDED) → 409. 정지 멤버는 코드로 구분하고 userId 를 실어 상세 링크를 돕는다.
+   * </ul>
+   *
+   * <p>역할 검증을 계정 생성보다 <b>먼저</b> 하는 이유: 잘못된 roleId 로 400 이 나면 트랜잭션이 롤백되긴
+   * 하지만, 앞에서 끊으면 불필요한 해시 계산·쓰기 자체가 없다.
+   */
+  @Transactional
+  public AddMemberResponse addMember(AddMemberRequest request, Long callerId) {
+    long tenantId = TenantContext.require("멤버 추가");
+    String email = request.email().trim().toLowerCase(Locale.ROOT);
+    Set<Long> roleIds = resolveMemberRoles(request.roleIds());
+
+    Optional<UserResponse> existing = userRepository.findByUsernameIgnoreCase(email);
+    boolean created = existing.isEmpty();
+    existing.ifPresent(u -> rejectIfAlreadyMember(u.id(), tenantId));
+    UserResponse user;
+    try {
+      user = existing.orElseGet(() -> createWithTemporaryPassword(email, request));
+      membershipRepository.insertMember(user.id(), tenantId);
+      for (Long roleId : roleIds) {
+        userRepository.addRole(user.id(), roleId);
+      }
+    } catch (DuplicateKeyException e) {
+      // 사전 검사(rejectIfAlreadyMember) 와 INSERT 사이에 같은 요청이 동시에 들어오면 유니크 제약이 먼저 잡는다.
+      // 영어 "Data integrity violation" 이 그대로 노출되지 않도록 서비스 경계에서 같은 409 로 번역한다.
+      // CodedApiException(런타임) 을 던지므로 @Transactional 이 롤백한다 — 부분 생성된 계정/멤버십은 남지 않는다.
+      throw new CodedApiException(
+          HttpStatus.CONFLICT, "MEMBER_ALREADY_EXISTS", "이미 이 워크스페이스의 멤버입니다");
+    }
+    audit(
+        callerId,
+        "MEMBER_ADD",
+        user.id(),
+        created ? "새 계정을 만들어 멤버로 추가" : "기존 계정을 멤버로 추가",
+        Map.of("created", created, "roleIds", List.copyOf(roleIds)));
+    return new AddMemberResponse(user.id(), created);
+  }
+
+  /** 이미 이 테넌트 멤버면 409. 정지 멤버는 코드로 구분하고 userId 를 실어 웹의 상세 링크를 돕는다. */
+  private void rejectIfAlreadyMember(Long userId, long tenantId) {
+    Optional<TenantMembership> membership = membershipRepository.findInTenant(userId, tenantId);
+    if (membership.isEmpty()) {
+      return;
+    }
+    if (membership.get().isActive()) {
+      throw new CodedApiException(
+          HttpStatus.CONFLICT, "MEMBER_ALREADY_EXISTS", "이미 이 워크스페이스의 멤버입니다");
+    }
+    throw new CodedApiException(
+        HttpStatus.CONFLICT,
+        "MEMBER_SUSPENDED",
+        "이미 이 워크스페이스의 멤버입니다(정지됨). 상세에서 재활성화하세요",
+        Map.of("userId", String.valueOf(userId)));
+  }
+
+  /** 계정이 없을 때 임시 비밀번호(변경 강제 표식 on)로 새 계정을 만든다. username = 소문자 이메일. */
+  private UserResponse createWithTemporaryPassword(String email, AddMemberRequest request) {
+    // username 은 없는데 다른 계정이 이 이메일을 쓰고 있으면 같은 사람의 두 번째 계정이 된다 — 거부.
+    // 대소문자 무시: 과거 계정의 이메일이 대소문자 섞여 저장돼 있어도 같은 사람으로 본다(리뷰 지적 4).
+    if (userRepository.existsByEmailIgnoreCase(email)) {
+      throw new EmailAlreadyExistsException("이미 사용 중인 이메일입니다.");
+    }
+    return userRepository.saveWithTemporaryPassword(
+        email, email, passwordEncoder.encode(request.temporaryPassword()), request.name().trim());
+  }
+
+  /**
+   * 요청 역할을 검증하고 USER 를 합친다.
+   *
+   * <p>USER 를 항상 넣는 이유: USER 는 워크스페이스 기본 역할이다. 초대된 멤버가 권한을 하나도 갖지 않는
+   * 상태를 만들지 않는다(사용자 결정, 계획 "판단 사항 1"). 선택 역할은 USER 에 추가된다.
+   */
+  private Set<Long> resolveMemberRoles(List<Long> requested) {
+    Set<Long> ids = new LinkedHashSet<>(requested == null ? List.of() : requested);
+    Set<Long> visible = roleRepository.findExistingIds(ids);
+    if (!visible.containsAll(ids)) {
+      throw new CodedApiException(
+          HttpStatus.BAD_REQUEST, "INVALID_ROLE", "이 워크스페이스에 없는 역할이 포함되어 있습니다");
+    }
+    Long userRoleId =
+        roleRepository
+            .findByName("USER")
+            .orElseThrow(() -> new RoleNotFoundException("System role not found: USER"))
+            .id();
+    ids.add(userRoleId);
+    return ids;
+  }
+
+  /**
+   * 멤버 관리 감사 로그. 행위자 username 은 감사 테이블 NOT NULL 이라 조회해서 넣는다.
+   * audit_log.tenant_id 는 GUC 기본값 — 호출 트랜잭션의 현재 테넌트로 기록된다.
+   */
+  private void audit(
+      Long callerId, String action, Long targetUserId, String description, Object metadata) {
+    String callerName =
+        userRepository.findById(callerId).map(UserResponse::username).orElse("unknown");
+    auditLogService.log(
+        callerId,
+        callerName,
+        action,
+        "user",
+        String.valueOf(targetUserId),
+        description,
+        null,
+        null,
+        "SUCCESS",
+        null,
+        metadata);
+  }
+
+  /**
+   * 내 비밀번호 변경. 성공하면 이 사용자의 <b>모든</b> refresh 토큰 패밀리를 폐기한다.
+   *
+   * <p>왜 전부인가(WD-2 리뷰 지적 2): 임시 비밀번호를 아는 다른 사람(예: 발급한 관리자)이 먼저 로그인해 둔
+   * 세션은 변경 뒤에도 refresh 로 표식 없는 토큰을 받아 계속 쓸 수 있었다. 호출자의 패밀리만 남기고 싶어도
+   * 이 엔드포인트에서는 알 수 없다 — refresh 쿠키는 {@code Path=/api/v1/auth} 라 여기로 오지 않고 access
+   * token 에는 패밀리 클레임이 없다. 그래서 전부 폐기하고, 호출자 세션은 컨트롤러가 새 패밀리를 발급해
+   * 쿠키로 이어 준다({@code AuthService#startSessionAfterPasswordChange}). 폐기를 같은 트랜잭션에 두어
+   * "비밀번호는 바뀌었는데 옛 세션은 살아 있는" 중간 상태가 커밋되지 않게 한다.
+   */
   @Transactional
   public void changePassword(Long userId, String currentPassword, String newPassword) {
     String storedPassword =
@@ -141,8 +330,14 @@ public class UserService {
     if (!passwordEncoder.matches(currentPassword, storedPassword)) {
       throw new IllegalArgumentException("현재 비밀번호가 올바르지 않습니다");
     }
+    // 같은 값으로 "변경" 하면 임시 비밀번호가 그대로인데 변경 강제 표식만 꺼진다 — 웹 스키마만 막으면 API
+    // 직접 호출로 강제 변경을 우회할 수 있으므로 서버가 최종 판정한다(리뷰 지적 1). 같은 400 스타일(#27).
+    if (passwordEncoder.matches(newPassword, storedPassword)) {
+      throw new IllegalArgumentException("새 비밀번호는 현재 비밀번호와 달라야 합니다");
+    }
 
     userRepository.updatePassword(userId, passwordEncoder.encode(newPassword));
+    refreshTokenRepository.revokeAllByUserId(userId);
   }
 
   @Transactional
@@ -167,22 +362,41 @@ public class UserService {
     userRepository.setRoles(userId, roleIds);
   }
 
+  /**
+   * 이 워크스페이스에서의 멤버십 정지/재활성(WD-2). 전역 계정({@code user.is_active})은 건드리지 않는다
+   * — 한 테넌트 관리자가 다중 소속 사용자의 다른 테넌트 로그인까지 막던 결함의 수정이다.
+   */
   @Transactional
   public void setUserActive(Long userId, boolean active, Long callerId) {
-    // 남의 테넌트 사용자를 비활성화(계정 잠금)할 수 없다. 존재 확인을 멤버십 확인으로 대체한다.
-    requireTenantMember(userId);
-    // 자기 자신 비활성화 차단 — 즉시 로그인 불가 자기잠금(self-lockout) 방지 (#585).
-    // AI 에이전트(admin-manager subagent)가 "자기 자신 비활성화 금지" 규칙을 프롬프트
-    // 레벨에서 놓치더라도(사용자가 자기 자신임을 밝혔는데도 확인 절차만 거쳐 실행한 사고 사례),
-    // 실제 인증된 호출자와 대상 userId 를 서버가 직접 비교해 파괴적 액션을 원천 차단한다
-    // (defense-in-depth — 모델 판단에만 의존하지 않음).
-    if (!active && userId.equals(callerId)) {
-      throw new IllegalArgumentException("자기 자신의 계정은 비활성화할 수 없습니다");
+    long tenantId = TenantContext.require("멤버십 정지/재활성");
+    // 멤버십 조회·마지막 ADMIN 판정보다 먼저 잠근다 — 동시 상호 정지로 활성 ADMIN 0 방지(리뷰 지적 3).
+    userRepository.acquireMemberAdminGuardLock(tenantId);
+    TenantMembership membership = requireTenantMember(userId);
+    if (active == membership.isActive()) {
+      return; // 이미 원하는 상태 — 감사 로그도 남기지 않는다
     }
-    // 마지막 활성 ADMIN 비활성화 방지 — 모든 ADMIN이 잠기면 시스템 관리 불가 (#146)
-    if (!active && userRepository.hasAdminRole(userId) && userRepository.countActiveAdmins() <= 1) {
-      throw new IllegalStateException("마지막 활성 ADMIN 계정은 비활성화할 수 없습니다");
+    if (!active) {
+      assertRemovable(userId, callerId, membership, tenantId);
     }
-    userRepository.setActive(userId, active);
+    membershipRepository.updateStatus(userId, tenantId, active ? "ACTIVE" : "SUSPENDED");
+    audit(
+        callerId,
+        active ? "MEMBER_REACTIVATE" : "MEMBER_SUSPEND",
+        userId,
+        active ? "멤버십 재활성" : "멤버십 정지",
+        null);
+  }
+
+  /** 이 워크스페이스에서 제거: 이 테넌트의 user_role + membership 만 삭제. 계정·만든 리소스는 유지. */
+  @Transactional
+  public void removeMember(Long userId, Long callerId) {
+    long tenantId = TenantContext.require("멤버 제거");
+    // setUserActive 와 같은 잠금 — 정지와 제거가 섞여 겹쳐도 직렬화된다(리뷰 지적 3).
+    userRepository.acquireMemberAdminGuardLock(tenantId);
+    TenantMembership membership = requireTenantMember(userId);
+    assertRemovable(userId, callerId, membership, tenantId);
+    userRepository.deleteRolesInTenant(userId, tenantId);
+    membershipRepository.delete(userId, tenantId);
+    audit(callerId, "MEMBER_REMOVE", userId, "워크스페이스에서 제거", null);
   }
 }

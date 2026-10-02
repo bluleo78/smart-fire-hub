@@ -7,6 +7,11 @@ import { expect, test } from '../../fixtures/auth.fixture';
  * - API 모킹 기반으로 백엔드 없이 회원가입 플로우를 검증한다.
  */
 test.describe('회원가입 페이지', () => {
+  // 공개 가입은 시스템 첫 사용자에게만 열린다(WD-2) — 기본 시나리오는 "열림" 상태
+  test.beforeEach(async ({ authMockedPage: page }) => {
+    await mockApi(page, 'GET', '/api/v1/auth/signup-status', { open: true });
+  });
+
   test('회원가입 페이지가 올바르게 렌더링된다', async ({ authMockedPage: page }) => {
     await page.goto('/signup');
 
@@ -289,5 +294,61 @@ test.describe('회원가입 페이지', () => {
       password: 'Password123',
       name: '정상 사용자',
     });
+  });
+});
+
+test.describe('공개 가입 폐쇄', () => {
+  test('닫혀 있으면 안내와 로그인 링크만 보인다', async ({ authMockedPage: page }) => {
+    await mockApi(page, 'GET', '/api/v1/auth/signup-status', { open: false });
+    await page.goto('/signup');
+    await expect(page.getByRole('heading', { level: 1, name: '회원가입' })).toBeVisible();
+    await expect(page.getByText('계정은 워크스페이스 관리자가 추가합니다. 관리자에게 계정 발급을 요청하세요.')).toBeVisible();
+    await expect(page.getByLabel('아이디 (이메일)')).toHaveCount(0);
+    await page.getByRole('link', { name: '로그인으로 이동' }).click();
+    await expect(page).toHaveURL(/\/login$/);
+  });
+
+  test('상태 조회가 실패하면 닫힘으로 취급한다', async ({ authMockedPage: page }) => {
+    await mockApi(page, 'GET', '/api/v1/auth/signup-status', { message: 'boom' }, { status: 500 });
+    await page.goto('/signup');
+    await expect(page.getByText('계정은 워크스페이스 관리자가 추가합니다. 관리자에게 계정 발급을 요청하세요.')).toBeVisible();
+    await expect(page.getByLabel('아이디 (이메일)')).toHaveCount(0);
+  });
+
+  test('열림 상태에서 제출했는데 그 사이 닫혔다면(403 SIGNUP_DISABLED) 안내로 바뀐다', async ({ authMockedPage: page }) => {
+    await mockApi(page, 'GET', '/api/v1/auth/signup-status', { open: true });
+    await mockApi(page, 'POST', '/api/v1/auth/signup',
+      { status: 403, error: 'Forbidden', message: '계정은 워크스페이스 관리자가 추가합니다', code: 'SIGNUP_DISABLED' },
+      { status: 403 });
+    await page.goto('/signup');
+    await page.getByLabel('아이디 (이메일)').fill('late@example.com');
+    await page.getByLabel('비밀번호', { exact: true }).fill('Password123');
+    await page.getByLabel('비밀번호 확인').fill('Password123');
+    await page.getByLabel('이름').fill('늦은 사용자');
+    await mockApi(page, 'GET', '/api/v1/auth/signup-status', { open: false });
+    await page.getByRole('button', { name: '회원가입' }).click();
+    await expect(page.getByText('계정은 워크스페이스 관리자가 추가합니다. 관리자에게 계정 발급을 요청하세요.')).toBeVisible();
+  });
+
+  test('403 SIGNUP_DISABLED 뒤 상태 재조회가 실패해도 닫힘 안내로 바뀐다(폼에 갇히지 않음)', async ({ authMockedPage: page }) => {
+    // 첫 조회만 열림, 그 뒤 조회는 전부 500 — 웹이 재조회 성공에 기대면 폼이 아무 안내 없이 남는다.
+    let statusCalls = 0;
+    await page.route((url) => url.pathname === '/api/v1/auth/signup-status', (route) => {
+      statusCalls += 1;
+      return statusCalls === 1
+        ? route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ open: true }) })
+        : route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ status: 500, message: 'boom' }) });
+    });
+    await mockApi(page, 'POST', '/api/v1/auth/signup',
+      { status: 403, error: 'Forbidden', message: '계정은 워크스페이스 관리자가 추가합니다', code: 'SIGNUP_DISABLED' },
+      { status: 403 });
+    await page.goto('/signup');
+    await page.getByLabel('아이디 (이메일)').fill('late@example.com');
+    await page.getByLabel('비밀번호', { exact: true }).fill('Password123');
+    await page.getByLabel('비밀번호 확인').fill('Password123');
+    await page.getByLabel('이름').fill('늦은 사용자');
+    await page.getByRole('button', { name: '회원가입' }).click();
+    await expect(page.getByText('계정은 워크스페이스 관리자가 추가합니다. 관리자에게 계정 발급을 요청하세요.')).toBeVisible();
+    await expect(page.getByRole('link', { name: '로그인으로 이동' })).toBeVisible();
   });
 });

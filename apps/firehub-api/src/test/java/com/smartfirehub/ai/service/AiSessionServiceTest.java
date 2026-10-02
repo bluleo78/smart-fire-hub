@@ -5,14 +5,15 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.smartfirehub.ai.dto.AiSessionResponse;
 import com.smartfirehub.ai.dto.CreateAiSessionRequest;
-import com.smartfirehub.auth.dto.SignupRequest;
-import com.smartfirehub.auth.service.AuthService;
 import com.smartfirehub.support.IntegrationTestBase;
+import com.smartfirehub.support.TestUsers;
 import com.smartfirehub.user.dto.UserResponse;
 import java.util.List;
+import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.transaction.annotation.Transactional;
 
 @Transactional
@@ -20,13 +21,21 @@ class AiSessionServiceTest extends IntegrationTestBase {
 
   @Autowired private AiSessionService aiSessionService;
 
-  @Autowired private AuthService authService;
+  @Autowired private DSLContext dsl;
+  @Autowired private PasswordEncoder passwordEncoder;
 
   @Test
   void getSessions_returnsSessionsForUser() {
     UserResponse user =
-        authService.signup(
-            new SignupRequest("testuser", "test@example.com", "Password123", "Test User"));
+        TestUsers.createMember(
+            dsl,
+            fixtureTransactionTemplate,
+            passwordEncoder,
+            "testuser",
+            "test@example.com",
+            "Password123",
+            "Test User",
+            DEFAULT_TEST_TENANT_ID);
     Long userId = user.id();
 
     aiSessionService.createSession(
@@ -43,8 +52,15 @@ class AiSessionServiceTest extends IntegrationTestBase {
   void getSessions_paginationLimitsResults() {
     // page=0, size=2 요청 시 최대 2건만 반환되는지 검증 (페이지네이션 LIMIT 효과)
     UserResponse user =
-        authService.signup(
-            new SignupRequest("testpager", "pager@example.com", "Password123", "Pager User"));
+        TestUsers.createMember(
+            dsl,
+            fixtureTransactionTemplate,
+            passwordEncoder,
+            "testpager",
+            "pager@example.com",
+            "Password123",
+            "Pager User",
+            DEFAULT_TEST_TENANT_ID);
     Long userId = user.id();
 
     // 3개 세션 생성
@@ -67,8 +83,15 @@ class AiSessionServiceTest extends IntegrationTestBase {
   @Test
   void createSession_success() {
     UserResponse user =
-        authService.signup(
-            new SignupRequest("testuser", "test@example.com", "Password123", "Test User"));
+        TestUsers.createMember(
+            dsl,
+            fixtureTransactionTemplate,
+            passwordEncoder,
+            "testuser",
+            "test@example.com",
+            "Password123",
+            "Test User",
+            DEFAULT_TEST_TENANT_ID);
     Long userId = user.id();
 
     AiSessionResponse result =
@@ -88,8 +111,15 @@ class AiSessionServiceTest extends IntegrationTestBase {
   @Test
   void verifySessionOwnership_ownSession_noException() {
     UserResponse user =
-        authService.signup(
-            new SignupRequest("testuser", "test@example.com", "Password123", "Test User"));
+        TestUsers.createMember(
+            dsl,
+            fixtureTransactionTemplate,
+            passwordEncoder,
+            "testuser",
+            "test@example.com",
+            "Password123",
+            "Test User",
+            DEFAULT_TEST_TENANT_ID);
     Long userId = user.id();
 
     aiSessionService.createSession(
@@ -102,11 +132,25 @@ class AiSessionServiceTest extends IntegrationTestBase {
   @Test
   void verifySessionOwnership_otherUser_throwsAccessDenied() {
     UserResponse user1 =
-        authService.signup(
-            new SignupRequest("user1", "user1@example.com", "Password123", "User 1"));
+        TestUsers.createMember(
+            dsl,
+            fixtureTransactionTemplate,
+            passwordEncoder,
+            "user1",
+            "user1@example.com",
+            "Password123",
+            "User 1",
+            DEFAULT_TEST_TENANT_ID);
     UserResponse user2 =
-        authService.signup(
-            new SignupRequest("user2", "user2@example.com", "Password123", "User 2"));
+        TestUsers.createMember(
+            dsl,
+            fixtureTransactionTemplate,
+            passwordEncoder,
+            "user2",
+            "user2@example.com",
+            "Password123",
+            "User 2",
+            DEFAULT_TEST_TENANT_ID);
 
     aiSessionService.createSession(
         user1.id(), new CreateAiSessionRequest("session-u1", null, null, "User1 Session"));
@@ -119,11 +163,25 @@ class AiSessionServiceTest extends IntegrationTestBase {
   @Test
   void verifyNotOthersSession_rejectsOnlySessionsRecordedToAnotherUser() {
     UserResponse owner =
-        authService.signup(
-            new SignupRequest("owner714", "owner714@example.com", "Password123", "Owner"));
+        TestUsers.createMember(
+            dsl,
+            fixtureTransactionTemplate,
+            passwordEncoder,
+            "owner714",
+            "owner714@example.com",
+            "Password123",
+            "Owner",
+            DEFAULT_TEST_TENANT_ID);
     UserResponse other =
-        authService.signup(
-            new SignupRequest("other714", "other714@example.com", "Password123", "Other"));
+        TestUsers.createMember(
+            dsl,
+            fixtureTransactionTemplate,
+            passwordEncoder,
+            "other714",
+            "other714@example.com",
+            "Password123",
+            "Other",
+            DEFAULT_TEST_TENANT_ID);
     aiSessionService.createSession(
         owner.id(), new CreateAiSessionRequest("session-714", null, null, "Owner Session"));
 
@@ -140,8 +198,15 @@ class AiSessionServiceTest extends IntegrationTestBase {
   @Test
   void updateSessionTitle_ownSession_success() {
     UserResponse user =
-        authService.signup(
-            new SignupRequest("testuser", "test@example.com", "Password123", "Test User"));
+        TestUsers.createMember(
+            dsl,
+            fixtureTransactionTemplate,
+            passwordEncoder,
+            "testuser",
+            "test@example.com",
+            "Password123",
+            "Test User",
+            DEFAULT_TEST_TENANT_ID);
     Long userId = user.id();
 
     AiSessionResponse created =
@@ -158,11 +223,25 @@ class AiSessionServiceTest extends IntegrationTestBase {
   @Test
   void updateSessionTitle_otherUser_throwsAccessDenied() {
     UserResponse user1 =
-        authService.signup(
-            new SignupRequest("user1", "user1@example.com", "Password123", "User 1"));
+        TestUsers.createMember(
+            dsl,
+            fixtureTransactionTemplate,
+            passwordEncoder,
+            "user1",
+            "user1@example.com",
+            "Password123",
+            "User 1",
+            DEFAULT_TEST_TENANT_ID);
     UserResponse user2 =
-        authService.signup(
-            new SignupRequest("user2", "user2@example.com", "Password123", "User 2"));
+        TestUsers.createMember(
+            dsl,
+            fixtureTransactionTemplate,
+            passwordEncoder,
+            "user2",
+            "user2@example.com",
+            "Password123",
+            "User 2",
+            DEFAULT_TEST_TENANT_ID);
 
     AiSessionResponse created =
         aiSessionService.createSession(
@@ -176,8 +255,15 @@ class AiSessionServiceTest extends IntegrationTestBase {
   @Test
   void deleteSession_ownSession_success() {
     UserResponse user =
-        authService.signup(
-            new SignupRequest("testuser", "test@example.com", "Password123", "Test User"));
+        TestUsers.createMember(
+            dsl,
+            fixtureTransactionTemplate,
+            passwordEncoder,
+            "testuser",
+            "test@example.com",
+            "Password123",
+            "Test User",
+            DEFAULT_TEST_TENANT_ID);
     Long userId = user.id();
 
     AiSessionResponse created =
@@ -193,8 +279,15 @@ class AiSessionServiceTest extends IntegrationTestBase {
   @Test
   void getSessionByContext_existingSession_returnsSession() {
     UserResponse user =
-        authService.signup(
-            new SignupRequest("testuser", "test@example.com", "Password123", "Test User"));
+        TestUsers.createMember(
+            dsl,
+            fixtureTransactionTemplate,
+            passwordEncoder,
+            "testuser",
+            "test@example.com",
+            "Password123",
+            "Test User",
+            DEFAULT_TEST_TENANT_ID);
     Long userId = user.id();
 
     aiSessionService.createSession(
@@ -211,8 +304,15 @@ class AiSessionServiceTest extends IntegrationTestBase {
   @Test
   void getSessionByContext_noMatch_returnsEmpty() {
     UserResponse user =
-        authService.signup(
-            new SignupRequest("testuser", "test@example.com", "Password123", "Test User"));
+        TestUsers.createMember(
+            dsl,
+            fixtureTransactionTemplate,
+            passwordEncoder,
+            "testuser",
+            "test@example.com",
+            "Password123",
+            "Test User",
+            DEFAULT_TEST_TENANT_ID);
     Long userId = user.id();
 
     var result = aiSessionService.getSessionByContext(userId, "dataset", 99L);
@@ -223,11 +323,25 @@ class AiSessionServiceTest extends IntegrationTestBase {
   @Test
   void deleteSession_otherUser_throwsAccessDenied() {
     UserResponse user1 =
-        authService.signup(
-            new SignupRequest("user1", "user1@example.com", "Password123", "User 1"));
+        TestUsers.createMember(
+            dsl,
+            fixtureTransactionTemplate,
+            passwordEncoder,
+            "user1",
+            "user1@example.com",
+            "Password123",
+            "User 1",
+            DEFAULT_TEST_TENANT_ID);
     UserResponse user2 =
-        authService.signup(
-            new SignupRequest("user2", "user2@example.com", "Password123", "User 2"));
+        TestUsers.createMember(
+            dsl,
+            fixtureTransactionTemplate,
+            passwordEncoder,
+            "user2",
+            "user2@example.com",
+            "Password123",
+            "User 2",
+            DEFAULT_TEST_TENANT_ID);
 
     AiSessionResponse created =
         aiSessionService.createSession(

@@ -8,6 +8,8 @@ import { expect, test } from '../../fixtures/auth.fixture';
  */
 test.describe('로그인 페이지', () => {
   test('로그인 페이지가 올바르게 렌더링된다', async ({ authMockedPage: page }) => {
+    // 링크 존재 단언이 있으므로 공개 가입 "열림" 상태로 모킹한다(WD-2)
+    await mockApi(page, 'GET', '/api/v1/auth/signup-status', { open: true });
     await page.goto('/login');
 
     // 페이지 타이틀 확인
@@ -172,14 +174,19 @@ test.describe('로그인 페이지', () => {
     await expect(button).toBeDisabled();
   });
 
-  test('회원가입 링크 클릭 시 /signup으로 이동한다', async ({ authMockedPage: page }) => {
+  test('공개 가입이 열려 있으면(첫 사용자) 회원가입 링크로 이동한다', async ({ authMockedPage: page }) => {
+    await mockApi(page, 'GET', '/api/v1/auth/signup-status', { open: true });
     await page.goto('/login');
-
-    // 회원가입 링크 클릭
     await page.getByText('계정이 없으신가요? 회원가입').click();
-
-    // /signup으로 이동했는지 확인
     await expect(page).toHaveURL(/\/signup/);
+  });
+
+  test('공개 가입이 닫혀 있으면 회원가입 링크를 숨긴다', async ({ authMockedPage: page }) => {
+    const status = await mockApi(page, 'GET', '/api/v1/auth/signup-status', { open: false }, { capture: true });
+    await page.goto('/login');
+    await status.waitForRequest();
+    await expect(page.getByRole('button', { name: '로그인' })).toBeVisible();
+    await expect(page.getByText('계정이 없으신가요? 회원가입')).toHaveCount(0);
   });
 
   // #77: 입력 필드 autocomplete 속성 검증

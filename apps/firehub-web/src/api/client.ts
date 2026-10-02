@@ -114,6 +114,18 @@ client.interceptors.response.use(
       }
     }
 
+    // 비밀번호 변경 강제(WD-2): 서버가 403 PASSWORD_CHANGE_REQUIRED 를 주면 변경 화면으로 보낸다.
+    // 코드로만 구분한다 — select-tenant 의 일반 403(코드 없음)은 호출자(useTenantSelection)가 처리해야
+    // 한다. 이미 변경 화면이면 이동하지 않는다(무한 리로드 방지). 하드 이동인 이유: 부팅 refresh 가
+    // 서버의 최신 표식을 다시 읽게 하려는 것.
+    if (
+      error.response?.status === 403 &&
+      error.response.data?.code === 'PASSWORD_CHANGE_REQUIRED' &&
+      window.location.pathname !== '/change-password'
+    ) {
+      window.location.assign('/change-password');
+    }
+
     return Promise.reject(error);
   }
 );

@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.smartfirehub.permission.dto.PermissionResponse;
 import com.smartfirehub.support.IntegrationTestBase;
+import com.smartfirehub.support.TenantRlsTestSupport;
 import java.util.List;
 import java.util.Set;
 import org.jooq.DSLContext;
@@ -76,6 +77,10 @@ class PermissionServiceTest extends IntegrationTestBase {
             .returning(DSL.field(DSL.name("user", "id"), Long.class))
             .fetchOne()
             .get(DSL.field(DSL.name("user", "id"), Long.class));
+
+    // 권한 조회는 같은 테넌트의 ACTIVE 멤버십을 요구한다(WD-2). @Transactional 이라 롤백된다.
+    TenantRlsTestSupport.insertActiveMembership(dsl, adminUserId, DEFAULT_TEST_TENANT_ID);
+    TenantRlsTestSupport.insertActiveMembership(dsl, userUserId, DEFAULT_TEST_TENANT_ID);
 
     // adminUserId에 ADMIN 역할(id=1) 할당
     dsl.insertInto(DSL.table(DSL.name("user_role")))

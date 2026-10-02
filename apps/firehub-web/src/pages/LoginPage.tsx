@@ -11,6 +11,7 @@ import { Card, CardContent, CardHeader } from '../components/ui/card';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { PasswordInput } from '../components/ui/password-input';
+import { useSignupStatus } from '../hooks/queries/useSignupStatus';
 import { useAuth } from '../hooks/useAuth';
 import { useBranding } from '../hooks/useBranding';
 import type { LoginFormData } from '../lib/validations/auth';
@@ -22,6 +23,8 @@ export default function LoginPage() {
   const { brandName } = useBranding(); // 런타임 브랜드명 (로그인 화면 제목)
   const [serverError, setServerError] = useState('');
   const location = useLocation();
+  // 공개 가입 열림 여부 — 열림이 확인될 때만 가입 링크를 그린다(WD-2)
+  const signupStatus = useSignupStatus();
 
   const {
     register,
@@ -107,11 +110,14 @@ export default function LoginPage() {
               {isSubmitting ? '로그인 중...' : '로그인'}
             </Button>
           </form>
-          <div className="mt-4 text-center text-sm">
-            <Link to="/signup" className="text-primary underline-offset-4 hover:underline">
-              계정이 없으신가요? 회원가입
-            </Link>
-          </div>
+          {/* 공개 가입은 시스템 첫 사용자만(WD-2). 열림이 확인될 때만 링크를 그린다(로딩·실패 = 숨김). */}
+          {signupStatus.data?.open && (
+            <div className="mt-4 text-center text-sm">
+              <Link to="/signup" className="text-primary underline-offset-4 hover:underline">
+                계정이 없으신가요? 회원가입
+              </Link>
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>

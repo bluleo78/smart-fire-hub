@@ -32,6 +32,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // 격리는 서버측 JWT + RLS 가 하고, 미러를 두면 "화면은 A, 토큰은 B" 상태를 만들 수 있다.
   const [activeTenantId, setActiveTenantId] = useState<number | null>(null);
   const [tenantOptions, setTenantOptions] = useState<MembershipResponse[]>([]);
+  // 첫 로그인 비밀번호 변경 강제 표식(WD-2). 토큰 응답의 mustChangePassword 를 그대로 반영한다.
+  const [mustChangePassword, setMustChangePassword] = useState(false);
 
   const isAuthenticated = user !== null;
 
@@ -70,6 +72,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return userDetail;
   }, []);
 
+  /**
+   * 토큰 응답 하나로 세션 상태를 세운다(부팅·로그인·변경 완료 공용).
+   *
+   * <p>표식이 켜져 있으면 `/users/me` 를 부르지 않는다 — 서버 게이트의 허용 목록에 없어 403 이 난다.
+   * 대신 허용된 `/auth/me` 로 최소 사용자 정보만 읽고 역할은 비워 둔다(관리 메뉴가 그려지지 않게).
+   *
+   * <p>상태 반영 순서가 중요하다. 표식 ON 은 `setUser` **보다 먼저** 켠다 — 반대면 LoginPage 가
+   * "인증됨"을 먼저 보고 `/` 로 보내 AppLayout 이 그려지고, 레이아웃의 API 들이 403 을 연달아 받는다.
+   * 표식 OFF 는 사용자·역할을 다 읽은 **뒤에** 끈다 — 먼저 끄면 변경 화면이 역할이 빈 채로 `/` 로 넘어간다.
+   */
+  const applySession = useCallback(async (tokens: TokenResponse) => {
+    setAccessToken(tokens.accessToken);
+    applyTenantState(tokens);
+    if (tokens.mustChangePassword) {
+      setMustChangePassword(true);
+      const { data: me } = await authApi.me();
+      setUser(me);
+      setRoles([]);
+      return;
+    }
+    await fetchUserWithRoles();
+    // 리터럴 false — 필드가 빠진 낡은 응답(구버전 서버·목)이 boolean 상태에 undefined 를 넣지 않게.
+    setMustChangePassword(false);
+  }, [applyTenantState, fetchUserWithRoles]);
+
   useEffect(() => {
     let ignore = false;
 
@@ -82,12 +109,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       try {
         const { data: tokens } = await deduplicatedRefresh();
         if (ignore) return;
-        setAccessToken(tokens.accessToken);
-        applyTenantState(tokens);
         // 테넌트 미선택(강등 포함) 상태에서도 `/users/me` 는 통과한다(권한 요구 없음) — 그래서
         // "인증됐지만 테넌트가 없다" 를 표현할 수 있고, 게이트가 로그인 화면 대신 워크스페이스
         // 선택 화면으로 보낼 수 있다. 이때 roles 는 RLS 때문에 자연히 빈 배열이 된다.
-        await fetchUserWithRoles();
+        // 비밀번호 변경 강제 상태면 applySession 이 `/users/me` 대신 `/auth/me` 를 읽는다(WD-2).
+        await applySession(tokens);
       } catch {
         if (ignore) return;
         setAccessToken(null);
@@ -99,7 +125,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     initAuth();
     return () => { ignore = true; };
-  }, [applyTenantState, fetchUserWithRoles]);
+  }, [applySession]);
 
   // 백그라운드 refresh(401 재시도 인터셉터)가 토큰을 강등시킬 수 있으므로 그 통지를 구독한다.
   // 구독하지 않으면 강등 후 UI 가 이유 없는 전 API 403 루프에 빠진다(api/tenant-session.ts 참조).
@@ -119,6 +145,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setRoles([]);
       setActiveTenantId(null);
       setTenantOptions([]);
+      setMustChangePassword(false);
     };
     window.addEventListener('storage', handleStorage);
     return () => window.removeEventListener('storage', handleStorage);
@@ -126,11 +153,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(async (data: LoginFormData) => {
     const { data: tokens } = await authApi.login(data);
-    setAccessToken(tokens.accessToken);
     localStorage.setItem(AUTH_FLAG_KEY, 'true');
-    applyTenantState(tokens);
-    await fetchUserWithRoles();
-  }, [applyTenantState, fetchUserWithRoles]);
+    await applySession(tokens);
+  }, [applySession]);
+
+  /**
+   * 비밀번호 변경 성공 직후 호출한다(WD-2).
+   *
+   * <p>서버 DB 의 표식은 이미 꺼졌지만 **지금 쥔 access token 에는 pwc 가 남아 있다** — 그대로 두면
+   * 다른 API 가 계속 403 이다. refresh 로 표식이 꺼진 새 토큰을 받아 세션을 다시 세운다.
+   */
+  const completePasswordChange = useCallback(async () => {
+    const { data: tokens } = await deduplicatedRefresh();
+    await applySession(tokens);
+  }, [applySession]);
 
   /**
    * 실행 테넌트를 확정하고 **하드 리로드**한다.
@@ -169,6 +205,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setRoles([]);
       setActiveTenantId(null);
       setTenantOptions([]);
+      setMustChangePassword(false);
     }
   }, []);
 
@@ -185,8 +222,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [fetchUserWithRoles]);
 
   const ctxValue = useMemo(
-    () => ({ user, roles, isLoading, isAuthenticated, login, signup, logout, hasRole, isAdmin, refreshUser, activeTenantId, tenantOptions, selectTenant }),
-    [user, roles, isLoading, isAuthenticated, login, signup, logout, hasRole, isAdmin, refreshUser, activeTenantId, tenantOptions, selectTenant]
+    () => ({ user, roles, isLoading, isAuthenticated, login, signup, logout, hasRole, isAdmin, refreshUser, activeTenantId, tenantOptions, selectTenant, mustChangePassword, completePasswordChange }),
+    [user, roles, isLoading, isAuthenticated, login, signup, logout, hasRole, isAdmin, refreshUser, activeTenantId, tenantOptions, selectTenant, mustChangePassword, completePasswordChange]
   );
 
   return (

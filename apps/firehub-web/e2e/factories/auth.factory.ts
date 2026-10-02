@@ -33,6 +33,8 @@ export function createTokenResponse(overrides?: Partial<TokenResponse>): TokenRe
     memberships: [
       { tenantId: 1, tenantSlug: 'test-workspace', tenantName: '테스트 워크스페이스', role: 'OWNER' },
     ],
+    // 비밀번호 변경 강제(WD-2)는 기본 꺼짐 — 강제 화면을 검증하는 테스트만 override 로 true 를 준다.
+    mustChangePassword: false,
     ...overrides,
   };
 }
@@ -58,6 +60,9 @@ export function createUserDetail(overrides?: Partial<UserDetailResponse>): UserD
     isActive: true,
     createdAt: '2024-01-01T00:00:00Z',
     roles: [createRole()],
+    // 멤버십 정보(WD-2) — 기본은 잠금 사유가 없는 일반 멤버
+    membershipRole: 'MEMBER',
+    lastActiveAdmin: false,
     ...overrides,
   };
 }

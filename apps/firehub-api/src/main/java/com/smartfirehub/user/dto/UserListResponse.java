@@ -20,10 +20,20 @@ public record UserListResponse(
     String name,
     boolean isActive,
     @JsonFormat(pattern = "yyyy-MM-dd'T'HH:mm:ss") LocalDateTime createdAt,
-    List<RoleResponse> roles) {
+    List<RoleResponse> roles,
+    String membershipRole) {
 
-  /** {@link UserResponse} 한 건과 그 사용자의 역할 목록을 합쳐 목록 응답 항목을 만든다. */
+  /** {@link UserResponse} 한 건과 그 사용자의 역할 목록을 합쳐 목록 응답 항목을 만든다(멤버십 라벨 없음). */
   public static UserListResponse of(UserResponse user, List<RoleResponse> roles) {
+    return of(user, roles, null);
+  }
+
+  /**
+   * 멤버십 라벨까지 담는 버전 — 관리 목록(GET /users)이 쓴다. membershipRole 은 현재 테넌트 멤버십
+   * 라벨(OWNER|ADMIN|MEMBER)이라 목록에서 OWNER 를 표시할 수 있다.
+   */
+  public static UserListResponse of(
+      UserResponse user, List<RoleResponse> roles, String membershipRole) {
     return new UserListResponse(
         user.id(),
         user.username(),
@@ -31,6 +41,7 @@ public record UserListResponse(
         user.name(),
         user.isActive(),
         user.createdAt(),
-        roles);
+        roles,
+        membershipRole);
   }
 }

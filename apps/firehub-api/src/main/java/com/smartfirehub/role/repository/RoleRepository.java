@@ -4,10 +4,13 @@ import static com.smartfirehub.jooq.Tables.*;
 
 import com.smartfirehub.role.dto.RoleResponse;
 import java.time.LocalDateTime;
+import java.util.Collection;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
@@ -48,6 +51,19 @@ public class RoleRepository {
 
   public boolean existsByName(String name) {
     return dsl.fetchExists(dsl.selectOne().from(ROLE).where(ROLE.NAME.eq(name)));
+  }
+
+  /**
+   * 주어진 id 중 <b>현재 테넌트</b>에 실제로 있는 역할 id 만 돌려준다.
+   *
+   * <p>role 은 RLS 대상이라 다른 테넌트 역할 id 는 조회되지 않는다. 멤버 추가 요청의 roleIds 검증
+   * (보이지 않는 id 가 하나라도 있으면 400 INVALID_ROLE)에 쓴다.
+   */
+  public Set<Long> findExistingIds(Collection<Long> ids) {
+    if (ids.isEmpty()) {
+      return Set.of();
+    }
+    return new HashSet<>(dsl.select(ROLE.ID).from(ROLE).where(ROLE.ID.in(ids)).fetch(ROLE.ID));
   }
 
   public RoleResponse save(String name, String description) {

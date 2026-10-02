@@ -5,7 +5,11 @@ import static org.jooq.impl.DSL.name;
 import static org.jooq.impl.DSL.table;
 
 import com.smartfirehub.tenant.dto.MembershipResponse;
+import com.smartfirehub.tenant.dto.TenantMembership;
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
 import org.jooq.Field;
@@ -84,11 +88,56 @@ public class MembershipRepository {
    * 단계(operator-driven provisioning)에서 다룬다 — 이 메서드는 그 대상이 아니다.
    */
   public void createDefaultMembership(Long userId) {
+    insertMember(userId, DEFAULT_TENANT_ID);
+  }
+
+  // ── 관리 경로(WD-2): 한 테넌트 안의 멤버십을 상태와 무관하게 다룬다 ──────────────
+  // membership 은 RLS 가 없는 전역 테이블이다. 그래서 아래 모든 쿼리는 tenant_id 술어를 직접 건다 —
+  // 빠뜨리면 한 테넌트의 관리자가 다른 테넌트 멤버십을 정지·삭제할 수 있다.
+
+  /** 이 테넌트에서의 멤버십(ACTIVE·SUSPENDED 모두). tenant.status 는 보지 않는다(관리 경로). */
+  public Optional<TenantMembership> findInTenant(Long userId, long tenantId) {
+    return dsl.select(M_USER_ID, M_ROLE, M_STATUS)
+        .from(MEMBERSHIP)
+        .where(M_USER_ID.eq(userId).and(M_TENANT_ID.eq(tenantId)))
+        .fetchOptional(r -> new TenantMembership(r.get(M_USER_ID), r.get(M_ROLE), r.get(M_STATUS)));
+  }
+
+  /** 목록 화면용 배치 조회 — 사용자마다 조회하면 페이지 크기만큼 N+1 이 된다. */
+  public Map<Long, TenantMembership> findInTenant(long tenantId, Collection<Long> userIds) {
+    if (userIds.isEmpty()) {
+      return Map.of();
+    }
+    return dsl.select(M_USER_ID, M_ROLE, M_STATUS)
+        .from(MEMBERSHIP)
+        .where(M_TENANT_ID.eq(tenantId).and(M_USER_ID.in(userIds)))
+        .fetchMap(
+            r -> r.get(M_USER_ID),
+            r -> new TenantMembership(r.get(M_USER_ID), r.get(M_ROLE), r.get(M_STATUS)));
+  }
+
+  /** 멤버 추가: 이 테넌트의 ACTIVE MEMBER 로 넣는다. 중복은 호출자가 먼저 걸러 409 로 응답한다. */
+  public void insertMember(Long userId, long tenantId) {
     dsl.insertInto(MEMBERSHIP)
         .set(M_USER_ID, userId)
-        .set(M_TENANT_ID, DEFAULT_TENANT_ID)
+        .set(M_TENANT_ID, tenantId)
         .set(M_ROLE, "MEMBER")
         .set(M_STATUS, "ACTIVE")
+        .execute();
+  }
+
+  /** 정지/재활성. 이 테넌트 행만 바꾼다. 반환값은 바뀐 행 수(0 이면 비멤버). */
+  public int updateStatus(Long userId, long tenantId, String status) {
+    return dsl.update(MEMBERSHIP)
+        .set(M_STATUS, status)
+        .where(M_USER_ID.eq(userId).and(M_TENANT_ID.eq(tenantId)))
+        .execute();
+  }
+
+  /** 테넌트에서 제거. 계정·다른 테넌트 멤버십은 그대로다. */
+  public int delete(Long userId, long tenantId) {
+    return dsl.deleteFrom(MEMBERSHIP)
+        .where(M_USER_ID.eq(userId).and(M_TENANT_ID.eq(tenantId)))
         .execute();
   }
 }

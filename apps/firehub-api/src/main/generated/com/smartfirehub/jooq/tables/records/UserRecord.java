@@ -132,6 +132,22 @@ public class UserRecord extends UpdatableRecordImpl<UserRecord> {
         return (LocalDateTime) get(7);
     }
 
+    /**
+     * Setter for <code>public.user.must_change_password</code>. 관리자가 임시 비밀번호로
+     * 생성한 계정 — 본인이 비밀번호를 바꾸기 전까지 true (access token 클레임 pwc 의 원천)
+     */
+    public void setMustChangePassword(Boolean value) {
+        set(8, value);
+    }
+
+    /**
+     * Getter for <code>public.user.must_change_password</code>. 관리자가 임시 비밀번호로
+     * 생성한 계정 — 본인이 비밀번호를 바꾸기 전까지 true (access token 클레임 pwc 의 원천)
+     */
+    public Boolean getMustChangePassword() {
+        return (Boolean) get(8);
+    }
+
     // -------------------------------------------------------------------------
     // Primary key information
     // -------------------------------------------------------------------------
@@ -155,7 +171,7 @@ public class UserRecord extends UpdatableRecordImpl<UserRecord> {
     /**
      * Create a detached, initialised UserRecord
      */
-    public UserRecord(Long id, String username, String email, String password, String name, Boolean isActive, LocalDateTime createdAt, LocalDateTime updatedAt) {
+    public UserRecord(Long id, String username, String email, String password, String name, Boolean isActive, LocalDateTime createdAt, LocalDateTime updatedAt, Boolean mustChangePassword) {
         super(User.USER);
 
         setId(id);
@@ -166,6 +182,7 @@ public class UserRecord extends UpdatableRecordImpl<UserRecord> {
         setIsActive(isActive);
         setCreatedAt(createdAt);
         setUpdatedAt(updatedAt);
+        setMustChangePassword(mustChangePassword);
         resetChangedOnNotNull();
     }
 }

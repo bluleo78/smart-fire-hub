@@ -88,6 +88,7 @@ class AiCredentialControllerTest extends IntegrationTestBase {
 
     for (Long userId : createdUserIds) {
       inTenantFixture(() -> dsl.execute("delete from user_role where user_id = ?", userId));
+      TenantRlsTestSupport.deleteMembership(dsl, userId);
       TenantRlsTestSupport.deleteUser(dsl, userId);
     }
   }
@@ -138,6 +139,8 @@ class AiCredentialControllerTest extends IntegrationTestBase {
     long userId =
         TenantRlsTestSupport.insertUserWithPassword(dsl, "p7t7-admin-" + System.nanoTime(), "{noop}x");
     createdUserIds.add(userId);
+    // 권한 조회는 같은 테넌트의 ACTIVE 멤버십을 요구한다(WD-2) — user_role 만으로는 권한이 0 이다.
+    TenantRlsTestSupport.insertActiveMembership(dsl, userId, DEFAULT_TEST_TENANT_ID);
     inTenantFixture(() -> dsl.execute("insert into user_role (user_id, role_id) values (?, 1)", userId));
     return userId;
   }

@@ -16,6 +16,7 @@ import { ThemeColorProvider } from './hooks/useThemeColor';
 const LoginPage = lazy(() => import('./pages/LoginPage'));
 const NotFoundPage = lazy(() => import('./pages/NotFoundPage'));
 const SignupPage = lazy(() => import('./pages/SignupPage'));
+const ChangePasswordPage = lazy(() => import('./pages/ChangePasswordPage'));
 const HomePage = lazy(() => import('./pages/HomePage'));
 const ProfilePage = lazy(() => import('./pages/ProfilePage'));
 const UserListPage = lazy(() => import('./pages/admin/UserListPage'));
@@ -68,6 +69,8 @@ function App() {
           {/* 퍼블릭 라우트: 각 페이지를 ErrorBoundary + Suspense로 감싸 렌더링 오류 격리 */}
           <Route path="/login" element={<PageErrorBoundary><Suspense fallback={<PageSkeleton />}><LoginPage /></Suspense></PageErrorBoundary>} />
           <Route path="/signup" element={<PageErrorBoundary><Suspense fallback={<PageSkeleton />}><SignupPage /></Suspense></PageErrorBoundary>} />
+          {/* 첫 로그인 비밀번호 변경 강제(WD-2) — AppLayout·ProtectedRoute 밖. 인증·표식 확인은 페이지가 직접 한다. */}
+          <Route path="/change-password" element={<PageErrorBoundary><Suspense fallback={<PageSkeleton />}><ChangePasswordPage /></Suspense></PageErrorBoundary>} />
           <Route element={<ProtectedRoute />}>
             {/* 앱 내부 라우트: AppLayout 전체를 PageErrorBoundary로 감싸 페이지 오류를 흰 화면 대신 폴백 UI로 처리 */}
             <Route element={<PageErrorBoundary><AppLayout /></PageErrorBoundary>}>

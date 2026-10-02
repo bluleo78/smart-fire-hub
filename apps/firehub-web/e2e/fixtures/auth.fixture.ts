@@ -48,6 +48,8 @@ export const MOCK_TOKEN_RESPONSE: TokenResponse = {
   expiresIn: 3600,
   activeTenantId: MOCK_MEMBERSHIP.tenantId,
   memberships: [MOCK_MEMBERSHIP],
+  // 비밀번호 변경 강제(WD-2) 꺼짐 — true 면 ProtectedRoute 가 /change-password 로 보낸다.
+  mustChangePassword: false,
 };
 
 /** 모킹용 역할 정보 */
@@ -58,8 +60,8 @@ const MOCK_ROLE: RoleResponse = {
   isSystem: true,
 };
 
-/** 모킹용 사용자 상세 정보 (roles 포함) — UserDetailResponse 타입으로 API 스펙 정합성 보장 */
-const MOCK_USER_DETAIL: UserDetailResponse = {
+/** 모킹용 사용자 상세 정보 (roles 포함) — UserDetailResponse 타입으로 API 스펙 정합성 보장 / 다른 테스트에서 재사용 가능하도록 export */
+export const MOCK_USER_DETAIL: UserDetailResponse = {
   ...MOCK_USER,
   roles: [MOCK_ROLE],
 };
@@ -75,6 +77,8 @@ async function setupAuthMocks(page: Page) {
   await mockApi(page, 'POST', '/api/v1/auth/login', MOCK_TOKEN_RESPONSE);
   await mockApi(page, 'POST', '/api/v1/auth/refresh', MOCK_TOKEN_RESPONSE);
   await mockApi(page, 'GET', '/api/v1/users/me', MOCK_USER_DETAIL);
+  // 공개 가입은 기본 "닫힘"(운영 현실과 동일). 가입 화면 테스트는 { open: true } 로 덮어쓴다(WD-2).
+  await mockApi(page, 'GET', '/api/v1/auth/signup-status', { open: false });
   // 로그인 후 홈으로 리다이렉트될 때 대시보드 API 호출을 모킹
   await setupHomeMocks(page);
 }

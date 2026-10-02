@@ -203,6 +203,19 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
   플랜에 `Index Scan using ... hnsw` 가 나와야 한다 — `Seq Scan` + `Sort` 로 떨어지면 통계 재계산
   (`ANALYZE document_chunk_vec_1024;`)이나 `ef_search` 조정을 검토한다. 확인 후 #713, #392 닫기.
 
+### 테넌트 멤버 추가 · 공개 가입 폐쇄 (V132, WD-2)
+
+- **api + web 동시 배포 필수.** 새 응답 필드(`TokenResponse.mustChangePassword`, `ErrorResponse.code`), 403 `PASSWORD_CHANGE_REQUIRED`, `GET /auth/signup-status` 를 웹이 처리해야 한다. api 만 먼저 나가면 구 웹의 로그인 화면이 가입 링크를 계속 보여 주고(제출 시 403), 임시 비밀번호 사용자는 원인 표시 없는 403 만 본다. ai-agent 는 이번에 바뀌지 않는다(admin-manager 의 `set_user_active` 안내 문구는 후속 이슈).
+- V132 는 `"user".must_change_password BOOLEAN NOT NULL DEFAULT false` 한 컬럼 추가 — 기존 행 무영향, 잠금 짧음. 배포 전 스냅샷 규칙(V122 이상)은 그대로 따른다.
+- **배포 즉시 운영의 공개 가입이 닫힌다**(사용자가 이미 있으므로). 이후 계정은 각 워크스페이스 관리자가 사용자 관리 > 멤버 추가로 만든다. 기존 계정은 영향 없음.
+- 사용자 상세의 "활성" 스위치 의미가 바뀐다: 전역 계정 비활성화 → **이 워크스페이스 멤버십 정지**. 배포 후 **전역 계정 비활성화 수단이 없다**(운영자 콘솔 후속 이슈). 기존에 전역 `is_active=false` 로 막아 둔 계정은 그대로 막혀 있다.
+- 정지는 그 테넌트 권한을 즉시 0 으로 만든다(권한 조회가 ACTIVE 멤버십을 조인) — 진행 중 세션도 다음 요청부터 403.
+- 정지·제거의 "마지막 활성 ADMIN" 판정은 테넌트별 advisory lock 으로 직렬화된다(동시 요청으로 ADMIN 이 0명이 되는 것을 방지).
+- 비밀번호 변경(`PUT /users/me/password`) 시 그 사용자의 **모든 refresh 세션**(다른 기기·운영자 콘솔 포함)이 폐기되고 호출자에게만 새 refresh 쿠키가 발급된다. 새 비밀번호가 현재(임시) 비밀번호와 같으면 400 으로 거부된다.
+- 프로필 수정(`PUT /users/me`)·비밀번호 변경(`PUT /users/me/password`)은 워크스페이스 선택 없이 인증만으로 동작한다(임시 비밀번호 사용자가 `/change-password` 에서 막히지 않도록).
+- 배포 직전 고아 확인(0 이 아니면 그 사용자는 배포 즉시 권한을 잃는다 — 중단 후 상의): **소유자 롤로 실행**(`docker exec <db> psql -U app -d smartfirehub`) — 런타임 롤 `app_tenant` 는 RLS(NOBYPASSRLS)라 `user_role` 이 0행으로 보여 쿼리가 공허하게 0 이 된다. 먼저 대조군 `SELECT count(*) FROM user_role;` 이 **0 보다 커야** 하고, 그 다음 `SELECT count(*) FROM user_role ur JOIN role r ON r.id=ur.role_id WHERE NOT EXISTS (SELECT 1 FROM membership m WHERE m.user_id=ur.user_id AND m.tenant_id=r.tenant_id AND m.status='ACTIVE');` 가 0 이어야 한다. 2026-10-02 소유자(app) 실측: dev user_role 18건 중 고아 0, prod 4건 중 고아 0
+- 배포 후 확인: (1) `curl -s https://<host>/api/v1/auth/signup-status` → `{"open":false}`; (2) 관리자 계정으로 멤버 추가 → 새 계정 로그인 → `/change-password` 강제 → 변경 후 진입; (3) 정지한 멤버가 다른 워크스페이스로는 로그인되는지.
+
 ### opencode baseURL 사설망 점검 (이슈 #698)
 
 #693 의 SSRF 가드는 **저장 시점**에만 baseURL 을 검사한다. 그 가드가 생기기 전에 저장된 행에는

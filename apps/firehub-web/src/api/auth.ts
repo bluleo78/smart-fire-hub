@@ -21,4 +21,8 @@ export const authApi = {
    */
   selectTenant: (tenantId: number) =>
     client.post<TokenResponse>('/auth/select-tenant', { tenantId }),
+  /** 공개 가입 열림 여부 — 사용자 0명일 때만 true(WD-2). 로그인 전 화면이 부른다. */
+  signupStatus: () => client.get<{ open: boolean }>('/auth/signup-status'),
+  /** 내 권한 코드 목록(현재 테넌트). '멤버 추가' 버튼 노출(user:write)·역할 선택(role:assign) 판단용. */
+  myPermissions: () => client.get<string[]>('/auth/me/permissions'),
 };

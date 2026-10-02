@@ -32,6 +32,13 @@ export interface TokenResponse {
    * 하드 리로드 후의 `refresh` 다 — `select-tenant` 응답의 이 필드는 읽지 않는다.
    */
   memberships: MembershipResponse[];
+  /**
+   * 관리자가 임시 비밀번호로 만든 계정이 아직 비밀번호를 바꾸지 않았는가(WD-2). true 면 서버가
+   * 허용 목록 외 API 를 403 PASSWORD_CHANGE_REQUIRED 로 막으므로 `/change-password` 로 보내야 한다.
+   *
+   * <p>`activeTenantId` 와 같은 이유로 **필수**다(읽기를 잊은 경로를 컴파일러가 짚게).
+   */
+  mustChangePassword: boolean;
 }
 
 export interface UserResponse {
@@ -41,6 +48,10 @@ export interface UserResponse {
   name: string;
   isActive: boolean;
   createdAt: string;
+  /** GET /auth/me 가 준다. 목록·상세 응답에는 없을 수 있다. */
+  mustChangePassword?: boolean;
+  /** 관리 목록(GET /users) 항목의 이 워크스페이스 멤버십 라벨. */
+  membershipRole?: 'OWNER' | 'ADMIN' | 'MEMBER' | null;
 }
 
 export interface ErrorResponse {
@@ -48,4 +59,6 @@ export interface ErrorResponse {
   error: string;
   message: string;
   errors?: Record<string, string>;
+  /** 기계가 읽는 오류 코드(예: PASSWORD_CHANGE_REQUIRED, SIGNUP_DISABLED). 대부분의 오류에는 없다. */
+  code?: string;
 }
