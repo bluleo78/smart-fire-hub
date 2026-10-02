@@ -1,0 +1,119 @@
+import { createAccount } from './factories/platform.factory';
+import { mockApi } from './fixtures/api-mock';
+import { expect, loginAs, test } from './fixtures/auth.fixture';
+
+const KIM = createAccount({ id: 10, name: '김소방', username: 'kim@example.com', email: 'kim@example.com', active: true });
+const LEE = createAccount({ id: 11, name: '이정지', username: 'lee@example.com', email: 'lee@example.com', active: false });
+const OPS = createAccount({ id: 1, name: '김운영', username: 'ops@example.com', email: 'ops@example.com', operator: true });
+
+const DEACTIVATE_COPY =
+  '"김소방"(kim@example.com) 계정을 비활성화합니다. 모든 워크스페이스에서 로그인할 수 없고, 권한이 필요한 작업은 즉시 거부됩니다. 이미 열린 화면은 최대 30분간 일부 보일 수 있습니다. 재활성화하면 다시 로그인해 쓸 수 있습니다.';
+
+test.describe('계정 화면 (#784)', () => {
+  test('검색어 → GET /accounts?q= → 표에 이름·아이디·상태를 그린다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
+    const capture = await mockApi(page, 'GET', '/api/platform/accounts', [KIM, LEE, OPS], { capture: true });
+    await page.goto('/accounts');
+
+    await expect(page.getByRole('link', { name: '계정' })).toHaveAttribute('aria-current', 'page');
+    await expect(page.getByRole('heading', { name: '계정' })).toBeVisible();
+    await page.getByRole('textbox', { name: '계정 검색' }).fill('kim');
+
+    expect((await capture.waitForRequest()).searchParams.get('q')).toBe('kim');
+    const table = page.getByRole('table', { name: '계정 목록' });
+    const kimRow = table.getByRole('row').filter({ hasText: '김소방' });
+    await expect(kimRow.getByRole('cell', { name: 'kim@example.com' }).first()).toBeVisible();
+    await expect(kimRow.getByText('활성', { exact: true })).toBeVisible();
+    await expect(table.getByRole('row').filter({ hasText: '이정지' }).getByText('비활성', { exact: true })).toBeVisible();
+    await expect(page.getByText('검색 결과는 최대 20건까지 표시됩니다. 찾는 계정이 없으면 검색어를 더 좁혀보세요.')).toBeVisible();
+  });
+
+  test('2자 미만이면 호출하지 않고 안내를 보여 준다', async ({ authenticatedPage: page }) => {
+    const capture = await mockApi(page, 'GET', '/api/platform/accounts', [KIM], { capture: true });
+    await page.goto('/accounts');
+    await page.getByRole('textbox', { name: '계정 검색' }).fill('k');
+    await page.waitForTimeout(500); // 디바운스(300ms)보다 길게
+    expect(capture.requests).toHaveLength(0);
+    await expect(page.getByText('이메일·이름·아이디를 2자 이상 입력하세요.')).toBeVisible();
+  });
+
+  test('비활성화: 확인 문구(D-2) → POST deactivate → 토스트 → 상태 갱신', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/platform/accounts', [KIM]);
+    const capture = await mockApi(page, 'POST', '/api/platform/accounts/10/deactivate', null, { status: 204, capture: true });
+    await page.goto('/accounts');
+    await page.getByRole('textbox', { name: '계정 검색' }).fill('kim');
+    await page.getByRole('button', { name: '김소방 계정 비활성화' }).click();
+
+    const dialog = page.getByRole('alertdialog');
+    await expect(dialog.getByRole('heading', { name: '계정 비활성화' })).toBeVisible();
+    await expect(dialog.getByText(DEACTIVATE_COPY)).toBeVisible();
+    // 다음 GET 은 비활성으로 — 나중에 등록한 route 가 우선한다.
+    await mockApi(page, 'GET', '/api/platform/accounts', [{ ...KIM, active: false }]);
+    await dialog.getByRole('button', { name: '비활성화' }).click();
+
+    await capture.waitForRequest();
+    await expect(page.getByText('계정을 비활성화했습니다.')).toBeVisible();
+    await expect(page.getByRole('row').filter({ hasText: '김소방' }).getByText('비활성', { exact: true })).toBeVisible();
+  });
+
+  test('확인 다이얼로그에서 취소하면 API 를 부르지 않는다', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/platform/accounts', [KIM]);
+    const capture = await mockApi(page, 'POST', '/api/platform/accounts/10/deactivate', null, { status: 204, capture: true });
+    await page.goto('/accounts');
+    await page.getByRole('textbox', { name: '계정 검색' }).fill('kim');
+    await page.getByRole('button', { name: '김소방 계정 비활성화' }).click();
+    await page.getByRole('alertdialog').getByRole('button', { name: '취소' }).click();
+    await expect(page.getByRole('alertdialog')).toHaveCount(0);
+    expect(capture.requests).toHaveLength(0);
+  });
+
+  test('재활성화는 확인 없이 즉시 POST activate (D-2)', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/platform/accounts', [LEE]);
+    const capture = await mockApi(page, 'POST', '/api/platform/accounts/11/activate', null, { status: 204, capture: true });
+    await page.goto('/accounts');
+    await page.getByRole('textbox', { name: '계정 검색' }).fill('lee');
+    await page.getByRole('button', { name: '이정지 계정 재활성화' }).click();
+    await capture.waitForRequest();
+    await expect(page.getByRole('alertdialog')).toHaveCount(0);
+    await expect(page.getByText('계정을 재활성화했습니다.')).toBeVisible();
+  });
+
+  test('운영자 행은 배지가 붙고 비활성화 버튼이 막혀 있다', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/platform/accounts', [OPS]);
+    await page.goto('/accounts');
+    await page.getByRole('textbox', { name: '계정 검색' }).fill('ops');
+    const row = page.getByRole('row').filter({ hasText: '김운영' });
+    await expect(row.getByText('운영자', { exact: true })).toBeVisible();
+    const button = row.getByRole('button', { name: '김운영 계정 비활성화' });
+    await expect(button).toBeDisabled();
+    await expect(button).toHaveAttribute('title', '운영자 계정은 비활성화할 수 없습니다');
+  });
+
+  test('409 는 서버 메시지를 토스트로 보여 준다', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/platform/accounts', [KIM]);
+    await mockApi(page, 'POST', '/api/platform/accounts/10/deactivate',
+      { status: 409, error: 'Conflict', message: '운영자 계정은 비활성화할 수 없습니다' }, { status: 409 });
+    await page.goto('/accounts');
+    await page.getByRole('textbox', { name: '계정 검색' }).fill('kim');
+    await page.getByRole('button', { name: '김소방 계정 비활성화' }).click();
+    await page.getByRole('alertdialog').getByRole('button', { name: '비활성화' }).click();
+    await expect(page.getByText('운영자 계정은 비활성화할 수 없습니다')).toBeVisible();
+  });
+
+  test('변경 권한(platform:tenant:suspend)이 없으면 작업 열이 없다', async ({ page }) => {
+    await loginAs(page, ['platform:tenant:read', 'platform:member:read']);
+    await mockApi(page, 'GET', '/api/platform/accounts', [KIM]);
+    await page.goto('/accounts');
+    await page.getByRole('textbox', { name: '계정 검색' }).fill('kim');
+    await expect(page.getByRole('row').filter({ hasText: '김소방' })).toBeVisible();
+    await expect(page.getByRole('columnheader', { name: '작업' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: /계정 비활성화/ })).toHaveCount(0);
+  });
+
+  test('조회 권한(platform:member:read)이 없으면 메뉴가 없고 직접 진입은 권한 안내', async ({ page }) => {
+    await loginAs(page, ['platform:tenant:read']);
+    await page.goto('/accounts');
+    await expect(page.getByRole('link', { name: '계정' })).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: '계정' })).toBeVisible(); // ProtectedRoute deniedTitle
+    await expect(page.getByText('이 작업을 수행할 권한이 없습니다.')).toBeVisible(); // PermissionDeniedBanner
+  });
+});

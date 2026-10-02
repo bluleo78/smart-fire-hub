@@ -180,8 +180,7 @@ export function AddMemberDialog({ canAssignRoles }: { canAssignRoles: boolean })
         {created ? (
           <>
             <DialogHeader>
-              {/* heading-card(20/28, 02-typography) — shadcn 기본 text-lg 대신 디자인 시스템 목표값 */}
-              <DialogTitle className="flex items-center gap-2 text-xl leading-7">
+              <DialogTitle className="flex items-center gap-2">
                 <CheckCircle2 className="h-5 w-5 text-success" aria-hidden="true" />
                 계정을 만들었습니다
               </DialogTitle>
@@ -225,7 +224,7 @@ export function AddMemberDialog({ canAssignRoles }: { canAssignRoles: boolean })
         ) : (
           <form onSubmit={handleSubmit(onSubmit)} noValidate className="flex min-h-0 flex-1 flex-col gap-4">
             <DialogHeader>
-              <DialogTitle className="text-xl leading-7">멤버 추가</DialogTitle>
+              <DialogTitle>멤버 추가</DialogTitle>
               <DialogDescription className="break-keep">
                 이 워크스페이스에 사용자를 추가합니다. 이미 가입된 이메일이면 기존 계정이 추가됩니다.
               </DialogDescription>

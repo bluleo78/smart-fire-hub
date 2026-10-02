@@ -50,6 +50,20 @@ test.describe('테넌트 상세', () => {
     await expect(page.getByText('테넌트를 정지했습니다.')).toBeVisible();
   });
 
+  test('정지 다이얼로그 제목이 디자인 시스템 heading-card 20px/28px 다 (#788)', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/platform/tenants/1', ACTIVE);
+    await mockApi(page, 'GET', '/api/platform/tenants/1/members', MEMBERS);
+    await page.goto('/tenants/1');
+
+    await page.getByRole('button', { name: '테넌트 정지' }).click();
+
+    // 개별 className 없이 AlertDialogTitle 기본값만으로 계산되는 크기를 단언한다
+    const title = page.getByRole('alertdialog').locator('[data-slot="alert-dialog-title"]');
+    await expect(title).toHaveCSS('font-size', '20px');
+    await expect(title).toHaveCSS('line-height', '28px');
+    await expect(title).toHaveCSS('font-weight', '600');
+  });
+
   test('정지 다이얼로그에서 취소하면 API 를 부르지 않는다', async ({ authenticatedPage: page }) => {
     await mockApi(page, 'GET', '/api/platform/tenants/1', ACTIVE);
     await mockApi(page, 'GET', '/api/platform/tenants/1/members', MEMBERS);

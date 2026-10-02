@@ -12,7 +12,7 @@ Smart Fire Hub 타이포그래피 시스템 — As-Is 감사 결과와 To-Be 권
 |-------|-----------------|------|--------|------|------|
 | Page Title | `text-2xl font-bold` | 24px | 700 | 모든 목록 페이지 h1 태그 | 22+ 페이지 |
 | Stat Value | `text-2xl font-bold` | 24px | 700 | HomePage 통계 카드 숫자 | 4 곳 |
-| Dialog Title | `text-lg font-semibold` | 18px | 600 | Dialog/Sheet 제목 (shadcn 기본값) | ~15 곳 |
+| Dialog Title | `text-xl leading-7 font-semibold` | 20px | 600 | Dialog/AlertDialog 제목 (dialog.tsx·alert-dialog.tsx 기본값, #788 에서 heading-card 로 전환). 예외: 툴바형 헤더(`ReportModal` — 제목·배지·아이콘 버튼이 한 줄)는 `text-base` 유지. 제목 앞 아이콘은 `h-5 w-5` + `gap-2` | ~70 곳 |
 | Section Head | `text-base font-semibold` | 16px | 600 | 섹션 헤딩 (예: "내 대시보드") | ~10 곳 |
 | Card Label | `text-sm font-medium` | 14px | 500 | 카드 제목, 테이블 헤더, 네비게이션 항목 | ~50 곳 |
 | Body | `text-sm` | 14px | 400 | 일반 본문, 폼 레이블 | ~200 곳 |
@@ -151,7 +151,7 @@ UI 컨트롤에 붙는 레이블. 본문 텍스트와 달리 line-height보다 �
 |-----------------|------|---------------------|-----------------|
 | `text-2xl font-bold` | 페이지 h1 | `heading-page` | `text-[28px] leading-[36px] font-semibold tracking-tight` |
 | `text-2xl font-bold` | 통계 숫자 (홈) | `data-number` (확대) | `text-2xl font-mono tabular-nums font-semibold` |
-| `text-lg font-semibold` | Dialog/Sheet 제목 | `heading-card` | `text-xl leading-7 font-semibold` |
+| `text-lg font-semibold` | Dialog/Sheet 제목 | `heading-card` | `text-xl leading-7 font-semibold` — **적용 완료(#788, 컴포넌트 기본값)** |
 | `text-base font-semibold` | 섹션 헤딩 | `heading-group` | `text-base leading-6 font-semibold` |
 | `text-sm font-medium` | 카드 제목, 네비게이션 | `label-primary` | `text-sm leading-5 font-medium` |
 | `text-sm` | 일반 본문, 폼 레이블 | `body-secondary` / `label-primary` | 문맥에 따라 분기 |

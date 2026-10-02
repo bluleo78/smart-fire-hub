@@ -277,32 +277,77 @@ describe('Inspector 회귀 보호망 (refs #260)', () => {
       expect(activeRow).toMatch(/같은 턴.*호출 금지|호출이 있어서는 안/);
     });
 
-    it('admin-manager agent.md Phase 2 계정 비활성화 절이 relay(SendMessage/Agent 재위임) 승인을 유효한 동의로 신뢰함을 명시한다', () => {
+    it('admin-manager agent.md Phase 2 멤버십 정지 절이 relay(SendMessage/Agent 재위임) 승인을 유효한 동의로 신뢰함을 명시한다', () => {
       const agent = readSubagentDoc('admin-manager', 'agent.md')!;
-      const deactivationSection = agent.split('계정 활성화/비활성화 시')[1]?.split('### Phase 3')[0];
-      expect(deactivationSection, '계정 활성화/비활성화 섹션을 찾을 수 없음').toBeDefined();
+      const deactivationSection = agent.split('멤버십 정지/재활성화 시')[1]?.split('### Phase 3')[0];
+      expect(deactivationSection, '멤버십 정지/재활성화 섹션을 찾을 수 없음').toBeDefined();
       expect(deactivationSection).toMatch(/SendMessage|Agent\(\)/);
       expect(deactivationSection).toMatch(/유효한 사용자 동의로 신뢰/);
       // 지어낸 정책 금지 문구도 함께 명시해야 재발을 막는다
       expect(deactivationSection).toMatch(/스스로 지어내지 않는다|어디에도 없/);
     });
 
-    it('admin-manager rules.md 의 계정 비활성화 안전 규칙이 relay-trust 원칙과 #606 같은 턴 금지를 함께 명시한다', () => {
+    it('admin-manager rules.md 의 멤버십 정지 안전 규칙이 relay-trust 원칙과 #606 같은 턴 금지를 함께 명시한다', () => {
       const rules = readSubagentDoc('admin-manager', 'rules.md')!;
-      const section = rules.split('## 계정 비활성화 안전 규칙')[1]?.split('##')[0];
-      expect(section, '계정 비활성화 안전 규칙 섹션을 찾을 수 없음').toBeDefined();
+      const section = rules.split('## 멤버십 정지 안전 규칙')[1]?.split('##')[0];
+      expect(section, '멤버십 정지 안전 규칙 섹션을 찾을 수 없음').toBeDefined();
       expect(section).toMatch(/유효한 동의로 신뢰|유효한 사용자 동의로 신뢰/);
       expect(section).toMatch(/#628/);
       expect(section).toMatch(/#606/);
       expect(section).toMatch(/같은 턴.*(금지|호출)/);
     });
 
-    it('자기 자신 비활성화 즉시 거부 규칙은 relay-trust 와 무관하게 예외 없이 유지됨을 명시한다', () => {
+    it('자기 자신 정지 즉시 거부 규칙은 relay-trust 와 무관하게 예외 없이 유지됨을 명시한다', () => {
       const rules = readSubagentDoc('admin-manager', 'rules.md')!;
-      const section = rules.split('## 계정 비활성화 안전 규칙')[1]?.split('##')[0];
-      expect(section, '계정 비활성화 안전 규칙 섹션을 찾을 수 없음').toBeDefined();
-      expect(section).toMatch(/자기 자신.*비활성화 금지/);
+      const section = rules.split('## 멤버십 정지 안전 규칙')[1]?.split('##')[0];
+      expect(section, '멤버십 정지 안전 규칙 섹션을 찾을 수 없음').toBeDefined();
+      expect(section).toMatch(/자기 자신.*정지 금지/);
       expect(section).toMatch(/relay-trust.*무관|무관.*예외 없이/);
+    });
+  });
+
+  // #786: WD-2 로 set_user_active 는 전역 계정 비활성화가 아니라 "이 워크스페이스 멤버십 정지" 가 됐다.
+  // 옛 문구("즉시 로그인 불가")가 남으면 에이전트가 사용자에게 다른 워크스페이스까지 막힌다고 잘못 안내한다.
+  describe('set_user_active 멤버십 정지 의미 (#786)', () => {
+    const forbidden = /즉시 로그인 불가|로그인할 수 없|로그인 불가/;
+
+    it('admin-manager agent.md·rules.md·examples.md 에 전역 로그인 차단 문구가 없다', () => {
+      const agent = readSubagentDoc('admin-manager', 'agent.md')!;
+      const rules = readSubagentDoc('admin-manager', 'rules.md')!;
+      const examples = fs.readFileSync(path.join(SUBAGENTS_DIR, 'admin-manager', 'examples.md'), 'utf-8');
+      for (const doc of [agent, rules, examples]) {
+        expect(doc).not.toMatch(forbidden);
+      }
+    });
+
+    it('agent.md·rules.md 가 "다른 워크스페이스·계정 자체는 영향 없음" 과 서버 거부(OWNER·마지막 ADMIN)를 명시한다', () => {
+      const agent = readSubagentDoc('admin-manager', 'agent.md')!;
+      const section = agent.split('멤버십 정지/재활성화 시')[1]?.split('### Phase 3')[0];
+      expect(section).toMatch(/다른 워크스페이스/);
+      expect(section).toMatch(/OWNER|소유자/);
+      expect(section).toMatch(/마지막 활성 ADMIN/);
+      const rules = readSubagentDoc('admin-manager', 'rules.md')!;
+      const ruleSection = rules.split('## 멤버십 정지 안전 규칙')[1]?.split('##')[0];
+      expect(ruleSection).toMatch(/다른 워크스페이스/);
+      expect(ruleSection).toMatch(/운영자 콘솔/);
+    });
+
+    it('메인 L3 의 set_user_active 행이 멤버십 정지로 표기된다', () => {
+      const l3 = SYSTEM_PROMPT.split('## L3. 통합 가드 패턴')[1];
+      const activeRow = l3.match(/\|\s*`set_user_active`[\s\S]*?(?=\|\s*`set_user_roles`)/)?.[0];
+      expect(activeRow).toMatch(/멤버십 정지/);
+      expect(activeRow).toMatch(/본인 멤버십은 정지할 수 없습니다/);
+    });
+
+    // Ruling S4(#785): 마지막 활성 ADMIN 의 ADMIN 역할 회수는 서버가 409 로 거부한다 — 안내 문구가 있어야 한다.
+    it('admin-manager 가 set_user_roles 의 마지막 활성 ADMIN 409 거부를 안내한다 (#785)', () => {
+      const agent = readSubagentDoc('admin-manager', 'agent.md')!;
+      const roleSection = agent.split('역할 변경 시:')[1]?.split('멤버십 정지/재활성화 시')[0];
+      expect(roleSection).toMatch(/마지막 활성 ADMIN 에게서 ADMIN 역할을 뺄 수 없습니다/);
+      expect(roleSection).toMatch(/409/);
+      const rules = readSubagentDoc('admin-manager', 'rules.md')!;
+      const ruleSection = rules.split('## 멤버십 정지 안전 규칙')[1]?.split('##')[0];
+      expect(ruleSection).toMatch(/set_user_roles.*409|409.*set_user_roles/);
     });
   });
 });

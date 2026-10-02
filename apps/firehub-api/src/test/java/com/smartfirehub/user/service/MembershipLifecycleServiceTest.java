@@ -10,6 +10,7 @@ import com.smartfirehub.auth.dto.LoginRequest;
 import com.smartfirehub.auth.service.AuthService;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.tenant.TenantProvisioningService;
+import com.smartfirehub.role.repository.RoleRepository;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TenantRlsTestSupport;
 import com.smartfirehub.support.TestUsers;
@@ -264,35 +265,211 @@ class MembershipLifecycleServiceTest extends IntegrationTestBase {
   @Test
   void concurrentMutualSuspend_ofTwoLastAdmins_onlyOneSucceeds() throws Exception {
     // owner 의 ADMIN 을 빼고 member 에 ADMIN 을 줘서, 활성 ADMIN = {admin, member} (owner 는 정지 불가라 제외).
+    stripOwnerAdmin();
+    TestUsers.grantRole(dsl, fixtureTransactionTemplate, member, tenantA, "ADMIN");
+    delayAfterCountActiveAdmins();
+
+    // admin 이 member 를, member 가 admin 을 정지.
+    List<String> results =
+        runConcurrently(
+            () -> inA(() -> userService.setUserActive(member, false, admin)),
+            () -> inA(() -> userService.setUserActive(admin, false, member)));
+
+    assertThat(results).containsExactlyInAnyOrder("OK", "CONFLICT");
+    // user_role·role 은 RLS 대상이라 A 컨텍스트 안에서 센다(밖에서 세면 항상 0).
+    reset(userRepository);
+    assertThat(inTenantFixture(tenantA, () -> userRepository.countActiveAdmins(tenantA)))
+        .isEqualTo(1);
+  }
+
+  /**
+   * 리뷰 지적(#784 #785): 전역 비활성된 ADMIN(member) 은 활성 ADMIN 집합 밖이라, 남은 활성 ADMIN(admin) 이 그의
+   * ADMIN 회수·정지·제거를 할 때 '마지막 활성 ADMIN' 거짓 409 가 나면 안 된다.
+   */
+  private void globallyDeactivatedAdminMember() {
+    stripOwnerAdmin();
+    TestUsers.grantRole(dsl, fixtureTransactionTemplate, member, tenantA, "ADMIN");
+    dsl.execute("update \"user\" set is_active = false where id = ?", member);
+  }
+
+  @Test
+  void globallyInactiveAdmin_roleRevoke_notBlockedAsLastAdmin() {
+    globallyDeactivatedAdminMember();
+    inA(() -> userService.setUserRoles(member, List.of(), admin));
+  }
+
+  @Test
+  void globallyInactiveAdmin_suspend_notBlockedAsLastAdmin() {
+    globallyDeactivatedAdminMember();
+    inA(() -> userService.setUserActive(member, false, admin));
+    assertThat(membershipRepository.findInTenant(member, tenantA).orElseThrow().status())
+        .isEqualTo("SUSPENDED");
+  }
+
+  @Test
+  void globallyInactiveAdmin_remove_notBlockedAsLastAdmin() {
+    globallyDeactivatedAdminMember();
+    inA(() -> userService.removeMember(member, admin));
+    assertThat(membershipRepository.findInTenant(member, tenantA)).isEmpty();
+  }
+
+  @Autowired private RoleRepository roleRepository;
+
+  /** 테넌트 A 의 역할 id(이름으로). role 은 RLS 대상이라 A 컨텍스트 트랜잭션 안에서 조회한다. */
+  private long roleIdInA(String roleName) {
+    return inTenantFixture(tenantA, () -> roleRepository.findByName(roleName).orElseThrow().id());
+  }
+
+  /** A 에서 owner 의 ADMIN 을 빼서 "활성 ADMIN = admin 한 명" 상태를 만든다(owner 는 OWNER 라 별도 보호). */
+  private void stripOwnerAdmin() {
     inTenantFixture(
         tenantA,
         () ->
             dsl.execute(
                 "delete from user_role where user_id = ? and role_id = (select id from role where name = 'ADMIN')",
                 owner));
+  }
+
+  private boolean hasAdminInA(long userId) {
+    return inTenantFixture(tenantA, () -> userRepository.hasAdminRole(userId));
+  }
+
+  /** #785 핵심: 다른 관리자가 마지막 활성 ADMIN 의 ADMIN 을 빼면 409, 역할은 그대로. */
+  @Test
+  void lastActiveAdmin_roleDemotion_rejected() {
+    stripOwnerAdmin();
+    long userRole = roleIdInA("USER");
+
+    assertThatThrownBy(() -> inA(() -> userService.setUserRoles(admin, List.of(userRole), owner)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("이 워크스페이스의 마지막 활성 ADMIN 에게서 ADMIN 역할을 뺄 수 없습니다");
+    assertThat(hasAdminInA(admin)).isTrue();
+  }
+
+  /** 빈 배열(역할 전체 제거)도 같은 409 — NPE·500 이 아니다. */
+  @Test
+  void lastActiveAdmin_emptyRoles_rejected() {
+    stripOwnerAdmin();
+
+    assertThatThrownBy(() -> inA(() -> userService.setUserRoles(admin, List.of(), owner)))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(hasAdminInA(admin)).isTrue();
+  }
+
+  /**
+   * ADMIN 을 유지한 채 역할 목록만 바꾸는 요청은 거부되지 않고 그대로 저장된다. 주의: 이 테스트는 "과잉 차단 방지"
+   * 중 removesAdmin=false 분기(ADMIN 이 요청에 남아 있으면 마지막-ADMIN 판정 자체를 건너뜀)만 증명한다. "정말
+   * 마지막 ADMIN 일 때" 의 판정 정확성은 위 거부 테스트들이, 다른 ADMIN 이 남는 경우의 허용은
+   * demotion_allowed_whenAnotherActiveAdminRemains 가 증명한다.
+   */
+  @Test
+  void lastActiveAdmin_keepingAdmin_otherRolesChange_allowed() {
+    stripOwnerAdmin();
+    long adminRole = roleIdInA("ADMIN");
+
+    inA(() -> userService.setUserRoles(admin, List.of(adminRole), owner)); // USER 를 뺀다
+
+    assertThat(hasAdminInA(admin)).isTrue();
+    Integer roleCount =
+        inTenantFixture(
+            tenantA,
+            () -> dsl.fetchCount(dsl.selectOne().from("user_role").where("user_id = ?", admin)));
+    assertThat(roleCount).isEqualTo(1);
+  }
+
+  /** 정지된 ADMIN 의 강등은 활성 ADMIN 수를 줄이지 않으므로 허용. */
+  @Test
+  void suspendedAdmin_roleDemotion_allowed() {
+    stripOwnerAdmin();
     TestUsers.grantRole(dsl, fixtureTransactionTemplate, member, tenantA, "ADMIN");
+    membershipRepository.updateStatus(member, tenantA, "SUSPENDED");
+    long userRole = roleIdInA("USER");
+
+    inA(() -> userService.setUserRoles(member, List.of(userRole), admin));
+
+    assertThat(hasAdminInA(member)).isFalse();
+  }
+
+  /** 다른 활성 ADMIN 이 남으면 강등 허용(setUp: owner·admin 둘 다 ADMIN). */
+  @Test
+  void demotion_allowed_whenAnotherActiveAdminRemains() {
+    long userRole = roleIdInA("USER");
+
+    inA(() -> userService.setUserRoles(admin, List.of(userRole), owner));
+
+    assertThat(hasAdminInA(admin)).isFalse();
+  }
+
+  /**
+   * 동시성: 활성 ADMIN 이 둘(admin·member)일 때 서로의 ADMIN 을 동시에 뺀다. countActiveAdmins 직후 지연으로
+   * 겹침을 강제한다 — 잠금이 없으면 둘 다 "2명"을 보고 통과해 0 명이 된다.
+   */
+  @Test
+  void concurrentMutualDemotion_ofTwoLastAdmins_onlyOneSucceeds() throws Exception {
+    stripOwnerAdmin();
+    TestUsers.grantRole(dsl, fixtureTransactionTemplate, member, tenantA, "ADMIN");
+    long userRole = roleIdInA("USER");
+    delayAfterCountActiveAdmins();
+
+    List<String> results =
+        runConcurrently(
+            () -> inA(() -> userService.setUserRoles(member, List.of(userRole), admin)),
+            () -> inA(() -> userService.setUserRoles(admin, List.of(userRole), member)));
+
+    assertThat(results).containsExactlyInAnyOrder("OK", "CONFLICT");
+    reset(userRepository);
+    assertThat(inTenantFixture(tenantA, () -> userRepository.countActiveAdmins(tenantA)))
+        .isEqualTo(1);
+  }
+
+  /** 정지(setUserActive)와 역할 회수(setUserRoles)가 같은 잠금을 쓰는지 — 섞여 겹쳐도 0 명이 되지 않는다. */
+  @Test
+  void concurrentDemotionAndSuspend_shareTheSameLock() throws Exception {
+    stripOwnerAdmin();
+    TestUsers.grantRole(dsl, fixtureTransactionTemplate, member, tenantA, "ADMIN");
+    long userRole = roleIdInA("USER");
+    delayAfterCountActiveAdmins();
+
+    List<String> results =
+        runConcurrently(
+            () -> inA(() -> userService.setUserRoles(member, List.of(userRole), admin)),
+            () -> inA(() -> userService.setUserActive(admin, false, member)));
+
+    assertThat(results).containsExactlyInAnyOrder("OK", "CONFLICT");
+    reset(userRepository);
+    assertThat(inTenantFixture(tenantA, () -> userRepository.countActiveAdmins(tenantA)))
+        .isEqualTo(1);
+  }
+
+  /** countActiveAdmins 판정 직후 700ms 지연 — 판정과 쓰기 사이 구간을 늘려 두 트랜잭션을 확실히 겹친다. */
+  private void delayAfterCountActiveAdmins() {
     doAnswer(
             inv -> {
               Object count = inv.callRealMethod();
-              Thread.sleep(700); // 판정 후 쓰기 전 구간을 늘려 두 트랜잭션이 반드시 겹치게 한다
+              Thread.sleep(700);
               return count;
             })
         .when(userRepository)
         .countActiveAdmins(anyLong());
+  }
 
+  /**
+   * 두 작업을 동시에 시작해 결과를 "OK"/"CONFLICT"(IllegalStateException) 로 모은다. 래치로 "둘 다 판정 도달" 을
+   * 기다리지 않는다 — 잠금이 있으면 두 번째는 판정에 도달하지 못해 교착된다.
+   */
+  private List<String> runConcurrently(Runnable first, Runnable second) {
     ExecutorService pool = Executors.newFixedThreadPool(2);
     CountDownLatch start = new CountDownLatch(1);
     try {
-      // (대상, 호출자): admin 이 member 를, member 가 admin 을 정지.
       List<CompletableFuture<String>> futures =
-          List.of(new long[] {member, admin}, new long[] {admin, member}).stream()
+          List.of(first, second).stream()
               .map(
-                  pair ->
+                  task ->
                       CompletableFuture.supplyAsync(
                           () -> {
                             try {
                               start.await();
-                              inA(() -> userService.setUserActive(pair[0], false, pair[1]));
+                              task.run();
                               return "OK";
                             } catch (IllegalStateException e) {
                               return "CONFLICT";
@@ -303,13 +480,7 @@ class MembershipLifecycleServiceTest extends IntegrationTestBase {
                           pool))
               .toList();
       start.countDown();
-      List<String> results = futures.stream().map(CompletableFuture::join).toList();
-
-      assertThat(results).containsExactlyInAnyOrder("OK", "CONFLICT");
-      // user_role·role 은 RLS 대상이라 A 컨텍스트 안에서 센다(밖에서 세면 항상 0).
-      reset(userRepository);
-      assertThat(inTenantFixture(tenantA, () -> userRepository.countActiveAdmins(tenantA)))
-          .isEqualTo(1);
+      return futures.stream().map(CompletableFuture::join).toList();
     } finally {
       pool.shutdownNow();
     }

@@ -62,7 +62,7 @@ export function MemberDangerZone({
             <AlertDialogTrigger asChild>{removeButton}</AlertDialogTrigger>
             <AlertDialogContent size="sm">
               <AlertDialogHeader>
-                <AlertDialogTitle className="text-xl leading-7">워크스페이스에서 제거</AlertDialogTitle>
+                <AlertDialogTitle>워크스페이스에서 제거</AlertDialogTitle>
                 <AlertDialogDescription>
                   {user.name}({user.username}) 님의 이 워크스페이스 멤버십과 역할을 삭제합니다. 계정과 만든 데이터는 남습니다.
                 </AlertDialogDescription>

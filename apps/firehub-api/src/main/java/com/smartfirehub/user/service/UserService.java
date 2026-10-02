@@ -109,9 +109,16 @@ public class UserService {
         isLastActiveAdmin(id, membership, tenantId));
   }
 
-  /** 대상이 지금 이 테넌트의 마지막 활성 ADMIN 인가(정지·제거하면 활성 ADMIN 이 0 이 되는가). */
+  /**
+   * 대상이 지금 이 테넌트의 마지막 활성 ADMIN 인가(정지·제거하면 활성 ADMIN 이 0 이 되는가).
+   *
+   * <p>대상이 "활성 ADMIN 집합" 에 들어 있는지를 {@code countActiveAdmins} 와 같은 조건(멤버십 ACTIVE + 전역
+   * 계정 활성 + 이 테넌트 ADMIN)으로 판정한다. 전역 비활성(#784 운영자 비활성화) 대상은 이미 집합 밖이라 빼도
+   * 활성 ADMIN 수가 변하지 않으므로, 이를 건너뛰지 않으면 남은 ADMIN 이 거짓 409 로 막힌다.
+   */
   private boolean isLastActiveAdmin(Long userId, TenantMembership membership, long tenantId) {
     return membership.isActive()
+        && userRepository.findById(userId).map(u -> u.isActive()).orElse(false)
         && userRepository.hasAdminRole(userId)
         && userRepository.countActiveAdmins(tenantId) <= 1;
   }
@@ -340,26 +347,46 @@ public class UserService {
     refreshTokenRepository.revokeAllByUserId(userId);
   }
 
+  /**
+   * 사용자 역할 전체 교체.
+   *
+   * <p>잠금 방지 두 가지(서버가 최종 판정):
+   *
+   * <ol>
+   *   <li>자기 자신의 ADMIN 제거 금지(#57) — 400.
+   *   <li>이 테넌트의 마지막 활성 ADMIN 에게서 ADMIN 제거 금지(#785) — 409. 정지·제거의 {@link
+   *       #assertRemovable} 과 같은 규칙({@link #isLastActiveAdmin})이다. 역할 회수도 "활성 ADMIN 수를 줄이는"
+   *       변경이기 때문이다.
+   * </ol>
+   *
+   * <p>잠금을 멤버십 조회·판정보다 먼저 잡는 이유: 두 관리자가 서로의 ADMIN 을 동시에 빼거나, 한쪽은 정지·한쪽은
+   * 역할 회수를 겹치면, 잠금 없이는 둘 다 "활성 ADMIN 2명" 을 보고 통과해 0 명이 된다. setUserActive·removeMember
+   * 와 <b>같은</b> 테넌트 잠금이라 세 경로가 서로 직렬화된다.
+   *
+   * <p>roleIds 가 null 이면 빈 목록(전체 제거)으로 본다 — 예전에는 setRoles 에서 NPE(500)가 났다.
+   */
   @Transactional
   public void setUserRoles(Long userId, List<Long> roleIds, Long callerId) {
+    long tenantId = TenantContext.require("역할 변경");
+    userRepository.acquireMemberAdminGuardLock(tenantId);
     // 남의 테넌트 사용자에게 역할을 부여/회수할 수 없다. 존재 확인을 멤버십 확인으로 대체한다.
-    requireTenantMember(userId);
-    // 자기 자신의 ADMIN 역할 제거 차단 — 자기 잠금(self-lockout) 방지 (#57)
-    if (userId.equals(callerId)) {
-      roleRepository
-          .findByName("ADMIN")
-          .ifPresent(
-              adminRole -> {
-                List<RoleResponse> currentRoles = roleRepository.findByUserId(userId);
-                boolean hasAdminNow =
-                    currentRoles.stream().anyMatch(r -> r.id().equals(adminRole.id()));
-                boolean wouldRemoveAdmin = roleIds == null || !roleIds.contains(adminRole.id());
-                if (hasAdminNow && wouldRemoveAdmin) {
-                  throw new IllegalArgumentException("자신의 ADMIN 역할은 제거할 수 없습니다");
-                }
-              });
+    TenantMembership membership = requireTenantMember(userId);
+    List<Long> requested = roleIds == null ? List.of() : roleIds;
+
+    // 이번 변경이 대상의 ADMIN 을 빼는가 — 지금 ADMIN 이고, 요청 목록에 이 테넌트 ADMIN id 가 없을 때.
+    Long adminRoleId = roleRepository.findByName("ADMIN").map(RoleResponse::id).orElse(null);
+    boolean removesAdmin =
+        adminRoleId != null
+            && !requested.contains(adminRoleId)
+            && userRepository.hasAdminRole(userId);
+    if (removesAdmin && userId.equals(callerId)) {
+      // 자기 잠금(self-lockout) 방지 (#57) — 기존 400 계약 유지
+      throw new IllegalArgumentException("자신의 ADMIN 역할은 제거할 수 없습니다");
     }
-    userRepository.setRoles(userId, roleIds);
+    if (removesAdmin && isLastActiveAdmin(userId, membership, tenantId)) {
+      throw new IllegalStateException("이 워크스페이스의 마지막 활성 ADMIN 에게서 ADMIN 역할을 뺄 수 없습니다");
+    }
+    userRepository.setRoles(userId, requested);
   }
 
   /**

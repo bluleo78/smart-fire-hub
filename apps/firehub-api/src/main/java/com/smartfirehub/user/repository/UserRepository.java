@@ -315,7 +315,7 @@ public class UserRepository {
         .execute();
   }
 
-  // 전역 계정 활성 플래그 — WD-2 이후 main 경로에선 쓰지 않는다(테넌트 정지는 멤버십). 후속 운영자 콘솔의 계정 잠금용으로 남긴다.
+  // 전역 계정 활성 플래그 — 운영자 콘솔 계정 비활성화/재활성화(#784, PlatformAccountService)만 쓴다. 테넌트 정지는 멤버십.
   public void setActive(Long id, boolean active) {
     dsl.update(USER)
         .set(USER.IS_ACTIVE, active)

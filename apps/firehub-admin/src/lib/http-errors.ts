@@ -30,14 +30,18 @@ export function isNotFound(error: unknown): boolean {
 }
 
 /**
- * axios 400 에러에서 서버 메시지를 뽑는다. 서버가 프런트가 재현할 수 없는 교차검증을
- * 하는 경우(예: "존재하지 않는 사용자입니다") 그 문구를 그대로 실어야 하는데, 이 추출
- * 로직이 `TenantCreatePage` 등 화면에 축어적으로 복제돼 있었다 — `isForbidden`/`isNotFound` 와
- * 같은 층으로 옮긴다. 400 이 아니거나 메시지가 없으면 `undefined`.
+ * axios 에러에서 서버 메시지를 뽑는다. 서버가 프런트가 재현할 수 없는 판정을 하는 경우(예: "존재하지 않는
+ * 사용자입니다", "운영자 계정은 비활성화할 수 없습니다") 그 문구를 그대로 실어야 한다.
+ * 기본은 400 만 — 기존 호출(TenantCreatePage 등)의 의미를 바꾸지 않는다. 409 같은 상태 충돌도 서버 문구를
+ * 보여 줘야 하는 화면(계정 비활성화, #784)은 statuses 로 넓힌다. 대상 상태가 아니거나 메시지가 없으면 `undefined`.
  */
-export function serverMessage(error: unknown): string | undefined {
-  if (!axios.isAxiosError(error) || error.response?.status !== 400) return undefined;
-  return (error.response.data as ErrorResponse | undefined)?.message;
+export function serverMessage(error: unknown, statuses: number[] = [400]): string | undefined {
+  if (!axios.isAxiosError(error)) return undefined;
+  const status = error.response?.status;
+  if (status === undefined || !statuses.includes(status)) return undefined;
+  const message = (error.response?.data as ErrorResponse | undefined)?.message;
+  // 빈 문자열도 "메시지 없음"으로 본다(호출부가 fallback 으로 넘어가도록).
+  return message ? message : undefined;
 }
 
 /** axios 에러가 4xx 인지 판정한다. 재시도 정책(main.tsx)이 상태코드별로 결정을 내리는 데 쓴다. */

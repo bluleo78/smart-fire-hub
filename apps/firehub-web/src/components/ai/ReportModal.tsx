@@ -111,6 +111,7 @@ export default function ReportModal({ open, onClose, jobId, executionId }: Repor
         {/* 헤더 — 제목, 상태 뱃지, 시간, 액션 버튼 */}
         <DialogHeader className="flex flex-row items-center justify-between px-6 py-4 border-b shrink-0 space-y-0">
           <div className="flex items-center gap-3">
+            {/* 의도된 예외(#788): 배지·시간·아이콘 버튼과 한 줄에 놓이는 툴바형 헤더라 heading-card(20px) 대신 16px 를 유지한다 */}
             <DialogTitle className="text-base font-semibold">
               리포트 #{executionId}
             </DialogTitle>

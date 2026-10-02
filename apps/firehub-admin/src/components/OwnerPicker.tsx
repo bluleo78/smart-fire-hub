@@ -7,10 +7,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useDebounceValue } from '@/hooks/useDebounceValue';
+import { MAX_SEARCH_RESULTS, MIN_QUERY_LENGTH } from '@/lib/search-limits';
 import type { PlatformUserResponse } from '@/types/platform';
-
-/** 서버가 강제하는 검색어 하한. 이보다 짧으면 400 이므로 호출조차 하지 않는다. */
-const MIN_QUERY_LENGTH = 2;
 
 interface OwnerPickerProps {
   value: PlatformUserResponse | null;
@@ -66,7 +64,7 @@ export function OwnerPicker({ value, onChange, error }: OwnerPickerProps) {
    */
   const capNotice = (
     <p className="text-sm text-muted-foreground">
-      검색 결과는 최대 20건까지 표시됩니다. 찾는 사용자가 없으면 검색어를 더 좁혀보세요.
+      검색 결과는 최대 {MAX_SEARCH_RESULTS}건까지 표시됩니다. 찾는 사용자가 없으면 검색어를 더 좁혀보세요.
     </p>
   );
 

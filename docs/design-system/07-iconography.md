@@ -29,7 +29,7 @@ shadcn/ui의 Button 컴포넌트는 `[&_svg:not([class*='size-'])]:size-4` 패�
 |---------|------|----------|-------------|------|
 | Badge/tag 내부 | 12px | `h-3 w-3` | 2 | Collapsible 내 Chevron |
 | 기본 인라인 | 16px | `h-4 w-4` | 2 | 버튼 아이콘, 테이블 액션, 폼 아이콘 |
-| 사이드바/헤더 | 20px | `h-5 w-5` | 2 | 사이드바 네비게이션, 헤더, DashboardWidgetCard 로더 |
+| 사이드바/헤더 | 20px | `h-5 w-5` | 2 | 사이드바 네비게이션, 헤더, DashboardWidgetCard 로더, 다이얼로그 제목 아이콘(heading-card 20px 과 짝) |
 | 빈 상태/강조 | 24px | `h-6 w-6` | 2 | Empty state, 기능 소개 아이콘 |
 
 > **strokeWidth**: 모든 크기에서 기본값 `2`를 유지한다. 특별한 사유 없이 변경하지 않는다. `1.5`나 `2.5` 등의 커스텀 stroke는 Lucide 기본 SVG 디자인과 어울리지 않는다.

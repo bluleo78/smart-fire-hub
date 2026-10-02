@@ -72,6 +72,10 @@ public class PermissionRepository {
    * <p>ACTIVE 멤버십 조인(WD-2): 필터는 요청마다 멤버십을 다시 보지 않으므로, 이 조인이 없으면 정지된
    * 멤버가 access token 만료(최대 30분)까지 API 를 계속 쓴다. user_role.tenant_id 와 같은 테넌트의
    * 멤버십이 ACTIVE 일 때만 그 역할의 권한을 인정한다 — 정지 즉시 그 테넌트 권한만 0 이 된다.
+   *
+   * <p>user 활성 조인(#784): 운영자가 전역 계정을 비활성화하면 이미 발급된 access token 으로도 권한 필요 API 가 즉시
+   * 403 이 된다(필터가 요청마다 이 메서드를 부른다). 같은 이유로 비활성 사용자 이름의 비동기 파이프라인 권한 검사
+   * ({@code PermissionChecker})도 거부된다 — 정지 멤버(ACTIVE 조인)와 같은 의미다.
    */
   public Set<String> findPermissionCodesByUserId(Long userId) {
     var ms = DSL.table(DSL.name("membership"));
@@ -85,10 +89,13 @@ public class PermissionRepository {
             .on(ROLE_PERMISSION.PERMISSION_ID.eq(PERMISSION.ID))
             .join(USER_ROLE)
             .on(USER_ROLE.ROLE_ID.eq(ROLE_PERMISSION.ROLE_ID))
+            .join(USER)
+            .on(USER.ID.eq(USER_ROLE.USER_ID))
             .join(ms)
             .on(msUser.eq(USER_ROLE.USER_ID).and(msTenant.eq(USER_ROLE.TENANT_ID)))
             .where(USER_ROLE.USER_ID.eq(userId))
             .and(msStatus.eq("ACTIVE"))
+            .and(USER.IS_ACTIVE.isTrue())
             .fetch(r -> r.get(PERMISSION.CODE));
     return new HashSet<>(codes);
   }

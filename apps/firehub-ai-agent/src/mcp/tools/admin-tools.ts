@@ -54,10 +54,10 @@ export function registerAdminTools(
 
     safeTool(
       'set_user_active',
-      '사용자 계정을 활성화하거나 비활성화합니다. 비활성화된 사용자는 로그인할 수 없습니다.',
+      '이 워크스페이스에서 사용자의 멤버십을 정지(active:false)하거나 재활성화(active:true)합니다. 계정 자체와 다른 워크스페이스 소속에는 영향이 없습니다. 정지된 멤버는 이 워크스페이스의 데이터·기능에 접근할 수 없지만 목록에 남아 언제든 재활성화할 수 있습니다. 본인·워크스페이스 소유자·마지막 활성 ADMIN 은 서버가 거부합니다.',
       {
         userId: z.number().describe('사용자 ID'),
-        active: z.boolean().describe('true: 활성화, false: 비활성화'),
+        active: z.boolean().describe('true: 이 워크스페이스 멤버십 재활성화, false: 이 워크스페이스 멤버십 정지'),
       },
       async (args) => {
         await apiClient.setUserActive(args.userId, args.active);

@@ -62,6 +62,22 @@ export interface PlatformUserResponse {
   name: string;
 }
 
+/**
+ * `GET /api/platform/accounts?q=` 응답 1건(#784). Owner 검색(`PlatformUserResponse`)과 달리 비활성 계정도 나오고
+ * 활성·운영자 여부를 싣는다 — 비활성화한 계정을 다시 찾아 재활성화해야 하기 때문이다.
+ */
+export interface PlatformAccountResponse {
+  id: number;
+  /** 로그인 아이디. */
+  username: string;
+  email: string | null;
+  name: string;
+  /** 전역 계정 활성 여부(`user.is_active`). 워크스페이스 멤버십 상태가 아니다. */
+  active: boolean;
+  /** 플랫폼 롤 보유자. 이 화면에서 비활성화할 수 없다(서버도 409). */
+  operator: boolean;
+}
+
 export interface ErrorResponse {
   status: number;
   error: string;

@@ -73,7 +73,7 @@ export function createAdminApi(client: AxiosInstance) {
       await client.put(`/users/${userId}/roles`, { roleIds });
     },
 
-    /** 사용자 계정 활성화/비활성화 */
+    /** 이 워크스페이스 멤버십 정지/재활성화 (PUT /users/{id}/active, WD-2 — 전역 계정 아님) */
     async setUserActive(userId: number, active: boolean): Promise<void> {
       await client.put(`/users/${userId}/active`, { active });
     },

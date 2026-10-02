@@ -1,11 +1,14 @@
 package com.smartfirehub.platform.repository;
 
+import static org.jooq.impl.DSL.exists;
 import static org.jooq.impl.DSL.field;
 import static org.jooq.impl.DSL.name;
+import static org.jooq.impl.DSL.selectOne;
 import static org.jooq.impl.DSL.table;
 import static org.jooq.impl.DSL.when;
 
 import com.smartfirehub.global.util.LikePatternUtils;
+import com.smartfirehub.platform.dto.PlatformAccountResponse;
 import com.smartfirehub.platform.dto.PlatformUserResponse;
 import java.util.List;
 import org.jooq.DSLContext;
@@ -76,5 +79,54 @@ public class PlatformUserRepository {
         .orderBy(exactEmailMatchRank.asc(), emailField.asc(), nameField.asc(), idField.asc())
         .limit(limit)
         .fetch(r -> new PlatformUserResponse(r.get(idField), r.get(emailField), r.get(nameField)));
+  }
+
+  /**
+   * 계정 화면 검색(#784). {@link #search} 와 정렬·이스케이프·상한은 같고 두 가지가 다르다:
+   *
+   * <ul>
+   *   <li>비활성 계정도 포함한다 — 비활성화한 계정을 다시 찾아 재활성화할 수 있어야 한다.
+   *   <li>username(로그인 아이디)도 매칭하고 활성 여부·운영자 여부를 싣는다.
+   * </ul>
+   *
+   * <p>운영자 여부는 platform_user_role EXISTS 로 본다 — 전역 테이블이라 GUC 없는 운영자 토큰에서도 정상 동작한다
+   * (role/user_role 같은 RLS 테이블은 여기서 조인하지 않는다: 클래스 주석 참고).
+   */
+  public List<PlatformAccountResponse> searchAccounts(String q, int limit) {
+    String pattern = LikePatternUtils.containsPattern(q);
+
+    Field<Long> idField = field(name("u", "id"), Long.class);
+    Field<String> usernameField = field(name("u", "username"), String.class);
+    Field<String> emailField = field(name("u", "email"), String.class);
+    Field<String> nameField = field(name("u", "name"), String.class);
+    Field<Boolean> isActiveField = field(name("u", "is_active"), Boolean.class);
+    Field<Boolean> operatorField =
+        field(
+                exists(
+                    selectOne()
+                        .from(table(name("platform_user_role")))
+                        .where(
+                            field(name("platform_user_role", "user_id"), Long.class).eq(idField))))
+            .as("operator");
+    Field<Integer> exactEmailMatchRank = when(emailField.equalIgnoreCase(q), 0).otherwise(1);
+
+    return dsl.select(idField, usernameField, emailField, nameField, isActiveField, operatorField)
+        .from(table(name("user")).as("u"))
+        .where(
+            emailField
+                .likeIgnoreCase(pattern, '\\')
+                .or(nameField.likeIgnoreCase(pattern, '\\'))
+                .or(usernameField.likeIgnoreCase(pattern, '\\')))
+        .orderBy(exactEmailMatchRank.asc(), emailField.asc(), nameField.asc(), idField.asc())
+        .limit(limit)
+        .fetch(
+            r ->
+                new PlatformAccountResponse(
+                    r.get(idField),
+                    r.get(usernameField),
+                    r.get(emailField),
+                    r.get(nameField),
+                    Boolean.TRUE.equals(r.get(isActiveField)),
+                    Boolean.TRUE.equals(r.get(operatorField))));
   }
 }

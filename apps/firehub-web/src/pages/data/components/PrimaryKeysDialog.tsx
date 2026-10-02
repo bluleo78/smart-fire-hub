@@ -87,7 +87,7 @@ export function PrimaryKeysDialog({
       <DialogContent className="max-h-[90vh] overflow-y-auto overscroll-contain">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <KeyRound className="h-4 w-4" />
+            <KeyRound className="h-5 w-5" />
             기본 키 일괄 설정
           </DialogTitle>
           <DialogDescription>

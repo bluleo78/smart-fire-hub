@@ -216,6 +216,14 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
 - 배포 직전 고아 확인(0 이 아니면 그 사용자는 배포 즉시 권한을 잃는다 — 중단 후 상의): **소유자 롤로 실행**(`docker exec <db> psql -U app -d smartfirehub`) — 런타임 롤 `app_tenant` 는 RLS(NOBYPASSRLS)라 `user_role` 이 0행으로 보여 쿼리가 공허하게 0 이 된다. 먼저 대조군 `SELECT count(*) FROM user_role;` 이 **0 보다 커야** 하고, 그 다음 `SELECT count(*) FROM user_role ur JOIN role r ON r.id=ur.role_id WHERE NOT EXISTS (SELECT 1 FROM membership m WHERE m.user_id=ur.user_id AND m.tenant_id=r.tenant_id AND m.status='ACTIVE');` 가 0 이어야 한다. 2026-10-02 소유자(app) 실측: dev user_role 18건 중 고아 0, prod 4건 중 고아 0
 - 배포 후 확인: (1) `curl -s https://<host>/api/v1/auth/signup-status` → `{"open":false}`; (2) 관리자 계정으로 멤버 추가 → 새 계정 로그인 → `/change-password` 강제 → 변경 후 진입; (3) 정지한 멤버가 다른 워크스페이스로는 로그인되는지.
 
+### 전역 계정 비활성화 · WD-2 후속 (#784~#788, 마이그레이션 없음)
+
+- **api → admin → web·ai-agent 순서(같은 배포 창).** admin 은 `./scripts/deploy.sh admin` 으로 명시 배포(`all` 에 없음). admin 이 api 보다 먼저 나가면 "계정" 화면이 `/api/platform/accounts` 404 를 띄운다.
+- 권한 조회가 `user.is_active` 를 조인한다 — 운영자 콘솔에서 비활성화한 사용자는 권한이 필요한 요청이 즉시 403, refresh 세션은 전부 폐기된다. 비활성 사용자 명의의 예약 실행 중 권한을 검사하는 스텝(Python·AI)과 ai-agent 대행 호출도 거부된다(SQL 스텝 등은 계속 돈다).
+- 기존에 전역 `is_active=false` 로 막혀 있던 계정이 있으면 배포 즉시 권한 조회에서도 0 이 된다(원래 로그인 불가라 실영향 없음). 확인: `SELECT count(*) FROM "user" WHERE is_active=false;`
+- 감사 로그(`ACCOUNT_DEACTIVATE`/`ACCOUNT_REACTIVATE`)는 tenant NULL 로 기록되어 현재 감사 화면에는 보이지 않는다.
+- 배포 후 확인: admin "계정" 메뉴에서 검색 → 테스트 계정 비활성화 → 그 계정 로그인 거부 → 재활성화 후 로그인.
+
 ### opencode baseURL 사설망 점검 (이슈 #698)
 
 #693 의 SSRF 가드는 **저장 시점**에만 baseURL 을 검사한다. 그 가드가 생기기 전에 저장된 행에는

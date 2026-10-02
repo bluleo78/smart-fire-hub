@@ -4,13 +4,14 @@ import { toast } from 'sonner';
 import type { ErrorResponse } from '@/types/auth';
 
 /**
- * ErrorResponse에서 사용자에게 표시할 메시지를 추출한다.
- * errors 필드(필드별 검증 오류)가 있으면 첫 번째 값을 우선 반환하여
- * 한국어 검증 메시지가 그대로 토스트에 뜨도록 한다.
- * errors 없으면 최상위 message, 그것도 없으면 fallback 사용.
+ * ErrorResponse 에서 사용자에게 보여 줄 메시지를 고른다.
+ *
+ * errors 는 (a) 코드 없는 검증 실패(사람이 읽는 문장)와 (b) CodedApiException 의 details(화면 분기용
+ * 기계 값, 예: {userId:"5"})로 쓰인다(#787). (b)만 code 를 싣고(GlobalExceptionHandler) 토스트에 "5" 가
+ * 뜨면 안 되므로, code 가 있으면 errors 를 건너뛰고 message → fallback 순으로 고른다.
  */
 function pickBestMessage(errData: ErrorResponse, fallback: string): string {
-  if (errData.errors) {
+  if (errData.code == null && errData.errors) {
     const firstFieldMsg = Object.values(errData.errors)[0];
     if (firstFieldMsg) return firstFieldMsg;
   }

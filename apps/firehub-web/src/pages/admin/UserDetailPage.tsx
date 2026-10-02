@@ -234,7 +234,7 @@ export default function UserDetailPage() {
       <AlertDialog open={isDeactivateDialogOpen} onOpenChange={setIsDeactivateDialogOpen}>
         <AlertDialogContent size="sm">
           <AlertDialogHeader>
-            <AlertDialogTitle className="text-xl leading-7">멤버십 정지</AlertDialogTitle>
+            <AlertDialogTitle>멤버십 정지</AlertDialogTitle>
             <AlertDialogDescription>
               이 워크스페이스에서만 접근이 막힙니다. 다른 워크스페이스와 계정은 영향이 없습니다. 계속하시겠습니까?
             </AlertDialogDescription>

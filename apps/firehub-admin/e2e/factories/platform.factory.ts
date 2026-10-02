@@ -1,4 +1,5 @@
 import type {
+  PlatformAccountResponse,
   PlatformMeResponse,
   PlatformTokenResponse,
   PlatformUserResponse,
@@ -64,4 +65,16 @@ export function createPlatformUser(
   overrides: Partial<PlatformUserResponse> = {},
 ): PlatformUserResponse {
   return { id: 42, email: 'owner@example.com', name: '박소유', ...overrides };
+}
+
+export function createAccount(overrides: Partial<PlatformAccountResponse> = {}): PlatformAccountResponse {
+  return {
+    id: 10,
+    username: 'kim@example.com',
+    email: 'kim@example.com',
+    name: '김소방',
+    active: true,
+    operator: false,
+    ...overrides,
+  };
 }

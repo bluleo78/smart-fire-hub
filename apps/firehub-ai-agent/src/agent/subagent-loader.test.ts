@@ -873,6 +873,16 @@ describe('SL-AM: admin-manager subagent integration', () => {
   });
 });
 
+describe('SL-AM-04: admin-manager 멤버십 정지 문구 (#786)', () => {
+  it('SL-AM-04: admin-manager 설명·프롬프트가 멤버십 정지 의미를 쓴다 (#786)', () => {
+    resetSubagentCache();
+    const agents = loadSubagents(path.join(__dirname, 'subagents'));
+    expect(agents['admin-manager'].description).toContain('멤버십 정지');
+    expect(agents['admin-manager'].prompt).toContain('다른 워크스페이스');
+    expect(agents['admin-manager'].prompt).not.toMatch(/즉시 로그인 불가|로그인할 수 없/);
+  });
+});
+
 describe('SL-AA: audit-analyst subagent integration', () => {
   it('SL-AA-01: loads audit-analyst from real subagents directory', () => {
     resetSubagentCache();

@@ -62,7 +62,7 @@ export default function ReportPreviewDialog({
       <DialogContent className="sm:max-w-4xl flex flex-col max-h-[85vh]">
         {/* 헤더 — 리포트 제목과 원본 질문 표시 */}
         <DialogHeader>
-          <DialogTitle className="text-base font-semibold">{title}</DialogTitle>
+          <DialogTitle>{title}</DialogTitle>
           <DialogDescription className="sr-only">리포트 초안 전체 내용을 미리봅니다.</DialogDescription>
           {/* 원본 질문 — 이탤릭 muted 텍스트로 표시 */}
           <p className="text-xs text-muted-foreground italic mt-1">"{question}"</p>

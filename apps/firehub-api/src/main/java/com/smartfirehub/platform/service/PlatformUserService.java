@@ -45,11 +45,21 @@ public class PlatformUserService {
    */
   @Transactional(readOnly = true)
   public List<PlatformUserResponse> search(String q) {
+    return userRepository.search(normalizeQuery(q), MAX_RESULTS);
+  }
+
+  /**
+   * 검색어를 trim 하고 길이 정책을 검증해 돌려준다. Owner 검색과 계정 검색(PlatformAccountService)이 같은
+   * 하한·상한·문구를 쓰도록 한 곳에 둔다.
+   *
+   * @throws IllegalArgumentException 길이가 범위 밖일 때(400)
+   */
+  static String normalizeQuery(String q) {
     String trimmed = q == null ? "" : q.trim();
     if (trimmed.length() < MIN_QUERY_LENGTH || trimmed.length() > MAX_QUERY_LENGTH) {
       throw new IllegalArgumentException(
           "검색어는 " + MIN_QUERY_LENGTH + "~" + MAX_QUERY_LENGTH + "자 사이여야 합니다");
     }
-    return userRepository.search(trimmed, MAX_RESULTS);
+    return trimmed;
   }
 }

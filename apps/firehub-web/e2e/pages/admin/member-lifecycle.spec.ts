@@ -139,4 +139,24 @@ test.describe('멤버십 정지·제거', () => {
     await expect(page.getByRole('cell', { name: '김지수', exact: true })).toHaveCount(0);
     expect(listCalls).toBeGreaterThan(before);
   });
+
+  test('코드가 있는 409 의 details 는 토스트에 나오지 않고 message 만 나온다 (#787)', async ({ authenticatedPage: page }) => {
+    // 실제 서버 모양: GlobalExceptionHandler.handleCodedApiException 이 내리는 ErrorResponse
+    // (status/error/message/errors(=details)/timestamp/path/code). 멤버 추가 중복(MEMBER_SUSPENDED)과 같은 응답이다.
+    await mockApi(page, 'PUT', '/api/v1/users/5/active', {
+      status: 409, error: 'Conflict',
+      message: '이미 이 워크스페이스의 멤버입니다(정지됨). 상세에서 재활성화하세요',
+      errors: { userId: '5' },
+      timestamp: '2026-10-02T06:00:00.000Z', path: '/api/v1/users/5/active',
+      code: 'MEMBER_SUSPENDED',
+    }, { status: 409 });
+    await openDetail(page);
+    await page.getByRole('switch', { name: '이 워크스페이스에서 활성' }).click();
+    await page.getByRole('alertdialog').getByRole('button', { name: '정지' }).click();
+
+    // details 값 "5" 가 아니라 서버 message 가 토스트에 나와야 한다(메시지에는 숫자 5 가 없다).
+    const toast = page.locator('[data-sonner-toast]').first();
+    await expect(toast).toContainText('이미 이 워크스페이스의 멤버입니다(정지됨). 상세에서 재활성화하세요');
+    expect(await toast.innerText()).not.toMatch(/\b5\b/);
+  });
 });

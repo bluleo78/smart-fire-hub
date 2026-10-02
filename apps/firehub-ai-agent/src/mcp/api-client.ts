@@ -565,7 +565,7 @@ export class FireHubApiClient {
     return this._admin.setUserRoles(userId, roleIds);
   }
 
-  /** 사용자 활성화 상태 변경 */
+  /** 이 워크스페이스 멤버십 정지/재활성화 (admin-api 참고) */
   setUserActive(userId: number, active: boolean): Promise<void> {
     return this._admin.setUserActive(userId, active);
   }

@@ -100,6 +100,14 @@ describe('Admin MCP Tools', () => {
   });
 
   describe('set_user_active', () => {
+    it('도구 설명이 전역 로그인 차단이 아니라 이 워크스페이스 멤버십 정지임을 말한다 (#786)', () => {
+      // MCP SDK RegisteredTool 은 description 필드를 갖는다 — invokeTool 과 같은 내부 레지스트리를 읽는다.
+      const entry = (server as any).instance._registeredTools['set_user_active'];
+      expect(entry.description).toMatch(/워크스페이스.*멤버십.*정지/);
+      expect(entry.description).toMatch(/다른 워크스페이스/);
+      expect(entry.description).not.toMatch(/로그인할 수 없|로그인 불가/);
+    });
+
     it('calls apiClient.setUserActive and returns success', async () => {
       (client.setUserActive as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 
