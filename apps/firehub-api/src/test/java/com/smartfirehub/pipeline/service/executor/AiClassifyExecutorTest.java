@@ -20,9 +20,9 @@ import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dataset.repository.DatasetRepository;
-import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.dataset.service.DataTableService;
+import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.pipeline.dto.AiClassifyConfig;
 import com.smartfirehub.pipeline.dto.AiClassifyConfig.OutputColumn;
 import com.smartfirehub.pipeline.dto.PipelineStepResponse;
@@ -406,7 +406,8 @@ class AiClassifyExecutorTest {
 
     // cache miss
     stubCacheMiss();
-    when(aiAgentClient.classify(any(), any(), anyLong())).thenThrow(new RuntimeException("AI agent down"));
+    when(aiAgentClient.classify(any(), any(), anyLong()))
+        .thenThrow(new RuntimeException("AI agent down"));
 
     PipelineStepResponse step = buildStep("APPEND", List.of(1L));
 
@@ -425,12 +426,11 @@ class AiClassifyExecutorTest {
   /**
    * 전량 실패 시 <b>기존 출력 테이블이 살아남아야</b> 한다(#685).
    *
-   * <p>2026-09-18 운영에서 실제로 잃은 것이 이것이다. 배치가 전부 실패해 결과가 0행인데도 REPLACE
-   * 스왑이 그대로 실행돼 <b>빈 임시 테이블이 원본을 덮었고</b>, 직전 실행이 적재한 10건이 사라졌다.
-   * 그러고도 스텝은 COMPLETED 였다.
+   * <p>2026-09-18 운영에서 실제로 잃은 것이 이것이다. 배치가 전부 실패해 결과가 0행인데도 REPLACE 스왑이 그대로 실행돼 <b>빈 임시 테이블이 원본을
+   * 덮었고</b>, 직전 실행이 적재한 10건이 사라졌다. 그러고도 스텝은 COMPLETED 였다.
    *
-   * <p>Python 경로({@code PipelineAsyncRunner:538})는 {@code rowsLoaded() > 0} 일 때만 스왑한다 —
-   * "빈 결과는 기존 데이터를 파괴하지 않는다"가 플랫폼 관례이고 AI_CLASSIFY 만 이를 어기고 있었다.
+   * <p>Python 경로({@code PipelineAsyncRunner:538})는 {@code rowsLoaded() > 0} 일 때만 스왑한다 — "빈 결과는 기존
+   * 데이터를 파괴하지 않는다"가 플랫폼 관례이고 AI_CLASSIFY 만 이를 어기고 있었다.
    */
   @Test
   @SuppressWarnings({"unchecked", "rawtypes"})
@@ -446,7 +446,8 @@ class AiClassifyExecutorTest {
         .thenReturn(List.of(sourceRow));
 
     stubCacheMiss();
-    when(aiAgentClient.classify(any(), any(), anyLong())).thenThrow(new RuntimeException("timeout"));
+    when(aiAgentClient.classify(any(), any(), anyLong()))
+        .thenThrow(new RuntimeException("timeout"));
 
     PipelineStepResponse step = buildStep("REPLACE", List.of(1L));
 
@@ -462,12 +463,11 @@ class AiClassifyExecutorTest {
   /**
    * 예외 없이 <b>조용히</b> 0행이 된 경우도 실패다(#685).
    *
-   * <p>{@code processBatch} 는 응답에 {@code source_id} 가 맞는 항목이 없으면 그 행을 warn 한 줄
-   * 남기고 버린다. LLM 이 형식은 멀쩡하되 {@code source_id} 를 어긋나게 돌려주면 <b>예외 0건 ·
-   * 결과 0행</b>이 된다 — 배치 오류 수로 판정했다면 이 경우가 다시 "성공"이 됐을 것이다.
+   * <p>{@code processBatch} 는 응답에 {@code source_id} 가 맞는 항목이 없으면 그 행을 warn 한 줄 남기고 버린다. LLM 이 형식은
+   * 멀쩡하되 {@code source_id} 를 어긋나게 돌려주면 <b>예외 0건 · 결과 0행</b>이 된다 — 배치 오류 수로 판정했다면 이 경우가 다시 "성공"이 됐을
+   * 것이다.
    *
-   * <p>입력이 비었으면 임시 테이블을 만들기도 전에 조기 반환하므로, 여기까지 와서 결과가 비었다는
-   * 것은 언제나 "행이 있었는데 하나도 분류되지 못했다"는 뜻이다.
+   * <p>입력이 비었으면 임시 테이블을 만들기도 전에 조기 반환하므로, 여기까지 와서 결과가 비었다는 것은 언제나 "행이 있었는데 하나도 분류되지 못했다"는 뜻이다.
    */
   @Test
   @SuppressWarnings({"unchecked", "rawtypes"})
@@ -500,8 +500,8 @@ class AiClassifyExecutorTest {
   /**
    * 일부 배치만 실패하면 {@code CONTINUE} 는 <b>계속 간다</b> — 성공한 배치의 행은 남는다.
    *
-   * <p>#685 의 수정이 여기까지 번지면 안 된다. 전량 실패만 막는 것이지, 부분 실패를 감내하겠다는
-   * 사용자의 선택({@code onError=CONTINUE})을 뒤집는 것이 아니다.
+   * <p>#685 의 수정이 여기까지 번지면 안 된다. 전량 실패만 막는 것이지, 부분 실패를 감내하겠다는 사용자의 선택({@code onError=CONTINUE})을
+   * 뒤집는 것이 아니다.
    */
   @Test
   @SuppressWarnings({"unchecked", "rawtypes"})
@@ -535,9 +535,7 @@ class AiClassifyExecutorTest {
 
     AiClassifyExecutor.ExecutionResult result = executor.execute(step, 100L, 1L);
 
-    assertThat(result.outputRows())
-        .as("성공한 배치의 행은 살아남아야 한다 — CONTINUE 의 존재 이유다")
-        .isEqualTo(1);
+    assertThat(result.outputRows()).as("성공한 배치의 행은 살아남아야 한다 — CONTINUE 의 존재 이유다").isEqualTo(1);
     assertThat(result.executionLog()).contains("1 batch errors");
     verify(dataTableRowService).insertBatch(anyString(), anyList(), anyList(), anyMap());
   }
@@ -568,7 +566,8 @@ class AiClassifyExecutorTest {
     when(condStep2.and(any(org.jooq.Condition.class))).thenReturn(condStep2);
     when(condStep2.fetchOne()).thenReturn(null);
 
-    when(aiAgentClient.classify(any(), any(), anyLong())).thenThrow(new RuntimeException("AI agent down"));
+    when(aiAgentClient.classify(any(), any(), anyLong()))
+        .thenThrow(new RuntimeException("AI agent down"));
 
     // onError=FAIL_STEP 설정으로 Step을 재구성
     AiClassifyConfig failConfig =
@@ -620,8 +619,7 @@ class AiClassifyExecutorTest {
   }
 
   /** 결과 여러 건을 담은 배치 응답. */
-  private AiAgentClient.ClassifyResponse classifyResponse(
-      AiAgentClient.ClassifyRowResult... rows) {
+  private AiAgentClient.ClassifyResponse classifyResponse(AiAgentClient.ClassifyRowResult... rows) {
     return new AiAgentClient.ClassifyResponse(List.of(rows), rows.length, "test-model");
   }
 
@@ -641,9 +639,8 @@ class AiClassifyExecutorTest {
   /**
    * 배치 결과는 <b>배치마다</b> 적재된다 — 끝까지 모아 두지 않는다(#690).
    *
-   * <p>예전에는 모든 배치의 결과를 힙에 모아 두었다가 루프가 끝난 뒤 한 번만 {@code insertBatch} 를
-   * 불렀다. 174배치 × 45초 ≈ 2시간짜리 실행이 중간 저장 없이 돌았고, 재시작·OOM·배포 무엇이든
-   * 그때까지의 분류가 전부 사라졌다(운영 실행 9 실측: 캐시 342행 vs 스테이징 테이블 0행).
+   * <p>예전에는 모든 배치의 결과를 힙에 모아 두었다가 루프가 끝난 뒤 한 번만 {@code insertBatch} 를 불렀다. 174배치 × 45초 ≈ 2시간짜리 실행이
+   * 중간 저장 없이 돌았고, 재시작·OOM·배포 무엇이든 그때까지의 분류가 전부 사라졌다(운영 실행 9 실측: 캐시 342행 vs 스테이징 테이블 0행).
    */
   @Test
   @SuppressWarnings({"unchecked", "rawtypes"})
@@ -675,9 +672,8 @@ class AiClassifyExecutorTest {
   /**
    * 뒤 배치가 실패해도 <b>앞 배치가 쓴 행은 이미 커밋돼 있다</b>(#690).
    *
-   * <p>모아 두던 시절에는 마지막 한 번의 적재 전에 예외가 나면 앞의 모든 배치 결과가 통째로
-   * 증발했다. 이제는 실패 시점까지의 적재가 {@code t_tmp} 에 남는다 — REPLACE 이므로 그 임시
-   * 테이블은 드롭되고 원본은 그대로다(#685 의 보장은 유지된다).
+   * <p>모아 두던 시절에는 마지막 한 번의 적재 전에 예외가 나면 앞의 모든 배치 결과가 통째로 증발했다. 이제는 실패 시점까지의 적재가 {@code t_tmp} 에 남는다
+   * — REPLACE 이므로 그 임시 테이블은 드롭되고 원본은 그대로다(#685 의 보장은 유지된다).
    */
   @Test
   @SuppressWarnings({"unchecked", "rawtypes"})
@@ -709,8 +705,8 @@ class AiClassifyExecutorTest {
   /**
    * 배치마다 진척(적재 행 수 + 진행 메시지)이 {@code pipeline_step_execution} 에 기록된다(#691).
    *
-   * <p>기록이 없으면 실행 중 화면의 "출력행"은 스텝이 끝날 때까지 {@code -} 이고, 몇 번째 배치를
-   * 돌고 있는지는 서버 로그에만 남는다 — 사용자는 멈춘 것과 도는 것을 구분할 수 없다.
+   * <p>기록이 없으면 실행 중 화면의 "출력행"은 스텝이 끝날 때까지 {@code -} 이고, 몇 번째 배치를 돌고 있는지는 서버 로그에만 남는다 — 사용자는 멈춘 것과
+   * 도는 것을 구분할 수 없다.
    */
   @Test
   @SuppressWarnings({"unchecked", "rawtypes"})
@@ -738,9 +734,8 @@ class AiClassifyExecutorTest {
   /**
    * 적재 실패는 <b>배치 실패가 아니다</b> — onError 와 무관하게 스텝을 떨군다.
    *
-   * <p>적재를 AI 호출 try 안에 두면 insert 오류(타입 변환·DDL 불일치·DB 장애)가 "배치 실패"로
-   * 격하된다. CONTINUE 면 그 배치를 조용히 건너뛰고, RETRY_BATCH 면 LLM 이 고칠 수 없는 오류에
-   * 2+4+8초를 자며 분류를 세 번 더 태운다. 그래서 적재는 try 밖에 있다.
+   * <p>적재를 AI 호출 try 안에 두면 insert 오류(타입 변환·DDL 불일치·DB 장애)가 "배치 실패"로 격하된다. CONTINUE 면 그 배치를 조용히
+   * 건너뛰고, RETRY_BATCH 면 LLM 이 고칠 수 없는 오류에 2+4+8초를 자며 분류를 세 번 더 태운다. 그래서 적재는 try 밖에 있다.
    */
   @Test
   @SuppressWarnings({"unchecked", "rawtypes"})
@@ -775,9 +770,8 @@ class AiClassifyExecutorTest {
   /**
    * 실패로 끝난 스텝에 "진행 중" 진척이 남지 않는다(#691).
    *
-   * <p>러너의 실패 경로는 output_rows/log 에 null 을 넘겨 기존 값을 덮지 않는다. 실행기가 정리하지
-   * 않으면 FAILED 스텝이 "출력행 N · 배치 4/174 진행 중" 을 계속 보여준다 — REPLACE 는 임시
-   * 테이블을 버렸으니 실제로 남은 행은 0 인데도.
+   * <p>러너의 실패 경로는 output_rows/log 에 null 을 넘겨 기존 값을 덮지 않는다. 실행기가 정리하지 않으면 FAILED 스텝이 "출력행 N · 배치
+   * 4/174 진행 중" 을 계속 보여준다 — REPLACE 는 임시 테이블을 버렸으니 실제로 남은 행은 0 인데도.
    */
   @Test
   @SuppressWarnings({"unchecked", "rawtypes"})
@@ -789,7 +783,8 @@ class AiClassifyExecutorTest {
         .thenReturn(List.of(sourceRow(1L, "boom")));
 
     stubCacheMiss();
-    when(aiAgentClient.classify(any(), any(), anyLong())).thenThrow(new RuntimeException("AI agent down"));
+    when(aiAgentClient.classify(any(), any(), anyLong()))
+        .thenThrow(new RuntimeException("AI agent down"));
 
     PipelineStepResponse step = buildStep("REPLACE", List.of(1L), 1);
 
@@ -807,9 +802,8 @@ class AiClassifyExecutorTest {
   /**
    * 캐시 키는 <b>내용만</b> 본다 — surrogate {@code id} 가 달라도 같은 키여야 한다(#687).
    *
-   * <p>운영에서 캐시가 한 번도 히트하지 않던 이유다. 입력이 임시 데이터셋이면 {@code id} 는 매 실행
-   * {@code TRUNCATE} 뒤 다시 채워지는 {@code BIGSERIAL} 값이라 실행마다 달라진다. 그 값이 해시에
-   * 섞여 있으면 같은 보도자료도 매번 새 키가 되고, LLM 을 처음부터 다시 태운다.
+   * <p>운영에서 캐시가 한 번도 히트하지 않던 이유다. 입력이 임시 데이터셋이면 {@code id} 는 매 실행 {@code TRUNCATE} 뒤 다시 채워지는 {@code
+   * BIGSERIAL} 값이라 실행마다 달라진다. 그 값이 해시에 섞여 있으면 같은 보도자료도 매번 새 키가 되고, LLM 을 처음부터 다시 태운다.
    */
   @Test
   void rowContentHash_ignoresSurrogateId() {
@@ -845,8 +839,7 @@ class AiClassifyExecutorTest {
   /**
    * 맵 순회 순서가 키를 가르면 안 된다.
    *
-   * <p>{@code HashMap} 의 순서는 보장이 없어서, 같은 내용이 다른 순서로 직렬화되면 캐시가 조용히
-   * 갈린다. 삽입 순서를 뒤집어도 같은 키가 나오는지 본다.
+   * <p>{@code HashMap} 의 순서는 보장이 없어서, 같은 내용이 다른 순서로 직렬화되면 캐시가 조용히 갈린다. 삽입 순서를 뒤집어도 같은 키가 나오는지 본다.
    */
   @Test
   void rowContentHash_isStableRegardlessOfKeyOrder() {
@@ -864,9 +857,8 @@ class AiClassifyExecutorTest {
   /**
    * 캐시 히트가 <b>자기 행의</b> {@code source_id} 를 갖는지 본다(#687).
    *
-   * <p>키에서 {@code id} 를 뺀 대가로 내용이 같은 여러 행이 한 캐시 항목을 공유하게 됐다. 저장된
-   * {@code source_id} 를 그대로 쓰면 그 행들이 전부 남의 조인 키를 물려받는다 — 캐시 키 수정이
-   * 만들어낼 수 있었던 새 결함이고, 이 단언이 그것을 막는다.
+   * <p>키에서 {@code id} 를 뺀 대가로 내용이 같은 여러 행이 한 캐시 항목을 공유하게 됐다. 저장된 {@code source_id} 를 그대로 쓰면 그 행들이
+   * 전부 남의 조인 키를 물려받는다 — 캐시 키 수정이 만들어낼 수 있었던 새 결함이고, 이 단언이 그것을 막는다.
    */
   @Test
   @SuppressWarnings({"unchecked", "rawtypes"})
@@ -975,14 +967,12 @@ class AiClassifyExecutorTest {
   /**
    * 보낸 번호 중 하나가 응답에 없으면 배치를 실패시킨다 — 예전에는 warn 한 줄 남기고 버렸다.
    *
-   * <p>같은 시나리오로 <b>캐시 순서</b>도 함께 못박는다. {@code verifySourceIds} 는 캐시 쓰기
-   * <b>뒤</b>에 불린다 — 대조에 실패할 배치라도 제대로 분류된 행(여기서는 1번)이 먼저 캐시에 남아야
-   * 재시도가 싸다. 검사를 캐시 쓰기 앞으로 옮기면 {@code insertInto} 가 아예 일어나지 않아 이
+   * <p>같은 시나리오로 <b>캐시 순서</b>도 함께 못박는다. {@code verifySourceIds} 는 캐시 쓰기 <b>뒤</b>에 불린다 — 대조에 실패할 배치라도
+   * 제대로 분류된 행(여기서는 1번)이 먼저 캐시에 남아야 재시도가 싸다. 검사를 캐시 쓰기 앞으로 옮기면 {@code insertInto} 가 아예 일어나지 않아 이
    * 테스트가 깨진다.
    *
-   * <p>결과를 버리면서 캐시는 남기는 것이 모순이 아닌 이유: 캐시는 "이 내용 + 이 프롬프트의 분류
-   * 결과"이지 "어느 행의 것인가"가 아니다(#687 로 {@code source_id} 를 싣지 않는다). 틀린 것은 행에
-   * 되짚는 부분이지 분류 자체가 아니다.
+   * <p>결과를 버리면서 캐시는 남기는 것이 모순이 아닌 이유: 캐시는 "이 내용 + 이 프롬프트의 분류 결과"이지 "어느 행의 것인가"가 아니다(#687 로 {@code
+   * source_id} 를 싣지 않는다). 틀린 것은 행에 되짚는 부분이지 분류 자체가 아니다.
    */
   @Test
   @SuppressWarnings({"unchecked", "rawtypes"})
@@ -1039,8 +1029,8 @@ class AiClassifyExecutorTest {
   /**
    * 같은 번호를 두 번 돌려주면 배치를 실패시킨다.
    *
-   * <p>{@code toMap} 의 병합 함수 {@code (a,b)->a} 가 중복을 삼키므로, 이 경우 다른 한 행은 짝을
-   * 잃고 조용히 사라졌다. 집합 비교가 그 손실을 드러낸다.
+   * <p>{@code toMap} 의 병합 함수 {@code (a,b)->a} 가 중복을 삼키므로, 이 경우 다른 한 행은 짝을 잃고 조용히 사라졌다. 집합 비교가 그 손실을
+   * 드러낸다.
    */
   @Test
   @SuppressWarnings({"unchecked", "rawtypes"})
@@ -1066,9 +1056,8 @@ class AiClassifyExecutorTest {
   /**
    * 버려진 <b>행</b> 수가 결과에 남는다(#694).
    *
-   * <p>{@code batch errors} 는 배치 수라, 10행짜리 배치가 통째로 빠져도 "1"로 보인다. 몇 행이
-   * 사라졌는지가 결과 문자열에 없으면 같은 행이 매 실행 결정적으로 실패하는 영구 루프가 조용히
-   * 굳는다 — 2026-09-19 운영의 guid 사건이 정확히 그 모양이었다.
+   * <p>{@code batch errors} 는 배치 수라, 10행짜리 배치가 통째로 빠져도 "1"로 보인다. 몇 행이 사라졌는지가 결과 문자열에 없으면 같은 행이 매 실행
+   * 결정적으로 실패하는 영구 루프가 조용히 굳는다 — 2026-09-19 운영의 guid 사건이 정확히 그 모양이었다.
    */
   @Test
   @SuppressWarnings({"unchecked", "rawtypes"})
@@ -1103,13 +1092,12 @@ class AiClassifyExecutorTest {
   /**
    * 입력 행의 id 가 겹치면 <b>LLM 을 태우기 전에</b> 진짜 원인을 말하고 멈춘다(#694).
    *
-   * <p>입력 데이터셋이 둘 이상이면 각 출력 테이블이 자기 {@code BIGSERIAL} 을 쓰므로 id 가 1 부터
-   * 다시 시작해 반드시 겹친다({@code PipelineAsyncRunner} 가 의존 스텝마다 입력 데이터셋을 하나씩
-   * 쌓는다). 그 상태에서는 "어느 결과가 어느 행의 것인가"를 판별할 방법이 없다 — 겹친 두 행이 같은
-   * 결과를 물려받아 한쪽의 분류가 다른 쪽에 조용히 저장된다.
+   * <p>입력 데이터셋이 둘 이상이면 각 출력 테이블이 자기 {@code BIGSERIAL} 을 쓰므로 id 가 1 부터 다시 시작해 반드시 겹친다({@code
+   * PipelineAsyncRunner} 가 의존 스텝마다 입력 데이터셋을 하나씩 쌓는다). 그 상태에서는 "어느 결과가 어느 행의 것인가"를 판별할 방법이 없다 — 겹친 두
+   * 행이 같은 결과를 물려받아 한쪽의 분류가 다른 쪽에 조용히 저장된다.
    *
-   * <p>배치 루프 <b>밖</b>에서 던져야 한다. 안에서 던지면 {@code onError=CONTINUE} 가 삼켜 "배치가
-   * 모두 실패했다"로 격하되고, {@code RETRY_BATCH} 는 절대 성공할 수 없는 재시도로 14초를 잔다.
+   * <p>배치 루프 <b>밖</b>에서 던져야 한다. 안에서 던지면 {@code onError=CONTINUE} 가 삼켜 "배치가 모두 실패했다"로 격하되고, {@code
+   * RETRY_BATCH} 는 절대 성공할 수 없는 재시도로 14초를 잔다.
    */
   @Test
   @SuppressWarnings({"unchecked", "rawtypes"})
@@ -1173,9 +1161,8 @@ class AiClassifyExecutorTest {
   }
 
   /**
-   * 미설정 = 현행과 바이트 동일: 채팅 자격증명이 깨져 있어도(알 수 없는 agentType) 전 행이 캐시
-   * 히트면 ai-agent 를 부르지 않고 성공한다. 해석기는 <b>실물</b>을 쓴다 — 해석기가 채팅 자격증명을
-   * 미리 해석하도록 바뀌면 이 테스트가 빨개진다.
+   * 미설정 = 현행과 바이트 동일: 채팅 자격증명이 깨져 있어도(알 수 없는 agentType) 전 행이 캐시 히트면 ai-agent 를 부르지 않고 성공한다. 해석기는
+   * <b>실물</b>을 쓴다 — 해석기가 채팅 자격증명을 미리 해석하도록 바뀌면 이 테스트가 빨개진다.
    */
   @Test
   @SuppressWarnings({"unchecked", "rawtypes"})
@@ -1214,10 +1201,7 @@ class AiClassifyExecutorTest {
     verify(brokenChat, never()).resolve();
   }
 
-  /**
-   * 분류 전용이면 해시와 요청이 같은 target 을 보도록, 배치가 여럿이어도 해석은 실행당 한 번이고
-   * 모든 배치에 같은 인스턴스가 넘어간다(#707 §4).
-   */
+  /** 분류 전용이면 해시와 요청이 같은 target 을 보도록, 배치가 여럿이어도 해석은 실행당 한 번이고 모든 배치에 같은 인스턴스가 넘어간다(#707 §4). */
   @Test
   @SuppressWarnings({"unchecked", "rawtypes"})
   void execute_는_target_을_한_번만_해석해_모든_배치에_같은_target_을_넘긴다() {
@@ -1260,10 +1244,7 @@ class AiClassifyExecutorTest {
   // #707 후속 — 캐시 판별자 보강(추론 강도·단사 인코딩)과 UseChat 실행 단위 해석 메모
   // -----------------------------------------------------------------------
 
-  /**
-   * 추론 강도가 다르면 같은 모델이라도 분류 결과가 달라질 수 있다 — 판별자에 없으면 강도를 바꾼 뒤에도
-   * 옛 강도로 만든 캐시가 계속 히트한다(#707 후속 1).
-   */
+  /** 추론 강도가 다르면 같은 모델이라도 분류 결과가 달라질 수 있다 — 판별자에 없으면 강도를 바꾼 뒤에도 옛 강도로 만든 캐시가 계속 히트한다(#707 후속 1). */
   @Test
   void promptHash_opencode_추론_강도만_달라도_갈린다() {
     AiClassifyTarget low =
@@ -1290,10 +1271,9 @@ class AiClassifyExecutorTest {
   }
 
   /**
-   * 판별자 칸을 이스케이프 없이 {@code |} 로 이으면 칸 경계가 다른 두 묶음이 같은 문자열이 된다
-   * (#707 후속 2). (c, d) 는 옛 인코딩에서 실제로 겹쳤다 — 둘 다 {@code opencode|a|b|c|a/x}.
-   * (a, b) 는 추론 강도 칸만 추가하고 이스케이프를 안 했다면 새로 생겼을 충돌이다 — 둘 다
-   * {@code opencode|p|u|e|m|n}. 칸을 늘릴 때 인코딩을 빠뜨리는 회귀를 막는다.
+   * 판별자 칸을 이스케이프 없이 {@code |} 로 이으면 칸 경계가 다른 두 묶음이 같은 문자열이 된다 (#707 후속 2). (c, d) 는 옛 인코딩에서 실제로 겹쳤다
+   * — 둘 다 {@code opencode|a|b|c|a/x}. (a, b) 는 추론 강도 칸만 추가하고 이스케이프를 안 했다면 새로 생겼을 충돌이다 — 둘 다 {@code
+   * opencode|p|u|e|m|n}. 칸을 늘릴 때 인코딩을 빠뜨리는 회귀를 막는다.
    */
   @Test
   void promptHash_구분자를_품은_값으로_칸_경계를_옮겨도_해시가_겹치지_않는다() {
@@ -1315,9 +1295,8 @@ class AiClassifyExecutorTest {
   }
 
   /**
-   * HTTP 만 걷어낸 실물 AiAgentClient — {@code buildClassifyBody} 로 실제 자격증명 해석을 태우고, 받은
-   * 행을 그대로 분류된 것처럼 돌려준다. 실행기 테스트가 mock 클라이언트로는 볼 수 없는 "실행 동안 채팅
-   * 자격증명을 몇 번 읽었나"를 보기 위함이다(#707 후속 3).
+   * HTTP 만 걷어낸 실물 AiAgentClient — {@code buildClassifyBody} 로 실제 자격증명 해석을 태우고, 받은 행을 그대로 분류된 것처럼
+   * 돌려준다. 실행기 테스트가 mock 클라이언트로는 볼 수 없는 "실행 동안 채팅 자격증명을 몇 번 읽었나"를 보기 위함이다(#707 후속 3).
    */
   private AiAgentClient echoingClient(
       com.smartfirehub.settings.service.SettingsService settings,
@@ -1342,7 +1321,8 @@ class AiClassifyExecutorTest {
   }
 
   /** 실물 해석기 + echoing 클라이언트로 실행기를 만든다 — 분류 슬롯은 비어 있다(UseChat). */
-  private AiClassifyExecutor useChatExecutor(AiAgentClient client, AiCredentialService credentials) {
+  private AiClassifyExecutor useChatExecutor(
+      AiAgentClient client, AiCredentialService credentials) {
     when(credentials.resolveClassify()).thenReturn(Optional.empty());
     return new AiClassifyExecutor(
         client,
@@ -1374,8 +1354,8 @@ class AiClassifyExecutorTest {
   }
 
   /**
-   * 미설정(UseChat) 실행에서 캐시 미스 배치가 여럿이어도 채팅 자격증명·{@code ai.model} 은 실행당
-   * <b>한 번</b>만 해석(복호화)한다. 바디는 배치마다 같은 자격증명·모델을 싣는다(#707 후속 3).
+   * 미설정(UseChat) 실행에서 캐시 미스 배치가 여럿이어도 채팅 자격증명·{@code ai.model} 은 실행당 <b>한 번</b>만 해석(복호화)한다. 바디는
+   * 배치마다 같은 자격증명·모델을 싣는다(#707 후속 3).
    */
   @Test
   void UseChat_실행은_미스_배치가_여럿이어도_채팅_자격증명을_한_번만_해석한다() {
@@ -1405,8 +1385,8 @@ class AiClassifyExecutorTest {
   }
 
   /**
-   * 해석 <b>실패는 기억하지 않는다</b> — 첫 배치에서 해석이 던지면(onError=CONTINUE) 다음 배치가 다시
-   * 해석해 요청을 보낸다. 성공한 뒤에는 그 값을 재사용한다(#707 후속 3).
+   * 해석 <b>실패는 기억하지 않는다</b> — 첫 배치에서 해석이 던지면(onError=CONTINUE) 다음 배치가 다시 해석해 요청을 보낸다. 성공한 뒤에는 그 값을
+   * 재사용한다(#707 후속 3).
    */
   @Test
   void UseChat_첫_해석이_실패해도_다음_배치는_다시_해석해_요청을_보낸다() {
@@ -1431,8 +1411,8 @@ class AiClassifyExecutorTest {
   }
 
   /**
-   * 불완전한 자격증명(검증 실패)도 기억하지 않는다 — 기억하면 실행 도중 관리자가 고쳐도 남은 배치가
-   * 전부 같은 이유로 떨어진다. 오늘처럼 배치마다 다시 읽는다(#707 후속 3).
+   * 불완전한 자격증명(검증 실패)도 기억하지 않는다 — 기억하면 실행 도중 관리자가 고쳐도 남은 배치가 전부 같은 이유로 떨어진다. 오늘처럼 배치마다 다시 읽는다(#707
+   * 후속 3).
    */
   @Test
   void UseChat_불완전한_자격증명은_기억하지_않고_다음_배치에서_다시_읽는다() {
@@ -1454,8 +1434,8 @@ class AiClassifyExecutorTest {
   }
 
   /**
-   * 기억은 <b>실행 단위</b>다 — 다음 실행(다른 테넌트일 수도 있다)은 채팅 자격증명을 새로 읽는다.
-   * 실행 간에 공유되면 한 테넌트의 복호화된 자격증명이 다른 실행의 요청에 실릴 수 있다.
+   * 기억은 <b>실행 단위</b>다 — 다음 실행(다른 테넌트일 수도 있다)은 채팅 자격증명을 새로 읽는다. 실행 간에 공유되면 한 테넌트의 복호화된 자격증명이 다른 실행의
+   * 요청에 실릴 수 있다.
    */
   @Test
   void UseChat_해석_기억은_실행마다_새로_시작한다() {
@@ -1476,8 +1456,8 @@ class AiClassifyExecutorTest {
   }
 
   /**
-   * 모델 형식 검증 실패(opencode 인데 {@code ai.model} 에 공급자 접두사가 없음)도 기억하지 않는다 —
-   * 첫 배치가 버려진 뒤 관리자가 모델을 고치면 같은 실행의 다음 배치가 다시 읽어 요청을 보낸다(#707 후속 3).
+   * 모델 형식 검증 실패(opencode 인데 {@code ai.model} 에 공급자 접두사가 없음)도 기억하지 않는다 — 첫 배치가 버려진 뒤 관리자가 모델을 고치면 같은
+   * 실행의 다음 배치가 다시 읽어 요청을 보낸다(#707 후속 3).
    */
   @Test
   void UseChat_opencode_모델_형식_실패는_기억하지_않고_다음_배치에서_다시_읽는다() {

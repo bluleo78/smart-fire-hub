@@ -64,8 +64,8 @@ public class DatasetController {
   }
 
   /**
-   * 관리자용 데이터셋 검색 인덱스 수동 백필. 전체 데이터셋의 source_text 를 동기 적재한 뒤 임베딩 재색인을 비동기 분산한다.
-   * 인덱스를 변경하므로 dataset:write 권한을 요구한다.
+   * 관리자용 데이터셋 검색 인덱스 수동 백필. 전체 데이터셋의 source_text 를 동기 적재한 뒤 임베딩 재색인을 비동기 분산한다. 인덱스를 변경하므로
+   * dataset:write 권한을 요구한다.
    */
   @PostMapping("/embedding/backfill")
   @RequirePermission("dataset:write")

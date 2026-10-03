@@ -9,21 +9,17 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * {@link TenantSchemaProvisioner#shouldSkipProvisioning} 의 8행 결정표를 고정한다(최종 전체
- * 리뷰 B1 — 이 밴드의 대표 안전 속성 "테넌트 1(data) 에 DDL 없음"을 지키는 단락 조건이
- * 세 번 다시 쓰이는 동안 검증하는 테스트가 하나도 없었다).
+ * {@link TenantSchemaProvisioner#shouldSkipProvisioning} 의 8행 결정표를 고정한다(최종 전체 리뷰 B1 — 이 밴드의 대표 안전
+ * 속성 "테넌트 1(data) 에 DDL 없음"을 지키는 단락 조건이 세 번 다시 쓰이는 동안 검증하는 테스트가 하나도 없었다).
  *
- * <p><b>왜 살아있는 DB 로 재현하지 않는가 — {@link TenantSchemaProvisionerSwallowDecisionTest}
- * 와 같은 이유에 더해 하나가 더 있다.</b> {@code app} 롤이 test/dev DB 양쪽에서 슈퍼유저라
- * (실측) 권한 실패를 주입할 수 없는 것은 같고, 여기서는 그것만이 아니다 — 이 조건을 실제
- * 프로덕션 데이터가 있는 테넌트 1({@code data})로 살아있는 DB 에서 시험하는 것 자체가
- * {@code TenantSchemaProvisionerTest} 클래스 Javadoc 이 명시한 규율("테넌트 1 로 프로비저너를
- * 시험하면 data 자체를 건드리게 되므로 절대 쓰지 않는다")과 정면으로 충돌한다. 그래서 판정
- * 로직만 순수 함수로 뽑아 DB 무접촉으로 직접 검증한다.
+ * <p><b>왜 살아있는 DB 로 재현하지 않는가 — {@link TenantSchemaProvisionerSwallowDecisionTest} 와 같은 이유에 더해 하나가 더
+ * 있다.</b> {@code app} 롤이 test/dev DB 양쪽에서 슈퍼유저라 (실측) 권한 실패를 주입할 수 없는 것은 같고, 여기서는 그것만이 아니다 — 이 조건을
+ * 실제 프로덕션 데이터가 있는 테넌트 1({@code data})로 살아있는 DB 에서 시험하는 것 자체가 {@code TenantSchemaProvisionerTest}
+ * 클래스 Javadoc 이 명시한 규율("테넌트 1 로 프로비저너를 시험하면 data 자체를 건드리게 되므로 절대 쓰지 않는다")과 정면으로 충돌한다. 그래서 판정 로직만 순수
+ * 함수로 뽑아 DB 무접촉으로 직접 검증한다.
  *
- * <p>인자가 {@code boolean} 세 개가 아니라 타입 세 개인 이유는 {@code
- * TenantSchemaProvisionerSwallowDecisionTest} 의 {@code ExistedBefore}/{@code ExistsNow} 와
- * 같다 — 순서를 바꿔도 컴파일이 통과하는 것을 막는다.
+ * <p>인자가 {@code boolean} 세 개가 아니라 타입 세 개인 이유는 {@code TenantSchemaProvisionerSwallowDecisionTest} 의
+ * {@code ExistedBefore}/{@code ExistsNow} 와 같다 — 순서를 바꿔도 컴파일이 통과하는 것을 막는다.
  */
 class TenantSchemaProvisionerSkipDecisionTest {
 

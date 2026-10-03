@@ -105,9 +105,9 @@ public class PipelineController {
   }
 
   /**
-   * 스텝의 다음 실행에서 전체 재생성(SELECT 자동 적재 스텝)/전체 재읽기(사용자 DML 스텝)을 예약한다.
-   * 스텝이 {@code {{last_run_at}}} 을 쓰지 않으면 예약할 수 없다(400) — 그런 스텝은 실행기가 증분 경로를
-   * 타지 않아 플래그를 영원히 해제하지 못한다. 수정 권한(PUT `/{id}`)과 같은 권한을 요구한다.
+   * 스텝의 다음 실행에서 전체 재생성(SELECT 자동 적재 스텝)/전체 재읽기(사용자 DML 스텝)을 예약한다. 스텝이 {@code {{last_run_at}}} 을 쓰지
+   * 않으면 예약할 수 없다(400) — 그런 스텝은 실행기가 증분 경로를 타지 않아 플래그를 영원히 해제하지 못한다. 수정 권한(PUT `/{id}`)과 같은 권한을
+   * 요구한다.
    */
   @PostMapping("/{id}/steps/{stepId}/full-rebuild")
   @RequirePermission("pipeline:write")

@@ -25,12 +25,11 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 운영자(플랫폼) 평면 인증. 테넌트 평면의 {@code AuthService} 와 같은 자격증명·잠금·리프레시 회전
- * 기계를 쓰되, <b>플랫폼 롤 보유</b>를 추가 조건으로 요구하고 테넌트를 일절 해석하지 않는다.
+ * 운영자(플랫폼) 평면 인증. 테넌트 평면의 {@code AuthService} 와 같은 자격증명·잠금·리프레시 회전 기계를 쓰되, <b>플랫폼 롤 보유</b>를 추가 조건으로
+ * 요구하고 테넌트를 일절 해석하지 않는다.
  *
- * <p>{@code refresh_token} 테이블은 전역(테넌트 컬럼·RLS 없음)이라 두 평면이 같은 회전·재사용 탐지
- * 기계를 공유한다 — 운영자 토큰도 폐기 가능하고 재사용 탐지 대상이다. 해시는
- * {@link RefreshTokenHasher} 로 통일한다.
+ * <p>{@code refresh_token} 테이블은 전역(테넌트 컬럼·RLS 없음)이라 두 평면이 같은 회전·재사용 탐지 기계를 공유한다 — 운영자 토큰도 폐기 가능하고
+ * 재사용 탐지 대상이다. 해시는 {@link RefreshTokenHasher} 로 통일한다.
  */
 @Service
 @RequiredArgsConstructor
@@ -48,13 +47,12 @@ public class PlatformAuthService {
   /**
    * 운영자 로그인.
    *
-   * <p>자격증명 검증 뒤 <b>플랫폼 롤 보유</b>를 추가로 요구하고, 롤이 없으면 자격증명 오류와
-   * <b>완전히 같은 예외·같은 메시지</b>로 거부한다. 다른 응답을 주면 "이 계정은 운영자다"를 밖에서
-   * 판별할 수 있는 열거 오라클이 된다. 로그인 시도 카운터도 함께 올려, 롤 없는 계정으로 비밀번호를
-   * 무한 시도하는 경로를 남기지 않는다.
+   * <p>자격증명 검증 뒤 <b>플랫폼 롤 보유</b>를 추가로 요구하고, 롤이 없으면 자격증명 오류와 <b>완전히 같은 예외·같은 메시지</b>로 거부한다. 다른 응답을
+   * 주면 "이 계정은 운영자다"를 밖에서 판별할 수 있는 열거 오라클이 된다. 로그인 시도 카운터도 함께 올려, 롤 없는 계정으로 비밀번호를 무한 시도하는 경로를 남기지
+   * 않는다.
    *
-   * <p>비활성 계정 검사를 롤 검사보다 <b>먼저</b> 두는 이유: 그러면 비활성 계정은 운영자든 아니든
-   * 같은 응답(비활성)을 받는다. 순서를 뒤집으면 비활성 비운영자만 자격증명 오류로 갈려 차이가 생긴다.
+   * <p>비활성 계정 검사를 롤 검사보다 <b>먼저</b> 두는 이유: 그러면 비활성 계정은 운영자든 아니든 같은 응답(비활성)을 받는다. 순서를 뒤집으면 비활성 비운영자만
+   * 자격증명 오류로 갈려 차이가 생긴다.
    */
   @Transactional
   public PlatformTokenResponse login(LoginRequest request) {
@@ -65,7 +63,9 @@ public class PlatformAuthService {
     UserResponse user =
         userRepository.findByUsername(request.username()).orElseThrow(() -> failed(request));
     String storedPassword =
-        userRepository.findPasswordByUsername(request.username()).orElseThrow(() -> failed(request));
+        userRepository
+            .findPasswordByUsername(request.username())
+            .orElseThrow(() -> failed(request));
 
     if (!passwordEncoder.matches(request.password(), storedPassword)) {
       throw failed(request);
@@ -85,10 +85,9 @@ public class PlatformAuthService {
   /**
    * 운영자 토큰 갱신.
    *
-   * <p>세 가지를 검사한다: (1) <b>평면</b> — 테넌트 리프레시 토큰으로는 플랫폼 토큰을 받을 수 없다.
-   * 이것이 없으면 일반 사용자가 자기 리프레시 토큰으로 운영자 평면에 올라서는 승격 경로가 생긴다.
-   * (2) 재사용 탐지와 폐기 여부(테넌트 평면과 동일한 기계). (3) <b>롤 재검증</b> — 운영자에서 내려온
-   * 사용자는 갱신 시점에 끊긴다. 액세스 토큰 만료(30분)까지는 지연 반영되며, 그것이 의도된 절충이다.
+   * <p>세 가지를 검사한다: (1) <b>평면</b> — 테넌트 리프레시 토큰으로는 플랫폼 토큰을 받을 수 없다. 이것이 없으면 일반 사용자가 자기 리프레시 토큰으로 운영자
+   * 평면에 올라서는 승격 경로가 생긴다. (2) 재사용 탐지와 폐기 여부(테넌트 평면과 동일한 기계). (3) <b>롤 재검증</b> — 운영자에서 내려온 사용자는 갱신
+   * 시점에 끊긴다. 액세스 토큰 만료(30분)까지는 지연 반영되며, 그것이 의도된 절충이다.
    */
   @Transactional
   public PlatformTokenResponse refresh(String rawRefreshToken) {
@@ -122,15 +121,13 @@ public class PlatformAuthService {
   /**
    * 운영자 로그아웃. 제시된 리프레시 토큰의 <b>패밀리만</b> 폐기한다.
    *
-   * <p>{@code revokeAllByUserId} 를 쓰지 않는 이유: {@code refresh_token} 은 전역 테이블이고 평면
-   * 컬럼이 없어서 사용자 단위 폐기는 <b>평면을 가리지 않는다</b>. 운영자이면서 일반 사용자인 계정이
-   * 운영자 콘솔에서 로그아웃하면 firehub-web 세션까지 끊긴다 — 쿠키 이름과 path 를 평면별로 분리해
-   * "서로의 세션을 끊지 않게" 만든 것을 로그아웃이 되돌리는 셈이다. 패밀리 단위 폐기는 회전 체인이
-   * 로그인마다 새로 시작되므로 정확히 이 콘솔 세션만 끊는다.
+   * <p>{@code revokeAllByUserId} 를 쓰지 않는 이유: {@code refresh_token} 은 전역 테이블이고 평면 컬럼이 없어서 사용자 단위 폐기는
+   * <b>평면을 가리지 않는다</b>. 운영자이면서 일반 사용자인 계정이 운영자 콘솔에서 로그아웃하면 firehub-web 세션까지 끊긴다 — 쿠키 이름과 path 를
+   * 평면별로 분리해 "서로의 세션을 끊지 않게" 만든 것을 로그아웃이 되돌리는 셈이다. 패밀리 단위 폐기는 회전 체인이 로그인마다 새로 시작되므로 정확히 이 콘솔 세션만
+   * 끊는다.
    *
-   * <p>쿠키가 없으면 서버 측에 끊을 세션이 특정되지 않으므로 아무것도 폐기하지 않는다(컨트롤러가
-   * 쿠키를 지우고, 액세스 토큰은 만료로 사라진다). 평면별 전체 로그아웃이 필요해지면
-   * {@code refresh_token} 에 평면 컬럼이 필요하다 — P7-b/c 백로그.
+   * <p>쿠키가 없으면 서버 측에 끊을 세션이 특정되지 않으므로 아무것도 폐기하지 않는다(컨트롤러가 쿠키를 지우고, 액세스 토큰은 만료로 사라진다). 평면별 전체 로그아웃이
+   * 필요해지면 {@code refresh_token} 에 평면 컬럼이 필요하다 — P7-b/c 백로그.
    */
   @Transactional
   public void logout(String rawRefreshToken) {

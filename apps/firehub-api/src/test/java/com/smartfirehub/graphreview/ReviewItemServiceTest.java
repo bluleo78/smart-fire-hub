@@ -11,12 +11,12 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartfirehub.document.repository.DocumentChunkRepository;
 import com.smartfirehub.graphreview.dto.EntityRelationRef;
 import com.smartfirehub.graphreview.dto.ReviewItemRecord;
 import com.smartfirehub.graphreview.repository.ReviewItemRepository;
 import com.smartfirehub.graphreview.service.GraphMutationClient;
 import com.smartfirehub.graphreview.service.ReviewItemService;
-import com.smartfirehub.document.repository.DocumentChunkRepository;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -45,8 +45,15 @@ class ReviewItemServiceTest {
   void recordPendingSynonym_ordersNamesByNormalizedComparison() {
     // "분전반의 누전" > "전기적 요인" (정규화 사전순) → nameA/nameB가 정렬되어 payload/dedupe에 반영.
     service.recordPendingSynonym("Cause", "분전반의 누전", "전기적 요인", 0.7, "동의어", null, null);
-    verify(repo).upsertPending(eq("synonym_merge"), any(), eq(null), eq("similarity"), eq(0.7), eq("동의어"),
-        argThatContainsBoth());
+    verify(repo)
+        .upsertPending(
+            eq("synonym_merge"),
+            any(),
+            eq(null),
+            eq("similarity"),
+            eq(0.7),
+            eq("동의어"),
+            argThatContainsBoth());
   }
 
   @Test
@@ -57,15 +64,33 @@ class ReviewItemServiceTest {
 
     // 실제 서비스가 기록한 payload를 캡처 — 손으로 만든 payload가 아니라 recordPendingSynonym이
     // 진짜로 sourceChunkIds를 직렬화했는지, datasetId를 그대로 전달했는지를 검증한다.
-    service.recordPendingSynonym("Cause", "전기적 요인", "분전반의 누전", 0.7, "동의어", datasetId, List.of(chunkId));
+    service.recordPendingSynonym(
+        "Cause", "전기적 요인", "분전반의 누전", 0.7, "동의어", datasetId, List.of(chunkId));
 
     ArgumentCaptor<String> payloadCaptor = ArgumentCaptor.forClass(String.class);
-    verify(repo).upsertPending(eq("synonym_merge"), any(), eq(datasetId), eq("similarity"), eq(0.7), eq("동의어"),
-        payloadCaptor.capture());
+    verify(repo)
+        .upsertPending(
+            eq("synonym_merge"),
+            any(),
+            eq(datasetId),
+            eq("similarity"),
+            eq(0.7),
+            eq("동의어"),
+            payloadCaptor.capture());
 
-    ReviewItemRecord persisted = new ReviewItemRecord(
-        1L, "synonym_merge", "pending", datasetId, "similarity", 0.7, "동의어",
-        payloadCaptor.getValue(), null, null, LocalDateTime.now());
+    ReviewItemRecord persisted =
+        new ReviewItemRecord(
+            1L,
+            "synonym_merge",
+            "pending",
+            datasetId,
+            "similarity",
+            0.7,
+            "동의어",
+            payloadCaptor.getValue(),
+            null,
+            null,
+            LocalDateTime.now());
     when(repo.findById(1L)).thenReturn(Optional.of(persisted));
     when(chunkRepository.findChunkContentsByDataset(datasetId))
         .thenReturn(List.of(new DocumentChunkRepository.ChunkContent(chunkId, "원문 청크 내용")));
@@ -79,10 +104,23 @@ class ReviewItemServiceTest {
   @DisplayName("datasetId/sourceChunkIds 없이 등록하면 저장되지만 evidence는 빈 배열(신규-only·하위호환)")
   void recordPendingSynonym_noEvidenceWhenNull() {
     service.recordPendingSynonym("Cause", "누전", "합선", 0.7, "동의어", null, null);
-    verify(repo).upsertPending(eq("synonym_merge"), any(), eq(null), eq("similarity"), eq(0.7), eq("동의어"), any());
+    verify(repo)
+        .upsertPending(
+            eq("synonym_merge"), any(), eq(null), eq("similarity"), eq(0.7), eq("동의어"), any());
 
-    ReviewItemRecord persisted = new ReviewItemRecord(
-        2L, "synonym_merge", "pending", null, "similarity", 0.7, "동의어", "{}", null, null, LocalDateTime.now());
+    ReviewItemRecord persisted =
+        new ReviewItemRecord(
+            2L,
+            "synonym_merge",
+            "pending",
+            null,
+            "similarity",
+            0.7,
+            "동의어",
+            "{}",
+            null,
+            null,
+            LocalDateTime.now());
     when(repo.findById(2L)).thenReturn(Optional.of(persisted));
 
     assertThat(service.evidence(2L)).isEmpty();
@@ -90,8 +128,11 @@ class ReviewItemServiceTest {
 
   @Test
   void approve_synonym_callsMergeThenUpdatesStatus() {
-    ReviewItemRecord pending = record("synonym_merge", 99L,
-        "{\"entityType\":\"Cause\",\"nameA\":\"전기적 요인\",\"nameB\":\"분전반의 누전\"}");
+    ReviewItemRecord pending =
+        record(
+            "synonym_merge",
+            99L,
+            "{\"entityType\":\"Cause\",\"nameA\":\"전기적 요인\",\"nameB\":\"분전반의 누전\"}");
     ReviewItemRecord approved = withStatus(pending, "approved");
     when(repo.findById(1L)).thenReturn(Optional.of(pending), Optional.of(approved));
 
@@ -105,8 +146,10 @@ class ReviewItemServiceTest {
   @Test
   @DisplayName("datasetId가 없는 동의어 승인은 ai-agent를 호출하지 않고 거부한다(#678 — 레거시 항목 보호)")
   void approve_synonym_withoutDatasetId_throwsBeforeCallingMutationClient() {
-    ReviewItemRecord pending = record("synonym_merge",
-        "{\"entityType\":\"Cause\",\"nameA\":\"전기적 요인\",\"nameB\":\"분전반의 누전\"}");
+    ReviewItemRecord pending =
+        record(
+            "synonym_merge",
+            "{\"entityType\":\"Cause\",\"nameA\":\"전기적 요인\",\"nameB\":\"분전반의 누전\"}");
     when(repo.findById(8L)).thenReturn(Optional.of(pending));
 
     assertThatThrownBy(() -> service.approve(8L, null, 1L))
@@ -119,14 +162,18 @@ class ReviewItemServiceTest {
   @Test
   void approve_property_requiresCorrectedValue_thenSetsProperty() {
     // datasetId는 PROPERTY도 필수다 — ai-agent가 이 값으로 해소한 온톨로지로 write를 스코프한다.
-    ReviewItemRecord pending = record("property_normalization", 900L,
-        "{\"entityKey\":\"3:화재\",\"propertyName\":\"피해액\",\"dataType\":\"number\"}");
+    ReviewItemRecord pending =
+        record(
+            "property_normalization",
+            900L,
+            "{\"entityKey\":\"3:화재\",\"propertyName\":\"피해액\",\"dataType\":\"number\"}");
     // 항상 pending 반환 — 두 번 호출(throw 경로 + success 경로)에서 모두 pending 상태여야 한다.
     // (호출 순서별 다른 값을 주면 두 번째 approve가 status≠pending으로 오작동)
     when(repo.findById(2L)).thenReturn(Optional.of(pending));
 
     // correctedValue 없으면 거부(400성 예외).
-    assertThatThrownBy(() -> service.approve(2L, null, 1L)).isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> service.approve(2L, null, 1L))
+        .isInstanceOf(IllegalArgumentException.class);
     verify(mutationClient, never()).setProperty(any(), any(), any(), any(), any());
 
     service.approve(2L, "30000000", 1L);
@@ -135,14 +182,15 @@ class ReviewItemServiceTest {
   }
 
   /**
-   * PROPERTY가 datasetId 예외였던 구멍의 회귀 가드. 예전에는 datasetId 없이도 승인이 진행돼
-   * ai-agent가 entityKey만으로 노드를 덮어썼다 — 그 키가 남의 온톨로지 것이어도 막을 수단이 없었다.
-   * 이제는 스코프를 해소할 수 없으므로 그래프를 건드리기 전에 막고, status도 그대로 둔다.
+   * PROPERTY가 datasetId 예외였던 구멍의 회귀 가드. 예전에는 datasetId 없이도 승인이 진행돼 ai-agent가 entityKey만으로 노드를 덮어썼다
+   * — 그 키가 남의 온톨로지 것이어도 막을 수단이 없었다. 이제는 스코프를 해소할 수 없으므로 그래프를 건드리기 전에 막고, status도 그대로 둔다.
    */
   @Test
   void approve_property_withoutDatasetId_isRejectedBeforeMutation() {
-    ReviewItemRecord pending = record("property_normalization",
-        "{\"entityKey\":\"3:화재\",\"propertyName\":\"피해액\",\"dataType\":\"number\"}");
+    ReviewItemRecord pending =
+        record(
+            "property_normalization",
+            "{\"entityKey\":\"3:화재\",\"propertyName\":\"피해액\",\"dataType\":\"number\"}");
     when(repo.findById(21L)).thenReturn(Optional.of(pending));
 
     assertThatThrownBy(() -> service.approve(21L, "30000000", 1L))
@@ -155,7 +203,8 @@ class ReviewItemServiceTest {
   @Test
   void reject_updatesStatusWithoutGraphMutation() {
     ReviewItemRecord pending = record("property_normalization", "{\"entityKey\":\"3:화재\"}");
-    when(repo.findById(3L)).thenReturn(Optional.of(pending), Optional.of(withStatus(pending, "rejected")));
+    when(repo.findById(3L))
+        .thenReturn(Optional.of(pending), Optional.of(withStatus(pending, "rejected")));
 
     service.reject(3L, 1L);
 
@@ -166,24 +215,51 @@ class ReviewItemServiceTest {
 
   @Test
   void approve_alreadyDecided_throws() {
-    when(repo.findById(4L)).thenReturn(Optional.of(withStatus(record("synonym_merge", "{}"), "approved")));
-    assertThatThrownBy(() -> service.approve(4L, null, 1L)).isInstanceOf(IllegalStateException.class);
+    when(repo.findById(4L))
+        .thenReturn(Optional.of(withStatus(record("synonym_merge", "{}"), "approved")));
+    assertThatThrownBy(() -> service.approve(4L, null, 1L))
+        .isInstanceOf(IllegalStateException.class);
   }
 
   @Test
   @DisplayName("엔티티 등록 시 datasetId/sourceChunkIds가 저장되고 evidence가 원문 스니펫을 반환한다")
   void recordPendingEntity_persistsEvidence() {
     long datasetId = 99L, chunkId = 10L;
-    service.recordPendingEntity(datasetId, "Cause", "노후배선", null, List.of(chunkId), 0.3, "추론",
+    service.recordPendingEntity(
+        datasetId,
+        "Cause",
+        "노후배선",
+        null,
+        List.of(chunkId),
+        0.3,
+        "추론",
         List.of(new EntityRelationRef("CAUSED_BY", "out", "3:과부하")));
 
     ArgumentCaptor<String> payloadCaptor = ArgumentCaptor.forClass(String.class);
-    verify(repo).upsertPending(eq("entity_extraction"), any(), eq(datasetId), eq("low_confidence"), eq(0.3), any(),
-        payloadCaptor.capture());
+    verify(repo)
+        .upsertPending(
+            eq("entity_extraction"),
+            any(),
+            eq(datasetId),
+            eq("low_confidence"),
+            eq(0.3),
+            any(),
+            payloadCaptor.capture());
     assertThat(payloadCaptor.getValue()).contains("노후배선").contains("relations").contains("3:과부하");
 
-    ReviewItemRecord persisted = new ReviewItemRecord(1L, "entity_extraction", "pending", datasetId,
-        "low_confidence", 0.3, "추론", payloadCaptor.getValue(), null, null, LocalDateTime.now());
+    ReviewItemRecord persisted =
+        new ReviewItemRecord(
+            1L,
+            "entity_extraction",
+            "pending",
+            datasetId,
+            "low_confidence",
+            0.3,
+            "추론",
+            payloadCaptor.getValue(),
+            null,
+            null,
+            LocalDateTime.now());
     when(repo.findById(1L)).thenReturn(Optional.of(persisted));
     when(chunkRepository.findChunkContentsByDataset(datasetId))
         .thenReturn(List.of(new DocumentChunkRepository.ChunkContent(chunkId, "원문 청크 내용")));
@@ -195,16 +271,28 @@ class ReviewItemServiceTest {
   @Test
   @DisplayName("엔티티 승인 시 addEntity를 호출하고(정정 없음) status를 approved로 갱신한다")
   void approve_entity_callsAddEntity() {
-    ReviewItemRecord pending = new ReviewItemRecord(3L, "entity_extraction", "pending", 99L, "low_confidence", 0.3, "추론",
-        "{\"entityType\":\"Cause\",\"name\":\"노후배선\",\"sourceChunkIds\":[10],"
-        + "\"relations\":[{\"relType\":\"CAUSED_BY\",\"direction\":\"out\",\"otherKey\":\"3:과부하\"}]}",
-        null, null, LocalDateTime.now());
+    ReviewItemRecord pending =
+        new ReviewItemRecord(
+            3L,
+            "entity_extraction",
+            "pending",
+            99L,
+            "low_confidence",
+            0.3,
+            "추론",
+            "{\"entityType\":\"Cause\",\"name\":\"노후배선\",\"sourceChunkIds\":[10],"
+                + "\"relations\":[{\"relType\":\"CAUSED_BY\",\"direction\":\"out\",\"otherKey\":\"3:과부하\"}]}",
+            null,
+            null,
+            LocalDateTime.now());
     when(repo.findById(3L)).thenReturn(Optional.of(pending));
 
     service.approve(3L, null, 1L); // correctedValue 불필요.
 
-    ArgumentCaptor<List<GraphMutationClient.RelationRef>> relCaptor = ArgumentCaptor.forClass(List.class);
-    verify(mutationClient).addEntity(eq("Cause"), eq("노후배선"), any(), eq(List.of(10L)), relCaptor.capture(), eq(99L));
+    ArgumentCaptor<List<GraphMutationClient.RelationRef>> relCaptor =
+        ArgumentCaptor.forClass(List.class);
+    verify(mutationClient)
+        .addEntity(eq("Cause"), eq("노후배선"), any(), eq(List.of(10L)), relCaptor.capture(), eq(99L));
     assertThat(relCaptor.getValue()).hasSize(1);
     assertThat(relCaptor.getValue().get(0).otherKey()).isEqualTo("3:과부하");
     verify(repo).updateStatus(3L, "approved", 1L);
@@ -213,9 +301,19 @@ class ReviewItemServiceTest {
   @Test
   @DisplayName("datasetId가 없는 엔티티 승인은 ai-agent를 호출하지 않고 거부한다(#678 — 레거시 항목 보호)")
   void approve_entity_withoutDatasetId_throwsBeforeCallingMutationClient() {
-    ReviewItemRecord pending = new ReviewItemRecord(9L, "entity_extraction", "pending", null, "low_confidence", 0.3,
-        "추론", "{\"entityType\":\"Cause\",\"name\":\"노후배선\",\"sourceChunkIds\":[10],\"relations\":[]}",
-        null, null, LocalDateTime.now());
+    ReviewItemRecord pending =
+        new ReviewItemRecord(
+            9L,
+            "entity_extraction",
+            "pending",
+            null,
+            "low_confidence",
+            0.3,
+            "추론",
+            "{\"entityType\":\"Cause\",\"name\":\"노후배선\",\"sourceChunkIds\":[10],\"relations\":[]}",
+            null,
+            null,
+            LocalDateTime.now());
     when(repo.findById(9L)).thenReturn(Optional.of(pending));
 
     assertThatThrownBy(() -> service.approve(9L, null, 1L))
@@ -228,7 +326,8 @@ class ReviewItemServiceTest {
   @Test
   @DisplayName("엔티티 lookup은 저장된 결정 상태를 반환한다")
   void lookupEntity_returnsStatus() {
-    when(repo.findDecisionStatus("entity_extraction", "Cause|노후배선")).thenReturn(Optional.of("approved"));
+    when(repo.findDecisionStatus("entity_extraction", "Cause|노후배선"))
+        .thenReturn(Optional.of("approved"));
     assertThat(service.lookupEntity("Cause", "노후배선")).isEqualTo("approved");
     when(repo.findDecisionStatus("entity_extraction", "Cause|미결")).thenReturn(Optional.empty());
     assertThat(service.lookupEntity("Cause", "미결")).isEqualTo("none");
@@ -238,16 +337,34 @@ class ReviewItemServiceTest {
   @DisplayName("관계 등록 시 datasetId/sourceChunkIds가 저장되고 evidence가 원문 스니펫을 반환한다")
   void recordPendingRelation_persistsEvidence() {
     long datasetId = 99L, chunkId = 7L;
-    service.recordPendingRelation(datasetId, "12:누전", "CAUSED_BY", "34:과부하", "누전", "과부하",
-        List.of(chunkId), 0.3, "추론");
+    service.recordPendingRelation(
+        datasetId, "12:누전", "CAUSED_BY", "34:과부하", "누전", "과부하", List.of(chunkId), 0.3, "추론");
 
     ArgumentCaptor<String> payloadCaptor = ArgumentCaptor.forClass(String.class);
-    verify(repo).upsertPending(eq("relation_extraction"), eq("12:누전|CAUSED_BY|34:과부하"),
-        eq(datasetId), eq("low_confidence"), eq(0.3), any(), payloadCaptor.capture());
+    verify(repo)
+        .upsertPending(
+            eq("relation_extraction"),
+            eq("12:누전|CAUSED_BY|34:과부하"),
+            eq(datasetId),
+            eq("low_confidence"),
+            eq(0.3),
+            any(),
+            payloadCaptor.capture());
     assertThat(payloadCaptor.getValue()).contains("누전").contains("과부하").contains("CAUSED_BY");
 
-    ReviewItemRecord persisted = new ReviewItemRecord(1L, "relation_extraction", "pending", datasetId,
-        "low_confidence", 0.3, "추론", payloadCaptor.getValue(), null, null, LocalDateTime.now());
+    ReviewItemRecord persisted =
+        new ReviewItemRecord(
+            1L,
+            "relation_extraction",
+            "pending",
+            datasetId,
+            "low_confidence",
+            0.3,
+            "추론",
+            payloadCaptor.getValue(),
+            null,
+            null,
+            LocalDateTime.now());
     when(repo.findById(1L)).thenReturn(Optional.of(persisted));
     when(chunkRepository.findChunkContentsByDataset(datasetId))
         .thenReturn(List.of(new DocumentChunkRepository.ChunkContent(chunkId, "원문 청크 내용")));
@@ -259,9 +376,19 @@ class ReviewItemServiceTest {
   @Test
   @DisplayName("관계 승인 시 addRelation을 호출하고 status를 approved로 갱신한다")
   void approve_relation_callsAddRelation() {
-    ReviewItemRecord pending = new ReviewItemRecord(4L, "relation_extraction", "pending", 99L, "low_confidence", 0.3, "추론",
-        "{\"subjectKey\":\"12:누전\",\"relType\":\"CAUSED_BY\",\"objectKey\":\"34:과부하\",\"sourceChunkIds\":[7]}",
-        null, null, LocalDateTime.now());
+    ReviewItemRecord pending =
+        new ReviewItemRecord(
+            4L,
+            "relation_extraction",
+            "pending",
+            99L,
+            "low_confidence",
+            0.3,
+            "추론",
+            "{\"subjectKey\":\"12:누전\",\"relType\":\"CAUSED_BY\",\"objectKey\":\"34:과부하\",\"sourceChunkIds\":[7]}",
+            null,
+            null,
+            LocalDateTime.now());
     when(repo.findById(4L)).thenReturn(Optional.of(pending));
 
     service.approve(4L, null, 1L); // correctedValue 불필요.
@@ -273,9 +400,19 @@ class ReviewItemServiceTest {
   @Test
   @DisplayName("datasetId가 없는 관계 승인은 ai-agent를 호출하지 않고 거부한다(#678 — 레거시 항목 보호)")
   void approve_relation_withoutDatasetId_throwsBeforeCallingMutationClient() {
-    ReviewItemRecord pending = new ReviewItemRecord(10L, "relation_extraction", "pending", null, "low_confidence",
-        0.3, "추론", "{\"subjectKey\":\"12:누전\",\"relType\":\"CAUSED_BY\",\"objectKey\":\"34:과부하\",\"sourceChunkIds\":[7]}",
-        null, null, LocalDateTime.now());
+    ReviewItemRecord pending =
+        new ReviewItemRecord(
+            10L,
+            "relation_extraction",
+            "pending",
+            null,
+            "low_confidence",
+            0.3,
+            "추론",
+            "{\"subjectKey\":\"12:누전\",\"relType\":\"CAUSED_BY\",\"objectKey\":\"34:과부하\",\"sourceChunkIds\":[7]}",
+            null,
+            null,
+            LocalDateTime.now());
     when(repo.findById(10L)).thenReturn(Optional.of(pending));
 
     assertThatThrownBy(() -> service.approve(10L, null, 1L))
@@ -288,14 +425,24 @@ class ReviewItemServiceTest {
   @Test
   @DisplayName("끝점 없는 관계 승인은 실패를 전파하고 status를 갱신하지 않아 항목이 pending으로 남는다 (#310)")
   void approve_relation_endpointMissing_keepsPending() {
-    ReviewItemRecord pending = new ReviewItemRecord(5L, "relation_extraction", "pending", 99L, "low_confidence", 0.38,
-        "인과 표현이 약함",
-        "{\"subjectKey\":\"1:2026-001\",\"relType\":\"CAUSED_BY\",\"objectKey\":\"9:없는엔티티\",\"sourceChunkIds\":[18]}",
-        null, null, LocalDateTime.now());
+    ReviewItemRecord pending =
+        new ReviewItemRecord(
+            5L,
+            "relation_extraction",
+            "pending",
+            99L,
+            "low_confidence",
+            0.38,
+            "인과 표현이 약함",
+            "{\"subjectKey\":\"1:2026-001\",\"relType\":\"CAUSED_BY\",\"objectKey\":\"9:없는엔티티\",\"sourceChunkIds\":[18]}",
+            null,
+            null,
+            LocalDateTime.now());
     when(repo.findById(5L)).thenReturn(Optional.of(pending));
     // ai-agent가 409를 주면 GraphMutationClient가 사유를 담은 IllegalStateException으로 바꿔 던진다.
     Mockito.doThrow(new IllegalStateException("주어/목적어 엔티티가 그래프에 없어 관계를 적재할 수 없습니다."))
-        .when(mutationClient).addRelation(any(), any(), any(), any(), any());
+        .when(mutationClient)
+        .addRelation(any(), any(), any(), any(), any());
 
     // 무음 유실 방지: 그래프에 아무 것도 안 들어갔으면 승인도 실패해야 한다.
     assertThatThrownBy(() -> service.approve(5L, null, 1L))
@@ -307,34 +454,62 @@ class ReviewItemServiceTest {
   @Test
   @DisplayName("병합 대상 없는 동의어 승인도 status를 갱신하지 않는다 (#310)")
   void approve_synonym_targetMissing_keepsPending() {
-    when(repo.findById(6L)).thenReturn(Optional.of(new ReviewItemRecord(6L, "synonym_merge", "pending", 99L,
-        "similarity", 0.7, "동의어", "{\"entityType\":\"Cause\",\"nameA\":\"누전\",\"nameB\":\"분전반 누전\"}",
-        null, null, LocalDateTime.now())));
+    when(repo.findById(6L))
+        .thenReturn(
+            Optional.of(
+                new ReviewItemRecord(
+                    6L,
+                    "synonym_merge",
+                    "pending",
+                    99L,
+                    "similarity",
+                    0.7,
+                    "동의어",
+                    "{\"entityType\":\"Cause\",\"nameA\":\"누전\",\"nameB\":\"분전반 누전\"}",
+                    null,
+                    null,
+                    LocalDateTime.now())));
     Mockito.doThrow(new IllegalStateException("병합할 엔티티가 그래프에 없어 동의어를 병합할 수 없습니다."))
-        .when(mutationClient).mergeEntities(any(), any(), any(), any());
+        .when(mutationClient)
+        .mergeEntities(any(), any(), any(), any());
 
-    assertThatThrownBy(() -> service.approve(6L, null, 1L)).isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(() -> service.approve(6L, null, 1L))
+        .isInstanceOf(IllegalStateException.class);
     verify(repo, never()).updateStatus(eq(6L), anyString(), anyLong());
   }
 
   @Test
   @DisplayName("대상 노드 없는 속성 정정 승인도 status를 갱신하지 않는다 (#310)")
   void approve_property_targetMissing_keepsPending() {
-    when(repo.findById(7L)).thenReturn(Optional.of(new ReviewItemRecord(7L, "property_normalization", "pending", 99L,
-        "normalization_failure", null, "정규화 실패",
-        "{\"entityKey\":\"3:없는엔티티\",\"propertyName\":\"피해액\",\"dataType\":\"number\"}",
-        null, null, LocalDateTime.now())));
+    when(repo.findById(7L))
+        .thenReturn(
+            Optional.of(
+                new ReviewItemRecord(
+                    7L,
+                    "property_normalization",
+                    "pending",
+                    99L,
+                    "normalization_failure",
+                    null,
+                    "정규화 실패",
+                    "{\"entityKey\":\"3:없는엔티티\",\"propertyName\":\"피해액\",\"dataType\":\"number\"}",
+                    null,
+                    null,
+                    LocalDateTime.now())));
     Mockito.doThrow(new IllegalStateException("대상 엔티티가 그래프에 없어 속성을 정정할 수 없습니다."))
-        .when(mutationClient).setProperty(any(), any(), any(), any(), any());
+        .when(mutationClient)
+        .setProperty(any(), any(), any(), any(), any());
 
-    assertThatThrownBy(() -> service.approve(7L, "30000000", 1L)).isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(() -> service.approve(7L, "30000000", 1L))
+        .isInstanceOf(IllegalStateException.class);
     verify(repo, never()).updateStatus(eq(7L), anyString(), anyLong());
   }
 
   @Test
   @DisplayName("관계 lookup은 저장된 결정 상태를 반환한다(opaque key 그대로)")
   void lookupRelation_returnsStatus() {
-    when(repo.findDecisionStatus("relation_extraction", "12:누전|CAUSED_BY|34:과부하")).thenReturn(Optional.of("rejected"));
+    when(repo.findDecisionStatus("relation_extraction", "12:누전|CAUSED_BY|34:과부하"))
+        .thenReturn(Optional.of("rejected"));
     assertThat(service.lookupRelation("12:누전", "CAUSED_BY", "34:과부하")).isEqualTo("rejected");
     when(repo.findDecisionStatus("relation_extraction", "a|R|b")).thenReturn(Optional.empty());
     assertThat(service.lookupRelation("a", "R", "b")).isEqualTo("none");
@@ -409,17 +584,53 @@ class ReviewItemServiceTest {
 
   // --- helpers ---
   private static ReviewItemRecord record(String itemType, String payloadJson) {
-    return new ReviewItemRecord(1L, itemType, "pending", null, null, null, null, payloadJson, null, null, LocalDateTime.now());
+    return new ReviewItemRecord(
+        1L,
+        itemType,
+        "pending",
+        null,
+        null,
+        null,
+        null,
+        payloadJson,
+        null,
+        null,
+        LocalDateTime.now());
   }
+
   private static ReviewItemRecord record(String itemType, long datasetId, String payloadJson) {
-    return new ReviewItemRecord(1L, itemType, "pending", datasetId, null, null, null, payloadJson, null, null, LocalDateTime.now());
+    return new ReviewItemRecord(
+        1L,
+        itemType,
+        "pending",
+        datasetId,
+        null,
+        null,
+        null,
+        payloadJson,
+        null,
+        null,
+        LocalDateTime.now());
   }
+
   private static ReviewItemRecord withStatus(ReviewItemRecord r, String status) {
-    return new ReviewItemRecord(r.id(), r.itemType(), status, r.datasetId(), r.signalType(), r.signalScore(),
-        r.reason(), r.payloadJson(), 1L, LocalDateTime.now(), r.createdAt());
+    return new ReviewItemRecord(
+        r.id(),
+        r.itemType(),
+        status,
+        r.datasetId(),
+        r.signalType(),
+        r.signalScore(),
+        r.reason(),
+        r.payloadJson(),
+        1L,
+        LocalDateTime.now(),
+        r.createdAt());
   }
+
   // payload가 두 이름을 모두 포함하는지 확인하는 Mockito matcher.
   private static String argThatContainsBoth() {
-    return org.mockito.ArgumentMatchers.argThat(s -> s != null && s.contains("전기적 요인") && s.contains("분전반의 누전"));
+    return org.mockito.ArgumentMatchers.argThat(
+        s -> s != null && s.contains("전기적 요인") && s.contains("분전반의 누전"));
   }
 }

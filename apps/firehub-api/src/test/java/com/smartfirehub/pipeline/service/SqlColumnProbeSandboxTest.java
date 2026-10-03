@@ -21,16 +21,15 @@ import org.springframework.beans.factory.annotation.Value;
 /**
  * {@link SqlColumnProbe} 가 <b>테넌트별 파이프라인 롤</b>로 probe 쿼리를 던지는지 실측한다.
  *
- * <p><b>이 테스트가 막는 회귀(실제 장애).</b> P3-b2 가 스키마를 {@code data_t{id}} 로 분리할 때 실행
- * 경로({@code SqlScriptExecutor})만 테넌트 롤로 옮기고 probe 경로는 공용 {@code pipeline_executor} 에
- * 남겨 뒀다. 그 롤은 {@code data} 에만 USAGE 가 있어서, 테넌트 2의 파이프라인이 운영에서 이렇게 터졌다:
+ * <p><b>이 테스트가 막는 회귀(실제 장애).</b> P3-b2 가 스키마를 {@code data_t{id}} 로 분리할 때 실행 경로({@code
+ * SqlScriptExecutor})만 테넌트 롤로 옮기고 probe 경로는 공용 {@code pipeline_executor} 에 남겨 뒀다. 그 롤은 {@code data}
+ * 에만 USAGE 가 있어서, 테넌트 2의 파이프라인이 운영에서 이렇게 터졌다:
  *
  * <pre>SQL 컬럼 타입 분석 실패: ERROR: permission denied for schema data_t2</pre>
  *
- * <p><b>왜 테넌트 1로는 이 결함을 잡을 수 없는가.</b> 테넌트 1의 스키마는 {@code data} 이고 공용 롤이
- * 거기에 USAGE 를 갖고 있어, 잘못된 배선으로도 probe 가 성공한다. 그래서 반드시 접미사 테넌트
- * ({@code data_t{id}})로 검증한다 — {@code SqlScriptExecutorSandboxTest} 의 접미사 테넌트 테스트와 같은
- * 근거다.
+ * <p><b>왜 테넌트 1로는 이 결함을 잡을 수 없는가.</b> 테넌트 1의 스키마는 {@code data} 이고 공용 롤이 거기에 USAGE 를 갖고 있어, 잘못된
+ * 배선으로도 probe 가 성공한다. 그래서 반드시 접미사 테넌트 ({@code data_t{id}})로 검증한다 — {@code
+ * SqlScriptExecutorSandboxTest} 의 접미사 테넌트 테스트와 같은 근거다.
  */
 class SqlColumnProbeSandboxTest extends IntegrationTestBase {
 
@@ -48,7 +47,8 @@ class SqlColumnProbeSandboxTest extends IntegrationTestBase {
   @Value("${app.pipeline.role-password-secret}")
   private String rolePasswordSecret;
 
-  private static final long TENANT_BASE = TenantRlsTestSupport.randomSchemaProvisioningTenantIdBase();
+  private static final long TENANT_BASE =
+      TenantRlsTestSupport.randomSchemaProvisioningTenantIdBase();
 
   private DSLContext ownerDsl() {
     return DSL.using(schemaOwnerDataSource, SQLDialect.POSTGRES);
@@ -89,8 +89,7 @@ class SqlColumnProbeSandboxTest extends IntegrationTestBase {
           TenantContext.runScopedGet(
               tenantId,
               () ->
-                  sqlColumnProbe.columnsWithTypes(
-                      "SELECT post_id, title, hit FROM " + probeTable));
+                  sqlColumnProbe.columnsWithTypes("SELECT post_id, title, hit FROM " + probeTable));
 
       assertThat(columns)
           .as("테넌트 롤로 접속해야 접미사 스키마의 컬럼을 읽을 수 있다")

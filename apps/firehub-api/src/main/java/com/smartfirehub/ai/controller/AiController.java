@@ -22,11 +22,10 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 public class AiController {
 
   /**
-   * opencode 자격증명 유형에 대한 인증 상태 응답. opencode 는 Anthropic 인증 개념이 없다 —
-   * {@code Opencode.apiKey} 는 OpenAI 호환 키라 {@link AiAgentProxyService#verifyApiKey()}(Anthropic
-   * 키 검증 엔드포인트)로 보내면 안 된다. ai-agent 를 아예 부르지 않고 "해당 없음"을 바로
-   * 응답한다. web 은 Task 11 에서 opencode 일 때 이 배지/버튼 자체를 숨긴다 — {@code applicable}
-   * 필드는 그 화면 분기가 참고할 계약이다.
+   * opencode 자격증명 유형에 대한 인증 상태 응답. opencode 는 Anthropic 인증 개념이 없다 — {@code Opencode.apiKey} 는
+   * OpenAI 호환 키라 {@link AiAgentProxyService#verifyApiKey()}(Anthropic 키 검증 엔드포인트)로 보내면 안 된다.
+   * ai-agent 를 아예 부르지 않고 "해당 없음"을 바로 응답한다. web 은 Task 11 에서 opencode 일 때 이 배지/버튼 자체를 숨긴다 — {@code
+   * applicable} 필드는 그 화면 분기가 참고할 계약이다.
    */
   private static final String NOT_APPLICABLE_AUTH_STATUS = "{\"valid\":false,\"applicable\":false}";
 

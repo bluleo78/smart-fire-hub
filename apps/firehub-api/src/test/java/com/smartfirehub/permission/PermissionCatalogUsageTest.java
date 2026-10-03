@@ -20,26 +20,24 @@ import org.springframework.beans.factory.annotation.Autowired;
 /**
  * 권한 카탈로그(DB)와 실제 사용처(소스)를 대조한다.
  *
- * <p><b>왜 이 테스트가 있는가</b>: "코드가 요구하지 않는 권한이 롤에 부여된 채 남는" 결함이
- * <b>재발하는 부류</b>다. V116 이 {@code settings:write} 를, V117 이 {@code user:delete} 와
- * {@code user:read:self} 를 지웠다 — 셋 다 같은 모양이었고, 셋 다 사람이 우연히 발견했다.
+ * <p><b>왜 이 테스트가 있는가</b>: "코드가 요구하지 않는 권한이 롤에 부여된 채 남는" 결함이 <b>재발하는 부류</b>다. V116 이 {@code
+ * settings:write} 를, V117 이 {@code user:delete} 와 {@code user:read:self} 를 지웠다 — 셋 다 같은 모양이었고, 셋 다
+ * 사람이 우연히 발견했다.
  *
- * <p>위험은 "안 쓰는 행이 있다"가 아니라 <b>부여 행이 살아 있다는 것</b>이다. 전 테넌트의 ADMIN
- * 롤이 이미 그 권한을 갖고 있으므로, 누군가 나중에 그 코드로 {@code @RequirePermission} 을 한 줄
- * 붙이면 <b>아무도 권한을 부여하지 않았는데 즉시 열린다.</b> 권한 이름이 그 동작에 맞아 보일수록
- * 그 한 줄은 자연스러워 보인다.
+ * <p>위험은 "안 쓰는 행이 있다"가 아니라 <b>부여 행이 살아 있다는 것</b>이다. 전 테넌트의 ADMIN 롤이 이미 그 권한을 갖고 있으므로, 누군가 나중에 그 코드로
+ * {@code @RequirePermission} 을 한 줄 붙이면 <b>아무도 권한을 부여하지 않았는데 즉시 열린다.</b> 권한 이름이 그 동작에 맞아 보일수록 그 한 줄은
+ * 자연스러워 보인다.
  *
- * <p><b>왜 권한마다 트립와이어를 늘리지 않는가</b>: 그것은 이미 아는 인스턴스만 막는다. 이
- * 테스트는 <b>부류</b>를 막는다 — 새 권한을 시드하면서 쓰는 곳을 만들지 않으면 여기서 걸린다.
+ * <p><b>왜 권한마다 트립와이어를 늘리지 않는가</b>: 그것은 이미 아는 인스턴스만 막는다. 이 테스트는 <b>부류</b>를 막는다 — 새 권한을 시드하면서 쓰는 곳을
+ * 만들지 않으면 여기서 걸린다.
  */
 class PermissionCatalogUsageTest extends IntegrationTestBase {
 
   @Autowired private DSLContext dsl;
 
   /**
-   * 소스에서 권한 코드처럼 보이는 문자열 리터럴. {@code @RequirePermission("x:y")} 뿐 아니라
-   * {@code hasPermission("x:y")} 같은 다른 호출 형태도 함께 잡으려고 애너테이션이 아니라
-   * <b>리터럴</b>을 센다 — 게이팅 방법이 늘어도 이 테스트가 따라갈 필요가 없다.
+   * 소스에서 권한 코드처럼 보이는 문자열 리터럴. {@code @RequirePermission("x:y")} 뿐 아니라 {@code hasPermission("x:y")}
+   * 같은 다른 호출 형태도 함께 잡으려고 애너테이션이 아니라 <b>리터럴</b>을 센다 — 게이팅 방법이 늘어도 이 테스트가 따라갈 필요가 없다.
    */
   private static final Pattern PERMISSION_LITERAL =
       Pattern.compile("\"([a-z][a-z_]*(?::[a-z_]+)+)\"");
@@ -47,9 +45,8 @@ class PermissionCatalogUsageTest extends IntegrationTestBase {
   /**
    * 코드 참조 없이 카탈로그에 남아 있어도 되는 권한. <b>비어 있는 것이 정상이다.</b>
    *
-   * <p>여기에 무언가를 넣는 것은 "이 권한은 코드가 안 쓰는데 남긴다"는 선언이므로, 넣을 때는
-   * 왜 남기는지와 언제 없앨 수 있는지를 함께 적어라. 근거 없이 추가하면 이 테스트는 다시
-   * 사람의 주의에 의존하는 장식이 된다.
+   * <p>여기에 무언가를 넣는 것은 "이 권한은 코드가 안 쓰는데 남긴다"는 선언이므로, 넣을 때는 왜 남기는지와 언제 없앨 수 있는지를 함께 적어라. 근거 없이 추가하면 이
+   * 테스트는 다시 사람의 주의에 의존하는 장식이 된다.
    */
   private static final Set<String> ALLOWED_UNREFERENCED =
       Set.of(

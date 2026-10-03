@@ -264,17 +264,15 @@ public class ProactiveJobService {
   }
 
   /**
-   * 알림 수신자 후보 검색. <b>현재 테넌트 멤버만</b> 나온다 — {@code "user"} 는 전역 테이블이라 RLS
-   * 가 걸러 주지 못하므로, 좁히지 않으면 이 피커가 다른 테넌트 사용자의 이름·이메일을 그대로
-   * 노출한다.
+   * 알림 수신자 후보 검색. <b>현재 테넌트 멤버만</b> 나온다 — {@code "user"} 는 전역 테이블이라 RLS 가 걸러 주지 못하므로, 좁히지 않으면 이 피커가
+   * 다른 테넌트 사용자의 이름·이메일을 그대로 노출한다.
    */
   @Transactional(readOnly = true)
   /**
    * 알림 수신자 검색/조회.
    *
-   * <p>{@code userIds}가 주어지면 검색어를 무시하고 해당 ID들의 사용자 정보를 그대로 반환한다
-   * (#555) — 저장된 채널 수신자를 편집 화면 재오픈 시 이름/이메일로 복원하는 용도. 검색 없이
-   * 벌크 조회이므로 20건 제한을 두지 않는다.
+   * <p>{@code userIds}가 주어지면 검색어를 무시하고 해당 ID들의 사용자 정보를 그대로 반환한다 (#555) — 저장된 채널 수신자를 편집 화면 재오픈 시
+   * 이름/이메일로 복원하는 용도. 검색 없이 벌크 조회이므로 20건 제한을 두지 않는다.
    */
   public List<RecipientResponse> searchRecipients(String search, List<Long> userIds) {
     long tenantId = TenantContext.require("알림 수신자 검색");

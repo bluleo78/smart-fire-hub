@@ -17,14 +17,13 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * 운영자 평면 전역 계정 관리(#784) — {@code user.is_active} 를 바꾼다.
  *
- * <p>WD-2 이후 테넌트 화면의 활성 스위치는 "그 워크스페이스 멤버십 정지" 라 전역 계정을 잠글 수단이 없었다. 이
- * 서비스가 그 수단이다. 효과:
+ * <p>WD-2 이후 테넌트 화면의 활성 스위치는 "그 워크스페이스 멤버십 정지" 라 전역 계정을 잠글 수단이 없었다. 이 서비스가 그 수단이다. 효과:
  *
  * <ul>
  *   <li>로그인·refresh·워크스페이스 선택: 이미 {@code isActive} 를 검사한다(AuthService·PlatformAuthService).
  *   <li>refresh 세션: 비활성화 시 전부 폐기한다 — 재활성화해도 옛 세션은 살아나지 않고 다시 로그인해야 한다.
- *   <li>권한: 테넌트 권한 조회가 user 활성 조인을 하므로(PermissionRepository) 권한 필요 API 는 즉시 403. 권한
- *       표시가 없는 API 는 access token 만료(최대 30분)까지 열린다.
+ *   <li>권한: 테넌트 권한 조회가 user 활성 조인을 하므로(PermissionRepository) 권한 필요 API 는 즉시 403. 권한 표시가 없는 API 는
+ *       access token 만료(최대 30분)까지 열린다.
  * </ul>
  */
 @Service
@@ -47,9 +46,8 @@ public class PlatformAccountService {
   /**
    * 전역 계정 비활성화.
    *
-   * <p>잠금 방지: 자기 자신(400) → 운영자 계정(409). 운영자 계정을 통째로 막으면 자기 잠금과 "운영자 둘이 서로를
-   * 동시에 비활성화해 0 명" 경합이 함께 사라진다(잠금이 필요 없다). 운영자 해임은 이 기능 범위 밖이다.
-   * 이미 비활성이면 무동작(감사 로그 없음) — 같은 요청 재전송이 감사 로그를 부풀리지 않게 한다.
+   * <p>잠금 방지: 자기 자신(400) → 운영자 계정(409). 운영자 계정을 통째로 막으면 자기 잠금과 "운영자 둘이 서로를 동시에 비활성화해 0 명" 경합이 함께
+   * 사라진다(잠금이 필요 없다). 운영자 해임은 이 기능 범위 밖이다. 이미 비활성이면 무동작(감사 로그 없음) — 같은 요청 재전송이 감사 로그를 부풀리지 않게 한다.
    */
   @Transactional
   public void deactivate(long targetUserId, long operatorId) {
@@ -87,8 +85,8 @@ public class PlatformAccountService {
   }
 
   /**
-   * 감사 로그. 운영자 요청에는 테넌트 GUC 가 없으므로 audit_log.tenant_id 는 DEFAULT 로 NULL 이 된다(로그인 이벤트와
-   * 같은 형태, V97/V99). 어느 테넌트 감사 화면에도 보이지 않는 플랫폼 이벤트로 남는다.
+   * 감사 로그. 운영자 요청에는 테넌트 GUC 가 없으므로 audit_log.tenant_id 는 DEFAULT 로 NULL 이 된다(로그인 이벤트와 같은 형태,
+   * V97/V99). 어느 테넌트 감사 화면에도 보이지 않는 플랫폼 이벤트로 남는다.
    */
   private void audit(long operatorId, String action, UserResponse target, String description) {
     String operatorName =

@@ -104,12 +104,11 @@ class PermissionServiceTest extends IntegrationTestBase {
    *
    * <p>V74 의 ontology:write 까지 39개였고, V82(멀티 테넌시 P1)가 플랫폼 운영자 평면 권한 4개
    * (platform:tenant:create|read|suspend, platform:member:read)를 추가해 43개, V113(P7-a)이
-   * platform:settings:read|write 를 추가해 45개가 되었다. V116(P7-c2b)이 아무 라우트도
-   * 게이팅하지 않는 고아 권한 'settings:write' 를 제거해 44개 — 그 권한이 정말
-   * 사라졌는지는 MultiTenancyMigrationTest#orphanSettingsWritePermissionIsGone 이 코드로 직접
-   * 단언한다. V117 이 고아 'user:delete'·'user:read:self' 를 지워 42개, V131(#713)이 게이팅하던
-   * PlatformSettingsController 삭제에 맞춰 platform:settings:read|write 를 지워 <b>40개</b>다
-   * (삭제는 EmbeddingVectorTablesMigrationTest 가 단언한다).
+   * platform:settings:read|write 를 추가해 45개가 되었다. V116(P7-c2b)이 아무 라우트도 게이팅하지 않는 고아 권한
+   * 'settings:write' 를 제거해 44개 — 그 권한이 정말 사라졌는지는
+   * MultiTenancyMigrationTest#orphanSettingsWritePermissionIsGone 이 코드로 직접 단언한다. V117 이 고아
+   * 'user:delete'·'user:read:self' 를 지워 42개, V131(#713)이 게이팅하던 PlatformSettingsController 삭제에 맞춰
+   * platform:settings:read|write 를 지워 <b>40개</b>다 (삭제는 EmbeddingVectorTablesMigrationTest 가 단언한다).
    * 카운트만 단언하면 시딩이 깨져도 개수만 맞으면 통과하므로 신규 코드 존재도 함께 단언한다.
    */
   @Test
@@ -160,16 +159,16 @@ class PermissionServiceTest extends IntegrationTestBase {
   /**
    * "user" 카테고리 권한 3개(user:read, user:write, user:write:self)가 반환되어야 한다.
    *
-   * <p>V117 이 {@code user:delete} 와 {@code user:read:self} 를 지워 5개에서 3개가 됐다. 둘 다
-   * 코드가 요구하지 않는 고아였다 — 삭제 라우트는 존재하지 않고(활성 전환은 {@code user:write}),
-   * {@code GET /users/me} 는 권한 게이트가 없다. <b>코드까지 단언하는 이유</b>: 개수만 세면
-   * 누군가 고아를 되살리면서 다른 하나를 지워도 통과한다.
+   * <p>V117 이 {@code user:delete} 와 {@code user:read:self} 를 지워 5개에서 3개가 됐다. 둘 다 코드가 요구하지 않는 고아였다 —
+   * 삭제 라우트는 존재하지 않고(활성 전환은 {@code user:write}), {@code GET /users/me} 는 권한 게이트가 없다. <b>코드까지 단언하는
+   * 이유</b>: 개수만 세면 누군가 고아를 되살리면서 다른 하나를 지워도 통과한다.
    */
   @Test
   void getPermissionsByCategory_userCategory_returns3Permissions() {
     List<PermissionResponse> result = permissionService.getPermissionsByCategory("user");
 
-    assertThat(result).extracting(PermissionResponse::code)
+    assertThat(result)
+        .extracting(PermissionResponse::code)
         .containsExactlyInAnyOrder("user:read", "user:write", "user:write:self");
     assertThat(result).extracting(PermissionResponse::category).containsOnly("user");
   }
@@ -240,10 +239,9 @@ class PermissionServiceTest extends IntegrationTestBase {
   /**
    * USER 역할(id=2)을 가진 사용자는 USER 역할에 할당된 권한만 반환해야 한다.
    *
-   * <p><b>여기서 {@code user:delete} 를 부재 목록에 두지 않는다.</b> V117 이 그 권한을 카탈로그에서
-   * 지웠으므로, 부재 단언에 남겨 두면 <b>어떤 롤에도 없는 코드</b>를 검사하는 셈이 되어 조용히
-   * 공허해진다(무슨 짓을 해도 통과한다). 부재를 단언할 대상은 <b>실재하면서 이 롤에는 없어야
-   * 하는</b> 권한이어야 한다 — {@code role:delete}·{@code dataset:delete} 가 그렇다.
+   * <p><b>여기서 {@code user:delete} 를 부재 목록에 두지 않는다.</b> V117 이 그 권한을 카탈로그에서 지웠으므로, 부재 단언에 남겨 두면
+   * <b>어떤 롤에도 없는 코드</b>를 검사하는 셈이 되어 조용히 공허해진다(무슨 짓을 해도 통과한다). 부재를 단언할 대상은 <b>실재하면서 이 롤에는 없어야 하는</b>
+   * 권한이어야 한다 — {@code role:delete}·{@code dataset:delete} 가 그렇다.
    */
   @Test
   void getUserPermissions_userRole_returnsUserRolePermissions() {

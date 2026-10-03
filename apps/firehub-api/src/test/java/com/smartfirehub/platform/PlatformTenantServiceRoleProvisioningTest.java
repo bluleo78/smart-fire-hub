@@ -29,10 +29,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
 /**
  * 테넌트 생성이 <b>파이프라인 실행 롤까지 만들고 끝나는지</b> 고정한다(#680).
  *
- * <p>DB 없이 배선만 본다 — 롤이 실제로 접속 가능해지는지는 {@code TenantPipelineRoleProvisionerTest}
- * 가 살아있는 DB 로 확인한다. 여기서 막으려는 회귀는 "프로비저너 호출 한 줄이 사라지는 것"이고,
- * 그 회귀는 통합 테스트로는 안 잡힌다 — test 프로필은 자동 프로비저닝이 꺼져 있어 호출이 있든
- * 없든 롤이 생기지 않기 때문이다.
+ * <p>DB 없이 배선만 본다 — 롤이 실제로 접속 가능해지는지는 {@code TenantPipelineRoleProvisionerTest} 가 살아있는 DB 로 확인한다.
+ * 여기서 막으려는 회귀는 "프로비저너 호출 한 줄이 사라지는 것"이고, 그 회귀는 통합 테스트로는 안 잡힌다 — test 프로필은 자동 프로비저닝이 꺼져 있어 호출이 있든 없든
+ * 롤이 생기지 않기 때문이다.
  */
 @ExtendWith(MockitoExtension.class)
 class PlatformTenantServiceRoleProvisioningTest {
@@ -76,10 +75,9 @@ class PlatformTenantServiceRoleProvisioningTest {
   }
 
   /**
-   * 롤 생성이 실패하면 예외가 그대로 전파돼야 한다 — 삼키면 "행은 있고 롤은 없는" 테넌트 2와
-   * 똑같은 상태가 트랜잭션 커밋과 함께 확정된다. 전파되면 프로비저너 자신의 트랜잭션도, 이
-   * {@code @Transactional} 의 tenant·membership 삽입도 모두 롤백되므로 아무것도 남지 않고 같은
-   * slug 로 재시도할 수 있다.
+   * 롤 생성이 실패하면 예외가 그대로 전파돼야 한다 — 삼키면 "행은 있고 롤은 없는" 테넌트 2와 똑같은 상태가 트랜잭션 커밋과 함께 확정된다. 전파되면 프로비저너 자신의
+   * 트랜잭션도, 이 {@code @Transactional} 의 tenant·membership 삽입도 모두 롤백되므로 아무것도 남지 않고 같은 slug 로 재시도할 수
+   * 있다.
    */
   @Test
   void create_propagatesRoleProvisioningFailure() {

@@ -12,8 +12,8 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * 데이터셋 카탈로그 검색 서비스 (DocumentSearchService 복제).
  *
- * <p>mode 에 따라 벡터(SEMANTIC)·트라이그램(KEYWORD)·RRF 융합(HYBRID, 기본)으로 분기한다. HYBRID 는 두 검색의 후보 풀을
- * 가져와 RRF(Reciprocal Rank Fusion)로 순위를 융합한다. RRF 상수·점수 공식은 DocumentSearchService 와 동일하게 맞춘다.
+ * <p>mode 에 따라 벡터(SEMANTIC)·트라이그램(KEYWORD)·RRF 융합(HYBRID, 기본)으로 분기한다. HYBRID 는 두 검색의 후보 풀을 가져와
+ * RRF(Reciprocal Rank Fusion)로 순위를 융합한다. RRF 상수·점수 공식은 DocumentSearchService 와 동일하게 맞춘다.
  */
 @Service
 @RequiredArgsConstructor
@@ -53,8 +53,7 @@ public class DatasetSearchService {
     QueryVector q = embed(query);
     List<DatasetSearchHit> semantic =
         repository.searchByCosine(q.space(), q.vector(), storageType, CANDIDATE_POOL);
-    List<DatasetSearchHit> keyword =
-        repository.searchByTrigram(query, storageType, CANDIDATE_POOL);
+    List<DatasetSearchHit> keyword = repository.searchByTrigram(query, storageType, CANDIDATE_POOL);
     return rrfFuse(List.of(semantic, keyword), topK);
   }
 

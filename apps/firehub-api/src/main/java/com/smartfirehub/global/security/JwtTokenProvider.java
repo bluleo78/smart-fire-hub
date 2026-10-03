@@ -29,8 +29,8 @@ public class JwtTokenProvider {
   }
 
   /**
-   * 액세스 토큰 발급. tenantId 가 null 이면 테넌트 미선택 토큰이 되어 select-tenant 외의 API 에서
-   * RLS 가 모든 행을 차단한다(fail-closed).
+   * 액세스 토큰 발급. tenantId 가 null 이면 테넌트 미선택 토큰이 되어 select-tenant 외의 API 에서 RLS 가 모든 행을
+   * 차단한다(fail-closed).
    */
   public String generateAccessToken(Long userId, String username, Long tenantId) {
     // 기존 호출처(테스트 다수)용 — 비밀번호 변경 강제 없음.
@@ -40,9 +40,9 @@ public class JwtTokenProvider {
   /**
    * 테넌트 평면 access token.
    *
-   * @param mustChangePassword true 면 클레임 {@code pwc=true} 를 싣는다. 필터가 이를 요청 속성으로 옮기고
-   *     {@link PasswordChangeInterceptor} 가 허용 핸들러 외 요청을 403 으로 막는다. 요청마다 DB 를 보지
-   *     않기 위해 토큰에 싣고, 토큰을 만드는 세 경로(login/refresh/selectTenant)가 DB 값을 다시 읽는다.
+   * @param mustChangePassword true 면 클레임 {@code pwc=true} 를 싣는다. 필터가 이를 요청 속성으로 옮기고 {@link
+   *     PasswordChangeInterceptor} 가 허용 핸들러 외 요청을 403 으로 막는다. 요청마다 DB 를 보지 않기 위해 토큰에 싣고, 토큰을 만드는 세
+   *     경로(login/refresh/selectTenant)가 DB 값을 다시 읽는다.
    */
   public String generateAccessToken(
       Long userId, String username, Long tenantId, boolean mustChangePassword) {
@@ -67,11 +67,10 @@ public class JwtTokenProvider {
   /**
    * 리프레시 토큰 발급. 갱신 시 활성 테넌트를 유지하기 위해 tenant 클레임을 함께 싣는다.
    *
-   * <p><b>jti 가 반드시 필요하다</b>: {@code iat}/{@code exp} 는 JWT 규격상 초 단위이고 서명은 HMAC
-   * 대칭키라 결정적이다. 고유 클레임이 없으면 같은 사용자·테넌트에 대해 같은 1초 안에 발급한 토큰이
-   * 바이트까지 동일해지고, {@code refresh_token.token_hash} 의 UNIQUE 제약에 걸려 저장이 실패한다.
-   * 실제로 {@code select-tenant} 직후 하드 리로드가 유발하는 세션 복원 {@code refresh} 가 같은 초에
-   * 들어와 로그인이 전면 실패했다(2026-09-16).
+   * <p><b>jti 가 반드시 필요하다</b>: {@code iat}/{@code exp} 는 JWT 규격상 초 단위이고 서명은 HMAC 대칭키라 결정적이다. 고유 클레임이
+   * 없으면 같은 사용자·테넌트에 대해 같은 1초 안에 발급한 토큰이 바이트까지 동일해지고, {@code refresh_token.token_hash} 의 UNIQUE 제약에
+   * 걸려 저장이 실패한다. 실제로 {@code select-tenant} 직후 하드 리로드가 유발하는 세션 복원 {@code refresh} 가 같은 초에 들어와 로그인이
+   * 전면 실패했다(2026-09-16).
    */
   public String generateRefreshToken(Long userId, Long tenantId) {
     Date now = new Date();
@@ -89,13 +88,11 @@ public class JwtTokenProvider {
   }
 
   /**
-   * 플랫폼(운영자) 액세스 토큰. {@code platform: true} 를 싣고 {@code tenant} 클레임은 <b>싣지
-   * 않는다</b>.
+   * 플랫폼(운영자) 액세스 토큰. {@code platform: true} 를 싣고 {@code tenant} 클레임은 <b>싣지 않는다</b>.
    *
-   * <p>왜 tenant 를 비우는가: 운영자 평면은 전역 테이블만 만진다. 클레임이 실리면 필터가
-   * TenantContext 를 세워 운영자 요청이 특정 테넌트의 RLS 안에서 돌게 되고, 그 테넌트의 도메인
-   * 데이터가 운영자에게 열린다 — 설계서 §4 가 크로스테넌트 도메인 조회를 제공하지 않기로 한 결정과
-   * 어긋난다. 비어 있으면 GUC 미설정 → RLS 전면 차단(fail-closed)이다.
+   * <p>왜 tenant 를 비우는가: 운영자 평면은 전역 테이블만 만진다. 클레임이 실리면 필터가 TenantContext 를 세워 운영자 요청이 특정 테넌트의 RLS
+   * 안에서 돌게 되고, 그 테넌트의 도메인 데이터가 운영자에게 열린다 — 설계서 §4 가 크로스테넌트 도메인 조회를 제공하지 않기로 한 결정과 어긋난다. 비어 있으면 GUC
+   * 미설정 → RLS 전면 차단(fail-closed)이다.
    */
   public String generatePlatformAccessToken(Long userId, String username) {
     Date now = new Date();
@@ -113,8 +110,8 @@ public class JwtTokenProvider {
   /**
    * 플랫폼 리프레시 토큰. 마찬가지로 tenant 클레임이 없다.
    *
-   * <p>운영자 평면도 같은 {@code refresh_token} 테이블·같은 UNIQUE 제약을 쓰므로 고유화({@code jti})가
-   * 테넌트 평면과 대칭으로 필요하다 — 한쪽만 고치면 다른 평면에서 같은 결함이 남는다.
+   * <p>운영자 평면도 같은 {@code refresh_token} 테이블·같은 UNIQUE 제약을 쓰므로 고유화({@code jti})가 테넌트 평면과 대칭으로 필요하다 —
+   * 한쪽만 고치면 다른 평면에서 같은 결함이 남는다.
    */
   public String generatePlatformRefreshToken(Long userId) {
     Date now = new Date();
@@ -132,8 +129,7 @@ public class JwtTokenProvider {
   /**
    * 토큰이 플랫폼 평면인지.
    *
-   * <p>리프레시 경로에서 평면을 검사하는 데 쓴다 — 테넌트 리프레시 토큰으로 플랫폼 토큰을 받아
-   * 평면을 갈아타는 승격 경로를 막는다.
+   * <p>리프레시 경로에서 평면을 검사하는 데 쓴다 — 테넌트 리프레시 토큰으로 플랫폼 토큰을 받아 평면을 갈아타는 승격 경로를 막는다.
    */
   public boolean isPlatformToken(String token) {
     try {
@@ -190,16 +186,12 @@ public class JwtTokenProvider {
    *
    * <p>{@code platform} 은 평면 표식이다 — true 면 운영자 평면 토큰이고 {@code tenantId} 는 null 이다.
    *
-   * <p><b>2인자 축약 생성자를 일부러 두지 않는다.</b> 평면을 생략할 수 있게 만들면 기본값(false)이
-   * 두 곳에 존재하게 되고, 운영자 평면 검증을 쓰려던 호출처가 평면을 빼먹은 채 조용히 테넌트 평면을
-   * 받는다. 모든 생성 지점이 평면을 명시하게 해서 그 실수를 컴파일 단계에서 막는다.
+   * <p><b>2인자 축약 생성자를 일부러 두지 않는다.</b> 평면을 생략할 수 있게 만들면 기본값(false)이 두 곳에 존재하게 되고, 운영자 평면 검증을 쓰려던
+   * 호출처가 평면을 빼먹은 채 조용히 테넌트 평면을 받는다. 모든 생성 지점이 평면을 명시하게 해서 그 실수를 컴파일 단계에서 막는다.
    */
   public record AccessTokenPrincipal(
       Long userId, Long tenantId, boolean platform, boolean mustChangePassword) {
-    /**
-     * 평면은 여전히 명시해야 한다(위 Javadoc 의 이유). 비밀번호 강제 표식만 기본 false 로 두는 보조
-     * 생성자 — 테스트 40여 곳이 이 형태로 만든다.
-     */
+    /** 평면은 여전히 명시해야 한다(위 Javadoc 의 이유). 비밀번호 강제 표식만 기본 false 로 두는 보조 생성자 — 테스트 40여 곳이 이 형태로 만든다. */
     public AccessTokenPrincipal(Long userId, Long tenantId, boolean platform) {
       this(userId, tenantId, platform, false);
     }
@@ -208,8 +200,8 @@ public class JwtTokenProvider {
   /**
    * 액세스 토큰을 1회 파싱해 userId 와 tenantId 를 함께 추출한다.
    *
-   * <p>필터는 요청마다 이 경로를 타므로, validate/getUserId/getTenantId 를 따로 호출하면 같은 토큰의
-   * 서명 검증과 JSON 파싱이 3번 반복된다. 인증은 가장 뜨거운 경로라 1회 파싱으로 합친다.
+   * <p>필터는 요청마다 이 경로를 타므로, validate/getUserId/getTenantId 를 따로 호출하면 같은 토큰의 서명 검증과 JSON 파싱이 3번 반복된다.
+   * 인증은 가장 뜨거운 경로라 1회 파싱으로 합친다.
    *
    * @return 유효한 access 토큰이면 값이 담긴 Optional, 아니면 Optional.empty()
    */

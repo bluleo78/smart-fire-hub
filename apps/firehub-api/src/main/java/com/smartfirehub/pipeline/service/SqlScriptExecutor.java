@@ -8,7 +8,6 @@ import com.smartfirehub.pipeline.service.validator.SqlValidator;
 import java.util.List;
 import java.util.regex.Pattern;
 import lombok.extern.slf4j.Slf4j;
-import org.jooq.DSLContext;
 import org.springframework.stereotype.Service;
 
 /**
@@ -21,38 +20,32 @@ import org.springframework.stereotype.Service;
 public class SqlScriptExecutor {
 
   /**
-   * 선행 문장의 테이블명 부분이 만족해야 하는 형태 — {@code DataTableService.validateName} 과 같은
-   * 규칙([a-z0-9_]+, 소문자·숫자·밑줄)이다. 스키마 부분은 접두어 자체에 {@link DataSchema#current()}
-   * 를 실어 비교하므로 별도 정규식이 필요 없다(현재 테넌트 스키마 하나만 허용).
+   * 선행 문장의 테이블명 부분이 만족해야 하는 형태 — {@code DataTableService.validateName} 과 같은 규칙([a-z0-9_]+,
+   * 소문자·숫자·밑줄)이다. 스키마 부분은 접두어 자체에 {@link DataSchema#current()} 를 실어 비교하므로 별도 정규식이 필요 없다(현재 테넌트 스키마
+   * 하나만 허용).
    */
   private static final Pattern PRE_STATEMENT_TABLE_PATTERN = Pattern.compile("^[a-z0-9_]+\"$");
 
   /**
    * 출력 테이블 단위 직렬화 잠금(#731). 선행 DELETE(출력 비우기) <b>직전에, 별도 문장으로</b> 실행한다.
    *
-   * <p><b>왜 필요한가.</b> 같은 출력 테이블에 "비우기 + 적재"를 하는 두 실행이 겹치면(실행 버튼
-   * 더블클릭, 수동 실행과 다른 실행의 겹침, 서로 다른 파이프라인이 같은 출력에 쓰는 경우), READ
-   * COMMITTED 에서 뒤 실행의 DELETE 는 앞 실행이 아직 커밋하지 않은 새 행을 보지 못해 지우지
-   * 못한다 — 두 실행의 INSERT 가 모두 남아 모든 행이 두 번 들어가고 둘 다 성공으로 끝난다. 이 잠금은
-   * 트랜잭션이 끝날 때(커밋·롤백) 자동으로 풀리므로, 뒤 실행은 앞 실행이 커밋한 <b>뒤에</b> 비우기를
-   * 시작한다. 뒤 실행은 거부되지 않고 기다렸다가 그대로 실행된다(기존 의미 유지).
+   * <p><b>왜 필요한가.</b> 같은 출력 테이블에 "비우기 + 적재"를 하는 두 실행이 겹치면(실행 버튼 더블클릭, 수동 실행과 다른 실행의 겹침, 서로 다른
+   * 파이프라인이 같은 출력에 쓰는 경우), READ COMMITTED 에서 뒤 실행의 DELETE 는 앞 실행이 아직 커밋하지 않은 새 행을 보지 못해 지우지 못한다 — 두
+   * 실행의 INSERT 가 모두 남아 모든 행이 두 번 들어가고 둘 다 성공으로 끝난다. 이 잠금은 트랜잭션이 끝날 때(커밋·롤백) 자동으로 풀리므로, 뒤 실행은 앞 실행이
+   * 커밋한 <b>뒤에</b> 비우기를 시작한다. 뒤 실행은 거부되지 않고 기다렸다가 그대로 실행된다(기존 의미 유지).
    *
-   * <p><b>왜 DELETE 와 다른 문장이어야 하는가.</b> READ COMMITTED 의 스냅샷은 문장 시작 시점에
-   * 잡힌다. 잠금 대기가 DELETE 와 같은 문장 안에서 일어나면 대기가 풀린 뒤에도 옛 스냅샷으로
-   * 지우므로 앞 실행의 행이 그대로 남는다. 잠금 문장이 끝난 다음에 시작하는 DELETE 만이 앞 실행이
-   * 커밋한 행을 본다.
+   * <p><b>왜 DELETE 와 다른 문장이어야 하는가.</b> READ COMMITTED 의 스냅샷은 문장 시작 시점에 잡힌다. 잠금 대기가 DELETE 와 같은 문장
+   * 안에서 일어나면 대기가 풀린 뒤에도 옛 스냅샷으로 지우므로 앞 실행의 행이 그대로 남는다. 잠금 문장이 끝난 다음에 시작하는 DELETE 만이 앞 실행이 커밋한 행을
+   * 본다.
    *
-   * <p><b>왜 LOCK TABLE 이 아니라 advisory 잠금인가.</b> 테이블 잠금(SHARE ROW EXCLUSIVE)은 파이프라인과
-   * 무관한 쓰기(화면의 행 편집·임포트)까지 스텝이 끝날 때까지 막고, 그 쓰기들이 끝나기를 기다리기도
-   * 한다. 이 결함에 필요한 것은 "비우기 + 적재" 트랜잭션끼리의 상호 배제뿐이다. APPEND·MERGE 처럼
-   * 선행 문장이 없는 실행은 잠금을 잡지 않는다 — 비우기와 겹쳐도 결과가 어느 한 순서로 직렬
-   * 실행한 것과 같다.
+   * <p><b>왜 LOCK TABLE 이 아니라 advisory 잠금인가.</b> 테이블 잠금(SHARE ROW EXCLUSIVE)은 파이프라인과 무관한 쓰기(화면의 행
+   * 편집·임포트)까지 스텝이 끝날 때까지 막고, 그 쓰기들이 끝나기를 기다리기도 한다. 이 결함에 필요한 것은 "비우기 + 적재" 트랜잭션끼리의 상호 배제뿐이다.
+   * APPEND·MERGE 처럼 선행 문장이 없는 실행은 잠금을 잡지 않는다 — 비우기와 겹쳐도 결과가 어느 한 순서로 직렬 실행한 것과 같다.
    *
    * <p>키는 선행 문장에 적힌 한정 이름({@code "<스키마>"."<테이블>"}, 따옴표 포함) 문자열의 64비트 해시다. advisory 키 공간은 데이터베이스 전체가
-   * 공유하므로 테넌트 스키마를 반드시 포함한다(테넌트마다 같은 테이블명이 있을 수 있다). 해시가
-   * 우연히 충돌해도 무관한 두 실행이 잠깐 직렬화될 뿐 정확성에는 영향이 없다. firehub-executor
-   * (sql_executor.py)도 같은 키·같은 문장을 쓴다 — 실행기를 켠 경로와 끈 경로가 같은 계약을 따른다.
-   * lock_timeout 은 걸지 않는다 — 걸면 뒤 실행이 실패로 바뀌는데, 그것은 제품 정책 변경이다.
+   * 공유하므로 테넌트 스키마를 반드시 포함한다(테넌트마다 같은 테이블명이 있을 수 있다). 해시가 우연히 충돌해도 무관한 두 실행이 잠깐 직렬화될 뿐 정확성에는 영향이 없다.
+   * firehub-executor (sql_executor.py)도 같은 키·같은 문장을 쓴다 — 실행기를 켠 경로와 끈 경로가 같은 계약을 따른다. lock_timeout
+   * 은 걸지 않는다 — 걸면 뒤 실행이 실패로 바뀌는데, 그것은 제품 정책 변경이다.
    */
   static final String OUTPUT_LOCK_SQL = "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))";
 
@@ -60,9 +53,8 @@ public class SqlScriptExecutor {
   private static final String CLEAR_VERB = "DELETE FROM ";
 
   /**
-   * {@link #OUTPUT_LOCK_SQL} 에 바인딩할 키 — 검증을 통과한 선행 문장이 가리키는 대상을 <b>적힌 그대로</b>
-   * ({@code "<스키마>"."<테이블>"}) 쓴다. 스키마명을 여기서 다시 조립하지 않으므로 선행 문장과 잠금
-   * 대상이 어긋날 수 없다.
+   * {@link #OUTPUT_LOCK_SQL} 에 바인딩할 키 — 검증을 통과한 선행 문장이 가리키는 대상을 <b>적힌 그대로</b> ({@code
+   * "<스키마>"."<테이블>"}) 쓴다. 스키마명을 여기서 다시 조립하지 않으므로 선행 문장과 잠금 대상이 어긋날 수 없다.
    */
   static String outputLockKey(String preStatement) {
     return preStatement.substring(CLEAR_VERB.length());
@@ -71,14 +63,13 @@ public class SqlScriptExecutor {
   /**
    * 테넌트별 파이프라인 실행 커넥션 풀의 레지스트리.
    *
-   * <p><b>왜 단일 {@code pipelineDslContext} 빈을 주입받지 않는가(P3-b1 R2).</b> 그 빈은 공용
-   * {@code pipeline_executor} 자격증명 하나로 만든 풀이라, 어느 테넌트의 SQL 스텝을 실행하든 같은 DB
-   * 롤로 접속한다 — 즉 스키마·grant 계층에서 테넌트를 구분할 수단이 없다. 여기서 테넌트별 롤
-   * ({@code pipeline_executor_t{tenantId}}) 로 접속하면 격리의 근거가 애플리케이션 코드가 아니라
+   * <p><b>왜 단일 {@code pipelineDslContext} 빈을 주입받지 않는가(P3-b1 R2).</b> 그 빈은 공용 {@code
+   * pipeline_executor} 자격증명 하나로 만든 풀이라, 어느 테넌트의 SQL 스텝을 실행하든 같은 DB 롤로 접속한다 — 즉 스키마·grant 계층에서 테넌트를
+   * 구분할 수단이 없다. 여기서 테넌트별 롤 ({@code pipeline_executor_t{tenantId}}) 로 접속하면 격리의 근거가 애플리케이션 코드가 아니라
    * <b>DB 권한</b>이 된다.
    *
-   * <p>그 공용 빈({@code pipelineDslContext})은 이제 존재하지 않는다 — 삭제 경위는 {@link
-   * SqlColumnProbe} 의 Javadoc 에 있다.
+   * <p>그 공용 빈({@code pipelineDslContext})은 이제 존재하지 않는다 — 삭제 경위는 {@link SqlColumnProbe} 의 Javadoc 에
+   * 있다.
    */
   private final TenantPipelineDataSourceRegistry tenantPipelineDataSources;
 
@@ -98,22 +89,20 @@ public class SqlScriptExecutor {
   /**
    * 선행 문장(preStatements)을 본 스크립트와 <b>같은 트랜잭션</b>으로 실행한다.
    *
-   * <p><b>왜 필요한가(Task 4).</b> REPLACE 전략의 SQL 스텝은 "출력 비우기(DELETE) + INSERT"가 원자적으로
-   * 커밋·롤백돼야 한다 — 따로 실행하면(비우기 커밋 → INSERT 별도 트랜잭션) INSERT 실패 시 출력 테이블이
-   * 빈 채로 남는다. {@link OutputClearStatement#deleteAll} 이 만든 DELETE 문을 여기서 본 스크립트보다
-   * 먼저, 같은 {@code dsl.transaction} 안에서 실행한다.
+   * <p><b>왜 필요한가(Task 4).</b> REPLACE 전략의 SQL 스텝은 "출력 비우기(DELETE) + INSERT"가 원자적으로 커밋·롤백돼야 한다 — 따로
+   * 실행하면(비우기 커밋 → INSERT 별도 트랜잭션) INSERT 실패 시 출력 테이블이 빈 채로 남는다. {@link
+   * OutputClearStatement#deleteAll} 이 만든 DELETE 문을 여기서 본 스크립트보다 먼저, 같은 {@code dsl.transaction} 안에서
+   * 실행한다.
    *
-   * <p>각 선행 문장은 {@link OutputClearStatement#deleteAll} 이 만드는 형태
-   * ({@code DELETE FROM "<현재 테넌트 스키마>"."<테이블명>"}) 와 <b>완전히</b> 일치해야 한다 —
-   * firehub-executor(Python) 의 선행 문장 화이트리스트 정규식과 같은 엄격도를 이쪽에도 둔다
-   * (Fix round 1, 리뷰 지적 2). 접두어(`DELETE FROM "<스키마>".`)는 {@link DataSchema#current()} 로
-   * 직접 조립해 비교한다 — executor 의 파이썬 정규식 리터럴을 그대로 옮기면
-   * {@code DataSchemaResolutionTest.noProductionSourceOutsideDataSchemaHoldsTheLiteral} 가드(물리
-   * 스키마 리터럴 금지)에 걸리므로, 이 계약을 별도 정규식 리터럴로 하드코딩하지 않는다. 테이블명
-   * 부분은 {@link #PRE_STATEMENT_TABLE_PATTERN} 으로 확인한다 — {@code DataTableService.validateName}
-   * 이 기존 {@code truncateTable} 경로에서 하던 것과 같은 방어를 이 경로에도 되살린다. 이 검증
-   * 하나로 "시작 문자열 + 세미콜론 없음"만 보던 이전 형태보다, API 서버가 만들지 않은 임의의
-   * DELETE(WHERE 절 포함·다른 스키마 대상 등)를 테넌트 파이프라인 롤 권한으로 실행할 길을 막는다.
+   * <p>각 선행 문장은 {@link OutputClearStatement#deleteAll} 이 만드는 형태 ({@code DELETE FROM "<현재 테넌트
+   * 스키마>"."<테이블명>"}) 와 <b>완전히</b> 일치해야 한다 — firehub-executor(Python) 의 선행 문장 화이트리스트 정규식과 같은 엄격도를
+   * 이쪽에도 둔다 (Fix round 1, 리뷰 지적 2). 접두어(`DELETE FROM "<스키마>".`)는 {@link DataSchema#current()} 로 직접
+   * 조립해 비교한다 — executor 의 파이썬 정규식 리터럴을 그대로 옮기면 {@code
+   * DataSchemaResolutionTest.noProductionSourceOutsideDataSchemaHoldsTheLiteral} 가드(물리 스키마 리터럴 금지)에
+   * 걸리므로, 이 계약을 별도 정규식 리터럴로 하드코딩하지 않는다. 테이블명 부분은 {@link #PRE_STATEMENT_TABLE_PATTERN} 으로 확인한다 —
+   * {@code DataTableService.validateName} 이 기존 {@code truncateTable} 경로에서 하던 것과 같은 방어를 이 경로에도 되살린다.
+   * 이 검증 하나로 "시작 문자열 + 세미콜론 없음"만 보던 이전 형태보다, API 서버가 만들지 않은 임의의 DELETE(WHERE 절 포함·다른 스키마 대상 등)를 테넌트
+   * 파이프라인 롤 권한으로 실행할 길을 막는다.
    *
    * @param preStatements 본 스크립트보다 먼저 실행할 문장 목록(순서 보존). 없으면 빈 목록.
    * @param scriptContent 본 SQL 스크립트

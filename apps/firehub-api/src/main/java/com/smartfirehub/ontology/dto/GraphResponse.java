@@ -8,7 +8,12 @@ public record GraphResponse(List<Node> nodes, List<Edge> edges) {
   // schemaVersion은 스탬프 도입(5-4) 이전 레거시 노드에는 없어 null일 수 있다(값 없음과 구버전을 구분).
   // ontologyId: 이 노드가 실제로 적재된 온톨로지 id. 스탬프 도입(#678) 이전 레거시 노드는 null.
   public record Node(
-      String key, String type, String name, int sourceChunkCount, Integer schemaVersion, Long ontologyId) {}
+      String key,
+      String type,
+      String name,
+      int sourceChunkCount,
+      Integer schemaVersion,
+      Long ontologyId) {}
 
   // 지식그래프 엣지: 주어 노드 키-관계타입-목적어 노드 키.
   public record Edge(String subjectKey, String type, String objectKey) {}

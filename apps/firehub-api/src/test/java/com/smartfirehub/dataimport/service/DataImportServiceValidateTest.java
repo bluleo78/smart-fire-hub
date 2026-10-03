@@ -20,8 +20,8 @@ import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 사전 검증(validateImport)이 전량이 아니라 파일 앞 200행만 샘플링해 검사하는지 검증한다. 대용량 파일에서도 즉시 응답할 수
- * 있도록 하는 것이 목적이며, 이 테스트는 응답 DTO의 sampleSize/sampled 필드와 실제 검사 대상 행수가 일치하는지 확인한다.
+ * 사전 검증(validateImport)이 전량이 아니라 파일 앞 200행만 샘플링해 검사하는지 검증한다. 대용량 파일에서도 즉시 응답할 수 있도록 하는 것이 목적이며, 이
+ * 테스트는 응답 DTO의 sampleSize/sampled 필드와 실제 검사 대상 행수가 일치하는지 확인한다.
  */
 @Transactional
 class DataImportServiceValidateTest extends IntegrationTestBase {

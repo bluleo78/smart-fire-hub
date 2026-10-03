@@ -27,13 +27,12 @@ import org.springframework.transaction.support.TransactionTemplate;
 /**
  * V94/V95 — 비인증 트리거 경로의 테넌트 해석을 고정한다.
  *
- * <p>이 경로는 인증 필터를 거치지 않아 요청 시점에 테넌트를 모른다. 해석은 RLS 를 우회하는
- * SECURITY DEFINER 함수가 담당하며, 시스템에서 RLS 우회는 이 함수뿐이다. 그래서 여기서 검증하는
- * 것은 "해석이 되는가" 만이 아니라 <b>노출면이 좁게 유지되는가</b>(id 두 개, PUBLIC 실행 불가)와
- * <b>식별자 유니크가 전역인가</b>(접으면 해석이 모호해진다)다.
+ * <p>이 경로는 인증 필터를 거치지 않아 요청 시점에 테넌트를 모른다. 해석은 RLS 를 우회하는 SECURITY DEFINER 함수가 담당하며, 시스템에서 RLS 우회는 이
+ * 함수뿐이다. 그래서 여기서 검증하는 것은 "해석이 되는가" 만이 아니라 <b>노출면이 좁게 유지되는가</b>(id 두 개, PUBLIC 실행 불가)와 <b>식별자 유니크가
+ * 전역인가</b>(접으면 해석이 모호해진다)다.
  *
- * <p>클래스 레벨 {@code @Transactional} 이 없다 — 서로 다른 테넌트의 커밋된 행이 동시에 존재해야
- * 해석이 테넌트를 구분하는지 볼 수 있기 때문이다. 심은 행은 {@link #cleanup()} 에서 직접 지운다.
+ * <p>클래스 레벨 {@code @Transactional} 이 없다 — 서로 다른 테넌트의 커밋된 행이 동시에 존재해야 해석이 테넌트를 구분하는지 볼 수 있기 때문이다. 심은
+ * 행은 {@link #cleanup()} 에서 직접 지운다.
  */
 class TriggerTenantResolverTest extends IntegrationTestBase {
 
@@ -61,7 +60,8 @@ class TriggerTenantResolverTest extends IntegrationTestBase {
   void cleanup() {
     // 파이프라인을 지우면 트리거가 FK CASCADE 로 함께 사라진다. 사용자·테넌트는 그 뒤에 지운다.
     for (long[] entry : pipelines) {
-      inTenantTx(entry[0], () -> dsl.deleteFrom(PIPELINE).where(PIPELINE.ID.eq(entry[1])).execute());
+      inTenantTx(
+          entry[0], () -> dsl.deleteFrom(PIPELINE).where(PIPELINE.ID.eq(entry[1])).execute());
     }
     pipelines.clear();
     TenantRlsTestSupport.deleteUser(dsl, userId);
@@ -77,10 +77,8 @@ class TriggerTenantResolverTest extends IntegrationTestBase {
     long triggerA = insertWebhookTrigger(tenantA, webhookA, true);
     long triggerB = insertWebhookTrigger(tenantB, webhookB, true);
 
-    assertThat(resolver.resolveByWebhookId(webhookA))
-        .contains(new TriggerRef(triggerA, tenantA));
-    assertThat(resolver.resolveByWebhookId(webhookB))
-        .contains(new TriggerRef(triggerB, tenantB));
+    assertThat(resolver.resolveByWebhookId(webhookA)).contains(new TriggerRef(triggerA, tenantA));
+    assertThat(resolver.resolveByWebhookId(webhookB)).contains(new TriggerRef(triggerB, tenantB));
   }
 
   /** API 토큰 해시 경로도 같은 보장을 갖는지. 해싱은 TriggerService 가 하고 여기엔 해시가 온다. */
@@ -153,9 +151,8 @@ class TriggerTenantResolverTest extends IntegrationTestBase {
   /**
    * 함수가 실제로 SECURITY DEFINER 이고 search_path 가 고정돼 있는지.
    *
-   * <p>V96 전에는 {@code pipeline_trigger} 에 정책이 없어, 위 해석 테스트들은 함수가 평범한
-   * SECURITY INVOKER 여도 전부 통과한다 — 즉 "RLS 를 우회한다"는 이 태스크의 본질이 공허하게
-   * 통과할 수 있다. 그래서 카탈로그를 직접 본다. search_path 고정이 빠지면 definer 함수는 권한
+   * <p>V96 전에는 {@code pipeline_trigger} 에 정책이 없어, 위 해석 테스트들은 함수가 평범한 SECURITY INVOKER 여도 전부 통과한다 —
+   * 즉 "RLS 를 우회한다"는 이 태스크의 본질이 공허하게 통과할 수 있다. 그래서 카탈로그를 직접 본다. search_path 고정이 빠지면 definer 함수는 권한
    * 상승 경로가 되므로 함께 고정한다.
    */
   @Test
@@ -178,10 +175,9 @@ class TriggerTenantResolverTest extends IntegrationTestBase {
   /**
    * definer 우회가 성립하는 두 전제를 고정한다.
    *
-   * <p>이 우회는 (a) 테이블 소유자와 함수 소유자가 같고 런타임 롤이 소유자가 아니라는 것, (b)
-   * {@code FORCE ROW LEVEL SECURITY} 가 꺼져 있다는 것에 의존한다. FORCE 는 소유자에게까지 정책을
-   * 적용하므로 켜는 순간 definer 함수도 0행을 받고 <b>모든 외부 트리거가 404/401 로 전멸한다</b> —
-   * 예외도 로그도 없이. 정책 마이그레이션에서 "일관성" 을 이유로 켜기 쉬운 플래그라 여기서 막는다.
+   * <p>이 우회는 (a) 테이블 소유자와 함수 소유자가 같고 런타임 롤이 소유자가 아니라는 것, (b) {@code FORCE ROW LEVEL SECURITY} 가 꺼져
+   * 있다는 것에 의존한다. FORCE 는 소유자에게까지 정책을 적용하므로 켜는 순간 definer 함수도 0행을 받고 <b>모든 외부 트리거가 404/401 로
+   * 전멸한다</b> — 예외도 로그도 없이. 정책 마이그레이션에서 "일관성" 을 이유로 켜기 쉬운 플래그라 여기서 막는다.
    */
   @Test
   @DisplayName("pipeline_trigger 에 FORCE RLS 가 걸려 있지 않고 소유자가 함수 소유자와 같다")

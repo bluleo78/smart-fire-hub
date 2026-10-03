@@ -20,15 +20,13 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * {@link ApiConnectionService} 의 조회 전용 협력자.
  *
- * <p><b>왜 별도 빈인가</b>: {@code testConnection} 은 외부 HTTP 를 트랜잭션 밖에서 수행해야 해서
- * 무애노테이션으로 남겨야 하는데, 그 안에서 조회 메서드를 {@code this.getById(...)} 로 자기호출하면
- * Spring AOP 프록시가 우회돼 서비스 레이어 트랜잭션이 열리지 않는다. RLS 하에서 GUC 는 트랜잭션이
- * 열릴 때만 주입되므로, 조회가 트랜잭션 경계를 갖지 못하면 조용히 0행이 될 위험을 구조적으로
- * 안고 가게 된다. 조회부를 별도 빈으로 분리해야 호출이 실제로 프록시를 통과한다.
+ * <p><b>왜 별도 빈인가</b>: {@code testConnection} 은 외부 HTTP 를 트랜잭션 밖에서 수행해야 해서 무애노테이션으로 남겨야 하는데, 그 안에서
+ * 조회 메서드를 {@code this.getById(...)} 로 자기호출하면 Spring AOP 프록시가 우회돼 서비스 레이어 트랜잭션이 열리지 않는다. RLS 하에서 GUC
+ * 는 트랜잭션이 열릴 때만 주입되므로, 조회가 트랜잭션 경계를 갖지 못하면 조용히 0행이 될 위험을 구조적으로 안고 가게 된다. 조회부를 별도 빈으로 분리해야 호출이 실제로
+ * 프록시를 통과한다.
  *
- * <p>여기에는 <b>조회·복호화·마스킹만</b> 둔다. 외부 HTTP 호출은 여전히 {@code ApiConnectionService}
- * 쪽 트랜잭션 밖에 남아 있어야 하며, 이 클래스로 들어와서는 안 된다(HTTP 5초를 트랜잭션이 물면
- * 커넥션 풀이 고갈된다).
+ * <p>여기에는 <b>조회·복호화·마스킹만</b> 둔다. 외부 HTTP 호출은 여전히 {@code ApiConnectionService} 쪽 트랜잭션 밖에 남아 있어야 하며,
+ * 이 클래스로 들어와서는 안 된다(HTTP 5초를 트랜잭션이 물면 커넥션 풀이 고갈된다).
  */
 @Service
 @Transactional(readOnly = true)
@@ -55,8 +53,8 @@ public class ApiConnectionReader {
   /**
    * 복호화된 authConfig 를 반환한다. 인증 헤더/쿼리 파라미터 조립에 쓰이므로 마스킹하지 않는다.
    *
-   * <p>authType 은 별도 컬럼이라 복호화된 Map 에 들어있지 않다. 호출자(Preview/Executor 등)가
-   * authType 으로 분기(API_KEY + placement=query 등)할 수 있도록 함께 합쳐 반환한다. (#113)
+   * <p>authType 은 별도 컬럼이라 복호화된 Map 에 들어있지 않다. 호출자(Preview/Executor 등)가 authType 으로 분기(API_KEY +
+   * placement=query 등)할 수 있도록 함께 합쳐 반환한다. (#113)
    */
   public Map<String, String> getDecryptedAuthConfig(Long id) {
     Record record =
@@ -74,8 +72,8 @@ public class ApiConnectionReader {
   }
 
   /**
-   * jOOQ Record → 응답 DTO 변환. 목록 조회(ApiConnectionService.getAll)도 같은 변환이 필요하므로
-   * 공개한다 — 서비스에 복호화/마스킹 로직을 중복시키지 않기 위함이다.
+   * jOOQ Record → 응답 DTO 변환. 목록 조회(ApiConnectionService.getAll)도 같은 변환이 필요하므로 공개한다 — 서비스에 복호화/마스킹
+   * 로직을 중복시키지 않기 위함이다.
    */
   public ApiConnectionResponse toResponse(Record r) {
     String encryptedConfig = r.get(field(name("api_connection", "auth_config"), String.class));

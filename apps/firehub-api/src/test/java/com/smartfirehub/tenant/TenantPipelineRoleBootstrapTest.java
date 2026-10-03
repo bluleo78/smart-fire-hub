@@ -23,8 +23,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 
 /**
- * 기동 치유({@link TenantPipelineRoleBootstrap})가 <b>2026-09-17 장애 상태의 테넌트를 실제로
- * 되살리는지</b> 확인한다(#680).
+ * 기동 치유({@link TenantPipelineRoleBootstrap})가 <b>2026-09-17 장애 상태의 테넌트를 실제로 되살리는지</b> 확인한다(#680).
  *
  * <p>이 테스트는 장애 당시 테넌트 2의 상태를 그대로 재현한다:
  *
@@ -33,10 +32,9 @@ import org.springframework.beans.factory.annotation.Qualifier;
  *   <li>그런데 {@code pipeline_executor_t{id}} 롤이 없어, 스키마가 executor GRANT 없이 만들어졌다
  * </ul>
  *
- * <p>그 상태에서 파이프라인을 돌리면 {@code permission denied for schema data_t{id}} 가 난다.
- * 중요한 것은 <b>이 상태가 스스로 낫지 않는다</b>는 점이다 — {@link TenantSchemaProvisioner} 의
- * 자가치유는 테이블을 <b>만들 때</b>만 돌고, 파이프라인은 읽기만 하기 때문이다. 그래서 운영자가
- * 손으로 고치기 전까지 영구히 고장이었다. 이 테스트는 <b>배포만으로</b> 낫는지를 본다.
+ * <p>그 상태에서 파이프라인을 돌리면 {@code permission denied for schema data_t{id}} 가 난다. 중요한 것은 <b>이 상태가 스스로 낫지
+ * 않는다</b>는 점이다 — {@link TenantSchemaProvisioner} 의 자가치유는 테이블을 <b>만들 때</b>만 돌고, 파이프라인은 읽기만 하기 때문이다.
+ * 그래서 운영자가 손으로 고치기 전까지 영구히 고장이었다. 이 테스트는 <b>배포만으로</b> 낫는지를 본다.
  */
 class TenantPipelineRoleBootstrapTest extends IntegrationTestBase {
 
@@ -54,7 +52,8 @@ class TenantPipelineRoleBootstrapTest extends IntegrationTestBase {
   @Qualifier("schemaOwnerDataSource")
   private DataSource schemaOwnerDataSource;
 
-  private static final long TENANT_BASE = TenantRlsTestSupport.randomSchemaProvisioningTenantIdBase();
+  private static final long TENANT_BASE =
+      TenantRlsTestSupport.randomSchemaProvisioningTenantIdBase();
 
   private DSLContext ownerDsl() {
     return DSL.using(schemaOwnerDataSource, SQLDialect.POSTGRES);
@@ -82,7 +81,8 @@ class TenantPipelineRoleBootstrapTest extends IntegrationTestBase {
       // "permission denied for schema data_t{id}" 로 바뀐다. 즉 이 테스트는 치유의 두 절반
       // (ensureRole · healSchemaGrants) 중 하나만 빠져도 빨개진다.
       assertThatThrownBy(
-              () -> TenantContext.runScopedGet(tenantId, () -> sqlColumnProbe.columnsWithTypes(sql)))
+              () ->
+                  TenantContext.runScopedGet(tenantId, () -> sqlColumnProbe.columnsWithTypes(sql)))
           .hasMessageContaining("SQL 컬럼 타입 분석 실패");
 
       // ── 배포(=기동 치유) ──────────────────────────────────────────────────────

@@ -33,9 +33,13 @@ class SearchConfigTest {
   void configHash_changesWithDisplayNameAndOrder() {
     String base = cfg.configHash();
     var renamed =
-        new SearchConfig(List.of(new SearchConfig.Field("title", "제목2"), new SearchConfig.Field("content", null)));
+        new SearchConfig(
+            List.of(
+                new SearchConfig.Field("title", "제목2"), new SearchConfig.Field("content", null)));
     var reordered =
-        new SearchConfig(List.of(new SearchConfig.Field("content", null), new SearchConfig.Field("title", "제목")));
+        new SearchConfig(
+            List.of(
+                new SearchConfig.Field("content", null), new SearchConfig.Field("title", "제목")));
     assertThat(renamed.configHash()).isNotEqualTo(base);
     assertThat(reordered.configHash()).isNotEqualTo(base);
     assertThat(base).hasSize(64);

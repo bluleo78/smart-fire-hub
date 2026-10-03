@@ -29,19 +29,16 @@ import org.springframework.test.web.servlet.MockMvc;
 /**
  * <b>다른 테넌트가 이미 설치한 Slack 팀을 (재)설치할 때</b>의 실패 표면을 고정한다 (P2-g Task 5).
  *
- * <p><b>경로가 반직관적이라 한 번 오진한 적이 있다.</b> {@code slack_workspace.team_id} 유니크는
- * 전역이고 {@code upsertFromOAuth} 는 {@code ON CONFLICT (team_id) DO UPDATE} 다. 충돌 판정은 유니크
- * 인덱스가 하는데 <b>인덱스는 RLS 와 무관하게 모든 행을 본다</b> → 남의 테넌트 행과 충돌해 DO UPDATE
- * 로 내려가고, 정책이 그 행을 보여 주지 않아 {@code 42501} 로 죽는다. <b>{@code 23505} 는 이 경로에서
- * 발생하지 않는다</b> — 그것을 기대하는 단언·핸들러는 영원히 발화하지 않는다.
+ * <p><b>경로가 반직관적이라 한 번 오진한 적이 있다.</b> {@code slack_workspace.team_id} 유니크는 전역이고 {@code
+ * upsertFromOAuth} 는 {@code ON CONFLICT (team_id) DO UPDATE} 다. 충돌 판정은 유니크 인덱스가 하는데 <b>인덱스는 RLS 와
+ * 무관하게 모든 행을 본다</b> → 남의 테넌트 행과 충돌해 DO UPDATE 로 내려가고, 정책이 그 행을 보여 주지 않아 {@code 42501} 로 죽는다.
+ * <b>{@code 23505} 는 이 경로에서 발생하지 않는다</b> — 그것을 기대하는 단언·핸들러는 영원히 발화하지 않는다.
  *
- * <p>두 층을 본다. (1) 리포지토리 층 — 실제로 던져지는 예외 클래스와 SQLState 를 못 박는다(다음
- * 사람이 예외 타입으로 잡으려다 죽은 코드를 쓰지 않도록). (2) HTTP 층 — OAuth 콜백이 500 이 아니라
- * 일반 409 로 응답하고, <b>응답 바디가 다른 테넌트의 존재를 시사하지 않는지</b> 단언한다.
+ * <p>두 층을 본다. (1) 리포지토리 층 — 실제로 던져지는 예외 클래스와 SQLState 를 못 박는다(다음 사람이 예외 타입으로 잡으려다 죽은 코드를 쓰지 않도록).
+ * (2) HTTP 층 — OAuth 콜백이 500 이 아니라 일반 409 로 응답하고, <b>응답 바디가 다른 테넌트의 존재를 시사하지 않는지</b> 단언한다.
  *
- * <p><b>클래스 레벨 {@code @Transactional} 을 쓰지 않는다.</b> 픽스처만
- * {@code inTenantFixture} 로 감싸고 검증 대상 호출은 밖에 둔다 — 안에 넣으면 리포지토리가 테스트
- * 트랜잭션에 합류해 거부가 rollback-only 로 바뀌고, 프로덕션이 스스로 컨텍스트를 세우는지도 가려진다.
+ * <p><b>클래스 레벨 {@code @Transactional} 을 쓰지 않는다.</b> 픽스처만 {@code inTenantFixture} 로 감싸고 검증 대상 호출은 밖에
+ * 둔다 — 안에 넣으면 리포지토리가 테스트 트랜잭션에 합류해 거부가 rollback-only 로 바뀌고, 프로덕션이 스스로 컨텍스트를 세우는지도 가려진다.
  */
 @AutoConfigureMockMvc
 class SlackReinstallCrossTenantTest extends IntegrationTestBase {
@@ -104,10 +101,9 @@ class SlackReinstallCrossTenantTest extends IntegrationTestBase {
   /**
    * 리포지토리 층 — 실제 예외 클래스와 SQLState 를 못 박는다.
    *
-   * <p>Spring 은 이 실패를 {@code BadSqlGrammarException} 으로 감싼다(클래스 코드 42 를 문법 오류로
-   * 뭉뚱그리는 SQLState 번역기 때문). {@code PermissionDeniedDataAccessException} 이 아니다 — 그것을
-   * 잡는 핸들러는 죽은 코드가 된다. 그래서 프로덕션 코드는 예외 클래스가 아니라 근본 원인의
-   * SQLState {@code 42501} 로 판정하며, 이 단언이 그 전제를 지킨다.
+   * <p>Spring 은 이 실패를 {@code BadSqlGrammarException} 으로 감싼다(클래스 코드 42 를 문법 오류로 뭉뚱그리는 SQLState 번역기
+   * 때문). {@code PermissionDeniedDataAccessException} 이 아니다 — 그것을 잡는 핸들러는 죽은 코드가 된다. 그래서 프로덕션 코드는 예외
+   * 클래스가 아니라 근본 원인의 SQLState {@code 42501} 로 판정하며, 이 단언이 그 전제를 지킨다.
    */
   @Test
   void upsertFromOAuth_teamOwnedByAnotherTenant_failsWithSqlState42501() {
@@ -151,8 +147,8 @@ class SlackReinstallCrossTenantTest extends IntegrationTestBase {
   /**
    * HTTP 층 — 콜백이 500 이 아니라 일반 409 로 응답하고, 응답이 <b>오라클이 아니다</b>.
    *
-   * <p>음성 단언이 이 태스크의 보안 산출물이다. 팀 ID 는 워크스페이스 관리자면 누구나 알므로, 응답이
-   * "이미 다른 테넌트가 설치했다"를 시사하는 순간 남의 테넌트 설치 여부를 조회하는 오라클이 된다.
+   * <p>음성 단언이 이 태스크의 보안 산출물이다. 팀 ID 는 워크스페이스 관리자면 누구나 알므로, 응답이 "이미 다른 테넌트가 설치했다"를 시사하는 순간 남의 테넌트 설치
+   * 여부를 조회하는 오라클이 된다.
    */
   @Test
   void callback_teamOwnedByAnotherTenant_returns409WithoutLeakingOtherTenant() throws Exception {
@@ -166,7 +162,8 @@ class SlackReinstallCrossTenantTest extends IntegrationTestBase {
 
     var result =
         mockMvc
-            .perform(get("/api/v1/oauth/slack/callback").param("code", "code-b").param("state", state))
+            .perform(
+                get("/api/v1/oauth/slack/callback").param("code", "code-b").param("state", state))
             .andReturn();
 
     assertThat(result.getResponse().getStatus())

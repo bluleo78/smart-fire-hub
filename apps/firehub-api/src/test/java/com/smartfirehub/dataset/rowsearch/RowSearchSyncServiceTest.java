@@ -24,8 +24,8 @@ import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 /**
- * 동기화 알고리즘: 증분·해시 생략·삭제 정리·전체 재색인 트리거·swap 재사용·주기 상한·실패 시 커서 불변.
- * 임베딩 호출 텍스트를 기록해 "임베딩을 생략했는가"를 호출 횟수로 단언한다.
+ * 동기화 알고리즘: 증분·해시 생략·삭제 정리·전체 재색인 트리거·swap 재사용·주기 상한·실패 시 커서 불변. 임베딩 호출 텍스트를 기록해 "임베딩을 생략했는가"를 호출
+ * 횟수로 단언한다.
  */
 @TestPropertySource(
     properties = {"row-search.sync.max-rows-per-cycle=4", "row-search.sync.batch-size=2"})
@@ -88,18 +88,22 @@ class RowSearchSyncServiceTest extends IntegrationTestBase {
               Long id =
                   dsl.fetchOne(
                           "INSERT INTO dataset(name, table_name, storage_type, origin_type, created_by) VALUES ('rs sync', ?, 'TABLE', 'SOURCE', ?) RETURNING id",
-                          SRC, userId)
+                          SRC,
+                          userId)
                       .get(0, Long.class);
               dsl.execute(
                   "INSERT INTO dataset_column(dataset_id, column_name, display_name, data_type, is_nullable, is_indexed, column_order) VALUES (?, 'content', '내용', 'TEXT', true, false, 0), (?, 'status', '상태', 'VARCHAR', true, false, 1)",
-                  id, id);
+                  id,
+                  id);
               dataTableService.createTable(
                   SRC,
                   List.of(
                       new DatasetColumnRequest("content", "내용", "TEXT", null, true, false, null),
                       new DatasetColumnRequest("status", "상태", "VARCHAR", 20, true, false, null)));
               dsl.execute(
-                  "INSERT INTO " + DataSchema.qualify(SRC) + " (content, status) VALUES ('a','x'),('b','x'),('c','x')");
+                  "INSERT INTO "
+                      + DataSchema.qualify(SRC)
+                      + " (content, status) VALUES ('a','x'),('b','x'),('c','x')");
               return id;
             });
     searchColumns.setSearchable(datasetId, List.of("content"));
@@ -188,7 +192,9 @@ class RowSearchSyncServiceTest extends IntegrationTestBase {
         () -> {
           dataTableService.createTempTable(SRC);
           dsl.execute(
-              "INSERT INTO " + DataSchema.qualify(SRC + "_tmp") + " (content, status) VALUES ('c','x'),('z','x')");
+              "INSERT INTO "
+                  + DataSchema.qualify(SRC + "_tmp")
+                  + " (content, status) VALUES ('c','x'),('z','x')");
           dataTableService.swapTable(SRC);
         });
 
@@ -202,7 +208,8 @@ class RowSearchSyncServiceTest extends IntegrationTestBase {
 
   @Test
   void cycleCap_resumesAcrossCycles() {
-    exec("INSERT INTO $T (content, status) SELECT 'n' || g, 'x' FROM generate_series(1, 6) g"); // 총 9행, 상한 4
+    exec("INSERT INTO $T (content, status) SELECT 'n' || g, 'x' FROM generate_series(1, 6) g"); // 총
+    // 9행, 상한 4
 
     assertThat(sync.sync(datasetId)).isEqualTo(RowSearchSyncService.Outcome.PARTIAL); // 1~4
     var mid = states.find(datasetId).orElseThrow();

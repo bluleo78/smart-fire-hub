@@ -47,10 +47,9 @@ public class AuthService {
   /**
    * 회원가입.
    *
-   * <p>트랜잭션이 없는 이유: /api/v1/auth/signup 은 permitAll 이라 JWT 가 없고 TenantContext 도
-   * 비어 있다. 그런데 내부에서 role 을 이름으로 조회하므로, role 에 RLS 가 걸리면 컨텍스트 없이는
-   * 0행이 되어 가입이 깨진다. GUC 는 트랜잭션이 열리는 순간(doBegin)에 확정되므로, 트랜잭션
-   * 경계보다 <b>바깥에서</b> 기본 테넌트를 세워야 한다.
+   * <p>트랜잭션이 없는 이유: /api/v1/auth/signup 은 permitAll 이라 JWT 가 없고 TenantContext 도 비어 있다. 그런데 내부에서
+   * role 을 이름으로 조회하므로, role 에 RLS 가 걸리면 컨텍스트 없이는 0행이 되어 가입이 깨진다. GUC 는 트랜잭션이 열리는 순간(doBegin)에
+   * 확정되므로, 트랜잭션 경계보다 <b>바깥에서</b> 기본 테넌트를 세워야 한다.
    */
   public UserResponse signup(SignupRequest request) {
     return TenantContext.runScopedGet(
@@ -58,8 +57,8 @@ public class AuthService {
   }
 
   /**
-   * 공개 가입이 열려 있는가 = 사용자가 한 명도 없는가. 로그인 화면이 가입 링크를 숨길지 정한다. 잠금 없이
-   * 읽는다 — 표시용 힌트일 뿐이고 최종 판정은 {@link SignupTransaction} 이 잠금 안에서 한다.
+   * 공개 가입이 열려 있는가 = 사용자가 한 명도 없는가. 로그인 화면이 가입 링크를 숨길지 정한다. 잠금 없이 읽는다 — 표시용 힌트일 뿐이고 최종 판정은 {@link
+   * SignupTransaction} 이 잠금 안에서 한다.
    */
   @Transactional(readOnly = true)
   public boolean isSignupOpen() {
@@ -245,8 +244,7 @@ public class AuthService {
   }
 
   /**
-   * 활성 테넌트를 선택한다. 테넌트 전환도 같은 경로를 쓴다 — 액세스/리프레시 토큰을 모두 재발급해
-   * 이후 요청이 새 테넌트 컨텍스트로 흐르게 한다.
+   * 활성 테넌트를 선택한다. 테넌트 전환도 같은 경로를 쓴다 — 액세스/리프레시 토큰을 모두 재발급해 이후 요청이 새 테넌트 컨텍스트로 흐르게 한다.
    *
    * @throws TenantAccessDeniedException 소속이 아니거나 멤버십/테넌트가 정지된 경우
    */
@@ -275,12 +273,12 @@ public class AuthService {
   /**
    * 비밀번호 변경 직후 호출자의 세션을 새 refresh 패밀리로 다시 세운다(WD-2 리뷰 지적 2).
    *
-   * <p>{@code UserService.changePassword} 가 이 사용자의 refresh 토큰을 전부 폐기하므로, 호출자(웹)가 쥔 옛
-   * 쿠키로는 refresh 가 401 이다. 컨트롤러가 여기서 받은 refresh 토큰을 쿠키로 내려 주면 웹의
-   * {@code completePasswordChange} → {@code /auth/refresh} 가 그대로 동작한다.
+   * <p>{@code UserService.changePassword} 가 이 사용자의 refresh 토큰을 전부 폐기하므로, 호출자(웹)가 쥔 옛 쿠키로는 refresh 가
+   * 401 이다. 컨트롤러가 여기서 받은 refresh 토큰을 쿠키로 내려 주면 웹의 {@code completePasswordChange} → {@code
+   * /auth/refresh} 가 그대로 동작한다.
    *
-   * <p>테넌트는 호출 시점 access token 의 클레임이다. refresh 와 같은 규칙으로 멤버십을 재검증해 정지됐으면
-   * 미선택(null)으로 강등한다. pwc 는 방금 커밋된 DB 값(꺼짐)을 읽는다.
+   * <p>테넌트는 호출 시점 access token 의 클레임이다. refresh 와 같은 규칙으로 멤버십을 재검증해 정지됐으면 미선택(null)으로 강등한다. pwc 는
+   * 방금 커밋된 DB 값(꺼짐)을 읽는다.
    */
   @Transactional
   public TokenResponse startSessionAfterPasswordChange(Long userId, Long claimedTenantId) {
@@ -289,7 +287,8 @@ public class AuthService {
             .findById(userId)
             .orElseThrow(() -> new InvalidTokenException("사용자를 찾을 수 없습니다. 다시 로그인해 주세요."));
     Long tenantId =
-        (claimedTenantId != null && membershipRepository.hasActiveMembership(userId, claimedTenantId))
+        (claimedTenantId != null
+                && membershipRepository.hasActiveMembership(userId, claimedTenantId))
             ? claimedTenantId
             : null;
     return issueTokenPair(
@@ -304,9 +303,8 @@ public class AuthService {
   /**
    * 액세스/리프레시 토큰을 발급하고 리프레시 토큰을 저장한 뒤 응답을 만든다.
    *
-   * <p>login/refresh/selectTenant 는 tenantId 산출 방식, familyId 를 새로 시작할지 재사용할지,
-   * memberships 를 실제 목록으로 채울지 비워둘지만 다르고 그 이후 처리(토큰 발급·저장·응답 조립)는
-   * 동일하므로 이 부분만 공유한다.
+   * <p>login/refresh/selectTenant 는 tenantId 산출 방식, familyId 를 새로 시작할지 재사용할지, memberships 를 실제 목록으로
+   * 채울지 비워둘지만 다르고 그 이후 처리(토큰 발급·저장·응답 조립)는 동일하므로 이 부분만 공유한다.
    */
   private TokenResponse issueTokenPair(
       Long userId,
@@ -356,8 +354,8 @@ public class AuthService {
   /**
    * 저장용 토큰 해시.
    *
-   * <p>구현은 {@link RefreshTokenHasher} 로 옮겼다 — 운영자 평면(P7-a)이 같은 {@code refresh_token}
-   * 테이블을 쓰므로 두 평면이 반드시 같은 해시를 만들어야 한다.
+   * <p>구현은 {@link RefreshTokenHasher} 로 옮겼다 — 운영자 평면(P7-a)이 같은 {@code refresh_token} 테이블을 쓰므로 두 평면이
+   * 반드시 같은 해시를 만들어야 한다.
    */
   private String hashToken(String token) {
     return RefreshTokenHasher.hash(token);

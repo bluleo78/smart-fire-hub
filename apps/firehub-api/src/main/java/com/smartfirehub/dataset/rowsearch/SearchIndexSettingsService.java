@@ -34,8 +34,8 @@ public class SearchIndexSettingsService {
   /**
    * 현재 검색 설정·색인 진행 상태. 색인 상태 행이 없으면 OFF.
    *
-   * <p>상태 행이 있어도 검색 대상 필드가 하나도 없으면 OFF 로 본다 — 검색 대상 컬럼을 컬럼 삭제로 모두 없앤 직후(다음
-   * 스윕이 정리하기 전)에 "사용 가능·필드 없음"이라는 모순된 상태를 보여주지 않기 위해서다.
+   * <p>상태 행이 있어도 검색 대상 필드가 하나도 없으면 OFF 로 본다 — 검색 대상 컬럼을 컬럼 삭제로 모두 없앤 직후(다음 스윕이 정리하기 전)에 "사용 가능·필드
+   * 없음"이라는 모순된 상태를 보여주지 않기 위해서다.
    */
   @Transactional(readOnly = true)
   public SearchIndexStatusResponse getStatus(long datasetId) {
@@ -108,8 +108,8 @@ public class SearchIndexSettingsService {
   }
 
   /**
-   * 데이터셋 존재(404)와 TABLE 저장 방식(400)을 확인한다. 행 검색 서비스({@link RowSearchService})도 같은 판정·메시지를
-   * 쓰도록 패키지 공용으로 둔다.
+   * 데이터셋 존재(404)와 TABLE 저장 방식(400)을 확인한다. 행 검색 서비스({@link RowSearchService})도 같은 판정·메시지를 쓰도록 패키지
+   * 공용으로 둔다.
    */
   static DatasetResponse requireTableDataset(DatasetRepository datasetRepository, long datasetId) {
     DatasetResponse d =

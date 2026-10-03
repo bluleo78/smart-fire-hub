@@ -91,7 +91,8 @@ class DatasetControllerTest {
             "orders",
             "Order data",
             category,
-            "TABLE", "SOURCE",
+            "TABLE",
+            "SOURCE",
             LocalDateTime.now(),
             false,
             List.of(),
@@ -116,7 +117,8 @@ class DatasetControllerTest {
   @Test
   void createDataset_withPermission_returnsCreated() throws Exception {
     CreateDatasetRequest request =
-        new CreateDatasetRequest("Orders", "orders", "Order data", 1L, "TABLE", "SOURCE", List.of(), null);
+        new CreateDatasetRequest(
+            "Orders", "orders", "Order data", 1L, "TABLE", "SOURCE", List.of(), null);
     DatasetDetailResponse detail =
         new DatasetDetailResponse(
             1L,
@@ -124,7 +126,8 @@ class DatasetControllerTest {
             "orders",
             "Order data",
             new CategoryResponse(1L, "Sales", "Sales data"),
-            "TABLE", "SOURCE",
+            "TABLE",
+            "SOURCE",
             "testuser",
             List.of(),
             0L,
@@ -163,7 +166,8 @@ class DatasetControllerTest {
             "orders",
             "Order data",
             new CategoryResponse(1L, "Sales", "Sales data"),
-            "TABLE", "SOURCE",
+            "TABLE",
+            "SOURCE",
             "testuser",
             List.of(),
             100L,
@@ -260,7 +264,9 @@ class DatasetControllerTest {
             List.of(new DatasetReferencesResponse.ReferenceItem(10L, "Pipeline A")),
             List.of(new DatasetReferencesResponse.ReferenceItem(20L, "Dashboard B")),
             List.of(),
-            List.of(new DatasetReferencesResponse.TriggerReferenceItem(30L, "Trigger C", 10L, "Pipeline A")),
+            List.of(
+                new DatasetReferencesResponse.TriggerReferenceItem(
+                    30L, "Trigger C", 10L, "Pipeline A")),
             3);
 
     when(datasetService.getReferences(1L)).thenReturn(response);

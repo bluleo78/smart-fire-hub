@@ -362,9 +362,7 @@ public class DashboardService {
                         // schemaname 도 현재 테넌트에서 파생시킨다 — 낡은 리터럴을 남기면 스키마가
                         // 분리되는 순간 이 조인이 **예외도 로그도 없이 0행**이 되고, 빈 데이터셋
                         // 개수가 조용히 0 으로 렌더링된다(오류로 보이지 않는 오답).
-                        .and(
-                            field("psu.schemaname", String.class)
-                                .eq(DataSchema.current())))
+                        .and(field("psu.schemaname", String.class).eq(DataSchema.current())))
                 .where(field("psu.n_live_tup", Long.class).eq(0L)));
 
     // ---- Dataset trend (최근 7일 일자별 임포트 이력 건수, #669) ----

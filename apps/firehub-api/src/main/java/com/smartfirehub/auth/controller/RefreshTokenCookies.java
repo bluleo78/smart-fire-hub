@@ -11,10 +11,10 @@ import org.springframework.stereotype.Component;
 /**
  * refresh 토큰 쿠키 작성기.
  *
- * <p>왜 AuthController 밖으로 뺐나(WD-2 리뷰 지적 2): 비밀번호 변경({@code PUT /users/me/password})도 새
- * refresh 쿠키를 내려야 한다. 쿠키 속성(HttpOnly·Secure·SameSite·Path·Max-Age)을 두 컨트롤러에 복사하면
- * 한쪽만 바뀌는 순간 브라우저가 이름은 같고 Path 가 다른 쿠키 두 개를 갖게 되어 refresh 가 엉뚱한 쿠키를
- * 보낼 수 있다. Path 는 요청 경로와 달라도 된다 — 브라우저는 응답의 Set-Cookie Path 를 그대로 따른다.
+ * <p>왜 AuthController 밖으로 뺐나(WD-2 리뷰 지적 2): 비밀번호 변경({@code PUT /users/me/password})도 새 refresh 쿠키를
+ * 내려야 한다. 쿠키 속성(HttpOnly·Secure·SameSite·Path·Max-Age)을 두 컨트롤러에 복사하면 한쪽만 바뀌는 순간 브라우저가 이름은 같고 Path 가
+ * 다른 쿠키 두 개를 갖게 되어 refresh 가 엉뚱한 쿠키를 보낼 수 있다. Path 는 요청 경로와 달라도 된다 — 브라우저는 응답의 Set-Cookie Path 를
+ * 그대로 따른다.
  */
 @Component
 public class RefreshTokenCookies {

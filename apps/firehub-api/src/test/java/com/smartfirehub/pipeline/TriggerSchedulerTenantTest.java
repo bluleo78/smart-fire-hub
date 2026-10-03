@@ -19,7 +19,6 @@ import com.smartfirehub.support.TenantRlsTestSupport;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledFuture;
 import org.jooq.DSLContext;
@@ -42,20 +41,18 @@ import org.springframework.transaction.support.TransactionTemplate;
  * <p>두 가지를 본다.
  *
  * <ul>
- *   <li>{@code reloadAllSchedules()} 가 ACTIVE 테넌트를 순회하는가 — 순회하지 않으면 기동 시 테넌트
- *       컨텍스트가 없어 SCHEDULE 트리거가 하나도 재등록되지 않는다.
- *   <li>cron 발화 콜백이 <b>등록 시점의 테넌트</b>를 들고 가는가 — 이 스케줄러 풀에는
- *       {@code TaskDecorator} 가 없어, 감싸지 않으면 발화 스레드에 테넌트가 없다.
+ *   <li>{@code reloadAllSchedules()} 가 ACTIVE 테넌트를 순회하는가 — 순회하지 않으면 기동 시 테넌트 컨텍스트가 없어 SCHEDULE 트리거가
+ *       하나도 재등록되지 않는다.
+ *   <li>cron 발화 콜백이 <b>등록 시점의 테넌트</b>를 들고 가는가 — 이 스케줄러 풀에는 {@code TaskDecorator} 가 없어, 감싸지 않으면 발화
+ *       스레드에 테넌트가 없다.
  * </ul>
  *
- * <p><b>클래스 레벨 {@code @Transactional} 이 없다 — 의도된 것이다.</b> 테스트가 트랜잭션을 열면 GUC
- * 가 그 트랜잭션에서 공급돼 프로덕션의 배선 누락을 구조적으로 가린다. 픽스처만
- * {@link TenantRlsTestSupport#runInTenantTransaction} 으로 감싸고, 검증 대상 호출은 트랜잭션 밖에
+ * <p><b>클래스 레벨 {@code @Transactional} 이 없다 — 의도된 것이다.</b> 테스트가 트랜잭션을 열면 GUC 가 그 트랜잭션에서 공급돼 프로덕션의 배선
+ * 누락을 구조적으로 가린다. 픽스처만 {@link TenantRlsTestSupport#runInTenantTransaction} 으로 감싸고, 검증 대상 호출은 트랜잭션 밖에
  * 남긴다(선례: {@code dashboard/job/PipelineExecutionTtlJobTest}).
  *
- * <p>{@link TriggerService} 는 목이다. {@code reloadAllSchedules()} 는 공유 테스트 DB 의 <b>모든</b>
- * 테넌트를 훑으므로, 실 서비스라면 다른 테스트가 심어둔 트리거의 missed-fire 를 실제로 발화시켜
- * 파이프라인 실행과 이벤트를 만들어낸다.
+ * <p>{@link TriggerService} 는 목이다. {@code reloadAllSchedules()} 는 공유 테스트 DB 의 <b>모든</b> 테넌트를 훑으므로,
+ * 실 서비스라면 다른 테스트가 심어둔 트리거의 missed-fire 를 실제로 발화시켜 파이프라인 실행과 이벤트를 만들어낸다.
  */
 class TriggerSchedulerTenantTest extends IntegrationTestBase {
 
@@ -109,7 +106,8 @@ class TriggerSchedulerTenantTest extends IntegrationTestBase {
         });
 
     // 싱글턴 빈의 taskScheduler 를 목으로 바꾼다 — 실제 cron 발화를 기다리지 않고 등록된 Runnable 을 꺼내기 위함.
-    originalScheduler = (TaskScheduler) ReflectionTestUtils.getField(schedulerService, "taskScheduler");
+    originalScheduler =
+        (TaskScheduler) ReflectionTestUtils.getField(schedulerService, "taskScheduler");
     schedulerMock = mock(TaskScheduler.class);
     when(schedulerMock.schedule(any(Runnable.class), any(Trigger.class)))
         .thenAnswer(invocation -> mock(ScheduledFuture.class));
@@ -129,10 +127,8 @@ class TriggerSchedulerTenantTest extends IntegrationTestBase {
     scheduledTasks().putAll(preexistingSchedules);
     ReflectionTestUtils.setField(schedulerService, "taskScheduler", originalScheduler);
 
-    TenantRlsTestSupport.runInTenantTransaction(
-        tx, tenantA, () -> deletePipeline(pipelineA));
-    TenantRlsTestSupport.runInTenantTransaction(
-        tx, tenantB, () -> deletePipeline(pipelineB));
+    TenantRlsTestSupport.runInTenantTransaction(tx, tenantA, () -> deletePipeline(pipelineA));
+    TenantRlsTestSupport.runInTenantTransaction(tx, tenantB, () -> deletePipeline(pipelineB));
     TenantRlsTestSupport.deleteUser(dsl, userA);
     TenantRlsTestSupport.deleteUser(dsl, userB);
     TenantRlsTestSupport.deleteTenants(dsl, tenantA, tenantB);
@@ -141,9 +137,9 @@ class TriggerSchedulerTenantTest extends IntegrationTestBase {
   /**
    * 기동 재등록이 두 테넌트 모두를 커버하는지 본다.
    *
-   * <p>단방향(한 테넌트만)이면 순회가 없어도 통과하므로 양쪽을 함께 단언한다. 호출 직전에 테넌트
-   * 컨텍스트를 비우는 것이 핵심이다 — {@code @PostConstruct} 실행 시점에는 승계할 테넌트가 없기
-   * 때문이며, {@link IntegrationTestBase} 가 세워둔 기본 테넌트를 남겨두면 순회가 없어도 통과한다.
+   * <p>단방향(한 테넌트만)이면 순회가 없어도 통과하므로 양쪽을 함께 단언한다. 호출 직전에 테넌트 컨텍스트를 비우는 것이 핵심이다 —
+   * {@code @PostConstruct} 실행 시점에는 승계할 테넌트가 없기 때문이며, {@link IntegrationTestBase} 가 세워둔 기본 테넌트를 남겨두면
+   * 순회가 없어도 통과한다.
    */
   @Test
   void reloadAllSchedules_registersSchedulesForEveryActiveTenant() {
@@ -157,8 +153,8 @@ class TriggerSchedulerTenantTest extends IntegrationTestBase {
   /**
    * 발화 콜백이 등록 시점의 테넌트를 들고 가는지 본다.
    *
-   * <p>등록된 {@code Runnable} 을 꺼내 <b>테넌트 컨텍스트가 비워진 별도 스레드</b>에서 실행한다 —
-   * 실제 cron 발화(다른 풀 스레드, 몇 시간 뒤)와 같은 조건이다. 감싸지 않았다면 여기서 null 이 관측된다.
+   * <p>등록된 {@code Runnable} 을 꺼내 <b>테넌트 컨텍스트가 비워진 별도 스레드</b>에서 실행한다 — 실제 cron 발화(다른 풀 스레드, 몇 시간 뒤)와
+   * 같은 조건이다. 감싸지 않았다면 여기서 null 이 관측된다.
    */
   @Test
   void fireCallback_carriesRegistrationTenantIntoFiringThread() throws Exception {
@@ -173,8 +169,10 @@ class TriggerSchedulerTenantTest extends IntegrationTestBase {
         .when(triggerService)
         .fireTrigger(any(), any());
 
-    TenantContext.runScoped(tenantA, () -> schedulerService.registerSchedule(triggerA, CRON_CONFIG));
-    TenantContext.runScoped(tenantB, () -> schedulerService.registerSchedule(triggerB, CRON_CONFIG));
+    TenantContext.runScoped(
+        tenantA, () -> schedulerService.registerSchedule(triggerA, CRON_CONFIG));
+    TenantContext.runScoped(
+        tenantB, () -> schedulerService.registerSchedule(triggerB, CRON_CONFIG));
 
     ArgumentCaptor<Runnable> captor = ArgumentCaptor.forClass(Runnable.class);
     verify(schedulerMock, times(2)).schedule(captor.capture(), any(Trigger.class));

@@ -25,23 +25,22 @@ import org.postgresql.util.PGInterval;
 /**
  * 애드혹 SQL 결과의 <b>다차원 배열</b>({@code ARRAY[[1,2],[3,4]]})을 중첩 리스트로 살려 내는 헬퍼(#757).
  *
- * <p><b>왜 필요한가.</b> jOOQ 는 PG 배열 컬럼을 메타데이터만 보고 1차원 Java 배열({@code Integer[]} 등)로 읽는다 —
- * PG 결과 메타데이터에는 차원 수가 없다. 값이 2차원 이상이면 pgjdbc 가 돌려준 {@code Integer[][]} 를 {@code Integer[]}
- * 로 바꾸지 못해 jOOQ 가 "Cannot parse array" 를 로그로만 남기고 <b>값을 null 로 바꿨다</b>(int·numeric·bool — 조용한
- * 데이터 손실). text 는 안쪽 배열이 PG 리터럴 문자열({@code {"a","b"}})로 뭉개졌다.
+ * <p><b>왜 필요한가.</b> jOOQ 는 PG 배열 컬럼을 메타데이터만 보고 1차원 Java 배열({@code Integer[]} 등)로 읽는다 — PG 결과
+ * 메타데이터에는 차원 수가 없다. 값이 2차원 이상이면 pgjdbc 가 돌려준 {@code Integer[][]} 를 {@code Integer[]} 로 바꾸지 못해 jOOQ
+ * 가 "Cannot parse array" 를 로그로만 남기고 <b>값을 null 로 바꿨다</b>(int·numeric·bool — 조용한 데이터 손실). text 는 안쪽
+ * 배열이 PG 리터럴 문자열({@code {"a","b"}})로 뭉개졌다.
  *
- * <p><b>방법.</b> jOOQ 에 넘기는 ResultSet 을 감싸 {@code getArray(int)} 를 가로챈다. 값이 다차원이면 연결이 열려 있는
- * 지금 pgjdbc 로 Java 다차원 배열을 materialize 해 두고 jOOQ 에는 null 을 준다(셀마다 오류 로그·뭉갬을 피한다). 결과를
- * 다 읽은 뒤 그 셀만 중첩 {@link List} 로 채운다. 1차원 배열·배열 아닌 값은 jOOQ 가 읽은 그대로라 기존 응답이 바이트
- * 단위로 같다 — 다차원 값이 하나도 없으면 결과 객체도 그대로 돌려준다.
+ * <p><b>방법.</b> jOOQ 에 넘기는 ResultSet 을 감싸 {@code getArray(int)} 를 가로챈다. 값이 다차원이면 연결이 열려 있는 지금
+ * pgjdbc 로 Java 다차원 배열을 materialize 해 두고 jOOQ 에는 null 을 준다(셀마다 오류 로그·뭉갬을 피한다). 결과를 다 읽은 뒤 그 셀만 중첩
+ * {@link List} 로 채운다. 1차원 배열·배열 아닌 값은 jOOQ 가 읽은 그대로라 기존 응답이 바이트 단위로 같다 — 다차원 값이 하나도 없으면 결과 객체도 그대로
+ * 돌려준다.
  *
- * <p><b>응답 형태 = executor 경로와 같은 중첩 리스트.</b> executor(psycopg2)는 다차원 배열을 중첩 리스트로 주고 하한
- * ({@code [0:1]=})은 버린다. 여기서도 같다. 원소는 jOOQ 가 1차원 배열 원소에 쓰는 것과 같은 변환
- * (가장 안쪽 1차원 조각에 {@link Convert#convert(Object, Class)} → 컬럼의 1차원 배열 타입)을 거친 뒤 {@link AdhocResultValues} 가 원소 단위로
- * 다듬는다 — 그래서 2차원 원소의 JSON 형태가 같은 직접 경로의 1차원 원소 형태와 같다(numeric 은 숫자, jsonb 는 텍스트).
+ * <p><b>응답 형태 = executor 경로와 같은 중첩 리스트.</b> executor(psycopg2)는 다차원 배열을 중첩 리스트로 주고 하한 ({@code
+ * [0:1]=})은 버린다. 여기서도 같다. 원소는 jOOQ 가 1차원 배열 원소에 쓰는 것과 같은 변환 (가장 안쪽 1차원 조각에 {@link
+ * Convert#convert(Object, Class)} → 컬럼의 1차원 배열 타입)을 거친 뒤 {@link AdhocResultValues} 가 원소 단위로 다듬는다 —
+ * 그래서 2차원 원소의 JSON 형태가 같은 직접 경로의 1차원 원소 형태와 같다(numeric 은 숫자, jsonb 는 텍스트).
  *
- * <p><b>손실 금지.</b> 원소 변환이 하나라도 실패하면 그 셀은 null 이 아니라 PG 배열 리터럴 텍스트
- * ({@code {{1,2},{3,4}}})로 준다.
+ * <p><b>손실 금지.</b> 원소 변환이 하나라도 실패하면 그 셀은 null 이 아니라 PG 배열 리터럴 텍스트 ({@code {{1,2},{3,4}}})로 준다.
  */
 final class AdhocMultiDimArrays {
 
@@ -89,8 +88,8 @@ final class AdhocMultiDimArrays {
   }
 
   /**
-   * 다차원 배열이면 materialize 해 기록하고 null 을 준다. 판정 중 무엇이 실패하든 원본 배열을 그대로 넘겨 jOOQ 의 기존
-   * 동작을 유지한다(이 헬퍼가 새 실패 경로를 만들지 않도록).
+   * 다차원 배열이면 materialize 해 기록하고 null 을 준다. 판정 중 무엇이 실패하든 원본 배열을 그대로 넘겨 jOOQ 의 기존 동작을 유지한다(이 헬퍼가 새
+   * 실패 경로를 만들지 않도록).
    */
   private java.sql.Array interceptGetArray(int idx) throws java.sql.SQLException {
     java.sql.Array array = delegate.getArray(idx);
@@ -129,10 +128,10 @@ final class AdhocMultiDimArrays {
   }
 
   /**
-   * (행 → (1-based 컬럼 인덱스 → 값)) 의 셀을 결과에 채운다. 채울 것이 없으면 결과를 그대로 돌려준다. 있으면 해당
-   * 컬럼만 {@code OTHER}(Object) 타입으로 바꾼 새 결과를 만든다 — 원래 타입({@code Integer[]}·{@code Date})에는 중첩
-   * 리스트·텍스트를 담을 수 없다. 호출자는 컬럼 이름과 값만 쓰므로 타입 변경은 응답에 드러나지 않는다.
-   * 다차원 배열(#757)과 범위 밖 날짜·시각({@link AdhocTemporalValues}, #768)이 함께 쓴다.
+   * (행 → (1-based 컬럼 인덱스 → 값)) 의 셀을 결과에 채운다. 채울 것이 없으면 결과를 그대로 돌려준다. 있으면 해당 컬럼만 {@code
+   * OTHER}(Object) 타입으로 바꾼 새 결과를 만든다 — 원래 타입({@code Integer[]}·{@code Date})에는 중첩 리스트·텍스트를 담을 수 없다.
+   * 호출자는 컬럼 이름과 값만 쓰므로 타입 변경은 응답에 드러나지 않는다. 다차원 배열(#757)과 범위 밖 날짜·시각({@link AdhocTemporalValues},
+   * #768)이 함께 쓴다.
    */
   static Result<Record> replaceCells(
       DSLContext dsl, Result<Record> result, Map<Integer, Map<Integer, Object>> cells) {
@@ -180,9 +179,9 @@ final class AdhocMultiDimArrays {
   }
 
   /**
-   * 바깥 차원은 리스트로 펼치고, 가장 안쪽 1차원 조각은 jOOQ 가 1차원 배열을 읽을 때와 <b>같은 호출</b>
-   * ({@code Convert.convert(array.getArray(), Integer[].class)} — DefaultBinding.convertArray)로 바꾼다. 그래서
-   * 원소 형태(interval → YearToSecond, date → LocalDate, jsonb → JSONB …)가 1차원 배열 원소와 정확히 같다.
+   * 바깥 차원은 리스트로 펼치고, 가장 안쪽 1차원 조각은 jOOQ 가 1차원 배열을 읽을 때와 <b>같은 호출</b> ({@code
+   * Convert.convert(array.getArray(), Integer[].class)} — DefaultBinding.convertArray)로 바꾼다. 그래서 원소
+   * 형태(interval → YearToSecond, date → LocalDate, jsonb → JSONB …)가 1차원 배열 원소와 정확히 같다.
    */
   private static Object nest(Object value, Class<?> sliceType) {
     if (!(value instanceof Object[] array)) {
@@ -217,8 +216,8 @@ final class AdhocMultiDimArrays {
   }
 
   /**
-   * interval 원소는 Convert 가 PGInterval 을 바꾸지 못해 jOOQ 도 1차원 배열에서 원소 바인딩(PostgresUtils)으로 따로
-   * 읽는다. 같은 변환을 여기서 먼저 적용해 1차원 interval 배열 원소와 같은 값을 만든다.
+   * interval 원소는 Convert 가 PGInterval 을 바꾸지 못해 jOOQ 도 1차원 배열에서 원소 바인딩(PostgresUtils)으로 따로 읽는다. 같은
+   * 변환을 여기서 먼저 적용해 1차원 interval 배열 원소와 같은 값을 만든다.
    */
   private static Object[] intervalsToJooq(Object[] array, Class<?> sliceType) {
     Class<?> component = sliceType.getComponentType();
@@ -244,8 +243,8 @@ final class AdhocMultiDimArrays {
   }
 
   /**
-   * 이 배열이 다른 배열을 원소로 담는 바깥 차원인가. 원소 타입이 {@code Object[]} 계열일 때만 그렇다 — 1차원
-   * {@code bytea[]} 는 pgjdbc 가 {@code byte[][]} 로 주므로 "원소가 배열인가"로 보면 다차원으로 오판한다.
+   * 이 배열이 다른 배열을 원소로 담는 바깥 차원인가. 원소 타입이 {@code Object[]} 계열일 때만 그렇다 — 1차원 {@code bytea[]} 는 pgjdbc
+   * 가 {@code byte[][]} 로 주므로 "원소가 배열인가"로 보면 다차원으로 오판한다.
    */
   private static boolean isOuterLevel(Object[] array) {
     return Object[].class.isAssignableFrom(array.getClass().getComponentType());

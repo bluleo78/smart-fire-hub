@@ -159,7 +159,8 @@ public class FileUploadService {
                     .set(UPLOADED_FILES.UPLOADED_BY, userId)
                     .set(UPLOADED_FILES.CREATED_AT, OffsetDateTime.ofInstant(now, ZoneOffset.UTC))
                     .set(
-                        UPLOADED_FILES.EXPIRES_AT, OffsetDateTime.ofInstant(expiresAt, ZoneOffset.UTC))
+                        UPLOADED_FILES.EXPIRES_AT,
+                        OffsetDateTime.ofInstant(expiresAt, ZoneOffset.UTC))
                     .returning(UPLOADED_FILES.ID)
                     .fetchOne()
                     .getId());

@@ -6,8 +6,8 @@ import java.time.LocalDateTime;
 /**
  * 사용자 기본 정보.
  *
- * @param mustChangePassword 관리자가 임시 비밀번호로 만든 계정이 아직 비밀번호를 바꾸지 않았으면 true
- *     ({@code /auth/me} 로 웹에 전달되고, 토큰 발급 시 클레임 {@code pwc} 의 원천이 된다)
+ * @param mustChangePassword 관리자가 임시 비밀번호로 만든 계정이 아직 비밀번호를 바꾸지 않았으면 true ({@code /auth/me} 로 웹에
+ *     전달되고, 토큰 발급 시 클레임 {@code pwc} 의 원천이 된다)
  */
 public record UserResponse(
     Long id,

@@ -52,7 +52,8 @@ class FileObjectControllerTest {
     when(storage.listObjects(eq("firehub-files"), eq("equip/"), any(), anyInt()))
         .thenReturn(
             new ObjectListResponse(
-                List.of(new ObjectItemResponse("equip/a.jpg", "a.jpg", 123L, "2026-07-20T00:00:00Z")),
+                List.of(
+                    new ObjectItemResponse("equip/a.jpg", "a.jpg", 123L, "2026-07-20T00:00:00Z")),
                 null,
                 false));
 
@@ -103,12 +104,14 @@ class FileObjectControllerTest {
     when(storage.defaultUploadPresignExpiry()).thenReturn(900);
     when(storage.presignedPutUrl(eq("firehub-files"), any(), eq(900)))
         .thenAnswer(
-            inv -> new PresignedUrlResponse("http://minio/" + inv.getArgument(1) + "?sig=put", 900));
+            inv ->
+                new PresignedUrlResponse("http://minio/" + inv.getArgument(1) + "?sig=put", 900));
 
     mvc.perform(
             post("/api/v1/datasets/7/objects/upload-urls")
                 .contentType(MediaType.APPLICATION_JSON)
-                .content("{\"files\":[{\"filename\":\"photo.jpg\"},{\"filename\":\"my report.png\"}]}"))
+                .content(
+                    "{\"files\":[{\"filename\":\"photo.jpg\"},{\"filename\":\"my report.png\"}]}"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.expiresInSeconds").value(900))
         .andExpect(jsonPath("$.targets.length()").value(2))
@@ -126,7 +129,8 @@ class FileObjectControllerTest {
     when(storage.defaultUploadPresignExpiry()).thenReturn(900);
     when(storage.presignedPutUrl(eq("firehub-files"), any(), eq(900)))
         .thenAnswer(
-            inv -> new PresignedUrlResponse("http://minio/" + inv.getArgument(1) + "?sig=put", 900));
+            inv ->
+                new PresignedUrlResponse("http://minio/" + inv.getArgument(1) + "?sig=put", 900));
 
     mvc.perform(
             post("/api/v1/datasets/7/objects/upload-urls")
@@ -216,7 +220,8 @@ class FileObjectControllerTest {
   @Test
   void createUploadUrls_requiresDatasetWritePermission() throws Exception {
     var method =
-        FileObjectController.class.getMethod("createUploadUrls", Long.class, UploadUrlRequest.class);
+        FileObjectController.class.getMethod(
+            "createUploadUrls", Long.class, UploadUrlRequest.class);
     RequirePermission ann = method.getAnnotation(RequirePermission.class);
     assertThat(ann).isNotNull();
     // RequirePermission.value()는 String[] — 단일 값 "dataset:write" 배열인지 확인한다.

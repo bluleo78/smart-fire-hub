@@ -138,8 +138,8 @@ class FileObjectStorageServiceTest {
 
   /**
    * Slice 3 핵심 회귀: presign은 내부 endpoint가 아니라 공개 endpoint(publicEndpoint)로 서명해야 한다.
-   * getPresignedObjectUrl은 네트워크 없이 host+path를 로컬 서명하므로, 서로 다른 endpoint로 빌드한 실제
-   * MinioClient 2개를 주입해 발급 URL의 host가 공개 호스트인지(내부 호스트가 새지 않는지) 검증한다.
+   * getPresignedObjectUrl은 네트워크 없이 host+path를 로컬 서명하므로, 서로 다른 endpoint로 빌드한 실제 MinioClient 2개를 주입해
+   * 발급 URL의 host가 공개 호스트인지(내부 호스트가 새지 않는지) 검증한다.
    */
   @Test
   void presign_signsAgainstPublicEndpointNotInternal() {

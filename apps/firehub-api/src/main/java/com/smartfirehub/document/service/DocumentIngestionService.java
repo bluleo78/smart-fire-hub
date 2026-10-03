@@ -20,7 +20,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.jobrunr.jobs.annotations.Job;
 import org.jobrunr.scheduling.JobScheduler;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 /** 문서 업로드 + 비동기 인제스션(추출→청킹→임베딩→저장). */
 @Service
@@ -92,44 +91,48 @@ public class DocumentIngestionService {
     TenantContext.runScoped(
         tenantId,
         () -> {
-      DocumentFileResponse file = fileRepository.findById(documentFileId).orElseThrow();
-      boolean completed = false;
-      try {
-        // 잡 재시도 시 이전에 부분 적재된 청크가 남아 중복되지 않도록 먼저 정리한다(멱등성 보장).
-        chunkRepository.deleteByDocumentFileId(documentFileId);
-        fileRepository.updateStatus(documentFileId, "PARSING");
-        // storagePath 는 응답 DTO에 없으므로 저장소 경로를 별도 조회로 얻는다.
-        byte[] data = storageService.read(fileRepository.findStoragePath(documentFileId));
-        ExtractedText extracted =
-            textExtractor.extract(data, file.mimeType(), file.originalName());
-        List<Chunk> chunks = textChunker.chunk(extracted.text());
+          DocumentFileResponse file = fileRepository.findById(documentFileId).orElseThrow();
+          boolean completed = false;
+          try {
+            // 잡 재시도 시 이전에 부분 적재된 청크가 남아 중복되지 않도록 먼저 정리한다(멱등성 보장).
+            chunkRepository.deleteByDocumentFileId(documentFileId);
+            fileRepository.updateStatus(documentFileId, "PARSING");
+            // storagePath 는 응답 DTO에 없으므로 저장소 경로를 별도 조회로 얻는다.
+            byte[] data = storageService.read(fileRepository.findStoragePath(documentFileId));
+            ExtractedText extracted =
+                textExtractor.extract(data, file.mimeType(), file.originalName());
+            List<Chunk> chunks = textChunker.chunk(extracted.text());
 
-        if (chunks.isEmpty()) {
-          // 추출 텍스트가 비어 청크가 없으면 임베딩 없이 0건으로 완료 처리한다.
-          fileRepository.markCompleted(documentFileId, extracted.pageCount(), 0);
-        } else {
-          fileRepository.updateStatus(documentFileId, "EMBEDDING");
-          EmbeddingProvider provider = embeddingProviderFactory.current();
-          List<float[]> embeddings =
-              provider.embed(chunks.stream().map(Chunk::content).toList());
+            if (chunks.isEmpty()) {
+              // 추출 텍스트가 비어 청크가 없으면 임베딩 없이 0건으로 완료 처리한다.
+              fileRepository.markCompleted(documentFileId, extracted.pageCount(), 0);
+            } else {
+              fileRepository.updateStatus(documentFileId, "EMBEDDING");
+              EmbeddingProvider provider = embeddingProviderFactory.current();
+              List<float[]> embeddings =
+                  provider.embed(chunks.stream().map(Chunk::content).toList());
 
-          chunkRepository.insertBatch(
-              documentFileId, file.datasetId(), chunks, embeddings, EmbeddingSpace.of(provider));
-          fileRepository.markCompleted(documentFileId, extracted.pageCount(), chunks.size());
-          log.info("Document ingested: file={} chunks={}", documentFileId, chunks.size());
-        }
-        completed = true;
-      } catch (Exception e) {
-        log.error("Document ingestion failed: file={}", documentFileId, e);
-        fileRepository.markFailed(documentFileId, e.getMessage());
-        notificationService.notifyDocumentIngested(
-            file.uploadedBy(), file.datasetId(), file.originalName(), false);
-      }
-      // 알림 브로드캐스트 중 예외가 COMPLETED 상태를 FAILED로 뒤집지 않도록 try 밖에서 성공 알림을 보낸다.
-      if (completed) {
-        notificationService.notifyDocumentIngested(
-            file.uploadedBy(), file.datasetId(), file.originalName(), true);
-      }
+              chunkRepository.insertBatch(
+                  documentFileId,
+                  file.datasetId(),
+                  chunks,
+                  embeddings,
+                  EmbeddingSpace.of(provider));
+              fileRepository.markCompleted(documentFileId, extracted.pageCount(), chunks.size());
+              log.info("Document ingested: file={} chunks={}", documentFileId, chunks.size());
+            }
+            completed = true;
+          } catch (Exception e) {
+            log.error("Document ingestion failed: file={}", documentFileId, e);
+            fileRepository.markFailed(documentFileId, e.getMessage());
+            notificationService.notifyDocumentIngested(
+                file.uploadedBy(), file.datasetId(), file.originalName(), false);
+          }
+          // 알림 브로드캐스트 중 예외가 COMPLETED 상태를 FAILED로 뒤집지 않도록 try 밖에서 성공 알림을 보낸다.
+          if (completed) {
+            notificationService.notifyDocumentIngested(
+                file.uploadedBy(), file.datasetId(), file.originalName(), true);
+          }
         });
   }
 

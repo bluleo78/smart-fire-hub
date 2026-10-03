@@ -28,8 +28,8 @@ import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 /**
  * 설정 저장 흐름(형식 검증 → probe 로 차원 측정 → 문서 저장)을 실제 tenant_settings(RLS)로 검증한다.
  *
- * <p>probe 는 대부분 스파이로 차원만 돌려준다(외부 호출 없음). Ollama 한 건은 MockWebServer 를 허용 목록에
- * 넣어 실제 HTTP 까지 통과시킨다 — 허용 목록 주입이 실제로 배선됐는지 보는 유일한 테스트다.
+ * <p>probe 는 대부분 스파이로 차원만 돌려준다(외부 호출 없음). Ollama 한 건은 MockWebServer 를 허용 목록에 넣어 실제 HTTP 까지 통과시킨다 —
+ * 허용 목록 주입이 실제로 배선됐는지 보는 유일한 테스트다.
  */
 class EmbeddingSettingsServiceTest extends IntegrationTestBase {
 
@@ -99,7 +99,10 @@ class EmbeddingSettingsServiceTest extends IntegrationTestBase {
     assertThat(view.configured()).isTrue();
     assertThat(view.dimension()).isEqualTo(1024);
     assertThat(view.model()).isEqualTo("bge-m3");
-    assertThat(configService.resolve()).get().extracting(EmbeddingConfig::dimension).isEqualTo(1024);
+    assertThat(configService.resolve())
+        .get()
+        .extracting(EmbeddingConfig::dimension)
+        .isEqualTo(1024);
   }
 
   @Test
@@ -148,7 +151,11 @@ class EmbeddingSettingsServiceTest extends IntegrationTestBase {
   void apiKeyIsEncryptedAtRestAndMaskedInView() {
     configService.store(
         new EmbeddingConfig(
-            EmbeddingProviderType.OPENAI, "text-embedding-3-small", "https://api.openai.com", "sk-abcdef1234", 0),
+            EmbeddingProviderType.OPENAI,
+            "text-embedding-3-small",
+            "https://api.openai.com",
+            "sk-abcdef1234",
+            0),
         com.smartfirehub.embedding.EmbeddingDimension.D1536,
         null);
     String raw =
@@ -159,20 +166,28 @@ class EmbeddingSettingsServiceTest extends IntegrationTestBase {
                     .get(0, String.class));
     assertThat(raw).doesNotContain("sk-abcdef1234");
     assertThat(settingsService.view().apiKeyMasked()).isEqualTo("****1234");
-    assertThat(configService.resolve()).get().extracting(EmbeddingConfig::apiKey).isEqualTo("sk-abcdef1234");
+    assertThat(configService.resolve())
+        .get()
+        .extracting(EmbeddingConfig::apiKey)
+        .isEqualTo("sk-abcdef1234");
   }
 
   @Test
   void omittedKeyKeepsStoredKeyWhenBaseUrlUnchanged() {
     configService.store(
         new EmbeddingConfig(
-            EmbeddingProviderType.OPENAI, "text-embedding-3-small", "https://api.openai.com", "sk-stored", 0),
+            EmbeddingProviderType.OPENAI,
+            "text-embedding-3-small",
+            "https://api.openai.com",
+            "sk-stored",
+            0),
         com.smartfirehub.embedding.EmbeddingDimension.D1536,
         null);
     // OpenAI 가드는 DNS 해석을 하므로 prepareForTest(가드 제외, 병합 규칙 동일)로 키 병합만 본다.
     EmbeddingConfig prepared =
         configService.prepareForTest(
-            new EmbeddingConfigRequest("OPENAI", "text-embedding-3-large", "https://api.openai.com/", null));
+            new EmbeddingConfigRequest(
+                "OPENAI", "text-embedding-3-large", "https://api.openai.com/", null));
     assertThat(prepared.apiKey()).isEqualTo("sk-stored");
   }
 
@@ -181,7 +196,11 @@ class EmbeddingSettingsServiceTest extends IntegrationTestBase {
     // Review Focus: Base URL 만 바꾸고 키를 비우면 저장된 키가 새 호스트로 실려 나가면 안 된다.
     configService.store(
         new EmbeddingConfig(
-            EmbeddingProviderType.OPENAI, "text-embedding-3-small", "https://api.openai.com", "sk-stored", 0),
+            EmbeddingProviderType.OPENAI,
+            "text-embedding-3-small",
+            "https://api.openai.com",
+            "sk-stored",
+            0),
         com.smartfirehub.embedding.EmbeddingDimension.D1536,
         null);
     assertThatThrownBy(

@@ -261,7 +261,8 @@ class ProactiveMessageRepositoryTest extends IntegrationTestBase {
 
     List<ProactiveMessageResponse> all = repository.findByUserId(userId, 10, 0, false);
 
-    assertThat(all).extracting(ProactiveMessageResponse::id)
+    assertThat(all)
+        .extracting(ProactiveMessageResponse::id)
         .containsExactlyInAnyOrder(unreadId, readId);
   }
 }

@@ -3,7 +3,6 @@ package com.smartfirehub.graphreview;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -48,20 +47,35 @@ class ReviewItemControllerTest {
   void setUp() {
     when(jwtTokenProvider.parseAccessToken("valid-token"))
         .thenReturn(Optional.of(new JwtTokenProvider.AccessTokenPrincipal(1L, null, false)));
-    when(permissionService.getUserPermissions(1L)).thenReturn(Set.of("dataset:read", "dataset:write"));
+    when(permissionService.getUserPermissions(1L))
+        .thenReturn(Set.of("dataset:read", "dataset:write"));
   }
 
   private static ReviewItemResponse resp(String status) {
-    return new ReviewItemResponse(1L, "property_normalization", status, 12L, "normalization_failure",
-        null, "reason", com.fasterxml.jackson.databind.node.NullNode.getInstance(), 1L, null, null);
+    return new ReviewItemResponse(
+        1L,
+        "property_normalization",
+        status,
+        12L,
+        "normalization_failure",
+        null,
+        "reason",
+        com.fasterxml.jackson.databind.node.NullNode.getInstance(),
+        1L,
+        null,
+        null);
   }
 
   @Test
   void lookup_returnsStatus() throws Exception {
     when(service.lookupSynonym("Cause", "a", "b")).thenReturn("none");
-    mockMvc.perform(get("/api/v1/graphrag/review-items/synonym/lookup")
-            .param("entityType", "Cause").param("nameA", "a").param("nameB", "b")
-            .header("Authorization", "Bearer valid-token"))
+    mockMvc
+        .perform(
+            get("/api/v1/graphrag/review-items/synonym/lookup")
+                .param("entityType", "Cause")
+                .param("nameA", "a")
+                .param("nameB", "b")
+                .header("Authorization", "Bearer valid-token"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("none"));
   }
@@ -69,9 +83,12 @@ class ReviewItemControllerTest {
   @Test
   void approve_property_passesCorrectedValue() throws Exception {
     when(service.approve(eq(1L), eq("30000000"), eq(1L))).thenReturn(resp("approved"));
-    mockMvc.perform(post("/api/v1/graphrag/review-items/{id}/approve", 1L)
-            .contentType("application/json").content("{\"correctedValue\":\"30000000\"}")
-            .header("Authorization", "Bearer valid-token"))
+    mockMvc
+        .perform(
+            post("/api/v1/graphrag/review-items/{id}/approve", 1L)
+                .contentType("application/json")
+                .content("{\"correctedValue\":\"30000000\"}")
+                .header("Authorization", "Bearer valid-token"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("approved"));
     verify(service).approve(1L, "30000000", 1L);
@@ -79,25 +96,34 @@ class ReviewItemControllerTest {
 
   @Test
   void approve_mutationFails_returns502() throws Exception {
-    doThrow(new ExternalServiceException("fail")).when(service).approve(anyLong(), org.mockito.ArgumentMatchers.any(), anyLong());
-    mockMvc.perform(post("/api/v1/graphrag/review-items/{id}/approve", 1L)
-            .contentType("application/json").content("{}")
-            .header("Authorization", "Bearer valid-token"))
+    doThrow(new ExternalServiceException("fail"))
+        .when(service)
+        .approve(anyLong(), org.mockito.ArgumentMatchers.any(), anyLong());
+    mockMvc
+        .perform(
+            post("/api/v1/graphrag/review-items/{id}/approve", 1L)
+                .contentType("application/json")
+                .content("{}")
+                .header("Authorization", "Bearer valid-token"))
         .andExpect(status().isBadGateway());
   }
 
   /**
-   * 대상 노드 부재로 그래프에 아무 것도 반영되지 않은 승인은 409 + 구체적 사유로 나가야 한다 (#310).
-   * 사유가 응답 body의 message로 살아 나오지 않으면 검수 UI가 일반 폴백 문구만 띄워 원인을 알 수 없다.
+   * 대상 노드 부재로 그래프에 아무 것도 반영되지 않은 승인은 409 + 구체적 사유로 나가야 한다 (#310). 사유가 응답 body의 message로 살아 나오지 않으면
+   * 검수 UI가 일반 폴백 문구만 띄워 원인을 알 수 없다.
    */
   @Test
   void approve_graphTargetMissing_returns409WithReason() throws Exception {
     String reason = "주어/목적어 엔티티가 그래프에 없어 관계를 적재할 수 없습니다.";
     doThrow(new IllegalStateException(reason))
-        .when(service).approve(anyLong(), org.mockito.ArgumentMatchers.any(), anyLong());
-    mockMvc.perform(post("/api/v1/graphrag/review-items/{id}/approve", 1L)
-            .contentType("application/json").content("{}")
-            .header("Authorization", "Bearer valid-token"))
+        .when(service)
+        .approve(anyLong(), org.mockito.ArgumentMatchers.any(), anyLong());
+    mockMvc
+        .perform(
+            post("/api/v1/graphrag/review-items/{id}/approve", 1L)
+                .contentType("application/json")
+                .content("{}")
+                .header("Authorization", "Bearer valid-token"))
         .andExpect(status().isConflict())
         .andExpect(jsonPath("$.message").value(reason));
   }
@@ -105,8 +131,10 @@ class ReviewItemControllerTest {
   @Test
   void reject_returnsRejected() throws Exception {
     when(service.reject(1L, 1L)).thenReturn(resp("rejected"));
-    mockMvc.perform(post("/api/v1/graphrag/review-items/{id}/reject", 1L)
-            .header("Authorization", "Bearer valid-token"))
+    mockMvc
+        .perform(
+            post("/api/v1/graphrag/review-items/{id}/reject", 1L)
+                .header("Authorization", "Bearer valid-token"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("rejected"));
   }
@@ -114,19 +142,26 @@ class ReviewItemControllerTest {
   @Test
   void list_withoutReadPermission_forbidden() throws Exception {
     when(permissionService.getUserPermissions(1L)).thenReturn(Set.of());
-    mockMvc.perform(get("/api/v1/graphrag/review-items").param("status", "pending")
-            .header("Authorization", "Bearer valid-token"))
+    mockMvc
+        .perform(
+            get("/api/v1/graphrag/review-items")
+                .param("status", "pending")
+                .header("Authorization", "Bearer valid-token"))
         .andExpect(status().isForbidden());
   }
 
   // ── status 필터(#318) — 예전에는 파라미터를 받고도 버려 항상 pending을 돌려줬다.
   @Test
   void list_passesStatusFilterToService() throws Exception {
-    when(service.list("approved", "synonym_merge", null, null)).thenReturn(List.of(resp("approved")));
+    when(service.list("approved", "synonym_merge", null, null))
+        .thenReturn(List.of(resp("approved")));
 
-    mockMvc.perform(get("/api/v1/graphrag/review-items")
-            .param("status", "approved").param("itemType", "synonym_merge")
-            .header("Authorization", "Bearer valid-token"))
+    mockMvc
+        .perform(
+            get("/api/v1/graphrag/review-items")
+                .param("status", "approved")
+                .param("itemType", "synonym_merge")
+                .header("Authorization", "Bearer valid-token"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$[0].status").value("approved"));
 
@@ -137,7 +172,8 @@ class ReviewItemControllerTest {
   void list_withoutStatus_defaultsToPendingAtServiceLayer() throws Exception {
     when(service.list(null, null, null, null)).thenReturn(List.of(resp("pending")));
 
-    mockMvc.perform(get("/api/v1/graphrag/review-items").header("Authorization", "Bearer valid-token"))
+    mockMvc
+        .perform(get("/api/v1/graphrag/review-items").header("Authorization", "Bearer valid-token"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$[0].status").value("pending"));
 
@@ -147,12 +183,18 @@ class ReviewItemControllerTest {
   @Test
   void list_invalidStatus_badRequest() throws Exception {
     when(service.list(eq("bogus"), eq(null), eq(null), eq(null)))
-        .thenThrow(new IllegalArgumentException("지원하지 않는 status 값입니다: bogus (허용: pending, approved, rejected)"));
+        .thenThrow(
+            new IllegalArgumentException(
+                "지원하지 않는 status 값입니다: bogus (허용: pending, approved, rejected)"));
 
-    mockMvc.perform(get("/api/v1/graphrag/review-items").param("status", "bogus")
-            .header("Authorization", "Bearer valid-token"))
+    mockMvc
+        .perform(
+            get("/api/v1/graphrag/review-items")
+                .param("status", "bogus")
+                .header("Authorization", "Bearer valid-token"))
         .andExpect(status().isBadRequest())
-        .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("지원하지 않는 status")));
+        .andExpect(
+            jsonPath("$.message").value(org.hamcrest.Matchers.containsString("지원하지 않는 status")));
   }
 
   // ── page/size(opt-in, #422) — 웹 인박스 무한스크롤이 넘기는 파라미터가 서비스로 그대로 전달되는지.
@@ -160,9 +202,12 @@ class ReviewItemControllerTest {
   void list_passesPageAndSizeToService() throws Exception {
     when(service.list(null, null, 1, 20)).thenReturn(List.of(resp("pending")));
 
-    mockMvc.perform(get("/api/v1/graphrag/review-items")
-            .param("page", "1").param("size", "20")
-            .header("Authorization", "Bearer valid-token"))
+    mockMvc
+        .perform(
+            get("/api/v1/graphrag/review-items")
+                .param("page", "1")
+                .param("size", "20")
+                .header("Authorization", "Bearer valid-token"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$[0].status").value("pending"));
 
@@ -171,10 +216,13 @@ class ReviewItemControllerTest {
 
   @Test
   void evidence_returnsChunks() throws Exception {
-    when(service.evidence(1L)).thenReturn(List.of(
-        new com.smartfirehub.graphreview.dto.EvidenceChunk(5L, "약 3천만원의 재산피해")));
-    mockMvc.perform(get("/api/v1/graphrag/review-items/{id}/evidence", 1L)
-            .header("Authorization", "Bearer valid-token"))
+    when(service.evidence(1L))
+        .thenReturn(
+            List.of(new com.smartfirehub.graphreview.dto.EvidenceChunk(5L, "약 3천만원의 재산피해")));
+    mockMvc
+        .perform(
+            get("/api/v1/graphrag/review-items/{id}/evidence", 1L)
+                .header("Authorization", "Bearer valid-token"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$[0].chunkId").value(5))
         .andExpect(jsonPath("$[0].content").value("약 3천만원의 재산피해"));

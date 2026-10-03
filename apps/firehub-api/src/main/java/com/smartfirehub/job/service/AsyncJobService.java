@@ -79,12 +79,10 @@ public class AsyncJobService {
   /**
    * 진행률 갱신. <b>메서드 트랜잭션을 두지 않는다.</b>
    *
-   * <p>DB 쓰기는 스테이지 변경 시 또는 {@code DB_UPDATE_INTERVAL} 회마다로 스로틀된다. 메서드에
-   * {@code @Transactional} 을 걸면 <b>쓰지 않는 호출까지</b> 커넥션을 빌리고 BEGIN/set_config/COMMIT
-   * 왕복을 한다 — 대용량 임포트에서 배치마다 불리므로 비용이 실질적이다. GUC 는 실제로 쓰는
-   * 순간 {@code asyncJobRepository}(클래스 레벨 {@code @Transactional}, Task 1)가 공급하므로
-   * 격리 관점의 손실은 없다. SSE 브로드캐스트도 트랜잭션 밖에 두어 느린 구독자가 커넥션을
-   * 붙잡지 않게 한다.
+   * <p>DB 쓰기는 스테이지 변경 시 또는 {@code DB_UPDATE_INTERVAL} 회마다로 스로틀된다. 메서드에 {@code @Transactional} 을 걸면
+   * <b>쓰지 않는 호출까지</b> 커넥션을 빌리고 BEGIN/set_config/COMMIT 왕복을 한다 — 대용량 임포트에서 배치마다 불리므로 비용이 실질적이다. GUC
+   * 는 실제로 쓰는 순간 {@code asyncJobRepository}(클래스 레벨 {@code @Transactional}, Task 1)가 공급하므로 격리 관점의 손실은
+   * 없다. SSE 브로드캐스트도 트랜잭션 밖에 두어 느린 구독자가 커넥션을 붙잡지 않게 한다.
    */
   public void updateProgress(
       String jobId, String stage, int progress, String message, Map<String, Object> metadata) {
@@ -106,9 +104,8 @@ public class AsyncJobService {
   }
 
   /**
-   * 완료 처리. 갱신 1건뿐이라 메서드 트랜잭션이 필요 없다 — 리포지토리가 자기 트랜잭션에서
-   * GUC 를 공급한다. SSE 브로드캐스트·emitter 종료를 트랜잭션 밖에 두는 것이 요점이다(느린
-   * 구독자가 DB 커넥션을 잡고 있지 않게).
+   * 완료 처리. 갱신 1건뿐이라 메서드 트랜잭션이 필요 없다 — 리포지토리가 자기 트랜잭션에서 GUC 를 공급한다. SSE 브로드캐스트·emitter 종료를 트랜잭션 밖에
+   * 두는 것이 요점이다(느린 구독자가 DB 커넥션을 잡고 있지 않게).
    */
   public void completeJob(String jobId, Map<String, Object> metadata) {
     asyncJobRepository.updateStageAndProgress(
@@ -124,10 +121,9 @@ public class AsyncJobService {
   }
 
   /**
-   * 실패 처리. {@code findById} + {@code updateStageAndError} 두 호출은 한 트랜잭션이어야 진행률
-   * 보존이 원자적이므로 <b>그 두 호출만</b> {@link TransactionTemplate} 으로 묶는다. 메서드 전체를
-   * 트랜잭션으로 감싸면 뒤따르는 SSE 브로드캐스트·emitter 종료까지 트랜잭션 안에서 돌아, 느린
-   * 구독자(프록시 버퍼링·먹통 탭)가 DB 커넥션을 그만큼 붙잡는다.
+   * 실패 처리. {@code findById} + {@code updateStageAndError} 두 호출은 한 트랜잭션이어야 진행률 보존이 원자적이므로 <b>그 두
+   * 호출만</b> {@link TransactionTemplate} 으로 묶는다. 메서드 전체를 트랜잭션으로 감싸면 뒤따르는 SSE 브로드캐스트·emitter 종료까지
+   * 트랜잭션 안에서 돌아, 느린 구독자(프록시 버퍼링·먹통 탭)가 DB 커넥션을 그만큼 붙잡는다.
    */
   public void failJob(String jobId, String errorMessage) {
     Integer persisted =
@@ -135,7 +131,10 @@ public class AsyncJobService {
             status -> {
               // Preserve last known progress for UI display
               int progress =
-                  asyncJobRepository.findById(jobId).map(AsyncJobStatusResponse::progress).orElse(0);
+                  asyncJobRepository
+                      .findById(jobId)
+                      .map(AsyncJobStatusResponse::progress)
+                      .orElse(0);
               // lastProgress를 DB에도 persist하여 SSE 이벤트와 REST 폴백 응답이 일치하도록 한다
               asyncJobRepository.updateStageAndError(jobId, "FAILED", progress, errorMessage);
               return progress;
@@ -161,11 +160,10 @@ public class AsyncJobService {
   /**
    * SSE 구독. <b>메서드 트랜잭션을 두지 않는다.</b>
    *
-   * <p>DB 접근은 {@code asyncJobRepository.findById} 하나뿐이고, 리포지토리가 클래스 레벨
-   * {@code @Transactional}(Task 1)이라 그 호출이 자기 트랜잭션에서 GUC 를 공급한다. 반대로 메서드
-   * 전체를 트랜잭션으로 감싸면 마지막의 {@code safeSend}(클라이언트 소켓으로의 블로킹 쓰기)까지
-   * 트랜잭션 안에 들어가, 느린 구독자가 DB 커넥션을 그만큼 붙잡는다 — 형제 메서드
-   * ({@code updateProgress}·{@code completeJob}·{@code failJob})에서 이미 걷어낸 것과 같은 형태다.
+   * <p>DB 접근은 {@code asyncJobRepository.findById} 하나뿐이고, 리포지토리가 클래스 레벨 {@code @Transactional}(Task
+   * 1)이라 그 호출이 자기 트랜잭션에서 GUC 를 공급한다. 반대로 메서드 전체를 트랜잭션으로 감싸면 마지막의 {@code safeSend}(클라이언트 소켓으로의 블로킹
+   * 쓰기)까지 트랜잭션 안에 들어가, 느린 구독자가 DB 커넥션을 그만큼 붙잡는다 — 형제 메서드 ({@code updateProgress}·{@code
+   * completeJob}·{@code failJob})에서 이미 걷어낸 것과 같은 형태다.
    */
   public SseEmitter subscribe(String jobId, Long userId) {
     // Single query — owner verification + current state
@@ -238,10 +236,11 @@ public class AsyncJobService {
   }
 
   /**
-   * 15초 주기로 활성 emitter 전체에 SSE comment(":ping")를 전송하는 하트비트. 프록시/로드밸런서의 idle timeout으로 커넥션이 끊기거나, 클라이언트가
-   * 죽은 채로 emitter만 남는 것을 방지한다. 데이터 이벤트가 아닌 comment이므로 프론트의 이벤트 파싱(onmessage/addEventListener)에는 영향을 주지 않는다.
-   * 이 프로젝트는 이미 {@code @EnableScheduling}이 전역 활성화되어 있고(AsyncConfig), 동일한 SSE 하트비트 패턴을
-   * {@code SseEmitterRegistry.sendHeartbeat()}에서 이미 사용 중이므로, 별도 ScheduledExecutorService를 새로 두지 않고 기존 관례를 따른다.
+   * 15초 주기로 활성 emitter 전체에 SSE comment(":ping")를 전송하는 하트비트. 프록시/로드밸런서의 idle timeout으로 커넥션이 끊기거나,
+   * 클라이언트가 죽은 채로 emitter만 남는 것을 방지한다. 데이터 이벤트가 아닌 comment이므로 프론트의 이벤트
+   * 파싱(onmessage/addEventListener)에는 영향을 주지 않는다. 이 프로젝트는 이미 {@code @EnableScheduling}이 전역 활성화되어
+   * 있고(AsyncConfig), 동일한 SSE 하트비트 패턴을 {@code SseEmitterRegistry.sendHeartbeat()}에서 이미 사용 중이므로, 별도
+   * ScheduledExecutorService를 새로 두지 않고 기존 관례를 따른다.
    */
   @Scheduled(fixedRate = 15_000)
   void sendHeartbeats() {

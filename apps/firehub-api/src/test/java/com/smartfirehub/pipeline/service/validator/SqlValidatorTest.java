@@ -5,9 +5,9 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.smartfirehub.global.tenant.DataSchema;
+import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.pipeline.exception.UnsafeSqlException;
 import com.smartfirehub.pipeline.service.MergeSqlBuilder;
-import com.smartfirehub.global.tenant.TenantContext;
 import java.util.List;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -20,12 +20,12 @@ class SqlValidatorTest {
   private final SqlValidator validator = new SqlValidator();
 
   /**
-   * 무인자 생성자(= 프로덕션 파이프라인 정책) 검증기는 허용 스키마를 {@code DataSchema.current()} 로
-   * 해석하므로 <b>테넌트 컨텍스트를 요구</b>한다(P3-b1 R7). 이 클래스는 스프링 컨텍스트를 띄우지 않는
-   * 순수 단위 테스트라 {@code IntegrationTestBase} 의 테넌트 설정을 받지 못하므로 직접 세운다.
+   * 무인자 생성자(= 프로덕션 파이프라인 정책) 검증기는 허용 스키마를 {@code DataSchema.current()} 로 해석하므로 <b>테넌트 컨텍스트를
+   * 요구</b>한다(P3-b1 R7). 이 클래스는 스프링 컨텍스트를 띄우지 않는 순수 단위 테스트라 {@code IntegrationTestBase} 의 테넌트 설정을 받지
+   * 못하므로 직접 세운다.
    *
-   * <p>단언을 약화시키는 장치가 아니다 — 프로덕션에서 이 검증기가 호출되는 지점은 언제나 테넌트
-   * 스코프 안이며(요청 필터 또는 배경 잡의 테넌트 순회), 여기서 흉내 내는 것은 그 전제뿐이다.
+   * <p>단언을 약화시키는 장치가 아니다 — 프로덕션에서 이 검증기가 호출되는 지점은 언제나 테넌트 스코프 안이며(요청 필터 또는 배경 잡의 테넌트 순회), 여기서 흉내 내는
+   * 것은 그 전제뿐이다.
    */
   @BeforeEach
   void setTenantContext() {
@@ -210,9 +210,8 @@ class SqlValidatorTest {
    * (1-b) 위 거부가 permissive 모드({@code allowUnqualifiedTables=true})에서도 유지되는지 고정한다.
    *
    * <p>Task 3/4 가 배선할 모드가 바로 이 모드이며, 여기서 표기 변형이 오분류되면 "다른 에러"가 아니라 **통과**(=검증 우회)가 된다. 아래 네 형태는
-   * PostgreSQL 이 동등하게 해석하는 {@code public."user"} 변형이다({@code smartfirehub.public."user"} 3파트
-   * 변형은 m5(#385 코드리뷰) 수정 후 다른 메시지("점이 2개 이상")로 먼저 거부되므로
-   * {@link #rejects_threePartTableName} 로 따로 뺐다).
+   * PostgreSQL 이 동등하게 해석하는 {@code public."user"} 변형이다({@code smartfirehub.public."user"} 3파트 변형은
+   * m5(#385 코드리뷰) 수정 후 다른 메시지("점이 2개 이상")로 먼저 거부되므로 {@link #rejects_threePartTableName} 로 따로 뺐다).
    */
   @ParameterizedTest
   @ValueSource(
@@ -233,7 +232,8 @@ class SqlValidatorTest {
   @Test
   void allowed_schema_is_actually_parameterized() {
     SqlValidator analytics = new SqlValidator("analytics", false);
-    assertThatCode(() -> analytics.validate("SELECT * FROM analytics.t")).doesNotThrowAnyException();
+    assertThatCode(() -> analytics.validate("SELECT * FROM analytics.t"))
+        .doesNotThrowAnyException();
     assertThatThrownBy(() -> analytics.validate("SELECT * FROM data.t"))
         .isInstanceOf(UnsafeSqlException.class)
         .hasMessageContaining("허용되지 않는 스키마");
@@ -242,7 +242,8 @@ class SqlValidatorTest {
   /** (2) set_config / current_setting 호출은 BLOCKED_FUNCTIONS 에 의해 거부된다. */
   @Test
   void rejects_set_config_and_current_setting_calls() {
-    assertThatThrownBy(() -> validator.validate("SELECT set_config('search_path', 'public', false)"))
+    assertThatThrownBy(
+            () -> validator.validate("SELECT set_config('search_path', 'public', false)"))
         .isInstanceOf(UnsafeSqlException.class)
         .hasMessageContaining("set_config");
     assertThatThrownBy(() -> validator.validate("SELECT current_setting('search_path')"))
@@ -253,8 +254,8 @@ class SqlValidatorTest {
   /**
    * (2-b) {@code pg_sleep} 호출은 BLOCKED_FUNCTIONS 에 의해 거부된다(#385 Task 5, R5).
    *
-   * <p>{@code statement_timeout} 이 쿼리 지속 시간은 묶어도 {@code pg_sleep} 이 점유하는 커넥션 자체는 막지 못하므로
-   * 애플리케이션 레이어에서 조기 차단한다. 공유 deny-list 라 파이프라인 경로(무인자 생성자)에도 함께 적용됨을 이 테스트로 고정한다.
+   * <p>{@code statement_timeout} 이 쿼리 지속 시간은 묶어도 {@code pg_sleep} 이 점유하는 커넥션 자체는 막지 못하므로 애플리케이션
+   * 레이어에서 조기 차단한다. 공유 deny-list 라 파이프라인 경로(무인자 생성자)에도 함께 적용됨을 이 테스트로 고정한다.
    */
   @Test
   void rejects_pg_sleep_call() {
@@ -296,9 +297,9 @@ class SqlValidatorTest {
   /**
    * (5) permissive 모드에서도 미한정 {@code pg_} 접두어 이름은 거부된다.
    *
-   * <p>{@code pg_catalog}는 {@code search_path} 설정과 무관하게 항상 암묵 검색되므로, 미한정 허용만으로는 카탈로그
-   * 열람(예: {@code pg_tables}로 다른 스키마 테이블 이름 나열, {@code pg_roles}로 롤 목록 나열)을 막지 못한다(#385
-   * Task 3 실측). 정상적인 미한정 사용자 테이블 이름은 계속 통과해야 한다(역방향 단언).
+   * <p>{@code pg_catalog}는 {@code search_path} 설정과 무관하게 항상 암묵 검색되므로, 미한정 허용만으로는 카탈로그 열람(예: {@code
+   * pg_tables}로 다른 스키마 테이블 이름 나열, {@code pg_roles}로 롤 목록 나열)을 막지 못한다(#385 Task 3 실측). 정상적인 미한정 사용자
+   * 테이블 이름은 계속 통과해야 한다(역방향 단언).
    */
   @Test
   void rejects_unqualified_pg_prefixed_name_even_in_permissive_mode() {
@@ -327,8 +328,8 @@ class SqlValidatorTest {
   }
 
   /**
-   * 따옴표로 감싼 혼합 대소문자 이름은 원문 그대로 보존된다 — 무조건 소문자화하면 {@code pg_class.relname}과 바이트 단위로
-   * 어긋나 호출부의 카탈로그 대조가 실패한다(리뷰 지적: {@code "MyTable"}은 소문자화하면 다른 이름이 된다).
+   * 따옴표로 감싼 혼합 대소문자 이름은 원문 그대로 보존된다 — 무조건 소문자화하면 {@code pg_class.relname}과 바이트 단위로 어긋나 호출부의 카탈로그
+   * 대조가 실패한다(리뷰 지적: {@code "MyTable"}은 소문자화하면 다른 이름이 된다).
    */
   @Test
   void unqualifiedTableNames_quotedMixedCaseName_preservesCase() {
@@ -349,10 +350,9 @@ class SqlValidatorTest {
   // --- 최종 리뷰 C1/C2/M4 — 각각 수정 전 실제로 통과했음을 실측한 우회 3종 ---
 
   /**
-   * C1: {@code query_to_xml} 은 인자가 문자열 리터럴이라 그 안의 테이블 참조가 {@code
-   * TablesNamesFinder}에 절대 안 잡힌다 — 스키마 화이트리스트가 완전히 무력화된다. 실측(수정 전):
-   * {@code SELECT query_to_xml('SELECT count(*) c FROM public."user"', true, false, '')}가
-   * {@code search_path='data'} 애드혹 경로에서 성공해 {@code <c>7777</c>}를 반환했다. 함수 자체를
+   * C1: {@code query_to_xml} 은 인자가 문자열 리터럴이라 그 안의 테이블 참조가 {@code TablesNamesFinder}에 절대 안 잡힌다 — 스키마
+   * 화이트리스트가 완전히 무력화된다. 실측(수정 전): {@code SELECT query_to_xml('SELECT count(*) c FROM public."user"',
+   * true, false, '')}가 {@code search_path='data'} 애드혹 경로에서 성공해 {@code <c>7777</c>}를 반환했다. 함수 자체를
    * {@code BLOCKED_FUNCTIONS}로 막는 것이 유일한 방어(형제 함수 계열 포함).
    */
   @Test
@@ -365,18 +365,20 @@ class SqlValidatorTest {
                     "SELECT query_to_xml('SELECT count(*) c FROM public.\"user\"', true, false,"
                         + " '')"))
         .isInstanceOf(UnsafeSqlException.class);
-    assertThatThrownBy(() -> permissive.validate("SELECT table_to_xml('public.role', true, false, '')"))
+    assertThatThrownBy(
+            () -> permissive.validate("SELECT table_to_xml('public.role', true, false, '')"))
         .isInstanceOf(UnsafeSqlException.class);
-    assertThatThrownBy(() -> permissive.validate("SELECT pg_get_viewdef('public.some_view'::regclass)"))
+    assertThatThrownBy(
+            () -> permissive.validate("SELECT pg_get_viewdef('public.some_view'::regclass)"))
         .isInstanceOf(UnsafeSqlException.class);
   }
 
   /**
-   * C2: 함수 이름을 따옴표로 감싸면 {@code BlockedFunctionFinder}가 {@code toLowerCase()}만 하고 따옴표를 벗기지
-   * 않아 deny-list 전체가 뚫렸다. 실측(수정 전): 검증기가 {@code SELECT "pg_sleep"(5)}를 통과시켰고, DB 에서
-   * {@code SELECT "current_setting"('search_path')}가 {@code data, public}을 반환했으며,
-   * {@code SELECT "resolve_trigger_tenant_by_token_hash"('deadbeef')}가 실행됐다 — Task 4 에서 추가한
-   * 정의자 함수 5개(변경 함수 {@code provision_tenant_defaults} 포함)까지 따옴표 한 쌍으로 무력화됐다.
+   * C2: 함수 이름을 따옴표로 감싸면 {@code BlockedFunctionFinder}가 {@code toLowerCase()}만 하고 따옴표를 벗기지 않아
+   * deny-list 전체가 뚫렸다. 실측(수정 전): 검증기가 {@code SELECT "pg_sleep"(5)}를 통과시켰고, DB 에서 {@code SELECT
+   * "current_setting"('search_path')}가 {@code data, public}을 반환했으며, {@code SELECT
+   * "resolve_trigger_tenant_by_token_hash"('deadbeef')}가 실행됐다 — Task 4 에서 추가한 정의자 함수 5개(변경 함수
+   * {@code provision_tenant_defaults} 포함)까지 따옴표 한 쌍으로 무력화됐다.
    */
   @Test
   void rejects_quoted_blocked_function_names() {
@@ -386,20 +388,16 @@ class SqlValidatorTest {
         .isInstanceOf(UnsafeSqlException.class);
     assertThatThrownBy(() -> permissive.validate("SELECT \"current_setting\"('search_path')"))
         .isInstanceOf(UnsafeSqlException.class);
-    assertThatThrownBy(
-            () ->
-                permissive.validate(
-                    "SELECT \"provision_tenant_defaults\"(1)"))
+    assertThatThrownBy(() -> permissive.validate("SELECT \"provision_tenant_defaults\"(1)"))
         .isInstanceOf(UnsafeSqlException.class);
   }
 
   /**
-   * M4: {@code SELECT ... INTO}는 {@code Select}로 모델링돼 {@code requireDmlOrSelect}를 통과하고,
-   * {@code TablesNamesFinder.getTables}가 INTO 대상을 보고하지 않아 스키마 화이트리스트가 적용되지 않았다.
-   * 실측(수정 전): 검증기가 {@code SELECT * INTO public.pwned FROM data.t}를 통과시켰고, DB 에서
-   * {@code SELECT 1 AS x INTO data.zz_probe}가 실제로 테이블을 생성했다. {@code detectQueryType}이 이
-   * 문장을 SELECT 로 분류해 {@code readOnly=true}(MCP 도구) 게이트까지 통과한다는 점도 별도로 고정한다 —
-   * {@code validate()} 가 readOnly 여부와 무관하게 거부해야 그 게이트를 우회할 수 없다.
+   * M4: {@code SELECT ... INTO}는 {@code Select}로 모델링돼 {@code requireDmlOrSelect}를 통과하고, {@code
+   * TablesNamesFinder.getTables}가 INTO 대상을 보고하지 않아 스키마 화이트리스트가 적용되지 않았다. 실측(수정 전): 검증기가 {@code
+   * SELECT * INTO public.pwned FROM data.t}를 통과시켰고, DB 에서 {@code SELECT 1 AS x INTO data.zz_probe}가
+   * 실제로 테이블을 생성했다. {@code detectQueryType}이 이 문장을 SELECT 로 분류해 {@code readOnly=true}(MCP 도구) 게이트까지
+   * 통과한다는 점도 별도로 고정한다 — {@code validate()} 가 readOnly 여부와 무관하게 거부해야 그 게이트를 우회할 수 없다.
    */
   @Test
   void rejects_select_into() {
@@ -416,9 +414,9 @@ class SqlValidatorTest {
   // --- 재재리뷰 C1 — 절 단위 visitor 가 놓쳤던 9개 위치. AstNodeCollector 전수 walk 로 고정 ---
 
   /**
-   * C1 실측(수정 전 전부 통과): {@code ORDER BY}/{@code GROUP BY}/{@code LIMIT} 안의 함수·서브쿼리는
-   * {@code TablesNamesFinder} 기반 절 단위 visitor 가 아예 방문하지 않는 절이었다. {@code ORDER BY (SELECT
-   * count(*) FROM public.usr)}는 스키마 화이트리스트까지 뚫었다(테이블 참조가 FROM 절 밖에 있다는 이유만으로).
+   * C1 실측(수정 전 전부 통과): {@code ORDER BY}/{@code GROUP BY}/{@code LIMIT} 안의 함수·서브쿼리는 {@code
+   * TablesNamesFinder} 기반 절 단위 visitor 가 아예 방문하지 않는 절이었다. {@code ORDER BY (SELECT count(*) FROM
+   * public.usr)}는 스키마 화이트리스트까지 뚫었다(테이블 참조가 FROM 절 밖에 있다는 이유만으로).
    */
   @Test
   void rejects_dangerous_calls_in_orderBy_groupBy_limit() {
@@ -434,11 +432,12 @@ class SqlValidatorTest {
         .isInstanceOf(UnsafeSqlException.class);
     assertThatThrownBy(
             () ->
-                permissive.validate(
-                    "SELECT a FROM data.t LIMIT (SELECT count(*) FROM public.usr)"))
+                permissive.validate("SELECT a FROM data.t LIMIT (SELECT count(*) FROM public.usr)"))
         .isInstanceOf(UnsafeSqlException.class);
     assertThatThrownBy(
-            () -> permissive.validate("SELECT a FROM data.t ORDER BY (SELECT count(*) FROM public.usr)"))
+            () ->
+                permissive.validate(
+                    "SELECT a FROM data.t ORDER BY (SELECT count(*) FROM public.usr)"))
         .as("서브쿼리 안 테이블 참조 — 스키마 화이트리스트까지 뚫렸던 케이스")
         .isInstanceOf(UnsafeSqlException.class);
   }
@@ -451,8 +450,7 @@ class SqlValidatorTest {
   void rejects_dangerous_calls_in_isNull_filter_whereReturning() {
     SqlValidator permissive = new SqlValidator("data", true);
 
-    assertThatThrownBy(
-            () -> permissive.validate("SELECT * FROM data.t WHERE pg_sleep(5) IS NULL"))
+    assertThatThrownBy(() -> permissive.validate("SELECT * FROM data.t WHERE pg_sleep(5) IS NULL"))
         .isInstanceOf(UnsafeSqlException.class);
     assertThatThrownBy(
             () ->
@@ -470,10 +468,10 @@ class SqlValidatorTest {
   }
 
   /**
-   * 부수 효과 회귀 방지: 절 단위 visitor({@code TablesNamesFinder} 상속)를 버리면서 그 유틸리티의 알려진
-   * 버그(윈도 프레임 {@code ROWS BETWEEN ... PRECEDING}에서 {@code WindowOffset.getExpression()}이 null 일
-   * 때 NPE)도 함께 사라졌다 — 정상 윈도 SQL 이 "SQL 테이블 분석 실패"로 오탐 거부되던 선행 결함이었다(재재리뷰어
-   * 실측, 이 diff 이전부터 존재). 리플렉션 순회는 null 을 만나면 그냥 멈추므로 해소된다.
+   * 부수 효과 회귀 방지: 절 단위 visitor({@code TablesNamesFinder} 상속)를 버리면서 그 유틸리티의 알려진 버그(윈도 프레임 {@code ROWS
+   * BETWEEN ... PRECEDING}에서 {@code WindowOffset.getExpression()}이 null 일 때 NPE)도 함께 사라졌다 — 정상 윈도
+   * SQL 이 "SQL 테이블 분석 실패"로 오탐 거부되던 선행 결함이었다(재재리뷰어 실측, 이 diff 이전부터 존재). 리플렉션 순회는 null 을 만나면 그냥 멈추므로
+   * 해소된다.
    */
   @Test
   void allows_windowFunctionWithRowsBetweenFrame_regressionFixed() {
@@ -488,27 +486,25 @@ class SqlValidatorTest {
   }
 
   /**
-   * 회귀 방지: CTE 는 {@link AstNodeCollector}가 스키마 검사 대상에서 제외해야 한다 — 절 단위 visitor 시절엔
-   * {@code TablesNamesFinder}가 자동으로 처리해 주던 것을, 전수 walk 로 바꾸면서 직접 구현했다(CTE 별칭도
-   * 일반 {@code Table} 노드로 파싱되기 때문). strict 모드(미한정 거부)에서도 CTE 참조 자체는 스키마 위반으로
-   * 오인되면 안 된다.
+   * 회귀 방지: CTE 는 {@link AstNodeCollector}가 스키마 검사 대상에서 제외해야 한다 — 절 단위 visitor 시절엔 {@code
+   * TablesNamesFinder}가 자동으로 처리해 주던 것을, 전수 walk 로 바꾸면서 직접 구현했다(CTE 별칭도 일반 {@code Table} 노드로 파싱되기
+   * 때문). strict 모드(미한정 거부)에서도 CTE 참조 자체는 스키마 위반으로 오인되면 안 된다.
    */
   @Test
   void allows_cteReference_notMisclassifiedAsUnqualifiedTable() {
     SqlValidator strict = new SqlValidator();
 
-    assertThatCode(
-            () -> strict.validate("WITH cte AS (SELECT * FROM data.t) SELECT * FROM cte"))
+    assertThatCode(() -> strict.validate("WITH cte AS (SELECT * FROM data.t) SELECT * FROM cte"))
         .doesNotThrowAnyException();
   }
 
   // --- 재재리뷰 M2 — nextval/currval 리터럴 인자 검사 ---
 
   /**
-   * nextval/currval 은 인자가 문자열 리터럴이라 그 안의 스키마를 AST 테이블 참조로는 볼 수 없다 — 그냥
-   * 허용목록에 이름만 올리면 {@code nextval('public.어떤_시퀀스')}로 남의 시퀀스를 조작할 수 있다(재재리뷰어가
-   * {@code nextval('public.slack_workspace_id_seq')}로 실제 754→755 진행시켰다). 리터럴을 파싱해 스키마를
-   * 검사하고, 계산된 표현식(리터럴이 아닌 인자)은 정적으로 검증할 수 없으므로 무조건 거부한다.
+   * nextval/currval 은 인자가 문자열 리터럴이라 그 안의 스키마를 AST 테이블 참조로는 볼 수 없다 — 그냥 허용목록에 이름만 올리면 {@code
+   * nextval('public.어떤_시퀀스')}로 남의 시퀀스를 조작할 수 있다(재재리뷰어가 {@code
+   * nextval('public.slack_workspace_id_seq')}로 실제 754→755 진행시켰다). 리터럴을 파싱해 스키마를 검사하고, 계산된 표현식(리터럴이
+   * 아닌 인자)은 정적으로 검증할 수 없으므로 무조건 거부한다.
    */
   @Test
   void nextval_literalArgument_checkedAgainstSchema() {
@@ -520,11 +516,9 @@ class SqlValidatorTest {
         .doesNotThrowAnyException();
 
     // public 스키마 한정 — 항상 거부(재재리뷰가 찾은 실제 우회)
-    assertThatThrownBy(
-            () -> strict.validate("SELECT nextval('public.slack_workspace_id_seq')"))
+    assertThatThrownBy(() -> strict.validate("SELECT nextval('public.slack_workspace_id_seq')"))
         .isInstanceOf(UnsafeSqlException.class);
-    assertThatThrownBy(
-            () -> permissive.validate("SELECT currval('public.oauth_state_id_seq')"))
+    assertThatThrownBy(() -> permissive.validate("SELECT currval('public.oauth_state_id_seq')"))
         .isInstanceOf(UnsafeSqlException.class);
 
     // 미한정 — C2(#385 코드리뷰) 수정 후에는 permissive 에서도 항상 거부한다. 처음엔 테이블과 같은 정책
@@ -548,20 +542,29 @@ class SqlValidatorTest {
   /**
    * #387-2 로 추가한 안전 함수들이 통과한다.
    *
-   * <p>주의: 이 목록은 <b>오늘 알려진 16개</b>를 닫을 뿐이다. 이슈의 진단대로 큐레이션 허용목록은
-   * LLM 이 새로 쓰는 SQL 의 함수 집합을 원리적으로 한정하지 못한다 — 이 테스트가 초록이라고
-   * "함수 허용목록 문제가 해결됐다"고 읽으면 안 된다.
+   * <p>주의: 이 목록은 <b>오늘 알려진 16개</b>를 닫을 뿐이다. 이슈의 진단대로 큐레이션 허용목록은 LLM 이 새로 쓰는 SQL 의 함수 집합을 원리적으로 한정하지
+   * 못한다 — 이 테스트가 초록이라고 "함수 허용목록 문제가 해결됐다"고 읽으면 안 된다.
    */
   @Test
   void allows_functions_added_for_issue_387() {
     List<String> exprs =
         List.of(
-            "encode(a::bytea, 'hex')", "decode(a, 'hex')", "gen_random_uuid()",
-            "uuid_generate_v4()", "json_array_length(a::json)", "jsonb_array_length(a::jsonb)",
-            "array_to_json(ARRAY[1,2])", "jsonb_pretty(a::jsonb)", "to_tsvector(a)",
-            "plainto_tsquery(a)", "ts_rank(to_tsvector(a), plainto_tsquery(a))",
-            "date_bin('1 hour', a::timestamp, '2000-01-01'::timestamp)", "similarity(a, b)",
-            "levenshtein(a, b)", "digest(a, 'sha256')", "sha256(a::bytea)");
+            "encode(a::bytea, 'hex')",
+            "decode(a, 'hex')",
+            "gen_random_uuid()",
+            "uuid_generate_v4()",
+            "json_array_length(a::json)",
+            "jsonb_array_length(a::jsonb)",
+            "array_to_json(ARRAY[1,2])",
+            "jsonb_pretty(a::jsonb)",
+            "to_tsvector(a)",
+            "plainto_tsquery(a)",
+            "ts_rank(to_tsvector(a), plainto_tsquery(a))",
+            "date_bin('1 hour', a::timestamp, '2000-01-01'::timestamp)",
+            "similarity(a, b)",
+            "levenshtein(a, b)",
+            "digest(a, 'sha256')",
+            "sha256(a::bytea)");
     for (String expr : exprs) {
       assertThatCode(() -> new SqlValidator().validate("SELECT " + expr + " FROM data.t"))
           .as("허용되어야 하는 함수: %s", expr)
@@ -605,14 +608,13 @@ class SqlValidatorTest {
   // --- 재재재리뷰 C — 깊이 상한 도달은 fail-closed(거부), fail-open(조용한 통과) 아님 ---
 
   /**
-   * 600 단 중첩 입력이 거부되는 <b>경로</b>는 머신 부하에 따라 갈린다 — 순회 깊이 가드에 닿기도 하고,
-   * 그 전에 {@code parseSingleStatement} 의 {@code PARSE_EXECUTOR} 파싱 예산이 먼저 끝나 파서가
-   * null 을 돌려주기도 한다(후자는 SqlValidator 안에 선재 결함으로 주석까지 달린 경로다).
+   * 600 단 중첩 입력이 거부되는 <b>경로</b>는 머신 부하에 따라 갈린다 — 순회 깊이 가드에 닿기도 하고, 그 전에 {@code
+   * parseSingleStatement} 의 {@code PARSE_EXECUTOR} 파싱 예산이 먼저 끝나 파서가 null 을 돌려주기도 한다(후자는
+   * SqlValidator 안에 선재 결함으로 주석까지 달린 경로다).
    *
-   * <p>이 테스트들이 지키려는 성질은 "상한 아래 묻힌 위반이 조용히 통과하지 않는다"(fail-closed)이고
-   * 그 성질은 어느 경로로 거부되든 동일하게 성립한다. 그래서 단언을 특정 경로의 메시지가 아니라
-   * "둘 중 하나로 거부됐다"에 건다 — 중첩 단수를 더 올리는 쪽(169→600 전례)은 파싱 예산 초과 확률만
-   * 키워 오히려 반대 방향이다.
+   * <p>이 테스트들이 지키려는 성질은 "상한 아래 묻힌 위반이 조용히 통과하지 않는다"(fail-closed)이고 그 성질은 어느 경로로 거부되든 동일하게 성립한다. 그래서
+   * 단언을 특정 경로의 메시지가 아니라 "둘 중 하나로 거부됐다"에 건다 — 중첩 단수를 더 올리는 쪽(169→600 전례)은 파싱 예산 초과 확률만 키워 오히려 반대
+   * 방향이다.
    */
   private static final String REJECTED_BEYOND_LIMIT = "순회 깊이|파서가 결과를 반환하지 않았습니다";
 
@@ -628,15 +630,13 @@ class SqlValidatorTest {
   }
 
   /**
-   * 재재재리뷰 실측(수정 전 전부 통과) — {@code WHERE a IN (SELECT ...)} 169단 중첩 + 최내부 {@code FROM
-   * public.usr}. DB 는 같은 형태 200단을 실제로 실행해 {@code public."user"} 7853행을 반환했다. 최초 구현은
-   * {@code MAX_DEPTH} 도달 시 조용히 {@code return}(fail-open)해서 그 아래 서브트리 전체가 미검사 통과였다 —
-   * 스키마 화이트리스트가 뚫린다.
+   * 재재재리뷰 실측(수정 전 전부 통과) — {@code WHERE a IN (SELECT ...)} 169단 중첩 + 최내부 {@code FROM public.usr}.
+   * DB 는 같은 형태 200단을 실제로 실행해 {@code public."user"} 7853행을 반환했다. 최초 구현은 {@code MAX_DEPTH} 도달 시 조용히
+   * {@code return}(fail-open)해서 그 아래 서브트리 전체가 미검사 통과였다 — 스키마 화이트리스트가 뚫린다.
    *
-   * <p>중첩 단수는 600 단이다(F6, 수정 라운드 1 — 이전엔 169 단). 상한이 {@code MAX_TRAVERSAL_DEPTH}(순회
-   * 깊이)로 500→1500 상향되면서 169 단(순회 깊이 실측 약 514)은 더 이상 상한에 닿지 않아 이 가드가
-   * "상한 지점 아래에 묻힌 위반이 조용히 통과하는가"를 더 이상 지키지 못하는 상태였다 — 600 단(순회 깊이
-   * 실측 약 1807)으로 올려 여전히 상한을 확실히 넘긴다.
+   * <p>중첩 단수는 600 단이다(F6, 수정 라운드 1 — 이전엔 169 단). 상한이 {@code MAX_TRAVERSAL_DEPTH}(순회 깊이)로 500→1500
+   * 상향되면서 169 단(순회 깊이 실측 약 514)은 더 이상 상한에 닿지 않아 이 가드가 "상한 지점 아래에 묻힌 위반이 조용히 통과하는가"를 더 이상 지키지 못하는
+   * 상태였다 — 600 단(순회 깊이 실측 약 1807)으로 올려 여전히 상한을 확실히 넘긴다.
    */
   @Test
   void rejects_schemaViolation_buriedBeyondMaxDepth() {
@@ -649,8 +649,8 @@ class SqlValidatorTest {
   }
 
   /**
-   * 같은 뿌리 — {@code SELECT ... INTO}를 깊이 묻어도 M4 차단이 유지돼야 한다(10단에선 이미 거부됨). 중첩
-   * 단수는 위 {@link #rejects_schemaViolation_buriedBeyondMaxDepth}와 같은 이유로 600 단이다(F6).
+   * 같은 뿌리 — {@code SELECT ... INTO}를 깊이 묻어도 M4 차단이 유지돼야 한다(10단에선 이미 거부됨). 중첩 단수는 위 {@link
+   * #rejects_schemaViolation_buriedBeyondMaxDepth}와 같은 이유로 600 단이다(F6).
    */
   @Test
   void rejects_selectInto_buriedBeyondMaxDepth() {
@@ -668,14 +668,13 @@ class SqlValidatorTest {
   }
 
   /**
-   * 같은 뿌리 — {@link SqlValidator#unqualifiedTableNames}이 깊이 상한 초과 시 <b>빈 집합을 조용히
-   * 반환</b>하는 쪽이 더 위험했다(호출부인 애널리틱스 카탈로그 대조가 "미한정 참조 없음"으로 잘못 읽는다).
-   * 이제 예외로 거부해 호출부가 그 사실을 알 수 있다.
+   * 같은 뿌리 — {@link SqlValidator#unqualifiedTableNames}이 깊이 상한 초과 시 <b>빈 집합을 조용히 반환</b>하는 쪽이 더
+   * 위험했다(호출부인 애널리틱스 카탈로그 대조가 "미한정 참조 없음"으로 잘못 읽는다). 이제 예외로 거부해 호출부가 그 사실을 알 수 있다.
    *
-   * <p>중첩 단수는 600 단(#387-4 이전엔 169 단) — 상한이 {@code MAX_TRAVERSAL_DEPTH}(순회 깊이, 이전 이름
-   * {@code MAX_DEPTH})로 500→1500 상향되면서(위 클래스 상단 문서 참고) 169 단(순회 깊이 실측 514)은 더 이상
-   * 상한을 넘지 못한다. 600 단(순회 깊이 실측 약 1807)으로 올려 여전히 상한을 확실히 넘긴다 — 이 메서드는
-   * {@code requireDataSchemaOnly} 같은 별도 검사가 없어서 상한 자체가 유일한 방어선이다.
+   * <p>중첩 단수는 600 단(#387-4 이전엔 169 단) — 상한이 {@code MAX_TRAVERSAL_DEPTH}(순회 깊이, 이전 이름 {@code
+   * MAX_DEPTH})로 500→1500 상향되면서(위 클래스 상단 문서 참고) 169 단(순회 깊이 실측 514)은 더 이상 상한을 넘지 못한다. 600 단(순회 깊이
+   * 실측 약 1807)으로 올려 여전히 상한을 확실히 넘긴다 — 이 메서드는 {@code requireDataSchemaOnly} 같은 별도 검사가 없어서 상한 자체가 유일한
+   * 방어선이다.
    */
   @Test
   void unqualifiedTableNames_throwsInsteadOfSilentlyEmpty_beyondMaxDepth() {
@@ -704,9 +703,8 @@ class SqlValidatorTest {
   /**
    * 평평한 OR 연쇄가 "너무 깊게 중첩됨"으로 거부되지 않는다(#387-4).
    *
-   * <p>이전 상한 500(당시 이름 {@code MAX_DEPTH})은 SQL 중첩이 아니라 리플렉션 순회 홉을 세고 있어, 중첩이
-   * 0 인 이 쿼리가 450항은 통과하고 500항은 거부됐다({@code OrExpression}이 left-deep 이진 트리를 만들기
-   * 때문). 800항으로 잡아 이전 임계를 확실히 넘긴다.
+   * <p>이전 상한 500(당시 이름 {@code MAX_DEPTH})은 SQL 중첩이 아니라 리플렉션 순회 홉을 세고 있어, 중첩이 0 인 이 쿼리가 450항은 통과하고
+   * 500항은 거부됐다({@code OrExpression}이 left-deep 이진 트리를 만들기 때문). 800항으로 잡아 이전 임계를 확실히 넘긴다.
    */
   @Test
   void allows_flat_or_chain_that_previously_tripped_depth_limit() {
@@ -723,9 +721,8 @@ class SqlValidatorTest {
   /**
    * 상한 자체는 살아 있어야 한다 — {@code StackOverflowError}(500)가 아니라 거부(400)로 끝난다(#387-4).
    *
-   * <p>새 상한({@code MAX_TRAVERSAL_DEPTH} = 1500)을 확실히 넘기도록 5000항을 쓴다 — 실측한
-   * {@code StackOverflowError} 임계(테스트 스레드 기준 최소 약 5,390)보다 한참 낮은 지점에서 먼저 거부돼야
-   * 한다.
+   * <p>새 상한({@code MAX_TRAVERSAL_DEPTH} = 1500)을 확실히 넘기도록 5000항을 쓴다 — 실측한 {@code
+   * StackOverflowError} 임계(테스트 스레드 기준 최소 약 5,390)보다 한참 낮은 지점에서 먼저 거부돼야 한다.
    */
   @Test
   void rejects_expression_beyond_traversal_limit_without_stack_overflow() {
@@ -745,10 +742,10 @@ class SqlValidatorTest {
 
   /**
    * 실측(수정 전, PG {@code search_path='data','public'}): {@code SELECT count(*) FROM (WITH role AS
-   * (SELECT 1 AS x) SELECT x FROM role) s, role} 가 {@code public.role} 3행을 반환했다. 최초 구현은
-   * CTE 별칭 "role"을 트리 전역에서 걷어 스코프 밖의 두 번째 {@code role}(진짜 테이블 참조)까지 {@link
-   * SqlValidator#unqualifiedTableNames}에서 지워버렸다 — 애널리틱스 카탈로그 백스톱이 그 이름 자체를 못 봐서
-   * 무동작이 됐다. 스코프 인식 수정 후에는 스코프 밖 참조가 목록에 남아야 한다.
+   * (SELECT 1 AS x) SELECT x FROM role) s, role} 가 {@code public.role} 3행을 반환했다. 최초 구현은 CTE 별칭
+   * "role"을 트리 전역에서 걷어 스코프 밖의 두 번째 {@code role}(진짜 테이블 참조)까지 {@link
+   * SqlValidator#unqualifiedTableNames}에서 지워버렸다 — 애널리틱스 카탈로그 백스톱이 그 이름 자체를 못 봐서 무동작이 됐다. 스코프 인식 수정
+   * 후에는 스코프 밖 참조가 목록에 남아야 한다.
    */
   @Test
   void unqualifiedTableNames_keepsOutOfScopeNameEvenIfSameAsCteAlias() {
@@ -781,8 +778,7 @@ class SqlValidatorTest {
 
     assertThatCode(
             () ->
-                strict.validate(
-                    "SELECT x FROM (WITH cte AS (SELECT 1 AS x) SELECT x FROM cte) s"))
+                strict.validate("SELECT x FROM (WITH cte AS (SELECT 1 AS x) SELECT x FROM cte) s"))
         .doesNotThrowAnyException();
   }
 
@@ -790,16 +786,15 @@ class SqlValidatorTest {
 
   /**
    * {@code SELECT count(*) OVER ()} 는 JSqlParser 5.0 에서 {@code Function} 이 아니라 {@code
-   * AnalyticExpression} 을 만든다 — 허용목록/deny-list/{@code SIMPLE_IDENTIFIER} 이스케이프 검사 셋 다
-   * 우회했다(수정 전). PG 가 {@code OVER} 뒤에 집계/윈도 함수를 요구해 지금 당장 시연 가능한 익스플로잇은
-   * 아니지만, 사용자 정의 public 집계처럼 알려지지 않은 이름이 무검사로 통과하면 안 된다.
+   * AnalyticExpression} 을 만든다 — 허용목록/deny-list/{@code SIMPLE_IDENTIFIER} 이스케이프 검사 셋 다 우회했다(수정 전).
+   * PG 가 {@code OVER} 뒤에 집계/윈도 함수를 요구해 지금 당장 시연 가능한 익스플로잇은 아니지만, 사용자 정의 public 집계처럼 알려지지 않은 이름이
+   * 무검사로 통과하면 안 된다.
    */
   @Test
   void rejects_unknownAnalyticFunctionCall() {
     SqlValidator permissive = new SqlValidator("data", true);
 
-    assertThatThrownBy(
-            () -> permissive.validate("SELECT some_unknown_agg(a) OVER () FROM data.t"))
+    assertThatThrownBy(() -> permissive.validate("SELECT some_unknown_agg(a) OVER () FROM data.t"))
         .isInstanceOf(UnsafeSqlException.class);
   }
 
@@ -815,9 +810,8 @@ class SqlValidatorTest {
   // --- 코드리뷰 m4 — current_user 등 의사 상수는 Column 노드라 함수 검사를 안 탄다 ---
 
   /**
-   * {@code current_user}/{@code session_user}/{@code current_catalog}/{@code current_schema} 는
-   * 함수 호출이 아니라 한정자 없는 {@code Column} 으로 파싱돼 함수 허용목록을 아예 지나가지 않는다(수정
-   * 전 실측: 두 정책 모두 통과해 DB 롤 이름 반환).
+   * {@code current_user}/{@code session_user}/{@code current_catalog}/{@code current_schema} 는 함수
+   * 호출이 아니라 한정자 없는 {@code Column} 으로 파싱돼 함수 허용목록을 아예 지나가지 않는다(수정 전 실측: 두 정책 모두 통과해 DB 롤 이름 반환).
    */
   @Test
   void rejects_reservedPseudoConstants() {
@@ -846,8 +840,8 @@ class SqlValidatorTest {
 
   /**
    * {@code data.public.role} 은 {@code indexOf('.')}로 앞부분만 자르면 스키마 "data"(허용) + 이름
-   * "public.role"(미검사)로 쪼개져 통과해버린다. 오늘은 PostgreSQL 이 cross-database reference 를 막아
-   * 주지만, 이 클래스의 전제는 "AST 화이트리스트가 정본"이다.
+   * "public.role"(미검사)로 쪼개져 통과해버린다. 오늘은 PostgreSQL 이 cross-database reference 를 막아 주지만, 이 클래스의 전제는
+   * "AST 화이트리스트가 정본"이다.
    */
   @Test
   void rejects_threePartTableName() {
@@ -867,9 +861,8 @@ class SqlValidatorTest {
   }
 
   /**
-   * m5 후속 — 미한정 이름 자체에 점이 포함된 경우({@code "my.table"})는 "스키마 없음" 메시지로 거부돼야
-   * 한다("허용되지 않는 스키마 참조"가 아니라). {@code indexOf('.')}가 따옴표 안의 점을 스키마 구분자로
-   * 오인해 엉뚱한 메시지를 냈던 결함(수정 전)을 고정한다.
+   * m5 후속 — 미한정 이름 자체에 점이 포함된 경우({@code "my.table"})는 "스키마 없음" 메시지로 거부돼야 한다("허용되지 않는 스키마 참조"가 아니라).
+   * {@code indexOf('.')}가 따옴표 안의 점을 스키마 구분자로 오인해 엉뚱한 메시지를 냈던 결함(수정 전)을 고정한다.
    */
   @Test
   void rejects_unqualifiedNameContainingDot_withCorrectMessage() {
@@ -888,11 +881,11 @@ class SqlValidatorTest {
   // --- 코드리뷰 후속 B1 — 자기그림자(self-shadowing) CTE ---
 
   /**
-   * PostgreSQL 은 비재귀 CTE 의 본문을 <b>그 CTE 자신의 스코프 밖</b>에서 해석한다. psql 실측:
-   * {@code WITH "user" AS (SELECT * FROM "user") SELECT * FROM "user"} → 7900행대(= {@code
-   * public."user"} 전체), {@code WITH pg_roles AS (SELECT * FROM pg_roles) SELECT * FROM pg_roles}
-   * → 17행(pg_ 가드도 우회). 최초 스코프 구현은 노드 진입 즉시 전체 별칭을 push 해 이 케이스를 스코프
-   * 안으로 오분류했다 — {@code unqualifiedTableNames()}가 빈 집합을 반환해 카탈로그 백스톱도 무력화됐다.
+   * PostgreSQL 은 비재귀 CTE 의 본문을 <b>그 CTE 자신의 스코프 밖</b>에서 해석한다. psql 실측: {@code WITH "user" AS
+   * (SELECT * FROM "user") SELECT * FROM "user"} → 7900행대(= {@code public."user"} 전체), {@code WITH
+   * pg_roles AS (SELECT * FROM pg_roles) SELECT * FROM pg_roles} → 17행(pg_ 가드도 우회). 최초 스코프 구현은 노드
+   * 진입 즉시 전체 별칭을 push 해 이 케이스를 스코프 안으로 오분류했다 — {@code unqualifiedTableNames()}가 빈 집합을 반환해 카탈로그 백스톱도
+   * 무력화됐다.
    */
   @Test
   void unqualifiedTableNames_doesNotHideSelfShadowingCteBody() {
@@ -911,7 +904,8 @@ class SqlValidatorTest {
     SqlValidator strict = new SqlValidator();
 
     assertThatThrownBy(
-            () -> strict.validate("WITH pg_roles AS (SELECT * FROM pg_roles) SELECT * FROM pg_roles"))
+            () ->
+                strict.validate("WITH pg_roles AS (SELECT * FROM pg_roles) SELECT * FROM pg_roles"))
         .isInstanceOf(UnsafeSqlException.class);
   }
 
@@ -954,10 +948,9 @@ class SqlValidatorTest {
   // --- 코드리뷰 후속 B2 — DML(WITH ... UPDATE/DELETE/INSERT) 회귀 ---
 
   /**
-   * 이번 라운드가 만든 회귀 — {@code Update}/{@code Delete}/{@code Insert}는 {@code Select}가 아니라서
-   * 그들이 소유한 {@code getWithItemsList()}가 스코프 push 대상에서 빠졌다(예전 전역 수집 방식은 이 형태를
-   * 처리하고 있었다). {@code strict.validate()}가 정상 통과해야 한다(CTE 참조가 미한정 테이블로 오독되면
-   * 안 됨) — 세 DML 타입 전부 확인.
+   * 이번 라운드가 만든 회귀 — {@code Update}/{@code Delete}/{@code Insert}는 {@code Select}가 아니라서 그들이 소유한
+   * {@code getWithItemsList()}가 스코프 push 대상에서 빠졌다(예전 전역 수집 방식은 이 형태를 처리하고 있었다). {@code
+   * strict.validate()}가 정상 통과해야 한다(CTE 참조가 미한정 테이블로 오독되면 안 됨) — 세 DML 타입 전부 확인.
    */
   @Test
   void allows_withUpdateDeleteInsert_cteNotMisreadAsUnqualifiedTable() {
@@ -1011,8 +1004,8 @@ class SqlValidatorTest {
   }
 
   /**
-   * 양성 대조 — 인용된 {@code "user"}는 PG 가 의사 상수로 해석하지 않는다(psql 실측: {@code column "user"
-   * does not exist}가 나는 것은 quoting 이 있을 때 뿐이다). 진짜 컬럼일 수 있으므로 막지 않는다.
+   * 양성 대조 — 인용된 {@code "user"}는 PG 가 의사 상수로 해석하지 않는다(psql 실측: {@code column "user" does not exist}가
+   * 나는 것은 quoting 이 있을 때 뿐이다). 진짜 컬럼일 수 있으므로 막지 않는다.
    */
   @Test
   void allows_quotedUserColumnReference() {
@@ -1045,16 +1038,15 @@ class SqlValidatorTest {
   // --- 코드리뷰 후속 B1 보강 — WITH 절 내부의 "전방 참조" 가시성 (비재귀 vs RECURSIVE) ---
 
   /**
-   * 비재귀 WITH 에서 <b>뒤에 정의된</b> 별칭을 앞 항목이 참조하면, PostgreSQL 은 그것을 CTE 가 아니라 진짜
-   * 테이블로 해석한다. psql 실측({@code search_path='data','public'}):
+   * 비재귀 WITH 에서 <b>뒤에 정의된</b> 별칭을 앞 항목이 참조하면, PostgreSQL 은 그것을 CTE 가 아니라 진짜 테이블로 해석한다. psql
+   * 실측({@code search_path='data','public'}):
    *
    * <pre>
    * WITH b AS (SELECT * FROM pg_roles), pg_roles AS (SELECT 1 x) SELECT count(*) FROM b;  -- 17행
    * </pre>
    *
-   * 17행은 진짜 {@code pg_catalog.pg_roles} 다(뒤의 CTE 였다면 1행). 따라서 전방 참조를 스코프로 인정하면
-   * B1 과 똑같은 구멍이 "자기 자신" 대신 "뒤 형제" 자리로 옮겨갈 뿐이다 — 앞→뒤 단조(monotone) 규칙이
-   * 필요한 이유이고, 이 테스트가 그 규칙을 고정한다.
+   * 17행은 진짜 {@code pg_catalog.pg_roles} 다(뒤의 CTE 였다면 1행). 따라서 전방 참조를 스코프로 인정하면 B1 과 똑같은 구멍이 "자기 자신"
+   * 대신 "뒤 형제" 자리로 옮겨갈 뿐이다 — 앞→뒤 단조(monotone) 규칙이 필요한 이유이고, 이 테스트가 그 규칙을 고정한다.
    */
   @Test
   void rejects_nonRecursiveCte_forwardReferenceResolvesToRealTable() {
@@ -1088,9 +1080,8 @@ class SqlValidatorTest {
    * WITH RECURSIVE b AS (SELECT * FROM pg_roles), pg_roles AS (SELECT 1 x) SELECT count(*) FROM b;
    * </pre>
    *
-   * 이 쿼리는 <b>1행</b>을 반환했다(진짜 카탈로그였다면 17행) — 즉 {@code WITH RECURSIVE} 는 목록 전체가
-   * 상호 참조 가능하다. 그래서 재귀 절에는 위의 단조 규칙을 적용하지 않는다(적용하면 합법 쿼리를 거부하는
-   * 오탐이 된다). 이 테스트가 그 비대칭을 고정한다.
+   * 이 쿼리는 <b>1행</b>을 반환했다(진짜 카탈로그였다면 17행) — 즉 {@code WITH RECURSIVE} 는 목록 전체가 상호 참조 가능하다. 그래서 재귀
+   * 절에는 위의 단조 규칙을 적용하지 않는다(적용하면 합법 쿼리를 거부하는 오탐이 된다). 이 테스트가 그 비대칭을 고정한다.
    */
   @Test
   void allows_recursiveCte_forwardReferenceBetweenSiblings() {
@@ -1108,10 +1099,9 @@ class SqlValidatorTest {
   /**
    * 파싱 실패가 OS 스레드를 남기지 않음을 증명한다(#387-1).
    *
-   * <p>왜 이 형태인가: jsqlparser 5.0 의 {@code parseStatements(String)} 은 내부에서 만든 {@code
-   * ExecutorService} 를 {@code try/finally} 없이 종료해, 파싱이 예외를 던지면 non-daemon 코어 스레드가 영구히 남는다(이슈
-   * 실측: 실패 200회 → 151스레드 잔존). 그래서 단언은 "여전히 거부한다"가 아니라 <b>스레드 수가 기준선으로 돌아온다</b>여야
-   * 한다 — 전자는 누수에 대해 아무것도 말하지 않는다.
+   * <p>왜 이 형태인가: jsqlparser 5.0 의 {@code parseStatements(String)} 은 내부에서 만든 {@code ExecutorService}
+   * 를 {@code try/finally} 없이 종료해, 파싱이 예외를 던지면 non-daemon 코어 스레드가 영구히 남는다(이슈 실측: 실패 200회 → 151스레드
+   * 잔존). 그래서 단언은 "여전히 거부한다"가 아니라 <b>스레드 수가 기준선으로 돌아온다</b>여야 한다 — 전자는 누수에 대해 아무것도 말하지 않는다.
    *
    * <p>스레드 종료는 비동기라 즉시 단언하면 플레이크가 된다 → 최대 5초까지 폴링한다.
    */
@@ -1156,10 +1146,9 @@ class SqlValidatorTest {
   // --- Task 5: MERGE 래핑 SQL 게이트 ---
 
   /**
-   * Task 5 브리핑의 차단 항목 게이트 — {@link MergeSqlBuilder}가 만든 INSERT ... ON CONFLICT 문이
-   * strict(파이프라인 정책) {@link SqlValidator}를 통과하는지 실측한다. 실행기를 끈 경로
-   * ({@code SqlScriptExecutor.execute})가 래핑된 전체 SQL을 이 검증기로 다시 검증하므로, 여기서
-   * 막히면 MERGE 기능 전체가 test 프로필에서 동작하지 않는다 — 구현 전에 먼저 확인한다.
+   * Task 5 브리핑의 차단 항목 게이트 — {@link MergeSqlBuilder}가 만든 INSERT ... ON CONFLICT 문이 strict(파이프라인 정책)
+   * {@link SqlValidator}를 통과하는지 실측한다. 실행기를 끈 경로 ({@code SqlScriptExecutor.execute})가 래핑된 전체 SQL을 이
+   * 검증기로 다시 검증하므로, 여기서 막히면 MERGE 기능 전체가 test 프로필에서 동작하지 않는다 — 구현 전에 먼저 확인한다.
    */
   @Test
   void MERGE_래핑_SQL은_API_검증기를_통과한다() {
@@ -1175,9 +1164,8 @@ class SqlValidatorTest {
   // --- Task 7: 증분 SQL 경고(incrementalWarnings) ---
 
   /**
-   * {@code {{last_run_at}}} 을 쓰는 SELECT 가 GROUP BY·집계 함수·윈도우 함수·DISTINCT 중 하나라도 쓰면
-   * 경고해야 한다 — 새로 바뀐 행만으로 계산한 부분 집계가 MERGE 로 기존 전체 집계를 덮어써 결과가 틀리기
-   * 때문이다.
+   * {@code {{last_run_at}}} 을 쓰는 SELECT 가 GROUP BY·집계 함수·윈도우 함수·DISTINCT 중 하나라도 쓰면 경고해야 한다 — 새로 바뀐
+   * 행만으로 계산한 부분 집계가 MERGE 로 기존 전체 집계를 덮어써 결과가 틀리기 때문이다.
    */
   @ParameterizedTest
   @ValueSource(
@@ -1192,9 +1180,8 @@ class SqlValidatorTest {
   }
 
   /**
-   * 비어 있음 논-베이커스 짝: 행 단위 증분 SQL(집계 없음)과, 플레이스홀더가 아예 없는 집계 SQL(증분 스텝이
-   * 아님) 둘 다 경고가 없어야 한다 — 경고기가 "항상 울림"이 아니라 실제로 집계/플레이스홀더 유무를 보고
-   * 판단한다는 것을 함께 증명한다.
+   * 비어 있음 논-베이커스 짝: 행 단위 증분 SQL(집계 없음)과, 플레이스홀더가 아예 없는 집계 SQL(증분 스텝이 아님) 둘 다 경고가 없어야 한다 — 경고기가 "항상
+   * 울림"이 아니라 실제로 집계/플레이스홀더 유무를 보고 판단한다는 것을 함께 증명한다.
    */
   @Test
   void 행단위_증분_SQL과_플레이스홀더_없는_집계는_경고하지_않는다() {
@@ -1215,10 +1202,12 @@ class SqlValidatorTest {
   void rejectsSearchIndexTables_qualifiedAndUnqualified() {
     // 행 검색 색인은 시스템 소유 — 파이프라인·애드혹 SQL 로 읽거나 쓰지 못하게 한다
     assertThatThrownBy(() -> validator.validate("SELECT * FROM data.\"fh_search_12\""))
-        .isInstanceOf(UnsafeSqlException.class).hasMessageContaining("검색 색인");
+        .isInstanceOf(UnsafeSqlException.class)
+        .hasMessageContaining("검색 색인");
     var adhoc = SqlValidator.forAdhocDataSchemaQueries();
     assertThatThrownBy(() -> adhoc.validate("SELECT * FROM fh_search_12_prev"))
-        .isInstanceOf(UnsafeSqlException.class).hasMessageContaining("검색 색인");
+        .isInstanceOf(UnsafeSqlException.class)
+        .hasMessageContaining("검색 색인");
   }
 
   @Test

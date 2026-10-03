@@ -109,9 +109,7 @@ public class AuthController {
     return ResponseEntity.ok(List.copyOf(codes));
   }
 
-  /**
-   * 선택 가능한 테넌트 목록. 테넌트 미선택 토큰으로도 호출할 수 있어야 하므로 권한을 요구하지 않는다.
-   */
+  /** 선택 가능한 테넌트 목록. 테넌트 미선택 토큰으로도 호출할 수 있어야 하므로 권한을 요구하지 않는다. */
   @GetMapping("/memberships")
   @AllowedDuringPasswordChange
   public ResponseEntity<List<MembershipResponse>> memberships(Authentication authentication) {

@@ -81,8 +81,7 @@ class DocumentSearchControllerTest {
   /** POST /documents/search — 서비스가 빈 검색어로 IllegalArgumentException 시 400 매핑(웹 계층 검증). */
   @Test
   void search_blankQuery_returnsBadRequest() throws Exception {
-    when(searchService.search(any()))
-        .thenThrow(new IllegalArgumentException("검색어가 비어 있습니다"));
+    when(searchService.search(any())).thenThrow(new IllegalArgumentException("검색어가 비어 있습니다"));
 
     mockMvc
         .perform(

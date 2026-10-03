@@ -119,8 +119,8 @@ class TriggerSchedulerServiceTest extends IntegrationTestBase {
   // ─────────────────────────────────────────────────────────────
 
   /**
-   * 시나리오: trigger.config.timezone = "Asia/Seoul" 인 트리거라도, nextFireTime은 UTC Instant
-   * 문자열로 저장되어 있다. now가 그 시각보다 뒤라면(=이미 지남) missed fire를 감지해야 한다.
+   * 시나리오: trigger.config.timezone = "Asia/Seoul" 인 트리거라도, nextFireTime은 UTC Instant 문자열로 저장되어 있다.
+   * now가 그 시각보다 뒤라면(=이미 지남) missed fire를 감지해야 한다.
    */
   @Test
   void detectMissedFire_withSeoulTimezone_detectsMissedFireCorrectly() {

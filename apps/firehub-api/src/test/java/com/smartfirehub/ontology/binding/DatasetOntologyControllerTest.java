@@ -50,7 +50,8 @@ class DatasetOntologyControllerTest {
     when(bindingRepository.findOntologyIdByDataset(999123L)).thenReturn(Optional.empty());
 
     mockMvc
-        .perform(get("/api/v1/datasets/999123/ontology").header("Authorization", "Bearer valid-token"))
+        .perform(
+            get("/api/v1/datasets/999123/ontology").header("Authorization", "Bearer valid-token"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.ontologyId").value(nullValue()));
   }

@@ -217,8 +217,8 @@ class SlackChannelTest {
   }
 
   /**
-   * 네트워크 오류 시 reason()에 원본 예외 클래스명이 아닌 안정적인 사유 코드
-   * {@link com.smartfirehub.notification.TransientFailureReason#NETWORK_ERROR}가 담겨야 한다 (#666).
+   * 네트워크 오류 시 reason()에 원본 예외 클래스명이 아닌 안정적인 사유 코드 {@link
+   * com.smartfirehub.notification.TransientFailureReason#NETWORK_ERROR}가 담겨야 한다 (#666).
    */
   @Test
   void deliver_networkError_returnsTransientFailureWithStableReasonCode() {

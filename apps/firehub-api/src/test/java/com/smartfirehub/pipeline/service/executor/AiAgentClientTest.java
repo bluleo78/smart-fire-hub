@@ -24,15 +24,14 @@ import org.springframework.test.util.ReflectionTestUtils;
 /**
  * AiAgentClient 의 자격증명 주입 검증.
  *
- * <p>핵심 회귀 방지 지점: ai-agent 가 {@code /settings/ai-api-key}(ADMIN 전용)를 역호출해 스스로 키를 가져오던
- * 구조를 걷어내고, 채팅 프록시와 동일하게 firehub-api 가 복호화한 자격증명을 요청 바디로 주입한다.
+ * <p>핵심 회귀 방지 지점: ai-agent 가 {@code /settings/ai-api-key}(ADMIN 전용)를 역호출해 스스로 키를 가져오던 구조를 걷어내고, 채팅
+ * 프록시와 동일하게 firehub-api 가 복호화한 자격증명을 요청 바디로 주입한다.
  *
- * <p><b>타입형 전환(2026-09) 이후</b> 자격증명 소스가 {@code SettingsService.getAiCredentials()}
- * (3키 번들)에서 {@code AiCredentialService.resolve()}(단일 JSON 문서 → 타입 있는
- * {@link AiCredential})로 바뀌었다. classify() 는 buildClassifyBody() 로 바디 조립을 위임하므로
- * (Ruling #4) 이 클래스는 WireMock 을 실제로 거치는 classify() 통합 동작만 검증하고, 유형별
- * 바디 조립 규칙 자체는 {@code com.smartfirehub.ai.AmbientKeyNeverUsedTest} 가 HTTP 없이
- * {@code buildClassifyBody()} 를 직접 불러 검증한다.
+ * <p><b>타입형 전환(2026-09) 이후</b> 자격증명 소스가 {@code SettingsService.getAiCredentials()} (3키 번들)에서 {@code
+ * AiCredentialService.resolve()}(단일 JSON 문서 → 타입 있는 {@link AiCredential})로 바뀌었다. classify() 는
+ * buildClassifyBody() 로 바디 조립을 위임하므로 (Ruling #4) 이 클래스는 WireMock 을 실제로 거치는 classify() 통합 동작만 검증하고,
+ * 유형별 바디 조립 규칙 자체는 {@code com.smartfirehub.ai.AmbientKeyNeverUsedTest} 가 HTTP 없이 {@code
+ * buildClassifyBody()} 를 직접 불러 검증한다.
  */
 class AiAgentClientTest {
 
@@ -56,6 +55,7 @@ class AiAgentClientTest {
 
   private SettingsService settingsService;
   private AiCredentialService aiCredentialService;
+
   /** 실제 해석기 — mock 위에 세운다(#707). 기본은 분류 슬롯 없음 → UseChat. */
   private AiClassifyTargetResolver resolver;
 
@@ -136,12 +136,10 @@ class AiAgentClientTest {
   }
 
   /**
-   * #706 — AI 자격증명이 테넌트 전용이 되면서 미설정 테넌트의 {@code resolve()} 는 빈 sdk 를
-   * 돌려준다. 분류는 채팅·프로액티브와 같은 문구({@code incompleteMessage()})로 <b>요청 전에</b>
-   * 실패해야 한다 — 비밀 없는 요청이 ai-agent 에 닿으면 컨테이너 ambient 키로 떨어질 여지가 생긴다.
-   * 네 유형 전부의 불완전 형태를 돌려 보고, 어느 경우에도 ai-agent 가 요청을 한 건도 받지 않았는지
-   * 확인한다. opencode 는 ai.model 이 opencode 형식이 아닌데도 "모델" 문구가 아니라 자격증명 문구가
-   * 나와야 한다(불완전 검사가 모델 검사보다 먼저 — 순서 고정).
+   * #706 — AI 자격증명이 테넌트 전용이 되면서 미설정 테넌트의 {@code resolve()} 는 빈 sdk 를 돌려준다. 분류는 채팅·프로액티브와 같은
+   * 문구({@code incompleteMessage()})로 <b>요청 전에</b> 실패해야 한다 — 비밀 없는 요청이 ai-agent 에 닿으면 컨테이너 ambient
+   * 키로 떨어질 여지가 생긴다. 네 유형 전부의 불완전 형태를 돌려 보고, 어느 경우에도 ai-agent 가 요청을 한 건도 받지 않았는지 확인한다. opencode 는
+   * ai.model 이 opencode 형식이 아닌데도 "모델" 문구가 아니라 자격증명 문구가 나와야 한다(불완전 검사가 모델 검사보다 먼저 — 순서 고정).
    */
   @Test
   void classify_자격증명이_불완전하면_요청을_보내지_않고_안내_문구로_실패한다() {
@@ -167,9 +165,8 @@ class AiAgentClientTest {
   }
 
   /**
-   * opencode 자격증명이면 agentType/providerId/baseUrl 이 바디에 실린다 — classify 가 이 유형을
-   * 아직 실제로 라우팅하지 않더라도(ai-agent 완성 provider 배선은 별도 태스크), 조립 규칙
-   * 자체는 유형별로 정확해야 한다.
+   * opencode 자격증명이면 agentType/providerId/baseUrl 이 바디에 실린다 — classify 가 이 유형을 아직 실제로 라우팅하지
+   * 않더라도(ai-agent 완성 provider 배선은 별도 태스크), 조립 규칙 자체는 유형별로 정확해야 한다.
    */
   @Test
   void classify_opencode_자격증명이면_provider_설정이_실린다() {
@@ -178,8 +175,7 @@ class AiAgentClientTest {
     // 조립 규칙까지 도달한다.
     when(settingsService.getValue("ai.model")).thenReturn(Optional.of("openai/gpt-4o"));
     when(aiCredentialService.resolve())
-        .thenReturn(
-            new AiCredential.Opencode("openai", "https://api.openai.com/v1", "", "sk-oai"));
+        .thenReturn(new AiCredential.Opencode("openai", "https://api.openai.com/v1", "", "sk-oai"));
     stubOk();
 
     client.classify(REQUEST, resolver.resolve(), 1L);
@@ -193,18 +189,16 @@ class AiAgentClientTest {
   }
 
   /**
-   * (전체 브랜치 리뷰 I3) 분류 경로에만 opencode 모델 형식 가드가 없었다 — chat
-   * (AiAgentProxyService:274-292) 에는 이미 있다. ai.model 기본값 "claude-sonnet-5" 는 슬래시가
-   * 없어 opencode 형식이 아니고, 가드 없이 그대로 보내면 OpenAI 호환 호스트가 원인을 알 수 없는
-   * 상류 오류로만 실패한다 — buildClassifyBody() 가 먼저 막아야 한다.
+   * (전체 브랜치 리뷰 I3) 분류 경로에만 opencode 모델 형식 가드가 없었다 — chat (AiAgentProxyService:274-292) 에는 이미 있다.
+   * ai.model 기본값 "claude-sonnet-5" 는 슬래시가 없어 opencode 형식이 아니고, 가드 없이 그대로 보내면 OpenAI 호환 호스트가 원인을 알 수
+   * 없는 상류 오류로만 실패한다 — buildClassifyBody() 가 먼저 막아야 한다.
    */
   @Test
   void classify_opencode_모델에_슬래시가_없으면_명시적으로_실패한다() {
     AiAgentClient client = newClient();
     when(settingsService.getValue("ai.model")).thenReturn(Optional.of("claude-sonnet-5"));
     when(aiCredentialService.resolve())
-        .thenReturn(
-            new AiCredential.Opencode("openai", "https://api.openai.com/v1", "", "sk-oai"));
+        .thenReturn(new AiCredential.Opencode("openai", "https://api.openai.com/v1", "", "sk-oai"));
 
     assertThatThrownBy(() -> client.classify(REQUEST, resolver.resolve(), 1L))
         .isInstanceOf(IllegalStateException.class)
@@ -215,17 +209,15 @@ class AiAgentClientTest {
   }
 
   /**
-   * 슬래시는 있어도 접두사가 해석된 providerId 와 다르면(예: sdk 시절 값이 남았거나 공급자를
-   * 바꾼 뒤 모델을 안 바꾼 경우) 같은 이유로 막아야 한다 — chat 의 검사와 동일하게 두 조건을
-   * 모두 본다.
+   * 슬래시는 있어도 접두사가 해석된 providerId 와 다르면(예: sdk 시절 값이 남았거나 공급자를 바꾼 뒤 모델을 안 바꾼 경우) 같은 이유로 막아야 한다 —
+   * chat 의 검사와 동일하게 두 조건을 모두 본다.
    */
   @Test
   void classify_opencode_모델의_providerId가_불일치하면_명시적으로_실패한다() {
     AiAgentClient client = newClient();
     when(settingsService.getValue("ai.model")).thenReturn(Optional.of("anthropic/claude-sonnet-5"));
     when(aiCredentialService.resolve())
-        .thenReturn(
-            new AiCredential.Opencode("openai", "https://api.openai.com/v1", "", "sk-oai"));
+        .thenReturn(new AiCredential.Opencode("openai", "https://api.openai.com/v1", "", "sk-oai"));
 
     assertThatThrownBy(() -> client.classify(REQUEST, resolver.resolve(), 1L))
         .isInstanceOf(IllegalStateException.class)
@@ -235,10 +227,9 @@ class AiAgentClientTest {
   }
 
   /**
-   * 알 수 없는 agentType(손으로 고친 행 등)을 만나면 resolve() 가 던지는
-   * {@code UnknownAgentTypeException} 이 classify() 의 {@code catch(Exception e)} 에 삼켜지지
-   * 않고 그대로 전파돼야 한다 — buildClassifyBody() 가 try 밖에서 불려야 하는 이유(Ruling #4
-   * dispatch 노트)를 classify() 수준에서 고정한다.
+   * 알 수 없는 agentType(손으로 고친 행 등)을 만나면 resolve() 가 던지는 {@code UnknownAgentTypeException} 이
+   * classify() 의 {@code catch(Exception e)} 에 삼켜지지 않고 그대로 전파돼야 한다 — buildClassifyBody() 가 try 밖에서
+   * 불려야 하는 이유(Ruling #4 dispatch 노트)를 classify() 수준에서 고정한다.
    */
   @Test
   void classify_알수없는_유형이면_예외가_그대로_전파된다() {
@@ -254,8 +245,8 @@ class AiAgentClientTest {
   }
 
   /**
-   * #707 — 분류 전용이 설정되면 바디의 agentType/baseUrl/model/apiKey 가 전부 분류 슬롯 값이고,
-   * 채팅 자격증명은 한 칸도 섞이지 않으며 읽히지도 않는다.
+   * #707 — 분류 전용이 설정되면 바디의 agentType/baseUrl/model/apiKey 가 전부 분류 슬롯 값이고, 채팅 자격증명은 한 칸도 섞이지 않으며
+   * 읽히지도 않는다.
    */
   @Test
   void classify_분류_전용이면_바디가_분류_슬롯_값만_싣고_채팅은_읽지_않는다() {
@@ -298,8 +289,8 @@ class AiAgentClientTest {
   }
 
   /**
-   * UseChat 은 요청을 만드는 순간 채팅 자격증명·ai.model 을 해석한다 — 해석 결과가 옛
-   * buildClassifyBody 와 같은 바디를 만든다(미설정 = 현행과 바이트 동일).
+   * UseChat 은 요청을 만드는 순간 채팅 자격증명·ai.model 을 해석한다 — 해석 결과가 옛 buildClassifyBody 와 같은 바디를 만든다(미설정 =
+   * 현행과 바이트 동일).
    */
   @Test
   void classify_UseChat_은_요청_시점에_채팅_설정으로_바디를_만든다() {
@@ -317,8 +308,8 @@ class AiAgentClientTest {
   }
 
   /**
-   * 같은 UseChat 인스턴스(= 한 실행)로 바디를 여러 번 만들면 채팅 자격증명·ai.model 은 첫 성공 때만
-   * 읽고, 이후 바디는 첫 바디와 같다(#707 후속 3).
+   * 같은 UseChat 인스턴스(= 한 실행)로 바디를 여러 번 만들면 채팅 자격증명·ai.model 은 첫 성공 때만 읽고, 이후 바디는 첫 바디와 같다(#707 후속
+   * 3).
    */
   @Test
   void buildClassifyBody_같은_UseChat_이면_채팅_설정을_한_번만_읽는다() {

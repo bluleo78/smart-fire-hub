@@ -21,8 +21,8 @@ import org.springframework.stereotype.Component;
 /**
  * Notification Outbox 관측 메트릭 등록·접근 헬퍼.
  *
- * <p>Gauge: (테넌트, 채널)별 PENDING 개수 — 주기 갱신(아래 {@link #refreshPendingGauges} 참조).
- * Counter/Timer: Worker에서 호출해 주입.
+ * <p>Gauge: (테넌트, 채널)별 PENDING 개수 — 주기 갱신(아래 {@link #refreshPendingGauges} 참조). Counter/Timer:
+ * Worker에서 호출해 주입.
  */
 @Component
 public class NotificationMetrics {
@@ -34,9 +34,8 @@ public class NotificationMetrics {
   private final boolean outboxEnabled;
 
   /**
-   * 게이지 맵의 key. 예전에는 {@code tenantId + "|" + channel} 문자열이었는데, 축출 때 그 문자열을
-   * 다시 쪼개 태그를 복원해야 했다 — 이 클래스가 스스로 포맷한 값을 스스로 파싱하는 왕복이라
-   * 포맷과 파서가 따로 놀 여지가 있었다. 레코드로 들고 있으면 축출이 필드를 그대로 쓴다.
+   * 게이지 맵의 key. 예전에는 {@code tenantId + "|" + channel} 문자열이었는데, 축출 때 그 문자열을 다시 쪼개 태그를 복원해야 했다 — 이
+   * 클래스가 스스로 포맷한 값을 스스로 파싱하는 왕복이라 포맷과 파서가 따로 놀 여지가 있었다. 레코드로 들고 있으면 축출이 필드를 그대로 쓴다.
    */
   record GaugeKey(long tenantId, ChannelType channel) {}
 
@@ -46,22 +45,20 @@ public class NotificationMetrics {
   /**
    * key 별 "연속 미출현 패스 횟수". {@link #gaugeEvictionPasses} 에 도달하면 축출한다.
    *
-   * <p>실패로 carry-forward 된 key 는 이번 패스에도 "값이 정해진" 것으로 취급해 0 으로 리셋한다 —
-   * 축출 후보가 아니라는 뜻이다(아래 {@link #refreshPendingGauges} javadoc 참조).
+   * <p>실패로 carry-forward 된 key 는 이번 패스에도 "값이 정해진" 것으로 취급해 0 으로 리셋한다 — 축출 후보가 아니라는 뜻이다(아래 {@link
+   * #refreshPendingGauges} javadoc 참조).
    */
   private final Map<GaugeKey, Integer> missPasses = new ConcurrentHashMap<>();
 
   /**
-   * 미출현 축출 임계 패스 수. 기본값 {@code 10} × 기본 갱신 주기
-   * {@code notification.metrics.refresh_interval_ms:30000}(30초) = <b>약 5분</b>의 유예다.
+   * 미출현 축출 임계 패스 수. 기본값 {@code 10} × 기본 갱신 주기 {@code
+   * notification.metrics.refresh_interval_ms:30000}(30초) = <b>약 5분</b>의 유예다.
    *
-   * <p>드레인 후 곧바로 재적체되는 정상 흐름에서 게이지가 등록/해제를 반복하지 않을 만큼 길게,
-   * 그러나 삭제·휴면 테넌트의 잔재가 메모리(아래 {@link #refreshPendingGauges} javadoc 의
-   * "축출" 참조)에 남는 시간은 짧게 잡은 절충값이다.
+   * <p>드레인 후 곧바로 재적체되는 정상 흐름에서 게이지가 등록/해제를 반복하지 않을 만큼 길게, 그러나 삭제·휴면 테넌트의 잔재가 메모리(아래 {@link
+   * #refreshPendingGauges} javadoc 의 "축출" 참조)에 남는 시간은 짧게 잡은 절충값이다.
    *
-   * <p><b>두 프로퍼티가 곱셈으로 묶여 있다</b> — {@code refresh_interval_ms} 를 바꾸면 이 값을
-   * 그대로 둬도 실제 유예 시간(초 단위)이 함께 바뀐다. 유예 시간 자체를 고정하고 싶다면 이 값을
-   * 스케줄 주기에 맞춰 같이 조정해야 한다.
+   * <p><b>두 프로퍼티가 곱셈으로 묶여 있다</b> — {@code refresh_interval_ms} 를 바꾸면 이 값을 그대로 둬도 실제 유예 시간(초 단위)이 함께
+   * 바뀐다. 유예 시간 자체를 고정하고 싶다면 이 값을 스케줄 주기에 맞춰 같이 조정해야 한다.
    */
   private final int gaugeEvictionPasses;
 
@@ -81,58 +78,47 @@ public class NotificationMetrics {
   /**
    * PENDING 적체 게이지를 주기적으로 갱신한다.
    *
-   * <p><b>왜 스크레이프 콜백이 아니라 주기 갱신인가(P2-f).</b> 이전 구현은 Micrometer 게이지 콜백
-   * 안에서 DB 를 조회했는데, 그 콜백은 <b>메트릭 스크레이프 스레드</b>에서 실행되므로 테넌트
-   * 컨텍스트가 절대 없다 — 정책(V107) 이후 이 게이지는 영원히 0 을 보고한다. 컨텍스트는 우리가
-   * 열어야 하고, 열려면 "어느 테넌트를 돌지"를 먼저 알아야 하므로 조회 주체가 우리 쪽으로 와야 한다.
+   * <p><b>왜 스크레이프 콜백이 아니라 주기 갱신인가(P2-f).</b> 이전 구현은 Micrometer 게이지 콜백 안에서 DB 를 조회했는데, 그 콜백은 <b>메트릭
+   * 스크레이프 스레드</b>에서 실행되므로 테넌트 컨텍스트가 절대 없다 — 정책(V107) 이후 이 게이지는 영원히 0 을 보고한다. 컨텍스트는 우리가 열어야 하고, 열려면
+   * "어느 테넌트를 돌지"를 먼저 알아야 하므로 조회 주체가 우리 쪽으로 와야 한다.
    *
-   * <p><b>왜 합산이 아니라 테넌트 태그인가.</b> 합산은 "어느 테넌트의 큐가 막혔는가"를 감춘다 —
-   * 적체 알람의 목적 자체가 그것이라 합산 게이지는 알람으로 쓸 수 없다. 카디널리티는
-   * (PENDING 행을 가진 적 있는 테넌트) × (채널 4종)으로 제한된다. 폭발이 우려되면 태그를
-   * 떼고 합산 + 테넌트별 최대치로 되돌리는 것이 다음 선택지다.
+   * <p><b>왜 합산이 아니라 테넌트 태그인가.</b> 합산은 "어느 테넌트의 큐가 막혔는가"를 감춘다 — 적체 알람의 목적 자체가 그것이라 합산 게이지는 알람으로 쓸 수
+   * 없다. 카디널리티는 (PENDING 행을 가진 적 있는 테넌트) × (채널 4종)으로 제한된다. 폭발이 우려되면 태그를 떼고 합산 + 테넌트별 최대치로 되돌리는 것이 다음
+   * 선택지다.
    *
    * <p><b>이 게이지에서 {@code 0} 은 세 상태를 뭉갠 값이다 — 읽는 쪽이 반드시 알아야 한다.</b>
    *
    * <ul>
-   *   <li><b>드레인</b>: 큐가 비었다. {@code outbox_tenant_ids} 는 <b>지금</b> PENDING 행이 있는
-   *       테넌트만 돌려주므로 빈 테넌트는 목록에서 사라진다. 0 으로 내리지 않으면 마지막 적체 값을
-   *       영원히 보고하는 <b>거짓 양성</b>이 된다.
+   *   <li><b>드레인</b>: 큐가 비었다. {@code outbox_tenant_ids} 는 <b>지금</b> PENDING 행이 있는 테넌트만 돌려주므로 빈 테넌트는
+   *       목록에서 사라진다. 0 으로 내리지 않으면 마지막 적체 값을 영원히 보고하는 <b>거짓 양성</b>이 된다.
    *   <li><b>미관측</b>: 아직 한 번도 등장하지 않은 (테넌트, 채널) — 게이지 자체가 없다.
-   *   <li><b>조회 실패</b>: 아래에서 <b>직전 값을 이월</b>해 0 이 되지 않게 막는다. 실패를 0 으로
-   *       두면 "적체 없음"이라는 <b>거짓 음성</b>이 되는데, 적체 알람에서 거짓 음성은 거짓 양성보다
-   *       나쁘다 — 테넌트 T 의 커넥션 타임아웃이 반복되는 동안 큐가 무한정 자라도 알람이 뜨지 않는다.
-   *       실패 자체는 {@code notification_metrics_refresh_failures_total} 로 따로 알람한다(어느
-   *       테넌트인지는 로그에 있다).
+   *   <li><b>조회 실패</b>: 아래에서 <b>직전 값을 이월</b>해 0 이 되지 않게 막는다. 실패를 0 으로 두면 "적체 없음"이라는 <b>거짓 음성</b>이
+   *       되는데, 적체 알람에서 거짓 음성은 거짓 양성보다 나쁘다 — 테넌트 T 의 커넥션 타임아웃이 반복되는 동안 큐가 무한정 자라도 알람이 뜨지 않는다. 실패 자체는
+   *       {@code notification_metrics_refresh_failures_total} 로 따로 알람한다(어느 테넌트인지는 로그에 있다).
    * </ul>
    *
-   * <p><b>값은 마지막에 한 번에 스왑한다.</b> "전부 0 으로 내리고 순회하며 덮는" 방식은 순회가
-   * 끝날 때까지 <b>모든 테넌트가 0</b> 으로 관측되는 창을 만든다(테넌트가 많으면 초 단위). 그
-   * 사이 스크레이프가 들어오면 알람이 플랩한다. 그래서 이번 패스 값을 별도 맵에 모아 두고, 순회가
-   * 끝난 뒤 게이지마다 한 번씩만 대입한다.
+   * <p><b>값은 마지막에 한 번에 스왑한다.</b> "전부 0 으로 내리고 순회하며 덮는" 방식은 순회가 끝날 때까지 <b>모든 테넌트가 0</b> 으로 관측되는 창을
+   * 만든다(테넌트가 많으면 초 단위). 그 사이 스크레이프가 들어오면 알람이 플랩한다. 그래서 이번 패스 값을 별도 맵에 모아 두고, 순회가 끝난 뒤 게이지마다 한 번씩만
+   * 대입한다.
    *
-   * <p><b>축출(P2-g).</b> 삭제·휴면 테넌트의 (테넌트,채널) 게이지는 이전에는 영원히 남아
-   * {@code pendingGauges} 맵과 {@link MeterRegistry} 미터에 <b>프로세스 수명 내내</b> 누적되고,
-   * 매 패스 스왑 순회 대상이 됐다 — 실제로 유효한 근거는 이 메모리 누적과 순회 비용이다.
-   * (스크레이프 페이로드가 함께 늘어나는 것도 사실이지만, 이건 Prometheus 등 exposition 레지스트리가
-   * 붙어 있을 때만 성립한다. 2026-08-17 검증: 이 앱은 {@code micrometer-registry-prometheus}
-   * 의존성이 없어 {@code /actuator/prometheus} 가 404 — 오늘은 스크레이프 자체가 존재하지 않는다.
-   * 나중에 그 의존성을 추가하면 이 근거의 나머지 절반도 함께 살아난다.) 이번 패스 값이 정해지지
-   * 않은 key 가 {@link #gaugeEvictionPasses} 패스 연속으로 반복되면 게이지를 완전히 제거한다
-   * ({@code registry.remove} + {@code pendingGauges} 제거 — 맵만 지우고 registry 에 남기면
-   * 메모리 누적이 고쳐지지 않는다).
+   * <p><b>축출(P2-g).</b> 삭제·휴면 테넌트의 (테넌트,채널) 게이지는 이전에는 영원히 남아 {@code pendingGauges} 맵과 {@link
+   * MeterRegistry} 미터에 <b>프로세스 수명 내내</b> 누적되고, 매 패스 스왑 순회 대상이 됐다 — 실제로 유효한 근거는 이 메모리 누적과 순회 비용이다.
+   * (스크레이프 페이로드가 함께 늘어나는 것도 사실이지만, 이건 Prometheus 등 exposition 레지스트리가 붙어 있을 때만 성립한다. 2026-08-17 검증:
+   * 이 앱은 {@code micrometer-registry-prometheus} 의존성이 없어 {@code /actuator/prometheus} 가 404 — 오늘은
+   * 스크레이프 자체가 존재하지 않는다. 나중에 그 의존성을 추가하면 이 근거의 나머지 절반도 함께 살아난다.) 이번 패스 값이 정해지지 않은 key 가 {@link
+   * #gaugeEvictionPasses} 패스 연속으로 반복되면 게이지를 완전히 제거한다 ({@code registry.remove} + {@code
+   * pendingGauges} 제거 — 맵만 지우고 registry 에 남기면 메모리 누적이 고쳐지지 않는다).
    *
-   * <p><b>즉시 축출하지 않고 유예를 두는 이유.</b> 드레인된 테넌트가 잠깐 0 이었다가 다시 쌓이는
-   * 정상 흐름에서 곧바로 축출하면 게이지가 등록/해제를 반복해 스크레이프 사이 시계열이 끊긴다.
+   * <p><b>즉시 축출하지 않고 유예를 두는 이유.</b> 드레인된 테넌트가 잠깐 0 이었다가 다시 쌓이는 정상 흐름에서 곧바로 축출하면 게이지가 등록/해제를 반복해
+   * 스크레이프 사이 시계열이 끊긴다.
    *
-   * <p><b>실패는 축출 후보가 아니다.</b> 조회에 실패한 key 는 위에서 이미 직전 값을 이월해 {@code
-   * next} 에 채워 넣었으므로 "값이 정해진" 것으로 취급되어 미출현 카운터가 리셋된다. 실패를
-   * "목록에 없음"으로 잘못 처리하면, DB 가 흔들리는 동안 carry-forward 가 막으려던 거짓 음성(적체
-   * 게이지가 0 으로 보이는 것)을 축출이 뒷문으로 되살리게 된다.
+   * <p><b>실패는 축출 후보가 아니다.</b> 조회에 실패한 key 는 위에서 이미 직전 값을 이월해 {@code next} 에 채워 넣었으므로 "값이 정해진" 것으로
+   * 취급되어 미출현 카운터가 리셋된다. 실패를 "목록에 없음"으로 잘못 처리하면, DB 가 흔들리는 동안 carry-forward 가 막으려던 거짓 음성(적체 게이지가 0
+   * 으로 보이는 것)을 축출이 뒷문으로 되살리게 된다.
    *
-   * <p>이 규칙의 직접적인 귀결로, <b>이미 드레인돼 0 을 보고하던 테넌트가 그 뒤로 조회에 계속
-   * 실패하면 그 게이지는 영원히 축출되지 않는다</b>(0 을 계속 이월할 뿐이다). 버그가 아니라
-   * 의도된 트레이드오프다 — 실패 중에는 "정말 드레인된 것"과 "적체가 있는데 관측이 안 되는 것"을
-   * 구분할 방법이 없으므로, 축출을 보류하는 쪽이 거짓 음성보다 안전하다.
+   * <p>이 규칙의 직접적인 귀결로, <b>이미 드레인돼 0 을 보고하던 테넌트가 그 뒤로 조회에 계속 실패하면 그 게이지는 영원히 축출되지 않는다</b>(0 을 계속 이월할
+   * 뿐이다). 버그가 아니라 의도된 트레이드오프다 — 실패 중에는 "정말 드레인된 것"과 "적체가 있는데 관측이 안 되는 것"을 구분할 방법이 없으므로, 축출을 보류하는 쪽이
+   * 거짓 음성보다 안전하다.
    */
   @Scheduled(
       // 기동 직후 1회 실행이 기본(0). 노브 사유는 NotificationDispatchWorker.pollOnce 주석 참조.
@@ -170,11 +156,10 @@ public class NotificationMetrics {
             next.put(key, previous.get());
           }
         }
-        Counter.builder("notification_metrics_refresh_failures_total").register(registry).increment();
-        log.warn(
-            "테넌트 {} PENDING 게이지 갱신 실패 — 직전 값을 이월하고 나머지 테넌트는 계속 갱신한다",
-            tenantId,
-            e);
+        Counter.builder("notification_metrics_refresh_failures_total")
+            .register(registry)
+            .increment();
+        log.warn("테넌트 {} PENDING 게이지 갱신 실패 — 직전 값을 이월하고 나머지 테넌트는 계속 갱신한다", tenantId, e);
       }
     }
 
@@ -204,10 +189,9 @@ public class NotificationMetrics {
   }
 
   /**
-   * key 에 해당하는 게이지를 {@link MeterRegistry} 와 {@link #pendingGauges} 양쪽에서 완전히
-   * 제거한다. {@code pendingGauges} 에서만 지우면 이미 등록된 게이지는 레지스트리에 그대로 남아
-   * 메모리 누적이 고쳐지지 않는다(Prometheus 가 붙어 있다면 스크레이프 페이로드도 줄지 않는다)
-   * — 그래서 {@code registry.remove} 를 반드시 함께 부른다.
+   * key 에 해당하는 게이지를 {@link MeterRegistry} 와 {@link #pendingGauges} 양쪽에서 완전히 제거한다. {@code
+   * pendingGauges} 에서만 지우면 이미 등록된 게이지는 레지스트리에 그대로 남아 메모리 누적이 고쳐지지 않는다(Prometheus 가 붙어 있다면 스크레이프
+   * 페이로드도 줄지 않는다) — 그래서 {@code registry.remove} 를 반드시 함께 부른다.
    */
   private void evict(GaugeKey key) {
     registry

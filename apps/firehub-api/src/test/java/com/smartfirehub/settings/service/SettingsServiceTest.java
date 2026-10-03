@@ -9,10 +9,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 
-/**
- * 테넌트 쓰기 경로의 값 검증·getAsMap NPE 회귀를 본다. 플랫폼 쓰기(updatePlatformSettings)는 #713 에서
- * 사라졌다.
- */
+/** 테넌트 쓰기 경로의 값 검증·getAsMap NPE 회귀를 본다. 플랫폼 쓰기(updatePlatformSettings)는 #713 에서 사라졌다. */
 @Transactional
 class SettingsServiceTest extends IntegrationTestBase {
 

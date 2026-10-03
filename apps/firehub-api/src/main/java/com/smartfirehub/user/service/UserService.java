@@ -34,12 +34,10 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * 사용자 관리 서비스.
  *
- * <p><b>테넌트 경계에 대하여.</b> {@code "user"} 는 전역 테이블(tenant_id 없음, RLS 없음)이라 다른
- * 도메인처럼 RLS 가 알아서 격리해 주지 않는다. 그래서 <b>관리 경로</b>(목록·상세·역할부여·활성화)는
- * 여기서 명시적으로 "현재 테넌트의 멤버(ACTIVE·SUSPENDED 모두)" 로 좁힌다 — 정지 멤버를 제외하면
- * 재활성·제거 수단이 사라지기 때문이다. 반면 <b>자기 자신 경로</b>
- * ({@code getMyProfile}, {@code updateProfile}, {@code changePassword})는 전역 정체성이므로 좁히지
- * 않는다 — 사용자는 여러 테넌트에 속할 수 있고, 자기 이름·비밀번호는 테넌트에 딸린 속성이 아니다.
+ * <p><b>테넌트 경계에 대하여.</b> {@code "user"} 는 전역 테이블(tenant_id 없음, RLS 없음)이라 다른 도메인처럼 RLS 가 알아서 격리해 주지
+ * 않는다. 그래서 <b>관리 경로</b>(목록·상세·역할부여·활성화)는 여기서 명시적으로 "현재 테넌트의 멤버(ACTIVE·SUSPENDED 모두)" 로 좁힌다 — 정지 멤버를
+ * 제외하면 재활성·제거 수단이 사라지기 때문이다. 반면 <b>자기 자신 경로</b> ({@code getMyProfile}, {@code updateProfile},
+ * {@code changePassword})는 전역 정체성이므로 좁히지 않는다 — 사용자는 여러 테넌트에 속할 수 있고, 자기 이름·비밀번호는 테넌트에 딸린 속성이 아니다.
  */
 @Service
 @RequiredArgsConstructor
@@ -55,10 +53,9 @@ public class UserService {
   /**
    * 사용자 목록 조회. 각 사용자의 역할도 함께 내려준다(#586).
    *
-   * <p>역할은 페이지에 담긴 사용자 ID들을 모아 {@link RoleRepository#findByUserIds} 로 <b>한 번에</b>
-   * 배치 조회한다 — 사용자마다 {@code findByUserId}를 호출하면 페이지 크기만큼 N+1 쿼리가 발생하기
-   * 때문이다(AI 에이전트의 admin-manager subagent가 목록 표시에 역할 컬럼을 요구하는데, 기존에는
-   * 목록 조회 한 번으로는 역할을 채울 방법이 없어 항상 빈 컬럼으로 응답했다).
+   * <p>역할은 페이지에 담긴 사용자 ID들을 모아 {@link RoleRepository#findByUserIds} 로 <b>한 번에</b> 배치 조회한다 — 사용자마다
+   * {@code findByUserId}를 호출하면 페이지 크기만큼 N+1 쿼리가 발생하기 때문이다(AI 에이전트의 admin-manager subagent가 목록 표시에
+   * 역할 컬럼을 요구하는데, 기존에는 목록 조회 한 번으로는 역할을 채울 방법이 없어 항상 빈 컬럼으로 응답했다).
    */
   @Transactional(readOnly = true)
   public PageResponse<UserListResponse> getUsers(String search, int page, int size) {
@@ -90,9 +87,8 @@ public class UserService {
   /**
    * 관리 경로의 사용자 상세. 현재 테넌트의 멤버가 아니면 404.
    *
-   * <p><b>왜 403 이 아니라 404 인가:</b> 403 은 "그 id 의 사용자는 존재하지만 너는 볼 수 없다" 를
-   * 알려 준다. 그러면 다른 테넌트의 사용자 id 를 훑어 존재 여부를 열거할 수 있다(계정 열거). 남의
-   * 테넌트 사용자는 이 테넌트 입장에서 <b>없는 것</b>으로 보이는 것이 옳다.
+   * <p><b>왜 403 이 아니라 404 인가:</b> 403 은 "그 id 의 사용자는 존재하지만 너는 볼 수 없다" 를 알려 준다. 그러면 다른 테넌트의 사용자 id 를
+   * 훑어 존재 여부를 열거할 수 있다(계정 열거). 남의 테넌트 사용자는 이 테넌트 입장에서 <b>없는 것</b>으로 보이는 것이 옳다.
    */
   @Transactional(readOnly = true)
   public UserDetailResponse getUserById(Long id) {
@@ -116,9 +112,9 @@ public class UserService {
   /**
    * 대상이 지금 이 테넌트의 마지막 활성 ADMIN 인가(정지·제거하면 활성 ADMIN 이 0 이 되는가).
    *
-   * <p>대상이 "활성 ADMIN 집합" 에 들어 있는지를 {@code countActiveAdmins} 와 같은 조건(멤버십 ACTIVE + 전역
-   * 계정 활성 + 이 테넌트 ADMIN)으로 판정한다. 전역 비활성(#784 운영자 비활성화) 대상은 이미 집합 밖이라 빼도
-   * 활성 ADMIN 수가 변하지 않으므로, 이를 건너뛰지 않으면 남은 ADMIN 이 거짓 409 로 막힌다.
+   * <p>대상이 "활성 ADMIN 집합" 에 들어 있는지를 {@code countActiveAdmins} 와 같은 조건(멤버십 ACTIVE + 전역 계정 활성 + 이 테넌트
+   * ADMIN)으로 판정한다. 전역 비활성(#784 운영자 비활성화) 대상은 이미 집합 밖이라 빼도 활성 ADMIN 수가 변하지 않으므로, 이를 건너뛰지 않으면 남은
+   * ADMIN 이 거짓 409 로 막힌다.
    */
   private boolean isLastActiveAdmin(Long userId, TenantMembership membership, long tenantId) {
     return membership.isActive()
@@ -128,9 +124,8 @@ public class UserService {
   }
 
   /**
-   * 정지·제거 공통 잠금 방지 규칙. 서버가 최종 판정한다(웹의 비활성 버튼은 안내일 뿐).
-   * 순서: 자기 자신(400) → OWNER(409) → 마지막 활성 ADMIN(409).
-   * 서버 가드인 이유: AI 에이전트가 자기 계정을 비활성화한 사고(#585)와 마지막 관리자 잠금(#146) 재발 방지.
+   * 정지·제거 공통 잠금 방지 규칙. 서버가 최종 판정한다(웹의 비활성 버튼은 안내일 뿐). 순서: 자기 자신(400) → OWNER(409) → 마지막 활성
+   * ADMIN(409). 서버 가드인 이유: AI 에이전트가 자기 계정을 비활성화한 사고(#585)와 마지막 관리자 잠금(#146) 재발 방지.
    */
   private void assertRemovable(
       Long userId, Long callerId, TenantMembership membership, long tenantId) {
@@ -148,10 +143,9 @@ public class UserService {
   /**
    * 자기 자신의 프로필. <b>테넌트로 좁히지 않는다</b> — 전역 정체성이다.
    *
-   * <p>{@code getUserById} 와 별도 메서드인 이유: 하나로 두면 관리 경로에 테넌트 술어를 넣는 순간
-   * {@code /users/me} 까지 막힌다(테넌트 미선택 상태나 멤버십 정리 중인 사용자가 자기 프로필조차
-   * 못 본다). 포함되는 역할 목록은 {@code role}/{@code user_role} 이 RLS 대상이므로 자연히 현재
-   * 테넌트 것만 나온다.
+   * <p>{@code getUserById} 와 별도 메서드인 이유: 하나로 두면 관리 경로에 테넌트 술어를 넣는 순간 {@code /users/me} 까지 막힌다(테넌트
+   * 미선택 상태나 멤버십 정리 중인 사용자가 자기 프로필조차 못 본다). 포함되는 역할 목록은 {@code role}/{@code user_role} 이 RLS 대상이므로
+   * 자연히 현재 테넌트 것만 나온다.
    */
   @Transactional(readOnly = true)
   public UserDetailResponse getMyProfile(Long userId) {
@@ -177,8 +171,8 @@ public class UserService {
   /**
    * 대상이 현재 테넌트의 멤버(ACTIVE·SUSPENDED)가 아니면 {@link UserNotFoundException}(→ 404).
    *
-   * <p>정지 멤버도 통과시키는 이유(WD-2): 정지 멤버를 404 로 만들면 재활성·제거·역할 변경이 불가능하다.
-   * 존재하지 않는 사용자와 남의 테넌트 사용자가 같은 404 인 것은 그대로다(계정 열거 방지).
+   * <p>정지 멤버도 통과시키는 이유(WD-2): 정지 멤버를 404 로 만들면 재활성·제거·역할 변경이 불가능하다. 존재하지 않는 사용자와 남의 테넌트 사용자가 같은 404
+   * 인 것은 그대로다(계정 열거 방지).
    */
   private TenantMembership requireTenantMember(Long userId) {
     long tenantId = TenantContext.require("사용자 관리 대상 확인");
@@ -207,14 +201,13 @@ public class UserService {
    * 현재 테넌트에 멤버를 추가한다(WD-2). 단일 트랜잭션.
    *
    * <ul>
-   *   <li>계정 없음 → 임시 비밀번호로 계정 생성(변경 강제 표식 on) + 이 테넌트 멤버십 + 역할. 기본 테넌트
-   *       자동 소속은 하지 않는다(가입 경로와 다름).
+   *   <li>계정 없음 → 임시 비밀번호로 계정 생성(변경 강제 표식 on) + 이 테넌트 멤버십 + 역할. 기본 테넌트 자동 소속은 하지 않는다(가입 경로와 다름).
    *   <li>계정 있음 + 비멤버 → 멤버십·역할만. 비밀번호·이름 불변, temporaryPassword 무시.
    *   <li>이미 멤버(ACTIVE/SUSPENDED) → 409. 정지 멤버는 코드로 구분하고 userId 를 실어 상세 링크를 돕는다.
    * </ul>
    *
-   * <p>역할 검증을 계정 생성보다 <b>먼저</b> 하는 이유: 잘못된 roleId 로 400 이 나면 트랜잭션이 롤백되긴
-   * 하지만, 앞에서 끊으면 불필요한 해시 계산·쓰기 자체가 없다.
+   * <p>역할 검증을 계정 생성보다 <b>먼저</b> 하는 이유: 잘못된 roleId 로 400 이 나면 트랜잭션이 롤백되긴 하지만, 앞에서 끊으면 불필요한 해시 계산·쓰기
+   * 자체가 없다.
    */
   @Transactional
   public AddMemberResponse addMember(AddMemberRequest request, Long callerId) {
@@ -279,8 +272,8 @@ public class UserService {
   /**
    * 요청 역할을 검증하고 USER 를 합친다.
    *
-   * <p>USER 를 항상 넣는 이유: USER 는 워크스페이스 기본 역할이다. 초대된 멤버가 권한을 하나도 갖지 않는
-   * 상태를 만들지 않는다(사용자 결정, 계획 "판단 사항 1"). 선택 역할은 USER 에 추가된다.
+   * <p>USER 를 항상 넣는 이유: USER 는 워크스페이스 기본 역할이다. 초대된 멤버가 권한을 하나도 갖지 않는 상태를 만들지 않는다(사용자 결정, 계획 "판단 사항
+   * 1"). 선택 역할은 USER 에 추가된다.
    */
   private Set<Long> resolveMemberRoles(List<Long> requested) {
     Set<Long> ids = new LinkedHashSet<>(requested == null ? List.of() : requested);
@@ -299,8 +292,8 @@ public class UserService {
   }
 
   /**
-   * 멤버 관리 감사 로그. 행위자 username 은 감사 테이블 NOT NULL 이라 조회해서 넣는다.
-   * audit_log.tenant_id 는 GUC 기본값 — 호출 트랜잭션의 현재 테넌트로 기록된다.
+   * 멤버 관리 감사 로그. 행위자 username 은 감사 테이블 NOT NULL 이라 조회해서 넣는다. audit_log.tenant_id 는 GUC 기본값 — 호출
+   * 트랜잭션의 현재 테넌트로 기록된다.
    */
   private void audit(
       Long callerId, String action, Long targetUserId, String description, Object metadata) {
@@ -323,12 +316,11 @@ public class UserService {
   /**
    * 내 비밀번호 변경. 성공하면 이 사용자의 <b>모든</b> refresh 토큰 패밀리를 폐기한다.
    *
-   * <p>왜 전부인가(WD-2 리뷰 지적 2): 임시 비밀번호를 아는 다른 사람(예: 발급한 관리자)이 먼저 로그인해 둔
-   * 세션은 변경 뒤에도 refresh 로 표식 없는 토큰을 받아 계속 쓸 수 있었다. 호출자의 패밀리만 남기고 싶어도
-   * 이 엔드포인트에서는 알 수 없다 — refresh 쿠키는 {@code Path=/api/v1/auth} 라 여기로 오지 않고 access
-   * token 에는 패밀리 클레임이 없다. 그래서 전부 폐기하고, 호출자 세션은 컨트롤러가 새 패밀리를 발급해
-   * 쿠키로 이어 준다({@code AuthService#startSessionAfterPasswordChange}). 폐기를 같은 트랜잭션에 두어
-   * "비밀번호는 바뀌었는데 옛 세션은 살아 있는" 중간 상태가 커밋되지 않게 한다.
+   * <p>왜 전부인가(WD-2 리뷰 지적 2): 임시 비밀번호를 아는 다른 사람(예: 발급한 관리자)이 먼저 로그인해 둔 세션은 변경 뒤에도 refresh 로 표식 없는
+   * 토큰을 받아 계속 쓸 수 있었다. 호출자의 패밀리만 남기고 싶어도 이 엔드포인트에서는 알 수 없다 — refresh 쿠키는 {@code Path=/api/v1/auth}
+   * 라 여기로 오지 않고 access token 에는 패밀리 클레임이 없다. 그래서 전부 폐기하고, 호출자 세션은 컨트롤러가 새 패밀리를 발급해 쿠키로 이어 준다({@code
+   * AuthService#startSessionAfterPasswordChange}). 폐기를 같은 트랜잭션에 두어 "비밀번호는 바뀌었는데 옛 세션은 살아 있는" 중간 상태가
+   * 커밋되지 않게 한다.
    */
   @Transactional
   public void changePassword(Long userId, String currentPassword, String newPassword) {
@@ -358,14 +350,12 @@ public class UserService {
    *
    * <ol>
    *   <li>자기 자신의 ADMIN 제거 금지(#57) — 400.
-   *   <li>이 테넌트의 마지막 활성 ADMIN 에게서 ADMIN 제거 금지(#785) — 409. 정지·제거의 {@link
-   *       #assertRemovable} 과 같은 규칙({@link #isLastActiveAdmin})이다. 역할 회수도 "활성 ADMIN 수를 줄이는"
-   *       변경이기 때문이다.
+   *   <li>이 테넌트의 마지막 활성 ADMIN 에게서 ADMIN 제거 금지(#785) — 409. 정지·제거의 {@link #assertRemovable} 과 같은
+   *       규칙({@link #isLastActiveAdmin})이다. 역할 회수도 "활성 ADMIN 수를 줄이는" 변경이기 때문이다.
    * </ol>
    *
-   * <p>잠금을 멤버십 조회·판정보다 먼저 잡는 이유: 두 관리자가 서로의 ADMIN 을 동시에 빼거나, 한쪽은 정지·한쪽은
-   * 역할 회수를 겹치면, 잠금 없이는 둘 다 "활성 ADMIN 2명" 을 보고 통과해 0 명이 된다. setUserActive·removeMember
-   * 와 <b>같은</b> 테넌트 잠금이라 세 경로가 서로 직렬화된다.
+   * <p>잠금을 멤버십 조회·판정보다 먼저 잡는 이유: 두 관리자가 서로의 ADMIN 을 동시에 빼거나, 한쪽은 정지·한쪽은 역할 회수를 겹치면, 잠금 없이는 둘 다 "활성
+   * ADMIN 2명" 을 보고 통과해 0 명이 된다. setUserActive·removeMember 와 <b>같은</b> 테넌트 잠금이라 세 경로가 서로 직렬화된다.
    *
    * <p>roleIds 가 null 이면 빈 목록(전체 제거)으로 본다 — 예전에는 setRoles 에서 NPE(500)가 났다.
    */
@@ -394,8 +384,8 @@ public class UserService {
   }
 
   /**
-   * 이 워크스페이스에서의 멤버십 정지/재활성(WD-2). 전역 계정({@code user.is_active})은 건드리지 않는다
-   * — 한 테넌트 관리자가 다중 소속 사용자의 다른 테넌트 로그인까지 막던 결함의 수정이다.
+   * 이 워크스페이스에서의 멤버십 정지/재활성(WD-2). 전역 계정({@code user.is_active})은 건드리지 않는다 — 한 테넌트 관리자가 다중 소속 사용자의
+   * 다른 테넌트 로그인까지 막던 결함의 수정이다.
    */
   @Transactional
   public void setUserActive(Long userId, boolean active, Long callerId) {

@@ -8,7 +8,6 @@ import com.smartfirehub.proactive.repository.ProactiveMessageRepository;
 import com.smartfirehub.proactive.util.ProactiveConfigParser;
 import com.smartfirehub.proactive.util.ProactiveConfigParser.ChannelConfig;
 import com.smartfirehub.proactive.util.ProactiveTime;
-import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;

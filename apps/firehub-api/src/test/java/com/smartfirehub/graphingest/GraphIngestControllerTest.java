@@ -35,9 +35,9 @@ import org.springframework.test.web.servlet.MockMvc;
  * GraphIngestController 엔드포인트 테스트.
  *
  * <p>{@link com.smartfirehub.document.controller.DocumentChunkControllerTest} 선례를 따라
- * {@code @WebMvcTest} + 인증/권한 mock 패턴을 사용한다. 단, GraphIngestService는 실제 빈을 사용하고
- * 그 하위 리포지토리(GraphIngestRepository)만 mock하여, 컨트롤러→서비스의
- * 매핑 로직(예: LocalDateTime→문자열 변환, stale 필터링)까지 포함한 입력=출력 왕복을 검증한다.
+ * {@code @WebMvcTest} + 인증/권한 mock 패턴을 사용한다. 단, GraphIngestService는 실제 빈을 사용하고 그 하위
+ * 리포지토리(GraphIngestRepository)만 mock하여, 컨트롤러→서비스의 매핑 로직(예: LocalDateTime→문자열 변환, stale 필터링)까지 포함한
+ * 입력=출력 왕복을 검증한다.
  */
 @WebMvcTest(GraphIngestController.class)
 @Import({SecurityConfig.class, JwtAuthenticationFilter.class, GraphIngestService.class})
@@ -125,8 +125,7 @@ class GraphIngestControllerTest {
         .thenReturn(List.of(new StaleRow(9101L, latestAt, 1, 3)));
 
     mockMvc
-        .perform(
-            get("/api/v1/graph-ingests/stale").header("Authorization", "Bearer valid-token"))
+        .perform(get("/api/v1/graph-ingests/stale").header("Authorization", "Bearer valid-token"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.length()").value(1))
         .andExpect(jsonPath("$[0].datasetId").value(9101))

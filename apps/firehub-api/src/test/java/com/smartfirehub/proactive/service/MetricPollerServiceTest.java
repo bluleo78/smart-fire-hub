@@ -234,8 +234,8 @@ class MetricPollerServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * #745 — 끝이 줄 주석(--)·블록 주석·세미콜론인 메트릭 SQL 은 주석·세미콜론을 걷어낸 채 executor 로 간다.
-   * 원문을 그대로 보내면 executor 가 붙이는 LIMIT 1 이 끝 주석에 묻혀 결과 전체를 가져왔다.
+   * #745 — 끝이 줄 주석(--)·블록 주석·세미콜론인 메트릭 SQL 은 주석·세미콜론을 걷어낸 채 executor 로 간다. 원문을 그대로 보내면 executor 가
+   * 붙이는 LIMIT 1 이 끝 주석에 묻혀 결과 전체를 가져왔다.
    */
   @Test
   void poll_withDatasetMetric_trailingComment_sendsStrippedSqlToExecutor() {

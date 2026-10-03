@@ -22,17 +22,15 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * 내부 토큰({@code Authorization: Internal ...} + {@code X-On-Behalf-Of}) 인증 경로가 대행 대상
- * 사용자의 테넌트를 세우는지 고정한다 (코드리뷰 HIGH-1).
+ * 내부 토큰({@code Authorization: Internal ...} + {@code X-On-Behalf-Of}) 인증 경로가 대행 대상 사용자의 테넌트를 세우는지
+ * 고정한다 (코드리뷰 HIGH-1).
  *
- * <p>왜 필요한가: 이 경로는 JWT 가 없어 tenant 클레임이 없다. V99 로 {@code role_permission} ·
- * {@code user_role} 에 RLS 가 걸렸으므로, 테넌트 없이 권한을 조회하면 0행이 되어 권한 집합이 비고
- * {@code PermissionInterceptor} 가 모든 {@code @RequirePermission} 엔드포인트를 403 으로 막는다 —
- * firehub-ai-agent 의 MCP 도구 호출이 전부 죽는다.
+ * <p>왜 필요한가: 이 경로는 JWT 가 없어 tenant 클레임이 없다. V99 로 {@code role_permission} · {@code user_role} 에 RLS
+ * 가 걸렸으므로, 테넌트 없이 권한을 조회하면 0행이 되어 권한 집합이 비고 {@code PermissionInterceptor} 가 모든
+ * {@code @RequirePermission} 엔드포인트를 403 으로 막는다 — firehub-ai-agent 의 MCP 도구 호출이 전부 죽는다.
  *
- * <p><b>클래스 레벨 {@code @Transactional} 이 없는 것은 의도된 것이다.</b> 붙이면 테스트 트랜잭션이
- * GUC 를 공급해 운영에 없는 조건이 만들어지고, 검증 대상인 "필터가 테넌트를 세우는가" 자체가
- * 가려진다. 픽스처와 정리만 트랜잭션으로 감싸고 필터 호출은 트랜잭션 밖에 둔다.
+ * <p><b>클래스 레벨 {@code @Transactional} 이 없는 것은 의도된 것이다.</b> 붙이면 테스트 트랜잭션이 GUC 를 공급해 운영에 없는 조건이
+ * 만들어지고, 검증 대상인 "필터가 테넌트를 세우는가" 자체가 가려진다. 픽스처와 정리만 트랜잭션으로 감싸고 필터 호출은 트랜잭션 밖에 둔다.
  */
 class InternalTokenTenantTest extends IntegrationTestBase {
 
@@ -57,7 +55,8 @@ class InternalTokenTenantTest extends IntegrationTestBase {
     // "user" 와 permission 은 테넌트 경계 위의 전역 테이블(RLS 없음)이라 컨텍스트 없이 만진다.
     userId = TenantRlsTestSupport.insertUser(dsl, "internal");
     permissionId = (Long) dsl.fetchValue("select id from permission order by id limit 1");
-    permissionCode = (String) dsl.fetchValue("select code from permission where id = ?", permissionId);
+    permissionCode =
+        (String) dsl.fetchValue("select code from permission where id = ?", permissionId);
 
     // 권한 부여는 전부 tenantA 안에서 — RLS 대상이라 컨텍스트 트랜잭션이 필요하다.
     roleId =
@@ -124,12 +123,11 @@ class InternalTokenTenantTest extends IntegrationTestBase {
   }
 
   /**
-   * 운영의 ai-agent 호출을 재현한다. {@code requestedTenant} 가 있으면 원요청 테넌트를
-   * {@code X-On-Behalf-Of-Tenant} 헤더로 실어 보낸다(웹 세션 JWT 의 tenant 클레임에서 파생된 값).
+   * 운영의 ai-agent 호출을 재현한다. {@code requestedTenant} 가 있으면 원요청 테넌트를 {@code X-On-Behalf-Of-Tenant} 헤더로
+   * 실어 보낸다(웹 세션 JWT 의 tenant 클레임에서 파생된 값).
    *
-   * <p>필터는 finally 에서 컨텍스트를 지우므로, 체인 안(= 실제 컨트롤러가 도는 시점)에서 인증과
-   * 테넌트를 모두 캡처해야 한다. 테넌트를 캡처하는 이유: 권한 집합만 보면 "헤더를 거부했다" 와
-   * "헤더가 가리킨 비소속 테넌트를 그대로 세웠다" 가 둘 다 권한 0개로 보여 구분되지 않는다.
+   * <p>필터는 finally 에서 컨텍스트를 지우므로, 체인 안(= 실제 컨트롤러가 도는 시점)에서 인증과 테넌트를 모두 캡처해야 한다. 테넌트를 캡처하는 이유: 권한
+   * 집합만 보면 "헤더를 거부했다" 와 "헤더가 가리킨 비소속 테넌트를 그대로 세웠다" 가 둘 다 권한 0개로 보여 구분되지 않는다.
    */
   private FilterOutcome runFilter(String requestedTenantRaw) throws Exception {
     SecurityContextHolder.clearContext();
@@ -203,9 +201,7 @@ class InternalTokenTenantTest extends IntegrationTestBase {
     // 권한은 tenantA 에만 부여돼 있다(setUp) — 헤더가 실제로 반영됐는지는 권한 유무로 드러난다.
     FilterOutcome outcome = runFilter(tenantA);
 
-    assertThat(outcome.tenantId())
-        .as("웹 세션이 알고 있는 실행 테넌트를 전달받았으므로 추측할 것이 없다")
-        .isEqualTo(tenantA);
+    assertThat(outcome.tenantId()).as("웹 세션이 알고 있는 실행 테넌트를 전달받았으므로 추측할 것이 없다").isEqualTo(tenantA);
     assertThat(outcome.authentication().getAuthorities())
         .extracting(GrantedAuthority::getAuthority)
         .contains(permissionCode);

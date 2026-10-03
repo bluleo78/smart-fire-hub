@@ -48,19 +48,16 @@ public class NotificationRetentionJob {
   }
 
   /**
-   * <b>테넌트 배선(P2-f)</b>: outbox 보존 삭제는 테넌트 술어 없는 DELETE 라, 정책(V107) 이후
-   * 컨텍스트 없이 돌면 <b>에러 없이 0행</b>을 지우고 {@code sent=0, permanentFailure=0} 만 남긴다 —
-   * 보존 정책이 조용히 죽는다. 그래서 {@code outbox_tenant_ids('{SENT,PERMANENT_FAILURE}')} 로
-   * 지울 것이 있는 테넌트만 얻어 테넌트마다 스코프를 연다.
+   * <b>테넌트 배선(P2-f)</b>: outbox 보존 삭제는 테넌트 술어 없는 DELETE 라, 정책(V107) 이후 컨텍스트 없이 돌면 <b>에러 없이 0행</b>을
+   * 지우고 {@code sent=0, permanentFailure=0} 만 남긴다 — 보존 정책이 조용히 죽는다. 그래서 {@code
+   * outbox_tenant_ids('{SENT,PERMANENT_FAILURE}')} 로 지울 것이 있는 테넌트만 얻어 테넌트마다 스코프를 연다.
    *
-   * <p>순회·격리·로깅은 {@code TenantScopedRunner.forEachTenant} 가 맡고 <b>목록만 여기서 정한다</b>.
-   * {@code forEachActiveTenant} 를 쓰지 않는 이유(R4): ACTIVE 테넌트만 돌면 <b>비활성·정지
-   * 테넌트의 행이 영원히 삭제되지 않는 누수</b>가 생긴다. 보존 정책에서 이 누수는 특히 나쁘다 —
-   * 해지된 테넌트의 알림 페이로드가 무기한 남는다. R4 가 배제한 것은 출처이지 루프가 아니다.
+   * <p>순회·격리·로깅은 {@code TenantScopedRunner.forEachTenant} 가 맡고 <b>목록만 여기서 정한다</b>. {@code
+   * forEachActiveTenant} 를 쓰지 않는 이유(R4): ACTIVE 테넌트만 돌면 <b>비활성·정지 테넌트의 행이 영원히 삭제되지 않는 누수</b>가 생긴다.
+   * 보존 정책에서 이 누수는 특히 나쁘다 — 해지된 테넌트의 알림 페이로드가 무기한 남는다. R4 가 배제한 것은 출처이지 루프가 아니다.
    *
-   * <p>{@code oauth_state} 삭제는 <b>순회 밖</b>에 그대로 둔다. R7 에 따라 이 테이블에는 RLS 가
-   * 없고(콜백이 컨텍스트 없이 {@code consume} 해야 테넌트를 되찾을 수 있다), 만료 삭제는 테넌트와
-   * 무관한 TTL 정리라 순회에 넣으면 테넌트 수만큼 같은 전역 DELETE 를 반복할 뿐이다.
+   * <p>{@code oauth_state} 삭제는 <b>순회 밖</b>에 그대로 둔다. R7 에 따라 이 테이블에는 RLS 가 없고(콜백이 컨텍스트 없이 {@code
+   * consume} 해야 테넌트를 되찾을 수 있다), 만료 삭제는 테넌트와 무관한 TTL 정리라 순회에 넣으면 테넌트 수만큼 같은 전역 DELETE 를 반복할 뿐이다.
    */
   @Scheduled(cron = "${notification.retention.cron:0 30 4 * * *}")
   public void cleanup() {

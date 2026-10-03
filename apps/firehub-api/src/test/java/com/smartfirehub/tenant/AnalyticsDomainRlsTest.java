@@ -19,8 +19,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 /**
  * V92 analytics 도메인 RLS 격리를 양방향으로 검증한다.
  *
- * <p>클래스 레벨 {@code @Transactional} 을 붙이지 않는다 — 테넌트를 바꿔 가며 여러 트랜잭션을
- * 열어야 하고, 하나의 테스트 트랜잭션에 묶이면 GUC 가 처음 값으로 고정된다.
+ * <p>클래스 레벨 {@code @Transactional} 을 붙이지 않는다 — 테넌트를 바꿔 가며 여러 트랜잭션을 열어야 하고, 하나의 테스트 트랜잭션에 묶이면 GUC 가
+ * 처음 값으로 고정된다.
  */
 class AnalyticsDomainRlsTest extends IntegrationTestBase {
 
@@ -64,12 +64,7 @@ class AnalyticsDomainRlsTest extends IntegrationTestBase {
   @Test
   void chartFollowsParentSavedQueryIsolation() {
     TenantRlsTestSupport.assertTwoSidedIsolation(
-        tx,
-        dsl,
-        tenantA,
-        tenantB,
-        "chart",
-        () -> insertChart(insertSavedQuery("차트부모")));
+        tx, dsl, tenantA, tenantB, "chart", () -> insertChart(insertSavedQuery("차트부모")));
   }
 
   @Test
@@ -84,7 +79,6 @@ class AnalyticsDomainRlsTest extends IntegrationTestBase {
   }
 
   // ── 픽스처 ────────────────────────────────────────────────────────────
-
 
   /** tenant_id 는 명시하지 않는다 — DEFAULT 가 GUC 에서 채우는 것을 함께 검증한다. */
   private Long insertSavedQuery(String namePrefix) {

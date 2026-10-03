@@ -15,16 +15,14 @@ import org.springframework.beans.factory.annotation.Autowired;
  * {@code UserChannelPreferenceRepository.setEnabled} 의 upsert 경로(ON CONFLICT) 행위 검증.
  *
  * <p><b>왜 이 파일이 따로 있는가.</b> V106 이 {@code uk_preference} 를 {@code (tenant_id, user_id,
- * channel_type)} 으로 접었으므로, {@code ON CONFLICT} 의 컬럼 목록도 함께 접히지 않으면 PostgreSQL 이
- * {@code 42P10 there is no unique or exclusion constraint matching the ON CONFLICT specification}
- * 으로 죽는다. 그런데 기존 {@link UserChannelPreferenceConstraintTest} 는 CHECK 제약만 보고
- * {@code ON CONFLICT} 경로를 아예 타지 않아, 전체 스위트가 초록이어도 이 결함이 살아남았다.
- * 즉 이 파일은 "커버리지가 0이던 프로덕션 경로"를 처음으로 실행한다.
+ * channel_type)} 으로 접었으므로, {@code ON CONFLICT} 의 컬럼 목록도 함께 접히지 않으면 PostgreSQL 이 {@code 42P10 there
+ * is no unique or exclusion constraint matching the ON CONFLICT specification} 으로 죽는다. 그런데 기존
+ * {@link UserChannelPreferenceConstraintTest} 는 CHECK 제약만 보고 {@code ON CONFLICT} 경로를 아예 타지 않아, 전체
+ * 스위트가 초록이어도 이 결함이 살아남았다. 즉 이 파일은 "커버리지가 0이던 프로덕션 경로"를 처음으로 실행한다.
  *
- * <p><b>클래스 레벨 {@code @Transactional} 을 붙이지 않는다.</b> 붙이면 테스트 트랜잭션이 GUC 를
- * 공급해 버려서, 리포지토리가 스스로 트랜잭션을 열지 못하는 배선 결함(= {@code tenant_id} NOT NULL
- * 위반)까지 함께 가려진다. 검증 대상인 {@code setEnabled}/{@code isEnabled} 호출은 반드시 픽스처
- * 트랜잭션 <b>밖</b>에 둔다.
+ * <p><b>클래스 레벨 {@code @Transactional} 을 붙이지 않는다.</b> 붙이면 테스트 트랜잭션이 GUC 를 공급해 버려서, 리포지토리가 스스로 트랜잭션을
+ * 열지 못하는 배선 결함(= {@code tenant_id} NOT NULL 위반)까지 함께 가려진다. 검증 대상인 {@code setEnabled}/{@code
+ * isEnabled} 호출은 반드시 픽스처 트랜잭션 <b>밖</b>에 둔다.
  */
 class UserChannelPreferenceUpsertTest extends IntegrationTestBase {
 
@@ -50,9 +48,9 @@ class UserChannelPreferenceUpsertTest extends IntegrationTestBase {
   /**
    * 같은 (tenant, user, channel) 로 {@code setEnabled} 를 두 번 부르면 두 번째가 갱신되어야 한다.
    *
-   * <p>첫 호출은 INSERT 경로(= 리포지토리가 스스로 트랜잭션을 열어 GUC 를 받는지), 두 번째 호출은
-   * {@code ON CONFLICT ... DO UPDATE} 경로(= 접힌 유니크와 컬럼 목록이 맞는지)를 각각 검증한다.
-   * 접기 전 코드({@code .onConflict(USER_ID, CHANNEL_TYPE)})에서는 두 번째 호출이 42P10 으로 죽는다.
+   * <p>첫 호출은 INSERT 경로(= 리포지토리가 스스로 트랜잭션을 열어 GUC 를 받는지), 두 번째 호출은 {@code ON CONFLICT ... DO UPDATE}
+   * 경로(= 접힌 유니크와 컬럼 목록이 맞는지)를 각각 검증한다. 접기 전 코드({@code .onConflict(USER_ID, CHANNEL_TYPE)})에서는 두 번째
+   * 호출이 42P10 으로 죽는다.
    */
   @Test
   void setEnabled_secondCallUpdatesInsteadOfFailing() {

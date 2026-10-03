@@ -41,11 +41,13 @@ class MembershipLifecycleServiceTest extends IntegrationTestBase {
   @Autowired private DSLContext dsl;
   @Autowired private PasswordEncoder passwordEncoder;
   @Autowired private UserService userService;
+
   /**
-   * 스파이 — 동시성 테스트에서 {@code countActiveAdmins} 판정 직후 지연을 넣어 두 트랜잭션을 확실히 겹치게
-   * 한다(SignupClosureTest 와 같은 기법). 다른 테스트에서는 실제 메서드를 그대로 호출한다.
+   * 스파이 — 동시성 테스트에서 {@code countActiveAdmins} 판정 직후 지연을 넣어 두 트랜잭션을 확실히 겹치게 한다(SignupClosureTest 와
+   * 같은 기법). 다른 테스트에서는 실제 메서드를 그대로 호출한다.
    */
   @MockitoSpyBean private UserRepository userRepository;
+
   @Autowired private MembershipRepository membershipRepository;
   @Autowired private AuthService authService;
   @Autowired private TenantProvisioningService provisioningService;
@@ -294,10 +296,9 @@ class MembershipLifecycleServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * 리뷰 지적 3: 활성 ADMIN 이 둘(admin·member)일 때 서로를 동시에 정지하면, 잠금 없이는 두 트랜잭션이 모두
-   * "활성 ADMIN 2명" 을 보고 통과해 활성 ADMIN 이 0 이 된다. 판정 직후 지연으로 겹침을 강제한다 — 테넌트 단위
-   * advisory 잠금이 있으면 두 번째는 첫 번째 커밋을 본 뒤 409(IllegalStateException)가 된다.
-   * 래치로 "둘 다 판정에 도달" 을 기다리지 않는 이유: 잠금이 있으면 두 번째는 판정에 도달하지 못해 교착된다.
+   * 리뷰 지적 3: 활성 ADMIN 이 둘(admin·member)일 때 서로를 동시에 정지하면, 잠금 없이는 두 트랜잭션이 모두 "활성 ADMIN 2명" 을 보고 통과해
+   * 활성 ADMIN 이 0 이 된다. 판정 직후 지연으로 겹침을 강제한다 — 테넌트 단위 advisory 잠금이 있으면 두 번째는 첫 번째 커밋을 본 뒤
+   * 409(IllegalStateException)가 된다. 래치로 "둘 다 판정에 도달" 을 기다리지 않는 이유: 잠금이 있으면 두 번째는 판정에 도달하지 못해 교착된다.
    */
   @Test
   void concurrentMutualSuspend_ofTwoLastAdmins_onlyOneSucceeds() throws Exception {
@@ -320,8 +321,8 @@ class MembershipLifecycleServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * 리뷰 지적(#784 #785): 전역 비활성된 ADMIN(member) 은 활성 ADMIN 집합 밖이라, 남은 활성 ADMIN(admin) 이 그의
-   * ADMIN 회수·정지·제거를 할 때 '마지막 활성 ADMIN' 거짓 409 가 나면 안 된다.
+   * 리뷰 지적(#784 #785): 전역 비활성된 ADMIN(member) 은 활성 ADMIN 집합 밖이라, 남은 활성 ADMIN(admin) 이 그의 ADMIN
+   * 회수·정지·제거를 할 때 '마지막 활성 ADMIN' 거짓 409 가 나면 안 된다.
    */
   private void globallyDeactivatedAdminMember() {
     stripOwnerAdmin();
@@ -394,10 +395,9 @@ class MembershipLifecycleServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * ADMIN 을 유지한 채 역할 목록만 바꾸는 요청은 거부되지 않고 그대로 저장된다. 주의: 이 테스트는 "과잉 차단 방지"
-   * 중 removesAdmin=false 분기(ADMIN 이 요청에 남아 있으면 마지막-ADMIN 판정 자체를 건너뜀)만 증명한다. "정말
-   * 마지막 ADMIN 일 때" 의 판정 정확성은 위 거부 테스트들이, 다른 ADMIN 이 남는 경우의 허용은
-   * demotion_allowed_whenAnotherActiveAdminRemains 가 증명한다.
+   * ADMIN 을 유지한 채 역할 목록만 바꾸는 요청은 거부되지 않고 그대로 저장된다. 주의: 이 테스트는 "과잉 차단 방지" 중 removesAdmin=false
+   * 분기(ADMIN 이 요청에 남아 있으면 마지막-ADMIN 판정 자체를 건너뜀)만 증명한다. "정말 마지막 ADMIN 일 때" 의 판정 정확성은 위 거부 테스트들이, 다른
+   * ADMIN 이 남는 경우의 허용은 demotion_allowed_whenAnotherActiveAdminRemains 가 증명한다.
    */
   @Test
   void lastActiveAdmin_keepingAdmin_otherRolesChange_allowed() {
@@ -438,8 +438,8 @@ class MembershipLifecycleServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * 동시성: 활성 ADMIN 이 둘(admin·member)일 때 서로의 ADMIN 을 동시에 뺀다. countActiveAdmins 직후 지연으로
-   * 겹침을 강제한다 — 잠금이 없으면 둘 다 "2명"을 보고 통과해 0 명이 된다.
+   * 동시성: 활성 ADMIN 이 둘(admin·member)일 때 서로의 ADMIN 을 동시에 뺀다. countActiveAdmins 직후 지연으로 겹침을 강제한다 — 잠금이
+   * 없으면 둘 다 "2명"을 보고 통과해 0 명이 된다.
    */
   @Test
   void concurrentMutualDemotion_ofTwoLastAdmins_onlyOneSucceeds() throws Exception {
@@ -491,8 +491,8 @@ class MembershipLifecycleServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * 두 작업을 동시에 시작해 결과를 "OK"/"CONFLICT"(IllegalStateException) 로 모은다. 래치로 "둘 다 판정 도달" 을
-   * 기다리지 않는다 — 잠금이 있으면 두 번째는 판정에 도달하지 못해 교착된다.
+   * 두 작업을 동시에 시작해 결과를 "OK"/"CONFLICT"(IllegalStateException) 로 모은다. 래치로 "둘 다 판정 도달" 을 기다리지 않는다 —
+   * 잠금이 있으면 두 번째는 판정에 도달하지 못해 교착된다.
    */
   private List<String> runConcurrently(Runnable first, Runnable second) {
     ExecutorService pool = Executors.newFixedThreadPool(2);

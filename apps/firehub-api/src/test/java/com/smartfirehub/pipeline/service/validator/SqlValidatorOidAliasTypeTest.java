@@ -18,23 +18,22 @@ import org.junit.jupiter.params.provider.MethodSource;
  *
  * <p><b>왜 필요한가.</b> {@code reg*} 계열 타입({@code regclass}/{@code regnamespace}/{@code regrole} …)의 출력
  * 함수는 OID 를 이름으로 바꿀 때 <b>권한 검사를 하지 않는다</b>. 그래서 {@code SELECT g::regclass::text FROM
- * generate_series(…) g} 한 줄로 USAGE 권한이 없는 다른 테넌트 데이터 스키마의 테이블 이름까지 추측 없이 열거됐다
- * (#755 재현: dev API 데이터셋·애널리틱스 두 경로 모두). 스키마 화이트리스트는 테이블 참조 노드만 보므로 캐스트의
- * 대상 타입은 아무도 검사하지 않았다.
+ * generate_series(…) g} 한 줄로 USAGE 권한이 없는 다른 테넌트 데이터 스키마의 테이블 이름까지 추측 없이 열거됐다 (#755 재현: dev API
+ * 데이터셋·애널리틱스 두 경로 모두). 스키마 화이트리스트는 테이블 참조 노드만 보므로 캐스트의 대상 타입은 아무도 검사하지 않았다.
  *
  * <p><b>검사 축(변이 테스트로 각 축의 비공허성을 따로 증명했다 — 커밋 메시지 참고).</b>
  *
  * <ol>
- *   <li>캐스트·배열 캐스트의 대상 타입({@code ColDataType}) — {@code ::}, {@code CAST(… AS …)}, 스키마 한정,
- *       인용 식별자, 배열 타입 이름({@code _regclass}), {@code []} 접미.
+ *   <li>캐스트·배열 캐스트의 대상 타입({@code ColDataType}) — {@code ::}, {@code CAST(… AS …)}, 스키마 한정, 인용 식별자,
+ *       배열 타입 이름({@code _regclass}), {@code []} 접미.
  *   <li>{@code U&"…"} 유니코드 이스케이프 타입 이름 — JSqlParser 는 이를 타입 {@code U} 와 비트 AND 로 잘못 읽는다.
  *   <li>타입 리터럴({@code regclass '…'}) — JSqlParser 는 이를 "컬럼 {@code regclass} + 문자열 별칭"으로 읽는다.
- *   <li>암묵 캐스트 경로 — 허용목록 함수 중 {@code regclass} 인자를 받아 데이터 유래 값을 돌려주는
- *       {@code _postgis_index_extent}(정수 OID 를 넘기면 PG 가 int→regclass 암묵 캐스트로 받아들인다).
+ *   <li>암묵 캐스트 경로 — 허용목록 함수 중 {@code regclass} 인자를 받아 데이터 유래 값을 돌려주는 {@code
+ *       _postgis_index_extent}(정수 OID 를 넘기면 PG 가 int→regclass 암묵 캐스트로 받아들인다).
  * </ol>
  *
- * <p>모든 거부 단언은 {@code hasMessageContaining}으로 <b>어느 규칙이 막았는지</b>까지 고정한다 — 파싱 실패 등 다른
- * 이유로 거부돼도 초록이 되는 공허한 테스트를 막기 위해서다(#387 깊이 테스트 전례).
+ * <p>모든 거부 단언은 {@code hasMessageContaining}으로 <b>어느 규칙이 막았는지</b>까지 고정한다 — 파싱 실패 등 다른 이유로 거부돼도 초록이
+ * 되는 공허한 테스트를 막기 위해서다(#387 깊이 테스트 전례).
  */
 class SqlValidatorOidAliasTypeTest {
 
@@ -161,13 +160,13 @@ class SqlValidatorOidAliasTypeTest {
     return cross(
         // 타입 이름 자리에 컬럼이 아닌 식이 온 형태 — PG 는 U&"…" 를 타입 이름으로 읽어 regclass 리터럴이 된다
         // (psql 실측). 타입 이름을 정적으로 확정할 수 없으므로 문자열 리터럴 별칭 자체를 거부한다.
-        List.of("SELECT U&\"reg\\0063lass\" '16384' FROM data.t"),
-        TYPED_LITERAL_MSG);
+        List.of("SELECT U&\"reg\\0063lass\" '16384' FROM data.t"), TYPED_LITERAL_MSG);
   }
 
   @ParameterizedTest
   @MethodSource("nonColumnTypedLiterals")
-  void rejects_typed_literal_with_non_column_type(SqlValidator validator, String sql, String expected) {
+  void rejects_typed_literal_with_non_column_type(
+      SqlValidator validator, String sql, String expected) {
     assertThatThrownBy(() -> validator.validate(sql))
         .isInstanceOf(UnsafeSqlException.class)
         .hasMessageContaining(expected);
@@ -186,7 +185,8 @@ class SqlValidatorOidAliasTypeTest {
 
   @ParameterizedTest
   @MethodSource("implicitRegclassFunctions")
-  void rejects_function_taking_regclass_implicitly(SqlValidator validator, String sql, String expected) {
+  void rejects_function_taking_regclass_implicitly(
+      SqlValidator validator, String sql, String expected) {
     assertThatThrownBy(() -> validator.validate(sql))
         .isInstanceOf(UnsafeSqlException.class)
         .hasMessageContaining(expected);

@@ -24,8 +24,8 @@ public final class ProactiveCron {
   /**
    * cron 표현식을 Spring 이 받아들이는 6필드 형식으로 정규화한다.
    *
-   * <p>Spring {@code CronExpression} 은 6필드(초 분 시 일 월 요일)만 수용하는데 DB에는 5필드(Unix 표준)와 6필드가 섞여 있다(#347).
-   * 5필드면 앞에 초 자리 {@code "0 "} 을 붙인다. TriggerService.validateScheduleConfig 와 같은 규칙이다.
+   * <p>Spring {@code CronExpression} 은 6필드(초 분 시 일 월 요일)만 수용하는데 DB에는 5필드(Unix 표준)와 6필드가 섞여
+   * 있다(#347). 5필드면 앞에 초 자리 {@code "0 "} 을 붙인다. TriggerService.validateScheduleConfig 와 같은 규칙이다.
    */
   public static String normalize(String cronExpression) {
     if (cronExpression == null) return null;
@@ -57,11 +57,7 @@ public final class ProactiveCron {
       if (next == null) return null; // 더 이상 발화하지 않는 식 (예: 지나간 특정 일자)
       return next.withZoneSameInstant(ZoneOffset.UTC).toLocalDateTime();
     } catch (Exception e) {
-      log.warn(
-          "다음 실행 시각 계산 실패 — cron='{}' timezone='{}': {}",
-          cronExpression,
-          tz,
-          e.getMessage());
+      log.warn("다음 실행 시각 계산 실패 — cron='{}' timezone='{}': {}", cronExpression, tz, e.getMessage());
       return null;
     }
   }

@@ -90,8 +90,7 @@ class OntologyStatusTransitionTest extends IntegrationTestBase {
   @Test
   void archived에서_draft로_강등할_수_없다() {
     long id = given("전이 테스트 archived→draft", "archived");
-    assertThatThrownBy(() -> transitionTo(id, "draft"))
-        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(() -> transitionTo(id, "draft")).isInstanceOf(IllegalStateException.class);
   }
 
   @Test
@@ -208,8 +207,7 @@ class OntologyStatusTransitionTest extends IntegrationTestBase {
     assertThatThrownBy(() -> transitionTo(id, "retired"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("알 수 없는 상태");
-    assertThatThrownBy(() -> transitionTo(id, null))
-        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> transitionTo(id, null)).isInstanceOf(IllegalArgumentException.class);
   }
 
   @Test

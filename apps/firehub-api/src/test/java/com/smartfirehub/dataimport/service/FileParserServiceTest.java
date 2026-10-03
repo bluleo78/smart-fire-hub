@@ -852,7 +852,9 @@ class FileParserServiceTest {
 
     int total = batches.stream().mapToInt(List::size).sum();
     assertThat(total).isEqualTo(5);
-    assertThat(batches.get(0).get(0)).containsEntry("column_1", "Alice").containsEntry("column_2", "30");
+    assertThat(batches.get(0).get(0))
+        .containsEntry("column_1", "Alice")
+        .containsEntry("column_2", "30");
   }
 
   @Test
@@ -1007,7 +1009,8 @@ class FileParserServiceTest {
     ParseOptions opts = ParseOptions.defaults();
 
     List<Map<String, String>> pathRows = service.parse(file, "xlsx", opts);
-    List<Map<String, String>> streamRows = service.parse(new ByteArrayInputStream(data), "xlsx", opts);
+    List<Map<String, String>> streamRows =
+        service.parse(new ByteArrayInputStream(data), "xlsx", opts);
 
     assertThat(pathRows).isEqualTo(streamRows);
   }

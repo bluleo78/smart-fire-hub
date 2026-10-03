@@ -34,8 +34,10 @@ import org.springframework.beans.factory.annotation.Qualifier;
  */
 class DocumentChunkVectorStoreTest extends IntegrationTestBase {
 
-  private static final EmbeddingSpace S1024 = new EmbeddingSpace(EmbeddingDimension.D1024, "bge-m3");
-  private static final EmbeddingSpace S1536 = new EmbeddingSpace(EmbeddingDimension.D1536, "text-embedding-3-small");
+  private static final EmbeddingSpace S1024 =
+      new EmbeddingSpace(EmbeddingDimension.D1024, "bge-m3");
+  private static final EmbeddingSpace S1536 =
+      new EmbeddingSpace(EmbeddingDimension.D1536, "text-embedding-3-small");
 
   @Autowired private DocumentChunkRepository repo;
   @Autowired private DSLContext dsl;
@@ -59,7 +61,8 @@ class DocumentChunkVectorStoreTest extends IntegrationTestBase {
         tenantA,
         () ->
             repo.insertBatch(
-                docA.fileId(), docA.datasetId(),
+                docA.fileId(),
+                docA.datasetId(),
                 List.of(new Chunk(0, "a-near", 1), new Chunk(1, "a-far", 1)),
                 List.of(axis(1024, 0), axis(1024, 1)),
                 S1024));
@@ -67,7 +70,8 @@ class DocumentChunkVectorStoreTest extends IntegrationTestBase {
         tenantB,
         () ->
             repo.insertBatch(
-                docB.fileId(), docB.datasetId(),
+                docB.fileId(),
+                docB.datasetId(),
                 List.of(new Chunk(0, "b-near", 1)),
                 List.of(axis(1536, 0)),
                 S1536));
@@ -85,7 +89,8 @@ class DocumentChunkVectorStoreTest extends IntegrationTestBase {
   @Test
   void eachTenantSeesOnlyItsOwnDimensionAndRows() {
     List<DocumentSearchHit> aHits =
-        TenantContext.runScopedGet(tenantA, () -> repo.searchByCosine(S1024, axis(1024, 0), List.of(), 10));
+        TenantContext.runScopedGet(
+            tenantA, () -> repo.searchByCosine(S1024, axis(1024, 0), List.of(), 10));
     assertThat(aHits).extracting(DocumentSearchHit::content).containsExactly("a-near", "a-far");
     // A 컨텍스트에서 1536 공간은 비어 있다(B 의 행이 새지 않는다).
     assertThat(TenantContext.runScopedGet(tenantA, () -> repo.countEmbedded(S1536))).isZero();
@@ -93,7 +98,9 @@ class DocumentChunkVectorStoreTest extends IntegrationTestBase {
     assertThat(TenantContext.runScopedGet(tenantB, () -> repo.countEmbedded(S1536))).isEqualTo(1);
     // 벡터 테이블 단독 SELECT 도 RLS 로 막힌다(조인 누락 대비).
     Long seenByA =
-        inTenantFixture(tenantA, () -> dsl.fetchOne("SELECT count(*) FROM document_chunk_vec_1536").get(0, Long.class));
+        inTenantFixture(
+            tenantA,
+            () -> dsl.fetchOne("SELECT count(*) FROM document_chunk_vec_1536").get(0, Long.class));
     assertThat(seenByA).isZero();
   }
 
@@ -101,15 +108,20 @@ class DocumentChunkVectorStoreTest extends IntegrationTestBase {
   void searchIgnoresVectorsOfAnotherModelInSameDimension() {
     // #392: 같은 1024 공간에 모델 A 벡터만 있는데 모델 B 로 검색하면 A 벡터는 결과에 없어야 한다.
     EmbeddingSpace otherModel = new EmbeddingSpace(EmbeddingDimension.D1024, "other-model");
-    assertThat(TenantContext.runScopedGet(tenantA, () -> repo.searchByCosine(otherModel, axis(1024, 0), List.of(), 10)))
+    assertThat(
+            TenantContext.runScopedGet(
+                tenantA, () -> repo.searchByCosine(otherModel, axis(1024, 0), List.of(), 10)))
         .isEmpty();
-    assertThat(TenantContext.runScopedGet(tenantA, () -> repo.countMissing(otherModel))).isEqualTo(2);
+    assertThat(TenantContext.runScopedGet(tenantA, () -> repo.countMissing(otherModel)))
+        .isEqualTo(2);
   }
 
   @Test
   void upsertMovesVectorAcrossDimensionsKeepingOneRowPerChunk() {
     List<Long> ids =
-        inTenantFixture(tenantA, () -> dsl.fetch("SELECT id FROM document_chunk ORDER BY id").getValues(0, Long.class));
+        inTenantFixture(
+            tenantA,
+            () -> dsl.fetch("SELECT id FROM document_chunk ORDER BY id").getValues(0, Long.class));
     TenantContext.runScoped(
         tenantA, () -> repo.upsertEmbeddings(S1536, ids, List.of(axis(1536, 0), axis(1536, 1))));
     // 불변식: 한 청크의 벡터는 차원 테이블 전체를 통틀어 최대 1행.
@@ -122,7 +134,8 @@ class DocumentChunkVectorStoreTest extends IntegrationTestBase {
   void upsertForVanishedChunkIsNoOp() {
     // Review Focus: 조회 뒤 문서가 지워져도 FK 오류로 잡이 죽지 않는다(INSERT…SELECT 가 0행).
     TenantContext.runScoped(
-        tenantA, () -> repo.upsertEmbeddings(S1536, List.of(Long.MAX_VALUE), List.of(axis(1536, 0))));
+        tenantA,
+        () -> repo.upsertEmbeddings(S1536, List.of(Long.MAX_VALUE), List.of(axis(1536, 0))));
     assertThat(TenantContext.runScopedGet(tenantA, () -> repo.countEmbedded(S1536))).isZero();
   }
 
@@ -131,7 +144,9 @@ class DocumentChunkVectorStoreTest extends IntegrationTestBase {
     EmbeddingSpace next = new EmbeddingSpace(EmbeddingDimension.D1536, "m2");
     var first = TenantContext.runScopedGet(tenantA, () -> repo.findMissing(next, 0L, 1));
     assertThat(first).hasSize(1);
-    var second = TenantContext.runScopedGet(tenantA, () -> repo.findMissing(next, first.get(0).chunkId(), 10));
+    var second =
+        TenantContext.runScopedGet(
+            tenantA, () -> repo.findMissing(next, first.get(0).chunkId(), 10));
     assertThat(second).hasSize(1);
     assertThat(second.get(0).chunkId()).isGreaterThan(first.get(0).chunkId());
   }
@@ -151,7 +166,8 @@ class DocumentChunkVectorStoreTest extends IntegrationTestBase {
     DocumentChunkRepository ownerRepo =
         new DocumentChunkRepository(DSL.using(ownerDataSource, SQLDialect.POSTGRES));
     int deletedByOwner =
-        TenantContext.runScopedGet(tenantB, () -> ownerRepo.deleteOtherDimensions(EmbeddingDimension.D1536));
+        TenantContext.runScopedGet(
+            tenantB, () -> ownerRepo.deleteOtherDimensions(EmbeddingDimension.D1536));
     assertThat(deletedByOwner).isZero();
     assertThat(TenantContext.runScopedGet(tenantA, () -> repo.countEmbedded(S1024))).isEqualTo(2);
 
@@ -187,8 +203,11 @@ class DocumentChunkVectorStoreTest extends IntegrationTestBase {
       target.add(new Chunk(200 + i, "target-" + i, 1));
       targetVec.add(axis(1024, 6));
     }
-    TenantContext.runScoped(tenantA, () -> repo.insertBatch(docA.fileId(), docA.datasetId(), near, nearVec, otherModel));
-    TenantContext.runScoped(tenantA, () -> repo.insertBatch(docA.fileId(), docA.datasetId(), target, targetVec, S1024));
+    TenantContext.runScoped(
+        tenantA,
+        () -> repo.insertBatch(docA.fileId(), docA.datasetId(), near, nearVec, otherModel));
+    TenantContext.runScoped(
+        tenantA, () -> repo.insertBatch(docA.fileId(), docA.datasetId(), target, targetVec, S1024));
 
     List<Object> params = new ArrayList<>();
     String sql = repo.semanticSql(S1024, List.of(), vectorLiteral(axis(1024, 5)), 5, params);
@@ -216,7 +235,9 @@ class DocumentChunkVectorStoreTest extends IntegrationTestBase {
     assertThat(without).isLessThan(5);
     assertThat(with).isEqualTo(5);
     // 실제 경로도 5건을 채운다(ef_search 200 + iterative scan).
-    assertThat(TenantContext.runScopedGet(tenantA, () -> repo.searchByCosine(S1024, axis(1024, 5), List.of(), 5)))
+    assertThat(
+            TenantContext.runScopedGet(
+                tenantA, () -> repo.searchByCosine(S1024, axis(1024, 5), List.of(), 5)))
         .hasSize(5);
   }
 
@@ -224,7 +245,8 @@ class DocumentChunkVectorStoreTest extends IntegrationTestBase {
   void compositeFkRejectsVectorWithAnotherTenantsId() {
     // 소유자 커넥션(RLS 우회)으로 넣어야 WITH CHECK(42501)보다 FK(23503)가 먼저 판정된다.
     Long chunkOfA =
-        inTenantFixture(tenantA, () -> dsl.fetchOne("SELECT min(id) FROM document_chunk").get(0, Long.class));
+        inTenantFixture(
+            tenantA, () -> dsl.fetchOne("SELECT min(id) FROM document_chunk").get(0, Long.class));
     DSLContext owner = DSL.using(ownerDataSource, SQLDialect.POSTGRES);
     Throwable thrown =
         catchThrowable(
@@ -232,7 +254,10 @@ class DocumentChunkVectorStoreTest extends IntegrationTestBase {
                 owner.execute(
                     "INSERT INTO document_chunk_vec_1536 (chunk_id, tenant_id, dataset_id, embedding, embedding_model)"
                         + " VALUES (?, ?, ?, ?::vector, 'x')",
-                    chunkOfA, tenantB, docA.datasetId(), vectorLiteral(axis(1536, 0))));
+                    chunkOfA,
+                    tenantB,
+                    docA.datasetId(),
+                    vectorLiteral(axis(1536, 0))));
     SQLException sql = TenantRlsTestSupport.findSqlException(thrown);
     assertThat((Object) sql).as("SQLException 이 감싸져 있어야 SQLSTATE 를 단언할 수 있다").isNotNull();
     assertThat(sql.getSQLState()).isEqualTo("23503");
@@ -240,14 +265,17 @@ class DocumentChunkVectorStoreTest extends IntegrationTestBase {
 
   private String explain(EmbeddingSpace space) {
     List<Object> params = new ArrayList<>();
-    String sql = repo.semanticSql(space, List.of(), vectorLiteral(axis(space.dimension().size(), 0)), 5, params);
+    String sql =
+        repo.semanticSql(
+            space, List.of(), vectorLiteral(axis(space.dimension().size(), 0)), 5, params);
     return inTenantFixture(
         tenantA,
         () -> {
           dsl.execute("SET LOCAL enable_seqscan = off");
           // 테넌트 btree 로 몇 행을 읽고 Sort 하는 계획도 막는다 — 정렬을 HNSW 가 맡는 계획만 남긴다.
           dsl.execute("SET LOCAL enable_sort = off");
-          return String.join("\n", dsl.fetch("EXPLAIN " + sql, params.toArray()).getValues(0, String.class));
+          return String.join(
+              "\n", dsl.fetch("EXPLAIN " + sql, params.toArray()).getValues(0, String.class));
         });
   }
 

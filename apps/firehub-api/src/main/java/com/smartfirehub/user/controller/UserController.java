@@ -27,8 +27,8 @@ public class UserController {
   private final RefreshTokenCookies refreshTokenCookies;
 
   /**
-   * 자기 프로필 조회. 전역 정체성 경로이므로 테넌트 멤버십으로 좁히지 않는다 — 관리 경로인
-   * {@code GET /{id}} 와 달리 {@code getMyProfile} 을 쓰는 이유다.
+   * 자기 프로필 조회. 전역 정체성 경로이므로 테넌트 멤버십으로 좁히지 않는다 — 관리 경로인 {@code GET /{id}} 와 달리 {@code getMyProfile}
+   * 을 쓰는 이유다.
    */
   @GetMapping("/me")
   public ResponseEntity<UserDetailResponse> getMyProfile(Authentication authentication) {
@@ -40,10 +40,9 @@ public class UserController {
   /**
    * 내 프로필 수정. <b>인증만 요구한다</b>(권한 코드 없음, WD-2).
    *
-   * <p>항상 본인(principal) 대상이고 {@code "user"} 는 전역 테이블이라 테넌트 RBAC 와 무관하다. 권한으로
-   * 막으면 테넌트 미선택 토큰(멤버십 여러 개인 첫 로그인)에서 RLS 로 권한이 0 이 되어 본인 계정조차 못
-   * 고친다. {@code user:write:self} 권한 코드는 카탈로그(permission 테이블)에 남아 있지만 이 엔드포인트의
-   * 게이트로는 쓰지 않는다.
+   * <p>항상 본인(principal) 대상이고 {@code "user"} 는 전역 테이블이라 테넌트 RBAC 와 무관하다. 권한으로 막으면 테넌트 미선택 토큰(멤버십 여러
+   * 개인 첫 로그인)에서 RLS 로 권한이 0 이 되어 본인 계정조차 못 고친다. {@code user:write:self} 권한 코드는 카탈로그(permission
+   * 테이블)에 남아 있지만 이 엔드포인트의 게이트로는 쓰지 않는다.
    */
   @PutMapping("/me")
   public ResponseEntity<Void> updateMyProfile(
@@ -54,12 +53,12 @@ public class UserController {
   }
 
   /**
-   * 내 비밀번호 변경. 위와 같은 이유로 인증만 요구한다({@code user:write:self} 로 막지 않는다). 비밀번호
-   * 변경 강제 중에도 허용된다 — 이 핸들러가 강제 상태를 푸는 유일한 수단이다.
+   * 내 비밀번호 변경. 위와 같은 이유로 인증만 요구한다({@code user:write:self} 로 막지 않는다). 비밀번호 변경 강제 중에도 허용된다 — 이 핸들러가
+   * 강제 상태를 푸는 유일한 수단이다.
    *
-   * <p>변경이 이 사용자의 refresh 세션을 전부 폐기하므로(리뷰 지적 2), 호출자에게는 새 패밀리의 refresh
-   * 쿠키를 내려 세션을 잇는다. 응답 본문은 그대로 204 — 웹은 이어서 {@code /auth/refresh} 로 access token 을
-   * 받는다. 새 세션 발급이 실패해도 비밀번호 변경·폐기는 이미 커밋돼 안전하다(웹은 재로그인으로 안내).
+   * <p>변경이 이 사용자의 refresh 세션을 전부 폐기하므로(리뷰 지적 2), 호출자에게는 새 패밀리의 refresh 쿠키를 내려 세션을 잇는다. 응답 본문은 그대로
+   * 204 — 웹은 이어서 {@code /auth/refresh} 로 access token 을 받는다. 새 세션 발급이 실패해도 비밀번호 변경·폐기는 이미 커밋돼
+   * 안전하다(웹은 재로그인으로 안내).
    */
   @PutMapping("/me/password")
   @AllowedDuringPasswordChange
@@ -88,9 +87,8 @@ public class UserController {
   /**
    * 멤버 추가(WD-2). user:write 필수, 역할을 지정하면 role:assign 도 필요하다.
    *
-   * <p>role:assign 을 애너테이션이 아니라 여기서 보는 이유: {@code @RequirePermission} 은 AND 고정이라
-   * "roleIds 가 있을 때만" 같은 조건부 요구를 표현할 수 없다. 메시지는 PermissionInterceptor 와 같은
-   * 형식으로 맞춘다.
+   * <p>role:assign 을 애너테이션이 아니라 여기서 보는 이유: {@code @RequirePermission} 은 AND 고정이라 "roleIds 가 있을 때만"
+   * 같은 조건부 요구를 표현할 수 없다. 메시지는 PermissionInterceptor 와 같은 형식으로 맞춘다.
    */
   @PostMapping
   @RequirePermission("user:write")

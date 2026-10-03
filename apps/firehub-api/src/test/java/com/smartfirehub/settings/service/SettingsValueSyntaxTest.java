@@ -18,14 +18,13 @@ import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.beans.factory.annotation.Autowired;
 
 /**
- * 설정 값의 <b>표기(문법)</b> 검증(#727). 범위 검증은 {@code SettingsServiceTest}·
- * {@code SmtpSettingsServiceTest} 가 본다 — 여기는 "Java 파서가 우연히 받아 주던 표기"와
- * "Java 예외 원문이 그대로 나가던 표기"를 고정한다.
+ * 설정 값의 <b>표기(문법)</b> 검증(#727). 범위 검증은 {@code SettingsServiceTest}· {@code SmtpSettingsServiceTest}
+ * 가 본다 — 여기는 "Java 파서가 우연히 받아 주던 표기"와 "Java 예외 원문이 그대로 나가던 표기"를 고정한다.
  *
- * <p>결함은 두 방향이었다. (1) {@code Integer.parseInt("+5")}·{@code Double.parseDouble("NaN")}·
- * {@code "0.5d"} 는 파싱에 성공해 204 로 저장됐고({@code NaN} 은 {@code v < 0 || v > 1} 을 둘 다
- * 통과한다), 빈 {@code ai.model} 은 검사 자체가 없었다. (2) {@code "1e1"}·{@code "5.0"} 은
- * {@code NumberFormatException} 원문({@code For input string: "1e1"})이 400 메시지가 됐다.
+ * <p>결함은 두 방향이었다. (1) {@code Integer.parseInt("+5")}·{@code Double.parseDouble("NaN")}· {@code
+ * "0.5d"} 는 파싱에 성공해 204 로 저장됐고({@code NaN} 은 {@code v < 0 || v > 1} 을 둘 다 통과한다), 빈 {@code ai.model}
+ * 은 검사 자체가 없었다. (2) {@code "1e1"}·{@code "5.0"} 은 {@code NumberFormatException} 원문({@code For input
+ * string: "1e1"})이 400 메시지가 됐다.
  *
  * <p>매 테스트마다 새 테넌트를 만들고 지운다 — 수용 케이스가 실제로 행을 쓰기 때문이다.
  */
@@ -49,8 +48,8 @@ class SettingsValueSyntaxTest extends IntegrationTestBase {
   }
 
   /**
-   * 거부돼야 하는 표기. 세 번째 열은 메시지에 들어 있어야 하는 필드 이름 — 사용자가 어느 칸이
-   * 틀렸는지 알 수 있어야 한다(화면이 이 메시지를 토스트로 그대로 보여준다).
+   * 거부돼야 하는 표기. 세 번째 열은 메시지에 들어 있어야 하는 필드 이름 — 사용자가 어느 칸이 틀렸는지 알 수 있어야 한다(화면이 이 메시지를 토스트로 그대로
+   * 보여준다).
    */
   @ParameterizedTest(name = "{0} = [{1}] 은 거부된다")
   @CsvSource(

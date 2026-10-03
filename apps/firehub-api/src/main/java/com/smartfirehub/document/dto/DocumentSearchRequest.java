@@ -3,8 +3,8 @@ package com.smartfirehub.document.dto;
 import java.util.List;
 
 /**
- * 문서 검색 요청. datasetIds 생략/빈값이면 전역 검색, topK 기본 5(최대 20).
- * mode 생략 시 HYBRID(의미+키워드 RRF 융합)가 기본 — 기존 호출자도 자동으로 하이브리드 검색을 받는다.
+ * 문서 검색 요청. datasetIds 생략/빈값이면 전역 검색, topK 기본 5(최대 20). mode 생략 시 HYBRID(의미+키워드 RRF 융합)가 기본 — 기존
+ * 호출자도 자동으로 하이브리드 검색을 받는다.
  */
 public record DocumentSearchRequest(
     String query, List<Long> datasetIds, Integer topK, SearchMode mode) {

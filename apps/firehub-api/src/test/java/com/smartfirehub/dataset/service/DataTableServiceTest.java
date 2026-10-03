@@ -446,8 +446,7 @@ class DataTableServiceTest extends IntegrationTestBase {
 
     // "FORM" 오타는 파싱 자체가 불가능해 이제 SqlValidator 단계에서 UnsafeSqlException 으로 거부된다
     // (#385 Task 3) — 예전처럼 DB 실행까지 도달해 error 필드로 반환되지 않는다.
-    assertThatThrownBy(
-            () -> dataTableQueryService.executeQuery("SELECT * FORM " + tableName, 100))
+    assertThatThrownBy(() -> dataTableQueryService.executeQuery("SELECT * FORM " + tableName, 100))
         .isInstanceOf(com.smartfirehub.pipeline.exception.UnsafeSqlException.class);
   }
 
@@ -709,7 +708,8 @@ class DataTableServiceTest extends IntegrationTestBase {
     dataTableService.swapTable(tableName);
 
     // 원본 이름이 스테이징 내용을 담는다 — DROP 과 RENAME 이 둘 다 올바른 스키마에 닿았다는 증거
-    List<String> names = dsl.fetch("SELECT name FROM data.\"" + tableName + "\"").getValues("name", String.class);
+    List<String> names =
+        dsl.fetch("SELECT name FROM data.\"" + tableName + "\"").getValues("name", String.class);
     assertThat(names).containsExactly("new");
 
     // 시퀀스 리네임이 실제로 일어났다 — 빠뜨리면 아무 에러 없이 tmp 이름의 시퀀스가 남고,
@@ -717,8 +717,7 @@ class DataTableServiceTest extends IntegrationTestBase {
     Long canonicalSeq =
         dsl.selectCount()
             .from("pg_sequences")
-            .where(
-                "schemaname = 'data' AND sequencename = '" + tableName + "_id_seq'")
+            .where("schemaname = 'data' AND sequencename = '" + tableName + "_id_seq'")
             .fetchOne(0, Long.class);
     assertThat(canonicalSeq).as("스왑 후 시퀀스는 원본 이름 규약을 따라야 한다").isEqualTo(1);
 
@@ -856,7 +855,9 @@ class DataTableServiceTest extends IntegrationTestBase {
     dataTableService.createTable(src, List.of(textColumn("name")));
     dsl.execute("INSERT INTO " + DataSchema.qualify(src) + " (name) VALUES ('a')");
     List<DatasetColumnResponse> columnDefs =
-        List.of(new DatasetColumnResponse(1L, "name", "name", "TEXT", null, true, false, null, 0, false));
+        List.of(
+            new DatasetColumnResponse(
+                1L, "name", "name", "TEXT", null, true, false, null, 0, false));
     dataTableService.cloneTable(src, dst, List.of("name"), columnDefs);
     dsl.execute("INSERT INTO " + DataSchema.qualify(dst) + " (name) VALUES ('b')");
     Long nulls =
@@ -875,8 +876,11 @@ class DataTableServiceTest extends IntegrationTestBase {
 
   @Test
   void createTable_rejectsReservedSearchPrefix() {
-    assertThatThrownBy(() -> dataTableService.createTable("fh_search_1",
-            List.of(new DatasetColumnRequest("a", "A", "TEXT", null, true, false, null))))
+    assertThatThrownBy(
+            () ->
+                dataTableService.createTable(
+                    "fh_search_1",
+                    List.of(new DatasetColumnRequest("a", "A", "TEXT", null, true, false, null))))
         .isInstanceOf(InvalidTableNameException.class);
   }
 
@@ -894,9 +898,9 @@ class DataTableServiceTest extends IntegrationTestBase {
   // =========================================================================
 
   /**
-   * #773 회귀: 컬럼 통계의 최솟값·최댓값은 값의 텍스트 사전순이 아니라 컬럼 실제 타입의 순서로 구해야 한다.
-   * 음수·자릿수가 다른 정수·5자리 연도·±infinity·BC 날짜를 섞어 넣고, 기대값은 PG 가 같은 컬럼을 원래 타입으로
-   * 집계한 결과(MIN(col)::text)와 직접 비교한다 — 텍스트 순서로 집계하면 INTEGER 가 "10 ~ 9" 가 된다.
+   * #773 회귀: 컬럼 통계의 최솟값·최댓값은 값의 텍스트 사전순이 아니라 컬럼 실제 타입의 순서로 구해야 한다. 음수·자릿수가 다른 정수·5자리
+   * 연도·±infinity·BC 날짜를 섞어 넣고, 기대값은 PG 가 같은 컬럼을 원래 타입으로 집계한 결과(MIN(col)::text)와 직접 비교한다 — 텍스트 순서로
+   * 집계하면 INTEGER 가 "10 ~ 9" 가 된다.
    */
   @Test
   void getColumnStats_minMax_usesNativeTypeOrderNotTextOrder() {
@@ -933,8 +937,7 @@ class DataTableServiceTest extends IntegrationTestBase {
 
     Map<String, ColumnStatsResponse> stats =
         dataTableService.getColumnStats(tableName, columnDefs).stream()
-            .collect(
-                java.util.stream.Collectors.toMap(ColumnStatsResponse::columnName, s -> s));
+            .collect(java.util.stream.Collectors.toMap(ColumnStatsResponse::columnName, s -> s));
 
     // 기대값을 하드코딩된 문자열로 단언 — 값 자체가 결함 여부의 증거다.
     assertThat(stats.get("n").minValue()).isEqualTo("-5");

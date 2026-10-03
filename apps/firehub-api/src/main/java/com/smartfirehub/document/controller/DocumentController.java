@@ -68,8 +68,7 @@ public class DocumentController {
   @Transactional
   @DeleteMapping("/{documentId}")
   @RequirePermission("dataset:write")
-  public ResponseEntity<Void> delete(
-      @PathVariable Long datasetId, @PathVariable Long documentId) {
+  public ResponseEntity<Void> delete(@PathVariable Long datasetId, @PathVariable Long documentId) {
     // 경로의 datasetId로 소속을 검증해 다른 데이터셋의 문서를 삭제하지 못하게 한다(교차 데이터셋 삭제 차단).
     var doc = fileRepository.findById(documentId).filter(d -> d.datasetId().equals(datasetId));
     if (doc.isEmpty()) {

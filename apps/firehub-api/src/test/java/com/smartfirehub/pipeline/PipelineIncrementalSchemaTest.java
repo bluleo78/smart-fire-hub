@@ -27,9 +27,8 @@ import org.springframework.beans.factory.annotation.Qualifier;
 /**
  * V123 + V124 + V125 가 만든 증분 처리 스키마(함수·컬럼·트리거·인덱스 백필)를 카탈로그로 고정한다.
  *
- * <p>인덱스는 V124 백필이 아니라 V125 가 CREATE INDEX CONCURRENTLY 로 만든다(운영 배포 중 쓰기 차단을
- * 피하려는 의도적 분리 — V125 클래스 주석 참고). 그래서 아래 테스트들은 "V123 하나의 내부"가 아니라
- * <b>모든 마이그레이션이 끝난 뒤의 최종 상태</b>를 단언한다.
+ * <p>인덱스는 V124 백필이 아니라 V125 가 CREATE INDEX CONCURRENTLY 로 만든다(운영 배포 중 쓰기 차단을 피하려는 의도적 분리 — V125 클래스
+ * 주석 참고). 그래서 아래 테스트들은 "V123 하나의 내부"가 아니라 <b>모든 마이그레이션이 끝난 뒤의 최종 상태</b>를 단언한다.
  */
 class PipelineIncrementalSchemaTest extends IntegrationTestBase {
 
@@ -44,11 +43,10 @@ class PipelineIncrementalSchemaTest extends IntegrationTestBase {
   @Autowired private DatasetService datasetService;
 
   /**
-   * V124 의 백필 DO 블록은 <b>실제 운영에서 Flyway 소유자 롤({@code app}) 로 실행되고, 소유자는 RLS 를
-   * 우회한다.</b> app_tenant({@code dsl})로 그대로 재실행하면 {@code dataset} 테이블의 RLS 정책이
-   * {@code app.tenant_id} GUC 미설정(트랜잭션 밖) 상태에서 모든 행을 가려 버려, 방금 만든 픽스처조차
-   * "보이지 않는" 것으로 취급돼 루프가 아무 것도 처리하지 않는다(실측 — dsl 로 먼저 시도했다가
-   * 재현했다). 그래서 {@code SqlScriptExecutorSandboxTest} 와 같은 소유자 커넥션으로 재실행한다.
+   * V124 의 백필 DO 블록은 <b>실제 운영에서 Flyway 소유자 롤({@code app}) 로 실행되고, 소유자는 RLS 를 우회한다.</b>
+   * app_tenant({@code dsl})로 그대로 재실행하면 {@code dataset} 테이블의 RLS 정책이 {@code app.tenant_id} GUC
+   * 미설정(트랜잭션 밖) 상태에서 모든 행을 가려 버려, 방금 만든 픽스처조차 "보이지 않는" 것으로 취급돼 루프가 아무 것도 처리하지 않는다(실측 — dsl 로 먼저
+   * 시도했다가 재현했다). 그래서 {@code SqlScriptExecutorSandboxTest} 와 같은 소유자 커넥션으로 재실행한다.
    */
   @Autowired
   @Qualifier("schemaOwnerDataSource")
@@ -91,22 +89,20 @@ class PipelineIncrementalSchemaTest extends IntegrationTestBase {
   }
 
   /**
-   * 함수가 존재하는 이유를 검증한다: 다른 롤(실행기 테넌트 롤) 세션의 열린 트랜잭션 시작 시각이 후보값에 반영돼야 한다.
-   * 같은 롤 연결로 검증하면 SECURITY DEFINER 없이도 보이므로 공허한 테스트가 된다 — 반드시 테넌트 파이프라인 롤로 연다.
+   * 함수가 존재하는 이유를 검증한다: 다른 롤(실행기 테넌트 롤) 세션의 열린 트랜잭션 시작 시각이 후보값에 반영돼야 한다. 같은 롤 연결로 검증하면 SECURITY
+   * DEFINER 없이도 보이므로 공허한 테스트가 된다 — 반드시 테넌트 파이프라인 롤로 연다.
    *
    * <p>SqlScriptExecutorSandboxTest 의 {@code tenantPipelineDataSources.withTenantDsl(...)} 로 테넌트 1
-   * 파이프라인 실행 롤({@code pipeline_executor_t1}) 커넥션을 얻는다. 그 커넥션 위에서 트랜잭션을 연 채로
-   * (람다를 리턴할 때까지 커밋되지 않는다) app_tenant 커넥션({@code dsl})으로 후보값 함수를 호출해,
-   * 아직 커밋되지 않은 다른 롤 트랜잭션의 시작 시각이 후보값을 끌어내리는지 확인한다.
+   * 파이프라인 실행 롤({@code pipeline_executor_t1}) 커넥션을 얻는다. 그 커넥션 위에서 트랜잭션을 연 채로 (람다를 리턴할 때까지 커밋되지 않는다)
+   * app_tenant 커넥션({@code dsl})으로 후보값 함수를 호출해, 아직 커밋되지 않은 다른 롤 트랜잭션의 시작 시각이 후보값을 끌어내리는지 확인한다.
    */
   /**
-   * 코드리뷰 MEDIUM — 함수 소유자(= Flyway 롤)가 다른 롤 세션의 {@code xact_start} 를 볼 권한이 없으면
-   * 그 컬럼이 전부 NULL 로 읽히고, {@code xact_start IS NOT NULL} 필터가 모든 행을 떨어뜨려 후보값이
-   * <b>조용히</b> {@code clock_timestamp()} 로 내려앉는다 — 오류도 로그도 없이, 늦게 커밋한 행을 영원히
-   * 놓치는 사고(이 함수가 존재하는 이유)가 그대로 되살아난다. 그래서 그 전제를 카탈로그로 못 박는다.
+   * 코드리뷰 MEDIUM — 함수 소유자(= Flyway 롤)가 다른 롤 세션의 {@code xact_start} 를 볼 권한이 없으면 그 컬럼이 전부 NULL 로 읽히고,
+   * {@code xact_start IS NOT NULL} 필터가 모든 행을 떨어뜨려 후보값이 <b>조용히</b> {@code clock_timestamp()} 로 내려앉는다
+   * — 오류도 로그도 없이, 늦게 커밋한 행을 영원히 놓치는 사고(이 함수가 존재하는 이유)가 그대로 되살아난다. 그래서 그 전제를 카탈로그로 못 박는다.
    *
-   * <p>실측(2026-09-21 로컬 test DB): 소유자 = {@code app}(superuser). 권한을 낮추려면 반드시
-   * {@code pg_read_all_stats} 를 함께 부여해야 한다(V123 상단 주석 참고).
+   * <p>실측(2026-09-21 로컬 test DB): 소유자 = {@code app}(superuser). 권한을 낮추려면 반드시 {@code
+   * pg_read_all_stats} 를 함께 부여해야 한다(V123 상단 주석 참고).
    */
   @Test
   void 후보값_함수_소유자는_다른_백엔드의_xact_start를_볼_수_있어야_한다() {
@@ -211,18 +207,16 @@ class PipelineIncrementalSchemaTest extends IntegrationTestBase {
   }
 
   /**
-   * 코드리뷰 지적 1 — 위 전수검사 테스트는 <b>이미 백필된(공유 test DB에 누적된) TABLE 데이터셋이
-   * 하나라도 있어야만</b> 의미가 있다. 깨끗한 DB(V124 적용 시점에 TABLE 데이터셋이 0건)에서는
-   * 백필 DO 블록을 통째로 지워도 그 테스트가 초록으로 남는다 — 공허한 테스트다.
+   * 코드리뷰 지적 1 — 위 전수검사 테스트는 <b>이미 백필된(공유 test DB에 누적된) TABLE 데이터셋이 하나라도 있어야만</b> 의미가 있다. 깨끗한
+   * DB(V124 적용 시점에 TABLE 데이터셋이 0건)에서는 백필 DO 블록을 통째로 지워도 그 테스트가 초록으로 남는다 — 공허한 테스트다.
    *
-   * <p>이 테스트는 스스로 픽스처(진짜 TABLE 데이터셋 + 물리 테이블, {@code _updated_at} 없음)를
-   * 만들어 사전 상태(컬럼·트리거·인덱스 없음)를 먼저 확인한 뒤, <b>V124 마이그레이션 파일 자체에서</b>
-   * 백필 DO 블록 텍스트를 읽어 그대로 재실행한다({@link #loadBackfillDoBlock()}). 마이그레이션 파일이
-   * 아니라 이 테스트 안에 SQL을 손으로 복사해 두면 파일이 바뀌어도 테스트가 따라가지 못하므로,
-   * 반드시 파일에서 읽는다 — 그래야 파일의 DO 블록을 지우는 변이가 이 테스트를 실제로 빨갛게 만든다.
+   * <p>이 테스트는 스스로 픽스처(진짜 TABLE 데이터셋 + 물리 테이블, {@code _updated_at} 없음)를 만들어 사전 상태(컬럼·트리거·인덱스 없음)를 먼저
+   * 확인한 뒤, <b>V124 마이그레이션 파일 자체에서</b> 백필 DO 블록 텍스트를 읽어 그대로 재실행한다({@link #loadBackfillDoBlock()}).
+   * 마이그레이션 파일이 아니라 이 테스트 안에 SQL을 손으로 복사해 두면 파일이 바뀌어도 테스트가 따라가지 못하므로, 반드시 파일에서 읽는다 — 그래야 파일의 DO 블록을
+   * 지우는 변이가 이 테스트를 실제로 빨갛게 만든다.
    *
-   * <p>변이 확인(수동, 커밋하지 않음): V124 파일의 {@code CREATE TRIGGER fh_touch_updated_at ...} 줄을
-   * 임시로 지우고 이 테스트를 단독 실행 → FAIL 확인. 원복 후 재실행 → PASS 확인. (보고서에 기록)
+   * <p>변이 확인(수동, 커밋하지 않음): V124 파일의 {@code CREATE TRIGGER fh_touch_updated_at ...} 줄을 임시로 지우고 이
+   * 테스트를 단독 실행 → FAIL 확인. 원복 후 재실행 → PASS 확인. (보고서에 기록)
    */
   @Test
   void 백필_DO_블록을_재실행하면_새_TABLE_데이터셋의_물리테이블에도_적용된다() throws Exception {
@@ -236,9 +230,7 @@ class PipelineIncrementalSchemaTest extends IntegrationTestBase {
       // 그렇지 않으면 사전 상태 단언이 항상 실패(또는 아무것도 증명하지 못하는 통과)하게 된다 —
       // 다음에 이 코드를 보는 사람이 "이미 있는데 왜 지우지" 하며 걷어내면 이 테스트가 다시
       // 공허해지므로 지우지 말 것.
-      ownerDsl()
-          .execute(
-              "DROP TRIGGER IF EXISTS fh_touch_updated_at ON data." + fx.tableName());
+      ownerDsl().execute("DROP TRIGGER IF EXISTS fh_touch_updated_at ON data." + fx.tableName());
       ownerDsl().execute("DROP INDEX IF EXISTS data.ix_" + fx.tableName() + "_upd");
       ownerDsl()
           .execute("ALTER TABLE data." + fx.tableName() + " DROP COLUMN IF EXISTS _updated_at");
@@ -255,7 +247,9 @@ class PipelineIncrementalSchemaTest extends IntegrationTestBase {
       assertThat(hasUpdatedAtTrigger(fx.tableName())).as("V124 백필 후: 트리거 생김").isTrue();
       // 인덱스는 V124 의 책임이 아니다 — 여기서 이미 생겼다면 누군가 인덱스 생성을 백필로 되접은 것이다
       // (그 순간 운영 배포 중 쓰기 차단이 돌아온다 — V125 클래스 주석 참고).
-      assertThat(hasUpdatedAtIndex(fx.tableName())).as("V124 백필은 인덱스를 만들지 않는다(V125 의 책임)").isFalse();
+      assertThat(hasUpdatedAtIndex(fx.tableName()))
+          .as("V124 백필은 인덱스를 만들지 않는다(V125 의 책임)")
+          .isFalse();
 
       // V125 를 마이그레이션 클래스 그대로 호출한다 — 테스트 안에 SQL 을 복사해 두면 파일이 바뀌어도
       // 테스트가 따라가지 못한다. CREATE INDEX CONCURRENTLY 는 autocommit 연결이어야 한다.
@@ -279,16 +273,14 @@ class PipelineIncrementalSchemaTest extends IntegrationTestBase {
   }
 
   /**
-   * 코드리뷰 지적 2 — 지금까지 모든 테스트는 카탈로그(정보 스키마·pg_trigger)만 봤다. {@code
-   * fh_touch_updated_at()} 트리거 함수 본문이 엉뚱한 필드를 대입해도(예: 오타로 다른 컬럼에 대입,
-   * 또는 대입 자체를 빠뜨려도) 카탈로그 검사는 여전히 초록이다. 이 테스트는 실제 INSERT·UPDATE를
-   * 실행해 트리거가 진짜로 값을 채우고 갱신하는지 행위로 증명한다.
+   * 코드리뷰 지적 2 — 지금까지 모든 테스트는 카탈로그(정보 스키마·pg_trigger)만 봤다. {@code fh_touch_updated_at()} 트리거 함수 본문이
+   * 엉뚱한 필드를 대입해도(예: 오타로 다른 컬럼에 대입, 또는 대입 자체를 빠뜨려도) 카탈로그 검사는 여전히 초록이다. 이 테스트는 실제 INSERT·UPDATE를 실행해
+   * 트리거가 진짜로 값을 채우고 갱신하는지 행위로 증명한다.
    *
-   * <p>INSERT 와 UPDATE 를 서로 다른(암묵적 autocommit) 트랜잭션으로 실행해야 한다 — {@code now()}
-   * 는 트랜잭션 시작 시각이라 같은 트랜잭션 안에서 두 문장을 실행하면 항상 같은 값이 나와
-   * "갱신됐다"를 증명할 수 없다(V124 마이그레이션 파일 상단 주석 참고). 이 테스트 클래스는
-   * 클래스 레벨 {@code @Transactional} 을 쓰지 않으므로(IntegrationTestBase 의 "클래스 레벨
-   * @Transactional 금지" 규칙) {@code dsl.execute} 각 호출이 별도 트랜잭션으로 커밋된다.
+   * <p>INSERT 와 UPDATE 를 서로 다른(암묵적 autocommit) 트랜잭션으로 실행해야 한다 — {@code now()} 는 트랜잭션 시작 시각이라 같은
+   * 트랜잭션 안에서 두 문장을 실행하면 항상 같은 값이 나와 "갱신됐다"를 증명할 수 없다(V124 마이그레이션 파일 상단 주석 참고). 이 테스트 클래스는 클래스 레벨
+   * {@code @Transactional} 을 쓰지 않으므로(IntegrationTestBase 의 "클래스 레벨 @Transactional 금지" 규칙) {@code
+   * dsl.execute} 각 호출이 별도 트랜잭션으로 커밋된다.
    */
   @Test
   void INSERT와_UPDATE에서_updated_at이_실제로_채워지고_갱신된다() throws Exception {
@@ -306,9 +298,7 @@ class PipelineIncrementalSchemaTest extends IntegrationTestBase {
       dsl.execute("UPDATE data." + fx.tableName() + " SET val = 'b'");
       OffsetDateTime updatedAt = fetchUpdatedAt(fx.tableName());
 
-      assertThat(updatedAt)
-          .as("UPDATE 후 _updated_at 이 INSERT 시점보다 엄격히 커야 한다")
-          .isAfter(insertedAt);
+      assertThat(updatedAt).as("UPDATE 후 _updated_at 이 INSERT 시점보다 엄격히 커야 한다").isAfter(insertedAt);
     } finally {
       dropFixture(fx);
     }
@@ -320,13 +310,12 @@ class PipelineIncrementalSchemaTest extends IntegrationTestBase {
   private record Fixture(Long userId, Long datasetId, String tableName) {}
 
   /**
-   * 진짜 TABLE 데이터셋을 하나 만든다 — {@code DatasetService.createDataset} 을 그대로 써서
-   * dataset/dataset_column NOT NULL·FK 제약과 실제 물리 테이블 생성 경로를 손으로 흉내 내지 않는다.
-   * 컬럼은 평범한 TEXT 컬럼 하나뿐이다(_updated_at 이 아님 — 백필 전 상태를 재현해야 하므로).
+   * 진짜 TABLE 데이터셋을 하나 만든다 — {@code DatasetService.createDataset} 을 그대로 써서 dataset/dataset_column
+   * NOT NULL·FK 제약과 실제 물리 테이블 생성 경로를 손으로 흉내 내지 않는다. 컬럼은 평범한 TEXT 컬럼 하나뿐이다(_updated_at 이 아님 — 백필 전
+   * 상태를 재현해야 하므로).
    *
-   * <p>이 클래스는 클래스 레벨 {@code @Transactional} 을 쓰지 않으므로 여기서 만든 행·테이블은
-   * 그대로 커밋된다({@code inTenantFixture} 는 픽스처 트랜잭션을 열고 정상 종료 시 커밋한다) —
-   * {@link #dropFixture(Fixture)} 가 반드시 정리해야 한다.
+   * <p>이 클래스는 클래스 레벨 {@code @Transactional} 을 쓰지 않으므로 여기서 만든 행·테이블은 그대로 커밋된다({@code
+   * inTenantFixture} 는 픽스처 트랜잭션을 열고 정상 종료 시 커밋한다) — {@link #dropFixture(Fixture)} 가 반드시 정리해야 한다.
    */
   private Fixture createTableDatasetFixture(String suffix) {
     String tableName = "v123_fx_" + suffix + "_" + UUID.randomUUID().toString().substring(0, 8);
@@ -351,7 +340,8 @@ class PipelineIncrementalSchemaTest extends IntegrationTestBase {
                       null,
                       "TABLE",
                       "SOURCE",
-                      List.of(new DatasetColumnRequest("val", "Val", "TEXT", null, true, false, null)),
+                      List.of(
+                          new DatasetColumnRequest("val", "Val", "TEXT", null, true, false, null)),
                       null),
                   userId);
           return new Fixture(userId, created.id(), tableName);
@@ -425,10 +415,9 @@ class PipelineIncrementalSchemaTest extends IntegrationTestBase {
   /**
    * V124 마이그레이션 파일에서 백필 {@code DO $$ ... $$;} 블록 <b>하나만</b> 잘라 읽는다.
    *
-   * <p>끝을 {@code "$$;"} 로 끊는 것이 핵심이다 — 파일 끝까지 가져오면 뒤따르는
-   * {@code RESET lock_timeout;} 까지 붙어 <b>여러 문장</b>이 되고, JDBC 단순 질의는 그 묶음을 암묵
-   * 트랜잭션으로 감싸므로 블록 안의 {@code COMMIT} 이 {@code invalid transaction termination} 으로
-   * 실패한다. 그러면 이 테스트가 제품 결함이 아닌 이유로 빨개진다.
+   * <p>끝을 {@code "$$;"} 로 끊는 것이 핵심이다 — 파일 끝까지 가져오면 뒤따르는 {@code RESET lock_timeout;} 까지 붙어 <b>여러
+   * 문장</b>이 되고, JDBC 단순 질의는 그 묶음을 암묵 트랜잭션으로 감싸므로 블록 안의 {@code COMMIT} 이 {@code invalid transaction
+   * termination} 으로 실패한다. 그러면 이 테스트가 제품 결함이 아닌 이유로 빨개진다.
    */
   private String loadBackfillDoBlock() throws IOException {
     try (InputStream in =

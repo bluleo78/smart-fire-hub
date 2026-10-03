@@ -33,7 +33,8 @@ class RlsIsolationTest extends IntegrationTestBase {
   @AfterEach
   void tearDown() {
     for (long tenantId : new long[] {tenant101, tenant102, tenant103, tenant104}) {
-      runInTenantTransaction(transactionTemplate, tenantId, () -> dsl.deleteFrom(TENANT_CANARY).execute());
+      runInTenantTransaction(
+          transactionTemplate, tenantId, () -> dsl.deleteFrom(TENANT_CANARY).execute());
     }
   }
 
@@ -46,7 +47,8 @@ class RlsIsolationTest extends IntegrationTestBase {
   }
 
   private int countAs(Long tenantId) {
-    return runInTenantTransaction(transactionTemplate, tenantId, () -> dsl.fetchCount(TENANT_CANARY));
+    return runInTenantTransaction(
+        transactionTemplate, tenantId, () -> dsl.fetchCount(TENANT_CANARY));
   }
 
   @Test

@@ -14,8 +14,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 /**
  * {@link TenantPipelineDataSourceRegistry} 의 캐싱·LRU 축출·실제 롤 접속을 검증한다.
  *
- * <p>세 번째 단언(테넌트 1 이 실제로 {@code pipeline_executor_t1} 롤로 접속하는지)이 핵심이다 — 이게
- * 없으면 풀만 만들고 롤이 틀려도 이 테스트가 통과해 버린다.
+ * <p>세 번째 단언(테넌트 1 이 실제로 {@code pipeline_executor_t1} 롤로 접속하는지)이 핵심이다 — 이게 없으면 풀만 만들고 롤이 틀려도 이 테스트가
+ * 통과해 버린다.
  */
 class TenantPipelineDataSourceRegistryTest extends IntegrationTestBase {
 
@@ -60,26 +60,26 @@ class TenantPipelineDataSourceRegistryTest extends IntegrationTestBase {
     // 기동(=이 테스트 클래스의 Spring 컨텍스트 부팅) 시 이미 test yml 의 role-password-secret 으로
     // pipeline_executor_t1 비밀번호를 맞춰 둔 상태라야 이 접속이 성공한다.
     String currentUser =
-        registry.withTenantDsl(1L, dsl -> dsl).select(field("current_user", String.class)).fetchOne(0, String.class);
+        registry
+            .withTenantDsl(1L, dsl -> dsl)
+            .select(field("current_user", String.class))
+            .fetchOne(0, String.class);
     assertThat(currentUser).isEqualTo("pipeline_executor_t1");
   }
 
   /**
-   * 대여 중({@link TenantPipelineDataSourceRegistry#withTenantDsl}) 인 풀은 축출되지 않는다 —
-   * 코드리뷰 지적 3 의 회귀 가드.
+   * 대여 중({@link TenantPipelineDataSourceRegistry#withTenantDsl}) 인 풀은 축출되지 않는다 — 코드리뷰 지적 3 의 회귀 가드.
    *
-   * <p>왜 필요한가: LRU 최신성은 {@code dslForWithoutLease}(스텝 시작) 에서만 갱신되므로, 오래 도는 스텝의 풀은
-   * <b>바쁜 채로 늙는다</b>. 사용 카운트를 보지 않으면 그 풀이 축출 대상으로 뽑혀 {@code close()} 되고,
-   * 진행 중인 문장이 엉뚱한 {@code ScriptExecutionException} 으로 죽는다.
+   * <p>왜 필요한가: LRU 최신성은 {@code dslForWithoutLease}(스텝 시작) 에서만 갱신되므로, 오래 도는 스텝의 풀은 <b>바쁜 채로 늙는다</b>.
+   * 사용 카운트를 보지 않으면 그 풀이 축출 대상으로 뽑혀 {@code close()} 되고, 진행 중인 문장이 엉뚱한 {@code
+   * ScriptExecutionException} 으로 죽는다.
    *
    * <p>위의 (b) 단언은 <b>축출된</b> 컨텍스트가 실패하는지만 보므로 이 경우를 덮지 못한다.
    *
-   * <p><b>단언을 개수가 아니라 동일성으로 하는 이유(첫 시도가 실패해서 알게 된 것).</b> 대여 중인
-   * 풀이 <i>하나</i> 뿐이면 축출할 자유로운 풀이 항상 남아 있어 상한은 그대로 지켜진다 — 즉
-   * "개수가 상한을 넘는다"는 단언은 틀렸다(상한 초과는 <b>모든</b> 풀이 대여 중일 때만 일어난다).
-   * 이 가드가 실제로 지키는 것은 개수가 아니라 <b>그 풀이 살아남는다</b>는 것이므로, 대여했던
-   * {@link DSLContext} 인스턴스가 축출 뒤에도 <b>같은 인스턴스로</b> 남아 있는지를 본다. 축출됐다면
-   * 레지스트리가 새 풀·새 컨텍스트를 만들어 다른 인스턴스가 돌아온다.
+   * <p><b>단언을 개수가 아니라 동일성으로 하는 이유(첫 시도가 실패해서 알게 된 것).</b> 대여 중인 풀이 <i>하나</i> 뿐이면 축출할 자유로운 풀이 항상 남아
+   * 있어 상한은 그대로 지켜진다 — 즉 "개수가 상한을 넘는다"는 단언은 틀렸다(상한 초과는 <b>모든</b> 풀이 대여 중일 때만 일어난다). 이 가드가 실제로 지키는 것은
+   * 개수가 아니라 <b>그 풀이 살아남는다</b>는 것이므로, 대여했던 {@link DSLContext} 인스턴스가 축출 뒤에도 <b>같은 인스턴스로</b> 남아 있는지를
+   * 본다. 축출됐다면 레지스트리가 새 풀·새 컨텍스트를 만들어 다른 인스턴스가 돌아온다.
    */
   @Test
   @DisplayName("대여 중인 풀은 축출되지 않는다(진행 중 작업 보호)")

@@ -17,15 +17,14 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * OAuth CSRF state 저장·단일소비 jOOQ 구현. FOR UPDATE + consumed_at 마킹으로 재사용 방지.
  *
- * <p><b>클래스 레벨 {@code @Transactional} 이 왜 필요한가</b> —
- * {@link com.smartfirehub.global.tenant.TenantAwareTransactionManager} 의 "리포지토리에 클래스
- * 레벨 {@code @Transactional} 이 왜 필요한가" 문단 참조.
+ * <p><b>클래스 레벨 {@code @Transactional} 이 왜 필요한가</b> — {@link
+ * com.smartfirehub.global.tenant.TenantAwareTransactionManager} 의 "리포지토리에 클래스 레벨
+ * {@code @Transactional} 이 왜 필요한가" 문단 참조.
  *
- * <p><b>이 지점만의 사실 두 가지.</b> 첫째, 컨텍스트를 공급하는 호출자가 인증된 HTTP 경로(JWT
- * 필터가 세움)와 보존 삭제 크론(P2-f Task 3 이 배선) 둘이다. 둘째, 다른 4개 채널 리포지토리와
- * 달리 <b>읽기 쪽 위험은 없다</b> — {@code oauth_state} 는 V106 [R7] 대로 컬럼만 있고 RLS 정책이
- * 없어서 GUC 가 비어도 조용히 0행이 되지는 않는다. 즉 <b>여기서 이 애노테이션이 막는 것은
- * {@code oauth_state.tenant_id} GUC DEFAULT 가 NULL 이 되어 INSERT 가 터지는 23502 하나뿐</b>이다.
+ * <p><b>이 지점만의 사실 두 가지.</b> 첫째, 컨텍스트를 공급하는 호출자가 인증된 HTTP 경로(JWT 필터가 세움)와 보존 삭제 크론(P2-f Task 3 이 배선)
+ * 둘이다. 둘째, 다른 4개 채널 리포지토리와 달리 <b>읽기 쪽 위험은 없다</b> — {@code oauth_state} 는 V106 [R7] 대로 컬럼만 있고 RLS
+ * 정책이 없어서 GUC 가 비어도 조용히 0행이 되지는 않는다. 즉 <b>여기서 이 애노테이션이 막는 것은 {@code oauth_state.tenant_id} GUC
+ * DEFAULT 가 NULL 이 되어 INSERT 가 터지는 23502 하나뿐</b>이다.
  */
 @Repository
 @Transactional

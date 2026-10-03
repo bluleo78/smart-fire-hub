@@ -1136,9 +1136,7 @@ public class DataTableRowService {
       if (i > 0) sql.append(", ");
       sql.append(selectExpr(columns.get(i), columnTypes));
     }
-    sql.append(", created_at FROM ")
-        .append(DataSchema.qualify(tableName))
-        .append(" WHERE id = ?");
+    sql.append(", created_at FROM ").append(DataSchema.qualify(tableName)).append(" WHERE id = ?");
 
     // 단건 조회도 데이터 탭과 같은 계약 — 범위 밖 날짜·시각은 PG 원문(#769)
     var record = TemporalSafeFetch.fetchOne(dsl, sql.toString(), rowId);
@@ -1173,9 +1171,9 @@ public class DataTableRowService {
    * target 테이블의 데이터 컬럼 타입을 information_schema에서 복제해 data 스키마에 staging용 실제 테이블을 생성한다.
    *
    * <p>테이블명은 {@code stg_import_} + UUID hex(하이픈 제거, 소문자)로 생성되며 항상 {@code
-   * DataTableService.validateName}을 통과한다. id/import_id/created_at 등 target의 시스템 컬럼은 복제하지 않고, 대신
-   * 파일 내 삽입 순서를 기록하는 {@code _seq BIGSERIAL}을 추가한다. staging 테이블에는 PK unique 제약을 두지 않아 동일 PK가 여러 배치에
-   * 걸쳐 중복 삽입되는 것을 허용한다(이게 이 설계의 핵심 — dedup을 promote 시점 SQL로 미룬다).
+   * DataTableService.validateName}을 통과한다. id/import_id/created_at 등 target의 시스템 컬럼은 복제하지 않고, 대신 파일
+   * 내 삽입 순서를 기록하는 {@code _seq BIGSERIAL}을 추가한다. staging 테이블에는 PK unique 제약을 두지 않아 동일 PK가 여러 배치에 걸쳐
+   * 중복 삽입되는 것을 허용한다(이게 이 설계의 핵심 — dedup을 promote 시점 SQL로 미룬다).
    *
    * <p>CREATE TABLE ... LIKE target INCLUDING ALL을 쓰지 않는 이유: LIKE INCLUDING ALL은 target의 PK unique
    * index까지 복제하므로, staging에 같은 PK를 두 번 삽입하는 순간 unique violation이 발생해 이 설계의 전제(중복 허용)가 깨진다.
@@ -1334,10 +1332,10 @@ public class DataTableRowService {
    * DESC}로 각 PK별 파일 내 마지막 등장 행만 선택한 뒤, 기존 upsertBatch와 동일한 {@code ON CONFLICT ... DO UPDATE}로
    * target에 반영한다.
    *
-   * <p>inserted/updated 카운트는 기존과 동일하게 PostgreSQL xmax 트릭(RETURNING (xmax = 0))으로 판별하되, 대량 upsert
-   * 시 결과 row 전체를 JVM으로 fetch하면(예: 수백만 건) 스트리밍으로 없앤 OOM을 카운팅 단계에서 재도입하게 된다. 이를 피하기 위해
-   * data-modifying CTE로 INSERT를 감싸고, 바깥 SELECT에서 count(*) FILTER로 서버 사이드에서 집계해 최종적으로 단 한 행(inserted,
-   * updated)만 JVM으로 가져온다.
+   * <p>inserted/updated 카운트는 기존과 동일하게 PostgreSQL xmax 트릭(RETURNING (xmax = 0))으로 판별하되, 대량 upsert 시
+   * 결과 row 전체를 JVM으로 fetch하면(예: 수백만 건) 스트리밍으로 없앤 OOM을 카운팅 단계에서 재도입하게 된다. 이를 피하기 위해 data-modifying
+   * CTE로 INSERT를 감싸고, 바깥 SELECT에서 count(*) FILTER로 서버 사이드에서 집계해 최종적으로 단 한 행(inserted, updated)만
+   * JVM으로 가져온다.
    */
   public UpsertResult promoteStagingToUpsert(
       String stagingTable,
@@ -1415,11 +1413,11 @@ public class DataTableRowService {
   }
 
   /**
-   * staging 테이블 내용으로 target 테이블을 완전히 교체(REPLACE)한다. target을 TRUNCATE한 뒤, {@code DISTINCT ON
-   * (pk) ORDER BY pk, _seq DESC}로 PK별 파일 내 마지막 등장 행만 삽입한다.
+   * staging 테이블 내용으로 target 테이블을 완전히 교체(REPLACE)한다. target을 TRUNCATE한 뒤, {@code DISTINCT ON (pk)
+   * ORDER BY pk, _seq DESC}로 PK별 파일 내 마지막 등장 행만 삽입한다.
    *
-   * <p>TRUNCATE + INSERT가 원자적으로 처리되어야 하므로, 호출자가 {@code transactionTemplate} 등으로 감싼 트랜잭션 내에서
-   * 호출해야 한다(기존 DataImportService의 REPLACE 처리 패턴과 동일).
+   * <p>TRUNCATE + INSERT가 원자적으로 처리되어야 하므로, 호출자가 {@code transactionTemplate} 등으로 감싼 트랜잭션 내에서 호출해야
+   * 한다(기존 DataImportService의 REPLACE 처리 패턴과 동일).
    */
   public void promoteStagingToReplace(
       String stagingTable, String targetTableName, List<String> columns, List<String> pkColumns) {

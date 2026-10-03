@@ -33,8 +33,8 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 /**
- * SettingsController WebMvcTest — JaCoCo LINE 커버리지 보강용. 핵심 경로(getSettings /
- * getDecryptedAiApiKey / updateSettings / clearSmtpSettings / testSmtpSettings) 각각의 성공 분기만 커버한다.
+ * SettingsController WebMvcTest — JaCoCo LINE 커버리지 보강용. 핵심 경로(getSettings / getDecryptedAiApiKey /
+ * updateSettings / clearSmtpSettings / testSmtpSettings) 각각의 성공 분기만 커버한다.
  */
 @WebMvcTest(SettingsController.class)
 @Import({SecurityConfig.class, JwtAuthenticationFilter.class})
@@ -58,9 +58,8 @@ class SettingsControllerTest {
   /**
    * 테넌트 조회는 <b>해석된</b> 값과 플래그를 돌려준다(P7-b).
    *
-   * <p>이전에는 {@code getByPrefix}(플랫폼 기본값만)를 스텁했다. 그대로 두면 오버라이드를 저장한
-   * 뒤에도 화면이 예전 값을 보여주는 어긋남을 이 테스트가 승인하게 된다 — 컨트롤러가 어느 서비스
-   * 메서드를 부르는지가 곧 계약이므로, 스텁 대상 자체가 단언의 일부다.
+   * <p>이전에는 {@code getByPrefix}(플랫폼 기본값만)를 스텁했다. 그대로 두면 오버라이드를 저장한 뒤에도 화면이 예전 값을 보여주는 어긋남을 이 테스트가
+   * 승인하게 된다 — 컨트롤러가 어느 서비스 메서드를 부르는지가 곧 계약이므로, 스텁 대상 자체가 단언의 일부다.
    */
   @Test
   void getSettings_withPrefix_returnsResolvedValuesWithFlags() throws Exception {
@@ -85,18 +84,15 @@ class SettingsControllerTest {
   /**
    * {@code GET /api/v1/settings/ai-api-key} 는 <b>삭제됐다</b>(P7-b Task 7) — 404 다.
    *
-   * <p>이 경로는 {@code ai:settings} 권한을 가진 <b>테넌트</b> 관리자에게 {@code ai.api_key} 의
-   * <b>복호화 평문</b>을 그대로 돌려줬다. P7-b 가 {@code ai.api_key} 를 플랫폼 소유로 확정하는
-   * 순간 그것은 "테넌트 관리자가 플랫폼 자격증명을 평문으로 읽는다"가 되어, 이 밴드가 세우는
-   * 경계를 정면으로 무력화한다(다른 모든 읽기 경로는 {@code maskSecret} 을 지나 {@code ****} 만
-   * 내보낸다 — 이 엔드포인트만 예외였다). 소비자가 없다는 것을 확인하고 지웠다.
+   * <p>이 경로는 {@code ai:settings} 권한을 가진 <b>테넌트</b> 관리자에게 {@code ai.api_key} 의 <b>복호화 평문</b>을 그대로
+   * 돌려줬다. P7-b 가 {@code ai.api_key} 를 플랫폼 소유로 확정하는 순간 그것은 "테넌트 관리자가 플랫폼 자격증명을 평문으로 읽는다"가 되어, 이 밴드가
+   * 세우는 경계를 정면으로 무력화한다(다른 모든 읽기 경로는 {@code maskSecret} 을 지나 {@code ****} 만 내보낸다 — 이 엔드포인트만 예외였다).
+   * 소비자가 없다는 것을 확인하고 지웠다.
    *
-   * <p><b>이 단언은 405 였다가 404 로 돌아왔고, 그 왕복 자체가 기록할 값어치가 있다.</b> Task 5 가
-   * {@code DELETE /{key}} 를 추가했을 때 그 매핑이 이 경로를 {@code key="ai-api-key"} 로 삼켜
-   * "매핑 없음"이 아니라 "메서드 불허"가 됐다(그때 405 를 실측으로 확인해 고쳤다). simplify 리뷰가
-   * 그 흡수를 구조적 위험으로 지적해 경로를 {@code /overrides/{key}} 로 옮기자, 흡수가 사라지고
-   * 삭제된 엔드포인트가 다시 정직하게 404 가 된다. 즉 <b>이 404 는 catch-all 이 없어졌다는
-   * 증거</b>이기도 하다.
+   * <p><b>이 단언은 405 였다가 404 로 돌아왔고, 그 왕복 자체가 기록할 값어치가 있다.</b> Task 5 가 {@code DELETE /{key}} 를 추가했을
+   * 때 그 매핑이 이 경로를 {@code key="ai-api-key"} 로 삼켜 "매핑 없음"이 아니라 "메서드 불허"가 됐다(그때 405 를 실측으로 확인해 고쳤다).
+   * simplify 리뷰가 그 흡수를 구조적 위험으로 지적해 경로를 {@code /overrides/{key}} 로 옮기자, 흡수가 사라지고 삭제된 엔드포인트가 다시 정직하게
+   * 404 가 된다. 즉 <b>이 404 는 catch-all 이 없어졌다는 증거</b>이기도 하다.
    */
   @Test
   void getDecryptedAiApiKey_endpointRemoved_returnsNotFound() throws Exception {
@@ -107,14 +103,12 @@ class SettingsControllerTest {
         .andExpect(status().isNotFound());
   }
 
-
   /**
    * 테넌트 쓰기는 <b>테넌트 평면 서비스 메서드</b>로 흘러야 한다.
    *
-   * <p>이전 버전은 {@code doNothing()} 스텁 + 204 단언뿐이었다. void 메서드의 mock 은 원래
-   * 아무것도 하지 않으므로 그 스텁은 의미가 없고, {@code verify} 가 없으니 <b>핸들러가 어느
-   * 서비스 메서드를 부르는지가 전혀 고정되지 않았다</b>. 그래서 호출 대상과 인자를 명시적으로
-   * 검증한다. 플랫폼 쓰기 경로({@code updatePlatformSettings})는 #713 에서 아예 사라졌다.
+   * <p>이전 버전은 {@code doNothing()} 스텁 + 204 단언뿐이었다. void 메서드의 mock 은 원래 아무것도 하지 않으므로 그 스텁은 의미가 없고,
+   * {@code verify} 가 없으니 <b>핸들러가 어느 서비스 메서드를 부르는지가 전혀 고정되지 않았다</b>. 그래서 호출 대상과 인자를 명시적으로 검증한다. 플랫폼
+   * 쓰기 경로({@code updatePlatformSettings})는 #713 에서 아예 사라졌다.
    */
   @Test
   void updateSettings_validBody_routesToTenantPlaneService() throws Exception {
@@ -149,11 +143,10 @@ class SettingsControllerTest {
   /**
    * {@code ai:settings} 가 <b>없으면</b> SMTP 설정 해제는 403 이다.
    *
-   * <p>이 파일의 다른 모든 테스트는 필요한 권한을 항상 부여하고 시작한다. 그래서 어느 테스트도
-   * "{@code @RequirePermission} 이 실제로 집행되는가"와 "애너테이션은 붙어 있지만 경로가
-   * {@code PermissionInterceptor} 에 등록되지 않아 그냥 통과하는가"를 <b>구별하지 못한다</b>. P7-a 가
-   * 정확히 그 함정(인터셉터 경로 등록 누락)을 한 번 겪었으므로, 삭제 경로에는 거부 쪽 단언을 둔다.
-   * 여기서 204 가 나오면 권한 없는 사용자가 워크스페이스 메일 설정을 조용히 지울 수 있다.
+   * <p>이 파일의 다른 모든 테스트는 필요한 권한을 항상 부여하고 시작한다. 그래서 어느 테스트도 "{@code @RequirePermission} 이 실제로 집행되는가"와
+   * "애너테이션은 붙어 있지만 경로가 {@code PermissionInterceptor} 에 등록되지 않아 그냥 통과하는가"를 <b>구별하지 못한다</b>. P7-a 가
+   * 정확히 그 함정(인터셉터 경로 등록 누락)을 한 번 겪었으므로, 삭제 경로에는 거부 쪽 단언을 둔다. 여기서 204 가 나오면 권한 없는 사용자가 워크스페이스 메일 설정을
+   * 조용히 지울 수 있다.
    */
   @Test
   void clearSmtpSettings_withoutPermission_returnsForbidden() throws Exception {
@@ -166,8 +159,8 @@ class SettingsControllerTest {
   }
 
   /**
-   * 키별 해제 {@code DELETE /settings/overrides/{key}} 는 삭제됐다(#712) — 404 다. SMTP 에 플랫폼
-   * 값이 없어 "되돌리기"가 성립하지 않고, AI 동작 키 화면은 키별 해제를 부르지 않는다.
+   * 키별 해제 {@code DELETE /settings/overrides/{key}} 는 삭제됐다(#712) — 404 다. SMTP 에 플랫폼 값이 없어 "되돌리기"가
+   * 성립하지 않고, AI 동작 키 화면은 키별 해제를 부르지 않는다.
    */
   @Test
   void clearOverride_endpointRemoved_returnsNotFound() throws Exception {
@@ -183,18 +176,15 @@ class SettingsControllerTest {
   /**
    * 연결 테스트는 <b>저장과 같은 권한</b>({@code ai:settings})을 요구한다.
    *
-   * <p>P7-c1 이전 이 라우트만 {@code settings:write} 를 요구했다. SMTP 쓰기가
-   * {@code PUT /settings}({@code ai:settings})로 옮겨간 뒤 <b>같은 탭의 저장과 테스트가 서로 다른
-   * 권한</b>을 요구하게 됐고, 그러면 {@code ai:settings} 만 가진 롤이 SMTP 자격증명을 저장해 놓고
-   * 바로 옆 버튼에서 403 을 받는다. 두 권한 다 오늘은 ADMIN 롤에만 시드돼 있지만(V16/V42) 롤은
-   * <b>런타임에 편집 가능</b>하므로 "그런 롤은 존재할 수 없다"에 기댈 수 없다.
+   * <p>P7-c1 이전 이 라우트만 {@code settings:write} 를 요구했다. SMTP 쓰기가 {@code PUT /settings}({@code
+   * ai:settings})로 옮겨간 뒤 <b>같은 탭의 저장과 테스트가 서로 다른 권한</b>을 요구하게 됐고, 그러면 {@code ai:settings} 만 가진 롤이
+   * SMTP 자격증명을 저장해 놓고 바로 옆 버튼에서 403 을 받는다. 두 권한 다 오늘은 ADMIN 롤에만 시드돼 있지만(V16/V42) 롤은 <b>런타임에 편집
+   * 가능</b>하므로 "그런 롤은 존재할 수 없다"에 기댈 수 없다.
    *
-   * <p><b>허용 쪽은 여기서 다시 단언하지 않는다.</b> 아래
-   * {@link #testSmtpSettings_whenHostBlank_returnsFailureMessage} 가 이미 {@code ai:settings} 로
-   * 이 라우트에 도달해 200 을 받고, 거기에 더해 {@code $.success == false} 까지 본다 — 더 강한
-   * 단언이 같은 파일에 있는데 약한 사본을 하나 더 두면 두 테스트가 허용 경로를 지키는 것처럼
-   * 보이면서 실제로는 하나만 일한다. 새 정보는 <b>거부</b> 쪽뿐이고, 이 javadoc 이 논증하는 것도
-   * 그쪽이다.
+   * <p><b>허용 쪽은 여기서 다시 단언하지 않는다.</b> 아래 {@link
+   * #testSmtpSettings_whenHostBlank_returnsFailureMessage} 가 이미 {@code ai:settings} 로 이 라우트에 도달해
+   * 200 을 받고, 거기에 더해 {@code $.success == false} 까지 본다 — 더 강한 단언이 같은 파일에 있는데 약한 사본을 하나 더 두면 두 테스트가
+   * 허용 경로를 지키는 것처럼 보이면서 실제로는 하나만 일한다. 새 정보는 <b>거부</b> 쪽뿐이고, 이 javadoc 이 논증하는 것도 그쪽이다.
    */
   @Test
   void testSmtpSettings_rejectsOldPermission() throws Exception {
@@ -208,14 +198,13 @@ class SettingsControllerTest {
   /**
    * {@code /settings/smtp} 에는 <b>DELETE(설정 해제, #712) 하나만</b> 있다 — GET·PUT 은 405 다.
    *
-   * <p>이 테스트의 궤적: 처음에는 {@code doNothing()} 스텁 + 204 라 서비스가 항상 거부하게 된 뒤에도
-   * 통과했고, P7-b 가 쓰기 라우트를 지운 뒤 405, P7-c1 이 GET 마저 지워 404 였다. #712 가 같은 경로에
-   * DELETE 를 추가해 다시 405 가 됐다. PUT 만 405 로 단언하면 GET 이 되살아나도 조용히 통과하므로
-   * GET 과 PUT 을 <b>각각</b> 요청해 둘 다 405 인지 본다(되살아난 메서드는 405 가 아니게 된다).
-   * 옛 GET 은 해석기를 타지 않아 <b>틀린 값</b>을 주던 경로였다.
+   * <p>이 테스트의 궤적: 처음에는 {@code doNothing()} 스텁 + 204 라 서비스가 항상 거부하게 된 뒤에도 통과했고, P7-b 가 쓰기 라우트를 지운 뒤
+   * 405, P7-c1 이 GET 마저 지워 404 였다. #712 가 같은 경로에 DELETE 를 추가해 다시 405 가 됐다. PUT 만 405 로 단언하면 GET 이
+   * 되살아나도 조용히 통과하므로 GET 과 PUT 을 <b>각각</b> 요청해 둘 다 405 인지 본다(되살아난 메서드는 405 가 아니게 된다). 옛 GET 은 해석기를
+   * 타지 않아 <b>틀린 값</b>을 주던 경로였다.
    *
-   * <p>{@code AccessDeniedException} → 403 매핑은 {@link #clearSmtpSettings_withoutPermission_returnsForbidden}
-   * 이 지킨다.
+   * <p>{@code AccessDeniedException} → 403 매핑은 {@link
+   * #clearSmtpSettings_withoutPermission_returnsForbidden} 이 지킨다.
    */
   @Test
   void smtpRoutes_onlyDeleteRemains() throws Exception {
@@ -233,7 +222,6 @@ class SettingsControllerTest {
         .perform(get("/api/v1/settings/smtp").header("Authorization", "Bearer valid-token"))
         .andExpect(status().isMethodNotAllowed());
   }
-
 
   @Test
   void testSmtpSettings_whenHostBlank_returnsFailureMessage() throws Exception {

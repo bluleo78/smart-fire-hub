@@ -66,8 +66,14 @@ class AuthServiceTest extends IntegrationTestBase {
   void login_returnsMustChangePasswordFlag() {
     var u =
         TestUsers.createMember(
-            dsl, fixtureTransactionTemplate, passwordEncoder,
-            "pwc@example.com", "pwc@example.com", "Password123", "PWC", DEFAULT_TEST_TENANT_ID);
+            dsl,
+            fixtureTransactionTemplate,
+            passwordEncoder,
+            "pwc@example.com",
+            "pwc@example.com",
+            "Password123",
+            "PWC",
+            DEFAULT_TEST_TENANT_ID);
     dsl.execute("update \"user\" set must_change_password = true where id = ?", u.id());
     var token = authService.login(new LoginRequest("pwc@example.com", "Password123"));
     assertThat(token.mustChangePassword()).isTrue();

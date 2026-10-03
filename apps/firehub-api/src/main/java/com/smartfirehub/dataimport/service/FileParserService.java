@@ -122,8 +122,7 @@ public class FileParserService {
   /**
    * CSV/XLSX 샘플 행을 파일 경로에서 파싱한다.
    *
-   * <p>주의: Excel은 항상 첫 행을 헤더로 취급하며 hasHeader=false/skipRows는 적용되지 않는다(기존 동작과 동일). CSV만
-   * 해당 옵션을 반영한다.
+   * <p>주의: Excel은 항상 첫 행을 헤더로 취급하며 hasHeader=false/skipRows는 적용되지 않는다(기존 동작과 동일). CSV만 해당 옵션을 반영한다.
    */
   public List<Map<String, String>> parseSampleRows(
       Path file, String fileType, int maxRows, ParseOptions opts) throws Exception {
@@ -141,8 +140,7 @@ public class FileParserService {
   /**
    * CSV/XLSX 전체 행 수를 파일 경로에서 계산한다.
    *
-   * <p>주의: Excel은 항상 첫 행을 헤더로 취급하며 hasHeader=false/skipRows는 적용되지 않는다(기존 동작과 동일). CSV만
-   * 해당 옵션을 반영한다.
+   * <p>주의: Excel은 항상 첫 행을 헤더로 취급하며 hasHeader=false/skipRows는 적용되지 않는다(기존 동작과 동일). CSV만 해당 옵션을 반영한다.
    */
   public int countRows(Path file, String fileType, ParseOptions opts) throws Exception {
     return switch (fileType.toLowerCase()) {
@@ -159,8 +157,7 @@ public class FileParserService {
   /**
    * CSV/XLSX 전체 데이터를 파일 경로에서 파싱한다.
    *
-   * <p>주의: Excel은 항상 첫 행을 헤더로 취급하며 hasHeader=false/skipRows는 적용되지 않는다(기존 동작과 동일). CSV만
-   * 해당 옵션을 반영한다.
+   * <p>주의: Excel은 항상 첫 행을 헤더로 취급하며 hasHeader=false/skipRows는 적용되지 않는다(기존 동작과 동일). CSV만 해당 옵션을 반영한다.
    */
   public List<Map<String, String>> parse(Path file, String fileType, ParseOptions opts)
       throws Exception {
@@ -178,16 +175,16 @@ public class FileParserService {
   /**
    * CSV/XLSX 대용량 파일을 배치 콜백 방식으로 스트리밍 파싱한다.
    *
-   * <p>전체 행을 메모리에 적재하지 않고, batchSize개씩 모아 {@code onBatch}를 호출한 뒤 배치 리스트를 비운다. 100~400MB급 파일을
-   * 임포트할 때 OOM 없이 처리하기 위한 진입점이다(#169 연장선).
+   * <p>전체 행을 메모리에 적재하지 않고, batchSize개씩 모아 {@code onBatch}를 호출한 뒤 배치 리스트를 비운다. 100~400MB급 파일을 임포트할 때
+   * OOM 없이 처리하기 위한 진입점이다(#169 연장선).
    *
-   * <p>CSV: {@link #buildCsvReaderFromStream}로 AUTO 인코딩까지 지원하는 리더를 얻어 skipRows를 건너뛴 뒤
-   * readNext() 루프로 행을 순회한다({@code readAll()} 금지). Excel: {@link ExcelStreamingParser#parse(java.io.File,
+   * <p>CSV: {@link #buildCsvReaderFromStream}로 AUTO 인코딩까지 지원하는 리더를 얻어 skipRows를 건너뛴 뒤 readNext()
+   * 루프로 행을 순회한다({@code readAll()} 금지). Excel: {@link ExcelStreamingParser#parse(java.io.File,
    * ExcelStreamingParser.RowConsumer)} core 진입점(랜덤액세스)에 위임한다.
    *
    * <p>주의: Excel(xlsx/xls/xlsb)은 항상 첫 행을 헤더로 취급하며 {@code opts}의 hasHeader=false/skipRows는 적용되지
-   * 않는다(기존 InputStream 기반 parseExcel/parseHeadersExcel과 동일한 동작이며 회귀가 아니다). CSV만 두 옵션을 온전히
-   * 반영하므로, hasHeader=false나 skipRows에 의존하는 호출은 Excel 입력에 사용하지 말 것.
+   * 않는다(기존 InputStream 기반 parseExcel/parseHeadersExcel과 동일한 동작이며 회귀가 아니다). CSV만 두 옵션을 온전히 반영하므로,
+   * hasHeader=false나 skipRows에 의존하는 호출은 Excel 입력에 사용하지 말 것.
    */
   public void parseStreaming(
       Path file,
@@ -275,7 +272,8 @@ public class FileParserService {
       byte[] fileData, String fileType, int maxRows, ParseOptions opts) throws Exception {
     return switch (fileType.toLowerCase()) {
       case "csv" -> parseSampleRowsCsvFromBytes(fileData, maxRows, opts);
-      case "xlsx", "xls", "xlsb" -> parseSampleRowsExcel(new ByteArrayInputStream(fileData), maxRows);
+      case "xlsx", "xls", "xlsb" ->
+          parseSampleRowsExcel(new ByteArrayInputStream(fileData), maxRows);
       default -> throw new UnsupportedFileTypeException("Unsupported file type: " + fileType);
     };
   }
@@ -555,8 +553,8 @@ public class FileParserService {
   }
 
   /**
-   * CSV를 batchSize 단위로 배치 콜백 스트리밍 파싱한다. {@code readAll()}을 쓰지 않고 readNext()만 반복하므로 전체 파일 크기와
-   * 무관하게 배치 하나 분량만 메모리에 유지한다.
+   * CSV를 batchSize 단위로 배치 콜백 스트리밍 파싱한다. {@code readAll()}을 쓰지 않고 readNext()만 반복하므로 전체 파일 크기와 무관하게
+   * 배치 하나 분량만 메모리에 유지한다.
    *
    * <p>hasHeader=false인 경우 첫 행도 column_N 헤더로 Map을 만들어 데이터로 포함한다(기존 규칙과 동일).
    */
@@ -836,8 +834,8 @@ public class FileParserService {
   /**
    * XLSX/XLS/XLSB 파일을 batchSize 단위로 배치 콜백 스트리밍 파싱한다.
    *
-   * <p>첫 행을 헤더로 캡처하고, 이후 행을 배치에 누적하다가 batchSize에 도달하면 {@code onBatch}를 호출한 뒤 배치를 비운다.
-   * RowConsumer는 항상 true를 반환해 전체 행을 순회하며, 파싱이 끝난 뒤 잔여 배치를 flush한다.
+   * <p>첫 행을 헤더로 캡처하고, 이후 행을 배치에 누적하다가 batchSize에 도달하면 {@code onBatch}를 호출한 뒤 배치를 비운다. RowConsumer는
+   * 항상 true를 반환해 전체 행을 순회하며, 파싱이 끝난 뒤 잔여 배치를 flush한다.
    */
   private void parseStreamingExcelFile(
       java.io.File file, int batchSize, Consumer<List<Map<String, String>>> onBatch)

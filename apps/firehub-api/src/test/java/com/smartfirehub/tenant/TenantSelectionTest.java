@@ -33,25 +33,30 @@ class TenantSelectionTest extends IntegrationTestBase {
   @Autowired private JwtTokenProvider jwtTokenProvider;
 
   /**
-   * 이 테스트 전용 픽스처 사용자를 직접 삽입(TestUsers)으로 새로 만든다 — 공개 가입은 첫
-   * 사용자만 열려 있다(WD-2). 공유 테스트 DB의 기존 사용자에 의존하면(예: id 최솟값 조회)
-   * 신선한 DB(사전 사용자 0명)에서 null 을 반환해 테스트가 깨지고, 공유 DB에서는 다른 테스트가
-   * 만든 사용자 상태에 우연히 의존하게 된다. nanoTime 접미사로 고유 아이디를 써서 매 실행이
-   * 독립적인 사용자를 갖게 하고, 픽스처가 삽입과 동시에 기본 테넌트 1번 ACTIVE 멤버십을 만든다
+   * 이 테스트 전용 픽스처 사용자를 직접 삽입(TestUsers)으로 새로 만든다 — 공개 가입은 첫 사용자만 열려 있다(WD-2). 공유 테스트 DB의 기존 사용자에
+   * 의존하면(예: id 최솟값 조회) 신선한 DB(사전 사용자 0명)에서 null 을 반환해 테스트가 깨지고, 공유 DB에서는 다른 테스트가 만든 사용자 상태에 우연히
+   * 의존하게 된다. nanoTime 접미사로 고유 아이디를 써서 매 실행이 독립적인 사용자를 갖게 하고, 픽스처가 삽입과 동시에 기본 테넌트 1번 ACTIVE 멤버십을 만든다
    * (백필이나 signup 경로가 아니라 직접 삽입 픽스처에서).
    */
   private Long createFixtureUserId() {
     String username = "tenant-selection-" + System.nanoTime() + "@example.com";
     return TestUsers.createMember(
-            dsl, fixtureTransactionTemplate, passwordEncoder, username, username, "Password123!",
-            "테넌트선택테스트", DEFAULT_TEST_TENANT_ID)
+            dsl,
+            fixtureTransactionTemplate,
+            passwordEncoder,
+            username,
+            username,
+            "Password123!",
+            "테넌트선택테스트",
+            DEFAULT_TEST_TENANT_ID)
         .id();
   }
 
   @Test
   @DisplayName("직접 삽입 픽스처로 만든 사용자는 기본 테넌트 멤버십을 조회할 수 있다")
   void backfilledUserHasDefaultMembership() {
-    List<MembershipResponse> memberships = membershipRepository.findActiveByUser(createFixtureUserId());
+    List<MembershipResponse> memberships =
+        membershipRepository.findActiveByUser(createFixtureUserId());
 
     assertThat(memberships).extracting(MembershipResponse::tenantId).contains(1L);
     assertThat(memberships).extracting(MembershipResponse::tenantSlug).contains("default");
@@ -93,9 +98,16 @@ class TenantSelectionTest extends IntegrationTestBase {
   void refreshWithSuspendedTenantDowngradesButKeepsMemberships() {
     String username = "tenant-refresh-" + System.nanoTime() + "@example.com";
     String password = "Password123!";
-    UserResponse user = TestUsers.createMember(
-            dsl, fixtureTransactionTemplate, passwordEncoder, username, username, password,
-            "테넌트갱신테스트", DEFAULT_TEST_TENANT_ID);
+    UserResponse user =
+        TestUsers.createMember(
+            dsl,
+            fixtureTransactionTemplate,
+            passwordEncoder,
+            username,
+            username,
+            password,
+            "테넌트갱신테스트",
+            DEFAULT_TEST_TENANT_ID);
 
     // 로그인 시점에는 소속이 tenant 1(default) 하나뿐이므로 자동 선택되어, 리프레시 토큰이
     // tenant 1 클레임을 담은 채 발급된다.
@@ -114,7 +126,10 @@ class TenantSelectionTest extends IntegrationTestBase {
             .get(0, Long.class);
     dsl.insertInto(table(name("membership")))
         .columns(
-            field(name("user_id")), field(name("tenant_id")), field(name("role")), field(name("status")))
+            field(name("user_id")),
+            field(name("tenant_id")),
+            field(name("role")),
+            field(name("status")))
         .values(user.id(), otherTenantId, "MEMBER", "ACTIVE")
         .execute();
     dsl.update(table(name("membership")))
@@ -130,7 +145,9 @@ class TenantSelectionTest extends IntegrationTestBase {
     // 클라이언트가 이 목록으로 재선택 화면을 그릴 수 있어야 한다.
     assertThat(refreshed.activeTenantId()).isNull();
     assertThat(refreshed.memberships()).isNotEmpty();
-    assertThat(refreshed.memberships()).extracting(MembershipResponse::tenantId).contains(otherTenantId);
+    assertThat(refreshed.memberships())
+        .extracting(MembershipResponse::tenantId)
+        .contains(otherTenantId);
     assertThat(refreshed.memberships()).extracting(MembershipResponse::tenantId).doesNotContain(1L);
   }
 }

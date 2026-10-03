@@ -16,5 +16,8 @@ public record GraphIngestRecord(
 
   /** stale 질의용 — 데이터셋별 최신 적재행 + 그 데이터셋이 실제 바인딩된 온톨로지의 현재 schema_version. */
   public record StaleRow(
-      long datasetId, LocalDateTime latestIngestedAt, int schemaVersionAtIngest, int currentSchemaVersion) {}
+      long datasetId,
+      LocalDateTime latestIngestedAt,
+      int schemaVersionAtIngest,
+      int currentSchemaVersion) {}
 }

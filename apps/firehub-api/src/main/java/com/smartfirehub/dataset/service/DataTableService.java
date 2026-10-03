@@ -31,8 +31,8 @@ public class DataTableService {
       Set.of("id", "import_id", "created_at", UPDATED_AT_COLUMN);
 
   /**
-   * _updated_at 트리거를 (재)설치한다. CREATE TABLE ... LIKE 는 트리거를 복사하지 않으므로
-   * 새 테이블·임시(_tmp) 테이블·복제 테이블 모두 이 메서드를 거쳐야 한다.
+   * _updated_at 트리거를 (재)설치한다. CREATE TABLE ... LIKE 는 트리거를 복사하지 않으므로 새 테이블·임시(_tmp) 테이블·복제 테이블 모두 이
+   * 메서드를 거쳐야 한다.
    */
   private void installUpdatedAtTrigger(String tableName) {
     String q = DataSchema.qualify(tableName);
@@ -46,10 +46,9 @@ public class DataTableService {
   /**
    * {{last_run_at}} 범위 조건 성능용 인덱스.
    *
-   * <p>이름·모양(ix_&lt;table&gt;_upd, (_updated_at))은 기존 테이블을 백필하는
-   * {@code V125__pipeline_incremental_updated_at_indexes} 와 반드시 같아야 한다 — 규약을 둘로
-   * 늘리면 V125 가 이미 있는 인덱스를 못 알아보고 중복 인덱스를 만든다. 여기서는 CONCURRENTLY 를
-   * 쓰지 않는다: 이 경로는 방금 만든 <b>빈</b> 테이블에만 쓰이므로 빌드가 즉시 끝나고, 데이터셋
+   * <p>이름·모양(ix_&lt;table&gt;_upd, (_updated_at))은 기존 테이블을 백필하는 {@code
+   * V125__pipeline_incremental_updated_at_indexes} 와 반드시 같아야 한다 — 규약을 둘로 늘리면 V125 가 이미 있는 인덱스를 못
+   * 알아보고 중복 인덱스를 만든다. 여기서는 CONCURRENTLY 를 쓰지 않는다: 이 경로는 방금 만든 <b>빈</b> 테이블에만 쓰이므로 빌드가 즉시 끝나고, 데이터셋
    * 생성 트랜잭션 안에서 실행되기 때문에 CONCURRENTLY 자체가 불가능하다.
    */
   private void createUpdatedAtIndex(String tableName) {
@@ -389,16 +388,14 @@ public class DataTableService {
   /**
    * REPLACE 적재를 마무리한다 — <b>쓴 행이 있을 때만</b> 맞바꾸고, 없으면 임시 테이블만 버린다.
    *
-   * <p>"빈 결과는 기존 데이터를 파괴하지 않는다"는 제품 결정이다. 이 판단이 실행기마다 흩어져 있던
-   * 탓에 네 호출부 중 둘이 무조건 {@link #swapTable} 을 불렀고, 2026-09-18 운영에서 AI 분류가
-   * 전량 실패해 0행이 나오자 빈 임시 테이블이 원본을 덮어 10건이 사라졌다(#685). API_CALL 경로 둘은
-   * 같은 결함이 아직 터지지 않은 상태였다 — API 가 빈 페이지를 돌려주면 똑같이 지워진다.
+   * <p>"빈 결과는 기존 데이터를 파괴하지 않는다"는 제품 결정이다. 이 판단이 실행기마다 흩어져 있던 탓에 네 호출부 중 둘이 무조건 {@link #swapTable} 을
+   * 불렀고, 2026-09-18 운영에서 AI 분류가 전량 실패해 0행이 나오자 빈 임시 테이블이 원본을 덮어 10건이 사라졌다(#685). API_CALL 경로 둘은 같은
+   * 결함이 아직 터지지 않은 상태였다 — API 가 빈 페이지를 돌려주면 똑같이 지워진다.
    *
-   * <p>정책을 {@code swapTable} 안에 숨기지 않는 이유: 그러면 "swap" 이라는 이름이 거짓말이 되고,
-   * DDL 원시연산 안에 제품 결정이 묻힌다. 결정은 이름이 있는 자리에 둔다.
+   * <p>정책을 {@code swapTable} 안에 숨기지 않는 이유: 그러면 "swap" 이라는 이름이 거짓말이 되고, DDL 원시연산 안에 제품 결정이 묻힌다. 결정은
+   * 이름이 있는 자리에 둔다.
    *
-   * <p>부분 실패(일부 배치만 성공)는 여기서 구분하지 않는다 — 성공한 행이 있으면 맞바꾼다. 그것이
-   * {@code onError=CONTINUE} 를 고른 쪽의 선택이다.
+   * <p>부분 실패(일부 배치만 성공)는 여기서 구분하지 않는다 — 성공한 행이 있으면 맞바꾼다. 그것이 {@code onError=CONTINUE} 를 고른 쪽의 선택이다.
    *
    * @param rowsWritten 임시 테이블에 실제로 적재된 행 수
    */
@@ -465,11 +462,7 @@ public class DataTableService {
     String oldIndex = "idx_" + tableName + "_" + oldColName;
     String newIndex = "idx_" + tableName + "_" + newColName;
     String sql =
-        "ALTER INDEX IF EXISTS "
-            + DataSchema.qualify(oldIndex)
-            + " RENAME TO \""
-            + newIndex
-            + "\"";
+        "ALTER INDEX IF EXISTS " + DataSchema.qualify(oldIndex) + " RENAME TO \"" + newIndex + "\"";
     dsl.execute(sql);
   }
 
@@ -489,8 +482,7 @@ public class DataTableService {
 
     // GEOMETRY로/에서의 타입 변환은 차단한다 (PostgreSQL이 GEOMETRY CAST를 지원하지 않음)
     if ("GEOMETRY".equalsIgnoreCase(dataType) || "GEOMETRY".equalsIgnoreCase(currentDataType)) {
-      throw new IllegalArgumentException(
-          "GEOMETRY 타입은 다른 타입으로 변환할 수 없습니다. 컬럼을 삭제 후 다시 추가하세요.");
+      throw new IllegalArgumentException("GEOMETRY 타입은 다른 타입으로 변환할 수 없습니다. 컬럼을 삭제 후 다시 추가하세요.");
     }
 
     String newType = mapDataType(dataType, maxLength);
@@ -525,11 +517,7 @@ public class DataTableService {
     validateName(tableName);
     validateName(columnName);
     String sql =
-        "ALTER TABLE "
-            + DataSchema.qualify(tableName)
-            + " DROP COLUMN \""
-            + columnName
-            + "\"";
+        "ALTER TABLE " + DataSchema.qualify(tableName) + " DROP COLUMN \"" + columnName + "\"";
     dsl.execute(sql);
   }
 

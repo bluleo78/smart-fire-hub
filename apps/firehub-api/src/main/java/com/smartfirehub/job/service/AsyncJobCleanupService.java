@@ -22,13 +22,11 @@ public class AsyncJobCleanupService {
   /**
    * 10분마다: 30분 이상 진행이 없는 잡을 실패 처리한다.
    *
-   * <p><b>테넌트 순회(P2-b)</b>: 스케줄러에는 원 HTTP 요청이 없어 승계할 테넌트가 없다 — ACTIVE
-   * 테넌트를 순회한다. 순회하지 않으면 RLS 가 async_job 을 전부 차단해 좀비 잡이 영구히 진행 중으로
-   * 남는다.
+   * <p><b>테넌트 순회(P2-b)</b>: 스케줄러에는 원 HTTP 요청이 없어 승계할 테넌트가 없다 — ACTIVE 테넌트를 순회한다. 순회하지 않으면 RLS 가
+   * async_job 을 전부 차단해 좀비 잡이 영구히 진행 중으로 남는다.
    *
-   * <p><b>트랜잭션</b>: {@code AsyncJobRepository} 는 클래스 레벨 {@code @Transactional} 이라(Task 1)
-   * 호출마다 자기 트랜잭션을 열고 그 시점에 GUC 가 주입된다 — {@code TransactionTemplate} 을 덧붙일
-   * 필요가 없다(확인함).
+   * <p><b>트랜잭션</b>: {@code AsyncJobRepository} 는 클래스 레벨 {@code @Transactional} 이라(Task 1) 호출마다 자기
+   * 트랜잭션을 열고 그 시점에 GUC 가 주입된다 — {@code TransactionTemplate} 을 덧붙일 필요가 없다(확인함).
    */
   @Scheduled(fixedRate = 600_000)
   public void failStaleJobs() {

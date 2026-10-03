@@ -136,7 +136,8 @@ public class PipelineService {
 
       if (ls == LoadStrategy.MERGE) {
         if (!"SQL".equals(stepRequest.scriptType())) {
-          throw new IllegalArgumentException("MERGE 로드 전략은 SQL 스텝에서만 사용할 수 있습니다: " + stepRequest.name());
+          throw new IllegalArgumentException(
+              "MERGE 로드 전략은 SQL 스텝에서만 사용할 수 있습니다: " + stepRequest.name());
         }
         // Fix round 1, must 3 — 사용자가 직접 쓴 INSERT/UPDATE/DELETE 스텝에 MERGE 를 걸면 실행 시점의
         // 출력 비우기 판단과 SELECT 래핑 두 블록이 모두 스킵돼(둘 다 SELECT 자동 적재 경로 전용) MERGE 가
@@ -189,13 +190,12 @@ public class PipelineService {
   /**
    * 저장 시점 SQL 구조 검증 전, {{#N}} 스텝 참조를 유효한 더미 테이블 참조로 치환한다.
    *
-   * <p>실행 시점({@code PipelineAsyncRunner#resolveStepReferences})은 {{#N}}을 {@link DataSchema#qualify}가
-   * 만든 실제 테이블 FQN으로 치환한 뒤 {@link SqlValidator#validate}를 호출하므로 정상 통과한다.
-   * 반면 저장 시점은 지금까지 원본(치환 전) SQL을 그대로 파싱했기 때문에, {{#N}}이 SQL
-   * 문법상 유효하지 않아(예: FROM절) 항상 파싱 실패로 저장이 거부됐다 (#643). 두 시점의 검증 대상을
-   * 구조적으로 맞추기 위해, 여기서도 실제 치환과 동일한 형태(현재 테넌트 데이터 스키마 + 식별자)의
-   * 더미로 바꿔 넣는다 — 스텝 번호가 유효한지, 참조 대상이 실제로 존재하는지는 실행 시점에만 알 수 있으므로
-   * (저장 시점엔 DAG의 나머지 스텝이 아직 없을 수도 있음) 검사하지 않고, 오직 "SQL 구조가 유효한가"만 본다.
+   * <p>실행 시점({@code PipelineAsyncRunner#resolveStepReferences})은 {{#N}}을 {@link
+   * DataSchema#qualify}가 만든 실제 테이블 FQN으로 치환한 뒤 {@link SqlValidator#validate}를 호출하므로 정상 통과한다. 반면 저장
+   * 시점은 지금까지 원본(치환 전) SQL을 그대로 파싱했기 때문에, {{#N}}이 SQL 문법상 유효하지 않아(예: FROM절) 항상 파싱 실패로 저장이 거부됐다
+   * (#643). 두 시점의 검증 대상을 구조적으로 맞추기 위해, 여기서도 실제 치환과 동일한 형태(현재 테넌트 데이터 스키마 + 식별자)의 더미로 바꿔 넣는다 — 스텝
+   * 번호가 유효한지, 참조 대상이 실제로 존재하는지는 실행 시점에만 알 수 있으므로 (저장 시점엔 DAG의 나머지 스텝이 아직 없을 수도 있음) 검사하지 않고, 오직 "SQL
+   * 구조가 유효한가"만 본다.
    */
   private String substituteStepReferencesForValidation(String sql) {
     // 증분 플레이스홀더도 여기서 유효한 타임스탬프 리터럴로 바꿔 둔다 — {{last_run_at}} 은 SQL 문법이
@@ -208,9 +208,8 @@ public class PipelineService {
   /**
    * 실행 시점(PipelineAsyncRunner)이 내릴 것과 <b>똑같은</b> "이게 SELECT 인가" 판단을 저장/조회 시점에 내린다.
    *
-   * <p>두 시점의 판단이 갈리면 저장은 SELECT 로 통과했는데 실행은 DML 로 보고 다르게 도는(또는 상세 조회가 실제와
-   * 다른 전체 재생성 모드를 보여주는) 결함이 생긴다. 그래서 치환 + 판별의 조합 자체를 이 메서드 하나로 고정하고,
-   * 호출하는 쪽은 언제나 이것만 쓴다.
+   * <p>두 시점의 판단이 갈리면 저장은 SELECT 로 통과했는데 실행은 DML 로 보고 다르게 도는(또는 상세 조회가 실제와 다른 전체 재생성 모드를 보여주는) 결함이
+   * 생긴다. 그래서 치환 + 판별의 조합 자체를 이 메서드 하나로 고정하고, 호출하는 쪽은 언제나 이것만 쓴다.
    */
   private boolean isSelectAsRunnerWouldJudge(String scriptContent) {
     return PipelineAsyncRunner.isSelectStatement(
@@ -221,10 +220,9 @@ public class PipelineService {
    * {@code {{#N}}} 스텝 참조만 더미 테이블 참조로 치환한다({@code {{last_run_at}}} 은 그대로 둔다).
    *
    * <p>{@link #substituteStepReferencesForValidation}과 분리한 이유(코드리뷰 MEDIUM): {@link
-   * SqlValidator#incrementalWarnings}는 <b>{@code {{last_run_at}}} 이 원문에 남아 있어야</b> 동작한다
-   * (없으면 증분 스텝이 아니라고 보고 빈 목록을 돌려준다). 그런데 스텝 참조가 남아 있으면 JSqlParser
-   * 파싱이 실패하고, 그 예외는 조용히 삼켜져 역시 빈 목록이 된다 — 즉 두 치환을 한 덩어리로 쓰든 아예
-   * 안 쓰든 경고가 영원히 안 나온다. 그래서 "스텝 참조만" 바꾸는 이 단계가 따로 필요하다.
+   * SqlValidator#incrementalWarnings}는 <b>{@code {{last_run_at}}} 이 원문에 남아 있어야</b> 동작한다 (없으면 증분 스텝이
+   * 아니라고 보고 빈 목록을 돌려준다). 그런데 스텝 참조가 남아 있으면 JSqlParser 파싱이 실패하고, 그 예외는 조용히 삼켜져 역시 빈 목록이 된다 — 즉 두 치환을
+   * 한 덩어리로 쓰든 아예 안 쓰든 경고가 영원히 안 나온다. 그래서 "스텝 참조만" 바꾸는 이 단계가 따로 필요하다.
    */
   private String substituteStepReferences(String sql) {
     Matcher matcher = STEP_REFERENCE_PATTERN.matcher(sql);
@@ -277,21 +275,20 @@ public class PipelineService {
   }
 
   /**
-   * SQL 스텝에 증분 처리 관련 어드바이저리 경고와 "전체 재생성 예약이 실제로 무엇을 하는가"({@code
-   * fullRebuildMode})를 계산해 붙인다(Task 7). 저장을 막지 않는다 — 상세 조회 시 매번 다시 계산해 사용자에게
-   * 보여줄 뿐이다.
+   * SQL 스텝에 증분 처리 관련 어드바이저리 경고와 "전체 재생성 예약이 실제로 무엇을 하는가"({@code fullRebuildMode})를 계산해 붙인다(Task 7).
+   * 저장을 막지 않는다 — 상세 조회 시 매번 다시 계산해 사용자에게 보여줄 뿐이다.
    *
    * <p>경고:
    *
    * <ul>
-   *   <li>{@code {{last_run_at}}} + GROUP BY/집계/윈도우/DISTINCT — {@link SqlValidator#incrementalWarnings}
+   *   <li>{@code {{last_run_at}}} + GROUP BY/집계/윈도우/DISTINCT — {@link
+   *       SqlValidator#incrementalWarnings}
    *   <li>{@code {{last_run_at}}} + APPEND — 매 실행 바뀐 행이 추가로 한 번 더 쌓여 중복된다(MERGE 권장)
    * </ul>
    *
-   * <p>{@code fullRebuildMode} 는 문자열 경고가 아니라 별도 필드로 노출한다 — 웹 UI(Task 8)가 문구를
-   * 파싱하지 않고도 "전체 재생성"(출력 재작성)과 "전체 재읽기"(출력은 그대로, 입력만 전체)를 정확히 갈라
-   * 라벨을 붙이도록 하기 위해서다. 판정은 저장 시점 MERGE 검증(#saveSteps)과 같은 {@link
-   * #isSelectAsRunnerWouldJudge}로 내린다.
+   * <p>{@code fullRebuildMode} 는 문자열 경고가 아니라 별도 필드로 노출한다 — 웹 UI(Task 8)가 문구를 파싱하지 않고도 "전체 재생성"(출력
+   * 재작성)과 "전체 재읽기"(출력은 그대로, 입력만 전체)를 정확히 갈라 라벨을 붙이도록 하기 위해서다. 판정은 저장 시점 MERGE 검증(#saveSteps)과 같은
+   * {@link #isSelectAsRunnerWouldJudge}로 내린다.
    */
   private PipelineStepResponse attachIncrementalMeta(PipelineStepResponse step) {
     // 증분 스텝이 아니면 경고도 재생성 모드도 없다(둘 다 기본값 유지) — 판정은 실행기와 같은 헬퍼(#739).
@@ -308,8 +305,7 @@ public class PipelineService {
     // equalsIgnoreCase — 실행기(PipelineAsyncRunner)가 로드 전략을 대소문자 무시로 해석하므로
     // 여기만 대소문자를 가리면 소문자 레거시 행("append")이 APPEND 로 실행되면서 경고만 빠진다.
     if ("APPEND".equalsIgnoreCase(step.loadStrategy())) {
-      warnings.add(
-          "APPEND 와 {{last_run_at}} 을 함께 쓰면 수정된 행이 한 줄 더 추가되어 중복됩니다. MERGE 를 권장합니다.");
+      warnings.add("APPEND 와 {{last_run_at}} 을 함께 쓰면 수정된 행이 한 줄 더 추가되어 중복됩니다. MERGE 를 권장합니다.");
     }
     String fullRebuildMode =
         isSelectAsRunnerWouldJudge(step.scriptContent())
@@ -319,19 +315,17 @@ public class PipelineService {
   }
 
   /**
-   * 전체 재생성/재읽기 예약(해제). 이 시점에는 데이터를 지우지 않는다 — 다음 실행이 비우기(SELECT 자동
-   * 적재 스텝) 또는 전체 읽기(사용자 DML 스텝)를 실제로 한 트랜잭션에서 수행한다.
+   * 전체 재생성/재읽기 예약(해제). 이 시점에는 데이터를 지우지 않는다 — 다음 실행이 비우기(SELECT 자동 적재 스텝) 또는 전체 읽기(사용자 DML 스텝)를 실제로
+   * 한 트랜잭션에서 수행한다.
    *
-   * <p><b>주의(운영 문서화 대상) — 사용자가 직접 쓴 INSERT/UPDATE/DELETE 증분 스텝은 "예약"이 출력을
-   * 재생성하지 않는다.</b> {@code {{last_run_at}}} 이 {@code -infinity} 로 바뀌어 전체 행을 다시 읽을
-   * 뿐이고, 그 다음에 무엇을 하는지는 사용자 SQL 자체(INSERT/UPDATE/DELETE 로직)에 달려 있다. 반면 SELECT
-   * 자동 적재 스텝(MERGE/APPEND)은 실행기가 출력을 비우고 전체를 다시 채운다. 두 경우를 뭉뚱그려 "전체
-   * 재생성"이라 안내하면 사용자 DML 스텝에서는 거짓 약속이 된다 — 호출부(웹 UI 등)는 스텝의 로드 전략을
-   * 보고 문구를 갈라 써야 한다.
+   * <p><b>주의(운영 문서화 대상) — 사용자가 직접 쓴 INSERT/UPDATE/DELETE 증분 스텝은 "예약"이 출력을 재생성하지 않는다.</b> {@code
+   * {{last_run_at}}} 이 {@code -infinity} 로 바뀌어 전체 행을 다시 읽을 뿐이고, 그 다음에 무엇을 하는지는 사용자 SQL
+   * 자체(INSERT/UPDATE/DELETE 로직)에 달려 있다. 반면 SELECT 자동 적재 스텝(MERGE/APPEND)은 실행기가 출력을 비우고 전체를 다시 채운다.
+   * 두 경우를 뭉뚱그려 "전체 재생성"이라 안내하면 사용자 DML 스텝에서는 거짓 약속이 된다 — 호출부(웹 UI 등)는 스텝의 로드 전략을 보고 문구를 갈라 써야 한다.
    *
    * @throws PipelineNotFoundException 파이프라인에 그 stepId 가 없을 때(다른 파이프라인의 스텝 포함)
-   * @throws IllegalArgumentException {@code pending=true} 인데 스텝 SQL 이 {@code {{last_run_at}}} 을
-   *     쓰지 않을 때 — 그런 스텝은 실행기가 증분 경로를 타지 않아 예약 플래그를 영원히 해제하지 못한다.
+   * @throws IllegalArgumentException {@code pending=true} 인데 스텝 SQL 이 {@code {{last_run_at}}} 을 쓰지
+   *     않을 때 — 그런 스텝은 실행기가 증분 경로를 타지 않아 예약 플래그를 영원히 해제하지 못한다.
    */
   @Transactional
   public void setFullRebuildPending(Long pipelineId, Long stepId, boolean pending) {
@@ -349,8 +343,7 @@ public class PipelineService {
     // 해제(pending=false)는 스텝 종류와 무관하게 허용한다 — 이미 남은 예약을 치울 수 있어야 한다.
     if (pending
         && !LastRunAtPlaceholder.isIncrementalStep(step.scriptType(), step.scriptContent())) {
-      throw new IllegalArgumentException(
-          "{{last_run_at}} 을 쓰는 SQL 스텝만 전체 재생성을 예약할 수 있습니다.");
+      throw new IllegalArgumentException("{{last_run_at}} 을 쓰는 SQL 스텝만 전체 재생성을 예약할 수 있습니다.");
     }
     stepRepository.setFullRebuildPending(stepId, pending);
   }

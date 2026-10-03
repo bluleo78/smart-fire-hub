@@ -27,12 +27,10 @@ public class DatasetOntologyService {
     }
     String status = ontologyRepository.findStatusById(ontologyId);
     if ("draft".equals(status)) {
-      throw new IllegalArgumentException(
-          "초안 상태의 온톨로지에는 데이터셋을 연결할 수 없습니다. '지식 모델' 화면에서 먼저 활성화하세요.");
+      throw new IllegalArgumentException("초안 상태의 온톨로지에는 데이터셋을 연결할 수 없습니다. '지식 모델' 화면에서 먼저 활성화하세요.");
     }
     if ("archived".equals(status)) {
-      throw new IllegalArgumentException(
-          "은퇴한 온톨로지에는 데이터셋을 연결할 수 없습니다. 복귀시키거나 다른 온톨로지를 선택하세요.");
+      throw new IllegalArgumentException("은퇴한 온톨로지에는 데이터셋을 연결할 수 없습니다. 복귀시키거나 다른 온톨로지를 선택하세요.");
     }
     bindingRepository.bind(datasetId, ontologyId, userId);
   }

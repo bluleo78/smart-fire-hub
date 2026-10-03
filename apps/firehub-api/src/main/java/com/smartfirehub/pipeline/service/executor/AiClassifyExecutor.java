@@ -36,18 +36,16 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * AI_CLASSIFY 스텝 실행기 — 입력 행을 배치로 묶어 ai-agent 에 분류를 맡기고, 결과를 {@code
- * ai_inference_cache} 에 캐시한다.
+ * AI_CLASSIFY 스텝 실행기 — 입력 행을 배치로 묶어 ai-agent 에 분류를 맡기고, 결과를 {@code ai_inference_cache} 에 캐시한다.
  *
- * <p><b>클래스/메서드 레벨 {@code @Transactional} 을 쓰지 않는 이유(P2-e R3).</b> 캐시 조회와 캐시
- * 쓰기 <b>사이</b>에서 외부 HTTP({@code aiAgentClient.classify})를 호출한다. 전체를 트랜잭션으로
- * 감싸면 LLM 왕복 시간(수 초~수십 초) 동안 DB 커넥션을 붙잡아 커넥션 풀이 마른다. 그래서 조회
- * 루프와 쓰기 루프만 각각 좁은 {@link TransactionTemplate} 으로 감싼다.
+ * <p><b>클래스/메서드 레벨 {@code @Transactional} 을 쓰지 않는 이유(P2-e R3).</b> 캐시 조회와 캐시 쓰기 <b>사이</b>에서 외부
+ * HTTP({@code aiAgentClient.classify})를 호출한다. 전체를 트랜잭션으로 감싸면 LLM 왕복 시간(수 초~수십 초) 동안 DB 커넥션을 붙잡아 커넥션
+ * 풀이 마른다. 그래서 조회 루프와 쓰기 루프만 각각 좁은 {@link TransactionTemplate} 으로 감싼다.
  *
- * <p><b>왜 트랜잭션이 필요한가.</b> {@code ai_inference_cache} 는 V103 으로 {@code tenant_id} NOT
- * NULL(GUC 파생 DEFAULT)이 됐고 V104 로 RLS 정책이 붙는다. RLS 격리 값은 <b>트랜잭션 로컬</b> GUC
- * 라 {@code TenantAwareTransactionManager.doBegin} 에서만 주입된다 — 트랜잭션 없이 읽으면 정책이
- * 켜진 뒤 조용히 0행(= 영구 캐시 미스), 쓰면 NOT NULL 위반이다.
+ * <p><b>왜 트랜잭션이 필요한가.</b> {@code ai_inference_cache} 는 V103 으로 {@code tenant_id} NOT NULL(GUC 파생
+ * DEFAULT)이 됐고 V104 로 RLS 정책이 붙는다. RLS 격리 값은 <b>트랜잭션 로컬</b> GUC 라 {@code
+ * TenantAwareTransactionManager.doBegin} 에서만 주입된다 — 트랜잭션 없이 읽으면 정책이 켜진 뒤 조용히 0행(= 영구 캐시 미스), 쓰면 NOT
+ * NULL 위반이다.
  */
 @Slf4j
 @Component
@@ -61,10 +59,9 @@ public class AiClassifyExecutor {
   private static final Field<JSONB> CACHE_RESULT_JSON = field(name("result_json"), JSONB.class);
 
   /**
-   * 캐시 조회에 붙이는 테넌트 술어용 컬럼. V103 이 유니크를 {@code (tenant_id, row_hash,
-   * prompt_version)} 으로 접었으므로 캐시는 테넌트별로 파티션된다(R2) — {@code row_hash} 는 분류
-   * 대상 <b>행 내용</b>의 해시라, 술어 없이 조회하면 A 테넌트 행의 존재와 추론 결과가 B 테넌트의
-   * 캐시 히트로 관측된다. 정책(V104)에 앞서 쿼리 자체가 격리를 성립시킨다.
+   * 캐시 조회에 붙이는 테넌트 술어용 컬럼. V103 이 유니크를 {@code (tenant_id, row_hash, prompt_version)} 으로 접었으므로 캐시는
+   * 테넌트별로 파티션된다(R2) — {@code row_hash} 는 분류 대상 <b>행 내용</b>의 해시라, 술어 없이 조회하면 A 테넌트 행의 존재와 추론 결과가 B
+   * 테넌트의 캐시 히트로 관측된다. 정책(V104)에 앞서 쿼리 자체가 격리를 성립시킨다.
    */
   private static final Field<Long> CACHE_TENANT_ID = field(name("tenant_id"), Long.class);
 
@@ -289,11 +286,7 @@ public class AiClassifyExecutor {
       // API_CALL 도 APPEND 에서 이미 부분 행을 남긴다. 전손 위험이 부분 적재보다 크다(#690).
       if (written == 0) {
         throw new IllegalStateException(
-            "AI_CLASSIFY 결과가 0행이다(입력 "
-                + allInputRows.size()
-                + "행, 배치 실패 "
-                + totalErrors
-                + "개)",
+            "AI_CLASSIFY 결과가 0행이다(입력 " + allInputRows.size() + "행, 배치 실패 " + totalErrors + "개)",
             lastBatchFailure);
       }
 
@@ -316,8 +309,7 @@ public class AiClassifyExecutor {
       // output_rows/log 에 null 을 넘겨 기존 값을 덮지 않으므로(updateStepExecution 은 null 필드를
       // 건너뛴다), 여기서 정리하지 않으면 FAILED 스텝이 "출력행 4 · 배치 4/174 진행 중" 을 계속
       // 보여준다. REPLACE 면 임시 테이블을 버렸으니 실제로 남은 행은 0 이다.
-      reportProgress(
-          stepExecutionId, isReplace ? 0 : written, "AI_CLASSIFY 실패: " + e.getMessage());
+      reportProgress(stepExecutionId, isReplace ? 0 : written, "AI_CLASSIFY 실패: " + e.getMessage());
       throw e;
     }
 
@@ -345,11 +337,10 @@ public class AiClassifyExecutor {
   /**
    * 배치 하나의 결과를 곧바로 대상 테이블에 적재하고 적재한 행 수를 돌려준다(#690).
    *
-   * <p>예전에는 모든 배치의 결과를 List 에 모아 두었다가 루프가 끝난 뒤 한 번에 적재했다. 그래서
-   * 재시작·OOM·배포 어느 것이든 그때까지의 분류가 전부 사라졌고, 힙 사용량이 입력 행 수에 비례했다.
-   * 타입 변환({@link #coerceRowValues})은 행 단위라 전체 결과를 기다릴 이유가 없고, {@code
-   * DataTableRowService} 에는 {@code @Transactional} 이 없어 각 INSERT 가 곧바로 커밋된다 —
-   * 그래서 도중에 죽어도 그때까지의 진척이 {@code t_tmp} 에 남는다. 빈 배치는 삽입하지 않는다.
+   * <p>예전에는 모든 배치의 결과를 List 에 모아 두었다가 루프가 끝난 뒤 한 번에 적재했다. 그래서 재시작·OOM·배포 어느 것이든 그때까지의 분류가 전부 사라졌고,
+   * 힙 사용량이 입력 행 수에 비례했다. 타입 변환({@link #coerceRowValues})은 행 단위라 전체 결과를 기다릴 이유가 없고, {@code
+   * DataTableRowService} 에는 {@code @Transactional} 이 없어 각 INSERT 가 곧바로 커밋된다 — 그래서 도중에 죽어도 그때까지의 진척이
+   * {@code t_tmp} 에 남는다. 빈 배치는 삽입하지 않는다.
    */
   private long writeBatch(
       String targetTable,
@@ -367,12 +358,10 @@ public class AiClassifyExecutor {
   }
 
   /**
-   * 실행 중인 스텝의 진척(적재 행 수 + 진행 메시지)을 {@code pipeline_step_execution} 에
-   * 남긴다(#691).
+   * 실행 중인 스텝의 진척(적재 행 수 + 진행 메시지)을 {@code pipeline_step_execution} 에 남긴다(#691).
    *
-   * <p>화면은 이 두 값을 이미 "출력행"과 "로그"로 보여주므로 새 컬럼이나 새 UI 없이 진행률이
-   * 드러난다. 상태는 건드리지 않는다 — 여기서 상태를 쓰면 호출부가 관리하는 RUNNING/FAILED 전이와
-   * 경합한다.
+   * <p>화면은 이 두 값을 이미 "출력행"과 "로그"로 보여주므로 새 컬럼이나 새 UI 없이 진행률이 드러난다. 상태는 건드리지 않는다 — 여기서 상태를 쓰면 호출부가
+   * 관리하는 RUNNING/FAILED 전이와 경합한다.
    *
    * <p>진척 기록 실패는 분류를 중단시킬 이유가 아니므로 삼키고 로그만 남긴다.
    */
@@ -395,9 +384,8 @@ public class AiClassifyExecutor {
   /**
    * 행을 가리키는 키 — id 를 문자열로 통일한다.
    *
-   * <p>같은 id 가 입력 맵에서는 {@code Long}, LLM 응답에서는 {@code Integer} 로 올라오므로 타입을
-   * 그대로 두면 {@code equals} 가 어긋난다. 이 변환을 세 군데(중복 검사·대조·조회)가 각자 하던
-   * 것을 한 곳으로 모은다.
+   * <p>같은 id 가 입력 맵에서는 {@code Long}, LLM 응답에서는 {@code Integer} 로 올라오므로 타입을 그대로 두면 {@code equals} 가
+   * 어긋난다. 이 변환을 세 군데(중복 검사·대조·조회)가 각자 하던 것을 한 곳으로 모은다.
    */
   private static String rowId(Map<String, Object> row) {
     return String.valueOf(row.get("id"));
@@ -406,24 +394,20 @@ public class AiClassifyExecutor {
   /**
    * 입력 행의 id 가 겹치면 던진다(#694).
    *
-   * <p><b>왜 우회하지 않고 거절하는가.</b> {@code source_id} 는 출력 테이블의 <b>계보 키</b>다 —
-   * 후속 스텝이 이 값으로 원본 행에 조인한다. id 가 겹치면 {@code source_id=5} 가 서로 다른 두 행을
-   * 가리키게 되어 그 조인이 성립하지 않는다. 배치 안의 상관(어느 결과가 어느 행의 것인가)은 LLM 이
-   * 되돌려주는 값 대신 배치 내 일련번호를 쓰면 우회할 수 있지만, 계보의 모호함은 그렇게 해도 남는다
-   * — 그걸 없애려면 {@code source_dataset_id} 컬럼이 필요하고 스키마 변경·마이그레이션·UI 가 따라
-   * 붙는다. 그래서 지금은 <b>거절이 옳은 깊이</b>다.
+   * <p><b>왜 우회하지 않고 거절하는가.</b> {@code source_id} 는 출력 테이블의 <b>계보 키</b>다 — 후속 스텝이 이 값으로 원본 행에 조인한다.
+   * id 가 겹치면 {@code source_id=5} 가 서로 다른 두 행을 가리키게 되어 그 조인이 성립하지 않는다. 배치 안의 상관(어느 결과가 어느 행의 것인가)은
+   * LLM 이 되돌려주는 값 대신 배치 내 일련번호를 쓰면 우회할 수 있지만, 계보의 모호함은 그렇게 해도 남는다 — 그걸 없애려면 {@code
+   * source_dataset_id} 컬럼이 필요하고 스키마 변경·마이그레이션·UI 가 따라 붙는다. 그래서 지금은 <b>거절이 옳은 깊이</b>다.
    *
-   * <p><b>실제로 도달 가능한 경로다.</b> {@code PipelineAsyncRunner} 는 명시 입력이 없을 때
-   * {@code dependsOnStepNames} 를 따라 <b>의존 스텝마다 출력 데이터셋을 하나씩</b> 쌓고,
-   * {@link #fetchInputRows} 는 그 테이블들의 행을 그냥 이어 붙인다. 각 출력 테이블은 자기
-   * {@code BIGSERIAL} 을 쓰므로 데이터셋이 둘 이상이면 id 가 1 부터 다시 시작해 <b>반드시</b> 겹친다.
+   * <p><b>실제로 도달 가능한 경로다.</b> {@code PipelineAsyncRunner} 는 명시 입력이 없을 때 {@code dependsOnStepNames}
+   * 를 따라 <b>의존 스텝마다 출력 데이터셋을 하나씩</b> 쌓고, {@link #fetchInputRows} 는 그 테이블들의 행을 그냥 이어 붙인다. 각 출력 테이블은
+   * 자기 {@code BIGSERIAL} 을 쓰므로 데이터셋이 둘 이상이면 id 가 1 부터 다시 시작해 <b>반드시</b> 겹친다.
    *
-   * <p><b>배치 루프 밖에서</b> 던진다. 안에서 던지면 {@code onError=CONTINUE} 가 삼켜 "배치가 모두
-   * 실패했다"로 격하되고, {@code RETRY_BATCH} 면 절대 성공할 수 없는 재시도로 14초를 잔다 — 테넌트
-   * 검사와 같은 이유다. 여기서 던지면 LLM 을 한 번도 태우지 않는다.
+   * <p><b>배치 루프 밖에서</b> 던진다. 안에서 던지면 {@code onError=CONTINUE} 가 삼켜 "배치가 모두 실패했다"로 격하되고, {@code
+   * RETRY_BATCH} 면 절대 성공할 수 없는 재시도로 14초를 잔다 — 테넌트 검사와 같은 이유다. 여기서 던지면 LLM 을 한 번도 태우지 않는다.
    *
-   * <p>데이터셋 수가 아니라 <b>행의 id</b>를 본다. "입력 데이터셋이 2개 이상이면 거절"은 특수 케이스고,
-   * 여기서 지켜야 하는 일반 불변식은 "id 가 유일하다"이다.
+   * <p>데이터셋 수가 아니라 <b>행의 id</b>를 본다. "입력 데이터셋이 2개 이상이면 거절"은 특수 케이스고, 여기서 지켜야 하는 일반 불변식은 "id 가
+   * 유일하다"이다.
    */
   private void rejectDuplicateInputIds(
       List<Map<String, Object>> allInputRows, PipelineStepResponse step) {
@@ -452,27 +436,22 @@ public class AiClassifyExecutor {
   /**
    * 배치 응답의 {@code source_id} 집합이 요청과 정확히 일치하는지 확인하고, 어긋나면 던진다(#694).
    *
-   * <p><b>왜 필요한가.</b> 배치가 1행이면 "결과 하나는 그 행의 것"이라 식별자가 필요 없다. 10행을
-   * 한 번에 보내는 순간 "3번째 결과는 누구 것인가"에 답해야 하고, 방법은 순서 아니면 이름표뿐이다.
-   * 이 구현은 이름표({@code source_id})를 골랐는데 — 순서 방식은 하나만 빠져도 뒤가 전부 밀리므로
-   * 합리적인 선택이다 — 그 이름표를 <b>LLM 이 받아 적는다</b>. 즉 위험은 지면서 이름표 방식의
-   * 유일한 이점인 <b>검증 가능성</b>은 쓰지 않고 있었다.
+   * <p><b>왜 필요한가.</b> 배치가 1행이면 "결과 하나는 그 행의 것"이라 식별자가 필요 없다. 10행을 한 번에 보내는 순간 "3번째 결과는 누구 것인가"에 답해야
+   * 하고, 방법은 순서 아니면 이름표뿐이다. 이 구현은 이름표({@code source_id})를 골랐는데 — 순서 방식은 하나만 빠져도 뒤가 전부 밀리므로 합리적인 선택이다
+   * — 그 이름표를 <b>LLM 이 받아 적는다</b>. 즉 위험은 지면서 이름표 방식의 유일한 이점인 <b>검증 가능성</b>은 쓰지 않고 있었다.
    *
-   * <p>검사가 없을 때의 실패 모드: {@code source_id} 를 빠뜨리면 ai-agent 파서가 조용히 {@code 0}
-   * 으로 떨구고, 없는 번호나 중복 번호를 돌려줘도 아래 조회가 {@code null} 이 되어 그 행을
-   * {@code warn} 한 줄 남기고 버린다. 스텝은 그대로 COMPLETED 다 — #685 가드는 <b>전량</b> 누락일
-   * 때만 던진다. 1109 건 중 1건이 빠지면 아무도 모른다.
+   * <p>검사가 없을 때의 실패 모드: {@code source_id} 를 빠뜨리면 ai-agent 파서가 조용히 {@code 0} 으로 떨구고, 없는 번호나 중복 번호를
+   * 돌려줘도 아래 조회가 {@code null} 이 되어 그 행을 {@code warn} 한 줄 남기고 버린다. 스텝은 그대로 COMPLETED 다 — #685 가드는
+   * <b>전량</b> 누락일 때만 던진다. 1109 건 중 1건이 빠지면 아무도 모른다.
    *
-   * <p>던지면 호출부의 {@code onError} 정책이 비로소 살아난다. {@code RETRY_BATCH} 면 LLM 을 다시
-   * 태워 대개 다음 번에 맞는다 — 지금은 재시도할 기회조차 없이 행을 버렸다.
+   * <p>던지면 호출부의 {@code onError} 정책이 비로소 살아난다. {@code RETRY_BATCH} 면 LLM 을 다시 태워 대개 다음 번에 맞는다 — 지금은
+   * 재시도할 기회조차 없이 행을 버렸다.
    *
-   * <p><b>개수를 따로 세는 이유.</b> {@code toMap} 의 병합 함수 {@code (a,b)->a} 가 중복 번호를
-   * 삼키므로, 집합 비교만으로는 "11개를 돌려줬는데 둘이 같은 번호"를 놓칠 수 있다. 원본 리스트
-   * 길이를 함께 본다.
+   * <p><b>개수를 따로 세는 이유.</b> {@code toMap} 의 병합 함수 {@code (a,b)->a} 가 중복 번호를 삼키므로, 집합 비교만으로는 "11개를
+   * 돌려줬는데 둘이 같은 번호"를 놓칠 수 있다. 원본 리스트 길이를 함께 본다.
    *
-   * <p><b>막지 못하는 것.</b> 두 행의 번호를 <b>서로 바꿔</b> 쓰면 집합도 개수도 그대로라 통과한다.
-   * 그건 배치를 쓰는 한 구조적으로 감지할 수 없다({@code batchSize: 1} 만이 막는다). 이 검사는
-   * 누락·미지·중복 세 가지를 걷어낼 뿐이며, 그 한계는 의도한 것이다.
+   * <p><b>막지 못하는 것.</b> 두 행의 번호를 <b>서로 바꿔</b> 쓰면 집합도 개수도 그대로라 통과한다. 그건 배치를 쓰는 한 구조적으로 감지할 수
+   * 없다({@code batchSize: 1} 만이 막는다). 이 검사는 누락·미지·중복 세 가지를 걷어낼 뿐이며, 그 한계는 의도한 것이다.
    */
   private void verifySourceIds(
       List<Map<String, Object>> sentRows, int receivedCount, Set<String> receivedIds) {
@@ -650,8 +629,7 @@ public class AiClassifyExecutor {
                         CACHE_RESULT_JSON);
                 for (PendingCacheEntry entry : pendingCacheEntries) {
                   insert =
-                      insert.values(
-                          entry.rowHash(), promptHash, JSONB.valueOf(entry.resultJson()));
+                      insert.values(entry.rowHash(), promptHash, JSONB.valueOf(entry.resultJson()));
                 }
                 insert.onConflictDoNothing().execute();
               });
@@ -721,14 +699,13 @@ public class AiClassifyExecutor {
   }
 
   /**
-   * 캐시 {@code prompt_version} 이자 {@link #rowContentHash} 의 입력. 여기 한 곳만 바꾸면 두 키가 함께
-   * 갈린다(#707 결정 5).
+   * 캐시 {@code prompt_version} 이자 {@link #rowContentHash} 의 입력. 여기 한 곳만 바꾸면 두 키가 함께 갈린다(#707 결정 5).
    *
    * <ul>
-   *   <li>UseChat(미설정): 입력이 옛 코드와 <b>완전히 같다</b> — 기존 캐시가 그대로 히트한다. 그래서
-   *       채팅의 {@code ai.model} 을 바꿔도 캐시가 갈리지 않는 옛 동작도 그대로다(스펙 비목표).
-   *   <li>Dedicated: 뒤에 {@code \u001f + 판별자} 를 붙여 해당 테넌트만 1회 미스. 해제하면 옛 해시로
-   *       돌아가 옛 캐시가 다시 히트한다(되돌림이 공짜).
+   *   <li>UseChat(미설정): 입력이 옛 코드와 <b>완전히 같다</b> — 기존 캐시가 그대로 히트한다. 그래서 채팅의 {@code ai.model} 을 바꿔도
+   *       캐시가 갈리지 않는 옛 동작도 그대로다(스펙 비목표).
+   *   <li>Dedicated: 뒤에 {@code \u001f + 판별자} 를 붙여 해당 테넌트만 1회 미스. 해제하면 옛 해시로 돌아가 옛 캐시가 다시 히트한다(되돌림이
+   *       공짜).
    * </ul>
    *
    * <p>package-private — 회귀 가드 테스트가 리터럴 해시를 직접 단언한다.
@@ -776,26 +753,22 @@ public class AiClassifyExecutor {
   /**
    * 캐시 키가 될 행 해시를 만든다 — <b>내용만</b> 보고 {@code id} 는 제외한다(#687).
    *
-   * <p>예전에는 행 맵을 통째로 직렬화해 해시했는데, 그 맵에는 {@code queryData} 가 항상 넣어 주는
-   * {@code id} 가 들어 있다. 입력이 임시 데이터셋이면 그 {@code id} 는 매 실행 {@code TRUNCATE} 후
-   * 다시 채워지는 {@code BIGSERIAL} 값이고({@code RESTART IDENTITY} 를 쓰지 않으므로 계속 증가한다),
-   * 결국 <b>내용이 완전히 같은 행도 실행마다 해시가 달라져 캐시가 영구히 미스</b>했다. 운영에서
-   * 실행 5·6·7 이 모두 {@code 0 cached} 였다.
+   * <p>예전에는 행 맵을 통째로 직렬화해 해시했는데, 그 맵에는 {@code queryData} 가 항상 넣어 주는 {@code id} 가 들어 있다. 입력이 임시
+   * 데이터셋이면 그 {@code id} 는 매 실행 {@code TRUNCATE} 후 다시 채워지는 {@code BIGSERIAL} 값이고({@code RESTART
+   * IDENTITY} 를 쓰지 않으므로 계속 증가한다), 결국 <b>내용이 완전히 같은 행도 실행마다 해시가 달라져 캐시가 영구히 미스</b>했다. 운영에서 실행 5·6·7
+   * 이 모두 {@code 0 cached} 였다.
    *
-   * <p>키를 정렬하는 이유: {@code HashMap} 의 순회 순서는 보장이 없어서, 같은 내용이 다른 순서로
-   * 직렬화되면 해시가 갈린다. 캐시 키는 그런 우연에 기대면 안 된다.
+   * <p>키를 정렬하는 이유: {@code HashMap} 의 순회 순서는 보장이 없어서, 같은 내용이 다른 순서로 직렬화되면 해시가 갈린다. 캐시 키는 그런 우연에 기대면
+   * 안 된다.
    *
-   * <p>{@code static} 인 이유: 목(mock) 체인 없이 성질 자체를 검증하기 위해서다 — 내용이 같고
-   * id 만 다르면 같은 해시, 내용이 다르면 다른 해시.
+   * <p>{@code static} 인 이유: 목(mock) 체인 없이 성질 자체를 검증하기 위해서다 — 내용이 같고 id 만 다르면 같은 해시, 내용이 다르면 다른 해시.
    *
-   * <p><b>{@link #toJson} 을 쓰지 않는다.</b> 한 줄로 줄어들지만 그쪽은 직렬화 실패를 삼켜
-   * {@code "{}"} 를 돌려준다 — 캐시 <b>키</b>에서 그러면 직렬화에 실패한 모든 행이 한 항목으로
-   * 붕괴해 서로의 분류 결과를 물려받는다. 예전 구현이 {@code toJson(row)} 로 해시를 만들고 있었으니
-   * 잠재해 있던 위험이기도 하다.
+   * <p><b>{@link #toJson} 을 쓰지 않는다.</b> 한 줄로 줄어들지만 그쪽은 직렬화 실패를 삼켜 {@code "{}"} 를 돌려준다 — 캐시
+   * <b>키</b>에서 그러면 직렬화에 실패한 모든 행이 한 항목으로 붕괴해 서로의 분류 결과를 물려받는다. 예전 구현이 {@code toJson(row)} 로 해시를 만들고
+   * 있었으니 잠재해 있던 위험이기도 하다.
    *
-   * <p>고칠 자리를 헷갈리지 말 것: {@code truncateTable} 에 {@code RESTART IDENTITY} 를 붙이는 것은
-   * <b>틀린 해법</b>이다. 캐시 키의 정확성이 시퀀스 상태에 의존하게 되고, 실행이 달라지면 서로 다른
-   * 내용이 같은 키로 충돌한다.
+   * <p>고칠 자리를 헷갈리지 말 것: {@code truncateTable} 에 {@code RESTART IDENTITY} 를 붙이는 것은 <b>틀린 해법</b>이다.
+   * 캐시 키의 정확성이 시퀀스 상태에 의존하게 되고, 실행이 달라지면 서로 다른 내용이 같은 키로 충돌한다.
    */
   static String rowContentHash(Map<String, Object> row, String promptHash) {
     Map<String, Object> content = new TreeMap<>(row);

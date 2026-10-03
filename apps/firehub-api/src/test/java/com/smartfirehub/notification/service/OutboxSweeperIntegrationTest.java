@@ -23,9 +23,8 @@ import org.springframework.test.context.TestPropertySource;
 /**
  * OutboxSweeper — claim 후 오래된 행을 PENDING으로 회복하는지 검증.
  *
- * <p><b>테넌트(P2-f)</b>: 스크래치 테넌트에서 픽스처를 만들고, 검증 대상인 {@code sweep()} 은
- * <b>컨텍스트를 비운 채</b> 부른다 — 프로덕션의 {@code @Scheduled} 스레드가 정확히 그 상태이기
- * 때문이다. 컨텍스트를 남겨 두고 부르면 "스위퍼가 스스로 테넌트를 순회하는가"라는 검증이 무의미해진다.
+ * <p><b>테넌트(P2-f)</b>: 스크래치 테넌트에서 픽스처를 만들고, 검증 대상인 {@code sweep()} 은 <b>컨텍스트를 비운 채</b> 부른다 — 프로덕션의
+ * {@code @Scheduled} 스레드가 정확히 그 상태이기 때문이다. 컨텍스트를 남겨 두고 부르면 "스위퍼가 스스로 테넌트를 순회하는가"라는 검증이 무의미해진다.
  */
 @TestPropertySource(
     // 5개 알림 통합 테스트가 완전히 동일한 프로퍼티 집합을 공유한다 — 스프링 컨텍스트 캐시

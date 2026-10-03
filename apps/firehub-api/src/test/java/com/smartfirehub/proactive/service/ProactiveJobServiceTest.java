@@ -190,8 +190,8 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
    * 회귀 테스트 — triggerType=ANOMALY로 생성하면 DB trigger_type 컬럼에 실제로 저장되어야 한다 (#655).
    *
    * <p>이전에는 CreateProactiveJobRequest DTO 자체에 triggerType 필드가 없어 프론트엔드가 값을 보내도 조용히 버려지고 DB 컬럼
-   * 기본값(SCHEDULE)만 저장됐다. 그 결과 MetricPollerService의 {@code trigger_type IN ('ANOMALY','BOTH')} 조회 대상에서
-   * 영원히 제외되어 이상 탐지 작업이 절대 발화하지 않았다.
+   * 기본값(SCHEDULE)만 저장됐다. 그 결과 MetricPollerService의 {@code trigger_type IN ('ANOMALY','BOTH')} 조회
+   * 대상에서 영원히 제외되어 이상 탐지 작업이 절대 발화하지 않았다.
    */
   @Test
   void createJob_withAnomalyTriggerType_persistsTriggerType() {
@@ -209,8 +209,14 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
                 List.of("CHAT"),
                 "anomaly",
                 Map.of(
-                    "enabled", true, "metrics", List.of(), "sensitivity", "medium",
-                    "cooldownMinutes", 30)));
+                    "enabled",
+                    true,
+                    "metrics",
+                    List.of(),
+                    "sensitivity",
+                    "medium",
+                    "cooldownMinutes",
+                    30)));
 
     ProactiveJobResponse created = proactiveJobService.createJob(req, testUserId);
 
@@ -405,8 +411,7 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
         proactiveJobService.createJob(buildCreateRequest("실행 테스트 작업"), testUserId);
 
     when(proactiveContextCollector.collectContext(any(), any())).thenReturn("{}");
-    when(proactiveAiClient.execute(
-            anyLong(), anyString(), anyString(), any(), any(), any(), any()))
+    when(proactiveAiClient.execute(anyLong(), anyString(), anyString(), any(), any(), any(), any()))
         .thenReturn(buildMockResult());
     when(chatDeliveryChannel.type()).thenReturn("CHAT");
 
@@ -429,8 +434,7 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
         proactiveJobService.createJob(buildCreateRequest("실패 테스트 작업"), testUserId);
 
     when(proactiveContextCollector.collectContext(any(), any())).thenReturn("{}");
-    when(proactiveAiClient.execute(
-            anyLong(), anyString(), anyString(), any(), any(), any(), any()))
+    when(proactiveAiClient.execute(anyLong(), anyString(), anyString(), any(), any(), any(), any()))
         .thenThrow(new RuntimeException("AI Agent 연결 실패"));
 
     // when / then — @Async 프록시를 우회한 raw 빈으로 직접 호출 (이슈 #192)
@@ -448,8 +452,8 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
   /**
    * [#350] AI 인증 실패 원문이 리포트 본문으로 둔갑한 결과는 COMPLETED로 기록하지 않고, CHAT/EMAIL로도 발송하지 않는다.
    *
-   * <p>에이전트가 인증 오류를 일반 텍스트로 흘린 뒤 정상 종료하면 aiClient는 예외 없이 "내용이 있는" 결과를 반환한다. 이 결과가 그대로 저장·발송되던 것이 이슈의
-   * 핵심이었다.
+   * <p>에이전트가 인증 오류를 일반 텍스트로 흘린 뒤 정상 종료하면 aiClient는 예외 없이 "내용이 있는" 결과를 반환한다. 이 결과가 그대로 저장·발송되던 것이
+   * 이슈의 핵심이었다.
    */
   @Test
   void executeJob_authErrorTextAsReportBody_executionFailedAndNotDelivered() {
@@ -474,8 +478,7 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
             "");
 
     when(proactiveContextCollector.collectContext(any(), any())).thenReturn("{}");
-    when(proactiveAiClient.execute(
-            anyLong(), anyString(), anyString(), any(), any(), any(), any()))
+    when(proactiveAiClient.execute(anyLong(), anyString(), anyString(), any(), any(), any(), any()))
         .thenReturn(authFailureResult);
     when(chatDeliveryChannel.type()).thenReturn("CHAT");
 
@@ -504,8 +507,7 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
         proactiveJobService.createJob(buildCreateRequest("채널 테스트 작업"), testUserId);
 
     when(proactiveContextCollector.collectContext(any(), any())).thenReturn("{}");
-    when(proactiveAiClient.execute(
-            anyLong(), anyString(), anyString(), any(), any(), any(), any()))
+    when(proactiveAiClient.execute(anyLong(), anyString(), anyString(), any(), any(), any(), any()))
         .thenReturn(buildMockResult());
     when(chatDeliveryChannel.type()).thenReturn("CHAT");
 
@@ -523,8 +525,7 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
         proactiveJobService.createJob(buildCreateRequest("채널 오류 내성 테스트"), testUserId);
 
     when(proactiveContextCollector.collectContext(any(), any())).thenReturn("{}");
-    when(proactiveAiClient.execute(
-            anyLong(), anyString(), anyString(), any(), any(), any(), any()))
+    when(proactiveAiClient.execute(anyLong(), anyString(), anyString(), any(), any(), any(), any()))
         .thenReturn(buildMockResult());
     when(chatDeliveryChannel.type()).thenReturn("CHAT");
     doThrow(new RuntimeException("채널 오류"))
@@ -608,8 +609,7 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
   void onAnomalyDetected_respects_cooldown_on_second_call() {
     var job = proactiveJobService.createJob(buildCreateRequest("쿨다운 테스트"), testUserId);
     when(proactiveContextCollector.collectContext(any(), any())).thenReturn("{}");
-    when(proactiveAiClient.execute(
-            anyLong(), anyString(), anyString(), any(), any(), any(), any()))
+    when(proactiveAiClient.execute(anyLong(), anyString(), anyString(), any(), any(), any(), any()))
         .thenReturn(buildMockResult());
     when(chatDeliveryChannel.type()).thenReturn("CHAT");
 
@@ -643,8 +643,7 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
   void onAnomalyDetected_delegates_execution_to_asyncRunner() {
     var job = proactiveJobService.createJob(buildCreateRequest("asyncRunner 위임 테스트"), testUserId);
     when(proactiveContextCollector.collectContext(any(), any())).thenReturn("{}");
-    when(proactiveAiClient.execute(
-            anyLong(), anyString(), anyString(), any(), any(), any(), any()))
+    when(proactiveAiClient.execute(anyLong(), anyString(), anyString(), any(), any(), any(), any()))
         .thenReturn(buildMockResult());
     when(chatDeliveryChannel.type()).thenReturn("CHAT");
 

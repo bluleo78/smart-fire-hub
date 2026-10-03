@@ -37,14 +37,26 @@ public class ReviewItemService {
     return s.trim().replaceAll("\\s+", " ").toLowerCase();
   }
 
-  /** 동의어 근접쌍 등록 — 이름쌍을 정규화 비교로 정렬(순서 무관 dedupe) 후 payload/dedupe_key 구성.
-   *  datasetId/sourceChunkIds가 오면 원문 근거(evidence)용으로 함께 기록한다(신규-only, first-writer-wins). */
+  /**
+   * 동의어 근접쌍 등록 — 이름쌍을 정규화 비교로 정렬(순서 무관 dedupe) 후 payload/dedupe_key 구성. datasetId/sourceChunkIds가
+   * 오면 원문 근거(evidence)용으로 함께 기록한다(신규-only, first-writer-wins).
+   */
   @SneakyThrows
-  public void recordPendingSynonym(String entityType, String rawA, String rawB, Double similarity, String rationale,
-      Long datasetId, List<Long> sourceChunkIds) {
+  public void recordPendingSynonym(
+      String entityType,
+      String rawA,
+      String rawB,
+      Double similarity,
+      String rationale,
+      Long datasetId,
+      List<Long> sourceChunkIds) {
     String a = rawA.trim();
     String b = rawB.trim();
-    if (normalize(a).compareTo(normalize(b)) > 0) { String t = a; a = b; b = t; }
+    if (normalize(a).compareTo(normalize(b)) > 0) {
+      String t = a;
+      a = b;
+      b = t;
+    }
     ObjectNode payload = objectMapper.createObjectNode();
     payload.put("entityType", entityType);
     payload.put("nameA", a);
@@ -55,22 +67,38 @@ public class ReviewItemService {
       for (Long c : sourceChunkIds) if (c != null) arr.add(c.longValue());
     }
     String dedupe = entityType + "|" + a + "|" + b;
-    repo.upsertPending(SYNONYM, dedupe, datasetId, "similarity", similarity, rationale, objectMapper.writeValueAsString(payload));
+    repo.upsertPending(
+        SYNONYM,
+        dedupe,
+        datasetId,
+        "similarity",
+        similarity,
+        rationale,
+        objectMapper.writeValueAsString(payload));
   }
 
   /** 동의어 근접쌍 기존 결정 조회 — 없으면 "none". */
   public String lookupSynonym(String entityType, String rawA, String rawB) {
     String a = rawA.trim();
     String b = rawB.trim();
-    if (normalize(a).compareTo(normalize(b)) > 0) { String t = a; a = b; b = t; }
+    if (normalize(a).compareTo(normalize(b)) > 0) {
+      String t = a;
+      a = b;
+      b = t;
+    }
     return repo.findDecisionStatus(SYNONYM, entityType + "|" + a + "|" + b).orElse("none");
   }
 
   /** 속성 정규화 실패 등록 — entityKey는 canonical 재매핑 후 최종 key(정정 write 대상). */
   @SneakyThrows
   public void recordPendingProperty(
-      Long datasetId, Long chunkId, String entityKey, String entityType,
-      String propertyName, String dataType, String rawText) {
+      Long datasetId,
+      Long chunkId,
+      String entityKey,
+      String entityType,
+      String propertyName,
+      String dataType,
+      String rawText) {
     ObjectNode payload = objectMapper.createObjectNode();
     payload.put("entityKey", entityKey);
     payload.put("entityType", entityType);
@@ -80,15 +108,27 @@ public class ReviewItemService {
     if (chunkId != null) payload.putArray("sourceChunkIds").add(chunkId);
     String dedupe = entityKey + "|" + propertyName;
     String reason = "'" + rawText + "' 값을 " + dataType + " 타입으로 정규화하지 못했습니다.";
-    repo.upsertPending(PROPERTY, dedupe, datasetId, "normalization_failure", null, reason,
+    repo.upsertPending(
+        PROPERTY,
+        dedupe,
+        datasetId,
+        "normalization_failure",
+        null,
+        reason,
         objectMapper.writeValueAsString(payload));
   }
 
   /** 저신뢰 엔티티 검수 등록 — dedupe_key는 as-extracted 정체성(entityType|정규화이름), signal_score=confidence. */
   @SneakyThrows
   public void recordPendingEntity(
-      Long datasetId, String entityType, String name, JsonNode properties,
-      List<Long> sourceChunkIds, Double confidence, String reason, List<EntityRelationRef> relations) {
+      Long datasetId,
+      String entityType,
+      String name,
+      JsonNode properties,
+      List<Long> sourceChunkIds,
+      Double confidence,
+      String reason,
+      List<EntityRelationRef> relations) {
     ObjectNode payload = objectMapper.createObjectNode();
     payload.put("entityType", entityType);
     payload.put("name", name);
@@ -109,7 +149,13 @@ public class ReviewItemService {
     }
     String dedupe = entityType + "|" + normalize(name);
     String reasonMsg = (reason != null && !reason.isBlank()) ? reason : "추출 신뢰도가 낮은 엔티티입니다.";
-    repo.upsertPending(ENTITY, dedupe, datasetId, "low_confidence", confidence, reasonMsg,
+    repo.upsertPending(
+        ENTITY,
+        dedupe,
+        datasetId,
+        "low_confidence",
+        confidence,
+        reasonMsg,
         objectMapper.writeValueAsString(payload));
   }
 
@@ -121,8 +167,15 @@ public class ReviewItemService {
   /** 저신뢰 관계 검수 등록 — dedupe_key는 ai-agent가 계산한 canonical subjectKey|relType|objectKey(opaque). */
   @SneakyThrows
   public void recordPendingRelation(
-      Long datasetId, String subjectKey, String relType, String objectKey,
-      String subjectName, String objectName, List<Long> sourceChunkIds, Double confidence, String reason) {
+      Long datasetId,
+      String subjectKey,
+      String relType,
+      String objectKey,
+      String subjectName,
+      String objectName,
+      List<Long> sourceChunkIds,
+      Double confidence,
+      String reason) {
     ObjectNode payload = objectMapper.createObjectNode();
     payload.put("subjectKey", subjectKey);
     payload.put("relType", relType);
@@ -135,13 +188,20 @@ public class ReviewItemService {
     }
     String dedupe = subjectKey + "|" + relType + "|" + objectKey;
     String reasonMsg = (reason != null && !reason.isBlank()) ? reason : "추출 신뢰도가 낮은 관계입니다.";
-    repo.upsertPending(RELATION, dedupe, datasetId, "low_confidence", confidence, reasonMsg,
+    repo.upsertPending(
+        RELATION,
+        dedupe,
+        datasetId,
+        "low_confidence",
+        confidence,
+        reasonMsg,
         objectMapper.writeValueAsString(payload));
   }
 
   /** 저신뢰 관계 기존 결정 조회 — 없으면 "none". dedupe_key는 ai-agent 계산 opaque 값 그대로. */
   public String lookupRelation(String subjectKey, String relType, String objectKey) {
-    return repo.findDecisionStatus(RELATION, subjectKey + "|" + relType + "|" + objectKey).orElse("none");
+    return repo.findDecisionStatus(RELATION, subjectKey + "|" + relType + "|" + objectKey)
+        .orElse("none");
   }
 
   /** 조회 가능한 status 값 — 이 테이블에 실제로 쓰이는 값의 전부다(upsertPending/approve/reject). */
@@ -153,13 +213,11 @@ public class ReviewItemService {
   /**
    * 검수 항목 목록 — status/itemType 필터(둘 다 선택) + page/size(둘 다 선택, opt-in).
    *
-   * <p>status를 생략하면 pending이다(#318 이전의 유일한 동작이자 웹 인박스의 기본값 — 생략을 "전체"로
-   * 해석하면 파라미터 없이 호출하던 기존 호출자의 결과가 조용히 달라진다). 허용되지 않은 값은
-   * IllegalArgumentException(400)으로 거부한다 — 받아놓고 무시하면 조용한 오답이 된다.
+   * <p>status를 생략하면 pending이다(#318 이전의 유일한 동작이자 웹 인박스의 기본값 — 생략을 "전체"로 해석하면 파라미터 없이 호출하던 기존 호출자의
+   * 결과가 조용히 달라진다). 허용되지 않은 값은 IllegalArgumentException(400)으로 거부한다 — 받아놓고 무시하면 조용한 오답이 된다.
    *
-   * <p>size를 생략하면(page도 함께 무시) 기존과 동일하게 전체를 반환한다 — ai-agent(MCP)의
-   * listReviewItems 호출자는 페이지 파라미터를 보내지 않으므로 응답 스키마·개수 모두 그대로다(#422).
-   * size를 주면 1..{@link #MAX_PAGE_SIZE} 범위여야 하고, page는 0 이상이어야 한다.
+   * <p>size를 생략하면(page도 함께 무시) 기존과 동일하게 전체를 반환한다 — ai-agent(MCP)의 listReviewItems 호출자는 페이지 파라미터를
+   * 보내지 않으므로 응답 스키마·개수 모두 그대로다(#422). size를 주면 1..{@link #MAX_PAGE_SIZE} 범위여야 하고, page는 0 이상이어야 한다.
    */
   public List<ReviewItemResponse> list(String status, String itemType, Integer page, Integer size) {
     String effective = (status == null || status.isBlank()) ? "pending" : status;
@@ -178,7 +236,9 @@ public class ReviewItemService {
       }
       offset = effectivePage * size;
     }
-    return repo.findByStatus(effective, itemType, offset, size).stream().map(this::toResponse).toList();
+    return repo.findByStatus(effective, itemType, offset, size).stream()
+        .map(this::toResponse)
+        .toList();
   }
 
   /** 승인 — item_type별 그래프 변경을 먼저 수행하고, 성공해야 status를 approved로 갱신한다(실패 시 pending 유지). */
@@ -188,15 +248,22 @@ public class ReviewItemService {
     // 네 타입 모두 datasetId가 필수다(사유는 requireDatasetId 문서 참고).
     requireDatasetId(row);
     switch (row.itemType()) {
-      case SYNONYM -> mutationClient.mergeEntities(
-          p.path("entityType").asText(), p.path("nameA").asText(), p.path("nameB").asText(), row.datasetId());
+      case SYNONYM ->
+          mutationClient.mergeEntities(
+              p.path("entityType").asText(),
+              p.path("nameA").asText(),
+              p.path("nameB").asText(),
+              row.datasetId());
       case PROPERTY -> {
         if (correctedValue == null || correctedValue.isBlank()) {
           throw new IllegalArgumentException("속성 정규화 승인에는 정정값(correctedValue)이 필요합니다.");
         }
         mutationClient.setProperty(
-            p.path("entityKey").asText(), p.path("propertyName").asText(),
-            p.path("dataType").asText(), correctedValue, row.datasetId());
+            p.path("entityKey").asText(),
+            p.path("propertyName").asText(),
+            p.path("dataType").asText(),
+            correctedValue,
+            row.datasetId());
       }
       case ENTITY -> {
         // as-extracted 타입/이름 그대로 적재(정정 없음). 보류 관계는 add-entity가 끝점 존재 시에만 MERGE.
@@ -204,17 +271,31 @@ public class ReviewItemService {
         List<Long> chunkIds = new ArrayList<>();
         p.path("sourceChunkIds").forEach(n -> chunkIds.add(n.asLong()));
         List<GraphMutationClient.RelationRef> rels = new ArrayList<>();
-        p.path("relations").forEach(r -> rels.add(new GraphMutationClient.RelationRef(
-            r.path("relType").asText(), r.path("direction").asText(), r.path("otherKey").asText())));
-        mutationClient.addEntity(p.path("entityType").asText(), p.path("name").asText(),
-            props.isMissingNode() ? null : props, chunkIds, rels, row.datasetId());
+        p.path("relations")
+            .forEach(
+                r ->
+                    rels.add(
+                        new GraphMutationClient.RelationRef(
+                            r.path("relType").asText(),
+                            r.path("direction").asText(),
+                            r.path("otherKey").asText())));
+        mutationClient.addEntity(
+            p.path("entityType").asText(),
+            p.path("name").asText(),
+            props.isMissingNode() ? null : props,
+            chunkIds,
+            rels,
+            row.datasetId());
       }
       case RELATION -> {
         // as-extracted 관계 그대로 적재. add-relation이 양 끝점 존재 시에만 MERGE.
         List<Long> chunkIds = new ArrayList<>();
         p.path("sourceChunkIds").forEach(n -> chunkIds.add(n.asLong()));
         mutationClient.addRelation(
-            p.path("subjectKey").asText(), p.path("relType").asText(), p.path("objectKey").asText(), chunkIds,
+            p.path("subjectKey").asText(),
+            p.path("relType").asText(),
+            p.path("objectKey").asText(),
+            chunkIds,
             row.datasetId());
       }
       default -> throw new IllegalStateException("알 수 없는 item_type: " + row.itemType());
@@ -234,8 +315,9 @@ public class ReviewItemService {
   // RLS 가 걸린 document_chunk 를 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
   @Transactional(readOnly = true)
   public List<EvidenceChunk> evidence(long id) {
-    ReviewItemRecord row = repo.findById(id)
-        .orElseThrow(() -> new IllegalArgumentException("검수 항목을 찾을 수 없습니다: " + id));
+    ReviewItemRecord row =
+        repo.findById(id)
+            .orElseThrow(() -> new IllegalArgumentException("검수 항목을 찾을 수 없습니다: " + id));
     if (row.datasetId() == null) return List.of();
     JsonNode ids = parse(row.payloadJson()).path("sourceChunkIds");
     if (!ids.isArray() || ids.isEmpty()) return List.of();
@@ -249,14 +331,13 @@ public class ReviewItemService {
   }
 
   /**
-   * 네 항목 타입 모두 ai-agent 호출에 datasetId가 필수다(#678 — "기본 온톨로지" 폴백 제거로 ai-agent가
-   * 온톨로지를 고를 다른 방법이 없어졌다). datasetId가 없는(레거시) 항목을 그대로 호출하면 ai-agent가
-   * 400을 반환하는데, 그건 승인 자체가 pending으로 남아 원인 파악이 어려운 실패다 — 대신 여기서 미리 막아
-   * "왜 승인이 안 되는지" 명확한 사유를 준다.
+   * 네 항목 타입 모두 ai-agent 호출에 datasetId가 필수다(#678 — "기본 온톨로지" 폴백 제거로 ai-agent가 온톨로지를 고를 다른 방법이 없어졌다).
+   * datasetId가 없는(레거시) 항목을 그대로 호출하면 ai-agent가 400을 반환하는데, 그건 승인 자체가 pending으로 남아 원인 파악이 어려운 실패다 —
+   * 대신 여기서 미리 막아 "왜 승인이 안 되는지" 명확한 사유를 준다.
    *
-   * <p>PROPERTY도 예외가 아니게 됐다: set-property가 datasetId로 해소한 온톨로지로 write를 스코프하게
-   * 바뀌었기 때문이다(그 전에는 entityKey만으로 남의 그래프 노드를 덮어쓸 수 있었다). 실적재 경로
-   * (recordPendingProperty)는 항상 datasetId를 채우므로, 막히는 것은 그 이전의 레거시 행뿐이다.
+   * <p>PROPERTY도 예외가 아니게 됐다: set-property가 datasetId로 해소한 온톨로지로 write를 스코프하게 바뀌었기 때문이다(그 전에는
+   * entityKey만으로 남의 그래프 노드를 덮어쓸 수 있었다). 실적재 경로 (recordPendingProperty)는 항상 datasetId를 채우므로, 막히는 것은
+   * 그 이전의 레거시 행뿐이다.
    */
   private void requireDatasetId(ReviewItemRecord row) {
     if (row.datasetId() == null) {
@@ -265,8 +346,9 @@ public class ReviewItemService {
   }
 
   private ReviewItemRecord getPendingOrThrow(long id) {
-    ReviewItemRecord row = repo.findById(id)
-        .orElseThrow(() -> new IllegalArgumentException("검수 항목을 찾을 수 없습니다: " + id));
+    ReviewItemRecord row =
+        repo.findById(id)
+            .orElseThrow(() -> new IllegalArgumentException("검수 항목을 찾을 수 없습니다: " + id));
     if (!"pending".equals(row.status())) {
       throw new IllegalStateException("이미 처리된 항목입니다(status=" + row.status() + "): " + id);
     }
@@ -281,8 +363,15 @@ public class ReviewItemService {
   @SneakyThrows
   private ReviewItemResponse toResponse(ReviewItemRecord r) {
     return new ReviewItemResponse(
-        r.id(), r.itemType(), r.status(), r.datasetId(), r.signalType(), r.signalScore(), r.reason(),
-        parse(r.payloadJson()), r.decidedBy(),
+        r.id(),
+        r.itemType(),
+        r.status(),
+        r.datasetId(),
+        r.signalType(),
+        r.signalScore(),
+        r.reason(),
+        parse(r.payloadJson()),
+        r.decidedBy(),
         r.decidedAt() == null ? null : r.decidedAt().toString(),
         r.createdAt() == null ? null : r.createdAt().toString());
   }

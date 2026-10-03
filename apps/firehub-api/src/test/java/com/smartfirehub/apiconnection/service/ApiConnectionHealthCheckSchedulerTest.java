@@ -33,8 +33,8 @@ class ApiConnectionHealthCheckSchedulerTest {
   @InjectMocks ApiConnectionHealthCheckScheduler scheduler;
 
   /**
-   * 이 단위 테스트는 스케줄러의 라우팅 로직만 보므로 테넌트 순회는 1건으로 단순화한다. 실제 다중
-   * 테넌트 순회 검증은 {@code ApiConnectionTenantTest} 가 담당한다.
+   * 이 단위 테스트는 스케줄러의 라우팅 로직만 보므로 테넌트 순회는 1건으로 단순화한다. 실제 다중 테넌트 순회 검증은 {@code
+   * ApiConnectionTenantTest} 가 담당한다.
    */
   @BeforeEach
   void stubSingleTenantIteration() {

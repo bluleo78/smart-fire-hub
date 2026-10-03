@@ -46,9 +46,8 @@ public class ApiConnectionHealthCheckScheduler {
   /**
    * ACTIVE 테넌트를 순회하며 각 테넌트의 헬스체크 대상을 점검한다.
    *
-   * <p>{@code @Scheduled} 경로에는 원 HTTP 요청이 없어 승계할 테넌트가 없다. 순회하지 않으면
-   * api_connection 의 RLS 정책이 전 행을 차단해 헬스체크가 매번 대상 0건으로 돌고, 예외도 로그도
-   * 없이 UP/DOWN 알림이 영구히 누락된다.
+   * <p>{@code @Scheduled} 경로에는 원 HTTP 요청이 없어 승계할 테넌트가 없다. 순회하지 않으면 api_connection 의 RLS 정책이 전 행을
+   * 차단해 헬스체크가 매번 대상 0건으로 돌고, 예외도 로그도 없이 UP/DOWN 알림이 영구히 누락된다.
    */
   @Scheduled(fixedDelay = FIXED_DELAY_MS, initialDelay = INITIAL_DELAY_MS)
   public void runOnce() {
@@ -56,8 +55,7 @@ public class ApiConnectionHealthCheckScheduler {
   }
 
   /**
-   * 한 테넌트 범위의 헬스체크 본문. 호출 시점에 {@link com.smartfirehub.global.tenant.TenantContext}
-   * 가 설정돼 있어야 한다.
+   * 한 테넌트 범위의 헬스체크 본문. 호출 시점에 {@link com.smartfirehub.global.tenant.TenantContext} 가 설정돼 있어야 한다.
    *
    * <p>각 연결을 독립적으로 처리하여 한 연결의 실패가 나머지 순회를 중단시키지 않도록 try-catch로 격리한다.
    */

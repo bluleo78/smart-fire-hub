@@ -144,8 +144,8 @@ class ProactiveJobExecutionRepositoryTest extends IntegrationTestBase {
   /**
    * findSummariesByJobId 통합 테스트 (#604).
    *
-   * <p>목록 endpoint 전용 경량 뷰가 리포트 본문(result)을 아예 담지 않으면서도 상태/시간 등 요약 정보와
-   * limit/offset 페이징은 findByJobId와 동일하게 동작하는지 검증한다.
+   * <p>목록 endpoint 전용 경량 뷰가 리포트 본문(result)을 아예 담지 않으면서도 상태/시간 등 요약 정보와 limit/offset 페이징은
+   * findByJobId와 동일하게 동작하는지 검증한다.
    */
   @Test
   void findSummariesByJobId_excludesResultButKeepsSummaryFields() {
@@ -175,7 +175,9 @@ class ProactiveJobExecutionRepositoryTest extends IntegrationTestBase {
     List<ProactiveJobExecutionSummaryResponse> page1 = repository.findSummariesByJobId(jobId, 2, 0);
     List<ProactiveJobExecutionSummaryResponse> page2 = repository.findSummariesByJobId(jobId, 2, 2);
 
-    assertThat(page1).extracting(ProactiveJobExecutionSummaryResponse::id).containsExactly(third, second);
+    assertThat(page1)
+        .extracting(ProactiveJobExecutionSummaryResponse::id)
+        .containsExactly(third, second);
     assertThat(page2).extracting(ProactiveJobExecutionSummaryResponse::id).containsExactly(first);
   }
 }

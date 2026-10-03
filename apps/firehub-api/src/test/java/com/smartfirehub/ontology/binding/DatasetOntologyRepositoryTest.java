@@ -54,7 +54,8 @@ class DatasetOntologyRepositoryTest extends IntegrationTestBase {
               tx,
               DEFAULT_TEST_TENANT_ID,
               () ->
-                  dsl.selectCount().from(table(name("dataset_ontology")))
+                  dsl.selectCount()
+                      .from(table(name("dataset_ontology")))
                       .where(field(name("dataset_id"), Long.class).eq(datasetId))
                       .fetchOne(0, int.class));
       assertThat(rows).isEqualTo(1); // UNIQUE(dataset_id) — 중복 행 없음.

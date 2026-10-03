@@ -27,26 +27,22 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
 /**
- * V122 마이그레이션(옛 3키 {@code ai.api_key}/{@code ai.cli_oauth_token}/{@code ai.agent_type} →
- * {@code ai.credential} 통합) 검증.
+ * V122 마이그레이션(옛 3키 {@code ai.api_key}/{@code ai.cli_oauth_token}/{@code ai.agent_type} → {@code
+ * ai.credential} 통합) 검증.
  *
- * <p><b>왜 SQL 을 "재생(replay)"하는가.</b> Flyway 는 forward-only 라 테스트 DB 부팅 시 V122 가
- * 이미 적용돼 있다. 그런데 부팅 시점의 {@code tenant_settings} 는 0행이다(어떤 마이그레이션도
- * 테넌트 평면에 옛 3키를 시드하지 않는다) — 그래서 테넌트 평면 변환 로직은 "실제로 부팅된 결과"만
- * 봐서는 검증할 수 없다. 이 테스트는 V122 파일 본문을 <b>그대로 읽어</b> 잘라낸 문(statement)을
- * 재실행한다 — 변환 규칙을 테스트 쪽에 다시 베껴 쓰지 않으므로, 파일이 바뀌면(뮤테이션이든 실수든)
- * 이 테스트도 그대로 반응한다.
+ * <p><b>왜 SQL 을 "재생(replay)"하는가.</b> Flyway 는 forward-only 라 테스트 DB 부팅 시 V122 가 이미 적용돼 있다. 그런데 부팅
+ * 시점의 {@code tenant_settings} 는 0행이다(어떤 마이그레이션도 테넌트 평면에 옛 3키를 시드하지 않는다) — 그래서 테넌트 평면 변환 로직은 "실제로
+ * 부팅된 결과"만 봐서는 검증할 수 없다. 이 테스트는 V122 파일 본문을 <b>그대로 읽어</b> 잘라낸 문(statement)을 재실행한다 — 변환 규칙을 테스트 쪽에
+ * 다시 베껴 쓰지 않으므로, 파일이 바뀌면(뮤테이션이든 실수든) 이 테스트도 그대로 반응한다.
  *
- * <p><b>테넌트 평면 재생은 RLS 로 안전하다.</b> {@code app_tenant} 커넥션에서 GUC 를 테스트 전용
- * 테넌트로 좁혀 두고 재생하므로, {@code INSERT ... SELECT ... GROUP BY} 가 "보는" 행은 그 테넌트
- * 행뿐이다 — 공유 테스트 DB 의 다른 테넌트를 건드리지 않는다(V114 의 RLS 정책이 owner 가 아닌
- * app_tenant 에는 그대로 걸린다).
+ * <p><b>테넌트 평면 재생은 RLS 로 안전하다.</b> {@code app_tenant} 커넥션에서 GUC 를 테스트 전용 테넌트로 좁혀 두고 재생하므로, {@code
+ * INSERT ... SELECT ... GROUP BY} 가 "보는" 행은 그 테넌트 행뿐이다 — 공유 테스트 DB 의 다른 테넌트를 건드리지 않는다(V114 의 RLS
+ * 정책이 owner 가 아닌 app_tenant 에는 그대로 걸린다).
  *
- * <p><b>플랫폼 평면({@code system_settings}) 변환 테스트는 없앴다(#706).</b> V126 이 V122 가 만든
- * 플랫폼 {@code ai.credential} 과 옛 플랫폼 3키를 전부 지우고, 애플리케이션도 더 이상 플랫폼 행을
- * 읽지 않는다 — V122 의 플랫폼 변환 결과는 어디에도 쓰이지 않는 이력이 됐다. 테스트 DB 에도 그
- * 행들이 없어 재생할 입력 자체가 없다. V122 의 가드 DO 블록은 여전히 {@code system_settings} 를
- * 검사하지만, 행이 없으면 그 분기는 통과한다.
+ * <p><b>플랫폼 평면({@code system_settings}) 변환 테스트는 없앴다(#706).</b> V126 이 V122 가 만든 플랫폼 {@code
+ * ai.credential} 과 옛 플랫폼 3키를 전부 지우고, 애플리케이션도 더 이상 플랫폼 행을 읽지 않는다 — V122 의 플랫폼 변환 결과는 어디에도 쓰이지 않는 이력이
+ * 됐다. 테스트 DB 에도 그 행들이 없어 재생할 입력 자체가 없다. V122 의 가드 DO 블록은 여전히 {@code system_settings} 를 검사하지만, 행이
+ * 없으면 그 분기는 통과한다.
  */
 class AiCredentialMigrationTest extends IntegrationTestBase {
 
@@ -85,7 +81,8 @@ class AiCredentialMigrationTest extends IntegrationTestBase {
 
   private static String loadMigrationSql() {
     try (InputStream in =
-        AiCredentialMigrationTest.class.getResourceAsStream("/db/migration/V122__ai_credential.sql")) {
+        AiCredentialMigrationTest.class.getResourceAsStream(
+            "/db/migration/V122__ai_credential.sql")) {
       if (in == null) throw new IllegalStateException("V122 마이그레이션 파일을 찾을 수 없다");
       return new String(in.readAllBytes(), StandardCharsets.UTF_8);
     } catch (IOException e) {
@@ -94,19 +91,15 @@ class AiCredentialMigrationTest extends IntegrationTestBase {
   }
 
   /**
-   * {@code full} 안에서 {@code startMarker}(첫 등장, {@code fromIndex} 이후) ~ {@code endMarker}
-   * 까지를 잘라낸다.
+   * {@code full} 안에서 {@code startMarker}(첫 등장, {@code fromIndex} 이후) ~ {@code endMarker} 까지를 잘라낸다.
    *
-   * <p><b>취약점(실측했다).</b> {@code GUARD_SQL}/{@code ASSERT_SQL} 은 둘 다 "DO $$ ... END $$;"
-   * 모양이라 이 헬퍼가 마커로 구분하지 못한다 — {@code fromIndex} 로 순서를 강제해 구분할 뿐이다.
-   * 파일에서 가드 DO 블록 전체를 지우는 뮤테이션 검사를 실제로 돌려 보니(2026-09-19), "DO $$"가
-   * 파일에 하나만 남아 {@code ASSERT_SQL} 을 잘라내는 {@code segment(..., "DO $$", afterGuard,
-   * ...)} 호출이 시작 마커를 못 찾고 {@link IllegalStateException} 을 던졌다 — 이게 정적 초기화
-   * 블록 안에서 일어나 클래스 전체가 {@code ExceptionInInitializerError} 로 로드 실패한다(가드
-   * 테스트 하나만이 아니라 이 클래스의 7개 테스트 전부가 그 실행에서 함께 깨진다). 여전히 RED 는
-   * 뜨지만 "opencode" 메시지와는 전혀 무관한 이유이고 실패 범위도 훨씬 넓다 — 파일에 테스트
-   * 전용 앵커 주석을 넣지 않기로 한 대가다. 이 파일이 "DO $$ 블록 정확히 2개" 불변식을 벗어나면
-   * (블록을 지우든 더 추가하든) 이 헬퍼부터 다시 봐야 한다.
+   * <p><b>취약점(실측했다).</b> {@code GUARD_SQL}/{@code ASSERT_SQL} 은 둘 다 "DO $$ ... END $$;" 모양이라 이 헬퍼가
+   * 마커로 구분하지 못한다 — {@code fromIndex} 로 순서를 강제해 구분할 뿐이다. 파일에서 가드 DO 블록 전체를 지우는 뮤테이션 검사를 실제로 돌려
+   * 보니(2026-09-19), "DO $$"가 파일에 하나만 남아 {@code ASSERT_SQL} 을 잘라내는 {@code segment(..., "DO $$",
+   * afterGuard, ...)} 호출이 시작 마커를 못 찾고 {@link IllegalStateException} 을 던졌다 — 이게 정적 초기화 블록 안에서 일어나
+   * 클래스 전체가 {@code ExceptionInInitializerError} 로 로드 실패한다(가드 테스트 하나만이 아니라 이 클래스의 7개 테스트 전부가 그 실행에서
+   * 함께 깨진다). 여전히 RED 는 뜨지만 "opencode" 메시지와는 전혀 무관한 이유이고 실패 범위도 훨씬 넓다 — 파일에 테스트 전용 앵커 주석을 넣지 않기로 한
+   * 대가다. 이 파일이 "DO $$ 블록 정확히 2개" 불변식을 벗어나면 (블록을 지우든 더 추가하든) 이 헬퍼부터 다시 봐야 한다.
    */
   private static String segment(String full, String startMarker, int fromIndex, String endMarker) {
     int start = full.indexOf(startMarker, fromIndex);
@@ -151,7 +144,9 @@ class AiCredentialMigrationTest extends IntegrationTestBase {
         () ->
             Optional.ofNullable(
                     dsl.fetchOne(
-                        "select value from tenant_settings where tenant_id = ? and key = ?", tenantId, key))
+                        "select value from tenant_settings where tenant_id = ? and key = ?",
+                        tenantId,
+                        key))
                 .map(r -> r.get(0, String.class)));
   }
 

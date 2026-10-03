@@ -8,9 +8,9 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 /**
  * {@code tenant_settings.embedding.config} JSON 문서 형태의 단일 출처.
  *
- * <p>형태: {@code {v:1, provider, model, baseUrl, dimension, secret:{apiKey:<암호문>}}}. 비밀은
- * {@code secret} 하위에만 두어 {@code AiCredentialDocument} 와 같은 규칙(비밀은 하위 필드, 범용 경로 금지)을
- * 따른다. 암호화·복호화는 이 클래스가 하지 않는다 — {@link EmbeddingConfigService} 한 곳에서만 한다.
+ * <p>형태: {@code {v:1, provider, model, baseUrl, dimension, secret:{apiKey:<암호문>}}}. 비밀은 {@code
+ * secret} 하위에만 두어 {@code AiCredentialDocument} 와 같은 규칙(비밀은 하위 필드, 범용 경로 금지)을 따른다. 암호화·복호화는 이 클래스가
+ * 하지 않는다 — {@link EmbeddingConfigService} 한 곳에서만 한다.
  */
 final class EmbeddingConfigDocument {
 
@@ -21,10 +21,18 @@ final class EmbeddingConfigDocument {
 
   /** 파싱 결과. {@code apiKeyCipher} 는 암호문(없으면 빈 문자열). */
   record Parsed(
-      EmbeddingProviderType provider, String model, String baseUrl, int dimension, String apiKeyCipher) {}
+      EmbeddingProviderType provider,
+      String model,
+      String baseUrl,
+      int dimension,
+      String apiKeyCipher) {}
 
   static String toJson(
-      EmbeddingProviderType provider, String model, String baseUrl, int dimension, String apiKeyCipher) {
+      EmbeddingProviderType provider,
+      String model,
+      String baseUrl,
+      int dimension,
+      String apiKeyCipher) {
     ObjectNode root = MAPPER.createObjectNode();
     root.put("v", VERSION);
     root.put("provider", provider.name());

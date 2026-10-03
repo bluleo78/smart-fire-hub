@@ -38,9 +38,8 @@ class PlatformTokenPlaneTest extends IntegrationTestBase {
   /**
    * 플랫폼 토큰에는 tenant 클레임이 없어야 한다.
    *
-   * <p>왜 중요한가: tenant 클레임이 실리면 JwtAuthenticationFilter 가 TenantContext 를 세우고, 운영자
-   * 요청이 특정 테넌트의 RLS 안에서 실행된다. 운영자 평면은 전역 테이블만 만지므로 컨텍스트가 비어
-   * 있어야 하고, 비어 있음이 곧 fail-closed 다.
+   * <p>왜 중요한가: tenant 클레임이 실리면 JwtAuthenticationFilter 가 TenantContext 를 세우고, 운영자 요청이 특정 테넌트의 RLS
+   * 안에서 실행된다. 운영자 평면은 전역 테이블만 만지므로 컨텍스트가 비어 있어야 하고, 비어 있음이 곧 fail-closed 다.
    */
   @Test
   void platformTokenCarriesPlatformFlagAndNoTenant() {
@@ -99,19 +98,17 @@ class PlatformTokenPlaneTest extends IntegrationTestBase {
   /**
    * 필터가 플랫폼 토큰으로 <b>{@link PlatformAuthentication} 과 플랫폼 권한</b>을 세우는지 검증한다.
    *
-   * <p><b>이 테스트가 평면 분기의 유일한 커버리지다.</b> 위의 단위 검증들은 발급기와 리포지토리만
-   * 만지므로, 필터에서 {@code if (principal.platform())} 블록을 지워도 전부 통과한다. 아래
-   * {@code platformTokenIsAuthenticatedAtAll} 도 마찬가지다 — 분기가 없으면 테넌트 경로가
-   * {@code TenantContext.set(null)} 로 흐르고, GUC 미설정 탓에 테넌트 권한 조회가 0행이 되어 <b>권한이
-   * 빈 채로 인증은 서므로</b> 그 요청도 여전히 404 다.
+   * <p><b>이 테스트가 평면 분기의 유일한 커버리지다.</b> 위의 단위 검증들은 발급기와 리포지토리만 만지므로, 필터에서 {@code if
+   * (principal.platform())} 블록을 지워도 전부 통과한다. 아래 {@code platformTokenIsAuthenticatedAtAll} 도 마찬가지다 —
+   * 분기가 없으면 테넌트 경로가 {@code TenantContext.set(null)} 로 흐르고, GUC 미설정 탓에 테넌트 권한 조회가 0행이 되어 <b>권한이 빈 채로
+   * 인증은 서므로</b> 그 요청도 여전히 404 다.
    *
-   * <p>두 분기를 실제로 가르는 것은 (1) Authentication 의 <b>타입</b>과 (2) 실린 <b>권한 집합</b>
-   * 둘뿐이라 그 둘을 단언한다. {@code TenantContext} 로는 가를 수 없다 — {@code set(null)} 과 "세우지
-   * 않음"이 구별되지 않고, {@link IntegrationTestBase} 가 {@code @BeforeEach} 로 테넌트 1 을 미리
-   * 세워 두기 때문이다.
+   * <p>두 분기를 실제로 가르는 것은 (1) Authentication 의 <b>타입</b>과 (2) 실린 <b>권한 집합</b> 둘뿐이라 그 둘을 단언한다. {@code
+   * TenantContext} 로는 가를 수 없다 — {@code set(null)} 과 "세우지 않음"이 구별되지 않고, {@link IntegrationTestBase}
+   * 가 {@code @BeforeEach} 로 테넌트 1 을 미리 세워 두기 때문이다.
    *
-   * <p>MockMvc 가 아니라 필터를 직접 호출하고 <b>체인 안에서</b> 컨텍스트를 캡처한다 — 필터는
-   * {@code finally} 에서 컨텍스트를 정리하므로 호출이 끝난 뒤에 보면 이미 비어 있다.
+   * <p>MockMvc 가 아니라 필터를 직접 호출하고 <b>체인 안에서</b> 컨텍스트를 캡처한다 — 필터는 {@code finally} 에서 컨텍스트를 정리하므로 호출이
+   * 끝난 뒤에 보면 이미 비어 있다.
    */
   @Test
   void platformTokenYieldsPlatformAuthenticationWithPlatformAuthorities() throws Exception {
@@ -137,9 +134,8 @@ class PlatformTokenPlaneTest extends IntegrationTestBase {
   /**
    * 플랫폼 토큰이 인증 자체를 통과하는지(=401 이 아닌지)만 보는 얕은 가드.
    *
-   * <p>Task 2 의 {@code PlatformPlaneSecurityTest} 가 "토큰 없으면 401" 을 잡으므로 그 반대편을 잡아
-   * 둔다. 경로가 아직 없어 404 가 정상 — Task 4/5 가 컨트롤러를 붙인다. <b>평면 분기의 증거는 아니다</b>
-   * (위 테스트 주석 참고).
+   * <p>Task 2 의 {@code PlatformPlaneSecurityTest} 가 "토큰 없으면 401" 을 잡으므로 그 반대편을 잡아 둔다. 경로가 아직 없어 404
+   * 가 정상 — Task 4/5 가 컨트롤러를 붙인다. <b>평면 분기의 증거는 아니다</b> (위 테스트 주석 참고).
    */
   @Test
   void platformTokenIsAuthenticatedAtAll() throws Exception {
@@ -154,8 +150,7 @@ class PlatformTokenPlaneTest extends IntegrationTestBase {
   /** 플랫폼 SUPER_ADMIN 을 가진 사용자를 만든다. test DB 는 platform_user_role 이 0행이다. */
   private long createUserWithSuperAdmin() {
     long userId =
-        TenantRlsTestSupport.insertUserWithPassword(
-            dsl, "p7a-tok-" + System.nanoTime(), "{noop}x");
+        TenantRlsTestSupport.insertUserWithPassword(dsl, "p7a-tok-" + System.nanoTime(), "{noop}x");
     TenantRlsTestSupport.grantPlatformSuperAdmin(dsl, userId);
     return userId;
   }

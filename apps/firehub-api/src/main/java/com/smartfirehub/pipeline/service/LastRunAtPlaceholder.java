@@ -8,12 +8,12 @@ import java.util.regex.Pattern;
 /**
  * SQL 스텝 증분 처리 플레이스홀더 {@code {{last_run_at}}} 을 감지·치환한다.
  *
- * <p>값은 엔진이 만든 타임스탬프뿐이라 SQL 주입 위험이 없다. null(첫 실행·전체 재생성)은 {@code -infinity} 로 바꿔 전체를
- * 읽게 한다. 마이크로초를 잃으면 경계 행({@code _updated_at} = 책갈피)을 놓치므로 포맷에서 정밀도를 보존한다.
+ * <p>값은 엔진이 만든 타임스탬프뿐이라 SQL 주입 위험이 없다. null(첫 실행·전체 재생성)은 {@code -infinity} 로 바꿔 전체를 읽게 한다. 마이크로초를
+ * 잃으면 경계 행({@code _updated_at} = 책갈피)을 놓치므로 포맷에서 정밀도를 보존한다.
  *
- * <p><b>경계 규약은 {@code >=} 다.</b> 사용자 SQL 은 반드시 {@code _updated_at >= {{last_run_at}}} 으로 쓴다 —
- * 책갈피와 정확히 같은 시각의 행은 "이미 읽었을 수도, 아직 커밋되지 않았을 수도" 있으므로 다시 읽어야 한다.
- * 중복 읽기는 MERGE 의 멱등성이 흡수하지만, 건너뛴 행은 영원히 복구되지 않는다.
+ * <p><b>경계 규약은 {@code >=} 다.</b> 사용자 SQL 은 반드시 {@code _updated_at >= {{last_run_at}}} 으로 쓴다 — 책갈피와
+ * 정확히 같은 시각의 행은 "이미 읽었을 수도, 아직 커밋되지 않았을 수도" 있으므로 다시 읽어야 한다. 중복 읽기는 MERGE 의 멱등성이 흡수하지만, 건너뛴 행은 영원히
+ * 복구되지 않는다.
  */
 public final class LastRunAtPlaceholder {
 
@@ -33,10 +33,10 @@ public final class LastRunAtPlaceholder {
   /**
    * 스텝이 증분 스텝인지 판정한다 — "SQL 스텝이면서 {@code {{last_run_at}}} 을 쓴다".
    *
-   * <p>실행기(PipelineAsyncRunner)는 이 조건일 때만 증분 경로를 타고 그 경로에서만 전체 재생성 예약을
-   * 소비·해제한다. 그래서 저장 검증·예약 이월(updatePipeline)·예약 API(setFullRebuildPending)가 모두 이
-   * 한 판정을 써야 한다(#739). 판정이 어긋나면(예: PYTHON 스크립트 주석 속 {@code {{last_run_at}}}) 화면에
-   * 안 보이고 해제도 안 되는 예약이 생겼다가, 나중에 증분 SQL 로 바꾸는 순간 이월되어 확인 없이 출력을 지운다.
+   * <p>실행기(PipelineAsyncRunner)는 이 조건일 때만 증분 경로를 타고 그 경로에서만 전체 재생성 예약을 소비·해제한다. 그래서 저장 검증·예약
+   * 이월(updatePipeline)·예약 API(setFullRebuildPending)가 모두 이 한 판정을 써야 한다(#739). 판정이 어긋나면(예: PYTHON
+   * 스크립트 주석 속 {@code {{last_run_at}}}) 화면에 안 보이고 해제도 안 되는 예약이 생겼다가, 나중에 증분 SQL 로 바꾸는 순간 이월되어 확인 없이
+   * 출력을 지운다.
    *
    * @param scriptType 스텝 스크립트 타입(SQL/PYTHON/API_CALL 등)
    * @param scriptContent 스크립트 본문(실행기에서는 스텝 참조 치환 후 SQL — 플레이스홀더 유무는 치환과 무관)

@@ -12,13 +12,11 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * 관리자용 데이터셋 검색 인덱스 백필 오케스트레이터.
  *
- * <p>{@link DatasetEmbeddingService} 의 3-arg 단위테스트 시그니처를 보존하기 위해 백필(잡 스케줄러 의존) 로직은
- * 별도 서비스로 분리했다.
+ * <p>{@link DatasetEmbeddingService} 의 3-arg 단위테스트 시그니처를 보존하기 위해 백필(잡 스케줄러 의존) 로직은 별도 서비스로 분리했다.
  *
- * <p>동작: (1) 모든 데이터셋 id 의 {@code syncSourceText} 를 먼저 동기 실행해 키워드 검색을 즉시 가능케 한 뒤,
- * (2) {@code reindexEmbedding} 을 데이터셋별 잡으로 enqueue 해 비용이 큰 임베딩 생성을 비동기 분산한다.
- * Jobrunr 는 빈 메서드 참조 람다를 직렬화해 백그라운드에서 해당 빈 메서드를 호출한다
- * (DocumentIngestionService.processIngestion 과 동일 메커니즘).
+ * <p>동작: (1) 모든 데이터셋 id 의 {@code syncSourceText} 를 먼저 동기 실행해 키워드 검색을 즉시 가능케 한 뒤, (2) {@code
+ * reindexEmbedding} 을 데이터셋별 잡으로 enqueue 해 비용이 큰 임베딩 생성을 비동기 분산한다. Jobrunr 는 빈 메서드 참조 람다를 직렬화해
+ * 백그라운드에서 해당 빈 메서드를 호출한다 (DocumentIngestionService.processIngestion 과 동일 메커니즘).
  */
 @Service
 @RequiredArgsConstructor
@@ -30,8 +28,8 @@ public class DatasetEmbeddingBackfillService {
   private final JobScheduler jobScheduler;
 
   /**
-   * 모든 데이터셋의 source_text 만 동기 적재한다. 재임베딩 판정식의 모집단(dataset_embedding 행)을 채워, 행이 없던
-   * 데이터셋도 전체 재임베딩 대상이 되게 한다(reindex-all 전용 — 벡터는 TenantReembedJob 이 만든다).
+   * 모든 데이터셋의 source_text 만 동기 적재한다. 재임베딩 판정식의 모집단(dataset_embedding 행)을 채워, 행이 없던 데이터셋도 전체 재임베딩 대상이
+   * 되게 한다(reindex-all 전용 — 벡터는 TenantReembedJob 이 만든다).
    */
   @Transactional
   public int syncAllSourceText() {
@@ -69,8 +67,8 @@ public class DatasetEmbeddingBackfillService {
   }
 
   /**
-   * 모든 데이터셋의 source_text 를 동기 적재하고 처리한 id 목록을 돌려준다 — 두 공개 메서드의 공통 루프. 호출자의
-   * 트랜잭션 안에서 돈다(자기 호출이라 별도 프록시 경계 없음).
+   * 모든 데이터셋의 source_text 를 동기 적재하고 처리한 id 목록을 돌려준다 — 두 공개 메서드의 공통 루프. 호출자의 트랜잭션 안에서 돈다(자기 호출이라 별도
+   * 프록시 경계 없음).
    */
   private List<Long> syncSourceTextOfAll() {
     List<Long> ids = metaReader.findAllIds();

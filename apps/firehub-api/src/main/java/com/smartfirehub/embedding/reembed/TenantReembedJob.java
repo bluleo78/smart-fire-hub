@@ -24,15 +24,14 @@ import org.jobrunr.scheduling.JobScheduler;
 import org.springframework.stereotype.Service;
 
 /**
- * 테넌트 전량 재임베딩(스펙 §4). 현재 차원 테이블에 현재 모델 벡터가 없는 청크·데이터셋을 64건씩 임베딩해 옮기고,
- * 끝나면 다른 차원 테이블의 잔여 행을 정리한다.
+ * 테넌트 전량 재임베딩(스펙 §4). 현재 차원 테이블에 현재 모델 벡터가 없는 청크·데이터셋을 64건씩 임베딩해 옮기고, 끝나면 다른 차원 테이블의 잔여 행을 정리한다.
  *
- * <p><b>동시 실행 방지는 임대 행으로 한다.</b> JobRunr 고정 잡 ID 는 쓰지 않는다 — JobRunr 7 은 같은 id 재투입을
- * 무시해(성공 잡 보관 36시간) A→B→A 전환의 두 번째 A 가 조용히 버려진다. 임대를 못 잡으면
- * {@link ReembedBusyException} 으로 실패해 JobRunr 재시도가 이어받는다.
+ * <p><b>동시 실행 방지는 임대 행으로 한다.</b> JobRunr 고정 잡 ID 는 쓰지 않는다 — JobRunr 7 은 같은 id 재투입을 무시해(성공 잡 보관
+ * 36시간) A→B→A 전환의 두 번째 A 가 조용히 버려진다. 임대를 못 잡으면 {@link ReembedBusyException} 으로 실패해 JobRunr 재시도가
+ * 이어받는다.
  *
- * <p><b>멱등.</b> "현재 모델 벡터 없음" 기준이라 중단 뒤 다시 돌면 남은 것만 처리한다. 배치마다 설정을 다시 읽어
- * 공간이 바뀌었으면 SUPERSEDED 로 멈추고 임대를 푼 뒤 자기 자신을 다시 투입한다(새 설정 공간으로 이어받는다).
+ * <p><b>멱등.</b> "현재 모델 벡터 없음" 기준이라 중단 뒤 다시 돌면 남은 것만 처리한다. 배치마다 설정을 다시 읽어 공간이 바뀌었으면 SUPERSEDED 로 멈추고
+ * 임대를 푼 뒤 자기 자신을 다시 투입한다(새 설정 공간으로 이어받는다).
  */
 @Slf4j
 @Service
@@ -52,11 +51,14 @@ public class TenantReembedJob {
   private final JobScheduler jobScheduler;
 
   /** 한 단계(청크·데이터셋)의 결말 — 끝까지 갔는지, 설정 변경으로 멈췄는지. */
-  private enum Outcome { COMPLETED, SUPERSEDED }
+  private enum Outcome {
+    COMPLETED,
+    SUPERSEDED
+  }
 
   /**
-   * 잡을 투입한다. 호출자 트랜잭션이 있으면 커밋 뒤로 미룬다 — JobRunr 는 자기 커넥션을 쓰므로 커밋 전에 투입하면 워커가
-   * 아직 보이지 않는 설정을 읽는다(DocumentIngestionService 와 같은 가드).
+   * 잡을 투입한다. 호출자 트랜잭션이 있으면 커밋 뒤로 미룬다 — JobRunr 는 자기 커넥션을 쓰므로 커밋 전에 투입하면 워커가 아직 보이지 않는 설정을
+   * 읽는다(DocumentIngestionService 와 같은 가드).
    */
   public void enqueue(long tenantId) {
     AfterCommitRunner.run(() -> jobScheduler.enqueue(() -> run(tenantId)));
@@ -65,7 +67,8 @@ public class TenantReembedJob {
   /** 관리자 "전체 재임베딩": source_text 를 먼저 채워 모집단을 맞춘 뒤 대상 수를 돌려주고 잡을 투입한다. */
   public EmbeddingImpact requestReindexAll() {
     long tenantId = TenantContext.require("전체 재임베딩");
-    EmbeddingSpace space = configService.currentSpace().orElseThrow(EmbeddingNotConfiguredException::new);
+    EmbeddingSpace space =
+        configService.currentSpace().orElseThrow(EmbeddingNotConfiguredException::new);
     datasetBackfillService.syncAllSourceText();
     EmbeddingImpact impact = backlogService.impact(space);
     enqueue(tenantId);
@@ -73,9 +76,8 @@ public class TenantReembedJob {
   }
 
   /**
-   * 잡 진입점. {@code @Transactional} 을 붙이지 않는다 — 본문 전에 트랜잭션이 열리면 GUC 가 이미 늦고, 외부 임베딩
-   * 호출 동안 커넥션을 쥔다. 테넌트는 페이로드로 받아 여기서 세운다
-   * (DatasetEmbeddingService.reindexEmbedding(datasetId, tenantId) 선례).
+   * 잡 진입점. {@code @Transactional} 을 붙이지 않는다 — 본문 전에 트랜잭션이 열리면 GUC 가 이미 늦고, 외부 임베딩 호출 동안 커넥션을 쥔다.
+   * 테넌트는 페이로드로 받아 여기서 세운다 (DatasetEmbeddingService.reindexEmbedding(datasetId, tenantId) 선례).
    */
   @Job(name = "Tenant embedding reembed: tenant %0")
   public void run(long tenantId) {
@@ -142,8 +144,8 @@ public class TenantReembedJob {
   }
 
   /**
-   * 판정식 대상 청크를 키셋(id) 순으로 BATCH 건씩 임베딩해 현재 차원 테이블로 옮긴다. 배치마다 설정을 다시 보고 임대를
-   * 늘린다. 한 배치의 청크 id 수는 BATCH 이하라 저장소의 IN 바인드 한도에 닿지 않는다.
+   * 판정식 대상 청크를 키셋(id) 순으로 BATCH 건씩 임베딩해 현재 차원 테이블로 옮긴다. 배치마다 설정을 다시 보고 임대를 늘린다. 한 배치의 청크 id 수는
+   * BATCH 이하라 저장소의 IN 바인드 한도에 닿지 않는다.
    */
   private Outcome reembedChunks(EmbeddingProvider provider, EmbeddingSpace space) {
     long afterId = 0L;
@@ -152,7 +154,8 @@ public class TenantReembedJob {
       List<ChunkContent> batch = chunkRepository.findMissing(space, afterId, BATCH);
       if (batch.isEmpty()) return Outcome.COMPLETED;
       List<float[]> vectors = provider.embed(batch.stream().map(ChunkContent::content).toList());
-      chunkRepository.upsertEmbeddings(space, batch.stream().map(ChunkContent::chunkId).toList(), vectors);
+      chunkRepository.upsertEmbeddings(
+          space, batch.stream().map(ChunkContent::chunkId).toList(), vectors);
       afterId = batch.get(batch.size() - 1).chunkId();
       stateRepository.renewLease(LEASE);
     }
@@ -165,9 +168,11 @@ public class TenantReembedJob {
       if (superseded(space)) return Outcome.SUPERSEDED;
       List<SourceTextRow> batch = datasetRepository.findMissing(space, afterId, BATCH);
       if (batch.isEmpty()) return Outcome.COMPLETED;
-      List<float[]> vectors = provider.embed(batch.stream().map(SourceTextRow::sourceText).toList());
+      List<float[]> vectors =
+          provider.embed(batch.stream().map(SourceTextRow::sourceText).toList());
       // 배치당 한 번(한 트랜잭션) — 행마다 부르면 트랜잭션이 BATCH 회 열린다.
-      datasetRepository.upsertEmbeddings(space, batch.stream().map(SourceTextRow::datasetId).toList(), vectors);
+      datasetRepository.upsertEmbeddings(
+          space, batch.stream().map(SourceTextRow::datasetId).toList(), vectors);
       afterId = batch.get(batch.size() - 1).datasetId();
       stateRepository.renewLease(LEASE);
     }

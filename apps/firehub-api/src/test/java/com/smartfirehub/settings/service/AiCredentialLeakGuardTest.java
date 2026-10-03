@@ -21,15 +21,13 @@ import org.springframework.beans.factory.annotation.Autowired;
 /**
  * {@code ai.credential} 이 범용 설정 경로로 유출·우회되지 않는지 고정한다(Task 3).
  *
- * <p>이 키는 {@link SettingsService#SECRET_KEYS} 의 원소가 아니다(비밀이 최상위 값이 아니라
- * 하위 필드에 있다) — 아무 조치도 하지 않으면 {@code getAll}/{@code getResolvedByPrefix}/
- * {@code getAsMap} 이 이 JSON 값을(비밀 하위 필드의 AES 암호문까지) 그대로 내보낸다. 이 키는
- * 테넌트 전용 값(#706)이라 {@code tenant_settings} 행으로 실재하고, V126 이전 DB 에는
- * {@code system_settings} 행도 남아 있을 수 있다 — 두 저장소 모두에 시드해 두고 본다.
+ * <p>이 키는 {@link SettingsService#SECRET_KEYS} 의 원소가 아니다(비밀이 최상위 값이 아니라 하위 필드에 있다) — 아무 조치도 하지 않으면
+ * {@code getAll}/{@code getResolvedByPrefix}/ {@code getAsMap} 이 이 JSON 값을(비밀 하위 필드의 AES 암호문까지) 그대로
+ * 내보낸다. 이 키는 테넌트 전용 값(#706)이라 {@code tenant_settings} 행으로 실재하고, V126 이전 DB 에는 {@code
+ * system_settings} 행도 남아 있을 수 있다 — 두 저장소 모두에 시드해 두고 본다.
  *
- * <p><b>정리 방식은 {@code AiCredentialServiceTest} 와 같다</b>(플랫폼 행 캡처·원복, 테넌트 행
- * 삭제) — 공유 테스트 DB 에 이 클래스가 심은 {@code ai.credential} 이 남으면 기본 테넌트(1번)를
- * 쓰는 다른 테스트의 {@code resolve()} 가 영향을 받는다.
+ * <p><b>정리 방식은 {@code AiCredentialServiceTest} 와 같다</b>(플랫폼 행 캡처·원복, 테넌트 행 삭제) — 공유 테스트 DB 에 이 클래스가
+ * 심은 {@code ai.credential} 이 남으면 기본 테넌트(1번)를 쓰는 다른 테스트의 {@code resolve()} 가 영향을 받는다.
  */
 class AiCredentialLeakGuardTest extends IntegrationTestBase {
 
@@ -82,11 +80,10 @@ class AiCredentialLeakGuardTest extends IntegrationTestBase {
   }
 
   /**
-   * 플랫폼 시드만으로는 잡지 못하는 유출 경로: {@code ai.credential} 은 테넌트 전용 값이라
-   * {@code tenant_settings} 행으로 실재한다. {@code resolveOverridesByPrefix} 가 이 키를 걸러
-   * 내지 않으면(화이트리스트 제외 + 방어적 명시 제외 둘 다 사라지면), 플랫폼 스트림만 거른 구현도
-   * 이 테스트에서는 유출이 드러난다 — {@code getResolvedByPrefix}/{@code getAsMap} 이 오버라이드
-   * 맵을 그대로 {@code putAll} 하기 때문이다.
+   * 플랫폼 시드만으로는 잡지 못하는 유출 경로: {@code ai.credential} 은 테넌트 전용 값이라 {@code tenant_settings} 행으로 실재한다.
+   * {@code resolveOverridesByPrefix} 가 이 키를 걸러 내지 않으면(화이트리스트 제외 + 방어적 명시 제외 둘 다 사라지면), 플랫폼 스트림만 거른
+   * 구현도 이 테스트에서는 유출이 드러난다 — {@code getResolvedByPrefix}/{@code getAsMap} 이 오버라이드 맵을 그대로 {@code
+   * putAll} 하기 때문이다.
    */
   @Test
   void 테넌트_행으로_저장해도_prefix_조회는_ai_credential_을_내보내지_않는다() {
@@ -103,15 +100,15 @@ class AiCredentialLeakGuardTest extends IntegrationTestBase {
 
   @Test
   void 단건_조회는_거부된다() {
-    assertThatThrownBy(() -> settingsService.getValue(KEY)).isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> settingsService.getValue(KEY))
+        .isInstanceOf(IllegalArgumentException.class);
   }
 
   /**
-   * #706 결정 7 — {@code ai.credential} 이 테넌트 오버라이드 화이트리스트에서 빠진 뒤에도 범용 PUT
-   * 경로({@code updateSettings})는 이 키를 계속 <b>거부</b>해야 한다. 새면 {@code AiCredentialService}
-   * 의 비밀 필수 규칙을 우회해 비밀 없는 문서를 저장할 수 있다. 거부 문구로 전용 관문
-   * ({@code rejectExternalOwnerKey})이 먼저 막는지까지 본다 — 화이트리스트 거부("플랫폼 관리자만")로
-   * 떨어지면 그 관문이 사라진 것이다.
+   * #706 결정 7 — {@code ai.credential} 이 테넌트 오버라이드 화이트리스트에서 빠진 뒤에도 범용 PUT 경로({@code
+   * updateSettings})는 이 키를 계속 <b>거부</b>해야 한다. 새면 {@code AiCredentialService} 의 비밀 필수 규칙을 우회해 비밀 없는
+   * 문서를 저장할 수 있다. 거부 문구로 전용 관문 ({@code rejectExternalOwnerKey})이 먼저 막는지까지 본다 — 화이트리스트 거부("플랫폼
+   * 관리자만")로 떨어지면 그 관문이 사라진 것이다.
    */
   @Test
   void 범용_쓰기로는_테넌트_평면에_저장할_수_없다() {
@@ -129,33 +126,39 @@ class AiCredentialLeakGuardTest extends IntegrationTestBase {
   // 사라졌다(플랫폼 설정 평면 제거).
 
   /**
-   * 위 테스트들이 키 이름만 본다면 이 테스트는 값 전체를 본다 — 나중에 키 이름이 바뀌어도
-   * 유출이 잡히게 하는 마지막 그물이다. {@code sk-live-secret} 은 저장 시점에 암호화되므로
-   * {@code doesNotContain} 은 그 자체로는 공허하지만(평문이 어차피 안 실린다),
-   * {@code agentType}/{@code ai.credential} 문자열은 JSON 구조·키 이름이 흘러나오는지를 잡는다.
+   * 위 테스트들이 키 이름만 본다면 이 테스트는 값 전체를 본다 — 나중에 키 이름이 바뀌어도 유출이 잡히게 하는 마지막 그물이다. {@code sk-live-secret}
+   * 은 저장 시점에 암호화되므로 {@code doesNotContain} 은 그 자체로는 공허하지만(평문이 어차피 안 실린다), {@code agentType}/{@code
+   * ai.credential} 문자열은 JSON 구조·키 이름이 흘러나오는지를 잡는다.
    */
   @Test
   void 어떤_범용_경로에도_문서_구조가_섞이지_않는다() {
     String all =
         settingsService.getResolvedByPrefix("ai").toString() + settingsService.getAsMap("ai");
-    assertThat(all).doesNotContain("sk-live-secret").doesNotContain(KEY).doesNotContain("agentType");
+    assertThat(all)
+        .doesNotContain("sk-live-secret")
+        .doesNotContain(KEY)
+        .doesNotContain("agentType");
   }
 
   /** #707 — 분류 전용 묶음도 범용 경로(읽기·쓰기)로 새거나 반쪽만 바뀌지 않는다. */
   @Test
   void 분류_전용_두_키는_범용_경로로_읽거나_쓰거나_지울_수_없다() {
     aiCredentialService.saveClassify(
-        new AiCredentialService.AiCredentialUpsert("sdk", Map.of(), Map.of("apiKey", "sk-classify")),
+        new AiCredentialService.AiCredentialUpsert(
+            "sdk", Map.of(), Map.of("apiKey", "sk-classify")),
         "claude-haiku-4-5",
         USER);
 
-    for (String key : java.util.List.of(AiCredentialSlot.CLASSIFY.key(), AiCredentialSlot.CLASSIFY_MODEL_KEY)) {
+    for (String key :
+        java.util.List.of(AiCredentialSlot.CLASSIFY.key(), AiCredentialSlot.CLASSIFY_MODEL_KEY)) {
       assertThat(settingsService.getResolvedByPrefix("ai"))
           .extracting(com.smartfirehub.settings.dto.ResolvedSettingResponse::key)
           .as(key)
           .doesNotContain(key);
       assertThat(settingsService.getAsMap("ai")).as(key).doesNotContainKey(key);
-      assertThatThrownBy(() -> settingsService.getValue(key)).as(key).isInstanceOf(IllegalArgumentException.class);
+      assertThatThrownBy(() -> settingsService.getValue(key))
+          .as(key)
+          .isInstanceOf(IllegalArgumentException.class);
       assertThatThrownBy(() -> settingsService.updateSettings(Map.of(key, "x"), USER))
           .as(key)
           .isInstanceOf(IllegalArgumentException.class);

@@ -36,30 +36,50 @@ public class ReviewItemController {
   @PostMapping("/synonym/pending")
   @RequirePermission("dataset:write")
   public void recordSynonym(@RequestBody PendingSynonymRequest req) {
-    service.recordPendingSynonym(req.entityType(), req.nameA(), req.nameB(),
-        req.similarity(), req.rationale(), req.datasetId(), req.sourceChunkIds());
+    service.recordPendingSynonym(
+        req.entityType(),
+        req.nameA(),
+        req.nameB(),
+        req.similarity(),
+        req.rationale(),
+        req.datasetId(),
+        req.sourceChunkIds());
   }
 
   // 속성 정규화 실패 등록 — ai-agent ingest 중 호출.
   @PostMapping("/property/pending")
   @RequirePermission("dataset:write")
   public void recordProperty(@RequestBody PendingPropertyRequest req) {
-    service.recordPendingProperty(req.datasetId(), req.chunkId(), req.entityKey(), req.entityType(),
-        req.propertyName(), req.dataType(), req.rawText());
+    service.recordPendingProperty(
+        req.datasetId(),
+        req.chunkId(),
+        req.entityKey(),
+        req.entityType(),
+        req.propertyName(),
+        req.dataType(),
+        req.rawText());
   }
 
   // 저신뢰 엔티티 등록 — ai-agent ingest 중 호출.
   @PostMapping("/entity/pending")
   @RequirePermission("dataset:write")
   public void recordEntity(@RequestBody PendingEntityRequest req) {
-    service.recordPendingEntity(req.datasetId(), req.entityType(), req.name(), req.properties(),
-        req.sourceChunkIds(), req.confidence(), req.reason(), req.relations());
+    service.recordPendingEntity(
+        req.datasetId(),
+        req.entityType(),
+        req.name(),
+        req.properties(),
+        req.sourceChunkIds(),
+        req.confidence(),
+        req.reason(),
+        req.relations());
   }
 
   // 저신뢰 엔티티 기존 결정 조회 — ingest 중 ai-agent가 보류 판정 시 확인.
   @GetMapping("/entity/lookup")
   @RequirePermission("dataset:read")
-  public EntityLookupResponse lookupEntity(@RequestParam String entityType, @RequestParam String name) {
+  public EntityLookupResponse lookupEntity(
+      @RequestParam String entityType, @RequestParam String name) {
     return new EntityLookupResponse(service.lookupEntity(entityType, name));
   }
 
@@ -67,15 +87,25 @@ public class ReviewItemController {
   @PostMapping("/relation/pending")
   @RequirePermission("dataset:write")
   public void recordRelation(@RequestBody PendingRelationRequest req) {
-    service.recordPendingRelation(req.datasetId(), req.subjectKey(), req.relType(), req.objectKey(),
-        req.subjectName(), req.objectName(), req.sourceChunkIds(), req.confidence(), req.reason());
+    service.recordPendingRelation(
+        req.datasetId(),
+        req.subjectKey(),
+        req.relType(),
+        req.objectKey(),
+        req.subjectName(),
+        req.objectName(),
+        req.sourceChunkIds(),
+        req.confidence(),
+        req.reason());
   }
 
   // 저신뢰 관계 기존 결정 조회 — ingest 중 ai-agent가 보류 판정 시 확인.
   @GetMapping("/relation/lookup")
   @RequirePermission("dataset:read")
   public RelationLookupResponse lookupRelation(
-      @RequestParam String subjectKey, @RequestParam String relType, @RequestParam String objectKey) {
+      @RequestParam String subjectKey,
+      @RequestParam String relType,
+      @RequestParam String objectKey) {
     return new RelationLookupResponse(service.lookupRelation(subjectKey, relType, objectKey));
   }
 
@@ -97,7 +127,9 @@ public class ReviewItemController {
   @PostMapping("/{id}/approve")
   @RequirePermission("dataset:write")
   public ReviewItemResponse approve(
-      @PathVariable long id, @RequestBody(required = false) DecideRequest req, Authentication auth) {
+      @PathVariable long id,
+      @RequestBody(required = false) DecideRequest req,
+      Authentication auth) {
     String corrected = req == null ? null : req.correctedValue();
     return service.approve(id, corrected, (Long) auth.getPrincipal());
   }

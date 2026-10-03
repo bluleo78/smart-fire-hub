@@ -24,10 +24,9 @@ public class DataTableQueryService {
   private final DSLContext dsl;
 
   /**
-   * 데이터셋 애드혹 쿼리 전용 검증기 인스턴스 — {@link SqlValidator#forAdhocDataSchemaQueries()}로 직접
-   * 생성한다(팩터리 도입 근거는 R1, #385). 아래 {@code SET LOCAL search_path} 가 현재 테넌트의 데이터
-   * 스키마 <b>하나만</b> 세우는 것이 미한정(스키마 없는) 테이블 참조 허용의 안전 전제다 — 두 스키마를
-   * 세우면 안 된다.
+   * 데이터셋 애드혹 쿼리 전용 검증기 인스턴스 — {@link SqlValidator#forAdhocDataSchemaQueries()}로 직접 생성한다(팩터리 도입 근거는
+   * R1, #385). 아래 {@code SET LOCAL search_path} 가 현재 테넌트의 데이터 스키마 <b>하나만</b> 세우는 것이 미한정(스키마 없는) 테이블
+   * 참조 허용의 안전 전제다 — 두 스키마를 세우면 안 된다.
    */
   private final SqlValidator sqlValidator = SqlValidator.forAdhocDataSchemaQueries();
 

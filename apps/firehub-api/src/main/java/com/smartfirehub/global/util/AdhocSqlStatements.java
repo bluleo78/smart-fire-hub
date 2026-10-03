@@ -11,22 +11,21 @@ import org.jooq.exception.DataAccessException;
 /**
  * 사용자가 직접 쓴 애드혹 SQL 을 <b>바인드 값 없는 정적 {@link Statement}</b> 로 실행하는 헬퍼(#753).
  *
- * <p><b>왜 {@code dsl.fetch(String)} 을 쓰지 않는가.</b> jOOQ 의 plain SQL 실행은 문자열을 {@code PreparedStatement}
- * 로 보낸다. 그러면 pgjdbc 가 리터럴 밖의 {@code ?} 를 JDBC 바인드 자리로 해석해 jsonb 키 존재 연산자
- * ({@code ?}, {@code ?|}, {@code ?&}) 가 "No value specified for parameter 1" 로 실패했다. 정적 Statement 는
- * {@code ?} 를 자리표시자로 보지 않으므로 원문이 그대로 서버에 간다 — {@code ??} 같은 이스케이프 변환이 없다.
+ * <p><b>왜 {@code dsl.fetch(String)} 을 쓰지 않는가.</b> jOOQ 의 plain SQL 실행은 문자열을 {@code
+ * PreparedStatement} 로 보낸다. 그러면 pgjdbc 가 리터럴 밖의 {@code ?} 를 JDBC 바인드 자리로 해석해 jsonb 키 존재 연산자 ({@code
+ * ?}, {@code ?|}, {@code ?&}) 가 "No value specified for parameter 1" 로 실패했다. 정적 Statement 는 {@code
+ * ?} 를 자리표시자로 보지 않으므로 원문이 그대로 서버에 간다 — {@code ??} 같은 이스케이프 변환이 없다.
  *
- * <p><b>SQL 가드와 의미 차이가 없다.</b> {@link Statement#setEscapeProcessing(boolean) escapeProcessing} 도 끈다 —
- * 켜 두면 pgjdbc 가 {@code {fn ...}}·{@code {d '...'}} 같은 JDBC 이스케이프를 다시 쓴다. 두 가지를 끄면 서버가
- * 받는 문자열은 호출자가 넘긴 문자열과 <b>바이트 단위로 같다</b>. 따라서 호출자가 검증기(SqlValidator)로 본
- * 문자열(+ 행 제한 덧붙임)이 곧 실행되는 문자열이다.
+ * <p><b>SQL 가드와 의미 차이가 없다.</b> {@link Statement#setEscapeProcessing(boolean) escapeProcessing} 도 끈다
+ * — 켜 두면 pgjdbc 가 {@code {fn ...}}·{@code {d '...'}} 같은 JDBC 이스케이프를 다시 쓴다. 두 가지를 끄면 서버가 받는 문자열은
+ * 호출자가 넘긴 문자열과 <b>바이트 단위로 같다</b>. 따라서 호출자가 검증기(SqlValidator)로 본 문자열(+ 행 제한 덧붙임)이 곧 실행되는 문자열이다.
  *
- * <p><b>{@code $n} 은 여기서 해결되지 않는다.</b> pgjdbc 는 정적 Statement 도 확장 프로토콜로 보내므로 서버가
- * Parse 에서 {@code $1} 을 추론한 뒤 Bind(값 0개)에서 08P01 로 거부하고, Hikari 가 그 커넥션을 폐기한다. 호출자는
- * 실행 전에 {@link SqlLexicalMask#findPositionalParameter} 로 걸러야 한다({@link #positionalParameterMessage}).
+ * <p><b>{@code $n} 은 여기서 해결되지 않는다.</b> pgjdbc 는 정적 Statement 도 확장 프로토콜로 보내므로 서버가 Parse 에서 {@code
+ * $1} 을 추론한 뒤 Bind(값 0개)에서 08P01 로 거부하고, Hikari 가 그 커넥션을 폐기한다. 호출자는 실행 전에 {@link
+ * SqlLexicalMask#findPositionalParameter} 로 걸러야 한다({@link #positionalParameterMessage}).
  *
- * <p>커넥션은 {@code dsl} 의 ConnectionProvider 에서 빌린다 — Spring 트랜잭션 안이면 그 트랜잭션의 커넥션(=테넌트
- * GUC·{@code SET LOCAL search_path}·savepoint 가 이미 걸린 커넥션)이다.
+ * <p>커넥션은 {@code dsl} 의 ConnectionProvider 에서 빌린다 — Spring 트랜잭션 안이면 그 트랜잭션의 커넥션(=테넌트 GUC·{@code SET
+ * LOCAL search_path}·savepoint 가 이미 걸린 커넥션)이다.
  */
 public final class AdhocSqlStatements {
 
@@ -59,29 +58,27 @@ public final class AdhocSqlStatements {
   /**
    * DML 을 정적 Statement 로 실행해 영향 행 수를 돌려준다.
    *
-   * <p><b>왜 {@code executeUpdate} 가 아니라 {@code execute} 인가(#754).</b> pgjdbc 의 {@code executeUpdate} 는
-   * 결과 집합이 돌아오면 "A result was returned when none was expected" 로 예외를 던진다 — {@code INSERT/UPDATE/
-   * DELETE … RETURNING} 이 전부 실패·롤백됐다. {@code execute} 후 {@code getMoreResults}/{@code getUpdateCount}
-   * 로 모든 결과를 소비하며 센다:
+   * <p><b>왜 {@code executeUpdate} 가 아니라 {@code execute} 인가(#754).</b> pgjdbc 의 {@code
+   * executeUpdate} 는 결과 집합이 돌아오면 "A result was returned when none was expected" 로 예외를 던진다 — {@code
+   * INSERT/UPDATE/ DELETE … RETURNING} 이 전부 실패·롤백됐다. {@code execute} 후 {@code
+   * getMoreResults}/{@code getUpdateCount} 로 모든 결과를 소비하며 센다:
    *
    * <ul>
-   *   <li>결과 집합(RETURNING) → 행 수. RETURNING 은 영향받은 행마다 한 행을 돌려주므로 이것이 곧 영향 행 수다
-   *       (pgjdbc 는 {@code execute} 경로에서 결과 집합과 명령 태그의 갱신 수를 함께 주지 않는다).
+   *   <li>결과 집합(RETURNING) → 행 수. RETURNING 은 영향받은 행마다 한 행을 돌려주므로 이것이 곧 영향 행 수다 (pgjdbc 는 {@code
+   *       execute} 경로에서 결과 집합과 명령 태그의 갱신 수를 함께 주지 않는다).
    *   <li>갱신 수(일반 DML) → 그 값. 예전 {@code executeUpdate} 와 같은 값이다.
    * </ul>
    *
-   * <p><b>반환 행 자체는 돌려주지 않는다(의도한 선택).</b> 응답 레코드에 {@code columns/rows} 자리는 있지만 웹 SQL
-   * 편집기는 SELECT 일 때만 행 표를 그리고 그 밖에는 영향 행 수만 보여 준다. 여기서는 영향 행 수만 정확히 한다.
+   * <p><b>반환 행 자체는 돌려주지 않는다(의도한 선택).</b> 응답 레코드에 {@code columns/rows} 자리는 있지만 웹 SQL 편집기는 SELECT 일
+   * 때만 행 표를 그리고 그 밖에는 영향 행 수만 보여 준다. 여기서는 영향 행 수만 정확히 한다.
    *
-   * <p><b>한계.</b> 본문이 SELECT 인 데이터 수정 CTE({@code WITH d AS (DELETE … RETURNING …) SELECT … FROM d})는
-   * PostgreSQL 이 CTE 안 DML 의 행 수를 보고하지 않는다(명령 태그가 {@code SELECT n}). 이 경우 돌려주는 값은 최종
-   * SELECT 가 돌려준 행 수다 — {@code SELECT value FROM d} 처럼 CTE 결과를 그대로 내면 영향 행 수와 같지만
-   * {@code SELECT count(*) FROM d} 면 1 이다. (현재는 SQL 가드가 이 형태를 파싱하지 못해 실행 전에 거부한다 — 가드가
-   * 허용하게 되면 이 한계가 드러난다.)
+   * <p><b>한계.</b> 본문이 SELECT 인 데이터 수정 CTE({@code WITH d AS (DELETE … RETURNING …) SELECT … FROM
+   * d})는 PostgreSQL 이 CTE 안 DML 의 행 수를 보고하지 않는다(명령 태그가 {@code SELECT n}). 이 경우 돌려주는 값은 최종 SELECT 가
+   * 돌려준 행 수다 — {@code SELECT value FROM d} 처럼 CTE 결과를 그대로 내면 영향 행 수와 같지만 {@code SELECT count(*)
+   * FROM d} 면 1 이다. (현재는 SQL 가드가 이 형태를 파싱하지 못해 실행 전에 거부한다 — 가드가 허용하게 되면 이 한계가 드러난다.)
    *
-   * <p><b>다중 문장은 여기서 막지 않는다.</b> {@code execute} 는 여러 결과를 소비할 수 있지만, 단일 문장 강제는
-   * 호출자의 사전 검증(SqlValidationUtils·SqlValidator)이 실행 전에 한다 — 이 헬퍼는 검증된 문자열을 바이트 그대로
-   * 실행할 뿐이다.
+   * <p><b>다중 문장은 여기서 막지 않는다.</b> {@code execute} 는 여러 결과를 소비할 수 있지만, 단일 문장 강제는 호출자의 사전
+   * 검증(SqlValidationUtils·SqlValidator)이 실행 전에 한다 — 이 헬퍼는 검증된 문자열을 바이트 그대로 실행할 뿐이다.
    */
   public static int execute(DSLContext dsl, String sql) {
     return dsl.connectionResult(
@@ -115,8 +112,8 @@ public final class AdhocSqlStatements {
   }
 
   /**
-   * SQL 에 리터럴·주석 밖의 위치 파라미터({@code $n})가 있으면 사용자에게 보여줄 거부 메시지를, 없으면 null 을 돌려준다.
-   * 애드혹 실행은 바인드 값을 받지 않으므로 {@code $n} 은 채울 수 없는 자리다.
+   * SQL 에 리터럴·주석 밖의 위치 파라미터({@code $n})가 있으면 사용자에게 보여줄 거부 메시지를, 없으면 null 을 돌려준다. 애드혹 실행은 바인드 값을 받지
+   * 않으므로 {@code $n} 은 채울 수 없는 자리다.
    */
   public static String positionalParameterMessage(String sql) {
     int pos = SqlLexicalMask.findPositionalParameter(sql);
@@ -133,9 +130,9 @@ public final class AdhocSqlStatements {
   }
 
   /**
-   * 오류 뒤 savepoint 로 되돌린다. 되돌리기마저 실패하면(예: 커넥션이 이미 끊김) 그 예외가 <b>원래 SQL 오류를 덮지
-   * 않도록</b> suppressed 로 붙이고 원래 예외를 다시 던진다(#753 — 예전에는 "Connection is closed" 롤백 예외만
-   * 남아 원인 없는 500 이 됐다). 커넥션이 정말 죽었다면 트랜잭션은 어차피 끝나므로 계속 진행할 수 없다.
+   * 오류 뒤 savepoint 로 되돌린다. 되돌리기마저 실패하면(예: 커넥션이 이미 끊김) 그 예외가 <b>원래 SQL 오류를 덮지 않도록</b> suppressed 로
+   * 붙이고 원래 예외를 다시 던진다(#753 — 예전에는 "Connection is closed" 롤백 예외만 남아 원인 없는 500 이 됐다). 커넥션이 정말 죽었다면
+   * 트랜잭션은 어차피 끝나므로 계속 진행할 수 없다.
    */
   public static void rollbackToSavepointOrRethrow(
       DSLContext dsl, String savepoint, Exception original) {

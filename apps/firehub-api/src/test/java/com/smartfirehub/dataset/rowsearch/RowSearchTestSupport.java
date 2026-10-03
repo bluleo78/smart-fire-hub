@@ -10,12 +10,12 @@ final class RowSearchTestSupport {
   private RowSearchTestSupport() {}
 
   /**
-   * 고정 이름 픽스처(원본 테이블·그 데이터셋 메타·색인 테이블)를 지운다. 테스트 사용자는 실행마다 고유한 이름으로
-   * 만들므로({@code TenantRlsTestSupport.insertUser}) 여기서 지우지 않는다 — 각 테스트가 tearDown 에서 id 로 지운다.
+   * 고정 이름 픽스처(원본 테이블·그 데이터셋 메타·색인 테이블)를 지운다. 테스트 사용자는 실행마다 고유한 이름으로 만들므로({@code
+   * TenantRlsTestSupport.insertUser}) 여기서 지우지 않는다 — 각 테스트가 tearDown 에서 id 로 지운다.
    *
-   * <p>RLS GUC 는 따로 set_config 하지 않는다 — jOOQ {@code dsl.transaction} 이 Spring
-   * {@code SpringTransactionProvider} 를 거쳐 {@code TenantAwareTransactionManager.doBegin} 을 타므로,
-   * {@link TenantContext#runScoped} 로 세운 테넌트가 트랜잭션 시작 시 GUC 로 주입된다.
+   * <p>RLS GUC 는 따로 set_config 하지 않는다 — jOOQ {@code dsl.transaction} 이 Spring {@code
+   * SpringTransactionProvider} 를 거쳐 {@code TenantAwareTransactionManager.doBegin} 을 타므로, {@link
+   * TenantContext#runScoped} 로 세운 테넌트가 트랜잭션 시작 시 GUC 로 주입된다.
    */
   static void cleanup(DSLContext dsl, DataTableService tables, String srcTable) {
     TenantContext.runScoped(

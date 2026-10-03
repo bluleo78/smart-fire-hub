@@ -22,16 +22,14 @@ public class SettingsController {
   private final SettingsService settingsService;
 
   /**
-   * 테넌트 화면용 설정 조회. <b>해석된</b> 값(오버라이드가 있으면 그 값)과 함께
-   * {@code overridden}/{@code tenantEditable} 플래그를 돌려준다. {@code prefix=smtp} 는 워크스페이스가
-   * 저장한 키만 나온다 — 미설정이면 빈 목록이다(#712).
+   * 테넌트 화면용 설정 조회. <b>해석된</b> 값(오버라이드가 있으면 그 값)과 함께 {@code overridden}/{@code tenantEditable} 플래그를
+   * 돌려준다. {@code prefix=smtp} 는 워크스페이스가 저장한 키만 나온다 — 미설정이면 빈 목록이다(#712).
    *
-   * <p>P7-b 이전에는 {@code getByPrefix} 를 불러 <b>플랫폼 기본값만</b> 돌려줬다. 그대로 두면
-   * 테넌트가 오버라이드를 저장한 뒤 화면을 다시 불러도 예전 값이 그대로 보여서 <b>저장이 아무
-   * 일도 하지 않은 것처럼</b> 보인다 — 쓰기 경로만 고치고 읽기 경로를 잊으면 생기는 어긋남이다.
+   * <p>P7-b 이전에는 {@code getByPrefix} 를 불러 <b>플랫폼 기본값만</b> 돌려줬다. 그대로 두면 테넌트가 오버라이드를 저장한 뒤 화면을 다시 불러도
+   * 예전 값이 그대로 보여서 <b>저장이 아무 일도 하지 않은 것처럼</b> 보인다 — 쓰기 경로만 고치고 읽기 경로를 잊으면 생기는 어긋남이다.
    *
-   * <p>엔드포인트를 새로 만들지 않고 이 자리를 교체한 이유: 소비자가 web 설정 화면 하나뿐이다.
-   * 대신 응답 형태가 바뀌므로 web 의 타입 정의와 Playwright 스펙이 함께 바뀐다.
+   * <p>엔드포인트를 새로 만들지 않고 이 자리를 교체한 이유: 소비자가 web 설정 화면 하나뿐이다. 대신 응답 형태가 바뀌므로 web 의 타입 정의와 Playwright
+   * 스펙이 함께 바뀐다.
    */
   @GetMapping
   @RequirePermission("ai:settings")
@@ -56,12 +54,11 @@ public class SettingsController {
   }
 
   /**
-   * 워크스페이스 SMTP 설정 해제(#712) — SMTP 6키(발신자 주소 포함)를 한 번에 지운다. <b>멱등</b>이라
-   * 이미 미설정이어도 204 다. 권한은 같은 탭의 저장·테스트와 같은 {@code ai:settings} 다.
+   * 워크스페이스 SMTP 설정 해제(#712) — SMTP 6키(발신자 주소 포함)를 한 번에 지운다. <b>멱등</b>이라 이미 미설정이어도 204 다. 권한은 같은 탭의
+   * 저장·테스트와 같은 {@code ai:settings} 다.
    *
-   * <p>이 자리에 있던 {@code DELETE /overrides/{key}}(키 하나를 지워 플랫폼 값으로 되돌리기)는
-   * 삭제했다. SMTP 에 플랫폼 값이 없어져 "되돌리기"가 성립하지 않고, 유일한 다른 대상이던 AI 동작
-   * 키는 화면에서 키별 해제를 부르지 않는다(사용처 0). 묶음 해제는 이 엔드포인트 하나로 한다.
+   * <p>이 자리에 있던 {@code DELETE /overrides/{key}}(키 하나를 지워 플랫폼 값으로 되돌리기)는 삭제했다. SMTP 에 플랫폼 값이 없어져
+   * "되돌리기"가 성립하지 않고, 유일한 다른 대상이던 AI 동작 키는 화면에서 키별 해제를 부르지 않는다(사용처 0). 묶음 해제는 이 엔드포인트 하나로 한다.
    */
   @DeleteMapping("/smtp")
   @RequirePermission("ai:settings")
@@ -86,16 +83,13 @@ public class SettingsController {
   /**
    * SMTP 연결 테스트. <b>권한은 이 컨트롤러의 나머지 라우트와 같은 {@code ai:settings} 다.</b>
    *
-   * <p>P7-c1 이전에는 이 라우트만 {@code settings:write} 를 요구했다. 당시에는 SMTP 쓰기가
-   * {@code PUT /settings/smtp}(같은 권한)였으므로 짝이 맞았는데, Task 4 가 SMTP 쓰기를
-   * {@code PUT /settings}({@code ai:settings})로 옮기면서 <b>같은 탭의 저장과 테스트가 서로 다른
-   * 권한을 요구하게</b> 됐다. 두 권한 모두 오늘은 ADMIN 롤에만 시드돼 있지만(V16/V42) 롤은
-   * 런타임에 편집 가능하므로, {@code ai:settings} 만 가진 롤은 SMTP 자격증명을 저장해 놓고
-   * 바로 옆 "연결 테스트" 버튼에서 403 을 받는다.
+   * <p>P7-c1 이전에는 이 라우트만 {@code settings:write} 를 요구했다. 당시에는 SMTP 쓰기가 {@code PUT /settings/smtp}(같은
+   * 권한)였으므로 짝이 맞았는데, Task 4 가 SMTP 쓰기를 {@code PUT /settings}({@code ai:settings})로 옮기면서 <b>같은 탭의
+   * 저장과 테스트가 서로 다른 권한을 요구하게</b> 됐다. 두 권한 모두 오늘은 ADMIN 롤에만 시드돼 있지만(V16/V42) 롤은 런타임에 편집 가능하므로, {@code
+   * ai:settings} 만 가진 롤은 SMTP 자격증명을 저장해 놓고 바로 옆 "연결 테스트" 버튼에서 403 을 받는다.
    *
-   * <p>테스트 쪽을 저장 쪽에 맞춘다(그 반대가 아니다). 이 라우트가 하는 일은 <b>방금 저장한 값으로
-   * 접속해 보는 것</b>이고, 저장할 수 있는 사람은 이미 그 접속을 발송으로 일으킬 수 있다 — 즉
-   * {@code ai:settings} 보유자에게 새로 생기는 능력이 없다. 반대로 {@code settings:write} 만 가진
+   * <p>테스트 쪽을 저장 쪽에 맞춘다(그 반대가 아니다). 이 라우트가 하는 일은 <b>방금 저장한 값으로 접속해 보는 것</b>이고, 저장할 수 있는 사람은 이미 그
+   * 접속을 발송으로 일으킬 수 있다 — 즉 {@code ai:settings} 보유자에게 새로 생기는 능력이 없다. 반대로 {@code settings:write} 만 가진
    * 롤은 이 탭을 <b>열지도</b> 못한다({@code GET} 이 {@code ai:settings} 를 요구한다).
    */
   @PostMapping("/smtp/test")
@@ -106,7 +100,8 @@ public class SettingsController {
       Map<String, String> config = settingsService.getSmtpConfig();
       String host = config.getOrDefault("smtp.host", "");
       if (host.isBlank()) {
-        return ResponseEntity.ok(Map.of("success", false, "message", "SMTP 가 설정되지 않았습니다. 호스트를 입력하고 저장한 뒤 다시 테스트하세요"));
+        return ResponseEntity.ok(
+            Map.of("success", false, "message", "SMTP 가 설정되지 않았습니다. 호스트를 입력하고 저장한 뒤 다시 테스트하세요"));
       }
 
       JavaMailSenderImpl sender = new JavaMailSenderImpl();

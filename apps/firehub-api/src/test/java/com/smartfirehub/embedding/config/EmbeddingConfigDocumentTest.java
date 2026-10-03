@@ -5,14 +5,20 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import org.junit.jupiter.api.Test;
 
-/** embedding.config 문서 직렬화 형태({v:1, provider, model, baseUrl, dimension, secret:{apiKey}})를 고정한다. */
+/**
+ * embedding.config 문서 직렬화 형태({v:1, provider, model, baseUrl, dimension, secret:{apiKey}})를 고정한다.
+ */
 class EmbeddingConfigDocumentTest {
 
   @Test
   void roundTripKeepsAllFields() {
     String json =
         EmbeddingConfigDocument.toJson(
-            EmbeddingProviderType.OPENAI, "text-embedding-3-small", "https://api.openai.com", 1536, "iv:cipher");
+            EmbeddingProviderType.OPENAI,
+            "text-embedding-3-small",
+            "https://api.openai.com",
+            1536,
+            "iv:cipher");
     assertThat(json).contains("\"v\":1").contains("\"secret\":{\"apiKey\":\"iv:cipher\"}");
 
     EmbeddingConfigDocument.Parsed p = EmbeddingConfigDocument.parse(json);
@@ -27,7 +33,8 @@ class EmbeddingConfigDocumentTest {
   void unknownProviderIsRejected() {
     // VOYAGE 는 죽은 선택지라 목록에서 뺐다 — 손으로 넣은 행도 해석하지 않는다.
     assertThatThrownBy(
-            () -> EmbeddingConfigDocument.parse("{\"v\":1,\"provider\":\"VOYAGE\",\"model\":\"m\"}"))
+            () ->
+                EmbeddingConfigDocument.parse("{\"v\":1,\"provider\":\"VOYAGE\",\"model\":\"m\"}"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("OLLAMA, OPENAI");
   }
@@ -35,7 +42,8 @@ class EmbeddingConfigDocumentTest {
   @Test
   void configToStringNeverPrintsApiKey() {
     EmbeddingConfig cfg =
-        new EmbeddingConfig(EmbeddingProviderType.OPENAI, "m", "https://x", "sk-secret-value", 1536);
+        new EmbeddingConfig(
+            EmbeddingProviderType.OPENAI, "m", "https://x", "sk-secret-value", 1536);
     assertThat(cfg.toString()).doesNotContain("sk-secret-value");
   }
 }

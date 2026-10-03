@@ -29,8 +29,7 @@ public final class PostgresTestContainer {
     // Docker 데몬의 API 버전 자동 협상이 OrbStack 에서 실패하지 않도록 지원 버전을 고정한다.
     System.setProperty("api.version", "1.41");
 
-    String imageName =
-        new ImageFromDockerfile().withDockerfile(findPostgresDockerfile()).get();
+    String imageName = new ImageFromDockerfile().withDockerfile(findPostgresDockerfile()).get();
 
     return new PostgreSQLContainer<>(
             DockerImageName.parse(imageName).asCompatibleSubstituteFor("postgres"))
@@ -56,7 +55,6 @@ public final class PostgresTestContainer {
       directory = directory.getParent();
     }
 
-    throw new IllegalStateException(
-        "모노레포의 docker/postgres/Dockerfile을 찾을 수 없습니다. 실행 위치를 확인하세요.");
+    throw new IllegalStateException("모노레포의 docker/postgres/Dockerfile을 찾을 수 없습니다. 실행 위치를 확인하세요.");
   }
 }

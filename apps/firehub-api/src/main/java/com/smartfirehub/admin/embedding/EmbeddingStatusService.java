@@ -20,8 +20,8 @@ public class EmbeddingStatusService {
   private final EmbeddingReembedStateRepository stateRepository;
 
   /**
-   * 현재 공간 기준 진행률 + 마지막 잡 상태. provider 를 만들지 않는다(설정 문서만 읽음) — 미설정이어도 409 로 죽지 않고
-   * configured=false 로 그려져야 사용자가 설정을 저장할 수 있다.
+   * 현재 공간 기준 진행률 + 마지막 잡 상태. provider 를 만들지 않는다(설정 문서만 읽음) — 미설정이어도 409 로 죽지 않고 configured=false 로
+   * 그려져야 사용자가 설정을 저장할 수 있다.
    */
   // RLS 테이블을 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
   @Transactional(readOnly = true)
@@ -49,7 +49,8 @@ public class EmbeddingStatusService {
         true,
         s.model(),
         s.dimension().size(),
-        new EmbeddingStatusResponse.Counts(datasetTotal, datasetEmbeddingRepository.countEmbedded(s)),
+        new EmbeddingStatusResponse.Counts(
+            datasetTotal, datasetEmbeddingRepository.countEmbedded(s)),
         new EmbeddingStatusResponse.Counts(chunkTotal, documentChunkRepository.countEmbedded(s)),
         job);
   }

@@ -29,8 +29,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 /**
  * 백로그 스윕(A1): 잡이 이미 DONE 인데 늦게 끝난 쓰기가 옛 공간 벡터를 남긴 경우를 주기 스윕이 잡아 다시 투입한다.
  *
- * <p>설정·판정식·상태 행은 실제 저장소를 쓰고 잡만 가짜로 둔다. 활성 테넌트 전체를 도므로 단언은 이 테스트
- * 테넌트 id 로만 한정한다(공유 컨테이너의 다른 테넌트 무관).
+ * <p>설정·판정식·상태 행은 실제 저장소를 쓰고 잡만 가짜로 둔다. 활성 테넌트 전체를 도므로 단언은 이 테스트 테넌트 id 로만 한정한다(공유 컨테이너의 다른 테넌트
+ * 무관).
  */
 class EmbeddingBacklogSweepSchedulerTest extends IntegrationTestBase {
 
@@ -52,7 +52,8 @@ class EmbeddingBacklogSweepSchedulerTest extends IntegrationTestBase {
   @BeforeEach
   void seed() {
     scheduler =
-        new EmbeddingBacklogSweepScheduler(tenantRunner, configService, backlogService, states, job, true);
+        new EmbeddingBacklogSweepScheduler(
+            tenantRunner, configService, backlogService, states, job, true);
     tenant = TenantRlsTestSupport.createActiveTenant(dsl, "bsweep");
     doc = inTenantFixture(tenant, () -> EmbeddingTestFixtures.createDocumentDataset(dsl, "bsweep"));
   }
@@ -60,7 +61,8 @@ class EmbeddingBacklogSweepSchedulerTest extends IntegrationTestBase {
   @AfterEach
   void cleanup() {
     TenantRlsTestSupport.deleteOwnDatasetRows(dsl, fixtureTransactionTemplate, tenant);
-    TenantRlsTestSupport.deleteTenants(dsl, tenant); // tenant_settings·embedding_reembed_state 는 CASCADE
+    TenantRlsTestSupport.deleteTenants(
+        dsl, tenant); // tenant_settings·embedding_reembed_state 는 CASCADE
     TenantRlsTestSupport.deleteUser(dsl, doc.userId());
   }
 
@@ -69,7 +71,8 @@ class EmbeddingBacklogSweepSchedulerTest extends IntegrationTestBase {
         tenant,
         () ->
             configService.store(
-                new EmbeddingConfig(EmbeddingProviderType.OLLAMA, space.model(), "http://unused", "", 0),
+                new EmbeddingConfig(
+                    EmbeddingProviderType.OLLAMA, space.model(), "http://unused", "", 0),
                 space.dimension(),
                 null));
   }
@@ -80,7 +83,11 @@ class EmbeddingBacklogSweepSchedulerTest extends IntegrationTestBase {
         tenant,
         () ->
             chunks.insertBatch(
-                doc.fileId(), doc.datasetId(), List.of(new Chunk(0, "late", 1)), List.of(axis(1024, 0)), OLD));
+                doc.fileId(),
+                doc.datasetId(),
+                List.of(new Chunk(0, "late", 1)),
+                List.of(axis(1024, 0)),
+                OLD));
   }
 
   /** 잡이 한 번 완주한 뒤의 상태(DONE, 임대 해제). */
@@ -189,7 +196,9 @@ class EmbeddingBacklogSweepSchedulerTest extends IntegrationTestBase {
     configure(NEW);
     lateWriteOldVector();
 
-    new EmbeddingBacklogSweepScheduler(tenantRunner, configService, backlogService, states, job, false).sweep();
+    new EmbeddingBacklogSweepScheduler(
+            tenantRunner, configService, backlogService, states, job, false)
+        .sweep();
 
     verify(job, never()).enqueue(tenant);
   }

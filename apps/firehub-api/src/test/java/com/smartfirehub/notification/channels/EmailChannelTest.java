@@ -43,8 +43,8 @@ class EmailChannelTest {
   @InjectMocks private EmailChannel channel;
 
   /**
-   * 워크스페이스 SMTP 미설정(#712: getSmtpConfig 가 빈 맵)이면 영구 실패이고, 사유가 등록 위치를
-   * 안내한다 — 플랫폼 폴백이 없어져 이 상태가 흔해졌으므로 사유만 보고 조치할 수 있어야 한다.
+   * 워크스페이스 SMTP 미설정(#712: getSmtpConfig 가 빈 맵)이면 영구 실패이고, 사유가 등록 위치를 안내한다 — 플랫폼 폴백이 없어져 이 상태가
+   * 흔해졌으므로 사유만 보고 조치할 수 있어야 한다.
    */
   @Test
   void deliver_smtpNotConfigured_returnsPermanentFailureWithGuidance() {
@@ -76,14 +76,14 @@ class EmailChannelTest {
   }
 
   /**
-   * 워크스페이스가 호스트만 저장했으면 나머지 키는 맵에 <b>없다</b>(#712: 빈 값으로 채우지 않는다).
-   * 그때 포트는 587, STARTTLS 는 켜짐으로 해석돼야 한다 — 저장하지 않은 보안 토글이 꺼짐으로
-   * 읽히면 자격증명이 평문 채널로 나간다.
+   * 워크스페이스가 호스트만 저장했으면 나머지 키는 맵에 <b>없다</b>(#712: 빈 값으로 채우지 않는다). 그때 포트는 587, STARTTLS 는 켜짐으로 해석돼야
+   * 한다 — 저장하지 않은 보안 토글이 꺼짐으로 읽히면 자격증명이 평문 채널로 나간다.
    */
   @Test
   @SuppressWarnings("unchecked")
   void deliver_hostOnly_usesSafeDefaultsForMissingKeys() {
-    when(settingsService.getSmtpConfig()).thenReturn(Map.of("smtp.host", "tenant-relay.example.com"));
+    when(settingsService.getSmtpConfig())
+        .thenReturn(Map.of("smtp.host", "tenant-relay.example.com"));
 
     var result = channel.deliver(ctx(null, "to@example.com"));
 
@@ -137,10 +137,10 @@ class EmailChannelTest {
   }
 
   /**
-   * 네트워크 오류(예: 커넥션 실패) 시 reason()에 원본 예외 클래스명이 아닌 안정적인 사유 코드
-   * {@link com.smartfirehub.notification.TransientFailureReason#NETWORK_ERROR}가 담겨야 한다 (#666).
-   * 예외 클래스명이 그대로 노출되면 ChannelSettingsService가 만드는 사용자 토스트 메시지에
-   * "WebClientRequestException" 같은 문구가 그대로 섞여 나간다.
+   * 네트워크 오류(예: 커넥션 실패) 시 reason()에 원본 예외 클래스명이 아닌 안정적인 사유 코드 {@link
+   * com.smartfirehub.notification.TransientFailureReason#NETWORK_ERROR}가 담겨야 한다 (#666). 예외 클래스명이
+   * 그대로 노출되면 ChannelSettingsService가 만드는 사용자 토스트 메시지에 "WebClientRequestException" 같은 문구가 그대로 섞여
+   * 나간다.
    */
   @Test
   void deliver_networkError_returnsTransientFailureWithStableReasonCode() {
@@ -161,10 +161,9 @@ class EmailChannelTest {
   }
 
   /**
-   * 빈 포트 방어 가드. 저장 경로는 빈 포트를 거부하지만(validateSmtpPort) 그 검증 이전에 저장된
-   * 옛 행이 있을 수 있다. {@code getOrDefault} 는 <b>키가 없을 때만</b> 기본값을 주므로 빈 값을 따로
-   * 거르지 않으면 {@code Integer.parseInt("")} 가 터지고, 그 줄은 {@code try} 블록 <b>밖</b>이라
-   * {@code DeliveryResult} 로 변환되지 못한 채 발송 워커로 튀어나간다.
+   * 빈 포트 방어 가드. 저장 경로는 빈 포트를 거부하지만(validateSmtpPort) 그 검증 이전에 저장된 옛 행이 있을 수 있다. {@code
+   * getOrDefault} 는 <b>키가 없을 때만</b> 기본값을 주므로 빈 값을 따로 거르지 않으면 {@code Integer.parseInt("")} 가 터지고, 그
+   * 줄은 {@code try} 블록 <b>밖</b>이라 {@code DeliveryResult} 로 변환되지 못한 채 발송 워커로 튀어나간다.
    */
   @Test
   @SuppressWarnings("unchecked")

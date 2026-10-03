@@ -11,11 +11,11 @@ import org.springframework.scheduling.annotation.Scheduled;
 /**
  * 1차 밴드 테이블(dataset 등)을 읽는 @Scheduled 경로가 테넌트 순회 없이 남아 있지 않은지 고정한다.
  *
- * <p>스케줄러는 원 HTTP 요청이 없어 TaskDecorator 로 해결되지 않는다. 순회를 빼먹으면 RLS 하에서
- * 조용히 무동작이 되고, 다음 주기에도 계속 무동작이라 증상이 "기능이 그냥 안 돈다"로 나타난다.
+ * <p>스케줄러는 원 HTTP 요청이 없어 TaskDecorator 로 해결되지 않는다. 순회를 빼먹으면 RLS 하에서 조용히 무동작이 되고, 다음 주기에도 계속 무동작이라
+ * 증상이 "기능이 그냥 안 돈다"로 나타난다.
  *
- * <p>본문 검사는 리플렉션으로 불가능하므로 "TenantScopedRunner 를 협력자로 갖는가"를 대리 지표로
- * 쓴다. 약한 단언이지만, 이 배선이 통째로 사라지는 회귀는 확실히 잡는다.
+ * <p>본문 검사는 리플렉션으로 불가능하므로 "TenantScopedRunner 를 협력자로 갖는가"를 대리 지표로 쓴다. 약한 단언이지만, 이 배선이 통째로 사라지는 회귀는
+ * 확실히 잡는다.
  */
 class ScheduledTenantIterationTest {
 
@@ -34,11 +34,11 @@ class ScheduledTenantIterationTest {
   }
 
   /**
-   * 고아 staging 스윕(P3-a Task 4 후속 F3). 스키마명을 {@code DataSchema} 로 파생시키게 된 뒤로는
-   * 순회 없이는 {@code MissingTenantScopeException} 만 나고 회수가 영구히 무동작이 된다.
+   * 고아 staging 스윕(P3-a Task 4 후속 F3). 스키마명을 {@code DataSchema} 로 파생시키게 된 뒤로는 순회 없이는 {@code
+   * MissingTenantScopeException} 만 나고 회수가 영구히 무동작이 된다.
    *
-   * <p>이 테스트는 협력자 배선만 본다 — 순회가 실제로 도는지는
-   * {@code CleanupSchedulerTenantTest.stagingSweepIteratesTenantsInTransaction} 이 프로브로 고정한다.
+   * <p>이 테스트는 협력자 배선만 본다 — 순회가 실제로 도는지는 {@code
+   * CleanupSchedulerTenantTest.stagingSweepIteratesTenantsInTransaction} 이 프로브로 고정한다.
    */
   @Test
   void stagingTableCleanupServiceIteratesTenants() {
@@ -62,9 +62,7 @@ class ScheduledTenantIterationTest {
             .filter(m -> m.getName().equals(methodName))
             .findFirst()
             .orElseThrow(
-                () ->
-                    new AssertionError(
-                        type.getSimpleName() + "." + methodName + " 를 찾을 수 없다"));
+                () -> new AssertionError(type.getSimpleName() + "." + methodName + " 를 찾을 수 없다"));
     assertThat(target.isAnnotationPresent(Scheduled.class))
         .as("%s.%s 는 @Scheduled 여야 한다", type.getSimpleName(), methodName)
         .isTrue();

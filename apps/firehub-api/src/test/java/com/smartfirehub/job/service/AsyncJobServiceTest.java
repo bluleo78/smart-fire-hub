@@ -326,10 +326,8 @@ class AsyncJobServiceTest extends IntegrationTestBase {
 
     ConcurrentHashMap<String, CopyOnWriteArrayList<SseEmitter>> emitters =
         new ConcurrentHashMap<>();
-    emitters.put(
-        "job-A", new CopyOnWriteArrayList<>(List.of(mockEmitter1)));
-    emitters.put(
-        "job-B", new CopyOnWriteArrayList<>(List.of(mockEmitter2)));
+    emitters.put("job-A", new CopyOnWriteArrayList<>(List.of(mockEmitter1)));
+    emitters.put("job-B", new CopyOnWriteArrayList<>(List.of(mockEmitter2)));
     ReflectionTestUtils.setField(asyncJobService, "emitters", emitters);
 
     asyncJobService.sendHeartbeats();
@@ -342,7 +340,9 @@ class AsyncJobServiceTest extends IntegrationTestBase {
   @Test
   void sendHeartbeats_noActiveEmitters_noOp() {
     ReflectionTestUtils.setField(
-        asyncJobService, "emitters", new ConcurrentHashMap<String, CopyOnWriteArrayList<SseEmitter>>());
+        asyncJobService,
+        "emitters",
+        new ConcurrentHashMap<String, CopyOnWriteArrayList<SseEmitter>>());
 
     asyncJobService.sendHeartbeats();
     // 예외 없이 반환되면 성공 (검증할 emitter가 없으므로 상호작용 없음)

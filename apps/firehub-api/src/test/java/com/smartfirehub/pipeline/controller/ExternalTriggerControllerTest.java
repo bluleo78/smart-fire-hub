@@ -105,10 +105,9 @@ class ExternalTriggerControllerTest extends IntegrationTestBase {
   /**
    * 비활성 웹훅은 404 다 — P2-b 에서 의도적으로 바꾼 외부 계약이라 여기서 고정한다.
    *
-   * <p>이전에는 해석에 {@code is_enabled} 필터가 없어 서명검증까지 통과한 뒤 {@code fireTrigger} 가
-   * 조용히 반환했고, 컨트롤러는 실행되지도 않은 요청에 <b>200 {"status":"triggered"}</b> 를 돌려줬다.
-   * V95 해석 함수가 비활성 트리거를 아예 해석하지 않으므로 이제 진실을 말한다. 부수 효과로 비활성
-   * 트리거의 테넌트 존재 여부도 노출되지 않는다.
+   * <p>이전에는 해석에 {@code is_enabled} 필터가 없어 서명검증까지 통과한 뒤 {@code fireTrigger} 가 조용히 반환했고, 컨트롤러는 실행되지도
+   * 않은 요청에 <b>200 {"status":"triggered"}</b> 를 돌려줬다. V95 해석 함수가 비활성 트리거를 아예 해석하지 않으므로 이제 진실을 말한다.
+   * 부수 효과로 비활성 트리거의 테넌트 존재 여부도 노출되지 않는다.
    */
   @Test
   void webhookTrigger_disabledTrigger_returnsNotFound() throws Exception {

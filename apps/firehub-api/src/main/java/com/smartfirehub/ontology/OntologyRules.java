@@ -101,7 +101,8 @@ public final class OntologyRules {
   }
 
   // 관계 description null 차단.
-  public static void validateRelationDescription(String description, String subjectName, String objectName) {
+  public static void validateRelationDescription(
+      String description, String subjectName, String objectName) {
     // 관계 description도 NOT NULL 컬럼 — 엔티티/속성과 동일하게 null만 차단한다(#305).
     if (description == null) {
       throw new IllegalArgumentException(
@@ -129,7 +130,8 @@ public final class OntologyRules {
   }
 
   // 중복 관계(트리플) 문구 생성기.
-  public static IllegalArgumentException duplicateTriple(String subject, String relation, String object) {
+  public static IllegalArgumentException duplicateTriple(
+      String subject, String relation, String object) {
     return new IllegalArgumentException("중복된 관계: " + subject + "|" + relation + "|" + object);
   }
 }

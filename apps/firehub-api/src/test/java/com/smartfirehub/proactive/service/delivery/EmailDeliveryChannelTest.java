@@ -85,15 +85,13 @@ class EmailDeliveryChannelTest {
   /**
    * 빈 호스트는 <b>조용한 건너뛰기가 아니라 예외</b>다(#390 item 5).
    *
-   * <p>예전 이름은 {@code deliver_smtpNotConfigured_skips} 였고 "정상 반환한다"를 계약처럼 말했다.
-   * 그런데 정상 반환은 호출부({@code ProactiveJobAsyncRunner})가 EMAIL 을
-   * {@code deliveredChannels} 에 담아 <b>실행 기록에 "전달됨"으로 남기는</b> 것을 뜻한다 —
-   * 한 통도 안 나갔는데. 같은 상태에서 {@code EmailChannel} 은 {@code PermanentFailure} 를
-   * 돌려주므로 두 소비자의 가시성이 어긋나 있었다.
+   * <p>예전 이름은 {@code deliver_smtpNotConfigured_skips} 였고 "정상 반환한다"를 계약처럼 말했다. 그런데 정상 반환은 호출부({@code
+   * ProactiveJobAsyncRunner})가 EMAIL 을 {@code deliveredChannels} 에 담아 <b>실행 기록에 "전달됨"으로 남기는</b> 것을
+   * 뜻한다 — 한 통도 안 나갔는데. 같은 상태에서 {@code EmailChannel} 은 {@code PermanentFailure} 를 돌려주므로 두 소비자의 가시성이
+   * 어긋나 있었다.
    *
-   * <p><b>흔한 상태다.</b> #712 로 SMTP 가 워크스페이스 전용이 되어, 자기 SMTP 를 등록하지 않은
-   * <b>모든 워크스페이스</b>가 여기를 지난다(플랫폼 폴백 없음). 그래서 예외 문구가 등록 위치
-   * (워크스페이스 설정 › 이메일)를 안내하는지까지 본다.
+   * <p><b>흔한 상태다.</b> #712 로 SMTP 가 워크스페이스 전용이 되어, 자기 SMTP 를 등록하지 않은 <b>모든 워크스페이스</b>가 여기를 지난다(플랫폼
+   * 폴백 없음). 그래서 예외 문구가 등록 위치 (워크스페이스 설정 › 이메일)를 안내하는지까지 본다.
    */
   @Test
   void deliver_smtpNotConfigured_throwsSoRunnerDoesNotRecordDelivery() {

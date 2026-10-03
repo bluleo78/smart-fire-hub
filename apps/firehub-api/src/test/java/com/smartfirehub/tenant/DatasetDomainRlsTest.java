@@ -21,11 +21,11 @@ import org.springframework.transaction.support.TransactionTemplate;
 /**
  * V88 dataset 도메인 RLS 격리를 양방향으로 검증한다.
  *
- * <p>공유 테스트 DB 라 전체 카운트 비교 단언은 쓸 수 없다(다른 세션이 동시에 쓴다). 실행마다
- * 고유한 테넌트 두 개를 만들어 그 범위에서만 단언하고, 만든 행은 자기 테넌트 컨텍스트에서 지운다.
+ * <p>공유 테스트 DB 라 전체 카운트 비교 단언은 쓸 수 없다(다른 세션이 동시에 쓴다). 실행마다 고유한 테넌트 두 개를 만들어 그 범위에서만 단언하고, 만든 행은 자기
+ * 테넌트 컨텍스트에서 지운다.
  *
- * <p>이 클래스에 클래스 레벨 {@code @Transactional} 을 붙이지 않는다 — 테넌트를 바꿔 가며 여러
- * 트랜잭션을 열어야 하고, 하나의 테스트 트랜잭션에 묶이면 GUC 가 처음 값으로 고정된다.
+ * <p>이 클래스에 클래스 레벨 {@code @Transactional} 을 붙이지 않는다 — 테넌트를 바꿔 가며 여러 트랜잭션을 열어야 하고, 하나의 테스트 트랜잭션에 묶이면
+ * GUC 가 처음 값으로 고정된다.
  */
 class DatasetDomainRlsTest extends IntegrationTestBase {
 
@@ -108,7 +108,8 @@ class DatasetDomainRlsTest extends IntegrationTestBase {
   @Test
   void readWithoutTenantContextSeesNothing() {
     // fail-closed 확인: 컨텍스트가 없으면 GUC 가 비고 정책이 전 행을 차단해야 한다.
-    Long datasetId = TenantRlsTestSupport.runInTenantTransaction(tx, tenantA, () -> insertDataset("무컨텍스트"));
+    Long datasetId =
+        TenantRlsTestSupport.runInTenantTransaction(tx, tenantA, () -> insertDataset("무컨텍스트"));
 
     TenantContext.clear();
     Boolean visible =
@@ -170,11 +171,9 @@ class DatasetDomainRlsTest extends IntegrationTestBase {
 
   // ── 픽스처 ────────────────────────────────────────────────────────────
 
-
   /** tenant_id 는 명시하지 않는다 — DEFAULT 가 GUC 에서 채우는 것을 함께 검증하기 위함이다. */
   private Long insertDataset(String namePrefix) {
-    return insertDatasetWithTableName(
-        namePrefix, "tbl_rls_" + TenantRlsTestSupport.nextTenantId());
+    return insertDatasetWithTableName(namePrefix, "tbl_rls_" + TenantRlsTestSupport.nextTenantId());
   }
 
   /** table_name 을 호출자가 정하는 버전. 두 테넌트가 같은 이름을 쓰는 시나리오에 필요하다. */

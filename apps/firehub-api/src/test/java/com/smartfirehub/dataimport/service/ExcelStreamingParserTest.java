@@ -287,8 +287,8 @@ class ExcelStreamingParserTest {
   private static final int LARGE_ROW_COUNT = 20_000;
 
   /**
-   * SXSSFWorkbook으로 대용량(2만 행) 숫자 위주 시트를 생성해 File로 저장한다. 숫자 위주로 구성해
-   * sharedStrings/styles 엔트리가 아닌 sheet1.xml 엔트리 자체가 커지도록 한다.
+   * SXSSFWorkbook으로 대용량(2만 행) 숫자 위주 시트를 생성해 File로 저장한다. 숫자 위주로 구성해 sharedStrings/styles 엔트리가 아닌
+   * sheet1.xml 엔트리 자체가 커지도록 한다.
    */
   private static void writeLargeDataDescriptorFixture(File dest) throws Exception {
     try (SXSSFWorkbook wb = new SXSSFWorkbook(100);
@@ -312,11 +312,10 @@ class ExcelStreamingParserTest {
   /**
    * 픽스처가 실제로 data-descriptor(엔트리 크기 미상, size=-1) zip인지 직접 검증한다.
    *
-   * <p>브리프의 MUST 조건 — "테스트 픽스처는 반드시 data-descriptor zip이어야 한다" — 을 SXSSF 자연 출력에
-   * 의존하는 방식으로만 만족시키면, 향후 POI/SXSSF 구현이 바뀌어 알려진 크기를 쓰게 되더라도 테스트가 조용히
-   * 통과해버려 더 이상 목표 케이스를 검증하지 못하는 상태가 될 수 있다. {@code ZipArchiveInputStream}(POI가
-   * 내부적으로 사용하는 것과 동일한 commons-compress 구현체)으로 sheet1.xml 엔트리를 {@code getNextEntry()}
-   * 하자마자 {@code getSize()}가 -1을 반환하는지 명시적으로 확인해 이 전제를 고정한다.
+   * <p>브리프의 MUST 조건 — "테스트 픽스처는 반드시 data-descriptor zip이어야 한다" — 을 SXSSF 자연 출력에 의존하는 방식으로만 만족시키면,
+   * 향후 POI/SXSSF 구현이 바뀌어 알려진 크기를 쓰게 되더라도 테스트가 조용히 통과해버려 더 이상 목표 케이스를 검증하지 못하는 상태가 될 수 있다. {@code
+   * ZipArchiveInputStream}(POI가 내부적으로 사용하는 것과 동일한 commons-compress 구현체)으로 sheet1.xml 엔트리를 {@code
+   * getNextEntry()} 하자마자 {@code getSize()}가 -1을 반환하는지 명시적으로 확인해 이 전제를 고정한다.
    */
   private static void assertSheetEntryIsDataDescriptor(File fixture) throws Exception {
     try (ZipArchiveInputStream zis = new ZipArchiveInputStream(new FileInputStream(fixture))) {
@@ -335,14 +334,13 @@ class ExcelStreamingParserTest {
   }
 
   /**
-   * 핵심 회귀 테스트: data-descriptor(size=-1) 대용량 xlsx를 {@code IOUtils.setByteArrayMaxOverride}로
-   * POI의 엔트리당 허용 크기를 인위적으로 낮춘 상태에서도, File 기반 파싱(현재 {@code parse(InputStream)}이
-   * 내부적으로 temp 파일에 스필 후 위임)은 성공적으로 스트리밍됨을 검증한다.
+   * 핵심 회귀 테스트: data-descriptor(size=-1) 대용량 xlsx를 {@code IOUtils.setByteArrayMaxOverride}로 POI의
+   * 엔트리당 허용 크기를 인위적으로 낮춘 상태에서도, File 기반 파싱(현재 {@code parse(InputStream)}이 내부적으로 temp 파일에 스필 후 위임)은
+   * 성공적으로 스트리밍됨을 검증한다.
    *
-   * <p>대조군으로 같은 픽스처를 {@code OPCPackage.open(InputStream)}으로 직접 열면 실패한다는 것도 함께
-   * 확인한다 — InputStream 기반 오픈은 엔트리 크기를 모르므로 POI가 기본 상한(100MB)을 기준으로 판단하는데,
-   * override가 그보다 작게 설정되면 실제 데이터 크기와 무관하게 즉시 실패한다. 반면 File 기반 오픈은 ZIP 중앙
-   * 디렉터리에서 엔트리 크기를 확정적으로 읽는 완전히 다른 코드 경로(ZipFileZipEntrySource)를 사용하므로 이
+   * <p>대조군으로 같은 픽스처를 {@code OPCPackage.open(InputStream)}으로 직접 열면 실패한다는 것도 함께 확인한다 — InputStream 기반
+   * 오픈은 엔트리 크기를 모르므로 POI가 기본 상한(100MB)을 기준으로 판단하는데, override가 그보다 작게 설정되면 실제 데이터 크기와 무관하게 즉시 실패한다.
+   * 반면 File 기반 오픈은 ZIP 중앙 디렉터리에서 엔트리 크기를 확정적으로 읽는 완전히 다른 코드 경로(ZipFileZipEntrySource)를 사용하므로 이
    * override의 영향을 받지 않는다.
    */
   @Test
@@ -376,8 +374,9 @@ class ExcelStreamingParserTest {
           });
 
       assertThat(rows).hasSize(LARGE_ROW_COUNT + 1); // 헤더 포함
-      assertThat(rows.get(0)).containsExactly(
-          "col0", "col1", "col2", "col3", "col4", "col5", "col6", "col7", "col8", "col9");
+      assertThat(rows.get(0))
+          .containsExactly(
+              "col0", "col1", "col2", "col3", "col4", "col5", "col6", "col7", "col8", "col9");
     } finally {
       // 전역 static 상태 원복 — 다른 테스트에 영향(cross-test pollution)을 주지 않도록 필수
       IOUtils.setByteArrayMaxOverride(-1);
@@ -385,8 +384,8 @@ class ExcelStreamingParserTest {
   }
 
   /**
-   * File 기반 core 진입점({@code parse(File, RowConsumer)})이 첫 행에서 early-exit 하면 대용량 파일을
-   * 전량 읽지 않고 즉시 중단됨을 검증한다(스트리밍 특성 보존 확인).
+   * File 기반 core 진입점({@code parse(File, RowConsumer)})이 첫 행에서 early-exit 하면 대용량 파일을 전량 읽지 않고 즉시
+   * 중단됨을 검증한다(스트리밍 특성 보존 확인).
    */
   @Test
   void file_based_parse_stops_immediately_on_early_exit_for_large_fixture(@TempDir File tempDir)
@@ -403,8 +402,9 @@ class ExcelStreamingParserTest {
         });
 
     assertThat(rows).hasSize(1);
-    assertThat(rows.get(0)).containsExactly(
-        "col0", "col1", "col2", "col3", "col4", "col5", "col6", "col7", "col8", "col9");
+    assertThat(rows.get(0))
+        .containsExactly(
+            "col0", "col1", "col2", "col3", "col4", "col5", "col6", "col7", "col8", "col9");
   }
 
   /** File 기반 core 진입점이 소규모 XLSX도 기존과 동일하게 파싱함을 확인한다(회귀 방지). */

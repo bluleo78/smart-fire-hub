@@ -301,16 +301,14 @@ class AiControllerTest {
   }
 
   /**
-   * opencode 는 Anthropic 인증 개념이 없다 — ai-agent 를 부르지 않고 "해당 없음"을 바로
-   * 응답해야 한다. {@code Opencode.apiKey}(OpenAI 호환 키)를 verifyApiKey()(Anthropic 키 검증)로
-   * 보내는 회귀를 이 테스트가 잡는다.
+   * opencode 는 Anthropic 인증 개념이 없다 — ai-agent 를 부르지 않고 "해당 없음"을 바로 응답해야 한다. {@code
+   * Opencode.apiKey}(OpenAI 호환 키)를 verifyApiKey()(Anthropic 키 검증)로 보내는 회귀를 이 테스트가 잡는다.
    */
   @Test
   void getAuthStatus_opencode면_해당없음을_바로_응답한다() throws Exception {
     mockAuthentication("ai:settings");
     when(aiCredentialService.resolve())
-        .thenReturn(
-            new AiCredential.Opencode("openai", "https://api.openai.com/v1", "", "sk-oai"));
+        .thenReturn(new AiCredential.Opencode("openai", "https://api.openai.com/v1", "", "sk-oai"));
 
     mockMvc
         .perform(get("/api/v1/ai/auth-status").header("Authorization", "Bearer valid-token"))
@@ -323,10 +321,9 @@ class AiControllerTest {
   }
 
   /**
-   * fail-closed 가드: 알 수 없는 agentType(손으로 고친 행 등)을 만나면 resolve() 가 던지는
-   * {@code UnknownAgentTypeException} 이 그대로 전파돼 500 이 되어야 한다. 누군가 이 예외를
-   * 잡아 빈 자격증명으로 계속 진행하게 바꾸면(예: sdk 로 폴백) 이 테스트가 RED 가 된다 — 그
-   * 폴백이 정확히 6b1c6383 과 같은 모양의 과금 혼입이다.
+   * fail-closed 가드: 알 수 없는 agentType(손으로 고친 행 등)을 만나면 resolve() 가 던지는 {@code
+   * UnknownAgentTypeException} 이 그대로 전파돼 500 이 되어야 한다. 누군가 이 예외를 잡아 빈 자격증명으로 계속 진행하게 바꾸면(예: sdk 로
+   * 폴백) 이 테스트가 RED 가 된다 — 그 폴백이 정확히 6b1c6383 과 같은 모양의 과금 혼입이다.
    */
   @Test
   void getAuthStatus_알수없는_유형이면_500으로_실패한다() throws Exception {

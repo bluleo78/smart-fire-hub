@@ -16,8 +16,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 /**
- * 스윕: 테넌트마다 대상 데이터셋을 동기화하고, 한 데이터셋 실패가 나머지를 막지 않는다. 남은 행이 있으면(PARTIAL)
- * 주기 대기 없이 연속 상한 안에서 다음 라운드를 바로 돈다(#715).
+ * 스윕: 테넌트마다 대상 데이터셋을 동기화하고, 한 데이터셋 실패가 나머지를 막지 않는다. 남은 행이 있으면(PARTIAL) 주기 대기 없이 연속 상한 안에서 다음 라운드를
+ * 바로 돈다(#715).
  */
 @ExtendWith(MockitoExtension.class)
 class RowSearchSweepSchedulerTest {

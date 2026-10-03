@@ -219,8 +219,7 @@ class SavedQueryControllerTest {
 
     // 실제 바인딩 결과 캡처 — Spring 버전·PG 버전 차이를 흡수하기 위해 null 또는 empty list 둘 다 허용.
     @SuppressWarnings("unchecked")
-    org.mockito.ArgumentCaptor<List<Long>> captor =
-        org.mockito.ArgumentCaptor.forClass(List.class);
+    org.mockito.ArgumentCaptor<List<Long>> captor = org.mockito.ArgumentCaptor.forClass(List.class);
     verify(executionService).getSchemaInfo(captor.capture());
     List<Long> captured = captor.getValue();
     assertThat(captured == null || captured.isEmpty())

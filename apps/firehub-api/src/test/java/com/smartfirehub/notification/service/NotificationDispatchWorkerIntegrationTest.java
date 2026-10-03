@@ -101,9 +101,8 @@ class NotificationDispatchWorkerIntegrationTest extends IntegrationTestBase {
   /**
    * V105 회귀 가드 — {@code 'PERMANENT_FAILURE'}(17자)가 status 컬럼에 실제로 저장되는지 본다.
    *
-   * <p>V50 이 컬럼을 varchar(16) 으로 선언한 탓에 이 쓰기는 언제나 22001 로 실패했고, 재시도가
-   * 소진된 행은 상태 기록 자체가 불가능해 SENDING 에 갇힌 뒤 stale-claim 리퍼에 의해 PENDING 으로
-   * 되돌려져 영구 루프에 빠졌다. 컬럼 폭을 되돌리면 이 단언이 즉시 깨진다.
+   * <p>V50 이 컬럼을 varchar(16) 으로 선언한 탓에 이 쓰기는 언제나 22001 로 실패했고, 재시도가 소진된 행은 상태 기록 자체가 불가능해 SENDING 에
+   * 갇힌 뒤 stale-claim 리퍼에 의해 PENDING 으로 되돌려져 영구 루프에 빠졌다. 컬럼 폭을 되돌리면 이 단언이 즉시 깨진다.
    */
   @Test
   void markPermanentFailure_persistsFullStatusString() {
@@ -122,12 +121,10 @@ class NotificationDispatchWorkerIntegrationTest extends IntegrationTestBase {
   /**
    * 테스트용 사용자 생성 — 충돌 회피를 위해 nanoTime으로 unique 이메일.
    *
-   * <p><b>멤버십은 만들지 않는다(P2-f Task 4).</b> P2-e 에는 여기서 스크래치 테넌트의 ACTIVE 멤버십을
-   * 함께 만들었다 — {@code ChatChannel} 이 수신자의 멤버십에서 저장 테넌트를 <b>추측</b>했고 멤버십이
-   * 없으면 영구 실패였기 때문이다. 그 임시방편은 제거됐다: 이제 워커가 outbox 행의
-   * {@code tenant_id} 로 {@code TenantContext.runScoped} 를 열고 채널은 그 컨텍스트를 그대로 쓴다.
-   * 따라서 <b>멤버십은 배달에 무관하며</b>, 여기서 멤버십을 만들면 사라진 계약을 되살리는 죽은
-   * 픽스처가 된다. 멤버십 없는 수신자도 정상 배달된다는 것 자체의 커버리지는
+   * <p><b>멤버십은 만들지 않는다(P2-f Task 4).</b> P2-e 에는 여기서 스크래치 테넌트의 ACTIVE 멤버십을 함께 만들었다 — {@code
+   * ChatChannel} 이 수신자의 멤버십에서 저장 테넌트를 <b>추측</b>했고 멤버십이 없으면 영구 실패였기 때문이다. 그 임시방편은 제거됐다: 이제 워커가
+   * outbox 행의 {@code tenant_id} 로 {@code TenantContext.runScoped} 를 열고 채널은 그 컨텍스트를 그대로 쓴다. 따라서
+   * <b>멤버십은 배달에 무관하며</b>, 여기서 멤버십을 만들면 사라진 계약을 되살리는 죽은 픽스처가 된다. 멤버십 없는 수신자도 정상 배달된다는 것 자체의 커버리지는
    * {@code OutboxWorkerTenantScopeTest} 가 진다.
    */
   private long createTestUser() {

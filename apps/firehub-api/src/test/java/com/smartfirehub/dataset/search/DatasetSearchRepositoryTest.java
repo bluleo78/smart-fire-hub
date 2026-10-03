@@ -35,41 +35,50 @@ class DatasetSearchRepositoryTest extends IntegrationTestBase {
   /** 테스트용 사용자 생성 후 id 반환. */
   private Long createUser(String username) {
     return dsl.fetchOne(
-        "INSERT INTO \"user\"(username, password, name, email) VALUES (?, 'x', ?, ?) RETURNING id",
-        username, username, username + "@example.com").get(0, Long.class);
+            "INSERT INTO \"user\"(username, password, name, email) VALUES (?, 'x', ?, ?) RETURNING id",
+            username,
+            username,
+            username + "@example.com")
+        .get(0, Long.class);
   }
 
   /** 데이터셋 생성 후 id 반환. */
   private Long createDataset(
       String name, String tableName, String storageType, String originType, Long userId) {
     return dsl.fetchOne(
-        "INSERT INTO dataset(name, table_name, storage_type, origin_type, created_by)"
-            + " VALUES (?, ?, ?, ?, ?) RETURNING id",
-        name, tableName, storageType, originType, userId).get(0, Long.class);
+            "INSERT INTO dataset(name, table_name, storage_type, origin_type, created_by)"
+                + " VALUES (?, ?, ?, ?, ?) RETURNING id",
+            name,
+            tableName,
+            storageType,
+            originType,
+            userId)
+        .get(0, Long.class);
   }
 
   /**
-   * source_text 를 dataset_embedding 에, 벡터(있으면)를 dataset_embedding_vec_1024 에 시드(#713 — 벡터는 차원
-   * 테이블에 따로 있다). embedLiteral 이 null 이면 벡터 행을 만들지 않는다(비동기 임베딩 대기 상태).
+   * source_text 를 dataset_embedding 에, 벡터(있으면)를 dataset_embedding_vec_1024 에 시드(#713 — 벡터는 차원 테이블에
+   * 따로 있다). embedLiteral 이 null 이면 벡터 행을 만들지 않는다(비동기 임베딩 대기 상태).
    */
   private void seedEmbedding(Long datasetId, String sourceText, String embedLiteral) {
     dsl.execute(
-        "INSERT INTO dataset_embedding(dataset_id, source_text) VALUES (?,?)", datasetId, sourceText);
+        "INSERT INTO dataset_embedding(dataset_id, source_text) VALUES (?,?)",
+        datasetId,
+        sourceText);
     if (embedLiteral != null) {
       dsl.execute(
           "INSERT INTO dataset_embedding_vec_1024(dataset_id, embedding, embedding_model)"
               + " VALUES (?, ?::vector, 'bge-m3')",
-          datasetId, embedLiteral);
+          datasetId,
+          embedLiteral);
     }
   }
 
   @Test
   void searchByTrigramFindsTermAndScoresPositive() {
     Long userId = createUser("dssearch_trgm");
-    Long matched =
-        createDataset("화재 통계 데이터셋", "data.ds_trgm_a", "DOCUMENT", "SOURCE", userId);
-    Long unrelated =
-        createDataset("전혀 무관한 인사 자료", "data.ds_trgm_b", "DOCUMENT", "SOURCE", userId);
+    Long matched = createDataset("화재 통계 데이터셋", "data.ds_trgm_a", "DOCUMENT", "SOURCE", userId);
+    Long unrelated = createDataset("전혀 무관한 인사 자료", "data.ds_trgm_b", "DOCUMENT", "SOURCE", userId);
     seedEmbedding(matched, "연도별 화재 발생 건수 및 피해 통계", null);
     seedEmbedding(unrelated, "직원 인사 발령 일반 자료", null);
 
@@ -110,7 +119,9 @@ class DatasetSearchRepositoryTest extends IntegrationTestBase {
     seedEmbedding(far, "원거리 본문", literal(0, 1)); // 직교
     seedEmbedding(pending, "임베딩 미생성 본문", null); // embedding NULL — 코사인 결과에서 제외되어야 함
 
-    var hits = searchRepository.searchByCosine(new EmbeddingSpace(EmbeddingDimension.D1024, "bge-m3"), vec(1f, 0f), null, 10);
+    var hits =
+        searchRepository.searchByCosine(
+            new EmbeddingSpace(EmbeddingDimension.D1024, "bge-m3"), vec(1f, 0f), null, 10);
 
     assertThat(hits).isNotEmpty();
     // (a) near 가 first, score 내림차순.
@@ -136,7 +147,9 @@ class DatasetSearchRepositoryTest extends IntegrationTestBase {
     seedEmbedding(doc, "문서 본문", literal(1, 0));
     seedEmbedding(table, "테이블 본문", literal(1, 0));
 
-    var hits = searchRepository.searchByCosine(new EmbeddingSpace(EmbeddingDimension.D1024, "bge-m3"), vec(1f, 0f), "DOCUMENT", 10);
+    var hits =
+        searchRepository.searchByCosine(
+            new EmbeddingSpace(EmbeddingDimension.D1024, "bge-m3"), vec(1f, 0f), "DOCUMENT", 10);
 
     assertThat(hits).isNotEmpty();
     assertThat(hits).allMatch(h -> h.storageType().equals("DOCUMENT"));
@@ -144,9 +157,9 @@ class DatasetSearchRepositoryTest extends IntegrationTestBase {
   }
 
   /**
-   * 회귀 가드: FILE(오브젝트) 데이터셋도 storageType 필터 없이 검색되면 결과에 포함되어야 한다.
-   * 검색/색인 계층은 storage_type 을 배제하지 않으므로(동적 필터만 존재) FILE 도 유효 후보다.
-   * 누군가 `AND storage_type IN ('TABLE','DOCUMENT')` 같은 제약을 추가하면 이 테스트가 깨진다.
+   * 회귀 가드: FILE(오브젝트) 데이터셋도 storageType 필터 없이 검색되면 결과에 포함되어야 한다. 검색/색인 계층은 storage_type 을 배제하지
+   * 않으므로(동적 필터만 존재) FILE 도 유효 후보다. 누군가 `AND storage_type IN ('TABLE','DOCUMENT')` 같은 제약을 추가하면 이
+   * 테스트가 깨진다.
    */
   @Test
   void searchByTrigramIncludesFileStorageTypeWhenUnfiltered() {

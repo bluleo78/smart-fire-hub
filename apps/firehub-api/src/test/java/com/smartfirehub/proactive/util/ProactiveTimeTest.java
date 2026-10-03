@@ -11,8 +11,8 @@ import org.junit.jupiter.api.Test;
 /**
  * ProactiveTime 단위 테스트 (#349)
  *
- * <p>proactive 모듈이 DB에 쓰는 시각이 JVM 기본 타임존에 좌우되면, 같은 테이블에 UTC(Postgres now() 기본값)와 KST(애플리케이션 기록)가
- * 섞여 저장되어 프론트가 9시간 어긋나게 표시한다. nowUtc()가 기본 타임존과 무관하게 UTC 벽시계를 반환하는지 고정한다.
+ * <p>proactive 모듈이 DB에 쓰는 시각이 JVM 기본 타임존에 좌우되면, 같은 테이블에 UTC(Postgres now() 기본값)와 KST(애플리케이션 기록)가 섞여
+ * 저장되어 프론트가 9시간 어긋나게 표시한다. nowUtc()가 기본 타임존과 무관하게 UTC 벽시계를 반환하는지 고정한다.
  */
 class ProactiveTimeTest {
 

@@ -1,8 +1,8 @@
 package com.smartfirehub.ontology.service;
 
-import com.smartfirehub.global.security.DelegationHeaders;
 import com.smartfirehub.audit.service.AuditLogService;
 import com.smartfirehub.global.exception.ExternalServiceException;
+import com.smartfirehub.global.security.DelegationHeaders;
 import com.smartfirehub.ontology.OntologyRules;
 import com.smartfirehub.ontology.dto.CreateOntologyRequest;
 import com.smartfirehub.ontology.dto.GraphResponse;
@@ -147,8 +147,7 @@ public class OntologyService {
   // 호출 전제(changeStatus가 보장): to는 유효한 상태이고 from과 다르다.
   private void assertTransitionAllowed(long ontologyId, String from, String to) {
     if ("draft".equals(to)) {
-      throw new IllegalStateException(
-          "이미 사용을 시작한 온톨로지는 초안으로 되돌릴 수 없습니다. 은퇴(archived)를 사용하세요.");
+      throw new IllegalStateException("이미 사용을 시작한 온톨로지는 초안으로 되돌릴 수 없습니다. 은퇴(archived)를 사용하세요.");
     }
     if ("archived".equals(to)) {
       if (!"active".equals(from)) {
@@ -222,8 +221,7 @@ public class OntologyService {
 
     int references = ontologyRepository.countReferences(ontologyId);
     if (references > 0) {
-      throw new IllegalStateException(
-          references + "개 데이터셋이 사용 중입니다. 은퇴(archived)를 사용하세요.");
+      throw new IllegalStateException(references + "개 데이터셋이 사용 중입니다. 은퇴(archived)를 사용하세요.");
     }
     ontologyRepository.deleteOntology(ontologyId);
 

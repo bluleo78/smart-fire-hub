@@ -21,8 +21,8 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 /**
  * 멤버십 단위 정지/제거와 테넌트 범위 ADMIN 카운트의 저장소 계약.
  *
- * <p>비트랜잭션: 테넌트 둘(A, B)을 실제로 만들고 RLS 컨텍스트를 바꿔 가며 검증해야 한다. 공유 test DB
- * 의 기본 테넌트(1)에는 다른 테스트의 ADMIN 이 섞여 있어 카운트가 오염되므로 <b>새 테넌트 둘</b>만 쓴다.
+ * <p>비트랜잭션: 테넌트 둘(A, B)을 실제로 만들고 RLS 컨텍스트를 바꿔 가며 검증해야 한다. 공유 test DB 의 기본 테넌트(1)에는 다른 테스트의 ADMIN 이
+ * 섞여 있어 카운트가 오염되므로 <b>새 테넌트 둘</b>만 쓴다.
  */
 class MembershipScopeRepositoryTest extends IntegrationTestBase {
 

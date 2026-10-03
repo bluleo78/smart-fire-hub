@@ -81,8 +81,14 @@ class PipelineServiceTest extends IntegrationTestBase {
     DatasetDetailResponse pkOutputDataset =
         datasetService.createDataset(
             new CreateDatasetRequest(
-                "PK Output Dataset", "pk_output_dataset", null, null, "TABLE", "DERIVED",
-                pkColumns, null),
+                "PK Output Dataset",
+                "pk_output_dataset",
+                null,
+                null,
+                "TABLE",
+                "DERIVED",
+                pkColumns,
+                null),
             testUserId);
     pkOutputDatasetId = pkOutputDataset.id();
   }
@@ -251,7 +257,8 @@ class PipelineServiceTest extends IntegrationTestBase {
                 null,
                 "MERGE"));
 
-    CreatePipelineRequest request = new CreatePipelineRequest("Merge Non-SQL Pipeline", "test", steps);
+    CreatePipelineRequest request =
+        new CreatePipelineRequest("Merge Non-SQL Pipeline", "test", steps);
 
     assertThatThrownBy(() -> pipelineService.createPipeline(request, testUserId))
         .isInstanceOf(IllegalArgumentException.class)
@@ -272,7 +279,8 @@ class PipelineServiceTest extends IntegrationTestBase {
                 null,
                 "MERGE"));
 
-    CreatePipelineRequest request = new CreatePipelineRequest("Merge No Output Pipeline", "test", steps);
+    CreatePipelineRequest request =
+        new CreatePipelineRequest("Merge No Output Pipeline", "test", steps);
 
     assertThatThrownBy(() -> pipelineService.createPipeline(request, testUserId))
         .isInstanceOf(IllegalArgumentException.class)
@@ -293,7 +301,8 @@ class PipelineServiceTest extends IntegrationTestBase {
                 null,
                 "MERGE"));
 
-    CreatePipelineRequest request = new CreatePipelineRequest("Merge No PK Pipeline", "test", steps);
+    CreatePipelineRequest request =
+        new CreatePipelineRequest("Merge No PK Pipeline", "test", steps);
 
     assertThatThrownBy(() -> pipelineService.createPipeline(request, testUserId))
         .isInstanceOf(IllegalArgumentException.class)
@@ -314,7 +323,8 @@ class PipelineServiceTest extends IntegrationTestBase {
                 null,
                 "FOO"));
 
-    CreatePipelineRequest request = new CreatePipelineRequest("Unknown Strategy Pipeline", "test", steps);
+    CreatePipelineRequest request =
+        new CreatePipelineRequest("Unknown Strategy Pipeline", "test", steps);
 
     assertThatThrownBy(() -> pipelineService.createPipeline(request, testUserId))
         .isInstanceOf(IllegalArgumentException.class)
@@ -335,17 +345,17 @@ class PipelineServiceTest extends IntegrationTestBase {
                 null,
                 "MERGE"));
 
-    CreatePipelineRequest request = new CreatePipelineRequest("Merge With PK Pipeline", "test", steps);
+    CreatePipelineRequest request =
+        new CreatePipelineRequest("Merge With PK Pipeline", "test", steps);
 
     assertThatCode(() -> pipelineService.createPipeline(request, testUserId))
         .doesNotThrowAnyException();
   }
 
   /**
-   * Fix round 1, must 3 — 사용자가 직접 쓴 UPDATE/INSERT/DELETE 에 MERGE 를 걸면 실행 시점의 출력
-   * 비우기 판단과 SELECT 래핑 두 블록이 모두 SELECT 자동 적재 전용이라 스킵되어, MERGE 가 조용히
-   * 아무 의미도 없는 채로 사용자 SQL 이 그대로 실행된다(무동작). PK 없음과 같은 부류의 silent
-   * degradation 이므로 저장 시점에 막는다.
+   * Fix round 1, must 3 — 사용자가 직접 쓴 UPDATE/INSERT/DELETE 에 MERGE 를 걸면 실행 시점의 출력 비우기 판단과 SELECT 래핑 두
+   * 블록이 모두 SELECT 자동 적재 전용이라 스킵되어, MERGE 가 조용히 아무 의미도 없는 채로 사용자 SQL 이 그대로 실행된다(무동작). PK 없음과 같은 부류의
+   * silent degradation 이므로 저장 시점에 막는다.
    */
   @Test
   void createPipeline_mergeStrategyOnNonSelectSqlStep_isRejected() {
@@ -361,7 +371,8 @@ class PipelineServiceTest extends IntegrationTestBase {
                 null,
                 "MERGE"));
 
-    CreatePipelineRequest request = new CreatePipelineRequest("Merge On Update Pipeline", "test", steps);
+    CreatePipelineRequest request =
+        new CreatePipelineRequest("Merge On Update Pipeline", "test", steps);
 
     assertThatThrownBy(() -> pipelineService.createPipeline(request, testUserId))
         .isInstanceOf(IllegalArgumentException.class)
@@ -457,8 +468,7 @@ class PipelineServiceTest extends IntegrationTestBase {
     // Given: 트리거가 없는 파이프라인, 활성 2개 + 비활성 1개를 가진 파이프라인
     PipelineDetailResponse noTriggerPipeline =
         pipelineService.createPipeline(
-            new CreatePipelineRequest("No Trigger Pipeline", "no triggers", List.of()),
-            testUserId);
+            new CreatePipelineRequest("No Trigger Pipeline", "no triggers", List.of()), testUserId);
     PipelineDetailResponse withTriggerPipeline =
         pipelineService.createPipeline(
             new CreatePipelineRequest("With Trigger Pipeline", "has triggers", List.of()),
@@ -978,8 +988,14 @@ class PipelineServiceTest extends IntegrationTestBase {
     List<PipelineStepRequest> steps =
         List.of(
             new PipelineStepRequest(
-                "step1", "incremental + append", "SQL", INCREMENTAL_SQL, outputDatasetId, null,
-                null, "APPEND"));
+                "step1",
+                "incremental + append",
+                "SQL",
+                INCREMENTAL_SQL,
+                outputDatasetId,
+                null,
+                null,
+                "APPEND"));
 
     // 플레이스홀더가 SQL 가드 파싱을 깨지 않아야 한다(치환 없이 파싱하면 항상 저장 불가).
     assertThatCode(
@@ -995,8 +1011,14 @@ class PipelineServiceTest extends IntegrationTestBase {
     List<PipelineStepRequest> steps =
         List.of(
             new PipelineStepRequest(
-                "step1", "incremental + merge", "SQL", INCREMENTAL_SQL, pkOutputDatasetId, null,
-                null, "MERGE"));
+                "step1",
+                "incremental + merge",
+                "SQL",
+                INCREMENTAL_SQL,
+                pkOutputDatasetId,
+                null,
+                null,
+                "MERGE"));
 
     assertThatCode(
             () ->
@@ -1007,8 +1029,8 @@ class PipelineServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * 재저장 이월 — {@code updatePipeline} 은 스텝을 전부 지우고 다시 넣어 스텝 id 가 바뀌므로, 책갈피는
-   * 이름을 키로 이월돼야 한다. 이월하지 않으면 파이프라인을 저장할 때마다 전체를 다시 읽는다.
+   * 재저장 이월 — {@code updatePipeline} 은 스텝을 전부 지우고 다시 넣어 스텝 id 가 바뀌므로, 책갈피는 이름을 키로 이월돼야 한다. 이월하지 않으면
+   * 파이프라인을 저장할 때마다 전체를 다시 읽는다.
    */
   @Test
   void updatePipeline_sameNameSameOutput_carriesCursorOver() {
@@ -1022,11 +1044,18 @@ class PipelineServiceTest extends IntegrationTestBase {
                 "test",
                 List.of(
                     new PipelineStepRequest(
-                        "stepA", "a", "SQL", INCREMENTAL_SQL, pkOutputDatasetId, null, null,
+                        "stepA",
+                        "a",
+                        "SQL",
+                        INCREMENTAL_SQL,
+                        pkOutputDatasetId,
+                        null,
+                        null,
                         "MERGE"))),
             testUserId);
 
-    Long oldStepId = stepRepository.findStepIdByPipelineAndName(created.id(), "stepA").orElseThrow();
+    Long oldStepId =
+        stepRepository.findStepIdByPipelineAndName(created.id(), "stepA").orElseThrow();
     stepRepository.advanceCursor(oldStepId, bookmark, true);
     stepRepository.setFullRebuildPending(oldStepId, true);
 
@@ -1038,11 +1067,18 @@ class PipelineServiceTest extends IntegrationTestBase {
             null,
             List.of(
                 new PipelineStepRequest(
-                    "stepA", "a-edited", "SQL", INCREMENTAL_SQL, pkOutputDatasetId, null, null,
+                    "stepA",
+                    "a-edited",
+                    "SQL",
+                    INCREMENTAL_SQL,
+                    pkOutputDatasetId,
+                    null,
+                    null,
                     "MERGE"))),
         testUserId);
 
-    Long newStepId = stepRepository.findStepIdByPipelineAndName(created.id(), "stepA").orElseThrow();
+    Long newStepId =
+        stepRepository.findStepIdByPipelineAndName(created.id(), "stepA").orElseThrow();
     assertThat(newStepId).as("스텝은 삭제·재생성되므로 id 가 바뀐다").isNotEqualTo(oldStepId);
 
     StepCursor cursor = stepRepository.findCursor(newStepId).orElseThrow();
@@ -1050,10 +1086,7 @@ class PipelineServiceTest extends IntegrationTestBase {
     assertThat(cursor.fullRebuildPending()).isTrue();
   }
 
-  /**
-   * 출력 데이터셋이 바뀌면 이월하지 않는다 — 새 출력은 과거 실행분을 받은 적이 없으므로, 책갈피만
-   * 이어받으면 그 구간이 영원히 비게 된다(조용한 데이터 누락).
-   */
+  /** 출력 데이터셋이 바뀌면 이월하지 않는다 — 새 출력은 과거 실행분을 받은 적이 없으므로, 책갈피만 이어받으면 그 구간이 영원히 비게 된다(조용한 데이터 누락). */
   @Test
   void updatePipeline_differentOutputDataset_resetsCursor() {
     java.time.OffsetDateTime bookmark = java.time.OffsetDateTime.parse("2026-09-19T01:02:03Z");
@@ -1065,11 +1098,18 @@ class PipelineServiceTest extends IntegrationTestBase {
                 "test",
                 List.of(
                     new PipelineStepRequest(
-                        "stepA", "a", "SQL", INCREMENTAL_SQL, pkOutputDatasetId, null, null,
+                        "stepA",
+                        "a",
+                        "SQL",
+                        INCREMENTAL_SQL,
+                        pkOutputDatasetId,
+                        null,
+                        null,
                         "MERGE"))),
             testUserId);
 
-    Long oldStepId = stepRepository.findStepIdByPipelineAndName(created.id(), "stepA").orElseThrow();
+    Long oldStepId =
+        stepRepository.findStepIdByPipelineAndName(created.id(), "stepA").orElseThrow();
     stepRepository.advanceCursor(oldStepId, bookmark, true);
     stepRepository.setFullRebuildPending(oldStepId, true);
 
@@ -1082,21 +1122,27 @@ class PipelineServiceTest extends IntegrationTestBase {
             null,
             List.of(
                 new PipelineStepRequest(
-                    "stepA", "a-moved", "SQL", INCREMENTAL_SQL, outputDatasetId, null, null,
+                    "stepA",
+                    "a-moved",
+                    "SQL",
+                    INCREMENTAL_SQL,
+                    outputDatasetId,
+                    null,
+                    null,
                     "APPEND"))),
         testUserId);
 
-    Long newStepId = stepRepository.findStepIdByPipelineAndName(created.id(), "stepA").orElseThrow();
+    Long newStepId =
+        stepRepository.findStepIdByPipelineAndName(created.id(), "stepA").orElseThrow();
     StepCursor cursor = stepRepository.findCursor(newStepId).orElseThrow();
     assertThat(cursor.lastRunAt()).as("출력이 바뀌면 책갈피를 이월하지 않는다").isNull();
     assertThat(cursor.fullRebuildPending()).isFalse();
   }
 
   /**
-   * #734 — 재생성 예약은 "{{last_run_at}} 을 쓰는 SQL 스텝"에만 존재할 수 있다(예약 API 와 실행기의 불변식).
-   * 예약된 증분 스텝을 비증분 SQL 로 바꿔 저장하면 예약은 이월되지 않아야 한다. 이월되면 화면에 안 보이고
-   * 취소도 못 하는 예약이 남았다가, 나중에 {{last_run_at}} 을 다시 넣는 순간 확인 없이 출력 전체가 지워진다.
-   * 책갈피(lastRunAt) 이월은 이 수정의 범위가 아니므로 기존대로 유지됨을 함께 고정한다.
+   * #734 — 재생성 예약은 "{{last_run_at}} 을 쓰는 SQL 스텝"에만 존재할 수 있다(예약 API 와 실행기의 불변식). 예약된 증분 스텝을 비증분 SQL
+   * 로 바꿔 저장하면 예약은 이월되지 않아야 한다. 이월되면 화면에 안 보이고 취소도 못 하는 예약이 남았다가, 나중에 {{last_run_at}} 을 다시 넣는 순간 확인
+   * 없이 출력 전체가 지워진다. 책갈피(lastRunAt) 이월은 이 수정의 범위가 아니므로 기존대로 유지됨을 함께 고정한다.
    */
   @Test
   void updatePipeline_incrementalToNonIncremental_dropsFullRebuildReservation() {
@@ -1109,11 +1155,18 @@ class PipelineServiceTest extends IntegrationTestBase {
                 "test",
                 List.of(
                     new PipelineStepRequest(
-                        "stepA", "a", "SQL", INCREMENTAL_SQL, pkOutputDatasetId, null, null,
+                        "stepA",
+                        "a",
+                        "SQL",
+                        INCREMENTAL_SQL,
+                        pkOutputDatasetId,
+                        null,
+                        null,
                         "MERGE"))),
             testUserId);
 
-    Long oldStepId = stepRepository.findStepIdByPipelineAndName(created.id(), "stepA").orElseThrow();
+    Long oldStepId =
+        stepRepository.findStepIdByPipelineAndName(created.id(), "stepA").orElseThrow();
     stepRepository.advanceCursor(oldStepId, bookmark, true);
     pipelineService.setFullRebuildPending(created.id(), oldStepId, true);
 
@@ -1126,16 +1179,20 @@ class PipelineServiceTest extends IntegrationTestBase {
             null,
             List.of(
                 new PipelineStepRequest(
-                    "stepA", "a", "SQL", "SELECT code, name FROM data.src_table WHERE 1=0",
-                    pkOutputDatasetId, null, null, "MERGE"))),
+                    "stepA",
+                    "a",
+                    "SQL",
+                    "SELECT code, name FROM data.src_table WHERE 1=0",
+                    pkOutputDatasetId,
+                    null,
+                    null,
+                    "MERGE"))),
         testUserId);
 
     Long nonIncStepId =
         stepRepository.findStepIdByPipelineAndName(created.id(), "stepA").orElseThrow();
     StepCursor afterNonInc = stepRepository.findCursor(nonIncStepId).orElseThrow();
-    assertThat(afterNonInc.fullRebuildPending())
-        .as("비증분 스텝에는 재생성 예약이 이월되지 않는다")
-        .isFalse();
+    assertThat(afterNonInc.fullRebuildPending()).as("비증분 스텝에는 재생성 예약이 이월되지 않는다").isFalse();
     assertThat(afterNonInc.lastRunAt()).as("책갈피 이월은 기존대로 유지(범위 밖)").isEqualTo(bookmark);
 
     // 다시 증분 SQL 로 되돌려도 옛 예약이 되살아나지 않아야 한다(확인 없는 출력 삭제 방지).
@@ -1147,8 +1204,7 @@ class PipelineServiceTest extends IntegrationTestBase {
             null,
             List.of(
                 new PipelineStepRequest(
-                    "stepA", "a", "SQL", INCREMENTAL_SQL, pkOutputDatasetId, null, null,
-                    "MERGE"))),
+                    "stepA", "a", "SQL", INCREMENTAL_SQL, pkOutputDatasetId, null, null, "MERGE"))),
         testUserId);
 
     Long reIncStepId =
@@ -1159,10 +1215,9 @@ class PipelineServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * 출력이 null(임시 데이터셋 자동 생성)인 스텝은 이월하지 않는다 — {@code null == null} 을 "같은
-   * 출력"으로 보면 안 된다. 임시 데이터셋은 {@code source_pipeline_step_id} = 스텝 id 로 묶여 있어,
-   * 재저장으로 id 가 바뀌면 러너가 빈 임시 데이터셋을 새로 만든다. 거기에 책갈피만 이어받으면 이전
-   * 실행분이 통째로 빠진 채 변경분만 쌓인다.
+   * 출력이 null(임시 데이터셋 자동 생성)인 스텝은 이월하지 않는다 — {@code null == null} 을 "같은 출력"으로 보면 안 된다. 임시 데이터셋은
+   * {@code source_pipeline_step_id} = 스텝 id 로 묶여 있어, 재저장으로 id 가 바뀌면 러너가 빈 임시 데이터셋을 새로 만든다. 거기에 책갈피만
+   * 이어받으면 이전 실행분이 통째로 빠진 채 변경분만 쌓인다.
    */
   @Test
   void updatePipeline_nullOutputDataset_doesNotCarryCursorOver() {
@@ -1178,7 +1233,8 @@ class PipelineServiceTest extends IntegrationTestBase {
                         "stepA", "a", "SQL", INCREMENTAL_SQL, null, null, null, "APPEND"))),
             testUserId);
 
-    Long oldStepId = stepRepository.findStepIdByPipelineAndName(created.id(), "stepA").orElseThrow();
+    Long oldStepId =
+        stepRepository.findStepIdByPipelineAndName(created.id(), "stepA").orElseThrow();
     stepRepository.advanceCursor(oldStepId, bookmark, true);
 
     pipelineService.updatePipeline(
@@ -1192,7 +1248,8 @@ class PipelineServiceTest extends IntegrationTestBase {
                     "stepA", "a-edited", "SQL", INCREMENTAL_SQL, null, null, null, "APPEND"))),
         testUserId);
 
-    Long newStepId = stepRepository.findStepIdByPipelineAndName(created.id(), "stepA").orElseThrow();
+    Long newStepId =
+        stepRepository.findStepIdByPipelineAndName(created.id(), "stepA").orElseThrow();
     StepCursor cursor = stepRepository.findCursor(newStepId).orElseThrow();
     assertThat(cursor.lastRunAt()).as("출력이 null 이면 이월하지 않는다").isNull();
     assertThat(cursor.fullRebuildPending()).isFalse();
@@ -1201,12 +1258,11 @@ class PipelineServiceTest extends IntegrationTestBase {
   /**
    * 책갈피 이월이 <b>스텝 이름을 키로 쓸 수 있는 근거</b>를 실측으로 고정한다.
    *
-   * <p>{@code updatePipeline} 은 스텝을 전부 지우고 다시 넣어 id 가 바뀌므로 이월 키가 이름이고,
-   * {@code restoreCursor} 의 {@code WHERE pipeline_id = ? AND name = ?} 가 한 행만 맞힌다는 전제도
-   * 같은 곳에서 온다 — {@code pipeline_step} 의 {@code UNIQUE (pipeline_id, name)}(V3:24) 이다.
-   * 그 제약이 사라지면 이월 설계 전체가 재검토 대상이므로, 여기서 제약의 존재 자체를 단언한다.
-   * ({@code findCursorsByPipelineId} 는 그래도 {@code fetchGroups} 로 중복을 견디게 해 두었다 —
-   * 제약이 사라졌을 때 "편집 불가"가 아니라 "이월 안 함"으로 degrade 시키기 위해서다.)
+   * <p>{@code updatePipeline} 은 스텝을 전부 지우고 다시 넣어 id 가 바뀌므로 이월 키가 이름이고, {@code restoreCursor} 의
+   * {@code WHERE pipeline_id = ? AND name = ?} 가 한 행만 맞힌다는 전제도 같은 곳에서 온다 — {@code pipeline_step} 의
+   * {@code UNIQUE (pipeline_id, name)}(V3:24) 이다. 그 제약이 사라지면 이월 설계 전체가 재검토 대상이므로, 여기서 제약의 존재 자체를
+   * 단언한다. ({@code findCursorsByPipelineId} 는 그래도 {@code fetchGroups} 로 중복을 견디게 해 두었다 — 제약이 사라졌을 때
+   * "편집 불가"가 아니라 "이월 안 함"으로 degrade 시키기 위해서다.)
    */
   @Test
   void pipelineStepName_isUniquePerPipeline() {
@@ -1217,7 +1273,13 @@ class PipelineServiceTest extends IntegrationTestBase {
                 "test",
                 List.of(
                     new PipelineStepRequest(
-                        "stepA", "a", "SQL", INCREMENTAL_SQL, pkOutputDatasetId, null, null,
+                        "stepA",
+                        "a",
+                        "SQL",
+                        INCREMENTAL_SQL,
+                        pkOutputDatasetId,
+                        null,
+                        null,
                         "MERGE"))),
             testUserId);
 
@@ -1251,15 +1313,20 @@ class PipelineServiceTest extends IntegrationTestBase {
                 "test",
                 List.of(
                     new PipelineStepRequest(
-                        "stepA", "a", "SQL", INCREMENTAL_SQL, outputDatasetId, null, null,
+                        "stepA",
+                        "a",
+                        "SQL",
+                        INCREMENTAL_SQL,
+                        outputDatasetId,
+                        null,
+                        null,
                         "APPEND"))),
             testUserId);
 
     PipelineDetailResponse detail = pipelineService.getPipelineById(created.id());
 
     assertThat(detail.steps()).hasSize(1);
-    assertThat(detail.steps().get(0).warnings())
-        .anySatisfy(w -> assertThat(w).contains("중복"));
+    assertThat(detail.steps().get(0).warnings()).anySatisfy(w -> assertThat(w).contains("중복"));
   }
 
   @Test
@@ -1271,8 +1338,14 @@ class PipelineServiceTest extends IntegrationTestBase {
                 "test",
                 List.of(
                     new PipelineStepRequest(
-                        "stepA", "a", "SQL", INCREMENTAL_AGGREGATE_SQL, pkOutputDatasetId, null,
-                        null, "MERGE"))),
+                        "stepA",
+                        "a",
+                        "SQL",
+                        INCREMENTAL_AGGREGATE_SQL,
+                        pkOutputDatasetId,
+                        null,
+                        null,
+                        "MERGE"))),
             testUserId);
 
     PipelineDetailResponse detail = pipelineService.getPipelineById(created.id());
@@ -1282,10 +1355,9 @@ class PipelineServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * 코드리뷰 MEDIUM — {@code {{#N}}} 스텝 참조를 쓰는 증분 스텝(이전 스텝 출력을 읽는, 증분의 가장 흔한
-   * 모양)에도 집계 경고가 나와야 한다. 예전에는 원문을 그대로 JSqlParser 에 넘겨서 {@code {{#1}}} 이
-   * 문법 오류를 내고, {@code incrementalWarnings} 가 그 예외를 삼켜 <b>항상</b> 빈 목록을 돌려줬다 —
-   * 이 형태에서는 경고가 영원히 안 나왔다.
+   * 코드리뷰 MEDIUM — {@code {{#N}}} 스텝 참조를 쓰는 증분 스텝(이전 스텝 출력을 읽는, 증분의 가장 흔한 모양)에도 집계 경고가 나와야 한다. 예전에는
+   * 원문을 그대로 JSqlParser 에 넘겨서 {@code {{#1}}} 이 문법 오류를 내고, {@code incrementalWarnings} 가 그 예외를 삼켜
+   * <b>항상</b> 빈 목록을 돌려줬다 — 이 형태에서는 경고가 영원히 안 나왔다.
    */
   @Test
   void 상세조회_스텝참조를_쓰는_집계_증분_SQL도_집계경고가_붙는다() {
@@ -1316,10 +1388,9 @@ class PipelineServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * 코드리뷰 LOW — 로드 전략 비교의 대소문자 비대칭. 저장 API({@code LoadStrategy.valueOf})는 소문자를
-   * 거부하지만 컬럼에는 체크 제약이 없어 레거시/외부 경로로 들어온 소문자 행이 남아 있을 수 있다.
-   * 실행기({@code PipelineAsyncRunner})는 {@code equalsIgnoreCase} 라 그 행을 APPEND 로 실행하므로,
-   * 경고만 {@code equals} 로 판단하면 정확히 그 행에서만 "중복" 경고가 조용히 빠진다.
+   * 코드리뷰 LOW — 로드 전략 비교의 대소문자 비대칭. 저장 API({@code LoadStrategy.valueOf})는 소문자를 거부하지만 컬럼에는 체크 제약이 없어
+   * 레거시/외부 경로로 들어온 소문자 행이 남아 있을 수 있다. 실행기({@code PipelineAsyncRunner})는 {@code equalsIgnoreCase} 라
+   * 그 행을 APPEND 로 실행하므로, 경고만 {@code equals} 로 판단하면 정확히 그 행에서만 "중복" 경고가 조용히 빠진다.
    */
   @Test
   void 상세조회_소문자_레거시_append_행에도_중복경고가_붙는다() {
@@ -1330,7 +1401,13 @@ class PipelineServiceTest extends IntegrationTestBase {
                 "test",
                 List.of(
                     new PipelineStepRequest(
-                        "stepA", "a", "SQL", INCREMENTAL_SQL, outputDatasetId, null, null,
+                        "stepA",
+                        "a",
+                        "SQL",
+                        INCREMENTAL_SQL,
+                        outputDatasetId,
+                        null,
+                        null,
                         "APPEND"))),
             testUserId);
     // 저장 API 는 소문자를 거부하므로(의도된 요청 검증) 레거시 행은 DB 에 직접 써서 재현한다.
@@ -1355,7 +1432,13 @@ class PipelineServiceTest extends IntegrationTestBase {
                 "test",
                 List.of(
                     new PipelineStepRequest(
-                        "stepA", "a", "SQL", INCREMENTAL_SQL, pkOutputDatasetId, null, null,
+                        "stepA",
+                        "a",
+                        "SQL",
+                        INCREMENTAL_SQL,
+                        pkOutputDatasetId,
+                        null,
+                        null,
                         "MERGE"))),
             testUserId);
 
@@ -1374,7 +1457,13 @@ class PipelineServiceTest extends IntegrationTestBase {
                 "test",
                 List.of(
                     new PipelineStepRequest(
-                        "stepA", "a", "SQL", INCREMENTAL_SQL, pkOutputDatasetId, null, null,
+                        "stepA",
+                        "a",
+                        "SQL",
+                        INCREMENTAL_SQL,
+                        pkOutputDatasetId,
+                        null,
+                        null,
                         "MERGE"))),
             testUserId);
     Long stepId = stepRepository.findStepIdByPipelineAndName(created.id(), "stepA").orElseThrow();
@@ -1399,7 +1488,13 @@ class PipelineServiceTest extends IntegrationTestBase {
                 "test",
                 List.of(
                     new PipelineStepRequest(
-                        "stepA", "a", "SQL", INCREMENTAL_SQL, pkOutputDatasetId, null, null,
+                        "stepA",
+                        "a",
+                        "SQL",
+                        INCREMENTAL_SQL,
+                        pkOutputDatasetId,
+                        null,
+                        null,
                         "MERGE"))),
             testUserId);
     PipelineDetailResponse pipelineB =
@@ -1408,8 +1503,7 @@ class PipelineServiceTest extends IntegrationTestBase {
     Long stepIdOfA =
         stepRepository.findStepIdByPipelineAndName(pipelineA.id(), "stepA").orElseThrow();
 
-    assertThatThrownBy(
-            () -> pipelineService.setFullRebuildPending(pipelineB.id(), stepIdOfA, true))
+    assertThatThrownBy(() -> pipelineService.setFullRebuildPending(pipelineB.id(), stepIdOfA, true))
         .isInstanceOf(PipelineNotFoundException.class);
   }
 
@@ -1443,10 +1537,9 @@ class PipelineServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * #739 — 예약 API 는 실행기와 같은 판정("SQL 스텝 + {{last_run_at}} 사용")으로 증분 스텝을 가려야 한다.
-   * PYTHON 스텝은 스크립트에 {{last_run_at}} 문자열(주석 등)이 있어도 실행기가 증분 경로를 타지 않으므로
-   * 예약을 거부해야 한다. 받아들이면 화면에 안 보이고 해제도 안 되는 예약이 남았다가, 같은 이름·출력의
-   * 증분 SQL 로 바꿔 저장하는 순간 이월되어 다음 실행이 확인 없이 출력 전체를 지운다.
+   * #739 — 예약 API 는 실행기와 같은 판정("SQL 스텝 + {{last_run_at}} 사용")으로 증분 스텝을 가려야 한다. PYTHON 스텝은 스크립트에
+   * {{last_run_at}} 문자열(주석 등)이 있어도 실행기가 증분 경로를 타지 않으므로 예약을 거부해야 한다. 받아들이면 화면에 안 보이고 해제도 안 되는 예약이
+   * 남았다가, 같은 이름·출력의 증분 SQL 로 바꿔 저장하는 순간 이월되어 다음 실행이 확인 없이 출력 전체를 지운다.
    */
   @Test
   void 전체재생성_예약_플레이스홀더를_담은_PYTHON_스텝은_IllegalArgumentException이다() {
@@ -1480,8 +1573,8 @@ class PipelineServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * {@code fullRebuildMode} 세 가지 형태를 실측한다 — 웹 UI(Task 8)가 이 필드로 "전체 재생성"(출력
-   * 재작성) vs "전체 재읽기"(입력만 전체, 출력 재작성 보장 없음) 라벨을 정확히 가른다.
+   * {@code fullRebuildMode} 세 가지 형태를 실측한다 — 웹 UI(Task 8)가 이 필드로 "전체 재생성"(출력 재작성) vs "전체 재읽기"(입력만
+   * 전체, 출력 재작성 보장 없음) 라벨을 정확히 가른다.
    */
   @Test
   void 상세조회_fullRebuildMode가_스텝_형태에_따라_갈린다() {
@@ -1492,7 +1585,13 @@ class PipelineServiceTest extends IntegrationTestBase {
                 "test",
                 List.of(
                     new PipelineStepRequest(
-                        "stepA", "a", "SQL", INCREMENTAL_SQL, pkOutputDatasetId, null, null,
+                        "stepA",
+                        "a",
+                        "SQL",
+                        INCREMENTAL_SQL,
+                        pkOutputDatasetId,
+                        null,
+                        null,
                         "MERGE"))),
             testUserId);
     assertThat(pipelineService.getPipelineById(rebuildOutput.id()).steps().get(0).fullRebuildMode())

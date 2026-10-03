@@ -15,16 +15,14 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
 /**
- * SettingsService SMTP 쓰기·발송 설정 커버리지 테스트. {@code updateSettings}(테넌트 쓰기) →
- * {@code getSmtpConfig}(발송 설정) 왕복과 저장 시 검증(포트 범위·마스크 센티널·빈 비밀번호)을 본다.
+ * SettingsService SMTP 쓰기·발송 설정 커버리지 테스트. {@code updateSettings}(테넌트 쓰기) → {@code getSmtpConfig}(발송
+ * 설정) 왕복과 저장 시 검증(포트 범위·마스크 센티널·빈 비밀번호)을 본다.
  *
- * <p><b>#712 이후 이 클래스가 덮는 것은 테넌트 평면뿐이다.</b> 예전에는 전부
- * {@code updatePlatformSettings}(→ {@code system_settings})로 썼지만, SMTP 가 워크스페이스 전용이
- * 되어 플랫폼 쓰기는 400 으로 거부된다(그 거부는 {@code SmtpSettingsTenantOnlyTest} 가 본다). 검증
- * 규칙 자체는 바뀌지 않았으므로 같은 단언을 테넌트 경로로 옮겼다.
+ * <p><b>#712 이후 이 클래스가 덮는 것은 테넌트 평면뿐이다.</b> 예전에는 전부 {@code updatePlatformSettings}(→ {@code
+ * system_settings})로 썼지만, SMTP 가 워크스페이스 전용이 되어 플랫폼 쓰기는 400 으로 거부된다(그 거부는 {@code
+ * SmtpSettingsTenantOnlyTest} 가 본다). 검증 규칙 자체는 바뀌지 않았으므로 같은 단언을 테넌트 경로로 옮겼다.
  *
- * <p>매 테스트마다 새 테넌트를 만들고 지운다 — 공유 test DB 의 기본 테넌트에 SMTP 행을 남기면
- * 다른 테스트의 "미설정" 전제가 깨진다.
+ * <p>매 테스트마다 새 테넌트를 만들고 지운다 — 공유 test DB 의 기본 테넌트에 SMTP 행을 남기면 다른 테스트의 "미설정" 전제가 깨진다.
  */
 class SmtpSettingsServiceTest extends IntegrationTestBase {
 
@@ -73,18 +71,21 @@ class SmtpSettingsServiceTest extends IntegrationTestBase {
   void updateSettings_maskedPassword_skipsUpdate() {
     settingsService.updateSettings(Map.of("smtp.password", "real-smtp-password"), null);
     // 발송 설정에서는 복호화된 평문이다.
-    assertThat(settingsService.getSmtpConfig().get("smtp.password")).isEqualTo("real-smtp-password");
+    assertThat(settingsService.getSmtpConfig().get("smtp.password"))
+        .isEqualTo("real-smtp-password");
 
     // 서버가 내려준 마스크(#725 이후 고정 표식 "****")를 그대로 되돌려 보낸다 — 기존 값 유지.
     settingsService.updateSettings(Map.of("smtp.password", "****"), null);
 
-    assertThat(settingsService.getSmtpConfig().get("smtp.password")).isEqualTo("real-smtp-password");
+    assertThat(settingsService.getSmtpConfig().get("smtp.password"))
+        .isEqualTo("real-smtp-password");
   }
 
   @Test
   void getSmtpConfig_emptyPassword_returnsEmptyString() {
     // 인증 없는 릴레이: 빈 비밀번호는 암호화하지 않고, 읽을 때도 복호화하지 않는다.
-    settingsService.updateSettings(Map.of("smtp.host", "relay.example.com", "smtp.password", ""), null);
+    settingsService.updateSettings(
+        Map.of("smtp.host", "relay.example.com", "smtp.password", ""), null);
 
     assertThat(settingsService.getSmtpConfig()).containsEntry("smtp.password", "");
   }
@@ -93,7 +94,8 @@ class SmtpSettingsServiceTest extends IntegrationTestBase {
   void updateSettings_username_updatesSuccessfully() {
     settingsService.updateSettings(Map.of("smtp.username", "smtp-user@example.com"), null);
 
-    assertThat(settingsService.getSmtpConfig()).containsEntry("smtp.username", "smtp-user@example.com");
+    assertThat(settingsService.getSmtpConfig())
+        .containsEntry("smtp.username", "smtp-user@example.com");
   }
 
   // --- smtp.port 범위 검증 ---

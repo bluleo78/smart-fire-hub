@@ -1,11 +1,11 @@
 package com.smartfirehub.proactive.repository;
 
-import com.smartfirehub.proactive.util.ProactiveTime;
 import static org.jooq.impl.DSL.*;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.proactive.dto.ProactiveMessageResponse;
+import com.smartfirehub.proactive.util.ProactiveTime;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -20,10 +20,9 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * 프로액티브 메시지(사용자 알림함) 저장소.
  *
- * <p>클래스 레벨 {@code @Transactional} 이 필요한 이유: V103 으로 {@code tenant_id} 가 생겼고
- * V104 에서 RLS 가 걸린다. 테넌트 값은 트랜잭션-로컬 GUC 이므로, 트랜잭션 없이 도는 발송
- * 경로({@code @Scheduled} 디스패치 워커, {@code @Async} 잡 실행기)에서는 INSERT 가 NOT NULL
- * 위반으로 깨진다. 전파 REQUIRED 이므로 컨트롤러 경로의 동작은 불변이다.
+ * <p>클래스 레벨 {@code @Transactional} 이 필요한 이유: V103 으로 {@code tenant_id} 가 생겼고 V104 에서 RLS 가 걸린다. 테넌트
+ * 값은 트랜잭션-로컬 GUC 이므로, 트랜잭션 없이 도는 발송 경로({@code @Scheduled} 디스패치 워커, {@code @Async} 잡 실행기)에서는 INSERT
+ * 가 NOT NULL 위반으로 깨진다. 전파 REQUIRED 이므로 컨트롤러 경로의 동작은 불변이다.
  */
 @Transactional
 @Repository
@@ -133,9 +132,8 @@ public class ProactiveMessageRepository {
   /**
    * 알림 목록 조회 (#520).
    *
-   * <p>{@code unreadOnly=true} 이면 안 읽은 알림만 조회한다 — 안 읽은 알림이 많이 쌓였을 때
-   * "더 보기"로 전체를 스크롤하지 않고도 안 읽은 것만 골라볼 수 있도록 서버 사이드 필터링을
-   * 지원한다. 기존 페이지네이션(limit/offset)과 함께 적용된다.
+   * <p>{@code unreadOnly=true} 이면 안 읽은 알림만 조회한다 — 안 읽은 알림이 많이 쌓였을 때 "더 보기"로 전체를 스크롤하지 않고도 안 읽은 것만
+   * 골라볼 수 있도록 서버 사이드 필터링을 지원한다. 기존 페이지네이션(limit/offset)과 함께 적용된다.
    */
   public List<ProactiveMessageResponse> findByUserId(
       Long userId, int limit, int offset, boolean unreadOnly) {

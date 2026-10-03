@@ -19,10 +19,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * <b>클래스 레벨 {@code @Transactional} 을 뺐다 — 의도된 것이다(P2-b Task 9).</b> 붙어 있으면
- * {@code cleanupOldEvents()} 의 테넌트 순회가 테스트 트랜잭션에 얹혀 <b>모든 순회 패스가 테넌트 1
- * 의 GUC 로</b> 실행된다 — 순회 배선을 통째로 지워도 통과하는 사각지대다. 픽스처와 검증만
- * 트랜잭션으로 감싸고 검증 대상 호출은 밖에 남긴다. 롤백이 없으므로 심은 행은 직접 지운다.
+ * <b>클래스 레벨 {@code @Transactional} 을 뺐다 — 의도된 것이다(P2-b Task 9).</b> 붙어 있으면 {@code
+ * cleanupOldEvents()} 의 테넌트 순회가 테스트 트랜잭션에 얹혀 <b>모든 순회 패스가 테넌트 1 의 GUC 로</b> 실행된다 — 순회 배선을 통째로 지워도
+ * 통과하는 사각지대다. 픽스처와 검증만 트랜잭션으로 감싸고 검증 대상 호출은 밖에 남긴다. 롤백이 없으므로 심은 행은 직접 지운다.
  */
 class TriggerEventCleanupServiceTest extends IntegrationTestBase {
 
@@ -119,8 +118,8 @@ class TriggerEventCleanupServiceTest extends IntegrationTestBase {
   /**
    * 검증 대상 호출 — 트랜잭션 밖에서 부른다(순회가 스스로 컨텍스트·트랜잭션을 잡아야 한다).
    *
-   * <p>{@code forEachActiveTenant} 는 진입 전 컨텍스트를 복원하므로 호출 뒤에도 기본 테넌트가
-   * 남는다 — 이후 검증 조회가 컨텍스트 없이 돌아 조용히 0행이 되는 일은 없다.
+   * <p>{@code forEachActiveTenant} 는 진입 전 컨텍스트를 복원하므로 호출 뒤에도 기본 테넌트가 남는다 — 이후 검증 조회가 컨텍스트 없이 돌아 조용히
+   * 0행이 되는 일은 없다.
    */
   private void runCleanupOutsideTransaction() {
     cleanupService.cleanupOldEvents();
@@ -143,8 +142,8 @@ class TriggerEventCleanupServiceTest extends IntegrationTestBase {
   /**
    * 픽스처를 테넌트 트랜잭션 안에서 실행한다.
    *
-   * <p>{@code runInTenantTransaction} 이 진입 전 컨텍스트를 복원하므로, 이어지는
-   * {@code cleanupOldEvents()} 의 테넌트 순회는 기본 테넌트 컨텍스트에서 시작된다.
+   * <p>{@code runInTenantTransaction} 이 진입 전 컨텍스트를 복원하므로, 이어지는 {@code cleanupOldEvents()} 의 테넌트 순회는
+   * 기본 테넌트 컨텍스트에서 시작된다.
    */
   private <T> T inTenantTx(java.util.function.Supplier<T> action) {
     return TenantRlsTestSupport.runInTenantTransaction(tx, DEFAULT_TEST_TENANT_ID, action);

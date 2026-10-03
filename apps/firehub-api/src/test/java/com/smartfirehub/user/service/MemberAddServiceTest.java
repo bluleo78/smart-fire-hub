@@ -24,8 +24,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
 /**
- * 멤버 추가(WD-2) 서비스 계약. 비트랜잭션 — 새 테넌트 A·B 를 만들어 테넌트 경계를 실제 RLS 로 검증한다.
- * 프로덕션 호출은 {@code TenantContext.runScopedGet(tenantA, ...)} 로만 감싸고 inTenantFixture 로 감싸지
+ * 멤버 추가(WD-2) 서비스 계약. 비트랜잭션 — 새 테넌트 A·B 를 만들어 테넌트 경계를 실제 RLS 로 검증한다. 프로덕션 호출은 {@code
+ * TenantContext.runScopedGet(tenantA, ...)} 로만 감싸고 inTenantFixture 로 감싸지
  * 않는다(IntegrationTestBase:73-77 규칙).
  */
 class MemberAddServiceTest extends IntegrationTestBase {
@@ -185,9 +185,8 @@ class MemberAddServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * 동시 추가 경합 재현: 사전 검사(멤버십 없음)는 통과하지만 INSERT 에서 유니크 제약이 걸리는 상황.
-   * 멤버십 없이 user_role(USER) 만 남은 사용자를 만들어 결정적으로 재현한다. 영어 무결성 오류가 아니라
-   * 409 MEMBER_ALREADY_EXISTS 여야 하고, 같은 트랜잭션에서 넣은 멤버십은 롤백돼야 한다.
+   * 동시 추가 경합 재현: 사전 검사(멤버십 없음)는 통과하지만 INSERT 에서 유니크 제약이 걸리는 상황. 멤버십 없이 user_role(USER) 만 남은 사용자를
+   * 만들어 결정적으로 재현한다. 영어 무결성 오류가 아니라 409 MEMBER_ALREADY_EXISTS 여야 하고, 같은 트랜잭션에서 넣은 멤버십은 롤백돼야 한다.
    */
   @Test
   void addMember_duplicateKeyRace_mapsTo409MemberAlreadyExists() {
@@ -240,8 +239,8 @@ class MemberAddServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * 리뷰 지적 4: 과거 계정의 이메일이 대소문자를 섞어 저장돼 있고(username 은 다른 값) 관리자가 소문자로 추가하면,
-   * 정확 일치 검사로는 못 잡아 같은 사람의 두 번째 계정이 생긴다. 대소문자 무시로 막아야 한다.
+   * 리뷰 지적 4: 과거 계정의 이메일이 대소문자를 섞어 저장돼 있고(username 은 다른 값) 관리자가 소문자로 추가하면, 정확 일치 검사로는 못 잡아 같은 사람의 두
+   * 번째 계정이 생긴다. 대소문자 무시로 막아야 한다.
    */
   @Test
   void addMember_emailUsedByAnotherUsername_mixedCase_conflict() {

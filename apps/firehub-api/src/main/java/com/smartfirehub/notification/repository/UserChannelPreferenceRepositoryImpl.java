@@ -13,10 +13,9 @@ import org.springframework.transaction.annotation.Transactional;
  * <p>isEnabled 정책: 테이블에 row가 없으면 기본값 true로 간주 (opt-in 없이도 정상 발송). CHAT 채널은 DB CHECK 제약으로 disable
  * 불가능하므로 항상 true 반환.
  *
- * <p><b>클래스 레벨 {@code @Transactional} 이 왜 필요한가</b> —
- * {@link com.smartfirehub.global.tenant.TenantAwareTransactionManager} 의 "리포지토리에 클래스
- * 레벨 {@code @Transactional} 이 왜 필요한가" 문단 참조. 요약: GUC 는 트랜잭션이 열리는 순간에만
- * 심기고, 컨텍스트 공급은 여전히 호출자 책임이다.
+ * <p><b>클래스 레벨 {@code @Transactional} 이 왜 필요한가</b> — {@link
+ * com.smartfirehub.global.tenant.TenantAwareTransactionManager} 의 "리포지토리에 클래스 레벨
+ * {@code @Transactional} 이 왜 필요한가" 문단 참조. 요약: GUC 는 트랜잭션이 열리는 순간에만 심기고, 컨텍스트 공급은 여전히 호출자 책임이다.
  */
 @Repository
 @Transactional

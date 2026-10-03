@@ -17,14 +17,13 @@ import org.springframework.beans.factory.annotation.Autowired;
 /**
  * 프로비저닝이 소유자에게 ADMIN 역할을 <b>배정</b>하는지 검증한다(V121).
  *
- * <p><b>왜 필요한가.</b> V98 의 프로비저닝은 역할·권한을 복제(정의)만 하고 아무에게도 배정하지
- * 않았다. {@code membership.role='OWNER'} 는 표시용 라벨이라 인가에 쓰이지 않으므로, 워크스페이스
- * 소유자조차 {@code user_role} 0행 → {@code isAdmin=false} 가 되어 관리 메뉴(사용자·역할·감사
- * 로그·설정)가 통째로 사라졌다. 역할 배정 화면 자체가 ADMIN 전용이라 자력 복구도 불가능했다.
+ * <p><b>왜 필요한가.</b> V98 의 프로비저닝은 역할·권한을 복제(정의)만 하고 아무에게도 배정하지 않았다. {@code membership.role='OWNER'}
+ * 는 표시용 라벨이라 인가에 쓰이지 않으므로, 워크스페이스 소유자조차 {@code user_role} 0행 → {@code isAdmin=false} 가 되어 관리
+ * 메뉴(사용자·역할·감사 로그·설정)가 통째로 사라졌다. 역할 배정 화면 자체가 ADMIN 전용이라 자력 복구도 불가능했다.
  *
- * <p>클래스 레벨 {@code @Transactional} 을 쓰지 않는다 — 생성은 자기 트랜잭션에서 커밋돼야 하고,
- * 검증 조회는 그 밖에서 GUC 를 세워 RLS(V99)를 실제로 통과해야 한다. 검증 대상인 프로덕션 호출은
- * {@link IntegrationTestBase#inTenantFixture} 블록 <b>밖</b>에 둔다(그 헬퍼의 경계 규칙).
+ * <p>클래스 레벨 {@code @Transactional} 을 쓰지 않는다 — 생성은 자기 트랜잭션에서 커밋돼야 하고, 검증 조회는 그 밖에서 GUC 를 세워
+ * RLS(V99)를 실제로 통과해야 한다. 검증 대상인 프로덕션 호출은 {@link IntegrationTestBase#inTenantFixture} 블록 <b>밖</b>에
+ * 둔다(그 헬퍼의 경계 규칙).
  */
 class TenantOwnerAdminProvisioningTest extends IntegrationTestBase {
 
@@ -63,12 +62,10 @@ class TenantOwnerAdminProvisioningTest extends IntegrationTestBase {
   /**
    * 운영자 SQL 경로(런북 §1)도 소유자를 ADMIN 으로 만든다.
    *
-   * <p>테넌트 생성의 정본은 아직 운영자가 직접 실행하는 SQL 이고, 그 절차가 부르는 것은
-   * {@code provision_tenant_defaults} 하나뿐이다. 배정을 앱 코드에만 배선하면 운영자가 만든
-   * 테넌트는 계속 권한 0개로 태어난다 — 그 회귀를 여기서 고정한다.
+   * <p>테넌트 생성의 정본은 아직 운영자가 직접 실행하는 SQL 이고, 그 절차가 부르는 것은 {@code provision_tenant_defaults} 하나뿐이다.
+   * 배정을 앱 코드에만 배선하면 운영자가 만든 테넌트는 계속 권한 0개로 태어난다 — 그 회귀를 여기서 고정한다.
    *
-   * <p>두 번 부르는 것은 멱등 검증을 겸한다 — 운영자가 안심하고 다시 부를 수 있어야 하고,
-   * {@code containsExactly} 가 중복 배정을 잡는다.
+   * <p>두 번 부르는 것은 멱등 검증을 겸한다 — 운영자가 안심하고 다시 부를 수 있어야 하고, {@code containsExactly} 가 중복 배정을 잡는다.
    */
   @Test
   void provisionDefaults_assignsAdminToExistingOwnerIdempotently() {
@@ -86,8 +83,8 @@ class TenantOwnerAdminProvisioningTest extends IntegrationTestBase {
   /**
    * 소유자가 아닌 멤버는 ADMIN 을 받지 않는다.
    *
-   * <p>배정 대상은 {@code membership.role='OWNER'} 한 종류뿐이다 — 이 조건이 느슨해지면 일반
-   * 멤버가 전원 관리자가 되므로, 라벨이 다른 멤버가 섞인 상태에서 고정한다.
+   * <p>배정 대상은 {@code membership.role='OWNER'} 한 종류뿐이다 — 이 조건이 느슨해지면 일반 멤버가 전원 관리자가 되므로, 라벨이 다른 멤버가
+   * 섞인 상태에서 고정한다.
    */
   @Test
   void provisionDefaults_assignsNothingToPlainMember() {
@@ -112,9 +109,8 @@ class TenantOwnerAdminProvisioningTest extends IntegrationTestBase {
   }
 
   /**
-   * 런북 §1-1 + 멤버십까지만 손으로 만든다(프로비저닝은 부르지 않는다) — 운영자 경로의 출발
-   * 상태를 그대로 재현하기 위해서다. {@code tenant}/{@code membership} 은 테넌트 경계 위의 전역
-   * 테이블이라 컨텍스트 없이 쓴다.
+   * 런북 §1-1 + 멤버십까지만 손으로 만든다(프로비저닝은 부르지 않는다) — 운영자 경로의 출발 상태를 그대로 재현하기 위해서다. {@code tenant}/{@code
+   * membership} 은 테넌트 경계 위의 전역 테이블이라 컨텍스트 없이 쓴다.
    */
   private long createTenantRowWithMember(Long userId, String role) {
     long tenantId = TenantRlsTestSupport.createActiveTenant(dsl, "v121-ops");

@@ -52,11 +52,10 @@ public final class ExcelStreamingParser {
   /**
    * 포맷을 자동 감지하여 XLSX/XLSB 또는 XLS 파서로 분기한다.
    *
-   * <p><b>Thin wrapper:</b> {@link OPCPackage#open(InputStream)}은 ZIP의 각 엔트리를 전부 메모리 byte[]로
-   * 버퍼링하기 때문에(특히 엔트리 크기를 미리 알 수 없는 data-descriptor zip에서는 POI temp-file 임계값 설정도
-   * 무력화됨) 대용량 파일에서 OOM/파싱 실패를 유발한다. 이를 피하기 위해 InputStream을 임시 파일로 1회 복사한 뒤
-   * 실제 파싱은 랜덤액세스가 가능한 {@link #parse(File, RowConsumer)}에 위임하고, 종료 시 임시 파일을 즉시
-   * 삭제한다. 기존 호출부(FileParserService 등)는 시그니처 변경 없이 그대로 사용 가능하다.
+   * <p><b>Thin wrapper:</b> {@link OPCPackage#open(InputStream)}은 ZIP의 각 엔트리를 전부 메모리 byte[]로 버퍼링하기
+   * 때문에(특히 엔트리 크기를 미리 알 수 없는 data-descriptor zip에서는 POI temp-file 임계값 설정도 무력화됨) 대용량 파일에서 OOM/파싱 실패를
+   * 유발한다. 이를 피하기 위해 InputStream을 임시 파일로 1회 복사한 뒤 실제 파싱은 랜덤액세스가 가능한 {@link #parse(File,
+   * RowConsumer)}에 위임하고, 종료 시 임시 파일을 즉시 삭제한다. 기존 호출부(FileParserService 등)는 시그니처 변경 없이 그대로 사용 가능하다.
    */
   public static void parse(InputStream in, RowConsumer consumer) throws Exception {
     File temp = File.createTempFile("excel-streaming-", ".tmp");
@@ -75,9 +74,9 @@ public final class ExcelStreamingParser {
    * 파일에서 직접 랜덤액세스로 열어 파싱하는 core 진입점.
    *
    * <p>{@link FileMagic#valueOf(File)}로 포맷을 감지한 뒤, OOXML(XLSX/XLSB)은 {@link OPCPackage#open(File,
-   * PackageAccess)}로, OLE2(XLS)는 {@link POIFSFileSystem#POIFSFileSystem(File)}로 연다. 두 API 모두 ZIP/OLE2
-   * 컨테이너를 파일 채널 기반 랜덤액세스로 읽어 엔트리를 전량 메모리에 적재하지 않고 필요한 부분만 온디맨드로
-   * 읽으므로, {@code InputStream} 기반 오픈에서 발생하던 대용량 파일 OOM을 근본적으로 회피한다.
+   * PackageAccess)}로, OLE2(XLS)는 {@link POIFSFileSystem#POIFSFileSystem(File)}로 연다. 두 API 모두
+   * ZIP/OLE2 컨테이너를 파일 채널 기반 랜덤액세스로 읽어 엔트리를 전량 메모리에 적재하지 않고 필요한 부분만 온디맨드로 읽으므로, {@code InputStream}
+   * 기반 오픈에서 발생하던 대용량 파일 OOM을 근본적으로 회피한다.
    */
   public static void parse(File file, RowConsumer consumer) throws Exception {
     FileMagic magic = FileMagic.valueOf(file);
@@ -96,15 +95,14 @@ public final class ExcelStreamingParser {
    * XLSX와 XLSB는 둘 다 ZIP 기반 OOXML 컨테이너라 {@link FileMagic}만으로는 구분할 수 없다. 워크북 파트의 content-type을 확인해
    * 바이너리(XLSB) 여부를 판별한다.
    *
-   * <p>{@code PackageAccess.READ}로 열어 ZipFile 랜덤액세스(중앙 디렉터리 기반 온디맨드 읽기)를 사용한다 — 이
-   * 방식은 엔트리 크기가 ZIP 중앙 디렉터리에서 항상 확정적으로 조회되므로, data-descriptor(사이즈 미상) 엔트리에서
-   * 무력화되는 temp-file 임계값 설정과 달리 항상 안전하게 스트리밍된다.
+   * <p>{@code PackageAccess.READ}로 열어 ZipFile 랜덤액세스(중앙 디렉터리 기반 온디맨드 읽기)를 사용한다 — 이 방식은 엔트리 크기가 ZIP
+   * 중앙 디렉터리에서 항상 확정적으로 조회되므로, data-descriptor(사이즈 미상) 엔트리에서 무력화되는 temp-file 임계값 설정과 달리 항상 안전하게
+   * 스트리밍된다.
    */
   private static void parseOoxml(File file, RowConsumer consumer) throws Exception {
     try (OPCPackage pkg = OPCPackage.open(file, PackageAccess.READ)) {
       boolean isXlsb =
-          !pkg.getPartsByContentType(XSSFRelation.XLSB_BINARY_WORKBOOK.getContentType())
-              .isEmpty();
+          !pkg.getPartsByContentType(XSSFRelation.XLSB_BINARY_WORKBOOK.getContentType()).isEmpty();
       if (isXlsb) {
         parseXlsb(pkg, consumer);
       } else {
@@ -151,9 +149,9 @@ public final class ExcelStreamingParser {
   // ---------------------------------------------------------------------
 
   /**
-   * XLSB는 시트가 XML이 아닌 바이너리 레코드(BIFF12)로 저장된다. POI의 {@code org.apache.poi.xssf.binary} 패키지가
-   * 제공하는 저수준 레코드 파서를 사용하며, {@link XSSFBSheetHandler}는 XLSX와 동일한 {@link SheetContentsHandler}
-   * 인터페이스를 받으므로 {@link RowAggregatingHandler}를 그대로 재사용한다.
+   * XLSB는 시트가 XML이 아닌 바이너리 레코드(BIFF12)로 저장된다. POI의 {@code org.apache.poi.xssf.binary} 패키지가 제공하는 저수준
+   * 레코드 파서를 사용하며, {@link XSSFBSheetHandler}는 XLSX와 동일한 {@link SheetContentsHandler} 인터페이스를 받으므로
+   * {@link RowAggregatingHandler}를 그대로 재사용한다.
    */
   private static void parseXlsb(OPCPackage pkg, RowConsumer consumer) throws Exception {
     XSSFBReader reader = new XSSFBReader(pkg);

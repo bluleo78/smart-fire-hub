@@ -8,28 +8,21 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * {@link TenantSchemaProvisioner#shouldSwallowCreationRace} 의 결정표를 고정한다(라운드 2
- * 리뷰 BLOCKER).
+ * {@link TenantSchemaProvisioner#shouldSwallowCreationRace} 의 결정표를 고정한다(라운드 2 리뷰 BLOCKER).
  *
- * <p><b>왜 살아있는 DB 로 재현하지 않는가.</b> 자가치유 경로(B1)의 실패 전파를 검증하려면
- * {@code ensureCurrentTenantSchema()} 의 트랜잭션이 진짜로 실패해야 하는데, 이 트랜잭션을
- * 실행하는 {@code app} 롤은 이 저장소의 test/dev DB 양쪽에서 <b>슈퍼유저</b>다(실측:
- * {@code rolsuper=t, rolbypassrls=t}). 슈퍼유저는 GRANT/ALTER DEFAULT PRIVILEGES 류를 대상
- * 존재 여부와 무관하게(대상이 실재하는 한) 항상 통과시키므로, 권한 거부로 실패를 주입할
- * 방법이 사실상 없다. 반면 동시성 기반 실패(역할 동시 드롭·데드락·타임아웃)는 타이밍에
- * 의존해 결정적으로 재현할 수 없다 — 그런 테스트는 그 자체로 이 저장소가 피하는 플레이크가
- * 된다.
+ * <p><b>왜 살아있는 DB 로 재현하지 않는가.</b> 자가치유 경로(B1)의 실패 전파를 검증하려면 {@code ensureCurrentTenantSchema()} 의
+ * 트랜잭션이 진짜로 실패해야 하는데, 이 트랜잭션을 실행하는 {@code app} 롤은 이 저장소의 test/dev DB 양쪽에서 <b>슈퍼유저</b>다(실측: {@code
+ * rolsuper=t, rolbypassrls=t}). 슈퍼유저는 GRANT/ALTER DEFAULT PRIVILEGES 류를 대상 존재 여부와 무관하게(대상이 실재하는 한)
+ * 항상 통과시키므로, 권한 거부로 실패를 주입할 방법이 사실상 없다. 반면 동시성 기반 실패(역할 동시 드롭·데드락·타임아웃)는 타이밍에 의존해 결정적으로 재현할 수 없다 —
+ * 그런 테스트는 그 자체로 이 저장소가 피하는 플레이크가 된다.
  *
- * <p>그래서 판정 로직 자체를 순수 함수로 뽑아 직접 검증한다. {@code
- * shouldSwallowCreationRace} 는 package-private 이라 이 테스트는 <b>같은 패키지</b>
- * ({@code com.smartfirehub.global.tenant})에 둔다 — {@code com.smartfirehub.tenant} 의 다른
+ * <p>그래서 판정 로직 자체를 순수 함수로 뽑아 직접 검증한다. {@code shouldSwallowCreationRace} 는 package-private 이라 이 테스트는
+ * <b>같은 패키지</b> ({@code com.smartfirehub.global.tenant})에 둔다 — {@code com.smartfirehub.tenant} 의 다른
  * 프로비저너 테스트들과 패키지가 다른 것은 의도다.
  *
- * <p><b>인자가 {@code boolean} 두 개가 아니라 {@link ExistedBefore}/{@link ExistsNow} 타입인
- * 이유(라운드 3 리뷰 N7).</b> 둘 다 {@code boolean} 이면 실제 호출부({@code
- * ensureCurrentTenantSchema} 의 catch 블록)에서 인자 순서를 바꿔도 컴파일이 통과하고, 이
- * 결정표 테스트도 정적 메서드를 직접 호출하므로 그 실수를 잡지 못한다 — 타입으로 감싸면
- * 순서를 바꾸는 순간 호출부 자체가 컴파일 에러가 난다.
+ * <p><b>인자가 {@code boolean} 두 개가 아니라 {@link ExistedBefore}/{@link ExistsNow} 타입인 이유(라운드 3 리뷰
+ * N7).</b> 둘 다 {@code boolean} 이면 실제 호출부({@code ensureCurrentTenantSchema} 의 catch 블록)에서 인자 순서를 바꿔도
+ * 컴파일이 통과하고, 이 결정표 테스트도 정적 메서드를 직접 호출하므로 그 실수를 잡지 못한다 — 타입으로 감싸면 순서를 바꾸는 순간 호출부 자체가 컴파일 에러가 난다.
  */
 class TenantSchemaProvisionerSwallowDecisionTest {
 

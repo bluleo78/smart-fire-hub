@@ -15,12 +15,10 @@ import org.springframework.transaction.support.TransactionTemplate;
 /**
  * audit_log 는 형태 (b) 정책이다 — NULL 테넌트를 허용한다.
  *
- * <p>로그인·회원가입 감사는 테넌트 선택 전에 기록되므로 tenant_id 가 NULL 이다. 표준 정책이면
- * WITH CHECK 가 NULL INSERT 를 거부해 로그인이 깨지고, 이어서 INSERT ... RETURNING 이 반환 행에
- * USING 정책까지 적용해 또 깨진다. IS NOT DISTINCT FROM 이 두 문제를 함께 해소한다.
+ * <p>로그인·회원가입 감사는 테넌트 선택 전에 기록되므로 tenant_id 가 NULL 이다. 표준 정책이면 WITH CHECK 가 NULL INSERT 를 거부해 로그인이
+ * 깨지고, 이어서 INSERT ... RETURNING 이 반환 행에 USING 정책까지 적용해 또 깨진다. IS NOT DISTINCT FROM 이 두 문제를 함께 해소한다.
  *
- * <p>대가는 대칭적이다 — NULL 테넌트 행은 어떤 테넌트 컨텍스트에서도 보이지 않는다. 그것이 의도된
- * 동작이므로 여기서 함께 고정한다.
+ * <p>대가는 대칭적이다 — NULL 테넌트 행은 어떤 테넌트 컨텍스트에서도 보이지 않는다. 그것이 의도된 동작이므로 여기서 함께 고정한다.
  */
 class AuditLogTenantTest extends IntegrationTestBase {
 

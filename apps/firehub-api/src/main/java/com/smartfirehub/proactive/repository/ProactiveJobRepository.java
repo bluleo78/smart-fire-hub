@@ -1,11 +1,11 @@
 package com.smartfirehub.proactive.repository;
 
-import com.smartfirehub.proactive.util.ProactiveTime;
 import static org.jooq.impl.DSL.*;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.proactive.dto.ProactiveJobResponse;
+import com.smartfirehub.proactive.util.ProactiveTime;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -21,13 +21,11 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * 프로액티브 잡 저장소.
  *
- * <p>클래스 레벨 {@code @Transactional} 이 필요한 이유: V103 으로 {@code proactive_job} 에
- * {@code tenant_id} 가 생겼고 V104 에서 RLS 정책이 걸린다. 테넌트 값은 <b>트랜잭션-로컬 GUC</b>
- * ({@code app.tenant_id}) 이고 그 GUC 는 {@code TenantAwareTransactionManager.doBegin} 에서만
- * 주입되므로, 트랜잭션 없이 도는 배경 경로(부팅 시 스케줄 재등록 {@code @PostConstruct},
- * 크론 발화 콜백, {@code @Async} 실행기)에서는 INSERT 가 NOT NULL 위반으로 깨지고 SELECT 는
- * 예외도 로그도 없이 0행이 된다. 전파는 REQUIRED 라 이미 트랜잭션 안인 컨트롤러 경로의
- * 동작은 불변이다. 선례: {@code ReportTemplateRepository}.
+ * <p>클래스 레벨 {@code @Transactional} 이 필요한 이유: V103 으로 {@code proactive_job} 에 {@code tenant_id} 가
+ * 생겼고 V104 에서 RLS 정책이 걸린다. 테넌트 값은 <b>트랜잭션-로컬 GUC</b> ({@code app.tenant_id}) 이고 그 GUC 는 {@code
+ * TenantAwareTransactionManager.doBegin} 에서만 주입되므로, 트랜잭션 없이 도는 배경 경로(부팅 시 스케줄 재등록
+ * {@code @PostConstruct}, 크론 발화 콜백, {@code @Async} 실행기)에서는 INSERT 가 NOT NULL 위반으로 깨지고 SELECT 는 예외도
+ * 로그도 없이 0행이 된다. 전파는 REQUIRED 라 이미 트랜잭션 안인 컨트롤러 경로의 동작은 불변이다. 선례: {@code ReportTemplateRepository}.
  */
 @Transactional
 @Repository
@@ -149,10 +147,9 @@ public class ProactiveJobRepository {
   /**
    * 지정한 테넌트의 활성 잡을 전부 읽는다 (부팅 시 크론 재등록 전용).
    *
-   * <p><b>왜 RLS 에 맡기지 않고 {@code tenant_id} 술어를 명시하는가</b>: 호출자
-   * ({@code ProactiveJobSchedulerService.reloadAllSchedules})는 ACTIVE 테넌트를 순회하며 잡마다 발화
-   * 시점 테넌트를 캡처한다. V104(정책) 이전에는 이 조회가 컨텍스트와 무관하게 전 테넌트 행을
-   * 돌려주므로, 술어가 없으면 <b>모든 잡이 마지막으로 순회된 테넌트를 캡처</b>해 남의 테넌트로
+   * <p><b>왜 RLS 에 맡기지 않고 {@code tenant_id} 술어를 명시하는가</b>: 호출자 ({@code
+   * ProactiveJobSchedulerService.reloadAllSchedules})는 ACTIVE 테넌트를 순회하며 잡마다 발화 시점 테넌트를 캡처한다.
+   * V104(정책) 이전에는 이 조회가 컨텍스트와 무관하게 전 테넌트 행을 돌려주므로, 술어가 없으면 <b>모든 잡이 마지막으로 순회된 테넌트를 캡처</b>해 남의 테넌트로
    * 발화한다. 정책이 켜진 뒤에는 같은 결과를 두 번 보장하는 방어적 중복이 된다.
    */
   public List<ProactiveJobResponse> findAllEnabled(long tenantId) {
@@ -267,10 +264,7 @@ public class ProactiveJobRepository {
    * "수정일"이 재부팅마다 흔들린다.
    */
   public void updateNextExecuteAt(Long id, LocalDateTime nextExecuteAt) {
-    dsl.update(PROACTIVE_JOB)
-        .set(PJ_NEXT_EXECUTE_AT, nextExecuteAt)
-        .where(PJ_ID.eq(id))
-        .execute();
+    dsl.update(PROACTIVE_JOB).set(PJ_NEXT_EXECUTE_AT, nextExecuteAt).where(PJ_ID.eq(id)).execute();
   }
 
   public void delete(Long id, Long userId) {

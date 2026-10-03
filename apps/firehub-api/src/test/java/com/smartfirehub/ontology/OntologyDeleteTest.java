@@ -151,8 +151,7 @@ class OntologyDeleteTest extends IntegrationTestBase {
 
     int remaining =
         dsl.fetchCount(
-            table(name("ontology_entity_type")),
-            field(name("ontology_id"), Long.class).eq(id));
+            table(name("ontology_entity_type")), field(name("ontology_id"), Long.class).eq(id));
     assertThat(remaining).isZero();
     createdId = null;
   }

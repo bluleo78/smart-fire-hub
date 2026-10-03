@@ -11,9 +11,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 /**
  * V97 이 만든 스키마 형태를 카탈로그로 고정한다.
  *
- * <p>왜 필요한가: 유니크 인덱스는 RLS 와 무관하게 전역으로 적용되므로, role 이름 유니크를 접지
- * 않으면 두 번째 테넌트가 'USER' 역할을 만들 때 충돌한다. 이 회귀는 테넌트가 하나뿐인 동안
- * 행위 테스트로는 드러나지 않아서 카탈로그로 못박는다.
+ * <p>왜 필요한가: 유니크 인덱스는 RLS 와 무관하게 전역으로 적용되므로, role 이름 유니크를 접지 않으면 두 번째 테넌트가 'USER' 역할을 만들 때 충돌한다. 이
+ * 회귀는 테넌트가 하나뿐인 동안 행위 테스트로는 드러나지 않아서 카탈로그로 못박는다.
  */
 class RbacAuditReportSchemaTest extends IntegrationTestBase {
 
@@ -53,8 +52,7 @@ class RbacAuditReportSchemaTest extends IntegrationTestBase {
     // 전역 유니크가 남아 있으면 두 번째 테넌트의 'USER' 생성이 충돌한다.
     Integer global =
         (Integer)
-            dsl.fetchValue(
-                "select count(*)::int from pg_constraint where conname='role_name_key'");
+            dsl.fetchValue("select count(*)::int from pg_constraint where conname='role_name_key'");
     assertThat(global).isZero();
   }
 

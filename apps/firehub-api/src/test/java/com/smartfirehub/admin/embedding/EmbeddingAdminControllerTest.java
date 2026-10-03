@@ -84,7 +84,9 @@ class EmbeddingAdminControllerTest {
     // dataset:write 권한으로 전체 재임베딩 요청 시 202 + 요청 시점 대상 수(판정식) 반환
     when(tenantReembedJob.requestReindexAll()).thenReturn(new EmbeddingImpact(340, 28, 2));
     mockMvc
-        .perform(post("/api/v1/admin/embedding/reindex-all").header("Authorization", "Bearer test-token"))
+        .perform(
+            post("/api/v1/admin/embedding/reindex-all")
+                .header("Authorization", "Bearer test-token"))
         .andExpect(status().isAccepted())
         .andExpect(jsonPath("$.chunks").value(340))
         .andExpect(jsonPath("$.datasets").value(28))

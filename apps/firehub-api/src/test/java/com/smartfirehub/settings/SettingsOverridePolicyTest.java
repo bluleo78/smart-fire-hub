@@ -7,8 +7,8 @@ import com.smartfirehub.settings.service.SettingsOverridePolicy.Plane;
 import org.junit.jupiter.api.Test;
 
 /**
- * {@link SettingsOverridePolicy} allow-list 단위 테스트. DB/Spring 컨텍스트가 필요 없는 순수
- * 단위 테스트라 {@code IntegrationTestBase} 를 상속하지 않는다.
+ * {@link SettingsOverridePolicy} allow-list 단위 테스트. DB/Spring 컨텍스트가 필요 없는 순수 단위 테스트라 {@code
+ * IntegrationTestBase} 를 상속하지 않는다.
  */
 class SettingsOverridePolicyTest {
 
@@ -17,10 +17,18 @@ class SettingsOverridePolicyTest {
     // 테넌트 전용 ai.* 동작 6키 + 테넌트 전용 smtp.* 6키(#712).
     assertThat(SettingsOverridePolicy.tenantOverridableKeys())
         .containsExactlyInAnyOrder(
-            "ai.system_prompt", "ai.model", "ai.temperature",
-            "ai.max_turns", "ai.max_tokens", "ai.session_max_tokens",
-            "smtp.host", "smtp.port", "smtp.username",
-            "smtp.password", "smtp.starttls", "smtp.from_address");
+            "ai.system_prompt",
+            "ai.model",
+            "ai.temperature",
+            "ai.max_turns",
+            "ai.max_tokens",
+            "ai.session_max_tokens",
+            "smtp.host",
+            "smtp.port",
+            "smtp.username",
+            "smtp.password",
+            "smtp.starttls",
+            "smtp.from_address");
   }
 
   @Test
@@ -28,16 +36,24 @@ class SettingsOverridePolicyTest {
     // AI 설정은 플랫폼 기본값이 없다 — 테넌트 값이 없으면 코드 기본값이다(#706 후속).
     for (String key :
         java.util.List.of(
-            "ai.system_prompt", "ai.model", "ai.temperature",
-            "ai.max_turns", "ai.max_tokens", "ai.session_max_tokens")) {
+            "ai.system_prompt",
+            "ai.model",
+            "ai.temperature",
+            "ai.max_turns",
+            "ai.max_tokens",
+            "ai.session_max_tokens")) {
       assertThat(SettingsOverridePolicy.planeOf(key)).as(key).isEqualTo(Plane.TENANT_ONLY);
       assertThat(SettingsOverridePolicy.smtpKeys()).as(key).doesNotContain(key);
     }
     // SMTP 도 플랫폼 행을 읽지 않는다 — 테넌트 값이 없으면 미설정이다(#712).
     assertThat(SettingsOverridePolicy.smtpKeys())
         .containsExactlyInAnyOrder(
-            "smtp.host", "smtp.port", "smtp.username",
-            "smtp.password", "smtp.starttls", "smtp.from_address");
+            "smtp.host",
+            "smtp.port",
+            "smtp.username",
+            "smtp.password",
+            "smtp.starttls",
+            "smtp.from_address");
     for (String key : SettingsOverridePolicy.smtpKeys()) {
       // TENANT_ONLY 는 플랫폼 행을 읽지 않는 평면이다(플랫폼 행을 읽는 평면은 UNKNOWN 뿐).
       assertThat(SettingsOverridePolicy.planeOf(key)).as(key).isEqualTo(Plane.TENANT_ONLY);
@@ -71,7 +87,8 @@ class SettingsOverridePolicyTest {
   void AI_자격증명은_두_평면_키가_아니다() {
     // #706 결정 7 — AiCredentialService 전용 값이라 이 화이트리스트에 없다. 옛 평면 3키도 마찬가지다.
     // (AiCredentialService.KEY 는 다른 패키지의 package-private 상수라 리터럴을 쓴다.)
-    for (String key : java.util.List.of("ai.credential", "ai.api_key", "ai.cli_oauth_token", "ai.agent_type")) {
+    for (String key :
+        java.util.List.of("ai.credential", "ai.api_key", "ai.cli_oauth_token", "ai.agent_type")) {
       assertThat(SettingsOverridePolicy.isTenantOverridable(key)).as(key).isFalse();
     }
   }

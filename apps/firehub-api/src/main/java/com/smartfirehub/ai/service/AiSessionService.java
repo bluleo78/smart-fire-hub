@@ -63,8 +63,8 @@ public class AiSessionService {
   }
 
   /**
-   * 채팅으로 이어 쓰려는 세션이 다른 사용자에게 기록된 것이면 거절한다(이슈 #714). 새 세션(빈 값)과
-   * 기록이 없는 세션은 통과한다 — 웹은 세션 기록 실패를 무시하므로, 막으면 그 대화를 이어 쓸 수 없다.
+   * 채팅으로 이어 쓰려는 세션이 다른 사용자에게 기록된 것이면 거절한다(이슈 #714). 새 세션(빈 값)과 기록이 없는 세션은 통과한다 — 웹은 세션 기록 실패를
+   * 무시하므로, 막으면 그 대화를 이어 쓸 수 없다.
    */
   public void verifyNotOthersSession(Long userId, String sessionId) {
     if (StringUtils.hasText(sessionId)

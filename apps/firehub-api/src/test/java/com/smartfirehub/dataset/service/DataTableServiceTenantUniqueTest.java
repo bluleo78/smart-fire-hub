@@ -22,41 +22,35 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * P3-b2 T5 — {@code dataset.table_name} 유니크를 {@code (tenant_id, table_name)} 으로 접은
- * 뒤(V112), 카탈로그(dataset 테이블 INSERT)와 물리 DDL({@link DataTableService})이 이어지는
- * <b>실제 프로덕션 경로</b>가 안전한지 고정한다.
+ * P3-b2 T5 — {@code dataset.table_name} 유니크를 {@code (tenant_id, table_name)} 으로 접은 뒤(V112),
+ * 카탈로그(dataset 테이블 INSERT)와 물리 DDL({@link DataTableService})이 이어지는 <b>실제 프로덕션 경로</b>가 안전한지 고정한다.
  *
- * <p><b>왜 {@link DataTableService#createTable} 을 직접 부르지 않고 {@link
- * DatasetService#createDataset} 을 쓰는가.</b> 처음 버전은 {@code DataTableService.createTable}
- * 만 직접 호출했는데, 그 메서드는 물리 DDL 만 하고 {@code dataset} 카탈로그 테이블을 전혀 건드리지
- * 않는다 — {@code idx_dataset_table_name} 유니크는 카탈로그 INSERT 에서만 걸린다. 그래서 그 버전의
- * {@code twoTenantsCanUseSameTableName} 은 V112 를 되돌려도(전역 유니크로 복원해도) 빨개지지
- * <b>않았다</b>(변이 테스트로 실측 확인, 아래 참조) — 카탈로그를 건드리지 않으니 유니크 위반이
- * 애초에 일어날 수 없었다. V110 사후분석이 설명한 실제 위험 경로(existsByTableName → save() →
- * DataTableService.createTable)를 그대로 재현하려면 {@link DatasetService#createDataset} 을 통해
- * 카탈로그 INSERT 까지 함께 실행해야 한다.
+ * <p><b>왜 {@link DataTableService#createTable} 을 직접 부르지 않고 {@link DatasetService#createDataset} 을
+ * 쓰는가.</b> 처음 버전은 {@code DataTableService.createTable} 만 직접 호출했는데, 그 메서드는 물리 DDL 만 하고 {@code
+ * dataset} 카탈로그 테이블을 전혀 건드리지 않는다 — {@code idx_dataset_table_name} 유니크는 카탈로그 INSERT 에서만 걸린다. 그래서 그
+ * 버전의 {@code twoTenantsCanUseSameTableName} 은 V112 를 되돌려도(전역 유니크로 복원해도) 빨개지지 <b>않았다</b>(변이 테스트로 실측
+ * 확인, 아래 참조) — 카탈로그를 건드리지 않으니 유니크 위반이 애초에 일어날 수 없었다. V110 사후분석이 설명한 실제 위험 경로(existsByTableName →
+ * save() → DataTableService.createTable)를 그대로 재현하려면 {@link DatasetService#createDataset} 을 통해 카탈로그
+ * INSERT 까지 함께 실행해야 한다.
  *
- * <p><b>정리를 {@code finally} 가 아니라 {@code @AfterEach} 로 하는 이유(라운드 1 리뷰
- * BLOCKER).</b> 처음 버전은 각 테스트 메서드의 {@code try/finally} 안에서 직접
- * {@code cleanupAll} 을 불렀다 — 그런데 자바의 plain try/finally 의미론상 {@code finally} 가
- * 예외를 던지면 {@code try} 블록이 던진 예외를(그게 이 클래스에서 가장 중요한
- * {@code AssertionError} 라도) <b>완전히 대체한다</b>(억제 연결 없음). 두 테넌트가 우연히 같은
- * 물리 스키마로 수렴하는 회귀가 실제로 나면, {@link #recreatingOneTenantsTableLeavesTheOthersRowsIntact}
- * 의 정리 단계({@code dropSchemasCreatedByThisTest})가 두 테넌트 모두 같은 이름을 넘겨받아
- * R7 하드가드(같은 이름을 두 번 드롭하려는 시도 자체는 아니지만, 스키마명이 {@code data} 처럼
- * 비정상적인 값이 되는 회귀 형태에서 하드가드가 걸린다)에 걸릴 수 있고, 그러면 JUnit 이 보고
- * 하는 것은 "데이터가 사라졌다" 가 아니라 "정리 헬퍼가 거부했다" 가 된다 — 다음 사람이 정리
- * 헬퍼를 고치러 가는 잘못된 방향으로 유도된다. {@code @AfterEach} 는 JUnit 5 가 실패를
- * <b>주 예외(테스트 자신의 실패)를 유지한 채 정리 실패를 suppressed 로 붙이는</b> 방식으로
- * 처리하므로, 이 위험이 구조적으로 사라진다. {@code cleanupAll} 로 "모아서 알린다" 는 이
- * 밴드의 기존 규율과도 결이 같다.
+ * <p><b>정리를 {@code finally} 가 아니라 {@code @AfterEach} 로 하는 이유(라운드 1 리뷰 BLOCKER).</b> 처음 버전은 각 테스트
+ * 메서드의 {@code try/finally} 안에서 직접 {@code cleanupAll} 을 불렀다 — 그런데 자바의 plain try/finally 의미론상 {@code
+ * finally} 가 예외를 던지면 {@code try} 블록이 던진 예외를(그게 이 클래스에서 가장 중요한 {@code AssertionError} 라도) <b>완전히
+ * 대체한다</b>(억제 연결 없음). 두 테넌트가 우연히 같은 물리 스키마로 수렴하는 회귀가 실제로 나면, {@link
+ * #recreatingOneTenantsTableLeavesTheOthersRowsIntact} 의 정리 단계({@code
+ * dropSchemasCreatedByThisTest})가 두 테넌트 모두 같은 이름을 넘겨받아 R7 하드가드(같은 이름을 두 번 드롭하려는 시도 자체는 아니지만, 스키마명이
+ * {@code data} 처럼 비정상적인 값이 되는 회귀 형태에서 하드가드가 걸린다)에 걸릴 수 있고, 그러면 JUnit 이 보고 하는 것은 "데이터가 사라졌다" 가 아니라
+ * "정리 헬퍼가 거부했다" 가 된다 — 다음 사람이 정리 헬퍼를 고치러 가는 잘못된 방향으로 유도된다. {@code @AfterEach} 는 JUnit 5 가 실패를 <b>주
+ * 예외(테스트 자신의 실패)를 유지한 채 정리 실패를 suppressed 로 붙이는</b> 방식으로 처리하므로, 이 위험이 구조적으로 사라진다. {@code
+ * cleanupAll} 로 "모아서 알린다" 는 이 밴드의 기존 규율과도 결이 같다.
  *
- * <p>클래스 레벨 {@code @Transactional} 을 쓰지 않는다 — 두 테넌트를 오가며 각각 새 물리
- * 트랜잭션을 열어야 그 시점 GUC 가 실제로 전환된다({@code IntegrationTestBase} 참조).
+ * <p>클래스 레벨 {@code @Transactional} 을 쓰지 않는다 — 두 테넌트를 오가며 각각 새 물리 트랜잭션을 열어야 그 시점 GUC 가 실제로
+ * 전환된다({@code IntegrationTestBase} 참조).
  */
 class DataTableServiceTenantUniqueTest extends IntegrationTestBase {
 
-  private static final long TENANT_BASE = TenantRlsTestSupport.randomSchemaProvisioningTenantIdBase();
+  private static final long TENANT_BASE =
+      TenantRlsTestSupport.randomSchemaProvisioningTenantIdBase();
 
   private static final List<DatasetColumnRequest> COLUMNS =
       List.of(new DatasetColumnRequest("val", "Value", "TEXT", null, true, false, null));
@@ -121,9 +115,8 @@ class DataTableServiceTenantUniqueTest extends IntegrationTestBase {
   }
 
   /**
-   * 서로 다른 테넌트가 같은 {@code table_name} 을 쓸 수 있어야 한다 — 물리 스키마가 분리됐고
-   * 카탈로그 유니크도 테넌트로 접혔으므로 어느 계층에서도 충돌하지 않는다. V112 접기 전에는
-   * 카탈로그 INSERT 가 전역 유니크에 걸려 두 번째 테넌트가 23505 로 거부됐다.
+   * 서로 다른 테넌트가 같은 {@code table_name} 을 쓸 수 있어야 한다 — 물리 스키마가 분리됐고 카탈로그 유니크도 테넌트로 접혔으므로 어느 계층에서도 충돌하지
+   * 않는다. V112 접기 전에는 카탈로그 INSERT 가 전역 유니크에 걸려 두 번째 테넌트가 23505 로 거부됐다.
    */
   @Test
   void twoTenantsCanUseSameTableName() {
@@ -147,13 +140,12 @@ class DataTableServiceTenantUniqueTest extends IntegrationTestBase {
   }
 
   /**
-   * 한쪽 테넌트의 재생성이 다른 테넌트의 <b>데이터</b>를 지우지 않는다 — V110 사후분석이 경고한
-   * 정확히 그 데이터 손실 시나리오(existsByTableName → save() → DataTableService.createTable)를
-   * 실제 서비스 경로로 고정한다.
+   * 한쪽 테넌트의 재생성이 다른 테넌트의 <b>데이터</b>를 지우지 않는다 — V110 사후분석이 경고한 정확히 그 데이터 손실 시나리오(existsByTableName →
+   * save() → DataTableService.createTable)를 실제 서비스 경로로 고정한다.
    *
-   * <p><b>이 밴드 전체에서 가장 중요한 테스트다.</b> "테이블이 존재한다" 가 아니라 <b>"행이
-   * 그대로 있다"</b> 를 단언한다 — {@code createTable} 의 {@code DROP TABLE IF EXISTS} 는 테이블을
-   * 지웠다가 같은 이름으로 다시 만들므로, 존재 여부만 보면 데이터가 날아가도 초록색이 된다.
+   * <p><b>이 밴드 전체에서 가장 중요한 테스트다.</b> "테이블이 존재한다" 가 아니라 <b>"행이 그대로 있다"</b> 를 단언한다 — {@code
+   * createTable} 의 {@code DROP TABLE IF EXISTS} 는 테이블을 지웠다가 같은 이름으로 다시 만들므로, 존재 여부만 보면 데이터가 날아가도
+   * 초록색이 된다.
    */
   @Test
   void recreatingOneTenantsTableLeavesTheOthersRowsIntact() {
@@ -189,11 +181,8 @@ class DataTableServiceTenantUniqueTest extends IntegrationTestBase {
 
   // ── 헬퍼 ──────────────────────────────────────────────────────────────
 
-
-
   private static CreateDatasetRequest newRequest(String name, String tableName) {
-    return new CreateDatasetRequest(
-        name, tableName, null, null, "TABLE", "SOURCE", COLUMNS, null);
+    return new CreateDatasetRequest(name, tableName, null, null, "TABLE", "SOURCE", COLUMNS, null);
   }
 
   /** 현재 테넌트 스키마 안의 {@code tableName} 에 {@code val} 한 건을 넣는다. */
@@ -203,8 +192,7 @@ class DataTableServiceTenantUniqueTest extends IntegrationTestBase {
 
   /** 현재 테넌트 스키마 안의 {@code tableName} 의 {@code val} 값 전체를 id 순으로 돌려준다. */
   private List<String> selectAllValues(String tableName) {
-    return dsl.fetch("SELECT val FROM " + DataSchema.qualify(tableName) + " ORDER BY id")
-        .stream()
+    return dsl.fetch("SELECT val FROM " + DataSchema.qualify(tableName) + " ORDER BY id").stream()
         .map(r -> r.get(0, String.class))
         .toList();
   }

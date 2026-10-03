@@ -7,10 +7,9 @@ import java.util.stream.Collectors;
 /**
  * 출력 방식 MERGE 의 INSERT ... ON CONFLICT 문을 조립한다(순수 함수).
  *
- * <p>사용자 SELECT 를 서브쿼리로 감싸 INSERT 대상 컬럼만 고른다 — 사용자 SQL 이 JOIN ... ON 으로 끝날 때
- * ON CONFLICT 와 문법이 섞이는 것을 막고, 출력에 없는 여분 컬럼을 안전하게 버린다.
- * 값이 같은 행은 갱신하지 않는다(IS DISTINCT FROM) — 그래야 _updated_at 이 쓸데없이 바뀌어 하류 증분 스텝이
- * 전량 재처리하는 일이 없다.
+ * <p>사용자 SELECT 를 서브쿼리로 감싸 INSERT 대상 컬럼만 고른다 — 사용자 SQL 이 JOIN ... ON 으로 끝날 때 ON CONFLICT 와 문법이 섞이는
+ * 것을 막고, 출력에 없는 여분 컬럼을 안전하게 버린다. 값이 같은 행은 갱신하지 않는다(IS DISTINCT FROM) — 그래야 _updated_at 이 쓸데없이 바뀌어
+ * 하류 증분 스텝이 전량 재처리하는 일이 없다.
  */
 public final class MergeSqlBuilder {
 
@@ -18,13 +17,12 @@ public final class MergeSqlBuilder {
   public static final String DUPLICATE_KEY_PG_MESSAGE = "cannot affect row a second time";
 
   /**
-   * PostgreSQL 이 {@code ON CONFLICT (컬럼...)} 에 대응하는 유니크/제외 제약이 없을 때 내는 오류 문구.
-   * (Fix round 1, must 4)
+   * PostgreSQL 이 {@code ON CONFLICT (컬럼...)} 에 대응하는 유니크/제외 제약이 없을 때 내는 오류 문구. (Fix round 1, must 4)
    *
-   * <p>저장·실행 시점 모두 {@code dataset_column.is_primary_key} 메타데이터로 PK 존재를 확인하지만,
-   * {@code createPrimaryKeyIndexConcurrently} 로 만든 {@code ux_<table>_pk} 인덱스가 (동시 생성 실패 등으로)
-   * INVALID 상태로 남을 수 있다 — 메타데이터는 여전히 true 인데 실제 유니크 제약은 없는 상태다. 이때
-   * PostgreSQL 은 이 문구로 거부한다. 사용자용 메시지로 번역할 때 이 상수를 함께 검사한다.
+   * <p>저장·실행 시점 모두 {@code dataset_column.is_primary_key} 메타데이터로 PK 존재를 확인하지만, {@code
+   * createPrimaryKeyIndexConcurrently} 로 만든 {@code ux_<table>_pk} 인덱스가 (동시 생성 실패 등으로) INVALID 상태로
+   * 남을 수 있다 — 메타데이터는 여전히 true 인데 실제 유니크 제약은 없는 상태다. 이때 PostgreSQL 은 이 문구로 거부한다. 사용자용 메시지로 번역할 때 이
+   * 상수를 함께 검사한다.
    */
   public static final String NO_UNIQUE_CONSTRAINT_PG_MESSAGE =
       "there is no unique or exclusion constraint matching the ON CONFLICT specification";
@@ -58,19 +56,31 @@ public final class MergeSqlBuilder {
     // 내용과 닫는 괄호 사이에 개행을 넣으면 한 줄 주석은 그 줄(=서브쿼리 내용이 끝나는 줄)에서만
     // 끝나고, 닫는 괄호는 다음 줄이라 영향을 받지 않는다 — REPLACE/APPEND 는 SELECT 를 문장 맨 끝에
     // 붙이므로 애초에 이 문제가 없다.
-    sql.append("INSERT INTO ").append(qualifiedTable).append(" AS t (").append(cols).append(") ")
-        .append("SELECT ").append(cols).append(" FROM (\n").append(normalizedSelectSql).append("\n) AS _src ")
-        .append("ON CONFLICT (").append(keys).append(") ");
+    sql.append("INSERT INTO ")
+        .append(qualifiedTable)
+        .append(" AS t (")
+        .append(cols)
+        .append(") ")
+        .append("SELECT ")
+        .append(cols)
+        .append(" FROM (\n")
+        .append(normalizedSelectSql)
+        .append("\n) AS _src ")
+        .append("ON CONFLICT (")
+        .append(keys)
+        .append(") ");
     if (nonKeys.isEmpty()) {
       return sql.append("DO NOTHING").toString();
     }
     String set =
-        nonKeys.stream()
-            .map(c -> q(c) + " = EXCLUDED." + q(c))
-            .collect(Collectors.joining(", "));
-    sql.append("DO UPDATE SET ").append(set)
-        .append(" WHERE (").append(quoteJoin(nonKeys, "t.")).append(") IS DISTINCT FROM (")
-        .append(quoteJoin(nonKeys, "EXCLUDED.")).append(")");
+        nonKeys.stream().map(c -> q(c) + " = EXCLUDED." + q(c)).collect(Collectors.joining(", "));
+    sql.append("DO UPDATE SET ")
+        .append(set)
+        .append(" WHERE (")
+        .append(quoteJoin(nonKeys, "t."))
+        .append(") IS DISTINCT FROM (")
+        .append(quoteJoin(nonKeys, "EXCLUDED."))
+        .append(")");
     return sql.toString();
   }
 

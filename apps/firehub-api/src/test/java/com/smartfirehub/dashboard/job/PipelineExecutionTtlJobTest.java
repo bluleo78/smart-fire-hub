@@ -22,12 +22,11 @@ import org.springframework.transaction.support.TransactionTemplate;
  * <p>- 90일 초과 + COMPLETED 행만 삭제, FAILED 는 보존. - 윈도우 내(89일 등) COMPLETED 행은 보존. - trigger_event 자식 행이
  * FK CASCADE 로 함께 삭제되는지 검증 (V59 의존).
  *
- * <p><b>이 클래스에는 클래스 레벨 {@code @Transactional} 이 없다 — 의도된 것이다.</b> V93 이후
- * 픽스처 INSERT 는 tenant_id DEFAULT 를 채울 트랜잭션 GUC 가 필요하지만, 그것을 클래스 레벨
- * {@code @Transactional} 로 해결하면 테스트가 열어둔 트랜잭션에 {@code runOnce()} 가 얹혀 타게 된다.
- * {@code PipelineExecutionTtlJob} 은 P2-b Task 8 에서 테넌트 순회 + 자체 트랜잭션을 받을 대상이라,
- * 그렇게 하면 배선을 빠뜨려도 이 테스트가 통과해 결함을 구조적으로 못 보게 된다. 그래서 픽스처만
- * 트랜잭션 안에서 만들고, {@code runOnce()} 호출은 트랜잭션 밖에 남긴다.
+ * <p><b>이 클래스에는 클래스 레벨 {@code @Transactional} 이 없다 — 의도된 것이다.</b> V93 이후 픽스처 INSERT 는 tenant_id
+ * DEFAULT 를 채울 트랜잭션 GUC 가 필요하지만, 그것을 클래스 레벨 {@code @Transactional} 로 해결하면 테스트가 열어둔 트랜잭션에 {@code
+ * runOnce()} 가 얹혀 타게 된다. {@code PipelineExecutionTtlJob} 은 P2-b Task 8 에서 테넌트 순회 + 자체 트랜잭션을 받을
+ * 대상이라, 그렇게 하면 배선을 빠뜨려도 이 테스트가 통과해 결함을 구조적으로 못 보게 된다. 그래서 픽스처만 트랜잭션 안에서 만들고, {@code runOnce()} 호출은
+ * 트랜잭션 밖에 남긴다.
  *
  * <p>롤백이 없으므로 심은 행은 {@link #cleanup()} 에서 직접 지운다.
  */
@@ -84,7 +83,8 @@ class PipelineExecutionTtlJobTest extends IntegrationTestBase {
   void runOnce_deletesCompletedRowsOlderThanRetention() {
     Long oldCompleted =
         inTenantTx(() -> insertExecution(LocalDateTime.now().minusDays(100), "COMPLETED"));
-    Long oldFailed = inTenantTx(() -> insertExecution(LocalDateTime.now().minusDays(100), "FAILED"));
+    Long oldFailed =
+        inTenantTx(() -> insertExecution(LocalDateTime.now().minusDays(100), "FAILED"));
     Long recentCompleted =
         inTenantTx(() -> insertExecution(LocalDateTime.now().minusDays(89), "COMPLETED"));
 
@@ -111,7 +111,8 @@ class PipelineExecutionTtlJobTest extends IntegrationTestBase {
   /** CASCADE — trigger_event 자식 행이 부모 삭제 시 함께 제거. V59 마이그레이션 의존. */
   @Test
   void runOnce_cascadesTriggerEventChild() {
-    Long execId = inTenantTx(() -> insertExecution(LocalDateTime.now().minusDays(100), "COMPLETED"));
+    Long execId =
+        inTenantTx(() -> insertExecution(LocalDateTime.now().minusDays(100), "COMPLETED"));
 
     Long eventId =
         inTenantTx(
@@ -183,6 +184,7 @@ class PipelineExecutionTtlJobTest extends IntegrationTestBase {
   private boolean executionExists(Long id) {
     return inTenantTx(
         () ->
-            dsl.fetchExists(dsl.selectFrom(PIPELINE_EXECUTION).where(PIPELINE_EXECUTION.ID.eq(id))));
+            dsl.fetchExists(
+                dsl.selectFrom(PIPELINE_EXECUTION).where(PIPELINE_EXECUTION.ID.eq(id))));
   }
 }

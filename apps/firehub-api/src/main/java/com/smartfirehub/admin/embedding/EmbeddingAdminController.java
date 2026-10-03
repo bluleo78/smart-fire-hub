@@ -33,8 +33,8 @@ public class EmbeddingAdminController {
   }
 
   /**
-   * 현재 설정 공간으로 전체 재임베딩(#713). source_text 를 먼저 채우고, 판정식 대상 수를 돌려준 뒤 TenantReembedJob 을
-   * 투입한다(임대 행이 중복 실행을 막는다). 미설정이면 409. 인덱스를 바꾸므로 dataset:write.
+   * 현재 설정 공간으로 전체 재임베딩(#713). source_text 를 먼저 채우고, 판정식 대상 수를 돌려준 뒤 TenantReembedJob 을 투입한다(임대 행이
+   * 중복 실행을 막는다). 미설정이면 409. 인덱스를 바꾸므로 dataset:write.
    */
   @PostMapping("/reindex-all")
   @RequirePermission("dataset:write")
@@ -45,8 +45,8 @@ public class EmbeddingAdminController {
   /**
    * 임의 텍스트 배치를 현재 활성 provider 로 임베딩해 벡터를 반환한다.
    *
-   * <p>ai-agent(GraphRAG 엔티티 해소)가 provider/모델/API 키를 직접 알 필요 없이 위임 호출하는 내부 진입점이다. provider
-   * 로직과 시크릿을 api 한쪽에 모아 설정을 단일화하기 위한 것으로, 벡터를 계산만 할 뿐 인덱스를 변경하지 않으므로 dataset:read 로 충분하다.
+   * <p>ai-agent(GraphRAG 엔티티 해소)가 provider/모델/API 키를 직접 알 필요 없이 위임 호출하는 내부 진입점이다. provider 로직과 시크릿을
+   * api 한쪽에 모아 설정을 단일화하기 위한 것으로, 벡터를 계산만 할 뿐 인덱스를 변경하지 않으므로 dataset:read 로 충분하다.
    */
   @PostMapping("/embed")
   @RequirePermission("dataset:read")

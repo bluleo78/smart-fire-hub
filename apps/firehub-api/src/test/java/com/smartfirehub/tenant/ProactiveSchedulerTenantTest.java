@@ -42,27 +42,25 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * <p>두 가지를 본다 — 선례 {@code pipeline/TriggerSchedulerTenantTest} 와 같은 이유로 <b>두 개</b>다.
  *
  * <ul>
- *   <li><b>등록 커버리지</b>: {@code reloadAllSchedules()} 가 ACTIVE 테넌트를 순회하는가. 순회하지
- *       않으면 V104 로 {@code proactive_job} 에 RLS 가 걸리는 순간 부팅 시 조회가 0행이 되어 <b>크론이
- *       하나도 등록되지 않은 채 부팅이 성공</b>한다 — 예외도 에러 로그도 없다. 이 밴드에서 가장 조용한
- *       결함이며, 기존 프로액티브 테스트가 전부 {@code doesNotThrowAnyException} 이라 이 상태를
+ *   <li><b>등록 커버리지</b>: {@code reloadAllSchedules()} 가 ACTIVE 테넌트를 순회하는가. 순회하지 않으면 V104 로 {@code
+ *       proactive_job} 에 RLS 가 걸리는 순간 부팅 시 조회가 0행이 되어 <b>크론이 하나도 등록되지 않은 채 부팅이 성공</b>한다 — 예외도 에러
+ *       로그도 없다. 이 밴드에서 가장 조용한 결함이며, 기존 프로액티브 테스트가 전부 {@code doesNotThrowAnyException} 이라 이 상태를
  *       통과시킨다.
- *   <li><b>발화 콜백 테넌트 승계</b>: 등록된 {@code Runnable} 이 등록 시점 테넌트를 들고 가는가. 이
- *       스케줄러 풀에는 {@code TaskDecorator} 가 없어, 감싸지 않으면 발화 스레드에 테넌트가 없다.
+ *   <li><b>발화 콜백 테넌트 승계</b>: 등록된 {@code Runnable} 이 등록 시점 테넌트를 들고 가는가. 이 스케줄러 풀에는 {@code
+ *       TaskDecorator} 가 없어, 감싸지 않으면 발화 스레드에 테넌트가 없다.
  * </ul>
  *
- * <p><b>잡 소유자에게 ACTIVE 멤버십을 일부러 2개 준다.</b> P2-e 이전 구현은 발화 시점에 소유자의
- * 멤버십에서 테넌트를 <i>추론</i>했는데, 멤버십이 1개인 흔한 경우에는 그 추론이 우연히 옳은 답을 내
- * 테스트가 공허하게 통과한다. 멤버십이 모호하면 옛 구현은 실행 자체를 건너뛰므로(관측 테넌트 null)
- * "행의 {@code tenant_id} 를 쓴다"는 새 계약만 통과할 수 있다. 새 계약은 옛 것보다 <b>강하다</b> —
- * 멤버십이 몇 개든 잡 행이 자기 테넌트를 들고 있으므로 실행을 건너뛸 이유가 없다.
+ * <p><b>잡 소유자에게 ACTIVE 멤버십을 일부러 2개 준다.</b> P2-e 이전 구현은 발화 시점에 소유자의 멤버십에서 테넌트를 <i>추론</i>했는데, 멤버십이
+ * 1개인 흔한 경우에는 그 추론이 우연히 옳은 답을 내 테스트가 공허하게 통과한다. 멤버십이 모호하면 옛 구현은 실행 자체를 건너뛰므로(관측 테넌트 null) "행의
+ * {@code tenant_id} 를 쓴다"는 새 계약만 통과할 수 있다. 새 계약은 옛 것보다 <b>강하다</b> — 멤버십이 몇 개든 잡 행이 자기 테넌트를 들고 있으므로
+ * 실행을 건너뛸 이유가 없다.
  *
- * <p><b>클래스 레벨 {@code @Transactional} 이 없다 — 의도된 것이다.</b> 테스트가 트랜잭션을 열면 GUC
- * 가 거기서 공급돼 프로덕션의 배선 누락을 영구히 가린다. 픽스처·정리만 {@code inTenantFixture} 로
- * 감싸고, 검증 대상 호출({@code reloadAllSchedules}, 발화 콜백)은 경계 <b>밖</b>에 둔다.
+ * <p><b>클래스 레벨 {@code @Transactional} 이 없다 — 의도된 것이다.</b> 테스트가 트랜잭션을 열면 GUC 가 거기서 공급돼 프로덕션의 배선 누락을
+ * 영구히 가린다. 픽스처·정리만 {@code inTenantFixture} 로 감싸고, 검증 대상 호출({@code reloadAllSchedules}, 발화 콜백)은 경계
+ * <b>밖</b>에 둔다.
  *
- * <p>{@link ProactiveJobService} 는 목이다. {@code reloadAllSchedules()} 는 공유 테스트 DB 의 모든
- * 잡을 훑으므로, 실제 실행이면 AI 호출과 비동기 잡이 줄줄이 일어난다.
+ * <p>{@link ProactiveJobService} 는 목이다. {@code reloadAllSchedules()} 는 공유 테스트 DB 의 모든 잡을 훑으므로, 실제
+ * 실행이면 AI 호출과 비동기 잡이 줄줄이 일어난다.
  */
 class ProactiveSchedulerTenantTest extends IntegrationTestBase {
 
@@ -141,16 +139,14 @@ class ProactiveSchedulerTenantTest extends IntegrationTestBase {
   /**
    * (1a) 기동 재등록이 두 테넌트를 모두 커버하는지 본다.
    *
-   * <p>한쪽만 단언하면 테넌트 순회가 없어도 통과하므로 양쪽을 함께 단언한다. 호출 직전에 컨텍스트를
-   * 비우는 것이 핵심이다 — {@code @PostConstruct} 시점에는 승계할 테넌트가 없고,
-   * {@link IntegrationTestBase} 가 세워둔 기본 테넌트를 남겨두면 순회가 없어도 통과한다.
+   * <p>한쪽만 단언하면 테넌트 순회가 없어도 통과하므로 양쪽을 함께 단언한다. 호출 직전에 컨텍스트를 비우는 것이 핵심이다 — {@code @PostConstruct}
+   * 시점에는 승계할 테넌트가 없고, {@link IntegrationTestBase} 가 세워둔 기본 테넌트를 남겨두면 순회가 없어도 통과한다.
    *
-   * <p><b>등록 여부(키 존재)만 보지 않고 캡처된 테넌트까지 단언한다.</b> 순회 안에서 조회가 남의
-   * 테넌트 행까지 돌려주면 잡마다 <b>마지막으로 순회된 테넌트</b>가 캡처돼, 등록은 다 됐는데 전부 남의
-   * 테넌트로 발화하는 상태가 된다 — 키만 보면 그 상태도 통과한다.
+   * <p><b>등록 여부(키 존재)만 보지 않고 캡처된 테넌트까지 단언한다.</b> 순회 안에서 조회가 남의 테넌트 행까지 돌려주면 잡마다 <b>마지막으로 순회된
+   * 테넌트</b>가 캡처돼, 등록은 다 됐는데 전부 남의 테넌트로 발화하는 상태가 된다 — 키만 보면 그 상태도 통과한다.
    *
-   * <p>존재 단언 부분은 V104(정책) 이전에는 판별력이 없다(정책이 없으면 조회가 컨텍스트와 무관하다).
-   * 그래도 지금 써 두는 이유는 Task 6 이 정책을 켜는 순간 곧바로 가드가 되기 때문이다.
+   * <p>존재 단언 부분은 V104(정책) 이전에는 판별력이 없다(정책이 없으면 조회가 컨텍스트와 무관하다). 그래도 지금 써 두는 이유는 Task 6 이 정책을 켜는 순간
+   * 곧바로 가드가 되기 때문이다.
    */
   @Test
   @DisplayName("부팅 재등록은 ACTIVE 테넌트를 순회해 각 잡을 자기 테넌트로 등록한다")
@@ -182,10 +178,9 @@ class ProactiveSchedulerTenantTest extends IntegrationTestBase {
   /**
    * (1b) 발화 콜백이 등록 시점의 테넌트를 들고 가는지 본다.
    *
-   * <p>등록된 {@code Runnable} 을 꺼내 <b>테넌트 컨텍스트가 비워진 별도 스레드</b>에서 실행한다 —
-   * 실제 cron 발화(다른 풀 스레드, 몇 시간 뒤)와 같은 조건이다. 감싸지 않았다면 여기서 null 이
-   * 관측되거나(승계 없음), 멤버십 추론에 의존하던 옛 구현에서는 소유자 A 의 멤버십이 모호해
-   * {@code executeJob} 호출 자체가 일어나지 않는다.
+   * <p>등록된 {@code Runnable} 을 꺼내 <b>테넌트 컨텍스트가 비워진 별도 스레드</b>에서 실행한다 — 실제 cron 발화(다른 풀 스레드, 몇 시간 뒤)와
+   * 같은 조건이다. 감싸지 않았다면 여기서 null 이 관측되거나(승계 없음), 멤버십 추론에 의존하던 옛 구현에서는 소유자 A 의 멤버십이 모호해 {@code
+   * executeJob} 호출 자체가 일어나지 않는다.
    */
   @Test
   @DisplayName("발화 콜백은 등록 시점 테넌트 안에서 실행된다 (멤버십 추론에 의존하지 않는다)")
@@ -217,9 +212,8 @@ class ProactiveSchedulerTenantTest extends IntegrationTestBase {
   /**
    * 이 테스트가 앰비언트 트랜잭션 밖에서 도는지 기계로 못박는다.
    *
-   * <p>왜 주석이 아니라 단언인가: 누군가 이 클래스에 클래스 레벨 {@code @Transactional} 을 붙이면
-   * 테스트 트랜잭션이 GUC 를 공급해 <b>검증하려던 배선 결함을 정확히 가린다</b>. 이 이니셔티브에서
-   * 다섯 번 일어난 실패 패턴이라, 유일한 자동 가드를 주석으로 대체하지 않는다.
+   * <p>왜 주석이 아니라 단언인가: 누군가 이 클래스에 클래스 레벨 {@code @Transactional} 을 붙이면 테스트 트랜잭션이 GUC 를 공급해 <b>검증하려던
+   * 배선 결함을 정확히 가린다</b>. 이 이니셔티브에서 다섯 번 일어난 실패 패턴이라, 유일한 자동 가드를 주석으로 대체하지 않는다.
    *
    * <p>구 {@code ProactiveScheduleTenantTest} 가 갖고 있던 단언을 그대로 승계한 것이다.
    */
@@ -247,8 +241,8 @@ class ProactiveSchedulerTenantTest extends IntegrationTestBase {
   /**
    * 테넌트 컨텍스트가 없는 새 스레드에서 실행하고, 실행 후에도 컨텍스트가 새지 않는지 확인한다.
    *
-   * <p>후자를 함께 보는 이유: {@code runScoped} 는 clear 가 아니라 "진입 전 값 복원" 계약이다. 발화
-   * 스레드에 테넌트가 남으면 풀 스레드가 재사용될 때 다른 잡이 남의 테넌트로 돈다.
+   * <p>후자를 함께 보는 이유: {@code runScoped} 는 clear 가 아니라 "진입 전 값 복원" 계약이다. 발화 스레드에 테넌트가 남으면 풀 스레드가 재사용될
+   * 때 다른 잡이 남의 테넌트로 돈다.
    */
   private void runWithoutTenantContext(Runnable task) throws InterruptedException {
     Long[] leaked = new Long[1];
@@ -272,9 +266,8 @@ class ProactiveSchedulerTenantTest extends IntegrationTestBase {
   /**
    * 잡 픽스처를 해당 테넌트로 삽입한다.
    *
-   * <p>V103 이후 {@code proactive_job.tenant_id} 는 NOT NULL + GUC 파생 DEFAULT 라, 트랜잭션 없이
-   * 삽입하면 GUC 가 비어 NOT NULL 위반이 된다. 감싸는 것은 픽스처뿐이며 검증 대상(재등록·발화)은
-   * 여전히 이 경계 밖에서 일어난다.
+   * <p>V103 이후 {@code proactive_job.tenant_id} 는 NOT NULL + GUC 파생 DEFAULT 라, 트랜잭션 없이 삽입하면 GUC 가 비어
+   * NOT NULL 위반이 된다. 감싸는 것은 픽스처뿐이며 검증 대상(재등록·발화)은 여전히 이 경계 밖에서 일어난다.
    */
   private Long insertScheduleJob(Long owner, String namePrefix) {
     return dsl.insertInto(table(name("proactive_job")))

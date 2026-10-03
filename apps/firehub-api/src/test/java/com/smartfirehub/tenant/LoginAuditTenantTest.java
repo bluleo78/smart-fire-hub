@@ -19,19 +19,16 @@ import org.springframework.transaction.support.TransactionTemplate;
 /**
  * 로그인 성공 감사 행이 <b>활성 테넌트 스코프로</b> 기록되는지 고정한다 (코드리뷰 MEDIUM-3).
  *
- * <p>왜 필요한가: {@code /auth/login} 은 permitAll 이라 JWT 도 {@link TenantContext} 도 없다. 그대로
- * 두면 {@code audit_log.tenant_id} 가 NULL 이 되고, V99 의 형태 (b) USING 정책이 그 행을 모든 테넌트
- * 스코프 조회에서 감춘다 — 감사 화면과 대시보드에 LOGOUT(JWT 아래에서 기록되어 테넌트가 붙는다)만
- * 보이고 짝이 되는 LOGIN 이 사라진다.
+ * <p>왜 필요한가: {@code /auth/login} 은 permitAll 이라 JWT 도 {@link TenantContext} 도 없다. 그대로 두면 {@code
+ * audit_log.tenant_id} 가 NULL 이 되고, V99 의 형태 (b) USING 정책이 그 행을 모든 테넌트 스코프 조회에서 감춘다 — 감사 화면과 대시보드에
+ * LOGOUT(JWT 아래에서 기록되어 테넌트가 붙는다)만 보이고 짝이 되는 LOGIN 이 사라진다.
  *
- * <p>{@code AuditLogTenantTest} 는 "테넌트가 진짜 없는 행은 안 보인다" 는 정책 자체를 고정한다.
- * 그 동작은 그대로 두고, 여기서는 "로그인은 테넌트가 있는 행을 남겨야 한다" 를 고정한다.
+ * <p>{@code AuditLogTenantTest} 는 "테넌트가 진짜 없는 행은 안 보인다" 는 정책 자체를 고정한다. 그 동작은 그대로 두고, 여기서는 "로그인은
+ * 테넌트가 있는 행을 남겨야 한다" 를 고정한다.
  *
- * <p><b>클래스 레벨 {@code @Transactional} 이 없는 것은 의도된 것이다.</b> 붙이면 테스트 트랜잭션이
- * GUC 를 공급해 운영에 없는 조건이 만들어지고, 검증 대상인 결함이 통째로 가려진다. 같은 이유로
- * {@code login} 호출 직전에 {@link TenantContext#clear()} 를 부른다 —
- * {@code IntegrationTestBase} 가 세워 두는 기본 테넌트 1 이 남아 있으면 로그인 트랜잭션이 그 GUC 로
- * 열려 결함이 드러나지 않는다.
+ * <p><b>클래스 레벨 {@code @Transactional} 이 없는 것은 의도된 것이다.</b> 붙이면 테스트 트랜잭션이 GUC 를 공급해 운영에 없는 조건이
+ * 만들어지고, 검증 대상인 결함이 통째로 가려진다. 같은 이유로 {@code login} 호출 직전에 {@link TenantContext#clear()} 를 부른다 —
+ * {@code IntegrationTestBase} 가 세워 두는 기본 테넌트 1 이 남아 있으면 로그인 트랜잭션이 그 GUC 로 열려 결함이 드러나지 않는다.
  */
 class LoginAuditTenantTest extends IntegrationTestBase {
 
@@ -98,9 +95,7 @@ class LoginAuditTenantTest extends IntegrationTestBase {
                         userId));
 
     assertThat(visibleInTenant)
-        .as(
-            "LOGIN 감사 행이 테넌트 스코프에서 안 보이면, 감사 화면·대시보드에 LOGOUT 만 남고"
-                + " 짝이 되는 LOGIN 이 사라진다")
+        .as("LOGIN 감사 행이 테넌트 스코프에서 안 보이면, 감사 화면·대시보드에 LOGOUT 만 남고" + " 짝이 되는 LOGIN 이 사라진다")
         .isEqualTo(1);
   }
 

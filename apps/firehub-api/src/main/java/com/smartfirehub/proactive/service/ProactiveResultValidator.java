@@ -8,14 +8,13 @@ import java.util.Optional;
 /**
  * AI 에이전트가 반환한 프로액티브 실행 결과가 "사용자에게 발송해도 되는 리포트"인지 검증한다.
  *
- * <p>왜 필요한가 (이슈 #350): CLI/SDK 에이전트는 인증 만료·크레딧 소진 같은 실패를 SSE {@code error}
- * 이벤트가 아니라 일반 assistant 텍스트로 흘려보낸 뒤 정상 종료한다. 그러면 오류 원문이 그대로 리포트
- * 본문(sections[0].content)이 되고, 실행은 COMPLETED로 기록되며, CHAT/EMAIL 채널로 발송된다.
- * ai-agent 층에서 1차 차단하지만, 백엔드에서도 발송 직전에 한 번 더 막는 2중 방어를 둔다.
+ * <p>왜 필요한가 (이슈 #350): CLI/SDK 에이전트는 인증 만료·크레딧 소진 같은 실패를 SSE {@code error} 이벤트가 아니라 일반 assistant
+ * 텍스트로 흘려보낸 뒤 정상 종료한다. 그러면 오류 원문이 그대로 리포트 본문(sections[0].content)이 되고, 실행은 COMPLETED로 기록되며,
+ * CHAT/EMAIL 채널로 발송된다. ai-agent 층에서 1차 차단하지만, 백엔드에서도 발송 직전에 한 번 더 막는 2중 방어를 둔다.
  *
- * <p>의도적으로 검사하지 <b>않는</b> 것: {@code htmlContent}/{@code summary}가 비었다는 사실 자체는
- * 실패 신호가 아니다. report-writer가 report.md만 생성한 경우 두 필드는 비어 있고 sections만 채워지는
- * 정상 리포트가 되기 때문이다. 이를 실패로 처리하면 멀쩡한 리포트가 FAILED가 되는 회귀가 생긴다.
+ * <p>의도적으로 검사하지 <b>않는</b> 것: {@code htmlContent}/{@code summary}가 비었다는 사실 자체는 실패 신호가 아니다.
+ * report-writer가 report.md만 생성한 경우 두 필드는 비어 있고 sections만 채워지는 정상 리포트가 되기 때문이다. 이를 실패로 처리하면 멀쩡한 리포트가
+ * FAILED가 되는 회귀가 생긴다.
  */
 public final class ProactiveResultValidator {
 

@@ -20,9 +20,9 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * pgvector(HNSW) + pg_trgm(GIN) 기반 행 검색 색인.
  *
- * <p>색인 테이블은 원본과 같은 테넌트 데이터 스키마에 둔다(스키마 단위 테넌트 격리를 그대로 따른다). FK 는 두지 않는다 —
- * TRUNCATE·swap 이 깨지기 때문(설계 3.4). vector/pg_trgm 은 public 에 있고 일부 경로의 search_path 에 public 이
- * 없으므로 타입·연산자 클래스를 public. 으로 한정한다.
+ * <p>색인 테이블은 원본과 같은 테넌트 데이터 스키마에 둔다(스키마 단위 테넌트 격리를 그대로 따른다). FK 는 두지 않는다 — TRUNCATE·swap 이 깨지기
+ * 때문(설계 3.4). vector/pg_trgm 은 public 에 있고 일부 경로의 search_path 에 public 이 없으므로 타입·연산자 클래스를 public.
+ * 으로 한정한다.
  */
 @Repository
 @Transactional
@@ -33,10 +33,9 @@ public class PgRowSearchIndex implements RowSearchIndex {
   /**
    * 색인 테이블(청크 단위) 행 수가 이 값 이하면 의미 검색을 HNSW 대신 **정확 스캔**으로 한다.
    *
-   * <p>왜: 비슷한 문장이 대부분인 데이터셋(템플릿성 민원 등)에서는 HNSW 그래프가 튀는 행으로 잘 이어지지 않아, 정확
-   * 계산으로는 1위인 행이 상위 결과에서 통째로 빠졌다(2026-09-27 라이브 검증 — 1.2만 행에서 ef_search 400, m=32 도
-   * 놓침). 근사 검색의 이득은 규모가 클 때만 의미가 있으므로 작은 색인은 정확도를 택한다. 실측 비용: 1.2만 행 약
-   * 54ms, 10만 행 warm 약 160ms·cold 약 1s(1024차원).
+   * <p>왜: 비슷한 문장이 대부분인 데이터셋(템플릿성 민원 등)에서는 HNSW 그래프가 튀는 행으로 잘 이어지지 않아, 정확 계산으로는 1위인 행이 상위 결과에서 통째로
+   * 빠졌다(2026-09-27 라이브 검증 — 1.2만 행에서 ef_search 400, m=32 도 놓침). 근사 검색의 이득은 규모가 클 때만 의미가 있으므로 작은 색인은
+   * 정확도를 택한다. 실측 비용: 1.2만 행 약 54ms, 10만 행 warm 약 160ms·cold 약 1s(1024차원).
    */
   private final long exactScanMaxRows;
 
@@ -44,7 +43,8 @@ public class PgRowSearchIndex implements RowSearchIndex {
   static final int HNSW_EF_SEARCH = 200;
 
   public PgRowSearchIndex(
-      DSLContext dsl, @Value("${row-search.search.exact-scan-max-rows:100000}") long exactScanMaxRows) {
+      DSLContext dsl,
+      @Value("${row-search.search.exact-scan-max-rows:100000}") long exactScanMaxRows) {
     this.dsl = dsl;
     this.exactScanMaxRows = exactScanMaxRows;
   }
@@ -53,8 +53,8 @@ public class PgRowSearchIndex implements RowSearchIndex {
   public static final int MAX_DIM = 2000;
 
   /**
-   * 색인 행 upsert 의 충돌 갱신 절 — {@link #upsert} 와 {@link #upsertReusing} 이 함께 쓴다. indexed_at 의 DEFAULT 는
-   * INSERT 에만 적용되므로 갱신 경로에서 명시한다.
+   * 색인 행 upsert 의 충돌 갱신 절 — {@link #upsert} 와 {@link #upsertReusing} 이 함께 쓴다. indexed_at 의 DEFAULT
+   * 는 INSERT 에만 적용되므로 갱신 경로에서 명시한다.
    */
   private static final String ON_CONFLICT_UPDATE =
       " ON CONFLICT (row_id, chunk_no) DO UPDATE SET source_text = EXCLUDED.source_text,"
@@ -75,7 +75,11 @@ public class PgRowSearchIndex implements RowSearchIndex {
     if (tableExists(ref.indexTable())) {
       // RENAME TO 의 새 이름에는 스키마를 붙이지 않는다(PostgreSQL 문법). 인덱스 이름은 자동 명명이라 충돌하지 않는다.
       dsl.execute(
-          "ALTER TABLE " + DataSchema.qualify(ref.indexTable()) + " RENAME TO \"" + ref.prevTable() + "\"");
+          "ALTER TABLE "
+              + DataSchema.qualify(ref.indexTable())
+              + " RENAME TO \""
+              + ref.prevTable()
+              + "\"");
     }
     // _prev 는 원래 createIndexTable 로 만든 테이블을 개명한 것이라 권한 회수 상태(ACL)가 그대로 따라온다.
     createIndexTable(ref, dim);
@@ -203,26 +207,34 @@ public class PgRowSearchIndex implements RowSearchIndex {
             tx.execute("SET LOCAL hnsw.iterative_scan = relaxed_order");
             tx.execute("SET LOCAL hnsw.ef_search = " + HNSW_EF_SEARCH);
           }
-          List<RowHit> hits = new ArrayList<>(tx.fetch(sql, params.toArray()).map(PgRowSearchIndex::toHit));
+          List<RowHit> hits =
+              new ArrayList<>(tx.fetch(sql, params.toArray()).map(PgRowSearchIndex::toHit));
           hits.sort((a, b) -> Double.compare(b.score(), a.score()));
           return hits;
         });
   }
 
   /**
-   * 의미 검색 SQL. {@code exact} 이면 정렬식을 {@code (거리) + 0} 으로 감싸 HNSW 인덱스가 정렬을 맡지 못하게 한다 —
-   * {@code enable_indexscan} 을 끄면 필터 조인이 쓰는 원본 PK 인덱스까지 막히므로 정렬식만 비튼다.
-   * package-private — 실행 계획 단언 테스트가 쓴다.
+   * 의미 검색 SQL. {@code exact} 이면 정렬식을 {@code (거리) + 0} 으로 감싸 HNSW 인덱스가 정렬을 맡지 못하게 한다 — {@code
+   * enable_indexscan} 을 끄면 필터 조인이 쓰는 원본 PK 인덱스까지 막히므로 정렬식만 비튼다. package-private — 실행 계획 단언 테스트가 쓴다.
    */
   String semanticSql(
-      IndexRef ref, CompiledFilter filter, boolean exact, String vector, int limit, List<Object> params) {
+      IndexRef ref,
+      CompiledFilter filter,
+      boolean exact,
+      String vector,
+      int limit,
+      List<Object> params) {
     StringBuilder sql =
         new StringBuilder("SELECT s.row_id, 1 - (s.embedding <=> ?::public.vector) AS score FROM ")
             .append(DataSchema.qualify(ref.indexTable()))
             .append(" s");
     params.add(vector);
     appendFilter(ref, filter, sql, params, " WHERE s.embedding IS NOT NULL");
-    sql.append(exact ? " ORDER BY (s.embedding <=> ?::public.vector) + 0" : " ORDER BY s.embedding <=> ?::public.vector");
+    sql.append(
+        exact
+            ? " ORDER BY (s.embedding <=> ?::public.vector) + 0"
+            : " ORDER BY s.embedding <=> ?::public.vector");
     sql.append(" LIMIT ?");
     params.add(vector);
     params.add(limit);
@@ -230,8 +242,8 @@ public class PgRowSearchIndex implements RowSearchIndex {
   }
 
   /**
-   * 정확 스캔 여부. 행 수는 매 질의 {@code count(*)} 대신 통계({@code reltuples})로 본다. 한 번도 ANALYZE 되지
-   * 않아 통계가 없으면(-1) 임계값+1 행까지만 세는 상한 카운트로 판정한다 — 큰 색인에서도 비용이 임계값에 묶인다.
+   * 정확 스캔 여부. 행 수는 매 질의 {@code count(*)} 대신 통계({@code reltuples})로 본다. 한 번도 ANALYZE 되지 않아 통계가
+   * 없으면(-1) 임계값+1 행까지만 세는 상한 카운트로 판정한다 — 큰 색인에서도 비용이 임계값에 묶인다.
    */
   boolean useExactScan(IndexRef ref) {
     String table = DataSchema.qualify(ref.indexTable());
@@ -242,7 +254,8 @@ public class PgRowSearchIndex implements RowSearchIndex {
         estimate != null && estimate >= 0
             ? estimate
             : dsl.fetchOne(
-                    "SELECT count(*) FROM (SELECT 1 FROM " + table + " LIMIT ?) x", exactScanMaxRows + 1)
+                    "SELECT count(*) FROM (SELECT 1 FROM " + table + " LIMIT ?) x",
+                    exactScanMaxRows + 1)
                 .get(0, Long.class);
     return rows <= exactScanMaxRows;
   }
@@ -271,9 +284,15 @@ public class PgRowSearchIndex implements RowSearchIndex {
 
   /** 필터가 있으면 원본(t)과 조인한 뒤 WHERE 에 base 조건과 필터를 AND 로 붙인다. */
   private void appendFilter(
-      IndexRef ref, CompiledFilter filter, StringBuilder sql, List<Object> params, String baseWhere) {
+      IndexRef ref,
+      CompiledFilter filter,
+      StringBuilder sql,
+      List<Object> params,
+      String baseWhere) {
     if (!filter.isEmpty()) {
-      sql.append(" JOIN ").append(DataSchema.qualify(ref.sourceTable())).append(" t ON t.id = s.row_id");
+      sql.append(" JOIN ")
+          .append(DataSchema.qualify(ref.sourceTable()))
+          .append(" t ON t.id = s.row_id");
     }
     sql.append(baseWhere);
     if (!filter.isEmpty()) {
@@ -290,10 +309,9 @@ public class PgRowSearchIndex implements RowSearchIndex {
   /**
    * 참조의 테넌트가 현재 테넌트 컨텍스트와 같은지 확인한다.
    *
-   * <p>색인 테이블의 스키마는 {@link DataSchema#qualify} 가 <b>현재 컨텍스트</b>에서 정한다(전역 규칙). 그래서
-   * {@code ref.tenantId()} 와 컨텍스트가 어긋나면 아무 오류 없이 다른 테넌트의 색인을 읽고 쓰거나 DROP 하게 된다.
-   * 테넌트별로 도는 배경 스윕에서 이런 불일치가 생기기 쉬우므로, SQL 을 실행하기 전에 모든 공개 메서드에서 막는다.
-   * 컨텍스트가 비어 있으면(null) 역시 불일치로 거부한다(fail-closed).
+   * <p>색인 테이블의 스키마는 {@link DataSchema#qualify} 가 <b>현재 컨텍스트</b>에서 정한다(전역 규칙). 그래서 {@code
+   * ref.tenantId()} 와 컨텍스트가 어긋나면 아무 오류 없이 다른 테넌트의 색인을 읽고 쓰거나 DROP 하게 된다. 테넌트별로 도는 배경 스윕에서 이런 불일치가
+   * 생기기 쉬우므로, SQL 을 실행하기 전에 모든 공개 메서드에서 막는다. 컨텍스트가 비어 있으면(null) 역시 불일치로 거부한다(fail-closed).
    */
   private void requireCurrentTenant(IndexRef ref) {
     Long current = TenantContext.get();
@@ -303,10 +321,7 @@ public class PgRowSearchIndex implements RowSearchIndex {
     }
   }
 
-  /**
-   * 색인 테이블 + HNSW(의미) + GIN trgm(키워드) + source_hash(재사용 조회) 인덱스를 만들고, 파이프라인 실행 롤의 권한을
-   * 회수한다.
-   */
+  /** 색인 테이블 + HNSW(의미) + GIN trgm(키워드) + source_hash(재사용 조회) 인덱스를 만들고, 파이프라인 실행 롤의 권한을 회수한다. */
   private void createIndexTable(IndexRef ref, int dim) {
     if (dim < 1 || dim > MAX_DIM) {
       throw new IllegalArgumentException("지원하지 않는 임베딩 차원입니다: " + dim + " (1~" + MAX_DIM + ")");
@@ -329,13 +344,12 @@ public class PgRowSearchIndex implements RowSearchIndex {
   }
 
   /**
-   * 테넌트 데이터 스키마의 기본 권한(ALTER DEFAULT PRIVILEGES, TenantSchemaProvisioner)은 새 테이블마다 파이프라인 실행
-   * 롤에 SELECT/INSERT/UPDATE/DELETE 를 준다. 색인 테이블은 사용자 데이터가 아니라 내부 파생물이므로, 사용자 파이프라인
-   * SQL 이 읽거나 오염시키지 못하게 만든 직후 모두 회수한다.
+   * 테넌트 데이터 스키마의 기본 권한(ALTER DEFAULT PRIVILEGES, TenantSchemaProvisioner)은 새 테이블마다 파이프라인 실행 롤에
+   * SELECT/INSERT/UPDATE/DELETE 를 준다. 색인 테이블은 사용자 데이터가 아니라 내부 파생물이므로, 사용자 파이프라인 SQL 이 읽거나 오염시키지 못하게
+   * 만든 직후 모두 회수한다.
    *
-   * <p>실행 롤은 자동 프로비저닝이 꺼진 환경 등에서 아직 없을 수 있다 — 없으면 줄 권한도 없으므로 건너뛴다(없는 롤에
-   * REVOKE 하면 오류). 롤 이름·존재 판정은 정본 헬퍼({@link TenantPipelineRole#roleName},
-   * {@link TenantSchemaProvisioner#roleExists})를 그대로 쓴다.
+   * <p>실행 롤은 자동 프로비저닝이 꺼진 환경 등에서 아직 없을 수 있다 — 없으면 줄 권한도 없으므로 건너뛴다(없는 롤에 REVOKE 하면 오류). 롤 이름·존재 판정은
+   * 정본 헬퍼({@link TenantPipelineRole#roleName}, {@link TenantSchemaProvisioner#roleExists})를 그대로 쓴다.
    */
   private void revokeFromPipelineExecutor(IndexRef ref, String qualifiedTable) {
     String executorRole = TenantPipelineRole.roleName(ref.tenantId());

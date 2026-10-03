@@ -21,10 +21,10 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * StagingTableCleanupService 통합 테스트.
  *
- * <p>고아 staging 테이블 정리 로직과 "활성 JobRunr 작업 게이트"를 검증한다. 모든 테스트는 {@code @Transactional}로 감싸져
- * DDL/DML 변경(테이블 생성·삭제, jobrunr_jobs 조작)이 테스트 종료 시 롤백된다 — PostgreSQL은 트랜잭션 DDL을 지원하므로 안전하다.
- * 게이트는 전역 jobrunr_jobs 상태를 보므로, 각 테스트는 트랜잭션 내에서 활성 상태 행을 먼저 삭제해(다른 테스트가 남긴
- * ENQUEUED 잔여 행의 간섭 제거) 게이트 조건을 결정적으로 만든다.
+ * <p>고아 staging 테이블 정리 로직과 "활성 JobRunr 작업 게이트"를 검증한다. 모든 테스트는 {@code @Transactional}로 감싸져 DDL/DML
+ * 변경(테이블 생성·삭제, jobrunr_jobs 조작)이 테스트 종료 시 롤백된다 — PostgreSQL은 트랜잭션 DDL을 지원하므로 안전하다. 게이트는 전역
+ * jobrunr_jobs 상태를 보므로, 각 테스트는 트랜잭션 내에서 활성 상태 행을 먼저 삭제해(다른 테스트가 남긴 ENQUEUED 잔여 행의 간섭 제거) 게이트 조건을
+ * 결정적으로 만든다.
  */
 @Transactional
 class StagingTableCleanupServiceTest extends IntegrationTestBase {
@@ -33,8 +33,7 @@ class StagingTableCleanupServiceTest extends IntegrationTestBase {
   @Autowired private DSLContext dsl;
 
   /**
-   * DROP 호출 <b>사이</b>에 개입하기 위한 스파이. 기본 동작은 실제 메서드 위임이라 다른 테스트는
-   * 영향을 받지 않고, 스텁은 필요한 테스트 안에서만 설치한다.
+   * DROP 호출 <b>사이</b>에 개입하기 위한 스파이. 기본 동작은 실제 메서드 위임이라 다른 테스트는 영향을 받지 않고, 스텁은 필요한 테스트 안에서만 설치한다.
    */
   @MockitoSpyBean private DataTableRowService dataTableRowService;
 
@@ -44,8 +43,7 @@ class StagingTableCleanupServiceTest extends IntegrationTestBase {
   @BeforeEach
   void clearActiveJobs() {
     // 다른 테스트가 커밋으로 남긴 활성(ENQUEUED 등) jobrunr 행을 트랜잭션 내에서 제거 — 롤백되므로 실제 DB엔 영향 없음.
-    dsl.execute(
-        "DELETE FROM jobrunr_jobs WHERE state IN ('SCHEDULED', 'ENQUEUED', 'PROCESSING')");
+    dsl.execute("DELETE FROM jobrunr_jobs WHERE state IN ('SCHEDULED', 'ENQUEUED', 'PROCESSING')");
   }
 
   /** stg_import_ + 32 hex 형태의 물리 테이블을 data 스키마에 생성한다(고아 시뮬레이션). */
@@ -70,10 +68,9 @@ class StagingTableCleanupServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * id 를 지정해 활성(PROCESSING) JobRunr 작업을 삽입한다. {@code jobrunr_jobs} 는 tenant_id 가 없는
-   * <b>전역 공유 테이블</b>이므로 id 는 테스트마다 달라야 하고(같은 트랜잭션 안에서 두 번 심으면 PK
-   * 충돌), 이 클래스의 {@code @Transactional} 롤백으로 반드시 사라져야 한다 — 커밋된 PROCESSING 행
-   * 하나가 다른 세션의 이 스윕을 전부 무동작으로 만든다.
+   * id 를 지정해 활성(PROCESSING) JobRunr 작업을 삽입한다. {@code jobrunr_jobs} 는 tenant_id 가 없는 <b>전역 공유
+   * 테이블</b>이므로 id 는 테스트마다 달라야 하고(같은 트랜잭션 안에서 두 번 심으면 PK 충돌), 이 클래스의 {@code @Transactional} 롤백으로 반드시
+   * 사라져야 한다 — 커밋된 PROCESSING 행 하나가 다른 세션의 이 스윕을 전부 무동작으로 만든다.
    */
   private void insertActiveJob(String jobId) {
     dsl.execute(
@@ -122,19 +119,16 @@ class StagingTableCleanupServiceTest extends IntegrationTestBase {
   /**
    * <b>순회 도중</b> 임포트가 시작되면 그 이후 테넌트는 스윕하지 않는다(테넌트별 게이트 재확인).
    *
-   * <p>왜 이 테스트가 필요한가: 진입 시 게이트를 1회만 보면 "게이트 통과 → 카탈로그 조회" 창이
-   * 테넌트 수만큼 늘어난다. 오늘 모든 테넌트가 같은 물리 스키마({@code data})를 공유하므로, 루프
-   * 도중 시작된 임포트의 <b>살아있는</b> staging 테이블이 뒤쪽 테넌트의 조회에 잡혀 DROP 되고 그
-   * 임포트가 깨진다. 이 결함은 관측이 어렵다 — 정상 경로에서는 아무 로그도 남지 않으므로
-   * {@code sweepActiveTenants(true)} 를 {@code false} 로 되돌려도 기존 테스트가 전부 초록이었다.
+   * <p>왜 이 테스트가 필요한가: 진입 시 게이트를 1회만 보면 "게이트 통과 → 카탈로그 조회" 창이 테넌트 수만큼 늘어난다. 오늘 모든 테넌트가 같은 물리
+   * 스키마({@code data})를 공유하므로, 루프 도중 시작된 임포트의 <b>살아있는</b> staging 테이블이 뒤쪽 테넌트의 조회에 잡혀 DROP 되고 그 임포트가
+   * 깨진다. 이 결함은 관측이 어렵다 — 정상 경로에서는 아무 로그도 남지 않으므로 {@code sweepActiveTenants(true)} 를 {@code false} 로
+   * 되돌려도 기존 테스트가 전부 초록이었다.
    *
-   * <p>어떻게 재현하나: 첫 테넌트의 DROP 이 일어나는 <b>정확히 그 순간</b>에 (a) 새 staging 테이블을
-   * 만들고 (b) PROCESSING 작업 행을 심는다 — 즉 "루프 중간에 임포트가 시작됐다". 게이트 재확인이
-   * 있으면 두 번째 테넌트부터는 건너뛰므로 그 테이블이 살아남고, 없으면 DROP 돼 단언이 깨진다.
+   * <p>어떻게 재현하나: 첫 테넌트의 DROP 이 일어나는 <b>정확히 그 순간</b>에 (a) 새 staging 테이블을 만들고 (b) PROCESSING 작업 행을
+   * 심는다 — 즉 "루프 중간에 임포트가 시작됐다". 게이트 재확인이 있으면 두 번째 테넌트부터는 건너뛰므로 그 테이블이 살아남고, 없으면 DROP 돼 단언이 깨진다.
    *
-   * <p>부수효과(스파이 스텁·물리 테이블·jobrunr 행)는 모두 클래스 레벨 {@code @Transactional} 의
-   * 롤백으로 사라진다. jobrunr 행은 특히 중요하다 — 커밋되면 공유 테스트 DB 를 쓰는 다른 세션의
-   * 스윕이 전부 무동작이 된다.
+   * <p>부수효과(스파이 스텁·물리 테이블·jobrunr 행)는 모두 클래스 레벨 {@code @Transactional} 의 롤백으로 사라진다. jobrunr 행은 특히
+   * 중요하다 — 커밋되면 공유 테스트 DB 를 쓰는 다른 세션의 스윕이 전부 무동작이 된다.
    */
   @Test
   @DisplayName("순회 도중 임포트가 시작되면 그 살아있는 staging 테이블은 보존된다")

@@ -8,13 +8,11 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * 신규 테넌트에 기본 RBAC·내장 양식을 시드한다.
  *
- * <p>정의의 정본은 V98 의 SQL 함수 {@code provision_tenant_defaults} 다 — 테넌트 생성이 아직
- * 운영자 SQL 이라, 앱에만 로직을 두면 운영자가 만든 테넌트는 영원히 비어 있게 된다. 이 클래스는
- * 같은 함수를 앱에서도 부를 수 있게 하는 얇은 래퍼다.
+ * <p>정의의 정본은 V98 의 SQL 함수 {@code provision_tenant_defaults} 다 — 테넌트 생성이 아직 운영자 SQL 이라, 앱에만 로직을 두면
+ * 운영자가 만든 테넌트는 영원히 비어 있게 된다. 이 클래스는 같은 함수를 앱에서도 부를 수 있게 하는 얇은 래퍼다.
  *
- * <p>이 시드가 없으면 신규 테넌트는 역할·권한 0개라 멤버십이 있어도 모든 API 가 403 이다.
- * V121 부터 이 함수는 역할 정의에 더해 OWNER 멤버십 보유자에게 ADMIN 을 배정한다 — 그래서
- * 호출 전에 멤버십이 이미 있어야 한다.
+ * <p>이 시드가 없으면 신규 테넌트는 역할·권한 0개라 멤버십이 있어도 모든 API 가 403 이다. V121 부터 이 함수는 역할 정의에 더해 OWNER 멤버십 보유자에게
+ * ADMIN 을 배정한다 — 그래서 호출 전에 멤버십이 이미 있어야 한다.
  */
 @Service
 @RequiredArgsConstructor

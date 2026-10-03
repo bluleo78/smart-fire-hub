@@ -26,9 +26,8 @@ import org.springframework.test.context.TestPropertySource;
 /**
  * PENDING 적체 게이지가 테넌트별로 갱신되는지 검증한다(P2-f Task 3).
  *
- * <p>이전 구현은 Micrometer 게이지 콜백 안에서 DB 를 조회했는데, 그 콜백은 컨텍스트가 없는 스크레이프
- * 스레드에서 실행돼 정책(V107) 이후 영원히 0 을 보고한다. 이 테스트는 <b>컨텍스트 없이</b> 갱신을
- * 부르고, 테넌트 태그가 붙은 게이지가 실제 적체 수를 보고하는지 본다.
+ * <p>이전 구현은 Micrometer 게이지 콜백 안에서 DB 를 조회했는데, 그 콜백은 컨텍스트가 없는 스크레이프 스레드에서 실행돼 정책(V107) 이후 영원히 0 을
+ * 보고한다. 이 테스트는 <b>컨텍스트 없이</b> 갱신을 부르고, 테넌트 태그가 붙은 게이지가 실제 적체 수를 보고하는지 본다.
  */
 @TestPropertySource(
     // 5개 알림 통합 테스트가 완전히 동일한 프로퍼티 집합을 공유한다 — 스프링 컨텍스트 캐시
@@ -79,9 +78,7 @@ class NotificationMetricsTenantGaugeTest extends IntegrationTestBase {
     TenantContext.clear();
     metrics.refreshPendingGauges();
 
-    assertThat(isolatedGauge(registry))
-        .as("테넌트 태그가 붙은 게이지가 이 테넌트의 적체를 보고해야 한다")
-        .isEqualTo(1.0);
+    assertThat(isolatedGauge(registry)).as("테넌트 태그가 붙은 게이지가 이 테넌트의 적체를 보고해야 한다").isEqualTo(1.0);
 
     // 큐가 비면 그 테넌트는 outbox_tenant_ids 목록에서 사라진다. 0 으로 내려야 마지막 값이
     // 영원히 남는 거짓 경보가 되지 않는다.
@@ -96,12 +93,11 @@ class NotificationMetricsTenantGaugeTest extends IntegrationTestBase {
   /**
    * 조회가 실패한 테넌트는 <b>직전 값을 이월</b>해야 한다(거짓 음성 방지).
    *
-   * <p>0 으로 두면 "적체 없음"으로 보고되어, 테넌트 T 의 조회가 계속 실패하는 동안 큐가 무한정
-   * 자라도 알람이 뜨지 않는다. 적체 알람에서 이 거짓 음성은 거짓 양성보다 나쁘다. 실패 자체는
-   * 별도 카운터로 알람 대상이 된다.
+   * <p>0 으로 두면 "적체 없음"으로 보고되어, 테넌트 T 의 조회가 계속 실패하는 동안 큐가 무한정 자라도 알람이 뜨지 않는다. 적체 알람에서 이 거짓 음성은 거짓
+   * 양성보다 나쁘다. 실패 자체는 별도 카운터로 알람 대상이 된다.
    *
-   * <p>공유 레지스트리를 더럽히지 않도록 {@link SimpleMeterRegistry} + 손으로 조립한
-   * {@link NotificationMetrics} 를 쓰고, 리포지토리만 {@link Proxy} 로 감싸 실패를 주입한다.
+   * <p>공유 레지스트리를 더럽히지 않도록 {@link SimpleMeterRegistry} + 손으로 조립한 {@link NotificationMetrics} 를 쓰고,
+   * 리포지토리만 {@link Proxy} 로 감싸 실패를 주입한다.
    */
   @Test
   void refreshPendingGauges_carriesForwardLastValueWhenTenantQueryFails() {
@@ -122,9 +118,7 @@ class NotificationMetricsTenantGaugeTest extends IntegrationTestBase {
     failCountPending.set(true);
     subject.refreshPendingGauges();
 
-    assertThat(isolatedGauge(isolated))
-        .as("조회 실패 테넌트는 직전 값을 이월해야 한다 (0 이면 거짓 음성)")
-        .isEqualTo(1.0);
+    assertThat(isolatedGauge(isolated)).as("조회 실패 테넌트는 직전 값을 이월해야 한다 (0 이면 거짓 음성)").isEqualTo(1.0);
     assertThat(isolated.find("notification_metrics_refresh_failures_total").counter())
         .as("실패 자체가 알람 대상이 되도록 카운터가 올라야 한다")
         .isNotNull();
@@ -157,8 +151,8 @@ class NotificationMetricsTenantGaugeTest extends IntegrationTestBase {
   /**
    * 주어진 레지스트리에서 (이 테스트의 테넌트, CHAT) 게이지 값을 읽는다.
    *
-   * <p>주입된 {@code registry} 와 실패 케이스가 쓰는 격리 레지스트리 양쪽이 이 하나를 쓴다 —
-   * 예전에는 {@code registry} 전용 사본이 따로 있었으나 본문이 한 글자도 다르지 않았다.
+   * <p>주입된 {@code registry} 와 실패 케이스가 쓰는 격리 레지스트리 양쪽이 이 하나를 쓴다 — 예전에는 {@code registry} 전용 사본이 따로
+   * 있었으나 본문이 한 글자도 다르지 않았다.
    */
   private Double isolatedGauge(MeterRegistry isolated) {
     Gauge gauge =

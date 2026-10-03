@@ -212,8 +212,8 @@ class DatasetCategoryServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * 카테고리에 데이터셋이 연결된 상태로 삭제를 시도하면 CategoryInUseException(한국어 메시지)을 던지고,
-   * 카테고리가 실제로 삭제되지 않아야 한다 (#518 — 영어 원문 노출 회귀 방지).
+   * 카테고리에 데이터셋이 연결된 상태로 삭제를 시도하면 CategoryInUseException(한국어 메시지)을 던지고, 카테고리가 실제로 삭제되지 않아야 한다 (#518
+   * — 영어 원문 노출 회귀 방지).
    */
   @Test
   void deleteCategory_withExistingDataset_throwsCategoryInUseExceptionWithKoreanMessage() {

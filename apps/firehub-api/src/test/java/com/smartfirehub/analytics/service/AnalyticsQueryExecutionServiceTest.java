@@ -44,7 +44,8 @@ class AnalyticsQueryExecutionServiceTest extends IntegrationTestBase {
             "exec_test",
             null,
             null,
-            "TABLE", "SOURCE",
+            "TABLE",
+            "SOURCE",
             List.of(
                 new DatasetColumnRequest("name", "Name", "TEXT", null, true, false, null),
                 new DatasetColumnRequest("value", "Value", "INTEGER", null, true, false, null)),
@@ -202,7 +203,9 @@ class AnalyticsQueryExecutionServiceTest extends IntegrationTestBase {
             true);
 
     assertThat(response.error()).isNull();
-    assertThat(response.rows()).extracting(r -> ((Number) r.get("g")).intValue()).containsExactly(6, 7, 8);
+    assertThat(response.rows())
+        .extracting(r -> ((Number) r.get("g")).intValue())
+        .containsExactly(6, 7, 8);
   }
 
   /** LIMIT ALL 은 "제한 없음" — maxRows 로 치환해 보호가 빠지지 않는다(#749). */
@@ -281,7 +284,8 @@ class AnalyticsQueryExecutionServiceTest extends IntegrationTestBase {
                     "schema_test_a",
                     null,
                     null,
-                    "TABLE", "SOURCE",
+                    "TABLE",
+                    "SOURCE",
                     List.of(
                         new DatasetColumnRequest("col_a1", "A1", "TEXT", null, true, false, null),
                         new DatasetColumnRequest(
@@ -297,7 +301,8 @@ class AnalyticsQueryExecutionServiceTest extends IntegrationTestBase {
                     "schema_test_b",
                     null,
                     null,
-                    "TABLE", "SOURCE",
+                    "TABLE",
+                    "SOURCE",
                     List.of(
                         new DatasetColumnRequest("col_b1", "B1", "TEXT", null, true, false, null)),
                     null),
@@ -362,14 +367,13 @@ class AnalyticsQueryExecutionServiceTest extends IntegrationTestBase {
   // =========================================================================
 
   /**
-   * $1 은 예전에 08P01 로 커넥션이 폐기되고 savepoint 롤백 예외가 원래 오류를 덮어 500 이 됐다(#753). 이제 실행 전에
-   * 원인 메시지로 거부하고(다른 검증 실패와 같은 error 응답), 같은 트랜잭션의 다음 쿼리가 정상이어야 한다.
+   * $1 은 예전에 08P01 로 커넥션이 폐기되고 savepoint 롤백 예외가 원래 오류를 덮어 500 이 됐다(#753). 이제 실행 전에 원인 메시지로 거부하고(다른
+   * 검증 실패와 같은 error 응답), 같은 트랜잭션의 다음 쿼리가 정상이어야 한다.
    */
   @Test
   void execute_positionalParameter_returnsClearError_andConnectionSurvives() {
     AnalyticsQueryResponse response =
-        executionService.execute(
-            "SELECT g FROM generate_series(1,5) g WHERE g = $1", 10, true);
+        executionService.execute("SELECT g FROM generate_series(1,5) g WHERE g = $1", 10, true);
     assertThat(response.error()).contains("$1");
 
     AnalyticsQueryResponse next =
@@ -418,8 +422,8 @@ class AnalyticsQueryExecutionServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * 애드혹 분석 쓰기 허용(readOnly=false) 경로도 같은 헬퍼를 쓴다 — DML … RETURNING 이 "A result was returned when
-   * none was expected" 로 실패하지 않고 실제 영향 행 수를 보고해야 한다(#754).
+   * 애드혹 분석 쓰기 허용(readOnly=false) 경로도 같은 헬퍼를 쓴다 — DML … RETURNING 이 "A result was returned when none
+   * was expected" 로 실패하지 않고 실제 영향 행 수를 보고해야 한다(#754).
    */
   @Test
   void execute_deleteReturning_readOnlyFalse_reportsActualAffectedRows() {

@@ -230,13 +230,12 @@ public class TriggerRepository {
   /**
    * {@code trigger_state.nextFireTime} 을 읽기-수정-쓰기로 병합한다(#676).
    *
-   * <p>{@code REQUIRES_NEW} 인 이유: 이 메서드는 {@code TriggerService.createTrigger}/{@code
-   * updateTrigger} 의 {@code TransactionSynchronization.afterCommit()} 콜백(=
-   * {@code TriggerSchedulerService.registerSchedule}) 안에서 호출된다. afterCommit 시점에는 방금
-   * 커밋된 트랜잭션의 리소스(커넥션)가 아직 스레드에 바인딩된 채라, 클래스 레벨 기본값인 {@code
-   * REQUIRED} 로는 이미 완료된 그 트랜잭션에 "참여"하게 되어 이 update 가 예외 없이 조용히
-   * 반영되지 않는다(#676 구현 중 실측: 로그·리턴값 모두 정상인데 DB에는 반영 안 됨). {@code
-   * REQUIRES_NEW} 로 강제로 새 물리 트랜잭션·커넥션을 열어야 실제로 커밋된다.
+   * <p>{@code REQUIRES_NEW} 인 이유: 이 메서드는 {@code TriggerService.createTrigger}/{@code updateTrigger}
+   * 의 {@code TransactionSynchronization.afterCommit()} 콜백(= {@code
+   * TriggerSchedulerService.registerSchedule}) 안에서 호출된다. afterCommit 시점에는 방금 커밋된 트랜잭션의 리소스(커넥션)가 아직
+   * 스레드에 바인딩된 채라, 클래스 레벨 기본값인 {@code REQUIRED} 로는 이미 완료된 그 트랜잭션에 "참여"하게 되어 이 update 가 예외 없이 조용히
+   * 반영되지 않는다(#676 구현 중 실측: 로그·리턴값 모두 정상인데 DB에는 반영 안 됨). {@code REQUIRES_NEW} 로 강제로 새 물리 트랜잭션·커넥션을
+   * 열어야 실제로 커밋된다.
    */
   @Transactional(propagation = Propagation.REQUIRES_NEW)
   public void mergeNextFireTime(Long id, String nextFireTimeIso) {

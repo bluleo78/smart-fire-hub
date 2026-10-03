@@ -38,7 +38,9 @@ class EmbeddingProviderFactoryTest {
   @Test
   void guardRejectionAtCallTimeBecomesEmbeddingException() {
     // A2: 저장 뒤 가드를 통과하지 못하게 된 주소는 provider 를 만들기 전에 거부한다(원인 보존).
-    EmbeddingConfig cfg = new EmbeddingConfig(EmbeddingProviderType.OLLAMA, "bge-m3", "http://10.0.0.1:11434", "", 1024);
+    EmbeddingConfig cfg =
+        new EmbeddingConfig(
+            EmbeddingProviderType.OLLAMA, "bge-m3", "http://10.0.0.1:11434", "", 1024);
     when(configService.resolve()).thenReturn(Optional.of(cfg));
     IllegalArgumentException denied = new IllegalArgumentException("차단된 주소");
     doThrow(denied).when(targetGuard).check(EmbeddingProviderType.OLLAMA, "http://10.0.0.1:11434");
@@ -60,7 +62,10 @@ class EmbeddingProviderFactoryTest {
   @Test
   void ollamaConfigBuildsOllamaProviderWithDocumentDimension() {
     when(configService.resolve())
-        .thenReturn(Optional.of(new EmbeddingConfig(EmbeddingProviderType.OLLAMA, "bge-m3", "http://h:11434", "", 1024)));
+        .thenReturn(
+            Optional.of(
+                new EmbeddingConfig(
+                    EmbeddingProviderType.OLLAMA, "bge-m3", "http://h:11434", "", 1024)));
     EmbeddingProvider p = factory.current();
     assertThat(p).isInstanceOf(OllamaEmbeddingProvider.class);
     assertThat(p.modelId()).isEqualTo("bge-m3");
@@ -73,7 +78,11 @@ class EmbeddingProviderFactoryTest {
         .thenReturn(
             Optional.of(
                 new EmbeddingConfig(
-                    EmbeddingProviderType.OPENAI, "text-embedding-3-small", "https://api.openai.com", "sk-x", 1536)));
+                    EmbeddingProviderType.OPENAI,
+                    "text-embedding-3-small",
+                    "https://api.openai.com",
+                    "sk-x",
+                    1536)));
     EmbeddingProvider p = factory.current();
     assertThat(p).isInstanceOf(OpenAiEmbeddingProvider.class);
     assertThat(p.dimension()).isEqualTo(1536);
@@ -84,7 +93,8 @@ class EmbeddingProviderFactoryTest {
     when(configService.resolve())
         .thenReturn(
             Optional.of(
-                new EmbeddingConfig(EmbeddingProviderType.OPENAI, "m", "https://api.openai.com", "", 1536)));
+                new EmbeddingConfig(
+                    EmbeddingProviderType.OPENAI, "m", "https://api.openai.com", "", 1536)));
     assertThatThrownBy(() -> factory.current())
         .isInstanceOf(EmbeddingException.class)
         .hasMessageContaining("API 키가 필요합니다");
@@ -100,7 +110,11 @@ class EmbeddingProviderFactoryTest {
           .thenReturn(
               Optional.of(
                   new EmbeddingConfig(
-                      EmbeddingProviderType.OLLAMA, "bge-m3", server.url("/").toString(), "", 1024)));
+                      EmbeddingProviderType.OLLAMA,
+                      "bge-m3",
+                      server.url("/").toString(),
+                      "",
+                      1024)));
       int count = 40; // 40 × 1024차원 ≈ 370KB
       server.enqueue(
           new MockResponse()

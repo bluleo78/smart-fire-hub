@@ -321,14 +321,12 @@ public class PipelineStepRepository {
   /**
    * 출력 커밋 성공 <b>후에만</b> 호출 — 책갈피를 전진시키고 전체 재생성 예약을 해제한다.
    *
-   * <p>실패·부분 적용 경로에서 호출하면 그 실행이 읽지 못한 행을 영원히 건너뛴다. 출력과 이 갱신은 서로 다른
-   * 커넥션이라 한 트랜잭션으로 묶을 수 없다 — 그래서 "출력 커밋 → 책갈피 전진" 순서가 계약이고, 그 사이에
-   * 죽으면 다음 실행이 같은 구간을 다시 읽는다(MERGE 멱등성이 흡수).
+   * <p>실패·부분 적용 경로에서 호출하면 그 실행이 읽지 못한 행을 영원히 건너뛴다. 출력과 이 갱신은 서로 다른 커넥션이라 한 트랜잭션으로 묶을 수 없다 — 그래서 "출력
+   * 커밋 → 책갈피 전진" 순서가 계약이고, 그 사이에 죽으면 다음 실행이 같은 구간을 다시 읽는다(MERGE 멱등성이 흡수).
    *
-   * <p><b>예약 해제는 {@code wasFullRebuild} 일 때만 한다.</b> 무조건 false 로 쓰면, 이번 실행이
-   * {@code findCursor} 로 예약을 읽은 뒤(=이번 실행은 증분으로 돌기로 확정된 뒤) 운영자가 켠 예약이
-   * 전체 재생성을 한 번도 하지 않은 채 사라진다. 반대로 "이번 실행이 실제로 전체 재생성이었을 때"
-   * 해제하면, 그 사이에 켜진 예약을 함께 해제하더라도 이미 전체를 다시 만든 뒤이므로 무해하다.
+   * <p><b>예약 해제는 {@code wasFullRebuild} 일 때만 한다.</b> 무조건 false 로 쓰면, 이번 실행이 {@code findCursor} 로
+   * 예약을 읽은 뒤(=이번 실행은 증분으로 돌기로 확정된 뒤) 운영자가 켠 예약이 전체 재생성을 한 번도 하지 않은 채 사라진다. 반대로 "이번 실행이 실제로 전체
+   * 재생성이었을 때" 해제하면, 그 사이에 켜진 예약을 함께 해제하더라도 이미 전체를 다시 만든 뒤이므로 무해하다.
    *
    * @param wasFullRebuild 이번 실행이 전체 재생성이었는지(예약을 소비했는지)
    */
@@ -351,19 +349,17 @@ public class PipelineStepRepository {
   /**
    * 파이프라인 재저장(스텝 전체 삭제·재생성) 전에 이름별 책갈피를 떠 둔다.
    *
-   * <p>{@code PipelineService.updatePipeline} 은 스텝을 통째로 지우고 다시 넣으므로 스텝 id 가 매번 바뀐다 —
-   * 이월의 키가 id 가 아니라 이름인 이유다.
+   * <p>{@code PipelineService.updatePipeline} 은 스텝을 통째로 지우고 다시 넣으므로 스텝 id 가 매번 바뀐다 — 이월의 키가 id 가
+   * 아니라 이름인 이유다.
    *
-   * <p><b>이름 중복은 현재 DB 가 막는다</b> — {@code pipeline_step} 에 {@code UNIQUE (pipeline_id,
-   * name)} 제약이 있고(V3:24, 이후 어떤 마이그레이션도 드롭하지 않는다) 이름을 이월 키로 쓸 수 있는
-   * 근거가 바로 그 제약이다. {@code PipelineServiceTest.pipelineStepName_isUniquePerPipeline} 이 그
-   * 불변식을 실측으로 고정한다.
+   * <p><b>이름 중복은 현재 DB 가 막는다</b> — {@code pipeline_step} 에 {@code UNIQUE (pipeline_id, name)} 제약이
+   * 있고(V3:24, 이후 어떤 마이그레이션도 드롭하지 않는다) 이름을 이월 키로 쓸 수 있는 근거가 바로 그 제약이다. {@code
+   * PipelineServiceTest.pipelineStepName_isUniquePerPipeline} 이 그 불변식을 실측으로 고정한다.
    *
-   * <p>그럼에도 {@code fetchMap} 이 아니라 {@code fetchGroups} 를 쓰는 이유는 <b>고장 방향</b> 때문이다.
-   * 언젠가 그 제약이 사라지면 {@code fetchMap} 은 {@code InvalidResultException} 을 던지고, 이 호출은
-   * {@code deleteByPipelineId} 보다 먼저 일어나므로 <b>해당 파이프라인 편집이 통째로 불가능</b>해진다.
-   * 반면 여기서 중복 이름을 버리면 "이월하지 않음"(=전체를 다시 읽음)으로 degrade 될 뿐이다 — 이름만으로는
-   * 어느 책갈피를 이어받을지 정할 수도 없으므로 그쪽이 옳은 답이기도 하다.
+   * <p>그럼에도 {@code fetchMap} 이 아니라 {@code fetchGroups} 를 쓰는 이유는 <b>고장 방향</b> 때문이다. 언젠가 그 제약이 사라지면
+   * {@code fetchMap} 은 {@code InvalidResultException} 을 던지고, 이 호출은 {@code deleteByPipelineId} 보다 먼저
+   * 일어나므로 <b>해당 파이프라인 편집이 통째로 불가능</b>해진다. 반면 여기서 중복 이름을 버리면 "이월하지 않음"(=전체를 다시 읽음)으로 degrade 될 뿐이다 —
+   * 이름만으로는 어느 책갈피를 이어받을지 정할 수도 없으므로 그쪽이 옳은 답이기도 하다.
    */
   public Map<String, StepCursor> findCursorsByPipelineId(Long pipelineId) {
     Map<String, List<StepCursor>> byName =
@@ -397,9 +393,8 @@ public class PipelineStepRepository {
   /**
    * 재저장으로 새로 만들어진 스텝(이름 기준)에 책갈피를 복원한다.
    *
-   * <p>이 {@code WHERE} 가 한 행만 맞히는 근거는 {@code UNIQUE (pipeline_id, name)}(V3:24)이다. 그
-   * 제약이 사라져도 {@link #findCursorsByPipelineId} 가 중복 이름을 애초에 돌려주지 않으므로 이 메서드가
-   * 동명의 스텝 전부를 갱신하는 일은 없다.
+   * <p>이 {@code WHERE} 가 한 행만 맞히는 근거는 {@code UNIQUE (pipeline_id, name)}(V3:24)이다. 그 제약이 사라져도
+   * {@link #findCursorsByPipelineId} 가 중복 이름을 애초에 돌려주지 않으므로 이 메서드가 동명의 스텝 전부를 갱신하는 일은 없다.
    */
   public void restoreCursor(
       Long pipelineId, String stepName, OffsetDateTime lastRunAt, boolean pending) {

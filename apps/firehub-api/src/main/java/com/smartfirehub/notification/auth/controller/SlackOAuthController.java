@@ -65,12 +65,10 @@ public class SlackOAuthController {
    *
    * <p>state 소비로 CSRF 검증 후 oauth.v2.access를 호출하여 봇 토큰을 저장한다. 완료 후 창을 닫는 HTML 페이지를 반환한다.
    *
-   * <p><b>테넌트 복원 지점이다.</b> 이 경로는 permitAll 이라 Bearer 헤더가 없고 따라서
-   * {@code TenantContext} 도 없는데, {@code slack_workspace} 는 쓰기 대상(RLS + tenant_id NOT
-   * NULL)이다. 그래서 state 가 발급 시점의 테넌트를 함께 실어 오고(V106 [R7]) 여기서 되찾아
-   * {@link TenantContext#runScopedGet} 으로 컨텍스트를 세운다. 되찾지 못하면
-   * <b>fail-closed</b> — {@code consume} 이 empty 를 돌려주고 아래 400 분기로 빠진다. 사용자에게는
-   * 일반적인 오류만 보이고 구체 사유는 리포지토리 로그에 남는다.
+   * <p><b>테넌트 복원 지점이다.</b> 이 경로는 permitAll 이라 Bearer 헤더가 없고 따라서 {@code TenantContext} 도 없는데, {@code
+   * slack_workspace} 는 쓰기 대상(RLS + tenant_id NOT NULL)이다. 그래서 state 가 발급 시점의 테넌트를 함께 실어 오고(V106
+   * [R7]) 여기서 되찾아 {@link TenantContext#runScopedGet} 으로 컨텍스트를 세운다. 되찾지 못하면 <b>fail-closed</b> —
+   * {@code consume} 이 empty 를 돌려주고 아래 400 분기로 빠진다. 사용자에게는 일반적인 오류만 보이고 구체 사유는 리포지토리 로그에 남는다.
    *
    * @param code Slack에서 전달한 authorization_code
    * @param state CSRF 방어용 state (OAuthStateService.issue로 발급)

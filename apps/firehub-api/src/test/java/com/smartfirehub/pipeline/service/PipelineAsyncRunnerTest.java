@@ -12,13 +12,12 @@ import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.global.security.PermissionChecker;
-import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantContext;
-import com.smartfirehub.pipeline.exception.ScriptExecutionException;
 import com.smartfirehub.pipeline.dto.AiClassifyConfig;
 import com.smartfirehub.pipeline.dto.PipelineStepResponse;
 import com.smartfirehub.pipeline.dto.StepCursor;
 import com.smartfirehub.pipeline.event.PipelineCompletedEvent;
+import com.smartfirehub.pipeline.exception.ScriptExecutionException;
 import com.smartfirehub.pipeline.repository.PipelineExecutionRepository;
 import com.smartfirehub.pipeline.repository.PipelineRepository;
 import com.smartfirehub.pipeline.repository.PipelineStepRepository;
@@ -89,12 +88,12 @@ class PipelineAsyncRunnerTest {
   }
 
   /**
-   * 스텝 SQL 조립이 {@code DataSchema.current()} 를 거치면서 테넌트 컨텍스트를 요구하게 됐다.
-   * 운영에서는 {@code pipelineExecutor} 에 붙은 {@code TenantContextTaskDecorator} 가 호출 스레드의
-   * 컨텍스트를 승계하므로(AsyncConfig) 이 클래스가 세우는 것은 그 승계 결과를 흉내 내는 것이다.
+   * 스텝 SQL 조립이 {@code DataSchema.current()} 를 거치면서 테넌트 컨텍스트를 요구하게 됐다. 운영에서는 {@code
+   * pipelineExecutor} 에 붙은 {@code TenantContextTaskDecorator} 가 호출 스레드의 컨텍스트를 승계하므로(AsyncConfig) 이
+   * 클래스가 세우는 것은 그 승계 결과를 흉내 내는 것이다.
    *
-   * <p>DB 를 쓰지 않는 순수 목(mock) 테스트이므로 GUC·트랜잭션과는 무관하다 — 즉 "프로덕션 경로가
-   * 스스로 컨텍스트를 세우지 못한다"는 배선 결함을 가리지 않는다(승계 주체는 executor 데코레이터).
+   * <p>DB 를 쓰지 않는 순수 목(mock) 테스트이므로 GUC·트랜잭션과는 무관하다 — 즉 "프로덕션 경로가 스스로 컨텍스트를 세우지 못한다"는 배선 결함을 가리지
+   * 않는다(승계 주체는 executor 데코레이터).
    */
   @BeforeEach
   void setTenantContext() {
@@ -256,18 +255,15 @@ class PipelineAsyncRunnerTest {
   }
 
   /**
-   * 출력 데이터셋이 <b>업무 키(PK)</b> 컬럼을 선언했고 SELECT 가 그 컬럼을 함께 낼 때, 그 컬럼이
-   * INSERT 대상 목록에 살아 있어야 한다(#684).
+   * 출력 데이터셋이 <b>업무 키(PK)</b> 컬럼을 선언했고 SELECT 가 그 컬럼을 함께 낼 때, 그 컬럼이 INSERT 대상 목록에 살아 있어야 한다(#684).
    *
-   * <p>이 경로는 대상 컬럼 목록만 좁히고 SELECT 식 목록은 그대로 둔다. 그래서 대상에서 한 컬럼이라도
-   * 빠지면 식 개수가 어긋나 PostgreSQL 이 {@code INSERT has more expressions than target columns} 로
-   * 거부한다 — 2026-09-17 운영 장애의 실제 실패 문구다.
+   * <p>이 경로는 대상 컬럼 목록만 좁히고 SELECT 식 목록은 그대로 둔다. 그래서 대상에서 한 컬럼이라도 빠지면 식 개수가 어긋나 PostgreSQL 이 {@code
+   * INSERT has more expressions than target columns} 로 거부한다 — 2026-09-17 운영 장애의 실제 실패 문구다.
    *
-   * <p><b>왜 PK 컬럼을 빼면 안 되는가</b>: 물리 PK 는 {@code DataTableService} 가
-   * {@code id BIGSERIAL PRIMARY KEY} 로 따로 만든다. {@code id}/{@code import_id}/{@code created_at}
-   * 은 시스템 예약어라 {@code dataset_column} 에 들어올 수 없다. 즉 {@code is_primary_key} 가 붙은
-   * 컬럼은 시스템이 채우는 대리키가 아니라 <b>사용자가 값을 넣어야 하는 업무 키</b>이고(기본값 없음),
-   * {@code DatasetService} 가 거기에 NOT NULL 까지 강제한다. 빼면 넣을 방법이 사라진다.
+   * <p><b>왜 PK 컬럼을 빼면 안 되는가</b>: 물리 PK 는 {@code DataTableService} 가 {@code id BIGSERIAL PRIMARY
+   * KEY} 로 따로 만든다. {@code id}/{@code import_id}/{@code created_at} 은 시스템 예약어라 {@code
+   * dataset_column} 에 들어올 수 없다. 즉 {@code is_primary_key} 가 붙은 컬럼은 시스템이 채우는 대리키가 아니라 <b>사용자가 값을 넣어야
+   * 하는 업무 키</b>이고(기본값 없음), {@code DatasetService} 가 거기에 NOT NULL 까지 강제한다. 빼면 넣을 방법이 사라진다.
    *
    * <p>그래서 개수까지 본다 — 컬럼 이름만 확인하면 목록이 한 칸 어긋나는 회귀를 놓친다.
    */
@@ -557,7 +553,12 @@ class PipelineAsyncRunnerTest {
 
     ArgumentCaptor<List<ColumnInfo>> columnsCaptor = ArgumentCaptor.forClass(List.class);
     when(tempDatasetService.createTempDataset(
-            columnsCaptor.capture(), eq(pipelineId), anyString(), eq(stepId), anyString(), eq(userId)))
+            columnsCaptor.capture(),
+            eq(pipelineId),
+            anyString(),
+            eq(stepId),
+            anyString(),
+            eq(userId)))
         .thenReturn(tempDatasetId);
     when(datasetRepository.findTableNameById(tempDatasetId))
         .thenReturn(Optional.of("ptmp_20_select_star_step_abcd"));
@@ -689,13 +690,13 @@ class PipelineAsyncRunnerTest {
   // ------------------------------------------------------------------ //
 
   /**
-   * REPLACE 전략의 SELECT 자동 적재는 더 이상 즉시 truncate 하지 않는다. 대신 DELETE 문을 INSERT 와
-   * 같은 executor 요청(preStatements)에 실어, 실행기가 같은 트랜잭션에서 순서대로 실행하게 한다 — 이래야
-   * INSERT 가 실패해도 DELETE 까지 같이 롤백되어 출력이 빈 채로 남지 않는다(원래 결함).
+   * REPLACE 전략의 SELECT 자동 적재는 더 이상 즉시 truncate 하지 않는다. 대신 DELETE 문을 INSERT 와 같은 executor
+   * 요청(preStatements)에 실어, 실행기가 같은 트랜잭션에서 순서대로 실행하게 한다 — 이래야 INSERT 가 실패해도 DELETE 까지 같이 롤백되어 출력이 빈
+   * 채로 남지 않는다(원래 결함).
    *
    * <p>fixture 는 :213 {@code executeStep_selectWithOutputDataset_wrapsAsInsertIntoSelect} 의
-   * given(출력 데이터셋이 이미 지정된 SELECT 스텝)을 그대로 복제하되, loadStrategy=REPLACE ·
-   * executorEnabled=true 로 바꿔 원자성 계약을 검증한다.
+   * given(출력 데이터셋이 이미 지정된 SELECT 스텝)을 그대로 복제하되, loadStrategy=REPLACE · executorEnabled=true 로 바꿔
+   * 원자성 계약을 검증한다.
    */
   @Test
   void REPLACE_SELECT_SQL은_truncate하지_않고_DELETE를_선행문장으로_같은_요청에_보낸다() {
@@ -752,10 +753,7 @@ class PipelineAsyncRunnerTest {
         .containsExactly("DELETE FROM \"data\".\"" + outputTable + "\"");
   }
 
-  /**
-   * APPEND 전략은 출력을 비우지 않으므로 선행 문장도 없어야 한다 — REPLACE 전용 경로가 APPEND 까지
-   * 잘못 건드리지 않는지 확인하는 회귀 가드.
-   */
+  /** APPEND 전략은 출력을 비우지 않으므로 선행 문장도 없어야 한다 — REPLACE 전용 경로가 APPEND 까지 잘못 건드리지 않는지 확인하는 회귀 가드. */
   @Test
   void APPEND_SELECT_SQL은_선행문장이_없다() {
     // given: stepResponseWithOutput 은 loadStrategy=APPEND 를 쓴다(:213 fixture와 동일 helper)
@@ -864,10 +862,9 @@ class PipelineAsyncRunnerTest {
   }
 
   /**
-   * 사용자가 직접 쓴 INSERT + REPLACE 는 즉시 커밋되는 truncate 를 하지 않고, SELECT 자동 적재와 같은
-   * DELETE 선행 문장을 사용자 DML 과 <b>같은 요청</b>으로 보낸다(#735). 선행 문장이 있어야 실행기가
-   * 출력 테이블 잠금(#731)을 잡고, 비우기와 적재가 한 트랜잭션이 된다 — 예전처럼 truncate 가 먼저
-   * 커밋되면 겹친 두 실행이 각자 비운 뒤 각자 적재해 행이 두 배가 된다. 사용자 SQL 은 고치지 않는다.
+   * 사용자가 직접 쓴 INSERT + REPLACE 는 즉시 커밋되는 truncate 를 하지 않고, SELECT 자동 적재와 같은 DELETE 선행 문장을 사용자 DML 과
+   * <b>같은 요청</b>으로 보낸다(#735). 선행 문장이 있어야 실행기가 출력 테이블 잠금(#731)을 잡고, 비우기와 적재가 한 트랜잭션이 된다 — 예전처럼
+   * truncate 가 먼저 커밋되면 겹친 두 실행이 각자 비운 뒤 각자 적재해 행이 두 배가 된다. 사용자 SQL 은 고치지 않는다.
    */
   @Test
   void REPLACE_사용자_INSERT_SQL은_truncate하지_않고_DELETE를_선행문장으로_같은_요청에_보낸다() {
@@ -910,10 +907,9 @@ class PipelineAsyncRunnerTest {
   }
 
   /**
-   * 실행기를 끈 PYTHON + REPLACE 는 출력 테이블 세션 잠금 <b>안에서</b> 비우고 실행한다(#735). 자식
-   * 프로세스가 자기 커넥션으로 적재해 한 트랜잭션으로 묶을 수 없으므로, 비우기와 적재가 잠금 밖으로
-   * 새면 겹친 실행이 각자 비운 뒤 각자 적재한다. 잠금 목이 본문을 실행하지 않게 해 "잠금 밖에서는
-   * 아무것도 하지 않는다"를 먼저 고정하고, 이어서 본문을 돌려 순서(비우기 → 실행)를 확인한다.
+   * 실행기를 끈 PYTHON + REPLACE 는 출력 테이블 세션 잠금 <b>안에서</b> 비우고 실행한다(#735). 자식 프로세스가 자기 커넥션으로 적재해 한
+   * 트랜잭션으로 묶을 수 없으므로, 비우기와 적재가 잠금 밖으로 새면 겹친 실행이 각자 비운 뒤 각자 적재한다. 잠금 목이 본문을 실행하지 않게 해 "잠금 밖에서는 아무것도
+   * 하지 않는다"를 먼저 고정하고, 이어서 본문을 돌려 순서(비우기 → 실행)를 확인한다.
    */
   @Test
   void 실행기_꺼진_PYTHON_REPLACE는_출력_잠금_안에서만_비우고_실행한다() {
@@ -966,7 +962,8 @@ class PipelineAsyncRunnerTest {
     Long outputDatasetId = 739L;
     Long userId = 1L;
     PipelineStepResponse step =
-        stepResponseWithOutput(7390L, "py-append", "PYTHON", "print('x')", outputDatasetId, List.of());
+        stepResponseWithOutput(
+            7390L, "py-append", "PYTHON", "print('x')", outputDatasetId, List.of());
 
     when(permissionChecker.hasPermission(userId, "pipeline:python_execute")).thenReturn(true);
     when(datasetRepository.findTableNameById(outputDatasetId)).thenReturn(Optional.of("out735_ap"));
@@ -981,11 +978,10 @@ class PipelineAsyncRunnerTest {
   }
 
   /**
-   * Fix round 1, 리뷰 지적 1 — 회귀 가드. loadStrategy 컬럼은 서버에 enum·체크 제약이 없어
-   * ({@code PipelineStepRepository} 는 null 만 "REPLACE" 로 매핑) 임의 문자열이 그대로 들어올 수
-   * 있다. Task 4 이전에는 상단 switch 의 default 분기가 알 수 없는 값을 REPLACE 로 폴백하며
-   * truncate 했는데, SQL 스텝을 그 switch 밖으로 뺀 뒤 "REPLACE".equalsIgnoreCase 만으로 판단하면
-   * 알 수 없는 값이 아무것도 비우지 않고 매 실행마다 행이 누적된다 — 이 테스트는 그 회귀를 막는다.
+   * Fix round 1, 리뷰 지적 1 — 회귀 가드. loadStrategy 컬럼은 서버에 enum·체크 제약이 없어 ({@code
+   * PipelineStepRepository} 는 null 만 "REPLACE" 로 매핑) 임의 문자열이 그대로 들어올 수 있다. Task 4 이전에는 상단 switch 의
+   * default 분기가 알 수 없는 값을 REPLACE 로 폴백하며 truncate 했는데, SQL 스텝을 그 switch 밖으로 뺀 뒤
+   * "REPLACE".equalsIgnoreCase 만으로 판단하면 알 수 없는 값이 아무것도 비우지 않고 매 실행마다 행이 누적된다 — 이 테스트는 그 회귀를 막는다.
    */
   @Test
   void 알수없는_loadStrategy의_SQL_SELECT_스텝도_REPLACE로_취급해_DELETE_선행문장을_보낸다() {
@@ -1039,8 +1035,8 @@ class PipelineAsyncRunnerTest {
   // ------------------------------------------------------------------ //
 
   /**
-   * MERGE 는 APPEND 와 마찬가지로 출력을 비우지 않는다(존재 이유 자체가 "기존 행 보존 + upsert") —
-   * truncate 도, DELETE 선행 문장도 없어야 한다.
+   * MERGE 는 APPEND 와 마찬가지로 출력을 비우지 않는다(존재 이유 자체가 "기존 행 보존 + upsert") — truncate 도, DELETE 선행 문장도
+   * 없어야 한다.
    */
   @Test
   void MERGE_SQL_스텝이면_truncateTable이_호출되지_않는다() {
@@ -1096,9 +1092,9 @@ class PipelineAsyncRunnerTest {
   }
 
   /**
-   * PostgreSQL 이 "ON CONFLICT DO UPDATE command cannot affect row a second time" 를 돌려주면
-   * (SELECT 가 같은 PK 를 두 번 이상 낼 때) 스텝이 FAILED 가 되고, 오류 메시지에 "같은 키"가
-   * 포함돼야 한다 — 사용자가 원인(PG 내부 문구가 아니라)을 바로 알 수 있어야 한다.
+   * PostgreSQL 이 "ON CONFLICT DO UPDATE command cannot affect row a second time" 를 돌려주면 (SELECT 가
+   * 같은 PK 를 두 번 이상 낼 때) 스텝이 FAILED 가 되고, 오류 메시지에 "같은 키"가 포함돼야 한다 — 사용자가 원인(PG 내부 문구가 아니라)을 바로 알 수
+   * 있어야 한다.
    */
   @Test
   void MERGE_중복키_오류는_같은_키_안내_메시지로_바뀐다() {
@@ -1151,20 +1147,13 @@ class PipelineAsyncRunnerTest {
     assertThat(status).isEqualTo("FAILED");
     verify(executionRepository)
         .updateStepExecution(
-            eq(stepExecId),
-            eq("FAILED"),
-            isNull(),
-            isNull(),
-            contains("같은 키"),
-            isNull(),
-            any());
+            eq(stepExecId), eq("FAILED"), isNull(), isNull(), contains("같은 키"), isNull(), any());
   }
 
   /**
-   * Fix round 1, must 2 — 위 테스트는 {@code executorEnabled=true}(=result.error() 분기)만 태운다.
-   * 실행기를 끈 경로({@code sqlExecutor.execute} 가 {@link ScriptExecutionException}을 던지는 경로)는
-   * test 프로필의 기본값이자 Task 6 통합 테스트가 실제로 타는 경로인데, 그 catch 분기(:531-544)가
-   * 이 브랜치 전용 테스트 없이는 검증되지 않는다.
+   * Fix round 1, must 2 — 위 테스트는 {@code executorEnabled=true}(=result.error() 분기)만 태운다. 실행기를 끈
+   * 경로({@code sqlExecutor.execute} 가 {@link ScriptExecutionException}을 던지는 경로)는 test 프로필의 기본값이자
+   * Task 6 통합 테스트가 실제로 타는 경로인데, 그 catch 분기(:531-544)가 이 브랜치 전용 테스트 없이는 검증되지 않는다.
    */
   @Test
   void MERGE_중복키_오류는_실행기_꺼진_경로에서도_같은_키_안내_메시지로_바뀐다() {
@@ -1214,20 +1203,14 @@ class PipelineAsyncRunnerTest {
     verify(sqlExecutor).execute(eq(List.of()), anyString());
     verify(executionRepository)
         .updateStepExecution(
-            eq(stepExecId),
-            eq("FAILED"),
-            isNull(),
-            isNull(),
-            contains("같은 키"),
-            isNull(),
-            any());
+            eq(stepExecId), eq("FAILED"), isNull(), isNull(), contains("같은 키"), isNull(), any());
   }
 
   /**
-   * Fix round 1, must 4 — 중복키 번역과 형제인 {@code NO_UNIQUE_CONSTRAINT_PG_MESSAGE} 번역 분기가
-   * 지금까지 테스트 없이 방치돼 있었다. {@code createPrimaryKeyIndexConcurrently} 가 남길 수 있는
-   * INVALID {@code ux_<table>_pk} 인덱스처럼, PK 메타데이터는 있는데 실제 유니크 제약이 없을 때
-   * PostgreSQL 이 이 문구로 거부한다 — "PK 를 다시 지정하라"는 한국어 안내로 바뀌는지 확인한다.
+   * Fix round 1, must 4 — 중복키 번역과 형제인 {@code NO_UNIQUE_CONSTRAINT_PG_MESSAGE} 번역 분기가 지금까지 테스트 없이
+   * 방치돼 있었다. {@code createPrimaryKeyIndexConcurrently} 가 남길 수 있는 INVALID {@code ux_<table>_pk}
+   * 인덱스처럼, PK 메타데이터는 있는데 실제 유니크 제약이 없을 때 PostgreSQL 이 이 문구로 거부한다 — "PK 를 다시 지정하라"는 한국어 안내로 바뀌는지
+   * 확인한다.
    */
   @Test
   void MERGE_유니크_제약_없음_오류는_PK_재지정_안내_메시지로_바뀐다() {
@@ -1291,10 +1274,9 @@ class PipelineAsyncRunnerTest {
   }
 
   /**
-   * Fix round 2, should 3 — MERGE+비SQL 거부를 스텝 타입 분기(:304 근방) 전체보다 앞으로 옮긴
-   * 변경(Fix round 1, nit 5)이 실제로 API_CALL/AI_CLASSIFY/실행기 켠 PYTHON 조합까지 잡는지 확인한다.
-   * 이전 위치(비SQL 타입 전용 switch 안)에서는 이 조합이 switch 진입 조건에서 이미 제외돼 있어
-   * 거부되지 않고 조용히 통과했었다.
+   * Fix round 2, should 3 — MERGE+비SQL 거부를 스텝 타입 분기(:304 근방) 전체보다 앞으로 옮긴 변경(Fix round 1, nit 5)이
+   * 실제로 API_CALL/AI_CLASSIFY/실행기 켠 PYTHON 조합까지 잡는지 확인한다. 이전 위치(비SQL 타입 전용 switch 안)에서는 이 조합이 switch
+   * 진입 조건에서 이미 제외돼 있어 거부되지 않고 조용히 통과했었다.
    */
   @Test
   void MERGE는_실행기_켠_PYTHON_스텝에서도_거부된다() {
@@ -1414,7 +1396,13 @@ class PipelineAsyncRunnerTest {
     ArgumentCaptor<String> errorCaptor = ArgumentCaptor.forClass(String.class);
     verify(executionRepository)
         .updateStepExecution(
-            eq(stepExecId), eq("FAILED"), isNull(), isNull(), errorCaptor.capture(), isNull(), any());
+            eq(stepExecId),
+            eq("FAILED"),
+            isNull(),
+            isNull(),
+            errorCaptor.capture(),
+            isNull(),
+            any());
     String errorMessage = errorCaptor.getValue();
     assertThat(errorMessage).contains("relation \"data.nonexistent_table\" does not exist");
     assertThat(errorMessage).doesNotContain("_probe");
@@ -2033,9 +2021,8 @@ class PipelineAsyncRunnerTest {
   /**
    * <b>순서 고정(이 Task 의 핵심 불변식)</b> — 출력이 커밋된 <b>뒤에</b>만 책갈피가 전진해야 한다.
    *
-   * <p>출력(테넌트 파이프라인 롤 커넥션)과 책갈피(앱 커넥션)는 다른 커넥션이라 한 트랜잭션으로 묶을 수
-   * 없다. 그래서 순서가 유일한 안전장치다. 이 테스트는 {@code sqlExecutor.execute} 가 도는 동안
-   * {@code advanceCursor} 가 아직 불리지 않았음을 실행 시점에 기록해 확인한다 — 프로덕션에서 두 줄을
+   * <p>출력(테넌트 파이프라인 롤 커넥션)과 책갈피(앱 커넥션)는 다른 커넥션이라 한 트랜잭션으로 묶을 수 없다. 그래서 순서가 유일한 안전장치다. 이 테스트는 {@code
+   * sqlExecutor.execute} 가 도는 동안 {@code advanceCursor} 가 아직 불리지 않았음을 실행 시점에 기록해 확인한다 — 프로덕션에서 두 줄을
    * 맞바꾸면 {@code advancedBeforeOutputCommit} 이 true 가 되어 이 테스트가 깨진다(변이로 확인함).
    */
   @Test
@@ -2081,9 +2068,7 @@ class PipelineAsyncRunnerTest {
     String status = runner.executeStep(stepExecId, step, pipelineId, "P", userId, false);
 
     assertThat(status).isEqualTo("COMPLETED");
-    assertThat(advancedBeforeOutputCommit)
-        .as("책갈피는 출력이 커밋된 뒤에만 전진해야 한다")
-        .isFalse();
+    assertThat(advancedBeforeOutputCommit).as("책갈피는 출력이 커밋된 뒤에만 전진해야 한다").isFalse();
     assertThat(advanced).as("성공 실행은 책갈피를 전진시켜야 한다").isTrue();
     verify(stepRepository).advanceCursor(stepId, candidate, false);
   }
@@ -2213,10 +2198,9 @@ class PipelineAsyncRunnerTest {
   /**
    * <b>비SELECT 증분 스텝은 전체 재생성 예약이 걸려도 출력을 비우지 않는다.</b>
    *
-   * <p>출력을 비우는 DELETE 뒤에 출력을 다시 채우는 것은 SELECT 자동 적재 경로(INSERT INTO ... SELECT)
-   * 뿐이다. 사용자가 직접 쓴 INSERT/UPDATE/DELETE 스텝(APPEND + {{last_run_at}} 은 저장 시점에
-   * 거부되지 않는다)에 그 DELETE 를 얹으면 출력이 빈 채로 COMPLETED 가 되고 책갈피까지 전진한다 —
-   * 조용한 전량 손실이다. 비SELECT 의 "전체 재생성"은 <b>전체 읽기</b>(-infinity)까지만을 뜻한다.
+   * <p>출력을 비우는 DELETE 뒤에 출력을 다시 채우는 것은 SELECT 자동 적재 경로(INSERT INTO ... SELECT) 뿐이다. 사용자가 직접 쓴
+   * INSERT/UPDATE/DELETE 스텝(APPEND + {{last_run_at}} 은 저장 시점에 거부되지 않는다)에 그 DELETE 를 얹으면 출력이 빈 채로
+   * COMPLETED 가 되고 책갈피까지 전진한다 — 조용한 전량 손실이다. 비SELECT 의 "전체 재생성"은 <b>전체 읽기</b>(-infinity)까지만을 뜻한다.
    */
   @Test
   void 비SELECT_증분_스텝은_전체_재생성_예약에도_출력을_비우지_않는다() {
@@ -2357,15 +2341,41 @@ class PipelineAsyncRunnerTest {
   /** 출력 데이터셋을 지정하지 않은(=임시 데이터셋 자동 생성) API_CALL 스텝. */
   private PipelineStepResponse apiStepNoOutput(Long stepId, String name, String loadStrategy) {
     return new PipelineStepResponse(
-        stepId, name, null, "API_CALL", null, null, null, List.of(), List.of(), 0, loadStrategy,
-        Map.of(), null, null, null);
+        stepId,
+        name,
+        null,
+        "API_CALL",
+        null,
+        null,
+        null,
+        List.of(),
+        List.of(),
+        0,
+        loadStrategy,
+        Map.of(),
+        null,
+        null,
+        null);
   }
 
   /** 출력 데이터셋을 지정하지 않은(=임시 데이터셋 자동 생성) AI_CLASSIFY 스텝. */
   private PipelineStepResponse aiStepNoOutput(Long stepId, String name, String loadStrategy) {
     return new PipelineStepResponse(
-        stepId, name, null, "AI_CLASSIFY", null, null, null, List.of(), List.of(), 0, loadStrategy,
-        null, Map.of(), null, null);
+        stepId,
+        name,
+        null,
+        "AI_CLASSIFY",
+        null,
+        null,
+        null,
+        List.of(),
+        List.of(),
+        0,
+        loadStrategy,
+        null,
+        Map.of(),
+        null,
+        null);
   }
 
   /** 스키마가 바뀌지 않은 기존 임시 데이터셋을 재사용하도록 스텁한다(=이전 실행 행이 남아 있는 상황). */
@@ -2388,8 +2398,12 @@ class PipelineAsyncRunnerTest {
     // when
     String status =
         runner.executeStep(
-            stepExecId, apiStepNoOutput(stepId, "api-fail", "REPLACE"), pipelineId,
-            "TestPipeline", userId, false);
+            stepExecId,
+            apiStepNoOutput(stepId, "api-fail", "REPLACE"),
+            pipelineId,
+            "TestPipeline",
+            userId,
+            false);
 
     // then: 실패했지만 출력 테이블은 건드리지 않았다 — 이전 행이 그대로 남는다
     assertThat(status).isEqualTo("FAILED");
@@ -2410,8 +2424,12 @@ class PipelineAsyncRunnerTest {
     // when
     String status =
         runner.executeStep(
-            stepExecId, apiStepNoOutput(stepId, "api-exec-fail", "REPLACE"), pipelineId,
-            "TestPipeline", userId, true);
+            stepExecId,
+            apiStepNoOutput(stepId, "api-exec-fail", "REPLACE"),
+            pipelineId,
+            "TestPipeline",
+            userId,
+            true);
 
     // then: 원본 truncate 없음 + 스테이징만 정리 + 맞바꿈 없음
     assertThat(status).isEqualTo("FAILED");
@@ -2440,8 +2458,12 @@ class PipelineAsyncRunnerTest {
     // when
     String status =
         runner.executeStep(
-            stepExecId, aiStepNoOutput(stepId, "ai-fail", "REPLACE"), pipelineId,
-            "TestPipeline", userId, false);
+            stepExecId,
+            aiStepNoOutput(stepId, "ai-fail", "REPLACE"),
+            pipelineId,
+            "TestPipeline",
+            userId,
+            false);
 
     // then
     assertThat(status).isEqualTo("FAILED");
@@ -2462,8 +2484,12 @@ class PipelineAsyncRunnerTest {
     // when
     String status =
         runner.executeStep(
-            stepExecId, apiStepNoOutput(stepId, "api-append", "APPEND"), pipelineId,
-            "TestPipeline", userId, false);
+            stepExecId,
+            apiStepNoOutput(stepId, "api-append", "APPEND"),
+            pipelineId,
+            "TestPipeline",
+            userId,
+            false);
 
     // then
     assertThat(status).isEqualTo("COMPLETED");
@@ -2490,8 +2516,12 @@ class PipelineAsyncRunnerTest {
     // when
     String status =
         runner.executeStep(
-            stepExecId, aiStepNoOutput(stepId, "ai-append", "APPEND"), pipelineId,
-            "TestPipeline", userId, false);
+            stepExecId,
+            aiStepNoOutput(stepId, "ai-append", "APPEND"),
+            pipelineId,
+            "TestPipeline",
+            userId,
+            false);
 
     // then
     assertThat(status).isEqualTo("COMPLETED");
@@ -2512,8 +2542,8 @@ class PipelineAsyncRunnerTest {
   }
 
   /**
-   * 성공한 REPLACE 의 최종 결과가 그대로인지 고정하는 가드 테스트. 선비우기 제거 전에도 통과했다
-   * (그때는 truncate 가 추가로 불렸을 뿐 맞바꿈 결과는 같았다) — 회귀 방지용이다.
+   * 성공한 REPLACE 의 최종 결과가 그대로인지 고정하는 가드 테스트. 선비우기 제거 전에도 통과했다 (그때는 truncate 가 추가로 불렸을 뿐 맞바꿈 결과는 같았다)
+   * — 회귀 방지용이다.
    */
   @Test
   void REPLACE_API_CALL_성공은_여전히_임시테이블_맞바꿈으로_전량_교체한다() {
@@ -2528,8 +2558,12 @@ class PipelineAsyncRunnerTest {
     // when
     String status =
         runner.executeStep(
-            stepExecId, apiStepNoOutput(stepId, "api-replace", "REPLACE"), pipelineId,
-            "TestPipeline", userId, true);
+            stepExecId,
+            apiStepNoOutput(stepId, "api-replace", "REPLACE"),
+            pipelineId,
+            "TestPipeline",
+            userId,
+            true);
 
     // then: 스테이징 생성 → 7행 맞바꿈. 원본 truncate 는 없다.
     assertThat(status).isEqualTo("COMPLETED");
@@ -2552,8 +2586,12 @@ class PipelineAsyncRunnerTest {
 
     String status =
         runner.executeStep(
-            stepExecId, apiStepNoOutput(stepId, "api-replace-off", "REPLACE"), pipelineId,
-            "TestPipeline", userId, false);
+            stepExecId,
+            apiStepNoOutput(stepId, "api-replace-off", "REPLACE"),
+            pipelineId,
+            "TestPipeline",
+            userId,
+            false);
 
     assertThat(status).isEqualTo("COMPLETED");
     verify(apiCallExecutor)
@@ -2562,18 +2600,30 @@ class PipelineAsyncRunnerTest {
   }
 
   /**
-   * 코드리뷰 LOW — 비SQL·비API 스텝의 로드 전략 분기(상단 {@code switch})가 대소문자를 가리면
-   * 소문자 레거시 행("append")이 {@code default} 로 떨어져 <b>REPLACE 처럼 출력을 truncate</b> 한다.
-   * 같은 메서드의 SQL 분기는 전부 {@code equalsIgnoreCase} 라 같은 값이 경로에 따라 다르게 해석되는
-   * 비대칭이었다. 실행기 끈 PYTHON 스텝이 그 switch 로 들어가는 유일한 경로라 그것으로 고정한다.
+   * 코드리뷰 LOW — 비SQL·비API 스텝의 로드 전략 분기(상단 {@code switch})가 대소문자를 가리면 소문자 레거시 행("append")이 {@code
+   * default} 로 떨어져 <b>REPLACE 처럼 출력을 truncate</b> 한다. 같은 메서드의 SQL 분기는 전부 {@code equalsIgnoreCase} 라
+   * 같은 값이 경로에 따라 다르게 해석되는 비대칭이었다. 실행기 끈 PYTHON 스텝이 그 switch 로 들어가는 유일한 경로라 그것으로 고정한다.
    */
   @Test
   void 소문자_append_는_비SQL_스텝에서도_truncate하지_않는다() {
     Long pipelineId = 97L, userId = 1L, stepId = 908L, stepExecId = 958L, outputDatasetId = 998L;
     PipelineStepResponse pythonStep =
         new PipelineStepResponse(
-            stepId, "py-lower-append", null, "PYTHON", "print('x')", outputDatasetId, null,
-            List.of(), List.of(), 0, "append", null, null, null, null);
+            stepId,
+            "py-lower-append",
+            null,
+            "PYTHON",
+            "print('x')",
+            outputDatasetId,
+            null,
+            List.of(),
+            List.of(),
+            0,
+            "append",
+            null,
+            null,
+            null,
+            null);
 
     when(permissionChecker.hasPermission(userId, "pipeline:python_execute")).thenReturn(true);
     when(datasetRepository.findTableNameById(outputDatasetId))

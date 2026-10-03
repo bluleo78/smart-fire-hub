@@ -32,10 +32,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
 /**
  * ChatChannel — proactive_message INSERT + SSE broadcast 경로 검증.
  *
- * <p>P2-f 이후 이 채널은 테넌트를 해석하지 않는다 — outbox 워커가 행의 {@code tenant_id} 로 스코프를
- * 열고 그 안에서 부른다. 그래서 멤버십 목이 필요 없다. 여기 남은 테넌트 관련 케이스는 R9 의
- * execution 교차테넌트 검사 하나뿐이고, 그 검사가 <b>실제로 테넌트 스코프되는지</b>는 목으로 증명할
- * 수 없어 {@code OutboxWorkerTenantScopeTest} 가 실제 DB·실제 RLS 위에서 맡는다.
+ * <p>P2-f 이후 이 채널은 테넌트를 해석하지 않는다 — outbox 워커가 행의 {@code tenant_id} 로 스코프를 열고 그 안에서 부른다. 그래서 멤버십 목이
+ * 필요 없다. 여기 남은 테넌트 관련 케이스는 R9 의 execution 교차테넌트 검사 하나뿐이고, 그 검사가 <b>실제로 테넌트 스코프되는지</b>는 목으로 증명할 수 없어
+ * {@code OutboxWorkerTenantScopeTest} 가 실제 DB·실제 RLS 위에서 맡는다.
  */
 @ExtendWith(MockitoExtension.class)
 class ChatChannelTest {
@@ -125,11 +124,10 @@ class ChatChannelTest {
   /**
    * execution 이 <b>현재 테넌트 컨텍스트</b>에서 보이지 않으면 메시지를 만들지 않는다(R9).
    *
-   * <p>{@code payload.metadata.executionId} 는 JSON 페이로드에서 파싱된 신뢰할 수 없는 입력이라,
-   * outbox 행의 테넌트와 그 execution 이 실제로 속한 테넌트가 어긋날 수 있다. FK 는 이것을
-   * <b>막지 못한다</b> — PostgreSQL 의 참조 무결성 검사는 RLS 를 우회하므로 보이지 않는 타 테넌트
-   * execution 을 참조해도 INSERT 가 통과한다. 이 명시 검사가 유일한 방어다. 그 사실 자체는 목이
-   * 아니라 실제 DB 위에서만 보이므로 {@code OutboxWorkerTenantScopeTest} 가 함께 고정한다.
+   * <p>{@code payload.metadata.executionId} 는 JSON 페이로드에서 파싱된 신뢰할 수 없는 입력이라, outbox 행의 테넌트와 그
+   * execution 이 실제로 속한 테넌트가 어긋날 수 있다. FK 는 이것을 <b>막지 못한다</b> — PostgreSQL 의 참조 무결성 검사는 RLS 를 우회하므로
+   * 보이지 않는 타 테넌트 execution 을 참조해도 INSERT 가 통과한다. 이 명시 검사가 유일한 방어다. 그 사실 자체는 목이 아니라 실제 DB 위에서만 보이므로
+   * {@code OutboxWorkerTenantScopeTest} 가 함께 고정한다.
    */
   @Test
   void deliver_executionNotVisibleInCurrentTenant_returnsPermanentFailure() {

@@ -13,8 +13,8 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * dataset_search_index 저장소(RLS — 트랜잭션 안에서만 테넌트 GUC 가 선다).
  *
- * <p>동시 실행 방지는 advisory lock 대신 임대(sync_lease_until) 컬럼으로 한다 — sync 는 여러 트랜잭션에 걸치고
- * 세션 락은 풀 커넥션에서 새기 때문이다.
+ * <p>동시 실행 방지는 advisory lock 대신 임대(sync_lease_until) 컬럼으로 한다 — sync 는 여러 트랜잭션에 걸치고 세션 락은 풀 커넥션에서 새기
+ * 때문이다.
  */
 @Repository
 @Transactional
@@ -72,16 +72,17 @@ public class SearchIndexStateRepository {
     return dsl.fetchOne(
             "SELECT count(*) FROM dataset_search_index"
                 + " WHERE embedding_model IS DISTINCT FROM ? OR embedding_dim IS DISTINCT FROM ?",
-            model, dim)
+            model,
+            dim)
         .get(0, Long.class);
   }
 
   /**
    * 동기화 임대를 잡는다. 성공하면 true.
    *
-   * <p>"임대가 비었거나 만료됐으면 now()+lease 로 설정"을 조건부 UPDATE 한 문장으로 한다 — PostgreSQL 은 같은 행의
-   * UPDATE 를 행 잠금으로 직렬화하고, 뒤따른 쪽은 커밋된 새 값으로 WHERE 를 다시 평가하므로 두 인스턴스가 동시에
-   * 시도해도 정확히 하나만 1행을 갱신한다(SELECT 후 UPDATE 의 경합 창이 없다). 상태 행이 없으면 0행이라 false.
+   * <p>"임대가 비었거나 만료됐으면 now()+lease 로 설정"을 조건부 UPDATE 한 문장으로 한다 — PostgreSQL 은 같은 행의 UPDATE 를 행 잠금으로
+   * 직렬화하고, 뒤따른 쪽은 커밋된 새 값으로 WHERE 를 다시 평가하므로 두 인스턴스가 동시에 시도해도 정확히 하나만 1행을 갱신한다(SELECT 후 UPDATE 의 경합
+   * 창이 없다). 상태 행이 없으면 0행이라 false.
    */
   public boolean tryAcquireLease(long datasetId, Duration lease) {
     return dsl.execute(
@@ -94,34 +95,41 @@ public class SearchIndexStateRepository {
 
   /** 임대를 푼다(동기화 성공·실패와 무관하게 finally 에서). 다음 스윕이 바로 다시 잡을 수 있다. */
   public void releaseLease(long datasetId) {
-    dsl.execute("UPDATE dataset_search_index SET sync_lease_until = NULL WHERE dataset_id = ?", datasetId);
+    dsl.execute(
+        "UPDATE dataset_search_index SET sync_lease_until = NULL WHERE dataset_id = ?", datasetId);
   }
 
   /** 전체 패스 시작 준비: 설정·모델·차원·원본 OID 를 기록하고 책갈피·진행 위치를 비운다. */
-  public void resetForFullPass(long datasetId, String configHash, String model, int dim, long sourceOid) {
+  public void resetForFullPass(
+      long datasetId, String configHash, String model, int dim, long sourceOid) {
     dsl.execute(
         "UPDATE dataset_search_index SET config_hash = ?, embedding_model = ?, embedding_dim = ?,"
             + " source_table_oid = ?,"
             + RESET_PASS
             + " status = 'SYNCING', updated_at = now() WHERE dataset_id = ?",
-        configHash, model, dim, sourceOid, datasetId);
+        configHash,
+        model,
+        dim,
+        sourceOid,
+        datasetId);
   }
 
   /**
-   * swap 재구축: OID 만 새 값으로(재구축 중 검색이 STALE 이 아니라 새 색인을 읽도록 즉시 갱신). 새 색인 테이블은 비어
-   * 있으므로 진행률 분자(indexed_rows)도 0 에서 다시 센다.
+   * swap 재구축: OID 만 새 값으로(재구축 중 검색이 STALE 이 아니라 새 색인을 읽도록 즉시 갱신). 새 색인 테이블은 비어 있으므로 진행률
+   * 분자(indexed_rows)도 0 에서 다시 센다.
    */
   public void markSourceOid(long datasetId, long sourceOid) {
     dsl.execute(
         "UPDATE dataset_search_index SET source_table_oid = ?,"
             + RESET_PASS
             + " status = 'SYNCING', updated_at = now() WHERE dataset_id = ?",
-        sourceOid, datasetId);
+        sourceOid,
+        datasetId);
   }
 
   /**
-   * 패스 시작 시에만 책갈피 후보와 원본 전체 행 수(진행률 분모)를 기록한다. 여러 주기에 걸친 패스 도중 캡처한 후보로
-   * 덮으면, 앞서 지나간 id 구간에서 그 사이 바뀐 행을 다음 패스가 놓친다.
+   * 패스 시작 시에만 책갈피 후보와 원본 전체 행 수(진행률 분모)를 기록한다. 여러 주기에 걸친 패스 도중 캡처한 후보로 덮으면, 앞서 지나간 id 구간에서 그 사이 바뀐
+   * 행을 다음 패스가 놓친다.
    *
    * <p>jOOQ plain SQL 은 OffsetDateTime 을 varchar 로 바인딩하므로 {@code ?::timestamptz} 로 명시 캐스팅한다.
    */
@@ -129,14 +137,16 @@ public class SearchIndexStateRepository {
     dsl.execute(
         "UPDATE dataset_search_index SET pass_cursor = ?::timestamptz, total_rows = ?"
             + " WHERE dataset_id = ? AND pass_cursor IS NULL",
-        candidate, totalRows, datasetId);
+        candidate,
+        totalRows,
+        datasetId);
   }
 
   /**
    * 설정 변경 직후: 다음 스윕 전까지 SYNCING 으로 두고 백오프·오류를 해제한다(재색인 판단은 config_hash 가 한다).
    *
-   * <p>이전 실패의 백오프(next_attempt_at)를 남기면 사용자가 방금 확인한 "다시 색인"이 백오프만큼 밀리고, 옛 설정의
-   * 오류 메시지가 새 설정의 상태처럼 보인다 — 수동 재색인({@link #forceFull})과 같은 방식으로 지운다.
+   * <p>이전 실패의 백오프(next_attempt_at)를 남기면 사용자가 방금 확인한 "다시 색인"이 백오프만큼 밀리고, 옛 설정의 오류 메시지가 새 설정의 상태처럼
+   * 보인다 — 수동 재색인({@link #forceFull})과 같은 방식으로 지운다.
    */
   public void markSyncing(long datasetId) {
     dsl.execute(
@@ -149,14 +159,16 @@ public class SearchIndexStateRepository {
   /**
    * 배치 하나를 저장한 뒤 이어 처리할 위치와 진행률을 기록한다.
    *
-   * <p>indexed_rows 는 count(*) 대신 배치가 보고한 증감(새로 넣은 행 − 지운 행)을 더한다 — 배치마다 색인 전체를 세면
-   * 큰 테이블에서 O(n) 이 반복된다. 원본에서 삭제된 행은 완주 시 {@link #markCompleted} 가 실제 개수로 바로잡는다.
+   * <p>indexed_rows 는 count(*) 대신 배치가 보고한 증감(새로 넣은 행 − 지운 행)을 더한다 — 배치마다 색인 전체를 세면 큰 테이블에서 O(n) 이
+   * 반복된다. 원본에서 삭제된 행은 완주 시 {@link #markCompleted} 가 실제 개수로 바로잡는다.
    */
   public void saveProgress(long datasetId, long resumeAfterId, long indexedDelta) {
     dsl.execute(
         "UPDATE dataset_search_index SET resume_after_id = ?, indexed_rows = GREATEST(indexed_rows + ?, 0),"
             + " status = 'SYNCING', updated_at = now() WHERE dataset_id = ?",
-        resumeAfterId, indexedDelta, datasetId);
+        resumeAfterId,
+        indexedDelta,
+        datasetId);
   }
 
   /** 패스 완주: 패스 시작 후보를 책갈피로 확정하고 오류·백오프를 해제한다. */
@@ -166,7 +178,9 @@ public class SearchIndexStateRepository {
             + " indexed_rows = ?, total_rows = ?, status = 'IDLE', consecutive_failures = 0,"
             + " next_attempt_at = NULL, last_error = NULL, last_synced_at = now(), updated_at = now()"
             + " WHERE dataset_id = ?",
-        indexedRows, totalRows, datasetId);
+        indexedRows,
+        totalRows,
+        datasetId);
   }
 
   /** 실패: 커서는 그대로 두고(다음 주기 재처리) 백오프를 건다. */
@@ -175,19 +189,22 @@ public class SearchIndexStateRepository {
         "UPDATE dataset_search_index SET status = 'ERROR', last_error = ?,"
             + " consecutive_failures = consecutive_failures + 1, next_attempt_at = ?::timestamptz, updated_at = now()"
             + " WHERE dataset_id = ?",
-        error, nextAttemptAt, datasetId);
+        error,
+        nextAttemptAt,
+        datasetId);
   }
 
   /**
-   * 대기: 사유만 남기고 잠시 뒤 다시 due 가 되게 한다. {@link #markFailed} 와 달리 실패 횟수를 올리지 않는다 —
-   * 임베딩 미설정(#713)은 장애가 아니라 설정 대기라, 지수 백오프(최대 30분)에 빠지면 설정 저장 뒤에도 한참
-   * degraded 로 남는다.
+   * 대기: 사유만 남기고 잠시 뒤 다시 due 가 되게 한다. {@link #markFailed} 와 달리 실패 횟수를 올리지 않는다 — 임베딩 미설정(#713)은 장애가
+   * 아니라 설정 대기라, 지수 백오프(최대 30분)에 빠지면 설정 저장 뒤에도 한참 degraded 로 남는다.
    */
   public void markWaiting(long datasetId, String reason, OffsetDateTime nextAttemptAt) {
     dsl.execute(
         "UPDATE dataset_search_index SET status = 'ERROR', last_error = ?,"
             + " next_attempt_at = ?::timestamptz, updated_at = now() WHERE dataset_id = ?",
-        reason, nextAttemptAt, datasetId);
+        reason,
+        nextAttemptAt,
+        datasetId);
   }
 
   private static SearchIndexState toState(Record r) {

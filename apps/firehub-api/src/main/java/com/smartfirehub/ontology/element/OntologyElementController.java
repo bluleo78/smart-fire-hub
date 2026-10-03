@@ -2,10 +2,10 @@ package com.smartfirehub.ontology.element;
 
 import com.smartfirehub.global.security.RequirePermission;
 import com.smartfirehub.ontology.element.dto.ElementDtos.CreateEntityTypeRequest;
-import com.smartfirehub.ontology.element.dto.ElementDtos.EntityTypeDeletion;
-import com.smartfirehub.ontology.element.dto.ElementDtos.EntityTypeMutation;
 import com.smartfirehub.ontology.element.dto.ElementDtos.CreatePropertyRequest;
 import com.smartfirehub.ontology.element.dto.ElementDtos.CreateRelationRequest;
+import com.smartfirehub.ontology.element.dto.ElementDtos.EntityTypeDeletion;
+import com.smartfirehub.ontology.element.dto.ElementDtos.EntityTypeMutation;
 import com.smartfirehub.ontology.element.dto.ElementDtos.PatchOntologyRequest;
 import com.smartfirehub.ontology.element.dto.ElementDtos.PropertyMutation;
 import com.smartfirehub.ontology.element.dto.ElementDtos.RelationMutation;
@@ -35,7 +35,8 @@ public class OntologyElementController {
 
   @PatchMapping
   @RequirePermission("ontology:write")
-  public VersionOnly patchOntology(@PathVariable long ontologyId, @RequestBody PatchOntologyRequest request) {
+  public VersionOnly patchOntology(
+      @PathVariable long ontologyId, @RequestBody PatchOntologyRequest request) {
     return elementService.patchDomain(ontologyId, request);
   }
 

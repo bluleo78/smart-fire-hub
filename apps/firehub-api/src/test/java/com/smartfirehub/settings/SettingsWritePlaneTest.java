@@ -28,9 +28,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 /**
  * 테넌트 평면 쓰기 좁히기 + 오버라이드 해제(P7-b Task 5).
  *
- * <p>{@link #테넌트_쓰기는_tenant_settings_에_들어가고_system_settings_는_그대로다} 가 이 밴드
- * 전체의 존재 이유다 — 오늘의 결함은 한 테넌트의 저장이 {@code system_settings}(전역 18행)를 바꿔
- * 전 테넌트에 적용되는 것이었다. 이 테스트가 깨지면 그 결함이 되돌아왔다는 뜻이다.
+ * <p>{@link #테넌트_쓰기는_tenant_settings_에_들어가고_system_settings_는_그대로다} 가 이 밴드 전체의 존재 이유다 — 오늘의 결함은 한
+ * 테넌트의 저장이 {@code system_settings}(전역 18행)를 바꿔 전 테넌트에 적용되는 것이었다. 이 테스트가 깨지면 그 결함이 되돌아왔다는 뜻이다.
  */
 class SettingsWritePlaneTest extends IntegrationTestBase {
 
@@ -54,9 +53,8 @@ class SettingsWritePlaneTest extends IntegrationTestBase {
   /**
    * 이 단언이 이 밴드의 존재 이유다 — 저장 후 system_settings 가 변하지 않아야 한다.
    *
-   * <p>검증 키로 {@code smtp.from_address} 를 쓰고, 같은 키의 플랫폼 행을 <b>직접 심는다</b> —
-   * 행이 없으면 "그대로다" 단언이 null == null 로 공허하게 통과한다. V127(ai.*)·V128(smtp.*)
-   * 이후 테넌트 쓰기 가능 키에는 플랫폼 시드 행이 하나도 없다.
+   * <p>검증 키로 {@code smtp.from_address} 를 쓰고, 같은 키의 플랫폼 행을 <b>직접 심는다</b> — 행이 없으면 "그대로다" 단언이 null ==
+   * null 로 공허하게 통과한다. V127(ai.*)·V128(smtp.*) 이후 테넌트 쓰기 가능 키에는 플랫폼 시드 행이 하나도 없다.
    */
   @Test
   void 테넌트_쓰기는_tenant_settings_에_들어가고_system_settings_는_그대로다() {
@@ -111,8 +109,6 @@ class SettingsWritePlaneTest extends IntegrationTestBase {
 
   // SMTP 쓰기 거부 테스트는 삭제했다 — 테넌트 평면 SMTP 쓰기 메서드 자체가 사라졌다.
 
-
-
   // 키별 삭제 후 기본값 복귀 테스트는 지웠다(#712) — 키별 해제 경로(clearOverride,
   // DELETE /settings/overrides/{key})가 사라졌다. SMTP 묶음 해제는 SmtpSettingsTenantOnlyTest 가 본다.
 
@@ -121,10 +117,9 @@ class SettingsWritePlaneTest extends IntegrationTestBase {
   // 키(임베딩 4키)는 전부 시드돼 있다. 저장소의 upsert 성질은 그대로다.
 
   /**
-   * {@code ai.session_max_tokens} 의 유효 범위는 <b>web 의 검증과 같아야 한다</b>(10,000~200,000).
-   * web 이 거부하는 값을 백엔드가 저장해 버리면, 화면이 그 값으로 시드되고 web 하한에 걸려
-   * 사용자가 그 필드를 건드리지도 않았는데 다른 필드 저장까지 막힌다. 이 키는 테넌트 전용이라
-   * 테넌트 쓰기 경로로 검증한다.
+   * {@code ai.session_max_tokens} 의 유효 범위는 <b>web 의 검증과 같아야 한다</b>(10,000~200,000). web 이 거부하는 값을
+   * 백엔드가 저장해 버리면, 화면이 그 값으로 시드되고 web 하한에 걸려 사용자가 그 필드를 건드리지도 않았는데 다른 필드 저장까지 막힌다. 이 키는 테넌트 전용이라 테넌트
+   * 쓰기 경로로 검증한다.
    */
   @Test
   void 세션_최대_토큰_하한은_web_과_같은_10000_이다() {
@@ -149,10 +144,9 @@ class SettingsWritePlaneTest extends IntegrationTestBase {
   /**
    * 값이 {@code null} 이면 500 이 아니라 400 계열(IllegalArgumentException)이어야 한다.
    *
-   * <p>{@code validateValues} 가 {@code ai.model} 을 free-form 으로 두므로 {@code null} 이 저장
-   * 계층까지 내려가 NPE 가 되고, 클라이언트 오류가 <b>서버 오류로 보고</b>됐다. 두 쓰기 경로가
-   * 서로 다른 지점에서 터지던 것(테넌트는 {@code upsert} 의 requireNonNull, 플랫폼은
-   * {@code encryptIfSecret} 의 isBlank)을 진입부 한 곳으로 모았다.
+   * <p>{@code validateValues} 가 {@code ai.model} 을 free-form 으로 두므로 {@code null} 이 저장 계층까지 내려가 NPE
+   * 가 되고, 클라이언트 오류가 <b>서버 오류로 보고</b>됐다. 두 쓰기 경로가 서로 다른 지점에서 터지던 것(테넌트는 {@code upsert} 의
+   * requireNonNull, 플랫폼은 {@code encryptIfSecret} 의 isBlank)을 진입부 한 곳으로 모았다.
    */
   @Test
   void null_값은_저장_계층까지_가지_않고_거부된다() {
@@ -169,17 +163,14 @@ class SettingsWritePlaneTest extends IntegrationTestBase {
   /**
    * 테넌트가 저장한 SMTP 비밀번호는 암호문으로 저장되고, 읽기 경로에서는 마스킹돼 나온다.
    *
-   * <p><b>두 단언을 한 테스트에 두는 이유.</b> 암호화와 마스킹은 한 변경의 두 끝이다 —
-   * {@code maskSecret} 이 {@code decrypt} 를 부르므로 마스킹만 먼저 고치면 평문 행에서
-   * 복호화가 터지고, 암호화만 먼저 고치면 암호문이 그대로 새어 나간다. 따로 두면 한쪽만
-   * 고쳐진 창을 아무도 못 본다.
+   * <p><b>두 단언을 한 테스트에 두는 이유.</b> 암호화와 마스킹은 한 변경의 두 끝이다 — {@code maskSecret} 이 {@code decrypt} 를
+   * 부르므로 마스킹만 먼저 고치면 평문 행에서 복호화가 터지고, 암호화만 먼저 고치면 암호문이 그대로 새어 나간다. 따로 두면 한쪽만 고쳐진 창을 아무도 못 본다.
    *
-   * <p>평문을 {@code :} 없이 고른 것은 의도적이다. {@code :} 가 들어 있으면 "암호문은
-   * {@code iv:ciphertext} 라 {@code :} 를 포함한다"는 전제 확인이 공허해진다.
+   * <p>평문을 {@code :} 없이 고른 것은 의도적이다. {@code :} 가 들어 있으면 "암호문은 {@code iv:ciphertext} 라 {@code :} 를
+   * 포함한다"는 전제 확인이 공허해진다.
    *
-   * <p>#725 이후 마스크는 <b>고정 표식 {@code ****}</b> 다(예전에는 {@code ****} + 평문 끝 4자).
-   * 그래서 읽은 값은 {@code startsWith} 가 아니라 <b>정확 일치</b>로 못 박는다 — 접두사 단언은
-   * 끝 4자가 다시 붙어도 통과한다.
+   * <p>#725 이후 마스크는 <b>고정 표식 {@code ****}</b> 다(예전에는 {@code ****} + 평문 끝 4자). 그래서 읽은 값은 {@code
+   * startsWith} 가 아니라 <b>정확 일치</b>로 못 박는다 — 접두사 단언은 끝 4자가 다시 붙어도 통과한다.
    */
   @Test
   void 테넌트_SMTP_비밀번호는_암호화_저장되고_마스킹되어_읽힌다() {
@@ -205,13 +196,11 @@ class SettingsWritePlaneTest extends IntegrationTestBase {
   /**
    * 읽기 응답에는 비밀번호의 <b>어떤 평문 조각도</b> 실리지 않는다 — 길이와 무관하게 (#725).
    *
-   * <p>예전 마스크는 {@code ****} + 평문 끝 4자였다. 4자 비밀번호는 <b>전체</b>가, 5자는 80% 가
-   * 응답에 실려 브라우저·프록시 로그에 남았다. 화면은 이 값을 "저장됨 여부"(빈 문자열인가)로만
-   * 쓰므로 끝 4자는 아무도 쓰지 않는 누출이었다.
+   * <p>예전 마스크는 {@code ****} + 평문 끝 4자였다. 4자 비밀번호는 <b>전체</b>가, 5자는 80% 가 응답에 실려 브라우저·프록시 로그에 남았다.
+   * 화면은 이 값을 "저장됨 여부"(빈 문자열인가)로만 쓰므로 끝 4자는 아무도 쓰지 않는 누출이었다.
    *
-   * <p>긴 값만 쓰는 테스트로는 이 결함이 안 걸린다(끝 4자가 평문 "전체"가 아니라서
-   * {@code doesNotContain(plain)} 이 통과한다). 그래서 4자·5자·16자를 모두 지나가게 하고, 평문
-   * 전체뿐 아니라 <b>끝 4자</b>가 없는지도 본다.
+   * <p>긴 값만 쓰는 테스트로는 이 결함이 안 걸린다(끝 4자가 평문 "전체"가 아니라서 {@code doesNotContain(plain)} 이 통과한다). 그래서
+   * 4자·5자·16자를 모두 지나가게 하고, 평문 전체뿐 아니라 <b>끝 4자</b>가 없는지도 본다.
    */
   @Test
   void 테넌트_SMTP_비밀번호는_길이와_무관하게_평문_조각_없이_고정_표식으로_읽힌다() {
@@ -230,9 +219,8 @@ class SettingsWritePlaneTest extends IntegrationTestBase {
   /**
    * 마스킹된 센티널을 그대로 PUT 해도 살아 있는 테넌트 비밀번호를 덮어쓰지 않는다.
    *
-   * <p>웹 화면은 이제 마스크를 되보내지 않지만(빈 칸 = 변경 없음), {@code GET} 응답을 그대로
-   * {@code PUT} 하는 다른 클라이언트·스크립트가 있을 수 있다. 방어가 없으면 비밀번호가 문자열
-   * {@code ****} 로 덮어써져 "아무것도 안 바꿨는데 메일이 안 나간다"가 된다.
+   * <p>웹 화면은 이제 마스크를 되보내지 않지만(빈 칸 = 변경 없음), {@code GET} 응답을 그대로 {@code PUT} 하는 다른 클라이언트·스크립트가 있을 수
+   * 있다. 방어가 없으면 비밀번호가 문자열 {@code ****} 로 덮어써져 "아무것도 안 바꿨는데 메일이 안 나간다"가 된다.
    */
   @Test
   void 테넌트_마스킹된_SMTP_비밀번호는_저장되지_않는다() {
@@ -264,18 +252,16 @@ class SettingsWritePlaneTest extends IntegrationTestBase {
   /**
    * {@code ****} 로 <b>시작하지만 마스크 형태가 아닌</b> 비밀번호는 실제로 저장된다.
    *
-   * <p>Task 5 이전 판정은 {@code value.startsWith("****")} 뿐이었다. 사용자가 비밀번호를
-   * {@code ****Str0ngPass} 로 <b>새로 입력</b>하면 센티널로 오인해 키를 통째로 드롭하고, 예외 없이
-   * 204 가 나가 화면이 "설정이 저장되었습니다" 토스트를 띄운다 — 저장된 것은 없고 메일은 옛
-   * 비밀번호로 계속 나간다. 전형적인 "성공처럼 보이는 무동작"이다.
+   * <p>Task 5 이전 판정은 {@code value.startsWith("****")} 뿐이었다. 사용자가 비밀번호를 {@code ****Str0ngPass} 로
+   * <b>새로 입력</b>하면 센티널로 오인해 키를 통째로 드롭하고, 예외 없이 204 가 나가 화면이 "설정이 저장되었습니다" 토스트를 띄운다 — 저장된 것은 없고 메일은
+   * 옛 비밀번호로 계속 나간다. 전형적인 "성공처럼 보이는 무동작"이다.
    *
-   * <p>#725 이후 센티널은 서버가 내보내는 고정 표식 {@code ****} <b>정확히 그 문자열 하나</b>다.
-   * 그 전에는 "길이 4 또는 8" 형태 판정이라 {@code ****abcd} 같은 <b>8자</b> 비밀번호가 여전히
-   * 204 와 함께 조용히 버려졌다 — 그래서 14자뿐 아니라 8자도 지나가게 한다(8자가 회귀 가드다).
+   * <p>#725 이후 센티널은 서버가 내보내는 고정 표식 {@code ****} <b>정확히 그 문자열 하나</b>다. 그 전에는 "길이 4 또는 8" 형태 판정이라
+   * {@code ****abcd} 같은 <b>8자</b> 비밀번호가 여전히 204 와 함께 조용히 버려졌다 — 그래서 14자뿐 아니라 8자도 지나가게 한다(8자가 회귀
+   * 가드다).
    *
-   * <p>같은 요청에 <b>진짜 센티널</b>도 한 번 더 태우지 않는 이유: 그 계약은 바로 위
-   * {@link #테넌트_마스킹된_SMTP_비밀번호는_저장되지_않는다} 가 실제 마스크로 고정한다.
-   * 두 테스트가 각자 한 방향씩 맡아야 좁히기가 <b>너무 많이</b> 좁혔을 때도 걸린다.
+   * <p>같은 요청에 <b>진짜 센티널</b>도 한 번 더 태우지 않는 이유: 그 계약은 바로 위 {@link #테넌트_마스킹된_SMTP_비밀번호는_저장되지_않는다} 가 실제
+   * 마스크로 고정한다. 두 테스트가 각자 한 방향씩 맡아야 좁히기가 <b>너무 많이</b> 좁혔을 때도 걸린다.
    */
   @Test
   void 마스크_형태가_아닌_별표_시작_비밀번호는_실제로_저장된다() {
@@ -294,8 +280,7 @@ class SettingsWritePlaneTest extends IntegrationTestBase {
   /**
    * {@code smtp.port} 범위 검증이 테넌트 평면에도 적용된다.
    *
-   * <p>검증이 플랫폼 경로에만 있던 동안 테넌트는 {@code 99999} 를 저장할 수 있었다 — 저장은
-   * 성공하고 실패는 한참 뒤 메일 발송에서 드러난다.
+   * <p>검증이 플랫폼 경로에만 있던 동안 테넌트는 {@code 99999} 를 저장할 수 있었다 — 저장은 성공하고 실패는 한참 뒤 메일 발송에서 드러난다.
    */
   @Test
   void 테넌트_SMTP_포트_범위를_벗어나면_거부된다() {
@@ -306,7 +291,8 @@ class SettingsWritePlaneTest extends IntegrationTestBase {
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("65535");
 
-    assertThatThrownBy(() -> settingsService.updateSettings(Map.of("smtp.port", "not-a-port"), null))
+    assertThatThrownBy(
+            () -> settingsService.updateSettings(Map.of("smtp.port", "not-a-port"), null))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("not-a-port");
 
@@ -317,15 +303,13 @@ class SettingsWritePlaneTest extends IntegrationTestBase {
   /**
    * 인증 없는 SMTP 릴레이를 위해 <b>빈 비밀번호는 합법이다</b> — 저장도 되고, 읽어도 터지지 않는다.
    *
-   * <p>암호화·마스킹을 붙이면서 함께 깨지기 쉬운 지점이다. 빈 값을 암호화하면 나중에 빈
-   * ciphertext 를 복호화하려다 실패하고, 마스킹에서 {@code decrypt("")} 를 부르면 설정 화면 전체가
-   * 500 이 된다 — <b>진짜 값만 쓰는 테스트로는 둘 다 안 걸린다</b>. 그래서 쓰기와 읽기 양쪽을
-   * 빈 값으로 한 번 지나가게 한다.
+   * <p>암호화·마스킹을 붙이면서 함께 깨지기 쉬운 지점이다. 빈 값을 암호화하면 나중에 빈 ciphertext 를 복호화하려다 실패하고, 마스킹에서 {@code
+   * decrypt("")} 를 부르면 설정 화면 전체가 500 이 된다 — <b>진짜 값만 쓰는 테스트로는 둘 다 안 걸린다</b>. 그래서 쓰기와 읽기 양쪽을 빈 값으로 한
+   * 번 지나가게 한다.
    *
-   * <p>{@code smtp.username} 은 {@code SECRET_KEYS} 가 아니라 암호화·마스킹이 아예 닿지 않는다.
-   * 여기서 단언하는 것은 "빈 값도 저장된다"가 아니라 <b>진짜 값이 평문 그대로 읽힌다</b>는 것이다 —
-   * 장래에 누가 마스킹 판정을 {@code smtp.} 프리픽스 전체로 넓히면 사용자명이 {@code ****} 로
-   * 보이고 복호화 실패까지 따라온다.
+   * <p>{@code smtp.username} 은 {@code SECRET_KEYS} 가 아니라 암호화·마스킹이 아예 닿지 않는다. 여기서 단언하는 것은 "빈 값도
+   * 저장된다"가 아니라 <b>진짜 값이 평문 그대로 읽힌다</b>는 것이다 — 장래에 누가 마스킹 판정을 {@code smtp.} 프리픽스 전체로 넓히면 사용자명이
+   * {@code ****} 로 보이고 복호화 실패까지 따라온다.
    */
   @Test
   void 인증_없는_릴레이를_위해_빈_SMTP_비밀번호도_저장되고_읽힌다() {
@@ -346,21 +330,18 @@ class SettingsWritePlaneTest extends IntegrationTestBase {
   }
 
   /**
-   * 한 요청에 SMTP 키와 비 SMTP 키가 섞여 와도 <b>둘 다</b> 저장되고, 암호화는 키의 비밀 여부로만
-   * 갈린다.
+   * 한 요청에 SMTP 키와 비 SMTP 키가 섞여 와도 <b>둘 다</b> 저장되고, 암호화는 키의 비밀 여부로만 갈린다.
    *
-   * <p>테넌트 쓰기는 SMTP 부분맵만 떼어 정규화한 뒤 다시 합치므로, 합치는 단계가 어긋나면
-   * <b>비 SMTP 키가 조용히 사라진다</b>(예외 없이 204). 그 회귀를 여기서 잡는다.
+   * <p>테넌트 쓰기는 SMTP 부분맵만 떼어 정규화한 뒤 다시 합치므로, 합치는 단계가 어긋나면 <b>비 SMTP 키가 조용히 사라진다</b>(예외 없이 204). 그
+   * 회귀를 여기서 잡는다.
    *
-   * <p><b>이 테스트가 덮지 <i>못하는</i> 것(이 태스크 이전 기준).</b> "암호화 판정이 프리픽스가
-   * 아니라 {@code SECRET_KEYS} 에서 나온다"는 성질은 그때는 <b>도달 불가</b>였다 — 테넌트
-   * 오버라이드 허용 12키 중 비밀 키는 {@code smtp.password} 하나뿐이라, 프리픽스로 판정해도
-   * 결과가 같았다. <b>이 태스크가 그 전제를 깼다</b>: {@code SettingsOverridePolicy} javadoc 이
-   * 예고한 BYO 키 정책대로 {@code ai.api_key}/{@code ai.cli_oauth_token} 이 열려, SMTP 가 아닌
-   * 비밀 키가 이제 테넌트 평면에 실재한다. 그 성질을 직접 증명하는 전용 테스트는 아직 없다 —
-   * 판정의 근거는 여전히 코드에서 읽힌다({@code encryptIfSecret} 의 첫 줄이
-   * {@code SECRET_KEYS.contains(key)} 이고, 두 쓰기 경로가 부분맵이 아니라 <b>합친 맵 전체</b>에
-   * {@code encryptSecrets} 를 적용한다).
+   * <p><b>이 테스트가 덮지 <i>못하는</i> 것(이 태스크 이전 기준).</b> "암호화 판정이 프리픽스가 아니라 {@code SECRET_KEYS} 에서 나온다"는
+   * 성질은 그때는 <b>도달 불가</b>였다 — 테넌트 오버라이드 허용 12키 중 비밀 키는 {@code smtp.password} 하나뿐이라, 프리픽스로 판정해도 결과가
+   * 같았다. <b>이 태스크가 그 전제를 깼다</b>: {@code SettingsOverridePolicy} javadoc 이 예고한 BYO 키 정책대로 {@code
+   * ai.api_key}/{@code ai.cli_oauth_token} 이 열려, SMTP 가 아닌 비밀 키가 이제 테넌트 평면에 실재한다. 그 성질을 직접 증명하는 전용
+   * 테스트는 아직 없다 — 판정의 근거는 여전히 코드에서 읽힌다({@code encryptIfSecret} 의 첫 줄이 {@code
+   * SECRET_KEYS.contains(key)} 이고, 두 쓰기 경로가 부분맵이 아니라 <b>합친 맵 전체</b>에 {@code encryptSecrets} 를
+   * 적용한다).
    */
   @Test
   void SMTP_와_비_SMTP_키가_섞인_저장은_둘_다_반영된다() {
@@ -384,10 +365,9 @@ class SettingsWritePlaneTest extends IntegrationTestBase {
   /**
    * 이 클래스의 {@code testTenant} 를 채워 넣는 얇은 위임 — 본체는 {@code SettingsTestSupport} 다.
    *
-   * <p>본체가 저장소가 아니라 raw SQL 을 쓰도록 바뀌었다. 이 헬퍼가 답하는 질문은 "저장소가 무엇을
-   * 돌려주나"가 아니라 <b>"테이블에 무엇이 들어갔나"</b>(암호화·센티널 드롭의 전제 확인)이므로,
-   * 저장소를 지나면 언젠가 저장소가 값을 변형하는 날 그 변형이 전제 단언에 그대로 반영되어
-   * 아무것도 검증하지 못한다.
+   * <p>본체가 저장소가 아니라 raw SQL 을 쓰도록 바뀌었다. 이 헬퍼가 답하는 질문은 "저장소가 무엇을 돌려주나"가 아니라 <b>"테이블에 무엇이
+   * 들어갔나"</b>(암호화·센티널 드롭의 전제 확인)이므로, 저장소를 지나면 언젠가 저장소가 값을 변형하는 날 그 변형이 전제 단언에 그대로 반영되어 아무것도 검증하지
+   * 못한다.
    */
   private java.util.Optional<String> tenantRawValue(String key) {
     return SettingsTestSupport.rawTenantSettingValue(dsl, transactionTemplate, testTenant, key);

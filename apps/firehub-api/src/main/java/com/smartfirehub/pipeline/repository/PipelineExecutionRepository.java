@@ -116,8 +116,8 @@ public class PipelineExecutionRepository {
   }
 
   /**
-   * 파이프라인 실행 상태를 갱신한다. {@code errorMessage}가 주어지면 스텝 실행 레코드 생성 전에 발생한 최상위 예외의 메시지를 함께
-   * 저장한다(#517) — 기존에는 FAILED 상태만 기록되고 원인이 완전히 유실됐다.
+   * 파이프라인 실행 상태를 갱신한다. {@code errorMessage}가 주어지면 스텝 실행 레코드 생성 전에 발생한 최상위 예외의 메시지를 함께 저장한다(#517) —
+   * 기존에는 FAILED 상태만 기록되고 원인이 완전히 유실됐다.
    */
   public void updateExecutionStatus(
       Long executionId,
@@ -154,9 +154,8 @@ public class PipelineExecutionRepository {
   /**
    * 실행 중인 스텝의 진척만 갱신한다 — 상태는 건드리지 않는다(#691).
    *
-   * <p>{@link #updateStepExecution} 은 상태를 반드시 쓰게 되어 있어, 진척을 남기려다 호출부가
-   * 관리하는 RUNNING/FAILED 전이를 덮어쓸 수 있다. 오래 도는 스텝(AI_CLASSIFY 는 배치 174개 ×
-   * 45초)이 배치마다 부르는 경로이므로 output_rows 와 log 만 좁게 갱신한다.
+   * <p>{@link #updateStepExecution} 은 상태를 반드시 쓰게 되어 있어, 진척을 남기려다 호출부가 관리하는 RUNNING/FAILED 전이를 덮어쓸 수
+   * 있다. 오래 도는 스텝(AI_CLASSIFY 는 배치 174개 × 45초)이 배치마다 부르는 경로이므로 output_rows 와 log 만 좁게 갱신한다.
    */
   public void updateStepProgress(Long stepExecId, Integer outputRows, String log) {
     dsl.update(PIPELINE_STEP_EXECUTION)
@@ -169,8 +168,8 @@ public class PipelineExecutionRepository {
   /**
    * 증분 스텝이 이번 실행에 주입한 책갈피 값을 기록한다(전체 읽기였으면 null).
    *
-   * <p>{@link #updateStepExecution} 에 인자로 얹지 않는다 — 그쪽은 상태를 반드시 쓰므로, "실행 시작 직전에
-   * 주입값만 남긴다"는 이 호출이 RUNNING/FAILED 전이와 얽히면 안 된다.
+   * <p>{@link #updateStepExecution} 에 인자로 얹지 않는다 — 그쪽은 상태를 반드시 쓰므로, "실행 시작 직전에 주입값만 남긴다"는 이 호출이
+   * RUNNING/FAILED 전이와 얽히면 안 된다.
    */
   public void setInjectedLastRunAt(Long stepExecId, java.time.OffsetDateTime value) {
     dsl.update(PIPELINE_STEP_EXECUTION)

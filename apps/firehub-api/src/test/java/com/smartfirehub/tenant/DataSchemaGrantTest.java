@@ -24,23 +24,18 @@ import org.springframework.dao.DataAccessException;
 /**
  * 런타임 롤 전환이 data 스키마를 깨지 않는지 검증한다.
  *
- * <p>연쇄가 세 겹이다. (1) DataTableService 는 런타임에 data 스키마에 CREATE TABLE 을 하므로
- * app_tenant 에게 CREATE 권한이 있어야 한다. (2) 새 테이블의 소유자가 app_tenant 가 되므로 V32 의
- * `ALTER DEFAULT PRIVILEGES FOR ROLE app` 이 적용되지 않아, 대응 기본 권한이 없으면
- * pipeline_executor 가 신규 데이터셋 테이블을 보지 못한다. (3) V83 "이전"부터 존재하던(=소유자가
- * app 인) data 테이블은 DML 권한만으로는 부족하다 — DROP/ALTER/RENAME/TRUNCATE 는 소유자만
- * 실행할 수 있으므로, V86 이 소유권을 app_tenant 로 이전해야 한다.
+ * <p>연쇄가 세 겹이다. (1) DataTableService 는 런타임에 data 스키마에 CREATE TABLE 을 하므로 app_tenant 에게 CREATE 권한이
+ * 있어야 한다. (2) 새 테이블의 소유자가 app_tenant 가 되므로 V32 의 `ALTER DEFAULT PRIVILEGES FOR ROLE app` 이 적용되지 않아,
+ * 대응 기본 권한이 없으면 pipeline_executor 가 신규 데이터셋 테이블을 보지 못한다. (3) V83 "이전"부터 존재하던(=소유자가 app 인) data 테이블은
+ * DML 권한만으로는 부족하다 — DROP/ALTER/RENAME/TRUNCATE 는 소유자만 실행할 수 있으므로, V86 이 소유권을 app_tenant 로 이전해야 한다.
  *
- * <p>{@link #runtimeCanAlterAndTruncatePreExistingOwnerOwnedTable()} 가 바로 (3)의 회귀 가드다.
- * 기존 버전은 프로브 테이블을 "런타임 롤(app_tenant)"로 생성했기 때문에 프로브가 처음부터
- * app_tenant 소유가 되어, V86 이 고치는 버그(소유자가 app 인 기존 테이블) 를 전혀 검증하지
- * 못했다. 이 테스트는 프로브를 Flyway 소유자 자격증명(app)으로 직접 JDBC 접속해 생성함으로써
- * "V86 이전부터 존재하던 테이블"의 조건을 재현한다.
+ * <p>{@link #runtimeCanAlterAndTruncatePreExistingOwnerOwnedTable()} 가 바로 (3)의 회귀 가드다. 기존 버전은 프로브
+ * 테이블을 "런타임 롤(app_tenant)"로 생성했기 때문에 프로브가 처음부터 app_tenant 소유가 되어, V86 이 고치는 버그(소유자가 app 인 기존 테이블) 를
+ * 전혀 검증하지 못했다. 이 테스트는 프로브를 Flyway 소유자 자격증명(app)으로 직접 JDBC 접속해 생성함으로써 "V86 이전부터 존재하던 테이블"의 조건을 재현한다.
  *
- * <p>주의: Flyway 는 컨텍스트 부팅 시 한 번만 실행되므로, 이 테스트가 만드는 프로브는 그 시점
- * 이후에 생겨 V86 이 이미 손대지 못한 테이블이다. 소유권 이전을 "직접 SQL로 재현"하면 V86 파일이
- * 삭제되거나 깨져도 테스트가 계속 통과하는(=가드가 아닌) 상태가 되므로, 재현이 아니라 V86
- * 마이그레이션 리소스 파일을 그대로 읽어 실행한다 — 그래야 V86 자체가 회귀 검증 대상이 된다.
+ * <p>주의: Flyway 는 컨텍스트 부팅 시 한 번만 실행되므로, 이 테스트가 만드는 프로브는 그 시점 이후에 생겨 V86 이 이미 손대지 못한 테이블이다. 소유권 이전을
+ * "직접 SQL로 재현"하면 V86 파일이 삭제되거나 깨져도 테스트가 계속 통과하는(=가드가 아닌) 상태가 되므로, 재현이 아니라 V86 마이그레이션 리소스 파일을 그대로 읽어
+ * 실행한다 — 그래야 V86 자체가 회귀 검증 대상이 된다.
  */
 class DataSchemaGrantTest extends IntegrationTestBase {
 
@@ -142,8 +137,7 @@ class DataSchemaGrantTest extends IntegrationTestBase {
 
       assertThatThrownBy(
               () ->
-                  dsl.execute(
-                      "ALTER TABLE data." + OWNER_OWNED_TABLE + " ADD COLUMN tmp_col text"))
+                  dsl.execute("ALTER TABLE data." + OWNER_OWNED_TABLE + " ADD COLUMN tmp_col text"))
           .as("V86 실행 전에는 소유자가 아니므로 ALTER 가 실패해야 한다")
           .isInstanceOf(DataAccessException.class);
 

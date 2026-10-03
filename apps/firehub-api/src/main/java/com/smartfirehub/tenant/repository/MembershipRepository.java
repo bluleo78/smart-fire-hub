@@ -19,8 +19,8 @@ import org.springframework.stereotype.Repository;
 /**
  * 사용자-테넌트 멤버십 조회.
  *
- * <p>membership/tenant 는 전역(RLS 미적용) 테이블이다. 테넌트 선택 전에 조회해야 하므로 RLS 를 걸면
- * 순환이 된다 — GUC 가 없어 0행이 나오면 어떤 테넌트를 선택할 수 있는지 알 수 없다.
+ * <p>membership/tenant 는 전역(RLS 미적용) 테이블이다. 테넌트 선택 전에 조회해야 하므로 RLS 를 걸면 순환이 된다 — GUC 가 없어 0행이 나오면
+ * 어떤 테넌트를 선택할 수 있는지 알 수 없다.
  */
 @Repository
 @RequiredArgsConstructor
@@ -29,9 +29,8 @@ public class MembershipRepository {
   /**
    * 회원가입 시 자동 가입되는 기본 테넌트. V81 마이그레이션에서 시드된 tenant.id=1(slug=default).
    *
-   * <p>자가 가입 사용자가 합류하는 기본 워크스페이스. 회원가입의 역할 조회도 이 테넌트 컨텍스트에서
-   * 일어난다({@code AuthService.signup} 참고) — public 으로 승격해 트랜잭션 밖에서 미리 세팅할 수
-   * 있게 한다.
+   * <p>자가 가입 사용자가 합류하는 기본 워크스페이스. 회원가입의 역할 조회도 이 테넌트 컨텍스트에서 일어난다({@code AuthService.signup} 참고) —
+   * public 으로 승격해 트랜잭션 밖에서 미리 세팅할 수 있게 한다.
    */
   public static final long DEFAULT_TENANT_ID = 1L;
 
@@ -61,9 +60,7 @@ public class MembershipRepository {
         .and(T_STATUS.eq("ACTIVE"))
         .orderBy(T_ID)
         .fetch(
-            r ->
-                new MembershipResponse(
-                    r.get(T_ID), r.get(T_SLUG), r.get(T_NAME), r.get(M_ROLE)));
+            r -> new MembershipResponse(r.get(T_ID), r.get(T_SLUG), r.get(T_NAME), r.get(M_ROLE)));
   }
 
   /** 해당 사용자가 그 테넌트의 ACTIVE 멤버이고 테넌트도 ACTIVE 인지. 테넌트 선택/갱신 시의 게이트. */
@@ -82,9 +79,8 @@ public class MembershipRepository {
   /**
    * 회원가입한 사용자를 기본 테넌트(id=1)에 ACTIVE MEMBER 로 가입시킨다.
    *
-   * <p>왜: 멤버십이 하나도 없는 사용자는 어떤 테넌트도 선택할 수 없어 테넌트 미선택 토큰만 발급받고,
-   * RLS 가 모든 행을 막아 모든 API 에서 403 을 받는다(잠김). 자가 가입 사용자를 잠그지 않기 위해
-   * 가입과 동시에 기본 워크스페이스에 합류시킨다. 운영자가 다른 테넌트로 프로비저닝하는 것은 이후
+   * <p>왜: 멤버십이 하나도 없는 사용자는 어떤 테넌트도 선택할 수 없어 테넌트 미선택 토큰만 발급받고, RLS 가 모든 행을 막아 모든 API 에서 403 을
+   * 받는다(잠김). 자가 가입 사용자를 잠그지 않기 위해 가입과 동시에 기본 워크스페이스에 합류시킨다. 운영자가 다른 테넌트로 프로비저닝하는 것은 이후
    * 단계(operator-driven provisioning)에서 다룬다 — 이 메서드는 그 대상이 아니다.
    */
   public void createDefaultMembership(Long userId) {

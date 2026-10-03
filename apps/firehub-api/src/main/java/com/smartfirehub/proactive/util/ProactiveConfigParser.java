@@ -24,9 +24,9 @@ public class ProactiveConfigParser {
   /**
    * 지원되는 전달 채널 타입 화이트리스트 (#594).
    *
-   * <p>실제 {@code DeliveryChannel} 구현체가 존재하는 채널만 등록한다. 이 목록에 없는 채널(예: "SMS")로 job을 생성/수정하면
-   * 스케줄대로 실행되어도 어떤 채널로도 전달되지 않고 조용히 사라지는 "성공한 것처럼 보이는 무동작" 결함이 되므로, API 계층에서
-   * 저장 이전에 즉시 거부한다. WEBHOOK은 별도 트리거 로직으로 처리되지만 config.channels 표기 자체는 허용한다.
+   * <p>실제 {@code DeliveryChannel} 구현체가 존재하는 채널만 등록한다. 이 목록에 없는 채널(예: "SMS")로 job을 생성/수정하면 스케줄대로
+   * 실행되어도 어떤 채널로도 전달되지 않고 조용히 사라지는 "성공한 것처럼 보이는 무동작" 결함이 되므로, API 계층에서 저장 이전에 즉시 거부한다. WEBHOOK은 별도
+   * 트리거 로직으로 처리되지만 config.channels 표기 자체는 허용한다.
    */
   private static final Set<String> SUPPORTED_CHANNEL_TYPES = Set.of("CHAT", "EMAIL", "WEBHOOK");
 
@@ -101,9 +101,9 @@ public class ProactiveConfigParser {
   }
 
   /**
-   * 채널 타입 화이트리스트 검증 (#594). 구/신 형식 모두에서 파싱된 타입 문자열 목록을 받아 지원되지 않는 타입이 하나라도
-   * 있으면 IllegalArgumentException을 던진다. AI 에이전트(smart-job-manager)가 프롬프트 규칙을 우회해 임의 채널
-   * 문자열("SMS" 등)을 그대로 전달하더라도, 서버 저장 이전에 여기서 최종 차단된다.
+   * 채널 타입 화이트리스트 검증 (#594). 구/신 형식 모두에서 파싱된 타입 문자열 목록을 받아 지원되지 않는 타입이 하나라도 있으면
+   * IllegalArgumentException을 던진다. AI 에이전트(smart-job-manager)가 프롬프트 규칙을 우회해 임의 채널 문자열("SMS" 등)을 그대로
+   * 전달하더라도, 서버 저장 이전에 여기서 최종 차단된다.
    */
   public static void validateChannelTypes(List<String> channelTypes) {
     if (channelTypes == null) return;

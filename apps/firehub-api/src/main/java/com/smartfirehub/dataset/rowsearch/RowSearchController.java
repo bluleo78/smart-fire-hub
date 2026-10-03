@@ -51,7 +51,8 @@ public class RowSearchController {
   /** 행 검색(하이브리드·의미·키워드) — 원본 행 조회 권한과 같은 data:read 로 보호한다. */
   @PostMapping("/rows/search")
   @RequirePermission("data:read")
-  public RowSearchResponse searchRows(@PathVariable Long id, @RequestBody RowSearchRequest request) {
+  public RowSearchResponse searchRows(
+      @PathVariable Long id, @RequestBody RowSearchRequest request) {
     return rowSearchService.search(id, request);
   }
 }

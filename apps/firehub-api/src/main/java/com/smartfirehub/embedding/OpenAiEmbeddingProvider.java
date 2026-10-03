@@ -8,8 +8,8 @@ import org.springframework.web.reactive.function.client.WebClient;
 /**
  * OpenAI 임베딩 API(/v1/embeddings)를 호출하는 provider.
  *
- * <p>WebClient 에는 팩토리에서 baseUrl 과 {@code Authorization: Bearer <api_key>} 헤더가 이미 주입돼 있다.
- * native 차원 그대로 받는다(#713) — 차원은 저장 시 probe 로 측정해 설정 문서에 기록한다.
+ * <p>WebClient 에는 팩토리에서 baseUrl 과 {@code Authorization: Bearer <api_key>} 헤더가 이미 주입돼 있다. native 차원
+ * 그대로 받는다(#713) — 차원은 저장 시 probe 로 측정해 설정 문서에 기록한다.
  */
 public class OpenAiEmbeddingProvider implements EmbeddingProvider {
   private final WebClient webClient;

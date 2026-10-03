@@ -16,9 +16,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 /**
  * 프로비저닝된 신규 테넌트가 원본이 아니라 <b>자기 사본</b>의 내장 양식을 본다는 것을 고정한다.
  *
- * <p>"원본이 안 보인다" 를 다른 테넌트의 행 수로 세려는 유혹이 있는데, RLS 아래에서는 그 조회가
- * 항상 0 이라 단언이 공허해진다. 그래서 각 테넌트를 <b>자기 컨텍스트에서</b> 세고, 두 집합의 id 가
- * 겹치지 않는지(= 복제된 별개 행인지)로 확인한다.
+ * <p>"원본이 안 보인다" 를 다른 테넌트의 행 수로 세려는 유혹이 있는데, RLS 아래에서는 그 조회가 항상 0 이라 단언이 공허해진다. 그래서 각 테넌트를 <b>자기
+ * 컨텍스트에서</b> 세고, 두 집합의 id 가 겹치지 않는지(= 복제된 별개 행인지)로 확인한다.
  */
 class ReportTemplateTenantTest extends IntegrationTestBase {
 

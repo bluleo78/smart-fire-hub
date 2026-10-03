@@ -10,8 +10,7 @@ import java.util.Map;
 /**
  * 데이터셋의 검색 대상 필드 목록(column_order 순). 색인 텍스트 조립과 설정 해시를 한곳에서 정의한다.
  *
- * <p>텍스트 라벨에 표시명을 쓰므로 표시명 변경은 데이터 행의 _updated_at 을 바꾸지 않아도 재색인이 필요하다 — 그래서
- * configHash 에 표시명을 포함한다.
+ * <p>텍스트 라벨에 표시명을 쓰므로 표시명 변경은 데이터 행의 _updated_at 을 바꾸지 않아도 재색인이 필요하다 — 그래서 configHash 에 표시명을 포함한다.
  */
 public record SearchConfig(List<Field> fields) {
 
@@ -59,7 +58,8 @@ public record SearchConfig(List<Field> fields) {
   public static String sha256(String s) {
     try {
       return HexFormat.of()
-          .formatHex(MessageDigest.getInstance("SHA-256").digest(s.getBytes(StandardCharsets.UTF_8)));
+          .formatHex(
+              MessageDigest.getInstance("SHA-256").digest(s.getBytes(StandardCharsets.UTF_8)));
     } catch (NoSuchAlgorithmException e) {
       throw new IllegalStateException(e);
     }

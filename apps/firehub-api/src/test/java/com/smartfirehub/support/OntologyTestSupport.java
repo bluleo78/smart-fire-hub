@@ -31,7 +31,9 @@ public final class OntologyTestSupport {
   // 주어진 상태의 온톨로지를 만들어 id를 반환한다. archived는 생성으로 도달할 수 없으므로
   // (OntologyService.createOntology가 거부) active로 만든 뒤 상태 전이로 우회한다.
   public static long createWithStatus(OntologyService service, String domain, String status) {
-    long id = service.createOntology(createRequest(domain, "archived".equals(status) ? "active" : status));
+    long id =
+        service.createOntology(
+            createRequest(domain, "archived".equals(status) ? "active" : status));
     if ("archived".equals(status)) {
       transitionTo(service, id, "archived");
     }

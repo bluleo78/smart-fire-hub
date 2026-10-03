@@ -65,8 +65,8 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * 이름을 지정할 수 있는 오버로드. (#647) 이름 중복 검증이 추가된 이후로는 같은 테스트 안에서 커넥션을 여러 개
-   * 만들 때 이름이 겹치면 안 되므로, 겹칠 가능성이 있는 호출부는 이 오버로드로 서로 다른 이름을 지정한다.
+   * 이름을 지정할 수 있는 오버로드. (#647) 이름 중복 검증이 추가된 이후로는 같은 테스트 안에서 커넥션을 여러 개 만들 때 이름이 겹치면 안 되므로, 겹칠 가능성이
+   * 있는 호출부는 이 오버로드로 서로 다른 이름을 지정한다.
    */
   private CreateApiConnectionRequest validReq(String baseUrl, String name) {
     return new CreateApiConnectionRequest(
@@ -369,8 +369,8 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
   private static final Table<?> PIPELINE_STEP = table(name("pipeline_step"));
 
   /**
-   * 테스트용 파이프라인 + API_CALL 스텝(주어진 apiConnectionId 참조)을 직접 INSERT 한다. 실제 서비스 경로(PipelineService)를
-   * 거치지 않고 최소 컬럼만 채워, getReferences가 보는 FK 관계(pipeline_step.api_connection_id)만 재현한다.
+   * 테스트용 파이프라인 + API_CALL 스텝(주어진 apiConnectionId 참조)을 직접 INSERT 한다. 실제 서비스 경로(PipelineService)를 거치지
+   * 않고 최소 컬럼만 채워, getReferences가 보는 FK 관계(pipeline_step.api_connection_id)만 재현한다.
    */
   private Long createPipelineWithApiCallStep(String pipelineName, Long apiConnectionId) {
     // pipeline/pipeline_step 모두 RLS(V96) 대상 — GUC는 트랜잭션 시작 시점에만 주입되므로
@@ -387,7 +387,8 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
                       dsl.insertInto(PIPELINE_STEP)
                           .set(field(name("pipeline_step", "pipeline_id"), Long.class), pipelineId)
                           .set(field(name("pipeline_step", "name"), String.class), "call-step")
-                          .set(field(name("pipeline_step", "script_type"), String.class), "API_CALL")
+                          .set(
+                              field(name("pipeline_step", "script_type"), String.class), "API_CALL")
                           .set(field(name("pipeline_step", "step_order"), Integer.class), 1)
                           .set(
                               field(name("pipeline_step", "api_connection_id"), Long.class),
@@ -411,7 +412,8 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
 
   @Test
   void getReferences_noReferences_returnsEmpty() {
-    ApiConnectionResponse created = apiConnectionService.create(validReq("https://noref.example.com"), testUserId);
+    ApiConnectionResponse created =
+        apiConnectionService.create(validReq("https://noref.example.com"), testUserId);
 
     ApiConnectionReferencesResponse refs = apiConnectionService.getReferences(created.id());
 
@@ -422,8 +424,10 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
 
   @Test
   void getReferences_withReferencingPipeline_returnsPipeline() {
-    ApiConnectionResponse created = apiConnectionService.create(validReq("https://ref.example.com"), testUserId);
-    Long pipelineId = createPipelineWithApiCallStep("inspector-fk-test-" + System.nanoTime(), created.id());
+    ApiConnectionResponse created =
+        apiConnectionService.create(validReq("https://ref.example.com"), testUserId);
+    Long pipelineId =
+        createPipelineWithApiCallStep("inspector-fk-test-" + System.nanoTime(), created.id());
 
     try {
       ApiConnectionReferencesResponse refs = apiConnectionService.getReferences(created.id());
@@ -456,8 +460,7 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
                 apiConnectionService.create(
                     validReq("https://dup-b.example.com", dupName), testUserId))
         .isInstanceOf(
-            com.smartfirehub.apiconnection.exception.ApiConnectionNameAlreadyExistsException
-                .class)
+            com.smartfirehub.apiconnection.exception.ApiConnectionNameAlreadyExistsException.class)
         .hasMessageContaining(dupName);
   }
 
@@ -488,8 +491,7 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
 
     assertThatThrownBy(() -> apiConnectionService.update(connB.id(), updateReq))
         .isInstanceOf(
-            com.smartfirehub.apiconnection.exception.ApiConnectionNameAlreadyExistsException
-                .class)
+            com.smartfirehub.apiconnection.exception.ApiConnectionNameAlreadyExistsException.class)
         .hasMessageContaining(nameA);
   }
 

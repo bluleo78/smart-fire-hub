@@ -23,9 +23,8 @@ public class MinioConfig {
   }
 
   /**
-   * presigned URL 서명 전용 클라이언트. 공개 엔드포인트로 빌드하므로 서명된 host가 브라우저 도달 가능하다.
-   * region을 명시해 서명 시 리전 조회 네트워크 호출을 생략한다 → 앱이 공개 host에 실제로 닿지 못해도
-   * 서명이 로컬에서 완결되어 유효하다.
+   * presigned URL 서명 전용 클라이언트. 공개 엔드포인트로 빌드하므로 서명된 host가 브라우저 도달 가능하다. region을 명시해 서명 시 리전 조회 네트워크
+   * 호출을 생략한다 → 앱이 공개 host에 실제로 닿지 못해도 서명이 로컬에서 완결되어 유효하다.
    */
   @Bean
   public MinioClient presignMinioClient(MinioProperties props) {

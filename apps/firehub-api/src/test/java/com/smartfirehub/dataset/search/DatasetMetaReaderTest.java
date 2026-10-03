@@ -18,7 +18,9 @@ class DatasetMetaReaderTest extends IntegrationTestBase {
   private Long createUser(String username) {
     return dsl.fetchOne(
             "INSERT INTO \"user\"(username, password, name, email) VALUES (?, 'x', ?, ?) RETURNING id",
-            username, username, username + "@example.com")
+            username,
+            username,
+            username + "@example.com")
         .get(0, Long.class);
   }
 
@@ -45,7 +47,11 @@ class DatasetMetaReaderTest extends IntegrationTestBase {
     dsl.execute(
         "INSERT INTO dataset_column(dataset_id, column_name, display_name, data_type, column_order)"
             + " VALUES (?,?,?,?,?)",
-        datasetId, columnName, displayName, "TEXT", order);
+        datasetId,
+        columnName,
+        displayName,
+        "TEXT",
+        order);
   }
 
   private void addTag(Long datasetId, String tagName) {
@@ -70,8 +76,7 @@ class DatasetMetaReaderTest extends IntegrationTestBase {
     assertThat(in.tableName()).isEqualTo("data.meta_a");
     assertThat(in.categoryName()).isEqualTo("화재안전통계");
     // 컬럼명과 표시명이 모두 columnNames 에 합쳐져 검색 텍스트를 풍부화한다.
-    assertThat(in.columnNames())
-        .containsExactlyInAnyOrder("fire_count", "화재건수", "region", "지역");
+    assertThat(in.columnNames()).containsExactlyInAnyOrder("fire_count", "화재건수", "region", "지역");
     assertThat(in.tagNames()).containsExactlyInAnyOrder("화재", "통계");
 
     // 빌더로 합본 시 모든 신호가 본문에 포함되는지 확인.

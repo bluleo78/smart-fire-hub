@@ -17,9 +17,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * GraphIngestService.stale() 통합 테스트 — 서로 다른 온톨로지에 바인딩된 데이터셋이 각자의 바인딩
- * 온톨로지 schema_version을 기준으로 개별 판정되는지 검증한다(#678 — 단일 "기본" 온톨로지 하드코딩
- * 제거).
+ * GraphIngestService.stale() 통합 테스트 — 서로 다른 온톨로지에 바인딩된 데이터셋이 각자의 바인딩 온톨로지 schema_version을 기준으로 개별
+ * 판정되는지 검증한다(#678 — 단일 "기본" 온톨로지 하드코딩 제거).
  */
 class GraphIngestServiceTest extends IntegrationTestBase {
 

@@ -45,8 +45,7 @@ public class ApiConnectionService {
   private final ApiConnectionRepository repository;
 
   /**
-   * 조회 전용 협력자. testConnection 이 조회를 자기호출하면 프록시가 우회돼 트랜잭션이 열리지 않으므로
-   * 별도 빈으로 분리해 두고 반드시 이 참조를 통해 호출한다.
+   * 조회 전용 협력자. testConnection 이 조회를 자기호출하면 프록시가 우회돼 트랜잭션이 열리지 않으므로 별도 빈으로 분리해 두고 반드시 이 참조를 통해 호출한다.
    */
   private final ApiConnectionReader reader;
 
@@ -155,8 +154,8 @@ public class ApiConnectionService {
    * 이 API 연결을 참조하는 파이프라인을 집계한다. 삭제 전 영향 범위 확인용(#605).
    *
    * <p>{@code pipeline_step.api_connection_id}는 FK(ON DELETE 절 없음 → 기본 RESTRICT)로 실제 삭제 시 참조가 있으면
-   * 409로 거부되지만, 그 전에는 확인할 방법이 없어 사전 고지가 정적 문구로만 이루어지던 문제(dataset-manager의
-   * {@code get_dataset_references}와 동일 패턴)를 해결한다.
+   * 409로 거부되지만, 그 전에는 확인할 방법이 없어 사전 고지가 정적 문구로만 이루어지던 문제(dataset-manager의 {@code
+   * get_dataset_references}와 동일 패턴)를 해결한다.
    */
   @Transactional(readOnly = true)
   public ApiConnectionReferencesResponse getReferences(Long id) {
@@ -194,11 +193,10 @@ public class ApiConnectionService {
    * 저장된 API 연결의 헬스체크 경로로 GET 호출하여 상태를 반환하고 DB에 반영한다. healthCheckPath가 없으면 baseUrl 자체를 GET. 5초 타임아웃.
    * DB 쓰기(updateHealthStatus)는 내부적으로 자체 트랜잭션을 사용하므로 본 메서드는 트랜잭션 밖에서 HTTP를 수행하여 커넥션 풀 점유를 피한다.
    *
-   * <p><b>이 메서드에 {@code @Transactional} 을 붙이면 안 된다.</b> 붙이는 순간 최대 5초짜리 외부
-   * HTTP 호출이 트랜잭션(=DB 커넥션) 안으로 들어와 커넥션 풀을 점유한다. 대신 조회는 별도 빈인
-   * {@link ApiConnectionReader} 를 통해 수행해 프록시를 실제로 통과시킨다(자기호출이면 프록시가
-   * 우회돼 트랜잭션이 열리지 않는다). DB 쓰기는 {@code repository.updateHealthStatus} 가 리포지토리
-   * 자신의 트랜잭션을 열어 처리하므로, HTTP 구간은 어떤 트랜잭션 안에도 들어가지 않는다.
+   * <p><b>이 메서드에 {@code @Transactional} 을 붙이면 안 된다.</b> 붙이는 순간 최대 5초짜리 외부 HTTP 호출이 트랜잭션(=DB 커넥션)
+   * 안으로 들어와 커넥션 풀을 점유한다. 대신 조회는 별도 빈인 {@link ApiConnectionReader} 를 통해 수행해 프록시를 실제로 통과시킨다(자기호출이면
+   * 프록시가 우회돼 트랜잭션이 열리지 않는다). DB 쓰기는 {@code repository.updateHealthStatus} 가 리포지토리 자신의 트랜잭션을 열어
+   * 처리하므로, HTTP 구간은 어떤 트랜잭션 안에도 들어가지 않는다.
    */
   public TestConnectionResponse testConnection(Long id) {
     // ── 여기까지가 트랜잭션 구간(각 호출이 reader 프록시에서 자체 트랜잭션을 연다) ──
@@ -313,9 +311,9 @@ public class ApiConnectionService {
    * (#532) 헬스체크 catch-all 예외를 감사 로그·UI에 노출 가능한 메시지로 변환한다.
    *
    * <p>Reactor의 {@code Mono#block(Duration)}은 타임아웃 시 "Timeout on blocking read for 5000000000
-   * NANOSECONDS" 같은 저수준 구현 디테일을 담은 {@link IllegalStateException}을 던진다. 관리자가 나노초 단위를 초로
-   * 환산해야만 의미를 파악할 수 있으므로, 타임아웃으로 판별되면 사람이 읽을 수 있는 고정 문구로 치환한다. 그 외
-   * 예외는 원래 메시지를 그대로 사용하되, 메시지가 없는 경우(getMessage()==null) 클래스 simple name으로 대체한다.
+   * NANOSECONDS" 같은 저수준 구현 디테일을 담은 {@link IllegalStateException}을 던진다. 관리자가 나노초 단위를 초로 환산해야만 의미를
+   * 파악할 수 있으므로, 타임아웃으로 판별되면 사람이 읽을 수 있는 고정 문구로 치환한다. 그 외 예외는 원래 메시지를 그대로 사용하되, 메시지가 없는
+   * 경우(getMessage()==null) 클래스 simple name으로 대체한다.
    */
   private static String toUserFacingErrorMessage(Exception e) {
     if (isTimeoutException(e)) {
@@ -325,10 +323,10 @@ public class ApiConnectionService {
   }
 
   /**
-   * 예외가 {@code .block(Duration.ofSeconds(5))} 타임아웃으로 인한 것인지 판별한다. Reactor-core는 전용 예외
-   * 타입 대신 {@link IllegalStateException}에 "Timeout on blocking read" 접두 메시지를 담아 던지므로 메시지
-   * 패턴으로 판별한다. Netty의 {@code ReadTimeoutException}은 클래스명 기준으로 판별하되, WebClient가 이를
-   * {@code WebClientRequestException}으로 감싸 던지는 경우가 있어 원인 체인(getCause)까지 한 단계 확인한다.
+   * 예외가 {@code .block(Duration.ofSeconds(5))} 타임아웃으로 인한 것인지 판별한다. Reactor-core는 전용 예외 타입 대신 {@link
+   * IllegalStateException}에 "Timeout on blocking read" 접두 메시지를 담아 던지므로 메시지 패턴으로 판별한다. Netty의 {@code
+   * ReadTimeoutException}은 클래스명 기준으로 판별하되, WebClient가 이를 {@code WebClientRequestException}으로 감싸 던지는
+   * 경우가 있어 원인 체인(getCause)까지 한 단계 확인한다.
    */
   private static boolean isTimeoutException(Exception e) {
     for (Throwable t = e; t != null; t = t.getCause()) {
@@ -522,9 +520,9 @@ public class ApiConnectionService {
   }
 
   /**
-   * 동일 테넌트 내 이름 중복을 막는다 (#647). {@code api_connection.name}에는 유니크 제약이 없어(V93 주석 참고) 같은
-   * 이름의 연결이 여러 개 생성될 수 있었고, 목록/삭제 확인 다이얼로그가 이름만으로 항목을 구분해 오삭제 위험이 있었다.
-   * RLS 정책이 테넌트 경계를 자동으로 걸어주므로 여기서는 이름만 검사하면 된다.
+   * 동일 테넌트 내 이름 중복을 막는다 (#647). {@code api_connection.name}에는 유니크 제약이 없어(V93 주석 참고) 같은 이름의 연결이 여러 개
+   * 생성될 수 있었고, 목록/삭제 확인 다이얼로그가 이름만으로 항목을 구분해 오삭제 위험이 있었다. RLS 정책이 테넌트 경계를 자동으로 걸어주므로 여기서는 이름만 검사하면
+   * 된다.
    */
   private void validateNameNotDuplicated(String name) {
     if (repository.existsByName(name)) {
@@ -555,5 +553,4 @@ public class ApiConnectionService {
             .orElseThrow(() -> new ApiConnectionException("ApiConnection not found: " + id));
     return record.get(field(name("api_connection", "auth_type"), String.class));
   }
-
 }

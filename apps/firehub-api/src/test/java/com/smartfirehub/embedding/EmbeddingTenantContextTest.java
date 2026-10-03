@@ -33,8 +33,8 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 
 /**
- * 배경 경로(행 검색 스윕이 쓰는 TenantScopedRunner, JobRunr 잡)가 요청 컨텍스트 없이도 <b>그 테넌트의</b> 설정으로
- * provider 를 만든다. 실제 팩토리 + 테넌트별 MockWebServer 두 대로, 요청이 어느 서버로 어떤 모델명으로 갔는지 본다.
+ * 배경 경로(행 검색 스윕이 쓰는 TenantScopedRunner, JobRunr 잡)가 요청 컨텍스트 없이도 <b>그 테넌트의</b> 설정으로 provider 를 만든다.
+ * 실제 팩토리 + 테넌트별 MockWebServer 두 대로, 요청이 어느 서버로 어떤 모델명으로 갔는지 본다.
  */
 class EmbeddingTenantContextTest extends IntegrationTestBase {
 
@@ -87,7 +87,10 @@ class EmbeddingTenantContextTest extends IntegrationTestBase {
         tenantB,
         () ->
             chunks.insertBatch(
-                docB.fileId(), docB.datasetId(), List.of(new Chunk(0, "b", 1)), List.of(axis(1024, 0)),
+                docB.fileId(),
+                docB.datasetId(),
+                List.of(new Chunk(0, "b", 1)),
+                List.of(axis(1024, 0)),
                 new EmbeddingSpace(EmbeddingDimension.D1024, "old")));
   }
 
@@ -103,7 +106,8 @@ class EmbeddingTenantContextTest extends IntegrationTestBase {
         tenant,
         () ->
             configService.store(
-                new EmbeddingConfig(EmbeddingProviderType.OLLAMA, model, server.url("/").toString(), "", 0),
+                new EmbeddingConfig(
+                    EmbeddingProviderType.OLLAMA, model, server.url("/").toString(), "", 0),
                 EmbeddingDimension.D1024,
                 null));
   }
@@ -123,7 +127,9 @@ class EmbeddingTenantContextTest extends IntegrationTestBase {
     // 영벡터는 코사인 HNSW 에서 의미가 없으므로 첫 칸만 1 인 벡터를 돌려준다.
     for (int i = 0; i < 1024; i++) vec.append(i == 0 ? "" : ",").append(i == 0 ? "1.0" : "0.0");
     SERVER_B.enqueue(
-        new MockResponse().setHeader("Content-Type", "application/json").setBody("{\"embeddings\":[" + vec + "]]}"));
+        new MockResponse()
+            .setHeader("Content-Type", "application/json")
+            .setBody("{\"embeddings\":[" + vec + "]]}"));
     int aBefore = SERVER_A.getRequestCount();
 
     TenantContext.clear(); // JobRunr 워커처럼 컨텍스트 없이 호출
@@ -144,7 +150,8 @@ class EmbeddingTenantContextTest extends IntegrationTestBase {
         tenantA,
         () ->
             configService.store(
-                new EmbeddingConfig(EmbeddingProviderType.OLLAMA, "model-a", "http://127.0.0.1:9", "", 0),
+                new EmbeddingConfig(
+                    EmbeddingProviderType.OLLAMA, "model-a", "http://127.0.0.1:9", "", 0),
                 EmbeddingDimension.D1024,
                 null));
 

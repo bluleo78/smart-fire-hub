@@ -6,8 +6,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-import com.smartfirehub.embedding.EmbeddingNotConfiguredException;
 import com.smartfirehub.embedding.EmbeddingDimension;
+import com.smartfirehub.embedding.EmbeddingNotConfiguredException;
 import com.smartfirehub.embedding.EmbeddingProvider;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
 import com.smartfirehub.embedding.EmbeddingSpace;
@@ -80,7 +80,8 @@ class DatasetEmbeddingServiceTest {
             new DatasetSourceTextBuilder.Input(
                 "화재", "설명", "fire", List.of("col"), List.of("tag"), "안전"));
     when(embeddingFactory.current()).thenThrow(new EmbeddingNotConfiguredException());
-    new DatasetEmbeddingService(embeddingRepo, metaReader, embeddingFactory).reindexEmbedding(7L, 1L);
+    new DatasetEmbeddingService(embeddingRepo, metaReader, embeddingFactory)
+        .reindexEmbedding(7L, 1L);
     verifyNoInteractions(embeddingRepo);
   }
 }

@@ -18,10 +18,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * <b>클래스 레벨 {@code @Transactional} 을 뺐다 — 의도된 것이다(P2-b Task 9).</b> 붙어 있으면
- * {@code pollDatasetChanges} 같은 테넌트 순회 경로가 테스트 트랜잭션에 얹혀 모든 순회 패스가
- * 테넌트 1 의 GUC 로 실행되고, 순회 배선을 지워도 통과하는 사각지대가 생긴다. 롤백이 사라졌으므로
- * 픽스처는 {@link #cleanup()} 에서 직접 지우고 유니크 컬럼은 실행마다 고유하게 만든다.
+ * <b>클래스 레벨 {@code @Transactional} 을 뺐다 — 의도된 것이다(P2-b Task 9).</b> 붙어 있으면 {@code
+ * pollDatasetChanges} 같은 테넌트 순회 경로가 테스트 트랜잭션에 얹혀 모든 순회 패스가 테넌트 1 의 GUC 로 실행되고, 순회 배선을 지워도 통과하는
+ * 사각지대가 생긴다. 롤백이 사라졌으므로 픽스처는 {@link #cleanup()} 에서 직접 지우고 유니크 컬럼은 실행마다 고유하게 만든다.
  */
 class TriggerEventServiceTest extends IntegrationTestBase {
 

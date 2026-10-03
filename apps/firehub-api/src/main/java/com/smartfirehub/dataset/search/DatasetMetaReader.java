@@ -16,8 +16,8 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * 데이터셋 메타를 검색 합본 빌더 입력({@link DatasetSourceTextBuilder.Input})으로 읽어온다. 없으면 null.
  *
- * <p>jOOQ 필드 참조 방식은 {@code DatasetRepository} 와 동일하게 {@code field(name(...))} 동적 참조를 쓴다
- * (생성 코드 의존 없이 public 스키마 테이블을 직접 가리킴).
+ * <p>jOOQ 필드 참조 방식은 {@code DatasetRepository} 와 동일하게 {@code field(name(...))} 동적 참조를 쓴다 (생성 코드 의존
+ * 없이 public 스키마 테이블을 직접 가리킴).
  */
 @Component
 // 배경 잡(JobRunr/@Async/@Scheduled)은 앰비언트 트랜잭션이 없다. RLS GUC 는 트랜잭션 시작

@@ -15,8 +15,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 /**
  * 신규 테넌트가 역할 0개로 잠기지 않는지 검증한다.
  *
- * <p>role 이 테넌트 스코프가 된 뒤로, 프로비저닝이 없으면 신규 테넌트의 사용자는 멤버십이
- * 있어도 권한 로딩이 0행이라 모든 API 가 403 이 된다.
+ * <p>role 이 테넌트 스코프가 된 뒤로, 프로비저닝이 없으면 신규 테넌트의 사용자는 멤버십이 있어도 권한 로딩이 0행이라 모든 API 가 403 이 된다.
  */
 class TenantProvisioningServiceTest extends IntegrationTestBase {
 

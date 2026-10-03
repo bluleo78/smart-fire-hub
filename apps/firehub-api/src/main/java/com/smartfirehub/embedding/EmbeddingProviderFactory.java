@@ -9,8 +9,8 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 
 /**
- * 현재 테넌트의 임베딩 설정 문서({@code embedding.config})로 활성 EmbeddingProvider 를 만든다(#713). 기대 차원은
- * 문서의 {@code dimension}(저장 시 probe 로 측정한 값)이고, 응답 차원이 다르면 provider 가 EmbeddingException 을 던진다.
+ * 현재 테넌트의 임베딩 설정 문서({@code embedding.config})로 활성 EmbeddingProvider 를 만든다(#713). 기대 차원은 문서의 {@code
+ * dimension}(저장 시 probe 로 측정한 값)이고, 응답 차원이 다르면 provider 가 EmbeddingException 을 던진다.
  */
 @Component
 public class EmbeddingProviderFactory {
@@ -34,8 +34,8 @@ public class EmbeddingProviderFactory {
   }
 
   /**
-   * 현재 테넌트 설정 기준 활성 provider. 미설정(행 없음·컨텍스트 없음)이면 {@link EmbeddingNotConfiguredException}.
-   * 배경 잡은 {@code TenantContext.runScoped} 안에서 불러야 해당 테넌트 설정을 읽는다.
+   * 현재 테넌트 설정 기준 활성 provider. 미설정(행 없음·컨텍스트 없음)이면 {@link EmbeddingNotConfiguredException}. 배경 잡은
+   * {@code TenantContext.runScoped} 안에서 불러야 해당 테넌트 설정을 읽는다.
    */
   public EmbeddingProvider current() {
     EmbeddingConfig cfg = configService.resolve().orElseThrow(EmbeddingNotConfiguredException::new);
@@ -43,8 +43,8 @@ public class EmbeddingProviderFactory {
   }
 
   /**
-   * 임베딩 호출용 WebClient 빌더 복사본. clone() 으로 공유 빌더의 독립 복사본을 만들어(스레드 안전, 공유 상태 비변형) baseUrl 과
-   * 상향된 응답 버퍼 한계를 적용한다. 배치 임베딩 응답이 기본 256KB 를 초과하는 것을 방지한다.
+   * 임베딩 호출용 WebClient 빌더 복사본. clone() 으로 공유 빌더의 독립 복사본을 만들어(스레드 안전, 공유 상태 비변형) baseUrl 과 상향된 응답 버퍼
+   * 한계를 적용한다. 배치 임베딩 응답이 기본 256KB 를 초과하는 것을 방지한다.
    */
   private WebClient.Builder embeddingWebClient(String baseUrl) {
     return webClientBuilder
@@ -57,8 +57,8 @@ public class EmbeddingProviderFactory {
   public static final int UNCHECKED_DIMENSION = 0;
 
   /**
-   * 설정 문서 하나로 provider 를 만든다. {@code expectedDimension} 은 응답 차원 검증 기준이다
-   * ({@link #UNCHECKED_DIMENSION} 이면 검증하지 않음 — probe 용).
+   * 설정 문서 하나로 provider 를 만든다. {@code expectedDimension} 은 응답 차원 검증 기준이다 ({@link
+   * #UNCHECKED_DIMENSION} 이면 검증하지 않음 — probe 용).
    */
   public EmbeddingProvider create(EmbeddingConfig cfg, int expectedDimension) {
     checkTarget(cfg);
@@ -82,10 +82,10 @@ public class EmbeddingProviderFactory {
   }
 
   /**
-   * 호출 직전 SSRF 가드 재검사. 저장 시점 가드만으로는 저장 뒤의 변화(DNS 재바인딩, 운영자의 허용 목록 축소, 문서 직접
-   * 조작)를 막지 못한다 — ApiCallExecutor 가 실행마다 URL 을 다시 검증하는 것과 같은 이유다. provider 를 만드는 유일한
-   * 지점이라 적재·재임베딩·검색·probe 가 모두 여기를 지난다. 거부는 EmbeddingException(원인 보존)으로 바꿔 호출 경로의
-   * 기존 실패 처리(적재 FAILED, 검색 오류, 연결 테스트 400)를 그대로 탄다.
+   * 호출 직전 SSRF 가드 재검사. 저장 시점 가드만으로는 저장 뒤의 변화(DNS 재바인딩, 운영자의 허용 목록 축소, 문서 직접 조작)를 막지 못한다 —
+   * ApiCallExecutor 가 실행마다 URL 을 다시 검증하는 것과 같은 이유다. provider 를 만드는 유일한 지점이라 적재·재임베딩·검색·probe 가 모두
+   * 여기를 지난다. 거부는 EmbeddingException(원인 보존)으로 바꿔 호출 경로의 기존 실패 처리(적재 FAILED, 검색 오류, 연결 테스트 400)를 그대로
+   * 탄다.
    */
   private void checkTarget(EmbeddingConfig cfg) {
     try {

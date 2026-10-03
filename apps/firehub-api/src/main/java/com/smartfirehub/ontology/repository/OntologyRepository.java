@@ -35,8 +35,10 @@ public class OntologyRepository {
   private static final Table<?> ONTOLOGY = table(name("ontology"));
   private static final Field<String> O_DOMAIN = field(name("ontology", "domain"), String.class);
   private static final Field<Long> O_ID = field(name("ontology", "id"), Long.class);
-  private static final Field<Integer> O_SCHEMA_VERSION = field(name("ontology", "schema_version"), Integer.class);
-  private static final Field<OffsetDateTime> O_UPDATED_AT = field(name("ontology", "updated_at"), OffsetDateTime.class);
+  private static final Field<Integer> O_SCHEMA_VERSION =
+      field(name("ontology", "schema_version"), Integer.class);
+  private static final Field<OffsetDateTime> O_UPDATED_AT =
+      field(name("ontology", "updated_at"), OffsetDateTime.class);
   private static final Field<String> O_STATUS = field(name("ontology", "status"), String.class);
 
   // 목록 요약의 카운트 조인 대상. dataset_ontology는 바인딩된 데이터셋 수를 센다.
@@ -55,32 +57,51 @@ public class OntologyRepository {
 
   private static final Table<?> ENTITY_TYPE = table(name("ontology_entity_type"));
   private static final Field<Long> ET_ID = field(name("ontology_entity_type", "id"), Long.class);
-  private static final Field<Long> ET_ONTOLOGY_ID = field(name("ontology_entity_type", "ontology_id"), Long.class);
-  private static final Field<String> ET_TYPE = field(name("ontology_entity_type", "type"), String.class);
-  private static final Field<String> ET_DESC = field(name("ontology_entity_type", "description"), String.class);
-  private static final Field<String> ET_NAMING = field(name("ontology_entity_type", "naming"), String.class);
-  private static final Field<String> ET_RES = field(name("ontology_entity_type", "resolution"), String.class);
-  private static final Field<Integer> ET_ORDER = field(name("ontology_entity_type", "sort_order"), Integer.class);
+  private static final Field<Long> ET_ONTOLOGY_ID =
+      field(name("ontology_entity_type", "ontology_id"), Long.class);
+  private static final Field<String> ET_TYPE =
+      field(name("ontology_entity_type", "type"), String.class);
+  private static final Field<String> ET_DESC =
+      field(name("ontology_entity_type", "description"), String.class);
+  private static final Field<String> ET_NAMING =
+      field(name("ontology_entity_type", "naming"), String.class);
+  private static final Field<String> ET_RES =
+      field(name("ontology_entity_type", "resolution"), String.class);
+  private static final Field<Integer> ET_ORDER =
+      field(name("ontology_entity_type", "sort_order"), Integer.class);
 
   private static final Table<?> ENTITY_PROP = table(name("ontology_entity_property"));
-  private static final Field<Long> EP_TYPE_ID = field(name("ontology_entity_property", "entity_type_id"), Long.class);
-  private static final Field<String> EP_NAME = field(name("ontology_entity_property", "name"), String.class);
-  private static final Field<String> EP_DESC = field(name("ontology_entity_property", "description"), String.class);
-  private static final Field<String> EP_DTYPE = field(name("ontology_entity_property", "data_type"), String.class);
-  private static final Field<String> EP_UNIT = field(name("ontology_entity_property", "unit"), String.class);
-  private static final Field<Integer> EP_ORDER = field(name("ontology_entity_property", "sort_order"), Integer.class);
+  private static final Field<Long> EP_TYPE_ID =
+      field(name("ontology_entity_property", "entity_type_id"), Long.class);
+  private static final Field<String> EP_NAME =
+      field(name("ontology_entity_property", "name"), String.class);
+  private static final Field<String> EP_DESC =
+      field(name("ontology_entity_property", "description"), String.class);
+  private static final Field<String> EP_DTYPE =
+      field(name("ontology_entity_property", "data_type"), String.class);
+  private static final Field<String> EP_UNIT =
+      field(name("ontology_entity_property", "unit"), String.class);
+  private static final Field<Integer> EP_ORDER =
+      field(name("ontology_entity_property", "sort_order"), Integer.class);
   // 요소 단위 편집 API(PATCH/DELETE .../properties/{id})가 속성을 지목하는 안정 id.
-  private static final Field<Long> EP_ID = field(name("ontology_entity_property", "id"), Long.class);
+  private static final Field<Long> EP_ID =
+      field(name("ontology_entity_property", "id"), Long.class);
 
   private static final Table<?> RELATION = table(name("ontology_relation"));
   private static final Field<Long> R_ID = field(name("ontology_relation", "id"), Long.class);
-  private static final Field<Long> R_ONTOLOGY_ID = field(name("ontology_relation", "ontology_id"), Long.class);
+  private static final Field<Long> R_ONTOLOGY_ID =
+      field(name("ontology_relation", "ontology_id"), Long.class);
   // V80: subject/object는 타입 "이름"(TEXT)이 아니라 ontology_entity_type.id FK다.
-  private static final Field<Long> R_SUBJECT_ID = field(name("ontology_relation", "subject_type_id"), Long.class);
-  private static final Field<String> R_RELATION = field(name("ontology_relation", "relation"), String.class);
-  private static final Field<Long> R_OBJECT_ID = field(name("ontology_relation", "object_type_id"), Long.class);
-  private static final Field<String> R_DESC = field(name("ontology_relation", "description"), String.class);
-  private static final Field<Integer> R_ORDER = field(name("ontology_relation", "sort_order"), Integer.class);
+  private static final Field<Long> R_SUBJECT_ID =
+      field(name("ontology_relation", "subject_type_id"), Long.class);
+  private static final Field<String> R_RELATION =
+      field(name("ontology_relation", "relation"), String.class);
+  private static final Field<Long> R_OBJECT_ID =
+      field(name("ontology_relation", "object_type_id"), Long.class);
+  private static final Field<String> R_DESC =
+      field(name("ontology_relation", "description"), String.class);
+  private static final Field<Integer> R_ORDER =
+      field(name("ontology_relation", "sort_order"), Integer.class);
 
   // 지정한 온톨로지를 조회해 OntologyResponse로 조립한다(해당 ontology_id의 타입/관계만).
   public OntologyResponse findById(long ontologyId) {
@@ -101,23 +122,36 @@ public class OntologyRepository {
     Map<Long, List<OntologyResponse.Property>> propsByTypeId = new HashMap<>();
     dsl.select(EP_TYPE_ID, EP_NAME, EP_DESC, EP_DTYPE, EP_UNIT, EP_ID)
         .from(ENTITY_PROP)
-        .where(EP_TYPE_ID.in(
-            dsl.select(ET_ID).from(ENTITY_TYPE).where(ET_ONTOLOGY_ID.eq(ontologyId))))
+        .where(
+            EP_TYPE_ID.in(dsl.select(ET_ID).from(ENTITY_TYPE).where(ET_ONTOLOGY_ID.eq(ontologyId))))
         .orderBy(EP_TYPE_ID, EP_ORDER)
-        .forEach(pr -> propsByTypeId
-            .computeIfAbsent(pr.get(EP_TYPE_ID), k -> new ArrayList<>())
-            .add(new OntologyResponse.Property(
-                pr.get(EP_NAME), pr.get(EP_DESC), pr.get(EP_DTYPE), pr.get(EP_UNIT), pr.get(EP_ID))));
+        .forEach(
+            pr ->
+                propsByTypeId
+                    .computeIfAbsent(pr.get(EP_TYPE_ID), k -> new ArrayList<>())
+                    .add(
+                        new OntologyResponse.Property(
+                            pr.get(EP_NAME),
+                            pr.get(EP_DESC),
+                            pr.get(EP_DTYPE),
+                            pr.get(EP_UNIT),
+                            pr.get(EP_ID))));
 
     List<OntologyResponse.EntityType> entities =
         dsl.select(ET_ID, ET_TYPE, ET_DESC, ET_NAMING, ET_RES)
             .from(ENTITY_TYPE)
             .where(ET_ONTOLOGY_ID.eq(ontologyId)) // ← 다중 온톨로지: 자기 타입만
             .orderBy(ET_ORDER)
-            .fetch(r -> new OntologyResponse.EntityType(
-                r.get(ET_TYPE), r.get(ET_DESC), r.get(ET_NAMING), r.get(ET_RES),
-                // 프로퍼티가 하나도 없는 타입도 빈 목록이어야 한다(기존 계약 — null 아님).
-                propsByTypeId.getOrDefault(r.get(ET_ID), List.of()), r.get(ET_ID)));
+            .fetch(
+                r ->
+                    new OntologyResponse.EntityType(
+                        r.get(ET_TYPE),
+                        r.get(ET_DESC),
+                        r.get(ET_NAMING),
+                        r.get(ET_RES),
+                        // 프로퍼티가 하나도 없는 타입도 빈 목록이어야 한다(기존 계약 — null 아님).
+                        propsByTypeId.getOrDefault(r.get(ET_ID), List.of()),
+                        r.get(ET_ID)));
 
     // V80 이후 관계는 타입 id를 들고 있다. 읽기 계약(OntologyResponse.Triple)은 이름을 유지해야 하므로
     // 위에서 이미 조회한 entities로 id→이름 맵을 만들어 되붙인다. 셀프 조인 2회보다 싸고 읽기 쉽다.
@@ -131,14 +165,16 @@ public class OntologyRepository {
             .from(RELATION)
             .where(R_ONTOLOGY_ID.eq(ontologyId)) // ← 다중 온톨로지: 자기 관계만
             .orderBy(R_ORDER)
-            .fetch(r -> new OntologyResponse.Triple(
-                typeNameById.get(r.get(R_SUBJECT_ID)),
-                r.get(R_RELATION),
-                typeNameById.get(r.get(R_OBJECT_ID)),
-                r.get(R_DESC),
-                r.get(R_ID),
-                r.get(R_SUBJECT_ID),
-                r.get(R_OBJECT_ID)));
+            .fetch(
+                r ->
+                    new OntologyResponse.Triple(
+                        typeNameById.get(r.get(R_SUBJECT_ID)),
+                        r.get(R_RELATION),
+                        typeNameById.get(r.get(R_OBJECT_ID)),
+                        r.get(R_DESC),
+                        r.get(R_ID),
+                        r.get(R_SUBJECT_ID),
+                        r.get(R_OBJECT_ID)));
 
     return new OntologyResponse(domain, schemaVersion, entities, relations);
   }
@@ -147,17 +183,13 @@ public class OntologyRepository {
   // 엔티티 수와 바인딩된 데이터셋 수는 상관 서브쿼리로 센다 — 온톨로지 행 수가 한 자릿수 규모라
   // 조인 폭발 걱정이 없고, GROUP BY보다 읽기 쉽다.
   public List<OntologySummary> findAllSummaries(String statusFilter) {
-    var entityCount =
-        field(
-            selectCount().from(ENTITY_TYPE).where(ET_ONTOLOGY_ID.eq(O_ID)));
-    var datasetCount =
-        field(
-            selectCount().from(DATASET_ONTOLOGY).where(DO_ONTOLOGY_ID.eq(O_ID)));
+    var entityCount = field(selectCount().from(ENTITY_TYPE).where(ET_ONTOLOGY_ID.eq(O_ID)));
+    var datasetCount = field(selectCount().from(DATASET_ONTOLOGY).where(DO_ONTOLOGY_ID.eq(O_ID)));
 
     var condition = statusFilter == null ? noCondition() : O_STATUS.eq(statusFilter);
 
-    return dsl
-        .select(O_ID, O_DOMAIN, O_SCHEMA_VERSION, O_STATUS, entityCount, datasetCount, O_UPDATED_AT)
+    return dsl.select(
+            O_ID, O_DOMAIN, O_SCHEMA_VERSION, O_STATUS, entityCount, datasetCount, O_UPDATED_AT)
         .from(ONTOLOGY)
         .where(condition)
         .orderBy(O_ID)
@@ -212,8 +244,13 @@ public class OntologyRepository {
   // 매핑까지 만든 데이터셋 1개가 2로 집계돼 관리 다이얼로그의 datasetCount(바인딩만)와 어긋난다.
   public int countReferences(long ontologyId) {
     return dsl.fetchCount(
-        dsl.select(DO_DATASET_ID).from(DATASET_ONTOLOGY).where(DO_ONTOLOGY_ID.eq(ontologyId))
-            .union(dsl.select(DM_DATASET_ID).from(DATASET_MAPPING).where(DM_ONTOLOGY_ID.eq(ontologyId))));
+        dsl.select(DO_DATASET_ID)
+            .from(DATASET_ONTOLOGY)
+            .where(DO_ONTOLOGY_ID.eq(ontologyId))
+            .union(
+                dsl.select(DM_DATASET_ID)
+                    .from(DATASET_MAPPING)
+                    .where(DM_ONTOLOGY_ID.eq(ontologyId))));
   }
 
   // 온톨로지 삭제. entity_type/relation/property는 ON DELETE CASCADE로 함께 지워진다.
@@ -245,8 +282,7 @@ public class OntologyRepository {
   private static long resolveTypeId(Map<String, Long> idByType, String typeName, String where) {
     Long id = idByType.get(typeName);
     if (id == null) {
-      throw new IllegalArgumentException(
-          "관계가 존재하지 않는 엔티티 타입을 참조합니다(" + where + "): " + typeName);
+      throw new IllegalArgumentException("관계가 존재하지 않는 엔티티 타입을 참조합니다(" + where + "): " + typeName);
     }
     return id;
   }
@@ -254,62 +290,63 @@ public class OntologyRepository {
   // 신규 도메인 온톨로지 생성 — ontology 행(schema_version=1) + entity_type + relation을 원자 삽입.
   // id는 IDENTITY(V77)로 자동 발급되어 반환된다. sort_order는 요청 배열 순서로 매긴다.
   public long createOntology(CreateOntologyRequest req) {
-    return dsl.transactionResult(cfg -> {
-      DSLContext tx = using(cfg);
-      long ontologyId =
-          tx.insertInto(ONTOLOGY)
-              .set(O_DOMAIN, req.domain())
-              .set(O_SCHEMA_VERSION, 1)
-              .set(O_STATUS, req.status())
-              .set(O_UPDATED_AT, currentOffsetDateTime())
-              .returning(O_ID)
-              .fetchOne()
-              .get(O_ID);
+    return dsl.transactionResult(
+        cfg -> {
+          DSLContext tx = using(cfg);
+          long ontologyId =
+              tx.insertInto(ONTOLOGY)
+                  .set(O_DOMAIN, req.domain())
+                  .set(O_SCHEMA_VERSION, 1)
+                  .set(O_STATUS, req.status())
+                  .set(O_UPDATED_AT, currentOffsetDateTime())
+                  .returning(O_ID)
+                  .fetchOne()
+                  .get(O_ID);
 
-      // 관계 삽입에 쓸 이름→id 맵. 엔티티 타입을 넣으면서 함께 모은다(별도 재조회 불필요).
-      Map<String, Long> idByType = new HashMap<>();
-      int etOrder = 0;
-      for (var e : req.entities()) {
-        long entityTypeId =
-            tx.insertInto(ENTITY_TYPE)
-                .set(ET_ONTOLOGY_ID, ontologyId)
-                .set(ET_TYPE, e.type())
-                .set(ET_DESC, e.description())
-                .set(ET_NAMING, e.naming())
-                .set(ET_RES, e.resolution())
-                .set(ET_ORDER, etOrder++)
-                .returning(ET_ID)
-                .fetchOne()
-                .get(ET_ID);
-        idByType.put(e.type(), entityTypeId);
-        int epOrder = 0;
-        List<OntologyResponse.Property> props = e.properties() == null ? List.of() : e.properties();
-        for (var p : props) {
-          tx.insertInto(ENTITY_PROP)
-              .set(EP_TYPE_ID, entityTypeId)
-              .set(EP_NAME, p.name())
-              .set(EP_DESC, p.description())
-              .set(EP_DTYPE, p.dataType())
-              .set(EP_UNIT, p.unit())
-              .set(EP_ORDER, epOrder++)
-              .execute();
-        }
-      }
+          // 관계 삽입에 쓸 이름→id 맵. 엔티티 타입을 넣으면서 함께 모은다(별도 재조회 불필요).
+          Map<String, Long> idByType = new HashMap<>();
+          int etOrder = 0;
+          for (var e : req.entities()) {
+            long entityTypeId =
+                tx.insertInto(ENTITY_TYPE)
+                    .set(ET_ONTOLOGY_ID, ontologyId)
+                    .set(ET_TYPE, e.type())
+                    .set(ET_DESC, e.description())
+                    .set(ET_NAMING, e.naming())
+                    .set(ET_RES, e.resolution())
+                    .set(ET_ORDER, etOrder++)
+                    .returning(ET_ID)
+                    .fetchOne()
+                    .get(ET_ID);
+            idByType.put(e.type(), entityTypeId);
+            int epOrder = 0;
+            List<OntologyResponse.Property> props =
+                e.properties() == null ? List.of() : e.properties();
+            for (var p : props) {
+              tx.insertInto(ENTITY_PROP)
+                  .set(EP_TYPE_ID, entityTypeId)
+                  .set(EP_NAME, p.name())
+                  .set(EP_DESC, p.description())
+                  .set(EP_DTYPE, p.dataType())
+                  .set(EP_UNIT, p.unit())
+                  .set(EP_ORDER, epOrder++)
+                  .execute();
+            }
+          }
 
-      // 관계는 엔티티 타입이 모두 삽입된 뒤에만 넣을 수 있다(FK).
-      int rOrder = 0;
-      for (var t : req.relations()) {
-        tx.insertInto(RELATION)
-            .set(R_ONTOLOGY_ID, ontologyId)
-            .set(R_SUBJECT_ID, resolveTypeId(idByType, t.subject(), "subject"))
-            .set(R_RELATION, t.relation())
-            .set(R_OBJECT_ID, resolveTypeId(idByType, t.object(), "object"))
-            .set(R_DESC, t.description())
-            .set(R_ORDER, rOrder++)
-            .execute();
-      }
-      return ontologyId;
-    });
+          // 관계는 엔티티 타입이 모두 삽입된 뒤에만 넣을 수 있다(FK).
+          int rOrder = 0;
+          for (var t : req.relations()) {
+            tx.insertInto(RELATION)
+                .set(R_ONTOLOGY_ID, ontologyId)
+                .set(R_SUBJECT_ID, resolveTypeId(idByType, t.subject(), "subject"))
+                .set(R_RELATION, t.relation())
+                .set(R_OBJECT_ID, resolveTypeId(idByType, t.object(), "object"))
+                .set(R_DESC, t.description())
+                .set(R_ORDER, rOrder++)
+                .execute();
+          }
+          return ontologyId;
+        });
   }
-
 }

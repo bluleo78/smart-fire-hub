@@ -7,7 +7,6 @@ import static com.smartfirehub.support.TenantRlsTestSupport.createActiveTenant;
 import static com.smartfirehub.support.TenantRlsTestSupport.deleteTenants;
 import static com.smartfirehub.support.TenantRlsTestSupport.runInTenantTransaction;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.settings.dto.ResolvedSettingResponse;
@@ -26,13 +25,12 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * SMTP 설정은 테넌트 전용이다(#712) — 플랫폼({@code system_settings}) 행을 어떤 경로에서도 읽지
- * 않고, 워크스페이스가 저장한 값이 없으면 미설정(빈 값)이다. 코드 기본값도 없다.
+ * SMTP 설정은 테넌트 전용이다(#712) — 플랫폼({@code system_settings}) 행을 어떤 경로에서도 읽지 않고, 워크스페이스가 저장한 값이 없으면
+ * 미설정(빈 값)이다. 코드 기본값도 없다.
  *
- * <p><b>비공허성</b>: V128 이 {@code smtp.*} 플랫폼 행을 지웠으므로, 아무것도 심지 않고 "미설정이다"를
- * 단언하면 플랫폼 폴백이 되살아나도 통과한다. 그래서 매 테스트 전에 6키 전부에 <b>표식 값</b>을
- * 플랫폼 행으로 직접 심고, 결과에 그 표식이 절대 나오지 않는지 본다. 정리는 심은 행 삭제다(V128
- * 이후 원래 행이 없다). {@code AiSettingsTenantOnlyTest}(#706)와 같은 형식이다.
+ * <p><b>비공허성</b>: V128 이 {@code smtp.*} 플랫폼 행을 지웠으므로, 아무것도 심지 않고 "미설정이다"를 단언하면 플랫폼 폴백이 되살아나도 통과한다.
+ * 그래서 매 테스트 전에 6키 전부에 <b>표식 값</b>을 플랫폼 행으로 직접 심고, 결과에 그 표식이 절대 나오지 않는지 본다. 정리는 심은 행 삭제다(V128 이후 원래
+ * 행이 없다). {@code AiSettingsTenantOnlyTest}(#706)와 같은 형식이다.
  */
 class SmtpSettingsTenantOnlyTest extends IntegrationTestBase {
 
@@ -58,7 +56,8 @@ class SmtpSettingsTenantOnlyTest extends IntegrationTestBase {
   @BeforeEach
   void plantPlatformRows() {
     // 전제: 표식 키 집합이 정책의 SMTP 6키와 정확히 같다(키가 늘면 이 테스트도 따라와야 한다).
-    assertThat(PLANTED.keySet()).containsExactlyInAnyOrderElementsOf(SettingsOverridePolicy.smtpKeys());
+    assertThat(PLANTED.keySet())
+        .containsExactlyInAnyOrderElementsOf(SettingsOverridePolicy.smtpKeys());
     PLANTED.forEach((key, value) -> upsertSystemSetting(dsl, key, value));
     // 전제: 실제로 심어졌다(심기가 조용히 실패하면 아래 단언이 전부 공허해진다).
     PLANTED.forEach((key, value) -> assertThat(rawSystemSettingValue(dsl, key)).isEqualTo(value));

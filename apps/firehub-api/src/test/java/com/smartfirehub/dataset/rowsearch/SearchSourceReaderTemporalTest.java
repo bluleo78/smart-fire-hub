@@ -24,8 +24,8 @@ import org.springframework.transaction.annotation.Transactional;
  * 텍스트 원문으로 돌려주는지 검증한다(#775 — #769 와 같은 결함의 행 검색 경로).
  *
  * <p>수정 전에는 {@code dsl.fetch} 가 읽은 {@code java.sql.Date}/{@code Timestamp} 를 그대로 응답에 실어 infinity →
- * 8994-08-17, 10000년 → 0000, BC 소실, 1582 전환 공백·DST 공백 이동이 오류 없이 일어났다. 행 검색 API 응답과 AI 에이전트의
- * {@code search_dataset_rows} 도구가 이 값을 그대로 쓴다.
+ * 8994-08-17, 10000년 → 0000, BC 소실, 1582 전환 공백·DST 공백 이동이 오류 없이 일어났다. 행 검색 API 응답과 AI 에이전트의 {@code
+ * search_dataset_rows} 도구가 이 값을 그대로 쓴다.
  *
  * <p><b>회귀 가드</b>: 정상 값은 수정 전 경로({@code dsl.fetch} + {@code record.get})로 읽은 Java 값과 JSON 이 바이트 단위로
  * 같아야 한다.
@@ -75,8 +75,15 @@ class SearchSourceReaderTemporalTest extends IntegrationTestBase {
     for (String[] r : rows) {
       Long id =
           dsl.fetchOne(
-                  "INSERT INTO " + DataSchema.qualify(TABLE) + " (label, d, ts) VALUES ('" + r[0] + "', "
-                      + r[1] + "::date, " + r[2] + "::timestamp) RETURNING id")
+                  "INSERT INTO "
+                      + DataSchema.qualify(TABLE)
+                      + " (label, d, ts) VALUES ('"
+                      + r[0]
+                      + "', "
+                      + r[1]
+                      + "::date, "
+                      + r[2]
+                      + "::timestamp) RETURNING id")
               .get(0, Long.class);
       ids.put(r[0], id);
     }
@@ -85,7 +92,8 @@ class SearchSourceReaderTemporalTest extends IntegrationTestBase {
     for (String l : List.of("big", "bc", "inf", "ninf")) abnormal.put(l, Set.of("d", "ts"));
     abnormal.put("gap", Set.of("d"));
     // Asia/Seoul 은 1988-05-08 02:00~03:00 이 DST 공백 — java.sql.Timestamp 가 시각을 민다. 그 밖 시간대는 정상 값
-    abnormal.put("dst", "Asia/Seoul".equals(TimeZone.getDefault().getID()) ? Set.of("ts") : Set.of());
+    abnormal.put(
+        "dst", "Asia/Seoul".equals(TimeZone.getDefault().getID()) ? Set.of("ts") : Set.of());
 
     // 수정 전 경로 — fetchRows 가 쓰던 그대로(dsl.fetch + record.get)
     preFix = new HashMap<>();
@@ -132,13 +140,15 @@ class SearchSourceReaderTemporalTest extends IntegrationTestBase {
     assertThat(rows.get(ids.get("bc")).get("d")).isEqualTo("0044-03-15 BC");
     assertThat(rows.get(ids.get("bc")).get("ts")).isEqualTo("0044-03-15 10:00:00 BC");
     assertThat(rows.get(ids.get("gap")).get("d")).isEqualTo("1582-10-10");
-    assertThat(objectMapper.writeValueAsString(rows.get(ids.get("ok1")).get("d"))).isEqualTo("\"2024-01-01\"");
+    assertThat(objectMapper.writeValueAsString(rows.get(ids.get("ok1")).get("d")))
+        .isEqualTo("\"2024-01-01\"");
   }
 
   @Test
   void fetchRows_emptyColumnsAndMissingIds_keepContract() {
     // 반환 컬럼이 없으면 id 만 조회하고, 없는 id 는 결과에 없다
-    Map<Long, Map<String, Object>> rows = reader.fetchRows(TABLE, List.of(), List.of(ids.get("inf"), -1L));
+    Map<Long, Map<String, Object>> rows =
+        reader.fetchRows(TABLE, List.of(), List.of(ids.get("inf"), -1L));
     assertThat(rows).containsOnlyKeys(ids.get("inf"));
     assertThat(rows.get(ids.get("inf"))).isEmpty();
   }

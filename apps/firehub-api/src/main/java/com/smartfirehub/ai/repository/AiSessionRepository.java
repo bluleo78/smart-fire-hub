@@ -17,29 +17,25 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * AI 세션 레포지토리. jOOQ DSLContext 기반 type-safe SQL로 ai_session 테이블을 관리한다. WEB(기본) 및 SLACK 채널 소스를 지원한다.
  *
- * <p>클래스 레벨 {@code @Transactional} 이 필요한 이유: V103 으로 {@code tenant_id} 가 생겼고
- * V104 에서 RLS 가 걸린다. 테넌트 값은 트랜잭션-로컬 GUC 이므로, 트랜잭션 없이 도는 경로에서는
- * 세션 INSERT 가 NOT NULL 위반으로 깨지고 조회는 조용히 0행이 된다. 전파 REQUIRED 이므로
- * 컨트롤러 경로의 동작은 불변이다.
+ * <p>클래스 레벨 {@code @Transactional} 이 필요한 이유: V103 으로 {@code tenant_id} 가 생겼고 V104 에서 RLS 가 걸린다. 테넌트
+ * 값은 트랜잭션-로컬 GUC 이므로, 트랜잭션 없이 도는 경로에서는 세션 INSERT 가 NOT NULL 위반으로 깨지고 조회는 조용히 0행이 된다. 전파 REQUIRED
+ * 이므로 컨트롤러 경로의 동작은 불변이다.
  *
- * <p><b>Slack inbound — 해소됨(P2-f Task 5).</b> 이 어노테이션은 트랜잭션이 없다는 문제만 푼다.
- * {@code SlackInboundService} 의 {@code @Async} 스레드에는 애초에
- * {@link com.smartfirehub.global.tenant.TenantContext} 가 없고(원 요청이 permitAll Slack 웹훅이라
- * 승계할 테넌트가 없다), {@code TenantAwareTransactionManager.doBegin} 은 컨텍스트가 null 이면
- * GUC 를 <b>아예 세팅하지 않는다</b>. 즉 트랜잭션만으로는 여전히 조회 0행 / INSERT NOT NULL
- * 위반이었다.
+ * <p><b>Slack inbound — 해소됨(P2-f Task 5).</b> 이 어노테이션은 트랜잭션이 없다는 문제만 푼다. {@code
+ * SlackInboundService} 의 {@code @Async} 스레드에는 애초에 {@link
+ * com.smartfirehub.global.tenant.TenantContext} 가 없고(원 요청이 permitAll Slack 웹훅이라 승계할 테넌트가 없다),
+ * {@code TenantAwareTransactionManager.doBegin} 은 컨텍스트가 null 이면 GUC 를 <b>아예 세팅하지 않는다</b>. 즉
+ * 트랜잭션만으로는 여전히 조회 0행 / INSERT NOT NULL 위반이었다.
  *
- * <p>이 구멍은 이제 <b>호출자 쪽에서</b> 막혀 있다. {@code SlackInboundService.dispatch} 가 본
- * 처리에 들어가기 전에 {@code SlackWorkspaceTenantResolver}(V106 의 {@code SECURITY DEFINER}
- * 함수, V95 패턴)로 {@code team_id → tenant_id} 를 해석하고 {@code TenantContext.runScoped} 안에서
- * 나머지를 돌린다. 따라서 여기서 부르는 {@code createSlackSession}/{@code findBySlackContext} 는
- * 올바른 테넌트 컨텍스트를 갖고 도착한다. 이전 판정("배경 쓰기 경로에 테넌트 해석이 없는 유일한
- * 테이블")은 <b>더 이상 유효하지 않다</b>.
+ * <p>이 구멍은 이제 <b>호출자 쪽에서</b> 막혀 있다. {@code SlackInboundService.dispatch} 가 본 처리에 들어가기 전에 {@code
+ * SlackWorkspaceTenantResolver}(V106 의 {@code SECURITY DEFINER} 함수, V95 패턴)로 {@code team_id →
+ * tenant_id} 를 해석하고 {@code TenantContext.runScoped} 안에서 나머지를 돌린다. 따라서 여기서 부르는 {@code
+ * createSlackSession}/{@code findBySlackContext} 는 올바른 테넌트 컨텍스트를 갖고 도착한다. 이전 판정("배경 쓰기 경로에 테넌트 해석이
+ * 없는 유일한 테이블")은 <b>더 이상 유효하지 않다</b>.
  *
- * <p>{@code @Async("slackInboundExecutor")} 빈은 커밋 {@code 968a28c2} 에서 지워졌다가 이슈
- * #709 에서 되살아났다 — Slack inbound 경로는 이제 실제로 돈다. 이 경로의 계약은
- * {@code SlackInboundService} 클래스 javadoc 에 있다(특히 "{@code TenantContextTaskDecorator} 는
- * 이 경로의 안전 조건이 아니다").
+ * <p>{@code @Async("slackInboundExecutor")} 빈은 커밋 {@code 968a28c2} 에서 지워졌다가 이슈 #709 에서 되살아났다 —
+ * Slack inbound 경로는 이제 실제로 돈다. 이 경로의 계약은 {@code SlackInboundService} 클래스 javadoc 에 있다(특히 "{@code
+ * TenantContextTaskDecorator} 는 이 경로의 안전 조건이 아니다").
  */
 @Transactional
 @Repository

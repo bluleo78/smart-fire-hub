@@ -37,34 +37,28 @@ import org.springframework.beans.factory.annotation.Autowired;
 /**
  * 배경 경로 배선의 <b>판별력 있는</b> 검증 — 워커가 outbox 행의 테넌트로 스코프를 여는가.
  *
- * <p><b>왜 별도 테스트인가.</b> RLS 정책은 아직 꺼져 있다(Task 6). 그 상태에서는 "배달이 됐다"만
- * 봐서는 스코프가 열렸는지 알 수 없다 — 컨텍스트가 없어도 쿼리가 전부 통과하기 때문이다. 그래서
- * 채널을 스텁으로 갈아 끼우고 <b>배달 시점의 {@link TenantContext#get()} 을 직접 기록</b>한다.
+ * <p><b>왜 별도 테스트인가.</b> RLS 정책은 아직 꺼져 있다(Task 6). 그 상태에서는 "배달이 됐다"만 봐서는 스코프가 열렸는지 알 수 없다 — 컨텍스트가
+ * 없어도 쿼리가 전부 통과하기 때문이다. 그래서 채널을 스텁으로 갈아 끼우고 <b>배달 시점의 {@link TenantContext#get()} 을 직접 기록</b>한다.
  * 스코프 배선을 걷어내면 이 단언은 null 로 즉시 깨진다(판별력 확인 완료).
  *
- * <p><b>왜 스프링 빈이 아니라 손으로 조립하는가.</b> {@link ChannelRegistry} 는
- * {@code List<Channel>} 을 {@code EnumMap} 에 나중 것이 이기는 순서로 담으므로, 경쟁하는 CHAT 빈을
- * 추가하면 결과가 빈 순서에 좌우된다. 워커의 생성자는 평범한 인자뿐이라 진짜 리포지토리·진짜 DB 를
- * 그대로 쓰면서 채널만 바꿔 끼우는 것이 더 정직하고 안정적이다.
+ * <p><b>왜 스프링 빈이 아니라 손으로 조립하는가.</b> {@link ChannelRegistry} 는 {@code List<Channel>} 을 {@code
+ * EnumMap} 에 나중 것이 이기는 순서로 담으므로, 경쟁하는 CHAT 빈을 추가하면 결과가 빈 순서에 좌우된다. 워커의 생성자는 평범한 인자뿐이라 진짜 리포지토리·진짜
+ * DB 를 그대로 쓰면서 채널만 바꿔 끼우는 것이 더 정직하고 안정적이다.
  *
- * <p><b>테넌트 목록을 좁히는 이유(R5).</b> {@code runOneBatch} 는 일감이 있는 <b>모든</b> 테넌트를
- * 돈다. 공유 테스트 DB 에는 다른 세션이 흘린 tenant_id=1 의 PENDING 행이 수천 건 쌓여 있어, 그대로
- * 부르면 <b>남의 행을 클레임해 SENT 로 바꿔 버린다</b>. 그래서 {@code tenantIdsWithStatus} 만
- * 가로채 이 테스트가 만든 두 테넌트로 좁힌다 — 순회 로직 자체는 그대로 검증된다.
+ * <p><b>테넌트 목록을 좁히는 이유(R5).</b> {@code runOneBatch} 는 일감이 있는 <b>모든</b> 테넌트를 돈다. 공유 테스트 DB 에는 다른 세션이
+ * 흘린 tenant_id=1 의 PENDING 행이 수천 건 쌓여 있어, 그대로 부르면 <b>남의 행을 클레임해 SENT 로 바꿔 버린다</b>. 그래서 {@code
+ * tenantIdsWithStatus} 만 가로채 이 테스트가 만든 두 테넌트로 좁힌다 — 순회 로직 자체는 그대로 검증된다.
  *
- * <p>이 테스트가 세우는 계약("워커가 outbox 행의 테넌트로 스코프를 연다")에 Task 4 의
- * {@code ChatChannel} 임시방편 제거가 의존한다.
+ * <p>이 테스트가 세우는 계약("워커가 outbox 행의 테넌트로 스코프를 연다")에 Task 4 의 {@code ChatChannel} 임시방편 제거가 의존한다.
  *
- * <p><b>P2-f Task 4 승계.</b> {@code tenant/ChatChannelTenantVetoTest} 가 검증하던 R9 의 execution
- * 교차테넌트 검사도 이 파일로 옮겼다. 원래 그 테스트는 {@code ChatChannel} 을 직접 부르며 "채널이
- * 스스로 멤버십으로 테넌트를 해석한다"를 전제했는데, 임시방편이 사라지면서 그 전제가 뒤집혔다 —
- * 이제 검증해야 할 것은 <b>워커가 연 스코프 안에서 execution 이 걸러지는가</b>이므로, 워커를 통과하는
- * 이 파일이 정직한 자리다. 스텁이 아닌 <b>진짜 {@link ChatChannel} 빈</b>을 끼워 돌린다.
+ * <p><b>P2-f Task 4 승계.</b> {@code tenant/ChatChannelTenantVetoTest} 가 검증하던 R9 의 execution 교차테넌트
+ * 검사도 이 파일로 옮겼다. 원래 그 테스트는 {@code ChatChannel} 을 직접 부르며 "채널이 스스로 멤버십으로 테넌트를 해석한다"를 전제했는데, 임시방편이
+ * 사라지면서 그 전제가 뒤집혔다 — 이제 검증해야 할 것은 <b>워커가 연 스코프 안에서 execution 이 걸러지는가</b>이므로, 워커를 통과하는 이 파일이 정직한
+ * 자리다. 스텁이 아닌 <b>진짜 {@link ChatChannel} 빈</b>을 끼워 돌린다.
  *
- * <p>클래스 레벨 {@code @Transactional} 은 여기서도 금지다. 검증 대상인 워커는 운영에서
- * {@code @Scheduled} 스레드가 컨텍스트·트랜잭션 없이 부르고, 스코프를 <b>스스로 만드는 주체</b>가
- * 바로 그 워커다 — 테스트가 트랜잭션을 열어 GUC 를 공급해 버리면 배선이 통째로 사라져도 초록이 된다.
- * 픽스처 생성·정리·검증 조회만 {@code inTenantFixture} 로 감싼다.
+ * <p>클래스 레벨 {@code @Transactional} 은 여기서도 금지다. 검증 대상인 워커는 운영에서 {@code @Scheduled} 스레드가 컨텍스트·트랜잭션 없이
+ * 부르고, 스코프를 <b>스스로 만드는 주체</b>가 바로 그 워커다 — 테스트가 트랜잭션을 열어 GUC 를 공급해 버리면 배선이 통째로 사라져도 초록이 된다. 픽스처
+ * 생성·정리·검증 조회만 {@code inTenantFixture} 로 감싼다.
  */
 class OutboxWorkerTenantScopeTest extends IntegrationTestBase {
 
@@ -103,11 +97,11 @@ class OutboxWorkerTenantScopeTest extends IntegrationTestBase {
   }
 
   /**
-   * 두 테넌트에 한 건씩 쌓아 두고 <b>컨텍스트 없이</b> {@code runOneBatch} 를 부른다. 워커는 스스로
-   * 테넌트를 순회하며, 각 행은 <b>자기 테넌트의 컨텍스트 안에서</b> 배달돼야 한다.
+   * 두 테넌트에 한 건씩 쌓아 두고 <b>컨텍스트 없이</b> {@code runOneBatch} 를 부른다. 워커는 스스로 테넌트를 순회하며, 각 행은 <b>자기 테넌트의
+   * 컨텍스트 안에서</b> 배달돼야 한다.
    *
-   * <p>클레임에 테넌트 술어가 없으면(정책이 꺼진 지금은 그게 기본 동작이다) A 의 순회에서 B 의
-   * 행까지 잡혀 B 의 행이 A 컨텍스트로 배달된다 — 그 회귀도 이 단언이 잡는다.
+   * <p>클레임에 테넌트 술어가 없으면(정책이 꺼진 지금은 그게 기본 동작이다) A 의 순회에서 B 의 행까지 잡혀 B 의 행이 A 컨텍스트로 배달된다 — 그 회귀도 이
+   * 단언이 잡는다.
    */
   @Test
   void runOneBatch_deliversEachRowInsideItsOwnTenantScope() {
@@ -124,17 +118,14 @@ class OutboxWorkerTenantScopeTest extends IntegrationTestBase {
     assertThat(channel.tenantOf(corrA))
         .as("테넌트 A 의 행은 A 컨텍스트 안에서 배달돼야 한다 (null 이면 스코프 배선 없음)")
         .isEqualTo(tenantA);
-    assertThat(channel.tenantOf(corrB))
-        .as("테넌트 B 의 행은 B 컨텍스트 안에서 배달돼야 한다")
-        .isEqualTo(tenantB);
+    assertThat(channel.tenantOf(corrB)).as("테넌트 B 의 행은 B 컨텍스트 안에서 배달돼야 한다").isEqualTo(tenantB);
   }
 
   /**
    * 순회 레벨 배치 중단 방지 — 한 테넌트의 클레임이 터져도 나머지 테넌트는 계속 처리돼야 한다.
    *
-   * <p>기존 행 단위 try/catch 로는 이 실패를 잡을 수 없다(클레임은 행 루프 <b>바깥</b>이다).
-   * 순회 레벨 방어가 없으면 A 의 예외가 {@code runOneBatch} 를 통째로 뚫고 나가 B 는 이 주기에
-   * 영원히 처리되지 않는다.
+   * <p>기존 행 단위 try/catch 로는 이 실패를 잡을 수 없다(클레임은 행 루프 <b>바깥</b>이다). 순회 레벨 방어가 없으면 A 의 예외가 {@code
+   * runOneBatch} 를 통째로 뚫고 나가 B 는 이 주기에 영원히 처리되지 않는다.
    */
   @Test
   void runOneBatch_oneTenantFailureDoesNotStopOthers() {
@@ -147,22 +138,20 @@ class OutboxWorkerTenantScopeTest extends IntegrationTestBase {
     TenantContext.clear();
     worker.runOneBatch();
 
-    assertThat(channel.tenantOf(corrB))
-        .as("한 테넌트의 실패가 다른 테넌트의 배치를 멈추면 안 된다")
-        .isEqualTo(tenantB);
+    assertThat(channel.tenantOf(corrB)).as("한 테넌트의 실패가 다른 테넌트의 배치를 멈추면 안 된다").isEqualTo(tenantB);
   }
 
   /**
    * 승계 — 타 테넌트의 execution 을 참조하는 행은 거부되고 {@code proactive_message} 가 생기지 않는다.
    *
-   * <p>outbox 행은 tenantA, 잡·실행은 tenantB 소유다. 워커가 tenantA 스코프를 열고 진짜
-   * {@link ChatChannel} 을 부르면, R9 의 검사가 현재 컨텍스트에서 execution 을 못 찾아 영구 실패로
-   * 마감해야 한다. 이 조합이 이 밴드가 불가능하게 만들어야 할 것이다.
+   * <p>outbox 행은 tenantA, 잡·실행은 tenantB 소유다. 워커가 tenantA 스코프를 열고 진짜 {@link ChatChannel} 을 부르면, R9 의
+   * 검사가 현재 컨텍스트에서 execution 을 못 찾아 영구 실패로 마감해야 한다. 이 조합이 이 밴드가 불가능하게 만들어야 할 것이다.
    */
   @Test
   void crossTenantExecutionIsVetoedInsideWorkerScope() {
     Long executionId = inTenantFixture(tenantB, () -> insertExecution(tenantB));
-    UUID corr = insertPendingRow(tenantA, "veto-a", recipientUserId, Map.of("executionId", executionId));
+    UUID corr =
+        insertPendingRow(tenantA, "veto-a", recipientUserId, Map.of("executionId", executionId));
 
     NotificationDispatchWorker worker = workerWith(chatChannel, scopedRepo(t -> false));
 
@@ -191,18 +180,16 @@ class OutboxWorkerTenantScopeTest extends IntegrationTestBase {
   }
 
   /**
-   * <b>A-1 사실 고정.</b> FK 는 교차테넌트 execution 참조를 막지 <b>못한다</b> — 따라서
-   * {@link ChatChannel} 의 명시 검사가 이 경로의 유일한 방어다.
+   * <b>A-1 사실 고정.</b> FK 는 교차테넌트 execution 참조를 막지 <b>못한다</b> — 따라서 {@link ChatChannel} 의 명시 검사가 이
+   * 경로의 유일한 방어다.
    *
-   * <p>원장 R9 · 조사 §8 · Task 4 는 오랫동안 "{@code proactive_message_execution_id_fkey} 가
-   * 있고 양쪽 다 RLS 대상이니 타 테넌트 execution 참조는 INSERT 에서 자연히 막힌다" 를 근거로
-   * 삼았다. 그 서술은 <b>거짓</b>이다: PostgreSQL 의 참조 무결성 검사는 정책을 우회해 부모 행을
-   * 찾으므로, 현재 컨텍스트에서 SELECT 로 보이지도 않는 부모를 참조하는 INSERT 가 통과한다.
+   * <p>원장 R9 · 조사 §8 · Task 4 는 오랫동안 "{@code proactive_message_execution_id_fkey} 가 있고 양쪽 다 RLS
+   * 대상이니 타 테넌트 execution 참조는 INSERT 에서 자연히 막힌다" 를 근거로 삼았다. 그 서술은 <b>거짓</b>이다: PostgreSQL 의 참조 무결성
+   * 검사는 정책을 우회해 부모 행을 찾으므로, 현재 컨텍스트에서 SELECT 로 보이지도 않는 부모를 참조하는 INSERT 가 통과한다.
    *
-   * <p>이 테스트는 그 사실 자체를 코드로 고정한다. 언젠가 PostgreSQL 이 동작을 바꾸거나 복합 FK
-   * ({@code (tenant_id, execution_id)}) 가 도입되면 이 테스트가 빨개지고, 그때 비로소 앱 레벨 검사를
-   * 걷어내도 되는지 재검토할 수 있다. 위 거부 케이스와 짝이다 — 저쪽은 "검사가 막는다", 이쪽은
-   * "DB 는 막지 않는다".
+   * <p>이 테스트는 그 사실 자체를 코드로 고정한다. 언젠가 PostgreSQL 이 동작을 바꾸거나 복합 FK ({@code (tenant_id,
+   * execution_id)}) 가 도입되면 이 테스트가 빨개지고, 그때 비로소 앱 레벨 검사를 걷어내도 되는지 재검토할 수 있다. 위 거부 케이스와 짝이다 — 저쪽은
+   * "검사가 막는다", 이쪽은 "DB 는 막지 않는다".
    */
   @Test
   void foreignKeyDoesNotBlockCrossTenantExecutionReference() {
@@ -236,15 +223,15 @@ class OutboxWorkerTenantScopeTest extends IntegrationTestBase {
   /**
    * 승계 — 거울 케이스. 같은 테넌트의 execution 이면 저장된다.
    *
-   * <p><b>이 케이스가 위 거부 단언을 떠받친다.</b> 거부 케이스만 두면 조회 예외·무조건 거부·스코프
-   * 미배선 등 <i>어떤</i> 고장이든 영구 실패라 초록이 된다 — 두 가설을 구분하지 못하는 픽스처는
-   * 아무것도 증명하지 못한다. 특히 이 단언이 빨개지면 원인은 "거부권이 과하다"가 아니라
-   * {@code ProactiveJobExecutionRepository} 의 트랜잭션 경계가 사라져 GUC 가 안 심긴 것이다.
+   * <p><b>이 케이스가 위 거부 단언을 떠받친다.</b> 거부 케이스만 두면 조회 예외·무조건 거부·스코프 미배선 등 <i>어떤</i> 고장이든 영구 실패라 초록이 된다
+   * — 두 가설을 구분하지 못하는 픽스처는 아무것도 증명하지 못한다. 특히 이 단언이 빨개지면 원인은 "거부권이 과하다"가 아니라 {@code
+   * ProactiveJobExecutionRepository} 의 트랜잭션 경계가 사라져 GUC 가 안 심긴 것이다.
    */
   @Test
   void sameTenantExecutionIsStoredInsideWorkerScope() {
     Long executionId = inTenantFixture(tenantA, () -> insertExecution(tenantA));
-    UUID corr = insertPendingRow(tenantA, "mirror-a", recipientUserId, Map.of("executionId", executionId));
+    UUID corr =
+        insertPendingRow(tenantA, "mirror-a", recipientUserId, Map.of("executionId", executionId));
 
     NotificationDispatchWorker worker = workerWith(chatChannel, scopedRepo(t -> false));
 
@@ -270,8 +257,8 @@ class OutboxWorkerTenantScopeTest extends IntegrationTestBase {
   }
 
   /**
-   * 해당 테넌트에서 <b>이 execution 을 참조하는</b> 메시지 수. 수신자가 아니라 execution 으로 세는
-   * 것이 A-1 의 관심사다 — 교차테넌트 참조 행이 생겼는지를 직접 본다.
+   * 해당 테넌트에서 <b>이 execution 을 참조하는</b> 메시지 수. 수신자가 아니라 execution 으로 세는 것이 A-1 의 관심사다 — 교차테넌트 참조 행이
+   * 생겼는지를 직접 본다.
    */
   private int messageCountForExecution(long tenantId, Long executionId) {
     return inTenantFixture(
@@ -307,7 +294,8 @@ class OutboxWorkerTenantScopeTest extends IntegrationTestBase {
 
   /** 호출자가 이미 해당 테넌트 트랜잭션을 열어 둔 안에서 실행된다(bare 삽입). */
   private Long insertExecution(long tenantId) {
-    Long jobId = TenantRlsTestSupport.insertProactiveJob(dsl, recipientUserId, "scope-job-" + tenantId);
+    Long jobId =
+        TenantRlsTestSupport.insertProactiveJob(dsl, recipientUserId, "scope-job-" + tenantId);
     return TenantRlsTestSupport.insertProactiveExecution(dsl, jobId);
   }
 
@@ -326,8 +314,8 @@ class OutboxWorkerTenantScopeTest extends IntegrationTestBase {
   }
 
   /**
-   * 실제 리포지토리를 감싸되 (a) 순회 대상 테넌트를 이 테스트가 만든 둘로 좁히고, (b)
-   * {@code failClaimFor} 에 해당하는 테넌트의 클레임을 실패시키는 프록시.
+   * 실제 리포지토리를 감싸되 (a) 순회 대상 테넌트를 이 테스트가 만든 둘로 좁히고, (b) {@code failClaimFor} 에 해당하는 테넌트의 클레임을 실패시키는
+   * 프록시.
    */
   private NotificationOutboxRepository scopedRepo(LongPredicate failClaimFor) {
     return (NotificationOutboxRepository)

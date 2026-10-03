@@ -21,10 +21,9 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * Outbox 작업 큐 jOOQ 구현. PG SKIP LOCKED + lease 컬럼으로 멀티 인스턴스 안전.
  *
- * <p><b>클래스 레벨 {@code @Transactional} 이 왜 필요한가</b> —
- * {@link com.smartfirehub.global.tenant.TenantAwareTransactionManager} 의 "리포지토리에 클래스
- * 레벨 {@code @Transactional} 이 왜 필요한가" 문단 참조. 요약: GUC 는 트랜잭션이 열리는 순간에만
- * 심기고, 컨텍스트 공급은 여전히 호출자 책임이다.
+ * <p><b>클래스 레벨 {@code @Transactional} 이 왜 필요한가</b> — {@link
+ * com.smartfirehub.global.tenant.TenantAwareTransactionManager} 의 "리포지토리에 클래스 레벨
+ * {@code @Transactional} 이 왜 필요한가" 문단 참조. 요약: GUC 는 트랜잭션이 열리는 순간에만 심기고, 컨텍스트 공급은 여전히 호출자 책임이다.
  */
 @Repository
 @Transactional
@@ -60,15 +59,12 @@ class NotificationOutboxRepositoryImpl implements NotificationOutboxRepository {
   /**
    * 클래스 레벨 {@code @Transactional} 을 <b>명시적으로 거부</b>한다.
    *
-   * <p>이 조회는 {@code SECURITY DEFINER} 함수라 RLS 를 우회하므로 GUC 가 필요 없다 — 그런데도
-   * 클래스 레벨 애노테이션을 물려받으면 호출마다 BEGIN/COMMIT 2왕복이 덤으로 붙는다.
-   * {@code onNotify} 경로는 enqueue 한 건마다 이 메서드를 부르므로 그 비용이 그대로 곱해진다.
-   * {@code SlackWorkspaceTenantResolver} 가 같은 이유로 {@code @Transactional} 을 붙이지 않은 것과
-   * 일관된다.
+   * <p>이 조회는 {@code SECURITY DEFINER} 함수라 RLS 를 우회하므로 GUC 가 필요 없다 — 그런데도 클래스 레벨 애노테이션을 물려받으면 호출마다
+   * BEGIN/COMMIT 2왕복이 덤으로 붙는다. {@code onNotify} 경로는 enqueue 한 건마다 이 메서드를 부르므로 그 비용이 그대로 곱해진다.
+   * {@code SlackWorkspaceTenantResolver} 가 같은 이유로 {@code @Transactional} 을 붙이지 않은 것과 일관된다.
    *
-   * <p>{@code NOT_SUPPORTED} 는 바깥 트랜잭션이 있으면 <b>중단(suspend)</b>시키므로 커밋된 상태만
-   * 읽는다. 이 메서드의 호출자 4곳(메트릭 갱신·워커 폴링/NOTIFY·스위퍼·보존잡)은 전부 앰비언트
-   * 트랜잭션이 없는 배경 스레드이고, NOTIFY 는 커밋 <b>후</b>에 도착하므로 문제가 되지 않는다.
+   * <p>{@code NOT_SUPPORTED} 는 바깥 트랜잭션이 있으면 <b>중단(suspend)</b>시키므로 커밋된 상태만 읽는다. 이 메서드의 호출자 4곳(메트릭
+   * 갱신·워커 폴링/NOTIFY·스위퍼·보존잡)은 전부 앰비언트 트랜잭션이 없는 배경 스레드이고, NOTIFY 는 커밋 <b>후</b>에 도착하므로 문제가 되지 않는다.
    * 앞으로 트랜잭션 안에서 이 메서드를 부르려는 호출자가 생기면 그때 이 결정을 다시 봐야 한다.
    */
   @Override
@@ -183,8 +179,7 @@ class NotificationOutboxRepositoryImpl implements NotificationOutboxRepository {
               // 알 수 없는 채널 문자열(구버전 행·수기 삽입)은 건너뛴다 — 게이지 하나 때문에
               // 갱신 전체가 예외로 죽으면 다른 채널의 적체까지 보이지 않게 된다.
               try {
-                counts.put(
-                    ChannelType.valueOf(r.value1()), Long.valueOf(r.value2().longValue()));
+                counts.put(ChannelType.valueOf(r.value1()), Long.valueOf(r.value2().longValue()));
               } catch (IllegalArgumentException ignored) {
                 // 무시 — 아래 로그 대신 조용히 건너뛴다(리포지토리에 로거를 들이지 않는다).
               }

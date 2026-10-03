@@ -84,7 +84,6 @@ public class PipelineAsyncRunner {
   private final IncrementalCursorService incrementalCursorService;
   private final OutputTableSessionLock outputTableSessionLock;
 
-
   /**
    * 파이프라인을 비동기로 실행한다.
    *
@@ -96,13 +95,11 @@ public class PipelineAsyncRunner {
    * @param steps 파이프라인 스텝 목록
    * @param stepDependencyMap 스텝 ID → 의존 스텝 ID 목록 매핑
    * @param stepIdToStepExecId 스텝 ID → 스텝 실행 레코드 ID 매핑
-   * <p><b>트랜잭션 경계(P2-b Task 5)</b>: 이 메서드는 의도적으로 {@code @Transactional} 이 아니다.
-   * 파이프라인 실행은 수 분이 걸릴 수 있어 전체를 한 트랜잭션으로 감싸면 커넥션을 그만큼 점유한다.
-   * 상태 갱신({@code updateExecutionStatus}/{@code updateStepExecution})은 모두 <b>단일 행 쓰기</b>이고
-   * 여러 건이 함께 커밋돼야 하는 불변식이 없으므로(스텝 상태는 각각 독립, 최종 상태는 스텝 종료 후
-   * 한 번), 리포지토리의 클래스 레벨 {@code @Transactional} 이 여는 짧은 트랜잭션으로 충분하다 —
-   * 그 트랜잭션이 곧 RLS GUC 공급 지점이다.
-   *
+   *     <p><b>트랜잭션 경계(P2-b Task 5)</b>: 이 메서드는 의도적으로 {@code @Transactional} 이 아니다. 파이프라인 실행은 수 분이
+   *     걸릴 수 있어 전체를 한 트랜잭션으로 감싸면 커넥션을 그만큼 점유한다. 상태 갱신({@code updateExecutionStatus}/{@code
+   *     updateStepExecution})은 모두 <b>단일 행 쓰기</b>이고 여러 건이 함께 커밋돼야 하는 불변식이 없으므로(스텝 상태는 각각 독립, 최종 상태는
+   *     스텝 종료 후 한 번), 리포지토리의 클래스 레벨 {@code @Transactional} 이 여는 짧은 트랜잭션으로 충분하다 — 그 트랜잭션이 곧 RLS GUC
+   *     공급 지점이다.
    * @param userId 실행 요청 사용자 ID (Python/AI 권한 체크에 사용)
    * @param executorEnabled 외부 실행기 활성화 여부
    */
@@ -344,9 +341,7 @@ public class PipelineAsyncRunner {
       // 위에서 이미 MERGE+비SQL 조합을 걸렀으므로 여기 도달하는 전략은 REPLACE/APPEND 뿐이다
       // (알 수 없는 값은 이미 REPLACE 로 폴백됐다).
       final String localPythonReplaceTable =
-          "PYTHON".equals(step.scriptType())
-                  && !executorEnabled
-                  && strategy != LoadStrategy.APPEND
+          "PYTHON".equals(step.scriptType()) && !executorEnabled && strategy != LoadStrategy.APPEND
               ? outputTableName
               : null;
 
@@ -513,7 +508,9 @@ public class PipelineAsyncRunner {
           }
           List<String> rawSelectColumns = probedColumns.stream().map(ColumnInfo::name).toList();
           List<String> selectColumns =
-              tempDatasetAutoCreated ? renameReservedColumnNames(rawSelectColumns) : rawSelectColumns;
+              tempDatasetAutoCreated
+                  ? renameReservedColumnNames(rawSelectColumns)
+                  : rawSelectColumns;
 
           // 출력 데이터셋의 컬럼은 **하나도 빼지 않는다**. 특히 is_primary_key 컬럼을 제외하면 안 된다
           // (#684). 이 경로는 대상 목록만 좁히고 SELECT 식 목록은 그대로 두기 때문에, 대상에서 한
@@ -1161,7 +1158,8 @@ public class PipelineAsyncRunner {
    * @param currentStep 현재 실행 중인 스텝 (자기 참조 방지 + 의존성 체인 검증에 사용)
    * @return 참조가 치환된 SQL 문자열
    */
-  private String resolveStepReferences(String sql, Long pipelineId, PipelineStepResponse currentStep) {
+  private String resolveStepReferences(
+      String sql, Long pipelineId, PipelineStepResponse currentStep) {
     Pattern pattern = Pattern.compile("\\{\\{#(\\d+)\\}\\}");
     Matcher matcher = pattern.matcher(sql);
     if (!matcher.find()) {
@@ -1227,8 +1225,7 @@ public class PipelineAsyncRunner {
                           "{{#" + stepNumber + "}} 참조 실패: 데이터셋 테이블을 찾을 수 없습니다"));
 
       // {{#n}} 참조를 실제 테이블 FQN 으로 치환한다 — 스키마는 현재 테넌트에서 파생시킨다.
-      matcher.appendReplacement(
-          result, Matcher.quoteReplacement(DataSchema.qualify(tableName)));
+      matcher.appendReplacement(result, Matcher.quoteReplacement(DataSchema.qualify(tableName)));
     }
     matcher.appendTail(result);
     return result.toString();
@@ -1237,8 +1234,8 @@ public class PipelineAsyncRunner {
   /**
    * 현재 스텝의 실제 선행(조상) 스텝 이름 집합을 dependsOnStepNames 체인을 따라 재귀적으로 수집한다.
    *
-   * <p>{{#N}} 스텝 참조가 배열 인덱스만으로 임의의 스텝을 가리키지 못하도록, 실제 DAG 의존성 체인에 포함된
-   * 스텝만 참조 가능하도록 검증하는 데 사용한다 (#531). 순환 참조가 있더라도 방문 집합으로 무한루프를 방지한다.
+   * <p>{{#N}} 스텝 참조가 배열 인덱스만으로 임의의 스텝을 가리키지 못하도록, 실제 DAG 의존성 체인에 포함된 스텝만 참조 가능하도록 검증하는 데 사용한다
+   * (#531). 순환 참조가 있더라도 방문 집합으로 무한루프를 방지한다.
    *
    * @param currentStep 현재 실행 중인 스텝
    * @param allSteps 파이프라인의 전체 스텝 목록
@@ -1278,9 +1275,9 @@ public class PipelineAsyncRunner {
    * <p>WITH 절로 시작하는 CTE 구문은 본문 키워드(SELECT / INSERT / UPDATE / DELETE / MERGE)를 파싱하여 실제 DML 여부를
    * 확인한다.
    *
-   * <p>패키지 전용 static — {@code PipelineService.saveSteps}가 MERGE 로드 전략은 SELECT 스텝에만
-   * 허용된다는 저장 시점 검증(Fix round 1, must 3)에 같은 판별 로직을 재사용한다. 인스턴스 상태를 쓰지
-   * 않는 순수 문자열 판별이라 static 으로 승격해도 동작이 바뀌지 않는다.
+   * <p>패키지 전용 static — {@code PipelineService.saveSteps}가 MERGE 로드 전략은 SELECT 스텝에만 허용된다는 저장 시점
+   * 검증(Fix round 1, must 3)에 같은 판별 로직을 재사용한다. 인스턴스 상태를 쓰지 않는 순수 문자열 판별이라 static 으로 승격해도 동작이 바뀌지
+   * 않는다.
    */
   static boolean isSelectStatement(String sql) {
     String upper = sql.stripLeading().toUpperCase();
@@ -1332,27 +1329,28 @@ public class PipelineAsyncRunner {
   }
 
   /**
-   * MERGE 실행 오류 메시지를 한국어 안내로 번역한다. 번역 대상이 아니면 {@code null}을 돌려줘 호출부가
-   * 원본 오류를 그대로 쓰게 한다.
+   * MERGE 실행 오류 메시지를 한국어 안내로 번역한다. 번역 대상이 아니면 {@code null}을 돌려줘 호출부가 원본 오류를 그대로 쓰게 한다.
    *
    * <p>두 가지 PostgreSQL 오류 문구를 처리한다(Fix round 1, must 2 / must 4):
    *
    * <ul>
    *   <li>{@link MergeSqlBuilder#DUPLICATE_KEY_PG_MESSAGE} — SELECT 가 같은 PK 를 두 번 이상 낼 때.
-   *   <li>{@link MergeSqlBuilder#NO_UNIQUE_CONSTRAINT_PG_MESSAGE} — {@code ux_<table>_pk} 인덱스가
-   *       (동시 생성 실패 등으로) INVALID 상태라 메타데이터(is_primary_key=true)와 실제 제약이 어긋날 때.
+   *   <li>{@link MergeSqlBuilder#NO_UNIQUE_CONSTRAINT_PG_MESSAGE} — {@code ux_<table>_pk} 인덱스가 (동시
+   *       생성 실패 등으로) INVALID 상태라 메타데이터(is_primary_key=true)와 실제 제약이 어긋날 때.
    * </ul>
    *
-   * <p>executor 켠 경로({@code result.error()})와 끈 경로({@code sqlExecutor.execute} 가 던지는
-   * {@link ScriptExecutionException#getMessage()}) 양쪽이 이 메서드 하나를 공유한다 — 번역 문구가 두
-   * 곳에서 갈리는 사고를 막는다.
+   * <p>executor 켠 경로({@code result.error()})와 끈 경로({@code sqlExecutor.execute} 가 던지는 {@link
+   * ScriptExecutionException#getMessage()}) 양쪽이 이 메서드 하나를 공유한다 — 번역 문구가 두 곳에서 갈리는 사고를 막는다.
    */
-  private static String translateMergeError(boolean isMerge, String rawMessage, List<String> pkColumns) {
+  private static String translateMergeError(
+      boolean isMerge, String rawMessage, List<String> pkColumns) {
     if (!isMerge || rawMessage == null) {
       return null;
     }
     if (rawMessage.contains(MergeSqlBuilder.DUPLICATE_KEY_PG_MESSAGE)) {
-      return "SQL 결과에 같은 키(" + String.join(", ", pkColumns) + ")가 두 번 이상 나옵니다. "
+      return "SQL 결과에 같은 키("
+          + String.join(", ", pkColumns)
+          + ")가 두 번 이상 나옵니다. "
           + "키별로 한 행만 나오도록 SQL을 수정하세요.";
     }
     if (rawMessage.contains(MergeSqlBuilder.NO_UNIQUE_CONSTRAINT_PG_MESSAGE)) {
@@ -1366,22 +1364,20 @@ public class PipelineAsyncRunner {
   /**
    * SELECT 결과 컬럼명 중 시스템 예약어(id/import_id/created_at/_updated_at)와 충돌하는 이름을 자동으로 안전한 이름으로 바꾼다(#645).
    *
-   * <p>{@code SELECT * FROM {{#N}}}처럼 이전 스텝(또는 실제 데이터셋)의 출력을 그대로 재사용하면, 모든 데이터셋 물리 테이블이
-   * 자동으로 갖는 시스템 컬럼(id/created_at 등)이 결과 컬럼에 그대로 섞여 들어온다. 이를 새 임시 데이터셋의 "사용자 컬럼"으로
-   * 그대로 저장하려 하면 {@code DataTableService}의 예약어 가드에 걸려 항상 실패한다. 그 가드는 사용자가 신규 데이터셋을 만들 때
-   * 컬럼명을 직접 예약어로 짓는 것을 막기 위한 것이라 이 자동 패스스루 시나리오에는 부적합하므로, 여기서는 충돌하는 컬럼명에 순번
-   * 접미사를 붙여 자동으로 별칭 처리한다 (예: {@code id} → {@code id_1}, {@code _updated_at} →
-   * {@code updated_at_1}).
+   * <p>{@code SELECT * FROM {{#N}}}처럼 이전 스텝(또는 실제 데이터셋)의 출력을 그대로 재사용하면, 모든 데이터셋 물리 테이블이 자동으로 갖는 시스템
+   * 컬럼(id/created_at 등)이 결과 컬럼에 그대로 섞여 들어온다. 이를 새 임시 데이터셋의 "사용자 컬럼"으로 그대로 저장하려 하면 {@code
+   * DataTableService}의 예약어 가드에 걸려 항상 실패한다. 그 가드는 사용자가 신규 데이터셋을 만들 때 컬럼명을 직접 예약어로 짓는 것을 막기 위한 것이라 이
+   * 자동 패스스루 시나리오에는 부적합하므로, 여기서는 충돌하는 컬럼명에 순번 접미사를 붙여 자동으로 별칭 처리한다 (예: {@code id} → {@code id_1},
+   * {@code _updated_at} → {@code updated_at_1}).
    *
-   * <p><b>선행 밑줄을 반드시 떼고 접미사를 붙인다(코드리뷰 HIGH).</b> {@code DataTableService.validateName}
-   * 은 컬럼명마다 {@code ^[a-z][a-z0-9_]*$} 를 요구한다 — 밑줄로 시작하는 이름은 거부다. 그래서
-   * {@code _updated_at} 을 단순히 {@code _updated_at_1} 로 바꾸면 여전히 무효라 임시 데이터셋 생성이
-   * {@code InvalidTableNameException} 으로 실패한다. V124 백필이 <b>모든</b> 데이터셋 테이블에
-   * {@code _updated_at} 을 추가했으므로 {@code SELECT *} 스텝은 100% 이 경로를 탄다. 대소문자도 함께
+   * <p><b>선행 밑줄을 반드시 떼고 접미사를 붙인다(코드리뷰 HIGH).</b> {@code DataTableService.validateName} 은 컬럼명마다
+   * {@code ^[a-z][a-z0-9_]*$} 를 요구한다 — 밑줄로 시작하는 이름은 거부다. 그래서 {@code _updated_at} 을 단순히 {@code
+   * _updated_at_1} 로 바꾸면 여전히 무효라 임시 데이터셋 생성이 {@code InvalidTableNameException} 으로 실패한다. V124 백필이
+   * <b>모든</b> 데이터셋 테이블에 {@code _updated_at} 을 추가했으므로 {@code SELECT *} 스텝은 100% 이 경로를 탄다. 대소문자도 함께
    * 정규화한다 — 검증 정규식이 소문자만 허용하기 때문이다.
    *
-   * <p>목록의 <b>개수와 순서는 절대 바꾸지 않는다</b> — 같은 목록이 뒤에서 INSERT 대상 컬럼 매칭에
-   * 그대로 재사용되므로, 한 컬럼이라도 빠지면 SELECT 식 목록과 어긋나 실행이 깨진다.
+   * <p>목록의 <b>개수와 순서는 절대 바꾸지 않는다</b> — 같은 목록이 뒤에서 INSERT 대상 컬럼 매칭에 그대로 재사용되므로, 한 컬럼이라도 빠지면 SELECT 식
+   * 목록과 어긋나 실행이 깨진다.
    *
    * @param names SELECT 결과 컬럼명 목록 (순서 보존 필요 — INSERT 매칭에 그대로 재사용됨)
    * @return 예약어 충돌이 해소된 컬럼명 목록 (같은 순서, 같은 개수)
@@ -1425,5 +1421,4 @@ public class PipelineAsyncRunner {
     }
     return result;
   }
-
 }

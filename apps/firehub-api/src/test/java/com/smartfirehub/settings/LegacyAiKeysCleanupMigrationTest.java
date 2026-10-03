@@ -21,13 +21,12 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
 /**
- * V129(#699) — 워크스페이스 평면에 남은 옛 AI 3키({@code ai.api_key}/{@code ai.cli_oauth_token}/
- * {@code ai.agent_type})를 지우는 마이그레이션을 검증한다.
+ * V129(#699) — 워크스페이스 평면에 남은 옛 AI 3키({@code ai.api_key}/{@code ai.cli_oauth_token}/ {@code
+ * ai.agent_type})를 지우는 마이그레이션을 검증한다.
  *
- * <p>Flyway 는 테스트 DB 부팅 때 V129 를 이미 적용했으므로, 마이그레이션 이전 상태(옛 3키 + V122 가 만든
- * {@code ai.credential})를 테넌트 하나에 직접 심고 V129 파일 본문을 그대로 재생한다
- * ({@link AiCredentialMigrationTest} 와 같은 방식). 재생은 그 테넌트의 RLS 컨텍스트 안에서 돌아서 다른
- * 테넌트 행에는 닿지 않는다.
+ * <p>Flyway 는 테스트 DB 부팅 때 V129 를 이미 적용했으므로, 마이그레이션 이전 상태(옛 3키 + V122 가 만든 {@code ai.credential})를
+ * 테넌트 하나에 직접 심고 V129 파일 본문을 그대로 재생한다 ({@link AiCredentialMigrationTest} 와 같은 방식). 재생은 그 테넌트의 RLS
+ * 컨텍스트 안에서 돌아서 다른 테넌트 행에는 닿지 않는다.
  */
 class LegacyAiKeysCleanupMigrationTest extends IntegrationTestBase {
 

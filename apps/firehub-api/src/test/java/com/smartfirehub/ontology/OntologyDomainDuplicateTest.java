@@ -58,7 +58,9 @@ class OntologyDomainDuplicateTest extends IntegrationTestBase {
         TenantRlsTestSupport.runInTenantTransaction(
             tx,
             DEFAULT_TEST_TENANT_ID,
-            () -> dsl.fetchCount(table(name("ontology")), field(name("domain"), String.class).eq(domain)));
+            () ->
+                dsl.fetchCount(
+                    table(name("ontology")), field(name("domain"), String.class).eq(domain)));
     assertThat(count).isEqualTo(1);
   }
 

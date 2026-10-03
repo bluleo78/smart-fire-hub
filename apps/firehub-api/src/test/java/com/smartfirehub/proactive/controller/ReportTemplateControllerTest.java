@@ -72,7 +72,14 @@ class ReportTemplateControllerTest {
   /** 목록 조회 응답(요약, #632) 샘플 — sections/style 없이 sectionCount만 포함. */
   private ReportTemplateSummaryResponse sampleTemplateSummary() {
     return new ReportTemplateSummaryResponse(
-        5L, "Daily Summary", "A daily summary template", 1, 1L, false, LocalDateTime.now(), LocalDateTime.now());
+        5L,
+        "Daily Summary",
+        "A daily summary template",
+        1,
+        1L,
+        false,
+        LocalDateTime.now(),
+        LocalDateTime.now());
   }
 
   @Test

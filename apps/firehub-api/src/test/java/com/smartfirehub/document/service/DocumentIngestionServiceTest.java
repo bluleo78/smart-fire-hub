@@ -77,8 +77,7 @@ class DocumentIngestionServiceTest extends IntegrationTestBase {
                 userId)
             .get(0, Long.class);
     byte[] data = "소방 점검 보고서. 화재 예방 점검 결과.".repeat(50).getBytes();
-    Long fileId =
-        ingestionService.upload(datasetId, data, "report.txt", "text/plain", userId).id();
+    Long fileId = ingestionService.upload(datasetId, data, "report.txt", "text/plain", userId).id();
 
     ingestionService.processIngestion(fileId, 1L);
 

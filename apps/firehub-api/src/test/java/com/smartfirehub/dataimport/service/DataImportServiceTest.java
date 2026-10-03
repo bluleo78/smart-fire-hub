@@ -27,7 +27,6 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicInteger;
 import org.apache.poi.hssf.usermodel.HSSFWorkbook;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.AfterEach;
@@ -90,7 +89,8 @@ class DataImportServiceTest extends IntegrationTestBase {
                 "import_test_dataset",
                 "Dataset for import testing",
                 null,
-                "TABLE", "SOURCE",
+                "TABLE",
+                "SOURCE",
                 columns,
                 null),
             testUserId);
@@ -131,8 +131,9 @@ class DataImportServiceTest extends IntegrationTestBase {
    * 회귀 가드(#312): 같은 데이터셋에 임포트가 이미 진행 중이면 두 번째 요청은 ConcurrentImportException(→409)이어야 한다.
    *
    * <p>V14 partial unique index가 활성 잡을 하나로 제한하므로 두 번째 createJob은 제약 위반을 일으킨다. 이때 DSLContext에
-   * ExceptionTranslatorExecuteListener가 등록되어 있어야만 jOOQ 예외가 Spring의 DataIntegrityViolationException으로
-   * 번역되어 DataImportService의 catch가 매칭된다. 번역기가 빠지면 이 예외가 그대로 새어나가 500이 된다.
+   * ExceptionTranslatorExecuteListener가 등록되어 있어야만 jOOQ 예외가 Spring의
+   * DataIntegrityViolationException으로 번역되어 DataImportService의 catch가 매칭된다. 번역기가 빠지면 이 예외가 그대로 새어나가
+   * 500이 된다.
    */
   @Test
   void importFile_whenImportAlreadyInProgress_throwsConcurrentImportException() throws Exception {
@@ -219,8 +220,9 @@ class DataImportServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * 대용량 CSV 미리보기 슬라이스(413 회피) 회귀 방지: 프론트가 앞부분만 잘라 보내면 파일 끝의 마지막 행이 열린 따옴표로 끝날 수 있다. partial=true일
-   * 때 전체 행수 계산(countRows, 파일 끝까지 스캔)을 건너뛰어 예외 없이 헤더+샘플을 반환해야 한다. 샘플 5행은 파일 앞에서 조기 종료하므로 잘린 꼬리에 닿지 않는다.
+   * 대용량 CSV 미리보기 슬라이스(413 회피) 회귀 방지: 프론트가 앞부분만 잘라 보내면 파일 끝의 마지막 행이 열린 따옴표로 끝날 수 있다. partial=true일 때
+   * 전체 행수 계산(countRows, 파일 끝까지 스캔)을 건너뛰어 예외 없이 헤더+샘플을 반환해야 한다. 샘플 5행은 파일 앞에서 조기 종료하므로 잘린 꼬리에 닿지
+   * 않는다.
    */
   @Test
   void previewImport_partialTruncatedCsv_skipsCountAndDoesNotThrow() throws Exception {
@@ -250,19 +252,22 @@ class DataImportServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * validateImport는 전량 검증이 아니라 파일 앞 200행만 샘플 검사한다(대용량 파일에서도 O(샘플)로 즉시 응답, N1). 5000행
-   * CSV 중 2001~2100행(샘플 범위 밖)에서 name을 비워 필수값 오류를 유발해도, 샘플(앞 200행)에는 포함되지 않으므로 검증
-   * 결과에 그 오류가 나타나지 않아야 한다.
+   * validateImport는 전량 검증이 아니라 파일 앞 200행만 샘플 검사한다(대용량 파일에서도 O(샘플)로 즉시 응답, N1). 5000행 CSV 중
+   * 2001~2100행(샘플 범위 밖)에서 name을 비워 필수값 오류를 유발해도, 샘플(앞 200행)에는 포함되지 않으므로 검증 결과에 그 오류가 나타나지 않아야 한다.
    */
   @Test
-  void validateImport_largeCsvSpanningMultipleBatches_onlySamplesFirst200Rows()
-      throws Exception {
+  void validateImport_largeCsvSpanningMultipleBatches_onlySamplesFirst200Rows() throws Exception {
     // Given - 5000행 CSV, 2001~2100행만 name 비움(필수값 위반, 샘플 범위 밖)
     StringBuilder csv = new StringBuilder("name,age,email\n");
     for (int i = 1; i <= 5000; i++) {
       boolean invalid = i >= 2001 && i <= 2100;
       String name = invalid ? "" : "User" + i;
-      csv.append(name).append(",").append(20 + (i % 60)).append(",user").append(i).append("@x.com\n");
+      csv.append(name)
+          .append(",")
+          .append(20 + (i % 60))
+          .append(",user")
+          .append(i)
+          .append("@x.com\n");
     }
     MockMultipartFile file =
         new MockMultipartFile(
@@ -504,13 +509,13 @@ class DataImportServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * fail-fast 회귀 테스트(Task2): 검증(Pass1)이 첫 오류가 나오는 배치에서 즉시 스트림을 중단해야 한다. 날짜/타입 불일치로 63만
-   * 행이 전량 실패하는 파일을 끝까지 기다리던 문제를 방지한다. 3000행(배치 2개 분량)을 모두 실패시키되, fail-fast가 동작하면 첫
-   * 배치(2000행)만 검증하고 멈추므로 실패 메시지의 오류 수가 2000에 그친다.
+   * fail-fast 회귀 테스트(Task2): 검증(Pass1)이 첫 오류가 나오는 배치에서 즉시 스트림을 중단해야 한다. 날짜/타입 불일치로 63만 행이 전량 실패하는
+   * 파일을 끝까지 기다리던 문제를 방지한다. 3000행(배치 2개 분량)을 모두 실패시키되, fail-fast가 동작하면 첫 배치(2000행)만 검증하고 멈추므로 실패
+   * 메시지의 오류 수가 2000에 그친다.
    *
-   * <p>옛(#7/#168/#169) 계약은 "유효 행이 하나도 없이 오류만 임계치(1000)를 넘을 때만" 조기 중단하고, 일부라도 유효 행이 있으면
-   * (부분 성공) 계속 진행해 유효 행을 적재했다. Task2는 이 부분 적재 자체를 제거하므로 — 오류가 하나라도 나오면(임계치 무관) 즉시
-   * 중단하고 0행 실패로 귀결된다. 이 테스트는 그 새 계약(오류 수 무관 즉시 중단 + fail-fast 메시지)에 맞게 갱신됐다.
+   * <p>옛(#7/#168/#169) 계약은 "유효 행이 하나도 없이 오류만 임계치(1000)를 넘을 때만" 조기 중단하고, 일부라도 유효 행이 있으면 (부분 성공) 계속
+   * 진행해 유효 행을 적재했다. Task2는 이 부분 적재 자체를 제거하므로 — 오류가 하나라도 나오면(임계치 무관) 즉시 중단하고 0행 실패로 귀결된다. 이 테스트는 그 새
+   * 계약(오류 수 무관 즉시 중단 + fail-fast 메시지)에 맞게 갱신됐다.
    */
   @Test
   void processImport_allRowsFailBeyondThreshold_abortsEarly() throws Exception {
@@ -541,8 +546,7 @@ class DataImportServiceTest extends IntegrationTestBase {
     // Then: fail-fast 메시지로 실패 처리되고, 첫 배치(2000행)까지만 검증했음을 오류 수로 확인
     ArgumentCaptor<String> msg = ArgumentCaptor.forClass(String.class);
     Mockito.verify(asyncJobService).failJob(Mockito.eq("abort-test-job-id"), msg.capture());
-    assertThat(msg.getValue())
-        .startsWith("검증 실패로 한 행도 적재되지 않았습니다 (오류 2000건)");
+    assertThat(msg.getValue()).startsWith("검증 실패로 한 행도 적재되지 않았습니다 (오류 2000건)");
 
     // 대상 테이블에는 아무 행도 적재되지 않아야 한다(부분 적재 없음)
     var count =
@@ -608,7 +612,8 @@ class DataImportServiceTest extends IntegrationTestBase {
                 "upsert_dedup_dataset",
                 "UPSERT 중복 PK 회귀 테스트용",
                 null,
-                "TABLE", "SOURCE",
+                "TABLE",
+                "SOURCE",
                 columns,
                 null),
             testUserId);
@@ -674,7 +679,8 @@ class DataImportServiceTest extends IntegrationTestBase {
                 "replace_dedup_dataset",
                 "REPLACE 중복 PK 회귀 테스트용",
                 null,
-                "TABLE", "SOURCE",
+                "TABLE",
+                "SOURCE",
                 columns,
                 null),
             testUserId);
@@ -728,8 +734,8 @@ class DataImportServiceTest extends IntegrationTestBase {
 
   /**
    * 피크 메모리 회귀 테스트: processImport가 전체 파일(4500행)을 한 번에 메모리에 올려 단일 validate() 호출로 처리하지 않고,
-   * BATCH_SIZE(2000) 이하 크기의 배치로 나누어 여러 번 validate를 호출하는지 검증한다. DataValidationService.validate를
-   * 스파이해 각 호출의 rows 크기를 기록 — 기존(전체 로드) 구현이면 단일 호출에 4500행이 전달되어 이 테스트가 실패한다.
+   * BATCH_SIZE(2000) 이하 크기의 배치로 나누어 여러 번 validate를 호출하는지 검증한다. DataValidationService.validate를 스파이해
+   * 각 호출의 rows 크기를 기록 — 기존(전체 로드) 구현이면 단일 호출에 4500행이 전달되어 이 테스트가 실패한다.
    */
   @Test
   void processImport_appendStreaming_neverPassesMoreThanBatchSizeRowsAtOnce() throws Exception {
@@ -780,14 +786,13 @@ class DataImportServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * APPEND 스트리밍: BATCH_SIZE(2000)보다 많은 행을 가진 CSV를 임포트해도 유효 행 전부가 적재되고, 각 단계(검증/삽입) 내에서
-   * progress 콜백의 processedRows가 단조 증가(non-decreasing)하는지 검증한다.
+   * APPEND 스트리밍: BATCH_SIZE(2000)보다 많은 행을 가진 CSV를 임포트해도 유효 행 전부가 적재되고, 각 단계(검증/삽입) 내에서 progress 콜백의
+   * processedRows가 단조 증가(non-decreasing)하는지 검증한다.
    *
-   * <p>Task2(검증→삽입 2단계 분리) 갱신: 예전엔 검증+삽입이 한 배치 안에서 함께 일어나 하나의 processedRows 카운터가 파일
-   * 전체에 걸쳐 계속 증가했다. 이제는 Pass1(검증, processedRows 0→전체)과 Pass2(삽입, processedRows 0→전체)가 완전히
-   * 분리된 별개 단계이므로, 단계 전환 시점(VALIDATING→INSERTING)에 processedRows가 되돌아가는 것은 "정직한 스테퍼"의
-   * 의도된 동작이다(Pass2가 Pass1의 카운터를 이어받으면 오히려 삽입 진행이 100%에 멈춘 것처럼 보여 부정확하다). 따라서 이
-   * 테스트는 단계별로 나눠 그 안에서만 단조성을 확인하고, 배치 경계를 넘는 리셋 회귀만 잡는다.
+   * <p>Task2(검증→삽입 2단계 분리) 갱신: 예전엔 검증+삽입이 한 배치 안에서 함께 일어나 하나의 processedRows 카운터가 파일 전체에 걸쳐 계속 증가했다.
+   * 이제는 Pass1(검증, processedRows 0→전체)과 Pass2(삽입, processedRows 0→전체)가 완전히 분리된 별개 단계이므로, 단계 전환
+   * 시점(VALIDATING→INSERTING)에 processedRows가 되돌아가는 것은 "정직한 스테퍼"의 의도된 동작이다(Pass2가 Pass1의 카운터를 이어받으면
+   * 오히려 삽입 진행이 100%에 멈춘 것처럼 보여 부정확하다). 따라서 이 테스트는 단계별로 나눠 그 안에서만 단조성을 확인하고, 배치 경계를 넘는 리셋 회귀만 잡는다.
    */
   @Test
   void processImport_appendStreaming_largeCsv_insertsAllRowsWithMonotonicProgress()
@@ -892,7 +897,8 @@ class DataImportServiceTest extends IntegrationTestBase {
                 "upsert_streaming_dataset",
                 "UPSERT 배치 경계 dedup 테스트용",
                 null,
-                "TABLE", "SOURCE",
+                "TABLE",
+                "SOURCE",
                 columns,
                 null),
             testUserId);
@@ -948,8 +954,8 @@ class DataImportServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * REPLACE(PK 有) 스트리밍: staging에 적재 후 promoteStagingToReplace로 truncate+insert가 원자적으로 처리되고,
-   * 완료 후 staging 테이블이 정리되는지 검증한다.
+   * REPLACE(PK 有) 스트리밍: staging에 적재 후 promoteStagingToReplace로 truncate+insert가 원자적으로 처리되고, 완료 후
+   * staging 테이블이 정리되는지 검증한다.
    */
   @Test
   void processImport_replaceWithPkStreaming_truncateAndPromoteAndDropsStaging() throws Exception {
@@ -965,7 +971,8 @@ class DataImportServiceTest extends IntegrationTestBase {
                 "replace_streaming_dataset",
                 "REPLACE 스트리밍 테스트용",
                 null,
-                "TABLE", "SOURCE",
+                "TABLE",
+                "SOURCE",
                 columns,
                 null),
             testUserId);
@@ -1028,8 +1035,8 @@ class DataImportServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * BLOCKER 회귀 테스트: REPLACE(PK 無) 모드에서 파일 전체 행이 검증 실패하면, lazy truncate가 발동하지 않아 기존 데이터가
-   * 보존되어야 한다. 스트리밍 전환 전 원자적 truncate+insert 로직이 "전량 무효" 케이스에서도 대상 테이블을 건드리지 않아야 한다.
+   * BLOCKER 회귀 테스트: REPLACE(PK 無) 모드에서 파일 전체 행이 검증 실패하면, lazy truncate가 발동하지 않아 기존 데이터가 보존되어야 한다.
+   * 스트리밍 전환 전 원자적 truncate+insert 로직이 "전량 무효" 케이스에서도 대상 테이블을 건드리지 않아야 한다.
    */
   @Test
   void processImport_replaceNoPkAllRowsInvalid_preservesExistingData() throws Exception {
@@ -1076,8 +1083,7 @@ class DataImportServiceTest extends IntegrationTestBase {
     // Then: 기존 데이터(Alice)가 여전히 존재해야 한다 — truncate가 발동하지 않았어야 함
     var rows =
         dsl.select()
-            .from(
-                org.jooq.impl.DSL.table(org.jooq.impl.DSL.name("data", "import_test_dataset")))
+            .from(org.jooq.impl.DSL.table(org.jooq.impl.DSL.name("data", "import_test_dataset")))
             .fetch();
     assertThat(rows).hasSize(1);
     assertThat(rows.get(0).get("name")).isEqualTo("Alice");
@@ -1128,8 +1134,7 @@ class DataImportServiceTest extends IntegrationTestBase {
     // Then: Old는 사라지고 Alice/Bob만 존재
     var rows =
         dsl.select()
-            .from(
-                org.jooq.impl.DSL.table(org.jooq.impl.DSL.name("data", "import_test_dataset")))
+            .from(org.jooq.impl.DSL.table(org.jooq.impl.DSL.name("data", "import_test_dataset")))
             .fetch();
     assertThat(rows).hasSize(2);
     assertThat(rows.stream().map(r -> (String) r.get("name")))

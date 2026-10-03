@@ -24,8 +24,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 /**
  * 테넌트 생명주기 API.
  *
- * <p>클래스 레벨 {@code @Transactional} 을 쓰지 않는다 — 생성은 자기 트랜잭션에서 커밋돼야 하고,
- * 검증 조회는 그 밖에서 GUC 를 세워 RLS 를 통과해야 한다.
+ * <p>클래스 레벨 {@code @Transactional} 을 쓰지 않는다 — 생성은 자기 트랜잭션에서 커밋돼야 하고, 검증 조회는 그 밖에서 GUC 를 세워 RLS 를
+ * 통과해야 한다.
  */
 @AutoConfigureMockMvc
 class PlatformTenantControllerTest extends IntegrationTestBase {
@@ -59,9 +59,8 @@ class PlatformTenantControllerTest extends IntegrationTestBase {
   /**
    * 생성이 롤·권한매핑·내장 양식·기본 카테고리를 모두 갖춘 테넌트를 만든다.
    *
-   * <p>카테고리는 여기서만 실전 검증된다 — Task 1 의 테스트는 테넌트 행을 별도로 커밋한 뒤
-   * 프로비저닝을 부르지만, 실제 생성 경로는 "같은 트랜잭션에서 insert 직후 SECURITY DEFINER 함수
-   * 호출"이라 스냅샷 가시성이 다르다.
+   * <p>카테고리는 여기서만 실전 검증된다 — Task 1 의 테스트는 테넌트 행을 별도로 커밋한 뒤 프로비저닝을 부르지만, 실제 생성 경로는 "같은 트랜잭션에서 insert
+   * 직후 SECURITY DEFINER 함수 호출"이라 스냅샷 가시성이 다르다.
    */
   @Test
   void createTenant_provisionsRolesPermissionsTemplatesAndCategories() throws Exception {
@@ -82,7 +81,8 @@ class PlatformTenantControllerTest extends IntegrationTestBase {
           assertThat(roles).contains("ADMIN", "USER");
 
           Integer rolePermissions =
-              dsl.fetchOne("select count(*) from role_permission where tenant_id = ?", createdTenant)
+              dsl.fetchOne(
+                      "select count(*) from role_permission where tenant_id = ?", createdTenant)
                   .get(0, Integer.class);
           assertThat(rolePermissions).isPositive();
 
@@ -167,8 +167,7 @@ class PlatformTenantControllerTest extends IntegrationTestBase {
   /**
    * 상세 응답에 도메인 데이터가 없다.
    *
-   * <p>설계서 §4 는 크로스테넌트 도메인 조회를 제공하지 않기로 결정했다 — 운영자 화면이 데이터셋
-   * 목록을 받기 시작하면 그 결정이 조용히 무너진다.
+   * <p>설계서 §4 는 크로스테넌트 도메인 조회를 제공하지 않기로 결정했다 — 운영자 화면이 데이터셋 목록을 받기 시작하면 그 결정이 조용히 무너진다.
    */
   @Test
   void tenantDetail_containsNoDomainData() throws Exception {

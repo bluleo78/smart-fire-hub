@@ -86,9 +86,7 @@ class PdfExportServiceTest extends IntegrationTestBase {
     assertThat(new String(pdf, 0, 4)).isEqualTo("%PDF");
   }
 
-  /**
-   * PDF에서 텍스트를 추출한다. 바이트 길이나 %PDF 헤더만 보면 "요약이 실제로 실렸는가"를 검증할 수 없어, 렌더된 문자열을 직접 읽는다 (#363).
-   */
+  /** PDF에서 텍스트를 추출한다. 바이트 길이나 %PDF 헤더만 보면 "요약이 실제로 실렸는가"를 검증할 수 없어, 렌더된 문자열을 직접 읽는다 (#363). */
   private String extractText(byte[] pdf) throws Exception {
     try (PDDocument doc = PDDocument.load(pdf)) {
       return new PDFTextStripper().getText(doc);
@@ -98,8 +96,8 @@ class PdfExportServiceTest extends IntegrationTestBase {
   /**
    * #363 회귀 — htmlContent 없이 Flying Saucer 경로로 생성한 PDF에 summary가 실려야 한다.
    *
-   * <p>화면(ExecutionDetailPage)은 result.summary를 요약 블록으로 보여주는데 PDF에는 summary 참조가 아예 없어, 같은 실행을 화면으로 볼
-   * 때와 PDF로 받을 때의 내용이 달랐다.
+   * <p>화면(ExecutionDetailPage)은 result.summary를 요약 블록으로 보여주는데 PDF에는 summary 참조가 아예 없어, 같은 실행을 화면으로
+   * 볼 때와 PDF로 받을 때의 내용이 달랐다.
    */
   @Test
   void generatePdf_includes_summary_in_rendered_text() throws Exception {

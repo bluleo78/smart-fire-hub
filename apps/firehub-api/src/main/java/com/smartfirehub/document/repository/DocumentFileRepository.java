@@ -30,24 +30,41 @@ public class DocumentFileRepository {
 
   private static final Table<?> T = table(name("document_file"));
   private static final Field<Long> ID = field(name("document_file", "id"), Long.class);
-  private static final Field<Long> DATASET_ID = field(name("document_file", "dataset_id"), Long.class);
-  private static final Field<String> ORIGINAL_NAME = field(name("document_file", "original_name"), String.class);
-  private static final Field<String> MIME_TYPE = field(name("document_file", "mime_type"), String.class);
-  private static final Field<Long> FILE_SIZE = field(name("document_file", "file_size"), Long.class);
-  private static final Field<String> STORAGE_PATH = field(name("document_file", "storage_path"), String.class);
-  private static final Field<String> CHECKSUM = field(name("document_file", "checksum"), String.class);
+  private static final Field<Long> DATASET_ID =
+      field(name("document_file", "dataset_id"), Long.class);
+  private static final Field<String> ORIGINAL_NAME =
+      field(name("document_file", "original_name"), String.class);
+  private static final Field<String> MIME_TYPE =
+      field(name("document_file", "mime_type"), String.class);
+  private static final Field<Long> FILE_SIZE =
+      field(name("document_file", "file_size"), Long.class);
+  private static final Field<String> STORAGE_PATH =
+      field(name("document_file", "storage_path"), String.class);
+  private static final Field<String> CHECKSUM =
+      field(name("document_file", "checksum"), String.class);
   private static final Field<String> STATUS = field(name("document_file", "status"), String.class);
-  private static final Field<Integer> PAGE_COUNT = field(name("document_file", "page_count"), Integer.class);
-  private static final Field<Integer> CHUNK_COUNT = field(name("document_file", "chunk_count"), Integer.class);
-  private static final Field<String> ERROR_DETAIL = field(name("document_file", "error_detail"), String.class);
-  private static final Field<Long> UPLOADED_BY = field(name("document_file", "uploaded_by"), Long.class);
-  private static final Field<LocalDateTime> CREATED_AT = field(name("document_file", "created_at"), LocalDateTime.class);
-  private static final Field<LocalDateTime> COMPLETED_AT = field(name("document_file", "completed_at"), LocalDateTime.class);
+  private static final Field<Integer> PAGE_COUNT =
+      field(name("document_file", "page_count"), Integer.class);
+  private static final Field<Integer> CHUNK_COUNT =
+      field(name("document_file", "chunk_count"), Integer.class);
+  private static final Field<String> ERROR_DETAIL =
+      field(name("document_file", "error_detail"), String.class);
+  private static final Field<Long> UPLOADED_BY =
+      field(name("document_file", "uploaded_by"), Long.class);
+  private static final Field<LocalDateTime> CREATED_AT =
+      field(name("document_file", "created_at"), LocalDateTime.class);
+  private static final Field<LocalDateTime> COMPLETED_AT =
+      field(name("document_file", "completed_at"), LocalDateTime.class);
 
   /** PENDING 상태로 신규 메타를 만들고 id 반환. */
   public Long create(
-      Long datasetId, String originalName, String mimeType, long fileSize,
-      String storagePath, String checksum, Long uploadedBy) {
+      Long datasetId,
+      String originalName,
+      String mimeType,
+      long fileSize,
+      String storagePath,
+      String checksum,
+      Long uploadedBy) {
     return dsl.insertInto(T)
         .set(DATASET_ID, datasetId)
         .set(ORIGINAL_NAME, originalName)
@@ -81,7 +98,11 @@ public class DocumentFileRepository {
   public void markFailed(Long id, String errorDetail) {
     dsl.update(T)
         .set(STATUS, "FAILED")
-        .set(ERROR_DETAIL, errorDetail == null ? "unknown" : errorDetail.substring(0, Math.min(errorDetail.length(), 4000)))
+        .set(
+            ERROR_DETAIL,
+            errorDetail == null
+                ? "unknown"
+                : errorDetail.substring(0, Math.min(errorDetail.length(), 4000)))
         .where(ID.eq(id))
         .execute();
   }
@@ -97,8 +118,11 @@ public class DocumentFileRepository {
   }
 
   public List<DocumentFileResponse> findByDataset(Long datasetId) {
-    return dsl.select().from(T).where(DATASET_ID.eq(datasetId))
-        .orderBy(CREATED_AT.desc()).fetch(this::map);
+    return dsl.select()
+        .from(T)
+        .where(DATASET_ID.eq(datasetId))
+        .orderBy(CREATED_AT.desc())
+        .fetch(this::map);
   }
 
   public Optional<DocumentFileResponse> findById(Long id) {
@@ -114,9 +138,16 @@ public class DocumentFileRepository {
     OffsetDateTime createdAt = r.get("created_at", OffsetDateTime.class);
     OffsetDateTime completedAt = r.get("completed_at", OffsetDateTime.class);
     return new DocumentFileResponse(
-        r.get(ID), r.get(DATASET_ID), r.get(ORIGINAL_NAME), r.get(MIME_TYPE),
-        r.get(FILE_SIZE), r.get(STATUS), r.get(PAGE_COUNT), r.get(CHUNK_COUNT),
-        r.get(ERROR_DETAIL), r.get(UPLOADED_BY),
+        r.get(ID),
+        r.get(DATASET_ID),
+        r.get(ORIGINAL_NAME),
+        r.get(MIME_TYPE),
+        r.get(FILE_SIZE),
+        r.get(STATUS),
+        r.get(PAGE_COUNT),
+        r.get(CHUNK_COUNT),
+        r.get(ERROR_DETAIL),
+        r.get(UPLOADED_BY),
         createdAt == null ? null : createdAt.toLocalDateTime(),
         completedAt == null ? null : completedAt.toLocalDateTime());
   }

@@ -20,9 +20,9 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <p>결과에 jsonb/json/xml/interval/확장 타입 배열이 있으면 jOOQ 가 돌려준 값({@code org.jooq.JSONB} 등)이 행 Map 에 그대로
  * 담겨 Jackson 직렬화가 500 으로 실패하거나(jsonb·json·xml·point[]), 200 인데 따옴표 없는 토큰이 섞인 깨진 JSON 이
- * 됐다(interval). 두 애드혹 경로(애드혹 분석·데이터셋 SQL 탭)의 응답을 <b>Spring 이 쓰는 ObjectMapper 로 직렬화 → 다시
- * 파싱</b>해, 값이 PostgreSQL 이 내보내는 텍스트(오라클 = 같은 식의 {@code ::text})와 같은 JSON 문자열인지 확인한다.
- * "직렬화가 예외 없이 끝난다"만 보면 interval 처럼 깨진 JSON 을 내는 경우를 놓치므로 반드시 다시 파싱한다.
+ * 됐다(interval). 두 애드혹 경로(애드혹 분석·데이터셋 SQL 탭)의 응답을 <b>Spring 이 쓰는 ObjectMapper 로 직렬화 → 다시 파싱</b>해, 값이
+ * PostgreSQL 이 내보내는 텍스트(오라클 = 같은 식의 {@code ::text})와 같은 JSON 문자열인지 확인한다. "직렬화가 예외 없이 끝난다"만 보면
+ * interval 처럼 깨진 JSON 을 내는 경우를 놓치므로 반드시 다시 파싱한다.
  */
 @Transactional
 class AdhocResultSerializationTest extends IntegrationTestBase {
@@ -164,21 +164,29 @@ class AdhocResultSerializationTest extends IntegrationTestBase {
             "interval '1 year 2 days'",
             "1.25::numeric")) {
       JsonNode oneDim = analyticsValue("ARRAY[" + elem + "]").get(0);
-      JsonNode expected = objectMapper.createArrayNode().add(objectMapper.createArrayNode().add(oneDim));
-      assertThat(analyticsValue("ARRAY[[" + elem + "]]")).as("analytics 2D %s", elem).isEqualTo(expected);
-      assertThat(datasetValue("ARRAY[[" + elem + "]]")).as("dataset 2D %s", elem).isEqualTo(expected);
+      JsonNode expected =
+          objectMapper.createArrayNode().add(objectMapper.createArrayNode().add(oneDim));
+      assertThat(analyticsValue("ARRAY[[" + elem + "]]"))
+          .as("analytics 2D %s", elem)
+          .isEqualTo(expected);
+      assertThat(datasetValue("ARRAY[[" + elem + "]]"))
+          .as("dataset 2D %s", elem)
+          .isEqualTo(expected);
     }
     assertJsonOnBothPaths("ARRAY[['{\"k\":1}'::jsonb]]", "[[\"{\\\"k\\\": 1}\"]]");
     assertJsonOnBothPaths("ARRAY[[interval '1 day']]", "[[\"1 day\"]]");
     // 여러 행·여러 컬럼이 섞여도 각 셀이 제자리에 들어간다
     var res =
         analyticsService.execute(
-            "SELECT g AS n, ARRAY[[g, g+1]] AS m, ARRAY[g] AS a FROM generate_series(1,3) g", 10, true);
+            "SELECT g AS n, ARRAY[[g, g+1]] AS m, ARRAY[g] AS a FROM generate_series(1,3) g",
+            10,
+            true);
     JsonNode rows = objectMapper.readTree(objectMapper.writeValueAsString(res)).get("rows");
     for (int i = 0; i < 3; i++) {
       int g = i + 1;
       assertThat(rows.get(i).get("n").asInt()).isEqualTo(g);
-      assertThat(rows.get(i).get("m")).isEqualTo(objectMapper.readTree("[[" + g + "," + (g + 1) + "]]"));
+      assertThat(rows.get(i).get("m"))
+          .isEqualTo(objectMapper.readTree("[[" + g + "," + (g + 1) + "]]"));
       assertThat(rows.get(i).get("a")).isEqualTo(objectMapper.readTree("[" + g + "]"));
     }
   }
@@ -203,7 +211,9 @@ class AdhocResultSerializationTest extends IntegrationTestBase {
             new Object[][] {{"not-a-number"}}, "{{not-a-number}}", Integer[].class);
     assertThat(v).isEqualTo("{{not-a-number}}");
     // 변환 가능한 값은 중첩 리스트
-    assertThat(AdhocMultiDimArrays.toNested(new Integer[][] {{1, null}}, "{{1,NULL}}", Integer[].class))
+    assertThat(
+            AdhocMultiDimArrays.toNested(
+                new Integer[][] {{1, null}}, "{{1,NULL}}", Integer[].class))
         .isEqualTo(java.util.List.of(java.util.Arrays.asList(1, null)));
   }
 
@@ -318,16 +328,23 @@ class AdhocResultSerializationTest extends IntegrationTestBase {
     String sql =
         "SELECT v, n FROM (VALUES (1, DATE '2024-01-01'), (2, '10000-01-01'::date), (3, NULL::date),"
             + " (4, 'infinity'::date), (5, DATE '2024-12-31')) t(n, v) ORDER BY n";
-    String[] expected = {"\"2024-01-01\"", "\"10000-01-01\"", "null", "\"infinity\"", "\"2024-12-31\""};
+    String[] expected = {
+      "\"2024-01-01\"", "\"10000-01-01\"", "null", "\"infinity\"", "\"2024-12-31\""
+    };
     JsonNode a =
-        objectMapper.readTree(objectMapper.writeValueAsString(analyticsService.execute(sql, 10, true)));
+        objectMapper.readTree(
+            objectMapper.writeValueAsString(analyticsService.execute(sql, 10, true)));
     JsonNode d =
         objectMapper.readTree(
             objectMapper.writeValueAsString(dataTableQueryService.executeQuery(sql, 10)));
     for (int i = 0; i < expected.length; i++) {
-      assertThat(a.get("rows").get(i).get("v").toString()).as("analytics row %d", i).isEqualTo(expected[i]);
+      assertThat(a.get("rows").get(i).get("v").toString())
+          .as("analytics row %d", i)
+          .isEqualTo(expected[i]);
       assertThat(a.get("rows").get(i).get("n").asInt()).isEqualTo(i + 1);
-      assertThat(d.get("rows").get(i).get("v").toString()).as("dataset row %d", i).isEqualTo(expected[i]);
+      assertThat(d.get("rows").get(i).get("v").toString())
+          .as("dataset row %d", i)
+          .isEqualTo(expected[i]);
     }
   }
 
@@ -380,7 +397,8 @@ class AdhocResultSerializationTest extends IntegrationTestBase {
     // 회귀 가드 — geometry/geography 는 이 수정 범위 밖이다. 애드혹 분석은 GeoJSON 문자열(#741), 데이터셋 SQL
     // 탭은 기존 형태(타입 + WKB 16진수 객체, #767 결정 대기) 그대로여야 한다.
     for (String expr :
-        java.util.List.of("public.ST_MakePoint(1,2)", "public.ST_MakePoint(1,2)::public.geography")) {
+        java.util.List.of(
+            "public.ST_MakePoint(1,2)", "public.ST_MakePoint(1,2)::public.geography")) {
       JsonNode d = datasetValue(expr);
       assertThat(d.isObject()).as("dataset %s", expr).isTrue();
       assertThat(d.get("type").asText()).containsAnyOf("geometry", "geography");
@@ -398,11 +416,16 @@ class AdhocResultSerializationTest extends IntegrationTestBase {
     assertTextOnBothPaths("ARRAY['(1,2)'::point]");
     // 다차원 배열도 pgjdbc 내부 필드(type/null/isNull)가 새지 않는다
     for (String expr :
-        java.util.List.of("ARRAY[['[1,2)'::int4range]]", "ARRAY[['(1,2)'::point]]", "ARRAY[['1.1.1.1'::inet]]")) {
+        java.util.List.of(
+            "ARRAY[['[1,2)'::int4range]]", "ARRAY[['(1,2)'::point]]", "ARRAY[['1.1.1.1'::inet]]")) {
       String a = analyticsValue(expr).toString();
       String d = datasetValue(expr).toString();
       for (String json : java.util.List.of(a, d)) {
-        assertThat(json).as(expr).doesNotContain("\"type\"").doesNotContain("isNull").doesNotContain("\"null\"");
+        assertThat(json)
+            .as(expr)
+            .doesNotContain("\"type\"")
+            .doesNotContain("isNull")
+            .doesNotContain("\"null\"");
       }
     }
   }

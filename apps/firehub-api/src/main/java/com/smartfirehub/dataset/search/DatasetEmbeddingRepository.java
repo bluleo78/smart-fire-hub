@@ -12,8 +12,8 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * dataset_embedding upsert/update/delete.
  *
- * <p>가시성 설계상 source_text(동기, 외부호출 없음)와 embedding(비동기) 경로를 분리한다. 신규 행은 벡터 없이
- * 시작해도 키워드(트라이그램) 검색에는 즉시 노출된다.
+ * <p>가시성 설계상 source_text(동기, 외부호출 없음)와 embedding(비동기) 경로를 분리한다. 신규 행은 벡터 없이 시작해도 키워드(트라이그램) 검색에는 즉시
+ * 노출된다.
  *
  * <p>벡터는 차원별 테이블(dataset_embedding_vec_N)에 둔다(#713).
  */
@@ -30,10 +30,7 @@ public class DatasetEmbeddingRepository {
     this.dsl = dsl;
   }
 
-  /**
-   * source_text 만 동기 upsert(외부 호출 없음). 벡터는 차원 테이블에 따로 있다 — 새 행은 벡터 없이 시작해 키워드
-   * 검색에는 즉시 노출된다.
-   */
+  /** source_text 만 동기 upsert(외부 호출 없음). 벡터는 차원 테이블에 따로 있다 — 새 행은 벡터 없이 시작해 키워드 검색에는 즉시 노출된다. */
   public void upsertSourceText(long datasetId, String sourceText) {
     String sql =
         "INSERT INTO dataset_embedding(dataset_id, source_text, updated_at) "
@@ -54,12 +51,13 @@ public class DatasetEmbeddingRepository {
   }
 
   /**
-   * 카탈로그 벡터 여러 건을 {@code space} 로 쓴다: 다른 차원 행 DELETE(차원마다 {@code dataset_id = ANY(?)} 1회) +
-   * 현재 차원 UPSERT(JDBC 배치 1회) — 한 트랜잭션. 재임베딩 잡이 배치(64건)마다 한 번 부른다(행마다 부르면 배치당
-   * 트랜잭션이 64회 열린다 — DocumentChunkRepository.upsertEmbeddings 와 같은 형태). 부모 dataset_embedding 행이
-   * 없으면(삭제 경합) INSERT…SELECT 가 0행이라 그 건만 조용히 건너뛴다 — 옛 UPDATE 0행과 같은 의미.
+   * 카탈로그 벡터 여러 건을 {@code space} 로 쓴다: 다른 차원 행 DELETE(차원마다 {@code dataset_id = ANY(?)} 1회) + 현재 차원
+   * UPSERT(JDBC 배치 1회) — 한 트랜잭션. 재임베딩 잡이 배치(64건)마다 한 번 부른다(행마다 부르면 배치당 트랜잭션이 64회 열린다 —
+   * DocumentChunkRepository.upsertEmbeddings 와 같은 형태). 부모 dataset_embedding 행이 없으면(삭제 경합)
+   * INSERT…SELECT 가 0행이라 그 건만 조용히 건너뛴다 — 옛 UPDATE 0행과 같은 의미.
    */
-  public void upsertEmbeddings(EmbeddingSpace space, List<Long> datasetIds, List<float[]> embeddings) {
+  public void upsertEmbeddings(
+      EmbeddingSpace space, List<Long> datasetIds, List<float[]> embeddings) {
     if (datasetIds.size() != embeddings.size()) {
       throw new IllegalArgumentException(
           "데이터셋 수와 임베딩 수 불일치: " + datasetIds.size() + " vs " + embeddings.size());
@@ -72,12 +70,16 @@ public class DatasetEmbeddingRepository {
     }
     org.jooq.BatchBindStep batch =
         dsl.batch(
-            "INSERT INTO " + space.dimension().datasetTable() + " (dataset_id, embedding, embedding_model, updated_at)"
+            "INSERT INTO "
+                + space.dimension().datasetTable()
+                + " (dataset_id, embedding, embedding_model, updated_at)"
                 + " SELECT de.dataset_id, ?::vector, ?, now() FROM dataset_embedding de WHERE de.dataset_id = ?"
                 + " ON CONFLICT (dataset_id) DO UPDATE SET embedding = EXCLUDED.embedding,"
                 + " embedding_model = EXCLUDED.embedding_model, updated_at = now()");
     for (int i = 0; i < datasetIds.size(); i++) {
-      batch = batch.bind(VectorLiterals.toVectorLiteral(embeddings.get(i)), space.model(), datasetIds.get(i));
+      batch =
+          batch.bind(
+              VectorLiterals.toVectorLiteral(embeddings.get(i)), space.model(), datasetIds.get(i));
     }
     batch.execute();
   }
@@ -95,7 +97,9 @@ public class DatasetEmbeddingRepository {
   /** {@code space} 로 임베딩된 데이터셋 수. */
   public long countEmbedded(EmbeddingSpace space) {
     return dsl.fetchOne(
-            "SELECT count(*) FROM " + space.dimension().datasetTable() + " WHERE embedding_model = ?",
+            "SELECT count(*) FROM "
+                + space.dimension().datasetTable()
+                + " WHERE embedding_model = ?",
             space.model())
         .get(0, Long.class);
   }
@@ -103,7 +107,8 @@ public class DatasetEmbeddingRepository {
   /** 재임베딩 판정식(현재 차원 테이블에 현재 모델 벡터가 없는 카탈로그 행 수). */
   public long countMissing(EmbeddingSpace space) {
     return dsl.fetchOne(
-            "SELECT count(*) FROM dataset_embedding de WHERE " + missingPredicate(space), space.model())
+            "SELECT count(*) FROM dataset_embedding de WHERE " + missingPredicate(space),
+            space.model())
         .get(0, Long.class);
   }
 
@@ -111,9 +116,15 @@ public class DatasetEmbeddingRepository {
   public List<SourceTextRow> findMissing(EmbeddingSpace space, long afterDatasetId, int limit) {
     return dsl.fetch(
             "SELECT de.dataset_id, de.source_text FROM dataset_embedding de WHERE de.dataset_id > ? AND "
-                + missingPredicate(space) + " ORDER BY de.dataset_id LIMIT ?",
-            afterDatasetId, space.model(), limit)
-        .map(r -> new SourceTextRow(r.get("dataset_id", Long.class), r.get("source_text", String.class)));
+                + missingPredicate(space)
+                + " ORDER BY de.dataset_id LIMIT ?",
+            afterDatasetId,
+            space.model(),
+            limit)
+        .map(
+            r ->
+                new SourceTextRow(
+                    r.get("dataset_id", Long.class), r.get("source_text", String.class)));
   }
 
   /** 현재 차원이 아닌 테이블의 이 테넌트 카탈로그 벡터 삭제(WHERE tenant_id 명시 — 문서 청크 쪽과 같은 규율). */
@@ -123,7 +134,8 @@ public class DatasetEmbeddingRepository {
   }
 
   private static String missingPredicate(EmbeddingSpace space) {
-    return "NOT EXISTS (SELECT 1 FROM " + space.dimension().datasetTable()
+    return "NOT EXISTS (SELECT 1 FROM "
+        + space.dimension().datasetTable()
         + " v WHERE v.dataset_id = de.dataset_id AND v.embedding_model = ?)";
   }
 }

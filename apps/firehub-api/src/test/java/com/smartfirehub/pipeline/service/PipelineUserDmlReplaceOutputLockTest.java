@@ -7,10 +7,10 @@ import com.smartfirehub.dataset.dto.CreateDatasetRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.service.DatasetService;
 import com.smartfirehub.global.tenant.DataSchema;
+import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.pipeline.dto.CreatePipelineRequest;
 import com.smartfirehub.pipeline.dto.PipelineStepRequest;
 import com.smartfirehub.support.IntegrationTestBase;
-import com.smartfirehub.global.tenant.TenantContext;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -30,25 +30,25 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 사용자가 직접 쓴 DML(비SELECT) SQL 스텝 + REPLACE 가 같은 출력에 겹칠 때의 직렬화(#735) — 실제 DB 에서
- * 파이프라인 실행 두 건(그리고 SELECT 자동 적재 실행과의 조합)을 끝에서 끝까지 겹쳐 확인한다.
+ * 사용자가 직접 쓴 DML(비SELECT) SQL 스텝 + REPLACE 가 같은 출력에 겹칠 때의 직렬화(#735) — 실제 DB 에서 파이프라인 실행 두 건(그리고
+ * SELECT 자동 적재 실행과의 조합)을 끝에서 끝까지 겹쳐 확인한다.
  *
- * <p><b>왜 {@code SqlScriptExecutorOutputLockTest}(#731)로는 부족한가.</b> 그 테스트는 "선행 문장이
- * 넘어왔을 때" 실행기가 잠금을 잡는지만 본다. #735 의 결함은 그 앞 단계 — 러너가 사용자 DML 스텝에는
- * 선행 문장을 아예 만들지 않고 즉시 커밋되는 truncate 를 따로 하던 것 — 이라, 러너를 거치는 실제
- * 파이프라인 실행으로만 드러난다.
+ * <p><b>왜 {@code SqlScriptExecutorOutputLockTest}(#731)로는 부족한가.</b> 그 테스트는 "선행 문장이 넘어왔을 때" 실행기가 잠금을
+ * 잡는지만 본다. #735 의 결함은 그 앞 단계 — 러너가 사용자 DML 스텝에는 선행 문장을 아예 만들지 않고 즉시 커밋되는 truncate 를 따로 하던 것 — 이라,
+ * 러너를 거치는 실제 파이프라인 실행으로만 드러난다.
  *
- * <p>테스트 프로파일의 테넌트 파이프라인 풀 크기(1)로는 두 실행이 같은 커넥션을 차례로 써 겹침이
- * 만들어지지 않으므로 운영 기본값(2)으로 올린다. 테스트 트랜잭션은 끈다 — 실행은 {@code @Async} 라
- * 별도 스레드·커넥션에서 돌고, 픽스처가 커밋돼 있어야 그쪽에서 보인다.
+ * <p>테스트 프로파일의 테넌트 파이프라인 풀 크기(1)로는 두 실행이 같은 커넥션을 차례로 써 겹침이 만들어지지 않으므로 운영 기본값(2)으로 올린다. 테스트 트랜잭션은 끈다
+ * — 실행은 {@code @Async} 라 별도 스레드·커넥션에서 돌고, 픽스처가 커밋돼 있어야 그쪽에서 보인다.
  */
 @TestPropertySource(properties = "app.pipeline.tenant-pool.max-size=2")
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class PipelineUserDmlReplaceOutputLockTest extends IntegrationTestBase {
 
   @Autowired private DSLContext dsl;
+
   /** 관문 잠금 전용 커넥션을 빌리기 위한 메인 풀. */
   @Autowired private DataSource dataSource;
+
   @Autowired private DatasetService datasetService;
   @Autowired private PipelineService pipelineService;
   @Autowired private PipelineExecutionService executionService;
@@ -102,7 +102,9 @@ class PipelineUserDmlReplaceOutputLockTest extends IntegrationTestBase {
 
     // 원천 2행, 출력에는 이전 실행 결과 1행.
     dsl.execute(
-        "INSERT INTO " + DataSchema.qualify(srcTable) + " (code, name) VALUES ('a','A'), ('b','B')");
+        "INSERT INTO "
+            + DataSchema.qualify(srcTable)
+            + " (code, name) VALUES ('a','A'), ('b','B')");
     dsl.execute("INSERT INTO " + DataSchema.qualify(outTable) + " (code, name) VALUES ('old','O')");
   }
 
@@ -135,11 +137,10 @@ class PipelineUserDmlReplaceOutputLockTest extends IntegrationTestBase {
   }
 
   /**
-   * 사용자가 직접 쓴 INSERT(REPLACE) 스텝의 같은 파이프라인을 두 번 겹쳐 실행해도 출력에는 한 번
-   * 분량만 남는다(#735).
+   * 사용자가 직접 쓴 INSERT(REPLACE) 스텝의 같은 파이프라인을 두 번 겹쳐 실행해도 출력에는 한 번 분량만 남는다(#735).
    *
-   * <p><b>수정 전에는 실패한다(실측 — 4행).</b> 수정 전 러너는 출력을 즉시 커밋되는 truncate 로 따로
-   * 비웠다. 두 실행이 각자 비우기를 끝낸 뒤 각자 INSERT 하므로 두 실행분이 모두 남는다.
+   * <p><b>수정 전에는 실패한다(실측 — 4행).</b> 수정 전 러너는 출력을 즉시 커밋되는 truncate 로 따로 비웠다. 두 실행이 각자 비우기를 끝낸 뒤 각자
+   * INSERT 하므로 두 실행분이 모두 남는다.
    */
   @Test
   void 사용자_INSERT_REPLACE_스텝을_겹쳐_실행해도_행이_중복되지_않는다() throws Exception {
@@ -154,12 +155,10 @@ class PipelineUserDmlReplaceOutputLockTest extends IntegrationTestBase {
   }
 
   /**
-   * 사용자 INSERT(REPLACE) 실행과 SELECT 자동 적재(REPLACE, #731) 실행은 <b>같은 잠금 키</b>를 쓴다 —
-   * 서로 배타라는 것의 직접 증거다.
+   * 사용자 INSERT(REPLACE) 실행과 SELECT 자동 적재(REPLACE, #731) 실행은 <b>같은 잠금 키</b>를 쓴다 — 서로 배타라는 것의 직접 증거다.
    *
-   * <p>테스트 커넥션이 그 키(SQL 경로가 쓰는 것과 같은 식)의 advisory 잠금을 쥔 동안 두 파이프라인을
-   * 실행하면 <b>둘 다</b> advisory 잠금 대기에 들어가야 한다. 수정 전에는 사용자 INSERT 실행이 잠금을
-   * 잡지 않고 그대로 끝나므로 대기가 1건뿐이라 실패한다(실측). 원천 관문 방식을 쓰지 않는 이유:
+   * <p>테스트 커넥션이 그 키(SQL 경로가 쓰는 것과 같은 식)의 advisory 잠금을 쥔 동안 두 파이프라인을 실행하면 <b>둘 다</b> advisory 잠금 대기에
+   * 들어가야 한다. 수정 전에는 사용자 INSERT 실행이 잠금을 잡지 않고 그대로 끝나므로 대기가 1건뿐이라 실패한다(실측). 원천 관문 방식을 쓰지 않는 이유:
    * SELECT 실행은 컬럼 probe 단계에서 원천 관문에 먼저 걸려, 잠금이 없어도 우연히 순차로 끝난다.
    */
   @Test
@@ -203,8 +202,8 @@ class PipelineUserDmlReplaceOutputLockTest extends IntegrationTestBase {
   }
 
   /**
-   * 사용자 DML 이 실패하면 비우기도 함께 롤백되어 이전 출력이 그대로 남는다 — 비우기가 사용자 DML 과
-   * 같은 트랜잭션이 됐다는 것의 직접 증거다(수정 전에는 truncate 가 먼저 커밋돼 출력이 빈 채로 남았다).
+   * 사용자 DML 이 실패하면 비우기도 함께 롤백되어 이전 출력이 그대로 남는다 — 비우기가 사용자 DML 과 같은 트랜잭션이 됐다는 것의 직접 증거다(수정 전에는
+   * truncate 가 먼저 커밋돼 출력이 빈 채로 남았다).
    */
   @Test
   void 사용자_DML이_실패하면_비우기도_롤백되어_이전_출력이_남는다() throws Exception {
@@ -227,11 +226,10 @@ class PipelineUserDmlReplaceOutputLockTest extends IntegrationTestBase {
   // ------------------------------------------------------------------ //
 
   /**
-   * 사용자가 직접 쓴 INSERT. <b>원천을 CTE 로 먼저 읽는 형태여야 한다</b> — PostgreSQL 은 구문 분석 때
-   * 관계 잠금을 등장 순서대로 잡는데, {@code INSERT INTO 출력 SELECT FROM 원천} 꼴이면 출력의 ROW
-   * EXCLUSIVE 를 먼저 쥔 채 원천 관문에서 멈춘다. 그러면 수정 전 코드에서도 뒤 실행의 TRUNCATE(ACCESS
-   * EXCLUSIVE)가 그 잠금에 막혀 저절로 직렬화되므로, 결함이 있어도 통과하는 공허한 테스트가 된다.
-   * WITH 절은 대상 테이블보다 먼저 분석되므로 출력 잠금 없이 원천 관문에서 멈춘다.
+   * 사용자가 직접 쓴 INSERT. <b>원천을 CTE 로 먼저 읽는 형태여야 한다</b> — PostgreSQL 은 구문 분석 때 관계 잠금을 등장 순서대로 잡는데,
+   * {@code INSERT INTO 출력 SELECT FROM 원천} 꼴이면 출력의 ROW EXCLUSIVE 를 먼저 쥔 채 원천 관문에서 멈춘다. 그러면 수정 전
+   * 코드에서도 뒤 실행의 TRUNCATE(ACCESS EXCLUSIVE)가 그 잠금에 막혀 저절로 직렬화되므로, 결함이 있어도 통과하는 공허한 테스트가 된다. WITH 절은
+   * 대상 테이블보다 먼저 분석되므로 출력 잠금 없이 원천 관문에서 멈춘다.
    */
   private String userInsertSql() {
     return "WITH s AS (SELECT code, name FROM "
@@ -258,9 +256,9 @@ class PipelineUserDmlReplaceOutputLockTest extends IntegrationTestBase {
   }
 
   /**
-   * 두 파이프라인 실행을 <b>결정적으로</b> 겹친다 — 타이밍(sleep)이 아니라 제3 커넥션의 관문으로.
-   * 테스트 커넥션이 원천 테이블에 ACCESS EXCLUSIVE 를 쥔 동안 두 실행을 띄우고, 두 실행의 백엔드가
-   * 모두 잠금 대기에 들어간 것을 {@code pg_locks} 로 확인한 뒤에 관문을 연다(#731 테스트와 같은 방식).
+   * 두 파이프라인 실행을 <b>결정적으로</b> 겹친다 — 타이밍(sleep)이 아니라 제3 커넥션의 관문으로. 테스트 커넥션이 원천 테이블에 ACCESS EXCLUSIVE
+   * 를 쥔 동안 두 실행을 띄우고, 두 실행의 백엔드가 모두 잠금 대기에 들어간 것을 {@code pg_locks} 로 확인한 뒤에 관문을 연다(#731 테스트와 같은
+   * 방식).
    */
   private List<Long> runOverlapped(Long firstPipeline, Long secondPipeline) throws Exception {
     List<Long> executions = new ArrayList<>();

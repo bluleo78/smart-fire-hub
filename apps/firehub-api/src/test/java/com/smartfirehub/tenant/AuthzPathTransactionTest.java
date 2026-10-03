@@ -18,12 +18,11 @@ import org.springframework.transaction.interceptor.TransactionAttributeSource;
 /**
  * RLS 정책(V99) 아래에서 조용히 0행이 되는 경로를 트랜잭션 프록시로 고정한다.
  *
- * <p>왜 행위 테스트가 아니라 메타데이터 단언인가: 이 Task 시점에는 아직 정책이 없어 행위로는
- * 결함이 드러나지 않는다(정책은 V99 로 분리돼 있다). 그래서 "트랜잭션이 열린다"는 전제 자체를
- * 고정하고, 실제 격리 행위는 Task 5 의 RLS 테스트가 검증한다.
+ * <p>왜 행위 테스트가 아니라 메타데이터 단언인가: 이 Task 시점에는 아직 정책이 없어 행위로는 결함이 드러나지 않는다(정책은 V99 로 분리돼 있다). 그래서
+ * "트랜잭션이 열린다"는 전제 자체를 고정하고, 실제 격리 행위는 Task 5 의 RLS 테스트가 검증한다.
  *
- * <p>GUC 는 TenantAwareTransactionManager.doBegin 에서만 주입되므로, 트랜잭션이 없으면
- * TenantContext 에 값이 있어도 아무 일도 일어나지 않는다 — 예외도 로그도 없이 0행이다.
+ * <p>GUC 는 TenantAwareTransactionManager.doBegin 에서만 주입되므로, 트랜잭션이 없으면 TenantContext 에 값이 있어도 아무 일도
+ * 일어나지 않는다 — 예외도 로그도 없이 0행이다.
  */
 class AuthzPathTransactionTest extends IntegrationTestBase {
 
@@ -144,8 +143,7 @@ class AuthzPathTransactionTest extends IntegrationTestBase {
                 "%s.%s 가 @Scheduled 다 — 요청 스코프 밖이라 TenantContext 가 비고,"
                     + " audit_log 형태 (b) 정책이 교차 테넌트 행을 돌려준다."
                     + " 스케줄 감사 작업이 필요하면 TenantContext.runScoped 로 테넌트를 명시하라.",
-                reader.getSimpleName(),
-                method.getName())
+                reader.getSimpleName(), method.getName())
             .isTrue();
       }
     }
@@ -154,10 +152,9 @@ class AuthzPathTransactionTest extends IntegrationTestBase {
   /**
    * 위 가드가 쓰는 탐지 API 자체가 {@code @Repeatable} 을 실제로 본다는 것을 고정한다.
    *
-   * <p>왜: 이 웨이브 이전의 {@code isAnnotationPresent(Scheduled.class)} 는 두 번 붙은 {@code
-   * @Scheduled} 를 놓쳤다(컴파일러가 {@code @Schedules} 컨테이너로 합성하기 때문). 가드를 고쳤다는
-   * 주장은 탐지 API 를 직접 시험해야 검증된다 — 실제 리더 클래스에는 {@code @Scheduled} 가 하나도
-   * 없어서 위 테스트는 API 를 바꿔도 통과하기 때문이다.
+   * <p>왜: 이 웨이브 이전의 {@code isAnnotationPresent(Scheduled.class)} 는 두 번 붙은 {@code @Scheduled} 를
+   * 놓쳤다(컴파일러가 {@code @Schedules} 컨테이너로 합성하기 때문). 가드를 고쳤다는 주장은 탐지 API 를 직접 시험해야 검증된다 — 실제 리더 클래스에는
+   * {@code @Scheduled} 가 하나도 없어서 위 테스트는 API 를 바꿔도 통과하기 때문이다.
    */
   @Test
   @DisplayName("@Scheduled 탐지가 반복 애노테이션(@Schedules 합성)도 본다")

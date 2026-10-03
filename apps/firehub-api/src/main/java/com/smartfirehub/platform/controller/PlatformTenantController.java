@@ -20,12 +20,12 @@ import org.springframework.web.bind.annotation.RestController;
 /**
  * 테넌트 생명주기 API(운영자 전용).
  *
- * <p>권한은 V82 가 시딩한 {@code platform:*} 코드로 검사한다. 이 코드들은 플랫폼 평면 로딩 경로
- * ({@code platform_user_role ⨝ platform_role_permission})로만 authority 에 실리며,
- * {@code PlatformPlaneFilter} 가 테넌트 토큰의 접근을 평면 단위로 먼저 차단한다.
+ * <p>권한은 V82 가 시딩한 {@code platform:*} 코드로 검사한다. 이 코드들은 플랫폼 평면 로딩 경로 ({@code platform_user_role ⨝
+ * platform_role_permission})로만 authority 에 실리며, {@code PlatformPlaneFilter} 가 테넌트 토큰의 접근을 평면 단위로 먼저
+ * 차단한다.
  *
- * <p>정지·활성화가 같은 권한({@code platform:tenant:suspend})을 쓰는 이유: 둘은 같은 상태 스위치의
- * 양방향이고, 정지시킬 수 있는 운영자가 되돌릴 수 없으면 실수를 복구할 수 없다.
+ * <p>정지·활성화가 같은 권한({@code platform:tenant:suspend})을 쓰는 이유: 둘은 같은 상태 스위치의 양방향이고, 정지시킬 수 있는 운영자가 되돌릴
+ * 수 없으면 실수를 복구할 수 없다.
  */
 @RestController
 @RequestMapping("/api/platform/tenants")

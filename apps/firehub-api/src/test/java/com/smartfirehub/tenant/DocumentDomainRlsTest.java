@@ -18,8 +18,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 /**
  * V90 document 도메인 RLS 격리를 양방향으로 검증한다.
  *
- * <p>클래스 레벨 {@code @Transactional} 을 붙이지 않는다 — 테넌트를 바꿔 가며 여러 트랜잭션을
- * 열어야 하고, 하나의 테스트 트랜잭션에 묶이면 GUC 가 처음 값으로 고정된다.
+ * <p>클래스 레벨 {@code @Transactional} 을 붙이지 않는다 — 테넌트를 바꿔 가며 여러 트랜잭션을 열어야 하고, 하나의 테스트 트랜잭션에 묶이면 GUC 가
+ * 처음 값으로 고정된다.
  */
 class DocumentDomainRlsTest extends IntegrationTestBase {
 
@@ -74,7 +74,6 @@ class DocumentDomainRlsTest extends IntegrationTestBase {
   }
 
   // ── 픽스처 ────────────────────────────────────────────────────────────
-
 
   private Long insertDataset(String namePrefix) {
     long suffix = TenantRlsTestSupport.nextTenantId();

@@ -95,7 +95,8 @@ class ProactiveMessageControllerTest {
   void getMessages_withUnreadOnly_passesFlagToRepository() throws Exception {
     // #520: unreadOnly=true 파라미터가 리포지토리 호출에 그대로 전달되는지 검증
     mockAuth("proactive:read");
-    when(messageRepository.findByUserId(anyLong(), anyInt(), anyInt(), org.mockito.ArgumentMatchers.eq(true)))
+    when(messageRepository.findByUserId(
+            anyLong(), anyInt(), anyInt(), org.mockito.ArgumentMatchers.eq(true)))
         .thenReturn(List.of(sampleMessage()));
 
     mockMvc

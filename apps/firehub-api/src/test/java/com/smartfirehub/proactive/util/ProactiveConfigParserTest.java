@@ -255,7 +255,6 @@ class ProactiveConfigParserTest {
 
   @Test
   void validateChannelTypes_emptyList_noException() {
-    assertThatNoException()
-        .isThrownBy(() -> ProactiveConfigParser.validateChannelTypes(List.of()));
+    assertThatNoException().isThrownBy(() -> ProactiveConfigParser.validateChannelTypes(List.of()));
   }
 }

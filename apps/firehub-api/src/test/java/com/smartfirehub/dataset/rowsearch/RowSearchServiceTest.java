@@ -24,8 +24,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 /**
- * 행 검색 E2E(서비스 수준): 모드별 결과·matchedBy·필터·원본 조회·STALE 차단·degraded 폴백·미설정 400.
- * 가짜 임베딩은 텍스트에 '누수'가 있으면 축 0, 없으면 축 1 — 질의 '배관 문제' 는 축 0 으로 보내 의미 검색을 흉내 낸다.
+ * 행 검색 E2E(서비스 수준): 모드별 결과·matchedBy·필터·원본 조회·STALE 차단·degraded 폴백·미설정 400. 가짜 임베딩은 텍스트에 '누수'가 있으면
+ * 축 0, 없으면 축 1 — 질의 '배관 문제' 는 축 0 으로 보내 의미 검색을 흉내 낸다.
  */
 class RowSearchServiceTest extends IntegrationTestBase {
 
@@ -50,37 +50,69 @@ class RowSearchServiceTest extends IntegrationTestBase {
   void setUp() {
     // 이전 실행의 tearDown 실패로 남은 데이터셋·원본·색인 테이블·사용자를 먼저 지운다(unique 위반 연쇄 방지).
     RowSearchTestSupport.cleanup(dsl, dataTableService, SRC);
-    when(embeddingFactory.current()).thenAnswer(inv -> new EmbeddingProvider() {
-      public List<float[]> embed(List<String> texts) {
-        if (down.get()) throw new EmbeddingException("down");
-        return texts.stream().map(t -> { float[] v = new float[dim]; v[(t.contains("누수") || t.contains("배관 문제")) ? 0 : 1] = 1f; return v; }).toList();
-      }
-      public String modelId() { return model; }
-      public int dimension() { return dim; }
-    });
-    datasetId = inTenantFixture(() -> {
-      userId = TenantRlsTestSupport.insertUser(dsl, "rs_svc_u");
-      Long id = dsl.fetchOne("INSERT INTO dataset(name, table_name, storage_type, origin_type, created_by) VALUES ('rs svc', ?, 'TABLE', 'SOURCE', ?) RETURNING id", SRC, userId).get(0, Long.class);
-      dsl.execute("INSERT INTO dataset_column(dataset_id, column_name, display_name, data_type, is_nullable, is_indexed, column_order) VALUES (?, 'content', '내용', 'TEXT', true, false, 0), (?, 'status', '상태', 'VARCHAR', true, false, 1)", id, id);
-      dataTableService.createTable(SRC, List.of(
-          new DatasetColumnRequest("content", "내용", "TEXT", null, true, false, null),
-          new DatasetColumnRequest("status", "상태", "VARCHAR", 20, true, false, null)));
-      dsl.execute("INSERT INTO " + DataSchema.qualify(SRC) + " (content, status) VALUES ('파이프 누수 신고', '미처리'), ('소음 민원 A-1023', '완료'), ('누수 재발', '완료')");
-      return id;
-    });
+    when(embeddingFactory.current())
+        .thenAnswer(
+            inv ->
+                new EmbeddingProvider() {
+                  public List<float[]> embed(List<String> texts) {
+                    if (down.get()) throw new EmbeddingException("down");
+                    return texts.stream()
+                        .map(
+                            t -> {
+                              float[] v = new float[dim];
+                              v[(t.contains("누수") || t.contains("배관 문제")) ? 0 : 1] = 1f;
+                              return v;
+                            })
+                        .toList();
+                  }
+
+                  public String modelId() {
+                    return model;
+                  }
+
+                  public int dimension() {
+                    return dim;
+                  }
+                });
+    datasetId =
+        inTenantFixture(
+            () -> {
+              userId = TenantRlsTestSupport.insertUser(dsl, "rs_svc_u");
+              Long id =
+                  dsl.fetchOne(
+                          "INSERT INTO dataset(name, table_name, storage_type, origin_type, created_by) VALUES ('rs svc', ?, 'TABLE', 'SOURCE', ?) RETURNING id",
+                          SRC,
+                          userId)
+                      .get(0, Long.class);
+              dsl.execute(
+                  "INSERT INTO dataset_column(dataset_id, column_name, display_name, data_type, is_nullable, is_indexed, column_order) VALUES (?, 'content', '내용', 'TEXT', true, false, 0), (?, 'status', '상태', 'VARCHAR', true, false, 1)",
+                  id,
+                  id);
+              dataTableService.createTable(
+                  SRC,
+                  List.of(
+                      new DatasetColumnRequest("content", "내용", "TEXT", null, true, false, null),
+                      new DatasetColumnRequest("status", "상태", "VARCHAR", 20, true, false, null)));
+              dsl.execute(
+                  "INSERT INTO "
+                      + DataSchema.qualify(SRC)
+                      + " (content, status) VALUES ('파이프 누수 신고', '미처리'), ('소음 민원 A-1023', '완료'), ('누수 재발', '완료')");
+              return id;
+            });
     settings.update(datasetId, List.of("content"));
     sync.sync(datasetId);
   }
 
   @AfterEach
   void tearDown() {
-    inTenantFixture(() -> {
-      index.drop(new IndexRef(DEFAULT_TEST_TENANT_ID, datasetId, SRC));
-      dataTableService.dropTable(SRC);
-      dataTableService.dropTempTable(SRC);
-      dsl.execute("DELETE FROM dataset_column WHERE dataset_id = ?", datasetId);
-      dsl.execute("DELETE FROM dataset WHERE id = ?", datasetId);
-    });
+    inTenantFixture(
+        () -> {
+          index.drop(new IndexRef(DEFAULT_TEST_TENANT_ID, datasetId, SRC));
+          dataTableService.dropTable(SRC);
+          dataTableService.dropTempTable(SRC);
+          dsl.execute("DELETE FROM dataset_column WHERE dataset_id = ?", datasetId);
+          dsl.execute("DELETE FROM dataset WHERE id = ?", datasetId);
+        });
     TenantRlsTestSupport.deleteUser(dsl, userId);
   }
 
@@ -93,8 +125,7 @@ class RowSearchServiceTest extends IntegrationTestBase {
     var res = service.search(datasetId, req("누수", null, null));
     assertThat(res.indexStatus().status()).isEqualTo("IDLE");
     assertThat(res.degraded()).isFalse();
-    assertThat(res.hits()).extracting(h -> h.row().get("content"))
-        .contains("파이프 누수 신고", "누수 재발");
+    assertThat(res.hits()).extracting(h -> h.row().get("content")).contains("파이프 누수 신고", "누수 재발");
     var top = res.hits().get(0);
     assertThat(top.matchedBy()).containsExactlyInAnyOrder("SEMANTIC", "KEYWORD");
   }
@@ -113,11 +144,15 @@ class RowSearchServiceTest extends IntegrationTestBase {
 
   @Test
   void filter_isApplied() {
-    var res = service.search(datasetId, req("누수", "HYBRID", List.of(new RowFilter.Condition("status", "eq", "완료"))));
+    var res =
+        service.search(
+            datasetId, req("누수", "HYBRID", List.of(new RowFilter.Condition("status", "eq", "완료"))));
     // 의미 검색은 limit 까지 전부 돌려주므로 '소음 민원'도 낮은 순위로 섞일 수 있다 — 필터로 '미처리' 행이 빠졌는지와 1위를 본다
-    assertThat(res.hits()).extracting(h -> h.row().get("content"))
+    assertThat(res.hits())
+        .extracting(h -> h.row().get("content"))
         .doesNotContain("파이프 누수 신고")
-        .first().isEqualTo("누수 재발");
+        .first()
+        .isEqualTo("누수 재발");
     assertThat(res.hits()).allMatch(h -> "완료".equals(h.row().get("status")));
   }
 
@@ -127,7 +162,8 @@ class RowSearchServiceTest extends IntegrationTestBase {
     var res = service.search(datasetId, req("누수", "HYBRID", null));
     assertThat(res.degraded()).isTrue();
     assertThat(res.hits()).isNotEmpty();
-    assertThatThrownBy(() -> service.search(datasetId, req("누수", "SEMANTIC", null))).isInstanceOf(EmbeddingException.class);
+    assertThatThrownBy(() -> service.search(datasetId, req("누수", "SEMANTIC", null)))
+        .isInstanceOf(EmbeddingException.class);
   }
 
   @Test
@@ -141,11 +177,15 @@ class RowSearchServiceTest extends IntegrationTestBase {
 
   @Test
   void afterSwap_beforeSweep_returnsStaleAndNoHits() {
-    inTenantFixture(() -> {
-      dataTableService.createTempTable(SRC);
-      dsl.execute("INSERT INTO " + DataSchema.qualify(SRC + "_tmp") + " (content, status) VALUES ('전혀 다른 행', '완료')");
-      dataTableService.swapTable(SRC);
-    });
+    inTenantFixture(
+        () -> {
+          dataTableService.createTempTable(SRC);
+          dsl.execute(
+              "INSERT INTO "
+                  + DataSchema.qualify(SRC + "_tmp")
+                  + " (content, status) VALUES ('전혀 다른 행', '완료')");
+          dataTableService.swapTable(SRC);
+        });
 
     var res = service.search(datasetId, req("누수", null, null));
 
@@ -196,9 +236,13 @@ class RowSearchServiceTest extends IntegrationTestBase {
   @Test
   void hybrid_limitAboveCandidatePool_canBeFilled() {
     // 후보 풀(50)보다 큰 limit 을 요청하면 풀도 limit 만큼 넓혀야 채울 수 있다.
-    inTenantFixture(() -> {
-      dsl.execute("INSERT INTO " + DataSchema.qualify(SRC) + " (content, status) SELECT '누수 ' || g, '완료' FROM generate_series(1, 60) g");
-    });
+    inTenantFixture(
+        () -> {
+          dsl.execute(
+              "INSERT INTO "
+                  + DataSchema.qualify(SRC)
+                  + " (content, status) SELECT '누수 ' || g, '완료' FROM generate_series(1, 60) g");
+        });
     sync.sync(datasetId);
     down.set(true); // 키워드 풀만으로 결정적으로 판별한다
 
@@ -221,7 +265,11 @@ class RowSearchServiceTest extends IntegrationTestBase {
   void searchFieldsEmptyButStateLeft_isNotConfigured() {
     // 방어 검사: 상태 행·색인 테이블이 남았는데 검색 대상 필드가 비었으면(컬럼 삭제 경로는 이제 즉시 끄지만, 그 밖의
     // 경로로 필드만 비는 경우) 낡은 색인으로 결과를 내면 안 된다 — 미설정으로 본다(getStatus 의 OFF 판정과 같은 기준).
-    inTenantFixture(() -> { dsl.execute("UPDATE dataset_column SET is_searchable = false WHERE dataset_id = ?", datasetId); });
+    inTenantFixture(
+        () -> {
+          dsl.execute(
+              "UPDATE dataset_column SET is_searchable = false WHERE dataset_id = ?", datasetId);
+        });
 
     assertThatThrownBy(() -> service.search(datasetId, req("누수", "KEYWORD", null)))
         .isInstanceOf(SearchIndexNotConfiguredException.class);
@@ -253,7 +301,13 @@ class RowSearchServiceTest extends IntegrationTestBase {
           .hasMessage("검색어에 사용할 수 없는 문자(NUL)가 있습니다");
     }
     assertThatThrownBy(
-            () -> service.search(datasetId, req("누수", "KEYWORD", List.of(new RowFilter.Condition("status", "eq", "완\u0000료")))))
+            () ->
+                service.search(
+                    datasetId,
+                    req(
+                        "누수",
+                        "KEYWORD",
+                        List.of(new RowFilter.Condition("status", "eq", "완\u0000료")))))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("filters[0]")
         .hasMessageContaining("NUL");

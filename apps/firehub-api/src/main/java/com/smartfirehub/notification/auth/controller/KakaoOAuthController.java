@@ -61,10 +61,9 @@ public class KakaoOAuthController {
    *
    * <p>state 소비로 CSRF 검증 후 authorization_code를 토큰으로 교환하여 저장한다. 완료 후 창을 닫는 HTML 페이지를 반환한다.
    *
-   * <p><b>테넌트 복원 지점이다.</b> permitAll 이라 컨텍스트가 없는데 {@code user_channel_binding}
-   * 은 쓰기 대상(RLS + tenant_id NOT NULL)이다. state 가 실어 온 테넌트(V106 [R7])를 되찾아
-   * {@link TenantContext#runScopedGet} 으로 컨텍스트를 세운다. 되찾지 못하면 <b>fail-closed</b>
-   * — {@code consume} 이 empty 를 돌려주고 아래 400 분기로 빠진다.
+   * <p><b>테넌트 복원 지점이다.</b> permitAll 이라 컨텍스트가 없는데 {@code user_channel_binding} 은 쓰기 대상(RLS +
+   * tenant_id NOT NULL)이다. state 가 실어 온 테넌트(V106 [R7])를 되찾아 {@link TenantContext#runScopedGet} 으로
+   * 컨텍스트를 세운다. 되찾지 못하면 <b>fail-closed</b> — {@code consume} 이 empty 를 돌려주고 아래 400 분기로 빠진다.
    *
    * @param code Kakao에서 전달한 authorization_code
    * @param state CSRF 방어용 state (OAuthStateService.issue로 발급)

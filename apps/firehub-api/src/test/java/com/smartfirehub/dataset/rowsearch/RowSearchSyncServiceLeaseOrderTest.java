@@ -27,9 +27,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 /**
  * 동시 실행 레이스 회귀: 상태는 반드시 임대를 잡은 <b>뒤</b> 읽어야 한다.
  *
- * <p>임대 전에 읽은 스냅샷은 다른 워커가 그 사이 패스를 끝냈을 때 낡은 resume_after_id 로 이어 처리하게 만들어, 새
- * 책갈피로 확정하면서 id≤resume 구간의 변경을 놓친다. 실 DB 로는 두 워커의 타이밍을 끼워 넣기 어려워 협력자를 mock 으로
- * 두고 호출 순서와 "임대 후 읽은 상태를 쓰는지"를 단언한다.
+ * <p>임대 전에 읽은 스냅샷은 다른 워커가 그 사이 패스를 끝냈을 때 낡은 resume_after_id 로 이어 처리하게 만들어, 새 책갈피로 확정하면서 id≤resume
+ * 구간의 변경을 놓친다. 실 DB 로는 두 워커의 타이밍을 끼워 넣기 어려워 협력자를 mock 으로 두고 호출 순서와 "임대 후 읽은 상태를 쓰는지"를 단언한다.
  */
 @ExtendWith(MockitoExtension.class)
 class RowSearchSyncServiceLeaseOrderTest {
@@ -50,7 +49,15 @@ class RowSearchSyncServiceLeaseOrderTest {
   void setUp() {
     sync =
         new RowSearchSyncService(
-            index, states, searchColumns, reader, datasetRepository, embeddingFactory, cursorService, 4, 2);
+            index,
+            states,
+            searchColumns,
+            reader,
+            datasetRepository,
+            embeddingFactory,
+            cursorService,
+            4,
+            2);
   }
 
   private static SearchIndexState state(int consecutiveFailures) {
@@ -86,7 +93,8 @@ class RowSearchSyncServiceLeaseOrderTest {
     order.verify(states).markFailed(eq(ID), eq("java.lang.RuntimeException"), next.capture());
     order.verify(states).releaseLease(ID);
     // 임대 후 읽은 상태의 연속 실패 3회 → 이번이 4회째 → 8분 백오프
-    assertThat(next.getValue()).isBetween(before.plusMinutes(8), OffsetDateTime.now().plusMinutes(8));
+    assertThat(next.getValue())
+        .isBetween(before.plusMinutes(8), OffsetDateTime.now().plusMinutes(8));
   }
 
   @Test

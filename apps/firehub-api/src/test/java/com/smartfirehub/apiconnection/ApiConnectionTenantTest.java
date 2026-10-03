@@ -39,24 +39,20 @@ import org.springframework.transaction.support.TransactionTemplate;
  * <p>두 가지를 본다.
  *
  * <ul>
- *   <li>{@code ApiConnectionHealthCheckScheduler.runOnce()} 가 ACTIVE 테넌트를 순회하는가 — 순회하지
- *       않으면 {@code @Scheduled} 스레드에 테넌트가 없어 RLS 가 대상을 전부 차단하고 UP/DOWN 알림이
- *       예외도 로그도 없이 영구히 누락된다.
- *   <li>{@code ApiConnectionService.testConnection} 의 조회가 <b>프록시를 통과해</b> 트랜잭션 안에서
- *       일어나고, 외부 HTTP 호출은 <b>트랜잭션 밖</b>에 남는가 — 조회를 자기호출하면 프록시가 우회돼
- *       트랜잭션 경계가 사라지고, 반대로 {@code testConnection} 에 {@code @Transactional} 을 붙이면
- *       5초짜리 HTTP 가 커넥션을 물어 풀이 고갈된다.
+ *   <li>{@code ApiConnectionHealthCheckScheduler.runOnce()} 가 ACTIVE 테넌트를 순회하는가 — 순회하지 않으면
+ *       {@code @Scheduled} 스레드에 테넌트가 없어 RLS 가 대상을 전부 차단하고 UP/DOWN 알림이 예외도 로그도 없이 영구히 누락된다.
+ *   <li>{@code ApiConnectionService.testConnection} 의 조회가 <b>프록시를 통과해</b> 트랜잭션 안에서 일어나고, 외부 HTTP
+ *       호출은 <b>트랜잭션 밖</b>에 남는가 — 조회를 자기호출하면 프록시가 우회돼 트랜잭션 경계가 사라지고, 반대로 {@code testConnection} 에
+ *       {@code @Transactional} 을 붙이면 5초짜리 HTTP 가 커넥션을 물어 풀이 고갈된다.
  * </ul>
  *
- * <p><b>클래스 레벨 {@code @Transactional} 이 없다 — 의도된 것이다.</b> 테스트가 트랜잭션을 열면 GUC
- * 가 그 트랜잭션에서 공급돼 프로덕션의 배선 누락을 구조적으로 가린다. 픽스처만
- * {@link TenantRlsTestSupport#runInTenantTransaction} 으로 감싸고, 검증 대상 호출은 트랜잭션 밖에
- * 남긴다(선례: {@code dashboard/job/PipelineExecutionTtlJobTest},
- * {@code pipeline/TriggerSchedulerTenantTest}).
+ * <p><b>클래스 레벨 {@code @Transactional} 이 없다 — 의도된 것이다.</b> 테스트가 트랜잭션을 열면 GUC 가 그 트랜잭션에서 공급돼 프로덕션의 배선
+ * 누락을 구조적으로 가린다. 픽스처만 {@link TenantRlsTestSupport#runInTenantTransaction} 으로 감싸고, 검증 대상 호출은 트랜잭션 밖에
+ * 남긴다(선례: {@code dashboard/job/PipelineExecutionTtlJobTest}, {@code
+ * pipeline/TriggerSchedulerTenantTest}).
  *
- * <p>{@link ApiConnectionNotifier} 는 목이다. {@code runOnce()} 는 공유 테스트 DB 의 <b>모든</b>
- * 테넌트를 훑으므로, 실 빈이면 다른 테스트가 심어둔 연결의 상태 전환으로 감사 로그와 SSE 브로드캐스트가
- * 발생한다.
+ * <p>{@link ApiConnectionNotifier} 는 목이다. {@code runOnce()} 는 공유 테스트 DB 의 <b>모든</b> 테넌트를 훑으므로, 실
+ * 빈이면 다른 테스트가 심어둔 연결의 상태 전환으로 감사 로그와 SSE 브로드캐스트가 발생한다.
  */
 class ApiConnectionTenantTest extends IntegrationTestBase {
 
@@ -167,12 +163,8 @@ class ApiConnectionTenantTest extends IntegrationTestBase {
 
     // 양방향 단언: 두 테넌트의 연결이 각각 자기 테넌트 컨텍스트에서 처리돼야 한다.
     // 순회가 없으면 컨텍스트가 null 이라 두 단언이 모두 깨진다.
-    assertThat(processed)
-        .as("테넌트 A 의 연결이 테넌트 A 컨텍스트에서 처리돼야 한다")
-        .contains(connA + "@" + tenantA);
-    assertThat(processed)
-        .as("테넌트 B 의 연결이 테넌트 B 컨텍스트에서 처리돼야 한다")
-        .contains(connB + "@" + tenantB);
+    assertThat(processed).as("테넌트 A 의 연결이 테넌트 A 컨텍스트에서 처리돼야 한다").contains(connA + "@" + tenantA);
+    assertThat(processed).as("테넌트 B 의 연결이 테넌트 B 컨텍스트에서 처리돼야 한다").contains(connB + "@" + tenantB);
   }
 
   @Test
@@ -207,9 +199,7 @@ class ApiConnectionTenantTest extends IntegrationTestBase {
     // HTTP 직후의 DB 쓰기는 리포지토리 <b>자신의</b> 트랜잭션에서 일어나야 한다. 이름이 서비스
     // 메서드의 것이면, 그 트랜잭션이 HTTP 구간까지 감싸고 있었다는 뜻이다
     // (= testConnection 에 @Transactional 이 붙어 커넥션을 5초간 물고 있었다는 뜻).
-    assertThat(updateHealthStatusTxNames)
-        .as("updateHealthStatus 가 한 번 호출돼야 한다")
-        .hasSize(1);
+    assertThat(updateHealthStatusTxNames).as("updateHealthStatus 가 한 번 호출돼야 한다").hasSize(1);
     assertThat(updateHealthStatusTxNames)
         .as("HTTP 구간을 감싸는 서비스 트랜잭션이 있으면 안 된다 — 커넥션 풀 점유가 재발한다")
         .containsExactly(
@@ -221,9 +211,8 @@ class ApiConnectionTenantTest extends IntegrationTestBase {
   /**
    * 헬스체크 대상 api_connection 한 건을 만든다.
    *
-   * <p>base_url 은 즉시 연결이 거부되는 주소를 쓴다 — 테스트가 실제 외부 네트워크를 타거나 5초
-   * 타임아웃을 기다리지 않게 하기 위함이다. auth_type 은 CHECK 제약이 허용하는 값만 쓸 수 있다
-   * (API_KEY / BEARER / OAUTH2).
+   * <p>base_url 은 즉시 연결이 거부되는 주소를 쓴다 — 테스트가 실제 외부 네트워크를 타거나 5초 타임아웃을 기다리지 않게 하기 위함이다. auth_type 은
+   * CHECK 제약이 허용하는 값만 쓸 수 있다 (API_KEY / BEARER / OAUTH2).
    */
   private Long insertConnection(Long ownerUserId, String connName) {
     String encrypted = encryptionService.encrypt("{\"apiKey\":\"dummy-key\"}");

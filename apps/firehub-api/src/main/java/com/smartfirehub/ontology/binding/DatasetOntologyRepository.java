@@ -25,13 +25,17 @@ public class DatasetOntologyRepository {
   private final DSLContext dsl;
 
   private static final Table<?> DATASET_ONTOLOGY = table(name("dataset_ontology"));
-  private static final Field<Long> DO_DATASET_ID = field(name("dataset_ontology", "dataset_id"), Long.class);
+  private static final Field<Long> DO_DATASET_ID =
+      field(name("dataset_ontology", "dataset_id"), Long.class);
   // V101 에서 dataset_id 유니크가 (tenant_id, dataset_id) 로 접혔다. ON CONFLICT 추론 대상을
   // 새 인덱스와 일치시키지 않으면 "no unique or exclusion constraint matching" 런타임 오류가 난다.
   // 값은 컬럼 DEFAULT(GUC app.tenant_id)가 채우므로 INSERT 에서는 세팅하지 않는다.
-  private static final Field<Long> DO_TENANT_ID = field(name("dataset_ontology", "tenant_id"), Long.class);
-  private static final Field<Long> DO_ONTOLOGY_ID = field(name("dataset_ontology", "ontology_id"), Long.class);
-  private static final Field<Long> DO_BOUND_BY = field(name("dataset_ontology", "bound_by"), Long.class);
+  private static final Field<Long> DO_TENANT_ID =
+      field(name("dataset_ontology", "tenant_id"), Long.class);
+  private static final Field<Long> DO_ONTOLOGY_ID =
+      field(name("dataset_ontology", "ontology_id"), Long.class);
+  private static final Field<Long> DO_BOUND_BY =
+      field(name("dataset_ontology", "bound_by"), Long.class);
   private static final Field<java.time.OffsetDateTime> DO_BOUND_AT =
       field(name("dataset_ontology", "bound_at"), java.time.OffsetDateTime.class);
 
@@ -52,7 +56,9 @@ public class DatasetOntologyRepository {
 
   // 데이터셋에 바인딩된 온톨로지 id 조회(없으면 empty).
   public Optional<Long> findOntologyIdByDataset(long datasetId) {
-    return dsl.select(DO_ONTOLOGY_ID).from(DATASET_ONTOLOGY).where(DO_DATASET_ID.eq(datasetId))
+    return dsl.select(DO_ONTOLOGY_ID)
+        .from(DATASET_ONTOLOGY)
+        .where(DO_DATASET_ID.eq(datasetId))
         .fetchOptional(r -> r.get(DO_ONTOLOGY_ID));
   }
 }

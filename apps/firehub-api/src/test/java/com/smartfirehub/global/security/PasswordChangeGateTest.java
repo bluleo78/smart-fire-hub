@@ -35,9 +35,8 @@ import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandl
 /**
  * 첫 로그인 비밀번호 변경 강제(WD-2) — 실제 필터·인터셉터·JWT 로 검증한다.
  *
- * <p>비트랜잭션: login/refresh 가 커밋된 refresh_token 행을 필요로 한다. 실제 JwtAuthenticationFilter 가
- * 요청마다 TenantContext 를 지우므로 @AfterEach 에서 기본 테넌트를 다시 세운 뒤 정리한다
- * (AiCredentialControllerTest:77-83 함정).
+ * <p>비트랜잭션: login/refresh 가 커밋된 refresh_token 행을 필요로 한다. 실제 JwtAuthenticationFilter 가 요청마다
+ * TenantContext 를 지우므로 @AfterEach 에서 기본 테넌트를 다시 세운 뒤 정리한다 (AiCredentialControllerTest:77-83 함정).
  */
 @AutoConfigureMockMvc
 class PasswordChangeGateTest extends IntegrationTestBase {
@@ -95,10 +94,7 @@ class PasswordChangeGateTest extends IntegrationTestBase {
         .andExpect(jsonPath("$.code").value("PASSWORD_CHANGE_REQUIRED"));
   }
 
-  /**
-   * 게이트는 권한 검사보다 먼저 돈다 — 테넌트 미선택 토큰은 권한이 0 이라 순서가 바뀌면 코드 없는 403 이
-   * 나와 웹이 변경 화면으로 보낼 근거를 잃는다.
-   */
+  /** 게이트는 권한 검사보다 먼저 돈다 — 테넌트 미선택 토큰은 권한이 0 이라 순서가 바뀌면 코드 없는 403 이 나와 웹이 변경 화면으로 보낼 근거를 잃는다. */
   @Test
   void pwcToken_gateRunsBeforePermissionCheck() throws Exception {
     String noTenantPwc =
@@ -269,8 +265,8 @@ class PasswordChangeGateTest extends IntegrationTestBase {
   }
 
   /**
-   * 리뷰 지적 1: 새 비밀번호가 현재(임시) 비밀번호와 같으면 서버가 거부해야 한다. 웹 스키마만 막으면 API
-   * 직접 호출로 같은 값을 보내 변경 강제 표식만 꺼 버릴 수 있다(강제 변경 무력화).
+   * 리뷰 지적 1: 새 비밀번호가 현재(임시) 비밀번호와 같으면 서버가 거부해야 한다. 웹 스키마만 막으면 API 직접 호출로 같은 값을 보내 변경 강제 표식만 꺼 버릴 수
+   * 있다(강제 변경 무력화).
    */
   @Test
   void changePassword_sameAsCurrent_rejected_andFlagStays() throws Exception {
@@ -287,9 +283,8 @@ class PasswordChangeGateTest extends IntegrationTestBase {
   }
 
   /**
-   * 리뷰 지적 2: 비밀번호를 바꾸면 <b>다른 세션</b>(임시 비밀번호를 아는 다른 사람이 먼저 로그인해 둔 세션 등)의
-   * refresh 가 막혀야 한다. 호출자 세션은 응답의 새 refresh 쿠키로 이어진다 — 웹의 completePasswordChange 가
-   * 곧바로 /auth/refresh 를 부르는 흐름이 그대로 동작해야 한다.
+   * 리뷰 지적 2: 비밀번호를 바꾸면 <b>다른 세션</b>(임시 비밀번호를 아는 다른 사람이 먼저 로그인해 둔 세션 등)의 refresh 가 막혀야 한다. 호출자 세션은
+   * 응답의 새 refresh 쿠키로 이어진다 — 웹의 completePasswordChange 가 곧바로 /auth/refresh 를 부르는 흐름이 그대로 동작해야 한다.
    */
   @Test
   void changePassword_revokesOtherSessions_callerContinuesWithNewCookie() throws Exception {
@@ -334,8 +329,7 @@ class PasswordChangeGateTest extends IntegrationTestBase {
         .perform(
             post("/api/v1/auth/login")
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(
-                    "{\"username\":\"" + username + "\",\"password\":\"TempPass1x\"}"))
+                .content("{\"username\":\"" + username + "\",\"password\":\"TempPass1x\"}"))
         .andExpect(status().isOk())
         .andReturn();
   }

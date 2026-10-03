@@ -436,14 +436,14 @@ public class DatasetDataService {
   /**
    * 행 데이터를 검증·변환한다.
    *
-   * <p>{@code columnsToValidate}에 포함된 컬럼만 not-null 검사 및 타입 변환을 수행하고, 그 외
-   * 컬럼(예: 부분 업데이트에서 요청에 없어 기존 DB 값으로 병합된 컬럼)은 이미 유효한 값으로
-   * 간주해 그대로 통과시킨다 (#672). 병합된 기존 값은 DB에서 그대로 조회한 원시 타입이라
-   * {@link #convertValue}가 기대하는 입력 포맷(예: DATE 컬럼의 문자열)과 다를 수 있어
-   * 재변환하면 오히려 실패하므로, 재검증 없이 그대로 사용해야 한다.
+   * <p>{@code columnsToValidate}에 포함된 컬럼만 not-null 검사 및 타입 변환을 수행하고, 그 외 컬럼(예: 부분 업데이트에서 요청에 없어 기존
+   * DB 값으로 병합된 컬럼)은 이미 유효한 값으로 간주해 그대로 통과시킨다 (#672). 병합된 기존 값은 DB에서 그대로 조회한 원시 타입이라 {@link
+   * #convertValue}가 기대하는 입력 포맷(예: DATE 컬럼의 문자열)과 다를 수 있어 재변환하면 오히려 실패하므로, 재검증 없이 그대로 사용해야 한다.
    */
   private Map<String, Object> validateAndConvertRowData(
-      List<DatasetColumnResponse> columns, Map<String, Object> data, Set<String> columnsToValidate) {
+      List<DatasetColumnResponse> columns,
+      Map<String, Object> data,
+      Set<String> columnsToValidate) {
     Map<String, Object> result = new HashMap<>();
     List<String> errors = new ArrayList<>();
 

@@ -21,7 +21,8 @@ public class MappingController {
   @GetMapping
   @RequirePermission("dataset:read")
   public ResponseEntity<MappingResponse> get(@PathVariable Long datasetId) {
-    return mappingService.get(datasetId)
+    return mappingService
+        .get(datasetId)
         .map(ResponseEntity::ok)
         .orElseGet(() -> ResponseEntity.notFound().build());
   }
@@ -30,9 +31,7 @@ public class MappingController {
   @PutMapping
   @RequirePermission("dataset:write")
   public MappingResponse save(
-      @PathVariable Long datasetId,
-      @RequestBody MappingSpec spec,
-      Authentication authentication) {
+      @PathVariable Long datasetId, @RequestBody MappingSpec spec, Authentication authentication) {
     Long userId = (Long) authentication.getPrincipal();
     return mappingService.save(datasetId, spec, userId);
   }

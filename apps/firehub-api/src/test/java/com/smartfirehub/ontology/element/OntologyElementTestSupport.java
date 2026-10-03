@@ -31,13 +31,17 @@ abstract class OntologyElementTestSupport extends IntegrationTestBase {
 
   @BeforeEach
   void createFixtureOntology() {
-    ontologyId = ontologyService.createOntology(new CreateOntologyRequest(
-        "요소편집테스트-" + System.nanoTime(),
-        List.of(
-            new OntologyResponse.EntityType("Sensor", "센서", "표기 그대로", "embedding", List.of()),
-            new OntologyResponse.EntityType("Building", "건물", "표기 그대로", "embedding", List.of())),
-        List.of(new OntologyResponse.Triple("Sensor", "INSTALLED_IN", "Building", "설치 위치")),
-        "draft"));
+    ontologyId =
+        ontologyService.createOntology(
+            new CreateOntologyRequest(
+                "요소편집테스트-" + System.nanoTime(),
+                List.of(
+                    new OntologyResponse.EntityType(
+                        "Sensor", "센서", "표기 그대로", "embedding", List.of()),
+                    new OntologyResponse.EntityType(
+                        "Building", "건물", "표기 그대로", "embedding", List.of())),
+                List.of(new OntologyResponse.Triple("Sensor", "INSTALLED_IN", "Building", "설치 위치")),
+                "draft"));
   }
 
   // IntegrationTestBase는 per-test 롤백을 하지 않으므로, 여기서 만든 온톨로지를 그대로 두면
@@ -50,6 +54,9 @@ abstract class OntologyElementTestSupport extends IntegrationTestBase {
 
   protected long typeId(String type) {
     return ontologyRepository.findById(ontologyId).entities().stream()
-        .filter(e -> e.type().equals(type)).findFirst().orElseThrow().id();
+        .filter(e -> e.type().equals(type))
+        .findFirst()
+        .orElseThrow()
+        .id();
   }
 }

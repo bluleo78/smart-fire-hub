@@ -18,24 +18,20 @@ import org.junit.jupiter.params.provider.MethodSource;
 /**
  * SMTP 호스트·발신자 주소 문법이 web 과 <b>같은 판정</b>을 내리는지 지킨다(#728).
  *
- * <p>값 목록을 이 클래스에 따로 두지 않는다 — web 의 {@code lib/smtp-address.test.ts} 와 <b>같은
- * 픽스처 파일</b>({@code fixtures/smtp-validation-vectors.json})을 읽는다. 목록을 앱마다 따로 들고
- * 있던 동안 두 번 어긋났다: 서버만 파서({@code InternetAddress.validate})를 더 돌려 도메인의
- * {@code _}·{@code ?} 를 서버만 거부했고, {@code \s}·{@code isBlank} 의 뜻이 JS 와 달라 NBSP·BOM 을
- * 서버만 통과시켰다.
+ * <p>값 목록을 이 클래스에 따로 두지 않는다 — web 의 {@code lib/smtp-address.test.ts} 와 <b>같은 픽스처 파일</b>({@code
+ * fixtures/smtp-validation-vectors.json})을 읽는다. 목록을 앱마다 따로 들고 있던 동안 두 번 어긋났다: 서버만 파서({@code
+ * InternetAddress.validate})를 더 돌려 도메인의 {@code _}·{@code ?} 를 서버만 거부했고, {@code \s}·{@code isBlank}
+ * 의 뜻이 JS 와 달라 NBSP·BOM 을 서버만 통과시켰다.
  *
  * <p>지키는 것 세 가지:
  *
  * <ol>
  *   <li>픽스처의 통과·거부 값에 대한 판정이 픽스처와 같다(web 도 같은 파일로 같은 단언을 한다).
- *   <li>자리마다 BMP 전 코드 단위를 넣은 판정이 픽스처의 {@code accepted} 범위와 같다 — 문자 단위로
- *       web 과 같다는 증명이다.
- *   <li><b>문법이 통과시킨 값을 파서 단계가 다시 거부하지 않는다.</b> 파서 단계는 web 에 없으므로,
- *       이것이 깨지면 그만큼이 "칸은 통과, 저장은 400"이다.
+ *   <li>자리마다 BMP 전 코드 단위를 넣은 판정이 픽스처의 {@code accepted} 범위와 같다 — 문자 단위로 web 과 같다는 증명이다.
+ *   <li><b>문법이 통과시킨 값을 파서 단계가 다시 거부하지 않는다.</b> 파서 단계는 web 에 없으므로, 이것이 깨지면 그만큼이 "칸은 통과, 저장은 400"이다.
  * </ol>
  *
- * <p>DB·스프링이 필요 없는 순수 단위 테스트다. 저장 경로 배선은 {@link
- * SmtpHostAndFromAddressValidationTest} 가 본다.
+ * <p>DB·스프링이 필요 없는 순수 단위 테스트다. 저장 경로 배선은 {@link SmtpHostAndFromAddressValidationTest} 가 본다.
  */
 class SmtpAddressGrammarTest {
 
@@ -64,8 +60,14 @@ class SmtpAddressGrammarTest {
   static Stream<Arguments> vectors() {
     List<Arguments> rows = new ArrayList<>();
     for (String field : List.of("fromAddress", "host")) {
-      FIXTURE.get(field).get("accept").forEach(v -> rows.add(Arguments.of(field, v.asText(), true)));
-      FIXTURE.get(field).get("reject").forEach(v -> rows.add(Arguments.of(field, v.asText(), false)));
+      FIXTURE
+          .get(field)
+          .get("accept")
+          .forEach(v -> rows.add(Arguments.of(field, v.asText(), true)));
+      FIXTURE
+          .get(field)
+          .get("reject")
+          .forEach(v -> rows.add(Arguments.of(field, v.asText(), false)));
     }
     return rows.stream();
   }
@@ -110,8 +112,8 @@ class SmtpAddressGrammarTest {
   }
 
   /**
-   * template 의 {@code {c}} 자리에 U+0000~U+FFFF 를 하나씩 넣어 통과하는 코드 단위를 16진 범위 목록으로
-   * 만든다(예: {@code 21,23-27}). web 테스트의 같은 이름 함수와 같은 표기다.
+   * template 의 {@code {c}} 자리에 U+0000~U+FFFF 를 하나씩 넣어 통과하는 코드 단위를 16진 범위 목록으로 만든다(예: {@code
+   * 21,23-27}). web 테스트의 같은 이름 함수와 같은 표기다.
    */
   private static String sweep(Predicate<String> judge, String template) {
     List<String> ranges = new ArrayList<>();
@@ -138,8 +140,7 @@ class SmtpAddressGrammarTest {
 
   @ParameterizedTest(name = "{0}({2}) 자리에서 문법이 통과시킨 문자를 파서가 다시 거부하지 않는다")
   @MethodSource("sweeps")
-  void 문법이_통과시킨_값을_파서_단계가_다시_거부하지_않는다(
-      String name, String field, String template, String accepted) {
+  void 문법이_통과시킨_값을_파서_단계가_다시_거부하지_않는다(String name, String field, String template, String accepted) {
     if (!field.equals("fromAddress")) return;
     // 최종 판정(문법+파서)의 범위가 문법만의 범위와 같다 = 파서 단계가 한 글자도 더 거르지 않는다.
     assertThat(sweep(SettingsService::isSingleMailAddress, template))

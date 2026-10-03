@@ -47,19 +47,16 @@ import org.springframework.transaction.support.TransactionTemplate;
 /**
  * {@code ai_inference_cache} 가 테넌트별로 파티션되는지 검증한다 (P2-e R2 / Task 5).
  *
- * <p><b>무엇을 지키는가.</b> {@code row_hash} 는 분류 대상 <b>행 내용</b>의 해시다. 캐시를 테넌트
- * 간에 공유하면 A 테넌트가 어떤 행을 갖고 있는지와 그 추론 결과가 B 테넌트의 캐시 히트로 관측된다.
- * 그래서 같은 {@code (row_hash, prompt_version)} 이라도 서로의 캐시를 보지 못하고 각자 자기 것만
- * 히트해야 한다.
+ * <p><b>무엇을 지키는가.</b> {@code row_hash} 는 분류 대상 <b>행 내용</b>의 해시다. 캐시를 테넌트 간에 공유하면 A 테넌트가 어떤 행을 갖고
+ * 있는지와 그 추론 결과가 B 테넌트의 캐시 히트로 관측된다. 그래서 같은 {@code (row_hash, prompt_version)} 이라도 서로의 캐시를 보지 못하고 각자
+ * 자기 것만 히트해야 한다.
  *
- * <p><b>무엇이 격리를 성립시키는가.</b> 이 시점에는 V104 정책이 아직 없다. 따라서 격리는 정책이
- * 아니라 {@code AiClassifyExecutor} 캐시 조회의 <b>tenant_id 술어</b>로만 성립한다 — 그 술어를
- * 지우면 이 테스트는 "B 가 A 의 캐시를 히트"로 실패한다(변이 확인 완료). V104 이후에는 정책이
+ * <p><b>무엇이 격리를 성립시키는가.</b> 이 시점에는 V104 정책이 아직 없다. 따라서 격리는 정책이 아니라 {@code AiClassifyExecutor} 캐시
+ * 조회의 <b>tenant_id 술어</b>로만 성립한다 — 그 술어를 지우면 이 테스트는 "B 가 A 의 캐시를 히트"로 실패한다(변이 확인 완료). V104 이후에는 정책이
  * 같은 일을 이중으로 하지만, 술어는 방어 심층화로 남긴다(트랜잭션 밖 조회를 막지는 못하므로).
  *
- * <p><b>클래스 레벨 {@code @Transactional} 을 쓰지 않는다.</b> 검증 대상인 {@code
- * executor.execute} 는 반드시 트랜잭션 <b>밖</b>에서 불러야 한다 — 테스트가 트랜잭션을 열어 주면
- * GUC 가 공급되어 "프로덕션 경로가 스스로 좁은 트랜잭션을 연다"는 이번 배선을 검증하지 못한다.
+ * <p><b>클래스 레벨 {@code @Transactional} 을 쓰지 않는다.</b> 검증 대상인 {@code executor.execute} 는 반드시 트랜잭션
+ * <b>밖</b>에서 불러야 한다 — 테스트가 트랜잭션을 열어 주면 GUC 가 공급되어 "프로덕션 경로가 스스로 좁은 트랜잭션을 연다"는 이번 배선을 검증하지 못한다.
  * 픽스처·정리·검증 조회만 {@code inTenantFixture} 로 감싼다.
  */
 class AiInferenceCacheTenantTest extends IntegrationTestBase {
@@ -135,8 +132,12 @@ class AiInferenceCacheTenantTest extends IntegrationTestBase {
   void cleanUp() {
     // 내가 만든 두 테넌트의 행만 지운다. 정리도 트랜잭션 안에서 — V104 정책이 켜지면 트랜잭션
     // 밖 DELETE 는 조용히 0행이 되어 픽스처가 누적되고, 한참 뒤 무관한 테스트가 깨진다(P2-d 전례).
-    inTenantFixture(tenantA, () -> dsl.deleteFrom(AI_INFERENCE_CACHE).where(CACHE_TENANT_ID.eq(tenantA)).execute());
-    inTenantFixture(tenantB, () -> dsl.deleteFrom(AI_INFERENCE_CACHE).where(CACHE_TENANT_ID.eq(tenantB)).execute());
+    inTenantFixture(
+        tenantA,
+        () -> dsl.deleteFrom(AI_INFERENCE_CACHE).where(CACHE_TENANT_ID.eq(tenantA)).execute());
+    inTenantFixture(
+        tenantB,
+        () -> dsl.deleteFrom(AI_INFERENCE_CACHE).where(CACHE_TENANT_ID.eq(tenantB)).execute());
     // tenant 는 경계 위의 전역 테이블(RLS 없음)이라 컨텍스트 없이 지울 수 있다.
     dsl.deleteFrom(table(name("tenant")))
         .where(field(name("id"), Long.class).in(tenantA, tenantB))
@@ -196,12 +197,10 @@ class AiInferenceCacheTenantTest extends IntegrationTestBase {
   }
 
   /**
-   * 해당 테넌트 컨텍스트에서 보이는 캐시 행을 가져온다. 정확히 1행이어야 한다 — 남의 테넌트 행이
-   * 함께 보이면(2행) 격리 실패고, 0행이면 자기 행조차 못 보는 것이다.
+   * 해당 테넌트 컨텍스트에서 보이는 캐시 행을 가져온다. 정확히 1행이어야 한다 — 남의 테넌트 행이 함께 보이면(2행) 격리 실패고, 0행이면 자기 행조차 못 보는 것이다.
    *
-   * <p>조회에 {@code tenant_id} 술어를 두지 않는 것이 요점이다. 술어를 걸면 이 단언이 검사하는 것이
-   * 정책이 아니라 WHERE 절이 된다. 대신 {@code @BeforeEach} 가 실행마다 고유한 테넌트 두 개를 만들어
-   * 공유 테스트 DB 의 남의 행이 섞이지 않게 한다.
+   * <p>조회에 {@code tenant_id} 술어를 두지 않는 것이 요점이다. 술어를 걸면 이 단언이 검사하는 것이 정책이 아니라 WHERE 절이 된다. 대신
+   * {@code @BeforeEach} 가 실행마다 고유한 테넌트 두 개를 만들어 공유 테스트 DB 의 남의 행이 섞이지 않게 한다.
    */
   private Record fetchSoleCacheRow(long tenantId) {
     List<? extends Record> rows =
@@ -236,7 +235,11 @@ class AiInferenceCacheTenantTest extends IntegrationTestBase {
   private PipelineStepResponse buildStep() {
     AiClassifyConfig config =
         new AiClassifyConfig(
-            prompt, List.of(new OutputColumn("category", "TEXT")), List.of("id", "text"), 20, "CONTINUE");
+            prompt,
+            List.of(new OutputColumn("category", "TEXT")),
+            List.of("id", "text"),
+            20,
+            "CONTINUE");
     @SuppressWarnings("unchecked")
     Map<String, Object> aiConfig = objectMapper.convertValue(config, Map.class);
     return new PipelineStepResponse(

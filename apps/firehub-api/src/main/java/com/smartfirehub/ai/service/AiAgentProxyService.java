@@ -51,17 +51,15 @@ public class AiAgentProxyService {
   /**
    * OAuth 토큰을 ai-agent 에 검증시킨다.
    *
-   * <p><b>토큰은 호출부가 넘긴다 — 여기서 다시 해석하지 않는다.</b> 예전에는 이 메서드가
-   * {@code aiCredentialService.resolve()} 를 스스로 한 번 더 불러 유형별로 토큰을 골랐는데,
-   * 유일한 호출부인 {@code AiController.getAuthStatus} 가 <b>이미 같은 {@code resolve()} 로
-   * 판정해 그 값을 손에 쥔 채</b> 이 메서드를 불렀다 — 요청 1건당 설정 SELECT + AES-GCM
-   * 복호화가 정확히 두 번 돌았다. 어느 유형에서 무엇이 토큰인지(그리고 어떤 유형이 이 경로
-   * 자체를 타면 안 되는지)를 정하는 것은 그 컨트롤러의 exhaustive switch 의 책임이다 —
-   * 그 switch 는 {@code AiCredential} 에 변형이 늘면 컴파일 오류로 막히고,
-   * {@code AiCredentialSwitchGuardTest} 가 {@code default} 탈출구까지 소스 텍스트로 금지한다.
+   * <p><b>토큰은 호출부가 넘긴다 — 여기서 다시 해석하지 않는다.</b> 예전에는 이 메서드가 {@code aiCredentialService.resolve()} 를
+   * 스스로 한 번 더 불러 유형별로 토큰을 골랐는데, 유일한 호출부인 {@code AiController.getAuthStatus} 가 <b>이미 같은 {@code
+   * resolve()} 로 판정해 그 값을 손에 쥔 채</b> 이 메서드를 불렀다 — 요청 1건당 설정 SELECT + AES-GCM 복호화가 정확히 두 번 돌았다. 어느
+   * 유형에서 무엇이 토큰인지(그리고 어떤 유형이 이 경로 자체를 타면 안 되는지)를 정하는 것은 그 컨트롤러의 exhaustive switch 의 책임이다 — 그 switch
+   * 는 {@code AiCredential} 에 변형이 늘면 컴파일 오류로 막히고, {@code AiCredentialSwitchGuardTest} 가 {@code
+   * default} 탈출구까지 소스 텍스트로 금지한다.
    *
-   * @param oauthToken 호출부가 자격증명에서 꺼낸 OAuth 토큰. 비어 있으면(빈/공백) ai-agent 를
-   *     부르지 않고 즉시 {@code invalid} 를 돌려준다 — "미설정"을 네트워크 왕복 없이 답한다.
+   * @param oauthToken 호출부가 자격증명에서 꺼낸 OAuth 토큰. 비어 있으면(빈/공백) ai-agent 를 부르지 않고 즉시 {@code invalid} 를
+   *     돌려준다 — "미설정"을 네트워크 왕복 없이 답한다.
    */
   public String verifyCliToken(String oauthToken) {
     if (oauthToken.isBlank()) {
@@ -84,14 +82,13 @@ public class AiAgentProxyService {
   /**
    * Anthropic API 키를 ai-agent 에 검증시킨다.
    *
-   * <p><b>키는 호출부가 넘긴다</b>(위 {@link #verifyCliToken(String)} 와 같은 이유 — 요청당
-   * {@code resolve()} 가 두 번 돌던 것을 한 번으로 줄인다). <b>어떤 유형의 키를 여기로 보낼지는
-   * 호출부 switch 가 정한다</b> — 특히 {@code Opencode.apiKey} 는 OpenAI 호환 키라 이
-   * 엔드포인트(Anthropic 키 검증)로 보내면 안 되고, {@code AiController.getAuthStatus} 의
-   * switch 가 opencode 를 이 경로가 아니라 "해당 없음" 응답으로 보낸다.
+   * <p><b>키는 호출부가 넘긴다</b>(위 {@link #verifyCliToken(String)} 와 같은 이유 — 요청당 {@code resolve()} 가 두 번
+   * 돌던 것을 한 번으로 줄인다). <b>어떤 유형의 키를 여기로 보낼지는 호출부 switch 가 정한다</b> — 특히 {@code Opencode.apiKey} 는
+   * OpenAI 호환 키라 이 엔드포인트(Anthropic 키 검증)로 보내면 안 되고, {@code AiController.getAuthStatus} 의 switch 가
+   * opencode 를 이 경로가 아니라 "해당 없음" 응답으로 보낸다.
    *
-   * @param apiKey 호출부가 자격증명에서 꺼낸 Anthropic API 키. 비어 있으면 ai-agent 를 부르지
-   *     않고 즉시 {@code invalid} 를 돌려준다.
+   * @param apiKey 호출부가 자격증명에서 꺼낸 Anthropic API 키. 비어 있으면 ai-agent 를 부르지 않고 즉시 {@code invalid} 를
+   *     돌려준다.
    */
   public String verifyApiKey(String apiKey) {
     if (apiKey.isBlank()) {
@@ -126,10 +123,9 @@ public class AiAgentProxyService {
   /**
    * ai-agent 의 세션 트랜스크립트를 가져온다.
    *
-   * <p>테넌트를 쿼리 파라미터로 실어 보낸다 — ai-agent 는 트랜스크립트를 테넌트별 디렉터리에
-   * 저장하므로 어느 테넌트의 것을 읽을지 알아야 하고, 동시에 세션 귀속 표식과 대조하는 심층방어
-   * 게이트의 입력이 된다. 1차 소유권 검증은 호출 전에 {@code verifySessionOwnership} 이 이미
-   * 수행한다({@code AiController.getSessionMessages}).
+   * <p>테넌트를 쿼리 파라미터로 실어 보낸다 — ai-agent 는 트랜스크립트를 테넌트별 디렉터리에 저장하므로 어느 테넌트의 것을 읽을지 알아야 하고, 동시에 세션 귀속
+   * 표식과 대조하는 심층방어 게이트의 입력이 된다. 1차 소유권 검증은 호출 전에 {@code verifySessionOwnership} 이 이미 수행한다({@code
+   * AiController.getSessionMessages}).
    */
   public String getSessionHistory(String sessionId) {
     long tenantId = TenantContext.require("AI 세션 이력 조회");
@@ -148,9 +144,9 @@ public class AiAgentProxyService {
   }
 
   /**
-   * ai-agent {@code POST /agent/chat} 의 SSE 이벤트 스트림. 웹 채팅(아래 {@link #streamChat})은
-   * 이벤트를 브라우저로 중계하고, Slack 인바운드({@link AiAgentBatchClient})는 done 까지 접는다 —
-   * 호출 규약(경로·내부 인증·비 2xx 처리)을 두 곳에 따로 두지 않으려고 여기 하나로 둔다.
+   * ai-agent {@code POST /agent/chat} 의 SSE 이벤트 스트림. 웹 채팅(아래 {@link #streamChat})은 이벤트를 브라우저로 중계하고,
+   * Slack 인바운드({@link AiAgentBatchClient})는 done 까지 접는다 — 호출 규약(경로·내부 인증·비 2xx 처리)을 두 곳에 따로 두지 않으려고
+   * 여기 하나로 둔다.
    *
    * @param requestBody {@link AiChatRequestBuilder#prepare} 가 만든 바디
    */
@@ -210,8 +206,7 @@ public class AiAgentProxyService {
         // 채팅은 예외가 아니라 SSE 이벤트로 오류를 내보내야 하므로 requireModelUsable 대신 문구만
         // 가져다 쓴다(분류·프로액티브는 같은 문구를 예외로 던진다).
         String errorPayload =
-            objectMapper.writeValueAsString(
-                Map.of("type", "error", "message", prepared.problem()));
+            objectMapper.writeValueAsString(Map.of("type", "error", "message", prepared.problem()));
         emitter.send(SseEmitter.event().data(errorPayload));
         emitter.complete();
       } catch (IOException ignored) {

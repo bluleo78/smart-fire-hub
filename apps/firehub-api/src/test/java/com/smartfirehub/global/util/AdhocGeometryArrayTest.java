@@ -19,16 +19,16 @@ import org.springframework.beans.factory.annotation.Autowired;
  * 애드혹 SQL 결과의 geometry·geography <b>배열</b>(1차원·다차원)이 500 으로 실패하지 않는지 확인하는 회귀 테스트(#760).
  *
  * <p><b>결함.</b> 직접 경로(애드혹 분석 executor 끔·데이터셋 SQL 탭)에서 jOOQ 가 geometry 배열 원소를 {@code
- * org.jooq.Geometry} 로 읽어 행 Map 에 그대로 담으면, Jackson 이 이를 직렬화하지 못해 응답이 500 이었다(1차원은
- * {@code Geometry[]}, 다차원은 #757 의 중첩 리스트 안 원소). #759 가 geometry 타입 이름을 {@code "public"."geometry"} 로
- * 고정한 뒤로 jOOQ 는 이 값을 PGobject 로 읽어 더는 실패하지 않는다 — 이 테스트는 그 해소를 고정한다.
+ * org.jooq.Geometry} 로 읽어 행 Map 에 그대로 담으면, Jackson 이 이를 직렬화하지 못해 응답이 500 이었다(1차원은 {@code
+ * Geometry[]}, 다차원은 #757 의 중첩 리스트 안 원소). #759 가 geometry 타입 이름을 {@code "public"."geometry"} 로 고정한
+ * 뒤로 jOOQ 는 이 값을 PGobject 로 읽어 더는 실패하지 않는다 — 이 테스트는 그 해소를 고정한다.
  *
- * <p><b>형태는 단언하지 않는다.</b> 지금은 executor 경로와 같은 PG 배열 리터럴(WKB 16진수) 문자열이지만, 경로 간 값 형태
- * 정규화(#758)·SQL 탭 geometry 표시(#767)는 사람 결정 대기 중이다. 그래서 "오류 없음 + Spring ObjectMapper 직렬화 성공 +
- * 값(WKB 16진수)이 사라지지 않음" 만 본다.
+ * <p><b>형태는 단언하지 않는다.</b> 지금은 executor 경로와 같은 PG 배열 리터럴(WKB 16진수) 문자열이지만, 경로 간 값 형태 정규화(#758)·SQL 탭
+ * geometry 표시(#767)는 사람 결정 대기 중이다. 그래서 "오류 없음 + Spring ObjectMapper 직렬화 성공 + 값(WKB 16진수)이 사라지지 않음"
+ * 만 본다.
  *
- * <p><b>순서·커넥션.</b> pgjdbc 의 커넥션별 타입 이름 캐시가 실행 순서에 따라 jOOQ 의 타입 해석을 바꾸므로(#759), 매
- * 시나리오 전에 Hikari 풀을 비워 새 커넥션에서 시작하고 두 경로를 같은 트랜잭션(= 같은 커넥션)에서 양쪽 순서로 실행한다.
+ * <p><b>순서·커넥션.</b> pgjdbc 의 커넥션별 타입 이름 캐시가 실행 순서에 따라 jOOQ 의 타입 해석을 바꾸므로(#759), 매 시나리오 전에 Hikari 풀을
+ * 비워 새 커넥션에서 시작하고 두 경로를 같은 트랜잭션(= 같은 커넥션)에서 양쪽 순서로 실행한다.
  */
 class AdhocGeometryArrayTest extends IntegrationTestBase {
 
@@ -72,8 +72,8 @@ class AdhocGeometryArrayTest extends IntegrationTestBase {
   }
 
   /**
-   * 응답을 Spring 이 쓰는 ObjectMapper 로 직렬화(= HTTP 응답 본문 생성)한 뒤 다시 파싱해 v 값을 확인한다. 이슈의 500 은 바로
-   * 이 직렬화 단계({@code No serializer found for class org.jooq.Geometry})에서 났다.
+   * 응답을 Spring 이 쓰는 ObjectMapper 로 직렬화(= HTTP 응답 본문 생성)한 뒤 다시 파싱해 v 값을 확인한다. 이슈의 500 은 바로 이 직렬화
+   * 단계({@code No serializer found for class org.jooq.Geometry})에서 났다.
    */
   private void assertServedWithoutLoss(String label, Object response) {
     String body;
@@ -94,13 +94,15 @@ class AdhocGeometryArrayTest extends IntegrationTestBase {
   }
 
   private void runAnalytics(Case c) {
-    AnalyticsQueryResponse res = analyticsService.execute("SELECT " + c.analyticsExpr() + " AS v", 10, true);
+    AnalyticsQueryResponse res =
+        analyticsService.execute("SELECT " + c.analyticsExpr() + " AS v", 10, true);
     assertThat(res.error()).as("애드혹 분석 %s 오류", c.name()).isNull();
     assertServedWithoutLoss("애드혹 분석 " + c.name(), res);
   }
 
   private void runDataset(Case c) {
-    SqlQueryResponse res = dataTableQueryService.executeQuery("SELECT " + c.datasetExpr() + " AS v", 10);
+    SqlQueryResponse res =
+        dataTableQueryService.executeQuery("SELECT " + c.datasetExpr() + " AS v", 10);
     assertThat(res.error()).as("데이터셋 SQL 탭 %s 오류", c.name()).isNull();
     assertServedWithoutLoss("데이터셋 SQL 탭 " + c.name(), res);
   }

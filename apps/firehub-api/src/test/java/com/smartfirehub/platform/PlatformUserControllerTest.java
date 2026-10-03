@@ -25,10 +25,9 @@ import org.springframework.test.web.servlet.MockMvc;
 /**
  * 운영자 평면 사용자 검색 TC.
  *
- * <p>가장 중요한 단언은 <b>교차 테넌트 가시성</b>이다. {@code "user"} 가 만약 RLS 였다면 플랫폼
- * 토큰에는 GUC 가 없어 조용히 0행이 나오고, 화면은 그것을 "검색 결과 없음"으로 그린다 — 예외도
- * 로그도 없는 무동작이다. 그래서 서로 다른 테넌트에 소속된 두 사용자를 심고 <b>둘 다</b> 잡히는지
- * 본다. 한 명만 심으면 깨진 쿼리에서도 우연히 통과할 수 있다.
+ * <p>가장 중요한 단언은 <b>교차 테넌트 가시성</b>이다. {@code "user"} 가 만약 RLS 였다면 플랫폼 토큰에는 GUC 가 없어 조용히 0행이 나오고, 화면은
+ * 그것을 "검색 결과 없음"으로 그린다 — 예외도 로그도 없는 무동작이다. 그래서 서로 다른 테넌트에 소속된 두 사용자를 심고 <b>둘 다</b> 잡히는지 본다. 한 명만
+ * 심으면 깨진 쿼리에서도 우연히 통과할 수 있다.
  */
 @AutoConfigureMockMvc
 class PlatformUserControllerTest extends IntegrationTestBase {
@@ -48,7 +47,8 @@ class PlatformUserControllerTest extends IntegrationTestBase {
   @BeforeEach
   void setUp() {
     marker = "p7c2a" + System.nanoTime();
-    operatorToken = jwtTokenProvider.generatePlatformAccessToken(createUser(marker + "-ops", true), "ops");
+    operatorToken =
+        jwtTokenProvider.generatePlatformAccessToken(createUser(marker + "-ops", true), "ops");
   }
 
   @AfterEach
@@ -86,8 +86,10 @@ class PlatformUserControllerTest extends IntegrationTestBase {
 
     String body =
         mockMvc
-            .perform(get("/api/platform/users").param("q", marker)
-                .header("Authorization", "Bearer " + operatorToken))
+            .perform(
+                get("/api/platform/users")
+                    .param("q", marker)
+                    .header("Authorization", "Bearer " + operatorToken))
             .andExpect(status().isOk())
             .andReturn()
             .getResponse()
@@ -103,8 +105,10 @@ class PlatformUserControllerTest extends IntegrationTestBase {
     long target = createUser(marker + "-charlie", false);
 
     mockMvc
-        .perform(get("/api/platform/users").param("q", marker + "-charlie")
-            .header("Authorization", "Bearer " + operatorToken))
+        .perform(
+            get("/api/platform/users")
+                .param("q", marker + "-charlie")
+                .header("Authorization", "Bearer " + operatorToken))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$[0].id").value(target))
         .andExpect(jsonPath("$[0].name").value(marker + "-charlie"))
@@ -118,8 +122,10 @@ class PlatformUserControllerTest extends IntegrationTestBase {
   @Test
   void rejectsShortQuery() throws Exception {
     mockMvc
-        .perform(get("/api/platform/users").param("q", "a")
-            .header("Authorization", "Bearer " + operatorToken))
+        .perform(
+            get("/api/platform/users")
+                .param("q", "a")
+                .header("Authorization", "Bearer " + operatorToken))
         .andExpect(status().isBadRequest());
   }
 
@@ -133,8 +139,10 @@ class PlatformUserControllerTest extends IntegrationTestBase {
   @Test
   void rejectsBlankQuery() throws Exception {
     mockMvc
-        .perform(get("/api/platform/users").param("q", "   ")
-            .header("Authorization", "Bearer " + operatorToken))
+        .perform(
+            get("/api/platform/users")
+                .param("q", "   ")
+                .header("Authorization", "Bearer " + operatorToken))
         .andExpect(status().isBadRequest());
   }
 
@@ -146,8 +154,10 @@ class PlatformUserControllerTest extends IntegrationTestBase {
     }
 
     mockMvc
-        .perform(get("/api/platform/users").param("q", marker + "-bulk")
-            .header("Authorization", "Bearer " + operatorToken))
+        .perform(
+            get("/api/platform/users")
+                .param("q", marker + "-bulk")
+                .header("Authorization", "Bearer " + operatorToken))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.length()").value(20));
   }
@@ -156,8 +166,10 @@ class PlatformUserControllerTest extends IntegrationTestBase {
   void escapesLikeWildcards() throws Exception {
     // '%' 를 이스케이프하지 않으면 이 검색어가 전 사용자를 긁는다.
     mockMvc
-        .perform(get("/api/platform/users").param("q", "%")
-            .header("Authorization", "Bearer " + operatorToken))
+        .perform(
+            get("/api/platform/users")
+                .param("q", "%")
+                .header("Authorization", "Bearer " + operatorToken))
         // 2자 미만이라 하한에서 먼저 걸린다.
         .andExpect(status().isBadRequest());
 
@@ -166,8 +178,10 @@ class PlatformUserControllerTest extends IntegrationTestBase {
     // 리터럴 대조군: 쿼리 자체는 정상 동작해서 delta 를 찾는다는 것을 먼저 확인한다.
     String literalBody =
         mockMvc
-            .perform(get("/api/platform/users").param("q", marker + "-delta")
-                .header("Authorization", "Bearer " + operatorToken))
+            .perform(
+                get("/api/platform/users")
+                    .param("q", marker + "-delta")
+                    .header("Authorization", "Bearer " + operatorToken))
             .andExpect(status().isOk())
             .andReturn()
             .getResponse()
@@ -189,8 +203,10 @@ class PlatformUserControllerTest extends IntegrationTestBase {
     // 방금 만든 delta 는 이스케이프 여부와 무관하게 항상 그 20명 밖이었다(공허 테스트).
     String body =
         mockMvc
-            .perform(get("/api/platform/users").param("q", marker + "-delt_")
-                .header("Authorization", "Bearer " + operatorToken))
+            .perform(
+                get("/api/platform/users")
+                    .param("q", marker + "-delt_")
+                    .header("Authorization", "Bearer " + operatorToken))
             .andExpect(status().isOk())
             .andReturn()
             .getResponse()
@@ -214,8 +230,10 @@ class PlatformUserControllerTest extends IntegrationTestBase {
 
     String body =
         mockMvc
-            .perform(get("/api/platform/users").param("q", marker)
-                .header("Authorization", "Bearer " + operatorToken))
+            .perform(
+                get("/api/platform/users")
+                    .param("q", marker)
+                    .header("Authorization", "Bearer " + operatorToken))
             .andExpect(status().isOk())
             .andReturn()
             .getResponse()
@@ -254,8 +272,10 @@ class PlatformUserControllerTest extends IntegrationTestBase {
 
     String body =
         mockMvc
-            .perform(get("/api/platform/users").param("q", q)
-                .header("Authorization", "Bearer " + operatorToken))
+            .perform(
+                get("/api/platform/users")
+                    .param("q", q)
+                    .header("Authorization", "Bearer " + operatorToken))
             .andExpect(status().isOk())
             .andReturn()
             .getResponse()
@@ -271,19 +291,22 @@ class PlatformUserControllerTest extends IntegrationTestBase {
     String tooLong = marker + "a".repeat(101);
 
     mockMvc
-        .perform(get("/api/platform/users").param("q", tooLong)
-            .header("Authorization", "Bearer " + operatorToken))
+        .perform(
+            get("/api/platform/users")
+                .param("q", tooLong)
+                .header("Authorization", "Bearer " + operatorToken))
         .andExpect(status().isBadRequest());
   }
 
   @Test
   void withoutPlatformPermissions_isForbidden() throws Exception {
     String weak =
-        jwtTokenProvider.generatePlatformAccessToken(createUser(marker + "-nobody", false), "nobody");
+        jwtTokenProvider.generatePlatformAccessToken(
+            createUser(marker + "-nobody", false), "nobody");
 
     mockMvc
-        .perform(get("/api/platform/users").param("q", marker)
-            .header("Authorization", "Bearer " + weak))
+        .perform(
+            get("/api/platform/users").param("q", marker).header("Authorization", "Bearer " + weak))
         .andExpect(status().isForbidden());
   }
 

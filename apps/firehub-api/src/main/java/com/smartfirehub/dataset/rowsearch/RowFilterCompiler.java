@@ -17,8 +17,7 @@ import java.util.Set;
 /**
  * 구조화 필터를 원본 테이블 별칭 t 기준 WHERE 조각으로 컴파일한다.
  *
- * <p>SQL 주입 방어: 컬럼은 호출자가 넘긴 사용자 컬럼 화이트리스트(시스템 컬럼 제외)에 있어야 하고, 식별자는 인용하며,
- * 값은 컬럼 타입으로 변환해 전부 바인딩한다.
+ * <p>SQL 주입 방어: 컬럼은 호출자가 넘긴 사용자 컬럼 화이트리스트(시스템 컬럼 제외)에 있어야 하고, 식별자는 인용하며, 값은 컬럼 타입으로 변환해 전부 바인딩한다.
  */
 public final class RowFilterCompiler {
 
@@ -78,7 +77,9 @@ public final class RowFilterCompiler {
         case "is_null" -> parts.add(col + " IS NULL");
         case "is_not_null" -> parts.add(col + " IS NOT NULL");
         case "in" -> {
-          if (!(c.value() instanceof Collection<?> values) || values.isEmpty() || values.size() > MAX_IN) {
+          if (!(c.value() instanceof Collection<?> values)
+              || values.isEmpty()
+              || values.size() > MAX_IN) {
             throw new IllegalArgumentException(at + "in 값은 1~" + MAX_IN + "개 목록이어야 합니다");
           }
           List<Object> converted = new ArrayList<>();
@@ -121,14 +122,13 @@ public final class RowFilterCompiler {
   }
 
   /**
-   * TIMESTAMP(시간대 없음) 컬럼 비교값을 해석한다. 허용 형식: yyyy-MM-dd(자정), ISO 로컬(yyyy-MM-ddTHH:mm[:ss]),
-   * 공백 구분(yyyy-MM-dd HH:mm[:ss]), 오프셋/Z 가 붙은 ISO(…Z, …+09:00).
+   * TIMESTAMP(시간대 없음) 컬럼 비교값을 해석한다. 허용 형식: yyyy-MM-dd(자정), ISO 로컬(yyyy-MM-ddTHH:mm[:ss]), 공백
+   * 구분(yyyy-MM-dd HH:mm[:ss]), 오프셋/Z 가 붙은 ISO(…Z, …+09:00).
    *
-   * <p>시간대 규칙: 오프셋이 없는 값은 저장된 벽시계 시각과 그대로 비교한다 — 임포트(DataValidationService)도 값을
-   * 시간대 변환 없이 LocalDateTime 으로 저장한다. 오프셋이 있는 값은 같은 순간의 UTC 벽시계 시각으로 바꾼다 — 이
-   * 프로젝트에서 시간대 있는 값을 TIMESTAMP 컬럼에 넣는 유일한 경로(API 호출 적재, JsonResponseParser)가 UTC 로
-   * 정규화하기 때문이다. JVM 기본 시간대(ZoneId.systemDefault)는 쓰지 않는다 — 운영 컨테이너는 TZ 미설정(UTC),
-   * 로컬 개발은 Asia/Seoul 이라 환경마다 결과가 달라진다.
+   * <p>시간대 규칙: 오프셋이 없는 값은 저장된 벽시계 시각과 그대로 비교한다 — 임포트(DataValidationService)도 값을 시간대 변환 없이
+   * LocalDateTime 으로 저장한다. 오프셋이 있는 값은 같은 순간의 UTC 벽시계 시각으로 바꾼다 — 이 프로젝트에서 시간대 있는 값을 TIMESTAMP 컬럼에 넣는
+   * 유일한 경로(API 호출 적재, JsonResponseParser)가 UTC 로 정규화하기 때문이다. JVM 기본 시간대(ZoneId.systemDefault)는 쓰지
+   * 않는다 — 운영 컨테이너는 TZ 미설정(UTC), 로컬 개발은 Asia/Seoul 이라 환경마다 결과가 달라진다.
    */
   private static LocalDateTime parseTimestamp(String s) {
     if (s.length() == 10) return LocalDate.parse(s).atStartOfDay();
@@ -166,7 +166,8 @@ public final class RowFilterCompiler {
         }
         case "DECIMAL" -> new BigDecimal(s);
         case "BOOLEAN" -> {
-          if (!s.equalsIgnoreCase("true") && !s.equalsIgnoreCase("false")) throw new IllegalArgumentException();
+          if (!s.equalsIgnoreCase("true") && !s.equalsIgnoreCase("false"))
+            throw new IllegalArgumentException();
           yield Boolean.parseBoolean(s);
         }
         case "DATE" -> LocalDate.parse(s.length() > 10 ? s.substring(0, 10) : s);

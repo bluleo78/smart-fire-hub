@@ -11,8 +11,8 @@ import org.springframework.test.util.ReflectionTestUtils;
 /**
  * KakaoTextFormatter 단위 테스트.
  *
- * <p>화이트라벨링 브랜드명이 답장 안내 푸터에 반영되는지 검증한다. @Value 필드는 Spring 컨텍스트 없이 생성 시 null이므로
- * ReflectionTestUtils로 직접 주입한다.
+ * <p>화이트라벨링 브랜드명이 답장 안내 푸터에 반영되는지 검증한다. @Value 필드는 Spring 컨텍스트 없이 생성 시 null이므로 ReflectionTestUtils로
+ * 직접 주입한다.
  */
 class KakaoTextFormatterTest {
 

@@ -25,8 +25,14 @@ class DocumentSearchServiceTest {
       public List<float[]> embed(List<String> texts) {
         return texts.stream().map(t -> new float[dim]).toList();
       }
-      public String modelId() { return "fake"; }
-      public int dimension() { return dim; }
+
+      public String modelId() {
+        return "fake";
+      }
+
+      public int dimension() {
+        return dim;
+      }
     };
   }
 
@@ -47,8 +53,10 @@ class DocumentSearchServiceTest {
     var service = new DocumentSearchService(factory, repo);
     // SEMANTIC 모드: 쿼리를 임베딩해 코사인 검색만 위임한다(topK 그대로 전달).
     // (3-인자 생성자는 이제 HYBRID 기본이므로 의미검색 경로는 모드를 명시한다.)
-    var result = service.search(
-        new DocumentSearchRequest("질의", List.of(3L), 5, com.smartfirehub.document.dto.SearchMode.SEMANTIC));
+    var result =
+        service.search(
+            new DocumentSearchRequest(
+                "질의", List.of(3L), 5, com.smartfirehub.document.dto.SearchMode.SEMANTIC));
 
     assertThat(result).hasSize(1);
     assertThat(result.get(0).content()).isEqualTo("내용");
@@ -56,8 +64,10 @@ class DocumentSearchServiceTest {
 
   @Test
   void searchRejectsBlankQuery() {
-    var service = new DocumentSearchService(
-        Mockito.mock(EmbeddingProviderFactory.class), Mockito.mock(DocumentChunkRepository.class));
+    var service =
+        new DocumentSearchService(
+            Mockito.mock(EmbeddingProviderFactory.class),
+            Mockito.mock(DocumentChunkRepository.class));
     assertThatThrownBy(() -> service.search(new DocumentSearchRequest("  ", null, 5)))
         .isInstanceOf(IllegalArgumentException.class);
   }
@@ -71,8 +81,10 @@ class DocumentSearchServiceTest {
         .thenReturn(List.of(hit));
 
     var service = new DocumentSearchService(factory, repo);
-    var result = service.search(
-        new DocumentSearchRequest("질의", List.of(3L), 5, com.smartfirehub.document.dto.SearchMode.KEYWORD));
+    var result =
+        service.search(
+            new DocumentSearchRequest(
+                "질의", List.of(3L), 5, com.smartfirehub.document.dto.SearchMode.KEYWORD));
 
     assertThat(result).hasSize(1);
     assertThat(result.get(0).content()).isEqualTo("키워드");
@@ -96,8 +108,10 @@ class DocumentSearchServiceTest {
         .thenReturn(List.of(b, c));
 
     var service = new DocumentSearchService(factory, repo);
-    var result = service.search(
-        new DocumentSearchRequest("질의", List.of(3L), 10, com.smartfirehub.document.dto.SearchMode.HYBRID));
+    var result =
+        service.search(
+            new DocumentSearchRequest(
+                "질의", List.of(3L), 10, com.smartfirehub.document.dto.SearchMode.HYBRID));
 
     // B 는 양쪽에 등장 → RRF 점수 최고 → 1위. A, C 는 한쪽씩.
     assertThat(result).hasSize(3);
@@ -111,8 +125,10 @@ class DocumentSearchServiceTest {
     var factory = Mockito.mock(EmbeddingProviderFactory.class);
     var repo = Mockito.mock(DocumentChunkRepository.class);
     when(factory.current()).thenReturn(fakeProvider(1024));
-    when(repo.searchByCosine(Mockito.any(), Mockito.any(), Mockito.any(), Mockito.anyInt())).thenReturn(List.of());
-    when(repo.searchByTrigram(Mockito.any(), Mockito.any(), Mockito.anyInt())).thenReturn(List.of());
+    when(repo.searchByCosine(Mockito.any(), Mockito.any(), Mockito.any(), Mockito.anyInt()))
+        .thenReturn(List.of());
+    when(repo.searchByTrigram(Mockito.any(), Mockito.any(), Mockito.anyInt()))
+        .thenReturn(List.of());
 
     var service = new DocumentSearchService(factory, repo);
     // 3-인자 생성자 → mode 미지정 → HYBRID → 양쪽 repo 호출돼야 함.

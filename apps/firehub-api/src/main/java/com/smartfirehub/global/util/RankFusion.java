@@ -11,8 +11,8 @@ import java.util.function.Function;
 /**
  * RRF(Reciprocal Rank Fusion) 공통 유틸.
  *
- * <p>점수 척도가 다른 검색(코사인·word_similarity)을 순위만으로 합친다. 문서·데이터셋 카탈로그·행 검색이 같은
- * 상수(k=60)와 동점 규칙(키 오름차순)을 공유하도록 한곳에 둔다.
+ * <p>점수 척도가 다른 검색(코사인·word_similarity)을 순위만으로 합친다. 문서·데이터셋 카탈로그·행 검색이 같은 상수(k=60)와 동점 규칙(키 오름차순)을
+ * 공유하도록 한곳에 둔다.
  */
 public final class RankFusion {
 
@@ -31,7 +31,8 @@ public final class RankFusion {
   public record Fused<T>(T hit, double score, Set<Integer> sources) {}
 
   /** 각 리스트에서의 순위(0-based)로 1/(k+rank+1)을 누적해 점수 내림차순, 동점은 키 오름차순으로 limit 개를 반환한다. */
-  public static <T> List<Fused<T>> fuse(List<List<T>> rankings, Function<T, Long> keyOf, int limit) {
+  public static <T> List<Fused<T>> fuse(
+      List<List<T>> rankings, Function<T, Long> keyOf, int limit) {
     Map<Long, Double> scoreByKey = new LinkedHashMap<>();
     Map<Long, T> hitByKey = new LinkedHashMap<>();
     Map<Long, Set<Integer>> sourcesByKey = new LinkedHashMap<>();

@@ -52,15 +52,20 @@ class MappingControllerTest {
   }
 
   private static MappingResponse resp(String status) {
-    return new MappingResponse(700L, 1L,
-        new MappingSpec(List.of(new MappingSpec.EntityMapping("Incident", "id", List.of())), List.of()), status);
+    return new MappingResponse(
+        700L,
+        1L,
+        new MappingSpec(
+            List.of(new MappingSpec.EntityMapping("Incident", "id", List.of())), List.of()),
+        status);
   }
 
   @Test
   void GET_매핑_있으면_200() throws Exception {
     when(permissionService.getUserPermissions(1L)).thenReturn(Set.of("dataset:read"));
     when(mappingService.get(700L)).thenReturn(Optional.of(resp("draft")));
-    mockMvc.perform(get("/api/v1/datasets/700/mapping").header("Authorization", "Bearer valid-token"))
+    mockMvc
+        .perform(get("/api/v1/datasets/700/mapping").header("Authorization", "Bearer valid-token"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("draft"))
         .andExpect(jsonPath("$.spec.entities[0].entityType").value("Incident"));
@@ -70,7 +75,8 @@ class MappingControllerTest {
   void GET_매핑_없으면_404() throws Exception {
     when(permissionService.getUserPermissions(1L)).thenReturn(Set.of("dataset:read"));
     when(mappingService.get(700L)).thenReturn(Optional.empty());
-    mockMvc.perform(get("/api/v1/datasets/700/mapping").header("Authorization", "Bearer valid-token"))
+    mockMvc
+        .perform(get("/api/v1/datasets/700/mapping").header("Authorization", "Bearer valid-token"))
         .andExpect(status().isNotFound());
   }
 
@@ -78,9 +84,12 @@ class MappingControllerTest {
   void PUT_저장은_dataset_write로_200() throws Exception {
     when(permissionService.getUserPermissions(1L)).thenReturn(Set.of("dataset:write"));
     when(mappingService.save(eq(700L), any(), eq(1L))).thenReturn(resp("draft"));
-    mockMvc.perform(put("/api/v1/datasets/700/mapping")
-            .header("Authorization", "Bearer valid-token")
-            .contentType(MediaType.APPLICATION_JSON).content(BODY))
+    mockMvc
+        .perform(
+            put("/api/v1/datasets/700/mapping")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(BODY))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("draft"));
   }
@@ -88,9 +97,12 @@ class MappingControllerTest {
   @Test
   void PUT_저장은_dataset_write_없으면_403() throws Exception {
     when(permissionService.getUserPermissions(1L)).thenReturn(Set.of("dataset:read"));
-    mockMvc.perform(put("/api/v1/datasets/700/mapping")
-            .header("Authorization", "Bearer valid-token")
-            .contentType(MediaType.APPLICATION_JSON).content(BODY))
+    mockMvc
+        .perform(
+            put("/api/v1/datasets/700/mapping")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(BODY))
         .andExpect(status().isForbidden());
   }
 
@@ -98,8 +110,10 @@ class MappingControllerTest {
   void POST_activate는_dataset_write로_200() throws Exception {
     when(permissionService.getUserPermissions(1L)).thenReturn(Set.of("dataset:write"));
     when(mappingService.activate(700L, 1L)).thenReturn(resp("active"));
-    mockMvc.perform(post("/api/v1/datasets/700/mapping/activate")
-            .header("Authorization", "Bearer valid-token"))
+    mockMvc
+        .perform(
+            post("/api/v1/datasets/700/mapping/activate")
+                .header("Authorization", "Bearer valid-token"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("active"));
   }
@@ -109,9 +123,12 @@ class MappingControllerTest {
     when(permissionService.getUserPermissions(1L)).thenReturn(Set.of("dataset:write"));
     when(mappingService.save(anyLong(), any(), anyLong()))
         .thenThrow(new IllegalArgumentException("온톨로지에 없는 엔티티 타입: NoSuch"));
-    mockMvc.perform(put("/api/v1/datasets/700/mapping")
-            .header("Authorization", "Bearer valid-token")
-            .contentType(MediaType.APPLICATION_JSON).content(BODY))
+    mockMvc
+        .perform(
+            put("/api/v1/datasets/700/mapping")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(BODY))
         .andExpect(status().isBadRequest());
   }
 }

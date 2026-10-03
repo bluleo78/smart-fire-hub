@@ -20,11 +20,10 @@ import org.springframework.beans.factory.annotation.Autowired;
 /**
  * 스펙 4장·5장 OutboxRepository 라이프사이클 통합 검증.
  *
- * <p><b>테넌트(P2-f)</b>: 기본 테넌트(1)가 아니라 <b>이 테스트가 직접 만든 테넌트</b>에서 돈다. 공유
- * 테스트 DB 의 {@code notification_outbox} 3883행이 전부 tenant_id=1 이라, 기본 테넌트로 정리하면
- * 다른 세션이 만든 행까지 지운다({@code deleteChannelCascade} javadoc 참조). 스크래치 테넌트를 쓰면
- * (a) 정리가 안전해지고 (b) {@code tenant_id} 값 자체를 단언할 수 있어 정책이 켜지기 전에도 배선
- * 판별력이 생긴다.
+ * <p><b>테넌트(P2-f)</b>: 기본 테넌트(1)가 아니라 <b>이 테스트가 직접 만든 테넌트</b>에서 돈다. 공유 테스트 DB 의 {@code
+ * notification_outbox} 3883행이 전부 tenant_id=1 이라, 기본 테넌트로 정리하면 다른 세션이 만든 행까지 지운다({@code
+ * deleteChannelCascade} javadoc 참조). 스크래치 테넌트를 쓰면 (a) 정리가 안전해지고 (b) {@code tenant_id} 값 자체를 단언할 수
+ * 있어 정책이 켜지기 전에도 배선 판별력이 생긴다.
  */
 class NotificationOutboxRepositoryIntegrationTest extends IntegrationTestBase {
 
@@ -58,8 +57,8 @@ class NotificationOutboxRepositoryIntegrationTest extends IntegrationTestBase {
   }
 
   /**
-   * 배선 판별력 — 리포지토리가 연 트랜잭션이 GUC 를 심어 {@code tenant_id} DEFAULT 가 <b>현재
-   * 컨텍스트</b>에서 채워지는지 직접 본다. 정책이 아직 꺼져 있어 격리로는 검증할 수 없다.
+   * 배선 판별력 — 리포지토리가 연 트랜잭션이 GUC 를 심어 {@code tenant_id} DEFAULT 가 <b>현재 컨텍스트</b>에서 채워지는지 직접 본다. 정책이
+   * 아직 꺼져 있어 격리로는 검증할 수 없다.
    */
   @Test
   void insertIfAbsent_stampsCurrentTenant() {
@@ -75,9 +74,7 @@ class NotificationOutboxRepositoryIntegrationTest extends IntegrationTestBase {
                     .where(NOTIFICATION_OUTBOX.CORRELATION_ID.eq(corr))
                     .fetchOne(NOTIFICATION_OUTBOX.TENANT_ID));
 
-    assertThat(stamped)
-        .as("insertIfAbsent 가 GUC 파생 DEFAULT 로 현재 테넌트를 찍어야 한다")
-        .isEqualTo(tenantId);
+    assertThat(stamped).as("insertIfAbsent 가 GUC 파생 DEFAULT 로 현재 테넌트를 찍어야 한다").isEqualTo(tenantId);
   }
 
   /** {@code outbox_tenant_ids} definer 함수가 내 테넌트를 실제로 돌려주는지 — 배경 경로 순회의 전제. */
@@ -106,11 +103,10 @@ class NotificationOutboxRepositoryIntegrationTest extends IntegrationTestBase {
   /**
    * SKIP LOCKED 동시성 — 두 스레드가 같은 행을 두 번 잡지 않는다.
    *
-   * <p><b>P2-f 로 단언을 조였다.</b> 이전에는 풀 스레드에 {@code TenantContext} 가 없어(ThreadLocal 은
-   * 승계되지 않는다) 정책이 켜지면 두 스레드 모두 0행을 보게 되는데도 {@code ≤1} 이 그대로 통과해
-   * 단언이 공허해지는 구조였다. 이제 각 스레드가 스스로 스코프를 열고(워커가 하는 것과 같다),
-   * <b>정확히 1</b>을 요구한다 — 0이면 컨텍스트 배선이 깨진 것이고 2면 SKIP LOCKED 계약이 깨진 것이다.
-   * 스크래치 테넌트라 이 행 말고는 클레임 대상이 없어 결정적이다.
+   * <p><b>P2-f 로 단언을 조였다.</b> 이전에는 풀 스레드에 {@code TenantContext} 가 없어(ThreadLocal 은 승계되지 않는다) 정책이
+   * 켜지면 두 스레드 모두 0행을 보게 되는데도 {@code ≤1} 이 그대로 통과해 단언이 공허해지는 구조였다. 이제 각 스레드가 스스로 스코프를 열고(워커가 하는 것과
+   * 같다), <b>정확히 1</b>을 요구한다 — 0이면 컨텍스트 배선이 깨진 것이고 2면 SKIP LOCKED 계약이 깨진 것이다. 스크래치 테넌트라 이 행 말고는 클레임
+   * 대상이 없어 결정적이다.
    */
   @Test
   void claimDue_skipLockedConcurrent() throws Exception {
@@ -122,11 +118,13 @@ class NotificationOutboxRepositoryIntegrationTest extends IntegrationTestBase {
     try {
       var f1 =
           CompletableFuture.supplyAsync(
-              () -> TenantContext.runScopedGet(tenantId, () -> repo.claimDue(10_000, "i1", tenantId)),
+              () ->
+                  TenantContext.runScopedGet(tenantId, () -> repo.claimDue(10_000, "i1", tenantId)),
               pool);
       var f2 =
           CompletableFuture.supplyAsync(
-              () -> TenantContext.runScopedGet(tenantId, () -> repo.claimDue(10_000, "i2", tenantId)),
+              () ->
+                  TenantContext.runScopedGet(tenantId, () -> repo.claimDue(10_000, "i2", tenantId)),
               pool);
       long thisCorrClaimed =
           f1.get().stream().filter(r -> r.correlationId().equals(corr)).count()

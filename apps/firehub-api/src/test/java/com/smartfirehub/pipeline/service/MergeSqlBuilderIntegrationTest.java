@@ -21,15 +21,13 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * {@link MergeSqlBuilder}가 만든 SQL 을 실제 테이블에 실행해 upsert 의미를 증명한다.
  *
- * <p>단위 테스트({@code MergeSqlBuilderTest})는 문자열 조립만 확인한다 — "만든 SQL 이 PostgreSQL 에서
- * 실제로 그 의미대로 도는가"는 별개 질문이다. 이 테스트는 (1) 기존 PK 행이 갱신되고(중복 삽입이 아님),
- * (2) 새 PK 행이 삽입되고, (3) 값이 그대로인 행은 {@code IS DISTINCT FROM} 가드로 건드리지 않는다는
- * 것을 실제 DB 행 수·값·{@code _updated_at} 타임스탬프로 확인한다.
+ * <p>단위 테스트({@code MergeSqlBuilderTest})는 문자열 조립만 확인한다 — "만든 SQL 이 PostgreSQL 에서 실제로 그 의미대로 도는가"는
+ * 별개 질문이다. 이 테스트는 (1) 기존 PK 행이 갱신되고(중복 삽입이 아님), (2) 새 PK 행이 삽입되고, (3) 값이 그대로인 행은 {@code IS DISTINCT
+ * FROM} 가드로 건드리지 않는다는 것을 실제 DB 행 수·값·{@code _updated_at} 타임스탬프로 확인한다.
  *
- * <p><b>테스트 트랜잭션을 끈다({@code NOT_SUPPORTED})</b> — {@code _updated_at} 트리거가 도는 것과
- * "행이 실제로 건드려지지 않았다"는 것을 커밋 경계 없이 같은 트랜잭션 안에서도 관찰할 수 있지만,
- * 이 테이블은 이 테스트가 직접 만들고 지우는 물리 테이블이라 클래스 레벨 트랜잭션 롤백에 기대지 않고
- * {@link #tearDown()} 에서 명시적으로 정리한다(다른 테스트의 공유 자원이 아니므로 안전하다).
+ * <p><b>테스트 트랜잭션을 끈다({@code NOT_SUPPORTED})</b> — {@code _updated_at} 트리거가 도는 것과 "행이 실제로 건드려지지
+ * 않았다"는 것을 커밋 경계 없이 같은 트랜잭션 안에서도 관찰할 수 있지만, 이 테이블은 이 테스트가 직접 만들고 지우는 물리 테이블이라 클래스 레벨 트랜잭션 롤백에 기대지
+ * 않고 {@link #tearDown()} 에서 명시적으로 정리한다(다른 테스트의 공유 자원이 아니므로 안전하다).
  */
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class MergeSqlBuilderIntegrationTest extends IntegrationTestBase {
@@ -92,7 +90,9 @@ class MergeSqlBuilderIntegrationTest extends IntegrationTestBase {
     // 전체 행 수: 갱신 1(A1) + 무변경 1(A2, 손대지 않음) + 신규 1(A3) = 3. 중복 삽입이었다면 4 이상이 된다.
     Integer total =
         dsl.fetchOne(
-                "SELECT count(*) FROM " + DataSchema.qualify(TABLE) + " WHERE code IN ('A1','A2','A3')")
+                "SELECT count(*) FROM "
+                    + DataSchema.qualify(TABLE)
+                    + " WHERE code IN ('A1','A2','A3')")
             .get(0, Integer.class);
     assertThat(total).as("A1 은 삽입이 아니라 갱신이어야 하므로 행 수가 3이어야 한다").isEqualTo(3);
 
@@ -148,11 +148,9 @@ class MergeSqlBuilderIntegrationTest extends IntegrationTestBase {
   }
 
   /**
-   * Fix round 2, must 1 — {@code MergeSqlBuilderTest}의 문자열 단위 테스트는 "생성되는 SQL 모양"만
-   * 고정한다. 이 테스트는 세미콜론 + 후행 한 줄 주석이 함께 있는 실제로 더 위험한 조합
-   * ({@code "...; -- note"})을 실제 PostgreSQL에 실행해, 문자열이 그럴듯해 보이는 것과 실제로
-   * 파싱·실행되는 것의 차이를 없앤다 — 서브쿼리를 자기 줄에 얹는 개행 처리와 세미콜론 제거가 함께
-   * 맞물려야 성립하는 케이스라 문자열 비교만으로는 증명력이 약하다.
+   * Fix round 2, must 1 — {@code MergeSqlBuilderTest}의 문자열 단위 테스트는 "생성되는 SQL 모양"만 고정한다. 이 테스트는 세미콜론
+   * + 후행 한 줄 주석이 함께 있는 실제로 더 위험한 조합 ({@code "...; -- note"})을 실제 PostgreSQL에 실행해, 문자열이 그럴듯해 보이는 것과
+   * 실제로 파싱·실행되는 것의 차이를 없앤다 — 서브쿼리를 자기 줄에 얹는 개행 처리와 세미콜론 제거가 함께 맞물려야 성립하는 케이스라 문자열 비교만으로는 증명력이 약하다.
    */
   @Test
   void 세미콜론과_후행_주석이_있는_SELECT도_실제로_실행된다() {
@@ -171,10 +169,9 @@ class MergeSqlBuilderIntegrationTest extends IntegrationTestBase {
   }
 
   /**
-   * 코드리뷰 MEDIUM — 주석이 세미콜론과 <b>다음 줄</b>에 있는 형태({@code "...;\n-- note"}). 예전
-   * 구현은 물리적 마지막 줄만 봤기 때문에 이 형태에서 세미콜론이 살아남아 서브쿼리 안에 들어갔고,
-   * 실행할 때마다 PostgreSQL 문법 오류가 났다. 문자열 단위 테스트와 별개로 실제 실행으로 증명한다 —
-   * 이 결함은 "그럴듯한 문자열"과 "실제로 파싱되는 SQL"의 차이 그 자체이기 때문이다.
+   * 코드리뷰 MEDIUM — 주석이 세미콜론과 <b>다음 줄</b>에 있는 형태({@code "...;\n-- note"}). 예전 구현은 물리적 마지막 줄만 봤기 때문에 이
+   * 형태에서 세미콜론이 살아남아 서브쿼리 안에 들어갔고, 실행할 때마다 PostgreSQL 문법 오류가 났다. 문자열 단위 테스트와 별개로 실제 실행으로 증명한다 — 이
+   * 결함은 "그럴듯한 문자열"과 "실제로 파싱되는 SQL"의 차이 그 자체이기 때문이다.
    */
   @Test
   void 세미콜론_다음_줄에_주석이_있는_SELECT도_실제로_실행된다() {

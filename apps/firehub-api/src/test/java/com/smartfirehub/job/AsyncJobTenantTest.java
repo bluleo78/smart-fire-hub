@@ -7,7 +7,6 @@ import static org.jooq.impl.DSL.name;
 import static org.jooq.impl.DSL.table;
 
 import com.smartfirehub.global.tenant.TenantContext;
-import com.smartfirehub.job.dto.AsyncJobStatusResponse;
 import com.smartfirehub.job.service.AsyncJobService;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TenantRlsTestSupport;
@@ -27,18 +26,17 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 /**
  * {@code async_job} 요청 경로의 테넌트 배선 검증 (P2-b Task 7).
  *
- * <p>Task 9(V96)에서 {@code async_job} 에 정책이 붙었다. 이 테스트의 핵심 판별력은 여전히
- * "앰비언트 트랜잭션 없이 {@link AsyncJobService} 를 호출해도 GUC 가 정상 주입되는가" 이고,
- * 여기에 정책이 실제로 격리하는지 보는 양방향 단언({@code assertTwoSidedIsolation})을 더한다.
+ * <p>Task 9(V96)에서 {@code async_job} 에 정책이 붙었다. 이 테스트의 핵심 판별력은 여전히 "앰비언트 트랜잭션 없이 {@link
+ * AsyncJobService} 를 호출해도 GUC 가 정상 주입되는가" 이고, 여기에 정책이 실제로 격리하는지 보는 양방향 단언({@code
+ * assertTwoSidedIsolation})을 더한다.
  *
- * <p>{@code AsyncJobService} 의 모든 쓰기/조회 메서드는 {@code asyncJobRepository} 를 경유하고,
- * 그 리포지토리는 이미 클래스 레벨 {@code @Transactional} 을 갖고 있다(Task 1). 즉 이 서비스에 붙인
- * {@code @Transactional} 은 결함 수정이 아니라 심층 방어다 — 리포지토리 호출이 있는 한 이 테스트는
- * 서비스 애노테이션을 지워도 통과한다. 그럼에도 회귀 커버리지로서 end-to-end 배선을 고정해 둔다.
+ * <p>{@code AsyncJobService} 의 모든 쓰기/조회 메서드는 {@code asyncJobRepository} 를 경유하고, 그 리포지토리는 이미 클래스 레벨
+ * {@code @Transactional} 을 갖고 있다(Task 1). 즉 이 서비스에 붙인 {@code @Transactional} 은 결함 수정이 아니라 심층 방어다 —
+ * 리포지토리 호출이 있는 한 이 테스트는 서비스 애노테이션을 지워도 통과한다. 그럼에도 회귀 커버리지로서 end-to-end 배선을 고정해 둔다.
  *
- * <p><b>클래스 레벨 {@code @Transactional} 이 없다 — 의도된 것이다.</b> 픽스처만
- * {@link TenantRlsTestSupport#runInTenantTransaction} 으로 감싸고, 검증 대상 호출(서비스 메서드)은
- * 트랜잭션 밖에 남긴다(선례: {@code apiconnection/ApiConnectionTenantTest}).
+ * <p><b>클래스 레벨 {@code @Transactional} 이 없다 — 의도된 것이다.</b> 픽스처만 {@link
+ * TenantRlsTestSupport#runInTenantTransaction} 으로 감싸고, 검증 대상 호출(서비스 메서드)은 트랜잭션 밖에 남긴다(선례: {@code
+ * apiconnection/ApiConnectionTenantTest}).
  */
 class AsyncJobTenantTest extends IntegrationTestBase {
 
@@ -150,8 +148,7 @@ class AsyncJobTenantTest extends IntegrationTestBase {
     // updateProgress 로 진행률을 올려둔다 — 역시 트랜잭션 없이, 워커 스레드 조건 그대로.
     TenantContext.set(tenantA);
     try {
-      asyncJobService.updateProgress(
-          jobId, "RUNNING", 42, "halfway", Map.of("processedRows", 42));
+      asyncJobService.updateProgress(jobId, "RUNNING", 42, "halfway", Map.of("processedRows", 42));
       asyncJobService.failJob(jobId, "boom");
     } finally {
       TenantContext.clear();
@@ -181,9 +178,8 @@ class AsyncJobTenantTest extends IntegrationTestBase {
   /**
    * V96 정책이 실제로 격리하는지 양방향으로 확인한다.
    *
-   * <p>{@code async_job} 의 PK 는 문자열 id 라 {@code assertTwoSidedIsolation}(id=bigint 전제)을
-   * 쓸 수 없어 같은 형태를 여기서 직접 편다 — 소유 테넌트에서 보이고, 타 테넌트에서 안 보이는
-   * 두 쪽을 모두 본다(단방향만 보면 빈 결과에서 공허하게 통과한다).
+   * <p>{@code async_job} 의 PK 는 문자열 id 라 {@code assertTwoSidedIsolation}(id=bigint 전제)을 쓸 수 없어 같은
+   * 형태를 여기서 직접 편다 — 소유 테넌트에서 보이고, 타 테넌트에서 안 보이는 두 쪽을 모두 본다(단방향만 보면 빈 결과에서 공허하게 통과한다).
    */
   @Test
   @DisplayName("async_job 은 테넌트 간 양방향으로 격리된다")
@@ -191,13 +187,11 @@ class AsyncJobTenantTest extends IntegrationTestBase {
     String jobId = createJobInTenantTx(tenantA, userA, "dataset", UUID.randomUUID().toString());
 
     Integer visibleToOwner =
-        TenantRlsTestSupport.runInTenantTransaction(
-            tx, tenantA, () -> countJobRows(jobId));
+        TenantRlsTestSupport.runInTenantTransaction(tx, tenantA, () -> countJobRows(jobId));
     assertThat(visibleToOwner).as("소유 테넌트에서 자기 잡이 보여야 한다").isEqualTo(1);
 
     Integer visibleToOther =
-        TenantRlsTestSupport.runInTenantTransaction(
-            tx, tenantB, () -> countJobRows(jobId));
+        TenantRlsTestSupport.runInTenantTransaction(tx, tenantB, () -> countJobRows(jobId));
     assertThat(visibleToOther).as("다른 테넌트에서 남의 잡이 보이면 격리 실패다").isZero();
   }
 
@@ -208,12 +202,11 @@ class AsyncJobTenantTest extends IntegrationTestBase {
     return dsl.fetchCount(table(name("async_job")), field(name("id"), String.class).eq(jobId));
   }
 
-
   /**
-   * 지정한 테넌트 컨텍스트의 트랜잭션 안에서 잡 하나를 만든다. 픽스처는 검증 대상이 아니므로
-   * 트랜잭션으로 감싸도 무방하다 — 검증은 별도 호출(트랜잭션 밖)에서 이뤄진다.
+   * 지정한 테넌트 컨텍스트의 트랜잭션 안에서 잡 하나를 만든다. 픽스처는 검증 대상이 아니므로 트랜잭션으로 감싸도 무방하다 — 검증은 별도 호출(트랜잭션 밖)에서 이뤄진다.
    */
-  private String createJobInTenantTx(Long tenantId, Long userId, String resource, String resourceId) {
+  private String createJobInTenantTx(
+      Long tenantId, Long userId, String resource, String resourceId) {
     return TenantRlsTestSupport.runInTenantTransaction(
         tx,
         tenantId,

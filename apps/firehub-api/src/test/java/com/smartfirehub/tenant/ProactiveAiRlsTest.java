@@ -15,19 +15,17 @@ import org.springframework.transaction.support.TransactionTemplate;
 /**
  * V104 가 켠 프로액티브 5테이블 + AI 2테이블의 테넌트 격리를 양방향으로 검증한다.
  *
- * <p>왜 양방향인가: "다른 테넌트에서 0행" 단방향 단언은 빈 테이블에서 공허하게 통과한다(P1 에서
- * 실제로 결함을 통과시킨 전례가 있다). 소유 테넌트에서 실제로 보이는 것 + {@code tenant_id} DEFAULT
- * 가 GUC 에서 채워지는 것을 함께 확인해야 의미가 있다({@code assertTwoSidedIsolation} 의 3다리).
+ * <p>왜 양방향인가: "다른 테넌트에서 0행" 단방향 단언은 빈 테이블에서 공허하게 통과한다(P1 에서 실제로 결함을 통과시킨 전례가 있다). 소유 테넌트에서 실제로 보이는
+ * 것 + {@code tenant_id} DEFAULT 가 GUC 에서 채워지는 것을 함께 확인해야 의미가 있다({@code assertTwoSidedIsolation} 의
+ * 3다리).
  *
- * <p>이 클래스에 클래스 레벨 {@code @Transactional} 을 붙이지 않는다 — 테넌트를 바꿔 가며 여러
- * 트랜잭션을 열어야 하고, 하나의 테스트 트랜잭션에 묶이면 GUC 가 처음 값으로 고정된다. 더 중요하게는
- * 테스트 트랜잭션이 GUC 를 공급해 프로덕션 배선 결함을 영구히 가린다.
+ * <p>이 클래스에 클래스 레벨 {@code @Transactional} 을 붙이지 않는다 — 테넌트를 바꿔 가며 여러 트랜잭션을 열어야 하고, 하나의 테스트 트랜잭션에 묶이면
+ * GUC 가 처음 값으로 고정된다. 더 중요하게는 테스트 트랜잭션이 GUC 를 공급해 프로덕션 배선 결함을 영구히 가린다.
  *
- * <p>테스트 커넥션은 비특권 롤 {@code app_tenant}(NOBYPASSRLS, V83)로 접속한다 — 픽스처 생성·정리·
- * 검증 조회에도 정책이 적용되므로 그 셋 모두 테넌트 트랜잭션 안에서 한다.
+ * <p>테스트 커넥션은 비특권 롤 {@code app_tenant}(NOBYPASSRLS, V83)로 접속한다 — 픽스처 생성·정리· 검증 조회에도 정책이 적용되므로 그 셋
+ * 모두 테넌트 트랜잭션 안에서 한다.
  *
- * <p>공유 테스트 DB 라 전체 카운트 비교 단언은 쓸 수 없다(다른 세션이 동시에 쓴다). 실행마다 고유한
- * 테넌트 두 개를 만들어 그 범위에서만 단언한다.
+ * <p>공유 테스트 DB 라 전체 카운트 비교 단언은 쓸 수 없다(다른 세션이 동시에 쓴다). 실행마다 고유한 테넌트 두 개를 만들어 그 범위에서만 단언한다.
  */
 class ProactiveAiRlsTest extends IntegrationTestBase {
 
@@ -123,8 +121,10 @@ class ProactiveAiRlsTest extends IntegrationTestBase {
     // 누출되고 정상 생성이 원인 불명으로 거부된다. 값을 고정해야 의미가 있다.
     String shared = newSessionId();
 
-    Long a = TenantRlsTestSupport.runInTenantTransaction(tx, tenantA, () -> insertAiSession(shared));
-    Long b = TenantRlsTestSupport.runInTenantTransaction(tx, tenantB, () -> insertAiSession(shared));
+    Long a =
+        TenantRlsTestSupport.runInTenantTransaction(tx, tenantA, () -> insertAiSession(shared));
+    Long b =
+        TenantRlsTestSupport.runInTenantTransaction(tx, tenantB, () -> insertAiSession(shared));
 
     assertThat(a).isNotNull();
     assertThat(b).isNotNull().isNotEqualTo(a);

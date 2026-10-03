@@ -132,7 +132,8 @@ class DashboardHealthTest extends IntegrationTestBase {
         dsl.insertInto(DATASET)
             .set(DATASET.NAME, "Fresh Dataset " + System.nanoTime())
             .set(DATASET.TABLE_NAME, "fresh_ds_" + System.nanoTime())
-            .set(DATASET.STORAGE_TYPE, "TABLE").set(DATASET.ORIGIN_TYPE, "SOURCE")
+            .set(DATASET.STORAGE_TYPE, "TABLE")
+            .set(DATASET.ORIGIN_TYPE, "SOURCE")
             .set(DATASET.CREATED_BY, testUserId)
             .set(DATASET.CREATED_AT, LocalDateTime.now().minusDays(7))
             .returning(DATASET.ID)
@@ -155,7 +156,8 @@ class DashboardHealthTest extends IntegrationTestBase {
         dsl.insertInto(DATASET)
             .set(DATASET.NAME, "Stale Dataset " + System.nanoTime())
             .set(DATASET.TABLE_NAME, "stale_ds_" + System.nanoTime())
-            .set(DATASET.STORAGE_TYPE, "TABLE").set(DATASET.ORIGIN_TYPE, "SOURCE")
+            .set(DATASET.STORAGE_TYPE, "TABLE")
+            .set(DATASET.ORIGIN_TYPE, "SOURCE")
             .set(DATASET.CREATED_BY, testUserId)
             .set(DATASET.CREATED_AT, LocalDateTime.now().minusDays(7))
             .returning(DATASET.ID)
@@ -178,7 +180,8 @@ class DashboardHealthTest extends IntegrationTestBase {
         dsl.insertInto(DATASET)
             .set(DATASET.NAME, "Critical Stale Dataset " + System.nanoTime())
             .set(DATASET.TABLE_NAME, "critical_stale_ds_" + System.nanoTime())
-            .set(DATASET.STORAGE_TYPE, "TABLE").set(DATASET.ORIGIN_TYPE, "SOURCE")
+            .set(DATASET.STORAGE_TYPE, "TABLE")
+            .set(DATASET.ORIGIN_TYPE, "SOURCE")
             .set(DATASET.CREATED_BY, testUserId)
             .set(DATASET.CREATED_AT, LocalDateTime.now().minusDays(30))
             .returning(DATASET.ID)
@@ -243,8 +246,8 @@ class DashboardHealthTest extends IntegrationTestBase {
   /**
    * #669 — 홈 대시보드 스파크라인이 실제 최근 7일 추이를 반영해야 한다.
    *
-   * <p>고정 하드코딩 배열([3,5,2,8,4,6,9] 등) 대신 pipelineHealth.trend/datasetHealth.trend가 오늘 실행/임포트한
-   * 데이터를 실제로 카운트해서 담는지 검증한다.
+   * <p>고정 하드코딩 배열([3,5,2,8,4,6,9] 등) 대신 pipelineHealth.trend/datasetHealth.trend가 오늘 실행/임포트한 데이터를
+   * 실제로 카운트해서 담는지 검증한다.
    */
   @Test
   void getSystemHealth_trend_reflectsRealActivity() {

@@ -20,33 +20,29 @@ import org.junit.jupiter.api.TestInstance;
 import org.springframework.beans.factory.annotation.Value;
 
 /**
- * <b>이중 방어 증명(P3-b1 R4)</b> — 테넌트의 파이프라인 실행 롤이 <b>다른 테넌트의 data 스키마</b>에
- * 접근할 수 없음을 <b>권한(grant) 계층 단독</b>으로, 그리고 <b>검증기(SqlValidator) 계층 단독</b>으로
- * 각각 따로 증명한다. 두 계층이 실제로 둘인지(하나가 무너져도 다른 하나가 막는지) 확인하는 것이
- * 이 테스트의 목적이며, 이 밴드 전체의 존재 이유다.
+ * <b>이중 방어 증명(P3-b1 R4)</b> — 테넌트의 파이프라인 실행 롤이 <b>다른 테넌트의 data 스키마</b>에 접근할 수 없음을 <b>권한(grant) 계층
+ * 단독</b>으로, 그리고 <b>검증기(SqlValidator) 계층 단독</b>으로 각각 따로 증명한다. 두 계층이 실제로 둘인지(하나가 무너져도 다른 하나가 막는지)
+ * 확인하는 것이 이 테스트의 목적이며, 이 밴드 전체의 존재 이유다.
  *
- * <p><b>왜 물리 스키마 리네임 없이 증명할 수 있는가.</b> 현재 물리 스키마는 {@code data} 하나뿐이고
- * (리네임은 P3-b2) 모든 테넌트 롤이 같은 {@code data} 를 본다 — 그래서 공유 스키마에 기대는 증명은
- * 공허하다. 대신 이 테스트는 <b>충돌하지 않는 신규 스키마 {@code data_t9901} 을 스스로 만들고</b>
- * (가산적 — 공유 test DB 의 다른 세션에 영향 0) 그 스키마에 대해 테넌트 1 의 롤이 거부되는지 본다.
- * 스키마 이름은 P3-b2 가 채택할 규약({@code data_t{tenantId}})과 동일한 형태이므로, 리네임이 켜지는
- * 순간 이 증명이 곧 실제 격리의 증명이 된다.
+ * <p><b>왜 물리 스키마 리네임 없이 증명할 수 있는가.</b> 현재 물리 스키마는 {@code data} 하나뿐이고 (리네임은 P3-b2) 모든 테넌트 롤이 같은
+ * {@code data} 를 본다 — 그래서 공유 스키마에 기대는 증명은 공허하다. 대신 이 테스트는 <b>충돌하지 않는 신규 스키마 {@code data_t9901} 을
+ * 스스로 만들고</b> (가산적 — 공유 test DB 의 다른 세션에 영향 0) 그 스키마에 대해 테넌트 1 의 롤이 거부되는지 본다. 스키마 이름은 P3-b2 가 채택할
+ * 규약({@code data_t{tenantId}})과 동일한 형태이므로, 리네임이 켜지는 순간 이 증명이 곧 실제 격리의 증명이 된다.
  *
- * <p><b>클래스 레벨 {@code @Transactional} 을 쓰지 않는다.</b> 픽스처가 DDL(스키마·테이블·롤 생성)
- * 이고, 그것이 <b>커밋</b>돼야 별도 커넥션(= 다른 롤)이 볼 수 있다. 트랜잭션 안에 넣으면 프로브
- * 커넥션에 아무것도 보이지 않아 "거부"가 "존재하지 않음"과 구별되지 않는다. 그래서 {@code @BeforeAll}
- * 에서 자기 커밋 DDL 로 만들고 {@code @AfterAll} 에서 <b>자기가 만든 것만</b> 지운다.
+ * <p><b>클래스 레벨 {@code @Transactional} 을 쓰지 않는다.</b> 픽스처가 DDL(스키마·테이블·롤 생성) 이고, 그것이 <b>커밋</b>돼야 별도
+ * 커넥션(= 다른 롤)이 볼 수 있다. 트랜잭션 안에 넣으면 프로브 커넥션에 아무것도 보이지 않아 "거부"가 "존재하지 않음"과 구별되지 않는다. 그래서
+ * {@code @BeforeAll} 에서 자기 커밋 DDL 로 만들고 {@code @AfterAll} 에서 <b>자기가 만든 것만</b> 지운다.
  *
- * <p><b>공유 DB 안전 규칙.</b> 이 테스트는 {@code data} 스키마, {@code pipeline_executor},
- * {@code pipeline_executor_t1} 을 <b>절대 변경·회수하지 않는다</b> — 읽기(프로브)만 한다. 생성·삭제
- * 대상은 {@code data_t9901} 스키마와 {@code pipeline_executor_t9901} 롤 둘뿐이다.
+ * <p><b>공유 DB 안전 규칙.</b> 이 테스트는 {@code data} 스키마, {@code pipeline_executor}, {@code
+ * pipeline_executor_t1} 을 <b>절대 변경·회수하지 않는다</b> — 읽기(프로브)만 한다. 생성·삭제 대상은 {@code data_t9901} 스키마와
+ * {@code pipeline_executor_t9901} 롤 둘뿐이다.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class DataSchemaGrantIsolationTest extends IntegrationTestBase {
 
   /**
-   * 프로브용 "다른 테넌트" id. 실제 테넌트 테이블에는 없는 높은 번호를 쓴다 — 공유 test DB 에서
-   * 다른 세션의 테넌트 픽스처(1, 2, ...)와 스키마·롤 이름이 겹치지 않게 하려는 것이다.
+   * 프로브용 "다른 테넌트" id. 실제 테넌트 테이블에는 없는 높은 번호를 쓴다 — 공유 test DB 에서 다른 세션의 테넌트 픽스처(1, 2, ...)와 스키마·롤
+   * 이름이 겹치지 않게 하려는 것이다.
    */
   private static final long OTHER_TENANT_ID = 9901L;
 
@@ -68,9 +64,8 @@ class DataSchemaGrantIsolationTest extends IntegrationTestBase {
   private String ownerPassword;
 
   /**
-   * 롤 비밀번호 파생 HMAC 키. 비밀번호를 테스트에 하드코딩하지 않고 {@link TenantPipelineRole}
-   * 로 파생한다 — 파생 규약이 바뀌면 이 테스트가 같이 따라가야 하고(하드코딩이면 조용히 인증
-   * 실패로만 드러난다), 롤 이름·비밀번호 조립점이 하나라는 T1 의 규약을 테스트도 지켜야 한다.
+   * 롤 비밀번호 파생 HMAC 키. 비밀번호를 테스트에 하드코딩하지 않고 {@link TenantPipelineRole} 로 파생한다 — 파생 규약이 바뀌면 이 테스트가 같이
+   * 따라가야 하고(하드코딩이면 조용히 인증 실패로만 드러난다), 롤 이름·비밀번호 조립점이 하나라는 T1 의 규약을 테스트도 지켜야 한다.
    */
   @Value("${app.pipeline.role-password-secret}")
   private String rolePasswordSecret;
@@ -95,7 +90,9 @@ class DataSchemaGrantIsolationTest extends IntegrationTestBase {
       // CONNECT 를 명시적으로 준다 — V111 이 테넌트 1 롤에도 명시적으로 GRANT CONNECT 를 하는 것과
       // 같은 이유다(이 DB 는 PUBLIC 의 CONNECT 를 신뢰하지 않는다).
       stmt.execute(
-          "GRANT CONNECT ON DATABASE " + quoteIdentifier(currentDatabase(owner)) + " TO "
+          "GRANT CONNECT ON DATABASE "
+              + quoteIdentifier(currentDatabase(owner))
+              + " TO "
               + otherRoleName());
       // 자기 스키마에만 권한을 준다. search_path 는 설정하지 않는다 — 이 테스트는 모든 참조를
       // 스키마로 한정하므로 롤 레벨 설정(클러스터 전역이 되기 쉬운 ALTER ROLE)이 아예 필요 없다.
@@ -150,7 +147,9 @@ class DataSchemaGrantIsolationTest extends IntegrationTestBase {
     // 예외 클래스로 단언하면 "권한 거부"와 "문법 오류"를 구별하지 못해, 스키마 이름이 오타여도
     // 초록색으로 통과하는 공허한 테스트가 된다.
     String sqlState =
-        sqlStateOf(tenantRoleUser(), tenantRolePassword(),
+        sqlStateOf(
+            tenantRoleUser(),
+            tenantRolePassword(),
             "SELECT * FROM " + OTHER_SCHEMA + "." + PROBE_TABLE);
 
     assertThat(sqlState).as("다른 테넌트 스키마 읽기는 권한 부족(42501)으로 거부돼야 한다").isEqualTo("42501");
@@ -165,7 +164,9 @@ class DataSchemaGrantIsolationTest extends IntegrationTestBase {
     // 대조가 언젠가 뚫려도(또는 검증기가 경로에서 빠져도) 아래쪽 계층이 여전히 막는다는 것을
     // 코드로 못 박아 두는 것이다.
     String sqlState =
-        sqlStateOf(tenantRoleUser(), tenantRolePassword(),
+        sqlStateOf(
+            tenantRoleUser(),
+            tenantRolePassword(),
             "SELECT * FROM U&\"data_t9901\"." + PROBE_TABLE);
 
     assertThat(sqlState).as("유니코드 이스케이프 식별자도 같은 스키마로 해석되어 거부돼야 한다").isEqualTo("42501");
@@ -263,7 +264,8 @@ class DataSchemaGrantIsolationTest extends IntegrationTestBase {
                 TenantPipelineRole.password(OTHER_TENANT_ID, rolePasswordSecret));
         Statement stmt = roleConn.createStatement();
         ResultSet rs =
-            stmt.executeQuery("SELECT v FROM " + OTHER_SCHEMA + "." + PROBE_TABLE + " ORDER BY id")) {
+            stmt.executeQuery(
+                "SELECT v FROM " + OTHER_SCHEMA + "." + PROBE_TABLE + " ORDER BY id")) {
       assertThat(rs.next()).as("자기 스키마의 행이 보여야 한다").isTrue();
       assertThat(rs.getString(1)).isEqualTo("secret");
     }
@@ -329,13 +331,11 @@ class DataSchemaGrantIsolationTest extends IntegrationTestBase {
   }
 
   /**
-   * {@code sql} 을 주어진 자격증명으로 <b>직접 JDBC 접속</b>해 실행하고, 거부된 경우의 SQLSTATE 를
-   * 돌려준다. 성공하면 {@code null} — 호출부의 단언이 "42501 이어야 한다"이므로 성공은 곧 실패로
-   * 드러난다.
+   * {@code sql} 을 주어진 자격증명으로 <b>직접 JDBC 접속</b>해 실행하고, 거부된 경우의 SQLSTATE 를 돌려준다. 성공하면 {@code null} —
+   * 호출부의 단언이 "42501 이어야 한다"이므로 성공은 곧 실패로 드러난다.
    *
-   * <p>jOOQ/Spring 을 거치지 않고 raw JDBC 를 쓰는 것은 의도적이다. "레지스트리도 검증기도 경로에
-   * 없다"가 코드만 봐서 자명해야 하고, 예외 번역 계층이 없으면 {@link SQLException#getSQLState()}
-   * 를 그대로 읽을 수 있어 단언이 DB 가 실제로 낸 코드에 직접 걸린다.
+   * <p>jOOQ/Spring 을 거치지 않고 raw JDBC 를 쓰는 것은 의도적이다. "레지스트리도 검증기도 경로에 없다"가 코드만 봐서 자명해야 하고, 예외 번역 계층이
+   * 없으면 {@link SQLException#getSQLState()} 를 그대로 읽을 수 있어 단언이 DB 가 실제로 낸 코드에 직접 걸린다.
    */
   private String sqlStateOf(String user, String password, String sql) throws SQLException {
     try (Connection conn = DriverManager.getConnection(jdbcUrl, user, password);

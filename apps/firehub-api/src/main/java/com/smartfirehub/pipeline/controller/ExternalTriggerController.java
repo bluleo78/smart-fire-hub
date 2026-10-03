@@ -55,9 +55,8 @@ public class ExternalTriggerController {
   }
 
   /**
-   * API 트리거의 본 처리. 테넌트 컨텍스트가 세워진 뒤 호출되므로 여기서 도는 모든 조회·삽입은
-   * RLS 아래에 있다. 트리거 재조회는 낭비가 아니라 설계다 — 해석 함수는 id 두 개만 내주고, 실제
-   * 데이터는 RLS 가 적용된 일반 경로로만 읽는다.
+   * API 트리거의 본 처리. 테넌트 컨텍스트가 세워진 뒤 호출되므로 여기서 도는 모든 조회·삽입은 RLS 아래에 있다. 트리거 재조회는 낭비가 아니라 설계다 — 해석 함수는
+   * id 두 개만 내주고, 실제 데이터는 RLS 가 적용된 일반 경로로만 읽는다.
    */
   private ResponseEntity<?> fireApiTrigger(
       String token, Map<String, Object> params, HttpServletRequest request, String sourceIp) {

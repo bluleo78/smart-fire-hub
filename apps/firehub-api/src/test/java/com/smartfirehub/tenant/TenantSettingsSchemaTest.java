@@ -11,9 +11,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 /**
  * V114 가 만든 tenant_settings 스키마 형태를 카탈로그로 고정한다.
  *
- * <p>왜 필요한가: P7-b 설정 2단 상속의 저장소 계층이다. RLS 정책이 audit_log 의 IS NOT DISTINCT
- * FROM idiom 을 잘못 복사하면 NULL 테넌트 컨텍스트에서 전 테넌트 행이 노출될 수 있으므로, 정책
- * 표현식 문자열을 직접 검사해 이 회귀를 막는다. 또한 "app_tenant 에 명시 GRANT 없이도 V83 의
+ * <p>왜 필요한가: P7-b 설정 2단 상속의 저장소 계층이다. RLS 정책이 audit_log 의 IS NOT DISTINCT FROM idiom 을 잘못 복사하면 NULL
+ * 테넌트 컨텍스트에서 전 테넌트 행이 노출될 수 있으므로, 정책 표현식 문자열을 직접 검사해 이 회귀를 막는다. 또한 "app_tenant 에 명시 GRANT 없이도 V83 의
  * ALTER DEFAULT PRIVILEGES 로 권한이 자동 부여된다"는 가정을 has_table_privilege 로 실측한다.
  */
 class TenantSettingsSchemaTest extends IntegrationTestBase {
@@ -52,8 +51,7 @@ class TenantSettingsSchemaTest extends IntegrationTestBase {
     // tenant_id 가 NOT NULL 인 이 테이블에서 IS NOT DISTINCT FROM 을 쓰면 NULL 컨텍스트에서
     // 오히려 전 테넌트 행을 노출하는 방향으로 안전 실패한다.
     String qual =
-        (String)
-            dsl.fetchValue("select qual from pg_policies where tablename = 'tenant_settings'");
+        (String) dsl.fetchValue("select qual from pg_policies where tablename = 'tenant_settings'");
     assertThat(qual).contains("app.tenant_id");
     assertThat(qual).doesNotContain("IS NOT DISTINCT FROM");
 
@@ -63,7 +61,8 @@ class TenantSettingsSchemaTest extends IntegrationTestBase {
     // 행을 INSERT</b> 할 수 있고, 읽을 수는 없으니 아무도 눈치채지 못한다.
     String withCheck =
         (String)
-            dsl.fetchValue("select with_check from pg_policies where tablename = 'tenant_settings'");
+            dsl.fetchValue(
+                "select with_check from pg_policies where tablename = 'tenant_settings'");
     assertThat(withCheck).isNotNull();
     assertThat(withCheck).contains("app.tenant_id");
     assertThat(withCheck).doesNotContain("IS NOT DISTINCT FROM");

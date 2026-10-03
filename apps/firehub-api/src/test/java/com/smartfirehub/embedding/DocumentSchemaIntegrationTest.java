@@ -52,7 +52,8 @@ class DocumentSchemaIntegrationTest extends IntegrationTestBase {
                 "INSERT INTO document_file(dataset_id, original_name, mime_type, file_size,"
                     + " storage_path, status, uploaded_by) VALUES (?, 'a.txt','text/plain', 3,"
                     + " '/tmp/a.txt','COMPLETED', ?) RETURNING id",
-                datasetId, userId)
+                datasetId,
+                userId)
             .get(0, Long.class);
 
     // 청크 2건 적재: 'hello'(축1) / 'world'(축2, 프로브와 직교)
@@ -67,7 +68,8 @@ class DocumentSchemaIntegrationTest extends IntegrationTestBase {
         dsl.fetchOne(
                 "SELECT c.content FROM document_chunk_vec_1024 v JOIN document_chunk c ON c.id = v.chunk_id"
                     + " WHERE v.dataset_id = ? ORDER BY v.embedding <=> ?::vector LIMIT 1",
-                datasetId, probe)
+                datasetId,
+                probe)
             .get(0, String.class);
 
     assertThat(content).isEqualTo("hello");
@@ -80,11 +82,16 @@ class DocumentSchemaIntegrationTest extends IntegrationTestBase {
         dsl.fetchOne(
                 "INSERT INTO document_chunk(document_file_id, dataset_id, chunk_index, content)"
                     + " VALUES (?, ?, ?, ?) RETURNING id",
-                fileId, datasetId, chunkIndex, content)
+                fileId,
+                datasetId,
+                chunkIndex,
+                content)
             .get(0, Long.class);
     dsl.execute(
         "INSERT INTO document_chunk_vec_1024(chunk_id, dataset_id, embedding, embedding_model)"
             + " VALUES (?, ?, ?::vector, 'bge-m3')",
-        chunkId, datasetId, vector);
+        chunkId,
+        datasetId,
+        vector);
   }
 }

@@ -134,32 +134,33 @@ public class SlackOAuthService {
   /**
    * upsert 를 수행하되, RLS 거부({@code 42501})만 전용 예외로 바꾼다.
    *
-   * <p>다른 테넌트가 이미 설치한 팀을 (재)설치하면 전역 유니크 {@code team_id} 때문에 남의 행으로
-   * DO UPDATE 가 내려가고 정책에 막힌다 —
-   * {@link SlackWorkspaceInstallDeniedException} 의 설명 참조. fail-closed 라 보안상 안전하지만
-   * 500 으로 새어 나가면 운영자가 버그로 오인하므로 여기서 4xx 로 분류한다.
+   * <p>다른 테넌트가 이미 설치한 팀을 (재)설치하면 전역 유니크 {@code team_id} 때문에 남의 행으로 DO UPDATE 가 내려가고 정책에 막힌다 —
+   * {@link SlackWorkspaceInstallDeniedException} 의 설명 참조. fail-closed 라 보안상 안전하지만 500 으로 새어 나가면
+   * 운영자가 버그로 오인하므로 여기서 4xx 로 분류한다.
    *
-   * <p><b>예외 클래스가 아니라 SQLState 로 판정하는 이유.</b> 실측하면 Spring 은 이 실패를
-   * {@code BadSqlGrammarException}(클래스 코드 42 → 문법 오류로 뭉뚱그림)으로 감싼다.
-   * {@code PermissionDeniedDataAccessException} 을 기대하는 코드는 영원히 발화하지 않는다. 반대로
-   * 클래스로 넓게 잡으면 진짜 문법 오류·권한 미부여(GRANT 누락)까지 4xx 로 묻힌다 — 그건 500 으로
-   * 터져야 하는 배선 결함이다. 그래서 근본 원인 {@code SQLException} 의 {@code 42501} 만 본다.
+   * <p><b>예외 클래스가 아니라 SQLState 로 판정하는 이유.</b> 실측하면 Spring 은 이 실패를 {@code
+   * BadSqlGrammarException}(클래스 코드 42 → 문법 오류로 뭉뚱그림)으로 감싼다. {@code
+   * PermissionDeniedDataAccessException} 을 기대하는 코드는 영원히 발화하지 않는다. 반대로 클래스로 넓게 잡으면 진짜 문법 오류·권한
+   * 미부여(GRANT 누락)까지 4xx 로 묻힌다 — 그건 500 으로 터져야 하는 배선 결함이다. 그래서 근본 원인 {@code SQLException} 의 {@code
+   * 42501} 만 본다.
    *
-   * <p><b>⚠ 이 변환이 옳기 위한 전제 — 새 호출부를 붙이기 전에 반드시 확인하라.</b> SQLState 만으로는
-   * "권한 거부"와 "배선 결함"이 구별되지 않는다. 실측: 테넌트 컨텍스트 없이(GUC 미설정) 같은
-   * 테이블에 쓰면 <b>똑같이 {@code 42501}</b> 이 난다({@code app_tenant} 롤로 재현. RLS
-   * {@code WITH CHECK} 가 {@code tenant_id} NOT NULL 보다 먼저 걸린다. 메시지의
-   * {@code (USING expression)} 접미사 유무만 다르다).
+   * <p><b>⚠ 이 변환이 옳기 위한 전제 — 새 호출부를 붙이기 전에 반드시 확인하라.</b> SQLState 만으로는 "권한 거부"와 "배선 결함"이 구별되지 않는다.
+   * 실측: 테넌트 컨텍스트 없이(GUC 미설정) 같은 테이블에 쓰면 <b>똑같이 {@code 42501}</b> 이 난다({@code app_tenant} 롤로 재현. RLS
+   * {@code WITH CHECK} 가 {@code tenant_id} NOT NULL 보다 먼저 걸린다. 메시지의 {@code (USING expression)} 접미사
+   * 유무만 다르다).
    *
-   * <p>따라서 여기서 42501 을 4xx 로 바꿔도 되는 이유는 SQLState 자체가 아니라 <b>호출자가 테넌트
-   * 컨텍스트를 세워 두었다는 사실</b> 뿐이다 — 그 상태에서 나는 42501 은 "남의 테넌트 행과 충돌"
-   * 밖에 없다. 현재 유일한 호출부인 {@code SlackOAuthController.callback} 이 그 전제를 만족한다:
-   * state 가 실어 온 테넌트로 {@code TenantContext.runScopedGet(long, …)} 을 감싸고, 복원에
-   * 실패하면 upsert 에 도달하기 전에 400 으로 fail-closed 한다. <b>컨텍스트를 세우지 않는 호출부가
-   * 붙으면 배선 결함이 조용히 409 로 묻힌다</b> — 그건 500 으로 시끄럽게 터져야 한다.
+   * <p>따라서 여기서 42501 을 4xx 로 바꿔도 되는 이유는 SQLState 자체가 아니라 <b>호출자가 테넌트 컨텍스트를 세워 두었다는 사실</b> 뿐이다 — 그
+   * 상태에서 나는 42501 은 "남의 테넌트 행과 충돌" 밖에 없다. 현재 유일한 호출부인 {@code SlackOAuthController.callback} 이 그 전제를
+   * 만족한다: state 가 실어 온 테넌트로 {@code TenantContext.runScopedGet(long, …)} 을 감싸고, 복원에 실패하면 upsert 에
+   * 도달하기 전에 400 으로 fail-closed 한다. <b>컨텍스트를 세우지 않는 호출부가 붙으면 배선 결함이 조용히 409 로 묻힌다</b> — 그건 500 으로
+   * 시끄럽게 터져야 한다.
    */
   private long upsertOrDeny(
-      String teamId, String teamName, String botUserId, String botTokenEnc, long installedByUserId) {
+      String teamId,
+      String teamName,
+      String botUserId,
+      String botTokenEnc,
+      long installedByUserId) {
     try {
       return slackWorkspaceRepo.upsertFromOAuth(
           teamId, teamName, botUserId, botTokenEnc, installedByUserId);
@@ -201,8 +202,7 @@ public class SlackOAuthService {
     String dmChannelId = convResp.path("channel").path("id").asText();
 
     // 연동 확인 DM 발송 — blocks 없이 텍스트만
-    slackApiClient.chatPostMessage(
-        botToken, dmChannelId, null, brandName + " 채널 연동이 확인되었습니다.");
+    slackApiClient.chatPostMessage(botToken, dmChannelId, null, brandName + " 채널 연동이 확인되었습니다.");
 
     // user_channel_binding upsert
     Instant now = Instant.now();

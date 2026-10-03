@@ -22,8 +22,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 /**
- * 행 검색(엔진 중립): 모드 분기 → RRF → 원본 조회. 원본 테이블이 교체(swap)돼 색인이 옛 id 를 가리키면 결과를 내지
- * 않는다(STALE) — 예전 벡터가 새 행으로 잘못 매칭되는 것을 원천 차단(설계 3.4).
+ * 행 검색(엔진 중립): 모드 분기 → RRF → 원본 조회. 원본 테이블이 교체(swap)돼 색인이 옛 id 를 가리키면 결과를 내지 않는다(STALE) — 예전 벡터가 새
+ * 행으로 잘못 매칭되는 것을 원천 차단(설계 3.4).
  */
 @Service
 @RequiredArgsConstructor
@@ -43,8 +43,8 @@ public class RowSearchService {
   private final EmbeddingProviderFactory embeddingFactory;
 
   /**
-   * 메서드 수준 트랜잭션을 걸지 않는다 — 여기서 부르는 DB 접근(데이터셋·컬럼·상태·검색 필드 저장소, 원본 리더, 색인,
-   * 임베딩 설정 조회)은 모두 자체 {@code @Transactional} 경계를 가진 빈이라 호출마다 짧은 트랜잭션에서 RLS 테넌트 GUC 가 선다
+   * 메서드 수준 트랜잭션을 걸지 않는다 — 여기서 부르는 DB 접근(데이터셋·컬럼·상태·검색 필드 저장소, 원본 리더, 색인, 임베딩 설정 조회)은 모두 자체
+   * {@code @Transactional} 경계를 가진 빈이라 호출마다 짧은 트랜잭션에서 RLS 테넌트 GUC 가 선다
    * (TenantAwareTransactionManager). 그래서 질의 임베딩(외부 HTTP 호출) 동안 DB 커넥션·트랜잭션을 붙잡지 않는다.
    */
   public RowSearchResponse search(long datasetId, RowSearchRequest req) {
@@ -63,7 +63,8 @@ public class RowSearchService {
     }
     int limit = req.limit() == null ? DEFAULT_LIMIT : Math.max(1, Math.min(req.limit(), MAX_LIMIT));
 
-    DatasetResponse dataset = SearchIndexSettingsService.requireTableDataset(datasetRepository, datasetId);
+    DatasetResponse dataset =
+        SearchIndexSettingsService.requireTableDataset(datasetRepository, datasetId);
     SearchIndexState state =
         states.find(datasetId).orElseThrow(() -> new SearchIndexNotConfiguredException(datasetId));
     // 상태 행이 있어도 검색 대상 필드가 없으면 미설정으로 본다 — 검색 대상 컬럼을 삭제로 모두 없앤 직후(다음 스윕이
@@ -127,13 +128,15 @@ public class RowSearchService {
         // 후보 풀이 limit 보다 작으면 limit(최대 100)을 채울 수 없으므로 limit 만큼은 넓힌다.
         int pool = Math.max(CANDIDATE_POOL, limit);
         List<RowHit> keyword = index.keyword(ref, req.query(), filter, pool);
-        List<RowHit> semantic = queryVec == null ? List.of() : index.semantic(ref, queryVec, filter, pool);
+        List<RowHit> semantic =
+            queryVec == null ? List.of() : index.semantic(ref, queryVec, filter, pool);
         fused = RankFusion.fuse(List.of(semantic, keyword), RowHit::rowId, limit);
       }
     }
 
     Map<Long, Map<String, Object>> rows =
-        reader.fetchRows(ref.sourceTable(), returnColumns, fused.stream().map(f -> f.hit().rowId()).toList());
+        reader.fetchRows(
+            ref.sourceTable(), returnColumns, fused.stream().map(f -> f.hit().rowId()).toList());
     List<RowSearchResponse.Hit> hits = new ArrayList<>();
     for (RankFusion.Fused<RowHit> f : fused) {
       Map<String, Object> row = rows.get(f.hit().rowId());
@@ -160,8 +163,8 @@ public class RowSearchService {
   }
 
   /**
-   * 모드에 필요한 임베딩 provider. KEYWORD 는 필요 없어 null. provider 구성 자체가 실패하면(미지원·키 누락) SEMANTIC 은
-   * 예외를 그대로 올리고, HYBRID 는 null 을 돌려 키워드만으로 답하게 한다(임베딩 서버 장애와 같은 degraded 처리).
+   * 모드에 필요한 임베딩 provider. KEYWORD 는 필요 없어 null. provider 구성 자체가 실패하면(미지원·키 누락) SEMANTIC 은 예외를 그대로
+   * 올리고, HYBRID 는 null 을 돌려 키워드만으로 답하게 한다(임베딩 서버 장애와 같은 degraded 처리).
    */
   private EmbeddingProvider providerFor(String mode) {
     if ("KEYWORD".equals(mode)) return null;
@@ -179,7 +182,8 @@ public class RowSearchService {
   }
 
   /** 반환 컬럼: 요청이 없으면 GEOMETRY 제외 전체, 있으면 존재·비GEOMETRY 검증. */
-  private static List<String> resolveReturnColumns(List<String> requested, Map<String, String> columnTypes) {
+  private static List<String> resolveReturnColumns(
+      List<String> requested, Map<String, String> columnTypes) {
     if (requested == null || requested.isEmpty()) {
       return columnTypes.entrySet().stream()
           .filter(e -> !"GEOMETRY".equals(e.getValue()))
@@ -189,7 +193,8 @@ public class RowSearchService {
     for (String c : requested) {
       String type = columnTypes.get(c);
       if (type == null) throw new IllegalArgumentException("columns: 알 수 없는 컬럼 '" + c + "'");
-      if ("GEOMETRY".equals(type)) throw new IllegalArgumentException("columns: GEOMETRY 컬럼은 반환할 수 없습니다");
+      if ("GEOMETRY".equals(type))
+        throw new IllegalArgumentException("columns: GEOMETRY 컬럼은 반환할 수 없습니다");
     }
     return requested;
   }

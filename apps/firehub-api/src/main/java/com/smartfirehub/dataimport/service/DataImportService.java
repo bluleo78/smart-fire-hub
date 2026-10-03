@@ -32,7 +32,6 @@ import org.jobrunr.scheduling.JobScheduler;
 import org.jooq.JSONB;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -49,9 +48,9 @@ public class DataImportService {
   private static final int SAMPLE_VALIDATION_ROWS = 200;
 
   /**
-   * 스트리밍 검증(Pass1) 중 fail-fast 중단을 위한 내부 신호용 예외. 오류가 하나라도 나오면 즉시 던져 부분 적재를 방지한다
-   * (Task2: 검증→삽입 2단계 분리). RuntimeException을 상속해 REPLACE(PK 無) 트랜잭션 람다의 rethrow 분기를 그대로 통과하고
-   * 트랜잭션 롤백을 유발한다. 스택트레이스는 불필요하므로 생성 비용을 없앤다.
+   * 스트리밍 검증(Pass1) 중 fail-fast 중단을 위한 내부 신호용 예외. 오류가 하나라도 나오면 즉시 던져 부분 적재를 방지한다 (Task2: 검증→삽입 2단계
+   * 분리). RuntimeException을 상속해 REPLACE(PK 無) 트랜잭션 람다의 rethrow 분기를 그대로 통과하고 트랜잭션 롤백을 유발한다. 스택트레이스는
+   * 불필요하므로 생성 비용을 없앤다.
    */
   private static final class ValidationAbortException extends RuntimeException {
     ValidationAbortException() {
@@ -133,8 +132,7 @@ public class DataImportService {
           fileParserService.parseSampleRows(tempFile, fileType, 5, parseOptions);
 
       // partial 미리보기는 파일 끝이 잘려 있어 전체 행수를 셀 수 없다(위 Javadoc 참고).
-      int totalRows =
-          partial ? -1 : fileParserService.countRows(tempFile, fileType, parseOptions);
+      int totalRows = partial ? -1 : fileParserService.countRows(tempFile, fileType, parseOptions);
 
       // Get dataset columns
       List<DatasetColumnResponse> columns = columnRepository.findByDatasetId(datasetId);
@@ -441,9 +439,8 @@ public class DataImportService {
   /**
    * 임포트 본문 — 항상 테넌트 스코프 <b>안에서</b> 호출된다({@link #processImport} 가 유일한 호출자).
    *
-   * <p>스코프 수립/해제를 본문에서 분리한 이유: 본문이 500줄에 걸쳐 여러 트랜잭션과 재시도 억제 로직을
-   * 다루는데, 그 안에 컨텍스트 정리 책임까지 섞이면 "어느 문장이 try 안이어야 하는가" 를 사람이 계속
-   * 따져야 한다. 스코프는 호출부의 {@code runScoped} 가 구조로 보장한다.
+   * <p>스코프 수립/해제를 본문에서 분리한 이유: 본문이 500줄에 걸쳐 여러 트랜잭션과 재시도 억제 로직을 다루는데, 그 안에 컨텍스트 정리 책임까지 섞이면 "어느 문장이
+   * try 안이어야 하는가" 를 사람이 계속 따져야 한다. 스코프는 호출부의 {@code runScoped} 가 구조로 보장한다.
    */
   private void processImportScoped(
       String jobId,
@@ -466,7 +463,10 @@ public class DataImportService {
 
     try {
       datasetNameForNotification =
-          datasetRepository.findById(datasetId).map(d -> d.name()).orElse(String.valueOf(datasetId));
+          datasetRepository
+              .findById(datasetId)
+              .map(d -> d.name())
+              .orElse(String.valueOf(datasetId));
       asyncJobService.updateProgress(
           jobId, "PARSING", 10, "Parsing file...", Map.of("totalRows", 0, "processedRows", 0));
 
@@ -489,7 +489,11 @@ public class DataImportService {
       // Task2: 검증(Pass1)이 전량 스트리밍하며 행수를 세므로, 별도의 countRows() pre-scan은 더 이상 필요 없다
       // (기존에는 진행률 분모를 위해 파일을 한 번 더 스캔했으나, Pass1이 그 역할을 겸한다).
       asyncJobService.updateProgress(
-          jobId, "VALIDATING", 20, "Validating data...", Map.of("totalRows", 0, "processedRows", 0));
+          jobId,
+          "VALIDATING",
+          20,
+          "Validating data...",
+          Map.of("totalRows", 0, "processedRows", 0));
 
       // Load dataset columns / mappings / mode
       List<DatasetColumnResponse> columns = columnRepository.findByDatasetId(datasetId);
@@ -653,9 +657,7 @@ public class DataImportService {
             metadata);
 
         log.error(
-            "Import failed: validation error(s) found for dataset {} — {}",
-            datasetId,
-            failMessage);
+            "Import failed: validation error(s) found for dataset {} — {}", datasetId, failMessage);
         return;
       }
 
@@ -698,8 +700,7 @@ public class DataImportService {
                 BiConsumer<Integer, Integer> wrapped =
                     (processed, total) -> {
                       int globalProcessed = base + processed;
-                      int pct =
-                          40 + (int) ((globalProcessed / (double) totalRowsForProgress) * 60);
+                      int pct = 40 + (int) ((globalProcessed / (double) totalRowsForProgress) * 60);
                       asyncJobService.updateProgress(
                           jobId,
                           "INSERTING",
@@ -742,8 +743,7 @@ public class DataImportService {
                 BiConsumer<Integer, Integer> wrapped =
                     (processed, total) -> {
                       int globalProcessed = base + processed;
-                      int pct =
-                          40 + (int) ((globalProcessed / (double) totalRowsForProgress) * 60);
+                      int pct = 40 + (int) ((globalProcessed / (double) totalRowsForProgress) * 60);
                       asyncJobService.updateProgress(
                           jobId,
                           "INSERTING",
@@ -759,8 +759,7 @@ public class DataImportService {
                 BiConsumer<Integer, Integer> wrapped =
                     (processed, total) -> {
                       int globalProcessed = base + processed;
-                      int pct =
-                          40 + (int) ((globalProcessed / (double) totalRowsForProgress) * 60);
+                      int pct = 40 + (int) ((globalProcessed / (double) totalRowsForProgress) * 60);
                       asyncJobService.updateProgress(
                           jobId,
                           "INSERTING",

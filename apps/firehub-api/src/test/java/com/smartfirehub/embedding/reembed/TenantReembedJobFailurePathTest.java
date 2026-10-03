@@ -22,8 +22,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 /**
- * 잡 실패 경로(D1): 실패 기록·임대 해제가 또 던져도 원래 예외(JobRunr 재시도 대상)가 가려지지 않고, 뒤의 예외는
- * suppressed 로 남는다. 저장소 실패를 일부러 일으켜야 하므로 모의 객체로 조립한다(성공 경로는 TenantReembedJobTest).
+ * 잡 실패 경로(D1): 실패 기록·임대 해제가 또 던져도 원래 예외(JobRunr 재시도 대상)가 가려지지 않고, 뒤의 예외는 suppressed 로 남는다. 저장소 실패를
+ * 일부러 일으켜야 하므로 모의 객체로 조립한다(성공 경로는 TenantReembedJobTest).
  */
 @ExtendWith(MockitoExtension.class)
 class TenantReembedJobFailurePathTest {

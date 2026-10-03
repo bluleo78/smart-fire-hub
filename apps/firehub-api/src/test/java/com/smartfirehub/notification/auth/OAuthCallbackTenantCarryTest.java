@@ -27,29 +27,23 @@ import org.springframework.beans.factory.annotation.Autowired;
 /**
  * permitAll OAuth 콜백 2종이 <b>테넌트를 실제로 운반·복원하는가</b>를 검증한다(P2-f Task 5).
  *
- * <p>RLS 정책은 아직 꺼져 있으므로(Task 6) 격리로는 아무것도 증명되지 않는다. 그래서 여기서는
- * <b>값 자체</b>를 단언한다 — 콜백 안에서 보이는 {@link TenantContext} 값과, 그 안에서 삽입된
- * 행의 {@code tenant_id} 다.
+ * <p>RLS 정책은 아직 꺼져 있으므로(Task 6) 격리로는 아무것도 증명되지 않는다. 그래서 여기서는 <b>값 자체</b>를 단언한다 — 콜백 안에서 보이는 {@link
+ * TenantContext} 값과, 그 안에서 삽입된 행의 {@code tenant_id} 다.
  *
- * <p><b>판별력의 핵심은 컨텍스트를 비우는 것이다.</b> {@code IntegrationTestBase} 가 기본
- * 테넌트(1)를 세워 두므로, 그대로 콜백을 부르면 배선이 하나도 없어도 삽입이 성공한다. 실제 콜백은
- * Bearer 헤더 없이 도착하므로 그 조건을 재현해야 한다 — 검증 대상 호출 직전에
- * {@code TenantContext.clear()} 를 부르고, 테스트 트랜잭션으로 감싸지 않는다.
+ * <p><b>판별력의 핵심은 컨텍스트를 비우는 것이다.</b> {@code IntegrationTestBase} 가 기본 테넌트(1)를 세워 두므로, 그대로 콜백을 부르면
+ * 배선이 하나도 없어도 삽입이 성공한다. 실제 콜백은 Bearer 헤더 없이 도착하므로 그 조건을 재현해야 한다 — 검증 대상 호출 직전에 {@code
+ * TenantContext.clear()} 를 부르고, 테스트 트랜잭션으로 감싸지 않는다.
  *
- * <p>외부 OAuth 서비스 호출(Slack {@code oauth.v2.access}, Kakao 토큰 교환)만 mock 으로 대체하고
- * <b>테넌시 경로는 전부 실제</b>다 — 두 mock 모두 진짜 리포지토리로 upsert 를 수행해, 콜백이 연
- * 컨텍스트 아래에서 GUC 파생 DEFAULT 가 찍히는지까지 본다.
+ * <p>외부 OAuth 서비스 호출(Slack {@code oauth.v2.access}, Kakao 토큰 교환)만 mock 으로 대체하고 <b>테넌시 경로는 전부
+ * 실제</b>다 — 두 mock 모두 진짜 리포지토리로 upsert 를 수행해, 콜백이 연 컨텍스트 아래에서 GUC 파생 DEFAULT 가 찍히는지까지 본다.
  *
- * <p><b>왜 {@code @MockitoBean} 이 아니라 컨트롤러를 손으로 조립하는가.</b> {@code @MockitoBean} 은
- * 이 클래스만의 Spring 컨텍스트 변종을 만든다 — 컨텍스트 캐시를 한 칸 더 쓰고, 이 클래스만 자기
- * 컨텍스트를 새로 띄운다. 컨트롤러는 생성자 주입만 하는 평범한 클래스라 직접 조립해도 검증
- * 대상(콜백 안의 {@code runScopedGet})은 그대로이고, {@code OAuthStateService}·리포지토리는 실제
- * 빈을 주입하므로 GUC 경로도 전부 실제다. 공유 컨텍스트를 재사용하게 되어 클래스 실행이
- * 0.74s → 0.18s 로 줄었다.
+ * <p><b>왜 {@code @MockitoBean} 이 아니라 컨트롤러를 손으로 조립하는가.</b> {@code @MockitoBean} 은 이 클래스만의 Spring
+ * 컨텍스트 변종을 만든다 — 컨텍스트 캐시를 한 칸 더 쓰고, 이 클래스만 자기 컨텍스트를 새로 띄운다. 컨트롤러는 생성자 주입만 하는 평범한 클래스라 직접 조립해도 검증
+ * 대상(콜백 안의 {@code runScopedGet})은 그대로이고, {@code OAuthStateService}·리포지토리는 실제 빈을 주입하므로 GUC 경로도 전부
+ * 실제다. 공유 컨텍스트를 재사용하게 되어 클래스 실행이 0.74s → 0.18s 로 줄었다.
  *
- * <p>대신 이 조립은 <b>AOP 를 거치지 않는다</b>. 지금 두 컨트롤러 모두 프록시가 필요한 애노테이션이
- * 없어 무해하지만, 컨트롤러에 {@code @Transactional} 같은 것이 붙는 날에는 이 테스트가 그것을
- * 보지 못한다.
+ * <p>대신 이 조립은 <b>AOP 를 거치지 않는다</b>. 지금 두 컨트롤러 모두 프록시가 필요한 애노테이션이 없어 무해하지만, 컨트롤러에
+ * {@code @Transactional} 같은 것이 붙는 날에는 이 테스트가 그것을 보지 못한다.
  */
 class OAuthCallbackTenantCarryTest extends IntegrationTestBase {
 
@@ -179,8 +173,7 @@ class OAuthCallbackTenantCarryTest extends IntegrationTestBase {
   /**
    * fail-closed — state 를 되찾지 못하면 400 이고 <b>쓰기가 일어나지 않는다.</b>
    *
-   * <p>조용히 기본 테넌트(1)로 떨어지지 않는지를 본다. 이 경로가 열려 있으면 남의 테넌트에 워크스페이스
-   * 가 심어진다.
+   * <p>조용히 기본 테넌트(1)로 떨어지지 않는지를 본다. 이 경로가 열려 있으면 남의 테넌트에 워크스페이스 가 심어진다.
    */
   @Test
   void slackCallback_unknownState_failsClosedWithoutWriting() {
@@ -207,8 +200,8 @@ class OAuthCallbackTenantCarryTest extends IntegrationTestBase {
   /**
    * 운반 자체의 단위 검증 — 컨텍스트 없이 {@code consume} 해도 발급 시점의 테넌트가 돌아온다.
    *
-   * <p>이것이 성립하는 이유는 {@code oauth_state} 에 RLS 정책이 <b>없기</b> 때문이다(V106 [R7]).
-   * 누군가 "일관성" 을 이유로 이 테이블에 정책을 걸면 이 테스트가 먼저 깨진다.
+   * <p>이것이 성립하는 이유는 {@code oauth_state} 에 RLS 정책이 <b>없기</b> 때문이다(V106 [R7]). 누군가 "일관성" 을 이유로 이 테이블에
+   * 정책을 걸면 이 테스트가 먼저 깨진다.
    */
   @Test
   void consume_returnsIssuingTenant_withoutAnyContext() {

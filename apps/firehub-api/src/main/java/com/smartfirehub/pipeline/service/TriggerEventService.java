@@ -51,19 +51,17 @@ public class TriggerEventService {
   }
 
   /**
-   * PIPELINE_CHAIN 트리거 처리 — 상위 파이프라인 완료 이벤트를 받아 하위 파이프라인을 발화한다.
-   * {@code @Async} 라 체인 트리거 실패가 상위 파이프라인 상태에 영향을 주지 않는다.
+   * PIPELINE_CHAIN 트리거 처리 — 상위 파이프라인 완료 이벤트를 받아 하위 파이프라인을 발화한다. {@code @Async} 라 체인 트리거 실패가 상위
+   * 파이프라인 상태에 영향을 주지 않는다.
    *
-   * <p><b>테넌트 승계(P2-b)</b>: 이 경로는 RLS 가 걸린 {@code pipeline_trigger} 를 읽는다. 한정자를
-   * {@code "taskExecutor"} 로 <b>명시</b>하는 이유는, 그 이름의 빈이 {@code AsyncConfig} 에
-   * {@link com.smartfirehub.global.tenant.TenantContextTaskDecorator} 와 함께 등록돼 있기
-   * 때문이다. 한정자가 없어도 Spring 은 같은 빈을 찾지만, 그 빈이 사라지면 조용히 데코레이터 없는
-   * {@code SimpleAsyncTaskExecutor} 로 폴백해 테넌트가 승계되지 않고 — 예외도 로그도 없이 —
-   * 체인 트리거가 영구히 발화하지 않는다. 명시해 두면 그때 기동 시점에 빈 해석이 실패한다.
+   * <p><b>테넌트 승계(P2-b)</b>: 이 경로는 RLS 가 걸린 {@code pipeline_trigger} 를 읽는다. 한정자를 {@code
+   * "taskExecutor"} 로 <b>명시</b>하는 이유는, 그 이름의 빈이 {@code AsyncConfig} 에 {@link
+   * com.smartfirehub.global.tenant.TenantContextTaskDecorator} 와 함께 등록돼 있기 때문이다. 한정자가 없어도 Spring 은
+   * 같은 빈을 찾지만, 그 빈이 사라지면 조용히 데코레이터 없는 {@code SimpleAsyncTaskExecutor} 로 폴백해 테넌트가 승계되지 않고 — 예외도 로그도
+   * 없이 — 체인 트리거가 영구히 발화하지 않는다. 명시해 두면 그때 기동 시점에 빈 해석이 실패한다.
    *
-   * <p>발행자는 {@code PipelineAsyncRunner.executeAsync}(=`pipelineExecutor` 풀, 데코레이터 있음)
-   * 하나뿐이며 그 스레드에는 이미 테넌트가 있으므로, 여기까지 제출 시점 캡처로 승계된다. 이벤트
-   * 페이로드에 tenantId 를 싣지 않는 근거다.
+   * <p>발행자는 {@code PipelineAsyncRunner.executeAsync}(=`pipelineExecutor` 풀, 데코레이터 있음) 하나뿐이며 그 스레드에는
+   * 이미 테넌트가 있으므로, 여기까지 제출 시점 캡처로 승계된다. 이벤트 페이로드에 tenantId 를 싣지 않는 근거다.
    */
   @Async("taskExecutor")
   @EventListener
@@ -105,9 +103,8 @@ public class TriggerEventService {
   /**
    * Poll dataset changes every 30 seconds.
    *
-   * <p>원 HTTP 요청이 없는 경로라 승계할 테넌트가 없다 — ACTIVE 테넌트를 순회해 테넌트별로 돈다.
-   * 순회하지 않으면 RLS 가 pipeline_trigger·dataset 을 전부 차단해 이 트리거가 예외도 로그도 없이
-   * 영구히 발화하지 않는다.
+   * <p>원 HTTP 요청이 없는 경로라 승계할 테넌트가 없다 — ACTIVE 테넌트를 순회해 테넌트별로 돈다. 순회하지 않으면 RLS 가
+   * pipeline_trigger·dataset 을 전부 차단해 이 트리거가 예외도 로그도 없이 영구히 발화하지 않는다.
    */
   @Scheduled(fixedDelay = 30000)
   public void pollDatasetChanges() {
@@ -211,14 +208,13 @@ public class TriggerEventService {
   /**
    * 모니터링 대상 데이터셋의 행 수 추정치를 모은다.
    *
-   * <p><b>트랜잭션 경계(P2-b)</b>: 이 구간을 감싸는 이유는 GUC 가 아니라 <b>커넥션 왕복 절감</b>이다.
-   * RLS 대상인 dataset 조회는 {@code datasetRepository}(클래스 레벨 {@code @Transactional}) 를 거치므로
-   * 이미 호출마다 GUC 가 주입되고, 여기서 {@code dsl} 로 직접 읽는 것은 {@code pg_stat_user_tables}
-   * (시스템 뷰 — RLS 무관, tenant_id 없음) 뿐이다. 감싸면 데이터셋 N 개에 대한 리포지토리 호출이
-   * 트랜잭션 하나에 합류한다("GUC 때문에 반드시 필요한 래핑" 은 아니라는 점을 분명히 남긴다).
+   * <p><b>트랜잭션 경계(P2-b)</b>: 이 구간을 감싸는 이유는 GUC 가 아니라 <b>커넥션 왕복 절감</b>이다. RLS 대상인 dataset 조회는 {@code
+   * datasetRepository}(클래스 레벨 {@code @Transactional}) 를 거치므로 이미 호출마다 GUC 가 주입되고, 여기서 {@code dsl} 로
+   * 직접 읽는 것은 {@code pg_stat_user_tables} (시스템 뷰 — RLS 무관, tenant_id 없음) 뿐이다. 감싸면 데이터셋 N 개에 대한 리포지토리
+   * 호출이 트랜잭션 하나에 합류한다("GUC 때문에 반드시 필요한 래핑" 은 아니라는 점을 분명히 남긴다).
    *
-   * <p>트리거 발화({@code triggerService.fireTrigger})와 알림은 <b>이 트랜잭션 밖</b>에 남긴다 —
-   * 파이프라인 실행을 시작하는 작업이라 트랜잭션에 넣으면 그 동안 커넥션을 점유하고 실패 의미도 바뀐다.
+   * <p>트리거 발화({@code triggerService.fireTrigger})와 알림은 <b>이 트랜잭션 밖</b>에 남긴다 — 파이프라인 실행을 시작하는 작업이라
+   * 트랜잭션에 넣으면 그 동안 커넥션을 점유하고 실패 의미도 바뀐다.
    */
   private Map<Long, Long> getRowCountEstimates(List<Long> datasetIds) {
     Map<Long, Long> result =

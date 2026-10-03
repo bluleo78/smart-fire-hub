@@ -153,8 +153,8 @@ public class GlobalExceptionHandler {
   /**
    * DB 제약조건 위반을 409로 변환한다 (#320).
    *
-   * <p>원문 DB 메시지에는 테이블·컬럼·제약조건 이름과 때로는 값 일부가 들어있으므로 <b>사용자 응답에는 절대 넣지 않는다</b>. 원인 분류(중복/FK/체크)만
-   * 응답에 담고, 진단에 필요한 원문은 서버 로그에만 남긴다 — ai-agent 호출 실패에 적용한 것과 같은 원칙(#313)이다.
+   * <p>원문 DB 메시지에는 테이블·컬럼·제약조건 이름과 때로는 값 일부가 들어있으므로 <b>사용자 응답에는 절대 넣지 않는다</b>. 원인 분류(중복/FK/체크)만 응답에
+   * 담고, 진단에 필요한 원문은 서버 로그에만 남긴다 — ai-agent 호출 실패에 적용한 것과 같은 원칙(#313)이다.
    *
    * <p>이 분기는 예외 번역기가 등록되기 전(#312 이전)까지 도달 불가한 죽은 코드였으나, 번역기 등록 이후 해당 DSLContext를 쓰는 모든 jOOQ 경로에서 도달
    * 가능해졌다.
@@ -185,16 +185,13 @@ public class GlobalExceptionHandler {
   /**
    * Slack 앱 설치가 RLS 에 막힌 경우 500 이 아니라 409 로 응답한다 (멀티 테넌시 P2-g).
    *
-   * <p><b>왜 응답 문구가 일반적이어야 하는가 — 지우지 말 것.</b> "이미 다른 테넌트가 이 Slack 팀을
-   * 설치했다"고 알려 주면, 아무나 팀 ID 만 넣어 보고 <b>다른 테넌트의 설치 여부를 조회하는
-   * 오라클</b>이 된다(팀 ID 는 워크스페이스 관리자면 누구나 안다). 그래서 응답에는 원인·team_id·
-   * 상대 테넌트를 일절 싣지 않고, 진단에 필요한 정보는 아래 WARN 로그에만 남긴다 —
-   * {@link #handleDataIntegrityViolation} 이 DB 원문을 응답에서 걷어낸 것과 같은 원칙(#313)이다.
-   * 뒤에 오는 사람이 "메시지가 불친절하다"며 구체화하지 않도록 여기 근거를 박아 둔다.
+   * <p><b>왜 응답 문구가 일반적이어야 하는가 — 지우지 말 것.</b> "이미 다른 테넌트가 이 Slack 팀을 설치했다"고 알려 주면, 아무나 팀 ID 만 넣어 보고
+   * <b>다른 테넌트의 설치 여부를 조회하는 오라클</b>이 된다(팀 ID 는 워크스페이스 관리자면 누구나 안다). 그래서 응답에는 원인·team_id· 상대 테넌트를 일절
+   * 싣지 않고, 진단에 필요한 정보는 아래 WARN 로그에만 남긴다 — {@link #handleDataIntegrityViolation} 이 DB 원문을 응답에서 걷어낸
+   * 것과 같은 원칙(#313)이다. 뒤에 오는 사람이 "메시지가 불친절하다"며 구체화하지 않도록 여기 근거를 박아 둔다.
    *
-   * <p>{@code 42501} 전반이 아니라 <b>OAuth 설치 경로에서 변환된 전용 예외</b>만 받는다. RLS 거부를
-   * 통째로 4xx 로 바꾸면 컨텍스트 없는 배경 경로의 쓰기 같은 배선 결함까지 조용히 묻히는데, 그건
-   * 500 으로 시끄럽게 터져야 한다.
+   * <p>{@code 42501} 전반이 아니라 <b>OAuth 설치 경로에서 변환된 전용 예외</b>만 받는다. RLS 거부를 통째로 4xx 로 바꾸면 컨텍스트 없는 배경
+   * 경로의 쓰기 같은 배선 결함까지 조용히 묻히는데, 그건 500 으로 시끄럽게 터져야 한다.
    */
   @ExceptionHandler(SlackWorkspaceInstallDeniedException.class)
   public ResponseEntity<ErrorResponse> handleSlackWorkspaceInstallDenied(
@@ -452,8 +449,8 @@ public class GlobalExceptionHandler {
   /**
    * 기계용 코드가 있는 예외. 상태는 예외가 정하고 본문에 {@code code} 를 싣는다.
    *
-   * <p>인터셉터({@code PasswordChangeInterceptor}) 의 preHandle 에서 던져도 DispatcherServlet 의
-   * 예외 해석을 거쳐 여기로 온다 — PermissionInterceptor 의 AccessDeniedException 과 같은 경로.
+   * <p>인터셉터({@code PasswordChangeInterceptor}) 의 preHandle 에서 던져도 DispatcherServlet 의 예외 해석을 거쳐 여기로
+   * 온다 — PermissionInterceptor 의 AccessDeniedException 과 같은 경로.
    */
   @ExceptionHandler(CodedApiException.class)
   public ResponseEntity<ErrorResponse> handleCodedApiException(

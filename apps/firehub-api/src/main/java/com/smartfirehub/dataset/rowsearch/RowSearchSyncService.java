@@ -20,12 +20,12 @@ import org.springframework.stereotype.Service;
 /**
  * 데이터셋 하나의 행 검색 색인을 원본과 맞춘다(설계 4장).
  *
- * <p>트랜잭션을 걸지 않는다 — 임베딩 호출(외부 서버)을 DB 트랜잭션 밖에 두고, DB 쓰기는 각 저장소의 짧은 트랜잭션으로
- * 나눈다. 실패하면 책갈피를 전진시키지 않아 다음 주기가 같은 구간을 다시 처리한다(source_hash 로 중복 임베딩 흡수).
+ * <p>트랜잭션을 걸지 않는다 — 임베딩 호출(외부 서버)을 DB 트랜잭션 밖에 두고, DB 쓰기는 각 저장소의 짧은 트랜잭션으로 나눈다. 실패하면 책갈피를 전진시키지 않아
+ * 다음 주기가 같은 구간을 다시 처리한다(source_hash 로 중복 임베딩 흡수).
  *
- * <p><b>크로스 도메인 의존:</b> 책갈피 후보 캡처는 {@code pipeline.service.IncrementalCursorService} 를 그대로
- * 재사용한다 — "처리 직전에, 커밋 안 된 가장 오래된 트랜잭션 시작 시각 이하로 잡는다"는 불변식이 파이프라인 증분 처리와
- * 같기 때문이다. 이 서비스가 다른 패키지로 옮겨지면 여기 import 도 함께 고친다.
+ * <p><b>크로스 도메인 의존:</b> 책갈피 후보 캡처는 {@code pipeline.service.IncrementalCursorService} 를 그대로 재사용한다 —
+ * "처리 직전에, 커밋 안 된 가장 오래된 트랜잭션 시작 시각 이하로 잡는다"는 불변식이 파이프라인 증분 처리와 같기 때문이다. 이 서비스가 다른 패키지로 옮겨지면 여기
+ * import 도 함께 고친다.
  */
 @Slf4j
 @Service
@@ -41,12 +41,13 @@ public class RowSearchSyncService {
 
   private static final Duration LEASE = Duration.ofMinutes(10);
   private static final Duration MAX_BACKOFF = Duration.ofMinutes(30);
+
   /** 미설정은 실패가 아니라 대기다 — 백오프 없이 1분 뒤 다시 본다(설정 저장 직후 바로 색인 재개). */
   private static final Duration NOT_CONFIGURED_RETRY = Duration.ofMinutes(1);
 
   /**
-   * 임베딩 서버 한 번 호출에 보내는 최대 텍스트 수. 배치(기본 200행 × 최대 8000자)를 통째로 보내면 느린 서버(Ollama 는
-   * 120초 타임아웃)에서 매번 시간 초과로 실패해 같은 구간을 영영 재시도하게 된다 — 그래서 작게 나눠 보낸다.
+   * 임베딩 서버 한 번 호출에 보내는 최대 텍스트 수. 배치(기본 200행 × 최대 8000자)를 통째로 보내면 느린 서버(Ollama 는 120초 타임아웃)에서 매번 시간
+   * 초과로 실패해 같은 구간을 영영 재시도하게 된다 — 그래서 작게 나눠 보낸다.
    */
   static final int EMBED_CHUNK_SIZE = 32;
 
@@ -100,7 +101,8 @@ public class RowSearchSyncService {
     } catch (RuntimeException e) {
       log.warn("행 검색 색인 동기화 실패: datasetId={}", datasetId, e);
       int failures = (state == null ? 0 : state.consecutiveFailures()) + 1;
-      long backoffMin = Math.min(MAX_BACKOFF.toMinutes(), 1L << Math.min(failures - 1, 5)); // 1,2,4,8,16,30분
+      long backoffMin =
+          Math.min(MAX_BACKOFF.toMinutes(), 1L << Math.min(failures - 1, 5)); // 1,2,4,8,16,30분
       // 메시지 없는 예외(NPE 등)도 원인을 남기도록 클래스 이름으로 대체한다.
       states.markFailed(
           datasetId,
@@ -131,7 +133,8 @@ public class RowSearchSyncService {
       provider = embeddingFactory.current();
     } catch (EmbeddingNotConfiguredException e) {
       // 미설정 = 대기(이유는 {@link #NOT_CONFIGURED_RETRY}).
-      states.markWaiting(datasetId, e.getMessage(), OffsetDateTime.now().plus(NOT_CONFIGURED_RETRY));
+      states.markWaiting(
+          datasetId, e.getMessage(), OffsetDateTime.now().plus(NOT_CONFIGURED_RETRY));
       return Outcome.SKIPPED;
     }
     String model = provider.modelId();
@@ -202,8 +205,8 @@ public class RowSearchSyncService {
   /**
    * 한 배치: 텍스트 조립 → 해시 같으면 생략 → (재구축 중이면) 재사용 → 나머지만 임베딩.
    *
-   * @return 색인 행 수 증감(새로 들어간 행 − 지운 행). 진행률(indexed_rows)을 count(*) 없이 갱신하는 데 쓴다 — 이미
-   *     색인에 있던 행의 갱신은 0 이다.
+   * @return 색인 행 수 증감(새로 들어간 행 − 지운 행). 진행률(indexed_rows)을 count(*) 없이 갱신하는 데 쓴다 — 이미 색인에 있던 행의 갱신은
+   *     0 이다.
    */
   private long processBatch(
       IndexRef ref,
@@ -237,7 +240,8 @@ public class RowSearchSyncService {
     List<String> texts = pending.stream().map(Pending::text).toList();
     List<float[]> vectors = new ArrayList<>(texts.size());
     for (int from = 0; from < texts.size(); from += EMBED_CHUNK_SIZE) {
-      vectors.addAll(provider.embed(texts.subList(from, Math.min(from + EMBED_CHUNK_SIZE, texts.size()))));
+      vectors.addAll(
+          provider.embed(texts.subList(from, Math.min(from + EMBED_CHUNK_SIZE, texts.size()))));
     }
     List<IndexedRow> upserts = new ArrayList<>(pending.size());
     for (int i = 0; i < pending.size(); i++) {

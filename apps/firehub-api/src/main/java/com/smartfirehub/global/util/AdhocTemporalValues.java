@@ -18,12 +18,14 @@ import org.jooq.Result;
 /**
  * 애드혹 SQL 결과의 날짜·시각 값이 Java 날짜 객체를 거치며 <b>다른 값으로 바뀌지 않게</b> 하는 ResultSet 래퍼(#768).
  *
- * <p><b>왜 필요한가.</b> jOOQ 는 PG {@code date}/{@code timestamp}/{@code time} 을 pgjdbc 의 {@code java.sql.Date}/
- * {@code Timestamp}/{@code Time} 으로, {@code timestamptz}/{@code timetz} 를 {@code OffsetDateTime}/{@code OffsetTime}
- * 으로 읽는다. PostgreSQL 은 허용하지만 이 객체들이 표현하지 못하는 값은 <b>오류 없이 다른 값</b>이 됐다:
+ * <p><b>왜 필요한가.</b> jOOQ 는 PG {@code date}/{@code timestamp}/{@code time} 을 pgjdbc 의 {@code
+ * java.sql.Date}/ {@code Timestamp}/{@code Time} 으로, {@code timestamptz}/{@code timetz} 를 {@code
+ * OffsetDateTime}/{@code OffsetTime} 으로 읽는다. PostgreSQL 은 허용하지만 이 객체들이 표현하지 못하는 값은 <b>오류 없이 다른
+ * 값</b>이 됐다:
  *
  * <ul>
- *   <li>5자리 연도 — {@code 10000-01-01} → {@code 0000-01-01}, {@code 12345-06-07} → {@code 2345-06-07}(4자리 절삭)
+ *   <li>5자리 연도 — {@code 10000-01-01} → {@code 0000-01-01}, {@code 12345-06-07} → {@code
+ *       2345-06-07}(4자리 절삭)
  *   <li>기원전 — {@code 0044-03-15 BC} → {@code 0044-03-15}(기원 소실)
  *   <li>{@code infinity} — pgjdbc 센티넬 millis 가 {@code 8994-08-17} 같은 날짜로 보임. timestamptz 는 읽기 예외로
  *       쿼리 전체 실패
@@ -32,15 +34,14 @@ import org.jooq.Result;
  *   <li>interval — jOOQ 가 시간을 일로 정규화({@code 24:00:00} → {@code 1 day})하거나 int 범위를 넘으면 읽기 예외
  * </ul>
  *
- * <p><b>방법.</b> 날짜·시각 컬럼을 읽을 때 pgjdbc 의 PG 텍스트({@code getString})를 함께 본다. 값이 범위 밖
- * (infinity·BC·5자리 연도·24시)이거나, pgjdbc 가 만든 Java 객체가 그 텍스트를 그대로 재현하지 못하거나, 읽기가
- * 실패하면 jOOQ 에는 null 을 주고 결과를 다 읽은 뒤 그 셀을 <b>PG 텍스트 원문</b>으로 채운다. interval 은 응답이
- * 원래 PG 텍스트이므로 늘 원문을 쓴다. 정상 값은 jOOQ 가 읽은 그대로라 기존 응답 형태(타임존 처리 포함)가 같다.
+ * <p><b>방법.</b> 날짜·시각 컬럼을 읽을 때 pgjdbc 의 PG 텍스트({@code getString})를 함께 본다. 값이 범위 밖 (infinity·BC·5자리
+ * 연도·24시)이거나, pgjdbc 가 만든 Java 객체가 그 텍스트를 그대로 재현하지 못하거나, 읽기가 실패하면 jOOQ 에는 null 을 주고 결과를 다 읽은 뒤 그 셀을
+ * <b>PG 텍스트 원문</b>으로 채운다. interval 은 응답이 원래 PG 텍스트이므로 늘 원문을 쓴다. 정상 값은 jOOQ 가 읽은 그대로라 기존 응답 형태(타임존
+ * 처리 포함)가 같다.
  *
- * <p><b>executor 경로와 같은 계약.</b> executor(psycopg2, #762)는 변환할 수 없는 스칼라를 그 값만 PG 리터럴 텍스트로,
- * 배열은 셀 전체를 PG 배열 리터럴 텍스트로 폴백한다. 여기서도 같다 — 날짜·시각 배열의 원소 하나라도 위 조건에
- * 걸리면 셀 전체가 배열 리터럴({@code {10000-01-01,2024-01-01}})이 된다. interval 배열은 원래 원소가 텍스트이므로
- * 원소별 PG 텍스트의 (중첩) 리스트로 준다.
+ * <p><b>executor 경로와 같은 계약.</b> executor(psycopg2, #762)는 변환할 수 없는 스칼라를 그 값만 PG 리터럴 텍스트로, 배열은 셀 전체를
+ * PG 배열 리터럴 텍스트로 폴백한다. 여기서도 같다 — 날짜·시각 배열의 원소 하나라도 위 조건에 걸리면 셀 전체가 배열 리터럴({@code
+ * {10000-01-01,2024-01-01}})이 된다. interval 배열은 원래 원소가 텍스트이므로 원소별 PG 텍스트의 (중첩) 리스트로 준다.
  *
  * <p>{@link AdhocMultiDimArrays} 보다 안쪽에 둔다 — 그래야 다차원 배열도 이 래퍼가 먼저 보고 폴백할 수 있다.
  */
@@ -72,8 +73,8 @@ final class AdhocTemporalValues {
 
   /**
    * 1-based 컬럼 인덱스 → Java 값의 텍스트 재현 검사 대상인가. 시간대 없는 date/timestamp/time(및 배열)만이다 —
-   * timestamptz/timetz 배열은 pgjdbc 가 {@code java.sql.Timestamp} 로 주므로 PG 텍스트(오프셋 포함)와 문자열 비교가
-   * 성립하지 않는다(스칼라는 jOOQ 가 PG 텍스트를 파싱한다).
+   * timestamptz/timetz 배열은 pgjdbc 가 {@code java.sql.Timestamp} 로 주므로 PG 텍스트(오프셋 포함)와 문자열 비교가 성립하지
+   * 않는다(스칼라는 jOOQ 가 PG 텍스트를 파싱한다).
    */
   private boolean[] roundTrip;
 
@@ -150,8 +151,8 @@ final class AdhocTemporalValues {
   }
 
   /**
-   * 배열 셀 — 날짜·시각 배열은 원소 하나라도 범위 밖·재현 실패·materialize 실패면 셀 전체를 PG 배열 리터럴로 대체한다.
-   * interval 배열은 늘 원소별 PG 텍스트의 (중첩) 리스트로 대체한다.
+   * 배열 셀 — 날짜·시각 배열은 원소 하나라도 범위 밖·재현 실패·materialize 실패면 셀 전체를 PG 배열 리터럴로 대체한다. interval 배열은 늘 원소별
+   * PG 텍스트의 (중첩) 리스트로 대체한다.
    */
   private Object readArray(int idx, Kind kind) throws SQLException {
     java.sql.Array array = delegate.getArray(idx);
@@ -244,9 +245,8 @@ final class AdhocTemporalValues {
   }
 
   /**
-   * pgjdbc 가 만든 Java 값이 PG 텍스트를 그대로 재현하는가. {@code java.sql.*} 는 JVM 혼합 달력·시간대로 만들어져
-   * 1582 전환 공백·DST 공백에서 다른 날짜/시각이 된다. 그 밖의 타입(OffsetDateTime 등)은 jOOQ 가 PG 텍스트를
-   * 파싱해 만들므로 검사하지 않는다.
+   * pgjdbc 가 만든 Java 값이 PG 텍스트를 그대로 재현하는가. {@code java.sql.*} 는 JVM 혼합 달력·시간대로 만들어져 1582 전환 공백·DST
+   * 공백에서 다른 날짜/시각이 된다. 그 밖의 타입(OffsetDateTime 등)은 jOOQ 가 PG 텍스트를 파싱해 만들므로 검사하지 않는다.
    */
   static boolean reproduces(Object value, String text) {
     if (value instanceof java.sql.Timestamp ts) {
@@ -268,8 +268,8 @@ final class AdhocTemporalValues {
   }
 
   /**
-   * PG 배열 리터럴을 원소 텍스트의 중첩 리스트로 해석한다(따옴표 없는 {@code NULL} 은 null). 차원 장식은 버린다 —
-   * 다차원 배열(#757)·executor 와 같이 하한은 응답에 남기지 않는다.
+   * PG 배열 리터럴을 원소 텍스트의 중첩 리스트로 해석한다(따옴표 없는 {@code NULL} 은 null). 차원 장식은 버린다 — 다차원 배열(#757)·executor
+   * 와 같이 하한은 응답에 남기지 않는다.
    */
   static Object parseLiteral(String literal) {
     String body = BOUNDS_PREFIX.matcher(literal).replaceFirst("");

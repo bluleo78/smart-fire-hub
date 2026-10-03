@@ -14,8 +14,21 @@ import org.junit.jupiter.api.Test;
 class RowFilterCompilerTest {
 
   private final Map<String, String> types =
-      Map.of("status", "VARCHAR", "cnt", "INTEGER", "amount", "DECIMAL", "created", "DATE",
-          "done", "BOOLEAN", "geom", "GEOMETRY", "ts", "TIMESTAMP");
+      Map.of(
+          "status",
+          "VARCHAR",
+          "cnt",
+          "INTEGER",
+          "amount",
+          "DECIMAL",
+          "created",
+          "DATE",
+          "done",
+          "BOOLEAN",
+          "geom",
+          "GEOMETRY",
+          "ts",
+          "TIMESTAMP");
 
   @Test
   void compilesAllOperators_withBoundParams() {
@@ -41,7 +54,9 @@ class RowFilterCompilerTest {
     assertThat(c.params().get(3)).isEqualTo(LocalDate.parse("2025-12-01"));
     assertThat(c.params().get(4)).isInstanceOf(String[].class);
     assertThat((String[]) c.params().get(4)).containsExactly("a", "b");
-    var ints = RowFilterCompiler.compile(new RowFilter(List.of(new RowFilter.Condition("cnt", "in", List.of(1, "2")))), types);
+    var ints =
+        RowFilterCompiler.compile(
+            new RowFilter(List.of(new RowFilter.Condition("cnt", "in", List.of(1, "2")))), types);
     assertThat(ints.params().get(0)).isInstanceOf(Long[].class);
   }
 
@@ -52,22 +67,27 @@ class RowFilterCompilerTest {
 
   @Test
   void rejectsUnknownColumn_systemColumn_geometry_badOp_badValue() {
-    assertThatThrownBy(() -> one("nope", "eq", "x")).hasMessageContaining("filters[0]").hasMessageContaining("nope");
+    assertThatThrownBy(() -> one("nope", "eq", "x"))
+        .hasMessageContaining("filters[0]")
+        .hasMessageContaining("nope");
     assertThatThrownBy(() -> one("id", "eq", 1)).hasMessageContaining("filters[0]");
     assertThatThrownBy(() -> one("geom", "is_null", null)).hasMessageContaining("GEOMETRY");
     assertThatThrownBy(() -> one("status", "like", "x")).hasMessageContaining("연산자");
     assertThatThrownBy(() -> one("cnt", "eq", "abc")).hasMessageContaining("INTEGER");
     assertThatThrownBy(() -> one("status", "in", List.of())).hasMessageContaining("in");
     // 따옴표로 식별자를 탈출하려는 입력은 화이트리스트에서 막힌다
-    assertThatThrownBy(() -> one("status\" OR 1=1 --", "eq", "x")).isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> one("status\" OR 1=1 --", "eq", "x"))
+        .isInstanceOf(IllegalArgumentException.class);
   }
 
   @Test
   void timestamp_acceptsDateOnly_isoLocal_spaceSeparated() {
-    assertThat(one("ts", "gte", "2025-12-01").params().get(0)).isEqualTo(LocalDateTime.of(2025, 12, 1, 0, 0));
+    assertThat(one("ts", "gte", "2025-12-01").params().get(0))
+        .isEqualTo(LocalDateTime.of(2025, 12, 1, 0, 0));
     assertThat(one("ts", "gte", "2025-12-01T09:30:15").params().get(0))
         .isEqualTo(LocalDateTime.of(2025, 12, 1, 9, 30, 15));
-    assertThat(one("ts", "gte", "2025-12-01 09:30").params().get(0)).isEqualTo(LocalDateTime.of(2025, 12, 1, 9, 30));
+    assertThat(one("ts", "gte", "2025-12-01 09:30").params().get(0))
+        .isEqualTo(LocalDateTime.of(2025, 12, 1, 9, 30));
     assertThat(one("ts", "gte", "2025-12-01 09:30:15").params().get(0))
         .isEqualTo(LocalDateTime.of(2025, 12, 1, 9, 30, 15));
   }
@@ -75,12 +95,17 @@ class RowFilterCompilerTest {
   @Test
   void timestamp_zonedValues_areNormalizedToUtcWallClock() {
     // 오프셋·Z 가 붙은 값은 같은 순간의 UTC 벽시계 시각으로 바꾼다(JVM 기본 시간대와 무관해야 한다).
-    assertThat(one("ts", "gte", "2025-12-01T09:00:00Z").params().get(0)).isEqualTo(LocalDateTime.of(2025, 12, 1, 9, 0));
+    assertThat(one("ts", "gte", "2025-12-01T09:00:00Z").params().get(0))
+        .isEqualTo(LocalDateTime.of(2025, 12, 1, 9, 0));
     assertThat(one("ts", "gte", "2025-12-01T09:00:00+09:00").params().get(0))
         .isEqualTo(LocalDateTime.of(2025, 12, 1, 0, 0));
-    var in = RowFilterCompiler.compile(
-        new RowFilter(List.of(new RowFilter.Condition("ts", "in", List.of("2025-12-01", "2025-12-01T01:00:00+01:00")))),
-        types);
+    var in =
+        RowFilterCompiler.compile(
+            new RowFilter(
+                List.of(
+                    new RowFilter.Condition(
+                        "ts", "in", List.of("2025-12-01", "2025-12-01T01:00:00+01:00")))),
+            types);
     assertThat((LocalDateTime[]) in.params().get(0))
         .containsExactly(LocalDateTime.of(2025, 12, 1, 0, 0), LocalDateTime.of(2025, 12, 1, 0, 0));
     assertThatThrownBy(() -> one("ts", "gte", "2025-13-01")).hasMessageContaining("TIMESTAMP");
@@ -125,6 +150,7 @@ class RowFilterCompilerTest {
   }
 
   private CompiledFilter one(String col, String op, Object v) {
-    return RowFilterCompiler.compile(new RowFilter(List.of(new RowFilter.Condition(col, op, v))), types);
+    return RowFilterCompiler.compile(
+        new RowFilter(List.of(new RowFilter.Condition(col, op, v))), types);
   }
 }

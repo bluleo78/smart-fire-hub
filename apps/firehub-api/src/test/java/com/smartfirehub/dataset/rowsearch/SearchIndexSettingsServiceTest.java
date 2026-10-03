@@ -43,32 +43,60 @@ class SearchIndexSettingsServiceTest extends IntegrationTestBase {
   void setUp() {
     // 이전 실행의 tearDown 실패로 남은 데이터셋·원본·색인 테이블·사용자를 먼저 지운다(unique 위반 연쇄 방지).
     RowSearchTestSupport.cleanup(dsl, dataTableService, SRC);
-    EmbeddingProvider p = new EmbeddingProvider() {
-      public List<float[]> embed(List<String> t) { return t.stream().map(x -> new float[1024]).toList(); }
-      public String modelId() { return "fake"; }
-      public int dimension() { return 1024; }
-    };
+    EmbeddingProvider p =
+        new EmbeddingProvider() {
+          public List<float[]> embed(List<String> t) {
+            return t.stream().map(x -> new float[1024]).toList();
+          }
+
+          public String modelId() {
+            return "fake";
+          }
+
+          public int dimension() {
+            return 1024;
+          }
+        };
     when(embeddingFactory.current()).thenReturn(p);
-    datasetId = inTenantFixture(() -> {
-      userId = TenantRlsTestSupport.insertUser(dsl, "rs_set_u");
-      Long id = dsl.fetchOne("INSERT INTO dataset(name, table_name, storage_type, origin_type, created_by) VALUES ('rs settings', ?, 'TABLE', 'SOURCE', ?) RETURNING id", SRC, userId).get(0, Long.class);
-      dsl.execute("INSERT INTO dataset_column(dataset_id, column_name, display_name, data_type, is_nullable, is_indexed, column_order) VALUES (?, 'content', '내용', 'TEXT', true, false, 0), (?, 'cnt', '건수', 'INTEGER', true, false, 1)", id, id);
-      dataTableService.createTable(SRC, List.of(
-          new DatasetColumnRequest("content", "내용", "TEXT", null, true, false, null),
-          new DatasetColumnRequest("cnt", "건수", "INTEGER", null, true, false, null)));
-      return id;
-    });
-    contentColumnId = inTenantFixture(() -> dsl.fetchOne("SELECT id FROM dataset_column WHERE dataset_id = ? AND column_name='content'", datasetId).get(0, Long.class));
+    datasetId =
+        inTenantFixture(
+            () -> {
+              userId = TenantRlsTestSupport.insertUser(dsl, "rs_set_u");
+              Long id =
+                  dsl.fetchOne(
+                          "INSERT INTO dataset(name, table_name, storage_type, origin_type, created_by) VALUES ('rs settings', ?, 'TABLE', 'SOURCE', ?) RETURNING id",
+                          SRC,
+                          userId)
+                      .get(0, Long.class);
+              dsl.execute(
+                  "INSERT INTO dataset_column(dataset_id, column_name, display_name, data_type, is_nullable, is_indexed, column_order) VALUES (?, 'content', '내용', 'TEXT', true, false, 0), (?, 'cnt', '건수', 'INTEGER', true, false, 1)",
+                  id,
+                  id);
+              dataTableService.createTable(
+                  SRC,
+                  List.of(
+                      new DatasetColumnRequest("content", "내용", "TEXT", null, true, false, null),
+                      new DatasetColumnRequest("cnt", "건수", "INTEGER", null, true, false, null)));
+              return id;
+            });
+    contentColumnId =
+        inTenantFixture(
+            () ->
+                dsl.fetchOne(
+                        "SELECT id FROM dataset_column WHERE dataset_id = ? AND column_name='content'",
+                        datasetId)
+                    .get(0, Long.class));
   }
 
   @AfterEach
   void tearDown() {
-    inTenantFixture(() -> {
-      index.drop(new IndexRef(DEFAULT_TEST_TENANT_ID, datasetId, SRC));
-      dataTableService.dropTable(SRC);
-      dsl.execute("DELETE FROM dataset_column WHERE dataset_id = ?", datasetId);
-      dsl.execute("DELETE FROM dataset WHERE id = ?", datasetId);
-    });
+    inTenantFixture(
+        () -> {
+          index.drop(new IndexRef(DEFAULT_TEST_TENANT_ID, datasetId, SRC));
+          dataTableService.dropTable(SRC);
+          dsl.execute("DELETE FROM dataset_column WHERE dataset_id = ?", datasetId);
+          dsl.execute("DELETE FROM dataset WHERE id = ?", datasetId);
+        });
     TenantRlsTestSupport.deleteUser(dsl, userId);
   }
 
@@ -88,12 +116,25 @@ class SearchIndexSettingsServiceTest extends IntegrationTestBase {
   @Test
   void update_changingFieldsOnIdleIndex_showsSyncing() {
     settings.update(datasetId, List.of("content"));
-    inTenantFixture(() -> { dsl.execute("UPDATE dataset_search_index SET status='IDLE' WHERE dataset_id=?", datasetId); });
-    inTenantFixture(() -> { dsl.execute("UPDATE dataset_column SET data_type='TEXT' WHERE dataset_id=? AND column_name='cnt'", datasetId); });
+    inTenantFixture(
+        () -> {
+          dsl.execute(
+              "UPDATE dataset_search_index SET status='IDLE' WHERE dataset_id=?", datasetId);
+        });
+    inTenantFixture(
+        () -> {
+          dsl.execute(
+              "UPDATE dataset_column SET data_type='TEXT' WHERE dataset_id=? AND column_name='cnt'",
+              datasetId);
+        });
 
     assertThat(settings.update(datasetId, List.of("content", "cnt")).status()).isEqualTo("SYNCING");
     // 같은 필드로 다시 저장하면 상태를 건드리지 않는다
-    inTenantFixture(() -> { dsl.execute("UPDATE dataset_search_index SET status='IDLE' WHERE dataset_id=?", datasetId); });
+    inTenantFixture(
+        () -> {
+          dsl.execute(
+              "UPDATE dataset_search_index SET status='IDLE' WHERE dataset_id=?", datasetId);
+        });
     assertThat(settings.update(datasetId, List.of("content", "cnt")).status()).isEqualTo("IDLE");
   }
 
@@ -104,7 +145,12 @@ class SearchIndexSettingsServiceTest extends IntegrationTestBase {
     settings.update(datasetId, List.of("content"));
     states.markFailed(datasetId, "boom", OffsetDateTime.now().plusHours(1));
     assertThat(states.findDueDatasetIds()).doesNotContain(datasetId);
-    inTenantFixture(() -> { dsl.execute("UPDATE dataset_column SET data_type='TEXT' WHERE dataset_id=? AND column_name='cnt'", datasetId); });
+    inTenantFixture(
+        () -> {
+          dsl.execute(
+              "UPDATE dataset_column SET data_type='TEXT' WHERE dataset_id=? AND column_name='cnt'",
+              datasetId);
+        });
 
     settings.update(datasetId, List.of("content", "cnt"));
 
@@ -117,16 +163,21 @@ class SearchIndexSettingsServiceTest extends IntegrationTestBase {
 
   @Test
   void update_rejectsUnknownOrNonTextField() {
-    assertThatThrownBy(() -> settings.update(datasetId, List.of("nope"))).isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(() -> settings.update(datasetId, List.of("cnt"))).hasMessageContaining("TEXT");
+    assertThatThrownBy(() -> settings.update(datasetId, List.of("nope")))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> settings.update(datasetId, List.of("cnt")))
+        .hasMessageContaining("TEXT");
   }
 
   @Test
   void changingSearchableColumnTypeToNonText_isConflict() {
     settings.update(datasetId, List.of("content"));
     assertThatThrownBy(
-            () -> datasetService.updateColumn(datasetId, contentColumnId,
-                new UpdateColumnRequest(null, null, "INTEGER", null, null, null, null)))
+            () ->
+                datasetService.updateColumn(
+                    datasetId,
+                    contentColumnId,
+                    new UpdateColumnRequest(null, null, "INTEGER", null, null, null, null)))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("검색 탭");
   }
@@ -173,7 +224,11 @@ class SearchIndexSettingsServiceTest extends IntegrationTestBase {
     // OFF 로 보이고, 다음 스윕이 끄기와 같게 정리한다.
     settings.update(datasetId, List.of("content"));
     assertThat(sync.sync(datasetId)).isEqualTo(RowSearchSyncService.Outcome.COMPLETED);
-    inTenantFixture(() -> { dsl.execute("UPDATE dataset_column SET is_searchable = false WHERE dataset_id = ?", datasetId); });
+    inTenantFixture(
+        () -> {
+          dsl.execute(
+              "UPDATE dataset_column SET is_searchable = false WHERE dataset_id = ?", datasetId);
+        });
 
     assertThat(settings.getStatus(datasetId).enabled()).isFalse();
     assertThat(settings.getStatus(datasetId).status()).isEqualTo("OFF");
@@ -198,7 +253,12 @@ class SearchIndexSettingsServiceTest extends IntegrationTestBase {
   @Test
   void reindex_forcesFullPass() {
     settings.update(datasetId, List.of("content"));
-    inTenantFixture(() -> { dsl.execute("UPDATE dataset_search_index SET config_hash='x', status='IDLE' WHERE dataset_id=?", datasetId); });
+    inTenantFixture(
+        () -> {
+          dsl.execute(
+              "UPDATE dataset_search_index SET config_hash='x', status='IDLE' WHERE dataset_id=?",
+              datasetId);
+        });
     settings.reindex(datasetId);
     var s = states.find(datasetId).orElseThrow();
     assertThat(s.configHash()).isEmpty();

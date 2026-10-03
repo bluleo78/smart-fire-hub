@@ -14,20 +14,19 @@ import org.springframework.beans.factory.annotation.Autowired;
 /**
  * V108 이 {@code notification_outbox} 에 만든 테넌트 선행 인덱스의 <b>형태</b>를 고정한다.
  *
- * <p>단순히 이름 존재만 확인하면 공허하다 — 실측(EXPLAIN)에서 확인한 "왜 이 컬럼 순서인가"가
- * 다음 사람이 인덱스를 손대도 재측정 없이 판단할 수 있게, {@code indexdef} 로 컬럼 순서까지 못박는다.
+ * <p>단순히 이름 존재만 확인하면 공허하다 — 실측(EXPLAIN)에서 확인한 "왜 이 컬럼 순서인가"가 다음 사람이 인덱스를 손대도 재측정 없이 판단할 수 있게,
+ * {@code indexdef} 로 컬럼 순서까지 못박는다.
  *
- * <p>역방향 자기검증({@link #onlyExpectedIndexesExistOnNotificationOutbox()})은
- * {@code TenantSchemaConformanceTest} 의 {@code containsExactlyInAnyOrderElementsOf} 패턴을
- * 그대로 따른다 — 인덱스 전수를 기대 집합과 정확히 맞춰야, 나중에 누가 인덱스를 하나 지우거나
- * 몰래 더 추가해도 이 테스트가 빨개진다.
+ * <p>역방향 자기검증({@link #onlyExpectedIndexesExistOnNotificationOutbox()})은 {@code
+ * TenantSchemaConformanceTest} 의 {@code containsExactlyInAnyOrderElementsOf} 패턴을 그대로 따른다 — 인덱스 전수를
+ * 기대 집합과 정확히 맞춰야, 나중에 누가 인덱스를 하나 지우거나 몰래 더 추가해도 이 테스트가 빨개진다.
  */
 class OutboxIndexUsageTest extends IntegrationTestBase {
 
   /**
-   * V108 이후 {@code notification_outbox} 에 존재해야 하는 인덱스 전체 집합(제약이 만드는 인덱스
-   * {@code uk_outbox_idempotency}, {@code notification_outbox_pkey} 포함). {@code
-   * idx_outbox_pending_due} 는 V108 이 대체·삭제했으므로 여기 없다.
+   * V108 이후 {@code notification_outbox} 에 존재해야 하는 인덱스 전체 집합(제약이 만드는 인덱스 {@code
+   * uk_outbox_idempotency}, {@code notification_outbox_pkey} 포함). {@code idx_outbox_pending_due} 는
+   * V108 이 대체·삭제했으므로 여기 없다.
    */
   private static final Set<String> EXPECTED_INDEXES =
       Set.of(
@@ -53,7 +52,9 @@ class OutboxIndexUsageTest extends IntegrationTestBase {
         .containsPattern("\\(tenant_id, next_attempt_at\\)");
     // countPendingByChannel 이 힙을 보지 않도록 channel_type 을 INCLUDE 로 실어야 한다
     // (실측: VACUUM 후 Heap Fetches: 0).
-    assertThat(indexDef).as("channel_type 을 INCLUDE 해야 한다: %s", indexDef).contains("INCLUDE (channel_type)");
+    assertThat(indexDef)
+        .as("channel_type 을 INCLUDE 해야 한다: %s", indexDef)
+        .contains("INCLUDE (channel_type)");
     assertThat(indexDef)
         .as("PENDING 부분 인덱스여야 한다: %s", indexDef)
         .contains("WHERE ((status)::text = 'PENDING'::text)");
@@ -87,7 +88,8 @@ class OutboxIndexUsageTest extends IntegrationTestBase {
   @DisplayName("notification_outbox 의 인덱스 전수가 기대 집합과 정확히 일치한다 (역방향 자기검증)")
   void onlyExpectedIndexesExistOnNotificationOutbox() {
     List<String> actual =
-        dsl.fetch(
+        dsl
+            .fetch(
                 "select indexname from pg_indexes"
                     + " where schemaname='public' and tablename='notification_outbox'")
             .stream()

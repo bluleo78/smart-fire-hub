@@ -37,9 +37,9 @@ import org.springframework.test.web.servlet.MockMvc;
  *
  * <p>구성: 운영자(SUPER_ADMIN, 테넌트 없음), 대상(새 테넌트 T 의 USER 멤버), 다른 운영자.
  *
- * <p>TenantContext 를 비우는 이유: IntegrationTestBase 가 테넌트 1 을 세워 두는데, 플랫폼 필터는 TenantContext 를
- * 세우지 않고 finally 에서만 지운다. 비우지 않으면 첫 요청이 GUC=1 로 돌아 감사 로그 tenant_id 가 1 이 된다(운영은
- * NULL) — 운영과 다른 조건에서 초록이 되는 것을 막는다.
+ * <p>TenantContext 를 비우는 이유: IntegrationTestBase 가 테넌트 1 을 세워 두는데, 플랫폼 필터는 TenantContext 를 세우지 않고
+ * finally 에서만 지운다. 비우지 않으면 첫 요청이 GUC=1 로 돌아 감사 로그 tenant_id 가 1 이 된다(운영은 NULL) — 운영과 다른 조건에서 초록이 되는
+ * 것을 막는다.
  */
 @AutoConfigureMockMvc
 class PlatformAccountControllerTest extends IntegrationTestBase {
@@ -72,8 +72,14 @@ class PlatformAccountControllerTest extends IntegrationTestBase {
     String username = marker + "-target@example.com";
     target =
         TestUsers.createMember(
-                dsl, fixtureTransactionTemplate, passwordEncoder, username, username,
-                "Password123", marker + "-target", tenantId)
+                dsl,
+                fixtureTransactionTemplate,
+                passwordEncoder,
+                username,
+                username,
+                "Password123",
+                marker + "-target",
+                tenantId)
             .id();
     users.add(target);
     TenantContext.clear(); // 운영 조건 재현(위 클래스 주석)
@@ -162,16 +168,17 @@ class PlatformAccountControllerTest extends IntegrationTestBase {
   void deactivate_zeroesTenantPermissionsImmediately() throws Exception {
     // 전제 보장: USER 역할 권한 구성에 기대지 않도록 ADMIN 을 붙여 "이전" 권한이 반드시 비어 있지 않게 한다.
     TestUsers.grantRole(dsl, fixtureTransactionTemplate, target, tenantId, "ADMIN");
-    Supplier<Integer> perms =
-        () -> permissionRepository.findPermissionCodesByUserId(target).size();
+    Supplier<Integer> perms = () -> permissionRepository.findPermissionCodesByUserId(target).size();
     assertThat(
-            TenantRlsTestSupport.runInTenantTransaction(fixtureTransactionTemplate, tenantId, perms))
+            TenantRlsTestSupport.runInTenantTransaction(
+                fixtureTransactionTemplate, tenantId, perms))
         .isPositive();
 
     deactivate(target);
 
     assertThat(
-            TenantRlsTestSupport.runInTenantTransaction(fixtureTransactionTemplate, tenantId, perms))
+            TenantRlsTestSupport.runInTenantTransaction(
+                fixtureTransactionTemplate, tenantId, perms))
         .isZero();
   }
 
@@ -272,8 +279,8 @@ class PlatformAccountControllerTest extends IntegrationTestBase {
   }
 
   /**
-   * 실제 HTTP 경로: 비활성화 전에 발급된 access token 으로 권한 필요 테넌트 API 를 부르면, 비활성화 직후 같은 토큰이 바로
-   * 403 이 된다(JWT 필터 → 권한 조회의 user 활성 조인). 다이얼로그의 "즉시 거부" 문구가 기대는 핵심 경로다.
+   * 실제 HTTP 경로: 비활성화 전에 발급된 access token 으로 권한 필요 테넌트 API 를 부르면, 비활성화 직후 같은 토큰이 바로 403 이 된다(JWT 필터
+   * → 권한 조회의 user 활성 조인). 다이얼로그의 "즉시 거부" 문구가 기대는 핵심 경로다.
    */
   @Test
   void deactivate_makesAlreadyIssuedTokenForbiddenOnTenantApiImmediately() throws Exception {

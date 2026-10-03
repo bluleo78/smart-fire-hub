@@ -87,7 +87,11 @@ class EmbeddingSettingsControllerTest {
                 .content(BODY))
         .andExpect(status().isOk());
     verify(settingsService)
-        .save(eq(new EmbeddingConfigRequest("OLLAMA", "bge-m3", "http://host.docker.internal:11434", null)), eq(1L));
+        .save(
+            eq(
+                new EmbeddingConfigRequest(
+                    "OLLAMA", "bge-m3", "http://host.docker.internal:11434", null)),
+            eq(1L));
   }
 
   @Test

@@ -8,4 +8,8 @@ import java.util.List;
  * 사용자 컬럼을 반환한다.
  */
 public record RowSearchRequest(
-    String query, String mode, Integer limit, List<RowFilter.Condition> filters, List<String> columns) {}
+    String query,
+    String mode,
+    Integer limit,
+    List<RowFilter.Condition> filters,
+    List<String> columns) {}

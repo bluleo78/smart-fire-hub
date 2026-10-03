@@ -15,86 +15,77 @@ import org.springframework.beans.factory.annotation.Autowired;
 /**
  * 테넌트 스코프 테이블의 스키마 형태를 <b>카탈로그에서 집합을 유도해</b> 전수 검사한다.
  *
- * <p>왜 필요한가: 지금까지 밴드마다 손으로 유지하는 테이블 목록 테스트가 4벌 쌓였고
- * ({@code DatasetDomainColumnTest}, {@code PipelineDomainColumnTest}, {@code RbacAuditReportSchemaTest},
- * {@code OntologyGraphSchemaTest}) 그 4벌이 덮는 31테이블 밖에 8테이블이 무커버로 남아 있었다
- * ({@code chart}, {@code dashboard}, {@code dashboard_widget}, {@code document_chunk},
- * {@code document_file}, {@code query_history}, {@code saved_query}, {@code tenant_canary}).
- * 이 테스트는 목록을 손으로 들지 않으므로 새 밴드가 테이블을 추가해도 자동으로 덮는다.
+ * <p>왜 필요한가: 지금까지 밴드마다 손으로 유지하는 테이블 목록 테스트가 4벌 쌓였고 ({@code DatasetDomainColumnTest}, {@code
+ * PipelineDomainColumnTest}, {@code RbacAuditReportSchemaTest}, {@code OntologyGraphSchemaTest}) 그
+ * 4벌이 덮는 31테이블 밖에 8테이블이 무커버로 남아 있었다 ({@code chart}, {@code dashboard}, {@code dashboard_widget},
+ * {@code document_chunk}, {@code document_file}, {@code query_history}, {@code saved_query}, {@code
+ * tenant_canary}). 이 테스트는 목록을 손으로 들지 않으므로 새 밴드가 테이블을 추가해도 자동으로 덮는다.
  *
- * <p><b>기존 4벌은 지우지 않는다.</b> 그쪽은 "이 인덱스는 tenant_id 를 포함하면 안 된다" 같은
- * <i>결정</i>을 못박는 단언이라 균일 검사로 대체되지 않는다. 이 테스트는 균일한 부분만 가져간다.
+ * <p><b>기존 4벌은 지우지 않는다.</b> 그쪽은 "이 인덱스는 tenant_id 를 포함하면 안 된다" 같은 <i>결정</i>을 못박는 단언이라 균일 검사로 대체되지
+ * 않는다. 이 테스트는 균일한 부분만 가져간다.
  *
- * <p><b>fail-open 방지가 이 테스트의 핵심이다.</b> {@code relrowsecurity = true} 에서 집합을
- * 유도하면 "RLS 켜기를 잊은 테이블"은 애초에 집합에 들어오지 않아 조용히 통과한다. 그래서
- * {@link #tablesWithTenantColumnMustHaveRlsEnabled()} 역방향 단언을 함께 둔다 — 이게 없으면
- * 이 테스트는 다음 밴드에서 무의미해진다.
+ * <p><b>fail-open 방지가 이 테스트의 핵심이다.</b> {@code relrowsecurity = true} 에서 집합을 유도하면 "RLS 켜기를 잊은 테이블"은
+ * 애초에 집합에 들어오지 않아 조용히 통과한다. 그래서 {@link #tablesWithTenantColumnMustHaveRlsEnabled()} 역방향 단언을 함께 둔다 —
+ * 이게 없으면 이 테스트는 다음 밴드에서 무의미해진다.
  */
 class TenantSchemaConformanceTest extends IntegrationTestBase {
 
   /**
-   * RLS 활성 테이블 집합의 하한. 카탈로그 쿼리가 망가져 빈 집합을 돌려주면 모든 루프 단언이
-   * 공허하게 통과하므로, 최소 개수를 못박아 자기검증한다. 2026-08-16 실측 50테이블(V107 이 채널
-   * 4테이블을 켜기 직전 46 + 4) — 밴드가 늘어나도 편집할 필요가 없도록 {@code >=} 로 비교한다.
+   * RLS 활성 테이블 집합의 하한. 카탈로그 쿼리가 망가져 빈 집합을 돌려주면 모든 루프 단언이 공허하게 통과하므로, 최소 개수를 못박아 자기검증한다. 2026-08-16
+   * 실측 50테이블(V107 이 채널 4테이블을 켜기 직전 46 + 4) — 밴드가 늘어나도 편집할 필요가 없도록 {@code >=} 로 비교한다.
    *
-   * <p><b>이 상수는 실제 개수가 아니라 하한선이다.</b> 다음 밴드가 테이블을 더 켜도 여기를 올릴
-   * 의무는 없다 — 올리는 것은 "카탈로그 쿼리가 여전히 살아 있다" 는 자기검증의 감도를 높이는
-   * 선택이지, 정확한 수를 맞추는 작업이 아니다.
+   * <p><b>이 상수는 실제 개수가 아니라 하한선이다.</b> 다음 밴드가 테이블을 더 켜도 여기를 올릴 의무는 없다 — 올리는 것은 "카탈로그 쿼리가 여전히 살아 있다"
+   * 는 자기검증의 감도를 높이는 선택이지, 정확한 수를 맞추는 작업이 아니다.
    */
   private static final int MIN_RLS_TABLE_COUNT = 50;
 
   /**
-   * {@code tenant_id} 가 nullable 이어도 되는 테이블. 로그인·회원가입 감사는 <b>테넌트를 고르기
-   * 전</b>에 기록되므로 테넌트를 붙일 수 없는 행이 존재한다 ({@code RbacAuditReportSchemaTest} 근거).
-   * 그 대가로 정책이 형태 (b) 여야 한다 — 아래 {@link #NON_STANDARD_POLICY_FORM_TABLES} 참조.
+   * {@code tenant_id} 가 nullable 이어도 되는 테이블. 로그인·회원가입 감사는 <b>테넌트를 고르기 전</b>에 기록되므로 테넌트를 붙일 수 없는 행이
+   * 존재한다 ({@code RbacAuditReportSchemaTest} 근거). 그 대가로 정책이 형태 (b) 여야 한다 — 아래 {@link
+   * #NON_STANDARD_POLICY_FORM_TABLES} 참조.
    */
   private static final Set<String> NULLABLE_TENANT_ID_TABLES = Set.of("audit_log");
 
   /**
-   * 정책이 표준 형태 (a)({@code tenant_id = GUC})가 아니어도 되는 테이블. {@code audit_log} 는
-   * NULL tenant_id 행을 함께 다뤄야 해서 {@code NOT (tenant_id IS DISTINCT FROM GUC)} 형태다.
-   * 이 형태는 GUC 가 비면 NULL-vs-NULL 이 참이 되어 <b>fail-open</b> 이므로 여기 말고는 금지다.
+   * 정책이 표준 형태 (a)({@code tenant_id = GUC})가 아니어도 되는 테이블. {@code audit_log} 는 NULL tenant_id 행을 함께
+   * 다뤄야 해서 {@code NOT (tenant_id IS DISTINCT FROM GUC)} 형태다. 이 형태는 GUC 가 비면 NULL-vs-NULL 이 참이 되어
+   * <b>fail-open</b> 이므로 여기 말고는 금지다.
    */
   private static final Set<String> NON_STANDARD_POLICY_FORM_TABLES = Set.of("audit_log");
 
   /**
-   * {@code tenant(id)} FK 가 없어도 되는 테이블. {@code tenant_canary} 는 RLS 격리 자체를 검증하는
-   * 테스트 전용 카나리라 존재하지 않는 테넌트 id 로도 행을 심을 수 있어야 한다
-   * ({@code TenantRlsTestSupport.TENANT_CANARY}).
+   * {@code tenant(id)} FK 가 없어도 되는 테이블. {@code tenant_canary} 는 RLS 격리 자체를 검증하는 테스트 전용 카나리라 존재하지 않는
+   * 테넌트 id 로도 행을 심을 수 있어야 한다 ({@code TenantRlsTestSupport.TENANT_CANARY}).
    */
   private static final Set<String> NO_TENANT_FK_TABLES = Set.of("tenant_canary");
 
   /**
-   * 정책명이 {@code <table>_tenant_isolation} 규칙을 벗어나는 테이블. {@code tenant_canary} 는
-   * {@code tenant_canary_isolation} 이다(테이블명이 이미 tenant 로 시작해 중복을 피한 것).
+   * 정책명이 {@code <table>_tenant_isolation} 규칙을 벗어나는 테이블. {@code tenant_canary} 는 {@code
+   * tenant_canary_isolation} 이다(테이블명이 이미 tenant 로 시작해 중복을 피한 것).
    */
   private static final Set<String> NON_STANDARD_POLICY_NAME_TABLES = Set.of("tenant_canary");
 
   /**
    * {@code tenant_id} 컬럼을 갖고도 RLS 를 끈 것이 <b>의도된</b> 전역 테이블.
    *
-   * <p>{@code oauth_state}(V106, P2-f)가 여기 영구로 들어가는 이유: 그 컬럼은 격리 수단이 아니라
-   * <b>OAuth 콜백에서 테넌트를 되찾는 운반 수단</b>이다. 콜백은 permitAll 이라 컨텍스트가 없고,
-   * RLS 를 켜면 {@code consume(state)} 이 0행을 보고 테넌트를 영영 되찾지 못한다. 따라서 아래
-   * {@link #IN_FLIGHT_RLS_PENDING}(밴드가 끝나면 비워야 하는 임시 목록)이 아니라 여기가 맞다.
+   * <p>{@code oauth_state}(V106, P2-f)가 여기 영구로 들어가는 이유: 그 컬럼은 격리 수단이 아니라 <b>OAuth 콜백에서 테넌트를 되찾는 운반
+   * 수단</b>이다. 콜백은 permitAll 이라 컨텍스트가 없고, RLS 를 켜면 {@code consume(state)} 이 0행을 보고 테넌트를 영영 되찾지 못한다.
+   * 따라서 아래 {@link #IN_FLIGHT_RLS_PENDING}(밴드가 끝나면 비워야 하는 임시 목록)이 아니라 여기가 맞다.
    */
   private static final Set<String> RLS_DISABLED_ALLOWLIST = Set.of("membership", "oauth_state");
 
   /**
    * 밴드 진행 중 임시 허용 목록 — <b>커밋 시점에 반드시 비어 있어야 한다.</b>
    *
-   * <p>왜 있는가: 이 프로젝트는 컬럼 마이그레이션과 정책 마이그레이션을 나눠 넣는다(V101/V102,
-   * P2-e 의 V103/V104). 그 중간 커밋에서는 {@code tenant_id} 는 있는데 RLS 는 아직 꺼진 테이블이
-   * 생겨 역방향 단언이 빨개진다. 그때 <b>영구 허용목록에 밀어 넣지 말고</b> 여기에 적어라 —
-   * 정책 마이그레이션이 들어오면 아래 staleness 가드가 다시 빨개져서 지우지 않고는 밴드를
-   * 끝낼 수 없다. 구멍이 밴드 밖으로 새어 나가지 못하게 하는 장치다.
+   * <p>왜 있는가: 이 프로젝트는 컬럼 마이그레이션과 정책 마이그레이션을 나눠 넣는다(V101/V102, P2-e 의 V103/V104). 그 중간 커밋에서는 {@code
+   * tenant_id} 는 있는데 RLS 는 아직 꺼진 테이블이 생겨 역방향 단언이 빨개진다. 그때 <b>영구 허용목록에 밀어 넣지 말고</b> 여기에 적어라 — 정책
+   * 마이그레이션이 들어오면 아래 staleness 가드가 다시 빨개져서 지우지 않고는 밴드를 끝낼 수 없다. 구멍이 밴드 밖으로 새어 나가지 못하게 하는 장치다.
    *
-   * <p>P2-e 기록: V103 이 7테이블을 여기 올렸고 V104 가 정책을 켜면서 다시 비웠다 — 장치가
-   * 설계대로 한 바퀴 돌았다. <b>영구 허용목록으로 옮기는 것은 이 장치를 우회하는 것이다.</b>
+   * <p>P2-e 기록: V103 이 7테이블을 여기 올렸고 V104 가 정책을 켜면서 다시 비웠다 — 장치가 설계대로 한 바퀴 돌았다. <b>영구 허용목록으로 옮기는 것은
+   * 이 장치를 우회하는 것이다.</b>
    *
-   * <p>P2-f 기록: V106 이 채널 4테이블을 여기 올렸고 <b>V107 이 정책을 켜면서 다시 비웠다</b> —
-   * 장치가 두 밴드 연속으로 설계대로 한 바퀴 돌았다. ({@code oauth_state} 는 영구히 RLS 가 없으므로
-   * 여기가 아니라 {@link #RLS_DISABLED_ALLOWLIST} 에 있다 — R7.)
+   * <p>P2-f 기록: V106 이 채널 4테이블을 여기 올렸고 <b>V107 이 정책을 켜면서 다시 비웠다</b> — 장치가 두 밴드 연속으로 설계대로 한 바퀴 돌았다.
+   * ({@code oauth_state} 는 영구히 RLS 가 없으므로 여기가 아니라 {@link #RLS_DISABLED_ALLOWLIST} 에 있다 — R7.)
    */
   private static final Set<String> IN_FLIGHT_RLS_PENDING = Set.of();
 
@@ -330,38 +321,33 @@ class TenantSchemaConformanceTest extends IntegrationTestBase {
     // 쿼리가 망가져 빈 결과를 내면 여기서 잡힌다. 망가진 쿼리 위에서는 위의 isSubsetOf 가
     // 공허하게 참이 되기 때문에 이 자기검증이 없으면 전체가 무의미해진다.
     assertThat(rlsDisabledWithTenantColumn)
-        .as(
-            "허용목록에 남았지만 이미 RLS 가 켜진 항목 — 목록에서 지워라"
-                + " (동시에 역방향 쿼리 자기검증: membership 이 반드시 잡혀야 한다)")
+        .as("허용목록에 남았지만 이미 RLS 가 켜진 항목 — 목록에서 지워라" + " (동시에 역방향 쿼리 자기검증: membership 이 반드시 잡혀야 한다)")
         .containsAll(union(RLS_DISABLED_ALLOWLIST, IN_FLIGHT_RLS_PENDING));
   }
 
   // ── SECURITY DEFINER 함수 전수 정합성 (D-1) ──────────────────────────────
 
   /**
-   * 시스템이 알고 있는 {@code SECURITY DEFINER} 함수 전부. <b>목록을 유지하는 것이 목적이 아니라,
-   * 새 definer 가 아무 목록에도 안 들어간 채 들어오는 것을 막는 것이 목적이다.</b>
+   * 시스템이 알고 있는 {@code SECURITY DEFINER} 함수 전부. <b>목록을 유지하는 것이 목적이 아니라, 새 definer 가 아무 목록에도 안 들어간 채
+   * 들어오는 것을 막는 것이 목적이다.</b>
    *
-   * <p><b>왜 이 장치가 필요한가.</b> definer 함수는 RLS 를 우회하도록 <b>의도적으로</b> 만든
-   * 구멍이다. 그 구멍의 안전은 세 가지에 걸려 있다 — {@code search_path} 고정(검색 경로 하이재킹
-   * 방지), {@code PUBLIC EXECUTE} 회수(아무나 우회 금지), 백킹 테이블에 FORCE RLS 미사용(우회가
-   * 실제로 동작하기 위한 전제). 밴드마다 definer 가 하나씩 늘었는데 카탈로그 단언은 밴드별 테스트에
-   * 흩어져 있어 {@code provision_tenant_defaults} 는 <b>어느 테스트도 고정하지 않고</b> 있었다.
-   * 그 실패 모드는 조용한 보안 구멍이므로 발견형 전수 검사로 바꾼다.
+   * <p><b>왜 이 장치가 필요한가.</b> definer 함수는 RLS 를 우회하도록 <b>의도적으로</b> 만든 구멍이다. 그 구멍의 안전은 세 가지에 걸려 있다 —
+   * {@code search_path} 고정(검색 경로 하이재킹 방지), {@code PUBLIC EXECUTE} 회수(아무나 우회 금지), 백킹 테이블에 FORCE RLS
+   * 미사용(우회가 실제로 동작하기 위한 전제). 밴드마다 definer 가 하나씩 늘었는데 카탈로그 단언은 밴드별 테스트에 흩어져 있어 {@code
+   * provision_tenant_defaults} 는 <b>어느 테스트도 고정하지 않고</b> 있었다. 그 실패 모드는 조용한 보안 구멍이므로 발견형 전수 검사로 바꾼다.
    *
-   * <p>새 definer 를 추가하면 아래 {@link #securityDefinerFunctionsAreKnownAndLeastPrivileged()}
-   * 가 빨개진다. 그때 <b>여기에 이름을 적고 왜 우회가 불가피한지 한 줄로 남겨라</b> — 그것이 이
-   * 목록의 존재 이유다.
+   * <p>새 definer 를 추가하면 아래 {@link #securityDefinerFunctionsAreKnownAndLeastPrivileged()} 가 빨개진다. 그때
+   * <b>여기에 이름을 적고 왜 우회가 불가피한지 한 줄로 남겨라</b> — 그것이 이 목록의 존재 이유다.
    *
    * <ul>
-   *   <li>{@code resolve_trigger_tenant_by_token_hash} / {@code resolve_trigger_tenant_by_webhook_id}
-   *       (V95) — permitAll 외부 트리거는 토큰만 들고 오므로 테넌트를 알 수 없다.
-   *   <li>{@code provision_tenant_defaults} (V98/V100) — 테넌트를 <b>만드는</b> 중이라 그 테넌트의
-   *       컨텍스트가 아직 존재하지 않는다.
-   *   <li>{@code outbox_tenant_ids} (V106) — 배경 스레드가 "어느 테넌트를 돌지" 를 먼저 알아야
-   *       컨텍스트를 열 수 있다(닭과 달걀). 노출은 정수 목록뿐이다.
-   *   <li>{@code resolve_slack_workspace_tenant_by_team_id} (V106) — permitAll Slack 웹훅.
-   *       {@code SlackWorkspaceTenantResolver} javadoc 에 전제 두 가지가 적혀 있다.
+   *   <li>{@code resolve_trigger_tenant_by_token_hash} / {@code
+   *       resolve_trigger_tenant_by_webhook_id} (V95) — permitAll 외부 트리거는 토큰만 들고 오므로 테넌트를 알 수 없다.
+   *   <li>{@code provision_tenant_defaults} (V98/V100) — 테넌트를 <b>만드는</b> 중이라 그 테넌트의 컨텍스트가 아직 존재하지
+   *       않는다.
+   *   <li>{@code outbox_tenant_ids} (V106) — 배경 스레드가 "어느 테넌트를 돌지" 를 먼저 알아야 컨텍스트를 열 수 있다(닭과 달걀). 노출은
+   *       정수 목록뿐이다.
+   *   <li>{@code resolve_slack_workspace_tenant_by_team_id} (V106) — permitAll Slack 웹훅. {@code
+   *       SlackWorkspaceTenantResolver} javadoc 에 전제 두 가지가 적혀 있다.
    * </ul>
    */
   private static final Set<String> KNOWN_SECURITY_DEFINER_FUNCTIONS =
@@ -376,19 +362,17 @@ class TenantSchemaConformanceTest extends IntegrationTestBase {
           "fh_incremental_cursor_candidate");
 
   /**
-   * {@code PUBLIC EXECUTE} 를 남겨 둘 사유가 있는 definer 함수. <b>지금은 비어 있고, 비어 있는
-   * 것이 정상이다.</b> 형태는 {@link #RLS_DISABLED_ALLOWLIST} 를 따른다 — 예외를 두려면 여기에
-   * 이름과 사유를 적어야 하고, 그 편집이 리뷰에 걸린다.
+   * {@code PUBLIC EXECUTE} 를 남겨 둘 사유가 있는 definer 함수. <b>지금은 비어 있고, 비어 있는 것이 정상이다.</b> 형태는 {@link
+   * #RLS_DISABLED_ALLOWLIST} 를 따른다 — 예외를 두려면 여기에 이름과 사유를 적어야 하고, 그 편집이 리뷰에 걸린다.
    */
   private static final Set<String> PUBLIC_EXECUTE_ALLOWLIST = Set.of();
 
   /**
    * definer 함수를 <b>카탈로그에서 발견</b>해 전수로 단언한다 — 손으로 든 목록을 순회하지 않는다.
    *
-   * <p>백킹 테이블의 {@code relforcerowsecurity = false} 는 여기서 다시 세지 않는다.
-   * {@link #forceRowLevelSecurityIsNeverEnabled()} 가 이미 <b>public 스키마 전체</b>에 대해 그것을
-   * 못박고 있어서, 함수→테이블 매핑을 카탈로그로 추정하는 취약한 쿼리를 더할 이유가 없다.
-   * 그쪽이 빨개지면 definer 우회 전체가 함께 무너진다는 사실은 그 테스트 주석에 적혀 있다.
+   * <p>백킹 테이블의 {@code relforcerowsecurity = false} 는 여기서 다시 세지 않는다. {@link
+   * #forceRowLevelSecurityIsNeverEnabled()} 가 이미 <b>public 스키마 전체</b>에 대해 그것을 못박고 있어서, 함수→테이블 매핑을
+   * 카탈로그로 추정하는 취약한 쿼리를 더할 이유가 없다. 그쪽이 빨개지면 definer 우회 전체가 함께 무너진다는 사실은 그 테스트 주석에 적혀 있다.
    */
   @Test
   @DisplayName("SECURITY DEFINER 함수는 전수로 — 등재됨 + search_path 고정 + PUBLIC EXECUTE 없음")
@@ -408,9 +392,7 @@ class TenantSchemaConformanceTest extends IntegrationTestBase {
         rows.stream().map(r -> r.get("proname", String.class)).collect(Collectors.toSet());
 
     // 자기검증 — 발견 쿼리가 망가져 빈 집합이 되면 아래 루프가 통째로 공허해진다.
-    assertThat(discovered)
-        .as("SECURITY DEFINER 함수가 하나도 발견되지 않았다 — 발견 쿼리를 의심하라")
-        .isNotEmpty();
+    assertThat(discovered).as("SECURITY DEFINER 함수가 하나도 발견되지 않았다 — 발견 쿼리를 의심하라").isNotEmpty();
 
     assertThat(discovered)
         .as("등재되지 않은 SECURITY DEFINER 함수 — 이름과 사유를 KNOWN_SECURITY_DEFINER_FUNCTIONS 에 적어라")

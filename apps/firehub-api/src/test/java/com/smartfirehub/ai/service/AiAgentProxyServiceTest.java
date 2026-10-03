@@ -42,7 +42,8 @@ class AiAgentProxyServiceTest extends IntegrationTestBase {
 
   // WireMock 서버를 정적 필드에서 즉시 시작한다: @DynamicPropertySource는 Spring 컨텍스트 준비(빈 생성) 이전에
   // 호출되므로, 그 시점에 이미 포트가 결정되어 있어야 agent.url 프로퍼티를 WireMock 주소로 오버라이드할 수 있다.
-  static WireMockServer wireMock = new WireMockServer(WireMockConfiguration.wireMockConfig().dynamicPort());
+  static WireMockServer wireMock =
+      new WireMockServer(WireMockConfiguration.wireMockConfig().dynamicPort());
 
   @BeforeAll
   static void startWireMock() {
@@ -74,14 +75,13 @@ class AiAgentProxyServiceTest extends IntegrationTestBase {
   @MockitoBean private AiCredentialService aiCredentialService;
 
   /**
-   * 토큰/키는 이제 호출부(두 {@code getAuthStatus} 컨트롤러의 exhaustive switch)가 넘긴다 —
-   * 이 메서드들은 "빈 값이면 네트워크 왕복 없이 즉시 invalid" 라는 자기 계약만 지키면 된다.
+   * 토큰/키는 이제 호출부(두 {@code getAuthStatus} 컨트롤러의 exhaustive switch)가 넘긴다 — 이 메서드들은 "빈 값이면 네트워크 왕복 없이
+   * 즉시 invalid" 라는 자기 계약만 지키면 된다.
    *
-   * <p>여기 있던 두 테스트(opencode 필드 무시 / 알 수 없는 유형에서 예외 전파)는 <b>이 메서드가
-   * 스스로 {@code resolve()} 를 부르던 시절</b>의 계약을 고정한 것이라 더 이상 대상이 없다.
-   * 두 성질 자체는 한 층 위에서 그대로 검증된다 — opencode 가 이 경로를 아예 타지 않는다는 것은
-   * {@code AiControllerTest} 의 "opencode 는 verify* 를 부르지 않는다"가, 알 수 없는 유형에서
-   * {@code UnknownAgentTypeException} 이 전파된다는 것은 같은 파일의 500 단언이 고정한다.
+   * <p>여기 있던 두 테스트(opencode 필드 무시 / 알 수 없는 유형에서 예외 전파)는 <b>이 메서드가 스스로 {@code resolve()} 를 부르던
+   * 시절</b>의 계약을 고정한 것이라 더 이상 대상이 없다. 두 성질 자체는 한 층 위에서 그대로 검증된다 — opencode 가 이 경로를 아예 타지 않는다는 것은
+   * {@code AiControllerTest} 의 "opencode 는 verify* 를 부르지 않는다"가, 알 수 없는 유형에서 {@code
+   * UnknownAgentTypeException} 이 전파된다는 것은 같은 파일의 500 단언이 고정한다.
    */
   @Test
   void verifyCliToken_whenTokenEmpty_returnsInvalidJson() {
@@ -117,9 +117,9 @@ class AiAgentProxyServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * sdk 모드 + OAuth 토큰 설정 시(API 키는 없음) ai-agent로 전송되는 요청 body에 {@code oauthToken}이 포함되고, 더 이상
-   * 사용하지 않는 {@code cliOauthToken} 키는 포함되지 않아야 한다. (Task 1: ai-agent가 body oauthToken을 읽도록 변경됨에
-   * 맞춰 firehub-api 프록시도 동일 키로 전달해야 함)
+   * sdk 모드 + OAuth 토큰 설정 시(API 키는 없음) ai-agent로 전송되는 요청 body에 {@code oauthToken}이 포함되고, 더 이상 사용하지
+   * 않는 {@code cliOauthToken} 키는 포함되지 않아야 한다. (Task 1: ai-agent가 body oauthToken을 읽도록 변경됨에 맞춰
+   * firehub-api 프록시도 동일 키로 전달해야 함)
    */
   @Test
   void streamChat_sdkWithOauthToken_injectsOauthTokenIntoBody() {
@@ -157,13 +157,11 @@ class AiAgentProxyServiceTest extends IntegrationTestBase {
   /**
    * agentType 의 출처가 {@code AiCredentialService.resolve()} 하나뿐인지 검증한다.
    *
-   * <p>{@code getAsMap("ai")} 의 {@code ai.agent_type} 은 이제 아무도 읽지 않는 레거시 플랫폼
-   * 기본값이다(타입형 전환, 2026-09) — 여기서는 일부러 <b>틀린</b> 값({@code cli-api})으로
-   * 스텁하고, 실제 출처인 {@code resolve()} 는 {@code sdk}(+OAuth 토큰)를 준다. streamChat 이
-   * 맵을 다시 읽지 않는지가 이 테스트의 단언이다. 맵을 다시 읽었다면 cli-api 분기로 떨어지고,
-   * API 키가 없으니 ai-agent 호출 자체가 나가지 않는다. resolve() 만 봤다면 OAuth 토큰만으로
-   * 인증이 성립해 호출이 나간다 — WireMock 이 그 요청을 받는 것으로 "출처가 하나"임을
-   * 확인한다(오류 emit 여부보다 직접적이다).
+   * <p>{@code getAsMap("ai")} 의 {@code ai.agent_type} 은 이제 아무도 읽지 않는 레거시 플랫폼 기본값이다(타입형 전환, 2026-09)
+   * — 여기서는 일부러 <b>틀린</b> 값({@code cli-api})으로 스텁하고, 실제 출처인 {@code resolve()} 는 {@code sdk}(+OAuth
+   * 토큰)를 준다. streamChat 이 맵을 다시 읽지 않는지가 이 테스트의 단언이다. 맵을 다시 읽었다면 cli-api 분기로 떨어지고, API 키가 없으니
+   * ai-agent 호출 자체가 나가지 않는다. resolve() 만 봤다면 OAuth 토큰만으로 인증이 성립해 호출이 나간다 — WireMock 이 그 요청을 받는 것으로
+   * "출처가 하나"임을 확인한다(오류 emit 여부보다 직접적이다).
    */
   @Test
   void streamChat_agentTypeComesOnlyFromAiCredentialService_notFromRawMap() {
@@ -190,11 +188,10 @@ class AiAgentProxyServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * fail-closed 가드: 알 수 없는 agentType 을 만나면 {@code resolve()} 가 던지는
-   * {@code UnknownAgentTypeException} 이 {@code streamChat()} 밖으로 그대로 전파돼야 한다 —
-   * resolve() 를 Flux 구독 전, 요청 스레드에서 동기적으로 부르기 때문이다. 누군가 이 예외를
-   * 삼키고 "미설정" 배지로 조용히 이어가게 바꾸면(구독 콜백 안으로 옮기는 실수 포함) 이 테스트가
-   * RED 가 된다 — ai-agent 로 요청 자체가 나가지 않았음도 함께 확인한다.
+   * fail-closed 가드: 알 수 없는 agentType 을 만나면 {@code resolve()} 가 던지는 {@code
+   * UnknownAgentTypeException} 이 {@code streamChat()} 밖으로 그대로 전파돼야 한다 — resolve() 를 Flux 구독 전, 요청
+   * 스레드에서 동기적으로 부르기 때문이다. 누군가 이 예외를 삼키고 "미설정" 배지로 조용히 이어가게 바꾸면(구독 콜백 안으로 옮기는 실수 포함) 이 테스트가 RED 가 된다
+   * — ai-agent 로 요청 자체가 나가지 않았음도 함께 확인한다.
    */
   @Test
   void streamChat_알수없는_유형이면_예외가_그대로_전파되고_호출이_나가지_않는다() {
@@ -210,11 +207,10 @@ class AiAgentProxyServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * 옵션 3 폐기(2026-09-19, 이슈 #693) — 이 테스트는 그 결정을 고정하던 이전 핀 테스트
-   * ({@code streamChat_opencode_자격증명이면_apiKey_필드가_실리지_않는다})를 뒤집는다. ai-agent 의
-   * {@code buildOpenCodeConfig} 가 이제 provider 블록(baseURL/apiKey)을 요청 바디로 직접 받아
-   * 조립하므로, {@code Opencode.apiKey}(OpenAI 호환 키)를 더 이상 숨기지 않고 {@code apiKey} 로
-   * 싣는다 — Anthropic 용 필드가 아니라 이 요청 자체가 opencode 전용이기 때문이다.
+   * 옵션 3 폐기(2026-09-19, 이슈 #693) — 이 테스트는 그 결정을 고정하던 이전 핀 테스트 ({@code
+   * streamChat_opencode_자격증명이면_apiKey_필드가_실리지_않는다})를 뒤집는다. ai-agent 의 {@code buildOpenCodeConfig} 가
+   * 이제 provider 블록(baseURL/apiKey)을 요청 바디로 직접 받아 조립하므로, {@code Opencode.apiKey}(OpenAI 호환 키)를 더 이상
+   * 숨기지 않고 {@code apiKey} 로 싣는다 — Anthropic 용 필드가 아니라 이 요청 자체가 opencode 전용이기 때문이다.
    */
   @Test
   void streamChat_opencode_자격증명이면_providerId_baseUrl_apiKey_reasoningEffort가_모두_실린다() {
@@ -250,15 +246,14 @@ class AiAgentProxyServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * reasoningEffort 가 빈 문자열이면 "설정 안 함" 이므로 필드 자체를 생략해야 한다 — 그대로 실어
-   * 보내면 ai-agent 의 buildOpenCodeConfig 가 opencode 에 빈 문자열을 그대로 전달해 400 이 된다.
+   * reasoningEffort 가 빈 문자열이면 "설정 안 함" 이므로 필드 자체를 생략해야 한다 — 그대로 실어 보내면 ai-agent 의
+   * buildOpenCodeConfig 가 opencode 에 빈 문자열을 그대로 전달해 400 이 된다.
    */
   @Test
   void streamChat_opencode_추론강도가_비어있으면_reasoningEffort_필드를_생략한다() {
     when(settingsService.getAsMap("ai")).thenReturn(Map.of("ai.model", "openai/gpt-4o"));
     when(aiCredentialService.resolve())
-        .thenReturn(
-            new AiCredential.Opencode("openai", "https://api.openai.com/v1", "", "sk-oai"));
+        .thenReturn(new AiCredential.Opencode("openai", "https://api.openai.com/v1", "", "sk-oai"));
     wireMock.stubFor(
         post(urlEqualTo("/agent/chat"))
             .willReturn(
@@ -280,15 +275,13 @@ class AiAgentProxyServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * providerId/baseUrl 이 비어 있으면(손상된 행, 마이그레이션 이전 등) 옵션 3 처럼 조용히 통과시켜
-   * ai-agent 로 보내지 않는다 — SSE 로 사용자에게 보이는 오류로 끝내야 한다(다른 세 유형과 같은
-   * fail-closed, missingCredential 가드).
+   * providerId/baseUrl 이 비어 있으면(손상된 행, 마이그레이션 이전 등) 옵션 3 처럼 조용히 통과시켜 ai-agent 로 보내지 않는다 — SSE 로
+   * 사용자에게 보이는 오류로 끝내야 한다(다른 세 유형과 같은 fail-closed, missingCredential 가드).
    */
   @Test
   void streamChat_opencode_provider설정이_불완전하면_에러이벤트로_끝내고_호출이_나가지_않는다() {
     when(settingsService.getAsMap("ai")).thenReturn(Map.of("ai.model", "openai/gpt-4o"));
-    when(aiCredentialService.resolve())
-        .thenReturn(new AiCredential.Opencode("", "", "", ""));
+    when(aiCredentialService.resolve()).thenReturn(new AiCredential.Opencode("", "", "", ""));
 
     SseEmitter emitter = new SseEmitter();
     aiAgentProxyService.streamChat(emitter, "hi", null, List.of(), 1L, null, null);
@@ -297,22 +290,18 @@ class AiAgentProxyServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * (리뷰 라운드 1 지적, 항목 3) opencode 인데 ai.model 이 opencode 형식(providerId/modelId)이
-   * 아니면(예: sdk 시절 값 "claude-sonnet-5" 가 그대로 남아 opencode 로 전환한 경우 —
-   * OpencodeCredentialValidation.checkProviderConsistency 가 저장 시 이런 값을 순환 잠금 회피
-   * 목적으로 허용한다) ai-agent 의 buildOpenCodeConfig 가 "providerId/modelId 형식이어야
-   * 합니다" 로 throw 한다 — 그 시점은 SSE 헤더가 이미 나간 뒤라 사용자는 구체적 원인 없는
-   * "Agent 처리 중 오류가 발생했습니다" 만 본다. 이 테스트는 그 요청 자체가 ai-agent 로 나가지
-   * 않고 여기서 먼저 명확한 오류로 끝나는지 확인한다(proactive 경로의 model 배선과 같은 이유로
-   * chat 경로도 닫는다).
+   * (리뷰 라운드 1 지적, 항목 3) opencode 인데 ai.model 이 opencode 형식(providerId/modelId)이 아니면(예: sdk 시절 값
+   * "claude-sonnet-5" 가 그대로 남아 opencode 로 전환한 경우 —
+   * OpencodeCredentialValidation.checkProviderConsistency 가 저장 시 이런 값을 순환 잠금 회피 목적으로 허용한다) ai-agent
+   * 의 buildOpenCodeConfig 가 "providerId/modelId 형식이어야 합니다" 로 throw 한다 — 그 시점은 SSE 헤더가 이미 나간 뒤라 사용자는
+   * 구체적 원인 없는 "Agent 처리 중 오류가 발생했습니다" 만 본다. 이 테스트는 그 요청 자체가 ai-agent 로 나가지 않고 여기서 먼저 명확한 오류로 끝나는지
+   * 확인한다(proactive 경로의 model 배선과 같은 이유로 chat 경로도 닫는다).
    */
   @Test
-  void streamChat_opencode_모델형식이_슬래시가_없으면_에러이벤트로_끝내고_호출이_나가지_않는다()
-      throws IOException {
+  void streamChat_opencode_모델형식이_슬래시가_없으면_에러이벤트로_끝내고_호출이_나가지_않는다() throws IOException {
     when(settingsService.getAsMap("ai")).thenReturn(Map.of("ai.model", "claude-sonnet-5"));
     when(aiCredentialService.resolve())
-        .thenReturn(
-            new AiCredential.Opencode("openai", "https://api.openai.com/v1", "", "sk-oai"));
+        .thenReturn(new AiCredential.Opencode("openai", "https://api.openai.com/v1", "", "sk-oai"));
     // 이 요청이 실제로 나가면 받아줄 스텁 — 가드가 사라진 뮤턴트에서도 무관한 응답을 받게 해,
     // 아래 단언이 "가드가 막았는가"만 보게 한다(스텁 부재로 인한 별개의 실패와 섞이지 않도록).
     wireMock.stubFor(
@@ -350,12 +339,11 @@ class AiAgentProxyServiceTest extends IntegrationTestBase {
 
   /** 슬래시는 있지만 providerId 접두사가 저장된 opencode 공급자와 다르면 마찬가지로 막는다. */
   @Test
-  void streamChat_opencode_모델의_provider접두사가_다르면_에러이벤트로_끝내고_호출이_나가지_않는다()
-      throws IOException {
-    when(settingsService.getAsMap("ai")).thenReturn(Map.of("ai.model", "anthropic/claude-sonnet-5"));
+  void streamChat_opencode_모델의_provider접두사가_다르면_에러이벤트로_끝내고_호출이_나가지_않는다() throws IOException {
+    when(settingsService.getAsMap("ai"))
+        .thenReturn(Map.of("ai.model", "anthropic/claude-sonnet-5"));
     when(aiCredentialService.resolve())
-        .thenReturn(
-            new AiCredential.Opencode("openai", "https://api.openai.com/v1", "", "sk-oai"));
+        .thenReturn(new AiCredential.Opencode("openai", "https://api.openai.com/v1", "", "sk-oai"));
     wireMock.stubFor(
         post(urlEqualTo("/agent/chat"))
             .willReturn(
@@ -387,8 +375,8 @@ class AiAgentProxyServiceTest extends IntegrationTestBase {
   /**
    * 세션 이력 조회가 테넌트를 쿼리 파라미터로 실어 보내는지 확인한다.
    *
-   * <p>ai-agent 는 트랜스크립트를 테넌트별 디렉터리에 저장하므로 이 값이 없으면 400 이고, 값이
-   * 틀리면 남의 테넌트 디렉터리를 뒤진다 — 경로 파생 입력이라 URL 에 실렸는지 자체가 계약이다.
+   * <p>ai-agent 는 트랜스크립트를 테넌트별 디렉터리에 저장하므로 이 값이 없으면 400 이고, 값이 틀리면 남의 테넌트 디렉터리를 뒤진다 — 경로 파생 입력이라
+   * URL 에 실렸는지 자체가 계약이다.
    */
   @Test
   void getSessionHistory_sendsTenantIdAsQueryParam() {
@@ -407,9 +395,8 @@ class AiAgentProxyServiceTest extends IntegrationTestBase {
   /**
    * 테넌트 컨텍스트가 없으면 이력 조회 자체가 실패해야 한다(fail-closed).
    *
-   * <p>여기서 조용히 진행하면 ai-agent 가 어느 테넌트의 디렉터리를 볼지 알 수 없는 상태로 호출을
-   * 받게 된다. {@code IntegrationTestBase} 가 매 테스트마다 기본 테넌트를 심으므로, 이 테스트는
-   * 그것을 명시적으로 비워 운영의 "필터를 안 거친 경로" 상태를 재현한다.
+   * <p>여기서 조용히 진행하면 ai-agent 가 어느 테넌트의 디렉터리를 볼지 알 수 없는 상태로 호출을 받게 된다. {@code IntegrationTestBase} 가
+   * 매 테스트마다 기본 테넌트를 심으므로, 이 테스트는 그것을 명시적으로 비워 운영의 "필터를 안 거친 경로" 상태를 재현한다.
    */
   @Test
   void getSessionHistory_withoutTenantContext_failsClosed() {

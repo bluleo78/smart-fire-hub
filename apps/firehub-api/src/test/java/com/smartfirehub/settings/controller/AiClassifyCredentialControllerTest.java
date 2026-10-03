@@ -1,12 +1,12 @@
 package com.smartfirehub.settings.controller;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
-import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.security.JwtTokenProvider;
@@ -29,8 +29,8 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
 /**
- * {@code AiClassifyCredentialController} 통합 테스트(#707). 실제 {@code OpencodeProbeService} 를 쓴다 —
- * "분류 프로브가 채팅 키를 빌리지 않는다"는 그 서비스 내부 분기가 실제로 돌아야 의미가 있다.
+ * {@code AiClassifyCredentialController} 통합 테스트(#707). 실제 {@code OpencodeProbeService} 를 쓴다 — "분류
+ * 프로브가 채팅 키를 빌리지 않는다"는 그 서비스 내부 분기가 실제로 돌아야 의미가 있다.
  */
 @AutoConfigureMockMvc
 class AiClassifyCredentialControllerTest extends IntegrationTestBase {
@@ -62,18 +62,21 @@ class AiClassifyCredentialControllerTest extends IntegrationTestBase {
   /** ai:settings 를 가진 테넌트 사용자(테넌트 1 의 ADMIN 롤, role_id=1 — 시드 고정값). */
   private long tenantUserWithAiSettings() {
     long userId =
-        TenantRlsTestSupport.insertUserWithPassword(dsl, "cls-admin-" + System.nanoTime(), "{noop}x");
+        TenantRlsTestSupport.insertUserWithPassword(
+            dsl, "cls-admin-" + System.nanoTime(), "{noop}x");
     createdUserIds.add(userId);
     // 권한 조회는 같은 테넌트의 ACTIVE 멤버십을 요구한다(WD-2) — user_role 만으로는 권한이 0 이다.
     TenantRlsTestSupport.insertActiveMembership(dsl, userId, DEFAULT_TEST_TENANT_ID);
-    inTenantFixture(() -> dsl.execute("insert into user_role (user_id, role_id) values (?, 1)", userId));
+    inTenantFixture(
+        () -> dsl.execute("insert into user_role (user_id, role_id) values (?, 1)", userId));
     return userId;
   }
 
   /** 어떤 테넌트 롤도 없는 사용자 — ai:settings 를 포함해 아무 권한도 없다. */
   private long tenantUserWithoutPermission() {
     long userId =
-        TenantRlsTestSupport.insertUserWithPassword(dsl, "cls-noperm-" + System.nanoTime(), "{noop}x");
+        TenantRlsTestSupport.insertUserWithPassword(
+            dsl, "cls-noperm-" + System.nanoTime(), "{noop}x");
     createdUserIds.add(userId);
     return userId;
   }
@@ -109,10 +112,14 @@ class AiClassifyCredentialControllerTest extends IntegrationTestBase {
                 .content(
                     json(
                         Map.of(
-                            "agentType", "sdk",
-                            "payload", Map.of(),
-                            "secret", Map.of("oauthToken", "oat-classify-SECRET"),
-                            "model", "claude-haiku-4-5"))))
+                            "agentType",
+                            "sdk",
+                            "payload",
+                            Map.of(),
+                            "secret",
+                            Map.of("oauthToken", "oat-classify-SECRET"),
+                            "model",
+                            "claude-haiku-4-5"))))
         .andExpect(status().isNoContent());
 
     mockMvc
@@ -121,7 +128,8 @@ class AiClassifyCredentialControllerTest extends IntegrationTestBase {
         .andExpect(jsonPath("$.model").value("claude-haiku-4-5"))
         .andExpect(jsonPath("$.secretFieldNames[0]").value("oauthToken"))
         .andExpect(
-            result -> assertThat(result.getResponse().getContentAsString()).doesNotContain("SECRET"));
+            result ->
+                assertThat(result.getResponse().getContentAsString()).doesNotContain("SECRET"));
     // 채팅 슬롯은 그대로 미설정이다.
     TenantContext.set(DEFAULT_TEST_TENANT_ID);
     assertThat(aiCredentialService.read().configured()).isFalse();
@@ -135,7 +143,15 @@ class AiClassifyCredentialControllerTest extends IntegrationTestBase {
             put(BASE)
                 .header("Authorization", "Bearer " + tenantToken(userId))
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(json(Map.of("agentType", "sdk", "payload", Map.of(), "secret", Map.of("apiKey", "sk")))))
+                .content(
+                    json(
+                        Map.of(
+                            "agentType",
+                            "sdk",
+                            "payload",
+                            Map.of(),
+                            "secret",
+                            Map.of("apiKey", "sk")))))
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.message").value("분류 모델을 선택하세요"));
   }
@@ -151,10 +167,14 @@ class AiClassifyCredentialControllerTest extends IntegrationTestBase {
                 .content(
                     json(
                         Map.of(
-                            "agentType", "opencode",
-                            "payload", Map.of("providerId", "openai", "baseURL", "https://api.openai.com/v1"),
-                            "secret", Map.of(),
-                            "model", "anthropic/claude-haiku-4-5"))))
+                            "agentType",
+                            "opencode",
+                            "payload",
+                            Map.of("providerId", "openai", "baseURL", "https://api.openai.com/v1"),
+                            "secret",
+                            Map.of(),
+                            "model",
+                            "anthropic/claude-haiku-4-5"))))
         .andExpect(status().isBadRequest());
     TenantContext.set(DEFAULT_TEST_TENANT_ID);
     assertThat(aiCredentialService.readClassify().configured()).isFalse();
@@ -171,10 +191,14 @@ class AiClassifyCredentialControllerTest extends IntegrationTestBase {
                 .content(
                     json(
                         Map.of(
-                            "agentType", "opencode",
-                            "payload", Map.of("providerId", "x", "baseURL", "http://169.254.169.254/latest"),
-                            "secret", Map.of(),
-                            "model", "x/m"))))
+                            "agentType",
+                            "opencode",
+                            "payload",
+                            Map.of("providerId", "x", "baseURL", "http://169.254.169.254/latest"),
+                            "secret",
+                            Map.of(),
+                            "model",
+                            "x/m"))))
         .andExpect(status().isBadRequest());
   }
 
@@ -182,7 +206,9 @@ class AiClassifyCredentialControllerTest extends IntegrationTestBase {
   void DELETE_는_두_키를_지우고_멱등이다() throws Exception {
     TenantContext.set(DEFAULT_TEST_TENANT_ID);
     aiCredentialService.saveClassify(
-        new AiCredentialUpsert("cli-api", Map.of(), Map.of("apiKey", "sk")), "claude-haiku-4-5", null);
+        new AiCredentialUpsert("cli-api", Map.of(), Map.of("apiKey", "sk")),
+        "claude-haiku-4-5",
+        null);
     long userId = tenantUserWithAiSettings();
 
     for (int i = 0; i < 2; i++) {
@@ -221,17 +247,25 @@ class AiClassifyCredentialControllerTest extends IntegrationTestBase {
     String token = "Bearer " + tenantToken(tenantUserWithoutPermission());
     mockMvc.perform(get(BASE).header("Authorization", token)).andExpect(status().isForbidden());
     mockMvc
-        .perform(put(BASE).header("Authorization", token).contentType(MediaType.APPLICATION_JSON).content("{}"))
+        .perform(
+            put(BASE)
+                .header("Authorization", token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{}"))
         .andExpect(status().isForbidden());
     mockMvc.perform(delete(BASE).header("Authorization", token)).andExpect(status().isForbidden());
     mockMvc
-        .perform(post(BASE + "/probe").header("Authorization", token).contentType(MediaType.APPLICATION_JSON).content("{}"))
+        .perform(
+            post(BASE + "/probe")
+                .header("Authorization", token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{}"))
         .andExpect(status().isForbidden());
   }
 
   /**
-   * baseURL 에 userinfo(user:pass@)가 있으면 400 — 자격증명이 URL 에 실려 저장·캐시 판별자·로그로
-   * 새는 것을 막는다(#707). 검증기는 채팅·분류 공용이라 채팅 PUT 에도 같이 적용된다.
+   * baseURL 에 userinfo(user:pass@)가 있으면 400 — 자격증명이 URL 에 실려 저장·캐시 판별자·로그로 새는 것을 막는다(#707). 검증기는
+   * 채팅·분류 공용이라 채팅 PUT 에도 같이 적용된다.
    */
   @Test
   void PUT_opencode_baseURL_에_userinfo_가_있으면_400() throws Exception {
@@ -244,11 +278,18 @@ class AiClassifyCredentialControllerTest extends IntegrationTestBase {
                 .content(
                     json(
                         Map.of(
-                            "agentType", "opencode",
+                            "agentType",
+                            "opencode",
                             "payload",
-                                Map.of("providerId", "openai", "baseURL", "https://user:pass@api.openai.com/v1"),
-                            "secret", Map.of(),
-                            "model", "openai/gpt-4o-mini"))))
+                            Map.of(
+                                "providerId",
+                                "openai",
+                                "baseURL",
+                                "https://user:pass@api.openai.com/v1"),
+                            "secret",
+                            Map.of(),
+                            "model",
+                            "openai/gpt-4o-mini"))))
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.message").value(OpencodePutValidator.MSG_BASE_URL_USERINFO));
     TenantContext.set(DEFAULT_TEST_TENANT_ID);

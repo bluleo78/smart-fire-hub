@@ -19,14 +19,14 @@ import org.springframework.beans.factory.annotation.Autowired;
  * 애드혹 SQL 의 geometry 조회가 <b>실행 순서에 따라</b> 깨지지 않는지 확인하는 회귀 테스트(#759).
  *
  * <p><b>결함.</b> pgjdbc 는 커넥션마다 "타입 OID → 타입 이름" 캐시(TypeInfoCache)를 두고, 이름은 <b>처음 조회한 순간의
- * search_path</b> 기준으로 정한다 — public 이 경로에 있으면 {@code geometry}, 없으면 {@code "public"."geometry"}. 애드혹
- * 분석 경로는 search_path 에 public 을 넣고, 데이터셋 SQL 탭은 데이터 스키마만 둔다. 그래서 같은 풀 커넥션에서 분석이 먼저
- * geometry 를 읽으면 그 커넥션의 캐시에 {@code geometry} 가 박히고, 이후 데이터셋 탭에서도 메타데이터 타입 이름이
- * {@code geometry} 로 보인다. jOOQ 는 이 이름을 자기 GEOMETRY 타입으로 해석해 값을 읽다 "Error while reading field" 로
- * 실패한다(분석 경로는 재시도로 가려졌지만 데이터셋 탭엔 재시도가 없다). 반대 순서면 둘 다 정상이었다.
+ * search_path</b> 기준으로 정한다 — public 이 경로에 있으면 {@code geometry}, 없으면 {@code "public"."geometry"}.
+ * 애드혹 분석 경로는 search_path 에 public 을 넣고, 데이터셋 SQL 탭은 데이터 스키마만 둔다. 그래서 같은 풀 커넥션에서 분석이 먼저 geometry 를
+ * 읽으면 그 커넥션의 캐시에 {@code geometry} 가 박히고, 이후 데이터셋 탭에서도 메타데이터 타입 이름이 {@code geometry} 로 보인다. jOOQ 는 이
+ * 이름을 자기 GEOMETRY 타입으로 해석해 값을 읽다 "Error while reading field" 로 실패한다(분석 경로는 재시도로 가려졌지만 데이터셋 탭엔 재시도가
+ * 없다). 반대 순서면 둘 다 정상이었다.
  *
- * <p><b>테스트 방법.</b> pgjdbc 캐시는 물리 커넥션 수명 동안 남으므로, 매 시나리오 전에 Hikari 풀을 비워(softEvict) 새
- * 커넥션에서 시작한다. 두 호출은 하나의 트랜잭션(= 같은 커넥션)으로 묶어 "같은 커넥션에서 A 후 B" 를 결정적으로 만든다.
+ * <p><b>테스트 방법.</b> pgjdbc 캐시는 물리 커넥션 수명 동안 남으므로, 매 시나리오 전에 Hikari 풀을 비워(softEvict) 새 커넥션에서 시작한다. 두
+ * 호출은 하나의 트랜잭션(= 같은 커넥션)으로 묶어 "같은 커넥션에서 A 후 B" 를 결정적으로 만든다.
  */
 class AdhocGeometryOrderIndependenceTest extends IntegrationTestBase {
 

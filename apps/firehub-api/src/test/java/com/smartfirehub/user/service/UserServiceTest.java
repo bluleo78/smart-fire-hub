@@ -72,9 +72,8 @@ class UserServiceTest extends IntegrationTestBase {
   /**
    * 픽스처 사용자를 기본 테넌트의 ACTIVE 멤버로 만든다.
    *
-   * <p>사용자 관리 경로(목록·상세·역할부여·활성화)는 {@code "user"} 가 전역 테이블이라 RLS 로 덮을
-   * 수 없어 {@code membership} 조인으로 테넌트를 좁힌다. 멤버십이 없으면 이 테스트의 픽스처는 관리
-   * 경로에서 "없는 사용자"(404)로 보인다 — 운영에서도 회원가입이 곧바로 기본 테넌트에 가입시키므로
+   * <p>사용자 관리 경로(목록·상세·역할부여·활성화)는 {@code "user"} 가 전역 테이블이라 RLS 로 덮을 수 없어 {@code membership} 조인으로
+   * 테넌트를 좁힌다. 멤버십이 없으면 이 테스트의 픽스처는 관리 경로에서 "없는 사용자"(404)로 보인다 — 운영에서도 회원가입이 곧바로 기본 테넌트에 가입시키므로
    * (SignupTransaction) 멤버십이 있는 상태가 정상이다.
    */
   private void joinDefaultTenant(Long userId) {
@@ -93,9 +92,8 @@ class UserServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * 목록 조회도 상세 조회처럼 역할을 함께 반환해야 한다(#586) — admin-manager subagent가
-   * list_users() 한 번의 호출만으로 "역할" 컬럼을 채울 수 있어야 하므로, 목록 응답에 역할이
-   * 실려 있는지 회귀 테스트로 고정한다.
+   * 목록 조회도 상세 조회처럼 역할을 함께 반환해야 한다(#586) — admin-manager subagent가 list_users() 한 번의 호출만으로 "역할" 컬럼을
+   * 채울 수 있어야 하므로, 목록 응답에 역할이 실려 있는지 회귀 테스트로 고정한다.
    */
   @Test
   void getUsers_includesRolesPerUser() {
@@ -235,7 +233,8 @@ class UserServiceTest extends IntegrationTestBase {
   }
 
   // setUserActive_lastAdmin_throwsException 삭제: 공유 기본 테넌트에는 다른 테스트의 ADMIN 이 섞여 판정이
-  // 오염된다. MembershipLifecycleServiceTest.lastActiveAdmin_rejected_whenOtherAdminSuspendedInThisTenant
+  // 오염된다.
+  // MembershipLifecycleServiceTest.lastActiveAdmin_rejected_whenOtherAdminSuspendedInThisTenant
   // (전용 테넌트)로 대체했다.
 
   @Test

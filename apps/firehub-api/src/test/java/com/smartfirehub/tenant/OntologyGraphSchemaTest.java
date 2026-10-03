@@ -12,10 +12,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 /**
  * V101 이 만든 온톨로지·그래프 8테이블의 스키마 형태를 카탈로그로 고정한다.
  *
- * <p>왜 필요한가: (1) 유니크 인덱스는 RLS 와 무관하게 전역으로 적용되므로 접지 않으면 두 번째
- * 테넌트가 같은 domain·dataset_id·dedupe_key 로 쓸 때 "보이지도 않는 행"과 충돌한다. (2) tenant_id
- * DEFAULT 가 GUC 를 읽지 않으면 앱이 값을 안 넣는 지금 구조에서 INSERT 가 NOT NULL 위반으로 깨진다.
- * 두 회귀 모두 테넌트가 하나뿐인 동안에는 행위 테스트로 드러나지 않아서 카탈로그로 못박는다.
+ * <p>왜 필요한가: (1) 유니크 인덱스는 RLS 와 무관하게 전역으로 적용되므로 접지 않으면 두 번째 테넌트가 같은 domain·dataset_id·dedupe_key 로
+ * 쓸 때 "보이지도 않는 행"과 충돌한다. (2) tenant_id DEFAULT 가 GUC 를 읽지 않으면 앱이 값을 안 넣는 지금 구조에서 INSERT 가 NOT NULL
+ * 위반으로 깨진다. 두 회귀 모두 테넌트가 하나뿐인 동안에는 행위 테스트로 드러나지 않아서 카탈로그로 못박는다.
  *
  * <p>주의: 이 밴드는 RDB 온톨로지 스키마만 격리한다 — Neo4j 그래프 자체는 여전히 미격리다.
  */
@@ -121,8 +120,7 @@ class OntologyGraphSchemaTest extends IntegrationTestBase {
     for (String table : TABLES) {
       Boolean rls =
           (Boolean)
-              dsl.fetchValue(
-                  "select relrowsecurity from pg_class where oid = ?::regclass", table);
+              dsl.fetchValue("select relrowsecurity from pg_class where oid = ?::regclass", table);
       assertThat(rls).as("%s RLS enabled", table).isTrue();
 
       Boolean forced =

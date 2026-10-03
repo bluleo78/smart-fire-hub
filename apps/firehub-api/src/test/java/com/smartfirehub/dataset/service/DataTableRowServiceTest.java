@@ -73,7 +73,8 @@ class DataTableRowServiceTest extends IntegrationTestBase {
             new DatasetColumnRequest("name", "Name", "TEXT", null, true, false, null),
             new DatasetColumnRequest("value", "Value", "INTEGER", null, true, false, null));
     return datasetService.createDataset(
-        new CreateDatasetRequest(tableName, tableName, null, null, "TABLE", "SOURCE", columns, null),
+        new CreateDatasetRequest(
+            tableName, tableName, null, null, "TABLE", "SOURCE", columns, null),
         testUserId);
   }
 
@@ -576,7 +577,8 @@ class DataTableRowServiceTest extends IntegrationTestBase {
             new DatasetColumnRequest("code", "Code", "TEXT", null, false, false, null, true),
             new DatasetColumnRequest("label", "Label", "TEXT", null, true, false, null, false));
     return datasetService.createDataset(
-        new CreateDatasetRequest(tableName, tableName, null, null, "TABLE", "SOURCE", columns, null),
+        new CreateDatasetRequest(
+            tableName, tableName, null, null, "TABLE", "SOURCE", columns, null),
         testUserId);
   }
 
@@ -597,15 +599,11 @@ class DataTableRowServiceTest extends IntegrationTestBase {
     dataTableRowService.insertStagingBatchWithProgress(
         stagingTable,
         columns,
-        List.of(
-            Map.of("code", "C1", "label", "First"), Map.of("code", "C2", "label", "OnlyOnce")),
+        List.of(Map.of("code", "C1", "label", "First"), Map.of("code", "C2", "label", "OnlyOnce")),
         (done, total) -> {});
     // 배치2: C1이 다시 등장 (마지막 등장이므로 이 값이 살아남아야 함)
     dataTableRowService.insertStagingBatchWithProgress(
-        stagingTable,
-        columns,
-        List.of(Map.of("code", "C1", "label", "Last")),
-        (done, total) -> {});
+        stagingTable, columns, List.of(Map.of("code", "C1", "label", "Last")), (done, total) -> {});
 
     DataTableRowService.UpsertResult result =
         dataTableRowService.promoteStagingToUpsert(
@@ -615,8 +613,7 @@ class DataTableRowServiceTest extends IntegrationTestBase {
     assertThat(result.inserted()).isEqualTo(2);
     assertThat(result.updated()).isEqualTo(0);
 
-    List<Map<String, Object>> rows =
-        dataTableRowService.queryData(tableName, columns, null, 0, 10);
+    List<Map<String, Object>> rows = dataTableRowService.queryData(tableName, columns, null, 0, 10);
     assertThat(rows).hasSize(2);
     Map<String, Object> c1 =
         rows.stream().filter(r -> "C1".equals(r.get("code"))).findFirst().orElseThrow();
@@ -652,8 +649,8 @@ class DataTableRowServiceTest extends IntegrationTestBase {
 
   /**
    * 정합성 고정(pin): staging 경로의 promote 결과가 기존 in-memory
-   * DataValidationService.dedupeByPrimaryKeysLastWins와 동일 입력에 대해 동일한 최종 값을 산출해야 한다. (null/구분자
-   * 충돌 등 엣지 케이스는 제외 — 순수하게 구분되는 pk에 대해서만 비교)
+   * DataValidationService.dedupeByPrimaryKeysLastWins와 동일 입력에 대해 동일한 최종 값을 산출해야 한다. (null/구분자 충돌 등
+   * 엣지 케이스는 제외 — 순수하게 구분되는 pk에 대해서만 비교)
    */
   @Test
   void promoteStagingToUpsert_sameFinalRowsAsInMemoryDedup() {
@@ -716,20 +713,13 @@ class DataTableRowServiceTest extends IntegrationTestBase {
 
     String stagingTable = dataTableRowService.createStagingTable(tableName, columns);
     dataTableRowService.insertStagingBatchWithProgress(
-        stagingTable,
-        columns,
-        List.of(Map.of("code", "C1", "label", "First")),
-        (d, t) -> {});
+        stagingTable, columns, List.of(Map.of("code", "C1", "label", "First")), (d, t) -> {});
     dataTableRowService.insertStagingBatchWithProgress(
-        stagingTable,
-        columns,
-        List.of(Map.of("code", "C1", "label", "Last")),
-        (d, t) -> {});
+        stagingTable, columns, List.of(Map.of("code", "C1", "label", "Last")), (d, t) -> {});
 
     dataTableRowService.promoteStagingToReplace(stagingTable, tableName, columns, pkColumns);
 
-    List<Map<String, Object>> rows =
-        dataTableRowService.queryData(tableName, columns, null, 0, 10);
+    List<Map<String, Object>> rows = dataTableRowService.queryData(tableName, columns, null, 0, 10);
     assertThat(rows).hasSize(1);
     assertThat(rows.get(0).get("code")).isEqualTo("C1");
     assertThat(rows.get(0).get("label")).isEqualTo("Last");

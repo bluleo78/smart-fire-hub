@@ -31,43 +31,34 @@ import reactor.netty.http.client.HttpClient;
 /**
  * opencode(OpenAI 호환) 공급자의 {@code GET {baseURL}/models} 를 호출해 모델 목록을 뽑는다.
  *
- * <p><b>이 클래스가 이 기능 전체의 보안 경계다.</b> 인증된 테넌트 관리자가 서버로 하여금 임의
- * URL 에 Bearer 토큰을 실어 보내게 할 수 있는 유일한 지점이다 — 설정 저장(PUT)은 값을 검증만
- * 하지 외부로 나가지 않지만, 프로브는 실제로 나간다. 그래서 가드를 이 서비스 안에서 전부
- * 끝낸다(호출부인 컨트롤러가 빠뜨려도 안전하도록).
+ * <p><b>이 클래스가 이 기능 전체의 보안 경계다.</b> 인증된 테넌트 관리자가 서버로 하여금 임의 URL 에 Bearer 토큰을 실어 보내게 할 수 있는 유일한 지점이다
+ * — 설정 저장(PUT)은 값을 검증만 하지 외부로 나가지 않지만, 프로브는 실제로 나간다. 그래서 가드를 이 서비스 안에서 전부 끝낸다(호출부인 컨트롤러가 빠뜨려도
+ * 안전하도록).
  *
  * <p><b>가드 목록</b> (설계서 "프로브(opencode 전용)" 절):
  *
  * <ul>
- *   <li>https 전용, 고정 포트 집합만 허용 — 임의 포트를 허용하면 내부 서비스(Redis/DB 등) 포트
- *       스캔 도구가 된다.
- *   <li>리다이렉트 추적 금지 — 공개 호스트가 302 로 169.254.169.254(클라우드 메타데이터)로
- *       돌려보내는 공격을 막는다.
- *   <li>DNS 해석 결과를 검사한다(호스트명 문자열이 아니라) — 호스트명만 보면 DNS rebinding(검사
- *       시점엔 공인 IP, 접속 시점엔 사설 IP)으로 우회된다.
+ *   <li>https 전용, 고정 포트 집합만 허용 — 임의 포트를 허용하면 내부 서비스(Redis/DB 등) 포트 스캔 도구가 된다.
+ *   <li>리다이렉트 추적 금지 — 공개 호스트가 302 로 169.254.169.254(클라우드 메타데이터)로 돌려보내는 공격을 막는다.
+ *   <li>DNS 해석 결과를 검사한다(호스트명 문자열이 아니라) — 호스트명만 보면 DNS rebinding(검사 시점엔 공인 IP, 접속 시점엔 사설 IP)으로 우회된다.
  *   <li>응답은 모델 ID 배열만 담는다 — upstream 본문·상태 텍스트·헤더를 그대로 흘리지 않는다.
  *   <li>{@code apiKey} 는 로그·응답 어디에도 남기지 않는다.
- *   <li><b>저장된 키 재사용은 현재 테넌트의 opencode 행에서만</b> — 요청이 {@code apiKey} 를
- *       생략했을 때 쓰는 "저장된 값"은 {@link AiCredentialService#tenantOpencodeCredential()}
- *       (현재 테넌트 행, 유형이 opencode 일 때만)이다. 이름만 같은 다른 유형의 비밀(sdk 의
- *       Anthropic {@code apiKey})이 임의 baseURL 로 실려 나가지 않게 한다.
+ *   <li><b>저장된 키 재사용은 현재 테넌트의 opencode 행에서만</b> — 요청이 {@code apiKey} 를 생략했을 때 쓰는 "저장된 값"은 {@link
+ *       AiCredentialService#tenantOpencodeCredential()} (현재 테넌트 행, 유형이 opencode 일 때만)이다. 이름만 같은 다른
+ *       유형의 비밀(sdk 의 Anthropic {@code apiKey})이 임의 baseURL 로 실려 나가지 않게 한다.
  * </ul>
  *
- * <p><b>실패를 구분한다.</b> 모든 실패를 {@code ok=false} 하나로 뭉치면(원인 문구가 전부
- * "실패했습니다" 식이면) 테스트가 "어떤 가드가 실제로 막았는지"를 검증할 수 없고, 화면도 사용자에게
- * 같은 조언만 반복한다. {@code MSG_*} 상수가 원인별로 다른 문구를 낸다.
+ * <p><b>실패를 구분한다.</b> 모든 실패를 {@code ok=false} 하나로 뭉치면(원인 문구가 전부 "실패했습니다" 식이면) 테스트가 "어떤 가드가 실제로
+ * 막았는지"를 검증할 수 없고, 화면도 사용자에게 같은 조언만 반복한다. {@code MSG_*} 상수가 원인별로 다른 문구를 낸다.
  *
- * <p><b>400 대 200</b>: 요청 형태 자체가 틀린 두 경우(재사용할 저장된 키가 없음, baseURL 이 저장된
- * 값과 달라 키 없이는 재사용 불가)는 {@link IllegalArgumentException} 을 던진다 —
- * {@code GlobalExceptionHandler} 가 이를 400 으로 매핑하고, {@link AiCredentialService#validate}
- * 가 이미 같은 신호로 쓰는 관례를 그대로 잇는다. 그 외(연결 불가/타임아웃/공급자 거부/응답 해석
- * 불가/가드 차단)는 {@link ProbeResult#ok()}{@code =false} 로 돌려준다 — 설계서가 프로브 엔드포인트
- * 응답을 "항상 200 + {ok,models,message}"(SMTP 테스트 선례)로 못박기 때문이다. 그 200 안에서
- * 422/502/504 를 더 세분화하고 싶으면 {@link ProbeResult#message()}(사람이 읽는 문구)가 아니라
- * {@link ProbeResult.Reason}(분기용 열거형)을 본다 — 문구를 문자열 매칭하면 문구가 바뀔 때마다
- * 그 매핑이 조용히 깨진다. 그 매핑 자체(reason → HTTP 세부 상태)는 이 서비스가 정하지 않는다
- * (저장 시 검증의 400/422/502/504 표는 PUT 경로 것이지 이 프로브의 것이 아니다) — Task 7
- * 컨트롤러가 {@link ProbeResult#reason()} 을 보고 필요하면 세분화한다.
+ * <p><b>400 대 200</b>: 요청 형태 자체가 틀린 두 경우(재사용할 저장된 키가 없음, baseURL 이 저장된 값과 달라 키 없이는 재사용 불가)는 {@link
+ * IllegalArgumentException} 을 던진다 — {@code GlobalExceptionHandler} 가 이를 400 으로 매핑하고, {@link
+ * AiCredentialService#validate} 가 이미 같은 신호로 쓰는 관례를 그대로 잇는다. 그 외(연결 불가/타임아웃/공급자 거부/응답 해석 불가/가드 차단)는
+ * {@link ProbeResult#ok()}{@code =false} 로 돌려준다 — 설계서가 프로브 엔드포인트 응답을 "항상 200 +
+ * {ok,models,message}"(SMTP 테스트 선례)로 못박기 때문이다. 그 200 안에서 422/502/504 를 더 세분화하고 싶으면 {@link
+ * ProbeResult#message()}(사람이 읽는 문구)가 아니라 {@link ProbeResult.Reason}(분기용 열거형)을 본다 — 문구를 문자열 매칭하면 문구가
+ * 바뀔 때마다 그 매핑이 조용히 깨진다. 그 매핑 자체(reason → HTTP 세부 상태)는 이 서비스가 정하지 않는다 (저장 시 검증의 400/422/502/504 표는
+ * PUT 경로 것이지 이 프로브의 것이 아니다) — Task 7 컨트롤러가 {@link ProbeResult#reason()} 을 보고 필요하면 세분화한다.
  */
 @Slf4j
 @Service
@@ -113,10 +104,7 @@ public class OpencodeProbeService {
     this(aiCredentialService, ssrfProtectionService, webClientBuilder, DEFAULT_TIMEOUT);
   }
 
-  /**
-   * 테스트 전용 — 타임아웃을 짧게 줘서 504 시나리오를 10초 기다리지 않고 재현할 수 있게 한다.
-   * 운영 경로는 위 3-인자 생성자(고정 10초)만 쓴다.
-   */
+  /** 테스트 전용 — 타임아웃을 짧게 줘서 504 시나리오를 10초 기다리지 않고 재현할 수 있게 한다. 운영 경로는 위 3-인자 생성자(고정 10초)만 쓴다. */
   OpencodeProbeService(
       AiCredentialService aiCredentialService,
       SsrfProtectionService ssrfProtectionService,
@@ -131,34 +119,28 @@ public class OpencodeProbeService {
   /**
    * {@code GET {baseUrl}/models} 결과.
    *
-   * <p><b>어떤 실패가 여기로 오고, 어떤 실패는 안 오는지.</b> 요청 형태 자체가 틀린 두 경우
-   * (재사용할 저장된 키가 없음, baseUrl 이 저장된 값과 달라 키 없이는 재사용 불가)는 이 record 가
-   * 아니라 {@link #probe} 가 {@link IllegalArgumentException} 을 던진다(400 신호, 아래
-   * {@link #probe} 의 {@code @throws} 참고). <b>그 외 모든 실패</b>(가드 차단/DNS 실패/연결 불가/
-   * 타임아웃/리다이렉트/공급자 거부/응답 파싱 불가/응답 과대)는 예외 없이 {@code ok=false} 로
-   * 돌아온다 — 설계서가 프로브 엔드포인트 응답을 "항상 200"으로 못박기 때문이다.
+   * <p><b>어떤 실패가 여기로 오고, 어떤 실패는 안 오는지.</b> 요청 형태 자체가 틀린 두 경우 (재사용할 저장된 키가 없음, baseUrl 이 저장된 값과 달라 키
+   * 없이는 재사용 불가)는 이 record 가 아니라 {@link #probe} 가 {@link IllegalArgumentException} 을 던진다(400 신호, 아래
+   * {@link #probe} 의 {@code @throws} 참고). <b>그 외 모든 실패</b>(가드 차단/DNS 실패/연결 불가/ 타임아웃/리다이렉트/공급자 거부/응답
+   * 파싱 불가/응답 과대)는 예외 없이 {@code ok=false} 로 돌아온다 — 설계서가 프로브 엔드포인트 응답을 "항상 200"으로 못박기 때문이다.
    *
-   * @param message 사람이 읽는 문구(화면 표시용). 실패 사유별로 다르지만 문자열 자체가 계약은
-   *     아니다 — 프로그램이 실패 종류로 분기해야 하면 {@code message} 를 파싱하지 말고
-   *     {@link Reason} 을 봐라.
-   * @param reason 실패 종류를 식별하는 열거형(성공이면 {@link Reason#OK}). Task 7 컨트롤러가
-   *     이 값을 스펙의 "저장 시 검증" 절 400/422/502/504 표에 대응하는 HTTP 상태로 매핑한다 —
-   *     한국어 문구를 문자열 매칭해 분기하면 문구가 바뀔 때마다 그 매핑이 조용히 깨진다.
+   * @param message 사람이 읽는 문구(화면 표시용). 실패 사유별로 다르지만 문자열 자체가 계약은 아니다 — 프로그램이 실패 종류로 분기해야 하면 {@code
+   *     message} 를 파싱하지 말고 {@link Reason} 을 봐라.
+   * @param reason 실패 종류를 식별하는 열거형(성공이면 {@link Reason#OK}). Task 7 컨트롤러가 이 값을 스펙의 "저장 시 검증" 절
+   *     400/422/502/504 표에 대응하는 HTTP 상태로 매핑한다 — 한국어 문구를 문자열 매칭해 분기하면 문구가 바뀔 때마다 그 매핑이 조용히 깨진다.
    */
   public record ProbeResult(boolean ok, List<String> models, String message, Reason reason) {
 
     /**
      * {@code ok() ⇔ reason == Reason.OK} 불변식을 생성 시점에 강제한다.
      *
-     * <p><b>왜 필요한가.</b> {@link OpencodeCredentialValidation#statusFor}(Task 7)와 이 클래스의
-     * {@code probe()} 호출부는 전부 {@code !result.ok()} 로 먼저 걸러낸 뒤에만
-     * {@code statusFor(result.reason())} 를 부른다 — {@code statusFor(Reason.OK)} 는 그 경로가
-     * 절대 밟히지 않는다는 가정 아래 일부러 {@code IllegalStateException} 을 던진다(그 메서드
-     * javadoc 참고). 이 record 자체는 그 가정("ok=false 인데 reason=OK", 혹은 그 반대)을 아무것도
-     * 막지 않았으므로, 나중에 실수로 그런 조합을 만드는 생성자 호출이 생기면 그 가정이 깨지고
-     * {@code statusFor(OK)} 가 실제로 호출돼 500 이 된다 — 컴파일도 기존 테스트도 통과한 채로.
-     * 그 조합 자체를 생성 시점에 차단해, 사고가 나더라도 이 record 를 만드는 순간 즉시 터지게
-     * 한다(런타임 어딘가에서 뒤늦게 500 으로 드러나는 대신).
+     * <p><b>왜 필요한가.</b> {@link OpencodeCredentialValidation#statusFor}(Task 7)와 이 클래스의 {@code
+     * probe()} 호출부는 전부 {@code !result.ok()} 로 먼저 걸러낸 뒤에만 {@code statusFor(result.reason())} 를 부른다 —
+     * {@code statusFor(Reason.OK)} 는 그 경로가 절대 밟히지 않는다는 가정 아래 일부러 {@code IllegalStateException} 을
+     * 던진다(그 메서드 javadoc 참고). 이 record 자체는 그 가정("ok=false 인데 reason=OK", 혹은 그 반대)을 아무것도 막지 않았으므로,
+     * 나중에 실수로 그런 조합을 만드는 생성자 호출이 생기면 그 가정이 깨지고 {@code statusFor(OK)} 가 실제로 호출돼 500 이 된다 — 컴파일도 기존
+     * 테스트도 통과한 채로. 그 조합 자체를 생성 시점에 차단해, 사고가 나더라도 이 record 를 만드는 순간 즉시 터지게 한다(런타임 어딘가에서 뒤늦게 500 으로
+     * 드러나는 대신).
      */
     public ProbeResult {
       if (ok != (reason == Reason.OK)) {
@@ -199,13 +181,11 @@ public class OpencodeProbeService {
   /**
    * 모델 목록을 조회한다.
    *
-   * @param baseUrl 테넌트가 입력한 opencode 공급자 기본 URL. 신뢰하지 않는다 — 클래스 상단 가드가
-   *     전부 이 값에 대해 돈다.
-   * @param apiKey 요청에 실린 키. {@code null}/공백이면 테넌트 자신의 저장된 opencode 키로
-   *     폴백한다(클래스 javadoc 참고). 그때 {@code baseUrl} 이 저장된 값과 다르면 폴백하지
-   *     않고 400 으로 거부한다.
-   * @throws IllegalArgumentException 재사용할 저장된 키가 없거나, baseUrl 이 저장된 값과 달라
-   *     키 없이는 재사용할 수 없을 때(둘 다 요청 형태 문제 — 400)
+   * @param baseUrl 테넌트가 입력한 opencode 공급자 기본 URL. 신뢰하지 않는다 — 클래스 상단 가드가 전부 이 값에 대해 돈다.
+   * @param apiKey 요청에 실린 키. {@code null}/공백이면 테넌트 자신의 저장된 opencode 키로 폴백한다(클래스 javadoc 참고). 그때
+   *     {@code baseUrl} 이 저장된 값과 다르면 폴백하지 않고 400 으로 거부한다.
+   * @throws IllegalArgumentException 재사용할 저장된 키가 없거나, baseUrl 이 저장된 값과 달라 키 없이는 재사용할 수 없을 때(둘 다 요청
+   *     형태 문제 — 400)
    */
   public ProbeResult probe(String baseUrl, String apiKey) {
     // 채팅 슬롯 프로브 — 기존 호출처 진입점(#707 이전 동작 그대로).
@@ -213,9 +193,8 @@ public class OpencodeProbeService {
   }
 
   /**
-   * {@link #probe(String, String)} 와 같되, 생략된 {@code apiKey} 를 <b>어느 슬롯의</b> 저장 키로
-   * 채울지 지정한다(#707). 슬롯을 섞지 않는다 — 분류 슬롯 프로브가 채팅 슬롯 키를 빌려 분류
-   * 게이트웨이로 보내면(또는 그 반대) 테넌트가 그 대상에 준 적 없는 키가 전송된다.
+   * {@link #probe(String, String)} 와 같되, 생략된 {@code apiKey} 를 <b>어느 슬롯의</b> 저장 키로 채울지 지정한다(#707).
+   * 슬롯을 섞지 않는다 — 분류 슬롯 프로브가 채팅 슬롯 키를 빌려 분류 게이트웨이로 보내면(또는 그 반대) 테넌트가 그 대상에 준 적 없는 키가 전송된다.
    *
    * @param slot 폴백 저장 키를 읽을 슬롯
    * @throws IllegalArgumentException {@link #probe(String, String)} 과 같은 조건(그 슬롯 기준)
@@ -234,21 +213,19 @@ public class OpencodeProbeService {
   }
 
   /**
-   * 이미 가드를 통과한 대상({@link #validateTargetOnly} 의 결과)으로 프로브한다 — 같은 baseUrl 에
-   * 대해 스킴/포트 검사와 <b>DNS 해석</b>을 다시 하지 않는다.
+   * 이미 가드를 통과한 대상({@link #validateTargetOnly} 의 결과)으로 프로브한다 — 같은 baseUrl 에 대해 스킴/포트 검사와 <b>DNS
+   * 해석</b>을 다시 하지 않는다.
    *
-   * <p><b>왜 있나.</b> 저장(PUT) 경로는 apiKey 유무와 무관하게 가드를 먼저 돌리고(보안 리뷰 Fix1),
-   * apiKey 가 있을 때만 이어서 프로브를 부른다. 그 두 단계가 각자 {@code baseUrl} 문자열로 시작하면
-   * {@code InetAddress.getAllByName()}(실제 DNS 질의)가 요청 1건당 두 번 돌고, 그 사이에 응답이
-   * 바뀌면 "검사한 주소"와 "접속할 주소"가 달라질 여지도 더 넓어진다.
+   * <p><b>왜 있나.</b> 저장(PUT) 경로는 apiKey 유무와 무관하게 가드를 먼저 돌리고(보안 리뷰 Fix1), apiKey 가 있을 때만 이어서 프로브를
+   * 부른다. 그 두 단계가 각자 {@code baseUrl} 문자열로 시작하면 {@code InetAddress.getAllByName()}(실제 DNS 질의)가 요청 1건당
+   * 두 번 돌고, 그 사이에 응답이 바뀌면 "검사한 주소"와 "접속할 주소"가 달라질 여지도 더 넓어진다.
    *
-   * <p><b>가드를 건너뛰는 문이 아니다.</b> {@link TargetCheck} 는 생성자가 {@code private} 라 이 클래스
-   * 밖에서 만들 수 없고, 유일한 생성 지점이 가드 본체({@link #validateTargetOnly})다. 게다가 실패한
-   * 결과를 들고 오면 아래에서 즉시 거부한다.
+   * <p><b>가드를 건너뛰는 문이 아니다.</b> {@link TargetCheck} 는 생성자가 {@code private} 라 이 클래스 밖에서 만들 수 없고, 유일한
+   * 생성 지점이 가드 본체({@link #validateTargetOnly})다. 게다가 실패한 결과를 들고 오면 아래에서 즉시 거부한다.
    *
    * @throws IllegalStateException 가드에 실패한 {@code check} 로 불렸을 때(호출부 버그)
-   * @throws IllegalArgumentException {@link #probe(String, String)} 과 같은 조건 — 재사용할 저장된
-   *     키가 없거나 baseUrl 이 저장된 값과 달라 키 없이는 재사용할 수 없을 때(400 신호)
+   * @throws IllegalArgumentException {@link #probe(String, String)} 과 같은 조건 — 재사용할 저장된 키가 없거나
+   *     baseUrl 이 저장된 값과 달라 키 없이는 재사용할 수 없을 때(400 신호)
    */
   public ProbeResult probe(TargetCheck check, String apiKey) {
     // 채팅 슬롯 — 기존 호출처 진입점.
@@ -256,8 +233,8 @@ public class OpencodeProbeService {
   }
 
   /**
-   * {@link #probe(TargetCheck, String)} 의 슬롯 지정판(#707). 생략된 {@code apiKey} 는 {@code slot}
-   * 의 저장 키에서만 채운다.
+   * {@link #probe(TargetCheck, String)} 의 슬롯 지정판(#707). 생략된 {@code apiKey} 는 {@code slot} 의 저장 키에서만
+   * 채운다.
    */
   public ProbeResult probe(AiCredentialSlot slot, TargetCheck check, String apiKey) {
     if (!check.ok()) {
@@ -269,24 +246,21 @@ public class OpencodeProbeService {
   }
 
   /**
-   * baseUrl 이 SSRF 가드(스킴/포트/DNS 해석·사설대역)를 통과하는지만 검사한다 — 실제
-   * {@code GET /models} 네트워크 호출은 하지 않는다.
+   * baseUrl 이 SSRF 가드(스킴/포트/DNS 해석·사설대역)를 통과하는지만 검사한다 — 실제 {@code GET /models} 네트워크 호출은 하지 않는다.
    *
-   * <p><b>왜 필요한가(보안 리뷰 Fix1).</b> {@code AiCredentialController} 의 opencode PUT 검증은 {@code apiKey} 가 생략되면
-   * {@link #probe} 를 통째로 건너뛰어 왔다(Ruling #27/#29 — "프로브만 건너뛴다"는 판정 자체는
-   * 맞지만, 그 프로브 안에 있던 이 가드까지 함께 건너뛰는 게 문제였다). 그 결과 {@code apiKey}
-   * 없이 저장하는 opencode 자격증명은 {@code baseURL} 이 전혀 검증되지 않은 채 저장됐고, 클라우드
-   * 메타데이터 주소({@code 169.254.169.254}) 같은 내부 대상을 저장한 뒤 {@code ai.model} 형식만
-   * 맞추면 다음 {@code AI_CLASSIFY} 호출에서 서버가 실제로 그 주소에 요청을 보내는 SSRF 가
-   * 성립했다. 이 메서드를 apiKey 유무와 무관하게 저장 시마다 호출해 그 구멍을 막는다.
+   * <p><b>왜 필요한가(보안 리뷰 Fix1).</b> {@code AiCredentialController} 의 opencode PUT 검증은 {@code apiKey}
+   * 가 생략되면 {@link #probe} 를 통째로 건너뛰어 왔다(Ruling #27/#29 — "프로브만 건너뛴다"는 판정 자체는 맞지만, 그 프로브 안에 있던 이
+   * 가드까지 함께 건너뛰는 게 문제였다). 그 결과 {@code apiKey} 없이 저장하는 opencode 자격증명은 {@code baseURL} 이 전혀 검증되지 않은 채
+   * 저장됐고, 클라우드 메타데이터 주소({@code 169.254.169.254}) 같은 내부 대상을 저장한 뒤 {@code ai.model} 형식만 맞추면 다음 {@code
+   * AI_CLASSIFY} 호출에서 서버가 실제로 그 주소에 요청을 보내는 SSRF 가 성립했다. 이 메서드를 apiKey 유무와 무관하게 저장 시마다 호출해 그 구멍을
+   * 막는다.
    *
-   * @return 가드를 통과하면 {@code ok()==true} 인 {@link TargetCheck}(검증된 {@code /models} URI 를
-   *     함께 든다 — {@link #probe(TargetCheck, String)} 가 그대로 받아 재검증·재해석을 건너뛴다),
-   *     실패하면 {@code ok()==false} 이고 {@code failure()} 에 실패 사유가 담긴 {@link ProbeResult} 가
-   *     들어 있다. {@link #probe} 와 달리 {@code baseUrl} 형식 오류도 예외가 아니라 이 결과
-   *     (Reason.INVALID_URL)로 돌아온다 — 호출부(컨트롤러)가 이미 프로브의
-   *     {@code IllegalArgumentException}/{@code ProbeResult} 두 갈래를 각자 다르게 다루고 있어,
-   *     이 메서드는 후자 하나로 통일해 호출부 분기를 단순하게 유지한다.
+   * @return 가드를 통과하면 {@code ok()==true} 인 {@link TargetCheck}(검증된 {@code /models} URI 를 함께 든다 —
+   *     {@link #probe(TargetCheck, String)} 가 그대로 받아 재검증·재해석을 건너뛴다), 실패하면 {@code ok()==false} 이고
+   *     {@code failure()} 에 실패 사유가 담긴 {@link ProbeResult} 가 들어 있다. {@link #probe} 와 달리 {@code
+   *     baseUrl} 형식 오류도 예외가 아니라 이 결과 (Reason.INVALID_URL)로 돌아온다 — 호출부(컨트롤러)가 이미 프로브의 {@code
+   *     IllegalArgumentException}/{@code ProbeResult} 두 갈래를 각자 다르게 다루고 있어, 이 메서드는 후자 하나로 통일해 호출부
+   *     분기를 단순하게 유지한다.
    */
   public TargetCheck validateTargetOnly(String baseUrl) {
     URI target;
@@ -312,18 +286,16 @@ public class OpencodeProbeService {
   }
 
   /**
-   * {@link #validateTargetOnly} 가 돌려주는 가드 검사 결과 — 통과했으면 그 대상을, 실패했으면
-   * 그대로 응답할 {@link ProbeResult} 를 든다.
+   * {@link #validateTargetOnly} 가 돌려주는 가드 검사 결과 — 통과했으면 그 대상을, 실패했으면 그대로 응답할 {@link ProbeResult} 를
+   * 든다.
    *
-   * <p><b>왜 값 객체인가.</b> 전에는 {@code validateTargetOnly} 가 {@link ProbeResult} 만 돌려줘서,
-   * 통과했다는 사실 외에 "무엇을 통과시켰는지"(조립된 {@code /models} URI)를 들고 나올 통로가
-   * 없었다. 그래서 컨트롤러가 이어서 {@code probe(baseUrl, apiKey)} 를 부르면 같은 호스트에 대해
-   * URI 조립과 DNS 해석이 처음부터 다시 돌았다.
+   * <p><b>왜 값 객체인가.</b> 전에는 {@code validateTargetOnly} 가 {@link ProbeResult} 만 돌려줘서, 통과했다는 사실 외에
+   * "무엇을 통과시켰는지"(조립된 {@code /models} URI)를 들고 나올 통로가 없었다. 그래서 컨트롤러가 이어서 {@code probe(baseUrl,
+   * apiKey)} 를 부르면 같은 호스트에 대해 URI 조립과 DNS 해석이 처음부터 다시 돌았다.
    *
-   * <p><b>생성자가 {@code private} 인 이유.</b> 이 타입의 존재 자체가 "가드를 통과했다"는 증거라,
-   * 밖에서 임의로 만들 수 있으면 {@link #probe(TargetCheck, String)} 가 가드를 건너뛰는 우회로가
-   * 된다 — 그게 정확히 보안 리뷰 Fix1 이 고친 버그의 모양이다. {@code record} 가 아니라 일반
-   * 클래스인 것도 같은 이유다 — public record 는 정규 생성자가 반드시 public 이라 그 문을 닫을 수 없다.
+   * <p><b>생성자가 {@code private} 인 이유.</b> 이 타입의 존재 자체가 "가드를 통과했다"는 증거라, 밖에서 임의로 만들 수 있으면 {@link
+   * #probe(TargetCheck, String)} 가 가드를 건너뛰는 우회로가 된다 — 그게 정확히 보안 리뷰 Fix1 이 고친 버그의 모양이다. {@code
+   * record} 가 아니라 일반 클래스인 것도 같은 이유다 — public record 는 정규 생성자가 반드시 public 이라 그 문을 닫을 수 없다.
    */
   public static class TargetCheck {
 
@@ -347,29 +319,24 @@ public class OpencodeProbeService {
       return failure == null;
     }
 
-    /**
-     * 실패 응답. {@link #ok()} 가 {@code true} 면 {@code null} 이다 — 호출부는 항상
-     * {@code ok()} 로 먼저 거른다.
-     */
+    /** 실패 응답. {@link #ok()} 가 {@code true} 면 {@code null} 이다 — 호출부는 항상 {@code ok()} 로 먼저 거른다. */
     public ProbeResult failure() {
       return failure;
     }
   }
 
   /**
-   * {@link #validateTarget} 이 가드에 걸렸을 때 던지는 사설 예외 — <b>어떤 가드에 걸렸는지를
-   * {@link ProbeResult.Reason} 으로 직접 들고 온다.</b>
+   * {@link #validateTarget} 이 가드에 걸렸을 때 던지는 사설 예외 — <b>어떤 가드에 걸렸는지를 {@link ProbeResult.Reason} 으로
+   * 직접 들고 온다.</b>
    *
-   * <p><b>왜 사설 예외인가.</b> 예전에는 {@code validateTarget} 이 {@code SsrfException(MSG_*)}
-   * 으로 메시지만 던지고, 호출부가 그 고정 문자열 4개를 다시 문자열 매칭해 {@code Reason} 을
-   * 복원했다(매칭 실패 시 {@code IllegalStateException} 으로 방어). 가드는 자기가 어느 갈래에서
-   * 걸렸는지 이미 정확히 알고 있었으므로 그 왕복은 정보를 한 번 버렸다가 추측으로 되살리는
-   * 것이었고, 가드를 하나 더하면서 역매핑을 깜빡하면 런타임에야 드러나는 종류의 결합이었다.
+   * <p><b>왜 사설 예외인가.</b> 예전에는 {@code validateTarget} 이 {@code SsrfException(MSG_*)} 으로 메시지만 던지고,
+   * 호출부가 그 고정 문자열 4개를 다시 문자열 매칭해 {@code Reason} 을 복원했다(매칭 실패 시 {@code IllegalStateException} 으로
+   * 방어). 가드는 자기가 어느 갈래에서 걸렸는지 이미 정확히 알고 있었으므로 그 왕복은 정보를 한 번 버렸다가 추측으로 되살리는 것이었고, 가드를 하나 더하면서 역매핑을
+   * 깜빡하면 런타임에야 드러나는 종류의 결합이었다.
    *
-   * <p>{@link SsrfException} 을 상속한다 — {@code validateTarget} 의 공개된 계약("여기서 던지는
-   * {@code SsrfException} 의 메시지는 항상 {@code MSG_*} 중 하나")과 그 메서드를 재정의해 쓰는
-   * 테스트 확장점을 그대로 유지하기 위해서다. 외부 노출 타입인 {@code SsrfException} 자체의
-   * 계약은 건드리지 않는다.
+   * <p>{@link SsrfException} 을 상속한다 — {@code validateTarget} 의 공개된 계약("여기서 던지는 {@code
+   * SsrfException} 의 메시지는 항상 {@code MSG_*} 중 하나")과 그 메서드를 재정의해 쓰는 테스트 확장점을 그대로 유지하기 위해서다. 외부 노출 타입인
+   * {@code SsrfException} 자체의 계약은 건드리지 않는다.
    */
   private static final class GuardViolation extends SsrfException {
     private final transient ProbeResult.Reason reason;
@@ -390,11 +357,10 @@ public class OpencodeProbeService {
   // -------------------------------------------------------------------------
 
   /**
-   * 요청에 {@code apiKey} 가 있으면 그대로 쓴다. 없으면(생략/공백) 테넌트 자신의 저장된 opencode
-   * 자격증명으로만 폴백한다 — 유형 필터가 있는 {@link
-   * AiCredentialService#tenantOpencodeCredential(AiCredentialSlot)} 를 쓰고 {@link
-   * AiCredentialService#resolve()} 는 쓰지 않는다(클래스 javadoc 참고). 폴백은 {@code slot} 의 행만
-   * 본다 — 다른 슬롯의 키는 빌리지 않는다(#707).
+   * 요청에 {@code apiKey} 가 있으면 그대로 쓴다. 없으면(생략/공백) 테넌트 자신의 저장된 opencode 자격증명으로만 폴백한다 — 유형 필터가 있는
+   * {@link AiCredentialService#tenantOpencodeCredential(AiCredentialSlot)} 를 쓰고 {@link
+   * AiCredentialService#resolve()} 는 쓰지 않는다(클래스 javadoc 참고). 폴백은 {@code slot} 의 행만 본다 — 다른 슬롯의 키는
+   * 빌리지 않는다(#707).
    */
   private String resolveApiKey(AiCredentialSlot slot, String baseUrl, String apiKey) {
     if (apiKey != null && !apiKey.isBlank()) {
@@ -416,7 +382,8 @@ public class OpencodeProbeService {
     // 문자열이다) 쪽으로 둔다. 요청 baseUrl 은 null 일 수 있고(UrlUtils.normalizeBaseUrl(null) 은
     // null 을 그대로 돌려준다), null 을 수신자로 두면 NPE 가 나 400 대신 500 이 된다 — apiKey 를
     // 생략한 요청이 baseUrl 도 생략했다면 "저장된 값과 다르다"로 자연스럽게 떨어져야 한다.
-    if (!UrlUtils.normalizeBaseUrl(stored.get().baseUrl()).equals(UrlUtils.normalizeBaseUrl(baseUrl))) {
+    if (!UrlUtils.normalizeBaseUrl(stored.get().baseUrl())
+        .equals(UrlUtils.normalizeBaseUrl(baseUrl))) {
       throw new IllegalArgumentException(MSG_BASE_URL_MISMATCH);
     }
 
@@ -428,11 +395,9 @@ public class OpencodeProbeService {
   // -------------------------------------------------------------------------
 
   /**
-   * {@code baseUrl + "/models"} 를 만들되, 원본 문자열을 그대로 이어붙이지 않고 스킴/호스트/포트/
-   * 경로만 뽑아 새 {@link URI} 를 조립한다. userinfo({@code user@host})·query·fragment 는 버린다
-   * — 파서마다 해석이 갈릴 수 있는 조각을 결과 URI 에 남기지 않기 위해서다(예:
-   * {@code https://trusted.example@evil.example/} 같은 입력에서 실제 접속 대상은 항상 host 필드
-   * 값이어야 한다).
+   * {@code baseUrl + "/models"} 를 만들되, 원본 문자열을 그대로 이어붙이지 않고 스킴/호스트/포트/ 경로만 뽑아 새 {@link URI} 를 조립한다.
+   * userinfo({@code user@host})·query·fragment 는 버린다 — 파서마다 해석이 갈릴 수 있는 조각을 결과 URI 에 남기지 않기 위해서다(예:
+   * {@code https://trusted.example@evil.example/} 같은 입력에서 실제 접속 대상은 항상 host 필드 값이어야 한다).
    */
   private URI buildModelsUri(String baseUrl) throws URISyntaxException {
     if (baseUrl == null || baseUrl.isBlank()) {
@@ -452,15 +417,12 @@ public class OpencodeProbeService {
   }
 
   /**
-   * 대상을 검증한다. 여기서 던지는 것은 {@link SsrfException} 의 하위 타입인 {@code GuardViolation}
-   * 이고, 메시지는 항상 위 {@code MSG_*} 상수 중 하나이며 어느 가드에 걸렸는지({@code Reason})를
-   * 함께 들고 나간다 — 호출부가 메시지를 되매핑할 필요가 없다.
+   * 대상을 검증한다. 여기서 던지는 것은 {@link SsrfException} 의 하위 타입인 {@code GuardViolation} 이고, 메시지는 항상 위 {@code
+   * MSG_*} 상수 중 하나이며 어느 가드에 걸렸는지({@code Reason})를 함께 들고 나간다 — 호출부가 메시지를 되매핑할 필요가 없다.
    *
-   * <p><b>protected — 테스트 전용 확장점.</b> WireMock(루프백)을 상대해야 하는 테스트는 이
-   * 메서드를 재정의해 통째로 건너뛴다. 가드 자체(사설 대역/스킴/포트/DNS 재바인딩 차단)의 정확성은
-   * 이 메서드를 재정의하지 <b>않은</b> 인스턴스로 검증하는 별도 테스트들이 맡는다 — 두 책임을
-   * 한 테스트 그룹에 같이 두면(성공 검증 + 루프백 차단을 같은 인스턴스로) 둘 중 하나가 항상
-   * 실패하게 된다(WireMock 은 루프백에서 뜬다).
+   * <p><b>protected — 테스트 전용 확장점.</b> WireMock(루프백)을 상대해야 하는 테스트는 이 메서드를 재정의해 통째로 건너뛴다. 가드 자체(사설
+   * 대역/스킴/포트/DNS 재바인딩 차단)의 정확성은 이 메서드를 재정의하지 <b>않은</b> 인스턴스로 검증하는 별도 테스트들이 맡는다 — 두 책임을 한 테스트 그룹에 같이
+   * 두면(성공 검증 + 루프백 차단을 같은 인스턴스로) 둘 중 하나가 항상 실패하게 된다(WireMock 은 루프백에서 뜬다).
    */
   protected void validateTarget(URI uri) {
     String scheme = uri.getScheme();
@@ -529,11 +491,9 @@ public class OpencodeProbeService {
   }
 
   /**
-   * 0.0.0.0/8("이 네트워크" — RFC 791/1122). {@link InetAddress#isAnyLocalAddress()} 는 전부
-   * 0인 주소(0.0.0.0) 하나만 참을 반환하고, 0.0.0.1 같은 나머지 대역 전체는 통과시킨다(리뷰에서
-   * jshell 로 실측: {@code 0.0.0.1} 은 any/loopback/site 판정 모두 거짓). 커널·라우팅 설정에 따라
-   * 실제 도달 가능성은 갈리지만, 스펙이 명시적으로 나열한 차단 대상 대역이라 문서화된 구멍보다는
-   * 막힌 상태가 낫다.
+   * 0.0.0.0/8("이 네트워크" — RFC 791/1122). {@link InetAddress#isAnyLocalAddress()} 는 전부 0인 주소(0.0.0.0)
+   * 하나만 참을 반환하고, 0.0.0.1 같은 나머지 대역 전체는 통과시킨다(리뷰에서 jshell 로 실측: {@code 0.0.0.1} 은 any/loopback/site
+   * 판정 모두 거짓). 커널·라우팅 설정에 따라 실제 도달 가능성은 갈리지만, 스펙이 명시적으로 나열한 차단 대상 대역이라 문서화된 구멍보다는 막힌 상태가 낫다.
    */
   private static boolean isReservedZeroNet(InetAddress address) {
     byte[] b = address.getAddress();
@@ -588,7 +548,14 @@ public class OpencodeProbeService {
                     HttpStatusCode status = response.statusCode();
 
                     if (status.is3xxRedirection()) {
-                      return response.releaseBody().thenReturn(new ProbeResult(false, List.of(), MSG_REDIRECT, ProbeResult.Reason.REDIRECT_BLOCKED));
+                      return response
+                          .releaseBody()
+                          .thenReturn(
+                              new ProbeResult(
+                                  false,
+                                  List.of(),
+                                  MSG_REDIRECT,
+                                  ProbeResult.Reason.REDIRECT_BLOCKED));
                     }
                     if (!status.is2xxSuccessful()) {
                       // 상태 코드 숫자만 남긴다 — 본문(예: "bad key sk-...")과 상태 텍스트(reason
@@ -599,10 +566,10 @@ public class OpencodeProbeService {
                           .releaseBody()
                           .thenReturn(
                               new ProbeResult(
-                                      false,
-                                      List.of(),
-                                      MSG_PROVIDER_REJECTED + " (status=" + code + ")",
-                                      ProbeResult.Reason.PROVIDER_REJECTED));
+                                  false,
+                                  List.of(),
+                                  MSG_PROVIDER_REJECTED + " (status=" + code + ")",
+                                  ProbeResult.Reason.PROVIDER_REJECTED));
                     }
                     return response.bodyToMono(String.class).map(OpencodeProbeService::parseModels);
                   })

@@ -18,10 +18,9 @@ import org.springframework.transaction.support.TransactionTemplate;
 /**
  * ReviewItemRepository 통합 테스트 — 실제 Postgres(smartfirehub_test). SynonymDecisionRepositoryTest 선례.
  *
- * <p>V102 로 graph_review_item 에 RLS 가 걸린 뒤로는 이 테스트가 직접 쏘는 raw dsl 삭제·조회도 정책의
- * 대상이다. GUC 는 트랜잭션이 열릴 때만 주입되므로 트랜잭션 밖 DELETE 는 0행이 되고, 남은 행이
- * decided_by FK 를 붙잡아 뒤이은 "user" 삭제가 FK 위반으로 터진다(실제로 그렇게 실패했다).
- * 그래서 정리·검증 조회만 트랜잭션으로 감싼다 — repo 호출은 그 자신의 트랜잭션 배선이 검증 대상이라 그대로 둔다.
+ * <p>V102 로 graph_review_item 에 RLS 가 걸린 뒤로는 이 테스트가 직접 쏘는 raw dsl 삭제·조회도 정책의 대상이다. GUC 는 트랜잭션이 열릴
+ * 때만 주입되므로 트랜잭션 밖 DELETE 는 0행이 되고, 남은 행이 decided_by FK 를 붙잡아 뒤이은 "user" 삭제가 FK 위반으로 터진다(실제로 그렇게
+ * 실패했다). 그래서 정리·검증 조회만 트랜잭션으로 감싼다 — repo 호출은 그 자신의 트랜잭션 배선이 검증 대상이라 그대로 둔다.
  */
 class ReviewItemRepositoryTest extends IntegrationTestBase {
 
@@ -46,7 +45,13 @@ class ReviewItemRepositoryTest extends IntegrationTestBase {
 
   @Test
   void upsertPending_thenFindDecisionStatus_returnsPending() {
-    repo.upsertPending("synonym_merge", "TestCause|a|b", null, "similarity", 0.7, "reason",
+    repo.upsertPending(
+        "synonym_merge",
+        "TestCause|a|b",
+        null,
+        "similarity",
+        0.7,
+        "reason",
         "{\"entityType\":\"TestCause\",\"nameA\":\"a\",\"nameB\":\"b\"}");
 
     assertThat(repo.findDecisionStatus("synonym_merge", "TestCause|a|b")).contains("pending");
@@ -56,35 +61,55 @@ class ReviewItemRepositoryTest extends IntegrationTestBase {
   @Test
   void upsertPending_duplicateKey_doesNothing() {
     repo.upsertPending("synonym_merge", "TestCause|a|b", null, "similarity", 0.7, "first", "{}");
-    repo.upsertPending("synonym_merge", "TestCause|a|b", null, "similarity", 0.7, "second(무시)", "{}");
+    repo.upsertPending(
+        "synonym_merge", "TestCause|a|b", null, "similarity", 0.7, "second(무시)", "{}");
 
-    var row = repo.findByStatus("pending", "synonym_merge", null, null).stream()
-        .filter(r -> "TestCause|a|b".equals(dedupeKeyOf(r))).findFirst().orElseThrow();
+    var row =
+        repo.findByStatus("pending", "synonym_merge", null, null).stream()
+            .filter(r -> "TestCause|a|b".equals(dedupeKeyOf(r)))
+            .findFirst()
+            .orElseThrow();
     assertThat(row.reason()).isEqualTo("first");
   }
 
   @Test
   void findByStatus_filtersByItemType_andRoundTripsPayloadJson() {
-    repo.upsertPending("property_normalization", "TestKey|피해액", 12L, "normalization_failure", null,
-        "정규화 실패", "{\"entityKey\":\"3:화재\",\"propertyName\":\"피해액\",\"rawText\":\"약 3천만\"}");
+    repo.upsertPending(
+        "property_normalization",
+        "TestKey|피해액",
+        12L,
+        "normalization_failure",
+        null,
+        "정규화 실패",
+        "{\"entityKey\":\"3:화재\",\"propertyName\":\"피해액\",\"rawText\":\"약 3천만\"}");
 
-    var props = repo.findByStatus("pending", "property_normalization", null, null).stream()
-        .filter(r -> "TestKey|피해액".equals(dedupeKeyOf(r))).toList();
+    var props =
+        repo.findByStatus("pending", "property_normalization", null, null).stream()
+            .filter(r -> "TestKey|피해액".equals(dedupeKeyOf(r)))
+            .toList();
     assertThat(props).hasSize(1);
     assertThat(props.get(0).datasetId()).isEqualTo(12L);
     assertThat(props.get(0).payloadJson()).contains("\"rawText\"").contains("약 3천만");
     // 다른 타입 필터로는 안 나온다.
-    assertThat(repo.findByStatus("pending", "synonym_merge", null, null).stream().anyMatch(r -> "TestKey|피해액".equals(dedupeKeyOf(r)))).isFalse();
+    assertThat(
+            repo.findByStatus("pending", "synonym_merge", null, null).stream()
+                .anyMatch(r -> "TestKey|피해액".equals(dedupeKeyOf(r))))
+        .isFalse();
   }
 
   @Test
   void updateStatus_approved_removesFromPending() {
-    long userId = dsl.fetchOne(
-        "INSERT INTO \"user\"(username, password, name, email) VALUES ('testdecider','x','T','testdecider@example.com') RETURNING id")
-        .get(0, Long.class);
+    long userId =
+        dsl.fetchOne(
+                "INSERT INTO \"user\"(username, password, name, email) VALUES ('testdecider','x','T','testdecider@example.com') RETURNING id")
+            .get(0, Long.class);
     repo.upsertPending("synonym_merge", "TestCause|a|b", null, "similarity", 0.7, "r", "{}");
-    long id = repo.findByStatus("pending", "synonym_merge", null, null).stream()
-        .filter(r -> "TestCause|a|b".equals(dedupeKeyOf(r))).findFirst().orElseThrow().id();
+    long id =
+        repo.findByStatus("pending", "synonym_merge", null, null).stream()
+            .filter(r -> "TestCause|a|b".equals(dedupeKeyOf(r)))
+            .findFirst()
+            .orElseThrow()
+            .id();
 
     repo.updateStatus(id, "approved", userId);
 
@@ -121,8 +146,10 @@ class ReviewItemRepositoryTest extends IntegrationTestBase {
     var ids1 = page1.stream().map(ReviewItemRecord::id).toList();
     var ids2 = page2.stream().map(ReviewItemRecord::id).toList();
     // 세 페이지를 합치면 limit 없이 조회한 전체와 정확히 일치해야 한다(중복도 누락도 없이).
-    var all = repo.findByStatus("pending", isolatedType, null, null).stream()
-        .map(ReviewItemRecord::id).toList();
+    var all =
+        repo.findByStatus("pending", isolatedType, null, null).stream()
+            .map(ReviewItemRecord::id)
+            .toList();
     var paged = new java.util.ArrayList<Long>();
     paged.addAll(ids0);
     paged.addAll(ids1);

@@ -39,7 +39,9 @@ class EmbeddingStatusServiceTest {
     when(chunkRepo.countAllChunks()).thenReturn(500L);
     when(chunkRepo.countEmbedded(space)).thenReturn(340L);
     OffsetDateTime at = OffsetDateTime.parse("2026-09-28T10:00:00Z");
-    when(stateRepo.find()).thenReturn(Optional.of(new ReembedState("FAILED", space.model(), 1536, "401 Unauthorized", at)));
+    when(stateRepo.find())
+        .thenReturn(
+            Optional.of(new ReembedState("FAILED", space.model(), 1536, "401 Unauthorized", at)));
 
     EmbeddingStatusResponse r = service().status();
 

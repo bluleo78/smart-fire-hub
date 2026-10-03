@@ -17,9 +17,7 @@ import org.jooq.Record;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
-/**
- * 원본 데이터 테이블 읽기. 컬럼 이름은 호출자가 dataset_column 에서 얻은 값만 넘긴다(식별자는 인용).
- */
+/** 원본 데이터 테이블 읽기. 컬럼 이름은 호출자가 dataset_column 에서 얻은 값만 넘긴다(식별자는 인용). */
 @Repository
 @Transactional(readOnly = true)
 @RequiredArgsConstructor
@@ -54,10 +52,14 @@ public class SearchSourceReader {
 
   /** 원본 테이블의 현재 OID — swap(DROP+RENAME)이면 바뀐다. */
   public long currentOid(String table) {
-    return dsl.fetchOne("SELECT ?::regclass::oid::bigint", DataSchema.qualify(table)).get(0, Long.class);
+    return dsl.fetchOne("SELECT ?::regclass::oid::bigint", DataSchema.qualify(table))
+        .get(0, Long.class);
   }
 
-  /** 원본 테이블 전체 행 수 — 진행률 분모(total_rows)에 쓴다. 데이터 테이블 행 수 조회의 정본을 그대로 쓴다(테이블명 형식 검증 포함 — 생성 경로가 이미 같은 검증을 거쳐 실질 영향 없음). */
+  /**
+   * 원본 테이블 전체 행 수 — 진행률 분모(total_rows)에 쓴다. 데이터 테이블 행 수 조회의 정본을 그대로 쓴다(테이블명 형식 검증 포함 — 생성 경로가 이미 같은
+   * 검증을 거쳐 실질 영향 없음).
+   */
   public long countRows(String table) {
     return dataTableRowService.countRows(table);
   }
@@ -65,9 +67,9 @@ public class SearchSourceReader {
   /**
    * 검색 결과 원본 조회: id → {컬럼: 값}. 없는 id 는 결과에 없다.
    *
-   * <p>반환 컬럼에는 DATE/TIMESTAMP 도 들어올 수 있다(검색 대상 필드와 달리 제한 없음). {@code dsl.fetch} 로 읽으면 Java
-   * 날짜 객체가 표현 못 하는 값(±infinity·BC·10000년·1582/DST 공백)이 오류 없이 다른 날짜가 되므로, 데이터 탭과 같은
-   * {@link TemporalSafeFetch} 로 읽어 이상 값은 PG 원문 텍스트, 정상 값은 예전과 같은 타입으로 둔다(#775, #769 와 같은 원인).
+   * <p>반환 컬럼에는 DATE/TIMESTAMP 도 들어올 수 있다(검색 대상 필드와 달리 제한 없음). {@code dsl.fetch} 로 읽으면 Java 날짜 객체가
+   * 표현 못 하는 값(±infinity·BC·10000년·1582/DST 공백)이 오류 없이 다른 날짜가 되므로, 데이터 탭과 같은 {@link
+   * TemporalSafeFetch} 로 읽어 이상 값은 PG 원문 텍스트, 정상 값은 예전과 같은 타입으로 둔다(#775, #769 와 같은 원인).
    */
   public Map<Long, Map<String, Object>> fetchRows(
       String table, List<String> columns, Collection<Long> ids) {
@@ -76,7 +78,10 @@ public class SearchSourceReader {
     String cols = quotedColumns(columns);
     TemporalSafeFetch.fetch(
             dsl,
-            "SELECT id" + (cols.isEmpty() ? "" : ", " + cols) + " FROM " + DataSchema.qualify(table)
+            "SELECT id"
+                + (cols.isEmpty() ? "" : ", " + cols)
+                + " FROM "
+                + DataSchema.qualify(table)
                 + " WHERE id = ANY(?)",
             (Object) ids.toArray(Long[]::new))
         .forEach(r -> result.put(r.get("id", Long.class), toValues(r, columns)));

@@ -25,9 +25,8 @@ import org.springframework.mail.javamail.MimeMessageHelper;
 /**
  * SMTP 호스트·발신자 주소의 저장 시점 검증(#728).
  *
- * <p>결함: {@code smtp.from_address = "not-an-email"} 과 {@code smtp.host = "  "} 이 204 로
- * 저장됐다. 연결 테스트는 접속만 확인하므로 잘못된 발신자는 실제 메일이 나갈 때에야 실패했고,
- * 공백 호스트는 "저장했는데 미설정"인 상태를 만들었다.
+ * <p>결함: {@code smtp.from_address = "not-an-email"} 과 {@code smtp.host = " "} 이 204 로 저장됐다. 연결 테스트는
+ * 접속만 확인하므로 잘못된 발신자는 실제 메일이 나갈 때에야 실패했고, 공백 호스트는 "저장했는데 미설정"인 상태를 만들었다.
  *
  * <p>매 테스트마다 새 테넌트를 만들고 지운다 — 수용 케이스가 실제로 행을 쓰기 때문이다.
  */
@@ -53,8 +52,8 @@ class SmtpHostAndFromAddressValidationTest extends IntegrationTestBase {
   /**
    * 거부돼야 하는 값. 메시지에는 필드 이름이 들어 있어야 한다(화면 토스트에 그대로 나간다).
    *
-   * <p>발신자 주소 행은 web 의 {@code smtp-address.test.ts} 거부 목록과 <b>같은 값</b>이다 — 두 목록이
-   * 갈라지면 "칸 검증은 통과하고 저장은 400" 이 다시 생긴다.
+   * <p>발신자 주소 행은 web 의 {@code smtp-address.test.ts} 거부 목록과 <b>같은 값</b>이다 — 두 목록이 갈라지면 "칸 검증은 통과하고
+   * 저장은 400" 이 다시 생긴다.
    */
   @ParameterizedTest(name = "{0} = [{1}] 은 거부된다")
   @CsvSource(
@@ -107,15 +106,13 @@ class SmtpHostAndFromAddressValidationTest extends IntegrationTestBase {
   }
 
   /**
-   * #728 회귀 — web 과 서버의 판정이 갈렸던 값들이 저장 경로에서도 거부되는지 본다. 문법 전체의
-   * 대조는 {@link SmtpAddressGrammarTest} 가 web 과 함께 읽는 픽스처로 하고, 여기서는 그 문법이
-   * {@code updateSettings} 에 실제로 배선돼 있는지만 확인한다.
+   * #728 회귀 — web 과 서버의 판정이 갈렸던 값들이 저장 경로에서도 거부되는지 본다. 문법 전체의 대조는 {@link SmtpAddressGrammarTest} 가
+   * web 과 함께 읽는 픽스처로 하고, 여기서는 그 문법이 {@code updateSettings} 에 실제로 배선돼 있는지만 확인한다.
    *
    * <ul>
-   *   <li>도메인의 {@code _}·{@code ?}: web 칸은 통과, 서버는 파서 단계에서만 400 이었다 —
-   *       이제 양쪽 문법이 같이 막는다.
-   *   <li>줄바꿈 없는 공백(U+00A0)·BOM(U+FEFF)·폭 없는 공백(U+200B): {@code isBlank}·{@code \s} 가
-   *       공백으로 보지 않아 API 직접 호출로 204 저장됐다.
+   *   <li>도메인의 {@code _}·{@code ?}: web 칸은 통과, 서버는 파서 단계에서만 400 이었다 — 이제 양쪽 문법이 같이 막는다.
+   *   <li>줄바꿈 없는 공백(U+00A0)·BOM(U+FEFF)·폭 없는 공백(U+200B): {@code isBlank}·{@code \s} 가 공백으로 보지 않아
+   *       API 직접 호출로 204 저장됐다.
    * </ul>
    */
   static Stream<Arguments> web_과_판정이_갈렸던_값() {
@@ -126,7 +123,8 @@ class SmtpHostAndFromAddressValidationTest extends IntegrationTestBase {
         Arguments.of("smtp.from_address", "a\u00A0b@example.com", "발신자 주소"),
         Arguments.of("smtp.from_address", "\u00A0", "발신자 주소"),
         Arguments.of("smtp.from_address", "noreply@example.com\uFEFF", "발신자 주소"),
-        Arguments.of("smtp.from_address", "Fire\r\nBcc: x@example.com <noreply@example.com>", "발신자 주소"),
+        Arguments.of(
+            "smtp.from_address", "Fire\r\nBcc: x@example.com <noreply@example.com>", "발신자 주소"),
         Arguments.of("smtp.host", "\u00A0", "SMTP 호스트"),
         Arguments.of("smtp.host", "\uFEFF", "SMTP 호스트"),
         Arguments.of("smtp.host", "smtp\u00A0example.com", "SMTP 호스트"),
@@ -143,9 +141,8 @@ class SmtpHostAndFromAddressValidationTest extends IntegrationTestBase {
   }
 
   /**
-   * 정상 값은 그대로 저장된다 — 검증을 넣다가 멀쩡한 발신자를 막지 않았는지 본다. 표시명 형태는
-   * 발송 코드({@code EmailDeliveryChannel} 의 {@code helper.setFrom(String)})가 받는 형태다.
-   * web 의 {@code smtp-address.test.ts} 수용 목록과 같은 값이다.
+   * 정상 값은 그대로 저장된다 — 검증을 넣다가 멀쩡한 발신자를 막지 않았는지 본다. 표시명 형태는 발송 코드({@code EmailDeliveryChannel} 의
+   * {@code helper.setFrom(String)})가 받는 형태다. web 의 {@code smtp-address.test.ts} 수용 목록과 같은 값이다.
    */
   @ParameterizedTest(name = "smtp.from_address = [{0}] 은 저장되고 발송 코드가 From 으로 받는다")
   @CsvSource(
@@ -164,8 +161,7 @@ class SmtpHostAndFromAddressValidationTest extends IntegrationTestBase {
           <noreply@example.com>
           """)
   void 정상_발신자_주소는_저장되고_발송_코드가_받는다(String value) throws Exception {
-    assertThatCode(
-            () -> settingsService.updateSettings(Map.of("smtp.from_address", value), null))
+    assertThatCode(() -> settingsService.updateSettings(Map.of("smtp.from_address", value), null))
         .doesNotThrowAnyException();
     assertThat(settingsService.getSmtpConfig()).containsEntry("smtp.from_address", value);
 

@@ -17,8 +17,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 /**
- * 채팅 요청 바디 조립 테스트(이슈 #709). 웹 채팅과 Slack 인바운드가 이 한 곳을 공유하므로, 자격증명이
- * 실리는지와 미설정일 때 ai-agent 를 부르지 말라는 신호(problem)를 내는지를 여기서 고정한다.
+ * 채팅 요청 바디 조립 테스트(이슈 #709). 웹 채팅과 Slack 인바운드가 이 한 곳을 공유하므로, 자격증명이 실리는지와 미설정일 때 ai-agent 를 부르지 말라는
+ * 신호(problem)를 내는지를 여기서 고정한다.
  */
 @ExtendWith(MockitoExtension.class)
 class AiChatRequestBuilderTest {

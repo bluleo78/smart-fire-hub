@@ -18,9 +18,9 @@ import org.springframework.test.util.ReflectionTestUtils;
 /**
  * {@code pendingGauges} 축출(eviction) 검증 (P2-g Task 3).
  *
- * <p>Spring 컨텍스트 없이 {@link SimpleMeterRegistry} + Mockito 리포지토리 목으로 순수 단위 테스트로
- * 짠다 — {@code refreshPendingGauges()} 를 N 번 직접 호출해야 하는데 {@code @Scheduled} 를 기다릴
- * 이유가 없고, 패키지가 같아 package-private 메서드를 그대로 부를 수 있다.
+ * <p>Spring 컨텍스트 없이 {@link SimpleMeterRegistry} + Mockito 리포지토리 목으로 순수 단위 테스트로 짠다 — {@code
+ * refreshPendingGauges()} 를 N 번 직접 호출해야 하는데 {@code @Scheduled} 를 기다릴 이유가 없고, 패키지가 같아
+ * package-private 메서드를 그대로 부를 수 있다.
  */
 class NotificationMetricsEvictionTest {
 
@@ -76,10 +76,9 @@ class NotificationMetricsEvictionTest {
   /**
    * carry-forward 와 축출의 상호작용을 고정하는 핵심 테스트.
    *
-   * <p>조회에 <b>실패한</b> 테넌트는 목록에 계속 있지만({@code tenantIdsWithStatus} 는 성공) 카운트
-   * 조회 자체({@code countPendingByChannel})가 매번 예외를 던진다. 이 경우 현재 값을 이월하는 것이지
-   * "이번 패스에 없음"이 아니다 — 실패를 미출현으로 취급하면 DB 가 흔들리는 동안 적체 게이지가
-   * 축출되어, carry-forward 가 막으려던 거짓 음성(적체가 0으로 보임)을 축출이 뒷문으로 되살린다.
+   * <p>조회에 <b>실패한</b> 테넌트는 목록에 계속 있지만({@code tenantIdsWithStatus} 는 성공) 카운트 조회 자체({@code
+   * countPendingByChannel})가 매번 예외를 던진다. 이 경우 현재 값을 이월하는 것이지 "이번 패스에 없음"이 아니다 — 실패를 미출현으로 취급하면 DB 가
+   * 흔들리는 동안 적체 게이지가 축출되어, carry-forward 가 막으려던 거짓 음성(적체가 0으로 보임)을 축출이 뒷문으로 되살린다.
    */
   @Test
   void failedTenantQuery_isNotEvictionCandidate() {
@@ -124,7 +123,8 @@ class NotificationMetricsEvictionTest {
   }
 
   @SuppressWarnings("unchecked")
-  private Map<NotificationMetrics.GaugeKey, AtomicLong> pendingGaugesOf(NotificationMetrics metrics) {
+  private Map<NotificationMetrics.GaugeKey, AtomicLong> pendingGaugesOf(
+      NotificationMetrics metrics) {
     return (Map<NotificationMetrics.GaugeKey, AtomicLong>)
         ReflectionTestUtils.getField(metrics, "pendingGauges");
   }

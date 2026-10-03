@@ -22,8 +22,8 @@ import org.springframework.test.context.DynamicPropertySource;
 /**
  * Slack 인바운드용 ai-agent 클라이언트 테스트(이슈 #709).
  *
- * <p>WireMock 이 ai-agent 의 실제 계약({@code POST /agent/chat}, SSE 응답, {@code Internal} 인증)을
- * 흉내 낸다. 실제 빈 배선({@code agent.url} 을 읽는지 포함)으로 확인하려고 Spring 컨텍스트에서 돈다.
+ * <p>WireMock 이 ai-agent 의 실제 계약({@code POST /agent/chat}, SSE 응답, {@code Internal} 인증)을 흉내 낸다. 실제
+ * 빈 배선({@code agent.url} 을 읽는지 포함)으로 확인하려고 Spring 컨텍스트에서 돈다.
  */
 class AiAgentBatchClientTest extends IntegrationTestBase {
 
@@ -55,8 +55,18 @@ class AiAgentBatchClientTest extends IntegrationTestBase {
 
   private static final Map<String, Object> BODY =
       Map.of(
-          "message", "hi", "sessionId", "", "userId", 42, "tenantId", 7, "agentType", "sdk",
-          "apiKey", "sk-test");
+          "message",
+          "hi",
+          "sessionId",
+          "",
+          "userId",
+          42,
+          "tenantId",
+          7,
+          "agentType",
+          "sdk",
+          "apiKey",
+          "sk-test");
 
   /** ai-agent 의 SSE 형식 그대로 — 각 이벤트는 {@code data: {json}} 한 줄과 빈 줄. */
   private static String sse(String... dataLines) {

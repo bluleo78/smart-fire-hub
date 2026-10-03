@@ -7,7 +7,6 @@ import static com.smartfirehub.support.TenantRlsTestSupport.createActiveTenant;
 import static com.smartfirehub.support.TenantRlsTestSupport.deleteTenants;
 import static com.smartfirehub.support.TenantRlsTestSupport.runInTenantTransaction;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.settings.dto.ResolvedSettingResponse;
@@ -26,13 +25,12 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * AI 설정은 테넌트 전용이다(#706 후속) — 플랫폼({@code system_settings}) 행을 어떤 경로에서도
- * 읽지 않고, 테넌트 값이 없으면 코드 기본값({@link AiBehaviorDefaults})으로 해석된다.
+ * AI 설정은 테넌트 전용이다(#706 후속) — 플랫폼({@code system_settings}) 행을 어떤 경로에서도 읽지 않고, 테넌트 값이 없으면 코드
+ * 기본값({@link AiBehaviorDefaults})으로 해석된다.
  *
- * <p><b>비공허성</b>: V127 이 {@code ai.*} 플랫폼 행을 지웠으므로, 아무것도 심지 않고 "기본값이
- * 나온다"를 단언하면 플랫폼 폴백이 되살아나도 통과한다. 그래서 매 테스트 전에 6키 전부에
- * 기본값과 <b>다른</b> 표식 값을 플랫폼 행으로 직접 심고, 결과에 그 표식이 절대 나오지 않는지 본다.
- * 정리는 심은 행 삭제다(V127 이후 원래 행이 없다).
+ * <p><b>비공허성</b>: V127 이 {@code ai.*} 플랫폼 행을 지웠으므로, 아무것도 심지 않고 "기본값이 나온다"를 단언하면 플랫폼 폴백이 되살아나도 통과한다.
+ * 그래서 매 테스트 전에 6키 전부에 기본값과 <b>다른</b> 표식 값을 플랫폼 행으로 직접 심고, 결과에 그 표식이 절대 나오지 않는지 본다. 정리는 심은 행
+ * 삭제다(V127 이후 원래 행이 없다).
  */
 class AiSettingsTenantOnlyTest extends IntegrationTestBase {
 

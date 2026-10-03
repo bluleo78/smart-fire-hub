@@ -79,8 +79,10 @@ class SlackInboundServiceTest {
   private static final String BOT_TOKEN = "xoxb-test-token";
   private static final String BOT_TOKEN_ENC = "enc::" + BOT_TOKEN;
   private static final long TENANT_ID = 7L;
+
   /** 새 스레드(빈 sessionId)용 요청 바디 — 내용은 AiChatRequestBuilder 테스트 몫이라 표식만 둔다. */
   private static final Map<String, Object> NEW_BODY = Map.of("marker", "new");
+
   /** 기존 세션 이어쓰기용 요청 바디. */
   private static final Map<String, Object> RESUME_BODY = Map.of("marker", "resume");
 
@@ -127,8 +129,7 @@ class SlackInboundServiceTest {
     when(chatRequestBuilder.prepare(TENANT_ID, USER_ID, AGENT_SESSION_ID, "hi"))
         .thenReturn(new Prepared(RESUME_BODY, null));
     when(aiAgentClient.chat(NEW_BODY)).thenReturn(new ChatReply(AGENT_SESSION_ID, "AI 응답 텍스트"));
-    when(aiAgentClient.chat(RESUME_BODY))
-        .thenReturn(new ChatReply(AGENT_SESSION_ID, "AI 응답 텍스트"));
+    when(aiAgentClient.chat(RESUME_BODY)).thenReturn(new ChatReply(AGENT_SESSION_ID, "AI 응답 텍스트"));
   }
 
   /** 이벤트 JSON 생성 헬퍼. */
@@ -201,8 +202,7 @@ class SlackInboundServiceTest {
     verify(slackApiClient).reactionsAdd(BOT_TOKEN, CHANNEL, TS, "warning");
     // 연결 실패 등은 내부 정보라 원문 대신 일반 문구로 안내한다
     verify(slackApiClient)
-        .postEphemeral(
-            BOT_TOKEN, CHANNEL, SLACK_USER, "AI 응답 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.");
+        .postEphemeral(BOT_TOKEN, CHANNEL, SLACK_USER, "AI 응답 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.");
     // 실패한 턴의 세션은 기록하지 않는다
     verify(aiSessionRepo, never())
         .createSlackSession(
@@ -221,8 +221,7 @@ class SlackInboundServiceTest {
 
     verify(slackApiClient).reactionsAdd(BOT_TOKEN, CHANNEL, TS, "warning");
     verify(slackApiClient)
-        .postEphemeral(
-            BOT_TOKEN, CHANNEL, SLACK_USER, "AI 인증에 실패했습니다. 설정 › AI 에이전트에서 확인하세요.");
+        .postEphemeral(BOT_TOKEN, CHANNEL, SLACK_USER, "AI 인증에 실패했습니다. 설정 › AI 에이전트에서 확인하세요.");
     verify(slackChannel, never()).replyTo(anyLong(), anyString(), anyString(), anyString());
   }
 
@@ -395,9 +394,8 @@ class SlackInboundServiceTest {
   /**
    * 가드 회귀 보호 — 컨텍스트 없이 본 처리에 진입하면 예외.
    *
-   * <p><b>이 단언이 없으면 가드에 판별력이 0이다.</b> {@code dispatch} 를 통해 부르는 테스트는
-   * 전부 {@code runScoped} 가 컨텍스트를 세워 주므로 가드를 지워도 초록이다(리뷰 실측). 가드의
-   * 존재 이유는 "{@code dispatch} 의 해석·runScoped 배선이 깨졌을 때의 기계적 방어" 이므로,
+   * <p><b>이 단언이 없으면 가드에 판별력이 0이다.</b> {@code dispatch} 를 통해 부르는 테스트는 전부 {@code runScoped} 가 컨텍스트를
+   * 세워 주므로 가드를 지워도 초록이다(리뷰 실측). 가드의 존재 이유는 "{@code dispatch} 의 해석·runScoped 배선이 깨졌을 때의 기계적 방어" 이므로,
    * 가장 필요한 시점에 보호가 없으면 안 된다. 그래서 {@code process} 를 직접 부른다.
    */
   @Test

@@ -22,8 +22,8 @@ import org.springframework.security.core.context.SecurityContextHolder;
 /**
  * GraphMutationClient 단위 테스트 — ai-agent 응답을 WireMock으로 모킹해 상태코드별 예외 매핑을 검증한다.
  *
- * <p>핵심 회귀 대상(#310): 대상 노드 부재(409)는 장애(502)와 구분해 사유 문구를 그대로 살려 올려야 한다. 이 매핑이
- * 깨지면 검수자에게 "승인 처리에 실패했습니다."라는 일반 문구만 남아 왜 실패했는지 알 수 없게 된다.
+ * <p>핵심 회귀 대상(#310): 대상 노드 부재(409)는 장애(502)와 구분해 사유 문구를 그대로 살려 올려야 한다. 이 매핑이 깨지면 검수자에게 "승인 처리에
+ * 실패했습니다."라는 일반 문구만 남아 왜 실패했는지 알 수 없게 된다.
  */
 class GraphMutationClientTest {
 
@@ -83,7 +83,8 @@ class GraphMutationClientTest {
   @DisplayName("409 바디가 JSON이 아니어도 일반 사유로 폴백하고 IllegalStateException은 유지한다")
   void setProperty_conflictWithoutJsonBody_fallsBack() {
     wireMock.stubFor(
-        post(urlEqualTo("/agent/graph/set-property")).willReturn(aResponse().withStatus(409).withBody("boom")));
+        post(urlEqualTo("/agent/graph/set-property"))
+            .willReturn(aResponse().withStatus(409).withBody("boom")));
 
     assertThatThrownBy(() -> client().setProperty("3:없음", "피해액", "number", "100", 42L))
         .isInstanceOf(IllegalStateException.class)
@@ -93,7 +94,8 @@ class GraphMutationClientTest {
   @Test
   @DisplayName("5xx 등 실제 장애는 종전대로 ExternalServiceException(502)으로 전파된다")
   void mergeEntities_serverError_mapsToExternalServiceException() {
-    wireMock.stubFor(post(urlEqualTo("/agent/graph/merge-entities")).willReturn(aResponse().withStatus(502)));
+    wireMock.stubFor(
+        post(urlEqualTo("/agent/graph/merge-entities")).willReturn(aResponse().withStatus(502)));
 
     assertThatThrownBy(() -> client().mergeEntities("Cause", "누전", "합선", 42L))
         .isInstanceOf(ExternalServiceException.class);
@@ -104,7 +106,8 @@ class GraphMutationClientTest {
   void setProperty_serverError_doesNotLeakInternalAddress() {
     wireMock.stubFor(
         post(urlEqualTo("/agent/graph/set-property"))
-            .willReturn(aResponse().withStatus(502).withBody("{\"error\":\"set property failed\"}")));
+            .willReturn(
+                aResponse().withStatus(502).withBody("{\"error\":\"set property failed\"}")));
 
     assertThatThrownBy(() -> client().setProperty("3:창고 화재", "피해액", "number", "30000000", 42L))
         .isInstanceOf(ExternalServiceException.class)
@@ -132,7 +135,8 @@ class GraphMutationClientTest {
   @Test
   @DisplayName("2xx는 정상 반환한다(호출자가 status를 approved로 갱신하는 경로)")
   void addRelation_success() {
-    wireMock.stubFor(post(urlEqualTo("/agent/graph/add-relation")).willReturn(aResponse().withStatus(204)));
+    wireMock.stubFor(
+        post(urlEqualTo("/agent/graph/add-relation")).willReturn(aResponse().withStatus(204)));
 
     assertThatCode(() -> client().addRelation("1:a", "CAUSED_BY", "2:b", List.of(7L), 42L))
         .doesNotThrowAnyException();
@@ -146,35 +150,42 @@ class GraphMutationClientTest {
   @Test
   @DisplayName("mergeEntities는 datasetId를 JSON 숫자로 보낸다(#678)")
   void mergeEntities_sendsDatasetIdAsNumber() {
-    wireMock.stubFor(post(urlEqualTo("/agent/graph/merge-entities")).willReturn(aResponse().withStatus(204)));
+    wireMock.stubFor(
+        post(urlEqualTo("/agent/graph/merge-entities")).willReturn(aResponse().withStatus(204)));
 
     client().mergeEntities("Cause", "누전", "합선", 42L);
 
-    wireMock.verify(postRequestedFor(urlEqualTo("/agent/graph/merge-entities"))
-        .withRequestBody(matchingJsonPath("$[?(@.datasetId == 42)]")));
+    wireMock.verify(
+        postRequestedFor(urlEqualTo("/agent/graph/merge-entities"))
+            .withRequestBody(matchingJsonPath("$[?(@.datasetId == 42)]")));
   }
 
   @Test
   @DisplayName("addEntity는 datasetId를 JSON 숫자로 보낸다(#678)")
   void addEntity_sendsDatasetIdAsNumber() {
-    wireMock.stubFor(post(urlEqualTo("/agent/graph/add-entity")).willReturn(aResponse().withStatus(204)));
+    wireMock.stubFor(
+        post(urlEqualTo("/agent/graph/add-entity")).willReturn(aResponse().withStatus(204)));
 
     client().addEntity("Cause", "노후배선", null, List.of(10L), List.of(), 42L);
 
-    wireMock.verify(postRequestedFor(urlEqualTo("/agent/graph/add-entity"))
-        .withRequestBody(matchingJsonPath("$[?(@.datasetId == 42)]")));
+    wireMock.verify(
+        postRequestedFor(urlEqualTo("/agent/graph/add-entity"))
+            .withRequestBody(matchingJsonPath("$[?(@.datasetId == 42)]")));
   }
 
   @Test
   @DisplayName("addRelation은 datasetId를 JSON 숫자로 보낸다(#678)")
   void addRelation_sendsDatasetIdAsNumber() {
-    wireMock.stubFor(post(urlEqualTo("/agent/graph/add-relation")).willReturn(aResponse().withStatus(204)));
+    wireMock.stubFor(
+        post(urlEqualTo("/agent/graph/add-relation")).willReturn(aResponse().withStatus(204)));
 
     client().addRelation("1:a", "CAUSED_BY", "2:b", List.of(7L), 42L);
 
-    wireMock.verify(postRequestedFor(urlEqualTo("/agent/graph/add-relation"))
-        .withRequestBody(matchingJsonPath("$[?(@.datasetId == 42)]")));
+    wireMock.verify(
+        postRequestedFor(urlEqualTo("/agent/graph/add-relation"))
+            .withRequestBody(matchingJsonPath("$[?(@.datasetId == 42)]")));
   }
+
   @Test
   @DisplayName("승인 요청의 사용자·테넌트를 대행 헤더로 실어 보낸다")
   void postJson_attachesDelegationHeaders() {
@@ -183,7 +194,8 @@ class GraphMutationClientTest {
     wireMock.stubFor(
         post(urlEqualTo("/agent/graph/merge-entities")).willReturn(aResponse().withStatus(204)));
 
-    assertThatCode(() -> client().mergeEntities("Cause", "a", "b", 900L)).doesNotThrowAnyException();
+    assertThatCode(() -> client().mergeEntities("Cause", "a", "b", 900L))
+        .doesNotThrowAnyException();
 
     wireMock.verify(
         postRequestedFor(urlEqualTo("/agent/graph/merge-entities"))
@@ -229,9 +241,8 @@ class GraphMutationClientTest {
   /**
    * set-property 요청에 datasetId 가 실제로 실리는지 본문으로 확인한다.
    *
-   * <p>페이로드 단언이 필요한 이유: 이 값은 ai-agent 가 write 를 온톨로지로 스코프하는 유일한
-   * 근거다. 호출 여부(verify)만 보면 필드를 빠뜨린 채로도 통과하고, 그 결과는 ai-agent 의 400 —
-   * 즉 승인이 조용히 pending 으로 남는 실패다.
+   * <p>페이로드 단언이 필요한 이유: 이 값은 ai-agent 가 write 를 온톨로지로 스코프하는 유일한 근거다. 호출 여부(verify)만 보면 필드를 빠뜨린 채로도
+   * 통과하고, 그 결과는 ai-agent 의 400 — 즉 승인이 조용히 pending 으로 남는 실패다.
    */
   @Test
   @DisplayName("set-property 요청 본문에 스코프 근거인 datasetId 가 실린다")

@@ -293,9 +293,7 @@ class DataValidationServiceMappingTest {
   void toRows_withoutMapping_matchesValidateValidRows() {
     List<DatasetColumnResponse> columns =
         List.of(
-            col("name", "TEXT", false),
-            col("age", "INTEGER", true),
-            col("score", "DECIMAL", true));
+            col("name", "TEXT", false), col("age", "INTEGER", true), col("score", "DECIMAL", true));
     List<Map<String, String>> rows =
         List.of(
             Map.of("name", "Alice", "age", "30", "score", "88.5"),
@@ -310,8 +308,8 @@ class DataValidationServiceMappingTest {
   }
 
   /**
-   * 매핑 없는 경로에서 필수값 누락/타입 변환 실패가 있는 잘못된 행은 validate()가 에러로 기록하고 유효 행에서 제외해야 한다.
-   * validate()와 toRows/validateWithMapping이 동일한 convertRowOrNull을 공유하는지 회귀 확인하는 테스트.
+   * 매핑 없는 경로에서 필수값 누락/타입 변환 실패가 있는 잘못된 행은 validate()가 에러로 기록하고 유효 행에서 제외해야 한다. validate()와
+   * toRows/validateWithMapping이 동일한 convertRowOrNull을 공유하는지 회귀 확인하는 테스트.
    */
   @Test
   void validate_withoutMapping_invalidRow_recordsErrorAndExcludesRow() {
@@ -328,10 +326,7 @@ class DataValidationServiceMappingTest {
     assertThat(vr.validRows()).hasSize(1);
     assertThat(vr.errorCount()).isEqualTo(2);
     assertThat(vr.errors().get(0)).contains("2행").contains("name").contains("필수 값이 비어 있습니다");
-    assertThat(vr.errors().get(1))
-        .contains("3행")
-        .contains("age")
-        .contains("정수 형식이 아닙니다");
+    assertThat(vr.errors().get(1)).contains("3행").contains("age").contains("정수 형식이 아닙니다");
   }
 
   // -----------------------------------------------------------------------

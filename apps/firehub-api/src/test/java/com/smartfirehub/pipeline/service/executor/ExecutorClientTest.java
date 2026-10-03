@@ -37,9 +37,8 @@ class ExecutorClientTest {
   }
 
   /**
-   * executor 요청은 본문에 현재 테넌트 id 를 싣는다(P3-b1 Task 3) — 이 클래스는 스프링 컨텍스트를
-   * 띄우지 않는 순수 단위 테스트라 {@code IntegrationTestBase} 의 테넌트 설정을 받지 못하므로 직접
-   * 세운다. 프로덕션 호출부(요청 필터·배경 잡의 테넌트 순회)는 언제나 이 전제 안에서 호출한다.
+   * executor 요청은 본문에 현재 테넌트 id 를 싣는다(P3-b1 Task 3) — 이 클래스는 스프링 컨텍스트를 띄우지 않는 순수 단위 테스트라 {@code
+   * IntegrationTestBase} 의 테넌트 설정을 받지 못하므로 직접 세운다. 프로덕션 호출부(요청 필터·배경 잡의 테넌트 순회)는 언제나 이 전제 안에서 호출한다.
    */
   @BeforeEach
   void setTenantContext() {
@@ -441,9 +440,8 @@ class ExecutorClientTest {
   // -------------------------------------------------------------------------
 
   /**
-   * 네 엔드포인트 전부가 본문에 {@code tenantId}(camelCase) 를 싣는지 고정한다. executor 는 별도
-   * 프로세스라 ThreadLocal 을 볼 수 없고, 이 필드가 그쪽에서 테넌트별 자격증명·스키마를 고르는 유일한
-   * 근거다. 필드명이 바뀌면 executor 쪽이 조용히 기본값으로 떨어지므로 이름까지 단언한다.
+   * 네 엔드포인트 전부가 본문에 {@code tenantId}(camelCase) 를 싣는지 고정한다. executor 는 별도 프로세스라 ThreadLocal 을 볼 수
+   * 없고, 이 필드가 그쪽에서 테넌트별 자격증명·스키마를 고르는 유일한 근거다. 필드명이 바뀌면 executor 쪽이 조용히 기본값으로 떨어지므로 이름까지 단언한다.
    */
   @Test
   void allEndpoints_sendTenantIdInBody() {
@@ -457,9 +455,11 @@ class ExecutorClientTest {
     executorClient().executePython(Map.of("script", "pass"));
     executorClient().executeApiCall(Map.of("url", "https://example.com"));
 
-    for (String path : List.of("/execute/sql", "/execute/query", "/execute/python", "/execute/api-call")) {
+    for (String path :
+        List.of("/execute/sql", "/execute/query", "/execute/python", "/execute/api-call")) {
       wireMock.verify(
-          postRequestedFor(urlEqualTo(path)).withRequestBody(matchingJsonPath("$.tenantId", equalTo("1"))));
+          postRequestedFor(urlEqualTo(path))
+              .withRequestBody(matchingJsonPath("$.tenantId", equalTo("1"))));
     }
   }
 
@@ -478,8 +478,8 @@ class ExecutorClientTest {
   // -------------------------------------------------------------------------
 
   /**
-   * 1000행 × md5 8컬럼 ≈ 330KB 응답 — Spring WebClient 기본 버퍼 한도(256KB)를 넘는다. 운영 기본 경로
-   * (executor 켬)에서 기본 maxRows=1000 조회가 DataBufferLimitException 으로 실패하던 결함(#761)의 회귀 가드.
+   * 1000행 × md5 8컬럼 ≈ 330KB 응답 — Spring WebClient 기본 버퍼 한도(256KB)를 넘는다. 운영 기본 경로 (executor 켬)에서 기본
+   * maxRows=1000 조회가 DataBufferLimitException 으로 실패하던 결함(#761)의 회귀 가드.
    */
   @Test
   void executeQuery_responseLargerThan256Kb_isDecoded() {
@@ -495,8 +495,8 @@ class ExecutorClientTest {
   }
 
   /**
-   * 응답이 설정 한도를 넘으면 원인 사슬의 DataBufferLimitException 을 찾아
-   * ExecutorResponseTooLargeException(한도 표기 포함 안내 메시지)으로 바꿔 던진다 — "연결 실패" 로 오인되지 않게.
+   * 응답이 설정 한도를 넘으면 원인 사슬의 DataBufferLimitException 을 찾아 ExecutorResponseTooLargeException(한도 표기 포함
+   * 안내 메시지)으로 바꿔 던진다 — "연결 실패" 로 오인되지 않게.
    */
   @Test
   void executeQuery_responseOverConfiguredLimit_throwsTooLarge() {

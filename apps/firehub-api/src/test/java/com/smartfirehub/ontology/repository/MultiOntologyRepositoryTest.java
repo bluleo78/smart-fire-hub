@@ -49,27 +49,29 @@ class MultiOntologyRepositoryTest extends IntegrationTestBase {
         new CreateOntologyRequest(
             "테스트 판매 도메인",
             List.of(
-                new OntologyResponse.EntityType(
-                    "Customer", "고객", "표기 그대로", "exact", List.of()),
-                new OntologyResponse.EntityType(
-                    "Product", "상품", "표기 그대로", "embedding", List.of())),
+                new OntologyResponse.EntityType("Customer", "고객", "표기 그대로", "exact", List.of()),
+                new OntologyResponse.EntityType("Product", "상품", "표기 그대로", "embedding", List.of())),
             List.of(new OntologyResponse.Triple("Customer", "PURCHASED", "Product", "구매")));
     createdId = repository.createOntology(req);
     assertThat(createdId).isGreaterThanOrEqualTo(2L);
 
     OntologyResponse created = repository.findById(createdId);
     assertThat(created.domain()).isEqualTo("테스트 판매 도메인");
-    assertThat(created.entities()).extracting(OntologyResponse.EntityType::type)
+    assertThat(created.entities())
+        .extracting(OntologyResponse.EntityType::type)
         .containsExactly("Customer", "Product");
-    assertThat(created.relations()).extracting(OntologyResponse.Triple::relation)
+    assertThat(created.relations())
+        .extracting(OntologyResponse.Triple::relation)
         .containsExactly("PURCHASED");
 
     // 화재조사(id=1)는 신규 온톨로지 타입에 오염되지 않아야 한다(미필터 fetch 버그 판별).
     OntologyResponse fire = repository.findById(1L);
-    assertThat(fire.entities()).extracting(OntologyResponse.EntityType::type)
+    assertThat(fire.entities())
+        .extracting(OntologyResponse.EntityType::type)
         .contains("Incident", "Building")
         .doesNotContain("Customer", "Product");
-    assertThat(fire.relations()).extracting(OntologyResponse.Triple::relation)
+    assertThat(fire.relations())
+        .extracting(OntologyResponse.Triple::relation)
         .doesNotContain("PURCHASED");
   }
 
@@ -154,10 +156,9 @@ class MultiOntologyRepositoryTest extends IntegrationTestBase {
   /**
    * findById 의 프로퍼티 조회를 타입당 1회(N+1)에서 온톨로지당 1회로 합친 뒤의 회귀 가드.
    *
-   * <p>한 방에 읽어 메모리에서 타입별로 묶는 형태라, 이 테스트가 보는 것은 세 가지다:
-   * (1) 프로퍼티가 엉뚱한 타입에 붙지 않는가, (2) 타입 안의 sort_order 순서가 보존되는가,
-   * (3) 프로퍼티가 없는 타입이 null 이 아니라 빈 목록인가. 타입이 하나뿐이면 (1)을 판별할 수
-   * 없으므로 반드시 두 타입 이상을 만든다.
+   * <p>한 방에 읽어 메모리에서 타입별로 묶는 형태라, 이 테스트가 보는 것은 세 가지다: (1) 프로퍼티가 엉뚱한 타입에 붙지 않는가, (2) 타입 안의
+   * sort_order 순서가 보존되는가, (3) 프로퍼티가 없는 타입이 null 이 아니라 빈 목록인가. 타입이 하나뿐이면 (1)을 판별할 수 없으므로 반드시 두 타입
+   * 이상을 만든다.
    */
   @Test
   void findById_는_프로퍼티를_타입별로_올바르게_묶는다() {
@@ -166,15 +167,20 @@ class MultiOntologyRepositoryTest extends IntegrationTestBase {
             "테스트 프로퍼티 묶기 도메인",
             List.of(
                 new OntologyResponse.EntityType(
-                    "Customer", "고객", "표기 그대로", "exact",
+                    "Customer",
+                    "고객",
+                    "표기 그대로",
+                    "exact",
                     List.of(
                         new OntologyResponse.Property("등급", "고객 등급", "text", null),
                         new OntologyResponse.Property("가입일", "가입 일자", "date", null))),
                 new OntologyResponse.EntityType(
-                    "Product", "상품", "표기 그대로", "exact",
+                    "Product",
+                    "상품",
+                    "표기 그대로",
+                    "exact",
                     List.of(new OntologyResponse.Property("단가", "판매 단가", "number", "원"))),
-                new OntologyResponse.EntityType(
-                    "Store", "매장", "표기 그대로", "exact", List.of())),
+                new OntologyResponse.EntityType("Store", "매장", "표기 그대로", "exact", List.of())),
             List.of());
     createdId = repository.createOntology(req);
 
@@ -186,9 +192,11 @@ class MultiOntologyRepositoryTest extends IntegrationTestBase {
                     OntologyResponse.EntityType::type, e -> e.properties()));
 
     // 타입별로 자기 프로퍼티만, 요청한 순서 그대로.
-    assertThat(byType.get("Customer")).extracting(OntologyResponse.Property::name)
+    assertThat(byType.get("Customer"))
+        .extracting(OntologyResponse.Property::name)
         .containsExactly("등급", "가입일");
-    assertThat(byType.get("Product")).extracting(OntologyResponse.Property::name)
+    assertThat(byType.get("Product"))
+        .extracting(OntologyResponse.Property::name)
         .containsExactly("단가");
     // 프로퍼티가 없는 타입은 null 이 아니라 빈 목록이어야 한다(기존 계약).
     assertThat(byType.get("Store")).isEmpty();

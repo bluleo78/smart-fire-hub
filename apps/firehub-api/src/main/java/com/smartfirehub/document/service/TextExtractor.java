@@ -21,8 +21,7 @@ public class TextExtractor {
       if (mime.equals("application/pdf")) {
         return extractPdf(data);
       }
-      if (mime.equals(
-          "application/vnd.openxmlformats-officedocument.wordprocessingml.document")) {
+      if (mime.equals("application/vnd.openxmlformats-officedocument.wordprocessingml.document")) {
         return extractDocx(data);
       }
       if (mime.startsWith("text/")) {
@@ -33,8 +32,7 @@ public class TextExtractor {
     } catch (Exception e) {
       throw new IllegalStateException("문서 텍스트 추출 실패: " + fileName, e);
     }
-    throw new UnsupportedFileTypeException(
-        "지원하지 않는 문서 형식입니다: " + mimeType + " (" + fileName + ")");
+    throw new UnsupportedFileTypeException("지원하지 않는 문서 형식입니다: " + mimeType + " (" + fileName + ")");
   }
 
   /** PDF 텍스트 추출. 페이지 수도 함께 반환한다. */

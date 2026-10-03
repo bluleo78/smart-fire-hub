@@ -24,22 +24,19 @@ import org.springframework.web.multipart.MultipartFile;
 /**
  * {@code uploaded_files} 요청 경로의 테넌트 배선 검증 (P2-b Task 7).
  *
- * <p><b>이 테스트가 지키는 것은 심층 방어가 아니라 실제 결함 수정이다.</b> {@code FileUploadService}
- * 는 리포지토리를 거치지 않고 {@code DSLContext} 로 {@code uploaded_files} 를 직접 읽고 쓴다 —
- * 즉 Task 1 이 리포지토리에 붙인 클래스 레벨 {@code @Transactional} 이 이 경로를 커버하지 못한다.
- * V93 이 {@code tenant_id} 를 NOT NULL + GUC 기반 DEFAULT 로 추가했으므로, 트랜잭션이 열리지 않으면
- * {@code current_setting('app.tenant_id', true)} 가 NULL 을 주고 <b>업로드가 NOT NULL 위반으로
- * 500 이 된다</b>. Task 7 의 {@code TransactionTemplate} 래핑과 {@code @Transactional(readOnly)} 를
- * 되돌리면 이 테스트가 실제로 깨진다 — 형제 {@code AsyncJobTenantTest} 와 달리 여기서는
- * 애노테이션/래핑이 유일한 방어선이다.
+ * <p><b>이 테스트가 지키는 것은 심층 방어가 아니라 실제 결함 수정이다.</b> {@code FileUploadService} 는 리포지토리를 거치지 않고 {@code
+ * DSLContext} 로 {@code uploaded_files} 를 직접 읽고 쓴다 — 즉 Task 1 이 리포지토리에 붙인 클래스 레벨
+ * {@code @Transactional} 이 이 경로를 커버하지 못한다. V93 이 {@code tenant_id} 를 NOT NULL + GUC 기반 DEFAULT 로
+ * 추가했으므로, 트랜잭션이 열리지 않으면 {@code current_setting('app.tenant_id', true)} 가 NULL 을 주고 <b>업로드가 NOT NULL
+ * 위반으로 500 이 된다</b>. Task 7 의 {@code TransactionTemplate} 래핑과 {@code @Transactional(readOnly)} 를
+ * 되돌리면 이 테스트가 실제로 깨진다 — 형제 {@code AsyncJobTenantTest} 와 달리 여기서는 애노테이션/래핑이 유일한 방어선이다.
  *
- * <p><b>클래스 레벨 {@code @Transactional} 이 없다 — 의도된 것이다.</b> 붙이면 테스트 트랜잭션이
- * GUC 를 공급해 프로덕션의 배선 누락을 구조적으로 가린다. 검증 대상 호출은 트랜잭션 밖에 남긴다
- * (선례: {@code apiconnection/ApiConnectionTenantTest}, {@code job/AsyncJobTenantTest}).
+ * <p><b>클래스 레벨 {@code @Transactional} 이 없다 — 의도된 것이다.</b> 붙이면 테스트 트랜잭션이 GUC 를 공급해 프로덕션의 배선 누락을
+ * 구조적으로 가린다. 검증 대상 호출은 트랜잭션 밖에 남긴다 (선례: {@code apiconnection/ApiConnectionTenantTest}, {@code
+ * job/AsyncJobTenantTest}).
  *
- * <p>Task 9(V96)에서 {@code uploaded_files} 에 정책이 붙었으므로 양방향 격리 단언
- * ({@code assertTwoSidedIsolation})을 함께 둔다. 픽스처·검증 조회는 트랜잭션으로 감싸지만
- * <b>검증 대상 호출은 여전히 트랜잭션 밖</b>이라는 점이 이 테스트의 판별력이다.
+ * <p>Task 9(V96)에서 {@code uploaded_files} 에 정책이 붙었으므로 양방향 격리 단언 ({@code assertTwoSidedIsolation})을
+ * 함께 둔다. 픽스처·검증 조회는 트랜잭션으로 감싸지만 <b>검증 대상 호출은 여전히 트랜잭션 밖</b>이라는 점이 이 테스트의 판별력이다.
  */
 class FileUploadTenantTest extends IntegrationTestBase {
 
@@ -123,9 +120,8 @@ class FileUploadTenantTest extends IntegrationTestBase {
   /**
    * V96 정책이 실제로 격리하는지 양방향으로 확인한다.
    *
-   * <p>단방향("타 테넌트에서 0행")만 보면 빈 테이블에서 공허하게 통과한다 — 소유 테넌트에서
-   * 보이는 것을 함께 확인해야 단언이 의미를 갖는다. 정책을 지우면 "남의 행이 보이면 격리 실패"
-   * 쪽이 깨진다.
+   * <p>단방향("타 테넌트에서 0행")만 보면 빈 테이블에서 공허하게 통과한다 — 소유 테넌트에서 보이는 것을 함께 확인해야 단언이 의미를 갖는다. 정책을 지우면 "남의
+   * 행이 보이면 격리 실패" 쪽이 깨진다.
    */
   @Test
   @DisplayName("uploaded_files 는 테넌트 간 양방향으로 격리된다")

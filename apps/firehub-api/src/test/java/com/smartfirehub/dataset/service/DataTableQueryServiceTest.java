@@ -301,11 +301,11 @@ class DataTableQueryServiceTest extends IntegrationTestBase {
   // =========================================================================
 
   /**
-   * 보안/트랜잭션: DB 실행 단계에서만 드러나는 오류(0으로 나누기)가 발생해도 SAVEPOINT 롤백으로 외부 트랜잭션이 중단되지 않는다. 오류 응답 반환 후
-   * 동일 트랜잭션에서 추가 쿼리를 실행할 수 있어야 한다.
+   * 보안/트랜잭션: DB 실행 단계에서만 드러나는 오류(0으로 나누기)가 발생해도 SAVEPOINT 롤백으로 외부 트랜잭션이 중단되지 않는다. 오류 응답 반환 후 동일
+   * 트랜잭션에서 추가 쿼리를 실행할 수 있어야 한다.
    *
-   * <p>이 쿼리는 문법상 유효해 {@link com.smartfirehub.pipeline.service.validator.SqlValidator}를 통과하고 실제
-   * DB 실행 단계에서 실패한다(#385 Task 3). 문법 자체가 잘못된 SQL(옛 "FORM" 오타)은 이제 검증기 단계에서 {@link
+   * <p>이 쿼리는 문법상 유효해 {@link com.smartfirehub.pipeline.service.validator.SqlValidator}를 통과하고 실제 DB
+   * 실행 단계에서 실패한다(#385 Task 3). 문법 자체가 잘못된 SQL(옛 "FORM" 오타)은 이제 검증기 단계에서 {@link
    * com.smartfirehub.pipeline.exception.UnsafeSqlException}으로 거부된다 — 아래 파싱 실패 케이스 참고.
    */
   @Test
@@ -407,9 +407,9 @@ class DataTableQueryServiceTest extends IntegrationTestBase {
    * com.smartfirehub.pipeline.exception.UnsafeSqlException}으로 거부된다.
    *
    * <p>#385 Task 3 이전에는 이런 입력도 DB 실행까지 도달해 Postgres 문법 오류로 error 필드에 담겼다. 이제는 {@link
-   * com.smartfirehub.pipeline.service.validator.SqlValidator}가 stripAndValidate 직후 AST 파싱을 시도하고,
-   * 파싱 실패를 폴백 없이 그대로 거부한다 — 폴백을 두면 검증기 전체(스키마·차단 함수 검사)를 우회하는 새 경로가
-   * 되기 때문이다(DataTableQueryService 주석 참고).
+   * com.smartfirehub.pipeline.service.validator.SqlValidator}가 stripAndValidate 직후 AST 파싱을 시도하고, 파싱
+   * 실패를 폴백 없이 그대로 거부한다 — 폴백을 두면 검증기 전체(스키마·차단 함수 검사)를 우회하는 새 경로가 되기 때문이다(DataTableQueryService 주석
+   * 참고).
    */
   @Test
   void executeQuery_unparsableSyntax_throwsUnsafeSqlException() {
@@ -510,9 +510,9 @@ class DataTableQueryServiceTest extends IntegrationTestBase {
   // =========================================================================
 
   /**
-   * $1 이 든 SQL 은 서버가 bind 개수 불일치(08P01, 프로토콜 오류)로 거부해 Hikari 가 커넥션을 폐기하고, 뒤이은
-   * savepoint 롤백이 "Connection is closed" 로 원래 오류를 덮어 500 이 됐다(#753). 이제 실행 전에 원인 메시지와
-   * 함께 거부하고(400), 커넥션·트랜잭션은 멀쩡해 같은 트랜잭션의 다음 쿼리가 정상이어야 한다.
+   * $1 이 든 SQL 은 서버가 bind 개수 불일치(08P01, 프로토콜 오류)로 거부해 Hikari 가 커넥션을 폐기하고, 뒤이은 savepoint 롤백이
+   * "Connection is closed" 로 원래 오류를 덮어 500 이 됐다(#753). 이제 실행 전에 원인 메시지와 함께 거부하고(400), 커넥션·트랜잭션은 멀쩡해
+   * 같은 트랜잭션의 다음 쿼리가 정상이어야 한다.
    */
   @Test
   void executeQuery_positionalParameter_rejectedWithClearMessage_andConnectionSurvives() {
@@ -531,7 +531,10 @@ class DataTableQueryServiceTest extends IntegrationTestBase {
     assertThat(dsl.fetchValue("SELECT 1", Integer.class)).isEqualTo(1);
   }
 
-  /** 리터럴·주석·따옴표 식별자 속의 $1 은(달러 인용은 JSqlParser 가 못 읽어 SqlLexicalMaskTest 에서 본다) 위치 파라미터가 아니다 — 거부하지 않고 그대로 실행한다. */
+  /**
+   * 리터럴·주석·따옴표 식별자 속의 $1 은(달러 인용은 JSqlParser 가 못 읽어 SqlLexicalMaskTest 에서 본다) 위치 파라미터가 아니다 — 거부하지
+   * 않고 그대로 실행한다.
+   */
   @Test
   void executeQuery_dollarDigitInsideLiteralOrComment_isNotRejected() {
     SqlQueryResponse response =
@@ -543,8 +546,8 @@ class DataTableQueryServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * jsonb 키 존재 연산자 ?, ?|, ?& 는 유효한 PostgreSQL 이다. 예전에는 PreparedStatement 가 ? 를 바인드 자리로
-   * 해석해 "No value specified for parameter 1" 로 실패했다(#753). 이제 원문 그대로 정적 Statement 로 실행한다.
+   * jsonb 키 존재 연산자 ?, ?|, ?& 는 유효한 PostgreSQL 이다. 예전에는 PreparedStatement 가 ? 를 바인드 자리로 해석해 "No
+   * value specified for parameter 1" 로 실패했다(#753). 이제 원문 그대로 정적 Statement 로 실행한다.
    */
   @Test
   void executeQuery_jsonbQuestionOperators_work() {
@@ -563,8 +566,8 @@ class DataTableQueryServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * ? 연산자를 실행 가능하게 만들면서 SQL 가드(#385)의 사각이 생기지 않는지 — ? 피연산자 서브쿼리로 public
-   * 스키마를 읽으려는 시도는 여전히 실행 전에 거부돼야 한다.
+   * ? 연산자를 실행 가능하게 만들면서 SQL 가드(#385)의 사각이 생기지 않는지 — ? 피연산자 서브쿼리로 public 스키마를 읽으려는 시도는 여전히 실행 전에
+   * 거부돼야 한다.
    */
   @Test
   void executeQuery_jsonbQuestionOperator_withPublicSubquery_isStillRejected() {
@@ -632,8 +635,8 @@ class DataTableQueryServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * DELETE … RETURNING — 삭제된 행 수가 보고돼야 한다. maxRows(1) 보다 많은 행을 돌려줘도 영향 행 수는 잘리지 않는다
-   * (행 제한은 SELECT 결과 표시용이지 DML 영향 행 수와 무관하다).
+   * DELETE … RETURNING — 삭제된 행 수가 보고돼야 한다. maxRows(1) 보다 많은 행을 돌려줘도 영향 행 수는 잘리지 않는다 (행 제한은 SELECT
+   * 결과 표시용이지 DML 영향 행 수와 무관하다).
    */
   @Test
   void executeQuery_deleteReturning_countsAllRowsRegardlessOfMaxRows() {
@@ -661,9 +664,9 @@ class DataTableQueryServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * 본문이 SELECT 인 데이터 수정 CTE({@code WITH d AS (DELETE … RETURNING …) SELECT …})는 현재 SQL 가드(JSqlParser)가
-   * 파싱하지 못해 실행 전에 거부된다(#385 — 파싱 실패 시 폴백 없음). execute() 가 다중 결과를 소비하게 바뀌어도 이
-   * 경계는 그대로이며 아무것도 삭제되지 않는다(#754 에서 확인·고정).
+   * 본문이 SELECT 인 데이터 수정 CTE({@code WITH d AS (DELETE … RETURNING …) SELECT …})는 현재 SQL
+   * 가드(JSqlParser)가 파싱하지 못해 실행 전에 거부된다(#385 — 파싱 실패 시 폴백 없음). execute() 가 다중 결과를 소비하게 바뀌어도 이 경계는
+   * 그대로이며 아무것도 삭제되지 않는다(#754 에서 확인·고정).
    */
   @Test
   void executeQuery_dataModifyingCteWithSelectBody_isRejectedBeforeExecution() {
@@ -691,8 +694,8 @@ class DataTableQueryServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * 다중 결과를 다루는 execute() 로 바꿔도 다중 문장은 실행 전 검증에서 거부돼야 한다 — 첫 문장도 실행되지 않는다
-   * (#754 보안 경계: 검증 문자열 = 실행 문자열, 단일 문장만).
+   * 다중 결과를 다루는 execute() 로 바꿔도 다중 문장은 실행 전 검증에서 거부돼야 한다 — 첫 문장도 실행되지 않는다 (#754 보안 경계: 검증 문자열 = 실행
+   * 문자열, 단일 문장만).
    */
   @Test
   void executeQuery_multiStatementWithReturning_isRejectedBeforeExecution() {

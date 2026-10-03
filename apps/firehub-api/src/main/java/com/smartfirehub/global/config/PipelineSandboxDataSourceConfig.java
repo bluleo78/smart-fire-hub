@@ -35,8 +35,8 @@ public class PipelineSandboxDataSourceConfig {
   }
 
   /**
-   * 기본 트랜잭션 매니저를 TenantAware 로 교체해, 트랜잭션 시작 시 활성 테넌트를 RLS GUC 로 주입한다.
-   * TenantContext 가 비면 GUC 를 설정하지 않으므로 테넌트 무관 동작(마이그레이션·부팅 등)은 그대로다.
+   * 기본 트랜잭션 매니저를 TenantAware 로 교체해, 트랜잭션 시작 시 활성 테넌트를 RLS GUC 로 주입한다. TenantContext 가 비면 GUC 를 설정하지
+   * 않으므로 테넌트 무관 동작(마이그레이션·부팅 등)은 그대로다.
    */
   @Bean
   @Primary
@@ -46,7 +46,8 @@ public class PipelineSandboxDataSourceConfig {
 
   @Bean
   @Primary
-  public DSLContext dslContext(DataSource dataSource, PlatformTransactionManager transactionManager) {
+  public DSLContext dslContext(
+      DataSource dataSource, PlatformTransactionManager transactionManager) {
     // Spring Boot auto-config의 동작을 재현:
     // 1. TransactionAwareDataSourceProxy → Spring @Transactional과 jOOQ가 같은 커넥션 공유
     // 2. SpringTransactionProvider → dsl.transaction()이 Spring 트랜잭션에 참여 (테스트 롤백 정상 동작)

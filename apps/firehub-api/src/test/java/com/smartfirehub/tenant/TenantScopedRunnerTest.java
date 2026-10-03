@@ -20,8 +20,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
 /**
- * 원 요청이 없는 스케줄러(@Scheduled, @PostConstruct)는 승계할 테넌트가 없다.
- * ACTIVE 테넌트를 순회해 테넌트별로 실행하는 것이 유일한 방법이다.
+ * 원 요청이 없는 스케줄러(@Scheduled, @PostConstruct)는 승계할 테넌트가 없다. ACTIVE 테넌트를 순회해 테넌트별로 실행하는 것이 유일한 방법이다.
  */
 class TenantScopedRunnerTest extends IntegrationTestBase {
 
@@ -67,8 +66,7 @@ class TenantScopedRunnerTest extends IntegrationTestBase {
   }
 
   /**
-   * 운영 형태(스케줄러 스레드 = 진입 전 컨텍스트 없음)에서 순회가 끝나면 컨텍스트가 남지 않아야
-   * 한다. 남으면 풀 스레드가 재사용될 때 다음 작업이 남의 테넌트로 돈다.
+   * 운영 형태(스케줄러 스레드 = 진입 전 컨텍스트 없음)에서 순회가 끝나면 컨텍스트가 남지 않아야 한다. 남으면 풀 스레드가 재사용될 때 다음 작업이 남의 테넌트로 돈다.
    */
   @Test
   void leavesNoContextWhenEnteredWithout() {
@@ -80,9 +78,9 @@ class TenantScopedRunnerTest extends IntegrationTestBase {
   /**
    * 이미 테넌트가 있는 스레드에서 부르면 <b>진입 전 값이 복원</b>돼야 한다.
    *
-   * <p>무조건 {@code clear} 하면 호출자의 컨텍스트를 빼앗아, 그 뒤 문장이 하나라도 추가되는 순간
-   * 조용히 0행이 된다 — 형제 헬퍼({@code TenantContext.runScoped}, {@code TenantContextTaskDecorator})
-   * 와 같은 의미론임을 여기서 고정한다. 마지막으로 순회된 테넌트가 남지 않는 것도 함께 본다.
+   * <p>무조건 {@code clear} 하면 호출자의 컨텍스트를 빼앗아, 그 뒤 문장이 하나라도 추가되는 순간 조용히 0행이 된다 — 형제 헬퍼({@code
+   * TenantContext.runScoped}, {@code TenantContextTaskDecorator}) 와 같은 의미론임을 여기서 고정한다. 마지막으로 순회된
+   * 테넌트가 남지 않는 것도 함께 본다.
    */
   @Test
   void restoresPreviousContextWhenEnteredWithOne() {

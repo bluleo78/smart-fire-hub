@@ -23,23 +23,20 @@ import org.junit.jupiter.api.Test;
 /**
  * {@link DataSchema} 의 계약과, 그 계약을 <b>호출처에서 실제로 지키게 만드는 규약 가드</b>.
  *
- * <p>스프링 컨텍스트를 띄우지 않는 순수 단위 테스트다({@code TenantContextRequireTest} 와 같은 형태).
- * 검사 대상이 ThreadLocal 과 디스크의 소스 파일뿐이라 DB 도 빈도 필요 없다.
+ * <p>스프링 컨텍스트를 띄우지 않는 순수 단위 테스트다({@code TenantContextRequireTest} 와 같은 형태). 검사 대상이 ThreadLocal 과
+ * 디스크의 소스 파일뿐이라 DB 도 빈도 필요 없다.
  *
- * <p><b>규약 가드는 세 규칙이다(P3-a 시점).</b> {@code data."}(한정 이름), 맨몸 {@code "data"}·
- * {@code 'data'}(리터럴 단독), 손 조립({@code current() + ".."}). Task 2 시점에 첫 규칙만
- * 있었고 Task 3~4 가 ~90곳을 {@link DataSchema} 로 옮겨 초록이 됐는데, <b>그 초록이 "완료" 를
- * 뜻하지 않았다</b> — 첫 규칙이 구조적으로 못 보는 형태로 실제 리터럴이 남아 있었다. Task 5 가
- * 나머지 두 규칙을 더해 초록의 의미를 맞췄다. 예외는 파일 단위가 아니라 {@link PinnedSite} 로
- * <b>개별 사이트</b>만 못박고, 핀이 낡으면 {@link #pinnedSitesAreNotStale()} 이 빨개진다
- * (허용목록을 뒤집은 역방향 단언).
+ * <p><b>규약 가드는 세 규칙이다(P3-a 시점).</b> {@code data."}(한정 이름), 맨몸 {@code "data"}· {@code 'data'}(리터럴
+ * 단독), 손 조립({@code current() + ".."}). Task 2 시점에 첫 규칙만 있었고 Task 3~4 가 ~90곳을 {@link DataSchema} 로
+ * 옮겨 초록이 됐는데, <b>그 초록이 "완료" 를 뜻하지 않았다</b> — 첫 규칙이 구조적으로 못 보는 형태로 실제 리터럴이 남아 있었다. Task 5 가 나머지 두 규칙을
+ * 더해 초록의 의미를 맞췄다. 예외는 파일 단위가 아니라 {@link PinnedSite} 로 <b>개별 사이트</b>만 못박고, 핀이 낡으면 {@link
+ * #pinnedSitesAreNotStale()} 이 빨개진다 (허용목록을 뒤집은 역방향 단언).
  *
- * <p><b>P3-b2 T2 가 네 번째 규칙을 더했다 — 카탈로그 기반 열거 금지.</b> 테넌트별 스키마 파생
- * (P3-b2 T1)이 생기면서 "손 조립" 규칙도 {@code data_t} 접두사 우회로 확장됐고(위 손 조립
- * 규칙과 같은 목록), 별도로 {@code information_schema.schemata}/{@code pg_namespace} 를
- * {@code data_t} 패턴과 함께 써서 테넌트 스키마를 열거하려는 코드를 잡는 새 규칙
- * ({@link #noProductionSourceEnumeratesTenantSchemasViaCatalog()})이 생겼다 — 그런 코드는
- * 테넌트 1 의 {@code data} 를 구조적으로 못 찾는다({@link #CATALOG_ENUMERATION_TOKENS} 참조).
+ * <p><b>P3-b2 T2 가 네 번째 규칙을 더했다 — 카탈로그 기반 열거 금지.</b> 테넌트별 스키마 파생 (P3-b2 T1)이 생기면서 "손 조립" 규칙도 {@code
+ * data_t} 접두사 우회로 확장됐고(위 손 조립 규칙과 같은 목록), 별도로 {@code information_schema.schemata}/{@code
+ * pg_namespace} 를 {@code data_t} 패턴과 함께 써서 테넌트 스키마를 열거하려는 코드를 잡는 새 규칙 ({@link
+ * #noProductionSourceEnumeratesTenantSchemasViaCatalog()})이 생겼다 — 그런 코드는 테넌트 1 의 {@code data} 를
+ * 구조적으로 못 찾는다({@link #CATALOG_ENUMERATION_TOKENS} 참조).
  */
 class DataSchemaResolutionTest {
 
@@ -49,28 +46,25 @@ class DataSchemaResolutionTest {
   /**
    * {@code src/main/java} 안의 {@code .java} 파일 개수 하한. 2026-08-17 실측 530개.
    *
-   * <p>이 하한이 없으면 규약 가드는 <b>스캔이 망가졌을 때도 빨갛다</b>. 그런데 이 밴드에서 빨간
-   * 것은 정상 상태이므로, 아무도 "루트를 못 찾아 0개를 훑었다"는 사실을 눈치채지 못한다. 그래서
-   * 스캔의 건전성만 따로 떼어 <b>초록 테스트</b>로 둔다. {@code TenantSchemaConformanceTest} 의
+   * <p>이 하한이 없으면 규약 가드는 <b>스캔이 망가졌을 때도 빨갛다</b>. 그런데 이 밴드에서 빨간 것은 정상 상태이므로, 아무도 "루트를 못 찾아 0개를 훑었다"는
+   * 사실을 눈치채지 못한다. 그래서 스캔의 건전성만 따로 떼어 <b>초록 테스트</b>로 둔다. {@code TenantSchemaConformanceTest} 의
    * {@code MIN_RLS_TABLE_COUNT} 와 같은 장치이며, 같은 이유로 정확한 수가 아니라 하한이다.
    */
   private static final int MIN_PRODUCTION_JAVA_FILES = 400;
 
   /**
-   * 규약 가드가 찾는 문자열. 자바 소스에서 이 형태는 <b>세 가지 모습</b>으로 나타나므로 원문을
-   * 그대로 찾지 않고 이스케이프를 먼저 푼다({@link #unescape}).
+   * 규약 가드가 찾는 문자열. 자바 소스에서 이 형태는 <b>세 가지 모습</b>으로 나타나므로 원문을 그대로 찾지 않고 이스케이프를 먼저 푼다({@link
+   * #unescape}).
    *
    * <ul>
    *   <li>문자열 리터럴 안: 원문 바이트가 {@code data.\"} (예: {@code PipelineAsyncRunner})
-   *   <li>Javadoc·주석 안: 원문 바이트가 {@code data."} (예: {@code DataTableService} 의 스테이징
-   *       테이블 설명)
-   *   <li>{@code "... data."} 처럼 문자열이 {@code data.} 로 <b>끝나는</b> 경우 — 뒤따르는 {@code "}
-   *       는 리터럴의 닫는 따옴표다 (예: {@code AnalyticsQueryExecutionService} 의 거부 메시지)
+   *   <li>Javadoc·주석 안: 원문 바이트가 {@code data."} (예: {@code DataTableService} 의 스테이징 테이블 설명)
+   *   <li>{@code "... data."} 처럼 문자열이 {@code data.} 로 <b>끝나는</b> 경우 — 뒤따르는 {@code "} 는 리터럴의 닫는 따옴표다
+   *       (예: {@code AnalyticsQueryExecutionService} 의 거부 메시지)
    * </ul>
    *
-   * <p><b>세 가지를 모두 위반으로 본다 — 정규식의 사고가 아니라 결정이다.</b> 주석과 사용자 노출
-   * 메시지도 P3-b 의 {@code data_t{id}} 개명 뒤에는 그냥 <b>틀린 문장</b>이 된다. 물리 스키마명을
-   * 소스 어디에도 손으로 적지 않는 것이 이 밴드의 목표이므로, 세 번째 모습까지 잡히는 것이 맞다.
+   * <p><b>세 가지를 모두 위반으로 본다 — 정규식의 사고가 아니라 결정이다.</b> 주석과 사용자 노출 메시지도 P3-b 의 {@code data_t{id}} 개명
+   * 뒤에는 그냥 <b>틀린 문장</b>이 된다. 물리 스키마명을 소스 어디에도 손으로 적지 않는 것이 이 밴드의 목표이므로, 세 번째 모습까지 잡히는 것이 맞다.
    */
   private static final String FORBIDDEN_LITERAL = "data.\"";
 
@@ -78,69 +72,59 @@ class DataSchemaResolutionTest {
   private static final String ALLOWED_FILE = "com/smartfirehub/global/tenant/DataSchema.java";
 
   /**
-   * 맨몸 스키마 리터럴. {@link #FORBIDDEN_LITERAL}({@code data."})은 <b>한정 이름</b> 형태만 잡으므로
-   * {@code "data"} 처럼 스키마명 단독으로 적힌 곳은 <b>구조적으로 보이지 않는다</b> — 그래서 Task 3~4
-   * 가 끝나고 가드가 초록이 된 뒤에도 실제 리터럴이 남아 있었다. 이 규칙이 그 구멍을 막는다.
+   * 맨몸 스키마 리터럴. {@link #FORBIDDEN_LITERAL}({@code data."})은 <b>한정 이름</b> 형태만 잡으므로 {@code "data"} 처럼
+   * 스키마명 단독으로 적힌 곳은 <b>구조적으로 보이지 않는다</b> — 그래서 Task 3~4 가 끝나고 가드가 초록이 된 뒤에도 실제 리터럴이 남아 있었다. 이 규칙이 그
+   * 구멍을 막는다.
    *
-   * <p>SQL 문자열 안의 {@code 'data'}(단일 인용)도 같은 규칙으로 잡는다 — {@code where table_schema
-   * = 'data'} 나 {@code search_path = 'data'} 는 진짜 스키마 리터럴인데 위 두 형태 어디에도 걸리지
-   * 않는다. 2026-08-17 실측: {@code src/main/java} 의 {@code 'data'} 11건은 <b>전부 주석·Javadoc</b>
-   * 이고(즉 코드 줄 0건) 그래서 이 규칙은 핀 없이 초록이다. 산문은 개명 뒤 "틀린 문장" 이 될 뿐
-   * 동작 결함이 아니므로 대상 밖이다 — 산문 때문에 빌드가 깨지면 가드는 소음이 되고 결국 꺼진다.
+   * <p>SQL 문자열 안의 {@code 'data'}(단일 인용)도 같은 규칙으로 잡는다 — {@code where table_schema = 'data'} 나 {@code
+   * search_path = 'data'} 는 진짜 스키마 리터럴인데 위 두 형태 어디에도 걸리지 않는다. 2026-08-17 실측: {@code src/main/java}
+   * 의 {@code 'data'} 11건은 <b>전부 주석·Javadoc</b> 이고(즉 코드 줄 0건) 그래서 이 규칙은 핀 없이 초록이다. 산문은 개명 뒤 "틀린 문장"
+   * 이 될 뿐 동작 결함이 아니므로 대상 밖이다 — 산문 때문에 빌드가 깨지면 가드는 소음이 되고 결국 꺼진다.
    *
-   * <p>스캔은 <b>원문</b>에 대해 한다 — {@code \"} 를 먼저 풀면 메시지 안의 {@code \"data\"} 가
-   * 거짓 양성이 된다. 또한 <b>주석·Javadoc 은 제외</b>한다({@link #stripComments}): 산문이
-   * {@code allowedSchema="data"} 처럼 스키마명을 <i>인용</i>하는 곳이 5곳 있고, 산문은 개명 뒤
-   * 틀린 문장이 될 뿐 동작 결함이 아니다.
+   * <p>스캔은 <b>원문</b>에 대해 한다 — {@code \"} 를 먼저 풀면 메시지 안의 {@code \"data\"} 가 거짓 양성이 된다. 또한
+   * <b>주석·Javadoc 은 제외</b>한다({@link #stripComments}): 산문이 {@code allowedSchema="data"} 처럼 스키마명을
+   * <i>인용</i>하는 곳이 5곳 있고, 산문은 개명 뒤 틀린 문장이 될 뿐 동작 결함이 아니다.
    *
-   * <p><b>P3-b2 T2 라운드 1 리뷰 NIT — {@code "data_t"} 를 추가했다.</b> 손조립 규칙 넷(
-   * {@link #HAND_ASSEMBLY_PATTERNS})은 전부 {@code + tenantId} 류의 <i>사용</i> 형태만 잡는다.
-   * 이름만 다른 상수 선언({@code private static final String SCHEMA_PREFIX = "data_t";})은
-   * 그 자체로는 아무 데도 안 걸린다 — 그 상수를 실제로 이어 붙이는 줄에서만 걸린다. 접두사
-   * <i>선언</i> 자체를 클론하는 것도 막으려면 맨몸 리터럴 목록에 {@code "data_t"} 를 추가해야
-   * 한다. 2026-08-18 실측: {@code src/main/java} 전체에서 {@code "data_t"} 리터럴은
-   * {@link DataSchema}{@code .java:37}(원본 선언) 단 한 곳뿐이라 핀 하나로 오탐 없이 막힌다.
+   * <p><b>P3-b2 T2 라운드 1 리뷰 NIT — {@code "data_t"} 를 추가했다.</b> 손조립 규칙 넷( {@link
+   * #HAND_ASSEMBLY_PATTERNS})은 전부 {@code + tenantId} 류의 <i>사용</i> 형태만 잡는다. 이름만 다른 상수 선언({@code
+   * private static final String SCHEMA_PREFIX = "data_t";})은 그 자체로는 아무 데도 안 걸린다 — 그 상수를 실제로 이어 붙이는
+   * 줄에서만 걸린다. 접두사 <i>선언</i> 자체를 클론하는 것도 막으려면 맨몸 리터럴 목록에 {@code "data_t"} 를 추가해야 한다. 2026-08-18 실측:
+   * {@code src/main/java} 전체에서 {@code "data_t"} 리터럴은 {@link DataSchema}{@code .java:37}(원본 선언) 단 한
+   * 곳뿐이라 핀 하나로 오탐 없이 막힌다.
    */
-  private static final List<String> FORBIDDEN_BARE_LITERALS = List.of("\"data\"", "'data'", "\"data_t\"");
+  private static final List<String> FORBIDDEN_BARE_LITERALS =
+      List.of("\"data\"", "'data'", "\"data_t\"");
 
   /**
    * 스키마명을 <b>손으로 조립</b>하는 형태를 잡는 정규식들.
    *
-   * <p>왜 필요한가: 가드는 소스 텍스트를 훑으므로 {@code DataSchema.current() + "." + tbl} 은
-   * {@code data."} 도 {@code "data"} 도 남기지 않으면서 {@link DataSchema#qualify} 의 인용·이중화를
-   * 건너뛴다 — 즉 두 리터럴 규칙을 <b>모두 통과하면서 인젝션 표면을 다시 여는</b> 우회로다.
-   * 조립은 {@code qualify()} 안에서만 일어나야 한다.
+   * <p>왜 필요한가: 가드는 소스 텍스트를 훑으므로 {@code DataSchema.current() + "." + tbl} 은 {@code data."} 도 {@code
+   * "data"} 도 남기지 않으면서 {@link DataSchema#qualify} 의 인용·이중화를 건너뛴다 — 즉 두 리터럴 규칙을 <b>모두 통과하면서 인젝션 표면을
+   * 다시 여는</b> 우회로다. 조립은 {@code qualify()} 안에서만 일어나야 한다.
    *
    * <ul>
    *   <li>{@code current()} 가 문자열 연결에 직접 참여하는 형태(양쪽 모두)
-   *   <li>{@code String.format("%s.\"%s\"", current(), tbl)} 같은 포맷 기반 조립 — 오늘 0건이므로
-   *       핀도 필요 없다
+   *   <li>{@code String.format("%s.\"%s\"", current(), tbl)} 같은 포맷 기반 조립 — 오늘 0건이므로 핀도 필요 없다
    * </ul>
    *
-   * <p><b>남아 있는 우회로(알려진 잔여물)</b>: {@code String s = DataSchema.current();} 로 변수에
-   * 담은 뒤 {@code s + "." + tbl} 로 조립하면 텍스트 스캔으로는 보이지 않는다. 이를 잡으려면
-   * {@code *schema} 류 식별자를 휴리스틱으로 훑어야 하는데, 그러면 {@code SqlValidator} 의 <b>산문
-   * 메시지 조립</b>까지 걸려 산문을 가드에 넣는 셈이 된다(위 {@link #FORBIDDEN_BARE_LITERALS} 주석과
-   * 같은 이유로 거부). 오늘 실측 3곳의 변수 경유 연결은 모두 {@code search_path} 목록·오류 메시지라
-   * 위험 형태가 아니며, 위험 형태가 되려면 리터럴이 {@code .} 로 시작해야 한다 — 그때는 리뷰에서
-   * 보인다. {@code String.format("%s.%s", schema, tbl)} 도 같은 부류로 남는다 — 여기에 맞추려면
-   * 패턴이 {@code %s\.} 가 되어야 하고 그러면 로깅 포맷 전반이 거짓 양성이 된다. 휴리스틱을 넣는
-   * 대신 이 잔여물들을 여기 적어 둔다.
+   * <p><b>남아 있는 우회로(알려진 잔여물)</b>: {@code String s = DataSchema.current();} 로 변수에 담은 뒤 {@code s +
+   * "." + tbl} 로 조립하면 텍스트 스캔으로는 보이지 않는다. 이를 잡으려면 {@code *schema} 류 식별자를 휴리스틱으로 훑어야 하는데, 그러면 {@code
+   * SqlValidator} 의 <b>산문 메시지 조립</b>까지 걸려 산문을 가드에 넣는 셈이 된다(위 {@link #FORBIDDEN_BARE_LITERALS} 주석과
+   * 같은 이유로 거부). 오늘 실측 3곳의 변수 경유 연결은 모두 {@code search_path} 목록·오류 메시지라 위험 형태가 아니며, 위험 형태가 되려면 리터럴이
+   * {@code .} 로 시작해야 한다 — 그때는 리뷰에서 보인다. {@code String.format("%s.%s", schema, tbl)} 도 같은 부류로 남는다 —
+   * 여기에 맞추려면 패턴이 {@code %s\.} 가 되어야 하고 그러면 로깅 포맷 전반이 거짓 양성이 된다. 휴리스틱을 넣는 대신 이 잔여물들을 여기 적어 둔다.
    *
-   * <p><b>P3-b2 T2 확장 — 스키마 접두사({@code data_t})의 손조립도 같은 규칙으로 잡는다.</b>
-   * {@code current()} 가 물리 스키마 상수 하나였을 때는 조립 우회로가 {@code qualify()} 쪽 하나뿐
-   * 이었지만, 테넌트별 파생이 생긴 뒤로는 {@code "data_t" + tenantId} 형태로 파생 로직 자체를
-   * 손으로 복제하는 두 번째 우회로가 생긴다. 세 패턴을 추가한다:
+   * <p><b>P3-b2 T2 확장 — 스키마 접두사({@code data_t})의 손조립도 같은 규칙으로 잡는다.</b> {@code current()} 가 물리 스키마
+   * 상수 하나였을 때는 조립 우회로가 {@code qualify()} 쪽 하나뿐 이었지만, 테넌트별 파생이 생긴 뒤로는 {@code "data_t" + tenantId}
+   * 형태로 파생 로직 자체를 손으로 복제하는 두 번째 우회로가 생긴다. 세 패턴을 추가한다:
    *
    * <ul>
    *   <li>{@code "data_t" + }, {@code 'data_t' + } — 접두사 리터럴을 직접 이어 붙이는 형태
-   *   <li>{@code "_t" + tenantId} — 접미사만 따로 이어 붙이는 형태(예: {@code "data" + "_t" +
-   *       tenantId} 처럼 여러 조각으로 쪼개 만들어도 이 조각 하나로 걸린다)
-   *   <li>{@code TENANT_SCHEMA_PREFIX + } — {@link DataSchema#current()} 자신의 파생 로직이
-   *       바로 이 형태다. 이 패턴이 없으면 그 한 줄이 규약 가드에 구조적으로 보이지 않아, "조립
-   *       지점은 DataSchema 하나"라는 규약이 코드로 강제되지 않고 문서로만 남는다 — {@code
-   *       qualify()} 본문({@code current() + "."})을 이미 같은 이유로 핀 처리하고 있는 것과
-   *       대칭이다.
+   *   <li>{@code "_t" + tenantId} — 접미사만 따로 이어 붙이는 형태(예: {@code "data" + "_t" + tenantId} 처럼 여러
+   *       조각으로 쪼개 만들어도 이 조각 하나로 걸린다)
+   *   <li>{@code TENANT_SCHEMA_PREFIX + } — {@link DataSchema#current()} 자신의 파생 로직이 바로 이 형태다. 이 패턴이
+   *       없으면 그 한 줄이 규약 가드에 구조적으로 보이지 않아, "조립 지점은 DataSchema 하나"라는 규약이 코드로 강제되지 않고 문서로만 남는다 —
+   *       {@code qualify()} 본문({@code current() + "."})을 이미 같은 이유로 핀 처리하고 있는 것과 대칭이다.
    * </ul>
    */
   private static final List<Pattern> HAND_ASSEMBLY_PATTERNS =
@@ -154,13 +138,12 @@ class DataSchemaResolutionTest {
           Pattern.compile("TENANT_SCHEMA_PREFIX\\s*\\+"));
 
   /**
-   * 규칙을 위반해도 되는 <b>개별 사이트</b>. 파일 단위 면제가 아니라 <b>정확한 코드 조각</b>을
-   * 못박는다 — 파일로 면제하면 {@code SqlValidator} 에 새로 생기는 리터럴이 영구히 숨는다.
+   * 규칙을 위반해도 되는 <b>개별 사이트</b>. 파일 단위 면제가 아니라 <b>정확한 코드 조각</b>을 못박는다 — 파일로 면제하면 {@code SqlValidator}
+   * 에 새로 생기는 리터럴이 영구히 숨는다.
    *
    * @param file 스캔 루트 기준 상대 경로(끝부분 일치)
    * @param snippet 그 파일에 정확히 {@code expectedCount} 번 나타나야 하는 코드 조각
-   * @param expectedCount 기대 출현 횟수 — 존재 여부가 아니라 <b>개수</b>를 못박는다. 존재만 보면
-   *     같은 조각이 한 벌 더 복사돼도 조용히 면제된다.
+   * @param expectedCount 기대 출현 횟수 — 존재 여부가 아니라 <b>개수</b>를 못박는다. 존재만 보면 같은 조각이 한 벌 더 복사돼도 조용히 면제된다.
    * @param reason 왜 남아 있는지 — 리뷰어가 핀을 지울 때 판단 근거가 된다
    */
   private record PinnedSite(String file, String snippet, int expectedCount, String reason) {}
@@ -168,18 +151,16 @@ class DataSchemaResolutionTest {
   /**
    * {@link #FORBIDDEN_BARE_LITERALS} 규칙의 핀 목록.
    *
-   * <p>{@code SqlValidator} 두 곳(무인자 생성자·정적 팩토리)은 <b>P3-b1 Task 3 에서 전환 완료</b>되어
-   * 핀이 사라졌다 — 검증기는 이제 허용 스키마를 {@code Supplier<String>}({@code DataSchema::current})
-   * 로 들고 검증 시점에 해석한다(싱글턴 생성 시점에는 테넌트 컨텍스트가 없어 값으로 받을 수 없다).
-   * 리터럴 2-인자 생성자는 <b>단위 테스트 전용</b>으로 남아 있으므로 프로덕션 소스에는 리터럴이 없다.
+   * <p>{@code SqlValidator} 두 곳(무인자 생성자·정적 팩토리)은 <b>P3-b1 Task 3 에서 전환 완료</b>되어 핀이 사라졌다 — 검증기는 이제
+   * 허용 스키마를 {@code Supplier<String>}({@code DataSchema::current}) 로 들고 검증 시점에 해석한다(싱글턴 생성 시점에는 테넌트
+   * 컨텍스트가 없어 값으로 받을 수 없다). 리터럴 2-인자 생성자는 <b>단위 테스트 전용</b>으로 남아 있으므로 프로덕션 소스에는 리터럴이 없다.
    *
-   * <p>{@link DataSchema} 는 조립 지점 그 자체이므로 파일이 아니라 <b>그 한 줄</b>을 핀으로 둔다.
-   * 파일 통째로 면제하면 조립 지점 안에서 늘어나는 리터럴이 보이지 않게 된다.
+   * <p>{@link DataSchema} 는 조립 지점 그 자체이므로 파일이 아니라 <b>그 한 줄</b>을 핀으로 둔다. 파일 통째로 면제하면 조립 지점 안에서 늘어나는
+   * 리터럴이 보이지 않게 된다.
    *
-   * <p><b>뒤쪽 4개는 동명이의(homonym)다</b> — JSON 응답·차트 스펙의 필드 이름이 우연히
-   * {@code data} 인 것이고 물리 스키마와 아무 관계가 없다. 규칙을 "스키마 문맥" 휴리스틱으로
-   * 좁히는 대신(그러면 {@code this("data", false)} 처럼 문맥 단어가 없는 진짜 위반을 놓친다)
-   * 개별 사이트로 못박는다. 개수까지 못박으므로 그 파일에 새 {@code "data"} 가 생기면 빨개진다.
+   * <p><b>뒤쪽 4개는 동명이의(homonym)다</b> — JSON 응답·차트 스펙의 필드 이름이 우연히 {@code data} 인 것이고 물리 스키마와 아무 관계가
+   * 없다. 규칙을 "스키마 문맥" 휴리스틱으로 좁히는 대신(그러면 {@code this("data", false)} 처럼 문맥 단어가 없는 진짜 위반을 놓친다) 개별 사이트로
+   * 못박는다. 개수까지 못박으므로 그 파일에 새 {@code "data"} 가 생기면 빨개진다.
    */
   private static final List<PinnedSite> BARE_LITERAL_PINS =
       List.of(
@@ -192,8 +173,7 @@ class DataSchemaResolutionTest {
               ALLOWED_FILE,
               "TENANT_SCHEMA_PREFIX = \"data_t\"",
               1,
-              "신규 테넌트 스키마 접두사의 유일한 선언 지점(P3-b2 T2 라운드 1 NIT) — 이름만 바꾼"
-                  + " 클론 상수 선언을 이 핀 밖에서 잡는다"),
+              "신규 테넌트 스키마 접두사의 유일한 선언 지점(P3-b2 T2 라운드 1 NIT) — 이름만 바꾼" + " 클론 상수 선언을 이 핀 밖에서 잡는다"),
           new PinnedSite(
               "db/migration/V125__pipeline_incremental_updated_at_indexes.java",
               "then 'data' else",
@@ -229,12 +209,11 @@ class DataSchemaResolutionTest {
   /**
    * {@link #HAND_ASSEMBLY_PATTERNS} 규칙의 핀 목록 — 조립이 <b>정당한</b> 곳들뿐이다.
    *
-   * <p>{@code AnalyticsQueryExecutionService} 는 {@code search_path} 를 세운다. 이건 한정 이름이
-   * 아니라 <b>스키마 식별자 목록</b>({@code '<schema>', 'public'})이므로 {@code qualify()} 를 쓰면
-   * 오히려 틀린 SQL 이 된다 — 그래서 조립이 맞다.
+   * <p>{@code AnalyticsQueryExecutionService} 는 {@code search_path} 를 세운다. 이건 한정 이름이 아니라 <b>스키마 식별자
+   * 목록</b>({@code '<schema>', 'public'})이므로 {@code qualify()} 를 쓰면 오히려 틀린 SQL 이 된다 — 그래서 조립이 맞다.
    *
-   * <p>{@code TENANT_SCHEMA_PREFIX + tenantId}({@code DataSchema.current()} 본문)도 핀이다 —
-   * 접두사에서 파생 스키마명을 만드는 유일한 합법 조립 지점이 바로 이 한 줄이다(P3-b2 T2).
+   * <p>{@code TENANT_SCHEMA_PREFIX + tenantId}({@code DataSchema.current()} 본문)도 핀이다 — 접두사에서 파생
+   * 스키마명을 만드는 유일한 합법 조립 지점이 바로 이 한 줄이다(P3-b2 T2).
    */
   private static final List<PinnedSite> HAND_ASSEMBLY_PINS =
       List.of(
@@ -279,62 +258,50 @@ class DataSchemaResolutionTest {
               "컬럼 probe 직전 search_path — 실행 경로(SqlScriptExecutor)와 같은 조리법이어야 한다"));
 
   /**
-   * 카탈로그로 테넌트 스키마를 <b>열거</b>하는 코드를 잡는다(P3-b2 T2, 신설. 라운드 1 리뷰로
-   * 토큰 경계·스캔 범위 개정).
+   * 카탈로그로 테넌트 스키마를 <b>열거</b>하는 코드를 잡는다(P3-b2 T2, 신설. 라운드 1 리뷰로 토큰 경계·스캔 범위 개정).
    *
-   * <p><b>왜 nit 이 아니라 진짜 결함 방지인가.</b> 테넌트 1 의 물리 스키마는 {@code data} 라서
-   * {@code data_t[0-9]+} 어떤 패턴에도 안 걸린다. "전 테넌트 스키마 순회"를 의도한 코드가
-   * {@code information_schema.schemata} 나 {@code pg_namespace} 를 {@code data_t} 패턴으로
-   * 필터링하면, 이 필터는 <b>구조적으로 테넌트 1 을 절대 찾지 못한다</b> — prod 에서 86개
-   * 테이블이 전부 들어 있는 바로 그 스키마를 조용히 빼먹는다. 정상적으로 만들어진 목록에서
-   * 우연히 하나가 빠지는 게 아니라, 필터 자체가 처음부터 그 스키마를 배제하도록 짜여 있다.
+   * <p><b>왜 nit 이 아니라 진짜 결함 방지인가.</b> 테넌트 1 의 물리 스키마는 {@code data} 라서 {@code data_t[0-9]+} 어떤 패턴에도
+   * 안 걸린다. "전 테넌트 스키마 순회"를 의도한 코드가 {@code information_schema.schemata} 나 {@code pg_namespace} 를
+   * {@code data_t} 패턴으로 필터링하면, 이 필터는 <b>구조적으로 테넌트 1 을 절대 찾지 못한다</b> — prod 에서 86개 테이블이 전부 들어 있는 바로
+   * 그 스키마를 조용히 빼먹는다. 정상적으로 만들어진 목록에서 우연히 하나가 빠지는 게 아니라, 필터 자체가 처음부터 그 스키마를 배제하도록 짜여 있다.
    *
-   * <p><b>이 가드가 실제로 잡는 것 — 과장하지도 축소하지도 않는다(라운드 1·2 리뷰 지적).</b>
-   * 잡는 것: {@code information_schema.schemata}/{@code pg_namespace} <b>리터럴</b>과
-   * {@code data_t} 패턴(이스케이프된 밑줄 {@code data\_t} 포함, {@code data_type} 같은 무관한
-   * 식별자는 제외 — 아래 {@link #countCatalogEnumerations} 참조)이 <b>같은 문장(세미콜론으로
-   * 구분한 단위) 안</b>에 함께 있는 코드. <b>알려진 잔여물(못 잡는 것)</b>:
+   * <p><b>이 가드가 실제로 잡는 것 — 과장하지도 축소하지도 않는다(라운드 1·2 리뷰 지적).</b> 잡는 것: {@code
+   * information_schema.schemata}/{@code pg_namespace} <b>리터럴</b>과 {@code data_t} 패턴(이스케이프된 밑줄
+   * {@code data\_t} 포함, {@code data_type} 같은 무관한 식별자는 제외 — 아래 {@link #countCatalogEnumerations}
+   * 참조)이 <b>같은 문장(세미콜론으로 구분한 단위) 안</b>에 함께 있는 코드. <b>알려진 잔여물(못 잡는 것)</b>:
    *
    * <ul>
-   *   <li>{@code LIKE 'data%'} 처럼 {@code data_t} 라고 철자하지 않은 다른 형태의 열거(여전히
-   *       테넌트 1 을 못 찾는 것은 같지만, 이 가드는 {@code data_t} 패턴 <i>철자</i>만 검사한다)
+   *   <li>{@code LIKE 'data%'} 처럼 {@code data_t} 라고 철자하지 않은 다른 형태의 열거(여전히 테넌트 1 을 못 찾는 것은 같지만, 이
+   *       가드는 {@code data_t} 패턴 <i>철자</i>만 검사한다)
    *   <li>{@code nspname <> 'public'} 같은 배제 조건
-   *   <li>세미콜론이 문자열 리터럴 안에 있어 문장 경계 분리 자체가 어긋나는 극히 드문 경우(이
-   *       경우는 <b>놓치는</b> 방향으로만 실패한다 — 오탐이 아니라 미탐이 늘어난다)
-   *   <li>카탈로그 토큰을 상수·변수로 뽑아 쓰는 경우(예: {@code String sql = "select nspname from
-   *       " + CATALOG + " where nspname like 'data_t%'";}) — 문장에 {@code pg_namespace}
-   *       <b>리터럴</b>이 없으므로 {@code data_t} 를 철자하고도 빠져나간다(2026-08-18 실측,
-   *       라운드 2 리뷰). jOOQ DSL 체이닝({@code table(name("pg_namespace"))})과
-   *       {@code String.format} 은 문장 안에 {@code pg_namespace} 리터럴이 그대로 있으므로
-   *       <b>잡힌다</b>
+   *   <li>세미콜론이 문자열 리터럴 안에 있어 문장 경계 분리 자체가 어긋나는 극히 드문 경우(이 경우는 <b>놓치는</b> 방향으로만 실패한다 — 오탐이 아니라 미탐이
+   *       늘어난다)
+   *   <li>카탈로그 토큰을 상수·변수로 뽑아 쓰는 경우(예: {@code String sql = "select nspname from " + CATALOG + "
+   *       where nspname like 'data_t%'";}) — 문장에 {@code pg_namespace} <b>리터럴</b>이 없으므로 {@code
+   *       data_t} 를 철자하고도 빠져나간다(2026-08-18 실측, 라운드 2 리뷰). jOOQ DSL 체이닝({@code
+   *       table(name("pg_namespace"))})과 {@code String.format} 은 문장 안에 {@code pg_namespace} 리터럴이
+   *       그대로 있으므로 <b>잡힌다</b>
    * </ul>
    *
-   * <p><b>덤 — {@code LIKE} 의 {@code _} 는 단일 문자 와일드카드다.</b> {@code LIKE 'data_t%'}
-   * 는 {@code dataXt...} 도 잡는다. 진짜로 카탈로그를 훑어야 한다면 이스케이프({@code LIKE
-   * 'data\_t%'})하거나 정규식({@code ~ '^data_t[0-9]+$'})을 써야 한다. 이 가드는 두 철자
-   * 형태(이스케이프된 밑줄, 자바/SQL 정규식 이스케이프 {@code \d} 류) 모두에서 카탈로그+
-   * {@code data_t} 조합을 잡는다({@link #countCatalogEnumerations} 가 밑줄 앞 백슬래시만
-   * 정규화해서 본다, 라운드 2 리뷰로 사거리 정정) — 단, 바로 위 잔여물 목록에 없는 형태에
-   * 한해서다. "철자 형태와 무관하게 전부 잡는다" 는 절대 단언은 아니다.
+   * <p><b>덤 — {@code LIKE} 의 {@code _} 는 단일 문자 와일드카드다.</b> {@code LIKE 'data_t%'} 는 {@code
+   * dataXt...} 도 잡는다. 진짜로 카탈로그를 훑어야 한다면 이스케이프({@code LIKE 'data\_t%'})하거나 정규식({@code ~
+   * '^data_t[0-9]+$'})을 써야 한다. 이 가드는 두 철자 형태(이스케이프된 밑줄, 자바/SQL 정규식 이스케이프 {@code \d} 류) 모두에서 카탈로그+
+   * {@code data_t} 조합을 잡는다({@link #countCatalogEnumerations} 가 밑줄 앞 백슬래시만 정규화해서 본다, 라운드 2 리뷰로 사거리
+   * 정정) — 단, 바로 위 잔여물 목록에 없는 형태에 한해서다. "철자 형태와 무관하게 전부 잡는다" 는 절대 단언은 아니다.
    *
-   * <p><b>스캔 범위 — 같은 줄이 아니라 같은 문장(라운드 1 리뷰로 개정).</b> 이 리포의 지배적
-   * SQL 조립 스타일은 줄머리 {@code + "} 다줄 연결이다(2026-08-18 리뷰 실측: {@code src/main/java}
-   * 35개 파일, 텍스트 블록은 프로덕션에 0개). "같은 줄" 기준이면 이 스타일에 정면으로 무력화되고,
-   * 하필 이 밴드가 방금 쓴 {@code TenantSchemaProvisioner.hasCompleteDefaultPrivileges} 자신이
-   * {@code pg_namespace} 를 그 스타일로 쓴다 — 20줄 옆에서. 그래서 스캔 단위를 세미콜론으로 나눈
-   * <b>문장</b>으로 넓히고, 문장 안에서 인접한 문자열 리터럴 연결({@code "..." + "..."})을
-   * {@link #foldStringConcatenation} 으로 접어 한 덩어리로 본다 — 다줄로 쪼개 적어도 조립된
-   * 결과 텍스트는 하나로 붙어 있다고 보는 것이다. 다른 두 규칙(맨몸 리터럴·손조립)은 건드리지
-   * 않는다 — 그쪽은 이미 줄 단위로도 실제 우회를 잡고 있고, 예산 인프라({@link
-   * #findExcessViolations})를 이 규칙 때문에 문장 단위로 바꾸면 두 규칙의 리포팅(정확한 줄
-   * 번호)이 부정확해진다. 이 규칙은 그 인프라를 아예 안 쓰므로 독립적으로 넓힐 수 있었다 —
-   * 대가로 <b>이 규칙에는 핀(면제) 개념이 없다</b>(런북 §5).
+   * <p><b>스캔 범위 — 같은 줄이 아니라 같은 문장(라운드 1 리뷰로 개정).</b> 이 리포의 지배적 SQL 조립 스타일은 줄머리 {@code + "} 다줄
+   * 연결이다(2026-08-18 리뷰 실측: {@code src/main/java} 35개 파일, 텍스트 블록은 프로덕션에 0개). "같은 줄" 기준이면 이 스타일에 정면으로
+   * 무력화되고, 하필 이 밴드가 방금 쓴 {@code TenantSchemaProvisioner.hasCompleteDefaultPrivileges} 자신이 {@code
+   * pg_namespace} 를 그 스타일로 쓴다 — 20줄 옆에서. 그래서 스캔 단위를 세미콜론으로 나눈 <b>문장</b>으로 넓히고, 문장 안에서 인접한 문자열 리터럴
+   * 연결({@code "..." + "..."})을 {@link #foldStringConcatenation} 으로 접어 한 덩어리로 본다 — 다줄로 쪼개 적어도 조립된 결과
+   * 텍스트는 하나로 붙어 있다고 보는 것이다. 다른 두 규칙(맨몸 리터럴·손조립)은 건드리지 않는다 — 그쪽은 이미 줄 단위로도 실제 우회를 잡고 있고, 예산
+   * 인프라({@link #findExcessViolations})를 이 규칙 때문에 문장 단위로 바꾸면 두 규칙의 리포팅(정확한 줄 번호)이 부정확해진다. 이 규칙은 그
+   * 인프라를 아예 안 쓰므로 독립적으로 넓힐 수 있었다 — 대가로 <b>이 규칙에는 핀(면제) 개념이 없다</b>(런북 §5).
    *
-   * <p>오늘 프로덕션 소스의 {@code pg_namespace} 사용(예: {@code TenantSchemaProvisioner.
-   * schemaExists}, {@code hasCompleteDefaultPrivileges}, {@code AnalyticsQueryExecutionService}
-   * 의 {@code pg_class}+{@code pg_namespace} 인트로스펙션)은 전부 {@code data_t} 패턴을 참조하지
-   * 않으므로 이 규칙에 걸리지 않는다(2026-08-18 재실측 0건, 문장 단위 스캔으로도 동일).
-   * {@link DataSchema} 도 이 두 카탈로그 토큰을 전혀 쓰지 않는다.
+   * <p>오늘 프로덕션 소스의 {@code pg_namespace} 사용(예: {@code TenantSchemaProvisioner. schemaExists}, {@code
+   * hasCompleteDefaultPrivileges}, {@code AnalyticsQueryExecutionService} 의 {@code pg_class}+{@code
+   * pg_namespace} 인트로스펙션)은 전부 {@code data_t} 패턴을 참조하지 않으므로 이 규칙에 걸리지 않는다(2026-08-18 재실측 0건, 문장 단위
+   * 스캔으로도 동일). {@link DataSchema} 도 이 두 카탈로그 토큰을 전혀 쓰지 않는다.
    */
   private static final List<String> CATALOG_ENUMERATION_TOKENS =
       List.of("information_schema.schemata", "pg_namespace");
@@ -432,9 +399,7 @@ class DataSchemaResolutionTest {
             .toList();
 
     assertThat(offenders)
-        .as(
-            "물리 스키마명을 직접 적은 프로덕션 소스 — DataSchema.qualify(..) 로 옮겨라 (유일한 예외: %s)",
-            ALLOWED_FILE)
+        .as("물리 스키마명을 직접 적은 프로덕션 소스 — DataSchema.qualify(..) 로 옮겨라 (유일한 예외: %s)", ALLOWED_FILE)
         .isEmpty();
   }
 
@@ -446,9 +411,7 @@ class DataSchemaResolutionTest {
     List<String> offenders =
         findExcessViolations(BARE_LITERAL_PINS, DataSchemaResolutionTest::countBareLiterals);
 
-    assertThat(offenders)
-        .as("맨몸 물리 스키마명을 적은 프로덕션 소스 — DataSchema 를 거쳐라 (예외는 핀 목록에만)")
-        .isEmpty();
+    assertThat(offenders).as("맨몸 물리 스키마명을 적은 프로덕션 소스 — DataSchema 를 거쳐라 (예외는 핀 목록에만)").isEmpty();
   }
 
   @Test
@@ -530,20 +493,19 @@ class DataSchemaResolutionTest {
   /**
    * 프로덕션 소스를 파일 단위로 훑어, <b>위반 개수가 핀이 허용한 예산을 넘는</b> 파일을 모은다.
    *
-   * <p><b>왜 "줄에 핀 조각이 있으면 면제" 가 아니라 개수 예산인가 — 리뷰에서 잡힌 실제 결함이다.</b>
-   * 줄 단위 부분문자열 면제는 핀 조각을 <b>흡수기</b>로 만든다: {@code ReportRenderUtils} 의 핀 조각은
-   * {@code "data",} 인데, 새로 추가된 진짜 위반 {@code Map.of("data", true)} 도 그 조각을 담고 있어
-   * 조용히 면제됐다. 그러면 빨개지는 것은 이 규칙이 아니라 {@link #pinnedSitesAreNotStale()} 의 개수
-   * 단언이고, 그 메시지는 "핀을 지워라" 라고 말한다 — <b>새 누출을 들고 온 사람이 핀을 지워 시끄러운
-   * 실패를 영구 면제로 바꾸도록 유도한다.</b> 그래서 두 방향을 분리한다.
+   * <p><b>왜 "줄에 핀 조각이 있으면 면제" 가 아니라 개수 예산인가 — 리뷰에서 잡힌 실제 결함이다.</b> 줄 단위 부분문자열 면제는 핀 조각을 <b>흡수기</b>로
+   * 만든다: {@code ReportRenderUtils} 의 핀 조각은 {@code "data",} 인데, 새로 추가된 진짜 위반 {@code Map.of("data",
+   * true)} 도 그 조각을 담고 있어 조용히 면제됐다. 그러면 빨개지는 것은 이 규칙이 아니라 {@link #pinnedSitesAreNotStale()} 의 개수
+   * 단언이고, 그 메시지는 "핀을 지워라" 라고 말한다 — <b>새 누출을 들고 온 사람이 핀을 지워 시끄러운 실패를 영구 면제로 바꾸도록 유도한다.</b> 그래서 두 방향을
+   * 분리한다.
    *
    * <ul>
    *   <li>위반이 예산보다 <b>많다</b> → 이 규칙이 빨개진다: "새 위반이 생겼다, 핀을 지우지 말고 고쳐라"
    *   <li>핀 조각이 <b>사라졌다</b> → {@link #pinnedSitesAreNotStale()} 이 빨개진다: "핀을 지워라"
    * </ul>
    *
-   * <p>예산은 핀 조각 자체를 같은 계수기로 세서 만든다({@code expectedCount × 조각의 위반 개수}) —
-   * 규칙과 예산이 같은 정의를 쓰므로 한쪽만 바뀌어 어긋날 수 없다.
+   * <p>예산은 핀 조각 자체를 같은 계수기로 세서 만든다({@code expectedCount × 조각의 위반 개수}) — 규칙과 예산이 같은 정의를 쓰므로 한쪽만 바뀌어
+   * 어긋날 수 없다.
    *
    * @param countMatches 한 줄(또는 핀 조각) 안의 위반 개수를 세는 함수
    */
@@ -589,36 +551,29 @@ class DataSchemaResolutionTest {
   }
 
   /**
-   * 텍스트 조각(문장 또는 그 안의 접은 문자열) 안에 카탈로그 토큰({@link
-   * #CATALOG_ENUMERATION_TOKENS})과 {@code data_t} 패턴이 <b>함께</b> 나타나면 1, 아니면 0.
-   * 둘 다 있어야 "카탈로그로 data_t 패턴을 열거"하는 형태가 되므로 존재 개수가 아니라 동시
-   * 출현 여부를 센다 — 카탈로그 토큰만 있는 정상적인 단건 조회({@code nspname = ?})는 이
-   * 규칙의 대상이 아니다.
+   * 텍스트 조각(문장 또는 그 안의 접은 문자열) 안에 카탈로그 토큰({@link #CATALOG_ENUMERATION_TOKENS})과 {@code data_t} 패턴이
+   * <b>함께</b> 나타나면 1, 아니면 0. 둘 다 있어야 "카탈로그로 data_t 패턴을 열거"하는 형태가 되므로 존재 개수가 아니라 동시 출현 여부를 센다 — 카탈로그
+   * 토큰만 있는 정상적인 단건 조회({@code nspname = ?})는 이 규칙의 대상이 아니다.
    *
-   * <p><b>{@code data_t} 판정을 정규식으로 바꿨다(라운드 1 리뷰 BLOCKER).</b> 단순
-   * {@code contains("data_t")} 는 양방향으로 어긋났다:
+   * <p><b>{@code data_t} 판정을 정규식으로 바꿨다(라운드 1 리뷰 BLOCKER).</b> 단순 {@code contains("data_t")} 는 양방향으로
+   * 어긋났다:
    *
    * <ul>
-   *   <li><b>놓친다</b>: 이스케이프를 옳게 한 {@code LIKE 'data\_t%'} 는 소스에 {@code
-   *       data\\_t}(백슬래시 포함)로 적혀 {@code data_t} 부분문자열이 없다 — 그런데 이스케이프를
-   *       옳게 해도 열거는 여전히 구조적으로 틀리다. 그래서 백슬래시를 먼저 지워 정규화한다
-   *       (raw 소스의 {@code \\} 든 {@code \}) 든 전부 지운다 — 이 규칙의 목적상 이스케이프
-   *       여부는 무관하다).
-   *   <li><b>과잉으로 잡는다</b>: {@code data_t} 는 {@code data_type} 의 부분문자열이다.
-   *       프로덕션에 {@code data_type} 이 여럿 있다({@code DataTableRowService},
-   *       {@code AnalyticsQueryExecutionService}, {@code OntologyRepository}). 그래서
-   *       {@code data_t} 뒤에 알파벳이 오면(={@code data_type} 처럼 진짜 단어의 일부이면)
-   *       제외한다({@code (?![a-zA-Z])}) — 뒤에 숫자나 SQL 와일드카드({@code %}, {@code '})가
-   *       오는 진짜 테넌트 패턴({@code data_t2}, {@code data_t%})은 그대로 잡힌다.
+   *   <li><b>놓친다</b>: 이스케이프를 옳게 한 {@code LIKE 'data\_t%'} 는 소스에 {@code data\\_t}(백슬래시 포함)로 적혀
+   *       {@code data_t} 부분문자열이 없다 — 그런데 이스케이프를 옳게 해도 열거는 여전히 구조적으로 틀리다. 그래서 백슬래시를 먼저 지워 정규화한다 (raw
+   *       소스의 {@code \\} 든 {@code \}) 든 전부 지운다 — 이 규칙의 목적상 이스케이프 여부는 무관하다).
+   *   <li><b>과잉으로 잡는다</b>: {@code data_t} 는 {@code data_type} 의 부분문자열이다. 프로덕션에 {@code data_type} 이
+   *       여럿 있다({@code DataTableRowService}, {@code AnalyticsQueryExecutionService}, {@code
+   *       OntologyRepository}). 그래서 {@code data_t} 뒤에 알파벳이 오면(={@code data_type} 처럼 진짜 단어의 일부이면)
+   *       제외한다({@code (?![a-zA-Z])}) — 뒤에 숫자나 SQL 와일드카드({@code %}, {@code '})가 오는 진짜 테넌트 패턴({@code
+   *       data_t2}, {@code data_t%})은 그대로 잡힌다.
    * </ul>
    *
-   * <p><b>알려진 잔여물(NIT, 라운드 2 리뷰) — 오늘의 규약에 하드코딩돼 있다.</b> 이 패턴의
-   * {@code "data_t"} 는 {@link DataSchema#TENANT_SCHEMA_PREFIX} 상수를 <b>읽지 않고</b> 그
-   * 값을 리터럴로 다시 적은 것이다. 그래서 접두사 규약이 바뀌면(예: {@code data_t} →
-   * {@code data_tenant}) 이 가드는 조용히 낡은 패턴을 계속 검사한다 — 고치라는 게 아니라
-   * 기록만 남긴다. ({@link #HAND_ASSEMBLY_PATTERNS} 의 손조립 규칙도 같은 방식으로 상수 이름
-   * {@code TENANT_SCHEMA_PREFIX} 자체에 묶여 있어 대칭이 안 맞는다 — 그쪽은 식별자를, 이쪽은
-   * 값을 하드코딩한다.)
+   * <p><b>알려진 잔여물(NIT, 라운드 2 리뷰) — 오늘의 규약에 하드코딩돼 있다.</b> 이 패턴의 {@code "data_t"} 는 {@link
+   * DataSchema#TENANT_SCHEMA_PREFIX} 상수를 <b>읽지 않고</b> 그 값을 리터럴로 다시 적은 것이다. 그래서 접두사 규약이 바뀌면(예:
+   * {@code data_t} → {@code data_tenant}) 이 가드는 조용히 낡은 패턴을 계속 검사한다 — 고치라는 게 아니라 기록만 남긴다. ({@link
+   * #HAND_ASSEMBLY_PATTERNS} 의 손조립 규칙도 같은 방식으로 상수 이름 {@code TENANT_SCHEMA_PREFIX} 자체에 묶여 있어 대칭이 안
+   * 맞는다 — 그쪽은 식별자를, 이쪽은 값을 하드코딩한다.)
    */
   private static final Pattern TENANT_SCHEMA_PATTERN_TOKEN = Pattern.compile("data_t(?![a-zA-Z])");
 
@@ -637,19 +592,15 @@ class DataSchemaResolutionTest {
   }
 
   /**
-   * 인접한 문자열 리터럴 연결({@code "..." + "..."})을 하나로 접는다 — 카탈로그 규칙 전용
-   * 정규화다(라운드 1 리뷰). 이 리포의 지배적 SQL 스타일이 줄머리 {@code + "} 다줄 연결이라,
-   * 문장을 통째로 넘겨도 리터럴이 여러 조각으로 쪼개져 있으면 {@code data_t} 패턴이 카탈로그
-   * 토큰과 다른 리터럴 조각에 나뉘어 있을 수 있다. 닫는 따옴표–공백(개행 포함)–{@code +}–공백–
-   * 여는 따옴표 형태를 통째로 지우면, 조립된 결과 텍스트가 실제로 실행될 SQL 과 같은 순서로
-   * 하나로 이어진다.
+   * 인접한 문자열 리터럴 연결({@code "..." + "..."})을 하나로 접는다 — 카탈로그 규칙 전용 정규화다(라운드 1 리뷰). 이 리포의 지배적 SQL 스타일이
+   * 줄머리 {@code + "} 다줄 연결이라, 문장을 통째로 넘겨도 리터럴이 여러 조각으로 쪼개져 있으면 {@code data_t} 패턴이 카탈로그 토큰과 다른 리터럴
+   * 조각에 나뉘어 있을 수 있다. 닫는 따옴표–공백(개행 포함)–{@code +}–공백– 여는 따옴표 형태를 통째로 지우면, 조립된 결과 텍스트가 실제로 실행될 SQL 과
+   * 같은 순서로 하나로 이어진다.
    *
-   * <p><b>알려진 잔여물(NIT, 라운드 2 리뷰) — 문자열 경계를 모른다.</b> 이 함수는 정규식으로
-   * {@code " + "} 자리를 지울 뿐 리터럴의 시작·끝을 추적하지 않으므로, 리터럴 <b>안</b>에 우연히
-   * {@code \" + \"} 와 같은 바이트 나열이 있어도 접힌다. 실해는 없다 — 방향이 미탐 쪽(잘못 접혀
-   * 원래 잡혔을 위반이 더 안 보이게 될 수는 있어도, 없던 위반이 새로 생기지는 않는다)이고,
-   * 세미콜론 근사({@link #noProductionSourceEnumeratesTenantSchemasViaCatalog} 참조)와 같은
-   * 성질의 근사다.
+   * <p><b>알려진 잔여물(NIT, 라운드 2 리뷰) — 문자열 경계를 모른다.</b> 이 함수는 정규식으로 {@code " + "} 자리를 지울 뿐 리터럴의 시작·끝을
+   * 추적하지 않으므로, 리터럴 <b>안</b>에 우연히 {@code \" + \"} 와 같은 바이트 나열이 있어도 접힌다. 실해는 없다 — 방향이 미탐 쪽(잘못 접혀 원래
+   * 잡혔을 위반이 더 안 보이게 될 수는 있어도, 없던 위반이 새로 생기지는 않는다)이고, 세미콜론 근사({@link
+   * #noProductionSourceEnumeratesTenantSchemasViaCatalog} 참조)와 같은 성질의 근사다.
    */
   private static String foldStringConcatenation(String statement) {
     return statement.replaceAll("\"\\s*\\+\\s*\"", "");
@@ -669,16 +620,13 @@ class DataSchemaResolutionTest {
   }
 
   /**
-   * 주석·Javadoc 을 <b>같은 길이의 공백으로</b> 지운 소스를 돌려준다 — 줄 번호와 열 위치가 그대로
-   * 남아야 위반 보고가 실제 위치를 가리킨다.
+   * 주석·Javadoc 을 <b>같은 길이의 공백으로</b> 지운 소스를 돌려준다 — 줄 번호와 열 위치가 그대로 남아야 위반 보고가 실제 위치를 가리킨다.
    *
-   * <p>왜 주석을 지우는가: 산문은 개명 뒤 "틀린 문장" 이 될 뿐 동작 결함이 아니므로 빌드를 깨면
-   * 안 된다(브리프의 명시적 요구). 반면 {@code data."} 규칙은 예전부터 <b>일부러</b> 주석까지 잡는다
-   * — 그쪽은 밴드가 산문까지 정리하기로 결정한 범위다. 두 규칙의 대상이 다른 것은 의도다.
+   * <p>왜 주석을 지우는가: 산문은 개명 뒤 "틀린 문장" 이 될 뿐 동작 결함이 아니므로 빌드를 깨면 안 된다(브리프의 명시적 요구). 반면 {@code data."}
+   * 규칙은 예전부터 <b>일부러</b> 주석까지 잡는다 — 그쪽은 밴드가 산문까지 정리하기로 결정한 범위다. 두 규칙의 대상이 다른 것은 의도다.
    *
-   * <p>문자열·문자 리터럴 안의 {@code //}, {@code /*} 는 주석이 아니므로 상태를 따라가며 판단한다.
-   * 단순 정규식으로 {@code //} 뒤를 자르면 {@code "http://..."} 안의 뒷부분이 사라져 그 뒤에 적힌
-   * 진짜 위반이 숨는다.
+   * <p>문자열·문자 리터럴 안의 {@code //}, {@code /*} 는 주석이 아니므로 상태를 따라가며 판단한다. 단순 정규식으로 {@code //} 뒤를 자르면
+   * {@code "http://..."} 안의 뒷부분이 사라져 그 뒤에 적힌 진짜 위반이 숨는다.
    */
   private static String stripComments(String source) {
     StringBuilder out = new StringBuilder(source.length());
@@ -797,8 +745,8 @@ class DataSchemaResolutionTest {
   }
 
   /**
-   * 자바 소스의 {@code \"} 이스케이프를 실제 {@code "} 로 되돌린다. 문자열 리터럴 안에 적힌
-   * {@code data.\"} 와 주석에 적힌 {@code data."} 를 <b>같은 위반</b>으로 취급하기 위한 정규화다.
+   * 자바 소스의 {@code \"} 이스케이프를 실제 {@code "} 로 되돌린다. 문자열 리터럴 안에 적힌 {@code data.\"} 와 주석에 적힌 {@code
+   * data."} 를 <b>같은 위반</b>으로 취급하기 위한 정규화다.
    */
   private static String unescape(String source) {
     return source.replace("\\\"", "\"");
@@ -810,31 +758,27 @@ class DataSchemaResolutionTest {
   /**
    * 자바 소스의 {@code \\uXXXX} 를 실제 문자로 되돌린다.
    *
-   * <p>왜 필요한가: 자바는 <b>토큰화 이전</b>에 유니코드 이스케이프를 푼다(JLS 3.3). 그래서
-   * {@code // data.\\u0022} 같은 줄은 컴파일 시점에 {@code data."} 가 되지만, 원문만 훑는 스캔에는
-   * 절대 보이지 않는다. 이 프로젝트에는 선례가 있다 — SQL 가드 밴드에서 {@code U&"..."} 유니코드
-   * 식별자가 이름 대조를 기계적으로 무력화했고, 그 때문에 거부목록을 허용목록으로 뒤집었다.
-   * 같은 부류의 구멍을 <b>문서화로 남기지 않고 닫는다</b>: 디코딩 한 단계가 전부이고, 변이 테스트로
-   * 닫혔음을 증명할 수 있기 때문이다.
+   * <p>왜 필요한가: 자바는 <b>토큰화 이전</b>에 유니코드 이스케이프를 푼다(JLS 3.3). 그래서 {@code // data.\\u0022} 같은 줄은 컴파일
+   * 시점에 {@code data."} 가 되지만, 원문만 훑는 스캔에는 절대 보이지 않는다. 이 프로젝트에는 선례가 있다 — SQL 가드 밴드에서 {@code U&"..."}
+   * 유니코드 식별자가 이름 대조를 기계적으로 무력화했고, 그 때문에 거부목록을 허용목록으로 뒤집었다. 같은 부류의 구멍을 <b>문서화로 남기지 않고 닫는다</b>: 디코딩 한
+   * 단계가 전부이고, 변이 테스트로 닫혔음을 증명할 수 있기 때문이다.
    *
-   * <p><b>정확히 무엇이 열려 있었나 — 두 경로 모두다</b>(초판 주석은 "주석 경로뿐" 이라고 적었는데
-   * 리뷰에서 실측으로 반증됐다. 낡은 근거는 낡은 처방과 같은 등급의 결함이므로 여기 정정해 둔다):
+   * <p><b>정확히 무엇이 열려 있었나 — 두 경로 모두다</b>(초판 주석은 "주석 경로뿐" 이라고 적었는데 리뷰에서 실측으로 반증됐다. 낡은 근거는 낡은 처방과 같은
+   * 등급의 결함이므로 여기 정정해 둔다):
    *
    * <ul>
-   *   <li><b>문자열 리터럴 경로</b>: {@code "data.\\u005C\\u0022"} 는 컴파일 전에 {@code "data.\""}
-   *       가 되어 값이 {@code data."} 다. 그런데 원문에는 {@code \"} 도 {@code data."} 도 없으므로
-   *       {@link #unescape} 만 하던 예전 스캔은 <b>이걸 놓친다</b>. 디코더가 새로 막는다.
-   *       ({@code "data.\\u0022"} 는 리터럴이 조기 종료돼 애초에 컴파일되지 않는다 — 그쪽이 아니라
-   *       {@code \\u005C\\u0022} 가 실제 우회로다.)
-   *   <li><b>주석 경로</b>: {@code // data.\\u0022} 는 컴파일 시점에 {@code data."} 인 주석이 되고
-   *       역시 원문 스캔에 보이지 않는다.
+   *   <li><b>문자열 리터럴 경로</b>: {@code "data.\\u005C\\u0022"} 는 컴파일 전에 {@code "data.\""} 가 되어 값이
+   *       {@code data."} 다. 그런데 원문에는 {@code \"} 도 {@code data."} 도 없으므로 {@link #unescape} 만 하던 예전
+   *       스캔은 <b>이걸 놓친다</b>. 디코더가 새로 막는다. ({@code "data.\\u0022"} 는 리터럴이 조기 종료돼 애초에 컴파일되지 않는다 — 그쪽이
+   *       아니라 {@code \\u005C\\u0022} 가 실제 우회로다.)
+   *   <li><b>주석 경로</b>: {@code // data.\\u0022} 는 컴파일 시점에 {@code data."} 인 주석이 되고 역시 원문 스캔에 보이지
+   *       않는다.
    * </ul>
    *
-   * <p><b>근사(approximation)</b>: 앞선 역슬래시의 개수(짝/홀)를 따지지 않으므로, 리터럴 안의
-   * {@code \\\\u0022}(문자 그대로의 백슬래시 + u0022)도 디코딩해 이론상 거짓 양성이 될 수 있다.
-   * 오늘 {@code src/main/java} 의 {@code \\u} 는 1건뿐이고({@code ApiCallPreviewService} 의 Javadoc 이
-   * U+FFFD 를 언급하는 곳) 그것은 스키마 리터럴을 만들지 않으므로 실측 거짓 양성 0건이다. 설령
-   * 생겨도 거짓 양성은 시끄럽게 실패해 사람이 보게 되는 쪽이므로 fail-closed 로 둔다.
+   * <p><b>근사(approximation)</b>: 앞선 역슬래시의 개수(짝/홀)를 따지지 않으므로, 리터럴 안의 {@code \\\\u0022}(문자 그대로의 백슬래시
+   * + u0022)도 디코딩해 이론상 거짓 양성이 될 수 있다. 오늘 {@code src/main/java} 의 {@code \\u} 는 1건뿐이고({@code
+   * ApiCallPreviewService} 의 Javadoc 이 U+FFFD 를 언급하는 곳) 그것은 스키마 리터럴을 만들지 않으므로 실측 거짓 양성 0건이다. 설령 생겨도
+   * 거짓 양성은 시끄럽게 실패해 사람이 보게 되는 쪽이므로 fail-closed 로 둔다.
    */
   private static String decodeUnicodeEscapes(String source) {
     if (!source.contains("\\u")) {

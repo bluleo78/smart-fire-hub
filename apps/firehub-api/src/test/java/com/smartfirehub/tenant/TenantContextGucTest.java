@@ -48,9 +48,7 @@ class TenantContextGucTest extends IntegrationTestBase {
 
     // 미설정이면 NULL, 같은 커넥션에서 이전에 설정된 적이 있으면 빈 문자열.
     // 어느 쪽이든 NULLIF(...,'') 를 거치면 NULL 이 되어 행이 보이지 않는다.
-    assertThat(guc).satisfiesAnyOf(
-        v -> assertThat(v).isNull(),
-        v -> assertThat(v).isEmpty());
+    assertThat(guc).satisfiesAnyOf(v -> assertThat(v).isNull(), v -> assertThat(v).isEmpty());
   }
 
   @Test

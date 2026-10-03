@@ -24,12 +24,11 @@ import org.springframework.web.bind.annotation.RestController;
 /**
  * AI 분류(AI_CLASSIFY) 전용 공급자 설정 엔드포인트(#707).
  *
- * <p><b>왜 별도 베이스 경로인가.</b> 기존 {@code /settings/ai-credential} 은 {@code /probe} 가 하위
- * 경로라 {@code /{slot}} 을 끼울 수 없고, 채팅 경로의 계약(DELETE 없음=405)을 바꾸지 않으려고
- * 별도 컨트롤러를 둔다. 네 라우트 모두 {@code ai:settings} — 채팅 자격증명과 같은 등급이다.
+ * <p><b>왜 별도 베이스 경로인가.</b> 기존 {@code /settings/ai-credential} 은 {@code /probe} 가 하위 경로라 {@code
+ * /{slot}} 을 끼울 수 없고, 채팅 경로의 계약(DELETE 없음=405)을 바꾸지 않으려고 별도 컨트롤러를 둔다. 네 라우트 모두 {@code ai:settings}
+ * — 채팅 자격증명과 같은 등급이다.
  *
- * <p>미설정 = 분류가 AI 에이전트(채팅) 설정을 통째로 쓰는 상태다. DELETE("설정 해제")가 그
- * 상태로 되돌린다.
+ * <p>미설정 = 분류가 AI 에이전트(채팅) 설정을 통째로 쓰는 상태다. DELETE("설정 해제")가 그 상태로 되돌린다.
  */
 @RestController
 @RequestMapping("/api/v1/settings/ai-classify-credential")
@@ -48,9 +47,8 @@ public class AiClassifyCredentialController {
   }
 
   /**
-   * 저장. 모델 공백은 opencode 검증보다 먼저 400 으로 끊는다(모델 형식 문구가 먼저 나가면 원인이
-   * 흐려진다). opencode 면 채팅과 같은 검증기를 <b>요청 모델</b>과 분류 슬롯으로 돌린다 — SSRF 가드는
-   * apiKey 유무와 무관하게 항상 돈다.
+   * 저장. 모델 공백은 opencode 검증보다 먼저 400 으로 끊는다(모델 형식 문구가 먼저 나가면 원인이 흐려진다). opencode 면 채팅과 같은 검증기를 <b>요청
+   * 모델</b>과 분류 슬롯으로 돌린다 — SSRF 가드는 apiKey 유무와 무관하게 항상 돈다.
    */
   @PutMapping
   @RequirePermission("ai:settings")
@@ -63,7 +61,10 @@ public class AiClassifyCredentialController {
     if ("opencode".equals(request.agentType())) {
       Optional<ResponseEntity<Map<String, Object>>> rejected =
           opencodePutValidator.validate(
-              request.payload(), request.secret(), request.model().trim(), AiCredentialSlot.CLASSIFY);
+              request.payload(),
+              request.secret(),
+              request.model().trim(),
+              AiCredentialSlot.CLASSIFY);
       if (rejected.isPresent()) return rejected.get();
     }
     Long userId = (Long) authentication.getPrincipal();
@@ -88,6 +89,7 @@ public class AiClassifyCredentialController {
   public ResponseEntity<Map<String, Object>> probe(@RequestBody OpencodeProbeRequest request) {
     return ResponseEntity.ok(
         OpencodeCredentialValidation.probeBody(
-            opencodeProbeService.probe(AiCredentialSlot.CLASSIFY, request.baseURL(), request.apiKey())));
+            opencodeProbeService.probe(
+                AiCredentialSlot.CLASSIFY, request.baseURL(), request.apiKey())));
   }
 }

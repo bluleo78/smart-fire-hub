@@ -1,12 +1,12 @@
 package com.smartfirehub.proactive.repository;
 
-import com.smartfirehub.proactive.util.ProactiveTime;
 import static org.jooq.impl.DSL.*;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.proactive.dto.ReportTemplateResponse;
 import com.smartfirehub.proactive.dto.ReportTemplateSummaryResponse;
+import com.smartfirehub.proactive.util.ProactiveTime;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -22,15 +22,14 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * 리포트 양식 저장소.
  *
- * <p>클래스 레벨 {@code @Transactional} 이 필요한 이유: V99 로 {@code report_template} 에 RLS 정책이
- * 걸렸는데, 이 저장소의 유일한 배경 호출자인 {@code ProactiveJobAsyncRunner.executeJob} 에는
- * {@code @Async("pipelineExecutor")} 만 있고 트랜잭션이 없다. RLS 격리 값은 트랜잭션-로컬 GUC 이고
- * 그 GUC 는 {@code TenantAwareTransactionManager.doBegin} 에서만 주입되므로, 트랜잭션이 없으면
- * 예외도 로그도 없이 0행이 되어 사용자의 sections·style 없이 리포트가 생성된다. 전파는 REQUIRED
- * 이므로 컨트롤러 경로(이미 트랜잭션 안)의 동작은 불변이다.
+ * <p>클래스 레벨 {@code @Transactional} 이 필요한 이유: V99 로 {@code report_template} 에 RLS 정책이 걸렸는데, 이 저장소의
+ * 유일한 배경 호출자인 {@code ProactiveJobAsyncRunner.executeJob} 에는 {@code @Async("pipelineExecutor")} 만 있고
+ * 트랜잭션이 없다. RLS 격리 값은 트랜잭션-로컬 GUC 이고 그 GUC 는 {@code TenantAwareTransactionManager.doBegin} 에서만
+ * 주입되므로, 트랜잭션이 없으면 예외도 로그도 없이 0행이 되어 사용자의 sections·style 없이 리포트가 생성된다. 전파는 REQUIRED 이므로 컨트롤러 경로(이미
+ * 트랜잭션 안)의 동작은 불변이다.
  *
- * <p>같은 이유로 {@code AuditLogRepository} 에도 클래스 레벨 {@code @Transactional} 이 붙어 있다.
- * (이슈 #384 최종 리뷰 Critical-1)
+ * <p>같은 이유로 {@code AuditLogRepository} 에도 클래스 레벨 {@code @Transactional} 이 붙어 있다. (이슈 #384 최종 리뷰
+ * Critical-1)
  */
 @Transactional
 @Repository
@@ -59,17 +58,17 @@ public class ReportTemplateRepository {
   /**
    * 목록 조회 전용 요약 조회 (#632).
    *
-   * <p>{@code sections}/{@code style} 전체 JSONB를 읽지 않고, 섹션 개수만 DB에서
-   * {@code jsonb_array_length()}로 계산해 반환한다 — 목록 조회 payload가 템플릿 규모/섹션 수에
-   * 비례해 커지는 문제를 근본적으로 없앤다(select-then-drop이 아니라 애초에 컬럼을 안 읽음).
-   * 상세 구조가 필요하면 {@link #findById(Long)}(단건 조회)을 사용한다.
+   * <p>{@code sections}/{@code style} 전체 JSONB를 읽지 않고, 섹션 개수만 DB에서 {@code jsonb_array_length()}로
+   * 계산해 반환한다 — 목록 조회 payload가 템플릿 규모/섹션 수에 비례해 커지는 문제를 근본적으로 없앤다(select-then-drop이 아니라 애초에 컬럼을 안
+   * 읽음). 상세 구조가 필요하면 {@link #findById(Long)}(단건 조회)을 사용한다.
    *
    * @param page 0-based 페이지 번호
    * @param size 페이지당 개수
    */
   public List<ReportTemplateSummaryResponse> findAllForUser(Long userId, int page, int size) {
     Field<Integer> sectionCount = field("jsonb_array_length({0})", Integer.class, RT_SECTIONS);
-    return dsl.select(RT_ID, RT_NAME, RT_DESCRIPTION, sectionCount, RT_USER_ID, RT_CREATED_AT, RT_UPDATED_AT)
+    return dsl.select(
+            RT_ID, RT_NAME, RT_DESCRIPTION, sectionCount, RT_USER_ID, RT_CREATED_AT, RT_UPDATED_AT)
         .from(REPORT_TEMPLATE)
         .where(RT_USER_ID.isNull().or(RT_USER_ID.eq(userId)))
         .orderBy(RT_ID.asc())

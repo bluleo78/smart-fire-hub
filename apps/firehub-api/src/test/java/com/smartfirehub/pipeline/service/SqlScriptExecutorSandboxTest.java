@@ -35,7 +35,8 @@ class SqlScriptExecutorSandboxTest extends IntegrationTestBase {
   // ── P3-b2 T4: search_path 조립 지점 실측 회귀 가드에서 쓰는 필드(라운드 2 리뷰 NIT-3 —
   // 테스트 메서드들 사이에 흩어져 있던 것을 클래스 상단으로 모았다) ────────────────────────
 
-  private static final long TENANT_BASE = TenantRlsTestSupport.randomSchemaProvisioningTenantIdBase();
+  private static final long TENANT_BASE =
+      TenantRlsTestSupport.randomSchemaProvisioningTenantIdBase();
 
   @Autowired private TenantSchemaProvisioner provisioner;
 
@@ -106,17 +107,15 @@ class SqlScriptExecutorSandboxTest extends IntegrationTestBase {
         .hasMessageContaining("data");
   }
 
-
   // ── P3-b1 Task 3: 테넌트별 롤·명시적 search_path 배선 ─────────────────────────
 
   /**
-   * 관측용 가드 테이블. <b>컬럼 DEFAULT 로</b> 실행 세션의 {@code current_user} 와 {@code search_path}
-   * 를 기록한다 — 이게 이 테스트의 핵심 장치다.
+   * 관측용 가드 테이블. <b>컬럼 DEFAULT 로</b> 실행 세션의 {@code current_user} 와 {@code search_path} 를 기록한다 — 이게 이
+   * 테스트의 핵심 장치다.
    *
-   * <p>왜 DEFAULT 인가: 프로덕션 경로({@link SqlScriptExecutor#execute})가 실행하는 SQL 은 {@code
-   * SqlValidator} 를 먼저 통과해야 하고, 그 검증기는 {@code current_setting} 같은 GUC 조회 함수를
-   * 차단한다(#385). 반면 컬럼 DEFAULT 는 <b>서버가 INSERT 시점에</b> 평가하므로 사용자 SQL 에 그
-   * 함수를 적을 필요가 없다 — 검증기 정책을 건드리지 않고 실행 세션의 신원·스키마를 관측할 수 있다.
+   * <p>왜 DEFAULT 인가: 프로덕션 경로({@link SqlScriptExecutor#execute})가 실행하는 SQL 은 {@code SqlValidator} 를
+   * 먼저 통과해야 하고, 그 검증기는 {@code current_setting} 같은 GUC 조회 함수를 차단한다(#385). 반면 컬럼 DEFAULT 는 <b>서버가
+   * INSERT 시점에</b> 평가하므로 사용자 SQL 에 그 함수를 적을 필요가 없다 — 검증기 정책을 건드리지 않고 실행 세션의 신원·스키마를 관측할 수 있다.
    */
   private static final String GUARD_TABLE = "data.p3b_sql_exec_guard";
 
@@ -131,13 +130,12 @@ class SqlScriptExecutorSandboxTest extends IntegrationTestBase {
   /**
    * 가드 테이블을 만들고 테넌트 1 파이프라인 롤에만 명시적으로 권한을 준다.
    *
-   * <p>DDL 은 트랜잭션 밖(autocommit)에서 실행돼야 다른 커넥션(테넌트 풀)에서 보인다. 이 클래스는
-   * 클래스 레벨 {@code @Transactional} 을 쓰지 않으므로 그대로 커밋된다 — 공유 test DB 이므로
-   * <b>이 테스트가 만든 것만</b> 이름 접두어로 구분해 지운다.
+   * <p>DDL 은 트랜잭션 밖(autocommit)에서 실행돼야 다른 커넥션(테넌트 풀)에서 보인다. 이 클래스는 클래스 레벨 {@code @Transactional} 을
+   * 쓰지 않으므로 그대로 커밋된다 — 공유 test DB 이므로 <b>이 테스트가 만든 것만</b> 이름 접두어로 구분해 지운다.
    *
-   * <p><b>{@code @BeforeEach} 가 아니라 필요한 테스트에서만 호출한다.</b> 공유 test DB 에 매 테스트마다
-   * DDL 을 걸면(이 클래스는 11건) 다른 워크트리 세션과 부딪히는 플레이크 창이 그만큼 넓어진다 —
-   * 이 저장소에서 이미 겪은 실패 형태다. 정리는 {@code @AfterEach} 가 무조건 하므로(IF EXISTS) 남지 않는다.
+   * <p><b>{@code @BeforeEach} 가 아니라 필요한 테스트에서만 호출한다.</b> 공유 test DB 에 매 테스트마다 DDL 을 걸면(이 클래스는 11건)
+   * 다른 워크트리 세션과 부딪히는 플레이크 창이 그만큼 넓어진다 — 이 저장소에서 이미 겪은 실패 형태다. 정리는 {@code @AfterEach} 가 무조건 하므로(IF
+   * EXISTS) 남지 않는다.
    */
   private void createGuardTable() {
     dropGuardTable();
@@ -184,26 +182,25 @@ class SqlScriptExecutorSandboxTest extends IntegrationTestBase {
         DEFAULT_TEST_TENANT_ID,
         leasedDsl -> {
           leasedDsl.transaction(
-            cfg -> {
-              cfg.dsl().execute("SET LOCAL search_path = '" + DataSchema.current() + "'");
-              var row =
-                  cfg.dsl()
-                      .fetch("SELECT setting, source FROM pg_settings WHERE name = 'search_path'")
-                      .get(0);
-              assertThat(row.get("setting", String.class)).isEqualTo(DataSchema.current());
-              assertThat(row.get("source", String.class)).isEqualTo("session");
-            });
+              cfg -> {
+                cfg.dsl().execute("SET LOCAL search_path = '" + DataSchema.current() + "'");
+                var row =
+                    cfg.dsl()
+                        .fetch("SELECT setting, source FROM pg_settings WHERE name = 'search_path'")
+                        .get(0);
+                assertThat(row.get("setting", String.class)).isEqualTo(DataSchema.current());
+                assertThat(row.get("source", String.class)).isEqualTo("session");
+              });
           return null;
         });
   }
 
   /**
-   * 런타임 SQL 실패(검증기는 통과, DB 가 거부)가 {@code ScriptExecutionException} 으로 감싸지면서
-   * <b>원인 메시지를 잃지 않는지</b> 고정한다.
+   * 런타임 SQL 실패(검증기는 통과, DB 가 거부)가 {@code ScriptExecutionException} 으로 감싸지면서 <b>원인 메시지를 잃지 않는지</b>
+   * 고정한다.
    *
-   * <p>왜 필요한가: 이 경로는 이제 {@code SET LOCAL search_path} 를 유효하게 만들기 위해 스크립트를
-   * jOOQ 트랜잭션으로 감싼다. 기존 실패 테스트는 전부 <b>검증기 단계</b>에서 끝나 트랜잭션에 진입조차
-   * 하지 않으므로, 트랜잭션 경계를 지나온 예외의 메시지가 파이프라인 실행 로그로 그대로 노출되는지는
+   * <p>왜 필요한가: 이 경로는 이제 {@code SET LOCAL search_path} 를 유효하게 만들기 위해 스크립트를 jOOQ 트랜잭션으로 감싼다. 기존 실패
+   * 테스트는 전부 <b>검증기 단계</b>에서 끝나 트랜잭션에 진입조차 하지 않으므로, 트랜잭션 경계를 지나온 예외의 메시지가 파이프라인 실행 로그로 그대로 노출되는지는
    * 아무도 보고 있지 않았다. {@code PipelineAsyncRunner} 가 이 메시지를 사용자에게 보여 준다.
    */
   @Test
@@ -218,17 +215,16 @@ class SqlScriptExecutorSandboxTest extends IntegrationTestBase {
   /**
    * 테넌트가 없으면 조용히 기본 스키마·공용 롤로 떨어지지 않고 즉시 거부한다.
    *
-   * <p><b>어디서 던지는지까지 단언하는 이유(코드리뷰 지적 6).</b> 예외 <i>클래스</i>만 단언하면 이
-   * 테스트는 공허하다 — {@code execute()} 의 첫 문장인 {@code sqlValidator.validate(...)} 가
-   * {@code allowedSchema()} → {@code DataSchema.current()} 를 거치며 이미 같은 예외를 던지므로,
-   * {@code SqlScriptExecutor} 의 {@code TenantContext.require(...)} 를 **지워도 초록으로 남는다**.
+   * <p><b>어디서 던지는지까지 단언하는 이유(코드리뷰 지적 6).</b> 예외 <i>클래스</i>만 단언하면 이 테스트는 공허하다 — {@code execute()} 의
+   * 첫 문장인 {@code sqlValidator.validate(...)} 가 {@code allowedSchema()} → {@code
+   * DataSchema.current()} 를 거치며 이미 같은 예외를 던지므로, {@code SqlScriptExecutor} 의 {@code
+   * TenantContext.require(...)} 를 **지워도 초록으로 남는다**.
    *
-   * <p>그래서 메시지로 <b>먼저 걸리는 지점이 검증기</b>임을 고정한다({@code TenantContext.require} 는
-   * 호출 문맥 문자열을 예외 메시지에 싣는다: 검증기 경로는 "data 스키마 식별자 해석",
-   * 실행기 경로는 "파이프라인 SQL 실행"). 이 순서가 바뀌면 빨개져 재검토를 강제한다.
+   * <p>그래서 메시지로 <b>먼저 걸리는 지점이 검증기</b>임을 고정한다({@code TenantContext.require} 는 호출 문맥 문자열을 예외 메시지에
+   * 싣는다: 검증기 경로는 "data 스키마 식별자 해석", 실행기 경로는 "파이프라인 SQL 실행"). 이 순서가 바뀌면 빨개져 재검토를 강제한다.
    *
-   * <p>덧붙여 {@code SqlScriptExecutor} 의 {@code require} 는 <b>2차 가드가 아니라 테넌트 id 취득</b>
-   * 이다(풀을 고르는 데 값이 필요하다) — 이 경로의 fail-closed 는 검증기가 담당한다.
+   * <p>덧붙여 {@code SqlScriptExecutor} 의 {@code require} 는 <b>2차 가드가 아니라 테넌트 id 취득</b> 이다(풀을 고르는 데 값이
+   * 필요하다) — 이 경로의 fail-closed 는 검증기가 담당한다.
    */
   @Test
   void execute_withoutTenantContext_failsClosedAtValidator() {
@@ -326,18 +322,17 @@ class SqlScriptExecutorSandboxTest extends IntegrationTestBase {
   // 롤백되는지를 실제 DB로 확인한다(mock 이 아니라 진짜 원자성 증거) ─────────────────────────
 
   /**
-   * DELETE 선행 문장 뒤 INSERT 가 실패하면 <b>기존 행이 그대로 남는다</b> — 원래 결함(따로 커밋되는
-   * truncate + INSERT)이었다면 이 테스트는 0행으로 실패했을 것이다.
+   * DELETE 선행 문장 뒤 INSERT 가 실패하면 <b>기존 행이 그대로 남는다</b> — 원래 결함(따로 커밋되는 truncate + INSERT)이었다면 이 테스트는
+   * 0행으로 실패했을 것이다.
    *
-   * <p><b>이 테스트는 롤백되는 테스트 트랜잭션 안에서 돌지 않는다.</b> 이 클래스는 클래스 레벨
-   * {@code @Transactional} 을 쓰지 않으므로(파일 상단 관례), 기존 1행을 심는 {@code dsl.execute} 는
-   * 즉시 커밋된다 — 그래야 별도 롤(테넌트 파이프라인 실행 롤) 연결이 그 행을 볼 수 있다. 만약 이
-   * 픽스처가 롤백되는 트랜잭션 안에 있었다면, DELETE 는 (아직 남 앞에 보이지 않는) 0행을 지우고도
-   * 테스트가 공허하게 통과했을 것이다.
+   * <p><b>이 테스트는 롤백되는 테스트 트랜잭션 안에서 돌지 않는다.</b> 이 클래스는 클래스 레벨 {@code @Transactional} 을 쓰지 않으므로(파일 상단
+   * 관례), 기존 1행을 심는 {@code dsl.execute} 는 즉시 커밋된다 — 그래야 별도 롤(테넌트 파이프라인 실행 롤) 연결이 그 행을 볼 수 있다. 만약 이
+   * 픽스처가 롤백되는 트랜잭션 안에 있었다면, DELETE 는 (아직 남 앞에 보이지 않는) 0행을 지우고도 테스트가 공허하게 통과했을 것이다.
    */
   @Test
   void 선행_DELETE_후_INSERT가_실패하면_기존_행이_남는다() {
-    String table = "p3b_replace_atomic_" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
+    String table =
+        "p3b_replace_atomic_" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
 
     // given: 출력 테이블 생성(정식 경로 — 권한·트리거까지 갖춘 실제 데이터셋 물리 테이블과 동일)
     // 후 기존 1행을 커밋되는 경로로 심는다.
@@ -364,17 +359,16 @@ class SqlScriptExecutorSandboxTest extends IntegrationTestBase {
   }
 
   /**
-   * Fix round 1, 리뷰 지적 2 — 선행 문장 검증은 "DELETE FROM 으로 시작 + 세미콜론 없음" 정도로는
-   * 부족했다. {@code WHERE} 절이 붙은 문장(전체 삭제가 아니라 조건부 삭제)도 그 느슨한 검증은
-   * 통과시킨다 — API 서버가 만들지 않은 임의의 DELETE 를 테넌트 파이프라인 롤 권한으로 실행할 수
-   * 있었다는 뜻이다. 이 테스트는 {@code OutputClearStatement.deleteAll} 이 만드는 정확한 형태에서
-   * 벗어난 문장(WHERE 절 추가)이 <b>본 스크립트 실행 전에</b> 거부되는지 — 그리고 실제로 아무 것도
-   * 실행되지 않는지(INSERT 가 도달하지 못해 테이블이 계속 비어 있는지)를 함께 확인한다.
+   * Fix round 1, 리뷰 지적 2 — 선행 문장 검증은 "DELETE FROM 으로 시작 + 세미콜론 없음" 정도로는 부족했다. {@code WHERE} 절이 붙은
+   * 문장(전체 삭제가 아니라 조건부 삭제)도 그 느슨한 검증은 통과시킨다 — API 서버가 만들지 않은 임의의 DELETE 를 테넌트 파이프라인 롤 권한으로 실행할 수
+   * 있었다는 뜻이다. 이 테스트는 {@code OutputClearStatement.deleteAll} 이 만드는 정확한 형태에서 벗어난 문장(WHERE 절 추가)이 <b>본
+   * 스크립트 실행 전에</b> 거부되는지 — 그리고 실제로 아무 것도 실행되지 않는지(INSERT 가 도달하지 못해 테이블이 계속 비어 있는지)를 함께 확인한다.
    */
   @Test
   void 형식에_맞지_않는_선행_문장은_본_스크립트_실행_전에_거부된다() {
     String table =
-        "p3b_replace_atomic_reject_" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+        "p3b_replace_atomic_reject_"
+            + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
 
     dataTableService.createTable(
         table,
@@ -387,7 +381,9 @@ class SqlScriptExecutorSandboxTest extends IntegrationTestBase {
               () ->
                   sqlScriptExecutor.execute(
                       List.of(nonConformingPreStatement),
-                      "INSERT INTO " + DataSchema.qualify(table) + " (name) VALUES ('should-not-run')"))
+                      "INSERT INTO "
+                          + DataSchema.qualify(table)
+                          + " (name) VALUES ('should-not-run')"))
           .isInstanceOf(ScriptExecutionException.class)
           .hasMessageContaining("허용되지 않은 선행 문장");
 

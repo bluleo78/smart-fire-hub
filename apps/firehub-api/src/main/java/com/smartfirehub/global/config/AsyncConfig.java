@@ -12,14 +12,14 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 /**
  * 비동기 실행자 정의.
  *
- * <p>여기 정의한 모든 풀에 {@link TenantContextTaskDecorator} 를 붙인다 — 붙이지 않으면 그 풀에서 도는
- * 작업이 테넌트 없이 실행돼 RLS 가 전부 차단하고 예외 없이 0행이 된다. 데코레이터는 반드시
- * {@code initialize()} <b>앞</b>에 설정해야 한다(뒤에 두면 이미 만들어진 풀에 반영되지 않는다).
+ * <p>여기 정의한 모든 풀에 {@link TenantContextTaskDecorator} 를 붙인다 — 붙이지 않으면 그 풀에서 도는 작업이 테넌트 없이 실행돼 RLS 가
+ * 전부 차단하고 예외 없이 0행이 된다. 데코레이터는 반드시 {@code initialize()} <b>앞</b>에 설정해야 한다(뒤에 두면 이미 만들어진 풀에 반영되지
+ * 않는다).
  *
- * <p><b>한정자 없는 {@code @Async}</b>(예: {@code TriggerEventService.onPipelineCompleted},
- * {@code NotificationService.onPipelineCompleted})는 이름이 {@code taskExecutor} 인 {@link Executor}
- * 빈을 찾는다. 그 이름의 빈이 없으면 Spring 은 데코레이터가 없는 {@code SimpleAsyncTaskExecutor} 로
- * 폴백해 스레드에 테넌트가 승계되지 않는다(P2-b: {@link #taskExecutor()} 로 그 간극을 메운다).
+ * <p><b>한정자 없는 {@code @Async}</b>(예: {@code TriggerEventService.onPipelineCompleted}, {@code
+ * NotificationService.onPipelineCompleted})는 이름이 {@code taskExecutor} 인 {@link Executor} 빈을 찾는다. 그
+ * 이름의 빈이 없으면 Spring 은 데코레이터가 없는 {@code SimpleAsyncTaskExecutor} 로 폴백해 스레드에 테넌트가 승계되지 않는다(P2-b:
+ * {@link #taskExecutor()} 로 그 간극을 메운다).
  */
 @Configuration
 @EnableAsync
@@ -66,13 +66,11 @@ public class AsyncConfig {
   /**
    * Slack 인바운드 처리 풀({@code SlackInboundService.dispatch} 의 {@code @Async} 대상).
    *
-   * <p>큐가 차면 <b>거절</b>한다(기본 AbortPolicy). {@code taskExecutor} 처럼 CallerRuns 로 두면
-   * 넘친 작업이 컨트롤러 스레드에서 AI 응답(최대 수 분)까지 기다려 ack 가 늦어지고, 채널
-   * 서비스가 재시도해 같은 질문에 답이 두 번 달린다. 거절되면 컨트롤러가 오류를 돌려주고 그
-   * 메시지는 답을 받지 못한다.
+   * <p>큐가 차면 <b>거절</b>한다(기본 AbortPolicy). {@code taskExecutor} 처럼 CallerRuns 로 두면 넘친 작업이 컨트롤러 스레드에서
+   * AI 응답(최대 수 분)까지 기다려 ack 가 늦어지고, 채널 서비스가 재시도해 같은 질문에 답이 두 번 달린다. 거절되면 컨트롤러가 오류를 돌려주고 그 메시지는 답을
+   * 받지 못한다.
    *
-   * <p>데코레이터는 다른 풀과 형태를 맞출 뿐 이 경로의 방어가 아니다 — {@code SlackInboundService}
-   * 클래스 javadoc 참고.
+   * <p>데코레이터는 다른 풀과 형태를 맞출 뿐 이 경로의 방어가 아니다 — {@code SlackInboundService} 클래스 javadoc 참고.
    */
   @Bean(name = "slackInboundExecutor")
   public Executor slackInboundExecutor() {
@@ -87,9 +85,8 @@ public class AsyncConfig {
   }
 
   /**
-   * 한정자 없는 @Async 가 쓰는 기본 풀. 이 빈이 없으면 Spring 은 데코레이터가 없는
-   * SimpleAsyncTaskExecutor 로 폴백하고, 그 스레드에는 테넌트가 승계되지 않아
-   * RLS 하에서 조용히 무동작이 된다(TriggerEventService.onPipelineCompleted 등).
+   * 한정자 없는 @Async 가 쓰는 기본 풀. 이 빈이 없으면 Spring 은 데코레이터가 없는 SimpleAsyncTaskExecutor 로 폴백하고, 그 스레드에는
+   * 테넌트가 승계되지 않아 RLS 하에서 조용히 무동작이 된다(TriggerEventService.onPipelineCompleted 등).
    */
   @Bean(name = "taskExecutor")
   public Executor taskExecutor() {

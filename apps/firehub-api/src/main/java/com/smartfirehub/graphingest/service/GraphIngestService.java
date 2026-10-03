@@ -51,7 +51,9 @@ public class GraphIngestService {
         .map(
             s ->
                 new StaleDatasetResponse(
-                    s.datasetId(), s.latestIngestedAt().toString(), s.schemaVersionAtIngest(),
+                    s.datasetId(),
+                    s.latestIngestedAt().toString(),
+                    s.schemaVersionAtIngest(),
                     s.currentSchemaVersion()))
         .toList();
   }

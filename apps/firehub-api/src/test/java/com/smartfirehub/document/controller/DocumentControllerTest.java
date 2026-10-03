@@ -58,8 +58,18 @@ class DocumentControllerTest {
 
   private DocumentFileResponse pendingResponse() {
     return new DocumentFileResponse(
-        10L, 1L, "report.txt", "text/plain", 100L, "PENDING", null, null, null, 1L,
-        LocalDateTime.now(), null);
+        10L,
+        1L,
+        "report.txt",
+        "text/plain",
+        100L,
+        "PENDING",
+        null,
+        null,
+        null,
+        1L,
+        LocalDateTime.now(),
+        null);
   }
 
   /** POST /datasets/{id}/documents — 업로드 성공 시 202 + 초기 상태(PENDING) 반환. */
@@ -94,8 +104,7 @@ class DocumentControllerTest {
     when(fileRepository.findByDataset(1L)).thenReturn(List.of(pendingResponse()));
 
     mockMvc
-        .perform(
-            get("/api/v1/datasets/1/documents").header("Authorization", "Bearer test-token"))
+        .perform(get("/api/v1/datasets/1/documents").header("Authorization", "Bearer test-token"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$[0].id").value(10))
         .andExpect(jsonPath("$[0].originalName").value("report.txt"));
@@ -108,8 +117,7 @@ class DocumentControllerTest {
 
     mockMvc
         .perform(
-            get("/api/v1/datasets/1/documents/10")
-                .header("Authorization", "Bearer test-token"))
+            get("/api/v1/datasets/1/documents/10").header("Authorization", "Bearer test-token"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.id").value(10))
         .andExpect(jsonPath("$.status").value("PENDING"));
@@ -122,8 +130,7 @@ class DocumentControllerTest {
 
     mockMvc
         .perform(
-            get("/api/v1/datasets/1/documents/99")
-                .header("Authorization", "Bearer test-token"))
+            get("/api/v1/datasets/1/documents/99").header("Authorization", "Bearer test-token"))
         .andExpect(status().isNotFound());
   }
 
@@ -135,8 +142,7 @@ class DocumentControllerTest {
 
     mockMvc
         .perform(
-            get("/api/v1/datasets/2/documents/10")
-                .header("Authorization", "Bearer test-token"))
+            get("/api/v1/datasets/2/documents/10").header("Authorization", "Bearer test-token"))
         .andExpect(status().isNotFound());
   }
 
@@ -147,8 +153,7 @@ class DocumentControllerTest {
 
     mockMvc
         .perform(
-            delete("/api/v1/datasets/1/documents/10")
-                .header("Authorization", "Bearer test-token"))
+            delete("/api/v1/datasets/1/documents/10").header("Authorization", "Bearer test-token"))
         .andExpect(status().isNoContent());
 
     verify(ingestionService).deleteDocument(10L);
@@ -162,8 +167,7 @@ class DocumentControllerTest {
 
     mockMvc
         .perform(
-            delete("/api/v1/datasets/2/documents/10")
-                .header("Authorization", "Bearer test-token"))
+            delete("/api/v1/datasets/2/documents/10").header("Authorization", "Bearer test-token"))
         .andExpect(status().isNotFound());
 
     verify(ingestionService, never()).deleteDocument(anyLong());

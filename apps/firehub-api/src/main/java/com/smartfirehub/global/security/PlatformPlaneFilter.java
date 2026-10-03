@@ -16,55 +16,48 @@ import org.springframework.web.filter.OncePerRequestFilter;
 /**
  * 평면 교차 차단. 인증된 요청의 평면과 경로의 평면이 다르면 403 으로 끊는다.
  *
- * <p>왜 권한 검사로 충분하지 않은가: {@code permission} 카탈로그는 전역 공유라 누군가 테넌트 롤에
- * {@code platform:*} 권한을 부여하는 것이 문법적으로 가능하다. 그 순간 권한 코드 기반 방어는 뚫린다.
- * 반대 방향도 새는데, 플랫폼 토큰은 테넌트 권한이 비어 있어 대개 403 이 되지만 <b>권한을 요구하지
- * 않는</b> 테넌트 엔드포인트(예: {@code /api/v1/auth/memberships}, {@code /auth/me})는 그냥 통과한다.
- * 그래서 권한이 아니라 <b>평면</b>으로 막는다.
+ * <p>왜 권한 검사로 충분하지 않은가: {@code permission} 카탈로그는 전역 공유라 누군가 테넌트 롤에 {@code platform:*} 권한을 부여하는 것이
+ * 문법적으로 가능하다. 그 순간 권한 코드 기반 방어는 뚫린다. 반대 방향도 새는데, 플랫폼 토큰은 테넌트 권한이 비어 있어 대개 403 이 되지만 <b>권한을 요구하지
+ * 않는</b> 테넌트 엔드포인트(예: {@code /api/v1/auth/memberships}, {@code /auth/me})는 그냥 통과한다. 그래서 권한이 아니라
+ * <b>평면</b>으로 막는다.
  *
- * <p>핸들러 조회 전에 도는 필터로 구현한 이유: 존재하지 않는 경로에 대해서도 평면 판정이 나야
- * fail-closed 다. 인터셉터(핸들러 조회 후)로 만들면 없는 경로가 404 를 돌려주어 어떤 운영자
- * 엔드포인트가 존재하는지 알려주는 오라클이 된다.
+ * <p>핸들러 조회 전에 도는 필터로 구현한 이유: 존재하지 않는 경로에 대해서도 평면 판정이 나야 fail-closed 다. 인터셉터(핸들러 조회 후)로 만들면 없는 경로가
+ * 404 를 돌려주어 어떤 운영자 엔드포인트가 존재하는지 알려주는 오라클이 된다.
  *
- * <p>{@code @Component} 를 붙이지 않는다 — Spring Boot 가 {@code @Component} 필터를 서블릿 체인에도
- * 자동 등록해 시큐리티 체인과 합쳐 두 번 돌기 때문이다. {@code SecurityConfig} 가
- * {@code addFilterAfter(new PlatformPlaneFilter(), JwtAuthenticationFilter.class)} 로 한 번만 넣는다.
- * 반드시 {@link JwtAuthenticationFilter} <b>뒤</b>여야 한다 — 앞이면 인증이 아직 없어 무조건 통과한다.
+ * <p>{@code @Component} 를 붙이지 않는다 — Spring Boot 가 {@code @Component} 필터를 서블릿 체인에도 자동 등록해 시큐리티 체인과
+ * 합쳐 두 번 돌기 때문이다. {@code SecurityConfig} 가 {@code addFilterAfter(new PlatformPlaneFilter(),
+ * JwtAuthenticationFilter.class)} 로 한 번만 넣는다. 반드시 {@link JwtAuthenticationFilter} <b>뒤</b>여야 한다 —
+ * 앞이면 인증이 아직 없어 무조건 통과한다.
  */
 public class PlatformPlaneFilter extends OncePerRequestFilter {
 
   /**
    * 평면 판정을 <b>{@code SecurityConfig} 와 같은 Ant 패턴 문법·같은 디코딩된 경로</b>로 한다.
    *
-   * <p>직접 {@code getRequestURI().startsWith("/api/platform/")} 로 대조하면 안 된다. {@code
-   * getRequestURI()} 는 <b>디코딩되지 않은</b> 원본 URI 인데, 이 스택의 다른 모든 판정
-   * ({@code SecurityConfig} 의 {@code requestMatchers}, MVC 핸들러 매핑)은 <b>디코딩된</b> 경로를
-   * 본다. 그래서 {@code GET /api/%70latform/tenants} 는 이 필터에게는 "플랫폼 경로가 아님"으로,
-   * 시큐리티와 MVC 에게는 "플랫폼 경로"로 보인다 — 테넌트 토큰이 평면 검사를 건너뛰고
-   * 운영자 컨트롤러에 도달하는 우회로다({@code %70} = {@code p}, StrictHttpFirewall 차단 대상
-   * 아님). 남는 방어는 권한 검사뿐인데, 이 클래스의 존재 이유가 바로 "권한 검사로는 부족하다"다.
+   * <p>직접 {@code getRequestURI().startsWith("/api/platform/")} 로 대조하면 안 된다. {@code getRequestURI()}
+   * 는 <b>디코딩되지 않은</b> 원본 URI 인데, 이 스택의 다른 모든 판정 ({@code SecurityConfig} 의 {@code requestMatchers},
+   * MVC 핸들러 매핑)은 <b>디코딩된</b> 경로를 본다. 그래서 {@code GET /api/%70latform/tenants} 는 이 필터에게는 "플랫폼 경로가
+   * 아님"으로, 시큐리티와 MVC 에게는 "플랫폼 경로"로 보인다 — 테넌트 토큰이 평면 검사를 건너뛰고 운영자 컨트롤러에 도달하는 우회로다({@code %70} =
+   * {@code p}, StrictHttpFirewall 차단 대상 아님). 남는 방어는 권한 검사뿐인데, 이 클래스의 존재 이유가 바로 "권한 검사로는 부족하다"다.
    *
-   * <p>매처를 쓰면 {@code server.servlet.context-path} 설정(원본 URI 에는 컨텍스트 경로가 포함되지만
-   * 매처는 그것을 제외한 경로를 본다)과 대소문자·트레일링 슬래시 처리까지 시큐리티 설정과 자동으로
-   * 일치한다.
+   * <p>매처를 쓰면 {@code server.servlet.context-path} 설정(원본 URI 에는 컨텍스트 경로가 포함되지만 매처는 그것을 제외한 경로를 본다)과
+   * 대소문자·트레일링 슬래시 처리까지 시큐리티 설정과 자동으로 일치한다.
    *
-   * <p>패턴 문자열은 {@link PlatformAuthPaths} 에서 가져와 {@code SecurityConfig} 와 공유한다.
-   * 단, {@code HttpSecurity.requestMatchers(String)} 이 만드는 매처는 이 클래스가 쓰는
-   * {@link AntPathRequestMatcher} 와 <b>같은 구현이 아니다</b>(기본 루트 서블릿 매핑에서는 동작이
-   * 같다). 즉 <b>목록</b>의 어긋남은 상수 공유가 막고, <b>매처 동작</b>의 어긋남은
-   * {@code PlatformPlaneIsolationTest.platformAuthPathsAreExemptFromPlaneCheck} 가 잡는다.
+   * <p>패턴 문자열은 {@link PlatformAuthPaths} 에서 가져와 {@code SecurityConfig} 와 공유한다. 단, {@code
+   * HttpSecurity.requestMatchers(String)} 이 만드는 매처는 이 클래스가 쓰는 {@link AntPathRequestMatcher} 와 <b>같은
+   * 구현이 아니다</b>(기본 루트 서블릿 매핑에서는 동작이 같다). 즉 <b>목록</b>의 어긋남은 상수 공유가 막고, <b>매처 동작</b>의 어긋남은 {@code
+   * PlatformPlaneIsolationTest.platformAuthPathsAreExemptFromPlaneCheck} 가 잡는다.
    */
   private static final RequestMatcher PLATFORM_PLANE =
       new AntPathRequestMatcher(PlatformAuthPaths.PLATFORM_PATTERN);
 
   /**
-   * 평면 검사 면제 경로. {@link PlatformAuthPaths} 를 통해 {@code SecurityConfig} 의 permitAll 목록과
-   * <b>같은 출처</b>를 공유한다 — 한쪽만 고치는 실수가 아예 불가능해진다.
+   * 평면 검사 면제 경로. {@link PlatformAuthPaths} 를 통해 {@code SecurityConfig} 의 permitAll 목록과 <b>같은
+   * 출처</b>를 공유한다 — 한쪽만 고치는 실수가 아예 불가능해진다.
    *
-   * <p>왜 면제가 필요한가: 이 두 경로는 인증 없이 호출되는 것이 정상이지만, 같은 호스트에서
-   * firehub-web 을 열어 둔 브라우저는 살아 있는 <b>테넌트</b> Bearer 를 함께 보낸다. 그러면
-   * {@code auth != null} 인데 평면이 어긋나 403 이 되고, 운영자가 로그인 자체를 못 한다 — 실제로
-   * 밟게 되는 경로다.
+   * <p>왜 면제가 필요한가: 이 두 경로는 인증 없이 호출되는 것이 정상이지만, 같은 호스트에서 firehub-web 을 열어 둔 브라우저는 살아 있는 <b>테넌트</b>
+   * Bearer 를 함께 보낸다. 그러면 {@code auth != null} 인데 평면이 어긋나 403 이 되고, 운영자가 로그인 자체를 못 한다 — 실제로 밟게 되는
+   * 경로다.
    */
   private static final List<RequestMatcher> PLANE_CHECK_EXEMPT =
       PlatformAuthPaths.PUBLIC_PATTERNS.stream()

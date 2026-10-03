@@ -26,15 +26,20 @@ public class MappingRepository {
   private final DSLContext dsl;
 
   private static final Table<?> DATASET_MAPPING = table(name("dataset_mapping"));
-  private static final Field<Long> M_DATASET_ID = field(name("dataset_mapping", "dataset_id"), Long.class);
+  private static final Field<Long> M_DATASET_ID =
+      field(name("dataset_mapping", "dataset_id"), Long.class);
   // V101 에서 dataset_id 유니크가 (tenant_id, dataset_id) 로 접혔다. ON CONFLICT 추론 대상도
   // 같은 컬럼 집합이어야 하므로 tenant_id 를 참조한다. 값 자체는 INSERT 에서 세팅하지 않고
   // 컬럼 DEFAULT(GUC app.tenant_id)가 채운다 — 앱이 테넌트를 직접 쓰지 않는다는 원칙 유지.
-  private static final Field<Long> M_TENANT_ID = field(name("dataset_mapping", "tenant_id"), Long.class);
-  private static final Field<Long> M_ONTOLOGY_ID = field(name("dataset_mapping", "ontology_id"), Long.class);
+  private static final Field<Long> M_TENANT_ID =
+      field(name("dataset_mapping", "tenant_id"), Long.class);
+  private static final Field<Long> M_ONTOLOGY_ID =
+      field(name("dataset_mapping", "ontology_id"), Long.class);
   private static final Field<JSONB> M_SPEC = field(name("dataset_mapping", "spec"), JSONB.class);
-  private static final Field<String> M_STATUS = field(name("dataset_mapping", "status"), String.class);
-  private static final Field<Long> M_UPDATED_BY = field(name("dataset_mapping", "updated_by"), Long.class);
+  private static final Field<String> M_STATUS =
+      field(name("dataset_mapping", "status"), String.class);
+  private static final Field<Long> M_UPDATED_BY =
+      field(name("dataset_mapping", "updated_by"), Long.class);
   private static final Field<java.time.OffsetDateTime> M_UPDATED_AT =
       field(name("dataset_mapping", "updated_at"), java.time.OffsetDateTime.class);
 
@@ -63,8 +68,8 @@ public class MappingRepository {
     return dsl.select(M_ONTOLOGY_ID, M_SPEC, M_STATUS)
         .from(DATASET_MAPPING)
         .where(M_DATASET_ID.eq(datasetId))
-        .fetchOptional(r -> new StoredMapping(
-            r.get(M_ONTOLOGY_ID), r.get(M_SPEC).data(), r.get(M_STATUS)));
+        .fetchOptional(
+            r -> new StoredMapping(r.get(M_ONTOLOGY_ID), r.get(M_SPEC).data(), r.get(M_STATUS)));
   }
 
   // 상태만 전환(draft→active). updated_by/at 함께 갱신.

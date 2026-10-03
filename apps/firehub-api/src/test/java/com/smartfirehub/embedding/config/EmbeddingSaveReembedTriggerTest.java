@@ -34,8 +34,8 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 
 /**
- * 저장 시 판정식으로만 잡을 투입한다(이전 문서와 비교하지 않는다). 청크 2건이 1024/bge-m3 로 임베딩된 테넌트에서
- * 여러 저장을 해 본다. probe 는 스파이로 차원만 돌려준다.
+ * 저장 시 판정식으로만 잡을 투입한다(이전 문서와 비교하지 않는다). 청크 2건이 1024/bge-m3 로 임베딩된 테넌트에서 여러 저장을 해 본다. probe 는 스파이로
+ * 차원만 돌려준다.
  */
 class EmbeddingSaveReembedTriggerTest extends IntegrationTestBase {
 
@@ -61,12 +61,14 @@ class EmbeddingSaveReembedTriggerTest extends IntegrationTestBase {
   @BeforeEach
   void seed() {
     tenant = TenantRlsTestSupport.createActiveTenant(dsl, "emb-trig");
-    doc = inTenantFixture(tenant, () -> EmbeddingTestFixtures.createDocumentDataset(dsl, "embtrig"));
+    doc =
+        inTenantFixture(tenant, () -> EmbeddingTestFixtures.createDocumentDataset(dsl, "embtrig"));
     TenantContext.runScoped(
         tenant,
         () ->
             chunks.insertBatch(
-                doc.fileId(), doc.datasetId(),
+                doc.fileId(),
+                doc.datasetId(),
                 List.of(new Chunk(0, "a", 1), new Chunk(1, "b", 1)),
                 List.of(axis(1024, 0), axis(1024, 1)),
                 new EmbeddingSpace(EmbeddingDimension.D1024, "bge-m3")));
@@ -115,7 +117,9 @@ class EmbeddingSaveReembedTriggerTest extends IntegrationTestBase {
   void unknownModelVectorsEnqueue() {
     // V131 이 모델 NULL 벡터를 '<unknown>' 으로 옮긴 상태를 재현한다.
     List<Long> ids =
-        inTenantFixture(tenant, () -> dsl.fetch("SELECT id FROM document_chunk ORDER BY id").getValues(0, Long.class));
+        inTenantFixture(
+            tenant,
+            () -> dsl.fetch("SELECT id FROM document_chunk ORDER BY id").getValues(0, Long.class));
     TenantContext.runScoped(
         tenant,
         () ->
@@ -139,7 +143,8 @@ class EmbeddingSaveReembedTriggerTest extends IntegrationTestBase {
   void impactCountsWhatTheJudgementCounts() {
     // 세 항목을 모두 채운다: 청크 2(시드), 카탈로그 1(bge-m3/1024), 행 검색 색인 1(bge-m3/1024 로 색인됨).
     datasets.upsertSourceText(doc.datasetId(), "화재 카탈로그");
-    datasets.upsertEmbedding(new EmbeddingSpace(EmbeddingDimension.D1024, "bge-m3"), doc.datasetId(), axis(1024, 0));
+    datasets.upsertEmbedding(
+        new EmbeddingSpace(EmbeddingDimension.D1024, "bge-m3"), doc.datasetId(), axis(1024, 0));
     searchIndexStates.createIfAbsent(doc.datasetId());
     searchIndexStates.resetForFullPass(doc.datasetId(), "h", "bge-m3", 1024, 0L);
 

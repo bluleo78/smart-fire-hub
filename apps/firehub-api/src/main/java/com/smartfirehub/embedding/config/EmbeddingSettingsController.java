@@ -16,9 +16,9 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * 테넌트 임베딩 설정 엔드포인트(#713). 권한은 기존 테넌트 설정 쓰기와 같은 {@code ai:settings} —
- * {@code SettingsController}·{@code AiCredentialController} 가 세운 "조회·저장·연결 테스트가 같은 권한" 규칙을 잇는다.
- * DELETE 는 없다 — 돌아갈 플랫폼 값이 없으므로 PUT 으로 덮어쓴다.
+ * 테넌트 임베딩 설정 엔드포인트(#713). 권한은 기존 테넌트 설정 쓰기와 같은 {@code ai:settings} — {@code
+ * SettingsController}·{@code AiCredentialController} 가 세운 "조회·저장·연결 테스트가 같은 권한" 규칙을 잇는다. DELETE 는
+ * 없다 — 돌아갈 플랫폼 값이 없으므로 PUT 으로 덮어쓴다.
  */
 @RestController
 @RequestMapping("/api/v1/settings/embedding")

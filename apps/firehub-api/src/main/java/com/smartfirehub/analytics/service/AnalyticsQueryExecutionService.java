@@ -38,9 +38,8 @@ public class AnalyticsQueryExecutionService {
   private final ExecutorClient executorClient;
 
   /**
-   * 애널리틱스 경로 전용 인스턴스 — 스프링 빈이 아니라 {@link SqlValidator#forAdhocDataSchemaQueries()}로
-   * 직접 생성한다(#385 Task 4, 팩터리 도입 근거는 R1). 스프링 컨텍스트의 무인자 {@link SqlValidator} 빈은
-   * 파이프라인 경로 전용이라 여기서 재사용하면 안 된다.
+   * 애널리틱스 경로 전용 인스턴스 — 스프링 빈이 아니라 {@link SqlValidator#forAdhocDataSchemaQueries()}로 직접 생성한다(#385
+   * Task 4, 팩터리 도입 근거는 R1). 스프링 컨텍스트의 무인자 {@link SqlValidator} 빈은 파이프라인 경로 전용이라 여기서 재사용하면 안 된다.
    */
   private final SqlValidator sqlValidator = SqlValidator.forAdhocDataSchemaQueries();
 
@@ -56,31 +55,30 @@ public class AnalyticsQueryExecutionService {
    * Execute SQL against the data schema. Routes to executor service when executorEnabled=true,
    * otherwise executes directly via jOOQ.
    *
-   * <p>AST 기반 스키마/함수 화이트리스트 검증({@link SqlValidator})은 executor/direct 두 경로로 갈리기 **이전**에 이 메서드에서
-   * 공통 수행한다 — 기존 부분문자열 대조({@code contains("PUBLIC.")} 등)가 있던 자리다. 그 대조는 executor 경로에도 걸려 있었으므로(Python
-   * 유효성 검사기는 Java 측 스키마 차단을 우회할 수 있다), 자리를 그대로 지켜 executor 경로의 방어가 사라지지 않게 한다. 부분문자열 대조는
-   * PostgreSQL 이 허용하는 동등 표기 변형(따옴표, 점 주변 공백)에 뚫린다는 것이 실측됐다(#385 Task 3/4) — AST 스키마 화이트리스트가 정본이다.
+   * <p>AST 기반 스키마/함수 화이트리스트 검증({@link SqlValidator})은 executor/direct 두 경로로 갈리기 **이전**에 이 메서드에서 공통
+   * 수행한다 — 기존 부분문자열 대조({@code contains("PUBLIC.")} 등)가 있던 자리다. 그 대조는 executor 경로에도 걸려 있었으므로(Python
+   * 유효성 검사기는 Java 측 스키마 차단을 우회할 수 있다), 자리를 그대로 지켜 executor 경로의 방어가 사라지지 않게 한다. 부분문자열 대조는 PostgreSQL
+   * 이 허용하는 동등 표기 변형(따옴표, 점 주변 공백)에 뚫린다는 것이 실측됐다(#385 Task 3/4) — AST 스키마 화이트리스트가 정본이다.
    *
    * <p>{@code search_path}는 여전히 {@code 'data', 'public'} 두 스키마를 세운다({@link #executeDirectly} 참고) —
    * {@code 'data'} 단독으로 좁히면 PostGIS 함수 해석이 깨진다는 것을 직접 실측했다({@code function
    * st_asgeojson(public.geometry) does not exist}, geometry 컬럼 타입 자체도 {@code public} 스키마 소속). 따라서 이
    * 검증기는 {@code allowUnqualifiedTables=true}로 미한정 이름을 허용한다.
    *
-   * <p><b>두 후속 검사의 적용 범위가 다르다 — 혼동하지 말 것.</b> {@code sqlValidator.validate(...)}(스키마 화이트리스트·차단
-   * 함수)는 위에서 말한 대로 executor/direct 공통이다. 반면 {@link #rejectUnqualifiedNamesShadowedByPublic}(미한정
-   * 이름이 {@code data}엔 없고 {@code public}에만 있어 조용히 새는 경로 차단)은 {@link #executeDirectly} 안에서만
-   * 호출된다 — {@code search_path='data','public'}은 이 서비스가 직접 여는 Java/jOOQ 커넥션에만 세팅되는 세션 상태이고,
-   * executor(Python) 경로는 별도 프로세스·별도 DB 커넥션으로 돌기 때문에 이 카탈로그 조회가 그 경로에는 애초에 적용될 수 없다.
-   * executor 경로가 오늘 이 구멍에서 안전한 이유는 별도다 — executor 가 사용하는 DB 역할({@code pipeline_executor})은
-   * {@code public.role}에 대한 SELECT 권한 자체가 없다({@code has_table_privilege('pipeline_executor',
-   * 'public.role','SELECT')} 실측 = {@code false}). 즉 그 경로에서 미한정 {@code role}이 {@code public.role}로
-   * 풀리더라도 GRANT 단계에서 permission denied 로 막힌다 — 이 판단이 뒤집히면(예: 향후 executor 역할에 더 넓은 public
-   * 권한이 부여되면) 이 카탈로그 조회를 executor 경로에도 확장해야 한다.
+   * <p><b>두 후속 검사의 적용 범위가 다르다 — 혼동하지 말 것.</b> {@code sqlValidator.validate(...)}(스키마 화이트리스트·차단 함수)는
+   * 위에서 말한 대로 executor/direct 공통이다. 반면 {@link #rejectUnqualifiedNamesShadowedByPublic}(미한정 이름이
+   * {@code data}엔 없고 {@code public}에만 있어 조용히 새는 경로 차단)은 {@link #executeDirectly} 안에서만 호출된다 — {@code
+   * search_path='data','public'}은 이 서비스가 직접 여는 Java/jOOQ 커넥션에만 세팅되는 세션 상태이고, executor(Python) 경로는
+   * 별도 프로세스·별도 DB 커넥션으로 돌기 때문에 이 카탈로그 조회가 그 경로에는 애초에 적용될 수 없다. executor 경로가 오늘 이 구멍에서 안전한 이유는 별도다 —
+   * executor 가 사용하는 DB 역할({@code pipeline_executor})은 {@code public.role}에 대한 SELECT 권한 자체가
+   * 없다({@code has_table_privilege('pipeline_executor', 'public.role','SELECT')} 실측 = {@code
+   * false}). 즉 그 경로에서 미한정 {@code role}이 {@code public.role}로 풀리더라도 GRANT 단계에서 permission denied 로
+   * 막힌다 — 이 판단이 뒤집히면(예: 향후 executor 역할에 더 넓은 public 권한이 부여되면) 이 카탈로그 조회를 executor 경로에도 확장해야 한다.
    *
    * @param sql raw SQL from user
    * @param maxRows maximum rows to return (1–10000)
-   * @param readOnly if true, only SELECT/WITH is allowed (used by MCP tools and Web UI ad-hoc
-   *     query — same flag, shared by both callers, so its error message must stay caller-neutral)
+   * @param readOnly if true, only SELECT/WITH is allowed (used by MCP tools and Web UI ad-hoc query
+   *     — same flag, shared by both callers, so its error message must stay caller-neutral)
    */
   @Transactional
   public AnalyticsQueryResponse execute(String sql, int maxRows, boolean readOnly) {
@@ -151,13 +149,11 @@ public class AnalyticsQueryExecutionService {
   /**
    * 사용자 SQL 을 API 자신의 커넥션으로 직접 실행하는 경로(executor 를 쓰지 않는 폴백·local 경로).
    *
-   * <p><b>⚠ 테넌트별 파이프라인 롤 격리는 이 경로에 적용되지 않는다(P3-b1 Task 3 Step 4b).</b>
-   * 파이프라인 SQL 스텝은 P3-b1 부터 테넌트별 DB 롤({@code pipeline_executor_t{tenantId}}) 자격증명으로
-   * 접속하므로, 잘못된 문장이 검증기를 빠져나가도 DB 권한이 두 번째 벽으로 남는다. 그러나 이 메서드는
-   * 메인 애플리케이션 {@code DSLContext}(= {@code app_tenant} 롤) 로 실행한다 — 그 롤은 데이터셋 생성
-   * 시 {@code data} 스키마에 런타임 DDL 을 하는 주체라 권한을 좁힐 수 없고, 좁히면 데이터셋 생성이
-   * 깨진다. <b>따라서 이 경로의 통제는 RLS + {@link SqlValidator} 두 가지뿐이며, grant 계층의 이중
-   * 방어가 없다.</b> 이 경로를 grant 계층으로 덮는 것은 별도 과제다(#383/#384).
+   * <p><b>⚠ 테넌트별 파이프라인 롤 격리는 이 경로에 적용되지 않는다(P3-b1 Task 3 Step 4b).</b> 파이프라인 SQL 스텝은 P3-b1 부터 테넌트별
+   * DB 롤({@code pipeline_executor_t{tenantId}}) 자격증명으로 접속하므로, 잘못된 문장이 검증기를 빠져나가도 DB 권한이 두 번째 벽으로
+   * 남는다. 그러나 이 메서드는 메인 애플리케이션 {@code DSLContext}(= {@code app_tenant} 롤) 로 실행한다 — 그 롤은 데이터셋 생성 시
+   * {@code data} 스키마에 런타임 DDL 을 하는 주체라 권한을 좁힐 수 없고, 좁히면 데이터셋 생성이 깨진다. <b>따라서 이 경로의 통제는 RLS + {@link
+   * SqlValidator} 두 가지뿐이며, grant 계층의 이중 방어가 없다.</b> 이 경로를 grant 계층으로 덮는 것은 별도 과제다(#383/#384).
    */
   private AnalyticsQueryResponse executeDirectly(
       String cleanSql, String queryType, int maxRows, boolean readOnly) {
@@ -309,27 +305,26 @@ public class AnalyticsQueryExecutionService {
   /**
    * 미한정 테이블 이름이 {@code data} 스키마엔 없고 {@code public} 스키마에만 있으면 거부한다 (#385 R1).
    *
-   * <p>{@code search_path = 'data', 'public'}에서 미한정 이름은 {@code data}에 동명 테이블이 있으면 그쪽이 먼저 해석되어
-   * 안전하다. 문제는 {@code data}엔 없고 {@code public}에만 있는 경우 — {@link SqlValidator}의 {@code
+   * <p>{@code search_path = 'data', 'public'}에서 미한정 이름은 {@code data}에 동명 테이블이 있으면 그쪽이 먼저 해석되어 안전하다.
+   * 문제는 {@code data}엔 없고 {@code public}에만 있는 경우 — {@link SqlValidator}의 {@code
    * allowUnqualifiedTables=true}는 이름 해석을 하지 않으므로 이 쿼리를 그대로 통과시키고, 실행 시점에 조용히 {@code
    * public.<name>}으로 풀려 다른 도메인 테이블(예: {@code public.role}, {@code public."user"})이 새는 경로가 된다.
    *
-   * <p>반대로 {@code data}에도 {@code public}에도 없는 이름은 여기서 막지 않는다 — Postgres 가 그대로 "relation does
-   * not exist"(42P01)를 던지며, 그 결과는 새로운 노출이 아니다({@code
+   * <p>반대로 {@code data}에도 {@code public}에도 없는 이름은 여기서 막지 않는다 — Postgres 가 그대로 "relation does not
+   * exist"(42P01)를 던지며, 그 결과는 새로운 노출이 아니다({@code
    * executeDirectly_undefinedTable_returnsCleanErrorWithSqlState42P01} 계약 유지).
    *
-   * <p>미한정 참조가 없는 쿼리(가장 흔한 경우 — 대부분의 프로그래밍 방식 쿼리는 {@code data.*}로 명시)는 카탈로그 조회를 아예
-   * 건너뛴다. 미한정 참조가 있는 쿼리만 쿼리 실행 전 1회 추가 카탈로그 조회 비용이 붙는다 — 애널리틱스 쿼리 UI는 초당 다건이 아닌
-   * 사용자 상호작용 경로라 이 비용은 무시할 만하다.
+   * <p>미한정 참조가 없는 쿼리(가장 흔한 경우 — 대부분의 프로그래밍 방식 쿼리는 {@code data.*}로 명시)는 카탈로그 조회를 아예 건너뛴다. 미한정 참조가 있는
+   * 쿼리만 쿼리 실행 전 1회 추가 카탈로그 조회 비용이 붙는다 — 애널리틱스 쿼리 UI는 초당 다건이 아닌 사용자 상호작용 경로라 이 비용은 무시할 만하다.
    *
-   * <p><b>정본은 {@code pg_class}+{@code pg_namespace} 다 — {@code information_schema.tables} 가 아니다.</b>
-   * {@code information_schema.tables} 는 relkind {@code r/p/v/f}(테이블·파티션·뷰·외래 테이블)만 담고
-   * **시퀀스({@code S})는 담지 않는다**(리뷰어 실측: app_tenant 기준 public 가시/전체 = r 68/68, v 3/3,
-   * S 0/49). 그 결과 {@code SELECT last_value, log_cnt FROM oauth_state_id_seq}처럼 시퀀스를 미한정으로
-   * 참조하면 이전 구현(information_schema)에서는 검사 대상에 아예 안 잡혀 그대로 통과·실행됐다(실측: 값 반환
-   * 확인). {@code pg_class.relkind}를 {@code r/p/v/m/f/S}(테이블/파티션/뷰/구체화 뷰/외래 테이블/시퀀스)로
-   * 넓혀 이 사각을 없앤다 — 권한 때문에 {@code information_schema}에 안 보이던 객체도 이 카탈로그 조회는
-   * 여전히 존재 자체는 볼 수 있다({@code has_table_privilege}가 아니라 오브젝트 존재만 확인하면 되므로).
+   * <p><b>정본은 {@code pg_class}+{@code pg_namespace} 다 — {@code information_schema.tables} 가
+   * 아니다.</b> {@code information_schema.tables} 는 relkind {@code r/p/v/f}(테이블·파티션·뷰·외래 테이블)만 담고
+   * **시퀀스({@code S})는 담지 않는다**(리뷰어 실측: app_tenant 기준 public 가시/전체 = r 68/68, v 3/3, S 0/49). 그 결과
+   * {@code SELECT last_value, log_cnt FROM oauth_state_id_seq}처럼 시퀀스를 미한정으로 참조하면 이전
+   * 구현(information_schema)에서는 검사 대상에 아예 안 잡혀 그대로 통과·실행됐다(실측: 값 반환 확인). {@code pg_class.relkind}를
+   * {@code r/p/v/m/f/S}(테이블/파티션/뷰/구체화 뷰/외래 테이블/시퀀스)로 넓혀 이 사각을 없앤다 — 권한 때문에 {@code
+   * information_schema}에 안 보이던 객체도 이 카탈로그 조회는 여전히 존재 자체는 볼 수 있다({@code has_table_privilege}가 아니라
+   * 오브젝트 존재만 확인하면 되므로).
    */
   private void rejectUnqualifiedNamesShadowedByPublic(String cleanSql) {
     Set<String> unqualified = sqlValidator.unqualifiedTableNames(cleanSql);
@@ -405,11 +400,11 @@ public class AnalyticsQueryExecutionService {
    *       <li>비어있음 — 빈 응답 (defensive: 외부에서 ?datasetIds= 빈값으로 호출 시 전체 폴백 방지)
    *       <li>값 있음 — 해당 id 들만 필터
    *     </ul>
-   *     <p>#596: {@code @Transactional}이 없으면 {@code TenantAwareTransactionManager.doBegin()}이
-   *     실행되지 않아 {@code app.tenant_id} GUC가 주입되지 않는다. 그 결과 V107 이후 RLS가 걸린
-   *     {@code dataset}/{@code dataset_column} 테이블에 대한 이 raw-SQL LEFT JOIN이 예외 없이 항상
-   *     0행을 반환해(fail-closed) datasetId/datasetName이 늘 null이 된다(형제 메서드 {@link
-   *     #execute}는 이미 {@code @Transactional}이 있어 문제가 없었다).
+   *     <p>#596: {@code @Transactional}이 없으면 {@code TenantAwareTransactionManager.doBegin()}이 실행되지
+   *     않아 {@code app.tenant_id} GUC가 주입되지 않는다. 그 결과 V107 이후 RLS가 걸린 {@code dataset}/{@code
+   *     dataset_column} 테이블에 대한 이 raw-SQL LEFT JOIN이 예외 없이 항상 0행을 반환해(fail-closed)
+   *     datasetId/datasetName이 늘 null이 된다(형제 메서드 {@link #execute}는 이미 {@code @Transactional}이 있어
+   *     문제가 없었다).
    */
   @Transactional(readOnly = true)
   public SchemaInfoResponse getSchemaInfo(List<Long> datasetIds) {
@@ -585,8 +580,8 @@ public class AnalyticsQueryExecutionService {
    *   <li>PSQL 아니면 원본 메시지 (또는 toString)
    * </ol>
    *
-   * <p>package-private — same-package 테스트에서 분기 커버리지(truncate, sem==null fallback) 직접 검증을 위해 노출. 외부 호출은
-   * 위 catch 블록 한 곳뿐.
+   * <p>package-private — same-package 테스트에서 분기 커버리지(truncate, sem==null fallback) 직접 검증을 위해 노출. 외부
+   * 호출은 위 catch 블록 한 곳뿐.
    */
   String formatExecutionError(Exception e) {
     Throwable cause = e;

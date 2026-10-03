@@ -13,11 +13,11 @@ import org.junit.jupiter.api.Test;
 /**
  * {@link DataSchema} 의 스키마명 파생 규약을 고정한다.
  *
- * <p>이 규약은 설정이 아니라 코드 상수로 박혀 있다 — 프로필마다 값이 갈라지면 prod 가 실제로
- * 쓰는 매핑(테넌트 1 → data)이 테스트에서 한 번도 실행되지 않기 때문이다.
+ * <p>이 규약은 설정이 아니라 코드 상수로 박혀 있다 — 프로필마다 값이 갈라지면 prod 가 실제로 쓰는 매핑(테넌트 1 → data)이 테스트에서 한 번도 실행되지 않기
+ * 때문이다.
  *
- * <p>{@code runAsTenant} 라는 이름의 헬퍼는 이 저장소에 없다 — {@link TenantContext#runScopedGet}
- * 가 정확히 같은 의미론(테넌트 설정 → 실행 → 진입 전 값 복원)을 이미 제공하므로 그대로 쓴다.
+ * <p>{@code runAsTenant} 라는 이름의 헬퍼는 이 저장소에 없다 — {@link TenantContext#runScopedGet} 가 정확히 같은 의미론(테넌트
+ * 설정 → 실행 → 진입 전 값 복원)을 이미 제공하므로 그대로 쓴다.
  */
 class DataSchemaTenantResolutionTest extends IntegrationTestBase {
 
@@ -59,9 +59,8 @@ class DataSchemaTenantResolutionTest extends IntegrationTestBase {
   }
 
   /**
-   * Fix round 1 선택 항목 — {@link OutputClearStatement#deleteAll} 이 접미사 붙은 테넌트
-   * 스키마에서도 스키마·테이블 양쪽을 인용하는지 손으로만 확인하고 넘어갔던 것을 문자열로
-   * 못박는다(리뷰 지적: "손으로만 확인" 상태를 남기지 말 것).
+   * Fix round 1 선택 항목 — {@link OutputClearStatement#deleteAll} 이 접미사 붙은 테넌트 스키마에서도 스키마·테이블 양쪽을
+   * 인용하는지 손으로만 확인하고 넘어갔던 것을 문자열로 못박는다(리뷰 지적: "손으로만 확인" 상태를 남기지 말 것).
    */
   @Test
   void deleteAll은_접미사_붙은_테넌트_스키마도_양쪽_인용한다() {

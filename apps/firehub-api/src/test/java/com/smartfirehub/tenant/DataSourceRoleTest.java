@@ -12,8 +12,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 /**
  * 런타임 트래픽이 비특권 롤로 접속하는지 단언한다.
  *
- * <p>이 테스트가 회귀 방지의 핵심이다 — 런타임이 소유자/SUPERUSER 롤로 되돌아가면 모든 RLS 정책이
- * 조용히 무력화되고, 다른 어떤 테스트도 그 사실을 알려주지 않는다.
+ * <p>이 테스트가 회귀 방지의 핵심이다 — 런타임이 소유자/SUPERUSER 롤로 되돌아가면 모든 RLS 정책이 조용히 무력화되고, 다른 어떤 테스트도 그 사실을 알려주지
+ * 않는다.
  */
 class DataSourceRoleTest extends IntegrationTestBase {
 

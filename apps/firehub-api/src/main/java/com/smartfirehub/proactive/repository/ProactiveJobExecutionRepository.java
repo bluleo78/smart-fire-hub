@@ -1,6 +1,5 @@
 package com.smartfirehub.proactive.repository;
 
-import com.smartfirehub.proactive.util.ProactiveTime;
 import static org.jooq.impl.DSL.*;
 
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -8,6 +7,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.proactive.dto.ProactiveJobExecutionResponse;
 import com.smartfirehub.proactive.dto.ProactiveJobExecutionSummaryResponse;
 import com.smartfirehub.proactive.dto.ReportListItemResponse;
+import com.smartfirehub.proactive.util.ProactiveTime;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -23,11 +23,9 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * 프로액티브 잡 실행 이력 저장소.
  *
- * <p>클래스 레벨 {@code @Transactional} 이 필요한 이유: V103 으로 {@code tenant_id} 가 생겼고
- * V104 에서 RLS 가 걸린다. 테넌트 값은 트랜잭션-로컬 GUC 라 트랜잭션이 없으면 공급되지 않는다.
- * 이 저장소의 주 호출자인 {@code ProactiveJobAsyncRunner.executeJob} 은 {@code @Async} 만 있고
- * 트랜잭션이 없어, 배선이 없으면 실행 이력이 조용히 남지 않는다. 전파 REQUIRED 이므로
- * 컨트롤러 경로의 동작은 불변이다.
+ * <p>클래스 레벨 {@code @Transactional} 이 필요한 이유: V103 으로 {@code tenant_id} 가 생겼고 V104 에서 RLS 가 걸린다. 테넌트
+ * 값은 트랜잭션-로컬 GUC 라 트랜잭션이 없으면 공급되지 않는다. 이 저장소의 주 호출자인 {@code ProactiveJobAsyncRunner.executeJob} 은
+ * {@code @Async} 만 있고 트랜잭션이 없어, 배선이 없으면 실행 이력이 조용히 남지 않는다. 전파 REQUIRED 이므로 컨트롤러 경로의 동작은 불변이다.
  */
 @Transactional
 @Repository
@@ -62,8 +60,7 @@ public class ProactiveJobExecutionRepository {
   // 리포트 목록 조회용 — 잡 소유자 검증과 잡 이름 표기를 위해 proactive_job 을 조인한다
   private static final Table<?> PROACTIVE_JOB = table(name("proactive_job"));
   private static final Field<Long> PJ_ID = field(name("proactive_job", "id"), Long.class);
-  private static final Field<Long> PJ_USER_ID =
-      field(name("proactive_job", "user_id"), Long.class);
+  private static final Field<Long> PJ_USER_ID = field(name("proactive_job", "user_id"), Long.class);
   private static final Field<String> PJ_NAME = field(name("proactive_job", "name"), String.class);
 
   public Long create(Long jobId) {
@@ -128,9 +125,8 @@ public class ProactiveJobExecutionRepository {
   /**
    * 실행 이력 목록(경량 뷰) 조회 — 컨트롤러 목록 endpoint 전용 (#604).
    *
-   * <p>{@link #findByJobId}와 달리 {@code result}(리포트 본문) 컬럼 자체를 SELECT하지 않는다. 목록은 실행
-   * 건수만큼 반복되므로 본문을 포함하면 응답이 수만 자에 달해 MCP 도구 결과 토큰 한도를 초과할 수 있다. 본문이
-   * 필요하면 단건 조회({@link #findById})를 사용해야 한다.
+   * <p>{@link #findByJobId}와 달리 {@code result}(리포트 본문) 컬럼 자체를 SELECT하지 않는다. 목록은 실행 건수만큼 반복되므로 본문을
+   * 포함하면 응답이 수만 자에 달해 MCP 도구 결과 토큰 한도를 초과할 수 있다. 본문이 필요하면 단건 조회({@link #findById})를 사용해야 한다.
    */
   public List<ProactiveJobExecutionSummaryResponse> findSummariesByJobId(
       Long jobId, int limit, int offset) {
@@ -179,11 +175,11 @@ public class ProactiveJobExecutionRepository {
   /**
    * 사용자가 소유한 스마트 작업들이 생성한 리포트를 잡 횡단으로 조회한다.
    *
-   * <p>"리포트"는 COMPLETED 이면서 result.htmlContent 가 실제로 있는 실행만을 뜻한다. htmlContent 가 없으면 뷰어가 404를
-   * 내므로 목록에 넣으면 빈 화면으로 이어진다.
+   * <p>"리포트"는 COMPLETED 이면서 result.htmlContent 가 실제로 있는 실행만을 뜻한다. htmlContent 가 없으면 뷰어가 404를 내므로
+   * 목록에 넣으면 빈 화면으로 이어진다.
    *
-   * <p>본문(htmlContent)은 수십 KB이므로 SELECT 하지 않고 WHERE 절의 존재 판정에만 사용한다. 잡 스코핑이 없는
-   * 엔드포인트이므로 user_id 조건이 유일한 소유권 방어선이다.
+   * <p>본문(htmlContent)은 수십 KB이므로 SELECT 하지 않고 WHERE 절의 존재 판정에만 사용한다. 잡 스코핑이 없는 엔드포인트이므로 user_id 조건이
+   * 유일한 소유권 방어선이다.
    */
   public List<ReportListItemResponse> findReportsByUserId(Long userId, int limit, int offset) {
     // result ->> 'htmlContent' / 'title' / 'summary' — JSONB 텍스트 추출

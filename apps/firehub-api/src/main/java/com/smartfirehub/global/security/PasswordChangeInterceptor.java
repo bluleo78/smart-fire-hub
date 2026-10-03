@@ -13,13 +13,12 @@ import org.springframework.web.servlet.HandlerInterceptor;
 /**
  * 첫 로그인 비밀번호 변경 강제 게이트(WD-2).
  *
- * <p>JwtAuthenticationFilter 가 토큰 클레임 pwc 를 {@link #MUST_CHANGE_PASSWORD_ATTR} 요청 속성으로
- * 옮겨 두면, 이 인터셉터는 {@link AllowedDuringPasswordChange} 가 없는 핸들러를 403
- * PASSWORD_CHANGE_REQUIRED 로 막는다. PermissionInterceptor <b>앞</b>에 등록한다 — 권한 부족(403 코드
- * 없음)보다 이 사유가 먼저 보여야 웹이 변경 화면으로 보낼 수 있다.
+ * <p>JwtAuthenticationFilter 가 토큰 클레임 pwc 를 {@link #MUST_CHANGE_PASSWORD_ATTR} 요청 속성으로 옮겨 두면, 이
+ * 인터셉터는 {@link AllowedDuringPasswordChange} 가 없는 핸들러를 403 PASSWORD_CHANGE_REQUIRED 로 막는다.
+ * PermissionInterceptor <b>앞</b>에 등록한다 — 권한 부족(403 코드 없음)보다 이 사유가 먼저 보여야 웹이 변경 화면으로 보낼 수 있다.
  *
- * <p>내부 호출(Internal 토큰 + X-On-Behalf-Of)은 속성을 세우지 않으므로 통과한다. 웹 경로 위임은 그
- * 시작(웹 API)이 여기서 막힌다; Slack·예약 등 비웹 채널은 pwc 대상이 아니다(스펙 §3).
+ * <p>내부 호출(Internal 토큰 + X-On-Behalf-Of)은 속성을 세우지 않으므로 통과한다. 웹 경로 위임은 그 시작(웹 API)이 여기서 막힌다;
+ * Slack·예약 등 비웹 채널은 pwc 대상이 아니다(스펙 §3).
  */
 @Component
 public class PasswordChangeInterceptor implements HandlerInterceptor {

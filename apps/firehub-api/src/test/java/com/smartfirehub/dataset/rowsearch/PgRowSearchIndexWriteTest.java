@@ -42,8 +42,10 @@ class PgRowSearchIndexWriteTest extends IntegrationTestBase {
     inTenantFixture(
         () -> {
           dataTableService.createTable(
-              SRC, List.of(new DatasetColumnRequest("content", "내용", "TEXT", null, true, false, null)));
-          dsl.execute("INSERT INTO " + DataSchema.qualify(SRC) + " (content) VALUES ('a'), ('b'), ('c')");
+              SRC,
+              List.of(new DatasetColumnRequest("content", "내용", "TEXT", null, true, false, null)));
+          dsl.execute(
+              "INSERT INTO " + DataSchema.qualify(SRC) + " (content) VALUES ('a'), ('b'), ('c')");
         });
   }
 
@@ -60,9 +62,13 @@ class PgRowSearchIndexWriteTest extends IntegrationTestBase {
   void recreatedIndexTable_isNotAccessibleToPipelineExecutorRole() {
     // 스키마 기본 권한(ALTER DEFAULT PRIVILEGES)이 파이프라인 실행 롤에 DML 을 주므로, 색인 테이블은 만들 때 회수해야
     // 사용자 파이프라인 SQL 이 색인을 읽거나 오염시키지 못한다.
-    String executor = com.smartfirehub.global.tenant.TenantPipelineRole.roleName(DEFAULT_TEST_TENANT_ID);
+    String executor =
+        com.smartfirehub.global.tenant.TenantPipelineRole.roleName(DEFAULT_TEST_TENANT_ID);
     boolean roleExists =
-        dsl.fetchExists(dsl.selectOne().from("pg_roles").where(org.jooq.impl.DSL.field("rolname").eq(executor)));
+        dsl.fetchExists(
+            dsl.selectOne()
+                .from("pg_roles")
+                .where(org.jooq.impl.DSL.field("rolname").eq(executor)));
     assertThat(roleExists).as("테스트 DB 에 실행 롤이 있어야 이 단언이 의미가 있다").isTrue();
 
     index.recreate(ref, 1024);
@@ -72,7 +78,8 @@ class PgRowSearchIndexWriteTest extends IntegrationTestBase {
       String q = DataSchema.qualify(t);
       for (String priv : List.of("SELECT", "INSERT", "UPDATE", "DELETE")) {
         Boolean has =
-            dsl.fetchOne("SELECT has_table_privilege(?, ?, ?)", executor, q, priv).get(0, Boolean.class);
+            dsl.fetchOne("SELECT has_table_privilege(?, ?, ?)", executor, q, priv)
+                .get(0, Boolean.class);
         assertThat(has).as(t + " " + priv).isFalse();
       }
     }
@@ -117,7 +124,8 @@ class PgRowSearchIndexWriteTest extends IntegrationTestBase {
         inTenantFixture(
             () ->
                 dsl.fetchOne(
-                        "SELECT to_regclass(?) IS NOT NULL", DataSchema.qualify(foreign.indexTable()))
+                        "SELECT to_regclass(?) IS NOT NULL",
+                        DataSchema.qualify(foreign.indexTable()))
                     .get(0, Boolean.class));
     assertThat(exists).isFalse();
   }

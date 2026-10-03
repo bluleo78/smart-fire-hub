@@ -15,11 +15,11 @@ import org.springframework.transaction.support.TransactionTemplate;
 /**
  * V99 의 role / role_permission / user_role 테넌트 격리를 양방향으로 검증한다.
  *
- * <p>클래스 레벨 {@code @Transactional} 을 붙이지 않는다 — 테넌트를 바꿔 가며 여러 트랜잭션을
- * 열어야 하고, 하나의 테스트 트랜잭션에 묶이면 GUC 가 처음 값으로 고정된다.
+ * <p>클래스 레벨 {@code @Transactional} 을 붙이지 않는다 — 테넌트를 바꿔 가며 여러 트랜잭션을 열어야 하고, 하나의 테스트 트랜잭션에 묶이면 GUC 가
+ * 처음 값으로 고정된다.
  *
- * <p>테스트 커넥션은 비특권 롤 {@code app_tenant}(NOBYPASSRLS, V83)로 접속한다 — 즉 픽스처·정리·
- * 검증 조회도 전부 정책의 대상이다. 그래서 정리까지 테넌트 컨텍스트 트랜잭션 안에서 한다.
+ * <p>테스트 커넥션은 비특권 롤 {@code app_tenant}(NOBYPASSRLS, V83)로 접속한다 — 즉 픽스처·정리· 검증 조회도 전부 정책의 대상이다. 그래서
+ * 정리까지 테넌트 컨텍스트 트랜잭션 안에서 한다.
  */
 class RbacDomainRlsTest extends IntegrationTestBase {
 
@@ -58,8 +58,7 @@ class RbacDomainRlsTest extends IntegrationTestBase {
   /**
    * 지정 테넌트 컨텍스트에서 역할을 하나 만들고 PK 를 돌려준다.
    *
-   * <p>{@code tenant_id} 는 명시하지 않는다 — V97 이 심은 컬럼 DEFAULT 가 GUC 에서 채우는 것을
-   * 함께 검증하기 위함이다.
+   * <p>{@code tenant_id} 는 명시하지 않는다 — V97 이 심은 컬럼 DEFAULT 가 GUC 에서 채우는 것을 함께 검증하기 위함이다.
    */
   private Long insertRole(long tenantId, String namePrefix) {
     return TenantRlsTestSupport.runInTenantTransaction(
@@ -74,8 +73,8 @@ class RbacDomainRlsTest extends IntegrationTestBase {
   }
 
   /**
-   * {@code assertTwoSidedIsolation} 은 이미 소유 테넌트 트랜잭션 안에서 이 Supplier 를 부른다 —
-   * 여기서 또 트랜잭션을 열면 중첩이 되므로 bare 삽입을 쓴다.
+   * {@code assertTwoSidedIsolation} 은 이미 소유 테넌트 트랜잭션 안에서 이 Supplier 를 부른다 — 여기서 또 트랜잭션을 열면 중첩이 되므로
+   * bare 삽입을 쓴다.
    */
   private Long insertRoleInCurrentContext(String namePrefix) {
     long suffix = TenantRlsTestSupport.nextTenantId();
@@ -125,7 +124,8 @@ class RbacDomainRlsTest extends IntegrationTestBase {
     TenantRlsTestSupport.runInTenantTransaction(
         tx,
         tenantA,
-        () -> dsl.execute("insert into user_role (user_id, role_id) values (?, ?)", userId, roleId));
+        () ->
+            dsl.execute("insert into user_role (user_id, role_id) values (?, ?)", userId, roleId));
 
     assertThat(countUserRoles(tenantA)).as("소유 테넌트에서는 보여야 한다").isEqualTo(1);
     assertThat(countUserRoles(tenantB)).as("다른 테넌트에서 보이면 격리 실패다").isZero();

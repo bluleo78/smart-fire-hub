@@ -1,6 +1,5 @@
 package com.smartfirehub.proactive.service;
 
-import com.smartfirehub.proactive.util.ProactiveTime;
 import static com.smartfirehub.jooq.Tables.DATASET;
 import static com.smartfirehub.jooq.Tables.PIPELINE_EXECUTION;
 import static com.smartfirehub.jooq.Tables.PROACTIVE_JOB;
@@ -8,13 +7,14 @@ import static com.smartfirehub.jooq.Tables.PROACTIVE_JOB;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dataset.exception.SqlQueryException;
+import com.smartfirehub.global.tenant.TenantScopedRunner;
 import com.smartfirehub.global.util.SqlValidationUtils;
 import com.smartfirehub.pipeline.exception.UnsafeSqlException;
 import com.smartfirehub.pipeline.service.validator.SqlValidator;
-import com.smartfirehub.global.tenant.TenantScopedRunner;
 import com.smartfirehub.proactive.dto.AnomalyEvent;
 import com.smartfirehub.proactive.repository.MetricSnapshotRepository;
 import com.smartfirehub.proactive.repository.MetricSnapshotRepository.MetricSnapshot;
+import com.smartfirehub.proactive.util.ProactiveTime;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -46,9 +46,9 @@ public class MetricPollerService {
   private final com.smartfirehub.pipeline.service.executor.ExecutorClient executorClient;
 
   /**
-   * 데이터셋 메트릭 SQL 검증기 — 애드혹 분석 쿼리({@code AnalyticsQueryExecutionService})와 같은 정책(현재 테넌트
-   * 데이터 스키마만, 미한정 이름 허용)이다. 메트릭 SQL 은 사용자가 애드혹 쿼리처럼 직접 쓰는 SELECT 이므로 같은
-   * 문을 통과해야 한다. 스프링 빈(파이프라인 정책)이 아니라 팩터리 인스턴스를 쓰는 이유는 그 팩터리 주석 참조.
+   * 데이터셋 메트릭 SQL 검증기 — 애드혹 분석 쿼리({@code AnalyticsQueryExecutionService})와 같은 정책(현재 테넌트 데이터 스키마만,
+   * 미한정 이름 허용)이다. 메트릭 SQL 은 사용자가 애드혹 쿼리처럼 직접 쓰는 SELECT 이므로 같은 문을 통과해야 한다. 스프링 빈(파이프라인 정책)이 아니라 팩터리
+   * 인스턴스를 쓰는 이유는 그 팩터리 주석 참조.
    */
   private final SqlValidator metricSqlValidator = SqlValidator.forAdhocDataSchemaQueries();
 
@@ -60,9 +60,8 @@ public class MetricPollerService {
   /**
    * 이상탐지 메트릭 폴링.
    *
-   * <p>원 HTTP 요청이 없어 승계할 테넌트가 없다 — ACTIVE 테넌트를 순회해 테넌트별로 돈다.
-   * 순회하지 않으면 RLS 가 proactive_job·dataset·pipeline_execution 을 전부 차단해 이상탐지가
-   * 예외도 로그도 없이 무동작이 된다.
+   * <p>원 HTTP 요청이 없어 승계할 테넌트가 없다 — ACTIVE 테넌트를 순회해 테넌트별로 돈다. 순회하지 않으면 RLS 가
+   * proactive_job·dataset·pipeline_execution 을 전부 차단해 이상탐지가 예외도 로그도 없이 무동작이 된다.
    */
   @Scheduled(fixedDelay = 30000)
   public void poll() {
@@ -79,11 +78,10 @@ public class MetricPollerService {
   /**
    * 한 테넌트 범위의 메트릭 폴링 본문.
    *
-   * <p><b>트랜잭션 경계(P2-b)</b>: 이 경로는 리포지토리를 거치지 않고 {@code DSLContext} 를 직접 쓴다 —
-   * {@link TenantScopedRunner} 는 ThreadLocal 만 세우므로 GUC(app.tenant_id)는 여기서 트랜잭션을 열어야
-   * 주입된다. 다만 트랜잭션은 <b>DB 를 만지는 구간에만</b> 둔다: 데이터셋 메트릭은 {@code
-   * executorClient} HTTP 호출로 값을 수집하고 이상탐지 이벤트도 발행하므로, 전체를 한 트랜잭션으로
-   * 감싸면 외부 호출 동안 커넥션을 점유해 풀이 고갈된다.
+   * <p><b>트랜잭션 경계(P2-b)</b>: 이 경로는 리포지토리를 거치지 않고 {@code DSLContext} 를 직접 쓴다 — {@link
+   * TenantScopedRunner} 는 ThreadLocal 만 세우므로 GUC(app.tenant_id)는 여기서 트랜잭션을 열어야 주입된다. 다만 트랜잭션은 <b>DB
+   * 를 만지는 구간에만</b> 둔다: 데이터셋 메트릭은 {@code executorClient} HTTP 호출로 값을 수집하고 이상탐지 이벤트도 발행하므로, 전체를 한
+   * 트랜잭션으로 감싸면 외부 호출 동안 커넥션을 점유해 풀이 고갈된다.
    */
   @SuppressWarnings("unchecked")
   private void pollMetrics() {

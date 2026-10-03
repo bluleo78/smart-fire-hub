@@ -51,7 +51,8 @@ class DatasetSearchServiceTest {
     when(repository.searchByCosine(
             ArgumentMatchers.eq(new EmbeddingSpace(EmbeddingDimension.D1024, "bge-m3")),
             ArgumentMatchers.any(),
-            ArgumentMatchers.isNull(), ArgumentMatchers.anyInt()))
+            ArgumentMatchers.isNull(),
+            ArgumentMatchers.anyInt()))
         .thenReturn(List.of(dsA, dsC)); // 코사인: dsA(rank0), dsC(rank1)
     when(repository.searchByTrigram(
             ArgumentMatchers.eq("화재"), ArgumentMatchers.isNull(), ArgumentMatchers.anyInt()))
@@ -99,7 +100,8 @@ class DatasetSearchServiceTest {
     when(repository.searchByCosine(
             ArgumentMatchers.any(),
             ArgumentMatchers.any(),
-            ArgumentMatchers.isNull(), ArgumentMatchers.anyInt()))
+            ArgumentMatchers.isNull(),
+            ArgumentMatchers.anyInt()))
         .thenReturn(List.of(hit(1L)));
     var req = new DatasetSearchRequest("화재", 10, DatasetSearchMode.SEMANTIC, null);
     assertThat(service().search(req)).hasSize(1);
@@ -118,7 +120,8 @@ class DatasetSearchServiceTest {
     when(repository.searchByCosine(
             ArgumentMatchers.any(),
             ArgumentMatchers.any(),
-            ArgumentMatchers.isNull(), ArgumentMatchers.anyInt()))
+            ArgumentMatchers.isNull(),
+            ArgumentMatchers.anyInt()))
         .thenReturn(List.of(hit(1L)));
     when(repository.searchByTrigram(
             ArgumentMatchers.eq("화재"), ArgumentMatchers.isNull(), ArgumentMatchers.anyInt()))
@@ -138,7 +141,8 @@ class DatasetSearchServiceTest {
     when(repository.searchByCosine(
             ArgumentMatchers.any(),
             ArgumentMatchers.any(),
-            ArgumentMatchers.isNull(), ArgumentMatchers.anyInt()))
+            ArgumentMatchers.isNull(),
+            ArgumentMatchers.anyInt()))
         .thenReturn(List.of(hit(1L)));
     when(repository.searchByTrigram(
             ArgumentMatchers.eq("화재"), ArgumentMatchers.isNull(), ArgumentMatchers.anyInt()))
@@ -206,14 +210,17 @@ class DatasetSearchServiceTest {
   void semantic_임베딩_미설정이면_미설정_예외() {
     when(embeddingFactory.current()).thenThrow(new EmbeddingNotConfiguredException());
     assertThatThrownBy(
-            () -> service().search(new DatasetSearchRequest("화재", 10, DatasetSearchMode.SEMANTIC, null)))
+            () ->
+                service()
+                    .search(new DatasetSearchRequest("화재", 10, DatasetSearchMode.SEMANTIC, null)))
         .isInstanceOf(EmbeddingNotConfiguredException.class);
   }
 
   @Test
   void keyword_임베딩_미설정이어도_동작한다() {
     when(repository.searchByTrigram("화재", null, 10)).thenReturn(List.of(hit(1L)));
-    assertThat(service().search(new DatasetSearchRequest("화재", 10, DatasetSearchMode.KEYWORD, null)))
+    assertThat(
+            service().search(new DatasetSearchRequest("화재", 10, DatasetSearchMode.KEYWORD, null)))
         .hasSize(1);
     verifyNoInteractions(embeddingFactory);
   }

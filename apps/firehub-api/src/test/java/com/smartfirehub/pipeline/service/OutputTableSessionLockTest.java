@@ -33,12 +33,11 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
 /**
- * 출력 테이블 세션 잠금(#735)의 계약 — 실제 DB 로 확인한다. 세션 범위 advisory 잠금은 커밋으로 풀리지
- * 않고 풀로 돌아간 커넥션에도 남으므로, <b>누수가 없다는 것</b>이 이 클래스의 핵심 단언이다.
+ * 출력 테이블 세션 잠금(#735)의 계약 — 실제 DB 로 확인한다. 세션 범위 advisory 잠금은 커밋으로 풀리지 않고 풀로 돌아간 커넥션에도 남으므로, <b>누수가
+ * 없다는 것</b>이 이 클래스의 핵심 단언이다.
  *
- * <p>잠금 관측은 {@code pg_locks} 의 advisory 행으로 한다. 테스트 DB 는 이 JVM 전용 컨테이너이고
- * 제품 코드에서 advisory 잠금을 쓰는 곳은 출력 테이블 직렬화뿐이라 다른 잠금이 섞이지 않는다.
- * 클래스 레벨 {@code @Transactional} 은 쓰지 않는다 — 다른 커넥션이 픽스처를 봐야 한다.
+ * <p>잠금 관측은 {@code pg_locks} 의 advisory 행으로 한다. 테스트 DB 는 이 JVM 전용 컨테이너이고 제품 코드에서 advisory 잠금을 쓰는 곳은
+ * 출력 테이블 직렬화뿐이라 다른 잠금이 섞이지 않는다. 클래스 레벨 {@code @Transactional} 은 쓰지 않는다 — 다른 커넥션이 픽스처를 봐야 한다.
  */
 class OutputTableSessionLockTest extends IntegrationTestBase {
 
@@ -53,7 +52,8 @@ class OutputTableSessionLockTest extends IntegrationTestBase {
 
   /** 현재 DB 에 존재하는 advisory 잠금 수(쥔 것·기다리는 것 모두). */
   private int advisoryLocks(String condition) {
-    return dsl.fetchOne("SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND " + condition)
+    return dsl.fetchOne(
+            "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND " + condition)
         .get(0, Integer.class);
   }
 
@@ -105,9 +105,8 @@ class OutputTableSessionLockTest extends IntegrationTestBase {
   }
 
   /**
-   * 세션 잠금을 쥔 동안에는 같은 출력에 대한 SQL 스텝의 "비우기 + 적재"(트랜잭션 범위 잠금, #731)가
-   * 기다린다 — 두 경로의 키가 같다는 증거다. 키가 어긋나면 SQL 실행이 기다리지 않고 바로 끝나
-   * 대기 단언(1건)과 "아직 비워지지 않았다" 단언이 깨진다.
+   * 세션 잠금을 쥔 동안에는 같은 출력에 대한 SQL 스텝의 "비우기 + 적재"(트랜잭션 범위 잠금, #731)가 기다린다 — 두 경로의 키가 같다는 증거다. 키가 어긋나면
+   * SQL 실행이 기다리지 않고 바로 끝나 대기 단언(1건)과 "아직 비워지지 않았다" 단언이 깨진다.
    */
   @Test
   void 세션_잠금을_쥔_동안_같은_출력의_SQL_REPLACE는_기다린다() throws Exception {
@@ -156,12 +155,11 @@ class OutputTableSessionLockTest extends IntegrationTestBase {
   }
 
   /**
-   * 같은 출력에 대한 세션 잠금끼리도 배타다 — 뒤 본문은 앞 본문이 끝난 뒤에 시작한다. 뒤 실행은
-   * 커넥션을 쥐지 않고 시도를 반복하므로(pg_locks 대기 행이 없다) 시도가 시작됐다는 신호를 받은 뒤
-   * 재시도 간격 여러 번만큼 기다려도 들어오지 못함을 확인한다.
+   * 같은 출력에 대한 세션 잠금끼리도 배타다 — 뒤 본문은 앞 본문이 끝난 뒤에 시작한다. 뒤 실행은 커넥션을 쥐지 않고 시도를 반복하므로(pg_locks 대기 행이 없다)
+   * 시도가 시작됐다는 신호를 받은 뒤 재시도 간격 여러 번만큼 기다려도 들어오지 못함을 확인한다.
    *
-   * <p>테스트 프로파일의 메인 풀은 2개다 — 앞 본문이 1개를 쥔 채 뒤 실행이 시도를 반복하고 테스트가
-   * 조회까지 하는데도 막히지 않는다는 것이, 대기자가 풀을 붙잡지 않는다는 증거이기도 하다.
+   * <p>테스트 프로파일의 메인 풀은 2개다 — 앞 본문이 1개를 쥔 채 뒤 실행이 시도를 반복하고 테스트가 조회까지 하는데도 막히지 않는다는 것이, 대기자가 풀을 붙잡지
+   * 않는다는 증거이기도 하다.
    */
   @Test
   void 같은_출력의_두_본문은_겹쳐_돌지_않는다() throws Exception {
@@ -214,9 +212,8 @@ class OutputTableSessionLockTest extends IntegrationTestBase {
   }
 
   /**
-   * 해제 문장이 실패하면 커넥션을 물리적으로 끊는다 — 잠금을 쥔 세션이 풀로 돌아가면 그 출력의 모든
-   * REPLACE 가 영원히 기다리게 되므로, 서버가 세션 종료로 잠금을 회수하게 만든다. 실제 DB 로는 해제
-   * 실패를 결정적으로 만들 수 없어 이 분기만 목으로 확인한다.
+   * 해제 문장이 실패하면 커넥션을 물리적으로 끊는다 — 잠금을 쥔 세션이 풀로 돌아가면 그 출력의 모든 REPLACE 가 영원히 기다리게 되므로, 서버가 세션 종료로 잠금을
+   * 회수하게 만든다. 실제 DB 로는 해제 실패를 결정적으로 만들 수 없어 이 분기만 목으로 확인한다.
    */
   @Test
   void 해제에_실패하면_커넥션을_끊고_반납한다() throws Exception {

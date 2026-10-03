@@ -10,8 +10,8 @@ import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
 import org.springframework.http.ResponseCookie;
+import org.springframework.http.ResponseEntity;
 import org.springframework.lang.NonNull;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.CookieValue;
@@ -24,23 +24,21 @@ import org.springframework.web.bind.annotation.RestController;
 /**
  * 운영자 평면 인증 엔드포인트.
  *
- * <p>{@code /login} 과 {@code /refresh} 만 public 이다({@code SecurityConfig}). 나머지는 플랫폼 토큰이
- * 필요하며, {@code PlatformPlaneFilter} 가 테넌트 토큰의 접근을 평면 단위로 막는다.
+ * <p>{@code /login} 과 {@code /refresh} 만 public 이다({@code SecurityConfig}). 나머지는 플랫폼 토큰이 필요하며,
+ * {@code PlatformPlaneFilter} 가 테넌트 토큰의 접근을 평면 단위로 막는다.
  *
- * <p>{@code /me} 와 {@code /logout} 에는 {@code @RequirePermission} 을 걸지 않는다 — 세션 확인과
- * 로그아웃은 어떤 권한 조합의 운영자든 할 수 있어야 한다(테넌트 평면의 {@code /auth/me} 와 같은 이유).
+ * <p>{@code /me} 와 {@code /logout} 에는 {@code @RequirePermission} 을 걸지 않는다 — 세션 확인과 로그아웃은 어떤 권한 조합의
+ * 운영자든 할 수 있어야 한다(테넌트 평면의 {@code /auth/me} 와 같은 이유).
  */
 @RestController
 @RequestMapping("/api/platform/auth")
 public class PlatformAuthController {
 
   /**
-   * 운영자 리프레시 쿠키. 이름과 path 를 테넌트 평면({@code refreshToken} @ {@code /api/v1/auth})과
-   * <b>모두</b> 분리한다.
+   * 운영자 리프레시 쿠키. 이름과 path 를 테넌트 평면({@code refreshToken} @ {@code /api/v1/auth})과 <b>모두</b> 분리한다.
    *
-   * <p>왜 분리해야 하는가: 같은 호스트에서 firehub-web 과 firehub-admin 을 동시에 열면, 이름이 같을
-   * 경우 나중 로그인이 앞의 쿠키를 덮어써 서로의 세션을 끊는다. path 까지 분리하면 브라우저가 각
-   * 평면의 갱신 요청에만 해당 쿠키를 보낸다 — 운영자 쿠키가 테넌트 API 로 새지 않는다.
+   * <p>왜 분리해야 하는가: 같은 호스트에서 firehub-web 과 firehub-admin 을 동시에 열면, 이름이 같을 경우 나중 로그인이 앞의 쿠키를 덮어써 서로의
+   * 세션을 끊는다. path 까지 분리하면 브라우저가 각 평면의 갱신 요청에만 해당 쿠키를 보낸다 — 운영자 쿠키가 테넌트 API 로 새지 않는다.
    */
   private static final String PLATFORM_REFRESH_COOKIE = "platformRefreshToken";
 
@@ -84,8 +82,8 @@ public class PlatformAuthController {
   /**
    * 운영자 로그아웃. 이 콘솔 세션의 리프레시 패밀리만 폐기하고 쿠키를 지운다.
    *
-   * <p>사용자 단위로 폐기하지 않는 이유는 {@code PlatformAuthService.logout} 주석 참고 —
-   * {@code refresh_token} 에 평면 컬럼이 없어 사용자 단위 폐기는 테넌트 세션까지 끊는다.
+   * <p>사용자 단위로 폐기하지 않는 이유는 {@code PlatformAuthService.logout} 주석 참고 — {@code refresh_token} 에 평면
+   * 컬럼이 없어 사용자 단위 폐기는 테넌트 세션까지 끊는다.
    */
   @PostMapping("/logout")
   public ResponseEntity<Void> logout(

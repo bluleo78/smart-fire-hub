@@ -1,11 +1,11 @@
 package com.smartfirehub.proactive.service;
 
-import com.smartfirehub.global.tenant.TenantContext;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.proactive.dto.ProactiveResult;
-import com.smartfirehub.settings.model.AiCredential;
 import com.smartfirehub.proactive.exception.ProactiveJobException;
+import com.smartfirehub.settings.model.AiCredential;
 import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
@@ -46,15 +46,14 @@ public class ProactiveAiClient {
   /**
    * ai-agent 의 프로액티브 라우트를 호출한다.
    *
-   * <p>자격증명은 평면 문자열 파라미터가 아니라 {@link AiCredential} 을 그대로 받는다(이슈
-   * #695). 예전에는 {@code apiKey}/{@code agentType}/{@code oauthToken} 세 개의 연속 String 과
-   * opencode 전용 필드를 묶은 별도 record 를 받아 <b>이 메서드가 직접 바디를 조립</b>했는데,
-   * 그 조립 규칙이 채팅·분류 경로와 따로 유지되는 세 번째 방언이었다 — 실제로 필드 누락과
-   * 빈 값 처리 차이가 생겨 있었다. 이제 필드 조립은 {@link AiCredential#applyTo(Map)} 하나뿐이다.
+   * <p>자격증명은 평면 문자열 파라미터가 아니라 {@link AiCredential} 을 그대로 받는다(이슈 #695). 예전에는 {@code apiKey}/{@code
+   * agentType}/{@code oauthToken} 세 개의 연속 String 과 opencode 전용 필드를 묶은 별도 record 를 받아 <b>이 메서드가 직접
+   * 바디를 조립</b>했는데, 그 조립 규칙이 채팅·분류 경로와 따로 유지되는 세 번째 방언이었다 — 실제로 필드 누락과 빈 값 처리 차이가 생겨 있었다. 이제 필드 조립은
+   * {@link AiCredential#applyTo(Map)} 하나뿐이다.
    *
-   * @param model opencode 에서만 실어 보낼 {@code ai.model}. {@code null} 이면 생략하고 ai-agent
-   *     라우트의 고정 기본값을 쓴다 — sdk/cli/cli-api 는 지금까지 모델을 보낸 적이 없고, 여기서
-   *     보내기 시작하면 그 테넌트들의 프로액티브 비용이 조용히 바뀐다(의도된 gap, 별도 이슈).
+   * @param model opencode 에서만 실어 보낼 {@code ai.model}. {@code null} 이면 생략하고 ai-agent 라우트의 고정 기본값을 쓴다
+   *     — sdk/cli/cli-api 는 지금까지 모델을 보낸 적이 없고, 여기서 보내기 시작하면 그 테넌트들의 프로액티브 비용이 조용히 바뀐다(의도된 gap, 별도
+   *     이슈).
    */
   public ProactiveResult execute(
       Long userId,
@@ -106,8 +105,7 @@ public class ProactiveAiClient {
       // 여기서 throw한 메시지는 execution.error로 저장되어 사용자 화면에 그대로 노출되므로
       // 번역된 행동 가능 문구만 전달한다 (이슈 #350, #313 원칙).
       String body = e.getResponseBodyAsString();
-      log.error(
-          "AI agent proactive failed with status {}: {}", e.getStatusCode(), body);
+      log.error("AI agent proactive failed with status {}: {}", e.getStatusCode(), body);
       throw new ProactiveJobException(userFacingMessageFor(body), e);
     } catch (Exception e) {
       log.error("AI agent proactive request failed: {}", e.getMessage(), e);
@@ -122,8 +120,8 @@ public class ProactiveAiClient {
   /**
    * 에이전트 오류 응답 본문의 {@code code}를 보고 사용자 문구를 고른다.
    *
-   * <p>ai-agent는 인증/쿼터 실패를 {@code AGENT_AUTH_OR_QUOTA_FAILURE} 코드로 구분해 알려준다. 이 경우
-   * 사용자가 실제로 취할 수 있는 조치(인증 정보 확인)를 안내한다.
+   * <p>ai-agent는 인증/쿼터 실패를 {@code AGENT_AUTH_OR_QUOTA_FAILURE} 코드로 구분해 알려준다. 이 경우 사용자가 실제로 취할 수 있는
+   * 조치(인증 정보 확인)를 안내한다.
    */
   private String userFacingMessageFor(String responseBody) {
     if (responseBody != null && responseBody.contains("AGENT_AUTH_OR_QUOTA_FAILURE")) {

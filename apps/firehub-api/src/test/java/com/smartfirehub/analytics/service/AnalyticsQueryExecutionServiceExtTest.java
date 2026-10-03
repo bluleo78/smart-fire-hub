@@ -66,7 +66,8 @@ class AnalyticsQueryExecutionServiceExtTest extends IntegrationTestBase {
             "exec_ext_test",
             null,
             null,
-            "TABLE", "SOURCE",
+            "TABLE",
+            "SOURCE",
             List.of(
                 new DatasetColumnRequest("item", "Item", "TEXT", null, true, false, null),
                 new DatasetColumnRequest("score", "Score", "INTEGER", null, true, false, null)),
@@ -268,14 +269,13 @@ class AnalyticsQueryExecutionServiceExtTest extends IntegrationTestBase {
   /**
    * PSQLException 의 Position 필드 분해를 실제 DB 에러로 검증한다.
    *
-   * <p>원래 입력은 {@code "SELECT FROMM data.exec_ext_test"}(파서 타이핑 오류)였다 — #385 Task 4 로
-   * {@link com.smartfirehub.pipeline.service.validator.SqlValidator}가 실행 경로 진입 이전에 배선되면서
-   * JSqlParser 가 이 문자열 자체를 파싱하지 못해 DB 까지 도달하지 못하게 됐다(R8: 파싱 실패 폴백 없음 — 승인된 트레이드오프,
-   * Task 3 의 동일 판단 참고). 그래서 "JSqlParser 는 통과하지만 Postgres 는 런타임에 syntax/타입 에러를 던지는" 입력으로
-   * 교체했다: 정수 컬럼에 문자열을 더하는 산술식은 문법적으로는 유효해 검증기를 통과하고, Postgres 실행 시점에 SQLState
-   * 22P02(invalid_text_representation)와 함께 Position 을 포함한 ServerErrorMessage 를 던진다(psql 실측 확인).
-   * 이 테스트의 목적(Position 분해)은 그대로 유지된다 — SQLState 값만 42601(파서 오류)에서 22P02(런타임 타입 오류)로
-   * 바뀌었다.
+   * <p>원래 입력은 {@code "SELECT FROMM data.exec_ext_test"}(파서 타이핑 오류)였다 — #385 Task 4 로 {@link
+   * com.smartfirehub.pipeline.service.validator.SqlValidator}가 실행 경로 진입 이전에 배선되면서 JSqlParser 가 이
+   * 문자열 자체를 파싱하지 못해 DB 까지 도달하지 못하게 됐다(R8: 파싱 실패 폴백 없음 — 승인된 트레이드오프, Task 3 의 동일 판단 참고). 그래서
+   * "JSqlParser 는 통과하지만 Postgres 는 런타임에 syntax/타입 에러를 던지는" 입력으로 교체했다: 정수 컬럼에 문자열을 더하는 산술식은 문법적으로는
+   * 유효해 검증기를 통과하고, Postgres 실행 시점에 SQLState 22P02(invalid_text_representation)와 함께 Position 을 포함한
+   * ServerErrorMessage 를 던진다(psql 실측 확인). 이 테스트의 목적(Position 분해)은 그대로 유지된다 — SQLState 값만 42601(파서
+   * 오류)에서 22P02(런타임 타입 오류)로 바뀌었다.
    */
   @Test
   void executeDirectly_runtimeTypeError_includesPosition() {
@@ -373,8 +373,8 @@ class AnalyticsQueryExecutionServiceExtTest extends IntegrationTestBase {
   }
 
   /**
-   * 결과가 executor 응답 한도를 넘으면 "Executor 연결 실패" 가 아니라 결과를 줄이라는 안내를 돌려준다(#761).
-   * 차트·저장 쿼리도 같은 execute() 를 거치므로 같은 메시지를 받는다.
+   * 결과가 executor 응답 한도를 넘으면 "Executor 연결 실패" 가 아니라 결과를 줄이라는 안내를 돌려준다(#761). 차트·저장 쿼리도 같은 execute()
+   * 를 거치므로 같은 메시지를 받는다.
    */
   @Test
   void executeViaExecutor_responseTooLarge_returnsResultTooLargeMessage() {

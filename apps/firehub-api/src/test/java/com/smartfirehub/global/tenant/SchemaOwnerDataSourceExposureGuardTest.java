@@ -13,26 +13,21 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 
 /**
- * {@code schemaOwnerDataSource} 빈을 <b>누가 주입받을 수 있는지</b>를 소스 스캔으로 강제한다
- * (최종 전체 리뷰 B10, 룰링 — 방안 C 채택).
+ * {@code schemaOwnerDataSource} 빈을 <b>누가 주입받을 수 있는지</b>를 소스 스캔으로 강제한다 (최종 전체 리뷰 B10, 룰링 — 방안 C 채택).
  *
- * <p><b>왜 이 가드가 필요한가.</b> 이 빈(자격증명 {@code app})은 dev·test·prod 세 환경 전부에서
- * {@code rolsuper=t, rolbypassrls=t} — 완전한 슈퍼유저다(런북 §3-2 실측). 그런데 이 빈은 평범한
- * {@code @Bean} 이라 스프링은 Java 접근 제한자로 주입 범위를 좁히지 않는다 — 아무 프로덕션
- * 클래스나 {@code @Autowired @Qualifier("schemaOwnerDataSource")} 를 선언하면 컴파일도 되고
- * 기존 테스트도 전부 통과한다(런북 §3-1 이 실측으로 확인한 그대로). 오늘은 우연히
- * {@link TenantSchemaProvisioner} 하나뿐이지만, 그것을 강제하는 것은 지금까지 아무것도 없었다.
+ * <p><b>왜 이 가드가 필요한가.</b> 이 빈(자격증명 {@code app})은 dev·test·prod 세 환경 전부에서 {@code rolsuper=t,
+ * rolbypassrls=t} — 완전한 슈퍼유저다(런북 §3-2 실측). 그런데 이 빈은 평범한 {@code @Bean} 이라 스프링은 Java 접근 제한자로 주입 범위를
+ * 좁히지 않는다 — 아무 프로덕션 클래스나 {@code @Autowired @Qualifier("schemaOwnerDataSource")} 를 선언하면 컴파일도 되고 기존
+ * 테스트도 전부 통과한다(런북 §3-1 이 실측으로 확인한 그대로). 오늘은 우연히 {@link TenantSchemaProvisioner} 하나뿐이지만, 그것을 강제하는 것은
+ * 지금까지 아무것도 없었다.
  *
- * <p><b>왜 전용 비-슈퍼유저 롤(방안 A) 대신 이 가드(방안 C)만 채택했는가.</b> 컨트롤러 룰링:
- * 자격증명 경로를 바꾸는 방안 A 는 새 마이그레이션 + 기동 실패 위험이 있는 별도 승인 사안이라
- * 이연한다(런북 §3-4). 이 가드는 이 밴드가 이미 운영 중인 규약 가드 인프라
- * ({@code DataSchemaResolutionTest} 의 네 규칙과 같은 종류의 소스 스캔)와 같은 패턴이라
- * 사실상 무료이고, 최소한 "오늘 하나뿐이다"라는 사실을 다음 사람이 깨뜨리면 **빨갛게** 만든다
- * — 사전 차단은 아니지만(가드를 지우는 것 자체는 여전히 가능하다) 사후 감지는 확실히 한다.
+ * <p><b>왜 전용 비-슈퍼유저 롤(방안 A) 대신 이 가드(방안 C)만 채택했는가.</b> 컨트롤러 룰링: 자격증명 경로를 바꾸는 방안 A 는 새 마이그레이션 + 기동 실패
+ * 위험이 있는 별도 승인 사안이라 이연한다(런북 §3-4). 이 가드는 이 밴드가 이미 운영 중인 규약 가드 인프라 ({@code DataSchemaResolutionTest}
+ * 의 네 규칙과 같은 종류의 소스 스캔)와 같은 패턴이라 사실상 무료이고, 최소한 "오늘 하나뿐이다"라는 사실을 다음 사람이 깨뜨리면 **빨갛게** 만든다 — 사전 차단은
+ * 아니지만(가드를 지우는 것 자체는 여전히 가능하다) 사후 감지는 확실히 한다.
  *
- * <p>스캔 대상은 {@code src/main/java} 뿐이다(다른 규약 가드와 같은 이유 — 테스트 코드는
- * {@code ownerDsl()} 헬퍼 패턴으로 이 빈을 합법적으로 여러 곳에서 참조한다, 예:
- * {@code TenantSchemaProvisionerTest}, {@code DataSchemaGrantIsolationTest},
+ * <p>스캔 대상은 {@code src/main/java} 뿐이다(다른 규약 가드와 같은 이유 — 테스트 코드는 {@code ownerDsl()} 헬퍼 패턴으로 이 빈을
+ * 합법적으로 여러 곳에서 참조한다, 예: {@code TenantSchemaProvisionerTest}, {@code DataSchemaGrantIsolationTest},
  * {@code DataTableServiceTenantUniqueTest} 등 — 그건 이 가드의 대상이 아니다).
  */
 class SchemaOwnerDataSourceExposureGuardTest {
@@ -40,16 +35,14 @@ class SchemaOwnerDataSourceExposureGuardTest {
   /**
    * 이 문자열을 참조해도 되는 파일 — 빈 정의 지점과 프로덕션 주입 지점들.
    *
-   * <p>{@code TenantPipelineRoleProvisioner} 는 #680 에서 추가됐다. {@code CREATE ROLE} /
-   * {@code GRANT ... ON DATABASE} / {@code ALTER ROLE ... IN DATABASE} 는 런타임 롤
-   * ({@code app_tenant})로 실행할 수 없어 소유자 커넥션 말고는 방법이 없다 — 위 Javadoc 이 말하는
-   * "이연된 방안 A"(전용 비-슈퍼유저 롤)가 도입되면 {@link TenantSchemaProvisioner} 와 함께 그쪽으로
-   * 옮겨갈 자리다.
+   * <p>{@code TenantPipelineRoleProvisioner} 는 #680 에서 추가됐다. {@code CREATE ROLE} / {@code GRANT ...
+   * ON DATABASE} / {@code ALTER ROLE ... IN DATABASE} 는 런타임 롤 ({@code app_tenant})로 실행할 수 없어 소유자
+   * 커넥션 말고는 방법이 없다 — 위 Javadoc 이 말하는 "이연된 방안 A"(전용 비-슈퍼유저 롤)가 도입되면 {@link TenantSchemaProvisioner}
+   * 와 함께 그쪽으로 옮겨갈 자리다.
    *
-   * <p><b>{@code TenantPipelineRoleBootstrap} 은 일부러 여기 없다.</b> 기동 치유 루프는 읽기
-   * 두 건({@code tenant}, {@code pg_namespace})만 직접 하고 쓰기는 전부 위 두 프로비저너에
-   * 위임하므로, 런타임 DSLContext 로 충분하다. 노출을 늘리지 않는 쪽을 골랐다는 사실 자체를
-   * 이 목록의 부재로 기록해 둔다.
+   * <p><b>{@code TenantPipelineRoleBootstrap} 은 일부러 여기 없다.</b> 기동 치유 루프는 읽기 두 건({@code tenant},
+   * {@code pg_namespace})만 직접 하고 쓰기는 전부 위 두 프로비저너에 위임하므로, 런타임 DSLContext 로 충분하다. 노출을 늘리지 않는 쪽을 골랐다는
+   * 사실 자체를 이 목록의 부재로 기록해 둔다.
    */
   private static final List<String> ALLOWED_FILES =
       List.of(
@@ -78,10 +71,7 @@ class SchemaOwnerDataSourceExposureGuardTest {
         .isEmpty();
   }
 
-  /**
-   * 허용 목록 자체가 낡지 않았는지 확인한다 — 두 파일이 실제로 이 토큰을 참조하는지, 그리고
-   * 스캔이 0개를 훑고 조용히 통과하는 것이 아닌지(비공허성) 함께 본다.
-   */
+  /** 허용 목록 자체가 낡지 않았는지 확인한다 — 두 파일이 실제로 이 토큰을 참조하는지, 그리고 스캔이 0개를 훑고 조용히 통과하는 것이 아닌지(비공허성) 함께 본다. */
   @Test
   void allowedFilesActuallyReferenceTheToken_andScanIsNonEmpty() {
     List<Path> files = productionJavaFiles();

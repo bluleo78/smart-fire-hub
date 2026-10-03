@@ -81,8 +81,8 @@ public class FileObjectStorageService {
   }
 
   /**
-   * 오브젝트 단건에 대한 단기 presigned GET URL을 발급한다(브라우저가 MinIO에서 직접 GET).
-   * 키의 마지막 세그먼트가 원본 파일명이므로(S3 방식), 다운로드 저장명은 URL 경로에서 자연히 원본명이 된다.
+   * 오브젝트 단건에 대한 단기 presigned GET URL을 발급한다(브라우저가 MinIO에서 직접 GET). 키의 마지막 세그먼트가 원본 파일명이므로(S3 방식),
+   * 다운로드 저장명은 URL 경로에서 자연히 원본명이 된다.
    */
   public PresignedUrlResponse presignedGetUrl(String bucket, String objectKey, int expirySeconds) {
     try {

@@ -8,11 +8,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dataset.dto.*;
+import com.smartfirehub.dataset.search.DatasetEmbeddingBackfillService;
+import com.smartfirehub.dataset.search.DatasetSearchService;
 import com.smartfirehub.dataset.service.ApiImportService;
 import com.smartfirehub.dataset.service.DatasetDataService;
 import com.smartfirehub.dataset.service.DatasetFavoriteService;
-import com.smartfirehub.dataset.search.DatasetEmbeddingBackfillService;
-import com.smartfirehub.dataset.search.DatasetSearchService;
 import com.smartfirehub.dataset.service.DatasetService;
 import com.smartfirehub.dataset.service.DatasetTagService;
 import com.smartfirehub.global.config.SecurityConfig;
@@ -79,7 +79,8 @@ class DatasetControllerExtendedTest {
         "ds_table",
         null,
         null,
-        "TABLE", "SOURCE",
+        "TABLE",
+        "SOURCE",
         "user",
         List.of(),
         0L,

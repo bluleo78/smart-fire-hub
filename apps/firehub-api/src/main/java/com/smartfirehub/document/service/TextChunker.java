@@ -7,11 +7,11 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 /**
- * 문자 기반 슬라이딩 윈도우 청킹. chunkSize 문자 단위로 자르되 overlap 문자만큼 겹쳐 문맥 단절을 줄인다.
- * 토큰 수는 임베딩 모델 정밀 토크나이저 없이 char/4 로 추정한다(영문 기준 근사, 한국어는 보수적).
+ * 문자 기반 슬라이딩 윈도우 청킹. chunkSize 문자 단위로 자르되 overlap 문자만큼 겹쳐 문맥 단절을 줄인다. 토큰 수는 임베딩 모델 정밀 토크나이저 없이
+ * char/4 로 추정한다(영문 기준 근사, 한국어는 보수적).
  *
- * <p>문자 인덱스 기반 분할은 BMP 텍스트(한국어 포함)를 가정한다. astral-plane 문자(이모지 등)는
- * 서로게이트 페어가 청크 경계에서 분리될 수 있으나 Phase 1 에서는 허용한다.
+ * <p>문자 인덱스 기반 분할은 BMP 텍스트(한국어 포함)를 가정한다. astral-plane 문자(이모지 등)는 서로게이트 페어가 청크 경계에서 분리될 수 있으나 Phase
+ * 1 에서는 허용한다.
  */
 @Service
 public class TextChunker {

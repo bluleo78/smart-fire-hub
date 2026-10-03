@@ -31,17 +31,14 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * SQL 스텝 증분 처리({@code {{last_run_at}}})를 실제 PostgreSQL 에 대해 끝에서 끝까지 증명한다.
  *
- * <p>단위 테스트(목)는 "러너가 어떤 순서로 무엇을 부르는가"만 고정한다. 이 테스트는 그와 별개의 질문 —
- * "실제로 <b>변경된 행만</b> 다시 읽고, 출력은 합집합이 되는가" — 에 답한다. 그래서 검증 장치가
- * {@code count(*)} 가 아니라 <b>출력 행 변조(tamper) 탐침</b>이다: 2회차 전에 출력의 어떤 행을 손으로
- * 바꿔 두면, 그 행의 원천이 <b>변경되지 않았을 때</b>에만 변조가 살아남는다. 치환이 항상 {@code -infinity}
- * 를 내는 결함이면 그 행이 원천 값으로 되돌아가 이 단언이 깨진다(변이로 확인함) — 행 수 단언만으로는
- * MERGE 의 멱등성 때문에 그 결함이 영원히 보이지 않는다.
+ * <p>단위 테스트(목)는 "러너가 어떤 순서로 무엇을 부르는가"만 고정한다. 이 테스트는 그와 별개의 질문 — "실제로 <b>변경된 행만</b> 다시 읽고, 출력은 합집합이
+ * 되는가" — 에 답한다. 그래서 검증 장치가 {@code count(*)} 가 아니라 <b>출력 행 변조(tamper) 탐침</b>이다: 2회차 전에 출력의 어떤 행을 손으로
+ * 바꿔 두면, 그 행의 원천이 <b>변경되지 않았을 때</b>에만 변조가 살아남는다. 치환이 항상 {@code -infinity} 를 내는 결함이면 그 행이 원천 값으로
+ * 되돌아가 이 단언이 깨진다(변이로 확인함) — 행 수 단언만으로는 MERGE 의 멱등성 때문에 그 결함이 영원히 보이지 않는다.
  *
- * <p><b>테스트 트랜잭션을 끈다({@code NOT_SUPPORTED}).</b> 파이프라인 실행은 {@code @Async} 라 별도
- * 스레드·커넥션에서 돈다 — 테스트 트랜잭션 안에서 픽스처를 만들면 그 스레드가 미커밋 행을 보지 못한다.
- * 만든 데이터셋·파이프라인은 {@link #tearDown()} 에서 명시적으로 지운다. 이름에 난수를 붙여 공유 test DB
- * 에서 다른 워크트리/테스트와 충돌하지 않게 한다.
+ * <p><b>테스트 트랜잭션을 끈다({@code NOT_SUPPORTED}).</b> 파이프라인 실행은 {@code @Async} 라 별도 스레드·커넥션에서 돈다 — 테스트
+ * 트랜잭션 안에서 픽스처를 만들면 그 스레드가 미커밋 행을 보지 못한다. 만든 데이터셋·파이프라인은 {@link #tearDown()} 에서 명시적으로 지운다. 이름에 난수를
+ * 붙여 공유 test DB 에서 다른 워크트리/테스트와 충돌하지 않게 한다.
  */
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class PipelineIncrementalIntegrationTest extends IntegrationTestBase {
@@ -51,8 +48,10 @@ class PipelineIncrementalIntegrationTest extends IntegrationTestBase {
   @Autowired private PipelineService pipelineService;
   @Autowired private PipelineExecutionService executionService;
   @Autowired private PipelineStepRepository stepRepository;
+
   /** SELECT * 자동 임시 데이터셋 시나리오에서 생성된 임시 데이터셋을 찾아 정리하기 위해 쓴다. */
   @Autowired private TempDatasetService tempDatasetService;
+
   /** 늦은 커밋 시나리오에서 실행기와 같은 롤로 직접 접속하기 위한 값들(하드코딩 금지 — 파생 규약을 그대로 쓴다). */
   @Value("${spring.datasource.url}")
   private String jdbcUrl;
@@ -285,10 +284,9 @@ class PipelineIncrementalIntegrationTest extends IntegrationTestBase {
   /**
    * REPLACE 스텝의 SQL 이 실행 중 실패하면 출력이 <b>빈 채로 남으면 안 된다</b>.
    *
-   * <p>Task 4 는 이 계약을 {@code SqlScriptExecutorSandboxTest}(실행기 단위)와
-   * {@code PipelineAsyncRunnerTest}(목)로 나눠 고정했다. 여기서는 러너 → 실행기 → 실제 테이블까지
-   * 한 번에 관통해 "비우기 DELETE 가 본 INSERT 와 같은 트랜잭션에 있다"를 최종 확인한다 — 증분과
-   * 무관한 회귀 가드지만 같은 픽스처로 싸게 얻을 수 있다.
+   * <p>Task 4 는 이 계약을 {@code SqlScriptExecutorSandboxTest}(실행기 단위)와 {@code
+   * PipelineAsyncRunnerTest}(목)로 나눠 고정했다. 여기서는 러너 → 실행기 → 실제 테이블까지 한 번에 관통해 "비우기 DELETE 가 본 INSERT
+   * 와 같은 트랜잭션에 있다"를 최종 확인한다 — 증분과 무관한 회귀 가드지만 같은 픽스처로 싸게 얻을 수 있다.
    */
   @Test
   void REPLACE_스텝이_실행_중_실패하면_출력이_비지_않는다() {
@@ -331,12 +329,11 @@ class PipelineIncrementalIntegrationTest extends IntegrationTestBase {
   /**
    * 실행 <b>도중</b> 열려 있던 트랜잭션이 나중에 커밋한 행을 다음 실행이 반드시 읽어야 한다.
    *
-   * <p>{@code _updated_at} 은 트랜잭션 <b>시작</b> 시각이므로, 미커밋 트랜잭션 T 가 있는 동안 잡은
-   * 책갈피가 {@code T.xact_start} 보다 크면 T 가 커밋한 행은 영원히 사라진다. V123 의
-   * {@code fh_incremental_cursor_candidate()} 가 {@code LEAST(clock, min(xact_start))} 를 돌려주어
-   * 책갈피 = {@code T.xact_start} 가 되고, 사용자 SQL 의 {@code >=} 가 그 경계 행을 다시 읽는다 —
-   * 즉 이 테스트 하나가 candidate 규칙과 {@code >=} 경계를 동시에 고정한다(별도 경계 행 테스트를 두지
-   * 않는 이유: {@code UPDATE ... SET _updated_at} 은 트리거가 덮어써 경계를 인위적으로 만들 수 없다).
+   * <p>{@code _updated_at} 은 트랜잭션 <b>시작</b> 시각이므로, 미커밋 트랜잭션 T 가 있는 동안 잡은 책갈피가 {@code T.xact_start}
+   * 보다 크면 T 가 커밋한 행은 영원히 사라진다. V123 의 {@code fh_incremental_cursor_candidate()} 가 {@code
+   * LEAST(clock, min(xact_start))} 를 돌려주어 책갈피 = {@code T.xact_start} 가 되고, 사용자 SQL 의 {@code >=} 가 그
+   * 경계 행을 다시 읽는다 — 즉 이 테스트 하나가 candidate 규칙과 {@code >=} 경계를 동시에 고정한다(별도 경계 행 테스트를 두지 않는 이유: {@code
+   * UPDATE ... SET _updated_at} 은 트리거가 덮어써 경계를 인위적으로 만들 수 없다).
    */
   @Test
   void 실행_도중_열려있던_트랜잭션이_나중에_커밋한_행도_다음_실행이_읽는다() {
@@ -379,14 +376,12 @@ class PipelineIncrementalIntegrationTest extends IntegrationTestBase {
   // ------------------------------------------------------------------ //
 
   /**
-   * 코드리뷰 HIGH — {@code SELECT *} 스텝(출력 데이터셋 미지정 = 임시 데이터셋 자동 생성)이 실제로
-   * 성공해야 한다.
+   * 코드리뷰 HIGH — {@code SELECT *} 스텝(출력 데이터셋 미지정 = 임시 데이터셋 자동 생성)이 실제로 성공해야 한다.
    *
-   * <p>V123 가 <b>모든</b> 데이터셋 물리 테이블에 {@code _updated_at} 을 추가했으므로 {@code SELECT *}
-   * 결과에는 항상 그 컬럼이 섞여 들어온다. 예약어 별칭이 {@code _updated_at_1} 처럼 밑줄로 시작하면
-   * {@code DataTableService.validateName}({@code ^[a-z][a-z0-9_]*$})이 거부해
-   * {@code InvalidTableNameException} 으로 <b>100% 실패</b>한다. 별칭 헬퍼만 단위로 보면 "이름이
-   * 바뀌었다"까지밖에 못 보므로, 여기서는 러너 → 임시 데이터셋 생성 → 적재까지 관통해 확인한다.
+   * <p>V123 가 <b>모든</b> 데이터셋 물리 테이블에 {@code _updated_at} 을 추가했으므로 {@code SELECT *} 결과에는 항상 그 컬럼이 섞여
+   * 들어온다. 예약어 별칭이 {@code _updated_at_1} 처럼 밑줄로 시작하면 {@code DataTableService.validateName}({@code
+   * ^[a-z][a-z0-9_]*$})이 거부해 {@code InvalidTableNameException} 으로 <b>100% 실패</b>한다. 별칭 헬퍼만 단위로 보면
+   * "이름이 바뀌었다"까지밖에 못 보므로, 여기서는 러너 → 임시 데이터셋 생성 → 적재까지 관통해 확인한다.
    */
   @Test
   void SELECT_스타_스텝은_예약어_컬럼을_유효한_이름으로_별칭해_임시_데이터셋을_만든다() {
@@ -419,8 +414,7 @@ class PipelineIncrementalIntegrationTest extends IntegrationTestBase {
       List<String> columns =
           inTenantFixture(
               () ->
-                  dsl
-                      .fetch(
+                  dsl.fetch(
                           "SELECT column_name FROM dataset_column WHERE dataset_id = ?"
                               + " ORDER BY column_order",
                           finalTempDatasetId)
@@ -439,9 +433,11 @@ class PipelineIncrementalIntegrationTest extends IntegrationTestBase {
           inTenantFixture(
               () ->
                   (String)
-                      dsl.fetchValue("SELECT table_name FROM dataset WHERE id = ?", finalTempDatasetId));
+                      dsl.fetchValue(
+                          "SELECT table_name FROM dataset WHERE id = ?", finalTempDatasetId));
       Integer loaded =
-          dsl.fetchOne("SELECT count(*) FROM " + DataSchema.qualify(tempTable)).get(0, Integer.class);
+          dsl.fetchOne("SELECT count(*) FROM " + DataSchema.qualify(tempTable))
+              .get(0, Integer.class);
       assertThat(loaded).as("임시 데이터셋에 원천 행이 실제로 적재돼야 한다").isEqualTo(3);
     } finally {
       if (tempDatasetId != null) {
@@ -463,11 +459,10 @@ class PipelineIncrementalIntegrationTest extends IntegrationTestBase {
   /**
    * SQL 끝의 한 줄 주석({@code -- ...})·세미콜론이 러너의 래핑(컬럼 probe·MERGE 서브쿼리)을 깨지 않는다(#741).
    *
-   * <p>예전 probe 는 사용자 SQL 뒤에 개행 없이 {@code ) AS _probe LIMIT 0} 을 붙여, 끝의 {@code --} 가
-   * 닫는 괄호까지 주석으로 만들어 {@code syntax error at end of input} 으로 실패했다. 세미콜론도 괄호
-   * 안에 그대로 들어가 같은 식으로 깨졌다. REPLACE(probe → INSERT … SELECT)와 MERGE(probe →
-   * {@code MergeSqlBuilder} 서브쿼리) 두 경로를 러너부터 실제 테이블까지 관통해 확인한다 — MERGE 의
-   * 개행 처리는 probe 가 먼저 실패해 지금까지 끝까지 실행된 적이 없었다.
+   * <p>예전 probe 는 사용자 SQL 뒤에 개행 없이 {@code ) AS _probe LIMIT 0} 을 붙여, 끝의 {@code --} 가 닫는 괄호까지 주석으로
+   * 만들어 {@code syntax error at end of input} 으로 실패했다. 세미콜론도 괄호 안에 그대로 들어가 같은 식으로 깨졌다. REPLACE(probe
+   * → INSERT … SELECT)와 MERGE(probe → {@code MergeSqlBuilder} 서브쿼리) 두 경로를 러너부터 실제 테이블까지 관통해 확인한다 —
+   * MERGE 의 개행 처리는 probe 가 먼저 실패해 지금까지 끝까지 실행된 적이 없었다.
    */
   @org.junit.jupiter.params.ParameterizedTest(name = "[{index}] {0} / {1}")
   @org.junit.jupiter.params.provider.MethodSource("trailingCommentCases")
@@ -497,7 +492,8 @@ class PipelineIncrementalIntegrationTest extends IntegrationTestBase {
     assertThat(outCount()).as("끝 주석/세미콜론이 있어도 원천 10행이 그대로 적재돼야 한다").isEqualTo(10);
   }
 
-  static java.util.stream.Stream<org.junit.jupiter.params.provider.Arguments> trailingCommentCases() {
+  static java.util.stream.Stream<org.junit.jupiter.params.provider.Arguments>
+      trailingCommentCases() {
     return java.util.stream.Stream.of(
         org.junit.jupiter.params.provider.Arguments.of("REPLACE", " -- note"),
         org.junit.jupiter.params.provider.Arguments.of("REPLACE", ";"),
@@ -507,17 +503,17 @@ class PipelineIncrementalIntegrationTest extends IntegrationTestBase {
   }
 
   /**
-   * 세미콜론 뒤 블록 주석, 달러 인용·E 문자열 안의 {@code --}/{@code '}/{@code ;} 가 있는 SELECT 스텝도
-   * 러너의 래핑(컬럼 probe·MERGE 서브쿼리)을 깨지 않는다(#746).
+   * 세미콜론 뒤 블록 주석, 달러 인용·E 문자열 안의 {@code --}/{@code '}/{@code ;} 가 있는 SELECT 스텝도 러너의 래핑(컬럼
+   * probe·MERGE 서브쿼리)을 깨지 않는다(#746).
    *
-   * <p>예전 {@code stripTrailingSemicolon} 은 작은따옴표와 {@code --} 만 추적해서, {@code ; /* note *}{@code /}
-   * 는 주석을 "세미콜론 뒤 코드"로 봐 세미콜론을 남겼고, {@code $$--y;$$} 는 달러 인용 속 {@code --} 를 주석
-   * 시작으로 봐 진짜 {@code ;} 까지 건너뛰었고, {@code $$it's$$} 는 달러 인용 속 {@code '} 로 따옴표 상태에
-   * 갇혔다 — 셋 다 probe 가 {@code syntax error at or near ";"} 로 실패했다. REPLACE 는 probe 경로, MERGE 는
-   * probe + {@code MergeSqlBuilder} 서브쿼리 경로를 러너부터 실제 테이블까지 관통해 확인한다.
+   * <p>예전 {@code stripTrailingSemicolon} 은 작은따옴표와 {@code --} 만 추적해서, {@code ; /* note *}{@code /} 는
+   * 주석을 "세미콜론 뒤 코드"로 봐 세미콜론을 남겼고, {@code $$--y;$$} 는 달러 인용 속 {@code --} 를 주석 시작으로 봐 진짜 {@code ;} 까지
+   * 건너뛰었고, {@code $$it's$$} 는 달러 인용 속 {@code '} 로 따옴표 상태에 갇혔다 — 셋 다 probe 가 {@code syntax error at
+   * or near ";"} 로 실패했다. REPLACE 는 probe 경로, MERGE 는 probe + {@code MergeSqlBuilder} 서브쿼리 경로를 러너부터
+   * 실제 테이블까지 관통해 확인한다.
    *
-   * <p>WHERE 절은 항상 붙인다(REPLACE 는 {@code WHERE true}, MERGE 는 증분 책갈피) — 꼬리의 {@code AND ...}
-   * 가 두 전략에 같은 모양으로 붙게 하려는 것이다. 비교 대상 문자열은 원천에 없는 값이라 행을 거르지 않는다.
+   * <p>WHERE 절은 항상 붙인다(REPLACE 는 {@code WHERE true}, MERGE 는 증분 책갈피) — 꼬리의 {@code AND ...} 가 두 전략에
+   * 같은 모양으로 붙게 하려는 것이다. 비교 대상 문자열은 원천에 없는 값이라 행을 거르지 않는다.
    */
   @org.junit.jupiter.params.ParameterizedTest(name = "[{index}] {0} / {1}")
   @org.junit.jupiter.params.provider.MethodSource("lexicalTailCases")
@@ -616,7 +612,8 @@ class PipelineIncrementalIntegrationTest extends IntegrationTestBase {
   }
 
   private int outCount() {
-    return dsl.fetchOne("SELECT count(*) FROM " + DataSchema.qualify(outTable)).get(0, Integer.class);
+    return dsl.fetchOne("SELECT count(*) FROM " + DataSchema.qualify(outTable))
+        .get(0, Integer.class);
   }
 
   /** 행이 없으면 null. */

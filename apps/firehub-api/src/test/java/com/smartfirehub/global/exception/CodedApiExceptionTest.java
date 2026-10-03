@@ -11,8 +11,8 @@ import org.springframework.mock.web.MockHttpServletRequest;
 /**
  * 기계가 읽는 오류 코드(ErrorResponse.code) 계약 고정.
  *
- * <p>웹은 403 을 "권한 없음" 과 "비밀번호 변경 필요" 로 구분해야 하고(메시지 문자열 비교는 깨지기
- * 쉽다), 기존 응답(코드 없음)의 JSON 모양은 바뀌면 안 된다 — 두 가지를 함께 검증한다.
+ * <p>웹은 403 을 "권한 없음" 과 "비밀번호 변경 필요" 로 구분해야 하고(메시지 문자열 비교는 깨지기 쉽다), 기존 응답(코드 없음)의 JSON 모양은 바뀌면 안 된다
+ * — 두 가지를 함께 검증한다.
  */
 class CodedApiExceptionTest {
 

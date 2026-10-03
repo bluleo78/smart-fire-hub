@@ -202,10 +202,10 @@ class MultiTenancyMigrationTest extends IntegrationTestBase {
   /**
    * 권한 카탈로그에서 코드 하나의 행 수를 센다.
    *
-   * <p>바인드 파라미터를 쓴다 — 위 세 호출은 전부 리터럴이지만, 문자열을 이어 붙이는 형태로
-   * 두면 다음 사람이 변수를 넣는 순간 이 테스트가 SQL 조립 예제가 된다.
+   * <p>바인드 파라미터를 쓴다 — 위 세 호출은 전부 리터럴이지만, 문자열을 이어 붙이는 형태로 두면 다음 사람이 변수를 넣는 순간 이 테스트가 SQL 조립 예제가 된다.
    */
   private int permissionCount(String code) {
-    return dsl.fetchOne("select count(*) from permission where code = ?", code).get(0, Integer.class);
+    return dsl.fetchOne("select count(*) from permission where code = ?", code)
+        .get(0, Integer.class);
   }
 }

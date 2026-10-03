@@ -49,7 +49,8 @@ class PgRowSearchIndexSearchTest extends IntegrationTestBase {
                   new DatasetColumnRequest("status", "상태", "VARCHAR", 20, true, false, null),
                   new DatasetColumnRequest("cnt", "건수", "INTEGER", null, true, false, null)));
           dsl.execute(
-              "INSERT INTO " + DataSchema.qualify(SRC)
+              "INSERT INTO "
+                  + DataSchema.qualify(SRC)
                   + " (content, status, cnt) VALUES ('배관 누수 발생', '미처리', 1), ('소음 민원', '완료', 2), ('누수 재발', '완료', 3)");
         });
     index.recreate(ref, 1024);
@@ -103,8 +104,8 @@ class PgRowSearchIndexSearchTest extends IntegrationTestBase {
   }
 
   /**
-   * 정확 스캔 SQL 은 HNSW 인덱스로 정렬하지 못하고, 필터 조인은 여전히 원본 PK 인덱스를 쓴다. 행 3개라 플래너가
-   * 원래도 순차 스캔을 고를 수 있으므로 enable_seqscan 을 꺼서 "인덱스를 쓸 수 있으면 쓰는" 상태로 비교한다.
+   * 정확 스캔 SQL 은 HNSW 인덱스로 정렬하지 못하고, 필터 조인은 여전히 원본 PK 인덱스를 쓴다. 행 3개라 플래너가 원래도 순차 스캔을 고를 수 있으므로
+   * enable_seqscan 을 꺼서 "인덱스를 쓸 수 있으면 쓰는" 상태로 비교한다.
    *
    * <p>뮤테이션: 정렬식의 {@code + 0} 감싸기를 지우면 exact 계획에도 embedding 인덱스가 나타나 빨개진다.
    */
@@ -120,7 +121,9 @@ class PgRowSearchIndexSearchTest extends IntegrationTestBase {
     assertThat(explain(CompiledFilter.none(), false, vec)).contains("embedding_idx");
     assertThat(explain(CompiledFilter.none(), true, vec)).doesNotContain("embedding_idx");
     // 필터가 있어도 정확 스캔은 embedding 인덱스를 쓰지 않고, 조인은 원본 PK 인덱스를 그대로 쓴다.
-    assertThat(explain(filter, true, vec)).doesNotContain("embedding_idx").contains("rs_search_src_pkey");
+    assertThat(explain(filter, true, vec))
+        .doesNotContain("embedding_idx")
+        .contains("rs_search_src_pkey");
   }
 
   /** 행 수가 임계값 이하면 정확 스캔, 넘으면 HNSW. 통계가 없을 때(-1)와 ANALYZE 뒤 모두 같은 판정이어야 한다. */

@@ -26,14 +26,11 @@ import org.springframework.transaction.support.TransactionTemplate;
  * <p>jOOQ DSLContext를 실제 DB와 함께 사용하여 만료 파일 정리 로직을 검증한다. UPLOADED_FILES 테이블에 만료된/유효한 레코드를 삽입하고
  * cleanupExpiredFiles() 호출 후 DB 레코드 삭제 여부를 검증한다. 실제 파일 I/O는 @TempDir을 활용하여 격리한다.
  *
- * <p><b>클래스 레벨 {@code @Transactional} 을 뺐다 — 의도된 것이다(P2-b Task 9).</b> 붙어 있으면
- * 정리 서비스의 테넌트 순회가 테스트 트랜잭션에 얹혀 <b>모든 순회 패스가 테넌트 1 의 GUC 로</b>
- * 실행된다. 즉 순회 배선을 통째로 지워도 테스트가 통과하는 구조적 사각지대가 생긴다. 픽스처와
- * 검증 조회만 테넌트 트랜잭션으로 감싸고, 검증 대상인 {@code cleanupExpiredFiles()} 는 트랜잭션
- * 밖에 남긴다.
+ * <p><b>클래스 레벨 {@code @Transactional} 을 뺐다 — 의도된 것이다(P2-b Task 9).</b> 붙어 있으면 정리 서비스의 테넌트 순회가 테스트
+ * 트랜잭션에 얹혀 <b>모든 순회 패스가 테넌트 1 의 GUC 로</b> 실행된다. 즉 순회 배선을 통째로 지워도 테스트가 통과하는 구조적 사각지대가 생긴다. 픽스처와 검증
+ * 조회만 테넌트 트랜잭션으로 감싸고, 검증 대상인 {@code cleanupExpiredFiles()} 는 트랜잭션 밖에 남긴다.
  *
- * <p>롤백이 사라졌으므로 심은 행은 {@link #cleanup()} 에서 직접 지우고, 유니크 컬럼(username/email)은
- * 실행마다 고유해야 한다.
+ * <p>롤백이 사라졌으므로 심은 행은 {@link #cleanup()} 에서 직접 지우고, 유니크 컬럼(username/email)은 실행마다 고유해야 한다.
  */
 class FileCleanupServiceTest extends IntegrationTestBase {
 
@@ -63,7 +60,10 @@ class FileCleanupServiceTest extends IntegrationTestBase {
   void cleanup() {
     // uploaded_files 는 RLS 대상(V96)이라 트랜잭션 밖 삭제는 0행이 되고 user 삭제가 FK 로 터진다.
     inTenantTx(
-        () -> dsl.deleteFrom(UPLOADED_FILES).where(UPLOADED_FILES.UPLOADED_BY.eq(testUserId)).execute());
+        () ->
+            dsl.deleteFrom(UPLOADED_FILES)
+                .where(UPLOADED_FILES.UPLOADED_BY.eq(testUserId))
+                .execute());
     dsl.deleteFrom(USER).where(USER.ID.eq(testUserId)).execute();
   }
 
@@ -99,7 +99,8 @@ class FileCleanupServiceTest extends IntegrationTestBase {
     Files.createFile(validFile);
 
     // 유효한 레코드 삽입 (expires_at = 1시간 후)
-    insertUploadedFile("valid-upload.csv", validFile, OffsetDateTime.now(ZoneOffset.UTC).plusHours(1));
+    insertUploadedFile(
+        "valid-upload.csv", validFile, OffsetDateTime.now(ZoneOffset.UTC).plusHours(1));
 
     fileCleanupService.cleanupExpiredFiles();
 

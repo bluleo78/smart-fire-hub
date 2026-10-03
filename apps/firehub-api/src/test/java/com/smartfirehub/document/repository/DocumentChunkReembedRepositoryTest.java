@@ -30,21 +30,34 @@ class DocumentChunkReembedRepositoryTest extends IntegrationTestBase {
 
   /** user → dataset → document_file → 청크 2개를 시드하고 dataset id 를 반환. */
   private long seedDataset(String slug) {
-    Long userId = dsl.fetchOne(
-        "INSERT INTO \"user\"(username, password, name, email) VALUES"
-            + " (?, 'x', ?, ?) RETURNING id",
-        slug, slug, slug + "@example.com").get(0, Long.class);
-    Long datasetId = dsl.fetchOne(
-        "INSERT INTO dataset(name, table_name, storage_type, origin_type, created_by) VALUES"
-            + " (?, ?, 'DOCUMENT', 'SOURCE', ?) RETURNING id",
-        slug + "-set", "data." + slug + "_set", userId).get(0, Long.class);
-    Long fileId = dsl.fetchOne(
-        "INSERT INTO document_file(dataset_id, original_name, mime_type, file_size,"
-            + " storage_path, status, uploaded_by) VALUES (?, 'a.txt','text/plain',3,'/tmp/a','COMPLETED', ?)"
-            + " RETURNING id", datasetId, userId).get(0, Long.class);
+    Long userId =
+        dsl.fetchOne(
+                "INSERT INTO \"user\"(username, password, name, email) VALUES"
+                    + " (?, 'x', ?, ?) RETURNING id",
+                slug,
+                slug,
+                slug + "@example.com")
+            .get(0, Long.class);
+    Long datasetId =
+        dsl.fetchOne(
+                "INSERT INTO dataset(name, table_name, storage_type, origin_type, created_by) VALUES"
+                    + " (?, ?, 'DOCUMENT', 'SOURCE', ?) RETURNING id",
+                slug + "-set",
+                "data." + slug + "_set",
+                userId)
+            .get(0, Long.class);
+    Long fileId =
+        dsl.fetchOne(
+                "INSERT INTO document_file(dataset_id, original_name, mime_type, file_size,"
+                    + " storage_path, status, uploaded_by) VALUES (?, 'a.txt','text/plain',3,'/tmp/a','COMPLETED', ?)"
+                    + " RETURNING id",
+                datasetId,
+                userId)
+            .get(0, Long.class);
 
     chunkRepository.insertBatch(
-        fileId, datasetId,
+        fileId,
+        datasetId,
         List.of(new Chunk(0, "near", 1), new Chunk(1, "far", 1)),
         List.of(vec(1f, 0f), vec(0f, 1f)),
         new EmbeddingSpace(EmbeddingDimension.D1024, "bge-m3"));
@@ -56,10 +69,12 @@ class DocumentChunkReembedRepositoryTest extends IntegrationTestBase {
     long datasetId = seedDataset("reembedcontents");
     List<ChunkContent> rows = chunkRepository.findChunkContentsByDataset(datasetId);
     assertThat(rows).hasSize(2);
-    assertThat(rows).allSatisfy(r -> {
-      assertThat(r.chunkId()).isPositive();
-      assertThat(r.content()).isNotBlank();
-    });
+    assertThat(rows)
+        .allSatisfy(
+            r -> {
+              assertThat(r.chunkId()).isPositive();
+              assertThat(r.content()).isNotBlank();
+            });
     // id 오름차순 보장
     assertThat(rows.get(0).chunkId()).isLessThan(rows.get(1).chunkId());
   }
@@ -74,7 +89,8 @@ class DocumentChunkReembedRepositoryTest extends IntegrationTestBase {
     chunkRepository.upsertEmbeddings(
         new EmbeddingSpace(EmbeddingDimension.D1024, "test-model"), chunkIds, embeddings);
 
-    long embedded = chunkRepository.countEmbedded(new EmbeddingSpace(EmbeddingDimension.D1024, "test-model"));
+    long embedded =
+        chunkRepository.countEmbedded(new EmbeddingSpace(EmbeddingDimension.D1024, "test-model"));
     assertThat(embedded).isGreaterThanOrEqualTo(2);
   }
 

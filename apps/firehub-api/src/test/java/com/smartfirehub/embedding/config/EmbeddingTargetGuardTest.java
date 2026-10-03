@@ -17,8 +17,8 @@ import org.junit.jupiter.api.Test;
 /**
  * Base URL 가드: 형식 → (Ollama 허용 목록) → SSRF 가드(OpencodeProbeService 재사용).
  *
- * <p>TargetCheck 는 private 생성자의 public 비-final 클래스라 목(mock)으로 ok/failure 를 흉내 낸다 — DNS·사설
- * 대역 판정 자체의 정확성은 OpencodeProbeServiceTest 가 이미 지킨다.
+ * <p>TargetCheck 는 private 생성자의 public 비-final 클래스라 목(mock)으로 ok/failure 를 흉내 낸다 — DNS·사설 대역 판정 자체의
+ * 정확성은 OpencodeProbeServiceTest 가 이미 지킨다.
  */
 class EmbeddingTargetGuardTest {
 

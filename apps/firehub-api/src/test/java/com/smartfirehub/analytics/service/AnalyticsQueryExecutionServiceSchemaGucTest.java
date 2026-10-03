@@ -14,21 +14,19 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
 /**
- * #596 회귀 — {@link AnalyticsQueryExecutionService#getSchemaInfo(List)} 가 <b>스스로 트랜잭션을 열지
- * 못하면</b> {@code TenantAwareTransactionManager.doBegin()} 이 실행되지 않아 {@code app.tenant_id}
- * GUC 가 주입되지 않고, RLS 가 걸린 {@code dataset}/{@code dataset_column} 조회가 fail-closed 로 0행이
- * 되어 {@code datasetId}/{@code datasetName} 이 항상 {@code null} 인 채 반환된다(형제 메서드 {@link
- * AnalyticsQueryExecutionService#execute} 는 자가 {@code @Transactional} 이 있어 이 결함이 없었다).
+ * #596 회귀 — {@link AnalyticsQueryExecutionService#getSchemaInfo(List)} 가 <b>스스로 트랜잭션을 열지 못하면</b>
+ * {@code TenantAwareTransactionManager.doBegin()} 이 실행되지 않아 {@code app.tenant_id} GUC 가 주입되지 않고,
+ * RLS 가 걸린 {@code dataset}/{@code dataset_column} 조회가 fail-closed 로 0행이 되어 {@code datasetId}/{@code
+ * datasetName} 이 항상 {@code null} 인 채 반환된다(형제 메서드 {@link AnalyticsQueryExecutionService#execute} 는
+ * 자가 {@code @Transactional} 이 있어 이 결함이 없었다).
  *
  * <p><b>클래스 레벨 {@code @Transactional} 을 쓰지 않는 이유(중요).</b> 기존 {@code
- * AnalyticsQueryExecutionServiceTest} 는 클래스 레벨 {@code @Transactional} 로 픽스처 생성과 검증 대상
- * 호출을 <b>같은 테스트 트랜잭션</b> 안에서 실행해 왔다 — 이 경우 {@code
- * TransactionalTestExecutionListener} 가 연 그 테스트 트랜잭션 자체가 {@code doBegin()} 을 한 번 태워
- * GUC 를 주입해 버리므로, 검증 대상 메서드에 {@code @Transactional} 이 있든 없든 결과가 똑같이
- * "정상"으로 보인다 — 이번 결함을 <b>몇 달째 가려 온</b> 공허한 테스트 패턴이다(실측: 이 수정 전
- * 코드에 대해 기존 클래스의 동일 시나리오 테스트를 그대로 돌려도 통과했다). 이 클래스는 그래서
- * {@link IntegrationTestBase#inTenantFixture} 로 픽스처만 커밋하고, 검증 대상 호출은 그 블록
- * <b>밖</b>(운영과 동일한 무-트랜잭션 상태)에서 실행한다.
+ * AnalyticsQueryExecutionServiceTest} 는 클래스 레벨 {@code @Transactional} 로 픽스처 생성과 검증 대상 호출을 <b>같은 테스트
+ * 트랜잭션</b> 안에서 실행해 왔다 — 이 경우 {@code TransactionalTestExecutionListener} 가 연 그 테스트 트랜잭션 자체가 {@code
+ * doBegin()} 을 한 번 태워 GUC 를 주입해 버리므로, 검증 대상 메서드에 {@code @Transactional} 이 있든 없든 결과가 똑같이 "정상"으로 보인다
+ * — 이번 결함을 <b>몇 달째 가려 온</b> 공허한 테스트 패턴이다(실측: 이 수정 전 코드에 대해 기존 클래스의 동일 시나리오 테스트를 그대로 돌려도 통과했다). 이
+ * 클래스는 그래서 {@link IntegrationTestBase#inTenantFixture} 로 픽스처만 커밋하고, 검증 대상 호출은 그 블록 <b>밖</b>(운영과 동일한
+ * 무-트랜잭션 상태)에서 실행한다.
  */
 class AnalyticsQueryExecutionServiceSchemaGucTest extends IntegrationTestBase {
 
@@ -49,7 +47,8 @@ class AnalyticsQueryExecutionServiceSchemaGucTest extends IntegrationTestBase {
                             "schema_guc_regr",
                             null,
                             null,
-                            "TABLE", "SOURCE",
+                            "TABLE",
+                            "SOURCE",
                             List.of(
                                 new DatasetColumnRequest(
                                     "col_x", "X", "TEXT", null, true, false, null)),

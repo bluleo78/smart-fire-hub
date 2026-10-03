@@ -3,37 +3,30 @@ package com.smartfirehub.settings.model;
 import java.util.Map;
 
 /**
- * 해석된 AI 자격증명. {@code agentType} 을 문자열로 비교하지 않고 타입으로 판별한다 —
- * 1단계에서 문자열 분기가 조용히 컴파일되고 조용히 틀려 과금 혼입 회귀를 만들었다(6b1c6383).
- * 유형이 늘면 switch 누락이 컴파일 오류가 된다.
+ * 해석된 AI 자격증명. {@code agentType} 을 문자열로 비교하지 않고 타입으로 판별한다 — 1단계에서 문자열 분기가 조용히 컴파일되고 조용히 틀려 과금 혼입
+ * 회귀를 만들었다(6b1c6383). 유형이 늘면 switch 누락이 컴파일 오류가 된다.
  *
  * <p>모델은 여기 없다. {@code ai.model} 은 자격증명이 아니라 평면 설정 키로 남는다.
  *
  * <h2>왜 유형별 동작이 이 인터페이스의 메서드인가 (이슈 #695)</h2>
  *
- * <p>#693 직후에는 "자격증명 → 전송 필드" 매핑이 소비처 <b>세 곳</b>({@code AiAgentProxyService}
- * 채팅, {@code AiAgentClient} 분류, {@code ProactiveJobAsyncRunner} 프로액티브)에 각각 독립된
- * {@code switch} 로 재작성돼 있었고, 병합 시점에 이미 서로 드리프트해 있었다 — 한쪽은 미사용
- * 필드를 {@code ""} 로 채우고 다른 쪽은 생략했으며, opencode 모델 접두사 검사는 두 곳에만 있고
- * 한 곳에는 아예 없었다. 다섯 번째 유형이 생기면 세 곳을 손으로 맞춰야 하는데 이미 달라서
- * 리뷰로는 잡히지 않는 상태였다.
+ * <p>#693 직후에는 "자격증명 → 전송 필드" 매핑이 소비처 <b>세 곳</b>({@code AiAgentProxyService} 채팅, {@code
+ * AiAgentClient} 분류, {@code ProactiveJobAsyncRunner} 프로액티브)에 각각 독립된 {@code switch} 로 재작성돼 있었고, 병합
+ * 시점에 이미 서로 드리프트해 있었다 — 한쪽은 미사용 필드를 {@code ""} 로 채우고 다른 쪽은 생략했으며, opencode 모델 접두사 검사는 두 곳에만 있고 한
+ * 곳에는 아예 없었다. 다섯 번째 유형이 생기면 세 곳을 손으로 맞춰야 하는데 이미 달라서 리뷰로는 잡히지 않는 상태였다.
  *
- * <p>그래서 유형에 따라 갈리는 동작을 <b>전부</b> 인터페이스 메서드로 내렸다 —
- * {@link #agentType()}, {@link #isComplete()}, {@link #incompleteMessage()},
- * {@link #applyTo(Map)}, {@link #modelProblem(String)}, {@link #modelToSend}. 소비처의
- * {@code switch} 도 {@code instanceof} 도 사라지므로 드리프트할 자리 자체가 없고, 새 변형을
- * 추가하면 "메서드를 구현하지 않았다"는 <b>컴파일 오류</b>로 막힌다 — 소스 텍스트를 읽는 가드
- * ({@code AiCredentialSwitchGuardTest})보다 강한 보장이다.
+ * <p>그래서 유형에 따라 갈리는 동작을 <b>전부</b> 인터페이스 메서드로 내렸다 — {@link #agentType()}, {@link #isComplete()},
+ * {@link #incompleteMessage()}, {@link #applyTo(Map)}, {@link #modelProblem(String)}, {@link
+ * #modelToSend}. 소비처의 {@code switch} 도 {@code instanceof} 도 사라지므로 드리프트할 자리 자체가 없고, 새 변형을 추가하면 "메서드를
+ * 구현하지 않았다"는 <b>컴파일 오류</b>로 막힌다 — 소스 텍스트를 읽는 가드 ({@code AiCredentialSwitchGuardTest})보다 강한 보장이다.
  *
- * <p><b>"전부"가 중요하다.</b> 첫 리팩터링은 모델 형식 검사만 밖에 남겨 소비처 세 곳이
- * {@code instanceof AiCredential.Opencode} 를 들고 있었는데, 그 가드 테스트는 {@code case
- * AiCredential.} 표식으로 대상을 <b>발견</b>하므로 세 파일이 감시 대상에서 통째로 빠졌다 —
- * 하나를 남긴 대가가 "그 하나가 예전보다 덜 보호받는" 것이었다. 그래서 가드 테스트는 이제
- * 정의 파일 밖의 {@code instanceof AiCredential} 부재도 함께 단언한다.
+ * <p><b>"전부"가 중요하다.</b> 첫 리팩터링은 모델 형식 검사만 밖에 남겨 소비처 세 곳이 {@code instanceof AiCredential.Opencode} 를
+ * 들고 있었는데, 그 가드 테스트는 {@code case AiCredential.} 표식으로 대상을 <b>발견</b>하므로 세 파일이 감시 대상에서 통째로 빠졌다 — 하나를
+ * 남긴 대가가 "그 하나가 예전보다 덜 보호받는" 것이었다. 그래서 가드 테스트는 이제 정의 파일 밖의 {@code instanceof AiCredential} 부재도 함께
+ * 단언한다.
  *
- * <p>여전히 {@code switch} 로 남아 있는 곳은 인증 상태 컨트롤러({@code AiController})뿐이다.
- * 그쪽은 값을 조립하는 게 아니라 <b>다른 서비스 메서드를 고르는</b> 컨트롤러 계층의 결정이라
- * 모델로 내리지 않았고, 그래서 계속 {@code AiCredentialSwitchGuardTest} 가 지킨다.
+ * <p>여전히 {@code switch} 로 남아 있는 곳은 인증 상태 컨트롤러({@code AiController})뿐이다. 그쪽은 값을 조립하는 게 아니라 <b>다른 서비스
+ * 메서드를 고르는</b> 컨트롤러 계층의 결정이라 모델로 내리지 않았고, 그래서 계속 {@code AiCredentialSwitchGuardTest} 가 지킨다.
  */
 public sealed interface AiCredential {
 
@@ -41,9 +34,8 @@ public sealed interface AiCredential {
   String agentType();
 
   /**
-   * 이 자격증명만으로 실제 호출이 가능한가. 거짓이면 호출 전에 사용자에게 보이는 오류로 끝낸다
-   * (fail-closed) — 비어 있는 채로 ai-agent 에 넘기면 ambient 자격증명으로 조용히 떨어질 여지를
-   * 준다(6b1c6383 의 모양).
+   * 이 자격증명만으로 실제 호출이 가능한가. 거짓이면 호출 전에 사용자에게 보이는 오류로 끝낸다 (fail-closed) — 비어 있는 채로 ai-agent 에 넘기면
+   * ambient 자격증명으로 조용히 떨어질 여지를 준다(6b1c6383 의 모양).
    */
   boolean isComplete();
 
@@ -51,8 +43,8 @@ public sealed interface AiCredential {
   String incompleteMessage();
 
   /**
-   * 불완전하면 {@link #incompleteMessage()} 로 {@link IllegalStateException} 을 던지고, 아니면 자신을
-   * 돌려준다 — 예외로 끝내는 경로(분류·프로액티브)가 쓴다. 채팅은 SSE 오류 이벤트로 문구만 쓴다.
+   * 불완전하면 {@link #incompleteMessage()} 로 {@link IllegalStateException} 을 던지고, 아니면 자신을 돌려준다 — 예외로
+   * 끝내는 경로(분류·프로액티브)가 쓴다. 채팅은 SSE 오류 이벤트로 문구만 쓴다.
    */
   default AiCredential requireComplete() {
     if (!isComplete()) {
@@ -64,29 +56,24 @@ public sealed interface AiCredential {
   /**
    * ai-agent 요청 바디에 이 유형이 실제로 쓰는 필드만 채운다.
    *
-   * <p>세 소비처(채팅/분류/프로액티브)가 모두 이 메서드를 쓴다 — 필드 이름은 ai-agent 가 읽는
-   * 이름이라 세 경로에서 같아야 한다. 빈 문자열은 "설정 안 함"이므로 키 자체를 생략한다
-   * (ai-agent 의 세 라우트 모두 {@code body.x || ''} 로 읽어 생략과 빈 문자열을 같게 다룬다).
+   * <p>세 소비처(채팅/분류/프로액티브)가 모두 이 메서드를 쓴다 — 필드 이름은 ai-agent 가 읽는 이름이라 세 경로에서 같아야 한다. 빈 문자열은 "설정 안
+   * 함"이므로 키 자체를 생략한다 (ai-agent 의 세 라우트 모두 {@code body.x || ''} 로 읽어 생략과 빈 문자열을 같게 다룬다).
    *
-   * <p>{@code model} 은 여기서 다루지 않는다 — 프로액티브는 sdk/cli/cli-api 에서 모델을 아예
-   * 보내지 않고 ai-agent 의 고정 기본값을 쓰는데(비용 차이가 있는 의도된 gap), 여기에 넣으면
-   * 그 gap 이 조용히 넓어진다. 모델은 소비처가 각자 싣는다.
+   * <p>{@code model} 은 여기서 다루지 않는다 — 프로액티브는 sdk/cli/cli-api 에서 모델을 아예 보내지 않고 ai-agent 의 고정 기본값을
+   * 쓰는데(비용 차이가 있는 의도된 gap), 여기에 넣으면 그 gap 이 조용히 넓어진다. 모델은 소비처가 각자 싣는다.
    */
   void applyTo(Map<String, Object> body);
 
   /**
-   * 이 자격증명으로 {@code model} 을 쓸 수 있는가. 쓸 수 있으면 {@code null}, 아니면 사용자에게
-   * 보일 문구를 돌려준다.
+   * 이 자격증명으로 {@code model} 을 쓸 수 있는가. 쓸 수 있으면 {@code null}, 아니면 사용자에게 보일 문구를 돌려준다.
    *
-   * <p>대부분의 유형은 모델 형식에 제약이 없어 기본 구현이 항상 {@code null} 이다 —
-   * {@link Opencode} 만 재정의한다.
+   * <p>대부분의 유형은 모델 형식에 제약이 없어 기본 구현이 항상 {@code null} 이다 — {@link Opencode} 만 재정의한다.
    *
-   * <p><b>왜 {@code instanceof} 가 아니라 메서드인가 (이슈 #695 리뷰).</b> 처음 리팩터링에서는
-   * 이 검사만 sealed 타입 밖에 남아 세 소비처가 각각 {@code instanceof AiCredential.Opencode} 를
-   * 들고 있었다. 그런데 {@code AiCredentialSwitchGuardTest} 는 {@code case AiCredential.} 표식으로
-   * 감시 대상을 <b>발견</b>하므로, switch 를 instanceof 로 바꾼 그 순간 세 파일이 가드의 시야에서
-   * 통째로 빠졌다 — 즉 이 검사는 리팩터링 전보다 오히려 덜 보호받는 상태가 됐었다. 메서드로
-   * 내리면 변형 추가가 다시 컴파일 문제로 드러나고, 규칙의 사본이 하나뿐이 된다.
+   * <p><b>왜 {@code instanceof} 가 아니라 메서드인가 (이슈 #695 리뷰).</b> 처음 리팩터링에서는 이 검사만 sealed 타입 밖에 남아 세
+   * 소비처가 각각 {@code instanceof AiCredential.Opencode} 를 들고 있었다. 그런데 {@code
+   * AiCredentialSwitchGuardTest} 는 {@code case AiCredential.} 표식으로 감시 대상을 <b>발견</b>하므로, switch 를
+   * instanceof 로 바꾼 그 순간 세 파일이 가드의 시야에서 통째로 빠졌다 — 즉 이 검사는 리팩터링 전보다 오히려 덜 보호받는 상태가 됐었다. 메서드로 내리면 변형
+   * 추가가 다시 컴파일 문제로 드러나고, 규칙의 사본이 하나뿐이 된다.
    */
   default String modelProblem(String model) {
     return null;
@@ -103,26 +90,23 @@ public sealed interface AiCredential {
   /**
    * ai-agent 요청에 함께 실어 보낼 모델. {@code null} 이면 보내지 않는다는 뜻이다.
    *
-   * <p>기본값이 {@code null} 인 이유: sdk/cli/cli-api 의 프로액티브 경로는 지금까지 모델을 보낸
-   * 적이 없고 ai-agent 라우트의 고정 기본값을 쓴다(비용 차이가 있는 의도된 gap). {@link Opencode}
-   * 만 반드시 보내야 한다 — 안 보내면 그 고정 기본값(슬래시 없음)이 형식 위반이 된다.
+   * <p>기본값이 {@code null} 인 이유: sdk/cli/cli-api 의 프로액티브 경로는 지금까지 모델을 보낸 적이 없고 ai-agent 라우트의 고정 기본값을
+   * 쓴다(비용 차이가 있는 의도된 gap). {@link Opencode} 만 반드시 보내야 한다 — 안 보내면 그 고정 기본값(슬래시 없음)이 형식 위반이 된다.
    *
-   * <p>값을 {@link java.util.function.Supplier} 로 받는 이유는 모델이 필요 없는 유형에서 설정
-   * 조회 자체를 하지 않기 위해서다.
+   * <p>값을 {@link java.util.function.Supplier} 로 받는 이유는 모델이 필요 없는 유형에서 설정 조회 자체를 하지 않기 위해서다.
    */
   default String modelToSend(java.util.function.Supplier<String> configuredModel) {
     return null;
   }
 
   /**
-   * 분류 전용 캐시 해시에 섞을 "어느 공급자로 분류했는가" 식별자(#707). <b>비밀은 절대 담지
-   * 않는다</b> — 해시는 {@code ai_inference_cache.prompt_version} 에 남는 값의 입력이다.
+   * 분류 전용 캐시 해시에 섞을 "어느 공급자로 분류했는가" 식별자(#707). <b>비밀은 절대 담지 않는다</b> — 해시는 {@code
+   * ai_inference_cache.prompt_version} 에 남는 값의 입력이다.
    *
-   * <p>형식은 {@code agentType|providerId|baseUrl} 이고, opencode 는 뒤에 {@code |reasoningEffort}
-   * 가 붙는다. 공급자 개념이 없는 유형은 뒤 두 칸이 빈다. 각 칸은 {@link #cacheIdentityPart} 로
-   * 인코딩한 뒤 잇는다 — 그래야 값 안의 {@code |} 가 칸 경계로 읽히지 않는다(#707 후속).
-   * 소비처가 {@code instanceof} 로 꺼내 쓰지 않도록({@code AiCredentialSwitchGuardTest}) 인터페이스
-   * 메서드로 둔다.
+   * <p>형식은 {@code agentType|providerId|baseUrl} 이고, opencode 는 뒤에 {@code |reasoningEffort} 가 붙는다.
+   * 공급자 개념이 없는 유형은 뒤 두 칸이 빈다. 각 칸은 {@link #cacheIdentityPart} 로 인코딩한 뒤 잇는다 — 그래야 값 안의 {@code |} 가 칸
+   * 경계로 읽히지 않는다(#707 후속). 소비처가 {@code instanceof} 로 꺼내 쓰지 않도록({@code AiCredentialSwitchGuardTest})
+   * 인터페이스 메서드로 둔다.
    */
   default String cacheIdentity() {
     return cacheIdentityPart(agentType()) + "||";
@@ -131,12 +115,11 @@ public sealed interface AiCredential {
   /**
    * 캐시 판별자의 한 칸을 인코딩한다(퍼센트 인코딩, UTF-8). {@code null} 은 빈 칸이다.
    *
-   * <p>왜 필요한가(#707 후속): 칸을 이스케이프 없이 {@code |} 로 이으면 칸 경계가 다른 두 묶음이 같은
-   * 문자열이 된다 — 예컨대 providerId {@code "a|b"}·baseUrl {@code "c"} 와 providerId {@code "a"}·
-   * baseUrl {@code "b|c"} 가 둘 다 {@code opencode|a|b|c} 여서 서로의 캐시를 히트했다. 퍼센트
-   * 인코딩은 {@code |} 를 {@code %7C} 로, {@code %} 자체를 {@code %25} 로 바꾸므로 인코딩된 칸에는
-   * {@code |} 가 없고, 서로 다른 값은 서로 다른 결과가 된다 — 이어 붙여도 원래 칸이 유일하게 복원된다.
-   * {@code AiClassifyTarget.Dedicated} 가 모델 칸에도 같은 규칙을 쓴다.
+   * <p>왜 필요한가(#707 후속): 칸을 이스케이프 없이 {@code |} 로 이으면 칸 경계가 다른 두 묶음이 같은 문자열이 된다 — 예컨대 providerId
+   * {@code "a|b"}·baseUrl {@code "c"} 와 providerId {@code "a"}· baseUrl {@code "b|c"} 가 둘 다 {@code
+   * opencode|a|b|c} 여서 서로의 캐시를 히트했다. 퍼센트 인코딩은 {@code |} 를 {@code %7C} 로, {@code %} 자체를 {@code %25}
+   * 로 바꾸므로 인코딩된 칸에는 {@code |} 가 없고, 서로 다른 값은 서로 다른 결과가 된다 — 이어 붙여도 원래 칸이 유일하게 복원된다. {@code
+   * AiClassifyTarget.Dedicated} 가 모델 칸에도 같은 규칙을 쓴다.
    */
   static String cacheIdentityPart(String value) {
     return java.net.URLEncoder.encode(
@@ -144,10 +127,9 @@ public sealed interface AiCredential {
   }
 
   /**
-   * 로그용 비밀 없는 요약 {@code agentType=…, model=…}(#707). 자격증명과 모델을 함께 들고 다니는
-   * record 들({@code AiClassifyTarget.Dedicated}, {@code AiCredentialService.ClassifyBinding})의
-   * toString 이 공용으로 쓴다 — 기본 record toString 은 비밀 필드까지 찍기 때문이다.
-   * {@link #agentType()} 외의 필드는 읽지 않는다.
+   * 로그용 비밀 없는 요약 {@code agentType=…, model=…}(#707). 자격증명과 모델을 함께 들고 다니는 record 들({@code
+   * AiClassifyTarget.Dedicated}, {@code AiCredentialService.ClassifyBinding})의 toString 이 공용으로 쓴다 —
+   * 기본 record toString 은 비밀 필드까지 찍기 때문이다. {@link #agentType()} 외의 필드는 읽지 않는다.
    */
   default String nonSecretSummary(String model) {
     return "agentType=" + agentType() + ", model=" + model;
@@ -243,9 +225,9 @@ public sealed interface AiCredential {
     }
 
     /**
-     * 옵션 3 폐기(2026-09-19, 이슈 #693) — provider 설정(providerId/baseUrl)이 없으면 ai-agent 의
-     * {@code buildOpenCodeConfig} 가 배포 측 전역 설정으로 조용히 떨어질 여지를 주지 않고 여기서
-     * 먼저 막는다. {@code apiKey} 는 인증이 필요 없는 사설 게이트웨이가 있을 수 있어 필수가 아니다.
+     * 옵션 3 폐기(2026-09-19, 이슈 #693) — provider 설정(providerId/baseUrl)이 없으면 ai-agent 의 {@code
+     * buildOpenCodeConfig} 가 배포 측 전역 설정으로 조용히 떨어질 여지를 주지 않고 여기서 먼저 막는다. {@code apiKey} 는 인증이 필요 없는
+     * 사설 게이트웨이가 있을 수 있어 필수가 아니다.
      */
     @Override
     public boolean isComplete() {
@@ -270,14 +252,11 @@ public sealed interface AiCredential {
     }
 
     /**
-     * {@code ai.model} 이 opencode 형식({@code providerId/modelId})이고 이 자격증명의 공급자와
-     * 일치하는가.
+     * {@code ai.model} 이 opencode 형식({@code providerId/modelId})이고 이 자격증명의 공급자와 일치하는가.
      *
-     * <p>세 소비처에 복붙돼 있던 검사다 — 채팅과 분류에는 있었고 프로액티브에는 <b>없어서</b>
-     * 같은 규칙이 세 갈래였다(이슈 #695). 저장 시 검증
-     * ({@code OpencodeCredentialValidation.checkProviderConsistency})은 순환 잠금을 피하려고
-     * 슬래시 없는 값을 통과시켜야 하지만, 여기는 <b>실제 호출 시점</b>이라 그 이유가 성립하지
-     * 않는다 — 슬래시가 없으면 무조건 형식 위반이다.
+     * <p>세 소비처에 복붙돼 있던 검사다 — 채팅과 분류에는 있었고 프로액티브에는 <b>없어서</b> 같은 규칙이 세 갈래였다(이슈 #695). 저장 시 검증
+     * ({@code OpencodeCredentialValidation.checkProviderConsistency})은 순환 잠금을 피하려고 슬래시 없는 값을 통과시켜야
+     * 하지만, 여기는 <b>실제 호출 시점</b>이라 그 이유가 성립하지 않는다 — 슬래시가 없으면 무조건 형식 위반이다.
      */
     public boolean matchesModel(String model) {
       if (model == null) {
@@ -299,9 +278,8 @@ public sealed interface AiCredential {
     }
 
     /**
-     * 같은 opencode 라도 공급자·게이트웨이·추론 강도가 다르면 분류 결과가 다르므로 셋 다 식별자에
-     * 싣는다. 추론 강도가 빠져 있으면 강도를 바꾼 뒤에도 옛 강도로 만든 캐시가 계속 히트한다
-     * (#707 후속). 미설정 강도는 빈 칸이다. {@code apiKey} 는 비밀이라 싣지 않는다.
+     * 같은 opencode 라도 공급자·게이트웨이·추론 강도가 다르면 분류 결과가 다르므로 셋 다 식별자에 싣는다. 추론 강도가 빠져 있으면 강도를 바꾼 뒤에도 옛 강도로
+     * 만든 캐시가 계속 히트한다 (#707 후속). 미설정 강도는 빈 칸이다. {@code apiKey} 는 비밀이라 싣지 않는다.
      */
     @Override
     public String cacheIdentity() {

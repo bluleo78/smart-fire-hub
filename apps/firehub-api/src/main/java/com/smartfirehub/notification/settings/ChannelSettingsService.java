@@ -298,7 +298,8 @@ public class ChannelSettingsService {
     return switch (result) {
       case DeliveryResult.Sent ignored -> new ChannelTestResult(true, "테스트 메시지가 발송되었습니다.");
       case DeliveryResult.TransientFailure tf ->
-          new ChannelTestResult(false, "발송 실패 (재시도 가능): " + friendlyTransientFailureReason(tf.reason()));
+          new ChannelTestResult(
+              false, "발송 실패 (재시도 가능): " + friendlyTransientFailureReason(tf.reason()));
       case DeliveryResult.PermanentFailure pf ->
           new ChannelTestResult(false, "발송 실패: " + pf.details());
     };
@@ -309,8 +310,8 @@ public class ChannelSettingsService {
    *
    * <p>채널 구현체(EmailChannel/KakaoChannel/SlackChannel)는 원본 예외 클래스명(예: {@code
    * WebClientRequestException})이 아닌 {@link com.smartfirehub.notification.TransientFailureReason}의
-   * 안정적인 코드만 reason에 담으므로, 여기서 알 수 없는 값이 들어오는 경우는 코드 변경 누락 등 예외 상황이다 —
-   * 이 경우에도 원본 값을 그대로 노출하지 않고 일반 메시지로 대체한다.
+   * 안정적인 코드만 reason에 담으므로, 여기서 알 수 없는 값이 들어오는 경우는 코드 변경 누락 등 예외 상황이다 — 이 경우에도 원본 값을 그대로 노출하지 않고 일반
+   * 메시지로 대체한다.
    */
   private String friendlyTransientFailureReason(String reason) {
     if (TransientFailureReason.NETWORK_ERROR.equals(reason)) {

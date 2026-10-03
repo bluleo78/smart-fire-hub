@@ -17,12 +17,12 @@ import org.springframework.stereotype.Service;
 /**
  * 테넌트 임베딩 설정({@code tenant_settings.embedding.config})의 <b>유일한 소유자</b>(#713).
  *
- * <p><b>테넌트 전용.</b> 행이 없거나 테넌트 컨텍스트가 없으면 "미설정"이다 — {@code system_settings} 는
- * 읽지도 쓰지도 않는다(#706 과 같은 방향). 범용 설정 경로는 이 키를 {@code EXTERNAL_OWNER} 로 막는다.
+ * <p><b>테넌트 전용.</b> 행이 없거나 테넌트 컨텍스트가 없으면 "미설정"이다 — {@code system_settings} 는 읽지도 쓰지도 않는다(#706 과 같은
+ * 방향). 범용 설정 경로는 이 키를 {@code EXTERNAL_OWNER} 로 막는다.
  *
- * <p><b>복호화는 여기서만.</b> 실제 호출용 {@link #resolve} 는 손상을 감추지 않고(fail-closed) 던지고,
- * 화면·병합용 {@link #resolveLenient} 는 손상을 "미설정"으로 보여 관리자가 다시 저장해 복구할 수 있게 한다
- * ({@code AiCredentialService} 의 decryptOrEmpty / Lenient 구분과 같은 이유).
+ * <p><b>복호화는 여기서만.</b> 실제 호출용 {@link #resolve} 는 손상을 감추지 않고(fail-closed) 던지고, 화면·병합용 {@link
+ * #resolveLenient} 는 손상을 "미설정"으로 보여 관리자가 다시 저장해 복구할 수 있게 한다 ({@code AiCredentialService} 의
+ * decryptOrEmpty / Lenient 구분과 같은 이유).
  */
 @Slf4j
 @Service
@@ -53,8 +53,7 @@ public class EmbeddingConfigService {
   }
 
   /**
-   * 현재 공간(차원, 모델)만 — 복호화하지 않는다. 재임베딩 잡이 배치마다 "설정이 바뀌었나"를 보려고 부르므로
-   * 가볍게 둔다. 손상·미지원 차원은 empty(로그만).
+   * 현재 공간(차원, 모델)만 — 복호화하지 않는다. 재임베딩 잡이 배치마다 "설정이 바뀌었나"를 보려고 부르므로 가볍게 둔다. 손상·미지원 차원은 empty(로그만).
    */
   public Optional<EmbeddingSpace> currentSpace() {
     return readRaw()
@@ -62,7 +61,8 @@ public class EmbeddingConfigService {
             raw -> {
               try {
                 EmbeddingConfigDocument.Parsed p = EmbeddingConfigDocument.parse(raw);
-                return Optional.of(new EmbeddingSpace(EmbeddingDimension.of(p.dimension()), p.model()));
+                return Optional.of(
+                    new EmbeddingSpace(EmbeddingDimension.of(p.dimension()), p.model()));
               } catch (RuntimeException e) {
                 log.warn("{} 문서를 공간으로 해석할 수 없다 — 미설정으로 본다: {}", KEY, e.toString());
                 return Optional.empty();
@@ -86,8 +86,8 @@ public class EmbeddingConfigService {
   }
 
   /**
-   * 요청을 검증하고 저장된 키와 병합한 설정 초안(dimension=0)을 만든다 — 아직 쓰지 않는다. 순서: provider →
-   * model → Base URL 가드(형식·SSRF) → 키 병합.
+   * 요청을 검증하고 저장된 키와 병합한 설정 초안(dimension=0)을 만든다 — 아직 쓰지 않는다. 순서: provider → model → Base URL
+   * 가드(형식·SSRF) → 키 병합.
    */
   public EmbeddingConfig prepare(EmbeddingConfigRequest req) {
     return prepareInternal(req, true);
@@ -108,13 +108,15 @@ public class EmbeddingConfigService {
   }
 
   /**
-   * 측정 차원을 넣어 문서를 저장한다(현재 테넌트 행 하나, 통째 교체). {@code TenantSettingsRepository} 의 클래스
-   * 레벨 트랜잭션이 RLS GUC 를 세운다.
+   * 측정 차원을 넣어 문서를 저장한다(현재 테넌트 행 하나, 통째 교체). {@code TenantSettingsRepository} 의 클래스 레벨 트랜잭션이 RLS GUC
+   * 를 세운다.
    */
   public void store(EmbeddingConfig config, EmbeddingDimension dimension, Long userId) {
     TenantContext.require("임베딩 설정 저장");
     String cipher =
-        config.apiKey() == null || config.apiKey().isBlank() ? "" : encryptionService.encrypt(config.apiKey());
+        config.apiKey() == null || config.apiKey().isBlank()
+            ? ""
+            : encryptionService.encrypt(config.apiKey());
     tenantSettingsRepository.upsert(
         KEY,
         EmbeddingConfigDocument.toJson(
@@ -133,10 +135,9 @@ public class EmbeddingConfigService {
   }
 
   /**
-   * 키 병합. Ollama 는 키를 쓰지 않으므로 항상 빈 값(저장된 OpenAI 키를 Ollama 주소로 보내지 않는다). OpenAI 는
-   * 새 키가 있으면 그 값, 없으면 <b>provider·Base URL 이 저장된 값과 같을 때만</b> 저장된 키를 쓴다 — 다르면
-   * 관리자(또는 CSRF)가 Base URL 만 바꿔 저장된 키를 임의 호스트로 보낼 수 있다(OpencodeProbeService 의
-   * MSG_BASE_URL_MISMATCH 와 같은 규칙).
+   * 키 병합. Ollama 는 키를 쓰지 않으므로 항상 빈 값(저장된 OpenAI 키를 Ollama 주소로 보내지 않는다). OpenAI 는 새 키가 있으면 그 값, 없으면
+   * <b>provider·Base URL 이 저장된 값과 같을 때만</b> 저장된 키를 쓴다 — 다르면 관리자(또는 CSRF)가 Base URL 만 바꿔 저장된 키를 임의
+   * 호스트로 보낼 수 있다(OpencodeProbeService 의 MSG_BASE_URL_MISMATCH 와 같은 규칙).
    */
   private EmbeddingConfig merge(
       EmbeddingProviderType provider, String model, String baseUrl, String submittedKey) {

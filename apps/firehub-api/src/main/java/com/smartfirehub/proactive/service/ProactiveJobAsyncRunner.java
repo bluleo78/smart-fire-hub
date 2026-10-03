@@ -16,7 +16,6 @@ import com.smartfirehub.proactive.util.ProactiveTime;
 import com.smartfirehub.settings.model.AiCredential;
 import com.smartfirehub.settings.service.AiCredentialService;
 import com.smartfirehub.settings.service.SettingsService;
-import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -155,8 +154,7 @@ public class ProactiveJobAsyncRunner {
       var rejection = ProactiveResultValidator.findRejectionReason(result);
       if (rejection.isPresent()) {
         // 내부 사유(오류 원문 포함 가능)는 로그에만 남기고, 저장·노출 메시지는 번역된 문구를 쓴다.
-        log.error(
-            "Proactive job {} produced an undeliverable result: {}", jobId, rejection.get());
+        log.error("Proactive job {} produced an undeliverable result: {}", jobId, rejection.get());
         throw new ProactiveJobException(ProactiveResultValidator.USER_FACING_FAILURE_MESSAGE);
       }
 

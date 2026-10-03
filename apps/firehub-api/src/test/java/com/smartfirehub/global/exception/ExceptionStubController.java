@@ -155,9 +155,9 @@ public class ExceptionStubController {
   }
 
   /**
-   * 데이터셋 애드혹 쿼리 경로(#385 Task 3)의 SqlValidator 거부가 실제로 어떤 HTTP 응답으로 새는지 고정한다.
-   * UnsafeSqlException 이 별도 매핑 없이 500 으로 새면 안 된다 — 이미 GlobalExceptionHandler#handleUnsafeSql 이
-   * 매핑을 갖고 있지만(파이프라인 SQL 스텝, #136), 데이터셋 경로도 같은 예외 타입을 던지므로 동일 매핑을 탄다.
+   * 데이터셋 애드혹 쿼리 경로(#385 Task 3)의 SqlValidator 거부가 실제로 어떤 HTTP 응답으로 새는지 고정한다. UnsafeSqlException 이
+   * 별도 매핑 없이 500 으로 새면 안 된다 — 이미 GlobalExceptionHandler#handleUnsafeSql 이 매핑을 갖고 있지만(파이프라인 SQL 스텝,
+   * #136), 데이터셋 경로도 같은 예외 타입을 던지므로 동일 매핑을 탄다.
    */
   @GetMapping("/unsafe-sql")
   public void unsafeSql() {

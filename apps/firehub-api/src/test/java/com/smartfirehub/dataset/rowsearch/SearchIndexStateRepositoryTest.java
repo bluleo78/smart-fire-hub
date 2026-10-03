@@ -41,13 +41,16 @@ class SearchIndexStateRepositoryTest extends IntegrationTestBase {
                   dsl.fetchOne(
                           "INSERT INTO dataset(name, table_name, storage_type, origin_type, created_by)"
                               + " VALUES ('rs state', ?, 'TABLE', 'SOURCE', ?) RETURNING id",
-                          SRC, userId)
+                          SRC,
+                          userId)
                       .get(0, Long.class);
               dsl.execute(
                   "INSERT INTO dataset_column(dataset_id, column_name, display_name, data_type, is_nullable, is_indexed, column_order)"
                       + " VALUES (?, 'title', '제목', 'TEXT', true, false, 0), (?, 'content', '내용', 'TEXT', true, false, 1),"
                       + " (?, 'cnt', '건수', 'INTEGER', true, false, 2)",
-                  id, id, id);
+                  id,
+                  id,
+                  id);
               dataTableService.createTable(
                   SRC,
                   List.of(
@@ -55,7 +58,9 @@ class SearchIndexStateRepositoryTest extends IntegrationTestBase {
                       new DatasetColumnRequest("content", "내용", "TEXT", null, true, false, null),
                       new DatasetColumnRequest("cnt", "건수", "INTEGER", null, true, false, null)));
               dsl.execute(
-                  "INSERT INTO " + DataSchema.qualify(SRC) + " (title, content, cnt) VALUES ('t1','c1',1),('t2','c2',2),('t3','c3',3)");
+                  "INSERT INTO "
+                      + DataSchema.qualify(SRC)
+                      + " (title, content, cnt) VALUES ('t1','c1',1),('t2','c2',2),('t3','c3',3)");
               return id;
             });
   }
@@ -134,9 +139,11 @@ class SearchIndexStateRepositoryTest extends IntegrationTestBase {
   @Test
   void reader_fetchChanged_withCursor_filtersByUpdatedAt() {
     // 책갈피 분기(_updated_at >= ?)도 실제 DB 에서 바인딩·비교가 되는지 확인한다.
-    var future = reader.fetchChanged(SRC, List.of("title"), OffsetDateTime.now().plusDays(1), 0L, 10);
+    var future =
+        reader.fetchChanged(SRC, List.of("title"), OffsetDateTime.now().plusDays(1), 0L, 10);
     assertThat(future).isEmpty();
-    var past = reader.fetchChanged(SRC, List.of("title"), OffsetDateTime.now().minusDays(1), 0L, 10);
+    var past =
+        reader.fetchChanged(SRC, List.of("title"), OffsetDateTime.now().minusDays(1), 0L, 10);
     assertThat(past).extracting(SearchSourceReader.SourceRow::id).containsExactly(1L, 2L, 3L);
   }
 }

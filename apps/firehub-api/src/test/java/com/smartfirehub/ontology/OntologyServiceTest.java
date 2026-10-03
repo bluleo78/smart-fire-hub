@@ -44,7 +44,8 @@ class OntologyServiceTest {
     // getGraph 는 대행 주체(요청 사용자·테넌트)를 헤더로 싣는다 — ai-agent 가 온톨로지 소유권을
     // 스스로 되확인하기 위해서다. 컨텍스트가 비면 원격 호출 전에 실패하므로 여기서 세워 둔다.
     SecurityContextHolder.getContext()
-        .setAuthentication(new UsernamePasswordAuthenticationToken(REQUEST_USER_ID, null, List.of()));
+        .setAuthentication(
+            new UsernamePasswordAuthenticationToken(REQUEST_USER_ID, null, List.of()));
     TenantContext.set(REQUEST_TENANT_ID);
     server = new MockWebServer();
     server.start();
@@ -69,9 +70,8 @@ class OntologyServiceTest {
   }
 
   /**
-   * ai-agent 는 이 헤더로 대행 주체를 확정하고, 그 주체를 대행해 RLS 걸린 ontology 테이블을 되읽어
-   * 소유권을 **한 번 더** 확인한다. 헤더가 빠지면 ai-agent 가 400 으로 거부하는데, 그 실패는 여기가
-   * 아니라 원격 로그에만 남아 원인 파악이 어렵다 — 계약을 이 테스트로 못박는다.
+   * ai-agent 는 이 헤더로 대행 주체를 확정하고, 그 주체를 대행해 RLS 걸린 ontology 테이블을 되읽어 소유권을 **한 번 더** 확인한다. 헤더가 빠지면
+   * ai-agent 가 400 으로 거부하는데, 그 실패는 여기가 아니라 원격 로그에만 남아 원인 파악이 어렵다 — 계약을 이 테스트로 못박는다.
    */
   @Test
   void getGraph_는_대행_주체_헤더를_싣는다() throws Exception {
@@ -83,7 +83,8 @@ class OntologyServiceTest {
     service.getGraph(OWNED_ONTOLOGY_ID);
 
     RecordedRequest req = server.takeRequest();
-    assertThat(req.getHeader(InternalCallHeaders.ON_BEHALF_OF)).isEqualTo(String.valueOf(REQUEST_USER_ID));
+    assertThat(req.getHeader(InternalCallHeaders.ON_BEHALF_OF))
+        .isEqualTo(String.valueOf(REQUEST_USER_ID));
     assertThat(req.getHeader(InternalCallHeaders.ON_BEHALF_OF_TENANT))
         .isEqualTo(String.valueOf(REQUEST_TENANT_ID));
   }
@@ -159,8 +160,10 @@ class OntologyServiceTest {
   @Test
   void getGraph_는_ai_agent_502를_예외로_전파한다() {
 
-    server.enqueue(new MockResponse().setResponseCode(502).setBody("{\"error\":\"graph read failed\"}"));
-    assertThatThrownBy(() -> service.getGraph(OWNED_ONTOLOGY_ID)).isInstanceOf(ExternalServiceException.class);
+    server.enqueue(
+        new MockResponse().setResponseCode(502).setBody("{\"error\":\"graph read failed\"}"));
+    assertThatThrownBy(() -> service.getGraph(OWNED_ONTOLOGY_ID))
+        .isInstanceOf(ExternalServiceException.class);
   }
 
   // 이 경로의 테넌트 경계 회귀 가드. Neo4j 에는 RLS 도 tenant_id 도 없어서, 남의 온톨로지 id 로
@@ -337,7 +340,8 @@ class OntologyServiceTest {
             List.of(new OntologyResponse.Triple("Incident", "OCCURRED_AT", "Building", "설명")),
             "draft");
 
-    assertThatThrownBy(() -> service.createOntology(bad)).isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> service.createOntology(bad))
+        .isInstanceOf(IllegalArgumentException.class);
     verify(repository, never()).createOntology(any());
   }
 
@@ -352,7 +356,8 @@ class OntologyServiceTest {
             List.of(),
             "acitve");
 
-    assertThatThrownBy(() -> service.createOntology(bad)).isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> service.createOntology(bad))
+        .isInstanceOf(IllegalArgumentException.class);
     verify(repository, never()).createOntology(any());
   }
 

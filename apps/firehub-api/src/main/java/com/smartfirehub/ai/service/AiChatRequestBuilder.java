@@ -10,11 +10,11 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 /**
- * ai-agent {@code POST /agent/chat} 요청 바디를 조립한다 — 웹 채팅({@link AiAgentProxyService})과
- * Slack 인바운드({@link AiAgentBatchClient})가 같은 규칙을 쓰도록 한 곳에 둔다(이슈 #709).
+ * ai-agent {@code POST /agent/chat} 요청 바디를 조립한다 — 웹 채팅({@link AiAgentProxyService})과 Slack
+ * 인바운드({@link AiAgentBatchClient})가 같은 규칙을 쓰도록 한 곳에 둔다(이슈 #709).
  *
- * <p><b>테넌트 ID 는 호출부가 넘긴다</b> — 컨텍스트 확인은 호출부의 가드 한 곳에서 한다
- * ({@code SlackInboundService.dispatch} 의 {@code MissingTenantScopeException} catch 참고).
+ * <p><b>테넌트 ID 는 호출부가 넘긴다</b> — 컨텍스트 확인은 호출부의 가드 한 곳에서 한다 ({@code SlackInboundService.dispatch} 의
+ * {@code MissingTenantScopeException} catch 참고).
  */
 @Component
 @Slf4j
@@ -40,8 +40,8 @@ public class AiChatRequestBuilder {
   /**
    * 현재 테넌트의 자격증명과 AI 동작 설정으로 채팅 요청 바디를 만든다.
    *
-   * <p>반드시 테넌트 컨텍스트 안에서 동기로 부른다 — {@link AiCredentialService#resolve()} 는
-   * 컨텍스트가 없으면 예외 대신 빈(미완성) 자격증명을 돌려준다.
+   * <p>반드시 테넌트 컨텍스트 안에서 동기로 부른다 — {@link AiCredentialService#resolve()} 는 컨텍스트가 없으면 예외 대신 빈(미완성)
+   * 자격증명을 돌려준다.
    *
    * @param tenantId 호출부가 확인한 실행 테넌트 — ai-agent 가 워크스페이스·트랜스크립트 경로를 가른다
    * @param sessionId ai-agent 세션 ID. 새 세션이면 빈 문자열
@@ -79,15 +79,18 @@ public class AiChatRequestBuilder {
     body.put("model", model);
     // AI 동작 키는 aiSettings 에 항상 들어 있다(SettingsService.getAsMap 이 코드 기본값을 깐다).
     // 아래 폴백은 저장된 값이 숫자로 파싱되지 않을 때만 쓰인다.
-    body.put("maxTurns", parseIntSafe(aiSettings.get("ai.max_turns"), AiBehaviorDefaults.MAX_TURNS));
+    body.put(
+        "maxTurns", parseIntSafe(aiSettings.get("ai.max_turns"), AiBehaviorDefaults.MAX_TURNS));
     body.put("systemPrompt", aiSettings.get("ai.system_prompt"));
     body.put(
         "temperature",
         parseDoubleSafe(aiSettings.get("ai.temperature"), AiBehaviorDefaults.TEMPERATURE));
-    body.put("maxTokens", parseIntSafe(aiSettings.get("ai.max_tokens"), AiBehaviorDefaults.MAX_TOKENS));
+    body.put(
+        "maxTokens", parseIntSafe(aiSettings.get("ai.max_tokens"), AiBehaviorDefaults.MAX_TOKENS));
     body.put(
         "sessionMaxTokens",
-        parseIntSafe(aiSettings.get("ai.session_max_tokens"), AiBehaviorDefaults.SESSION_MAX_TOKENS));
+        parseIntSafe(
+            aiSettings.get("ai.session_max_tokens"), AiBehaviorDefaults.SESSION_MAX_TOKENS));
     return new Prepared(body, null);
   }
 

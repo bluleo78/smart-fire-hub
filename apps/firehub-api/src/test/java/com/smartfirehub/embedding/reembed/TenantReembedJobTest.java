@@ -42,9 +42,8 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 /**
  * TenantReembedJob: 1024→1536 완주·옛 차원 정리, 재실행 멱등, 도중 설정 변경 시 중단, 임대 대기·만료, 실패 기록.
  *
- * <p>잡 메서드는 JobRunr 없이 직접 부른다(test 프로필은 background-job-server 가 꺼져 있다). provider 는 가짜로
- * 바꾸되 설정 문서는 실제 tenant_settings 에 저장한다 — 잡이 배치마다 읽는 "현재 공간"이 진짜 저장소에서 와야
- * 도중 변경 감지가 검증된다.
+ * <p>잡 메서드는 JobRunr 없이 직접 부른다(test 프로필은 background-job-server 가 꺼져 있다). provider 는 가짜로 바꾸되 설정 문서는
+ * 실제 tenant_settings 에 저장한다 — 잡이 배치마다 읽는 "현재 공간"이 진짜 저장소에서 와야 도중 변경 감지가 검증된다.
  */
 class TenantReembedJobTest extends IntegrationTestBase {
 
@@ -69,7 +68,8 @@ class TenantReembedJobTest extends IntegrationTestBase {
   @BeforeEach
   void seed() {
     tenant = TenantRlsTestSupport.createActiveTenant(dsl, "reembed");
-    doc = inTenantFixture(tenant, () -> EmbeddingTestFixtures.createDocumentDataset(dsl, "reembed"));
+    doc =
+        inTenantFixture(tenant, () -> EmbeddingTestFixtures.createDocumentDataset(dsl, "reembed"));
     storeConfig(NEW);
     when(providerFactory.current()).thenAnswer(inv -> fake(NEW));
   }
@@ -77,7 +77,8 @@ class TenantReembedJobTest extends IntegrationTestBase {
   @AfterEach
   void cleanup() {
     TenantRlsTestSupport.deleteOwnDatasetRows(dsl, fixtureTransactionTemplate, tenant);
-    TenantRlsTestSupport.deleteTenants(dsl, tenant); // tenant_settings·embedding_reembed_state 는 CASCADE
+    TenantRlsTestSupport.deleteTenants(
+        dsl, tenant); // tenant_settings·embedding_reembed_state 는 CASCADE
     TenantRlsTestSupport.deleteUser(dsl, doc.userId());
   }
 
@@ -86,7 +87,8 @@ class TenantReembedJobTest extends IntegrationTestBase {
         tenant,
         () ->
             configService.store(
-                new EmbeddingConfig(EmbeddingProviderType.OLLAMA, space.model(), "http://unused", "", 0),
+                new EmbeddingConfig(
+                    EmbeddingProviderType.OLLAMA, space.model(), "http://unused", "", 0),
                 space.dimension(),
                 null));
   }
@@ -117,7 +119,8 @@ class TenantReembedJobTest extends IntegrationTestBase {
       cs.add(new Chunk(i, "c" + i, 1));
       vs.add(axis(1024, 0));
     }
-    TenantContext.runScoped(tenant, () -> chunks.insertBatch(doc.fileId(), doc.datasetId(), cs, vs, OLD));
+    TenantContext.runScoped(
+        tenant, () -> chunks.insertBatch(doc.fileId(), doc.datasetId(), cs, vs, OLD));
   }
 
   private <T> T inTenant(java.util.function.Supplier<T> s) {
@@ -149,8 +152,10 @@ class TenantReembedJobTest extends IntegrationTestBase {
     // 이미 NEW 벡터가 있어 잡이 건드리지 않는 청크에 옛 차원 행을 직접 남겨, 완료 단계의 정리만이 지울 수 있게 한다.
     seedChunks(1);
     List<Long> ids =
-        inTenantFixture(tenant, () -> dsl.fetch("SELECT id FROM document_chunk").getValues(0, Long.class));
-    TenantContext.runScoped(tenant, () -> chunks.upsertEmbeddings(NEW, ids, List.of(axis(1536, 0))));
+        inTenantFixture(
+            tenant, () -> dsl.fetch("SELECT id FROM document_chunk").getValues(0, Long.class));
+    TenantContext.runScoped(
+        tenant, () -> chunks.upsertEmbeddings(NEW, ids, List.of(axis(1536, 0))));
     inTenantFixture(
         tenant,
         () -> {
@@ -173,8 +178,10 @@ class TenantReembedJobTest extends IntegrationTestBase {
   void rerunIsIdempotentAndResumesWhereItStopped() {
     seedChunks(3);
     List<Long> firstId =
-        inTenantFixture(tenant, () -> dsl.fetch("SELECT min(id) FROM document_chunk").getValues(0, Long.class));
-    TenantContext.runScoped(tenant, () -> chunks.upsertEmbeddings(NEW, firstId, List.of(axis(1536, 0))));
+        inTenantFixture(
+            tenant, () -> dsl.fetch("SELECT min(id) FROM document_chunk").getValues(0, Long.class));
+    TenantContext.runScoped(
+        tenant, () -> chunks.upsertEmbeddings(NEW, firstId, List.of(axis(1536, 0))));
 
     job.run(tenant);
     assertThat(embeddedTexts).hasSize(2); // 이미 NEW 로 있던 1건은 다시 임베딩하지 않는다
@@ -254,7 +261,8 @@ class TenantReembedJobTest extends IntegrationTestBase {
     inTenantFixture(
         tenant,
         () -> {
-          dsl.execute("UPDATE embedding_reembed_state SET lease_until = now() - interval '1 minute'");
+          dsl.execute(
+              "UPDATE embedding_reembed_state SET lease_until = now() - interval '1 minute'");
         });
     assertThat(inTenant(() -> states.tryAcquire(Duration.ofMinutes(10)))).isTrue();
   }

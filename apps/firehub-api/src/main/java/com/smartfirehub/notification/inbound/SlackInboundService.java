@@ -41,27 +41,25 @@ import org.springframework.stereotype.Service;
  *   <li>SlackChannel.replyTo — 동일 스레드에 AI 응답 전송
  * </ol>
  *
- * <p><b>테넌트 해석 — 이 경로의 닭과 달걀.</b> inbound 웹훅은 permitAll 이라 {@link TenantContext}
- * 가 없는데, 테넌트를 알려 줄 유일한 행({@code slack_workspace})이 RLS 대상이다. 그래서
- * {@link #dispatch} 가 가장 먼저 {@link SlackWorkspaceTenantResolver} (V106 의 SECURITY DEFINER
- * 함수)로 {@code team_id → tenant_id} 를 해석하고, 그 컨텍스트 안에서 기존 조회를 전부 수행한다.
- * 봇 토큰은 우회 함수가 아니라 <b>RLS 하의 정상 조회</b>로 읽는다. 해석에 실패하면 이벤트를
- * <b>조용히 버린다</b> — 외부에 오류를 노출하면 어떤 팀 ID 가 등록돼 있는지가 누출된다.
+ * <p><b>테넌트 해석 — 이 경로의 닭과 달걀.</b> inbound 웹훅은 permitAll 이라 {@link TenantContext} 가 없는데, 테넌트를 알려 줄
+ * 유일한 행({@code slack_workspace})이 RLS 대상이다. 그래서 {@link #dispatch} 가 가장 먼저 {@link
+ * SlackWorkspaceTenantResolver} (V106 의 SECURITY DEFINER 함수)로 {@code team_id → tenant_id} 를 해석하고, 그
+ * 컨텍스트 안에서 기존 조회를 전부 수행한다. 봇 토큰은 우회 함수가 아니라 <b>RLS 하의 정상 조회</b>로 읽는다. 해석에 실패하면 이벤트를 <b>조용히 버린다</b>
+ * — 외부에 오류를 노출하면 어떤 팀 ID 가 등록돼 있는지가 누출된다.
  *
- * <p>{@code @Async("slackInboundExecutor")} 의 실행기는 {@code AsyncConfig} 에 있다. 커밋
- * {@code 968a28c2} 에서 빈이 지워진 뒤 이 경로는 죽어 있었고, 이슈 #709 에서 빈과 ai-agent 호출
- * (자격증명·내부 인증·실제 SSE 엔드포인트)을 함께 되살렸다. <b>이 경로의 계약:</b>
+ * <p>{@code @Async("slackInboundExecutor")} 의 실행기는 {@code AsyncConfig} 에 있다. 커밋 {@code 968a28c2} 에서
+ * 빈이 지워진 뒤 이 경로는 죽어 있었고, 이슈 #709 에서 빈과 ai-agent 호출 (자격증명·내부 인증·실제 SSE 엔드포인트)을 함께 되살렸다. <b>이 경로의
+ * 계약:</b>
  *
  * <ul>
- *   <li>테넌트 해석은 여기 배선돼 있다 — {@code ai/repository/AiSessionRepository} 의 경고
- *       ("복원과 같은 커밋에서 웹훅 테넌트 해석을 넣어라")가 요구하던 것이 바로 이 배선이다.
- *   <li>{@code TenantContextTaskDecorator} 는 <b>이 경로의 안전 조건이 아니다.</b> 제출 스레드가
- *       permitAll 컨트롤러라 승계할 컨텍스트가 애초에 없기 때문이다 — 데코레이터를 달아도 전파할
- *       값이 없다. 안전을 만드는 것은 {@code dispatch} 안의 해석이다. 다른 실행기와 형태를 맞추기
- *       위해 데코레이터를 다는 것은 무해하지만, 그것을 이 경로의 방어로 오해하지 말 것.
- *   <li>해석 없이 본 처리에 진입하지 못하도록 {@link #process} 첫 문장의 가드가
- *       <b>기계적으로</b> 막는다. 가드는 {@link TenantContext#require(String)} 로 이 지점 전용 문맥
- *       설명을 넘겨 쓴다 — 자세한 내용은 {@link #process} 에 한 곳에만 서술한다.
+ *   <li>테넌트 해석은 여기 배선돼 있다 — {@code ai/repository/AiSessionRepository} 의 경고 ("복원과 같은 커밋에서 웹훅 테넌트 해석을
+ *       넣어라")가 요구하던 것이 바로 이 배선이다.
+ *   <li>{@code TenantContextTaskDecorator} 는 <b>이 경로의 안전 조건이 아니다.</b> 제출 스레드가 permitAll 컨트롤러라 승계할
+ *       컨텍스트가 애초에 없기 때문이다 — 데코레이터를 달아도 전파할 값이 없다. 안전을 만드는 것은 {@code dispatch} 안의 해석이다. 다른 실행기와 형태를
+ *       맞추기 위해 데코레이터를 다는 것은 무해하지만, 그것을 이 경로의 방어로 오해하지 말 것.
+ *   <li>해석 없이 본 처리에 진입하지 못하도록 {@link #process} 첫 문장의 가드가 <b>기계적으로</b> 막는다. 가드는 {@link
+ *       TenantContext#require(String)} 로 이 지점 전용 문맥 설명을 넘겨 쓴다 — 자세한 내용은 {@link #process} 에 한 곳에만
+ *       서술한다.
  * </ul>
  */
 @Service
@@ -71,12 +69,16 @@ public class SlackInboundService {
 
   private final UserChannelBindingRepository bindingRepo;
   private final SlackWorkspaceRepository workspaceRepo;
+
   /** permitAll 웹훅의 테넌트 해석기 — team_id 로 컨텍스트를 세우는 유일한 수단이다. */
   private final SlackWorkspaceTenantResolver tenantResolver;
+
   private final AiSessionRepository aiSessionRepo;
   private final AiAgentBatchClient aiAgentClient;
+
   /** 웹 채팅과 같은 규칙으로 테넌트 자격증명·AI 동작 설정을 실은 요청 바디를 만든다(이슈 #709). */
   private final AiChatRequestBuilder chatRequestBuilder;
+
   private final SlackApiClient slackApiClient;
   private final SlackChannel slackChannel;
   private final EncryptionService encryption;
@@ -169,20 +171,17 @@ public class SlackInboundService {
   /**
    * 이벤트 본 처리. <b>반드시 테넌트 컨텍스트 안에서 호출되어야 한다.</b>
    *
-   * <p>첫 문장의 {@link TenantContext#require(String)} 이 그것을 기계적으로 강제한다 — 여기서 도는
-   * 모든 조회·삽입({@code slack_workspace}, {@code user_channel_binding}, {@code ai_session})이 RLS
-   * 대상이라, 컨텍스트가 비면 예외가 아니라 <b>조용한 0행</b>이 되어 원인 추적이 불가능해진다.
-   * 주석 대신 실행되는 가드를 두는 이유는 배선이 깨져도 조용히 지나가지 않게 하기 위해서다.
+   * <p>첫 문장의 {@link TenantContext#require(String)} 이 그것을 기계적으로 강제한다 — 여기서 도는 모든 조회·삽입({@code
+   * slack_workspace}, {@code user_channel_binding}, {@code ai_session})이 RLS 대상이라, 컨텍스트가 비면 예외가 아니라
+   * <b>조용한 0행</b>이 되어 원인 추적이 불가능해진다. 주석 대신 실행되는 가드를 두는 이유는 배선이 깨져도 조용히 지나가지 않게 하기 위해서다.
    *
-   * <p>{@code private} 이 아니라 <b>package-private</b> 인 것은 의도다 — 같은 패키지의
-   * {@code SlackInboundServiceTest} 가 "컨텍스트 없이 진입하면 예외" 를 직접 단언해 이 가드에
-   * 회귀 보호를 준다. 그 단언이 없으면 가드를 지워도 아무것도 빨개지지 않고, 배선이 깨지는 순간
-   * {@code ai_session} 삽입이 조용히 죽는다.
+   * <p>{@code private} 이 아니라 <b>package-private</b> 인 것은 의도다 — 같은 패키지의 {@code
+   * SlackInboundServiceTest} 가 "컨텍스트 없이 진입하면 예외" 를 직접 단언해 이 가드에 회귀 보호를 준다. 그 단언이 없으면 가드를 지워도 아무것도
+   * 빨개지지 않고, 배선이 깨지는 순간 {@code ai_session} 삽입이 조용히 죽는다.
    *
-   * <p>무인자 {@link TenantContext#require()} 를 쓰지 않는 이유: 그 메서드의 메시지가
-   * "배경 잡을 예약할 수 없다" 라 이 지점(웹훅 본 처리)과 맞지 않는다. 가드가 실제로 발화한 날
-   * 운영자가 JobRunr 를 뒤지게 만들지 않으려고, 이 지점 전용 문맥 설명을 담은
-   * {@link TenantContext#require(String)} 오버로드를 쓴다.
+   * <p>무인자 {@link TenantContext#require()} 를 쓰지 않는 이유: 그 메서드의 메시지가 "배경 잡을 예약할 수 없다" 라 이 지점(웹훅 본
+   * 처리)과 맞지 않는다. 가드가 실제로 발화한 날 운영자가 JobRunr 를 뒤지게 만들지 않으려고, 이 지점 전용 문맥 설명을 담은 {@link
+   * TenantContext#require(String)} 오버로드를 쓴다.
    */
   void process(String teamId, JsonNode event) {
     long tenantId = TenantContext.require("Slack inbound 본 처리 (team=" + teamId + ")");
@@ -223,8 +222,7 @@ public class SlackInboundService {
           botToken,
           channel,
           slackUserId,
-          brandName + " 웹에서 먼저 계정 연동을 진행해주세요: "
-              + "https://app.smartfirehub.com/settings/channels");
+          brandName + " 웹에서 먼저 계정 연동을 진행해주세요: " + "https://app.smartfirehub.com/settings/channels");
       return;
     }
     long userId = binding.get().userId();
@@ -298,17 +296,15 @@ public class SlackInboundService {
 
     // 8. 동일 스레드에 AI 응답 전송
     slackChannel.replyTo(workspace.id(), channel, threadTs, aiResponse);
-    log.info(
-        "slack inbound — 응답 완료 (team={}, ts={}, sessionId={})", teamId, ts, reply.sessionId());
+    log.info("slack inbound — 응답 완료 (team={}, ts={}, sessionId={})", teamId, ts, reply.sessionId());
   }
 
   /**
    * 새 스레드의 세션을 기록한다.
    *
-   * <p>같은 새 스레드에 메시지가 거의 동시에 두 개 오면 둘 다 "기존 세션 없음" 으로 보고 각자
-   * 세션을 연다. {@code uk_ai_session_slack_thread}(team, channel, thread_ts) 가 두 번째 기록을
-   * 막으므로 그 충돌은 받아들인다 — 두 번째 답은 그대로 보내고, 스레드의 후속 메시지는 먼저 기록된
-   * 세션을 이어 쓴다(두 번째 턴의 대화 맥락만 빠진다).
+   * <p>같은 새 스레드에 메시지가 거의 동시에 두 개 오면 둘 다 "기존 세션 없음" 으로 보고 각자 세션을 연다. {@code
+   * uk_ai_session_slack_thread}(team, channel, thread_ts) 가 두 번째 기록을 막으므로 그 충돌은 받아들인다 — 두 번째 답은 그대로
+   * 보내고, 스레드의 후속 메시지는 먼저 기록된 세션을 이어 쓴다(두 번째 턴의 대화 맥락만 빠진다).
    */
   private void recordSlackSession(
       long userId, String agentSessionId, String teamId, String channel, String threadTs) {

@@ -5,8 +5,8 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 행 검색 색인 엔진 경계. 구현체는 row_id 와 점수만 반환하고 원본 행 조회는 호출자가 한다 — 조인에 의존하지 않아
- * 외부 벡터 DB 구현체로 교체해도 호출처가 바뀌지 않는다.
+ * 행 검색 색인 엔진 경계. 구현체는 row_id 와 점수만 반환하고 원본 행 조회는 호출자가 한다 — 조인에 의존하지 않아 외부 벡터 DB 구현체로 교체해도 호출처가 바뀌지
+ * 않는다.
  */
 public interface RowSearchIndex {
 
@@ -31,7 +31,8 @@ public interface RowSearchIndex {
   Map<Long, String> existingHashes(IndexRef ref, Collection<Long> rowIds);
 
   /** _prev 에서 같은 source_hash·같은 모델의 벡터를 찾아 복사한다. 복사했으면 true. */
-  boolean upsertReusing(IndexRef ref, long rowId, String sourceText, String sourceHash, String model);
+  boolean upsertReusing(
+      IndexRef ref, long rowId, String sourceText, String sourceHash, String model);
 
   /** 임베딩까지 끝난 행들을 넣는다. 같은 (row_id, chunk_no) 가 있으면 텍스트·해시·벡터·모델을 덮어쓴다. */
   void upsert(IndexRef ref, List<IndexedRow> rows);

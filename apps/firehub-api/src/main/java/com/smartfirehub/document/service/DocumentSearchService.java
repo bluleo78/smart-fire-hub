@@ -2,7 +2,6 @@ package com.smartfirehub.document.service;
 
 import com.smartfirehub.document.dto.DocumentSearchHit;
 import com.smartfirehub.document.dto.DocumentSearchRequest;
-import com.smartfirehub.document.dto.SearchMode;
 import com.smartfirehub.document.repository.DocumentChunkRepository;
 import com.smartfirehub.embedding.EmbeddingProvider;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
@@ -14,8 +13,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 문서 검색: mode 에 따라 벡터(SEMANTIC)·트라이그램(KEYWORD)·RRF 융합(HYBRID, 기본)으로 분기한다.
- * HYBRID 는 두 검색의 후보 풀을 가져와 RRF(Reciprocal Rank Fusion)로 순위를 융합한다.
+ * 문서 검색: mode 에 따라 벡터(SEMANTIC)·트라이그램(KEYWORD)·RRF 융합(HYBRID, 기본)으로 분기한다. HYBRID 는 두 검색의 후보 풀을 가져와
+ * RRF(Reciprocal Rank Fusion)로 순위를 융합한다.
  */
 @Service
 @RequiredArgsConstructor
@@ -34,11 +33,12 @@ public class DocumentSearchService {
       throw new IllegalArgumentException("검색어가 비어 있습니다");
     }
     return switch (request.mode()) {
-      case KEYWORD -> chunkRepository.searchByTrigram(
-          request.query(), request.datasetIds(), request.topK());
+      case KEYWORD ->
+          chunkRepository.searchByTrigram(request.query(), request.datasetIds(), request.topK());
       case SEMANTIC -> {
         QueryVector q = embedQuery(request.query());
-        yield chunkRepository.searchByCosine(q.space(), q.vector(), request.datasetIds(), request.topK());
+        yield chunkRepository.searchByCosine(
+            q.space(), q.vector(), request.datasetIds(), request.topK());
       }
       case HYBRID -> hybridSearch(request);
     };
@@ -58,8 +58,8 @@ public class DocumentSearchService {
     QueryVector q = embedQuery(request.query());
     List<DocumentSearchHit> semantic =
         chunkRepository.searchByCosine(q.space(), q.vector(), request.datasetIds(), CANDIDATE_POOL);
-    List<DocumentSearchHit> keyword = chunkRepository.searchByTrigram(
-        request.query(), request.datasetIds(), CANDIDATE_POOL);
+    List<DocumentSearchHit> keyword =
+        chunkRepository.searchByTrigram(request.query(), request.datasetIds(), CANDIDATE_POOL);
     return rrfFuse(List.of(semantic, keyword), request.topK());
   }
 

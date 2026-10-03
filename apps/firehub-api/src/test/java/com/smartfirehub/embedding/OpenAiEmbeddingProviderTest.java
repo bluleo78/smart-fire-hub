@@ -98,8 +98,7 @@ class OpenAiEmbeddingProviderTest {
 
   @Test
   void embedThrowsWhenDataMissing() {
-    server.enqueue(
-        new MockResponse().setHeader("Content-Type", "application/json").setBody("{}"));
+    server.enqueue(new MockResponse().setHeader("Content-Type", "application/json").setBody("{}"));
     assertThatThrownBy(() -> provider(2).embed(List.of("a")))
         .isInstanceOf(EmbeddingException.class)
         .hasMessageContaining("data");

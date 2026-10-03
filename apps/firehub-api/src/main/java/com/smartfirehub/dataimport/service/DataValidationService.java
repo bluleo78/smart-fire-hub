@@ -88,9 +88,8 @@ public class DataValidationService {
   }
 
   /**
-   * 값이 "무의미한 날짜없음 표식"인지 판정한다. 레거시/공공 데이터에서 날짜 없음을 "0", "0000-00-00", "00000000",
-   * "0000/00/00", "00000000000000" 등으로 표기하는 경우가 있어, 어떤 포맷으로도 파싱되지 않아 "날짜 형식이 아닙니다: 0"으로
-   * 거부되던 문제를 방지하기 위함이다.
+   * 값이 "무의미한 날짜없음 표식"인지 판정한다. 레거시/공공 데이터에서 날짜 없음을 "0", "0000-00-00", "00000000", "0000/00/00",
+   * "00000000000000" 등으로 표기하는 경우가 있어, 어떤 포맷으로도 파싱되지 않아 "날짜 형식이 아닙니다: 0"으로 거부되던 문제를 방지하기 위함이다.
    *
    * <p>과검출 방지: 구분자(-, /, 공백, :)를 제거한 뒤 남은 문자열이 최소 1자 이상이면서 전부 '0'인 경우에만 무의미값으로 판정한다. 유효한 날짜(예:
    * "2020-03-16" → 구분자 제거 시 "20200316")는 0이 아닌 문자가 섞여 있으므로 오검출되지 않는다.
@@ -148,8 +147,7 @@ public class DataValidationService {
         } else if (lower.equals("false") || lower.equals("0") || lower.equals("no")) {
           yield false;
         } else {
-          throw new Exception(
-              "참/거짓 형식이 아닙니다: " + value + " (허용 값: true/false/1/0/yes/no)");
+          throw new Exception("참/거짓 형식이 아닙니다: " + value + " (허용 값: true/false/1/0/yes/no)");
         }
       }
       case "DATE" -> {
@@ -255,10 +253,10 @@ public class DataValidationService {
   /**
    * 배치의 각 행을 데이터셋 컬럼 순서에 맞는 값 리스트로 변환한다(임포트 잡 Pass2 삽입 전용).
    *
-   * <p>Pass1 검증({@link #validateWithMapping})과 반드시 같은 셀 변환 로직({@link #convertRowOrNull})을 거치므로,
-   * "검증 통과 == 값 변환 성공"이 두 경로에서 어긋나지 않는다. 매핑 없는 경로({@code mappings=null} 또는 빈 리스트)는 {@link
-   * #validate}와 동일하게 컬럼명으로 행을 직접 조회한다. Pass2는 전량 검증을 통과한 배치에서만 호출되므로 변환 실패(null 반환)는
-   * 발생하지 않는 것이 전제다 — 이 전제가 깨지면(변환기 불변식 위반) 빈 행을 조용히 삽입하는 대신 즉시 예외로 실패시킨다.
+   * <p>Pass1 검증({@link #validateWithMapping})과 반드시 같은 셀 변환 로직({@link #convertRowOrNull})을 거치므로, "검증
+   * 통과 == 값 변환 성공"이 두 경로에서 어긋나지 않는다. 매핑 없는 경로({@code mappings=null} 또는 빈 리스트)는 {@link #validate}와
+   * 동일하게 컬럼명으로 행을 직접 조회한다. Pass2는 전량 검증을 통과한 배치에서만 호출되므로 변환 실패(null 반환)는 발생하지 않는 것이 전제다 — 이 전제가
+   * 깨지면(변환기 불변식 위반) 빈 행을 조용히 삽입하는 대신 즉시 예외로 실패시킨다.
    */
   public List<List<Object>> toRows(
       List<Map<String, String>> rows,
@@ -273,7 +271,8 @@ public class DataValidationService {
     for (Map<String, String> row : rows) {
       rowIndex++;
       Map<String, String> effectiveRow = hasMappings ? remapRow(row, columnMapping) : row;
-      List<Object> convertedRow = convertRowOrNull(effectiveRow, columns, rowIndex, discardedErrors);
+      List<Object> convertedRow =
+          convertRowOrNull(effectiveRow, columns, rowIndex, discardedErrors);
       if (convertedRow == null) {
         // Pass1(검증)을 통과한 행이 Pass2(삽입)에서 변환 실패하는 것은 불변식 위반이다.
         // 조용히 빈 행을 삽입하면 데이터 정합성이 깨지므로 즉시 실패시킨다.
@@ -312,10 +311,9 @@ public class DataValidationService {
   }
 
   /**
-   * 한 행(매핑 경로는 이미 매핑 적용됨)을 데이터셋 컬럼 순서의 값 리스트로 변환한다. 필수값 누락/타입 변환 실패는 errorSink에 기록하고
-   * null을 반환한다(행 전체 무효). {@link #validate}, {@link #validateWithMapping}, {@link #toRows} 세 경로 모두
-   * 이 메서드를 공유해 변환 로직이 하나로 유지되게 한다(Task2 핵심 위험 3) — 두 벌로 갈라지면 "검증 통과 == 값 변환 성공"이 어긋나는
-   * 미묘한 버그가 생긴다.
+   * 한 행(매핑 경로는 이미 매핑 적용됨)을 데이터셋 컬럼 순서의 값 리스트로 변환한다. 필수값 누락/타입 변환 실패는 errorSink에 기록하고 null을 반환한다(행
+   * 전체 무효). {@link #validate}, {@link #validateWithMapping}, {@link #toRows} 세 경로 모두 이 메서드를 공유해 변환
+   * 로직이 하나로 유지되게 한다(Task2 핵심 위험 3) — 두 벌로 갈라지면 "검증 통과 == 값 변환 성공"이 어긋나는 미묘한 버그가 생긴다.
    */
   private List<Object> convertRowOrNull(
       Map<String, String> row,
@@ -385,10 +383,7 @@ public class DataValidationService {
         if (value == null || value.trim().isEmpty()) {
           errors.add(
               new ValidationErrorDetail(
-                  rowIndex,
-                  pkCol,
-                  value != null ? value : "",
-                  "기본키 컬럼은 비어 있을 수 없습니다"));
+                  rowIndex, pkCol, value != null ? value : "", "기본키 컬럼은 비어 있을 수 없습니다"));
         }
       }
 

@@ -34,15 +34,13 @@ import org.springframework.transaction.support.TransactionTemplate;
 /**
  * 배경 잡 스레드의 형태를 그대로 재현해, 리포지토리 접근이 실제로 데이터를 본다는 것을 단언한다.
  *
- * <p>왜 이 테스트가 필요한가: RLS 격리 값은 트랜잭션-로컬 GUC 이고, 그 GUC 는 {@code
- * TenantAwareTransactionManager.doBegin} 에서만 주입된다. {@code TenantContext.set()} 은 ThreadLocal 만
- * 바꾼다 — <b>그 뒤에 트랜잭션이 열리지 않으면 GUC 는 영원히 비어 있고 RLS 가 전 행을 차단한다.</b>
- * JobRunr 잡은 요청 컨텍스트도 앰비언트 트랜잭션도 없이 실행되므로 정확히 이 상황에 놓인다.
+ * <p>왜 이 테스트가 필요한가: RLS 격리 값은 트랜잭션-로컬 GUC 이고, 그 GUC 는 {@code TenantAwareTransactionManager.doBegin}
+ * 에서만 주입된다. {@code TenantContext.set()} 은 ThreadLocal 만 바꾼다 — <b>그 뒤에 트랜잭션이 열리지 않으면 GUC 는 영원히 비어 있고
+ * RLS 가 전 행을 차단한다.</b> JobRunr 잡은 요청 컨텍스트도 앰비언트 트랜잭션도 없이 실행되므로 정확히 이 상황에 놓인다.
  *
- * <p><b>이 클래스에는 클래스 레벨 {@code @Transactional} 이 없다.</b> 그것이 이 테스트의 전부다 —
- * 붙이는 순간 테스트 트랜잭션이 GUC 를 공급해서 운영에는 없는 조건을 만들고, 결함이 보이지 않게 된다.
- * 기존 {@code BackgroundTenantPropagationTest} 는 시그니처만 리플렉션으로 확인하므로 이 결함을
- * 구조적으로 잡지 못한다.
+ * <p><b>이 클래스에는 클래스 레벨 {@code @Transactional} 이 없다.</b> 그것이 이 테스트의 전부다 — 붙이는 순간 테스트 트랜잭션이 GUC 를
+ * 공급해서 운영에는 없는 조건을 만들고, 결함이 보이지 않게 된다. 기존 {@code BackgroundTenantPropagationTest} 는 시그니처만 리플렉션으로
+ * 확인하므로 이 결함을 구조적으로 잡지 못한다.
  */
 class BackgroundPathTransactionTest extends IntegrationTestBase {
 
@@ -127,10 +125,9 @@ class BackgroundPathTransactionTest extends IntegrationTestBase {
   /**
    * V99 로 RLS 가 걸린 {@code report_template} 이 배경 잡 형태에서 읽히는지.
    *
-   * <p>{@code ProactiveJobAsyncRunner.executeJob} 이 정확히 이 형태다: {@code @Async} 만 있고
-   * 트랜잭션이 없는 스레드에서 {@code reportTemplateRepository.findById(...)} 를 부른다. 리포지토리가
-   * 자기 트랜잭션을 열지 않으면 GUC 가 비어 0행이 되고, 예외 없이 {@code template = null} 이 되어
-   * 사용자의 sections·style 없는 리포트가 만들어진다(최종 리뷰 Critical-1).
+   * <p>{@code ProactiveJobAsyncRunner.executeJob} 이 정확히 이 형태다: {@code @Async} 만 있고 트랜잭션이 없는 스레드에서
+   * {@code reportTemplateRepository.findById(...)} 를 부른다. 리포지토리가 자기 트랜잭션을 열지 않으면 GUC 가 비어 0행이 되고,
+   * 예외 없이 {@code template = null} 이 되어 사용자의 sections·style 없는 리포트가 만들어진다(최종 리뷰 Critical-1).
    */
   @Test
   void reportTemplateIsReadableFromBackgroundThreadShape() {
@@ -149,9 +146,7 @@ class BackgroundPathTransactionTest extends IntegrationTestBase {
     // fail-closed 는 유지되어야 한다 — 리포지토리가 트랜잭션을 열더라도, 테넌트가 없으면
     // GUC 가 비어 정책이 전 행을 차단해야 한다.
     TenantContext.clear();
-    assertThat(datasetRepository.findById(datasetId))
-        .as("테넌트 없이 보이면 fail-open 이다")
-        .isEmpty();
+    assertThat(datasetRepository.findById(datasetId)).as("테넌트 없이 보이면 fail-open 이다").isEmpty();
   }
 
   // ── 전 리포지토리 트랜잭션 경계 가드 (P2-g: 손 등재 → 전수 발견형) ────────
@@ -214,43 +209,39 @@ class BackgroundPathTransactionTest extends IntegrationTestBase {
   /**
    * RLS 테이블을 만지지만 <b>모든 호출자가 트랜잭션 안에서 호출하는</b> 리포지토리. (C)-2
    *
-   * <p><b>불변식을 정확히 하라: "배경 경로에서 도달하지 않는다" 가 아니다.</b> 배경 경로 도달
-   * 가능성과 트랜잭션 유무는 별개의 축이고, 여기서 필요한 조건은 후자뿐이다 — GUC 는 트랜잭션
-   * 시작 시점에만 주입되므로, 배경 스레드라도 호출 체인 어딘가에서 트랜잭션이 열리면 안전하다.
-   * (이 목록은 P2-g 초안에서 {@code REQUEST_SCOPED_ONLY_REPOSITORIES} 라는 이름과 "모든 호출자가
-   * 요청 스코프" 라는 서술을 달고 있었는데, 아래 반례들 때문에 <b>그 서술은 이미 거짓이었다</b>.)
+   * <p><b>불변식을 정확히 하라: "배경 경로에서 도달하지 않는다" 가 아니다.</b> 배경 경로 도달 가능성과 트랜잭션 유무는 별개의 축이고, 여기서 필요한 조건은
+   * 후자뿐이다 — GUC 는 트랜잭션 시작 시점에만 주입되므로, 배경 스레드라도 호출 체인 어딘가에서 트랜잭션이 열리면 안전하다. (이 목록은 P2-g 초안에서 {@code
+   * REQUEST_SCOPED_ONLY_REPOSITORIES} 라는 이름과 "모든 호출자가 요청 스코프" 라는 서술을 달고 있었는데, 아래 반례들 때문에 <b>그 서술은
+   * 이미 거짓이었다</b>.)
    *
    * <p>실제로 배경 경로에서 도달하지만 다른 이유로 안전한 항목들 — 가장 먼저 의심할 셋이다:
    *
    * <ul>
    *   <li>{@code PermissionRepository} — {@code PipelineAsyncRunner.java:452,643} 의
-   *       {@code @Async("pipelineExecutor")} 스레드가 {@code PermissionChecker.hasPermission} 을
-   *       부른다. 안전한 이유는 요청 스코프여서가 아니라 {@code PermissionChecker.java:22} 에
-   *       {@code @Transactional(readOnly = true)} 가 있어 <b>트랜잭션이 열리기 때문</b>이다.
-   *   <li>{@code UserRepository} — {@code EmailChannel.java:121}(outbox {@code @Scheduled}),
-   *       {@code EmailDeliveryChannel.java:92}, {@code ProactiveJobService.java:263} 이 배경에서
-   *       부른다. 안전한 이유는 그 경로가 {@code findById} / {@code findAllPaginated} 뿐이고
-   *       <b>{@code "user"} 테이블이 RLS 대상이 아니기 때문</b>이다.
+   *       {@code @Async("pipelineExecutor")} 스레드가 {@code PermissionChecker.hasPermission} 을 부른다.
+   *       안전한 이유는 요청 스코프여서가 아니라 {@code PermissionChecker.java:22} 에 {@code @Transactional(readOnly
+   *       = true)} 가 있어 <b>트랜잭션이 열리기 때문</b>이다.
+   *   <li>{@code UserRepository} — {@code EmailChannel.java:121}(outbox {@code @Scheduled}), {@code
+   *       EmailDeliveryChannel.java:92}, {@code ProactiveJobService.java:263} 이 배경에서 부른다. 안전한 이유는 그
+   *       경로가 {@code findById} / {@code findAllPaginated} 뿐이고 <b>{@code "user"} 테이블이 RLS 대상이 아니기
+   *       때문</b>이다.
    *   <li>{@code RoleRepository} — 배경 호출자가 없다. 이 항목만 "요청 스코프 전용" 이 정확하다.
    * </ul>
    *
-   * <p>⚠ <b>그래도 이 목록은 "검토 끝난 안전 목록" 이 아니라 "우연히 안전한 목록" 이다.</b>
-   * 진짜 위험 지점은 {@code user_role} / {@code role} / {@code role_permission}(전부 RLS 대상)을
-   * 만지는 쓰기 메서드다 — {@code UserRepository} / {@code RoleRepository} 의 {@code addRole} /
-   * {@code removeRole} / {@code setRoles} / {@code countActiveAdmins} / {@code hasAdminRole} 이
-   * 오늘 동작하는 이유는 그 호출자가 {@code UserService} 와 {@code SignupTransaction} 둘뿐이고
-   * <b>둘 다 {@code @Transactional} 이라는 우연</b>일 뿐, 구조적 보장이 아니다.
+   * <p>⚠ <b>그래도 이 목록은 "검토 끝난 안전 목록" 이 아니라 "우연히 안전한 목록" 이다.</b> 진짜 위험 지점은 {@code user_role} / {@code
+   * role} / {@code role_permission}(전부 RLS 대상)을 만지는 쓰기 메서드다 — {@code UserRepository} / {@code
+   * RoleRepository} 의 {@code addRole} / {@code removeRole} / {@code setRoles} / {@code
+   * countActiveAdmins} / {@code hasAdminRole} 이 오늘 동작하는 이유는 그 호출자가 {@code UserService} 와 {@code
+   * SignupTransaction} 둘뿐이고 <b>둘 다 {@code @Transactional} 이라는 우연</b>일 뿐, 구조적 보장이 아니다.
    *
-   * <p>따라서 여기 있는 리포지토리에 <b>트랜잭션 없는 호출자</b>가 하나라도 생기면(배경 여부와
-   * 무관하다) 조회는 조용히 0행, 삽입은 깨진다. 그때는 목록에서 빼고 해당 리포지토리에 클래스 레벨
-   * {@code @Transactional} 을 붙이는 것이 먼저다.
+   * <p>따라서 여기 있는 리포지토리에 <b>트랜잭션 없는 호출자</b>가 하나라도 생기면(배경 여부와 무관하다) 조회는 조용히 0행, 삽입은 깨진다. 그때는 목록에서 빼고
+   * 해당 리포지토리에 클래스 레벨 {@code @Transactional} 을 붙이는 것이 먼저다.
    *
-   * <p><b>"삽입이 깨지는" SQLState 는 테이블에 따라 다르다 — {@code 23502} 하나로 적지 마라.</b>
-   * 정책이 그 INSERT 를 통과시키는 테이블에서만 {@code tenant_id} NOT NULL 위반({@code 23502})이
-   * 나고, 정책에 {@code WITH CHECK} 가 걸린 테이블에서는 그것이 NOT NULL 검사보다 <b>먼저</b> 걸려
-   * {@code 42501}(insufficient_privilege)이 난다({@code TenantAwareTransactionManager} 의 같은
-   * 문단 참조 — P2-g 에서 {@code slack_workspace} 로 실측). 위에 위험 지점으로 적은
-   * {@code role}/{@code role_permission}/{@code user_role} 은 <b>셋 다 {@code WITH CHECK} 대상</b>
+   * <p><b>"삽입이 깨지는" SQLState 는 테이블에 따라 다르다 — {@code 23502} 하나로 적지 마라.</b> 정책이 그 INSERT 를 통과시키는
+   * 테이블에서만 {@code tenant_id} NOT NULL 위반({@code 23502})이 나고, 정책에 {@code WITH CHECK} 가 걸린 테이블에서는 그것이
+   * NOT NULL 검사보다 <b>먼저</b> 걸려 {@code 42501}(insufficient_privilege)이 난다({@code
+   * TenantAwareTransactionManager} 의 같은 문단 참조 — P2-g 에서 {@code slack_workspace} 로 실측). 위에 위험 지점으로
+   * 적은 {@code role}/{@code role_permission}/{@code user_role} 은 <b>셋 다 {@code WITH CHECK} 대상</b>
    * (`pg_policies.with_check is not null`)이라, 그 경로에서 실제로 볼 것은 {@code 42501} 이다.
    */
   private static final Set<String> ALL_CALLERS_TRANSACTIONAL_REPOSITORIES =
@@ -272,9 +263,8 @@ class BackgroundPathTransactionTest extends IntegrationTestBase {
   /**
    * 설계상 RLS 를 우회하는 {@code SECURITY DEFINER} 해석기. (C)-3
    *
-   * <p>웹훅·Slack 진입점은 테넌트를 <b>아직 모르는 상태</b>에서 식별자로 테넌트를 역해석해야 한다.
-   * GUC 가 비어 있는 것이 정상이므로, 트랜잭션을 열어 GUC 를 주입하면 오히려 자기 자신을 가려
-   * 0행이 된다 — 여기에 {@code @Transactional} 을 붙이는 것은 수정이 아니라 회귀다.
+   * <p>웹훅·Slack 진입점은 테넌트를 <b>아직 모르는 상태</b>에서 식별자로 테넌트를 역해석해야 한다. GUC 가 비어 있는 것이 정상이므로, 트랜잭션을 열어 GUC
+   * 를 주입하면 오히려 자기 자신을 가려 0행이 된다 — 여기에 {@code @Transactional} 을 붙이는 것은 수정이 아니라 회귀다.
    */
   private static final Set<String> SECURITY_DEFINER_RESOLVERS =
       Set.of("SlackWorkspaceTenantResolver", "TriggerTenantResolver");
@@ -292,13 +282,12 @@ class BackgroundPathTransactionTest extends IntegrationTestBase {
   /**
    * 컨텍스트의 <b>모든</b> {@code @Repository} 빈이 클래스 레벨 @Transactional 을 유지하는지.
    *
-   * <p>허용목록에 사유와 함께 등재된 것만 예외다. 새 리포지토리가 애노테이션 없이 들어오면
-   * 자동으로 빨개진다 — 손 등재 시절의 구조적 구멍(옵트인)이 이 뒤집기로 막힌다.
+   * <p>허용목록에 사유와 함께 등재된 것만 예외다. 새 리포지토리가 애노테이션 없이 들어오면 자동으로 빨개진다 — 손 등재 시절의 구조적 구멍(옵트인)이 이 뒤집기로
+   * 막힌다.
    *
-   * <p>단언은 양방향이다: 순방향({@code isSubsetOf})은 "목록 밖 신규 0건", 역방향
-   * ({@code containsAll})은 "목록이 낡았으면 빨개짐" — 허용목록에 있는데 이미 @Transactional 이
-   * 붙었으면 목록에서 지우라는 뜻이다. 역방향이 곧 발견 로직 자체의 자기검증도 겸한다
-   * (발견이 0건이면 {@code isSubsetOf} 는 공허하게 참이 되지만 {@code containsAll} 은 실패한다).
+   * <p>단언은 양방향이다: 순방향({@code isSubsetOf})은 "목록 밖 신규 0건", 역방향 ({@code containsAll})은 "목록이 낡았으면 빨개짐"
+   * — 허용목록에 있는데 이미 @Transactional 이 붙었으면 목록에서 지우라는 뜻이다. 역방향이 곧 발견 로직 자체의 자기검증도 겸한다 (발견이 0건이면 {@code
+   * isSubsetOf} 는 공허하게 참이 되지만 {@code containsAll} 은 실패한다).
    */
   @Test
   void everyRepositoryBeanKeepsClassLevelTransactional() {
@@ -361,8 +350,8 @@ class BackgroundPathTransactionTest extends IntegrationTestBase {
   /**
    * 이 테스트 클래스 자체에 트랜잭션이 없어야 한다 — 잡 스레드의 형태를 재현하기 위함이다.
    *
-   * <p>클래스 레벨 @Transactional 을 붙이면 테스트 트랜잭션이 GUC 를 공급해 운영에 없는 조건이
-   * 만들어지고, 이 파일이 잡아야 할 결함이 영원히 보이지 않게 된다.
+   * <p>클래스 레벨 @Transactional 을 붙이면 테스트 트랜잭션이 GUC 를 공급해 운영에 없는 조건이 만들어지고, 이 파일이 잡아야 할 결함이 영원히 보이지 않게
+   * 된다.
    */
   @Test
   void testClassItselfRunsWithoutAmbientTransaction() {
@@ -370,7 +359,6 @@ class BackgroundPathTransactionTest extends IntegrationTestBase {
   }
 
   // ── 픽스처 ────────────────────────────────────────────────────────────
-
 
   private Long insertDataset() {
     long suffix = TenantRlsTestSupport.nextTenantId();

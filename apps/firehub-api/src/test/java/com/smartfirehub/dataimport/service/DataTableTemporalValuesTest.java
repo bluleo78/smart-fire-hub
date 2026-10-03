@@ -45,11 +45,11 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 데이터셋 데이터 탭 조회·단건 조회·중복 조회·CSV/Excel 내보내기(동기·비동기)가 범위 밖 DATE/TIMESTAMP 를 다른 날짜로
- * 바꾸지 않고 PG 텍스트 원문으로 돌려주는지 검증한다(#769).
+ * 데이터셋 데이터 탭 조회·단건 조회·중복 조회·CSV/Excel 내보내기(동기·비동기)가 범위 밖 DATE/TIMESTAMP 를 다른 날짜로 바꾸지 않고 PG 텍스트 원문으로
+ * 돌려주는지 검증한다(#769).
  *
- * <p>수정 전에는 {@code java.sql.Date}/{@code Timestamp} 를 거치며 10000년 → 0000, BC 소실, infinity → 8994-08-17,
- * -infinity 타임스탬프 → 부호 없는 거대 연도, 1582 전환 공백·DST 공백 이동이 오류 없이 일어났다.
+ * <p>수정 전에는 {@code java.sql.Date}/{@code Timestamp} 를 거치며 10000년 → 0000, BC 소실, infinity →
+ * 8994-08-17, -infinity 타임스탬프 → 부호 없는 거대 연도, 1582 전환 공백·DST 공백 이동이 오류 없이 일어났다.
  *
  * <p><b>회귀 가드</b>: 정상 값은 수정 전 경로({@code dsl.fetch} + {@code record.get})로 읽은 Java 값과 응답 JSON·내보내기
  * 문자열이 바이트 단위로 같아야 한다.
@@ -110,7 +110,8 @@ class DataTableTemporalValuesTest extends IntegrationTestBase {
                     List.of(
                         new DatasetColumnRequest("d", "D", "DATE", null, true, false, null),
                         new DatasetColumnRequest("ts", "TS", "TIMESTAMP", null, true, false, null),
-                        new DatasetColumnRequest("label", "Label", "TEXT", null, true, false, null)),
+                        new DatasetColumnRequest(
+                            "label", "Label", "TEXT", null, true, false, null)),
                     null),
                 userId)
             .id();
@@ -152,13 +153,15 @@ class DataTableTemporalValuesTest extends IntegrationTestBase {
     }
     abnormal.put("gap", Set.of("d"));
     abnormal.put("inf2", Set.of("d"));
-    // Asia/Seoul 은 1988-05-08 02:00~03:00 이 DST 공백 — java.sql.Timestamp 가 03:30 으로 민다. 그 밖 시간대는 정상 값
+    // Asia/Seoul 은 1988-05-08 02:00~03:00 이 DST 공백 — java.sql.Timestamp 가 03:30 으로 민다. 그 밖 시간대는 정상
+    // 값
     abnormal.put(
         "dst", "Asia/Seoul".equals(TimeZone.getDefault().getID()) ? Set.of("ts") : Set.of());
 
     // 수정 전 경로 — 데이터 탭이 쓰던 그대로(dsl.fetch + record.get)
     preFix = new HashMap<>();
-    for (var rec : dsl.fetch("SELECT id, \"d\", \"ts\", \"label\" FROM " + DataSchema.qualify(table))) {
+    for (var rec :
+        dsl.fetch("SELECT id, \"d\", \"ts\", \"label\" FROM " + DataSchema.qualify(table))) {
       Map<String, Object> m = new HashMap<>();
       for (int i = 0; i < rec.size(); i++) {
         m.put(rec.field(i).getName(), rec.get(i));
@@ -218,15 +221,19 @@ class DataTableTemporalValuesTest extends IntegrationTestBase {
       assertRowContract("queryData", row);
     }
     // 대표 값은 리터럴로도 고정한다(시간대 무관 값)
-    Map<String, Object> big = rows.stream().filter(r -> "big".equals(r.get("label"))).findFirst().orElseThrow();
+    Map<String, Object> big =
+        rows.stream().filter(r -> "big".equals(r.get("label"))).findFirst().orElseThrow();
     assertThat(big.get("d")).isEqualTo("10000-01-01");
-    Map<String, Object> inf = rows.stream().filter(r -> "inf".equals(r.get("label"))).findFirst().orElseThrow();
+    Map<String, Object> inf =
+        rows.stream().filter(r -> "inf".equals(r.get("label"))).findFirst().orElseThrow();
     assertThat(inf.get("d")).isEqualTo("infinity");
     assertThat(inf.get("ts")).isEqualTo("-infinity");
-    Map<String, Object> bc = rows.stream().filter(r -> "bc".equals(r.get("label"))).findFirst().orElseThrow();
+    Map<String, Object> bc =
+        rows.stream().filter(r -> "bc".equals(r.get("label"))).findFirst().orElseThrow();
     assertThat(bc.get("d")).isEqualTo("0044-03-15 BC");
     assertThat(bc.get("ts")).isEqualTo("0044-03-15 10:00:00 BC");
-    Map<String, Object> ok1 = rows.stream().filter(r -> "ok1".equals(r.get("label"))).findFirst().orElseThrow();
+    Map<String, Object> ok1 =
+        rows.stream().filter(r -> "ok1".equals(r.get("label"))).findFirst().orElseThrow();
     assertThat(objectMapper.writeValueAsString(ok1.get("d"))).isEqualTo("\"2024-01-01\"");
   }
 
@@ -259,7 +266,8 @@ class DataTableTemporalValuesTest extends IntegrationTestBase {
       int i = 0;
       for (String col : List.of("d", "ts")) {
         Object old = preFix.get(label).get(col);
-        v[i++] = isAbnormal(label, col) ? pgText.get(label).get(col) : old == null ? "" : old.toString();
+        v[i++] =
+            isAbnormal(label, col) ? pgText.get(label).get(col) : old == null ? "" : old.toString();
       }
       v[2] = label;
       out.add(v);
@@ -320,7 +328,9 @@ class DataTableTemporalValuesTest extends IntegrationTestBase {
           Cell cell = row.getCell(c);
           // 내보내기 Excel 은 모든 셀을 문자열 셀로 쓴다 — 정상·이상 값 모두 예전과 같은 셀 타입
           assertThat(cell.getCellType()).as("row %d col %d", r, c).isEqualTo(CellType.STRING);
-          assertThat(cell.getStringCellValue()).as("row %d col %d", r, c).isEqualTo(expected.get(r)[c]);
+          assertThat(cell.getStringCellValue())
+              .as("row %d col %d", r, c)
+              .isEqualTo(expected.get(r)[c]);
         }
       }
     }

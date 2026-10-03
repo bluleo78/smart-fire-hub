@@ -31,19 +31,16 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * {@link AiCredentialService} 통합 테스트. {@code ai.credential} 은 테넌트 전용 값(#706)이라
- * {@code IntegrationTestBase} 의 기본 테넌트(1번) 컨텍스트 아래 {@code tenant_settings} 에 실제
- * 행을 만든다.
+ * {@link AiCredentialService} 통합 테스트. {@code ai.credential} 은 테넌트 전용 값(#706)이라 {@code
+ * IntegrationTestBase} 의 기본 테넌트(1번) 컨텍스트 아래 {@code tenant_settings} 에 실제 행을 만든다.
  *
- * <p><b>플랫폼 행을 일부러 심는 테스트가 있다.</b> "플랫폼 행은 절대 읽지 않는다"는 부재를
- * 증명하려면, {@code system_settings} 에 <b>완전한</b> 자격증명을 심어 두고도 해석 결과가 미설정인지
- * 봐야 한다 — 플랫폼 행이 없는 상태에서 미설정을 확인하는 것은 폴백이 되살아나도 통과하는 공허한
+ * <p><b>플랫폼 행을 일부러 심는 테스트가 있다.</b> "플랫폼 행은 절대 읽지 않는다"는 부재를 증명하려면, {@code system_settings} 에
+ * <b>완전한</b> 자격증명을 심어 두고도 해석 결과가 미설정인지 봐야 한다 — 플랫폼 행이 없는 상태에서 미설정을 확인하는 것은 폴백이 되살아나도 통과하는 공허한
  * 테스트다({@link #플랫폼_행에_완전한_자격증명이_있어도_테넌트_행이_없으면_미설정이다}).
  *
- * <p><b>공유 테스트 DB 정리.</b> 기본 테넌트(1번)는 다른 테스트 클래스와도 공유되므로, 이 클래스가
- * 만든 {@code ai.credential} 행이 다음 테스트에 새면 안 된다. {@link #cleanup()} 이 테넌트 행은
- * 지우고 플랫폼 행은 시작 시점 값으로 복원한다(V126 이후 원래 없으므로 삭제) —
- * {@code SettingsTestSupport} 의 원복 semantics 를 그대로 따른다.
+ * <p><b>공유 테스트 DB 정리.</b> 기본 테넌트(1번)는 다른 테스트 클래스와도 공유되므로, 이 클래스가 만든 {@code ai.credential} 행이 다음
+ * 테스트에 새면 안 된다. {@link #cleanup()} 이 테넌트 행은 지우고 플랫폼 행은 시작 시점 값으로 복원한다(V126 이후 원래 없으므로 삭제) — {@code
+ * SettingsTestSupport} 의 원복 semantics 를 그대로 따른다.
  */
 class AiCredentialServiceTest extends IntegrationTestBase {
 
@@ -91,9 +88,8 @@ class AiCredentialServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * {@code system_settings} 에 <b>완전한</b> sdk 자격증명(암호화된 apiKey)을 직접 심는다 — 옛 플랫폼
-   * 평면 행을 흉내낸다(V126 이전 DB, 혹은 누군가 손으로 되살린 행). 이 행이 있어도 해석 결과가
-   * 바뀌지 않아야 한다. 복원은 {@link #cleanup()} 이 한다.
+   * {@code system_settings} 에 <b>완전한</b> sdk 자격증명(암호화된 apiKey)을 직접 심는다 — 옛 플랫폼 평면 행을 흉내낸다(V126 이전
+   * DB, 혹은 누군가 손으로 되살린 행). 이 행이 있어도 해석 결과가 바뀌지 않아야 한다. 복원은 {@link #cleanup()} 이 한다.
    */
   private void plantCompletePlatformRow(String plainApiKey) {
     String json =
@@ -206,7 +202,9 @@ class AiCredentialServiceTest extends IntegrationTestBase {
     // 같은 유형으로 다시 저장하되 reasoningEffort 는 요청에 담지 않는다(낡은 화면 흉내).
     service.save(
         upsert(
-            "opencode", Map.of("providerId", "openai", "baseURL", "https://api.openai.com/v1"), Map.of()),
+            "opencode",
+            Map.of("providerId", "openai", "baseURL", "https://api.openai.com/v1"),
+            Map.of()),
         USER);
 
     AiCredential.Opencode resolved = (AiCredential.Opencode) service.resolve();
@@ -243,12 +241,10 @@ class AiCredentialServiceTest extends IntegrationTestBase {
   // -------------------------------------------------------------------------
 
   /**
-   * 핵심 회귀 시나리오. 테넌트 관리자가 sdk 를 고르고 비밀 없이 저장하면(화면은 이를 막지
-   * 않는다), 병합된 문서는 secretFieldNames 가 비어 있다 — 그런데도 저장이 성공하면 화면은
-   * "설정됨"이라 말하면서 실제 classify/proactive 호출은 컨테이너 ambient ANTHROPIC_API_KEY 로
-   * 과금될 수 있다(사고 6b1c6383 의 한 경로, 보안 리뷰 Fix3). 예전엔 플랫폼 평면만 이 규칙에서
-   * 면제였는데, 그 평면이 사라져(#706) 이제 예외가 없다 — 오류 문구도 더 이상 "DELETE 로 플랫폼
-   * 값을 쓰라"고 안내하지 않는다.
+   * 핵심 회귀 시나리오. 테넌트 관리자가 sdk 를 고르고 비밀 없이 저장하면(화면은 이를 막지 않는다), 병합된 문서는 secretFieldNames 가 비어 있다 —
+   * 그런데도 저장이 성공하면 화면은 "설정됨"이라 말하면서 실제 classify/proactive 호출은 컨테이너 ambient ANTHROPIC_API_KEY 로 과금될 수
+   * 있다(사고 6b1c6383 의 한 경로, 보안 리뷰 Fix3). 예전엔 플랫폼 평면만 이 규칙에서 면제였는데, 그 평면이 사라져(#706) 이제 예외가 없다 — 오류
+   * 문구도 더 이상 "DELETE 로 플랫폼 값을 쓰라"고 안내하지 않는다.
    */
   @Test
   void save_sdk는_비밀이_없으면_거부한다() {
@@ -273,14 +269,11 @@ class AiCredentialServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * advisor 지적 — "비밀이 하나라도 있으면 통과"로는 부족하다. {@code cli} 는
-   * {@link AiCredentialService#toCredential} 이 {@code oauthToken} 만 읽는데(그 스위치 참고),
-   * 여기서 {@code apiKey}(cli 가 안 쓰는 이름)만 채워 저장하면 병합된 문서의
-   * {@code secretNames()} 는 비어 있지 않으니(이름만 다를 뿐 비밀은 "있다") 이름 대조 없는
-   * 구현은 통과시킨다 — 그런데 {@code resolve()} 는 여전히 {@code Cli(oauthToken="")} 를 돌려줘
-   * ambient 키로 새는 원래 사고가 필드 이름만 바꿔 재발한다. 화면은 유형별 필드만 보내
-   * (CREDENTIAL_FIELDS) 이 모양을 만들 수 없지만, 이 서비스는 화면을 거치지 않는 API 호출도
-   * 받으므로 화면의 필터링에 기대면 안 된다.
+   * advisor 지적 — "비밀이 하나라도 있으면 통과"로는 부족하다. {@code cli} 는 {@link AiCredentialService#toCredential} 이
+   * {@code oauthToken} 만 읽는데(그 스위치 참고), 여기서 {@code apiKey}(cli 가 안 쓰는 이름)만 채워 저장하면 병합된 문서의 {@code
+   * secretNames()} 는 비어 있지 않으니(이름만 다를 뿐 비밀은 "있다") 이름 대조 없는 구현은 통과시킨다 — 그런데 {@code resolve()} 는 여전히
+   * {@code Cli(oauthToken="")} 를 돌려줘 ambient 키로 새는 원래 사고가 필드 이름만 바꿔 재발한다. 화면은 유형별 필드만 보내
+   * (CREDENTIAL_FIELDS) 이 모양을 만들 수 없지만, 이 서비스는 화면을 거치지 않는 API 호출도 받으므로 화면의 필터링에 기대면 안 된다.
    */
   @Test
   void save_cli는_그_유형이_안_쓰는_이름의_비밀만_있으면_거부한다() {
@@ -291,10 +284,9 @@ class AiCredentialServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * 이미 저장된 비밀이 있는 상태에서 secret 을 통째로 생략하는(=유지) 저장은 막지 않는다 —
-   * Ruling #16 이 열어 둔 자리("병합된 문서를 봐야, baseURL 만 고치고 저장된 키는 그대로 두는
-   * 정상 저장이 스푸리어스 400 을 안 받는다")를 이 가드에서도 지킨다. 요청만 보고 판정했다면
-   * (예: 잘못된 구현이 {@code req.secret()} 만 검사) 이 저장도 거부됐을 것이다.
+   * 이미 저장된 비밀이 있는 상태에서 secret 을 통째로 생략하는(=유지) 저장은 막지 않는다 — Ruling #16 이 열어 둔 자리("병합된 문서를 봐야,
+   * baseURL 만 고치고 저장된 키는 그대로 두는 정상 저장이 스푸리어스 400 을 안 받는다")를 이 가드에서도 지킨다. 요청만 보고 판정했다면 (예: 잘못된 구현이
+   * {@code req.secret()} 만 검사) 이 저장도 거부됐을 것이다.
    */
   @Test
   void save_저장된_비밀을_생략해도_통과한다() {
@@ -307,13 +299,16 @@ class AiCredentialServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * opencode 는 Fix3 대상이 아니다 — baseURL 로만 나가는 별개 공급자라 비밀이 없으면 그 호출이
-   * 그냥 실패할 뿐, ambient(Anthropic) 키로 몰래 넘어가는 경로가 없다.
+   * opencode 는 Fix3 대상이 아니다 — baseURL 로만 나가는 별개 공급자라 비밀이 없으면 그 호출이 그냥 실패할 뿐, ambient(Anthropic) 키로
+   * 몰래 넘어가는 경로가 없다.
    */
   @Test
   void save_opencode는_비밀이_없어도_허용된다() {
     service.save(
-        upsert("opencode", Map.of("providerId", "openai", "baseURL", "https://api.openai.com/v1"), Map.of()),
+        upsert(
+            "opencode",
+            Map.of("providerId", "openai", "baseURL", "https://api.openai.com/v1"),
+            Map.of()),
         USER);
 
     assertThat(service.read().agentType()).isEqualTo("opencode");
@@ -323,13 +318,14 @@ class AiCredentialServiceTest extends IntegrationTestBase {
   // 재검토 N1 — 필수 비밀 검사는 손상된 암호문에서 터지지 않는다(관용 복호화)
   // -------------------------------------------------------------------------
 
-  /** iv 자리가 base64 두 토막("iv:ciphertext")이 아닌 값 — EncryptionService 가 IllegalArgumentException 을 던진다. */
+  /**
+   * iv 자리가 base64 두 토막("iv:ciphertext")이 아닌 값 — EncryptionService 가 IllegalArgumentException 을 던진다.
+   */
   private static final String CIPHER_FORMAT_BROKEN = "not-a-cipher";
 
   /**
-   * 형식은 맞지만(12바이트 0 IV : 32바이트 0 본문) GCM 태그 검증이 실패하는 값 — 암호화 키
-   * 로테이션 뒤 남은 옛 암호문의 전형적인 모양이다. EncryptionService 는 여기서
-   * {@code CryptoException}(RuntimeException) 을 던진다.
+   * 형식은 맞지만(12바이트 0 IV : 32바이트 0 본문) GCM 태그 검증이 실패하는 값 — 암호화 키 로테이션 뒤 남은 옛 암호문의 전형적인 모양이다.
+   * EncryptionService 는 여기서 {@code CryptoException}(RuntimeException) 을 던진다.
    */
   private static final String CIPHER_GCM_BROKEN =
       "AAAAAAAAAAAAAAAA:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
@@ -346,11 +342,10 @@ class AiCredentialServiceTest extends IntegrationTestBase {
    * 재검토 N1 — 형식이 깨진 암호문이 남아 있어도 PUT 은 <b>한국어 거부 메시지</b>로 끝나야 한다.
    *
    * <p>수정 전에는 {@code requireUsableSecret}(당시 이름 requireSecretForTenantOwnedCredential) 이 던지는 복호화
-   * ({@code decryptOrEmpty})로 기존 암호문을 전부 읽어, 손상된 값 하나가
-   * {@code IllegalArgumentException("Invalid encrypted format — expected 'iv:ciphertext'")} 을
-   * 그대로 응답에 실어 보냈다(400 이지만 내부 암호화 형식이 노출된다). 예외 <b>타입</b>만 보면
-   * 수정 전후가 같으므로(둘 다 IllegalArgumentException), 이 테스트는 반드시 <b>메시지</b>로
-   * 판정한다 — 그래야 관용 복호화를 되돌리는 뮤턴트가 RED 가 된다.
+   * ({@code decryptOrEmpty})로 기존 암호문을 전부 읽어, 손상된 값 하나가 {@code IllegalArgumentException("Invalid
+   * encrypted format — expected 'iv:ciphertext'")} 을 그대로 응답에 실어 보냈다(400 이지만 내부 암호화 형식이 노출된다). 예외
+   * <b>타입</b>만 보면 수정 전후가 같으므로(둘 다 IllegalArgumentException), 이 테스트는 반드시 <b>메시지</b>로 판정한다 — 그래야 관용
+   * 복호화를 되돌리는 뮤턴트가 RED 가 된다.
    */
   @Test
   void save_테넌트_손상된_암호문이_있어도_내부_예외_문구_대신_한국어로_거부한다() {
@@ -364,9 +359,8 @@ class AiCredentialServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * 재검토 N1 — GCM 태그 검증 실패(키 로테이션의 전형)는 수정 전이면 {@code CryptoException} →
-   * <b>500</b> 이었다. 관용 복호화 뒤에는 "쓸 수 없는 비밀 = 없는 비밀"로 판정돼 같은 한국어
-   * 400 으로 끝난다.
+   * 재검토 N1 — GCM 태그 검증 실패(키 로테이션의 전형)는 수정 전이면 {@code CryptoException} → <b>500</b> 이었다. 관용 복호화 뒤에는
+   * "쓸 수 없는 비밀 = 없는 비밀"로 판정돼 같은 한국어 400 으로 끝난다.
    */
   @Test
   void save_테넌트_GCM_복호화_실패_암호문도_500이_아니라_한국어_거부로_끝난다() {
@@ -379,11 +373,11 @@ class AiCredentialServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * 재검토 N1 의 반대편 경계 — 손상된 암호문이 남아 있어도 <b>이번에 보낸 비밀이 멀쩡하면 저장은
-   * 성공</b>해야 한다. 이게 Fix7 이 열어 둔 복구 경로다(관리자가 올바른 새 값으로 덮어쓴다).
+   * 재검토 N1 의 반대편 경계 — 손상된 암호문이 남아 있어도 <b>이번에 보낸 비밀이 멀쩡하면 저장은 성공</b>해야 한다. 이게 Fix7 이 열어 둔 복구
+   * 경로다(관리자가 올바른 새 값으로 덮어쓴다).
    *
-   * <p>{@code resolve()} 가 아니라 {@code read()} 로 확인한다 — 손상된 {@code oauthToken} 은 저장
-   * 뒤에도 문서에 남아 있어 {@code resolve()}(fail-closed) 는 여전히 던지는 게 <b>맞다</b>.
+   * <p>{@code resolve()} 가 아니라 {@code read()} 로 확인한다 — 손상된 {@code oauthToken} 은 저장 뒤에도 문서에 남아 있어
+   * {@code resolve()}(fail-closed) 는 여전히 던지는 게 <b>맞다</b>.
    */
   @Test
   void save_테넌트_손상된_암호문이_있어도_새_비밀이_멀쩡하면_저장된다() {
@@ -399,9 +393,8 @@ class AiCredentialServiceTest extends IntegrationTestBase {
   // -------------------------------------------------------------------------
 
   /**
-   * 재검토 N7 — 손상된 JSON 행에서 {@code AiCredentialDocument::parse} 를 직접 부르면
-   * {@code POST /ai-credential/probe}(apiKey 생략) 가 500 이 됐다. {@code tryParse} 로 감싸
-   * "테넌트 행 없음"과 같게 취급한다.
+   * 재검토 N7 — 손상된 JSON 행에서 {@code AiCredentialDocument::parse} 를 직접 부르면 {@code POST
+   * /ai-credential/probe}(apiKey 생략) 가 500 이 됐다. {@code tryParse} 로 감싸 "테넌트 행 없음"과 같게 취급한다.
    */
   @Test
   void tenantOpencodeCredential_은_행이_손상돼도_던지지_않고_빈_값이다() {
@@ -411,9 +404,8 @@ class AiCredentialServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * 재검토 N7 — JSON 은 멀쩡하지만 저장된 apiKey 암호문이 손상된 경우. 복호화에서 던지면 역시
-   * 500 이 된다 — 관용 복호화로 빈 키를 내주면 프로브가 "재사용할 저장된 키가 없다"는 한국어
-   * 400 으로 끝난다.
+   * 재검토 N7 — JSON 은 멀쩡하지만 저장된 apiKey 암호문이 손상된 경우. 복호화에서 던지면 역시 500 이 된다 — 관용 복호화로 빈 키를 내주면 프로브가
+   * "재사용할 저장된 키가 없다"는 한국어 400 으로 끝난다.
    */
   @Test
   void tenantOpencodeCredential_은_암호문이_손상돼도_던지지_않고_빈_키를_돌려준다() {
@@ -435,9 +427,8 @@ class AiCredentialServiceTest extends IntegrationTestBase {
   // -------------------------------------------------------------------------
 
   /**
-   * 손으로 고친 행이 JSON 문법 자체를 깨뜨린 경우(agentType 이 이상한 정도가 아니라 파싱 자체가
-   * 실패) — read() 는 예외 없이 빈 폼으로 보여준다. configured 는 그래도 정확히 true 를 보고한다
-   * (무엇인가 저장돼 있다는 사실은 숨기지 않는다 — 관리자는 PUT 으로 덮어써 고친다).
+   * 손으로 고친 행이 JSON 문법 자체를 깨뜨린 경우(agentType 이 이상한 정도가 아니라 파싱 자체가 실패) — read() 는 예외 없이 빈 폼으로 보여준다.
+   * configured 는 그래도 정확히 true 를 보고한다 (무엇인가 저장돼 있다는 사실은 숨기지 않는다 — 관리자는 PUT 으로 덮어써 고친다).
    */
   @Test
   void read_는_JSON_파싱_자체가_실패해도_예외_없이_미설정으로_보여준다() {
@@ -451,9 +442,8 @@ class AiCredentialServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * 손상된 테넌트 행은 DELETE 가 없어(#706) PUT 이 유일한 복구 통로다 — save() 가 파싱 실패를
-   * "행이 없다"로 흡수하지 않으면 이 PUT 자체가 손상된 기존 값을 파싱하려다 던져서 관리자가
-   * API 로는 영영 복구할 수 없다.
+   * 손상된 테넌트 행은 DELETE 가 없어(#706) PUT 이 유일한 복구 통로다 — save() 가 파싱 실패를 "행이 없다"로 흡수하지 않으면 이 PUT 자체가 손상된
+   * 기존 값을 파싱하려다 던져서 관리자가 API 로는 영영 복구할 수 없다.
    */
   @Test
   void save_는_기존_테넌트_행이_손상돼도_새_값으로_덮어쓴다() {
@@ -527,14 +517,13 @@ class AiCredentialServiceTest extends IntegrationTestBase {
   // -------------------------------------------------------------------------
 
   /**
-   * 핵심 부재 증명. 예전 {@code clearTenantOverride_후에는_플랫폼_값이_해석된다} 를 뒤집은 것이다 —
-   * {@code system_settings} 에 <b>완전한</b> 자격증명이 있어도 테넌트 행이 없으면 해석은 미설정
-   * (빈 sdk, {@code isComplete()==false})이고 화면은 {@code configured=false} 다.
+   * 핵심 부재 증명. 예전 {@code clearTenantOverride_후에는_플랫폼_값이_해석된다} 를 뒤집은 것이다 — {@code system_settings} 에
+   * <b>완전한</b> 자격증명이 있어도 테넌트 행이 없으면 해석은 미설정 (빈 sdk, {@code isComplete()==false})이고 화면은 {@code
+   * configured=false} 다.
    *
-   * <p>플랫폼 행을 실제로 심는 것이 핵심이다 — 행이 없는 상태에서 미설정을 확인하면 폴백
-   * ({@code readTenantRaw().or(readPlatformRaw)})이 되살아나도 결과가 같아 공허하다. 뮤테이션
-   * 확인: 폴백을 되살리면 {@code resolve()} 가 {@code Sdk(apiKey="sk-platform-must-not-leak")} 를
-   * 돌려줘 두 단언이 모두 RED 가 된다.
+   * <p>플랫폼 행을 실제로 심는 것이 핵심이다 — 행이 없는 상태에서 미설정을 확인하면 폴백 ({@code
+   * readTenantRaw().or(readPlatformRaw)})이 되살아나도 결과가 같아 공허하다. 뮤테이션 확인: 폴백을 되살리면 {@code resolve()} 가
+   * {@code Sdk(apiKey="sk-platform-must-not-leak")} 를 돌려줘 두 단언이 모두 RED 가 된다.
    */
   @Test
   void 플랫폼_행에_완전한_자격증명이_있어도_테넌트_행이_없으면_미설정이다() {
@@ -553,10 +542,8 @@ class AiCredentialServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * 테넌트 컨텍스트가 없으면(배경 경로가 컨텍스트를 세우지 않은 경우) "행 없음"과 똑같이 미설정이다
-   * — 예전 계약("컨텍스트 없음 = 플랫폼 값")은 사라졌다. 플랫폼 행을 심어 두는 이유는 위 테스트와
-   * 같고, 기본 테넌트에 테넌트 행까지 심어 두어 "컨텍스트가 없는데 아무 테넌트 행이나 읽는" 변종도
-   * 함께 막는다.
+   * 테넌트 컨텍스트가 없으면(배경 경로가 컨텍스트를 세우지 않은 경우) "행 없음"과 똑같이 미설정이다 — 예전 계약("컨텍스트 없음 = 플랫폼 값")은 사라졌다. 플랫폼
+   * 행을 심어 두는 이유는 위 테스트와 같고, 기본 테넌트에 테넌트 행까지 심어 두어 "컨텍스트가 없는데 아무 테넌트 행이나 읽는" 변종도 함께 막는다.
    */
   @Test
   void 테넌트_컨텍스트가_없으면_플랫폼_행이_있어도_미설정이다() {
@@ -575,11 +562,10 @@ class AiCredentialServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * 프로액티브 등 배경 작업은 {@link TenantScopedRunner} 가 테넌트마다 컨텍스트를 세운 뒤
-   * {@code resolve()} 를 부른다(ProactiveJobAsyncRunner 주석 참고). 두 테넌트가 <b>서로 다른</b>
-   * 자격증명을 가진 상태에서, 같은 러너로 순회하면 각자 자기 행만 해석돼야 한다 — 한쪽 행만 있는
-   * 상태에서는 "스코프됨"과 "아무 행이나 읽음"을 구분할 수 없으므로 두 행을 동시에 둔다. 완전한
-   * 플랫폼 행도 심어 두어, 어느 쪽도 그 값을 받지 않는지 함께 본다.
+   * 프로액티브 등 배경 작업은 {@link TenantScopedRunner} 가 테넌트마다 컨텍스트를 세운 뒤 {@code resolve()} 를
+   * 부른다(ProactiveJobAsyncRunner 주석 참고). 두 테넌트가 <b>서로 다른</b> 자격증명을 가진 상태에서, 같은 러너로 순회하면 각자 자기 행만
+   * 해석돼야 한다 — 한쪽 행만 있는 상태에서는 "스코프됨"과 "아무 행이나 읽음"을 구분할 수 없으므로 두 행을 동시에 둔다. 완전한 플랫폼 행도 심어 두어, 어느 쪽도 그
+   * 값을 받지 않는지 함께 본다.
    */
   @Test
   void 배경_작업은_테넌트마다_자기_자격증명으로_해석된다() {
@@ -593,7 +579,8 @@ class AiCredentialServiceTest extends IntegrationTestBase {
         tenantA,
         () -> service.save(upsert("cli-api", Map.of(), Map.of("apiKey", "sk-tenant-A")), USER));
     TenantContext.runScoped(
-        tenantB, () -> service.save(upsert("cli", Map.of(), Map.of("oauthToken", "oauth-B")), USER));
+        tenantB,
+        () -> service.save(upsert("cli", Map.of(), Map.of("oauthToken", "oauth-B")), USER));
 
     Map<Long, AiCredential> resolvedByTenant = new HashMap<>();
     TenantContext.clear(); // 배경 스레드처럼 바깥 컨텍스트 없이 시작한다
@@ -619,7 +606,8 @@ class AiCredentialServiceTest extends IntegrationTestBase {
 
   @Test
   void saveClassify_는_분류_슬롯에만_쓰고_채팅_슬롯을_건드리지_않는다() {
-    service.saveClassify(upsert("sdk", Map.of(), Map.of("apiKey", "sk-classify")), "claude-haiku-4-5", USER);
+    service.saveClassify(
+        upsert("sdk", Map.of(), Map.of("apiKey", "sk-classify")), "claude-haiku-4-5", USER);
 
     AiClassifyCredentialView view = service.readClassify();
     assertThat(view.configured()).isTrue();
@@ -634,7 +622,8 @@ class AiCredentialServiceTest extends IntegrationTestBase {
   @Test
   void 채팅_저장과_분류_해제는_서로의_행을_건드리지_않는다() {
     service.save(upsert("cli-api", Map.of(), Map.of("apiKey", "sk-chat")), USER);
-    service.saveClassify(upsert("sdk", Map.of(), Map.of("oauthToken", "oat-classify")), "claude-haiku-4-5", USER);
+    service.saveClassify(
+        upsert("sdk", Map.of(), Map.of("oauthToken", "oat-classify")), "claude-haiku-4-5", USER);
 
     // 채팅 유형을 바꿔도 분류 묶음은 그대로다.
     service.save(upsert("cli", Map.of(), Map.of("oauthToken", "oat-chat")), USER);
@@ -652,7 +641,9 @@ class AiCredentialServiceTest extends IntegrationTestBase {
   void saveClassify_모델이_공백이면_400_문구로_거부하고_아무_행도_쓰지_않는다() {
     for (String blank : new String[] {null, "", "   "}) {
       assertThatThrownBy(
-              () -> service.saveClassify(upsert("sdk", Map.of(), Map.of("apiKey", "sk")), blank, USER))
+              () ->
+                  service.saveClassify(
+                      upsert("sdk", Map.of(), Map.of("apiKey", "sk")), blank, USER))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessage(AiCredentialService.MSG_CLASSIFY_MODEL_REQUIRED);
     }
@@ -663,7 +654,8 @@ class AiCredentialServiceTest extends IntegrationTestBase {
   @Test
   void saveClassify_자격증명_검증이_실패하면_모델_행도_쓰지_않는다() {
     // sdk 인데 비밀이 없다 → requireUsableSecret 이 거부한다. 모델만 남는 반쪽 묶음이 생기면 안 된다.
-    assertThatThrownBy(() -> service.saveClassify(upsert("sdk", Map.of(), Map.of()), "claude-haiku-4-5", USER))
+    assertThatThrownBy(
+            () -> service.saveClassify(upsert("sdk", Map.of(), Map.of()), "claude-haiku-4-5", USER))
         .isInstanceOf(IllegalArgumentException.class);
     assertThat(rawTenant(AiCredentialSlot.CLASSIFY.key())).isEmpty();
     assertThat(rawTenant(AiCredentialSlot.CLASSIFY_MODEL_KEY)).isEmpty();
@@ -697,7 +689,8 @@ class AiCredentialServiceTest extends IntegrationTestBase {
   void resolveClassify_미설정이면_비어_있고_설정되면_묶음을_준다() {
     assertThat(service.resolveClassify()).isEmpty();
 
-    service.saveClassify(upsert("cli-api", Map.of(), Map.of("apiKey", "sk-c")), "claude-haiku-4-5", USER);
+    service.saveClassify(
+        upsert("cli-api", Map.of(), Map.of("apiKey", "sk-c")), "claude-haiku-4-5", USER);
 
     AiCredentialService.ClassifyBinding binding = service.resolveClassify().orElseThrow();
     assertThat(binding.credential()).isEqualTo(new AiCredential.CliApi("sk-c"));
@@ -728,19 +721,26 @@ class AiCredentialServiceTest extends IntegrationTestBase {
                 .getMethod("saveClassify", AiCredentialUpsert.class, String.class, Long.class)
                 .isAnnotationPresent(Transactional.class))
         .isTrue();
-    assertThat(AiCredentialService.class.getMethod("clearClassify").isAnnotationPresent(Transactional.class))
+    assertThat(
+            AiCredentialService.class
+                .getMethod("clearClassify")
+                .isAnnotationPresent(Transactional.class))
         .isTrue();
   }
 
   /**
-   * {@link AiCredentialService.ClassifyBinding} 은 기본 record toString 이 아니다(#707) —
-   * 기본값을 쓰면 자격증명 record 의 비밀 필드가 그대로 로그에 찍힌다.
+   * {@link AiCredentialService.ClassifyBinding} 은 기본 record toString 이 아니다(#707) — 기본값을 쓰면 자격증명
+   * record 의 비밀 필드가 그대로 로그에 찍힌다.
    */
   @Test
   void ClassifyBinding_toString_은_비밀을_담지_않는다() {
     AiCredentialService.ClassifyBinding binding =
-        new AiCredentialService.ClassifyBinding(new AiCredential.CliApi("sk-SECRET"), "claude-haiku-4-5");
+        new AiCredentialService.ClassifyBinding(
+            new AiCredential.CliApi("sk-SECRET"), "claude-haiku-4-5");
 
-    assertThat(binding.toString()).doesNotContain("SECRET").contains("cli-api").contains("claude-haiku-4-5");
+    assertThat(binding.toString())
+        .doesNotContain("SECRET")
+        .contains("cli-api")
+        .contains("claude-haiku-4-5");
   }
 }

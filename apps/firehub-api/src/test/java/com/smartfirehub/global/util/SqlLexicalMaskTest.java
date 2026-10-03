@@ -18,9 +18,8 @@ import org.junit.jupiter.params.provider.MethodSource;
  * {@link SqlLexicalMask} 가 공용 픽스처({@code fixtures/sql-lexical-vectors.json})와 같은 결과를 내는지 본다(#746).
  *
  * <p>executor 의 {@code tests/test_sql_lexical_vectors.py} 가 같은 파일로 Python {@code _mask_sql}/{@code
- * _normalize_sql} 을 검증한다 — 두 구현의 토큰 규칙이 갈리면 어느 한쪽 테스트가 깨진다. DB·스프링이 필요
- * 없는 순수 단위 테스트다. 실제 PostgreSQL 이 정규화된 SQL 을 받아들이는지는
- * {@code PipelineIncrementalIntegrationTest} 가 러너 관통으로 본다.
+ * _normalize_sql} 을 검증한다 — 두 구현의 토큰 규칙이 갈리면 어느 한쪽 테스트가 깨진다. DB·스프링이 필요 없는 순수 단위 테스트다. 실제 PostgreSQL
+ * 이 정규화된 SQL 을 받아들이는지는 {@code PipelineIncrementalIntegrationTest} 가 러너 관통으로 본다.
  */
 class SqlLexicalMaskTest {
 
@@ -37,7 +36,9 @@ class SqlLexicalMaskTest {
 
   static Stream<Arguments> maskVectors() {
     List<Arguments> rows = new ArrayList<>();
-    FIXTURE.get("mask").forEach(v -> rows.add(Arguments.of(v.get("sql").asText(), v.get("mask").asText())));
+    FIXTURE
+        .get("mask")
+        .forEach(v -> rows.add(Arguments.of(v.get("sql").asText(), v.get("mask").asText())));
     return rows.stream();
   }
 

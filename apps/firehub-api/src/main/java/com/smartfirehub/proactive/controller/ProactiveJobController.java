@@ -112,10 +112,9 @@ public class ProactiveJobController {
   }
 
   /**
-   * 실행 이력 목록 — 리포트 본문(result.summary/sections 등)은 포함하지 않는 경량 뷰를 반환한다.
-   * 실행 건수가 많거나 리포트가 길면 본문 포함 시 응답이 수만 자에 달해 MCP 도구 결과 토큰 한도를 초과하고,
-   * 이를 우회하려는 극단적 offset 순차 개별 조회(N+1)를 유발했다 (#604). 리포트 본문이 필요하면
-   * {@link #getExecution}(단건 상세)을 사용해야 한다.
+   * 실행 이력 목록 — 리포트 본문(result.summary/sections 등)은 포함하지 않는 경량 뷰를 반환한다. 실행 건수가 많거나 리포트가 길면 본문 포함 시
+   * 응답이 수만 자에 달해 MCP 도구 결과 토큰 한도를 초과하고, 이를 우회하려는 극단적 offset 순차 개별 조회(N+1)를 유발했다 (#604). 리포트 본문이
+   * 필요하면 {@link #getExecution}(단건 상세)을 사용해야 한다.
    */
   @GetMapping("/{id}/executions")
   @RequirePermission("proactive:read")
@@ -231,9 +230,9 @@ public class ProactiveJobController {
   /**
    * 알림 수신자 검색/조회.
    *
-   * <p>{@code userIds}가 주어지면 검색어와 무관하게 해당 ID들의 사용자 정보를 그대로 반환한다
-   * (#555) — UserCombobox가 이미 저장된 {@code selectedUserIds}를 마운트 시점에 하이드레이션할 때
-   * 사용. {@code userIds}가 없으면 기존처럼 {@code search} 기반 검색 결과를 반환한다.
+   * <p>{@code userIds}가 주어지면 검색어와 무관하게 해당 ID들의 사용자 정보를 그대로 반환한다 (#555) — UserCombobox가 이미 저장된
+   * {@code selectedUserIds}를 마운트 시점에 하이드레이션할 때 사용. {@code userIds}가 없으면 기존처럼 {@code search} 기반 검색
+   * 결과를 반환한다.
    */
   @GetMapping("/recipients")
   @RequirePermission("proactive:read")

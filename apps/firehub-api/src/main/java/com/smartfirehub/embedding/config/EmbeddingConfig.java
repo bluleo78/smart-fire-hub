@@ -11,7 +11,16 @@ public record EmbeddingConfig(
   /** 기본 record toString 은 apiKey 평문을 찍는다 — 로그 유출을 막는다. */
   @Override
   public String toString() {
-    return "EmbeddingConfig[provider=" + provider + ", model=" + model + ", baseUrl=" + baseUrl
-        + ", dimension=" + dimension + ", apiKey=" + (apiKey == null || apiKey.isBlank() ? "" : "****") + "]";
+    return "EmbeddingConfig[provider="
+        + provider
+        + ", model="
+        + model
+        + ", baseUrl="
+        + baseUrl
+        + ", dimension="
+        + dimension
+        + ", apiKey="
+        + (apiKey == null || apiKey.isBlank() ? "" : "****")
+        + "]";
   }
 }

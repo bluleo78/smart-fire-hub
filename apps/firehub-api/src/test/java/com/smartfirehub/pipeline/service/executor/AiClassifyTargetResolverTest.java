@@ -15,9 +15,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * {@link AiClassifyTargetResolver} 단위 테스트(#707). 분류 전용이면 그 묶음을, 아니면 {@code UseChat}
- * 표식을 준다 — 미설정 경로는 채팅 자격증명을 <b>읽지 않는다</b>(현행과 바이트 동일, 캐시 전량 히트 실행이
- * 깨진 채팅 자격증명 때문에 실패하면 안 된다).
+ * {@link AiClassifyTargetResolver} 단위 테스트(#707). 분류 전용이면 그 묶음을, 아니면 {@code UseChat} 표식을 준다 — 미설정
+ * 경로는 채팅 자격증명을 <b>읽지 않는다</b>(현행과 바이트 동일, 캐시 전량 히트 실행이 깨진 채팅 자격증명 때문에 실패하면 안 된다).
  */
 class AiClassifyTargetResolverTest {
 
@@ -74,7 +73,8 @@ class AiClassifyTargetResolverTest {
         .contains("opencode|openai|https%3A%2F%2Fgw.example%2Fv1|high|openai%2Fgpt-4o-mini");
 
     AiClassifyTarget sdk =
-        new AiClassifyTarget.Dedicated(new AiCredential.Sdk("oat-SECRET", "sk-SECRET"), "claude-haiku-4-5");
+        new AiClassifyTarget.Dedicated(
+            new AiCredential.Sdk("oat-SECRET", "sk-SECRET"), "claude-haiku-4-5");
     assertThat(sdk.cacheDiscriminator()).contains("sdk|||claude-haiku-4-5");
 
     for (AiClassifyTarget t : new AiClassifyTarget[] {opencode, sdk}) {

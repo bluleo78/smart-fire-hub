@@ -17,8 +17,8 @@ import org.springframework.stereotype.Service;
 /**
  * 설정 화면의 세 동작(연결 테스트·영향도·저장)을 묶는다.
  *
- * <p><b>트랜잭션을 열지 않는다.</b> probe 는 외부 HTTP 라 DB 커넥션을 잡은 채 기다리면 안 된다. 저장은
- * 저장소 자체 트랜잭션이 GUC 를 세운다. 서버 저장은 클라이언트가 먼저 잰 차원을 믿지 않고 다시 probe 한다.
+ * <p><b>트랜잭션을 열지 않는다.</b> probe 는 외부 HTTP 라 DB 커넥션을 잡은 채 기다리면 안 된다. 저장은 저장소 자체 트랜잭션이 GUC 를 세운다. 서버
+ * 저장은 클라이언트가 먼저 잰 차원을 믿지 않고 다시 probe 한다.
  */
 @Service
 @RequiredArgsConstructor

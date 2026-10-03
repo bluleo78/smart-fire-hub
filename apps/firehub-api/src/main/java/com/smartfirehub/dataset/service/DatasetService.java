@@ -110,8 +110,7 @@ public class DatasetService {
 
     // DOCUMENT/FILE 데이터셋은 컬럼 정의가 없어 columns 가 null 로 들어올 수 있다(로봇 등 프로그래매틱
     // API 호출 시). 아래 컬럼 검증 루프에서 NPE 가 나지 않도록 null 을 빈 목록으로 정규화한다.
-    List<DatasetColumnRequest> columns =
-        request.columns() != null ? request.columns() : List.of();
+    List<DatasetColumnRequest> columns = request.columns() != null ? request.columns() : List.of();
 
     for (DatasetColumnRequest col : columns) {
       dataTableService.validateName(col.columnName());
@@ -367,8 +366,7 @@ public class DatasetService {
     // dataset 삭제 시 FK CASCADE 로 함께 제거된다.
     if (isTableBacked(dataset.storageType())) {
       // 색인 테이블은 FK 가 없어 CASCADE 로 사라지지 않는다 — 원본과 함께 지운다.
-      rowSearchIndex.drop(
-          new IndexRef(TenantContext.require(), id, dataset.tableName()));
+      rowSearchIndex.drop(new IndexRef(TenantContext.require(), id, dataset.tableName()));
       dataTableService.dropTable(dataset.tableName());
     }
     columnRepository.deleteByDatasetId(id);
@@ -781,9 +779,9 @@ public class DatasetService {
    *   <li><b>Proactive Jobs</b>: 현재 {@code proactive_job} 스키마는 datasetId 를 저장하지 않는다(채널/수신자/템플릿만
    *       저장). 따라서 이 메서드는 항상 빈 리스트를 반환한다. 추후 스키마가 datasetId 를 포함하게 되면 업데이트 필요.
    *   <li><b>Triggers</b>: {@code pipeline_trigger.trigger_type = 'DATASET_CHANGE'} 이고 {@code
-   *       config} JSONB의 {@code datasetIds} 배열이 주어진 datasetId 를 포함하는 트리거. 이 참조는 FK가
-   *       아니라 JSONB 배열 소속이므로 위 3개 카테고리와 달리 DB 제약으로 보호되지 않는다 — 데이터셋을 삭제해도
-   *       트리거는 고아로 남아 존재하지 않는 데이터셋 ID를 계속 폴링하게 된다(#600).
+   *       config} JSONB의 {@code datasetIds} 배열이 주어진 datasetId 를 포함하는 트리거. 이 참조는 FK가 아니라 JSONB 배열
+   *       소속이므로 위 3개 카테고리와 달리 DB 제약으로 보호되지 않는다 — 데이터셋을 삭제해도 트리거는 고아로 남아 존재하지 않는 데이터셋 ID를 계속 폴링하게
+   *       된다(#600).
    * </ul>
    */
   @Transactional(readOnly = true)
@@ -875,7 +873,8 @@ public class DatasetService {
             .on(
                 field(name("pipeline_trigger", "pipeline_id"), Long.class)
                     .eq(field(name("pipeline", "id"), Long.class)))
-            .where(field(name("pipeline_trigger", "trigger_type"), String.class).eq("DATASET_CHANGE"))
+            .where(
+                field(name("pipeline_trigger", "trigger_type"), String.class).eq("DATASET_CHANGE"))
             .and(
                 condition(
                     "(pipeline_trigger.config -> 'datasetIds') @> to_jsonb({0}::bigint)",
@@ -889,8 +888,7 @@ public class DatasetService {
                         r.get(field(name("pipeline", "id"), Long.class)),
                         r.get(field(name("pipeline", "name"), String.class))));
 
-    int totalCount =
-        pipelines.size() + dashboards.size() + proactiveJobs.size() + triggers.size();
+    int totalCount = pipelines.size() + dashboards.size() + proactiveJobs.size() + triggers.size();
     return new DatasetReferencesResponse(
         datasetId, pipelines, dashboards, proactiveJobs, triggers, totalCount);
   }

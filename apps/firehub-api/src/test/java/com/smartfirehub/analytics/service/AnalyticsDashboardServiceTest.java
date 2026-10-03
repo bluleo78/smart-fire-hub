@@ -173,9 +173,7 @@ class AnalyticsDashboardServiceTest extends IntegrationTestBase {
     // When: autoRefreshSeconds만 null이고 clearAutoRefresh 플래그가 없는 부분 업데이트
     // (다른 필드만 바꾸는 기존 partial-update 경로와 동일 — 값이 "미제공"으로 해석돼야 한다)
     dashboardService.update(
-        dashboard.id(),
-        new UpdateDashboardRequest(null, null, true, null, null),
-        ownerUserId);
+        dashboard.id(), new UpdateDashboardRequest(null, null, true, null, null), ownerUserId);
 
     // Then: autoRefreshSeconds는 그대로 유지되어야 한다
     DashboardResponse reloaded = dashboardService.getById(dashboard.id(), ownerUserId);

@@ -10,12 +10,11 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
 /**
- * V106 이 채널 도메인 5개 테이블에 NOT NULL + GUC DEFAULT 로 tenant_id 를 심고, 유니크를 제약(constraint)으로
- * 접고, SECURITY DEFINER 해석기 2종을 최소 권한으로 만들었는지 고정한다.
+ * V106 이 채널 도메인 5개 테이블에 NOT NULL + GUC DEFAULT 로 tenant_id 를 심고, 유니크를 제약(constraint)으로 접고, SECURITY
+ * DEFINER 해석기 2종을 최소 권한으로 만들었는지 고정한다.
  *
- * <p>정책(RLS)은 V107 소관이라 여기서 단언하지 않는다 — 단 {@code oauth_state} 만은 "정책이 <b>영원히</b>
- * 없다"가 설계이므로(V106 [R7]) 이 테스트가 명시적으로 말한다. 누락이 아니라 결정임을 카탈로그 단언으로
- * 남겨야 다음 밴드가 "빠뜨린 테이블"로 오인해 RLS 를 켜지 않는다.
+ * <p>정책(RLS)은 V107 소관이라 여기서 단언하지 않는다 — 단 {@code oauth_state} 만은 "정책이 <b>영원히</b> 없다"가 설계이므로(V106
+ * [R7]) 이 테스트가 명시적으로 말한다. 누락이 아니라 결정임을 카탈로그 단언으로 남겨야 다음 밴드가 "빠뜨린 테이블"로 오인해 RLS 를 켜지 않는다.
  */
 class ChannelDomainColumnTest extends IntegrationTestBase {
 
@@ -75,7 +74,8 @@ class ChannelDomainColumnTest extends IntegrationTestBase {
     assertThat(rlsEnabled).as("oauth_state 에 RLS 가 켜졌다 — 켜면 OAuth 콜백이 fail-closed 된다").isFalse();
 
     Integer policyCount =
-        dsl.fetchOne("select count(*) from pg_policies where schemaname='public' and tablename='oauth_state'")
+        dsl.fetchOne(
+                "select count(*) from pg_policies where schemaname='public' and tablename='oauth_state'")
             .get(0, Integer.class);
     assertThat(policyCount).as("oauth_state 에 정책이 붙었다").isZero();
   }
@@ -88,7 +88,8 @@ class ChannelDomainColumnTest extends IntegrationTestBase {
     // UserChannelBindingRepositoryImpl). 유니크 인덱스로 바꾸면 런타임에
     // "there is no unique or exclusion constraint matching the ON CONFLICT specification" 이 난다.
     assertConstraintDef("uk_outbox_idempotency", "UNIQUE (tenant_id, idempotency_key)");
-    assertConstraintDef("uk_user_channel", "UNIQUE (tenant_id, user_id, channel_type, workspace_id)");
+    assertConstraintDef(
+        "uk_user_channel", "UNIQUE (tenant_id, user_id, channel_type, workspace_id)");
     assertConstraintDef("uk_preference", "UNIQUE (tenant_id, user_id, channel_type)");
   }
 
@@ -136,8 +137,12 @@ class ChannelDomainColumnTest extends IntegrationTestBase {
       String acl = row.get("acl", String.class);
       assertThat(acl).as("%s 의 ACL 이 비어 기본값(PUBLIC 허용)이다", fn).isNotBlank();
       // ACL 항목의 grantee 가 빈 문자열이면 PUBLIC 이다("=X/owner" 형태).
-      assertThat(acl.split(",")).as("%s 의 EXECUTE 가 PUBLIC 에 남아 있다", fn).noneMatch(e -> e.startsWith("="));
-      assertThat(acl).as("%s 에 app_tenant EXECUTE 가 없다 — 런타임 롤이 호출하지 못한다", fn).contains("app_tenant=X");
+      assertThat(acl.split(","))
+          .as("%s 의 EXECUTE 가 PUBLIC 에 남아 있다", fn)
+          .noneMatch(e -> e.startsWith("="));
+      assertThat(acl)
+          .as("%s 에 app_tenant EXECUTE 가 없다 — 런타임 롤이 호출하지 못한다", fn)
+          .contains("app_tenant=X");
 
       // 반환 형태 고정 — 노출면이 정수뿐임을 못박는다. V95 가 "트리거 행을 반환하지 않는다,
       // id 두 개뿐이라 노출면이 정수 하나로 제한된다"를 원칙으로 세웠고 이 두 함수도 같다.
@@ -174,7 +179,9 @@ class ChannelDomainColumnTest extends IntegrationTestBase {
                 + " where n.nspname='public' and c.conname=?",
             constraintName);
     assertThat(row).as("제약 %s 가 존재하지 않는다 (유니크 인덱스로 바뀌었는가?)", constraintName).isNotNull();
-    assertThat(row.get("contype", String.class)).as("%s 가 유니크 제약이 아니다", constraintName).isEqualTo("u");
+    assertThat(row.get("contype", String.class))
+        .as("%s 가 유니크 제약이 아니다", constraintName)
+        .isEqualTo("u");
     assertThat(row.get("def", String.class)).as("%s 정의", constraintName).isEqualTo(expectedDef);
   }
 }

@@ -4,23 +4,21 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.smartfirehub.document.service.DocumentIngestionService;
 import java.lang.reflect.Method;
-import org.junit.jupiter.api.Test;
 import org.jobrunr.jobs.annotations.Job;
+import org.junit.jupiter.api.Test;
 
 /**
  * JobRunr 잡이 테넌트를 페이로드로 받는지 시그니처 수준에서 고정한다.
  *
- * <p>왜 시그니처를 단언하나: 잡 본문의 동작은 잡 서버를 띄워야 검증되는데 테스트 프로파일은
- * background-job-server 를 끈다(application-test.yml). 반면 "테넌트 파라미터가 사라지는"
- * 회귀는 컴파일이 아니라 조용한 무동작으로 나타나므로, 계약을 테스트로 못박는다.
+ * <p>왜 시그니처를 단언하나: 잡 본문의 동작은 잡 서버를 띄워야 검증되는데 테스트 프로파일은 background-job-server 를
+ * 끈다(application-test.yml). 반면 "테넌트 파라미터가 사라지는" 회귀는 컴파일이 아니라 조용한 무동작으로 나타나므로, 계약을 테스트로 못박는다.
  */
 class BackgroundTenantPropagationTest {
 
   @Test
   void jobMethodsAcceptTenantIdAsLastParameter() throws Exception {
     assertLastParamIsTenantId(DocumentIngestionService.class, "processIngestion");
-    assertLastParamIsTenantId(
-        com.smartfirehub.embedding.reembed.TenantReembedJob.class, "run");
+    assertLastParamIsTenantId(com.smartfirehub.embedding.reembed.TenantReembedJob.class, "run");
     assertLastParamIsTenantId(
         com.smartfirehub.dataset.search.DatasetEmbeddingService.class, "reindexEmbedding");
     assertLastParamIsTenantId(
@@ -37,7 +35,9 @@ class BackgroundTenantPropagationTest {
             .flatMap(c -> java.util.Arrays.stream(c.getDeclaredMethods()))
             .toList()) {
       if (m.isAnnotationPresent(Job.class)) {
-        assertThat(m.isAnnotationPresent(org.springframework.transaction.annotation.Transactional.class))
+        assertThat(
+                m.isAnnotationPresent(
+                    org.springframework.transaction.annotation.Transactional.class))
             .as("@Job 메서드 %s 에 @Transactional 이 붙으면 테넌트 주입 시점을 놓친다", m.getName())
             .isFalse();
       }

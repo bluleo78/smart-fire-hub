@@ -189,12 +189,14 @@ class PipelineControllerTest {
 
   @Test
   void reserveFullRebuild_withoutAuth_returnsUnauthorized() throws Exception {
-    mockMvc.perform(post("/api/v1/pipelines/1/steps/2/full-rebuild")).andExpect(status().isUnauthorized());
+    mockMvc
+        .perform(post("/api/v1/pipelines/1/steps/2/full-rebuild"))
+        .andExpect(status().isUnauthorized());
   }
 
   /**
-   * 증분 필드(Task 7)의 JSON 계약 — Task 8 웹 UI가 이 필드명·형태에 그대로 의존한다. {@code lastRunAt} 이
-   * ISO-8601 오프셋 문자열로 직렬화되는지(에포크 숫자가 아닌지)까지 함께 확인한다.
+   * 증분 필드(Task 7)의 JSON 계약 — Task 8 웹 UI가 이 필드명·형태에 그대로 의존한다. {@code lastRunAt} 이 ISO-8601 오프셋 문자열로
+   * 직렬화되는지(에포크 숫자가 아닌지)까지 함께 확인한다.
    */
   @Test
   void getPipelineById_includesIncrementalFields() throws Exception {

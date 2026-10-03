@@ -61,13 +61,15 @@ class DatasetServiceExtTest extends IntegrationTestBase {
     List<DatasetColumnRequest> columns =
         List.of(new DatasetColumnRequest("col1", "Col1", "TEXT", null, true, false, null));
     return datasetService.createDataset(
-        new CreateDatasetRequest(name, tableName, null, null, "TABLE", "SOURCE", columns, null), testUserId);
+        new CreateDatasetRequest(name, tableName, null, null, "TABLE", "SOURCE", columns, null),
+        testUserId);
   }
 
   private DatasetDetailResponse createDatasetWithColumns(
       String name, String tableName, List<DatasetColumnRequest> columns) {
     return datasetService.createDataset(
-        new CreateDatasetRequest(name, tableName, null, null, "TABLE", "SOURCE", columns, null), testUserId);
+        new CreateDatasetRequest(name, tableName, null, null, "TABLE", "SOURCE", columns, null),
+        testUserId);
   }
 
   // =========================================================================

@@ -15,19 +15,17 @@ import org.springframework.transaction.support.TransactionTemplate;
 /**
  * V102 가 켠 온톨로지·그래프 8테이블의 테넌트 격리를 양방향으로 검증한다.
  *
- * <p>왜 양방향인가: "다른 테넌트에서 0행" 단방향 단언은 빈 테이블에서 공허하게 통과한다(P1 에서
- * 실제로 결함을 통과시킨 전례가 있다). 소유 테넌트에서 실제로 보이는 것을 함께 확인해야 의미가 있다.
+ * <p>왜 양방향인가: "다른 테넌트에서 0행" 단방향 단언은 빈 테이블에서 공허하게 통과한다(P1 에서 실제로 결함을 통과시킨 전례가 있다). 소유 테넌트에서 실제로 보이는
+ * 것을 함께 확인해야 의미가 있다.
  *
- * <p>이 클래스에 클래스 레벨 {@code @Transactional} 을 붙이지 않는다 — 테넌트를 바꿔 가며 여러
- * 트랜잭션을 열어야 하고, 하나의 테스트 트랜잭션에 묶이면 GUC 가 처음 값으로 고정된다. 더 중요하게는
- * 테스트 트랜잭션이 GUC 를 공급해 프로덕션 배선 결함을 영구히 가린다.
+ * <p>이 클래스에 클래스 레벨 {@code @Transactional} 을 붙이지 않는다 — 테넌트를 바꿔 가며 여러 트랜잭션을 열어야 하고, 하나의 테스트 트랜잭션에 묶이면
+ * GUC 가 처음 값으로 고정된다. 더 중요하게는 테스트 트랜잭션이 GUC 를 공급해 프로덕션 배선 결함을 영구히 가린다.
  *
- * <p>테스트 커넥션은 비특권 롤 {@code app_tenant}(NOBYPASSRLS, V83)로 접속한다 — 즉 픽스처 생성·
- * 정리·검증 조회에도 정책이 적용된다. 그래서 그 셋 모두 {@code runInTenantTransaction} 안에서 한다.
- * bare {@code dsl} 로 지우면 0행 삭제가 되고 뒤이은 부모 삭제가 FK 로 터진다.
+ * <p>테스트 커넥션은 비특권 롤 {@code app_tenant}(NOBYPASSRLS, V83)로 접속한다 — 즉 픽스처 생성· 정리·검증 조회에도 정책이 적용된다. 그래서
+ * 그 셋 모두 {@code runInTenantTransaction} 안에서 한다. bare {@code dsl} 로 지우면 0행 삭제가 되고 뒤이은 부모 삭제가 FK 로
+ * 터진다.
  *
- * <p>공유 테스트 DB 라 전체 카운트 비교 단언은 쓸 수 없다(다른 세션이 동시에 쓴다). 실행마다 고유한
- * 테넌트 두 개를 만들어 그 범위에서만 단언한다.
+ * <p>공유 테스트 DB 라 전체 카운트 비교 단언은 쓸 수 없다(다른 세션이 동시에 쓴다). 실행마다 고유한 테넌트 두 개를 만들어 그 범위에서만 단언한다.
  *
  * <p>범위 주의: 이 밴드는 RDB 온톨로지 스키마만 격리한다. Neo4j 그래프 자체는 여전히 미격리다.
  */
@@ -56,8 +54,8 @@ class OntologyGraphRlsTest extends IntegrationTestBase {
   /**
    * 해당 테넌트 컨텍스트에서 이 테스트가 만든 8테이블 행을 FK 순서대로 지운다.
    *
-   * <p>삭제 순서와 {@code tenant_id} 스코핑은 {@link TenantRlsTestSupport#deleteOntologyGraphCascade}
-   * 가 소유한다(RBAC 밴드의 {@code deleteRbacCascade} 선례).
+   * <p>삭제 순서와 {@code tenant_id} 스코핑은 {@link TenantRlsTestSupport#deleteOntologyGraphCascade} 가
+   * 소유한다(RBAC 밴드의 {@code deleteRbacCascade} 선례).
    */
   private void deleteOwnRows(long tenantId) {
     TenantRlsTestSupport.runInTenantTransaction(
@@ -149,8 +147,12 @@ class OntologyGraphRlsTest extends IntegrationTestBase {
     // 이름을 고정해야 의미가 있으므로 테넌트별 접미사를 붙이지 않는다.
     String sharedDomain = "동일도메인-" + TenantRlsTestSupport.nextTenantId();
 
-    Long a = TenantRlsTestSupport.runInTenantTransaction(tx, tenantA, () -> insertOntologyWithDomain(sharedDomain));
-    Long b = TenantRlsTestSupport.runInTenantTransaction(tx, tenantB, () -> insertOntologyWithDomain(sharedDomain));
+    Long a =
+        TenantRlsTestSupport.runInTenantTransaction(
+            tx, tenantA, () -> insertOntologyWithDomain(sharedDomain));
+    Long b =
+        TenantRlsTestSupport.runInTenantTransaction(
+            tx, tenantB, () -> insertOntologyWithDomain(sharedDomain));
 
     assertThat(a).isNotNull();
     assertThat(b).isNotNull().isNotEqualTo(a);
@@ -232,8 +234,8 @@ class OntologyGraphRlsTest extends IntegrationTestBase {
   }
 
   /**
-   * dataset_id 에는 FK 가 없다(감사 패턴) — 실제 dataset 행 없이 임의 id 를 써도 된다. 이 테이블은
-   * 서로게이트 id 가 없으므로 행 식별자로 쓸 dataset_id 를 그대로 돌려준다.
+   * dataset_id 에는 FK 가 없다(감사 패턴) — 실제 dataset 행 없이 임의 id 를 써도 된다. 이 테이블은 서로게이트 id 가 없으므로 행 식별자로 쓸
+   * dataset_id 를 그대로 돌려준다.
    */
   private Long insertDatasetOntology() {
     long datasetId = TenantRlsTestSupport.nextTenantId();

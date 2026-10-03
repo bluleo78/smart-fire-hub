@@ -68,25 +68,22 @@ class ProactiveContextCollectorTest extends IntegrationTestBase {
   /**
    * 병렬 수집이 <b>조용히 엉뚱한 테넌트</b>로 도는 회귀를 잡는다 — 이 밴드가 고친 결함의 형태다.
    *
-   * <p>무엇이 있었나: {@code collectContext} 는 4개 대시보드 조회를 공용 {@code ForkJoinPool} 에서
-   * 돌렸고, 그 풀에는 테넌트 데코레이터가 붙지 않아 컨텍스트가 유실됐다. GUC 가 비면 {@code audit_log}
-   * 의 정책({@code IS NOT DISTINCT FROM})이 <b>모든 테넌트의 tenant_id IS NULL 행</b>(로그인·회원가입
-   * 감사)에 매칭돼, 그 행들이 활동 피드를 타고 proactive LLM 컨텍스트로 흘러 들어갔다.
+   * <p>무엇이 있었나: {@code collectContext} 는 4개 대시보드 조회를 공용 {@code ForkJoinPool} 에서 돌렸고, 그 풀에는 테넌트
+   * 데코레이터가 붙지 않아 컨텍스트가 유실됐다. GUC 가 비면 {@code audit_log} 의 정책({@code IS NOT DISTINCT FROM})이 <b>모든
+   * 테넌트의 tenant_id IS NULL 행</b>(로그인·회원가입 감사)에 매칭돼, 그 행들이 활동 피드를 타고 proactive LLM 컨텍스트로 흘러 들어갔다.
    *
-   * <p><b>왜 이런 모양의 테스트인가</b>: 기존 스위트는 <i>던지는</i> 형태만 잡는다({@code join()} 이
-   * 예외를 되던지면 결과가 "{}" 가 되어 형제 테스트가 빨개진다). <b>조용한</b> 형태 — 엉뚱한 테넌트
-   * 또는 0행 — 는 아무도 단언하지 않았다. 그래서 두 축을 함께 본다.
+   * <p><b>왜 이런 모양의 테스트인가</b>: 기존 스위트는 <i>던지는</i> 형태만 잡는다({@code join()} 이 예외를 되던지면 결과가 "{}" 가 되어 형제
+   * 테스트가 빨개진다). <b>조용한</b> 형태 — 엉뚱한 테넌트 또는 0행 — 는 아무도 단언하지 않았다. 그래서 두 축을 함께 본다.
    *
    * <ul>
-   *   <li><b>NULL 테넌트 미끼</b>: tenant_id 가 NULL 인 감사 행을 하나 심고, 수집 결과에 그 표식이
-   *       <b>없어야</b> 한다. GUC 가 비면 audit_log 에서 보이는 행은 NULL 행뿐이고 파이프라인 실행은
-   *       0행이 되므로, 이 표식은 피드 첫 페이지에 반드시 올라온다 — 즉 이 단언은 날카롭다.
-   *   <li><b>내용의 양수성</b>: 기본 테넌트의 데이터셋·활동 건수가 0 보다 크다. 엉뚱한(비어 있는)
-   *       테넌트로 돌면 두 값이 0 이 되고, 컨텍스트가 아예 없으면 "{}" 가 된다.
+   *   <li><b>NULL 테넌트 미끼</b>: tenant_id 가 NULL 인 감사 행을 하나 심고, 수집 결과에 그 표식이 <b>없어야</b> 한다. GUC 가 비면
+   *       audit_log 에서 보이는 행은 NULL 행뿐이고 파이프라인 실행은 0행이 되므로, 이 표식은 피드 첫 페이지에 반드시 올라온다 — 즉 이 단언은 날카롭다.
+   *   <li><b>내용의 양수성</b>: 기본 테넌트의 데이터셋·활동 건수가 0 보다 크다. 엉뚱한(비어 있는) 테넌트로 돌면 두 값이 0 이 되고, 컨텍스트가 아예 없으면
+   *       "{}" 가 된다.
    * </ul>
    *
-   * <p>테넌트 B 를 심어 "B 의 행이 안 보인다" 를 확인하지 않는 이유: GUC 가 비었을 때 B 의 행도
-   * 어차피 안 보이므로(정책이 NULL 과만 매칭) 정상·결함을 구분하지 못한다. 구분력은 위 두 축에 있다.
+   * <p>테넌트 B 를 심어 "B 의 행이 안 보인다" 를 확인하지 않는 이유: GUC 가 비었을 때 B 의 행도 어차피 안 보이므로(정책이 NULL 과만 매칭) 정상·결함을
+   * 구분하지 못한다. 구분력은 위 두 축에 있다.
    */
   @Test
   void collectContext_collectsDashboardContentForCurrentTenantOnly() throws Exception {
@@ -157,8 +154,8 @@ class ProactiveContextCollectorTest extends IntegrationTestBase {
   /**
    * 활동 피드에 뜨는 형태의 감사 행 하나를 심는다({@code CREATE} + {@code dataset}).
    *
-   * <p>{@code action_time} 을 현재 시각으로 두는 이유: 피드는 시간 내림차순 500건으로 자르고 JSON 도
-   * 5만자에서 잘리므로, 과거 시각으로 심으면 표식이 어느 쪽에서든 탈락해 단언이 조용히 공허해진다.
+   * <p>{@code action_time} 을 현재 시각으로 두는 이유: 피드는 시간 내림차순 500건으로 자르고 JSON 도 5만자에서 잘리므로, 과거 시각으로 심으면
+   * 표식이 어느 쪽에서든 탈락해 단언이 조용히 공허해진다.
    */
   private void insertDatasetCreateAudit(String resourceId) {
     dsl.insertInto(AUDIT_LOG)

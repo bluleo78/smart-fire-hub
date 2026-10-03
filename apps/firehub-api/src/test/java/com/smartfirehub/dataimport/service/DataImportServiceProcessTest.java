@@ -22,9 +22,9 @@ import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Task2: 임포트 잡(processImport)이 검증(Pass1, fail-fast)과 삽입(Pass2)을 완전히 분리해, 오류가 하나라도 있으면
- * 부분 적재 없이 0행으로 실패해야 함을 검증한다. 기존(옛) 계약은 "일부 유효 행은 보존"(#7/#168/#169, APPEND 부분 성공)이었으나,
- * 이 잡의 fail-fast 재설계로 뒤집힌다 — 이 계약 변경 자체가 이 테스트 클래스의 핵심 목적이다.
+ * Task2: 임포트 잡(processImport)이 검증(Pass1, fail-fast)과 삽입(Pass2)을 완전히 분리해, 오류가 하나라도 있으면 부분 적재 없이 0행으로
+ * 실패해야 함을 검증한다. 기존(옛) 계약은 "일부 유효 행은 보존"(#7/#168/#169, APPEND 부분 성공)이었으나, 이 잡의 fail-fast 재설계로 뒤집힌다 —
+ * 이 계약 변경 자체가 이 테스트 클래스의 핵심 목적이다.
  */
 @Transactional
 class DataImportServiceProcessTest extends IntegrationTestBase {
@@ -73,9 +73,7 @@ class DataImportServiceProcessTest extends IntegrationTestBase {
     return dataset.id();
   }
 
-  /**
-   * badRowIndex(1-based, 헤더 제외 데이터 행 기준)가 -1이면 전량 유효, 그 외에는 해당 행의 amount를 비숫자 값으로 채운다.
-   */
+  /** badRowIndex(1-based, 헤더 제외 데이터 행 기준)가 -1이면 전량 유효, 그 외에는 해당 행의 amount를 비숫자 값으로 채운다. */
   private Path writeCsv(int rows, int badRowIndex) throws Exception {
     StringBuilder csv = new StringBuilder("name,amount\n");
     for (int i = 1; i <= rows; i++) {
@@ -91,8 +89,7 @@ class DataImportServiceProcessTest extends IntegrationTestBase {
 
   private long countRows(String tableName) {
     return dsl.fetchCount(
-        dsl.select()
-            .from(org.jooq.impl.DSL.table(org.jooq.impl.DSL.name("data", tableName))));
+        dsl.select().from(org.jooq.impl.DSL.table(org.jooq.impl.DSL.name("data", tableName))));
   }
 
   @Test
@@ -152,6 +149,7 @@ class DataImportServiceProcessTest extends IntegrationTestBase {
         1L);
 
     assertThat(countRows(tableName)).isEqualTo(5000);
-    Mockito.verify(asyncJobService, Mockito.never()).failJob(Mockito.anyString(), Mockito.anyString());
+    Mockito.verify(asyncJobService, Mockito.never())
+        .failJob(Mockito.anyString(), Mockito.anyString());
   }
 }

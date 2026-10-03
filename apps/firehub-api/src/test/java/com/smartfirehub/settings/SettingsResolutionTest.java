@@ -17,16 +17,14 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * 해석 규칙 테스트(Task 4). {@code SettingsService.getValue}/{@code getAsMap} 가 {@code
- * tenant_settings} 오버라이드 → {@code system_settings} 폴백을 올바르게 해석하는지 검증한다.
+ * 해석 규칙 테스트(Task 4). {@code SettingsService.getValue}/{@code getAsMap} 가 {@code tenant_settings}
+ * 오버라이드 → {@code system_settings} 폴백을 올바르게 해석하는지 검증한다.
  *
- * <p><b>픽스처와 검증 대상의 트랜잭션 취급이 다르다.</b> 오버라이드 행을 만드는 {@code
- * tenantSettingsRepository.upsert} 는 {@code runInTenantTransaction(transactionTemplate, tenantId,
- * ...)} 으로 감싸야 GUC 가 주입되고 정책의 WITH CHECK 를 통과한다. 반대로 검증 대상인 {@code
- * settingsService.getValue} 는 자기 {@code @Transactional} 로 트랜잭션을 열고 그 시점의 {@code
- * TenantContext} 로 GUC 를 받으므로 <b>감싸지 않고 그대로 부른다</b> — 감싸면 실제 배선을 우회해
- * 버린다. 픽스처를 감싸지 않으면 0행이 들어가 "폴백이 잘 되네" 하며 통과하는, 정확히 검증하려던
- * 것을 놓치는 테스트가 된다.
+ * <p><b>픽스처와 검증 대상의 트랜잭션 취급이 다르다.</b> 오버라이드 행을 만드는 {@code tenantSettingsRepository.upsert} 는 {@code
+ * runInTenantTransaction(transactionTemplate, tenantId, ...)} 으로 감싸야 GUC 가 주입되고 정책의 WITH CHECK 를
+ * 통과한다. 반대로 검증 대상인 {@code settingsService.getValue} 는 자기 {@code @Transactional} 로 트랜잭션을 열고 그 시점의
+ * {@code TenantContext} 로 GUC 를 받으므로 <b>감싸지 않고 그대로 부른다</b> — 감싸면 실제 배선을 우회해 버린다. 픽스처를 감싸지 않으면 0행이
+ * 들어가 "폴백이 잘 되네" 하며 통과하는, 정확히 검증하려던 것을 놓치는 테스트가 된다.
  */
 class SettingsResolutionTest extends IntegrationTestBase {
 
@@ -52,7 +50,9 @@ class SettingsResolutionTest extends IntegrationTestBase {
   void 오버라이드가_있으면_테넌트_값을_돌려준다() {
     testTenant = createActiveTenant(dsl, "sr-override");
     runInTenantTransaction(
-        transactionTemplate, testTenant, () -> tenantSettingsRepository.upsert("ai.model", "tenant-model", null));
+        transactionTemplate,
+        testTenant,
+        () -> tenantSettingsRepository.upsert("ai.model", "tenant-model", null));
 
     // 검증 대상은 트랜잭션으로 감싸지 않고 그대로 부른다 — 자기 @Transactional 이 이 시점의
     // TenantContext 로 GUC 를 받는다.
@@ -113,7 +113,9 @@ class SettingsResolutionTest extends IntegrationTestBase {
     // 오버라이드가 보이지만 실제 호출은 플랫폼 값으로 나간다.
     testTenant = createActiveTenant(dsl, "sr-asmap");
     runInTenantTransaction(
-        transactionTemplate, testTenant, () -> tenantSettingsRepository.upsert("ai.model", "tenant-model", null));
+        transactionTemplate,
+        testTenant,
+        () -> tenantSettingsRepository.upsert("ai.model", "tenant-model", null));
 
     TenantContext.set(testTenant);
     var resolved = settingsService.getAsMap("ai");
@@ -154,7 +156,8 @@ class SettingsResolutionTest extends IntegrationTestBase {
         resolved.stream()
             .filter(r -> r.key().equals("ai.session_max_tokens"))
             .findFirst()
-            .orElseThrow(() -> new AssertionError("ai.session_max_tokens 가 목록에 없다 — 합집합이 아니라 교집합이다"));
+            .orElseThrow(
+                () -> new AssertionError("ai.session_max_tokens 가 목록에 없다 — 합집합이 아니라 교집합이다"));
 
     assertThat(entry.value()).isEqualTo("54321");
     assertThat(entry.overridden()).isTrue();
@@ -203,7 +206,9 @@ class SettingsResolutionTest extends IntegrationTestBase {
     long tenantB = createActiveTenant(dsl, "sr-b");
     try {
       runInTenantTransaction(
-          transactionTemplate, tenantA, () -> tenantSettingsRepository.upsert("ai.model", "model-a", null));
+          transactionTemplate,
+          tenantA,
+          () -> tenantSettingsRepository.upsert("ai.model", "model-a", null));
       // tenantB 는 오버라이드를 만들지 않는다 — 플랫폼 값이어야 한다.
 
       TenantContext.set(tenantA);
@@ -221,20 +226,16 @@ class SettingsResolutionTest extends IntegrationTestBase {
   // 가 지킨다.
 
   /**
-   * 프리픽스에 마침표를 붙이면 아무것도 매칭하지 않는다 — {@code ProactiveJobAsyncRunner} 가 빠졌던
-   * 함정의 회귀 가드(Task 8).
+   * 프리픽스에 마침표를 붙이면 아무것도 매칭하지 않는다 — {@code ProactiveJobAsyncRunner} 가 빠졌던 함정의 회귀 가드(Task 8).
    *
-   * <p>{@code findByPrefix} 가 스스로 {@code prefix + ".%"} 를 만들기 때문에 {@code "ai."} 는
-   * {@code "ai..%"} 가 되어 <b>예외 없이 빈 맵</b>을 돌려준다. 조용한 빈 결과는 호출부에서 폴백
-   * 기본값으로 흡수되므로(그 잡은 {@code agent_type} 을 항상 {@code "sdk"} 로 읽었다) 로그에도
-   * 흔적이 남지 않는다. 두 형태를 같은 테스트에서 대조해 두면, 누군가 다시 마침표를 붙였을 때
-   * "왜 설정이 안 먹지"를 런타임에서 추적하지 않아도 된다.
+   * <p>{@code findByPrefix} 가 스스로 {@code prefix + ".%"} 를 만들기 때문에 {@code "ai."} 는 {@code "ai..%"} 가
+   * 되어 <b>예외 없이 빈 맵</b>을 돌려준다. 조용한 빈 결과는 호출부에서 폴백 기본값으로 흡수되므로(그 잡은 {@code agent_type} 을 항상 {@code
+   * "sdk"} 로 읽었다) 로그에도 흔적이 남지 않는다. 두 형태를 같은 테스트에서 대조해 두면, 누군가 다시 마침표를 붙였을 때 "왜 설정이 안 먹지"를 런타임에서
+   * 추적하지 않아도 된다.
    */
   @Test
   void 프리픽스에_마침표를_붙이면_조용히_빈_맵이_된다() {
-    assertThat(settingsService.getAsMap("ai"))
-        .as("마침표 없는 형태가 올바르다")
-        .containsKey("ai.model");
+    assertThat(settingsService.getAsMap("ai")).as("마침표 없는 형태가 올바르다").containsKey("ai.model");
 
     assertThat(settingsService.getAsMap("ai."))
         .as("마침표를 붙이면 ai..%% 패턴이 되어 0행 — 이 형태를 쓰면 안 된다")

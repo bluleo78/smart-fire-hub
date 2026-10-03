@@ -49,24 +49,19 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * 정리 스케줄러 4건 + 폴러 2건의 배경 경로가 (1) ACTIVE 테넌트를 순회하고 (2) DB 접근을 트랜잭션 안에서
- * 하는지 고정한다(P2-b Task 8).
+ * 정리 스케줄러 4건 + 폴러 2건의 배경 경로가 (1) ACTIVE 테넌트를 순회하고 (2) DB 접근을 트랜잭션 안에서 하는지 고정한다(P2-b Task 8).
  *
- * <p><b>이 클래스에 클래스 레벨 {@code @Transactional} 은 없다 — 의도된 것이다.</b> 붙이는 순간 테스트
- * 트랜잭션이 GUC 를 공급해 운영에 없는 조건을 만들고, 이 파일이 잡아야 할 "잡이 스스로 트랜잭션을 열지
- * 않는다" 는 결함이 구조적으로 보이지 않게 된다. 픽스처만 {@link
- * TenantRlsTestSupport#runInTenantTransaction} 으로 감싸고, 검증 대상인 잡 호출은 트랜잭션 밖에 둔다.
- * 롤백이 없으므로 심은 행은 {@link #cleanup()} 에서 직접 지운다 — 공유 테스트 DB 의 남의 행은 건드리지
- * 않는다.
+ * <p><b>이 클래스에 클래스 레벨 {@code @Transactional} 은 없다 — 의도된 것이다.</b> 붙이는 순간 테스트 트랜잭션이 GUC 를 공급해 운영에 없는
+ * 조건을 만들고, 이 파일이 잡아야 할 "잡이 스스로 트랜잭션을 열지 않는다" 는 결함이 구조적으로 보이지 않게 된다. 픽스처만 {@link
+ * TenantRlsTestSupport#runInTenantTransaction} 으로 감싸고, 검증 대상인 잡 호출은 트랜잭션 밖에 둔다. 롤백이 없으므로 심은 행은
+ * {@link #cleanup()} 에서 직접 지운다 — 공유 테스트 DB 의 남의 행은 건드리지 않는다.
  *
  * <p><b>왜 "양쪽 다 지워졌는가" 단언만으로는 부족한가(반드시 읽을 것)</b>: P2-b 대상 테이블
  * (uploaded_files·async_job·trigger_event·pipeline_execution)은 V93 에서 {@code tenant_id} 만 받았고
- * <b>정책(RLS)은 V96 에 있다</b>(V93 헤더 주석에 명시). 정책이 없는 동안 이 잡들의 DELETE 는 순회가
- * 있든 없든, 트랜잭션이 있든 없든 전 테넌트 행을 지운다 — 즉 브리프의 "A·B 양쪽이 지워졌는가" 형태는
- * <b>오늘은 공허하게 통과</b>한다(배선을 되돌려도 실패하지 않는다). 그래서 그 행위 단언은 V96 이후를
- * 위한 회귀 가드로 남겨 두고, 오늘 실제로 배선을 판별하는 단언은 {@link SqlProbe} 로 한다: 잡이 그
- * 테이블을 만지는 순간의 (a) 트랜잭션 활성 여부와 (b) 테넌트 컨텍스트를 기록해, 순회를 되돌리면
- * "테넌트 A·B 둘 다 관측" 이 깨지고 {@code TransactionTemplate} 을 되돌리면 "항상 트랜잭션 안" 이
+ * <b>정책(RLS)은 V96 에 있다</b>(V93 헤더 주석에 명시). 정책이 없는 동안 이 잡들의 DELETE 는 순회가 있든 없든, 트랜잭션이 있든 없든 전 테넌트 행을
+ * 지운다 — 즉 브리프의 "A·B 양쪽이 지워졌는가" 형태는 <b>오늘은 공허하게 통과</b>한다(배선을 되돌려도 실패하지 않는다). 그래서 그 행위 단언은 V96 이후를 위한
+ * 회귀 가드로 남겨 두고, 오늘 실제로 배선을 판별하는 단언은 {@link SqlProbe} 로 한다: 잡이 그 테이블을 만지는 순간의 (a) 트랜잭션 활성 여부와 (b)
+ * 테넌트 컨텍스트를 기록해, 순회를 되돌리면 "테넌트 A·B 둘 다 관측" 이 깨지고 {@code TransactionTemplate} 을 되돌리면 "항상 트랜잭션 안" 이
  * 깨지게 한다.
  */
 class CleanupSchedulerTenantTest extends IntegrationTestBase {
@@ -96,9 +91,8 @@ class CleanupSchedulerTenantTest extends IntegrationTestBase {
   private Long proactiveJobId;
 
   /**
-   * 내가 만들 고아 staging 테이블 이름. 스윕 정규식({@code stg_import_} + 정확히 32자리 hex)을 만족해야
-   * 대상이 되므로 UUID 의 hex 32자를 쓴다. 매 테스트마다 새로 뽑아 <b>내가 만든 것만</b> 지운다 —
-   * 공유 테스트 DB 에는 다른 세션의 테이블이 있을 수 있다.
+   * 내가 만들 고아 staging 테이블 이름. 스윕 정규식({@code stg_import_} + 정확히 32자리 hex)을 만족해야 대상이 되므로 UUID 의 hex
+   * 32자를 쓴다. 매 테스트마다 새로 뽑아 <b>내가 만든 것만</b> 지운다 — 공유 테스트 DB 에는 다른 세션의 테이블이 있을 수 있다.
    */
   private String stagingTableA;
 
@@ -223,7 +217,8 @@ class CleanupSchedulerTenantTest extends IntegrationTestBase {
     assertThat(asyncJobExists(tenantB, oldB)).as("B 의 오래된 잡이 지워져야 한다").isFalse();
     assertTouchedInTransactionForBothTenants("async_job", "AsyncJobCleanupService.deleteOldJobs");
 
-    String freshA = inTenant(tenantA, () -> insertAsyncJob(userA, "COMPLETED", LocalDateTime.now()));
+    String freshA =
+        inTenant(tenantA, () -> insertAsyncJob(userA, "COMPLETED", LocalDateTime.now()));
     asyncJobCleanupService.deleteOldJobs();
     assertThat(asyncJobExists(tenantA, freshA)).as("보존 기간 내 잡은 남아야 한다").isTrue();
   }
@@ -260,7 +255,8 @@ class CleanupSchedulerTenantTest extends IntegrationTestBase {
     assertThat(triggerEventExists(tenantB, oldB)).as("B 의 오래된 이벤트가 지워져야 한다").isFalse();
     assertTouchedInTransactionForBothTenants("trigger_event", "TriggerEventCleanupService");
 
-    Long freshA = inTenant(tenantA, () -> insertTriggerEvent(pipelineA, userA, LocalDateTime.now()));
+    Long freshA =
+        inTenant(tenantA, () -> insertTriggerEvent(pipelineA, userA, LocalDateTime.now()));
     triggerEventCleanupService.cleanupOldEvents();
     assertThat(triggerEventExists(tenantA, freshA)).as("보존 기간 내 이벤트는 남아야 한다").isTrue();
   }
@@ -268,8 +264,10 @@ class CleanupSchedulerTenantTest extends IntegrationTestBase {
   @Test
   @DisplayName("pipeline_execution TTL: A·B 양쪽 만료 행을 지우고 최근 행은 남긴다 + 테넌트별 트랜잭션")
   void pipelineExecutionTtlIteratesTenantsInTransaction() {
-    Long oldA = inTenant(tenantA, () -> insertExecution(pipelineA, userA, daysAgo(100), "COMPLETED"));
-    Long oldB = inTenant(tenantB, () -> insertExecution(pipelineB, userB, daysAgo(100), "COMPLETED"));
+    Long oldA =
+        inTenant(tenantA, () -> insertExecution(pipelineA, userA, daysAgo(100), "COMPLETED"));
+    Long oldB =
+        inTenant(tenantB, () -> insertExecution(pipelineB, userB, daysAgo(100), "COMPLETED"));
 
     ReflectionTestUtils.setField(pipelineExecutionTtlJob, "retentionDays", 90);
     probe.arm();
@@ -304,14 +302,12 @@ class CleanupSchedulerTenantTest extends IntegrationTestBase {
   /**
    * SYSTEM 메트릭 수집이 테넌트 트랜잭션 안에서 돌아 <b>실제 값</b>을 본다는 것을 단언한다.
    *
-   * <p>이 단언은 프로브가 아니라 수집된 값 자체로 판별한다 — {@code dataset} 은 <b>V88 부터 이미 RLS
-   * 가 켜져 있는 테이블</b>이므로, {@code collectSystemMetric} 이 트랜잭션 밖에서 돌면 GUC 가 비어
-   * 정책이 전 행을 차단하고 {@code dataset_total_count} 는 <b>언제나 0</b> 이 된다(V96 을 기다리는
-   * 미래 대비가 아니라, Task 8 이 실제로 고친 오늘의 결함이다 — 그 전까지 운영에서 조용히 0 이 수집됐다).
+   * <p>이 단언은 프로브가 아니라 수집된 값 자체로 판별한다 — {@code dataset} 은 <b>V88 부터 이미 RLS 가 켜져 있는 테이블</b>이므로,
+   * {@code collectSystemMetric} 이 트랜잭션 밖에서 돌면 GUC 가 비어 정책이 전 행을 차단하고 {@code dataset_total_count} 는
+   * <b>언제나 0</b> 이 된다(V96 을 기다리는 미래 대비가 아니라, Task 8 이 실제로 고친 오늘의 결함이다 — 그 전까지 운영에서 조용히 0 이 수집됐다).
    *
-   * <p>{@code pollingInterval} 을 0 으로 두는 것이 중요하다: {@code lastPollTime} 키가
-   * {@code jobId:metricId} 라 테넌트 스코프가 아니어서, 기본 간격이면 첫 테넌트 패스 뒤 나머지
-   * 테넌트가 스킵된다.
+   * <p>{@code pollingInterval} 을 0 으로 두는 것이 중요하다: {@code lastPollTime} 키가 {@code jobId:metricId} 라
+   * 테넌트 스코프가 아니어서, 기본 간격이면 첫 테넌트 패스 뒤 나머지 테넌트가 스킵된다.
    */
   @Test
   @DisplayName("메트릭 폴러: SYSTEM 메트릭이 테넌트 데이터의 실제 값을 수집한다(RLS 적용 dataset)")
@@ -362,23 +358,20 @@ class CleanupSchedulerTenantTest extends IntegrationTestBase {
   /**
    * 고아 staging 스윕이 테넌트를 순회하는지 고정한다(P3-a Task 4 후속 F3).
    *
-   * <p><b>왜 이 테스트가 필요했나</b>: {@code findStagingTables()} 가 {@code DataSchema.current()} 로
-   * 스키마명을 파생시키게 된 순간, 컨텍스트가 없는 {@code @Scheduled} 진입점은
-   * {@code MissingTenantScopeException} 을 던져 스윕이 영구히 무동작이 됐다. 그런데 그 무동작은
-   * "정리할 고아가 없었다" 와 구분되지 않아 <b>어떤 테스트도 실패하지 않았다</b>.
+   * <p><b>왜 이 테스트가 필요했나</b>: {@code findStagingTables()} 가 {@code DataSchema.current()} 로 스키마명을
+   * 파생시키게 된 순간, 컨텍스트가 없는 {@code @Scheduled} 진입점은 {@code MissingTenantScopeException} 을 던져 스윕이 영구히
+   * 무동작이 됐다. 그런데 그 무동작은 "정리할 고아가 없었다" 와 구분되지 않아 <b>어떤 테스트도 실패하지 않았다</b>.
    *
-   * <p><b>왜 {@code sweepActiveTenants()} 를 부르고 {@code sweepOrphanedStagingTables()} 를 부르지
-   * 않는가</b>: 후자는 전역 {@code jobrunr_jobs} 게이트를 먼저 본다. 공유 테스트 DB 에는 다른
-   * 세션이 남긴 활성(ENQUEUED) 행이 수백 개 쌓여 있어(실측) 게이트가 상시 닫혀 있고, 그러면 이
-   * 테스트는 아무것도 검증하지 못하고 조용히 통과한다. 게이트를 열려면 남의 행을 지워야 하는데
-   * 그것은 공유 DB 에서 해서는 안 되는 일이다. 그래서 순회(기계장치)만 떼어 검증한다 —
-   * 게이트(정책)는 {@code StagingTableCleanupServiceTest} 가 자기 트랜잭션 안에서 검증한다.
+   * <p><b>왜 {@code sweepActiveTenants()} 를 부르고 {@code sweepOrphanedStagingTables()} 를 부르지 않는가</b>:
+   * 후자는 전역 {@code jobrunr_jobs} 게이트를 먼저 본다. 공유 테스트 DB 에는 다른 세션이 남긴 활성(ENQUEUED) 행이 수백 개 쌓여 있어(실측)
+   * 게이트가 상시 닫혀 있고, 그러면 이 테스트는 아무것도 검증하지 못하고 조용히 통과한다. 게이트를 열려면 남의 행을 지워야 하는데 그것은 공유 DB 에서 해서는 안 되는
+   * 일이다. 그래서 순회(기계장치)만 떼어 검증한다 — 게이트(정책)는 {@code StagingTableCleanupServiceTest} 가 자기 트랜잭션 안에서
+   * 검증한다.
    *
-   * <p><b>단언의 의미를 오해하지 말 것</b>: {@code DataSchema.current()} 는 아직 상수 {@code data} 를
-   * 돌려주므로 두 테넌트의 스윕은 <b>같은 물리 스키마</b>를 본다. 따라서 "테넌트별 격리" 는 오늘
-   * 참이 아니며 그것을 주장하는 단언은 거짓 위안이다. 여기서 고정하는 것은 <b>테넌트 스코프 안에서
-   * 회수가 실제로 일어나는가</b>(행위) 와 <b>ACTIVE 테넌트를 실제로 순회했는가</b>(프로브) 두 가지다.
-   * 첫 테넌트의 패스가 두 테이블을 모두 지우므로, 순회를 판별하는 것은 프로브 층이다.
+   * <p><b>단언의 의미를 오해하지 말 것</b>: {@code DataSchema.current()} 는 아직 상수 {@code data} 를 돌려주므로 두 테넌트의
+   * 스윕은 <b>같은 물리 스키마</b>를 본다. 따라서 "테넌트별 격리" 는 오늘 참이 아니며 그것을 주장하는 단언은 거짓 위안이다. 여기서 고정하는 것은 <b>테넌트
+   * 스코프 안에서 회수가 실제로 일어나는가</b>(행위) 와 <b>ACTIVE 테넌트를 실제로 순회했는가</b>(프로브) 두 가지다. 첫 테넌트의 패스가 두 테이블을 모두
+   * 지우므로, 순회를 판별하는 것은 프로브 층이다.
    */
   @Test
   @DisplayName("고아 staging 스윕: 테넌트 스코프 안에서 회수되고, ACTIVE 테넌트를 순회한다")
@@ -405,13 +398,11 @@ class CleanupSchedulerTenantTest extends IntegrationTestBase {
   // ── 배선 단언 ─────────────────────────────────────────────────────────
 
   /**
-   * 해당 테이블을 만진 모든 문장이 트랜잭션 안에서 실행됐고, 관측된 테넌트 컨텍스트에 A·B 가 모두
-   * 포함되는지 단언한다.
+   * 해당 테이블을 만진 모든 문장이 트랜잭션 안에서 실행됐고, 관측된 테넌트 컨텍스트에 A·B 가 모두 포함되는지 단언한다.
    *
-   * <p>공유 테스트 DB 에는 다른 테스트가 남긴 ACTIVE 테넌트도 있을 수 있으므로 "정확히 A·B" 가 아니라
-   * "A·B 를 포함" 으로 본다. 트랜잭션 활성 여부를 GUC 주입의 대리 지표로 쓰는 근거는 {@code
-   * TenantAwareTransactionManager.doBegin} 이 유일한 주입 지점이라는 것이다(TenantContextGucTest 가
-   * 그 사실을 따로 고정한다).
+   * <p>공유 테스트 DB 에는 다른 테스트가 남긴 ACTIVE 테넌트도 있을 수 있으므로 "정확히 A·B" 가 아니라 "A·B 를 포함" 으로 본다. 트랜잭션 활성 여부를
+   * GUC 주입의 대리 지표로 쓰는 근거는 {@code TenantAwareTransactionManager.doBegin} 이 유일한 주입 지점이라는
+   * 것이다(TenantContextGucTest 가 그 사실을 따로 고정한다).
    */
   private void assertTouchedInTransactionForBothTenants(String tableFragment, String label) {
     List<SqlProbe.Observation> hits = probe.observationsFor(tableFragment);
@@ -504,8 +495,8 @@ class CleanupSchedulerTenantTest extends IntegrationTestBase {
   /**
    * 고아 staging 테이블을 물리적으로 만든다(임포트 도중 프로세스가 죽은 상황의 재현).
    *
-   * <p>테스트 소스는 규약 가드의 대상이 아니므로 물리 스키마명을 직접 쓴다 — 스윕이 실제로 그
-   * 스키마를 보는지 검사하는 것이 목적이라 {@code DataSchema} 를 거치면 검사가 순환한다.
+   * <p>테스트 소스는 규약 가드의 대상이 아니므로 물리 스키마명을 직접 쓴다 — 스윕이 실제로 그 스키마를 보는지 검사하는 것이 목적이라 {@code DataSchema}
+   * 를 거치면 검사가 순환한다.
    */
   private void createStagingTable(String name) {
     dsl.execute("CREATE TABLE data.\"" + name + "\" (_seq BIGSERIAL, a TEXT)");
@@ -639,8 +630,7 @@ class CleanupSchedulerTenantTest extends IntegrationTestBase {
   }
 
   private boolean asyncJobExists(long tenantId, String jobId) {
-    return inTenant(
-        tenantId, () -> dsl.fetchCount(ASYNC_JOB, ASYNC_JOB.ID.eq(jobId)) > 0);
+    return inTenant(tenantId, () -> dsl.fetchCount(ASYNC_JOB, ASYNC_JOB.ID.eq(jobId)) > 0);
   }
 
   private String asyncJobStage(long tenantId, String jobId) {
@@ -660,6 +650,7 @@ class CleanupSchedulerTenantTest extends IntegrationTestBase {
 
   private boolean executionExists(long tenantId, Long executionId) {
     return inTenant(
-        tenantId, () -> TenantRlsTestSupport.rowExists(dsl, "pipeline_execution", "id", executionId));
+        tenantId,
+        () -> TenantRlsTestSupport.rowExists(dsl, "pipeline_execution", "id", executionId));
   }
 }

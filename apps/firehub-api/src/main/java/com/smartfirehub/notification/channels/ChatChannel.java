@@ -1,5 +1,6 @@
 package com.smartfirehub.notification.channels;
 
+import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.notification.AuthStrategy;
 import com.smartfirehub.notification.Channel;
 import com.smartfirehub.notification.ChannelType;
@@ -7,7 +8,6 @@ import com.smartfirehub.notification.DeliveryContext;
 import com.smartfirehub.notification.DeliveryResult;
 import com.smartfirehub.notification.Payload;
 import com.smartfirehub.notification.PermanentFailureReason;
-import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.notification.dto.NotificationEvent;
 import com.smartfirehub.notification.service.SseEmitterRegistry;
 import com.smartfirehub.proactive.repository.ProactiveJobExecutionRepository;
@@ -29,15 +29,14 @@ import org.springframework.stereotype.Component;
  * <p>executionId는 Payload.metadata에 들어있으면 그대로 사용(Proactive 발송 흐름), 없으면 null — message_type=REPORT는
  * 기본값으로 유지. htmlContent 등 대용량 필드는 저장하지 않음(인박스 UI는 title/summary만 필요).
  *
- * <p><b>테넌트 배선(P2-f)</b>: 이 채널은 항상 <b>이미 열린 테넌트 컨텍스트 안</b>에서 불린다.
- * 프로덕션 호출자는 outbox 워커 하나뿐이고({@code ChannelSettingsService} 는 CHAT 을 진입 즉시
- * 거부한다), {@code NotificationDispatchWorker.runOneBatchForTenant} 가 outbox 행의
- * {@code tenant_id} 로 {@code TenantContext.runScoped} 를 열어 그 안에서 배달한다. 따라서 여기서
- * 테넌트를 따로 해석하지 않는다 — 해석 지점이 늘수록 각자 다른 방식으로 틀릴 수 있다.
+ * <p><b>테넌트 배선(P2-f)</b>: 이 채널은 항상 <b>이미 열린 테넌트 컨텍스트 안</b>에서 불린다. 프로덕션 호출자는 outbox 워커 하나뿐이고({@code
+ * ChannelSettingsService} 는 CHAT 을 진입 즉시 거부한다), {@code
+ * NotificationDispatchWorker.runOneBatchForTenant} 가 outbox 행의 {@code tenant_id} 로 {@code
+ * TenantContext.runScoped} 를 열어 그 안에서 배달한다. 따라서 여기서 테넌트를 따로 해석하지 않는다 — 해석 지점이 늘수록 각자 다른 방식으로 틀릴 수
+ * 있다.
  *
- * <p>P2-e 에는 여기서 수신자의 ACTIVE 멤버십으로 테넌트를 <b>추측</b>했다. 그것은
- * {@code notification_outbox} 에 {@code tenant_id} 가 없던 시절의 임시방편이었고, V106 이 그 컬럼을
- * 붙이면서 전제가 사라져 P2-f 에서 제거했다(추측이 아니라 enqueue 시점의 사실을 쓴다).
+ * <p>P2-e 에는 여기서 수신자의 ACTIVE 멤버십으로 테넌트를 <b>추측</b>했다. 그것은 {@code notification_outbox} 에 {@code
+ * tenant_id} 가 없던 시절의 임시방편이었고, V106 이 그 컬럼을 붙이면서 전제가 사라져 P2-f 에서 제거했다(추측이 아니라 enqueue 시점의 사실을 쓴다).
  */
 @Component
 public class ChatChannel implements Channel {

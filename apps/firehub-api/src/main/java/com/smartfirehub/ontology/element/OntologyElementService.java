@@ -4,10 +4,10 @@ import com.smartfirehub.audit.service.AuditLogService;
 import com.smartfirehub.ontology.OntologyRules;
 import com.smartfirehub.ontology.dto.OntologyResponse;
 import com.smartfirehub.ontology.element.dto.ElementDtos.CreateEntityTypeRequest;
-import com.smartfirehub.ontology.element.dto.ElementDtos.EntityTypeDeletion;
-import com.smartfirehub.ontology.element.dto.ElementDtos.EntityTypeMutation;
 import com.smartfirehub.ontology.element.dto.ElementDtos.CreatePropertyRequest;
 import com.smartfirehub.ontology.element.dto.ElementDtos.CreateRelationRequest;
+import com.smartfirehub.ontology.element.dto.ElementDtos.EntityTypeDeletion;
+import com.smartfirehub.ontology.element.dto.ElementDtos.EntityTypeMutation;
 import com.smartfirehub.ontology.element.dto.ElementDtos.PatchOntologyRequest;
 import com.smartfirehub.ontology.element.dto.ElementDtos.PropertyMutation;
 import com.smartfirehub.ontology.element.dto.ElementDtos.RelationMutation;
@@ -62,9 +62,22 @@ public class OntologyElementService {
   public void audit(String action, long ontologyId, String detail) {
     var auth = SecurityContextHolder.getContext().getAuthentication();
     if (auth == null || !(auth.getPrincipal() instanceof Long userId)) return;
-    userRepository.findById(userId).ifPresent(u ->
-        auditLogService.log(userId, u.username(), action, "ontology",
-            String.valueOf(ontologyId), detail, null, null, "SUCCESS", null, null));
+    userRepository
+        .findById(userId)
+        .ifPresent(
+            u ->
+                auditLogService.log(
+                    userId,
+                    u.username(),
+                    action,
+                    "ontology",
+                    String.valueOf(ontologyId),
+                    detail,
+                    null,
+                    null,
+                    "SUCCESS",
+                    null,
+                    null));
   }
 
   @Transactional
@@ -91,7 +104,8 @@ public class OntologyElementService {
   @Transactional
   public EntityTypeMutation addEntityType(long ontologyId, CreateEntityTypeRequest req) {
     assertEditable(ontologyId);
-    OntologyRules.validateEntityTypeCommon(req.type(), req.description(), req.naming(), req.resolution());
+    OntologyRules.validateEntityTypeCommon(
+        req.type(), req.description(), req.naming(), req.resolution());
     if (elementRepository.findTypeNames(ontologyId).contains(req.type())) {
       throw OntologyRules.duplicateEntityTypeName(req.type());
     }
@@ -102,7 +116,8 @@ public class OntologyElementService {
   }
 
   @Transactional
-  public EntityTypeMutation updateEntityType(long ontologyId, long entityTypeId, UpdateEntityTypeRequest req) {
+  public EntityTypeMutation updateEntityType(
+      long ontologyId, long entityTypeId, UpdateEntityTypeRequest req) {
     assertEditable(ontologyId);
     String currentName = requireType(ontologyId, entityTypeId);
 
@@ -110,17 +125,21 @@ public class OntologyElementService {
     if (req.type() != null) {
       OntologyRules.validateEntityTypeName(req.type());
       // 자기 자신으로의 "리네임"은 중복이 아니다.
-      if (!req.type().equals(currentName) && elementRepository.findTypeNames(ontologyId).contains(req.type())) {
+      if (!req.type().equals(currentName)
+          && elementRepository.findTypeNames(ontologyId).contains(req.type())) {
         throw OntologyRules.duplicateEntityTypeName(req.type());
       }
     }
     if (req.resolution() != null) {
-      OntologyRules.validateResolution(req.resolution(), req.type() == null ? currentName : req.type());
+      OntologyRules.validateResolution(
+          req.resolution(), req.type() == null ? currentName : req.type());
     }
 
     elementRepository.updateEntityType(entityTypeId, req);
     int version = bumpVersion(ontologyId);
-    audit("ONTOLOGY_TYPE_UPDATE", ontologyId,
+    audit(
+        "ONTOLOGY_TYPE_UPDATE",
+        ontologyId,
         "엔티티 타입 수정 — " + currentName + (req.type() == null ? "" : " → " + req.type()));
     return new EntityTypeMutation(version, findEntityType(ontologyId, entityTypeId));
   }
@@ -140,7 +159,9 @@ public class OntologyElementService {
     List<Long> deletedRelationIds = elementRepository.findRelationIdsTouching(entityTypeId);
     elementRepository.deleteEntityType(entityTypeId);
     int version = bumpVersion(ontologyId);
-    audit("ONTOLOGY_TYPE_DELETE", ontologyId,
+    audit(
+        "ONTOLOGY_TYPE_DELETE",
+        ontologyId,
         "엔티티 타입 삭제 — " + name + " (참조 관계 " + deletedRelationIds.size() + "건 함께 삭제)");
     return new EntityTypeDeletion(version, deletedRelationIds);
   }
@@ -165,10 +186,12 @@ public class OntologyElementService {
   }
 
   @Transactional
-  public PropertyMutation addProperty(long ontologyId, long entityTypeId, CreatePropertyRequest req) {
+  public PropertyMutation addProperty(
+      long ontologyId, long entityTypeId, CreatePropertyRequest req) {
     assertEditable(ontologyId);
     String typeName = requireType(ontologyId, entityTypeId);
-    validatePropertyName(req.name(), typeName, elementRepository.findPropertyNames(entityTypeId), null);
+    validatePropertyName(
+        req.name(), typeName, elementRepository.findPropertyNames(entityTypeId), null);
     OntologyRules.validatePropertyCommon(req.description(), req.dataType(), typeName, req.name());
 
     long propertyId = elementRepository.insertProperty(entityTypeId, req);
@@ -185,7 +208,8 @@ public class OntologyElementService {
     String currentName = requireProperty(entityTypeId, propertyId);
 
     if (req.name() != null) {
-      validatePropertyName(req.name(), typeName, elementRepository.findPropertyNames(entityTypeId), currentName);
+      validatePropertyName(
+          req.name(), typeName, elementRepository.findPropertyNames(entityTypeId), currentName);
     }
     if (req.dataType() != null && !OntologyRules.DATA_TYPES.contains(req.dataType())) {
       throw OntologyRules.invalidDataType(req.name() == null ? currentName : req.name());
@@ -221,14 +245,16 @@ public class OntologyElementService {
   // 앞 두 단계는 OntologyRules가 소유하고(문구 단일 소유), 중복만 이 스코프에서 판정한다 —
   // "무엇이 중복인가"는 대상 엔티티 타입을 아는 호출부만 답할 수 있기 때문이다.
   // excludeName은 수정 시 자기 자신을 중복 후보에서 빼기 위한 것이다.
-  private void validatePropertyName(String name, String typeName, List<String> existing, String excludeName) {
+  private void validatePropertyName(
+      String name, String typeName, List<String> existing, String excludeName) {
     OntologyRules.validatePropertyName(name, typeName);
     if (!name.equals(excludeName) && existing.contains(name)) {
       throw OntologyRules.duplicatePropertyName(typeName, name);
     }
   }
 
-  private OntologyResponse.Property findProperty(long ontologyId, long entityTypeId, long propertyId) {
+  private OntologyResponse.Property findProperty(
+      long ontologyId, long entityTypeId, long propertyId) {
     return findEntityType(ontologyId, entityTypeId).properties().stream()
         .filter(p -> propertyId == p.id())
         .findFirst()
@@ -247,20 +273,25 @@ public class OntologyElementService {
     String objectName = requireType(ontologyId, req.objectTypeId());
 
     // blank 검사가 중복 검사보다 먼저다 — 빈 관계명 2건은 트리플 키가 같아 "중복"으로 오진단된다.
-    OntologyRules.validateRelationCommon(req.relation(), req.description(), subjectName, objectName);
-    if (elementRepository.existsTriple(ontologyId, req.subjectTypeId(), req.relation(), req.objectTypeId())) {
+    OntologyRules.validateRelationCommon(
+        req.relation(), req.description(), subjectName, objectName);
+    if (elementRepository.existsTriple(
+        ontologyId, req.subjectTypeId(), req.relation(), req.objectTypeId())) {
       throw OntologyRules.duplicateTriple(subjectName, req.relation(), objectName);
     }
 
     long relationId = elementRepository.insertRelation(ontologyId, req);
     int version = bumpVersion(ontologyId);
-    audit("ONTOLOGY_RELATION_ADD", ontologyId,
+    audit(
+        "ONTOLOGY_RELATION_ADD",
+        ontologyId,
         "관계 추가 — " + subjectName + " -[" + req.relation() + "]-> " + objectName);
     return new RelationMutation(version, findRelation(ontologyId, relationId));
   }
 
   @Transactional
-  public RelationMutation updateRelation(long ontologyId, long relationId, UpdateRelationRequest req) {
+  public RelationMutation updateRelation(
+      long ontologyId, long relationId, UpdateRelationRequest req) {
     assertEditable(ontologyId);
     OntologyResponse.Triple current = requireRelation(ontologyId, relationId);
 
@@ -277,7 +308,9 @@ public class OntologyElementService {
 
     elementRepository.updateRelation(relationId, req);
     int version = bumpVersion(ontologyId);
-    audit("ONTOLOGY_RELATION_UPDATE", ontologyId,
+    audit(
+        "ONTOLOGY_RELATION_UPDATE",
+        ontologyId,
         "관계 수정 — " + current.subject() + " -[" + current.relation() + "]-> " + current.object());
     return new RelationMutation(version, findRelation(ontologyId, relationId));
   }
@@ -289,7 +322,9 @@ public class OntologyElementService {
 
     elementRepository.deleteRelation(relationId);
     int version = bumpVersion(ontologyId);
-    audit("ONTOLOGY_RELATION_DELETE", ontologyId,
+    audit(
+        "ONTOLOGY_RELATION_DELETE",
+        ontologyId,
         "관계 삭제 — " + current.subject() + " -[" + current.relation() + "]-> " + current.object());
     return new VersionOnly(version);
   }

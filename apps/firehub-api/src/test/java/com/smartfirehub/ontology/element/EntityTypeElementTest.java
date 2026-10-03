@@ -75,11 +75,14 @@ class EntityTypeElementTest extends OntologyElementTestSupport {
   // V79 부분 유니크 인덱스 위반이 영문 "Data integrity violation" 409로 새어나가지 않는다.
   @Test
   void 다른_살아있는_온톨로지와_같은_도메인으로_패치하면_기존_문구와_동일하게_거부된다() {
-    long otherId = OntologyTestSupport.createWithStatus(ontologyService, "충돌도메인-" + System.nanoTime(), "active");
+    long otherId =
+        OntologyTestSupport.createWithStatus(
+            ontologyService, "충돌도메인-" + System.nanoTime(), "active");
     try {
       String otherDomain = ontologyRepository.findById(otherId).domain();
 
-      assertThatThrownBy(() -> elementService.patchDomain(ontologyId, new PatchOntologyRequest(otherDomain)))
+      assertThatThrownBy(
+              () -> elementService.patchDomain(ontologyId, new PatchOntologyRequest(otherDomain)))
           .isInstanceOf(IllegalStateException.class)
           .hasMessage("이미 같은 도메인의 온톨로지가 있습니다: " + otherDomain);
     } finally {
@@ -91,8 +94,9 @@ class EntityTypeElementTest extends OntologyElementTestSupport {
   void 타입을_추가하면_새_id와_증가된_schemaVersion을_반환한다() {
     int before = ontologyRepository.currentSchemaVersion(ontologyId);
 
-    var result = elementService.addEntityType(ontologyId,
-        new CreateEntityTypeRequest("Gateway", "게이트웨이", "표기 그대로", "exact"));
+    var result =
+        elementService.addEntityType(
+            ontologyId, new CreateEntityTypeRequest("Gateway", "게이트웨이", "표기 그대로", "exact"));
 
     assertThat(result.entityType().id()).isNotNull();
     assertThat(result.entityType().type()).isEqualTo("Gateway");
@@ -104,8 +108,10 @@ class EntityTypeElementTest extends OntologyElementTestSupport {
 
   @Test
   void 중복된_타입명_추가는_기존_문구와_동일한_400으로_거부된다() {
-    assertThatThrownBy(() -> elementService.addEntityType(ontologyId,
-        new CreateEntityTypeRequest("Sensor", "중복", "x", "exact")))
+    assertThatThrownBy(
+            () ->
+                elementService.addEntityType(
+                    ontologyId, new CreateEntityTypeRequest("Sensor", "중복", "x", "exact")))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("중복된 엔티티 타입명: Sensor");
   }
@@ -114,8 +120,10 @@ class EntityTypeElementTest extends OntologyElementTestSupport {
   // OntologyRules.validateEntityTypeCommon이 요소 경로(addEntityType)에서도 이 규칙을 실제로 막는지 고정한다.
   @Test
   void null_naming을_가진_타입_추가는_거부된다() {
-    assertThatThrownBy(() -> elementService.addEntityType(ontologyId,
-        new CreateEntityTypeRequest("Gateway", "x", null, "exact")))
+    assertThatThrownBy(
+            () ->
+                elementService.addEntityType(
+                    ontologyId, new CreateEntityTypeRequest("Gateway", "x", null, "exact")))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("엔티티 명명 규칙(naming)은 null일 수 없습니다");
   }
@@ -125,8 +133,9 @@ class EntityTypeElementTest extends OntologyElementTestSupport {
   // 막는 강화가 들어오면 이 테스트가 먼저 깨져 "의도된 변경"인지 확인하게 만드는 캐너리다.
   @Test
   void 빈_문자열_description과_naming은_허용된다() {
-    var result = elementService.addEntityType(ontologyId,
-        new CreateEntityTypeRequest("Gateway", "", "", "exact"));
+    var result =
+        elementService.addEntityType(
+            ontologyId, new CreateEntityTypeRequest("Gateway", "", "", "exact"));
 
     assertThat(result.entityType().description()).isEmpty();
     assertThat(result.entityType().naming()).isEmpty();
@@ -136,19 +145,24 @@ class EntityTypeElementTest extends OntologyElementTestSupport {
   void 리네임은_관계를_건드리지_않고_id를_보존한다() {
     long sensorId = typeId("Sensor");
 
-    var result = elementService.updateEntityType(ontologyId, sensorId,
-        new UpdateEntityTypeRequest("Detector", null, null, null));
+    var result =
+        elementService.updateEntityType(
+            ontologyId, sensorId, new UpdateEntityTypeRequest("Detector", null, null, null));
 
     assertThat(result.entityType().id()).isEqualTo(sensorId);
     OntologyResponse after = ontologyRepository.findById(ontologyId);
-    assertThat(after.entities()).extracting(OntologyResponse.EntityType::type)
+    assertThat(after.entities())
+        .extracting(OntologyResponse.EntityType::type)
         .containsExactly("Detector", "Building");
     // 관계는 FK로 매달려 있으므로 이름만 따라 바뀐다 — 별도 갱신이 없어야 한다.
-    assertThat(after.relations()).singleElement().satisfies(t -> {
-      assertThat(t.subject()).isEqualTo("Detector");
-      assertThat(t.relation()).isEqualTo("INSTALLED_IN");
-      assertThat(t.object()).isEqualTo("Building");
-    });
+    assertThat(after.relations())
+        .singleElement()
+        .satisfies(
+            t -> {
+              assertThat(t.subject()).isEqualTo("Detector");
+              assertThat(t.relation()).isEqualTo("INSTALLED_IN");
+              assertThat(t.object()).isEqualTo("Building");
+            });
   }
 
   @Test
@@ -159,7 +173,9 @@ class EntityTypeElementTest extends OntologyElementTestSupport {
 
     assertThat(result.deletedRelationIds()).containsExactly(relationId);
     OntologyResponse after = ontologyRepository.findById(ontologyId);
-    assertThat(after.entities()).extracting(OntologyResponse.EntityType::type).containsExactly("Building");
+    assertThat(after.entities())
+        .extracting(OntologyResponse.EntityType::type)
+        .containsExactly("Building");
     assertThat(after.relations()).isEmpty();
   }
 
@@ -179,8 +195,10 @@ class EntityTypeElementTest extends OntologyElementTestSupport {
     ontologyService.changeStatus(ontologyId, "active");
     ontologyService.changeStatus(ontologyId, "archived");
 
-    assertThatThrownBy(() -> elementService.addEntityType(ontologyId,
-        new CreateEntityTypeRequest("Gateway", "x", "y", "exact")))
+    assertThatThrownBy(
+            () ->
+                elementService.addEntityType(
+                    ontologyId, new CreateEntityTypeRequest("Gateway", "x", "y", "exact")))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("은퇴한 온톨로지는 편집할 수 없습니다. 먼저 복귀시키세요.");
   }
@@ -188,10 +206,13 @@ class EntityTypeElementTest extends OntologyElementTestSupport {
   // 라우팅·권한·직렬화가 실제로 붙어 있는지 한 번은 컨트롤러를 통해 확인한다.
   @Test
   void POST_entity_types는_생성된_타입과_새_버전을_JSON으로_반환한다() throws Exception {
-    mockMvc.perform(post("/api/v1/ontology/{id}/entity-types", ontologyId)
-            .header("Authorization", "Bearer valid-token")
-            .contentType(MediaType.APPLICATION_JSON)
-            .content("""
+    mockMvc
+        .perform(
+            post("/api/v1/ontology/{id}/entity-types", ontologyId)
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    """
                 {"type":"Gateway","description":"게이트웨이","naming":"표기 그대로","resolution":"exact"}
                 """))
         .andExpect(status().isOk())
@@ -199,5 +220,4 @@ class EntityTypeElementTest extends OntologyElementTestSupport {
         .andExpect(jsonPath("$.entityType.id").isNumber())
         .andExpect(jsonPath("$.schemaVersion").isNumber());
   }
-
 }

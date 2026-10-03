@@ -45,16 +45,22 @@ public class MappingService {
 
   // 매핑 조회(없으면 empty).
   public Optional<MappingResponse> get(long datasetId) {
-    return mappingRepository.findByDataset(datasetId)
-        .map(m -> new MappingResponse(datasetId, m.ontologyId(), deserialize(m.specJson()), m.status()));
+    return mappingRepository
+        .findByDataset(datasetId)
+        .map(
+            m ->
+                new MappingResponse(
+                    datasetId, m.ontologyId(), deserialize(m.specJson()), m.status()));
   }
 
   // draft→active 활성화. 존재 확인 + 재검증 후 상태 전환.
   // RLS 가 걸린 dataset_column 을 validate()에서 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
   @Transactional
   public MappingResponse activate(long datasetId, Long userId) {
-    StoredMapping stored = mappingRepository.findByDataset(datasetId)
-        .orElseThrow(() -> new IllegalArgumentException("활성화할 매핑이 없습니다: " + datasetId));
+    StoredMapping stored =
+        mappingRepository
+            .findByDataset(datasetId)
+            .orElseThrow(() -> new IllegalArgumentException("활성화할 매핑이 없습니다: " + datasetId));
     MappingSpec spec = deserialize(stored.specJson());
     long ontologyId = validate(datasetId, spec); // 활성화 시점 스키마가 바뀌었을 수 있어 재검증
 
@@ -72,19 +78,27 @@ public class MappingService {
 
   // conformance 검증 — 위반 시 IllegalArgumentException(→400). 통과하면 바인딩 ontologyId 반환.
   private long validate(long datasetId, MappingSpec spec) {
-    long ontologyId = bindingRepository.findOntologyIdByDataset(datasetId)
-        .orElseThrow(() -> new IllegalArgumentException("데이터셋이 온톨로지에 바인딩되지 않았습니다: " + datasetId));
+    long ontologyId =
+        bindingRepository
+            .findOntologyIdByDataset(datasetId)
+            .orElseThrow(
+                () -> new IllegalArgumentException("데이터셋이 온톨로지에 바인딩되지 않았습니다: " + datasetId));
     OntologyResponse ontology = ontologyRepository.findById(ontologyId);
 
     // 컬럼명→컬럼타입. 존재 확인뿐 아니라 속성 dataType 호환 검사에도 원본 타입이 필요하다.
-    Map<String, String> columnTypes = columnRepository.findByDatasetId(datasetId).stream()
-        .collect(Collectors.toMap(DatasetColumnResponse::columnName,
-            c -> c.dataType() == null ? "" : c.dataType()));
+    Map<String, String> columnTypes =
+        columnRepository.findByDatasetId(datasetId).stream()
+            .collect(
+                Collectors.toMap(
+                    DatasetColumnResponse::columnName,
+                    c -> c.dataType() == null ? "" : c.dataType()));
     Set<String> columns = columnTypes.keySet();
-    Map<String, OntologyResponse.EntityType> typeByName = ontology.entities().stream()
-        .collect(Collectors.toMap(OntologyResponse.EntityType::type, Function.identity()));
+    Map<String, OntologyResponse.EntityType> typeByName =
+        ontology.entities().stream()
+            .collect(Collectors.toMap(OntologyResponse.EntityType::type, Function.identity()));
 
-    List<MappingSpec.EntityMapping> entities = spec.entities() == null ? List.of() : spec.entities();
+    List<MappingSpec.EntityMapping> entities =
+        spec.entities() == null ? List.of() : spec.entities();
     // 동일 엔티티 타입을 서로 다른 nameColumn으로 두 번 매핑하면 그래프 투영(table-projection.ts)
     // 단계에서 매핑 항목마다 별도 identity key가 계산돼 같은 타입의 노드가 조각난다(#408).
     // "한 엔티티 타입 = 한 매핑 항목"을 conformance 규칙으로 강제해 애초에 조각날 상태를 차단한다.
@@ -101,9 +115,11 @@ public class MappingService {
       if (!columns.contains(em.nameColumn())) {
         throw new IllegalArgumentException("데이터셋에 없는 컬럼(nameColumn): " + em.nameColumn());
       }
-      Map<String, OntologyResponse.Property> propByName = et.properties().stream()
-          .collect(Collectors.toMap(OntologyResponse.Property::name, Function.identity()));
-      List<MappingSpec.PropertyMapping> props = em.properties() == null ? List.of() : em.properties();
+      Map<String, OntologyResponse.Property> propByName =
+          et.properties().stream()
+              .collect(Collectors.toMap(OntologyResponse.Property::name, Function.identity()));
+      List<MappingSpec.PropertyMapping> props =
+          em.properties() == null ? List.of() : em.properties();
       for (MappingSpec.PropertyMapping pm : props) {
         OntologyResponse.Property prop = propByName.get(pm.propertyName());
         if (prop == null) {
@@ -116,21 +132,30 @@ public class MappingService {
       }
     }
 
-    List<MappingSpec.RelationMapping> relations = spec.relations() == null ? List.of() : spec.relations();
+    List<MappingSpec.RelationMapping> relations =
+        spec.relations() == null ? List.of() : spec.relations();
     // 클라이언트 다이얼로그가 중복 검사를 우회(구버전 캐시·직접 API 호출 등)해도 서버가 최종 방어선이
     // 되도록 (subjectRef, relation, objectRef) 완전 동일 트리플 중복을 막는다(#501). 클라이언트는
     // 안정 ID(subjectId/objectId) 기준으로 검사하지만 서버는 저장 시점 인덱스(subjectRef/objectRef)
     // 기준이라 표현이 다를 뿐 같은 트리플이면 여기서도 동일하게 걸린다.
     Set<String> seenTriples = new HashSet<>();
     for (MappingSpec.RelationMapping rm : relations) {
-      if (rm.subjectRef() < 0 || rm.subjectRef() >= entities.size()
-          || rm.objectRef() < 0 || rm.objectRef() >= entities.size()) {
-        throw new IllegalArgumentException("relation ref 범위 오류: " + rm.subjectRef() + "," + rm.objectRef());
+      if (rm.subjectRef() < 0
+          || rm.subjectRef() >= entities.size()
+          || rm.objectRef() < 0
+          || rm.objectRef() >= entities.size()) {
+        throw new IllegalArgumentException(
+            "relation ref 범위 오류: " + rm.subjectRef() + "," + rm.objectRef());
       }
       String subjectType = entities.get(rm.subjectRef()).entityType();
       String objectType = entities.get(rm.objectRef()).entityType();
-      boolean allowed = ontology.relations().stream().anyMatch(t ->
-          t.subject().equals(subjectType) && t.relation().equals(rm.relation()) && t.object().equals(objectType));
+      boolean allowed =
+          ontology.relations().stream()
+              .anyMatch(
+                  t ->
+                      t.subject().equals(subjectType)
+                          && t.relation().equals(rm.relation())
+                          && t.object().equals(objectType));
       if (!allowed) {
         throw new IllegalArgumentException(
             "허용되지 않은 트리플: " + subjectType + "-" + rm.relation() + "->" + objectType);
@@ -159,7 +184,8 @@ public class MappingService {
       base = base.substring(0, paren);
     }
     return switch (base) {
-      case "INTEGER", "BIGINT", "SMALLINT", "DECIMAL", "NUMERIC", "DOUBLE", "REAL", "FLOAT" -> "number";
+      case "INTEGER", "BIGINT", "SMALLINT", "DECIMAL", "NUMERIC", "DOUBLE", "REAL", "FLOAT" ->
+          "number";
       case "DATE", "TIMESTAMP", "TIMESTAMPTZ", "TIME" -> "date";
       // BOOLEAN·GEOMETRY는 숫자도 날짜도 아니므로 text로 접어 number/date 연결을 막는다.
       case "TEXT", "VARCHAR", "CHAR", "BPCHAR", "BOOLEAN", "GEOMETRY" -> "text";
@@ -171,8 +197,8 @@ public class MappingService {
   // 온톨로지 text 속성은 어떤 컬럼이든 문자열화해 담을 수 있으므로 허용하고,
   // number/date 속성은 같은 축의 컬럼만 허용한다(투영이 SET n += properties로 원본 값을 그대로 쓰기 때문에
   // 문자열이 들어가면 집계·범위 질의가 조용히 어긋난다).
-  private static void checkPropertyType(String entityType, OntologyResponse.Property prop,
-      String columnName, String columnType) {
+  private static void checkPropertyType(
+      String entityType, OntologyResponse.Property prop, String columnName, String columnType) {
     String want = prop.dataType();
     if (want == null || want.isBlank() || "text".equalsIgnoreCase(want)) {
       return; // 미지정 속성은 판정 대상이 아니고, text는 모두 허용
@@ -181,9 +207,10 @@ public class MappingService {
     if (actual == null || actual.equals(want.toLowerCase())) {
       return;
     }
-    throw new IllegalArgumentException(String.format(
-        "%s의 속성 '%s'(%s)에 %s 컬럼 '%s'(%s)을 연결할 수 없습니다",
-        entityType, prop.name(), want, koreanTypeName(actual), columnName, columnType));
+    throw new IllegalArgumentException(
+        String.format(
+            "%s의 속성 '%s'(%s)에 %s 컬럼 '%s'(%s)을 연결할 수 없습니다",
+            entityType, prop.name(), want, koreanTypeName(actual), columnName, columnType));
   }
 
   // 오류 메시지용 축약 타입 한글 표기.

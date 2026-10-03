@@ -35,52 +35,68 @@ class OntologyMigrationTest extends IntegrationTestBase {
   }
 
   private static final Table<?> ET = table(name("ontology_entity_type"));
-  private static final Field<String> ET_TYPE = field(name("ontology_entity_type", "type"), String.class);
-  private static final Field<String> ET_RES = field(name("ontology_entity_type", "resolution"), String.class);
-  private static final Field<Integer> ET_ORDER = field(name("ontology_entity_type", "sort_order"), Integer.class);
+  private static final Field<String> ET_TYPE =
+      field(name("ontology_entity_type", "type"), String.class);
+  private static final Field<String> ET_RES =
+      field(name("ontology_entity_type", "resolution"), String.class);
+  private static final Field<Integer> ET_ORDER =
+      field(name("ontology_entity_type", "sort_order"), Integer.class);
   private static final Field<Long> ET_ID = field(name("ontology_entity_type", "id"), Long.class);
   private static final Table<?> REL = table(name("ontology_relation"));
-  private static final Field<String> REL_RELATION = field(name("ontology_relation", "relation"), String.class);
-  private static final Field<Integer> REL_ORDER = field(name("ontology_relation", "sort_order"), Integer.class);
-  private static final Field<Long> REL_SUBJ_ID = field(name("ontology_relation", "subject_type_id"), Long.class);
-  private static final Field<Long> REL_OBJ_ID = field(name("ontology_relation", "object_type_id"), Long.class);
+  private static final Field<String> REL_RELATION =
+      field(name("ontology_relation", "relation"), String.class);
+  private static final Field<Integer> REL_ORDER =
+      field(name("ontology_relation", "sort_order"), Integer.class);
+  private static final Field<Long> REL_SUBJ_ID =
+      field(name("ontology_relation", "subject_type_id"), Long.class);
+  private static final Field<Long> REL_OBJ_ID =
+      field(name("ontology_relation", "object_type_id"), Long.class);
 
   @Test
   void 시드_엔티티는_원본_순서로_6개_적재된다() {
     List<String> types =
-        readAsDefaultTenant(() -> dsl.select(ET_TYPE).from(ET).orderBy(ET_ORDER).fetch(r -> r.get(ET_TYPE)));
-    assertThat(types).containsExactly("Incident", "Building", "Cause", "Damage", "Equipment", "Regulation");
+        readAsDefaultTenant(
+            () -> dsl.select(ET_TYPE).from(ET).orderBy(ET_ORDER).fetch(r -> r.get(ET_TYPE)));
+    assertThat(types)
+        .containsExactly("Incident", "Building", "Cause", "Damage", "Equipment", "Regulation");
     // resolution 정책 6종 전부 순서대로 검증한다. resolution 은 추출 프롬프트에 실리지 않아
     // "프롬프트 바이트 동일" 회귀가 커버하지 못하므로(오직 semantic-resolver 병합 정책에만 영향),
     // 여기서 Incident/Damage=exact, 나머지=embedding 을 명시적으로 단언해 시드 오류를 잡는다.
     List<String> resolutions =
-        readAsDefaultTenant(() -> dsl.select(ET_RES).from(ET).orderBy(ET_ORDER).fetch(r -> r.get(ET_RES)));
-    assertThat(resolutions).containsExactly("exact", "embedding", "embedding", "exact", "embedding", "embedding");
+        readAsDefaultTenant(
+            () -> dsl.select(ET_RES).from(ET).orderBy(ET_ORDER).fetch(r -> r.get(ET_RES)));
+    assertThat(resolutions)
+        .containsExactly("exact", "embedding", "embedding", "exact", "embedding", "embedding");
   }
 
   @Test
   void 시드_관계는_원본_순서로_6개_적재된다() {
     List<String> rels =
         readAsDefaultTenant(
-            () -> dsl.select(REL_RELATION).from(REL).orderBy(REL_ORDER).fetch(r -> r.get(REL_RELATION)));
-    assertThat(rels).containsExactly(
-        "OCCURRED_AT", "CAUSED_BY", "RESULTED_IN", "HAS_EQUIPMENT", "VIOLATED", "GOVERNED_BY");
+            () ->
+                dsl.select(REL_RELATION)
+                    .from(REL)
+                    .orderBy(REL_ORDER)
+                    .fetch(r -> r.get(REL_RELATION)));
+    assertThat(rels)
+        .containsExactly(
+            "OCCURRED_AT", "CAUSED_BY", "RESULTED_IN", "HAS_EQUIPMENT", "VIOLATED", "GOVERNED_BY");
   }
 
   // V72 시드: Incident 는 '피해액'(number, 원) 속성 1개를 가져야 한다. 다른 타입은 속성 없음.
   @Test
   void incident_hasDamageAmountProperty() {
     OntologyResponse res = ontologyRepository.findById(1L);
-    OntologyResponse.EntityType incident = res.entities().stream()
-        .filter(e -> e.type().equals("Incident")).findFirst().orElseThrow();
+    OntologyResponse.EntityType incident =
+        res.entities().stream().filter(e -> e.type().equals("Incident")).findFirst().orElseThrow();
     assertThat(incident.properties()).hasSize(1);
     OntologyResponse.Property p = incident.properties().get(0);
     assertThat(p.name()).isEqualTo("피해액");
     assertThat(p.dataType()).isEqualTo("number");
     assertThat(p.unit()).isEqualTo("원");
     // 속성 미정의 타입은 빈 목록.
-    OntologyResponse.EntityType building = res.entities().stream()
-        .filter(e -> e.type().equals("Building")).findFirst().orElseThrow();
+    OntologyResponse.EntityType building =
+        res.entities().stream().filter(e -> e.type().equals("Building")).findFirst().orElseThrow();
     assertThat(building.properties()).isEmpty();
   }
 
@@ -98,7 +114,11 @@ class OntologyMigrationTest extends IntegrationTestBase {
   void V80_백필은_시드_관계를_올바른_타입_id_쌍으로_옮긴다() {
     Map<String, Long> idByType =
         readAsDefaultTenant(
-            () -> dsl.select(ET_TYPE, ET_ID).from(ET).fetch().intoMap(r -> r.get(ET_TYPE), r -> r.get(ET_ID)));
+            () ->
+                dsl.select(ET_TYPE, ET_ID)
+                    .from(ET)
+                    .fetch()
+                    .intoMap(r -> r.get(ET_TYPE), r -> r.get(ET_ID)));
 
     List<String> actual =
         readAsDefaultTenant(
@@ -106,17 +126,22 @@ class OntologyMigrationTest extends IntegrationTestBase {
                 dsl.select(REL_SUBJ_ID, REL_RELATION, REL_OBJ_ID)
                     .from(REL)
                     .orderBy(REL_ORDER)
-                    .fetch(r -> nameOf(idByType, r.get(REL_SUBJ_ID))
-                        + "|" + r.get(REL_RELATION)
-                        + "|" + nameOf(idByType, r.get(REL_OBJ_ID))));
+                    .fetch(
+                        r ->
+                            nameOf(idByType, r.get(REL_SUBJ_ID))
+                                + "|"
+                                + r.get(REL_RELATION)
+                                + "|"
+                                + nameOf(idByType, r.get(REL_OBJ_ID))));
 
-    assertThat(actual).containsExactly(
-        "Incident|OCCURRED_AT|Building",
-        "Incident|CAUSED_BY|Cause",
-        "Incident|RESULTED_IN|Damage",
-        "Building|HAS_EQUIPMENT|Equipment",
-        "Incident|VIOLATED|Regulation",
-        "Equipment|GOVERNED_BY|Regulation");
+    assertThat(actual)
+        .containsExactly(
+            "Incident|OCCURRED_AT|Building",
+            "Incident|CAUSED_BY|Cause",
+            "Incident|RESULTED_IN|Damage",
+            "Building|HAS_EQUIPMENT|Equipment",
+            "Incident|VIOLATED|Regulation",
+            "Equipment|GOVERNED_BY|Regulation");
   }
 
   // id → 타입명 역조회(테스트 가독성용).
@@ -135,23 +160,29 @@ class OntologyMigrationTest extends IntegrationTestBase {
     OntologyResponse res = ontologyRepository.findById(1L);
 
     assertThat(res.relations()).isNotEmpty();
-    assertThat(res.relations()).allSatisfy(t -> {
-      assertThat(t.id()).isNotNull();
-      assertThat(t.subjectTypeId()).isNotNull();
-      assertThat(t.objectTypeId()).isNotNull();
-    });
+    assertThat(res.relations())
+        .allSatisfy(
+            t -> {
+              assertThat(t.id()).isNotNull();
+              assertThat(t.subjectTypeId()).isNotNull();
+              assertThat(t.objectTypeId()).isNotNull();
+            });
 
     // subjectTypeId는 같은 이름의 엔티티 타입 id와 일치해야 한다(엉뚱한 id를 채우지 않았다는 확인).
     Map<String, Long> idByType =
-        res.entities().stream().collect(java.util.stream.Collectors.toMap(
-            OntologyResponse.EntityType::type, OntologyResponse.EntityType::id));
-    assertThat(res.relations()).allSatisfy(t -> {
-      assertThat(t.subjectTypeId()).isEqualTo(idByType.get(t.subject()));
-      assertThat(t.objectTypeId()).isEqualTo(idByType.get(t.object()));
-    });
+        res.entities().stream()
+            .collect(
+                java.util.stream.Collectors.toMap(
+                    OntologyResponse.EntityType::type, OntologyResponse.EntityType::id));
+    assertThat(res.relations())
+        .allSatisfy(
+            t -> {
+              assertThat(t.subjectTypeId()).isEqualTo(idByType.get(t.subject()));
+              assertThat(t.objectTypeId()).isEqualTo(idByType.get(t.object()));
+            });
 
-    OntologyResponse.EntityType incident = res.entities().stream()
-        .filter(e -> e.type().equals("Incident")).findFirst().orElseThrow();
+    OntologyResponse.EntityType incident =
+        res.entities().stream().filter(e -> e.type().equals("Incident")).findFirst().orElseThrow();
     assertThat(incident.properties().get(0).id()).isNotNull();
   }
 }

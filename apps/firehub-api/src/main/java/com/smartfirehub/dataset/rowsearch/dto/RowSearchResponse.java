@@ -6,8 +6,8 @@ import java.util.Map;
 /**
  * 행 검색 응답. indexStatus.status: IDLE | SYNCING | ERROR | STALE(원본 교체 직후, 결과 없음).
  *
- * <p>첫 스윕 전에는 SYNCING/ERROR 와 빈 결과가, 임베딩 모델 변경 후 재색인 전 SEMANTIC 검색에는 SYNCING 과 빈 결과가
- * 온다(HYBRID 는 키워드만으로 답하고 degraded=true).
+ * <p>첫 스윕 전에는 SYNCING/ERROR 와 빈 결과가, 임베딩 모델 변경 후 재색인 전 SEMANTIC 검색에는 SYNCING 과 빈 결과가 온다(HYBRID 는
+ * 키워드만으로 답하고 degraded=true).
  */
 public record RowSearchResponse(IndexStatus indexStatus, boolean degraded, List<Hit> hits) {
 

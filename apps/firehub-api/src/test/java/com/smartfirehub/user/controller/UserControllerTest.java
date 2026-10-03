@@ -103,8 +103,7 @@ class UserControllerTest {
     mockAuthentication();
     ChangePasswordRequest request = new ChangePasswordRequest("oldpassword", "newPassword123");
     when(authService.startSessionAfterPasswordChange(eq(1L), any()))
-        .thenReturn(
-            new TokenResponse("a", "new-refresh", "Bearer", 1800L, null, List.of(), false));
+        .thenReturn(new TokenResponse("a", "new-refresh", "Bearer", 1800L, null, List.of(), false));
 
     mockMvc
         .perform(
@@ -114,7 +113,11 @@ class UserControllerTest {
                 .content(objectMapper.writeValueAsString(request)))
         .andExpect(status().isNoContent())
         // 호출자 세션은 새 refresh 쿠키로 이어진다(리뷰 지적 2).
-        .andExpect(header().string("Set-Cookie", org.hamcrest.Matchers.containsString("refreshToken=new-refresh")));
+        .andExpect(
+            header()
+                .string(
+                    "Set-Cookie",
+                    org.hamcrest.Matchers.containsString("refreshToken=new-refresh")));
 
     verify(userService).changePassword(1L, "oldpassword", "newPassword123");
   }

@@ -43,27 +43,49 @@ class MappingServiceTest {
     bindingRepository = mock(DatasetOntologyRepository.class);
     ontologyRepository = mock(OntologyRepository.class);
     columnRepository = mock(DatasetColumnRepository.class);
-    service = new MappingService(mappingRepository, bindingRepository, ontologyRepository,
-        columnRepository, new ObjectMapper());
+    service =
+        new MappingService(
+            mappingRepository,
+            bindingRepository,
+            ontologyRepository,
+            columnRepository,
+            new ObjectMapper());
 
     // 기본 fixture: DS는 온톨로지 1에 바인딩, 온톨로지는 Incident/Building + OCCURRED_AT.
     // 속성은 dataType 축(number/date/text/미지정)별로 하나씩 두어 타입 conformance 검증을 커버한다.
     when(bindingRepository.findOntologyIdByDataset(DS)).thenReturn(Optional.of(1L));
     // activate()가 상태 가드에서 조회하는 값 — 기본 fixture는 운영 중(active)으로 둔다.
     when(ontologyRepository.findStatusById(1L)).thenReturn("active");
-    when(ontologyRepository.findById(1L)).thenReturn(new OntologyResponse("화재조사", 1,
-        List.of(
-            new OntologyResponse.EntityType("Incident", "사건", "명명", "exact",
-                List.of(new OntologyResponse.Property("피해액", "d", "number", "원"),
-                    new OntologyResponse.Property("발생일시", "d", "date", null),
-                    new OntologyResponse.Property("비고", "d", "text", null),
-                    new OntologyResponse.Property("미지정", "d", null, null)), 10L),
-            new OntologyResponse.EntityType("Building", "건물", "명명", "embedding", List.of(), 11L)),
-        List.of(new OntologyResponse.Triple("Incident", "OCCURRED_AT", "Building", "d"))));
+    when(ontologyRepository.findById(1L))
+        .thenReturn(
+            new OntologyResponse(
+                "화재조사",
+                1,
+                List.of(
+                    new OntologyResponse.EntityType(
+                        "Incident",
+                        "사건",
+                        "명명",
+                        "exact",
+                        List.of(
+                            new OntologyResponse.Property("피해액", "d", "number", "원"),
+                            new OntologyResponse.Property("발생일시", "d", "date", null),
+                            new OntologyResponse.Property("비고", "d", "text", null),
+                            new OntologyResponse.Property("미지정", "d", null, null)),
+                        10L),
+                    new OntologyResponse.EntityType(
+                        "Building", "건물", "명명", "embedding", List.of(), 11L)),
+                List.of(new OntologyResponse.Triple("Incident", "OCCURRED_AT", "Building", "d"))));
     // 컬럼도 타입 축별로: 문자열(id/bld/email), 숫자(loss), 날짜(at), 미지 타입(weird).
-    when(columnRepository.findByDatasetId(DS)).thenReturn(List.of(
-        col("id", "TEXT"), col("bld", "TEXT"), col("loss", "DECIMAL"),
-        col("at", "TIMESTAMP"), col("email", "VARCHAR"), col("weird", "MONEY")));
+    when(columnRepository.findByDatasetId(DS))
+        .thenReturn(
+            List.of(
+                col("id", "TEXT"),
+                col("bld", "TEXT"),
+                col("loss", "DECIMAL"),
+                col("at", "TIMESTAMP"),
+                col("email", "VARCHAR"),
+                col("weird", "MONEY")));
   }
 
   private static DatasetColumnResponse col(String nm, String type) {
@@ -73,16 +95,17 @@ class MappingServiceTest {
   // 단일 속성 매핑만 담은 최소 스펙(타입 검증 케이스용).
   private static MappingSpec specWithProperty(String column, String propertyName) {
     return new MappingSpec(
-        List.of(new MappingSpec.EntityMapping("Incident", "id",
-            List.of(new MappingSpec.PropertyMapping(column, propertyName)))),
+        List.of(
+            new MappingSpec.EntityMapping(
+                "Incident", "id", List.of(new MappingSpec.PropertyMapping(column, propertyName)))),
         List.of());
   }
 
   private static MappingSpec validSpec() {
     return new MappingSpec(
         List.of(
-            new MappingSpec.EntityMapping("Incident", "id",
-                List.of(new MappingSpec.PropertyMapping("loss", "피해액"))),
+            new MappingSpec.EntityMapping(
+                "Incident", "id", List.of(new MappingSpec.PropertyMapping("loss", "피해액"))),
             new MappingSpec.EntityMapping("Building", "bld", List.of())),
         List.of(new MappingSpec.RelationMapping(0, "OCCURRED_AT", 1)));
   }
@@ -100,52 +123,68 @@ class MappingServiceTest {
     when(bindingRepository.findOntologyIdByDataset(DS)).thenReturn(Optional.empty());
     assertThatThrownBy(() -> service.save(DS, validSpec(), 42L))
         .isInstanceOf(IllegalArgumentException.class);
-    verify(mappingRepository, never()).upsert(anyLong(), anyLong(), anyString(), anyString(), any());
+    verify(mappingRepository, never())
+        .upsert(anyLong(), anyLong(), anyString(), anyString(), any());
   }
 
   @Test
   void save_온톨로지에_없는_엔티티타입은_400() {
-    MappingSpec bad = new MappingSpec(
-        List.of(new MappingSpec.EntityMapping("NoSuch", "id", List.of())), List.of());
-    assertThatThrownBy(() -> service.save(DS, bad, 42L)).isInstanceOf(IllegalArgumentException.class);
+    MappingSpec bad =
+        new MappingSpec(
+            List.of(new MappingSpec.EntityMapping("NoSuch", "id", List.of())), List.of());
+    assertThatThrownBy(() -> service.save(DS, bad, 42L))
+        .isInstanceOf(IllegalArgumentException.class);
   }
 
   @Test
   void save_데이터셋에_없는_nameColumn은_400() {
-    MappingSpec bad = new MappingSpec(
-        List.of(new MappingSpec.EntityMapping("Incident", "nope", List.of())), List.of());
-    assertThatThrownBy(() -> service.save(DS, bad, 42L)).isInstanceOf(IllegalArgumentException.class);
+    MappingSpec bad =
+        new MappingSpec(
+            List.of(new MappingSpec.EntityMapping("Incident", "nope", List.of())), List.of());
+    assertThatThrownBy(() -> service.save(DS, bad, 42L))
+        .isInstanceOf(IllegalArgumentException.class);
   }
 
   @Test
   void save_엔티티타입에_없는_속성은_400() {
-    MappingSpec bad = new MappingSpec(
-        List.of(new MappingSpec.EntityMapping("Incident", "id",
-            List.of(new MappingSpec.PropertyMapping("loss", "없는속성")))), List.of());
-    assertThatThrownBy(() -> service.save(DS, bad, 42L)).isInstanceOf(IllegalArgumentException.class);
+    MappingSpec bad =
+        new MappingSpec(
+            List.of(
+                new MappingSpec.EntityMapping(
+                    "Incident", "id", List.of(new MappingSpec.PropertyMapping("loss", "없는속성")))),
+            List.of());
+    assertThatThrownBy(() -> service.save(DS, bad, 42L))
+        .isInstanceOf(IllegalArgumentException.class);
   }
 
   // --- 엔티티 타입 중복 매핑 conformance (#408) ---
 
   @Test
   void save_동일엔티티타입_중복매핑은_400() {
-    MappingSpec bad = new MappingSpec(
-        List.of(
-            new MappingSpec.EntityMapping("Incident", "id", List.of()),
-            new MappingSpec.EntityMapping("Incident", "bld", List.of())), // 같은 타입, 다른 nameColumn
-        List.of());
+    MappingSpec bad =
+        new MappingSpec(
+            List.of(
+                new MappingSpec.EntityMapping("Incident", "id", List.of()),
+                new MappingSpec.EntityMapping(
+                    "Incident", "bld", List.of())), // 같은 타입, 다른 nameColumn
+            List.of());
     assertThatThrownBy(() -> service.save(DS, bad, 42L))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Incident");
-    verify(mappingRepository, never()).upsert(anyLong(), anyLong(), anyString(), anyString(), any());
+    verify(mappingRepository, never())
+        .upsert(anyLong(), anyLong(), anyString(), anyString(), any());
   }
 
   @Test
   void activate_동일엔티티타입_중복매핑은_400이고_상태전환없음() {
-    when(mappingRepository.findByDataset(DS)).thenReturn(Optional.of(new StoredMapping(1L,
-        "{\"entities\":[{\"entityType\":\"Incident\",\"nameColumn\":\"id\",\"properties\":[]},"
-            + "{\"entityType\":\"Incident\",\"nameColumn\":\"bld\",\"properties\":[]}],\"relations\":[]}",
-        "draft")));
+    when(mappingRepository.findByDataset(DS))
+        .thenReturn(
+            Optional.of(
+                new StoredMapping(
+                    1L,
+                    "{\"entities\":[{\"entityType\":\"Incident\",\"nameColumn\":\"id\",\"properties\":[]},"
+                        + "{\"entityType\":\"Incident\",\"nameColumn\":\"bld\",\"properties\":[]}],\"relations\":[]}",
+                    "draft")));
     assertThatThrownBy(() -> service.activate(DS, 44L))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Incident");
@@ -163,7 +202,8 @@ class MappingServiceTest {
         .hasMessageContaining("number")
         .hasMessageContaining("email")
         .hasMessageContaining("VARCHAR");
-    verify(mappingRepository, never()).upsert(anyLong(), anyLong(), anyString(), anyString(), any());
+    verify(mappingRepository, never())
+        .upsert(anyLong(), anyLong(), anyString(), anyString(), any());
   }
 
   @Test
@@ -202,10 +242,14 @@ class MappingServiceTest {
 
   @Test
   void activate_속성타입_위반이면_400이고_상태전환없음() {
-    when(mappingRepository.findByDataset(DS)).thenReturn(Optional.of(new StoredMapping(1L,
-        "{\"entities\":[{\"entityType\":\"Incident\",\"nameColumn\":\"id\","
-            + "\"properties\":[{\"column\":\"email\",\"propertyName\":\"피해액\"}]}],\"relations\":[]}",
-        "draft")));
+    when(mappingRepository.findByDataset(DS))
+        .thenReturn(
+            Optional.of(
+                new StoredMapping(
+                    1L,
+                    "{\"entities\":[{\"entityType\":\"Incident\",\"nameColumn\":\"id\","
+                        + "\"properties\":[{\"column\":\"email\",\"propertyName\":\"피해액\"}]}],\"relations\":[]}",
+                    "draft")));
     assertThatThrownBy(() -> service.activate(DS, 44L))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("피해액");
@@ -214,39 +258,51 @@ class MappingServiceTest {
 
   @Test
   void save_허용되지않은_트리플은_400() {
-    MappingSpec bad = new MappingSpec(
-        List.of(new MappingSpec.EntityMapping("Incident", "id", List.of()),
-            new MappingSpec.EntityMapping("Building", "bld", List.of())),
-        List.of(new MappingSpec.RelationMapping(1, "OCCURRED_AT", 0))); // Building-OCCURRED_AT->Incident 없음
-    assertThatThrownBy(() -> service.save(DS, bad, 42L)).isInstanceOf(IllegalArgumentException.class);
+    MappingSpec bad =
+        new MappingSpec(
+            List.of(
+                new MappingSpec.EntityMapping("Incident", "id", List.of()),
+                new MappingSpec.EntityMapping("Building", "bld", List.of())),
+            List.of(
+                new MappingSpec.RelationMapping(
+                    1, "OCCURRED_AT", 0))); // Building-OCCURRED_AT->Incident 없음
+    assertThatThrownBy(() -> service.save(DS, bad, 42L))
+        .isInstanceOf(IllegalArgumentException.class);
   }
 
   // --- 관계 트리플 완전 중복 conformance (#501) ---
 
   @Test
   void save_동일트리플_중복관계매핑은_400() {
-    MappingSpec bad = new MappingSpec(
-        List.of(new MappingSpec.EntityMapping("Incident", "id", List.of()),
-            new MappingSpec.EntityMapping("Building", "bld", List.of())),
-        List.of(
-            new MappingSpec.RelationMapping(0, "OCCURRED_AT", 1),
-            new MappingSpec.RelationMapping(0, "OCCURRED_AT", 1))); // 완전 동일 트리플 2회
+    MappingSpec bad =
+        new MappingSpec(
+            List.of(
+                new MappingSpec.EntityMapping("Incident", "id", List.of()),
+                new MappingSpec.EntityMapping("Building", "bld", List.of())),
+            List.of(
+                new MappingSpec.RelationMapping(0, "OCCURRED_AT", 1),
+                new MappingSpec.RelationMapping(0, "OCCURRED_AT", 1))); // 완전 동일 트리플 2회
     assertThatThrownBy(() -> service.save(DS, bad, 42L))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Incident")
         .hasMessageContaining("OCCURRED_AT")
         .hasMessageContaining("Building");
-    verify(mappingRepository, never()).upsert(anyLong(), anyLong(), anyString(), anyString(), any());
+    verify(mappingRepository, never())
+        .upsert(anyLong(), anyLong(), anyString(), anyString(), any());
   }
 
   @Test
   void activate_동일트리플_중복관계매핑은_400이고_상태전환없음() {
-    when(mappingRepository.findByDataset(DS)).thenReturn(Optional.of(new StoredMapping(1L,
-        "{\"entities\":[{\"entityType\":\"Incident\",\"nameColumn\":\"id\",\"properties\":[]},"
-            + "{\"entityType\":\"Building\",\"nameColumn\":\"bld\",\"properties\":[]}],"
-            + "\"relations\":[{\"subjectRef\":0,\"relation\":\"OCCURRED_AT\",\"objectRef\":1},"
-            + "{\"subjectRef\":0,\"relation\":\"OCCURRED_AT\",\"objectRef\":1}]}",
-        "draft")));
+    when(mappingRepository.findByDataset(DS))
+        .thenReturn(
+            Optional.of(
+                new StoredMapping(
+                    1L,
+                    "{\"entities\":[{\"entityType\":\"Incident\",\"nameColumn\":\"id\",\"properties\":[]},"
+                        + "{\"entityType\":\"Building\",\"nameColumn\":\"bld\",\"properties\":[]}],"
+                        + "\"relations\":[{\"subjectRef\":0,\"relation\":\"OCCURRED_AT\",\"objectRef\":1},"
+                        + "{\"subjectRef\":0,\"relation\":\"OCCURRED_AT\",\"objectRef\":1}]}",
+                    "draft")));
     assertThatThrownBy(() -> service.activate(DS, 44L))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("OCCURRED_AT");
@@ -255,16 +311,23 @@ class MappingServiceTest {
 
   @Test
   void save_relation_ref_범위밖이면_400() {
-    MappingSpec bad = new MappingSpec(
-        List.of(new MappingSpec.EntityMapping("Incident", "id", List.of())),
-        List.of(new MappingSpec.RelationMapping(0, "OCCURRED_AT", 5))); // objectRef 범위 초과
-    assertThatThrownBy(() -> service.save(DS, bad, 42L)).isInstanceOf(IllegalArgumentException.class);
+    MappingSpec bad =
+        new MappingSpec(
+            List.of(new MappingSpec.EntityMapping("Incident", "id", List.of())),
+            List.of(new MappingSpec.RelationMapping(0, "OCCURRED_AT", 5))); // objectRef 범위 초과
+    assertThatThrownBy(() -> service.save(DS, bad, 42L))
+        .isInstanceOf(IllegalArgumentException.class);
   }
 
   @Test
   void get_저장된_매핑을_역직렬화해_반환() {
-    when(mappingRepository.findByDataset(DS)).thenReturn(Optional.of(new StoredMapping(
-        1L, "{\"entities\":[{\"entityType\":\"Incident\",\"nameColumn\":\"id\",\"properties\":[]}],\"relations\":[]}", "draft")));
+    when(mappingRepository.findByDataset(DS))
+        .thenReturn(
+            Optional.of(
+                new StoredMapping(
+                    1L,
+                    "{\"entities\":[{\"entityType\":\"Incident\",\"nameColumn\":\"id\",\"properties\":[]}],\"relations\":[]}",
+                    "draft")));
     Optional<MappingResponse> res = service.get(DS);
     assertThat(res).isPresent();
     assertThat(res.get().spec().entities()).hasSize(1);
@@ -279,8 +342,13 @@ class MappingServiceTest {
 
   @Test
   void activate_재검증후_active로_전환() {
-    when(mappingRepository.findByDataset(DS)).thenReturn(Optional.of(new StoredMapping(
-        1L, "{\"entities\":[{\"entityType\":\"Incident\",\"nameColumn\":\"id\",\"properties\":[]}],\"relations\":[]}", "draft")));
+    when(mappingRepository.findByDataset(DS))
+        .thenReturn(
+            Optional.of(
+                new StoredMapping(
+                    1L,
+                    "{\"entities\":[{\"entityType\":\"Incident\",\"nameColumn\":\"id\",\"properties\":[]}],\"relations\":[]}",
+                    "draft")));
     MappingResponse res = service.activate(DS, 44L);
     assertThat(res.status()).isEqualTo("active");
     verify(mappingRepository).updateStatus(DS, "active", 44L);
@@ -289,15 +357,21 @@ class MappingServiceTest {
   @Test
   void activate_매핑없으면_400() {
     when(mappingRepository.findByDataset(DS)).thenReturn(Optional.empty());
-    assertThatThrownBy(() -> service.activate(DS, 44L)).isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> service.activate(DS, 44L))
+        .isInstanceOf(IllegalArgumentException.class);
     verify(mappingRepository, never()).updateStatus(anyLong(), anyString(), any());
   }
 
   @Test
   void activate_온톨로지가_운영중이_아니면_409() {
     // 바인딩 가드(DatasetOntologyService)와 짝을 이루는 매핑 활성화 가드 — 상태 충돌이므로 409.
-    when(mappingRepository.findByDataset(DS)).thenReturn(Optional.of(new StoredMapping(
-        1L, "{\"entities\":[{\"entityType\":\"Incident\",\"nameColumn\":\"id\",\"properties\":[]}],\"relations\":[]}", "draft")));
+    when(mappingRepository.findByDataset(DS))
+        .thenReturn(
+            Optional.of(
+                new StoredMapping(
+                    1L,
+                    "{\"entities\":[{\"entityType\":\"Incident\",\"nameColumn\":\"id\",\"properties\":[]}],\"relations\":[]}",
+                    "draft")));
     when(ontologyRepository.findStatusById(1L)).thenReturn("archived");
     assertThatThrownBy(() -> service.activate(DS, 44L)).isInstanceOf(IllegalStateException.class);
     verify(mappingRepository, never()).updateStatus(anyLong(), anyString(), any());

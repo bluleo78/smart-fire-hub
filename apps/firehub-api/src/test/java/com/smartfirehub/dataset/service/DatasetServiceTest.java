@@ -68,7 +68,8 @@ class DatasetServiceTest extends IntegrationTestBase {
             "test_dataset",
             "Test description",
             testCategoryId,
-            "TABLE", "SOURCE",
+            "TABLE",
+            "SOURCE",
             columns,
             null);
 
@@ -115,7 +116,8 @@ class DatasetServiceTest extends IntegrationTestBase {
             "document_dataset",
             "RAG document dataset",
             testCategoryId,
-            "DOCUMENT", "SOURCE",
+            "DOCUMENT",
+            "SOURCE",
             List.of(),
             null);
 
@@ -154,12 +156,14 @@ class DatasetServiceTest extends IntegrationTestBase {
         List.of(new DatasetColumnRequest("col1", "Col1", "TEXT", null, true, false, null));
 
     CreateDatasetRequest request1 =
-        new CreateDatasetRequest("Duplicate", "table1", null, null, "TABLE", "SOURCE", columns, null);
+        new CreateDatasetRequest(
+            "Duplicate", "table1", null, null, "TABLE", "SOURCE", columns, null);
 
     datasetService.createDataset(request1, testUserId);
 
     CreateDatasetRequest request2 =
-        new CreateDatasetRequest("Duplicate", "table2", null, null, "TABLE", "SOURCE", columns, null);
+        new CreateDatasetRequest(
+            "Duplicate", "table2", null, null, "TABLE", "SOURCE", columns, null);
 
     // When/Then
     assertThatThrownBy(() -> datasetService.createDataset(request2, testUserId))
@@ -178,7 +182,8 @@ class DatasetServiceTest extends IntegrationTestBase {
         testUserId);
 
     datasetService.createDataset(
-        new CreateDatasetRequest("Dataset B", "dataset_b", null, null, "TABLE", "DERIVED", columns, null),
+        new CreateDatasetRequest(
+            "Dataset B", "dataset_b", null, null, "TABLE", "DERIVED", columns, null),
         testUserId);
 
     // When
@@ -202,7 +207,8 @@ class DatasetServiceTest extends IntegrationTestBase {
                 "Plain DS", "plain_ds", null, null, "TABLE", "SOURCE", columns, null),
             testUserId);
     datasetService.createDataset(
-        new CreateDatasetRequest("Other DS", "other_ds", null, null, "TABLE", "SOURCE", columns, null),
+        new CreateDatasetRequest(
+            "Other DS", "other_ds", null, null, "TABLE", "SOURCE", columns, null),
         testUserId);
     datasetTagService.addTag(tagged.id(), "zztagkw", testUserId);
 
@@ -230,7 +236,8 @@ class DatasetServiceTest extends IntegrationTestBase {
                 "Plain DS2", "plain_ds2", null, catId, "TABLE", "SOURCE", columns, null),
             testUserId);
     datasetService.createDataset(
-        new CreateDatasetRequest("Other DS2", "other_ds2", null, null, "TABLE", "SOURCE", columns, null),
+        new CreateDatasetRequest(
+            "Other DS2", "other_ds2", null, null, "TABLE", "SOURCE", columns, null),
         testUserId);
 
     PageResponse<DatasetResponse> result =
@@ -253,7 +260,8 @@ class DatasetServiceTest extends IntegrationTestBase {
                 "original_table",
                 "Original description",
                 null,
-                "TABLE", "SOURCE",
+                "TABLE",
+                "SOURCE",
                 columns,
                 null),
             testUserId);
@@ -347,7 +355,14 @@ class DatasetServiceTest extends IntegrationTestBase {
     DatasetDetailResponse dataset =
         datasetService.createDataset(
             new CreateDatasetRequest(
-                "Reorder Fail Test", "reorder_fail_test", null, null, "TABLE", "SOURCE", columns, null),
+                "Reorder Fail Test",
+                "reorder_fail_test",
+                null,
+                null,
+                "TABLE",
+                "SOURCE",
+                columns,
+                null),
             testUserId);
 
     List<Long> incompleteIds = List.of(dataset.columns().get(0).id());
@@ -372,7 +387,14 @@ class DatasetServiceTest extends IntegrationTestBase {
     DatasetDetailResponse dataset =
         datasetService.createDataset(
             new CreateDatasetRequest(
-                "Reorder Dup Test", "reorder_dup_test", null, null, "TABLE", "SOURCE", columns, null),
+                "Reorder Dup Test",
+                "reorder_dup_test",
+                null,
+                null,
+                "TABLE",
+                "SOURCE",
+                columns,
+                null),
             testUserId);
 
     Long firstColId = dataset.columns().get(0).id();
@@ -404,7 +426,8 @@ class DatasetServiceTest extends IntegrationTestBase {
 
     DatasetDetailResponse dataset =
         datasetService.createDataset(
-            new CreateDatasetRequest("To Delete", "to_delete", null, null, "TABLE", "SOURCE", columns, null),
+            new CreateDatasetRequest(
+                "To Delete", "to_delete", null, null, "TABLE", "SOURCE", columns, null),
             testUserId);
 
     Long datasetId = dataset.id();
@@ -490,11 +513,10 @@ class DatasetServiceTest extends IntegrationTestBase {
   /**
    * DB 실행 단계 오류(존재하지 않는 테이블)는 이력에 실패로 기록된다.
    *
-   * <p>예전에는 "FORM" 오타 같은 SQL 문법 오류도 DB 실행까지 도달해 이 경로로 기록됐지만, 이제 문법 오류는 검증기가 실행 전에
-   * {@code UnsafeSqlException}으로 거부하고(#385 Task 3) {@code DatasetDataService#executeQuery}는 그 예외를
-   * 잡지 않고 그대로 전파하므로 이력 저장 코드에 도달하지 못한다(폴백을 두지 않은 이유는 검증 우회 방지 —
-   * DataTableQueryService 주석 참고). 이 테스트는 "이력 저장" 자체를 검증하는 것이 목적이므로, 검증기를 통과하지만 실행
-   * 단계에서 실패하는 입력으로 바꾼다.
+   * <p>예전에는 "FORM" 오타 같은 SQL 문법 오류도 DB 실행까지 도달해 이 경로로 기록됐지만, 이제 문법 오류는 검증기가 실행 전에 {@code
+   * UnsafeSqlException}으로 거부하고(#385 Task 3) {@code DatasetDataService#executeQuery}는 그 예외를 잡지 않고
+   * 그대로 전파하므로 이력 저장 코드에 도달하지 못한다(폴백을 두지 않은 이유는 검증 우회 방지 — DataTableQueryService 주석 참고). 이 테스트는 "이력
+   * 저장" 자체를 검증하는 것이 목적이므로, 검증기를 통과하지만 실행 단계에서 실패하는 입력으로 바꾼다.
    */
   @Test
   void executeQuery_executionError_savesHistory() {
@@ -515,14 +537,14 @@ class DatasetServiceTest extends IntegrationTestBase {
 
   /**
    * {@code SqlValidator} 거부({@code UnsafeSqlException}, 예: 다른 스키마 참조)는 이력에 남지 않는다 — {@code
-   * DataTableQueryService#executeQuery}가 {@code stripAndValidate} 통과 후 {@code sqlValidator.validate}
-   * 단계에서 예외를 던지고, {@link DatasetDataService#executeQuery}가 그것을 잡지 않으므로 {@code
-   * queryHistoryRepository.save}에 도달하기 전에 전파된다(#385 Task 3). 파싱 실패 폴백을 두지 않기로 한 결정으로 생긴
-   * 이력 손실이 새로 생긴 것이 아니라 이 예외 클래스가 원래 갖던 동작임을 고정한다.
+   * DataTableQueryService#executeQuery}가 {@code stripAndValidate} 통과 후 {@code
+   * sqlValidator.validate} 단계에서 예외를 던지고, {@link DatasetDataService#executeQuery}가 그것을 잡지 않으므로
+   * {@code queryHistoryRepository.save}에 도달하기 전에 전파된다(#385 Task 3). 파싱 실패 폴백을 두지 않기로 한 결정으로 생긴 이력
+   * 손실이 새로 생긴 것이 아니라 이 예외 클래스가 원래 갖던 동작임을 고정한다.
    *
-   * <p>입력은 반드시 {@code stripAndValidate}(키워드 화이트리스트·멀티 스테이트먼트 검사)를 통과해 {@code SqlValidator}
-   * 까지 도달하는 형태여야 한다 — 리뷰에서 지적된 대로, 세미콜론이 있는 멀티 스테이트먼트는 그 앞 단계에서 이미
-   * {@code SqlQueryException}으로 걸러져 이 경로를 검증하지 못한다.
+   * <p>입력은 반드시 {@code stripAndValidate}(키워드 화이트리스트·멀티 스테이트먼트 검사)를 통과해 {@code SqlValidator} 까지 도달하는
+   * 형태여야 한다 — 리뷰에서 지적된 대로, 세미콜론이 있는 멀티 스테이트먼트는 그 앞 단계에서 이미 {@code SqlQueryException}으로 걸러져 이 경로를
+   * 검증하지 못한다.
    */
   @Test
   void executeQuery_unsafeSqlRejected_doesNotSaveHistory() {
@@ -540,9 +562,8 @@ class DatasetServiceTest extends IntegrationTestBase {
 
   /**
    * {@code stripAndValidate} 거부({@code SqlQueryException}, 예: 멀티 스테이트먼트)도 {@code
-   * UnsafeSqlException}과 동일하게 이력에 남지 않는다 — 같은 이유({@code DatasetDataService#executeQuery}에
-   * catch 없음)로 두 예외 경로가 대칭이다. 위 {@code executeQuery_unsafeSqlRejected_doesNotSaveHistory}와
-   * 짝을 이루는 테스트.
+   * UnsafeSqlException}과 동일하게 이력에 남지 않는다 — 같은 이유({@code DatasetDataService#executeQuery}에 catch
+   * 없음)로 두 예외 경로가 대칭이다. 위 {@code executeQuery_unsafeSqlRejected_doesNotSaveHistory}와 짝을 이루는 테스트.
    */
   @Test
   void executeQuery_sqlQueryExceptionRejected_doesNotSaveHistory() {
@@ -633,7 +654,14 @@ class DatasetServiceTest extends IntegrationTestBase {
     DatasetDetailResponse dataset =
         datasetService.createDataset(
             new CreateDatasetRequest(
-                "InvalidType Test", "invalidtype_test", null, null, "TABLE", "SOURCE", columns, null),
+                "InvalidType Test",
+                "invalidtype_test",
+                null,
+                null,
+                "TABLE",
+                "SOURCE",
+                columns,
+                null),
             testUserId);
 
     assertThatThrownBy(
@@ -856,7 +884,8 @@ class DatasetServiceTest extends IntegrationTestBase {
         List.of(new DatasetColumnRequest("col1", "Col1", "TEXT", null, true, false, null));
     DatasetDetailResponse dataset =
         datasetService.createDataset(
-            new CreateDatasetRequest("Tag Test", "tag_test", null, null, "TABLE", "SOURCE", columns, null),
+            new CreateDatasetRequest(
+                "Tag Test", "tag_test", null, null, "TABLE", "SOURCE", columns, null),
             testUserId);
 
     datasetTagService.addTag(dataset.id(), "test-tag", testUserId);
@@ -919,7 +948,14 @@ class DatasetServiceTest extends IntegrationTestBase {
     DatasetDetailResponse dataset =
         datasetService.createDataset(
             new CreateDatasetRequest(
-                "BatchInvalid Test", "batchinvalid_test", null, null, "TABLE", "SOURCE", columns, null),
+                "BatchInvalid Test",
+                "batchinvalid_test",
+                null,
+                null,
+                "TABLE",
+                "SOURCE",
+                columns,
+                null),
             testUserId);
 
     List<Map<String, Object>> rows = List.of(Map.of("score", 100), Map.of("score", "not_a_number"));

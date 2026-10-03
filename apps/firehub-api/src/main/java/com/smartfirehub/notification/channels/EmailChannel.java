@@ -31,11 +31,10 @@ public class EmailChannel implements Channel {
   private static final Logger log = LoggerFactory.getLogger(EmailChannel.class);
 
   /**
-   * 워크스페이스 SMTP 미설정 사유(#712). 예전 문구 "SMTP 호스트 미설정"은 플랫폼 기본값이 있던 시절
-   * "운영자가 채울 값"을 가리켰다 — 이제는 워크스페이스 관리자가 직접 등록해야 하므로 위치를 안내한다.
+   * 워크스페이스 SMTP 미설정 사유(#712). 예전 문구 "SMTP 호스트 미설정"은 플랫폼 기본값이 있던 시절 "운영자가 채울 값"을 가리켰다 — 이제는 워크스페이스
+   * 관리자가 직접 등록해야 하므로 위치를 안내한다.
    */
-  static final String SMTP_NOT_CONFIGURED =
-      "SMTP 미설정 — 워크스페이스 설정 › 이메일에서 SMTP 서버를 등록하세요";
+  static final String SMTP_NOT_CONFIGURED = "SMTP 미설정 — 워크스페이스 설정 › 이메일에서 SMTP 서버를 등록하세요";
 
   private final SettingsService settingsService;
   private final UserRepository userRepository;
