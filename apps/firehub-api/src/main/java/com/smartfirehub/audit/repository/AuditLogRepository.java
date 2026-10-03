@@ -14,6 +14,7 @@ import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.JSONB;
 import org.jooq.Record;
+import org.jooq.SelectField;
 import org.jooq.Table;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
@@ -61,6 +62,33 @@ public class AuditLogRepository {
   /** metadata 의 대상 아이디(운영자 계정 조치가 남긴다). 괄호로 연산 우선순위를 명시한다. */
   private static final Field<String> AL_TARGET_USERNAME =
       field("({0} ->> 'targetUsername')", String.class, AL_METADATA);
+
+  /** metadata 의 테넌트 slug·이름(테넌트 생명주기 감사가 남긴다, WD-12). 운영자는 대상을 숫자 id 가 아니라 이것으로 찾는다. */
+  private static final Field<String> AL_TARGET_TENANT_SLUG =
+      field("({0} ->> 'tenantSlug')", String.class, AL_METADATA);
+
+  private static final Field<String> AL_TARGET_TENANT_NAME =
+      field("({0} ->> 'tenantName')", String.class, AL_METADATA);
+
+  /**
+   * 응답 매핑({@link #mapToResponse})이 읽는 13개 컬럼(WD-16). 조회 4곳이 같은 목록을 쓴다 — 컬럼을 더할 때 한 곳만 고치면 되고, 매핑이
+   * 필드로 읽으므로 순서는 의미가 없다.
+   */
+  private static final List<SelectField<?>> RESPONSE_FIELDS =
+      List.of(
+          AL_ID,
+          AL_USER_ID,
+          AL_USERNAME,
+          AL_ACTION_TYPE,
+          AL_RESOURCE,
+          AL_RESOURCE_ID,
+          AL_DESCRIPTION,
+          AL_ACTION_TIME,
+          AL_IP_ADDRESS,
+          AL_USER_AGENT,
+          AL_RESULT,
+          AL_ERROR_MESSAGE,
+          AL_METADATA);
 
   private AuditLogResponse mapToResponse(Record r) {
     JSONB jsonb = r.get(AL_METADATA);
@@ -110,20 +138,7 @@ public class AuditLogRepository {
   }
 
   public Optional<AuditLogResponse> findById(Long id) {
-    return dsl.select(
-            AL_ID,
-            AL_USER_ID,
-            AL_USERNAME,
-            AL_ACTION_TYPE,
-            AL_RESOURCE,
-            AL_RESOURCE_ID,
-            AL_DESCRIPTION,
-            AL_ACTION_TIME,
-            AL_IP_ADDRESS,
-            AL_USER_AGENT,
-            AL_RESULT,
-            AL_ERROR_MESSAGE,
-            AL_METADATA)
+    return dsl.select(RESPONSE_FIELDS)
         .from(AUDIT_LOG)
         .where(AL_ID.eq(id))
         .fetchOptional(this::mapToResponse);
@@ -141,20 +156,7 @@ public class AuditLogRepository {
       condition = condition.and(AL_RESOURCE_ID.eq(resourceId));
     }
 
-    return dsl.select(
-            AL_ID,
-            AL_USER_ID,
-            AL_USERNAME,
-            AL_ACTION_TYPE,
-            AL_RESOURCE,
-            AL_RESOURCE_ID,
-            AL_DESCRIPTION,
-            AL_ACTION_TIME,
-            AL_IP_ADDRESS,
-            AL_USER_AGENT,
-            AL_RESULT,
-            AL_ERROR_MESSAGE,
-            AL_METADATA)
+    return dsl.select(RESPONSE_FIELDS)
         .from(AUDIT_LOG)
         .where(condition)
         .orderBy(AL_ACTION_TIME.desc())
@@ -224,20 +226,7 @@ public class AuditLogRepository {
     long totalElements = dsl.selectCount().from(AUDIT_LOG).where(condition).fetchOne(0, long.class);
 
     List<AuditLogResponse> content =
-        dsl.select(
-                AL_ID,
-                AL_USER_ID,
-                AL_USERNAME,
-                AL_ACTION_TYPE,
-                AL_RESOURCE,
-                AL_RESOURCE_ID,
-                AL_DESCRIPTION,
-                AL_ACTION_TIME,
-                AL_IP_ADDRESS,
-                AL_USER_AGENT,
-                AL_RESULT,
-                AL_ERROR_MESSAGE,
-                AL_METADATA)
+        dsl.select(RESPONSE_FIELDS)
             .from(AUDIT_LOG)
             .where(condition)
             .orderBy(AL_ACTION_TIME.desc())
@@ -256,7 +245,8 @@ public class AuditLogRepository {
    * 테넌트 행만, 이 조건은 NULL 행만 고르므로 결과가 0행이 된다(fail-closed) — 테넌트 행이 새지 않는다.
    *
    * @param actor 행위자 username 부분일치(대소문자 무시). null/공백이면 무시
-   * @param target 대상 — resource_id 정확 일치 또는 metadata.targetUsername 부분일치. null/공백이면 무시
+   * @param target 대상 — resource_id 정확 일치 또는 metadata.targetUsername·tenantSlug·tenantName 부분일치.
+   *     null/공백이면 무시
    * @param actionType 액션 정확 일치. null/공백이면 무시
    * @param fromInclusive 이 시각 이상(null 이면 무제한)
    * @param toExclusive 이 시각 미만(null 이면 무제한)
@@ -277,13 +267,14 @@ public class AuditLogRepository {
     }
     if (target != null && !target.isBlank()) {
       String t = target.trim();
+      String pattern = LikePatternUtils.containsPattern(t);
       condition =
           condition.and(
               AL_RESOURCE_ID
                   .eq(t)
-                  .or(
-                      AL_TARGET_USERNAME.likeIgnoreCase(
-                          LikePatternUtils.containsPattern(t), '\\')));
+                  .or(AL_TARGET_USERNAME.likeIgnoreCase(pattern, '\\'))
+                  .or(AL_TARGET_TENANT_SLUG.likeIgnoreCase(pattern, '\\'))
+                  .or(AL_TARGET_TENANT_NAME.likeIgnoreCase(pattern, '\\')));
     }
     if (actionType != null && !actionType.isBlank()) {
       condition = condition.and(AL_ACTION_TYPE.eq(actionType));
@@ -297,20 +288,7 @@ public class AuditLogRepository {
 
     long totalElements = dsl.selectCount().from(AUDIT_LOG).where(condition).fetchOne(0, long.class);
     List<AuditLogResponse> content =
-        dsl.select(
-                AL_ID,
-                AL_USER_ID,
-                AL_USERNAME,
-                AL_ACTION_TYPE,
-                AL_RESOURCE,
-                AL_RESOURCE_ID,
-                AL_DESCRIPTION,
-                AL_ACTION_TIME,
-                AL_IP_ADDRESS,
-                AL_USER_AGENT,
-                AL_RESULT,
-                AL_ERROR_MESSAGE,
-                AL_METADATA)
+        dsl.select(RESPONSE_FIELDS)
             .from(AUDIT_LOG)
             .where(condition)
             // 같은 트랜잭션 행은 NOW() 가 같다 — id 로 순서를 고정해 페이지 경계가 흔들리지 않게 한다.

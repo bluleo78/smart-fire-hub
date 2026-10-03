@@ -71,6 +71,14 @@ test.describe('사용자 관리 페이지', () => {
     await expect(page.getByRole('cell', { name: '사용자 3', exact: true })).toBeVisible();
   });
 
+  test('목록의 이름이 아이디보다 굵다 — 보조 식별자가 주 식별자를 이기지 않는다 (WD-15)', async ({ authenticatedPage: page }) => {
+    await setupUserListMocks(page, 3);
+    await page.goto('/admin/users');
+    // setupUserListMocks(3): 첫 행 name='사용자 1', username='user1'
+    await expect(page.getByRole('cell', { name: '사용자 1', exact: true })).toHaveCSS('font-weight', '500');
+    await expect(page.getByRole('cell', { name: 'user1', exact: true })).toHaveCSS('font-weight', '400');
+  });
+
   test('빈 목록일 때 빈 상태 메시지를 표시한다', async ({ authenticatedPage: page }) => {
     // 빈 목록 응답 모킹
     await mockApi(page, 'GET', '/api/v1/users', createPageResponse([]));

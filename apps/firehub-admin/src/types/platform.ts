@@ -32,7 +32,7 @@ export interface TenantSummaryResponse {
   /** 'ACTIVE' | 'SUSPENDED' — 서버가 문자열로 준다. */
   status: string;
   memberCount: number;
-  /** `yyyy-MM-ddTHH:mm:ss` (타임존 없음). */
+  /** ISO 8601 + 저장 TZ 오프셋(예: 2026-03-03T15:30:00Z, WD-11). 표시는 formatDateOnly/formatDateTimeMinute(로컬). */
   createdAt: string;
 }
 
@@ -100,18 +100,18 @@ export interface PlatformAuditLogResponse {
   resource: string;
   resourceId: string | null;
   description: string | null;
-  /** `yyyy-MM-ddTHH:mm:ss[.ffffff]` (타임존 없음). */
+  /** ISO 8601 + 저장 TZ 오프셋(예: 2026-09-30T15:30:00Z). 표시는 formatDateTimeSecond(로컬). */
   actionTime: string;
   ipAddress: string | null;
   userAgent: string | null;
   /** 'SUCCESS' | 'FAILURE' */
   result: string;
   errorMessage: string | null;
-  /** 운영자 계정 조치는 `{ plane: 'platform', targetUsername }` 을 싣는다. */
+  /** 운영자 계정 조치는 { plane, targetUsername }, 테넌트 생명주기는 { plane, tenantSlug, tenantName }(WD-12). */
   metadata: Record<string, unknown> | null;
 }
 
-/** 조회 파라미터. undefined 는 axios 가 쿼리에서 뺀다. 날짜는 `yyyy-MM-dd`(양끝 포함, 서버가 벽시계 하루로 바꾼다). */
+/** 조회 파라미터. undefined 는 axios 가 쿼리에서 뺀다. from(이상)·to(미만)는 오프셋 포함 절대 시각(WD-11). */
 export interface PlatformAuditLogQuery {
   actor?: string;
   target?: string;

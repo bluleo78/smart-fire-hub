@@ -9,13 +9,13 @@ test.describe('테넌트 생성', () => {
     await expect(page.getByRole('heading', { name: '테넌트 생성' })).toBeVisible();
     await expect(page.getByLabel('이름')).toBeVisible();
     await expect(page.getByText('조직에 표시될 이름입니다.')).toBeVisible();
-    await expect(page.getByLabel('slug')).toBeVisible();
-    await expect(page.getByText('소문자·숫자·하이픈만 사용합니다.')).toBeVisible();
+    await expect(page.getByLabel('식별자')).toBeVisible();
+    await expect(page.getByText('테넌트를 구분하는 고유한 영문 이름입니다. 소문자·숫자·하이픈만 사용합니다.')).toBeVisible();
     await expect(page.getByText('생성 후에는 변경할 수 없습니다.')).toBeVisible();
     await expect(page.getByLabel('초기 Owner')).toBeVisible();
     await expect(
       page.getByText(
-        '이 테넌트의 첫 소유자가 될 사용자입니다. Owner 없이는 아무도 이 테넌트에 로그인할 수 없습니다.',
+        '이 테넌트의 첫 소유자가 될 사용자입니다. 소유자 없이는 아무도 이 테넌트에 로그인할 수 없습니다.',
       ),
     ).toBeVisible();
     // Task 5 검색 엔드포인트는 20건 상한을 넘겨도 잘렸다는 신호를 안 준다 — 정적 안내로 보완한다.
@@ -46,7 +46,7 @@ test.describe('테넌트 생성', () => {
     await page.goto('/tenants/new');
 
     await page.getByLabel('이름').fill('한빛소방서');
-    await page.getByLabel('slug').fill('hanbit');
+    await page.getByLabel('식별자').fill('hanbit');
     await page.getByLabel('초기 Owner').fill('박소');
     await page.waitForTimeout(400);
     await page.getByRole('option', { name: /박소유/ }).click();
@@ -69,11 +69,11 @@ test.describe('테넌트 생성', () => {
     await page.goto('/tenants/new');
 
     await page.getByLabel('이름').fill('한빛소방서');
-    await page.getByLabel('slug').fill('-Bad_Slug');
+    await page.getByLabel('식별자').fill('-Bad_Slug');
     await page.getByRole('button', { name: '테넌트 생성' }).click();
 
     await expect(
-      page.getByText('slug 는 소문자·숫자·하이픈만 사용할 수 있으며 소문자 또는 숫자로 시작해야 합니다.'),
+      page.getByText('식별자는 소문자·숫자·하이픈만 사용할 수 있으며 소문자 또는 숫자로 시작해야 합니다.'),
     ).toBeVisible();
     await page.waitForTimeout(300);
     expect(capture.lastRequest()).toBeUndefined();
@@ -190,7 +190,7 @@ test.describe('테넌트 생성', () => {
     // (실측: heading 대기 없이 곧장 fill 하면 제출 시 이름·slug 가 비어 있었다).
     await expect(page.getByRole('heading', { name: '테넌트 생성' })).toBeVisible();
     await page.getByLabel('이름').fill('한빛소방서');
-    await page.getByLabel('slug').fill('hanbit');
+    await page.getByLabel('식별자').fill('hanbit');
     await page.getByLabel('초기 Owner').fill('박소');
     await page.waitForTimeout(400);
     await page.getByRole('option', { name: /박소유/ }).click();
@@ -211,7 +211,7 @@ test.describe('테넌트 생성', () => {
     await page.goto('/tenants/new');
 
     await page.getByLabel('이름').fill('한빛소방서');
-    await page.getByLabel('slug').fill('hanbit');
+    await page.getByLabel('식별자').fill('hanbit');
     await page.getByLabel('초기 Owner').fill('박소');
     await page.waitForTimeout(400);
     await page.getByRole('option', { name: /박소유/ }).click();
@@ -229,20 +229,20 @@ test.describe('테넌트 생성', () => {
       page,
       'POST',
       '/api/platform/tenants',
-      { status: 400, error: 'Bad Request', message: '이미 사용 중인 slug 입니다: hanbit' },
+      { status: 400, error: 'Bad Request', message: '이미 사용 중인 식별자입니다: hanbit' },
       { status: 400 },
     );
     await page.goto('/tenants/new');
 
     await page.getByLabel('이름').fill('한빛소방서');
-    await page.getByLabel('slug').fill('hanbit');
+    await page.getByLabel('식별자').fill('hanbit');
     await page.getByLabel('초기 Owner').fill('박소');
     await page.waitForTimeout(400);
     await page.getByRole('option', { name: /박소유/ }).click();
     await page.getByRole('button', { name: '테넌트 생성' }).click();
 
     // 프런트가 문구를 다시 쓰지 않는다 — 서버가 유일한 판정자다.
-    await expect(page.getByText('이미 사용 중인 slug 입니다: hanbit')).toBeVisible();
+    await expect(page.getByText('이미 사용 중인 식별자입니다: hanbit')).toBeVisible();
     await expect(page).toHaveURL('/tenants/new');
   });
 
@@ -274,7 +274,7 @@ test.describe('테넌트 생성', () => {
     await page.goto('/tenants/new');
 
     await page.getByLabel('이름').fill('한빛소방서');
-    await page.getByLabel('slug').fill('hanbit');
+    await page.getByLabel('식별자').fill('hanbit');
     await page.getByLabel('초기 Owner').fill('박소');
     await page.waitForTimeout(400);
     await page.getByRole('option', { name: /박소유/ }).click();
@@ -290,7 +290,7 @@ test.describe('테넌트 생성', () => {
     await page.goto('/tenants/new');
 
     await page.getByLabel('이름').fill('한빛소방서');
-    await page.getByLabel('slug').fill('hanbit');
+    await page.getByLabel('식별자').fill('hanbit');
     await page.getByLabel('초기 Owner').fill('박소');
     await page.waitForTimeout(400);
     await page.getByRole('option', { name: /박소유/ }).click();

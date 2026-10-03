@@ -429,10 +429,8 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>취소</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleDeleteConfirm}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
+            {/* WD-13: 색 className 흉내 대신 variant — 다크 모드·호버 토큰이 Button destructive 와 같아진다 */}
+            <AlertDialogAction variant="destructive" onClick={handleDeleteConfirm}>
               삭제
             </AlertDialogAction>
           </AlertDialogFooter>

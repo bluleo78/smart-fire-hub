@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { accountsApi } from '@/api/accounts';
 import { AccountStatusBadge } from '@/components/AccountStatusBadge';
 import { PermissionDeniedBanner } from '@/components/PermissionDeniedBanner';
+import { TableErrorRow } from '@/components/TableErrorRow';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -66,7 +67,7 @@ export default function AccountListPage() {
   const enabled = debounced.length >= MIN_QUERY_LENGTH;
   const canChange = hasPermission('platform:tenant:suspend');
   const [target, setTarget] = useState<PlatformAccountResponse | null>(null);
-  const columns = canChange ? 5 : 4;
+  const columns = canChange ? 4 : 3;
 
   const query = useQuery({
     queryKey: ['platform-accounts', debounced],
@@ -139,7 +140,6 @@ export default function AccountListPage() {
               <TableRow>
                 <TableHead>이름</TableHead>
                 <TableHead>아이디</TableHead>
-                <TableHead>이메일</TableHead>
                 <TableHead>상태</TableHead>
                 {canChange && <TableHead className="text-right">작업</TableHead>}
               </TableRow>
@@ -148,11 +148,7 @@ export default function AccountListPage() {
               {query.isLoading ? (
                 <TableSkeletonRows columns={columns} rows={3} />
               ) : query.isError ? (
-                <TableRow>
-                  <TableCell colSpan={columns} className="text-center text-destructive">
-                    데이터를 불러오는데 실패했습니다.
-                  </TableCell>
-                </TableRow>
+                <TableErrorRow colSpan={columns} />
               ) : rows.length > 0 ? (
                 rows.map((a) => (
                   <TableRow key={a.id}>
@@ -162,8 +158,14 @@ export default function AccountListPage() {
                         {a.operator && <Badge variant="outline">운영자</Badge>}
                       </span>
                     </TableCell>
-                    <TableCell>{a.username}</TableCell>
-                    <TableCell>{a.email ?? '-'}</TableCell>
+                    {/* WD-15: 아이디는 이메일 형식이 강제된다 — 같은 값을 두 열에 반복하지 않고, 이메일이 다를 때만 보조 줄.
+                        대소문자만 다른 주소는 같은 메일함이라 반복으로 본다. */}
+                    <TableCell>
+                      <div>{a.username}</div>
+                      {a.email && a.email.toLowerCase() !== a.username.toLowerCase() && (
+                        <div className="text-xs text-muted-foreground">이메일 {a.email}</div>
+                      )}
+                    </TableCell>
                     <TableCell>
                       <AccountStatusBadge active={a.active} />
                     </TableCell>

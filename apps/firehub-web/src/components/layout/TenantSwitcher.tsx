@@ -14,6 +14,7 @@ import { Building2, Check, ChevronsUpDown, Loader2 } from 'lucide-react';
 
 import { useAuth } from '../../hooks/useAuth';
 import { useTenantSelection } from '../../hooks/useTenantSelection';
+import { membershipRoleLabel } from '../../lib/membership-role';
 import { cn } from '../../lib/utils';
 import {
   DropdownMenu,
@@ -53,8 +54,8 @@ export function TenantSwitcher({ collapsed = false }: TenantSwitcherProps) {
       {!collapsed && (
         <div className="min-w-0 flex-1 text-left">
           <p className="truncate text-sm font-medium leading-tight">{active.tenantName}</p>
-          {/* role 은 표시용 라벨 — 인가 판단에 쓰지 않는다(types/tenant.ts 참조). */}
-          <p className="truncate text-xs text-muted-foreground leading-tight">{active.role}</p>
+          {/* role 은 표시용 라벨 — 인가 판단에 쓰지 않는다(types/tenant.ts 참조). 코드 대신 한국어 라벨(WD-15). */}
+          <p className="truncate text-xs text-muted-foreground leading-tight">{membershipRoleLabel(active.role)}</p>
         </div>
       )}
     </>
@@ -146,8 +147,8 @@ export function TenantSwitcher({ collapsed = false }: TenantSwitcherProps) {
             >
               <div className="min-w-0 flex-1">
                 <p className="truncate">{option.tenantName}</p>
-                {/* role 은 표시용 라벨 — types/tenant.ts 참조. */}
-                <p className="truncate text-xs text-muted-foreground">{option.role}</p>
+                {/* role 은 표시용 라벨 — types/tenant.ts 참조. 코드 대신 한국어 라벨(WD-15). */}
+                <p className="truncate text-xs text-muted-foreground">{membershipRoleLabel(option.role)}</p>
               </div>
               {/* 상태 아이콘. svg 의 aria-label 은 보조기술에 안정적으로 노출되지 않으므로
                   sr-only 텍스트로 따로 알린다. */}

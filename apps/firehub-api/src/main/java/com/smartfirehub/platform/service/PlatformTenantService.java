@@ -9,6 +9,7 @@ import com.smartfirehub.platform.exception.TenantNotFoundException;
 import com.smartfirehub.platform.repository.PlatformTenantRepository;
 import com.smartfirehub.user.repository.UserRepository;
 import java.util.List;
+import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -27,6 +28,7 @@ public class PlatformTenantService {
   private final TenantProvisioningService provisioningService;
   private final UserRepository userRepository;
   private final TenantPipelineRoleProvisioner pipelineRoleProvisioner;
+  private final PlatformAuditRecorder auditRecorder;
 
   /**
    * 신규 테넌트를 만들고 초기 Owner 와 기본 시드를 채운다.
@@ -46,7 +48,7 @@ public class PlatformTenantService {
    * 데도 드러나지 않는다 (2026-09-17 운영 장애). 그래서 롤이 먼저다.
    */
   @Transactional
-  public TenantSummaryResponse create(CreateTenantRequest request) {
+  public TenantSummaryResponse create(CreateTenantRequest request, long operatorId) {
     // 사용자 존재 확인은 기존 UserRepository 를 쓴다 — 같은 전역 테이블에 조회를 하나 더 만들면
     // 나중에 사용자 조회 규칙이 바뀔 때 이쪽만 남는다.
     if (userRepository.findById(request.ownerUserId()).isEmpty()) {
@@ -55,7 +57,7 @@ public class PlatformTenantService {
     }
     if (tenantRepository.slugExists(request.slug())) {
       // UNIQUE 위반을 500 으로 흘리지 않고 400 으로 알려준다.
-      throw new IllegalArgumentException("이미 사용 중인 slug 입니다: " + request.slug());
+      throw new IllegalArgumentException("이미 사용 중인 식별자입니다: " + request.slug());
     }
 
     long tenantId = tenantRepository.insertTenant(request.slug(), request.name());
@@ -63,6 +65,15 @@ public class PlatformTenantService {
     // 배정한다(V121). 멤버십 삽입이 먼저여야 소유자가 권한 0개로 태어나지 않는다.
     tenantRepository.insertOwnerMembership(tenantId, request.ownerUserId());
     provisioningService.provisionDefaults(tenantId);
+    // WD-12: 생성 감사(tenant NULL). 롤 생성(별도 커밋)보다 앞에 둔다 — 뒤에 두면 감사 실패가 (b) 고아 롤 창을 넓힌다.
+    // 같은 트랜잭션이라 감사가 실패하면 생성도 롤백된다(계정 조치와 같은 규칙).
+    auditRecorder.record(
+        operatorId,
+        "TENANT_CREATE",
+        "tenant",
+        String.valueOf(tenantId),
+        "테넌트 생성(소유자 userId " + request.ownerUserId() + ")",
+        Map.of("tenantSlug", request.slug(), "tenantName", request.name()));
     // DB 롤 생성은 소유자 커넥션이라 이 트랜잭션에 묶이지 않는다 — 그래서 **일부러 마지막**이다.
     //
     // 실패 두 가지를 구분할 것:
@@ -106,17 +117,35 @@ public class PlatformTenantService {
    * 30분)까지 유효하다. 즉시 차단이 필요하면 별도 조치가 필요하며 이 밴드 범위 밖이다 — 런북에 명시한다.
    */
   @Transactional
-  public void suspend(long tenantId) {
-    if (tenantRepository.updateStatus(tenantId, "SUSPENDED") == 0) {
-      throw notFound(tenantId);
-    }
+  public void suspend(long tenantId, long operatorId) {
+    changeStatus(tenantId, "SUSPENDED", "TENANT_SUSPEND", "테넌트 정지", operatorId);
   }
 
+  /** 테넌트를 다시 활성화한다. 정지와 같은 상태 스위치의 반대 방향이다. */
   @Transactional
-  public void activate(long tenantId) {
-    if (tenantRepository.updateStatus(tenantId, "ACTIVE") == 0) {
-      throw notFound(tenantId);
+  public void activate(long tenantId, long operatorId) {
+    changeStatus(tenantId, "ACTIVE", "TENANT_ACTIVATE", "테넌트 활성화", operatorId);
+  }
+
+  /**
+   * 상태 스위치 + 감사(WD-12). updateStatus 는 같은 상태여도 1 을 돌려주므로 먼저 읽어 무변화면 아무것도 하지 않는다 — 같은 요청 재전송이 감사 로그를
+   * 부풀리지 않게(계정 조치와 같은 규칙).
+   */
+  private void changeStatus(
+      long tenantId, String status, String action, String description, long operatorId) {
+    TenantSummaryResponse tenant =
+        tenantRepository.findById(tenantId).orElseThrow(() -> notFound(tenantId));
+    if (status.equals(tenant.status())) {
+      return;
     }
+    tenantRepository.updateStatus(tenantId, status);
+    auditRecorder.record(
+        operatorId,
+        action,
+        "tenant",
+        String.valueOf(tenantId),
+        description,
+        Map.of("tenantSlug", tenant.slug(), "tenantName", tenant.name()));
   }
 
   private TenantNotFoundException notFound(long tenantId) {

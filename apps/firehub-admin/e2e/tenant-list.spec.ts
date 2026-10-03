@@ -3,18 +3,34 @@ import { mockApi } from './fixtures/api-mock';
 import { expect, loginAs, test } from './fixtures/auth.fixture';
 
 const TENANTS = [
-  createTenant({ id: 1, name: '한빛소방서', slug: 'hanbit', status: 'ACTIVE', memberCount: 12, createdAt: '2026-03-04T09:21:14' }),
-  createTenant({ id: 2, name: '남부지사', slug: 'nambu', status: 'SUSPENDED', memberCount: 3, createdAt: '2026-05-19T11:00:00' }),
+  createTenant({ id: 1, name: '한빛소방서', slug: 'hanbit', status: 'ACTIVE', memberCount: 12, createdAt: '2026-03-04T00:21:14Z' }),
+  createTenant({ id: 2, name: '남부지사', slug: 'nambu', status: 'SUSPENDED', memberCount: 3, createdAt: '2026-05-19T02:00:00Z' }),
 ];
 
 test.describe('테넌트 목록', () => {
+  // WD-11: 생성일은 서버가 저장 TZ 오프셋을 붙여 준 순간을 브라우저 로컬 날짜로 그린다 — KST 로 고정해 결정적으로 단언한다.
+  test.use({ timezoneId: 'Asia/Seoul' });
+
+  test('KST 00~09시에 생성된 테넌트는 전날이 아니라 KST 날짜로 보인다 (WD-11)', async ({ authenticatedPage: page }) => {
+    // 운영 저장 TZ=UTC: KST 2026-03-04 00:30 생성 → 서버는 2026-03-03T15:30:00Z 로 준다. 자르면 03-03 으로 하루 밀린다.
+    await mockApi(page, 'GET', '/api/platform/tenants', [
+      createTenant({ id: 3, name: '새벽지사', slug: 'dawn', createdAt: '2026-03-03T15:30:00Z' }),
+    ]);
+    await page.goto('/tenants');
+
+    // 행은 클릭 가능한 role="button" 이다(상세 보기).
+    const row = page.getByRole('button', { name: '테넌트 새벽지사 상세 보기' });
+    await expect(row.getByRole('cell', { name: '2026-03-04', exact: true })).toBeVisible();
+    await expect(row.getByRole('cell', { name: '2026-03-03', exact: true })).toHaveCount(0);
+  });
+
   test('목록이 렌더되고 상태 배지가 붙는다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     await mockApi(page, 'GET', '/api/platform/tenants', TENANTS);
     await page.goto('/tenants');
 
     await expect(page.getByRole('heading', { name: '테넌트' })).toBeVisible();
     await expect(page.getByRole('columnheader', { name: '이름' })).toBeVisible();
-    await expect(page.getByRole('columnheader', { name: 'slug' })).toBeVisible();
+    await expect(page.getByRole('columnheader', { name: '식별자' })).toBeVisible();
     await expect(page.getByRole('columnheader', { name: '상태' })).toBeVisible();
     await expect(page.getByRole('columnheader', { name: '멤버' })).toBeVisible();
     await expect(page.getByRole('columnheader', { name: '생성일' })).toBeVisible();
@@ -35,11 +51,11 @@ test.describe('테넌트 목록', () => {
     await expect(rows.first()).toHaveAttribute('aria-label', '테넌트 남부지사 상세 보기');
   });
 
-  test('이름/slug 로 클라이언트 검색한다', async ({ authenticatedPage: page }) => {
+  test('이름/식별자(slug) 로 클라이언트 검색한다', async ({ authenticatedPage: page }) => {
     await mockApi(page, 'GET', '/api/platform/tenants', TENANTS);
     await page.goto('/tenants');
 
-    const search = page.getByPlaceholder('이름 또는 slug로 검색...');
+    const search = page.getByPlaceholder('이름 또는 식별자로 검색...');
     await search.fill('nambu');
     await page.waitForTimeout(400);
 
@@ -51,7 +67,7 @@ test.describe('테넌트 목록', () => {
     await mockApi(page, 'GET', '/api/platform/tenants', TENANTS);
     await page.goto('/tenants');
 
-    await page.getByPlaceholder('이름 또는 slug로 검색...').fill('없는이름');
+    await page.getByPlaceholder('이름 또는 식별자로 검색...').fill('없는이름');
     await page.waitForTimeout(400);
 
     await expect(page.getByText("'없는이름'에 대한 결과가 없습니다.")).toBeVisible();
@@ -118,7 +134,7 @@ test.describe('테넌트 목록', () => {
 
   test('20건을 넘으면 클라이언트 페이지네이션이 나온다', async ({ authenticatedPage: page }) => {
     const many = Array.from({ length: 24 }, (_, i) =>
-      createTenant({ id: i + 1, name: `테넌트 ${i + 1}`, slug: `t${i + 1}`, createdAt: '2026-01-01T00:00:00' }),
+      createTenant({ id: i + 1, name: `테넌트 ${i + 1}`, slug: `t${i + 1}`, createdAt: '2026-01-01T00:00:00Z' }),
     );
     await mockApi(page, 'GET', '/api/platform/tenants', many);
     await page.goto('/tenants');

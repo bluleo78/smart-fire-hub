@@ -2,8 +2,10 @@ package com.smartfirehub.platform.service;
 
 import com.smartfirehub.audit.dto.AuditLogResponse;
 import com.smartfirehub.audit.repository.AuditLogRepository;
+import com.smartfirehub.audit.time.AuditTimes;
 import com.smartfirehub.global.dto.PageResponse;
-import java.time.LocalDate;
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -25,16 +27,16 @@ public class PlatformAuditLogService {
   private final AuditLogRepository auditLogRepository;
 
   /**
-   * 날짜는 벽시계 하루 단위다 — {@code action_time} 이 타임존 없는 TIMESTAMP 이고 화면이 그 문자열을 그대로 보이므로, {@code [from
-   * 00:00, to+1 00:00)} 로 바꾸면 화면에 보이는 날짜와 조회 범위가 정확히 같다.
+   * 기간은 절대 시각이다 — 저장 TZ 는 서버만 알므로 운영자의 "하루" 는 admin 이 자기 로컬 자정 두 순간으로 보내고, 여기서 저장 벽시계로 바꿔 {@code
+   * [from, to)} 로 비교한다(WD-11). 날짜만 받아 벽시계 하루로 해석하던 WD-4 방식은 운영(UTC 저장)에서 KST 운영자에게 9시간 어긋났다.
    */
   @Transactional(readOnly = true)
   public PageResponse<AuditLogResponse> search(
       String actor,
       String target,
       String actionType,
-      LocalDate from,
-      LocalDate to,
+      OffsetDateTime from,
+      OffsetDateTime to,
       int page,
       int size) {
     if (page < 0) {
@@ -43,15 +45,16 @@ public class PlatformAuditLogService {
     if (size < 1 || size > MAX_PAGE_SIZE) {
       throw new IllegalArgumentException("size 는 1 이상 " + MAX_PAGE_SIZE + " 이하여야 합니다");
     }
-    if (from != null && to != null && from.isAfter(to)) {
+    if (from != null && to != null && !from.isBefore(to)) {
       throw new IllegalArgumentException("시작일이 종료일보다 늦습니다");
     }
+    ZoneId storage = AuditTimes.storageZone();
     return auditLogRepository.findPlatform(
         actor,
         target,
         actionType,
-        from == null ? null : from.atStartOfDay(),
-        to == null ? null : to.plusDays(1).atStartOfDay(),
+        from == null ? null : AuditTimes.toStorage(from, storage),
+        to == null ? null : AuditTimes.toStorage(to, storage),
         page,
         size);
   }

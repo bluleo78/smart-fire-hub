@@ -42,6 +42,17 @@ class TenantOwnerAdminProvisioningTest extends IntegrationTestBase {
           dsl, fixtureTransactionTemplate, createdTenant);
       createdTenant = null;
     }
+    // WD-12: 생성 감사 행이 user_id FK 로 사용자 삭제를 막는다 — 기록된 평면(NULL·테넌트 1) 양쪽에서 먼저 지운다.
+    for (Long ctx : new Long[] {null, DEFAULT_TEST_TENANT_ID}) {
+      createdUsers.forEach(
+          userId ->
+              TenantRlsTestSupport.runInTenantTransaction(
+                  fixtureTransactionTemplate,
+                  ctx,
+                  () -> {
+                    dsl.execute("delete from audit_log where user_id = ?", userId);
+                  }));
+    }
     // 사용자는 테넌트 밖 전역 테이블이라 위 정리에 걸리지 않는다 — 자식 행이 사라진 뒤에 지운다.
     createdUsers.forEach(userId -> TenantRlsTestSupport.deleteUser(dsl, userId));
     createdUsers.clear();
@@ -105,7 +116,7 @@ class TenantOwnerAdminProvisioningTest extends IntegrationTestBase {
   /** 앱 경로(운영자 평면 API 가 쓰는 서비스). 멤버십 삽입·시드·배정이 한 트랜잭션에서 끝난다. */
   private long createTenantViaService(Long ownerId) {
     String slug = "v121-app-" + System.nanoTime();
-    return platformTenantService.create(new CreateTenantRequest(slug, slug, ownerId)).id();
+    return platformTenantService.create(new CreateTenantRequest(slug, slug, ownerId), ownerId).id();
   }
 
   /**

@@ -26,6 +26,9 @@ const badgeVariants = cva(
           "bg-warning/10 text-warning border-warning/20 [a&]:hover:bg-warning/15",
         info:
           "bg-info/10 text-info border-info/20 [a&]:hover:bg-info/15",
+        // WD-15: 실패·오류 상태 배지 — success/warning/info 와 같은 옅은 틴트로 무게를 맞춘다(꽉 찬 destructive 는 버튼용).
+        danger:
+          "bg-destructive/10 text-destructive border-destructive/20 [a&]:hover:bg-destructive/15",
       },
     },
     defaultVariants: {

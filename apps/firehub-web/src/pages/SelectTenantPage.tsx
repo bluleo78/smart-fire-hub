@@ -17,6 +17,7 @@ import { Button } from '../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { useAuth } from '../hooks/useAuth';
 import { useTenantSelection } from '../hooks/useTenantSelection';
+import { membershipRoleLabel } from '../lib/membership-role';
 import type { MembershipResponse } from '../types/tenant';
 
 export function SelectTenantPage() {
@@ -86,8 +87,8 @@ export function SelectTenantPage() {
                   <Building2 className="size-5 shrink-0 text-muted-foreground" aria-hidden />
                   <div className="min-w-0 flex-1">
                     <p className="truncate font-medium">{option.tenantName}</p>
-                    {/* role 은 표시용 라벨 — 인가 판단에 쓰지 않는다(types/tenant.ts 참조). */}
-                    <p className="text-xs text-muted-foreground">{option.role}</p>
+                    {/* role 은 표시용 라벨 — 인가 판단에 쓰지 않는다(types/tenant.ts 참조). 코드 대신 한국어 라벨(WD-15). */}
+                    <p className="text-xs text-muted-foreground">{membershipRoleLabel(option.role)}</p>
                   </div>
                   {pendingTenantId === option.tenantId && (
                     <span className="text-xs text-muted-foreground">전환 중...</span>

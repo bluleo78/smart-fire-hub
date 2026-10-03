@@ -2,6 +2,9 @@ package com.smartfirehub.platform;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -12,6 +15,7 @@ import com.smartfirehub.global.tenant.TenantProvisioningService;
 import com.smartfirehub.platform.dto.CreateTenantRequest;
 import com.smartfirehub.platform.dto.TenantSummaryResponse;
 import com.smartfirehub.platform.repository.PlatformTenantRepository;
+import com.smartfirehub.platform.service.PlatformAuditRecorder;
 import com.smartfirehub.platform.service.PlatformTenantService;
 import com.smartfirehub.user.dto.UserResponse;
 import com.smartfirehub.user.repository.UserRepository;
@@ -40,6 +44,7 @@ class PlatformTenantServiceRoleProvisioningTest {
   @Mock TenantProvisioningService provisioningService;
   @Mock UserRepository userRepository;
   @Mock TenantPipelineRoleProvisioner pipelineRoleProvisioner;
+  @Mock PlatformAuditRecorder auditRecorder;
 
   @InjectMocks PlatformTenantService service;
 
@@ -63,7 +68,7 @@ class PlatformTenantServiceRoleProvisioningTest {
             Optional.of(
                 new TenantSummaryResponse(42L, "jeonju", "전주시", "ACTIVE", 1, LocalDateTime.now())));
 
-    service.create(REQUEST);
+    service.create(REQUEST, 1L);
 
     // 순서가 계약이다 — 롤 생성은 소유자 커넥션이라 이 트랜잭션에 묶이지 않고 독립적으로 커밋된다.
     // 마지막에 두어야 "롤은 커밋됐는데 뒤가 실패해 고아 롤이 남는" 창이 가장 좁다(상세는
@@ -72,6 +77,14 @@ class PlatformTenantServiceRoleProvisioningTest {
     order.verify(tenantRepository).insertOwnerMembership(42L, 7L);
     order.verify(provisioningService).provisionDefaults(42L);
     order.verify(pipelineRoleProvisioner).ensureRoleIfAutoProvisionEnabled(42L);
+
+    // WD-12: 감사는 롤 생성(별도 커밋)보다 앞 — 뒤면 감사 실패가 고아 롤 창을 넓힌다.
+    InOrder auditOrder = inOrder(provisioningService, auditRecorder, pipelineRoleProvisioner);
+    auditOrder.verify(provisioningService).provisionDefaults(42L);
+    auditOrder
+        .verify(auditRecorder)
+        .record(eq(1L), eq("TENANT_CREATE"), eq("tenant"), eq("42"), anyString(), anyMap());
+    auditOrder.verify(pipelineRoleProvisioner).ensureRoleIfAutoProvisionEnabled(42L);
   }
 
   /**
@@ -86,7 +99,7 @@ class PlatformTenantServiceRoleProvisioningTest {
         .when(pipelineRoleProvisioner)
         .ensureRoleIfAutoProvisionEnabled(42L);
 
-    assertThatThrownBy(() -> service.create(REQUEST))
+    assertThatThrownBy(() -> service.create(REQUEST, 1L))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("CREATE ROLE 실패");
   }
@@ -96,7 +109,8 @@ class PlatformTenantServiceRoleProvisioningTest {
   void create_withUnknownOwner_doesNotTouchRoleProvisioner() {
     when(userRepository.findById(anyLong())).thenReturn(Optional.empty());
 
-    assertThatThrownBy(() -> service.create(REQUEST)).isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> service.create(REQUEST, 1L))
+        .isInstanceOf(IllegalArgumentException.class);
 
     verifyNoInteractions(pipelineRoleProvisioner);
     verify(tenantRepository, Mockito.never())

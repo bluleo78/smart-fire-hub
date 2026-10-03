@@ -1,6 +1,5 @@
 package com.smartfirehub.platform.service;
 
-import com.smartfirehub.audit.service.AuditLogService;
 import com.smartfirehub.auth.repository.RefreshTokenRepository;
 import com.smartfirehub.platform.dto.PlatformAccountResponse;
 import com.smartfirehub.platform.repository.PlatformRoleRepository;
@@ -34,7 +33,7 @@ public class PlatformAccountService {
   private final PlatformRoleRepository platformRoleRepository;
   private final UserRepository userRepository;
   private final RefreshTokenRepository refreshTokenRepository;
-  private final AuditLogService auditLogService;
+  private final PlatformAuditRecorder auditRecorder;
 
   /** 계정 검색 — 길이 하한·상한·결과 상한은 Owner 검색과 같은 정책을 쓴다(PlatformUserService 상수). */
   @Transactional(readOnly = true)
@@ -84,24 +83,14 @@ public class PlatformAccountService {
         .orElseThrow(() -> new UserNotFoundException("User not found: " + userId));
   }
 
-  /**
-   * 감사 로그. 운영자 요청에는 테넌트 GUC 가 없으므로 audit_log.tenant_id 는 DEFAULT 로 NULL 이 된다(로그인 이벤트와 같은 형태,
-   * V97/V99). 어느 테넌트 감사 화면에도 보이지 않는 플랫폼 이벤트로 남는다.
-   */
+  /** 감사 로그 — 운영자 평면 공통 기록기에 위임한다(tenant NULL, WD-12 에서 테넌트 생명주기와 형태 통일). */
   private void audit(long operatorId, String action, UserResponse target, String description) {
-    String operatorName =
-        userRepository.findById(operatorId).map(UserResponse::username).orElse("unknown");
-    auditLogService.log(
+    auditRecorder.record(
         operatorId,
-        operatorName,
         action,
         "user",
         String.valueOf(target.id()),
         description,
-        null,
-        null,
-        "SUCCESS",
-        null,
-        Map.of("plane", "platform", "targetUsername", target.username()));
+        Map.of("targetUsername", target.username()));
   }
 }

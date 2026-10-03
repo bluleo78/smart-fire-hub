@@ -24,10 +24,31 @@ test.describe('계정 화면 (#784)', () => {
     const kimUsernameCell = kimRow.getByRole('cell', { name: 'kim@example.com' }).first();
     await expect(kimUsernameCell).toBeVisible();
     await expect(kimRow.getByText('활성', { exact: true })).toBeVisible();
-    // WD-7: 계정 식별자(아이디)는 일반 텍스트 — 옆 이메일 열과 같은 글꼴
+    // WD-7: 계정 식별자(아이디)는 일반 텍스트(mono 아님)
     await expect(kimUsernameCell).not.toHaveCSS('font-family', /mono/i);
     await expect(table.getByRole('row').filter({ hasText: '이정지' }).getByText('비활성', { exact: true })).toBeVisible();
     await expect(page.getByText('검색 결과는 최대 20건까지 표시됩니다. 찾는 계정이 없으면 검색어를 더 좁혀보세요.')).toBeVisible();
+  });
+
+  test('아이디와 같은 이메일은 반복하지 않고, 다를 때만 보조 줄로 보인다 (WD-15)', async ({ authenticatedPage: page }) => {
+    const DIFF = createAccount({ id: 12, name: '박연락', username: 'park@example.com', email: 'park.contact@example.org', active: true });
+    // 대소문자만 다른 주소는 같은 메일함 — 반복으로 본다.
+    const CASE = createAccount({ id: 13, name: '최대문', username: 'choi@example.com', email: 'CHOI@example.com', active: true });
+    await mockApi(page, 'GET', '/api/platform/accounts', [KIM, DIFF, CASE]);
+    await page.goto('/accounts');
+    await page.getByRole('textbox', { name: '계정 검색' }).fill('ki');
+    const table = page.getByRole('table', { name: '계정 목록' });
+    await expect(table.getByRole('columnheader', { name: '이메일' })).toHaveCount(0);
+    await expect(table.getByRole('row').filter({ hasText: '김소방' }).getByText('kim@example.com')).toHaveCount(1);
+    await expect(table.getByRole('row').filter({ hasText: '박연락' }).getByText('이메일 park.contact@example.org')).toBeVisible();
+    await expect(table.getByRole('row').filter({ hasText: '최대문' }).getByText(/이메일 /)).toHaveCount(0);
+  });
+
+  test('조회 실패는 표 안에 에러 문구를 그린다 (WD-16 안전망)', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/platform/accounts', {}, { status: 500 });
+    await page.goto('/accounts');
+    await page.getByRole('textbox', { name: '계정 검색' }).fill('kim');
+    await expect(page.getByRole('table', { name: '계정 목록' }).getByText('데이터를 불러오는데 실패했습니다.')).toBeVisible();
   });
 
   test('2자 미만이면 호출하지 않고 안내를 보여 준다', async ({ authenticatedPage: page }) => {

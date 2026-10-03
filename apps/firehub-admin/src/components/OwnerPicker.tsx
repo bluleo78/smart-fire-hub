@@ -53,7 +53,7 @@ export function OwnerPicker({ value, onChange, error }: OwnerPickerProps) {
   // 분기 **밖에서 한 번만** 만든다(문구는 설계서 §3.2 확정 카피).
   const help = (
     <p className="text-sm text-muted-foreground">
-      이 테넌트의 첫 소유자가 될 사용자입니다. Owner 없이는 아무도 이 테넌트에 로그인할 수 없습니다.
+      이 테넌트의 첫 소유자가 될 사용자입니다. 소유자 없이는 아무도 이 테넌트에 로그인할 수 없습니다.
     </p>
   );
 

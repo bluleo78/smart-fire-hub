@@ -36,6 +36,9 @@ test.describe('워크스페이스 전환 UI', () => {
     await page.goto('/');
 
     await expect(page.getByText(MOCK_MEMBERSHIP.tenantName)).toBeVisible();
+    // WD-15: 현재 워크스페이스의 역할은 코드(OWNER)가 아니라 한국어 라벨로 보인다.
+    await expect(page.getByText('소유자', { exact: true })).toBeVisible();
+    await expect(page.getByText('OWNER', { exact: true })).toHaveCount(0);
     // 드롭다운 트리거는 aria-label 로만 존재하므로, 그 이름의 버튼이 없다는 것이 표시 전용의 증거다.
     await expect(
       page.getByRole('button', { name: `워크스페이스 전환 (현재: ${MOCK_MEMBERSHIP.tenantName})` }),
@@ -52,6 +55,9 @@ test.describe('워크스페이스 전환 UI', () => {
     const menu = page.getByRole('menu');
     await expect(menu.getByText(TENANT_A.tenantName)).toBeVisible();
     await expect(menu.getByText(TENANT_B.tenantName)).toBeVisible();
+    // WD-15: 목록 항목의 역할도 한국어 라벨이다.
+    await expect(menu.getByRole('menuitem').filter({ hasText: TENANT_A.tenantName }).getByText('소유자', { exact: true })).toBeVisible();
+    await expect(menu.getByRole('menuitem').filter({ hasText: TENANT_B.tenantName }).getByText('멤버', { exact: true })).toBeVisible();
     // 현재 항목만 "현재 워크스페이스" 로 표시된다(sr-only 텍스트).
     await expect(menu.getByRole('menuitem').filter({ hasText: TENANT_A.tenantName })).toContainText('현재 워크스페이스');
   });

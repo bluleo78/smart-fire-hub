@@ -76,7 +76,7 @@ export default function DeleteTypeConfirm({
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>취소</AlertDialogCancel>
-          <AlertDialogAction onClick={onConfirm} data-testid="entity-delete-confirm">
+          <AlertDialogAction variant="destructive" onClick={onConfirm} data-testid="entity-delete-confirm">
             삭제
           </AlertDialogAction>
         </AlertDialogFooter>

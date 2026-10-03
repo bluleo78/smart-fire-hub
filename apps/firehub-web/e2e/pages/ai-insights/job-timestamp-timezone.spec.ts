@@ -23,6 +23,7 @@ test.describe('스마트 작업 타임스탬프 타임존 (#349)', () => {
     authenticatedPage: page,
   }) => {
     // 5분 전(UTC)에 실행된 것으로 꾸민다 — 목록은 "5분 전"이어야 한다
+    // eslint-disable-next-line no-restricted-syntax -- epoch 숫자 인자(서버 날짜 문자열 아님, #691 대상 아님)
     const executedAt = new Date(Date.now() - 5 * 60 * 1000);
     const job = createJob({
       id: 1,
@@ -52,6 +53,7 @@ test.describe('스마트 작업 타임스탬프 타임존 (#349)', () => {
     // 기대 문자열은 브라우저 안에서 만든다 — Node와 브라우저의 ko-KR ICU 출력이 달라
     // 테스트 프로세스에서 만든 문자열로 비교하면 표기 차이로 헛되이 깨진다
     const expectedLocal = await page.evaluate(
+      // eslint-disable-next-line no-restricted-syntax -- 인자는 toISOString() 결과(Z 포함) — 타임존이 명시돼 #691 대상 아님
       (iso) => new Date(iso).toLocaleString('ko-KR'),
       executedAt.toISOString(),
     );

@@ -332,6 +332,8 @@ test.describe('데이터셋 상세 — 데이터 탭', () => {
     await deleteBtn.click();
     await expect(page.getByRole('alertdialog')).toBeVisible({ timeout: 5000 });
     await expect(page.getByText('행 삭제 확인')).toBeVisible();
+    // WD-13: className 흉내가 아니라 variant — data-variant 로 확인한다
+    await expect(page.getByRole('alertdialog').getByRole('button', { name: '삭제', exact: true })).toHaveAttribute('data-variant', 'destructive');
   });
 
   test('컬럼 헤더 정렬 버튼 클릭 시 sortBy 파라미터가 API 에 전달된다', async ({

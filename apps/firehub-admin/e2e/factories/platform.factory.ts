@@ -47,7 +47,7 @@ export function createTenant(overrides: Partial<TenantSummaryResponse> = {}): Te
     name: '한빛소방서',
     status: 'ACTIVE',
     memberCount: 12,
-    createdAt: '2026-03-04T09:21:14',
+    createdAt: '2026-03-04T00:21:14Z',
     ...overrides,
   };
 }
@@ -91,7 +91,7 @@ export function createAuditLog(overrides: Partial<PlatformAuditLogResponse> = {}
     resource: 'user',
     resourceId: '10',
     description: '전역 계정 비활성화(모든 워크스페이스 로그인 차단, refresh 세션 폐기)',
-    actionTime: '2026-10-01T09:15:30',
+    actionTime: '2026-10-01T00:15:30Z',
     ipAddress: null,
     userAgent: null,
     result: 'SUCCESS',

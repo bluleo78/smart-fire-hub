@@ -260,11 +260,12 @@ test.describe('멤버 추가', () => {
     await expect(dialog.getByRole('alert')).toHaveText('이 워크스페이스에 없는 역할이 포함되어 있습니다');
   });
 
-  test('목록: 상태 열은 멤버십 기준(활성/정지), OWNER 라벨', async ({ authenticatedPage: page }) => {
+  test('목록: 상태 열은 멤버십 기준(활성/정지), 소유자 라벨 (WD-15)', async ({ authenticatedPage: page }) => {
     await page.goto('/admin/users');
     await expect(page.getByRole('columnheader', { name: '상태' })).toBeVisible();
     const ownerRow = page.getByRole('button', { name: '사용자 양동희 상세 보기' });
-    await expect(ownerRow.getByText('OWNER', { exact: true })).toBeVisible();
+    await expect(ownerRow.getByText('소유자', { exact: true })).toBeVisible();
+    await expect(ownerRow.getByText('OWNER', { exact: true })).toHaveCount(0);
     await expect(ownerRow.getByText('활성', { exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: '사용자 박민호 상세 보기' }).getByText('정지', { exact: true })).toBeVisible();
   });

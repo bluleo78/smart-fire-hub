@@ -4,7 +4,7 @@ import com.smartfirehub.audit.dto.AuditLogResponse;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.global.security.RequirePermission;
 import com.smartfirehub.platform.service.PlatformAuditLogService;
-import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
@@ -28,15 +28,20 @@ public class PlatformAuditLogController {
 
   private final PlatformAuditLogService platformAuditLogService;
 
-  /** 기간(from·to, yyyy-MM-dd, 양끝 포함)·행위자·대상·액션 필터 + 페이지네이션. 잘못된 값은 400. */
+  /**
+   * 기간(from 이상·to 미만, ISO 8601 오프셋 필수)·행위자·대상·액션 필터 + 페이지네이션. 잘못된 값은 400. admin 은 운영자 브라우저의 로컬
+   * 자정(시작일)과 다음 날 자정(종료일+1)을 보낸다(WD-11).
+   */
   @GetMapping
   @RequirePermission("platform:member:read")
   public ResponseEntity<PageResponse<AuditLogResponse>> search(
       @RequestParam(required = false) String actor,
       @RequestParam(required = false) String target,
       @RequestParam(required = false) String actionType,
-      @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
-      @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+      @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME)
+          OffsetDateTime from,
+      @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME)
+          OffsetDateTime to,
       @RequestParam(defaultValue = "0") int page,
       @RequestParam(defaultValue = "20") int size) {
     return ResponseEntity.ok(

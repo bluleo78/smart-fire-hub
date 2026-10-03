@@ -122,7 +122,7 @@
 
 [Phase 1 — IDENTIFY] 날짜 범위 조회 요청. startDate/endDate로 1회 조회.
 
-[Phase 2 — QUERY] list_audit_logs(startDate="2026-09-01T00:00:00", endDate="2026-09-05T23:59:59", size=100) 호출.
+[Phase 2 — QUERY] list_audit_logs(startDate="2026-09-01T00:00:00+09:00", endDate="2026-09-05T23:59:59+09:00", size=100) 호출.
 
 <!-- page/size 이진탐색 금지: 날짜 범위 요청은 startDate/endDate 파라미터로 직접 해결한다.
      페이지를 반복 조회하며 날짜 구간을 찾는 방식은 무제한 호출로 이어지는 회귀 원인이었다(#629). -->

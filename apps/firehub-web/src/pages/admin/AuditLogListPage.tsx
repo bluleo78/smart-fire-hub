@@ -1,6 +1,7 @@
 import { useState } from 'react';
 
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogContent,
@@ -134,10 +135,10 @@ function formatAuditResource(resource: string | null | undefined): string {
 }
 
 /**
- * 날짜 문자열(YYYY-MM-DD)을 ISO 8601 UTC datetime 문자열로 변환.
- * - KST(UTC+9) 환경에서 타임존 suffix 없이 생성하면 백엔드가 UTC로 해석할 때 9시간 오프셋 오류가 발생하므로,
- *   Date 객체로 변환 후 toISOString()으로 UTC 기준 문자열(Z suffix)을 생성한다.
- * - endDate의 경우 하루의 끝(23:59:59 KST = 14:59:59 UTC)으로 설정해 inclusive 범위를 구현한다.
+ * 날짜 문자열(YYYY-MM-DD)을 브라우저 로컬 자정/하루 끝의 절대 시각(ISO 8601, Z)으로 변환.
+ * - 서버는 오프셋을 존중해 그 순간을 저장 TZ 벽시계로 바꿔 비교한다(WD-11) — 오프셋 없이 보내면 서버 저장 TZ 로
+ *   해석돼 브라우저 하루와 어긋날 수 있다.
+ * - endDate 는 하루의 끝(23:59:59.999 로컬)으로 설정해 inclusive 범위를 구현한다.
  */
 function toIsoDateTime(dateStr: string, endOfDay = false): string {
   // YYYY-MM-DD를 로컬 타임존 기준 시작/끝 시각으로 파싱 후 UTC ISO 문자열로 변환
@@ -280,6 +281,20 @@ export default function AuditLogListPage() {
   /** 상세 보기 다이얼로그 상태 */
   const [selectedLog, setSelectedLog] = useState<AuditLogResponse | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
+
+  // WD-15: 결과에 실제로 반영된 조건 기준 — 검색어는 디바운스된 값으로 본다(입력 중 300ms 동안 문구가 앞서가지 않게).
+  const hasAnyFilter = Boolean(debouncedSearch || userId || actionType || resource || result || startDate || endDate);
+  /** 모든 필터를 비우고 첫 페이지로 — 빈 결과의 "필터 초기화" 가 쓴다. 입력 중인 원본 검색어도 지운다. */
+  const resetAllFilters = () => {
+    setSearch('');
+    setUserId('');
+    setActionType('');
+    setResource('');
+    setResult('');
+    setStartDate('');
+    setEndDate('');
+    setPage(0);
+  };
 
   const handleSearchChange = (value: string) => {
     setSearch(value);
@@ -494,23 +509,17 @@ export default function AuditLogListPage() {
                 </TableRow>
               ))
             ) : (
+              // WD-15: admin 과 같은 빈 상태 — 필터가 걸린 빈 결과는 "기록 없음" 과 구분하고 한 번에 되돌릴 행동을 준다.
+              // searchKeyword 분기(검색 초기화)는 쓰지 않는다: 같은 동작에 라벨이 둘로 갈리고, 날짜·셀렉트까지 지워 라벨과 어긋난다.
               <TableEmptyRow
                 colSpan={7}
-                message="감사 로그가 없습니다."
-                searchKeyword={debouncedSearch || undefined}
-                onResetSearch={
-                  search || userId || actionType || resource || result || startDate || endDate
-                    ? () => {
-                        setSearch('');
-                        setUserId('');
-                        setActionType('');
-                        setResource('');
-                        setResult('');
-                        setStartDate('');
-                        setEndDate('');
-                        setPage(0);
-                      }
-                    : undefined
+                message={hasAnyFilter ? '조건에 맞는 감사 로그가 없습니다.' : '감사 로그가 없습니다.'}
+                emptyAction={
+                  hasAnyFilter ? (
+                    <Button variant="outline" size="sm" onClick={resetAllFilters}>
+                      필터 초기화
+                    </Button>
+                  ) : undefined
                 }
               />
             )}

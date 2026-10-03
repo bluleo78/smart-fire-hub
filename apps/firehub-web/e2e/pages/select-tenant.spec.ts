@@ -41,7 +41,10 @@ test.describe('워크스페이스 선택 게이트', () => {
     // 두 워크스페이스가 모두 이름으로 표시되고, 표시용 라벨(role)도 함께 보인다.
     await expect(page.getByText(TENANT_A.tenantName)).toBeVisible();
     await expect(page.getByText(TENANT_B.tenantName)).toBeVisible();
-    await expect(page.getByText('MEMBER')).toBeVisible();
+    // WD-15: 역할 코드는 한국어 라벨로 보인다(OWNER→소유자, MEMBER→멤버).
+    await expect(page.getByText('소유자', { exact: true })).toBeVisible();
+    await expect(page.getByText('멤버', { exact: true })).toBeVisible();
+    await expect(page.getByText('MEMBER', { exact: true })).toHaveCount(0);
   });
 
   // ST-02: 선택 → API payload → 재진입까지 전체 파이프라인. refresh 응답을 선택 전후로 바꿔

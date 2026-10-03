@@ -466,6 +466,7 @@ test.describe('데이터셋 매핑 탭', () => {
 
     await page.getByTestId('entity-row-Building').getByRole('button', { name: '삭제' }).click();
     const confirm = page.getByTestId('entity-delete-confirm');
+    await expect(confirm.getByRole('button', { name: '삭제' })).toHaveAttribute('data-variant', 'destructive'); // WD-13
     await expect(confirm).toContainText('관계 1건');
     await confirm.getByRole('button', { name: '삭제' }).click();
 
@@ -746,6 +747,7 @@ test.describe('데이터셋 매핑 탭', () => {
 
     // 확인 전에는 행도 dirty 표시도 그대로다.
     const confirm = page.getByTestId('relation-delete-confirm');
+    await expect(confirm.getByRole('button', { name: '삭제' })).toHaveAttribute('data-variant', 'destructive'); // WD-13
     await expect(confirm).toBeVisible();
     // 어떤 관계가 지워지는지 끝점 라벨까지 정확히 고지해야 한다.
     await expect(confirm).toContainText(

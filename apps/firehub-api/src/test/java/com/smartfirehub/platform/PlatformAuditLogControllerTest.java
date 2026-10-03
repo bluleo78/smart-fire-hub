@@ -1,5 +1,6 @@
 package com.smartfirehub.platform;
 
+import static java.time.temporal.ChronoUnit.MINUTES;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -7,13 +8,19 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.smartfirehub.audit.repository.AuditLogRepository;
+import com.smartfirehub.audit.time.AuditTimes;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.tenant.TenantProvisioningService;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TenantRlsTestSupport;
 import com.smartfirehub.support.TestUsers;
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import org.hamcrest.Matchers;
@@ -36,6 +43,8 @@ import org.springframework.test.web.servlet.MockMvc;
  */
 @AutoConfigureMockMvc
 class PlatformAuditLogControllerTest extends IntegrationTestBase {
+
+  private static final ZoneId KST = ZoneId.of("Asia/Seoul");
 
   @Autowired private MockMvc mockMvc;
   @Autowired private JwtTokenProvider jwtTokenProvider;
@@ -74,6 +83,13 @@ class PlatformAuditLogControllerTest extends IntegrationTestBase {
             TenantRlsTestSupport.deleteProvisionedTenantCascade(
                 dsl, fixtureTransactionTemplate, tenantId));
     TenantRlsTestSupport.cleanupAll(steps.toArray(Runnable[]::new));
+  }
+
+  /** KST 벽시계 시각을 저장 TZ 벽시계로 — 손 픽스처를 실제 저장 규칙과 같은 값으로 심는다(WD-11). */
+  private static LocalDateTime kstToStorage(int y, int mo, int d, int h, int mi) {
+    return ZonedDateTime.of(y, mo, d, h, mi, 0, 0, KST)
+        .withZoneSameInstant(AuditTimes.storageZone())
+        .toLocalDateTime();
   }
 
   /** 감사 행 픽스처. tenant=null 이면 NULL 테넌트(플랫폼), 아니면 그 테넌트 GUC 안에서 넣어 DEFAULT 가 채운다. */
@@ -176,22 +192,38 @@ class PlatformAuditLogControllerTest extends IntegrationTestBase {
         .andExpect(jsonPath("$.totalElements").value(1))
         .andExpect(jsonPath("$.content[0].username").value(marker + "-ops"))
         .andExpect(jsonPath("$.content[0].resourceId").value(String.valueOf(target)));
+
+    // WD-11: 실제 기록 행을 같은 순간 창의 서로 다른 오프셋 표기로 찾는다(오프셋을 버리면 한쪽이 0행)
+    Instant now = Instant.now();
+    for (ZoneOffset off : List.of(ZoneOffset.ofHours(9), ZoneOffset.ofHours(-5))) {
+      list(
+              "target", username,
+              "from", now.minus(2, MINUTES).atOffset(off).toString(),
+              "to", now.plus(2, MINUTES).atOffset(off).toString())
+          .andExpect(status().isOk())
+          .andExpect(jsonPath("$.totalElements").value(1));
+    }
   }
 
+  /** KST 운영자의 하루(09-29~09-30) = [09-28T15:00Z, 09-30T15:00Z). admin 이 이 두 순간을 보낸다(WD-11). */
   @Test
-  void dateRange_isWallClockInclusiveOfEndDay() throws Exception {
+  void dateRange_isOperatorLocalDay_givenAsInstants() throws Exception {
+    insertAudit(null, "ACCOUNT_REACTIVATE", "in@example.com", kstToStorage(2026, 9, 30, 23, 30));
+    insertAudit(null, "ACCOUNT_REACTIVATE", "out@example.com", kstToStorage(2026, 10, 1, 0, 30));
     insertAudit(
-        null, "ACCOUNT_REACTIVATE", "in@example.com", LocalDateTime.of(2026, 9, 30, 23, 30));
-    insertAudit(
-        null, "ACCOUNT_REACTIVATE", "out@example.com", LocalDateTime.of(2026, 10, 1, 0, 30));
-    insertAudit(
-        null, "ACCOUNT_REACTIVATE", "before@example.com", LocalDateTime.of(2026, 9, 28, 23, 59));
+        null, "ACCOUNT_REACTIVATE", "before@example.com", kstToStorage(2026, 9, 28, 23, 59));
 
-    list("from", "2026-09-29", "to", "2026-09-30")
+    String expectedTime =
+        ZonedDateTime.of(2026, 9, 30, 23, 30, 0, 0, KST)
+            .withZoneSameInstant(AuditTimes.storageZone())
+            .toOffsetDateTime()
+            .format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
+    list("from", "2026-09-28T15:00:00.000Z", "to", "2026-09-30T15:00:00.000Z")
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.totalElements").value(1))
         .andExpect(jsonPath("$.content[0].metadata.targetUsername").value("in@example.com"))
-        .andExpect(jsonPath("$.content[0].actionTime").value("2026-09-30T23:30:00"));
+        // 응답은 저장 TZ 오프셋을 붙인다 — 같은 순간(KST 23:30)이어야 한다
+        .andExpect(jsonPath("$.content[0].actionTime").value(expectedTime));
   }
 
   @Test
@@ -231,10 +263,13 @@ class PlatformAuditLogControllerTest extends IntegrationTestBase {
     list("size", "0").andExpect(status().isBadRequest());
     list("size", "101").andExpect(status().isBadRequest());
     list("page", "-1").andExpect(status().isBadRequest());
-    list("from", "2026-10-02", "to", "2026-10-01")
+    list("from", "2026-10-01T15:00:00Z", "to", "2026-09-30T15:00:00Z")
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.message").value("시작일이 종료일보다 늦습니다"));
-    list("from", "2026-13-01").andExpect(status().isBadRequest());
+    // 구 계약(날짜만)·오프셋 없는 값은 거부 — 저장 TZ 를 추측하지 않는다
+    list("from", "2026-09-30").andExpect(status().isBadRequest());
+    list("from", "2026-09-30T00:00:00").andExpect(status().isBadRequest());
+    list("from", "2026-13-01T00:00:00Z").andExpect(status().isBadRequest());
   }
 
   @Test

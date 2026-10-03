@@ -10,6 +10,7 @@ import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -50,21 +51,23 @@ public class PlatformTenantController {
   @PostMapping
   @RequirePermission("platform:tenant:create")
   public ResponseEntity<TenantSummaryResponse> create(
-      @Valid @RequestBody CreateTenantRequest request) {
-    return ResponseEntity.status(HttpStatus.CREATED).body(tenantService.create(request));
+      @Valid @RequestBody CreateTenantRequest request, Authentication authentication) {
+    // 운영자 id 는 감사 행위자로 쓰인다(WD-12) — 계정 조치 컨트롤러와 같은 방식으로 principal 에서 꺼낸다.
+    return ResponseEntity.status(HttpStatus.CREATED)
+        .body(tenantService.create(request, (Long) authentication.getPrincipal()));
   }
 
   @PostMapping("/{tenantId}/suspend")
   @RequirePermission("platform:tenant:suspend")
-  public ResponseEntity<Void> suspend(@PathVariable long tenantId) {
-    tenantService.suspend(tenantId);
+  public ResponseEntity<Void> suspend(@PathVariable long tenantId, Authentication authentication) {
+    tenantService.suspend(tenantId, (Long) authentication.getPrincipal());
     return ResponseEntity.noContent().build();
   }
 
   @PostMapping("/{tenantId}/activate")
   @RequirePermission("platform:tenant:suspend")
-  public ResponseEntity<Void> activate(@PathVariable long tenantId) {
-    tenantService.activate(tenantId);
+  public ResponseEntity<Void> activate(@PathVariable long tenantId, Authentication authentication) {
+    tenantService.activate(tenantId, (Long) authentication.getPrincipal());
     return ResponseEntity.noContent().build();
   }
 

@@ -6,6 +6,7 @@ import { SimplePagination } from '@/components/ui/simple-pagination';
 import { TableEmptyRow } from '@/components/ui/table-empty';
 import { TableSkeletonRows } from '@/components/ui/table-skeleton';
 import { useDebounceValue } from '@/hooks/useDebounceValue';
+import { membershipRoleLabel } from '@/lib/membership-role';
 
 import { Badge } from '../../components/ui/badge';
 import {
@@ -87,13 +88,15 @@ export default function UserListPage() {
                   // Enter/Space 키로 행 클릭과 동일한 네비게이션 동작 수행
                   onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') navigate(`/admin/users/${u.id}`); }}
                 >
-                  <TableCell>
+                  {/* WD-15: 주 식별자(이름)만 굵게 — 보조 식별자(아이디)가 더 굵으면 시선이 역전된다(02 §4.1).
+                      역할 라벨은 공용 매핑(lib/membership-role)으로 admin 콘솔과 같은 용어 "소유자". */}
+                  <TableCell className="font-medium">
                     <span className="inline-flex items-center gap-2">
                       {u.name}
-                      {u.membershipRole === 'OWNER' && <Badge variant="outline">OWNER</Badge>}
+                      {u.membershipRole === 'OWNER' && <Badge variant="outline">{membershipRoleLabel('OWNER')}</Badge>}
                     </span>
                   </TableCell>
-                  <TableCell className="font-medium">{u.username}</TableCell>
+                  <TableCell>{u.username}</TableCell>
                   <TableCell>{u.email ?? '-'}</TableCell>
                   <TableCell>
                     {/* 이 워크스페이스 멤버십 상태(전역 계정 아님, WD-2). 색만으로 구분하지 않도록 문구가 다르다.

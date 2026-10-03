@@ -1,6 +1,7 @@
 package com.smartfirehub.platform.dto;
 
-import com.fasterxml.jackson.annotation.JsonFormat;
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
+import com.smartfirehub.audit.time.StorageZoneDateTimeSerializer;
 import java.time.LocalDateTime;
 
 /**
@@ -15,4 +16,8 @@ public record TenantSummaryResponse(
     String name,
     String status,
     int memberCount,
-    @JsonFormat(pattern = "yyyy-MM-dd'T'HH:mm:ss") LocalDateTime createdAt) {}
+    /**
+     * tenant.created_at(TIMESTAMP DEFAULT NOW(), 저장 TZ 벽시계) — JSON 에는 저장 TZ 오프셋이 붙는다(WD-11). 예전 고정
+     * 형식(@JsonFormat, 오프셋 없음)은 운영(UTC 저장)에서 admin 이 날짜를 잘라 KST 운영자에게 어긋났다.
+     */
+    @JsonSerialize(using = StorageZoneDateTimeSerializer.class) LocalDateTime createdAt) {}

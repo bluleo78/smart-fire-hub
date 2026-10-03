@@ -329,6 +329,8 @@ test.describe('파이프라인 트리거 탭', () => {
 
     // AlertDialog 확인
     await expect(page.getByRole('alertdialog').getByText(/트리거 삭제/)).toBeVisible();
+    // WD-13: 삭제 확인은 destructive
+    await expect(page.getByRole('alertdialog').getByRole('button', { name: '삭제', exact: true })).toHaveAttribute('data-variant', 'destructive');
     await page.getByRole('button', { name: '삭제', exact: true }).click();
 
     // 짧은 대기 후 호출 여부 확인

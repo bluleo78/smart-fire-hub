@@ -2,11 +2,11 @@ package com.smartfirehub.audit.controller;
 
 import com.smartfirehub.audit.dto.AuditLogResponse;
 import com.smartfirehub.audit.service.AuditLogService;
+import com.smartfirehub.audit.time.AuditTimes;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.global.security.RequirePermission;
-import java.time.LocalDateTime;
+import java.time.ZoneId;
 import lombok.RequiredArgsConstructor;
-import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -30,17 +30,26 @@ public class AuditLogController {
       @RequestParam(required = false) String actionType,
       @RequestParam(required = false) String resource,
       @RequestParam(required = false) String result,
-      @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME)
-          LocalDateTime startDate,
-      @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME)
-          LocalDateTime endDate,
+      // WD-11: 오프셋이 있으면 그 순간을 저장 TZ 로 바꾼다(웹은 toISOString 의 Z 를 보낸다). 오프셋 없는 값은
+      // ai-agent 호환으로 저장 벽시계 그대로. 형식 오류는 IllegalArgumentException → 400.
+      @RequestParam(required = false) String startDate,
+      @RequestParam(required = false) String endDate,
       @RequestParam(defaultValue = "0") int page,
       @RequestParam(defaultValue = "20") int size) {
     // userId 파라미터: 특정 사용자(user_id)로 정확히 일치 필터링.
     // free-text search 와 별도로 동작해 동명이인/오타 노이즈 없이 사용자별 활동 추적이 가능하다 (#89).
+    ZoneId storage = AuditTimes.storageZone();
     PageResponse<AuditLogResponse> logs =
         auditLogService.getAuditLogs(
-            search, userId, actionType, resource, result, startDate, endDate, page, size);
+            search,
+            userId,
+            actionType,
+            resource,
+            result,
+            AuditTimes.parseBoundary(startDate, storage),
+            AuditTimes.parseBoundary(endDate, storage),
+            page,
+            size);
     return ResponseEntity.ok(logs);
   }
 }

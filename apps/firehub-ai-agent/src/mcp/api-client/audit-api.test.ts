@@ -82,6 +82,20 @@ describe('auditApi (via FireHubApiClient)', () => {
     expect(result.totalElements).toBe(0);
   });
 
+  it('오프셋의 + 는 %2B 로 인코딩해 보낸다 — 날것의 + 는 서버에서 공백이 되어 400 이다 (WD-11)', async () => {
+    const mock = { content: [], totalElements: 0, totalPages: 0, number: 0, size: 20 };
+    let rawPath = '';
+    nock(BASE_URL)
+      .get((uri) => {
+        rawPath = uri;
+        return uri.startsWith('/api/v1/admin/audit-logs');
+      })
+      .reply(200, mock);
+    await client.listAuditLogs({ startDate: '2026-09-01T00:00:00+09:00' });
+    expect(rawPath).toContain('startDate=2026-09-01T00:00:00%2B09:00');
+    expect(rawPath).not.toMatch(/startDate=[^&]*\+/);
+  });
+
   it('listAuditLogs passes userId filter (#657)', async () => {
     const mock = { content: [], totalElements: 0, totalPages: 0, number: 0, size: 20 };
     nock(BASE_URL).get('/admin/audit-logs').query({ userId: '16' }).reply(200, mock);

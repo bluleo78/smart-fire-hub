@@ -80,6 +80,7 @@ test.describe('파이프라인 에디터 페이지', () => {
     // 고정된 브라우저 시각: 2024-01-01T00:00:05Z (KST로는 09:00:05)
     // setFixedTime은 install({ time })과 달리 실시간으로 흐르지 않고 완전히 고정되므로
     // 병렬 실행 등으로 테스트가 느려져도 경과시간이 항상 정확히 5초로 유지된다(비결정성 방지).
+    // eslint-disable-next-line no-restricted-syntax -- 오프셋을 명시한 고정 문자열 — 브라우저 존 해석 오류 없음(#691 대상 아님)
     await page.clock.setFixedTime(new Date('2024-01-01T00:00:05Z'));
 
     await mockApi(page, 'GET', '/api/v1/pipelines/1', detail);

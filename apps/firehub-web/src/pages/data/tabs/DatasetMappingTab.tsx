@@ -354,7 +354,7 @@ export function DatasetMappingTab({ dataset, datasetId, onDirtyChange }: Dataset
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>취소</AlertDialogCancel>
-            <AlertDialogAction onClick={handleEntityDeleteConfirm}>삭제</AlertDialogAction>
+            <AlertDialogAction variant="destructive" onClick={handleEntityDeleteConfirm}>삭제</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -374,7 +374,7 @@ export function DatasetMappingTab({ dataset, datasetId, onDirtyChange }: Dataset
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>취소</AlertDialogCancel>
-            <AlertDialogAction onClick={handleRelationDeleteConfirm}>삭제</AlertDialogAction>
+            <AlertDialogAction variant="destructive" onClick={handleRelationDeleteConfirm}>삭제</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

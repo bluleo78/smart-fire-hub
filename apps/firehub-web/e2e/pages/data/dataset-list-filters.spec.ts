@@ -323,6 +323,7 @@ test.describe('데이터셋 목록 — 필터 및 미리보기', () => {
     // 다를 수 있으므로 브라우저 컨텍스트에서 직접 기대값을 계산한다.
     const expectedTimestamp = await page.evaluate(() =>
       new Intl.DateTimeFormat('ko-KR', { dateStyle: 'medium', timeStyle: 'short' }).format(
+        // eslint-disable-next-line no-restricted-syntax -- 오프셋을 명시한 고정 문자열 — 브라우저 존 해석 오류 없음(#691 대상 아님)
         new Date('2026-05-17T01:00:00.000+00:00'),
       ),
     );

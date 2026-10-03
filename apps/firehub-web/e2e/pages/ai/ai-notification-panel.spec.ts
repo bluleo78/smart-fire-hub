@@ -31,6 +31,7 @@ test.describe('AI 인사이트 알림 패널', () => {
       },
       messageType: 'PROACTIVE_INSIGHT',
       read: false,
+      // eslint-disable-next-line no-restricted-syntax -- epoch 숫자 인자(서버 날짜 문자열 아님, #691 대상 아님)
       createdAt: new Date(Date.now() - 3600_000).toISOString(),
     },
     {
@@ -42,6 +43,7 @@ test.describe('AI 인사이트 알림 패널', () => {
       content: { summary: '금주 데이터셋 업로드 12건이 완료되었습니다.' },
       messageType: 'PROACTIVE_INSIGHT',
       read: true,
+      // eslint-disable-next-line no-restricted-syntax -- epoch 숫자 인자(서버 날짜 문자열 아님, #691 대상 아님)
       createdAt: new Date(Date.now() - 86400_000).toISOString(),
     },
   ];
@@ -155,6 +157,7 @@ test.describe('AI 인사이트 알림 패널', () => {
         content: { summary: '이미 읽은 알림입니다.' },
         messageType: 'PROACTIVE_INSIGHT',
         read: true,
+        // eslint-disable-next-line no-restricted-syntax -- epoch 숫자 인자(서버 날짜 문자열 아님, #691 대상 아님)
         createdAt: new Date(Date.now() - 86400_000).toISOString(),
       },
     ];

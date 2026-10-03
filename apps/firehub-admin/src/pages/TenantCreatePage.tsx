@@ -21,7 +21,7 @@ import type { PlatformUserResponse } from '@/types/platform';
 /**
  * 테넌트 생성. 서버는 테넌트 행 + 초기 Owner + 기본 시드를 한 트랜잭션으로 만든다.
  *
- * 서버 400 메시지(`존재하지 않는 사용자입니다: {id}` / `이미 사용 중인 slug 입니다: {slug}`)는
+ * 서버 400 메시지(`존재하지 않는 사용자입니다: {id}` / `이미 사용 중인 식별자입니다: {slug}`)는
  * **그대로** 표시한다 — 프런트가 문구를 다시 쓰면 두 판정이 갈라진다. Owner 를 검색으로 골라도
  * 이 처리를 남겨 두는 이유: 고른 뒤 제출 전에 그 사용자가 삭제될 수 있다.
  */
@@ -119,9 +119,9 @@ export default function TenantCreatePage() {
 
             <Separator />
 
-            <FormField label="slug" htmlFor="tenant-slug" error={errors.slug?.message}>
+            <FormField label="식별자" htmlFor="tenant-slug" error={errors.slug?.message}>
               <Input id="tenant-slug" className="font-mono" {...register('slug')} />
-              <p className="mt-1.5 text-sm text-muted-foreground">소문자·숫자·하이픈만 사용합니다.</p>
+              <p className="mt-1.5 text-sm text-muted-foreground">테넌트를 구분하는 고유한 영문 이름입니다. 소문자·숫자·하이픈만 사용합니다.</p>
               <p className="text-sm text-muted-foreground">생성 후에는 변경할 수 없습니다.</p>
             </FormField>
 

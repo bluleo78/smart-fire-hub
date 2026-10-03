@@ -5,6 +5,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { tenantsApi } from '@/api/tenants';
+import { MembershipRoleBadge } from '@/components/MembershipRoleBadge';
 import { MembershipStatusBadge } from '@/components/MembershipStatusBadge';
 import { PermissionDeniedBanner } from '@/components/PermissionDeniedBanner';
 import { TenantStatusBadge } from '@/components/TenantStatusBadge';
@@ -18,7 +19,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { InlineBanner } from '@/components/ui/inline-banner';
@@ -200,7 +200,7 @@ export default function TenantDetailPage() {
           <div className="grid grid-cols-[120px_1fr] gap-2 text-sm">
             <span className="text-muted-foreground">이름</span>
             <span>{tenant.name}</span>
-            <span className="text-muted-foreground">slug</span>
+            <span className="text-muted-foreground">식별자</span>
             <span className="font-mono text-[13px]">{tenant.slug}</span>
             <span className="text-muted-foreground">상태</span>
             <span>
@@ -261,7 +261,7 @@ export default function TenantDetailPage() {
                           <TableCell title={`userId: ${m.userId}`}>{m.username}</TableCell>
                           <TableCell>{m.email ?? '-'}</TableCell>
                           <TableCell>
-                            <Badge variant="outline">{m.role}</Badge>
+                            <MembershipRoleBadge role={m.role} />
                           </TableCell>
                           <TableCell>
                             <MembershipStatusBadge status={m.status} />

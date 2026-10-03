@@ -3,11 +3,17 @@ package com.smartfirehub.platform;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.security.JwtTokenProvider;
+import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TenantRlsTestSupport;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.util.List;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.AfterEach;
@@ -34,6 +40,7 @@ class PlatformTenantControllerTest extends IntegrationTestBase {
   @Autowired private JwtTokenProvider jwtTokenProvider;
   @Autowired private DSLContext dsl;
   @Autowired private PlatformTransactionManager transactionManager;
+  @Autowired private ObjectMapper objectMapper;
 
   private TransactionTemplate tx;
   private String token;
@@ -45,12 +52,25 @@ class PlatformTenantControllerTest extends IntegrationTestBase {
     tx = new TransactionTemplate(transactionManager);
     ownerUserId = createUser(false);
     token = jwtTokenProvider.generatePlatformAccessToken(createUser(true), "ops");
+    // 운영 조건: 운영자 요청 스레드에는 테넌트 컨텍스트가 없다. JwtAuthenticationFilter 는 요청 끝(finally)에서만
+    // 지우므로, 테스트 베이스가 세운 테넌트 1 이 남으면 감사 행이 tenant_id=1 로 새어 들어간다(WD-12).
+    TenantContext.clear();
   }
 
   /** 만든 테넌트를 지운다 — 공유 test DB 라 자기 것만 지운다. */
   @AfterEach
   void cleanUp() {
     if (createdTenant != null) {
+      // WD-12 감사 행(tenant NULL)은 테넌트 cascade 에 걸리지 않는다 — 컨텍스트 없이 resource_id 로 지운다.
+      long id = createdTenant;
+      TenantRlsTestSupport.runInTenantTransaction(
+          tx,
+          null,
+          () -> {
+            dsl.execute(
+                "delete from audit_log where resource = 'tenant' and resource_id = ?",
+                String.valueOf(id));
+          });
       TenantRlsTestSupport.deleteProvisionedTenantCascade(dsl, tx, createdTenant);
       createdTenant = null;
     }
@@ -156,6 +176,47 @@ class PlatformTenantControllerTest extends IntegrationTestBase {
     assertThat(statusOf(createdTenant)).isEqualTo("ACTIVE");
   }
 
+  /** 생성이 커밋되고(롤백 안 됨) 플랫폼 감사 행이 tenant NULL 로 하나 남으며, 운영자 감사 API 에서 slug 로 찾힌다. */
+  @Test
+  void createTenant_commitsAndRecordsNullTenantAuditRow() throws Exception {
+    String slug = "wd12-create-" + System.nanoTime();
+
+    assertThat(createTenant(slug, ownerUserId).getStatus()).isEqualTo(201);
+    createdTenant = tenantIdBySlug(slug);
+
+    assertThat(auditCount("TENANT_CREATE", createdTenant)).isEqualTo(1L);
+    mockMvc
+        .perform(
+            authed(get("/api/platform/audit-logs"))
+                .param("actionType", "TENANT_CREATE")
+                .param("target", slug))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.totalElements").value(1))
+        .andExpect(jsonPath("$.content[0].resourceId").value(String.valueOf(createdTenant)))
+        .andExpect(jsonPath("$.content[0].metadata.plane").value("platform"))
+        .andExpect(jsonPath("$.content[0].metadata.tenantSlug").value(slug));
+  }
+
+  /** 정지·활성화는 상태가 실제로 바뀔 때만 감사한다 — 같은 요청 재전송이 로그를 부풀리지 않는다. */
+  @Test
+  void suspendActivate_recordAuditOnlyOnChange() throws Exception {
+    String slug = "wd12-status-" + System.nanoTime();
+    createTenant(slug, ownerUserId);
+    createdTenant = tenantIdBySlug(slug);
+
+    for (int i = 0; i < 2; i++) {
+      mockMvc
+          .perform(authed(post("/api/platform/tenants/" + createdTenant + "/suspend")))
+          .andExpect(status().isNoContent());
+    }
+    mockMvc
+        .perform(authed(post("/api/platform/tenants/" + createdTenant + "/activate")))
+        .andExpect(status().isNoContent());
+
+    assertThat(auditCount("TENANT_SUSPEND", createdTenant)).isEqualTo(1L);
+    assertThat(auditCount("TENANT_ACTIVATE", createdTenant)).isEqualTo(1L);
+  }
+
   /** 없는 테넌트를 정지하면 404 다. */
   @Test
   void suspend_unknownTenantIs404() throws Exception {
@@ -184,6 +245,31 @@ class PlatformTenantControllerTest extends IntegrationTestBase {
 
     assertThat(body).contains("\"slug\":\"" + slug + "\"", "\"memberCount\":1");
     assertThat(body).doesNotContain("dataset", "pipeline", "ontology", "document");
+  }
+
+  /**
+   * 생성일에 저장 TZ 오프셋이 붙고 실제 순간과 맞는다(WD-11).
+   *
+   * <p>tenant.created_at 은 감사 action_time 과 같은 {@code TIMESTAMP DEFAULT NOW()}(세션 TZ = JVM TZ
+   * 벽시계)다. 오프셋 없이 내보내면 운영(UTC 저장)에서 admin 이 날짜를 잘라 KST 운영자에게 하루가 어긋난다. 오프셋이 없으면 parse 가 예외로 실패한다.
+   */
+  @Test
+  void tenantDetail_createdAtCarriesStorageOffset() throws Exception {
+    String slug = "wd11-created-" + System.nanoTime();
+    createTenant(slug, ownerUserId);
+    createdTenant = tenantIdBySlug(slug);
+
+    String body =
+        mockMvc
+            .perform(authed(get("/api/platform/tenants/" + createdTenant)))
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+
+    OffsetDateTime createdAt =
+        OffsetDateTime.parse(objectMapper.readTree(body).get("createdAt").asText());
+    assertThat(Duration.between(createdAt.toInstant(), Instant.now()).abs())
+        .isLessThan(Duration.ofMinutes(2));
   }
 
   /** 멤버 목록에 초기 Owner 가 보인다. */
@@ -230,6 +316,20 @@ class PlatformTenantControllerTest extends IntegrationTestBase {
   private org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder authed(
       org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder builder) {
     return builder.header("Authorization", "Bearer " + token);
+  }
+
+  /** tenant NULL 감사 행 수 — tenant_id=1 로 샌 행은 세지 않으므로 컨텍스트 누수를 잡는다. */
+  private Long auditCount(String action, long tenantId) {
+    return TenantRlsTestSupport.runInTenantTransaction(
+        tx,
+        null,
+        () ->
+            dsl.fetchOne(
+                    "select count(*) from audit_log where action_type = ? and resource = 'tenant'"
+                        + " and resource_id = ? and tenant_id is null",
+                    action,
+                    String.valueOf(tenantId))
+                .get(0, Long.class));
   }
 
   private String statusOf(long tenantId) {

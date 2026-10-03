@@ -9,7 +9,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
-import { Button, buttonVariants } from '@/components/ui/button';
+import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -21,7 +21,6 @@ import {
 } from '@/hooks/queries/useReviewItems';
 import { handleApiError } from '@/lib/api-error';
 import { validatePropertyCorrection } from '@/lib/property-correction';
-import { cn } from '@/lib/utils';
 import type {
   EntityPayload, PropertyPayload, RelationPayload, ReviewItemResponse, ReviewItemType, SynonymPayload,
 } from '@/types/reviewItem';
@@ -356,7 +355,8 @@ export default function ReviewInboxPage() {
             <AlertDialogCancel data-testid="review-decide-confirm-cancel">취소</AlertDialogCancel>
             <AlertDialogAction
               data-testid="review-decide-confirm-action"
-              className={cn(copy?.destructive && buttonVariants({ variant: 'destructive' }))}
+              // WD-13: 거부·동의어 병합(되돌릴 수 없는 제거)만 destructive — className 흉내 대신 variant(data-variant 일치)
+              variant={copy?.destructive ? 'destructive' : 'default'}
               onClick={handleConfirm}
             >
               {copy?.confirmLabel}

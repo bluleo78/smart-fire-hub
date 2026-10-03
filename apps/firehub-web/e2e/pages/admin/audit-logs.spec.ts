@@ -52,6 +52,26 @@ test.describe('감사 로그 페이지', () => {
     await expect(page.getByText('감사 로그가 없습니다.')).toBeVisible();
   });
 
+  test('검색어 없이 날짜만 건 빈 결과에도 "필터 초기화" 가 있다 (WD-15)', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/v1/admin/audit-logs', createPageResponse([]));
+    await page.goto('/admin/audit-logs');
+    await expect(page.getByText('감사 로그가 없습니다.')).toBeVisible();
+    await expect(page.getByRole('button', { name: '필터 초기화' })).toHaveCount(0);
+
+    // 날짜만 건 경우 — 예전에는 검색어가 없으면 되돌릴 버튼이 아예 없었다.
+    await page.getByLabel('시작 날짜').fill('2026-09-01');
+    await expect(page.getByText('조건에 맞는 감사 로그가 없습니다.')).toBeVisible();
+    await page.getByRole('button', { name: '필터 초기화' }).click();
+    await expect(page.getByLabel('시작 날짜')).toHaveValue('');
+    await expect(page.getByText('감사 로그가 없습니다.')).toBeVisible();
+
+    // 검색어를 넣은 경우에도 같은 문구·같은 버튼 — "검색 초기화" 로 갈리지 않는다(admin 과 통일).
+    await page.getByPlaceholder('설명으로 검색...').fill('없는설명');
+    await expect(page.getByRole('button', { name: '필터 초기화' })).toBeVisible();
+    await expect(page.getByText('조건에 맞는 감사 로그가 없습니다.')).toBeVisible();
+    await expect(page.getByRole('button', { name: '검색 초기화' })).toHaveCount(0);
+  });
+
   test('액션 유형 필터 셀렉트가 렌더링된다', async ({ authenticatedPage: page }) => {
     await setupAuditLogMocks(page);
     await page.goto('/admin/audit-logs');

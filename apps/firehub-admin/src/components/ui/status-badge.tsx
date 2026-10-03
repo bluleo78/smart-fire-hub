@@ -12,7 +12,7 @@ import { cn } from '@/lib/utils';
  * - active     활성/켜짐                → success (녹색)
  * - inactive   비활성/꺼짐              → secondary (회색)
  * - success    완료/정상/성공           → success (녹색)
- * - error      실패/이상/오류           → destructive (빨강)
+ * - error      실패/이상/오류           → danger (옅은 빨강, WD-15 — 웹 사본은 destructive 그대로)
  * - warning    경고/재인증 필요/주의    → warning (주황)
  * - info       진행중/실행중/처리중     → info (파랑)
  * - pending    대기/예정                → outline (테두리만, 회색)
@@ -36,12 +36,12 @@ export type StatusBadgeType =
 
 const TYPE_TO_VARIANT: Record<
   StatusBadgeType,
-  'default' | 'secondary' | 'destructive' | 'outline' | 'success' | 'warning' | 'info'
+  'default' | 'secondary' | 'destructive' | 'outline' | 'success' | 'warning' | 'info' | 'danger'
 > = {
   active: 'success',
   inactive: 'secondary',
   success: 'success',
-  error: 'destructive',
+  error: 'danger',
   warning: 'warning',
   info: 'info',
   pending: 'outline',

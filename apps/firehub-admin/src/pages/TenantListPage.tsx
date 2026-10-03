@@ -5,6 +5,7 @@ import { Link, useNavigate } from 'react-router-dom';
 
 import { tenantsApi } from '@/api/tenants';
 import { PermissionDeniedBanner } from '@/components/PermissionDeniedBanner';
+import { TableErrorRow } from '@/components/TableErrorRow';
 import { TenantStatusBadge } from '@/components/TenantStatusBadge';
 import { Button } from '@/components/ui/button';
 import { SearchInput } from '@/components/ui/search-input';
@@ -105,7 +106,7 @@ export default function TenantListPage() {
 
       <div className="flex items-center gap-3">
         <SearchInput
-          placeholder="이름 또는 slug로 검색..."
+          placeholder="이름 또는 식별자로 검색..."
           value={search}
           onChange={(value) => {
             setSearch(value);
@@ -138,7 +139,7 @@ export default function TenantListPage() {
           <TableHeader>
             <TableRow>
               <TableHead>이름</TableHead>
-              <TableHead>slug</TableHead>
+              <TableHead>식별자</TableHead>
               <TableHead>상태</TableHead>
               <TableHead className="text-right">멤버</TableHead>
               <TableHead>생성일</TableHead>
@@ -148,11 +149,7 @@ export default function TenantListPage() {
             {isLoading ? (
               <TableSkeletonRows columns={5} rows={5} />
             ) : isError ? (
-              <TableRow>
-                <TableCell colSpan={5} className="text-center text-destructive">
-                  데이터를 불러오는데 실패했습니다.
-                </TableCell>
-              </TableRow>
+              <TableErrorRow colSpan={5} />
             ) : pageRows.length > 0 ? (
               pageRows.map((t) => (
                 <TableRow

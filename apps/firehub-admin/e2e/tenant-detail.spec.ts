@@ -2,7 +2,7 @@ import { createMember, createTenant } from './factories/platform.factory';
 import { mockApi } from './fixtures/api-mock';
 import { expect, loginAs, test } from './fixtures/auth.fixture';
 
-const ACTIVE = createTenant({ id: 1, name: '한빛소방서', slug: 'hanbit', status: 'ACTIVE', memberCount: 12, createdAt: '2026-03-04T09:21:14' });
+const ACTIVE = createTenant({ id: 1, name: '한빛소방서', slug: 'hanbit', status: 'ACTIVE', memberCount: 12, createdAt: '2026-03-04T00:21:14Z' });
 const SUSPENDED = createTenant({ ...ACTIVE, status: 'SUSPENDED' });
 const MEMBERS = [
   createMember({ userId: 10, username: 'kimsb', email: 'kim@example.com', role: 'OWNER', status: 'ACTIVE' }),
@@ -10,6 +10,19 @@ const MEMBERS = [
 ];
 
 test.describe('테넌트 상세', () => {
+  // WD-11: 생성일시는 서버가 저장 TZ 오프셋을 붙여 준 순간을 브라우저 로컬로 그린다 — KST 로 고정해 결정적으로 단언한다.
+  test.use({ timezoneId: 'Asia/Seoul' });
+
+  test('KST 00~09시에 생성된 테넌트의 생성일시는 전날이 아니라 KST 로 보인다 (WD-11)', async ({ authenticatedPage: page }) => {
+    // 운영 저장 TZ=UTC: KST 2026-03-04 00:30 생성 → 서버는 2026-03-03T15:30:00Z 로 준다.
+    await mockApi(page, 'GET', '/api/platform/tenants/1', createTenant({ ...ACTIVE, createdAt: '2026-03-03T15:30:00Z' }));
+    await mockApi(page, 'GET', '/api/platform/tenants/1/members', MEMBERS);
+    await page.goto('/tenants/1');
+
+    await expect(page.getByText('2026-03-04 00:30')).toBeVisible();
+    await expect(page.getByText('2026-03-03 15:30')).toHaveCount(0);
+  });
+
   test('기본 정보와 멤버 표를 그린다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     await mockApi(page, 'GET', '/api/platform/tenants/1', ACTIVE);
     await mockApi(page, 'GET', '/api/platform/tenants/1/members', MEMBERS);
@@ -21,7 +34,8 @@ test.describe('테넌트 상세', () => {
     await expect(page.getByText('2026-03-04 09:21')).toBeVisible();
     await expect(page.getByText('멤버 (12)')).toBeVisible();
     await expect(page.getByRole('cell', { name: 'kim@example.com' })).toBeVisible();
-    await expect(page.getByText('OWNER')).toBeVisible();
+    await expect(page.getByText('식별자', { exact: true })).toBeVisible();
+    await expect(page.getByText('소유자', { exact: true })).toBeVisible();
     await expect(
       page.getByText('역할은 워크스페이스 내 표시용이며, 실제 권한은 워크스페이스 관리자가 설정합니다.'),
     ).toBeVisible();
@@ -61,6 +75,20 @@ test.describe('테넌트 상세', () => {
     await expect(page.getByRole('alertdialog').getByText(/^"서울소방청"\(seoul\)을 정지합니다\./)).toBeVisible();
   });
 
+  for (const [name, slug, expected] of [
+    ['Acme', 'acme', '"Acme"(acme)을(를) 정지합니다.'],
+    ['소방서2', 'fs2', '"소방서2"(fs2)를 정지합니다.'],
+    ['소방서3', 'fs3', '"소방서3"(fs3)을 정지합니다.'],
+  ]) {
+    test(`정지 문구 조사: ${name} → 영문 끝은 "을(를)", 숫자 끝은 읽기 규칙 (WD-15)`, async ({ authenticatedPage: page }) => {
+      await mockApi(page, 'GET', '/api/platform/tenants/1', createTenant({ ...ACTIVE, name, slug }));
+      await mockApi(page, 'GET', '/api/platform/tenants/1/members', MEMBERS);
+      await page.goto('/tenants/1');
+      await page.getByRole('button', { name: '테넌트 정지' }).click();
+      await expect(page.getByRole('alertdialog').getByText(expected, { exact: false })).toBeVisible();
+    });
+  }
+
   test('식별자 표기 규칙: slug 는 mono 13px, 멤버 아이디는 일반 텍스트 (WD-7)', async ({ authenticatedPage: page }) => {
     await mockApi(page, 'GET', '/api/platform/tenants/1', ACTIVE);
     await mockApi(page, 'GET', '/api/platform/tenants/1/members', MEMBERS);
@@ -75,6 +103,29 @@ test.describe('테넌트 상세', () => {
     const username = table.getByRole('cell', { name: 'kimsb', exact: true });
     await expect(username).not.toHaveCSS('font-family', /mono/i);
     await expect(username).toHaveCSS('font-weight', '400');
+  });
+
+  test('멤버 역할은 한국어 배지, 알 수 없는 값은 원문 (WD-15)', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/platform/tenants/1', ACTIVE);
+    await mockApi(page, 'GET', '/api/platform/tenants/1/members', [
+      createMember({ userId: 1, username: 'owner@example.com', role: 'OWNER' }),
+      createMember({ userId: 2, username: 'admin@example.com', role: 'ADMIN' }),
+      createMember({ userId: 3, username: 'm@example.com', role: 'MEMBER' }),
+      createMember({ userId: 4, username: 'x@example.com', role: 'GUEST' }),
+    ]);
+    await page.goto('/tenants/1');
+    const table = page.getByRole('table', { name: '테넌트 멤버 목록' });
+    for (const [user, label, code] of [
+      ['owner@', '소유자', 'OWNER'],
+      ['admin@', '관리자', 'ADMIN'],
+      ['m@', '멤버', 'MEMBER'],
+      ['x@', 'GUEST', 'GUEST'],
+    ]) {
+      const badge = table.getByRole('row').filter({ hasText: user }).getByText(label, { exact: true });
+      await expect(badge).toBeVisible();
+      // 원문 코드는 title 로 남는다 — 라벨만 보고 서버 값을 추적할 수 있게.
+      await expect(badge).toHaveAttribute('title', code);
+    }
   });
 
   test('멤버 상태 열이 원시값이 아니라 한국어 배지다 (WD-8)', async ({ authenticatedPage: page }) => {

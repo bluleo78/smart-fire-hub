@@ -54,6 +54,17 @@ async function setupChannelMocks(page: Parameters<typeof mockApi>[0]) {
   await mockApi(page, 'GET', '/api/v1/channels/settings', MOCK_CHANNEL_SETTINGS);
 }
 
+/**
+ * KAKAO 만 connected: true, needsReauth: false 로 바꾼 설정을 모킹한다 (연결 해제 버튼이 보이는 상태).
+ * "연결됨" 테스트 둘이 같은 모킹을 복붙하지 않고 공유한다.
+ */
+async function setupKakaoConnectedMocks(page: Parameters<typeof mockApi>[0]) {
+  const connectedSettings: ChannelSetting[] = MOCK_CHANNEL_SETTINGS.map((s) =>
+    s.channel === 'KAKAO' ? { ...s, connected: true, needsReauth: false, enabled: true } : s,
+  );
+  await mockApi(page, 'GET', '/api/v1/channels/settings', connectedSettings);
+}
+
 test.describe('채널 설정 페이지', () => {
   test('페이지 진입 시 4개 채널 카드가 표시된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     await setupChannelMocks(page);
@@ -190,18 +201,22 @@ test.describe('채널 설정 페이지', () => {
   });
 
   test('KAKAO 연결됨 상태 — "연결 해제" 버튼이 표시된다', async ({ authenticatedPage: page }) => {
-    // KAKAO를 connected: true, needsReauth: false 상태로 오버라이드
-    const connectedSettings: ChannelSetting[] = MOCK_CHANNEL_SETTINGS.map((s) =>
-      s.channel === 'KAKAO'
-        ? { ...s, connected: true, needsReauth: false, enabled: true }
-        : s,
-    );
-    await mockApi(page, 'GET', '/api/v1/channels/settings', connectedSettings);
+    await setupKakaoConnectedMocks(page);
     await page.goto('/settings/channels');
 
     await expect(page.getByText('카카오 알림톡', { exact: true })).toBeVisible();
     // "연결 해제" 버튼 표시 확인
     await expect(page.getByRole('button', { name: '연결 해제' })).toBeVisible();
+  });
+
+  test('연결 해제 확인 버튼은 destructive 다 (WD-13)', async ({ authenticatedPage: page }) => {
+    await setupKakaoConnectedMocks(page);
+    await page.goto('/settings/channels');
+
+    await page.getByRole('button', { name: '연결 해제' }).click();
+    const dialog = page.getByRole('alertdialog');
+    await expect(dialog.getByRole('button', { name: '연결 해제' })).toHaveAttribute('data-variant', 'destructive');
+    await expect(dialog.getByRole('button', { name: '취소' })).toHaveAttribute('data-variant', 'outline');
   });
 
   /**

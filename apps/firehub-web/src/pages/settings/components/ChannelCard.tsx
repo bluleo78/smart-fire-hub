@@ -372,7 +372,7 @@ export function ChannelCard({ setting }: ChannelCardProps) {
                     </AlertDialogHeader>
                     <AlertDialogFooter>
                       <AlertDialogCancel>취소</AlertDialogCancel>
-                      <AlertDialogAction onClick={handleDisconnect}>
+                      <AlertDialogAction variant="destructive" onClick={handleDisconnect}>
                         연결 해제
                       </AlertDialogAction>
                     </AlertDialogFooter>

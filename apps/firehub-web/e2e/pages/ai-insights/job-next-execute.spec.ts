@@ -17,6 +17,7 @@ function toServerLocalDateTime(d: Date): string {
 
 /** 지금으로부터 N일 뒤, 서울 기준 09:00 정각의 UTC 시각 (서울 09:00 = UTC 00:00) */
 function seoulNineAmInDays(days: number): Date {
+  // eslint-disable-next-line no-restricted-syntax -- epoch 숫자 인자(서버 날짜 문자열 아님, #691 대상 아님)
   const d = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
   d.setUTCHours(0, 0, 0, 0);
   return d;

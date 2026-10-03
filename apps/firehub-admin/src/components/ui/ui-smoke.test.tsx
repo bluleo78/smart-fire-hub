@@ -30,7 +30,8 @@ describe('복사한 UI 프리미티브', () => {
   });
 
   it('날짜 포맷터가 고정폭 문자열을 만든다', () => {
-    expect(formatDateOnly('2026-03-04T09:21:14')).toBe('2026-03-04');
-    expect(formatDateTimeMinute('2026-08-19T14:02:31')).toBe('2026-08-19 14:02');
+    // WD-11: 서버는 오프셋 붙은 순간을 준다 — 로컬 벽시계로 만든 순간을 넣어 프로세스 시간대와 무관하게 고정폭을 본다.
+    expect(formatDateOnly(new Date(2026, 2, 4, 9, 21, 14).toISOString())).toBe('2026-03-04');
+    expect(formatDateTimeMinute(new Date(2026, 7, 19, 14, 2, 31).toISOString())).toBe('2026-08-19 14:02');
   });
 });

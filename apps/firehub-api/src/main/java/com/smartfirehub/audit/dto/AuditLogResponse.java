@@ -1,6 +1,8 @@
 package com.smartfirehub.audit.dto;
 
 import com.fasterxml.jackson.annotation.JsonRawValue;
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
+import com.smartfirehub.audit.time.StorageZoneDateTimeSerializer;
 import java.time.LocalDateTime;
 
 public record AuditLogResponse(
@@ -11,7 +13,8 @@ public record AuditLogResponse(
     String resource,
     String resourceId,
     String description,
-    LocalDateTime actionTime,
+    /** 저장 벽시계 — JSON 에는 저장 TZ 오프셋이 붙는다(WD-11, StorageZoneDateTimeSerializer). */
+    @JsonSerialize(using = StorageZoneDateTimeSerializer.class) LocalDateTime actionTime,
     String ipAddress,
     String userAgent,
     String result,

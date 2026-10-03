@@ -694,6 +694,7 @@ test.describe('EntityInspector — 타입 필드 · 속성 CRUD · 자동 저장
       { schemaVersion: 2, deletedRelationIds: [1, 4] },
       { capture: true },
     );
+    await expect(page.getByTestId('entity-delete-confirm')).toHaveAttribute('data-variant', 'destructive'); // WD-13
     await page.getByTestId('entity-delete-confirm').click();
 
     // 삭제 성공 → 선택이 비워지고 인스펙터가 빈 안내 문구로 돌아간다(RelationInspector 삭제와 동일한 패턴).

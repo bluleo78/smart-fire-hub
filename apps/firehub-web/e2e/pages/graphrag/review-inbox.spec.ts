@@ -131,6 +131,8 @@ test.describe('AI 검수 인박스', () => {
     await expect(page.getByText('전기적 요인')).toBeVisible();
     await mockApi(page, 'GET', '/api/v1/graphrag/review-items', []);
     await page.getByRole('button', { name: '승인' }).click();
+    // WD-13: 동의어 병합은 되돌릴 수 없는 제거 — destructive(className 흉내가 아니라 variant)
+    await expect(page.getByTestId('review-decide-confirm-action')).toHaveAttribute('data-variant', 'destructive');
     await page.getByTestId('review-decide-confirm-action').click();
 
     await expect(page.getByText('검수 대기 중인 항목이 없습니다.')).toBeVisible();
@@ -148,6 +150,8 @@ test.describe('AI 검수 인박스', () => {
     await page.goto('/knowledge-graph/review');
     await page.getByPlaceholder('정정 숫자(예: 30000000)').fill('30000000');
     await page.getByRole('button', { name: '정정 적용' }).click();
+    // WD-13: 정정 적용은 삭제/제거가 아니다 — default 유지
+    await expect(page.getByTestId('review-decide-confirm-action')).toHaveAttribute('data-variant', 'default');
     await page.getByTestId('review-decide-confirm-action').click();
 
     await expect.poll(() => (sentBody as { correctedValue?: string })?.correctedValue).toBe('30000000');
