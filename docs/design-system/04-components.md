@@ -91,26 +91,33 @@ Smart Fire Hub 프론트엔드(`apps/firehub-web`)에서 사용하는 UI 컴포�
 
 ### 3. DeleteConfirmDialog (`delete-confirm-dialog.tsx`)
 
-**목적**: 삭제 작업 전 사용자 확인을 받는 AlertDialog 래퍼. 파괴적 작업의 안전장치.
+**목적**: 되돌릴 수 없는 삭제 전 확인을 받는 AlertDialog 래퍼. 제목은 `{entityName} 삭제`, 본문은 `"{itemName}" {entityName}을/를 정말 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.` 로 고정이다.
+
+**확인 버튼**: 항상 `variant="destructive"`(§D — 삭제/제거), 취소는 `outline`. 되돌릴 수 있는 동작(정지·비활성화)은 이 컴포넌트를 쓰지 않고 범위·되돌림을 설명하는 전용 AlertDialog 를 쓴다.
 
 **Props API**:
 
 | Prop | Type | Required | Description |
 |------|------|----------|-------------|
-| `title` | `string` | 필수 | 다이얼로그 제목 |
-| `description` | `string` | 필수 | 삭제 대상 설명 문구 |
-| `onConfirm` | `() => void` | 필수 | 확인 버튼 클릭 시 콜백 |
-| `trigger` | `ReactNode` | 필수 | 다이얼로그를 여는 트리거 요소 |
+| `entityName` | `string` | 필수 | 대상 종류(예: `역할`). 제목·조사에 쓰인다 |
+| `itemName` | `string` | 필수 | 대상 이름 |
+| `onConfirm` | `() => void` | 필수 | 확인 클릭 콜백 |
+| `trigger` | `ReactNode` | `open` 과 택1 | 클릭으로 여는 트리거 |
+| `open` / `onOpenChange` | `boolean` / `(open) => void` | `trigger` 와 택1 | 트리거 없이 여는 제어형(예: Delete 키) |
+| `restoreFocusRef` | `RefObject<HTMLElement>` | 선택 | 닫힌 뒤 포커스 복귀 대상 |
+| `extraDetail` | `string` | 선택 | 이름이 겹칠 수 있을 때 ID/URL 등 보조 식별 정보 |
 
 **사용 예시**:
 
 ```tsx
 <DeleteConfirmDialog
-  title="데이터셋 삭제"
-  description="이 데이터셋을 삭제하면 복구할 수 없습니다. 계속하시겠습니까?"
-  onConfirm={handleDelete}
+  entityName="역할"
+  itemName={role.name}
+  onConfirm={() => handleDelete(role)}
   trigger={
-    <Button variant="destructive" size="sm">삭제</Button>
+    <Button variant="outline" size="sm" aria-label={`${role.name} 역할 삭제`}>
+      <Trash2 className="h-4 w-4" />
+    </Button>
   }
 />
 ```

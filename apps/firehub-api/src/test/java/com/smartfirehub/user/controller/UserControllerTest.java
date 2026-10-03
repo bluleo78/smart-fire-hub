@@ -144,7 +144,8 @@ class UserControllerTest {
                     true,
                     LocalDateTime.now(),
                     List.of(new RoleResponse(1L, "ADMIN", null, true)),
-                    null)),
+                    null,
+                    true)),
             0,
             20,
             1,
@@ -155,6 +156,7 @@ class UserControllerTest {
         .perform(get("/api/v1/users").header("Authorization", "Bearer valid-token"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.content[0].username").value("testuser"))
+        .andExpect(jsonPath("$.content[0].accountActive").value(true))
         // 목록 응답에도 역할이 포함되는지 확인 (#586 회귀 방지)
         .andExpect(jsonPath("$.content[0].roles[0].name").value("ADMIN"))
         .andExpect(jsonPath("$.totalElements").value(1));
@@ -177,7 +179,8 @@ class UserControllerTest {
     mockMvc
         .perform(get("/api/v1/users/2").header("Authorization", "Bearer valid-token"))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$.username").value("otheruser"));
+        .andExpect(jsonPath("$.username").value("otheruser"))
+        .andExpect(jsonPath("$.accountActive").value(true));
   }
 
   @Test

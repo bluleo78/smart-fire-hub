@@ -21,8 +21,11 @@ test.describe('계정 화면 (#784)', () => {
     expect((await capture.waitForRequest()).searchParams.get('q')).toBe('kim');
     const table = page.getByRole('table', { name: '계정 목록' });
     const kimRow = table.getByRole('row').filter({ hasText: '김소방' });
-    await expect(kimRow.getByRole('cell', { name: 'kim@example.com' }).first()).toBeVisible();
+    const kimUsernameCell = kimRow.getByRole('cell', { name: 'kim@example.com' }).first();
+    await expect(kimUsernameCell).toBeVisible();
     await expect(kimRow.getByText('활성', { exact: true })).toBeVisible();
+    // WD-7: 계정 식별자(아이디)는 일반 텍스트 — 옆 이메일 열과 같은 글꼴
+    await expect(kimUsernameCell).not.toHaveCSS('font-family', /mono/i);
     await expect(table.getByRole('row').filter({ hasText: '이정지' }).getByText('비활성', { exact: true })).toBeVisible();
     await expect(page.getByText('검색 결과는 최대 20건까지 표시됩니다. 찾는 계정이 없으면 검색어를 더 좁혀보세요.')).toBeVisible();
   });

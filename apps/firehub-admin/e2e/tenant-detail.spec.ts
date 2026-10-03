@@ -41,13 +41,60 @@ test.describe('테넌트 상세', () => {
     await expect(dialog.getByText('테넌트 정지')).toBeVisible();
     await expect(
       dialog.getByText(
-        '"한빛소방서"(hanbit) 를 정지합니다. 이 워크스페이스의 멤버 12명은 새로 로그인하거나 세션을 갱신하는 시점부터 접근이 차단됩니다. 이미 발급된 세션은 최대 30분간 유효합니다. 정지는 언제든 되돌릴 수 있습니다.',
+        '"한빛소방서"(hanbit)를 정지합니다. 이 워크스페이스의 멤버 12명은 새로 로그인하거나 세션을 갱신하는 시점부터 접근이 차단됩니다. 이미 발급된 세션은 최대 30분간 유효합니다. 정지는 언제든 되돌릴 수 있습니다.',
       ),
     ).toBeVisible();
 
     await page.getByRole('button', { name: '정지', exact: true }).click();
     await capture.waitForRequest();
     await expect(page.getByText('테넌트를 정지했습니다.')).toBeVisible();
+  });
+
+  test('정지 문구의 조사가 테넌트 이름 받침에 맞는다 (WD-6)', async ({ authenticatedPage: page }) => {
+    // 받침 있는 이름(청) → "을". 괄호 뒤 조사는 괄호 앞 이름에 맞춘다.
+    await mockApi(page, 'GET', '/api/platform/tenants/1', createTenant({ ...ACTIVE, name: '서울소방청', slug: 'seoul' }));
+    await mockApi(page, 'GET', '/api/platform/tenants/1/members', MEMBERS);
+    await page.goto('/tenants/1');
+
+    await page.getByRole('button', { name: '테넌트 정지' }).click();
+
+    await expect(page.getByRole('alertdialog').getByText(/^"서울소방청"\(seoul\)을 정지합니다\./)).toBeVisible();
+  });
+
+  test('식별자 표기 규칙: slug 는 mono 13px, 멤버 아이디는 일반 텍스트 (WD-7)', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/platform/tenants/1', ACTIVE);
+    await mockApi(page, 'GET', '/api/platform/tenants/1/members', MEMBERS);
+    await page.goto('/tenants/1');
+
+    const slug = page.getByText('hanbit', { exact: true });
+    await expect(slug).toHaveCSS('font-family', /mono/i);
+    await expect(slug).toHaveCSS('font-size', '13px');
+
+    const table = page.getByRole('table', { name: '테넌트 멤버 목록' });
+    await expect(table.getByRole('columnheader', { name: '아이디', exact: true })).toBeVisible();
+    const username = table.getByRole('cell', { name: 'kimsb', exact: true });
+    await expect(username).not.toHaveCSS('font-family', /mono/i);
+    await expect(username).toHaveCSS('font-weight', '400');
+  });
+
+  test('멤버 상태 열이 원시값이 아니라 한국어 배지다 (WD-8)', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/platform/tenants/1', ACTIVE);
+    await mockApi(page, 'GET', '/api/platform/tenants/1/members', [
+      ...MEMBERS,
+      createMember({ userId: 12, username: 'parkjs', email: 'park@example.com', role: 'MEMBER', status: 'SUSPENDED' }),
+      createMember({ userId: 13, username: 'choiyh', email: 'choi@example.com', role: 'MEMBER', status: 'PENDING' }),
+    ]);
+    await page.goto('/tenants/1');
+
+    const table = page.getByRole('table', { name: '테넌트 멤버 목록' });
+    await expect(table.getByText('ACTIVE', { exact: true })).toHaveCount(0);
+    const active = table.getByRole('row').filter({ hasText: 'kimsb' }).getByText('활성', { exact: true });
+    await expect(active).toHaveAttribute('data-status', 'active');
+    const suspended = table.getByRole('row').filter({ hasText: 'parkjs' }).getByText('정지', { exact: true });
+    await expect(suspended).toHaveAttribute('data-status', 'warning');
+    // 모르는 값은 "활성"으로 둔갑시키지 않고 원문을 unknown 톤으로 보인다
+    const unknown = table.getByRole('row').filter({ hasText: 'choiyh' }).getByText('PENDING', { exact: true });
+    await expect(unknown).toHaveAttribute('data-status', 'unknown');
   });
 
   test('정지 다이얼로그 제목이 디자인 시스템 heading-card 20px/28px 다 (#788)', async ({ authenticatedPage: page }) => {

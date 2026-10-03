@@ -13,6 +13,7 @@ const TenantListPage = lazy(() => import('./pages/TenantListPage'));
 const TenantCreatePage = lazy(() => import('./pages/TenantCreatePage'));
 const TenantDetailPage = lazy(() => import('./pages/TenantDetailPage'));
 const AccountListPage = lazy(() => import('./pages/AccountListPage'));
+const AuditLogPage = lazy(() => import('./pages/AuditLogPage'));
 
 function App() {
   return (
@@ -63,6 +64,10 @@ function App() {
                 {/* 전역 계정(#784). 조회 자격은 기존 사용자 검색과 같은 platform:member:read — 변경 버튼은 화면이 따로 판단한다. */}
                 <Route element={<ProtectedRoute requiredPermission="platform:member:read" deniedTitle="계정" />}>
                   <Route path="/accounts" element={<AccountListPage />} />
+                </Route>
+                {/* 플랫폼 감사 로그(WD-4). 조회 자격은 계정 화면과 같은 platform:member:read — 새 권한 코드를 만들지 않는다. */}
+                <Route element={<ProtectedRoute requiredPermission="platform:member:read" deniedTitle="감사 로그" />}>
+                  <Route path="/audit-logs" element={<AuditLogPage />} />
                 </Route>
                 {/* 알 수 없는 경로(옛 /settings 포함, #713 에서 플랫폼 설정 제거)는 테넌트 목록으로 보낸다. */}
                 <Route path="*" element={<Navigate to="/tenants" replace />} />

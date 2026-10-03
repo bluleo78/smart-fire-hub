@@ -32,7 +32,7 @@ Smart Fire Hub 타이포그래피 시스템 — As-Is 감사 결과와 To-Be 권
 
 ## 2. 권장(To-Be) 타이포그래피 스케일
 
-Vercel Geist 3-tier 시스템(Heading / Body / Label)을 참고하여 13개 의미론적 레벨을 정의한다.
+Vercel Geist 3-tier 시스템(Heading / Body / Label)을 참고하여 14개 의미론적 레벨을 정의한다.
 
 ### 2.1 전체 스케일
 
@@ -49,6 +49,7 @@ Vercel Geist 3-tier 시스템(Heading / Body / Label)을 참고하여 13개 의�
 | `label-primary` | UI 라벨, 폼 레이블 | `text-sm leading-5 font-medium` | 14px | 20px | 500 | normal |
 | `label-secondary` | 배지, 태그, 메타 | `text-xs leading-4 font-medium` | 12px | 16px | 500 | normal |
 | `code-inline` | 인라인 코드, API 키 | `text-sm font-mono` | 14px | - | 400 | normal |
+| `code-identifier` | 기계 식별자(테넌트 slug 등) | `text-[13px] font-mono` | 13px | - | 400 | normal |
 | `code-block` | 코드 블록, SQL 에디터 | `text-[13px] leading-5 font-mono` | 13px | 20px | 400 | normal |
 | `data-number` | 데이터 테이블 숫자 | `text-sm font-mono tabular-nums` | 14px | - | 400 | normal |
 
@@ -165,7 +166,7 @@ UI 컨트롤에 붙는 레이블. 본문 텍스트와 달리 line-height보다 �
 
 ## 4. font-mono 사용 규칙
 
-`font-mono`는 아래 5가지 컨텍스트에서만 사용한다. 그 외 일반 UI 텍스트에는 절대 사용하지 않는다.
+`font-mono`는 아래 6가지 컨텍스트에서만 사용한다. 그 외 일반 UI 텍스트에는 절대 사용하지 않는다.
 
 | 컨텍스트 | Semantic Name | 예시 |
 |---------|---------------|------|
@@ -173,7 +174,16 @@ UI 컨트롤에 붙는 레이블. 본문 텍스트와 달리 line-height보다 �
 | SQL 쿼리, 코드 | `code-block` | `SELECT id FROM ...` |
 | 테이블 이름, 컬럼 이름 | `code-inline` | `public.datasets` |
 | 코드 블록 | `code-block` | 에디터 내 전체 영역 |
+| 기계 식별자(테넌트 slug 등) | `code-identifier` (`code-inline` 13px 변형) | `hanbit` |
 | 숫자 데이터 (테이블) | `data-number` | `1,234,567` |
+
+### 4.1 식별자 표기 (WD-7)
+
+| 식별자 | 표기 | 비고 |
+|---|---|---|
+| 기계 식별자 — slug·키처럼 시스템이 URL·설정에 쓰는 소문자·하이픈 값 | `font-mono text-[13px]` | 표에서 이름 옆 **보조 열**이면 `text-muted-foreground` 추가. 상세 키-값 그리드처럼 값이 주인공이면 추가하지 않는다. 입력 필드는 `font-mono` 만 |
+| 계정 식별자 — 로그인 아이디·이메일 | 일반 텍스트(sans) | 아이디가 대부분 이메일 형태라 mono 로 쓰면 옆 이메일 열과 같은 값이 다른 글꼴로 보인다 |
+| 문장 속 식별자 — 확인 문구의 `"이름"(slug)` | 산문 그대로 | 문장 안에서 글꼴을 바꾸지 않는다 |
 
 ---
 

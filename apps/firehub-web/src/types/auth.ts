@@ -47,6 +47,8 @@ export interface UserResponse {
   email: string | null;
   name: string;
   isActive: boolean;
+  /** 관리 목록(GET /users) 항목의 전역 계정 활성 여부(WD-3). false 면 운영자가 비활성화한 계정 — isActive(멤버십)와 별개다. */
+  accountActive?: boolean;
   createdAt: string;
   /** GET /auth/me 가 준다. 목록·상세 응답에는 없을 수 있다. */
   mustChangePassword?: boolean;

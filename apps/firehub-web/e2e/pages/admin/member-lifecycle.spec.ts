@@ -46,6 +46,31 @@ test.describe('멤버십 정지·제거', () => {
     await expect(page.getByText('멤버십이 재활성화되었습니다')).toBeVisible();
   });
 
+  test('운영자가 비활성화한 계정은 상태 행에 배지와 안내가 붙고, 멤버십 스위치는 그대로 쓸 수 있다 (WD-3)', async ({ authenticatedPage: page }) => {
+    await openDetail(page, { accountActive: false });
+
+    await expect(page.getByText('계정 비활성(운영자)', { exact: true })).toBeVisible();
+    await expect(page.getByText('운영자가 이 계정을 비활성화해 지금은 어느 워크스페이스에도 로그인할 수 없습니다. 이 스위치는 이 워크스페이스 멤버십만 바꿉니다.')).toBeVisible();
+    await expect(page.locator('[data-slot="inline-banner"]').filter({ hasText: '운영자가 이 계정을' })).toBeVisible();
+    const toggle = page.getByRole('switch', { name: '이 워크스페이스에서 활성' });
+    await expect(toggle).toBeChecked();
+    await expect(toggle).toBeEnabled();
+  });
+
+  test('멤버십 정지 + 전역 비활성이면 멤버십 "정지" 배지와 계정 배지가 둘 다 보인다 (WD-3)', async ({ authenticatedPage: page }) => {
+    await openDetail(page, { isActive: false, accountActive: false });
+    // 스위치 옆 <Label>정지</Label> 이 아니라 상태 행의 멤버십 배지(data-slot=badge)로 범위를 좁힌다.
+    await expect(page.locator('[data-slot="badge"]').filter({ hasText: /^정지$/ })).toBeVisible();
+    await expect(page.getByText('계정 비활성(운영자)', { exact: true })).toBeVisible();
+  });
+
+  test('활성 계정에는 계정 배지가 없다 (WD-3)', async ({ authenticatedPage: page }) => {
+    await openDetail(page, { accountActive: true });
+    // 음성 단언이 공허하지 않도록 상태 행이 그려졌음을 먼저 확인한다.
+    await expect(page.locator('[data-slot="badge"]').filter({ hasText: /^활성$/ })).toBeVisible();
+    await expect(page.getByText('계정 비활성(운영자)')).toHaveCount(0);
+  });
+
   test('제거: 확인 다이얼로그 → DELETE → 목록으로', async ({ authenticatedPage: page }) => {
     const capture = await mockApi(page, 'DELETE', '/api/v1/users/5/membership', null, { status: 204, capture: true });
     await openDetail(page);

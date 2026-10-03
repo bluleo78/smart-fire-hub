@@ -1,5 +1,7 @@
 import type {
+  PageResponse,
   PlatformAccountResponse,
+  PlatformAuditLogResponse,
   PlatformMeResponse,
   PlatformTokenResponse,
   PlatformUserResponse,
@@ -77,4 +79,32 @@ export function createAccount(overrides: Partial<PlatformAccountResponse> = {}):
     operator: false,
     ...overrides,
   };
+}
+
+/** 플랫폼 감사 로그 한 행(WD-4). 기본값은 운영자의 전역 계정 비활성화 조치. */
+export function createAuditLog(overrides: Partial<PlatformAuditLogResponse> = {}): PlatformAuditLogResponse {
+  return {
+    id: 501,
+    userId: 1,
+    username: 'ops@example.com',
+    actionType: 'ACCOUNT_DEACTIVATE',
+    resource: 'user',
+    resourceId: '10',
+    description: '전역 계정 비활성화(모든 워크스페이스 로그인 차단, refresh 세션 폐기)',
+    actionTime: '2026-10-01T09:15:30',
+    ipAddress: null,
+    userAgent: null,
+    result: 'SUCCESS',
+    errorMessage: null,
+    metadata: { plane: 'platform', targetUsername: 'kim@example.com' },
+    ...overrides,
+  };
+}
+
+/** 감사 로그 페이지 응답. 기본은 한 페이지짜리. */
+export function createAuditPage(
+  content: PlatformAuditLogResponse[],
+  overrides: Partial<PageResponse<PlatformAuditLogResponse>> = {},
+): PageResponse<PlatformAuditLogResponse> {
+  return { content, page: 0, size: 20, totalElements: content.length, totalPages: content.length > 0 ? 1 : 0, ...overrides };
 }

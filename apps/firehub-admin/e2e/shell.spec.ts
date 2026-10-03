@@ -4,7 +4,7 @@ import { mockApi } from './fixtures/api-mock';
 import { expect, loginAs, test } from './fixtures/auth.fixture';
 
 test.describe('운영자 콘솔 셸', () => {
-  test('상단 바에 평면 칩과 목적지 2개, 계정 메뉴가 있다', async ({ authenticatedPage: page }) => {
+  test('상단 바에 평면 칩과 목적지 3개, 계정 메뉴가 있다', async ({ authenticatedPage: page }) => {
     await page.goto('/tenants');
 
     await expect(page.getByText('Smart Fire Hub')).toBeVisible();
@@ -15,7 +15,8 @@ test.describe('운영자 콘솔 셸', () => {
     // 플랫폼 설정은 #713 에서 사라졌다(임베딩이 마지막 그룹이었다 — 이제 테넌트 전용).
     await expect(nav.getByRole('link', { name: '플랫폼 설정' })).toHaveCount(0);
     await expect(nav.getByRole('link', { name: '계정' })).toBeVisible();
-    await expect(nav.getByRole('link')).toHaveCount(2);
+    await expect(nav.getByRole('link', { name: '감사 로그' })).toBeVisible();
+    await expect(nav.getByRole('link')).toHaveCount(3);
 
     await expect(nav.getByRole('link', { name: '테넌트' })).toHaveAttribute('aria-current', 'page');
 
@@ -35,7 +36,7 @@ test.describe('운영자 콘솔 셸', () => {
   });
 
   test('권한이 없으면 목적지를 렌더하지 않고 안내 문구를 보여준다', async ({ page }) => {
-    // 메뉴 권한(tenant:read·member:read)이 하나도 없는 운영자 — 두 목적지(테넌트·계정) 모두 가려진다.
+    // 메뉴 권한(tenant:read·member:read)이 하나도 없는 운영자 — 세 목적지(테넌트·계정·감사 로그) 모두 가려진다.
     await loginAs(page, ['platform:tenant:create']);
     await page.goto('/tenants');
 

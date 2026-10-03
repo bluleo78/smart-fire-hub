@@ -6,6 +6,8 @@ export interface UserDetailResponse {
   email: string | null;
   name: string;
   isActive: boolean;
+  /** 전역 계정 활성 여부(WD-3). 관리 상세에서 isActive(이 워크스페이스 멤버십)와 다를 수 있다. */
+  accountActive?: boolean;
   createdAt: string;
   roles: RoleResponse[];
   /** 관리 상세에서 이 워크스페이스 멤버십 라벨. 자기 프로필(/users/me)에서는 null. */

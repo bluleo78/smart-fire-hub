@@ -224,6 +224,12 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
 - 감사 로그(`ACCOUNT_DEACTIVATE`/`ACCOUNT_REACTIVATE`)는 tenant NULL 로 기록되어 현재 감사 화면에는 보이지 않는다.
 - 배포 후 확인: admin "계정" 메뉴에서 검색 → 테스트 계정 비활성화 → 그 계정 로그인 거부 → 재활성화 후 로그인.
 
+### 전역 비활성 표시 · 플랫폼 감사 로그 (WD-3~WD-9, 마이그레이션 없음)
+
+- **api → admin → web 순서(같은 배포 창).** admin 은 `./scripts/deploy.sh admin` 으로 명시 배포. admin 이 api 보다 먼저 나가면 "감사 로그" 화면이 `/api/platform/audit-logs` 404 를 띄운다. web 의 `accountActive` 는 optional 이라 순서가 어긋나도 깨지지 않고 배지만 안 보인다.
+- 플랫폼 감사 로그는 `tenant_id IS NULL` 행만 보인다(운영자 계정 조치 + 워크스페이스가 정해지지 않은 로그인·실패). 테넌트 생성·정지 감사는 아직 기록되지 않는다(후속).
+- 배포 후 확인: admin "감사 로그" 메뉴에서 앞 절의 비활성화/재활성화 기록이 보이는지, web 사용자 관리에서 비활성화한 계정에 '계정 비활성(운영자)' 배지가 붙는지.
+
 ### opencode baseURL 사설망 점검 (이슈 #698)
 
 #693 의 SSRF 가드는 **저장 시점**에만 baseURL 을 검사한다. 그 가드가 생기기 전에 저장된 행에는

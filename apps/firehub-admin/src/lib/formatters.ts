@@ -14,3 +14,8 @@ export function formatDateOnly(iso: string): string {
 export function formatDateTimeMinute(iso: string): string {
   return `${iso.slice(0, 10)} ${iso.slice(11, 16)}`;
 }
+
+/** `2026-10-01 09:15:30` 형태. 감사 로그처럼 초 단위 순서가 의미 있는 곳에 쓴다(소수 초는 버린다). */
+export function formatDateTimeSecond(iso: string): string {
+  return `${iso.slice(0, 10)} ${iso.slice(11, 19)}`;
+}

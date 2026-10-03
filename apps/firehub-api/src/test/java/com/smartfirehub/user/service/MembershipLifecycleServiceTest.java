@@ -141,6 +141,43 @@ class MembershipLifecycleServiceTest extends IntegrationTestBase {
     assertThat(token.activeTenantId()).isEqualTo(tenantB);
   }
 
+  /**
+   * WD-3: 운영자가 전역 계정을 비활성화해도 isActive(멤버십)는 그대로 활성이고, accountActive 가 false 로 따로 온다. 멤버십까지 정지된 경우에도
+   * 두 값이 서로를 가리지 않는다.
+   */
+  @Test
+  void globallyDeactivated_listAndDetail_exposeAccountActiveSeparately() {
+    dsl.execute("update \"user\" set is_active = false where id = ?", member);
+
+    var row =
+        TenantContext.runScopedGet(tenantA, () -> userService.getUsers(null, 0, 50))
+            .content()
+            .stream()
+            .filter(u -> u.id().equals(member))
+            .findFirst()
+            .orElseThrow();
+    assertThat(row.isActive()).isTrue();
+    assertThat(row.accountActive()).isFalse();
+    var detail = TenantContext.runScopedGet(tenantA, () -> userService.getUserById(member));
+    assertThat(detail.isActive()).isTrue();
+    assertThat(detail.accountActive()).isFalse();
+    assertThat(detail.lastActiveAdmin()).isFalse();
+
+    inA(() -> userService.setUserActive(member, false, owner));
+    var suspended = TenantContext.runScopedGet(tenantA, () -> userService.getUserById(member));
+    assertThat(suspended.isActive()).isFalse();
+    assertThat(suspended.accountActive()).isFalse();
+  }
+
+  /** WD-3: 평범한 활성 계정은 accountActive=true, 자기 프로필(/users/me)은 isActive 와 같은 전역 값이다. */
+  @Test
+  void activeAccount_accountActiveTrue_andMyProfileMirrorsGlobal() {
+    var detail = TenantContext.runScopedGet(tenantA, () -> userService.getUserById(member));
+    assertThat(detail.accountActive()).isTrue();
+    var me = userService.getMyProfile(member);
+    assertThat(me.accountActive()).isEqualTo(me.isActive()).isTrue();
+  }
+
   @Test
   void suspendedMember_isListedAndReactivatable() {
     inA(() -> userService.setUserActive(member, false, owner));

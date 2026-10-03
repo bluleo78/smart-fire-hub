@@ -74,10 +74,12 @@ public class UserService {
                 user -> {
                   TenantMembership m = memberships.get(user.id());
                   UserResponse shown = user.withActive(m != null && m.isActive());
+                  // accountActive 는 덮어쓰기 전 전역 값(WD-3) — 운영자 비활성화를 목록에서 가리지 않는다.
                   return UserListResponse.of(
                       shown,
                       rolesByUserId.getOrDefault(user.id(), List.of()),
-                      m == null ? null : m.role());
+                      m == null ? null : m.role(),
+                      user.isActive());
                 })
             .toList();
     long totalElements = userRepository.countAll(tenantId, search);
@@ -97,6 +99,7 @@ public class UserService {
     long tenantId = TenantContext.require("사용자 상세");
     TenantMembership membership = requireTenantMember(id);
     UserDetailResponse base = loadDetail(id);
+    // base 는 loadDetail(전역 user 행) 결과라 base.isActive() 가 전역 계정 활성이다(WD-3).
     return new UserDetailResponse(
         base.id(),
         base.username(),
@@ -106,7 +109,8 @@ public class UserService {
         base.createdAt(),
         base.roles(),
         membership.role(),
-        isLastActiveAdmin(id, membership, tenantId));
+        isLastActiveAdmin(id, membership, tenantId),
+        base.isActive());
   }
 
   /**

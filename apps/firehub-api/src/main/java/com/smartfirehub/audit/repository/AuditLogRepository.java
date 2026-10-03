@@ -58,6 +58,12 @@ public class AuditLogRepository {
       field(name("audit_log", "error_message"), String.class);
   private static final Field<JSONB> AL_METADATA = field(name("audit_log", "metadata"), JSONB.class);
 
+  private static final Field<Long> AL_TENANT_ID = field(name("audit_log", "tenant_id"), Long.class);
+
+  /** metadata 의 대상 아이디(운영자 계정 조치가 남긴다). 괄호로 연산 우선순위를 명시한다. */
+  private static final Field<String> AL_TARGET_USERNAME =
+      field("({0} ->> 'targetUsername')", String.class, AL_METADATA);
+
   private AuditLogResponse mapToResponse(Record r) {
     JSONB jsonb = r.get(AL_METADATA);
     return new AuditLogResponse(
@@ -241,6 +247,79 @@ public class AuditLogRepository {
             .limit(size)
             .fetch(this::mapToResponse);
 
+    int totalPages = (int) Math.ceil((double) totalElements / size);
+    return new PageResponse<>(content, page, size, totalElements, totalPages);
+  }
+
+  /**
+   * 플랫폼 감사 로그 조회(WD-4) — {@code tenant_id IS NULL} 행만.
+   *
+   * <p>RLS 형태 (b)(V99)는 GUC 가 없을 때 NULL 행만 보여 주지만, 이 조건을 쿼리에도 명시한다: 어떤 경로로든 GUC 가 남아 있으면 RLS 는 그
+   * 테넌트 행만, 이 조건은 NULL 행만 고르므로 결과가 0행이 된다(fail-closed) — 테넌트 행이 새지 않는다.
+   *
+   * @param actor 행위자 username 부분일치(대소문자 무시). null/공백이면 무시
+   * @param target 대상 — resource_id 정확 일치 또는 metadata.targetUsername 부분일치. null/공백이면 무시
+   * @param actionType 액션 정확 일치. null/공백이면 무시
+   * @param fromInclusive 이 시각 이상(null 이면 무제한)
+   * @param toExclusive 이 시각 미만(null 이면 무제한)
+   */
+  public PageResponse<AuditLogResponse> findPlatform(
+      String actor,
+      String target,
+      String actionType,
+      LocalDateTime fromInclusive,
+      LocalDateTime toExclusive,
+      int page,
+      int size) {
+    Condition condition = AL_TENANT_ID.isNull();
+    if (actor != null && !actor.isBlank()) {
+      condition =
+          condition.and(
+              AL_USERNAME.likeIgnoreCase(LikePatternUtils.containsPattern(actor.trim()), '\\'));
+    }
+    if (target != null && !target.isBlank()) {
+      String t = target.trim();
+      condition =
+          condition.and(
+              AL_RESOURCE_ID
+                  .eq(t)
+                  .or(
+                      AL_TARGET_USERNAME.likeIgnoreCase(
+                          LikePatternUtils.containsPattern(t), '\\')));
+    }
+    if (actionType != null && !actionType.isBlank()) {
+      condition = condition.and(AL_ACTION_TYPE.eq(actionType));
+    }
+    if (fromInclusive != null) {
+      condition = condition.and(AL_ACTION_TIME.greaterOrEqual(fromInclusive));
+    }
+    if (toExclusive != null) {
+      condition = condition.and(AL_ACTION_TIME.lessThan(toExclusive));
+    }
+
+    long totalElements = dsl.selectCount().from(AUDIT_LOG).where(condition).fetchOne(0, long.class);
+    List<AuditLogResponse> content =
+        dsl.select(
+                AL_ID,
+                AL_USER_ID,
+                AL_USERNAME,
+                AL_ACTION_TYPE,
+                AL_RESOURCE,
+                AL_RESOURCE_ID,
+                AL_DESCRIPTION,
+                AL_ACTION_TIME,
+                AL_IP_ADDRESS,
+                AL_USER_AGENT,
+                AL_RESULT,
+                AL_ERROR_MESSAGE,
+                AL_METADATA)
+            .from(AUDIT_LOG)
+            .where(condition)
+            // 같은 트랜잭션 행은 NOW() 가 같다 — id 로 순서를 고정해 페이지 경계가 흔들리지 않게 한다.
+            .orderBy(AL_ACTION_TIME.desc(), AL_ID.desc())
+            .offset((long) page * size)
+            .limit(size)
+            .fetch(this::mapToResponse);
     int totalPages = (int) Math.ceil((double) totalElements / size);
     return new PageResponse<>(content, page, size, totalElements, totalPages);
   }

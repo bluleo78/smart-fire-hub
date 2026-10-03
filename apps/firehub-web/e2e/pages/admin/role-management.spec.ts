@@ -117,6 +117,17 @@ test.describe('역할 관리 페이지', () => {
     expect(req).toBeTruthy();
   });
 
+  test('역할 삭제 확인 버튼은 destructive 다 (WD-5)', async ({ authenticatedPage: page }) => {
+    await setupRoleListMocks(page);
+    await page.goto('/admin/roles');
+    await page.getByRole('button', { name: 'EDITOR 역할 삭제' }).click();
+
+    const confirm = page.getByRole('alertdialog').getByRole('button', { name: '삭제', exact: true });
+    await expect(confirm).toHaveAttribute('data-variant', 'destructive');
+    // 취소는 보조 액션(outline) 그대로
+    await expect(page.getByRole('alertdialog').getByRole('button', { name: '취소' })).toHaveAttribute('data-variant', 'outline');
+  });
+
   test('역할 상세 페이지에서 시스템 역할 이름 필드는 비활성화된다', async ({ authenticatedPage: page }) => {
     // isSystem=true 역할 상세 모킹
     await setupRoleDetailMocks(page, 1, true);

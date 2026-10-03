@@ -1,6 +1,6 @@
 import { useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, UserX } from 'lucide-react';
 import { useEffect,useId,useMemo,useState } from 'react';
 import { useNavigate,useParams } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -21,6 +21,7 @@ import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Checkbox } from '../../components/ui/checkbox';
+import { InlineBanner } from '../../components/ui/inline-banner';
 import { Label } from '../../components/ui/label';
 import { Separator } from '../../components/ui/separator';
 import { Skeleton } from '../../components/ui/skeleton';
@@ -33,6 +34,7 @@ import { formatDateShort } from '../../lib/formatters';
 import type { ErrorResponse } from '../../types/auth';
 import type { RoleResponse } from '../../types/role';
 import type { UserDetailResponse } from '../../types/user';
+import { AccountDisabledBadge } from './components/AccountDisabledBadge';
 import { MemberDangerZone } from './components/MemberDangerZone';
 import { memberLockReason } from './components/memberLockReason';
 
@@ -222,9 +224,10 @@ export default function UserDetailPage() {
             <span className="text-muted-foreground">가입일</span>
             <span>{formatDateShort(user.createdAt)}</span>
             <span className="text-muted-foreground">상태</span>
-            <span>
-              {/* 목록과 같은 멤버십 상태 표기(활성/정지, WD-2) — 화면마다 다른 말을 쓰지 않는다. */}
+            <span className="inline-flex items-center gap-2">
+              {/* 목록과 같은 멤버십 상태 표기(활성/정지, WD-2) + 전역 계정 비활성 배지(WD-3). */}
               <Badge variant={user.isActive ? 'success' : 'secondary'}>{user.isActive ? '활성' : '정지'}</Badge>
+              {user.accountActive === false && <AccountDisabledBadge />}
             </span>
           </div>
         </CardContent>
@@ -259,6 +262,13 @@ export default function UserDetailPage() {
           <CardTitle>이 워크스페이스에서 활성</CardTitle>
         </CardHeader>
         <CardContent className="space-y-2">
+          {/* WD-3: 스위치는 멤버십만 바꾼다 — 전역 비활성 계정은 켜 둬도 로그인할 수 없다는 사실을 조작 전에 읽히도록
+              스위치 위 InlineBanner(info: 이 화면에서 바꿀 수 없는 지속 상태, 06 §E)로 말한다. */}
+          {user.accountActive === false && (
+            <InlineBanner variant="info" icon={<UserX />}>
+              운영자가 이 계정을 비활성화해 지금은 어느 워크스페이스에도 로그인할 수 없습니다. 이 스위치는 이 워크스페이스 멤버십만 바꿉니다.
+            </InlineBanner>
+          )}
           <div className="flex items-center gap-3">
             {/* 끄는 방향만 잠근다 — 정지된 사람을 다시 켜는 건 언제나 허용(잠금 규칙은 정지·제거에만 적용).
                 disabled 스위치는 포인터/포커스 이벤트를 못 받으므로 span(tabIndex=0)으로 감싸 툴팁을 띄운다.

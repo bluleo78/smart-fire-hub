@@ -5,6 +5,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { tenantsApi } from '@/api/tenants';
+import { MembershipStatusBadge } from '@/components/MembershipStatusBadge';
 import { PermissionDeniedBanner } from '@/components/PermissionDeniedBanner';
 import { TenantStatusBadge } from '@/components/TenantStatusBadge';
 import {
@@ -35,6 +36,7 @@ import { TableSkeletonRows } from '@/components/ui/table-skeleton';
 import { useAuth } from '@/hooks/useAuth';
 import { formatDateTimeMinute } from '@/lib/formatters';
 import { isForbidden, isNotFound } from '@/lib/http-errors';
+import { eulReul } from '@/lib/utils';
 
 /**
  * 테넌트 상세.
@@ -242,7 +244,8 @@ export default function TenantDetailPage() {
                 <Table aria-label="테넌트 멤버 목록">
                   <TableHeader>
                     <TableRow>
-                      <TableHead>이름/아이디</TableHead>
+                      {/* WD-7: 이 열은 username 만 보인다(이름 필드가 없다) — 헤더도 "아이디". 계정 식별자는 일반 텍스트(02-typography §4.1). */}
+                      <TableHead>아이디</TableHead>
                       <TableHead>이메일</TableHead>
                       <TableHead>역할</TableHead>
                       <TableHead>상태</TableHead>
@@ -255,14 +258,14 @@ export default function TenantDetailPage() {
                     ) : membersQuery.data && membersQuery.data.length > 0 ? (
                       membersQuery.data.map((m) => (
                         <TableRow key={m.userId}>
-                          <TableCell className="font-medium" title={`userId: ${m.userId}`}>
-                            {m.username}
-                          </TableCell>
+                          <TableCell title={`userId: ${m.userId}`}>{m.username}</TableCell>
                           <TableCell>{m.email ?? '-'}</TableCell>
                           <TableCell>
                             <Badge variant="outline">{m.role}</Badge>
                           </TableCell>
-                          <TableCell>{m.status}</TableCell>
+                          <TableCell>
+                            <MembershipStatusBadge status={m.status} />
+                          </TableCell>
                         </TableRow>
                       ))
                     ) : (
@@ -286,7 +289,8 @@ export default function TenantDetailPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>테넌트 정지</AlertDialogTitle>
             <AlertDialogDescription>
-              {`"${tenant.name}"(${tenant.slug}) 를 정지합니다. 이 워크스페이스의 멤버 ${tenant.memberCount}명은 새로 로그인하거나 세션을 갱신하는 시점부터 접근이 차단됩니다. 이미 발급된 세션은 최대 30분간 유효합니다. 정지는 언제든 되돌릴 수 있습니다.`}
+              {/* WD-6: 괄호 뒤 조사는 괄호 앞 이름의 받침에 맞춘다(공백 없이). 이름이 동적이라 "를" 고정은 틀린다. */}
+              {`"${tenant.name}"(${tenant.slug})${eulReul(tenant.name)} 정지합니다. 이 워크스페이스의 멤버 ${tenant.memberCount}명은 새로 로그인하거나 세션을 갱신하는 시점부터 접근이 차단됩니다. 이미 발급된 세션은 최대 30분간 유효합니다. 정지는 언제든 되돌릴 수 있습니다.`}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

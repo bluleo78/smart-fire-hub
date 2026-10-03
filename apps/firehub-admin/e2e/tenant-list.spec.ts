@@ -20,7 +20,11 @@ test.describe('테넌트 목록', () => {
     await expect(page.getByRole('columnheader', { name: '생성일' })).toBeVisible();
 
     await expect(page.getByRole('cell', { name: '한빛소방서', exact: true })).toBeVisible();
-    await expect(page.getByRole('cell', { name: 'hanbit', exact: true })).toBeVisible();
+    const slugCell = page.getByRole('cell', { name: 'hanbit', exact: true });
+    await expect(slugCell).toBeVisible();
+    // WD-7: 보조 열 slug 는 mono 13px
+    await expect(slugCell).toHaveCSS('font-family', /mono/i);
+    await expect(slugCell).toHaveCSS('font-size', '13px');
     await expect(page.getByText('활성')).toBeVisible();
     await expect(page.getByText('정지됨')).toBeVisible();
     await expect(page.getByRole('cell', { name: '2026-03-04', exact: true })).toBeVisible();

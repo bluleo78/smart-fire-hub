@@ -262,7 +262,7 @@ test.describe('멤버 추가', () => {
 
   test('목록: 상태 열은 멤버십 기준(활성/정지), OWNER 라벨', async ({ authenticatedPage: page }) => {
     await page.goto('/admin/users');
-    await expect(page.getByRole('columnheader', { name: '상태 (이 워크스페이스)' })).toBeVisible();
+    await expect(page.getByRole('columnheader', { name: '상태' })).toBeVisible();
     const ownerRow = page.getByRole('button', { name: '사용자 양동희 상세 보기' });
     await expect(ownerRow.getByText('OWNER', { exact: true })).toBeVisible();
     await expect(ownerRow.getByText('활성', { exact: true })).toBeVisible();

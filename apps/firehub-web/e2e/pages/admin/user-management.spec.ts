@@ -1,3 +1,4 @@
+import { createUser } from '../../factories/auth.factory';
 import {
   setupAdminAuth,
   setupUserDetailMocks,
@@ -17,6 +18,31 @@ test.describe('사용자 관리 페이지', () => {
     await setupAdminAuth(page);
   });
 
+  test('목록: 운영자가 비활성화한 계정은 멤버십 배지 옆에 계정 배지가 붙는다 (WD-3)', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/v1/users', createPageResponse([
+      createUser({ id: 1, name: '양동희', username: 'dh@acme.io', accountActive: true }),
+      createUser({ id: 5, name: '김지수', username: 'jisu@acme.io', accountActive: false }),
+      createUser({ id: 6, name: '박정지', username: 'park@acme.io', isActive: false, accountActive: false }),
+    ]));
+    await page.goto('/admin/users');
+
+    const jisu = page.getByRole('button', { name: '사용자 김지수 상세 보기' });
+    await expect(jisu).toBeVisible();
+    await expect(jisu.getByText('활성', { exact: true })).toBeVisible();
+    await expect(jisu.getByText('계정 비활성(운영자)', { exact: true })).toHaveAttribute('data-status', 'warning');
+
+    // 멤버십 정지 + 전역 비활성: 두 배지가 같은 행에서 서로를 가리지 않는다.
+    const park = page.getByRole('button', { name: '사용자 박정지 상세 보기' });
+    await expect(park).toBeVisible();
+    await expect(park.getByText('정지', { exact: true })).toBeVisible();
+    await expect(park.getByText('계정 비활성(운영자)', { exact: true })).toBeVisible();
+
+    // 음성 대조: 행이 그려졌음을 먼저 확인한 뒤 배지가 없음을 단언한다.
+    const dh = page.getByRole('button', { name: '사용자 양동희 상세 보기' });
+    await expect(dh).toBeVisible();
+    await expect(dh.getByText('계정 비활성(운영자)')).toHaveCount(0);
+  });
+
   test('사용자 목록이 올바르게 렌더링된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     // 3명의 사용자 목록 모킹
     await setupUserListMocks(page, 3);
@@ -29,7 +55,7 @@ test.describe('사용자 관리 페이지', () => {
     await expect(page.getByRole('columnheader', { name: '이름' })).toBeVisible();
     await expect(page.getByRole('columnheader', { name: '아이디' })).toBeVisible();
     await expect(page.getByRole('columnheader', { name: '이메일' })).toBeVisible();
-    await expect(page.getByRole('columnheader', { name: '상태 (이 워크스페이스)' })).toBeVisible();
+    await expect(page.getByRole('columnheader', { name: '상태' })).toBeVisible();
 
     // 행 개수 확인: 헤더 row 1개 + 데이터 button 행 3개
     // 데이터 행은 role="button" (#29 키보드 접근성 수정으로 변경됨)이므로 별도 카운트

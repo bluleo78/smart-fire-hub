@@ -78,6 +78,50 @@ export interface PlatformAccountResponse {
   operator: boolean;
 }
 
+/** 서버 `PageResponse<T>` 와 1:1. */
+export interface PageResponse<T> {
+  content: T[];
+  page: number;
+  size: number;
+  totalElements: number;
+  totalPages: number;
+}
+
+/**
+ * `GET /api/platform/audit-logs` 한 행(WD-4). 서버 `AuditLogResponse` 그대로 — 테넌트 감사 로그와 같은 DTO 다.
+ * 이 화면에는 tenant_id 가 NULL 인 행(운영자 계정 조치, 워크스페이스가 정해지지 않은 로그인)만 온다.
+ */
+export interface PlatformAuditLogResponse {
+  id: number;
+  userId: number | null;
+  /** 행위자 username(운영자 조치면 운영자, 로그인이면 그 사용자). */
+  username: string;
+  actionType: string;
+  resource: string;
+  resourceId: string | null;
+  description: string | null;
+  /** `yyyy-MM-ddTHH:mm:ss[.ffffff]` (타임존 없음). */
+  actionTime: string;
+  ipAddress: string | null;
+  userAgent: string | null;
+  /** 'SUCCESS' | 'FAILURE' */
+  result: string;
+  errorMessage: string | null;
+  /** 운영자 계정 조치는 `{ plane: 'platform', targetUsername }` 을 싣는다. */
+  metadata: Record<string, unknown> | null;
+}
+
+/** 조회 파라미터. undefined 는 axios 가 쿼리에서 뺀다. 날짜는 `yyyy-MM-dd`(양끝 포함, 서버가 벽시계 하루로 바꾼다). */
+export interface PlatformAuditLogQuery {
+  actor?: string;
+  target?: string;
+  actionType?: string;
+  from?: string;
+  to?: string;
+  page: number;
+  size: number;
+}
+
 export interface ErrorResponse {
   status: number;
   error: string;

@@ -18,6 +18,7 @@ import {
 } from '../../components/ui/table';
 import { useMyPermissions } from '../../hooks/queries/useMyPermissions';
 import { useUsers } from '../../hooks/queries/useUsers';
+import { AccountDisabledBadge } from './components/AccountDisabledBadge';
 import { AddMemberDialog } from './components/AddMemberDialog';
 
 export default function UserListPage() {
@@ -61,7 +62,7 @@ export default function UserListPage() {
               <TableHead>이름</TableHead>
               <TableHead>아이디</TableHead>
               <TableHead>이메일</TableHead>
-              <TableHead>상태 (이 워크스페이스)</TableHead>
+              <TableHead>상태</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -95,8 +96,12 @@ export default function UserListPage() {
                   <TableCell className="font-medium">{u.username}</TableCell>
                   <TableCell>{u.email ?? '-'}</TableCell>
                   <TableCell>
-                    {/* 이 워크스페이스 멤버십 상태(전역 계정 아님, WD-2). 색만으로 구분하지 않도록 문구가 다르다. */}
-                    <Badge variant={u.isActive ? 'success' : 'secondary'}>{u.isActive ? '활성' : '정지'}</Badge>
+                    {/* 이 워크스페이스 멤버십 상태(전역 계정 아님, WD-2). 색만으로 구분하지 않도록 문구가 다르다.
+                        전역 계정이 운영자에게 비활성화됐으면 옆에 계정 배지를 붙인다(WD-3). */}
+                    <span className="inline-flex items-center gap-2">
+                      <Badge variant={u.isActive ? 'success' : 'secondary'} title="이 워크스페이스 멤버십">{u.isActive ? '활성' : '정지'}</Badge>
+                      {u.accountActive === false && <AccountDisabledBadge />}
+                    </span>
                   </TableCell>
                 </TableRow>
               ))
