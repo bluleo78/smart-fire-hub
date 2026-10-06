@@ -17,7 +17,9 @@
  *
  * AI 결과물(채팅 답변·리포트·분류 결과)은 여기서 만들지 않는다 — seed-ai.mjs 가 실제로 요청해 만든다.
  */
-import { pathToFileURL } from 'node:url';
+import { readFile, readdir } from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const API = (process.env.INTRO_API ?? 'http://localhost:5010') + '/api/v1';
 export const PASSWORD = process.env.INTRO_PASS ?? 'IntroShot1!';
@@ -366,6 +368,7 @@ async function seed() {
 
   const ids = { sales: dsSales.id, purchase: dsPurchase.id, customer: dsCustomer.id, inquiry: dsInquiry.id, catFin: catFin.id, catCust: catCust.id };
   await seedAssets(token, ids);
+  await seedKnowledge(token, ids);
   return { token, ids };
 }
 
@@ -624,9 +627,116 @@ GROUP BY 1, 2, 3`,
   console.log('  분석 자산·파이프라인·스마트 작업 생성');
 }
 
+/** 사내 문서(가상) 원본 위치 — 계약서·품질 보고서·회의록 등. 문서 검색과 지식그래프 적재의 입력이다. */
+const SEED_DOCS = path.join(path.dirname(fileURLToPath(import.meta.url)), '../seed-docs');
+const OLLAMA_URL = process.env.INTRO_OLLAMA_URL ?? 'http://bluelion.iptime.org:11434';
+
+/** 조건이 참이 될 때까지 폴링한다(문서 파싱·임베딩은 비동기 잡). */
+async function poll(label, check, { intervalMs = 3000, timeoutMs = 10 * 60 * 1000 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const v = await check();
+    if (v) return v;
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+  throw new Error(`시간 초과: ${label}`);
+}
+
+/**
+ * 문서 검색·행 검색·지식 모델을 준비한다.
+ * 그래프 적재(표 투영·문서 추출)는 API 엔드포인트가 없고 AI 에이전트 도구로만 돌기 때문에 seed-ai.mjs 가 채팅으로 시킨다.
+ */
+async function seedKnowledge(token, ids) {
+  // 1) 임베딩 — 운영과 같은 Ollama(bge-m3, 1024차원). 저장할 때 서버가 실제로 한 번 임베딩해 차원을 잰다.
+  await call(token, 'PUT', '/settings/embedding', { provider: 'OLLAMA', model: 'bge-m3', baseUrl: OLLAMA_URL });
+
+  // 2) 행 검색(검색 탭) — 거래처 정보의 글자 컬럼을 의미 검색 대상으로 켠다. 색인은 1분 주기 스윕이 만든다.
+  await call(token, 'PUT', `/datasets/${ids.customer}/search-index`, { fields: ['customer_name', 'industry', 'region', 'contact_name'] });
+
+  // 3) 문서 데이터셋 — 파일은 한 건씩 올리고, 형식은 확장자가 아니라 Content-Type 으로 판정되므로 명시한다.
+  const dsDocs = await call(token, 'POST', '/datasets', {
+    name: '사내 문서',
+    tableName: 'company_docs',
+    storageType: 'DOCUMENT',
+    description: '거래 계약서·품질 보고서·회의록·신용 평가·단가 협상 메모·제품 사양서',
+    categoryId: ids.catCust,
+  });
+  ids.docs = dsDocs.id;
+  const files = (await readdir(SEED_DOCS)).filter((f) => f.endsWith('.md')).sort();
+  const uploaded = [];
+  for (const f of files) {
+    const form = new FormData();
+    form.append('file', new Blob([await readFile(path.join(SEED_DOCS, f))], { type: 'text/markdown' }), f.replace(/^\d+-/, ''));
+    const res = await fetch(`${API}/datasets/${dsDocs.id}/documents`, { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: form });
+    if (!res.ok) throw new Error(`문서 업로드 실패(${f}) → ${res.status} ${await res.text()}`);
+    uploaded.push((await res.json()).id);
+  }
+  for (const docId of uploaded) {
+    const doc = await poll(`문서 ${docId} 처리`, async () => {
+      const d = await call(token, 'GET', `/datasets/${dsDocs.id}/documents/${docId}`);
+      return ['COMPLETED', 'FAILED'].includes(d.status) ? d : null;
+    });
+    if (doc.status === 'FAILED') throw new Error(`문서 처리 실패: ${doc.fileName ?? docId} — ${doc.errorDetail}`);
+  }
+  console.log(`  사내 문서 ${uploaded.length}건 색인 완료`);
+
+  // 4) 지식 모델 — 거래처·제품군·권역·담당자·이슈와 그 관계. 이름은 화면에 그대로 보이므로 한글로 짓는다.
+  // 마이그레이션이 넣는 예시 지식 모델(화재조사 보고서)은 시연 주제와 무관해 목록에서 지운다.
+  for (const o of await call(token, 'GET', '/ontologies')) await call(token, 'DELETE', `/ontology/${o.id}`);
+  const prop = (name, description, dataType = 'text') => ({ name, description, dataType, unit: null });
+  const ontology = await call(token, 'POST', '/ontologies', {
+    domain: '영업·고객',
+    status: 'active',
+    entities: [
+      { type: '거래처', description: '제품을 구매하는 고객사', naming: '법인 표기(㈜, 주식회사)와 띄어쓰기를 뺀 회사명', resolution: 'embedding', properties: [prop('등급', '거래 규모 등급(VIP·A·B·C)'), prop('업종', '거래처의 주요 업종')] },
+      { type: '제품군', description: '판매 제품의 묶음', naming: '제품군 이름', resolution: 'exact', properties: [] },
+      { type: '영업권역', description: '거래처를 담당하는 지역 단위', naming: '권역 이름', resolution: 'exact', properties: [] },
+      { type: '영업담당', description: '거래처를 맡은 영업 사원', naming: '사람 이름', resolution: 'exact', properties: [] },
+      { type: '이슈', description: '품질 불량·결제 지연·단가 협상처럼 거래에 영향을 준 사건', naming: '이슈를 한 구절로 요약', resolution: 'embedding', properties: [prop('심각도', '높음·보통·낮음')] },
+    ],
+    relations: [
+      { subject: '거래처', relation: '구매함', object: '제품군', description: '거래처가 해당 제품군을 구매한 적이 있다' },
+      { subject: '영업담당', relation: '담당함', object: '거래처', description: '영업 사원이 거래처를 맡고 있다' },
+      { subject: '거래처', relation: '소속', object: '영업권역', description: '거래처가 속한 영업권역' },
+      { subject: '거래처', relation: '관련 이슈', object: '이슈', description: '거래처와 관련된 품질·결제·계약 이슈' },
+      { subject: '이슈', relation: '대상 제품', object: '제품군', description: '이슈가 발생한 제품군' },
+    ],
+  });
+  const ontologyId = ontology?.id ?? ontology;
+  ids.ontology = ontologyId;
+
+  // 5) 매핑 — 거래처 정보(거래처·권역)와 매출 전표(거래처·제품군·담당자). 같은 이름의 거래처 노드는 그래프에서 하나로 합쳐진다.
+  const bindAndMap = async (datasetId, spec) => {
+    await call(token, 'PUT', `/datasets/${datasetId}/ontology`, { ontologyId });
+    await call(token, 'PUT', `/datasets/${datasetId}/mapping`, spec);
+    await call(token, 'POST', `/datasets/${datasetId}/mapping/activate`);
+  };
+  await bindAndMap(ids.customer, {
+    entities: [
+      { entityType: '거래처', nameColumn: 'customer_name', properties: [{ column: 'grade', propertyName: '등급' }, { column: 'industry', propertyName: '업종' }] },
+      { entityType: '영업권역', nameColumn: 'region', properties: [] },
+    ],
+    relations: [{ subjectRef: 0, relation: '소속', objectRef: 1 }],
+  });
+  await bindAndMap(ids.sales, {
+    entities: [
+      { entityType: '거래처', nameColumn: 'customer_name', properties: [] },
+      { entityType: '제품군', nameColumn: 'product_line', properties: [] },
+      { entityType: '영업담당', nameColumn: 'sales_rep', properties: [] },
+    ],
+    relations: [
+      { subjectRef: 0, relation: '구매함', objectRef: 1 },
+      { subjectRef: 2, relation: '담당함', objectRef: 0 },
+    ],
+  });
+  // 문서 데이터셋도 같은 지식 모델에 묶는다 — AI 가 문서에서 거래처·이슈를 뽑아 같은 그래프에 잇는다(seed-ai.mjs).
+  await call(token, 'PUT', `/datasets/${dsDocs.id}/ontology`, { ontologyId });
+  console.log('  임베딩·행 검색·지식 모델·매핑 준비');
+}
+
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const { ids } = await seed();
   console.log('seed-demo 완료', ids);
 }
 
-export { seed };
+export { seed, seedKnowledge };

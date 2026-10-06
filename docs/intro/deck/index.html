@@ -18,7 +18,7 @@
 </head>
 <body>
 
-<!-- 1. 표지 -->
+<!-- 표지 -->
 <section class="slide cover">
   <div class="brand">
     <span class="mark"><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#1d4ed8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg></span>
@@ -31,12 +31,12 @@
   <div class="note">화면의 조직·인물·데이터는 모두 시연용 가상 데이터입니다.</div>
 </section>
 
-<!-- 2. 데이터를 한 곳에 -->
+<!-- 데이터를 한 곳에 -->
 <section class="slide layout-shot">
   <div class="head">
     <div class="eyebrow">데이터 관리 · 01</div>
     <div class="headline">흩어진 데이터를 한 곳에</div>
-    <div class="sub">ERP·영업 시스템·파일에서 모은 매출·매입·고객 데이터를 데이터셋으로 등록하고, 카테고리로 묶어 관리합니다.</div>
+    <div class="sub">파일 업로드·외부 API·파이프라인으로 모은 매출·매입·고객 데이터와 사내 문서를 데이터셋으로 등록하고, 카테고리로 묶어 관리합니다.</div>
   </div>
   <div class="callouts" style="top:330px;gap:26px">
     <div class="callout"><div class="n">1</div><div><b>데이터셋 목록</b><span>저장 방식·출처·상태로 거르고, 이름으로 찾습니다.</span></div></div>
@@ -60,7 +60,7 @@
   <span class="page-no">2</span>
 </section>
 
-<!-- 3. 구조·품질·위치 -->
+<!-- 구조·품질·위치 -->
 <section class="slide">
   <div class="head">
     <div class="eyebrow">데이터 관리 · 02</div>
@@ -89,7 +89,36 @@
   <span class="page-no">3</span>
 </section>
 
-<!-- 4. AI 어시스턴트 -->
+<!-- 문서 데이터셋 · 문서 검색 -->
+<section class="slide">
+  <div class="head">
+    <div class="eyebrow">데이터 관리 · 03</div>
+    <div class="headline">계약서·보고서도 검색되는 데이터로</div>
+    <div class="sub">PDF·Word·텍스트 문서를 올리면 내용을 잘라 색인합니다. 단어가 달라도 뜻이 비슷한 문단까지 찾아냅니다.</div>
+  </div>
+  <div class="frame" style="left:96px;top:300px;width:1060px;">
+    <div class="bar"><i></i><i></i><i></i></div>
+    <div class="shot">
+      <img src="shots/docs-list.png" alt="">
+      <b class="ann area" data-box="docs-list:upload" data-n="1"></b>
+      <b class="ann area" data-box="docs-list:list" data-n="2"></b>
+    </div>
+  </div>
+  <div class="zoom-panel" style="left:1196px;top:290px;width:628px;">
+    <div class="zhead"><span class="n">3</span>같은 데이터셋 · 문서 검색</div>
+    <div data-crop="520,0,2320,1320" data-max-h="400">
+      <img src="shots/docs-search.png" alt="">
+    </div>
+  </div>
+  <div class="callouts" style="left:1236px;top:720px;width:588px;gap:14px">
+    <div class="callout"><div class="n">1</div><div><b>문서 올리기</b><span>끌어다 놓으면 자동으로 색인합니다.</span></div></div>
+    <div class="callout"><div class="n">2</div><div><b>처리 상태</b><span>문서마다 색인 진행 상태와 조각(청크) 수를 봅니다.</span></div></div>
+    <div class="callout ai"><div class="n">3</div><div><b>뜻으로 찾기</b><span>"납기가 늦어지면 위약금은?"으로 계약서의 지체상금 조항을 찾습니다.</span></div></div>
+  </div>
+  <span class="page-no">4</span>
+</section>
+
+<!-- AI 어시스턴트 -->
 <section class="slide">
   <div class="head">
     <div class="eyebrow ai">AI 분석 · 01</div>
@@ -113,13 +142,40 @@
     <div class="callout ai"><div class="n">2</div><div><b>해석과 다음 분석</b><span>숫자만이 아니라 눈에 띄는 차이와, 이어서 볼 분석을 함께 제안합니다.</span></div></div>
     <div class="callout"><div class="n">Q</div><div><b>질문 예시</b><span>"최근 3개월 영업권역별 매출과 매출총이익률을 분석해서 차트로 보여줘"</span></div></div>
   </div>
-  <span class="page-no">4</span>
+  <span class="page-no">5</span>
 </section>
 
-<!-- 5. SQL 편집기 -->
+<!-- AI 어시스턴트 · 표와 문서를 함께 -->
+<section class="slide">
+  <div class="head">
+    <div class="eyebrow ai">AI 분석 · 02</div>
+    <div class="headline">숫자와 문서를 함께 읽고 답합니다</div>
+    <div class="sub">매출 전표는 조회하고, 계약서·품질 보고서·회의록은 찾아 읽어서 한 번에 정리합니다.</div>
+  </div>
+  <div class="zoom-panel" style="left:96px;top:290px;width:560px;">
+    <div class="zhead"><span class="n">1</span>질문과 조회·문서 검색 과정</div>
+    <div data-crop="2130,150,750,1340" data-max-h="700">
+      <img src="shots/ai-docs-top.png" alt="">
+    </div>
+  </div>
+  <div class="zoom-panel" style="left:690px;top:290px;width:560px;">
+    <div class="zhead"><span class="n">2</span>근거를 엮은 답변</div>
+    <div data-crop="2130,150,750,1340" data-max-h="700">
+      <img src="shots/ai-docs.png" alt="">
+    </div>
+  </div>
+  <div class="callouts" style="left:1310px;top:320px;width:520px;gap:30px">
+    <div class="callout ai"><div class="n">1</div><div><b>표와 문서를 같이</b><span>매출은 데이터셋에서 조회하고, 관련 이슈는 사내 문서에서 찾아 읽습니다.</span></div></div>
+    <div class="callout ai"><div class="n">2</div><div><b>실무 판단까지</b><span>품질 이슈·매출 비중·계약 조건을 엮어 주의할 점을 정리합니다.</span></div></div>
+    <div class="callout"><div class="n">Q</div><div><b>질문 예시</b><span>"다솜오토텍과 최근에 어떤 문제가 있었고 올해 매출은 얼마나 돼? 사내 문서도 찾아보고 우리가 주의할 점을 정리해줘"</span></div></div>
+  </div>
+  <span class="page-no">6</span>
+</section>
+
+<!-- SQL 편집기 -->
 <section class="slide layout-shot">
   <div class="head">
-    <div class="eyebrow">분석 · 02</div>
+    <div class="eyebrow">분석 · 01</div>
     <div class="headline">직접 분석도 한 화면에서</div>
     <div class="sub">분석 담당자는 SQL로 바로 조회하고, 결과를 저장·공유하거나 차트로 이어 만듭니다.</div>
   </div>
@@ -137,13 +193,13 @@
       <b class="ann point" data-box="query:tochart" data-n="3" data-side="bottom" data-len="50"><i></i></b>
     </div>
   </div>
-  <span class="page-no">5</span>
+  <span class="page-no">7</span>
 </section>
 
-<!-- 6. 차트 -->
+<!-- 차트 -->
 <section class="slide layout-shot">
   <div class="head">
-    <div class="eyebrow">분석 · 03</div>
+    <div class="eyebrow">분석 · 02</div>
     <div class="headline">17가지 차트로 시각화</div>
     <div class="sub">저장한 쿼리를 골라 차트 종류와 축만 정하면, 미리보기로 확인하고 대시보드에 바로 올립니다.</div>
   </div>
@@ -161,13 +217,13 @@
       <b class="ann area" data-xywh="1122,202,1708,1058" data-n="3"></b>
     </div>
   </div>
-  <span class="page-no">6</span>
+  <span class="page-no">8</span>
 </section>
 
-<!-- 7. 대시보드 -->
+<!-- 대시보드 -->
 <section class="slide">
   <div class="head">
-    <div class="eyebrow">분석 · 04</div>
+    <div class="eyebrow">분석 · 03</div>
     <div class="headline">현황은 대시보드 한 장으로</div>
     <div class="sub">지표·추이·위치를 한 화면에 모으고, 정해진 주기로 자동 갱신해 늘 최신 상태로 봅니다.</div>
   </div>
@@ -192,10 +248,10 @@
     <div class="callout"><div class="n">3</div><div><b>지도·히트맵</b><span>어느 지역 거래처에서, 어떤 제품이 팔리는지 봅니다.</span></div></div>
     <div class="callout"><div class="n">4</div><div><b>공유·내려받기·전체 화면</b><span>상황판처럼 띄워 두거나 팀과 공유합니다.</span></div></div>
   </div>
-  <span class="page-no">7</span>
+  <span class="page-no">9</span>
 </section>
 
-<!-- 8. 파이프라인 -->
+<!-- 파이프라인 -->
 <section class="slide">
   <div class="head">
     <div class="eyebrow">자동화 · 01</div>
@@ -221,13 +277,13 @@
     <div class="callout ai"><div class="n">2</div><div><b>AI 분류 단계</b><span>글로 된 데이터를 AI가 읽고 분류해 새 컬럼으로 남깁니다(다음 장).</span></div></div>
     <div class="callout"><div class="n">3</div><div><b>실행 조건</b><span>스케줄, 데이터 변경, API·웹훅 호출, 다른 파이프라인 완료 후.</span></div></div>
   </div>
-  <span class="page-no">8</span>
+  <span class="page-no">10</span>
 </section>
 
-<!-- 9. AI 분류 -->
+<!-- AI 분류 -->
 <section class="slide layout-shot">
   <div class="head">
-    <div class="eyebrow ai">AI 분석 · 02</div>
+    <div class="eyebrow ai">AI 분석 · 03</div>
     <div class="headline">글로 된 데이터도 AI가 읽고 분류합니다</div>
     <div class="sub">거래처 문의·클레임처럼 정형화되지 않은 텍스트를 AI가 읽고, 긴급도·유형·판단 근거를 데이터로 남깁니다.</div>
   </div>
@@ -243,13 +299,91 @@
       <b class="ann area" data-box="ai-classify:ai" data-n="2"></b>
     </div>
   </div>
-  <span class="page-no">9</span>
+  <span class="page-no">11</span>
 </section>
 
-<!-- 10. 스마트 작업 + 리포트 -->
+<!-- 지식 모델 · 매핑 -->
 <section class="slide">
   <div class="head">
-    <div class="eyebrow ai">AI 분석 · 03</div>
+    <div class="eyebrow">지식그래프 · 01</div>
+    <div class="headline">업무 개념과 관계를 지식 모델로</div>
+    <div class="sub">거래처·제품군·담당자·이슈 같은 업무 개념과 그 관계를 정의하고, 표의 컬럼을 개념에 연결합니다.</div>
+  </div>
+  <div class="frame" style="left:96px;top:300px;width:1060px;">
+    <div class="bar"><i></i><i></i><i></i></div>
+    <div class="shot">
+      <img src="shots/kg-model.png" alt="">
+      <b class="ann area" data-xywh="1060,280,1780,1300" data-n="1"></b>
+    </div>
+  </div>
+  <div class="zoom-panel" style="left:1196px;top:290px;width:628px;">
+    <div class="zhead"><span class="n">2</span>매출 전표 · 매핑 탭</div>
+    <div data-crop="520,480,2340,1120" data-max-h="380">
+      <img src="shots/kg-mapping.png" alt="">
+    </div>
+  </div>
+  <div class="callouts" style="left:1236px;top:760px;width:588px;gap:22px">
+    <div class="callout"><div class="n">1</div><div><b>지식 모델</b><span>개념(거래처·제품군·영업권역·영업담당·이슈)과 관계(구매함·담당함·관련 이슈)를 그림으로 편집합니다.</span></div></div>
+    <div class="callout"><div class="n">2</div><div><b>표 → 그래프 매핑</b><span>어떤 컬럼이 어떤 개념인지 지정하면 표의 행이 그래프의 노드와 관계가 됩니다.</span></div></div>
+  </div>
+  <span class="page-no">12</span>
+</section>
+
+<!-- 그래프 탐색 -->
+<section class="slide layout-shot">
+  <div class="head">
+    <div class="eyebrow">지식그래프 · 02</div>
+    <div class="headline">흩어진 정보가 하나의 관계망으로</div>
+    <div class="sub">표에서 온 거래 관계와, AI가 문서에서 뽑아낸 이슈가 같은 거래처 노드에 모입니다.</div>
+  </div>
+  <div class="callouts">
+    <div class="callout"><div class="n">1</div><div><b>개념별 개수</b><span>거래처·이슈·제품군 등 개념마다 쌓인 노드를 보고 걸러 봅니다.</span></div></div>
+    <div class="callout"><div class="n">2</div><div><b>이웃 강조</b><span>한 거래처에 닿은 제품·담당자·이슈만 밝혀 봅니다.</span></div></div>
+    <div class="callout ai"><div class="n">3</div><div><b>관계 한눈에</b><span>구매함·담당함(매출 전표)과 관련 이슈(AI가 품질 보고서에서 추출)를 함께 봅니다.</span></div></div>
+  </div>
+  <div class="frame">
+    <div class="bar"><i></i><i></i><i></i></div>
+    <div class="shot">
+      <img src="shots/kg-node.png" alt="">
+      <b class="ann area" data-xywh="554,216,454,605" data-n="1"></b>
+      <b class="ann area" data-xywh="1300,330,700,700" data-n="2"></b>
+      <b class="ann area" data-xywh="2196,216,634,763" data-n="3"></b>
+    </div>
+  </div>
+  <span class="page-no">13</span>
+</section>
+
+<!-- AI 검수 -->
+<section class="slide">
+  <div class="head">
+    <div class="eyebrow ai">지식그래프 · 03</div>
+    <div class="headline">AI가 애매한 건 사람에게 묻습니다</div>
+    <div class="sub">"다솜"과 "다솜오토텍"처럼 같은 대상일 수 있는 이름은 AI가 마음대로 합치지 않고, 원문 근거와 함께 검수를 요청합니다.</div>
+  </div>
+  <div class="frame" style="left:96px;top:300px;width:1060px;">
+    <div class="bar"><i></i><i></i><i></i></div>
+    <div class="shot">
+      <img src="shots/kg-review.png" alt="">
+      <b class="ann area" data-box="kg-review:table" data-n="1"></b>
+    </div>
+  </div>
+  <div class="zoom-panel" style="left:1196px;top:290px;width:628px;">
+    <div class="zhead"><span class="n">2</span>원문 근거 보기</div>
+    <div data-crop="560,470,2300,1150" data-max-h="380">
+      <img src="shots/kg-evidence.png" alt="">
+    </div>
+  </div>
+  <div class="callouts" style="left:1236px;top:760px;width:588px;gap:22px">
+    <div class="callout ai"><div class="n">1</div><div><b>검수 대기열</b><span>동의어·속성·개체·관계마다 AI의 판단 이유와 유사도를 보여 줍니다.</span></div></div>
+    <div class="callout"><div class="n">2</div><div><b>근거 확인 후 승인</b><span>원문 문단을 확인하고 승인하면 그래프에 반영되고, 거부하면 다시 묻지 않습니다.</span></div></div>
+  </div>
+  <span class="page-no">14</span>
+</section>
+
+<!-- 스마트 작업 + 리포트 -->
+<section class="slide">
+  <div class="head">
+    <div class="eyebrow ai">AI 분석 · 04</div>
     <div class="headline">정기 보고서는 AI가 씁니다</div>
     <div class="sub">분석 지시와 보고서 양식, 실행 주기를 정해 두면 AI가 때마다 데이터를 분석해 보고서를 작성합니다.</div>
   </div>
@@ -272,10 +406,33 @@
     <div class="callout ai"><div class="n">2</div><div><b>AI가 분석해 작성한 보고서</b></div></div>
     <div class="callout"><div class="n">3</div><div><b>인쇄·PDF 내려받기</b></div></div>
   </div>
-  <span class="page-no">10</span>
+  <span class="page-no">15</span>
 </section>
 
-<!-- 11. 권한·감사 -->
+<!-- 알림 채널 -->
+<section class="slide layout-shot">
+  <div class="head">
+    <div class="eyebrow">자동화 · 02</div>
+    <div class="headline">결과는 쓰는 곳으로 보냅니다</div>
+    <div class="sub">보고서·이상 탐지 알림을 앱 알림·이메일·카카오톡·Slack으로 받습니다. Slack 스레드에서는 AI에게 바로 묻고 답을 받습니다.</div>
+  </div>
+  <div class="callouts">
+    <div class="callout"><div class="n">1</div><div><b>앱 알림·이메일</b><span>기본 채널. 메일은 관리자가 정한 메일 서버로 보냅니다.</span></div></div>
+    <div class="callout"><div class="n">2</div><div><b>카카오톡·Slack</b><span>사용자가 직접 연동해 원하는 곳에서 받습니다.</span></div></div>
+    <div class="callout ai"><div class="n">3</div><div><b>메신저에서 AI와 대화</b><span>Slack 스레드에 질문하면 AI가 같은 권한으로 데이터를 조회해 답합니다.</span></div></div>
+  </div>
+  <div class="frame">
+    <div class="bar"><i></i><i></i><i></i></div>
+    <div class="shot">
+      <img src="shots/channels.png" alt="">
+      <b class="ann area" data-xywh="530,230,2300,470" data-n="1"></b>
+      <b class="ann area" data-xywh="530,728,2300,560" data-n="2"></b>
+    </div>
+  </div>
+  <span class="page-no">16</span>
+</section>
+
+<!-- 권한·감사 -->
 <section class="slide">
   <div class="head">
     <div class="eyebrow">보안 · 관리</div>
@@ -298,10 +455,10 @@
     <div class="callout"><div class="n">1</div><div><b>역할별 세부 권한</b></div></div>
     <div class="callout"><div class="n">2</div><div><b>사용자·작업·결과·접속 위치 기록</b></div></div>
   </div>
-  <span class="page-no">11</span>
+  <span class="page-no">17</span>
 </section>
 
-<!-- 12. 조직 인프라 안에서 -->
+<!-- 조직 인프라 안에서 -->
 <section class="slide">
   <div class="head">
     <div class="eyebrow">구성</div>
@@ -316,7 +473,7 @@
         <p>웹 · API 서버 · AI 에이전트 · 파이프라인 실행기</p>
         <div class="chips">
           <span class="chip">데이터셋</span><span class="chip">분석·차트</span><span class="chip">대시보드</span>
-          <span class="chip">파이프라인</span><span class="chip ai">AI 어시스턴트</span><span class="chip ai">AI 분류·보고서</span>
+          <span class="chip">파이프라인</span><span class="chip">문서 검색</span><span class="chip">지식그래프</span><span class="chip ai">AI 어시스턴트</span><span class="chip ai">AI 분류·보고서</span>
         </div>
       </div>
       <div class="box">
@@ -336,7 +493,7 @@
     <div><b>워크스페이스별 분리</b>조직(워크스페이스)마다 데이터 영역을 나누어 서로 볼 수 없습니다.</div>
     <div><b>작업 기록</b>로그인·데이터 생성·파이프라인 실행 같은 작업이 감사 로그에 남습니다.</div>
   </div>
-  <span class="page-no">12</span>
+  <span class="page-no">18</span>
 </section>
 
 <script src="shots/boxes.js"></script>

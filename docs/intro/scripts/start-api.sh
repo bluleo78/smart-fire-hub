@@ -14,9 +14,12 @@ WEB_PORT="${INTRO_WEB_PORT:-5273}"
 DB_URL="jdbc:postgresql://localhost:${INTRO_DB_PORT:-5452}/smartfirehub"
 pkill -f "intro-data-api-marker" 2>/dev/null || true
 sleep 1
-APP_BRANDING_NAME="Gen:iA Data" \
+# 임베딩(문서 검색·지식그래프)은 운영과 같은 외부 Ollama(bge-m3)를 쓴다 — 평문 http 라 허용 목록에 있어야 저장된다.
+OLLAMA_URL="${INTRO_OLLAMA_URL:-http://bluelion.iptime.org:11434}"
 # JVM 시간대는 운영 컨테이너와 같은 UTC — 로컬(KST) JVM 이면 생성·수정 시각이 화면에서 9시간 밀려 보인다.
+APP_BRANDING_NAME="Gen:iA Data" \
 nohup java -Dintro-data-api-marker=1 -Duser.timezone=UTC -jar "$JAR" \
+  --app.embedding.ollama-allowed-base-urls="$OLLAMA_URL" \
   --spring.profiles.active=local \
   --server.port=5010 \
   --spring.datasource.url="$DB_URL" \

@@ -206,6 +206,28 @@ async function main() {
     await shoot(page, 'dataset-map');
   });
 
+  // 문서 데이터셋: 계약서·보고서 목록과 하이브리드 문서 검색
+  await scene('documents', async () => {
+    await page.goto(`${WEB}/data/datasets/${dsId('사내 문서')}`);
+    await settle(page);
+    await page.getByRole('tab', { name: '문서' }).click();
+    await settle(page, 2000);
+    await soft(mark(page, 'docs-list', 'upload', page.getByText('PDF, Word, 텍스트 문서를 드래그하세요').locator('xpath=../..')));
+    await soft(mark(page, 'docs-list', 'list', page.getByTestId('document-list-section')));
+    await shoot(page, 'docs-list');
+    const q = page.getByPlaceholder('검색어를 입력하세요');
+    await q.fill('납기가 늦어지면 위약금은 얼마나 물어야 하나');
+    await q.press('Enter');
+    await settle(page, 4000);
+    await page.getByText('펼치기').first().click().catch(() => {});
+    await settle(page, 800);
+    await page.getByText('문서 검색', { exact: true }).first().evaluate((el) => el.scrollIntoView({ block: 'start' }));
+    await settle(page, 800);
+    await soft(markUnion(page, 'docs-search', 'modes', [page.getByText('하이브리드', { exact: true }).first(), page.getByText('키워드', { exact: true }).first()]));
+    await soft(mark(page, 'docs-search', 'query', q));
+    await shoot(page, 'docs-search');
+  });
+
   // AI 어시스턴트: 말로 묻고, AI 가 데이터를 조회해 표·차트로 답한다
   await scene('ai-chat', async () => {
     await page.goto(`${WEB}/`);
@@ -233,6 +255,33 @@ async function main() {
     await page.mouse.wheel(0, 4000);
     await settle(page, 800);
     await shoot(page, 'ai-chat');
+  });
+
+  // AI 어시스턴트: 표(매출)와 문서(계약서·품질 보고서·회의록)를 함께 찾아 답한다 — 새 대화로 시작하도록 브라우저를 따로 연다
+  await scene('ai-docs', async () => {
+    const { browser: b2, page: p2 } = await openDesktop();
+    try {
+      await loginUi(p2, PEOPLE[0].username, PASSWORD);
+      await p2.goto(`${WEB}/`);
+      await settle(p2);
+      const question = '다솜오토텍과 최근에 어떤 문제가 있었고 올해 매출은 얼마나 돼? 사내 문서도 찾아보고 우리가 주의할 점을 정리해줘';
+      const panel = await askAi(p2, question);
+      // 답변이 길어 패널이 맨 아래에 붙어 있다 — 스크롤 영역을 직접 질문 위치로 올린다.
+      await panel.getByText(question).last().evaluate((el) => {
+        let box = el.parentElement;
+        while (box && !(box.scrollHeight > box.clientHeight + 10 && getComputedStyle(box).overflowY !== 'visible')) box = box.parentElement;
+        if (box) box.scrollTop = el.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop - 16;
+      });
+      await settle(p2, 800);
+      await mark(p2, 'ai-docs-top', 'panel', panel);
+      await shoot(p2, 'ai-docs-top');
+      await p2.mouse.move(1300, 400);
+      await p2.mouse.wheel(0, 4000);
+      await settle(p2, 800);
+      await shoot(p2, 'ai-docs');
+    } finally {
+      await b2.close();
+    }
   });
 
   // SQL 편집기(스키마 탐색 + 결과)
@@ -288,6 +337,52 @@ async function main() {
     await soft(markUnion(page, 'ai-classify', 'source', [head.filter({ hasText: '문의내용' }), page.locator('table tbody tr').nth(7).locator('td').nth(2)]));
     await soft(markUnion(page, 'ai-classify', 'ai', [head.filter({ hasText: '긴급도' }), head.filter({ hasText: '판단근거' }), page.locator('table tbody tr').nth(7).locator('td').last()]));
     await shoot(page, 'ai-classify');
+  });
+
+  // 지식그래프: 지식 모델 · 매핑 · 그래프 탐색 · AI 검수
+  await scene('knowledge', async () => {
+    await page.goto(`${WEB}/knowledge-graph/model`);
+    await settle(page, 3000);
+    await shoot(page, 'kg-model');
+    await page.goto(`${WEB}/data/datasets/${dsId('매출 전표')}`);
+    await settle(page);
+    await page.getByRole('tab', { name: '매핑' }).click();
+    await settle(page, 2000);
+    await shoot(page, 'kg-mapping');
+    await page.goto(`${WEB}/knowledge-graph/explore`);
+    await settle(page, 4000);
+    await shoot(page, 'kg-explore');
+    // 전체 그래프에서 거래처 하나를 골라 이웃만 밝히고(호버 스포트라이트) 상세 패널을 연다.
+    // 캔버스(cytoscape)라 요소 클릭 대신 컨테이너에 붙은 인스턴스로 같은 이벤트를 낸다 — 화면 동작은 마우스와 같다.
+    const picked = await page.evaluate((name) => {
+      const host = [...document.querySelectorAll('div')].find((el) => el._cyreg?.cy);
+      const cy = host?._cyreg.cy;
+      const node = cy?.nodes().filter((n) => n.id().endsWith(':' + name.toLowerCase()) || n.data('label') === name || n.data('name') === name)[0];
+      if (!node) return false;
+      cy.zoom({ level: 2.4, position: node.position() });
+      cy.center(node);
+      node.emit('mouseover');
+      node.emit('tap');
+      return true;
+    }, '다솜오토텍');
+    if (!picked) throw new Error('그래프에서 다솜오토텍 노드를 찾지 못했다');
+    await settle(page, 2500);
+    await shoot(page, 'kg-node');
+    await page.goto(`${WEB}/knowledge-graph/review`);
+    await settle(page, 2500);
+    await soft(mark(page, 'kg-review', 'table', page.locator('table').first()));
+    await shoot(page, 'kg-review');
+    await page.getByText('원문 근거 보기').first().click();
+    await settle(page, 2000);
+    await shoot(page, 'kg-evidence');
+    await page.keyboard.press('Escape');
+  });
+
+  // 알림 채널
+  await scene('channels', async () => {
+    await page.goto(`${WEB}/settings/channels`);
+    await settle(page, 2000);
+    await shoot(page, 'channels');
   });
 
   // 스마트 작업 + AI 가 쓴 리포트

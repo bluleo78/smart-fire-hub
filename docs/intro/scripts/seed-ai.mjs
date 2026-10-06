@@ -29,6 +29,39 @@ async function waitFor(label, check, intervalMs = 5000) {
   throw new Error(`시간 초과: ${label}`);
 }
 
+/**
+ * AI 채팅(SSE)에 한 번 묻고 답이 끝날 때까지 기다린 뒤 세션 ID 를 돌려준다.
+ * 화면 채팅과 같은 엔드포인트라 대화 이력(AI 패널 세션 목록)에도 남는다.
+ */
+async function aiChat(token, message, sessionId) {
+  const res = await fetch(`${process.env.INTRO_API ?? 'http://localhost:5010'}/api/v1/ai/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ message, sessionId }),
+  });
+  if (!res.ok) throw new Error(`AI 채팅 실패 → ${res.status} ${await res.text()}`);
+  const dec = new TextDecoder();
+  let buf = '';
+  let sid = sessionId;
+  for await (const chunk of res.body) {
+    buf += dec.decode(chunk, { stream: true });
+    let i;
+    while ((i = buf.indexOf('\n\n')) >= 0) {
+      const data = buf.slice(0, i).split('\n').filter((l) => l.startsWith('data:')).map((l) => l.slice(5)).join('');
+      buf = buf.slice(i + 2);
+      try {
+        const ev = JSON.parse(data);
+        if (ev.type === 'done') sid = ev.sessionId ?? sid;
+        if (ev.type === 'error') throw new Error(`AI 채팅 오류: ${JSON.stringify(ev).slice(0, 300)}`);
+        if (ev.type === 'tool_result' && ev.isError) console.warn(`  도구 오류: ${String(ev.result).slice(0, 200)}`);
+      } catch (e) {
+        if (e.message.startsWith('AI 채팅 오류')) throw e; // 그 밖의 파싱 실패(연결 알림 등)는 건너뛴다
+      }
+    }
+  }
+  return sid;
+}
+
 const token = await login(PEOPLE[0].username);
 const list = (r) => r?.content ?? r?.items ?? r ?? [];
 
@@ -45,7 +78,22 @@ if (!process.env.INTRO_ONLY_JOB) {
   if (done.status === 'FAILED') throw new Error(`파이프라인 실패: ${JSON.stringify(done).slice(0, 800)}`);
 }
 
-// 2) 스마트 작업 — 주간 브리핑을 지금 실행해 AI 가 리포트를 쓰게 한다
+// 2) 지식그래프 적재 — API 엔드포인트가 없고 AI 에이전트 도구(graphrag_*)로만 돌아서 채팅으로 시킨다.
+//    표 투영은 결정적(LLM 없음), 문서 적재는 AI 가 문서에서 거래처·이슈·관계를 뽑는다. 뽑다가 애매한 이름 쌍
+//    (예: "다솜" ↔ "다솜오토텍")은 AI 가 병합하지 않고 AI 검수 대기열에 올린다 — 검수 화면의 항목은 이렇게 생긴다.
+if (!process.env.INTRO_ONLY_JOB) {
+  const datasets = list(await call(token, 'GET', '/datasets?size=50'));
+  const dsId = (name) => datasets.find((d) => d.name === name).id;
+  await aiChat(token, `데이터셋 ${dsId('거래처 정보')}(거래처 정보)과 데이터셋 ${dsId('매출 전표')}(매출 전표)을 graphrag_project_table 도구로 지식그래프에 투영해줘. 투영만 하고 다른 작업은 하지 마.`);
+  console.log('✓ 표 → 지식그래프 투영');
+  // 문서 적재는 비용이 큰 작업이라 에이전트가 한 번 확인을 묻는다 — 같은 세션에서 "네"로 답한다.
+  const sid = await aiChat(token, `graphrag_ingest 도구로 문서 데이터셋 ${dsId('사내 문서')}(사내 문서)을 지식그래프에 적재해줘.`);
+  await aiChat(token, '네', sid);
+  const reviews = await call(token, 'GET', '/graphrag/review-items?status=pending');
+  console.log(`✓ 문서 → 지식그래프 적재(AI 검수 대기 ${list(reviews).length}건)`);
+}
+
+// 3) 스마트 작업 — 주간 브리핑을 지금 실행해 AI 가 리포트를 쓰게 한다
 // sdk 유형은 스마트 작업에 모델을 싣지 않아 ai-agent 기본값(haiku)으로 돈다. 리포트 작성 단계가 파일을 남기지 않고
 // 끝나는 경우가 있어(→ FAILED "리포트를 생성하지 못했습니다") 최대 3번까지 다시 실행한다. 실패한 실행은 이력에 남는다.
 const job = list(await call(token, 'GET', '/proactive/jobs')).find((j) => j.name === '주간 매출·수금 브리핑');
