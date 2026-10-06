@@ -12,7 +12,9 @@
 | 표시 좌표 | `docs/intro/deck/shots/boxes.js` | 촬영 때 기록한 요소 위치(원본 px). 번호 표식·잘라 보기가 이 값을 쓴다 |
 | 슬라이드 원본 | `docs/intro/deck/index.html` · `deck.css` · `deck.js` | 화면 원본을 잘라 보여 줄 뿐 가공하지 않는다 |
 | PDF | `docs/intro/genia-data-intro.pdf` | 배포본. `build-pdf.mjs` 는 `dist/intro/` 에 만들고, 확정한 판만 이 위치로 복사해 커밋한다 |
-| 장별 PNG | `dist/intro/png/slide-01~12.png` | 빌드 산출물(커밋하지 않음) |
+| 장별 PNG | `dist/intro/png/slide-01~18.png` | 빌드 산출물(커밋하지 않음) |
+| 고객 사전 질문지 | `docs/intro/customer-data-survey.md` | 미팅 전에 고객에게 보내는 데이터 현황 질문지 |
+| 질문지 해석 가이드 | `docs/intro/customer-data-survey-guide.md` | 내부용 — 답변별로 제안할 기능과 확인할 제약(고객에게 보내지 않음) |
 
 ## 구성(12장)
 
