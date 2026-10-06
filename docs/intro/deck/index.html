@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>Gen:iA Data 제품 소개</title>
+<!--
+  Gen:iA Data 고객용 제품 소개 자료(16:9).
+  화면은 모두 shots/ 의 실제 캡처(격리 스택 + 가상 조직 데이터, capture-screens.mjs)다.
+  번호 표시는 촬영 때 기록한 실제 요소 좌표(shots/boxes.js)로 그린다:
+    <b class="ann area"  data-box="샷:대상" data-n="1">            영역 — 빨간 테두리 박스
+    <b class="ann point" data-box="샷:대상" data-n="2" data-side>   지점 — 가장자리 점 + 지시선
+  좌표를 기록하기 어려운 카드(차트 위젯 등)는 data-xywh(원본 px)로 둔다 — 대시보드 격자는 시드가 고정한다.
+  잘라 보기: data-crop="x,y,w,h"(원본 px) 또는 data-crop-box="샷:대상"(기록된 요소 주변).
+  화면 문구·기능 설명은 현재 코드 근거로만 쓴다 — docs/intro/README.md.
+  빌드: node docs/intro/scripts/build-pdf.mjs
+-->
+<link rel="stylesheet" href="deck.css">
+</head>
+<body>
+
+<!-- 1. 표지 -->
+<section class="slide cover">
+  <div class="brand">
+    <span class="mark"><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#1d4ed8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg></span>
+    Gen:iA Data
+  </div>
+  <h1>데이터는 <em>조직 안에서</em>,<br>분석은 AI와 함께</h1>
+  <p>매출·매입·고객 정보처럼 외부 SaaS에 올릴 수 없는 데이터를,<br>수집부터 분석·시각화·보고까지 한 플랫폼에서.<br>조직의 서버에 설치해 운영하는 AI 데이터 플랫폼입니다.</p>
+  <div class="frame"><div class="bar"><i></i><i></i><i></i></div><div class="shot"><img src="shots/dashboard.png" alt=""></div></div>
+  <div class="foot">제품 소개</div>
+  <div class="note">화면의 조직·인물·데이터는 모두 시연용 가상 데이터입니다.</div>
+</section>
+
+<!-- 2. 데이터를 한 곳에 -->
+<section class="slide layout-shot">
+  <div class="head">
+    <div class="eyebrow">데이터 관리 · 01</div>
+    <div class="headline">흩어진 데이터를 한 곳에</div>
+    <div class="sub">ERP·영업 시스템·파일에서 모은 매출·매입·고객 데이터를 데이터셋으로 등록하고, 카테고리로 묶어 관리합니다.</div>
+  </div>
+  <div class="callouts" style="top:330px;gap:26px">
+    <div class="callout"><div class="n">1</div><div><b>데이터셋 목록</b><span>저장 방식·출처·상태로 거르고, 이름으로 찾습니다.</span></div></div>
+    <div class="callout"><div class="n">2</div><div><b>카테고리</b><span>업무 분류별로 데이터셋을 묶어 봅니다.</span></div></div>
+    <div class="callout"><div class="n">3</div><div><b>세 가지 데이터 유형</b><span>표 형태 데이터, PDF·Word 같은 문서, 대량 이미지·파일까지 담습니다.</span></div></div>
+  </div>
+  <div class="frame">
+    <div class="bar"><i></i><i></i><i></i></div>
+    <div class="shot">
+      <img src="shots/datasets.png" alt="">
+      <b class="ann area" data-box="datasets:table" data-n="1"></b>
+      <b class="ann point" data-xywh="527,295,642,45" data-n="2" data-side="right" data-len="60"><i></i></b>
+    </div>
+  </div>
+  <div class="zoom-panel" style="left:96px;top:735px;width:470px;">
+    <div class="zhead"><span class="n">3</span>데이터셋 추가 · 유형 선택</div>
+    <div data-crop-box="dataset-type:dialog" data-crop-pad="0" data-max-h="270">
+      <img src="shots/dataset-type.png" alt="">
+    </div>
+  </div>
+  <span class="page-no">2</span>
+</section>
+
+<!-- 3. 구조·품질·위치 -->
+<section class="slide">
+  <div class="head">
+    <div class="eyebrow">데이터 관리 · 02</div>
+    <div class="headline">구조와 품질, 위치까지 한눈에</div>
+    <div class="sub">필드 정의와 값의 분포를 함께 보고, 좌표가 있는 데이터는 바로 지도에서 확인합니다.</div>
+  </div>
+  <div class="frame" style="left:96px;top:300px;width:1060px;">
+    <div class="bar"><i></i><i></i><i></i></div>
+    <div class="shot">
+      <img src="shots/dataset-fields.png" alt="">
+      <b class="ann area" data-box="dataset-fields:tabs" data-n="1"></b>
+      <b class="ann area" data-xywh="2005,619,430,995" data-n="2"></b>
+    </div>
+  </div>
+  <div class="zoom-panel" style="left:1196px;top:290px;width:628px;">
+    <div class="zhead"><span class="n">3</span>같은 데이터셋 · 지도 탭</div>
+    <div data-crop="530,620,2300,1000">
+      <img src="shots/dataset-map.png" alt="">
+    </div>
+  </div>
+  <div class="callouts" style="left:1236px;top:640px;width:588px;gap:24px">
+    <div class="callout"><div class="n">1</div><div><b>정보·필드·데이터·이력</b><span>한 데이터셋의 정의와 내용, 변경 이력을 탭으로 오갑니다.</span></div></div>
+    <div class="callout"><div class="n">2</div><div><b>값의 분포</b><span>필드마다 빈 값 비율과 고유값 수를 보여 줍니다.</span></div></div>
+    <div class="callout"><div class="n">3</div><div><b>공간 데이터</b><span>위치(좌표) 필드가 있으면 지도에 바로 표시합니다.</span></div></div>
+  </div>
+  <span class="page-no">3</span>
+</section>
+
+<!-- 4. AI 어시스턴트 -->
+<section class="slide">
+  <div class="head">
+    <div class="eyebrow ai">AI 분석 · 01</div>
+    <div class="headline">말로 물으면, AI가 데이터로 답합니다</div>
+    <div class="sub">SQL을 몰라도 됩니다. AI가 필요한 데이터를 찾아 직접 조회하고, 표와 차트로 정리해 답합니다.</div>
+  </div>
+  <div class="zoom-panel" style="left:96px;top:290px;width:560px;">
+    <div class="zhead"><span class="n">1</span>조회 과정과 차트</div>
+    <div data-crop="2130,150,750,1340" data-max-h="700">
+      <img src="shots/ai-chat-chart.png" alt="">
+    </div>
+  </div>
+  <div class="zoom-panel" style="left:690px;top:290px;width:560px;">
+    <div class="zhead"><span class="n">2</span>분석 결과와 다음 제안</div>
+    <div data-crop="2130,330,750,1150" data-max-h="700">
+      <img src="shots/ai-chat.png" alt="">
+    </div>
+  </div>
+  <div class="callouts" style="left:1310px;top:320px;width:520px;gap:30px">
+    <div class="callout ai"><div class="n">1</div><div><b>근거가 보이는 분석</b><span>어떤 데이터를 찾고 어떤 쿼리를 실행했는지 단계마다 보여 주고, 결과를 차트로 그립니다.</span></div></div>
+    <div class="callout ai"><div class="n">2</div><div><b>해석과 다음 분석</b><span>숫자만이 아니라 눈에 띄는 차이와, 이어서 볼 분석을 함께 제안합니다.</span></div></div>
+    <div class="callout"><div class="n">Q</div><div><b>질문 예시</b><span>"최근 3개월 영업권역별 매출과 매출총이익률을 분석해서 차트로 보여줘"</span></div></div>
+  </div>
+  <span class="page-no">4</span>
+</section>
+
+<!-- 5. SQL 편집기 -->
+<section class="slide layout-shot">
+  <div class="head">
+    <div class="eyebrow">분석 · 02</div>
+    <div class="headline">직접 분석도 한 화면에서</div>
+    <div class="sub">분석 담당자는 SQL로 바로 조회하고, 결과를 저장·공유하거나 차트로 이어 만듭니다.</div>
+  </div>
+  <div class="callouts">
+    <div class="callout"><div class="n">1</div><div><b>테이블 목록</b><span>등록된 데이터셋의 테이블과 컬럼을 찾아 넣습니다.</span></div></div>
+    <div class="callout"><div class="n">2</div><div><b>SQL 편집기</b><span>저장한 쿼리는 폴더로 정리하고 팀과 공유합니다.</span></div></div>
+    <div class="callout"><div class="n">3</div><div><b>결과에서 바로 차트로</b><span>결과를 내보내거나 차트 만들기로 이어 갑니다.</span></div></div>
+  </div>
+  <div class="frame">
+    <div class="bar"><i></i><i></i><i></i></div>
+    <div class="shot">
+      <img src="shots/query.png" alt="">
+      <b class="ann area" data-xywh="530,186,444,1270" data-n="1"></b>
+      <b class="ann area" data-box="query:editor" data-n="2"></b>
+      <b class="ann point" data-box="query:tochart" data-n="3" data-side="bottom" data-len="50"><i></i></b>
+    </div>
+  </div>
+  <span class="page-no">5</span>
+</section>
+
+<!-- 6. 차트 -->
+<section class="slide layout-shot">
+  <div class="head">
+    <div class="eyebrow">분석 · 03</div>
+    <div class="headline">17가지 차트로 시각화</div>
+    <div class="sub">저장한 쿼리를 골라 차트 종류와 축만 정하면, 미리보기로 확인하고 대시보드에 바로 올립니다.</div>
+  </div>
+  <div class="callouts">
+    <div class="callout"><div class="n">1</div><div><b>차트 종류</b><span>막대·선·지도·히트맵·게이지 등 17종.</span></div></div>
+    <div class="callout"><div class="n">2</div><div><b>축 설정</b><span>쿼리 결과의 컬럼을 골라 축과 값에 놓습니다.</span></div></div>
+    <div class="callout"><div class="n">3</div><div><b>미리보기 → 대시보드</b><span>모양을 확인하고 대시보드에 추가합니다.</span></div></div>
+  </div>
+  <div class="frame">
+    <div class="bar"><i></i><i></i><i></i></div>
+    <div class="shot">
+      <img src="shots/chart.png" alt="">
+      <b class="ann area" data-xywh="530,612,556,350" data-n="1"></b>
+      <b class="ann area" data-xywh="530,991,556,531" data-n="2"></b>
+      <b class="ann area" data-xywh="1122,202,1708,1058" data-n="3"></b>
+    </div>
+  </div>
+  <span class="page-no">6</span>
+</section>
+
+<!-- 7. 대시보드 -->
+<section class="slide">
+  <div class="head">
+    <div class="eyebrow">분석 · 04</div>
+    <div class="headline">현황은 대시보드 한 장으로</div>
+    <div class="sub">지표·추이·위치를 한 화면에 모으고, 정해진 주기로 자동 갱신해 늘 최신 상태로 봅니다.</div>
+  </div>
+  <div class="frame" style="left:96px;top:300px;width:1060px;">
+    <div class="bar"><i></i><i></i><i></i></div>
+    <div class="shot">
+      <img src="shots/dashboard.png" alt="">
+      <b class="ann point" data-box="dashboard:refresh" data-n="1" data-side="bottom" data-len="44"><i></i></b>
+      <b class="ann area" data-xywh="572,245,2218,684" data-n="2"></b>
+      <b class="ann point" data-box="dashboard:actions" data-n="4" data-side="bottom" data-len="44"><i></i></b>
+    </div>
+  </div>
+  <div class="zoom-panel" style="left:1196px;top:290px;width:628px;">
+    <div class="zhead"><span class="n">3</span>같은 대시보드 · 아래쪽</div>
+    <div data-crop="560,660,2240,880">
+      <img src="shots/dashboard-lower.png" alt="">
+    </div>
+  </div>
+  <div class="callouts" style="left:1236px;top:600px;width:588px;gap:20px">
+    <div class="callout"><div class="n">1</div><div><b>자동 새로고침</b><span>정한 주기(예: 300초)마다 최신 데이터로 다시 그립니다.</span></div></div>
+    <div class="callout"><div class="n">2</div><div><b>핵심 지표</b><span>수금률·제품군별 매출 비중·권역별 매출.</span></div></div>
+    <div class="callout"><div class="n">3</div><div><b>지도·히트맵</b><span>어느 지역 거래처에서, 어떤 제품이 팔리는지 봅니다.</span></div></div>
+    <div class="callout"><div class="n">4</div><div><b>공유·내려받기·전체 화면</b><span>상황판처럼 띄워 두거나 팀과 공유합니다.</span></div></div>
+  </div>
+  <span class="page-no">7</span>
+</section>
+
+<!-- 8. 파이프라인 -->
+<section class="slide">
+  <div class="head">
+    <div class="eyebrow">자동화 · 01</div>
+    <div class="headline">반복되는 데이터 작업은 파이프라인으로</div>
+    <div class="sub">집계·정제 단계를 이어 붙이고, 정해진 시각이나 데이터가 바뀔 때 자동으로 실행합니다.</div>
+  </div>
+  <div class="frame" style="left:96px;top:300px;width:1060px;">
+    <div class="bar"><i></i><i></i><i></i></div>
+    <div class="shot">
+      <img src="shots/pipeline.png" alt="">
+      <b class="ann area" data-box="pipeline:sql" data-n="1"></b>
+      <b class="ann area" data-box="pipeline:ai" data-n="2"></b>
+    </div>
+  </div>
+  <div class="zoom-panel" style="left:1196px;top:290px;width:628px;">
+    <div class="zhead"><span class="n">3</span>같은 파이프라인 · 트리거</div>
+    <div data-crop="580,500,1100,560">
+      <img src="shots/pipeline-triggers.png" alt="">
+    </div>
+  </div>
+  <div class="callouts" style="left:1236px;top:680px;width:588px;gap:18px">
+    <div class="callout"><div class="n">1</div><div><b>SQL 단계</b><span>매출 전표를 일·권역·제품군별로 집계해 결과 데이터셋에 적재합니다.</span></div></div>
+    <div class="callout ai"><div class="n">2</div><div><b>AI 분류 단계</b><span>글로 된 데이터를 AI가 읽고 분류해 새 컬럼으로 남깁니다(다음 장).</span></div></div>
+    <div class="callout"><div class="n">3</div><div><b>실행 조건</b><span>스케줄, 데이터 변경, API·웹훅 호출, 다른 파이프라인 완료 후.</span></div></div>
+  </div>
+  <span class="page-no">8</span>
+</section>
+
+<!-- 9. AI 분류 -->
+<section class="slide layout-shot">
+  <div class="head">
+    <div class="eyebrow ai">AI 분석 · 02</div>
+    <div class="headline">글로 된 데이터도 AI가 읽고 분류합니다</div>
+    <div class="sub">거래처 문의·클레임처럼 정형화되지 않은 텍스트를 AI가 읽고, 긴급도·유형·판단 근거를 데이터로 남깁니다.</div>
+  </div>
+  <div class="callouts">
+    <div class="callout"><div class="n">1</div><div><b>문의 원문</b><span>메일·전화로 접수된 문장 그대로가 입력입니다.</span></div></div>
+    <div class="callout ai"><div class="n">2</div><div><b>AI 판정 결과</b><span>긴급·보통·낮음과 유형, 판단 근거를 행마다 기록합니다. 결과는 SQL·차트·대시보드에서 그대로 씁니다.</span></div></div>
+  </div>
+  <div class="frame">
+    <div class="bar"><i></i><i></i><i></i></div>
+    <div class="shot">
+      <img src="shots/ai-classify.png" alt="">
+      <b class="ann area" data-box="ai-classify:source" data-n="1"></b>
+      <b class="ann area" data-box="ai-classify:ai" data-n="2"></b>
+    </div>
+  </div>
+  <span class="page-no">9</span>
+</section>
+
+<!-- 10. 스마트 작업 + 리포트 -->
+<section class="slide">
+  <div class="head">
+    <div class="eyebrow ai">AI 분석 · 03</div>
+    <div class="headline">정기 보고서는 AI가 씁니다</div>
+    <div class="sub">분석 지시와 보고서 양식, 실행 주기를 정해 두면 AI가 때마다 데이터를 분석해 보고서를 작성합니다.</div>
+  </div>
+  <div class="zoom-panel" style="left:96px;top:290px;width:700px;">
+    <div class="zhead"><span class="n">1</span>스마트 작업 · 주간 매출·수금 브리핑</div>
+    <div data-crop="530,60,1900,1160">
+      <img src="shots/smart-job.png" alt="">
+    </div>
+  </div>
+  <div class="frame" style="left:836px;top:300px;width:988px;">
+    <div class="bar"><i></i><i></i><i></i></div>
+    <div class="shot">
+      <img src="shots/report.png" alt="">
+      <b class="ann area" data-box="report:body" data-n="2" data-pad="-6"></b>
+      <b class="ann point" data-box="report:pdf" data-n="3" data-side="bottom" data-len="44"><i></i></b>
+    </div>
+  </div>
+  <div class="callouts row" style="left:96px;top:930px;width:1728px;gap:46px">
+    <div class="callout"><div class="n">1</div><div><b>양식·주기 지정</b></div></div>
+    <div class="callout ai"><div class="n">2</div><div><b>AI가 분석해 작성한 보고서</b></div></div>
+    <div class="callout"><div class="n">3</div><div><b>인쇄·PDF 내려받기</b></div></div>
+  </div>
+  <span class="page-no">10</span>
+</section>
+
+<!-- 11. 권한·감사 -->
+<section class="slide">
+  <div class="head">
+    <div class="eyebrow">보안 · 관리</div>
+    <div class="headline">누가 무엇을 하는지, 권한과 기록으로</div>
+    <div class="sub">역할마다 할 수 있는 일을 정하고, 로그인부터 데이터 생성·파이프라인 실행까지 모든 작업을 기록합니다.</div>
+  </div>
+  <div class="zoom-panel" style="left:96px;top:290px;width:640px;">
+    <div class="zhead"><span class="n">1</span>역할 관리 · 권한 할당</div>
+    <div data-crop="1000,180,1380,1440" data-max-h="560">
+      <img src="shots/roles.png" alt="">
+    </div>
+  </div>
+  <div class="zoom-panel" style="left:776px;top:290px;width:1048px;">
+    <div class="zhead"><span class="n">2</span>감사 로그</div>
+    <div data-crop="520,180,2320,1180" data-max-h="560">
+      <img src="shots/audit.png" alt="">
+    </div>
+  </div>
+  <div class="callouts row" style="left:96px;top:950px;width:1728px;gap:46px">
+    <div class="callout"><div class="n">1</div><div><b>역할별 세부 권한</b></div></div>
+    <div class="callout"><div class="n">2</div><div><b>사용자·작업·결과·접속 위치 기록</b></div></div>
+  </div>
+  <span class="page-no">11</span>
+</section>
+
+<!-- 12. 조직 인프라 안에서 -->
+<section class="slide">
+  <div class="head">
+    <div class="eyebrow">구성</div>
+    <div class="headline">우리 조직의 인프라 안에서 운영합니다</div>
+    <div class="sub">플랫폼과 데이터는 조직이 관리하는 서버에 두고, AI 모델은 관리자가 정한 곳에 표준 방식으로 연결합니다.</div>
+  </div>
+  <div class="diagram" style="top:290px;bottom:330px;grid-template-columns:1.25fr 260px 1fr">
+    <div class="boundary">
+      <span class="tag">조직 인프라</span>
+      <div class="box hub">
+        <h3>Gen:iA Data</h3>
+        <p>웹 · API 서버 · AI 에이전트 · 파이프라인 실행기</p>
+        <div class="chips">
+          <span class="chip">데이터셋</span><span class="chip">분석·차트</span><span class="chip">대시보드</span>
+          <span class="chip">파이프라인</span><span class="chip ai">AI 어시스턴트</span><span class="chip ai">AI 분류·보고서</span>
+        </div>
+      </div>
+      <div class="box">
+        <h3>데이터 저장소</h3>
+        <p>관계형 DB(공간·벡터 확장) · 그래프 DB · 파일 저장소</p>
+      </div>
+    </div>
+    <div class="link"><div class="line"></div>표준 API<br>(OpenAI 호환)</div>
+    <div class="box">
+      <h3>AI 모델</h3>
+      <p>관리자가 설정 화면에서 연결할 모델과 방식을 정합니다.</p>
+      <div class="chips"><span class="chip ai">대화·분석 모델</span><span class="chip ai">분류 모델</span><span class="chip ai">임베딩(Ollama)</span></div>
+    </div>
+  </div>
+  <div class="points">
+    <div><b>AI도 사용자 권한으로</b>AI는 질문한 사용자의 권한 안에서만 데이터를 조회합니다.</div>
+    <div><b>워크스페이스별 분리</b>조직(워크스페이스)마다 데이터 영역을 나누어 서로 볼 수 없습니다.</div>
+    <div><b>작업 기록</b>로그인·데이터 생성·파이프라인 실행 같은 작업이 감사 로그에 남습니다.</div>
+  </div>
+  <span class="page-no">12</span>
+</section>
+
+<script src="shots/boxes.js"></script>
+<script src="deck.js"></script>
+</body>
+</html>
