@@ -208,6 +208,22 @@ class SqlGateArchitectureTest {
   }
 
   /**
+   * 사용자 SQL 을 바이트 그대로 보내는 조리법(VerbatimSql — 패키지 전용) — 파이프라인 싱크 두
+   * 곳(SqlScriptExecutor·SqlColumnProbe)만. 같은 패키지의 러너 등이 이 헬퍼로 판정 없이 사용자 SQL 을 실행하는 지점을 새로 만들지 못하게
+   * 한다. 클래스가 패키지 전용이라 이름으로 고르고, 고른 메서드가 없으면(이름 변경 등) 규칙이 공허해지므로 실패로 본다.
+   */
+  @Test
+  void verbatimSql_onlyFromPipelineSinks() {
+    methods()
+        .that()
+        .areDeclaredInClassesThat()
+        .haveFullyQualifiedName("com.smartfirehub.pipeline.service.VerbatimSql")
+        .should(onlyBeAccessedBy(SqlScriptExecutor.class, SqlColumnProbe.class))
+        .allowEmptyShould(false)
+        .check(PROD);
+  }
+
+  /**
    * 파이프라인 싱크(ExecutorClient.executeSql·SqlScriptExecutor.execute·SqlColumnProbe.columnsWithTypes)에
    * 접근하는 러너 메서드는 같은 메서드 안에서 실행 주체 판정({@link PipelineSecurityGate#checkStepSqlForRun})에도 접근해야
    * 한다(Task 17). 판정을 지우거나 판정 없는 새 실행 메서드를 만들면 실패한다. 싱크 접근 메서드가 하나도 없으면 규칙이 공허하므로 그것도 실패로 본다.

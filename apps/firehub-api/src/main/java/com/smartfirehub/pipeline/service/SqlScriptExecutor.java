@@ -5,13 +5,9 @@ import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.pipeline.exception.ScriptExecutionException;
 import com.smartfirehub.pipeline.service.validator.SqlValidator;
-import java.sql.SQLException;
-import java.sql.Statement;
 import java.util.List;
 import java.util.regex.Pattern;
 import lombok.extern.slf4j.Slf4j;
-import org.jooq.DSLContext;
-import org.jooq.exception.DataAccessException;
 import org.springframework.stereotype.Service;
 
 /**
@@ -83,31 +79,6 @@ public class SqlScriptExecutor {
       TenantPipelineDataSourceRegistry tenantPipelineDataSources, SqlValidator sqlValidator) {
     this.tenantPipelineDataSources = tenantPipelineDataSources;
     this.sqlValidator = sqlValidator;
-  }
-
-  /**
-   * 사용자 SQL(본 스크립트)을 바인드 없는 정적 {@link Statement} + JDBC 이스케이프 처리 끔으로 실행한다(최종 리뷰 I1).
-   *
-   * <p><b>왜 {@code dsl.execute(String)} 이 아닌가.</b> jOOQ plain SQL 실행은 문자열을 (1) jOOQ 템플릿 파서({@code
-   * {…}} 키워드 렌더링·{@code ?} 바인드 인식)와 (2) pgjdbc 의 JDBC 이스케이프 치환({@code {fn …}}·{@code {d
-   * '…'}}·{@code {oj …}})을 거쳐 보낸다. 보안 관문(DatasetAccessGuard#checkSql)과 SqlValidator 는 PG 어휘로 판정하므로
-   * "판정한 문자열 ≠ PG 가 받는 문자열"이 구조적으로 열린다. 애드혹 경로({@code AdhocSqlStatements})와 같이 정적 Statement +
-   * escape off 로 보내면 서버가 받는 문자열이 판정한 문자열과 바이트 단위로 같다. AdhocSqlStatements 는 ArchUnit 이 호출자를 애드혹 실행
-   * 서비스로 동결한 싱크라 재사용하지 않는다.
-   *
-   * <p>{@code dsl.connection} 은 이 트랜잭션의 커넥션을 쓴다 — {@code SET LOCAL search_path}·출력 잠금·선행 비우기와 같은
-   * 트랜잭션이다. 오류 메시지는 jOOQ 와 같은 {@code SQL [...]; <PG 메시지>} 형태로 유지한다(스텝 오류 표시 계약).
-   */
-  private static void executeVerbatim(DSLContext dsl, String sql) {
-    dsl.connection(
-        conn -> {
-          try (Statement st = conn.createStatement()) {
-            st.setEscapeProcessing(false);
-            st.execute(sql);
-          } catch (SQLException e) {
-            throw new DataAccessException("SQL [" + sql + "]; " + e.getMessage(), e);
-          }
-        });
   }
 
   /** 선행 문장 없는 실행. {@link #execute(List, String)} 에 빈 목록으로 위임한다. */
@@ -194,8 +165,11 @@ public class SqlScriptExecutor {
                     cfg.dsl().fetch(OUTPUT_LOCK_SQL, outputLockKey(preStatement));
                     cfg.dsl().execute(preStatement);
                   }
-                  // 판정·검증한 문자열을 바이트 그대로 보낸다(executeVerbatim — JDBC 이스케이프·jOOQ 템플릿 해석 없음).
-                  executeVerbatim(cfg.dsl(), scriptContent);
+                  // 판정·검증한 문자열을 바이트 그대로 보낸다(최종 리뷰 I1 — 정적 Statement + JDBC 이스케이프 끔, jOOQ 템플릿
+                  // 해석 없음). dsl.execute(String) 은 jOOQ 템플릿 파서와 pgjdbc 이스케이프 치환({fn …}·{d '…'})을 거쳐
+                  // "판정한 문자열 ≠ PG 가 받는 문자열"이 된다. 애드혹 경로의 AdhocSqlStatements 는 ArchUnit 이 호출자를
+                  // 애드혹 실행 서비스로 동결한 싱크라 재사용하지 않는다. cfg.dsl() 은 SET LOCAL·출력 잠금·선행 비우기와 같은 트랜잭션이다.
+                  VerbatimSql.execute(cfg.dsl(), scriptContent);
                 });
             return null;
           });

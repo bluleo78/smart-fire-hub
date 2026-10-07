@@ -16,6 +16,7 @@ import com.smartfirehub.proactive.dto.AnomalyEvent;
 import com.smartfirehub.proactive.repository.MetricSnapshotRepository;
 import com.smartfirehub.proactive.repository.MetricSnapshotRepository.MetricSnapshot;
 import com.smartfirehub.proactive.util.ProactiveTime;
+import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.sql.GuardedSqlExecutor;
 import java.time.LocalDateTime;
@@ -142,8 +143,10 @@ public class MetricPollerService {
                 ? (List<Map<String, Object>>) anomalyConfig.get("metrics")
                 : List.of();
 
+        // 소유자 자격은 이 잡 평가(같은 폴링 주기) 안에서 처음 필요할 때 한 번만 계산해 메트릭들이 함께 쓴다.
+        OwnerClearance ownerClearance = new OwnerClearance(userId);
         for (Map<String, Object> metric : metrics) {
-          processMetric(jobId, userId, metric, sensitivity);
+          processMetric(jobId, userId, ownerClearance, metric, sensitivity);
         }
       } catch (Exception e) {
         log.error("MetricPollerService: failed to process job {}", jobId, e);
@@ -151,8 +154,32 @@ public class MetricPollerService {
     }
   }
 
+  /**
+   * 잡 1회 평가 동안의 소유자 자격 메모. 데이터셋 메트릭이 처음 판정할 때 계산하고(시스템 메트릭만 있으면 계산하지 않는다) 같은 평가의 다음 메트릭이 재사용한다. 계산이
+   * 실패하면 저장하지 않는다 — 다음 메트릭이 다시 시도해 메트릭별 실패 격리가 그대로다. 다음 폴링 주기는 새로 계산한다.
+   */
+  private final class OwnerClearance {
+    private final Long userId;
+    private Clearance resolved;
+
+    private OwnerClearance(Long userId) {
+      this.userId = userId;
+    }
+
+    Clearance get() {
+      if (resolved == null) {
+        resolved = clearanceResolver.resolve(userId);
+      }
+      return resolved;
+    }
+  }
+
   private void processMetric(
-      Long jobId, Long userId, Map<String, Object> metric, String sensitivity) {
+      Long jobId,
+      Long userId,
+      OwnerClearance ownerClearance,
+      Map<String, Object> metric,
+      String sensitivity) {
     String metricId = (String) metric.get("id");
     String metricName = (String) metric.getOrDefault("name", metricId);
     String source = (String) metric.getOrDefault("source", "system");
@@ -205,8 +232,7 @@ public class MetricPollerService {
       try {
         // 보안 등급(S2): 잡 소유자의 현재 자격으로 판정한 뒤 실행한다(생성 이후 자격이 낮아졌을 수 있다). 소유자가 없거나 ACTIVE
         // 멤버십이 없으면 자격이 비어 거부된다(fail-closed). readOnly=true·행 수 1 제한은 관문이 건다.
-        var result =
-            guardedSqlExecutor.executeMetricQuery(clearanceResolver.resolve(userId), normalized);
+        var result = guardedSqlExecutor.executeMetricQuery(ownerClearance.get(), normalized);
         if (result.rows() != null
             && !result.rows().isEmpty()
             && result.rows().get(0) != null

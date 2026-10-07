@@ -41,6 +41,20 @@ public class PipelineSecurityGate {
   private final DSLContext dsl;
 
   /**
+   * 한 스텝의 실행 주체 — userId 와 그 자격을 함께 들고 다닌다. 러너가 스텝마다 {@link #runAs} 로 한 번 만들어 그 스텝의 판정에 넘긴다(스텝 안
+   * 판정마다 자격을 다시 계산하지 않게). 실행 단위로 캐시하지 않는다 — 다음 스텝은 그 시점의 자격으로 다시 판정한다.
+   *
+   * @param userId 실행 주체(미상이면 null — 등급 상향·시드의 행위자로도 쓴다)
+   * @param clearance 판정 자격(userId 가 null 이면 아무것도 못 보는 자격)
+   */
+  public record RunAs(Long userId, Clearance clearance) {}
+
+  /** 실행 주체의 현재 자격을 계산한다(스텝 시작 판정 직전에 한 번). 실행 주체 미상은 fail-closed. */
+  public RunAs runAs(Long runAsUserId) {
+    return new RunAs(runAsUserId, clearance(runAsUserId));
+  }
+
+  /**
    * 저장 시점 — 편집자 기준 VIEW 판정. {@code {{#N}}} 더미({@code step_ref_N})는 실행 전엔 실제 테이블을 알 수 없어 제외한다(판단 사항
    * 4) — 실행 시점에 실제 ptmp 테이블로 치환된 SQL 로 전부 판정된다.
    *
@@ -58,8 +72,8 @@ public class PipelineSecurityGate {
    * @return 판정 결과 — {@link #enforceOutputLevel} 이 입력 최대 등급({@link
    *     SqlAccessResult#effectiveLevel()})을 쓴다
    */
-  public SqlAccessResult checkStepSqlForRun(Long runAsUserId, String resolvedSql) {
-    return guard.requireSql(clearance(runAsUserId), resolvedSql, SqlAccessMode.PIPELINE_RUN);
+  public SqlAccessResult checkStepSqlForRun(RunAs runAs, String resolvedSql) {
+    return guard.requireSql(runAs.clearance(), resolvedSql, SqlAccessMode.PIPELINE_RUN);
   }
 
   /**
@@ -77,8 +91,8 @@ public class PipelineSecurityGate {
    *
    * @return 판정 결과 — {@link #enforceOutputLevel} 이 입력 최대 등급을 쓴다(SQL SELECT 스텝과 같은 출력 규칙)
    */
-  public SqlAccessResult checkStepInputsForRun(Long runAsUserId, Collection<Long> inputDatasetIds) {
-    return guard.requireDatasetReads(clearance(runAsUserId), inputDatasetIds);
+  public SqlAccessResult checkStepInputsForRun(RunAs runAs, Collection<Long> inputDatasetIds) {
+    return guard.requireDatasetReads(runAs.clearance(), inputDatasetIds);
   }
 
   /**
@@ -108,24 +122,19 @@ public class PipelineSecurityGate {
    */
   @Transactional
   public void enforceOutputLevel(
-      SqlAccessResult access,
-      long outputDatasetId,
-      long stepId,
-      boolean freshTemp,
-      Long runAsUserId) {
+      SqlAccessResult access, long outputDatasetId, long stepId, boolean freshTemp, RunAs runAs) {
+    Long runAsUserId = runAs.userId();
     boolean runnerOwnedTemp = isStepTemp(outputDatasetId, stepId);
     if (!runnerOwnedTemp) {
-      requireOutputVisible(outputDatasetId, runAsUserId);
+      requireOutputVisible(outputDatasetId, runAs);
     }
     LevelPolicy effective = access.effectiveLevel();
     // effective == null: 테이블을 읽지 않는 SELECT(상수 등) — 전파할 등급이 없다.
     if (effective != null) {
-      Long outLevelId =
-          dsl.select(DATASET.SECURITY_LEVEL_ID)
-              .from(DATASET)
-              .where(DATASET.ID.eq(outputDatasetId))
-              .fetchSingle(DATASET.SECURITY_LEVEL_ID);
-      LevelPolicy out = levelRepository.findById(outLevelId).orElseThrow();
+      LevelPolicy out =
+          levelRepository
+              .findById(levelRepository.findDatasetLevelId(outputDatasetId))
+              .orElseThrow();
       if (!runnerOwnedTemp) {
         if (out.rank() < effective.rank()) {
           // VIEW 를 통과한 뒤에만 오는 분기라 등급 이름은 실행 주체가 이미 볼 수 있는 정보다(가드의 쓰기 하향 메시지와 같은 문구).
@@ -151,7 +160,7 @@ public class PipelineSecurityGate {
     // 비우고(REPLACE) 덮어써 이전 실행 주체의 결과를 지운다. 새로 만든 TEMP 는 이번 실행 주체가 방금 만든 빈 테이블이라 제외한다(입력 없는
     // 상수 SELECT 의 새 TEMP 는 기본 등급이라 낮은 자격 실행 주체가 못 볼 수 있다). 거부 시 이 트랜잭션의 상향·시드도 롤백된다.
     if (runnerOwnedTemp && !freshTemp) {
-      requireOutputVisible(outputDatasetId, runAsUserId);
+      requireOutputVisible(outputDatasetId, runAs);
     }
   }
 
@@ -159,8 +168,8 @@ public class PipelineSecurityGate {
    * 사용자가 지정한 출력 데이터셋을 실행 주체가 볼 수 있어야 한다. DML 스텝도 REPLACE 면 러너가 출력 비우기(DELETE) 선행 문장을 붙이므로, 이 판정이
    * 없으면 볼 수 없는 데이터셋을 비울 수 있다. 없는 데이터셋·숨김 데이터셋은 같은 거부(존재 은닉).
    */
-  public void requireOutputVisible(long outputDatasetId, Long runAsUserId) {
-    if (!guard.check(clearance(runAsUserId), outputDatasetId, DatasetAction.VIEW, null).allowed()) {
+  public void requireOutputVisible(long outputDatasetId, RunAs runAs) {
+    if (!guard.check(runAs.clearance(), outputDatasetId, DatasetAction.VIEW, null).allowed()) {
       throw new CodedApiException(
           HttpStatus.FORBIDDEN,
           DatasetAccessGuard.SQL_ACCESS_DENIED_CODE,
@@ -191,7 +200,7 @@ public class PipelineSecurityGate {
    */
   public void requireExplicitOutputVisible(long outputDatasetId, long stepId, Long runAsUserId) {
     if (!isStepTemp(outputDatasetId, stepId)) {
-      requireOutputVisible(outputDatasetId, runAsUserId);
+      requireOutputVisible(outputDatasetId, runAs(runAsUserId));
     }
   }
 

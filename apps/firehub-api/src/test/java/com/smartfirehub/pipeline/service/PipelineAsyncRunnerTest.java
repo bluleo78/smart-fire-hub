@@ -679,7 +679,10 @@ class PipelineAsyncRunnerTest {
     stubProbeColumns("a");
     when(tempDatasetService.findExistingTempDataset(stepId)).thenReturn(Optional.of(oldTemp));
     when(tempDatasetService.hasSchemaChanged(eq(oldTemp), any())).thenReturn(true);
-    doThrow(outputDenied()).when(pipelineSecurityGate).requireOutputVisible(oldTemp, userId);
+    // 실행 주체 자격은 스텝당 한 번 계산돼(RunAs) 판정에 넘어간다 — 이 실행 주체로 판정할 때만 거부한다.
+    PipelineSecurityGate.RunAs runAs = new PipelineSecurityGate.RunAs(userId, null);
+    when(pipelineSecurityGate.runAs(userId)).thenReturn(runAs);
+    doThrow(outputDenied()).when(pipelineSecurityGate).requireOutputVisible(oldTemp, runAs);
 
     String status =
         runner.executeStep(stepExecId, sqlStep, pipelineId, "TestPipeline", userId, false);
@@ -705,7 +708,10 @@ class PipelineAsyncRunnerTest {
                 null));
     when(tempDatasetService.findExistingTempDataset(stepId)).thenReturn(Optional.of(oldTemp));
     when(tempDatasetService.hasSchemaChanged(eq(oldTemp), any())).thenReturn(true);
-    doThrow(outputDenied()).when(pipelineSecurityGate).requireOutputVisible(oldTemp, userId);
+    // 실행 주체 자격은 스텝당 한 번 계산돼(RunAs) 판정에 넘어간다 — 이 실행 주체로 판정할 때만 거부한다.
+    PipelineSecurityGate.RunAs runAs = new PipelineSecurityGate.RunAs(userId, null);
+    when(pipelineSecurityGate.runAs(userId)).thenReturn(runAs);
+    doThrow(outputDenied()).when(pipelineSecurityGate).requireOutputVisible(oldTemp, runAs);
 
     String status =
         runner.executeStep(

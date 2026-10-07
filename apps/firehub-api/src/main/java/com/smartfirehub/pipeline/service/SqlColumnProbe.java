@@ -6,15 +6,11 @@ import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.util.SqlLexicalMask;
 import com.smartfirehub.pipeline.exception.ScriptExecutionException;
 import com.smartfirehub.pipeline.service.validator.SqlValidator;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.sql.Statement;
 import java.util.Arrays;
 import java.util.List;
 import org.jooq.DataType;
 import org.jooq.Record;
 import org.jooq.Result;
-import org.jooq.exception.DataAccessException;
 import org.springframework.stereotype.Service;
 
 /**
@@ -104,21 +100,8 @@ public class SqlColumnProbe {
                 cfg -> {
                   cfg.dsl().execute("SET LOCAL search_path = '" + DataSchema.current() + "'");
                   // 사용자 SQL 을 감싼 probe 도 실행과 같은 조리법 — 정적 Statement + JDBC 이스케이프 끔(최종 리뷰 I1,
-                  // SqlScriptExecutor#executeVerbatim 참고). jOOQ plain SQL fetch 는 {fn …}·{d '…'} 를
-                  // 다시 써서 보낸다.
-                  return cfg.dsl()
-                      .connectionResult(
-                          conn -> {
-                            try (Statement st = conn.createStatement()) {
-                              st.setEscapeProcessing(false);
-                              try (ResultSet rs = st.executeQuery(probeSql)) {
-                                return cfg.dsl().fetch(rs);
-                              }
-                            } catch (SQLException e) {
-                              throw new DataAccessException(
-                                  "SQL [" + probeSql + "]; " + e.getMessage(), e);
-                            }
-                          });
+                  // VerbatimSql 참고). jOOQ plain SQL fetch 는 {fn …}·{d '…'} 를 다시 써서 보낸다.
+                  return VerbatimSql.fetch(cfg.dsl(), probeSql);
                 }));
   }
 
