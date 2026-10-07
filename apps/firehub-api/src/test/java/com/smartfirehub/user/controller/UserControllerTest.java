@@ -18,6 +18,7 @@ import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.permission.service.PermissionService;
 import com.smartfirehub.role.dto.RoleResponse;
+import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.user.dto.*;
 import com.smartfirehub.user.service.UserService;
 import java.time.LocalDateTime;
@@ -36,6 +37,10 @@ import org.springframework.test.web.servlet.MockMvc;
 @WebMvcTest(UserController.class)
 @Import({SecurityConfig.class, JwtAuthenticationFilter.class, RefreshTokenCookies.class})
 class UserControllerTest {
+
+  // WebMvcConfig 가 DatasetAccessInterceptor(→DatasetAccessGuard)를 등록하므로 슬라이스에도 빈이 있어야 한다.
+  // 목은 아무것도 던지지 않아 숨김 판정은 통과 처리된다(실제 판정은 DatasetRouteHidingTest 가 검증).
+  @MockitoBean private DatasetAccessGuard datasetAccessGuard;
 
   @Autowired private MockMvc mockMvc;
 

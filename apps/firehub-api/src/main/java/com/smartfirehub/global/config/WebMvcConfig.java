@@ -2,6 +2,7 @@ package com.smartfirehub.global.config;
 
 import com.smartfirehub.global.security.PasswordChangeInterceptor;
 import com.smartfirehub.global.security.PermissionInterceptor;
+import com.smartfirehub.securitylevel.access.DatasetAccessInterceptor;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.lang.NonNull;
@@ -15,6 +16,8 @@ public class WebMvcConfig implements WebMvcConfigurer {
 
   private final PermissionInterceptor permissionInterceptor;
   private final PasswordChangeInterceptor passwordChangeInterceptor;
+  // 데이터셋 보안 등급(S1): /datasets/{id} 하위 전부를 숨김 판정한다. 권한 검사 뒤에 둔다.
+  private final DatasetAccessInterceptor datasetAccessInterceptor;
 
   /**
    * 권한 인터셉터 등록.
@@ -32,6 +35,8 @@ public class WebMvcConfig implements WebMvcConfigurer {
     registry
         .addInterceptor(permissionInterceptor)
         .addPathPatterns("/api/v1/**", "/api/platform/**");
+    // 이 한 줄이 빠지면 데이터셋 ID 경로 전체가 열린다 — DatasetRouteHidingTest 가 잡는다.
+    registry.addInterceptor(datasetAccessInterceptor).addPathPatterns("/api/v1/datasets/**");
   }
 
   @Override
