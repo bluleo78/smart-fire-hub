@@ -13,6 +13,7 @@ import com.smartfirehub.securitylevel.access.SqlAccessMode;
 import com.smartfirehub.securitylevel.access.SqlAccessResult;
 import com.smartfirehub.securitylevel.repository.SecurityLevelRepository;
 import com.smartfirehub.securitylevel.service.DatasetSecurityService;
+import java.util.Collection;
 import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
 import org.springframework.http.HttpStatus;
@@ -58,6 +59,25 @@ public class PipelineSecurityGate {
    */
   public SqlAccessResult checkStepSqlForRun(Long runAsUserId, String resolvedSql) {
     return guard.requireSql(clearance(runAsUserId), resolvedSql, SqlAccessMode.PIPELINE_RUN);
+  }
+
+  /**
+   * AI_CLASSIFY 스텝 저장 시점 — 편집자가 명시 입력 데이터셋(inputDatasetIds)을 모두 볼 수 있어야 한다(최종 리뷰 C3). AI_CLASSIFY 는
+   * SQL 이 아니라 입력 데이터셋 테이블을 페이지 단위로 전부 읽어 LLM 으로 보내므로, SQL 스텝의 {@link #checkStepSqlForSave} 와 같은 의미를
+   * id 목록으로 적용한다.
+   */
+  public void checkStepInputsForSave(Long editorUserId, Collection<Long> inputDatasetIds) {
+    guard.requireDatasetReads(clearance(editorUserId), inputDatasetIds);
+  }
+
+  /**
+   * AI_CLASSIFY 스텝 실행 시점 — 실행 주체가 <b>해석된</b> 입력(명시 입력 또는 의존 스텝 출력 자동 해석)을 모두 볼 수 있어야 한다. 반드시 입력을 읽기
+   * 전, 출력 TEMP 생성·삭제 전에 부른다. 거부 메시지는 SQL 스텝과 같은 구분 불가 문구라 실행 이력에 숨김 데이터셋 정보가 남지 않는다.
+   *
+   * @return 판정 결과 — {@link #enforceOutputLevel} 이 입력 최대 등급을 쓴다(SQL SELECT 스텝과 같은 출력 규칙)
+   */
+  public SqlAccessResult checkStepInputsForRun(Long runAsUserId, Collection<Long> inputDatasetIds) {
+    return guard.requireDatasetReads(clearance(runAsUserId), inputDatasetIds);
   }
 
   /**

@@ -102,6 +102,11 @@ public class PipelineService {
       // Validate AI_CLASSIFY step requirements
       if ("AI_CLASSIFY".equals(stepRequest.scriptType())) {
         validateAiClassifyStep(stepRequest);
+        // 보안 등급(최종 리뷰 C3): AI_CLASSIFY 는 명시 입력 데이터셋을 전부 읽어 LLM 으로 보낸다 — 편집자가 볼 수 없는 입력은 저장할 수
+        // 없다(SQL 스텝의 저장 판정과 같은 의미). 의존 스텝 출력 자동 해석분은 실행 시점에 판정된다.
+        if (stepRequest.inputDatasetIds() != null && !stepRequest.inputDatasetIds().isEmpty()) {
+          pipelineSecurityGate.checkStepInputsForSave(editorUserId, stepRequest.inputDatasetIds());
+        }
       }
 
       // PYTHON 스텝 escalation 코드(shell/동적실행 등) 차단 — pythonConfig 유무와 무관하게 항상 검증 (#270)

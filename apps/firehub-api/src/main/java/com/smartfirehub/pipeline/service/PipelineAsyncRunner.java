@@ -911,6 +911,14 @@ public class PipelineAsyncRunner {
           }
         }
 
+        // 보안 등급(최종 리뷰 C3): 실행 주체가 해석된 입력(명시 + 의존 스텝 출력 자동 해석)을 모두 볼 수 있어야 한다 — 입력을 읽기 전,
+        // 출력 TEMP 를 만들거나 지우기 전에 판정한다. 거부는 SQL 스텝과 같은 구분 불가 메시지로 스텝 실패가 된다.
+        SqlAccessResult aiInputAccess =
+            pipelineSecurityGate.checkStepInputsForRun(
+                userId, resolvedInputDatasetIds == null ? List.of() : resolvedInputDatasetIds);
+        // 이번 실행에서 TEMP 를 새로 만들었는지(빈 테이블) — SQL 스텝과 같은 이유로 새 TEMP 만 입력 최대 등급으로 "정확히" 맞춘다.
+        boolean aiTempFresh = false;
+
         // outputDatasetId가 없으면 임시 데이터셋 자동 생성
         if (outputDatasetId == null) {
           com.smartfirehub.pipeline.dto.AiClassifyConfig aiClassifyConfig =
@@ -925,6 +933,7 @@ public class PipelineAsyncRunner {
               log.info(
                   "Schema changed for AI_CLASSIFY step {}, recreating temp dataset", step.name());
               tempDatasetService.deleteTempDataset(dsId);
+              aiTempFresh = true;
               outputDatasetId =
                   tempDatasetService.createTempDataset(
                       aiColumns, pipelineId, pipelineName, stepId, step.name(), userId);
@@ -935,6 +944,7 @@ public class PipelineAsyncRunner {
             }
           } else {
             log.info("Creating new temp dataset for AI_CLASSIFY step {}", step.name());
+            aiTempFresh = true;
             outputDatasetId =
                 tempDatasetService.createTempDataset(
                     aiColumns, pipelineId, pipelineName, stepId, step.name(), userId);
@@ -949,6 +959,13 @@ public class PipelineAsyncRunner {
           // 아니라 swapTable 을 직접 부르는데, AI_CLASSIFY 에서 0행은 정상 결과가 아니라
           // :255 에서 먼저 예외를 던지기 때문이다 — 즉 swapTable 에 도달하면 이미 비어 있지 않다.
           // 실패하면 :273 의 dropTempTable 로 이전 행이 그대로 남는다.
+        }
+
+        // 출력 등급(판단 사항 5, SQL SELECT 스텝과 같은 규칙): 러너 TEMP 는 입력 최대 등급으로 상향·시드, 사용자 지정 출력은 실행 주체가
+        // 볼 수 있어야 하고 입력보다 낮으면 실패(SQL_WRITE_DOWNGRADE). 실행기(AiClassifyExecutor)가 출력을 비우거나 쓰기 전에 둔다.
+        if (outputDatasetId != null) {
+          pipelineSecurityGate.enforceOutputLevel(
+              aiInputAccess, outputDatasetId, step.id(), aiTempFresh, userId);
         }
 
         // AiClassifyExecutor에 전달할 스텝 래퍼: 해결된 outputDatasetId 및 inputDatasetIds 반영

@@ -16,10 +16,12 @@ import com.smartfirehub.pipeline.service.validator.PgLexicalAmbiguityCheck;
 import com.smartfirehub.pipeline.service.validator.SqlValidator;
 import com.smartfirehub.securitylevel.repository.DatasetAccessRepository;
 import com.smartfirehub.securitylevel.repository.DatasetAccessRepository.AccessFacts;
+import java.util.Collection;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
@@ -145,6 +147,45 @@ public class DatasetAccessGuard {
             c,
             field(name(datasetAlias, "id"), Long.class),
             field(name(datasetAlias, "security_level_id"), Long.class)));
+  }
+
+  /**
+   * SQL 이 아니라 <b>데이터셋 id 목록</b>을 직접 읽는 실행 지점(AI_CLASSIFY 스텝 입력)의 판정 — {@link #checkSql} 의 읽기 집합 규칙과
+   * 같다: 전부 VIEW 여야 하고, 실효 등급은 최대 rank, 내보내기 허용은 전부의 EXPORT. 없는 id·null id·볼 수 없는 id 는 같은 거부(SQL 경로와
+   * 같은 코드·메시지 — 실행 이력에 남는 문구로 숨김 데이터셋 존재를 구분할 수 없게).
+   *
+   * @return 빈 목록이면 허용 + 실효 등급 null(전파할 등급 없음)
+   */
+  public SqlAccessResult checkDatasetReads(Clearance c, Collection<Long> datasetIds) {
+    if (datasetIds.stream().anyMatch(Objects::isNull)) {
+      return accessDenied();
+    }
+    Map<Long, AccessFacts> facts =
+        datasetIds.isEmpty() ? Map.of() : accessRepository.findFactsByDatasetIds(datasetIds, c);
+    LevelPolicy effective = null;
+    boolean exportAllowed = true;
+    Set<Long> ids = new LinkedHashSet<>();
+    for (Long id : datasetIds) {
+      AccessFacts f = facts.get(id);
+      if (f == null || !decide(c, f, DatasetAction.VIEW, null).allowed()) {
+        return accessDenied();
+      }
+      ids.add(id);
+      if (effective == null || f.level().rank() > effective.rank()) {
+        effective = f.level();
+      }
+      exportAllowed &= decide(c, f, DatasetAction.EXPORT, null).allowed();
+    }
+    return new SqlAccessResult(true, null, null, effective, ids, Set.of(), exportAllowed);
+  }
+
+  /** {@link #checkDatasetReads} 를 강제한다 — 거부 시 403 {@link CodedApiException}(SQL 경로와 같은 코드·메시지). */
+  public SqlAccessResult requireDatasetReads(Clearance c, Collection<Long> datasetIds) {
+    SqlAccessResult r = checkDatasetReads(c, datasetIds);
+    if (!r.allowed()) {
+      throw new CodedApiException(HttpStatus.FORBIDDEN, r.code(), r.message());
+    }
+    return r;
   }
 
   /**
