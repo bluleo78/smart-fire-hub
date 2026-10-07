@@ -14,6 +14,7 @@ import { Label } from '../../../components/ui/label';
 import { RadioGroup, RadioGroupItem } from '../../../components/ui/radio-group';
 import { SecurityLevelBadge } from '../../../components/ui/SecurityLevelBadge';
 import { Switch } from '../../../components/ui/switch';
+import { toRequest } from '../../../lib/security-level';
 import type {
   SecurityLevel,
   SecurityLevelRequest,
@@ -101,15 +102,7 @@ export function SecurityLevelRow({
   onNameEdit,
 }: Props) {
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState<SecurityLevelRequest>({
-    name: level.name,
-    allowlistRequired: level.allowlistRequired,
-    adminBypass: level.adminBypass,
-    exportPolicy: level.exportPolicy,
-    aiPolicy: level.aiPolicy,
-    sharePolicy: level.sharePolicy,
-    auditAccess: level.auditAccess,
-  });
+  const [form, setForm] = useState<SecurityLevelRequest>(() => toRequest(level));
   const set = <K extends keyof SecurityLevelRequest>(
     k: K,
     v: SecurityLevelRequest[K],

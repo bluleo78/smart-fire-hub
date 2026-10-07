@@ -54,6 +54,15 @@ import { DatasetSecurityTab } from './tabs/DatasetSecurityTab';
 // 클라이언트에서 사전에 제한하여 불필요한 400 요청/토스트 혼란을 방지한다 (#530)
 const TAG_NAME_MAX_LENGTH = 50;
 
+/**
+ * 저장 유형별 유효 탭 — 초기 탭 결정과 ?tab= 동기화가 같은 목록을 쓰도록 한 곳에 둔다. 유형을 모르면(로드 전) 표 데이터셋 목록이다.
+ */
+function tabsFor(storageType: 'TABLE' | 'DOCUMENT' | 'FILE' | undefined): string[] {
+  if (storageType === 'DOCUMENT') return ['info', 'security', 'documents'];
+  if (storageType === 'FILE') return ['info', 'security', 'objects'];
+  return ['info', 'security', 'columns', 'data', 'search', 'map', 'mapping', 'history'];
+}
+
 export default function DatasetDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -77,11 +86,7 @@ export default function DatasetDetailPage() {
   // dataset 로드 전에는 isDocument=false이므로 validTabs는 전체 목록. 로드 후 useEffect가 재계산.
   const isDocument = dataset?.storageType === 'DOCUMENT';
   const isFile = dataset?.storageType === 'FILE';
-  const validTabs = isDocument
-    ? ['info', 'security', 'documents']
-    : isFile
-      ? ['info', 'security', 'objects']
-      : ['info', 'security', 'columns', 'data', 'search', 'map', 'mapping', 'history'];
+  const validTabs = tabsFor(dataset?.storageType);
   const tabParam = searchParams.get('tab');
   const initialTab = tabParam && validTabs.includes(tabParam) ? tabParam : 'info';
   const [activeTab, setActiveTab] = useState(initialTab);
@@ -106,13 +111,7 @@ export default function DatasetDetailPage() {
   // useState 초기값은 최초 렌더링에만 반영되므로, searchParams 변경 시 별도 동기화가 필요하다.
   // 페인트 전 동기 보정으로 탭 깜빡임 방지.
   useLayoutEffect(() => {
-    const isDocumentType = dataset?.storageType === 'DOCUMENT';
-    const isFileType = dataset?.storageType === 'FILE';
-    const currentValidTabs = isDocumentType
-      ? ['info', 'security', 'documents']
-      : isFileType
-        ? ['info', 'security', 'objects']
-        : ['info', 'security', 'columns', 'data', 'search', 'map', 'mapping', 'history'];
+    const currentValidTabs = tabsFor(dataset?.storageType);
     const newTabParam = searchParams.get('tab');
     const newTab = newTabParam && currentValidTabs.includes(newTabParam) ? newTabParam : 'info';
     setActiveTab(newTab);

@@ -1,4 +1,7 @@
-import type { SecurityLevel, SecurityLevelSummary } from '../types/security-level';
+import type { SecurityLevel, SecurityLevelRequest, SecurityLevelSummary } from '../types/security-level';
+
+/** 하향 사유 최소 길이 — 백엔드 SecurityLevelService.MIN_DOWNGRADE_REASON 과 같다(등급 변경·삭제 이동 다이얼로그 공용). */
+export const MIN_DOWNGRADE_REASON = 10;
 
 export type LevelTone = 'outline' | 'warning' | 'caution';
 
@@ -32,4 +35,17 @@ export function cumulativeDescription(levelsAsc: SecurityLevel[], index: number)
   if (level.allowlistRequired) return `${level.name}까지 열람 — 단, 허용 목록에 있는 데이터셋만`;
   if (index === 0) return `${level.name} 데이터셋만 열람`;
   return `${levelsAsc.slice(0, index + 1).map((l) => l.name).join('·')} 데이터셋 열람`;
+}
+
+/** 등급 → 수정 요청 본문(편집 폼 초기값). 정책 필드만 옮기고 seedAllowlistFromViewers 는 넣지 않는다(저장 시점에 따로 정한다). */
+export function toRequest(level: SecurityLevel): SecurityLevelRequest {
+  return {
+    name: level.name,
+    allowlistRequired: level.allowlistRequired,
+    adminBypass: level.adminBypass,
+    exportPolicy: level.exportPolicy,
+    aiPolicy: level.aiPolicy,
+    sharePolicy: level.sharePolicy,
+    auditAccess: level.auditAccess,
+  };
 }
