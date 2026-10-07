@@ -13,8 +13,8 @@ import com.smartfirehub.securitylevel.access.LevelPolicy;
 import com.smartfirehub.securitylevel.dto.ClearancePreviewResponse;
 import com.smartfirehub.securitylevel.dto.RoleClearanceResponse;
 import com.smartfirehub.securitylevel.repository.SecurityLevelRepository;
+import com.smartfirehub.securitylevel.repository.SystemAdminRole;
 import java.util.Map;
-import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
 import org.springframework.http.HttpStatus;
@@ -47,7 +47,7 @@ public class RoleClearanceService {
   @Transactional(readOnly = true)
   public ClearancePreviewResponse preview(long roleId, long levelId, Clearance caller) {
     requireRole(roleId);
-    Map<Long, Integer> rankById = rankById();
+    Map<Long, Integer> rankById = levelRepository.rankById();
     Integer newRoleRank = rankById.get(levelId);
     if (newRoleRank == null) {
       throw levelNotFound();
@@ -94,7 +94,7 @@ public class RoleClearanceService {
           "CLEARANCE_ABOVE_OWN",
           "본인 열람 등급보다 높은 등급의 역할은 변경할 수 없고, 그보다 높은 등급을 역할에 지정할 수도 없습니다.");
     }
-    if (topLevelRoleCountAfter(roleId, levelId, rankById()) == 0) {
+    if (topLevelRoleCountAfter(roleId, levelId, levelRepository.rankById()) == 0) {
       throw new CodedApiException(
           HttpStatus.CONFLICT, "TOP_LEVEL_ROLE_REQUIRED", "최상위 등급을 열람할 수 있는 역할이 최소 1개 필요합니다.");
     }
@@ -124,13 +124,9 @@ public class RoleClearanceService {
   private int callerRankAfter(
       Clearance caller, long roleId, int newRoleRank, Map<Long, Integer> rankById) {
     int max = newRoleRank;
-    for (var r :
-        dsl.select(ROLE.ID, ROLE.MAX_SECURITY_LEVEL_ID)
-            .from(ROLE)
-            .where(ROLE.ID.in(caller.roleIds()))
-            .fetch()) {
-      if (!r.get(ROLE.ID).equals(roleId)) {
-        max = Math.max(max, rankById.get(r.get(ROLE.MAX_SECURITY_LEVEL_ID)));
+    for (var r : levelRepository.findRoleLevels()) {
+      if (caller.roleIds().contains(r.roleId()) && r.roleId() != roleId) {
+        max = Math.max(max, rankById.get(r.levelId()));
       }
     }
     return max;
@@ -140,18 +136,13 @@ public class RoleClearanceService {
   private long topLevelRoleCountAfter(long roleId, long levelId, Map<Long, Integer> rankById) {
     int topRank = levelRepository.findTop().rank();
     long count = 0;
-    for (var r : dsl.select(ROLE.ID, ROLE.MAX_SECURITY_LEVEL_ID).from(ROLE).fetch()) {
-      long lv = r.get(ROLE.ID).equals(roleId) ? levelId : r.get(ROLE.MAX_SECURITY_LEVEL_ID);
+    for (var r : levelRepository.findRoleLevels()) {
+      long lv = r.roleId() == roleId ? levelId : r.levelId();
       if (rankById.get(lv) == topRank) {
         count++;
       }
     }
     return count;
-  }
-
-  private Map<Long, Integer> rankById() {
-    return levelRepository.findAll().stream()
-        .collect(Collectors.toMap(LevelPolicy::id, LevelPolicy::rank));
   }
 
   private RoleRecord requireRole(long roleId) {
@@ -163,6 +154,6 @@ public class RoleClearanceService {
   }
 
   private static boolean isSystemAdmin(RoleRecord r) {
-    return "ADMIN".equals(r.getName()) && Boolean.TRUE.equals(r.getIsSystem());
+    return SystemAdminRole.matches(r.getName(), r.getIsSystem());
   }
 }

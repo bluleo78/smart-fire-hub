@@ -11,7 +11,9 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
+import org.jooq.Condition;
 import org.jooq.DSLContext;
+import org.jooq.Field;
 import org.springframework.stereotype.Repository;
 
 /** 데이터셋 허용 목록(dataset_access_grant) CRUD. 테넌트 범위는 RLS — 클래스 레벨 트랜잭션으로 GUC 를 보장한다. */
@@ -31,9 +33,37 @@ public class DatasetAccessGrantRepository {
       String subjectName,
       Long grantedBy,
       String grantedByName,
-      LocalDateTime grantedAt) {}
+      LocalDateTime grantedAt) {
+
+    /** 대상 종류 — 사용자 항목이면 USER, 아니면 ROLE(화면·감사 메타 표기). */
+    public String type() {
+      return userId != null ? "USER" : "ROLE";
+    }
+
+    /** 대상 id — 사용자 항목이면 user_id, 아니면 role_id. */
+    public Long subjectId() {
+      return userId != null ? userId : roleId;
+    }
+  }
 
   public List<GrantRow> findByDataset(long datasetId) {
+    return findRows(DATASET_ACCESS_GRANT.DATASET_ID.eq(datasetId));
+  }
+
+  /** 이 데이터셋에서 지정 대상(사용자 또는 역할 — 둘 중 하나만 non-null)의 항목(이름 조인 포함). 같은 대상의 항목이 여럿이면 목록 순서상 첫 항목. */
+  public Optional<GrantRow> findByDatasetAndSubject(long datasetId, Long userId, Long roleId) {
+    var g = DATASET_ACCESS_GRANT;
+    var subject = userId != null ? g.USER_ID.eq(userId) : g.ROLE_ID.eq(roleId);
+    return findRows(g.DATASET_ID.eq(datasetId).and(subject)).stream().findFirst();
+  }
+
+  /** 항목 1개(이름 조인 포함 — 화면 응답용). {@link #findById} 는 이름 없이 원 행만 읽는다. */
+  public Optional<GrantRow> findRowById(long grantId) {
+    return findRows(DATASET_ACCESS_GRANT.ID.eq(grantId)).stream().findFirst();
+  }
+
+  /** 화면용 행 조회 공통부 — 대상 이름과 추가한 사람 이름을 조인한다. */
+  private List<GrantRow> findRows(Condition where) {
     var g = DATASET_ACCESS_GRANT;
     var subjectUser = USER.as("subject_user");
     var granter = USER.as("granter");
@@ -54,7 +84,7 @@ public class DatasetAccessGrantRepository {
         .on(ROLE.ID.eq(g.ROLE_ID))
         .leftJoin(granter)
         .on(granter.ID.eq(g.GRANTED_BY))
-        .where(g.DATASET_ID.eq(datasetId))
+        .where(where)
         .orderBy(g.GRANTED_AT.asc(), g.ID.asc())
         .fetch(
             r ->
@@ -96,18 +126,18 @@ public class DatasetAccessGrantRepository {
   }
 
   public long insertUser(long datasetId, long userId, Long grantedBy) {
-    return dsl.insertInto(DATASET_ACCESS_GRANT)
-        .set(DATASET_ACCESS_GRANT.DATASET_ID, datasetId)
-        .set(DATASET_ACCESS_GRANT.USER_ID, userId)
-        .set(DATASET_ACCESS_GRANT.GRANTED_BY, grantedBy)
-        .returning(DATASET_ACCESS_GRANT.ID)
-        .fetchSingle(DATASET_ACCESS_GRANT.ID);
+    return insert(datasetId, DATASET_ACCESS_GRANT.USER_ID, userId, grantedBy);
   }
 
   public long insertRole(long datasetId, long roleId, Long grantedBy) {
+    return insert(datasetId, DATASET_ACCESS_GRANT.ROLE_ID, roleId, grantedBy);
+  }
+
+  /** 항목 1개 추가 공통부 — 대상 컬럼(user_id 또는 role_id) 하나만 채운다. */
+  private long insert(long datasetId, Field<Long> subjectColumn, long subjectId, Long grantedBy) {
     return dsl.insertInto(DATASET_ACCESS_GRANT)
         .set(DATASET_ACCESS_GRANT.DATASET_ID, datasetId)
-        .set(DATASET_ACCESS_GRANT.ROLE_ID, roleId)
+        .set(subjectColumn, subjectId)
         .set(DATASET_ACCESS_GRANT.GRANTED_BY, grantedBy)
         .returning(DATASET_ACCESS_GRANT.ID)
         .fetchSingle(DATASET_ACCESS_GRANT.ID);

@@ -11,6 +11,7 @@ import com.smartfirehub.securitylevel.dto.SecurityLevelRequest;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
 import org.jooq.impl.DSL;
@@ -38,6 +39,19 @@ public class SecurityLevelRepository {
     return dsl.selectFrom(SECURITY_LEVEL)
         .where(SECURITY_LEVEL.ID.eq(id))
         .fetchOptional(SecurityLevelRepository::toPolicy);
+  }
+
+  /** 등급 id → rank(현재 테넌트 전부). 자격·시드 계산이 등급 id 를 rank 로 바꿀 때 쓴다. */
+  public Map<Long, Integer> rankById() {
+    return findAll().stream().collect(Collectors.toMap(LevelPolicy::id, LevelPolicy::rank));
+  }
+
+  /** 데이터셋 1개의 현재 등급 id. 데이터셋이 없으면 예외(fetchSingle) — 호출자는 존재가 확인된 데이터셋에만 쓴다. */
+  public Long findDatasetLevelId(long datasetId) {
+    return dsl.select(DATASET.SECURITY_LEVEL_ID)
+        .from(DATASET)
+        .where(DATASET.ID.eq(datasetId))
+        .fetchSingle(DATASET.SECURITY_LEVEL_ID);
   }
 
   /** 기본 등급(테넌트당 정확히 1개). */
@@ -166,7 +180,7 @@ public class SecurityLevelRepository {
     long top = findTop().id();
     dsl.update(ROLE)
         .set(ROLE.MAX_SECURITY_LEVEL_ID, top)
-        .where(ROLE.NAME.eq("ADMIN").and(ROLE.IS_SYSTEM.isTrue()))
+        .where(SystemAdminRole.CONDITION)
         .execute();
   }
 
@@ -183,8 +197,7 @@ public class SecurityLevelRepository {
                     r.get(ROLE.ID),
                     r.get(ROLE.NAME),
                     r.get(ROLE.MAX_SECURITY_LEVEL_ID),
-                    Boolean.TRUE.equals(r.get(ROLE.IS_SYSTEM))
-                        && "ADMIN".equals(r.get(ROLE.NAME))));
+                    SystemAdminRole.matches(r.get(ROLE.NAME), r.get(ROLE.IS_SYSTEM))));
   }
 
   /** 순서 일괄 갱신 — UNIQUE(tenant_id, rank) 를 트랜잭션 끝까지 미룬다(DEFERRABLE). */

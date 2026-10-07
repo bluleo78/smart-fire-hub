@@ -156,11 +156,8 @@ public class SecurityLevelService {
     if (toId != null && toId != id) {
       LevelPolicy to = require(toId);
       boolean downward = to.rank() < target.rank();
-      String reason = req.reason() == null ? "" : req.reason().trim();
-      if (downward && inUse && reason.length() < MIN_DOWNGRADE_REASON) {
-        throw new CodedApiException(
-            HttpStatus.BAD_REQUEST, "DOWNGRADE_REASON_REQUIRED", "하향 이동에는 사유(10자 이상)가 필요합니다.");
-      }
+      // 감사 메타에는 원문 사유(req.reason())를 남기므로 정리된 반환값은 쓰지 않는다.
+      requireDowngradeReason(downward && inUse, req.reason(), "하향 이동에는 사유(10자 이상)가 필요합니다.");
       repository.moveDatasets(id, toId);
       repository.moveRoles(id, toId);
       // 이동 대상이 허용 목록 필요 등급이면, 옮겨진 데이터셋의 빈 허용 목록이 고아(아무도 못 봄)가 되지 않게 같은 트랜잭션에서 채운다
@@ -286,6 +283,21 @@ public class SecurityLevelService {
       throw new CodedApiException(
           HttpStatus.BAD_REQUEST, "SECURITY_LEVEL_ORDER_INVALID", "모든 보안 등급을 정확히 한 번씩 포함해야 합니다.");
     }
+  }
+
+  /**
+   * 하향 사유 검증(스펙 §4.7) — 등급 변경·삭제 이동이 같은 규칙(null→빈 문자열, 앞뒤 공백 제거 후 {@link #MIN_DOWNGRADE_REASON}자
+   * 이상)을 쓰게 한 곳에 둔다. 메시지는 화면 문맥마다 달라 호출자가 넘긴다.
+   *
+   * @param downgrade 사유가 필요한 하향인가 — false 면 검사하지 않는다
+   * @return 앞뒤 공백을 뗀 사유(없으면 빈 문자열)
+   */
+  static String requireDowngradeReason(boolean downgrade, String rawReason, String message) {
+    String reason = rawReason == null ? "" : rawReason.trim();
+    if (downgrade && reason.length() < MIN_DOWNGRADE_REASON) {
+      throw new CodedApiException(HttpStatus.BAD_REQUEST, "DOWNGRADE_REASON_REQUIRED", message);
+    }
+    return reason;
   }
 
   /** 같은 테넌트 안 이름 중복을 UNIQUE 위반(500) 대신 409 로 알린다. */

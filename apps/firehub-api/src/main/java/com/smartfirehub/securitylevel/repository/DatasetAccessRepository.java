@@ -7,11 +7,8 @@ import static com.smartfirehub.jooq.Tables.SECURITY_LEVEL;
 import static com.smartfirehub.jooq.Tables.USER;
 import static com.smartfirehub.jooq.Tables.USER_ROLE;
 import static org.jooq.impl.DSL.exists;
-import static org.jooq.impl.DSL.falseCondition;
 import static org.jooq.impl.DSL.field;
-import static org.jooq.impl.DSL.name;
 import static org.jooq.impl.DSL.selectOne;
-import static org.jooq.impl.DSL.table;
 
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.LevelPolicy;
@@ -98,10 +95,6 @@ public class DatasetAccessRepository {
    * 자격 0). membership 은 전역 테이블이라 tenant_id 를 명시한다.
    */
   public ClearanceRow findClearanceRow(long userId, long tenantId) {
-    var membership = table(name("membership"));
-    Field<Long> mUser = field(name("membership", "user_id"), Long.class);
-    Field<Long> mTenant = field(name("membership", "tenant_id"), Long.class);
-    Field<String> mStatus = field(name("membership", "status"), String.class);
     var rows =
         dsl.select(ROLE.ID, ROLE.NAME, ROLE.IS_SYSTEM, SECURITY_LEVEL.RANK)
             .from(USER_ROLE)
@@ -111,12 +104,8 @@ public class DatasetAccessRepository {
             .on(SECURITY_LEVEL.ID.eq(ROLE.MAX_SECURITY_LEVEL_ID))
             .join(USER)
             .on(USER.ID.eq(USER_ROLE.USER_ID).and(USER.IS_ACTIVE.isTrue()))
-            .join(membership)
-            .on(
-                mUser
-                    .eq(USER_ROLE.USER_ID)
-                    .and(mTenant.eq(USER_ROLE.TENANT_ID))
-                    .and(mStatus.eq("ACTIVE")))
+            .join(ActiveMembership.TABLE)
+            .on(ActiveMembership.of(USER_ROLE.USER_ID, USER_ROLE.TENANT_ID))
             .where(USER_ROLE.USER_ID.eq(userId))
             .and(USER_ROLE.TENANT_ID.eq(tenantId))
             .fetch();
@@ -127,13 +116,8 @@ public class DatasetAccessRepository {
       roleIds.add(r.get(ROLE.ID));
       int rank = r.get(SECURITY_LEVEL.RANK);
       max = max == null ? rank : Math.max(max, rank);
-      admin |= "ADMIN".equals(r.get(ROLE.NAME)) && Boolean.TRUE.equals(r.get(ROLE.IS_SYSTEM));
+      admin |= SystemAdminRole.matches(r.get(ROLE.NAME), r.get(ROLE.IS_SYSTEM));
     }
     return new ClearanceRow(max, roleIds, admin);
-  }
-
-  /** 아무것도 못 보는 조건(자격 없음). */
-  public static Condition nothing() {
-    return falseCondition();
   }
 }

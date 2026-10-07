@@ -10,7 +10,6 @@ import com.smartfirehub.securitylevel.repository.DatasetAccessGrantRepository;
 import com.smartfirehub.securitylevel.repository.SecurityLevelRepository;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
 import org.springframework.stereotype.Component;
@@ -38,9 +37,7 @@ public class AllowlistSeeder {
    */
   public int seedEmptyAllowlistsWithViewerRoles(long levelId, long actor) {
     LevelPolicy level = levelRepository.findById(levelId).orElseThrow();
-    Map<Long, Integer> rankById =
-        levelRepository.findAll().stream()
-            .collect(Collectors.toMap(LevelPolicy::id, LevelPolicy::rank));
+    Map<Long, Integer> rankById = levelRepository.rankById();
     List<Long> viewerRoles =
         levelRepository.findRoleLevels().stream()
             .filter(r -> r.systemAdmin() || rankById.get(r.levelId()) >= level.rank())
