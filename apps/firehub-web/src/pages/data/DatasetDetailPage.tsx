@@ -284,22 +284,7 @@ export default function DatasetDetailPage() {
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
               <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">{dataset.name}</h1>
-              {/* Status badge */}
-              {dataset.status === 'CERTIFIED' && (
-                <Badge variant="success">
-                  ✓ Certified
-                </Badge>
-              )}
-              {dataset.status === 'DEPRECATED' && (
-                <Badge variant="destructive">
-                  Deprecated
-                </Badge>
-              )}
-              {/* TEMP badge */}
-              {dataset.originType === 'TEMP' && (
-                <Badge variant="secondary" className="text-xs">임시</Badge>
-              )}
-              {/* 보안 등급 배지 — Certified 배지와 같은 위계(목업 s2). 생성 응답 등에서 비어 올 수 있어 있을 때만 그린다. */}
+              {/* 보안 등급 배지 — Certified 배지 앞, 같은 위계(목업 s2). 생성 응답 등에서 비어 올 수 있어 있을 때만 그린다. */}
               {dataset.securityLevel && (
                 <span className="inline-flex items-center gap-1">
                   <SecurityLevelBadge level={dataset.securityLevel} />
@@ -316,6 +301,21 @@ export default function DatasetDetailPage() {
                     </Button>
                   )}
                 </span>
+              )}
+              {/* Status badge */}
+              {dataset.status === 'CERTIFIED' && (
+                <Badge variant="success">
+                  ✓ Certified
+                </Badge>
+              )}
+              {dataset.status === 'DEPRECATED' && (
+                <Badge variant="destructive">
+                  Deprecated
+                </Badge>
+              )}
+              {/* TEMP badge */}
+              {dataset.originType === 'TEMP' && (
+                <Badge variant="secondary" className="text-xs">임시</Badge>
               )}
               {/* 데이터셋 → 분석 워크플로우 단축 진입점 (#98)
                   쿼리/차트 에디터로 이동하면서 ?datasetId=, ?sql= 파라미터로
@@ -604,8 +604,8 @@ export default function DatasetDetailPage() {
         dataset={dataset}
       />
 
-      {/* 보안 등급 변경 다이얼로그 — 등급이 바뀌면 key 로 새로 마운트해 초기 선택을 현재 등급에 맞춘다 */}
-      {dataset.securityLevel && (
+      {/* 보안 등급 변경 다이얼로그(dataset:classify 보유자만 마운트) — 등급이 바뀌면 key 로 새로 마운트해 초기 선택을 현재 등급에 맞춘다 */}
+      {dataset.securityLevel && canClassify && (
         <ChangeSecurityLevelDialog
           key={dataset.securityLevel.id}
           datasetId={dataset.id}

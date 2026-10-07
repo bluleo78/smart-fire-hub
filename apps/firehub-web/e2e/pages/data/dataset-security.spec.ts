@@ -119,6 +119,64 @@ test.describe('데이터셋 상세 — 보안', () => {
     await expect(page).toHaveURL(/\/data\/datasets$/);
     await expect(page.getByText('더 이상 이 데이터셋에 접근할 수 없습니다', { exact: false })).toBeVisible();
     await expect(page.getByText('데이터셋을 찾을 수 없습니다.')).toHaveCount(0);
+    // 접근을 잃은 데이터셋은 최근 본 데이터셋 바로가기에서도 빠진다
+    const recents = await page.evaluate(() => JSON.parse(localStorage.getItem('sfh-recent-datasets') ?? '[]'));
+    expect(recents.map((d: { id: number }) => d.id)).not.toContain(1);
+  });
+
+  test('본인이 가진 역할 항목 제거는 확인을 받고, 다른 항목은 바로 제거한다', async ({ authenticatedPage: page }) => {
+    await setupAdminAuth(page);
+    await setup(page, '기밀');
+    // createAdminUserDetail 은 ADMIN 역할(id 2)을 가진다 — 같은 역할 항목은 본인 항목이다
+    await mockApi(page, 'GET', '/api/v1/datasets/1/access-grants', [
+      { id: 31, type: 'ROLE', subjectId: 2, subjectName: 'ADMIN', grantedByName: '관리자', grantedAt: '2026-10-07T10:00:00' },
+      { id: 32, type: 'USER', subjectId: 99, subjectName: '김OO', grantedByName: '관리자', grantedAt: '2026-10-07T10:01:00' },
+      { id: 33, type: 'ROLE', subjectId: 5, subjectName: '인사팀', grantedByName: '관리자', grantedAt: '2026-10-07T10:02:00' },
+    ]);
+    const delRole = await mockApi(page, 'DELETE', '/api/v1/datasets/1/access-grants/31', {}, { status: 204, capture: true });
+    const delOther = await mockApi(page, 'DELETE', '/api/v1/datasets/1/access-grants/32', {}, { status: 204, capture: true });
+    await page.goto('/data/datasets/1?tab=security');
+
+    await page.getByRole('button', { name: 'ADMIN 제거' }).click();
+    const confirm = page.getByRole('alertdialog');
+    await expect(confirm).toContainText('본인이 속한 역할');
+    await expect(confirm).toContainText('더 이상 접근할 수 없습니다');
+    await confirm.getByRole('button', { name: '제거' }).click();
+    await delRole.waitForRequest();
+
+    await page.getByRole('button', { name: '김OO 제거' }).click();
+    await delOther.waitForRequest();
+    await expect(page.getByRole('alertdialog')).toHaveCount(0);
+  });
+
+  test('허용 목록 추가 — 사용자 후보는 이메일로 구분되고 POST payload 는 userId', async ({ authenticatedPage: page }) => {
+    await setupAdminAuth(page);
+    await setup(page, '기밀');
+    await mockApi(page, 'GET', '/api/v1/datasets/1/access-grants', [
+      { id: 11, type: 'ROLE', subjectId: 5, subjectName: '인사팀', grantedByName: '양동희', grantedAt: '2026-10-07T10:00:00' },
+    ]);
+    await mockApi(page, 'GET', '/api/v1/datasets/1/access-grants/candidates', {
+      users: [
+        { id: 99, name: '김OO', email: 'kim1@example.com' },
+        { id: 100, name: '김OO', email: 'kim2@example.com' },
+      ],
+      roles: [{ id: 5, name: '인사팀' }],
+    });
+    const post = await mockApi(
+      page, 'POST', '/api/v1/datasets/1/access-grants',
+      { id: 40, type: 'USER', subjectId: 100, subjectName: '김OO', grantedByName: '관리자', grantedAt: '2026-10-08T10:00:00' },
+      { capture: true },
+    );
+    await page.goto('/data/datasets/1?tab=security');
+    await page.getByRole('button', { name: '추가', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: '허용 목록 추가' });
+    await dialog.getByRole('combobox', { name: '유형' }).click();
+    await page.getByRole('option', { name: '사용자' }).click();
+    await dialog.getByRole('combobox', { name: '대상' }).click();
+    await page.getByRole('option', { name: '김OO (kim2@example.com)' }).click();
+    await dialog.getByRole('button', { name: '추가' }).click();
+    expect((await post.waitForRequest()).payload).toEqual({ userId: 100 });
+    await expect(dialog).toHaveCount(0);
   });
 
   test('문서형 데이터셋에도 보안 탭이 있다', async ({ authenticatedPage: page }) => {

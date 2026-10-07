@@ -81,7 +81,7 @@ export function ChangeSecurityLevelDialog({
           <DialogTitle>보안 등급 변경</DialogTitle>
           <DialogDescription>본인 열람 등급 이하의 등급으로만 지정할 수 있습니다.</DialogDescription>
         </DialogHeader>
-        <RadioGroup value={selected} onValueChange={setSelected} className="space-y-2">
+        <RadioGroup value={selected} onValueChange={setSelected} aria-label="보안 등급" className="space-y-2">
           {levels.map((l) => {
             // 자격 로딩 중엔 일단 비활성만 하고 안내 문구는 띄우지 않는다(로딩 깜빡임에 "선택 불가"가 모든 줄에 뜨지 않도록).
             // 자격이 정말 없으면(rank null) 어떤 등급도 지정할 수 없다 — 서버도 거부한다.

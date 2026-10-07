@@ -42,10 +42,17 @@ export function useRecentDatasets() {
     setRecents(updated.slice(0, MAX_SHOWN));
   };
 
+  /** 특정 데이터셋을 최근 목록에서 뺀다 — 접근을 잃은(숨겨진) 데이터셋이 바로가기로 남지 않게. */
+  const removeRecent = (id: number) => {
+    const updated = readFromStorage().filter((d) => d.id !== id);
+    writeToStorage(updated);
+    setRecents(updated.slice(0, MAX_SHOWN));
+  };
+
   const clearRecents = () => {
     writeToStorage([]);
     setRecents([]);
   };
 
-  return { recents, addRecent, clearRecents };
+  return { recents, addRecent, removeRecent, clearRecents };
 }
