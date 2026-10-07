@@ -188,6 +188,82 @@ class DatasetSecurityServiceTest extends IntegrationTestBase {
         .isEqualTo("ALLOWLIST_LAST_ENTRY");
   }
 
+  /**
+   * 코드리뷰 CR4 — 항목 2개에서 두 요청이 동시에 서로 다른 항목을 지워도 목록이 비면 안 된다. 결정적으로 재현한다: 첫 요청(tx1)이 제거를 끝내고 커밋 전에 멈춘
+   * 사이 두 번째 요청(tx2)을 시작해, tx2 가 데이터셋 행 잠금에서 <b>대기</b>하는지 pg_stat_activity 로 확인한 뒤 tx1 을 커밋한다. 잠금이
+   * 없으면 tx2 는 대기 없이 개수 2 를 읽고 통과해 목록이 비므로(대기 감지 시간 초과 + 개수 0) 이 테스트가 실패한다.
+   */
+  @Test
+  void concurrentRemovalOfLastTwoGrants_keepsOneEntry() throws Exception {
+    var caller = userWithLevel("기밀");
+    long ds = dataset("기밀");
+    long other = fx.createUser("dss_other");
+    users.add(other);
+    fx.grantUser(ds, caller.userId());
+    fx.grantUser(ds, other);
+    List<Long> grantIds = service.listGrants(ds).stream().map(g -> g.id()).toList();
+    assertThat(grantIds).hasSize(2);
+
+    var removed = new java.util.concurrent.CountDownLatch(1);
+    var release = new java.util.concurrent.CountDownLatch(1);
+    var pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+    try {
+      var tx1 =
+          pool.submit(
+              () -> {
+                TenantContext.set(DEFAULT_TEST_TENANT_ID);
+                try {
+                  // 예외적으로 프로덕션 호출을 바깥 트랜잭션으로 감싼다 — 커밋 전 시점을 붙잡아야 경합을 결정적으로 만들 수 있다. 배선
+                  // (스스로 트랜잭션·테넌트를 세우는가)은 tx2 가 감싸지 않은 호출로 함께 검증한다.
+                  TenantRlsTestSupport.runInTenantTransaction(
+                      fixtureTransactionTemplate,
+                      DEFAULT_TEST_TENANT_ID,
+                      () -> {
+                        service.removeGrant(ds, grantIds.get(0), caller.userId());
+                        removed.countDown();
+                        try {
+                          // 커밋 전 멈춤 — tx2 가 이 사이에 개수를 읽게 한다.
+                          release.await(30, java.util.concurrent.TimeUnit.SECONDS);
+                        } catch (InterruptedException e) {
+                          Thread.currentThread().interrupt();
+                        }
+                      });
+                } finally {
+                  TenantContext.clear();
+                }
+                return null;
+              });
+      assertThat(removed.await(30, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+      var tx2 =
+          pool.submit(
+              () -> {
+                TenantContext.set(DEFAULT_TEST_TENANT_ID);
+                try {
+                  service.removeGrant(ds, grantIds.get(1), caller.userId());
+                  return (Throwable) null;
+                } catch (Throwable e) {
+                  return e;
+                } finally {
+                  TenantContext.clear();
+                }
+              });
+      // tx2 가 tx1 커밋 전까지 끝나지 않아야 한다(데이터셋 행 잠금 대기). 잠금이 없으면 tx2 는 대기 없이 바로 끝난다.
+      // 테스트 커넥션 풀이 2개라(tx1·tx2 가 모두 점유) pg_stat_activity 를 조회할 커넥션이 없어 시간으로 관측한다.
+      Thread.sleep(1_500);
+      boolean blocked = !tx2.isDone();
+      release.countDown();
+      tx1.get(30, java.util.concurrent.TimeUnit.SECONDS);
+      Throwable second = tx2.get(30, java.util.concurrent.TimeUnit.SECONDS);
+      assertThat(blocked).as("두 번째 제거는 첫 제거 커밋 전까지 데이터셋 행 잠금에서 대기해야 한다").isTrue();
+      assertThat(second).isInstanceOf(CodedApiException.class);
+      assertThat(codeOf(second)).isEqualTo("ALLOWLIST_LAST_ENTRY");
+      assertThat(service.listGrants(ds)).hasSize(1);
+    } finally {
+      release.countDown();
+      pool.shutdownNow();
+    }
+  }
+
   @Test
   void addGrant_nonMemberOrBothSubjects_isRejected() {
     var caller = userWithLevel("기밀");

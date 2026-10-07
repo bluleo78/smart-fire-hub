@@ -660,6 +660,126 @@ class PipelineAsyncRunnerTest {
         .createTempDataset(any(), eq(pipelineId), anyString(), eq(stepId), anyString(), eq(userId));
   }
 
+  /** 실행 주체가 볼 수 없는 출력에 대한 게이트 거부(실제 게이트가 던지는 것과 같은 코드). */
+  private static com.smartfirehub.global.exception.CodedApiException outputDenied() {
+    return new com.smartfirehub.global.exception.CodedApiException(
+        org.springframework.http.HttpStatus.FORBIDDEN, "DATASET_SQL_ACCESS_DENIED", "denied");
+  }
+
+  /**
+   * 코드리뷰 CR3 — 재사용 TEMP 의 스키마가 바뀌어 다시 만들 때, 실행 주체(B)가 그 TEMP 를 볼 수 없으면 <b>지우기 전에</b> 실패해야 한다. 예전에는
+   * 삭제가 먼저였고 등급 판정은 새로 만든 TEMP 만 봤으므로 B 가 이전 실행 주체(A)의 결과 TEMP 를 통째로 지웠다.
+   */
+  @Test
+  void executeStep_sqlSchemaChangedReusedTempHiddenFromRunAs_failsBeforeDeleting() {
+    Long pipelineId = 17L, userId = 2L, stepId = 207L, stepExecId = 307L, oldTemp = 779L;
+    PipelineStepResponse sqlStep =
+        stepResponse(
+            stepId, "hidden-temp", "SQL", "SELECT a FROM data.\"source\"", null, List.of());
+    stubProbeColumns("a");
+    when(tempDatasetService.findExistingTempDataset(stepId)).thenReturn(Optional.of(oldTemp));
+    when(tempDatasetService.hasSchemaChanged(eq(oldTemp), any())).thenReturn(true);
+    doThrow(outputDenied()).when(pipelineSecurityGate).requireOutputVisible(oldTemp, userId);
+
+    String status =
+        runner.executeStep(stepExecId, sqlStep, pipelineId, "TestPipeline", userId, false);
+
+    assertThat(status).isEqualTo("FAILED");
+    verify(tempDatasetService, never()).deleteTempDataset(any());
+    verify(tempDatasetService, never()).createTempDataset(any(), any(), any(), any(), any(), any());
+    verify(sqlExecutor, never()).execute(anyList(), anyString());
+  }
+
+  /** CR3 — AI_CLASSIFY 도 같다: 볼 수 없는 재사용 TEMP 는 스키마가 바뀌어도 지우지 않고 실패한다. */
+  @Test
+  void executeStep_aiClassifySchemaChangedReusedTempHiddenFromRunAs_failsBeforeDeleting() {
+    Long pipelineId = 18L, userId = 2L, stepId = 208L, stepExecId = 308L, oldTemp = 780L;
+    when(permissionChecker.hasPermission(userId, "pipeline:ai_execute")).thenReturn(true);
+    when(objectMapper.convertValue(any(), eq(AiClassifyConfig.class)))
+        .thenReturn(
+            new AiClassifyConfig(
+                "Classify",
+                List.of(new AiClassifyConfig.OutputColumn("label", "TEXT")),
+                List.of("text"),
+                null,
+                null));
+    when(tempDatasetService.findExistingTempDataset(stepId)).thenReturn(Optional.of(oldTemp));
+    when(tempDatasetService.hasSchemaChanged(eq(oldTemp), any())).thenReturn(true);
+    doThrow(outputDenied()).when(pipelineSecurityGate).requireOutputVisible(oldTemp, userId);
+
+    String status =
+        runner.executeStep(
+            stepExecId,
+            aiStepNoOutput(stepId, "ai-hidden-temp", "REPLACE"),
+            pipelineId,
+            "TestPipeline",
+            userId,
+            false);
+
+    assertThat(status).isEqualTo("FAILED");
+    verify(tempDatasetService, never()).deleteTempDataset(any());
+    verify(tempDatasetService, never()).createTempDataset(any(), any(), any(), any(), any(), any());
+    verify(aiClassifyExecutor, never()).execute(any(), any(), any());
+  }
+
+  /**
+   * 코드리뷰 CR2 — PYTHON(실행기 끈 REPLACE)은 스크립트 실행 전에 지정 출력을 truncate 한다. 실행 주체가 그 출력을 볼 수 없으면 비우기·실행 전에
+   * 실패해야 한다.
+   */
+  @Test
+  void executeStep_pythonHiddenExplicitOutput_failsBeforeTruncateOrRun() {
+    Long pipelineId = 19L, userId = 2L, stepId = 209L, stepExecId = 309L, out = 781L;
+    PipelineStepResponse py =
+        stepResponse(stepId, "py-hidden-out", "PYTHON", "print('x')", out, List.of());
+    when(permissionChecker.hasPermission(userId, "pipeline:python_execute")).thenReturn(true);
+    when(datasetRepository.findTableNameById(out)).thenReturn(Optional.of("hidden_out"));
+    doThrow(outputDenied())
+        .when(pipelineSecurityGate)
+        .requireExplicitOutputVisible(out, stepId, userId);
+
+    String status = runner.executeStep(stepExecId, py, pipelineId, "TestPipeline", userId, false);
+
+    assertThat(status).isEqualTo("FAILED");
+    verify(dataTableRowService, never()).truncateTable(anyString());
+    verify(outputTableSessionLock, never()).callLocked(anyString(), any());
+    verify(pythonExecutor, never()).execute(anyString());
+  }
+
+  /** CR2 — API_CALL(실행기 켠 REPLACE)도 맞바꿈용 임시 테이블 생성·호출 전에 실패한다. */
+  @Test
+  void executeStep_apiCallHiddenExplicitOutput_failsBeforeReplaceOrCall() {
+    Long pipelineId = 20L, userId = 2L, stepId = 210L, stepExecId = 310L, out = 782L;
+    PipelineStepResponse api =
+        new PipelineStepResponse(
+            stepId,
+            "api-hidden-out",
+            null,
+            "API_CALL",
+            null,
+            out,
+            null,
+            List.of(),
+            List.of(),
+            0,
+            "REPLACE",
+            Map.of(),
+            null,
+            null,
+            null);
+    when(objectMapper.convertValue(any(), eq(ApiCallConfig.class))).thenReturn(minimalApiConfig());
+    when(datasetRepository.findTableNameById(out)).thenReturn(Optional.of("hidden_api_out"));
+    doThrow(outputDenied())
+        .when(pipelineSecurityGate)
+        .requireExplicitOutputVisible(out, stepId, userId);
+
+    String status = runner.executeStep(stepExecId, api, pipelineId, "TestPipeline", userId, true);
+
+    assertThat(status).isEqualTo("FAILED");
+    verify(dataTableService, never()).createTempTable(anyString());
+    verify(executorClient, never()).executeApiCall(any());
+    verify(apiCallExecutor, never()).execute(any(), any(), any(), any(), any(), any());
+  }
+
   @Test
   void executeStep_insertSqlWithOutputDataset_executesAsIs() {
     // given: INSERT SQL — SELECT 래핑 없이 그대로 실행

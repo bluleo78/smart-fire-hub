@@ -71,6 +71,40 @@ class RoleClearanceServiceTest extends SecurityLevelServiceTest {
         .isEqualTo("CLEARANCE_ABOVE_OWN");
   }
 
+  private long currentLevelOf(long roleId) {
+    return inTenantFixture(
+        tenantId,
+        () ->
+            dsl.select(ROLE.MAX_SECURITY_LEVEL_ID)
+                .from(ROLE)
+                .where(ROLE.ID.eq(roleId))
+                .fetchSingle(ROLE.MAX_SECURITY_LEVEL_ID));
+  }
+
+  /** CR7 — 현재 자격이 호출자보다 높은 역할은 낮추는 변경도 거부한다(역할은 그대로). */
+  @Test
+  void changingRoleWhoseCurrentClearanceIsAboveOwn_isForbidden() {
+    long r = role("기밀");
+    // actor 는 USER(내부) — 기밀 역할을 공개로 끌어내리려 한다(결과 등급은 본인 이하지만 현재 등급이 본인 초과).
+    assertThatThrownBy(() -> asTenant(() -> clearanceService.set(r, levelId("공개"), caller())))
+        .extracting(e -> ((CodedApiException) e).code())
+        .isEqualTo("CLEARANCE_ABOVE_OWN");
+    assertThat(currentLevelOf(r)).isEqualTo(levelId("기밀"));
+    assertThat(auditCount("ROLE_CLEARANCE_CHANGE")).isZero();
+  }
+
+  /** 양성 대조 — 본인과 같은 등급의 역할은 낮출 수 있고, 최상위 자격(관리자)은 상위 역할도 바꿀 수 있다. */
+  @Test
+  void changingRoleAtOwnClearance_andTopCallerChangingHigherRole_areAllowed() {
+    long own = role("내부");
+    asTenant(() -> clearanceService.set(own, levelId("공개"), caller()));
+    assertThat(currentLevelOf(own)).isEqualTo(levelId("공개"));
+    long high = role("기밀");
+    Clearance top = caller().withRank(4);
+    asTenant(() -> clearanceService.set(high, levelId("민감"), top));
+    assertThat(currentLevelOf(high)).isEqualTo(levelId("민감"));
+  }
+
   @Test
   void lastTopLevelRole_cannotBeLowered() {
     // 시스템 ADMIN 이 최상위 고정이라 정상 상태에선 도달 불가 — 손상 상태(ADMIN 이 최상위 아님)를 만들어 방어 검사를 확인한다.

@@ -246,22 +246,31 @@ public class DatasetSecurityService {
     return listGrants(datasetId).stream().filter(g -> g.id() == id).findFirst().orElseThrow();
   }
 
-  /** 마지막 항목은 허용 목록 필요 등급에서 제거 불가(스펙 §2.4) — 아무도 못 보는 고아 방지. */
+  /**
+   * 마지막 항목은 허용 목록 필요 등급에서 제거 불가(스펙 §2.4) — 아무도 못 보는 고아 방지.
+   *
+   * <p>코드리뷰 CR4 — "개수 확인 → 삭제"는 READ COMMITTED 에서 경합한다: 항목이 2개일 때 두 요청이 동시에 서로 다른 항목을 지우면 둘 다 상대의
+   * (미커밋) 삭제를 못 보고 개수 2 를 읽어 통과해 목록이 비었다. 그래서 먼저 데이터셋 행을 {@code FOR UPDATE} 로 잠가 같은 데이터셋의 제거를 직렬화한다
+   * — 뒤 요청은 앞 요청 커밋 후에 개수를 읽어 거부된다. 등급 변경({@link #changeLevel})도 같은 행을 UPDATE 하므로 이 잠금과 직렬화된다(등급을
+   * 허용 목록 등급으로 올리는 중의 제거도 새 등급으로 판단).
+   */
   @Transactional
   public void removeGrant(long datasetId, long grantId, long actor) {
+    Long levelId =
+        dsl.select(DATASET.SECURITY_LEVEL_ID)
+            .from(DATASET)
+            .where(DATASET.ID.eq(datasetId))
+            .forUpdate()
+            .fetchOptional(DATASET.SECURITY_LEVEL_ID)
+            // 데이터셋이 없으면 그 항목도 없다 — 잠금을 앞으로 옮기기 전과 같은 404 로 답한다.
+            .orElseThrow(this::grantNotFound);
     var grant =
         grantRepository
             .findById(grantId)
             .filter(g -> g.datasetId() == datasetId)
-            .orElseThrow(
-                () ->
-                    new CodedApiException(
-                        HttpStatus.NOT_FOUND, "GRANT_NOT_FOUND", "허용 항목을 찾을 수 없습니다."));
+            .orElseThrow(this::grantNotFound);
     boolean allowlistLevel =
-        levelRepository
-            .findById(currentLevelId(datasetId))
-            .map(LevelPolicy::allowlistRequired)
-            .orElse(false);
+        levelRepository.findById(levelId).map(LevelPolicy::allowlistRequired).orElse(false);
     if (allowlistLevel && grantRepository.countByDataset(datasetId) <= 1) {
       throw new CodedApiException(
           HttpStatus.CONFLICT, "ALLOWLIST_LAST_ENTRY", "마지막 허용 목록 항목은 제거할 수 없습니다.");
@@ -306,6 +315,10 @@ public class DatasetSecurityService {
             .fetch(
                 r -> new GrantCandidatesResponse.RoleCandidate(r.get(ROLE.ID), r.get(ROLE.NAME)));
     return new GrantCandidatesResponse(users, roles);
+  }
+
+  private CodedApiException grantNotFound() {
+    return new CodedApiException(HttpStatus.NOT_FOUND, "GRANT_NOT_FOUND", "허용 항목을 찾을 수 없습니다.");
   }
 
   private Long currentLevelId(long datasetId) {

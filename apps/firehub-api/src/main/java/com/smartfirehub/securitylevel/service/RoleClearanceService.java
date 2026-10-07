@@ -66,7 +66,7 @@ public class RoleClearanceService {
         dsl.fetchCount(USER_ROLE, USER_ROLE.ROLE_ID.eq(roleId)));
   }
 
-  /** 규칙: 시스템 ADMIN 고정 / 본인 자격 초과 금지(판단 사항 12) / 최상위 열람 역할 ≥ 1(스펙 §2.3 불변식). */
+  /** 규칙: 시스템 ADMIN 고정 / 본인 자격 초과 금지(판단 사항 12 — 현재 자격·새 자격 모두, CR7) / 최상위 열람 역할 ≥ 1(스펙 §2.3 불변식). */
   @Transactional
   public void set(long roleId, long levelId, Clearance caller) {
     var role = requireRole(roleId);
@@ -77,10 +77,22 @@ public class RoleClearanceService {
           "시스템 ADMIN 역할의 열람 등급은 최상위로 고정됩니다.");
     }
     LevelPolicy to = levelRepository.findById(levelId).orElseThrow(this::levelNotFound);
+    // 현재 자격이 호출자 자격보다 높은 역할은 건드릴 수 없다(코드리뷰 CR7 — Task 11 판단 번복). 막지 않으면 낮은 자격의 role:write
+    // 보유자가 상위 역할을 끌어내려 그 역할 보유자들(자기보다 높은 열람자)의 가시성을 마음대로 줄일 수 있다. max_security_level_id 는
+    // NOT NULL(V133)이지만 손상 상태면 fail-closed 로 같은 거부를 한다.
+    int currentRank =
+        role.getMaxSecurityLevelId() == null
+            ? Integer.MAX_VALUE
+            : levelRepository
+                .findById(role.getMaxSecurityLevelId())
+                .map(LevelPolicy::rank)
+                .orElse(Integer.MAX_VALUE);
     // role:write 보유자가 자기 역할을 최상위로 올려 우회하지 못하게 한다.
-    if (to.rank() > caller.rank()) {
+    if (currentRank > caller.rank() || to.rank() > caller.rank()) {
       throw new CodedApiException(
-          HttpStatus.FORBIDDEN, "CLEARANCE_ABOVE_OWN", "본인 열람 등급보다 높은 등급을 역할에 지정할 수 없습니다.");
+          HttpStatus.FORBIDDEN,
+          "CLEARANCE_ABOVE_OWN",
+          "본인 열람 등급보다 높은 등급의 역할은 변경할 수 없고, 그보다 높은 등급을 역할에 지정할 수도 없습니다.");
     }
     if (topLevelRoleCountAfter(roleId, levelId, rankById()) == 0) {
       throw new CodedApiException(

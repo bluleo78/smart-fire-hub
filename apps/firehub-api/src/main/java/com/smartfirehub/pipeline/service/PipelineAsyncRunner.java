@@ -442,6 +442,10 @@ public class PipelineAsyncRunner {
             Long dsId = existingDatasetId.get();
             if (tempDatasetService.hasSchemaChanged(dsId, selectColumns)) {
               log.info("Schema changed for step {}, recreating temp dataset", step.name());
+              // 코드리뷰 CR3: 재사용 TEMP 를 지우기 <b>전에</b> 실행 주체가 볼 수 있는지 본다. 아래 enforceOutputLevel 은 새
+              // TEMP
+              // 만 보므로, 여기서 막지 않으면 볼 수 없는 실행 주체(B)가 이전 실행 주체(A)의 결과 TEMP 를 통째로 지운다.
+              pipelineSecurityGate.requireOutputVisible(dsId, userId);
               tempDatasetService.deleteTempDataset(dsId);
               tempDatasetFresh = true;
               outputDatasetId =
@@ -655,6 +659,11 @@ public class PipelineAsyncRunner {
         }
         // escalation 코드 차단 — 저장 시 검증을 우회해 저장된 스텝(직접 DB 삽입 등)에 대한 실행 시 2차 방어 (#270)
         pythonScriptValidator.validate(step.scriptContent());
+        // 보안 등급(코드리뷰 CR2): 사용자 지정 출력은 실행 주체가 볼 수 있어야 쓴다 — 출력 비우기(실행기 끈 REPLACE truncate·실행기 켠
+        // REPLACE 맞바꿈)·적재보다 먼저다. 입력 읽기는 여전히 판정하지 않는다(알려진 우회, 배포 문서의 알려진 한계).
+        if (outputDatasetId != null) {
+          pipelineSecurityGate.requireExplicitOutputVisible(outputDatasetId, step.id(), userId);
+        }
         // outputDatasetId가 없고 pythonConfig에 outputColumns가 있으면 임시 데이터셋 자동 생성
         if (outputDatasetId == null && step.pythonConfig() != null) {
           com.smartfirehub.pipeline.dto.PythonStepConfig pythonStepConfig =
@@ -774,6 +783,12 @@ public class PipelineAsyncRunner {
           decryptedAuth = apiConnectionService.getDecryptedAuthConfig(step.apiConnectionId());
         } else if (apiCallConfig.inlineAuth() != null) {
           decryptedAuth = apiCallConfig.inlineAuth();
+        }
+
+        // 보안 등급(코드리뷰 CR2): 사용자 지정 출력은 실행 주체가 볼 수 있어야 쓴다 — REPLACE 맞바꿈·적재보다 먼저다. 외부 API 데이터라 판정할
+        // 입력이 없으므로 등급 전파·하향 판정은 없다.
+        if (outputDatasetId != null) {
+          pipelineSecurityGate.requireExplicitOutputVisible(outputDatasetId, step.id(), userId);
         }
 
         // outputDatasetId가 없으면 임시 데이터셋 자동 생성
@@ -932,6 +947,8 @@ public class PipelineAsyncRunner {
             if (tempDatasetService.hasSchemaChanged(dsId, aiColumns)) {
               log.info(
                   "Schema changed for AI_CLASSIFY step {}, recreating temp dataset", step.name());
+              // 코드리뷰 CR3: SQL 스텝과 같다 — 재사용 TEMP 삭제 전에 실행 주체가 볼 수 있는지 본다(새 TEMP 는 아래 등급 처리가 본다).
+              pipelineSecurityGate.requireOutputVisible(dsId, userId);
               tempDatasetService.deleteTempDataset(dsId);
               aiTempFresh = true;
               outputDatasetId =

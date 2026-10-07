@@ -181,6 +181,50 @@ class SqlPathsAccessTest extends IntegrationTestBase {
     assertThat(dsl.fetchValue("SELECT count(*) FROM " + schema + "." + pubTable)).isEqualTo(2L);
   }
 
+  /**
+   * 코드리뷰 CR1 — 쓰기 CTE(WITH x AS (INSERT/DELETE ... RETURNING ...))는 쓰기 대상 수집이 최상위 문장만 보므로, 실행까지 가면
+   * 하향 쓰기·숨김 테이블 삭제가 된다. 지금은 파서(JSqlParser 5.0)가 이 구문을 거부해 판정 전에 막힌다 — 이 테스트는 그 fail-closed 가 HTTP
+   * 경로(데이터셋 /query 400, 애널리틱스 200+error)에서 부작용 없이 유지되는지 실제 테이블 내용으로 고정한다.
+   */
+  @Test
+  void writableCte_isRejectedWithoutSideEffects_onAdhocPaths() throws Exception {
+    String high = tokenAt("민감");
+    String low = tokenAt("공개");
+    String downgrade =
+        "WITH x AS (INSERT INTO "
+            + pubTable
+            + " (v) SELECT v FROM "
+            + secTable
+            + " RETURNING 1)"
+            + " SELECT 1";
+    String shadowDelete =
+        "WITH "
+            + secTable
+            + " AS (SELECT 1), d AS (DELETE FROM "
+            + secTable
+            + " RETURNING 1)"
+            + " SELECT * FROM d";
+    String query = "/api/v1/datasets/" + pubId + "/query";
+    assertThat(postJson(query, high, sqlBody(downgrade)).getResponse().getStatus()).isEqualTo(400);
+    assertThat(postJson(query, low, sqlBody(shadowDelete)).getResponse().getStatus())
+        .isEqualTo(400);
+    String analytics = "/api/v1/analytics/queries/execute";
+    for (var c : List.of(List.of(high, downgrade), List.of(low, shadowDelete))) {
+      MvcResult r =
+          postJson(
+              analytics,
+              c.get(0),
+              "{\"sql\":\"" + c.get(1) + "\",\"maxRows\":10,\"readOnly\":false}");
+      assertThat(r.getResponse().getStatus()).isEqualTo(200);
+      assertThat(json(r).get("error").isNull()).isFalse();
+    }
+    // 부작용 없음: 공개 테이블에 민감 값이 복사되지 않았고, 민감 테이블 행이 지워지지 않았다.
+    assertThat(
+            dsl.fetchValue("SELECT count(*) FROM " + schema + "." + pubTable + " WHERE v = 4242"))
+        .isEqualTo(0L);
+    assertThat(dsl.fetchValue("SELECT count(*) FROM " + schema + "." + secTable)).isEqualTo(1L);
+  }
+
   @Test
   void adhocAnalytics_isJudgedForExecutor() throws Exception {
     String url = "/api/v1/analytics/queries/execute";

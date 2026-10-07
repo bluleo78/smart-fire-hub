@@ -501,6 +501,119 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
     assertThat(rowCount(pubTable)).isEqualTo(1);
   }
 
+  /** 지정 등급 자격 + PYTHON 실행 권한을 가진 사용자(러너가 실행 주체의 pipeline:python_execute 를 본다). */
+  private long pythonUserAt(String level) {
+    long uid = fx.createUser("pa_py");
+    users.add(uid);
+    fx.removeUserRole(uid);
+    long rid =
+        fx.createRole(
+            "pa_py_r_" + System.nanoTime(),
+            fx.levelId(level),
+            "pipeline:read",
+            "pipeline:write",
+            "pipeline:execute",
+            "pipeline:python_execute");
+    roles.add(rid);
+    fx.assignRole(uid, rid);
+    return uid;
+  }
+
+  private static PipelineStepRequest pythonStep(Long outputDatasetId) {
+    return new PipelineStepRequest(
+        "step", null, "PYTHON", "print('x')", outputDatasetId, null, null, "REPLACE");
+  }
+
+  private static PipelineStepRequest apiStep(Long outputDatasetId) {
+    return new PipelineStepRequest(
+        "step",
+        null,
+        "API_CALL",
+        null,
+        outputDatasetId,
+        null,
+        null,
+        "REPLACE",
+        Map.of("customUrl", "http://127.0.0.1:9/never", "method", "GET", "dataPath", "$"),
+        null,
+        null,
+        null);
+  }
+
+  /**
+   * 코드리뷰 CR2 — API_CALL·PYTHON 스텝은 SQL 관문 없이 지정 출력을 비우고 덮어쓴다. 편집자가 볼 수 없는 데이터셋을 출력으로 지정한 스텝은 저장 시점에
+   * SQL 스텝과 같은 403 으로 거부된다. 대조군: 볼 수 있는 편집자는 같은 스텝을 저장한다(거부가 다른 검증 때문이 아님).
+   */
+  @Test
+  void save_apiCallOrPythonStepWithHiddenExplicitOutput_rejectedForEditor() {
+    long secId = tableId(secTable);
+    long low = pythonUserAt("공개");
+    for (PipelineStepRequest step : List.of(pythonStep(secId), apiStep(secId))) {
+      assertThatThrownBy(() -> pipeline(low, List.of(step)))
+          .as(step.scriptType())
+          .isInstanceOf(CodedApiException.class)
+          .extracting(e -> ((CodedApiException) e).code())
+          .isEqualTo("DATASET_SQL_ACCESS_DENIED");
+      assertThat(pipeline(pythonUserAt("민감"), List.of(step))).isPositive();
+    }
+  }
+
+  /**
+   * 저장 판정은 러너 TEMP 출력을 건너뛴다 — 편집 화면은 GET 의 출력 폴백(스텝 TEMP id)을 그대로 되돌려 보내므로, 등급이 오른 TEMP 를 판정하면 다른
+   * 편집자의 재저장이 막힌다. TEMP 쓰기는 실행 시점에 실행 주체 기준으로 판정된다.
+   */
+  @Test
+  void save_pythonStepEchoingRaisedTempOutput_isNotJudgedAtSaveTime() throws Exception {
+    long sens = userAt("민감");
+    long p = pipeline(sens, "SELECT v FROM " + qualified(secTable), null);
+    assertThat(waitForEnd(executionService.executePipeline(p, sens))).isEqualTo("COMPLETED");
+    long temp = tempOf(p, "step");
+    assertThat(levelOf(temp)).isEqualTo(fx.levelId("민감"));
+    long echo = pipeline(pythonUserAt("공개"), List.of(pythonStep(temp)));
+    assertThat(echo).isPositive();
+    // 정리 순서: 이 파이프라인 스텝이 TEMP 를 출력으로 참조하므로 먼저 지워야 tearDown 이 TEMP 를 지울 수 있다.
+    pipelineService.deletePipeline(echo);
+    pipelines.remove(Long.valueOf(echo));
+  }
+
+  /**
+   * 코드리뷰 CR2 — 실행 시점: 실행 주체가 볼 수 없는 지정 출력에 PYTHON 스텝이 쓰지 못한다. 실행기 끈 REPLACE 는 스크립트 실행 전에 출력을
+   * truncate 하므로, 관문이 없으면 스크립트 성패와 무관하게 숨김 데이터셋이 비워진다 — 행 수로 확인한다. 거부 메시지는 구분 불가 문구.
+   */
+  @Test
+  void run_pythonStepWithHiddenExplicitOutput_failsAndKeepsRows() throws Exception {
+    String outTable = m + "_pyout";
+    long hiddenOut = table(outTable, "민감");
+    insertRow(outTable, "keep");
+    long p = pipeline(pythonUserAt("민감"), List.of(pythonStep(hiddenOut)));
+    long exec = executionService.executePipeline(p, pythonUserAt("공개"));
+    assertThat(waitForEnd(exec)).isEqualTo("FAILED");
+    assertThat(stepError(exec)).isEqualTo(DatasetAccessGuard.SQL_ACCESS_DENIED_MESSAGE);
+    assertThat(rowCount(outTable)).isEqualTo(1);
+  }
+
+  /** API_CALL 도 같다 — 거부는 API 호출·REPLACE 맞바꿈 전에 구분 불가 메시지로 난다(호출 실패 메시지가 아니다). */
+  @Test
+  void run_apiCallStepWithHiddenExplicitOutput_isDeniedBeforeCall() throws Exception {
+    String outTable = m + "_apiout";
+    long hiddenOut = table(outTable, "민감");
+    insertRow(outTable, "keep");
+    long p = pipeline(userAt("민감"), List.of(apiStep(hiddenOut)));
+    long exec = executionService.executePipeline(p, userAt("공개"));
+    assertThat(waitForEnd(exec)).isEqualTo("FAILED");
+    assertThat(stepError(exec)).isEqualTo(DatasetAccessGuard.SQL_ACCESS_DENIED_MESSAGE);
+    assertThat(rowCount(outTable)).isEqualTo(1);
+  }
+
+  private long tableId(String t) {
+    return inTenantFixture(
+        () ->
+            dsl.select(DATASET.ID)
+                .from(DATASET)
+                .where(DATASET.TABLE_NAME.eq(t))
+                .fetchSingle(DATASET.ID));
+  }
+
   @Test
   void run_trigger_judgesTriggerCreator() throws Exception {
     long editor = userAt("민감");

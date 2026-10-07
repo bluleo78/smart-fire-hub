@@ -109,6 +109,13 @@ public class PipelineService {
         }
       }
 
+      // 보안 등급(코드리뷰 CR2): API_CALL·PYTHON 은 SQL 관문 없이 지정 출력을 비우고(REPLACE) 덮어쓴다 — 편집자가 볼 수 없는 데이터셋을
+      // 출력으로 지정한 스텝은 저장할 수 없다. 러너 TEMP(편집 화면이 되돌려 보내는 출력 폴백)는 실행 시점에 판정된다.
+      if ("API_CALL".equals(stepRequest.scriptType())
+          || "PYTHON".equals(stepRequest.scriptType())) {
+        pipelineSecurityGate.checkStepOutputForSave(editorUserId, stepRequest.outputDatasetId());
+      }
+
       // PYTHON 스텝 escalation 코드(shell/동적실행 등) 차단 — pythonConfig 유무와 무관하게 항상 검증 (#270)
       if ("PYTHON".equals(stepRequest.scriptType())) {
         pythonScriptValidator.validate(stepRequest.scriptContent());

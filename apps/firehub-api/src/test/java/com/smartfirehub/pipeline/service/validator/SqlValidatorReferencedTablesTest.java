@@ -129,7 +129,17 @@ class SqlValidatorReferencedTablesTest {
         Set.of(
             "WITH d AS (INSERT INTO pub SELECT a FROM high RETURNING 1) SELECT 1",
             "WITH pub AS (SELECT 1), d AS (DELETE FROM pub RETURNING 1) SELECT 1",
-            "WITH d AS (UPDATE pub SET a = 1 RETURNING 1) SELECT * FROM d")) {
+            "WITH d AS (UPDATE pub SET a = 1 RETURNING 1) SELECT * FROM d",
+            // 코드리뷰 CR1 의 두 재현 SQL — 쓰기 하향(secret → low)과 CTE 이름 그림자(hidden)
+            "WITH x AS (INSERT INTO low SELECT * FROM secret RETURNING 1) SELECT 1",
+            "WITH hidden AS (SELECT 1), d AS (DELETE FROM hidden RETURNING 1) SELECT * FROM d",
+            // 중첩 형태 — CTE 안의 CTE, DML 본문 안의 쓰기 CTE, 파생 테이블 안의 쓰기 CTE, MERGE 쓰기 CTE
+            "WITH a AS (WITH b AS (DELETE FROM t RETURNING 1) SELECT * FROM b) SELECT * FROM a",
+            "INSERT INTO z WITH d AS (DELETE FROM t RETURNING *) SELECT * FROM d",
+            "SELECT * FROM (WITH d AS (DELETE FROM t RETURNING 1) SELECT * FROM d) s",
+            "WITH d AS (DELETE FROM t RETURNING 1) DELETE FROM u",
+            "WITH d AS (MERGE INTO t USING s ON t.id = s.id WHEN MATCHED THEN DELETE RETURNING 1)"
+                + " SELECT * FROM d")) {
       assertThatThrownBy(() -> v.referencedTables(sql))
           .as(sql)
           .isInstanceOf(UnsafeSqlException.class);

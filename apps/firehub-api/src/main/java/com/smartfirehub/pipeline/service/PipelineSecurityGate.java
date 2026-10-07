@@ -14,6 +14,7 @@ import com.smartfirehub.securitylevel.access.SqlAccessResult;
 import com.smartfirehub.securitylevel.repository.SecurityLevelRepository;
 import com.smartfirehub.securitylevel.service.DatasetSecurityService;
 import java.util.Collection;
+import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
 import org.springframework.http.HttpStatus;
@@ -164,6 +165,33 @@ public class PipelineSecurityGate {
           HttpStatus.FORBIDDEN,
           DatasetAccessGuard.SQL_ACCESS_DENIED_CODE,
           DatasetAccessGuard.SQL_ACCESS_DENIED_MESSAGE);
+    }
+  }
+
+  /**
+   * API_CALL·PYTHON 스텝 저장 시점 — 편집자가 사용자 지정 출력 데이터셋을 볼 수 있어야 한다(코드리뷰 CR2). 두 스텝은 SQL 관문을 거치지 않고 출력을
+   * 비우거나(REPLACE) 덮어쓰므로, 판정이 없으면 볼 수 없는 데이터셋을 출력으로 지정해 내용을 지울 수 있다. 러너 TEMP({@code
+   * origin_type='TEMP'})는 건너뛴다 — 편집 화면이 GET 의 출력 폴백(스텝 TEMP id)을 그대로 되돌려 보내므로, 이를 판정하면 TEMP 등급이 오른
+   * 파이프라인을 다른 편집자가 재저장하지 못한다. 그 TEMP 쓰기는 실행 시점에 실행 주체 기준으로 판정된다. 거부는 SQL 스텝 저장과 같은 403 {@code
+   * DATASET_SQL_ACCESS_DENIED}(구분 불가 메시지).
+   */
+  public void checkStepOutputForSave(Long editorUserId, Long outputDatasetId) {
+    if (outputDatasetId == null
+        || dsl.fetchExists(
+            DATASET, DATASET.ID.eq(outputDatasetId).and(DATASET.ORIGIN_TYPE.eq("TEMP")))) {
+      return;
+    }
+    guard.requireDatasetReads(clearance(editorUserId), List.of(outputDatasetId));
+  }
+
+  /**
+   * API_CALL·PYTHON 스텝 실행 시점 — 사용자 지정 출력(이 스텝의 러너 소유 TEMP 가 아닌 출력)은 실행 주체가 볼 수 있어야 한다(코드리뷰 CR2).
+   * 반드시 출력 비우기(truncate·REPLACE 맞바꿈용 임시 테이블 생성)·적재 전에 부른다. 두 스텝은 판정할 입력이 없거나(API_CALL 은 외부 데이터) 입력
+   * 판정이 알려진 우회(PYTHON)라 등급 전파·하향 판정은 하지 않는다 — VIEW 만 본다.
+   */
+  public void requireExplicitOutputVisible(long outputDatasetId, long stepId, Long runAsUserId) {
+    if (!isStepTemp(outputDatasetId, stepId)) {
+      requireOutputVisible(outputDatasetId, runAsUserId);
     }
   }
 
