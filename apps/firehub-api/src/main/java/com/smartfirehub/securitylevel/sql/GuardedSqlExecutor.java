@@ -89,6 +89,7 @@ public class GuardedSqlExecutor {
    * 403 이 아니라 위젯 denied 로 바꿔야 한다. 그 밖의 코드는 그대로 다시 던지게 false.
    */
   public static boolean isSqlAccessDenial(CodedApiException e) {
-    return "DATASET_SQL_ACCESS_DENIED".equals(e.code()) || "SQL_WRITE_DOWNGRADE".equals(e.code());
+    return DatasetAccessGuard.SQL_ACCESS_DENIED_CODE.equals(e.code())
+        || DatasetAccessGuard.SQL_WRITE_DOWNGRADE_CODE.equals(e.code());
   }
 }

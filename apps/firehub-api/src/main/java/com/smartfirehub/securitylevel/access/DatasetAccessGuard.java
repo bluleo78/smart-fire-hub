@@ -51,8 +51,11 @@ public class DatasetAccessGuard {
   public static final String SQL_ACCESS_DENIED_MESSAGE =
       "쿼리가 참조하는 테이블 중 열람할 수 없거나 확인할 수 없는 테이블이 있습니다.";
 
-  /** VIEW 거부 코드 — 숨김·매핑 없음·없는 테이블·다른 스키마 모두 이 코드 하나다. */
-  private static final String SQL_ACCESS_DENIED_CODE = "DATASET_SQL_ACCESS_DENIED";
+  /** VIEW 거부 코드 — 숨김·매핑 없음·없는 테이블·다른 스키마 모두 이 코드 하나다. 차트·대시보드가 거부 예외를 denied 로 바꿀 때도 쓴다. */
+  public static final String SQL_ACCESS_DENIED_CODE = "DATASET_SQL_ACCESS_DENIED";
+
+  /** 쓰기 하향 거부 코드(스펙 §4.1) — 읽기 집합보다 낮은 등급 데이터셋에 쓰는 SQL. */
+  public static final String SQL_WRITE_DOWNGRADE_CODE = "SQL_WRITE_DOWNGRADE";
 
   /** 파이프라인 저장 검증이 {@code {{#N}}} 을 치환한 더미 테이블 이름(판단 사항 4). */
   private static final Pattern STEP_REF_PLACEHOLDER = Pattern.compile("step_ref_\\d+");
@@ -236,7 +239,7 @@ public class DatasetAccessGuard {
           && effective != null
           && f.level().rank() < effective.rank()) {
         return SqlAccessResult.denied(
-            "SQL_WRITE_DOWNGRADE", "'" + effective.name() + "' 데이터를 더 낮은 등급 데이터셋에 쓸 수 없습니다");
+            SQL_WRITE_DOWNGRADE_CODE, "'" + effective.name() + "' 데이터를 더 낮은 등급 데이터셋에 쓸 수 없습니다");
       }
     }
     return new SqlAccessResult(true, null, null, effective, readIds, writeIds, exportAllowed);

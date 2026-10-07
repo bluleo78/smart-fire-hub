@@ -44,8 +44,14 @@ public class AnalyticsDashboardService {
   private final SavedQueryRepository savedQueryRepository;
   private final ClearanceResolver clearanceResolver;
 
-  // Caffeine cache: TTL 60s, max 200 entries, keyed by saved_query_id
-  private final Cache<Long, AnalyticsQueryResponse> queryResultCache =
+  /**
+   * 대시보드 결과 캐시 키 — 저장 쿼리 id 와 <b>그 요청에서 판정한 SQL 원문</b>. id 만 키로 쓰면 소유자가 SQL 을 바꾼 뒤(TTL 60초 안) 새 SQL
+   * 로 판정을 통과한 조회자가 옛 SQL(판정받지 않은 테이블)의 결과를 캐시 히트로 받는다. 원문이 같으면 정규화본(판정·실행 문자열)도 같다 — 정규화는 결정적이다.
+   */
+  private record QueryCacheKey(Long savedQueryId, String sqlText) {}
+
+  // Caffeine cache: TTL 60s, max 200 entries, keyed by (saved_query_id, 판정한 SQL 원문)
+  private final Cache<QueryCacheKey, AnalyticsQueryResponse> queryResultCache =
       Caffeine.newBuilder().expireAfterWrite(60, TimeUnit.SECONDS).maximumSize(200).build();
 
   // RLS 가 걸린 dashboard 를 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
@@ -154,11 +160,12 @@ public class AnalyticsDashboardService {
 
     // Execute each unique savedQueryId — 보안 등급(S2): 조회자 판정이 먼저, 캐시는 그 뒤(스펙 §4.2 4행).
     //
-    // 캐시 키를 saved_query_id 로 두어도 안전한 이유(조회자 무관 공유):
-    //  (1) 캐시를 읽기 전에 매 요청 이 조회자로 판정한다 — 캐시 히트가 판정을 건너뛰지 못한다.
-    //  (2) 판정 단위(VIEW)는 데이터셋 전체 허용/거부뿐이다(행·열 필터 없음) — VIEW 를 통과한 조회자는 누가 실행해도 같은 행을 본다.
+    // 캐시를 조회자 간에 공유해도 안전한 이유:
+    //  (1) 캐시를 읽기 전에 매 요청 이 조회자로 SQL 을 판정하고, 캐시 키에 그 판정한 SQL 원문을 넣는다 — 히트한 결과는 반드시
+    //      이 조회자가 방금 판정을 통과한 바로 그 SQL 의 결과다(SQL 이 바뀌면 다른 키라 미스).
+    //  (2) 판정 단위(VIEW)는 데이터셋 전체 허용/거부뿐이다(행·열 필터 없음) — 같은 SQL 은 VIEW 를 통과한 누가 실행해도 같은 행을 본다.
     //  (3) saved_query id 는 전역 시퀀스라 테넌트 간 키 충돌이 없다.
-    // 행·열 단위 필터가 생기면 이 전제가 깨지므로 키에 조회자 가시성을 넣어야 한다.
+    // 행·열 단위 필터가 생기면 (2) 가 깨지므로 키에 조회자 가시성을 넣어야 한다.
     Clearance viewer = clearanceResolver.resolve(userId);
     Map<Long, AnalyticsQueryResponse> resultByQuery = new HashMap<>();
     java.util.Set<Long> deniedQueries = new java.util.HashSet<>();
@@ -178,7 +185,8 @@ public class AnalyticsDashboardService {
         resultByQuery.put(
             savedQueryId,
             queryResultCache.get(
-                savedQueryId, k -> chartService.executeQueryForCache(viewer, sqlText)));
+                new QueryCacheKey(savedQueryId, sqlText),
+                k -> chartService.executeQueryForCache(viewer, sqlText)));
       } catch (CodedApiException e) {
         // 사전 판정과 실행 판정 사이 경합으로 로더 안 실행 관문이 거부한 경우 — 대시보드 전체 403 이 아니라 이 위젯만 denied.
         // (Caffeine 은 언체크 예외를 감싸지 않고 다시 던지며, 실패한 로드는 캐시에 남기지 않는다.)

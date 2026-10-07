@@ -219,6 +219,34 @@ class ChartDeniedTest extends IntegrationTestBase {
   }
 
   /**
+   * 수정 1차(Critical) — 자격 있는 조회자가 캐시를 데운 뒤 소유자가 저장 쿼리 SQL 을 공개 테이블로 바꾸면, 자격 없는 조회자는 새 SQL 로 판정을
+   * 통과한다. 캐시 키가 saved_query_id 뿐이면 옛 SQL(민감 테이블)의 결과가 히트로 새어 나온다 — 키에 판정한 SQL 을 넣어야 한다.
+   */
+  @Test
+  void sqlEditedAfterCacheWarm_unclearedViewerGetsNewSqlResult_notStaleRestrictedRows() {
+    DashboardDataResponse warm = dashboardService.getDashboardData(dashboardId, viewerAt("민감"));
+    assertThat(values(byChart(warm).get(secChart))).containsExactly(SEC_VALUE);
+
+    // 소유자의 SQL 수정을 흉내 낸다(SavedQueryService.update 도 캐시를 비우지 않는다).
+    TenantRlsTestSupport.runInTenantTransaction(
+        fixtureTransactionTemplate,
+        DEFAULT_TEST_TENANT_ID,
+        () ->
+            dsl.execute(
+                "update saved_query set sql_text = ? where id = (select saved_query_id from chart"
+                    + " where id = ?)",
+                "SELECT v FROM " + pubTable,
+                secChart));
+
+    ChartDataResponse edited =
+        byChart(dashboardService.getDashboardData(dashboardId, viewerAt("공개"))).get(secChart);
+    assertThat(edited.denied()).isFalse();
+    assertThat(values(edited)).doesNotContain(SEC_VALUE);
+    // 양성 대조: 새 SQL 의 결과(공개 행)는 정상으로 보인다.
+    assertThat(values(edited)).containsExactly(PUB_VALUE);
+  }
+
+  /**
    * 원문은 공개 테이블만 참조하지만 정규화본(실행 문자열)은 민감 테이블을 참조하는 SQL(GuardedSqlExecutorTest 와 같은 형태). 원문으로 판정하면 통과
    * 후 실행 관문이 403 을 던져 단건은 403, 대시보드는 전체 실패가 된다 — 판정도 실행 문자열 기준이어야 위젯 하나만 denied 가 된다.
    */
