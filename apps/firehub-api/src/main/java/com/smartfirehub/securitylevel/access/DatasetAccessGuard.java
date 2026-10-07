@@ -8,13 +8,23 @@ import static org.jooq.impl.DSL.name;
 import static org.jooq.impl.DSL.selectOne;
 
 import com.smartfirehub.dataset.exception.DatasetNotFoundException;
+import com.smartfirehub.global.exception.CodedApiException;
+import com.smartfirehub.global.tenant.DataSchema;
+import com.smartfirehub.global.util.SqlValidationUtils;
+import com.smartfirehub.pipeline.service.validator.SqlValidator;
 import com.smartfirehub.securitylevel.repository.DatasetAccessRepository;
 import com.smartfirehub.securitylevel.repository.DatasetAccessRepository.AccessFacts;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
 import org.jooq.Condition;
 import org.jooq.DSLContext;
 import org.jooq.Field;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
 /**
@@ -28,6 +38,22 @@ public class DatasetAccessGuard {
   private final DatasetAccessRepository accessRepository;
   private final ClearanceResolver clearanceResolver;
   private final DSLContext dsl;
+
+  /**
+   * 참조 테이블 추출 전용 인스턴스 — 스프링 빈이 아니다. 스키마 허용 여부는 이 인스턴스가 아니라 {@link #checkSql} 이 테넌트 data 스키마와 대조해
+   * 판정한다(추출은 스키마를 거부하지 않는다).
+   */
+  private final SqlValidator sqlParser = SqlValidator.forAdhocDataSchemaQueries();
+
+  /** "볼 수 없음·데이터셋 아님·없음" 을 구분하지 않는 단일 메시지(존재 은닉, 스펙 §2.5). */
+  public static final String SQL_ACCESS_DENIED_MESSAGE =
+      "쿼리가 참조하는 테이블 중 열람할 수 없거나 확인할 수 없는 테이블이 있습니다.";
+
+  /** VIEW 거부 코드 — 숨김·매핑 없음·없는 테이블·다른 스키마 모두 이 코드 하나다. */
+  private static final String SQL_ACCESS_DENIED_CODE = "DATASET_SQL_ACCESS_DENIED";
+
+  /** 파이프라인 저장 검증이 {@code {{#N}}} 을 치환한 더미 테이블 이름(판단 사항 4). */
+  private static final Pattern STEP_REF_PLACEHOLDER = Pattern.compile("step_ref_\\d+");
 
   /** 현재 요청 사용자 기준 VIEW 강제. */
   public void requireView(long datasetId) {
@@ -114,5 +140,115 @@ public class DatasetAccessGuard {
             c,
             field(name(datasetAlias, "id"), Long.class),
             field(name(datasetAlias, "security_level_id"), Long.class)));
+  }
+
+  /**
+   * SQL 참조 테이블 판정을 강제한다. 거부 시 403 {@link CodedApiException}(코드는 {@link SqlAccessResult#code()}). 파싱
+   * 실패는 기존 계약대로 UnsafeSqlException/SqlQueryException(400) 이 그대로 올라간다.
+   */
+  public SqlAccessResult requireSql(Clearance c, String sql, SqlAccessMode mode) {
+    SqlAccessResult r = checkSql(c, sql, mode);
+    if (!r.allowed()) {
+      throw new CodedApiException(HttpStatus.FORBIDDEN, r.code(), r.message());
+    }
+    return r;
+  }
+
+  /**
+   * 참조 테이블 → 데이터셋 매핑 → 판정(스펙 §4.1). 거부를 값으로 돌려준다(차트가 {@code denied} 로 쓴다).
+   *
+   * <p>fail-closed: 다른 스키마, 데이터셋에 매핑되지 않는 data 스키마 테이블(stg_import_* 등), 없는 테이블은 전부 "볼 수 없음"과 같은
+   * 코드·메시지다 — 응답으로 숨김 데이터셋의 존재를 추측할 수 없게(존재 은닉). 쓰기 대상(INSERT/UPDATE/DELETE)도 VIEW 를 요구한다 —
+   * UPDATE/DELETE 대상은 WHERE·RETURNING 으로 읽히고, 쓰기만 허용하면 존재를 탐지하는 경로가 된다.
+   *
+   * <p>정규화·파싱(referencedTables)을 DB 접근보다 먼저 한다 — 파싱 예외를 잡아 계속 진행하는 호출자(차트·메트릭)의 트랜잭션이 오염되지 않게.
+   *
+   * <p><b>전제(호출자 계약):</b> 판정은 {@code removeTrailingSemicolon(stripAndValidate(sql))} 로 정규화한 문자열
+   * 기준이다. 호출자는 바로 그 정규화 문자열을 {@code SqlValidator.validate} 로 검증하고 그대로 실행해야 한다 — 원문을 실행하면 주석 제거 규칙이
+   * 문자열 리터럴을 구분하지 않는 탓에 판정이 본 테이블과 실행되는 테이블이 달라질 수 있고, validate 없이 쓰면 함수·타입 경유 참조(query_to_xml 등)를
+   * 못 본다.
+   */
+  public SqlAccessResult checkSql(Clearance c, String sql, SqlAccessMode mode) {
+    String clean =
+        SqlValidationUtils.removeTrailingSemicolon(SqlValidationUtils.stripAndValidate(sql))
+            .strip();
+    SqlValidator.ReferencedTables refs = sqlParser.referencedTables(clean);
+    String dataSchema = DataSchema.current();
+
+    // 1) 스키마 검사 + 이름 수집. 다른 스키마 참조는 매핑을 볼 것도 없이 거부.
+    Set<String> readNames = new LinkedHashSet<>();
+    Set<String> writeNames = new LinkedHashSet<>();
+    for (SqlValidator.TableName t : refs.reads()) {
+      if (!collect(t, dataSchema, mode, readNames)) {
+        return accessDenied();
+      }
+    }
+    for (SqlValidator.TableName t : refs.writes()) {
+      if (!collect(t, dataSchema, mode, writeNames)) {
+        return accessDenied();
+      }
+    }
+
+    // 2) 읽기 ∪ 쓰기 전부 VIEW 판정. 데이터셋에 매핑되지 않는 이름(f == null)도 같은 거부 — fail-closed.
+    Set<String> all = new HashSet<>(readNames);
+    all.addAll(writeNames);
+    Map<String, AccessFacts> facts = accessRepository.findFactsByTableNames(all, c);
+    for (String name : all) {
+      AccessFacts f = facts.get(name);
+      if (f == null || !decide(c, f, DatasetAction.VIEW, null).allowed()) {
+        return accessDenied();
+      }
+    }
+
+    // 3) 실효 등급 = 읽기 집합의 최대 rank. 내보내기 허용은 읽기·쓰기 대상 전부의 EXPORT 판정 —
+    //    UPDATE/DELETE ... RETURNING 은 쓰기 대상 행을 그대로 돌려주므로 쓰기 대상도 내보내기 판정에 넣는다.
+    LevelPolicy effective = null;
+    boolean exportAllowed = true;
+    Set<Long> readIds = new LinkedHashSet<>();
+    for (String name : readNames) {
+      AccessFacts f = facts.get(name);
+      readIds.add(f.datasetId());
+      if (effective == null || f.level().rank() > effective.rank()) {
+        effective = f.level();
+      }
+      exportAllowed &= decide(c, f, DatasetAction.EXPORT, null).allowed();
+    }
+    Set<Long> writeIds = new LinkedHashSet<>();
+    for (String name : writeNames) {
+      AccessFacts f = facts.get(name);
+      writeIds.add(f.datasetId());
+      exportAllowed &= decide(c, f, DatasetAction.EXPORT, null).allowed();
+      // 4) 쓰기 하향 금지(스펙 §4.1): 쓰기 대상 rank ≥ 읽기 최대 rank. VIEW 를 모두 통과한 뒤에만 오는 분기라
+      //    메시지의 등급 이름은 사용자가 이미 볼 수 있는 정보다. PIPELINE_SAVE 는 VIEW 만 본다(판단 사항 4).
+      if (mode != SqlAccessMode.PIPELINE_SAVE
+          && effective != null
+          && f.level().rank() < effective.rank()) {
+        return SqlAccessResult.denied(
+            "SQL_WRITE_DOWNGRADE", "'" + effective.name() + "' 데이터를 더 낮은 등급 데이터셋에 쓸 수 없습니다");
+      }
+    }
+    return new SqlAccessResult(true, null, null, effective, readIds, writeIds, exportAllowed);
+  }
+
+  /** VIEW 계열 거부 — 사유(숨김·매핑 없음·없는 테이블·다른 스키마)를 구분하지 않는 단일 결과. */
+  private static SqlAccessResult accessDenied() {
+    return SqlAccessResult.denied(SQL_ACCESS_DENIED_CODE, SQL_ACCESS_DENIED_MESSAGE);
+  }
+
+  /**
+   * 스키마 검사 + 이름 수집. 테넌트 data 스키마가 아닌 한정 이름이면 false(거부). 미한정 이름은 data 스키마 이름으로 보고 매핑 단계에 맡긴다 — 다른
+   * 스키마로 해석될 미한정 이름(public 테이블 등)은 데이터셋 매핑이 없어 어차피 거부된다. PIPELINE_SAVE 의 step_ref 더미는 건너뛴다.
+   */
+  private static boolean collect(
+      SqlValidator.TableName t, String dataSchema, SqlAccessMode mode, Set<String> out) {
+    // 이름은 PG 폴딩이 끝난 값이라 바이트 비교한다 — "DATA_T1" 처럼 인용된 대문자 스키마는 PG 에서 다른 스키마다.
+    if (t.schema() != null && !t.schema().equals(dataSchema)) {
+      return false;
+    }
+    if (mode == SqlAccessMode.PIPELINE_SAVE && STEP_REF_PLACEHOLDER.matcher(t.name()).matches()) {
+      return true;
+    }
+    out.add(t.name());
+    return true;
   }
 }
