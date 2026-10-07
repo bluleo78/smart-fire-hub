@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { toast } from 'sonner';
 
 import { securityLevelsApi } from '../../../api/security-levels';
@@ -45,6 +45,8 @@ export function ChangeSecurityLevelDialog({
   const { data: mine, isSuccess: clearanceLoaded } = useMyClearance();
   const [selected, setSelected] = useState<string>(String(current.id));
   const [reason, setReason] = useState('');
+  // 라디오 라벨-입력 연결용 id 접두(09-form-patterns §J — 반복 행은 `${baseId}-${id}`).
+  const baseId = useId();
   const target = levels.find((l) => String(l.id) === selected);
   const downgrade = !!target && target.rank < current.rank;
   const enteringAllowlist = !!target && target.allowlistRequired && !current.allowlistRequired;
@@ -88,8 +90,13 @@ export function ChangeSecurityLevelDialog({
             const aboveMine = !clearanceLoaded || mine?.rank == null || l.rank > mine.rank;
             const isCurrent = l.id === current.id;
             return (
-              <Label key={l.id} className={`flex items-center gap-2 font-normal ${aboveMine ? 'opacity-60' : ''}`}>
+              <Label
+                key={l.id}
+                htmlFor={`${baseId}-${l.id}`}
+                className={`flex items-center gap-2 font-normal ${aboveMine ? 'opacity-60' : ''}`}
+              >
                 <RadioGroupItem
+                  id={`${baseId}-${l.id}`}
                   value={String(l.id)}
                   disabled={aboveMine}
                   aria-label={isCurrent ? `${l.name} (현재)` : l.name}

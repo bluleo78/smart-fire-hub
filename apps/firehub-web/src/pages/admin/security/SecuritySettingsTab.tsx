@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import axios from "axios";
 import { Plus } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { securityLevelsApi } from "../../../api/security-levels";
@@ -81,6 +81,8 @@ export default function SecuritySettingsTab() {
     impact: number;
   } | null>(null);
   const [seedViewers, setSeedViewers] = useState(true);
+  // "허용 목록 채우기" 체크박스 라벨-입력 연결용 id(09-form-patterns §J).
+  const seedViewersId = useId();
   const [deleting, setDeleting] = useState<SecurityLevel | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [newName, setNewName] = useState("");
@@ -300,8 +302,12 @@ export default function SecuritySettingsTab() {
               {`이 등급 데이터셋 ${pendingAllowlist?.impact ?? 0}개의 허용 목록이 비어 있어 저장 즉시 아무도 볼 수 없게 됩니다.`}
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <Label className="flex items-center gap-2 font-normal">
+          <Label
+            htmlFor={seedViewersId}
+            className="flex items-center gap-2 font-normal"
+          >
             <Checkbox
+              id={seedViewersId}
               checked={seedViewers}
               onCheckedChange={(v) => setSeedViewers(v === true)}
               aria-label="현재 열람 가능한 역할로 허용 목록 채우기"

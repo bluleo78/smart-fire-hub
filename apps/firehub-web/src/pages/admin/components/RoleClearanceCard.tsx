@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
-import { useMemo, useState } from 'react';
+import { useId, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 
 import { securityLevelsApi } from '../../../api/security-levels';
@@ -39,6 +39,8 @@ export function RoleClearanceCard({ roleId }: { roleId: number }) {
   // 사용자가 고른 미저장 값. null 이면 서버의 현재 자격을 그대로 보여 준다(효과 없이 파생 — 저장 후 자연 동기화).
   const [draft, setDraft] = useState<string | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  // 라디오 라벨-입력 연결용 id 접두(09-form-patterns §J — 반복 행은 `${baseId}-${id}`).
+  const baseId = useId();
 
   const current = clearance ? String(clearance.securityLevelId) : '';
   const selected = draft ?? current;
@@ -105,8 +107,8 @@ export function RoleClearanceCard({ roleId }: { roleId: number }) {
           <>
             <RadioGroup value={selected} onValueChange={setDraft} aria-label="데이터 열람 등급" className="gap-3">
               {levels.map((l, i) => (
-                <Label key={l.id} className="flex items-start gap-2 font-normal">
-                  <RadioGroupItem value={String(l.id)} aria-label={l.name} className="mt-0.5" />
+                <Label key={l.id} htmlFor={`${baseId}-${l.id}`} className="flex items-start gap-2 font-normal">
+                  <RadioGroupItem id={`${baseId}-${l.id}`} value={String(l.id)} aria-label={l.name} className="mt-0.5" />
                   <span className="space-y-1">
                     <SecurityLevelBadge level={l} />
                     <span className="block text-sm text-muted-foreground">{cumulativeDescription(levels, i)}</span>

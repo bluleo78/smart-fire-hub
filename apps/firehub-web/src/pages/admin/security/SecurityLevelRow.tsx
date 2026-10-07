@@ -1,5 +1,5 @@
 import { ArrowDown, ArrowUp, ChevronDown, MoreHorizontal } from "lucide-react";
-import { useState } from "react";
+import { useId, useState } from "react";
 
 import { Badge } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
@@ -51,6 +51,8 @@ function PolicyRadio<T extends string>({
   onChange: (v: T) => void;
   hint?: string;
 }) {
+  // 라디오 라벨-입력 연결용 id 접두(09-form-patterns §J). 등급 행마다 같은 정책 라디오가 반복돼 하드코딩 id 는 충돌한다.
+  const baseId = useId();
   return (
     <div className="space-y-1.5">
       <p className="text-sm font-medium">{label}</p>
@@ -63,9 +65,14 @@ function PolicyRadio<T extends string>({
         {options.map((o) => (
           <Label
             key={o.value}
+            htmlFor={`${baseId}-${o.value}`}
             className="flex items-center gap-1.5 font-normal"
           >
-            <RadioGroupItem value={o.value} aria-label={o.label} />
+            <RadioGroupItem
+              id={`${baseId}-${o.value}`}
+              value={o.value}
+              aria-label={o.label}
+            />
             {o.label}
           </Label>
         ))}
