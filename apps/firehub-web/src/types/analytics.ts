@@ -182,6 +182,8 @@ export interface UpdateChartRequest {
 export interface ChartDataResponse {
   chart: Chart;
   queryResult: AnalyticsQueryResult;
+  /** 조회자가 원본 데이터셋을 볼 수 없음 — 위젯은 "열람 권한 없음" 상태를 그린다(스펙 §5-4). */
+  denied?: boolean;
 }
 
 // ============================================================

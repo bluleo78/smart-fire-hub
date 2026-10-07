@@ -1,3 +1,5 @@
+import type { SecurityLevelSummary } from './security-level';
+
 export interface CategoryResponse {
   id: number;
   name: string;
@@ -19,6 +21,10 @@ export interface DatasetResponse {
   statusNote: string | null;
   statusUpdatedBy: string | null;
   statusUpdatedAt: string | null;
+  /** 보안 등급(S1). 서버가 항상 채우지만 구버전 응답·목 호환을 위해 optional. 생성 응답은 null 가능. */
+  securityLevel?: SecurityLevelSummary | null;
+  /** 파이프라인 입력 등급에 따른 자동 상향 시각(「보안」 탭 배너). */
+  securityLevelAutoRaisedAt?: string | null;
 }
 
 export interface FavoriteToggleResponse {
@@ -69,6 +75,10 @@ export interface DatasetDetailResponse {
   statusUpdatedBy: string | null;
   statusUpdatedAt: string | null;
   linkedPipelines: LinkedPipelineInfo[];
+  /** 보안 등급(S1). 서버가 항상 채우지만 구버전 응답·목 호환을 위해 optional. 생성 응답은 null 가능. */
+  securityLevel?: SecurityLevelSummary | null;
+  /** 파이프라인 입력 등급에 따른 자동 상향 시각(「보안」 탭 배너). */
+  securityLevelAutoRaisedAt?: string | null;
 }
 
 export interface CreateDatasetRequest {

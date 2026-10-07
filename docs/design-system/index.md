@@ -120,7 +120,7 @@
 | 정보/진행중 | `bg-info-subtle` | `text-info` | `variant="info"` |
 | 오류/위험 | `bg-destructive/10` | `text-destructive` | `variant="destructive"` |
 | AI 기능 | `bg-ai-accent-subtle` | `text-ai-accent` | — |
-| 주의(강) | `bg-caution-subtle` | `text-caution` | — |
+| 주의(강) | `bg-caution-subtle` | `text-caution` | `variant="caution"`(보안 등급 허용 목록 배지에서 도입) |
 
 ### Domain Colors
 
