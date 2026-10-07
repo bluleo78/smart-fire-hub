@@ -56,6 +56,54 @@ test.describe('데이터셋 상세 — 보안', () => {
     expect((await put.waitForRequest()).payload).toEqual({ securityLevelId: 2, reason: '공개 보고서 반영으로 하향' });
   });
 
+  /**
+   * 코드리뷰 CR6 — 변경 성공 후 다시 열면 새 등급(현재)이 선택돼 있고 「변경」은 비활성이어야 한다. 성공 시 선택을 옛 등급으로 되돌리면, 다시 연
+   * 다이얼로그가 옛 등급을 미리 고른 채 「변경」이 활성이라 한 번 더 누르면 의도치 않게 되돌린다.
+   */
+  test('등급 변경 성공 후 다시 열면 새 등급이 선택되고 변경 버튼은 비활성', async ({ authenticatedPage: page }) => {
+    await setupAdminAuth(page);
+    await setup(page, '내부', { myRank: 4 });
+    // PUT 이 성공하면 상세 GET 이 새 등급(민감)을 돌려준다 — 실제 서버처럼 무효화 후 재조회에 반영된다.
+    let changed = false;
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets/1/security-level',
+      (route) => {
+        if (route.request().method() !== 'PUT') return route.fallback();
+        changed = true;
+        return route.fulfill({ status: 204 });
+      },
+    );
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets/1',
+      (route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(
+            createDatasetDetail({
+              id: 1,
+              name: '인사_평가_2026',
+              securityLevel: createLevelSummary(changed ? '민감' : '내부'),
+            }),
+          ),
+        });
+      },
+    );
+    await page.goto('/data/datasets/1');
+    await page.getByRole('button', { name: '보안 등급 변경' }).click();
+    const dialog = page.getByRole('dialog', { name: '보안 등급 변경' });
+    await dialog.getByRole('radio', { name: /민감/ }).check();
+    await dialog.getByRole('button', { name: '변경' }).click();
+    await expect(dialog).toBeHidden();
+    await expect(page.getByTestId('security-level-badge').first()).toHaveText('민감');
+
+    await page.getByRole('button', { name: '보안 등급 변경' }).click();
+    await expect(dialog.getByRole('radio', { name: '민감 (현재)' })).toBeChecked();
+    await expect(dialog.getByRole('radio', { name: /^내부/ })).not.toBeChecked();
+    await expect(dialog.getByRole('button', { name: '변경' })).toBeDisabled();
+  });
+
   test('보안 탭 — 정책 칩, 자동 상향 배너, 허용 목록 카드', async ({ authenticatedPage: page }) => {
     await setupAdminAuth(page);
     await setup(page, '기밀', { autoRaised: true });

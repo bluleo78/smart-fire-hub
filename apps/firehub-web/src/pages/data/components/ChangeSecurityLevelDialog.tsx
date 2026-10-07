@@ -62,16 +62,20 @@ export function ChangeSecurityLevelDialog({
   };
 
   const change = useMutation({
-    mutationFn: () =>
+    mutationFn: (levelId: number) =>
       securityLevelsApi.changeDatasetLevel(datasetId, {
-        securityLevelId: target!.id,
+        securityLevelId: levelId,
         ...(downgrade ? { reason: reason.trim() } : {}),
       }),
-    onSuccess: () => {
+    onSuccess: (_data, levelId) => {
       toast.success('보안 등급을 변경했습니다');
       // ['datasets'] 접두 무효화 — 상세·목록·허용 목록(서버가 본인을 시드했을 수 있음)을 함께 갱신한다.
       void qc.invalidateQueries({ queryKey: ['datasets'] });
-      handleOpenChange(false);
+      // 닫기 초기화(handleOpenChange)를 쓰지 않는다 — 그건 선택을 아직 옛 값인 current.id 로 되돌려, 다시 열면 옛 등급이 미리 골라진 채
+      // 「변경」이 활성이 된다(코드리뷰 CR6). 방금 저장한 등급이 새 현재 등급이므로 그것으로 맞춘다(상위의 key 재마운트에 기대지 않는다).
+      setSelected(String(levelId));
+      setReason('');
+      onOpenChange(false);
     },
     onError: (e) => handleApiError(e, '보안 등급 변경에 실패했습니다.'),
   });
@@ -133,7 +137,7 @@ export function ChangeSecurityLevelDialog({
           <Button variant="outline" onClick={() => handleOpenChange(false)}>
             취소
           </Button>
-          <Button disabled={!valid || change.isPending} onClick={() => change.mutate()}>
+          <Button disabled={!valid || change.isPending} onClick={() => target && change.mutate(target.id)}>
             변경
           </Button>
         </DialogFooter>
