@@ -231,6 +231,50 @@ class SqlAccessGuardTest extends IntegrationTestBase {
         .isInstanceOf(CodedApiException.class);
   }
 
+  /**
+   * 판정은 받은 문자열 그대로를 파싱한다(주석 정규화 없음). 정규식 주석 제거는 문자열 리터럴 안의 {@code /*}·{@code *}{@code /} 를 주석으로 오인해
+   * 숨김 테이블 참조를 지워 버렸다 — 원문을 실행하는 호출자(파이프라인)에서 PG 는 hidden 을 읽는다(리뷰 지적 우회).
+   */
+  @Test
+  void commentLikeLiterals_doNotHideReferences() {
+    Clearance c = userAt("민감");
+    assertDenied(
+        c,
+        "SELECT a FROM "
+            + pub
+            + " WHERE b = '/*' OR EXISTS (SELECT 1 FROM "
+            + hidden
+            + ") OR b = '*/'",
+        "DATASET_SQL_ACCESS_DENIED");
+    assertDenied(
+        c,
+        "SELECT a FROM " + pub + " WHERE b = '--' OR EXISTS (SELECT 1 FROM " + hidden + ")",
+        "DATASET_SQL_ACCESS_DENIED");
+  }
+
+  /** 진짜 주석 안의 테이블 이름은 참조가 아니다(양성 대조) — 끝 세미콜론도 허용. */
+  @Test
+  void realComments_areNotReferences() {
+    Clearance c = userAt("민감");
+    assertThat(
+            guard
+                .requireSql(
+                    c,
+                    "SELECT 1 FROM " + pub + " /* " + hidden + " */ -- " + hidden + "\n;",
+                    SqlAccessMode.INTERACTIVE)
+                .readDatasetIds())
+        .hasSize(1);
+  }
+
+  /** 내보내기 허용 양성 대조 — 내보내기 ALLOW 등급(공개)만 읽으면 true. */
+  @Test
+  void exportAllowed_isTrue_whenOnlyExportAllowLevelsAreRead() {
+    Clearance c = userAt("민감");
+    assertThat(
+            guard.requireSql(c, "SELECT * FROM " + pub, SqlAccessMode.INTERACTIVE).exportAllowed())
+        .isTrue();
+  }
+
   @Test
   void checkSql_returnsDenialAsValue() {
     Clearance c = userAt("공개");
