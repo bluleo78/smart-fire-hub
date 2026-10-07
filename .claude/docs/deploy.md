@@ -254,6 +254,10 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
   - `select max(version::int) from flyway_schema_history` 가 132 인지.
   - 역할이 하나도 없는 활성 사용자는 어떤 데이터셋도 볼 수 없다(fail-closed) — `select u.id from "user" u join membership m on m.user_id=u.id and m.status='ACTIVE' where not exists (select 1 from user_role ur where ur.user_id=u.id and ur.tenant_id=m.tenant_id)` 가 0행인지.
   - 파이프라인 TEMP 판정: `source_pipeline_step_id` 가 있는 데이터셋은 스텝 TEMP 로 신뢰된다 — `SELECT id, table_name, created_by FROM dataset WHERE source_pipeline_step_id IS NOT NULL AND table_name NOT LIKE 'ptmp\_%'` 가 0행이어야 한다(아니면 중단 후 상의).
+  - **FILE 데이터셋 저장 경로(prefix) 점검**(필수 — 결과가 0행이 아니면 중단 후 상의): 이번 배포부터 prefix 는 서버가 `datasets/<데이터셋 id>/` 로만 만들고 클라이언트 지정은 400 `FILE_PREFIX_NOT_ALLOWED` 로 거부된다. 그 전에 사용자가 직접 지정한 prefix 가 다른 데이터셋(다른 테넌트 포함) 경로를 덮고 있으면, 그 데이터셋 화면에서 남의 파일 목록·다운로드 URL 이 계속 발급된다. 두 쿼리 모두 소유자 롤로 실행한다(RLS 를 넘어 **모든 테넌트**를 봐야 한다). `LIKE` 를 쓰지 않는다 — prefix 의 `_` 가 와일드카드로 오탐을 낸다.
+    - 서버 형식이 아닌 prefix(앞으로 생길 `datasets/<새 id>/` 와도 겹칠 수 있다): `SELECT c.dataset_id, d.tenant_id, c.bucket, c.prefix FROM file_dataset_config c JOIN dataset d ON d.id = c.dataset_id WHERE c.prefix <> 'datasets/' || c.dataset_id || '/'`
+    - 같은 버킷에서 서로의 접두어가 되는 쌍: `SELECT a.dataset_id AS a_id, b.dataset_id AS b_id, a.bucket, a.prefix AS a_prefix, b.prefix AS b_prefix FROM file_dataset_config a JOIN file_dataset_config b ON a.bucket = b.bucket AND a.dataset_id < b.dataset_id WHERE starts_with(a.prefix, b.prefix) OR starts_with(b.prefix, a.prefix)`
+    - 첫 쿼리에 행이 나오면 해당 데이터셋의 객체를 `datasets/<id>/` 로 옮기고(MinIO 복사) `file_dataset_config.prefix` 를 갱신하거나, 데이터셋 소유자와 정리 방법을 정한다 — 자동 이동은 하지 않는다.
   - (권장) 아래 "파이프라인 실행 주체" 변화에 걸릴 대상 — 생성자에게 ACTIVE 멤버십·역할이 없는 예약/API 트리거, 데이터셋이 아닌 data 스키마 테이블(`stg_import_*` 등)을 읽는 SQL 스텝 — 을 미리 찾아 둔다.
 - 배포 후 확인: `select tenant_id, count(*) from security_level group by 1` 이 모든 테넌트 4, `select count(*) from dataset where security_level_id is null` = 0, `select count(*) from role where max_security_level_id is null` = 0.
 - **동작 변화**(관리자 공지에 포함):
@@ -266,11 +270,16 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
     - 사용자가 지정한 출력 데이터셋에 쓰는(DML·REPLACE) 스텝은 실행 주체에게 그 출력의 VIEW 가 있어야 한다 — 없으면 실행이 **실패한다**(숨김 데이터셋을 덮어써 비우는 것을 막기 위함).
     - 재사용되는 러너 TEMP 가 실행 주체가 볼 수 없는 등급으로 이미 올라가 있으면 실행이 **실패한다**(관리자가 TEMP 등급을 내려야 다시 돈다).
     - 입력보다 낮은 등급의 출력에 쓰면(쓰기 하향) 실행이 **실패한다** — 자동 상향은 러너 TEMP 출력만이며, 일반 자동 상향은 S4 까지 없다.
+  - **AI_CLASSIFY 스텝**도 SQL 스텝과 같은 규칙으로 판정된다: 저장 시 편집자, 실행 시 실행 주체가 입력 데이터셋(명시 입력·의존 스텝 출력 자동 해석분 모두)을 볼 수 있어야 하고, 아니면 저장 403 `DATASET_SQL_ACCESS_DENIED` / 실행 **실패**(구분 불가 메시지). 삭제된 입력 데이터셋도 예전처럼 건너뛰지 않고 같은 거부로 **실패**한다. 출력은 SQL SELECT 스텝과 같다 — 러너 TEMP 는 입력 최대 등급으로 상향(허용 목록 등급이면 실행 주체 시드), 사용자가 지정한 출력은 실행 주체가 볼 수 있어야 하고 입력보다 낮으면 `SQL_WRITE_DOWNGRADE` 로 실패한다.
+  - **FILE 데이터셋** 생성 폼의 "경로 프리픽스" 입력이 없어졌다 — 저장 경로는 서버가 `datasets/<id>/` 로 만든다(API 로 prefix 를 보내면 400 `FILE_PREFIX_NOT_ALLOWED`).
+  - **GraphRAG 검수 인박스**: 출처 데이터셋을 볼 수 없는 검수 항목은 목록에서 빠지고, 근거·승인·거부는 404 `REVIEW_ITEM_NOT_FOUND` 다. 없는 항목도 이제 400 이 아니라 같은 404 다(숨김 항목과 구분되지 않게).
+  - 파이프라인 SQL 스텝·컬럼 탐지는 사용자 SQL 을 JDBC 이스케이프 처리 없이 그대로 보낸다 — `{fn …}`·`{d '…'}` 같은 JDBC 이스케이프 표기는 이제 PG 문법 오류로 **실패**한다(애드혹 SQL 과 같은 동작). jsonb `?` 연산자는 이제 파이프라인 SQL 에서도 동작한다.
   - 정책 칩(내보내기·AI·공유)은 S1 에선 **표시만** — 강제는 S3/S4. 사용자가 "막혀 있다"고 오해하지 않도록 공지에 명시.
 - **알려진 한계**(후속):
   - 데이터셋 **이름**은 홈·파이프라인·저장 쿼리(차트 메타데이터 포함) 화면에서 여전히 노출될 수 있다(내용·행은 아님).
   - PYTHON 스텝은 SQL 관문을 거치지 않는 알려진 우회 경로다(편집 화면 경고만, 강제는 후속).
-  - 비 SQL 스텝(PYTHON·API_CALL·AI_CLASSIFY)의 REPLACE 는 숨김 상태의 명시 출력 데이터셋을 여전히 비울 수 있다(S3/S4).
+  - 비 SQL 스텝(PYTHON·API_CALL)의 REPLACE 는 숨김 상태의 명시 출력 데이터셋을 여전히 비울 수 있다(S3/S4). AI_CLASSIFY 는 이번 배포에서 SQL 스텝과 같은 출력 규칙으로 닫혔다.
+  - **GraphRAG 에 이미 적재된 내용은 등급을 올려도 계속 읽힌다**: 문서 적재·`graphrag_project_table`(표 투영)로 Neo4j 에 들어간 엔티티·관계·속성(표 행 값 포함)은 데이터셋을 나중에 '민감'·'기밀'로 올려도 ai-agent 의 그래프 조회·채팅 검색으로 계속 노출된다(스펙 §7.5 — 그래프 쪽 통제는 후속). **운영 절차**: 등급을 올리기 전에 그 데이터셋이 GraphRAG 에 적재됐는지(소유자 롤로 `SELECT * FROM dataset_graph_ingest WHERE dataset_id = <id>`) 확인하고, 적재돼 있으면 그래프에서 해당 데이터셋 유래 노드를 수동으로 정리한 뒤 올린다. 검수 인박스의 원문 근거는 이번 배포에서 막혔다.
   - 스텝 오류에 PG 원문 메시지가 그대로 저장돼 숨김 테이블 이름이 드러날 수 있다.
   - 접근 거부 감사(누가 무엇에 거부됐는지)는 S4 로 이연 — 이번 배포에서는 관리 작업만 감사에 남는다.
   - 러너 TEMP 의 허용 목록은 늘어나기만 한다(REPLACE 때 재설정은 S4 전파 설계와 함께).
