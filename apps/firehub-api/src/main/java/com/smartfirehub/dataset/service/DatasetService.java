@@ -35,6 +35,7 @@ import com.smartfirehub.file.service.FileObjectStorageService;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
+import com.smartfirehub.securitylevel.service.DatasetSecurityService;
 import com.smartfirehub.user.repository.UserRepository;
 import java.util.ArrayList;
 import java.util.List;
@@ -95,6 +96,7 @@ public class DatasetService {
   private final DSLContext dsl;
   private final AuditLogService auditLogService;
   private final DatasetAccessGuard datasetAccessGuard;
+  private final DatasetSecurityService datasetSecurityService;
   // 검색 인덱싱: source_text 동기 저장 + 임베딩 비동기 재생성 트리거 (통합 데이터셋 Discovery)
   private final DatasetEmbeddingService datasetEmbeddingService;
   private final ApplicationEventPublisher events;
@@ -963,6 +965,9 @@ public class DatasetService {
             null // sourcePipelineStepId — cloned datasets are not auto-generated
             );
     DatasetResponse newDataset = datasetRepository.save(createRequest, userId);
+
+    // 보안 등급: 사본은 원본 등급·허용 목록을 상속한다(스펙 §4.5 clone). 기본 등급으로 두면 기밀 데이터가 내부로 새어 나간다.
+    datasetSecurityService.inheritFromSource(sourceId, newDataset.id(), userId);
 
     // 4. Copy column definitions
     List<DatasetColumnRequest> columnRequests = new ArrayList<>();

@@ -81,6 +81,9 @@ class DatasetServiceFileTest {
             // 이 테스트는 목록 조회를 쓰지 않아 가드는 호출되지 않는다.
             org.mockito.Mockito.mock(
                 com.smartfirehub.securitylevel.access.DatasetAccessGuard.class),
+            // 이 테스트는 복제를 쓰지 않아 보안 서비스는 호출되지 않는다.
+            org.mockito.Mockito.mock(
+                com.smartfirehub.securitylevel.service.DatasetSecurityService.class),
             datasetEmbeddingService,
             events,
             fileDatasetConfigRepository,
