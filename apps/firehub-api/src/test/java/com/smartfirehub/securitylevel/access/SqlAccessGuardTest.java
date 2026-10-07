@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.pipeline.exception.UnsafeSqlException;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.SecurityFixture;
 import java.util.ArrayList;
@@ -250,6 +251,41 @@ class SqlAccessGuardTest extends IntegrationTestBase {
         c,
         "SELECT a FROM " + pub + " WHERE b = '--' OR EXISTS (SELECT 1 FROM " + hidden + ")",
         "DATASET_SQL_ACCESS_DENIED");
+  }
+
+  /**
+   * PG·JSqlParser 어휘가 갈리는 표기(중첩 블록 주석·E 문자열 백슬래시·태그 달러 인용)는 판정 전에 400 으로 거부된다 — 허용으로 새지 않는다. 우회 문자열
+   * 목록은 {@code PgLexicalAmbiguityCheckTest.BYPASSES} 와 같다(PG 실측으로 hidden 을 스캔).
+   */
+  @Test
+  void lexicallyAmbiguousSql_isRejectedBeforeJudgement() {
+    Clearance c = userAt("민감");
+    List<String> bypasses =
+        List.of(
+            "SELECT 1 AS x FROM pub WHERE 1 = /* /* */ '*/ (SELECT 1 FROM hidden LIMIT 1) --'",
+            "SELECT 1 AS x FROM pub WHERE 1 = /* /* */ $$*/ (SELECT 1 FROM hidden LIMIT 1) --$$",
+            "SELECT 1 AS x FROM pub WHERE 1 = /* /* */ \"*/ (SELECT 1 FROM hidden LIMIT 1) --\"",
+            "SELECT E'\\' /*' AS a FROM pub, hidden -- */ AS a FROM pub",
+            "SELECT $a$ ' $a$ AS x FROM pub, hidden --'",
+            "SELECT $a$ /* $a$ AS x FROM pub, hidden -- */",
+            "SELECT '\\' AS a FROM pub, hidden -- '");
+    for (String tpl : bypasses) {
+      String sql = tpl.replace("hidden", hidden).replace("pub", pub);
+      for (SqlAccessMode mode : SqlAccessMode.values()) {
+        assertThatThrownBy(() -> guard.checkSql(c, sql, mode))
+            .as(mode + " " + sql)
+            .isInstanceOf(UnsafeSqlException.class);
+      }
+    }
+    // 대조군: 태그 없는 $$·'' 이중 따옴표·단일 수준 주석은 그대로 판정된다
+    assertThat(
+            guard
+                .requireSql(
+                    c,
+                    "SELECT $$it's$$, 'it''s' FROM " + pub + " /* " + hidden + " */ -- x",
+                    SqlAccessMode.INTERACTIVE)
+                .allowed())
+        .isTrue();
   }
 
   /** 진짜 주석 안의 테이블 이름은 참조가 아니다(양성 대조) — 끝 세미콜론도 허용. */

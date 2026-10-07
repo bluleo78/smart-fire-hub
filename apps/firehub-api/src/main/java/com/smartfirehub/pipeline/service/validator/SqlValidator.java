@@ -786,6 +786,10 @@ public class SqlValidator {
 
   /** JSqlParser로 파싱하고 단일 스테이트먼트인지 확인한다. */
   private Statement parseSingleStatement(String sql) {
+    // PG 와 JSqlParser 가 주석·문자열 경계를 다르게 자르는 표기를 먼저 거부한다 — 그 틈에 넣은 테이블 참조는 JSqlParser 에겐
+    // 주석·리터럴이고 PG 에겐 실제 참조다(PgLexicalAmbiguityCheck 문서). validate·unqualifiedTableNames·
+    // referencedTables(·incrementalWarnings) 가 모두 이 경로를 지난다.
+    PgLexicalAmbiguityCheck.requireUnambiguous(sql);
     Statements parsed;
     try {
       parsed = CCJSqlParserUtil.parseStatements(sql, PARSE_EXECUTOR, null);

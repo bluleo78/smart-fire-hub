@@ -550,10 +550,46 @@ class PipelineIncrementalIntegrationTest extends IntegrationTestBase {
             "; /* note */",
             " AND code <> $$--y;$$;",
             " AND code <> $$it's$$;",
-            " AND code <> E'\\'--;'; /* a /* nested */ b */ -- z\n");
+            // E 문자열 속 --/;, 세미콜론 뒤 블록·줄 주석. 백슬래시 E 문자열과 중첩 블록 주석은 이제 저장 시 거부된다(아래 테스트)
+            " AND code <> E'x''--;'; /* a b */ -- z\n");
     return java.util.stream.Stream.of("REPLACE", "MERGE")
         .flatMap(
             s -> tails.stream().map(t -> org.junit.jupiter.params.provider.Arguments.of(s, t)));
+  }
+
+  /**
+   * PG·JSqlParser 어휘가 갈리는 꼬리(백슬래시 E 문자열, 중첩 블록 주석)는 저장 시 검증에서 거부된다 — 그 틈에 넣은 테이블 참조를 검증기가 못 보기
+   * 때문이다(PgLexicalAmbiguityCheck, 보안 등급 Task 13). 예전에는 위 파라미터 케이스로 실행까지 확인하던 꼬리다.
+   */
+  @Test
+  void 어휘가_모호한_꼬리는_저장_시_거부된다() {
+    for (String tail :
+        List.of(" AND code <> E'\\'--;';", " AND code <> 'x'; /* a /* nested */ b */ -- z\n")) {
+      org.assertj.core.api.Assertions.assertThatThrownBy(
+              () ->
+                  pipelineService.updatePipeline(
+                      pipelineId,
+                      new UpdatePipelineRequest(
+                          "Inc Pipeline " + suffix,
+                          "어휘 꼬리",
+                          null,
+                          List.of(
+                              new PipelineStepRequest(
+                                  STEP_NAME,
+                                  "어휘 꼬리",
+                                  "SQL",
+                                  "SELECT code, name FROM "
+                                      + DataSchema.qualify(srcTable)
+                                      + " WHERE true"
+                                      + tail,
+                                  outDatasetId,
+                                  null,
+                                  null,
+                                  "REPLACE"))),
+                      userId))
+          .as(tail)
+          .isInstanceOf(com.smartfirehub.pipeline.exception.UnsafeSqlException.class);
+    }
   }
 
   // ------------------------------------------------------------------ //
