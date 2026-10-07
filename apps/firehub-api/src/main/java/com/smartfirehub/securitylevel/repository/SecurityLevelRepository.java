@@ -150,9 +150,9 @@ public class SecurityLevelRepository {
   }
 
   /** 역할 1개의 열람 등급 — 허용 목록 시드가 "rank 이상 자격 역할"을 고르는 데 쓴다. */
-  public record RoleLevel(long roleId, Long levelId, boolean systemAdmin) {}
+  public record RoleLevel(long roleId, String roleName, Long levelId, boolean systemAdmin) {}
 
-  /** 현재 테넌트 모든 역할의 (역할, 최대 열람 등급, 시스템 ADMIN 여부). */
+  /** 현재 테넌트 모든 역할의 (역할 id·이름, 최대 열람 등급, 시스템 ADMIN 여부). */
   public List<RoleLevel> findRoleLevels() {
     return dsl.select(ROLE.ID, ROLE.MAX_SECURITY_LEVEL_ID, ROLE.NAME, ROLE.IS_SYSTEM)
         .from(ROLE)
@@ -160,6 +160,7 @@ public class SecurityLevelRepository {
             r ->
                 new RoleLevel(
                     r.get(ROLE.ID),
+                    r.get(ROLE.NAME),
                     r.get(ROLE.MAX_SECURITY_LEVEL_ID),
                     Boolean.TRUE.equals(r.get(ROLE.IS_SYSTEM))
                         && "ADMIN".equals(r.get(ROLE.NAME))));

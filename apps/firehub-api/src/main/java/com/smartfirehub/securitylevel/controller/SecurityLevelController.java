@@ -3,6 +3,8 @@ package com.smartfirehub.securitylevel.controller;
 import com.smartfirehub.global.security.RequirePermission;
 import com.smartfirehub.securitylevel.dto.DeleteSecurityLevelRequest;
 import com.smartfirehub.securitylevel.dto.MyClearanceResponse;
+import com.smartfirehub.securitylevel.dto.ReorderPreviewResponse;
+import com.smartfirehub.securitylevel.dto.ReorderRequest;
 import com.smartfirehub.securitylevel.dto.SecurityLevelRequest;
 import com.smartfirehub.securitylevel.dto.SecurityLevelResponse;
 import com.smartfirehub.securitylevel.dto.SecurityLevelUsage;
@@ -46,6 +48,22 @@ public class SecurityLevelController {
   public SecurityLevelResponse create(
       @Valid @RequestBody SecurityLevelRequest req, Authentication auth) {
     return service.create(req, (Long) auth.getPrincipal());
+  }
+
+  /** 순서 변경 영향(역할별 열람 데이터셋 증감) 미리보기 — 변경 없음. */
+  @PostMapping("/reorder/preview")
+  @RequirePermission("security:settings")
+  public ReorderPreviewResponse previewReorder(@Valid @RequestBody ReorderRequest req) {
+    return service.previewReorder(req.orderedIds());
+  }
+
+  /** 순서 변경 적용(감사). 리터럴 경로가 /{id} 보다 우선 매칭된다. */
+  @PutMapping("/reorder")
+  @RequirePermission("security:settings")
+  public ResponseEntity<Void> applyReorder(
+      @Valid @RequestBody ReorderRequest req, Authentication auth) {
+    service.applyReorder(req.orderedIds(), (Long) auth.getPrincipal());
+    return ResponseEntity.noContent().build();
   }
 
   @PutMapping("/{id}")

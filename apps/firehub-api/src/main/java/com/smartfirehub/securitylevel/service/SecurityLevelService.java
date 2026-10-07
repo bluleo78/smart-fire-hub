@@ -6,13 +6,17 @@ import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.access.LevelPolicy;
 import com.smartfirehub.securitylevel.dto.DeleteSecurityLevelRequest;
 import com.smartfirehub.securitylevel.dto.MyClearanceResponse;
+import com.smartfirehub.securitylevel.dto.ReorderPreviewResponse;
 import com.smartfirehub.securitylevel.dto.SecurityLevelRequest;
 import com.smartfirehub.securitylevel.dto.SecurityLevelResponse;
 import com.smartfirehub.securitylevel.dto.SecurityLevelUsage;
 import com.smartfirehub.securitylevel.repository.SecurityLevelRepository;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -166,6 +170,87 @@ public class SecurityLevelService {
     meta.put("reason", req == null ? null : req.reason());
     audit.record(
         actor, "SECURITY_LEVEL_DELETE", "security_level", String.valueOf(id), target.name(), meta);
+  }
+
+  /**
+   * 순서 변경 영향 미리보기 — 역할별 "rank 기준" 열람 데이터셋 수의 변화(허용 목록은 순서와 무관하므로 제외). 아무것도 변경하지 않는다.
+   *
+   * <p>시스템 ADMIN 은 적용 후에도 최상위로 동기화되므로 계산에서도 항상 최상위로 본다(증감 0 → 목록에서 빠진다). 등급이 없는 역할은 어떤 순서에서도 0 건이라
+   * 빠진다.
+   */
+  @Transactional(readOnly = true)
+  public ReorderPreviewResponse previewReorder(List<Long> orderedIds) {
+    List<LevelPolicy> levels = repository.findAll();
+    requireFullPermutation(levels, orderedIds);
+    Map<Long, Integer> oldRank = new HashMap<>();
+    levels.forEach(l -> oldRank.put(l.id(), l.rank()));
+    Map<Long, Integer> newRank = new HashMap<>();
+    for (int i = 0; i < orderedIds.size(); i++) {
+      newRank.put(orderedIds.get(i), i + 1);
+    }
+    Map<Long, Long> datasetsByLevel = repository.countDatasetsByLevel();
+    List<ReorderPreviewResponse.RoleImpact> impacts = new ArrayList<>();
+    for (var role : repository.findRoleLevels()) {
+      if (role.levelId() == null && !role.systemAdmin()) {
+        continue;
+      }
+      long before =
+          visibleCount(
+              role.systemAdmin() ? Integer.MAX_VALUE : oldRank.get(role.levelId()),
+              oldRank,
+              datasetsByLevel);
+      long after =
+          visibleCount(
+              role.systemAdmin() ? Integer.MAX_VALUE : newRank.get(role.levelId()),
+              newRank,
+              datasetsByLevel);
+      if (before != after) {
+        impacts.add(
+            new ReorderPreviewResponse.RoleImpact(role.roleId(), role.roleName(), after - before));
+      }
+    }
+    return new ReorderPreviewResponse(impacts);
+  }
+
+  /** 순서 적용 — rank 일괄 갱신(UNIQUE 지연) 후 시스템 ADMIN 을 새 최상위로 재동기화한다(판단 사항 13). 영향 요약을 감사 메타에 함께 남긴다. */
+  @Transactional
+  public void applyReorder(List<Long> orderedIds, long actor) {
+    // previewReorder 가 순열 검증을 포함한다(잘못된 목록이면 여기서 400).
+    ReorderPreviewResponse impact = previewReorder(orderedIds);
+    Map<Long, Integer> newRanks = new HashMap<>();
+    for (int i = 0; i < orderedIds.size(); i++) {
+      newRanks.put(orderedIds.get(i), i + 1);
+    }
+    repository.updateRanks(newRanks);
+    repository.syncSystemAdminToTop();
+    audit.record(
+        actor,
+        "SECURITY_LEVEL_REORDER",
+        "security_level",
+        null,
+        null,
+        Map.of("orderedIds", orderedIds, "impact", impact.roles()));
+  }
+
+  /** rank 가 roleRank 이하인 등급의 데이터셋 합 — 그 자격의 역할이 rank 기준으로 볼 수 있는 수. */
+  private static long visibleCount(
+      int roleRank, Map<Long, Integer> ranks, Map<Long, Long> datasetsByLevel) {
+    long sum = 0;
+    for (var e : ranks.entrySet()) {
+      if (e.getValue() <= roleRank) {
+        sum += datasetsByLevel.getOrDefault(e.getKey(), 0L);
+      }
+    }
+    return sum;
+  }
+
+  /** 순서 목록은 현재 테넌트 등급의 완전한 순열이어야 한다(누락·중복·타 테넌트 id 거부). */
+  private static void requireFullPermutation(List<LevelPolicy> levels, List<Long> orderedIds) {
+    var expected = levels.stream().map(LevelPolicy::id).collect(Collectors.toSet());
+    if (orderedIds.size() != expected.size() || !expected.equals(new HashSet<>(orderedIds))) {
+      throw new CodedApiException(
+          HttpStatus.BAD_REQUEST, "SECURITY_LEVEL_ORDER_INVALID", "모든 보안 등급을 정확히 한 번씩 포함해야 합니다.");
+    }
   }
 
   /** 같은 테넌트 안 이름 중복을 UNIQUE 위반(500) 대신 409 로 알린다. */
