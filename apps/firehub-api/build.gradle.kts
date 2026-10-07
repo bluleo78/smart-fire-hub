@@ -126,6 +126,8 @@ dependencies {
     testImplementation("org.wiremock:wiremock-standalone:3.10.0")
     // MockWebServer for embedding provider unit tests (버전은 Spring Boot BOM이 관리)
     testImplementation("com.squareup.okhttp3:mockwebserver")
+    // SQL 실행 단일 관문(GuardedSqlExecutor) 우회 금지 규칙(스펙 §4.1). 로컬 Gradle 캐시에 있는 버전.
+    testImplementation("com.tngtech.archunit:archunit:1.3.0")
     testRuntimeOnly("org.postgresql:postgresql")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }

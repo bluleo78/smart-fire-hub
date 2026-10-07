@@ -50,6 +50,7 @@ public class PipelineService {
   private final SqlValidator sqlValidator;
   private final PythonScriptValidator pythonScriptValidator;
   private final DatasetColumnRepository columnRepository;
+  private final PipelineSecurityGate pipelineSecurityGate;
 
   @Transactional
   public PipelineDetailResponse createPipeline(CreatePipelineRequest request, Long userId) {
@@ -67,13 +68,19 @@ public class PipelineService {
         pipelineRepository.save(request.name(), request.description(), userId);
 
     // Save steps
-    saveSteps(pipeline.id(), request.steps());
+    saveSteps(pipeline.id(), request.steps(), userId);
 
     // Return full detail
     return getPipelineById(pipeline.id());
   }
 
-  private void saveSteps(Long pipelineId, List<PipelineStepRequest> stepRequests) {
+  /**
+   * 스텝 전체를 검증·저장한다.
+   *
+   * @param editorUserId 저장하는 편집자 — SQL 스텝이 참조하는 데이터셋을 이 사용자가 볼 수 있어야 한다(보안 등급 S2, 스펙 §4.2 5행)
+   */
+  private void saveSteps(
+      Long pipelineId, List<PipelineStepRequest> stepRequests, Long editorUserId) {
     if (stepRequests == null || stepRequests.isEmpty()) {
       return;
     }
@@ -95,6 +102,18 @@ public class PipelineService {
       // Validate AI_CLASSIFY step requirements
       if ("AI_CLASSIFY".equals(stepRequest.scriptType())) {
         validateAiClassifyStep(stepRequest);
+        // 보안 등급(최종 리뷰 C3): AI_CLASSIFY 는 명시 입력 데이터셋을 전부 읽어 LLM 으로 보낸다 — 편집자가 볼 수 없는 입력은 저장할 수
+        // 없다(SQL 스텝의 저장 판정과 같은 의미). 의존 스텝 출력 자동 해석분은 실행 시점에 판정된다.
+        if (stepRequest.inputDatasetIds() != null && !stepRequest.inputDatasetIds().isEmpty()) {
+          pipelineSecurityGate.checkStepInputsForSave(editorUserId, stepRequest.inputDatasetIds());
+        }
+      }
+
+      // 보안 등급(코드리뷰 CR2): API_CALL·PYTHON 은 SQL 관문 없이 지정 출력을 비우고(REPLACE) 덮어쓴다 — 편집자가 볼 수 없는 데이터셋을
+      // 출력으로 지정한 스텝은 저장할 수 없다. 러너 TEMP(편집 화면이 되돌려 보내는 출력 폴백)는 실행 시점에 판정된다.
+      if ("API_CALL".equals(stepRequest.scriptType())
+          || "PYTHON".equals(stepRequest.scriptType())) {
+        pipelineSecurityGate.checkStepOutputForSave(editorUserId, stepRequest.outputDatasetId());
       }
 
       // PYTHON 스텝 escalation 코드(shell/동적실행 등) 차단 — pythonConfig 유무와 무관하게 항상 검증 (#270)
@@ -112,7 +131,11 @@ public class PipelineService {
       // 참조로 치환한 뒤 검증한다 — 그렇지 않으면 UI가 권장하는 표준 사용법이 저장 단계에서
       // 항상 파싱 실패로 거부된다 (#643).
       if ("SQL".equals(stepRequest.scriptType())) {
-        sqlValidator.validate(substituteStepReferencesForValidation(stepRequest.scriptContent()));
+        String substituted = substituteStepReferencesForValidation(stepRequest.scriptContent());
+        sqlValidator.validate(substituted);
+        // 보안 등급(S2): 편집자가 볼 수 없는 데이터셋을 참조하는 스텝은 저장할 수 없다(스펙 §4.2 5행). 검증한 바로 그
+        // 문자열을 판정한다(가드 계약). {{#N}} 더미는 판정에서 빠지고 실행 시점에 실제 테이블로 판정된다(판단 사항 4).
+        pipelineSecurityGate.checkStepSqlForSave(editorUserId, substituted);
       }
 
       // 출력 방식 검증 — 문자열로만 저장되던 값을 enum 으로 고정한다(알 수 없는 값이 REPLACE 로 조용히 폴백되던 경로 차단).
@@ -387,7 +410,7 @@ public class PipelineService {
       // 이전 실행분이 통째로 빠진 채 변경분만 쌓인다.
       Map<String, StepCursor> cursors = stepRepository.findCursorsByPipelineId(id);
       stepRepository.deleteByPipelineId(id);
-      saveSteps(id, request.steps());
+      saveSteps(id, request.steps(), userId);
       // 새로 저장하는 쪽의 동명 스텝은 따로 거를 필요가 없다 — pipeline_step 에는
       // UNIQUE (pipeline_id, name) 제약이 있어(V3:24) saveSteps 가 이 루프에 닿기 전에 실패하고
       // 트랜잭션 전체가 롤백된다. 이름을 이월 키로 쓸 수 있는 근거도 그 제약이다.

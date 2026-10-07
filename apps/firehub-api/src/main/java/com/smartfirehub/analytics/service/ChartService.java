@@ -9,6 +9,9 @@ import com.smartfirehub.analytics.exception.SavedQueryNotFoundException;
 import com.smartfirehub.analytics.repository.ChartRepository;
 import com.smartfirehub.analytics.repository.SavedQueryRepository;
 import com.smartfirehub.global.dto.PageResponse;
+import com.smartfirehub.securitylevel.access.Clearance;
+import com.smartfirehub.securitylevel.access.ClearanceResolver;
+import com.smartfirehub.securitylevel.sql.GuardedSqlExecutor;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -20,7 +23,8 @@ public class ChartService {
 
   private final ChartRepository chartRepository;
   private final SavedQueryRepository savedQueryRepository;
-  private final AnalyticsQueryExecutionService executionService;
+  private final GuardedSqlExecutor guardedSqlExecutor;
+  private final ClearanceResolver clearanceResolver;
 
   /** List charts with optional filters and pagination. */
   // RLS 가 걸린 chart 를 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
@@ -113,15 +117,33 @@ public class ChartService {
   }
 
   /**
-   * Execute SQL for cache population (no user context — internal use by dashboard service). Uses
-   * readOnly=false to match chart data behavior; cache key is saved_query_id.
+   * 조회자 자격으로 판정하고 실행한다(빈 SQL 은 빈 결과). readOnly=false 는 차트 데이터와 같은 기존 동작이다(쓰기 집합도 관문이 VIEW·하향 규칙으로
+   * 판정한다 — 판단 사항 8).
    */
-  public com.smartfirehub.analytics.dto.AnalyticsQueryResponse executeQueryForCache(String sql) {
+  public com.smartfirehub.analytics.dto.AnalyticsQueryResponse executeQueryForCache(
+      Clearance viewer, String sql) {
     if (sql == null || sql.isBlank()) {
       return new com.smartfirehub.analytics.dto.AnalyticsQueryResponse(
           "SELECT", java.util.List.of(), java.util.List.of(), 0, 0L, 0, false, null);
     }
-    return executionService.execute(sql, 1000, false);
+    return executeJudged(judge(viewer, sql));
+  }
+
+  /**
+   * 조회자 기준 차트 SQL 판정(실행하지 않음) — 대시보드 일괄 경로가 캐시를 읽기 전에 매 요청 부른다. 거부는 예외가 아니라 {@link
+   * GuardedSqlExecutor.AnalyticsJudgment#denied()} 값이다(위젯 하나 때문에 화면 전체가 403 이 되지 않게).
+   */
+  public GuardedSqlExecutor.AnalyticsJudgment judge(Clearance viewer, String sqlText) {
+    return guardedSqlExecutor.judgeAnalytics(viewer, sqlText);
+  }
+
+  /**
+   * 판정 토큰을 차트 데이터 조건(최대 1000행, readOnly=false)으로 실행한다 — 판정한 바로 그 정규화본이 실행되고 다시 판정하지 않는다. 대시보드 캐시
+   * 채움(캐시 키는 saved_query_id + 판정한 SQL 원문)과 단건 차트 데이터가 같이 쓴다.
+   */
+  public com.smartfirehub.analytics.dto.AnalyticsQueryResponse executeJudged(
+      GuardedSqlExecutor.AnalyticsJudgment judgment) {
+    return guardedSqlExecutor.executeJudgedAnalytics(judgment, 1000, false);
   }
 
   /**
@@ -137,7 +159,26 @@ public class ChartService {
             .findSavedQuerySqlText(id, userId)
             .orElseThrow(
                 () -> new SavedQueryNotFoundException("Saved query not found for chart: " + id));
-    var queryResult = executionService.execute(sqlText, 1000, false);
-    return new ChartDataResponse(chart, queryResult);
+    // 보안 등급(S2): 조회자 기준 판정 — 위반이면 실행하지 않고 200 + denied. 단건 위젯 경로(DashboardWidgetCard→useChartData)도
+    // 대시보드 일괄 경로와 같은 계약이어야 위젯 하나가 화면 전체를 오류로 만들지 않는다(스펙 §4.2 4행).
+    // 판정은 한 번 — 통과한 토큰의 정규화본을 그대로 실행하므로 판정과 실행 사이에 다른 판정이 끼지 않는다.
+    GuardedSqlExecutor.AnalyticsJudgment judgment =
+        judge(clearanceResolver.resolve(userId), sqlText);
+    if (judgment.denied()) {
+      return deniedData(chart);
+    }
+    return new ChartDataResponse(chart, executeJudged(judgment));
+  }
+
+  /**
+   * denied 위젯 응답 — queryResult 는 null 이 아닌 빈 결과(null 이면 차트 빌더 등 다른 소비자가 깨진다, 판단 사항 7). 거부 코드·원본 이름은
+   * 싣지 않는다. chart 메타데이터는 같은 조회자가 GET /charts/{id} 로 이미 받는 값과 같다(새로 드러나는 것 없음).
+   */
+  public static ChartDataResponse deniedData(ChartResponse chart) {
+    return new ChartDataResponse(
+        chart,
+        new com.smartfirehub.analytics.dto.AnalyticsQueryResponse(
+            "SELECT", List.of(), List.of(), 0, 0L, 0, false, null),
+        true);
   }
 }

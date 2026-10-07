@@ -11,11 +11,16 @@ import com.smartfirehub.dataset.exception.DatasetNotFoundException;
 import com.smartfirehub.dataset.exception.DuplicateDatasetNameException;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.support.IntegrationTestBase;
+import com.smartfirehub.support.TestUsers;
 import java.util.List;
 import org.jooq.DSLContext;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
@@ -28,6 +33,7 @@ class DatasetServiceExtTest extends IntegrationTestBase {
   @Autowired private DatasetService datasetService;
   @Autowired private DatasetFavoriteService datasetFavoriteService;
   @Autowired private DSLContext dsl;
+  @Autowired private PasswordEncoder encoder;
 
   private Long testUserId;
   private Long testCategoryId;
@@ -35,14 +41,16 @@ class DatasetServiceExtTest extends IntegrationTestBase {
   @BeforeEach
   void setUp() {
     testUserId =
-        dsl.insertInto(USER)
-            .set(USER.USERNAME, "ext_testuser")
-            .set(USER.PASSWORD, "password")
-            .set(USER.NAME, "Ext Test User")
-            .set(USER.EMAIL, "ext_test@example.com")
-            .returning(USER.ID)
-            .fetchOne()
-            .getId();
+        TestUsers.createMember(
+                dsl,
+                fixtureTransactionTemplate,
+                encoder,
+                "ext_testuser",
+                "ext_test@example.com",
+                "Password123",
+                "Ext Test User",
+                DEFAULT_TEST_TENANT_ID)
+            .id();
 
     testCategoryId =
         dsl.insertInto(DATASET_CATEGORY)
@@ -51,6 +59,16 @@ class DatasetServiceExtTest extends IntegrationTestBase {
             .returning(DATASET_CATEGORY.ID)
             .fetchOne()
             .getId();
+
+    // 목록 조회는 이제 호출자의 열람 자격(보안 등급)으로 걸러진다 — 사용자를 USER 역할 테넌트 멤버로 만들고
+    // 인증 컨텍스트를 세운다. 인증이 없으면 가드가 fail-closed 로 빈 목록을 돌려준다(가드를 풀지 않는다).
+    SecurityContextHolder.getContext()
+        .setAuthentication(new UsernamePasswordAuthenticationToken(testUserId, null, List.of()));
+  }
+
+  @AfterEach
+  void clearAuthentication() {
+    SecurityContextHolder.clearContext();
   }
 
   // =========================================================================
@@ -133,9 +151,11 @@ class DatasetServiceExtTest extends IntegrationTestBase {
     datasetService.updateStatus(ds.id(), new UpdateStatusRequest("CERTIFIED", "ok"), testUserId);
 
     PageResponse<DatasetResponse> certified =
-        datasetService.getDatasets(null, null, null, null, 0, 10, testUserId, "CERTIFIED", false);
+        datasetService.getDatasets(
+            null, null, null, null, 0, 10, testUserId, "CERTIFIED", false, null);
     PageResponse<DatasetResponse> deprecated =
-        datasetService.getDatasets(null, null, null, null, 0, 10, testUserId, "DEPRECATED", false);
+        datasetService.getDatasets(
+            null, null, null, null, 0, 10, testUserId, "DEPRECATED", false, null);
 
     List<Long> certIds = certified.content().stream().map(DatasetResponse::id).toList();
     assertThat(certIds).contains(ds.id());
@@ -152,7 +172,7 @@ class DatasetServiceExtTest extends IntegrationTestBase {
     datasetFavoriteService.toggleFavorite(fav.id(), testUserId);
 
     PageResponse<DatasetResponse> result =
-        datasetService.getDatasets(null, null, null, null, 0, 10, testUserId, null, true);
+        datasetService.getDatasets(null, null, null, null, 0, 10, testUserId, null, true, null);
 
     List<Long> ids = result.content().stream().map(DatasetResponse::id).toList();
     assertThat(ids).contains(fav.id());
@@ -164,7 +184,8 @@ class DatasetServiceExtTest extends IntegrationTestBase {
     createSimpleDataset("IgnoreMeExt", "ignore_me_ext");
 
     PageResponse<DatasetResponse> result =
-        datasetService.getDatasets(null, null, null, "SearchMeExt", 0, 10, null, null, false);
+        datasetService.getDatasets(
+            null, null, null, "SearchMeExt", 0, 10, testUserId, null, false, null);
 
     assertThat(result.content()).hasSize(1);
     assertThat(result.content().get(0).name()).isEqualTo("SearchMeExt");

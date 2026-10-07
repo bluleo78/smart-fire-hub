@@ -24,6 +24,7 @@ import com.smartfirehub.pipeline.service.executor.ApiCallExecutor;
 import com.smartfirehub.pipeline.service.executor.ExecutorClient;
 import com.smartfirehub.pipeline.service.validator.PythonScriptValidator;
 import com.smartfirehub.pipeline.service.validator.SqlValidator;
+import com.smartfirehub.securitylevel.access.SqlAccessResult;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -83,6 +84,7 @@ public class PipelineAsyncRunner {
   private final PythonScriptValidator pythonScriptValidator;
   private final IncrementalCursorService incrementalCursorService;
   private final OutputTableSessionLock outputTableSessionLock;
+  private final PipelineSecurityGate pipelineSecurityGate;
 
   /**
    * 파이프라인을 비동기로 실행한다.
@@ -100,7 +102,8 @@ public class PipelineAsyncRunner {
    *     updateStepExecution})은 모두 <b>단일 행 쓰기</b>이고 여러 건이 함께 커밋돼야 하는 불변식이 없으므로(스텝 상태는 각각 독립, 최종 상태는
    *     스텝 종료 후 한 번), 리포지토리의 클래스 레벨 {@code @Transactional} 이 여는 짧은 트랜잭션으로 충분하다 — 그 트랜잭션이 곧 RLS GUC
    *     공급 지점이다.
-   * @param userId 실행 요청 사용자 ID (Python/AI 권한 체크에 사용)
+   * @param userId 실행 주체 ID — 수동은 요청자, 트리거는 트리거 생성자. Python/AI 권한 체크와 SQL 스텝 보안 등급
+   *     판정(PipelineSecurityGate)에 쓴다
    * @param executorEnabled 외부 실행기 활성화 여부
    */
   @Async("pipelineExecutor")
@@ -399,12 +402,23 @@ public class PipelineAsyncRunner {
         // 실행 직전 재검증 — 저장 이후 정책 변경/우회 방지. probe/wrappedSql 결합은 이 검증 통과 후이므로
         // 단일 statement·세미콜론 없음이 보장되어 구조적으로 안전하다. (#136)
         sqlValidator.validate(sql);
+        // 보안 등급(S2, 스펙 §4.2 5행): 실행 주체(수동=요청자, 트리거=트리거 생성자) 기준 판정. 판정 문자열은 스텝 참조·증분
+        // 플레이스홀더를 치환하고 위에서 검증한 바로 이 sql 이다 — DML 분기는 이 문자열을 그대로, SELECT 분기는 러너가 만든
+        // INSERT/MERGE 래퍼 + 이 문자열을 실행하므로 판정한 테이블 = 실행되는 테이블이다(가드 계약). 원문(scriptContent)이나
+        // 주석을 뗀 사본을 판정하면 안 된다. 사용자 SQL 을 실제로 돌리는 probe(SqlColumnProbe)·실행보다 먼저다. 거부는 예외로
+        // 스텝 실패가 되고, 메시지는 구분 불가 문구라 실행 이력에 숨김 데이터셋 이름이 남지 않는다.
+        // 실행 주체 자격은 이 스텝에서 한 번만 계산해 이 스텝의 모든 판정(입력·TEMP 삭제 전·출력)에 쓴다.
+        PipelineSecurityGate.RunAs runAs = pipelineSecurityGate.runAs(userId);
+        SqlAccessResult access = pipelineSecurityGate.checkStepSqlForRun(runAs, sql);
         boolean isSelect = isSelectStatement(sql);
         // 이번 실행에서 SQL 스텝 출력을 위해 임시 데이터셋을 자동 생성/재사용했는지 여부.
         // 예약어 컬럼명 별칭 처리(renameReservedColumn*)는 이 경로에서만 적용해야 한다 — 사용자가
         // 명시적으로 지정한 기존 데이터셋(outputDatasetId가 원래부터 있던 경우)은 실제로 "id"라는
         // 정상 사용자 컬럼을 가질 수 있으므로 그 이름을 그대로 매칭해야 한다(#645).
         boolean tempDatasetAutoCreated = false;
+        // 그중 이번 실행에서 TEMP 를 새로 만들었는지(빈 테이블) — 새 TEMP 만 입력 최대 등급으로 "정확히" 맞출 수 있다(낮추기 포함).
+        // 재사용 TEMP 는 이전 실행 데이터가 남아 있을 수 있어 상향만 한다(PipelineSecurityGate#enforceOutputLevel).
+        boolean tempDatasetFresh = false;
         // probe 결과를 스텝당 한 번만 얻어 재사용한다 — 아래 두 블록이 같은 sql 을 각각 probe 하면
         // 테넌트 풀 대여·트랜잭션·왕복이 두 벌 나가고, 그 사이 풀이 축출·close() 될 틈까지 생긴다.
         // SELECT 가 아니면 probe 자체가 필요 없으므로 지연 획득한다.
@@ -413,7 +427,6 @@ public class PipelineAsyncRunner {
         // SELECT이고 outputDatasetId가 없으면 임시 데이터셋 자동 생성
         if (isSelect && outputDatasetId == null) {
           tempDatasetAutoCreated = true;
-          Long stepId = step.id();
           // SELECT * FROM {{#N}} 처럼 이전 스텝(또는 실제 데이터셋)의 결과를 그대로 재사용하면
           // 결과 컬럼에 시스템 예약 컬럼(id/import_id/created_at/_updated_at)이 그대로 섞여 들어온다.
           // V124 백필 이후 _updated_at 은 모든 데이터셋 테이블에 있으므로 SELECT * 는 항상 이 경로를 탄다.
@@ -425,25 +438,10 @@ public class PipelineAsyncRunner {
           probedColumns = sqlColumnProbe.columnsWithTypes(sql);
           List<ColumnInfo> selectColumns = renameReservedColumns(probedColumns);
 
-          Optional<Long> existingDatasetId = tempDatasetService.findExistingTempDataset(stepId);
-          if (existingDatasetId.isPresent()) {
-            Long dsId = existingDatasetId.get();
-            if (tempDatasetService.hasSchemaChanged(dsId, selectColumns)) {
-              log.info("Schema changed for step {}, recreating temp dataset", step.name());
-              tempDatasetService.deleteTempDataset(dsId);
-              outputDatasetId =
-                  tempDatasetService.createTempDataset(
-                      selectColumns, pipelineId, pipelineName, stepId, step.name(), userId);
-            } else {
-              log.info("Reusing existing temp dataset {} for step {}", dsId, step.name());
-              outputDatasetId = dsId;
-            }
-          } else {
-            log.info("Creating new temp dataset for step {}", step.name());
-            outputDatasetId =
-                tempDatasetService.createTempDataset(
-                    selectColumns, pipelineId, pipelineName, stepId, step.name(), userId);
-          }
+          StepTemp temp =
+              ensureStepTemp(step, selectColumns, pipelineId, pipelineName, userId, runAs, "");
+          tempDatasetFresh = temp.fresh();
+          outputDatasetId = temp.datasetId();
           outputTableName = datasetRepository.findTableNameById(outputDatasetId).orElseThrow();
           // 여기서 즉시 truncate 하지 않는다 — 임시 데이터셋도 이번 실행 재사용 시 이전 실행 결과를
           // 담고 있어(findExistingTempDataset) 일반 출력 테이블과 같은 원자성 문제를 겪는다. 비우기는
@@ -493,6 +491,20 @@ public class PipelineAsyncRunner {
         // 사용자 DML 이 스스로 정한다.
         if (stepWasFullRebuild && isSelect && outputTableName != null) {
           preStatements.add(OutputClearStatement.deleteAll(outputTableName));
+        }
+
+        // 출력 등급(판단 사항 5): SELECT 는 러너가 붙이는 래퍼의 INSERT 대상이 판정 문자열에 없으므로 여기서 본다 — 러너가 만든
+        // TEMP 는 입력 최대 등급으로 상향, 지정 출력은 볼 수 있어야 하고 하향이면 실패. 사용자 DML 스텝의 지정 출력도 REPLACE 면
+        // 비우기(DELETE) 선행 문장의 대상이 되므로 실행 주체가 볼 수 있어야 한다. 아래 실행(선행 문장 포함)보다 먼저다.
+        // 러너 소유 TEMP 여부는 게이트가 DB 로 판정한다 — 두 번째 실행부터 TEMP 는 step.outputDatasetId 로 들어와 위 자동 생성
+        // 분기를 타지 않기 때문이다(PipelineStepRepository 의 coalesce 폴백).
+        if (outputDatasetId != null) {
+          if (isSelect) {
+            pipelineSecurityGate.enforceOutputLevel(
+                access, outputDatasetId, step.id(), tempDatasetFresh, runAs);
+          } else {
+            pipelineSecurityGate.requireOutputVisible(outputDatasetId, runAs);
+          }
         }
 
         if (isSelect && outputTableName != null && outputDatasetId != null) {
@@ -627,6 +639,11 @@ public class PipelineAsyncRunner {
         }
         // escalation 코드 차단 — 저장 시 검증을 우회해 저장된 스텝(직접 DB 삽입 등)에 대한 실행 시 2차 방어 (#270)
         pythonScriptValidator.validate(step.scriptContent());
+        // 보안 등급(코드리뷰 CR2): 사용자 지정 출력은 실행 주체가 볼 수 있어야 쓴다 — 출력 비우기(실행기 끈 REPLACE truncate·실행기 켠
+        // REPLACE 맞바꿈)·적재보다 먼저다. 입력 읽기는 여전히 판정하지 않는다(알려진 우회, 배포 문서의 알려진 한계).
+        if (outputDatasetId != null) {
+          pipelineSecurityGate.requireExplicitOutputVisible(outputDatasetId, step.id(), userId);
+        }
         // outputDatasetId가 없고 pythonConfig에 outputColumns가 있으면 임시 데이터셋 자동 생성
         if (outputDatasetId == null && step.pythonConfig() != null) {
           com.smartfirehub.pipeline.dto.PythonStepConfig pythonStepConfig =
@@ -746,6 +763,12 @@ public class PipelineAsyncRunner {
           decryptedAuth = apiConnectionService.getDecryptedAuthConfig(step.apiConnectionId());
         } else if (apiCallConfig.inlineAuth() != null) {
           decryptedAuth = apiCallConfig.inlineAuth();
+        }
+
+        // 보안 등급(코드리뷰 CR2): 사용자 지정 출력은 실행 주체가 볼 수 있어야 쓴다 — REPLACE 맞바꿈·적재보다 먼저다. 외부 API 데이터라 판정할
+        // 입력이 없으므로 등급 전파·하향 판정은 없다.
+        if (outputDatasetId != null) {
+          pipelineSecurityGate.requireExplicitOutputVisible(outputDatasetId, step.id(), userId);
         }
 
         // outputDatasetId가 없으면 임시 데이터셋 자동 생성
@@ -883,34 +906,26 @@ public class PipelineAsyncRunner {
           }
         }
 
+        // 보안 등급(최종 리뷰 C3): 실행 주체가 해석된 입력(명시 + 의존 스텝 출력 자동 해석)을 모두 볼 수 있어야 한다 — 입력을 읽기 전,
+        // 출력 TEMP 를 만들거나 지우기 전에 판정한다. 거부는 SQL 스텝과 같은 구분 불가 메시지로 스텝 실패가 된다.
+        PipelineSecurityGate.RunAs aiRunAs = pipelineSecurityGate.runAs(userId);
+        SqlAccessResult aiInputAccess =
+            pipelineSecurityGate.checkStepInputsForRun(
+                aiRunAs, resolvedInputDatasetIds == null ? List.of() : resolvedInputDatasetIds);
+        // 이번 실행에서 TEMP 를 새로 만들었는지(빈 테이블) — SQL 스텝과 같은 이유로 새 TEMP 만 입력 최대 등급으로 "정확히" 맞춘다.
+        boolean aiTempFresh = false;
+
         // outputDatasetId가 없으면 임시 데이터셋 자동 생성
         if (outputDatasetId == null) {
           com.smartfirehub.pipeline.dto.AiClassifyConfig aiClassifyConfig =
               objectMapper.convertValue(
                   step.aiConfig(), com.smartfirehub.pipeline.dto.AiClassifyConfig.class);
           List<ColumnInfo> aiColumns = buildAiClassifyColumns(aiClassifyConfig);
-          Long stepId = step.id();
-          Optional<Long> existingDatasetId = tempDatasetService.findExistingTempDataset(stepId);
-          if (existingDatasetId.isPresent()) {
-            Long dsId = existingDatasetId.get();
-            if (tempDatasetService.hasSchemaChanged(dsId, aiColumns)) {
-              log.info(
-                  "Schema changed for AI_CLASSIFY step {}, recreating temp dataset", step.name());
-              tempDatasetService.deleteTempDataset(dsId);
-              outputDatasetId =
-                  tempDatasetService.createTempDataset(
-                      aiColumns, pipelineId, pipelineName, stepId, step.name(), userId);
-            } else {
-              log.info(
-                  "Reusing existing temp dataset {} for AI_CLASSIFY step {}", dsId, step.name());
-              outputDatasetId = dsId;
-            }
-          } else {
-            log.info("Creating new temp dataset for AI_CLASSIFY step {}", step.name());
-            outputDatasetId =
-                tempDatasetService.createTempDataset(
-                    aiColumns, pipelineId, pipelineName, stepId, step.name(), userId);
-          }
+          StepTemp temp =
+              ensureStepTemp(
+                  step, aiColumns, pipelineId, pipelineName, userId, aiRunAs, "AI_CLASSIFY ");
+          aiTempFresh = temp.fresh();
+          outputDatasetId = temp.datasetId();
           outputTableName = datasetRepository.findTableNameById(outputDatasetId).orElseThrow();
           // 여기서 truncateTable 하지 않는다 — 다시 넣지 말 것. API_CALL 블록과 같은 이유다:
           //  (1) APPEND 스텝의 재사용 임시 데이터셋까지 매 실행 비웠다.
@@ -921,6 +936,13 @@ public class PipelineAsyncRunner {
           // 아니라 swapTable 을 직접 부르는데, AI_CLASSIFY 에서 0행은 정상 결과가 아니라
           // :255 에서 먼저 예외를 던지기 때문이다 — 즉 swapTable 에 도달하면 이미 비어 있지 않다.
           // 실패하면 :273 의 dropTempTable 로 이전 행이 그대로 남는다.
+        }
+
+        // 출력 등급(판단 사항 5, SQL SELECT 스텝과 같은 규칙): 러너 TEMP 는 입력 최대 등급으로 상향·시드, 사용자 지정 출력은 실행 주체가
+        // 볼 수 있어야 하고 입력보다 낮으면 실패(SQL_WRITE_DOWNGRADE). 실행기(AiClassifyExecutor)가 출력을 비우거나 쓰기 전에 둔다.
+        if (outputDatasetId != null) {
+          pipelineSecurityGate.enforceOutputLevel(
+              aiInputAccess, outputDatasetId, step.id(), aiTempFresh, aiRunAs);
         }
 
         // AiClassifyExecutor에 전달할 스텝 래퍼: 해결된 outputDatasetId 및 inputDatasetIds 반영
@@ -997,6 +1019,46 @@ public class PipelineAsyncRunner {
           LocalDateTime.now(ZoneOffset.UTC));
       return "FAILED";
     }
+  }
+
+  /** 러너 소유 TEMP 출력 — 데이터셋 id 와 이번 실행에서 새로 만든(빈) 테이블인지. */
+  private record StepTemp(Long datasetId, boolean fresh) {}
+
+  /**
+   * SQL SELECT·AI_CLASSIFY 스텝의 러너 소유 TEMP 출력을 준비한다 — 없으면 만들고, 있으면 스키마가 같을 때 재사용, 바뀌었으면 지우고 다시 만든다.
+   *
+   * <p>코드리뷰 CR3: 재사용 TEMP 를 지우기 <b>전에</b> 실행 주체가 볼 수 있는지 본다. 이후 출력 등급 처리(enforceOutputLevel)는 새로 만든
+   * TEMP 만 보므로, 여기서 막지 않으면 볼 수 없는 실행 주체(B)가 이전 실행 주체(A)의 결과 TEMP 를 통째로 지운다. 삭제·재생성 경로를 두 스텝 타입이 이 한
+   * 곳으로 지나가게 해, 판정을 빠뜨린 복사본이 생기지 않게 한다. 사용자 SQL 을 실행하는 probe 는 여기서 부르지 않는다(호출자가 실행 주체 판정 뒤에 부른다).
+   *
+   * @param logLabel 로그 문구의 스텝 종류 접두("" 또는 "AI_CLASSIFY ")
+   */
+  private StepTemp ensureStepTemp(
+      PipelineStepResponse step,
+      List<ColumnInfo> columns,
+      Long pipelineId,
+      String pipelineName,
+      Long userId,
+      PipelineSecurityGate.RunAs runAs,
+      String logLabel) {
+    Long stepId = step.id();
+    Optional<Long> existingDatasetId = tempDatasetService.findExistingTempDataset(stepId);
+    if (existingDatasetId.isPresent()) {
+      Long dsId = existingDatasetId.get();
+      if (!tempDatasetService.hasSchemaChanged(dsId, columns)) {
+        log.info("Reusing existing temp dataset {} for {}step {}", dsId, logLabel, step.name());
+        return new StepTemp(dsId, false);
+      }
+      log.info("Schema changed for {}step {}, recreating temp dataset", logLabel, step.name());
+      pipelineSecurityGate.requireOutputVisible(dsId, runAs);
+      tempDatasetService.deleteTempDataset(dsId);
+    } else {
+      log.info("Creating new temp dataset for {}step {}", logLabel, step.name());
+    }
+    return new StepTemp(
+        tempDatasetService.createTempDataset(
+            columns, pipelineId, pipelineName, stepId, step.name(), userId),
+        true);
   }
 
   /**

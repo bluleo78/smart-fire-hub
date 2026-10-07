@@ -146,16 +146,27 @@ public class DocumentChunkRepository {
    * 켜고({@link HnswSearch}) relaxed_order 라 바깥에서 점수로 재정렬한다.
    */
   public List<DocumentSearchHit> searchByCosine(
-      EmbeddingSpace space, float[] queryEmbedding, List<Long> datasetIds, int topK) {
+      EmbeddingSpace space,
+      float[] queryEmbedding,
+      List<Long> datasetIds,
+      int topK,
+      String visibilitySql) {
     List<Object> params = new ArrayList<>();
-    String sql = semanticSql(space, datasetIds, toVectorLiteral(queryEmbedding), topK, params);
+    String sql =
+        semanticSql(
+            space, datasetIds, toVectorLiteral(queryEmbedding), topK, params, visibilitySql);
     return HnswSearch.search(
         dsl, sql, params, DocumentChunkRepository::toHit, DocumentSearchHit::score);
   }
 
   /** 의미 검색 SQL. package-private — 실행 계획(EXPLAIN) 단언 테스트가 쓴다. */
   String semanticSql(
-      EmbeddingSpace space, List<Long> datasetIds, String vector, int topK, List<Object> params) {
+      EmbeddingSpace space,
+      List<Long> datasetIds,
+      String vector,
+      int topK,
+      List<Object> params,
+      String visibilitySql) {
     StringBuilder sql =
         new StringBuilder(
                 "SELECT c.id, c.document_file_id, c.dataset_id, df.original_name, c.chunk_index, c.content,"
@@ -163,9 +174,12 @@ public class DocumentChunkRepository {
             .append(space.dimension().chunkTable())
             .append(" v JOIN document_chunk c ON c.id = v.chunk_id")
             .append(" JOIN document_file df ON df.id = c.document_file_id")
+            .append(" JOIN dataset d ON d.id = c.dataset_id")
             .append(" WHERE df.status = 'COMPLETED' AND v.embedding_model = ?");
     params.add(vector);
     params.add(space.model());
+    // 가시성(보안 등급) — DatasetAccessGuard.visibleSql 이 인라인 렌더한 조건. 별칭은 d.
+    sql.append(" AND ").append(visibilitySql);
     if (datasetIds != null && !datasetIds.isEmpty()) {
       sql.append(" AND v.dataset_id IN (").append(placeholders(datasetIds.size())).append(")");
       params.addAll(datasetIds);
@@ -187,16 +201,20 @@ public class DocumentChunkRepository {
    * 임계값}). {@code %>} 는 pg_trgm.word_similarity_threshold GUC(기본 0.6)를 임계값으로 쓰므로, 기존 0.1 floor 를
    * 유지하려면 같은 트랜잭션에서 SET LOCAL 로 0.1 로 낮춰야 한다.
    */
-  public List<DocumentSearchHit> searchByTrigram(String query, List<Long> datasetIds, int topK) {
+  public List<DocumentSearchHit> searchByTrigram(
+      String query, List<Long> datasetIds, int topK, String visibilitySql) {
     StringBuilder sql =
         new StringBuilder(
             "SELECT dc.id, dc.document_file_id, dc.dataset_id, df.original_name,"
                 + " dc.chunk_index, dc.content, word_similarity(?, dc.content) AS score"
                 + " FROM document_chunk dc"
                 + " JOIN document_file df ON df.id = dc.document_file_id"
+                + " JOIN dataset d ON d.id = dc.dataset_id"
                 + " WHERE df.status = 'COMPLETED'");
     List<Object> params = new java.util.ArrayList<>();
     params.add(query); // SELECT 의 word_similarity 첫 인자
+    // 가시성(보안 등급) — DatasetAccessGuard.visibleSql 이 인라인 렌더한 조건. 별칭은 d.
+    sql.append(" AND ").append(visibilitySql);
     if (datasetIds != null && !datasetIds.isEmpty()) {
       sql.append(" AND dc.dataset_id IN (")
           .append(

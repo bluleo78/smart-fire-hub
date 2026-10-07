@@ -24,6 +24,7 @@ import com.smartfirehub.global.security.JwtAuthenticationFilter;
 import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.permission.service.PermissionService;
+import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -40,6 +41,10 @@ import org.springframework.test.web.servlet.MockMvc;
 @WebMvcTest(ChartController.class)
 @Import({SecurityConfig.class, JwtAuthenticationFilter.class})
 class ChartControllerTest {
+
+  // WebMvcConfig 가 DatasetAccessInterceptor(→DatasetAccessGuard)를 등록하므로 슬라이스에도 빈이 있어야 한다.
+  // 목은 아무것도 던지지 않아 숨김 판정은 통과 처리된다(실제 판정은 DatasetRouteHidingTest 가 검증).
+  @MockitoBean private DatasetAccessGuard datasetAccessGuard;
 
   @Autowired private MockMvc mockMvc;
   @Autowired private ObjectMapper objectMapper;
@@ -133,6 +138,31 @@ class ChartControllerTest {
         .perform(
             get("/api/v1/analytics/charts/5/data").header("Authorization", "Bearer valid-token"))
         .andExpect(status().isOk());
+  }
+
+  /**
+   * 보안 등급(Task 16) — 열람 거부 차트는 403 이 아니라 200 + denied:true, queryResult 는 null 이 아닌 빈 결과. 거부 코드는
+   * 본문에 싣지 않는다(스펙 §2.5).
+   */
+  @Test
+  void getChartData_denied_returns200WithDeniedFlagAndEmptyResult() throws Exception {
+    mockAuth("analytics:read");
+    when(chartService.getChartData(eq(5L), eq(1L)))
+        .thenReturn(ChartService.deniedData(sampleChartResponse(5L)));
+
+    mockMvc
+        .perform(
+            get("/api/v1/analytics/charts/5/data").header("Authorization", "Bearer valid-token"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.denied").value(true))
+        .andExpect(jsonPath("$.queryResult.columns").isEmpty())
+        .andExpect(jsonPath("$.queryResult.rows").isEmpty())
+        .andExpect(jsonPath("$.queryResult.error").doesNotExist())
+        .andExpect(
+            org.springframework.test.web.servlet.result.MockMvcResultMatchers.content()
+                .string(
+                    org.hamcrest.Matchers.not(
+                        org.hamcrest.Matchers.containsString("DATASET_SQL_ACCESS_DENIED"))));
   }
 
   /** ChartResponse 샘플 객체 생성 헬퍼 — DTO 필드 수에 대응하기 위해 리플렉션으로 인스턴스화 시도 없이 직접 작성한다. */

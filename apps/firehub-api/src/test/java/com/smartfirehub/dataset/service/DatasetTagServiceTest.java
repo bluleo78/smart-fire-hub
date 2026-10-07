@@ -9,11 +9,16 @@ import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.dto.DatasetDetailResponse;
 import com.smartfirehub.dataset.exception.DatasetNotFoundException;
 import com.smartfirehub.support.IntegrationTestBase;
+import com.smartfirehub.support.TestUsers;
 import java.util.List;
 import org.jooq.DSLContext;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
@@ -27,6 +32,7 @@ class DatasetTagServiceTest extends IntegrationTestBase {
   @Autowired private DatasetTagService datasetTagService;
   @Autowired private DatasetService datasetService;
   @Autowired private DSLContext dsl;
+  @Autowired private PasswordEncoder encoder;
 
   /** 테스트용 사용자 ID */
   private Long testUserId;
@@ -45,15 +51,20 @@ class DatasetTagServiceTest extends IntegrationTestBase {
   @BeforeEach
   void setUp() {
     // 테스트 사용자 생성
+    // 태그 집계는 호출자의 열람 자격(보안 등급)으로 걸러진다 — USER 역할 테넌트 멤버로 만들고 인증 컨텍스트를 세운다.
     testUserId =
-        dsl.insertInto(USER)
-            .set(USER.USERNAME, "tag_test_user")
-            .set(USER.PASSWORD, "password")
-            .set(USER.NAME, "Tag Test User")
-            .set(USER.EMAIL, "tag_test@example.com")
-            .returning(USER.ID)
-            .fetchOne()
-            .getId();
+        TestUsers.createMember(
+                dsl,
+                fixtureTransactionTemplate,
+                encoder,
+                "tag_test_user",
+                "tag_test@example.com",
+                "Password123",
+                "Tag Test User",
+                DEFAULT_TEST_TENANT_ID)
+            .id();
+    SecurityContextHolder.getContext()
+        .setAuthentication(new UsernamePasswordAuthenticationToken(testUserId, null, List.of()));
 
     // 첫 번째 테스트용 데이터셋 생성
     DatasetDetailResponse ds1 =
@@ -84,6 +95,11 @@ class DatasetTagServiceTest extends IntegrationTestBase {
                 null),
             testUserId);
     datasetId2 = ds2.id();
+  }
+
+  @AfterEach
+  void clearAuthentication() {
+    SecurityContextHolder.clearContext();
   }
 
   // =========================================================================

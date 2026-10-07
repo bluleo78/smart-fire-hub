@@ -78,6 +78,12 @@ class DatasetServiceFileTest {
             tagRepository,
             dsl,
             auditLogService,
+            // 이 테스트는 목록 조회를 쓰지 않아 가드는 호출되지 않는다.
+            org.mockito.Mockito.mock(
+                com.smartfirehub.securitylevel.access.DatasetAccessGuard.class),
+            // 이 테스트는 복제를 쓰지 않아 보안 서비스는 호출되지 않는다.
+            org.mockito.Mockito.mock(
+                com.smartfirehub.securitylevel.service.DatasetSecurityService.class),
             datasetEmbeddingService,
             events,
             fileDatasetConfigRepository,
@@ -144,28 +150,59 @@ class DatasetServiceFileTest {
   }
 
   @Test
-  void createFileDataset_withExplicitBucketAndPrefix_normalizesTrailingSlash() {
-    // given: 요청에 버킷/프리픽스를 명시적으로 지정 ("equip" → 저장 시 "equip/" 로 trailing slash 정규화되어야 함).
-    // 이 케이스는 request 가 지정한 bucket/prefix 가 그대로(정규화만 거쳐) 전달되는지도 함께 검증한다.
+  void createFileDataset_withClientPrefix_isRejectedBeforeAnythingIsSaved() {
+    // given: 클라이언트가 프리픽스를 지정한 FILE 요청 — 숨김·타 테넌트 데이터셋의 "datasets/<id>/" 를 덮을 수 있으므로 거부해야 한다(최종 리뷰
+    // C1).
+    CreateDatasetRequest request =
+        new CreateDatasetRequest(
+            "Alias File Dataset",
+            "alias_file_dataset",
+            "FILE storage dataset aliasing another dataset prefix",
+            null,
+            "FILE",
+            "SOURCE",
+            List.of(),
+            null,
+            null,
+            "datasets/7/");
+
+    // when / then: 400 FILE_PREFIX_NOT_ALLOWED, 데이터셋·config 모두 저장되지 않는다(부분 생성 없음).
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> datasetService.createDataset(request, USER_ID))
+        .isInstanceOf(com.smartfirehub.global.exception.CodedApiException.class)
+        .satisfies(
+            e -> {
+              var coded = (com.smartfirehub.global.exception.CodedApiException) e;
+              org.assertj.core.api.Assertions.assertThat(coded.code())
+                  .isEqualTo("FILE_PREFIX_NOT_ALLOWED");
+              org.assertj.core.api.Assertions.assertThat(coded.status().value()).isEqualTo(400);
+            });
+    verify(datasetRepository, never()).save(any(), anyLong());
+    verify(fileDatasetConfigRepository, never()).save(anyLong(), anyString(), anyString());
+  }
+
+  @Test
+  void createFileDataset_withExplicitBucket_keepsBucket_andUsesServerPrefix() {
+    // given: 버킷만 지정하고 프리픽스는 빈 문자열(웹이 빈 입력을 보내던 형태) — 빈 값은 "지정 안 함"으로 보고 서버 프리픽스를 쓴다.
     CreateDatasetRequest request =
         new CreateDatasetRequest(
             "Equip File Dataset",
             "equip_file_dataset",
-            "FILE storage dataset with explicit bucket/prefix",
+            "FILE storage dataset with explicit bucket",
             null,
             "FILE",
             "SOURCE",
             List.of(),
             null,
             "custom-bucket",
-            "equip");
+            "  ");
 
     DatasetResponse savedDataset =
         new DatasetResponse(
             DATASET_ID,
             "Equip File Dataset",
             "equip_file_dataset",
-            "FILE storage dataset with explicit bucket/prefix",
+            "FILE storage dataset with explicit bucket",
             null,
             "FILE",
             "SOURCE",
@@ -184,10 +221,10 @@ class DatasetServiceFileTest {
     // when
     datasetService.createDataset(request, USER_ID);
 
-    // then: request 가 지정한 bucket 이 그대로 전달되고(fileObjectStorageService.defaultBucket() 미호출),
-    // prefix 는 "equip" → "equip/" 로 trailing slash 가 붙어 "equipment/..." 와 부분 일치하지 않는다.
+    // then: 지정 버킷은 그대로(기본 버킷 미조회), 프리픽스는 서버가 만든 "datasets/<id>/".
     verify(fileObjectStorageService, never()).defaultBucket();
-    verify(fileDatasetConfigRepository).save(DATASET_ID, "custom-bucket", "equip/");
+    verify(fileDatasetConfigRepository)
+        .save(DATASET_ID, "custom-bucket", "datasets/" + DATASET_ID + "/");
   }
 
   @Test

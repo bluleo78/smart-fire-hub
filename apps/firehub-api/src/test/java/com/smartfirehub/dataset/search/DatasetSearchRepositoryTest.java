@@ -74,6 +74,10 @@ class DatasetSearchRepositoryTest extends IntegrationTestBase {
     }
   }
 
+  // 저장·검색 인프라(벡터 차원·모델 필터·실행 계획)를 검증하는 테스트라 가시성은 항상 참인 SQL 을 넘긴다 — 가시성 자체는 securitylevel 패키지 테스트가
+  // 고정한다.
+  private static final String ALL_VISIBLE = "TRUE";
+
   @Test
   void searchByTrigramFindsTermAndScoresPositive() {
     Long userId = createUser("dssearch_trgm");
@@ -82,7 +86,7 @@ class DatasetSearchRepositoryTest extends IntegrationTestBase {
     seedEmbedding(matched, "연도별 화재 발생 건수 및 피해 통계", null);
     seedEmbedding(unrelated, "직원 인사 발령 일반 자료", null);
 
-    var hits = searchRepository.searchByTrigram("화재", null, 10);
+    var hits = searchRepository.searchByTrigram("화재", null, 10, ALL_VISIBLE);
 
     // 시드한 '화재' 포함 데이터셋이 후보로 나오고 score > 0.
     assertThat(hits).isNotEmpty();
@@ -100,7 +104,7 @@ class DatasetSearchRepositoryTest extends IntegrationTestBase {
     seedEmbedding(doc, "화재 관련 비정형 문서 모음", null);
     seedEmbedding(table, "화재 관련 정형 테이블 데이터", null);
 
-    var hits = searchRepository.searchByTrigram("화재", "DOCUMENT", 10);
+    var hits = searchRepository.searchByTrigram("화재", "DOCUMENT", 10, ALL_VISIBLE);
 
     // storageType 필터 → 결과 전부 DOCUMENT.
     assertThat(hits).isNotEmpty();
@@ -121,7 +125,11 @@ class DatasetSearchRepositoryTest extends IntegrationTestBase {
 
     var hits =
         searchRepository.searchByCosine(
-            new EmbeddingSpace(EmbeddingDimension.D1024, "bge-m3"), vec(1f, 0f), null, 10);
+            new EmbeddingSpace(EmbeddingDimension.D1024, "bge-m3"),
+            vec(1f, 0f),
+            null,
+            10,
+            ALL_VISIBLE);
 
     assertThat(hits).isNotEmpty();
     // (a) near 가 first, score 내림차순.
@@ -149,7 +157,11 @@ class DatasetSearchRepositoryTest extends IntegrationTestBase {
 
     var hits =
         searchRepository.searchByCosine(
-            new EmbeddingSpace(EmbeddingDimension.D1024, "bge-m3"), vec(1f, 0f), "DOCUMENT", 10);
+            new EmbeddingSpace(EmbeddingDimension.D1024, "bge-m3"),
+            vec(1f, 0f),
+            "DOCUMENT",
+            10,
+            ALL_VISIBLE);
 
     assertThat(hits).isNotEmpty();
     assertThat(hits).allMatch(h -> h.storageType().equals("DOCUMENT"));
@@ -167,7 +179,7 @@ class DatasetSearchRepositoryTest extends IntegrationTestBase {
     Long file = createDataset("화재 현장 사진 모음", "data.ds_file_a", "FILE", "SOURCE", userId);
     seedEmbedding(file, "화재 현장 사진 및 첨부 파일 오브젝트", null);
 
-    var hits = searchRepository.searchByTrigram("화재", null, 10);
+    var hits = searchRepository.searchByTrigram("화재", null, 10, ALL_VISIBLE);
 
     assertThat(hits).anyMatch(h -> h.datasetId().equals(file));
     var hit = hits.stream().filter(h -> h.datasetId().equals(file)).findFirst().orElseThrow();
@@ -183,7 +195,7 @@ class DatasetSearchRepositoryTest extends IntegrationTestBase {
     seedEmbedding(file, "화재 관련 파일 오브젝트 모음", null);
     seedEmbedding(doc, "화재 관련 비정형 문서", null);
 
-    var hits = searchRepository.searchByTrigram("화재", "FILE", 10);
+    var hits = searchRepository.searchByTrigram("화재", "FILE", 10, ALL_VISIBLE);
 
     assertThat(hits).isNotEmpty();
     assertThat(hits).allMatch(h -> h.storageType().equals("FILE"));

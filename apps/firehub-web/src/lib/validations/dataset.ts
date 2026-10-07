@@ -39,8 +39,6 @@ export const createDatasetSchema = z.object({
   storageType: z.enum(['TABLE', 'DOCUMENT', 'FILE'], { message: '저장 방식을 선택하세요' }),
   originType: z.enum(['SOURCE', 'DERIVED', 'TEMP'], { message: '출처를 선택하세요' }),
   columns: z.array(datasetColumnSchema),
-  // FILE 타입 전용: 오브젝트 스토리지 프리픽스 (선택 입력)
-  prefix: z.string().optional(),
 }).superRefine((data, ctx) => {
   // DOCUMENT·FILE 데이터셋은 동적 컬럼이 없으므로 빈 배열 허용. 그 외 유형은 최소 1개 필요.
   if (data.storageType !== 'DOCUMENT' && data.storageType !== 'FILE' && data.columns.length === 0) {

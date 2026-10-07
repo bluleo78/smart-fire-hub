@@ -4,6 +4,7 @@ import static org.jooq.impl.DSL.*;
 
 import java.util.List;
 import lombok.RequiredArgsConstructor;
+import org.jooq.Condition;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Table;
@@ -47,9 +48,13 @@ public class DatasetTagRepository {
         .execute();
   }
 
-  public List<String> findAllDistinctTags() {
+  /** 열람 가능한 데이터셋의 태그만 집계한다 — 숨김 데이터셋의 태그명도 정보다(스펙 §4.2 1행). */
+  public List<String> findAllDistinctTags(Condition visibleDataset) {
     return dsl.selectDistinct(DT_TAG_NAME)
         .from(DATASET_TAG)
+        .join(table(name("dataset")))
+        .on(field(name("dataset", "id"), Long.class).eq(DT_DATASET_ID))
+        .where(visibleDataset)
         .orderBy(DT_TAG_NAME.asc())
         .fetch(r -> r.get(DT_TAG_NAME));
   }

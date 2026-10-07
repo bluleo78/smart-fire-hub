@@ -412,7 +412,7 @@ class AnalyticsQueryExecutionServiceExtTest extends IntegrationTestBase {
   @Test
   void getSchemaInfo_includesDatasetMetadata() {
     // exec_ext_test 테이블이 data 스키마에 존재하고 dataset과 연결되어 있어야 함
-    var schemaInfo = executionService.getSchemaInfo();
+    var schemaInfo = executionService.getSchemaInfo("TRUE");
     assertThat(schemaInfo.tables()).isNotEmpty();
 
     boolean hasTable =

@@ -13,6 +13,8 @@ import com.smartfirehub.global.security.JwtAuthenticationFilter;
 import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.permission.service.PermissionService;
+import com.smartfirehub.securitylevel.access.ClearanceResolver;
+import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -30,6 +32,13 @@ import org.springframework.test.web.servlet.MockMvc;
 @WebMvcTest(DocumentSearchController.class)
 @Import({SecurityConfig.class, JwtAuthenticationFilter.class})
 class DocumentSearchControllerTest {
+
+  // WebMvcConfig 가 DatasetAccessInterceptor(→DatasetAccessGuard)를 등록하므로 슬라이스에도 빈이 있어야 한다.
+  // 목은 아무것도 던지지 않아 숨김 판정은 통과 처리된다(실제 판정은 DatasetRouteHidingTest 가 검증).
+  @MockitoBean private DatasetAccessGuard datasetAccessGuard;
+
+  // 컨트롤러가 검색 가시성 자격을 위해 ClearanceResolver 를 주입받는다 — 슬라이스에선 목(서비스도 목이라 값은 쓰이지 않는다).
+  @MockitoBean private ClearanceResolver clearanceResolver;
 
   @Autowired private MockMvc mockMvc;
 
@@ -50,7 +59,7 @@ class DocumentSearchControllerTest {
   @Test
   void search_withPermission_returnsOkWithHits() throws Exception {
     var hit = new DocumentSearchHit(1L, 2L, 3L, "f.txt", 0, "내용", 0.9);
-    when(searchService.search(any())).thenReturn(List.of(hit));
+    when(searchService.search(any(), any())).thenReturn(List.of(hit));
 
     mockMvc
         .perform(
@@ -81,7 +90,8 @@ class DocumentSearchControllerTest {
   /** POST /documents/search — 서비스가 빈 검색어로 IllegalArgumentException 시 400 매핑(웹 계층 검증). */
   @Test
   void search_blankQuery_returnsBadRequest() throws Exception {
-    when(searchService.search(any())).thenThrow(new IllegalArgumentException("검색어가 비어 있습니다"));
+    when(searchService.search(any(), any()))
+        .thenThrow(new IllegalArgumentException("검색어가 비어 있습니다"));
 
     mockMvc
         .perform(

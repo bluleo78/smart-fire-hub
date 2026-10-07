@@ -7,6 +7,7 @@ package com.smartfirehub.jooq.tables;
 import com.smartfirehub.jooq.Indexes;
 import com.smartfirehub.jooq.Keys;
 import com.smartfirehub.jooq.Public;
+import com.smartfirehub.jooq.tables.DatasetAccessGrant.DatasetAccessGrantPath;
 import com.smartfirehub.jooq.tables.DatasetCategory.DatasetCategoryPath;
 import com.smartfirehub.jooq.tables.DatasetColumn.DatasetColumnPath;
 import com.smartfirehub.jooq.tables.DatasetEmbedding.DatasetEmbeddingPath;
@@ -19,7 +20,9 @@ import com.smartfirehub.jooq.tables.FileDatasetConfig.FileDatasetConfigPath;
 import com.smartfirehub.jooq.tables.PipelineStep.PipelineStepPath;
 import com.smartfirehub.jooq.tables.PipelineStepInput.PipelineStepInputPath;
 import com.smartfirehub.jooq.tables.QueryHistory.QueryHistoryPath;
+import com.smartfirehub.jooq.tables.Role.RolePath;
 import com.smartfirehub.jooq.tables.SavedQuery.SavedQueryPath;
+import com.smartfirehub.jooq.tables.SecurityLevel.SecurityLevelPath;
 import com.smartfirehub.jooq.tables.Tenant.TenantPath;
 import com.smartfirehub.jooq.tables.User.UserPath;
 import com.smartfirehub.jooq.tables.records.DatasetRecord;
@@ -161,6 +164,16 @@ public class Dataset extends TableImpl<DatasetRecord> {
      */
     public final TableField<DatasetRecord, Long> TENANT_ID = createField(DSL.name("tenant_id"), SQLDataType.BIGINT.nullable(false).defaultValue(DSL.field(DSL.raw("(NULLIF(current_setting('app.tenant_id'::text, true), ''::text))::bigint"), SQLDataType.BIGINT)), this, "");
 
+    /**
+     * The column <code>public.dataset.security_level_id</code>.
+     */
+    public final TableField<DatasetRecord, Long> SECURITY_LEVEL_ID = createField(DSL.name("security_level_id"), SQLDataType.BIGINT.nullable(false).defaultValue(DSL.field(DSL.raw("tenant_default_security_level_id()"), SQLDataType.BIGINT)), this, "");
+
+    /**
+     * The column <code>public.dataset.security_level_auto_raised_at</code>.
+     */
+    public final TableField<DatasetRecord, LocalDateTime> SECURITY_LEVEL_AUTO_RAISED_AT = createField(DSL.name("security_level_auto_raised_at"), SQLDataType.LOCALDATETIME(6), this, "");
+
     private Dataset(Name alias, Table<DatasetRecord> aliased) {
         this(alias, aliased, (Field<?>[]) null, null);
     }
@@ -230,7 +243,7 @@ public class Dataset extends TableImpl<DatasetRecord> {
 
     @Override
     public List<Index> getIndexes() {
-        return Arrays.asList(Indexes.IDX_DATASET_CATEGORY, Indexes.IDX_DATASET_NAME, Indexes.IDX_DATASET_SOURCE_PIPELINE_STEP, Indexes.IDX_DATASET_TABLE_NAME, Indexes.IDX_DATASET_TENANT);
+        return Arrays.asList(Indexes.IDX_DATASET_CATEGORY, Indexes.IDX_DATASET_NAME, Indexes.IDX_DATASET_SECURITY_LEVEL, Indexes.IDX_DATASET_SOURCE_PIPELINE_STEP, Indexes.IDX_DATASET_TABLE_NAME, Indexes.IDX_DATASET_TENANT);
     }
 
     @Override
@@ -245,7 +258,7 @@ public class Dataset extends TableImpl<DatasetRecord> {
 
     @Override
     public List<ForeignKey<DatasetRecord, ?>> getReferences() {
-        return Arrays.asList(Keys.DATASET__DATASET_CATEGORY_ID_FKEY, Keys.DATASET__DATASET_CREATED_BY_FKEY, Keys.DATASET__DATASET_SOURCE_PIPELINE_STEP_ID_FKEY, Keys.DATASET__DATASET_STATUS_UPDATED_BY_FKEY, Keys.DATASET__DATASET_UPDATED_BY_FKEY, Keys.DATASET__FK_DATASET_TENANT);
+        return Arrays.asList(Keys.DATASET__DATASET_CATEGORY_ID_FKEY, Keys.DATASET__DATASET_CREATED_BY_FKEY, Keys.DATASET__DATASET_SOURCE_PIPELINE_STEP_ID_FKEY, Keys.DATASET__DATASET_STATUS_UPDATED_BY_FKEY, Keys.DATASET__DATASET_UPDATED_BY_FKEY, Keys.DATASET__FK_DATASET_SECURITY_LEVEL, Keys.DATASET__FK_DATASET_TENANT);
     }
 
     private transient DatasetCategoryPath _datasetCategory;
@@ -313,6 +326,19 @@ public class Dataset extends TableImpl<DatasetRecord> {
         return _datasetUpdatedByFkey;
     }
 
+    private transient SecurityLevelPath _securityLevel;
+
+    /**
+     * Get the implicit join path to the <code>public.security_level</code>
+     * table.
+     */
+    public SecurityLevelPath securityLevel() {
+        if (_securityLevel == null)
+            _securityLevel = new SecurityLevelPath(this, Keys.DATASET__FK_DATASET_SECURITY_LEVEL, null);
+
+        return _securityLevel;
+    }
+
     private transient TenantPath _tenant;
 
     /**
@@ -323,6 +349,19 @@ public class Dataset extends TableImpl<DatasetRecord> {
             _tenant = new TenantPath(this, Keys.DATASET__FK_DATASET_TENANT, null);
 
         return _tenant;
+    }
+
+    private transient DatasetAccessGrantPath _datasetAccessGrant;
+
+    /**
+     * Get the implicit to-many join path to the
+     * <code>public.dataset_access_grant</code> table
+     */
+    public DatasetAccessGrantPath datasetAccessGrant() {
+        if (_datasetAccessGrant == null)
+            _datasetAccessGrant = new DatasetAccessGrantPath(this, null, Keys.DATASET_ACCESS_GRANT__DATASET_ACCESS_GRANT_DATASET_ID_FKEY.getInverseKey());
+
+        return _datasetAccessGrant;
     }
 
     private transient DatasetColumnPath _datasetColumn;
@@ -469,10 +508,26 @@ public class Dataset extends TableImpl<DatasetRecord> {
     }
 
     /**
-     * Get the implicit many-to-many join path to the <code>public.user</code>
+     * Get the implicit many-to-many join path to the <code>public.role</code>
      * table
      */
-    public UserPath user() {
+    public RolePath role() {
+        return datasetAccessGrant().role();
+    }
+
+    /**
+     * Get the implicit many-to-many join path to the <code>public.user</code>
+     * table, via the <code>dataset_access_grant_user_id_fkey</code> key
+     */
+    public UserPath datasetAccessGrantUserIdFkey() {
+        return datasetAccessGrant().user();
+    }
+
+    /**
+     * Get the implicit many-to-many join path to the <code>public.user</code>
+     * table, via the <code>dataset_favorite_user_id_fkey</code> key
+     */
+    public UserPath datasetFavoriteUserIdFkey() {
         return datasetFavorite().user();
     }
 

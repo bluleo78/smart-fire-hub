@@ -22,6 +22,8 @@ import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.repository.QueryHistoryRepository;
 import com.smartfirehub.global.dto.PageResponse;
+import com.smartfirehub.securitylevel.access.ClearanceResolver;
+import com.smartfirehub.securitylevel.sql.GuardedSqlExecutor;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -44,7 +46,8 @@ public class DatasetDataService {
   private final DatasetColumnRepository columnRepository;
   private final DataTableService dataTableService;
   private final DataTableRowService dataTableRowService;
-  private final DataTableQueryService dataTableQueryService;
+  private final GuardedSqlExecutor guardedSqlExecutor;
+  private final ClearanceResolver clearanceResolver;
   private final QueryHistoryRepository queryHistoryRepository;
   private final ObjectMapper objectMapper;
 
@@ -216,8 +219,10 @@ public class DatasetDataService {
         .findById(datasetId)
         .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
 
+    // 보안 등급(S2): 경로의 데이터셋이 아니라 SQL 이 참조하는 모든 데이터셋을 실행자 기준으로 판정한다 — /query 는 data 스키마 전체에 닿는다.
     SqlQueryResponse response =
-        dataTableQueryService.executeQuery(request.sql(), request.maxRows());
+        guardedSqlExecutor.executeDatasetQuery(
+            clearanceResolver.current(), request.sql(), request.maxRows());
 
     // Save to query history
     boolean success = response.error() == null;

@@ -39,6 +39,10 @@ class DocumentChunkVectorStoreTest extends IntegrationTestBase {
   private static final EmbeddingSpace S1536 =
       new EmbeddingSpace(EmbeddingDimension.D1536, "text-embedding-3-small");
 
+  // 저장·검색 인프라(벡터 차원·모델 필터·실행 계획)를 검증하는 테스트라 가시성은 항상 참인 SQL 을 넘긴다 — 가시성 자체는 securitylevel 패키지 테스트가
+  // 고정한다.
+  private static final String ALL_VISIBLE = "TRUE";
+
   @Autowired private DocumentChunkRepository repo;
   @Autowired private DSLContext dsl;
 
@@ -90,7 +94,7 @@ class DocumentChunkVectorStoreTest extends IntegrationTestBase {
   void eachTenantSeesOnlyItsOwnDimensionAndRows() {
     List<DocumentSearchHit> aHits =
         TenantContext.runScopedGet(
-            tenantA, () -> repo.searchByCosine(S1024, axis(1024, 0), List.of(), 10));
+            tenantA, () -> repo.searchByCosine(S1024, axis(1024, 0), List.of(), 10, ALL_VISIBLE));
     assertThat(aHits).extracting(DocumentSearchHit::content).containsExactly("a-near", "a-far");
     // A 컨텍스트에서 1536 공간은 비어 있다(B 의 행이 새지 않는다).
     assertThat(TenantContext.runScopedGet(tenantA, () -> repo.countEmbedded(S1536))).isZero();
@@ -110,7 +114,8 @@ class DocumentChunkVectorStoreTest extends IntegrationTestBase {
     EmbeddingSpace otherModel = new EmbeddingSpace(EmbeddingDimension.D1024, "other-model");
     assertThat(
             TenantContext.runScopedGet(
-                tenantA, () -> repo.searchByCosine(otherModel, axis(1024, 0), List.of(), 10)))
+                tenantA,
+                () -> repo.searchByCosine(otherModel, axis(1024, 0), List.of(), 10, ALL_VISIBLE)))
         .isEmpty();
     assertThat(TenantContext.runScopedGet(tenantA, () -> repo.countMissing(otherModel)))
         .isEqualTo(2);
@@ -210,7 +215,8 @@ class DocumentChunkVectorStoreTest extends IntegrationTestBase {
         tenantA, () -> repo.insertBatch(docA.fileId(), docA.datasetId(), target, targetVec, S1024));
 
     List<Object> params = new ArrayList<>();
-    String sql = repo.semanticSql(S1024, List.of(), vectorLiteral(axis(1024, 5)), 5, params);
+    String sql =
+        repo.semanticSql(S1024, List.of(), vectorLiteral(axis(1024, 5)), 5, params, ALL_VISIBLE);
     int without =
         inTenantFixture(
             tenantA,
@@ -237,7 +243,8 @@ class DocumentChunkVectorStoreTest extends IntegrationTestBase {
     // 실제 경로도 5건을 채운다(ef_search 200 + iterative scan).
     assertThat(
             TenantContext.runScopedGet(
-                tenantA, () -> repo.searchByCosine(S1024, axis(1024, 5), List.of(), 5)))
+                tenantA,
+                () -> repo.searchByCosine(S1024, axis(1024, 5), List.of(), 5, ALL_VISIBLE)))
         .hasSize(5);
   }
 
@@ -267,7 +274,12 @@ class DocumentChunkVectorStoreTest extends IntegrationTestBase {
     List<Object> params = new ArrayList<>();
     String sql =
         repo.semanticSql(
-            space, List.of(), vectorLiteral(axis(space.dimension().size(), 0)), 5, params);
+            space,
+            List.of(),
+            vectorLiteral(axis(space.dimension().size(), 0)),
+            5,
+            params,
+            ALL_VISIBLE);
     return inTenantFixture(
         tenantA,
         () -> {

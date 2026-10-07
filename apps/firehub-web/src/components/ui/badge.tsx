@@ -1,6 +1,6 @@
-import * as React from "react"
 import { cva, type VariantProps } from "class-variance-authority"
 import { Slot } from "radix-ui"
+import * as React from "react"
 
 import { cn } from "@/lib/utils"
 
@@ -24,6 +24,8 @@ const badgeVariants = cva(
           "bg-warning/10 text-warning border-warning/20 [a&]:hover:bg-warning/15",
         info:
           "bg-info/10 text-info border-info/20 [a&]:hover:bg-info/15",
+        // 주의(강) — 허용 목록 필요 보안 등급 배지(스펙 §5). design-system index 상태 색 표의 "주의(강)" 행.
+        caution: "bg-caution-subtle text-caution border-caution/30 [a&]:hover:bg-caution-subtle",
       },
     },
     defaultVariants: {
@@ -51,4 +53,6 @@ function Badge({
   )
 }
 
+// shadcn 생성 파일 — badgeVariants 재노출은 의도된 것(lint-staged 가 ui 무시 규칙을 못 적용해 훅이 막는 것을 회피)
+// eslint-disable-next-line react-refresh/only-export-components
 export { Badge, badgeVariants }

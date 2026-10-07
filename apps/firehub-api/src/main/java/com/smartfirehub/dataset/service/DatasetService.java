@@ -33,16 +33,21 @@ import com.smartfirehub.dataset.search.DatasetEmbeddingService;
 import com.smartfirehub.file.repository.FileDatasetConfigRepository;
 import com.smartfirehub.file.service.FileObjectStorageService;
 import com.smartfirehub.global.dto.PageResponse;
+import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
+import com.smartfirehub.securitylevel.service.DatasetSecurityService;
 import com.smartfirehub.user.repository.UserRepository;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
+import org.jooq.Condition;
 import org.jooq.DSLContext;
 import org.jooq.exception.IntegrityConstraintViolationException;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -67,20 +72,19 @@ public class DatasetService {
     return !DOCUMENT_TYPE.equals(storageType) && !FILE_TYPE.equals(storageType);
   }
 
+  /** FILE 데이터셋 생성 요청에 클라이언트가 프리픽스를 지정했을 때의 오류 코드(400). */
+  public static final String FILE_PREFIX_NOT_ALLOWED_CODE = "FILE_PREFIX_NOT_ALLOWED";
+
   /**
-   * FILE 데이터셋의 저장 프리픽스를 정규화한다.
+   * FILE 데이터셋의 저장 프리픽스 — 항상 서버가 {@code datasets/<데이터셋 id>/} 로 만든다.
    *
-   * <p>보안(격리) 목적: 요청 프리픽스가 비어 있으면 빈 문자열("")을 그대로 저장해서는 안 된다. 컨트롤러는 오브젝트 키가 {@code cfg.prefix()}로
-   * 시작하는지로 데이터셋 간 접근을 격리하는데, 빈 문자열은 모든 키와 일치해 버킷 전체가 노출된다. 또한 프리픽스가 "/"로 끝나지 않으면 "equip" 이
-   * "equipment/..." 처럼 의도치 않은 다른 프리픽스와 부분 일치할 수 있으므로 항상 "/"로 끝나도록 강제한다.
+   * <p>보안(격리) 목적: 컨트롤러는 오브젝트 키가 {@code cfg.prefix()} 로 시작하는지로 데이터셋 간 접근을 격리한다. 사용자가 프리픽스를 고를 수 있으면
+   * 숨김(보안 등급) 데이터셋이나 다른 테넌트 데이터셋의 프리픽스({@code datasets/<그 id>/}, id 는 순번이라 추측 가능)를 덮는 새 데이터셋을 만들어 그
+   * 객체 목록·presigned URL 을 받을 수 있다(최종 리뷰 C1). 데이터셋 id 는 전역 유일이므로 이 형태는 테넌트를 넘어서도 겹치지 않고, 끝의 "/" 가
+   * {@code datasets/1/} 과 {@code datasets/12/} 의 부분 일치를 막는다.
    */
-  private static String normalizeFilePrefix(String requested, long datasetId) {
-    if (requested == null || requested.isBlank()) {
-      // 데이터셋별로 고유한 격리 프리픽스를 생성한다.
-      return "datasets/" + datasetId + "/";
-    }
-    String trimmed = requested.trim();
-    return trimmed.endsWith("/") ? trimmed : trimmed + "/";
+  private static String serverFilePrefix(long datasetId) {
+    return "datasets/" + datasetId + "/";
   }
 
   private final DatasetRepository datasetRepository;
@@ -92,6 +96,8 @@ public class DatasetService {
   private final DatasetTagRepository tagRepository;
   private final DSLContext dsl;
   private final AuditLogService auditLogService;
+  private final DatasetAccessGuard datasetAccessGuard;
+  private final DatasetSecurityService datasetSecurityService;
   // 검색 인덱싱: source_text 동기 저장 + 임베딩 비동기 재생성 트리거 (통합 데이터셋 Discovery)
   private final DatasetEmbeddingService datasetEmbeddingService;
   private final ApplicationEventPublisher events;
@@ -104,8 +110,41 @@ public class DatasetService {
   private final SearchColumnRepository searchColumnRepository;
   private final SearchIndexSettingsService searchIndexSettingsService;
 
+  /** 파이프라인 전용 출처 필드를 일반 생성 경로에서 보냈을 때의 오류 코드. */
+  public static final String ORIGIN_RESERVED_CODE = "DATASET_ORIGIN_RESERVED";
+
+  /**
+   * 일반 데이터셋 생성(REST·AI 에이전트 등 모든 비파이프라인 경로).
+   *
+   * <p>{@code originType=TEMP} 와 {@code sourcePipelineStepId} 는 파이프라인 러너만 쓰는 예약 필드라 여기서 거부한다(400).
+   * 이 두 값이 곧 "어느 스텝의 러너 소유 TEMP 인가"의 식별자다 — 스텝 출력 폴백({@code
+   * PipelineStepRepository.findByPipelineId}·{@code TempDatasetService.findExistingTempDataset})과
+   * 보안 관문({@code PipelineSecurityGate})이 이 값을 믿는다. 사용자가 위조할 수 있으면 남의 파이프라인 스텝 출력을 자기 데이터셋으로 돌려 실행
+   * 주체의 입력 행을 받아 갈 수 있다(유출). 러너는 {@link #createPipelineTempDataset} 만 쓴다.
+   */
   @Transactional
   public DatasetDetailResponse createDataset(CreateDatasetRequest request, Long userId) {
+    if ("TEMP".equalsIgnoreCase(request.originType()) || request.sourcePipelineStepId() != null) {
+      throw new CodedApiException(
+          HttpStatus.BAD_REQUEST,
+          ORIGIN_RESERVED_CODE,
+          "임시(TEMP) 데이터셋과 파이프라인 스텝 연결은 파이프라인 실행만 만들 수 있습니다.");
+    }
+    return createDatasetInternal(request, userId);
+  }
+
+  /** 파이프라인 러너 전용 — 스텝의 러너 소유 TEMP 데이터셋을 만든다(TempDatasetService 만 호출). 예약 필드가 정확히 채워졌는지만 확인한다. */
+  @Transactional
+  public DatasetDetailResponse createPipelineTempDataset(
+      CreateDatasetRequest request, Long userId) {
+    if (!"TEMP".equals(request.originType()) || request.sourcePipelineStepId() == null) {
+      throw new IllegalArgumentException("파이프라인 TEMP 데이터셋은 originType=TEMP 와 스텝 id 가 필요합니다");
+    }
+    return createDatasetInternal(request, userId);
+  }
+
+  /** 생성 본체 — 출처 필드 검사는 두 공개 진입점이 맡는다. */
+  private DatasetDetailResponse createDatasetInternal(CreateDatasetRequest request, Long userId) {
     dataTableService.validateName(request.tableName());
 
     // DOCUMENT/FILE 데이터셋은 컬럼 정의가 없어 columns 가 null 로 들어올 수 있다(로봇 등 프로그래매틱
@@ -127,6 +166,15 @@ public class DatasetService {
         throw new ColumnModificationException(
             "GEOMETRY column '" + col.columnName() + "' cannot be a primary key");
       }
+    }
+
+    // FILE 프리픽스는 서버 생성 전용이다 — 지정하면 다른(숨김·타 테넌트) 데이터셋의 객체 경로를 덮을 수 있다(serverFilePrefix).
+    // 빈 값은 "지정 안 함"으로 본다(웹·기존 클라이언트가 빈 입력을 생략하거나 빈 문자열로 보낸다). 저장 전에 거부해 부분 생성이 없게 한다.
+    if (request.prefix() != null && !request.prefix().isBlank()) {
+      throw new CodedApiException(
+          HttpStatus.BAD_REQUEST,
+          FILE_PREFIX_NOT_ALLOWED_CODE,
+          "파일 데이터셋의 저장 경로(prefix)는 지정할 수 없습니다. 서버가 데이터셋마다 자동으로 만듭니다.");
     }
 
     if (datasetRepository.existsByName(request.name())) {
@@ -156,12 +204,8 @@ public class DatasetService {
           request.bucket() != null && !request.bucket().isBlank()
               ? request.bucket()
               : fileObjectStorageService.defaultBucket();
-      // 보안: 빈 프리픽스("")를 그대로 저장하면 컨트롤러의 key.startsWith(prefix) 격리가
-      // 사실상 무력화되어(모든 키가 "" 로 시작) 버킷 전체 오브젝트가 노출된다.
-      // 프리픽스 미지정 시 데이터셋별 고유 프리픽스를 생성하고, 지정 시 trailing slash 를 강제해
-      // "equip" 이 "equipment/..." 등 다른 프리픽스와 부분 일치하지 않도록 한다.
-      String prefix = normalizeFilePrefix(request.prefix(), dataset.id());
-      fileDatasetConfigRepository.save(dataset.id(), bucket, prefix);
+      // 프리픽스는 서버가 데이터셋 id 로 만든다(클라이언트 지정은 위에서 400 으로 거부됨 — serverFilePrefix 참고).
+      fileDatasetConfigRepository.save(dataset.id(), bucket, serverFilePrefix(dataset.id()));
     }
 
     // 데이터셋 생성 감사 로그 (#60/#92)
@@ -212,12 +256,6 @@ public class DatasetService {
 
   @Transactional(readOnly = true)
   public PageResponse<DatasetResponse> getDatasets(
-      Long categoryId, String storageType, String originType, String search, int page, int size) {
-    return getDatasets(categoryId, storageType, originType, search, page, size, null, null, false);
-  }
-
-  @Transactional(readOnly = true)
-  public PageResponse<DatasetResponse> getDatasets(
       Long categoryId,
       String storageType,
       String originType,
@@ -226,7 +264,10 @@ public class DatasetService {
       int size,
       Long currentUserId,
       String status,
-      boolean favoriteOnly) {
+      boolean favoriteOnly,
+      Long securityLevelId) {
+    // 목록은 항상 현재 사용자 가시성 조건과 함께 조회한다(스펙 §4.2 1행).
+    Condition access = datasetAccessGuard.visibleCondition();
     List<DatasetResponse> content =
         datasetRepository.findAll(
             categoryId,
@@ -237,10 +278,20 @@ public class DatasetService {
             size,
             currentUserId,
             status,
-            favoriteOnly);
+            favoriteOnly,
+            securityLevelId,
+            access);
     long totalElements =
         datasetRepository.count(
-            categoryId, storageType, originType, search, currentUserId, status, favoriteOnly);
+            categoryId,
+            storageType,
+            originType,
+            search,
+            currentUserId,
+            status,
+            favoriteOnly,
+            securityLevelId,
+            access);
     int totalPages = (int) Math.ceil((double) totalElements / size);
     return new PageResponse<>(content, page, size, totalElements, totalPages);
   }
@@ -321,7 +372,9 @@ public class DatasetService {
         dataset.statusUpdatedBy(),
         dataset.statusUpdatedAt(),
         linkedPipelines,
-        dataset.sourcePipelineStepId());
+        dataset.sourcePipelineStepId(),
+        dataset.securityLevel(),
+        dataset.securityLevelAutoRaisedAt());
   }
 
   @Transactional
@@ -951,6 +1004,9 @@ public class DatasetService {
             null // sourcePipelineStepId — cloned datasets are not auto-generated
             );
     DatasetResponse newDataset = datasetRepository.save(createRequest, userId);
+
+    // 보안 등급: 사본은 원본 등급·허용 목록을 상속한다(스펙 §4.5 clone). 기본 등급으로 두면 기밀 데이터가 내부로 새어 나간다.
+    datasetSecurityService.inheritFromSource(sourceId, newDataset.id(), userId);
 
     // 4. Copy column definitions
     List<DatasetColumnRequest> columnRequests = new ArrayList<>();

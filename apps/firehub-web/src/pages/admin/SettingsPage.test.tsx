@@ -96,6 +96,17 @@ vi.mock('sonner', () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 
+// 설정 라우트 진입점이 ADMIN 여부로 전체 설정/보안 전용 화면을 가른다(데이터셋 보안 등급 S1).
+// 이 파일은 ADMIN 전체 설정의 저장 오케스트레이션을 보므로 ADMIN 으로 고정하고,
+// 탭 노출용 권한 조회(react-query)는 QueryClientProvider 없이 돌도록 빈 권한으로 모킹한다.
+vi.mock('../../hooks/useAuth', () => ({
+  useAuth: () => ({ isAdmin: true }),
+}));
+
+vi.mock('../../hooks/queries/useMyPermissions', () => ({
+  useMyPermissions: () => ({ permissions: new Set<string>(), isLoading: false }),
+}));
+
 const mockedUseAiCredentialForm = vi.mocked(useAiCredentialForm);
 const mockedUseSettingsOverrideForm = vi.mocked(useSettingsOverrideForm);
 const mockedUpdate = vi.mocked(settingsApi.update);

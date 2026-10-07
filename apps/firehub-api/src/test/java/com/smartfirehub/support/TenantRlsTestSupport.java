@@ -96,13 +96,53 @@ public final class TenantRlsTestSupport {
    */
   public static long createActiveTenant(DSLContext dsl, String slugPrefix) {
     long suffix = nextTenantId();
-    return dsl.insertInto(TENANT)
-        .set(field(name("slug"), String.class), slugPrefix + "-" + suffix)
-        .set(field(name("name"), String.class), "Test Tenant " + suffix)
-        .set(field(name("status"), String.class), "ACTIVE")
-        .returning(field(name("id"), Long.class))
-        .fetchOne()
-        .get(field(name("id"), Long.class));
+    long tenantId =
+        dsl.insertInto(TENANT)
+            .set(field(name("slug"), String.class), slugPrefix + "-" + suffix)
+            .set(field(name("name"), String.class), "Test Tenant " + suffix)
+            .set(field(name("status"), String.class), "ACTIVE")
+            .returning(field(name("id"), Long.class))
+            .fetchOne()
+            .get(field(name("id"), Long.class));
+    // V133: dataset.security_level_id·role.max_security_level_id 는 NOT NULL + "테넌트 기본 등급" DEFAULT
+    // 다. 프로비저닝 없이
+    // 만든 테스트 테넌트도 행을 넣을 수 있도록 기본 등급 1개를 심는다(provision_tenant_defaults 는 이름·순위로 건너뛰어 나머지를 채운다).
+    inRawTenantTx(
+        dsl,
+        tenantId,
+        t ->
+            t.execute(
+                "insert into security_level (tenant_id, rank, name, is_default) values (?, 2, '내부', true)",
+                tenantId));
+    return tenantId;
+  }
+
+  /**
+   * TransactionTemplate 이 없는 정적 헬퍼에서 RLS 테이블을 만질 때 — jOOQ 트랜잭션 안에서 GUC 를 그 테넌트로 덮어쓰고, 끝나면 이전 값으로
+   * 되돌린다.
+   *
+   * <p><b>"LOCAL 이라 자동 복원"에 기대지 않는다.</b> 메인 DSLContext 는
+   * SpringTransactionProvider(PROPAGATION_NESTED)라, 바깥 Spring 트랜잭션(@Transactional
+   * 테스트·runInTenantTransaction) 안에서는 {@code dsl.transaction} 이 세이브포인트일 뿐이다. 그러면 {@code
+   * set_config(..., true)} 는 <b>바깥</b> 트랜잭션이 끝날 때까지 남아, 호출자의 테넌트 컨텍스트가 조용히 스크래치 테넌트로 바뀐다. 그래서 진입 전
+   * 값을 읽어 두었다가 finally 에서 복원한다(바깥 트랜잭션이 없으면 어차피 종료 시 사라지므로 무해).
+   */
+  private static void inRawTenantTx(
+      DSLContext dsl, long tenantId, java.util.function.Consumer<DSLContext> body) {
+    dsl.transaction(
+        cfg -> {
+          DSLContext t = cfg.dsl();
+          // 미설정이면 null, 설정 후 비워진 경우 '' — 둘 다 그대로 되돌릴 수 있게 빈 문자열로 통일한다.
+          String prev =
+              t.resultQuery("select coalesce(current_setting('app.tenant_id', true), '')")
+                  .fetchOneInto(String.class);
+          t.execute("select set_config('app.tenant_id', ?, true)", String.valueOf(tenantId));
+          try {
+            body.accept(t);
+          } finally {
+            t.execute("select set_config('app.tenant_id', ?, true)", prev);
+          }
+        });
   }
 
   /**
@@ -233,6 +273,14 @@ public final class TenantRlsTestSupport {
     for (Long id : tenantIds) {
       if (id != null) {
         dsl.execute("delete from oauth_state where tenant_id = ?", id);
+        // V133: 보안 등급 행은 tenant FK 를 잡는다(RLS 대상이라 그 테넌트 GUC 안에서 지운다). 데이터셋·역할은 호출자가 먼저 지운다.
+        inRawTenantTx(
+            dsl,
+            id,
+            t -> {
+              t.execute("delete from dataset_access_grant where tenant_id = ?", id);
+              t.execute("delete from security_level where tenant_id = ?", id);
+            });
         dsl.deleteFrom(TENANT).where(field(name("id"), Long.class).eq(id)).execute();
       }
     }
@@ -356,6 +404,8 @@ public final class TenantRlsTestSupport {
    * <p>호출자가 대상 테넌트 컨텍스트 트랜잭션 안에서 불러야 한다({@link #runInTenantTransaction}).
    */
   public static void deleteRbacCascade(DSLContext dsl, long tenantId) {
+    // V133: 허용 목록은 role 을 참조하므로 role 보다 먼저 지운다.
+    dsl.execute("delete from dataset_access_grant where tenant_id = ?", tenantId);
     dsl.execute("delete from role_permission where tenant_id = ?", tenantId);
     dsl.execute("delete from user_role where tenant_id = ?", tenantId);
     dsl.execute("delete from report_template where tenant_id = ?", tenantId);
@@ -363,6 +413,8 @@ public final class TenantRlsTestSupport {
     // 터진다. dataset 이 이 카테고리를 참조하고 있으면 그 테스트가 자기 dataset 을 먼저 지워야 한다.
     dsl.execute("delete from dataset_category where tenant_id = ?", tenantId);
     dsl.execute("delete from role where tenant_id = ?", tenantId);
+    // V133 의 등급 시드. role·dataset 이 (tenant_id, id) 로 참조하므로 그 둘 다음에 지운다.
+    dsl.execute("delete from security_level where tenant_id = ?", tenantId);
   }
 
   /**
@@ -594,6 +646,14 @@ public final class TenantRlsTestSupport {
         .set(field(name("name"), String.class), "Schema Provision Test " + tenantId)
         .set(field(name("status"), String.class), "ACTIVE")
         .execute();
+    // V133: createActiveTenant 와 같은 이유 — NOT NULL + 기본 등급 DEFAULT 가 동작하도록 기본 등급 1개를 심는다.
+    inRawTenantTx(
+        dsl,
+        tenantId,
+        t ->
+            t.execute(
+                "insert into security_level (tenant_id, rank, name, is_default) values (?, 2, '내부', true)",
+                tenantId));
   }
 
   /**

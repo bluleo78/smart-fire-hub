@@ -711,7 +711,10 @@ public class SqlValidator {
     requireDmlOrSelect(statement);
 
     AstNodeCollector collected = collectSafely(statement);
-    requireDataSchemaOnly(collected.tableFqns());
+    // DML 쓰기 대상은 CTE 필터 없이 스키마 검사에 넣는다 — PG 는 DML 대상을 CTE 로 해석하지 않으므로
+    // WITH pg_authid AS (SELECT 1) DELETE FROM pg_authid 가 실제 카탈로그 테이블을 겨눈다(referencedTables 와 같은
+    // 규칙).
+    requireDataSchemaOnly(collected.tableFqns(writeTargetsOf(statement, collected)));
     requireNoBlockedFunctions(collected.functions(), collected.analyticFunctionNames());
     requireOnlyKnownFunctions(collected.functions(), collected.analyticFunctionNames());
     requireNoReservedPseudoColumns(collected.columns());
@@ -783,6 +786,10 @@ public class SqlValidator {
 
   /** JSqlParser로 파싱하고 단일 스테이트먼트인지 확인한다. */
   private Statement parseSingleStatement(String sql) {
+    // PG 와 JSqlParser 가 주석·문자열 경계를 다르게 자르는 표기를 먼저 거부한다 — 그 틈에 넣은 테이블 참조는 JSqlParser 에겐
+    // 주석·리터럴이고 PG 에겐 실제 참조다(PgLexicalAmbiguityCheck 문서). validate·unqualifiedTableNames·
+    // referencedTables(·incrementalWarnings) 가 모두 이 경로를 지난다.
+    PgLexicalAmbiguityCheck.requireUnambiguous(sql);
     Statements parsed;
     try {
       parsed = CCJSqlParserUtil.parseStatements(sql, PARSE_EXECUTOR, null);
@@ -824,8 +831,9 @@ public class SqlValidator {
   /**
    * 모든 실제 테이블 참조가 {@code data} 스키마인지 검사한다.
    *
-   * <p>{@link AstNodeCollector#tableFqns()}가 CTE 별칭을 제외한 실제 테이블 FQN 문자열만 돌려주므로 그 목록만 검사하면 된다. 결과 형식
-   * 예: {@code "스키마.t"}, {@code "스키마.\"My Table\""}, {@code "public.\"user\""}, {@code "t"}(스키마 없음).
+   * <p>{@link AstNodeCollector#tableFqns}가 (DML 쓰기 대상이 아닌) CTE 별칭을 제외한 실제 테이블 FQN 문자열만 돌려주므로 그 목록만
+   * 검사하면 된다. 결과 형식 예: {@code "스키마.t"}, {@code "스키마.\"My Table\""}, {@code "public.\"user\""},
+   * {@code "t"}(스키마 없음).
    *
    * <p>미한정 이름이 {@code pg_} 로 시작하면 {@link #allowUnqualifiedTables} 값과 무관하게 항상 거부한다(아래 미한정 분기보다 먼저
    * 검사) — {@code pg_catalog} 는 {@code search_path} 설정을 타지 않고 항상 암묵 검색되므로({@link
@@ -1009,7 +1017,8 @@ public class SqlValidator {
     Statement statement = parseSingleStatement(sql);
     AstNodeCollector collected = collectSafely(statement);
     Set<String> result = new LinkedHashSet<>();
-    for (String fqn : collected.tableFqns()) {
+    // DML 쓰기 대상은 CTE 와 이름이 같아도 실제 테이블이다 — 카탈로그 백스톱이 그 이름을 보도록 남긴다.
+    for (String fqn : collected.tableFqns(writeTargetsOf(statement, collected))) {
       // indexOfUnquotedDot 사용 — 순수 indexOf('.')는 "my.table"(따옴표 안에 점이 있는 미한정 테이블)을
       // "점이 있으니 한정됐다"고 오판해 이 결과 집합에서 빠뜨렸다(m5 후속 정정과 같은 근본 원인).
       if (indexOfUnquotedDot(fqn) < 0) {
@@ -1017,6 +1026,88 @@ public class SqlValidator {
       }
     }
     return result;
+  }
+
+  /** 참조 테이블 이름. PG 식별자 폴딩 적용 결과. 미한정이면 schema 는 null. */
+  public record TableName(String schema, String name) {}
+
+  /** 읽기 집합과 쓰기 집합(INSERT/UPDATE/DELETE 대상, SELECT INTO 대상). */
+  public record ReferencedTables(Set<TableName> reads, Set<TableName> writes) {}
+
+  /**
+   * 보안 등급 판정용 참조 테이블 추출(스펙 §4.1). validate 와 같은 파서·같은 CTE 스코프 규칙·같은 이름 정규화를 재사용한다 — 두 경로가 다른 규칙을 쓰면
+   * validate 는 통과하고 판정은 다른 테이블을 보는 틈이 생긴다.
+   *
+   * <p>fail-closed: 파싱 실패, SELECT/INSERT/UPDATE/DELETE 외 문장, 3단 이름, 유니코드 이스케이프 식별자는
+   * UnsafeSqlException. 쓰기 대상은 AST 노드 <b>동일성</b>으로 구분한다(같은 이름이 읽기에도 나오면 각각 따로 센다).
+   *
+   * <p><b>전제:</b> 이 메서드는 함수·타입(query_to_xml, dblink, regclass 등)을 검사하지 않는다. 같은 SQL 에 {@link
+   * #validate} 가 함께 실행될 때만 안전하다.
+   */
+  public ReferencedTables referencedTables(String sql) {
+    Statement statement = parseSingleStatement(sql);
+    requireDmlOrSelect(statement);
+    AstNodeCollector collected = collectSafely(statement);
+    Set<Table> writeTargets = writeTargetsOf(statement, collected);
+    Set<TableName> reads = new LinkedHashSet<>();
+    Set<TableName> writes = new LinkedHashSet<>();
+    // 쓰기 대상은 CTE 필터를 적용하지 않는다 — PG 는 DML 대상을 CTE 로 해석하지 않고 실제 테이블을 변경한다
+    // (WITH hidden AS (...) DELETE FROM hidden 이 두 집합에서 사라지던 결함). 읽기 참조만 CTE 를 제외한다.
+    for (Table target : writeTargets) {
+      writes.add(toTableName(target));
+    }
+    for (Table table : collected.realTables(writeTargets)) {
+      if (!writeTargets.contains(table)) {
+        reads.add(toTableName(table));
+      }
+    }
+    return new ReferencedTables(reads, writes);
+  }
+
+  /**
+   * 쓰기 대상 테이블 노드(동일성 집합) — INSERT/UPDATE/DELETE 대상과 SELECT INTO 대상. validate·unqualifiedTableNames·
+   * referencedTables 가 공유한다: 이 노드들은 같은 이름의 CTE 가 스코프에 있어도 CTE 로 제외하지 않는다(PG 는 DML 대상을 CTE 로 해석하지
+   * 않는다). 세 경로가 다른 규칙을 쓰면 검증은 통과하고 판정은 다른 테이블을 보는 틈이 생긴다.
+   */
+  private static Set<Table> writeTargetsOf(Statement statement, AstNodeCollector collected) {
+    Set<Table> writeTargets = Collections.newSetFromMap(new IdentityHashMap<>());
+    if (statement instanceof Insert insert) {
+      writeTargets.add(insert.getTable());
+    } else if (statement instanceof Update update) {
+      writeTargets.add(update.getTable());
+    } else if (statement instanceof Delete delete) {
+      if (delete.getTable() != null) {
+        writeTargets.add(delete.getTable());
+      }
+      if (delete.getTables() != null) {
+        writeTargets.addAll(delete.getTables());
+      }
+    }
+    // validate 는 SELECT INTO 를 거부하지만, 판정 단독 호출에서도 쓰기로 분류해 둔다(이중 방어).
+    for (PlainSelect ps : collected.plainSelects()) {
+      if (ps.getIntoTables() != null) {
+        writeTargets.addAll(ps.getIntoTables());
+      }
+    }
+    return writeTargets;
+  }
+
+  /** requireDataSchemaOnly 와 같은 분해·거부 규칙으로 이름을 정규화한다. */
+  private static TableName toTableName(Table table) {
+    String fqn = table.getFullyQualifiedName();
+    if (countUnquotedDots(fqn) > 1) {
+      throw new UnsafeSqlException("허용되지 않은 테이블 이름 형식입니다: " + fqn);
+    }
+    int dot = indexOfUnquotedDot(fqn);
+    if (dot < 0) {
+      rejectUnicodeEscapeIdentifier(fqn);
+      return new TableName(null, foldIdentifier(fqn));
+    }
+    String schema = fqn.substring(0, dot);
+    String name = fqn.substring(dot + 1);
+    rejectUnicodeEscapeIdentifier(schema);
+    rejectUnicodeEscapeIdentifier(name);
+    return new TableName(foldIdentifier(schema), foldIdentifier(name));
   }
 
   /**
@@ -1499,16 +1590,41 @@ public class SqlValidator {
      * 동명의 {@code Table}은 그 스냅샷에 별칭이 없어 제외되지 않는다. 정확한 스코프 추적이라 "이름이 같으면 fail-closed로 남긴다" 같은 근사치가 필요
      * 없다.
      */
-    List<String> tableFqns() {
+    List<String> tableFqns(Set<Table> writeTargets) {
       List<String> result = new ArrayList<>();
       for (TableRef ref : tables) {
         String fqn = ref.table().getFullyQualifiedName();
-        if (indexOfUnquotedDot(fqn) < 0 && ref.activeCteAliases().contains(foldIdentifier(fqn))) {
+        if (isCteReference(ref, writeTargets)) {
           continue; // 그 스코프에서 유효한 CTE 참조 — 실제 테이블이 아니다.
         }
         result.add(fqn);
       }
       return result;
+    }
+
+    /** CTE 참조를 뺀 실제 테이블 노드(동일성 보존) — referencedTables 가 쓰기 대상 판별에 쓴다. tableFqns 와 같은 제외 규칙. */
+    List<Table> realTables(Set<Table> writeTargets) {
+      List<Table> result = new ArrayList<>();
+      for (TableRef ref : tables) {
+        if (isCteReference(ref, writeTargets)) {
+          continue;
+        }
+        result.add(ref.table());
+      }
+      return result;
+    }
+
+    /**
+     * 이 참조가 그 스코프에서 유효한 CTE 별칭을 가리키는가. 쓰기 대상 노드는 이름이 같아도 항상 실제 테이블이다 — PG 는 INSERT/UPDATE/DELETE
+     * 대상을 CTE 로 해석하지 않으므로({@code WITH users AS (SELECT 1) DELETE FROM users} 는 실제 users 를 지운다) 여기서
+     * 제외하면 스키마 검사·판정에서 그 대상이 사라진다.
+     */
+    private static boolean isCteReference(TableRef ref, Set<Table> writeTargets) {
+      if (writeTargets.contains(ref.table())) {
+        return false;
+      }
+      String fqn = ref.table().getFullyQualifiedName();
+      return indexOfUnquotedDot(fqn) < 0 && ref.activeCteAliases().contains(foldIdentifier(fqn));
     }
 
     private void walk(Object node, int depth) {

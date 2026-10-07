@@ -7,8 +7,11 @@ package com.smartfirehub.jooq.tables;
 import com.smartfirehub.jooq.Indexes;
 import com.smartfirehub.jooq.Keys;
 import com.smartfirehub.jooq.Public;
+import com.smartfirehub.jooq.tables.Dataset.DatasetPath;
+import com.smartfirehub.jooq.tables.DatasetAccessGrant.DatasetAccessGrantPath;
 import com.smartfirehub.jooq.tables.Permission.PermissionPath;
 import com.smartfirehub.jooq.tables.RolePermission.RolePermissionPath;
+import com.smartfirehub.jooq.tables.SecurityLevel.SecurityLevelPath;
 import com.smartfirehub.jooq.tables.Tenant.TenantPath;
 import com.smartfirehub.jooq.tables.User.UserPath;
 import com.smartfirehub.jooq.tables.UserRole.UserRolePath;
@@ -99,6 +102,11 @@ public class Role extends TableImpl<RoleRecord> {
      */
     public final TableField<RoleRecord, Long> TENANT_ID = createField(DSL.name("tenant_id"), SQLDataType.BIGINT.nullable(false).defaultValue(DSL.field(DSL.raw("(NULLIF(current_setting('app.tenant_id'::text, true), ''::text))::bigint"), SQLDataType.BIGINT)), this, "");
 
+    /**
+     * The column <code>public.role.max_security_level_id</code>.
+     */
+    public final TableField<RoleRecord, Long> MAX_SECURITY_LEVEL_ID = createField(DSL.name("max_security_level_id"), SQLDataType.BIGINT.nullable(false).defaultValue(DSL.field(DSL.raw("tenant_default_security_level_id()"), SQLDataType.BIGINT)), this, "");
+
     private Role(Name alias, Table<RoleRecord> aliased) {
         this(alias, aliased, (Field<?>[]) null, null);
     }
@@ -168,7 +176,7 @@ public class Role extends TableImpl<RoleRecord> {
 
     @Override
     public List<Index> getIndexes() {
-        return Arrays.asList(Indexes.IDX_ROLE_TENANT, Indexes.ROLE_TENANT_NAME_KEY);
+        return Arrays.asList(Indexes.IDX_ROLE_SECURITY_LEVEL, Indexes.IDX_ROLE_TENANT, Indexes.ROLE_TENANT_NAME_KEY);
     }
 
     @Override
@@ -183,7 +191,20 @@ public class Role extends TableImpl<RoleRecord> {
 
     @Override
     public List<ForeignKey<RoleRecord, ?>> getReferences() {
-        return Arrays.asList(Keys.ROLE__FK_ROLE_TENANT);
+        return Arrays.asList(Keys.ROLE__FK_ROLE_SECURITY_LEVEL, Keys.ROLE__FK_ROLE_TENANT);
+    }
+
+    private transient SecurityLevelPath _securityLevel;
+
+    /**
+     * Get the implicit join path to the <code>public.security_level</code>
+     * table.
+     */
+    public SecurityLevelPath securityLevel() {
+        if (_securityLevel == null)
+            _securityLevel = new SecurityLevelPath(this, Keys.ROLE__FK_ROLE_SECURITY_LEVEL, null);
+
+        return _securityLevel;
     }
 
     private transient TenantPath _tenant;
@@ -196,6 +217,19 @@ public class Role extends TableImpl<RoleRecord> {
             _tenant = new TenantPath(this, Keys.ROLE__FK_ROLE_TENANT, null);
 
         return _tenant;
+    }
+
+    private transient DatasetAccessGrantPath _datasetAccessGrant;
+
+    /**
+     * Get the implicit to-many join path to the
+     * <code>public.dataset_access_grant</code> table
+     */
+    public DatasetAccessGrantPath datasetAccessGrant() {
+        if (_datasetAccessGrant == null)
+            _datasetAccessGrant = new DatasetAccessGrantPath(this, null, Keys.DATASET_ACCESS_GRANT__DATASET_ACCESS_GRANT_ROLE_ID_FKEY.getInverseKey());
+
+        return _datasetAccessGrant;
     }
 
     private transient RolePermissionPath _rolePermission;
@@ -222,6 +256,14 @@ public class Role extends TableImpl<RoleRecord> {
             _userRole = new UserRolePath(this, null, Keys.USER_ROLE__USER_ROLE_ROLE_ID_FKEY.getInverseKey());
 
         return _userRole;
+    }
+
+    /**
+     * Get the implicit many-to-many join path to the
+     * <code>public.dataset</code> table
+     */
+    public DatasetPath dataset() {
+        return datasetAccessGrant().dataset();
     }
 
     /**

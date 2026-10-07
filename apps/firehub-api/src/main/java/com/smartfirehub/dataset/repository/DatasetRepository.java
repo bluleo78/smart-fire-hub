@@ -7,6 +7,9 @@ import com.smartfirehub.dataset.dto.CreateDatasetRequest;
 import com.smartfirehub.dataset.dto.DatasetResponse;
 import com.smartfirehub.dataset.dto.UpdateDatasetRequest;
 import com.smartfirehub.global.util.LikePatternUtils;
+import com.smartfirehub.securitylevel.access.LevelPolicy;
+import com.smartfirehub.securitylevel.dto.SecurityLevelSummary;
+import com.smartfirehub.securitylevel.repository.SecurityLevelRepository;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -16,6 +19,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.jooq.Condition;
 import org.jooq.DSLContext;
@@ -34,6 +38,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class DatasetRepository {
 
   private final DSLContext dsl;
+  private final SecurityLevelRepository securityLevelRepository;
 
   private static final Table<?> DATASET = table(name("dataset"));
   private static final Field<Long> DS_ID = field(name("dataset", "id"), Long.class);
@@ -64,6 +69,11 @@ public class DatasetRepository {
       field(name("dataset", "status_updated_at"), LocalDateTime.class);
   private static final Field<Long> DS_SOURCE_PIPELINE_STEP_ID =
       field(name("dataset", "source_pipeline_step_id"), Long.class);
+  // V133 보안 등급. 목록 필터·응답 요약·가시성 조건이 쓴다.
+  private static final Field<Long> DS_SECURITY_LEVEL_ID =
+      field(name("dataset", "security_level_id"), Long.class);
+  private static final Field<LocalDateTime> DS_SECURITY_LEVEL_AUTO_RAISED_AT =
+      field(name("dataset", "security_level_auto_raised_at"), LocalDateTime.class);
 
   private static final Table<?> DATASET_CATEGORY = table(name("dataset_category"));
   private static final Field<Long> DC_ID = field(name("dataset_category", "id"), Long.class);
@@ -104,7 +114,10 @@ public class DatasetRepository {
   private static final Field<String> SU_NAME = field(name("status_user", "name"), String.class);
 
   private DatasetResponse mapToDatasetResponse(
-      Record r, Set<Long> favoriteIds, Map<Long, List<String>> tagsByDatasetId) {
+      Record r,
+      Set<Long> favoriteIds,
+      Map<Long, List<String>> tagsByDatasetId,
+      Map<Long, SecurityLevelSummary> levels) {
     CategoryResponse category =
         r.get(DC_ID) != null
             ? new CategoryResponse(r.get(DC_ID), r.get(DC_NAME), r.get(DC_DESCRIPTION))
@@ -132,7 +145,15 @@ public class DatasetRepository {
         r.get(DS_STATUS_NOTE),
         statusUpdatedByName,
         r.get(DS_STATUS_UPDATED_AT),
-        r.get(DS_SOURCE_PIPELINE_STEP_ID));
+        r.get(DS_SOURCE_PIPELINE_STEP_ID),
+        levels.get(r.get(DS_SECURITY_LEVEL_ID)),
+        r.get(DS_SECURITY_LEVEL_AUTO_RAISED_AT));
+  }
+
+  /** 테넌트 등급은 보통 4~10개 — 행마다 조인하는 대신 한 번 읽어 id 로 매핑한다. */
+  private Map<Long, SecurityLevelSummary> fetchLevelSummaries() {
+    return securityLevelRepository.findAll().stream()
+        .collect(Collectors.toMap(LevelPolicy::id, SecurityLevelSummary::of));
   }
 
   private Map<Long, List<String>> fetchTagsByDatasetIds(List<Long> datasetIds) {
@@ -162,8 +183,18 @@ public class DatasetRepository {
   }
 
   private Condition buildCondition(
-      Long categoryId, String storageType, String originType, String search, String status) {
-    Condition condition = trueCondition();
+      Long categoryId,
+      String storageType,
+      String originType,
+      String search,
+      String status,
+      Long securityLevelId,
+      Condition access) {
+    // 열람 가능성(보안 등급)은 모든 다른 필터보다 먼저 AND 한다 — 검색어·필터가 가시성을 넓힐 수 없다.
+    Condition condition = access;
+    if (securityLevelId != null) {
+      condition = condition.and(DS_SECURITY_LEVEL_ID.eq(securityLevelId));
+    }
     if (categoryId != null) {
       condition = condition.and(DS_CATEGORY_ID.eq(categoryId));
     }
@@ -197,11 +228,6 @@ public class DatasetRepository {
   }
 
   public List<DatasetResponse> findAll(
-      Long categoryId, String storageType, String originType, String search, int page, int size) {
-    return findAll(categoryId, storageType, originType, search, page, size, null, null, false);
-  }
-
-  public List<DatasetResponse> findAll(
       Long categoryId,
       String storageType,
       String originType,
@@ -210,8 +236,12 @@ public class DatasetRepository {
       int size,
       Long currentUserId,
       String status,
-      boolean favoriteOnly) {
-    Condition condition = buildCondition(categoryId, storageType, originType, search, status);
+      boolean favoriteOnly,
+      Long securityLevelId,
+      Condition access) {
+    Condition condition =
+        buildCondition(
+            categoryId, storageType, originType, search, status, securityLevelId, access);
 
     // First get the distinct IDs for the page
     var idQuery =
@@ -245,6 +275,7 @@ public class DatasetRepository {
 
     Set<Long> favoriteIds = fetchFavoriteIds(currentUserId);
     Map<Long, List<String>> tagsByDatasetId = fetchTagsByDatasetIds(datasetIds);
+    Map<Long, SecurityLevelSummary> levels = fetchLevelSummaries();
 
     // status_updated_by 사용자 이름을 JOIN으로 한 번에 조회하여 N+1 제거
     return dsl.select(
@@ -260,6 +291,8 @@ public class DatasetRepository {
             DS_STATUS_UPDATED_BY,
             DS_STATUS_UPDATED_AT,
             DS_SOURCE_PIPELINE_STEP_ID,
+            DS_SECURITY_LEVEL_ID,
+            DS_SECURITY_LEVEL_AUTO_RAISED_AT,
             DC_ID,
             DC_NAME,
             DC_DESCRIPTION,
@@ -271,11 +304,7 @@ public class DatasetRepository {
         .on(SU_ID.eq(DS_STATUS_UPDATED_BY))
         .where(DS_ID.in(datasetIds))
         .orderBy(DS_ID.asc())
-        .fetch(r -> mapToDatasetResponse(r, favoriteIds, tagsByDatasetId));
-  }
-
-  public long count(Long categoryId, String storageType, String originType, String search) {
-    return count(categoryId, storageType, originType, search, null, null, false);
+        .fetch(r -> mapToDatasetResponse(r, favoriteIds, tagsByDatasetId, levels));
   }
 
   public long count(
@@ -285,8 +314,12 @@ public class DatasetRepository {
       String search,
       Long currentUserId,
       String status,
-      boolean favoriteOnly) {
-    Condition condition = buildCondition(categoryId, storageType, originType, search, status);
+      boolean favoriteOnly,
+      Long securityLevelId,
+      Condition access) {
+    Condition condition =
+        buildCondition(
+            categoryId, storageType, originType, search, status, securityLevelId, access);
 
     var countQuery =
         dsl.select(countDistinct(DS_ID))
@@ -316,6 +349,7 @@ public class DatasetRepository {
   public Optional<DatasetResponse> findById(Long id, Long currentUserId) {
     Set<Long> favoriteIds = fetchFavoriteIds(currentUserId);
     Map<Long, List<String>> tagMap = fetchTagsByDatasetIds(List.of(id));
+    Map<Long, SecurityLevelSummary> levels = fetchLevelSummaries();
 
     // status_updated_by 사용자 이름을 JOIN으로 조회하여 N+1 제거
     return dsl.select(
@@ -331,6 +365,8 @@ public class DatasetRepository {
             DS_STATUS_UPDATED_BY,
             DS_STATUS_UPDATED_AT,
             DS_SOURCE_PIPELINE_STEP_ID,
+            DS_SECURITY_LEVEL_ID,
+            DS_SECURITY_LEVEL_AUTO_RAISED_AT,
             DC_ID,
             DC_NAME,
             DC_DESCRIPTION,
@@ -341,7 +377,7 @@ public class DatasetRepository {
         .leftJoin(STATUS_USER_TABLE)
         .on(SU_ID.eq(DS_STATUS_UPDATED_BY))
         .where(DS_ID.eq(id))
-        .fetchOptional(r -> mapToDatasetResponse(r, favoriteIds, tagMap));
+        .fetchOptional(r -> mapToDatasetResponse(r, favoriteIds, tagMap, levels));
   }
 
   public DatasetResponse save(CreateDatasetRequest request, Long createdBy) {

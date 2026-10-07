@@ -14,6 +14,7 @@ import com.smartfirehub.jooq.tables.Chart;
 import com.smartfirehub.jooq.tables.Dashboard;
 import com.smartfirehub.jooq.tables.DashboardWidget;
 import com.smartfirehub.jooq.tables.Dataset;
+import com.smartfirehub.jooq.tables.DatasetAccessGrant;
 import com.smartfirehub.jooq.tables.DatasetCategory;
 import com.smartfirehub.jooq.tables.DatasetColumn;
 import com.smartfirehub.jooq.tables.DatasetEmbedding;
@@ -78,6 +79,7 @@ import com.smartfirehub.jooq.tables.ResolveTriggerTenantByWebhookId;
 import com.smartfirehub.jooq.tables.Role;
 import com.smartfirehub.jooq.tables.RolePermission;
 import com.smartfirehub.jooq.tables.SavedQuery;
+import com.smartfirehub.jooq.tables.SecurityLevel;
 import com.smartfirehub.jooq.tables.SlackWorkspace;
 import com.smartfirehub.jooq.tables.SpatialRefSys;
 import com.smartfirehub.jooq.tables.StHexagongrid;
@@ -179,6 +181,11 @@ public class Public extends SchemaImpl {
      * The table <code>public.dataset</code>.
      */
     public final Dataset DATASET = Dataset.DATASET;
+
+    /**
+     * The table <code>public.dataset_access_grant</code>.
+     */
+    public final DatasetAccessGrant DATASET_ACCESS_GRANT = DatasetAccessGrant.DATASET_ACCESS_GRANT;
 
     /**
      * The table <code>public.dataset_category</code>.
@@ -771,6 +778,11 @@ public class Public extends SchemaImpl {
     public final SavedQuery SAVED_QUERY = SavedQuery.SAVED_QUERY;
 
     /**
+     * The table <code>public.security_level</code>.
+     */
+    public final SecurityLevel SECURITY_LEVEL = SecurityLevel.SECURITY_LEVEL;
+
+    /**
      * The table <code>public.slack_workspace</code>.
      */
     public final SlackWorkspace SLACK_WORKSPACE = SlackWorkspace.SLACK_WORKSPACE;
@@ -997,6 +1009,7 @@ public class Public extends SchemaImpl {
             Dashboard.DASHBOARD,
             DashboardWidget.DASHBOARD_WIDGET,
             Dataset.DATASET,
+            DatasetAccessGrant.DATASET_ACCESS_GRANT,
             DatasetCategory.DATASET_CATEGORY,
             DatasetColumn.DATASET_COLUMN,
             DatasetEmbedding.DATASET_EMBEDDING,
@@ -1061,6 +1074,7 @@ public class Public extends SchemaImpl {
             Role.ROLE,
             RolePermission.ROLE_PERMISSION,
             SavedQuery.SAVED_QUERY,
+            SecurityLevel.SECURITY_LEVEL,
             SlackWorkspace.SLACK_WORKSPACE,
             SpatialRefSys.SPATIAL_REF_SYS,
             StHexagongrid.ST_HEXAGONGRID,

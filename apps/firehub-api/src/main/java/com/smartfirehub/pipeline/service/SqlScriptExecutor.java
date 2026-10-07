@@ -165,7 +165,11 @@ public class SqlScriptExecutor {
                     cfg.dsl().fetch(OUTPUT_LOCK_SQL, outputLockKey(preStatement));
                     cfg.dsl().execute(preStatement);
                   }
-                  cfg.dsl().execute(scriptContent);
+                  // 판정·검증한 문자열을 바이트 그대로 보낸다(최종 리뷰 I1 — 정적 Statement + JDBC 이스케이프 끔, jOOQ 템플릿
+                  // 해석 없음). dsl.execute(String) 은 jOOQ 템플릿 파서와 pgjdbc 이스케이프 치환({fn …}·{d '…'})을 거쳐
+                  // "판정한 문자열 ≠ PG 가 받는 문자열"이 된다. 애드혹 경로의 AdhocSqlStatements 는 ArchUnit 이 호출자를
+                  // 애드혹 실행 서비스로 동결한 싱크라 재사용하지 않는다. cfg.dsl() 은 SET LOCAL·출력 잠금·선행 비우기와 같은 트랜잭션이다.
+                  VerbatimSql.execute(cfg.dsl(), scriptContent);
                 });
             return null;
           });

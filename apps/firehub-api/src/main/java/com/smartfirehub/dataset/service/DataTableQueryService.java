@@ -5,6 +5,7 @@ import com.smartfirehub.dataset.exception.SqlQueryException;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.util.AdhocResultValues;
 import com.smartfirehub.global.util.AdhocSqlStatements;
+import com.smartfirehub.global.util.NormalizedSql;
 import com.smartfirehub.global.util.SqlLexicalMask;
 import com.smartfirehub.global.util.SqlValidationUtils;
 import com.smartfirehub.pipeline.service.validator.SqlValidator;
@@ -36,10 +37,17 @@ public class DataTableQueryService {
    * for SET LOCAL to be effective.
    */
   public SqlQueryResponse executeQuery(String sql, int maxRows) {
-    // Delegate comment stripping and keyword validation to SqlValidationUtils
-    String stripped = SqlValidationUtils.stripAndValidate(sql);
-    String queryType = SqlValidationUtils.detectQueryType(stripped);
-    String cleanSql = SqlValidationUtils.removeTrailingSemicolon(stripped);
+    // 테스트 전용 진입점 — 프로덕션 호출은 SqlGateArchitectureTest 가 거부한다(판정 없이 실행되므로).
+    return executeQuery(NormalizedSql.of(sql), maxRows);
+  }
+
+  /**
+   * 관문(GuardedSqlExecutor)이 정규화·판정을 마친 문자열을 그대로 실행한다. 여기서 다시 정규화하지 않는다 — 판정한 String 과 실행하는 String 이
+   * 같은 인스턴스여야 한다(스펙 §4.1, {@link NormalizedSql} 참고). 실행 문자열 = 판정 문자열 + 최상위 행 제한(SELECT 만)이다.
+   */
+  public SqlQueryResponse executeQuery(NormalizedSql normalized, int maxRows) {
+    String cleanSql = normalized.text();
+    String queryType = SqlValidationUtils.detectQueryType(cleanSql);
 
     // 부분문자열 대조(예: upperSql.contains("PUBLIC.")) 는 폐기했다 — PostgreSQL 이 허용하는 동등 표기
     // 변형(따옴표로 감싼 "public", 점 주변 공백 등)에 뚫린다(#385 R3 실측). AST 기반 스키마 화이트리스트가

@@ -16,6 +16,7 @@ import com.smartfirehub.jooq.tables.Chart.ChartPath;
 import com.smartfirehub.jooq.tables.Dashboard.DashboardPath;
 import com.smartfirehub.jooq.tables.DashboardWidget.DashboardWidgetPath;
 import com.smartfirehub.jooq.tables.Dataset.DatasetPath;
+import com.smartfirehub.jooq.tables.DatasetAccessGrant.DatasetAccessGrantPath;
 import com.smartfirehub.jooq.tables.DatasetCategory.DatasetCategoryPath;
 import com.smartfirehub.jooq.tables.DatasetColumn.DatasetColumnPath;
 import com.smartfirehub.jooq.tables.DatasetEmbedding.DatasetEmbeddingPath;
@@ -57,6 +58,7 @@ import com.smartfirehub.jooq.tables.ReportTemplate.ReportTemplatePath;
 import com.smartfirehub.jooq.tables.Role.RolePath;
 import com.smartfirehub.jooq.tables.RolePermission.RolePermissionPath;
 import com.smartfirehub.jooq.tables.SavedQuery.SavedQueryPath;
+import com.smartfirehub.jooq.tables.SecurityLevel.SecurityLevelPath;
 import com.smartfirehub.jooq.tables.SlackWorkspace.SlackWorkspacePath;
 import com.smartfirehub.jooq.tables.TenantSettings.TenantSettingsPath;
 import com.smartfirehub.jooq.tables.TriggerEvent.TriggerEventPath;
@@ -459,6 +461,19 @@ public class Tenant extends TableImpl<TenantRecord> {
         return _dashboardWidget;
     }
 
+    private transient DatasetAccessGrantPath _datasetAccessGrant;
+
+    /**
+     * Get the implicit to-many join path to the
+     * <code>public.dataset_access_grant</code> table
+     */
+    public DatasetAccessGrantPath datasetAccessGrant() {
+        if (_datasetAccessGrant == null)
+            _datasetAccessGrant = new DatasetAccessGrantPath(this, null, Keys.DATASET_ACCESS_GRANT__FK_DATASET_ACCESS_GRANT_TENANT.getInverseKey());
+
+        return _datasetAccessGrant;
+    }
+
     private transient DatasetCategoryPath _datasetCategory;
 
     /**
@@ -729,6 +744,19 @@ public class Tenant extends TableImpl<TenantRecord> {
             _savedQuery = new SavedQueryPath(this, null, Keys.SAVED_QUERY__FK_SAVED_QUERY_TENANT.getInverseKey());
 
         return _savedQuery;
+    }
+
+    private transient SecurityLevelPath _securityLevel;
+
+    /**
+     * Get the implicit to-many join path to the
+     * <code>public.security_level</code> table
+     */
+    public SecurityLevelPath securityLevel() {
+        if (_securityLevel == null)
+            _securityLevel = new SecurityLevelPath(this, null, Keys.SECURITY_LEVEL__FK_SECURITY_LEVEL_TENANT.getInverseKey());
+
+        return _securityLevel;
     }
 
     private transient TriggerEventPath _triggerEvent;

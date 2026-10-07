@@ -23,6 +23,8 @@ import com.smartfirehub.global.security.JwtAuthenticationFilter;
 import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.permission.service.PermissionService;
+import com.smartfirehub.securitylevel.access.ClearanceResolver;
+import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -40,6 +42,13 @@ import org.springframework.test.web.servlet.MockMvc;
 @WebMvcTest(DatasetController.class)
 @Import({SecurityConfig.class, JwtAuthenticationFilter.class})
 class DatasetControllerTest {
+
+  // WebMvcConfig 가 DatasetAccessInterceptor(→DatasetAccessGuard)를 등록하므로 슬라이스에도 빈이 있어야 한다.
+  // 목은 아무것도 던지지 않아 숨김 판정은 통과 처리된다(실제 판정은 DatasetRouteHidingTest 가 검증).
+  @MockitoBean private DatasetAccessGuard datasetAccessGuard;
+
+  // 컨트롤러가 검색 가시성 자격을 위해 ClearanceResolver 를 주입받는다 — 슬라이스에선 목(서비스도 목이라 값은 쓰이지 않는다).
+  @MockitoBean private ClearanceResolver clearanceResolver;
 
   @Autowired private MockMvc mockMvc;
 
@@ -104,7 +113,7 @@ class DatasetControllerTest {
     PageResponse<DatasetResponse> page = new PageResponse<>(List.of(dataset), 0, 20, 1, 1);
 
     when(datasetService.getDatasets(
-            any(), any(), any(), any(), anyInt(), anyInt(), anyLong(), any(), anyBoolean()))
+            any(), any(), any(), any(), anyInt(), anyInt(), anyLong(), any(), anyBoolean(), any()))
         .thenReturn(page);
 
     mockMvc
@@ -225,7 +234,7 @@ class DatasetControllerTest {
   @Test
   void searchDatasets_withPermission_returnsHits() throws Exception {
     // 검색 서비스는 스텁 — 컨트롤러가 요청 body 를 받아 결과 배열을 그대로 반환하는지 검증
-    when(datasetSearchService.search(any()))
+    when(datasetSearchService.search(any(), any()))
         .thenReturn(
             List.of(
                 new DatasetSearchHit(42L, "화재 출동", "설명", "TABLE", "SOURCE", "fire", "안전", 0.9)));

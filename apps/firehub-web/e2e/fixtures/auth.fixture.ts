@@ -79,6 +79,8 @@ async function setupAuthMocks(page: Page) {
   await mockApi(page, 'GET', '/api/v1/users/me', MOCK_USER_DETAIL);
   // 공개 가입은 기본 "닫힘"(운영 현실과 동일). 가입 화면 테스트는 { open: true } 로 덮어쓴다(WD-2).
   await mockApi(page, 'GET', '/api/v1/auth/signup-status', { open: false });
+  // 권한 코드 기본값 — 사이드바(AppLayout)가 모든 사용자에 대해 조회한다(보안 등급 S1). 관리자 테스트는 setupAdminAuth 가 덮어쓴다.
+  await mockApi(page, 'GET', '/api/v1/auth/me/permissions', []);
   // 로그인 후 홈으로 리다이렉트될 때 대시보드 API 호출을 모킹
   await setupHomeMocks(page);
 }

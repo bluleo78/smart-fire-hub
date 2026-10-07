@@ -4,20 +4,31 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.smartfirehub.document.repository.DocumentChunkRepository;
+import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.graphreview.dto.EntityRelationRef;
 import com.smartfirehub.graphreview.dto.EvidenceChunk;
 import com.smartfirehub.graphreview.dto.ReviewItemRecord;
 import com.smartfirehub.graphreview.dto.ReviewItemResponse;
 import com.smartfirehub.graphreview.repository.ReviewItemRepository;
+import com.smartfirehub.securitylevel.access.ClearanceResolver;
+import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
+import com.smartfirehub.securitylevel.access.DatasetAction;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import lombok.SneakyThrows;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-/** 범용 검수 인박스 서비스 — 타입별 등록/조회, 승인 시 item_type별 액션 라우팅, 원문 근거 조회. */
+/**
+ * 범용 검수 인박스 서비스 — 타입별 등록/조회, 승인 시 item_type별 액션 라우팅, 원문 근거 조회.
+ *
+ * <p>보안 등급(최종 리뷰 C2): 검수 항목은 출처 데이터셋(dataset_id)의 청크 원문·엔티티 이름을 싣는다. 경로가 {@code
+ * /api/v1/datasets/**} 밖이라 데이터셋 인터셉터가 닿지 않으므로, 조회자가 출처 데이터셋을 볼 수 없는 항목은 목록에서 빼고 근거·승인·거부는 <b>없는 항목과
+ * 같은</b> 404 로 거부한다(존재 은닉). dataset_id 가 없는 레거시 항목은 판정할 데이터셋이 없어 기존대로 둔다.
+ */
 @Service
 @RequiredArgsConstructor
 public class ReviewItemService {
@@ -26,6 +37,11 @@ public class ReviewItemService {
   private final GraphMutationClient mutationClient;
   private final DocumentChunkRepository chunkRepository;
   private final ObjectMapper objectMapper;
+  private final DatasetAccessGuard datasetAccessGuard;
+  private final ClearanceResolver clearanceResolver;
+
+  /** 없는 항목·볼 수 없는 출처 데이터셋의 항목 — 둘을 구분하지 않는 단일 404 코드. */
+  public static final String NOT_FOUND_CODE = "REVIEW_ITEM_NOT_FOUND";
 
   static final String SYNONYM = "synonym_merge";
   static final String PROPERTY = "property_normalization";
@@ -236,7 +252,10 @@ public class ReviewItemService {
       }
       offset = effectivePage * size;
     }
-    return repo.findByStatus(effective, itemType, offset, size).stream()
+    // 출처 데이터셋을 볼 수 없는 항목은 SQL 에서 거른다 — 자바에서 거르면 limit/offset 페이지가 어긋난다.
+    return repo
+        .findByStatus(effective, itemType, offset, size, datasetAccessGuard.visibleCondition())
+        .stream()
         .map(this::toResponse)
         .toList();
   }
@@ -315,9 +334,7 @@ public class ReviewItemService {
   // RLS 가 걸린 document_chunk 를 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
   @Transactional(readOnly = true)
   public List<EvidenceChunk> evidence(long id) {
-    ReviewItemRecord row =
-        repo.findById(id)
-            .orElseThrow(() -> new IllegalArgumentException("검수 항목을 찾을 수 없습니다: " + id));
+    ReviewItemRecord row = findVisibleOrThrow(id);
     if (row.datasetId() == null) return List.of();
     JsonNode ids = parse(row.payloadJson()).path("sourceChunkIds");
     if (!ids.isArray() || ids.isEmpty()) return List.of();
@@ -345,14 +362,36 @@ public class ReviewItemService {
     }
   }
 
+  /**
+   * pending 항목을 가져온다. 볼 수 있는지(findVisibleOrThrow)를 상태 검사보다 <b>먼저</b> 본다 — 순서가 바뀌면 "이미 처리된
+   * 항목입니다(status=…)" 응답이 숨김 항목의 존재와 상태를 드러낸다.
+   */
   private ReviewItemRecord getPendingOrThrow(long id) {
-    ReviewItemRecord row =
-        repo.findById(id)
-            .orElseThrow(() -> new IllegalArgumentException("검수 항목을 찾을 수 없습니다: " + id));
+    ReviewItemRecord row = findVisibleOrThrow(id);
     if (!"pending".equals(row.status())) {
       throw new IllegalStateException("이미 처리된 항목입니다(status=" + row.status() + "): " + id);
     }
     return row;
+  }
+
+  /**
+   * 항목을 가져오되, 현재 사용자가 출처 데이터셋을 볼 수 없으면 없는 항목과 같은 404 를 던진다(존재 은닉 — 데이터셋 id 도 싣지 않는다). 그래서
+   * DatasetAccessGuard#requireView(데이터셋 id 를 담은 다른 404)가 아니라 판정 값만 쓴다.
+   */
+  private ReviewItemRecord findVisibleOrThrow(long id) {
+    ReviewItemRecord row = repo.findById(id).orElseThrow(() -> notFound(id));
+    if (row.datasetId() != null
+        && !datasetAccessGuard
+            .check(clearanceResolver.current(), row.datasetId(), DatasetAction.VIEW, null)
+            .allowed()) {
+      throw notFound(id);
+    }
+    return row;
+  }
+
+  /** 없는 항목·숨김 항목 공통 404 — 바이트 단위로 같은 응답이어야 존재가 드러나지 않는다. */
+  private static CodedApiException notFound(long id) {
+    return new CodedApiException(HttpStatus.NOT_FOUND, NOT_FOUND_CODE, "검수 항목을 찾을 수 없습니다: " + id);
   }
 
   @SneakyThrows

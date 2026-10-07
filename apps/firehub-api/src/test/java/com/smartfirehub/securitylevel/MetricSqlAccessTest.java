@@ -1,0 +1,235 @@
+package com.smartfirehub.securitylevel;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.reset;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import com.smartfirehub.global.exception.CodedApiException;
+import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.global.util.NormalizedSql;
+import com.smartfirehub.pipeline.service.executor.ExecutorClient;
+import com.smartfirehub.pipeline.service.executor.ExecutorClient.QueryExecuteResult;
+import com.smartfirehub.proactive.dto.CreateProactiveJobRequest;
+import com.smartfirehub.proactive.dto.UpdateProactiveJobRequest;
+import com.smartfirehub.proactive.service.MetricPollerService;
+import com.smartfirehub.proactive.service.ProactiveJobService;
+import com.smartfirehub.securitylevel.access.ClearanceResolver;
+import com.smartfirehub.securitylevel.sql.GuardedSqlExecutor;
+import com.smartfirehub.support.IntegrationTestBase;
+import com.smartfirehub.support.SecurityFixture;
+import com.smartfirehub.support.TenantRlsTestSupport;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import org.jooq.DSLContext;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+
+/** 스펙 §4.2 6행 + 판단 사항 9: 메트릭 SQL 은 생성·수정 시 작성자 기준, 폴링 시 소유자 기준. */
+class MetricSqlAccessTest extends IntegrationTestBase {
+
+  @Autowired private DSLContext dsl;
+  @Autowired private PasswordEncoder encoder;
+  @Autowired private ProactiveJobService jobService;
+  @Autowired private GuardedSqlExecutor guardedSqlExecutor;
+  @Autowired private ClearanceResolver clearanceResolver;
+  @Autowired private MetricPollerService poller;
+  @MockitoBean private ExecutorClient executorClient;
+
+  private SecurityFixture fx;
+  private final List<Long> users = new ArrayList<>();
+  private final List<Long> roles = new ArrayList<>();
+  private final List<Long> datasets = new ArrayList<>();
+  private String pub;
+  private String sec;
+
+  @BeforeEach
+  void setUp() {
+    fx = new SecurityFixture(dsl, fixtureTransactionTemplate, encoder);
+    long creator = fx.createUser("ms_c");
+    users.add(creator);
+    String m = "ms" + System.nanoTime();
+    pub = m + "_pub";
+    sec = m + "_sec";
+    datasets.add(fx.createDatasetRow(pub, fx.levelId("공개"), creator));
+    datasets.add(fx.createDatasetRow(sec, fx.levelId("민감"), creator));
+  }
+
+  @AfterEach
+  void tearDown() {
+    TenantContext.set(DEFAULT_TEST_TENANT_ID);
+    for (long u : users) {
+      TenantRlsTestSupport.runInTenantTransaction(
+          fixtureTransactionTemplate,
+          DEFAULT_TEST_TENANT_ID,
+          () -> dsl.execute("delete from proactive_job where user_id = ?", u));
+    }
+    datasets.forEach(fx::deleteDatasetRow);
+    users.forEach(fx::deleteUser);
+    roles.forEach(fx::deleteRole);
+  }
+
+  private long userAt(String level) {
+    long uid = fx.createUser("ms_u");
+    users.add(uid);
+    fx.removeUserRole(uid);
+    long rid = fx.createRole("ms_r_" + System.nanoTime(), fx.levelId(level), "proactive:write");
+    roles.add(rid);
+    fx.assignRole(uid, rid);
+    return uid;
+  }
+
+  private static Map<String, Object> config(String table) {
+    return Map.of(
+        "anomaly",
+        Map.of(
+            "metrics",
+            List.of(
+                Map.of(
+                    "id",
+                    "m1",
+                    "name",
+                    "건수",
+                    "source",
+                    "dataset",
+                    "query",
+                    "SELECT count(*) FROM " + table))));
+  }
+
+  private CreateProactiveJobRequest create(String table) {
+    return new CreateProactiveJobRequest(
+        "ms-job", "보고", null, null, null, false, "ANOMALY", config(table));
+  }
+
+  @Test
+  void create_withHiddenMetricTable_isRejected() {
+    long u = userAt("공개");
+    assertThatThrownBy(() -> jobService.createJob(create(sec), u))
+        .isInstanceOf(CodedApiException.class)
+        .extracting(e -> ((CodedApiException) e).code())
+        .isEqualTo("DATASET_SQL_ACCESS_DENIED");
+    assertThat(jobService.createJob(create(pub), u).id()).isPositive();
+  }
+
+  @Test
+  void update_cannotSwapInHiddenTable() {
+    long u = userAt("공개");
+    long jobId = jobService.createJob(create(pub), u).id();
+    assertThatThrownBy(
+            () ->
+                jobService.updateJob(
+                    jobId,
+                    new UpdateProactiveJobRequest(
+                        null, null, null, null, null, null, null, config(sec)),
+                    u))
+        .isInstanceOf(CodedApiException.class);
+  }
+
+  /** 판단 사항 19 — 파싱 불가 메트릭 SQL 은 저장 계약 불변(폴러가 건너뛴다). 트랜잭션 오염으로 저장이 500 이 되면 안 된다. */
+  @Test
+  void create_withUnparseableMetricQuery_stillSaves() {
+    long u = userAt("공개");
+    var req =
+        new CreateProactiveJobRequest(
+            "ms-bad",
+            "보고",
+            null,
+            null,
+            null,
+            false,
+            "ANOMALY",
+            Map.of(
+                "anomaly",
+                Map.of(
+                    "metrics",
+                    List.of(Map.of("id", "m1", "source", "dataset", "query", "SELEC 1")))));
+    assertThat(jobService.createJob(req, u).id()).isPositive();
+  }
+
+  /** 폴링 시점 판정은 실행 관문(GuardedSqlExecutor#executeMetricQuery)이 소유자 자격으로 한다 — 실제 관문을 직접 부른다. */
+  @Test
+  void pollTime_reJudgesOwner() {
+    reset(executorClient);
+    when(executorClient.executeQuery(anyString(), anyInt(), anyBoolean()))
+        .thenReturn(
+            new QueryExecuteResult(
+                true, "SELECT", List.of("c"), List.of(Map.of("c", 1)), 1, 0, 0L, false, null));
+    NormalizedSql q = NormalizedSql.of("SELECT count(*) FROM " + sec);
+    assertThatThrownBy(
+            () -> guardedSqlExecutor.executeMetricQuery(clearanceResolver.resolve(userAt("공개")), q))
+        .isInstanceOf(CodedApiException.class)
+        .extracting(e -> ((CodedApiException) e).code())
+        .isEqualTo("DATASET_SQL_ACCESS_DENIED");
+    verify(executorClient, never()).executeQuery(anyString(), anyInt(), anyBoolean());
+    assertThat(
+            guardedSqlExecutor
+                .executeMetricQuery(clearanceResolver.resolve(userAt("민감")), q)
+                .success())
+        .isTrue();
+  }
+
+  /** 폴러 실행 경로 — 자격이 낮아진 소유자의 메트릭은 executor 로 가지 않고, 충분한 소유자는 간다. */
+  @Test
+  void poller_skipsDeniedOwner_andRunsAllowedOwner() {
+    reset(executorClient);
+    when(executorClient.executeQuery(anyString(), anyInt(), anyBoolean()))
+        .thenReturn(
+            new QueryExecuteResult(
+                true, "SELECT", List.of("c"), List.of(Map.of("c", 1)), 1, 0, 0L, false, null));
+    // 숨김 테이블 메트릭을 가진 "공개" 소유자 잡 — 생성 이후 자격이 낮아진 상황을 직접 삽입으로 재현한다.
+    insertAnomalyJob(userAt("공개"), "SELECT count(*) FROM " + sec);
+
+    poller.poll();
+    verify(executorClient, never()).executeQuery(anyString(), anyInt(), anyBoolean());
+
+    // 같은 SQL 이라도 자격이 충분한 소유자는 수집된다(판정이 SQL 이 아니라 소유자에 달렸음을 확인).
+    insertAnomalyJob(userAt("민감"), "SELECT count(*) FROM " + sec);
+    poller.poll();
+    verify(executorClient).executeQuery("SELECT count(*) FROM " + sec, 1, true);
+  }
+
+  /** 소유자가 ACTIVE 멤버십이 없으면(역할 제거) fail-closed 로 수집하지 않는다. */
+  @Test
+  void poller_ownerWithoutMembership_failsClosed() {
+    reset(executorClient);
+    long u = userAt("민감");
+    // 모든 역할 멤버십 제거(removeUserRole 은 기본 USER 역할만 뗀다) — 자격 없음 = 아무것도 볼 수 없음.
+    TenantRlsTestSupport.runInTenantTransaction(
+        fixtureTransactionTemplate,
+        DEFAULT_TEST_TENANT_ID,
+        () -> dsl.execute("delete from user_role where user_id = ?", u));
+    insertAnomalyJob(u, "SELECT count(*) FROM " + pub);
+
+    poller.poll();
+    verify(executorClient, never()).executeQuery(anyString(), anyInt(), anyBoolean());
+  }
+
+  private void insertAnomalyJob(long ownerId, String query) {
+    String cfg =
+        "{\"anomaly\":{\"metrics\":[{\"id\":\"m1\",\"source\":\"dataset\",\"query\":\""
+            + query
+            + "\"}]}}";
+    TenantRlsTestSupport.runInTenantTransaction(
+        fixtureTransactionTemplate,
+        DEFAULT_TEST_TENANT_ID,
+        () ->
+            dsl.execute(
+                "insert into proactive_job(user_id,name,prompt,cron_expression,enabled,trigger_type,config)"
+                    + " values (?,?,?,?,true,'ANOMALY',?::jsonb)",
+                ownerId,
+                "ms-poll",
+                "p",
+                "0 * * * *",
+                cfg));
+  }
+}

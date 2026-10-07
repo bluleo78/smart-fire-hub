@@ -16,6 +16,10 @@ import com.smartfirehub.global.security.JwtAuthenticationFilter;
 import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.permission.service.PermissionService;
+import com.smartfirehub.securitylevel.access.Clearance;
+import com.smartfirehub.securitylevel.access.ClearanceResolver;
+import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
+import com.smartfirehub.securitylevel.sql.GuardedSqlExecutor;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -36,11 +40,19 @@ import org.springframework.test.web.servlet.MockMvc;
 @Import({SecurityConfig.class, JwtAuthenticationFilter.class})
 class SavedQueryControllerTest {
 
+  // WebMvcConfig 가 DatasetAccessInterceptor(→DatasetAccessGuard)를 등록하므로 슬라이스에도 빈이 있어야 한다.
+  // 목은 아무것도 던지지 않아 숨김 판정은 통과 처리된다(실제 판정은 DatasetRouteHidingTest 가 검증).
+  @MockitoBean private DatasetAccessGuard datasetAccessGuard;
+
   @Autowired private MockMvc mockMvc;
   @Autowired private ObjectMapper objectMapper;
 
   @MockitoBean private SavedQueryService savedQueryService;
   @MockitoBean private AnalyticsQueryExecutionService executionService;
+  // 보안 등급(S2): 애드혹 실행은 관문(GuardedSqlExecutor)을 실행자 자격(ClearanceResolver.current())으로 부른다. 판정 자체는
+  // GuardedSqlExecutorTest 가 실제 DB 로 검증하고, 여기서는 컨트롤러 배선(관문 호출·readOnly 강제)만 본다.
+  @MockitoBean private GuardedSqlExecutor guardedSqlExecutor;
+  @MockitoBean private ClearanceResolver clearanceResolver;
   @MockitoBean private JwtTokenProvider jwtTokenProvider;
   @MockitoBean private JwtProperties jwtProperties;
   @MockitoBean private PermissionService permissionService;
@@ -155,7 +167,7 @@ class SavedQueryControllerTest {
         new SchemaInfoResponse(
             List.of(new SchemaInfoResponse.TableInfo("my_table", "My Dataset", 1L, List.of())));
     // PR-1 Task 2: 컨트롤러가 datasetIds 파라미터를 받는 오버로드로 변경됨 → null 분기 stub.
-    when(executionService.getSchemaInfo((List<Long>) isNull())).thenReturn(schema);
+    when(executionService.getSchemaInfo((List<Long>) isNull(), any())).thenReturn(schema);
 
     mockMvc
         .perform(
@@ -164,7 +176,7 @@ class SavedQueryControllerTest {
         .andExpect(jsonPath("$.tables[0].tableName").value("my_table"));
 
     // 추가 — datasetIds 미지정 시 서비스의 List<Long> 오버로드에 null 위임 검증
-    verify(executionService).getSchemaInfo((java.util.List<Long>) isNull());
+    verify(executionService).getSchemaInfo((java.util.List<Long>) isNull(), any());
   }
 
   // === GET /api/v1/analytics/queries/schema — datasetIds 필터 (PR-1 Task 2) ===
@@ -172,7 +184,7 @@ class SavedQueryControllerTest {
   /** 단일 datasetId — Spring 의 List<Long> 단일 값 바인딩 검증. */
   @Test
   void getSchema_singleDatasetId_passesListWithOneElement() throws Exception {
-    when(executionService.getSchemaInfo(List.of(11L)))
+    when(executionService.getSchemaInfo(eq(List.of(11L)), any()))
         .thenReturn(new SchemaInfoResponse(List.of()));
 
     mockMvc
@@ -181,13 +193,13 @@ class SavedQueryControllerTest {
                 .header("Authorization", "Bearer test-token"))
         .andExpect(status().isOk());
 
-    verify(executionService).getSchemaInfo(List.of(11L));
+    verify(executionService).getSchemaInfo(eq(List.of(11L)), any());
   }
 
   /** 콤마 구분 다중 datasetIds — 순서 보존 검증. */
   @Test
   void getSchema_multipleDatasetIds_passesListInOrder() throws Exception {
-    when(executionService.getSchemaInfo(List.of(11L, 7L)))
+    when(executionService.getSchemaInfo(eq(List.of(11L, 7L)), any()))
         .thenReturn(new SchemaInfoResponse(List.of()));
 
     mockMvc
@@ -196,7 +208,7 @@ class SavedQueryControllerTest {
                 .header("Authorization", "Bearer test-token"))
         .andExpect(status().isOk());
 
-    verify(executionService).getSchemaInfo(List.of(11L, 7L));
+    verify(executionService).getSchemaInfo(eq(List.of(11L, 7L)), any());
   }
 
   /**
@@ -208,7 +220,7 @@ class SavedQueryControllerTest {
    */
   @Test
   void getSchema_emptyDatasetIdsParam_behaviorDocumented() throws Exception {
-    when(executionService.getSchemaInfo((List<Long>) any()))
+    when(executionService.getSchemaInfo((List<Long>) any(), any()))
         .thenReturn(new SchemaInfoResponse(List.of()));
 
     mockMvc
@@ -220,7 +232,7 @@ class SavedQueryControllerTest {
     // 실제 바인딩 결과 캡처 — Spring 버전·PG 버전 차이를 흡수하기 위해 null 또는 empty list 둘 다 허용.
     @SuppressWarnings("unchecked")
     org.mockito.ArgumentCaptor<List<Long>> captor = org.mockito.ArgumentCaptor.forClass(List.class);
-    verify(executionService).getSchemaInfo(captor.capture());
+    verify(executionService).getSchemaInfo(captor.capture(), any());
     List<Long> captured = captor.getValue();
     assertThat(captured == null || captured.isEmpty())
         .as("Spring @RequestParam List<Long> 빈 문자열 바인딩: null 또는 empty list")
@@ -246,7 +258,10 @@ class SavedQueryControllerTest {
   @Test
   void executeAdHoc_withPermission_returnsResult() throws Exception {
     AnalyticsQueryRequest request = new AnalyticsQueryRequest("SELECT 1", 100, true);
-    when(executionService.execute(anyString(), anyInt(), anyBoolean()))
+    Clearance viewer = Clearance.none(1L, 1L);
+    when(clearanceResolver.current()).thenReturn(viewer);
+    // readOnly 는 웹 애드혹에서 항상 true 로 강제된다(#66) — 관문에 true 로 넘어가야만 스텁이 맞는다.
+    when(guardedSqlExecutor.executeAnalytics(eq(viewer), eq("SELECT 1"), eq(100), eq(true)))
         .thenReturn(sampleQueryResult());
 
     mockMvc

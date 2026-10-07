@@ -1,5 +1,8 @@
 package com.smartfirehub.dataset.service;
 
+import static com.smartfirehub.jooq.Tables.ROLE;
+import static com.smartfirehub.jooq.Tables.SECURITY_LEVEL;
+import static com.smartfirehub.jooq.Tables.USER_ROLE;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.smartfirehub.dataset.dto.CreateDatasetRequest;
@@ -19,6 +22,8 @@ import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
@@ -80,6 +85,34 @@ class DataTableQueryServiceTenantSchemaTest extends IntegrationTestBase {
     Long userId = TenantRlsTestSupport.insertUser(dsl, "t4-dtq-suffixed");
 
     try {
+      // 보안 등급(S2): /query 는 실행자 자격으로 참조 데이터셋을 판정한다(GuardedSqlExecutor). 이 테스트의 관심사는
+      // search_path 조립이므로, 실행자를 스크래치 테넌트의 ACTIVE 멤버 + 기본 등급('내부') 자격 역할로 만들고 요청
+      // principal 로 세운다 — 자격이 없으면 판정이 403 으로 먼저 끊어 search_path 경로까지 가지 않는다.
+      TenantRlsTestSupport.insertActiveMembership(dsl, userId, tenantId);
+      TenantRlsTestSupport.runInTenantTransaction(
+          tx,
+          tenantId,
+          () -> {
+            Long levelId =
+                dsl.select(SECURITY_LEVEL.ID)
+                    .from(SECURITY_LEVEL)
+                    .where(SECURITY_LEVEL.IS_DEFAULT.isTrue())
+                    .fetchSingle(SECURITY_LEVEL.ID);
+            Long roleId =
+                dsl.insertInto(ROLE)
+                    .set(ROLE.NAME, "t4-dtq-reader")
+                    .set(ROLE.IS_SYSTEM, false)
+                    .set(ROLE.MAX_SECURITY_LEVEL_ID, levelId)
+                    .returning(ROLE.ID)
+                    .fetchSingle(ROLE.ID);
+            dsl.insertInto(USER_ROLE)
+                .set(USER_ROLE.USER_ID, userId)
+                .set(USER_ROLE.ROLE_ID, roleId)
+                .execute();
+          });
+      SecurityContextHolder.getContext()
+          .setAuthentication(new UsernamePasswordAuthenticationToken(userId, null, List.of()));
+
       // 픽스처: 실제 프로덕션 경로(DatasetService.createDataset)로 카탈로그 행 + 물리 테이블을
       // 함께 만든다 — DatasetDataService.executeQuery 가 datasetId 로 dataset 을 조회하므로
       // 카탈로그 행이 반드시 있어야 한다.
@@ -136,9 +169,20 @@ class DataTableQueryServiceTenantSchemaTest extends IntegrationTestBase {
                           .and(DSL.field(DSL.name("success"), Boolean.class).eq(true))));
       assertThat(historyCount).as("복원 성공을 증명하는 query_history 행이 저장돼 있어야 한다").isEqualTo(1);
     } finally {
+      SecurityContextHolder.clearContext();
       TenantRlsTestSupport.cleanupAll(
           // dataset 삭제가 query_history 를 CASCADE 로 함께 지운다(V24).
           () -> TenantRlsTestSupport.deleteOwnDatasetRows(dsl, tx, tenantId),
+          // 위에서 만든 판정용 역할·배정(테넌트 스코프) — tenant 삭제보다 먼저.
+          () ->
+              TenantRlsTestSupport.runInTenantTransaction(
+                  tx,
+                  tenantId,
+                  () -> {
+                    dsl.execute("delete from user_role where tenant_id = ?", tenantId);
+                    dsl.execute("delete from role where tenant_id = ?", tenantId);
+                  }),
+          () -> TenantRlsTestSupport.deleteMembership(dsl, userId),
           () -> TenantRlsTestSupport.deleteOwnAuditLogRows(dsl, tx, tenantId),
           () -> TenantRlsTestSupport.dropSchemasCreatedByThisTest(ownerDsl(), schema),
           () -> TenantRlsTestSupport.deleteTenants(dsl, tenantId),

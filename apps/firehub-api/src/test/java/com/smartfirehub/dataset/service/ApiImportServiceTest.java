@@ -47,6 +47,12 @@ class ApiImportServiceTest extends IntegrationTestBase {
             .returning(USER.ID)
             .fetchOne()
             .getId();
+    // 보안 등급(코드리뷰 CR2): API_CALL 스텝 저장이 편집자의 지정 출력 VIEW 를 요구한다 — 실제 호출자(데이터셋 화면의 사용자)처럼 이
+    // 테넌트 ACTIVE 멤버 + USER 역할(내부 열람)을 준다. 없으면 자격이 비어 거부된다(fail-closed).
+    com.smartfirehub.support.TenantRlsTestSupport.insertActiveMembership(
+        dsl, testUserId, DEFAULT_TEST_TENANT_ID);
+    com.smartfirehub.support.TestUsers.grantRole(
+        dsl, fixtureTransactionTemplate, testUserId, DEFAULT_TEST_TENANT_ID, "USER");
 
     List<DatasetColumnRequest> columns =
         List.of(new DatasetColumnRequest("col1", "Col1", "TEXT", null, true, false, null));

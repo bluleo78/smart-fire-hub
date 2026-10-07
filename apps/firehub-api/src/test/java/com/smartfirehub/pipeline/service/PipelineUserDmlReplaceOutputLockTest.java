@@ -11,6 +11,8 @@ import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.pipeline.dto.CreatePipelineRequest;
 import com.smartfirehub.pipeline.dto.PipelineStepRequest;
 import com.smartfirehub.support.IntegrationTestBase;
+import com.smartfirehub.support.TenantRlsTestSupport;
+import com.smartfirehub.support.TestUsers;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -79,6 +81,12 @@ class PipelineUserDmlReplaceOutputLockTest extends IntegrationTestBase {
                     .fetchOne()
                     .getId());
 
+    // 보안 등급(S2): 파이프라인 SQL 스텝은 저장·실행 시 사용자 자격으로 판정된다 — ACTIVE 멤버십 + USER 역할(기본 '내부' 자격)이
+    // 있어야 기본 등급('내부') 데이터셋을 볼 수 있다.
+    inTenantFixture(
+        () -> TenantRlsTestSupport.insertActiveMembership(dsl, userId, DEFAULT_TEST_TENANT_ID));
+    TestUsers.grantRole(dsl, fixtureTransactionTemplate, userId, DEFAULT_TEST_TENANT_ID, "USER");
+
     // 출력에는 PK 를 두지 않는다 — PK 가 있으면 중복이 유니크 위반(실행 실패)으로 바뀌어, 이슈가 말하는
     // "둘 다 완료인데 행이 두 배" 증상을 그대로 관측할 수 없다.
     List<DatasetColumnRequest> columns =
@@ -131,6 +139,8 @@ class PipelineUserDmlReplaceOutputLockTest extends IntegrationTestBase {
       inTenantFixture(
           () -> {
             dsl.execute("DELETE FROM audit_log WHERE user_id = ?", userId);
+            dsl.execute("DELETE FROM user_role WHERE user_id = ?", userId);
+            TenantRlsTestSupport.deleteMembership(dsl, userId);
             dsl.deleteFrom(USER).where(USER.ID.eq(userId)).execute();
           });
     }

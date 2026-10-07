@@ -11,6 +11,9 @@ import com.smartfirehub.analytics.service.AnalyticsQueryExecutionService;
 import com.smartfirehub.analytics.service.SavedQueryService;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.global.security.RequirePermission;
+import com.smartfirehub.securitylevel.access.ClearanceResolver;
+import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
+import com.smartfirehub.securitylevel.sql.GuardedSqlExecutor;
 import jakarta.validation.Valid;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
@@ -26,6 +29,9 @@ public class SavedQueryController {
 
   private final SavedQueryService savedQueryService;
   private final AnalyticsQueryExecutionService executionService;
+  private final GuardedSqlExecutor guardedSqlExecutor;
+  private final ClearanceResolver clearanceResolver;
+  private final DatasetAccessGuard datasetAccessGuard;
 
   @GetMapping
   @RequirePermission("analytics:read")
@@ -58,7 +64,9 @@ public class SavedQueryController {
       @RequestParam(required = false) List<Long> datasetIds) {
     // datasetIds 미지정 시 null 위임 → 서비스 BC 분기로 전체 스키마 반환.
     // 지정 시 (?datasetIds=11 / ?datasetIds=11,7) 해당 데이터셋만 필터링 — ai-agent 응답 크기 절감.
-    return ResponseEntity.ok(executionService.getSchemaInfo(datasetIds));
+    // 스키마 목록도 열람 가능한 데이터셋만(스펙 §4.2 3행).
+    String visibility = datasetAccessGuard.visibleSql(clearanceResolver.current(), "d");
+    return ResponseEntity.ok(executionService.getSchemaInfo(datasetIds, visibility));
   }
 
   @GetMapping("/folders")
@@ -74,7 +82,10 @@ public class SavedQueryController {
       @Valid @RequestBody AnalyticsQueryRequest request) {
     int maxRows = request.maxRows() != null ? request.maxRows() : 1000;
     // Web UI 애드혹 쿼리는 항상 readOnly=true 강제 — DELETE/UPDATE 허용 금지 (#66)
-    return ResponseEntity.ok(executionService.execute(request.sql(), maxRows, true));
+    // 보안 등급(S2): 실행자 자격으로 참조 데이터셋을 판정한다.
+    return ResponseEntity.ok(
+        guardedSqlExecutor.executeAnalytics(
+            clearanceResolver.current(), request.sql(), maxRows, true));
   }
 
   @GetMapping("/{id}")

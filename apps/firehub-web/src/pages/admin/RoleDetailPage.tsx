@@ -32,6 +32,12 @@ import { updateRoleSchema } from '../../lib/validations/role';
 import type { ErrorResponse } from '../../types/auth';
 import type { RoleDetailResponse } from '../../types/role';
 import type { PermissionResponse } from '../../types/role';
+import { RoleClearanceCard } from './components/RoleClearanceCard';
+
+/** 권한 카테고리 표시 이름 — 없는 키는 원문 그대로. 보안 등급 S1 의 신규 카테고리(목업 s3 "보안"). */
+const PERMISSION_CATEGORY_LABELS: Record<string, string> = { security: '보안' };
+/** 보안 등급 열람 통제를 우회할 수 있는 권한(스펙 §7.3 — 1차 조치: 권한 할당 화면 경고). */
+const BYPASS_WARNING_PERMISSIONS = new Set(['pipeline:python_execute']);
 
 export default function RoleDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -229,6 +235,9 @@ export default function RoleDetailPage() {
         </CardContent>
       </Card>
 
+      {/* 데이터 열람 등급 — 권한과 성격이 달라 별도 Card·별도 저장(목업 s3) */}
+      <RoleClearanceCard roleId={role.id} />
+
       <Separator />
 
       {/* 권한 전체 해제 확인 AlertDialog — "권한 저장" 시점에 선택된 권한이 0개일 때만 표시된다 (#567) */}
@@ -262,7 +271,9 @@ export default function RoleDetailPage() {
         <CardContent className="space-y-6">
           {Object.entries(permissionsByCategory).map(([category, perms]) => (
             <div key={category} className="space-y-3">
-              <h3 className="text-sm font-semibold uppercase text-muted-foreground">{category}</h3>
+              <h3 className="text-sm font-semibold uppercase text-muted-foreground">
+                {PERMISSION_CATEGORY_LABELS[category] ?? category}
+              </h3>
               <div className="space-y-2">
                 {perms.map((perm) => (
                   <div key={perm.id} className="flex items-center gap-3">
@@ -277,6 +288,11 @@ export default function RoleDetailPage() {
                     </Label>
                     {perm.description && (
                       <span className="text-sm text-muted-foreground">- {perm.description}</span>
+                    )}
+                    {BYPASS_WARNING_PERMISSIONS.has(perm.code) && (
+                      <span className="text-xs text-warning">
+                        이 권한 보유자는 보안 등급 열람 통제를 우회할 수 있습니다(데이터 스키마 직접 접근).
+                      </span>
                     )}
                   </div>
                 ))}

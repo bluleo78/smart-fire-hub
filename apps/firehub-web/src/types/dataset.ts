@@ -1,3 +1,5 @@
+import type { SecurityLevelSummary } from './security-level';
+
 export interface CategoryResponse {
   id: number;
   name: string;
@@ -19,6 +21,10 @@ export interface DatasetResponse {
   statusNote: string | null;
   statusUpdatedBy: string | null;
   statusUpdatedAt: string | null;
+  /** 보안 등급(S1). 서버가 항상 채우지만 구버전 응답·목 호환을 위해 optional. 생성 응답은 null 가능. */
+  securityLevel?: SecurityLevelSummary | null;
+  /** 파이프라인 입력 등급에 따른 자동 상향 시각(「보안」 탭 배너). */
+  securityLevelAutoRaisedAt?: string | null;
 }
 
 export interface FavoriteToggleResponse {
@@ -69,6 +75,10 @@ export interface DatasetDetailResponse {
   statusUpdatedBy: string | null;
   statusUpdatedAt: string | null;
   linkedPipelines: LinkedPipelineInfo[];
+  /** 보안 등급(S1). 서버가 항상 채우지만 구버전 응답·목 호환을 위해 optional. 생성 응답은 null 가능. */
+  securityLevel?: SecurityLevelSummary | null;
+  /** 파이프라인 입력 등급에 따른 자동 상향 시각(「보안」 탭 배너). */
+  securityLevelAutoRaisedAt?: string | null;
 }
 
 export interface CreateDatasetRequest {
@@ -80,9 +90,8 @@ export interface CreateDatasetRequest {
   originType: 'SOURCE' | 'DERIVED' | 'TEMP';
   columns: DatasetColumnRequest[];
   sourcePipelineStepId?: number;
-  // FILE 타입 전용: 오브젝트 스토리지 버킷/프리픽스 (미전송 시 백엔드 기본값 사용)
+  // FILE 타입 전용: 오브젝트 스토리지 버킷(미전송 시 백엔드 기본값). 프리픽스는 서버가 datasets/<id>/ 로 만들며 지정할 수 없다.
   bucket?: string;
-  prefix?: string;
 }
 
 export interface DatasetColumnRequest {

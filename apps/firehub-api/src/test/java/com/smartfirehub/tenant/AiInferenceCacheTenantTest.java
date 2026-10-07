@@ -138,10 +138,9 @@ class AiInferenceCacheTenantTest extends IntegrationTestBase {
     inTenantFixture(
         tenantB,
         () -> dsl.deleteFrom(AI_INFERENCE_CACHE).where(CACHE_TENANT_ID.eq(tenantB)).execute());
-    // tenant 는 경계 위의 전역 테이블(RLS 없음)이라 컨텍스트 없이 지울 수 있다.
-    dsl.deleteFrom(table(name("tenant")))
-        .where(field(name("id"), Long.class).in(tenantA, tenantB))
-        .execute();
+    // tenant 는 경계 위의 전역 테이블(RLS 없음)이라 컨텍스트 없이 지울 수 있다. V133 이후에는 테넌트가 보안 등급 행을 FK 로
+    // 잡으므로 등급 정리까지 하는 deleteTenants 로 지운다.
+    TenantRlsTestSupport.deleteTenants(dsl, tenantA, tenantB);
   }
 
   @Test

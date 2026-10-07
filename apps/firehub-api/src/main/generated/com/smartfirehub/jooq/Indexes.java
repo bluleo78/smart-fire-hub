@@ -14,6 +14,7 @@ import com.smartfirehub.jooq.tables.Chart;
 import com.smartfirehub.jooq.tables.Dashboard;
 import com.smartfirehub.jooq.tables.DashboardWidget;
 import com.smartfirehub.jooq.tables.Dataset;
+import com.smartfirehub.jooq.tables.DatasetAccessGrant;
 import com.smartfirehub.jooq.tables.DatasetCategory;
 import com.smartfirehub.jooq.tables.DatasetColumn;
 import com.smartfirehub.jooq.tables.DatasetEmbedding;
@@ -60,6 +61,7 @@ import com.smartfirehub.jooq.tables.ReportTemplate;
 import com.smartfirehub.jooq.tables.Role;
 import com.smartfirehub.jooq.tables.RolePermission;
 import com.smartfirehub.jooq.tables.SavedQuery;
+import com.smartfirehub.jooq.tables.SecurityLevel;
 import com.smartfirehub.jooq.tables.TenantCanary;
 import com.smartfirehub.jooq.tables.TriggerEvent;
 import com.smartfirehub.jooq.tables.UploadedFiles;
@@ -119,6 +121,8 @@ public class Indexes {
     public static final Index IDX_DASHBOARD_WIDGET_CHART = Internal.createIndex(DSL.name("idx_dashboard_widget_chart"), DashboardWidget.DASHBOARD_WIDGET, new OrderField[] { DashboardWidget.DASHBOARD_WIDGET.CHART_ID }, false);
     public static final Index IDX_DASHBOARD_WIDGET_DASHBOARD = Internal.createIndex(DSL.name("idx_dashboard_widget_dashboard"), DashboardWidget.DASHBOARD_WIDGET, new OrderField[] { DashboardWidget.DASHBOARD_WIDGET.DASHBOARD_ID }, false);
     public static final Index IDX_DASHBOARD_WIDGET_TENANT = Internal.createIndex(DSL.name("idx_dashboard_widget_tenant"), DashboardWidget.DASHBOARD_WIDGET, new OrderField[] { DashboardWidget.DASHBOARD_WIDGET.TENANT_ID }, false);
+    public static final Index IDX_DATASET_ACCESS_GRANT_DATASET = Internal.createIndex(DSL.name("idx_dataset_access_grant_dataset"), DatasetAccessGrant.DATASET_ACCESS_GRANT, new OrderField[] { DatasetAccessGrant.DATASET_ACCESS_GRANT.DATASET_ID }, false);
+    public static final Index IDX_DATASET_ACCESS_GRANT_TENANT = Internal.createIndex(DSL.name("idx_dataset_access_grant_tenant"), DatasetAccessGrant.DATASET_ACCESS_GRANT, new OrderField[] { DatasetAccessGrant.DATASET_ACCESS_GRANT.TENANT_ID }, false);
     public static final Index IDX_DATASET_CATEGORY = Internal.createIndex(DSL.name("idx_dataset_category"), Dataset.DATASET, new OrderField[] { Dataset.DATASET.CATEGORY_ID }, false);
     public static final Index IDX_DATASET_CATEGORY_TENANT = Internal.createIndex(DSL.name("idx_dataset_category_tenant"), DatasetCategory.DATASET_CATEGORY, new OrderField[] { DatasetCategory.DATASET_CATEGORY.TENANT_ID }, false);
     public static final Index IDX_DATASET_COLUMN_DATASET = Internal.createIndex(DSL.name("idx_dataset_column_dataset"), DatasetColumn.DATASET_COLUMN, new OrderField[] { DatasetColumn.DATASET_COLUMN.DATASET_ID }, false);
@@ -137,6 +141,7 @@ public class Indexes {
     public static final Index IDX_DATASET_NAME = Internal.createIndex(DSL.name("idx_dataset_name"), Dataset.DATASET, new OrderField[] { Dataset.DATASET.TENANT_ID, Dataset.DATASET.NAME }, true);
     public static final Index IDX_DATASET_ONTOLOGY_ONTOLOGY = Internal.createIndex(DSL.name("idx_dataset_ontology_ontology"), DatasetOntology.DATASET_ONTOLOGY, new OrderField[] { DatasetOntology.DATASET_ONTOLOGY.ONTOLOGY_ID }, false);
     public static final Index IDX_DATASET_SEARCH_INDEX_TENANT = Internal.createIndex(DSL.name("idx_dataset_search_index_tenant"), DatasetSearchIndex.DATASET_SEARCH_INDEX, new OrderField[] { DatasetSearchIndex.DATASET_SEARCH_INDEX.TENANT_ID }, false);
+    public static final Index IDX_DATASET_SECURITY_LEVEL = Internal.createIndex(DSL.name("idx_dataset_security_level"), Dataset.DATASET, new OrderField[] { Dataset.DATASET.SECURITY_LEVEL_ID }, false);
     public static final Index IDX_DATASET_SOURCE_PIPELINE_STEP = Internal.createIndex(DSL.name("idx_dataset_source_pipeline_step"), Dataset.DATASET, new OrderField[] { Dataset.DATASET.SOURCE_PIPELINE_STEP_ID }, false);
     public static final Index IDX_DATASET_TABLE_NAME = Internal.createIndex(DSL.name("idx_dataset_table_name"), Dataset.DATASET, new OrderField[] { Dataset.DATASET.TENANT_ID, Dataset.DATASET.TABLE_NAME }, true);
     public static final Index IDX_DATASET_TAG_DATASET = Internal.createIndex(DSL.name("idx_dataset_tag_dataset"), DatasetTag.DATASET_TAG, new OrderField[] { DatasetTag.DATASET_TAG.DATASET_ID }, false);
@@ -197,11 +202,13 @@ public class Indexes {
     public static final Index IDX_REPORT_TEMPLATE_TENANT = Internal.createIndex(DSL.name("idx_report_template_tenant"), ReportTemplate.REPORT_TEMPLATE, new OrderField[] { ReportTemplate.REPORT_TEMPLATE.TENANT_ID }, false);
     public static final Index IDX_ROLE_PERMISSION_PERMISSION_ID = Internal.createIndex(DSL.name("idx_role_permission_permission_id"), RolePermission.ROLE_PERMISSION, new OrderField[] { RolePermission.ROLE_PERMISSION.PERMISSION_ID }, false);
     public static final Index IDX_ROLE_PERMISSION_TENANT = Internal.createIndex(DSL.name("idx_role_permission_tenant"), RolePermission.ROLE_PERMISSION, new OrderField[] { RolePermission.ROLE_PERMISSION.TENANT_ID }, false);
+    public static final Index IDX_ROLE_SECURITY_LEVEL = Internal.createIndex(DSL.name("idx_role_security_level"), Role.ROLE, new OrderField[] { Role.ROLE.MAX_SECURITY_LEVEL_ID }, false);
     public static final Index IDX_ROLE_TENANT = Internal.createIndex(DSL.name("idx_role_tenant"), Role.ROLE, new OrderField[] { Role.ROLE.TENANT_ID }, false);
     public static final Index IDX_SAVED_QUERY_CREATED_BY = Internal.createIndex(DSL.name("idx_saved_query_created_by"), SavedQuery.SAVED_QUERY, new OrderField[] { SavedQuery.SAVED_QUERY.CREATED_BY }, false);
     public static final Index IDX_SAVED_QUERY_DATASET = Internal.createIndex(DSL.name("idx_saved_query_dataset"), SavedQuery.SAVED_QUERY, new OrderField[] { SavedQuery.SAVED_QUERY.DATASET_ID }, false);
     public static final Index IDX_SAVED_QUERY_FOLDER = Internal.createIndex(DSL.name("idx_saved_query_folder"), SavedQuery.SAVED_QUERY, new OrderField[] { SavedQuery.SAVED_QUERY.FOLDER }, false);
     public static final Index IDX_SAVED_QUERY_TENANT = Internal.createIndex(DSL.name("idx_saved_query_tenant"), SavedQuery.SAVED_QUERY, new OrderField[] { SavedQuery.SAVED_QUERY.TENANT_ID }, false);
+    public static final Index IDX_SECURITY_LEVEL_TENANT = Internal.createIndex(DSL.name("idx_security_level_tenant"), SecurityLevel.SECURITY_LEVEL, new OrderField[] { SecurityLevel.SECURITY_LEVEL.TENANT_ID }, false);
     public static final Index IDX_STEP_EXEC_EXECUTION = Internal.createIndex(DSL.name("idx_step_exec_execution"), PipelineStepExecution.PIPELINE_STEP_EXECUTION, new OrderField[] { PipelineStepExecution.PIPELINE_STEP_EXECUTION.EXECUTION_ID }, false);
     public static final Index IDX_TENANT_CANARY_TENANT = Internal.createIndex(DSL.name("idx_tenant_canary_tenant"), TenantCanary.TENANT_CANARY, new OrderField[] { TenantCanary.TENANT_CANARY.TENANT_ID }, false);
     public static final Index IDX_TRIGGER_ENABLED_TYPE = Internal.createIndex(DSL.name("idx_trigger_enabled_type"), PipelineTrigger.PIPELINE_TRIGGER, new OrderField[] { PipelineTrigger.PIPELINE_TRIGGER.TRIGGER_TYPE }, false);
@@ -231,4 +238,5 @@ public class Indexes {
     public static final Index UK_AI_SESSION_SLACK_THREAD = Internal.createIndex(DSL.name("uk_ai_session_slack_thread"), AiSession.AI_SESSION, new OrderField[] { AiSession.AI_SESSION.TENANT_ID, AiSession.AI_SESSION.SLACK_TEAM_ID, AiSession.AI_SESSION.SLACK_CHANNEL_ID, AiSession.AI_SESSION.SLACK_THREAD_TS }, true);
     public static final Index UQ_DOCUMENT_FILE_DATASET_CHECKSUM = Internal.createIndex(DSL.name("uq_document_file_dataset_checksum"), DocumentFile.DOCUMENT_FILE, new OrderField[] { DocumentFile.DOCUMENT_FILE.DATASET_ID, DocumentFile.DOCUMENT_FILE.CHECKSUM }, true);
     public static final Index UQ_GRAPH_REVIEW_ITEM = Internal.createIndex(DSL.name("uq_graph_review_item"), GraphReviewItem.GRAPH_REVIEW_ITEM, new OrderField[] { GraphReviewItem.GRAPH_REVIEW_ITEM.TENANT_ID, GraphReviewItem.GRAPH_REVIEW_ITEM.ITEM_TYPE, GraphReviewItem.GRAPH_REVIEW_ITEM.DEDUPE_KEY }, true);
+    public static final Index UQ_SECURITY_LEVEL_DEFAULT = Internal.createIndex(DSL.name("uq_security_level_default"), SecurityLevel.SECURITY_LEVEL, new OrderField[] { SecurityLevel.SECURITY_LEVEL.TENANT_ID }, true);
 }

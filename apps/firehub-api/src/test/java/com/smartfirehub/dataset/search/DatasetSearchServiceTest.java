@@ -12,6 +12,8 @@ import com.smartfirehub.embedding.EmbeddingNotConfiguredException;
 import com.smartfirehub.embedding.EmbeddingProvider;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
 import com.smartfirehub.embedding.EmbeddingSpace;
+import com.smartfirehub.securitylevel.access.Clearance;
+import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -28,9 +30,15 @@ class DatasetSearchServiceTest {
   @Mock DatasetSearchRepository repository;
   @Mock EmbeddingProviderFactory embeddingFactory;
   @Mock EmbeddingProvider embeddingProvider;
+  @Mock DatasetAccessGuard datasetAccessGuard;
+
+  // 가시성 SQL 은 가드(목)가 만든 고정 문자열 — 서비스가 이 값을 모든 검색 분기에 그대로 전달하는지 verify 로 고정한다.
+  private static final String VIS = "VIS_SQL";
+  private static final Clearance CLEARANCE = Clearance.none(1L, 1L);
 
   private DatasetSearchService service() {
-    return new DatasetSearchService(repository, embeddingFactory);
+    when(datasetAccessGuard.visibleSql(CLEARANCE, "d")).thenReturn(VIS);
+    return new DatasetSearchService(repository, embeddingFactory, datasetAccessGuard);
   }
 
   @Test
@@ -52,14 +60,18 @@ class DatasetSearchServiceTest {
             ArgumentMatchers.eq(new EmbeddingSpace(EmbeddingDimension.D1024, "bge-m3")),
             ArgumentMatchers.any(),
             ArgumentMatchers.isNull(),
-            ArgumentMatchers.anyInt()))
+            ArgumentMatchers.anyInt(),
+            ArgumentMatchers.eq(VIS)))
         .thenReturn(List.of(dsA, dsC)); // 코사인: dsA(rank0), dsC(rank1)
     when(repository.searchByTrigram(
-            ArgumentMatchers.eq("화재"), ArgumentMatchers.isNull(), ArgumentMatchers.anyInt()))
+            ArgumentMatchers.eq("화재"),
+            ArgumentMatchers.isNull(),
+            ArgumentMatchers.anyInt(),
+            ArgumentMatchers.eq(VIS)))
         .thenReturn(List.of(dsA, dsB)); // 트라이그램: dsA(rank0), dsB(rank1)
 
     var req = new DatasetSearchRequest("화재", 10, DatasetSearchMode.HYBRID, null);
-    List<DatasetSearchHit> result = service().search(req);
+    List<DatasetSearchHit> result = service().search(req, CLEARANCE);
 
     double expectedA = 1.0 / 61 + 1.0 / 61; // 2/61
     double expectedSingle = 1.0 / 62; // 1/62
@@ -83,10 +95,13 @@ class DatasetSearchServiceTest {
   @Test
   void keyword_모드는_임베딩을_호출하지_않는다() {
     when(repository.searchByTrigram(
-            ArgumentMatchers.eq("x"), ArgumentMatchers.isNull(), ArgumentMatchers.anyInt()))
+            ArgumentMatchers.eq("x"),
+            ArgumentMatchers.isNull(),
+            ArgumentMatchers.anyInt(),
+            ArgumentMatchers.eq(VIS)))
         .thenReturn(List.of(hit(1L)));
     var req = new DatasetSearchRequest("x", 10, DatasetSearchMode.KEYWORD, null);
-    assertThat(service().search(req)).hasSize(1);
+    assertThat(service().search(req, CLEARANCE)).hasSize(1);
     Mockito.verifyNoInteractions(embeddingFactory);
   }
 
@@ -101,13 +116,17 @@ class DatasetSearchServiceTest {
             ArgumentMatchers.any(),
             ArgumentMatchers.any(),
             ArgumentMatchers.isNull(),
-            ArgumentMatchers.anyInt()))
+            ArgumentMatchers.anyInt(),
+            ArgumentMatchers.eq(VIS)))
         .thenReturn(List.of(hit(1L)));
     var req = new DatasetSearchRequest("화재", 10, DatasetSearchMode.SEMANTIC, null);
-    assertThat(service().search(req)).hasSize(1);
+    assertThat(service().search(req, CLEARANCE)).hasSize(1);
     Mockito.verify(repository, Mockito.never())
         .searchByTrigram(
-            ArgumentMatchers.anyString(), ArgumentMatchers.any(), ArgumentMatchers.anyInt());
+            ArgumentMatchers.anyString(),
+            ArgumentMatchers.any(),
+            ArgumentMatchers.anyInt(),
+            ArgumentMatchers.anyString());
   }
 
   @Test
@@ -121,14 +140,18 @@ class DatasetSearchServiceTest {
             ArgumentMatchers.any(),
             ArgumentMatchers.any(),
             ArgumentMatchers.isNull(),
-            ArgumentMatchers.anyInt()))
+            ArgumentMatchers.anyInt(),
+            ArgumentMatchers.eq(VIS)))
         .thenReturn(List.of(hit(1L)));
     when(repository.searchByTrigram(
-            ArgumentMatchers.eq("화재"), ArgumentMatchers.isNull(), ArgumentMatchers.anyInt()))
+            ArgumentMatchers.eq("화재"),
+            ArgumentMatchers.isNull(),
+            ArgumentMatchers.anyInt(),
+            ArgumentMatchers.eq(VIS)))
         .thenReturn(List.of(hit(2L)));
 
     var req = new DatasetSearchRequest("화재", 10, null, null);
-    assertThat(service().search(req)).hasSize(2);
+    assertThat(service().search(req, CLEARANCE)).hasSize(2);
   }
 
   @Test
@@ -142,14 +165,18 @@ class DatasetSearchServiceTest {
             ArgumentMatchers.any(),
             ArgumentMatchers.any(),
             ArgumentMatchers.isNull(),
-            ArgumentMatchers.anyInt()))
+            ArgumentMatchers.anyInt(),
+            ArgumentMatchers.eq(VIS)))
         .thenReturn(List.of(hit(1L)));
     when(repository.searchByTrigram(
-            ArgumentMatchers.eq("화재"), ArgumentMatchers.isNull(), ArgumentMatchers.anyInt()))
+            ArgumentMatchers.eq("화재"),
+            ArgumentMatchers.isNull(),
+            ArgumentMatchers.anyInt(),
+            ArgumentMatchers.eq(VIS)))
         .thenReturn(List.of(hit(2L)));
 
     var req = new DatasetSearchRequest("화재", 5, DatasetSearchMode.HYBRID, null);
-    service().search(req);
+    service().search(req, CLEARANCE);
 
     ArgumentCaptor<Integer> cosineLimit = ArgumentCaptor.forClass(Integer.class);
     ArgumentCaptor<Integer> trigramLimit = ArgumentCaptor.forClass(Integer.class);
@@ -158,10 +185,14 @@ class DatasetSearchServiceTest {
             ArgumentMatchers.any(),
             ArgumentMatchers.any(),
             ArgumentMatchers.isNull(),
-            cosineLimit.capture());
+            cosineLimit.capture(),
+            ArgumentMatchers.eq(VIS));
     Mockito.verify(repository)
         .searchByTrigram(
-            ArgumentMatchers.eq("화재"), ArgumentMatchers.isNull(), trigramLimit.capture());
+            ArgumentMatchers.eq("화재"),
+            ArgumentMatchers.isNull(),
+            trigramLimit.capture(),
+            ArgumentMatchers.eq(VIS));
     assertThat(cosineLimit.getValue()).isEqualTo(50);
     assertThat(trigramLimit.getValue()).isEqualTo(50);
   }
@@ -169,41 +200,61 @@ class DatasetSearchServiceTest {
   @Test
   void topK가_null이면_기본_10으로_정규화된다() {
     when(repository.searchByTrigram(
-            ArgumentMatchers.eq("x"), ArgumentMatchers.isNull(), ArgumentMatchers.anyInt()))
+            ArgumentMatchers.eq("x"),
+            ArgumentMatchers.isNull(),
+            ArgumentMatchers.anyInt(),
+            ArgumentMatchers.eq(VIS)))
         .thenReturn(List.of(hit(1L)));
     var req = new DatasetSearchRequest("x", null, DatasetSearchMode.KEYWORD, null);
-    service().search(req);
+    service().search(req, CLEARANCE);
 
     ArgumentCaptor<Integer> topK = ArgumentCaptor.forClass(Integer.class);
     Mockito.verify(repository)
-        .searchByTrigram(ArgumentMatchers.eq("x"), ArgumentMatchers.isNull(), topK.capture());
+        .searchByTrigram(
+            ArgumentMatchers.eq("x"),
+            ArgumentMatchers.isNull(),
+            topK.capture(),
+            ArgumentMatchers.eq(VIS));
     assertThat(topK.getValue()).isEqualTo(10);
   }
 
   @Test
   void topK가_20초과면_20으로_제한된다() {
     when(repository.searchByTrigram(
-            ArgumentMatchers.eq("x"), ArgumentMatchers.isNull(), ArgumentMatchers.anyInt()))
+            ArgumentMatchers.eq("x"),
+            ArgumentMatchers.isNull(),
+            ArgumentMatchers.anyInt(),
+            ArgumentMatchers.eq(VIS)))
         .thenReturn(List.of(hit(1L)));
     var req = new DatasetSearchRequest("x", 999, DatasetSearchMode.KEYWORD, null);
-    service().search(req);
+    service().search(req, CLEARANCE);
 
     ArgumentCaptor<Integer> topK = ArgumentCaptor.forClass(Integer.class);
     Mockito.verify(repository)
-        .searchByTrigram(ArgumentMatchers.eq("x"), ArgumentMatchers.isNull(), topK.capture());
+        .searchByTrigram(
+            ArgumentMatchers.eq("x"),
+            ArgumentMatchers.isNull(),
+            topK.capture(),
+            ArgumentMatchers.eq(VIS));
     assertThat(topK.getValue()).isEqualTo(20);
   }
 
   @Test
   void storageType_필터가_리포지토리로_전달된다() {
     when(repository.searchByTrigram(
-            ArgumentMatchers.eq("x"), ArgumentMatchers.eq("TABLE"), ArgumentMatchers.anyInt()))
+            ArgumentMatchers.eq("x"),
+            ArgumentMatchers.eq("TABLE"),
+            ArgumentMatchers.anyInt(),
+            ArgumentMatchers.eq(VIS)))
         .thenReturn(List.of(hit(1L)));
     var req = new DatasetSearchRequest("x", 10, DatasetSearchMode.KEYWORD, "TABLE");
-    assertThat(service().search(req)).hasSize(1);
+    assertThat(service().search(req, CLEARANCE)).hasSize(1);
     Mockito.verify(repository)
         .searchByTrigram(
-            ArgumentMatchers.eq("x"), ArgumentMatchers.eq("TABLE"), ArgumentMatchers.anyInt());
+            ArgumentMatchers.eq("x"),
+            ArgumentMatchers.eq("TABLE"),
+            ArgumentMatchers.anyInt(),
+            ArgumentMatchers.eq(VIS));
   }
 
   @Test
@@ -212,15 +263,19 @@ class DatasetSearchServiceTest {
     assertThatThrownBy(
             () ->
                 service()
-                    .search(new DatasetSearchRequest("화재", 10, DatasetSearchMode.SEMANTIC, null)))
+                    .search(
+                        new DatasetSearchRequest("화재", 10, DatasetSearchMode.SEMANTIC, null),
+                        CLEARANCE))
         .isInstanceOf(EmbeddingNotConfiguredException.class);
   }
 
   @Test
   void keyword_임베딩_미설정이어도_동작한다() {
-    when(repository.searchByTrigram("화재", null, 10)).thenReturn(List.of(hit(1L)));
+    when(repository.searchByTrigram("화재", null, 10, VIS)).thenReturn(List.of(hit(1L)));
     assertThat(
-            service().search(new DatasetSearchRequest("화재", 10, DatasetSearchMode.KEYWORD, null)))
+            service()
+                .search(
+                    new DatasetSearchRequest("화재", 10, DatasetSearchMode.KEYWORD, null), CLEARANCE))
         .hasSize(1);
     verifyNoInteractions(embeddingFactory);
   }

@@ -46,7 +46,10 @@ export async function setupAdminAuth(page: Page) {
   // 필요시 setupUserListMocks 등으로 오버라이드한다.
   await mockApi(page, 'GET', '/api/v1/users', createPageResponse([]));
   // 멤버 추가 버튼(user:write)·역할 지정(role:assign) 노출 판단용(WD-2). 개별 테스트가 덮어쓴다.
-  await mockApi(page, 'GET', '/api/v1/auth/me/permissions', ['user:read', 'user:write', 'role:assign']);
+  await mockApi(page, 'GET', '/api/v1/auth/me/permissions', [
+    'user:read', 'user:write', 'role:assign', 'role:read', 'role:write',
+    'security:settings', 'dataset:read', 'dataset:classify', 'dataset:grant',
+  ]);
 }
 
 /**

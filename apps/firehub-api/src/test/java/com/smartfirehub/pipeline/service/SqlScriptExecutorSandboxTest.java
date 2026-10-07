@@ -60,6 +60,37 @@ class SqlScriptExecutorSandboxTest extends IntegrationTestBase {
     assertThatCode(() -> sqlScriptExecutor.execute("SELECT 1")).doesNotThrowAnyException();
   }
 
+  // ── 최종 리뷰 I1: 판정한 문자열 = PG 가 받는 문자열 ─────────────────────────────
+
+  @Autowired private SqlColumnProbe sqlColumnProbe;
+
+  /**
+   * JDBC 이스케이프({@code {fn …}})는 드라이버가 다시 쓰지 않고 PG 에 그대로 간다. 보안 관문·검증기는 PG 어휘로 판정하므로 실행 문자열도 PG 가
+   * 그대로 받아야 한다 — 이스케이프 처리가 켜져 있으면 pgjdbc 가 {@code {fn upper('a')}} 를 {@code upper('a')} 로 벗겨
+   * 성공한다(변이 확인 기준).
+   */
+  @Test
+  void execute_jdbcEscapeSyntax_isSentVerbatim() {
+    assertThatThrownBy(() -> sqlScriptExecutor.execute("SELECT {fn upper('a')}"))
+        .isInstanceOf(ScriptExecutionException.class)
+        .hasMessageContaining("syntax error");
+  }
+
+  /** 컬럼 탐지(probe)도 같은 조리법 — {@code {d '…'}} 를 DATE 리터럴로 바꾸지 않는다. */
+  @Test
+  void probe_jdbcEscapeSyntax_isSentVerbatim() {
+    assertThatThrownBy(() -> sqlColumnProbe.columnsWithTypes("SELECT {d '2020-01-01'} AS x"))
+        .isInstanceOf(ScriptExecutionException.class)
+        .hasMessageContaining("syntax error");
+  }
+
+  /** 정적 Statement 라 jsonb 키 존재 연산자 {@code ?} 를 바인드 자리로 보지 않는다(애드혹 경로와 같은 동작). */
+  @Test
+  void execute_jsonbKeyExistsOperator_isNotABindParameter() {
+    assertThatCode(() -> sqlScriptExecutor.execute("SELECT '{\"a\":1}'::jsonb ? 'a'"))
+        .doesNotThrowAnyException();
+  }
+
   @Test
   void execute_dropTable_blockedByValidator() {
     // AST 검증: 비-DML(Drop)은 차단된다 (#136)

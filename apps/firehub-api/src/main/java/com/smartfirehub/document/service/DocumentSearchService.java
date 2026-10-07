@@ -7,6 +7,8 @@ import com.smartfirehub.embedding.EmbeddingProvider;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
 import com.smartfirehub.embedding.EmbeddingSpace;
 import com.smartfirehub.global.util.RankFusion;
+import com.smartfirehub.securitylevel.access.Clearance;
+import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -22,25 +24,29 @@ public class DocumentSearchService {
 
   private final EmbeddingProviderFactory embeddingProviderFactory;
   private final DocumentChunkRepository chunkRepository;
+  private final DatasetAccessGuard datasetAccessGuard;
 
   // RRF 상수: 후보 풀 크기. 융합 상수 k(=60)는 RankFusion 공통 유틸에서 관리한다.
   private static final int CANDIDATE_POOL = 50;
 
   // RLS 가 걸린 document_chunk 를 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
   @Transactional(readOnly = true)
-  public List<DocumentSearchHit> search(DocumentSearchRequest request) {
+  public List<DocumentSearchHit> search(DocumentSearchRequest request, Clearance clearance) {
     if (request.query() == null || request.query().isBlank()) {
       throw new IllegalArgumentException("검색어가 비어 있습니다");
     }
+    // 전역 청크 검색이라 청크 본문이 그대로 나간다 — 볼 수 없는 데이터셋의 청크는 SQL 에서 제외한다(별칭 d).
+    String visibility = datasetAccessGuard.visibleSql(clearance, "d");
     return switch (request.mode()) {
       case KEYWORD ->
-          chunkRepository.searchByTrigram(request.query(), request.datasetIds(), request.topK());
+          chunkRepository.searchByTrigram(
+              request.query(), request.datasetIds(), request.topK(), visibility);
       case SEMANTIC -> {
         QueryVector q = embedQuery(request.query());
         yield chunkRepository.searchByCosine(
-            q.space(), q.vector(), request.datasetIds(), request.topK());
+            q.space(), q.vector(), request.datasetIds(), request.topK(), visibility);
       }
-      case HYBRID -> hybridSearch(request);
+      case HYBRID -> hybridSearch(request, visibility);
     };
   }
 
@@ -54,12 +60,14 @@ public class DocumentSearchService {
   }
 
   /** 시맨틱·키워드 후보 풀을 RRF 로 융합해 상위 topK 를 반환한다. */
-  private List<DocumentSearchHit> hybridSearch(DocumentSearchRequest request) {
+  private List<DocumentSearchHit> hybridSearch(DocumentSearchRequest request, String visibility) {
     QueryVector q = embedQuery(request.query());
     List<DocumentSearchHit> semantic =
-        chunkRepository.searchByCosine(q.space(), q.vector(), request.datasetIds(), CANDIDATE_POOL);
+        chunkRepository.searchByCosine(
+            q.space(), q.vector(), request.datasetIds(), CANDIDATE_POOL, visibility);
     List<DocumentSearchHit> keyword =
-        chunkRepository.searchByTrigram(request.query(), request.datasetIds(), CANDIDATE_POOL);
+        chunkRepository.searchByTrigram(
+            request.query(), request.datasetIds(), CANDIDATE_POOL, visibility);
     return rrfFuse(List.of(semantic, keyword), request.topK());
   }
 

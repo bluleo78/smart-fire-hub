@@ -2,6 +2,7 @@ import { ThemeProvider } from 'next-themes';
 import { lazy,Suspense } from 'react';
 import { BrowserRouter, Navigate, Route,Routes } from 'react-router-dom';
 
+import { AdminOrPermissionRoute } from './components/AdminOrPermissionRoute';
 import { AdminRoute } from './components/AdminRoute';
 import { AppLayout } from './components/layout/AppLayout';
 import { PageErrorBoundary } from './components/PageErrorBoundary';
@@ -114,13 +115,16 @@ function App() {
               <Route path="/knowledge-graph/synonym-review" element={<Navigate to="/knowledge-graph/review" replace />} />
               {/* 구 URL 하위호환 — AdminRoute 밖에 둬야 비관리자 북마크도 리다이렉트된다(안 그러면 /로 튕김). */}
               <Route path="/admin/ontology" element={<Navigate to="/knowledge-graph/explore" replace />} />
+              {/* 설정은 ADMIN 또는 security:settings 보유자(스펙 §5-1). 탭 노출은 페이지가 권한별로 정한다. */}
+              <Route element={<AdminOrPermissionRoute permission="security:settings" />}>
+                <Route path="/admin/settings" element={<SettingsPage />} />
+              </Route>
               <Route element={<AdminRoute />}>
                 <Route path="/admin/users" element={<UserListPage />} />
                 <Route path="/admin/users/:id" element={<UserDetailPage />} />
                 <Route path="/admin/roles" element={<RoleListPage />} />
                 <Route path="/admin/roles/:id" element={<RoleDetailPage />} />
                 <Route path="/admin/audit-logs" element={<AuditLogListPage />} />
-                <Route path="/admin/settings" element={<SettingsPage />} />
                 <Route path="/admin/ai-settings" element={<Navigate to="/admin/settings" replace />} />
                 <Route path="/admin/api-connections" element={<ApiConnectionListPage />} />
                 <Route path="/admin/api-connections/:id" element={<ApiConnectionDetailPage />} />

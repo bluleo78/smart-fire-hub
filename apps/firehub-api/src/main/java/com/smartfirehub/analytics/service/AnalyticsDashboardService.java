@@ -18,6 +18,9 @@ import com.smartfirehub.analytics.repository.AnalyticsDashboardRepository;
 import com.smartfirehub.analytics.repository.ChartRepository;
 import com.smartfirehub.analytics.repository.DashboardWidgetRepository;
 import com.smartfirehub.analytics.repository.SavedQueryRepository;
+import com.smartfirehub.securitylevel.access.Clearance;
+import com.smartfirehub.securitylevel.access.ClearanceResolver;
+import com.smartfirehub.securitylevel.sql.GuardedSqlExecutor;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -38,9 +41,16 @@ public class AnalyticsDashboardService {
   private final ChartService chartService;
   private final ChartRepository chartRepository;
   private final SavedQueryRepository savedQueryRepository;
+  private final ClearanceResolver clearanceResolver;
 
-  // Caffeine cache: TTL 60s, max 200 entries, keyed by saved_query_id
-  private final Cache<Long, AnalyticsQueryResponse> queryResultCache =
+  /**
+   * 대시보드 결과 캐시 키 — 저장 쿼리 id 와 <b>그 요청에서 판정한 SQL 원문</b>. id 만 키로 쓰면 소유자가 SQL 을 바꾼 뒤(TTL 60초 안) 새 SQL
+   * 로 판정을 통과한 조회자가 옛 SQL(판정받지 않은 테이블)의 결과를 캐시 히트로 받는다. 원문이 같으면 정규화본(판정·실행 문자열)도 같다 — 정규화는 결정적이다.
+   */
+  private record QueryCacheKey(Long savedQueryId, String sqlText) {}
+
+  // Caffeine cache: TTL 60s, max 200 entries, keyed by (saved_query_id, 판정한 SQL 원문)
+  private final Cache<QueryCacheKey, AnalyticsQueryResponse> queryResultCache =
       Caffeine.newBuilder().expireAfterWrite(60, TimeUnit.SECONDS).maximumSize(200).build();
 
   // RLS 가 걸린 dashboard 를 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
@@ -147,35 +157,59 @@ public class AnalyticsDashboardService {
       }
     }
 
-    // Execute each unique savedQueryId (cached)
+    // Execute each unique savedQueryId — 보안 등급(S2): 조회자 판정이 먼저, 캐시는 그 뒤(스펙 §4.2 4행).
+    //
+    // 캐시를 조회자 간에 공유해도 안전한 이유:
+    //  (1) 캐시를 읽기 전에 매 요청 이 조회자로 SQL 을 판정하고, 캐시 키에 그 판정한 SQL 원문을 넣는다 — 히트한 결과는 반드시
+    //      이 조회자가 방금 판정을 통과한 바로 그 SQL 의 결과다(SQL 이 바뀌면 다른 키라 미스).
+    //  (2) 판정 단위(VIEW)는 데이터셋 전체 허용/거부뿐이다(행·열 필터 없음) — 같은 SQL 은 VIEW 를 통과한 누가 실행해도 같은 행을 본다.
+    //  (3) saved_query id 는 전역 시퀀스라 테넌트 간 키 충돌이 없다.
+    // 행·열 단위 필터가 생기면 (2) 가 깨지므로 키에 조회자 가시성을 넣어야 한다.
+    Clearance viewer = clearanceResolver.resolve(userId);
+    Map<Long, AnalyticsQueryResponse> resultByQuery = new HashMap<>();
+    java.util.Set<Long> deniedQueries = new java.util.HashSet<>();
     for (Long savedQueryId : new java.util.HashSet<>(chartIdToSavedQueryId.values())) {
-      queryResultCache.get(
+      String sqlText = chartRepository.findSavedQuerySqlTextById(savedQueryId).orElse("");
+      if (sqlText.isBlank()) {
+        // 빈 SQL 은 판정할 테이블이 없다 — 기존 동작(빈 결과)을 유지한다.
+        resultByQuery.put(savedQueryId, emptyQueryResponse());
+        continue;
+      }
+      GuardedSqlExecutor.AnalyticsJudgment judgment = chartService.judge(viewer, sqlText);
+      if (judgment.denied()) {
+        deniedQueries.add(savedQueryId);
+        continue;
+      }
+      // 판정을 통과한 쿼리만 캐시에 닿는다. 캐시 미스면 방금 판정한 토큰을 그대로 실행한다(다시 판정하지 않는다 — 판정 = 실행). 결과를 지역
+      // 맵에 담아 위젯 루프가 getIfPresent(만료·축출 시 null)에 의존하지 않게 한다.
+      resultByQuery.put(
           savedQueryId,
-          k -> {
-            String sqlText = chartRepository.findSavedQuerySqlTextById(k).orElse("");
-            return chartService.executeQueryForCache(sqlText);
-          });
+          queryResultCache.get(
+              new QueryCacheKey(savedQueryId, sqlText), k -> chartService.executeJudged(judgment)));
     }
 
     // 4. Build widget data list
     List<DashboardDataResponse.WidgetData> widgetDataList = new ArrayList<>();
     for (DashboardResponse.DashboardWidgetResponse widget : limitedWidgets) {
       Long savedQueryId = chartIdToSavedQueryId.get(widget.chartId());
-      AnalyticsQueryResponse queryResult =
-          savedQueryId != null ? queryResultCache.getIfPresent(savedQueryId) : null;
-      if (queryResult == null) {
-        queryResult = emptyQueryResponse();
-      }
       // chartId 별로 한 번만 조회하여 불필요한 중복 DB 쿼리 방지 (이슈 #148)
-      // 기존: null 체크 + 생성자 인수 두 곳에서 getById() 2회 호출
-      // 수정: Optional로 1회만 조회 후 로컬 변수에 캐싱
       ChartResponse chartResponse =
           chartService.getByIdOptional(widget.chartId(), userId).orElse(null);
-      ChartDataResponse chartData =
-          chartResponse != null ? new ChartDataResponse(chartResponse, queryResult) : null;
-      if (chartData != null) {
-        widgetDataList.add(new DashboardDataResponse.WidgetData(widget.id(), chartData));
+      if (chartResponse == null) {
+        continue;
       }
+      ChartDataResponse chartData;
+      if (savedQueryId != null && deniedQueries.contains(savedQueryId)) {
+        // 위반 위젯 — 빈 결과 + denied. 거부 코드·원본 데이터셋 이름은 싣지 않는다(스펙 §2.5).
+        chartData = ChartService.deniedData(chartResponse);
+      } else {
+        AnalyticsQueryResponse queryResult =
+            savedQueryId != null ? resultByQuery.get(savedQueryId) : null;
+        chartData =
+            new ChartDataResponse(
+                chartResponse, queryResult != null ? queryResult : emptyQueryResponse());
+      }
+      widgetDataList.add(new DashboardDataResponse.WidgetData(widget.id(), chartData));
     }
 
     return new DashboardDataResponse(dashboard, widgetDataList);

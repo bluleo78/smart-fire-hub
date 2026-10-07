@@ -81,7 +81,8 @@ public class TempDatasetService {
             columnRequests,
             stepId);
 
-    return datasetService.createDataset(request, userId).id();
+    // 예약 출처 필드(TEMP·스텝 id)는 러너 전용 진입점으로만 쓸 수 있다 — 일반 createDataset 은 거부한다.
+    return datasetService.createPipelineTempDataset(request, userId).id();
   }
 
   /** Delete a temp dataset (used when schema has changed). */

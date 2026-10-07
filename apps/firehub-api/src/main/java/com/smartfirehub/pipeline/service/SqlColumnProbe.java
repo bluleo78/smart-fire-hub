@@ -99,7 +99,9 @@ public class SqlColumnProbe {
             tenantDsl.transactionResult(
                 cfg -> {
                   cfg.dsl().execute("SET LOCAL search_path = '" + DataSchema.current() + "'");
-                  return cfg.dsl().fetch(probeSql);
+                  // 사용자 SQL 을 감싼 probe 도 실행과 같은 조리법 — 정적 Statement + JDBC 이스케이프 끔(최종 리뷰 I1,
+                  // VerbatimSql 참고). jOOQ plain SQL fetch 는 {fn …}·{d '…'} 를 다시 써서 보낸다.
+                  return VerbatimSql.fetch(cfg.dsl(), probeSql);
                 }));
   }
 

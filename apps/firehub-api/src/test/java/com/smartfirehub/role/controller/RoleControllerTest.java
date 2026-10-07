@@ -14,6 +14,7 @@ import com.smartfirehub.permission.dto.PermissionResponse;
 import com.smartfirehub.permission.service.PermissionService;
 import com.smartfirehub.role.dto.*;
 import com.smartfirehub.role.service.RoleService;
+import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -29,6 +30,10 @@ import org.springframework.test.web.servlet.MockMvc;
 @WebMvcTest(RoleController.class)
 @Import({SecurityConfig.class, JwtAuthenticationFilter.class})
 class RoleControllerTest {
+
+  // WebMvcConfig 가 DatasetAccessInterceptor(→DatasetAccessGuard)를 등록하므로 슬라이스에도 빈이 있어야 한다.
+  // 목은 아무것도 던지지 않아 숨김 판정은 통과 처리된다(실제 판정은 DatasetRouteHidingTest 가 검증).
+  @MockitoBean private DatasetAccessGuard datasetAccessGuard;
 
   @Autowired private MockMvc mockMvc;
 

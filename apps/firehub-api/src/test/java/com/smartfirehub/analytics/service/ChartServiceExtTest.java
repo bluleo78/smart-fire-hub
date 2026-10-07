@@ -7,6 +7,8 @@ import com.smartfirehub.analytics.dto.ChartResponse;
 import com.smartfirehub.analytics.dto.CreateChartRequest;
 import com.smartfirehub.analytics.dto.CreateSavedQueryRequest;
 import com.smartfirehub.analytics.dto.SavedQueryResponse;
+import com.smartfirehub.securitylevel.access.Clearance;
+import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.support.IntegrationTestBase;
 import java.util.Map;
 import org.jooq.DSLContext;
@@ -27,6 +29,7 @@ class ChartServiceExtTest extends IntegrationTestBase {
   @Autowired private ChartService chartService;
   @Autowired private SavedQueryService savedQueryService;
   @Autowired private DSLContext dsl;
+  @Autowired private ClearanceResolver clearanceResolver;
 
   private Long ownerUserId;
   private Long savedQueryId;
@@ -54,12 +57,17 @@ class ChartServiceExtTest extends IntegrationTestBase {
     savedQueryId = sq.id();
   }
 
+  /** 캐시 채움은 조회자 자격으로 실행된다(보안 등급 S2) — 테이블을 참조하지 않는 SQL 이라 자격 수준과 무관하게 허용된다. */
+  private Clearance viewer() {
+    return clearanceResolver.resolve(ownerUserId);
+  }
+
   // ── executeQueryForCache: null SQL → 빈 응답 (L107-108 커버) ─────────────────
 
   @Test
   void executeQueryForCache_nullSql_returnsEmptyResponse() {
     // null SQL → 즉시 빈 AnalyticsQueryResponse 반환
-    AnalyticsQueryResponse result = chartService.executeQueryForCache(null);
+    AnalyticsQueryResponse result = chartService.executeQueryForCache(viewer(), null);
 
     assertThat(result).isNotNull();
     assertThat(result.queryType()).isEqualTo("SELECT");
@@ -71,7 +79,7 @@ class ChartServiceExtTest extends IntegrationTestBase {
   @Test
   void executeQueryForCache_blankSql_returnsEmptyResponse() {
     // blank SQL → 즉시 빈 AnalyticsQueryResponse 반환
-    AnalyticsQueryResponse result = chartService.executeQueryForCache("   ");
+    AnalyticsQueryResponse result = chartService.executeQueryForCache(viewer(), "   ");
 
     assertThat(result).isNotNull();
     assertThat(result.queryType()).isEqualTo("SELECT");
@@ -82,7 +90,8 @@ class ChartServiceExtTest extends IntegrationTestBase {
   @Test
   void executeQueryForCache_validSql_returnsQueryResult() {
     // 유효한 SQL → 실제 실행 결과 반환
-    AnalyticsQueryResponse result = chartService.executeQueryForCache("SELECT 42 AS answer");
+    AnalyticsQueryResponse result =
+        chartService.executeQueryForCache(viewer(), "SELECT 42 AS answer");
 
     assertThat(result).isNotNull();
     assertThat(result.totalRows()).isGreaterThan(0);

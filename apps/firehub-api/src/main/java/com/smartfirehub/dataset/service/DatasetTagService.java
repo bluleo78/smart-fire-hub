@@ -5,6 +5,7 @@ import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.repository.DatasetTagRepository;
 import com.smartfirehub.dataset.search.DatasetChangedEvent;
 import com.smartfirehub.dataset.search.DatasetEmbeddingService;
+import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.ApplicationEventPublisher;
@@ -20,6 +21,7 @@ public class DatasetTagService {
   // 검색 인덱싱: source_text 동기 저장 + 임베딩 비동기 재생성 트리거
   private final DatasetEmbeddingService datasetEmbeddingService;
   private final ApplicationEventPublisher events;
+  private final DatasetAccessGuard datasetAccessGuard;
 
   @Transactional
   public void addTag(Long datasetId, String tagName, Long userId) {
@@ -59,6 +61,7 @@ public class DatasetTagService {
 
   @Transactional(readOnly = true)
   public List<String> getAllDistinctTags() {
-    return tagRepository.findAllDistinctTags();
+    // 숨김 데이터셋의 태그명은 집계에서 제외한다.
+    return tagRepository.findAllDistinctTags(datasetAccessGuard.visibleCondition());
   }
 }

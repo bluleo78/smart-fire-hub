@@ -258,6 +258,34 @@ public class DatasetRecord extends UpdatableRecordImpl<DatasetRecord> {
         return (Long) get(16);
     }
 
+    /**
+     * Setter for <code>public.dataset.security_level_id</code>.
+     */
+    public void setSecurityLevelId(Long value) {
+        set(17, value);
+    }
+
+    /**
+     * Getter for <code>public.dataset.security_level_id</code>.
+     */
+    public Long getSecurityLevelId() {
+        return (Long) get(17);
+    }
+
+    /**
+     * Setter for <code>public.dataset.security_level_auto_raised_at</code>.
+     */
+    public void setSecurityLevelAutoRaisedAt(LocalDateTime value) {
+        set(18, value);
+    }
+
+    /**
+     * Getter for <code>public.dataset.security_level_auto_raised_at</code>.
+     */
+    public LocalDateTime getSecurityLevelAutoRaisedAt() {
+        return (LocalDateTime) get(18);
+    }
+
     // -------------------------------------------------------------------------
     // Primary key information
     // -------------------------------------------------------------------------
@@ -281,7 +309,7 @@ public class DatasetRecord extends UpdatableRecordImpl<DatasetRecord> {
     /**
      * Create a detached, initialised DatasetRecord
      */
-    public DatasetRecord(Long id, String name, String tableName, String description, Long categoryId, Long createdBy, LocalDateTime createdAt, LocalDateTime updatedAt, Long updatedBy, String status, String statusNote, Long statusUpdatedBy, LocalDateTime statusUpdatedAt, Long sourcePipelineStepId, String storageType, String originType, Long tenantId) {
+    public DatasetRecord(Long id, String name, String tableName, String description, Long categoryId, Long createdBy, LocalDateTime createdAt, LocalDateTime updatedAt, Long updatedBy, String status, String statusNote, Long statusUpdatedBy, LocalDateTime statusUpdatedAt, Long sourcePipelineStepId, String storageType, String originType, Long tenantId, Long securityLevelId, LocalDateTime securityLevelAutoRaisedAt) {
         super(Dataset.DATASET);
 
         setId(id);
@@ -301,6 +329,8 @@ public class DatasetRecord extends UpdatableRecordImpl<DatasetRecord> {
         setStorageType(storageType);
         setOriginType(originType);
         setTenantId(tenantId);
+        setSecurityLevelId(securityLevelId);
+        setSecurityLevelAutoRaisedAt(securityLevelAutoRaisedAt);
         resetChangedOnNotNull();
     }
 }

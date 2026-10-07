@@ -23,6 +23,9 @@ class AnalyticsQueryExecutionServiceTest extends IntegrationTestBase {
   @Autowired private DatasetService datasetService;
   @Autowired private DSLContext dsl;
 
+  /** 이 테스트는 필터 동작만 검증하므로 열람 조건은 항상 참(가시성 자체는 SqlPathsAccessTest 가 검증). */
+  private static final String ALL_VISIBLE = "TRUE";
+
   private Long testUserId;
 
   @BeforeEach
@@ -251,7 +254,7 @@ class AnalyticsQueryExecutionServiceTest extends IntegrationTestBase {
 
   @Test
   void getSchemaInfo_returnsDataSchemaTablesAndColumns() {
-    SchemaInfoResponse schemaInfo = executionService.getSchemaInfo();
+    SchemaInfoResponse schemaInfo = executionService.getSchemaInfo(ALL_VISIBLE);
 
     assertThat(schemaInfo.tables()).isNotEmpty();
 
@@ -315,8 +318,8 @@ class AnalyticsQueryExecutionServiceTest extends IntegrationTestBase {
   @Test
   void getSchemaInfo_nullDatasetIds_returnsAllTables_BC() {
     List<Long> ids = createTwoSchemaFixtures();
-    SchemaInfoResponse all = executionService.getSchemaInfo();
-    SchemaInfoResponse nullFiltered = executionService.getSchemaInfo(null);
+    SchemaInfoResponse all = executionService.getSchemaInfo(ALL_VISIBLE);
+    SchemaInfoResponse nullFiltered = executionService.getSchemaInfo(null, ALL_VISIBLE);
     assertThat(nullFiltered.tables())
         .extracting(SchemaInfoResponse.TableInfo::tableName)
         .containsAll(all.tables().stream().map(SchemaInfoResponse.TableInfo::tableName).toList());
@@ -326,7 +329,7 @@ class AnalyticsQueryExecutionServiceTest extends IntegrationTestBase {
   @Test
   void getSchemaInfo_emptyList_returnsEmpty_defensive() {
     createTwoSchemaFixtures();
-    SchemaInfoResponse res = executionService.getSchemaInfo(List.of());
+    SchemaInfoResponse res = executionService.getSchemaInfo(List.of(), ALL_VISIBLE);
     assertThat(res.tables()).isEmpty();
   }
 
@@ -335,7 +338,7 @@ class AnalyticsQueryExecutionServiceTest extends IntegrationTestBase {
   void getSchemaInfo_singleDatasetId_returnsOnlyMatchingTable() {
     List<Long> ids = createTwoSchemaFixtures();
     Long firstId = ids.get(0);
-    SchemaInfoResponse res = executionService.getSchemaInfo(List.of(firstId));
+    SchemaInfoResponse res = executionService.getSchemaInfo(List.of(firstId), ALL_VISIBLE);
     assertThat(res.tables())
         .extracting(SchemaInfoResponse.TableInfo::datasetId)
         .containsExactly(firstId);
@@ -348,7 +351,7 @@ class AnalyticsQueryExecutionServiceTest extends IntegrationTestBase {
   @Test
   void getSchemaInfo_multipleDatasetIds_returnsAllMatching() {
     List<Long> ids = createTwoSchemaFixtures();
-    SchemaInfoResponse res = executionService.getSchemaInfo(ids);
+    SchemaInfoResponse res = executionService.getSchemaInfo(ids, ALL_VISIBLE);
     assertThat(res.tables())
         .extracting(SchemaInfoResponse.TableInfo::tableName)
         .containsExactlyInAnyOrder("schema_test_a", "schema_test_b");
@@ -358,7 +361,7 @@ class AnalyticsQueryExecutionServiceTest extends IntegrationTestBase {
   @Test
   void getSchemaInfo_unknownDatasetId_returnsEmpty() {
     createTwoSchemaFixtures();
-    SchemaInfoResponse res = executionService.getSchemaInfo(List.of(9_999_999L));
+    SchemaInfoResponse res = executionService.getSchemaInfo(List.of(9_999_999L), ALL_VISIBLE);
     assertThat(res.tables()).isEmpty();
   }
 

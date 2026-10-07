@@ -17,6 +17,9 @@ import com.smartfirehub.graphreview.dto.ReviewItemRecord;
 import com.smartfirehub.graphreview.repository.ReviewItemRepository;
 import com.smartfirehub.graphreview.service.GraphMutationClient;
 import com.smartfirehub.graphreview.service.ReviewItemService;
+import com.smartfirehub.securitylevel.access.ClearanceResolver;
+import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
+import com.smartfirehub.securitylevel.access.Decision;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -38,7 +41,17 @@ class ReviewItemServiceTest {
     repo = Mockito.mock(ReviewItemRepository.class);
     mutationClient = Mockito.mock(GraphMutationClient.class);
     chunkRepository = Mockito.mock(DocumentChunkRepository.class);
-    service = new ReviewItemService(repo, mutationClient, chunkRepository, new ObjectMapper());
+    // 보안 등급 판정은 ReviewItemVisibilityTest(통합)가 맡는다 — 이 단위 테스트에서는 모든 데이터셋을 볼 수 있다고 둔다.
+    DatasetAccessGuard guard = Mockito.mock(DatasetAccessGuard.class);
+    Mockito.when(guard.check(any(), anyLong(), any(), any())).thenReturn(Decision.allow(null));
+    service =
+        new ReviewItemService(
+            repo,
+            mutationClient,
+            chunkRepository,
+            new ObjectMapper(),
+            guard,
+            Mockito.mock(ClearanceResolver.class));
   }
 
   @Test
@@ -519,17 +532,18 @@ class ReviewItemServiceTest {
   @Test
   @DisplayName("status를 주면 그대로 필터에 쓰이고, 생략하면 pending으로 폴백한다")
   void list_appliesStatusFilter_andDefaultsToPending() {
-    when(repo.findByStatus(anyString(), any(), any(), any())).thenReturn(List.of());
+    when(repo.findByStatus(anyString(), any(), any(), any(), any())).thenReturn(List.of());
 
     service.list("approved", "synonym_merge", null, null);
-    verify(repo).findByStatus("approved", "synonym_merge", null, null);
+    verify(repo).findByStatus(eq("approved"), eq("synonym_merge"), eq(null), eq(null), any());
 
     service.list(null, null, null, null);
-    verify(repo).findByStatus("pending", null, null, null);
+    verify(repo).findByStatus(eq("pending"), eq(null), eq(null), eq(null), any());
 
     // 빈 문자열도 "생략"으로 본다(쿼리스트링 status= 형태).
     service.list("  ", "property_normalization", null, null);
-    verify(repo).findByStatus("pending", "property_normalization", null, null);
+    verify(repo)
+        .findByStatus(eq("pending"), eq("property_normalization"), eq(null), eq(null), any());
   }
 
   @Test
@@ -538,28 +552,28 @@ class ReviewItemServiceTest {
     assertThatThrownBy(() -> service.list("deleted", null, null, null))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("지원하지 않는 status");
-    verify(repo, never()).findByStatus(anyString(), any(), any(), any());
+    verify(repo, never()).findByStatus(anyString(), any(), any(), any(), any());
   }
 
   // ── page/size(opt-in, #422) — pending 큐가 무제한으로 불어나는 것을 막기 위한 페이지네이션.
   @Test
   @DisplayName("size를 생략하면 offset 없이 전체를 요청한다(ai-agent 등 기존 호출자 하위호환)")
   void list_withoutSize_passesNullOffsetAndLimit() {
-    when(repo.findByStatus(anyString(), any(), any(), any())).thenReturn(List.of());
+    when(repo.findByStatus(anyString(), any(), any(), any(), any())).thenReturn(List.of());
     service.list("pending", null, null, null);
-    verify(repo).findByStatus("pending", null, null, null);
+    verify(repo).findByStatus(eq("pending"), eq(null), eq(null), eq(null), any());
   }
 
   @Test
   @DisplayName("size를 주면 page*size를 offset으로 계산해 전달한다(page 생략 시 0)")
   void list_withSize_computesOffsetFromPage() {
-    when(repo.findByStatus(anyString(), any(), any(), any())).thenReturn(List.of());
+    when(repo.findByStatus(anyString(), any(), any(), any(), any())).thenReturn(List.of());
 
     service.list("pending", null, null, 20);
-    verify(repo).findByStatus("pending", null, 0, 20);
+    verify(repo).findByStatus(eq("pending"), eq(null), eq(0), eq(20), any());
 
     service.list("pending", null, 2, 20);
-    verify(repo).findByStatus("pending", null, 40, 20);
+    verify(repo).findByStatus(eq("pending"), eq(null), eq(40), eq(20), any());
   }
 
   @Test
@@ -571,7 +585,7 @@ class ReviewItemServiceTest {
     assertThatThrownBy(() -> service.list("pending", null, null, 201))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("size는");
-    verify(repo, never()).findByStatus(anyString(), any(), any(), any());
+    verify(repo, never()).findByStatus(anyString(), any(), any(), any(), any());
   }
 
   @Test

@@ -8,6 +8,7 @@ import com.smartfirehub.dataset.exception.SqlQueryException;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.util.AdhocResultValues;
 import com.smartfirehub.global.util.AdhocSqlStatements;
+import com.smartfirehub.global.util.NormalizedSql;
 import com.smartfirehub.global.util.SqlLexicalMask;
 import com.smartfirehub.global.util.SqlValidationUtils;
 import com.smartfirehub.pipeline.exception.UnsafeSqlException;
@@ -82,14 +83,25 @@ public class AnalyticsQueryExecutionService {
    */
   @Transactional
   public AnalyticsQueryResponse execute(String sql, int maxRows, boolean readOnly) {
-    String stripped;
-    String queryType;
+    // 테스트 전용 진입점 — 프로덕션 호출은 SqlGateArchitectureTest 가 거부한다(판정 없이 실행되므로).
+    NormalizedSql normalized;
     try {
-      stripped = SqlValidationUtils.stripAndValidate(sql);
-      queryType = SqlValidationUtils.detectQueryType(stripped);
+      normalized = NormalizedSql.of(sql);
     } catch (SqlQueryException e) {
       return errorResponse(e.getMessage());
     }
+    return execute(normalized, maxRows, readOnly);
+  }
+
+  /**
+   * 관문(GuardedSqlExecutor)이 정규화·판정을 마친 문자열을 그대로 실행한다. 여기서 다시 정규화하지 않는다 — 판정한 String 과 실행하는 String 이
+   * 같은 인스턴스여야 한다(스펙 §4.1, {@link NormalizedSql} 참고). 실행 문자열 = 판정 문자열 + 최상위 행 제한, 또는 판정 문자열을 그대로 품은
+   * geometry 래핑 CTE(바깥 투영은 결과 메타데이터의 컬럼명을 인용해 코드가 만든다)다. 검증·오류 계약은 위 문자열 오버로드와 같다.
+   */
+  @Transactional
+  public AnalyticsQueryResponse execute(NormalizedSql normalized, int maxRows, boolean readOnly) {
+    String cleanSql = normalized.text();
+    String queryType = SqlValidationUtils.detectQueryType(cleanSql);
 
     if (readOnly && !"SELECT".equals(queryType)) {
       // #511: 이 readOnly 검사는 MCP AI 도구 호출과 웹 UI 애드혹 쿼리 실행이 동일 엔드포인트/플래그를
@@ -97,8 +109,6 @@ public class AnalyticsQueryExecutionService {
       // 컨텍스트 중립적인 문구로 유지해야 웹 UI 사용자에게 혼란을 주지 않는다.
       return errorResponse("SELECT 쿼리만 실행할 수 있습니다. 데이터 수정은 데이터셋 상세의 '데이터' 탭을 이용하세요.");
     }
-
-    String cleanSql = SqlValidationUtils.removeTrailingSemicolon(stripped);
 
     try {
       sqlValidator.validate(cleanSql);
@@ -386,9 +396,14 @@ public class AnalyticsQueryExecutionService {
     }
   }
 
-  /** BC 진입점 — 인자 없이 호출되는 기존 외부 호출자(Web UI, 컨트롤러 BC)를 위해 유지. 내부적으로 datasetIds=null 오버로드에 위임한다. */
-  public SchemaInfoResponse getSchemaInfo() {
-    return getSchemaInfo(null);
+  /**
+   * 데이터셋 필터 없이 전체(열람 가능한 데이터셋만) 스키마를 반환하는 진입점. datasetIds=null 오버로드에 위임한다.
+   *
+   * @param visibilitySql 별칭 {@code d}(dataset) 기준 열람 가능 조건 SQL 조각({@code
+   *     DatasetAccessGuard.visibleSql})
+   */
+  public SchemaInfoResponse getSchemaInfo(String visibilitySql) {
+    return getSchemaInfo(null, visibilitySql);
   }
 
   /**
@@ -400,6 +415,8 @@ public class AnalyticsQueryExecutionService {
    *       <li>비어있음 — 빈 응답 (defensive: 외부에서 ?datasetIds= 빈값으로 호출 시 전체 폴백 방지)
    *       <li>값 있음 — 해당 id 들만 필터
    *     </ul>
+   *
+   * @param visibilitySql 보안 등급(S2): 별칭 {@code d} 기준 열람 가능 조건. 조회자가 볼 수 있는 데이터셋의 테이블만 반환한다.
    *     <p>#596: {@code @Transactional}이 없으면 {@code TenantAwareTransactionManager.doBegin()}이 실행되지
    *     않아 {@code app.tenant_id} GUC가 주입되지 않는다. 그 결과 V107 이후 RLS가 걸린 {@code dataset}/{@code
    *     dataset_column} 테이블에 대한 이 raw-SQL LEFT JOIN이 예외 없이 항상 0행을 반환해(fail-closed)
@@ -407,7 +424,7 @@ public class AnalyticsQueryExecutionService {
    *     문제가 없었다).
    */
   @Transactional(readOnly = true)
-  public SchemaInfoResponse getSchemaInfo(List<Long> datasetIds) {
+  public SchemaInfoResponse getSchemaInfo(List<Long> datasetIds, String visibilitySql) {
     if (datasetIds != null && datasetIds.isEmpty()) {
       return new SchemaInfoResponse(List.of());
     }
@@ -418,7 +435,11 @@ public class AnalyticsQueryExecutionService {
             .append("       d.id AS dataset_id, d.name AS dataset_name, ")
             .append("       dc.display_name ")
             .append("FROM information_schema.columns c ")
-            .append("LEFT JOIN dataset d ON d.table_name = c.table_name ")
+            // 보안 등급(S2): 열람 가능한 데이터셋의 테이블만 — INNER JOIN 이라 데이터셋이 아닌 data 스키마
+            // 테이블(stg_import_* 등)도 함께 사라진다. visibilitySql 은 별칭 d 기준 인라인 조건.
+            .append("JOIN dataset d ON d.table_name = c.table_name AND ")
+            .append(visibilitySql)
+            .append(" ")
             .append("LEFT JOIN dataset_column dc ")
             .append("  ON dc.dataset_id = d.id AND dc.column_name = c.column_name ")
             // 스키마명은 현재 테넌트에서 파생 + 바인드 파라미터로 넘긴다. 낡은 리터럴을 남기면
