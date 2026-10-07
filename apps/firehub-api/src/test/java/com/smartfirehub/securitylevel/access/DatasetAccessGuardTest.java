@@ -35,6 +35,10 @@ class DatasetAccessGuardTest extends IntegrationTestBase {
   private SecurityFixture fx;
   private final List<Long> datasets = new ArrayList<>();
   private final List<Long> roles = new ArrayList<>();
+
+  /** user(...) 가 만든 사용자 → 그 사용자의 자격 역할 id(역할 허용 목록 부여를 결정적으로 하기 위함). */
+  private final java.util.Map<Long, Long> ownRole = new java.util.HashMap<>();
+
   private final List<Long> users = new ArrayList<>();
   private long secretId;
   private long creatorId;
@@ -66,6 +70,7 @@ class DatasetAccessGuardTest extends IntegrationTestBase {
     long rid = fx.createRole("g_role_" + System.nanoTime(), fx.levelId(levelName), "dataset:read");
     roles.add(rid);
     fx.assignRole(uid, rid);
+    ownRole.put(uid, rid);
     return uid;
   }
 
@@ -133,15 +138,19 @@ class DatasetAccessGuardTest extends IntegrationTestBase {
     long admin = user("기밀", false);
     fx.assignRole(admin, adminRoleId());
     List<Long> subjects = List.of(pub, sens, plain, admin);
+    // 앵커: 관리자 탐지가 깨지면 SQL·Policy 가 똑같이 거부해 일치 매트릭스가 통과해 버린다 — 탐지 자체를 직접 단언한다.
+    assertThat(clearanceResolver.resolve(admin).tenantAdmin()).isTrue();
+    assertThat(clearanceResolver.resolve(plain).tenantAdmin()).isFalse();
+    long ungrantedSecret = -1;
     List<Long> ids = new ArrayList<>();
     for (String lv : List.of("공개", "내부", "민감", "기밀")) {
       for (int grantMode = 0; grantMode < 3; grantMode++) {
         long ds = dataset(lv);
         ids.add(ds);
+        if (lv.equals("기밀") && grantMode == 0) ungrantedSecret = ds;
         for (long subject : subjects) {
-          Clearance sc = clearanceResolver.resolve(subject);
           if (grantMode == 1) fx.grantUser(ds, subject);
-          if (grantMode == 2) fx.grantRole(ds, sc.roleIds().iterator().next());
+          if (grantMode == 2) fx.grantRole(ds, ownRole.get(subject));
         }
       }
     }
@@ -167,6 +176,14 @@ class DatasetAccessGuardTest extends IntegrationTestBase {
               .as("dataset=%d user=%d bypass=%s", ds, uid, bypass)
               .isEqualTo(policy);
         }
+        // 앵커: 허용 목록에 없는 기밀 데이터셋 — ADMIN 은 우회 켜짐일 때만, 그 외는 항상 안 보인다.
+        boolean expected = uid == admin && bypass;
+        assertThat(guard.check(c, ungrantedSecret, DatasetAction.VIEW, null).allowed())
+            .as("anchor policy user=%d bypass=%s", uid, bypass)
+            .isEqualTo(expected);
+        assertThat(sqlVisible.contains(ungrantedSecret))
+            .as("anchor sql user=%d bypass=%s", uid, bypass)
+            .isEqualTo(expected);
       }
     }
   }
