@@ -60,12 +60,12 @@ class ReviewItemServiceTest {
   @Test
   void recordPendingSynonym_ordersNamesByNormalizedComparison() {
     // "분전반의 누전" > "전기적 요인" (정규화 사전순) → nameA/nameB가 정렬되어 payload/dedupe에 반영.
-    service.recordPendingSynonym("Cause", "분전반의 누전", "전기적 요인", 0.7, "동의어", null, null);
+    service.recordPendingSynonym("Cause", "분전반의 누전", "전기적 요인", 0.7, "동의어", 99L, null);
     verify(repo)
         .upsertPending(
             eq("synonym_merge"),
             any(),
-            eq(null),
+            eq(99L),
             eq("similarity"),
             eq(0.7),
             eq("동의어"),
@@ -117,12 +117,13 @@ class ReviewItemServiceTest {
   }
 
   @Test
-  @DisplayName("datasetId/sourceChunkIds 없이 등록하면 저장되지만 evidence는 빈 배열(신규-only·하위호환)")
+  @DisplayName("datasetId 없이 등록하면 400(저장 안 됨), 기존 레거시 행(dataset_id null)의 evidence는 빈 배열")
   void recordPendingSynonym_noEvidenceWhenNull() {
-    service.recordPendingSynonym("Cause", "누전", "합선", 0.7, "동의어", null, null);
-    verify(repo)
-        .upsertPending(
-            eq("synonym_merge"), any(), eq(null), eq("similarity"), eq(0.7), eq("동의어"), any());
+    // 리뷰 M-1: datasetId 는 필수다 — 없으면 IllegalArgumentException(400)이고 아무것도 저장하지 않는다.
+    assertThatThrownBy(
+            () -> service.recordPendingSynonym("Cause", "누전", "합선", 0.7, "동의어", null, null))
+        .isInstanceOf(IllegalArgumentException.class);
+    verify(repo, never()).upsertPending(any(), any(), any(), any(), any(), any(), any());
 
     ReviewItemRecord persisted =
         new ReviewItemRecord(

@@ -274,12 +274,15 @@ class ReviewItemVisibilityTest extends IntegrationTestBase {
     }
     Map<String, String> syn = Map.of("entityType", et, "nameA", "나", "nameB", "가");
     Map<String, String> synMissing = Map.of("entityType", et, "nameA", "다", "nameB", "가");
+    // 기준값 고정(M-3): 없는 키는 정확히 200 none — 숨김==없음 비교가 둘 다 같은 이상값이어도 통과하는 것을 막는다.
+    assertThat(lookup("synonym/lookup", synMissing, low)).isEqualTo("200|{\"status\":\"none\"}");
     assertThat(lookup("synonym/lookup", syn, low))
         .isEqualTo(lookup("synonym/lookup", synMissing, low));
     Map<String, String> rel =
         Map.of("subjectKey", rs, "relType", "CAUSED_BY", "objectKey", rs + "o");
     Map<String, String> relMissing =
         Map.of("subjectKey", rs, "relType", "CAUSED_BY", "objectKey", rs + "x");
+    assertThat(lookup("relation/lookup", relMissing, low)).isEqualTo("200|{\"status\":\"none\"}");
     assertThat(lookup("relation/lookup", rel, low))
         .isEqualTo(lookup("relation/lookup", relMissing, low));
 
@@ -435,7 +438,7 @@ class ReviewItemVisibilityTest extends IntegrationTestBase {
       assertThat(f.getStatus()).as(path).isEqualTo(400);
       assertThat(errorBody(f, hiddenChunk)).as(path).isEqualTo(errorBody(a, missingChunk));
     }
-    // datasetId 없이 청크만 보내면 근거를 판정할 데이터셋이 없어 400.
+    // datasetId 없이 청크만 보내도 400(datasetId 필수 — M-1).
     var orphan = pendingBodies(null, hiddenChunk);
     for (String path : orphan.keySet()) {
       assertThat(postJson(path, orphan.get(path), high).getStatus()).as(path).isEqualTo(400);
@@ -448,5 +451,183 @@ class ReviewItemVisibilityTest extends IntegrationTestBase {
       assertThat(postJson(path, own.get(path), low).getStatus()).as(path).isEqualTo(200);
     }
     assertThat(countByDedupe("%P" + marker + "%")).isEqualTo(4);
+  }
+
+  // ── Fix round 1: I-1(V134 데이터셋 단위 dedupe) · M-1(datasetId 필수) · M-2(교차 테넌트) ─────────
+
+  /** 낮은 자격 사용자가 볼 수 있는 pending 목록(entity_extraction)의 id. */
+  private List<Long> pendingEntityIds(long userId) throws Exception {
+    JsonNode arr =
+        om.readTree(
+            mockMvc
+                .perform(
+                    get("/api/v1/graphrag/review-items")
+                        .param("status", "pending")
+                        .param("itemType", "entity_extraction")
+                        .header("Authorization", token(userId)))
+                .andReturn()
+                .getResponse()
+                .getContentAsString());
+    List<Long> ids = new ArrayList<>();
+    arr.forEach(n -> ids.add(n.get("id").asLong()));
+    return ids;
+  }
+
+  /** (item_type, dataset_id, dedupe_key) 행 id — 없으면 null. */
+  private Long itemId(String type, long datasetId, String dedupeKey) {
+    return TenantRlsTestSupport.runInTenantTransaction(
+        fixtureTransactionTemplate,
+        DEFAULT_TEST_TENANT_ID,
+        () -> {
+          Object v =
+              dsl.fetchValue(
+                  "select id from graph_review_item where item_type = ? and dataset_id = ?"
+                      + " and dedupe_key = ?",
+                  type,
+                  datasetId,
+                  dedupeKey);
+          return v == null ? null : ((Number) v).longValue();
+        });
+  }
+
+  /**
+   * I-1: 숨김 데이터셋에 같은 키가 있어도, 볼 수 있는 데이터셋으로 보낸 등록이 흡수되지 않고 등록자 인박스에 나타난다 — "목록 어디에도 없음"으로 숨김 데이터셋의
+   * 이름 존재를 추론하는 조합 오라클이 닫힌다. 숨김 키가 pending 이든 approved 이든 같다.
+   */
+  @Test
+  void pendingPost_sameKeyInHiddenDataset_isNotAbsorbed_andShowsInSubmittersInbox()
+      throws Exception {
+    String et = "I" + marker;
+    insertDecision("entity_extraction", et + "|숨김대기", hiddenDs, "pending");
+    insertDecision("entity_extraction", et + "|숨김승인", hiddenDs, "approved");
+    for (String name : List.of("숨김대기", "숨김승인", "어디에도없음")) {
+      String body =
+          "{\"datasetId\":"
+              + visibleDs
+              + ",\"entityType\":\""
+              + et
+              + "\",\"name\":\""
+              + name
+              + "\",\"sourceChunkIds\":[],\"confidence\":0.3,\"relations\":[]}";
+      assertThat(postJson("entity/pending", body, low).getStatus()).as(name).isEqualTo(200);
+      Long created = itemId("entity_extraction", visibleDs, et + "|" + name);
+      // 숨김 키가 있든 없든 똑같이 X 에 새 행이 생기고 등록자 목록에 보인다(흡수 = 오라클이 사라졌다).
+      assertThat(created).as(name).isNotNull();
+      assertThat(pendingEntityIds(low)).as(name).contains(created);
+    }
+  }
+
+  /**
+   * I-1 기능 회귀: 낮은 자격 사용자의 X ingest 가 숨김 Y 에서 승인된 같은 키를 {@code none} 으로 보고 보류·큐 등록할 때, 그 항목이 X 인박스에
+   * 남아 엔티티가 조용히 사라지지 않는다. 자격이 충분한 사용자의 결정 조회는 X 의 pending 이 생긴 뒤에도 Y 의 사람 결정(approved)을 계속 따른다.
+   */
+  @Test
+  void
+      lowClearanceIngest_ofKeyApprovedInHiddenDataset_keepsEntityInInbox_andClearedLookupKeepsDecision()
+          throws Exception {
+    String et = "G" + marker;
+    String name = "승인된기밀";
+    insertDecision("entity_extraction", et + "|" + name, hiddenDs, "approved");
+    Map<String, String> q = Map.of("entityType", et, "name", name);
+    // ingest 1단계(lookup): 낮은 자격은 숨김 결정을 볼 수 없다 → none → 보류 + 큐 등록.
+    assertThat(lookup("entity/lookup", q, low)).isEqualTo("200|{\"status\":\"none\"}");
+    String body =
+        "{\"datasetId\":"
+            + visibleDs
+            + ",\"entityType\":\""
+            + et
+            + "\",\"name\":\""
+            + name
+            + "\",\"sourceChunkIds\":[],\"confidence\":0.3,\"relations\":[]}";
+    assertThat(postJson("entity/pending", body, low).getStatus()).isEqualTo(200);
+    Long queued = itemId("entity_extraction", visibleDs, et + "|" + name);
+    assertThat(queued).isNotNull();
+    assertThat(pendingEntityIds(low)).contains(queued);
+    // 이제 그 키의 낮은 자격 조회는 자기 데이터셋의 pending 이다.
+    assertThat(lookup("entity/lookup", q, low)).isEqualTo("200|{\"status\":\"pending\"}");
+    // 자격이 충분한 사용자는 두 행(Y approved, X pending)을 다 보지만 사람 결정을 우선한다.
+    assertThat(lookup("entity/lookup", q, high)).isEqualTo("200|{\"status\":\"approved\"}");
+  }
+
+  /** M-1: datasetId 없는 등록은 청크 유무와 무관하게 400 이고 아무것도 만들지 않는다(레거시 이름만 꽂기 통로 차단). */
+  @Test
+  void pendingPost_withoutDatasetId_is400_andCreatesNothing() throws Exception {
+    var bodies = pendingBodies(null, null);
+    for (String path : bodies.keySet()) {
+      var r = postJson(path, bodies.get(path), high);
+      assertThat(r.getStatus()).as(path).isEqualTo(400);
+      assertThat(om.readTree(r.getContentAsString()).path("message").asText())
+          .as(path)
+          .contains("datasetId");
+    }
+    assertThat(countByDedupe("%P" + marker + "%")).isZero();
+  }
+
+  /** M-2: 다른 테넌트의 데이터셋은 없는 데이터셋과 같은 404, 다른 테넌트의 청크는 없는 청크와 같은 400(RLS 로 보이지 않음). */
+  @Test
+  void pendingPost_otherTenantDatasetOrChunk_isSameAsMissing() throws Exception {
+    long other = TenantRlsTestSupport.createActiveTenant(dsl, "rivx" + System.nanoTime());
+    try {
+      long[] foreign =
+          TenantRlsTestSupport.runInTenantTransaction(
+              fixtureTransactionTemplate,
+              other,
+              () -> {
+                long ds =
+                    ((Number)
+                            dsl.fetchValue(
+                                "insert into dataset (name, table_name, created_by, storage_type,"
+                                    + " origin_type) values (?, ?, ?, 'TABLE', 'SOURCE')"
+                                    + " returning id",
+                                "sf_" + marker + "_x",
+                                marker + "_x",
+                                creator))
+                        .longValue();
+                long file =
+                    ((Number)
+                            dsl.fetchValue(
+                                "insert into document_file (dataset_id, original_name, mime_type,"
+                                    + " file_size, storage_path, uploaded_by) values (?, 'f.txt',"
+                                    + " 'text/plain', 1, 'p', ?) returning id",
+                                ds,
+                                creator))
+                        .longValue();
+                long chunk =
+                    ((Number)
+                            dsl.fetchValue(
+                                "insert into document_chunk (document_file_id, dataset_id,"
+                                    + " chunk_index, content) values (?, ?, 0, '타 테넌트 원문')"
+                                    + " returning id",
+                                file,
+                                ds))
+                        .longValue();
+                return new long[] {ds, chunk};
+              });
+      long missing = Long.MAX_VALUE - 7;
+      long missingChunk = Long.MAX_VALUE - 9;
+      var foreignDs = pendingBodies(foreign[0], null);
+      var missingDs = pendingBodies(missing, null);
+      var foreignChunk = pendingBodies(visibleDs, foreign[1]);
+      var absentChunk = pendingBodies(visibleDs, missingChunk);
+      for (String path : foreignDs.keySet()) {
+        // 최상위 자격 사용자라도 다른 테넌트 데이터셋은 없는 것과 같다.
+        var f = postJson(path, foreignDs.get(path), high);
+        var n = postJson(path, missingDs.get(path), high);
+        assertThat(f.getStatus()).as(path).isEqualTo(404);
+        assertThat(errorBody(f, foreign[0])).as(path).isEqualTo(errorBody(n, missing));
+        var fc = postJson(path, foreignChunk.get(path), high);
+        var ac = postJson(path, absentChunk.get(path), high);
+        assertThat(fc.getStatus()).as(path).isEqualTo(400);
+        assertThat(errorBody(fc, foreign[1])).as(path).isEqualTo(errorBody(ac, missingChunk));
+      }
+      assertThat(countByDedupe("%P" + marker + "%")).isZero();
+    } finally {
+      TenantContext.set(DEFAULT_TEST_TENANT_ID);
+      TenantRlsTestSupport.runInTenantTransaction(
+          fixtureTransactionTemplate,
+          other,
+          () -> dsl.execute("delete from dataset where tenant_id = ?", other));
+      TenantRlsTestSupport.deleteTenants(dsl, other);
+    }
   }
 }

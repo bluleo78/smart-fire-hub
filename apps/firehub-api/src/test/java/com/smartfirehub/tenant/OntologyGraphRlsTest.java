@@ -263,7 +263,10 @@ class OntologyGraphRlsTest extends IntegrationTestBase {
             TenantRlsTestSupport.nextTenantId());
   }
 
-  /** uq_graph_review_item(tenant_id, item_type, dedupe_key) 때문에 dedupe_key 는 고유해야 한다. */
+  /**
+   * uq_graph_review_item(tenant_id, item_type, dataset_id, dedupe_key) NULLS NOT DISTINCT(V134) 때문에
+   * dedupe_key 는 고유해야 한다.
+   */
   private Long insertReviewItem() {
     return (Long)
         dsl.fetchValue(

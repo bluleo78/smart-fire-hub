@@ -361,6 +361,9 @@ public class ReviewItemService {
   /** 근거 청크가 출처 데이터셋에 속하지 않을 때의 단일 400 메시지 — 없는 청크와 남의 청크를 구분하지 않는다(청크 존재 오라클 방지). */
   static final String SOURCE_CHUNK_MISMATCH = "출처 청크가 지정한 데이터셋에 속하지 않습니다.";
 
+  /** 검수 대기 등록에 datasetId 가 없을 때의 400 메시지. */
+  static final String DATASET_ID_REQUIRED = "검수 항목 등록에는 datasetId 가 필요합니다.";
+
   /**
    * 검수 대기 등록 요청의 출처를 서버가 검증한다(후속 F3) — 예전에는 클라이언트가 보낸 datasetId 를 그대로 믿어, 볼 수 없는(또는 없는) 데이터셋에 항목을
    * 꽂아 그 데이터셋의 그래프 승인 대기열을 오염시킬 수 있었다.
@@ -371,16 +374,16 @@ public class ReviewItemService {
    *       저장됐다.
    *   <li>근거 청크 id 가 오면 전부 그 데이터셋의 청크여야 한다(없거나 다른 데이터셋이면 같은 400). 실제 호출자(ai-agent ingest)는 그 데이터셋의
    *       청크 목록에서 id 를 얻으므로 항상 통과한다 — 페이로드 계약은 바뀌지 않는다.
-   *   <li>datasetId 없이 청크만 오면 근거를 판정할 데이터셋이 없어 400. 둘 다 없는 등록(레거시 호환)은 그대로 둔다.
+   *   <li>datasetId 는 필수(없으면 400, 리뷰 M-1). 실제 호출자(ai-agent ingest)는 네 엔드포인트 모두 항상 보낸다. datasetId 없는
+   *       항목은 승인조차 못 하는데(requireDatasetId) 테넌트 전원의 인박스에 보이므로, 허용하면 이름만 꽂는 통로가 될 뿐이다.
    * </ol>
    */
   private void requireSource(Long datasetId, List<Long> chunkIds) {
+    if (datasetId == null) {
+      throw new IllegalArgumentException(DATASET_ID_REQUIRED);
+    }
     Set<Long> ids = new java.util.HashSet<>();
     if (chunkIds != null) for (Long c : chunkIds) if (c != null) ids.add(c);
-    if (datasetId == null) {
-      if (!ids.isEmpty()) throw new IllegalArgumentException(SOURCE_CHUNK_MISMATCH);
-      return;
-    }
     // 가시성을 청크 검사보다 먼저 본다 — 순서가 바뀌면 숨김 데이터셋에 대해 "청크 불일치(400)"와 "404"가 갈려 존재가 드러난다.
     datasetAccessGuard.requireView(datasetId);
     if (!ids.isEmpty() && chunkRepository.countChunksInDataset(datasetId, ids) != ids.size()) {

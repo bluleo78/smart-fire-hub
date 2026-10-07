@@ -15,6 +15,7 @@ import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.JSONB;
 import org.jooq.Table;
+import org.jooq.impl.DSL;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -66,13 +67,19 @@ public class ReviewItemRepository {
       field(name("graph_review_item", "decided_at"), LocalDateTime.class);
   private static final Field<LocalDateTime> CREATED_AT =
       field(name("graph_review_item", "created_at"), LocalDateTime.class);
-  // V101 에서 uq_graph_review_item 이 (tenant_id, item_type, dedupe_key) 로 접혔다.
+  // V101 에서 uq_graph_review_item 이 (tenant_id, item_type, dedupe_key) 로 접혔고, V134 에서
+  // (tenant_id, item_type, dataset_id, dedupe_key) NULLS NOT DISTINCT 로 데이터셋 단위가 됐다.
   // ON CONFLICT 추론 대상을 새 인덱스와 맞추지 않으면 dedupe 가 런타임 오류로 터진다.
   // 값은 컬럼 DEFAULT(GUC app.tenant_id)가 채우므로 INSERT 에서는 세팅하지 않는다.
   private static final Field<Long> TENANT_ID =
       field(name("graph_review_item", "tenant_id"), Long.class);
 
-  /** pending 항목을 upsert 등록한다. (item_type, dedupe_key)가 이미 있으면 무시한다(재적재 중복 방지). */
+  /**
+   * pending 항목을 upsert 등록한다. 같은 데이터셋에 (item_type, dedupe_key)가 이미 있으면 무시한다(재적재 중복 방지).
+   *
+   * <p>중복 판정이 데이터셋 단위인 이유(V134): 테넌트 단위였을 때는 볼 수 없는 데이터셋의 같은 키가 이 등록을 흡수해, 등록한 항목이 어느 목록에도 나타나지 않는
+   * 것으로 숨김 데이터셋에 그 이름이 있다는 사실이 드러났다(존재 오라클).
+   */
   public void upsertPending(
       String itemType,
       String dedupeKey,
@@ -90,7 +97,7 @@ public class ReviewItemRepository {
         .set(REASON, reason)
         .set(PAYLOAD, JSONB.valueOf(payloadJson))
         .set(DEDUPE_KEY, dedupeKey)
-        .onConflict(TENANT_ID, ITEM_TYPE, DEDUPE_KEY)
+        .onConflict(TENANT_ID, ITEM_TYPE, DATASET_ID, DEDUPE_KEY)
         .doNothing()
         .execute();
   }
@@ -100,6 +107,10 @@ public class ReviewItemRepository {
    *
    * <p>보안 등급(후속 F2): 출처 데이터셋을 볼 수 없는 항목은 <b>없는 항목과 똑같이</b> empty 로 돌려준다 — 이름만 넣어 상태를 물을 수 있는 조회라,
    * 거르지 않으면 숨김 데이터셋에 그 이름이 있는지·어떻게 판정됐는지가 드러나는 존재 오라클이 된다.
+   *
+   * <p>V134 이후 같은 키가 데이터셋마다 한 건씩 있을 수 있다. 조회 요청에는 데이터셋이 없으므로(ai-agent 계약 유지) 볼 수 있는 행들 중 하나를 고른다 —
+   * 사람이 내린 결정(approved/rejected)을 pending 보다 우선하고, 결정끼리는 가장 최근 결정을 따른다. 테넌트 단위 시절 "한 번 내린 결정을 이후
+   * ingest 가 재사용한다"는 의미를 볼 수 있는 범위 안에서 유지하기 위함이다.
    */
   public Optional<String> findDecisionStatus(
       String itemType, String dedupeKey, Condition visibleDatasetCondition) {
@@ -110,6 +121,11 @@ public class ReviewItemRepository {
                 .eq(itemType)
                 .and(DEDUPE_KEY.eq(dedupeKey))
                 .and(visibleItem(visibleDatasetCondition)))
+        .orderBy(
+            DSL.when(STATUS.eq("pending"), 1).otherwise(0),
+            DECIDED_AT.desc().nullsLast(),
+            ID.desc())
+        .limit(1)
         .fetchOptional(r -> r.get(STATUS));
   }
 
