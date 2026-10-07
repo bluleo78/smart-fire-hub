@@ -12,6 +12,7 @@ import com.smartfirehub.pipeline.dto.StepCursor;
 import java.time.OffsetDateTime;
 import java.util.*;
 import lombok.RequiredArgsConstructor;
+import org.jooq.Condition;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.JSONB;
@@ -81,7 +82,21 @@ public class PipelineStepRepository {
   private static final Field<Long> D_ID = field(name("dataset", "id"), Long.class);
   private static final Field<String> D_NAME = field(name("dataset", "name"), String.class);
 
+  /** 실행·내부 경로용 — 출력 데이터셋 이름을 가리지 않는다(러너·트리거 스레드에는 요청 사용자가 없어 가시성 조건을 만들 수 없다). */
   public List<PipelineStepResponse> findByPipelineId(Long pipelineId) {
+    return findByPipelineId(pipelineId, trueCondition());
+  }
+
+  /**
+   * 화면 응답용 — {@code outputDatasetNameVisible} 을 출력 데이터셋 LEFT JOIN 의 ON 에 더해, 조회자가 볼 수 없는 출력 데이터셋은
+   * 이름만 null 이 된다(보안 등급, 스펙 §2.5). <b>출력·입력 데이터셋 id 는 그대로 둔다</b> — 웹 편집기가 PUT 으로 그대로 되돌려 보내므로 id 를
+   * 지우면 저장 한 번에 참조가 사라진다.
+   *
+   * @param outputDatasetNameVisible {@code "dataset"} 이름 관례의 가시성
+   *     조건(DatasetAccessGuard#visibleCondition())
+   */
+  public List<PipelineStepResponse> findByPipelineId(
+      Long pipelineId, Condition outputDatasetNameVisible) {
     // output_dataset_id가 null이면 source_pipeline_step_id로 임시 데이터셋 폴백
     var resolvedOutputExpr =
         coalesce(
@@ -111,7 +126,7 @@ public class PipelineStepRepository {
                 D_NAME)
             .from(PIPELINE_STEP)
             .leftJoin(DATASET)
-            .on(resolvedOutputExpr.eq(D_ID))
+            .on(resolvedOutputExpr.eq(D_ID).and(outputDatasetNameVisible))
             .where(PS_PIPELINE_ID.eq(pipelineId))
             .orderBy(PS_STEP_ORDER.asc())
             .fetch();

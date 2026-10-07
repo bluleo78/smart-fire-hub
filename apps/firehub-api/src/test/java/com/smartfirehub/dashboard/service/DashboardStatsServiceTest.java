@@ -66,6 +66,18 @@ class DashboardStatsServiceTest extends IntegrationTestBase {
             .fetchOne()
             .getId();
 
+    // 보안 등급(Task 3 A1~A4): 홈 통계·건강도·활동은 요청 사용자가 볼 수 있는 데이터셋만 싣는다 — 테스트 사용자를 기본 테넌트
+    // USER(기본=내부) 멤버로 만들고 인증 주체로 세운다. 인증이 없으면 아무것도 못 보는 자격(fail-closed)이라 데이터셋 항목이 0 이 된다.
+    com.smartfirehub.support.TenantRlsTestSupport.insertActiveMembership(
+        dsl, testUserId, DEFAULT_TEST_TENANT_ID);
+    dsl.execute(
+        "insert into user_role (user_id, role_id) select ?, id from role where name = 'USER'",
+        testUserId);
+    org.springframework.security.core.context.SecurityContextHolder.getContext()
+        .setAuthentication(
+            new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
+                testUserId, null, List.of()));
+
     // SOURCE 데이터셋 삽입
     activeSourceDatasetId =
         dsl.insertInto(DATASET)
@@ -120,6 +132,11 @@ class DashboardStatsServiceTest extends IntegrationTestBase {
    *
    * <p>DB에 데이터가 있을 때 응답의 모든 필드가 non-null이어야 한다.
    */
+  @org.junit.jupiter.api.AfterEach
+  void clearAuthentication() {
+    org.springframework.security.core.context.SecurityContextHolder.clearContext();
+  }
+
   @Test
   void getStats_returnsNonNullResponse() {
     DashboardStatsResponse stats = dashboardService.getStats();

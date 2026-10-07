@@ -68,8 +68,21 @@ public class SavedQueryRepository {
   private static final Field<String> U_NAME_ALIAS =
       field(name("user", "name"), String.class).as("created_by_name");
 
+  /**
+   * 목록.
+   *
+   * @param datasetNameVisible 연결 데이터셋 LEFT JOIN 의 ON 에 더하는 가시성 조건({@code "dataset"} 이름 관례) — 조회자가 볼
+   *     수 없는 데이터셋은 이름만 null 이 되고 datasetId 는 유지된다(보안 등급, 스펙 §2.5). 웹은 id 있음+이름 null 을 "열람 권한 없음" 으로
+   *     그린다
+   */
   public List<SavedQueryListResponse> findAll(
-      String search, String folder, Boolean sharedOnly, Long userId, int page, int size) {
+      String search,
+      String folder,
+      Boolean sharedOnly,
+      Long userId,
+      int page,
+      int size,
+      Condition datasetNameVisible) {
 
     var chartCountField =
         dsl.selectCount().from(CHART).where(CHART_SAVED_QUERY_ID.eq(SQ_ID)).asField("chart_count");
@@ -109,7 +122,7 @@ public class SavedQueryRepository {
                 chartCountField)
             .from(SQ)
             .leftJoin(DS)
-            .on(SQ_DATASET_ID.eq(DS_ID))
+            .on(SQ_DATASET_ID.eq(DS_ID).and(datasetNameVisible))
             .join(USER_TABLE)
             .on(SQ_CREATED_BY.eq(U_ID))
             .where(combined)
@@ -161,7 +174,8 @@ public class SavedQueryRepository {
     return dsl.selectCount().from(SQ).where(combined).fetchOne(0, Long.class);
   }
 
-  public Optional<SavedQueryResponse> findById(Long id, Long userId) {
+  /** 단건(소유자 또는 공유). {@code datasetNameVisible} 은 {@link #findAll} 과 같다. */
+  public Optional<SavedQueryResponse> findById(Long id, Long userId, Condition datasetNameVisible) {
     var chartCountField =
         dsl.selectCount().from(CHART).where(CHART_SAVED_QUERY_ID.eq(SQ_ID)).asField("chart_count");
 
@@ -182,7 +196,7 @@ public class SavedQueryRepository {
                 chartCountField)
             .from(SQ)
             .leftJoin(DS)
-            .on(SQ_DATASET_ID.eq(DS_ID))
+            .on(SQ_DATASET_ID.eq(DS_ID).and(datasetNameVisible))
             .join(USER_TABLE)
             .on(SQ_CREATED_BY.eq(U_ID))
             .where(SQ_ID.eq(id).and(SQ_CREATED_BY.eq(userId).or(SQ_IS_SHARED.isTrue())))
@@ -192,7 +206,9 @@ public class SavedQueryRepository {
     return Optional.of(mapToResponse(r));
   }
 
-  public Optional<SavedQueryResponse> findByIdForOwner(Long id, Long userId) {
+  /** 단건(소유자만). {@code datasetNameVisible} 은 {@link #findAll} 과 같다. */
+  public Optional<SavedQueryResponse> findByIdForOwner(
+      Long id, Long userId, Condition datasetNameVisible) {
     var chartCountField =
         dsl.selectCount().from(CHART).where(CHART_SAVED_QUERY_ID.eq(SQ_ID)).asField("chart_count");
 
@@ -213,7 +229,7 @@ public class SavedQueryRepository {
                 chartCountField)
             .from(SQ)
             .leftJoin(DS)
-            .on(SQ_DATASET_ID.eq(DS_ID))
+            .on(SQ_DATASET_ID.eq(DS_ID).and(datasetNameVisible))
             .join(USER_TABLE)
             .on(SQ_CREATED_BY.eq(U_ID))
             .where(SQ_ID.eq(id).and(SQ_CREATED_BY.eq(userId)))

@@ -126,7 +126,7 @@ class GraphIngestControllerTest {
     // 데이터셋별 바인딩 온톨로지 조인 + lt(schema_version) 필터링을 마친 결과만 반환하므로,
     // 서비스는 그 결과를 그대로 응답으로 매핑하기만 한다.
     LocalDateTime latestAt = LocalDateTime.of(2026, 7, 20, 9, 0, 0);
-    when(graphIngestRepository.findStale())
+    when(graphIngestRepository.findStale(org.mockito.ArgumentMatchers.any()))
         .thenReturn(List.of(new StaleRow(9101L, latestAt, 1, 3)));
 
     mockMvc

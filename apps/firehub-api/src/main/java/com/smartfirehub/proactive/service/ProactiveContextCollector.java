@@ -6,6 +6,8 @@ import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.proactive.dto.AnomalyEvent;
 import com.smartfirehub.proactive.dto.ProactiveJobExecutionResponse;
 import com.smartfirehub.proactive.repository.ProactiveJobExecutionRepository;
+import com.smartfirehub.securitylevel.access.Clearance;
+import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -28,8 +30,15 @@ public class ProactiveContextCollector {
   private final DashboardService dashboardService;
   private final ObjectMapper objectMapper;
   private final ProactiveJobExecutionRepository executionRepository;
+  private final ClearanceResolver clearanceResolver;
 
-  public String collectContext(Map<String, Object> config, Long jobId) {
+  /**
+   * 리포트 컨텍스트 수집.
+   *
+   * @param ownerUserId 작업 소유자 — 홈 대시보드 데이터(데이터셋 이름·개수·활동)를 이 사용자 자격으로 거른다(보안 등급). 비동기 러너에는 요청 사용자가
+   *     없어 명시해야 한다(없으면 "아무것도 못 봄"으로 데이터셋 항목이 전부 빠진다). 소유자 미상(null)이면 아무것도 못 보는 자격(fail-closed)
+   */
+  public String collectContext(Map<String, Object> config, Long jobId, Long ownerUserId) {
     try {
       Map<String, Object> context = new HashMap<>();
 
@@ -37,11 +46,16 @@ public class ProactiveContextCollector {
       // (이유는 scopedAsync 의 Javadoc 참고). require 는 반드시 호출 스레드에서 — 풀 스레드에서
       // 부르면 컨텍스트가 비어 있어 그 자리에서 던진다.
       long tenantId = TenantContext.require("proactive 컨텍스트 수집");
-      var statsFuture = scopedAsync(tenantId, dashboardService::getStats);
-      var healthFuture = scopedAsync(tenantId, dashboardService::getSystemHealth);
-      var attentionFuture = scopedAsync(tenantId, dashboardService::getAttentionItems);
+      // 소유자 자격은 호출 스레드(테넌트 컨텍스트 있음)에서 한 번 계산해 네 작업이 공유한다.
+      Clearance viewer =
+          ownerUserId != null
+              ? clearanceResolver.resolve(ownerUserId)
+              : Clearance.none(-1L, tenantId);
+      var statsFuture = scopedAsync(tenantId, () -> dashboardService.getStats(viewer));
+      var healthFuture = scopedAsync(tenantId, () -> dashboardService.getSystemHealth(viewer));
+      var attentionFuture = scopedAsync(tenantId, () -> dashboardService.getAttentionItems(viewer));
       var activityFuture =
-          scopedAsync(tenantId, () -> dashboardService.getActivityFeed(null, null, 0, 20));
+          scopedAsync(tenantId, () -> dashboardService.getActivityFeed(null, null, 0, 20, viewer));
       CompletableFuture.allOf(statsFuture, healthFuture, attentionFuture, activityFuture).join();
 
       // 1. Dashboard stats

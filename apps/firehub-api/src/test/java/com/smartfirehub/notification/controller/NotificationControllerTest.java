@@ -42,9 +42,10 @@ class NotificationControllerTest {
   @BeforeEach
   void setUp() {
     when(jwtTokenProvider.parseAccessToken("test-token"))
-        .thenReturn(Optional.of(new JwtTokenProvider.AccessTokenPrincipal(1L, null, false)));
+        .thenReturn(Optional.of(new JwtTokenProvider.AccessTokenPrincipal(1L, 1L, false)));
     when(permissionService.getUserPermissions(1L)).thenReturn(Set.of("dataset:read"));
-    when(registry.register(1L)).thenReturn(new SseEmitter());
+    // 구독은 연결마다 테넌트를 남긴다(Task 3 D2) — 토큰의 테넌트(1)로 등록되는지까지 고정한다.
+    when(registry.register(1L, 1L)).thenReturn(new SseEmitter());
   }
 
   /** 인증 토큰과 dataset:read 권한이 있으면 SSE 스트림에 200 OK */

@@ -410,7 +410,7 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
     ProactiveJobResponse created =
         proactiveJobService.createJob(buildCreateRequest("실행 테스트 작업"), testUserId);
 
-    when(proactiveContextCollector.collectContext(any(), any())).thenReturn("{}");
+    when(proactiveContextCollector.collectContext(any(), any(), any())).thenReturn("{}");
     when(proactiveAiClient.execute(anyLong(), anyString(), anyString(), any(), any(), any(), any()))
         .thenReturn(buildMockResult());
     when(chatDeliveryChannel.type()).thenReturn("CHAT");
@@ -433,7 +433,7 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
     ProactiveJobResponse created =
         proactiveJobService.createJob(buildCreateRequest("실패 테스트 작업"), testUserId);
 
-    when(proactiveContextCollector.collectContext(any(), any())).thenReturn("{}");
+    when(proactiveContextCollector.collectContext(any(), any(), any())).thenReturn("{}");
     when(proactiveAiClient.execute(anyLong(), anyString(), anyString(), any(), any(), any(), any()))
         .thenThrow(new RuntimeException("AI Agent 연결 실패"));
 
@@ -477,7 +477,7 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
             "",
             "");
 
-    when(proactiveContextCollector.collectContext(any(), any())).thenReturn("{}");
+    when(proactiveContextCollector.collectContext(any(), any(), any())).thenReturn("{}");
     when(proactiveAiClient.execute(anyLong(), anyString(), anyString(), any(), any(), any(), any()))
         .thenReturn(authFailureResult);
     when(chatDeliveryChannel.type()).thenReturn("CHAT");
@@ -506,7 +506,7 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
     ProactiveJobResponse created =
         proactiveJobService.createJob(buildCreateRequest("채널 테스트 작업"), testUserId);
 
-    when(proactiveContextCollector.collectContext(any(), any())).thenReturn("{}");
+    when(proactiveContextCollector.collectContext(any(), any(), any())).thenReturn("{}");
     when(proactiveAiClient.execute(anyLong(), anyString(), anyString(), any(), any(), any(), any()))
         .thenReturn(buildMockResult());
     when(chatDeliveryChannel.type()).thenReturn("CHAT");
@@ -524,7 +524,7 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
     ProactiveJobResponse created =
         proactiveJobService.createJob(buildCreateRequest("채널 오류 내성 테스트"), testUserId);
 
-    when(proactiveContextCollector.collectContext(any(), any())).thenReturn("{}");
+    when(proactiveContextCollector.collectContext(any(), any(), any())).thenReturn("{}");
     when(proactiveAiClient.execute(anyLong(), anyString(), anyString(), any(), any(), any(), any()))
         .thenReturn(buildMockResult());
     when(chatDeliveryChannel.type()).thenReturn("CHAT");
@@ -608,7 +608,7 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
   @Test
   void onAnomalyDetected_respects_cooldown_on_second_call() {
     var job = proactiveJobService.createJob(buildCreateRequest("쿨다운 테스트"), testUserId);
-    when(proactiveContextCollector.collectContext(any(), any())).thenReturn("{}");
+    when(proactiveContextCollector.collectContext(any(), any(), any())).thenReturn("{}");
     when(proactiveAiClient.execute(anyLong(), anyString(), anyString(), any(), any(), any(), any()))
         .thenReturn(buildMockResult());
     when(chatDeliveryChannel.type()).thenReturn("CHAT");
@@ -642,7 +642,7 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
   @Test
   void onAnomalyDetected_delegates_execution_to_asyncRunner() {
     var job = proactiveJobService.createJob(buildCreateRequest("asyncRunner 위임 테스트"), testUserId);
-    when(proactiveContextCollector.collectContext(any(), any())).thenReturn("{}");
+    when(proactiveContextCollector.collectContext(any(), any(), any())).thenReturn("{}");
     when(proactiveAiClient.execute(anyLong(), anyString(), anyString(), any(), any(), any(), any()))
         .thenReturn(buildMockResult());
     when(chatDeliveryChannel.type()).thenReturn("CHAT");

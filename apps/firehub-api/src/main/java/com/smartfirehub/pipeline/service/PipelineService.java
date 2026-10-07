@@ -15,6 +15,7 @@ import com.smartfirehub.pipeline.repository.PipelineStepRepository;
 import com.smartfirehub.pipeline.repository.TriggerRepository;
 import com.smartfirehub.pipeline.service.validator.PythonScriptValidator;
 import com.smartfirehub.pipeline.service.validator.SqlValidator;
+import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.user.repository.UserRepository;
 import java.util.HashMap;
 import java.util.List;
@@ -52,6 +53,9 @@ public class PipelineService {
   private final DatasetColumnRepository columnRepository;
   private final PipelineSecurityGate pipelineSecurityGate;
 
+  /** 상세 응답의 출력 데이터셋 이름 가시성(보안 등급) — 볼 수 없는 출력은 이름만 null(id 는 유지). */
+  private final DatasetAccessGuard datasetAccessGuard;
+
   @Transactional
   public PipelineDetailResponse createPipeline(CreatePipelineRequest request, Long userId) {
     // 이름 중복 검사 — 동일 이름의 파이프라인이 존재하면 409 반환 (#181)
@@ -68,7 +72,7 @@ public class PipelineService {
         pipelineRepository.save(request.name(), request.description(), userId);
 
     // Save steps
-    saveSteps(pipeline.id(), request.steps(), userId);
+    saveSteps(pipeline.id(), request.steps(), userId, Set.of());
 
     // Return full detail
     return getPipelineById(pipeline.id());
@@ -78,9 +82,14 @@ public class PipelineService {
    * 스텝 전체를 검증·저장한다.
    *
    * @param editorUserId 저장하는 편집자 — SQL 스텝이 참조하는 데이터셋을 이 사용자가 볼 수 있어야 한다(보안 등급 S2, 스펙 §4.2 5행)
+   * @param previouslySavedOutputIds 이 파이프라인에 저장 전부터 있던(해석된) 출력 데이터셋 id — 그대로 되돌아온 id 는 출력 VIEW 판정을
+   *     건너뛴다(왕복 보존, 아래 SQL·AI_CLASSIFY 출력 판정 참고). 새 파이프라인은 빈 집합
    */
   private void saveSteps(
-      Long pipelineId, List<PipelineStepRequest> stepRequests, Long editorUserId) {
+      Long pipelineId,
+      List<PipelineStepRequest> stepRequests,
+      Long editorUserId,
+      Set<Long> previouslySavedOutputIds) {
     if (stepRequests == null || stepRequests.isEmpty()) {
       return;
     }
@@ -113,6 +122,14 @@ public class PipelineService {
       // 출력으로 지정한 스텝은 저장할 수 없다. 러너 TEMP(편집 화면이 되돌려 보내는 출력 폴백)는 실행 시점에 판정된다.
       if ("API_CALL".equals(stepRequest.scriptType())
           || "PYTHON".equals(stepRequest.scriptType())) {
+        pipelineSecurityGate.checkStepOutputForSave(editorUserId, stepRequest.outputDatasetId());
+      } else if (stepRequest.outputDatasetId() != null
+          && !previouslySavedOutputIds.contains(stepRequest.outputDatasetId())) {
+        // 보안 등급(이름 확인 경로 차단): SQL·AI_CLASSIFY 스텝의 출력 id 는 저장 시 판정이 없어, 임의 id 를 넣고 저장 성공(숨김)·FK
+        // 오류(없음)·MERGE PK 안내 차이로 숨김 데이터셋의 존재를 확인할 수 있었다. 새로 지정한 출력은 편집자가 볼 수 있어야 한다 —
+        // 숨김·없는 id 는 같은 403(DATASET_SQL_ACCESS_DENIED). MERGE PK 조회·saveStep(FK)보다 먼저 둬야 구분이 사라진다.
+        // 이미 이 파이프라인에 있던 출력 id(편집자가 자격을 잃은 뒤 웹이 그대로 되돌려 보내는 값)는 막지 않는다 — 막으면 다른 필드만
+        // 고쳐도 저장이 불가능해진다(왕복 보존). 실행 시점에는 실행 주체 기준으로 다시 판정된다(enforceOutputLevel).
         pipelineSecurityGate.checkStepOutputForSave(editorUserId, stepRequest.outputDatasetId());
       }
 
@@ -274,7 +291,9 @@ public class PipelineService {
             .orElseThrow(() -> new PipelineNotFoundException("Pipeline not found: " + id));
 
     List<PipelineStepResponse> steps =
-        stepRepository.findByPipelineId(id).stream().map(this::attachIncrementalMeta).toList();
+        stepRepository.findByPipelineId(id, datasetAccessGuard.visibleCondition()).stream()
+            .map(this::attachIncrementalMeta)
+            .toList();
 
     var updatedAt = pipelineRepository.findUpdatedAtById(id).orElse(null);
 
@@ -409,8 +428,15 @@ public class PipelineService {
       // 러너가 기존 임시 데이터셋을 찾지 못하고 빈 것을 새로 만든다. 그 새 출력에 책갈피만 이어받으면
       // 이전 실행분이 통째로 빠진 채 변경분만 쌓인다.
       Map<String, StepCursor> cursors = stepRepository.findCursorsByPipelineId(id);
+      // 왕복 보존용 기존 출력 id — 스텝 삭제 전에 뜬다. 이름이 아니라 파이프라인 전체 집합으로 비교한다(스텝 이름을 바꿔도 같은 출력을
+      // 되돌려 보내는 저장이 막히지 않게). 웹은 해석된 출력(TEMP 폴백 포함)을 되돌려 보내므로 해석된 값을 쓴다.
+      Set<Long> previouslySavedOutputIds = new java.util.HashSet<>();
+      stepRepository.findByPipelineId(id).stream()
+          .map(PipelineStepResponse::outputDatasetId)
+          .filter(java.util.Objects::nonNull)
+          .forEach(previouslySavedOutputIds::add);
       stepRepository.deleteByPipelineId(id);
-      saveSteps(id, request.steps(), userId);
+      saveSteps(id, request.steps(), userId, previouslySavedOutputIds);
       // 새로 저장하는 쪽의 동명 스텝은 따로 거를 필요가 없다 — pipeline_step 에는
       // UNIQUE (pipeline_id, name) 제약이 있어(V3:24) saveSteps 가 이 루프에 닿기 전에 실패하고
       // 트랜잭션 전체가 롤백된다. 이름을 이월 키로 쓸 수 있는 근거도 그 제약이다.

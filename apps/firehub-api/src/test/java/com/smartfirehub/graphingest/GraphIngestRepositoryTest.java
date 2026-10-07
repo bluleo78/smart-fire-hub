@@ -59,7 +59,7 @@ class GraphIngestRepositoryTest extends IntegrationTestBase {
       repo.save(9101L, 1, 1, 1, 1, 0, "SUCCESS"); // v1 적재(낡음, 바인딩 온톨로지 v3 미만)
       repo.save(9102L, 3, 1, 1, 1, 0, "SUCCESS"); // v3 적재(최신, 낡지 않음)
 
-      var stale = repo.findStale();
+      var stale = repo.findStale(org.jooq.impl.DSL.trueCondition());
 
       assertThat(stale).extracting("datasetId").contains(9101L).doesNotContain(9102L);
     } finally {
@@ -76,7 +76,7 @@ class GraphIngestRepositoryTest extends IntegrationTestBase {
       repo.save(9201L, 1, 1, 1, 1, 0, "SUCCESS");
       repo.save(9201L, 3, 1, 1, 1, 0, "SUCCESS");
 
-      var stale = repo.findStale();
+      var stale = repo.findStale(org.jooq.impl.DSL.trueCondition());
 
       assertThat(stale).extracting("datasetId").doesNotContain(9201L);
     } finally {
@@ -90,7 +90,7 @@ class GraphIngestRepositoryTest extends IntegrationTestBase {
     // stale 여부와 무관하게 결과에 나타나지 않아야 한다(적재 자체가 바인딩 전제이므로 정상 케이스).
     repo.save(9301L, 0, 1, 1, 1, 0, "SUCCESS");
 
-    var stale = repo.findStale();
+    var stale = repo.findStale(org.jooq.impl.DSL.trueCondition());
 
     assertThat(stale).extracting("datasetId").doesNotContain(9301L);
   }

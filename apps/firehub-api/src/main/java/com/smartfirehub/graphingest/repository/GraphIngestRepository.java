@@ -2,6 +2,8 @@ package com.smartfirehub.graphingest.repository;
 
 import static org.jooq.impl.DSL.field;
 import static org.jooq.impl.DSL.name;
+import static org.jooq.impl.DSL.not;
+import static org.jooq.impl.DSL.selectOne;
 import static org.jooq.impl.DSL.table;
 
 import com.smartfirehub.graphingest.dto.GraphIngestRecord;
@@ -9,6 +11,7 @@ import com.smartfirehub.graphingest.dto.GraphIngestRecord.StaleRow;
 import java.time.LocalDateTime;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
+import org.jooq.Condition;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Table;
@@ -62,6 +65,10 @@ public class GraphIngestRepository {
   private static final Field<Integer> O_SCHEMA_VER =
       field(name("ontology", "schema_version"), Integer.class);
 
+  // 가시성 필터용 데이터셋 조인 — DatasetAccessGuard#visibleCondition() 의 "dataset" 이름 관례와 맞춘다.
+  private static final Table<?> DATASET = table(name("dataset"));
+  private static final Field<Long> D_ID = field(name("dataset", "id"), Long.class);
+
   /** GraphRAG 적재 이력 1행 INSERT, 생성된 id 반환. */
   public long save(
       long datasetId,
@@ -113,8 +120,11 @@ public class GraphIngestRepository {
    * 테이블(latest)의 컬럼을 문자열 한정 이름(name())으로 재참조하여 필터링한다. jOOQ의 {@code Table.field(Field)} API는 원본
    * Field 객체를 그대로 넘기면 파생 테이블에서 매칭되지 않는 경우가 있어, 명시적으로 {@code field(name("latest", "col"),
    * Type.class)} 형태를 사용한다.
+   *
+   * @param datasetVisible {@code "dataset"} 이름 관례의 가시성 조건(DatasetAccessGuard#visibleCondition()) —
+   *     조회자가 볼 수 없는 데이터셋 id 는 결과에서 뺀다(보안 등급, 스펙 §2.5 존재 은닉). 필터 없이 쓰려면 trueCondition()
    */
-  public List<StaleRow> findStale() {
+  public List<StaleRow> findStale(Condition datasetVisible) {
     Table<?> latest =
         dsl.select(DATASET_ID, INGESTED_AT, SCHEMA_VER)
             .distinctOn(DATASET_ID)
@@ -133,6 +143,9 @@ public class GraphIngestRepository {
         .join(ONTOLOGY)
         .on(O_ID.eq(DO_ONTOLOGY_ID))
         .where(lVer.lt(O_SCHEMA_VER))
+        // 숨김 데이터셋 제외 — "데이터셋 행이 있는데 볼 수 없으면 뺀다"(홈 활동 피드와 같은 규칙). 데이터셋 행이 없는 이력은 드러낼
+        // 이름·등급이 없어 그대로 둔다.
+        .andNotExists(selectOne().from(DATASET).where(D_ID.eq(lDataset)).and(not(datasetVisible)))
         .fetch(r -> new StaleRow(r.get(lDataset), r.get(lAt), r.get(lVer), r.get(O_SCHEMA_VER)));
   }
 }

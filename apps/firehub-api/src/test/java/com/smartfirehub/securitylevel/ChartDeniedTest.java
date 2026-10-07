@@ -187,6 +187,38 @@ class ChartDeniedTest extends IntegrationTestBase {
     assertThat(values(m.get(pubChart))).containsExactly(PUB_VALUE);
   }
 
+  /**
+   * Task 3 E1 — denied 페이로드의 chart 는 최소 메타만: config(원본 테이블 컬럼명이 들어 있다)는 빈 맵, savedQueryName 은 null.
+   * 단건·대시보드 일괄 두 경로 모두. 양성 대조: 자격 있는 조회자는 config·저장 쿼리 이름을 그대로 받는다.
+   */
+  @Test
+  void deniedPayload_stripsConfigAndSavedQueryName() {
+    TenantRlsTestSupport.runInTenantTransaction(
+        fixtureTransactionTemplate,
+        DEFAULT_TEST_TENANT_ID,
+        () ->
+            dsl.execute(
+                "update chart set config = '{\"xAxis\":\"secret_col\"}'::jsonb where id in (?, ?)",
+                secChart,
+                pubChart));
+    ChartDataResponse single = chartService.getChartData(secChart, viewerAt("공개"));
+    assertThat(single.denied()).isTrue();
+    assertThat(single.chart().id()).isEqualTo(secChart);
+    assertThat(single.chart().config()).isEmpty();
+    assertThat(single.chart().savedQueryName()).isNull();
+
+    ChartDataResponse inDashboard =
+        byChart(dashboardService.getDashboardData(dashboardId, viewerAt("공개"))).get(secChart);
+    assertThat(inDashboard.denied()).isTrue();
+    assertThat(inDashboard.chart().config()).isEmpty();
+    assertThat(inDashboard.chart().savedQueryName()).isNull();
+
+    ChartDataResponse cleared = chartService.getChartData(secChart, viewerAt("민감"));
+    assertThat(cleared.denied()).isFalse();
+    assertThat(cleared.chart().config()).containsEntry("xAxis", "secret_col");
+    assertThat(cleared.chart().savedQueryName()).isNotNull();
+  }
+
   /** 판단 사항 19 — 파싱 불가 SQL 은 기존처럼 200 + error. 가드 예외가 읽기 트랜잭션을 rollback-only 로 만들어 500 이 나면 안 된다. */
   @Test
   void unparseableChartSql_keepsLegacyErrorResponse() {

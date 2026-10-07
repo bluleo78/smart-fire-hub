@@ -107,8 +107,16 @@ public class DatasetAccessGuard {
    * 현재 사용자 + DatasetRepository 관례({@code "dataset"."id"}, {@code "dataset"."security_level_id"}).
    */
   public Condition visibleCondition() {
+    return visibleCondition(clearanceResolver.current());
+  }
+
+  /**
+   * 명시 자격 + DatasetRepository 관례 이름. 요청 사용자가 아니라 서비스 인자 userId 로 자격을 계산하는 호출부(저장 쿼리 등)가 쓴다 — 조회 대상
+   * 테이블이 {@code "dataset"} 이름으로 조인돼 있어야 한다.
+   */
+  public Condition visibleCondition(Clearance c) {
     return visibleCondition(
-        clearanceResolver.current(),
+        c,
         field(name("dataset", "id"), Long.class),
         field(name("dataset", "security_level_id"), Long.class));
   }

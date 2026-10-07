@@ -1,7 +1,11 @@
 package com.smartfirehub.notification.service;
 
+import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.notification.dto.NotificationEvent;
 import com.smartfirehub.pipeline.event.PipelineCompletedEvent;
+import com.smartfirehub.securitylevel.access.ClearanceResolver;
+import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
+import com.smartfirehub.securitylevel.access.DatasetAction;
 import java.time.LocalDateTime;
 import java.util.Map;
 import java.util.UUID;
@@ -17,6 +21,9 @@ import org.springframework.stereotype.Service;
 public class NotificationService {
 
   private final SseEmitterRegistry registry;
+  // 데이터셋 변경 알림 수신자 판정(보안 등급) — 그 데이터셋을 볼 수 있는 같은 테넌트 사용자에게만 보낸다.
+  private final DatasetAccessGuard datasetAccessGuard;
+  private final ClearanceResolver clearanceResolver;
 
   @Async
   @EventListener
@@ -119,7 +126,17 @@ public class NotificationService {
     registry.broadcastAll(notification);
   }
 
+  /**
+   * 데이터셋 변경 알림. 예전에는 broadcastAll 로 <b>모든 테넌트의 모든 접속자</b>에게 데이터셋 이름을 보냈다. 이제 현재 테넌트(폴러가 세운
+   * TenantContext)의 연결 중 그 데이터셋을 VIEW 할 수 있는 사용자에게만 보낸다. 테넌트를 모르면 보내지 않는다(fail-closed). 웹 소비자는 쿼리
+   * 무효화만 하므로 페이로드 계약은 그대로다.
+   */
   public void notifyDatasetChanged(Long datasetId, String datasetName) {
+    Long tenantId = TenantContext.get();
+    if (tenantId == null) {
+      log.warn("notifyDatasetChanged without tenant context — skipped datasetId={}", datasetId);
+      return;
+    }
     NotificationEvent notification =
         new NotificationEvent(
             UUID.randomUUID().toString(),
@@ -132,6 +149,12 @@ public class NotificationService {
             Map.of("datasetName", datasetName),
             LocalDateTime.now());
 
-    registry.broadcastAll(notification);
+    registry.broadcastToTenant(
+        tenantId,
+        notification,
+        userId ->
+            datasetAccessGuard
+                .check(clearanceResolver.resolve(userId), datasetId, DatasetAction.VIEW, null)
+                .allowed());
   }
 }

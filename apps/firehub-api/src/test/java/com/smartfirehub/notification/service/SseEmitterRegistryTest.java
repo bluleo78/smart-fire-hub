@@ -30,22 +30,22 @@ class SseEmitterRegistryTest {
 
   @Test
   void register_returnsNonNullEmitter() {
-    SseEmitter emitter = registry.register(1L);
+    SseEmitter emitter = registry.register(1L, 1L);
     assertThat(emitter).isNotNull();
   }
 
   @Test
   void register_multipleUsersIndependent() {
-    SseEmitter e1 = registry.register(1L);
-    SseEmitter e2 = registry.register(2L);
+    SseEmitter e1 = registry.register(1L, 1L);
+    SseEmitter e2 = registry.register(2L, 1L);
     assertThat(e1).isNotSameAs(e2);
   }
 
   @Test
   void register_sameUser_multipleEmitters_allowed_up_to_max() {
-    SseEmitter e1 = registry.register(1L);
-    SseEmitter e2 = registry.register(1L);
-    SseEmitter e3 = registry.register(1L);
+    SseEmitter e1 = registry.register(1L, 1L);
+    SseEmitter e2 = registry.register(1L, 1L);
+    SseEmitter e3 = registry.register(1L, 1L);
     assertThat(e1).isNotNull();
     assertThat(e2).isNotNull();
     assertThat(e3).isNotNull();
@@ -54,11 +54,11 @@ class SseEmitterRegistryTest {
   @Test
   void register_exceedsMaxEmittersPerUser_evictsOldest() {
     // Register MAX_EMITTERS_PER_USER (3) emitters
-    SseEmitter e1 = registry.register(1L);
-    SseEmitter e2 = registry.register(1L);
-    SseEmitter e3 = registry.register(1L);
+    SseEmitter e1 = registry.register(1L, 1L);
+    SseEmitter e2 = registry.register(1L, 1L);
+    SseEmitter e3 = registry.register(1L, 1L);
     // 4th registration should evict e1
-    SseEmitter e4 = registry.register(1L);
+    SseEmitter e4 = registry.register(1L, 1L);
     assertThat(e4).isNotNull();
     // e1 was removed - broadcast should not throw
     registry.broadcast(1L, sampleEvent());
@@ -66,7 +66,7 @@ class SseEmitterRegistryTest {
 
   @Test
   void remove_removesEmitter_broadcastToRemovedUserIsNoOp() {
-    SseEmitter emitter = registry.register(1L);
+    SseEmitter emitter = registry.register(1L, 1L);
     registry.remove(1L, emitter);
     // No exception expected
     registry.broadcast(1L, sampleEvent());
@@ -100,8 +100,8 @@ class SseEmitterRegistryTest {
 
     // We cannot inject spy emitters directly via register() since it creates them internally.
     // Instead, register normally and verify broadcast does not throw.
-    registry.register(1L);
-    registry.register(2L);
+    registry.register(1L, 1L);
+    registry.register(2L, 1L);
     // broadcastAll should attempt to send to both users without throwing
     registry.broadcastAll(sampleEvent());
   }
@@ -117,7 +117,7 @@ class SseEmitterRegistryTest {
 
   @Test
   void sendHeartbeat_withRegisteredEmitter_noException() {
-    registry.register(1L);
+    registry.register(1L, 1L);
     registry.sendHeartbeat();
   }
 
@@ -128,7 +128,7 @@ class SseEmitterRegistryTest {
     deadEmitter.complete(); // mark as done -> subsequent sends will throw IllegalStateException
 
     // Register a live emitter first, then manually trigger cleanup via heartbeat
-    registry.register(1L);
+    registry.register(1L, 1L);
     // heartbeat should not throw even if some emitters are dead
     registry.sendHeartbeat();
   }
@@ -140,14 +140,14 @@ class SseEmitterRegistryTest {
   @Test
   void maxEmittersPerUser_isThree() {
     // Register 3 emitters for user 1 — all should succeed
-    SseEmitter e1 = registry.register(1L);
-    SseEmitter e2 = registry.register(1L);
-    SseEmitter e3 = registry.register(1L);
+    SseEmitter e1 = registry.register(1L, 1L);
+    SseEmitter e2 = registry.register(1L, 1L);
+    SseEmitter e3 = registry.register(1L, 1L);
     assertThat(e1).isNotNull();
     assertThat(e2).isNotNull();
     assertThat(e3).isNotNull();
     // 4th should evict oldest instead of throwing
-    SseEmitter e4 = registry.register(1L);
+    SseEmitter e4 = registry.register(1L, 1L);
     assertThat(e4).isNotNull();
   }
 

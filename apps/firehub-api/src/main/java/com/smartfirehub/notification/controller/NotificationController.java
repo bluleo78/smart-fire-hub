@@ -1,6 +1,7 @@
 package com.smartfirehub.notification.controller;
 
 import com.smartfirehub.global.security.RequirePermission;
+import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.notification.service.SseEmitterRegistry;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
@@ -24,6 +25,7 @@ public class NotificationController {
   @RequirePermission("dataset:read")
   public SseEmitter subscribe() {
     Long userId = (Long) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
-    return registry.register(userId);
+    // 연결마다 구독 테넌트를 남긴다 — 테넌트 범위 알림(데이터셋 변경 등)이 다른 테넌트 연결로 새지 않게.
+    return registry.register(userId, TenantContext.require("알림 스트림 구독"));
   }
 }

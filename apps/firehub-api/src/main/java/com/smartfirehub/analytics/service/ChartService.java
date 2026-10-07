@@ -47,8 +47,9 @@ public class ChartService {
   /** Create a new chart. Validates that the referenced saved query is accessible. */
   @Transactional
   public ChartResponse create(CreateChartRequest req, Long userId) {
+    // 저장 쿼리 접근 확인만 한다(연결 데이터셋 이름은 쓰지 않아 가시성 조건이 필요 없다).
     savedQueryRepository
-        .findById(req.savedQueryId(), userId)
+        .findById(req.savedQueryId(), userId, org.jooq.impl.DSL.trueCondition())
         .orElseThrow(
             () -> new SavedQueryNotFoundException("Saved query not found: " + req.savedQueryId()));
     if ("MAP".equals(req.chartType())) {
@@ -172,11 +173,28 @@ public class ChartService {
 
   /**
    * denied 위젯 응답 — queryResult 는 null 이 아닌 빈 결과(null 이면 차트 빌더 등 다른 소비자가 깨진다, 판단 사항 7). 거부 코드·원본 이름은
-   * 싣지 않는다. chart 메타데이터는 같은 조회자가 GET /charts/{id} 로 이미 받는 값과 같다(새로 드러나는 것 없음).
+   * 싣지 않는다. chart 는 웹 잠금 상태가 쓰는 최소 메타만 남긴다 — config(원본 테이블의 컬럼명이 들어 있다)는 빈 맵, savedQueryName 은
+   * null. 빈 맵인 이유: config 를 순회하는 소비자(웹 ChartRenderer·ai-agent)가 null 에서 깨지지 않게. GET /charts/{id} 의
+   * config 는 소유자 재저장 덮어쓰기 위험 때문에 그대로 둔다(알려진 한계).
    */
   public static ChartDataResponse deniedData(ChartResponse chart) {
+    ChartResponse minimal =
+        new ChartResponse(
+            chart.id(),
+            chart.name(),
+            chart.description(),
+            chart.savedQueryId(),
+            null,
+            chart.chartType(),
+            java.util.Map.of(),
+            chart.isShared(),
+            chart.createdByName(),
+            chart.createdBy(),
+            chart.createdAt(),
+            chart.updatedAt(),
+            chart.dashboardCount());
     return new ChartDataResponse(
-        chart,
+        minimal,
         new com.smartfirehub.analytics.dto.AnalyticsQueryResponse(
             "SELECT", List.of(), List.of(), 0, 0L, 0, false, null),
         true);

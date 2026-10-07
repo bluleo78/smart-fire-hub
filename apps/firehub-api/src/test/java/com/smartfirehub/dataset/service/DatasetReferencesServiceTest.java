@@ -68,6 +68,13 @@ class DatasetReferencesServiceTest extends IntegrationTestBase {
             .returning(USER.ID)
             .fetchOne()
             .getId();
+    // 보안 등급(Task 3 B2·D1): 파이프라인 출력·트리거 감시 대상으로 새로 지정하는 데이터셋은 저장자가 볼 수 있어야 한다 — 테스트
+    // 사용자를 기본 테넌트 USER(기본=내부) 멤버로 만든다. 자격이 없으면 저장이 DATASET_SQL_ACCESS_DENIED 로 거부된다.
+    com.smartfirehub.support.TenantRlsTestSupport.insertActiveMembership(
+        dsl, testUserId, DEFAULT_TEST_TENANT_ID);
+    dsl.execute(
+        "insert into user_role (user_id, role_id) select ?, id from role where name = 'USER'",
+        testUserId);
 
     // 참조 대상 데이터셋 + 무관한 비교 데이터셋 생성
     List<DatasetColumnRequest> columns =

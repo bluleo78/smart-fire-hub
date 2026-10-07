@@ -35,6 +35,7 @@ class TriggerServiceExtTest extends IntegrationTestBase {
   private Long pipelineId;
   private Long pipelineId2;
   private Long pipelineId3;
+  private Long watchedDatasetId;
 
   @BeforeEach
   void setUp() {
@@ -45,6 +46,23 @@ class TriggerServiceExtTest extends IntegrationTestBase {
             .set(USER.NAME, "Trig Ext User")
             .set(USER.EMAIL, "trigext_" + System.nanoTime() + "@example.com")
             .returning(USER.ID)
+            .fetchOne()
+            .getId();
+    // 보안 등급(Task 3 D1): DATASET_CHANGE 감시 대상은 저장자가 볼 수 있어야 한다 — 테스트 사용자를 기본 테넌트 USER(기본=내부)
+    // 멤버로 만들고, 감시 대상은 실제 데이터셋(기본 등급)으로 쓴다. 예전처럼 존재하지 않는 id(1,2,3)는 이제 저장이 거부된다.
+    com.smartfirehub.support.TenantRlsTestSupport.insertActiveMembership(
+        dsl, testUserId, DEFAULT_TEST_TENANT_ID);
+    dsl.execute(
+        "insert into user_role (user_id, role_id) select ?, id from role where name = 'USER'",
+        testUserId);
+    watchedDatasetId =
+        dsl.insertInto(DATASET)
+            .set(DATASET.NAME, "trigext_ds_" + System.nanoTime())
+            .set(DATASET.TABLE_NAME, "trigext_ds_" + System.nanoTime())
+            .set(DATASET.STORAGE_TYPE, "TABLE")
+            .set(DATASET.ORIGIN_TYPE, "SOURCE")
+            .set(DATASET.CREATED_BY, testUserId)
+            .returning(DATASET.ID)
             .fetchOne()
             .getId();
 
@@ -198,7 +216,7 @@ class TriggerServiceExtTest extends IntegrationTestBase {
             "Dataset Change Trigger",
             TriggerType.DATASET_CHANGE,
             "Watch datasets",
-            Map.of("datasetIds", List.of(1, 2, 3)));
+            Map.of("datasetIds", List.of(watchedDatasetId)));
 
     TriggerResponse response = triggerService.createTrigger(pipelineId, request, testUserId);
 
@@ -247,7 +265,13 @@ class TriggerServiceExtTest extends IntegrationTestBase {
             "Min Polling",
             TriggerType.DATASET_CHANGE,
             null,
-            Map.of("datasetIds", List.of(1), "pollingIntervalSeconds", 30, "debounceSeconds", 0));
+            Map.of(
+                "datasetIds",
+                List.of(watchedDatasetId),
+                "pollingIntervalSeconds",
+                30,
+                "debounceSeconds",
+                0));
 
     TriggerResponse response = triggerService.createTrigger(pipelineId, request, testUserId);
 

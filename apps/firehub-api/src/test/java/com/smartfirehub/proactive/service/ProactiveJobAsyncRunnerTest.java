@@ -93,7 +93,7 @@ class ProactiveJobAsyncRunnerTest {
             null);
     when(proactiveJobRepository.findById(JOB_ID, USER_ID)).thenReturn(Optional.of(job));
     when(executionRepository.create(JOB_ID)).thenReturn(EXECUTION_ID);
-    when(contextCollector.collectContext(any(), eq(JOB_ID))).thenReturn("{}");
+    when(contextCollector.collectContext(any(), eq(JOB_ID), any())).thenReturn("{}");
   }
 
   /**

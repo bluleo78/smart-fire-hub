@@ -7,6 +7,8 @@ import com.smartfirehub.pipeline.exception.TriggerNotFoundException;
 import com.smartfirehub.pipeline.repository.TriggerEventRepository;
 import com.smartfirehub.pipeline.repository.TriggerRepository;
 import com.smartfirehub.pipeline.repository.TriggerTenantResolver;
+import com.smartfirehub.securitylevel.access.ClearanceResolver;
+import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
@@ -37,18 +39,61 @@ public class TriggerService {
   private final TriggerTenantResolver triggerTenantResolver;
   private final PipelineService pipelineService;
   private final TriggerSchedulerService schedulerService;
+  // DATASET_CHANGE 감시 대상 VIEW 판정(보안 등급) — 저장하는 사용자가 볼 수 없는 데이터셋을 감시 대상으로 넣지 못하게.
+  private final DatasetAccessGuard datasetAccessGuard;
+  private final ClearanceResolver clearanceResolver;
 
   public TriggerService(
       TriggerRepository triggerRepository,
       TriggerEventRepository triggerEventRepository,
       TriggerTenantResolver triggerTenantResolver,
       @Lazy PipelineService pipelineService,
-      @Lazy TriggerSchedulerService schedulerService) {
+      @Lazy TriggerSchedulerService schedulerService,
+      DatasetAccessGuard datasetAccessGuard,
+      ClearanceResolver clearanceResolver) {
     this.triggerRepository = triggerRepository;
     this.triggerEventRepository = triggerEventRepository;
     this.triggerTenantResolver = triggerTenantResolver;
     this.pipelineService = pipelineService;
     this.schedulerService = schedulerService;
+    this.datasetAccessGuard = datasetAccessGuard;
+    this.clearanceResolver = clearanceResolver;
+  }
+
+  /**
+   * DATASET_CHANGE 감시 대상 중 <b>새로 추가되는</b> id 를 저장자 자격으로 판정한다(보안 등급). 판정이 없으면 숨김 데이터셋의 변경 시점이 트리거
+   * 발화로 드러나고, 숨김 id 는 201·없는 id 도 201 이라도 이후 발화 여부로 존재가 갈린다. 숨김·없는·형식이 잘못된 id 는 같은 403
+   * (DATASET_SQL_ACCESS_DENIED — 파이프라인 저장 거부와 같은 구분 불가 응답).
+   *
+   * <p>이미 저장돼 있던 id(저장자가 자격을 잃은 뒤 웹이 그대로 되돌려 보내는 값)는 판정하지 않는다 — 막으면 다른 설정만 고쳐도 저장할 수 없다(왕복 보존). 실행
+   * 시점에는 트리거 생성자(실행 주체) 기준으로 파이프라인 관문이 다시 판정한다.
+   *
+   * @param requested 요청 config 의 datasetIds 원값(List 가 아니면 호출부의 기존 검증이 처리한다)
+   * @param existing 이미 저장된 config 의 datasetIds(신규 생성이면 null)
+   */
+  private void requireNewWatchedDatasetsVisible(Object requested, Object existing, Long userId) {
+    if (!(requested instanceof List<?> requestedList)) {
+      return;
+    }
+    Set<Long> already = new HashSet<>();
+    if (existing instanceof List<?> existingList) {
+      for (Object o : existingList) {
+        if (o instanceof Number n) {
+          already.add(n.longValue());
+        }
+      }
+    }
+    List<Long> added = new ArrayList<>();
+    for (Object o : requestedList) {
+      // 숫자가 아닌 원소는 null 로 넘겨 가드가 같은 거부 응답을 내게 한다(형식 오류로 따로 구분하지 않는다).
+      Long id = o instanceof Number n ? n.longValue() : null;
+      if (id == null || !already.contains(id)) {
+        added.add(id);
+      }
+    }
+    if (!added.isEmpty()) {
+      datasetAccessGuard.requireDatasetReads(clearanceResolver.resolve(userId), added);
+    }
   }
 
   @Transactional
@@ -114,6 +159,8 @@ public class TriggerService {
         if (debounceSeconds < 0 || debounceSeconds > 3600) {
           throw new IllegalArgumentException("debounceSeconds must be between 0 and 3600");
         }
+        // 형식·범위 검증(400) 뒤에 VIEW 판정 — 감시 대상 판정은 저장 직전 마지막 관문이다.
+        requireNewWatchedDatasetsVisible(datasetIds, null, userId);
       }
     }
 
@@ -199,6 +246,8 @@ public class TriggerService {
           throw new IllegalArgumentException("debounceSeconds must be between 0 and 3600");
         }
       }
+      requireNewWatchedDatasetsVisible(
+          updatedConfig.get("datasetIds"), existing.config().get("datasetIds"), userId);
     }
 
     triggerRepository.update(triggerId, request, userId);

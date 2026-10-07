@@ -48,7 +48,7 @@ class ProactiveContextCollectorTest extends IntegrationTestBase {
     when(executionRepository.findByJobId(anyLong(), anyInt(), anyInt()))
         .thenReturn(List.of(execution));
 
-    String context = contextCollector.collectContext(Map.of(), 10L);
+    String context = contextCollector.collectContext(Map.of(), 10L, null);
 
     assertThat(context).contains("previousExecutions");
     assertThat(context).contains("테스트 내용");
@@ -56,7 +56,7 @@ class ProactiveContextCollectorTest extends IntegrationTestBase {
 
   @Test
   void collectContext_works_without_jobId() {
-    String context = contextCollector.collectContext(Map.of(), null);
+    String context = contextCollector.collectContext(Map.of(), null, null);
 
     assertThat(context).doesNotContain("previousExecutions");
     // 위 단언만으로는 공허하다 — 수집이 통째로 실패해 "{}" 를 돌려줘도 통과한다. 실제로 이
@@ -97,6 +97,14 @@ class ProactiveContextCollectorTest extends IntegrationTestBase {
     // 따라 0 일 수 있어(실측 0건) "양수" 단언이 DB 상태에 의존하면 안 된다 — 픽스처로 보장한다.
     Long ownerUserId =
         inTenantFixture(() -> TenantRlsTestSupport.insertUser(dsl, "proactive_guard_"));
+    // 보안 등급(Task 3): 대시보드 데이터는 작업 소유자 자격으로 걸러진다 — 소유자를 기본 테넌트 USER(기본=내부) 멤버로 만든다.
+    inTenantFixture(
+        () -> {
+          TenantRlsTestSupport.insertActiveMembership(dsl, ownerUserId, DEFAULT_TEST_TENANT_ID);
+          dsl.execute(
+              "insert into user_role (user_id, role_id) select ?, id from role where name = 'USER'",
+              ownerUserId);
+        });
     Long datasetId = inTenantFixture(() -> insertDataset(ownerUserId));
     // 활동 건수도 같은 이유로 픽스처로 보장한다. 피드는 기본 테넌트의 pipeline_execution 과
     // audit_log(CREATE/IMPORT)에서 만들어지는데, JVM 마다 새로 뜨는 Testcontainers DB 에서는 이 행들이
@@ -107,7 +115,7 @@ class ProactiveContextCollectorTest extends IntegrationTestBase {
     String tenantActivityResourceId = String.valueOf(datasetId);
     inTenantFixture(() -> insertDatasetCreateAudit(tenantActivityResourceId));
     try {
-      String context = contextCollector.collectContext(Map.of(), null);
+      String context = contextCollector.collectContext(Map.of(), null, ownerUserId);
 
       assertThat(context)
           .as("수집이 통째로 실패하면 아래 단언들이 공허해진다 — 네 섹션의 존재를 먼저 못박는다")
@@ -132,6 +140,8 @@ class ProactiveContextCollectorTest extends IntegrationTestBase {
       inTenantFixture(
           () -> {
             dsl.deleteFrom(DATASET).where(DATASET.ID.eq(datasetId)).execute();
+            dsl.execute("delete from user_role where user_id = ?", ownerUserId);
+            TenantRlsTestSupport.deleteMembership(dsl, ownerUserId);
             TenantRlsTestSupport.deleteUser(dsl, ownerUserId); // FK 순서상 데이터셋 뒤
           });
     }

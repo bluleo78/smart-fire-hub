@@ -136,16 +136,14 @@ class NotificationServiceTest extends IntegrationTestBase {
   // notifyDatasetChanged
   // =========================================================================
 
-  /**
-   * 정상: 데이터셋 변경 알림 시 registry.broadcastAll()이 DATASET_CHANGED 이벤트로 호출되어야 한다. 특정 사용자가 아닌 전체
-   * 브로드캐스트이므로 broadcastAll()을 사용해야 한다.
-   */
+  /** 정상: 데이터셋 변경 알림은 현재 테넌트(1) 범위 브로드캐스트로 DATASET_CHANGED 이벤트를 보낸다(Task 3 D2 — 전체 브로드캐스트 금지). */
   @Test
-  void notifyDatasetChanged_broadcastsToAll() {
+  void notifyDatasetChanged_broadcastsToCurrentTenant() {
     notificationService.notifyDatasetChanged(50L, "Geo Dataset");
 
     ArgumentCaptor<NotificationEvent> captor = forClass(NotificationEvent.class);
-    verify(registry).broadcastAll(captor.capture());
+    verify(registry).broadcastToTenant(eq(1L), captor.capture(), any());
+    verify(registry, never()).broadcastAll(any());
     verify(registry, never()).broadcast(any(), any());
 
     NotificationEvent notification = captor.getValue();

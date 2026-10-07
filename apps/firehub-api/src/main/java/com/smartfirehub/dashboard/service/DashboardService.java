@@ -12,6 +12,9 @@ import com.smartfirehub.dashboard.dto.SystemHealthResponse;
 import com.smartfirehub.dashboard.dto.SystemHealthResponse.DatasetHealth;
 import com.smartfirehub.dashboard.dto.SystemHealthResponse.PipelineHealth;
 import com.smartfirehub.global.tenant.DataSchema;
+import com.smartfirehub.securitylevel.access.Clearance;
+import com.smartfirehub.securitylevel.access.ClearanceResolver;
+import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -20,6 +23,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
+import org.jooq.Condition;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Record;
@@ -32,6 +36,17 @@ import org.springframework.transaction.annotation.Transactional;
 public class DashboardService {
 
   private final DSLContext dsl;
+
+  /**
+   * 보안 등급 가시성(스펙 §2.5 존재 은닉) — 홈 화면은 조회자가 볼 수 없는 데이터셋의 이름·건수·활동을 싣지 않는다. 각 공개 메서드는 두 형태다: 인자 없는 형태는
+   * 요청 경로(홈 대시보드 API)용으로 현재 요청 사용자 자격을, {@link Clearance} 를 받는 형태는 비요청 경로(proactive 리포트 컨텍스트 수집 —
+   * 요청 사용자가 없어 current() 가 "아무것도 못 봄"이 된다)용으로 명시 자격을 쓴다.
+   *
+   * <p>인자 없는 형태에도 @Transactional 을 둔다 — 자기 호출은 프록시를 우회하므로 위임받는 쪽 어노테이션만으로는 트랜잭션(=RLS GUC)이 열리지 않는다.
+   */
+  private final DatasetAccessGuard datasetAccessGuard;
+
+  private final ClearanceResolver clearanceResolver;
 
   // Table constants
   private static final Table<?> DATASET = table(name("dataset"));
@@ -113,14 +128,23 @@ public class DashboardService {
 
   @Transactional(readOnly = true)
   public DashboardStatsResponse getStats() {
+    return getStats(clearanceResolver.current());
+  }
+
+  @Transactional(readOnly = true)
+  public DashboardStatsResponse getStats(Clearance viewer) {
+    // 조회자가 볼 수 있는 데이터셋만 센다·싣는다(보안 등급) — 숨김 데이터셋 개수·이름이 홈에서 새지 않게.
+    Condition visible = datasetAccessGuard.visibleCondition(viewer);
+
     // Count total datasets
-    long totalDatasets = dsl.selectCount().from(DATASET).fetchOne(0, Long.class);
+    long totalDatasets = dsl.selectCount().from(DATASET).where(visible).fetchOne(0, Long.class);
 
     // Count source datasets
     long sourceDatasets =
         dsl.selectCount()
             .from(DATASET)
             .where(D_STORAGE_TYPE.eq("TABLE").and(D_ORIGIN_TYPE.eq("SOURCE")))
+            .and(visible)
             .fetchOne(0, Long.class);
 
     // Count derived datasets
@@ -128,6 +152,7 @@ public class DashboardService {
         dsl.selectCount()
             .from(DATASET)
             .where(D_STORAGE_TYPE.eq("TABLE").and(D_ORIGIN_TYPE.eq("DERIVED")))
+            .and(visible)
             .fetchOne(0, Long.class);
 
     // Count total pipelines
@@ -146,6 +171,8 @@ public class DashboardService {
             .join(DATASET)
             .on(AL_RESOURCE_ID_AS_LONG.eq(D_ID))
             .where(AL_ACTION_TYPE.eq("IMPORT").and(AL_RESOURCE.eq("dataset")))
+            // LIMIT 전에 SQL 에서 거른다 — 자바 후처리면 숨김 행이 상위 5개를 차지해 볼 수 있는 임포트가 밀려난다.
+            .and(visible)
             .orderBy(AL_ACTION_TIME.desc())
             .limit(5)
             .fetch(
@@ -189,6 +216,11 @@ public class DashboardService {
 
   @Transactional(readOnly = true)
   public SystemHealthResponse getSystemHealth() {
+    return getSystemHealth(clearanceResolver.current());
+  }
+
+  @Transactional(readOnly = true)
+  public SystemHealthResponse getSystemHealth(Clearance viewer) {
     // ---- Pipeline health ----
     // Count all pipelines
     int totalPipelines = dsl.selectCount().from(PIPELINE).fetchOne(0, int.class);
@@ -253,7 +285,9 @@ public class DashboardService {
             pipelineTrend);
 
     // ---- Dataset health ----
-    int totalDatasets = dsl.selectCount().from(DATASET).fetchOne(0, int.class);
+    // 데이터셋 건강도 개수는 조회자가 볼 수 있는 데이터셋만 집계한다(보안 등급 — 숨김 데이터셋 존재가 개수로 드러나지 않게).
+    Condition visible = datasetAccessGuard.visibleCondition(viewer);
+    int totalDatasets = dsl.selectCount().from(DATASET).where(visible).fetchOne(0, int.class);
 
     LocalDateTime now = LocalDateTime.now();
     LocalDateTime freshThreshold = now.minusHours(24);
@@ -271,7 +305,8 @@ public class DashboardService {
                         .and(AL_RESOURCE.eq("dataset"))
                         .and(AL_RESULT.eq("SUCCESS"))
                         .and(AL_ACTION_TIME.greaterThan(freshThreshold))
-                        .and(D_STORAGE_TYPE.eq("TABLE").and(D_ORIGIN_TYPE.eq("SOURCE")))));
+                        .and(D_STORAGE_TYPE.eq("TABLE").and(D_ORIGIN_TYPE.eq("SOURCE")))
+                        .and(visible)));
 
     // Also count source datasets created within 24h with no imports (brand new = fresh)
     int newSourceNoImport =
@@ -283,6 +318,7 @@ public class DashboardService {
                         .eq("TABLE")
                         .and(D_ORIGIN_TYPE.eq("SOURCE"))
                         .and(D_CREATED_AT.greaterThan(freshThreshold))
+                        .and(visible)
                         .and(
                             notExists(
                                 dsl.selectOne()
@@ -310,7 +346,8 @@ public class DashboardService {
                         .eq("IMPORT")
                         .and(AL_RESOURCE.eq("dataset"))
                         .and(AL_RESULT.eq("SUCCESS"))
-                        .and(D_STORAGE_TYPE.eq("TABLE").and(D_ORIGIN_TYPE.eq("SOURCE"))))
+                        .and(D_STORAGE_TYPE.eq("TABLE").and(D_ORIGIN_TYPE.eq("SOURCE")))
+                        .and(visible))
                 .andNot(
                     exists(
                         dsl.selectOne()
@@ -335,6 +372,7 @@ public class DashboardService {
                         .eq("TABLE")
                         .and(D_ORIGIN_TYPE.eq("SOURCE"))
                         .and(D_CREATED_AT.lessOrEqual(staleThreshold))
+                        .and(visible)
                         .and(
                             notExists(
                                 dsl.selectOne()
@@ -363,14 +401,20 @@ public class DashboardService {
                         // 분리되는 순간 이 조인이 **예외도 로그도 없이 0행**이 되고, 빈 데이터셋
                         // 개수가 조용히 0 으로 렌더링된다(오류로 보이지 않는 오답).
                         .and(field("psu.schemaname", String.class).eq(DataSchema.current())))
-                .where(field("psu.n_live_tup", Long.class).eq(0L)));
+                .where(field("psu.n_live_tup", Long.class).eq(0L))
+                .and(visible));
 
     // ---- Dataset trend (최근 7일 일자별 임포트 이력 건수, #669) ----
     Field<LocalDate> auditDay = field("CAST({0} AS date)", LocalDate.class, AL_ACTION_TIME);
+    // 숨김 데이터셋의 이력은 추이에서 뺀다(볼 수 있는 것만 집계). 데이터셋 행이 없는 이력(삭제된 데이터셋)은 기존처럼 센다 —
+    // 삭제된 데이터셋은 이름·존재를 드러낼 대상이 없다.
     Map<LocalDate, Integer> datasetCountsByDay =
         dsl.select(auditDay, count())
             .from(AUDIT_LOG)
+            .leftJoin(DATASET)
+            .on(AL_RESOURCE_ID_AS_LONG.eq(D_ID))
             .where(AL_RESOURCE.eq("dataset").and(AL_ACTION_TIME.greaterOrEqual(trendFrom)))
+            .and(D_ID.isNull().or(visible))
             .groupBy(auditDay)
             .fetchMap(r -> r.get(auditDay), r -> r.get(1, Integer.class));
     List<Integer> datasetTrend = fillTrendDays(datasetCountsByDay);
@@ -383,7 +427,14 @@ public class DashboardService {
 
   @Transactional(readOnly = true)
   public List<AttentionItemResponse> getAttentionItems() {
+    return getAttentionItems(clearanceResolver.current());
+  }
+
+  @Transactional(readOnly = true)
+  public List<AttentionItemResponse> getAttentionItems(Clearance viewer) {
     List<AttentionItemResponse> items = new ArrayList<>();
+    // 임포트 실패 항목은 조회자가 볼 수 있는 데이터셋만(보안 등급 — 항목 제목에 데이터셋 이름이 실린다).
+    Condition visible = datasetAccessGuard.visibleCondition(viewer);
     LocalDateTime now = LocalDateTime.now();
     LocalDateTime twoHoursAgo = now.minusHours(2);
     LocalDateTime twentyFourHoursAgo = now.minusHours(24);
@@ -464,7 +515,8 @@ public class DashboardService {
                     .eq("IMPORT")
                     .and(AL_RESOURCE.eq("dataset"))
                     .and(AL_RESULT.eq("FAILURE"))
-                    .and(AL_ACTION_TIME.greaterThan(twentyFourHoursAgo)))
+                    .and(AL_ACTION_TIME.greaterThan(twentyFourHoursAgo))
+                    .and(visible))
             .orderBy(AL_ACTION_TIME.desc())
             .fetch();
 
@@ -495,6 +547,12 @@ public class DashboardService {
   @Transactional(readOnly = true)
   public ActivityFeedResponse getActivityFeed(
       String typeFilter, String severityFilter, int page, int size) {
+    return getActivityFeed(typeFilter, severityFilter, page, size, clearanceResolver.current());
+  }
+
+  @Transactional(readOnly = true)
+  public ActivityFeedResponse getActivityFeed(
+      String typeFilter, String severityFilter, int page, int size, Clearance viewer) {
 
     // Build activity items from two sources:
     // 1. pipeline_execution — pipeline events
@@ -590,6 +648,10 @@ public class DashboardService {
             .on(AL_RESOURCE.eq("dataset").and(AL_RESOURCE_ID_AS_LONG.eq(D_ID)))
             .where(
                 AL_ACTION_TYPE.in("IMPORT", "CREATE").and(AL_RESOURCE.in("dataset", "dashboard")))
+            // 보안 등급: 조회자가 볼 수 없는 데이터셋 유래 활동은 뺀다. ON 이 아니라 WHERE 에 둔다 — ON 에 두면 숨김 행이
+            // "dataset #id" 로 남아 id 가 새고, 자바 후처리면 LIMIT 500 이 볼 수 있는 행을 먼저 잘라 낸다. 데이터셋 행이
+            // 없는 이력(삭제된 데이터셋·대시보드 이벤트)은 D_ID 가 null 이라 기존처럼 남는다.
+            .and(D_ID.isNull().or(datasetAccessGuard.visibleCondition(viewer)))
             .orderBy(AL_ACTION_TIME.desc())
             .limit(500)
             .fetch();

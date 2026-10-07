@@ -57,6 +57,16 @@ class SavedQueryServiceTest extends IntegrationTestBase {
             .returning(DSL.field(DSL.name("user", "id"), Long.class))
             .fetchOne()
             .get(DSL.field(DSL.name("user", "id"), Long.class));
+
+    // 보안 등급(Task 3 C1/C2): 연결 데이터셋 이름·지정은 사용자 자격으로 판정한다 — 두 사용자를 기본 테넌트 USER(기본=내부) 멤버로
+    // 만든다. 자격이 없으면 이름이 null 이 되고 datasetId 지정이 404 로 거부된다(그 자체가 이 태스크의 동작).
+    for (Long uid : List.of(ownerUserId, otherUserId)) {
+      com.smartfirehub.support.TenantRlsTestSupport.insertActiveMembership(
+          dsl, uid, DEFAULT_TEST_TENANT_ID);
+      dsl.execute(
+          "insert into user_role (user_id, role_id) select ?, id from role where name = 'USER'",
+          uid);
+    }
   }
 
   // =========================================================================
@@ -122,11 +132,9 @@ class SavedQueryServiceTest extends IntegrationTestBase {
                 savedQueryService.create(
                     new CreateSavedQueryRequest("Q", null, "SELECT 1", 999999L, null, false),
                     ownerUserId))
-        .isInstanceOf(ResponseStatusException.class)
-        .satisfies(
-            ex ->
-                assertThat(((ResponseStatusException) ex).getStatusCode())
-                    .isEqualTo(HttpStatus.NOT_FOUND));
+        // 없는 id 는 숨김 id 와 같은 DatasetNotFoundException(404, 같은 메시지)이다(존재 은닉 — Task 3 C2).
+        .isInstanceOf(com.smartfirehub.dataset.exception.DatasetNotFoundException.class)
+        .hasMessage("Dataset not found: 999999");
   }
 
   // =========================================================================

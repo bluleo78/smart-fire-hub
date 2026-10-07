@@ -137,15 +137,21 @@ class NotificationServiceUnitTest {
   // =========================================================================
 
   /**
-   * 정상: 데이터셋 변경 알림은 특정 사용자가 아닌 전체 브로드캐스트여야 한다. registry.broadcastAll()이 DATASET_CHANGED 이벤트로 호출되고
-   * registry.broadcast()는 호출되지 않아야 한다.
+   * 정상: 데이터셋 변경 알림은 현재 테넌트 범위 브로드캐스트여야 한다(Task 3 D2 — 예전 broadcastAll 은 모든 테넌트 접속자에게 데이터셋 이름을 보냈다).
+   * 수신자 VIEW 판정은 통합 테스트(DatasetChangeNotificationScopeTest)가 검증한다.
    */
   @Test
-  void notifyDatasetChanged_callsBroadcastAll() {
-    notificationService.notifyDatasetChanged(50L, "Geo Dataset");
+  void notifyDatasetChanged_broadcastsToCurrentTenantOnly() {
+    com.smartfirehub.global.tenant.TenantContext.set(1L);
+    try {
+      notificationService.notifyDatasetChanged(50L, "Geo Dataset");
+    } finally {
+      com.smartfirehub.global.tenant.TenantContext.clear();
+    }
 
     ArgumentCaptor<NotificationEvent> captor = forClass(NotificationEvent.class);
-    verify(registry).broadcastAll(captor.capture());
+    verify(registry).broadcastToTenant(eq(1L), captor.capture(), any());
+    verify(registry, never()).broadcastAll(any());
     verify(registry, never()).broadcast(any(), any());
 
     NotificationEvent notification = captor.getValue();
@@ -155,6 +161,14 @@ class NotificationServiceUnitTest {
     assertThat(notification.entityId()).isEqualTo(50L);
     assertThat(notification.metadata()).containsEntry("datasetName", "Geo Dataset");
     assertThat(notification.title()).isEqualTo("Dataset Changed");
+  }
+
+  /** 테넌트 컨텍스트가 없으면 아무에게도 보내지 않는다(fail-closed). */
+  @Test
+  void notifyDatasetChanged_withoutTenant_sendsNothing() {
+    notificationService.notifyDatasetChanged(50L, "Geo Dataset");
+
+    verifyNoInteractions(registry);
   }
 
   // =========================================================================

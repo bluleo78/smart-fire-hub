@@ -102,7 +102,8 @@ public class ProactiveJobAsyncRunner {
               .orElseThrow(() -> new ProactiveJobException("Job을 찾을 수 없습니다: " + jobId));
 
       // 컨텍스트 수집
-      String context = contextCollector.collectContext(job.config(), jobId);
+      // 컨텍스트는 작업 소유자 자격으로 거른다(보안 등급 — 볼 수 없는 데이터셋 이름이 리포트에 실리지 않게).
+      String context = contextCollector.collectContext(job.config(), jobId, userId);
 
       // 템플릿 조회 (templateId가 있으면 sections/style 포함)
       Map<String, Object> template = null;

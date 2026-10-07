@@ -7,12 +7,14 @@ import com.smartfirehub.analytics.dto.SavedQueryResponse;
 import com.smartfirehub.analytics.dto.UpdateSavedQueryRequest;
 import com.smartfirehub.analytics.exception.SavedQueryNotFoundException;
 import com.smartfirehub.analytics.repository.SavedQueryRepository;
-import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
+import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.securitylevel.sql.GuardedSqlExecutor;
 import java.util.List;
+import java.util.Objects;
 import lombok.RequiredArgsConstructor;
+import org.jooq.Condition;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -23,9 +25,17 @@ import org.springframework.web.server.ResponseStatusException;
 public class SavedQueryService {
 
   private final SavedQueryRepository savedQueryRepository;
-  private final DatasetRepository datasetRepository;
   private final GuardedSqlExecutor guardedSqlExecutor;
   private final ClearanceResolver clearanceResolver;
+  private final DatasetAccessGuard datasetAccessGuard;
+
+  /**
+   * 응답의 연결 데이터셋 이름 가시성(보안 등급, 스펙 §2.5) — 조회자가 볼 수 없는 데이터셋은 이름만 null, datasetId 는 유지(웹 편집기가 PUT 으로
+   * 되돌려 보내는 참조를 지우지 않게).
+   */
+  private Condition datasetNameVisible(Long userId) {
+    return datasetAccessGuard.visibleCondition(clearanceResolver.resolve(userId));
+  }
 
   /** List saved queries with optional filters and pagination. */
   // RLS 가 걸린 saved_query 를 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
@@ -33,7 +43,8 @@ public class SavedQueryService {
   public PageResponse<SavedQueryListResponse> list(
       String search, String folder, Boolean sharedOnly, Long userId, int page, int size) {
     List<SavedQueryListResponse> content =
-        savedQueryRepository.findAll(search, folder, sharedOnly, userId, page, size);
+        savedQueryRepository.findAll(
+            search, folder, sharedOnly, userId, page, size, datasetNameVisible(userId));
     long total = savedQueryRepository.countAll(search, folder, sharedOnly, userId);
     int totalPages = (int) Math.ceil((double) total / size);
     return new PageResponse<>(content, page, size, total, totalPages);
@@ -42,17 +53,14 @@ public class SavedQueryService {
   /** Create a new saved query. */
   @Transactional
   public SavedQueryResponse create(CreateSavedQueryRequest req, Long userId) {
+    // 연결 데이터셋은 생성자가 볼 수 있어야 한다(보안 등급) — 필터 없는 존재 확인이면 숨김 id 는 201·이름 노출, 없는 id 는 404 로 갈려 이름
+    // 확인 경로가 됐다. requireView 는 숨김·없음을 바이트 단위로 같은 404 로 낸다.
     if (req.datasetId() != null) {
-      datasetRepository
-          .findById(req.datasetId())
-          .orElseThrow(
-              () ->
-                  new ResponseStatusException(
-                      HttpStatus.NOT_FOUND, "Dataset not found: " + req.datasetId()));
+      datasetAccessGuard.requireView(clearanceResolver.resolve(userId), req.datasetId());
     }
     Long id = savedQueryRepository.insert(req, userId);
     return savedQueryRepository
-        .findById(id, userId)
+        .findById(id, userId, datasetNameVisible(userId))
         .orElseThrow(() -> new SavedQueryNotFoundException("Saved query not found after insert"));
   }
 
@@ -63,7 +71,7 @@ public class SavedQueryService {
   @Transactional(readOnly = true)
   public SavedQueryResponse getById(Long id, Long userId) {
     return savedQueryRepository
-        .findById(id, userId)
+        .findById(id, userId, datasetNameVisible(userId))
         .orElseThrow(() -> new SavedQueryNotFoundException("Saved query not found: " + id));
   }
 
@@ -75,8 +83,14 @@ public class SavedQueryService {
   public SavedQueryResponse update(Long id, UpdateSavedQueryRequest req, Long userId) {
     SavedQueryResponse existing =
         savedQueryRepository
-            .findByIdForOwner(id, userId)
+            .findByIdForOwner(id, userId, datasetNameVisible(userId))
             .orElseThrow(() -> new SavedQueryNotFoundException("Saved query not found: " + id));
+
+    // 연결 데이터셋을 바꾸는 경우만 판정한다(create 와 같은 404) — 웹 편집기가 기존 값(편집자가 자격을 잃은 숨김 id 포함)을 그대로 되돌려
+    // 보내는 저장은 막지 않는다(왕복 보존).
+    if (req.datasetId() != null && !Objects.equals(req.datasetId(), existing.datasetId())) {
+      datasetAccessGuard.requireView(clearanceResolver.resolve(userId), req.datasetId());
+    }
 
     // Protect shared query SQL if other users' charts reference it
     if (req.sqlText() != null && !req.sqlText().equals(existing.sqlText()) && existing.isShared()) {
@@ -89,7 +103,7 @@ public class SavedQueryService {
 
     savedQueryRepository.update(id, req, userId);
     return savedQueryRepository
-        .findByIdForOwner(id, userId)
+        .findByIdForOwner(id, userId, datasetNameVisible(userId))
         .orElseThrow(() -> new SavedQueryNotFoundException("Saved query not found: " + id));
   }
 
@@ -98,7 +112,7 @@ public class SavedQueryService {
   public void delete(Long id, Long userId) {
     // Verify ownership first
     savedQueryRepository
-        .findByIdForOwner(id, userId)
+        .findByIdForOwner(id, userId, datasetNameVisible(userId))
         .orElseThrow(() -> new SavedQueryNotFoundException("Saved query not found: " + id));
     boolean deleted = savedQueryRepository.deleteById(id, userId);
     if (!deleted) {
@@ -135,7 +149,7 @@ public class SavedQueryService {
 
     Long newId = savedQueryRepository.insert(cloneReq, userId);
     return savedQueryRepository
-        .findById(newId, userId)
+        .findById(newId, userId, datasetNameVisible(userId))
         .orElseThrow(() -> new SavedQueryNotFoundException("Clone failed"));
   }
 
