@@ -133,6 +133,17 @@ class GuardedSqlExecutorTest extends IntegrationTestBase {
         .isEqualTo("DATASET_SQL_ACCESS_DENIED");
   }
 
+  /**
+   * 차트·대시보드 사전 판정(Task 16)도 실행 문자열(정규화본)을 판정한다 — 원문을 판정하면 사전 판정은 통과하고 실행 관문만 거부해 위젯 denied 가 아니라 요청
+   * 실패가 된다. 파싱 불가 SQL 은 거부가 아니다(실행이 200 + error 로 바꾼다).
+   */
+  @Test
+  void analyticsDeniedPrecheck_judgesTheExecutedString_notTheRawInput() {
+    assertThat(gate.isAnalyticsDenied(viewer, strippedOnlyLeak())).isTrue();
+    assertThat(gate.isAnalyticsDenied(viewer, "SELECT a FROM " + pub)).isFalse();
+    assertThat(gate.isAnalyticsDenied(viewer, "SELEC a FRM x")).isFalse();
+  }
+
   @Test
   void datasetQuery_judgesTheExecutedString_notTheRawInput() {
     asUser(userId);

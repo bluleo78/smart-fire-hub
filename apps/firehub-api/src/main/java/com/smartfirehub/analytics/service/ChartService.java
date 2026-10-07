@@ -9,6 +9,7 @@ import com.smartfirehub.analytics.exception.SavedQueryNotFoundException;
 import com.smartfirehub.analytics.repository.ChartRepository;
 import com.smartfirehub.analytics.repository.SavedQueryRepository;
 import com.smartfirehub.global.dto.PageResponse;
+import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.sql.GuardedSqlExecutor;
@@ -142,10 +143,38 @@ public class ChartService {
             .findSavedQuerySqlText(id, userId)
             .orElseThrow(
                 () -> new SavedQueryNotFoundException("Saved query not found for chart: " + id));
-    // 보안 등급(S2): 조회자 자격으로 차트 SQL 의 참조 데이터셋을 판정한다(Task 16 이 denied 응답으로 바꾼다).
-    var queryResult =
-        guardedSqlExecutor.executeAnalytics(
-            clearanceResolver.resolve(userId), sqlText, 1000, false);
-    return new ChartDataResponse(chart, queryResult);
+    // 보안 등급(S2): 조회자 기준 판정 — 위반이면 실행하지 않고 200 + denied. 단건 위젯 경로(DashboardWidgetCard→useChartData)도
+    // 대시보드 일괄 경로와 같은 계약이어야 위젯 하나가 화면 전체를 오류로 만들지 않는다(스펙 §4.2 4행).
+    Clearance viewer = clearanceResolver.resolve(userId);
+    if (guardedSqlExecutor.isAnalyticsDenied(viewer, sqlText)) {
+      return deniedData(chart);
+    }
+    try {
+      return new ChartDataResponse(
+          chart, guardedSqlExecutor.executeAnalytics(viewer, sqlText, 1000, false));
+    } catch (CodedApiException e) {
+      // 사전 판정과 실행 판정 사이 경합(등급·자격 변경)으로 실행 관문이 거부한 경우도 같은 denied 로 — 403 으로 새지 않게.
+      if (GuardedSqlExecutor.isSqlAccessDenial(e)) {
+        return deniedData(chart);
+      }
+      throw e;
+    }
+  }
+
+  /** 조회자가 차트 SQL 을 볼 수 없는지 판정한다(대시보드 일괄 경로용 — 캐시를 읽기 전에 매 요청 호출한다). 실행 문자열과 같은 정규화본을 판정한다. */
+  public boolean isDeniedFor(Clearance viewer, String sqlText) {
+    return guardedSqlExecutor.isAnalyticsDenied(viewer, sqlText);
+  }
+
+  /**
+   * denied 위젯 응답 — queryResult 는 null 이 아닌 빈 결과(null 이면 차트 빌더 등 다른 소비자가 깨진다, 판단 사항 7). 거부 코드·원본 이름은
+   * 싣지 않는다. chart 메타데이터는 같은 조회자가 GET /charts/{id} 로 이미 받는 값과 같다(새로 드러나는 것 없음).
+   */
+  public static ChartDataResponse deniedData(ChartResponse chart) {
+    return new ChartDataResponse(
+        chart,
+        new com.smartfirehub.analytics.dto.AnalyticsQueryResponse(
+            "SELECT", List.of(), List.of(), 0, 0L, 0, false, null),
+        true);
   }
 }

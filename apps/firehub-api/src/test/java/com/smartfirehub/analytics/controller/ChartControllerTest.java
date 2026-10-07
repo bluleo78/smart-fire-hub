@@ -140,6 +140,31 @@ class ChartControllerTest {
         .andExpect(status().isOk());
   }
 
+  /**
+   * 보안 등급(Task 16) — 열람 거부 차트는 403 이 아니라 200 + denied:true, queryResult 는 null 이 아닌 빈 결과. 거부 코드는
+   * 본문에 싣지 않는다(스펙 §2.5).
+   */
+  @Test
+  void getChartData_denied_returns200WithDeniedFlagAndEmptyResult() throws Exception {
+    mockAuth("analytics:read");
+    when(chartService.getChartData(eq(5L), eq(1L)))
+        .thenReturn(ChartService.deniedData(sampleChartResponse(5L)));
+
+    mockMvc
+        .perform(
+            get("/api/v1/analytics/charts/5/data").header("Authorization", "Bearer valid-token"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.denied").value(true))
+        .andExpect(jsonPath("$.queryResult.columns").isEmpty())
+        .andExpect(jsonPath("$.queryResult.rows").isEmpty())
+        .andExpect(jsonPath("$.queryResult.error").doesNotExist())
+        .andExpect(
+            org.springframework.test.web.servlet.result.MockMvcResultMatchers.content()
+                .string(
+                    org.hamcrest.Matchers.not(
+                        org.hamcrest.Matchers.containsString("DATASET_SQL_ACCESS_DENIED"))));
+  }
+
   /** ChartResponse 샘플 객체 생성 헬퍼 — DTO 필드 수에 대응하기 위해 리플렉션으로 인스턴스화 시도 없이 직접 작성한다. */
   private static ChartResponse sampleChartResponse(Long id) {
     // ChartResponse 레코드는 필드가 많을 수 있으므로 Map 기반 실제 필드 세팅 대신 null/빈 값으로 생성한다.

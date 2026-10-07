@@ -5,6 +5,7 @@ import com.smartfirehub.analytics.service.AnalyticsQueryExecutionService;
 import com.smartfirehub.dataset.dto.SqlQueryResponse;
 import com.smartfirehub.dataset.exception.SqlQueryException;
 import com.smartfirehub.dataset.service.DataTableQueryService;
+import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.util.NormalizedSql;
 import com.smartfirehub.pipeline.exception.UnsafeSqlException;
 import com.smartfirehub.securitylevel.access.Clearance;
@@ -63,5 +64,31 @@ public class GuardedSqlExecutor {
           "UNKNOWN", List.of(), List.of(), 0, 0L, 0, false, e.getMessage());
     }
     return analyticsExecution.execute(normalized, maxRows, readOnly);
+  }
+
+  /**
+   * 차트·대시보드용 사전 판정 — 거부를 예외가 아니라 값으로 돌려준다(위젯 하나 때문에 페이지 전체가 403 이 되지 않게, 스펙 §4.2 4행).
+   *
+   * <p>{@link #executeAnalytics} 와 <b>같은 문자열</b>({@link NormalizedSql#of} 정규화본)을 판정한다. 원문을 판정하면
+   * 정규화가 리터럴 안에 숨은 테이블 참조를 드러내는 SQL 에서 사전 판정은 통과하고 실행 판정은 403 을 던져, 결국 위젯별 denied 가 아니라 요청 전체 실패가
+   * 된다. 정규화·파싱 실패는 "거부 아님"(false)으로 돌려준다 — 실행 시 {@link #executeAnalytics} 가 기존 계약대로 200 + error 로
+   * 바꾼다.
+   *
+   * @return 조회자가 SQL 이 참조하는 데이터셋 중 하나라도 볼 수 없으면 true
+   */
+  public boolean isAnalyticsDenied(Clearance c, String sql) {
+    try {
+      return !guard.checkSql(c, NormalizedSql.of(sql).text(), SqlAccessMode.INTERACTIVE).allowed();
+    } catch (SqlQueryException | UnsafeSqlException e) {
+      return false;
+    }
+  }
+
+  /**
+   * 실행 관문이 던진 예외가 SQL 열람 거부(403)인가. 사전 판정과 실행 판정 사이에 등급·자격이 바뀐 경합에서 실행 관문이 거부하면, 호출자(차트·대시보드)는 이를
+   * 403 이 아니라 위젯 denied 로 바꿔야 한다. 그 밖의 코드는 그대로 다시 던지게 false.
+   */
+  public static boolean isSqlAccessDenial(CodedApiException e) {
+    return "DATASET_SQL_ACCESS_DENIED".equals(e.code()) || "SQL_WRITE_DOWNGRADE".equals(e.code());
   }
 }

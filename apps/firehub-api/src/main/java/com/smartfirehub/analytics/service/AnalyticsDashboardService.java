@@ -18,8 +18,10 @@ import com.smartfirehub.analytics.repository.AnalyticsDashboardRepository;
 import com.smartfirehub.analytics.repository.ChartRepository;
 import com.smartfirehub.analytics.repository.DashboardWidgetRepository;
 import com.smartfirehub.analytics.repository.SavedQueryRepository;
+import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
+import com.smartfirehub.securitylevel.sql.GuardedSqlExecutor;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -150,37 +152,65 @@ public class AnalyticsDashboardService {
       }
     }
 
-    // Execute each unique savedQueryId (cached)
-    // 보안 등급(S2): 조회자 자격으로 실행한다 — 위젯별 판정·캐시 재구성은 Task 16.
+    // Execute each unique savedQueryId — 보안 등급(S2): 조회자 판정이 먼저, 캐시는 그 뒤(스펙 §4.2 4행).
+    //
+    // 캐시 키를 saved_query_id 로 두어도 안전한 이유(조회자 무관 공유):
+    //  (1) 캐시를 읽기 전에 매 요청 이 조회자로 판정한다 — 캐시 히트가 판정을 건너뛰지 못한다.
+    //  (2) 판정 단위(VIEW)는 데이터셋 전체 허용/거부뿐이다(행·열 필터 없음) — VIEW 를 통과한 조회자는 누가 실행해도 같은 행을 본다.
+    //  (3) saved_query id 는 전역 시퀀스라 테넌트 간 키 충돌이 없다.
+    // 행·열 단위 필터가 생기면 이 전제가 깨지므로 키에 조회자 가시성을 넣어야 한다.
     Clearance viewer = clearanceResolver.resolve(userId);
+    Map<Long, AnalyticsQueryResponse> resultByQuery = new HashMap<>();
+    java.util.Set<Long> deniedQueries = new java.util.HashSet<>();
     for (Long savedQueryId : new java.util.HashSet<>(chartIdToSavedQueryId.values())) {
-      queryResultCache.get(
-          savedQueryId,
-          k -> {
-            String sqlText = chartRepository.findSavedQuerySqlTextById(k).orElse("");
-            return chartService.executeQueryForCache(viewer, sqlText);
-          });
+      String sqlText = chartRepository.findSavedQuerySqlTextById(savedQueryId).orElse("");
+      if (sqlText.isBlank()) {
+        // 빈 SQL 은 판정할 테이블이 없다 — 기존 동작(빈 결과)을 유지한다.
+        resultByQuery.put(savedQueryId, emptyQueryResponse());
+        continue;
+      }
+      if (chartService.isDeniedFor(viewer, sqlText)) {
+        deniedQueries.add(savedQueryId);
+        continue;
+      }
+      try {
+        // 판정을 통과한 쿼리만 캐시에 닿는다. 결과를 지역 맵에 담아 위젯 루프가 getIfPresent(만료·축출 시 null)에 의존하지 않게 한다.
+        resultByQuery.put(
+            savedQueryId,
+            queryResultCache.get(
+                savedQueryId, k -> chartService.executeQueryForCache(viewer, sqlText)));
+      } catch (CodedApiException e) {
+        // 사전 판정과 실행 판정 사이 경합으로 로더 안 실행 관문이 거부한 경우 — 대시보드 전체 403 이 아니라 이 위젯만 denied.
+        // (Caffeine 은 언체크 예외를 감싸지 않고 다시 던지며, 실패한 로드는 캐시에 남기지 않는다.)
+        if (!GuardedSqlExecutor.isSqlAccessDenial(e)) {
+          throw e;
+        }
+        deniedQueries.add(savedQueryId);
+      }
     }
 
     // 4. Build widget data list
     List<DashboardDataResponse.WidgetData> widgetDataList = new ArrayList<>();
     for (DashboardResponse.DashboardWidgetResponse widget : limitedWidgets) {
       Long savedQueryId = chartIdToSavedQueryId.get(widget.chartId());
-      AnalyticsQueryResponse queryResult =
-          savedQueryId != null ? queryResultCache.getIfPresent(savedQueryId) : null;
-      if (queryResult == null) {
-        queryResult = emptyQueryResponse();
-      }
       // chartId 별로 한 번만 조회하여 불필요한 중복 DB 쿼리 방지 (이슈 #148)
-      // 기존: null 체크 + 생성자 인수 두 곳에서 getById() 2회 호출
-      // 수정: Optional로 1회만 조회 후 로컬 변수에 캐싱
       ChartResponse chartResponse =
           chartService.getByIdOptional(widget.chartId(), userId).orElse(null);
-      ChartDataResponse chartData =
-          chartResponse != null ? new ChartDataResponse(chartResponse, queryResult) : null;
-      if (chartData != null) {
-        widgetDataList.add(new DashboardDataResponse.WidgetData(widget.id(), chartData));
+      if (chartResponse == null) {
+        continue;
       }
+      ChartDataResponse chartData;
+      if (savedQueryId != null && deniedQueries.contains(savedQueryId)) {
+        // 위반 위젯 — 빈 결과 + denied. 거부 코드·원본 데이터셋 이름은 싣지 않는다(스펙 §2.5).
+        chartData = ChartService.deniedData(chartResponse);
+      } else {
+        AnalyticsQueryResponse queryResult =
+            savedQueryId != null ? resultByQuery.get(savedQueryId) : null;
+        chartData =
+            new ChartDataResponse(
+                chartResponse, queryResult != null ? queryResult : emptyQueryResponse());
+      }
+      widgetDataList.add(new DashboardDataResponse.WidgetData(widget.id(), chartData));
     }
 
     return new DashboardDataResponse(dashboard, widgetDataList);
