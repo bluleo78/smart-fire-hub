@@ -9,6 +9,7 @@ import com.smartfirehub.dataset.exception.ColumnModificationException;
 import com.smartfirehub.dataset.exception.DatasetNotFoundException;
 import com.smartfirehub.dataset.exception.DuplicateDatasetNameException;
 import com.smartfirehub.global.dto.PageResponse;
+import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TestUsers;
 import java.util.List;
@@ -532,7 +533,11 @@ class DatasetServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * DB 실행 단계 오류(존재하지 않는 테이블)는 이력에 실패로 기록된다.
+   * DB 실행 단계 오류(0 으로 나누기)는 이력에 실패로 기록된다.
+   *
+   * <p>보안 등급(S2) 이후 "존재하지 않는 테이블"은 실행 전에 관문이 숨김 테이블과 같은 403({@code DATASET_SQL_ACCESS_DENIED})으로
+   * 거부한다(존재 은닉 — {@link #executeQuery_nonExistentTable_isDeniedBeforeExecution}). 그래서 판정을 통과하는 볼 수
+   * 있는 데이터셋 테이블에서 실행 단계에서만 실패하는 입력으로 바꿨다.
    *
    * <p>예전에는 "FORM" 오타 같은 SQL 문법 오류도 DB 실행까지 도달해 이 경로로 기록됐지만, 이제 문법 오류는 검증기가 실행 전에 {@code
    * UnsafeSqlException}으로 거부하고(#385 Task 3) {@code DatasetDataService#executeQuery}는 그 예외를 잡지 않고
@@ -543,11 +548,12 @@ class DatasetServiceTest extends IntegrationTestBase {
   void executeQuery_executionError_savesHistory() {
     DatasetDetailResponse dataset =
         createTestDatasetWithData("Execution Error Test", "execution_error_test");
-    SqlQueryRequest request = new SqlQueryRequest("SELECT * FROM non_existent_table_xyz", 100);
+    SqlQueryRequest request =
+        new SqlQueryRequest("SELECT 1 / 0 AS boom FROM data.execution_error_test", 100);
 
     SqlQueryResponse response = datasetDataService.executeQuery(dataset.id(), request, testUserId);
 
-    assertThat(response.error()).isNotNull();
+    assertThat(response.error()).contains("division by zero");
 
     PageResponse<QueryHistoryResponse> history =
         datasetDataService.getQueryHistory(dataset.id(), 0, 10);
@@ -571,7 +577,13 @@ class DatasetServiceTest extends IntegrationTestBase {
   void executeQuery_unsafeSqlRejected_doesNotSaveHistory() {
     DatasetDetailResponse dataset =
         createTestDatasetWithData("Unsafe Sql Reject Test", "unsafe_sql_reject_test");
-    SqlQueryRequest request = new SqlQueryRequest("SELECT * FROM \"public\".\"user\"", 100);
+    // 보안 등급(S2): 다른 스키마 참조("public"."user")는 이제 검증기보다 먼저 관문이 403 으로 거부한다(아래
+    // executeQuery_otherSchema_isDeniedBeforeValidation). 검증기 거부 경로를 계속 고정하려고, 판정은 통과하는(볼 수 있는
+    // 데이터셋 테이블만 참조) 차단 함수 호출로 바꿨다.
+    SqlQueryRequest request =
+        new SqlQueryRequest(
+            "SELECT set_config('search_path', 'public', false) FROM data.unsafe_sql_reject_test",
+            100);
 
     assertThatThrownBy(() -> datasetDataService.executeQuery(dataset.id(), request, testUserId))
         .isInstanceOf(com.smartfirehub.pipeline.exception.UnsafeSqlException.class);
@@ -595,6 +607,40 @@ class DatasetServiceTest extends IntegrationTestBase {
 
     assertThatThrownBy(() -> datasetDataService.executeQuery(dataset.id(), request, testUserId))
         .isInstanceOf(com.smartfirehub.dataset.exception.SqlQueryException.class);
+
+    PageResponse<QueryHistoryResponse> history =
+        datasetDataService.getQueryHistory(dataset.id(), 0, 10);
+    assertThat(history.content()).isEmpty();
+  }
+
+  /** 보안 등급(S2): 다른 스키마 참조는 검증기 전에 관문이 403 으로 거부하고 이력에 남지 않는다. */
+  @Test
+  void executeQuery_otherSchema_isDeniedBeforeValidation() {
+    DatasetDetailResponse dataset =
+        createTestDatasetWithData("Other Schema Deny Test", "other_schema_deny_test");
+    SqlQueryRequest request = new SqlQueryRequest("SELECT * FROM \"public\".\"user\"", 100);
+
+    assertThatThrownBy(() -> datasetDataService.executeQuery(dataset.id(), request, testUserId))
+        .isInstanceOf(CodedApiException.class)
+        .extracting(e -> ((CodedApiException) e).code())
+        .isEqualTo("DATASET_SQL_ACCESS_DENIED");
+
+    PageResponse<QueryHistoryResponse> history =
+        datasetDataService.getQueryHistory(dataset.id(), 0, 10);
+    assertThat(history.content()).isEmpty();
+  }
+
+  /** 보안 등급(S2): 없는 테이블은 숨김 테이블과 같은 403 — 실행 전에 거부되어 이력에 남지 않는다(존재 은닉). */
+  @Test
+  void executeQuery_nonExistentTable_isDeniedBeforeExecution() {
+    DatasetDetailResponse dataset =
+        createTestDatasetWithData("Missing Table Deny Test", "missing_table_deny_test");
+    SqlQueryRequest request = new SqlQueryRequest("SELECT * FROM non_existent_table_xyz", 100);
+
+    assertThatThrownBy(() -> datasetDataService.executeQuery(dataset.id(), request, testUserId))
+        .isInstanceOf(CodedApiException.class)
+        .extracting(e -> ((CodedApiException) e).code())
+        .isEqualTo("DATASET_SQL_ACCESS_DENIED");
 
     PageResponse<QueryHistoryResponse> history =
         datasetDataService.getQueryHistory(dataset.id(), 0, 10);

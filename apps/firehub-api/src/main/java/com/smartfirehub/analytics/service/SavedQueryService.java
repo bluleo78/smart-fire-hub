@@ -9,6 +9,8 @@ import com.smartfirehub.analytics.exception.SavedQueryNotFoundException;
 import com.smartfirehub.analytics.repository.SavedQueryRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.global.dto.PageResponse;
+import com.smartfirehub.securitylevel.access.ClearanceResolver;
+import com.smartfirehub.securitylevel.sql.GuardedSqlExecutor;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -22,7 +24,8 @@ public class SavedQueryService {
 
   private final SavedQueryRepository savedQueryRepository;
   private final DatasetRepository datasetRepository;
-  private final AnalyticsQueryExecutionService executionService;
+  private final GuardedSqlExecutor guardedSqlExecutor;
+  private final ClearanceResolver clearanceResolver;
 
   /** List saved queries with optional filters and pagination. */
   // RLS 가 걸린 saved_query 를 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
@@ -140,7 +143,9 @@ public class SavedQueryService {
   @Transactional
   public AnalyticsQueryResponse executeById(Long id, int maxRows, boolean readOnly, Long userId) {
     SavedQueryResponse query = getById(id, userId);
-    return executionService.execute(query.sqlText(), maxRows, readOnly);
+    // 저장 쿼리 실행도 실행자 기준 판정 — 공유 쿼리를 자격 없는 사람이 실행하는 경로(스펙 §4.2 3행).
+    return guardedSqlExecutor.executeAnalytics(
+        clearanceResolver.resolve(userId), query.sqlText(), maxRows, readOnly);
   }
 
   /** Get distinct folder names visible to the user. */

@@ -16,7 +16,10 @@ import com.smartfirehub.global.security.JwtAuthenticationFilter;
 import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.permission.service.PermissionService;
+import com.smartfirehub.securitylevel.access.Clearance;
+import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
+import com.smartfirehub.securitylevel.sql.GuardedSqlExecutor;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -46,6 +49,10 @@ class SavedQueryControllerTest {
 
   @MockitoBean private SavedQueryService savedQueryService;
   @MockitoBean private AnalyticsQueryExecutionService executionService;
+  // 보안 등급(S2): 애드혹 실행은 관문(GuardedSqlExecutor)을 실행자 자격(ClearanceResolver.current())으로 부른다. 판정 자체는
+  // GuardedSqlExecutorTest 가 실제 DB 로 검증하고, 여기서는 컨트롤러 배선(관문 호출·readOnly 강제)만 본다.
+  @MockitoBean private GuardedSqlExecutor guardedSqlExecutor;
+  @MockitoBean private ClearanceResolver clearanceResolver;
   @MockitoBean private JwtTokenProvider jwtTokenProvider;
   @MockitoBean private JwtProperties jwtProperties;
   @MockitoBean private PermissionService permissionService;
@@ -251,7 +258,10 @@ class SavedQueryControllerTest {
   @Test
   void executeAdHoc_withPermission_returnsResult() throws Exception {
     AnalyticsQueryRequest request = new AnalyticsQueryRequest("SELECT 1", 100, true);
-    when(executionService.execute(anyString(), anyInt(), anyBoolean()))
+    Clearance viewer = Clearance.none(1L, 1L);
+    when(clearanceResolver.current()).thenReturn(viewer);
+    // readOnly 는 웹 애드혹에서 항상 true 로 강제된다(#66) — 관문에 true 로 넘어가야만 스텁이 맞는다.
+    when(guardedSqlExecutor.executeAnalytics(eq(viewer), eq("SELECT 1"), eq(100), eq(true)))
         .thenReturn(sampleQueryResult());
 
     mockMvc

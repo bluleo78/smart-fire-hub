@@ -18,6 +18,8 @@ import com.smartfirehub.analytics.repository.AnalyticsDashboardRepository;
 import com.smartfirehub.analytics.repository.ChartRepository;
 import com.smartfirehub.analytics.repository.DashboardWidgetRepository;
 import com.smartfirehub.analytics.repository.SavedQueryRepository;
+import com.smartfirehub.securitylevel.access.Clearance;
+import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -38,6 +40,7 @@ public class AnalyticsDashboardService {
   private final ChartService chartService;
   private final ChartRepository chartRepository;
   private final SavedQueryRepository savedQueryRepository;
+  private final ClearanceResolver clearanceResolver;
 
   // Caffeine cache: TTL 60s, max 200 entries, keyed by saved_query_id
   private final Cache<Long, AnalyticsQueryResponse> queryResultCache =
@@ -148,12 +151,14 @@ public class AnalyticsDashboardService {
     }
 
     // Execute each unique savedQueryId (cached)
+    // 보안 등급(S2): 조회자 자격으로 실행한다 — 위젯별 판정·캐시 재구성은 Task 16.
+    Clearance viewer = clearanceResolver.resolve(userId);
     for (Long savedQueryId : new java.util.HashSet<>(chartIdToSavedQueryId.values())) {
       queryResultCache.get(
           savedQueryId,
           k -> {
             String sqlText = chartRepository.findSavedQuerySqlTextById(k).orElse("");
-            return chartService.executeQueryForCache(sqlText);
+            return chartService.executeQueryForCache(viewer, sqlText);
           });
     }
 

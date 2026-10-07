@@ -13,6 +13,7 @@ import com.smartfirehub.analytics.repository.AnalyticsDashboardRepository;
 import com.smartfirehub.analytics.repository.ChartRepository;
 import com.smartfirehub.analytics.repository.DashboardWidgetRepository;
 import com.smartfirehub.analytics.repository.SavedQueryRepository;
+import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -35,6 +36,8 @@ class AnalyticsDashboardServiceUnitTest {
   @Mock private ChartService chartService;
   @Mock private ChartRepository chartRepository;
   @Mock private SavedQueryRepository savedQueryRepository;
+  // 보안 등급(S2): 캐시 채움이 조회자 자격으로 실행된다 — 자격 계산 자체는 이 테스트의 관심사가 아니다(null 이 전달돼도 무방).
+  @Mock private ClearanceResolver clearanceResolver;
 
   @InjectMocks private AnalyticsDashboardService dashboardService;
 
@@ -95,7 +98,7 @@ class AnalyticsDashboardServiceUnitTest {
     when(chartRepository.findSavedQueryId(chartId)).thenReturn(savedQueryId);
     when(chartRepository.findSavedQuerySqlTextById(savedQueryId))
         .thenReturn(Optional.of("SELECT 1"));
-    when(chartService.executeQueryForCache(anyString())).thenReturn(queryResponse);
+    when(chartService.executeQueryForCache(any(), anyString())).thenReturn(queryResponse);
     // getByIdOptional이 호출될 때 chartResponse 반환
     when(chartService.getByIdOptional(chartId, userId)).thenReturn(Optional.of(chartResponse));
 
@@ -182,7 +185,7 @@ class AnalyticsDashboardServiceUnitTest {
     when(chartRepository.findSavedQueryId(anyLong())).thenReturn(savedQueryId);
     when(chartRepository.findSavedQuerySqlTextById(savedQueryId))
         .thenReturn(Optional.of("SELECT 1"));
-    when(chartService.executeQueryForCache(anyString())).thenReturn(queryResponse);
+    when(chartService.executeQueryForCache(any(), anyString())).thenReturn(queryResponse);
     when(chartService.getByIdOptional(chartId1, userId)).thenReturn(Optional.of(chartResponse1));
     when(chartService.getByIdOptional(chartId2, userId)).thenReturn(Optional.of(chartResponse2));
 

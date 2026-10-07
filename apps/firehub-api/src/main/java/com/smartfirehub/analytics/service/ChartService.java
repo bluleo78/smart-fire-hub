@@ -9,6 +9,9 @@ import com.smartfirehub.analytics.exception.SavedQueryNotFoundException;
 import com.smartfirehub.analytics.repository.ChartRepository;
 import com.smartfirehub.analytics.repository.SavedQueryRepository;
 import com.smartfirehub.global.dto.PageResponse;
+import com.smartfirehub.securitylevel.access.Clearance;
+import com.smartfirehub.securitylevel.access.ClearanceResolver;
+import com.smartfirehub.securitylevel.sql.GuardedSqlExecutor;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -20,7 +23,8 @@ public class ChartService {
 
   private final ChartRepository chartRepository;
   private final SavedQueryRepository savedQueryRepository;
-  private final AnalyticsQueryExecutionService executionService;
+  private final GuardedSqlExecutor guardedSqlExecutor;
+  private final ClearanceResolver clearanceResolver;
 
   /** List charts with optional filters and pagination. */
   // RLS 가 걸린 chart 를 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
@@ -113,15 +117,16 @@ public class ChartService {
   }
 
   /**
-   * Execute SQL for cache population (no user context — internal use by dashboard service). Uses
-   * readOnly=false to match chart data behavior; cache key is saved_query_id.
+   * 대시보드 캐시 채움용 — 조회자 자격으로 실행한다(판정은 호출자가 먼저 한다 — Task 16). readOnly=false 는 차트 데이터와 같은 기존 동작이다(쓰기
+   * 집합도 관문이 VIEW·하향 규칙으로 판정한다 — 판단 사항 8). 캐시 키는 saved_query_id.
    */
-  public com.smartfirehub.analytics.dto.AnalyticsQueryResponse executeQueryForCache(String sql) {
+  public com.smartfirehub.analytics.dto.AnalyticsQueryResponse executeQueryForCache(
+      Clearance viewer, String sql) {
     if (sql == null || sql.isBlank()) {
       return new com.smartfirehub.analytics.dto.AnalyticsQueryResponse(
           "SELECT", java.util.List.of(), java.util.List.of(), 0, 0L, 0, false, null);
     }
-    return executionService.execute(sql, 1000, false);
+    return guardedSqlExecutor.executeAnalytics(viewer, sql, 1000, false);
   }
 
   /**
@@ -137,7 +142,10 @@ public class ChartService {
             .findSavedQuerySqlText(id, userId)
             .orElseThrow(
                 () -> new SavedQueryNotFoundException("Saved query not found for chart: " + id));
-    var queryResult = executionService.execute(sqlText, 1000, false);
+    // 보안 등급(S2): 조회자 자격으로 차트 SQL 의 참조 데이터셋을 판정한다(Task 16 이 denied 응답으로 바꾼다).
+    var queryResult =
+        guardedSqlExecutor.executeAnalytics(
+            clearanceResolver.resolve(userId), sqlText, 1000, false);
     return new ChartDataResponse(chart, queryResult);
   }
 }

@@ -8,6 +8,7 @@ import com.smartfirehub.dataset.exception.SqlQueryException;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.util.AdhocResultValues;
 import com.smartfirehub.global.util.AdhocSqlStatements;
+import com.smartfirehub.global.util.NormalizedSql;
 import com.smartfirehub.global.util.SqlLexicalMask;
 import com.smartfirehub.global.util.SqlValidationUtils;
 import com.smartfirehub.pipeline.exception.UnsafeSqlException;
@@ -82,14 +83,25 @@ public class AnalyticsQueryExecutionService {
    */
   @Transactional
   public AnalyticsQueryResponse execute(String sql, int maxRows, boolean readOnly) {
-    String stripped;
-    String queryType;
+    // 테스트 전용 진입점 — 프로덕션 호출은 SqlGateArchitectureTest 가 거부한다(판정 없이 실행되므로).
+    NormalizedSql normalized;
     try {
-      stripped = SqlValidationUtils.stripAndValidate(sql);
-      queryType = SqlValidationUtils.detectQueryType(stripped);
+      normalized = NormalizedSql.of(sql);
     } catch (SqlQueryException e) {
       return errorResponse(e.getMessage());
     }
+    return execute(normalized, maxRows, readOnly);
+  }
+
+  /**
+   * 관문(GuardedSqlExecutor)이 정규화·판정을 마친 문자열을 그대로 실행한다. 여기서 다시 정규화하지 않는다 — 판정한 String 과 실행하는 String 이
+   * 같은 인스턴스여야 한다(스펙 §4.1, {@link NormalizedSql} 참고). 실행 문자열 = 판정 문자열 + 최상위 행 제한, 또는 판정 문자열을 그대로 품은
+   * geometry 래핑 CTE(바깥 투영은 결과 메타데이터의 컬럼명을 인용해 코드가 만든다)다. 검증·오류 계약은 위 문자열 오버로드와 같다.
+   */
+  @Transactional
+  public AnalyticsQueryResponse execute(NormalizedSql normalized, int maxRows, boolean readOnly) {
+    String cleanSql = normalized.text();
+    String queryType = SqlValidationUtils.detectQueryType(cleanSql);
 
     if (readOnly && !"SELECT".equals(queryType)) {
       // #511: 이 readOnly 검사는 MCP AI 도구 호출과 웹 UI 애드혹 쿼리 실행이 동일 엔드포인트/플래그를
@@ -97,8 +109,6 @@ public class AnalyticsQueryExecutionService {
       // 컨텍스트 중립적인 문구로 유지해야 웹 UI 사용자에게 혼란을 주지 않는다.
       return errorResponse("SELECT 쿼리만 실행할 수 있습니다. 데이터 수정은 데이터셋 상세의 '데이터' 탭을 이용하세요.");
     }
-
-    String cleanSql = SqlValidationUtils.removeTrailingSemicolon(stripped);
 
     try {
       sqlValidator.validate(cleanSql);

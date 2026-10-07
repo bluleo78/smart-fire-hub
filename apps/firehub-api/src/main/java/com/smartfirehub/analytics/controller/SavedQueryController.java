@@ -11,6 +11,8 @@ import com.smartfirehub.analytics.service.AnalyticsQueryExecutionService;
 import com.smartfirehub.analytics.service.SavedQueryService;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.global.security.RequirePermission;
+import com.smartfirehub.securitylevel.access.ClearanceResolver;
+import com.smartfirehub.securitylevel.sql.GuardedSqlExecutor;
 import jakarta.validation.Valid;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
@@ -26,6 +28,8 @@ public class SavedQueryController {
 
   private final SavedQueryService savedQueryService;
   private final AnalyticsQueryExecutionService executionService;
+  private final GuardedSqlExecutor guardedSqlExecutor;
+  private final ClearanceResolver clearanceResolver;
 
   @GetMapping
   @RequirePermission("analytics:read")
@@ -74,7 +78,10 @@ public class SavedQueryController {
       @Valid @RequestBody AnalyticsQueryRequest request) {
     int maxRows = request.maxRows() != null ? request.maxRows() : 1000;
     // Web UI 애드혹 쿼리는 항상 readOnly=true 강제 — DELETE/UPDATE 허용 금지 (#66)
-    return ResponseEntity.ok(executionService.execute(request.sql(), maxRows, true));
+    // 보안 등급(S2): 실행자 자격으로 참조 데이터셋을 판정한다.
+    return ResponseEntity.ok(
+        guardedSqlExecutor.executeAnalytics(
+            clearanceResolver.current(), request.sql(), maxRows, true));
   }
 
   @GetMapping("/{id}")
