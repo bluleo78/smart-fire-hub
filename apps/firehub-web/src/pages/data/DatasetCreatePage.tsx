@@ -53,7 +53,6 @@ export default function DatasetCreatePage() {
       categoryId: undefined,
       storageType,
       originType,
-      prefix: '',
       columns: isSchemaless
         ? []
         : [
@@ -146,8 +145,8 @@ export default function DatasetCreatePage() {
         categoryId: data.categoryId || undefined,
         storageType: data.storageType,
         originType: data.originType,
-        // FILE 유형만 prefix를 전송 — bucket은 백엔드 기본값을 사용하도록 미전송
-        ...(isFile ? { prefix: data.prefix || undefined } : {}),
+        // FILE 유형의 저장 경로(bucket/prefix)는 보내지 않는다 — 서버가 데이터셋마다 datasets/<id>/ 로 만든다
+        // (클라이언트 지정 prefix 는 다른 데이터셋 경로를 덮을 수 있어 서버가 400 으로 거부한다).
         columns: data.columns.map((col) => ({
           columnName: col.columnName,
           displayName: col.displayName || undefined,
@@ -254,18 +253,6 @@ export default function DatasetCreatePage() {
                   placeholder="데이터셋 설명"
                 />
               </FormField>
-
-              {/* FILE 유형 전용: 오브젝트 스토리지 내 파일 경로 프리픽스 (선택 입력, 미입력 시 백엔드 기본값 사용) */}
-              {isFile && (
-                <FormField label="경로 프리픽스" htmlFor="prefix">
-                  <Input
-                    id="prefix"
-                    {...form.register('prefix')}
-                    placeholder="예: datasets/equipment/"
-                    className="font-mono"
-                  />
-                </FormField>
-              )}
 
               <div className="grid grid-cols-2 gap-4">
                 {/* 카테고리는 사용자 정의로 늘어날 수 있어 검색 가능한 SearchableSelect로 대체 (#104) */}

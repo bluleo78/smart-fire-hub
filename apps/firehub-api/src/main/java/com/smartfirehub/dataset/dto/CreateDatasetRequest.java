@@ -13,7 +13,7 @@ public record CreateDatasetRequest(
     List<DatasetColumnRequest> columns,
     Long sourcePipelineStepId,
     String bucket, // FILE 전용: MinIO 버킷 (null이면 기본 버킷 사용)
-    String prefix) { // FILE 전용: 오브젝트 프리픽스 (null이면 빈 문자열)
+    String prefix) { // 지정 불가(서버가 datasets/<id>/ 로 생성) — 값이 있으면 400 FILE_PREFIX_NOT_ALLOWED
 
   public CreateDatasetRequest {
     // 저장 방식 기본값: 행·열 테이블

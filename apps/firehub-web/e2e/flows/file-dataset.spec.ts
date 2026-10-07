@@ -3,9 +3,10 @@ import { setupDatasetMocks, setupFileDatasetCreateMocks } from '../fixtures/data
 
 /**
  * FILE 유형 데이터셋 생성 E2E 테스트
- * - FILE 유형 선택 시 테이블명·칼럼 정의 카드 숨김, 대신 경로 프리픽스 입력 노출
+ * - FILE 유형 선택 시 테이블명·칼럼 정의 카드 숨김
  * - tableName 자동 생성(file_<timestamp>), columns: [] payload 검증
- * - prefix 입력값이 payload에 그대로 전달되는지 검증
+ * - 저장 경로(prefix)는 서버가 datasets/<id>/ 로 만든다 — 입력 필드가 없고 payload 에도 실리지 않는다
+ *   (클라이언트 지정 prefix 는 숨김·타 테넌트 데이터셋 경로를 덮을 수 있어 서버가 400 으로 거부한다)
  */
 test.describe('FILE 데이터셋', () => {
   test(
@@ -23,23 +24,22 @@ test.describe('FILE 데이터셋', () => {
       await expect(page.getByRole('heading', { name: '칼럼 정의' })).toHaveCount(0);
       // 테이블명 입력 필드도 숨겨진다 (자동 생성)
       await expect(page.getByLabel('테이블명')).toHaveCount(0);
-      // FILE 전용 경로 프리픽스 입력 필드는 노출된다
-      await expect(page.getByLabel('경로 프리픽스')).toBeVisible();
+      // 저장 경로(프리픽스) 입력 필드는 없다 — 서버 생성 전용
+      await expect(page.getByLabel('경로 프리픽스')).toHaveCount(0);
 
       await page.getByLabel('데이터셋 이름').fill('장비 학습 데이터');
-      await page.getByLabel('경로 프리픽스').fill('datasets/equipment/');
 
       await page.getByRole('button', { name: '생성' }).click();
 
-      // POST payload 검증 — storageType/columns/prefix가 올바르게 전송되는지 확인
+      // POST payload 검증 — storageType/columns 가 올바르게 전송되고 prefix 는 전송되지 않는지 확인
       const req = await capture.waitForRequest();
       expect(req.payload).toMatchObject({
         name: '장비 학습 데이터',
         storageType: 'FILE',
         originType: 'SOURCE',
         columns: [],
-        prefix: 'datasets/equipment/',
       });
+      expect(req.payload as Record<string, unknown>).not.toHaveProperty('prefix');
       // tableName은 file_<timestamp> 형식 — 백엔드 식별자 규칙([a-z][a-z0-9_]*)을 만족
       expect((req.payload as { tableName: string }).tableName).toMatch(/^file_\d+$/);
       // bucket은 전송하지 않아 백엔드 기본값을 사용한다

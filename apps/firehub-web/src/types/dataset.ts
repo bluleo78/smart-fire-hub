@@ -90,9 +90,8 @@ export interface CreateDatasetRequest {
   originType: 'SOURCE' | 'DERIVED' | 'TEMP';
   columns: DatasetColumnRequest[];
   sourcePipelineStepId?: number;
-  // FILE 타입 전용: 오브젝트 스토리지 버킷/프리픽스 (미전송 시 백엔드 기본값 사용)
+  // FILE 타입 전용: 오브젝트 스토리지 버킷(미전송 시 백엔드 기본값). 프리픽스는 서버가 datasets/<id>/ 로 만들며 지정할 수 없다.
   bucket?: string;
-  prefix?: string;
 }
 
 export interface DatasetColumnRequest {
