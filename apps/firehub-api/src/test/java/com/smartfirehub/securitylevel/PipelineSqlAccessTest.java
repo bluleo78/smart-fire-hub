@@ -374,6 +374,93 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
     assertThat(levelOf(temp)).isEqualTo(fx.levelId("민감"));
   }
 
+  /**
+   * 이전 실행(A)이 기밀로 올린 재사용 TEMP 에, 지금 입력은 민감뿐인 실행 주체 B 가 쓰려 한다 — 상향도 시드도 일어나지 않으므로 B 는 TEMP 를 볼 수 없다.
+   * 쓰기 전에 거부되어야 하고 A 의 결과 행은 그대로 남아야 한다(fix round 2).
+   */
+  @Test
+  void run_reusedTempAboveInputLevel_deniesRunAsWhoCannotSeeItAndKeepsRows() throws Exception {
+    String inTable = m + "_hi";
+    long inId = table(inTable, "기밀");
+    insertRow(inTable, "a");
+    long a = userAt("기밀");
+    fx.grantUser(inId, a);
+    long p = pipeline(a, "SELECT v FROM " + qualified(inTable), null);
+    assertThat(waitForEnd(executionService.executePipeline(p, a))).isEqualTo("COMPLETED");
+    long temp = tempOf(p, "step");
+    assertThat(levelOf(temp)).isEqualTo(fx.levelId("기밀"));
+    String tempTable =
+        inTenantFixture(
+            () ->
+                dsl.select(DATASET.TABLE_NAME)
+                    .from(DATASET)
+                    .where(DATASET.ID.eq(temp))
+                    .fetchSingle(DATASET.TABLE_NAME));
+    assertThat(rowCount(tempTable)).isEqualTo(1);
+
+    // 입력을 민감으로 내리고 행을 하나 더 넣는다 — B 의 쓰기가 일어나면 TEMP 행 수가 2 가 된다.
+    setLevel(inId, "민감");
+    insertRow(inTable, "b");
+    long b = userAt("민감");
+    long exec = executionService.executePipeline(p, b);
+    assertThat(waitForEnd(exec)).isEqualTo("FAILED");
+    assertThat(stepError(exec)).isEqualTo(DatasetAccessGuard.SQL_ACCESS_DENIED_MESSAGE);
+    assertThat(rowCount(tempTable)).isEqualTo(1);
+    assertThat(levelOf(temp)).isEqualTo(fx.levelId("기밀"));
+  }
+
+  /**
+   * 스텝 TEMP 식별자(originType=TEMP·sourcePipelineStepId)는 일반 생성 경로에서 위조할 수 없다. 위조할 수 있으면 남의 스텝 출력 폴백이
+   * 공격자 데이터셋을 가리켜 실행 주체의 입력 행이 그리로 적재된다(fix round 2). 거부 후 실행하면 스텝 출력은 러너가 만든 ptmp TEMP 다.
+   */
+  @Test
+  void forgedStepTemp_isRejectedAndCannotBecomeStepOutput() throws Exception {
+    long victim = userAt("민감");
+    long p = pipeline(victim, "SELECT v FROM " + qualified(secTable), null);
+    long stepId =
+        inTenantFixture(
+            () ->
+                dsl.fetchOne("SELECT id FROM pipeline_step WHERE pipeline_id = ?", p)
+                    .get(0, Long.class));
+    long attacker = userAt("공개");
+    List<DatasetColumnRequest> cols =
+        List.of(new DatasetColumnRequest("v", "v", "TEXT", null, true, false, null, false));
+    for (CreateDatasetRequest forged :
+        List.of(
+            new CreateDatasetRequest(
+                m + "_f1", m + "_f1", null, null, "TABLE", "TEMP", cols, stepId),
+            new CreateDatasetRequest(
+                m + "_f2", m + "_f2", null, null, "TABLE", "DERIVED", cols, stepId),
+            new CreateDatasetRequest(
+                m + "_f3", m + "_f3", null, null, "TABLE", "TEMP", cols, null))) {
+      assertThatThrownBy(() -> datasetService.createDataset(forged, attacker))
+          .isInstanceOf(CodedApiException.class)
+          .extracting(e -> ((CodedApiException) e).code())
+          .isEqualTo("DATASET_ORIGIN_RESERVED");
+    }
+    assertThat(
+            inTenantFixture(
+                () ->
+                    dsl.fetchCount(
+                        DATASET,
+                        DATASET
+                            .TABLE_NAME
+                            .like(m + "\\_f%")
+                            .or(DATASET.SOURCE_PIPELINE_STEP_ID.eq(stepId)))))
+        .isZero();
+
+    assertThat(waitForEnd(executionService.executePipeline(p, victim))).isEqualTo("COMPLETED");
+    List<String> stepOutputs =
+        inTenantFixture(
+            () ->
+                dsl.select(DATASET.TABLE_NAME)
+                    .from(DATASET)
+                    .where(DATASET.SOURCE_PIPELINE_STEP_ID.eq(stepId))
+                    .fetch(DATASET.TABLE_NAME));
+    assertThat(stepOutputs).hasSize(1);
+    assertThat(stepOutputs.get(0)).startsWith("ptmp_" + p + "_");
+  }
+
   @Test
   void run_explicitLowerOutput_failsWithoutWriting() throws Exception {
     long runner = userAt("민감");

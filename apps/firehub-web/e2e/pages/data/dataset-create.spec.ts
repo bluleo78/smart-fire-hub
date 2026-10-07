@@ -145,6 +145,30 @@ test.describe('데이터셋 생성 페이지', () => {
     await expect(page).toHaveURL('/data/datasets/99');
   });
 
+  test('URL 의 originType=TEMP 는 무시하고 SOURCE 로 생성 요청한다 (TEMP 는 파이프라인 전용)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDatasetMocks(page);
+    const capture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/datasets',
+      { id: 99, name: '신규 데이터셋' },
+      { capture: true },
+    );
+
+    await page.goto('/data/datasets/new?storageType=TABLE&originType=TEMP');
+    await page.getByLabel('데이터셋 이름').fill('신규 데이터셋');
+    await page.getByLabel('테이블명').fill('new_dataset');
+    await page.getByPlaceholder('예: user_id').fill('col_name');
+    await page.getByRole('button', { name: '생성' }).click();
+
+    // 서버가 예약 출처(TEMP)를 400 으로 거부하므로 클라이언트는 애초에 보내지 않는다.
+    const req = await capture.waitForRequest();
+    expect(req.payload).toMatchObject({ originType: 'SOURCE' });
+    expect(req.payload).not.toHaveProperty('sourcePipelineStepId');
+  });
+
   test('테이블명에 대문자 입력 시 유효성 에러가 표시된다', async ({ authenticatedPage: page }) => {
     await setupDatasetMocks(page);
     await page.goto('/data/datasets/new');

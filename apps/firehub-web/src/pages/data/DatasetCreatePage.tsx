@@ -30,10 +30,11 @@ export default function DatasetCreatePage() {
     const s = searchParams.get('storageType');
     return s === 'DOCUMENT' || s === 'FILE' ? s : 'TABLE';
   })() as 'TABLE' | 'DOCUMENT' | 'FILE';
+  // TEMP 는 파이프라인 러너만 만드는 예약 출처라 서버가 400(DATASET_ORIGIN_RESERVED)으로 거부한다 — URL 로 들어와도 SOURCE 로 취급한다.
   const originType = (() => {
     const o = searchParams.get('originType');
-    return o === 'DERIVED' || o === 'TEMP' ? o : 'SOURCE';
-  })() as 'SOURCE' | 'DERIVED' | 'TEMP';
+    return o === 'DERIVED' ? o : 'SOURCE';
+  })() as 'SOURCE' | 'DERIVED';
   // DOCUMENT/FILE 유형 여부 — 칼럼·테이블명 UI 토글에 사용 (URL에서 파생되므로 폼 watch 불필요)
   const isDocument = storageType === 'DOCUMENT';
   const isFile = storageType === 'FILE';

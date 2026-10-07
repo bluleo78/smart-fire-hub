@@ -66,7 +66,8 @@ public class PipelineSecurityGate {
    * <ul>
    *   <li>러너가 이번 실행에서 <b>새로 만든</b>(빈) TEMP: 등급을 정확히 입력 최대 등급으로 맞춘다(스펙 §4.5 — 기본 등급보다 낮아도). 비어 있으므로
    *       낮춰도 기존 데이터가 노출되지 않는다.
-   *   <li>러너가 <b>재사용</b>하는 TEMP: 입력보다 낮으면 상향만 한다 — 이전 실행 데이터가 남아 있을 수 있어 절대 낮추지 않는다.
+   *   <li>러너가 <b>재사용</b>하는 TEMP: 입력보다 낮으면 상향만 한다 — 이전 실행 데이터가 남아 있을 수 있어 절대 낮추지 않는다. 상향·시드 후 실행 주체가
+   *       현재 등급·허용 목록으로 볼 수 없으면 쓰기 전에 거부한다(fail-closed).
    *   <li>러너 소유 TEMP 공통: 입력 최대 등급이 허용 목록 필요면 실행 주체를 허용 목록에 (멱등) 넣는다 — 상향이 일어나지 않아도. 다른 실행 주체(수동 실행자
    *       vs 트리거 생성자)가 같은 TEMP 를 재사용할 때 다음 스텝({@code {{#N}}})이 거부되지 않게 하고, 실행 주체가 아직 볼 수 없는 TEMP 에
    *       쓰는 일이 없게 한다. 실행 주체는 이 스텝의 입력을 모두 볼 수 있음이 이미 판정됐으므로 새 열람자를 넓히지 않는다.
@@ -96,34 +97,40 @@ public class PipelineSecurityGate {
       requireOutputVisible(outputDatasetId, runAsUserId);
     }
     LevelPolicy effective = access.effectiveLevel();
-    if (effective == null) {
-      // 테이블을 읽지 않는 SELECT(상수 등) — 전파할 등급이 없다.
-      return;
-    }
-    Long outLevelId =
-        dsl.select(DATASET.SECURITY_LEVEL_ID)
-            .from(DATASET)
-            .where(DATASET.ID.eq(outputDatasetId))
-            .fetchSingle(DATASET.SECURITY_LEVEL_ID);
-    LevelPolicy out = levelRepository.findById(outLevelId).orElseThrow();
-    if (!runnerOwnedTemp) {
-      if (out.rank() < effective.rank()) {
-        // VIEW 를 통과한 뒤에만 오는 분기라 등급 이름은 실행 주체가 이미 볼 수 있는 정보다(가드의 쓰기 하향 메시지와 같은 문구).
-        throw new CodedApiException(
-            HttpStatus.FORBIDDEN,
-            DatasetAccessGuard.SQL_WRITE_DOWNGRADE_CODE,
-            "'" + effective.name() + "' 데이터를 더 낮은 등급 데이터셋에 쓸 수 없습니다");
+    // effective == null: 테이블을 읽지 않는 SELECT(상수 등) — 전파할 등급이 없다.
+    if (effective != null) {
+      Long outLevelId =
+          dsl.select(DATASET.SECURITY_LEVEL_ID)
+              .from(DATASET)
+              .where(DATASET.ID.eq(outputDatasetId))
+              .fetchSingle(DATASET.SECURITY_LEVEL_ID);
+      LevelPolicy out = levelRepository.findById(outLevelId).orElseThrow();
+      if (!runnerOwnedTemp) {
+        if (out.rank() < effective.rank()) {
+          // VIEW 를 통과한 뒤에만 오는 분기라 등급 이름은 실행 주체가 이미 볼 수 있는 정보다(가드의 쓰기 하향 메시지와 같은 문구).
+          throw new CodedApiException(
+              HttpStatus.FORBIDDEN,
+              DatasetAccessGuard.SQL_WRITE_DOWNGRADE_CODE,
+              "'" + effective.name() + "' 데이터를 더 낮은 등급 데이터셋에 쓸 수 없습니다");
+        }
+        return;
       }
-      return;
+      if (out.rank() < effective.rank()) {
+        datasetSecurityService.raiseForPipelineOutput(outputDatasetId, effective, runAsUserId);
+      } else if (freshTemp && out.rank() > effective.rank()) {
+        datasetSecurityService.assignNewPipelineTempLevel(outputDatasetId, effective, runAsUserId);
+      }
+      // 상향 여부와 무관하게 — 재사용 TEMP 를 다른 실행 주체가 쓸 때도 시드한다(위 Javadoc). 상향 경로에서 이미 넣었으면 멱등으로 건너뛴다.
+      if (effective.allowlistRequired()) {
+        datasetSecurityService.seedPipelineOutputRunAs(outputDatasetId, runAsUserId);
+      }
     }
-    if (out.rank() < effective.rank()) {
-      datasetSecurityService.raiseForPipelineOutput(outputDatasetId, effective, runAsUserId);
-    } else if (freshTemp && out.rank() > effective.rank()) {
-      datasetSecurityService.assignNewPipelineTempLevel(outputDatasetId, effective, runAsUserId);
-    }
-    // 상향 여부와 무관하게 — 재사용 TEMP 를 다른 실행 주체가 쓸 때도 시드한다(위 Javadoc). 상향 경로에서 이미 넣었으면 멱등으로 건너뛴다.
-    if (effective.allowlistRequired()) {
-      datasetSecurityService.seedPipelineOutputRunAs(outputDatasetId, runAsUserId);
+    // 재사용 TEMP 는 상향·시드를 마친 <b>현재</b> 등급·허용 목록으로 실행 주체가 볼 수 있어야 쓴다(fail-closed, 쓰기 전). 예: 이전 실행이
+    // 기밀로 올려 둔 TEMP 에 지금 입력은 민감뿐인 실행 주체 B — 상향도 시드도 일어나지 않으므로, 이 검사가 없으면 B 가 볼 수 없는 TEMP 를
+    // 비우고(REPLACE) 덮어써 이전 실행 주체의 결과를 지운다. 새로 만든 TEMP 는 이번 실행 주체가 방금 만든 빈 테이블이라 제외한다(입력 없는
+    // 상수 SELECT 의 새 TEMP 는 기본 등급이라 낮은 자격 실행 주체가 못 볼 수 있다). 거부 시 이 트랜잭션의 상향·시드도 롤백된다.
+    if (runnerOwnedTemp && !freshTemp) {
+      requireOutputVisible(outputDatasetId, runAsUserId);
     }
   }
 

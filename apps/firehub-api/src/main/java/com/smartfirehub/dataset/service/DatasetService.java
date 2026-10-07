@@ -33,6 +33,7 @@ import com.smartfirehub.dataset.search.DatasetEmbeddingService;
 import com.smartfirehub.file.repository.FileDatasetConfigRepository;
 import com.smartfirehub.file.service.FileObjectStorageService;
 import com.smartfirehub.global.dto.PageResponse;
+import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.securitylevel.service.DatasetSecurityService;
@@ -46,6 +47,7 @@ import org.jooq.DSLContext;
 import org.jooq.exception.IntegrityConstraintViolationException;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -109,8 +111,41 @@ public class DatasetService {
   private final SearchColumnRepository searchColumnRepository;
   private final SearchIndexSettingsService searchIndexSettingsService;
 
+  /** 파이프라인 전용 출처 필드를 일반 생성 경로에서 보냈을 때의 오류 코드. */
+  public static final String ORIGIN_RESERVED_CODE = "DATASET_ORIGIN_RESERVED";
+
+  /**
+   * 일반 데이터셋 생성(REST·AI 에이전트 등 모든 비파이프라인 경로).
+   *
+   * <p>{@code originType=TEMP} 와 {@code sourcePipelineStepId} 는 파이프라인 러너만 쓰는 예약 필드라 여기서 거부한다(400).
+   * 이 두 값이 곧 "어느 스텝의 러너 소유 TEMP 인가"의 식별자다 — 스텝 출력 폴백({@code
+   * PipelineStepRepository.findByPipelineId}·{@code TempDatasetService.findExistingTempDataset})과
+   * 보안 관문({@code PipelineSecurityGate})이 이 값을 믿는다. 사용자가 위조할 수 있으면 남의 파이프라인 스텝 출력을 자기 데이터셋으로 돌려 실행
+   * 주체의 입력 행을 받아 갈 수 있다(유출). 러너는 {@link #createPipelineTempDataset} 만 쓴다.
+   */
   @Transactional
   public DatasetDetailResponse createDataset(CreateDatasetRequest request, Long userId) {
+    if ("TEMP".equalsIgnoreCase(request.originType()) || request.sourcePipelineStepId() != null) {
+      throw new CodedApiException(
+          HttpStatus.BAD_REQUEST,
+          ORIGIN_RESERVED_CODE,
+          "임시(TEMP) 데이터셋과 파이프라인 스텝 연결은 파이프라인 실행만 만들 수 있습니다.");
+    }
+    return createDatasetInternal(request, userId);
+  }
+
+  /** 파이프라인 러너 전용 — 스텝의 러너 소유 TEMP 데이터셋을 만든다(TempDatasetService 만 호출). 예약 필드가 정확히 채워졌는지만 확인한다. */
+  @Transactional
+  public DatasetDetailResponse createPipelineTempDataset(
+      CreateDatasetRequest request, Long userId) {
+    if (!"TEMP".equals(request.originType()) || request.sourcePipelineStepId() == null) {
+      throw new IllegalArgumentException("파이프라인 TEMP 데이터셋은 originType=TEMP 와 스텝 id 가 필요합니다");
+    }
+    return createDatasetInternal(request, userId);
+  }
+
+  /** 생성 본체 — 출처 필드 검사는 두 공개 진입점이 맡는다. */
+  private DatasetDetailResponse createDatasetInternal(CreateDatasetRequest request, Long userId) {
     dataTableService.validateName(request.tableName());
 
     // DOCUMENT/FILE 데이터셋은 컬럼 정의가 없어 columns 가 null 로 들어올 수 있다(로봇 등 프로그래매틱
