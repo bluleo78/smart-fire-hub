@@ -7,6 +7,7 @@ import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { DeleteConfirmDialog } from '../../components/ui/delete-confirm-dialog';
 import { SearchInput } from '../../components/ui/search-input';
+import { SecurityLevelBadge } from '../../components/ui/SecurityLevelBadge';
 import {
   Select,
   SelectContent,
@@ -27,6 +28,7 @@ import {
 import { TableEmptyRow } from '../../components/ui/table-empty';
 import { TableSkeletonRows } from '../../components/ui/table-skeleton';
 import { useCategories, useDatasets, useDeleteDataset, useToggleFavorite } from '../../hooks/queries/useDatasets';
+import { useSecurityLevels } from '../../hooks/queries/useSecurityLevels';
 import { useRecentDatasets } from '../../hooks/useRecentDatasets';
 import { handleApiError } from '../../lib/api-error';
 import { formatDateOnly, formatDateTimeMinute, formatRelativeTime, getOriginTypeLabel, getStorageTypeLabel } from '../../lib/formatters';
@@ -57,6 +59,9 @@ export default function DatasetListPage() {
   const page = Number(searchParams.get('page') || '0');
   const favoriteOnly = searchParams.get('favorite') === 'true';
   const statusFilter = searchParams.get('status') || '';
+  // 보안 등급 필터 — 서버 쿼리(페이지 내 정렬 한계 회피, 목업 s2). URL 값은 등급 id.
+  const securityLevelParam = searchParams.get('securityLevel');
+  const securityLevelId = securityLevelParam ? Number(securityLevelParam) : undefined;
   /** 페이지당 표시 건수: 사용자가 selector 로 변경 가능 (기본 10) */
   const size = Number(searchParams.get('size') || '10');
   const sortKeyParam = searchParams.get('sort');
@@ -156,7 +161,9 @@ export default function DatasetListPage() {
     size,
     favoriteOnly: favoriteOnly || undefined,
     status: statusFilter || undefined,
+    securityLevelId,
   });
+  const { data: levels } = useSecurityLevels();
   const deleteDataset = useDeleteDataset();
   const toggleFavorite = useToggleFavorite();
   const { recents } = useRecentDatasets();
@@ -182,7 +189,7 @@ export default function DatasetListPage() {
   const totalPages = datasetsData?.totalPages || 0;
   const totalElements = datasetsData?.totalElements;
 
-  const noFiltersActive = !search && !categoryId && !storageType && !originType && !favoriteOnly && !statusFilter;
+  const noFiltersActive = !search && !categoryId && !storageType && !originType && !favoriteOnly && !statusFilter && !securityLevelId;
 
   const handleDelete = async (id: number, name: string) => {
     try {
@@ -306,6 +313,26 @@ export default function DatasetListPage() {
             </SelectContent>
           </Select>
 
+          {/* Security level filter — 서버 쿼리 파라미터 securityLevelId 로 나간다 */}
+          <Select
+            value={securityLevelParam || '__all__'}
+            onValueChange={(value) => {
+              patchParams({ securityLevel: value === '__all__' ? null : value, page: null });
+            }}
+          >
+            <SelectTrigger className="w-[140px]" aria-label="보안 등급 필터">
+              <SelectValue placeholder="보안 등급: 전체" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">보안 등급: 전체</SelectItem>
+              {(levels ?? []).map((l) => (
+                <SelectItem key={l.id} value={String(l.id)}>
+                  {l.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
           {/* Favorite toggle */}
           <Button
             variant={favoriteOnly ? 'default' : 'outline'}
@@ -366,6 +393,7 @@ export default function DatasetListPage() {
               >
                 이름
               </SortableHeader>
+              <TableHead>보안 등급</TableHead>
               <TableHead>태그</TableHead>
               <TableHead>유형</TableHead>
               <TableHead>카테고리</TableHead>
@@ -381,7 +409,7 @@ export default function DatasetListPage() {
           </TableHeader>
           <tbody>
             {isLoading ? (
-              <TableSkeletonRows columns={7} rows={5} />
+              <TableSkeletonRows columns={8} rows={5} />
             ) : datasets.length > 0 ? (
               datasets.map((dataset) => (
                 <TableRow
@@ -421,6 +449,11 @@ export default function DatasetListPage() {
                         </Badge>
                       )}
                     </div>
+                  </TableCell>
+
+                  {/* Security level column — 등급이 비어 오면(생성 직후 등) 빈 칸 */}
+                  <TableCell>
+                    {dataset.securityLevel && <SecurityLevelBadge level={dataset.securityLevel} />}
                   </TableCell>
 
                   {/* Tags column */}
@@ -524,7 +557,7 @@ export default function DatasetListPage() {
               ))
             ) : (
               <TableEmptyRow
-                colSpan={7}
+                colSpan={8}
                 message="데이터셋이 없습니다."
                 searchKeyword={search || undefined}
                 onResetSearch={search ? () => { patchParams({ q: null, page: null }); } : undefined}

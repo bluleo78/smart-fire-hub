@@ -1,4 +1,4 @@
-import { ArrowLeft, BarChart2, Copy, FileCode, Plus, Shield, Star, X } from 'lucide-react';
+import { ArrowLeft, BarChart2, Copy, FileCode, Pencil, Plus, Shield, ShieldCheck, Star, X } from 'lucide-react';
 import { useEffect, useLayoutEffect, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -12,6 +12,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '../../components/ui/popover';
+import { SecurityLevelBadge } from '../../components/ui/SecurityLevelBadge';
 import {
   Select,
   SelectContent,
@@ -30,10 +31,12 @@ import {
   useToggleFavorite,
   useUpdateStatus,
 } from '../../hooks/queries/useDatasets';
+import { useMyPermissions } from '../../hooks/queries/useMyPermissions';
 import { useAuth } from '../../hooks/useAuth';
 import { useRecentDatasets } from '../../hooks/useRecentDatasets';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
 import { handleApiError } from '../../lib/api-error';
+import { ChangeSecurityLevelDialog } from './components/ChangeSecurityLevelDialog';
 import { CloneDatasetDialog } from './components/CloneDatasetDialog';
 import { LinkedPipelineStatus } from './components/LinkedPipelineStatus';
 import { DatasetColumnsTab } from './tabs/DatasetColumnsTab';
@@ -45,6 +48,7 @@ import { DatasetMappingTab } from './tabs/DatasetMappingTab';
 import { DatasetMapTab } from './tabs/DatasetMapTab';
 import { DatasetObjectsTab } from './tabs/DatasetObjectsTab';
 import { DatasetSearchTab } from './tabs/DatasetSearchTab';
+import { DatasetSecurityTab } from './tabs/DatasetSecurityTab';
 
 // 백엔드 dataset_tag.tag_name 컬럼 제약(VARCHAR(50))과 동일한 길이 제한.
 // 클라이언트에서 사전에 제한하여 불필요한 400 요청/토스트 혼란을 방지한다 (#530)
@@ -74,10 +78,10 @@ export default function DatasetDetailPage() {
   const isDocument = dataset?.storageType === 'DOCUMENT';
   const isFile = dataset?.storageType === 'FILE';
   const validTabs = isDocument
-    ? ['info', 'documents']
+    ? ['info', 'security', 'documents']
     : isFile
-      ? ['info', 'objects']
-      : ['info', 'columns', 'data', 'search', 'map', 'mapping', 'history'];
+      ? ['info', 'security', 'objects']
+      : ['info', 'security', 'columns', 'data', 'search', 'map', 'mapping', 'history'];
   const tabParam = searchParams.get('tab');
   const initialTab = tabParam && validTabs.includes(tabParam) ? tabParam : 'info';
   const [activeTab, setActiveTab] = useState(initialTab);
@@ -105,10 +109,10 @@ export default function DatasetDetailPage() {
     const isDocumentType = dataset?.storageType === 'DOCUMENT';
     const isFileType = dataset?.storageType === 'FILE';
     const currentValidTabs = isDocumentType
-      ? ['info', 'documents']
+      ? ['info', 'security', 'documents']
       : isFileType
-        ? ['info', 'objects']
-        : ['info', 'columns', 'data', 'search', 'map', 'mapping', 'history'];
+        ? ['info', 'security', 'objects']
+        : ['info', 'security', 'columns', 'data', 'search', 'map', 'mapping', 'history'];
     const newTabParam = searchParams.get('tab');
     const newTab = newTabParam && currentValidTabs.includes(newTabParam) ? newTabParam : 'info';
     setActiveTab(newTab);
@@ -129,6 +133,10 @@ export default function DatasetDetailPage() {
   const [statusValue, setStatusValue] = useState<string>('NONE');
   const [statusNote, setStatusNote] = useState('');
   const [cloneDialogOpen, setCloneDialogOpen] = useState(false);
+  // 보안 등급 변경(✎)은 dataset:classify 보유자에게만(스펙 §5-2). 최종 판정은 서버.
+  const { permissions } = useMyPermissions();
+  const canClassify = permissions.has('dataset:classify');
+  const [levelDialogOpen, setLevelDialogOpen] = useState(false);
 
   const categories = categoriesData || [];
 
@@ -290,6 +298,24 @@ export default function DatasetDetailPage() {
               {/* TEMP badge */}
               {dataset.originType === 'TEMP' && (
                 <Badge variant="secondary" className="text-xs">임시</Badge>
+              )}
+              {/* 보안 등급 배지 — Certified 배지와 같은 위계(목업 s2). 생성 응답 등에서 비어 올 수 있어 있을 때만 그린다. */}
+              {dataset.securityLevel && (
+                <span className="inline-flex items-center gap-1">
+                  <SecurityLevelBadge level={dataset.securityLevel} />
+                  {canClassify && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6"
+                      aria-label="보안 등급 변경"
+                      title="보안 등급 변경"
+                      onClick={() => setLevelDialogOpen(true)}
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </Button>
+                  )}
+                </span>
               )}
               {/* 데이터셋 → 분석 워크플로우 단축 진입점 (#98)
                   쿼리/차트 에디터로 이동하면서 ?datasetId=, ?sql= 파라미터로
@@ -493,6 +519,11 @@ export default function DatasetDetailPage() {
       >
         <TabsList className="border-b justify-start h-10 shrink-0">
           <TabsTrigger value="info">정보</TabsTrigger>
+          {/* 「보안」 탭 — 표·문서·파일 모든 유형 공통(목업 s2) */}
+          <TabsTrigger value="security">
+            <ShieldCheck className="h-4 w-4" />
+            보안
+          </TabsTrigger>
           {isDocument ? (
             <TabsTrigger value="documents">문서</TabsTrigger>
           ) : isFile ? (
@@ -517,6 +548,11 @@ export default function DatasetDetailPage() {
               datasetId={datasetId}
               onDirtyChange={setInfoDirty}
             />
+          </div>
+        )}
+        {activeTab === 'security' && (
+          <div className="mt-6">
+            <DatasetSecurityTab dataset={dataset} />
           </div>
         )}
         {activeTab === 'columns' && (
@@ -567,6 +603,17 @@ export default function DatasetDetailPage() {
         onOpenChange={setCloneDialogOpen}
         dataset={dataset}
       />
+
+      {/* 보안 등급 변경 다이얼로그 — 등급이 바뀌면 key 로 새로 마운트해 초기 선택을 현재 등급에 맞춘다 */}
+      {dataset.securityLevel && (
+        <ChangeSecurityLevelDialog
+          key={dataset.securityLevel.id}
+          datasetId={dataset.id}
+          current={dataset.securityLevel}
+          open={levelDialogOpen}
+          onOpenChange={setLevelDialogOpen}
+        />
+      )}
 
       {/* 매핑 탭·기본 정보 인라인 편집 미저장 변경 이탈 가드 — 사이드바 링크 클릭/뒤로가기 등 라우트 이탈 시 확인 (#502, #635) */}
       {unsavedChangesDialog}
