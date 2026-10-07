@@ -1,6 +1,7 @@
 package com.smartfirehub.securitylevel.repository;
 
 import static com.smartfirehub.jooq.Tables.DATASET;
+import static com.smartfirehub.jooq.Tables.DATASET_ACCESS_GRANT;
 import static com.smartfirehub.jooq.Tables.ROLE;
 import static com.smartfirehub.jooq.Tables.SECURITY_LEVEL;
 
@@ -116,6 +117,26 @@ public class SecurityLevelRepository {
         .from(DATASET)
         .groupBy(DATASET.SECURITY_LEVEL_ID)
         .fetchMap(DATASET.SECURITY_LEVEL_ID, r -> r.get(1, Long.class));
+  }
+
+  /**
+   * 등급별 · 역할별 "역할 허용 항목이 있는 데이터셋" 수 — 순서 변경 영향 미리보기용(그룹 쿼리 1회, N+1 없음). 사용자 단위 항목(user_id)은 역할에
+   * 귀속시키지 않는다.
+   */
+  public Map<Long, Map<Long, Long>> countRoleGrantedDatasetsByLevelAndRole() {
+    Map<Long, Map<Long, Long>> result = new java.util.HashMap<>();
+    dsl.select(DATASET.SECURITY_LEVEL_ID, DATASET_ACCESS_GRANT.ROLE_ID, DSL.count())
+        .from(DATASET_ACCESS_GRANT)
+        .join(DATASET)
+        .on(DATASET.ID.eq(DATASET_ACCESS_GRANT.DATASET_ID))
+        .where(DATASET_ACCESS_GRANT.ROLE_ID.isNotNull())
+        .groupBy(DATASET.SECURITY_LEVEL_ID, DATASET_ACCESS_GRANT.ROLE_ID)
+        .forEach(
+            r ->
+                result
+                    .computeIfAbsent(r.get(0, Long.class), k -> new java.util.HashMap<>())
+                    .put(r.get(1, Long.class), r.get(2, Long.class)));
+    return result;
   }
 
   /** 등급별 역할 수(역할의 최대 열람 등급 기준). */

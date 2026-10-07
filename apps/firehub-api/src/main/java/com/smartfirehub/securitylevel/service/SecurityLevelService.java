@@ -16,6 +16,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -189,6 +190,12 @@ public class SecurityLevelService {
       newRank.put(orderedIds.get(i), i + 1);
     }
     Map<Long, Long> datasetsByLevel = repository.countDatasetsByLevel();
+    Map<Long, Map<Long, Long>> roleGranted = repository.countRoleGrantedDatasetsByLevelAndRole();
+    Set<Long> allowlistLevels =
+        levels.stream()
+            .filter(LevelPolicy::allowlistRequired)
+            .map(LevelPolicy::id)
+            .collect(Collectors.toSet());
     List<ReorderPreviewResponse.RoleImpact> impacts = new ArrayList<>();
     for (var role : repository.findRoleLevels()) {
       if (role.levelId() == null && !role.systemAdmin()) {
@@ -197,13 +204,19 @@ public class SecurityLevelService {
       long before =
           visibleCount(
               role.systemAdmin() ? Integer.MAX_VALUE : oldRank.get(role.levelId()),
+              role.roleId(),
               oldRank,
-              datasetsByLevel);
+              datasetsByLevel,
+              allowlistLevels,
+              roleGranted);
       long after =
           visibleCount(
               role.systemAdmin() ? Integer.MAX_VALUE : newRank.get(role.levelId()),
+              role.roleId(),
               newRank,
-              datasetsByLevel);
+              datasetsByLevel,
+              allowlistLevels,
+              roleGranted);
       if (before != after) {
         impacts.add(
             new ReorderPreviewResponse.RoleImpact(role.roleId(), role.roleName(), after - before));
@@ -232,14 +245,28 @@ public class SecurityLevelService {
         Map.of("orderedIds", orderedIds, "impact", impact.roles()));
   }
 
-  /** rank 가 roleRank 이하인 등급의 데이터셋 합 — 그 자격의 역할이 rank 기준으로 볼 수 있는 수. */
+  /**
+   * 역할 1개가 rank 기준으로 볼 수 있는 데이터셋 수. rank 가 roleRank 이하인 등급을 합산하되, 허용 목록 필요 등급은 그 역할의 ROLE 허용 항목이 있는
+   * 데이터셋만 센다 (허용 목록 등급은 rank 만으로는 열람 불가 — DatasetAccessPolicy). 사용자 단위 허용 항목은 역할에 귀속시키지 않는다(역할별 증감
+   * 의미: "이 역할 자격 보유자 전원이 공통으로 보는 수").
+   */
   private static long visibleCount(
-      int roleRank, Map<Long, Integer> ranks, Map<Long, Long> datasetsByLevel) {
+      int roleRank,
+      long roleId,
+      Map<Long, Integer> ranks,
+      Map<Long, Long> datasetsByLevel,
+      Set<Long> allowlistLevels,
+      Map<Long, Map<Long, Long>> roleGranted) {
     long sum = 0;
     for (var e : ranks.entrySet()) {
-      if (e.getValue() <= roleRank) {
-        sum += datasetsByLevel.getOrDefault(e.getKey(), 0L);
+      if (e.getValue() > roleRank) {
+        continue;
       }
+      long levelId = e.getKey();
+      sum +=
+          allowlistLevels.contains(levelId)
+              ? roleGranted.getOrDefault(levelId, Map.of()).getOrDefault(roleId, 0L)
+              : datasetsByLevel.getOrDefault(levelId, 0L);
     }
     return sum;
   }
