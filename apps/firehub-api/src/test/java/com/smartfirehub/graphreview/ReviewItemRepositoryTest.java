@@ -10,6 +10,7 @@ import com.smartfirehub.graphreview.repository.ReviewItemRepository;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TenantRlsTestSupport;
 import org.jooq.DSLContext;
+import org.jooq.impl.DSL;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -65,7 +66,7 @@ class ReviewItemRepositoryTest extends IntegrationTestBase {
         "synonym_merge", "TestCause|a|b", null, "similarity", 0.7, "second(무시)", "{}");
 
     var row =
-        repo.findByStatus("pending", "synonym_merge", null, null).stream()
+        repo.findByStatus("pending", "synonym_merge", null, null, DSL.trueCondition()).stream()
             .filter(r -> "TestCause|a|b".equals(dedupeKeyOf(r)))
             .findFirst()
             .orElseThrow();
@@ -77,22 +78,26 @@ class ReviewItemRepositoryTest extends IntegrationTestBase {
     repo.upsertPending(
         "property_normalization",
         "TestKey|피해액",
-        12L,
+        // 출처 데이터셋 가시성 필터(보안 등급)는 실제로 있는 데이터셋 행을 요구한다 — 이 테스트의 관심사는 타입 필터·payload 왕복이라
+        // 데이터셋 없는(레거시) 항목으로 둔다. 가시성 필터 자체는 ReviewItemVisibilityTest 가 고정한다.
+        null,
         "normalization_failure",
         null,
         "정규화 실패",
         "{\"entityKey\":\"3:화재\",\"propertyName\":\"피해액\",\"rawText\":\"약 3천만\"}");
 
     var props =
-        repo.findByStatus("pending", "property_normalization", null, null).stream()
+        repo
+            .findByStatus("pending", "property_normalization", null, null, DSL.trueCondition())
+            .stream()
             .filter(r -> "TestKey|피해액".equals(dedupeKeyOf(r)))
             .toList();
     assertThat(props).hasSize(1);
-    assertThat(props.get(0).datasetId()).isEqualTo(12L);
+    assertThat(props.get(0).datasetId()).isNull();
     assertThat(props.get(0).payloadJson()).contains("\"rawText\"").contains("약 3천만");
     // 다른 타입 필터로는 안 나온다.
     assertThat(
-            repo.findByStatus("pending", "synonym_merge", null, null).stream()
+            repo.findByStatus("pending", "synonym_merge", null, null, DSL.trueCondition()).stream()
                 .anyMatch(r -> "TestKey|피해액".equals(dedupeKeyOf(r))))
         .isFalse();
   }
@@ -105,7 +110,7 @@ class ReviewItemRepositoryTest extends IntegrationTestBase {
             .get(0, Long.class);
     repo.upsertPending("synonym_merge", "TestCause|a|b", null, "similarity", 0.7, "r", "{}");
     long id =
-        repo.findByStatus("pending", "synonym_merge", null, null).stream()
+        repo.findByStatus("pending", "synonym_merge", null, null, DSL.trueCondition()).stream()
             .filter(r -> "TestCause|a|b".equals(dedupeKeyOf(r)))
             .findFirst()
             .orElseThrow()
@@ -115,11 +120,14 @@ class ReviewItemRepositoryTest extends IntegrationTestBase {
 
     assertThat(repo.findById(id).orElseThrow().status()).isEqualTo("approved");
     assertThat(repo.findById(id).orElseThrow().decidedBy()).isEqualTo(userId);
-    assertThat(repo.findByStatus("pending", null, null, null)).noneMatch(r -> r.id().equals(id));
+    assertThat(repo.findByStatus("pending", null, null, null, DSL.trueCondition()))
+        .noneMatch(r -> r.id().equals(id));
     assertThat(repo.findDecisionStatus("synonym_merge", "TestCause|a|b")).contains("approved");
     // status 필터가 실제로 동작한다 — 예전에는 'pending' 하드코딩이라 approved 조회가 불가능했다(#318).
-    assertThat(repo.findByStatus("approved", null, null, null)).anyMatch(r -> r.id().equals(id));
-    assertThat(repo.findByStatus("rejected", null, null, null)).noneMatch(r -> r.id().equals(id));
+    assertThat(repo.findByStatus("approved", null, null, null, DSL.trueCondition()))
+        .anyMatch(r -> r.id().equals(id));
+    assertThat(repo.findByStatus("rejected", null, null, null, DSL.trueCondition()))
+        .noneMatch(r -> r.id().equals(id));
   }
 
   // ── page/size(opt-in, #422) ── limit/offset 이 실제로 행 수를 제한하고, orderBy(CREATED_AT, ID) 2차
@@ -134,11 +142,11 @@ class ReviewItemRepositoryTest extends IntegrationTestBase {
       repo.upsertPending(isolatedType, "TestPage|" + i, null, "similarity", 0.5, "r", "{}");
     }
 
-    var page0 = repo.findByStatus("pending", isolatedType, 0, 2);
+    var page0 = repo.findByStatus("pending", isolatedType, 0, 2, DSL.trueCondition());
     assertThat(page0).hasSize(2);
-    var page1 = repo.findByStatus("pending", isolatedType, 2, 2);
+    var page1 = repo.findByStatus("pending", isolatedType, 2, 2, DSL.trueCondition());
     assertThat(page1).hasSize(2);
-    var page2 = repo.findByStatus("pending", isolatedType, 4, 2);
+    var page2 = repo.findByStatus("pending", isolatedType, 4, 2, DSL.trueCondition());
     // 마지막 페이지는 남은 1건만 — 요청한 size보다 적게 와도 됨을 확인.
     assertThat(page2).hasSize(1);
 
@@ -147,7 +155,7 @@ class ReviewItemRepositoryTest extends IntegrationTestBase {
     var ids2 = page2.stream().map(ReviewItemRecord::id).toList();
     // 세 페이지를 합치면 limit 없이 조회한 전체와 정확히 일치해야 한다(중복도 누락도 없이).
     var all =
-        repo.findByStatus("pending", isolatedType, null, null).stream()
+        repo.findByStatus("pending", isolatedType, null, null, DSL.trueCondition()).stream()
             .map(ReviewItemRecord::id)
             .toList();
     var paged = new java.util.ArrayList<Long>();

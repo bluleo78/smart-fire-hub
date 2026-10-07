@@ -2,6 +2,7 @@ package com.smartfirehub.graphreview.repository;
 
 import static org.jooq.impl.DSL.field;
 import static org.jooq.impl.DSL.name;
+import static org.jooq.impl.DSL.select;
 import static org.jooq.impl.DSL.table;
 
 import com.smartfirehub.graphreview.dto.ReviewItemRecord;
@@ -35,6 +36,13 @@ public class ReviewItemRepository {
   private final DSLContext dsl;
 
   private static final Table<?> T = table(name("graph_review_item"));
+
+  /**
+   * 목록 가시성 필터의 하위 질의 대상 — DatasetAccessGuard#visibleCondition() 이 쓰는 {@code "dataset"} 이름 관례와 맞춘다.
+   */
+  private static final Table<?> DATASET_TABLE = table(name("dataset"));
+
+  private static final Field<Long> DATASET_ROW_ID = field(name("dataset", "id"), Long.class);
   private static final Field<Long> ID = field(name("graph_review_item", "id"), Long.class);
   private static final Field<String> ITEM_TYPE =
       field(name("graph_review_item", "item_type"), String.class);
@@ -106,9 +114,23 @@ public class ReviewItemRepository {
    * 페이지 경계에서 동시각 행이 누락되거나 중복될 수 있다.
    */
   public List<ReviewItemRecord> findByStatus(
-      String status, String itemType, Integer offset, Integer limit) {
+      String status,
+      String itemType,
+      Integer offset,
+      Integer limit,
+      Condition visibleDatasetCondition) {
     Condition where = STATUS.eq(status);
     if (itemType != null) where = where.and(ITEM_TYPE.eq(itemType));
+    // 보안 등급: 출처 데이터셋을 볼 수 있는 항목만(레거시 dataset_id null 은 판정 대상이 없어 유지). 페이지 경계가 맞도록 SQL 에서 거른다.
+    where =
+        where.and(
+            DATASET_ID
+                .isNull()
+                .or(
+                    DATASET_ID.in(
+                        select(DATASET_ROW_ID)
+                            .from(DATASET_TABLE)
+                            .where(visibleDatasetCondition))));
     var query =
         dsl.select(
                 ID,
