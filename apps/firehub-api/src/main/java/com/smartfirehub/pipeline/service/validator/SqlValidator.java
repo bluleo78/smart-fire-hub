@@ -1019,6 +1019,73 @@ public class SqlValidator {
     return result;
   }
 
+  /** 참조 테이블 이름. PG 식별자 폴딩 적용 결과. 미한정이면 schema 는 null. */
+  public record TableName(String schema, String name) {}
+
+  /** 읽기 집합과 쓰기 집합(INSERT/UPDATE/DELETE 대상, SELECT INTO 대상). */
+  public record ReferencedTables(Set<TableName> reads, Set<TableName> writes) {}
+
+  /**
+   * 보안 등급 판정용 참조 테이블 추출(스펙 §4.1). validate 와 같은 파서·같은 CTE 스코프 규칙·같은 이름 정규화를 재사용한다 — 두 경로가 다른 규칙을 쓰면
+   * validate 는 통과하고 판정은 다른 테이블을 보는 틈이 생긴다.
+   *
+   * <p>fail-closed: 파싱 실패, SELECT/INSERT/UPDATE/DELETE 외 문장, 3단 이름, 유니코드 이스케이프 식별자는
+   * UnsafeSqlException. 쓰기 대상은 AST 노드 <b>동일성</b>으로 구분한다(같은 이름이 읽기에도 나오면 각각 따로 센다).
+   */
+  public ReferencedTables referencedTables(String sql) {
+    Statement statement = parseSingleStatement(sql);
+    requireDmlOrSelect(statement);
+    AstNodeCollector collected = collectSafely(statement);
+    Set<Table> writeTargets = Collections.newSetFromMap(new IdentityHashMap<>());
+    if (statement instanceof Insert insert) {
+      writeTargets.add(insert.getTable());
+    } else if (statement instanceof Update update) {
+      writeTargets.add(update.getTable());
+    } else if (statement instanceof Delete delete) {
+      if (delete.getTable() != null) {
+        writeTargets.add(delete.getTable());
+      }
+      if (delete.getTables() != null) {
+        writeTargets.addAll(delete.getTables());
+      }
+    }
+    // validate 는 SELECT INTO 를 거부하지만, 판정 단독 호출에서도 쓰기로 분류해 둔다(이중 방어).
+    for (PlainSelect ps : collected.plainSelects()) {
+      if (ps.getIntoTables() != null) {
+        writeTargets.addAll(ps.getIntoTables());
+      }
+    }
+    Set<TableName> reads = new LinkedHashSet<>();
+    Set<TableName> writes = new LinkedHashSet<>();
+    for (Table table : collected.realTables()) {
+      TableName n = toTableName(table);
+      if (writeTargets.contains(table)) {
+        writes.add(n);
+      } else {
+        reads.add(n);
+      }
+    }
+    return new ReferencedTables(reads, writes);
+  }
+
+  /** requireDataSchemaOnly 와 같은 분해·거부 규칙으로 이름을 정규화한다. */
+  private static TableName toTableName(Table table) {
+    String fqn = table.getFullyQualifiedName();
+    if (countUnquotedDots(fqn) > 1) {
+      throw new UnsafeSqlException("허용되지 않은 테이블 이름 형식입니다: " + fqn);
+    }
+    int dot = indexOfUnquotedDot(fqn);
+    if (dot < 0) {
+      rejectUnicodeEscapeIdentifier(fqn);
+      return new TableName(null, foldIdentifier(fqn));
+    }
+    String schema = fqn.substring(0, dot);
+    String name = fqn.substring(dot + 1);
+    rejectUnicodeEscapeIdentifier(schema);
+    rejectUnicodeEscapeIdentifier(name);
+    return new TableName(foldIdentifier(schema), foldIdentifier(name));
+  }
+
   /**
    * AST 내 모든 함수 호출이 deny-list({@link #BLOCKED_FUNCTIONS})에 포함되지 않는지 검사한다 — 알려진 위험 함수에 더 구체적인 메시지를
    * 주는 심층 방어. 정본은 {@link #requireOnlyKnownFunctions}(허용목록)다.
@@ -1507,6 +1574,19 @@ public class SqlValidator {
           continue; // 그 스코프에서 유효한 CTE 참조 — 실제 테이블이 아니다.
         }
         result.add(fqn);
+      }
+      return result;
+    }
+
+    /** CTE 참조를 뺀 실제 테이블 노드(동일성 보존) — referencedTables 가 쓰기 대상 판별에 쓴다. tableFqns 와 같은 제외 규칙. */
+    List<Table> realTables() {
+      List<Table> result = new ArrayList<>();
+      for (TableRef ref : tables) {
+        String fqn = ref.table().getFullyQualifiedName();
+        if (indexOfUnquotedDot(fqn) < 0 && ref.activeCteAliases().contains(foldIdentifier(fqn))) {
+          continue;
+        }
+        result.add(ref.table());
       }
       return result;
     }
