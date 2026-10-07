@@ -12,8 +12,10 @@ import com.smartfirehub.pipeline.service.executor.ExecutorClient;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.securitylevel.access.SqlAccessMode;
+import com.smartfirehub.securitylevel.access.SqlAccessResult;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
 /**
@@ -52,20 +54,75 @@ public class GuardedSqlExecutor {
   /**
    * 애널리틱스 — 기존 계약상 문법·검증 오류는 200 + error 필드다(AnalyticsQueryExecutionService.execute). 정규화·판정 전 파싱
    * 오류도 같은 형태로 돌려 웹 쿼리 편집기 표시가 바뀌지 않게 한다. 열람 거부는 403(구조화 코드 — {@code CodedApiException} 이 그대로
-   * 올라간다).
+   * 올라간다). 판정({@link #judgeAnalytics})과 실행({@link #executeJudgedAnalytics})을 한 번에 한다.
    */
   public AnalyticsQueryResponse executeAnalytics(
       Clearance c, String sql, int maxRows, boolean readOnly) {
-    NormalizedSql normalized;
-    try {
-      normalized = NormalizedSql.of(sql);
-      guard.requireSql(c, normalized.text(), SqlAccessMode.INTERACTIVE);
-    } catch (SqlQueryException | UnsafeSqlException e) {
-      // AnalyticsQueryExecutionService.errorResponse 와 같은 모양(queryType "UNKNOWN") — 웹 표시가 같게.
-      return new AnalyticsQueryResponse(
-          "UNKNOWN", List.of(), List.of(), 0, 0L, 0, false, e.getMessage());
+    return executeJudgedAnalytics(judgeAnalytics(c, sql), maxRows, readOnly);
+  }
+
+  /**
+   * 애널리틱스 SQL 판정 결과 — 판정한 정규화본({@link NormalizedSql})과 판정 결과를 함께 들고 다니는 토큰. 차트·대시보드는 거부를 예외가 아니라
+   * 값으로 받아 위젯만 denied 로 바꾸고(스펙 §4.2 4행), 통과한 토큰만 {@link #executeJudgedAnalytics} 로 실행한다 — 판정을 두 번
+   * 하지 않고, 판정한 바로 그 문자열이 실행된다(판정 = 실행).
+   *
+   * <p>생성자는 이 관문만 부른다 — 바깥에서 "허용" 토큰을 만들어 판정 없이 실행할 수 없게 한다.
+   */
+  public static final class AnalyticsJudgment {
+    /** 판정·실행할 정규화본. 정규화·파싱 실패면 null. */
+    private final NormalizedSql normalized;
+
+    /** 판정 결과. 정규화·파싱 실패면 null. */
+    private final SqlAccessResult access;
+
+    /** 정규화·파싱 실패 메시지(실행 시 200 + error 로 돌려준다). 성공이면 null. */
+    private final String parseError;
+
+    private AnalyticsJudgment(NormalizedSql normalized, SqlAccessResult access, String parseError) {
+      this.normalized = normalized;
+      this.access = access;
+      this.parseError = parseError;
     }
-    return analyticsExecution.execute(normalized, maxRows, readOnly);
+
+    /**
+     * 조회자가 SQL 이 참조하는 데이터셋 중 하나라도 볼 수 없는가. 정규화·파싱 실패는 "거부 아님"(false) — 실행 시 기존 계약대로 200 + error 가
+     * 된다.
+     */
+    public boolean denied() {
+      return access != null && !access.allowed();
+    }
+  }
+
+  /**
+   * 애널리틱스 SQL 을 실행하지 않고 판정만 한다. 원문을 {@link NormalizedSql#of} 로 한 번 정규화하고 그 정규화본을 판정한다 — 원문을 판정하면
+   * 정규화가 리터럴 안에 숨은 테이블 참조를 드러내는 SQL 에서 판정은 통과하고 실행 문자열은 숨김 테이블을 읽는다.
+   */
+  public AnalyticsJudgment judgeAnalytics(Clearance c, String sql) {
+    try {
+      NormalizedSql normalized = NormalizedSql.of(sql);
+      SqlAccessResult access = guard.checkSql(c, normalized.text(), SqlAccessMode.INTERACTIVE);
+      return new AnalyticsJudgment(normalized, access, null);
+    } catch (SqlQueryException | UnsafeSqlException e) {
+      return new AnalyticsJudgment(null, null, e.getMessage());
+    }
+  }
+
+  /**
+   * 판정 토큰을 실행한다 — 판정한 정규화본 그대로. 정규화·파싱 실패 토큰은 AnalyticsQueryExecutionService.errorResponse 와 같은
+   * 모양(queryType "UNKNOWN", 200 + error)으로, 거부 토큰은 {@link DatasetAccessGuard#requireSql} 과 같은 403
+   * 으로 끝난다.
+   */
+  public AnalyticsQueryResponse executeJudgedAnalytics(
+      AnalyticsJudgment judgment, int maxRows, boolean readOnly) {
+    if (judgment.parseError != null) {
+      return new AnalyticsQueryResponse(
+          "UNKNOWN", List.of(), List.of(), 0, 0L, 0, false, judgment.parseError);
+    }
+    SqlAccessResult r = judgment.access;
+    if (!r.allowed()) {
+      throw new CodedApiException(HttpStatus.FORBIDDEN, r.code(), r.message());
+    }
+    return analyticsExecution.execute(judgment.normalized, maxRows, readOnly);
   }
 
   /**
@@ -79,32 +136,5 @@ public class GuardedSqlExecutor {
     String sql = normalized.text().strip();
     guard.requireSql(c, sql, SqlAccessMode.INTERACTIVE);
     return executorClient.executeQuery(sql, 1, true);
-  }
-
-  /**
-   * 차트·대시보드용 사전 판정 — 거부를 예외가 아니라 값으로 돌려준다(위젯 하나 때문에 페이지 전체가 403 이 되지 않게, 스펙 §4.2 4행).
-   *
-   * <p>{@link #executeAnalytics} 와 <b>같은 문자열</b>({@link NormalizedSql#of} 정규화본)을 판정한다. 원문을 판정하면
-   * 정규화가 리터럴 안에 숨은 테이블 참조를 드러내는 SQL 에서 사전 판정은 통과하고 실행 판정은 403 을 던져, 결국 위젯별 denied 가 아니라 요청 전체 실패가
-   * 된다. 정규화·파싱 실패는 "거부 아님"(false)으로 돌려준다 — 실행 시 {@link #executeAnalytics} 가 기존 계약대로 200 + error 로
-   * 바꾼다.
-   *
-   * @return 조회자가 SQL 이 참조하는 데이터셋 중 하나라도 볼 수 없으면 true
-   */
-  public boolean isAnalyticsDenied(Clearance c, String sql) {
-    try {
-      return !guard.checkSql(c, NormalizedSql.of(sql).text(), SqlAccessMode.INTERACTIVE).allowed();
-    } catch (SqlQueryException | UnsafeSqlException e) {
-      return false;
-    }
-  }
-
-  /**
-   * 실행 관문이 던진 예외가 SQL 열람 거부(403)인가. 사전 판정과 실행 판정 사이에 등급·자격이 바뀐 경합에서 실행 관문이 거부하면, 호출자(차트·대시보드)는 이를
-   * 403 이 아니라 위젯 denied 로 바꿔야 한다. 그 밖의 코드는 그대로 다시 던지게 false.
-   */
-  public static boolean isSqlAccessDenial(CodedApiException e) {
-    return DatasetAccessGuard.SQL_ACCESS_DENIED_CODE.equals(e.code())
-        || DatasetAccessGuard.SQL_WRITE_DOWNGRADE_CODE.equals(e.code());
   }
 }

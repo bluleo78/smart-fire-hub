@@ -9,7 +9,6 @@ import com.smartfirehub.analytics.exception.SavedQueryNotFoundException;
 import com.smartfirehub.analytics.repository.ChartRepository;
 import com.smartfirehub.analytics.repository.SavedQueryRepository;
 import com.smartfirehub.global.dto.PageResponse;
-import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.sql.GuardedSqlExecutor;
@@ -118,8 +117,8 @@ public class ChartService {
   }
 
   /**
-   * 대시보드 캐시 채움용 — 조회자 자격으로 실행한다(판정은 호출자가 먼저 한다 — Task 16). readOnly=false 는 차트 데이터와 같은 기존 동작이다(쓰기
-   * 집합도 관문이 VIEW·하향 규칙으로 판정한다 — 판단 사항 8). 캐시 키는 saved_query_id.
+   * 조회자 자격으로 판정하고 실행한다(빈 SQL 은 빈 결과). readOnly=false 는 차트 데이터와 같은 기존 동작이다(쓰기 집합도 관문이 VIEW·하향 규칙으로
+   * 판정한다 — 판단 사항 8).
    */
   public com.smartfirehub.analytics.dto.AnalyticsQueryResponse executeQueryForCache(
       Clearance viewer, String sql) {
@@ -127,7 +126,24 @@ public class ChartService {
       return new com.smartfirehub.analytics.dto.AnalyticsQueryResponse(
           "SELECT", java.util.List.of(), java.util.List.of(), 0, 0L, 0, false, null);
     }
-    return guardedSqlExecutor.executeAnalytics(viewer, sql, 1000, false);
+    return executeJudged(judge(viewer, sql));
+  }
+
+  /**
+   * 조회자 기준 차트 SQL 판정(실행하지 않음) — 대시보드 일괄 경로가 캐시를 읽기 전에 매 요청 부른다. 거부는 예외가 아니라 {@link
+   * GuardedSqlExecutor.AnalyticsJudgment#denied()} 값이다(위젯 하나 때문에 화면 전체가 403 이 되지 않게).
+   */
+  public GuardedSqlExecutor.AnalyticsJudgment judge(Clearance viewer, String sqlText) {
+    return guardedSqlExecutor.judgeAnalytics(viewer, sqlText);
+  }
+
+  /**
+   * 판정 토큰을 차트 데이터 조건(최대 1000행, readOnly=false)으로 실행한다 — 판정한 바로 그 정규화본이 실행되고 다시 판정하지 않는다. 대시보드 캐시
+   * 채움(캐시 키는 saved_query_id + 판정한 SQL 원문)과 단건 차트 데이터가 같이 쓴다.
+   */
+  public com.smartfirehub.analytics.dto.AnalyticsQueryResponse executeJudged(
+      GuardedSqlExecutor.AnalyticsJudgment judgment) {
+    return guardedSqlExecutor.executeJudgedAnalytics(judgment, 1000, false);
   }
 
   /**
@@ -145,25 +161,13 @@ public class ChartService {
                 () -> new SavedQueryNotFoundException("Saved query not found for chart: " + id));
     // 보안 등급(S2): 조회자 기준 판정 — 위반이면 실행하지 않고 200 + denied. 단건 위젯 경로(DashboardWidgetCard→useChartData)도
     // 대시보드 일괄 경로와 같은 계약이어야 위젯 하나가 화면 전체를 오류로 만들지 않는다(스펙 §4.2 4행).
-    Clearance viewer = clearanceResolver.resolve(userId);
-    if (guardedSqlExecutor.isAnalyticsDenied(viewer, sqlText)) {
+    // 판정은 한 번 — 통과한 토큰의 정규화본을 그대로 실행하므로 판정과 실행 사이에 다른 판정이 끼지 않는다.
+    GuardedSqlExecutor.AnalyticsJudgment judgment =
+        judge(clearanceResolver.resolve(userId), sqlText);
+    if (judgment.denied()) {
       return deniedData(chart);
     }
-    try {
-      return new ChartDataResponse(
-          chart, guardedSqlExecutor.executeAnalytics(viewer, sqlText, 1000, false));
-    } catch (CodedApiException e) {
-      // 사전 판정과 실행 판정 사이 경합(등급·자격 변경)으로 실행 관문이 거부한 경우도 같은 denied 로 — 403 으로 새지 않게.
-      if (GuardedSqlExecutor.isSqlAccessDenial(e)) {
-        return deniedData(chart);
-      }
-      throw e;
-    }
-  }
-
-  /** 조회자가 차트 SQL 을 볼 수 없는지 판정한다(대시보드 일괄 경로용 — 캐시를 읽기 전에 매 요청 호출한다). 실행 문자열과 같은 정규화본을 판정한다. */
-  public boolean isDeniedFor(Clearance viewer, String sqlText) {
-    return guardedSqlExecutor.isAnalyticsDenied(viewer, sqlText);
+    return new ChartDataResponse(chart, executeJudged(judgment));
   }
 
   /**

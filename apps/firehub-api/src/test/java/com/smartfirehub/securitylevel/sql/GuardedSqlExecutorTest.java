@@ -139,9 +139,9 @@ class GuardedSqlExecutorTest extends IntegrationTestBase {
    */
   @Test
   void analyticsDeniedPrecheck_judgesTheExecutedString_notTheRawInput() {
-    assertThat(gate.isAnalyticsDenied(viewer, strippedOnlyLeak())).isTrue();
-    assertThat(gate.isAnalyticsDenied(viewer, "SELECT a FROM " + pub)).isFalse();
-    assertThat(gate.isAnalyticsDenied(viewer, "SELEC a FRM x")).isFalse();
+    assertThat(gate.judgeAnalytics(viewer, strippedOnlyLeak()).denied()).isTrue();
+    assertThat(gate.judgeAnalytics(viewer, "SELECT a FROM " + pub).denied()).isFalse();
+    assertThat(gate.judgeAnalytics(viewer, "SELEC a FRM x").denied()).isFalse();
   }
 
   @Test

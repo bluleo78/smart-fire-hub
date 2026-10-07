@@ -18,7 +18,6 @@ import com.smartfirehub.analytics.repository.AnalyticsDashboardRepository;
 import com.smartfirehub.analytics.repository.ChartRepository;
 import com.smartfirehub.analytics.repository.DashboardWidgetRepository;
 import com.smartfirehub.analytics.repository.SavedQueryRepository;
-import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.sql.GuardedSqlExecutor;
@@ -176,25 +175,17 @@ public class AnalyticsDashboardService {
         resultByQuery.put(savedQueryId, emptyQueryResponse());
         continue;
       }
-      if (chartService.isDeniedFor(viewer, sqlText)) {
+      GuardedSqlExecutor.AnalyticsJudgment judgment = chartService.judge(viewer, sqlText);
+      if (judgment.denied()) {
         deniedQueries.add(savedQueryId);
         continue;
       }
-      try {
-        // 판정을 통과한 쿼리만 캐시에 닿는다. 결과를 지역 맵에 담아 위젯 루프가 getIfPresent(만료·축출 시 null)에 의존하지 않게 한다.
-        resultByQuery.put(
-            savedQueryId,
-            queryResultCache.get(
-                new QueryCacheKey(savedQueryId, sqlText),
-                k -> chartService.executeQueryForCache(viewer, sqlText)));
-      } catch (CodedApiException e) {
-        // 사전 판정과 실행 판정 사이 경합으로 로더 안 실행 관문이 거부한 경우 — 대시보드 전체 403 이 아니라 이 위젯만 denied.
-        // (Caffeine 은 언체크 예외를 감싸지 않고 다시 던지며, 실패한 로드는 캐시에 남기지 않는다.)
-        if (!GuardedSqlExecutor.isSqlAccessDenial(e)) {
-          throw e;
-        }
-        deniedQueries.add(savedQueryId);
-      }
+      // 판정을 통과한 쿼리만 캐시에 닿는다. 캐시 미스면 방금 판정한 토큰을 그대로 실행한다(다시 판정하지 않는다 — 판정 = 실행). 결과를 지역
+      // 맵에 담아 위젯 루프가 getIfPresent(만료·축출 시 null)에 의존하지 않게 한다.
+      resultByQuery.put(
+          savedQueryId,
+          queryResultCache.get(
+              new QueryCacheKey(savedQueryId, sqlText), k -> chartService.executeJudged(judgment)));
     }
 
     // 4. Build widget data list

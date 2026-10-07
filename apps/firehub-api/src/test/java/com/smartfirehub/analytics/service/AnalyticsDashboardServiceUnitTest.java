@@ -14,6 +14,7 @@ import com.smartfirehub.analytics.repository.ChartRepository;
 import com.smartfirehub.analytics.repository.DashboardWidgetRepository;
 import com.smartfirehub.analytics.repository.SavedQueryRepository;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
+import com.smartfirehub.securitylevel.sql.GuardedSqlExecutor;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -98,7 +99,10 @@ class AnalyticsDashboardServiceUnitTest {
     when(chartRepository.findSavedQueryId(chartId)).thenReturn(savedQueryId);
     when(chartRepository.findSavedQuerySqlTextById(savedQueryId))
         .thenReturn(Optional.of("SELECT 1"));
-    when(chartService.executeQueryForCache(any(), anyString())).thenReturn(queryResponse);
+    // 판정 통과 토큰(denied()=false) → 그 토큰 실행 결과(판정 1회 + 판정 토큰 실행으로 바뀐 seam).
+    GuardedSqlExecutor.AnalyticsJudgment allowed = mock(GuardedSqlExecutor.AnalyticsJudgment.class);
+    when(chartService.judge(any(), anyString())).thenReturn(allowed);
+    when(chartService.executeJudged(allowed)).thenReturn(queryResponse);
     // getByIdOptional이 호출될 때 chartResponse 반환
     when(chartService.getByIdOptional(chartId, userId)).thenReturn(Optional.of(chartResponse));
 
@@ -185,7 +189,10 @@ class AnalyticsDashboardServiceUnitTest {
     when(chartRepository.findSavedQueryId(anyLong())).thenReturn(savedQueryId);
     when(chartRepository.findSavedQuerySqlTextById(savedQueryId))
         .thenReturn(Optional.of("SELECT 1"));
-    when(chartService.executeQueryForCache(any(), anyString())).thenReturn(queryResponse);
+    // 판정 통과 토큰(denied()=false) → 그 토큰 실행 결과(판정 1회 + 판정 토큰 실행으로 바뀐 seam).
+    GuardedSqlExecutor.AnalyticsJudgment allowed = mock(GuardedSqlExecutor.AnalyticsJudgment.class);
+    when(chartService.judge(any(), anyString())).thenReturn(allowed);
+    when(chartService.executeJudged(allowed)).thenReturn(queryResponse);
     when(chartService.getByIdOptional(chartId1, userId)).thenReturn(Optional.of(chartResponse1));
     when(chartService.getByIdOptional(chartId2, userId)).thenReturn(Optional.of(chartResponse2));
 
