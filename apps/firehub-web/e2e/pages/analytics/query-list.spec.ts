@@ -346,4 +346,45 @@ test.describe('쿼리 목록 페이지', () => {
     // 목록에서 executeSavedQuery가 정확히 1회만 호출되었는지 (편집기가 자동 재실행하지 않음을 검증)
     expect(executeCallCount).toBe(1);
   });
+  test('볼 수 없는 연결 데이터셋은 이름 대신 "열람 권한 없음"으로 표시한다(오류 아님)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 서버(Task 3 C1)는 조회자가 볼 수 없는 연결 데이터셋의 이름만 null 로 주고 datasetId 는 유지한다.
+    // datasetId 도 null 인 행(연결 없음)은 기존처럼 cross-dataset 이다 — 두 상태가 구분돼야 한다.
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/analytics/queries',
+      createPageResponse([
+        createSavedQueryListItem({ id: 1, name: '숨김 연결 쿼리', datasetId: 42, datasetName: null }),
+        createSavedQueryListItem({ id: 2, name: '연결 없는 쿼리', datasetId: null, datasetName: null }),
+        createSavedQueryListItem({ id: 3, name: '공개 연결 쿼리', datasetId: 7, datasetName: '출동 기록' }),
+      ]),
+    );
+    await mockApi(page, 'GET', '/api/v1/analytics/queries/folders', []);
+
+    await page.goto('/analytics/queries');
+
+    const hiddenRow = page.getByRole('row').filter({ hasText: '숨김 연결 쿼리' });
+    const restricted = hiddenRow.getByTestId('query-dataset-restricted');
+    await expect(restricted).toHaveText('열람 권한 없음');
+    // 권한 부족은 오류가 아니다 — 오류색 대신 muted, 아이콘은 보조 기술에 숨긴다
+    await expect(restricted).toHaveClass(/text-muted-foreground/);
+    await expect(restricted).not.toHaveClass(/destructive/);
+    await expect(restricted.locator('svg')).toHaveAttribute('aria-hidden', 'true');
+    await expect(hiddenRow.getByText('cross-dataset')).toHaveCount(0);
+
+    const noLinkRow = page.getByRole('row').filter({ hasText: '연결 없는 쿼리' });
+    await expect(noLinkRow.getByText('cross-dataset')).toBeVisible();
+    await expect(noLinkRow.getByTestId('query-dataset-restricted')).toHaveCount(0);
+
+    const visibleRow = page.getByRole('row').filter({ hasText: '공개 연결 쿼리' });
+    await expect(visibleRow.getByText('출동 기록')).toBeVisible();
+    await expect(visibleRow.getByTestId('query-dataset-restricted')).toHaveCount(0);
+
+    // 토스트·경고 없음
+    await expect(page.locator('[data-sonner-toast]')).toHaveCount(0);
+    await expect(page.getByRole('alert')).toHaveCount(0);
+    await page.screenshot({ path: 'test-results/tc/security-level-name-masking/query-list-restricted.png' });
+  });
 });

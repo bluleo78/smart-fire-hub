@@ -28,7 +28,8 @@ export interface PipelineStepResponse {
   scriptType: 'SQL' | 'PYTHON' | 'API_CALL' | 'AI_CLASSIFY';
   scriptContent: string;
   outputDatasetId: number;
-  outputDatasetName: string;
+  /** 조회자가 볼 수 없는 출력 데이터셋이면 null(보안 등급 — id 는 그대로 온다, 편집기는 받은 id 를 저장 시 되돌려 보낸다) */
+  outputDatasetName: string | null;
   inputDatasetIds: number[];
   dependsOnStepNames: string[];
   stepOrder: number;

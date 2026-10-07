@@ -182,7 +182,11 @@ export interface UpdateChartRequest {
 export interface ChartDataResponse {
   chart: Chart;
   queryResult: AnalyticsQueryResult;
-  /** 조회자가 원본 데이터셋을 볼 수 없음 — 위젯은 "열람 권한 없음" 상태를 그린다(스펙 §5-4). */
+  /**
+   * 조회자가 원본 데이터셋을 볼 수 없음 — 위젯은 "열람 권한 없음" 상태를 그린다(스펙 §5-4).
+   * true 면 서버가 chart 를 최소 메타로 준다: config 는 빈 객체(원본 컬럼명 비노출), savedQueryName 은 null.
+   * 그래서 denied 분기는 chart.config 를 읽지 않고 먼저 반환해야 한다(DashboardWidgetCard).
+   */
   denied?: boolean;
 }
 

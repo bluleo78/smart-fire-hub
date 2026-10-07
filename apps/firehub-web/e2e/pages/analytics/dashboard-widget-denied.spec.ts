@@ -15,8 +15,10 @@ test.describe('대시보드 위젯 — 열람 권한 없음', () => {
     await mockApi(page, 'GET', '/api/v1/analytics/dashboards/1', createDashboard({ id: 1, widgets: [denied, ok] }));
     await mockApi(page, 'GET', '/api/v1/analytics/charts/1', deniedChart);
     await mockApi(page, 'GET', '/api/v1/analytics/charts/2', okChart);
+    // 서버(Task 3 E1)는 denied 페이로드의 chart 에서 config(원본 컬럼명)를 비우고 savedQueryName 을 null 로 준다 —
+    // 위젯이 config 없이도 잠금 상태를 그려야 한다.
     await mockApi(page, 'GET', '/api/v1/analytics/charts/1/data', {
-      chart: deniedChart,
+      chart: { ...deniedChart, config: {}, savedQueryName: null },
       queryResult: createQueryResult({ columns: [], rows: [], totalRows: 0, error: null }),
       denied: true,
     });

@@ -2,6 +2,7 @@ import {
   BarChart2,
   FileText,
   Folder,
+  Lock,
   Pencil,
   Play,
   Plus,
@@ -219,6 +220,17 @@ export default function QueryListPage() {
                       <Badge variant="outline" className="text-xs">
                         {query.datasetName}
                       </Badge>
+                    ) : query.datasetId != null ? (
+                      // 연결 데이터셋은 있지만 조회자가 볼 수 없다(보안 등급 — 서버가 이름만 null 로 준다). 권한 부족은 오류가 아니므로
+                      // 위젯 잠금 상태와 같은 문구·아이콘의 차분한 표시만 한다(오류색·토스트 금지). 삭제된 데이터셋은 서버가 datasetId 를
+                      // null 로 만들어(ON DELETE SET NULL) 아래 cross-dataset 으로 간다.
+                      <span
+                        className="flex items-center gap-1 text-sm text-muted-foreground"
+                        data-testid="query-dataset-restricted"
+                      >
+                        <Lock className="h-3.5 w-3.5" aria-hidden="true" />
+                        열람 권한 없음
+                      </span>
                     ) : (
                       <span className="text-muted-foreground text-sm">cross-dataset</span>
                     )}
