@@ -396,9 +396,14 @@ public class AnalyticsQueryExecutionService {
     }
   }
 
-  /** BC 진입점 — 인자 없이 호출되는 기존 외부 호출자(Web UI, 컨트롤러 BC)를 위해 유지. 내부적으로 datasetIds=null 오버로드에 위임한다. */
-  public SchemaInfoResponse getSchemaInfo() {
-    return getSchemaInfo(null);
+  /**
+   * 데이터셋 필터 없이 전체(열람 가능한 데이터셋만) 스키마를 반환하는 진입점. datasetIds=null 오버로드에 위임한다.
+   *
+   * @param visibilitySql 별칭 {@code d}(dataset) 기준 열람 가능 조건 SQL 조각({@code
+   *     DatasetAccessGuard.visibleSql})
+   */
+  public SchemaInfoResponse getSchemaInfo(String visibilitySql) {
+    return getSchemaInfo(null, visibilitySql);
   }
 
   /**
@@ -410,6 +415,8 @@ public class AnalyticsQueryExecutionService {
    *       <li>비어있음 — 빈 응답 (defensive: 외부에서 ?datasetIds= 빈값으로 호출 시 전체 폴백 방지)
    *       <li>값 있음 — 해당 id 들만 필터
    *     </ul>
+   *
+   * @param visibilitySql 보안 등급(S2): 별칭 {@code d} 기준 열람 가능 조건. 조회자가 볼 수 있는 데이터셋의 테이블만 반환한다.
    *     <p>#596: {@code @Transactional}이 없으면 {@code TenantAwareTransactionManager.doBegin()}이 실행되지
    *     않아 {@code app.tenant_id} GUC가 주입되지 않는다. 그 결과 V107 이후 RLS가 걸린 {@code dataset}/{@code
    *     dataset_column} 테이블에 대한 이 raw-SQL LEFT JOIN이 예외 없이 항상 0행을 반환해(fail-closed)
@@ -417,7 +424,7 @@ public class AnalyticsQueryExecutionService {
    *     문제가 없었다).
    */
   @Transactional(readOnly = true)
-  public SchemaInfoResponse getSchemaInfo(List<Long> datasetIds) {
+  public SchemaInfoResponse getSchemaInfo(List<Long> datasetIds, String visibilitySql) {
     if (datasetIds != null && datasetIds.isEmpty()) {
       return new SchemaInfoResponse(List.of());
     }
@@ -428,7 +435,11 @@ public class AnalyticsQueryExecutionService {
             .append("       d.id AS dataset_id, d.name AS dataset_name, ")
             .append("       dc.display_name ")
             .append("FROM information_schema.columns c ")
-            .append("LEFT JOIN dataset d ON d.table_name = c.table_name ")
+            // 보안 등급(S2): 열람 가능한 데이터셋의 테이블만 — INNER JOIN 이라 데이터셋이 아닌 data 스키마
+            // 테이블(stg_import_* 등)도 함께 사라진다. visibilitySql 은 별칭 d 기준 인라인 조건.
+            .append("JOIN dataset d ON d.table_name = c.table_name AND ")
+            .append(visibilitySql)
+            .append(" ")
             .append("LEFT JOIN dataset_column dc ")
             .append("  ON dc.dataset_id = d.id AND dc.column_name = c.column_name ")
             // 스키마명은 현재 테넌트에서 파생 + 바인드 파라미터로 넘긴다. 낡은 리터럴을 남기면

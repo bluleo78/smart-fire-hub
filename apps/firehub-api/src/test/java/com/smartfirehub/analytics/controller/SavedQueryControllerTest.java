@@ -167,7 +167,7 @@ class SavedQueryControllerTest {
         new SchemaInfoResponse(
             List.of(new SchemaInfoResponse.TableInfo("my_table", "My Dataset", 1L, List.of())));
     // PR-1 Task 2: 컨트롤러가 datasetIds 파라미터를 받는 오버로드로 변경됨 → null 분기 stub.
-    when(executionService.getSchemaInfo((List<Long>) isNull())).thenReturn(schema);
+    when(executionService.getSchemaInfo((List<Long>) isNull(), any())).thenReturn(schema);
 
     mockMvc
         .perform(
@@ -176,7 +176,7 @@ class SavedQueryControllerTest {
         .andExpect(jsonPath("$.tables[0].tableName").value("my_table"));
 
     // 추가 — datasetIds 미지정 시 서비스의 List<Long> 오버로드에 null 위임 검증
-    verify(executionService).getSchemaInfo((java.util.List<Long>) isNull());
+    verify(executionService).getSchemaInfo((java.util.List<Long>) isNull(), any());
   }
 
   // === GET /api/v1/analytics/queries/schema — datasetIds 필터 (PR-1 Task 2) ===
@@ -184,7 +184,7 @@ class SavedQueryControllerTest {
   /** 단일 datasetId — Spring 의 List<Long> 단일 값 바인딩 검증. */
   @Test
   void getSchema_singleDatasetId_passesListWithOneElement() throws Exception {
-    when(executionService.getSchemaInfo(List.of(11L)))
+    when(executionService.getSchemaInfo(eq(List.of(11L)), any()))
         .thenReturn(new SchemaInfoResponse(List.of()));
 
     mockMvc
@@ -193,13 +193,13 @@ class SavedQueryControllerTest {
                 .header("Authorization", "Bearer test-token"))
         .andExpect(status().isOk());
 
-    verify(executionService).getSchemaInfo(List.of(11L));
+    verify(executionService).getSchemaInfo(eq(List.of(11L)), any());
   }
 
   /** 콤마 구분 다중 datasetIds — 순서 보존 검증. */
   @Test
   void getSchema_multipleDatasetIds_passesListInOrder() throws Exception {
-    when(executionService.getSchemaInfo(List.of(11L, 7L)))
+    when(executionService.getSchemaInfo(eq(List.of(11L, 7L)), any()))
         .thenReturn(new SchemaInfoResponse(List.of()));
 
     mockMvc
@@ -208,7 +208,7 @@ class SavedQueryControllerTest {
                 .header("Authorization", "Bearer test-token"))
         .andExpect(status().isOk());
 
-    verify(executionService).getSchemaInfo(List.of(11L, 7L));
+    verify(executionService).getSchemaInfo(eq(List.of(11L, 7L)), any());
   }
 
   /**
@@ -220,7 +220,7 @@ class SavedQueryControllerTest {
    */
   @Test
   void getSchema_emptyDatasetIdsParam_behaviorDocumented() throws Exception {
-    when(executionService.getSchemaInfo((List<Long>) any()))
+    when(executionService.getSchemaInfo((List<Long>) any(), any()))
         .thenReturn(new SchemaInfoResponse(List.of()));
 
     mockMvc
@@ -232,7 +232,7 @@ class SavedQueryControllerTest {
     // 실제 바인딩 결과 캡처 — Spring 버전·PG 버전 차이를 흡수하기 위해 null 또는 empty list 둘 다 허용.
     @SuppressWarnings("unchecked")
     org.mockito.ArgumentCaptor<List<Long>> captor = org.mockito.ArgumentCaptor.forClass(List.class);
-    verify(executionService).getSchemaInfo(captor.capture());
+    verify(executionService).getSchemaInfo(captor.capture(), any());
     List<Long> captured = captor.getValue();
     assertThat(captured == null || captured.isEmpty())
         .as("Spring @RequestParam List<Long> 빈 문자열 바인딩: null 또는 empty list")

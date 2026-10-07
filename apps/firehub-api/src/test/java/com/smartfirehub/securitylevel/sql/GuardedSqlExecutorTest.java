@@ -164,7 +164,9 @@ class GuardedSqlExecutorTest extends IntegrationTestBase {
   @Test
   void hiddenTable_isDeniedOnBothPaths() {
     assertThatThrownBy(() -> gate.executeAnalytics(viewer, "SELECT a FROM " + hidden, 100, true))
-        .isInstanceOf(CodedApiException.class);
+        .isInstanceOf(CodedApiException.class)
+        .extracting(e -> ((CodedApiException) e).code())
+        .isEqualTo("DATASET_SQL_ACCESS_DENIED");
     asUser(userId);
     assertThatThrownBy(
             () ->
@@ -182,7 +184,9 @@ class GuardedSqlExecutorTest extends IntegrationTestBase {
             () ->
                 datasetDataService.executeQuery(
                     pubId, new SqlQueryRequest("SELECT a FROM " + pub, 100), userId))
-        .isInstanceOf(CodedApiException.class);
+        .isInstanceOf(CodedApiException.class)
+        .extracting(e -> ((CodedApiException) e).code())
+        .isEqualTo("DATASET_SQL_ACCESS_DENIED");
   }
 
   /** 애널리틱스 오류 계약 — 정규화·판정 전 파싱 오류는 예외가 아니라 200 + error 필드(웹 쿼리 편집기 표시 유지). */
