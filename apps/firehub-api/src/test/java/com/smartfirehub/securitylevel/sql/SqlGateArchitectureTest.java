@@ -217,7 +217,15 @@ class SqlGateArchitectureTest {
   void runnerMethodsThatRunUserSql_judgeRunAsUser() {
     List<String> sinkUsers = new ArrayList<>();
     List<String> unjudged = new ArrayList<>();
-    for (JavaCodeUnit unit : PROD.get(PipelineAsyncRunner.class).getCodeUnits()) {
+    // 러너 자신 + 중첩·익명 클래스(PipelineAsyncRunner$…) — 싱크 허용 목록이 이들을 함께 허용하므로 여기서도 함께 본다. 중첩 클래스의
+    // 싱크 호출 메서드는 그 메서드 안에서 판정을 부르지 않으면 걸린다(보수적 — 판정을 바깥 메서드에 두고 안에서 실행하는 형태도 거부).
+    String runner = PipelineAsyncRunner.class.getName();
+    List<JavaCodeUnit> units =
+        PROD.stream()
+            .filter(c -> c.getName().equals(runner) || c.getName().startsWith(runner + "$"))
+            .flatMap(c -> c.getCodeUnits().stream())
+            .toList();
+    for (JavaCodeUnit unit : units) {
       boolean touchesSink =
           unit.getAccessesFromSelf().stream()
               .anyMatch(
