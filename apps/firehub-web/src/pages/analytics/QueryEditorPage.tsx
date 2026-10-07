@@ -5,6 +5,7 @@ import { searchKeymap } from '@codemirror/search';
 import { EditorState } from '@codemirror/state';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { EditorView, keymap } from '@codemirror/view';
+import axios from 'axios';
 import {
   ArrowLeft,
   BarChart2,
@@ -375,6 +376,16 @@ function SaveDialog({
 // QueryEditorPage
 // ============================================================
 
+/** 서버 SQL 관문의 열람 거부 코드(DatasetAccessGuard) — 이 코드의 403 이면 화면의 이전 결과를 비운다. */
+const SQL_ACCESS_DENIAL_CODES = new Set(['DATASET_SQL_ACCESS_DENIED', 'SQL_WRITE_DOWNGRADE']);
+
+/** 실행 실패가 SQL 열람 거부(403 + 거부 코드)인지 판별한다. */
+function isSqlAccessDenial(error: unknown): boolean {
+  if (!axios.isAxiosError(error) || error.response?.status !== 403) return false;
+  const code = (error.response.data as { code?: string } | undefined)?.code;
+  return code != null && SQL_ACCESS_DENIAL_CODES.has(code);
+}
+
 export default function QueryEditorPage() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -506,6 +517,10 @@ export default function QueryEditorPage() {
         );
       }
     } catch (error) {
+      // SQL 열람 거부(403) — 이전 실행 결과가 거부 토스트 옆에 남으면 방금 SQL 의 결과처럼 보이므로 비운다.
+      if (isSqlAccessDenial(error)) {
+        setResult(null);
+      }
       handleApiError(error, '쿼리 실행에 실패했습니다.');
     }
   }, [sql, executeQuery]);

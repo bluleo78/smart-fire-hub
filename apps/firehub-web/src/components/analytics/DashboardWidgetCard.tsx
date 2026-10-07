@@ -1,4 +1,4 @@
-import { AlertTriangle, Loader2, X } from 'lucide-react';
+import { AlertTriangle, Loader2, Lock, X } from 'lucide-react';
 import { useCallback, useRef } from 'react';
 
 import { useChart, useChartData } from '../../hooks/queries/useAnalytics';
@@ -40,6 +40,22 @@ function WidgetContent({ widget, chartData, dataLoading, dataFetching }: WidgetC
     return (
       <div className="flex items-center justify-center h-full">
         <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  // 열람 권한 없음(스펙 §5-4, 목업 s4 ①) — 권한 부족은 오류가 아니다. 빨간 오류·재시도 대신 차분한 잠금 상태,
+  // 원본 데이터셋 이름은 노출하지 않는다(존재 은닉과 같은 선). 서버는 200 + denied:true + 빈 결과를 주므로
+  // 이 검사가 없으면 빈 차트("데이터가 없습니다.")로 보여 정상 0행과 구분되지 않는다.
+  if (chartData?.denied) {
+    return (
+      <div
+        data-testid="widget-denied"
+        className="flex h-full flex-col items-center justify-center gap-1 text-center text-muted-foreground"
+      >
+        <Lock className="h-5 w-5" aria-hidden="true" />
+        <p className="text-sm font-medium">열람 권한 없음</p>
+        <p className="text-xs">이 위젯의 원본 데이터를 볼 수 있는 권한이 없습니다.</p>
       </div>
     );
   }
@@ -175,13 +191,16 @@ export function DashboardWidgetCard({
           />
         </WidgetErrorBoundary>
       </CardContent>
-      <WidgetFreshnessBar
-        dataUpdatedAt={dataUpdatedAt}
-        isFetching={dataFetching}
-        isError={dataError}
-        refreshSeconds={autoRefreshSeconds ?? undefined}
-        onRefresh={handleRefresh}
-      />
+      {/* 열람 권한 없음 위젯은 신선도·재시도가 의미 없으므로 신선도 바를 숨긴다(목업 s4 ①) */}
+      {!chartData?.denied && (
+        <WidgetFreshnessBar
+          dataUpdatedAt={dataUpdatedAt}
+          isFetching={dataFetching}
+          isError={dataError}
+          refreshSeconds={autoRefreshSeconds ?? undefined}
+          onRefresh={handleRefresh}
+        />
+      )}
     </Card>
   );
 }

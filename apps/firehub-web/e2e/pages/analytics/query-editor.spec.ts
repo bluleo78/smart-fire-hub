@@ -196,6 +196,35 @@ test.describe('쿼리 에디터 페이지', () => {
     await expect(page.getByRole('button', { name: '내보내기' })).not.toBeVisible();
   });
 
+  // 데이터셋 보안 등급(스펙 §4.2): SQL 열람 거부(403)면 이전 실행 결과가 거부 토스트 옆에 남아
+  // 방금 SQL 의 결과처럼 보이지 않도록 결과 영역을 비운다.
+  test('SQL 열람 거부(403) 시 이전 실행 결과를 비운다', async ({ authenticatedPage: page }) => {
+    await setupQueryEditorMocks(page, 1);
+    await mockApi(page, 'POST', '/api/v1/analytics/queries/execute', createQueryResult());
+
+    await page.goto('/analytics/queries/1');
+    await expect(page.getByText('테스트 쿼리')).toBeVisible();
+    await page.getByRole('button', { name: '실행' }).click();
+    await expect(page.getByRole('cell', { name: '항목 1' })).toBeVisible();
+
+    // 같은 SQL 을 다시 실행했는데 그 사이 열람 권한을 잃은 경우
+    await mockApi(
+      page,
+      'POST',
+      '/api/v1/analytics/queries/execute',
+      {
+        status: 403,
+        code: 'DATASET_SQL_ACCESS_DENIED',
+        message: '쿼리가 참조하는 테이블 중 열람할 수 없거나 확인할 수 없는 테이블이 있습니다.',
+      },
+      { status: 403 },
+    );
+    await page.getByRole('button', { name: '실행' }).click();
+
+    await expect(page.getByText('쿼리가 참조하는 테이블 중 열람할 수 없거나 확인할 수 없는 테이블이 있습니다.')).toBeVisible();
+    await expect(page.getByRole('cell', { name: '항목 1' })).toHaveCount(0);
+  });
+
   test('공유 쿼리에는 "공유됨" 뱃지가 표시된다', async ({ authenticatedPage: page }) => {
     // isShared: true 쿼리 모킹
     await mockApi(
