@@ -32,6 +32,7 @@ import { Textarea } from '../../components/ui/textarea';
 import { useMyPermissions } from '../../hooks/queries/useMyPermissions';
 import { useAiClassifyForm } from '../../hooks/useAiClassifyForm';
 import { useAiCredentialForm } from '../../hooks/useAiCredentialForm';
+import { useAuth } from '../../hooks/useAuth';
 import { useEmbeddingSettingsForm } from '../../hooks/useEmbeddingSettingsForm';
 import { useSettingsOverrideForm } from '../../hooks/useSettingsOverrideForm';
 import { useSmtpSettingsForm } from '../../hooks/useSmtpSettingsForm';
@@ -45,6 +46,7 @@ import { isDecimalSyntax, isIntegerSyntax } from '../../lib/settings-number';
 import AiClassifySettingsTab from './AiClassifySettingsTab';
 import { AiCredentialFieldset, OpencodeModelField } from './AiCredentialFieldset';
 import EmbeddingSettingsTab from './EmbeddingSettingsTab';
+import SecurityOnlySettingsPage from './security/SecurityOnlySettingsPage';
 import { SettingFieldLabel } from './settings-lock';
 import SmtpSettingsTab from './SmtpSettingsTab';
 
@@ -127,7 +129,7 @@ function DefaultHint({ show }: { show: boolean }) {
   );
 }
 
-export default function SettingsPage() {
+function AdminSettingsPage() {
   // 「데이터 보안」 탭은 security:settings 보유자에게만(스펙 §5-1 탭별 권한 노출). 최종 판정은 서버.
   const { permissions } = useMyPermissions();
   const canSecurity = permissions.has('security:settings');
@@ -802,4 +804,13 @@ export default function SettingsPage() {
       {unsavedDialog}
     </div>
   );
+}
+
+/**
+ * 설정 라우트 진입점 — ADMIN 은 전체 설정(탭별 권한 노출), 그 외(security:settings 보유자)는 보안 전용 화면.
+ * 훅 규칙상 조건부 조기 반환을 한 컴포넌트 안에서 할 수 없어 래퍼로 분리했다.
+ */
+export default function SettingsPage() {
+  const { isAdmin } = useAuth();
+  return isAdmin ? <AdminSettingsPage /> : <SecurityOnlySettingsPage />;
 }

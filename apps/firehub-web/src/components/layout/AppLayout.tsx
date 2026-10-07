@@ -25,6 +25,7 @@ import {
 import { lazy, Suspense,useRef,useState } from 'react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
 
+import { useMyPermissions } from '../../hooks/queries/useMyPermissions';
 import { useActiveNavIntoView } from '../../hooks/useActiveNavIntoView';
 import { useAuth } from '../../hooks/useAuth';
 import { useBranding } from '../../hooks/useBranding';
@@ -249,6 +250,13 @@ function AppLayoutInner() {
   const navRef = useRef<HTMLElement>(null);
   useActiveNavIntoView(navRef);
   const { isAdmin } = useAuth();
+  // 관리 섹션 노출: ADMIN 은 전체, security:settings 만 가진 사용자는 「설정」만(스펙 §5-1).
+  const { permissions } = useMyPermissions();
+  const visibleAdminNavItems = isAdmin
+    ? adminNavItems
+    : permissions.has('security:settings')
+      ? adminNavItems.filter((item) => item.href === '/admin/settings')
+      : [];
   const { brandName } = useBranding(); // 런타임 브랜드명 (사이드바 표시)
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -425,10 +433,10 @@ function AppLayoutInner() {
                 onOpenChange={setAiInsightsOpen}
               />
 
-              {isAdmin && (
+              {visibleAdminNavItems.length > 0 && (
                 <NavSection
                   label="관리"
-                  items={adminNavItems}
+                  items={visibleAdminNavItems}
                   isActive={isActive}
                   collapsed={collapsed}
                   onClick={handleNavClick}
