@@ -150,6 +150,11 @@ public class SecurityLevelService {
       }
       repository.moveDatasets(id, toId);
       repository.moveRoles(id, toId);
+      // 이동 대상이 허용 목록 필요 등급이면, 옮겨진 데이터셋의 빈 허용 목록이 고아(아무도 못 봄)가 되지 않게 같은 트랜잭션에서 채운다
+      // (스펙 §2.4, §4.5). 이미 목록이 있는 데이터셋은 건드리지 않는다. 역할 이동 이후에 호출해 옮겨진 역할도 열람 역할로 포함된다.
+      if (to.allowlistRequired()) {
+        allowlistSeeder.seedEmptyAllowlistsWithViewerRoles(toId, actor);
+      }
     }
     repository.delete(id);
     repository.syncSystemAdminToTop();

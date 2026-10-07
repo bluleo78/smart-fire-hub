@@ -2,6 +2,7 @@ package com.smartfirehub.securitylevel;
 
 import static com.smartfirehub.jooq.Tables.AUDIT_LOG;
 import static com.smartfirehub.jooq.Tables.DATASET;
+import static com.smartfirehub.jooq.Tables.DATASET_ACCESS_GRANT;
 import static com.smartfirehub.jooq.Tables.ROLE;
 import static com.smartfirehub.jooq.Tables.SECURITY_LEVEL;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -10,6 +11,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.tenant.TenantProvisioningService;
+import com.smartfirehub.securitylevel.access.Clearance;
+import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
+import com.smartfirehub.securitylevel.access.DatasetAction;
 import com.smartfirehub.securitylevel.access.LevelPolicy.AiPolicy;
 import com.smartfirehub.securitylevel.access.LevelPolicy.ExportPolicy;
 import com.smartfirehub.securitylevel.access.LevelPolicy.SharePolicy;
@@ -22,6 +26,7 @@ import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TenantRlsTestSupport;
 import com.smartfirehub.support.TestUsers;
 import java.util.List;
+import java.util.Set;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -36,6 +41,7 @@ class SecurityLevelServiceTest extends IntegrationTestBase {
   @Autowired protected PasswordEncoder encoder;
   @Autowired protected TenantProvisioningService provisioning;
   @Autowired protected SecurityLevelService service;
+  @Autowired protected DatasetAccessGuard guard;
 
   protected long tenantId;
   protected long actor;
@@ -226,6 +232,58 @@ class SecurityLevelServiceTest extends IntegrationTestBase {
               .isEqualTo(secret);
         });
     assertThat(auditCount("SECURITY_LEVEL_DELETE")).isEqualTo(1);
+  }
+
+  /** 허용 목록 필요 등급(기밀)으로 이동한 데이터셋이 고아가 되지 않는지 — 최상위 자격 역할 보유자에게 보여야 한다. */
+  @Test
+  void delete_reassignToAllowlistLevel_seedsGrants_andDatasetIsVisibleToTopRole() {
+    long ds = insertDataset("민감");
+    long sensitive = levelId("민감");
+    long secret = levelId("기밀");
+    asTenant(() -> service.delete(sensitive, new DeleteSecurityLevelRequest(secret, null), actor));
+    long adminRole = roleId("ADMIN");
+    int grants =
+        inTenantFixture(
+            tenantId,
+            () -> dsl.fetchCount(DATASET_ACCESS_GRANT, DATASET_ACCESS_GRANT.DATASET_ID.eq(ds)));
+    assertThat(grants).as("이동된 데이터셋은 허용 항목이 1개 이상").isGreaterThanOrEqualTo(1);
+    Clearance viewer = new Clearance(actor, tenantId, 4, Set.of(adminRole), false, Set.of());
+    boolean visible = asTenant(() -> guard.check(viewer, ds, DatasetAction.VIEW, null).allowed());
+    assertThat(visible).as("최상위 자격 역할 보유자에게 보여야 한다(고아 아님)").isTrue();
+  }
+
+  @Test
+  void delete_reassignToAllowlistLevel_doesNotReseedDatasetsThatAlreadyHaveAllowlist() {
+    long kept = insertDataset("기밀");
+    long moved = insertDataset("민감");
+    long userRole = roleId("USER");
+    inTenantFixture(
+        tenantId,
+        () ->
+            dsl.insertInto(DATASET_ACCESS_GRANT)
+                .set(DATASET_ACCESS_GRANT.DATASET_ID, kept)
+                .set(DATASET_ACCESS_GRANT.ROLE_ID, userRole)
+                .execute());
+    asTenant(
+        () ->
+            service.delete(
+                levelId("민감"), new DeleteSecurityLevelRequest(levelId("기밀"), null), actor));
+    int keptCount =
+        inTenantFixture(
+            tenantId,
+            () -> dsl.fetchCount(DATASET_ACCESS_GRANT, DATASET_ACCESS_GRANT.DATASET_ID.eq(kept)));
+    assertThat(keptCount).as("이미 목록이 있는 데이터셋은 건드리지 않는다").isEqualTo(1);
+    int movedCount =
+        inTenantFixture(
+            tenantId,
+            () -> dsl.fetchCount(DATASET_ACCESS_GRANT, DATASET_ACCESS_GRANT.DATASET_ID.eq(moved)));
+    assertThat(movedCount).isGreaterThanOrEqualTo(1);
+  }
+
+  protected long roleId(String name) {
+    return inTenantFixture(
+        tenantId,
+        () -> dsl.select(ROLE.ID).from(ROLE).where(ROLE.NAME.eq(name)).fetchSingle(ROLE.ID));
   }
 
   @Test
