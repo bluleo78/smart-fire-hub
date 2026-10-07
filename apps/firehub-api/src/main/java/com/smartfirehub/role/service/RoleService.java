@@ -1,5 +1,6 @@
 package com.smartfirehub.role.service;
 
+import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.permission.dto.PermissionResponse;
 import com.smartfirehub.permission.repository.PermissionRepository;
 import com.smartfirehub.role.dto.RoleDetailResponse;
@@ -7,8 +8,10 @@ import com.smartfirehub.role.dto.RoleResponse;
 import com.smartfirehub.role.exception.RoleNotFoundException;
 import com.smartfirehub.role.exception.SystemRoleModificationException;
 import com.smartfirehub.role.repository.RoleRepository;
+import com.smartfirehub.securitylevel.repository.DatasetAccessGrantRepository;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -18,6 +21,7 @@ public class RoleService {
 
   private final RoleRepository roleRepository;
   private final PermissionRepository permissionRepository;
+  private final DatasetAccessGrantRepository grantRepository;
 
   @Transactional(readOnly = true)
   public List<RoleResponse> getAllRoles() {
@@ -67,6 +71,15 @@ public class RoleService {
 
     if (role.isSystem()) {
       throw new SystemRoleModificationException("Cannot delete system role: " + role.name());
+    }
+
+    // 판단 사항 14: 이 역할이 어떤 허용 목록 필요 데이터셋의 유일한 항목이면, 삭제(ON DELETE CASCADE)가 그 데이터셋을 아무도 못 보게 만든다.
+    var orphaned = grantRepository.datasetsWhereRoleIsSoleGrantOnAllowlistLevel(id);
+    if (!orphaned.isEmpty()) {
+      throw new CodedApiException(
+          HttpStatus.CONFLICT,
+          "ROLE_SOLE_ALLOWLIST_ENTRY",
+          "이 역할이 유일한 허용 항목인 데이터셋이 " + orphaned.size() + "개 있어 삭제할 수 없습니다. 먼저 허용 목록에 다른 항목을 추가하세요.");
     }
 
     roleRepository.deleteById(id);
