@@ -1,24 +1,24 @@
-import { ArrowDown, ArrowUp, ChevronDown, MoreHorizontal } from "lucide-react";
-import { useId, useState } from "react";
+import { ArrowDown, ArrowUp, ChevronDown, MoreHorizontal } from 'lucide-react';
+import { useId, useState } from 'react';
 
-import { Badge } from "../../../components/ui/badge";
-import { Button } from "../../../components/ui/button";
+import { Badge } from '../../../components/ui/badge';
+import { Button } from '../../../components/ui/button';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "../../../components/ui/dropdown-menu";
-import { Input } from "../../../components/ui/input";
-import { Label } from "../../../components/ui/label";
-import { RadioGroup, RadioGroupItem } from "../../../components/ui/radio-group";
-import { SecurityLevelBadge } from "../../../components/ui/SecurityLevelBadge";
-import { Switch } from "../../../components/ui/switch";
+} from '../../../components/ui/dropdown-menu';
+import { Input } from '../../../components/ui/input';
+import { Label } from '../../../components/ui/label';
+import { RadioGroup, RadioGroupItem } from '../../../components/ui/radio-group';
+import { SecurityLevelBadge } from '../../../components/ui/SecurityLevelBadge';
+import { Switch } from '../../../components/ui/switch';
 import type {
   SecurityLevel,
   SecurityLevelRequest,
   SecurityLevelUsage,
-} from "../../../types/security-level";
+} from '../../../types/security-level';
 
 interface Props {
   level: SecurityLevel;
@@ -143,7 +143,7 @@ export function SecurityLevelRow({
         <span className="ml-auto text-sm text-muted-foreground">
           {usage
             ? `데이터셋 ${usage.datasetCount} · 역할 ${usage.roleCount}`
-            : ""}
+            : ''}
         </span>
         <Button
           variant="ghost"
@@ -154,7 +154,7 @@ export function SecurityLevelRow({
           onClick={() => setOpen((o) => !o)}
         >
           <ChevronDown
-            className={`h-4 w-4 transition-transform ${open ? "rotate-180" : ""}`}
+            className={`h-4 w-4 transition-transform ${open ? 'rotate-180' : ''}`}
           />
         </Button>
         <DropdownMenu>
@@ -203,7 +203,7 @@ export function SecurityLevelRow({
                 nameError ? `level-name-error-${level.id}` : undefined
               }
               onChange={(e) => {
-                set("name", e.target.value);
+                set('name', e.target.value);
                 onNameEdit?.();
               }}
             />
@@ -223,7 +223,7 @@ export function SecurityLevelRow({
               id={`allowlist-${level.id}`}
               aria-label="허용 목록 필요"
               checked={form.allowlistRequired}
-              onCheckedChange={(v) => set("allowlistRequired", v)}
+              onCheckedChange={(v) => set('allowlistRequired', v)}
             />
           </div>
           <div className="flex items-center justify-between">
@@ -238,37 +238,37 @@ export function SecurityLevelRow({
               aria-label="ADMIN 우회"
               disabled={!form.allowlistRequired}
               checked={form.adminBypass}
-              onCheckedChange={(v) => set("adminBypass", v)}
+              onCheckedChange={(v) => set('adminBypass', v)}
             />
           </div>
           <PolicyRadio
             label="내보내기"
             value={form.exportPolicy}
-            onChange={(v) => set("exportPolicy", v)}
+            onChange={(v) => set('exportPolicy', v)}
             options={[
-              { value: "ALLOW", label: "허용" },
-              { value: "PERMISSION", label: "권한 필요" },
-              { value: "DENY", label: "차단" },
+              { value: 'ALLOW', label: '허용' },
+              { value: 'PERMISSION', label: '권한 필요' },
+              { value: 'DENY', label: '차단' },
             ]}
           />
           <PolicyRadio
             label="AI 분석"
             value={form.aiPolicy}
-            onChange={(v) => set("aiPolicy", v)}
+            onChange={(v) => set('aiPolicy', v)}
             options={[
-              { value: "ALL", label: "전체" },
-              { value: "SELF_HOSTED_ONLY", label: "자체 호스팅 모델만" },
-              { value: "DENY", label: "차단" },
+              { value: 'ALL', label: '전체' },
+              { value: 'SELF_HOSTED_ONLY', label: '자체 호스팅 모델만' },
+              { value: 'DENY', label: '차단' },
             ]}
           />
           <PolicyRadio
             label="외부 공유·전달"
             value={form.sharePolicy}
-            onChange={(v) => set("sharePolicy", v)}
+            onChange={(v) => set('sharePolicy', v)}
             hint="GraphRAG·리포트 메일·Slack"
             options={[
-              { value: "ALLOW", label: "허용" },
-              { value: "DENY", label: "차단" },
+              { value: 'ALLOW', label: '허용' },
+              { value: 'DENY', label: '차단' },
             ]}
           />
           <div className="flex items-center justify-between">
@@ -277,7 +277,7 @@ export function SecurityLevelRow({
               id={`audit-${level.id}`}
               aria-label="감사 기록"
               checked={form.auditAccess}
-              onCheckedChange={(v) => set("auditAccess", v)}
+              onCheckedChange={(v) => set('auditAccess', v)}
             />
           </div>
           <div className="flex justify-end">

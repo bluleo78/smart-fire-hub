@@ -1,10 +1,10 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import axios from "axios";
-import { Plus } from "lucide-react";
-import { useId, useMemo, useState } from "react";
-import { toast } from "sonner";
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import axios from 'axios';
+import { Plus } from 'lucide-react';
+import { useId, useMemo, useState } from 'react';
+import { toast } from 'sonner';
 
-import { securityLevelsApi } from "../../../api/security-levels";
+import { securityLevelsApi } from '../../../api/security-levels';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -14,15 +14,15 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from "../../../components/ui/alert-dialog";
-import { Button } from "../../../components/ui/button";
+} from '../../../components/ui/alert-dialog';
+import { Button } from '../../../components/ui/button';
 import {
   Card,
   CardContent,
   CardHeader,
   CardTitle,
-} from "../../../components/ui/card";
-import { Checkbox } from "../../../components/ui/checkbox";
+} from '../../../components/ui/card';
+import { Checkbox } from '../../../components/ui/checkbox';
 import {
   Dialog,
   DialogContent,
@@ -30,27 +30,27 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "../../../components/ui/dialog";
-import { InlineBanner } from "../../../components/ui/inline-banner";
-import { Input } from "../../../components/ui/input";
-import { Label } from "../../../components/ui/label";
-import { Skeleton } from "../../../components/ui/skeleton";
+} from '../../../components/ui/dialog';
+import { InlineBanner } from '../../../components/ui/inline-banner';
+import { Input } from '../../../components/ui/input';
+import { Label } from '../../../components/ui/label';
+import { Skeleton } from '../../../components/ui/skeleton';
 import {
   useSecurityLevels,
   useSecurityLevelUsage,
-} from "../../../hooks/queries/useSecurityLevels";
-import { handleApiError } from "../../../lib/api-error";
+} from '../../../hooks/queries/useSecurityLevels';
+import { handleApiError } from '../../../lib/api-error';
 import type {
   ReorderPreview,
   SecurityLevel,
   SecurityLevelRequest,
-} from "../../../types/security-level";
-import { ReassignDeleteDialog } from "./ReassignDeleteDialog";
-import { SecurityLevelRow } from "./SecurityLevelRow";
+} from '../../../types/security-level';
+import { ReassignDeleteDialog } from './ReassignDeleteDialog';
+import { SecurityLevelRow } from './SecurityLevelRow';
 
 /** 이름 중복 — 백엔드 409 + code. 토스트 대신 이름 입력란 아래에 인라인으로 보여 준다. */
-const NAME_DUPLICATE_CODE = "SECURITY_LEVEL_NAME_DUPLICATE";
-const NAME_DUPLICATE_MESSAGE = "같은 이름의 보안 등급이 이미 있습니다.";
+const NAME_DUPLICATE_CODE = 'SECURITY_LEVEL_NAME_DUPLICATE';
+const NAME_DUPLICATE_MESSAGE = '같은 이름의 보안 등급이 이미 있습니다.';
 const isNameDuplicate = (e: unknown) =>
   axios.isAxiosError(e) &&
   e.response?.status === 409 &&
@@ -85,7 +85,7 @@ export default function SecuritySettingsTab() {
   const seedViewersId = useId();
   const [deleting, setDeleting] = useState<SecurityLevel | null>(null);
   const [addOpen, setAddOpen] = useState(false);
-  const [newName, setNewName] = useState("");
+  const [newName, setNewName] = useState('');
   // 이름 중복 인라인 오류 — 행 저장은 등급 id, 추가 다이얼로그는 'new' 로 구분한다.
   const [nameErrors, setNameErrors] = useState<Record<string, string>>({});
   const setNameError = (key: string, msg?: string) =>
@@ -114,32 +114,32 @@ export default function SecuritySettingsTab() {
     () => new Map((usage ?? []).map((u) => [u.levelId, u])),
     [usage],
   );
-  const dirtyOrder = order.join(",") !== serverOrder.join(",");
+  const dirtyOrder = order.join(',') !== serverOrder.join(',');
   const invalidate = () =>
-    qc.invalidateQueries({ queryKey: ["security-levels"] });
+    qc.invalidateQueries({ queryKey: ['security-levels'] });
 
   const save = useMutation({
     mutationFn: ({ id, req }: { id: number; req: SecurityLevelRequest }) =>
       securityLevelsApi.update(id, req),
     onSuccess: (_d, { id }) => {
-      toast.success("보안 등급을 저장했습니다");
+      toast.success('보안 등급을 저장했습니다');
       setNameError(String(id));
       void invalidate();
     },
     onError: (e, { id }) => {
       if (isNameDuplicate(e)) setNameError(String(id), NAME_DUPLICATE_MESSAGE);
-      else handleApiError(e, "보안 등급 저장에 실패했습니다.");
+      else handleApiError(e, '보안 등급 저장에 실패했습니다.');
     },
   });
   const reorder = useMutation({
     mutationFn: (ids: number[]) => securityLevelsApi.reorder(ids),
     onSuccess: () => {
-      toast.success("등급 순서를 적용했습니다");
+      toast.success('등급 순서를 적용했습니다');
       setReorderPreview(null);
       setLocalOrder(null);
       void invalidate();
     },
-    onError: (e) => handleApiError(e, "순서 적용에 실패했습니다."),
+    onError: (e) => handleApiError(e, '순서 적용에 실패했습니다.'),
   });
   const remove = useMutation({
     mutationFn: ({
@@ -152,19 +152,19 @@ export default function SecuritySettingsTab() {
       reason: string | null;
     }) => securityLevelsApi.remove(id, { reassignToLevelId: to, reason }),
     onSuccess: () => {
-      toast.success("보안 등급을 삭제했습니다");
+      toast.success('보안 등급을 삭제했습니다');
       setDeleting(null);
       void invalidate();
     },
-    onError: (e) => handleApiError(e, "보안 등급 삭제에 실패했습니다."),
+    onError: (e) => handleApiError(e, '보안 등급 삭제에 실패했습니다.'),
   });
   const setDefault = useMutation({
     mutationFn: (id: number) => securityLevelsApi.setDefault(id),
     onSuccess: () => {
-      toast.success("기본 등급을 변경했습니다");
+      toast.success('기본 등급을 변경했습니다');
       void invalidate();
     },
-    onError: (e) => handleApiError(e, "기본 등급 변경에 실패했습니다."),
+    onError: (e) => handleApiError(e, '기본 등급 변경에 실패했습니다.'),
   });
   const create = useMutation({
     mutationFn: (name: string) =>
@@ -172,21 +172,21 @@ export default function SecuritySettingsTab() {
         name,
         allowlistRequired: false,
         adminBypass: false,
-        exportPolicy: "ALLOW",
-        aiPolicy: "ALL",
-        sharePolicy: "ALLOW",
+        exportPolicy: 'ALLOW',
+        aiPolicy: 'ALL',
+        sharePolicy: 'ALLOW',
         auditAccess: false,
       }),
     onSuccess: () => {
-      toast.success("보안 등급을 추가했습니다");
+      toast.success('보안 등급을 추가했습니다');
       setAddOpen(false);
-      setNewName("");
-      setNameError("new");
+      setNewName('');
+      setNameError('new');
       void invalidate();
     },
     onError: (e) => {
-      if (isNameDuplicate(e)) setNameError("new", NAME_DUPLICATE_MESSAGE);
-      else handleApiError(e, "보안 등급 추가에 실패했습니다.");
+      if (isNameDuplicate(e)) setNameError('new', NAME_DUPLICATE_MESSAGE);
+      else handleApiError(e, '보안 등급 추가에 실패했습니다.');
     },
   });
 
@@ -206,7 +206,7 @@ export default function SecuritySettingsTab() {
           impact: data.datasetsWithoutAllowlist,
         });
       } catch (e) {
-        handleApiError(e, "영향 범위를 확인하지 못했습니다.");
+        handleApiError(e, '영향 범위를 확인하지 못했습니다.');
       }
       return;
     }
@@ -225,7 +225,7 @@ export default function SecuritySettingsTab() {
       const { data } = await securityLevelsApi.previewReorder(order);
       setReorderPreview(data);
     } catch (e) {
-      handleApiError(e, "순서 변경 영향을 확인하지 못했습니다.");
+      handleApiError(e, '순서 변경 영향을 확인하지 못했습니다.');
     }
   };
 
@@ -346,7 +346,7 @@ export default function SecuritySettingsTab() {
             <AlertDialogDescription>
               {reorderPreview && reorderPreview.roles.length > 0
                 ? `역할 ${reorderPreview.roles.length}개의 열람 범위가 달라집니다.`
-                : "열람 범위가 달라지는 역할이 없습니다."}
+                : '열람 범위가 달라지는 역할이 없습니다.'}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <ul className="space-y-1 text-sm">
@@ -373,12 +373,12 @@ export default function SecuritySettingsTab() {
       </AlertDialog>
 
       <ReassignDeleteDialog
-        key={deleting?.id ?? "none"}
+        key={deleting?.id ?? 'none'}
         level={deleting}
         levels={levels}
         usage={deleting ? usageById.get(deleting.id) : undefined}
         usageState={
-          usageError ? "error" : usageLoading || !usage ? "loading" : "ready"
+          usageError ? 'error' : usageLoading || !usage ? 'loading' : 'ready'
         }
         open={!!deleting}
         onOpenChange={(o) => !o && setDeleting(null)}
@@ -393,8 +393,8 @@ export default function SecuritySettingsTab() {
         onOpenChange={(o) => {
           setAddOpen(o);
           if (!o) {
-            setNameError("new");
-            setNewName("");
+            setNameError('new');
+            setNewName('');
           }
         }}
       >
@@ -422,11 +422,11 @@ export default function SecuritySettingsTab() {
                 maxLength={50}
                 aria-invalid={nameErrors.new ? true : undefined}
                 aria-describedby={
-                  nameErrors.new ? "new-level-name-error" : undefined
+                  nameErrors.new ? 'new-level-name-error' : undefined
                 }
                 onChange={(e) => {
                   setNewName(e.target.value);
-                  setNameError("new");
+                  setNameError('new');
                 }}
               />
               {nameErrors.new && (

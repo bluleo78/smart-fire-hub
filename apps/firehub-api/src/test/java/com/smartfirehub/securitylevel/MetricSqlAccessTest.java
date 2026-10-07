@@ -12,13 +12,15 @@ import static org.mockito.Mockito.when;
 
 import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.global.util.NormalizedSql;
 import com.smartfirehub.pipeline.service.executor.ExecutorClient;
 import com.smartfirehub.pipeline.service.executor.ExecutorClient.QueryExecuteResult;
 import com.smartfirehub.proactive.dto.CreateProactiveJobRequest;
 import com.smartfirehub.proactive.dto.UpdateProactiveJobRequest;
 import com.smartfirehub.proactive.service.MetricPollerService;
-import com.smartfirehub.proactive.service.MetricSqlAccessChecker;
 import com.smartfirehub.proactive.service.ProactiveJobService;
+import com.smartfirehub.securitylevel.access.ClearanceResolver;
+import com.smartfirehub.securitylevel.sql.GuardedSqlExecutor;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.SecurityFixture;
 import com.smartfirehub.support.TenantRlsTestSupport;
@@ -39,7 +41,8 @@ class MetricSqlAccessTest extends IntegrationTestBase {
   @Autowired private DSLContext dsl;
   @Autowired private PasswordEncoder encoder;
   @Autowired private ProactiveJobService jobService;
-  @Autowired private MetricSqlAccessChecker checker;
+  @Autowired private GuardedSqlExecutor guardedSqlExecutor;
+  @Autowired private ClearanceResolver clearanceResolver;
   @Autowired private MetricPollerService poller;
   @MockitoBean private ExecutorClient executorClient;
 
@@ -153,10 +156,26 @@ class MetricSqlAccessTest extends IntegrationTestBase {
     assertThat(jobService.createJob(req, u).id()).isPositive();
   }
 
+  /** 폴링 시점 판정은 실행 관문(GuardedSqlExecutor#executeMetricQuery)이 소유자 자격으로 한다 — 실제 관문을 직접 부른다. */
   @Test
   void pollTime_reJudgesOwner() {
-    assertThat(checker.isAllowed("SELECT count(*) FROM " + sec, userAt("민감"))).isTrue();
-    assertThat(checker.isAllowed("SELECT count(*) FROM " + sec, userAt("공개"))).isFalse();
+    reset(executorClient);
+    when(executorClient.executeQuery(anyString(), anyInt(), anyBoolean()))
+        .thenReturn(
+            new QueryExecuteResult(
+                true, "SELECT", List.of("c"), List.of(Map.of("c", 1)), 1, 0, 0L, false, null));
+    NormalizedSql q = NormalizedSql.of("SELECT count(*) FROM " + sec);
+    assertThatThrownBy(
+            () -> guardedSqlExecutor.executeMetricQuery(clearanceResolver.resolve(userAt("공개")), q))
+        .isInstanceOf(CodedApiException.class)
+        .extracting(e -> ((CodedApiException) e).code())
+        .isEqualTo("DATASET_SQL_ACCESS_DENIED");
+    verify(executorClient, never()).executeQuery(anyString(), anyInt(), anyBoolean());
+    assertThat(
+            guardedSqlExecutor
+                .executeMetricQuery(clearanceResolver.resolve(userAt("민감")), q)
+                .success())
+        .isTrue();
   }
 
   /** 폴러 실행 경로 — 자격이 낮아진 소유자의 메트릭은 executor 로 가지 않고, 충분한 소유자는 간다. */
