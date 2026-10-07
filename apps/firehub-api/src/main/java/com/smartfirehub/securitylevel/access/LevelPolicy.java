@@ -1,8 +1,7 @@
 package com.smartfirehub.securitylevel.access;
 
 /**
- * 보안 등급 1개의 정책 스냅샷(security_level 한 행). 판정 함수가 DB 를 모르게 하려고 값 객체로
- * 넘긴다.
+ * 보안 등급 1개의 정책 스냅샷(security_level 한 행). 판정 함수가 DB 를 모르게 하려고 값 객체로 넘긴다.
  *
  * @param rank 테넌트 내 순서 — 클수록 높은 등급
  */

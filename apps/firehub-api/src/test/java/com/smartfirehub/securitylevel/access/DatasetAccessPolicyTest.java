@@ -12,10 +12,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
-/**
- * 스펙 §2.5 판정 규칙의 조합 매트릭스. Spring 없이 도는 순수 테스트 — 규칙 변경이 여기서
- * 먼저 드러나야 한다.
- */
+/** 스펙 §2.5 판정 규칙의 조합 매트릭스. Spring 없이 도는 순수 테스트 — 규칙 변경이 여기서 먼저 드러나야 한다. */
 class DatasetAccessPolicyTest {
 
   private static LevelPolicy level(
@@ -60,7 +57,8 @@ class DatasetAccessPolicyTest {
 
   @ParameterizedTest
   @MethodSource("viewMatrix")
-  void view(int rank, boolean onList, boolean admin, LevelPolicy l, boolean allowed, String reason) {
+  void view(
+      int rank, boolean onList, boolean admin, LevelPolicy l, boolean allowed, String reason) {
     Decision d = decide(rank, onList, admin, l, DatasetAction.VIEW);
     assertThat(d.allowed()).isEqualTo(allowed);
     assertThat(d.reasonCode()).isEqualTo(reason);
@@ -104,14 +102,22 @@ class DatasetAccessPolicyTest {
     Decision selfHosted =
         DatasetAccessPolicy.decide(
             new AccessInput(
-                3, false, false, SENSITIVE, DatasetAction.AI, Set.of(), ProviderHosting.SELF_HOSTED));
+                3,
+                false,
+                false,
+                SENSITIVE,
+                DatasetAction.AI,
+                Set.of(),
+                ProviderHosting.SELF_HOSTED));
     assertThat(selfHosted.allowed()).isTrue();
     Decision nullHosting =
         DatasetAccessPolicy.decide(
             new AccessInput(3, false, false, SENSITIVE, DatasetAction.AI, Set.of(), null));
     assertThat(nullHosting.allowed()).as("hosting 미상은 외부로 간주(fail-closed)").isFalse();
-    LevelPolicy aiDeny = level(2, false, false, ExportPolicy.ALLOW, AiPolicy.DENY, SharePolicy.ALLOW);
-    assertThat(decide(2, false, false, aiDeny, DatasetAction.AI).reasonCode()).isEqualTo("AI_DENIED");
+    LevelPolicy aiDeny =
+        level(2, false, false, ExportPolicy.ALLOW, AiPolicy.DENY, SharePolicy.ALLOW);
+    assertThat(decide(2, false, false, aiDeny, DatasetAction.AI).reasonCode())
+        .isEqualTo("AI_DENIED");
   }
 
   @Test

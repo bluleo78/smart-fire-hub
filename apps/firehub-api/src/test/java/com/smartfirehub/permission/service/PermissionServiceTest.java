@@ -109,8 +109,8 @@ class PermissionServiceTest extends IntegrationTestBase {
    * MultiTenancyMigrationTest#orphanSettingsWritePermissionIsGone 이 코드로 직접 단언한다. V117 이 고아
    * 'user:delete'·'user:read:self' 를 지워 42개, V131(#713)이 게이팅하던 PlatformSettingsController 삭제에 맞춰
    * platform:settings:read|write 를 지워 40개, V133(데이터셋 보안 등급)이 security:settings·dataset:classify·
-   * dataset:grant·data:export_restricted 4개를 추가해 <b>44개</b>다 (삭제는 EmbeddingVectorTablesMigrationTest 가 단언한다).
-   * 카운트만 단언하면 시딩이 깨져도 개수만 맞으면 통과하므로 신규 코드 존재도 함께 단언한다.
+   * dataset:grant·data:export_restricted 4개를 추가해 <b>44개</b>다 (삭제는
+   * EmbeddingVectorTablesMigrationTest 가 단언한다). 카운트만 단언하면 시딩이 깨져도 개수만 맞으면 통과하므로 신규 코드 존재도 함께 단언한다.
    */
   @Test
   void getAllPermissions_returnAllSeedPermissions() {

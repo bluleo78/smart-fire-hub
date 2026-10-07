@@ -18,8 +18,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 /**
  * V133 백필·시드·프로비저닝 계약을 고정한다.
  *
- * <p>스펙 §7.7 "배포 직후 접근 상실" 방지가 핵심이다: 기존 데이터셋·역할 = 기본(내부), 시스템 ADMIN = 최상위. 이 값이 어긋나면 배포 순간 일부
- * 사용자가 데이터셋을 잃는다. 또한 신규 테넌트가 같은 4등급을 받는지(프로비저닝)와, 새 행이 DEFAULT 함수로 기본 등급을 받는지 확인한다.
+ * <p>스펙 §7.7 "배포 직후 접근 상실" 방지가 핵심이다: 기존 데이터셋·역할 = 기본(내부), 시스템 ADMIN = 최상위. 이 값이 어긋나면 배포 순간 일부 사용자가
+ * 데이터셋을 잃는다. 또한 신규 테넌트가 같은 4등급을 받는지(프로비저닝)와, 새 행이 DEFAULT 함수로 기본 등급을 받는지 확인한다.
  */
 class MigrationBackfillTest extends IntegrationTestBase {
 
@@ -58,8 +58,12 @@ class MigrationBackfillTest extends IntegrationTestBase {
                     .where(SECURITY_LEVEL.TENANT_ID.eq(DEFAULT_TEST_TENANT_ID))
                     .orderBy(SECURITY_LEVEL.RANK.asc())
                     .fetch());
-    assertThat(rows).extracting(r -> r.getAllowlistRequired()).containsExactly(false, false, false, true);
-    assertThat(rows).extracting(r -> r.getAdminBypass()).containsExactly(false, false, false, false);
+    assertThat(rows)
+        .extracting(r -> r.getAllowlistRequired())
+        .containsExactly(false, false, false, true);
+    assertThat(rows)
+        .extracting(r -> r.getAdminBypass())
+        .containsExactly(false, false, false, false);
     assertThat(rows)
         .extracting(r -> r.getExportPolicy())
         .containsExactly("ALLOW", "ALLOW", "PERMISSION", "DENY");
@@ -136,7 +140,10 @@ class MigrationBackfillTest extends IntegrationTestBase {
                   .returning(ROLE.ID)
                   .fetchOne(ROLE.ID);
           Long level =
-              dsl.select(ROLE.MAX_SECURITY_LEVEL_ID).from(ROLE).where(ROLE.ID.eq(id)).fetchOne(ROLE.MAX_SECURITY_LEVEL_ID);
+              dsl.select(ROLE.MAX_SECURITY_LEVEL_ID)
+                  .from(ROLE)
+                  .where(ROLE.ID.eq(id))
+                  .fetchOne(ROLE.MAX_SECURITY_LEVEL_ID);
           Long def =
               dsl.select(SECURITY_LEVEL.ID)
                   .from(SECURITY_LEVEL)
@@ -151,7 +158,9 @@ class MigrationBackfillTest extends IntegrationTestBase {
   void newPermissions_seededAndGrantedToSystemAdmin() {
     List<String> codes =
         List.of("security:settings", "dataset:classify", "dataset:grant", "data:export_restricted");
-    int catalog = dsl.fetchCount(PERMISSION, PERMISSION.CODE.in(codes).and(PERMISSION.CATEGORY.eq("security")));
+    int catalog =
+        dsl.fetchCount(
+            PERMISSION, PERMISSION.CODE.in(codes).and(PERMISSION.CATEGORY.eq("security")));
     assertThat(catalog).isEqualTo(4);
     int granted =
         inTenantFixture(
@@ -196,18 +205,20 @@ class MigrationBackfillTest extends IntegrationTestBase {
       provisioningService.provisionDefaults(tenantId);
       int count =
           inTenantFixture(
-              tenantId, () -> dsl.fetchCount(SECURITY_LEVEL, SECURITY_LEVEL.TENANT_ID.eq(tenantId)));
+              tenantId,
+              () -> dsl.fetchCount(SECURITY_LEVEL, SECURITY_LEVEL.TENANT_ID.eq(tenantId)));
       assertThat(count).isEqualTo(4);
     } finally {
-      TenantRlsTestSupport.deleteProvisionedTenantCascade(dsl, fixtureTransactionTemplate, tenantId);
+      TenantRlsTestSupport.deleteProvisionedTenantCascade(
+          dsl, fixtureTransactionTemplate, tenantId);
     }
   }
 
   /**
    * 테스트 지원 헬퍼가 바깥 트랜잭션의 테넌트 컨텍스트를 건드리지 않는다는 계약.
    *
-   * <p>메인 DSLContext 는 PROPAGATION_NESTED 라 바깥 트랜잭션 안의 {@code dsl.transaction} 은 세이브포인트일 뿐이다 — 헬퍼가 GUC 를
-   * 복원하지 않으면 {@code createActiveTenant}/{@code deleteTenants} 호출 뒤 호출자의 RLS 가 스크래치 테넌트로 바뀐다.
+   * <p>메인 DSLContext 는 PROPAGATION_NESTED 라 바깥 트랜잭션 안의 {@code dsl.transaction} 은 세이브포인트일 뿐이다 — 헬퍼가
+   * GUC 를 복원하지 않으면 {@code createActiveTenant}/{@code deleteTenants} 호출 뒤 호출자의 RLS 가 스크래치 테넌트로 바뀐다.
    */
   @Test
   void createAndDeleteTenant_insideOuterTx_restoreCallerTenantContext() {
@@ -223,6 +234,7 @@ class MigrationBackfillTest extends IntegrationTestBase {
   }
 
   private String currentTenantSetting() {
-    return dsl.resultQuery("select current_setting('app.tenant_id', true)").fetchOneInto(String.class);
+    return dsl.resultQuery("select current_setting('app.tenant_id', true)")
+        .fetchOneInto(String.class);
   }
 }
