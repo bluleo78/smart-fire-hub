@@ -26,6 +26,7 @@ import { Checkbox } from "../../../components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -64,7 +65,11 @@ const formatDelta = (n: number) => (n > 0 ? `+${n}` : `−${Math.abs(n)}`);
 export default function SecuritySettingsTab() {
   const qc = useQueryClient();
   const { data: levels, isLoading } = useSecurityLevels();
-  const { data: usage } = useSecurityLevelUsage(true);
+  const {
+    data: usage,
+    isLoading: usageLoading,
+    isError: usageError,
+  } = useSecurityLevelUsage(true);
   // 로컬에서 바꾼 순서. null 이면 서버 순서 그대로(이펙트로 동기화하지 않고 파생한다 — 적용·되돌리기 후엔 null 로).
   const [localOrder, setLocalOrder] = useState<number[] | null>(null);
   const [reorderPreview, setReorderPreview] = useState<ReorderPreview | null>(
@@ -362,9 +367,13 @@ export default function SecuritySettingsTab() {
       </AlertDialog>
 
       <ReassignDeleteDialog
+        key={deleting?.id ?? "none"}
         level={deleting}
         levels={levels}
         usage={deleting ? usageById.get(deleting.id) : undefined}
+        usageState={
+          usageError ? "error" : usageLoading || !usage ? "loading" : "ready"
+        }
         open={!!deleting}
         onOpenChange={(o) => !o && setDeleting(null)}
         onConfirm={(to, reason) =>
@@ -377,52 +386,69 @@ export default function SecuritySettingsTab() {
         open={addOpen}
         onOpenChange={(o) => {
           setAddOpen(o);
-          if (!o) setNameError("new");
+          if (!o) {
+            setNameError("new");
+            setNewName("");
+          }
         }}
       >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>등급 추가</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-1.5">
-            <Label htmlFor="new-level-name">이름</Label>
-            <Input
-              id="new-level-name"
-              value={newName}
-              maxLength={50}
-              aria-invalid={nameErrors.new ? true : undefined}
-              aria-describedby={
-                nameErrors.new ? "new-level-name-error" : undefined
-              }
-              onChange={(e) => {
-                setNewName(e.target.value);
-                setNameError("new");
-              }}
-            />
-            {nameErrors.new && (
-              <p
-                id="new-level-name-error"
-                role="alert"
-                className="text-xs text-destructive"
-              >
-                {nameErrors.new}
-              </p>
-            )}
-            <p className="text-xs text-muted-foreground">
+            <DialogDescription>
               새 등급은 가장 높은 등급으로 추가됩니다. 순서는 ↑↓ 로 조정하세요.
-            </p>
-          </div>
-          <DialogFooter className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-            <Button variant="outline" onClick={() => setAddOpen(false)}>
-              취소
-            </Button>
-            <Button
-              disabled={!newName.trim() || create.isPending}
-              onClick={() => create.mutate(newName.trim())}
-            >
-              추가
-            </Button>
-          </DialogFooter>
+            </DialogDescription>
+          </DialogHeader>
+          {/* form 으로 감싸 Enter 로도 추가된다(중복 제출은 isPending 으로 막는다). */}
+          <form
+            className="space-y-4"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (newName.trim() && !create.isPending)
+                create.mutate(newName.trim());
+            }}
+          >
+            <div className="space-y-1.5">
+              <Label htmlFor="new-level-name">이름</Label>
+              <Input
+                id="new-level-name"
+                value={newName}
+                maxLength={50}
+                aria-invalid={nameErrors.new ? true : undefined}
+                aria-describedby={
+                  nameErrors.new ? "new-level-name-error" : undefined
+                }
+                onChange={(e) => {
+                  setNewName(e.target.value);
+                  setNameError("new");
+                }}
+              />
+              {nameErrors.new && (
+                <p
+                  id="new-level-name-error"
+                  role="alert"
+                  className="text-xs text-destructive"
+                >
+                  {nameErrors.new}
+                </p>
+              )}
+            </div>
+            <DialogFooter className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setAddOpen(false)}
+              >
+                취소
+              </Button>
+              <Button
+                type="submit"
+                disabled={!newName.trim() || create.isPending}
+              >
+                추가
+              </Button>
+            </DialogFooter>
+          </form>
         </DialogContent>
       </Dialog>
     </div>

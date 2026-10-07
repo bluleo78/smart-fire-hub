@@ -29,6 +29,8 @@ interface Props {
   level: SecurityLevel | null;
   levels: SecurityLevel[];
   usage?: SecurityLevelUsage;
+  /** 사용량 조회 상태 — ready 가 아니면 사용 중 여부를 모르므로 삭제를 막는다. */
+  usageState: "loading" | "error" | "ready";
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onConfirm: (reassignToLevelId: number | null, reason: string | null) => void;
@@ -43,6 +45,7 @@ export function ReassignDeleteDialog({
   level,
   levels,
   usage,
+  usageState,
   open,
   onOpenChange,
   onConfirm,
@@ -51,34 +54,38 @@ export function ReassignDeleteDialog({
   const [target, setTarget] = useState<string>("");
   const [reason, setReason] = useState("");
   if (!level) return null;
+  const usageReady = usageState === "ready";
   const inUse = (usage?.datasetCount ?? 0) + (usage?.roleCount ?? 0) > 0;
   const targetLevel = levels.find((l) => String(l.id) === target);
   const downward = !!targetLevel && targetLevel.rank < level.rank;
   const valid =
     (!inUse || !!targetLevel) &&
     (!downward || !inUse || reason.trim().length >= MIN_REASON);
+  // 닫히는 모든 경로(X·ESC·취소·삭제 성공)에서 입력을 비운다. 호출처의 key 와 이중 안전망.
+  const handleOpenChange = (o: boolean) => {
+    if (!o) {
+      setTarget("");
+      setReason("");
+    }
+    onOpenChange(o);
+  };
 
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(o) => {
-        if (!o) {
-          setTarget("");
-          setReason("");
-        }
-        onOpenChange(o);
-      }}
-    >
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent aria-describedby="reassign-desc">
         <DialogHeader>
           <DialogTitle>{`'${level.name}' 등급 삭제`}</DialogTitle>
           <DialogDescription id="reassign-desc">
-            {inUse
-              ? `데이터셋 ${usage?.datasetCount ?? 0}개와 역할 ${usage?.roleCount ?? 0}개를 다른 등급으로 옮겨야 삭제할 수 있습니다.`
-              : "사용 중이 아닌 등급입니다. 삭제할까요?"}
+            {usageState === "loading"
+              ? "사용 현황을 불러오는 중입니다…"
+              : usageState === "error"
+                ? "사용 현황을 확인하지 못해 삭제할 수 없습니다. 잠시 후 다시 시도하세요."
+                : inUse
+                  ? `데이터셋 ${usage?.datasetCount ?? 0}개와 역할 ${usage?.roleCount ?? 0}개를 다른 등급으로 옮겨야 삭제할 수 있습니다.`
+                  : "사용 중이 아닌 등급입니다. 삭제할까요?"}
           </DialogDescription>
         </DialogHeader>
-        {inUse && (
+        {usageReady && inUse && (
           <div className="space-y-4">
             <div className="space-y-1.5">
               <Label htmlFor="reassign-target">옮길 등급 *</Label>
@@ -111,12 +118,12 @@ export function ReassignDeleteDialog({
           </div>
         )}
         <DialogFooter className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <Button variant="outline" onClick={() => handleOpenChange(false)}>
             취소
           </Button>
           <Button
             variant="destructive"
-            disabled={!valid || pending}
+            disabled={!usageReady || !valid || pending}
             onClick={() =>
               onConfirm(
                 targetLevel ? targetLevel.id : null,

@@ -244,4 +244,126 @@ test.describe("설정 › 데이터 보안", () => {
     await expect(dialog).toContainText("역할 기준 데이터셋 수 변화입니다.");
     await expect(dialog).toContainText("사용자 개별 허용은 포함하지 않습니다.");
   });
+  test("삭제 다이얼로그 — 취소 후 다른 등급을 열면 이전 선택·사유가 남지 않는다", async ({
+    authenticatedPage: page,
+  }) => {
+    await openTab(page);
+    await page.getByRole("button", { name: "민감 메뉴" }).click();
+    await page.getByRole("menuitem", { name: "삭제" }).click();
+    let dialog = page.getByRole("dialog", { name: "'민감' 등급 삭제" });
+    await dialog.getByRole("combobox", { name: "옮길 등급" }).click();
+    await page.getByRole("option", { name: "내부 (하향)" }).click();
+    await dialog.getByLabel("하향 사유").fill("민감 등급 통합 정리");
+    await dialog.getByRole("button", { name: "취소" }).click();
+    await expect(dialog).toHaveCount(0);
+
+    // 기밀(id 4) 삭제 — 선택은 비어 있고 하향 사유란도 없다
+    await page.getByRole("button", { name: "기밀 메뉴" }).click();
+    await page.getByRole("menuitem", { name: "삭제" }).click();
+    dialog = page.getByRole("dialog", { name: "'기밀' 등급 삭제" });
+    await expect(
+      dialog.getByRole("combobox", { name: "옮길 등급" }),
+    ).toContainText("선택…");
+    await expect(dialog.getByLabel("하향 사유")).toHaveCount(0);
+    await expect(dialog.getByRole("button", { name: "삭제" })).toBeDisabled();
+  });
+
+  test("삭제 성공 후 다시 열면 입력이 비어 있다", async ({
+    authenticatedPage: page,
+  }) => {
+    const del = await mockApi(
+      page,
+      "DELETE",
+      "/api/v1/security-levels/3",
+      {},
+      { capture: true },
+    );
+    await openTab(page);
+    await page.getByRole("button", { name: "민감 메뉴" }).click();
+    await page.getByRole("menuitem", { name: "삭제" }).click();
+    let dialog = page.getByRole("dialog", { name: "'민감' 등급 삭제" });
+    await dialog.getByRole("combobox", { name: "옮길 등급" }).click();
+    await page.getByRole("option", { name: "기밀" }).click();
+    await dialog.getByRole("button", { name: "삭제" }).click();
+    await del.waitForRequest();
+    await expect(dialog).toHaveCount(0);
+
+    // 모킹 목록은 그대로라 민감 행이 남아 있다 — 다시 열면 깨끗해야 한다
+    await page.getByRole("button", { name: "민감 메뉴" }).click();
+    await page.getByRole("menuitem", { name: "삭제" }).click();
+    dialog = page.getByRole("dialog", { name: "'민감' 등급 삭제" });
+    await expect(
+      dialog.getByRole("combobox", { name: "옮길 등급" }),
+    ).toContainText("선택…");
+    await expect(dialog.getByRole("button", { name: "삭제" })).toBeDisabled();
+  });
+
+  test("사용량 조회 중에는 삭제가 막히고 안내가 보인다", async ({
+    authenticatedPage: page,
+  }) => {
+    await page.route(
+      (url) => url.pathname === "/api/v1/security-levels/usage",
+      async (route) => {
+        await new Promise((r) => setTimeout(r, 1500));
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify([
+            { levelId: 3, datasetCount: 12, roleCount: 2 },
+          ]),
+        });
+      },
+    );
+    await openTab(page);
+    await page.getByRole("button", { name: "민감 메뉴" }).click();
+    await page.getByRole("menuitem", { name: "삭제" }).click();
+    const dialog = page.getByRole("dialog", { name: "'민감' 등급 삭제" });
+    await expect(dialog).toContainText("사용 현황을 불러오는 중입니다");
+    await expect(dialog).not.toContainText("사용 중이 아닌 등급");
+    await expect(dialog.getByRole("button", { name: "삭제" })).toBeDisabled();
+    await expect(dialog).toContainText("데이터셋 12개와 역할 2개를");
+  });
+
+  test("사용량 조회 실패 시 삭제 불가 안내", async ({
+    authenticatedPage: page,
+  }) => {
+    await mockApi(
+      page,
+      "GET",
+      "/api/v1/security-levels/usage",
+      { message: "boom" },
+      { status: 500 },
+    );
+    await openTab(page);
+    await page.getByRole("button", { name: "민감 메뉴" }).click();
+    await page.getByRole("menuitem", { name: "삭제" }).click();
+    const dialog = page.getByRole("dialog", { name: "'민감' 등급 삭제" });
+    await expect(dialog).toContainText(
+      "사용 현황을 확인하지 못해 삭제할 수 없습니다",
+    );
+    await expect(dialog.getByRole("button", { name: "삭제" })).toBeDisabled();
+  });
+
+  test("등급 추가 — Enter 로 제출되고 설명이 있다", async ({
+    authenticatedPage: page,
+  }) => {
+    const post = await mockApi(
+      page,
+      "POST",
+      "/api/v1/security-levels",
+      {},
+      { capture: true },
+    );
+    await openTab(page);
+    await page.getByRole("button", { name: "등급 추가" }).click();
+    const dialog = page.getByRole("dialog", { name: "등급 추가" });
+    await expect(dialog).toHaveAccessibleDescription(
+      /가장 높은 등급으로 추가됩니다/,
+    );
+    await dialog.getByLabel("이름").fill("극비");
+    await dialog.getByLabel("이름").press("Enter");
+    expect((await post.waitForRequest()).payload).toMatchObject({
+      name: "극비",
+    });
+  });
 });
