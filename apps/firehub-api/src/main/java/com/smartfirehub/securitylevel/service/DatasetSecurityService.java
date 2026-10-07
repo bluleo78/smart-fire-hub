@@ -19,6 +19,7 @@ import com.smartfirehub.securitylevel.dto.ChangeDatasetLevelRequest;
 import com.smartfirehub.securitylevel.dto.GrantCandidatesResponse;
 import com.smartfirehub.securitylevel.repository.DatasetAccessGrantRepository;
 import com.smartfirehub.securitylevel.repository.SecurityLevelRepository;
+import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -63,6 +64,33 @@ public class DatasetSecurityService {
         "복제 원본 등급 상속",
         Map.of(
             "sourceDatasetId", sourceDatasetId, "toLevelId", sourceLevel, "copiedGrants", copied));
+  }
+
+  /**
+   * 러너 소유 TEMP 출력의 최소 전파(판단 사항 5): 입력 최대 등급으로 올리고 자동 상향 시각을 남긴다. 결과 등급이 허용 목록 필요면 {실행 주체}를 넣는다 —
+   * 비우면 다음 스텝(같은 실행 주체가 {@code {{#N}}} 로 읽는다)부터 못 보고, 아무도 못 보는 고아가 된다(스펙 §4.5). 일반 출력의 교집합 시드·자동
+   * 상향은 S4.
+   *
+   * <p>상향 여부(입력보다 낮은가)는 호출자(PipelineSecurityGate)가 판단한다 — 여기서는 지정 등급으로 옮기기만 한다.
+   */
+  @Transactional
+  public void raiseForPipelineOutput(long datasetId, LevelPolicy toLevel, long runAsUserId) {
+    Long fromId = currentLevelId(datasetId);
+    dsl.update(DATASET)
+        .set(DATASET.SECURITY_LEVEL_ID, toLevel.id())
+        .set(DATASET.SECURITY_LEVEL_AUTO_RAISED_AT, LocalDateTime.now())
+        .where(DATASET.ID.eq(datasetId))
+        .execute();
+    if (toLevel.allowlistRequired() && !grantRepository.existsUser(datasetId, runAsUserId)) {
+      grantRepository.insertUser(datasetId, runAsUserId, runAsUserId);
+    }
+    audit.record(
+        runAsUserId,
+        "DATASET_SECURITY_LEVEL_AUTO_RAISE",
+        "dataset",
+        String.valueOf(datasetId),
+        "파이프라인 입력 등급에 따른 자동 상향",
+        Map.of("fromLevelId", fromId, "toLevelId", toLevel.id()));
   }
 
   /**

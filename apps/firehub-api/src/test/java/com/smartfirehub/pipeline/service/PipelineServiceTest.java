@@ -16,6 +16,7 @@ import com.smartfirehub.pipeline.exception.PipelineNotFoundException;
 import com.smartfirehub.pipeline.exception.UnsafePythonScriptException;
 import com.smartfirehub.pipeline.exception.UnsafeSqlException;
 import com.smartfirehub.support.IntegrationTestBase;
+import com.smartfirehub.support.TenantRlsTestSupport;
 import java.util.List;
 import java.util.Map;
 import org.jooq.DSLContext;
@@ -53,6 +54,12 @@ class PipelineServiceTest extends IntegrationTestBase {
             .returning(USER.ID)
             .fetchOne()
             .getId();
+    // 보안 등급(S2): SQL 스텝 저장은 편집자 자격으로 판정된다 — ACTIVE 멤버십 + USER 역할(기본 '내부' 자격)이 있어야 기본
+    // 등급('내부') 데이터셋을 참조할 수 있다. 테스트 트랜잭션 안에서 넣어 롤백으로 함께 정리된다.
+    TenantRlsTestSupport.insertActiveMembership(dsl, testUserId, DEFAULT_TEST_TENANT_ID);
+    dsl.execute(
+        "insert into user_role (user_id, role_id) select ?, id from role where name = 'USER'",
+        testUserId);
 
     // Create input dataset
     List<DatasetColumnRequest> columns =
@@ -91,6 +98,14 @@ class PipelineServiceTest extends IntegrationTestBase {
                 null),
             testUserId);
     pkOutputDatasetId = pkOutputDataset.id();
+
+    // 보안 등급(S2): 저장 시 SQL 판정은 데이터셋에 매핑되지 않는(없는) 테이블을 숨김 테이블과 같이 거부한다(존재 은닉, fail-closed).
+    // 스텝 SQL 이 참조하는 data.src_table·data.dst_table 을 실제 데이터셋으로 만들어 둔다 — 테스트 트랜잭션 롤백으로 함께 정리된다.
+    for (String t : List.of("src_table", "dst_table")) {
+      datasetService.createDataset(
+          new CreateDatasetRequest(t, t, null, null, "TABLE", "SOURCE", pkColumns, null),
+          testUserId);
+    }
   }
 
   @Test

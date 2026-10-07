@@ -73,6 +73,8 @@ class PipelineAsyncRunnerTest {
   @Mock PythonScriptValidator pythonScriptValidator;
   @Mock IncrementalCursorService incrementalCursorService;
   @Mock OutputTableSessionLock outputTableSessionLock;
+  // 보안 등급 판정은 PipelineSqlAccessTest(통합)가 검증한다 — 여기서는 통과(목 기본값)로 두고 실행 로직만 본다.
+  @Mock PipelineSecurityGate pipelineSecurityGate;
 
   @InjectMocks PipelineAsyncRunner runner;
 

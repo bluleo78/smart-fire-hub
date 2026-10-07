@@ -1,24 +1,29 @@
 package com.smartfirehub.securitylevel.sql;
 
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.methods;
+import static org.assertj.core.api.Assertions.assertThat;
 
 import com.smartfirehub.analytics.service.AnalyticsQueryExecutionService;
 import com.smartfirehub.dataset.service.DataTableQueryService;
 import com.smartfirehub.global.util.AdhocSqlStatements;
 import com.smartfirehub.pipeline.service.PipelineAsyncRunner;
+import com.smartfirehub.pipeline.service.PipelineSecurityGate;
 import com.smartfirehub.pipeline.service.SqlColumnProbe;
 import com.smartfirehub.pipeline.service.SqlScriptExecutor;
 import com.smartfirehub.pipeline.service.executor.ExecutorClient;
 import com.smartfirehub.proactive.service.MetricPollerService;
 import com.tngtech.archunit.core.domain.JavaAccess;
 import com.tngtech.archunit.core.domain.JavaClasses;
+import com.tngtech.archunit.core.domain.JavaCodeUnit;
 import com.tngtech.archunit.core.domain.JavaMethod;
 import com.tngtech.archunit.core.importer.ClassFileImporter;
 import com.tngtech.archunit.core.importer.ImportOption;
 import com.tngtech.archunit.lang.ArchCondition;
 import com.tngtech.archunit.lang.ConditionEvents;
 import com.tngtech.archunit.lang.SimpleConditionEvent;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.AfterAll;
@@ -38,7 +43,10 @@ import org.junit.jupiter.api.Test;
  * <p>모든 규칙은 호출뿐 아니라 메서드 참조도 접근으로 센다({@link #onlyBeAccessedBy}).
  *
  * <p>파이프라인 싱크는 세 규칙으로 쪼갰다 — ArchUnit 의 {@code that().and().or()} 체인은 왼쪽부터 결합되어 한 규칙에 묶으면 앞 두 싱크가
- * 검사에서 빠진다.
+ * 검사에서 빠진다. 파이프라인 싱크의 허용 호출자(러너)는 사용자 SQL 을 판정 없이 실행하지 않도록, 싱크를 부르는 러너 메서드가 실행 주체 판정({@link
+ * PipelineSecurityGate#checkStepSqlForRun})도 부르는지 별도 규칙({@code
+ * runnerMethodsThatRunUserSql_judgeRunAsUser})이 고정한다. 순서(판정이 실행보다 먼저)는 ArchUnit 으로 볼 수 없어
+ * PipelineSqlAccessTest(통합)가 맡는다.
  */
 class SqlGateArchitectureTest {
 
@@ -198,5 +206,42 @@ class SqlGateArchitectureTest {
         .haveName("columnsWithTypes")
         .should(onlyBeAccessedBy(PipelineAsyncRunner.class))
         .check(PROD);
+  }
+
+  /**
+   * 파이프라인 싱크(ExecutorClient.executeSql·SqlScriptExecutor.execute·SqlColumnProbe.columnsWithTypes)에
+   * 접근하는 러너 메서드는 같은 메서드 안에서 실행 주체 판정({@link PipelineSecurityGate#checkStepSqlForRun})에도 접근해야
+   * 한다(Task 17). 판정을 지우거나 판정 없는 새 실행 메서드를 만들면 실패한다. 싱크 접근 메서드가 하나도 없으면 규칙이 공허하므로 그것도 실패로 본다.
+   */
+  @Test
+  void runnerMethodsThatRunUserSql_judgeRunAsUser() {
+    List<String> sinkUsers = new ArrayList<>();
+    List<String> unjudged = new ArrayList<>();
+    for (JavaCodeUnit unit : PROD.get(PipelineAsyncRunner.class).getCodeUnits()) {
+      boolean touchesSink =
+          unit.getAccessesFromSelf().stream()
+              .anyMatch(
+                  a ->
+                      isAccessTo(a, ExecutorClient.class, "executeSql")
+                          || isAccessTo(a, SqlScriptExecutor.class, "execute")
+                          || isAccessTo(a, SqlColumnProbe.class, "columnsWithTypes"));
+      if (!touchesSink) {
+        continue;
+      }
+      sinkUsers.add(unit.getFullName());
+      boolean judges =
+          unit.getAccessesFromSelf().stream()
+              .anyMatch(a -> isAccessTo(a, PipelineSecurityGate.class, "checkStepSqlForRun"));
+      if (!judges) {
+        unjudged.add(unit.getFullName());
+      }
+    }
+    assertThat(sinkUsers).as("러너에 싱크 접근 메서드가 있어야 규칙이 의미가 있다").isNotEmpty();
+    assertThat(unjudged).as("실행 주체 판정 없이 사용자 SQL 을 실행하는 러너 메서드").isEmpty();
+  }
+
+  /** 접근 대상이 지정 클래스의 지정 이름 멤버인가. */
+  private static boolean isAccessTo(JavaAccess<?> access, Class<?> owner, String name) {
+    return access.getTargetOwner().isEquivalentTo(owner) && access.getName().equals(name);
   }
 }

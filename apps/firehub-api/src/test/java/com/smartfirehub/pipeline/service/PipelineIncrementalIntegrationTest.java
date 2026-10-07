@@ -16,6 +16,8 @@ import com.smartfirehub.pipeline.dto.StepCursor;
 import com.smartfirehub.pipeline.dto.UpdatePipelineRequest;
 import com.smartfirehub.pipeline.repository.PipelineStepRepository;
 import com.smartfirehub.support.IntegrationTestBase;
+import com.smartfirehub.support.TenantRlsTestSupport;
+import com.smartfirehub.support.TestUsers;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
@@ -95,6 +97,12 @@ class PipelineIncrementalIntegrationTest extends IntegrationTestBase {
                     .fetchOne()
                     .getId());
 
+    // 보안 등급(S2): 파이프라인 SQL 스텝은 저장·실행 시 사용자 자격으로 판정된다 — ACTIVE 멤버십 + USER 역할(기본 '내부' 자격)이
+    // 있어야 기본 등급('내부') 데이터셋을 볼 수 있다.
+    inTenantFixture(
+        () -> TenantRlsTestSupport.insertActiveMembership(dsl, userId, DEFAULT_TEST_TENANT_ID));
+    TestUsers.grantRole(dsl, fixtureTransactionTemplate, userId, DEFAULT_TEST_TENANT_ID, "USER");
+
     List<DatasetColumnRequest> columns =
         List.of(
             new DatasetColumnRequest("code", "Code", "TEXT", null, false, false, null, true),
@@ -159,6 +167,8 @@ class PipelineIncrementalIntegrationTest extends IntegrationTestBase {
       inTenantFixture(
           () -> {
             dsl.execute("DELETE FROM audit_log WHERE user_id = ?", userId);
+            dsl.execute("DELETE FROM user_role WHERE user_id = ?", userId);
+            TenantRlsTestSupport.deleteMembership(dsl, userId);
             dsl.deleteFrom(USER).where(USER.ID.eq(userId)).execute();
           });
     }

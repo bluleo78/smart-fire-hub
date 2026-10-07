@@ -24,6 +24,7 @@ import com.smartfirehub.pipeline.service.executor.ApiCallExecutor;
 import com.smartfirehub.pipeline.service.executor.ExecutorClient;
 import com.smartfirehub.pipeline.service.validator.PythonScriptValidator;
 import com.smartfirehub.pipeline.service.validator.SqlValidator;
+import com.smartfirehub.securitylevel.access.SqlAccessResult;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -83,6 +84,7 @@ public class PipelineAsyncRunner {
   private final PythonScriptValidator pythonScriptValidator;
   private final IncrementalCursorService incrementalCursorService;
   private final OutputTableSessionLock outputTableSessionLock;
+  private final PipelineSecurityGate pipelineSecurityGate;
 
   /**
    * 파이프라인을 비동기로 실행한다.
@@ -100,7 +102,8 @@ public class PipelineAsyncRunner {
    *     updateStepExecution})은 모두 <b>단일 행 쓰기</b>이고 여러 건이 함께 커밋돼야 하는 불변식이 없으므로(스텝 상태는 각각 독립, 최종 상태는
    *     스텝 종료 후 한 번), 리포지토리의 클래스 레벨 {@code @Transactional} 이 여는 짧은 트랜잭션으로 충분하다 — 그 트랜잭션이 곧 RLS GUC
    *     공급 지점이다.
-   * @param userId 실행 요청 사용자 ID (Python/AI 권한 체크에 사용)
+   * @param userId 실행 주체 ID — 수동은 요청자, 트리거는 트리거 생성자. Python/AI 권한 체크와 SQL 스텝 보안 등급
+   *     판정(PipelineSecurityGate)에 쓴다
    * @param executorEnabled 외부 실행기 활성화 여부
    */
   @Async("pipelineExecutor")
@@ -399,6 +402,12 @@ public class PipelineAsyncRunner {
         // 실행 직전 재검증 — 저장 이후 정책 변경/우회 방지. probe/wrappedSql 결합은 이 검증 통과 후이므로
         // 단일 statement·세미콜론 없음이 보장되어 구조적으로 안전하다. (#136)
         sqlValidator.validate(sql);
+        // 보안 등급(S2, 스펙 §4.2 5행): 실행 주체(수동=요청자, 트리거=트리거 생성자) 기준 판정. 판정 문자열은 스텝 참조·증분
+        // 플레이스홀더를 치환하고 위에서 검증한 바로 이 sql 이다 — DML 분기는 이 문자열을 그대로, SELECT 분기는 러너가 만든
+        // INSERT/MERGE 래퍼 + 이 문자열을 실행하므로 판정한 테이블 = 실행되는 테이블이다(가드 계약). 원문(scriptContent)이나
+        // 주석을 뗀 사본을 판정하면 안 된다. 사용자 SQL 을 실제로 돌리는 probe(SqlColumnProbe)·실행보다 먼저다. 거부는 예외로
+        // 스텝 실패가 되고, 메시지는 구분 불가 문구라 실행 이력에 숨김 데이터셋 이름이 남지 않는다.
+        SqlAccessResult access = pipelineSecurityGate.checkStepSqlForRun(userId, sql);
         boolean isSelect = isSelectStatement(sql);
         // 이번 실행에서 SQL 스텝 출력을 위해 임시 데이터셋을 자동 생성/재사용했는지 여부.
         // 예약어 컬럼명 별칭 처리(renameReservedColumn*)는 이 경로에서만 적용해야 한다 — 사용자가
@@ -493,6 +502,18 @@ public class PipelineAsyncRunner {
         // 사용자 DML 이 스스로 정한다.
         if (stepWasFullRebuild && isSelect && outputTableName != null) {
           preStatements.add(OutputClearStatement.deleteAll(outputTableName));
+        }
+
+        // 출력 등급(판단 사항 5): SELECT 는 러너가 붙이는 래퍼의 INSERT 대상이 판정 문자열에 없으므로 여기서 본다 — 러너가 만든
+        // TEMP 는 입력 최대 등급으로 상향, 지정 출력은 볼 수 있어야 하고 하향이면 실패. 사용자 DML 스텝의 지정 출력도 REPLACE 면
+        // 비우기(DELETE) 선행 문장의 대상이 되므로 실행 주체가 볼 수 있어야 한다. 아래 실행(선행 문장 포함)보다 먼저다.
+        if (outputDatasetId != null) {
+          if (isSelect) {
+            pipelineSecurityGate.enforceOutputLevel(
+                access, outputDatasetId, tempDatasetAutoCreated, userId);
+          } else {
+            pipelineSecurityGate.requireOutputVisible(outputDatasetId, userId);
+          }
         }
 
         if (isSelect && outputTableName != null && outputDatasetId != null) {
