@@ -90,14 +90,26 @@ class DatasetRouteHidingTest extends IntegrationTestBase {
   void everyDatasetIdRoute_returns404ForHiddenDataset() throws Exception {
     List<String> failures = new ArrayList<>();
     int checked = 0;
+    List<String> enumerated = new ArrayList<>();
     for (var entry : handlerMapping.getHandlerMethods().entrySet()) {
       var info = entry.getKey();
       if (info.getPathPatternsCondition() == null) {
         continue;
       }
       for (String pattern : info.getPathPatternsCondition().getPatternValues()) {
-        if (!pattern.startsWith("/api/v1/datasets/")
-            || !(pattern.contains("{id}") || pattern.contains("{datasetId}"))) {
+        if (!pattern.startsWith("/api/v1/datasets/")) {
+          continue;
+        }
+        // 첫 경로 세그먼트가 변수라면 인터셉터가 읽는 이름(id/datasetId)이어야 한다. 다른 이름(예: {dsId})은
+        // 인터셉터가 건너뛰어 가드가 빠지므로, 열거가 같은 규칙으로 거르면 아무도 못 잡는다 — 여기서 위반으로 기록한다.
+        String firstSegment = pattern.substring("/api/v1/datasets/".length()).split("/")[0];
+        if (firstSegment.startsWith("{")
+            && !firstSegment.equals("{id}")
+            && !firstSegment.equals("{datasetId}")) {
+          failures.add("인터셉터가 읽지 않는 경로 변수명: " + pattern);
+          continue;
+        }
+        if (!(pattern.contains("{id}") || pattern.contains("{datasetId}"))) {
           continue;
         }
         String url =
@@ -118,10 +130,22 @@ class DatasetRouteHidingTest extends IntegrationTestBase {
                       .header("Authorization", token)
                       .contentType(MediaType.APPLICATION_JSON)
                       .content("{}");
-          int status = mockMvc.perform(builder).andReturn().getResponse().getStatus();
+          var response = mockMvc.perform(builder).andReturn().getResponse();
+          int status = response.getStatus();
           checked++;
-          if (status != 404) {
-            failures.add(m + " " + pattern + " -> " + status);
+          enumerated.add(m + " " + pattern);
+          // 보조 변수(columnId 등)는 1 이라 엔티티 부재로도 404 가 날 수 있다 — 본문 메시지가 '데이터셋' 부재(가드가 만든
+          // 것)임을 확인해야 가드 증거가 된다.
+          String expected = "Dataset not found: " + hiddenId;
+          String message = "";
+          try {
+            JsonNode n = objectMapper.readTree(response.getContentAsString());
+            message = n.has("message") ? n.get("message").asText() : "";
+          } catch (Exception ignored) {
+            // 본문이 JSON 이 아니면 아래에서 불일치로 기록된다.
+          }
+          if (status != 404 || !expected.equals(message)) {
+            failures.add(m + " " + pattern + " -> " + status + " [" + message + "]");
           }
         }
       }
