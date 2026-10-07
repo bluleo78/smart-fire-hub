@@ -1255,4 +1255,60 @@ class SqlValidatorTest {
         .isInstanceOf(UnsafeSqlException.class)
         .hasMessageContaining("검색 색인");
   }
+
+  // --- DML 쓰기 대상의 CTE 그림자 (보안 등급 Task 13 — referencedTables 수정과 같은 뿌리) ---
+
+  /**
+   * PG 는 INSERT/UPDATE/DELETE 대상을 CTE 로 해석하지 않는다 — {@code WITH pg_authid AS (SELECT 1) DELETE FROM
+   * pg_authid} 는 실제 카탈로그 테이블을 겨눈다. 수정 전 validate 는 대상 이름이 CTE 별칭과 같다는 이유로 스키마 검사 목록에서 지워 통과시켰다.
+   */
+  @Test
+  void dmlTargetShadowedByCte_isStillSchemaChecked() {
+    SqlValidator permissive = new SqlValidator("data", true);
+    assertThatThrownBy(
+            () -> permissive.validate("WITH pg_authid AS (SELECT 1) DELETE FROM pg_authid"))
+        .isInstanceOf(UnsafeSqlException.class)
+        .hasMessageContaining("pg_");
+    assertThatThrownBy(() -> validator.validate("WITH users AS (SELECT 1) DELETE FROM users"))
+        .isInstanceOf(UnsafeSqlException.class)
+        .hasMessageContaining("스키마가 없습니다");
+    assertThatThrownBy(
+            () -> validator.validate("WITH t AS (SELECT 1 AS a) UPDATE public.t SET a = 1"))
+        .isInstanceOf(UnsafeSqlException.class);
+    assertThatThrownBy(
+            () ->
+                validator.validate(
+                    "WITH users AS (SELECT 1 AS a) INSERT INTO users SELECT a FROM users"))
+        .isInstanceOf(UnsafeSqlException.class)
+        .hasMessageContaining("스키마가 없습니다");
+  }
+
+  /** 애널리틱스 카탈로그 백스톱 입력에서도 CTE 와 이름이 같은 DML 대상이 사라지지 않는다. */
+  @Test
+  void unqualifiedTableNames_keepsDmlTargetShadowedByCte() {
+    SqlValidator permissive = new SqlValidator("data", true);
+    assertThat(permissive.unqualifiedTableNames("WITH users AS (SELECT 1) DELETE FROM users"))
+        .containsExactly("users");
+    // 진짜 CTE 읽기 참조는 여전히 제외된다(회귀 대조)
+    assertThat(
+            permissive.unqualifiedTableNames(
+                "WITH x AS (SELECT * FROM data.src) INSERT INTO data.dst SELECT * FROM x"))
+        .isEmpty();
+  }
+
+  /** 대조군: 쓰기 대상이 data 스키마면 CTE 읽기 참조와 함께 통과한다(정상 쿼리 회귀 방지). */
+  @Test
+  void dmlWithGenuineCteRead_stillPasses() {
+    assertThatCode(
+            () ->
+                validator.validate(
+                    "WITH users AS (SELECT * FROM data.src) DELETE FROM data.users"
+                        + " WHERE id IN (SELECT id FROM users)"))
+        .doesNotThrowAnyException();
+    assertThatCode(
+            () ->
+                validator.validate(
+                    "WITH x AS (SELECT a FROM data.src) INSERT INTO data.dst SELECT a FROM x"))
+        .doesNotThrowAnyException();
+  }
 }

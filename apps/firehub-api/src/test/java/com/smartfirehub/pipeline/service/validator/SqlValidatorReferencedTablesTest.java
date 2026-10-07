@@ -117,4 +117,23 @@ class SqlValidatorReferencedTablesTest {
     assertThat(ins.writes()).containsExactly(t("low"));
     assertThat(ins.reads()).contains(t("high"));
   }
+
+  /**
+   * 쓰기 CTE(WITH d AS (DELETE ... RETURNING ...))는 쓰기 대상 수집이 최상위 문장만 보므로 통과하면 하향·CTE 그림자 우회가 된다.
+   * JSqlParser 5.0 이 이 구문을 파싱하지 못해 지금은 fail-closed 다 — 파서 업그레이드로 파싱되기 시작하면 이 테스트가 깨져 쓰기 대상 수집을 중첩
+   * DML 까지 넓히라고 알린다.
+   */
+  @Test
+  void writableCte_isRejected_untilNestedDmlTargetsAreCollected() {
+    for (String sql :
+        Set.of(
+            "WITH d AS (INSERT INTO pub SELECT a FROM high RETURNING 1) SELECT 1",
+            "WITH pub AS (SELECT 1), d AS (DELETE FROM pub RETURNING 1) SELECT 1",
+            "WITH d AS (UPDATE pub SET a = 1 RETURNING 1) SELECT * FROM d")) {
+      assertThatThrownBy(() -> v.referencedTables(sql))
+          .as(sql)
+          .isInstanceOf(UnsafeSqlException.class);
+      assertThatThrownBy(() -> v.validate(sql)).as(sql).isInstanceOf(UnsafeSqlException.class);
+    }
+  }
 }
