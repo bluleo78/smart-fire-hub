@@ -237,10 +237,17 @@ public class DatasetSecurityService {
     if (existing.isPresent()) {
       return toResponse(existing.get());
     }
-    long id =
-        user
-            ? grantRepository.insertUser(datasetId, subjectId, actor)
-            : grantRepository.insertRole(datasetId, subjectId, actor);
+    // 후속 F5: 위 조회와 INSERT 사이에 같은 대상이 동시에 추가되면 INSERT 가 유니크 위반(DuplicateKeyException → 코드 없는 일반 409,
+    // 순차 중복과 다른 계약)으로 끝났다. 충돌을 문장 안에서
+    // 흡수하고(ON CONFLICT DO NOTHING), 넣지 못했으면 먼저 커밋된 승자의 항목을 순차 중복 추가와 같은 계약(기존 항목 반환, 감사 없음)으로 돌려준다.
+    var inserted = grantRepository.insertIfAbsent(datasetId, req.userId(), req.roleId(), actor);
+    if (inserted.isEmpty()) {
+      return toResponse(
+          grantRepository
+              .findByDatasetAndSubject(datasetId, req.userId(), req.roleId())
+              .orElseThrow());
+    }
+    long id = inserted.get();
     audit.record(
         actor,
         "DATASET_ACCESS_GRANT_ADD",

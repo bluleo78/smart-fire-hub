@@ -15,6 +15,7 @@ import com.smartfirehub.securitylevel.dto.AddAccessGrantRequest;
 import com.smartfirehub.securitylevel.dto.ChangeDatasetLevelRequest;
 import com.smartfirehub.securitylevel.service.DatasetSecurityService;
 import com.smartfirehub.support.IntegrationTestBase;
+import com.smartfirehub.support.PausedTransactionRace;
 import com.smartfirehub.support.SecurityFixture;
 import com.smartfirehub.support.TenantRlsTestSupport;
 import com.smartfirehub.support.TestUsers;
@@ -312,6 +313,41 @@ class DatasetSecurityServiceTest extends IntegrationTestBase {
     assertThat(second.id()).isEqualTo(first.id());
     assertThat(service.listGrants(ds)).hasSize(1);
     assertThat(auditCount(caller.userId(), "DATASET_ACCESS_GRANT_ADD")).isEqualTo(1);
+  }
+
+  /**
+   * 후속 F5(b) — 같은 대상 동시 추가 경합. tx1 이 같은 항목을 넣고 커밋 전에 멈춘 사이 addGrant 를 부르면 사전 조회는 미커밋 행을 못 봐 통과하고
+   * INSERT 가 유니크 인덱스에서 대기한다. tx1 커밋 뒤에도 순차 중복 추가({@link #addGrant_sameSubjectTwice_isIdempotent})와
+   * 같은 계약이어야 한다: 예외 없이 기존(승자) 항목을 돌려주고, 새 항목·감사는 남기지 않는다. 예전에는 유니크 위반이 그대로 터졌다.
+   */
+  @Test
+  void addGrant_racingSameSubject_returnsWinnerWithoutAudit() throws Exception {
+    var caller = userWithLevel("기밀");
+    long ds = dataset("기밀");
+    long other = fx.createUser("dss_race");
+    users.add(other);
+    var winner = new java.util.concurrent.atomic.AtomicLong();
+
+    var out =
+        PausedTransactionRace.run(
+            fixtureTransactionTemplate,
+            DEFAULT_TEST_TENANT_ID,
+            () ->
+                winner.set(
+                    dsl.insertInto(DATASET_ACCESS_GRANT)
+                        .set(DATASET_ACCESS_GRANT.DATASET_ID, ds)
+                        .set(DATASET_ACCESS_GRANT.USER_ID, other)
+                        .set(DATASET_ACCESS_GRANT.GRANTED_BY, creatorId)
+                        .returning(DATASET_ACCESS_GRANT.ID)
+                        .fetchSingle(DATASET_ACCESS_GRANT.ID)),
+            () -> service.addGrant(ds, new AddAccessGrantRequest(other, null), caller.userId()));
+
+    assertThat(out.secondBlocked()).as("두 번째 추가는 유니크 인덱스에서 대기해야 한다(경합 구간 통과 증거)").isTrue();
+    assertThat(out.secondError()).isNull();
+    assertThat(out.secondResult().id()).isEqualTo(winner.get());
+    assertThat(out.secondResult().type()).isEqualTo("USER");
+    assertThat(service.listGrants(ds)).hasSize(1);
+    assertThat(auditCount(caller.userId(), "DATASET_ACCESS_GRANT_ADD")).isZero();
   }
 
   /** 정지(SUSPENDED) 멤버는 허용 목록에 넣을 수 없다 — 활성 멤버만. */

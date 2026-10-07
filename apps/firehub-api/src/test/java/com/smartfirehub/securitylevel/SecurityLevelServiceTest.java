@@ -21,8 +21,10 @@ import com.smartfirehub.securitylevel.dto.DeleteSecurityLevelRequest;
 import com.smartfirehub.securitylevel.dto.SecurityLevelRequest;
 import com.smartfirehub.securitylevel.dto.SecurityLevelResponse;
 import com.smartfirehub.securitylevel.dto.SecurityLevelUsage;
+import com.smartfirehub.securitylevel.repository.SecurityLevelRepository;
 import com.smartfirehub.securitylevel.service.SecurityLevelService;
 import com.smartfirehub.support.IntegrationTestBase;
+import com.smartfirehub.support.PausedTransactionRace;
 import com.smartfirehub.support.TenantRlsTestSupport;
 import com.smartfirehub.support.TestUsers;
 import java.util.List;
@@ -42,6 +44,7 @@ class SecurityLevelServiceTest extends IntegrationTestBase {
   @Autowired protected TenantProvisioningService provisioning;
   @Autowired protected SecurityLevelService service;
   @Autowired protected DatasetAccessGuard guard;
+  @Autowired protected SecurityLevelRepository levelRepository;
 
   protected long tenantId;
   protected long actor;
@@ -130,6 +133,42 @@ class SecurityLevelServiceTest extends IntegrationTestBase {
     assertThatThrownBy(() -> asTenant(() -> service.create(req("민감"), actor)))
         .isInstanceOf(CodedApiException.class)
         .extracting(e -> ((CodedApiException) e).code())
+        .isEqualTo("SECURITY_LEVEL_NAME_DUPLICATE");
+  }
+
+  /**
+   * 후속 F5(a) — 사전 검사(existsByName)와 INSERT 사이에 같은 이름이 들어오는 경합. tx1 이 같은 이름을 넣고 커밋 전에 멈춘 사이 등급을 만들면,
+   * 사전 검사는 미커밋 행을 못 봐 통과하고 INSERT 가 이름 유니크 인덱스에서 대기한 뒤 위반으로 끝난다 — 그 위반도 사전 검사와 같은 409 {@code
+   * SECURITY_LEVEL_NAME_DUPLICATE} 여야 한다(일반 "Data integrity violation" 이 아니라). tx1 은 순위 충돌이 없도록
+   * 동떨어진 순위로 넣는다.
+   */
+  @Test
+  void create_racingSameName_isRejectedWith409() throws Exception {
+    var out =
+        PausedTransactionRace.run(
+            fixtureTransactionTemplate,
+            tenantId,
+            () -> levelRepository.insert(req("경합등급"), 1_000, actor),
+            () -> service.create(req("경합등급"), actor));
+    assertThat(out.secondBlocked()).as("두 번째 생성은 이름 유니크 인덱스에서 대기해야 한다(경합 구간 통과 증거)").isTrue();
+    assertThat(out.secondError()).isInstanceOf(CodedApiException.class);
+    assertThat(((CodedApiException) out.secondError()).code())
+        .isEqualTo("SECURITY_LEVEL_NAME_DUPLICATE");
+  }
+
+  /** 후속 F5(a) — 이름 변경도 같다: 경합으로 생긴 이름 유니크 위반은 409 {@code SECURITY_LEVEL_NAME_DUPLICATE}. */
+  @Test
+  void rename_racingSameName_isRejectedWith409() throws Exception {
+    long target = levelId("공개");
+    var out =
+        PausedTransactionRace.run(
+            fixtureTransactionTemplate,
+            tenantId,
+            () -> levelRepository.insert(req("경합이름"), 1_000, actor),
+            () -> service.update(target, req("경합이름"), actor));
+    assertThat(out.secondBlocked()).as("이름 변경은 이름 유니크 인덱스에서 대기해야 한다(경합 구간 통과 증거)").isTrue();
+    assertThat(out.secondError()).isInstanceOf(CodedApiException.class);
+    assertThat(((CodedApiException) out.secondError()).code())
         .isEqualTo("SECURITY_LEVEL_NAME_DUPLICATE");
   }
 

@@ -74,6 +74,9 @@ public class RoleService {
     }
 
     // 판단 사항 14: 이 역할이 어떤 허용 목록 필요 데이터셋의 유일한 항목이면, 삭제(ON DELETE CASCADE)가 그 데이터셋을 아무도 못 보게 만든다.
+    // 후속 F4: 검사 전에 이 역할이 걸린 데이터셋 행을 잠가 같은 데이터셋의 허용 항목 제거(removeGrant — 같은 행 FOR UPDATE)와 직렬화한다.
+    // 잠금 없이 검사하면 동시 제거의 미커밋 삭제를 못 보고 통과해 데이터셋이 고아가 된다. 검사는 잠금 뒤 별도 문장이어야 상대의 커밋이 보인다.
+    grantRepository.lockDatasetsGrantedToRole(id);
     var orphaned = grantRepository.datasetsWhereRoleIsSoleGrantOnAllowlistLevel(id);
     if (!orphaned.isEmpty()) {
       throw new CodedApiException(

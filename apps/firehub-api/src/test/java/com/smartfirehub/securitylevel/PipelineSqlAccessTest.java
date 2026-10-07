@@ -605,6 +605,133 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
     assertThat(rowCount(outTable)).isEqualTo(1);
   }
 
+  /**
+   * 러너 TEMP 를 만드는 PYTHON 스텝(출력 미지정 + outputColumns v). 실행기 끈 REPLACE 는 스크립트 실행 전에 출력을 truncate 한다.
+   */
+  private static PipelineStepRequest pythonTempStep() {
+    return new PipelineStepRequest(
+        "step",
+        null,
+        "PYTHON",
+        "print('x')",
+        null,
+        null,
+        null,
+        "REPLACE",
+        null,
+        null,
+        Map.of("outputColumns", List.of(Map.of("name", "v", "type", "TEXT"))),
+        null);
+  }
+
+  /** 러너 TEMP 를 만드는 API_CALL 스텝(출력 미지정 + 필드 매핑 v). 호출은 닿지 않는 주소라 항상 호출 실패로 끝난다. */
+  private static PipelineStepRequest apiTempStep() {
+    return new PipelineStepRequest(
+        "step",
+        null,
+        "API_CALL",
+        null,
+        null,
+        null,
+        null,
+        "REPLACE",
+        Map.of(
+            "customUrl",
+            "http://127.0.0.1:9/never",
+            "method",
+            "GET",
+            "dataPath",
+            "$",
+            "fieldMappings",
+            List.of(Map.of("sourceField", "v", "targetColumn", "v", "dataType", "TEXT"))),
+        null,
+        null,
+        null);
+  }
+
+  /**
+   * 후속 F1 — API_CALL·PYTHON 의 러너 TEMP 재사용에도 실행 주체 VIEW 판정이 있다. 재실행에서 TEMP 는 coalesce 폴백으로 "들어온 출력"이
+   * 되는데, 예전 판정은 러너 TEMP 를 건너뛰어 볼 수 없는 실행 주체가 TEMP 를 비우고(실행기 끈 PYTHON REPLACE 는 실행 전 truncate) 덮어썼다.
+   * 관리자가 TEMP 등급을 실행 주체 자격보다 높이면 다음 실행은 쓰기 전에 구분 불가 메시지로 실패하고 TEMP 는 그대로(같은 id·행 수·등급)여야 한다.
+   *
+   * <p>대조군: 등급을 올리기 전에는 같은 실행 주체의 재실행이 보안 판정으로 막히지 않는다(PYTHON 은 truncate 까지 도달해 행이 0 이 된다) — 실패가 다른
+   * 이유가 아니라 등급 때문임을 보인다.
+   */
+  @Test
+  void run_pythonReusedTempRaisedAboveRunAs_failsAndKeepsTemp() throws Exception {
+    long a = pythonUserAt("민감");
+    long b = pythonUserAt("민감");
+    long p = pipeline(a, List.of(pythonTempStep()));
+    waitForEnd(executionService.executePipeline(p, a));
+    long temp = tempOf(p, "step");
+    String tempTable = tableNameOf(temp);
+
+    // 대조군: 등급을 올리기 전 B 의 재실행은 판정을 통과해 truncate 에 닿는다.
+    insertRow(tempTable, "a1");
+    long control = executionService.executePipeline(p, b);
+    waitForEnd(control);
+    assertThat(failedStepErrorOrNull(control))
+        .isNotEqualTo(DatasetAccessGuard.SQL_ACCESS_DENIED_MESSAGE);
+    assertThat(rowCount(tempTable)).isZero();
+
+    insertRow(tempTable, "keep");
+    setLevel(temp, "기밀");
+    long exec = executionService.executePipeline(p, b);
+    assertThat(waitForEnd(exec)).isEqualTo("FAILED");
+    assertThat(stepError(exec)).isEqualTo(DatasetAccessGuard.SQL_ACCESS_DENIED_MESSAGE);
+    assertThat(tempOf(p, "step")).isEqualTo(temp);
+    assertThat(rowCount(tempTable)).isEqualTo(1);
+    assertThat(levelOf(temp)).isEqualTo(fx.levelId("기밀"));
+  }
+
+  /**
+   * 후속 F1 — API_CALL 도 같다. 호출 주소가 닿지 않아 실행은 어차피 실패하므로 행 수만으로는 판정 유무가 드러나지 않는다 — 실패 메시지가 호출 실패가 아니라
+   * 구분 불가 거부 문구인지로 판정이 호출·맞바꿈 <b>전에</b> 났음을 확인한다(대조군은 같은 실행 주체가 호출 실패 메시지를 받는다).
+   */
+  @Test
+  void run_apiCallReusedTempRaisedAboveRunAs_isDeniedBeforeCallAndKeepsTemp() throws Exception {
+    long a = userAt("민감");
+    long b = userAt("민감");
+    long p = pipeline(a, List.of(apiTempStep()));
+    waitForEnd(executionService.executePipeline(p, a));
+    long temp = tempOf(p, "step");
+    String tempTable = tableNameOf(temp);
+
+    long control = executionService.executePipeline(p, b);
+    assertThat(waitForEnd(control)).isEqualTo("FAILED");
+    assertThat(stepError(control)).isNotEqualTo(DatasetAccessGuard.SQL_ACCESS_DENIED_MESSAGE);
+
+    insertRow(tempTable, "keep");
+    setLevel(temp, "기밀");
+    long exec = executionService.executePipeline(p, b);
+    assertThat(waitForEnd(exec)).isEqualTo("FAILED");
+    assertThat(stepError(exec)).isEqualTo(DatasetAccessGuard.SQL_ACCESS_DENIED_MESSAGE);
+    assertThat(tempOf(p, "step")).isEqualTo(temp);
+    assertThat(rowCount(tempTable)).isEqualTo(1);
+    assertThat(levelOf(temp)).isEqualTo(fx.levelId("기밀"));
+  }
+
+  private String tableNameOf(long datasetId) {
+    return inTenantFixture(
+        () ->
+            dsl.select(DATASET.TABLE_NAME)
+                .from(DATASET)
+                .where(DATASET.ID.eq(datasetId))
+                .fetchSingle(DATASET.TABLE_NAME));
+  }
+
+  /** 실행의 실패 스텝 오류 메시지 — 실패 스텝이 없으면(COMPLETED) null. */
+  private String failedStepErrorOrNull(long executionId) {
+    return inTenantFixture(
+        () ->
+            dsl.fetchOptional(
+                    "SELECT error_message FROM pipeline_step_execution WHERE execution_id = ?"
+                        + " AND status = 'FAILED'",
+                    executionId)
+                .map(r -> r.get(0, String.class))
+                .orElse(null));
+  }
+
   private long tableId(String t) {
     return inTenantFixture(
         () ->

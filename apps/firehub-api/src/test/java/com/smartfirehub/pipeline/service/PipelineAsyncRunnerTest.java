@@ -739,9 +739,9 @@ class PipelineAsyncRunnerTest {
         stepResponse(stepId, "py-hidden-out", "PYTHON", "print('x')", out, List.of());
     when(permissionChecker.hasPermission(userId, "pipeline:python_execute")).thenReturn(true);
     when(datasetRepository.findTableNameById(out)).thenReturn(Optional.of("hidden_out"));
-    doThrow(outputDenied())
-        .when(pipelineSecurityGate)
-        .requireExplicitOutputVisible(out, stepId, userId);
+    PipelineSecurityGate.RunAs runAs = new PipelineSecurityGate.RunAs(userId, null);
+    when(pipelineSecurityGate.runAs(userId)).thenReturn(runAs);
+    doThrow(outputDenied()).when(pipelineSecurityGate).requireOutputVisible(out, runAs);
 
     String status = runner.executeStep(stepExecId, py, pipelineId, "TestPipeline", userId, false);
 
@@ -774,11 +774,113 @@ class PipelineAsyncRunnerTest {
             null);
     when(objectMapper.convertValue(any(), eq(ApiCallConfig.class))).thenReturn(minimalApiConfig());
     when(datasetRepository.findTableNameById(out)).thenReturn(Optional.of("hidden_api_out"));
-    doThrow(outputDenied())
-        .when(pipelineSecurityGate)
-        .requireExplicitOutputVisible(out, stepId, userId);
+    PipelineSecurityGate.RunAs runAs = new PipelineSecurityGate.RunAs(userId, null);
+    when(pipelineSecurityGate.runAs(userId)).thenReturn(runAs);
+    doThrow(outputDenied()).when(pipelineSecurityGate).requireOutputVisible(out, runAs);
 
     String status = runner.executeStep(stepExecId, api, pipelineId, "TestPipeline", userId, true);
+
+    assertThat(status).isEqualTo("FAILED");
+    verify(dataTableService, never()).createTempTable(anyString());
+    verify(executorClient, never()).executeApiCall(any());
+    verify(apiCallExecutor, never()).execute(any(), any(), any(), any(), any(), any());
+  }
+
+  /**
+   * 후속 F1 — PYTHON 도 CR3 와 같다: 스키마가 바뀐 재사용 TEMP 를 실행 주체가 볼 수 없으면 지우기·다시 만들기·실행 전에 실패한다. 예전에는 PYTHON
+   * 블록이 판정 없는 자체 삭제·재생성 복사본을 갖고 있었다.
+   */
+  @Test
+  void executeStep_pythonSchemaChangedReusedTempHiddenFromRunAs_failsBeforeDeleting() {
+    Long pipelineId = 21L, userId = 2L, stepId = 211L, stepExecId = 311L, oldTemp = 783L;
+    PipelineStepResponse py =
+        new PipelineStepResponse(
+            stepId,
+            "py-hidden-temp",
+            null,
+            "PYTHON",
+            "print('x')",
+            null,
+            null,
+            List.of(),
+            List.of(),
+            0,
+            "REPLACE",
+            null,
+            null,
+            Map.of("outputColumns", List.of(Map.of("name", "v", "type", "TEXT"))),
+            null);
+    when(permissionChecker.hasPermission(userId, "pipeline:python_execute")).thenReturn(true);
+    when(objectMapper.convertValue(any(), eq(com.smartfirehub.pipeline.dto.PythonStepConfig.class)))
+        .thenReturn(
+            new com.smartfirehub.pipeline.dto.PythonStepConfig(
+                List.of(
+                    new com.smartfirehub.pipeline.dto.PythonStepConfig.OutputColumn("v", "TEXT"))));
+    when(tempDatasetService.findExistingTempDataset(stepId)).thenReturn(Optional.of(oldTemp));
+    when(tempDatasetService.hasSchemaChanged(eq(oldTemp), any())).thenReturn(true);
+    PipelineSecurityGate.RunAs runAs = new PipelineSecurityGate.RunAs(userId, null);
+    when(pipelineSecurityGate.runAs(userId)).thenReturn(runAs);
+    doThrow(outputDenied()).when(pipelineSecurityGate).requireOutputVisible(oldTemp, runAs);
+
+    String status = runner.executeStep(stepExecId, py, pipelineId, "TestPipeline", userId, false);
+
+    assertThat(status).isEqualTo("FAILED");
+    verify(tempDatasetService, never()).deleteTempDataset(any());
+    verify(tempDatasetService, never()).createTempDataset(any(), any(), any(), any(), any(), any());
+    verify(pythonExecutor, never()).execute(anyString());
+  }
+
+  /** 후속 F1 — API_CALL 도 같다: 스키마가 바뀐 볼 수 없는 재사용 TEMP 는 지우지 않고, 호출 전에 실패한다. */
+  @Test
+  void executeStep_apiCallSchemaChangedReusedTempHiddenFromRunAs_failsBeforeDeleting() {
+    Long pipelineId = 22L, userId = 2L, stepId = 212L, stepExecId = 312L, oldTemp = 784L;
+    when(objectMapper.convertValue(any(), eq(ApiCallConfig.class))).thenReturn(minimalApiConfig());
+    when(tempDatasetService.findExistingTempDataset(stepId)).thenReturn(Optional.of(oldTemp));
+    when(tempDatasetService.hasSchemaChanged(eq(oldTemp), any())).thenReturn(true);
+    PipelineSecurityGate.RunAs runAs = new PipelineSecurityGate.RunAs(userId, null);
+    when(pipelineSecurityGate.runAs(userId)).thenReturn(runAs);
+    doThrow(outputDenied()).when(pipelineSecurityGate).requireOutputVisible(oldTemp, runAs);
+
+    String status =
+        runner.executeStep(
+            stepExecId,
+            apiStepNoOutput(stepId, "api-hidden-temp", "REPLACE"),
+            pipelineId,
+            "TestPipeline",
+            userId,
+            false);
+
+    assertThat(status).isEqualTo("FAILED");
+    verify(tempDatasetService, never()).deleteTempDataset(any());
+    verify(tempDatasetService, never()).createTempDataset(any(), any(), any(), any(), any(), any());
+    verify(apiCallExecutor, never()).execute(any(), any(), any(), any(), any(), any());
+  }
+
+  /**
+   * 후속 F1 — 스키마가 같은 재사용 TEMP 도 실행 주체가 볼 수 없으면 쓰기(호출·맞바꿈) 전에 실패한다. API_CALL·PYTHON 은 SQL 처럼 입력 등급 전파
+   * 뒤 판정하는 단계가 없어 재사용 시점에 바로 판정한다.
+   */
+  @Test
+  void executeStep_apiCallReusedTempHiddenFromRunAs_failsBeforeCall() {
+    Long pipelineId = 23L, userId = 2L, stepId = 213L, stepExecId = 313L, oldTemp = 785L;
+    when(objectMapper.convertValue(any(), eq(ApiCallConfig.class))).thenReturn(minimalApiConfig());
+    when(tempDatasetService.findExistingTempDataset(stepId)).thenReturn(Optional.of(oldTemp));
+    when(tempDatasetService.hasSchemaChanged(eq(oldTemp), any())).thenReturn(false);
+    // 판정이 빠지면 실행이 맞바꿈(createTempTable)까지 가도록 테이블명을 준다 — 없으면 판정 유무와 무관하게 orElseThrow 로 FAILED 가 되어
+    // 이 TC 가 공허해진다. 판정이 있으면 쓰이지 않으므로 lenient.
+    lenient().when(datasetRepository.findTableNameById(oldTemp)).thenReturn(Optional.of("ptmp_x"));
+    PipelineSecurityGate.RunAs runAs = new PipelineSecurityGate.RunAs(userId, null);
+    when(pipelineSecurityGate.runAs(userId)).thenReturn(runAs);
+    doThrow(outputDenied()).when(pipelineSecurityGate).requireOutputVisible(oldTemp, runAs);
+
+    String status =
+        runner.executeStep(
+            stepExecId,
+            apiStepNoOutput(stepId, "api-hidden-reuse", "REPLACE"),
+            pipelineId,
+            "TestPipeline",
+            userId,
+            true);
 
     assertThat(status).isEqualTo("FAILED");
     verify(dataTableService, never()).createTempTable(anyString());

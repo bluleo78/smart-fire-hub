@@ -10,7 +10,9 @@ import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.role.service.RoleService;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
+import com.smartfirehub.securitylevel.service.DatasetSecurityService;
 import com.smartfirehub.securitylevel.service.RoleClearanceService;
+import com.smartfirehub.support.PausedTransactionRace;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
@@ -20,6 +22,7 @@ class RoleClearanceServiceTest extends SecurityLevelServiceTest {
   @Autowired private RoleClearanceService clearanceService;
   @Autowired private ClearanceResolver clearanceResolver;
   @Autowired private RoleService roleService;
+  @Autowired private DatasetSecurityService datasetSecurityService;
 
   private long role(String level) {
     return inTenantFixture(
@@ -149,5 +152,86 @@ class RoleClearanceServiceTest extends SecurityLevelServiceTest {
         .isInstanceOf(CodedApiException.class)
         .extracting(e -> ((CodedApiException) e).code())
         .isEqualTo("ROLE_SOLE_ALLOWLIST_ENTRY");
+  }
+
+  /** 허용 항목 1개를 직접 넣고 id 를 돌려준다(사용자 항목이면 roleId=null). */
+  private long grant(long datasetId, Long userId, Long roleId) {
+    return inTenantFixture(
+        tenantId,
+        () ->
+            dsl.insertInto(DATASET_ACCESS_GRANT)
+                .set(DATASET_ACCESS_GRANT.DATASET_ID, datasetId)
+                .set(DATASET_ACCESS_GRANT.USER_ID, userId)
+                .set(DATASET_ACCESS_GRANT.ROLE_ID, roleId)
+                .returning(DATASET_ACCESS_GRANT.ID)
+                .fetchSingle(DATASET_ACCESS_GRANT.ID));
+  }
+
+  private int grantCount(long datasetId) {
+    return inTenantFixture(
+        tenantId,
+        () -> dsl.fetchCount(DATASET_ACCESS_GRANT, DATASET_ACCESS_GRANT.DATASET_ID.eq(datasetId)));
+  }
+
+  private boolean roleExists(long roleId) {
+    return inTenantFixture(tenantId, () -> dsl.fetchExists(ROLE, ROLE.ID.eq(roleId)));
+  }
+
+  /**
+   * 후속 F4 — 허용 항목 2개(역할 R + 사용자)인 기밀 데이터셋에서 사용자 항목 제거(tx1)와 역할 R 삭제(tx2)가 동시에 진행돼도 데이터셋이 고아가 되면 안
+   * 된다. tx1 이 제거를 끝내고 커밋 전에 멈춘 사이 tx2 가 시작한다 — tx2 는 데이터셋 행 잠금에서 대기해야 하고(잠금이 없으면 대기 없이 개수 2 를 보고
+   * 통과해 역할과 항목이 함께 사라진다), tx1 커밋 뒤 R 이 유일한 항목이 됐음을 보고 {@code ROLE_SOLE_ALLOWLIST_ENTRY} 로 거부돼야 한다.
+   */
+  @Test
+  void deleteRole_racingWithGrantRemoval_waitsAndRejects() throws Exception {
+    long r = role("기밀");
+    long ds = insertDataset("기밀");
+    grant(ds, null, r);
+    long userGrant = grant(ds, actor, null);
+
+    var out =
+        PausedTransactionRace.run(
+            fixtureTransactionTemplate,
+            tenantId,
+            () -> datasetSecurityService.removeGrant(ds, userGrant, actor),
+            () -> {
+              roleService.deleteRole(r);
+              return null;
+            });
+
+    assertThat(out.secondBlocked()).as("역할 삭제는 항목 제거 커밋 전까지 데이터셋 행 잠금에서 대기해야 한다").isTrue();
+    assertThat(out.secondError()).isInstanceOf(CodedApiException.class);
+    assertThat(((CodedApiException) out.secondError()).code())
+        .isEqualTo("ROLE_SOLE_ALLOWLIST_ENTRY");
+    assertThat(roleExists(r)).isTrue();
+    assertThat(grantCount(ds)).isEqualTo(1);
+  }
+
+  /**
+   * 후속 F4 — 반대 순서도 같다: 역할 R 삭제(tx1)가 검사를 통과하고 커밋 전에 멈춘 사이 사용자 항목 제거(tx2)가 시작하면, tx2 는 역할 삭제가 잡은
+   * 데이터셋 행 잠금에서 대기한 뒤 R 의 항목이 사라진 것을 보고 {@code ALLOWLIST_LAST_ENTRY} 로 거부돼야 한다(같은 잠금 순서 — 교착 없음).
+   */
+  @Test
+  void grantRemoval_racingWithDeleteRole_waitsAndRejects() throws Exception {
+    long r = role("기밀");
+    long ds = insertDataset("기밀");
+    grant(ds, null, r);
+    long userGrant = grant(ds, actor, null);
+
+    var out =
+        PausedTransactionRace.run(
+            fixtureTransactionTemplate,
+            tenantId,
+            () -> roleService.deleteRole(r),
+            () -> {
+              datasetSecurityService.removeGrant(ds, userGrant, actor);
+              return null;
+            });
+
+    assertThat(out.secondBlocked()).as("항목 제거는 역할 삭제 커밋 전까지 데이터셋 행 잠금에서 대기해야 한다").isTrue();
+    assertThat(out.secondError()).isInstanceOf(CodedApiException.class);
+    assertThat(((CodedApiException) out.secondError()).code()).isEqualTo("ALLOWLIST_LAST_ENTRY");
+    assertThat(roleExists(r)).isFalse();
+    assertThat(grantCount(ds)).isEqualTo(1);
   }
 }

@@ -166,7 +166,8 @@ public class PipelineSecurityGate {
 
   /**
    * 사용자가 지정한 출력 데이터셋을 실행 주체가 볼 수 있어야 한다. DML 스텝도 REPLACE 면 러너가 출력 비우기(DELETE) 선행 문장을 붙이므로, 이 판정이
-   * 없으면 볼 수 없는 데이터셋을 비울 수 있다. 없는 데이터셋·숨김 데이터셋은 같은 거부(존재 은닉).
+   * 없으면 볼 수 없는 데이터셋을 비울 수 있다. 없는 데이터셋·숨김 데이터셋은 같은 거부(존재 은닉). 러너는 재사용·삭제할 TEMP 와 API_CALL·PYTHON 스텝에
+   * 들어온 출력(지정 출력·재사용 TEMP 모두 — 후속 F1)에도 같은 판정을 쓴다.
    */
   public void requireOutputVisible(long outputDatasetId, RunAs runAs) {
     if (!guard.check(runAs.clearance(), outputDatasetId, DatasetAction.VIEW, null).allowed()) {
@@ -191,17 +192,6 @@ public class PipelineSecurityGate {
       return;
     }
     guard.requireDatasetReads(clearance(editorUserId), List.of(outputDatasetId));
-  }
-
-  /**
-   * API_CALL·PYTHON 스텝 실행 시점 — 사용자 지정 출력(이 스텝의 러너 소유 TEMP 가 아닌 출력)은 실행 주체가 볼 수 있어야 한다(코드리뷰 CR2).
-   * 반드시 출력 비우기(truncate·REPLACE 맞바꿈용 임시 테이블 생성)·적재 전에 부른다. 두 스텝은 판정할 입력이 없거나(API_CALL 은 외부 데이터) 입력
-   * 판정이 알려진 우회(PYTHON)라 등급 전파·하향 판정은 하지 않는다 — VIEW 만 본다.
-   */
-  public void requireExplicitOutputVisible(long outputDatasetId, long stepId, Long runAsUserId) {
-    if (!isStepTemp(outputDatasetId, stepId)) {
-      requireOutputVisible(outputDatasetId, runAs(runAsUserId));
-    }
   }
 
   /**

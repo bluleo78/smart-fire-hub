@@ -20,6 +20,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
+import org.postgresql.util.PSQLException;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -31,6 +33,9 @@ public class SecurityLevelService {
 
   /** 하향 사유 최소 길이(스펙 §4.7). DatasetSecurityService 도 같은 값을 쓴다. */
   public static final int MIN_DOWNGRADE_REASON = 10;
+
+  /** 등급 이름 유니크 제약 이름(V133) — 경합으로 생긴 위반을 이 제약일 때만 이름 중복으로 번역한다. */
+  private static final String NAME_UNIQUE_CONSTRAINT = "uq_security_level_name";
 
   private final SecurityLevelRepository repository;
   private final ClearanceResolver clearanceResolver;
@@ -76,7 +81,7 @@ public class SecurityLevelService {
   public SecurityLevelResponse create(SecurityLevelRequest req, long actor) {
     rejectDuplicateName(req.name(), null);
     int nextRank = repository.findTop().rank() + 1;
-    long id = repository.insert(req, nextRank, actor);
+    long id = withNameDuplicateAs409(() -> repository.insert(req, nextRank, actor));
     // 판단 사항 13: 새 최상위가 생겼으므로 시스템 ADMIN 을 다시 최상위에 맞춘다.
     repository.syncSystemAdminToTop();
     audit.record(
@@ -93,7 +98,11 @@ public class SecurityLevelService {
   public SecurityLevelResponse update(long id, SecurityLevelRequest req, long actor) {
     LevelPolicy before = require(id);
     rejectDuplicateName(req.name(), id);
-    repository.update(id, req, actor);
+    withNameDuplicateAs409(
+        () -> {
+          repository.update(id, req, actor);
+          return null;
+        });
     // allowlist_required 를 새로 켜고 시드를 요청했으면, 빈 허용 목록 데이터셋을 현재 열람 가능 역할로 채운다(Task 9).
     int seeded = 0;
     if (!before.allowlistRequired()
@@ -303,9 +312,43 @@ public class SecurityLevelService {
   /** 같은 테넌트 안 이름 중복을 UNIQUE 위반(500) 대신 409 로 알린다. */
   private void rejectDuplicateName(String name, Long excludeId) {
     if (repository.existsByName(name, excludeId)) {
-      throw new CodedApiException(
-          HttpStatus.CONFLICT, "SECURITY_LEVEL_NAME_DUPLICATE", "같은 이름의 보안 등급이 이미 있습니다.");
+      throw nameDuplicate();
     }
+  }
+
+  private static CodedApiException nameDuplicate() {
+    return new CodedApiException(
+        HttpStatus.CONFLICT, "SECURITY_LEVEL_NAME_DUPLICATE", "같은 이름의 보안 등급이 이미 있습니다.");
+  }
+
+  /**
+   * 등급 INSERT/이름 UPDATE 를 실행하고, 이름 유니크 위반이면 사전 검사({@link #rejectDuplicateName})와 같은 409 로 번역한다(후속
+   * F5).
+   *
+   * <p>왜: 사전 검사와 쓰기 사이에 같은 이름이 동시에 들어오면 사전 검사는 미커밋 행을 못 봐 통과하고, 쓰기가 유니크 인덱스에서 위반으로 끝난다. 그대로 두면 전역
+   * 처리기가 코드 없는 일반 "Data integrity violation" 으로 답해 화면이 이름 중복 안내를 못 한다. 다른 제약 위반(예: 동시 생성의 순위 충돌
+   * {@code uq_security_level_rank})은 이름 중복이 아니므로 그대로 던진다. 이 예외로 트랜잭션은 롤백된다(CodedApiException 은 런타임
+   * 예외).
+   */
+  private static <T> T withNameDuplicateAs409(java.util.function.Supplier<T> write) {
+    try {
+      return write.get();
+    } catch (DuplicateKeyException e) {
+      if (NAME_UNIQUE_CONSTRAINT.equals(violatedConstraint(e))) {
+        throw nameDuplicate();
+      }
+      throw e;
+    }
+  }
+
+  /** 예외 원인 사슬에서 PostgreSQL 이 보고한 위반 제약 이름을 찾는다(없으면 null). */
+  private static String violatedConstraint(Throwable e) {
+    for (Throwable c = e; c != null; c = c.getCause()) {
+      if (c instanceof PSQLException psql && psql.getServerErrorMessage() != null) {
+        return psql.getServerErrorMessage().getConstraint();
+      }
+    }
+    return null;
   }
 
   private LevelPolicy require(long id) {

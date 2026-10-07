@@ -639,11 +639,11 @@ public class PipelineAsyncRunner {
         }
         // escalation 코드 차단 — 저장 시 검증을 우회해 저장된 스텝(직접 DB 삽입 등)에 대한 실행 시 2차 방어 (#270)
         pythonScriptValidator.validate(step.scriptContent());
-        // 보안 등급(코드리뷰 CR2): 사용자 지정 출력은 실행 주체가 볼 수 있어야 쓴다 — 출력 비우기(실행기 끈 REPLACE truncate·실행기 켠
+        // 보안 등급(코드리뷰 CR2·후속 F1): 이미 있던 출력은 실행 주체가 볼 수 있어야 쓴다 — 출력 비우기(실행기 끈 REPLACE truncate·실행기 켠
         // REPLACE 맞바꿈)·적재보다 먼저다. 입력 읽기는 여전히 판정하지 않는다(알려진 우회, 배포 문서의 알려진 한계).
-        if (outputDatasetId != null) {
-          pipelineSecurityGate.requireExplicitOutputVisible(outputDatasetId, step.id(), userId);
-        }
+        // 실행 주체 자격은 이 스텝에서 한 번만 계산해 이 스텝의 모든 판정(출력·TEMP 삭제 전)에 쓴다.
+        PipelineSecurityGate.RunAs pyRunAs = pipelineSecurityGate.runAs(userId);
+        requireExistingOutputVisible(outputDatasetId, pyRunAs);
         // outputDatasetId가 없고 pythonConfig에 outputColumns가 있으면 임시 데이터셋 자동 생성
         if (outputDatasetId == null && step.pythonConfig() != null) {
           com.smartfirehub.pipeline.dto.PythonStepConfig pythonStepConfig =
@@ -655,26 +655,9 @@ public class PipelineAsyncRunner {
                 pythonStepConfig.outputColumns().stream()
                     .map(col -> new ColumnInfo(col.name(), col.type()))
                     .toList();
-            Long stepId = step.id();
-            Optional<Long> existingDatasetId = tempDatasetService.findExistingTempDataset(stepId);
-            if (existingDatasetId.isPresent()) {
-              Long dsId = existingDatasetId.get();
-              if (tempDatasetService.hasSchemaChanged(dsId, pythonColumns)) {
-                log.info("Schema changed for Python step {}, recreating temp dataset", step.name());
-                tempDatasetService.deleteTempDataset(dsId);
-                outputDatasetId =
-                    tempDatasetService.createTempDataset(
-                        pythonColumns, pipelineId, pipelineName, stepId, step.name(), userId);
-              } else {
-                log.info("Reusing existing temp dataset {} for Python step {}", dsId, step.name());
-                outputDatasetId = dsId;
-              }
-            } else {
-              log.info("Creating new temp dataset for Python step {}", step.name());
-              outputDatasetId =
-                  tempDatasetService.createTempDataset(
-                      pythonColumns, pipelineId, pipelineName, stepId, step.name(), userId);
-            }
+            outputDatasetId =
+                ensureUnpropagatedStepTemp(
+                    step, pythonColumns, pipelineId, pipelineName, userId, pyRunAs, "Python ");
             outputTableName = datasetRepository.findTableNameById(outputDatasetId).orElseThrow();
           }
         }
@@ -765,35 +748,17 @@ public class PipelineAsyncRunner {
           decryptedAuth = apiCallConfig.inlineAuth();
         }
 
-        // 보안 등급(코드리뷰 CR2): 사용자 지정 출력은 실행 주체가 볼 수 있어야 쓴다 — REPLACE 맞바꿈·적재보다 먼저다. 외부 API 데이터라 판정할
-        // 입력이 없으므로 등급 전파·하향 판정은 없다.
-        if (outputDatasetId != null) {
-          pipelineSecurityGate.requireExplicitOutputVisible(outputDatasetId, step.id(), userId);
-        }
+        // 보안 등급(코드리뷰 CR2·후속 F1): 이미 있던 출력은 실행 주체가 볼 수 있어야 쓴다 — REPLACE 맞바꿈·적재보다 먼저다. 외부 API 데이터라
+        // 판정할 입력이 없으므로 등급 전파·하향 판정은 없다. 실행 주체 자격은 이 스텝에서 한 번만 계산한다.
+        PipelineSecurityGate.RunAs apiRunAs = pipelineSecurityGate.runAs(userId);
+        requireExistingOutputVisible(outputDatasetId, apiRunAs);
 
         // outputDatasetId가 없으면 임시 데이터셋 자동 생성
         if (outputDatasetId == null) {
           List<ColumnInfo> apiColumns = inferApiCallColumns(apiCallConfig);
-          Long stepId = step.id();
-          Optional<Long> existingDatasetId = tempDatasetService.findExistingTempDataset(stepId);
-          if (existingDatasetId.isPresent()) {
-            Long dsId = existingDatasetId.get();
-            if (tempDatasetService.hasSchemaChanged(dsId, apiColumns)) {
-              log.info("Schema changed for API_CALL step {}, recreating temp dataset", step.name());
-              tempDatasetService.deleteTempDataset(dsId);
-              outputDatasetId =
-                  tempDatasetService.createTempDataset(
-                      apiColumns, pipelineId, pipelineName, stepId, step.name(), userId);
-            } else {
-              log.info("Reusing existing temp dataset {} for API_CALL step {}", dsId, step.name());
-              outputDatasetId = dsId;
-            }
-          } else {
-            log.info("Creating new temp dataset for API_CALL step {}", step.name());
-            outputDatasetId =
-                tempDatasetService.createTempDataset(
-                    apiColumns, pipelineId, pipelineName, stepId, step.name(), userId);
-          }
+          outputDatasetId =
+              ensureUnpropagatedStepTemp(
+                  step, apiColumns, pipelineId, pipelineName, userId, apiRunAs, "API_CALL ");
           outputTableName = datasetRepository.findTableNameById(outputDatasetId).orElseThrow();
           // 여기서 truncateTable 하지 않는다 — 다시 넣지 말 것.
           // 이유 셋:
@@ -1025,7 +990,8 @@ public class PipelineAsyncRunner {
   private record StepTemp(Long datasetId, boolean fresh) {}
 
   /**
-   * SQL SELECT·AI_CLASSIFY 스텝의 러너 소유 TEMP 출력을 준비한다 — 없으면 만들고, 있으면 스키마가 같을 때 재사용, 바뀌었으면 지우고 다시 만든다.
+   * 러너 소유 TEMP 출력(SQL SELECT·AI_CLASSIFY, 그리고 {@link #ensureUnpropagatedStepTemp} 를 거친
+   * API_CALL·PYTHON)을 준비한다 — 없으면 만들고, 있으면 스키마가 같을 때 재사용, 바뀌었으면 지우고 다시 만든다.
    *
    * <p>코드리뷰 CR3: 재사용 TEMP 를 지우기 <b>전에</b> 실행 주체가 볼 수 있는지 본다. 이후 출력 등급 처리(enforceOutputLevel)는 새로 만든
    * TEMP 만 보므로, 여기서 막지 않으면 볼 수 없는 실행 주체(B)가 이전 실행 주체(A)의 결과 TEMP 를 통째로 지운다. 삭제·재생성 경로를 두 스텝 타입이 이 한
@@ -1059,6 +1025,51 @@ public class PipelineAsyncRunner {
         tempDatasetService.createTempDataset(
             columns, pipelineId, pipelineName, stepId, step.name(), userId),
         true);
+  }
+
+  /**
+   * API_CALL·PYTHON 스텝의 러너 소유 TEMP 출력을 준비한다(후속 F1). 삭제·재생성은 {@link #ensureStepTemp} 를 그대로 지나가 "삭제 전
+   * 판정"을 SQL·AI_CLASSIFY 와 공유하고, 재사용 TEMP 는 여기서 바로 "쓰기 전 판정"을 한다.
+   *
+   * <p>왜 재사용 판정을 여기서 하나: SQL·AI_CLASSIFY 는 입력 등급 전파(상향·시드) 뒤 {@code enforceOutputLevel} 이 재사용 TEMP
+   * 를 판정하지만, 이 두 스텝은 전파할 입력 등급이 없어(외부 API 데이터·입력 판정 없는 PYTHON) 그 단계가 없다. 판정이 없으면 관리자가 TEMP 등급을 실행
+   * 주체 자격보다 높인 뒤에도 실행 주체가 TEMP 를 비우고(REPLACE) 덮어쓴다. 새로 만든(빈) TEMP 는 이번 실행 주체가 방금 만든 것이라 제외한다(SQL
+   * 경로와 같은 규칙).
+   *
+   * @return 준비된 TEMP 데이터셋 id
+   */
+  private Long ensureUnpropagatedStepTemp(
+      PipelineStepResponse step,
+      List<ColumnInfo> columns,
+      Long pipelineId,
+      String pipelineName,
+      Long userId,
+      PipelineSecurityGate.RunAs runAs,
+      String logLabel) {
+    StepTemp temp =
+        ensureStepTemp(step, columns, pipelineId, pipelineName, userId, runAs, logLabel);
+    if (!temp.fresh()) {
+      pipelineSecurityGate.requireOutputVisible(temp.datasetId(), runAs);
+    }
+    return temp.datasetId();
+  }
+
+  /**
+   * API_CALL·PYTHON 스텝에 들어온 출력(사용자 지정 출력, 또는 재실행에서 {@code PipelineStepRepository.findByPipelineId}
+   * 의 coalesce 폴백으로 들어온 이 스텝의 재사용 TEMP)을 실행 주체가 볼 수 있어야 한다(코드리뷰 CR2·후속 F1). 반드시 출력 비우기·맞바꿈용 임시 테이블
+   * 생성·적재 전에 부른다.
+   *
+   * <p>들어온 출력은 이번 실행 전부터 있던 데이터셋이라 러너 TEMP 든 아니든 같은 판정을 한다. 예전 판정({@code
+   * PipelineSecurityGate.requireExplicitOutputVisible})은 러너 TEMP 를 건너뛰도록 쓰여 있었는데, 그 TEMP 판별이 트랜잭션
+   * 밖(러너는 트랜잭션이 없어 RLS GUC 가 없다)에서 돌아 언제나 "TEMP 아님"으로 나와 우연히 판정이 걸려 있었다 — 의도대로 고치면 재사용 TEMP 를 볼 수
+   * 없는 실행 주체가 비우고 덮어쓰게 되므로, 판별을 없애고 의도를 명시했다. 출력이 없으면(null) 아무것도 하지 않는다 — 그 경우 TEMP 는 {@link
+   * #ensureUnpropagatedStepTemp} 가 판정한다.
+   */
+  private void requireExistingOutputVisible(
+      Long outputDatasetId, PipelineSecurityGate.RunAs runAs) {
+    if (outputDatasetId != null) {
+      pipelineSecurityGate.requireOutputVisible(outputDatasetId, runAs);
+    }
   }
 
   /**
