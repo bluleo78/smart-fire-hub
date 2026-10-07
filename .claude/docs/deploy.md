@@ -242,6 +242,31 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
   - 테스트 테넌트를 정지·활성화한 뒤 감사 로그에 "테넌트 정지/활성화" 가 이름·slug 와 함께 보이는지.
   - admin 테넌트 목록·상세의 생성일이 KST 로 맞게 보이는지.
 
+### V133 데이터셋 보안 등급 S1+S2 (2026-10-07 계획)
+
+- **api + web 동시 배포 필수.** S1(ID·목록 통제)만 배포하면 SQL 경로(애드혹·/query·차트·파이프라인)로 우회된다. web 만 배포하면 새 API 404.
+- executor·ai-agent 는 이번 변경 없음(재배포 불필요).
+- 마이그레이션 V133: 전 테넌트에 4등급 시드 + 기존 데이터셋·역할=내부, 시스템 ADMIN=기밀 백필 → **배포 직후 가시성은 배포 전과 같다**(내부 이하는 허용 목록 없음).
+- **번호 확인**: 2026-10-08 기준 main 의 최신 마이그레이션은 V132 이고 이 브랜치의 V133 은 맞는 번호다. **병합 직전에 실제 main 의 마이그레이션 목록을 다시 확인한다**(번호 충돌 전례 — V122). 배포 전 스냅샷 규칙(V122 이상)은 그대로 따른다.
+- 아래 확인 쿼리는 전부 **소유자 롤로 실행**한다(`docker exec <db> psql -U app -d smartfirehub`) — 런타임 롤 `app_tenant` 는 RLS 라 행이 0 으로 보여 확인이 공허해진다.
+- 배포 전 확인:
+  - `select max(version::int) from flyway_schema_history` 가 132 인지.
+  - 역할이 하나도 없는 활성 사용자는 어떤 데이터셋도 볼 수 없다(fail-closed) — `select u.id from "user" u join membership m on m.user_id=u.id and m.status='ACTIVE' where not exists (select 1 from user_role ur where ur.user_id=u.id and ur.tenant_id=m.tenant_id)` 가 0행인지.
+  - 파이프라인 TEMP 판정: `source_pipeline_step_id` 가 있는 데이터셋은 스텝 TEMP 로 신뢰된다 — `SELECT id, table_name, created_by FROM dataset WHERE source_pipeline_step_id IS NOT NULL AND table_name NOT LIKE 'ptmp\_%'` 가 0행이어야 한다(아니면 중단 후 상의).
+  - (권장) 아래 "파이프라인 실행 주체" 변화에 걸릴 대상 — 생성자에게 ACTIVE 멤버십·역할이 없는 예약/API 트리거, 데이터셋이 아닌 data 스키마 테이블(`stg_import_*` 등)을 읽는 SQL 스텝 — 을 미리 찾아 둔다.
+- 배포 후 확인: `select tenant_id, count(*) from security_level group by 1` 이 모든 테넌트 4, `select count(*) from dataset where security_level_id is null` = 0, `select count(*) from role where max_security_level_id is null` = 0.
+- **동작 변화**(관리자 공지에 포함):
+  - 파이프라인은 실행 주체(run-as) 자격으로 판정된다. 실행 주체에게 그 테넌트의 ACTIVE 멤버십(또는 역할·활성 계정)이 없으면 SQL 스텝이 **실패한다** — 퇴사·제외된 생성자의 예약/API 트리거 포함.
+  - 스텝 SQL 이 데이터셋이 아닌 테이블(`stg_import_*`·고아 테이블 등)을 읽으면 실행 시·다음 저장 시 **거부된다**(존재 은닉, fail-closed).
+  - 분석(애드혹·/query·저장 쿼리)에서 숨김·다른 스키마·존재하지 않는 테이블은 예전의 200 + error 대신 **403 `DATASET_SQL_ACCESS_DENIED`**. 차트·대시보드 위젯은 200 + `denied:true`(위젯 단위).
+  - PG 어휘 모호 형태(중첩 블록 주석, 백슬래시 든 E-문자열, 태그 달러 인용, `//`·백틱·q-인용 등)는 **400 으로 거부**된다 — 애드혹·파이프라인 SQL 모두.
+  - 이상탐지 메트릭이 조회자(작업 소유자)가 볼 수 없는 데이터셋을 참조하면 그 메트릭은 **건너뛴다**(로그 경고).
+  - 정책 칩(내보내기·AI·공유)은 S1 에선 **표시만** — 강제는 S3/S4. 사용자가 "막혀 있다"고 오해하지 않도록 공지에 명시.
+- **알려진 한계**(후속):
+  - 데이터셋 **이름**은 홈·파이프라인·저장 쿼리(차트 메타데이터 포함) 화면에서 여전히 노출될 수 있다(내용·행은 아님).
+  - PYTHON 스텝은 SQL 관문을 거치지 않는 알려진 우회 경로다(편집 화면 경고만, 강제는 후속).
+- **롤백**: V133 은 새 컬럼에 DEFAULT 함수(`tenant_default_security_level_id()`)를 두어 구 코드의 INSERT 도 통과하고, Flyway 는 기본값(`*:future` 무시)으로 앞선 마이그레이션을 무시하므로 **이미지만 이전 버전(api+web 함께)으로 되돌리면 된다** — DB 는 그대로 둔다. 이 경우 등급 통제가 사라져 배포 전 가시성으로 돌아간다(등급·허용 목록 데이터는 보존돼 재배포 시 다시 적용). V133 을 DB 에서 되돌리는 down 스크립트는 없다 — 꼭 필요하면 배포 전 스냅샷 복원으로만 한다.
+
 ### opencode baseURL 사설망 점검 (이슈 #698)
 
 #693 의 SSRF 가드는 **저장 시점**에만 baseURL 을 검사한다. 그 가드가 생기기 전에 저장된 행에는
