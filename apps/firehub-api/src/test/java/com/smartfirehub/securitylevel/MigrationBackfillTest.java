@@ -202,4 +202,27 @@ class MigrationBackfillTest extends IntegrationTestBase {
       TenantRlsTestSupport.deleteProvisionedTenantCascade(dsl, fixtureTransactionTemplate, tenantId);
     }
   }
+
+  /**
+   * 테스트 지원 헬퍼가 바깥 트랜잭션의 테넌트 컨텍스트를 건드리지 않는다는 계약.
+   *
+   * <p>메인 DSLContext 는 PROPAGATION_NESTED 라 바깥 트랜잭션 안의 {@code dsl.transaction} 은 세이브포인트일 뿐이다 — 헬퍼가 GUC 를
+   * 복원하지 않으면 {@code createActiveTenant}/{@code deleteTenants} 호출 뒤 호출자의 RLS 가 스크래치 테넌트로 바뀐다.
+   */
+  @Test
+  void createAndDeleteTenant_insideOuterTx_restoreCallerTenantContext() {
+    inTenantFixture(
+        () -> {
+          String before = currentTenantSetting();
+          assertThat(before).isEqualTo(String.valueOf(DEFAULT_TEST_TENANT_ID));
+          long scratch = TenantRlsTestSupport.createActiveTenant(dsl, "sl-restore");
+          assertThat(currentTenantSetting()).as("createActiveTenant 이후").isEqualTo(before);
+          TenantRlsTestSupport.deleteTenants(dsl, scratch);
+          assertThat(currentTenantSetting()).as("deleteTenants 이후").isEqualTo(before);
+        });
+  }
+
+  private String currentTenantSetting() {
+    return dsl.resultQuery("select current_setting('app.tenant_id', true)").fetchOneInto(String.class);
+  }
 }

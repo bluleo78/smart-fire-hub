@@ -117,15 +117,27 @@ public final class TenantRlsTestSupport {
   }
 
   /**
-   * TransactionTemplate 이 없는 정적 헬퍼에서 RLS 테이블을 만질 때 — jOOQ 트랜잭션 안에서 GUC 를 그 테넌트로 덮어쓴다(LOCAL 이라 트랜잭션 종료 시 복원).
+   * TransactionTemplate 이 없는 정적 헬퍼에서 RLS 테이블을 만질 때 — jOOQ 트랜잭션 안에서 GUC 를 그 테넌트로 덮어쓰고, 끝나면 이전 값으로
+   * 되돌린다.
+   *
+   * <p><b>"LOCAL 이라 자동 복원"에 기대지 않는다.</b> 메인 DSLContext 는 SpringTransactionProvider(PROPAGATION_NESTED)라, 바깥 Spring
+   * 트랜잭션(@Transactional 테스트·runInTenantTransaction) 안에서는 {@code dsl.transaction} 이 세이브포인트일 뿐이다. 그러면 {@code
+   * set_config(..., true)} 는 <b>바깥</b> 트랜잭션이 끝날 때까지 남아, 호출자의 테넌트 컨텍스트가 조용히 스크래치 테넌트로 바뀐다. 그래서
+   * 진입 전 값을 읽어 두었다가 finally 에서 복원한다(바깥 트랜잭션이 없으면 어차피 종료 시 사라지므로 무해).
    */
   private static void inRawTenantTx(
       DSLContext dsl, long tenantId, java.util.function.Consumer<DSLContext> body) {
     dsl.transaction(
         cfg -> {
           DSLContext t = cfg.dsl();
+          // 미설정이면 null, 설정 후 비워진 경우 '' — 둘 다 그대로 되돌릴 수 있게 빈 문자열로 통일한다.
+          String prev = t.resultQuery("select coalesce(current_setting('app.tenant_id', true), '')").fetchOneInto(String.class);
           t.execute("select set_config('app.tenant_id', ?, true)", String.valueOf(tenantId));
-          body.accept(t);
+          try {
+            body.accept(t);
+          } finally {
+            t.execute("select set_config('app.tenant_id', ?, true)", prev);
+          }
         });
   }
 
