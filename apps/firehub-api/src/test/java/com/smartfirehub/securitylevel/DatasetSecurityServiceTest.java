@@ -299,6 +299,85 @@ class DatasetSecurityServiceTest extends IntegrationTestBase {
     }
   }
 
+  /** 비활성화된 계정은 멤버십이 ACTIVE 여도 허용 목록에 넣을 수 없다(candidates() 와 같은 기준). */
+  @Test
+  void addGrant_deactivatedUser_isRejected() {
+    var caller = userWithLevel("기밀");
+    long ds = dataset("기밀");
+    long other = fx.createUser("dss_deact");
+    users.add(other);
+    dsl.update(Tables.USER)
+        .set(Tables.USER.IS_ACTIVE, false)
+        .where(Tables.USER.ID.eq(other))
+        .execute();
+    assertThatThrownBy(
+            () -> service.addGrant(ds, new AddAccessGrantRequest(other, null), caller.userId()))
+        .extracting(this::codeOf)
+        .isEqualTo("GRANT_SUBJECT_INVALID");
+  }
+
+  /**
+   * 테넌트 관리자가 admin_bypass 등급(허용 목록 필요)으로 올려도 목록이 비면 안 된다 — 우회로 "보인다"는 이유로 시드를 건너뛰면, 우회를 끄는 순간 고아가
+   * 된다(스펙 §2.4).
+   */
+  @Test
+  void changeToAllowlistLevelWithAdminBypass_stillSeedsTenantAdminCaller() {
+    var base = userWithLevel("기밀");
+    var admin =
+        new Clearance(
+            base.userId(), base.tenantId(), base.rank(), base.roleIds(), true, base.permissions());
+    long ds = dataset("내부");
+    long level = fx.levelId("기밀");
+    fx.setLevelFlags(level, true, true);
+    try {
+      service.changeLevel(ds, new ChangeDatasetLevelRequest(level, null), admin);
+    } finally {
+      fx.setLevelFlags(level, true, false);
+    }
+    List<Long> grantedUsers =
+        inTenantFixture(
+            () ->
+                dsl.select(DATASET_ACCESS_GRANT.USER_ID)
+                    .from(DATASET_ACCESS_GRANT)
+                    .where(DATASET_ACCESS_GRANT.DATASET_ID.eq(ds))
+                    .fetch(DATASET_ACCESS_GRANT.USER_ID));
+    assertThat(grantedUsers).containsExactly(admin.userId());
+  }
+
+  /** 후보 조회는 다른 테넌트의 사용자·역할을 내지 않는다(membership 은 RLS 없는 전역 테이블이라 tenant_id 술어가 유일한 방벽). */
+  @Test
+  void candidates_excludesOtherTenantUsersAndRoles() {
+    long otherTenant = TenantRlsTestSupport.createActiveTenant(dsl, "dssc" + System.nanoTime());
+    provisioning.provisionDefaults(otherTenant);
+    long foreignUser = 0;
+    try {
+      String u = "dssc" + System.nanoTime() + "@example.com";
+      foreignUser =
+          TestUsers.createMember(
+                  dsl, fixtureTransactionTemplate, encoder, u, u, "Password123", "x", otherTenant)
+              .id();
+      long foreignRole =
+          inTenantFixture(
+              otherTenant,
+              () ->
+                  dsl.select(Tables.ROLE.ID)
+                      .from(Tables.ROLE)
+                      .limit(1)
+                      .fetchSingle(Tables.ROLE.ID));
+      var res = inTenantFixture(() -> service.candidates());
+      assertThat(res.users()).extracting(c -> c.id()).doesNotContain(foreignUser);
+      assertThat(res.roles()).extracting(c -> c.id()).doesNotContain(foreignRole);
+      assertThat(res.users()).isNotEmpty();
+    } finally {
+      TenantContext.set(DEFAULT_TEST_TENANT_ID);
+      if (foreignUser != 0) {
+        TestUsers.cleanup(dsl, fixtureTransactionTemplate, foreignUser, otherTenant);
+      }
+      TenantRlsTestSupport.deleteProvisionedTenantCascade(
+          dsl, fixtureTransactionTemplate, otherTenant);
+    }
+  }
+
   /** 후보 조회는 이 테넌트 활성 멤버·역할만 — 정지 멤버는 나오지 않는다. */
   @Test
   void candidates_listsOnlyActiveMembersOfThisTenant() {

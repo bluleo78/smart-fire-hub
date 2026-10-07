@@ -92,11 +92,13 @@ public class DatasetSecurityService {
         .set(DATASET.SECURITY_LEVEL_ID, to.id())
         .where(DATASET.ID.eq(datasetId))
         .execute();
-    // 변경 후 판정으로 "본인이 잠기는가"를 본다(역할·관리자 우회로 이미 보이면 시드하지 않는다).
+    // 허용 목록 필요 등급이면 (목록이 비었거나 본인이 못 보게 되는 경우) 본인을 시드한다(스펙 §2.4).
+    // 관리자 우회(admin_bypass)로 보인다는 이유로 건너뛰면 목록이 빈 채로 남고, 우회를 끄는 순간 아무도 못 보는 고아가 된다.
     boolean seededSelf = false;
     if (to.allowlistRequired()
-        && !guard.check(caller, datasetId, DatasetAction.VIEW, null).allowed()
-        && !grantRepository.existsUser(datasetId, caller.userId())) {
+        && !grantRepository.existsUser(datasetId, caller.userId())
+        && (grantRepository.countByDataset(datasetId) == 0
+            || !guard.check(caller, datasetId, DatasetAction.VIEW, null).allowed())) {
       grantRepository.insertUser(datasetId, caller.userId(), caller.userId());
       seededSelf = true;
     }
@@ -252,6 +254,13 @@ public class DatasetSecurityService {
             .from(table(name("membership")))
             .where(field(name("membership", "user_id"), Long.class).eq(userId))
             .and(field(name("membership", "tenant_id"), Long.class).eq(tenantId))
-            .and(field(name("membership", "status"), String.class).eq("ACTIVE")));
+            .and(field(name("membership", "status"), String.class).eq("ACTIVE"))
+            // candidates() 와 같은 기준: 비활성화된 계정은 멤버십이 ACTIVE 여도 대상이 아니다.
+            .and(
+                org.jooq.impl.DSL.exists(
+                    dsl.selectOne()
+                        .from(USER)
+                        .where(USER.ID.eq(userId))
+                        .and(USER.IS_ACTIVE.isTrue()))));
   }
 }
