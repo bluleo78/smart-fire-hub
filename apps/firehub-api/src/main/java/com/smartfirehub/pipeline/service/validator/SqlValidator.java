@@ -1031,6 +1031,9 @@ public class SqlValidator {
    *
    * <p>fail-closed: 파싱 실패, SELECT/INSERT/UPDATE/DELETE 외 문장, 3단 이름, 유니코드 이스케이프 식별자는
    * UnsafeSqlException. 쓰기 대상은 AST 노드 <b>동일성</b>으로 구분한다(같은 이름이 읽기에도 나오면 각각 따로 센다).
+   *
+   * <p><b>전제:</b> 이 메서드는 함수·타입(query_to_xml, dblink, regclass 등)을 검사하지 않는다. 같은 SQL 에 {@link
+   * #validate} 가 함께 실행될 때만 안전하다.
    */
   public ReferencedTables referencedTables(String sql) {
     Statement statement = parseSingleStatement(sql);
@@ -1057,12 +1060,14 @@ public class SqlValidator {
     }
     Set<TableName> reads = new LinkedHashSet<>();
     Set<TableName> writes = new LinkedHashSet<>();
+    // 쓰기 대상은 CTE 필터를 적용하지 않는다 — PG 는 DML 대상을 CTE 로 해석하지 않고 실제 테이블을 변경한다
+    // (WITH hidden AS (...) DELETE FROM hidden 이 두 집합에서 사라지던 결함). 읽기 참조만 CTE 를 제외한다.
+    for (Table target : writeTargets) {
+      writes.add(toTableName(target));
+    }
     for (Table table : collected.realTables()) {
-      TableName n = toTableName(table);
-      if (writeTargets.contains(table)) {
-        writes.add(n);
-      } else {
-        reads.add(n);
+      if (!writeTargets.contains(table)) {
+        reads.add(toTableName(table));
       }
     }
     return new ReferencedTables(reads, writes);

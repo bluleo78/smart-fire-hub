@@ -105,4 +105,16 @@ class SqlValidatorReferencedTablesTest {
           .isInstanceOf(UnsafeSqlException.class);
     }
   }
+
+  /** DML 대상은 같은 이름의 CTE 가 있어도 실제 테이블이다(PG 동작) — 두 집합에서 사라지면 안 된다. */
+  @Test
+  void dmlTarget_sharingCteName_isStillWrite() {
+    var del = v.referencedTables("WITH hidden AS (SELECT 1) DELETE FROM hidden");
+    assertThat(del.writes()).containsExactly(t("hidden"));
+    var upd = v.referencedTables("WITH hidden AS (SELECT 1 AS a) UPDATE hidden SET a = 1");
+    assertThat(upd.writes()).containsExactly(t("hidden"));
+    var ins = v.referencedTables("WITH low AS (SELECT 1 AS a) INSERT INTO low SELECT a FROM high");
+    assertThat(ins.writes()).containsExactly(t("low"));
+    assertThat(ins.reads()).contains(t("high"));
+  }
 }
