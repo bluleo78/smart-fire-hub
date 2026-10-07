@@ -1,6 +1,7 @@
 package com.smartfirehub.securitylevel.controller;
 
 import com.smartfirehub.global.security.RequirePermission;
+import com.smartfirehub.securitylevel.dto.AllowlistImpactResponse;
 import com.smartfirehub.securitylevel.dto.DeleteSecurityLevelRequest;
 import com.smartfirehub.securitylevel.dto.MyClearanceResponse;
 import com.smartfirehub.securitylevel.dto.ReorderPreviewResponse;
@@ -41,6 +42,13 @@ public class SecurityLevelController {
   @RequirePermission("security:settings")
   public List<SecurityLevelUsage> usage() {
     return service.usage();
+  }
+
+  /** 허용 목록 켜기 영향 수(허용 목록이 빈 데이터셋 수). */
+  @GetMapping("/{id}/allowlist-impact")
+  @RequirePermission("security:settings")
+  public AllowlistImpactResponse allowlistImpact(@PathVariable Long id) {
+    return service.allowlistImpact(id);
   }
 
   @PostMapping

@@ -4,6 +4,7 @@ import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.access.LevelPolicy;
+import com.smartfirehub.securitylevel.dto.AllowlistImpactResponse;
 import com.smartfirehub.securitylevel.dto.DeleteSecurityLevelRequest;
 import com.smartfirehub.securitylevel.dto.MyClearanceResponse;
 import com.smartfirehub.securitylevel.dto.ReorderPreviewResponse;
@@ -107,6 +108,13 @@ public class SecurityLevelService {
     audit.record(
         actor, "SECURITY_LEVEL_UPDATE", "security_level", String.valueOf(id), req.name(), meta);
     return SecurityLevelResponse.of(require(id));
+  }
+
+  /** 허용 목록 켜기 영향 — 이 등급 데이터셋 중 허용 목록이 빈 것의 수(시드 정의와 동일). */
+  @Transactional(readOnly = true)
+  public AllowlistImpactResponse allowlistImpact(long levelId) {
+    require(levelId);
+    return new AllowlistImpactResponse(allowlistSeeder.datasetsWithoutAllowlist(levelId).size());
   }
 
   /** 기본 등급 교체 — 테넌트당 기본은 정확히 1개(기존 기본을 끄고 새로 켠다). */
