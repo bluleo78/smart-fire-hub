@@ -50,6 +50,7 @@ public class ProactiveJobService {
   private final SseEmitterRegistry sseEmitterRegistry;
   // Spring AOP @Async 프록시를 우회하는 self-call 문제를 방지하기 위해 별도 빈으로 분리 (이슈 #192)
   private final ProactiveJobAsyncRunner asyncRunner;
+  private final MetricSqlAccessChecker metricSqlAccessChecker;
 
   // 동시 실행 방지: jobId -> running flag
   private final ConcurrentHashMap<Long, AtomicBoolean> runningJobs = new ConcurrentHashMap<>();
@@ -64,7 +65,8 @@ public class ProactiveJobService {
       UserRepository userRepository,
       AnomalyEventRepository anomalyEventRepository,
       SseEmitterRegistry sseEmitterRegistry,
-      ProactiveJobAsyncRunner asyncRunner) {
+      ProactiveJobAsyncRunner asyncRunner,
+      MetricSqlAccessChecker metricSqlAccessChecker) {
     this.proactiveJobRepository = proactiveJobRepository;
     this.executionRepository = executionRepository;
     this.schedulerService = schedulerService;
@@ -72,6 +74,7 @@ public class ProactiveJobService {
     this.anomalyEventRepository = anomalyEventRepository;
     this.sseEmitterRegistry = sseEmitterRegistry;
     this.asyncRunner = asyncRunner;
+    this.metricSqlAccessChecker = metricSqlAccessChecker;
     // asyncRunner가 runningJobs 맵을 공유하여 슬롯 해제가 동일한 맵에 반영되도록 한다
     asyncRunner.setRunningJobs(this.runningJobs);
   }
@@ -134,6 +137,8 @@ public class ProactiveJobService {
     // cronExpression / timezone 형식을 사전 검증한다. 잘못된 값을 그대로 저장하면 스케줄러가 silent fail 하여
     // 사용자에게는 정상 생성처럼 보이지만 실제 실행이 한 번도 일어나지 않는 좀비 상태가 된다 (#221).
     validateCronAndTimezone(request.cronExpression(), request.timezone());
+    // 보안 등급(S2): 메트릭 SQL 이 작성자가 볼 수 없는 데이터셋을 참조하면 거부(스펙 §4.2 6행). update 도 같은 검사 — 우회로 차단.
+    metricSqlAccessChecker.requireMetricQueriesAllowed(request.config(), userId);
 
     Long id =
         proactiveJobRepository.create(
@@ -164,6 +169,8 @@ public class ProactiveJobService {
   public void updateJob(Long id, UpdateProactiveJobRequest request, Long userId) {
     // 업데이트 요청에 포함된 cronExpression / timezone 도 동일하게 사전 검증한다 (#221).
     validateCronAndTimezone(request.cronExpression(), request.timezone());
+    // 보안 등급(S2): 메트릭 SQL 이 작성자가 볼 수 없는 데이터셋을 참조하면 거부(스펙 §4.2 6행). update 도 같은 검사 — 우회로 차단.
+    metricSqlAccessChecker.requireMetricQueriesAllowed(request.config(), userId);
 
     proactiveJobRepository.update(
         id,

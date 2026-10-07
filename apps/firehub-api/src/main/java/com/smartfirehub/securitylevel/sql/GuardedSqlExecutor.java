@@ -8,6 +8,7 @@ import com.smartfirehub.dataset.service.DataTableQueryService;
 import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.util.NormalizedSql;
 import com.smartfirehub.pipeline.exception.UnsafeSqlException;
+import com.smartfirehub.pipeline.service.executor.ExecutorClient;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.securitylevel.access.SqlAccessMode;
@@ -36,6 +37,7 @@ public class GuardedSqlExecutor {
   private final DatasetAccessGuard guard;
   private final DataTableQueryService dataTableQueryService;
   private final AnalyticsQueryExecutionService analyticsExecution;
+  private final ExecutorClient executorClient;
 
   /**
    * 데이터셋 /query — 정규화 실패({@link SqlQueryException})·파싱 실패({@link UnsafeSqlException})는 기존과 같이
@@ -64,6 +66,19 @@ public class GuardedSqlExecutor {
           "UNKNOWN", List.of(), List.of(), 0, 0L, 0, false, e.getMessage());
     }
     return analyticsExecution.execute(normalized, maxRows, readOnly);
+  }
+
+  /**
+   * 이상탐지 메트릭 수집(폴러) — 소유자 자격({@code c})으로 판정한 뒤 executor 로 한 행만 읽는다(스펙 §4.2 6행). 호출자가 만든 {@link
+   * NormalizedSql} 의 같은 String 을 판정하고 실행하므로 판정 = 실행이다. 열람 거부는 403({@code CodedApiException});
+   * 호출자(폴러)는 이를 메트릭 수집 실패로 취급해 건너뛴다. 구분 불가 메시지라 로그·이력에 숨김 데이터셋 이름이 남지 않는다.
+   */
+  public ExecutorClient.QueryExecuteResult executeMetricQuery(
+      Clearance c, NormalizedSql normalized) {
+    // 끝 공백만 뗀 같은 문자열을 판정·실행한다(주석을 걷어낸 자리에 공백이 남을 수 있다 — 가드도 판정 시 strip 하므로 동일).
+    String sql = normalized.text().strip();
+    guard.requireSql(c, sql, SqlAccessMode.INTERACTIVE);
+    return executorClient.executeQuery(sql, 1, true);
   }
 
   /**

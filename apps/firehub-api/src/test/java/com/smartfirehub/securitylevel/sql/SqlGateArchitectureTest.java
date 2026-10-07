@@ -11,7 +11,6 @@ import com.smartfirehub.pipeline.service.PipelineSecurityGate;
 import com.smartfirehub.pipeline.service.SqlColumnProbe;
 import com.smartfirehub.pipeline.service.SqlScriptExecutor;
 import com.smartfirehub.pipeline.service.executor.ExecutorClient;
-import com.smartfirehub.proactive.service.MetricPollerService;
 import com.tngtech.archunit.core.domain.JavaAccess;
 import com.tngtech.archunit.core.domain.JavaClasses;
 import com.tngtech.archunit.core.domain.JavaCodeUnit;
@@ -162,13 +161,13 @@ class SqlGateArchitectureTest {
   }
 
   @Test
-  void executorQuery_onlyFromAnalyticsAndMetricPoller() {
+  void executorQuery_onlyFromAnalyticsAndGate() {
     methods()
         .that()
         .areDeclaredIn(ExecutorClient.class)
         .and()
         .haveName("executeQuery")
-        .should(onlyBeAccessedBy(AnalyticsQueryExecutionService.class, MetricPollerService.class))
+        .should(onlyBeAccessedBy(AnalyticsQueryExecutionService.class, GuardedSqlExecutor.class))
         .check(PROD);
   }
 

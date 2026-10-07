@@ -7,14 +7,17 @@ import static com.smartfirehub.jooq.Tables.PROACTIVE_JOB;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dataset.exception.SqlQueryException;
+import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.tenant.TenantScopedRunner;
-import com.smartfirehub.global.util.SqlValidationUtils;
+import com.smartfirehub.global.util.NormalizedSql;
 import com.smartfirehub.pipeline.exception.UnsafeSqlException;
 import com.smartfirehub.pipeline.service.validator.SqlValidator;
 import com.smartfirehub.proactive.dto.AnomalyEvent;
 import com.smartfirehub.proactive.repository.MetricSnapshotRepository;
 import com.smartfirehub.proactive.repository.MetricSnapshotRepository.MetricSnapshot;
 import com.smartfirehub.proactive.util.ProactiveTime;
+import com.smartfirehub.securitylevel.access.ClearanceResolver;
+import com.smartfirehub.securitylevel.sql.GuardedSqlExecutor;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -42,8 +45,10 @@ public class MetricPollerService {
   private final TenantScopedRunner tenantScopedRunner;
   // dsl 직접 경로에 GUC 를 주입하기 위한 트랜잭션 경계 — 순회만으로는 GUC 가 비어 있다.
   private final TransactionTemplate transactionTemplate;
-  // 데이터셋 메트릭 수집을 위한 SQL 실행 클라이언트
-  private final com.smartfirehub.pipeline.service.executor.ExecutorClient executorClient;
+  // 데이터셋 메트릭 SQL 의 판정+실행 관문 — executor 를 직접 부르지 않는다(SqlGateArchitectureTest).
+  private final GuardedSqlExecutor guardedSqlExecutor;
+  // 폴링에는 요청 인증이 없으므로 잡 소유자의 열람 자격을 직접 계산한다.
+  private final ClearanceResolver clearanceResolver;
 
   /**
    * 데이터셋 메트릭 SQL 검증기 — 애드혹 분석 쿼리({@code AnalyticsQueryExecutionService})와 같은 정책(현재 테넌트 데이터 스키마만,
@@ -186,12 +191,10 @@ public class MetricPollerService {
       // 애드혹 쿼리 경로와 같은 정규화·검증을 거친다(#745) — 원문을 그대로 보내면 끝의 "-- 주석"이
       // executor 가 붙이는 LIMIT 1 을 삼켜 결과 전체를 가져오고(수백만 행·수십 MB), 응답이 WebClient 버퍼
       // 한도를 넘어 수집이 매번 실패했다. 주석을 걷어내고 끝 세미콜론을 지운 뒤 스키마/함수 검증까지 한다.
-      String cleanSql;
+      NormalizedSql normalized;
       try {
-        cleanSql =
-            SqlValidationUtils.removeTrailingSemicolon(SqlValidationUtils.stripAndValidate(query))
-                .strip();
-        metricSqlValidator.validate(cleanSql);
+        normalized = NormalizedSql.of(query);
+        metricSqlValidator.validate(normalized.text());
       } catch (SqlQueryException | UnsafeSqlException e) {
         log.warn(
             "MetricPollerService: dataset metric '{}' has invalid query, skipping: {}",
@@ -200,8 +203,10 @@ public class MetricPollerService {
         return;
       }
       try {
-        // readOnly=true로 SELECT 쿼리만 허용하고, 결과 행 수를 1로 제한한다
-        var result = executorClient.executeQuery(cleanSql, 1, true);
+        // 보안 등급(S2): 잡 소유자의 현재 자격으로 판정한 뒤 실행한다(생성 이후 자격이 낮아졌을 수 있다). 소유자가 없거나 ACTIVE
+        // 멤버십이 없으면 자격이 비어 거부된다(fail-closed). readOnly=true·행 수 1 제한은 관문이 건다.
+        var result =
+            guardedSqlExecutor.executeMetricQuery(clearanceResolver.resolve(userId), normalized);
         if (result.rows() != null
             && !result.rows().isEmpty()
             && result.rows().get(0) != null
@@ -216,6 +221,15 @@ public class MetricPollerService {
           log.warn("MetricPollerService: dataset metric '{}' returned no data", metricId);
           return;
         }
+      } catch (CodedApiException e) {
+        // 열람 거부 — 실패한 평가와 같이 이벤트 없이 건너뛴다. 사유(숨김 데이터셋 이름)는 남기지 않고 같은 주기에 반복돼도 경고 한 줄이다.
+        log.warn(
+            "MetricPollerService: job {} metric '{}' skipped — owner cannot view referenced data"
+                + " ({})",
+            jobId,
+            metricId,
+            e.code());
+        return;
       } catch (Exception e) {
         log.error("MetricPollerService: failed to collect dataset metric '{}'", metricId, e);
         return;
