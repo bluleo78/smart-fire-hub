@@ -1,11 +1,30 @@
 package com.smartfirehub.securitylevel.service;
 
 import static com.smartfirehub.jooq.Tables.DATASET;
+import static com.smartfirehub.jooq.Tables.ROLE;
+import static com.smartfirehub.jooq.Tables.USER;
+import static org.jooq.impl.DSL.field;
+import static org.jooq.impl.DSL.name;
+import static org.jooq.impl.DSL.table;
 
+import com.smartfirehub.global.exception.CodedApiException;
+import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.securitylevel.access.Clearance;
+import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
+import com.smartfirehub.securitylevel.access.DatasetAction;
+import com.smartfirehub.securitylevel.access.LevelPolicy;
+import com.smartfirehub.securitylevel.dto.AccessGrantResponse;
+import com.smartfirehub.securitylevel.dto.AddAccessGrantRequest;
+import com.smartfirehub.securitylevel.dto.ChangeDatasetLevelRequest;
+import com.smartfirehub.securitylevel.dto.GrantCandidatesResponse;
 import com.smartfirehub.securitylevel.repository.DatasetAccessGrantRepository;
+import com.smartfirehub.securitylevel.repository.SecurityLevelRepository;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -17,6 +36,8 @@ public class DatasetSecurityService {
   private final DSLContext dsl;
   private final DatasetAccessGrantRepository grantRepository;
   private final SecurityAuditRecorder audit;
+  private final SecurityLevelRepository levelRepository;
+  private final DatasetAccessGuard guard;
 
   /**
    * clone 은 원본 등급을 상속하고 허용 목록을 복사한다(스펙 §4.2 2행, §4.5). 복사하지 않으면 허용 목록 필요 등급의 사본은 아무도 못 보는 고아가 된다.
@@ -42,5 +63,195 @@ public class DatasetSecurityService {
         "복제 원본 등급 상속",
         Map.of(
             "sourceDatasetId", sourceDatasetId, "toLevelId", sourceLevel, "copiedGrants", copied));
+  }
+
+  /**
+   * 등급 변경(스펙 §4.7): 본인 자격 초과 금지, 하향은 사유 필수, 허용 목록 필요 등급으로 갈 때 변경자가 볼 수 없게 되면 본인을 목록에 넣는다(판단 사항 11 —
+   * 변경 직후 본인도 못 보는 잠김 방지).
+   */
+  @Transactional
+  public void changeLevel(long datasetId, ChangeDatasetLevelRequest req, Clearance caller) {
+    LevelPolicy to =
+        levelRepository
+            .findById(req.securityLevelId())
+            .orElseThrow(
+                () ->
+                    new CodedApiException(
+                        HttpStatus.BAD_REQUEST, "SECURITY_LEVEL_NOT_FOUND", "보안 등급을 찾을 수 없습니다."));
+    if (to.rank() > caller.rank()) {
+      throw new CodedApiException(
+          HttpStatus.FORBIDDEN, "CLASSIFY_ABOVE_CLEARANCE", "본인 열람 등급보다 높은 등급으로 지정할 수 없습니다.");
+    }
+    LevelPolicy from = levelRepository.findById(currentLevelId(datasetId)).orElseThrow();
+    String reason = req.reason() == null ? "" : req.reason().trim();
+    if (to.rank() < from.rank() && reason.length() < SecurityLevelService.MIN_DOWNGRADE_REASON) {
+      throw new CodedApiException(
+          HttpStatus.BAD_REQUEST, "DOWNGRADE_REASON_REQUIRED", "등급을 낮추려면 사유(10자 이상)가 필요합니다.");
+    }
+    dsl.update(DATASET)
+        .set(DATASET.SECURITY_LEVEL_ID, to.id())
+        .where(DATASET.ID.eq(datasetId))
+        .execute();
+    // 변경 후 판정으로 "본인이 잠기는가"를 본다(역할·관리자 우회로 이미 보이면 시드하지 않는다).
+    boolean seededSelf = false;
+    if (to.allowlistRequired()
+        && !guard.check(caller, datasetId, DatasetAction.VIEW, null).allowed()
+        && !grantRepository.existsUser(datasetId, caller.userId())) {
+      grantRepository.insertUser(datasetId, caller.userId(), caller.userId());
+      seededSelf = true;
+    }
+    Map<String, Object> meta = new HashMap<>();
+    meta.put("fromLevelId", from.id());
+    meta.put("fromLevelName", from.name());
+    meta.put("toLevelId", to.id());
+    meta.put("toLevelName", to.name());
+    meta.put("reason", reason.isEmpty() ? null : reason);
+    meta.put("seededSelf", seededSelf);
+    audit.record(
+        caller.userId(),
+        "DATASET_SECURITY_LEVEL_CHANGE",
+        "dataset",
+        String.valueOf(datasetId),
+        from.name() + " → " + to.name(),
+        meta);
+  }
+
+  /** 허용 목록 조회(카드 표시용). */
+  @Transactional(readOnly = true)
+  public List<AccessGrantResponse> listGrants(long datasetId) {
+    return grantRepository.findByDataset(datasetId).stream()
+        .map(
+            g ->
+                new AccessGrantResponse(
+                    g.id(),
+                    g.userId() != null ? "USER" : "ROLE",
+                    g.userId() != null ? g.userId() : g.roleId(),
+                    g.subjectName(),
+                    g.grantedByName(),
+                    g.grantedAt()))
+        .toList();
+  }
+
+  /**
+   * 허용 항목 추가. dataset_access_grant 의 user/role FK 는 테넌트 복합 FK 가 아니라서 DB 가 타 테넌트 대상을 막지 못한다 — 그래서
+   * 사용자는 이 테넌트 ACTIVE 멤버, 역할은 이 테넌트(RLS) 역할인지 여기서 검증한다. 이미 있는 항목이면 새로 만들지 않고 기존 항목을 돌려준다(멱등, 감사
+   * 없음).
+   */
+  @Transactional
+  public AccessGrantResponse addGrant(long datasetId, AddAccessGrantRequest req, long actor) {
+    boolean user = req.userId() != null;
+    boolean role = req.roleId() != null;
+    if (user == role) {
+      throw new CodedApiException(
+          HttpStatus.BAD_REQUEST, "GRANT_SUBJECT_INVALID", "사용자 또는 역할 중 하나를 지정하세요.");
+    }
+    long tenantId = TenantContext.require("허용 목록 추가");
+    if (user && !isActiveMember(req.userId(), tenantId)) {
+      throw new CodedApiException(
+          HttpStatus.BAD_REQUEST, "GRANT_SUBJECT_INVALID", "이 워크스페이스의 활성 멤버가 아닙니다.");
+    }
+    if (role && !dsl.fetchExists(ROLE, ROLE.ID.eq(req.roleId()))) {
+      throw new CodedApiException(
+          HttpStatus.BAD_REQUEST, "GRANT_SUBJECT_INVALID", "역할을 찾을 수 없습니다.");
+    }
+    long subjectId = user ? req.userId() : req.roleId();
+    String type = user ? "USER" : "ROLE";
+    var existing =
+        listGrants(datasetId).stream()
+            .filter(g -> g.type().equals(type) && g.subjectId() == subjectId)
+            .findFirst();
+    if (existing.isPresent()) {
+      return existing.get();
+    }
+    long id =
+        user
+            ? grantRepository.insertUser(datasetId, subjectId, actor)
+            : grantRepository.insertRole(datasetId, subjectId, actor);
+    audit.record(
+        actor,
+        "DATASET_ACCESS_GRANT_ADD",
+        "dataset",
+        String.valueOf(datasetId),
+        null,
+        Map.of("grantId", id, "type", type, "subjectId", subjectId));
+    return listGrants(datasetId).stream().filter(g -> g.id() == id).findFirst().orElseThrow();
+  }
+
+  /** 마지막 항목은 허용 목록 필요 등급에서 제거 불가(스펙 §2.4) — 아무도 못 보는 고아 방지. */
+  @Transactional
+  public void removeGrant(long datasetId, long grantId, long actor) {
+    var grant =
+        grantRepository
+            .findById(grantId)
+            .filter(g -> g.datasetId() == datasetId)
+            .orElseThrow(
+                () ->
+                    new CodedApiException(
+                        HttpStatus.NOT_FOUND, "GRANT_NOT_FOUND", "허용 항목을 찾을 수 없습니다."));
+    boolean allowlistLevel =
+        levelRepository
+            .findById(currentLevelId(datasetId))
+            .map(LevelPolicy::allowlistRequired)
+            .orElse(false);
+    if (allowlistLevel && grantRepository.countByDataset(datasetId) <= 1) {
+      throw new CodedApiException(
+          HttpStatus.CONFLICT, "ALLOWLIST_LAST_ENTRY", "마지막 허용 목록 항목은 제거할 수 없습니다.");
+    }
+    grantRepository.delete(grantId);
+    audit.record(
+        actor,
+        "DATASET_ACCESS_GRANT_REMOVE",
+        "dataset",
+        String.valueOf(datasetId),
+        null,
+        Map.of(
+            "grantId",
+            grantId,
+            "type",
+            grant.userId() != null ? "USER" : "ROLE",
+            "subjectId",
+            grant.userId() != null ? grant.userId() : grant.roleId()));
+  }
+
+  /** 추가 후보 — 이 테넌트 ACTIVE 멤버와 역할(이름만). membership 은 RLS 없는 전역 테이블이라 tenant_id 를 명시한다. */
+  @Transactional(readOnly = true)
+  public GrantCandidatesResponse candidates() {
+    long tenantId = TenantContext.require("허용 목록 후보");
+    var users =
+        dsl.select(USER.ID, USER.NAME, USER.EMAIL)
+            .from(USER)
+            .join(table(name("membership")))
+            .on(field(name("membership", "user_id"), Long.class).eq(USER.ID))
+            .where(field(name("membership", "tenant_id"), Long.class).eq(tenantId))
+            .and(field(name("membership", "status"), String.class).eq("ACTIVE"))
+            .and(USER.IS_ACTIVE.isTrue())
+            .orderBy(USER.NAME.asc())
+            .fetch(
+                r ->
+                    new GrantCandidatesResponse.UserCandidate(
+                        r.get(USER.ID), r.get(USER.NAME), r.get(USER.EMAIL)));
+    var roles =
+        dsl.select(ROLE.ID, ROLE.NAME)
+            .from(ROLE)
+            .orderBy(ROLE.NAME.asc())
+            .fetch(
+                r -> new GrantCandidatesResponse.RoleCandidate(r.get(ROLE.ID), r.get(ROLE.NAME)));
+    return new GrantCandidatesResponse(users, roles);
+  }
+
+  private Long currentLevelId(long datasetId) {
+    return dsl.select(DATASET.SECURITY_LEVEL_ID)
+        .from(DATASET)
+        .where(DATASET.ID.eq(datasetId))
+        .fetchSingle(DATASET.SECURITY_LEVEL_ID);
+  }
+
+  private boolean isActiveMember(long userId, long tenantId) {
+    return dsl.fetchExists(
+        dsl.selectOne()
+            .from(table(name("membership")))
+            .where(field(name("membership", "user_id"), Long.class).eq(userId))
+            .and(field(name("membership", "tenant_id"), Long.class).eq(tenantId))
+            .and(field(name("membership", "status"), String.class).eq("ACTIVE")));
   }
 }

@@ -773,6 +773,70 @@ class DatasetServiceTest extends IntegrationTestBase {
     assertThat(cloned.columns()).hasSameSizeAs(source.columns());
   }
 
+  /**
+   * 기밀(허용 목록 필요) 데이터셋의 사본은 같은 등급 + 허용 목록(사용자·역할 항목) 복사 + 감사 1건이어야 한다. cloneDataset 의
+   * inheritFromSource 호출을 지우면 사본이 기본 등급·빈 목록이 되어 이 테스트가 실패한다.
+   */
+  @Test
+  void cloneDataset_inheritsLevelAllowlistAndAudits() {
+    DatasetDetailResponse source = createTestDatasetWithData("Clone Sec Src", "clone_sec_src");
+    Long secretLevel =
+        dsl.select(SECURITY_LEVEL.ID)
+            .from(SECURITY_LEVEL)
+            .where(SECURITY_LEVEL.NAME.eq("기밀"))
+            .fetchSingle(SECURITY_LEVEL.ID);
+    dsl.update(DATASET)
+        .set(DATASET.SECURITY_LEVEL_ID, secretLevel)
+        .where(DATASET.ID.eq(source.id()))
+        .execute();
+    Long roleId =
+        dsl.insertInto(ROLE)
+            .set(ROLE.NAME, "clone_sec_role")
+            .set(ROLE.IS_SYSTEM, false)
+            .returning(ROLE.ID)
+            .fetchSingle(ROLE.ID);
+    dsl.insertInto(DATASET_ACCESS_GRANT)
+        .set(DATASET_ACCESS_GRANT.DATASET_ID, source.id())
+        .set(DATASET_ACCESS_GRANT.USER_ID, testUserId)
+        .execute();
+    dsl.insertInto(DATASET_ACCESS_GRANT)
+        .set(DATASET_ACCESS_GRANT.DATASET_ID, source.id())
+        .set(DATASET_ACCESS_GRANT.ROLE_ID, roleId)
+        .execute();
+
+    DatasetDetailResponse cloned =
+        datasetService.cloneDataset(
+            source.id(),
+            new CloneDatasetRequest("Clone Sec Tgt", "clone_sec_tgt", null, false, false),
+            testUserId);
+
+    assertThat(
+            dsl.select(DATASET.SECURITY_LEVEL_ID)
+                .from(DATASET)
+                .where(DATASET.ID.eq(cloned.id()))
+                .fetchSingle(DATASET.SECURITY_LEVEL_ID))
+        .isEqualTo(secretLevel);
+    assertThat(
+            dsl.select(DATASET_ACCESS_GRANT.USER_ID, DATASET_ACCESS_GRANT.ROLE_ID)
+                .from(DATASET_ACCESS_GRANT)
+                .where(DATASET_ACCESS_GRANT.DATASET_ID.eq(cloned.id()))
+                .fetch()
+                .map(
+                    r ->
+                        r.get(DATASET_ACCESS_GRANT.USER_ID)
+                            + "/"
+                            + r.get(DATASET_ACCESS_GRANT.ROLE_ID)))
+        .containsExactlyInAnyOrder(testUserId + "/null", "null/" + roleId);
+    assertThat(
+            dsl.fetchCount(
+                AUDIT_LOG,
+                AUDIT_LOG
+                    .RESOURCE_ID
+                    .eq(String.valueOf(cloned.id()))
+                    .and(AUDIT_LOG.ACTION_TYPE.eq("DATASET_SECURITY_LEVEL_CHANGE"))))
+        .isEqualTo(1);
+  }
+
   @Test
   void cloneDataset_withTags_copiesTags() {
     DatasetDetailResponse source = createTestDatasetWithData("Clone Tag Src", "clone_tag_src");
