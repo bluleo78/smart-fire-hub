@@ -14,6 +14,8 @@ import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 
 const HIDDEN_OUTPUT_ID = 77;
+/** 목록에 없는(볼 수 없는) 입력 데이터셋 — 입력 선택칸이 모르는 id 를 조용히 버리면 저장 한 번에 입력 참조가 사라진다. */
+const HIDDEN_INPUT_ID = 78;
 
 async function setupMocks(page: Page) {
   const step = createStep({
@@ -23,6 +25,7 @@ async function setupMocks(page: Page) {
     loadStrategy: 'REPLACE',
     outputDatasetId: HIDDEN_OUTPUT_ID,
     outputDatasetName: null,
+    inputDatasetIds: [HIDDEN_INPUT_ID, 1],
   });
   await mockApi(page, 'GET', '/api/v1/pipelines/1', createPipelineDetail({ id: 1, steps: [step] }));
   await mockApi(page, 'GET', '/api/v1/pipelines/1/executions', []);
@@ -69,8 +72,13 @@ test.describe('파이프라인 에디터 — 볼 수 없는 출력 데이터셋'
 
     await page.getByRole('button', { name: '저장', exact: true }).click();
     const req = await putCapture.waitForRequest();
-    const payload = req.payload as { steps: Array<{ outputDatasetId: number | null; description: string | null }> };
+    const payload = req.payload as {
+      steps: Array<{ outputDatasetId: number | null; inputDatasetIds: number[]; description: string | null }>;
+    };
     expect(payload.steps[0].description).toBe('설명만 바꾼 저장');
     expect(payload.steps[0].outputDatasetId).toBe(HIDDEN_OUTPUT_ID);
+    expect(payload.steps[0].inputDatasetIds).toEqual(expect.arrayContaining([HIDDEN_INPUT_ID, 1]));
+    // 숨김 데이터셋 단건 조회 404 가 오류 토스트로 새지 않는다(권한 부족은 오류가 아니다)
+    await expect(page.locator('[data-sonner-toast][data-type="error"]')).toHaveCount(0);
   });
 });
