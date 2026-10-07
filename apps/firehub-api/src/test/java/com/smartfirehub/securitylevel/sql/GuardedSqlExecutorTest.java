@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.smartfirehub.analytics.dto.AnalyticsQueryResponse;
+import com.smartfirehub.analytics.dto.CreateSavedQueryRequest;
+import com.smartfirehub.analytics.service.SavedQueryService;
 import com.smartfirehub.dataset.dto.SqlQueryRequest;
 import com.smartfirehub.dataset.dto.SqlQueryResponse;
 import com.smartfirehub.dataset.exception.SqlQueryException;
@@ -42,6 +44,7 @@ class GuardedSqlExecutorTest extends IntegrationTestBase {
   @Autowired private DatasetDataService datasetDataService;
   @Autowired private ClearanceResolver clearanceResolver;
   @Autowired private DatasetAccessGuard guard;
+  @Autowired private SavedQueryService savedQueryService;
 
   private SecurityFixture fx;
   private final List<Long> datasets = new ArrayList<>();
@@ -52,12 +55,15 @@ class GuardedSqlExecutorTest extends IntegrationTestBase {
   private String hidden;
   private long pubId;
   private long userId;
+  private long creator;
+  private long hiddenId;
+  private final List<Long> savedQueries = new ArrayList<>();
   private Clearance viewer;
 
   @BeforeEach
   void setUp() {
     fx = new SecurityFixture(dsl, fixtureTransactionTemplate, encoder);
-    long creator = fx.createUser("gse_c");
+    creator = fx.createUser("gse_c");
     users.add(creator);
     schema = DataSchema.current();
     String m = "gse" + System.nanoTime();
@@ -70,7 +76,8 @@ class GuardedSqlExecutorTest extends IntegrationTestBase {
     dsl.execute("INSERT INTO " + schema + "." + hidden + " VALUES (4242)");
     pubId = fx.createDatasetRow(pub, fx.levelId("공개"), creator);
     datasets.add(pubId);
-    datasets.add(fx.createDatasetRow(hidden, fx.levelId("기밀"), creator));
+    hiddenId = fx.createDatasetRow(hidden, fx.levelId("기밀"), creator);
+    datasets.add(hiddenId);
 
     // '민감' 자격 — 공개는 보고 기밀(허용 목록 필요)은 못 본다.
     userId = fx.createUser("gse_u");
@@ -86,6 +93,7 @@ class GuardedSqlExecutorTest extends IntegrationTestBase {
   void tearDown() {
     SecurityContextHolder.clearContext();
     TenantContext.set(DEFAULT_TEST_TENANT_ID);
+    savedQueries.forEach(id -> savedQueryService.delete(id, creator));
     datasets.forEach(fx::deleteDatasetRow);
     users.forEach(fx::deleteUser);
     roles.forEach(fx::deleteRole);
@@ -199,6 +207,53 @@ class GuardedSqlExecutorTest extends IntegrationTestBase {
                 datasetDataService.executeQuery(
                     pubId, new SqlQueryRequest("SELECT 1; SELECT 2", 100), userId))
         .isInstanceOf(SqlQueryException.class);
+  }
+
+  /**
+   * 저장 쿼리 실행은 소유자가 아니라 <b>실행자</b> 자격으로 판정한다(스펙 §4.2 3행) — 공유된 쿼리가 숨김 데이터셋을 읽으면 자격 없는 실행자는 403. 양성
+   * 대조로 같은 실행자가 볼 수 있는 테이블만 읽는 공유 쿼리는 실행된다.
+   */
+  @Test
+  void savedQuery_isJudgedWithTheExecutorsClearance_notTheOwners() {
+    // 소유자는 숨김(기밀·허용 목록) 데이터셋을 볼 수 있게 만든다 — 그래야 "소유자 자격으로 판정" 변이가 이 테스트를 깬다.
+    long ownerRole = fx.createRole("gse_o_" + System.nanoTime(), fx.levelId("기밀"), "dataset:read");
+    roles.add(ownerRole);
+    fx.assignRole(creator, ownerRole);
+    fx.grantUser(hiddenId, creator);
+    assertThat(
+            guard
+                .checkSql(
+                    clearanceResolver.resolve(creator),
+                    "SELECT a FROM " + hidden,
+                    SqlAccessMode.INTERACTIVE)
+                .allowed())
+        .as("전제: 소유자는 숨김 데이터셋을 볼 수 있다")
+        .isTrue();
+
+    long hiddenQuery = sharedQuery("SELECT a FROM " + hidden);
+    long pubQuery = sharedQuery("SELECT a FROM " + pub);
+
+    assertThatThrownBy(() -> savedQueryService.executeById(hiddenQuery, 100, true, userId))
+        .isInstanceOf(CodedApiException.class)
+        .extracting(e -> ((CodedApiException) e).code())
+        .isEqualTo("DATASET_SQL_ACCESS_DENIED");
+
+    AnalyticsQueryResponse ok = savedQueryService.executeById(pubQuery, 100, true, userId);
+    assertThat(ok.error()).isNull();
+    assertThat(ok.rows()).hasSize(1);
+  }
+
+  /** 소유자(creator)가 만든 공유 저장 쿼리. */
+  private long sharedQuery(String sql) {
+    long id =
+        savedQueryService
+            .create(
+                new CreateSavedQueryRequest(
+                    "gse_" + System.nanoTime(), null, sql, null, null, true),
+                creator)
+            .id();
+    savedQueries.add(id);
+    return id;
   }
 
   /** 요청 경로의 principal(Long userId)을 세운다 — ClearanceResolver.current() 가 읽는다. */
