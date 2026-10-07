@@ -14,6 +14,7 @@ import com.smartfirehub.jooq.tables.AuditLog.AuditLogPath;
 import com.smartfirehub.jooq.tables.Chart.ChartPath;
 import com.smartfirehub.jooq.tables.Dashboard.DashboardPath;
 import com.smartfirehub.jooq.tables.Dataset.DatasetPath;
+import com.smartfirehub.jooq.tables.DatasetAccessGrant.DatasetAccessGrantPath;
 import com.smartfirehub.jooq.tables.DatasetFavorite.DatasetFavoritePath;
 import com.smartfirehub.jooq.tables.DatasetTag.DatasetTagPath;
 import com.smartfirehub.jooq.tables.DocumentFile.DocumentFilePath;
@@ -327,6 +328,19 @@ public class User extends TableImpl<UserRecord> {
             _dashboardUpdatedByFkey = new DashboardPath(this, null, Keys.DASHBOARD__DASHBOARD_UPDATED_BY_FKEY.getInverseKey());
 
         return _dashboardUpdatedByFkey;
+    }
+
+    private transient DatasetAccessGrantPath _datasetAccessGrant;
+
+    /**
+     * Get the implicit to-many join path to the
+     * <code>public.dataset_access_grant</code> table
+     */
+    public DatasetAccessGrantPath datasetAccessGrant() {
+        if (_datasetAccessGrant == null)
+            _datasetAccessGrant = new DatasetAccessGrantPath(this, null, Keys.DATASET_ACCESS_GRANT__DATASET_ACCESS_GRANT_USER_ID_FKEY.getInverseKey());
+
+        return _datasetAccessGrant;
     }
 
     private transient DatasetPath _datasetCreatedByFkey;
@@ -710,9 +724,19 @@ public class User extends TableImpl<UserRecord> {
 
     /**
      * Get the implicit many-to-many join path to the
-     * <code>public.dataset</code> table
+     * <code>public.dataset</code> table, via the
+     * <code>dataset_access_grant_dataset_id_fkey</code> key
      */
-    public DatasetPath dataset() {
+    public DatasetPath datasetAccessGrantDatasetIdFkey() {
+        return datasetAccessGrant().dataset();
+    }
+
+    /**
+     * Get the implicit many-to-many join path to the
+     * <code>public.dataset</code> table, via the
+     * <code>dataset_favorite_dataset_id_fkey</code> key
+     */
+    public DatasetPath datasetFavoriteDatasetIdFkey() {
         return datasetFavorite().dataset();
     }
 

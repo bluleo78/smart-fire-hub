@@ -118,6 +118,20 @@ public class RoleRecord extends UpdatableRecordImpl<RoleRecord> {
         return (Long) get(6);
     }
 
+    /**
+     * Setter for <code>public.role.max_security_level_id</code>.
+     */
+    public void setMaxSecurityLevelId(Long value) {
+        set(7, value);
+    }
+
+    /**
+     * Getter for <code>public.role.max_security_level_id</code>.
+     */
+    public Long getMaxSecurityLevelId() {
+        return (Long) get(7);
+    }
+
     // -------------------------------------------------------------------------
     // Primary key information
     // -------------------------------------------------------------------------
@@ -141,7 +155,7 @@ public class RoleRecord extends UpdatableRecordImpl<RoleRecord> {
     /**
      * Create a detached, initialised RoleRecord
      */
-    public RoleRecord(Long id, String name, String description, Boolean isSystem, LocalDateTime createdAt, LocalDateTime updatedAt, Long tenantId) {
+    public RoleRecord(Long id, String name, String description, Boolean isSystem, LocalDateTime createdAt, LocalDateTime updatedAt, Long tenantId, Long maxSecurityLevelId) {
         super(Role.ROLE);
 
         setId(id);
@@ -151,6 +165,7 @@ public class RoleRecord extends UpdatableRecordImpl<RoleRecord> {
         setCreatedAt(createdAt);
         setUpdatedAt(updatedAt);
         setTenantId(tenantId);
+        setMaxSecurityLevelId(maxSecurityLevelId);
         resetChangedOnNotNull();
     }
 }
