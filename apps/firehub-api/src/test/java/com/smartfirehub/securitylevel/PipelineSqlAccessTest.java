@@ -104,6 +104,17 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
     return id;
   }
 
+  private void setLevel(long datasetId, String level) {
+    TenantRlsTestSupport.runInTenantTransaction(
+        fixtureTransactionTemplate,
+        DEFAULT_TEST_TENANT_ID,
+        () ->
+            dsl.update(DATASET)
+                .set(DATASET.SECURITY_LEVEL_ID, fx.levelId(level))
+                .where(DATASET.ID.eq(datasetId))
+                .execute());
+  }
+
   private void insertRow(String t, String v) {
     inTenantFixture(
         () -> dsl.execute("INSERT INTO " + DataSchema.qualify(t) + " (v) VALUES (?)", v));
@@ -292,6 +303,77 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
         .isTrue();
   }
 
+  /**
+   * 같은 파이프라인을 서로 다른 기밀 자격 실행 주체(예: 수동 실행자와 트리거 생성자)가 차례로 돌린다. 두 번째 실행은 이미 기밀로 오른 TEMP 를 재사용하므로 상향이
+   * 일어나지 않는다 — 상향 때만 시드하면 두 번째 실행 주체가 허용 목록에 없어 step 2({@code {{#1}}})가 거부된다(fix round 1).
+   */
+  @Test
+  void run_reusedAllowlistTemp_seedsEachRunAsUser() throws Exception {
+    String topTable = m + "_top2";
+    long topId = table(topTable, "기밀");
+    insertRow(topTable, "t");
+    long first = userAt("기밀");
+    long second = userAt("기밀");
+    fx.grantUser(topId, first);
+    fx.grantUser(topId, second);
+    long p =
+        pipeline(
+            first,
+            List.of(
+                new PipelineStepRequest(
+                    "s1", null, "SQL", "SELECT v FROM " + qualified(topTable), null, null, null),
+                new PipelineStepRequest(
+                    "s2", null, "SQL", "SELECT v FROM {{#1}}", null, null, List.of("s1"))));
+    assertThat(waitForEnd(executionService.executePipeline(p, first))).isEqualTo("COMPLETED");
+    assertThat(waitForEnd(executionService.executePipeline(p, second))).isEqualTo("COMPLETED");
+    long s1Temp = tempOf(p, "s1");
+    assertThat(hasUserGrant(s1Temp, first)).isTrue();
+    assertThat(hasUserGrant(s1Temp, second)).isTrue();
+  }
+
+  /**
+   * 새로 만든(빈) TEMP 는 입력 최대 등급으로 정확히 맞춘다 — 기본 등급('내부')보다 낮은 '공개'여도(스펙 §4.5). 그래야 '공개' 자격 실행 주체가 다음
+   * 스텝에서 자기 TEMP 를 읽을 수 있다.
+   */
+  @Test
+  void run_freshTempFromPublicInputs_isSetToPublicAndNextStepReads() throws Exception {
+    long runner = userAt("공개");
+    long p =
+        pipeline(
+            runner,
+            List.of(
+                new PipelineStepRequest(
+                    "s1", null, "SQL", "SELECT v FROM " + qualified(pubTable), null, null, null),
+                new PipelineStepRequest(
+                    "s2", null, "SQL", "SELECT v FROM {{#1}}", null, null, List.of("s1"))));
+    assertThat(waitForEnd(executionService.executePipeline(p, runner))).isEqualTo("COMPLETED");
+    assertThat(levelOf(tempOf(p, "s1"))).isEqualTo(fx.levelId("공개"));
+  }
+
+  /**
+   * 재실행에서 TEMP 는 스텝 출력(coalesce 폴백)으로 들어온다 — 그래도 러너 소유 TEMP 로 다뤄야 한다. 입력 등급이 오르면 재사용 TEMP 를 상향하고(지정
+   * 출력처럼 하향 실패가 아니다), 입력 등급이 다시 내려가도 재사용 TEMP 는 낮추지 않는다(이전 데이터가 남아 있을 수 있다).
+   */
+  @Test
+  void run_reusedTemp_isRaisedWhenInputRisesAndNeverLowered() throws Exception {
+    String inTable = m + "_mov";
+    long inId = table(inTable, "공개");
+    insertRow(inTable, "x");
+    long runner = userAt("민감");
+    long p = pipeline(runner, "SELECT v FROM " + qualified(inTable), null);
+    assertThat(waitForEnd(executionService.executePipeline(p, runner))).isEqualTo("COMPLETED");
+    long temp = tempOf(p, "step");
+    assertThat(levelOf(temp)).isEqualTo(fx.levelId("공개"));
+
+    setLevel(inId, "민감");
+    assertThat(waitForEnd(executionService.executePipeline(p, runner))).isEqualTo("COMPLETED");
+    assertThat(levelOf(temp)).isEqualTo(fx.levelId("민감"));
+
+    setLevel(inId, "공개");
+    assertThat(waitForEnd(executionService.executePipeline(p, runner))).isEqualTo("COMPLETED");
+    assertThat(levelOf(temp)).isEqualTo(fx.levelId("민감"));
+  }
+
   @Test
   void run_explicitLowerOutput_failsWithoutWriting() throws Exception {
     long runner = userAt("민감");
@@ -356,6 +438,27 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
 
   private String qualified(String table) {
     return DataSchema.qualify(table);
+  }
+
+  /** 러너가 만든 스텝 TEMP(ptmp_<pipelineId>_<step>…)의 데이터셋 id. */
+  private long tempOf(long pipelineId, String stepName) {
+    return inTenantFixture(
+        () ->
+            dsl.select(DATASET.ID)
+                .from(DATASET)
+                .where(DATASET.TABLE_NAME.like("ptmp\\_" + pipelineId + "\\_" + stepName + "%"))
+                .fetchSingle(DATASET.ID));
+  }
+
+  private boolean hasUserGrant(long datasetId, long userId) {
+    return inTenantFixture(
+        () ->
+            dsl.fetchExists(
+                DATASET_ACCESS_GRANT,
+                DATASET_ACCESS_GRANT
+                    .DATASET_ID
+                    .eq(datasetId)
+                    .and(DATASET_ACCESS_GRANT.USER_ID.eq(userId))));
   }
 
   private long levelOf(long datasetId) {

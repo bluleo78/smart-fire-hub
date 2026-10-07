@@ -94,6 +94,45 @@ public class DatasetSecurityService {
   }
 
   /**
+   * 러너가 이번 실행에서 새로 만든(빈) TEMP 출력의 등급을 입력 최대 등급으로 정확히 맞춘다(스펙 §4.5 — 기본 등급보다 낮아도). 상향이 아니므로 자동 상향 시각은
+   * 남기지 않고 등급 변경 감사만 남긴다. 빈 테이블이라 낮춰도 노출되는 데이터가 없다 — 재사용 TEMP 에는 호출하지 않는다(호출자 책임).
+   */
+  @Transactional
+  public void assignNewPipelineTempLevel(long datasetId, LevelPolicy level, long runAsUserId) {
+    Long fromId = currentLevelId(datasetId);
+    dsl.update(DATASET)
+        .set(DATASET.SECURITY_LEVEL_ID, level.id())
+        .where(DATASET.ID.eq(datasetId))
+        .execute();
+    audit.record(
+        runAsUserId,
+        "DATASET_SECURITY_LEVEL_CHANGE",
+        "dataset",
+        String.valueOf(datasetId),
+        "파이프라인 신규 임시 출력 등급 = 입력 최대 등급",
+        Map.of("fromLevelId", fromId, "toLevelId", level.id()));
+  }
+
+  /**
+   * 파이프라인 출력(러너 소유 TEMP)의 허용 목록에 실행 주체를 넣는다(멱등). 이미 있으면 아무것도 하지 않는다. 새로 넣을 때만 감사 {@code
+   * DATASET_ACCESS_GRANT_ADD} 를 남긴다 — 실행마다 감사가 쌓이지 않게.
+   */
+  @Transactional
+  public void seedPipelineOutputRunAs(long datasetId, long runAsUserId) {
+    if (grantRepository.existsUser(datasetId, runAsUserId)) {
+      return;
+    }
+    long id = grantRepository.insertUser(datasetId, runAsUserId, runAsUserId);
+    audit.record(
+        runAsUserId,
+        "DATASET_ACCESS_GRANT_ADD",
+        "dataset",
+        String.valueOf(datasetId),
+        "파이프라인 실행 주체 허용 목록 시드",
+        Map.of("grantId", id, "type", "USER", "subjectId", runAsUserId));
+  }
+
+  /**
    * 등급 변경(스펙 §4.7): 본인 자격 초과 금지, 하향은 사유 필수, 허용 목록 필요 등급으로 갈 때 변경자가 볼 수 없게 되면 본인을 목록에 넣는다(판단 사항 11 —
    * 변경 직후 본인도 못 보는 잠김 방지).
    */

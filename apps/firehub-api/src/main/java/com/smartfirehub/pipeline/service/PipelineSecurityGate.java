@@ -61,14 +61,37 @@ public class PipelineSecurityGate {
   }
 
   /**
-   * SELECT 스텝의 출력 등급 처리(판단 사항 5). 러너가 자동 생성한 TEMP 는 입력 최대 등급으로 상향하고, 사용자가 지정한 출력은 실행 주체가 볼 수 있어야 하며
-   * 입력보다 낮으면 실패({@code SQL_WRITE_DOWNGRADE})한다 — 지정 출력의 자동 상향은 S4.
+   * SELECT 스텝의 출력 등급 처리(판단 사항 5). 반드시 출력 비우기(DELETE)·적재(INSERT) 실행 <b>전에</b> 부른다.
+   *
+   * <ul>
+   *   <li>러너가 이번 실행에서 <b>새로 만든</b>(빈) TEMP: 등급을 정확히 입력 최대 등급으로 맞춘다(스펙 §4.5 — 기본 등급보다 낮아도). 비어 있으므로
+   *       낮춰도 기존 데이터가 노출되지 않는다.
+   *   <li>러너가 <b>재사용</b>하는 TEMP: 입력보다 낮으면 상향만 한다 — 이전 실행 데이터가 남아 있을 수 있어 절대 낮추지 않는다.
+   *   <li>러너 소유 TEMP 공통: 입력 최대 등급이 허용 목록 필요면 실행 주체를 허용 목록에 (멱등) 넣는다 — 상향이 일어나지 않아도. 다른 실행 주체(수동 실행자
+   *       vs 트리거 생성자)가 같은 TEMP 를 재사용할 때 다음 스텝({@code {{#N}}})이 거부되지 않게 하고, 실행 주체가 아직 볼 수 없는 TEMP 에
+   *       쓰는 일이 없게 한다. 실행 주체는 이 스텝의 입력을 모두 볼 수 있음이 이미 판정됐으므로 새 열람자를 넓히지 않는다.
+   *   <li>사용자가 지정한 출력: 실행 주체가 볼 수 있어야 하고, 입력보다 낮으면 실패({@code SQL_WRITE_DOWNGRADE}) — 지정 출력의 자동 상향은
+   *       S4.
+   * </ul>
    *
    * <p>SELECT 자동 적재는 래퍼({@code INSERT INTO 출력 ...})를 러너가 붙이므로 출력 테이블이 판정 문자열에 없다 — 그래서 여기서 따로 본다.
+   *
+   * <p><b>러너 소유 여부는 DB 로 판정한다</b>(origin_type='TEMP' 이고 source_pipeline_step_id = 이 스텝). 러너의 "출력
+   * 미지정 → TEMP 생성" 분기는 첫 실행에서만 탄다 — 두 번째 실행부터는 {@code PipelineStepRepository.findByPipelineId} 가
+   * 출력이 null 인 스텝의 출력을 그 스텝의 TEMP 로 채워(coalesce) 넘기므로, 러너 지역 변수로 판단하면 재사용 TEMP 가 "사용자 지정 출력"으로 오인돼
+   * 다른 실행 주체는 VIEW 거부, 입력 등급 상승은 하향 실패가 된다(fix round 1 에서 실측).
+   *
+   * @param stepId 이 스텝의 id — 출력이 이 스텝의 TEMP 인지 판정한다
+   * @param freshTemp 이번 실행에서 새로 만든(빈) TEMP 인가 — 러너 소유 TEMP 일 때만 의미가 있다
    */
   @Transactional
   public void enforceOutputLevel(
-      SqlAccessResult access, long outputDatasetId, boolean runnerOwnedTemp, Long runAsUserId) {
+      SqlAccessResult access,
+      long outputDatasetId,
+      long stepId,
+      boolean freshTemp,
+      Long runAsUserId) {
+    boolean runnerOwnedTemp = isStepTemp(outputDatasetId, stepId);
     if (!runnerOwnedTemp) {
       requireOutputVisible(outputDatasetId, runAsUserId);
     }
@@ -83,18 +106,25 @@ public class PipelineSecurityGate {
             .where(DATASET.ID.eq(outputDatasetId))
             .fetchSingle(DATASET.SECURITY_LEVEL_ID);
     LevelPolicy out = levelRepository.findById(outLevelId).orElseThrow();
-    if (out.rank() >= effective.rank()) {
+    if (!runnerOwnedTemp) {
+      if (out.rank() < effective.rank()) {
+        // VIEW 를 통과한 뒤에만 오는 분기라 등급 이름은 실행 주체가 이미 볼 수 있는 정보다(가드의 쓰기 하향 메시지와 같은 문구).
+        throw new CodedApiException(
+            HttpStatus.FORBIDDEN,
+            DatasetAccessGuard.SQL_WRITE_DOWNGRADE_CODE,
+            "'" + effective.name() + "' 데이터를 더 낮은 등급 데이터셋에 쓸 수 없습니다");
+      }
       return;
     }
-    if (runnerOwnedTemp) {
+    if (out.rank() < effective.rank()) {
       datasetSecurityService.raiseForPipelineOutput(outputDatasetId, effective, runAsUserId);
-      return;
+    } else if (freshTemp && out.rank() > effective.rank()) {
+      datasetSecurityService.assignNewPipelineTempLevel(outputDatasetId, effective, runAsUserId);
     }
-    // VIEW 를 통과한 뒤에만 오는 분기라 등급 이름은 실행 주체가 이미 볼 수 있는 정보다(가드의 쓰기 하향 메시지와 같은 문구).
-    throw new CodedApiException(
-        HttpStatus.FORBIDDEN,
-        DatasetAccessGuard.SQL_WRITE_DOWNGRADE_CODE,
-        "'" + effective.name() + "' 데이터를 더 낮은 등급 데이터셋에 쓸 수 없습니다");
+    // 상향 여부와 무관하게 — 재사용 TEMP 를 다른 실행 주체가 쓸 때도 시드한다(위 Javadoc). 상향 경로에서 이미 넣었으면 멱등으로 건너뛴다.
+    if (effective.allowlistRequired()) {
+      datasetSecurityService.seedPipelineOutputRunAs(outputDatasetId, runAsUserId);
+    }
   }
 
   /**
@@ -108,6 +138,20 @@ public class PipelineSecurityGate {
           DatasetAccessGuard.SQL_ACCESS_DENIED_CODE,
           DatasetAccessGuard.SQL_ACCESS_DENIED_MESSAGE);
     }
+  }
+
+  /**
+   * 출력 데이터셋이 이 스텝의 러너 소유 TEMP 인가 — TempDatasetService.createTempDataset 이
+   * origin_type·source_pipeline_step_id 를 남긴다.
+   */
+  private boolean isStepTemp(long datasetId, long stepId) {
+    return dsl.fetchExists(
+        DATASET,
+        DATASET
+            .ID
+            .eq(datasetId)
+            .and(DATASET.ORIGIN_TYPE.eq("TEMP"))
+            .and(DATASET.SOURCE_PIPELINE_STEP_ID.eq(stepId)));
   }
 
   /** 실행 주체 미상(삭제된 트리거 생성자 등)은 아무것도 못 보는 자격 — fail-closed. */

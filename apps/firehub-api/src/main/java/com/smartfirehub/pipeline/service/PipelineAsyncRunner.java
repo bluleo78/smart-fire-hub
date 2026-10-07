@@ -414,6 +414,9 @@ public class PipelineAsyncRunner {
         // 명시적으로 지정한 기존 데이터셋(outputDatasetId가 원래부터 있던 경우)은 실제로 "id"라는
         // 정상 사용자 컬럼을 가질 수 있으므로 그 이름을 그대로 매칭해야 한다(#645).
         boolean tempDatasetAutoCreated = false;
+        // 그중 이번 실행에서 TEMP 를 새로 만들었는지(빈 테이블) — 새 TEMP 만 입력 최대 등급으로 "정확히" 맞출 수 있다(낮추기 포함).
+        // 재사용 TEMP 는 이전 실행 데이터가 남아 있을 수 있어 상향만 한다(PipelineSecurityGate#enforceOutputLevel).
+        boolean tempDatasetFresh = false;
         // probe 결과를 스텝당 한 번만 얻어 재사용한다 — 아래 두 블록이 같은 sql 을 각각 probe 하면
         // 테넌트 풀 대여·트랜잭션·왕복이 두 벌 나가고, 그 사이 풀이 축출·close() 될 틈까지 생긴다.
         // SELECT 가 아니면 probe 자체가 필요 없으므로 지연 획득한다.
@@ -440,6 +443,7 @@ public class PipelineAsyncRunner {
             if (tempDatasetService.hasSchemaChanged(dsId, selectColumns)) {
               log.info("Schema changed for step {}, recreating temp dataset", step.name());
               tempDatasetService.deleteTempDataset(dsId);
+              tempDatasetFresh = true;
               outputDatasetId =
                   tempDatasetService.createTempDataset(
                       selectColumns, pipelineId, pipelineName, stepId, step.name(), userId);
@@ -449,6 +453,7 @@ public class PipelineAsyncRunner {
             }
           } else {
             log.info("Creating new temp dataset for step {}", step.name());
+            tempDatasetFresh = true;
             outputDatasetId =
                 tempDatasetService.createTempDataset(
                     selectColumns, pipelineId, pipelineName, stepId, step.name(), userId);
@@ -507,10 +512,12 @@ public class PipelineAsyncRunner {
         // 출력 등급(판단 사항 5): SELECT 는 러너가 붙이는 래퍼의 INSERT 대상이 판정 문자열에 없으므로 여기서 본다 — 러너가 만든
         // TEMP 는 입력 최대 등급으로 상향, 지정 출력은 볼 수 있어야 하고 하향이면 실패. 사용자 DML 스텝의 지정 출력도 REPLACE 면
         // 비우기(DELETE) 선행 문장의 대상이 되므로 실행 주체가 볼 수 있어야 한다. 아래 실행(선행 문장 포함)보다 먼저다.
+        // 러너 소유 TEMP 여부는 게이트가 DB 로 판정한다 — 두 번째 실행부터 TEMP 는 step.outputDatasetId 로 들어와 위 자동 생성
+        // 분기를 타지 않기 때문이다(PipelineStepRepository 의 coalesce 폴백).
         if (outputDatasetId != null) {
           if (isSelect) {
             pipelineSecurityGate.enforceOutputLevel(
-                access, outputDatasetId, tempDatasetAutoCreated, userId);
+                access, outputDatasetId, step.id(), tempDatasetFresh, userId);
           } else {
             pipelineSecurityGate.requireOutputVisible(outputDatasetId, userId);
           }
