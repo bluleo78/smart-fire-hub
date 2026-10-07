@@ -272,7 +272,14 @@ class SqlAccessGuardTest extends IntegrationTestBase {
             // 줄 주석은 \r 에서도 끝난다(PG newline [\n\r])
             "SELECT 1 AS x FROM pub --\rWHERE 1 = /* /* */ '*/ (SELECT 1 FROM hidden LIMIT 1) --'\n",
             "SELECT 1 AS x FROM pub --\r\nWHERE 1 = /* /* */ '*/ (SELECT 1 FROM hidden LIMIT 1) --'\r\n",
-            "SELECT 1 AS x FROM pub --\rWHERE 1 = /* /* */ '*/ (SELECT 1 FROM hidden LIMIT 1) --'\r");
+            "SELECT 1 AS x FROM pub --\rWHERE 1 = /* /* */ '*/ (SELECT 1 FROM hidden LIMIT 1) --'\r",
+            // JSqlParser 만 아는 주석·인용 표기(//, q'[...]', $ 든 $$, 숫자 뒤 $$, 백틱)
+            "SELECT 0 * 1 //* c */ 1 + (SELECT a FROM hidden LIMIT 1) AS v",
+            "SELECT 1 AS x FROM pub WHERE 1 = 1 //* c */ + (SELECT 1 FROM hidden LIMIT 1)",
+            "SELECT q'[ ' AS c, (SELECT a FROM hidden LIMIT 1) AS w -- ]' FROM pub",
+            "SELECT $$a$ = '$$ AS c, (SELECT a FROM hidden LIMIT 1) AS d -- '",
+            "SELECT 1$$ ' $$ AS c, (SELECT a FROM hidden LIMIT 1) AS d -- '",
+            "SELECT `x, (SELECT a FROM hidden LIMIT 1)` FROM pub");
     for (String tpl : bypasses) {
       String sql = tpl.replace("hidden", hidden).replace("pub", pub);
       for (SqlAccessMode mode : SqlAccessMode.values()) {
