@@ -98,7 +98,7 @@ public class SqlScriptExecutor {
    * <p>{@code dsl.connection} 은 이 트랜잭션의 커넥션을 쓴다 — {@code SET LOCAL search_path}·출력 잠금·선행 비우기와 같은
    * 트랜잭션이다. 오류 메시지는 jOOQ 와 같은 {@code SQL [...]; <PG 메시지>} 형태로 유지한다(스텝 오류 표시 계약).
    */
-  static void executeVerbatim(DSLContext dsl, String sql) {
+  private static void executeVerbatim(DSLContext dsl, String sql) {
     dsl.connection(
         conn -> {
           try (Statement st = conn.createStatement()) {
