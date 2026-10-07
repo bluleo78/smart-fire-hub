@@ -34,7 +34,11 @@ class PgLexicalAmbiguityCheckTest {
           "SELECT $a$ ' $a$ AS x FROM pub, hidden --'",
           "SELECT $a$ /* $a$ AS x FROM pub, hidden -- */",
           // 일반 문자열 끝의 백슬래시(standard_conforming_strings=on 이면 PG 에선 리터럴 \)
-          "SELECT '\\' AS a FROM pub, hidden -- '");
+          "SELECT '\\' AS a FROM pub, hidden -- '",
+          // PG 는 줄 주석을 \r 에서도 끝낸다(newline [\n\r]) — \r 뒤 코드도 훑어야 한다
+          "SELECT 1 AS x FROM pub --\rWHERE 1 = /* /* */ '*/ (SELECT 1 FROM hidden LIMIT 1) --'\n",
+          "SELECT 1 AS x FROM pub --\r\nWHERE 1 = /* /* */ '*/ (SELECT 1 FROM hidden LIMIT 1) --'\r\n",
+          "SELECT 1 AS x FROM pub --\rWHERE 1 = /* /* */ '*/ (SELECT 1 FROM hidden LIMIT 1) --'\r");
 
   static List<String> bypasses() {
     return BYPASSES;
@@ -85,7 +89,8 @@ class PgLexicalAmbiguityCheckTest {
             "SELECT 1 FROM data.t /* hidden */ WHERE a = 1 -- hidden",
             "SELECT \"we\"\"ird\" FROM data.t",
             "SELECT e'plain' AS x, somee'x' FROM data.t",
-            "SELECT a$$b FROM data.t")) {
+            "SELECT a$$b FROM data.t",
+            "SELECT 1 FROM data.t -- c\rWHERE a = 1 -- d\r\n")) {
       assertThatCode(() -> PgLexicalAmbiguityCheck.requireUnambiguous(sql))
           .as(sql)
           .doesNotThrowAnyException();

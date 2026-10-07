@@ -34,8 +34,9 @@ public final class PgLexicalAmbiguityCheck {
       char next = i + 1 < n ? sql.charAt(i + 1) : '\0';
       if (ch == '-' && next == '-') {
         // 줄 주석: 줄 끝(또는 입력 끝)까지. 줄 주석 안의 /* · ' 등은 의미가 없다.
-        int nl = sql.indexOf('\n', i + 2);
-        i = nl < 0 ? n : nl + 1;
+        // PG 렉서는 줄 끝을 newline [\n\r] 로 정의한다 — \r 하나만으로도 줄 주석이 끝난다(JSqlParser 도 같다).
+        // \n 만 찾으면 "--\r<코드>\n" 의 <코드>를 훑지 않아 그 안의 모호한 표기를 놓친다(실측 우회).
+        i = lineCommentEnd(sql, i + 2);
       } else if (ch == '/' && next == '*') {
         i = skipBlockComment(sql, i);
       } else if (ch == '\'') {
@@ -60,6 +61,17 @@ public final class PgLexicalAmbiguityCheck {
         i++;
       }
     }
+  }
+
+  /** 줄 주석 다음 위치 — 첫 {@code \n} 또는 {@code \r}(PG {@code newline [\n\r]}) 다음, 없으면 입력 끝. */
+  private static int lineCommentEnd(String sql, int from) {
+    for (int j = from; j < sql.length(); j++) {
+      char ch = sql.charAt(j);
+      if (ch == '\n' || ch == '\r') {
+        return j + 1;
+      }
+    }
+    return sql.length();
   }
 
   /** 블록 주석을 건너뛴다. PG 는 블록 주석을 중첩하고 JSqlParser 는 첫 {@code *}{@code /} 에서 닫으므로 중첩 여는 표기는 거부한다. */

@@ -268,7 +268,11 @@ class SqlAccessGuardTest extends IntegrationTestBase {
             "SELECT E'\\' /*' AS a FROM pub, hidden -- */ AS a FROM pub",
             "SELECT $a$ ' $a$ AS x FROM pub, hidden --'",
             "SELECT $a$ /* $a$ AS x FROM pub, hidden -- */",
-            "SELECT '\\' AS a FROM pub, hidden -- '");
+            "SELECT '\\' AS a FROM pub, hidden -- '",
+            // 줄 주석은 \r 에서도 끝난다(PG newline [\n\r])
+            "SELECT 1 AS x FROM pub --\rWHERE 1 = /* /* */ '*/ (SELECT 1 FROM hidden LIMIT 1) --'\n",
+            "SELECT 1 AS x FROM pub --\r\nWHERE 1 = /* /* */ '*/ (SELECT 1 FROM hidden LIMIT 1) --'\r\n",
+            "SELECT 1 AS x FROM pub --\rWHERE 1 = /* /* */ '*/ (SELECT 1 FROM hidden LIMIT 1) --'\r");
     for (String tpl : bypasses) {
       String sql = tpl.replace("hidden", hidden).replace("pub", pub);
       for (SqlAccessMode mode : SqlAccessMode.values()) {
