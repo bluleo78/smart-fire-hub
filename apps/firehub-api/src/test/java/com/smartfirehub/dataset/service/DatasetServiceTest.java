@@ -10,12 +10,17 @@ import com.smartfirehub.dataset.exception.DatasetNotFoundException;
 import com.smartfirehub.dataset.exception.DuplicateDatasetNameException;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.support.IntegrationTestBase;
+import com.smartfirehub.support.TestUsers;
 import java.util.List;
 import java.util.Map;
 import org.jooq.DSLContext;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.transaction.annotation.Transactional;
 
 @Transactional
@@ -27,6 +32,7 @@ class DatasetServiceTest extends IntegrationTestBase {
   @Autowired private DatasetTagService datasetTagService;
 
   @Autowired private DSLContext dsl;
+  @Autowired private PasswordEncoder encoder;
 
   private Long testUserId;
   private Long testCategoryId;
@@ -35,14 +41,16 @@ class DatasetServiceTest extends IntegrationTestBase {
   void setUp() {
     // Create test user
     testUserId =
-        dsl.insertInto(USER)
-            .set(USER.USERNAME, "testuser")
-            .set(USER.PASSWORD, "password")
-            .set(USER.NAME, "Test User")
-            .set(USER.EMAIL, "test@example.com")
-            .returning(USER.ID)
-            .fetchOne()
-            .getId();
+        TestUsers.createMember(
+                dsl,
+                fixtureTransactionTemplate,
+                encoder,
+                "testuser",
+                "test@example.com",
+                "Password123",
+                "Test User",
+                DEFAULT_TEST_TENANT_ID)
+            .id();
 
     // Create test category
     testCategoryId =
@@ -52,6 +60,16 @@ class DatasetServiceTest extends IntegrationTestBase {
             .returning(DATASET_CATEGORY.ID)
             .fetchOne()
             .getId();
+
+    // 목록 조회는 이제 호출자의 열람 자격(보안 등급)으로 걸러진다 — 사용자를 USER 역할 테넌트 멤버로 만들고
+    // 인증 컨텍스트를 세운다. 인증이 없으면 가드가 fail-closed 로 빈 목록을 돌려준다(가드를 풀지 않는다).
+    SecurityContextHolder.getContext()
+        .setAuthentication(new UsernamePasswordAuthenticationToken(testUserId, null, List.of()));
+  }
+
+  @AfterEach
+  void clearAuthentication() {
+    SecurityContextHolder.clearContext();
   }
 
   @Test
@@ -188,7 +206,8 @@ class DatasetServiceTest extends IntegrationTestBase {
 
     // When
     PageResponse<DatasetResponse> result =
-        datasetService.getDatasets(testCategoryId, null, null, null, 0, 10);
+        datasetService.getDatasets(
+            testCategoryId, null, null, null, 0, 10, testUserId, null, false, null);
 
     // Then
     assertThat(result.content()).hasSize(1);
@@ -213,7 +232,8 @@ class DatasetServiceTest extends IntegrationTestBase {
     datasetTagService.addTag(tagged.id(), "zztagkw", testUserId);
 
     PageResponse<DatasetResponse> result =
-        datasetService.getDatasets(null, null, null, "zztagkw", 0, 10);
+        datasetService.getDatasets(
+            null, null, null, "zztagkw", 0, 10, testUserId, null, false, null);
 
     assertThat(result.content()).hasSize(1);
     assertThat(result.content().get(0).id()).isEqualTo(tagged.id());
@@ -241,7 +261,8 @@ class DatasetServiceTest extends IntegrationTestBase {
         testUserId);
 
     PageResponse<DatasetResponse> result =
-        datasetService.getDatasets(null, null, null, "zzcatkw", 0, 10);
+        datasetService.getDatasets(
+            null, null, null, "zzcatkw", 0, 10, testUserId, null, false, null);
 
     assertThat(result.content()).hasSize(1);
     assertThat(result.content().get(0).id()).isEqualTo(inCat.id());

@@ -78,6 +78,9 @@ class DatasetServiceFileTest {
             tagRepository,
             dsl,
             auditLogService,
+            // 이 테스트는 목록 조회를 쓰지 않아 가드는 호출되지 않는다.
+            org.mockito.Mockito.mock(
+                com.smartfirehub.securitylevel.access.DatasetAccessGuard.class),
             datasetEmbeddingService,
             events,
             fileDatasetConfigRepository,

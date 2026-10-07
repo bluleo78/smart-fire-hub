@@ -13,6 +13,7 @@ import com.smartfirehub.dataset.service.DatasetService;
 import com.smartfirehub.dataset.service.DatasetTagService;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.global.security.RequirePermission;
+import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import jakarta.validation.Valid;
 import java.util.List;
 import java.util.Map;
@@ -33,6 +34,7 @@ public class DatasetController {
   private final DatasetTagService datasetTagService;
   private final ApiImportService apiImportService;
   private final DatasetSearchService datasetSearchService;
+  private final ClearanceResolver clearanceResolver;
   private final DatasetEmbeddingBackfillService datasetEmbeddingBackfillService;
 
   @GetMapping
@@ -46,13 +48,23 @@ public class DatasetController {
       @RequestParam(defaultValue = "20") int size,
       @RequestParam(required = false) String status,
       @RequestParam(defaultValue = "false") boolean favoriteOnly,
+      @RequestParam(required = false) Long securityLevelId,
       Authentication authentication) {
     page = Math.max(0, page);
     size = Math.max(1, Math.min(size, 100));
     Long userId = (Long) authentication.getPrincipal();
     PageResponse<DatasetResponse> response =
         datasetService.getDatasets(
-            categoryId, storageType, originType, search, page, size, userId, status, favoriteOnly);
+            categoryId,
+            storageType,
+            originType,
+            search,
+            page,
+            size,
+            userId,
+            status,
+            favoriteOnly,
+            securityLevelId);
     return ResponseEntity.ok(response);
   }
 
@@ -60,7 +72,8 @@ public class DatasetController {
   @PostMapping("/search")
   @RequirePermission("dataset:read")
   public List<DatasetSearchHit> searchDatasets(@RequestBody DatasetSearchRequest request) {
-    return datasetSearchService.search(request);
+    // find_datasets(ai-agent)도 이 경로 — 이름·설명이 결과로 나가므로 가시성 조건 필수(스펙 §4.2 1행).
+    return datasetSearchService.search(request, clearanceResolver.current());
   }
 
   /**

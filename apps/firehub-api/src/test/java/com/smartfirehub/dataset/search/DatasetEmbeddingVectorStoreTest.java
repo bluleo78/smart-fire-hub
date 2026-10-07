@@ -29,6 +29,10 @@ class DatasetEmbeddingVectorStoreTest extends IntegrationTestBase {
       new EmbeddingSpace(EmbeddingDimension.D1024, "bge-m3");
   private static final EmbeddingSpace S1536 = new EmbeddingSpace(EmbeddingDimension.D1536, "m2");
 
+  // 저장·검색 인프라(벡터 차원·모델 필터·실행 계획)를 검증하는 테스트라 가시성은 항상 참인 SQL 을 넘긴다 — 가시성 자체는 securitylevel 패키지 테스트가
+  // 고정한다.
+  private static final String ALL_VISIBLE = "TRUE";
+
   @Autowired private DatasetEmbeddingRepository repo;
   @Autowired private DatasetSearchRepository searchRepo;
   @Autowired private DSLContext dsl;
@@ -107,13 +111,15 @@ class DatasetEmbeddingVectorStoreTest extends IntegrationTestBase {
     // #392
     assertThat(
             TenantContext.runScopedGet(
-                tenant, () -> searchRepo.searchByCosine(S1024, axis(1024, 0), null, 10)))
+                tenant,
+                () -> searchRepo.searchByCosine(S1024, axis(1024, 0), null, 10, ALL_VISIBLE)))
         .extracting(DatasetSearchHit::datasetId)
         .containsExactly(doc.datasetId());
     EmbeddingSpace otherModel = new EmbeddingSpace(EmbeddingDimension.D1024, "other");
     assertThat(
             TenantContext.runScopedGet(
-                tenant, () -> searchRepo.searchByCosine(otherModel, axis(1024, 0), null, 10)))
+                tenant,
+                () -> searchRepo.searchByCosine(otherModel, axis(1024, 0), null, 10, ALL_VISIBLE)))
         .isEmpty();
     assertThat(TenantContext.runScopedGet(tenant, () -> repo.countMissing(otherModel)))
         .isEqualTo(1);
@@ -164,7 +170,7 @@ class DatasetEmbeddingVectorStoreTest extends IntegrationTestBase {
     List<Object> params = new ArrayList<>();
     String sql =
         searchRepo.semanticSql(
-            S1536, null, VectorLiterals.toVectorLiteral(axis(1536, 0)), 5, params);
+            S1536, null, VectorLiterals.toVectorLiteral(axis(1536, 0)), 5, params, ALL_VISIBLE);
     String plan =
         inTenantFixture(
             tenant,

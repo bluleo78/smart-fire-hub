@@ -28,18 +28,32 @@ public class DatasetSearchRepository {
    * scan + 바깥 재정렬({@link HnswSearch}).
    */
   public List<DatasetSearchHit> searchByCosine(
-      EmbeddingSpace space, float[] queryEmbedding, String storageType, int topK) {
+      EmbeddingSpace space,
+      float[] queryEmbedding,
+      String storageType,
+      int topK,
+      String visibilitySql) {
     List<Object> params = new java.util.ArrayList<>();
     String sql =
         semanticSql(
-            space, storageType, VectorLiterals.toVectorLiteral(queryEmbedding), topK, params);
+            space,
+            storageType,
+            VectorLiterals.toVectorLiteral(queryEmbedding),
+            topK,
+            params,
+            visibilitySql);
     return HnswSearch.search(
         dsl, sql, params, DatasetSearchRepository::toHit, DatasetSearchHit::score);
   }
 
   /** 의미 검색 SQL. package-private — EXPLAIN 단언 테스트가 쓴다. */
   String semanticSql(
-      EmbeddingSpace space, String storageType, String vector, int topK, List<Object> params) {
+      EmbeddingSpace space,
+      String storageType,
+      String vector,
+      int topK,
+      List<Object> params,
+      String visibilitySql) {
     StringBuilder sql =
         new StringBuilder(
                 "SELECT d.id, d.name, d.description, d.storage_type, d.origin_type, d.table_name,"
@@ -50,6 +64,8 @@ public class DatasetSearchRepository {
             .append(" WHERE v.embedding_model = ?");
     params.add(vector);
     params.add(space.model());
+    // 가시성(보안 등급) — DatasetAccessGuard.visibleSql 이 인라인 렌더한 조건. 별칭은 d.
+    sql.append(" AND ").append(visibilitySql);
     if (storageType != null) {
       sql.append(" AND d.storage_type = ?");
       params.add(storageType);
@@ -70,7 +86,8 @@ public class DatasetSearchRepository {
    * 트랜잭션에서 SET LOCAL 로 0.1 로 낮춘다(LOCAL 은 tx 종료 시 자동 복원). source_text 만 보므로 벡터가 없는 행도 검색되어 가시성이
    * 보장된다. storageType 이 null 이면 저장유형 필터를 적용하지 않는다.
    */
-  public List<DatasetSearchHit> searchByTrigram(String query, String storageType, int topK) {
+  public List<DatasetSearchHit> searchByTrigram(
+      String query, String storageType, int topK, String visibilitySql) {
     StringBuilder sql =
         new StringBuilder(
             "SELECT d.id, d.name, d.description, d.storage_type, d.origin_type, d.table_name,"
@@ -82,6 +99,8 @@ public class DatasetSearchRepository {
     List<Object> params = new java.util.ArrayList<>();
     params.add(query); // SELECT 의 word_similarity 첫 인자
     params.add(query); // %> 우변(질의)
+    // 가시성(보안 등급) — DatasetAccessGuard.visibleSql 이 인라인 렌더한 조건. 별칭은 d.
+    sql.append(" AND ").append(visibilitySql);
     if (storageType != null) {
       sql.append(" AND d.storage_type = ?");
       params.add(storageType);

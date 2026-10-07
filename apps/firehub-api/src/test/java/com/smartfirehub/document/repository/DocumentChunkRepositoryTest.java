@@ -36,6 +36,10 @@ class DocumentChunkRepositoryTest extends IntegrationTestBase {
     return sb.append("]").toString();
   }
 
+  // 저장·검색 인프라(벡터 차원·모델 필터·실행 계획)를 검증하는 테스트라 가시성은 항상 참인 SQL 을 넘긴다 — 가시성 자체는 securitylevel 패키지 테스트가
+  // 고정한다.
+  private static final String ALL_VISIBLE = "TRUE";
+
   @Test
   void insertsChunksAndCosineSearchRanksNearestFirst() {
     Long userId =
@@ -141,7 +145,8 @@ class DocumentChunkRepositoryTest extends IntegrationTestBase {
         List.of(vec(1f, 0f), vec(0f, 1f)),
         SPACE);
 
-    var hits = chunkRepository.searchByCosine(SPACE, vec(1f, 0f), List.of(datasetId), 5);
+    var hits =
+        chunkRepository.searchByCosine(SPACE, vec(1f, 0f), List.of(datasetId), 5, ALL_VISIBLE);
 
     assertThat(hits).isNotEmpty();
     assertThat(hits.get(0).content()).isEqualTo("near");
@@ -173,7 +178,8 @@ class DocumentChunkRepositoryTest extends IntegrationTestBase {
     chunkRepository.insertBatch(
         fileId, datasetId, List.of(new Chunk(0, "hidden", 1)), List.of(vec(1f, 0f)), SPACE);
 
-    var hits = chunkRepository.searchByCosine(SPACE, vec(1f, 0f), List.of(datasetId), 5);
+    var hits =
+        chunkRepository.searchByCosine(SPACE, vec(1f, 0f), List.of(datasetId), 5, ALL_VISIBLE);
     assertThat(hits).isEmpty();
   }
 
@@ -207,7 +213,7 @@ class DocumentChunkRepositoryTest extends IntegrationTestBase {
         List.of(vec(1f, 0f), vec(0f, 1f)),
         SPACE);
 
-    var hits = chunkRepository.searchByTrigram("UR4206974320", List.of(datasetId), 5);
+    var hits = chunkRepository.searchByTrigram("UR4206974320", List.of(datasetId), 5, ALL_VISIBLE);
 
     assertThat(hits).isNotEmpty();
     assertThat(hits.get(0).content()).contains("UR4206974320");
@@ -246,7 +252,9 @@ class DocumentChunkRepositoryTest extends IntegrationTestBase {
         List.of(vec(1f, 0f)),
         SPACE);
 
-    var hits = chunkRepository.searchByTrigram("fire statistics report", List.of(datasetId), 5);
+    var hits =
+        chunkRepository.searchByTrigram(
+            "fire statistics report", List.of(datasetId), 5, ALL_VISIBLE);
 
     assertThat(hits).isNotEmpty();
     assertThat(hits.get(0).content()).isEqualTo("annual wildfire damage summary 2026");
@@ -280,7 +288,7 @@ class DocumentChunkRepositoryTest extends IntegrationTestBase {
         List.of(vec(1f, 0f)),
         SPACE);
 
-    var hits = chunkRepository.searchByTrigram("UR4206974320", List.of(datasetId), 5);
+    var hits = chunkRepository.searchByTrigram("UR4206974320", List.of(datasetId), 5, ALL_VISIBLE);
     assertThat(hits).isEmpty();
   }
 }

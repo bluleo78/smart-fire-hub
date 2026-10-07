@@ -4,6 +4,8 @@ import com.smartfirehub.embedding.EmbeddingProvider;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
 import com.smartfirehub.embedding.EmbeddingSpace;
 import com.smartfirehub.global.util.RankFusion;
+import com.smartfirehub.securitylevel.access.Clearance;
+import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -27,33 +29,38 @@ public class DatasetSearchService {
 
   private final DatasetSearchRepository repository;
   private final EmbeddingProviderFactory embeddingFactory;
+  private final DatasetAccessGuard datasetAccessGuard;
 
   /** mode 분기 진입점. mode null → HYBRID, topK 정규화 후 각 검색을 수행한다. */
   // RLS 가 걸린 dataset_embedding 을 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
   @Transactional(readOnly = true)
-  public List<DatasetSearchHit> search(DatasetSearchRequest req) {
+  public List<DatasetSearchHit> search(DatasetSearchRequest req, Clearance clearance) {
     if (req.query() == null || req.query().isBlank()) {
       throw new IllegalArgumentException("검색어가 비어 있습니다");
     }
     DatasetSearchMode mode = req.mode() == null ? DatasetSearchMode.HYBRID : req.mode();
     int topK = clampTopK(req.topK());
     String storageType = req.storageType();
+    // 가시성 SQL 은 한 번 렌더해 KEYWORD/SEMANTIC/HYBRID 모든 분기가 공유한다.
+    String visibility = datasetAccessGuard.visibleSql(clearance, "d");
     return switch (mode) {
-      case KEYWORD -> repository.searchByTrigram(req.query(), storageType, topK);
+      case KEYWORD -> repository.searchByTrigram(req.query(), storageType, topK, visibility);
       case SEMANTIC -> {
         QueryVector q = embed(req.query());
-        yield repository.searchByCosine(q.space(), q.vector(), storageType, topK);
+        yield repository.searchByCosine(q.space(), q.vector(), storageType, topK, visibility);
       }
-      case HYBRID -> hybrid(req.query(), storageType, topK);
+      case HYBRID -> hybrid(req.query(), storageType, topK, visibility);
     };
   }
 
   /** 시맨틱·키워드 후보 풀(CANDIDATE_POOL)을 RRF 로 융합해 상위 topK 를 반환한다. */
-  private List<DatasetSearchHit> hybrid(String query, String storageType, int topK) {
+  private List<DatasetSearchHit> hybrid(
+      String query, String storageType, int topK, String visibility) {
     QueryVector q = embed(query);
     List<DatasetSearchHit> semantic =
-        repository.searchByCosine(q.space(), q.vector(), storageType, CANDIDATE_POOL);
-    List<DatasetSearchHit> keyword = repository.searchByTrigram(query, storageType, CANDIDATE_POOL);
+        repository.searchByCosine(q.space(), q.vector(), storageType, CANDIDATE_POOL, visibility);
+    List<DatasetSearchHit> keyword =
+        repository.searchByTrigram(query, storageType, CANDIDATE_POOL, visibility);
     return rrfFuse(List.of(semantic, keyword), topK);
   }
 

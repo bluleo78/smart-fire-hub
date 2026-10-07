@@ -34,11 +34,13 @@ import com.smartfirehub.file.repository.FileDatasetConfigRepository;
 import com.smartfirehub.file.service.FileObjectStorageService;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.user.repository.UserRepository;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
+import org.jooq.Condition;
 import org.jooq.DSLContext;
 import org.jooq.exception.IntegrityConstraintViolationException;
 import org.springframework.context.ApplicationEventPublisher;
@@ -92,6 +94,7 @@ public class DatasetService {
   private final DatasetTagRepository tagRepository;
   private final DSLContext dsl;
   private final AuditLogService auditLogService;
+  private final DatasetAccessGuard datasetAccessGuard;
   // 검색 인덱싱: source_text 동기 저장 + 임베딩 비동기 재생성 트리거 (통합 데이터셋 Discovery)
   private final DatasetEmbeddingService datasetEmbeddingService;
   private final ApplicationEventPublisher events;
@@ -212,12 +215,6 @@ public class DatasetService {
 
   @Transactional(readOnly = true)
   public PageResponse<DatasetResponse> getDatasets(
-      Long categoryId, String storageType, String originType, String search, int page, int size) {
-    return getDatasets(categoryId, storageType, originType, search, page, size, null, null, false);
-  }
-
-  @Transactional(readOnly = true)
-  public PageResponse<DatasetResponse> getDatasets(
       Long categoryId,
       String storageType,
       String originType,
@@ -226,7 +223,10 @@ public class DatasetService {
       int size,
       Long currentUserId,
       String status,
-      boolean favoriteOnly) {
+      boolean favoriteOnly,
+      Long securityLevelId) {
+    // 목록은 항상 현재 사용자 가시성 조건과 함께 조회한다(스펙 §4.2 1행).
+    Condition access = datasetAccessGuard.visibleCondition();
     List<DatasetResponse> content =
         datasetRepository.findAll(
             categoryId,
@@ -237,10 +237,20 @@ public class DatasetService {
             size,
             currentUserId,
             status,
-            favoriteOnly);
+            favoriteOnly,
+            securityLevelId,
+            access);
     long totalElements =
         datasetRepository.count(
-            categoryId, storageType, originType, search, currentUserId, status, favoriteOnly);
+            categoryId,
+            storageType,
+            originType,
+            search,
+            currentUserId,
+            status,
+            favoriteOnly,
+            securityLevelId,
+            access);
     int totalPages = (int) Math.ceil((double) totalElements / size);
     return new PageResponse<>(content, page, size, totalElements, totalPages);
   }
@@ -321,7 +331,9 @@ public class DatasetService {
         dataset.statusUpdatedBy(),
         dataset.statusUpdatedAt(),
         linkedPipelines,
-        dataset.sourcePipelineStepId());
+        dataset.sourcePipelineStepId(),
+        dataset.securityLevel(),
+        dataset.securityLevelAutoRaisedAt());
   }
 
   @Transactional
