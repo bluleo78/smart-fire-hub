@@ -95,12 +95,34 @@ public class ReviewItemRepository {
         .execute();
   }
 
-  /** (item_type, dedupe_key)의 기존 결정 상태. 없으면 empty(ingest는 이를 LLM 재호출 신호로 해석). */
-  public Optional<String> findDecisionStatus(String itemType, String dedupeKey) {
+  /**
+   * (item_type, dedupe_key)의 기존 결정 상태. 없으면 empty(ingest는 이를 LLM 재호출 신호로 해석).
+   *
+   * <p>보안 등급(후속 F2): 출처 데이터셋을 볼 수 없는 항목은 <b>없는 항목과 똑같이</b> empty 로 돌려준다 — 이름만 넣어 상태를 물을 수 있는 조회라,
+   * 거르지 않으면 숨김 데이터셋에 그 이름이 있는지·어떻게 판정됐는지가 드러나는 존재 오라클이 된다.
+   */
+  public Optional<String> findDecisionStatus(
+      String itemType, String dedupeKey, Condition visibleDatasetCondition) {
     return dsl.select(STATUS)
         .from(T)
-        .where(ITEM_TYPE.eq(itemType).and(DEDUPE_KEY.eq(dedupeKey)))
+        .where(
+            ITEM_TYPE
+                .eq(itemType)
+                .and(DEDUPE_KEY.eq(dedupeKey))
+                .and(visibleItem(visibleDatasetCondition)))
         .fetchOptional(r -> r.get(STATUS));
+  }
+
+  /**
+   * 조회자가 볼 수 있는 검수 항목 조건 — 출처 데이터셋이 보이는 항목 + 판정할 데이터셋이 없는 레거시 항목(dataset_id null). 목록·결정 조회가 같은 규칙을
+   * 쓰도록 한 곳에 둔다.
+   */
+  private static Condition visibleItem(Condition visibleDatasetCondition) {
+    return DATASET_ID
+        .isNull()
+        .or(
+            DATASET_ID.in(
+                select(DATASET_ROW_ID).from(DATASET_TABLE).where(visibleDatasetCondition)));
   }
 
   /**
@@ -122,15 +144,7 @@ public class ReviewItemRepository {
     Condition where = STATUS.eq(status);
     if (itemType != null) where = where.and(ITEM_TYPE.eq(itemType));
     // 보안 등급: 출처 데이터셋을 볼 수 있는 항목만(레거시 dataset_id null 은 판정 대상이 없어 유지). 페이지 경계가 맞도록 SQL 에서 거른다.
-    where =
-        where.and(
-            DATASET_ID
-                .isNull()
-                .or(
-                    DATASET_ID.in(
-                        select(DATASET_ROW_ID)
-                            .from(DATASET_TABLE)
-                            .where(visibleDatasetCondition))));
+    where = where.and(visibleItem(visibleDatasetCondition));
     var query =
         dsl.select(
                 ID,

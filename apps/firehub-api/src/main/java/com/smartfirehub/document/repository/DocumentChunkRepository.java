@@ -12,6 +12,7 @@ import com.smartfirehub.embedding.HnswSearch;
 import com.smartfirehub.embedding.VectorTables;
 import com.smartfirehub.global.tenant.TenantContext;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -254,6 +255,19 @@ public class DocumentChunkRepository {
     return dsl.fetch(
             "SELECT id, content FROM document_chunk WHERE dataset_id = ? ORDER BY id", datasetId)
         .map(r -> new ChunkContent(r.get("id", Long.class), r.get("content", String.class)));
+  }
+
+  /**
+   * 주어진 청크 id 들 중 해당 데이터셋에 속한 것의 개수(중복 id 는 한 번만 센다). 검수 항목 등록이 클라이언트가 보낸 근거 청크가 정말 그 데이터셋의 것인지 확인할
+   * 때 쓴다 — 없는 청크와 다른 데이터셋(또는 다른 테넌트, RLS)의 청크를 구분하지 않는다.
+   */
+  public long countChunksInDataset(long datasetId, Collection<Long> chunkIds) {
+    if (chunkIds.isEmpty()) return 0;
+    return dsl.fetchOne(
+            "SELECT count(*) FROM document_chunk WHERE dataset_id = ? AND id = ANY(?)",
+            datasetId,
+            chunkIds.toArray(Long[]::new))
+        .get(0, Long.class);
   }
 
   /** 전체 청크 수. 재임베딩 진행률 계산의 분모. */

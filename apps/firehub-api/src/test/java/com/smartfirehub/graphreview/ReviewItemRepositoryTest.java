@@ -55,8 +55,10 @@ class ReviewItemRepositoryTest extends IntegrationTestBase {
         "reason",
         "{\"entityType\":\"TestCause\",\"nameA\":\"a\",\"nameB\":\"b\"}");
 
-    assertThat(repo.findDecisionStatus("synonym_merge", "TestCause|a|b")).contains("pending");
-    assertThat(repo.findDecisionStatus("synonym_merge", "Test|none|none")).isEmpty();
+    assertThat(repo.findDecisionStatus("synonym_merge", "TestCause|a|b", DSL.trueCondition()))
+        .contains("pending");
+    assertThat(repo.findDecisionStatus("synonym_merge", "Test|none|none", DSL.trueCondition()))
+        .isEmpty();
   }
 
   @Test
@@ -122,7 +124,8 @@ class ReviewItemRepositoryTest extends IntegrationTestBase {
     assertThat(repo.findById(id).orElseThrow().decidedBy()).isEqualTo(userId);
     assertThat(repo.findByStatus("pending", null, null, null, DSL.trueCondition()))
         .noneMatch(r -> r.id().equals(id));
-    assertThat(repo.findDecisionStatus("synonym_merge", "TestCause|a|b")).contains("approved");
+    assertThat(repo.findDecisionStatus("synonym_merge", "TestCause|a|b", DSL.trueCondition()))
+        .contains("approved");
     // status 필터가 실제로 동작한다 — 예전에는 'pending' 하드코딩이라 approved 조회가 불가능했다(#318).
     assertThat(repo.findByStatus("approved", null, null, null, DSL.trueCondition()))
         .anyMatch(r -> r.id().equals(id));

@@ -66,6 +66,7 @@ public class ReviewItemService {
       String rationale,
       Long datasetId,
       List<Long> sourceChunkIds) {
+    requireSource(datasetId, sourceChunkIds);
     String a = rawA.trim();
     String b = rawB.trim();
     if (normalize(a).compareTo(normalize(b)) > 0) {
@@ -102,7 +103,9 @@ public class ReviewItemService {
       a = b;
       b = t;
     }
-    return repo.findDecisionStatus(SYNONYM, entityType + "|" + a + "|" + b).orElse("none");
+    return repo.findDecisionStatus(
+            SYNONYM, entityType + "|" + a + "|" + b, datasetAccessGuard.visibleCondition())
+        .orElse("none");
   }
 
   /** 속성 정규화 실패 등록 — entityKey는 canonical 재매핑 후 최종 key(정정 write 대상). */
@@ -115,6 +118,7 @@ public class ReviewItemService {
       String propertyName,
       String dataType,
       String rawText) {
+    requireSource(datasetId, chunkId == null ? List.of() : List.of(chunkId));
     ObjectNode payload = objectMapper.createObjectNode();
     payload.put("entityKey", entityKey);
     payload.put("entityType", entityType);
@@ -145,6 +149,7 @@ public class ReviewItemService {
       Double confidence,
       String reason,
       List<EntityRelationRef> relations) {
+    requireSource(datasetId, sourceChunkIds);
     ObjectNode payload = objectMapper.createObjectNode();
     payload.put("entityType", entityType);
     payload.put("name", name);
@@ -177,7 +182,9 @@ public class ReviewItemService {
 
   /** 저신뢰 엔티티 기존 결정 조회 — 없으면 "none". dedupe_key는 recordPendingEntity와 동일 규칙. */
   public String lookupEntity(String entityType, String name) {
-    return repo.findDecisionStatus(ENTITY, entityType + "|" + normalize(name)).orElse("none");
+    return repo.findDecisionStatus(
+            ENTITY, entityType + "|" + normalize(name), datasetAccessGuard.visibleCondition())
+        .orElse("none");
   }
 
   /** 저신뢰 관계 검수 등록 — dedupe_key는 ai-agent가 계산한 canonical subjectKey|relType|objectKey(opaque). */
@@ -192,6 +199,7 @@ public class ReviewItemService {
       List<Long> sourceChunkIds,
       Double confidence,
       String reason) {
+    requireSource(datasetId, sourceChunkIds);
     ObjectNode payload = objectMapper.createObjectNode();
     payload.put("subjectKey", subjectKey);
     payload.put("relType", relType);
@@ -216,7 +224,10 @@ public class ReviewItemService {
 
   /** 저신뢰 관계 기존 결정 조회 — 없으면 "none". dedupe_key는 ai-agent 계산 opaque 값 그대로. */
   public String lookupRelation(String subjectKey, String relType, String objectKey) {
-    return repo.findDecisionStatus(RELATION, subjectKey + "|" + relType + "|" + objectKey)
+    return repo.findDecisionStatus(
+            RELATION,
+            subjectKey + "|" + relType + "|" + objectKey,
+            datasetAccessGuard.visibleCondition())
         .orElse("none");
   }
 
@@ -345,6 +356,36 @@ public class ReviewItemService {
       if (want.contains(c.chunkId())) out.add(new EvidenceChunk(c.chunkId(), c.content()));
     }
     return out;
+  }
+
+  /** 근거 청크가 출처 데이터셋에 속하지 않을 때의 단일 400 메시지 — 없는 청크와 남의 청크를 구분하지 않는다(청크 존재 오라클 방지). */
+  static final String SOURCE_CHUNK_MISMATCH = "출처 청크가 지정한 데이터셋에 속하지 않습니다.";
+
+  /**
+   * 검수 대기 등록 요청의 출처를 서버가 검증한다(후속 F3) — 예전에는 클라이언트가 보낸 datasetId 를 그대로 믿어, 볼 수 없는(또는 없는) 데이터셋에 항목을
+   * 꽂아 그 데이터셋의 그래프 승인 대기열을 오염시킬 수 있었다.
+   *
+   * <ol>
+   *   <li>datasetId 가 있으면 요청자가 그 데이터셋을 볼 수 있어야 한다. 못 보면 <b>없는 데이터셋과 같은</b> 404(requireView 의
+   *       DatasetNotFoundException) — 숨김과 부재를 구분하지 않는다. dataset_id 에는 FK 가 없어 예전에는 없는 id 도 그대로
+   *       저장됐다.
+   *   <li>근거 청크 id 가 오면 전부 그 데이터셋의 청크여야 한다(없거나 다른 데이터셋이면 같은 400). 실제 호출자(ai-agent ingest)는 그 데이터셋의
+   *       청크 목록에서 id 를 얻으므로 항상 통과한다 — 페이로드 계약은 바뀌지 않는다.
+   *   <li>datasetId 없이 청크만 오면 근거를 판정할 데이터셋이 없어 400. 둘 다 없는 등록(레거시 호환)은 그대로 둔다.
+   * </ol>
+   */
+  private void requireSource(Long datasetId, List<Long> chunkIds) {
+    Set<Long> ids = new java.util.HashSet<>();
+    if (chunkIds != null) for (Long c : chunkIds) if (c != null) ids.add(c);
+    if (datasetId == null) {
+      if (!ids.isEmpty()) throw new IllegalArgumentException(SOURCE_CHUNK_MISMATCH);
+      return;
+    }
+    // 가시성을 청크 검사보다 먼저 본다 — 순서가 바뀌면 숨김 데이터셋에 대해 "청크 불일치(400)"와 "404"가 갈려 존재가 드러난다.
+    datasetAccessGuard.requireView(datasetId);
+    if (!ids.isEmpty() && chunkRepository.countChunksInDataset(datasetId, ids) != ids.size()) {
+      throw new IllegalArgumentException(SOURCE_CHUNK_MISMATCH);
+    }
   }
 
   /**

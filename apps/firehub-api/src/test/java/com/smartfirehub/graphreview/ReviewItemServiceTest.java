@@ -44,6 +44,9 @@ class ReviewItemServiceTest {
     // 보안 등급 판정은 ReviewItemVisibilityTest(통합)가 맡는다 — 이 단위 테스트에서는 모든 데이터셋을 볼 수 있다고 둔다.
     DatasetAccessGuard guard = Mockito.mock(DatasetAccessGuard.class);
     Mockito.when(guard.check(any(), anyLong(), any(), any())).thenReturn(Decision.allow(null));
+    // 근거 청크 소속 검증(F3)도 통합 테스트(ReviewItemVisibilityTest)가 맡는다 — 여기서는 보낸 청크가 모두 그 데이터셋 것이라고 둔다.
+    Mockito.when(chunkRepository.countChunksInDataset(anyLong(), any()))
+        .thenAnswer(inv -> (long) ((java.util.Collection<?>) inv.getArgument(1)).size());
     service =
         new ReviewItemService(
             repo,
@@ -339,10 +342,11 @@ class ReviewItemServiceTest {
   @Test
   @DisplayName("엔티티 lookup은 저장된 결정 상태를 반환한다")
   void lookupEntity_returnsStatus() {
-    when(repo.findDecisionStatus("entity_extraction", "Cause|노후배선"))
+    when(repo.findDecisionStatus(eq("entity_extraction"), eq("Cause|노후배선"), any()))
         .thenReturn(Optional.of("approved"));
     assertThat(service.lookupEntity("Cause", "노후배선")).isEqualTo("approved");
-    when(repo.findDecisionStatus("entity_extraction", "Cause|미결")).thenReturn(Optional.empty());
+    when(repo.findDecisionStatus(eq("entity_extraction"), eq("Cause|미결"), any()))
+        .thenReturn(Optional.empty());
     assertThat(service.lookupEntity("Cause", "미결")).isEqualTo("none");
   }
 
@@ -521,10 +525,11 @@ class ReviewItemServiceTest {
   @Test
   @DisplayName("관계 lookup은 저장된 결정 상태를 반환한다(opaque key 그대로)")
   void lookupRelation_returnsStatus() {
-    when(repo.findDecisionStatus("relation_extraction", "12:누전|CAUSED_BY|34:과부하"))
+    when(repo.findDecisionStatus(eq("relation_extraction"), eq("12:누전|CAUSED_BY|34:과부하"), any()))
         .thenReturn(Optional.of("rejected"));
     assertThat(service.lookupRelation("12:누전", "CAUSED_BY", "34:과부하")).isEqualTo("rejected");
-    when(repo.findDecisionStatus("relation_extraction", "a|R|b")).thenReturn(Optional.empty());
+    when(repo.findDecisionStatus(eq("relation_extraction"), eq("a|R|b"), any()))
+        .thenReturn(Optional.empty());
     assertThat(service.lookupRelation("a", "R", "b")).isEqualTo("none");
   }
 
