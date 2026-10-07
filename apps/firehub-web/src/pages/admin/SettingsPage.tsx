@@ -1,5 +1,5 @@
-import { Bot, Boxes, Mail, RotateCcw, Save, Settings, Tags } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Bot, Boxes, Mail, RotateCcw, Save, Settings, ShieldCheck, Tags } from 'lucide-react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import { settingsApi } from '../../api/settings';
@@ -29,6 +29,7 @@ import { Separator } from '../../components/ui/separator';
 import { Skeleton } from '../../components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import { Textarea } from '../../components/ui/textarea';
+import { useMyPermissions } from '../../hooks/queries/useMyPermissions';
 import { useAiClassifyForm } from '../../hooks/useAiClassifyForm';
 import { useAiCredentialForm } from '../../hooks/useAiCredentialForm';
 import { useEmbeddingSettingsForm } from '../../hooks/useEmbeddingSettingsForm';
@@ -46,6 +47,9 @@ import { AiCredentialFieldset, OpencodeModelField } from './AiCredentialFieldset
 import EmbeddingSettingsTab from './EmbeddingSettingsTab';
 import { SettingFieldLabel } from './settings-lock';
 import SmtpSettingsTab from './SmtpSettingsTab';
+
+// 데이터 보안 탭은 security:settings 보유자만 열므로 지연 로딩한다.
+const SecuritySettingsTab = lazy(() => import('./security/SecuritySettingsTab'));
 
 /**
  * AI 탭의 <b>동작 설정</b> 6키 — 모델·시스템 프롬프트·Temperature·최대 턴 수·최대 응답 토큰·세션
@@ -124,6 +128,9 @@ function DefaultHint({ show }: { show: boolean }) {
 }
 
 export default function SettingsPage() {
+  // 「데이터 보안」 탭은 security:settings 보유자에게만(스펙 §5-1 탭별 권한 노출). 최종 판정은 서버.
+  const { permissions } = useMyPermissions();
+  const canSecurity = permissions.has('security:settings');
   const [isSaving, setIsSaving] = useState(false);
   const [authStatus, setAuthStatus] = useState<{ valid: boolean; email?: string; subscriptionType?: string } | null>(null);
   const [isVerifying, setIsVerifying] = useState(false);
@@ -492,6 +499,12 @@ export default function SettingsPage() {
             <Boxes className="h-4 w-4" />
             임베딩
           </TabsTrigger>
+          {canSecurity && (
+            <TabsTrigger value="security">
+              <ShieldCheck className="h-4 w-4" />
+              데이터 보안
+            </TabsTrigger>
+          )}
         </TabsList>
 
         {/* 일반 탭 */}
@@ -748,6 +761,14 @@ export default function SettingsPage() {
         <TabsContent value="embedding" className="mt-6">
           <EmbeddingSettingsTab state={embedding} />
         </TabsContent>
+        {/* 데이터 보안 탭 — 자체 쿼리를 가지며 페이지 폼 상태와 무관 */}
+        {canSecurity && (
+          <TabsContent value="security" className="mt-6">
+            <Suspense fallback={<Skeleton className="h-64 w-full" />}>
+              <SecuritySettingsTab />
+            </Suspense>
+          </TabsContent>
+        )}
       </Tabs>
 
       {/* 저장 확인 다이얼로그 — 유형 전환(이전 비밀 폐기)처럼 되돌릴 수 없는 결과가 예정돼
