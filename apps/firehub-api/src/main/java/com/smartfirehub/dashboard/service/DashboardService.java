@@ -31,19 +31,22 @@ import org.jooq.Table;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+/**
+ * 홈 대시보드(통계·건강도·주의 항목·활동) 조회.
+ *
+ * <p>보안 등급 가시성(스펙 §2.5 존재 은닉) — 홈 화면은 조회자가 볼 수 없는 데이터셋의 이름·건수·활동을 싣지 않는다. 각 공개 메서드는 두 형태다: 인자 없는
+ * 형태는 요청 경로(홈 대시보드 API)용으로 현재 요청 사용자 자격을, {@link Clearance} 를 받는 형태는 비요청 경로(proactive 리포트 컨텍스트 수집 —
+ * 요청 사용자가 없어 current() 가 "아무것도 못 봄"이 된다)용으로 명시 자격을 쓴다.
+ *
+ * <p>인자 없는 형태에도 @Transactional 을 둔다 — 자기 호출은 프록시를 우회하므로 위임받는 쪽 어노테이션만으로는 트랜잭션(=RLS GUC)이 열리지 않는다.
+ */
 @Service
 @RequiredArgsConstructor
 public class DashboardService {
 
   private final DSLContext dsl;
 
-  /**
-   * 보안 등급 가시성(스펙 §2.5 존재 은닉) — 홈 화면은 조회자가 볼 수 없는 데이터셋의 이름·건수·활동을 싣지 않는다. 각 공개 메서드는 두 형태다: 인자 없는 형태는
-   * 요청 경로(홈 대시보드 API)용으로 현재 요청 사용자 자격을, {@link Clearance} 를 받는 형태는 비요청 경로(proactive 리포트 컨텍스트 수집 —
-   * 요청 사용자가 없어 current() 가 "아무것도 못 봄"이 된다)용으로 명시 자격을 쓴다.
-   *
-   * <p>인자 없는 형태에도 @Transactional 을 둔다 — 자기 호출은 프록시를 우회하므로 위임받는 쪽 어노테이션만으로는 트랜잭션(=RLS GUC)이 열리지 않는다.
-   */
+  /** 데이터셋 가시성 조건(보안 등급) — 클래스 Javadoc 참고. */
   private final DatasetAccessGuard datasetAccessGuard;
 
   private final ClearanceResolver clearanceResolver;

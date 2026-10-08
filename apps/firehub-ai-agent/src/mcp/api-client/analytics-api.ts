@@ -112,7 +112,8 @@ export interface Chart {
   chartType: ChartType;
   config: ChartConfig;
   savedQueryId: number;
-  savedQueryName: string;
+  /** 조회자가 원본 데이터셋을 볼 수 없어 denied 인 차트 데이터 응답에서는 null(config 도 빈 객체) — 원본 메타 비노출 */
+  savedQueryName: string | null;
   isShared: boolean;
   createdBy: number;
   createdByName: string;
@@ -142,6 +143,8 @@ export interface ChartList {
 export interface ChartData {
   chart: Chart;
   queryResult: AnalyticsQueryResult;
+  /** 조회자가 원본 데이터셋을 볼 수 없음 — queryResult 는 빈 결과, chart 는 최소 메타(서버 보안 등급) */
+  denied?: boolean;
 }
 
 export interface CreateDashboardParams {

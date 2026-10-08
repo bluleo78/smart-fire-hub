@@ -225,4 +225,48 @@ class HomeDatasetVisibilityTest extends IntegrationTestBase {
     assertThat(lowCtx).contains("sf_" + m + "_visible").doesNotContain("sf_" + m + "_hidden");
     assertThat(highCtx).contains("sf_" + m + "_hidden");
   }
+
+  /**
+   * 리뷰 M5: health 의 stale·empty·trend 도 볼 수 있는 데이터셋만 센다. 숨김 데이터셋 하나를 (a) 48시간 전에 만든 미임포트 원천(stale),
+   * (b) 행 0건 물리 테이블(empty), (c) 오늘 감사 이력 1건(trend)으로 만들고 전후 차이를 본다 — low 불변, high +1.
+   */
+  @Test
+  void health_staleEmptyTrend_countOnlyVisibleDatasets() throws Exception {
+    JsonNode lowBefore = getJson("/api/v1/dashboard/health", lowToken).get("datasetHealth");
+    JsonNode highBefore = getJson("/api/v1/dashboard/health", highToken).get("datasetHealth");
+
+    String table = m + "_hidden_stale";
+    long staleHidden = dataset(table, "민감");
+    // MockMvc 요청이 끝나면 필터가 TenantContext 를 지운다 — 스키마 해석 전에 다시 세운다.
+    TenantContext.set(DEFAULT_TEST_TENANT_ID);
+    String schema = com.smartfirehub.global.tenant.DataSchema.current();
+    dsl.execute("CREATE TABLE " + schema + "." + table + " (v text)");
+    try {
+      TenantRlsTestSupport.runInTenantTransaction(
+          fixtureTransactionTemplate,
+          DEFAULT_TEST_TENANT_ID,
+          () ->
+              dsl.execute(
+                  "update dataset set created_at = now() - interval '48 hours' where id = ?",
+                  staleHidden));
+      audit("UPDATE", staleHidden, "SUCCESS"); // trend 는 resource='dataset' 인 모든 오늘 이력을 센다
+
+      JsonNode lowAfter = getJson("/api/v1/dashboard/health", lowToken).get("datasetHealth");
+      JsonNode highAfter = getJson("/api/v1/dashboard/health", highToken).get("datasetHealth");
+      for (String f : List.of("stale", "empty")) {
+        assertThat(lowAfter.get(f).asLong()).as("low " + f).isEqualTo(lowBefore.get(f).asLong());
+        assertThat(highAfter.get(f).asLong())
+            .as("high " + f)
+            .isEqualTo(highBefore.get(f).asLong() + 1);
+      }
+      assertThat(lowAfter.get("trend").get(6).asLong())
+          .as("low trend(오늘)")
+          .isEqualTo(lowBefore.get("trend").get(6).asLong());
+      assertThat(highAfter.get("trend").get(6).asLong())
+          .as("high trend(오늘)")
+          .isEqualTo(highBefore.get("trend").get(6).asLong() + 1);
+    } finally {
+      dsl.execute("DROP TABLE IF EXISTS " + schema + "." + table);
+    }
+  }
 }

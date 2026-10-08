@@ -3,10 +3,12 @@ package com.smartfirehub.notification.service;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.notification.dto.NotificationEvent;
 import com.smartfirehub.pipeline.event.PipelineCompletedEvent;
+import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.securitylevel.access.DatasetAction;
 import java.time.LocalDateTime;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
@@ -102,7 +104,9 @@ public class NotificationService {
   }
 
   /**
-   * API 연결 상태 변화를 모든 사용자에게 대시보드 알림으로 브로드캐스트한다. 관리자만 볼 수 있는 알림이지만, 권한 필터링은 프론트엔드에서 처리한다.
+   * API 연결 상태 변화를 <b>현재 테넌트</b>(헬스체크 스케줄러가 테넌트 순회 중 세운 TenantContext)의 연결에만 대시보드 알림으로 보낸다(WD-19).
+   * 예전 broadcastAll 은 모든 테넌트 접속자에게 API 연결 이름·오류 메시지를 보냈다. 테넌트를 모르면 보내지 않는다(fail-closed). 관리자 전용 표시
+   * 여부는 기존대로 프론트엔드가 거른다.
    *
    * @param eventType "API_CONNECTION_DOWN" 또는 "API_CONNECTION_UP"
    * @param message 알림 본문
@@ -123,7 +127,12 @@ public class NotificationService {
             metadata != null ? metadata : Map.of(),
             LocalDateTime.now());
 
-    registry.broadcastAll(notification);
+    Long tenantId = TenantContext.get();
+    if (tenantId == null) {
+      log.warn("broadcastApiConnectionStatus without tenant context — skipped {}", eventType);
+      return;
+    }
+    registry.broadcastToTenant(tenantId, notification, userId -> true);
   }
 
   /**
@@ -132,6 +141,16 @@ public class NotificationService {
    * 무효화만 하므로 페이로드 계약은 그대로다.
    */
   public void notifyDatasetChanged(Long datasetId, String datasetName) {
+    notifyDatasetChanged(datasetId, datasetName, new HashMap<>());
+  }
+
+  /**
+   * 여러 데이터셋 알림을 한 번에 보낼 때 수신자 자격을 재사용한다(리뷰 M2 — 데이터셋 K개 × 접속자 N명마다 자격을 다시 계산하지 않게).
+   *
+   * @param clearanceCache userId → 자격. 같은 폴링 회차·같은 테넌트 안에서만 공유할 것(자격은 테넌트별이다)
+   */
+  public void notifyDatasetChanged(
+      Long datasetId, String datasetName, Map<Long, Clearance> clearanceCache) {
     Long tenantId = TenantContext.get();
     if (tenantId == null) {
       log.warn("notifyDatasetChanged without tenant context — skipped datasetId={}", datasetId);
@@ -154,7 +173,11 @@ public class NotificationService {
         notification,
         userId ->
             datasetAccessGuard
-                .check(clearanceResolver.resolve(userId), datasetId, DatasetAction.VIEW, null)
+                .check(
+                    clearanceCache.computeIfAbsent(userId, clearanceResolver::resolve),
+                    datasetId,
+                    DatasetAction.VIEW,
+                    null)
                 .allowed());
   }
 }

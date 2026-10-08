@@ -72,7 +72,7 @@ public class PipelineService {
         pipelineRepository.save(request.name(), request.description(), userId);
 
     // Save steps
-    saveSteps(pipeline.id(), request.steps(), userId, Set.of());
+    saveSteps(pipeline.id(), request.steps(), userId, Set.of(), Set.of());
 
     // Return full detail
     return getPipelineById(pipeline.id());
@@ -84,12 +84,15 @@ public class PipelineService {
    * @param editorUserId 저장하는 편집자 — SQL 스텝이 참조하는 데이터셋을 이 사용자가 볼 수 있어야 한다(보안 등급 S2, 스펙 §4.2 5행)
    * @param previouslySavedOutputIds 이 파이프라인에 저장 전부터 있던(해석된) 출력 데이터셋 id — 그대로 되돌아온 id 는 출력 VIEW 판정을
    *     건너뛴다(왕복 보존, 아래 SQL·AI_CLASSIFY 출력 판정 참고). 새 파이프라인은 빈 집합
+   * @param previouslySavedInputIds 이 파이프라인에 저장 전부터 있던 입력 데이터셋 id — SQL·PYTHON·API_CALL 입력의 같은 왕복 보존
+   *     규칙(WD-21)
    */
   private void saveSteps(
       Long pipelineId,
       List<PipelineStepRequest> stepRequests,
       Long editorUserId,
-      Set<Long> previouslySavedOutputIds) {
+      Set<Long> previouslySavedOutputIds,
+      Set<Long> previouslySavedInputIds) {
     if (stepRequests == null || stepRequests.isEmpty()) {
       return;
     }
@@ -125,12 +128,28 @@ public class PipelineService {
         pipelineSecurityGate.checkStepOutputForSave(editorUserId, stepRequest.outputDatasetId());
       } else if (stepRequest.outputDatasetId() != null
           && !previouslySavedOutputIds.contains(stepRequest.outputDatasetId())) {
+        // TEMP 예외 없이 판정한다(리뷰 M1) — 자기 TEMP 폴백은 previouslySavedOutputIds 가 이미 덮는다.
         // 보안 등급(이름 확인 경로 차단): SQL·AI_CLASSIFY 스텝의 출력 id 는 저장 시 판정이 없어, 임의 id 를 넣고 저장 성공(숨김)·FK
         // 오류(없음)·MERGE PK 안내 차이로 숨김 데이터셋의 존재를 확인할 수 있었다. 새로 지정한 출력은 편집자가 볼 수 있어야 한다 —
         // 숨김·없는 id 는 같은 403(DATASET_SQL_ACCESS_DENIED). MERGE PK 조회·saveStep(FK)보다 먼저 둬야 구분이 사라진다.
         // 이미 이 파이프라인에 있던 출력 id(편집자가 자격을 잃은 뒤 웹이 그대로 되돌려 보내는 값)는 막지 않는다 — 막으면 다른 필드만
         // 고쳐도 저장이 불가능해진다(왕복 보존). 실행 시점에는 실행 주체 기준으로 다시 판정된다(enforceOutputLevel).
-        pipelineSecurityGate.checkStepOutputForSave(editorUserId, stepRequest.outputDatasetId());
+        pipelineSecurityGate.checkNewStepReferencesForSave(
+            editorUserId, List.of(stepRequest.outputDatasetId()));
+      }
+
+      // 보안 등급(WD-21): SQL·PYTHON·API_CALL 의 입력 id 는 메타데이터로만 저장돼 판정이 없었다 — 없는 id 는 FK 오류, 숨김 id 는 저장
+      // 성공으로 갈려 존재를 확인할 수 있었다. 새로 추가한 입력만 편집자 VIEW 판정(숨김·없음·null 같은 403), 기존 입력 재전송은 통과(왕복
+      // 보존). AI_CLASSIFY 는 위에서 입력 전부를 이미 판정한다(입력을 실제로 읽어 LLM 으로 보내므로 더 엄격 — 그대로 둔다).
+      if (!"AI_CLASSIFY".equals(stepRequest.scriptType())
+          && stepRequest.inputDatasetIds() != null) {
+        List<Long> newInputs = new java.util.ArrayList<>();
+        for (Long in : stepRequest.inputDatasetIds()) {
+          if (in == null || !previouslySavedInputIds.contains(in)) {
+            newInputs.add(in);
+          }
+        }
+        pipelineSecurityGate.checkNewStepReferencesForSave(editorUserId, newInputs);
       }
 
       // PYTHON 스텝 escalation 코드(shell/동적실행 등) 차단 — pythonConfig 유무와 무관하게 항상 검증 (#270)
@@ -431,12 +450,15 @@ public class PipelineService {
       // 왕복 보존용 기존 출력 id — 스텝 삭제 전에 뜬다. 이름이 아니라 파이프라인 전체 집합으로 비교한다(스텝 이름을 바꿔도 같은 출력을
       // 되돌려 보내는 저장이 막히지 않게). 웹은 해석된 출력(TEMP 폴백 포함)을 되돌려 보내므로 해석된 값을 쓴다.
       Set<Long> previouslySavedOutputIds = new java.util.HashSet<>();
-      stepRepository.findByPipelineId(id).stream()
-          .map(PipelineStepResponse::outputDatasetId)
-          .filter(java.util.Objects::nonNull)
-          .forEach(previouslySavedOutputIds::add);
+      Set<Long> previouslySavedInputIds = new java.util.HashSet<>();
+      for (PipelineStepResponse existing : stepRepository.findByPipelineId(id)) {
+        if (existing.outputDatasetId() != null) {
+          previouslySavedOutputIds.add(existing.outputDatasetId());
+        }
+        previouslySavedInputIds.addAll(existing.inputDatasetIds());
+      }
       stepRepository.deleteByPipelineId(id);
-      saveSteps(id, request.steps(), userId, previouslySavedOutputIds);
+      saveSteps(id, request.steps(), userId, previouslySavedOutputIds, previouslySavedInputIds);
       // 새로 저장하는 쪽의 동명 스텝은 따로 거를 필요가 없다 — pipeline_step 에는
       // UNIQUE (pipeline_id, name) 제약이 있어(V3:24) saveSteps 가 이 루프에 닿기 전에 실패하고
       // 트랜잭션 전체가 롤백된다. 이름을 이월 키로 쓸 수 있는 근거도 그 제약이다.

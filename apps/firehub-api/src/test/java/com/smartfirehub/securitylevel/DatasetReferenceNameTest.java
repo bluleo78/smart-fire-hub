@@ -170,13 +170,19 @@ class DatasetReferenceNameTest extends IntegrationTestBase {
   /** 상태·본문 바이트 동일(존재 은닉) 비교 — timestamp 같은 가변 필드는 제외한다. */
   private void assertSameRejection(MockHttpServletResponse a, MockHttpServletResponse b)
       throws Exception {
+    assertSameRejection(a, b, hidden2Id);
+  }
+
+  /** {@code b} 가 숨김 id {@code hiddenInB} 로 거부된 응답일 때, 없는 id 로 거부된 {@code a} 와 상태·본문이 같다. */
+  private void assertSameRejection(
+      MockHttpServletResponse a, MockHttpServletResponse b, long hiddenInB) throws Exception {
     assertThat(a.getStatus()).isEqualTo(b.getStatus());
     JsonNode ja = json(a);
     JsonNode jb = json(b);
     ((com.fasterxml.jackson.databind.node.ObjectNode) ja).remove("timestamp");
     ((com.fasterxml.jackson.databind.node.ObjectNode) jb).remove("timestamp");
     assertThat(ja.toString().replace(String.valueOf(MISSING_ID), "<id>"))
-        .isEqualTo(jb.toString().replace(String.valueOf(hidden2Id), "<id>"));
+        .isEqualTo(jb.toString().replace(String.valueOf(hiddenInB), "<id>"));
   }
 
   // ---------------------------------------------------------------- pipeline (B1·B2)
@@ -271,6 +277,86 @@ class DatasetReferenceNameTest extends IntegrationTestBase {
             highToken,
             pipelineBody("v4", List.of(sqlStep("s1", hidden2Id))));
     assertThat(highNew.getStatus()).as(highNew.getContentAsString()).isEqualTo(204);
+  }
+
+  private static Map<String, Object> sqlStepWithInputs(String name, List<Long> inputs) {
+    Map<String, Object> s = sqlStep(name, null);
+    s.put("inputDatasetIds", inputs);
+    return s;
+  }
+
+  /**
+   * 리뷰 M1: 다른 파이프라인의 러너 TEMP 라도 숨김이면 새 출력 지정은 없는 id 와 같은 거부다. 예전에는 TEMP 면 판정 없이 통과(204)해 TEMP 한정 존재
+   * 오라클이 남았다.
+   */
+  @Test
+  void pipelineSave_hiddenTempOfOtherPipelineAsNewOutput_sameAsMissing() throws Exception {
+    long hiddenTemp = dataset(m + "_tmp", "민감");
+    TenantRlsTestSupport.runInTenantTransaction(
+        fixtureTransactionTemplate,
+        DEFAULT_TEST_TENANT_ID,
+        () -> dsl.execute("update dataset set origin_type = 'TEMP' where id = ?", hiddenTemp));
+    MockHttpServletResponse temp =
+        send(
+            post("/api/v1/pipelines"),
+            lowToken,
+            pipelineBody("t1", List.of(sqlStep("s1", hiddenTemp))));
+    MockHttpServletResponse missing =
+        send(
+            post("/api/v1/pipelines"),
+            lowToken,
+            pipelineBody("t2", List.of(sqlStep("s1", MISSING_ID))));
+    assertThat(temp.getStatus()).as(temp.getContentAsString()).isEqualTo(403);
+    assertSameRejection(missing, temp, hiddenTemp);
+  }
+
+  /**
+   * WD-21: SQL·PYTHON·API_CALL 입력 id 도 새로 추가한 것만 판정한다 — 숨김·없음 같은 403(예전: 없음은 FK 오류, 숨김은 저장 성공), 기존
+   * 입력 재전송은 통과.
+   */
+  @Test
+  void pipelineSave_newHiddenInput_rejectedSameAsMissing_butResentExistingPasses()
+      throws Exception {
+    MockHttpServletResponse created =
+        send(
+            post("/api/v1/pipelines"),
+            highToken,
+            pipelineBody("in1", List.of(sqlStepWithInputs("s1", List.of(hiddenId, visibleId)))));
+    assertThat(created.getStatus()).as(created.getContentAsString()).isEqualTo(201);
+    long p = json(created).get("id").asLong();
+    pipelines.add(p);
+
+    MockHttpServletResponse resend =
+        send(
+            put("/api/v1/pipelines/" + p),
+            lowToken,
+            pipelineBody("in2", List.of(sqlStepWithInputs("s1", List.of(hiddenId, visibleId)))));
+    assertThat(resend.getStatus()).as(resend.getContentAsString()).isEqualTo(204);
+    assertThat(step(p, highToken).get("inputDatasetIds").toString())
+        .contains(String.valueOf(hiddenId));
+
+    MockHttpServletResponse hidden =
+        send(
+            put("/api/v1/pipelines/" + p),
+            lowToken,
+            pipelineBody("in3", List.of(sqlStepWithInputs("s1", List.of(hiddenId, hidden2Id)))));
+    MockHttpServletResponse missing =
+        send(
+            put("/api/v1/pipelines/" + p),
+            lowToken,
+            pipelineBody("in3", List.of(sqlStepWithInputs("s1", List.of(hiddenId, MISSING_ID)))));
+    assertThat(hidden.getStatus()).isEqualTo(403);
+    assertThat(json(hidden).get("code").asText()).isEqualTo("DATASET_SQL_ACCESS_DENIED");
+    assertSameRejection(missing, hidden);
+    // 양성 대조: 볼 수 있는 새 입력은 통과
+    long visible2 = dataset(m + "_visible2", "공개");
+    MockHttpServletResponse addVisible =
+        send(
+            put("/api/v1/pipelines/" + p),
+            lowToken,
+            pipelineBody(
+                "in4", List.of(sqlStepWithInputs("s1", List.of(hiddenId, visibleId, visible2)))));
+    assertThat(addVisible.getStatus()).as(addVisible.getContentAsString()).isEqualTo(204);
   }
 
   // ---------------------------------------------------------------- saved query (C1·C2)

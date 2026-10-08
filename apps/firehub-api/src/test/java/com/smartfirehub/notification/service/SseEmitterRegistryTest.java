@@ -88,22 +88,17 @@ class SseEmitterRegistryTest {
   }
 
   @Test
-  void broadcastAll_noEmitters_noException() {
-    registry.broadcastAll(sampleEvent());
+  void broadcastToTenant_noEmitters_noException() {
+    registry.broadcastToTenant(1L, sampleEvent(), userId -> true);
   }
 
   @Test
-  void broadcastAll_sendsToAllRegisteredUsers() throws Exception {
-    // Register emitters for two different users using spy approach
-    SseEmitter spy1 = spy(new SseEmitter(1000L));
-    SseEmitter spy2 = spy(new SseEmitter(1000L));
-
-    // We cannot inject spy emitters directly via register() since it creates them internally.
-    // Instead, register normally and verify broadcast does not throw.
+  void broadcastToTenant_registeredUsers_noException() {
+    // 실제 전송 대상 판정(테넌트·수신자 필터)은 DatasetChangeNotificationScopeTest·ApiConnectionStatusScopeTest 가 기록
+    // 연결로 검증한다.
     registry.register(1L, 1L);
     registry.register(2L, 1L);
-    // broadcastAll should attempt to send to both users without throwing
-    registry.broadcastAll(sampleEvent());
+    registry.broadcastToTenant(1L, sampleEvent(), userId -> true);
   }
 
   // ------------------------------------------------------------------ //

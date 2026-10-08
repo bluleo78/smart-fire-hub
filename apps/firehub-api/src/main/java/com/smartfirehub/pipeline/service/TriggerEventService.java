@@ -183,13 +183,15 @@ public class TriggerEventService {
         triggerService.fireTrigger(trigger.id(), Map.of("changedDatasets", changedIds));
         updatedState.put("lastFiredAt", LocalDateTime.now().toString());
 
+        // 이번 발화의 알림들이 수신자 자격을 공유한다(같은 테넌트·같은 회차 — 리뷰 M2).
+        Map<Long, com.smartfirehub.securitylevel.access.Clearance> clearanceCache = new HashMap<>();
         for (Long changedDatasetId : changedIds) {
           String datasetName =
               datasetRepository
                   .findById(changedDatasetId)
                   .map(d -> d.name())
                   .orElse(String.valueOf(changedDatasetId));
-          notificationService.notifyDatasetChanged(changedDatasetId, datasetName);
+          notificationService.notifyDatasetChanged(changedDatasetId, datasetName, clearanceCache);
         }
       } else {
         log.debug("Dataset change detected for trigger {} but debounce not elapsed", trigger.id());

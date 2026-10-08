@@ -130,4 +130,72 @@ class DatasetChangeNotificationScopeTest extends IntegrationTestBase {
     assertThat(lowT1.sent).hasValue(1);
     assertThat(highT2.sent).hasValue(0);
   }
+
+  /**
+   * WD-19: API 연결 상태 알림(연결 이름·오류 메시지가 실린다)은 현재 테넌트 연결에만 간다 — 예전 broadcastAll 은 모든 테넌트 접속자에게 보냈다. 같은
+   * 테넌트의 모든 사용자는 받는다(등급 판정 없음, 관리자 표시 필터는 웹 몫). 테넌트 컨텍스트가 없으면 아무에게도 보내지 않는다.
+   */
+  @Test
+  void apiConnectionStatus_reachesOnlyCurrentTenantConnections() {
+    RecordingRegistry registry = new RecordingRegistry(om);
+    NotificationService service = new NotificationService(registry, guard, clearanceResolver);
+    registry.register(high, DEFAULT_TEST_TENANT_ID);
+    registry.register(low, DEFAULT_TEST_TENANT_ID);
+    registry.register(high, tenant2);
+    RecordingEmitter highT1 = registry.created.get(0);
+    RecordingEmitter lowT1 = registry.created.get(1);
+    RecordingEmitter highT2 = registry.created.get(2);
+
+    TenantContext.set(DEFAULT_TEST_TENANT_ID);
+    service.broadcastApiConnectionStatus(
+        "API_CONNECTION_DOWN", "API 연결 'secret-api'이(가) 응답하지 않습니다", java.util.Map.of());
+    assertThat(highT1.sent).hasValue(1);
+    assertThat(lowT1.sent).hasValue(1);
+    assertThat(highT2.sent).as("다른 테넌트 연결").hasValue(0);
+
+    // 반대 방향: 테넌트 2 의 연결 상태는 테넌트 2 연결에만
+    TenantContext.set(tenant2);
+    service.broadcastApiConnectionStatus(
+        "API_CONNECTION_UP", "API 연결 't2-api'이(가) 복구되었습니다", java.util.Map.of());
+    assertThat(highT2.sent).hasValue(1);
+    assertThat(highT1.sent).hasValue(1);
+    assertThat(lowT1.sent).hasValue(1);
+
+    TenantContext.clear();
+    service.broadcastApiConnectionStatus("API_CONNECTION_UP", "x", java.util.Map.of());
+    assertThat(highT1.sent.get() + lowT1.sent.get() + highT2.sent.get())
+        .as("테넌트 없음 → 미전송")
+        .isEqualTo(3);
+  }
+
+  /** 리뷰 M2: 한 회차의 여러 데이터셋 알림이 같은 자격 캐시를 쓰면 사용자당 자격 계산은 한 번이다(결과는 그대로). */
+  @Test
+  void datasetChanged_sharedClearanceCache_resolvesEachRecipientOnce() {
+    RecordingRegistry registry = new RecordingRegistry(om);
+    java.util.concurrent.atomic.AtomicInteger resolves =
+        new java.util.concurrent.atomic.AtomicInteger();
+    ClearanceResolver counting =
+        new ClearanceResolver(null, null) {
+          @Override
+          public com.smartfirehub.securitylevel.access.Clearance resolve(long userId) {
+            resolves.incrementAndGet();
+            return clearanceResolver.resolve(userId);
+          }
+        };
+    NotificationService service = new NotificationService(registry, guard, counting);
+    registry.register(high, DEFAULT_TEST_TENANT_ID);
+    registry.register(low, DEFAULT_TEST_TENANT_ID);
+    RecordingEmitter highT1 = registry.created.get(0);
+    RecordingEmitter lowT1 = registry.created.get(1);
+
+    TenantContext.set(DEFAULT_TEST_TENANT_ID);
+    java.util.Map<Long, com.smartfirehub.securitylevel.access.Clearance> cache =
+        new java.util.HashMap<>();
+    service.notifyDatasetChanged(hiddenId, "h", cache);
+    service.notifyDatasetChanged(publicId, "p", cache);
+
+    assertThat(resolves).as("사용자 2명 × 데이터셋 2개인데 자격 계산은 2번").hasValue(2);
+    assertThat(highT1.sent).hasValue(2);
+    assertThat(lowT1.sent).hasValue(1);
+  }
 }

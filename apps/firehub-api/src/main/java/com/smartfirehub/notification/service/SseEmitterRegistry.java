@@ -108,14 +108,6 @@ public class SseEmitterRegistry {
   }
 
   /**
-   * <b>테넌트 구분 없이</b> 모든 연결에 보낸다. 데이터셋 이름 등 테넌트 데이터가 실린 알림에는 쓰지 말 것 — {@link #broadcastToTenant} 를
-   * 쓴다. (알려진 한계: API 연결 상태 알림이 아직 이 경로를 쓴다.)
-   */
-  public void broadcastAll(NotificationEvent event) {
-    emitters.keySet().forEach(userId -> broadcast(userId, event));
-  }
-
-  /**
    * 한 테넌트의 연결 중 수신자 판정을 통과한 사용자에게만 보낸다(보안 등급 — 데이터셋 이름이 실린 알림이 다른 테넌트나 그 데이터셋을 볼 수 없는 사용자에게 가지 않게).
    * 판정은 그 테넌트 연결이 있는 사용자에 대해서만, 사용자당 한 번 부른다. 판정이 예외를 던지면 그 사용자는 받지 않는다 (fail-closed).
    *

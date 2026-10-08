@@ -195,6 +195,20 @@ public class PipelineSecurityGate {
   }
 
   /**
+   * 저장 시점 — 스텝이 <b>새로</b> 참조하는 데이터셋(SQL·AI_CLASSIFY 출력, SQL·PYTHON·API_CALL 입력)을 편집자가 볼 수 있어야
+   * 한다(Task 3 B2·WD-21). {@link #checkStepOutputForSave} 와 달리 TEMP 도 예외 없이 판정한다 — 호출자가 이 파이프라인에 이미
+   * 있던 id(자기 TEMP 폴백 포함)를 미리 걸러 넘기므로 예외가 필요 없고, 예외를 두면 다른 파이프라인의 숨김 TEMP id 는 통과·없는 id 는 거부로 갈려 존재
+   * 오라클이 된다. 숨김·없음·null 은 같은 403 {@code DATASET_SQL_ACCESS_DENIED}. 반드시 FK 가 걸린
+   * insert(saveStep·saveStepInput)와 MERGE PK 조회 <b>전에</b> 부른다 — 그래야 "없음"이 FK 오류로 따로 드러나지 않는다.
+   */
+  public void checkNewStepReferencesForSave(Long editorUserId, Collection<Long> newDatasetIds) {
+    if (newDatasetIds.isEmpty()) {
+      return;
+    }
+    guard.requireDatasetReads(clearance(editorUserId), newDatasetIds);
+  }
+
+  /**
    * 출력 데이터셋이 이 스텝의 러너 소유 TEMP 인가 — TempDatasetService.createTempDataset 이
    * origin_type·source_pipeline_step_id 를 남긴다.
    */

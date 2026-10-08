@@ -13,7 +13,9 @@ import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.sql.GuardedSqlExecutor;
 import java.util.List;
+import java.util.Map;
 import lombok.RequiredArgsConstructor;
+import org.jooq.impl.DSL;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -49,7 +51,7 @@ public class ChartService {
   public ChartResponse create(CreateChartRequest req, Long userId) {
     // 저장 쿼리 접근 확인만 한다(연결 데이터셋 이름은 쓰지 않아 가시성 조건이 필요 없다).
     savedQueryRepository
-        .findById(req.savedQueryId(), userId, org.jooq.impl.DSL.trueCondition())
+        .findById(req.savedQueryId(), userId, DSL.trueCondition())
         .orElseThrow(
             () -> new SavedQueryNotFoundException("Saved query not found: " + req.savedQueryId()));
     if ("MAP".equals(req.chartType())) {
@@ -186,7 +188,7 @@ public class ChartService {
             chart.savedQueryId(),
             null,
             chart.chartType(),
-            java.util.Map.of(),
+            Map.of(),
             chart.isShared(),
             chart.createdByName(),
             chart.createdBy(),

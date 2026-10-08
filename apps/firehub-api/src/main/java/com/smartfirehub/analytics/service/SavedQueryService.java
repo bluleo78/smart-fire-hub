@@ -8,6 +8,7 @@ import com.smartfirehub.analytics.dto.UpdateSavedQueryRequest;
 import com.smartfirehub.analytics.exception.SavedQueryNotFoundException;
 import com.smartfirehub.analytics.repository.SavedQueryRepository;
 import com.smartfirehub.global.dto.PageResponse;
+import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.securitylevel.sql.GuardedSqlExecutor;
@@ -15,6 +16,7 @@ import java.util.List;
 import java.util.Objects;
 import lombok.RequiredArgsConstructor;
 import org.jooq.Condition;
+import org.jooq.impl.DSL;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -34,7 +36,12 @@ public class SavedQueryService {
    * 되돌려 보내는 참조를 지우지 않게).
    */
   private Condition datasetNameVisible(Long userId) {
-    return datasetAccessGuard.visibleCondition(clearanceResolver.resolve(userId));
+    return datasetNameVisible(clearanceResolver.resolve(userId));
+  }
+
+  /** 이미 계산한 자격으로 — 한 메서드에서 판정과 이름 가시성에 같은 자격을 쓸 때 DB 왕복을 한 번으로(리뷰 M3). */
+  private Condition datasetNameVisible(Clearance viewer) {
+    return datasetAccessGuard.visibleCondition(viewer);
   }
 
   /** List saved queries with optional filters and pagination. */
@@ -55,12 +62,13 @@ public class SavedQueryService {
   public SavedQueryResponse create(CreateSavedQueryRequest req, Long userId) {
     // 연결 데이터셋은 생성자가 볼 수 있어야 한다(보안 등급) — 필터 없는 존재 확인이면 숨김 id 는 201·이름 노출, 없는 id 는 404 로 갈려 이름
     // 확인 경로가 됐다. requireView 는 숨김·없음을 바이트 단위로 같은 404 로 낸다.
+    Clearance viewer = clearanceResolver.resolve(userId);
     if (req.datasetId() != null) {
-      datasetAccessGuard.requireView(clearanceResolver.resolve(userId), req.datasetId());
+      datasetAccessGuard.requireView(viewer, req.datasetId());
     }
     Long id = savedQueryRepository.insert(req, userId);
     return savedQueryRepository
-        .findById(id, userId, datasetNameVisible(userId))
+        .findById(id, userId, datasetNameVisible(viewer))
         .orElseThrow(() -> new SavedQueryNotFoundException("Saved query not found after insert"));
   }
 
@@ -81,15 +89,16 @@ public class SavedQueryService {
    */
   @Transactional
   public SavedQueryResponse update(Long id, UpdateSavedQueryRequest req, Long userId) {
+    Clearance viewer = clearanceResolver.resolve(userId);
     SavedQueryResponse existing =
         savedQueryRepository
-            .findByIdForOwner(id, userId, datasetNameVisible(userId))
+            .findByIdForOwner(id, userId, datasetNameVisible(viewer))
             .orElseThrow(() -> new SavedQueryNotFoundException("Saved query not found: " + id));
 
     // 연결 데이터셋을 바꾸는 경우만 판정한다(create 와 같은 404) — 웹 편집기가 기존 값(편집자가 자격을 잃은 숨김 id 포함)을 그대로 되돌려
     // 보내는 저장은 막지 않는다(왕복 보존).
     if (req.datasetId() != null && !Objects.equals(req.datasetId(), existing.datasetId())) {
-      datasetAccessGuard.requireView(clearanceResolver.resolve(userId), req.datasetId());
+      datasetAccessGuard.requireView(viewer, req.datasetId());
     }
 
     // Protect shared query SQL if other users' charts reference it
@@ -103,16 +112,16 @@ public class SavedQueryService {
 
     savedQueryRepository.update(id, req, userId);
     return savedQueryRepository
-        .findByIdForOwner(id, userId, datasetNameVisible(userId))
+        .findByIdForOwner(id, userId, datasetNameVisible(viewer))
         .orElseThrow(() -> new SavedQueryNotFoundException("Saved query not found: " + id));
   }
 
   /** Delete a saved query (owner only). CASCADE removes linked charts and widgets. */
   @Transactional
   public void delete(Long id, Long userId) {
-    // Verify ownership first
+    // Verify ownership first — 소유 확인만 하고 응답을 쓰지 않으므로 이름 가시성 조건은 필요 없다.
     savedQueryRepository
-        .findByIdForOwner(id, userId, datasetNameVisible(userId))
+        .findByIdForOwner(id, userId, DSL.trueCondition())
         .orElseThrow(() -> new SavedQueryNotFoundException("Saved query not found: " + id));
     boolean deleted = savedQueryRepository.deleteById(id, userId);
     if (!deleted) {

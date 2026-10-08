@@ -143,7 +143,6 @@ class NotificationServiceTest extends IntegrationTestBase {
 
     ArgumentCaptor<NotificationEvent> captor = forClass(NotificationEvent.class);
     verify(registry).broadcastToTenant(eq(1L), captor.capture(), any());
-    verify(registry, never()).broadcastAll(any());
     verify(registry, never()).broadcast(any(), any());
 
     NotificationEvent notification = captor.getValue();
