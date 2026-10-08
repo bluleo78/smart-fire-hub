@@ -559,8 +559,13 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
   }
 
   /**
-   * 저장 판정은 러너 TEMP 출력을 건너뛴다 — 편집 화면은 GET 의 출력 폴백(스텝 TEMP id)을 그대로 되돌려 보내므로, 등급이 오른 TEMP 를 판정하면 다른
-   * 편집자의 재저장이 막힌다. TEMP 쓰기는 실행 시점에 실행 주체 기준으로 판정된다.
+   * 저장 판정은 <b>이 파이프라인의</b> 러너 TEMP 출력을 건너뛴다 — 편집 화면은 GET 의 출력 폴백(스텝 TEMP id)을 그대로 되돌려 보내므로, 등급이 오른
+   * TEMP 를 판정하면 다른 편집자의 재저장이 막힌다. TEMP 쓰기는 실행 시점에 실행 주체 기준으로 판정된다.
+   *
+   * <p>Task 3 리뷰 M1: 예전 이 TC 는 <b>다른</b> 파이프라인을 새로 만들어 TEMP 를 되돌려 보냈다 — 그 형태가 곧 "다른 파이프라인의 숨김 TEMP
+   * id 는 저장 성공·없는 id 는 403" 존재 오라클이라 이제
+   * 거부된다(DatasetReferenceNameTest.pythonStep_hiddenTempOfOtherPipelineAsOutput_sameAsMissing). 편집
+   * 화면의 실제 왕복인 "같은 파이프라인 재저장"으로 바꿨다.
    */
   @Test
   void save_pythonStepEchoingRaisedTempOutput_isNotJudgedAtSaveTime() throws Exception {
@@ -569,11 +574,16 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
     assertThat(waitForEnd(executionService.executePipeline(p, sens))).isEqualTo("COMPLETED");
     long temp = tempOf(p, "step");
     assertThat(levelOf(temp)).isEqualTo(fx.levelId("민감"));
-    long echo = pipeline(pythonUserAt("공개"), List.of(pythonStep(temp)));
-    assertThat(echo).isPositive();
-    // 정리 순서: 이 파이프라인 스텝이 TEMP 를 출력으로 참조하므로 먼저 지워야 tearDown 이 TEMP 를 지울 수 있다.
-    pipelineService.deletePipeline(echo);
-    pipelines.remove(Long.valueOf(echo));
+    // 공개 자격 편집자가 같은 파이프라인을 PYTHON 스텝(출력 = GET 이 돌려준 TEMP 폴백)으로 재저장 — 판정 없이 통과해야 한다.
+    pipelineService.updatePipeline(
+        p,
+        new com.smartfirehub.pipeline.dto.UpdatePipelineRequest(
+            "PA " + m + " echo", "보안 등급 TC", true, List.of(pythonStep(temp))),
+        pythonUserAt("공개"));
+    // 정리 순서: 이제 스텝이 TEMP 를 출력으로 참조하므로 파이프라인을 먼저 지우고 TEMP 를 지운다(tearDown 은 TEMP 를 먼저 지운다).
+    pipelineService.deletePipeline(p);
+    pipelines.remove(Long.valueOf(p));
+    datasetService.deleteDataset(temp);
   }
 
   /**

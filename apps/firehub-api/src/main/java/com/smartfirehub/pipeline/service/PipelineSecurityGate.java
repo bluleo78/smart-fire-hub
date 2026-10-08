@@ -184,11 +184,18 @@ public class PipelineSecurityGate {
    * origin_type='TEMP'})는 건너뛴다 — 편집 화면이 GET 의 출력 폴백(스텝 TEMP id)을 그대로 되돌려 보내므로, 이를 판정하면 TEMP 등급이 오른
    * 파이프라인을 다른 편집자가 재저장하지 못한다. 그 TEMP 쓰기는 실행 시점에 실행 주체 기준으로 판정된다. 거부는 SQL 스텝 저장과 같은 403 {@code
    * DATASET_SQL_ACCESS_DENIED}(구분 불가 메시지).
+   *
+   * <p>TEMP 예외는 <b>이 파이프라인에 이미 있던</b> 출력(되돌아온 자기 TEMP 폴백)에만 적용한다(Task 3 리뷰 M1). 예전처럼 모든 TEMP 를
+   * 통과시키면 다른 파이프라인의 숨김 TEMP id 는 저장 성공·없는 id 는 403 으로 갈려 존재 오라클이 됐다.
+   *
+   * @param alreadyInPipeline 이 id 가 저장 전 이 파이프라인의 (해석된) 출력 집합에 있었는가
    */
-  public void checkStepOutputForSave(Long editorUserId, Long outputDatasetId) {
+  public void checkStepOutputForSave(
+      Long editorUserId, Long outputDatasetId, boolean alreadyInPipeline) {
     if (outputDatasetId == null
-        || dsl.fetchExists(
-            DATASET, DATASET.ID.eq(outputDatasetId).and(DATASET.ORIGIN_TYPE.eq("TEMP")))) {
+        || (alreadyInPipeline
+            && dsl.fetchExists(
+                DATASET, DATASET.ID.eq(outputDatasetId).and(DATASET.ORIGIN_TYPE.eq("TEMP"))))) {
       return;
     }
     guard.requireDatasetReads(clearance(editorUserId), List.of(outputDatasetId));

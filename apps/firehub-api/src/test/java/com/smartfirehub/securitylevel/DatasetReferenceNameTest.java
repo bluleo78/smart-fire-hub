@@ -310,6 +310,38 @@ class DatasetReferenceNameTest extends IntegrationTestBase {
     assertSameRejection(missing, temp, hiddenTemp);
   }
 
+  /** 같은 규칙을 PYTHON 스텝(CR2 출력 판정 경로)에도 — 다른 파이프라인의 숨김 TEMP 를 새 출력으로 지정하면 없는 id 와 같은 거부. */
+  @Test
+  void pythonStep_hiddenTempOfOtherPipelineAsOutput_sameAsMissing() throws Exception {
+    long hiddenTemp = dataset(m + "_tmp_py", "민감");
+    TenantRlsTestSupport.runInTenantTransaction(
+        fixtureTransactionTemplate,
+        DEFAULT_TEST_TENANT_ID,
+        () -> dsl.execute("update dataset set origin_type = 'TEMP' where id = ?", hiddenTemp));
+    MockHttpServletResponse temp =
+        send(
+            post("/api/v1/pipelines"),
+            lowToken,
+            pipelineBody("py1", List.of(pythonStep(hiddenTemp))));
+    MockHttpServletResponse missing =
+        send(
+            post("/api/v1/pipelines"),
+            lowToken,
+            pipelineBody("py2", List.of(pythonStep(MISSING_ID))));
+    assertThat(temp.getStatus()).as(temp.getContentAsString()).isEqualTo(403);
+    assertSameRejection(missing, temp, hiddenTemp);
+  }
+
+  private static Map<String, Object> pythonStep(Long outputDatasetId) {
+    Map<String, Object> s = new LinkedHashMap<>();
+    s.put("name", "py");
+    s.put("scriptType", "PYTHON");
+    s.put("scriptContent", "print(1)");
+    s.put("outputDatasetId", outputDatasetId);
+    s.put("loadStrategy", "REPLACE");
+    return s;
+  }
+
   /**
    * WD-21: SQL·PYTHON·API_CALL 입력 id 도 새로 추가한 것만 판정한다 — 숨김·없음 같은 403(예전: 없음은 FK 오류, 숨김은 저장 성공), 기존
    * 입력 재전송은 통과.

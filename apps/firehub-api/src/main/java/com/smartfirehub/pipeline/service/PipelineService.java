@@ -125,7 +125,12 @@ public class PipelineService {
       // 출력으로 지정한 스텝은 저장할 수 없다. 러너 TEMP(편집 화면이 되돌려 보내는 출력 폴백)는 실행 시점에 판정된다.
       if ("API_CALL".equals(stepRequest.scriptType())
           || "PYTHON".equals(stepRequest.scriptType())) {
-        pipelineSecurityGate.checkStepOutputForSave(editorUserId, stepRequest.outputDatasetId());
+        pipelineSecurityGate.checkStepOutputForSave(
+            editorUserId,
+            stepRequest.outputDatasetId(),
+            // Set.of() 는 contains(null) 에서 NPE — null 출력(자동 TEMP)은 헬퍼가 먼저 통과시킨다.
+            stepRequest.outputDatasetId() != null
+                && previouslySavedOutputIds.contains(stepRequest.outputDatasetId()));
       } else if (stepRequest.outputDatasetId() != null
           && !previouslySavedOutputIds.contains(stepRequest.outputDatasetId())) {
         // TEMP 예외 없이 판정한다(리뷰 M1) — 자기 TEMP 폴백은 previouslySavedOutputIds 가 이미 덮는다.
