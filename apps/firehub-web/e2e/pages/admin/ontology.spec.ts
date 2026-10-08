@@ -1,3 +1,5 @@
+import type { Page } from '@playwright/test';
+
 import { createOntologySummaries } from '../../factories/mapping.factory';
 import { createEntityTypeMutation, createOntologyGraph, createOntologySchema } from '../../factories/ontology.factory';
 import {
@@ -20,6 +22,17 @@ import { expect, test } from '../../fixtures/auth.fixture';
  * - 인스턴스 그래프는 Cytoscape.js(Canvas) 렌더 — DOM 노드가 없으므로 컨테이너의 data-node-count(필터 후 노드 수)와
  *   dev에서 노출되는 window.__ontologyCy로 검증한다. 힘-기반 레이아웃은 비결정적이라 캔버스 좌표 클릭은 쓰지 않는다.
  */
+
+/**
+ * 그래프 탐색 탭의 그래프 의존 컨트롤(이름 검색·타입 묶기·타입 필터 패널·패널 접기 토글)이 각각 count 개인지 본다.
+ * 읽기 제한(WD-28) 상태에선 넷 다 0, 일반 상태에선 넷 다 1 — 넷을 한 묶음으로 단언해 하나만 빠지는 회귀를 잡는다.
+ */
+async function expectGraphControls(page: Page, count: 0 | 1) {
+  await expect(page.getByPlaceholder('이름 검색')).toHaveCount(count);
+  await expect(page.getByRole('button', { name: '타입 묶기' })).toHaveCount(count);
+  await expect(page.getByTestId('type-filter-panel')).toHaveCount(count);
+  await expect(page.getByRole('button', { name: /^타입 필터 (접기|펼치기)$/ })).toHaveCount(count);
+}
 test.describe('지식그래프 시각화 페이지', () => {
   test.beforeEach(async ({ authenticatedPage: page }) => {
     await setupAdminAuth(page);
@@ -830,9 +843,42 @@ test.describe('지식그래프 시각화 페이지', () => {
     await expect(page.getByText('그래프를 불러오지 못했습니다.')).toHaveCount(0);
     await expect(page.getByRole('button', { name: '다시 시도' })).toHaveCount(0);
     await expect(page.locator('[data-sonner-toast]')).toHaveCount(0);
+    // 그래프가 없으니 눌러도 효과가 없는 컨트롤(이름 검색·타입 묶기·타입 필터와 그 접기 토글)은 숨긴다(디자인 검토 M-2).
+    await expectGraphControls(page, 0);
+    // 온톨로지 선택기는 제한에서 벗어나는 유일한 출구라 남는다.
+    await expect(page.getByRole('combobox', { name: '온톨로지 선택' })).toBeVisible();
     // 403 제한은 재시도하지 않는다(전역 retry:1 예외) — 첫 재시도 지연(1s)을 넘겨 기다린 뒤 요청이 1회인지 본다.
     await page.waitForTimeout(1500);
     expect(requestedPaths).toEqual(['/api/v1/ontology/1/graph']);
+  });
+
+  // 제한은 온톨로지 단위다 — 볼 수 있는 온톨로지로 바꾸면 숨겼던 컨트롤과 그래프가 다시 나타나야 한다
+  // (graphRestricted 가 한번 켜진 뒤 안 꺼지는 회귀 방지).
+  test('읽기 제한 온톨로지에서 제한 없는 온톨로지로 바꾸면 그래프 컨트롤이 다시 나타난다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupOntologyMocks(page);
+    // id=1 그래프만 403 제한, 나머지(id=2)는 기본 그래프 모킹(200)을 그대로 쓴다 — 나중에 등록한 route 가 앞을 가린다.
+    await page.route(
+      (url) => url.pathname === '/api/v1/ontology/1/graph',
+      (route) =>
+        route.fulfill({
+          status: 403,
+          contentType: 'application/json',
+          body: JSON.stringify({ status: 403, error: 'Forbidden', message: 'x', code: 'GRAPH_READ_RESTRICTED' }),
+        }),
+    );
+    await page.goto('/knowledge-graph/explore');
+
+    await expect(page.getByTestId('graph-read-restricted')).toBeVisible();
+    await expectGraphControls(page, 0);
+
+    await page.getByRole('combobox', { name: '온톨로지 선택' }).click();
+    await page.getByRole('option', { name: '건축물 대장' }).click();
+
+    await expect(page.getByTestId('graph-read-restricted')).toHaveCount(0);
+    await expect(page.getByTestId('instance-graph')).toBeVisible();
+    await expectGraphControls(page, 1);
   });
 
   test('인스턴스 그래프 에러 후 "다시 시도" 클릭 시 재요청하여 그래프가 정상 렌더된다', async ({

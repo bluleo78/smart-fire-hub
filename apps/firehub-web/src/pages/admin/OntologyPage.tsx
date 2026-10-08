@@ -220,6 +220,11 @@ export default function OntologyPage() {
   // canEdit이 꺼지면(예: 관리 다이얼로그에서 archived로 전이) 토글 state와 무관하게 즉시 닫혀야 하므로
   // modelEditMode를 곱해 파생시킨다(별도 effect로 끄는 대신).
   const showEditor = tab === 'schema' && modelEditMode && canEdit;
+  // 그래프 탐색 탭이 읽기 제한(WD-28) 상태인가 — 한 번만 계산해 본문·툴바·좌측 패널이 같은 판정을 쓴다.
+  // 제한 상태에선 그래프가 없어 이름 검색·타입 묶기·타입 필터가 눌러도 아무 효과가 없는 죽은 컨트롤이 되고,
+  // 색색의 타입 목록이 "표시할 수 없습니다" 옆에 있으면 필터만 바꾸면 보일 것처럼 읽힌다(디자인 검토 M-2) — 숨긴다.
+  // 온톨로지 선택기는 제한에서 벗어나는 유일한 출구라 유지한다. 스키마 탭은 판정 대상이 아니다.
+  const graphRestricted = tab === 'instance' && isGraphReadRestricted(graphError);
 
   // 온톨로지를 바꾸면 이전 선택/편집 상태가 새 컨텍스트에 잘못 남지 않도록 초기화한다.
   // useEffect 대신 렌더 중 이전 값 비교(React 권장 패턴)로 처리한다 — setState-in-effect의
@@ -426,7 +431,7 @@ export default function OntologyPage() {
     );
     if (gate) return gate;
     // 제한은 오류보다 먼저 본다 — 같은 isError 이지만 사용자에게는 다른 상태다(재시도로 풀리지 않는다).
-    if (isGraphReadRestricted(graphError)) return <GraphReadRestricted />;
+    if (graphRestricted) return <GraphReadRestricted />;
     if (isGraphError) {
       return <GraphError message="그래프를 불러오지 못했습니다." onRetry={() => refetchGraph()} />;
     }
@@ -457,8 +462,9 @@ export default function OntologyPage() {
         {/* (리뷰 MIN-5) 편집 모드에서는 숨긴다 — ModelOutline이 TypeFilterPanel과 달리 collapsed prop을
             받지 않아, 편집 모드에서 이 버튼을 누르면 aria-pressed만 바뀌고 화면은 그대로였다(무력한 컨트롤).
             (#414) sm(640px) 미만에서는 TypeFilterPanel 자체가 collapsed 상태와 무관하게 항상 숨으므로
-            이 토글도 함께 숨긴다 — 안 그러면 눌러도 아무 효과가 없는 죽은 컨트롤이 된다. */}
-        {!showEditor && (
+            이 토글도 함께 숨긴다 — 안 그러면 눌러도 아무 효과가 없는 죽은 컨트롤이 된다.
+            (WD-28) 읽기 제한 상태에서도 타입 필터 패널이 없으므로 같은 이유로 숨긴다. */}
+        {!showEditor && !graphRestricted && (
           <Button
             variant="ghost"
             size="icon"
@@ -528,8 +534,9 @@ export default function OntologyPage() {
           {/* 404 실패는 saveState를 'error'로 만들지만 재시도 대상이 아니다(대상이 이미 삭제됨) —
               canRetry로 그 경우만 걸러 dead 버튼을 그리지 않는다(Task 4 리뷰 I-2). */}
           <SaveStatusChip state={saveState} onRetry={canRetry ? retry : undefined} />
-          {/* search-first: 검색을 캔버스 위 별도 줄이 아닌 툴바로 승격(인스턴스 탭에서만 의미 있음). */}
-          {tab === 'instance' && (
+          {/* search-first: 검색을 캔버스 위 별도 줄이 아닌 툴바로 승격(인스턴스 탭에서만 의미 있음).
+              읽기 제한(WD-28) 상태에선 검색·묶기할 그래프가 없으므로 숨긴다. */}
+          {tab === 'instance' && !graphRestricted && (
             <>
               <SearchInput placeholder="이름 검색" value={search} onChange={setSearch} className="w-64" />
               {/* 타입 묶기 토글 — 타입별 compound 번들로 접어 밀집을 줄인다. */}
@@ -574,7 +581,8 @@ export default function OntologyPage() {
             addEntityTypeButtonRef={addEntityTypeButtonRef}
             onDirtyChange={makeModelDirtyReporter('outline')}
           />
-        ) : (
+        ) : graphRestricted ? null : (
+          // 읽기 제한(WD-28) 상태에선 거를 그래프가 없으므로 타입 필터를 그리지 않는다(위 graphRestricted 주석).
           <TypeFilterPanel
             entities={filterEntities}
             graph={graph}

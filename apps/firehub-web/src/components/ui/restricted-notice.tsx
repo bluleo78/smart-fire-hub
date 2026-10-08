@@ -22,7 +22,8 @@ export function RestrictedNotice({ message, className, 'data-testid': testId }: 
       data-testid={testId}
     >
       <Lock className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-      <span>{message}</span>
+      {/* break-keep: 한국어 안내문이 어절 중간("포함되/어")에서 잘리지 않게 한다 — CJK 에만 작용해 라틴 긴 토큰은 기존대로 줄바꿈된다. */}
+      <span className="break-keep">{message}</span>
     </p>
   );
 }
