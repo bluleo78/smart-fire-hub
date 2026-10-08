@@ -1,13 +1,16 @@
 package com.smartfirehub.ontology.service;
 
 import com.smartfirehub.audit.service.AuditLogService;
+import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.exception.ExternalServiceException;
 import com.smartfirehub.global.security.DelegationHeaders;
 import com.smartfirehub.ontology.OntologyRules;
 import com.smartfirehub.ontology.dto.CreateOntologyRequest;
+import com.smartfirehub.ontology.dto.GraphAccessResponse;
 import com.smartfirehub.ontology.dto.GraphResponse;
 import com.smartfirehub.ontology.dto.OntologyResponse;
 import com.smartfirehub.ontology.dto.OntologySummary;
+import com.smartfirehub.ontology.graphread.GraphReadGate;
 import com.smartfirehub.ontology.repository.OntologyRepository;
 import com.smartfirehub.user.repository.UserRepository;
 import java.time.Duration;
@@ -15,10 +18,12 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientException;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 
 // 온톨로지 스키마는 api DB 단일 소유(OntologyRepository), 전체 그래프(/graph)는 ai-agent(Neo4j) 프록시.
 // B-2a 소스 플립: 과거 getOntology 프록시를 DB 읽기로 교체했다(getGraph 는 프록시 유지).
@@ -35,13 +40,16 @@ public class OntologyService {
   private final OntologyRepository ontologyRepository;
   private final AuditLogService auditLogService;
   private final UserRepository userRepository;
+  // WD-28 지식그래프 읽기 게이트 — 출처 데이터셋을 전부 볼 수 있어야 그래프를 내준다.
+  private final GraphReadGate graphReadGate;
 
   public OntologyService(
       @Value("${agent.url}") String agentUrl,
       @Value("${agent.internal-token}") String internalToken,
       OntologyRepository ontologyRepository,
       AuditLogService auditLogService,
-      UserRepository userRepository) {
+      UserRepository userRepository,
+      GraphReadGate graphReadGate) {
     this.webClient =
         WebClient.builder()
             .baseUrl(agentUrl)
@@ -59,6 +67,7 @@ public class OntologyService {
     this.ontologyRepository = ontologyRepository;
     this.auditLogService = auditLogService;
     this.userRepository = userRepository;
+    this.graphReadGate = graphReadGate;
   }
 
   // id 스코프 조회.
@@ -333,6 +342,12 @@ public class OntologyService {
     if (!ontologyRepository.existsById(ontologyId)) {
       throw new IllegalArgumentException("존재하지 않는 온톨로지입니다: " + ontologyId);
     }
+    // WD-28 읽기 게이트 — 존재 확인 **뒤에** 둔다. 없는 온톨로지는 출처도 없어 게이트가 true 를 주므로,
+    // 순서가 바뀌면 "없음(400)"이 "읽기 가능"으로 새어 나간다. 막히면 ai-agent 를 부르지 않는다.
+    // ai-agent 도 같은 판정을 다시 한다(이중 방어).
+    if (!graphReadGate.canRead(ontologyId)) {
+      throw graphReadRestricted();
+    }
     try {
       return webClient
           .get()
@@ -345,8 +360,32 @@ public class OntologyService {
           .retrieve()
           .bodyToMono(GraphResponse.class)
           .block(BLOCK_TIMEOUT);
+    } catch (WebClientResponseException.Forbidden e) {
+      // api 판정 통과 직후 등급이 바뀐 경합 — ai-agent 가 제한을 돌려주면 502 가 아니라 같은 403 코드로 전달해야
+      // web 이 오류 대신 제한 안내를 보여 준다. 다른 403(코드 없음)은 기존대로 장애로 취급한다.
+      if (e.getResponseBodyAsString().contains(GraphReadGate.RESTRICTED_CODE)) {
+        throw graphReadRestricted();
+      }
+      throw new ExternalServiceException("지식그래프 조회 중 ai-agent 호출 실패: " + e.getMessage(), e);
     } catch (WebClientException e) {
       throw new ExternalServiceException("지식그래프 조회 중 ai-agent 호출 실패: " + e.getMessage(), e);
     }
+  }
+
+  /**
+   * 이 온톨로지 그래프를 현재 사용자가 읽을 수 있는지(WD-28) — ai-agent 해소 함수가 X-On-Behalf-Of 로 묻는다. 없는·남의 온톨로지는
+   * getGraph 와 같은 400 이다(판정 결과로 존재 여부를 떠볼 수 없게).
+   */
+  public GraphAccessResponse getGraphAccess(long ontologyId) {
+    if (!ontologyRepository.existsById(ontologyId)) {
+      throw new IllegalArgumentException("존재하지 않는 온톨로지입니다: " + ontologyId);
+    }
+    return new GraphAccessResponse(graphReadGate.canRead(ontologyId));
+  }
+
+  /** 그래프 읽기 제한 403 — 코드·문구는 GraphReadGate 상수(스펙 원문). */
+  private static CodedApiException graphReadRestricted() {
+    return new CodedApiException(
+        HttpStatus.FORBIDDEN, GraphReadGate.RESTRICTED_CODE, GraphReadGate.RESTRICTED_MESSAGE);
   }
 }

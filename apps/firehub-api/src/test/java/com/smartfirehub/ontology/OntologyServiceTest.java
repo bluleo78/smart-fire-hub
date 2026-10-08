@@ -9,11 +9,14 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.smartfirehub.audit.service.AuditLogService;
+import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.exception.ExternalServiceException;
 import com.smartfirehub.global.security.InternalCallHeaders;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.ontology.dto.GraphAccessResponse;
 import com.smartfirehub.ontology.dto.GraphResponse;
 import com.smartfirehub.ontology.dto.OntologyResponse;
+import com.smartfirehub.ontology.graphread.GraphReadGate;
 import com.smartfirehub.ontology.repository.OntologyRepository;
 import com.smartfirehub.ontology.service.OntologyService;
 import com.smartfirehub.user.repository.UserRepository;
@@ -33,6 +36,7 @@ class OntologyServiceTest {
   private MockWebServer server;
   private OntologyService service;
   private OntologyRepository repository;
+  private GraphReadGate gate;
 
   // getGraph 테스트들이 공유하는 "내 테넌트 소유" 온톨로지 id.
   private static final long OWNED_ONTOLOGY_ID = 7L;
@@ -53,13 +57,17 @@ class OntologyServiceTest {
     // 기본값은 "존재함" — 소유권 거부를 검증하는 테스트만 자기 id로 false를 덮어쓴다
     // (Mockito 는 나중에 지정한 구체 스텁이 이긴다).
     when(repository.existsById(anyLong())).thenReturn(true);
+    gate = mock(GraphReadGate.class);
+    // 기본값은 "읽기 가능" — 제한을 검증하는 테스트만 덮어쓴다.
+    when(gate.canRead(anyLong())).thenReturn(true);
     service =
         new OntologyService(
             server.url("/").toString(),
             "test-token",
             repository,
             mock(AuditLogService.class),
-            mock(UserRepository.class));
+            mock(UserRepository.class),
+            gate);
   }
 
   @AfterEach
@@ -389,5 +397,61 @@ class OntologyServiceTest {
     service.changeStatus(1L, "archived");
 
     verify(repository).updateStatus(1L, "archived");
+  }
+
+  // WD-28: 읽기 제한이면 ai-agent 를 부르지 않고 403 코드로 막는다 — 부른 뒤 거르면 이미 읽은 것이다.
+  @Test
+  void getGraph_는_읽기_제한이면_ai_agent_를_호출하지_않고_403_코드로_막는다() {
+    when(gate.canRead(OWNED_ONTOLOGY_ID)).thenReturn(false);
+
+    assertThatThrownBy(() -> service.getGraph(OWNED_ONTOLOGY_ID))
+        .isInstanceOfSatisfying(
+            CodedApiException.class,
+            e -> {
+              assertThat(e.code()).isEqualTo("GRAPH_READ_RESTRICTED");
+              assertThat(e.getMessage()).isEqualTo("이 지식그래프에는 열람 권한이 없는 데이터가 포함되어 있어 표시할 수 없습니다.");
+            });
+    assertThat(server.getRequestCount()).isZero();
+  }
+
+  // Review Focus 3: 경합으로 ai-agent 가 제한을 돌려주면 502 가 아니라 같은 403 코드다.
+  @Test
+  void getGraph_는_ai_agent_403_제한을_403_코드로_바꾼다() {
+    server.enqueue(
+        new MockResponse()
+            .setResponseCode(403)
+            .setHeader("Content-Type", "application/json")
+            .setBody("{\"code\":\"GRAPH_READ_RESTRICTED\",\"error\":\"graph read restricted\"}"));
+
+    assertThatThrownBy(() -> service.getGraph(OWNED_ONTOLOGY_ID))
+        .isInstanceOfSatisfying(
+            CodedApiException.class, e -> assertThat(e.code()).isEqualTo("GRAPH_READ_RESTRICTED"));
+  }
+
+  // 코드 없는 403 은 제한이 아니다 — 장애(502)로 남겨 원인 추적이 되게 한다.
+  @Test
+  void getGraph_는_코드_없는_ai_agent_403_은_외부_장애로_둔다() {
+    server.enqueue(new MockResponse().setResponseCode(403).setBody("{\"error\":\"forbidden\"}"));
+
+    assertThatThrownBy(() -> service.getGraph(OWNED_ONTOLOGY_ID))
+        .isInstanceOf(ExternalServiceException.class);
+  }
+
+  // Review Focus 4: 없는 온톨로지는 출처도 없어 게이트가 true 를 준다 — 존재 확인이 먼저여야 한다.
+  @Test
+  void getGraphAccess_는_내_테넌트에_없는_온톨로지면_400_이고_판정하지_않는다() {
+    when(repository.existsById(999L)).thenReturn(false);
+
+    assertThatThrownBy(() -> service.getGraphAccess(999L))
+        .isInstanceOf(IllegalArgumentException.class);
+    verify(gate, never()).canRead(999L);
+  }
+
+  @Test
+  void getGraphAccess_는_게이트_판정을_그대로_돌려준다() {
+    when(gate.canRead(OWNED_ONTOLOGY_ID)).thenReturn(false);
+    assertThat(service.getGraphAccess(OWNED_ONTOLOGY_ID)).isEqualTo(new GraphAccessResponse(false));
+    when(gate.canRead(OWNED_ONTOLOGY_ID)).thenReturn(true);
+    assertThat(service.getGraphAccess(OWNED_ONTOLOGY_ID)).isEqualTo(new GraphAccessResponse(true));
   }
 }

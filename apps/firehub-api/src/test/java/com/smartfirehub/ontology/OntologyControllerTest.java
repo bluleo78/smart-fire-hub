@@ -57,6 +57,8 @@ class OntologyControllerTest {
   @MockitoBean private PermissionService permissionService;
   @MockitoBean private JwtTokenProvider jwtTokenProvider;
   @MockitoBean private JwtProperties jwtProperties;
+  // OntologyService 생성자 주입용(WD-28) — 판정은 GraphReadGateTest 가 실제 DB 로 검증한다.
+  @MockitoBean private com.smartfirehub.ontology.graphread.GraphReadGate graphReadGate;
 
   @BeforeEach
   void setUp() {
@@ -178,5 +180,30 @@ class OntologyControllerTest {
                             List.of()))))
         .andExpect(status().isCreated())
         .andExpect(jsonPath("$").value(7));
+  }
+
+  @Test
+  void 그래프_읽기_판정_라우트는_dataset_read_로_200() throws Exception {
+    when(permissionService.getUserPermissions(1L)).thenReturn(Set.of("dataset:read"));
+    when(ontologyRepository.existsById(5L)).thenReturn(true);
+    when(graphReadGate.canRead(5L)).thenReturn(false);
+
+    mockMvc
+        .perform(
+            get("/api/v1/ontology/5/graph-access").header("Authorization", "Bearer valid-token"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.graphReadable").value(false));
+  }
+
+  @Test
+  void 그래프_라우트는_읽기_제한이면_403_GRAPH_READ_RESTRICTED() throws Exception {
+    when(permissionService.getUserPermissions(1L)).thenReturn(Set.of("dataset:read"));
+    when(ontologyRepository.existsById(5L)).thenReturn(true);
+    when(graphReadGate.canRead(5L)).thenReturn(false);
+
+    mockMvc
+        .perform(get("/api/v1/ontology/5/graph").header("Authorization", "Bearer valid-token"))
+        .andExpect(status().isForbidden())
+        .andExpect(jsonPath("$.code").value("GRAPH_READ_RESTRICTED"));
   }
 }
