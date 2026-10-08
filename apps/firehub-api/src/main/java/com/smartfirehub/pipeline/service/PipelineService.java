@@ -9,6 +9,7 @@ import com.smartfirehub.pipeline.dto.*;
 import com.smartfirehub.pipeline.exception.PipelineInactiveException;
 import com.smartfirehub.pipeline.exception.PipelineNameConflictException;
 import com.smartfirehub.pipeline.exception.PipelineNotFoundException;
+import com.smartfirehub.pipeline.exception.UnsafeSqlException;
 import com.smartfirehub.pipeline.repository.PipelineExecutionRepository;
 import com.smartfirehub.pipeline.repository.PipelineRepository;
 import com.smartfirehub.pipeline.repository.PipelineStepRepository;
@@ -657,28 +658,46 @@ public class PipelineService {
    * 보여 주고 아니면 원문 전체를 고정 문구로 바꾼다. 저장 시점이 아니라 조회 시점에 가리는 이유: 저장본을 지우면 볼 자격이 있는 사용자(실행 주체 등)의 디버깅 정보까지
    * 사라진다.
    *
-   * <p>판정이 모호하면 가린다(과잉 은닉은 허용, 과소 은닉은 불허).
+   * <p>판정이 모호하면 가린다(과잉 은닉은 허용, 과소 은닉은 불허). 상세 화면은 실행 중 3초마다 폴링하므로, 가릴 원문이 하나도 없으면 판정 자체를 건너뛰고 스텝
+   * 판정은 요청당 스텝마다 한 번만 한다(메모).
    */
   private ExecutionDetailResponse withholdRawErrorsFromViewer(
       Long pipelineId, ExecutionDetailResponse execution) {
+    boolean anyStepText =
+        execution.stepExecutions().stream()
+            .anyMatch(se -> se.errorMessage() != null || se.log() != null);
+    if (!anyStepText && execution.errorMessage() == null) {
+      return execution;
+    }
     Clearance viewer = clearanceResolver.current();
     // 판정 근거가 없는 스텝의 원문은 실행 주체 본인과 테넌트 관리자(관리자 우회 개념 — DatasetAccessPolicy 와 같은 tenantAdmin)에게만 보인다.
     Long runAsUserId = executionRepository.findExecutedById(execution.id()).orElse(null);
     boolean undeterminedAllowed =
         viewer.tenantAdmin() || (runAsUserId != null && runAsUserId == viewer.userId());
-    // 스텝 정의는 현재 상태로 읽는다 — 출력 id 는 러너 TEMP 폴백(coalesce)이 반영된 값이다. 이름 가시성 조건은 여기서 쓰지 않는다.
+    // 스텝 정의는 현재 상태로, step_order 순으로 읽는다 — {{#N}} 은 이 순서의 N 번째 스텝이다(러너 resolveStepReferences 와 같은
+    // 해석).
+    // 출력 id 는 러너 TEMP 폴백(coalesce)이 반영된 값이다. 이름 가시성 조건은 여기서 쓰지 않는다.
+    List<PipelineStepResponse> orderedSteps =
+        stepRepository.findByPipelineId(pipelineId, datasetAccessGuard.visibleCondition(viewer));
     Map<Long, PipelineStepResponse> stepsById = new HashMap<>();
-    for (PipelineStepResponse s :
-        stepRepository.findByPipelineId(pipelineId, datasetAccessGuard.visibleCondition(viewer))) {
+    for (PipelineStepResponse s : orderedSteps) {
       stepsById.put(s.id(), s);
     }
-    boolean anyStepHidden = false;
+    // stepId → 원문 공개 여부(요청당 한 번만 판정).
+    Map<Long, Boolean> verdicts = new HashMap<>();
+    java.util.function.Function<Long, Boolean> canSee =
+        stepId ->
+            verdicts.computeIfAbsent(
+                stepId,
+                id ->
+                    canSeeRawStepText(
+                        viewer, stepsById.get(id), orderedSteps, undeterminedAllowed));
+
     List<StepExecutionResponse> steps = new java.util.ArrayList<>();
     for (StepExecutionResponse se : execution.stepExecutions()) {
-      boolean hidden = !canSeeRawStepText(viewer, stepsById.get(se.stepId()), undeterminedAllowed);
-      anyStepHidden |= hidden;
+      boolean hasText = se.errorMessage() != null || se.log() != null;
       steps.add(
-          hidden && (se.errorMessage() != null || se.log() != null)
+          hasText && !canSee.apply(se.stepId())
               ? new StepExecutionResponse(
                   se.id(),
                   se.stepId(),
@@ -691,14 +710,16 @@ public class PipelineService {
                   se.completedAt())
               : se);
     }
-    // 실행 단위 오류(스텝 밖 최상위 예외)는 어느 스텝에서 왔는지 알 수 없으므로, 파이프라인의 스텝 중 하나라도 조회자가 못 보면 가린다.
-    for (PipelineStepResponse s : stepsById.values()) {
-      anyStepHidden |= !canSeeRawStepText(viewer, s, undeterminedAllowed);
+    // 실행 단위 오류(스텝 밖 최상위 예외)는 어느 스텝에서 왔는지 알 수 없으므로, 이 실행의 스텝과 현재 파이프라인 스텝 중 하나라도 조회자가 못 보면 가린다.
+    String executionError = execution.errorMessage();
+    if (executionError != null) {
+      boolean anyHidden =
+          execution.stepExecutions().stream().anyMatch(se -> !canSee.apply(se.stepId()))
+              || orderedSteps.stream().anyMatch(s -> !canSee.apply(s.id()));
+      if (anyHidden) {
+        executionError = WITHHELD_STEP_ERROR_MESSAGE;
+      }
     }
-    String executionError =
-        anyStepHidden && execution.errorMessage() != null
-            ? WITHHELD_STEP_ERROR_MESSAGE
-            : execution.errorMessage();
     return new ExecutionDetailResponse(
         execution.id(),
         execution.pipelineId(),
@@ -713,27 +734,33 @@ public class PipelineService {
   }
 
   /**
-   * 조회자가 이 스텝의 원문 오류·로그를 볼 수 있는가 — 스텝이 다루는 데이터셋(출력·명시 입력·SQL 참조 테이블)을 전부 VIEW 할 수 있어야 한다.
+   * 조회자가 이 스텝의 원문 오류·로그를 볼 수 있는가 — 스텝이 다루는 데이터셋(출력·명시 입력·SQL 참조 테이블·{@code {{#N}}} 이 가리키는 스텝 출력)을
+   * 전부 VIEW 할 수 있어야 한다.
    *
    * <ul>
    *   <li>출력: 러너 TEMP 는 실행 시 입력 최대 등급으로 오르므로(판단 사항 5) 출력 VIEW 가 입력 가시성을 대부분 대신한다.
-   *   <li>SQL: 저장 판정과 같은 문자열({@code {{#N}}} 더미 치환)·같은 모드로 조회자 기준 판정 — DML 쓰기 대상과 출력 없는 스텝을 덮는다. 스텝
-   *       참조 더미는 판정에서 빠지지만, 참조된 TEMP 의 등급은 이 스텝의 출력 등급에 이미 반영된다.
+   *   <li>SQL: 저장 판정과 같은 문자열({@code {{#N}}} 더미 치환)·같은 모드로 조회자 기준 판정 — DML 쓰기 대상과 출력 없는 스텝을 덮는다. 저장
+   *       모드는 {@code step_ref_N} 더미를 판정에서 빼므로, {@code {{#N}}} 은 따로 러너와 같은 방식(step_order 의 N 번째 스텝의
+   *       해석된 출력)으로 풀어 그 출력을 VIEW 판정한다 — 출력 없는 DML 스텝({@code UPDATE {{#1}} …})이나 첫 실행 probe 실패(이 스텝
+   *       TEMP 가 아직 없음)도 참조 스텝의 TEMP 등급으로 가려진다. 풀 수 없는 참조(범위 밖·출력 아직 없음)는 근거 없음으로 다룬다.
    *   <li>판정 근거가 없는 스텝 — 출력도 SQL 도 없는 스텝(출력 미지정 PYTHON 등. 명시 입력은 PYTHON 이 실제로 읽는 범위를 보장하지 않아 근거로 치지
-   *       않는다), 파싱할 수 없는 SQL, 현재 정의에 없는 스텝 — 은 {@code undeterminedAllowed}(실행 주체 본인·테넌트 관리자)일 때만
-   *       보인다. 그 외 조회자에게는 가린다(fail-closed). 근거가 있는 스텝은 이 허용을 쓰지 않는다 — 관리자 우회는 VIEW 판정 안에서 이미 반영된다.
+   *       않는다), 파싱할 수 없는 SQL, 풀 수 없는 스텝 참조, 현재 정의에 없는 스텝 — 은 {@code undeterminedAllowed}(실행 주체
+   *       본인·테넌트 관리자)일 때만 보인다. 그 외 조회자에게는 가린다(fail-closed). 근거가 있는 스텝은 이 허용을 쓰지 않는다 — 관리자 우회는 VIEW
+   *       판정 안에서 이미 반영된다. 명시적인 VIEW 거부는 근거 없음보다 우선한다(실행 주체라도 지금 못 보는 데이터셋이 있으면 가린다).
    * </ul>
    */
   private boolean canSeeRawStepText(
-      Clearance viewer, PipelineStepResponse step, boolean undeterminedAllowed) {
+      Clearance viewer,
+      PipelineStepResponse step,
+      List<PipelineStepResponse> orderedSteps,
+      boolean undeterminedAllowed) {
     if (step == null) {
       return undeterminedAllowed;
     }
     boolean judged = false;
+    boolean undetermined = false;
     if (step.outputDatasetId() != null) {
-      if (!datasetAccessGuard
-          .check(viewer, step.outputDatasetId(), DatasetAction.VIEW, null)
-          .allowed()) {
+      if (!canView(viewer, step.outputDatasetId())) {
         return false;
       }
       judged = true;
@@ -743,7 +770,21 @@ public class PipelineService {
         return false;
       }
     }
-    if ("SQL".equals(step.scriptType())) {
+    if ("SQL".equals(step.scriptType()) && step.scriptContent() != null) {
+      // {{#N}} — step_order 의 N 번째 스텝(1-based)의 해석된 출력(러너 resolveStepReferences 와 같은 해석).
+      Matcher ref = STEP_REFERENCE_PATTERN.matcher(step.scriptContent());
+      while (ref.find()) {
+        int index = Integer.parseInt(ref.group(1)) - 1;
+        Long refOutput =
+            index >= 0 && index < orderedSteps.size()
+                ? orderedSteps.get(index).outputDatasetId()
+                : null;
+        if (refOutput == null) {
+          undetermined = true;
+        } else if (!canView(viewer, refOutput)) {
+          return false;
+        }
+      }
       try {
         if (!datasetAccessGuard
             .checkSql(
@@ -753,12 +794,21 @@ public class PipelineService {
             .allowed()) {
           return false;
         }
-      } catch (RuntimeException e) {
+        judged = true;
+      } catch (UnsafeSqlException e) {
         // 파싱 불가·모호 표기 — 판정할 수 없으므로 근거 없는 스텝과 같이 다룬다.
-        return undeterminedAllowed;
+        undetermined = true;
+      } catch (RuntimeException e) {
+        // 파싱 외 예외(DB 오류 등)는 판정 실패다 — 근거 없음으로 둔갑시키지 않고 모두에게 가린다(누출 금지).
+        log.warn("실행 기록 원문 공개 판정 실패 — 원문을 가린다: stepId={}", step.id(), e);
+        return false;
       }
-      judged = true;
     }
-    return judged || undeterminedAllowed;
+    return (judged && !undetermined) || undeterminedAllowed;
+  }
+
+  /** 조회자 기준 데이터셋 VIEW 여부(없는 데이터셋도 거부). */
+  private boolean canView(Clearance viewer, long datasetId) {
+    return datasetAccessGuard.check(viewer, datasetId, DatasetAction.VIEW, null).allowed();
   }
 }

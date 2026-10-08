@@ -2,6 +2,9 @@ package com.smartfirehub.securitylevel;
 
 import static com.smartfirehub.jooq.Tables.DATASET;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.jooq.impl.DSL.field;
+import static org.jooq.impl.DSL.name;
+import static org.jooq.impl.DSL.table;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -166,12 +169,12 @@ class PipelineExecutionErrorExposureTest extends IntegrationTestBase {
         editor, new PipelineStepRequest("step", null, "SQL", sql, null, null, null, "REPLACE"));
   }
 
-  private long pipelineOf(long editor, PipelineStepRequest step) {
+  private long pipelineOf(long editor, PipelineStepRequest... steps) {
     long id =
         pipelineService
             .createPipeline(
                 new CreatePipelineRequest(
-                    "EE " + m + " " + System.nanoTime(), "WD-27 TC", List.of(step)),
+                    "EE " + m + " " + System.nanoTime(), "WD-27 TC", List.of(steps)),
                 editor)
             .id();
     pipelines.add(id);
@@ -231,6 +234,99 @@ class PipelineExecutionErrorExposureTest extends IntegrationTestBase {
         .isEqualTo(PipelineService.WITHHELD_STEP_ERROR_MESSAGE);
   }
 
+  /**
+   * Fix round 2 I-1: {@code {{#1}}} 만 참조하고 출력이 없는 DML 스텝. 저장 모드 SQL 판정은 스텝 참조 더미를 빼므로, 참조 스텝(스텝1)의
+   * TEMP(민감으로 상향됨)를 따로 VIEW 판정해야 행 값이 새지 않는다.
+   */
+  @Test
+  void dmlOnStepReferenceWithoutOutput_rawErrorWithheldFromViewerWhoCannotSeeReferencedTemp()
+      throws Exception {
+    long runner = userAt("민감");
+    long p =
+        pipelineOf(
+            runner,
+            firstStepReadingSecret(),
+            dependentSqlStep("UPDATE {{#1}} SET v = ((v)::int + 1)::text"));
+    long exec = executionService.executePipeline(p, runner);
+    assertThat(waitForEnd(exec)).isEqualTo("FAILED");
+    String url = "/api/v1/pipelines/" + p + "/executions/" + exec;
+    assertThat(stepErrorByName(url, userAt("공개"), "s2"))
+        .isEqualTo(PipelineService.WITHHELD_STEP_ERROR_MESSAGE);
+    // 양성 대조: 민감 자격 조회자(실행 주체 아님)에게는 행 값이 실린 원문.
+    assertThat(stepErrorByName(url, userAt("민감"), "s2")).contains("SECRETVALUE42");
+  }
+
+  /**
+   * Fix round 2 I-1 변형: 첫 실행에서 {@code {{#1}}} 을 읽는 SELECT 스텝이 컬럼 probe 단계에서 실패하면 그 스텝의 TEMP 가 아직 없어
+   * 출력 판정이 없다 — 참조 스텝 TEMP 판정이 가려야 한다(숨김 컬럼명·ptmp 이름 노출 차단).
+   */
+  @Test
+  void probeFailureOnFirstRun_rawErrorWithheldFromViewerWhoCannotSeeReferencedTemp()
+      throws Exception {
+    long runner = userAt("민감");
+    long p =
+        pipelineOf(
+            runner,
+            firstStepReadingSecret(),
+            dependentSqlStep("SELECT nonexistent_col FROM {{#1}}"));
+    long exec = executionService.executePipeline(p, runner);
+    assertThat(waitForEnd(exec)).isEqualTo("FAILED");
+    String url = "/api/v1/pipelines/" + p + "/executions/" + exec;
+    assertThat(stepErrorByName(url, userAt("공개"), "s2"))
+        .isEqualTo(PipelineService.WITHHELD_STEP_ERROR_MESSAGE);
+    assertThat(stepErrorByName(url, userAt("민감"), "s2")).contains("nonexistent_col");
+  }
+
+  /**
+   * Fix round 2 M-1: 실행 단위 오류(스텝 밖 최상위 예외 — 러너 경로로 결정적으로 만들기 어려워 저장값을 픽스처로 넣는다)도 조회자가 못 보는 스텝이 있으면
+   * 가려진다.
+   */
+  @Test
+  void executionLevelError_withheldWhenViewerCannotSeeAStep() throws Exception {
+    long runner = userAt("민감");
+    long p = pipeline(runner, "SELECT v::int AS n FROM " + DataSchema.qualify(secTable));
+    long exec = executionService.executePipeline(p, runner);
+    assertThat(waitForEnd(exec)).isEqualTo("FAILED");
+    inTenantFixture(
+        () ->
+            dsl.execute(
+                "UPDATE pipeline_execution SET error_message = ? WHERE id = ?",
+                "EXEC-LEVEL SECRETVALUE42",
+                exec));
+    String url = "/api/v1/pipelines/" + p + "/executions/" + exec;
+    assertThat(getJson(url, userAt("공개")).get("errorMessage").asText())
+        .isEqualTo(PipelineService.WITHHELD_STEP_ERROR_MESSAGE);
+    assertThat(getJson(url, userAt("민감")).get("errorMessage").asText())
+        .isEqualTo("EXEC-LEVEL SECRETVALUE42");
+  }
+
+  /** 스텝1: 숨김(민감) 테이블을 읽어 러너 TEMP 로 적재 — TEMP 는 민감으로 오른다. */
+  private PipelineStepRequest firstStepReadingSecret() {
+    return new PipelineStepRequest(
+        "s1",
+        null,
+        "SQL",
+        "SELECT v FROM " + DataSchema.qualify(secTable),
+        null,
+        null,
+        null,
+        "REPLACE");
+  }
+
+  /** 스텝2: 스텝1 에 의존하고 출력 데이터셋을 지정하지 않은 SQL 스텝. */
+  private PipelineStepRequest dependentSqlStep(String sql) {
+    return new PipelineStepRequest("s2", null, "SQL", sql, null, null, List.of("s1"), "APPEND");
+  }
+
+  private String stepErrorByName(String url, long viewer, String stepName) throws Exception {
+    for (JsonNode se : getJson(url, viewer).get("stepExecutions")) {
+      if (stepName.equals(se.get("stepName").asText())) {
+        return se.get("errorMessage").asText();
+      }
+    }
+    throw new AssertionError("스텝 실행 없음: " + stepName);
+  }
+
   private String stepErrorFor(String url, long viewer) throws Exception {
     return getJson(url, viewer).get("stepExecutions").get(0).get("errorMessage").asText();
   }
@@ -238,16 +334,10 @@ class PipelineExecutionErrorExposureTest extends IntegrationTestBase {
   private long adminRoleId() {
     return inTenantFixture(
         () ->
-            dsl.select(org.jooq.impl.DSL.field(org.jooq.impl.DSL.name("role", "id"), Long.class))
-                .from(org.jooq.impl.DSL.table(org.jooq.impl.DSL.name("role")))
-                .where(
-                    org.jooq
-                        .impl
-                        .DSL
-                        .field(org.jooq.impl.DSL.name("role", "name"), String.class)
-                        .eq("ADMIN"))
-                .fetchSingle(
-                    org.jooq.impl.DSL.field(org.jooq.impl.DSL.name("role", "id"), Long.class)));
+            dsl.select(field(name("role", "id"), Long.class))
+                .from(table(name("role")))
+                .where(field(name("role", "name"), String.class).eq("ADMIN"))
+                .fetchSingle(field(name("role", "id"), Long.class)));
   }
 
   /**
