@@ -13,6 +13,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { FormField } from '@/components/ui/form-field';
 import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
+import { useAuth } from '@/hooks/useAuth';
 import { isForbidden, serverMessage } from '@/lib/http-errors';
 import type { CreateTenantFormData } from '@/lib/validations/tenant';
 import { createTenantSchema } from '@/lib/validations/tenant';
@@ -28,6 +29,9 @@ import type { PlatformUserResponse } from '@/types/platform';
 export default function TenantCreatePage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  // 라우트 게이트가 이미 platform:tenant:create 를 요구하지만, 픽커의 "새 계정 만들기"(WD-46)는 권한 판정을 명시적으로 내려준다 —
+  // 게이트 구성이 바뀌어도 권한 없는 사람에게 생성 버튼이 보이지 않게.
+  const { hasPermission } = useAuth();
   // `owner` 는 **표시 전용** 상태다(픽커가 이름·이메일을 그리는 데 필요). 검증에 쓰이는 값은
   // 폼 필드 `ownerUserId` 이고, 그 판정자는 zod 하나다.
   const [owner, setOwner] = useState<PlatformUserResponse | null>(null);
@@ -128,7 +132,12 @@ export default function TenantCreatePage() {
             <Separator />
 
             {/* 오류 문구의 출처는 zod 하나다 — 별도 ownerError state 는 두지 않는다. */}
-            <OwnerPicker value={owner} onChange={handleOwnerChange} error={errors.ownerUserId?.message} />
+            <OwnerPicker
+              value={owner}
+              onChange={handleOwnerChange}
+              error={errors.ownerUserId?.message}
+              canCreateAccount={hasPermission('platform:tenant:create')}
+            />
 
             {serverFieldError && <p className="text-sm text-destructive">{serverFieldError}</p>}
           </CardContent>

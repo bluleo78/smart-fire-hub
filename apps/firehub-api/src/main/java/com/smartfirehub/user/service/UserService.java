@@ -49,6 +49,7 @@ public class UserService {
   private final MembershipRepository membershipRepository;
   private final AuditLogService auditLogService;
   private final RefreshTokenRepository refreshTokenRepository;
+  private final TemporaryAccountCreator temporaryAccountCreator;
 
   /**
    * 사용자 목록 조회. 각 사용자의 역할도 함께 내려준다(#586).
@@ -258,15 +259,12 @@ public class UserService {
         Map.of("userId", String.valueOf(userId)));
   }
 
-  /** 계정이 없을 때 임시 비밀번호(변경 강제 표식 on)로 새 계정을 만든다. username = 소문자 이메일. */
+  /**
+   * 계정이 없을 때 임시 비밀번호(변경 강제 표식 on)로 새 계정을 만든다. username = 소문자 이메일. 규칙은 운영자 계정 생성(WD-46)과 공유하는 {@link
+   * TemporaryAccountCreator} 에 있다.
+   */
   private UserResponse createWithTemporaryPassword(String email, AddMemberRequest request) {
-    // username 은 없는데 다른 계정이 이 이메일을 쓰고 있으면 같은 사람의 두 번째 계정이 된다 — 거부.
-    // 대소문자 무시: 과거 계정의 이메일이 대소문자 섞여 저장돼 있어도 같은 사람으로 본다(리뷰 지적 4).
-    if (userRepository.existsByEmailIgnoreCase(email)) {
-      throw new EmailAlreadyExistsException("이미 사용 중인 이메일입니다.");
-    }
-    return userRepository.saveWithTemporaryPassword(
-        email, email, passwordEncoder.encode(request.temporaryPassword()), request.name().trim());
+    return temporaryAccountCreator.create(email, request.name(), request.temporaryPassword());
   }
 
   /**

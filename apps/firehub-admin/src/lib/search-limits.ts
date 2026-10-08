@@ -1,5 +1,5 @@
 /**
- * 계정·사용자 검색(AccountListPage, OwnerPicker)이 서버와 맞추는 한도. 서버 하한(PlatformUserService)이 바뀌면
+ * Owner 검색(OwnerPicker)이 서버와 맞추는 한도. 계정 화면(AccountListPage)은 WD-47 부터 페이지 목록이라 이 한도를 쓰지 않는다. 서버 하한(PlatformUserService)이 바뀌면
  * 여기 한 곳만 고친다.
  */
 

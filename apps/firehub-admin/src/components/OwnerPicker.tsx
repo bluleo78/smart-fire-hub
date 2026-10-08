@@ -1,8 +1,9 @@
 import { useQuery } from '@tanstack/react-query';
-import { X } from 'lucide-react';
-import { useId, useState } from 'react';
+import { Plus, X } from 'lucide-react';
+import { useId, useRef, useState } from 'react';
 
 import { usersApi } from '@/api/users';
+import { CreateAccountDialog } from '@/components/CreateAccountDialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -18,7 +19,15 @@ interface OwnerPickerProps {
    * 이 컴포넌트는 검증하지 않는다 — 검증 권위는 zod 하나다.
    */
   error?: string;
+  /**
+   * 검색 결과가 없을 때 "새 계정 만들기" 를 보일지(WD-46). 호출자가 `platform:tenant:create` 보유 여부를 내려준다 —
+   * 이 컴포넌트는 권한을 직접 읽지 않는다(순수 표현 컴포넌트 유지).
+   */
+  canCreateAccount?: boolean;
 }
+
+/** 검색어가 이메일 형태인지 — 그렇다면 새 계정 이메일로 미리 채운다. 엄밀한 검증은 다이얼로그의 zod 가 한다. */
+const EMAIL_LIKE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /**
  * 초기 Owner 선택기. **순수 표현 컴포넌트**다 — react-hook-form 을 import 하지 않고
@@ -31,13 +40,19 @@ interface OwnerPickerProps {
  * 서버는 결과를 20건으로 자른다 — "더 보기"를 만들지 않는다. 못 찾으면 검색어를 좁히는 것이
  * 이 화면의 의도된 사용법이다.
  */
-export function OwnerPicker({ value, onChange, error }: OwnerPickerProps) {
+export function OwnerPicker({ value, onChange, error, canCreateAccount = false }: OwnerPickerProps) {
   const inputId = useId();
   const labelId = useId();
   const listId = useId();
   const [keyword, setKeyword] = useState('');
   const debounced = useDebounceValue(keyword, 300);
   const enabled = debounced.trim().length >= MIN_QUERY_LENGTH && value === null;
+  const [createOpen, setCreateOpen] = useState(false);
+  // 새 계정을 Owner 로 고르면 "새 계정 만들기" 행이 사라진다 — 다이얼로그가 닫힐 때 포커스를 선택 해제 버튼으로 돌린다.
+  const clearButtonRef = useRef<HTMLButtonElement | null>(null);
+  // prefill 은 실제로 검색한 값(디바운스·trim) 기준이다 — 입력 중인 글자가 아니라 "결과 없음" 을 만든 검색어.
+  const searched = debounced.trim();
+  const prefillEmail = EMAIL_LIKE.test(searched) ? searched : undefined;
 
   const {
     data: results,
@@ -68,6 +83,25 @@ export function OwnerPicker({ value, onChange, error }: OwnerPickerProps) {
     </p>
   );
 
+  /**
+   * 새 계정 다이얼로그. 두 분기(선택 전·후) 어디서든 같은 인스턴스가 그려져야 한다 — 완료 시 onChange 로 선택 분기로
+   * 바뀌는데, 선택 전 분기에만 두면 결과 화면이 닫히기 전에 언마운트된다.
+   */
+  const createDialog = canCreateAccount && (
+    <CreateAccountDialog
+      open={createOpen}
+      onOpenChange={setCreateOpen}
+      initialEmail={prefillEmail}
+      finishLabel="Owner로 선택하고 닫기"
+      restoreFocusRef={clearButtonRef}
+      onCreated={(account) => {
+        // 만든 계정을 Owner 검색 결과와 같은 3필드 모양으로 넘긴다(PlatformUserResponse).
+        onChange({ id: account.id, email: account.email, name: account.name });
+        setKeyword('');
+      }}
+    />
+  );
+
   if (value) {
     return (
       <div className="space-y-1.5">
@@ -87,6 +121,7 @@ export function OwnerPicker({ value, onChange, error }: OwnerPickerProps) {
             {value.name} · {value.email ?? '이메일 없음'}
           </span>
           <Button
+            ref={clearButtonRef}
             type="button"
             variant="ghost"
             size="icon-sm"
@@ -101,6 +136,7 @@ export function OwnerPicker({ value, onChange, error }: OwnerPickerProps) {
           </Button>
         </div>
         {help}
+        {createDialog}
       </div>
     );
   }
@@ -149,9 +185,28 @@ export function OwnerPicker({ value, onChange, error }: OwnerPickerProps) {
         </ul>
       )}
 
+      {/*
+        결과 없음 → 새 계정 만들기(WD-46). listbox 안에 두지 않는다 — option 이 아닌 버튼이 listbox 자식이면 잘못된 ARIA 다.
+        결과 없음 문구 바로 아래 같은 테두리 묶음처럼 보이게 둔다.
+      */}
+      {canCreateAccount && enabled && !isFetching && !isError && results && results.length === 0 && (
+        <button
+          type="button"
+          className="w-full rounded-md border border-dashed px-3 py-2 text-left text-sm text-primary hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring focus-visible:outline-none"
+          onClick={() => setCreateOpen(true)}
+        >
+          <Plus className="mr-1 inline h-4 w-4 align-[-2px]" aria-hidden="true" />
+          {prefillEmail ? `"${prefillEmail}"으로 새 계정 만들기` : '새 계정 만들기'}
+        </button>
+      )}
+
       {error && <p className="text-sm text-destructive">{error}</p>}
       {help}
       {capNotice}
+      {canCreateAccount && (
+        <p className="text-sm text-muted-foreground">찾는 사용자가 없으면 검색 후 새 계정을 만들 수 있습니다.</p>
+      )}
+      {createDialog}
     </div>
   );
 }

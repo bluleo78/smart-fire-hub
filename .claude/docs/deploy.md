@@ -242,6 +242,12 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
   - 테스트 테넌트를 정지·활성화한 뒤 감사 로그에 "테넌트 정지/활성화" 가 이름·slug 와 함께 보이는지.
   - admin 테넌트 목록·상세의 생성일이 KST 로 맞게 보이는지.
 
+### 운영자 계정 생성 · 계정 전체 목록 (WD-46·WD-47, 마이그레이션 없음)
+
+- **api + admin 은 반드시 같은 배포 창에 동시 배포한다.** `GET /api/platform/accounts` 응답이 배열에서 `PageResponse` 로 바뀌었다 — 한쪽만 나가면 admin "계정" 화면이 깨진다. admin 은 `./scripts/deploy.sh admin` 으로 명시 배포. web·ai-agent 는 영향 없음.
+- 새 `POST /api/platform/accounts`(권한 `platform:tenant:create`)로 만든 계정은 멤버십이 없고 첫 로그인 시 비밀번호 변경이 강제된다. 감사 `ACCOUNT_CREATE`(tenant NULL).
+- 배포 후 확인: admin "계정" 첫 진입에 전체 목록·페이지·소속 열이 보이는지 → 테넌트 생성에서 없는 이메일 검색 → "새 계정 만들기" → Owner 자동 선택 → 생성. 확인용 계정·테넌트는 정리한다.
+
 ### V133·V134 데이터셋 보안 등급 S1+S2 + 후속 수정 (계획 2026-10-07·2026-10-08 · 배포일은 배포 시점에 갱신)
 
 - **api + web 동시 배포 필수.** S1(ID·목록 통제)과 S2(SQL 경로 통제)는 한 묶음으로만 배포한다 — 둘을 나누면 SQL 경로(애드혹·/query·차트·파이프라인)로 우회된다. web 만 배포하면 새 API 404.

@@ -77,8 +77,18 @@ export function createAccount(overrides: Partial<PlatformAccountResponse> = {}):
     name: '김소방',
     active: true,
     operator: false,
+    membershipCount: 1,
+    createdAt: '2026-03-04T00:21:14Z',
     ...overrides,
   };
+}
+
+/** 계정 목록 페이지 응답(WD-47). 기본은 한 페이지짜리 — 여러 쪽을 흉내 내려면 overrides 로 totalElements·totalPages 를 준다. */
+export function createAccountPage(
+  content: PlatformAccountResponse[],
+  overrides: Partial<PageResponse<PlatformAccountResponse>> = {},
+): PageResponse<PlatformAccountResponse> {
+  return { content, page: 0, size: 20, totalElements: content.length, totalPages: content.length > 0 ? 1 : 0, ...overrides };
 }
 
 /** 플랫폼 감사 로그 한 행(WD-4). 기본값은 운영자의 전역 계정 비활성화 조치. */
