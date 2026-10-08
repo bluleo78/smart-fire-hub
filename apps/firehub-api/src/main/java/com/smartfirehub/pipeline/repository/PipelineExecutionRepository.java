@@ -286,7 +286,8 @@ public class PipelineExecutionRepository {
             exec.get(PE_STARTED_AT),
             exec.get(PE_COMPLETED_AT),
             exec.get(PE_CREATED_AT),
-            exec.get(PE_ERROR_MESSAGE)));
+            exec.get(PE_ERROR_MESSAGE),
+            false));
   }
 
   /**
@@ -327,6 +328,7 @@ public class PipelineExecutionRepository {
                     r.get(PSE_LOG),
                     r.get(PSE_ERROR_MESSAGE),
                     r.get(PSE_STARTED_AT),
-                    r.get(PSE_COMPLETED_AT)));
+                    r.get(PSE_COMPLETED_AT),
+                    false));
   }
 }

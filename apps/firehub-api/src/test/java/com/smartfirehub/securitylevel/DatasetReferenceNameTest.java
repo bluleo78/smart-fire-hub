@@ -391,6 +391,44 @@ class DatasetReferenceNameTest extends IntegrationTestBase {
     assertThat(addVisible.getStatus()).as(addVisible.getContentAsString()).isEqualTo(204);
   }
 
+  /**
+   * WD-21 생성 경로(POST): 신규 파이프라인은 "기존 입력"이 없으므로 모든 입력 id 가 새로 지정한 것이다 — 숨김 입력과 없는 입력은 같은 403(존재
+   * 은닉)이고, 거부된 생성은 파이프라인을 남기지 않는다. 양성 대조로 볼 수 있는 입력만이면 생성된다.
+   */
+  @Test
+  void pipelineCreate_hiddenInput_rejectedSameAsMissing() throws Exception {
+    MockHttpServletResponse hidden =
+        send(
+            post("/api/v1/pipelines"),
+            lowToken,
+            pipelineBody("cin", List.of(sqlStepWithInputs("s1", List.of(visibleId, hidden2Id)))));
+    MockHttpServletResponse missing =
+        send(
+            post("/api/v1/pipelines"),
+            lowToken,
+            pipelineBody("cin", List.of(sqlStepWithInputs("s1", List.of(visibleId, MISSING_ID)))));
+    assertThat(hidden.getStatus()).as(hidden.getContentAsString()).isEqualTo(403);
+    assertThat(json(hidden).get("code").asText()).isEqualTo("DATASET_SQL_ACCESS_DENIED");
+    assertSameRejection(missing, hidden);
+    // 거부된 생성은 파이프라인 행을 남기지 않는다(같은 이름으로 조회해 0건).
+    long leftover =
+        TenantRlsTestSupport.runInTenantTransaction(
+            fixtureTransactionTemplate,
+            DEFAULT_TEST_TENANT_ID,
+            () ->
+                dsl.fetchOne("select count(*) from pipeline where name = ?", "RN " + m + " cin")
+                    .get(0, Long.class));
+    assertThat(leftover).isZero();
+
+    MockHttpServletResponse ok =
+        send(
+            post("/api/v1/pipelines"),
+            lowToken,
+            pipelineBody("cin-ok", List.of(sqlStepWithInputs("s1", List.of(visibleId)))));
+    assertThat(ok.getStatus()).as(ok.getContentAsString()).isEqualTo(201);
+    pipelines.add(json(ok).get("id").asLong());
+  }
+
   // ---------------------------------------------------------------- saved query (C1·C2)
 
   private Map<String, Object> queryBody(String name, Long datasetId, Boolean shared) {

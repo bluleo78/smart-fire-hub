@@ -17,4 +17,9 @@ public record ExecutionDetailResponse(
      * 스텝 실행 레코드가 하나도 생성되기 전에 발생한 최상위 예외 메시지(#517). 스텝 레벨 오류가 아닌 파이프라인 실행 자체의 실패 원인(토폴로지 정렬 실패, DB
      * 오류 등)을 담으며, 정상 완료되었거나 스텝 레벨에서 실패한 경우 null이다.
      */
-    String errorMessage) {}
+    String errorMessage,
+    /**
+     * 실행 단위 errorMessage 가 원문 대신 가림 문구로 바뀌었는가(WD-27) — 스텝 단위 {@link
+     * StepExecutionResponse#errorMasked} 와 같은 용도.
+     */
+    boolean errorMasked) {}

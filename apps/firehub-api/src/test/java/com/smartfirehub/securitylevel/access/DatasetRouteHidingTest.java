@@ -154,6 +154,86 @@ class DatasetRouteHidingTest extends IntegrationTestBase {
     assertThat(failures).as("숨김 데이터셋에 404 가 아닌 라우트").isEmpty();
   }
 
+  /**
+   * 숨김 id 와 없는 id 가 <b>권한 조합과 무관하게</b> 같은 응답을 받는지 모든 데이터셋 ID 라우트에서 비교한다.
+   *
+   * <p>왜 필요한가: 위 열거 TC 는 "모든 권한 + 숨김 = 404" 만 본다. 권한 검사(PermissionInterceptor)·서비스 내부 판정 순서가 어긋나면
+   * 권한이 부족한 사용자에게 숨김=403 / 없음=404 처럼 갈려 존재가 드러난다(API 가져오기 경로에서 의심된 형태). 그래서 모든 권한·권한 없음·읽기 전용 세
+   * 사용자로 같은 라우트를 숨김/없음 두 id 로 호출해 상태 코드와 (id 를 정규화한) 본문 메시지가 같은지 고정한다. 권한 없는 사용자가 <b>보이는</b> 데이터셋에
+   * 403 을 받는 것은 정상이므로 여기서는 비교하지 않는다.
+   */
+  @Test
+  void everyDatasetIdRoute_hiddenAndMissingIndistinguishable_acrossPermissionSets()
+      throws Exception {
+    long missing = 9_000_000_002L;
+    long noPermRoleId = fx.createRole("rh_none_" + System.nanoTime(), fx.levelId("공개"));
+    long readRoleId =
+        fx.createRole(
+            "rh_read_" + System.nanoTime(), fx.levelId("공개"), "dataset:read", "data:read");
+    long noPermUser = fx.createUser("rh_noperm");
+    long readUser = fx.createUser("rh_read");
+    try {
+      fx.removeUserRole(noPermUser);
+      fx.assignRole(noPermUser, noPermRoleId);
+      fx.removeUserRole(readUser);
+      fx.assignRole(readUser, readRoleId);
+      List<String> failures = new ArrayList<>();
+      int compared = 0;
+      for (String[] who :
+          List.of(
+              new String[] {"all", token},
+              new String[] {"none", tokenFor(noPermUser)},
+              new String[] {"read", tokenFor(readUser)})) {
+        for (Object[] route : datasetIdRoutes()) {
+          RequestMethod m = (RequestMethod) route[0];
+          String pattern = (String) route[1];
+          boolean multipartRoute = (Boolean) route[2];
+          String[] h = call(who[1], m, pattern, multipartRoute, hiddenId);
+          String[] n = call(who[1], m, pattern, multipartRoute, missing);
+          compared++;
+          // 메시지 안의 id 만 다르고 나머지는 바이트 단위로 같아야 한다.
+          String hNorm = h[1].replace(String.valueOf(hiddenId), "<id>");
+          String nNorm = n[1].replace(String.valueOf(missing), "<id>");
+          if (!h[0].equals(n[0]) || !hNorm.equals(nNorm)) {
+            failures.add(
+                who[0] + " " + m + " " + pattern + " -> 숨김 " + h[0] + " [" + hNorm + "] / 없음 "
+                    + n[0] + " [" + nNorm + "]");
+          }
+        }
+      }
+      assertThat(compared).as("비교한 (사용자 × 라우트) 수").isGreaterThan(120);
+      assertThat(failures).as("숨김과 없음이 갈리는 라우트").isEmpty();
+    } finally {
+      fx.deleteUser(noPermUser);
+      fx.deleteUser(readUser);
+      fx.deleteRole(noPermRoleId);
+      fx.deleteRole(readRoleId);
+    }
+  }
+
+  /**
+   * API 가져오기(`POST /datasets/{id}/api-import`) 존재 오라클 회귀 가드 — 파이프라인 작성 권한을 가진 사용자가 실제 형태의 본문으로 보내도
+   * 숨김 id 와 없는 id 가 같은 404 본문을 받는다(서비스의 파이프라인 출력 판정 403 까지 내려가지 않음).
+   */
+  @Test
+  void apiImport_hiddenAndMissing_sameNotFound() throws Exception {
+    long missing = 9_000_000_003L;
+    String body =
+        "{\"pipelineName\":\"rh_api\",\"apiConfig\":{\"url\":\"https://example.com\",\"method\":\"GET\"},"
+            + "\"loadStrategy\":\"REPLACE\",\"executeImmediately\":false}";
+    JsonNode hidden = postJson("/api/v1/datasets/" + hiddenId + "/api-import", body);
+    JsonNode none = postJson("/api/v1/datasets/" + missing + "/api-import", body);
+    assertThat(hidden.get("status").asInt()).isEqualTo(404);
+    assertThat(none.get("status").asInt()).isEqualTo(404);
+    assertThat(hidden.get("message").asText()).isEqualTo("Dataset not found: " + hiddenId);
+    assertThat(none.get("message").asText()).isEqualTo("Dataset not found: " + missing);
+    // 바이트 동일 비교: 가변 필드(timestamp)를 빼고 id 만 정규화하면 본문 전체가 같아야 한다.
+    ((com.fasterxml.jackson.databind.node.ObjectNode) hidden).remove("timestamp");
+    ((com.fasterxml.jackson.databind.node.ObjectNode) none).remove("timestamp");
+    assertThat(hidden.toString().replace(String.valueOf(hiddenId), "<id>"))
+        .isEqualTo(none.toString().replace(String.valueOf(missing), "<id>"));
+  }
+
   @Test
   void hiddenAndMissing_haveIndistinguishableBodies() throws Exception {
     long missing = 9_000_000_001L;
@@ -182,6 +262,80 @@ class DatasetRouteHidingTest extends IntegrationTestBase {
     int status =
         mockMvc.perform(get("/api/v1/datasets/" + hiddenId)).andReturn().getResponse().getStatus();
     assertThat(status).isEqualTo(401);
+  }
+
+  /** 핸들러 매핑에서 {id}/{datasetId} 를 가진 데이터셋 라우트를 (메서드, 패턴, multipart 여부) 로 열거한다. */
+  private List<Object[]> datasetIdRoutes() {
+    List<Object[]> routes = new ArrayList<>();
+    for (var entry : handlerMapping.getHandlerMethods().entrySet()) {
+      var info = entry.getKey();
+      if (info.getPathPatternsCondition() == null) {
+        continue;
+      }
+      for (String pattern : info.getPathPatternsCondition().getPatternValues()) {
+        if (!pattern.startsWith("/api/v1/datasets/")
+            || !(pattern.contains("{id}") || pattern.contains("{datasetId}"))) {
+          continue;
+        }
+        boolean multipartRoute =
+            info.getConsumesCondition().getConsumableMediaTypes().stream()
+                .anyMatch(mt -> mt.isCompatibleWith(MediaType.MULTIPART_FORM_DATA));
+        Set<RequestMethod> methods = info.getMethodsCondition().getMethods();
+        for (RequestMethod m : methods.isEmpty() ? Set.of(RequestMethod.GET) : methods) {
+          routes.add(new Object[] {m, pattern, multipartRoute});
+        }
+      }
+    }
+    return routes;
+  }
+
+  /** 라우트를 주어진 데이터셋 id 로 호출하고 {상태 코드, 본문 message(없으면 원문)} 를 돌려준다. */
+  private String[] call(
+      String auth, RequestMethod m, String pattern, boolean multipartRoute, long id)
+      throws Exception {
+    String url =
+        pattern
+            .replace("{id}", String.valueOf(id))
+            .replace("{datasetId}", String.valueOf(id))
+            .replaceAll("\\{[^}]+}", "1");
+    var builder =
+        multipartRoute
+            ? multipart(HttpMethod.valueOf(m.name()), url).header("Authorization", auth)
+            : request(HttpMethod.valueOf(m.name()), url)
+                .header("Authorization", auth)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{}");
+    var response = mockMvc.perform(builder).andReturn().getResponse();
+    String raw = response.getContentAsString();
+    String message = raw;
+    try {
+      JsonNode n = objectMapper.readTree(raw);
+      if (n != null && n.has("message")) {
+        message =
+            n.get("message").asText() + (n.has("code") ? " code=" + n.get("code").asText() : "");
+      }
+    } catch (Exception ignored) {
+      // JSON 이 아니면 원문 그대로 비교한다.
+    }
+    return new String[] {String.valueOf(response.getStatus()), message};
+  }
+
+  private String tokenFor(long uid) {
+    return "Bearer " + jwt.generateAccessToken(uid, "rh" + uid, DEFAULT_TEST_TENANT_ID);
+  }
+
+  private JsonNode postJson(String url, String json) throws Exception {
+    String res =
+        mockMvc
+            .perform(
+                request(HttpMethod.POST, url)
+                    .header("Authorization", token)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(json))
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+    return objectMapper.readTree(res);
   }
 
   private JsonNode body(String url) throws Exception {

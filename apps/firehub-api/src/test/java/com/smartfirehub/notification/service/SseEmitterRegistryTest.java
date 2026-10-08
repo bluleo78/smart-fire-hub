@@ -94,8 +94,8 @@ class SseEmitterRegistryTest {
 
   @Test
   void broadcastToTenant_registeredUsers_noException() {
-    // 실제 전송 대상 판정(테넌트·수신자 필터)은 DatasetChangeNotificationScopeTest·ApiConnectionStatusScopeTest 가 기록
-    // 연결로 검증한다.
+    // 실제 전송 대상 판정(테넌트·수신자 필터)은 DatasetChangeNotificationScopeTest(데이터셋 변경
+    // datasetChanged_*, API 연결 상태 apiConnectionStatus_*)가 기록 연결로 검증한다.
     registry.register(1L, 1L);
     registry.register(2L, 1L);
     registry.broadcastToTenant(1L, sampleEvent(), userId -> true);

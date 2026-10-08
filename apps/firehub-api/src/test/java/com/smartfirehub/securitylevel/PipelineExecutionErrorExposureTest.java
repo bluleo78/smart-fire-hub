@@ -294,10 +294,14 @@ class PipelineExecutionErrorExposureTest extends IntegrationTestBase {
                 "EXEC-LEVEL SECRETVALUE42",
                 exec));
     String url = "/api/v1/pipelines/" + p + "/executions/" + exec;
-    assertThat(getJson(url, userAt("공개")).get("errorMessage").asText())
-        .isEqualTo(PipelineService.WITHHELD_STEP_ERROR_MESSAGE);
-    assertThat(getJson(url, userAt("민감")).get("errorMessage").asText())
-        .isEqualTo("EXEC-LEVEL SECRETVALUE42");
+    JsonNode low = getJson(url, userAt("공개"));
+    assertThat(low.get("errorMessage").asText())
+        .isEqualTo(PipelineService.WITHHELD_EXECUTION_ERROR_MESSAGE);
+    // 웹이 안내 문구를 숨기는 근거 플래그 — 가렸을 때만 true(문자열 비교 대신).
+    assertThat(low.get("errorMasked").asBoolean()).isTrue();
+    JsonNode cleared = getJson(url, userAt("민감"));
+    assertThat(cleared.get("errorMessage").asText()).isEqualTo("EXEC-LEVEL SECRETVALUE42");
+    assertThat(cleared.get("errorMasked").asBoolean()).isFalse();
   }
 
   /** 스텝1: 숨김(민감) 테이블을 읽어 러너 TEMP 로 적재 — TEMP 는 민감으로 오른다. */
@@ -353,10 +357,12 @@ class PipelineExecutionErrorExposureTest extends IntegrationTestBase {
         .doesNotContain(secTable)
         .doesNotContain("SECRETVALUE42");
     assertThat(lowStep.get("log").isNull()).isTrue();
+    assertThat(lowStep.get("errorMasked").asBoolean()).isTrue();
 
-    String raw =
-        getJson(url, userAt("민감")).get("stepExecutions").get(0).get("errorMessage").asText();
+    JsonNode clearedStep = getJson(url, userAt("민감")).get("stepExecutions").get(0);
+    String raw = clearedStep.get("errorMessage").asText();
     assertThat(raw).contains("SECRETVALUE42").contains(secTable);
+    assertThat(clearedStep.get("errorMasked").asBoolean()).isFalse();
   }
 
   private String waitForEnd(Long executionId) throws InterruptedException {

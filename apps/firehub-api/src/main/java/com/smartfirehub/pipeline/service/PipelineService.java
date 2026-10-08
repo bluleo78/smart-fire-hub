@@ -71,6 +71,10 @@ public class PipelineService {
   public static final String WITHHELD_STEP_ERROR_MESSAGE =
       "이 스텝의 상세 오류는 관련 데이터에 접근할 수 있는 사용자에게만 표시됩니다.";
 
+  /** 실행 단위 오류(스텝 밖 최상위 예외)용 가림 문구 — 특정 스텝 오류가 아니므로 "이 스텝의" 대신 "이 실행의" 로 둔다(WD-27). */
+  public static final String WITHHELD_EXECUTION_ERROR_MESSAGE =
+      "이 실행의 상세 오류는 관련 데이터에 접근할 수 있는 사용자에게만 표시됩니다.";
+
   @Transactional
   public PipelineDetailResponse createPipeline(CreatePipelineRequest request, Long userId) {
     // 이름 중복 검사 — 동일 이름의 파이프라인이 존재하면 409 반환 (#181)
@@ -707,17 +711,20 @@ public class PipelineService {
                   null,
                   se.errorMessage() != null ? WITHHELD_STEP_ERROR_MESSAGE : null,
                   se.startedAt(),
-                  se.completedAt())
+                  se.completedAt(),
+                  se.errorMessage() != null)
               : se);
     }
     // 실행 단위 오류(스텝 밖 최상위 예외)는 어느 스텝에서 왔는지 알 수 없으므로, 이 실행의 스텝과 현재 파이프라인 스텝 중 하나라도 조회자가 못 보면 가린다.
     String executionError = execution.errorMessage();
+    boolean executionErrorMasked = false;
     if (executionError != null) {
       boolean anyHidden =
           execution.stepExecutions().stream().anyMatch(se -> !canSee.apply(se.stepId()))
               || orderedSteps.stream().anyMatch(s -> !canSee.apply(s.id()));
       if (anyHidden) {
-        executionError = WITHHELD_STEP_ERROR_MESSAGE;
+        executionError = WITHHELD_EXECUTION_ERROR_MESSAGE;
+        executionErrorMasked = true;
       }
     }
     return new ExecutionDetailResponse(
@@ -730,7 +737,8 @@ public class PipelineService {
         execution.startedAt(),
         execution.completedAt(),
         execution.createdAt(),
-        executionError);
+        executionError,
+        executionErrorMasked);
   }
 
   /**
