@@ -69,11 +69,11 @@ public class PipelineService {
    * 통째로 바꾼다. 판정 근거가 없어 가린 경우(숨김 데이터셋이 실제로 없을 수도 있음)에도 사실과 어긋나지 않도록 중립 문구로 둔다.
    */
   public static final String WITHHELD_STEP_ERROR_MESSAGE =
-      "이 스텝의 상세 오류는 관련 데이터에 접근할 수 있는 사용자에게만 표시됩니다.";
+      "이 스텝의 상세 오류는 관련 데이터를 볼 수 있는 사용자에게만 표시됩니다.";
 
   /** 실행 단위 오류(스텝 밖 최상위 예외)용 가림 문구 — 특정 스텝 오류가 아니므로 "이 스텝의" 대신 "이 실행의" 로 둔다(WD-27). */
   public static final String WITHHELD_EXECUTION_ERROR_MESSAGE =
-      "이 실행의 상세 오류는 관련 데이터에 접근할 수 있는 사용자에게만 표시됩니다.";
+      "이 실행의 상세 오류는 관련 데이터를 볼 수 있는 사용자에게만 표시됩니다.";
 
   @Transactional
   public PipelineDetailResponse createPipeline(CreatePipelineRequest request, Long userId) {

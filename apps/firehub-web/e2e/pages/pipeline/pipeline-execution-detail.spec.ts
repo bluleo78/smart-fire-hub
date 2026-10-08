@@ -8,10 +8,35 @@
  * - 로그가 있는 스텝의 로그 표시
  */
 
+import type { Page } from '@playwright/test';
+
 import { createExecutionDetail, createStepExecution } from '../../factories/pipeline.factory';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { setupPipelineEditorMocks } from '../../fixtures/pipeline.fixture';
+
+/** 가림 표시 스크린샷 경로 — `apps/firehub-web/test-results/tc/<suite>/` 규약(디자인 검토 증빙). */
+const MASKED_SCREENSHOT_DIR = 'test-results/tc/security-level-execution-masked';
+
+/**
+ * 가림 문구 블록이 제한 상태 스타일인지 단언한다(디자인 검토 필수 항목).
+ * 원문 오류처럼 보이면 안 되므로: <pre> 아님, destructive 클래스 없음, 오류 섹션 안에 role=alert 0건, Lock 아이콘 동반.
+ */
+async function expectMutedMaskedBlock(page: Page, maskedText: string) {
+  const textNode = page.getByText(maskedText, { exact: true });
+  await expect(textNode).toBeVisible();
+  const block = textNode.locator('xpath=..');
+  expect(await block.evaluate((el) => el.tagName)).toBe('P');
+  await expect(block).toHaveClass(/bg-muted/);
+  await expect(block).toHaveClass(/text-muted-foreground/);
+  await expect(block).not.toHaveClass(/destructive/);
+  await expect(block.locator('svg.lucide-lock')).toHaveCount(1);
+  // 오류 섹션(오류 상세 라벨을 담은 div) 안에 원문용 <pre>·오류색·경보 역할이 없어야 한다.
+  const section = block.locator('xpath=..');
+  await expect(section.locator('pre')).toHaveCount(0);
+  await expect(section.locator('[class*="destructive"]')).toHaveCount(0);
+  await expect(section.locator('[role="alert"]')).toHaveCount(0);
+}
 
 test.describe('파이프라인 실행 상세 — ExecutionStepPanel', () => {
   test('실행 탭에서 실행 클릭 시 ExecutionSummary가 표시된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
@@ -237,6 +262,8 @@ test.describe('파이프라인 실행 상세 — ExecutionStepPanel', () => {
 
     // 기술적 원문은 그대로 표시되어야 한다 (개발자 디버깅용, 숨기지 않음)
     await expect(page.getByText(technicalErrorMsg)).toBeVisible();
+    // 회귀 대조: 가리지 않은 원문은 기존 빨간 <pre> 그대로다(가림 블록 스타일과 구분).
+    await expect(page.locator('pre', { hasText: technicalErrorMsg })).toHaveClass(/text-destructive/);
   });
 
   test('가려진 스텝 오류(errorMasked)에는 "아래 오류 정보를 참고" 안내가 빠지고 실패 사실과 가림 문구만 표시된다 (WD-27)', async ({ authenticatedPage: page }) => {
@@ -244,7 +271,7 @@ test.describe('파이프라인 실행 상세 — ExecutionStepPanel', () => {
     // 아래에 참고할 원문이 없으므로 "아래 오류 정보를 참고하여 스텝 설정을 확인하세요" 안내를 숨겨야 한다(문자열 비교가 아니라 플래그로 판단).
     await setupPipelineEditorMocks(page, 1);
 
-    const maskedMsg = '이 스텝의 상세 오류는 관련 데이터에 접근할 수 있는 사용자에게만 표시됩니다.';
+    const maskedMsg = '이 스텝의 상세 오류는 관련 데이터를 볼 수 있는 사용자에게만 표시됩니다.';
     const detail = createExecutionDetail({
       id: 1,
       pipelineId: 1,
@@ -275,12 +302,15 @@ test.describe('파이프라인 실행 상세 — ExecutionStepPanel', () => {
     await expect(page.getByText('스텝 실행 중 오류가 발생했습니다.', { exact: true })).toBeVisible();
     // 참고 안내는 가렸을 때 렌더링되지 않는다(양성 대조는 위 '사용자 친화적 안내' 테스트).
     await expect(page.getByText(/아래 오류 정보를 참고하여/)).toHaveCount(0);
+    // 가림 문구는 빨간 원문 블록이 아니라 muted + Lock 제한 상태 블록이다(디자인 검토).
+    await expectMutedMaskedBlock(page, maskedMsg);
+    await page.screenshot({ path: `${MASKED_SCREENSHOT_DIR}/step-masked.png` });
   });
 
   test('가려진 실행 단위 오류(errorMasked)에는 "아래 오류 정보를 참고하세요" 가 빠지고 실패 사실만 안내한다 (WD-27)', async ({ authenticatedPage: page }) => {
     await setupPipelineEditorMocks(page, 1);
 
-    const maskedExecMsg = '이 실행의 상세 오류는 관련 데이터에 접근할 수 있는 사용자에게만 표시됩니다.';
+    const maskedExecMsg = '이 실행의 상세 오류는 관련 데이터를 볼 수 있는 사용자에게만 표시됩니다.';
     const detail = createExecutionDetail({
       id: 1,
       pipelineId: 1,
@@ -301,6 +331,8 @@ test.describe('파이프라인 실행 상세 — ExecutionStepPanel', () => {
     await expect(page.getByText(maskedExecMsg)).toBeVisible();
     await expect(page.getByText('스텝이 실행되기 전 파이프라인 실행 자체가 실패했습니다.', { exact: true })).toBeVisible();
     await expect(page.getByText(/아래 오류 정보를 참고하세요/)).toHaveCount(0);
+    await expectMutedMaskedBlock(page, maskedExecMsg);
+    await page.screenshot({ path: `${MASKED_SCREENSHOT_DIR}/execution-masked.png` });
   });
 
   test('스텝 실행 레코드가 없는 실행에서 DAG 노드를 클릭하면 "실행되지 않음" 빈 상태와 execution 레벨 오류가 표시된다 (이슈 #517)', async ({ authenticatedPage: page }) => {
@@ -330,6 +362,8 @@ test.describe('파이프라인 실행 상세 — ExecutionStepPanel', () => {
     await expect(page.getByText('실행 정보')).toBeVisible({ timeout: 5000 });
     await expect(page.getByText(/완료 0\/0/)).toBeVisible();
     await expect(page.getByText(execErrorMsg)).toBeVisible();
+    // 회귀 대조: 가리지 않은 실행 단위 원문은 빨간 <pre> 그대로다.
+    await expect(page.locator('pre', { hasText: execErrorMsg })).toHaveClass(/text-destructive/);
 
     // DAG 노드(스텝) 클릭 — 해당 스텝의 실행 레코드는 없다(stepExecutions: [])
     const stepNode = page.locator('.react-flow__node').first();

@@ -139,7 +139,8 @@ export interface Chart {
   name: string;
   description: string | null;
   savedQueryId: number;
-  savedQueryName: string;
+  /** 조회자가 원본 데이터셋을 볼 수 없어 denied 인 차트 데이터 응답(`ChartDataResponse.chart`)에서는 null — 원본 메타 비노출(보안 등급) */
+  savedQueryName: string | null;
   chartType: ChartType;
   config: ChartConfig;
   isShared: boolean;

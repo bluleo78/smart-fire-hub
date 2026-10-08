@@ -1,4 +1,4 @@
-import { X } from 'lucide-react';
+import { Lock, X } from 'lucide-react';
 
 import { DurationText } from '@/components/pipeline/DurationText';
 import { Badge } from '@/components/ui/badge';
@@ -12,6 +12,30 @@ interface ExecutionStepPanelProps {
   execution: ExecutionDetailResponse;
   selectedStepName: string | null;
   onClose: () => void;
+}
+
+/**
+ * 실행 기록 오류 표시 — 원문이 가려졌으면(WD-27, 서버 errorMasked) 제한 상태 블록, 아니면 빨간 원문 블록.
+ *
+ * 왜 나누는가: 빨간 고정폭 <pre> 는 "기계가 뱉은 오류 원문"의 시각 언어라, 권한 안내를 거기에 넣으면 또 하나의 시스템 오류처럼 읽혀
+ * 재실행·문의로 이어진다(디자인 검토). 실패 신호는 상태 배지와 안내 문장이 이미 담당하므로, 가림 문구는 다른 제한 상태(task-3 "열람 권한
+ * 없음")와 같은 muted + Lock 으로 보여 준다 — 오류색·role=alert·재시도 없음.
+ */
+function ExecutionErrorBody({ errorMessage, errorMasked }: { errorMessage: string; errorMasked?: boolean }) {
+  if (errorMasked) {
+    return (
+      <p className="flex items-start gap-1.5 rounded bg-muted p-3 text-xs text-muted-foreground">
+        <Lock className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+        <span>{errorMessage}</span>
+      </p>
+    );
+  }
+  // 개발자 디버깅용 기술적 원문 — 최대 높이 제한 + 스크롤
+  return (
+    <pre className="bg-destructive/10 text-destructive p-3 rounded text-xs overflow-auto max-h-[200px] whitespace-pre-wrap break-words">
+      {errorMessage}
+    </pre>
+  );
 }
 
 function StepDetails({
@@ -64,10 +88,7 @@ function StepDetails({
                   ? '스텝 실행 중 오류가 발생했습니다.'
                   : '스텝 실행 중 오류가 발생했습니다. 아래 오류 정보를 참고하여 스텝 설정을 확인하세요.'}
               </p>
-              {/* 개발자 디버깅용 기술적 원문 — 최대 높이 제한 + 스크롤 */}
-              <pre className="bg-destructive/10 text-destructive p-3 rounded text-xs overflow-auto max-h-[200px] whitespace-pre-wrap break-words">
-                {step.errorMessage}
-              </pre>
+              <ExecutionErrorBody errorMessage={step.errorMessage} errorMasked={step.errorMasked} />
             </div>
           </>
         )}
@@ -108,9 +129,7 @@ function ExecutionErrorMessage({ errorMessage, errorMasked }: { errorMessage: st
             ? '스텝이 실행되기 전 파이프라인 실행 자체가 실패했습니다.'
             : '스텝이 실행되기 전 파이프라인 실행 자체가 실패했습니다. 아래 오류 정보를 참고하세요.'}
         </p>
-        <pre className="bg-destructive/10 text-destructive p-3 rounded text-xs overflow-auto max-h-[200px] whitespace-pre-wrap break-words">
-          {errorMessage}
-        </pre>
+        <ExecutionErrorBody errorMessage={errorMessage} errorMasked={errorMasked} />
       </div>
     </>
   );
