@@ -64,11 +64,11 @@ public class PipelineService {
   private final ClearanceResolver clearanceResolver;
 
   /**
-   * 조회자가 볼 수 없는 데이터셋이 관련된 스텝의 오류를 대신하는 고정 문구(WD-27). 원문(PG 오류)에는 숨김 테이블명·행 값이 실릴 수 있어 일부만 지우지 않고
-   * 통째로 바꾼다.
+   * 원문 오류를 볼 수 없는 조회자에게 스텝·실행 오류 대신 보여 주는 고정 문구(WD-27). 원문(PG 오류)에는 숨김 테이블명·행 값이 실릴 수 있어 일부만 지우지 않고
+   * 통째로 바꾼다. 판정 근거가 없어 가린 경우(숨김 데이터셋이 실제로 없을 수도 있음)에도 사실과 어긋나지 않도록 중립 문구로 둔다.
    */
   public static final String WITHHELD_STEP_ERROR_MESSAGE =
-      "열람 권한이 없는 데이터셋이 관련된 스텝이라 상세 오류를 표시하지 않습니다.";
+      "이 스텝의 상세 오류는 관련 데이터에 접근할 수 있는 사용자에게만 표시됩니다.";
 
   @Transactional
   public PipelineDetailResponse createPipeline(CreatePipelineRequest request, Long userId) {
@@ -662,6 +662,10 @@ public class PipelineService {
   private ExecutionDetailResponse withholdRawErrorsFromViewer(
       Long pipelineId, ExecutionDetailResponse execution) {
     Clearance viewer = clearanceResolver.current();
+    // 판정 근거가 없는 스텝의 원문은 실행 주체 본인과 테넌트 관리자(관리자 우회 개념 — DatasetAccessPolicy 와 같은 tenantAdmin)에게만 보인다.
+    Long runAsUserId = executionRepository.findExecutedById(execution.id()).orElse(null);
+    boolean undeterminedAllowed =
+        viewer.tenantAdmin() || (runAsUserId != null && runAsUserId == viewer.userId());
     // 스텝 정의는 현재 상태로 읽는다 — 출력 id 는 러너 TEMP 폴백(coalesce)이 반영된 값이다. 이름 가시성 조건은 여기서 쓰지 않는다.
     Map<Long, PipelineStepResponse> stepsById = new HashMap<>();
     for (PipelineStepResponse s :
@@ -671,7 +675,7 @@ public class PipelineService {
     boolean anyStepHidden = false;
     List<StepExecutionResponse> steps = new java.util.ArrayList<>();
     for (StepExecutionResponse se : execution.stepExecutions()) {
-      boolean hidden = !canSeeRawStepText(viewer, stepsById.get(se.stepId()));
+      boolean hidden = !canSeeRawStepText(viewer, stepsById.get(se.stepId()), undeterminedAllowed);
       anyStepHidden |= hidden;
       steps.add(
           hidden && (se.errorMessage() != null || se.log() != null)
@@ -689,7 +693,7 @@ public class PipelineService {
     }
     // 실행 단위 오류(스텝 밖 최상위 예외)는 어느 스텝에서 왔는지 알 수 없으므로, 파이프라인의 스텝 중 하나라도 조회자가 못 보면 가린다.
     for (PipelineStepResponse s : stepsById.values()) {
-      anyStepHidden |= !canSeeRawStepText(viewer, s);
+      anyStepHidden |= !canSeeRawStepText(viewer, s, undeterminedAllowed);
     }
     String executionError =
         anyStepHidden && execution.errorMessage() != null
@@ -715,12 +719,15 @@ public class PipelineService {
    *   <li>출력: 러너 TEMP 는 실행 시 입력 최대 등급으로 오르므로(판단 사항 5) 출력 VIEW 가 입력 가시성을 대부분 대신한다.
    *   <li>SQL: 저장 판정과 같은 문자열({@code {{#N}}} 더미 치환)·같은 모드로 조회자 기준 판정 — DML 쓰기 대상과 출력 없는 스텝을 덮는다. 스텝
    *       참조 더미는 판정에서 빠지지만, 참조된 TEMP 의 등급은 이 스텝의 출력 등급에 이미 반영된다.
-   *   <li>출력도 SQL 도 없는 스텝(출력 미지정 PYTHON 등)은 무엇을 읽었는지 알 수 없어 가린다.
+   *   <li>판정 근거가 없는 스텝 — 출력도 SQL 도 없는 스텝(출력 미지정 PYTHON 등. 명시 입력은 PYTHON 이 실제로 읽는 범위를 보장하지 않아 근거로 치지
+   *       않는다), 파싱할 수 없는 SQL, 현재 정의에 없는 스텝 — 은 {@code undeterminedAllowed}(실행 주체 본인·테넌트 관리자)일 때만
+   *       보인다. 그 외 조회자에게는 가린다(fail-closed). 근거가 있는 스텝은 이 허용을 쓰지 않는다 — 관리자 우회는 VIEW 판정 안에서 이미 반영된다.
    * </ul>
    */
-  private boolean canSeeRawStepText(Clearance viewer, PipelineStepResponse step) {
+  private boolean canSeeRawStepText(
+      Clearance viewer, PipelineStepResponse step, boolean undeterminedAllowed) {
     if (step == null) {
-      return false;
+      return undeterminedAllowed;
     }
     boolean judged = false;
     if (step.outputDatasetId() != null) {
@@ -747,11 +754,11 @@ public class PipelineService {
           return false;
         }
       } catch (RuntimeException e) {
-        // 파싱 불가·모호 표기 — 판정할 수 없으므로 가린다.
-        return false;
+        // 파싱 불가·모호 표기 — 판정할 수 없으므로 근거 없는 스텝과 같이 다룬다.
+        return undeterminedAllowed;
       }
       judged = true;
     }
-    return judged;
+    return judged || undeterminedAllowed;
   }
 }

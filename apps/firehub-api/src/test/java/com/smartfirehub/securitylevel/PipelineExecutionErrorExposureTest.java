@@ -162,15 +162,16 @@ class PipelineExecutionErrorExposureTest extends IntegrationTestBase {
   }
 
   private long pipeline(long editor, String sql) {
+    return pipelineOf(
+        editor, new PipelineStepRequest("step", null, "SQL", sql, null, null, null, "REPLACE"));
+  }
+
+  private long pipelineOf(long editor, PipelineStepRequest step) {
     long id =
         pipelineService
             .createPipeline(
                 new CreatePipelineRequest(
-                    "EE " + m + " " + System.nanoTime(),
-                    "WD-27 TC",
-                    List.of(
-                        new PipelineStepRequest(
-                            "step", null, "SQL", sql, null, null, null, "REPLACE"))),
+                    "EE " + m + " " + System.nanoTime(), "WD-27 TC", List.of(step)),
                 editor)
             .id();
     pipelines.add(id);
@@ -200,6 +201,53 @@ class PipelineExecutionErrorExposureTest extends IntegrationTestBase {
     long exec = executionService.executePipeline(p, runner);
     assertThat(waitForEnd(exec)).isEqualTo("FAILED");
     assertWithheldForLowButRawForCleared(p, exec);
+  }
+
+  /**
+   * Fix round 1 규칙 1: 판정 근거가 없는 스텝(출력 미지정 PYTHON — 데이터셋 판정 대상이 없다)의 원문 오류는 실행 주체 본인과 테넌트 관리자(시스템
+   * ADMIN 역할)에게만 보이고, 같은 자격의 다른 조회자에게는 가려진다. 실행 주체에게 python_execute 권한이 없어 러너가 실행 전에 실패시키므로 Python
+   * 실행 환경 없이 결정적으로 실패 기록을 만든다.
+   */
+  @Test
+  void stepWithoutJudgeableDatasets_rawErrorOnlyForRunAsAndAdmin() throws Exception {
+    long runner = userAt("공개");
+    long p =
+        pipelineOf(
+            runner,
+            new PipelineStepRequest("py", null, "PYTHON", "print(1)", null, null, null, "APPEND"));
+    long exec = executionService.executePipeline(p, runner);
+    assertThat(waitForEnd(exec)).isEqualTo("FAILED");
+    String url = "/api/v1/pipelines/" + p + "/executions/" + exec;
+
+    // 실행 주체 본인 — 원문.
+    assertThat(stepErrorFor(url, runner)).contains("pipeline:python_execute");
+    // 테넌트 관리자(시스템 ADMIN 역할) — 원문.
+    long admin = fx.createUser("ee_admin");
+    users.add(admin);
+    fx.assignRole(admin, adminRoleId());
+    assertThat(stepErrorFor(url, admin)).contains("pipeline:python_execute");
+    // 같은 자격의 다른 조회자 — 고정 문구.
+    assertThat(stepErrorFor(url, userAt("공개")))
+        .isEqualTo(PipelineService.WITHHELD_STEP_ERROR_MESSAGE);
+  }
+
+  private String stepErrorFor(String url, long viewer) throws Exception {
+    return getJson(url, viewer).get("stepExecutions").get(0).get("errorMessage").asText();
+  }
+
+  private long adminRoleId() {
+    return inTenantFixture(
+        () ->
+            dsl.select(org.jooq.impl.DSL.field(org.jooq.impl.DSL.name("role", "id"), Long.class))
+                .from(org.jooq.impl.DSL.table(org.jooq.impl.DSL.name("role")))
+                .where(
+                    org.jooq
+                        .impl
+                        .DSL
+                        .field(org.jooq.impl.DSL.name("role", "name"), String.class)
+                        .eq("ADMIN"))
+                .fetchSingle(
+                    org.jooq.impl.DSL.field(org.jooq.impl.DSL.name("role", "id"), Long.class)));
   }
 
   /**

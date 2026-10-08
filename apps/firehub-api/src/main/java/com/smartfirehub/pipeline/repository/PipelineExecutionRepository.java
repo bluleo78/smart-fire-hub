@@ -289,6 +289,17 @@ public class PipelineExecutionRepository {
             exec.get(PE_ERROR_MESSAGE)));
   }
 
+  /**
+   * 실행의 실행 주체 사용자 id(수동=요청자, 트리거=트리거 생성자). 상세 응답 DTO 는 사용자 이름만 싣기 때문에, 원문 오류 노출 판정(WD-27)이 id 를 따로
+   * 읽는다.
+   */
+  public Optional<Long> findExecutedById(Long executionId) {
+    return dsl.select(PE_EXECUTED_BY)
+        .from(PIPELINE_EXECUTION)
+        .where(PE_ID.eq(executionId))
+        .fetchOptional(PE_EXECUTED_BY);
+  }
+
   public List<StepExecutionResponse> findStepExecutionsByExecutionId(Long executionId) {
     return dsl.select(
             PSE_ID,
