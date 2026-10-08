@@ -2,6 +2,7 @@ import {
   Brain,
   ChevronDown,
   ChevronRight,
+  Lock,
   MessageSquare,
   Plus,
   Settings2,
@@ -64,6 +65,11 @@ interface AiClassifyStepConfigProps {
   inputDatasetIds: number[];
   onChange: (config: AiClassifyConfig) => void;
   readOnly: boolean;
+  /**
+   * 첫 입력 데이터셋(컬럼 필터 기준)을 조회자가 볼 수 없음(보안 등급 — 편집기 데이터셋 목록 로드 후 그 목록에 없는 id).
+   * true 면 상세 조회(404)를 하지 않고 "볼 수 없어 컬럼을 표시할 수 없음"을 보인다. 저장된 inputColumns 값은 건드리지 않는다.
+   */
+  primaryInputHidden?: boolean;
 }
 
 interface CollapsibleSectionProps {
@@ -111,6 +117,7 @@ export default function AiClassifyStepConfig({
   inputDatasetIds,
   onChange,
   readOnly,
+  primaryInputHidden = false,
 }: AiClassifyStepConfigProps) {
   // 접근성: 라벨↔입력 연결용 id 접두사 (#432). 스텝마다 이 패널이 다시 렌더되므로 하드코딩 id 는 충돌한다.
   const baseId = useId();
@@ -118,7 +125,8 @@ export default function AiClassifyStepConfig({
   const batchSizeHelpId = `${baseId}-batch-size-help`;
   const onErrorId = `${baseId}-on-error`;
 
-  const primaryDatasetId = inputDatasetIds[0] ?? 0;
+  // 숨김 입력이면 상세를 조회하지 않는다(어차피 404 — "컬럼이 없습니다" 오표시와 재시도 깜빡임 방지).
+  const primaryDatasetId = primaryInputHidden ? 0 : (inputDatasetIds[0] ?? 0);
   const { data: datasetDetail, isLoading: columnsLoading } = useDataset(primaryDatasetId);
   const columns = datasetDetail?.columns ?? [];
 
@@ -303,6 +311,12 @@ export default function AiClassifyStepConfig({
       >
         {inputDatasetIds.length === 0 ? (
           <p className="text-xs text-warning">입력 데이터셋을 먼저 선택하세요</p>
+        ) : primaryInputHidden ? (
+          // 권한 부족은 오류가 아니다 — 차분한 잠금 안내(오류색·토스트 없음). 빈 상태("컬럼이 없습니다")로 보이면 사실과 다르다.
+          <p className="flex items-center gap-1 text-xs text-muted-foreground" data-testid="ai-classify-input-restricted">
+            <Lock className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            입력 데이터셋을 볼 수 없어 컬럼을 표시할 수 없습니다
+          </p>
         ) : columnsLoading ? (
           <div className="space-y-1.5">
             <Skeleton className="h-5 w-full" />

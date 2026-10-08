@@ -769,4 +769,50 @@ test.describe('파이프라인 트리거 탭', () => {
     const withoutCard = page.getByText('다음 실행 미등록 트리거').locator('..').locator('..');
     await expect(withoutCard.getByText(/다음 실행:/)).toHaveCount(0);
   });
+  /**
+   * 보안 등급(Task 3 D1, 디자인 검토 3절): 볼 수 없는 감시 대상은 이름 대신 잠금 칩("열람 권한 없음", X 없음)으로 보이고,
+   * 주기만 바꿔 저장해도 PUT config.datasetIds 에 그대로 남는다(서버는 새로 추가된 id 만 판정).
+   */
+  test('DATASET_CHANGE 트리거 편집 — 볼 수 없는 감시 대상은 잠금 칩, 주기만 바꿔 저장해도 id 유지', async ({
+    authenticatedPage: page,
+  }) => {
+    const existing = createTrigger({
+      id: 21,
+      name: '숨김 감시 트리거',
+      triggerType: 'DATASET_CHANGE',
+      config: { datasetIds: [42, 77], pollingIntervalSeconds: 60, debounceSeconds: 0 },
+    });
+    await mockApi(page, 'GET', '/api/v1/pipelines/1', createPipelineDetail({ id: 1 }));
+    await mockApi(page, 'GET', '/api/v1/pipelines/1/executions', []);
+    await mockApi(page, 'GET', '/api/v1/pipelines/1/trigger-events', []);
+    await mockApi(page, 'GET', '/api/v1/pipelines/1/triggers', [existing]);
+    // 볼 수 있는 목록에는 42 만 — 77 은 숨김
+    await mockApi(page, 'GET', '/api/v1/datasets', {
+      content: [{ id: 42, name: '화재 이력', tableName: 'fire_history' }],
+      page: 0,
+      size: 1000,
+      totalElements: 1,
+      totalPages: 1,
+    });
+    const updateCapture = await mockApi(page, 'PUT', '/api/v1/pipelines/1/triggers/21', {}, { capture: true });
+
+    await gotoTriggerTab(page);
+    await page.getByRole('button').filter({ has: page.locator('.lucide-ellipsis') }).first().click();
+    await page.getByRole('menuitem', { name: '편집' }).click();
+
+    const watch = page.getByRole('dialog').getByRole('combobox', { name: '감시 대상 데이터셋' });
+    await expect(watch).toContainText('화재 이력');
+    const lockChip = watch.getByTestId('dataset-restricted');
+    await expect(lockChip).toHaveText('열람 권한 없음');
+    await expect(lockChip.locator('[role="button"]')).toHaveCount(0);
+
+    await page.getByRole('dialog').getByLabel('폴링 주기 (초)').fill('120');
+    await page.getByRole('button', { name: '저장' }).click();
+
+    const req = await updateCapture.waitForRequest();
+    const payload = req.payload as { config: { datasetIds: number[]; pollingIntervalSeconds: number } };
+    expect(payload.config.pollingIntervalSeconds).toBe(120);
+    expect(payload.config.datasetIds).toEqual([42, 77]);
+    await expect(page.locator('[data-sonner-toast][data-type="error"]')).toHaveCount(0);
+  });
 });

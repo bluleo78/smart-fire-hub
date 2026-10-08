@@ -1,4 +1,4 @@
-import { Trash2,X } from 'lucide-react';
+import { Lock, Trash2,X } from 'lucide-react';
 import { lazy, Suspense, useId, useMemo, useRef, useState } from 'react';
 
 const ApiCallStepConfig = lazy(() => import('./ApiCallStepConfig'));
@@ -64,6 +64,11 @@ interface StepConfigPanelProps {
   dispatch: React.Dispatch<EditorAction>;
   readOnly: boolean;
   datasets: DatasetOption[];
+  /**
+   * `datasets`(조회자가 볼 수 있는 데이터셋 전체) 로드 완료 여부. 숨김 참조 판정(목록에 없는 id = 볼 수 없음)은 로드가 끝난 뒤에만 한다 —
+   * 로딩 중에 판정하면 잠금 표시가 깜빡이고, MERGE 안내가 잠깐 잘못 바뀐다.
+   */
+  datasetsLoaded: boolean;
   pipelineInfo?: PipelineInfo;
   /** 증분 처리 컨트롤(예약/취소) 호출에 필요 — 신규 파이프라인(/pipelines/new)에서는 없다 */
   pipelineId?: number;
@@ -80,6 +85,7 @@ export default function StepConfigPanel({
   dispatch,
   readOnly,
   datasets,
+  datasetsLoaded,
   pipelineInfo,
   pipelineId,
   serverSteps,
@@ -98,7 +104,17 @@ export default function StepConfigPanel({
 
   // MERGE 로드 전략의 PK 안내에 필요 — 출력 데이터셋의 컬럼 정의를 조회한다.
   // (rules-of-hooks: early return 이전 선언, step이 없으면 id 0으로 비활성 조회)
-  const { data: outputDataset, isLoading: outputDatasetLoading } = useDataset(step?.outputDatasetId ?? 0);
+  // 보안 등급: 조회자가 볼 수 없는 출력 데이터셋(서버가 이름만 null 로 주고 목록에도 없는 id). 숨김이면 상세 조회를 하지 않는다 —
+  // 어차피 404 이고, 그 결과(hasPk=false)로 "PK 지정 필요" 같은 사실과 다른 안내가 뜬다(아래 MERGE 분기에서 따로 안내).
+  const outputHidden =
+    datasetsLoaded && step?.outputDatasetId != null && !datasets.some((d) => d.id === step.outputDatasetId);
+  // AI 분류 컬럼 필터 기준(첫 입력)도 같은 규칙으로 숨김 판정
+  const primaryInputId = step?.inputDatasetIds[0];
+  const primaryInputHidden =
+    datasetsLoaded && primaryInputId != null && !datasets.some((d) => d.id === primaryInputId);
+  const { data: outputDataset, isLoading: outputDatasetLoading } = useDataset(
+    outputHidden ? 0 : (step?.outputDatasetId ?? 0),
+  );
   const pkColumns = outputDataset?.columns.filter((c) => c.isPrimaryKey) ?? [];
   const hasPk = pkColumns.length > 0;
   const pkNames = pkColumns.map((c) => c.columnName);
@@ -119,6 +135,7 @@ export default function StepConfigPanel({
   const inputDatasetsId = `${baseId}-input-datasets`;
   const outputDatasetId = `${baseId}-output-dataset`;
   const outputDatasetHelpId = `${baseId}-output-dataset-help`;
+  const outputDatasetRestrictedId = `${baseId}-output-dataset-restricted`;
   const outputDatasetErrorId = `${baseId}-output-dataset-error`;
   const loadStrategyId = `${baseId}-load-strategy`;
   const loadStrategyHelpId = `${baseId}-load-strategy-help`;
@@ -406,6 +423,7 @@ export default function StepConfigPanel({
                   inputDatasetIds={step.inputDatasetIds}
                   onChange={(config) => handleUpdateStep({ aiConfig: config })}
                   readOnly={readOnly}
+                  primaryInputHidden={primaryInputHidden}
                 />
               </Suspense>
             </>
@@ -492,6 +510,7 @@ export default function StepConfigPanel({
                 aria-describedby={
                   [
                     step.outputDatasetId === null ? outputDatasetHelpId : null,
+                    outputHidden ? outputDatasetRestrictedId : null,
                     outputDatasetIdError ? outputDatasetErrorId : null,
                   ]
                     .filter(Boolean)
@@ -502,6 +521,18 @@ export default function StepConfigPanel({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
+                {/*
+                  현재 값이 볼 수 없는 출력일 때만 잠금 항목을 둬 트리거가 빈 칸 대신 "열람 권한 없음"을 보이게 한다(이름·id 비노출).
+                  선택 변경은 허용한다(다른 데이터셋·자동 생성으로 바꾸는 건 정당한 편집 — 서버는 새 id 만 판정). 바꾸면 이 항목은 사라진다.
+                */}
+                {outputHidden && (
+                  <SelectItem value={String(step.outputDatasetId)}>
+                    <span className="flex items-center gap-1 text-muted-foreground">
+                      <Lock className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                      열람 권한 없음
+                    </span>
+                  </SelectItem>
+                )}
                 <SelectItem value="__auto__">자동 생성 (임시)</SelectItem>
                 {datasets.map((ds) => (
                   <SelectItem key={ds.id} value={ds.id.toString()}>
@@ -513,6 +544,12 @@ export default function StepConfigPanel({
             {step.outputDatasetId === null && (
               <p id={outputDatasetHelpId} className="text-xs text-muted-foreground">
                 실행 시 스텝 결과에 맞는 임시 데이터셋이 자동 생성됩니다
+              </p>
+            )}
+            {/* 바꾸면 되돌릴 방법이 편집기 「취소」뿐이라 미리 알린다 */}
+            {outputHidden && (
+              <p id={outputDatasetRestrictedId} className="text-xs text-muted-foreground">
+                이 출력 데이터셋을 볼 수 있는 권한이 없습니다. 다른 데이터셋으로 바꾸면 다시 선택할 수 없습니다.
               </p>
             )}
             {outputDatasetIdError && (
@@ -558,7 +595,16 @@ export default function StepConfigPanel({
               <SelectContent>
                 <SelectItem value="REPLACE">교체 (Replace)</SelectItem>
                 <SelectItem value="APPEND">추가 (Append)</SelectItem>
-                <SelectItem value="MERGE" disabled={!pkStatusPending && !hasPk}>병합 (Merge)</SelectItem>
+                {/*
+                  숨김 출력이면 PK 를 확인할 수 없다 — 이미 MERGE 로 저장된 스텝은 그 설정을 유지·재저장할 수 있게 비활성화하지 않고,
+                  새로 MERGE 로 바꾸는 것만 막는다.
+                */}
+                <SelectItem
+                  value="MERGE"
+                  disabled={outputHidden ? step.loadStrategy !== 'MERGE' : !pkStatusPending && !hasPk}
+                >
+                  병합 (Merge)
+                </SelectItem>
               </SelectContent>
             </Select>
             <p id={loadStrategyHelpId} className="text-xs text-muted-foreground">
@@ -567,7 +613,10 @@ export default function StepConfigPanel({
             {step.loadStrategy === 'MERGE' && hasPk && (
               <p className="text-xs text-muted-foreground">PK: {pkNames.join(', ')}</p>
             )}
-            {mergeApplicable && !pkStatusPending && !hasPk && (
+            {mergeApplicable && outputHidden && (
+              <p className="text-xs text-muted-foreground">출력 데이터셋을 볼 수 없어 PK 를 확인할 수 없습니다</p>
+            )}
+            {mergeApplicable && !outputHidden && !pkStatusPending && !hasPk && (
               <p className="text-xs text-muted-foreground">
                 출력 데이터셋에 PK 컬럼을 지정해야 병합을 쓸 수 있습니다
               </p>
@@ -611,6 +660,7 @@ export default function StepConfigPanel({
                   mode="multi"
                   datasets={inputDatasetOptions}
                   value={step.inputDatasetIds}
+                  datasetsLoaded={datasetsLoaded}
                   disabled={readOnly}
                   onChange={(value) => handleUpdateStep({ inputDatasetIds: value })}
                 />

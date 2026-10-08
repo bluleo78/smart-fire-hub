@@ -225,10 +225,10 @@ export default function QueryListPage() {
                       // 위젯 잠금 상태와 같은 문구·아이콘의 차분한 표시만 한다(오류색·토스트 금지). 삭제된 데이터셋은 서버가 datasetId 를
                       // null 로 만들어(ON DELETE SET NULL) 아래 cross-dataset 으로 간다.
                       <span
-                        className="flex items-center gap-1 text-sm text-muted-foreground"
+                        className="flex items-center gap-1 whitespace-nowrap text-sm text-muted-foreground"
                         data-testid="query-dataset-restricted"
                       >
-                        <Lock className="h-3.5 w-3.5" aria-hidden="true" />
+                        <Lock className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                         열람 권한 없음
                       </span>
                     ) : (

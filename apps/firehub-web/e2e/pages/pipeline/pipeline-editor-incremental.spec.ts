@@ -6,7 +6,7 @@
  * IncrementalProcessingSection이 실제로 구동하는지 검증한다.
  */
 
-import { createColumn, createDatasetDetail } from '../../factories/dataset.factory';
+import { createColumn, createDataset, createDatasetDetail } from '../../factories/dataset.factory';
 import { createExecution, createPipelineDetail, createStep } from '../../factories/pipeline.factory';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
@@ -25,8 +25,14 @@ async function setupMocks(
   await mockApi(page, 'GET', '/api/v1/pipelines/1/executions', []);
   await mockApi(page, 'GET', '/api/v1/pipelines/1/triggers', []);
   await mockApi(page, 'GET', '/api/v1/pipelines/1/trigger-events', []);
+  // 출력 데이터셋은 조회자가 볼 수 있는 목록에도 있어야 실제 서버와 같다 — 목록에 없으면 편집기는 "볼 수 없는 출력"(보안 등급)으로
+  // 판정해 PK 대신 "확인할 수 없음"을 안내한다(pipeline-editor-hidden-output.spec.ts).
   await mockApi(page, 'GET', '/api/v1/datasets', {
-    content: [], page: 0, size: 1000, totalElements: 0, totalPages: 0,
+    content: [createDataset({ id: OUTPUT_DATASET_ID, name: '출력 데이터셋', tableName: 'out_ds' })],
+    page: 0,
+    size: 1000,
+    totalElements: 1,
+    totalPages: 1,
   });
   await mockApi(
     page,

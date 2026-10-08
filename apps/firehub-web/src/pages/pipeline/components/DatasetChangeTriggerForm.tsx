@@ -19,6 +19,8 @@ interface DatasetChangeTriggerFormProps {
 export default function DatasetChangeTriggerForm({ config, onChange, errors }: DatasetChangeTriggerFormProps) {
   // 서버 목록 상한(100)을 넘어도 전부 보이도록 전 페이지를 모은다 (#732)
   const { data: allDatasets } = useAllDatasets();
+  // 볼 수 없는 감시 대상(보안 등급)은 목록 로드가 끝난 뒤에만 잠금 칩으로 판정한다(DatasetCombobox).
+  const datasetsLoaded = allDatasets !== undefined;
   // 접근성: 라벨↔입력 연결용 id 접두사 (#432). 추가/수정 다이얼로그 양쪽에서 렌더되므로 useId.
   const baseId = useId();
   // DatasetCombobox 는 Popover 트리거 버튼(labelable)에 id 를 심어 라벨과 연결한다.
@@ -49,6 +51,7 @@ export default function DatasetChangeTriggerForm({ config, onChange, errors }: D
           mode="multi"
           datasets={datasetOptions}
           value={config.datasetIds}
+          datasetsLoaded={datasetsLoaded}
           onChange={(datasetIds) => onChange({ ...config, datasetIds })}
         />
         {errors?.datasetIds && (

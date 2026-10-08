@@ -324,6 +324,7 @@ export default function PipelineEditorPage() {
             dispatch={dispatch}
             readOnly={readOnly}
             datasets={datasetOptions}
+            datasetsLoaded={allDatasets !== undefined}
             pipelineInfo={pipelineInfo}
             pipelineId={pipelineId}
             serverSteps={pipelineData?.steps}
