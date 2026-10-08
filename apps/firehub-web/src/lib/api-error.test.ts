@@ -1,7 +1,7 @@
 import { toast } from 'sonner';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { extractApiError, extractApiErrorAsync, handleApiError } from './api-error';
+import { extractApiError, extractApiErrorAsync, handleApiError, isGraphReadRestricted } from './api-error';
 
 // toast 는 부수효과만 확인한다 — 실제 sonner 렌더는 E2E 몫이다. vi.mock 은 호이스팅되므로 import 아래에 둬도
 // import 보다 먼저 적용된다(import 순서 lint 를 지키기 위해 아래에 둔다).
@@ -60,5 +60,17 @@ describe('extractApiError — errors 맵의 두 의미 구분 (#787)', () => {
   it('handleApiError 는 고른 메시지를 토스트로 띄운다 — details 값("5")이 아니다', () => {
     handleApiError(axiosErrorWith({ status: 409, error: 'Conflict', message: '정지된 멤버', errors: { userId: '5' }, code: 'MEMBER_SUSPENDED' }), '실패');
     expect(toast.error).toHaveBeenCalledWith('정지된 멤버');
+  });
+});
+
+describe('isGraphReadRestricted', () => {
+  const err = (status: number, data: unknown) => ({ isAxiosError: true, response: { status, data } });
+
+  it('403 + GRAPH_READ_RESTRICTED 만 참이다', () => {
+    expect(isGraphReadRestricted(err(403, { code: 'GRAPH_READ_RESTRICTED' }))).toBe(true);
+    expect(isGraphReadRestricted(err(403, { code: 'PASSWORD_CHANGE_REQUIRED' }))).toBe(false);
+    expect(isGraphReadRestricted(err(403, { message: '권한 없음' }))).toBe(false);
+    expect(isGraphReadRestricted(err(500, { code: 'GRAPH_READ_RESTRICTED' }))).toBe(false);
+    expect(isGraphReadRestricted(new Error('x'))).toBe(false);
   });
 });

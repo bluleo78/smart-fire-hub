@@ -801,6 +801,40 @@ test.describe('지식그래프 시각화 페이지', () => {
     await expect(page.getByTestId('instance-graph')).toHaveCount(0);
   });
 
+  // WD-28: 출처 데이터셋 중 볼 수 없는 것이 있으면 서버가 403 GRAPH_READ_RESTRICTED 를 준다. 오류가 아니라 권한 상태이므로
+  // 빈 그래프·빨간 오류·재시도·토스트 대신 muted 자물쇠 안내를 보여 준다(실행 기록 가림과 같은 시각 언어).
+  test('그래프 읽기가 제한된 온톨로지는 오류 대신 자물쇠 안내를 보여 준다', async ({ authenticatedPage: page }) => {
+    await setupOntologyMocks(page);
+    const { requestedPaths } = await mockOntologyGraph(
+      page,
+      {
+        status: 403,
+        error: 'Forbidden',
+        message: '이 지식그래프에는 열람 권한이 없는 데이터가 포함되어 있어 표시할 수 없습니다.',
+        code: 'GRAPH_READ_RESTRICTED',
+      },
+      { status: 403 },
+    );
+    await page.goto('/knowledge-graph/model');
+    // 스키마(지식 모델)는 판정 대상이 아니다 — 그대로 보여야 한다.
+    await expect(page.getByTestId('schema-graph')).toHaveAttribute('data-node-count', '6');
+
+    await page.getByRole('tab', { name: '그래프 탐색' }).click();
+
+    const notice = page.getByTestId('graph-read-restricted');
+    await expect(notice).toHaveText('이 지식그래프에는 열람 권한이 없는 데이터가 포함되어 있어 표시할 수 없습니다.');
+    await expect(notice.locator('svg.lucide-lock')).toHaveCount(1);
+    await expect(notice).toHaveClass(/bg-muted/);
+    await expect(notice).not.toHaveClass(/destructive/);
+    await expect(page.getByTestId('instance-graph')).toHaveCount(0);
+    await expect(page.getByText('그래프를 불러오지 못했습니다.')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '다시 시도' })).toHaveCount(0);
+    await expect(page.locator('[data-sonner-toast]')).toHaveCount(0);
+    // 403 제한은 재시도하지 않는다(전역 retry:1 예외) — 첫 재시도 지연(1s)을 넘겨 기다린 뒤 요청이 1회인지 본다.
+    await page.waitForTimeout(1500);
+    expect(requestedPaths).toEqual(['/api/v1/ontology/1/graph']);
+  });
+
   test('인스턴스 그래프 에러 후 "다시 시도" 클릭 시 재요청하여 그래프가 정상 렌더된다', async ({
     authenticatedPage: page,
   }) => {
