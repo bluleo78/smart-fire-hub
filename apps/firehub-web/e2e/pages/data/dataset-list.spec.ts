@@ -364,7 +364,7 @@ test.describe('데이터셋 목록 페이지', () => {
     const oldDate = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString();
     await page.addInitScript((date: string) => {
       localStorage.setItem(
-        'sfh-recent-datasets',
+        'sfh-recent-datasets:1:1',
         JSON.stringify([{ id: 99, name: '최근 접근 데이터셋', tableName: 'recent_ds', accessedAt: date }]),
       );
     }, oldDate);
@@ -374,6 +374,33 @@ test.describe('데이터셋 목록 페이지', () => {
 
     // 최근 접근 데이터셋 카드의 상대 시간 확인 — getRelativeTime이 60일 전 날짜를 '2개월 전'으로 표시
     await expect(page.getByText(/개월 전/).first()).toBeVisible({ timeout: 5000 });
+  });
+
+  test('최근 접근 이력은 현재 사용자·테넌트 것만 보이고 다른 테넌트·전역 키 이력은 보이지 않는다', async ({
+    authenticatedPage: page,
+  }) => {
+    const now = new Date().toISOString();
+    await page.addInitScript((date: string) => {
+      const item = (id: number, name: string) => [{ id, name, tableName: `t_${id}`, accessedAt: date }];
+      // 현재 사용자(1)·테넌트(1)
+      localStorage.setItem('sfh-recent-datasets:1:1', JSON.stringify(item(11, '내 테넌트 데이터셋')));
+      // 같은 사용자의 다른 테넌트(2)
+      localStorage.setItem('sfh-recent-datasets:1:2', JSON.stringify(item(22, '다른 테넌트 데이터셋')));
+      // 다른 사용자(9)의 같은 테넌트
+      localStorage.setItem('sfh-recent-datasets:9:1', JSON.stringify(item(33, '다른 사용자 데이터셋')));
+      // 수정 전 전역 키 잔재
+      localStorage.setItem('sfh-recent-datasets', JSON.stringify(item(44, '전역 키 데이터셋')));
+    }, now);
+
+    await setupDatasetMocks(page);
+    await page.goto('/data/datasets');
+
+    await expect(page.getByText('내 테넌트 데이터셋')).toBeVisible();
+    await expect(page.getByText('다른 테넌트 데이터셋')).toHaveCount(0);
+    await expect(page.getByText('다른 사용자 데이터셋')).toHaveCount(0);
+    await expect(page.getByText('전역 키 데이터셋')).toHaveCount(0);
+    // 어느 테넌트 것인지 가릴 수 없는 전역 키 잔재는 지워진다
+    await expect.poll(() => page.evaluate(() => localStorage.getItem('sfh-recent-datasets'))).toBeNull();
   });
   /**
    * #328 회귀: DeleteConfirmDialog 는 실제 AlertDialogTrigger 를 쓰므로 Radix 가 복귀를 시도하지만,

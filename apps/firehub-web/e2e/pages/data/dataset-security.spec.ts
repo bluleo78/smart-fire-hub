@@ -160,6 +160,11 @@ test.describe('데이터셋 상세 — 보안', () => {
     await mockApi(page, 'DELETE', '/api/v1/datasets/1/access-grants/21', {}, { status: 204 });
     await mockApi(page, 'GET', '/api/v1/datasets', { content: [], page: 0, size: 10, totalElements: 0, totalPages: 0 });
     await page.goto('/data/datasets/1?tab=security');
+    // 최근 접근 이력은 사용자·테넌트 단위 키에 저장된다 — 제거 전에는 기록돼 있어야 아래 단언이 공허하지 않다
+    const recentKey = `sfh-recent-datasets:${me.id}:1`;
+    await expect
+      .poll(() => page.evaluate((k) => JSON.parse(localStorage.getItem(k) ?? '[]').map((d: { id: number }) => d.id), recentKey))
+      .toContain(1);
     // 제거 이후의 상세 조회는 숨김 데이터셋과 같은 404 를 돌려준다(백엔드 규칙)
     await page.getByRole('button', { name: `${me.name} 제거` }).click();
     await mockApi(page, 'GET', '/api/v1/datasets/1', { message: 'not found' }, { status: 404 });
@@ -168,7 +173,7 @@ test.describe('데이터셋 상세 — 보안', () => {
     await expect(page.getByText('더 이상 이 데이터셋에 접근할 수 없습니다', { exact: false })).toBeVisible();
     await expect(page.getByText('데이터셋을 찾을 수 없습니다.')).toHaveCount(0);
     // 접근을 잃은 데이터셋은 최근 본 데이터셋 바로가기에서도 빠진다
-    const recents = await page.evaluate(() => JSON.parse(localStorage.getItem('sfh-recent-datasets') ?? '[]'));
+    const recents = await page.evaluate((k) => JSON.parse(localStorage.getItem(k) ?? '[]'), recentKey);
     expect(recents.map((d: { id: number }) => d.id)).not.toContain(1);
   });
 
