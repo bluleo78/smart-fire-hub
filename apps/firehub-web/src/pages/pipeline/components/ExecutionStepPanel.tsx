@@ -57,9 +57,12 @@ function StepDetails({
             {/* 에러 섹션: 사용자 친화적 안내 + 기술적 원문을 스크롤 영역에 표시 */}
             <div className="space-y-2">
               <p className="text-muted-foreground text-xs font-medium">오류 상세</p>
-              {/* 일반 사용자를 위한 친화적 안내 메시지 */}
+              {/* 일반 사용자를 위한 친화적 안내 메시지 — 원문이 가려졌으면(WD-27) 아래에 참고할 오류 정보가 없으므로
+                  "아래 오류 정보를 참고…" 안내는 빼고 실패 사실만 알린다(실행 단위 오류와 같은 규칙) */}
               <p className="text-xs text-muted-foreground">
-                스텝 실행 중 오류가 발생했습니다. 아래 오류 정보를 참고하여 스텝 설정을 확인하세요.
+                {step.errorMasked
+                  ? '스텝 실행 중 오류가 발생했습니다.'
+                  : '스텝 실행 중 오류가 발생했습니다. 아래 오류 정보를 참고하여 스텝 설정을 확인하세요.'}
               </p>
               {/* 개발자 디버깅용 기술적 원문 — 최대 높이 제한 + 스크롤 */}
               <pre className="bg-destructive/10 text-destructive p-3 rounded text-xs overflow-auto max-h-[200px] whitespace-pre-wrap break-words">
@@ -93,14 +96,17 @@ function StepDetails({
  * 스텝별 errorMessage에는 남지 않고 execution.errorMessage에만 남는다(#517). 이 값이 있으면
  * "스텝 실행 전 실패"임을 명확히 보여준다.
  */
-function ExecutionErrorMessage({ errorMessage }: { errorMessage: string }) {
+function ExecutionErrorMessage({ errorMessage, errorMasked }: { errorMessage: string; errorMasked?: boolean }) {
   return (
     <>
       <Separator />
       <div className="space-y-2">
         <p className="text-muted-foreground text-xs font-medium">오류 상세</p>
+        {/* 원문이 가려졌으면(WD-27) 참고할 오류 정보가 없으므로 "아래 오류 정보를 참고하세요" 는 빼고 실패 사실만 알린다 */}
         <p className="text-xs text-muted-foreground">
-          스텝이 실행되기 전 파이프라인 실행 자체가 실패했습니다. 아래 오류 정보를 참고하세요.
+          {errorMasked
+            ? '스텝이 실행되기 전 파이프라인 실행 자체가 실패했습니다.'
+            : '스텝이 실행되기 전 파이프라인 실행 자체가 실패했습니다. 아래 오류 정보를 참고하세요.'}
         </p>
         <pre className="bg-destructive/10 text-destructive p-3 rounded text-xs overflow-auto max-h-[200px] whitespace-pre-wrap break-words">
           {errorMessage}
@@ -123,7 +129,9 @@ function StepNotExecuted({ execution }: { execution: ExecutionDetailResponse }) 
           <p className="text-muted-foreground text-xs">
             이 스텝은 실행되지 않았습니다. 스텝이 실행되기 전 파이프라인 실행이 중단됐을 수 있습니다.
           </p>
-          {execution.errorMessage && <ExecutionErrorMessage errorMessage={execution.errorMessage} />}
+          {execution.errorMessage && (
+            <ExecutionErrorMessage errorMessage={execution.errorMessage} errorMasked={execution.errorMasked} />
+          )}
         </div>
       </ScrollArea>
     </div>
@@ -170,7 +178,9 @@ function ExecutionSummary({ execution }: { execution: ExecutionDetailResponse })
             </span>
           </div>
 
-          {execution.errorMessage && <ExecutionErrorMessage errorMessage={execution.errorMessage} />}
+          {execution.errorMessage && (
+            <ExecutionErrorMessage errorMessage={execution.errorMessage} errorMasked={execution.errorMasked} />
+          )}
 
           <Separator />
 

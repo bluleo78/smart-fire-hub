@@ -239,6 +239,70 @@ test.describe('파이프라인 실행 상세 — ExecutionStepPanel', () => {
     await expect(page.getByText(technicalErrorMsg)).toBeVisible();
   });
 
+  test('가려진 스텝 오류(errorMasked)에는 "아래 오류 정보를 참고" 안내가 빠지고 실패 사실과 가림 문구만 표시된다 (WD-27)', async ({ authenticatedPage: page }) => {
+    // 조회자가 관련 데이터를 볼 수 없으면 서버가 원문 대신 가림 문구 + errorMasked=true 를 보낸다.
+    // 아래에 참고할 원문이 없으므로 "아래 오류 정보를 참고하여 스텝 설정을 확인하세요" 안내를 숨겨야 한다(문자열 비교가 아니라 플래그로 판단).
+    await setupPipelineEditorMocks(page, 1);
+
+    const maskedMsg = '이 스텝의 상세 오류는 관련 데이터에 접근할 수 있는 사용자에게만 표시됩니다.';
+    const detail = createExecutionDetail({
+      id: 1,
+      pipelineId: 1,
+      status: 'FAILED',
+      stepExecutions: [
+        createStepExecution({
+          id: 1,
+          stepName: '데이터 추출',
+          status: 'FAILED',
+          errorMessage: maskedMsg,
+          errorMasked: true,
+          completedAt: '2024-01-01T00:00:10Z',
+        }),
+      ],
+      startedAt: '2024-01-01T00:00:00Z',
+      completedAt: '2024-01-01T00:00:10Z',
+    });
+    await mockApi(page, 'GET', '/api/v1/pipelines/1/executions/1', detail);
+
+    await page.goto('/pipelines/1');
+    await page.getByRole('tab', { name: /실행|이력/ }).click();
+    await page.getByRole('row').nth(1).click();
+    await expect(page.getByText('실행 정보')).toBeVisible({ timeout: 5000 });
+    await page.locator('.react-flow__node').first().click();
+
+    await expect(page.getByText('오류 상세')).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText(maskedMsg)).toBeVisible();
+    await expect(page.getByText('스텝 실행 중 오류가 발생했습니다.', { exact: true })).toBeVisible();
+    // 참고 안내는 가렸을 때 렌더링되지 않는다(양성 대조는 위 '사용자 친화적 안내' 테스트).
+    await expect(page.getByText(/아래 오류 정보를 참고하여/)).toHaveCount(0);
+  });
+
+  test('가려진 실행 단위 오류(errorMasked)에는 "아래 오류 정보를 참고하세요" 가 빠지고 실패 사실만 안내한다 (WD-27)', async ({ authenticatedPage: page }) => {
+    await setupPipelineEditorMocks(page, 1);
+
+    const maskedExecMsg = '이 실행의 상세 오류는 관련 데이터에 접근할 수 있는 사용자에게만 표시됩니다.';
+    const detail = createExecutionDetail({
+      id: 1,
+      pipelineId: 1,
+      status: 'FAILED',
+      stepExecutions: [],
+      startedAt: '2024-01-01T00:00:00Z',
+      completedAt: '2024-01-01T00:00:01Z',
+      errorMessage: maskedExecMsg,
+      errorMasked: true,
+    });
+    await mockApi(page, 'GET', '/api/v1/pipelines/1/executions/1', detail);
+
+    await page.goto('/pipelines/1');
+    await page.getByRole('tab', { name: /실행|이력/ }).click();
+    await page.getByRole('row').nth(1).click();
+
+    await expect(page.getByText('실행 정보')).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText(maskedExecMsg)).toBeVisible();
+    await expect(page.getByText('스텝이 실행되기 전 파이프라인 실행 자체가 실패했습니다.', { exact: true })).toBeVisible();
+    await expect(page.getByText(/아래 오류 정보를 참고하세요/)).toHaveCount(0);
+  });
+
   test('스텝 실행 레코드가 없는 실행에서 DAG 노드를 클릭하면 "실행되지 않음" 빈 상태와 execution 레벨 오류가 표시된다 (이슈 #517)', async ({ authenticatedPage: page }) => {
     // 스텝 실행 레코드가 하나도 생성되기 전에 최상위 예외로 실패한 케이스를 재현한다.
     // (예: 토폴로지 정렬 실패 등 — pipeline_execution.error_message에만 원인이 남는다)

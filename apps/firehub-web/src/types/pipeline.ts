@@ -121,6 +121,11 @@ export interface ExecutionDetailResponse {
    * 정상 완료되었거나 스텝 레벨에서 실패한 경우 null이다.
    */
   errorMessage: string | null;
+  /**
+   * 실행 단위 errorMessage 가 원문 대신 가림 문구인지(WD-27 — 조회자가 관련 데이터를 볼 수 없음).
+   * 가림 문구 문자열을 비교하지 않고 이 값으로 "아래 오류 정보를 참고" 안내를 숨긴다. 구 API 응답에는 없으므로 선택 필드.
+   */
+  errorMasked?: boolean;
 }
 
 export interface StepExecutionResponse {
@@ -133,6 +138,8 @@ export interface StepExecutionResponse {
   errorMessage: string | null;
   startedAt: string | null;
   completedAt: string | null;
+  /** errorMessage 가 원문 대신 가림 문구인지(WD-27) — 참이면 스텝 설정 확인 안내를 숨긴다. 구 API 응답에는 없으므로 선택 필드. */
+  errorMasked?: boolean;
 }
 
 // --- Trigger types ---

@@ -614,7 +614,7 @@ export default function StepConfigPanel({
               <p className="text-xs text-muted-foreground">PK: {pkNames.join(', ')}</p>
             )}
             {mergeApplicable && outputHidden && (
-              <p className="text-xs text-muted-foreground">출력 데이터셋을 볼 수 없어 PK 를 확인할 수 없습니다</p>
+              <p className="text-xs text-muted-foreground">출력 데이터셋을 볼 수 없어 PK를 확인할 수 없습니다</p>
             )}
             {mergeApplicable && !outputHidden && !pkStatusPending && !hasPk && (
               <p className="text-xs text-muted-foreground">

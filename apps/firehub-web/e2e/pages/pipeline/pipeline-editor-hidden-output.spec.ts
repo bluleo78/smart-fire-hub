@@ -149,7 +149,7 @@ test.describe('파이프라인 에디터 — 볼 수 없는 출력·입력 데�
 
     const strategy = page.getByRole('combobox', { name: '로드 전략' });
     await expect(strategy).toHaveText('병합 (Merge)');
-    await expect(page.getByText('출력 데이터셋을 볼 수 없어 PK 를 확인할 수 없습니다')).toBeVisible();
+    await expect(page.getByText('출력 데이터셋을 볼 수 없어 PK를 확인할 수 없습니다')).toBeVisible();
     await expect(page.getByText('출력 데이터셋에 PK 컬럼을 지정해야 병합을 쓸 수 있습니다')).toHaveCount(0);
     // MERGE 항목은 현재 값이라 비활성화되지 않는다
     await strategy.click();
