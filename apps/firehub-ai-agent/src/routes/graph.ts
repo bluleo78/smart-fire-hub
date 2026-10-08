@@ -3,6 +3,8 @@ import { z } from 'zod/v4';
 import { internalAuth, requireDelegation, type Delegation } from '../middleware/auth.js';
 import { isValidTenantId } from '../agent/tenant-paths.js';
 import { readWholeGraph } from '../graphrag/neo4j-client.js';
+// 그래프 읽기 제한(WD-28) 코드·문구 정본 — api·web 과 같은 값을 쓴다.
+import { GRAPH_READ_RESTRICTED_CODE, GRAPH_READ_RESTRICTED_MESSAGE } from '../graphrag/graph-read-gate.js';
 import { mergeEntities } from '../graphrag/synonym-merge.js';
 import { setEntityProperty } from '../graphrag/property-mutation.js';
 import { addEntity, AddEntityInput } from '../graphrag/entity-add.js';
@@ -77,10 +79,21 @@ router.get('/graph', internalAuth, requireDelegation, async (req, res) => {
     return;
   }
   try {
-    // 이 왕복이 테넌트 경계다 — 남의 온톨로지면 RLS 때문에 "없는 것"과 같아져 예외가 나고,
-    // Neo4j 는 조회조차 하지 않는다. 통과한 값만 VerifiedOntologyId 라 readWholeGraph 에 들어간다.
-    const { ontologyId: verified } = await resolveOntologyById(delegationClient(res), ontologyId);
-    res.json(await readWholeGraph(verified));
+    // 이 왕복이 테넌트 경계 + 그래프 읽기 판정(WD-28)이다 — 남의 온톨로지면 RLS 때문에 "없는 것"과 같아져
+    // 예외가 나고, Neo4j 는 조회조차 하지 않는다. api(OntologyService#getGraph)도 먼저 판정하지만, 내부 토큰은
+    // 만능 자격증명이라 여기서도 대행 사용자 기준으로 다시 판정한다(이중 방어). 판정을 통과한 값만
+    // GraphReadableOntologyId 라 readWholeGraph 에 들어간다.
+    const { readableOntologyId } = await resolveOntologyById(delegationClient(res), ontologyId);
+    if (readableOntologyId == null) {
+      // 502 catch-all 보다 먼저 응답한다 — api 의 프록시가 본문의 code 를 보고 web 에 같은 403 을 전달한다.
+      res.status(403).json({
+        code: GRAPH_READ_RESTRICTED_CODE,
+        error: 'graph read restricted',
+        message: GRAPH_READ_RESTRICTED_MESSAGE,
+      });
+      return;
+    }
+    res.json(await readWholeGraph(readableOntologyId));
   } catch (e) {
     // 무로그 502 금지(#308) — 로그가 없으면 원인 추적이 불가능하다.
     console.error('[graph] readWholeGraph 실패:', e);

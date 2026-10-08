@@ -15,9 +15,9 @@ vi.mock('../graphrag/property-mutation.js', () => ({ setEntityProperty: setEntit
 vi.mock('../graphrag/entity-add.js', () => ({ addEntity: addEntityMock }));
 vi.mock('../graphrag/neo4j-client.js', () => ({ readWholeGraph: vi.fn() }));
 vi.mock('../graphrag/ontology-source.js', () => ({
-  resolveDatasetOntology: vi.fn().mockResolvedValue({ ontology: boundOntology, ontologyId: 42 }),
-  // GET /graph 도 이 왕복(=RLS 경계)을 거친다 — 읽기 전용이라고 예외를 두지 않는다.
-  resolveOntologyById: vi.fn().mockResolvedValue({ ontology: boundOntology, ontologyId: 42 }),
+  resolveDatasetOntology: vi.fn().mockResolvedValue({ ontology: boundOntology, ontologyId: 42, readableOntologyId: 42 }),
+  // GET /graph 도 이 왕복(=RLS 경계 + 읽기 판정)을 거친다 — 읽기 전용이라고 예외를 두지 않는다.
+  resolveOntologyById: vi.fn().mockResolvedValue({ ontology: boundOntology, ontologyId: 42, readableOntologyId: 42 }),
 }));
 
 process.env.INTERNAL_SERVICE_TOKEN = 'test-internal-token';
@@ -86,6 +86,21 @@ describe('GET /agent/graph', () => {
     expect(readWholeGraph).not.toHaveBeenCalled();
   });
 
+  // WD-28: api 의 시각화 프록시는 403 본문에 GRAPH_READ_RESTRICTED 문자열이 있는지로 경합 상황을 판별해
+  // web 에 같은 403 을 넘긴다 — 그래서 code 필드가 본문에 반드시 있어야 한다.
+  it('읽기 판정이 없으면 403 GRAPH_READ_RESTRICTED 이고 Neo4j 를 조회하지 않는다', async () => {
+    vi.mocked(resolveOntologyById).mockResolvedValueOnce(
+      { ontology: boundOntology, ontologyId: 42, readableOntologyId: null } as never,
+    );
+    const res = await request(app).get('/agent/graph?ontologyId=5').set(authHeader);
+    expect(res.status).toBe(403);
+    expect(res.headers['content-type']).toMatch(/application\/json/);
+    expect(res.body.code).toBe('GRAPH_READ_RESTRICTED');
+    expect(res.text).toContain('GRAPH_READ_RESTRICTED');
+    expect(res.body.message).toBe('이 지식그래프에는 열람 권한이 없는 데이터가 포함되어 있어 조회할 수 없습니다.');
+    expect(readWholeGraph).not.toHaveBeenCalled();
+  });
+
   it('읽기 실패 시 502를 반환한다', async () => {
     vi.mocked(readWholeGraph).mockRejectedValue(new Error('neo4j down'));
     const res = await request(app).get('/agent/graph?ontologyId=5').set(authHeader);
@@ -125,6 +140,20 @@ describe('POST /agent/graph/merge-entities', () => {
       .send({ entityType: 'Cause' });
     expect(res.status).toBe(400);
     expect(mergeEntitiesMock).not.toHaveBeenCalled();
+  });
+
+  // Review Focus 2: 읽기 제한은 쓰기(검수 반영)를 막지 않는다 — 기밀 출처가 섞인 온톨로지도 승인은 반영돼야 한다.
+  it('읽기 제한 온톨로지여도 merge-entities 는 204', async () => {
+    mergeEntitiesMock.mockResolvedValue(undefined);
+    vi.mocked(resolveDatasetOntology).mockResolvedValueOnce(
+      { ontology: boundOntology, ontologyId: 42, readableOntologyId: null } as never,
+    );
+    const res = await request(app)
+      .post('/agent/graph/merge-entities')
+      .set(authHeader)
+      .send({ entityType: 'Incident', nameA: 'a', nameB: 'b', datasetId: 3 });
+    expect(res.status).toBe(204);
+    expect(mergeEntitiesMock).toHaveBeenCalled();
   });
 
   it('mergeEntities 실패 시 502', async () => {

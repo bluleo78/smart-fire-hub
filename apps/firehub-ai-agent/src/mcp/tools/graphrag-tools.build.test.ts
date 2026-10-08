@@ -66,6 +66,9 @@ function baseClient(overrides: Partial<any> = {}) {
     activateDatasetMapping: vi.fn().mockResolvedValue({ datasetId: 900, ontologyId: 1, status: 'active' }),
     createOntology: vi.fn().mockResolvedValue(7),
     listReviewItems: vi.fn().mockResolvedValue([]),
+    // 실제 ontology-source 를 쓰므로 그래프 읽기 판정(WD-28)도 기본은 "읽기 가능"으로 둔다.
+    hasDelegatedUser: true,
+    getOntologyGraphAccess: vi.fn().mockResolvedValue({ graphReadable: true }),
     ...overrides,
   };
 }
@@ -183,6 +186,20 @@ describe('graphrag_structured_query — 동적 스키마 검증', () => {
         filters: [{ property: '없는속성', operator: 'gt', value: 1 }],
       }),
     ).rejects.toThrow(/피해액/);
+    expect(structuredQueryMock).not.toHaveBeenCalled();
+  });
+
+  // WD-28: 출처 데이터셋 중 하나라도 못 보는 사용자에게는 구조 질의도 거부한다 — 실제 ontology-source 로 판정이 흐른다.
+  it('읽기 제한 온톨로지면 스펙 문구로 거부하고 구조 질의를 실행하지 않는다', async () => {
+    const client = baseClient({ getOntologyGraphAccess: vi.fn().mockResolvedValue({ graphReadable: false }) });
+    await expect(
+      findTool(client, 'graphrag_structured_query').handler({
+        ontologyId: 2,
+        entityType: 'Incident',
+        filters: [{ property: '피해액', operator: 'gt', value: 1 }],
+      }),
+    ).rejects.toThrow('이 지식그래프에는 열람 권한이 없는 데이터가 포함되어 있어 조회할 수 없습니다.');
+    expect(client.getOntologyGraphAccess).toHaveBeenCalledWith(2);
     expect(structuredQueryMock).not.toHaveBeenCalled();
   });
 

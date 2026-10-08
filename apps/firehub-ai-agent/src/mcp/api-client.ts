@@ -99,6 +99,12 @@ export class FireHubApiClient {
   private _graphSource: ReturnType<typeof createGraphSourceApi>;
   private _review: ReturnType<typeof createReviewApi>;
   private _fileObject: ReturnType<typeof createFileObjectApi>;
+  /**
+   * 이 클라이언트가 실제 사용자를 대행하는가(X-On-Behalf-Of 가 양의 정수). 그래프 읽기 판정(WD-28)은 사용자 기준이라,
+   * 대행 사용자가 없으면 판정할 주체가 없다 — 해소 함수가 이 값이 true 일 때만 판정을 묻는다. 인스턴스 필드인 이유:
+   * 테스트의 프로토타입 기반 목(createMockClient)에는 이 값이 없어 자동으로 false(읽기 불가)가 된다(fail-closed).
+   */
+  readonly hasDelegatedUser: boolean;
 
   /**
    * @param tenantId 원요청 테넌트(웹 세션 JWT 의 tenant 클레임에서 파생). 테넌트 헤더로 api 에
@@ -112,6 +118,8 @@ export class FireHubApiClient {
    *   단일 멤버십이 보장된 개발 스크립트에만 허용된다. 다른 파일들은 이 문단을 가리킨다.
    */
   constructor(baseURL: string, internalToken: string, userId: number, tenantId?: number) {
+    // 양의 정수 판정은 isValidTenantId 를 재사용한다(auth.ts 가 userId 에도 같은 술어를 쓴다).
+    this.hasDelegatedUser = isValidTenantId(userId);
     const headers: Record<string, string> = {
       Authorization: `Internal ${internalToken}`,
       [ON_BEHALF_OF_HEADER]: String(userId),
@@ -670,6 +678,15 @@ export class FireHubApiClient {
     });
     this.ontologyCache.set(id, { at: Date.now(), promise });
     return promise;
+  }
+
+  /**
+   * 현재 대행 사용자가 이 온톨로지의 그래프를 읽을 수 있는가(GET /api/v1/ontology/{id}/graph-access, WD-28).
+   * getOntologyById 와 달리 **캐시하지 않는다** — 등급·허용 목록 변경이 다음 호출에 바로 반영돼야 한다.
+   */
+  async getOntologyGraphAccess(id: number): Promise<{ graphReadable: boolean }> {
+    const { data } = await this.client.get<{ graphReadable: boolean }>(`/ontology/${id}/graph-access`);
+    return data;
   }
 
   /**

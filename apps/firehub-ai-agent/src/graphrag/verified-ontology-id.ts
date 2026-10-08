@@ -22,6 +22,16 @@ import neo4j, { type Integer } from 'neo4j-driver';
 export type VerifiedOntologyId = number & { readonly __verifiedOntologyId: unique symbol };
 
 /**
+ * 테넌트 경계에 더해 **그래프 읽기 판정(WD-28)** 까지 통과한 온톨로지 id.
+ *
+ * 온톨로지 그래프에 내용을 쓴 데이터셋(출처) 중 하나라도 요청 사용자가 볼 수 없으면 그 그래프 전체를 읽지 않는다.
+ * 판정은 api(GET /ontology/{id}/graph-access, 사용자 대행)만 할 수 있으므로, 이 값도 ontology-source.ts 의 해소 함수만 만든다.
+ * VerifiedOntologyId 의 하위 타입이라 쓰기 함수(loadGraph 등)에는 그대로 넘어가지만, 반대로 VerifiedOntologyId 를
+ * 읽기 함수(readWholeGraph·retrieve·structuredQuery)에 넘기면 컴파일되지 않는다 — 판정 누락을 컴파일 오류로 만든다.
+ */
+export type GraphReadableOntologyId = VerifiedOntologyId & { readonly __graphReadableOntologyId: unique symbol };
+
+/**
  * 스코프 술어(`n.ontologyId = $ontologyId`)에 바인딩할 형태로 바꾼다.
  *
  * plain JS number 를 그대로 넘기면 드라이버가 Cypher FLOAT 로 직렬화하는데, 저장된 값은

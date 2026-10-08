@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { resolveDatasetOntology } from './ontology-source.js';
+import { resolveDatasetOntology, resolveOntologyById } from './ontology-source.js';
 
 // 백엔드 OntologyResponse 최소 형태 — deserializeOntology 가 받아들이는 모양.
 const BOUND_RESPONSE = {
@@ -52,5 +52,74 @@ describe('resolveDatasetOntology', () => {
       getOntologyById: vi.fn().mockRejectedValue(new Error('boom')),
     };
     await expect(resolveDatasetOntology(apiClient as never, 7)).rejects.toThrow('boom');
+  });
+});
+
+describe('resolveOntologyById — 그래프 읽기 판정(WD-28)', () => {
+  const readableClient = (access: unknown) => ({
+    hasDelegatedUser: true,
+    getOntologyById: vi.fn().mockResolvedValue(BOUND_RESPONSE),
+    getOntologyGraphAccess: vi.fn().mockResolvedValue(access),
+  });
+
+  it('graphReadable=true 면 읽기 타입을 발급한다', async () => {
+    const apiClient = readableClient({ graphReadable: true });
+    const r = await resolveOntologyById(apiClient as never, 42);
+    expect(r.ontologyId).toBe(42);
+    expect(r.readableOntologyId).toBe(42);
+    expect(apiClient.getOntologyGraphAccess).toHaveBeenCalledWith(42);
+  });
+
+  it('graphReadable=false 면 읽기 타입은 null 이지만 해소(쓰기용 id)는 성공한다', async () => {
+    const r = await resolveOntologyById(readableClient({ graphReadable: false }) as never, 42);
+    expect(r.ontologyId).toBe(42);
+    expect(r.readableOntologyId).toBeNull();
+  });
+
+  // 구버전 api(필드 없음)·형식 이상은 읽기 불가(fail-closed) — `=== true` 만 통과시킨다.
+  it.each([[{}], [{ graphReadable: 'true' }], [{ graphReadable: 1 }], [null]])(
+    '판정 응답이 %j 이면 읽기 타입을 발급하지 않는다',
+    async (access) => {
+      const r = await resolveOntologyById(readableClient(access) as never, 42);
+      expect(r.readableOntologyId).toBeNull();
+    },
+  );
+
+  // Review Focus 2: 판정 조회가 실패해도 쓰기 경로(적재·검수 반영)는 막지 않는다 — 읽기만 막힌다.
+  it('판정 조회 실패는 readable=null 이고 해소는 성공', async () => {
+    const apiClient = {
+      hasDelegatedUser: true,
+      getOntologyById: vi.fn().mockResolvedValue(BOUND_RESPONSE),
+      getOntologyGraphAccess: vi.fn().mockRejectedValue(new Error('404')),
+    };
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const r = await resolveOntologyById(apiClient as never, 42);
+    expect(r.ontologyId).toBe(42);
+    expect(r.readableOntologyId).toBeNull();
+    // 무로그 실패 금지(#308) — 판정 실패는 로그로 남아야 한다.
+    expect(errSpy).toHaveBeenCalled();
+    errSpy.mockRestore();
+  });
+
+  // 사용자 신원(X-On-Behalf-Of) 없는 클라이언트에는 판정할 주체가 없다 — api 에 묻지도 않고 발급하지 않는다.
+  it('대행 사용자가 없는 클라이언트는 판정을 묻지 않고 읽기 타입을 발급하지 않는다', async () => {
+    const apiClient = { ...readableClient({ graphReadable: true }), hasDelegatedUser: false };
+    const r = await resolveOntologyById(apiClient as never, 42);
+    expect(r.readableOntologyId).toBeNull();
+    expect(apiClient.getOntologyGraphAccess).not.toHaveBeenCalled();
+  });
+});
+
+describe('resolveDatasetOntology — 그래프 읽기 판정(WD-28)', () => {
+  it('바인딩된 온톨로지 id 로 판정을 묻는다', async () => {
+    const apiClient = {
+      hasDelegatedUser: true,
+      getDatasetOntology: vi.fn().mockResolvedValue({ datasetId: 7, ontologyId: 42 }),
+      getOntologyById: vi.fn().mockResolvedValue(BOUND_RESPONSE),
+      getOntologyGraphAccess: vi.fn().mockResolvedValue({ graphReadable: true }),
+    };
+    const r = await resolveDatasetOntology(apiClient as never, 7);
+    expect(apiClient.getOntologyGraphAccess).toHaveBeenCalledWith(42);
+    expect(r.readableOntologyId).toBe(42);
   });
 });

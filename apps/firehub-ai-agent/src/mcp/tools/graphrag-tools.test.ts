@@ -19,6 +19,7 @@ vi.mock('../../graphrag/ontology-source.js', () => ({
   resolveDatasetOntology: vi.fn().mockResolvedValue({
     ontology: { domain: 'fire', schemaVersion: 1, entities: [], relations: [] },
     ontologyId: 42,
+    readableOntologyId: 42,
   }),
   // id 기반 해소 — 읽기 도구(graphrag_query·structured_query)의 소유권 확인 겸 온톨로지 로딩.
   // apiClient 를 실제와 같은 지점에서 호출한다: 그래야 "api 가 거부하면 Neo4j 를 조회하지 않는다"를
@@ -29,6 +30,8 @@ vi.mock('../../graphrag/ontology-source.js', () => ({
   resolveOntologyById: vi.fn(async (apiClient: any, ontologyId: number) => ({
     ontology: await apiClient.getOntologyById(ontologyId),
     ontologyId,
+    // 그래프 읽기 판정(WD-28) 기본값은 "읽기 가능" — 제한 TC 는 mockResolvedValueOnce 로 null 을 넣는다.
+    readableOntologyId: ontologyId,
   })),
 }));
 vi.mock('../../graphrag/neo4j-client.js', () => ({ bootstrapConstraints: vi.fn() }));
@@ -39,7 +42,7 @@ vi.mock('../../graphrag/loader.js', () => ({ loadGraph: vi.fn() }));
 import { retrieve } from '../../graphrag/retriever.js';
 import { registerGraphragTools } from './graphrag-tools.js';
 import { ingestDataset } from '../../graphrag/ingest.js';
-import { resolveDatasetOntology } from '../../graphrag/ontology-source.js';
+import { resolveDatasetOntology, resolveOntologyById } from '../../graphrag/ontology-source.js';
 import { createCompleter } from '../../graphrag/llm-completer.js';
 import { FireHubApiClient } from '../api-client.js';
 import { createFireHubMcpServer } from '../firehub-mcp-server.js';
@@ -140,6 +143,25 @@ describe('graphrag_query 도구', () => {
     await expect(query.handler({ ontologyId: 999, query: '원인?' })).rejects.toThrow('존재하지 않는 온톨로지');
     expect(vi.mocked(retrieve)).not.toHaveBeenCalled();
   });
+
+  // WD-28: 출처 데이터셋 중 하나라도 못 보는 사용자에게는 그래프 읽기 자체를 거부한다 — 시드 검색조차 하지 않는다.
+  it('읽기 제한 온톨로지면 스펙 문구로 거부하고 그래프를 조회하지 않는다', async () => {
+    vi.mocked(resolveOntologyById).mockResolvedValueOnce({
+      ontology: { domain: 'd', schemaVersion: 1, entities: [], relations: [] },
+      ontologyId: 9,
+      readableOntologyId: null,
+    } as never);
+    const apiClient = { searchDocuments: vi.fn(), getOntologyById: vi.fn() } as unknown as FireHubApiClient;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const tools: any[] = registerGraphragTools(apiClient, safeTool, jsonResult);
+    const query = tools.find((t) => t.name === 'graphrag_query');
+
+    await expect(query.handler({ ontologyId: 9, query: '원인?' })).rejects.toThrow(
+      '이 지식그래프에는 열람 권한이 없는 데이터가 포함되어 있어 조회할 수 없습니다.',
+    );
+    expect(vi.mocked(retrieve)).not.toHaveBeenCalled();
+    expect(apiClient.searchDocuments).not.toHaveBeenCalled();
+  });
 });
 
 describe('graphrag_ingest 도구 — 적재 이력 best-effort 기록', () => {
@@ -154,7 +176,7 @@ describe('graphrag_ingest 도구 — 적재 이력 best-effort 기록', () => {
   const TEST_ONTOLOGY_ID = 42 as VerifiedOntologyId;
 
   it('추출 실패가 0건이면 status=SUCCESS 로 recordGraphIngest 를 호출한다', async () => {
-    vi.mocked(resolveDatasetOntology).mockResolvedValue({ ontology, ontologyId: TEST_ONTOLOGY_ID });
+    vi.mocked(resolveDatasetOntology).mockResolvedValue({ ontology, ontologyId: TEST_ONTOLOGY_ID, readableOntologyId: null });
     vi.mocked(ingestDataset).mockResolvedValue({ datasetId: 1, chunks: 10, entities: 20, relations: 15 });
     const recordGraphIngest = vi.fn().mockResolvedValue(undefined);
     const apiClient = { recordGraphIngest } as unknown as FireHubApiClient;
@@ -177,7 +199,7 @@ describe('graphrag_ingest 도구 — 적재 이력 best-effort 기록', () => {
   });
 
   it('추출 실패가 있으면 status=PARTIAL 로 recordGraphIngest 를 호출한다', async () => {
-    vi.mocked(resolveDatasetOntology).mockResolvedValue({ ontology, ontologyId: TEST_ONTOLOGY_ID });
+    vi.mocked(resolveDatasetOntology).mockResolvedValue({ ontology, ontologyId: TEST_ONTOLOGY_ID, readableOntologyId: null });
     vi.mocked(ingestDataset).mockResolvedValue({
       datasetId: 1, chunks: 10, entities: 20, relations: 15, extractionFailures: 2,
     });
@@ -195,7 +217,7 @@ describe('graphrag_ingest 도구 — 적재 이력 best-effort 기록', () => {
   });
 
   it('recordGraphIngest 가 실패해도 도구는 jsonResult(summary) 를 정상 반환한다(best-effort)', async () => {
-    vi.mocked(resolveDatasetOntology).mockResolvedValue({ ontology, ontologyId: TEST_ONTOLOGY_ID });
+    vi.mocked(resolveDatasetOntology).mockResolvedValue({ ontology, ontologyId: TEST_ONTOLOGY_ID, readableOntologyId: null });
     vi.mocked(ingestDataset).mockResolvedValue({ datasetId: 1, chunks: 5, entities: 3, relations: 2 });
     const recordGraphIngest = vi.fn().mockRejectedValue(new Error('api down'));
     const apiClient = { recordGraphIngest } as unknown as FireHubApiClient;

@@ -87,12 +87,14 @@ describe('그래프 조회 스코프 규약 (트립와이어)', () => {
 
   // 브랜드 타입의 생산 지점은 ontology-source.ts 하나여야 한다 — 다른 곳에서 캐스팅으로 만들면
   // "RLS 왕복을 거친 값"이라는 타입의 의미가 그 순간 사라진다.
-  it('VerifiedOntologyId 캐스팅은 ontology-source.ts 밖에서 일어나지 않는다', () => {
+  // GraphReadableOntologyId(그래프 읽기 판정, WD-28)도 같다 — 판정을 거치지 않은 캐스팅은 게이트 우회다.
+  it('VerifiedOntologyId·GraphReadableOntologyId 캐스팅은 ontology-source.ts 밖에서 일어나지 않는다', () => {
     const offenders: string[] = [];
     for (const dir of SCAN_DIRS) {
       for (const full of sourceFiles(dir)) {
         if (full.endsWith('ontology-source.ts')) continue;
-        if (readFileSync(full, 'utf8').includes('as VerifiedOntologyId')) {
+        const text = readFileSync(full, 'utf8');
+        if (text.includes('as VerifiedOntologyId') || text.includes('as GraphReadableOntologyId')) {
           offenders.push(relative(SRC_DIR, full));
         }
       }
