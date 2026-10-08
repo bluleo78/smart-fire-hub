@@ -437,6 +437,22 @@ class OntologyServiceTest {
         .isInstanceOf(ExternalServiceException.class);
   }
 
+  // ai-agent 가 판정 조회 자체에 실패하면(502 GRAPH_READ_CHECK_FAILED) "권한 없음"이 아니라 일시 장애다 —
+  // 403 제한으로 바꾸면 web 이 재시도 없는 자물쇠 안내를 띄워 사용자가 권한 문제로 오해한다. 일반 502 로 둔다.
+  @Test
+  void getGraph_는_ai_agent_판정_조회_실패_502_를_403_이_아닌_외부_장애로_둔다() {
+    server.enqueue(
+        new MockResponse()
+            .setResponseCode(502)
+            .setHeader("Content-Type", "application/json")
+            .setBody(
+                "{\"code\":\"GRAPH_READ_CHECK_FAILED\",\"error\":\"graph read check failed\"}"));
+
+    assertThatThrownBy(() -> service.getGraph(OWNED_ONTOLOGY_ID))
+        .isInstanceOf(ExternalServiceException.class)
+        .isNotInstanceOf(CodedApiException.class);
+  }
+
   // Review Focus 4: 없는 온톨로지는 출처도 없어 게이트가 true 를 준다 — 존재 확인이 먼저여야 한다.
   @Test
   void getGraphAccess_는_내_테넌트에_없는_온톨로지면_400_이고_판정하지_않는다() {

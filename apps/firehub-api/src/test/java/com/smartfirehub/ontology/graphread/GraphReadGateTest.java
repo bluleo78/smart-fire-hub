@@ -146,27 +146,63 @@ class GraphReadGateTest extends IntegrationTestBase {
     long o = ontology();
     long secret = dataset("기밀"); // V133 시드: 허용 목록 필수 + ADMIN 우회 꺼짐
     source(o, secret);
-    long admin = userAt("기밀");
-    fx.assignRole(admin, adminRoleId());
-    assertThat(clearanceResolver.resolve(admin).tenantAdmin()).as("픽스처 전제: 테넌트 관리자").isTrue();
+    long admin = adminAt("기밀");
 
     assertThat(canRead(admin, o)).as("관리자여도 허용 목록 밖").isFalse();
     fx.grantUser(secret, admin);
     assertThat(canRead(admin, o)).as("양성 대조 — 허용 목록에 넣음").isTrue();
   }
 
+  /** 테넌트 관리자 — 기본 USER 역할을 떼고 지정 등급 역할 + 시스템 ADMIN 역할. */
+  private long adminAt(String level) {
+    long admin = userAt(level);
+    fx.assignRole(admin, adminRoleId());
+    assertThat(clearanceResolver.resolve(admin).tenantAdmin()).as("픽스처 전제: 테넌트 관리자").isTrue();
+    return admin;
+  }
+
+  // 삭제된 데이터셋은 등급이 없어 판정할 수 없지만 그 내용은 그래프에 남아 있다 — 테넌트 관리자만 읽는다(스펙 §4).
   @Test
-  void 삭제된_데이터셋_출처는_판정에서_뺀다() {
+  void 삭제된_출처가_있으면_일반_사용자는_false_이고_테넌트_관리자는_true() {
     long o = ontology();
-    long sensitive = dataset("민감");
-    source(o, sensitive);
-    long internalUser = userAt("내부");
-    assertThat(canRead(internalUser, o)).as("사전 — 삭제 전에는 막힌다").isFalse();
+    long open = dataset("공개");
+    long deleted = dataset("공개");
+    source(o, open);
+    source(o, deleted);
+    long user = userAt("민감");
+    long admin = adminAt("민감");
+    assertThat(canRead(user, o)).as("사전 — 삭제 전에는 출처를 다 볼 수 있어 열린다").isTrue();
 
-    fx.deleteDatasetRow(sensitive);
-    datasets.remove(sensitive);
+    fx.deleteDatasetRow(deleted);
+    datasets.remove(deleted);
 
-    assertThat(canRead(internalUser, o)).as("등급이 없어진 출처는 판정 대상이 아니다(알려진 한계)").isTrue();
+    assertThat(canRead(user, o)).as("삭제된 출처 + 일반 사용자").isFalse();
+    assertThat(canRead(admin, o)).as("양성 대조 — 삭제된 출처 + 테넌트 관리자").isTrue();
+  }
+
+  // 관리자 예외는 "삭제된 출처"에만 적용된다 — 존재하는 출처의 열람 판정까지 풀면 안 된다.
+  @Test
+  void 삭제된_출처가_있어도_관리자가_못_보는_존재_출처가_있으면_false() {
+    long o = ontology();
+    long deleted = dataset("공개");
+    source(o, deleted);
+    source(o, dataset("기밀")); // V133 시드: 허용 목록 필수 + ADMIN 우회 꺼짐 — 관리자도 못 본다
+    long admin = adminAt("기밀");
+    fx.deleteDatasetRow(deleted);
+    datasets.remove(deleted);
+
+    assertThat(canRead(admin, o)).as("허용 목록 밖 기밀 출처").isFalse();
+  }
+
+  // 삭제된 출처가 없으면 관리자 여부는 판정에 영향이 없다(기존 동작).
+  @Test
+  void 삭제된_출처가_없으면_관리자_여부와_무관하게_기존_판정이다() {
+    long o = ontology();
+    source(o, dataset("내부"));
+
+    assertThat(canRead(userAt("내부"), o)).as("일반 사용자 — 출처를 다 본다").isTrue();
+    assertThat(canRead(adminAt("내부"), o)).as("관리자 — 출처를 다 본다").isTrue();
+    assertThat(canRead(userAt("공개"), o)).as("일반 사용자 — 내부 출처를 못 본다").isFalse();
   }
 
   @Test

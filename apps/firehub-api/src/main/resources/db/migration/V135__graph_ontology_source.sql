@@ -24,6 +24,10 @@ CREATE POLICY graph_ontology_source_tenant_isolation ON graph_ontology_source
   USING      (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::bigint)
   WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::bigint);
 
+-- 읽기 판정(GraphReadGate)은 "이 온톨로지의 출처 전부"를 ontology_id 로 찾는다. PK 의 선두 열은 tenant_id 라
+-- ontology_id 단독 조건에는 쓰이지 않고, 온톨로지 삭제 시 ON DELETE CASCADE 도 이 열로 지운다 — 둘 다 이 인덱스를 탄다.
+CREATE INDEX idx_graph_ontology_source_ontology ON graph_ontology_source (ontology_id);
+
 -- 백필: 기존 출처를 최대한 넓게(안전 쪽) 잡는다. 현재 바인딩 전부 + 매핑 전부(draft 포함).
 -- Flyway 는 소유자 롤로 GUC 없이 돌므로 tenant_id DEFAULT 가 NULL 이 된다 — 반드시 원행의 tenant_id 를 명시한다(V120 선례).
 -- 한계: 과거에 다른 온톨로지로 적재했다가 재연결한 이력은 복원할 수 없다(이력에 ontology id 가 없음, deploy.md 수동 점검).

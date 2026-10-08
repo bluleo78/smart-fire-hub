@@ -11,7 +11,9 @@ import org.springframework.stereotype.Service;
 /**
  * 지식그래프 읽기 판정(WD-28). 어떤 사용자가 온톨로지 O 의 그래프를 읽으려면 O 의 출처(graph_ontology_source)인 <b>존재하는</b> 데이터셋을
  * <b>전부</b> VIEW 할 수 있어야 한다. 하나라도 못 보면 그래프 읽기 세 경로(시각화·graphrag_query· structured_query)를 모두 막는다.
- * 판정은 거칠다 — 노드 단위 정밀 판정은 S3 이후 과제다.
+ * 출처 중 <b>삭제된</b> 데이터셋이 하나라도 있으면 테넌트 관리자({@link Clearance#tenantAdmin()} — 실행 기록 원문 공개·admin_bypass
+ * 와 같은 판정)만 읽는다. 삭제된 데이터셋은 등급이 없어 판정할 수 없지만 그 내용은 그래프에 남아 있기 때문이다. 판정은 거칠다 — 노드 단위 정밀 판정은 S3 이후
+ * 과제다.
  *
  * <p>등급·허용 목록 규칙은 {@link DatasetAccessGuard#visibleCondition} 을 그대로 쓴다(새 판정 SQL 을 만들지 않는다). 온톨로지
  * 스키마(목록·요소 편집)는 데이터가 아니라 이 판정의 대상이 아니다.
@@ -46,7 +48,11 @@ public class GraphReadGate {
     if (c.userId() <= 0) {
       return false;
     }
-    return !sourceRepository.existsInvisibleSource(
-        ontologyId, accessGuard.visibleCondition(c, DATASET.ID, DATASET.SECURITY_LEVEL_ID));
+    // 삭제된 출처는 테넌트 관리자에게만 열린다. 관리자 판정을 못 하는 자격(Clearance.none 등)은 tenantAdmin=false 라
+    // 막힌다(fail-closed).
+    return !sourceRepository.existsUnreadableSource(
+        ontologyId,
+        accessGuard.visibleCondition(c, DATASET.ID, DATASET.SECURITY_LEVEL_ID),
+        c.tenantAdmin());
   }
 }

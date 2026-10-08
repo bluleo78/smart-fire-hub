@@ -20,7 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
  * 비의존).
  *
  * <p>클래스 레벨 @Transactional 은 지우지 말 것. RLS GUC 는 트랜잭션 시작 시점에만 주입되는데, 판정 쿼리가 트랜잭션 없이 돌면 출처가 0행으로 보인다.
- * 그러면 {@link #existsInvisibleSource} 가 false 가 되어 게이트가 <b>전부 열린다(fail-open)</b>. 판정 쿼리를
+ * 그러면 {@link #existsUnreadableSource} 가 false 가 되어 게이트가 <b>전부 열린다(fail-open)</b>. 판정 쿼리를
  * GraphReadGate 가 아니라 이 별도 빈에 두는 이유도 같다 — 같은 클래스 안의 자기 호출은 프록시를 우회해 트랜잭션이 걸리지 않는다.
  */
 @Repository
@@ -49,22 +49,33 @@ public class GraphOntologySourceRepository {
   }
 
   /**
-   * 이 온톨로지의 출처 중 <b>존재하는</b> 데이터셋인데 {@code visible} 을 만족하지 않는 것이 하나라도 있는가.
+   * 이 온톨로지의 출처 중 읽기를 막는 것이 하나라도 있는가. 막는 출처는 둘이다.
    *
-   * <p>dataset 과 내부 조인하므로 삭제된 데이터셋(행은 있는데 dataset 이 없음)은 판정에서 빠진다 — 등급이 없기 때문이다(스펙 §4, 알려진 한계). 쿼리
-   * 하나로 판정한다(N+1 없음).
+   * <ul>
+   *   <li>존재하는 데이터셋인데 {@code visible} 을 만족하지 않는 것.
+   *   <li>삭제된 데이터셋(출처 행은 있는데 dataset 이 없음) — {@code deletedSourceReadable} 이 false 일 때만. 삭제된 데이터셋은
+   *       등급이 없어 열람 조건으로 판정할 수 없는데, 그 내용은 Neo4j 그래프에 남아 있다. 그래서 테넌트 관리자만 읽게 한다(스펙 §4).
+   * </ul>
+   *
+   * <p>dataset 과 LEFT JOIN 해 두 조건을 쿼리 하나로 판정한다(N+1 없음).
    *
    * @param visible {@code Tables.DATASET.ID}·{@code Tables.DATASET.SECURITY_LEVEL_ID} 로 만든 열람 조건
    *     (DatasetAccessGuard#visibleCondition(Clearance, Field, Field))
+   * @param deletedSourceReadable 삭제된 출처를 막지 않을지(테넌트 관리자면 true)
    */
   @Transactional(readOnly = true)
-  public boolean existsInvisibleSource(long ontologyId, Condition visible) {
+  public boolean existsUnreadableSource(
+      long ontologyId, Condition visible, boolean deletedSourceReadable) {
+    // 존재하는 출처는 열람 조건으로 — isNotNull 을 명시해 삭제 행의 NULL 비교가 not(visible) 에 섞이지 않게 한다.
+    Condition invisibleExisting = DATASET.ID.isNotNull().and(not(visible));
+    Condition blocking =
+        deletedSourceReadable ? invisibleExisting : invisibleExisting.or(DATASET.ID.isNull());
     return dsl.fetchExists(
         selectOne()
             .from(GOS)
-            .join(DATASET)
+            .leftJoin(DATASET)
             .on(DATASET.ID.eq(GOS_DATASET_ID))
             .where(GOS_ONTOLOGY_ID.eq(ontologyId))
-            .and(not(visible)));
+            .and(blocking));
   }
 }
