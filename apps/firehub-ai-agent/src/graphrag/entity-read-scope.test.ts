@@ -20,7 +20,9 @@ const GRAPHRAG_DIR = dirname(fileURLToPath(import.meta.url));
 const SRC_DIR = dirname(GRAPHRAG_DIR);
 // routes 도 본다 — 라우트가 직접 Cypher 를 쓰지는 않지만, 스캔 범위를 graphrag 로 좁혀 두면
 // "옆 디렉터리에 새로 만들면 안 걸린다"가 성립한다.
-const SCAN_DIRS = [GRAPHRAG_DIR, join(SRC_DIR, 'routes')];
+// mcp 도 본다(WD-28 최종 리뷰) — 새 그래프 읽기 코드가 가장 생기기 쉬운 곳이 MCP 도구다. getSession() 이 export 돼 있어
+// 브랜드 타입은 읽기 세 함수만 지키므로, mcp 에서의 브랜드 캐스팅·스코프 없는 :Entity 조회도 이 트립와이어가 잡아야 한다.
+const SCAN_DIRS = [GRAPHRAG_DIR, join(SRC_DIR, 'routes'), join(SRC_DIR, 'mcp')];
 
 /**
  * 스코프 술어 없이 :Entity 를 MATCH 해도 되는 파일과 그 이유.
