@@ -1,7 +1,13 @@
 import { toast } from 'sonner';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { extractApiError, extractApiErrorAsync, handleApiError, isGraphReadRestricted } from './api-error';
+import {
+  extractApiError,
+  extractApiErrorAsync,
+  GRAPH_READ_RESTRICTED_MESSAGE,
+  handleApiError,
+  isGraphReadRestricted,
+} from './api-error';
 
 // toast 는 부수효과만 확인한다 — 실제 sonner 렌더는 E2E 몫이다. vi.mock 은 호이스팅되므로 import 아래에 둬도
 // import 보다 먼저 적용된다(import 순서 lint 를 지키기 위해 아래에 둔다).
@@ -72,5 +78,15 @@ describe('isGraphReadRestricted', () => {
     expect(isGraphReadRestricted(err(403, { message: '권한 없음' }))).toBe(false);
     expect(isGraphReadRestricted(err(500, { code: 'GRAPH_READ_RESTRICTED' }))).toBe(false);
     expect(isGraphReadRestricted(new Error('x'))).toBe(false);
+  });
+
+  // 판정 조회 일시 장애(502)는 제한이 아니다 — 자물쇠 안내가 아니라 재시도 가능한 일반 오류로 남아야 한다.
+  it('판정 조회 실패 502 는 제한이 아니다', () => {
+    expect(isGraphReadRestricted(err(502, { message: '지식그래프 조회 중 ai-agent 호출 실패' }))).toBe(false);
+    expect(isGraphReadRestricted(err(502, { code: 'GRAPH_READ_CHECK_FAILED' }))).toBe(false);
+  });
+
+  it('제한 안내 문구 상수가 스펙 원문과 같다', () => {
+    expect(GRAPH_READ_RESTRICTED_MESSAGE).toBe('이 지식그래프에는 열람 권한이 없는 데이터가 포함되어 있어 표시할 수 없습니다.');
   });
 });

@@ -12,7 +12,7 @@ import { useOntologyById, useOntologyGraph, useOntologyList } from '@/hooks/quer
 import { useOntologyElementMutations } from '@/hooks/queries/useOntologyElement';
 import { useAuth } from '@/hooks/useAuth';
 import { useDirtyAggregator, useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
-import { isGraphReadRestricted } from '@/lib/api-error';
+import { GRAPH_READ_RESTRICTED_MESSAGE, isGraphReadRestricted } from '@/lib/api-error';
 import { createTypePalette } from '@/lib/ontology-colors';
 import { affectedRelationsFor, isLastActiveEntityType } from '@/lib/ontology-validation';
 import type { GraphNode } from '@/types/ontology';
@@ -55,12 +55,12 @@ function GraphError({ message, onRetry }: { message: string; onRetry: () => void
 
 // 그래프 읽기 제한(WD-28) — 출처 데이터셋 중 볼 수 없는 것이 있어 서버가 그래프를 내려주지 않은 상태.
 // 오류가 아니므로 GraphError(빨간 아이콘·재시도) 대신 실행 기록 가림과 같은 muted 자물쇠 박스를 쓴다.
-// 어느 데이터셋 때문인지는 밝히지 않는다(스펙 §2). 문구는 스펙 원문이며 서버 message 를 쓰지 않는다.
+// 어느 데이터셋 때문인지는 밝히지 않는다(스펙 §2). 문구는 스펙 원문 상수(api-error.ts)이며 서버 message 를 쓰지 않는다.
 function GraphReadRestricted() {
   return (
     <div className="flex h-full items-center justify-center p-6">
       <RestrictedNotice
-        message="이 지식그래프에는 열람 권한이 없는 데이터가 포함되어 있어 표시할 수 없습니다."
+        message={GRAPH_READ_RESTRICTED_MESSAGE}
         className="max-w-md"
         data-testid="graph-read-restricted"
       />
