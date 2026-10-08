@@ -5,6 +5,7 @@ import static org.jooq.impl.DSL.field;
 import static org.jooq.impl.DSL.name;
 import static org.jooq.impl.DSL.table;
 
+import com.smartfirehub.ontology.graphread.GraphOntologySourceRepository;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
@@ -23,6 +24,8 @@ import org.springframework.transaction.annotation.Transactional;
 public class DatasetOntologyRepository {
 
   private final DSLContext dsl;
+  // WD-28: 연결·재연결 시 출처를 남긴다. 같은 트랜잭션(이 클래스의 @Transactional)에 합류한다.
+  private final GraphOntologySourceRepository sourceRepository;
 
   private static final Table<?> DATASET_ONTOLOGY = table(name("dataset_ontology"));
   private static final Field<Long> DO_DATASET_ID =
@@ -52,6 +55,8 @@ public class DatasetOntologyRepository {
         .set(DO_BOUND_BY, userId)
         .set(DO_BOUND_AT, currentOffsetDateTime())
         .execute();
+    // 재연결이어도 옛 온톨로지 행은 지우지 않는다 — 예전 그래프의 잔존 데이터 출처이기 때문이다(스펙 §3).
+    sourceRepository.record(ontologyId, datasetId);
   }
 
   // 데이터셋에 바인딩된 온톨로지 id 조회(없으면 empty).

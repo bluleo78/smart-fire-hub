@@ -34,6 +34,7 @@ import com.smartfirehub.jooq.tables.DocumentChunkVec_1536.DocumentChunkVec_1536P
 import com.smartfirehub.jooq.tables.DocumentFile.DocumentFilePath;
 import com.smartfirehub.jooq.tables.EmbeddingReembedState.EmbeddingReembedStatePath;
 import com.smartfirehub.jooq.tables.FileDatasetConfig.FileDatasetConfigPath;
+import com.smartfirehub.jooq.tables.GraphOntologySource.GraphOntologySourcePath;
 import com.smartfirehub.jooq.tables.GraphReviewItem.GraphReviewItemPath;
 import com.smartfirehub.jooq.tables.Membership.MembershipPath;
 import com.smartfirehub.jooq.tables.MetricSnapshot.MetricSnapshotPath;
@@ -796,6 +797,19 @@ public class Tenant extends TableImpl<TenantRecord> {
             _userRole = new UserRolePath(this, null, Keys.USER_ROLE__FK_USER_ROLE_TENANT.getInverseKey());
 
         return _userRole;
+    }
+
+    private transient GraphOntologySourcePath _graphOntologySource;
+
+    /**
+     * Get the implicit to-many join path to the
+     * <code>public.graph_ontology_source</code> table
+     */
+    public GraphOntologySourcePath graphOntologySource() {
+        if (_graphOntologySource == null)
+            _graphOntologySource = new GraphOntologySourcePath(this, null, Keys.GRAPH_ONTOLOGY_SOURCE__GRAPH_ONTOLOGY_SOURCE_TENANT_ID_FKEY.getInverseKey());
+
+        return _graphOntologySource;
     }
 
     private transient GraphReviewItemPath _graphReviewItem;

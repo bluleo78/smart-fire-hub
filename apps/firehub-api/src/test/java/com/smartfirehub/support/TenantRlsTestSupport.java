@@ -454,6 +454,7 @@ public final class TenantRlsTestSupport {
     dsl.execute("delete from dataset_mapping where tenant_id = ?", tenantId);
     dsl.execute("delete from dataset_graph_ingest where tenant_id = ?", tenantId);
     dsl.execute("delete from graph_review_item where tenant_id = ?", tenantId);
+    dsl.execute("delete from graph_ontology_source where tenant_id = ?", tenantId);
     dsl.execute("delete from ontology where tenant_id = ?", tenantId);
   }
 

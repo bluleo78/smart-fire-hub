@@ -5,6 +5,7 @@ import static org.jooq.impl.DSL.field;
 import static org.jooq.impl.DSL.name;
 import static org.jooq.impl.DSL.table;
 
+import com.smartfirehub.ontology.graphread.GraphOntologySourceRepository;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
@@ -24,6 +25,8 @@ import org.springframework.transaction.annotation.Transactional;
 public class MappingRepository {
 
   private final DSLContext dsl;
+  // WD-28: 매핑 저장 시 출처를 남긴다. 같은 트랜잭션(이 클래스의 @Transactional)에 합류한다.
+  private final GraphOntologySourceRepository sourceRepository;
 
   private static final Table<?> DATASET_MAPPING = table(name("dataset_mapping"));
   private static final Field<Long> M_DATASET_ID =
@@ -61,6 +64,8 @@ public class MappingRepository {
         .set(M_UPDATED_BY, userId)
         .set(M_UPDATED_AT, currentOffsetDateTime())
         .execute();
+    // WD-28: 표 투영(graphrag_project_table)은 mapping.ontologyId 로 쓰므로 매핑 저장 시점에도 출처를 남긴다.
+    sourceRepository.record(ontologyId, datasetId);
   }
 
   // 데이터셋 매핑 조회(없으면 empty).

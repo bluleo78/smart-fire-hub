@@ -137,6 +137,14 @@ class OntologyGraphRlsTest extends IntegrationTestBase {
         tx, dsl, tenantA, tenantB, "dataset_ontology", "dataset_id", this::insertDatasetOntology);
   }
 
+  @Test
+  @DisplayName("graph_ontology_source 는 테넌트 간 양방향으로 격리된다 (V135)")
+  void graphOntologySourceIsIsolated() {
+    // 서로게이트 id 가 없다 — dataset_id 로 행을 식별해 3다리 단언(소유자 보임/남 안 보임/tenant_id DEFAULT)을 받는다.
+    TenantRlsTestSupport.assertTwoSidedIsolation(
+        tx, dsl, tenantA, tenantB, "graph_ontology_source", "dataset_id", this::insertGraphSource);
+  }
+
   // ── 접은 유니크 / fail-closed / WITH CHECK ──────────────────────────────
 
   @Test
@@ -243,6 +251,16 @@ class OntologyGraphRlsTest extends IntegrationTestBase {
         "insert into dataset_ontology (dataset_id, ontology_id) values (?, ?)",
         datasetId,
         insertOntology("격리검증-바인딩"));
+    return datasetId;
+  }
+
+  /** 출처 행 픽스처(V135). dataset_id 에 FK 가 없으므로 임의 id 를 쓰고, 행 식별자로 그대로 돌려준다. */
+  private Long insertGraphSource() {
+    long datasetId = TenantRlsTestSupport.nextTenantId();
+    dsl.execute(
+        "insert into graph_ontology_source (ontology_id, dataset_id) values (?, ?)",
+        insertOntology("격리검증-출처"),
+        datasetId);
     return datasetId;
   }
 
