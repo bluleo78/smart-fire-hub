@@ -15,7 +15,11 @@ import com.smartfirehub.pipeline.repository.PipelineStepRepository;
 import com.smartfirehub.pipeline.repository.TriggerRepository;
 import com.smartfirehub.pipeline.service.validator.PythonScriptValidator;
 import com.smartfirehub.pipeline.service.validator.SqlValidator;
+import com.smartfirehub.securitylevel.access.Clearance;
+import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
+import com.smartfirehub.securitylevel.access.DatasetAction;
+import com.smartfirehub.securitylevel.access.SqlAccessMode;
 import com.smartfirehub.user.repository.UserRepository;
 import java.util.HashMap;
 import java.util.List;
@@ -55,6 +59,16 @@ public class PipelineService {
 
   /** 상세 응답의 출력 데이터셋 이름 가시성(보안 등급) — 볼 수 없는 출력은 이름만 null(id 는 유지). */
   private final DatasetAccessGuard datasetAccessGuard;
+
+  /** 실행 기록 조회자 자격(WD-27) — 원문 오류·로그를 보여 줄지 판정한다. */
+  private final ClearanceResolver clearanceResolver;
+
+  /**
+   * 조회자가 볼 수 없는 데이터셋이 관련된 스텝의 오류를 대신하는 고정 문구(WD-27). 원문(PG 오류)에는 숨김 테이블명·행 값이 실릴 수 있어 일부만 지우지 않고
+   * 통째로 바꾼다.
+   */
+  public static final String WITHHELD_STEP_ERROR_MESSAGE =
+      "열람 권한이 없는 데이터셋이 관련된 스텝이라 상세 오류를 표시하지 않습니다.";
 
   @Transactional
   public PipelineDetailResponse createPipeline(CreatePipelineRequest request, Long userId) {
@@ -631,6 +645,113 @@ public class PipelineService {
           "Execution not found: " + executionId + " in pipeline " + pipelineId);
     }
 
-    return execution;
+    return withholdRawErrorsFromViewer(pipelineId, execution);
+  }
+
+  /**
+   * 실행 기록의 원문 오류·로그를 조회자 기준으로 가린다(WD-27, 보안 등급 S2).
+   *
+   * <p>실행 기록은 {@code pipeline:read} 만 있으면 누구나 읽지만, 스텝 오류에는 PG 원문이 그대로 저장된다 — 실행 주체(숨김 데이터셋을 볼 수 있는
+   * 사용자)가 돌린 스텝이 실행 중 실패하면 그 문구에 숨김 데이터셋의 테이블명은 물론 <b>행 값</b>까지 실린다(실측: {@code invalid input syntax
+   * for type integer: "<숨김 행 값>"}). 이름만 지우는 마스킹으로는 값이 남으므로, 조회자가 그 스텝이 다루는 데이터셋을 전부 볼 수 있을 때만 원문을
+   * 보여 주고 아니면 원문 전체를 고정 문구로 바꾼다. 저장 시점이 아니라 조회 시점에 가리는 이유: 저장본을 지우면 볼 자격이 있는 사용자(실행 주체 등)의 디버깅 정보까지
+   * 사라진다.
+   *
+   * <p>판정이 모호하면 가린다(과잉 은닉은 허용, 과소 은닉은 불허).
+   */
+  private ExecutionDetailResponse withholdRawErrorsFromViewer(
+      Long pipelineId, ExecutionDetailResponse execution) {
+    Clearance viewer = clearanceResolver.current();
+    // 스텝 정의는 현재 상태로 읽는다 — 출력 id 는 러너 TEMP 폴백(coalesce)이 반영된 값이다. 이름 가시성 조건은 여기서 쓰지 않는다.
+    Map<Long, PipelineStepResponse> stepsById = new HashMap<>();
+    for (PipelineStepResponse s :
+        stepRepository.findByPipelineId(pipelineId, datasetAccessGuard.visibleCondition(viewer))) {
+      stepsById.put(s.id(), s);
+    }
+    boolean anyStepHidden = false;
+    List<StepExecutionResponse> steps = new java.util.ArrayList<>();
+    for (StepExecutionResponse se : execution.stepExecutions()) {
+      boolean hidden = !canSeeRawStepText(viewer, stepsById.get(se.stepId()));
+      anyStepHidden |= hidden;
+      steps.add(
+          hidden && (se.errorMessage() != null || se.log() != null)
+              ? new StepExecutionResponse(
+                  se.id(),
+                  se.stepId(),
+                  se.stepName(),
+                  se.status(),
+                  se.outputRows(),
+                  null,
+                  se.errorMessage() != null ? WITHHELD_STEP_ERROR_MESSAGE : null,
+                  se.startedAt(),
+                  se.completedAt())
+              : se);
+    }
+    // 실행 단위 오류(스텝 밖 최상위 예외)는 어느 스텝에서 왔는지 알 수 없으므로, 파이프라인의 스텝 중 하나라도 조회자가 못 보면 가린다.
+    for (PipelineStepResponse s : stepsById.values()) {
+      anyStepHidden |= !canSeeRawStepText(viewer, s);
+    }
+    String executionError =
+        anyStepHidden && execution.errorMessage() != null
+            ? WITHHELD_STEP_ERROR_MESSAGE
+            : execution.errorMessage();
+    return new ExecutionDetailResponse(
+        execution.id(),
+        execution.pipelineId(),
+        execution.pipelineName(),
+        execution.status(),
+        execution.executedBy(),
+        steps,
+        execution.startedAt(),
+        execution.completedAt(),
+        execution.createdAt(),
+        executionError);
+  }
+
+  /**
+   * 조회자가 이 스텝의 원문 오류·로그를 볼 수 있는가 — 스텝이 다루는 데이터셋(출력·명시 입력·SQL 참조 테이블)을 전부 VIEW 할 수 있어야 한다.
+   *
+   * <ul>
+   *   <li>출력: 러너 TEMP 는 실행 시 입력 최대 등급으로 오르므로(판단 사항 5) 출력 VIEW 가 입력 가시성을 대부분 대신한다.
+   *   <li>SQL: 저장 판정과 같은 문자열({@code {{#N}}} 더미 치환)·같은 모드로 조회자 기준 판정 — DML 쓰기 대상과 출력 없는 스텝을 덮는다. 스텝
+   *       참조 더미는 판정에서 빠지지만, 참조된 TEMP 의 등급은 이 스텝의 출력 등급에 이미 반영된다.
+   *   <li>출력도 SQL 도 없는 스텝(출력 미지정 PYTHON 등)은 무엇을 읽었는지 알 수 없어 가린다.
+   * </ul>
+   */
+  private boolean canSeeRawStepText(Clearance viewer, PipelineStepResponse step) {
+    if (step == null) {
+      return false;
+    }
+    boolean judged = false;
+    if (step.outputDatasetId() != null) {
+      if (!datasetAccessGuard
+          .check(viewer, step.outputDatasetId(), DatasetAction.VIEW, null)
+          .allowed()) {
+        return false;
+      }
+      judged = true;
+    }
+    if (step.inputDatasetIds() != null && !step.inputDatasetIds().isEmpty()) {
+      if (!datasetAccessGuard.checkDatasetReads(viewer, step.inputDatasetIds()).allowed()) {
+        return false;
+      }
+    }
+    if ("SQL".equals(step.scriptType())) {
+      try {
+        if (!datasetAccessGuard
+            .checkSql(
+                viewer,
+                substituteStepReferencesForValidation(step.scriptContent()),
+                SqlAccessMode.PIPELINE_SAVE)
+            .allowed()) {
+          return false;
+        }
+      } catch (RuntimeException e) {
+        // 파싱 불가·모호 표기 — 판정할 수 없으므로 가린다.
+        return false;
+      }
+      judged = true;
+    }
+    return judged;
   }
 }
