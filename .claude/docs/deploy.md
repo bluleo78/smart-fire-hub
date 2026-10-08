@@ -242,16 +242,19 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
   - 테스트 테넌트를 정지·활성화한 뒤 감사 로그에 "테넌트 정지/활성화" 가 이름·slug 와 함께 보이는지.
   - admin 테넌트 목록·상세의 생성일이 KST 로 맞게 보이는지.
 
-### V133 데이터셋 보안 등급 S1+S2 (계획 2026-10-07 · 배포일은 배포 시점에 갱신)
+### V133·V134 데이터셋 보안 등급 S1+S2 + 후속 수정 (계획 2026-10-07·2026-10-08 · 배포일은 배포 시점에 갱신)
 
 - **api + web 동시 배포 필수.** S1(ID·목록 통제)과 S2(SQL 경로 통제)는 한 묶음으로만 배포한다 — 둘을 나누면 SQL 경로(애드혹·/query·차트·파이프라인)로 우회된다. web 만 배포하면 새 API 404.
 - **배포 전 웹 단위 테스트를 수동으로 돌린다**: `cd apps/firehub-web && pnpm test:unit` — 커밋 훅은 vitest 를 돌리지 않는다(이 앱의 `pnpm test` 는 아무것도 하지 않는 자리표시자다).
-- executor·ai-agent 는 이번 변경 없음(재배포 불필요).
+- executor·ai-agent 는 재배포 불필요. executor 는 변경 없음. ai-agent 는 `src/mcp/api-client/analytics-api.ts` 의 **TypeScript 타입만** 바뀌었다(`Chart.savedQueryName` 을 `string | null` 로, `ChartData.denied?` 추가) — 이 필드를 읽는 런타임 코드가 없고 타입은 빌드 시 지워지므로 실행 동작이 같다.
 - 마이그레이션 V133: 전 테넌트에 4등급 시드 + 기존 데이터셋·역할=내부, 시스템 ADMIN=기밀 백필 → **배포 직후 가시성은 배포 전과 같다**(내부 이하는 허용 목록 없음).
-- **번호 확인**: 2026-10-08 기준 main 의 최신 마이그레이션은 V132 이고 이 브랜치의 V133 은 맞는 번호다. **병합 직전에 실제 main 의 마이그레이션 목록을 다시 확인한다**(번호 충돌 전례 — V122). 배포 전 스냅샷 규칙(V122 이상)은 그대로 따른다.
+- 마이그레이션 V134(후속 수정, 같은 릴리스): GraphRAG 검수 항목 유일 인덱스 `uq_graph_review_item` 을 `(tenant_id, item_type, dedupe_key)` 에서 `(tenant_id, item_type, dataset_id, dedupe_key) NULLS NOT DISTINCT` 로 교체한다(인덱스 이름 유지). `NULLS NOT DISTINCT` 는 **PostgreSQL 15 이상** 문법이다 — 운영 DB 가 PG16 인지 배포 전에 확인한다(`select version()`). 새 키는 옛 키의 상위 집합이라 기존 행이 위반할 수 없다(아래 사전 확인 쿼리로 확인).
+- **다음 신규 마이그레이션 번호 = V135.**
+- **번호 확인**: 2026-10-08 기준 main 의 최신 마이그레이션은 V132 이고 이 브랜치의 V133·V134 는 맞는 번호다. **병합 직전에 실제 main 의 마이그레이션 목록을 다시 확인한다**(번호 충돌 전례 — V122). 배포 전 스냅샷 규칙(V122 이상)은 그대로 따른다.
 - 아래 확인 쿼리는 전부 **소유자 롤로 실행**한다(`docker exec <db> psql -U app -d smartfirehub`) — 런타임 롤 `app_tenant` 는 RLS 라 행이 0 으로 보여 확인이 공허해진다.
 - 배포 전 확인:
   - `select max(version::int) from flyway_schema_history` 가 132 인지.
+  - V134 사전 확인: `SELECT tenant_id, item_type, dataset_id, dedupe_key, count(*) FROM graph_review_item GROUP BY 1,2,3,4 HAVING count(*) > 1` 가 0행인지(새 키는 구 인덱스의 상위 집합이라 0행이어야 정상 — 행이 나오면 구 인덱스가 깨진 것이므로 중단 후 상의).
   - 역할이 하나도 없는 활성 사용자는 어떤 데이터셋도 볼 수 없다(fail-closed) — `select u.id from "user" u join membership m on m.user_id=u.id and m.status='ACTIVE' where not exists (select 1 from user_role ur where ur.user_id=u.id and ur.tenant_id=m.tenant_id)` 가 0행인지.
   - 파이프라인 TEMP 판정: `source_pipeline_step_id` 가 있는 데이터셋은 스텝 TEMP 로 신뢰된다 — `SELECT id, table_name, created_by FROM dataset WHERE source_pipeline_step_id IS NOT NULL AND table_name NOT LIKE 'ptmp\_%'` 가 0행이어야 한다(아니면 중단 후 상의).
   - **FILE 데이터셋 저장 경로(prefix) 점검**(필수 — 결과가 0행이 아니면 중단 후 상의): 이번 배포부터 prefix 는 서버가 `datasets/<데이터셋 id>/` 로만 만들고 클라이언트 지정은 400 `FILE_PREFIX_NOT_ALLOWED` 로 거부된다. 그 전에 사용자가 직접 지정한 prefix 가 다른 데이터셋(다른 테넌트 포함) 경로를 덮고 있으면, 그 데이터셋 화면에서 남의 파일 목록·다운로드 URL 이 계속 발급된다. 두 쿼리 모두 소유자 롤로 실행한다(RLS 를 넘어 **모든 테넌트**를 봐야 한다). `LIKE` 를 쓰지 않는다 — prefix 의 `_` 가 와일드카드로 오탐을 낸다.
@@ -259,7 +262,7 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
     - 같은 버킷에서 서로의 접두어가 되는 쌍: `SELECT a.dataset_id AS a_id, b.dataset_id AS b_id, a.bucket, a.prefix AS a_prefix, b.prefix AS b_prefix FROM file_dataset_config a JOIN file_dataset_config b ON a.bucket = b.bucket AND a.dataset_id < b.dataset_id WHERE starts_with(a.prefix, b.prefix) OR starts_with(b.prefix, a.prefix)`
     - 첫 쿼리에 행이 나오면 해당 데이터셋의 객체를 `datasets/<id>/` 로 옮기고(MinIO 복사) `file_dataset_config.prefix` 를 갱신하거나, 데이터셋 소유자와 정리 방법을 정한다 — 자동 이동은 하지 않는다.
   - (권장) 아래 "파이프라인 실행 주체" 변화에 걸릴 대상 — 생성자에게 ACTIVE 멤버십·역할이 없는 예약/API 트리거, 데이터셋이 아닌 data 스키마 테이블(`stg_import_*` 등)을 읽는 SQL 스텝 — 을 미리 찾아 둔다.
-- 배포 후 확인: `select tenant_id, count(*) from security_level group by 1` 이 모든 테넌트 4, `select count(*) from dataset where security_level_id is null` = 0, `select count(*) from role where max_security_level_id is null` = 0.
+- 배포 후 확인: `select tenant_id, count(*) from security_level group by 1` 이 모든 테넌트 4, `select count(*) from dataset where security_level_id is null` = 0, `select count(*) from role where max_security_level_id is null` = 0, `select max(version::int) from flyway_schema_history` = 134, `select indexdef from pg_indexes where indexname = 'uq_graph_review_item'` 에 `dataset_id` 와 `NULLS NOT DISTINCT` 가 들어 있는지.
 - **동작 변화**(관리자 공지에 포함):
   - 파이프라인은 실행 주체(run-as) 자격으로 판정된다. 실행 주체에게 그 테넌트의 ACTIVE 멤버십(또는 역할·활성 계정)이 없으면 SQL 스텝이 **실패한다** — 퇴사·제외된 생성자의 예약/API 트리거 포함.
   - 스텝 SQL 이 데이터셋이 아닌 테이블(`stg_import_*`·고아 테이블 등)을 읽으면 실행 시·다음 저장 시 **거부된다**(존재 은닉, fail-closed).
@@ -270,24 +273,46 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
     - 사용자가 지정한 출력 데이터셋에 쓰는(DML·REPLACE) 스텝은 실행 주체에게 그 출력의 VIEW 가 있어야 한다 — 없으면 실행이 **실패한다**(숨김 데이터셋을 덮어써 비우는 것을 막기 위함).
     - 재사용되는 러너 TEMP 가 실행 주체가 볼 수 없는 등급으로 이미 올라가 있으면 실행이 **실패한다**(관리자가 TEMP 등급을 내려야 다시 돈다).
     - 입력보다 낮은 등급의 출력에 쓰면(쓰기 하향) 실행이 **실패한다** — 자동 상향은 러너 TEMP 출력만이며, 일반 자동 상향은 S4 까지 없다.
-    - **API_CALL·PYTHON 스텝**도 사용자가 지정한 출력 데이터셋에 쓰려면 볼 수 있어야 한다: 저장 시 편집자가 못 보면 403 `DATASET_SQL_ACCESS_DENIED`, 실행 시 실행 주체가 못 보면 출력 비우기(REPLACE)·적재 전에 **실패한다**(구분 불가 메시지). 러너 TEMP 출력은 저장 판정에서 제외된다. 등급 전파·하향 판정은 없다(외부 API 데이터·PYTHON 입력 미판정).
-    - 러너 TEMP 의 스키마가 바뀌어 다시 만들 때(SQL·AI_CLASSIFY), 실행 주체가 기존 TEMP 를 볼 수 없으면 지우기 전에 **실패한다**(다른 실행 주체의 결과를 지우지 않음).
+    - **API_CALL·PYTHON 스텝**도 사용자가 지정한 출력 데이터셋에 쓰려면 볼 수 있어야 한다: 저장 시 편집자가 못 보면 403 `DATASET_SQL_ACCESS_DENIED`, 실행 시 실행 주체가 못 보면 출력 비우기(REPLACE)·적재 전에 **실패한다**(구분 불가 메시지). 저장 판정에서 빠지는 것은 **그 파이프라인 자신의** 러너 TEMP(편집 화면이 되돌려 보내는 출력 폴백)뿐이다 — 다른 파이프라인의 TEMP 를 출력으로 새로 지정하면 TEMP 예외 없이 판정돼, 볼 수 없으면 없는 id 와 같은 403 으로 지정할 수 없다. 이미 저장된 지정 출력도 같은 값을 다시 보내면 다시 판정된다(아래 알려진 한계). 등급 전파·하향 판정은 없다(외부 API 데이터·PYTHON 입력 미판정).
+    - 러너 TEMP 의 스키마가 바뀌어 다시 만들 때(SQL·AI_CLASSIFY·**API_CALL·PYTHON**), 실행 주체가 기존 TEMP 를 볼 수 없으면 지우기 전에 **실패한다**(다른 실행 주체의 결과를 지우지 않음). API_CALL·PYTHON 이 기존 러너 TEMP 를 재사용할 때도 실행 주체가 볼 수 있어야 한다.
   - **AI_CLASSIFY 스텝**도 SQL 스텝과 같은 규칙으로 판정된다: 저장 시 편집자, 실행 시 실행 주체가 입력 데이터셋(명시 입력·의존 스텝 출력 자동 해석분 모두)을 볼 수 있어야 하고, 아니면 저장 403 `DATASET_SQL_ACCESS_DENIED` / 실행 **실패**(구분 불가 메시지). 삭제된 입력 데이터셋도 예전처럼 건너뛰지 않고 같은 거부로 **실패**한다. 출력은 SQL SELECT 스텝과 같다 — 러너 TEMP 는 입력 최대 등급으로 상향(허용 목록 등급이면 실행 주체 시드), 사용자가 지정한 출력은 실행 주체가 볼 수 있어야 하고 입력보다 낮으면 `SQL_WRITE_DOWNGRADE` 로 실패한다.
   - **FILE 데이터셋** 생성 폼의 "경로 프리픽스" 입력이 없어졌다 — 저장 경로는 서버가 `datasets/<id>/` 로 만든다(API 로 prefix 를 보내면 400 `FILE_PREFIX_NOT_ALLOWED`).
   - **GraphRAG 검수 인박스**: 출처 데이터셋을 볼 수 없는 검수 항목은 목록에서 빠지고, 근거·승인·거부는 404 `REVIEW_ITEM_NOT_FOUND` 다. 없는 항목도 이제 400 이 아니라 같은 404 다(숨김 항목과 구분되지 않게).
   - 파이프라인 SQL 스텝·컬럼 탐지는 사용자 SQL 을 JDBC 이스케이프 처리 없이 그대로 보낸다 — `{fn …}`·`{d '…'}` 같은 JDBC 이스케이프 표기는 이제 PG 문법 오류로 **실패**한다(애드혹 SQL 과 같은 동작). jsonb `?` 연산자는 이제 파이프라인 SQL 에서도 동작한다.
   - 정책 칩(내보내기·AI·공유)은 S1 에선 **표시만** — 강제는 S3/S4. 사용자가 "막혀 있다"고 오해하지 않도록 공지에 명시.
-- **알려진 한계**(후속):
-  - 데이터셋 **이름**은 홈·파이프라인·저장 쿼리(차트 메타데이터 포함) 화면에서 여전히 노출될 수 있다(내용·행은 아님).
-  - PYTHON 스텝의 **입력 읽기**는 SQL 관문을 거치지 않는 알려진 우회 경로다(편집 화면 경고만, 강제는 후속). 출력 쓰기는 이번 배포에서 막혔다(위 동작 변화).
-  - API_CALL·PYTHON 의 **러너 TEMP** 출력(재사용·스키마 변경 시 재생성)은 실행 주체 VIEW 판정을 하지 않는다 — 이 TEMP 는 등급 전파가 없어 기본 등급으로 남지만, 관리자가 수동으로 등급을 올린 경우 볼 수 없는 실행 주체가 비우거나 다시 만들 수 있다(후속).
-  - **GraphRAG 에 이미 적재된 내용은 등급을 올려도 계속 읽힌다**: 문서 적재·`graphrag_project_table`(표 투영)로 Neo4j 에 들어간 엔티티·관계·속성(표 행 값 포함)은 데이터셋을 나중에 '민감'·'기밀'로 올려도 ai-agent 의 그래프 조회·채팅 검색으로 계속 노출된다(스펙 §7.5 — 그래프 쪽 통제는 후속). **운영 절차**: 등급을 올리기 전에 그 데이터셋이 GraphRAG 에 적재됐는지(소유자 롤로 `SELECT * FROM dataset_graph_ingest WHERE dataset_id = <id>`) 확인하고, 적재돼 있으면 그래프에서 해당 데이터셋 유래 노드를 수동으로 정리한 뒤 올린다. 검수 인박스의 원문 근거는 이번 배포에서 막혔다.
-  - 스텝 오류에 PG 원문 메시지가 그대로 저장돼 숨김 테이블 이름이 드러날 수 있다.
-  - 접근 거부 감사(누가 무엇에 거부됐는지)는 S4 로 이연 — 이번 배포에서는 관리 작업만 감사에 남는다.
-  - 러너 TEMP 의 허용 목록은 늘어나기만 한다(REPLACE 때 재설정은 S4 전파 설계와 함께).
+  - **이름·존재 노출 차단(후속 수정)**:
+    - 홈 화면의 데이터셋 개수(전체·원본·파생)·최근 임포트·주의 항목·활동 피드·상태(health) 집계는 조회자가 볼 수 없는 데이터셋을 **뺀다**(사용자마다 숫자가 다를 수 있다).
+    - 파이프라인 스텝의 입력·출력 데이터셋, 저장 쿼리의 연결 데이터셋이 숨김이면 응답의 **이름이 null** 이다(id 는 유지 — 편집 후 저장해도 참조가 보존된다). 웹은 자물쇠와 함께 "열람 권한 없음" 으로 표시한다.
+    - 저장 시 **새로 지정한** 숨김 데이터셋 id 는 없는 id 와 같은 응답이다 — 파이프라인 입력·출력(생성·수정 모두), 저장 쿼리의 연결 데이터셋, 데이터셋 변경 트리거의 감시 데이터셋. 이미 저장돼 있던 id 를 그대로 다시 보내는 것은 통과한다(왕복 보존).
+    - 다른 파이프라인의 러너 TEMP 를 API_CALL·PYTHON 출력으로 새로 지정할 때도 TEMP 예외 없이 판정한다(위 출력 쓰기 규칙).
+    - 데이터셋 변경 SSE 는 같은 테넌트에서 그 데이터셋을 볼 수 있는 사용자에게만, API 연결 상태 SSE 는 같은 테넌트 사용자에게만 간다(예전에는 **모든 테넌트**에 방송됐다).
+    - 차트·대시보드 위젯의 `denied` 응답에서 `config`(컬럼명 포함)와 저장 쿼리 이름이 빠진다(빈 객체·null).
+    - **API 가져오기**(`POST /datasets/{id}/api-import`): 숨김 데이터셋은 없는 데이터셋과 같은 404 다(데이터셋 ID 경로 인터셉터 — 권한 유무와 무관하게 숨김·없음 응답이 같음을 라우트 열거 TC 로 고정).
+  - **GraphRAG 검수 후속**:
+    - 검수 대기 등록(POST)은 `datasetId` 가 **필수**다(없으면 400). 볼 수 없는 데이터셋이면 404, 그 데이터셋에 속하지 않은 청크를 근거로 대면 400.
+    - 검수 결정 조회에서 숨김 데이터셋의 결정은 `none`(결정 없음)으로 답한다.
+    - 같은 이름(dedupe 키)의 검수 항목이 이제 **데이터셋마다 따로** 생긴다(V134) — 인박스에 같은 이름 항목이 여러 건 보일 수 있고, 승인·거부도 데이터셋별로 한다.
+  - **실행 기록 오류 원문 가림**(WD-27): 파이프라인 실행 상세의 스텝 오류·로그 원문(PG 오류에 숨김 테이블명·행 값이 실릴 수 있음)은 조회자가 그 스텝이 다루는 데이터셋(출력·명시 입력·SQL 참조 테이블·`{{#N}}` 이 가리키는 스텝 출력)을 **전부** 볼 수 있을 때만 보인다. 아니면 오류는 "이 스텝의 상세 오류는 관련 데이터에 접근할 수 있는 사용자에게만 표시됩니다." 로 바뀌고 로그는 비며 응답에 `errorMasked: true` 가 붙는다. 판정할 데이터셋이 없는 스텝(출력 없는 PYTHON 등)의 원문은 **실행 주체와 테넌트 관리자**에게만 보인다. 실행 단위 오류는 실행의 스텝 중 하나라도 조회자가 못 보면 "이 실행의 상세 오류는 …" 으로 가린다. 웹은 가렸을 때 "아래 오류 정보를 참고…" 안내를 숨긴다. 저장본은 지우지 않는다(조회 시점 판정).
+  - **보안 등급 이름 경합**: 같은 이름으로 동시에 등급을 만들거나 이름을 바꾸면 예전의 코드 없는 일반 409 대신 409 `SECURITY_LEVEL_NAME_DUPLICATE` 로 답한다(사전 검사와 같은 코드).
+- **알려진 한계**(후속 — 괄호 안은 workplace WD 이슈 키):
+  - **남은 이름 노출**(WD-31): 숨김 데이터셋의 **테이블명**이 다음 경로에는 남는다(내용·행은 아님).
+    - 파이프라인 스텝 SQL 원문(`scriptContent`)·저장 쿼리 SQL 원문(`sqlText`) 안의 테이블명 — 원문을 고치면 실행이 바뀌므로 가리지 않는다.
+    - `GET /charts`·`GET /charts/{id}` 의 `config`(컬럼명) — denied 데이터 응답에서만 뺐다(소유자가 재저장 시 덮어쓰지 않게 메타 조회는 유지).
+    - API 가져오기가 만든 파이프라인의 기본 이름(`<데이터셋 이름> API Import`)과 감사 로그 설명문.
+  - **실행 기록 원문 판정의 시점**: 실행 단위·스텝 원문 공개는 **현재** 스텝 정의와 **현재** 등급으로 판정한다 — 실행 뒤 스텝 정의를 바꾸거나 등급을 내리면 과거 실행의 원문이 그 시점 기준으로는 못 볼 조회자에게 보일 수 있다. 판정 중 DB 예외가 나면 500 으로 끝난다(원문은 나가지 않는다).
+  - **편집기 숨김 표시의 상한**: 파이프라인 편집기·트리거 폼의 "열람 권한 없음" 잠금 표시는 데이터셋 목록(최대 1만 건) 안에서만 정확하다 — 1만 건을 넘는 테넌트에서는 볼 수 있는 데이터셋도 잠금으로 보일 수 있다(서버 판정에는 영향 없음).
+  - **API_CALL·PYTHON 지정 출력은 같은 값 재전송도 판정한다**: SQL 스텝과 달리 이미 저장된 지정 출력을 그대로 다시 보내도 편집자의 VIEW 를 본다 — 그 출력을 볼 자격을 잃은 편집자는 그 파이프라인을 저장할 수 없다(다른 편집자가 저장하거나 출력을 바꾼다).
+  - **PYTHON 입력 우회**(WD-29): PYTHON 스텝의 **입력 읽기**는 SQL 관문을 거치지 않는 알려진 우회 경로다(편집 화면 경고만, 강제는 후속). 출력 쓰기는 막혔다. 이 우회로 숨김 데이터를 읽은 PYTHON 스텝이 공개 출력에 쓰면, 그 스텝의 로그·오류 원문이 출력을 볼 수 있는 조회자에게 보일 수 있다(실행 기록 원문 판정이 입력을 모르기 때문).
+  - **GraphRAG 에 이미 적재된 내용은 등급을 올려도 계속 읽힌다**(WD-28): 문서 적재·`graphrag_project_table`(표 투영)로 Neo4j 에 들어간 엔티티·관계·속성(표 행 값 포함)은 데이터셋을 나중에 '민감'·'기밀'로 올려도 ai-agent 의 그래프 조회·채팅 검색으로 계속 노출된다(스펙 §7.5 — 그래프 쪽 통제는 후속). **운영 절차**: 등급을 올리기 전에 그 데이터셋이 GraphRAG 에 적재됐는지(소유자 롤로 `SELECT * FROM dataset_graph_ingest WHERE dataset_id = <id>`) 확인하고, 적재돼 있으면 그래프에서 해당 데이터셋 유래 노드를 수동으로 정리한 뒤 올린다. 검수 인박스의 원문 근거는 이번 배포에서 막혔다.
+  - 접근 거부 감사(누가 무엇에 거부됐는지)는 S4 로 이연 — 이번 배포에서는 관리 작업만 감사에 남는다(WD-30).
+  - 러너 TEMP 의 허용 목록은 늘어나기만 한다(REPLACE 때 재설정은 S4 전파 설계와 함께, WD-30).
   - 허용 목록의 사용자 항목은 `"user"` 행 삭제 시 함께 지워진다(`ON DELETE CASCADE`). **제품 코드에는 사용자 하드 삭제 경로가 없다**(멤버 제거·정지·전역 비활성은 행을 남긴다) — 그래서 역할 삭제와 달리 "유일 항목" 가드를 두지 않았다. 운영에서 사용자 행을 **수동으로** 지울 때는 먼저 `SELECT g.dataset_id FROM dataset_access_grant g JOIN dataset d ON d.id = g.dataset_id JOIN security_level l ON l.id = d.security_level_id WHERE g.user_id = <id> AND l.allowlist_required AND (SELECT count(*) FROM dataset_access_grant x WHERE x.dataset_id = g.dataset_id) = 1` (소유자 롤) 가 0행인지 확인한다. 같은 이유로, 유일 허용 항목인 사용자를 워크스페이스에서 **제거·정지**하면 그 데이터셋은 관리자 우회(admin_bypass) 외에는 아무도 못 본다 — 관리자가 허용 목록에 다른 항목을 추가해 복구한다(가드는 후속 판단).
   - 역할 열람 등급 변경은 **역할의 현재 등급**과 **새 등급** 둘 다 본인 열람 등급 이하여야 한다 — 본인보다 높은 등급의 역할은 낮추는 변경도 403 `CLEARANCE_ABOVE_OWN` 으로 거부된다(최상위 자격이 아닌 `role:write` 보유자는 상위 역할을 고칠 수 없다; 최상위 자격 관리자는 영향 없음. 역할 화면은 ADMIN 전용이라 UI 에서는 사실상 닿지 않는다).
 - **롤백**: V133 은 새 컬럼에 DEFAULT 함수(`tenant_default_security_level_id()`)를 두어 구 코드의 INSERT 도 통과하고, Flyway 는 기본값(`*:future` 무시)으로 앞선 마이그레이션을 무시하므로 **이미지만 이전 버전(api+web 함께)으로 되돌리면 된다** — DB 는 그대로 둔다. 이 경우 등급 통제가 사라져 배포 전 가시성으로 돌아간다(등급·허용 목록 데이터는 보존돼 재배포 시 다시 적용). V133 을 DB 에서 되돌리는 down 스크립트는 없다 — 꼭 필요하면 배포 전 스냅샷 복원으로만 한다.
+  - **단, V134 는 이미지만 되돌리면 깨진다.** 구 코드의 검수 대기 등록은 `ON CONFLICT (tenant_id, item_type, dedupe_key)` 로 옛 3열 유일 인덱스를 추론하는데 V134 뒤에는 그런 인덱스가 없어 **500(PG 42P10)** 이 나고, 구 코드의 결정 조회는 키당 1행을 가정해 데이터셋별 중복 행이 생긴 뒤에는 오류가 난다. 그래서 이미지를 되돌리기 **전에** 소유자 롤로:
+    1. `SELECT tenant_id, item_type, dedupe_key, count(*) FROM graph_review_item GROUP BY 1,2,3 HAVING count(*) > 1` 가 0행인지 확인한다. 행이 있으면(배포 후 데이터셋별 중복 항목이 생김) 어느 행을 남길지 상의한다 — 자동 삭제하지 않는다. 정리할 수 없으면 배포 전 스냅샷 복원으로 간다.
+    2. 0행이면 `DROP INDEX uq_graph_review_item; CREATE UNIQUE INDEX uq_graph_review_item ON graph_review_item (tenant_id, item_type, dedupe_key);` 로 옛 인덱스를 되살린다.
+    3. `DELETE FROM flyway_schema_history WHERE version = '134';` — 남겨 두면 재배포 때 Flyway 가 V134 를 적용된 것으로 보고 다시 돌리지 않아, 새 코드의 4열 `ON CONFLICT` 가 같은 42P10 으로 깨진다.
 
 ### opencode baseURL 사설망 점검 (이슈 #698)
 
