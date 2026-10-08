@@ -78,7 +78,7 @@ export async function handleApiErrorAsync(
 }
 
 /** 지식그래프 읽기 제한 코드(WD-28) — api GraphReadGate.RESTRICTED_CODE 와 같은 값. */
-export const GRAPH_READ_RESTRICTED_CODE = 'GRAPH_READ_RESTRICTED';
+const GRAPH_READ_RESTRICTED_CODE = 'GRAPH_READ_RESTRICTED';
 
 /**
  * 그래프 읽기 제한 안내 문구(스펙 원문). 서버 message 를 쓰지 않고 web 이 이 상수를 쓴다 — 코드와 문구를 한곳에 둬

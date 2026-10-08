@@ -725,14 +725,8 @@ export function registerGraphragTools(
         topK: z.number().min(1).max(20).optional().describe('시드 문서 검색 수(기본 8)'),
       },
       async (args: { ontologyId: number; query: string; topK?: number }) => {
-        // 소유권 확인 — 근거는 resolveOntologyById 주석 참고(여기선 ontology 본문은 쓰지 않는다).
-        // 읽기 지점이라 판정까지 하는 resolveReadableOntologyById 를 쓴다.
-        // 아래 retrieve 에는 args.ontologyId(생인자)가 아니라 이 왕복이 돌려준 값을 넘긴다 —
-        // 런타임 값은 같지만, 생인자를 넘기면 컴파일되지 않아 "검증을 건너뛴 경로"가 드러난다.
-        // 소유권 확인(RLS) + 그래프 읽기 판정(WD-28). 출처 데이터셋 중 하나라도 볼 수 없으면 여기서 스펙 문구로
-        // 거부한다 — 시드 검색(searchDocuments)조차 하지 않는다. retrieve 는 GraphReadableOntologyId 만 받으므로
-        // 판정을 건너뛰면 컴파일되지 않는다.
-        // 판정 조회 자체가 실패하면 '권한 없음'이 아니라 재시도 안내로 거부한다(requireGraphReadable).
+        // 소유권 확인(RLS) + 그래프 읽기 판정(WD-28) — 제한·판정 실패면 시드 검색조차 하지 않고 거부한다(requireGraphReadable).
+        // retrieve 는 판정을 통과한 GraphReadableOntologyId 만 받으므로 생인자(args.ontologyId)를 넘기면 컴파일되지 않는다.
         const { readable } = await resolveReadableOntologyById(apiClient, args.ontologyId);
         const ontologyId = requireGraphReadable(readable);
         // 벡터검색(searchDocuments)을 retriever의 deps 규약으로 어댑팅해 시드 청크를 확보하고,

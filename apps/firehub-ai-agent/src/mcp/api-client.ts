@@ -105,9 +105,8 @@ export class FireHubApiClient {
   private _review: ReturnType<typeof createReviewApi>;
   private _fileObject: ReturnType<typeof createFileObjectApi>;
   /**
-   * 이 클라이언트가 실제 사용자를 대행하는가(X-On-Behalf-Of 가 양의 정수). 그래프 읽기 판정(WD-28)은 사용자 기준이라,
-   * 대행 사용자가 없으면 판정할 주체가 없다 — 해소 함수가 이 값이 true 일 때만 판정을 묻는다. 인스턴스 필드인 이유:
-   * 테스트의 프로토타입 기반 목(createMockClient)에는 이 값이 없어 자동으로 false(읽기 불가)가 된다(fail-closed).
+   * 실제 사용자를 대행하는가(X-On-Behalf-Of 가 양의 정수) — true 일 때만 그래프 읽기 판정(WD-28)을 묻는다.
+   * 인스턴스 필드라 프로토타입 기반 목(createMockClient)에는 없어 자동으로 false(읽기 불가)다(fail-closed).
    */
   readonly hasDelegatedUser: boolean;
 

@@ -41,8 +41,7 @@ public class GraphReadGate {
    * 명시 자격 기준 판정. 사용자 신원이 없는 자격(미인증 {@code Clearance.none(-1L, …)})은 판정할 주체가 없으므로 false 다
    * (fail-closed). 출처가 없는 온톨로지도 신원 없이는 열지 않는다.
    *
-   * <p>여기에 @Transactional 을 두지 않는다 — 판정 쿼리의 트랜잭션은 GraphOntologySourceRepository 가 맡는다(자기 호출이 프록시를
-   * 우회하는 함정, 그 클래스 주석 참고).
+   * <p>트랜잭션은 저장소가 맡는다(GraphOntologySourceRepository 주석 참고).
    */
   public boolean canRead(Clearance c, long ontologyId) {
     if (c.userId() <= 0) {

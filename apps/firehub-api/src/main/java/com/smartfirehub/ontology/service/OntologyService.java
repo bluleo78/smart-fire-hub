@@ -1,5 +1,8 @@
 package com.smartfirehub.ontology.service;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.audit.service.AuditLogService;
 import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.exception.ExternalServiceException;
@@ -42,6 +45,8 @@ public class OntologyService {
   private final UserRepository userRepository;
   // WD-28 지식그래프 읽기 게이트 — 출처 데이터셋을 전부 볼 수 있어야 그래프를 내준다.
   private final GraphReadGate graphReadGate;
+  // ai-agent 오류 본문의 code 필드를 읽기 위한 공용 ObjectMapper(스프링 빈).
+  private final ObjectMapper objectMapper;
 
   public OntologyService(
       @Value("${agent.url}") String agentUrl,
@@ -49,7 +54,8 @@ public class OntologyService {
       OntologyRepository ontologyRepository,
       AuditLogService auditLogService,
       UserRepository userRepository,
-      GraphReadGate graphReadGate) {
+      GraphReadGate graphReadGate,
+      ObjectMapper objectMapper) {
     this.webClient =
         WebClient.builder()
             .baseUrl(agentUrl)
@@ -68,6 +74,7 @@ public class OntologyService {
     this.auditLogService = auditLogService;
     this.userRepository = userRepository;
     this.graphReadGate = graphReadGate;
+    this.objectMapper = objectMapper;
   }
 
   // id 스코프 조회.
@@ -363,7 +370,7 @@ public class OntologyService {
     } catch (WebClientResponseException.Forbidden e) {
       // api 판정 통과 직후 등급이 바뀐 경합 — ai-agent 가 제한을 돌려주면 502 가 아니라 같은 403 코드로 전달해야
       // web 이 오류 대신 제한 안내를 보여 준다. 다른 403(코드 없음)은 기존대로 장애로 취급한다.
-      if (e.getResponseBodyAsString().contains(GraphReadGate.RESTRICTED_CODE)) {
+      if (isGraphReadRestrictedBody(e.getResponseBodyAsString())) {
         throw graphReadRestricted();
       }
       throw new ExternalServiceException("지식그래프 조회 중 ai-agent 호출 실패: " + e.getMessage(), e);
@@ -381,6 +388,19 @@ public class OntologyService {
       throw new IllegalArgumentException("존재하지 않는 온톨로지입니다: " + ontologyId);
     }
     return new GraphAccessResponse(graphReadGate.canRead(ontologyId));
+  }
+
+  /**
+   * ai-agent 403 본문이 읽기 제한 응답인지 — 부분일치가 아니라 JSON code 필드를 정확히 비교한다(다른 403 본문에 같은 단어가 섞여도 제한으로 오인하지
+   * 않게). 파싱 실패·필드 없음은 제한이 아니다(일반 장애 경로).
+   */
+  private boolean isGraphReadRestrictedBody(String body) {
+    try {
+      JsonNode code = objectMapper.readTree(body).path("code");
+      return code.isTextual() && GraphReadGate.RESTRICTED_CODE.equals(code.asText());
+    } catch (JsonProcessingException e) {
+      return false;
+    }
   }
 
   /** 그래프 읽기 제한 403 — 코드·문구는 GraphReadGate 상수(스펙 원문). */

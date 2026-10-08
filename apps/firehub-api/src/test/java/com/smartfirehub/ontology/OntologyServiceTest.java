@@ -8,6 +8,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.audit.service.AuditLogService;
 import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.exception.ExternalServiceException;
@@ -67,7 +68,8 @@ class OntologyServiceTest {
             repository,
             mock(AuditLogService.class),
             mock(UserRepository.class),
-            gate);
+            gate,
+            new ObjectMapper());
   }
 
   @AfterEach
@@ -435,6 +437,20 @@ class OntologyServiceTest {
 
     assertThatThrownBy(() -> service.getGraph(OWNED_ONTOLOGY_ID))
         .isInstanceOf(ExternalServiceException.class);
+  }
+
+  // 본문에 제한 코드 문자열이 섞여 있어도 code 필드 값이 아니면 제한이 아니다 — 부분일치 오인 방지.
+  @Test
+  void getGraph_는_본문에_제한_단어만_섞인_다른_ai_agent_403_은_외부_장애로_둔다() {
+    server.enqueue(
+        new MockResponse()
+            .setResponseCode(403)
+            .setHeader("Content-Type", "application/json")
+            .setBody("{\"code\":\"FORBIDDEN\",\"error\":\"not GRAPH_READ_RESTRICTED\"}"));
+
+    assertThatThrownBy(() -> service.getGraph(OWNED_ONTOLOGY_ID))
+        .isInstanceOf(ExternalServiceException.class)
+        .isNotInstanceOf(CodedApiException.class);
   }
 
   // ai-agent 가 판정 조회 자체에 실패하면(502 GRAPH_READ_CHECK_FAILED) "권한 없음"이 아니라 일시 장애다 —

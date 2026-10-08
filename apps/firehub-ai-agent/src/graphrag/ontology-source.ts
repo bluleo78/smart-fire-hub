@@ -9,7 +9,7 @@ import { GraphReadableOntologyId, VerifiedOntologyId } from './verified-ontology
 /** 해소 결과 — 테넌트 경계(RLS)를 통과한 온톨로지. 쓰기·스키마 경로가 쓴다. */
 export interface ResolvedOntology {
   ontology: Ontology;
-  /** 테넌트 경계를 통과한 id — 쓰기·스키마 경로가 쓴다. */
+  /** 테넌트 경계를 통과한 id. */
   ontologyId: VerifiedOntologyId;
 }
 
@@ -34,9 +34,8 @@ type ReadableResolverClient = ResolverClient & Pick<FireHubApiClient, 'getOntolo
  * 남의 온톨로지는 보이지 않고, 없는 것과 똑같이 예외가 된다 — 호출부는 그 예외를 잡지 말고
  * 그대로 올려 Neo4j 를 조회조차 하지 않아야 한다.
  *
- * 쓰기·스키마 경로(적재·표 투영·추론·describe·검수 반영)용이라 그래프 **읽기** 판정 API 는 부르지 않는다(WD-28) —
- * 읽기 제한·판정 장애가 쓰기를 막으면 안 되고(스펙 §6), 쓰지도 않을 판정에 왕복을 낭비하지 않는다.
- * 그래프를 읽는 지점은 resolveReadableOntologyById 를 쓴다.
+ * 쓰기·스키마 경로(적재·표 투영·추론·describe·검수 반영)용이라 읽기 판정(WD-28)은 하지 않는다 — 읽기 제한·판정 장애가
+ * 쓰기를 막으면 안 된다(스펙 §6). 그래프를 읽는 지점은 resolveReadableOntologyById 를 쓴다.
  */
 export async function resolveOntologyById(apiClient: ResolverClient, ontologyId: number): Promise<ResolvedOntology> {
   const ontology = deserializeOntology(await apiClient.getOntologyById(ontologyId));

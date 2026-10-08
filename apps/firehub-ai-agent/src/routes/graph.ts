@@ -165,7 +165,8 @@ router.post('/graph/set-property', internalAuth, requireDelegation, async (req, 
   }
   try {
     const apiClient = delegationClient(res);
-    const { ontologyId } = await resolveDatasetOntology(apiClient, parsed.data.datasetId);    await setEntityProperty(ontologyId, parsed.data.entityKey, parsed.data.propertyName,
+    const { ontologyId } = await resolveDatasetOntology(apiClient, parsed.data.datasetId);
+    await setEntityProperty(ontologyId, parsed.data.entityKey, parsed.data.propertyName,
       parsed.data.dataType, parsed.data.value);
     res.status(204).send();
   } catch (e) {

@@ -77,7 +77,7 @@ function toJsNumber(v: unknown): number {
 // 스코프 축은 loader 가 스탬프하는 ontologyId 뿐이고, 그 온톨로지가 요청자 테넌트의 것인지는 호출부인
 // firehub-api 가 RLS 걸린 ontology 테이블로 검증한다(근거는 OntologyService.getGraph 참고).
 // 따라서 이 술어를 빼면 그 검증이 통째로 무의미해진다.
-// 읽기 판정(WD-28)을 통과한 id 만 받는다 — 근거는 verified-ontology-id.ts 의 GraphReadableOntologyId.
+// 읽기 판정(WD-28) → GraphReadableOntologyId(verified-ontology-id.ts) 참고.
 export async function readWholeGraph(ontologyId: GraphReadableOntologyId): Promise<WholeGraph> {
   const session = getSession();
   // 적재측이 neo4j.int() 로 INTEGER 를 썼으므로(#308 의 교훈) 조회측도 INTEGER 로 바인딩한다.

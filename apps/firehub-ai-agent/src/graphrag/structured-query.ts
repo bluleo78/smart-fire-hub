@@ -57,7 +57,7 @@ export interface StructuredResult {
 }
 
 // Cypher 를 실행해 매칭 엔티티 + 출처 청크 id 를 반환한다.
-// Neo4j 를 읽으므로 그래프 읽기 판정(WD-28)을 통과한 id 만 받는다(buildStructuredCypher 는 읽지 않아 VerifiedOntologyId 그대로).
+// 읽기 판정(WD-28) → GraphReadableOntologyId(verified-ontology-id.ts) 참고(buildStructuredCypher 는 Neo4j 를 읽지 않아 VerifiedOntologyId).
 export async function structuredQuery(
   ontology: Ontology, ontologyId: GraphReadableOntologyId, entityType: string, filters: Filter[],
 ): Promise<StructuredResult> {
