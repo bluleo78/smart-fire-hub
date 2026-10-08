@@ -213,6 +213,26 @@ test.describe('플랫폼 감사 로그 (WD-4)', () => {
     await expect.poll(() => capture.requests.at(-1)?.searchParams.get('actionType')).toBe('TENANT_CREATE');
   });
 
+  test('계정 생성 행: "계정 생성" 라벨·대상 username·액션 필터 (WD-46)', async ({ authenticatedPage: page }) => {
+    const capture = await mockApi(page, 'GET', PATH, createAuditPage([
+      createAuditLog({
+        id: 701,
+        actionType: 'ACCOUNT_CREATE',
+        resourceId: '77',
+        description: '소속 없는 계정 생성(임시 비밀번호, 첫 로그인 시 변경 강제)',
+        metadata: { plane: 'platform', targetUsername: 'new@example.com' },
+      }),
+    ]), { capture: true });
+    await page.goto('/audit-logs');
+
+    const row = page.getByRole('table', { name: '플랫폼 감사 로그' }).getByRole('row').filter({ hasText: 'new@example.com' });
+    await expect(row.getByRole('cell').nth(2)).toHaveText('계정 생성');
+
+    await page.getByRole('combobox', { name: '액션' }).click();
+    await page.getByRole('option', { name: '계정 생성', exact: true }).click();
+    await expect.poll(() => capture.requests.at(-1)?.searchParams.get('actionType')).toBe('ACCOUNT_CREATE');
+  });
+
   test('모르는 액션은 원문 그대로, 빈 결과는 빈 상태 문구', async ({ authenticatedPage: page }) => {
     // WD-12 로 TENANT_SUSPEND 는 라벨이 생겼다 — 매핑에 없을 값으로 원문 폴백을 지킨다.
     await mockApi(page, 'GET', PATH, createAuditPage([createAuditLog({ actionType: 'PLATFORM_UNMAPPED_ACTION' })]));

@@ -47,8 +47,8 @@ public class PlatformUserService {
   }
 
   /**
-   * 검색어를 trim 하고 길이 정책을 검증해 돌려준다. Owner 검색과 계정 검색(PlatformAccountService)이 같은 하한·상한·문구를 쓰도록 한 곳에
-   * 둔다.
+   * Owner 검색어를 trim 하고 길이 정책을 검증해 돌려준다. 계정 목록(PlatformAccountService#list)은 WD-47 부터 페이지 목록이라 하한을
+   * 1자로 따로 두고 상한({@link #MAX_QUERY_LENGTH})만 공유한다.
    *
    * @throws IllegalArgumentException 길이가 범위 밖일 때(400)
    */

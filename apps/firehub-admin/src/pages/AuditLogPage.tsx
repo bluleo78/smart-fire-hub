@@ -27,6 +27,7 @@ const ALL = 'ALL';
  * 매핑이 없으면 원문을 그대로 보여 준다(모르는 값을 숨기지 않는다).
  */
 const ACTION_LABELS: Record<string, string> = {
+  ACCOUNT_CREATE: '계정 생성',
   ACCOUNT_DEACTIVATE: '계정 비활성화',
   ACCOUNT_REACTIVATE: '계정 재활성화',
   TENANT_CREATE: '테넌트 생성',

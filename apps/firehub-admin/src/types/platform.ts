@@ -63,7 +63,7 @@ export interface PlatformUserResponse {
 }
 
 /**
- * `GET /api/platform/accounts?q=` 응답 1건(#784). Owner 검색(`PlatformUserResponse`)과 달리 비활성 계정도 나오고
+ * `GET /api/platform/accounts` 목록 한 행(#784 → WD-47 페이지 목록). `POST /accounts`(WD-46) 응답도 같은 모양이다. Owner 검색(`PlatformUserResponse`)과 달리 비활성 계정도 나오고
  * 활성·운영자 여부를 싣는다 — 비활성화한 계정을 다시 찾아 재활성화해야 하기 때문이다.
  */
 export interface PlatformAccountResponse {
@@ -76,6 +76,24 @@ export interface PlatformAccountResponse {
   active: boolean;
   /** 플랫폼 롤 보유자. 이 화면에서 비활성화할 수 없다(서버도 409). */
   operator: boolean;
+  /** 소속 워크스페이스 수(멤버십 ACTIVE + 정지, WD-47). 0 이면 "미소속". */
+  membershipCount: number;
+  /** ISO 8601 + 저장 TZ 오프셋(WD-11). 표시는 formatDateOnly(로컬). */
+  createdAt: string;
+}
+
+/** `GET /api/platform/accounts` 조회 파라미터(WD-47). q 가 undefined 면 전체 목록(axios 가 쿼리에서 뺀다). */
+export interface PlatformAccountQuery {
+  q?: string;
+  page: number;
+  size: number;
+}
+
+/** `POST /api/platform/accounts` 요청(WD-46). 서버 `CreatePlatformAccountRequest` 와 1:1. */
+export interface CreatePlatformAccountRequest {
+  email: string;
+  name: string;
+  temporaryPassword: string;
 }
 
 /** 서버 `PageResponse<T>` 와 1:1. */
@@ -127,4 +145,6 @@ export interface ErrorResponse {
   error: string;
   message: string;
   errors?: Record<string, string>;
+  /** 기계가 읽는 오류 코드(예: ACCOUNT_ALREADY_EXISTS). 대부분의 오류에는 없다. */
+  code?: string;
 }
