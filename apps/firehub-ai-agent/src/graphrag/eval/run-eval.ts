@@ -6,7 +6,7 @@ import { dirname, join } from 'node:path';
 import { createCompleter } from '../llm-completer.js';
 import { readScriptCredentials } from '../script-credentials.js';
 import { retrieve } from '../retriever.js';
-import { resolveDatasetOntology } from '../ontology-source.js';
+import { resolveDatasetOntology, resolveReadableOntologyById } from '../ontology-source.js';
 import { requireGraphReadable } from '../graph-read-gate.js';
 import { FireHubApiClient } from '../../mcp/api-client.js';
 import { isValidTenantId } from '../../agent/tenant-paths.js';
@@ -78,8 +78,11 @@ async function main(): Promise<void> {
   // 없다, #678). 바인딩이 없으면 여기서 명확히 실패하는 편이 낫다: 예전처럼 전역 그래프를 읽으면
   // 평가 점수가 다른 데이터셋의 노드까지 끌어와 부풀려진다.
   // 평가도 그래프 읽기다 — 대행 사용자(EVAL_USER_ID)가 출처를 다 볼 수 없으면 명확히 실패한다(WD-28).
-  const { readableOntologyId } = await resolveDatasetOntology(apiClient, Number(datasetIdArg));
-  const ontologyId = requireGraphReadable(readableOntologyId);
+  // 바인딩 해소(미바인딩이면 명확한 오류)는 resolveDatasetOntology 가, 읽기 판정은 resolveReadableOntologyById 가 한다 —
+  // 판정은 읽기 지점에서만 한다. 온톨로지 본문을 두 번 받지만 일회성 평가 스크립트라 감수한다.
+  const { ontologyId: boundOntologyId } = await resolveDatasetOntology(apiClient, Number(datasetIdArg));
+  const { readable } = await resolveReadableOntologyById(apiClient, boundOntologyId);
+  const ontologyId = requireGraphReadable(readable);
 
   const deps = {
     graphragContext: async (question: string): Promise<string[]> => {

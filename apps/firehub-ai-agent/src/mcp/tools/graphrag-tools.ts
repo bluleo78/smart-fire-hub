@@ -13,7 +13,7 @@ import { profileColumns } from '../../graphrag/column-profiler.js';
 import { inferMapping } from '../../graphrag/mapping-inference.js';
 import { inferOntology, DatasetEvidence } from '../../graphrag/ontology-inference.js';
 // 추출 시점 온톨로지는 api(DB 소유)에서 fetch한다. 데이터셋 바인딩이 없으면 예외가 던져진다(폴백 없음).
-import { resolveDatasetOntology, resolveOntologyById } from '../../graphrag/ontology-source.js';
+import { resolveDatasetOntology, resolveOntologyById, resolveReadableOntologyById } from '../../graphrag/ontology-source.js';
 // 그래프 읽기 게이트(WD-28) — ontology-source 와 별 모듈이라 도구 테스트가 해소만 목으로 바꿔도 게이트는 실코드로 돈다.
 import { requireGraphReadable } from '../../graphrag/graph-read-gate.js';
 import { structuredQuery, Filter, Operator } from '../../graphrag/structured-query.js';
@@ -726,13 +726,15 @@ export function registerGraphragTools(
       },
       async (args: { ontologyId: number; query: string; topK?: number }) => {
         // 소유권 확인 — 근거는 resolveOntologyById 주석 참고(여기선 ontology 본문은 쓰지 않는다).
+        // 읽기 지점이라 판정까지 하는 resolveReadableOntologyById 를 쓴다.
         // 아래 retrieve 에는 args.ontologyId(생인자)가 아니라 이 왕복이 돌려준 값을 넘긴다 —
         // 런타임 값은 같지만, 생인자를 넘기면 컴파일되지 않아 "검증을 건너뛴 경로"가 드러난다.
         // 소유권 확인(RLS) + 그래프 읽기 판정(WD-28). 출처 데이터셋 중 하나라도 볼 수 없으면 여기서 스펙 문구로
         // 거부한다 — 시드 검색(searchDocuments)조차 하지 않는다. retrieve 는 GraphReadableOntologyId 만 받으므로
         // 판정을 건너뛰면 컴파일되지 않는다.
-        const { readableOntologyId } = await resolveOntologyById(apiClient, args.ontologyId);
-        const ontologyId = requireGraphReadable(readableOntologyId);
+        // 판정 조회 자체가 실패하면 '권한 없음'이 아니라 재시도 안내로 거부한다(requireGraphReadable).
+        const { readable } = await resolveReadableOntologyById(apiClient, args.ontologyId);
+        const ontologyId = requireGraphReadable(readable);
         // 벡터검색(searchDocuments)을 retriever의 deps 규약으로 어댑팅해 시드 청크를 확보하고,
         // 그 청크에서 유래한 엔티티를 1~2홉 확장한 서브그래프+출처를 조립한다.
         const result = await retrieve(
@@ -772,9 +774,9 @@ export function registerGraphragTools(
       async (args: { ontologyId: number; entityType: string; filters: Array<{ property: string; operator: Operator; value: number | string }> }) => {
         // 질의 시점 온톨로지를 fetch 해 화이트리스트로 쓴다. 이 한 번의 왕복이 소유권 확인도 겸한다
         // (근거는 resolveOntologyById 주석) — 조회 스코프와 화이트리스트가 같은 온톨로지임이 보장된다.
-        const { ontology, readableOntologyId } = await resolveOntologyById(apiClient, args.ontologyId);
-        // 그래프 읽기 판정(WD-28) — 스키마 검증보다 먼저 거부해 제한 상태를 바로 알린다.
-        const ontologyId = requireGraphReadable(readableOntologyId);
+        const { ontology, readable } = await resolveReadableOntologyById(apiClient, args.ontologyId);
+        // 그래프 읽기 판정(WD-28) — 스키마 검증보다 먼저 거부해 제한·판정 실패를 바로 알린다.
+        const ontologyId = requireGraphReadable(readable);
         // 도구 설명에 속성을 하드코딩하면 온톨로지가 바뀌어도 모델이 옛 속성만 알게 된다.
         // 대신 검증 실패 시 "지금 이 온톨로지에서 실제로 가능한 값"을 오류에 실어 1턴 내 자체 정정을 유도한다.
         const typeDef = ontology.entities.find((e) => e.type === args.entityType);

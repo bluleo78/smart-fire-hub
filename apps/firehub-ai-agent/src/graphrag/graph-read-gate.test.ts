@@ -9,6 +9,9 @@ import type { structuredQuery } from './structured-query.js';
 import type { loadGraph } from './loader.js';
 import type { GraphReadableOntologyId, VerifiedOntologyId } from './verified-ontology-id.js';
 import {
+  GRAPH_READ_CHECK_FAILED_CODE,
+  GRAPH_READ_CHECK_FAILED_MESSAGE,
+  GraphReadCheckFailedError,
   GRAPH_READ_RESTRICTED_CODE,
   GRAPH_READ_RESTRICTED_MESSAGE,
   GraphReadRestrictedError,
@@ -16,10 +19,10 @@ import {
 } from './graph-read-gate.js';
 
 describe('requireGraphReadable', () => {
-  it('판정이 없으면(null) 스펙 문구의 GraphReadRestrictedError 를 던진다', () => {
+  it("'restricted' 면 스펙 문구의 GraphReadRestrictedError 를 던진다", () => {
     let thrown: unknown;
     try {
-      requireGraphReadable(null);
+      requireGraphReadable('restricted');
     } catch (e) {
       thrown = e;
     }
@@ -28,6 +31,22 @@ describe('requireGraphReadable', () => {
     expect((thrown as Error).message).toBe(
       '이 지식그래프에는 열람 권한이 없는 데이터가 포함되어 있어 조회할 수 없습니다.',
     );
+  });
+
+  // 판정 조회 실패는 권한 없음과 다른 오류다 — 문구가 재시도를 안내해야 사용자가 권한 문제로 오해하지 않는다.
+  it("'unavailable' 이면 재시도 안내 문구의 GraphReadCheckFailedError 를 던진다", () => {
+    let thrown: unknown;
+    try {
+      requireGraphReadable('unavailable');
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(GraphReadCheckFailedError);
+    expect(thrown).not.toBeInstanceOf(GraphReadRestrictedError);
+    expect((thrown as GraphReadCheckFailedError).code).toBe('GRAPH_READ_CHECK_FAILED');
+    expect((thrown as Error).message).toBe('지식그래프 열람 권한을 확인하지 못했습니다. 잠시 후 다시 시도하세요.');
+    expect(GRAPH_READ_CHECK_FAILED_CODE).toBe('GRAPH_READ_CHECK_FAILED');
+    expect(GRAPH_READ_CHECK_FAILED_MESSAGE).toBe('지식그래프 열람 권한을 확인하지 못했습니다. 잠시 후 다시 시도하세요.');
   });
 
   it('판정이 있으면 같은 값을 그대로 돌려준다', () => {

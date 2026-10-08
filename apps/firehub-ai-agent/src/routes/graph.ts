@@ -4,14 +4,19 @@ import { internalAuth, requireDelegation, type Delegation } from '../middleware/
 import { isValidTenantId } from '../agent/tenant-paths.js';
 import { readWholeGraph } from '../graphrag/neo4j-client.js';
 // 그래프 읽기 제한(WD-28) 코드·문구 정본 — api·web 과 같은 값을 쓴다.
-import { GRAPH_READ_RESTRICTED_CODE, GRAPH_READ_RESTRICTED_MESSAGE } from '../graphrag/graph-read-gate.js';
+import {
+  GRAPH_READ_CHECK_FAILED_CODE,
+  GRAPH_READ_CHECK_FAILED_MESSAGE,
+  GRAPH_READ_RESTRICTED_CODE,
+  GRAPH_READ_RESTRICTED_MESSAGE,
+} from '../graphrag/graph-read-gate.js';
 import { mergeEntities } from '../graphrag/synonym-merge.js';
 import { setEntityProperty } from '../graphrag/property-mutation.js';
 import { addEntity, AddEntityInput } from '../graphrag/entity-add.js';
 import { addRelation } from '../graphrag/relation-add.js';
 import { EntityType, RelationType } from '../graphrag/ontology.js';
 import { GraphMutationRejectedError } from '../graphrag/graph-mutation-guard.js';
-import { resolveDatasetOntology, resolveOntologyById } from '../graphrag/ontology-source.js';
+import { resolveDatasetOntology, resolveReadableOntologyById } from '../graphrag/ontology-source.js';
 import { FireHubApiClient } from '../mcp/api-client.js';
 
 /**
@@ -64,7 +69,7 @@ function respondMutationError(res: import('express').Response, opLabel: string, 
 // 내부 호출자 누구나 전 테넌트 그래프를 읽을 수 있다.
 //
 // 소유권 검증은 변형 라우트 네 개와 **똑같이** 여기서 한다: requireDelegation 으로 주체를 확정하고,
-// 그 주체를 대행해 RLS 걸린 ontology 테이블을 되읽는다(resolveOntologyById). 예전에는 "호출부인
+// 그 주체를 대행해 RLS 걸린 ontology 테이블을 되읽는다(resolveReadableOntologyById). 예전에는 "호출부인
 // firehub-api 가 이미 확인했다"며 값을 그대로 믿었는데, 내부 토큰은 만능 자격증명이라 그 말은
 // "ai-agent 쪽에는 검증 지점이 없다"와 같았다 — 내부망에 닿는 누구나 전 테넌트 그래프를 읽을 수 있었다.
 // api 쪽 확인이 사라진 것은 아니고(OntologyService#getGraph), 두 겹이 된 것이다.
@@ -83,8 +88,8 @@ router.get('/graph', internalAuth, requireDelegation, async (req, res) => {
     // 예외가 나고, Neo4j 는 조회조차 하지 않는다. api(OntologyService#getGraph)도 먼저 판정하지만, 내부 토큰은
     // 만능 자격증명이라 여기서도 대행 사용자 기준으로 다시 판정한다(이중 방어). 판정을 통과한 값만
     // GraphReadableOntologyId 라 readWholeGraph 에 들어간다.
-    const { readableOntologyId } = await resolveOntologyById(delegationClient(res), ontologyId);
-    if (readableOntologyId == null) {
+    const { readable } = await resolveReadableOntologyById(delegationClient(res), ontologyId);
+    if (readable === 'restricted') {
       // 502 catch-all 보다 먼저 응답한다 — api 의 프록시가 본문의 code 를 보고 web 에 같은 403 을 전달한다.
       res.status(403).json({
         code: GRAPH_READ_RESTRICTED_CODE,
@@ -93,7 +98,17 @@ router.get('/graph', internalAuth, requireDelegation, async (req, res) => {
       });
       return;
     }
-    res.json(await readWholeGraph(readableOntologyId));
+    if (readable === 'unavailable') {
+      // 판정 조회 자체가 실패했다 — 읽기는 막되(fail-closed) 403 이 아니라 502 로 알린다. api 프록시는 이를 일반
+      // 장애(502)로 전달하므로 web 은 자물쇠 안내가 아니라 재시도 가능한 오류를 보여 준다(권한 문제로 오해 금지).
+      res.status(502).json({
+        code: GRAPH_READ_CHECK_FAILED_CODE,
+        error: 'graph read check failed',
+        message: GRAPH_READ_CHECK_FAILED_MESSAGE,
+      });
+      return;
+    }
+    res.json(await readWholeGraph(readable));
   } catch (e) {
     // 무로그 502 금지(#308) — 로그가 없으면 원인 추적이 불가능하다.
     console.error('[graph] readWholeGraph 실패:', e);
@@ -150,8 +165,7 @@ router.post('/graph/set-property', internalAuth, requireDelegation, async (req, 
   }
   try {
     const apiClient = delegationClient(res);
-    const { ontologyId } = await resolveDatasetOntology(apiClient, parsed.data.datasetId);
-    await setEntityProperty(ontologyId, parsed.data.entityKey, parsed.data.propertyName,
+    const { ontologyId } = await resolveDatasetOntology(apiClient, parsed.data.datasetId);    await setEntityProperty(ontologyId, parsed.data.entityKey, parsed.data.propertyName,
       parsed.data.dataType, parsed.data.value);
     res.status(204).send();
   } catch (e) {

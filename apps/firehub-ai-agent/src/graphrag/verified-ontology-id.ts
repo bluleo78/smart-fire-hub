@@ -7,10 +7,10 @@
 // 그 코드는 아무 경고 없이 컴파일된다(실제로 한 번 그렇게 샜다).
 //
 // 브랜드를 붙이면 그 호출이 컴파일되지 않는다. 값을 만들 수 있는 곳은 ontology-source.ts 의
-// resolveOntologyById / resolveDatasetOntology 뿐이고, 그 둘은 api 왕복(=RLS 경계)을 반드시 거친다.
+// 해소 함수(resolveOntologyById / resolveDatasetOntology / resolveReadableOntologyById)뿐이고, 모두 api 왕복(=RLS 경계)을 반드시 거친다.
 // 예외(escape hatch)는 두지 않았다 — 한때 "호출부인 api 가 이미 확인했다"며 GET /agent/graph 에
 // 하나 두려 했지만, 내부 토큰은 만능 자격증명이라 그 구멍이 곧 유일하게 중요한 구멍이었다.
-// 지금은 그 라우트도 requireDelegation + resolveOntologyById 를 거친다.
+// 지금은 그 라우트도 requireDelegation + resolveReadableOntologyById 를 거친다.
 //
 // 이 파일이 별도 모듈인 이유: loader.ts 같은 저수준 모듈도 이 타입을 써야 하는데,
 // ontology-source.ts 는 api 클라이언트에 의존하므로 거기서 가져오면 의존 방향이 뒤집힌다.
@@ -25,7 +25,8 @@ export type VerifiedOntologyId = number & { readonly __verifiedOntologyId: uniqu
  * 테넌트 경계에 더해 **그래프 읽기 판정(WD-28)** 까지 통과한 온톨로지 id.
  *
  * 온톨로지 그래프에 내용을 쓴 데이터셋(출처) 중 하나라도 요청 사용자가 볼 수 없으면 그 그래프 전체를 읽지 않는다.
- * 판정은 api(GET /ontology/{id}/graph-access, 사용자 대행)만 할 수 있으므로, 이 값도 ontology-source.ts 의 해소 함수만 만든다.
+ * 판정은 api(GET /ontology/{id}/graph-access, 사용자 대행)만 할 수 있으므로, 이 값도 ontology-source.ts 의
+ * resolveReadableOntologyById(읽기 지점 전용 해소)만 만든다.
  * VerifiedOntologyId 의 하위 타입이라 쓰기 함수(loadGraph 등)에는 그대로 넘어가지만, 반대로 VerifiedOntologyId 를
  * 읽기 함수(readWholeGraph·retrieve·structuredQuery)에 넘기면 컴파일되지 않는다 — 판정 누락을 컴파일 오류로 만든다.
  */

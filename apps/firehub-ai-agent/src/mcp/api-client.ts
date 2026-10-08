@@ -78,6 +78,11 @@ export type { ObjectItem, ObjectListResponse, PresignedUrlResponse };
  */
 const ONTOLOGY_CACHE_TTL_MS = 30_000;
 
+/** 양의 정수인지 — 대행 사용자 id(X-On-Behalf-Of)가 성립하는 값인지 판정한다. */
+function isPositiveInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0;
+}
+
 export class FireHubApiClient {
   private client: AxiosInstance;
   /** id → 진행 중이거나 방금 끝난 온톨로지 조회. 인스턴스 단위(=테넌트 단위) — getOntologyById 주석 참고. */
@@ -118,8 +123,8 @@ export class FireHubApiClient {
    *   단일 멤버십이 보장된 개발 스크립트에만 허용된다. 다른 파일들은 이 문단을 가리킨다.
    */
   constructor(baseURL: string, internalToken: string, userId: number, tenantId?: number) {
-    // 양의 정수 판정은 isValidTenantId 를 재사용한다(auth.ts 가 userId 에도 같은 술어를 쓴다).
-    this.hasDelegatedUser = isValidTenantId(userId);
+    // 사용자 id 는 테넌트가 아니므로 테넌트 이름의 술어 대신 중립 이름의 양의 정수 검사를 쓴다.
+    this.hasDelegatedUser = isPositiveInteger(userId);
     const headers: Record<string, string> = {
       Authorization: `Internal ${internalToken}`,
       [ON_BEHALF_OF_HEADER]: String(userId),
