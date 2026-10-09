@@ -117,7 +117,8 @@ class DocumentChunkVectorStoreTest extends IntegrationTestBase {
                 tenantA,
                 () -> repo.searchByCosine(otherModel, axis(1024, 0), List.of(), 10, ALL_VISIBLE)))
         .isEmpty();
-    assertThat(TenantContext.runScopedGet(tenantA, () -> repo.countMissing(otherModel)))
+    assertThat(
+            TenantContext.runScopedGet(tenantA, () -> repo.countMissing(otherModel, ALL_VISIBLE)))
         .isEqualTo(2);
   }
 
@@ -132,7 +133,8 @@ class DocumentChunkVectorStoreTest extends IntegrationTestBase {
     // 불변식: 한 청크의 벡터는 차원 테이블 전체를 통틀어 최대 1행.
     assertThat(TenantContext.runScopedGet(tenantA, () -> repo.countEmbedded(S1024))).isZero();
     assertThat(TenantContext.runScopedGet(tenantA, () -> repo.countEmbedded(S1536))).isEqualTo(2);
-    assertThat(TenantContext.runScopedGet(tenantA, () -> repo.countMissing(S1536))).isZero();
+    assertThat(TenantContext.runScopedGet(tenantA, () -> repo.countMissing(S1536, ALL_VISIBLE)))
+        .isZero();
   }
 
   @Test
@@ -147,11 +149,12 @@ class DocumentChunkVectorStoreTest extends IntegrationTestBase {
   @Test
   void findMissingPagesByIdAndSkipsEmbedded() {
     EmbeddingSpace next = new EmbeddingSpace(EmbeddingDimension.D1536, "m2");
-    var first = TenantContext.runScopedGet(tenantA, () -> repo.findMissing(next, 0L, 1));
+    var first =
+        TenantContext.runScopedGet(tenantA, () -> repo.findMissing(next, 0L, 1, ALL_VISIBLE));
     assertThat(first).hasSize(1);
     var second =
         TenantContext.runScopedGet(
-            tenantA, () -> repo.findMissing(next, first.get(0).chunkId(), 10));
+            tenantA, () -> repo.findMissing(next, first.get(0).chunkId(), 10, ALL_VISIBLE));
     assertThat(second).hasSize(1);
     assertThat(second.get(0).chunkId()).isGreaterThan(first.get(0).chunkId());
   }

@@ -13,6 +13,7 @@ import static org.mockito.Mockito.when;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
 import com.smartfirehub.pipeline.service.IncrementalCursorService;
+import com.smartfirehub.securitylevel.ai.EmbeddingAiGate;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.Optional;
@@ -42,6 +43,7 @@ class RowSearchSyncServiceLeaseOrderTest {
   @Mock private DatasetRepository datasetRepository;
   @Mock private EmbeddingProviderFactory embeddingFactory;
   @Mock private IncrementalCursorService cursorService;
+  @Mock private EmbeddingAiGate aiGate;
 
   private RowSearchSyncService sync;
 
@@ -56,6 +58,7 @@ class RowSearchSyncServiceLeaseOrderTest {
             datasetRepository,
             embeddingFactory,
             cursorService,
+            aiGate,
             4,
             2);
   }
@@ -105,6 +108,6 @@ class RowSearchSyncServiceLeaseOrderTest {
     assertThat(sync.sync(ID)).isEqualTo(RowSearchSyncService.Outcome.SKIPPED);
 
     verify(states).releaseLease(ID);
-    verifyNoInteractions(datasetRepository, index, reader, embeddingFactory, cursorService);
+    verifyNoInteractions(datasetRepository, index, reader, embeddingFactory, cursorService, aiGate);
   }
 }

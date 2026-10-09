@@ -7,6 +7,7 @@ import com.smartfirehub.embedding.EmbeddingProvider;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.pipeline.service.IncrementalCursorService;
+import com.smartfirehub.securitylevel.ai.EmbeddingAiGate;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
@@ -39,6 +40,15 @@ public class RowSearchSyncService {
     FAILED
   }
 
+  /**
+   * 등급이 임베딩 공급자를 허용하지 않는 색인의 모델 표식(S3 §4.3). 벡터 없이 source_text 만 색인한다 — 실제 모델명과 겹치지 않는 값. 상태 행의
+   * embedding_model 이 이 값이면 허용↔불허 전환 때 기존 configChanged 비교가 자동으로 전체 재색인을 일으킨다.
+   */
+  public static final String KEYWORD_ONLY_MODEL = "__policy_keyword_only__";
+
+  /** 키워드 전용 색인 테이블의 벡터 차원 — 벡터를 쓰지 않으므로 1(허용으로 바뀌면 모델 비교가 실제 차원으로 재생성한다). */
+  static final int KEYWORD_ONLY_DIM = 1;
+
   private static final Duration LEASE = Duration.ofMinutes(10);
   private static final Duration MAX_BACKOFF = Duration.ofMinutes(30);
 
@@ -58,6 +68,7 @@ public class RowSearchSyncService {
   private final DatasetRepository datasetRepository;
   private final EmbeddingProviderFactory embeddingFactory;
   private final IncrementalCursorService cursorService;
+  private final EmbeddingAiGate aiGate;
   private final int maxRowsPerCycle;
   private final int batchSize;
 
@@ -70,6 +81,7 @@ public class RowSearchSyncService {
       DatasetRepository datasetRepository,
       EmbeddingProviderFactory embeddingFactory,
       IncrementalCursorService cursorService,
+      EmbeddingAiGate aiGate,
       @Value("${row-search.sync.max-rows-per-cycle:5000}") int maxRowsPerCycle,
       @Value("${row-search.sync.batch-size:200}") int batchSize) {
     this.index = index;
@@ -79,6 +91,7 @@ public class RowSearchSyncService {
     this.datasetRepository = datasetRepository;
     this.embeddingFactory = embeddingFactory;
     this.cursorService = cursorService;
+    this.aiGate = aiGate;
     this.maxRowsPerCycle = maxRowsPerCycle;
     this.batchSize = batchSize;
   }
@@ -128,17 +141,28 @@ public class RowSearchSyncService {
       states.delete(datasetId);
       return Outcome.SKIPPED;
     }
-    EmbeddingProvider provider;
-    try {
-      provider = embeddingFactory.current();
-    } catch (EmbeddingNotConfiguredException e) {
-      // 미설정 = 대기(이유는 {@link #NOT_CONFIGURED_RETRY}).
-      states.markWaiting(
-          datasetId, e.getMessage(), OffsetDateTime.now().plus(NOT_CONFIGURED_RETRY));
-      return Outcome.SKIPPED;
+    // S3 §4.3: 등급이 임베딩 공급자를 허용하는가. 매 주기 다시 보므로 호스팅 선언·등급 변경이 다음 스윕에 반영된다.
+    // 문맥이 없으면 게이트가 예외를 던져 FAILED(백오프)로 끝난다 — 조용히 키워드 전용으로 갈아엎지 않는다.
+    boolean aiAllowed = aiGate.datasetAllowed(datasetId);
+    EmbeddingProvider provider = null;
+    String model;
+    int dim;
+    if (aiAllowed) {
+      try {
+        provider = embeddingFactory.current();
+      } catch (EmbeddingNotConfiguredException e) {
+        // 미설정 = 대기(이유는 {@link #NOT_CONFIGURED_RETRY}).
+        states.markWaiting(
+            datasetId, e.getMessage(), OffsetDateTime.now().plus(NOT_CONFIGURED_RETRY));
+        return Outcome.SKIPPED;
+      }
+      model = provider.modelId();
+      dim = provider.dimension();
+    } else {
+      // 색인 생략 — 키워드 검색만(스펙 §4.3). 외부 공급자를 부르지 않고 벡터 없이 source_text 만 넣는다.
+      model = KEYWORD_ONLY_MODEL;
+      dim = KEYWORD_ONLY_DIM;
     }
-    String model = provider.modelId();
-    int dim = provider.dimension();
     long oid = reader.currentOid(ref.sourceTable());
 
     // 1) 전체 재색인 판단
@@ -205,6 +229,9 @@ public class RowSearchSyncService {
   /**
    * 한 배치: 텍스트 조립 → 해시 같으면 생략 → (재구축 중이면) 재사용 → 나머지만 임베딩.
    *
+   * <p>{@code provider} 가 null 이면 키워드 전용 색인(S3)이다 — 임베딩 호출 없이 벡터 NULL 로 넣는다. 재사용(upsertReusing)은
+   * 벡터가 있는 행만 복사하므로 키워드 전용에서는 늘 실패해 이 경로로 온다.
+   *
    * @return 색인 행 수 증감(새로 들어간 행 − 지운 행). 진행률(indexed_rows)을 count(*) 없이 갱신하는 데 쓴다 — 이미 색인에 있던 행의 갱신은
    *     0 이다.
    */
@@ -236,6 +263,14 @@ public class RowSearchSyncService {
     index.deleteRows(ref, toDelete);
     added -= toDelete.size();
     if (pending.isEmpty()) return added;
+    if (provider == null) {
+      List<IndexedRow> textOnly = new ArrayList<>(pending.size());
+      for (Pending p : pending) {
+        textOnly.add(new IndexedRow(p.rowId(), p.text(), p.hash(), null, model));
+      }
+      index.upsert(ref, textOnly);
+      return added;
+    }
     // 트랜잭션 밖에서, 한 호출이 너무 커지지 않도록 EMBED_CHUNK_SIZE 씩 나눠 임베딩한다(순서 유지).
     List<String> texts = pending.stream().map(Pending::text).toList();
     List<float[]> vectors = new ArrayList<>(texts.size());

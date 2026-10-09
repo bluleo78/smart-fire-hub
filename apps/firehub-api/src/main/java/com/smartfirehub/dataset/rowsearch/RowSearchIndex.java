@@ -37,6 +37,12 @@ public interface RowSearchIndex {
   /** 임베딩까지 끝난 행들을 넣는다. 같은 (row_id, chunk_no) 가 있으면 텍스트·해시·벡터·모델을 덮어쓴다. */
   void upsert(IndexRef ref, List<IndexedRow> rows);
 
+  /**
+   * 색인 행의 embedding·embedding_model 을 NULL 로 비운다(텍스트·해시는 남겨 키워드 검색 유지). 등급이 임베딩 공급자를 허용하지 않게 된
+   * 데이터셋의 외부 유래 벡터 정리용(S3 §4.3). 색인 테이블이 아직 없으면 아무것도 하지 않는다.
+   */
+  void clearEmbeddings(IndexRef ref);
+
   /** 지정한 row_id 의 색인 행을 지운다(검색 대상 필드가 모두 빈 행 등). 빈 목록이면 아무것도 하지 않는다. */
   void deleteRows(IndexRef ref, Collection<Long> rowIds);
 

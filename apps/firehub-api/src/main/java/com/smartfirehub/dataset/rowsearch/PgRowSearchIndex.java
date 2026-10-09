@@ -157,10 +157,22 @@ public class PgRowSearchIndex implements RowSearchIndex {
               r.rowId(),
               r.sourceText(),
               r.sourceHash(),
-              VectorLiterals.toVectorLiteral(r.embedding()),
+              // 키워드 전용 색인(S3)은 벡터 없이 넣는다 — NULL::vector 는 허용되고 HNSW 는 NULL 을 건너뛴다.
+              r.embedding() == null ? null : VectorLiterals.toVectorLiteral(r.embedding()),
               r.embeddingModel());
     }
     batch.execute();
+  }
+
+  @Override
+  public void clearEmbeddings(IndexRef ref) {
+    requireCurrentTenant(ref);
+    // 테이블이 없으면(첫 스윕 전) 할 일 없음.
+    if (!tableExists(ref.indexTable())) return;
+    dsl.execute(
+        "UPDATE "
+            + DataSchema.qualify(ref.indexTable())
+            + " SET embedding = NULL, embedding_model = NULL");
   }
 
   @Override

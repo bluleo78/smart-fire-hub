@@ -5,6 +5,7 @@ import com.smartfirehub.embedding.EmbeddingProvider;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
 import com.smartfirehub.embedding.EmbeddingSpace;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.securitylevel.ai.EmbeddingAiGate;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -19,7 +20,7 @@ import org.springframework.stereotype.Service;
  * </ul>
  *
  * <p>주의: 생성자 인자 순서는 {@code @RequiredArgsConstructor} 가 필드 선언 순서대로 생성한다 (embeddingRepo, metaReader,
- * embeddingFactory). 단위 테스트가 이 3-arg 시그니처에 의존한다.
+ * embeddingFactory, aiGate). 단위 테스트가 이 4-arg 시그니처에 의존한다.
  */
 @Slf4j
 @Service
@@ -29,6 +30,7 @@ public class DatasetEmbeddingService {
   private final DatasetEmbeddingRepository embeddingRepo;
   private final DatasetMetaReader metaReader;
   private final EmbeddingProviderFactory embeddingFactory;
+  private final EmbeddingAiGate aiGate;
 
   /** 동기: source_text 만 갱신. 메타 없으면(삭제됨) 인덱스 제거. 쓰기 트랜잭션 내에서 호출. */
   public void syncSourceText(long datasetId) {
@@ -55,6 +57,12 @@ public class DatasetEmbeddingService {
         () -> {
           DatasetSourceTextBuilder.Input meta = metaReader.read(datasetId);
           if (meta == null) {
+            return;
+          }
+          // S3 §4.3: 등급이 이 임베딩 공급자를 허용하지 않으면 벡터를 만들지 않고(메타가 외부로 나가지 않게), 남아 있던 벡터도 지운다.
+          // 키워드용 source_text 는 syncSourceText 가 유지한다. 판정은 공급자 해석보다 먼저 — 미설정이어도 남은 벡터는 정리한다.
+          if (!aiGate.datasetAllowed(datasetId)) {
+            embeddingRepo.deleteVectors(datasetId);
             return;
           }
           String sourceText = DatasetSourceTextBuilder.build(meta);

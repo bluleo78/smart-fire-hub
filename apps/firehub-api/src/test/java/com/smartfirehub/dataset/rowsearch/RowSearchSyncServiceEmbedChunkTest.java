@@ -7,6 +7,8 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.smartfirehub.dataset.dto.DatasetResponse;
@@ -15,6 +17,7 @@ import com.smartfirehub.embedding.EmbeddingProvider;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.pipeline.service.IncrementalCursorService;
+import com.smartfirehub.securitylevel.ai.EmbeddingAiGate;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
@@ -30,8 +33,10 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 /**
- * 임베딩 호출 크기 상한 회귀: 배치(최대 200행 × 8000자)를 한 번에 임베딩하면 임베딩 서버 타임아웃(Ollama 120초)에 걸려 같은 구간을 영원히 재시도한다.
- * 배치 크기를 32 보다 크게 잡고 호출마다 텍스트 수를 기록해 상한을 단언한다.
+ * 임베딩 호출 크기 상한 회귀 + S3 키워드 전용 색인(등급이 임베딩 공급자를 불허하면 공급자 호출 없이 텍스트만 색인, 다시 허용되면 실제 모델로 재생성).
+ *
+ * <p>임베딩 호출 크기 상한 회귀: 배치(최대 200행 × 8000자)를 한 번에 임베딩하면 임베딩 서버 타임아웃(Ollama 120초)에 걸려 같은 구간을 영원히
+ * 재시도한다. 배치 크기를 32 보다 크게 잡고 호출마다 텍스트 수를 기록해 상한을 단언한다.
  *
  * <p>통합 테스트(RowSearchSyncServiceTest)는 batch-size=2 라 32 를 넘을 수 없어 이 경계를 증명하지 못한다 — 그래서 협력자를 mock
  * 으로 둔 단위 테스트로 따로 둔다.
@@ -49,6 +54,7 @@ class RowSearchSyncServiceEmbedChunkTest {
   @Mock private DatasetRepository datasetRepository;
   @Mock private EmbeddingProviderFactory embeddingFactory;
   @Mock private IncrementalCursorService cursorService;
+  @Mock private EmbeddingAiGate aiGate;
 
   private final List<Integer> callSizes = new ArrayList<>();
   private final List<IndexedRow> upserted = new ArrayList<>();
@@ -63,27 +69,31 @@ class RowSearchSyncServiceEmbedChunkTest {
     TenantContext.clear();
   }
 
-  @Test
-  void largeBatch_isEmbeddedInChunksOfAtMost32() {
+  /** 같은 설정 해시·OID 의 상태 행. model·dim 만 바꿔 키워드 전용/일반 색인 상태를 만든다. */
+  private static SearchIndexState state(SearchConfig config, String model, int dim) {
+    return new SearchIndexState(
+        ID,
+        "IDLE",
+        config.configHash(),
+        model,
+        dim,
+        1L,
+        null,
+        OffsetDateTime.now(),
+        null,
+        0,
+        0,
+        0,
+        null,
+        null);
+  }
+
+  /** 공통 협력자 준비: 상태·데이터셋·설정·원본 70행. 공급자 스텁은 테스트마다 다르므로 여기서 두지 않는다. */
+  private SearchConfig prepare(String stateModel, int stateDim) {
     SearchConfig config = new SearchConfig(List.of(new SearchConfig.Field("content", "내용")));
-    // 설정·모델·차원·OID 가 모두 같아 재색인 없이 증분 패스만 돈다(패스 커서도 이미 잡혀 있음).
-    SearchIndexState state =
-        new SearchIndexState(
-            ID,
-            "IDLE",
-            config.configHash(),
-            "m",
-            1024,
-            1L,
-            null,
-            OffsetDateTime.now(),
-            null,
-            0,
-            0,
-            0,
-            null,
-            null);
+    SearchIndexState state = state(config, stateModel, stateDim);
     when(states.tryAcquireLease(eq(ID), any(Duration.class))).thenReturn(true);
+    // 재색인(resetForFullPass) 뒤 다시 읽을 때도 같은 상태를 돌려준다(패스 커서는 null 이라 startPassIfNeeded 를 부른다).
     when(states.find(ID)).thenReturn(Optional.of(state));
     when(datasetRepository.findById(ID))
         .thenReturn(
@@ -92,22 +102,6 @@ class RowSearchSyncServiceEmbedChunkTest {
                     ID, "d", "src", null, null, "TABLE", "SOURCE", null, false, List.of(), null,
                     null, null, null, null)));
     when(searchColumns.findConfig(ID)).thenReturn(config);
-    when(embeddingFactory.current())
-        .thenReturn(
-            new EmbeddingProvider() {
-              public List<float[]> embed(List<String> texts) {
-                callSizes.add(texts.size());
-                return texts.stream().map(t -> new float[1024]).toList();
-              }
-
-              public String modelId() {
-                return "m";
-              }
-
-              public int dimension() {
-                return 1024;
-              }
-            });
     when(reader.currentOid("src")).thenReturn(1L);
     List<SearchSourceReader.SourceRow> rows =
         LongStream.rangeClosed(1, ROWS)
@@ -129,20 +123,49 @@ class RowSearchSyncServiceEmbedChunkTest {
     lenient()
         .when(index.upsertReusing(any(), anyLong(), anyString(), anyString(), anyString()))
         .thenReturn(false);
+    return config;
+  }
 
-    RowSearchSyncService sync =
-        new RowSearchSyncService(
-            index,
-            states,
-            searchColumns,
-            reader,
-            datasetRepository,
-            embeddingFactory,
-            cursorService,
-            5000,
-            100);
+  /** 호출마다 텍스트 수를 기록하는 1024차원 가짜 공급자(모델 "m"). */
+  private EmbeddingProvider recordingProvider() {
+    return new EmbeddingProvider() {
+      public List<float[]> embed(List<String> texts) {
+        callSizes.add(texts.size());
+        return texts.stream().map(t -> new float[1024]).toList();
+      }
 
-    assertThat(sync.sync(ID)).isEqualTo(RowSearchSyncService.Outcome.COMPLETED);
+      public String modelId() {
+        return "m";
+      }
+
+      public int dimension() {
+        return 1024;
+      }
+    };
+  }
+
+  private RowSearchSyncService service() {
+    return new RowSearchSyncService(
+        index,
+        states,
+        searchColumns,
+        reader,
+        datasetRepository,
+        embeddingFactory,
+        cursorService,
+        aiGate,
+        5000,
+        100);
+  }
+
+  @Test
+  void largeBatch_isEmbeddedInChunksOfAtMost32() {
+    // 설정·모델·차원·OID 가 모두 같아 재색인 없이 증분 패스만 돈다(패스 커서도 이미 잡혀 있음).
+    prepare("m", 1024);
+    when(aiGate.datasetAllowed(ID)).thenReturn(true);
+    when(embeddingFactory.current()).thenReturn(recordingProvider());
+
+    assertThat(service().sync(ID)).isEqualTo(RowSearchSyncService.Outcome.COMPLETED);
 
     assertThat(callSizes).isNotEmpty().allMatch(n -> n <= 32);
     assertThat(callSizes.stream().mapToInt(Integer::intValue).sum()).isEqualTo(ROWS);
@@ -150,5 +173,54 @@ class RowSearchSyncServiceEmbedChunkTest {
     assertThat(upserted)
         .extracting(IndexedRow::rowId)
         .containsExactlyElementsOf(LongStream.rangeClosed(1, ROWS).boxed().toList());
+  }
+
+  @Test
+  void disallowed_indexesTextOnly_withoutCallingProvider() {
+    // S3 §4.3: 민감 등급 + 외부 임베딩 — 상태는 실제 모델로 색인돼 있었지만 이제 불허. 공급자를 아예 만들지 않는다.
+    prepare("m", 1024);
+    when(aiGate.datasetAllowed(ID)).thenReturn(false);
+
+    assertThat(service().sync(ID)).isEqualTo(RowSearchSyncService.Outcome.COMPLETED);
+
+    verify(embeddingFactory, never()).current();
+    // 모델 표식이 KEYWORD_ONLY 로 바뀌어 전체 재색인(벡터 차원 1 — 기존 외부 유래 벡터는 테이블과 함께 사라진다).
+    verify(index).recreate(any(), eq(RowSearchSyncService.KEYWORD_ONLY_DIM));
+    verify(states)
+        .resetForFullPass(
+            eq(ID),
+            anyString(),
+            eq(RowSearchSyncService.KEYWORD_ONLY_MODEL),
+            eq(RowSearchSyncService.KEYWORD_ONLY_DIM),
+            anyLong());
+    assertThat(upserted)
+        .hasSize(ROWS)
+        .allSatisfy(
+            r -> {
+              assertThat(r.embedding()).isNull();
+              assertThat(r.embeddingModel()).isEqualTo(RowSearchSyncService.KEYWORD_ONLY_MODEL);
+              assertThat(r.sourceText()).isNotBlank();
+            });
+  }
+
+  @Test
+  void keywordOnly_thenAllowed_recreatesWithModel() {
+    // Review Focus 1·2: 키워드 전용 색인(호스팅 미선언·민감)이 자체 호스팅 선언·등급 하향으로 허용되면 실제 모델로 재생성·임베딩된다.
+    prepare(RowSearchSyncService.KEYWORD_ONLY_MODEL, RowSearchSyncService.KEYWORD_ONLY_DIM);
+    when(aiGate.datasetAllowed(ID)).thenReturn(true);
+    when(embeddingFactory.current()).thenReturn(recordingProvider());
+
+    assertThat(service().sync(ID)).isEqualTo(RowSearchSyncService.Outcome.COMPLETED);
+
+    verify(index).recreate(any(), eq(1024));
+    verify(states).resetForFullPass(eq(ID), anyString(), eq("m"), eq(1024), anyLong());
+    assertThat(callSizes.stream().mapToInt(Integer::intValue).sum()).isEqualTo(ROWS);
+    assertThat(upserted)
+        .hasSize(ROWS)
+        .allSatisfy(
+            r -> {
+              assertThat(r.embedding()).isNotNull();
+              assertThat(r.embeddingModel()).isEqualTo("m");
+            });
   }
 }

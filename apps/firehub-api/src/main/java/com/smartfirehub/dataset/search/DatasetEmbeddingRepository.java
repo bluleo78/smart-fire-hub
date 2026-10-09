@@ -89,9 +89,24 @@ public class DatasetEmbeddingRepository {
     dsl.execute("DELETE FROM dataset_embedding WHERE dataset_id = ?", datasetId);
   }
 
-  /** 카탈로그 행 수(dataset_embedding). 진행률 분모 — 판정식과 같은 모집단이어야 100% 에 닿는다. */
-  public long countAll() {
-    return dsl.fetchOne("SELECT count(*) FROM dataset_embedding").get(0, Long.class);
+  /**
+   * 이 데이터셋의 모든 차원 벡터를 지운다(카탈로그 행·source_text 는 남긴다 — 키워드 검색 유지). 등급이 임베딩 공급자를 허용하지 않게 된 데이터셋의 남은 벡터
+   * 정리용(S3 §4.3).
+   */
+  public void deleteVectors(long datasetId) {
+    for (EmbeddingDimension d : EmbeddingDimension.values()) {
+      dsl.execute("DELETE FROM " + d.datasetTable() + " WHERE dataset_id = ?", datasetId);
+    }
+  }
+
+  /**
+   * 카탈로그 행 수(dataset_embedding). 진행률 분모 — 판정식과 같은 모집단이어야 100% 에 닿는다. {@code allowedSql} 은
+   * EmbeddingAiGate#allowedDatasetSql("de.dataset_id") — 등급이 임베딩 공급자를 허용하지 않는 데이터셋은 모집단에서 빠진다(S3
+   * §4.3).
+   */
+  public long countAll(String allowedSql) {
+    return dsl.fetchOne("SELECT count(*) FROM dataset_embedding de WHERE " + allowedSql)
+        .get(0, Long.class);
   }
 
   /** {@code space} 로 임베딩된 데이터셋 수. */
@@ -104,19 +119,28 @@ public class DatasetEmbeddingRepository {
         .get(0, Long.class);
   }
 
-  /** 재임베딩 판정식(현재 차원 테이블에 현재 모델 벡터가 없는 카탈로그 행 수). */
-  public long countMissing(EmbeddingSpace space) {
+  /**
+   * 재임베딩 판정식(현재 차원 테이블에 현재 모델 벡터가 없고 <b>등급이 임베딩 공급자를 허용하는</b> 카탈로그 행 수). {@code allowedSql} 은
+   * EmbeddingAiGate#allowedDatasetSql("de.dataset_id") — 정책 없는 오버로드는 두지 않는다(우회 경로가 된다).
+   */
+  public long countMissing(EmbeddingSpace space, String allowedSql) {
     return dsl.fetchOne(
-            "SELECT count(*) FROM dataset_embedding de WHERE " + missingPredicate(space),
+            "SELECT count(*) FROM dataset_embedding de WHERE "
+                + missingPredicate(space)
+                + " AND "
+                + allowedSql,
             space.model())
         .get(0, Long.class);
   }
 
-  /** 판정식을 만족하는 행을 dataset_id 순으로 {@code limit} 건(키셋). */
-  public List<SourceTextRow> findMissing(EmbeddingSpace space, long afterDatasetId, int limit) {
+  /** 판정식(등급 허용 포함)을 만족하는 행을 dataset_id 순으로 {@code limit} 건(키셋). */
+  public List<SourceTextRow> findMissing(
+      EmbeddingSpace space, long afterDatasetId, int limit, String allowedSql) {
     return dsl.fetch(
             "SELECT de.dataset_id, de.source_text FROM dataset_embedding de WHERE de.dataset_id > ? AND "
                 + missingPredicate(space)
+                + " AND "
+                + allowedSql
                 + " ORDER BY de.dataset_id LIMIT ?",
             afterDatasetId,
             space.model(),

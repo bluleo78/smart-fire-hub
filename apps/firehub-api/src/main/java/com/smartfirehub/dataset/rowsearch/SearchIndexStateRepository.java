@@ -67,13 +67,19 @@ public class SearchIndexStateRepository {
         .map(r -> r.get(0, Long.class));
   }
 
-  /** 이 공간과 다른(또는 아직 없는) 모델·차원으로 만들어진 행 검색 색인 수. 저장 전 비용 안내용(스윕이 스스로 재색인한다). */
+  /**
+   * 이 공간과 다른(또는 아직 없는) 모델·차원으로 만들어진 행 검색 색인 수. 저장 전 비용 안내용(스윕이 스스로 재색인한다). 키워드 전용 색인(S3 — 등급이 임베딩
+   * 공급자를 허용하지 않음)은 임베딩 공간이 바뀌어도 재임베딩하지 않으므로 세지 않는다.
+   */
   public long countStale(String model, int dim) {
+    // OR 를 괄호로 묶는다 — 묶지 않으면 AND 가 뒤 항에만 붙는다.
     return dsl.fetchOne(
             "SELECT count(*) FROM dataset_search_index"
-                + " WHERE embedding_model IS DISTINCT FROM ? OR embedding_dim IS DISTINCT FROM ?",
+                + " WHERE (embedding_model IS DISTINCT FROM ? OR embedding_dim IS DISTINCT FROM ?)"
+                + " AND embedding_model IS DISTINCT FROM ?",
             model,
-            dim)
+            dim,
+            RowSearchSyncService.KEYWORD_ONLY_MODEL)
         .get(0, Long.class);
   }
 

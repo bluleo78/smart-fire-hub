@@ -1,9 +1,12 @@
 package com.smartfirehub.document.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.smartfirehub.document.repository.DocumentFileRepository;
+import com.smartfirehub.embedding.EmbeddingDimension;
 import com.smartfirehub.embedding.EmbeddingNotConfiguredException;
 import com.smartfirehub.embedding.EmbeddingProvider;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
@@ -113,5 +116,40 @@ class DocumentIngestionServiceTest extends IntegrationTestBase {
     var file = fileRepository.findById(fileId).orElseThrow();
     assertThat(file.status()).isEqualTo("FAILED");
     assertThat(file.errorDetail()).isEqualTo(EmbeddingNotConfiguredException.MESSAGE);
+  }
+
+  @Test
+  void processIngestion_disallowedLevel_storesChunksWithoutCallingEmbeddingProvider() {
+    // S3 §4.3: 민감 등급 + 임베딩 호스팅 외부(미선언 기본) — 문서 원문을 외부 공급자로 보내지 않고 본문만 저장한 뒤 완료한다.
+    Long userId =
+        dsl.fetchOne(
+                "INSERT INTO \"user\"(username, password, name, email) VALUES"
+                    + " ('docing_pol','x','Doc Pol','docing_pol@example.com') RETURNING id")
+            .get(0, Long.class);
+    Long datasetId =
+        dsl.fetchOne(
+                "INSERT INTO dataset(name, table_name, storage_type, origin_type, created_by,"
+                    + " security_level_id) VALUES ('docing-pol-set','data.docing_pol_set','DOCUMENT',"
+                    + " 'SOURCE', ?, (SELECT id FROM security_level WHERE name = '민감')) RETURNING id",
+                userId)
+            .get(0, Long.class);
+    Long fileId =
+        ingestionService
+            .upload(datasetId, "민감 점검 기록".repeat(40).getBytes(), "pol.txt", "text/plain", userId)
+            .id();
+
+    ingestionService.processIngestion(fileId, 1L);
+
+    verify(embeddingProviderFactory, never()).current();
+    var file = fileRepository.findById(fileId).orElseThrow();
+    assertThat(file.status()).isEqualTo("COMPLETED");
+    assertThat(file.chunkCount()).isPositive();
+    int chunks =
+        dsl.fetchCount(dsl.selectFrom("document_chunk").where("document_file_id = ?", fileId));
+    assertThat(chunks).isEqualTo(file.chunkCount());
+    for (EmbeddingDimension d : EmbeddingDimension.values()) {
+      assertThat(dsl.fetchCount(dsl.selectFrom(d.chunkTable()).where("dataset_id = ?", datasetId)))
+          .isZero();
+    }
   }
 }
