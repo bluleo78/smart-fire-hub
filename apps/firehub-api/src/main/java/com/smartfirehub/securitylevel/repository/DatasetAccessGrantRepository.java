@@ -8,8 +8,13 @@ import static com.smartfirehub.jooq.Tables.USER;
 import static org.jooq.impl.DSL.selectCount;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import org.jooq.Condition;
 import org.jooq.DSLContext;
@@ -44,6 +49,65 @@ public class DatasetAccessGrantRepository {
     public Long subjectId() {
       return userId != null ? userId : roleId;
     }
+  }
+
+  /**
+   * 허용 항목의 대상 — 사용자 또는 역할 중 하나만 non-null. 파이프라인 출력 허용 목록의 교집합은 이 값의 동등성으로 낸다(항목 단위, 계획 결정 12 — 입력 A
+   * 에 역할로, 입력 B 에 사용자로 올라 있는 사람은 교집합에서 빠진다: 보수적 좁힘).
+   */
+  public record GrantSubject(Long userId, Long roleId) {
+    public static GrantSubject user(long id) {
+      return new GrantSubject(id, null);
+    }
+
+    public static GrantSubject role(long id) {
+      return new GrantSubject(null, id);
+    }
+
+    /** 감사 메타 표기 — USER 또는 ROLE. */
+    public String type() {
+      return userId != null ? "USER" : "ROLE";
+    }
+
+    /** 감사 메타 표기 — 사용자 id 또는 역할 id. */
+    public long subjectId() {
+      return userId != null ? userId : roleId;
+    }
+  }
+
+  /** 데이터셋별 허용 항목 대상 집합(항목 없는 데이터셋은 키가 없다). */
+  public Map<Long, Set<GrantSubject>> findSubjects(Collection<Long> datasetIds) {
+    if (datasetIds.isEmpty()) {
+      return Map.of();
+    }
+    Map<Long, Set<GrantSubject>> out = new HashMap<>();
+    dsl.select(
+            DATASET_ACCESS_GRANT.DATASET_ID,
+            DATASET_ACCESS_GRANT.USER_ID,
+            DATASET_ACCESS_GRANT.ROLE_ID)
+        .from(DATASET_ACCESS_GRANT)
+        .where(DATASET_ACCESS_GRANT.DATASET_ID.in(datasetIds))
+        .forEach(
+            r ->
+                out.computeIfAbsent(r.value1(), k -> new HashSet<>())
+                    .add(new GrantSubject(r.value2(), r.value3())));
+    return out;
+  }
+
+  /**
+   * 대상 항목을 없을 때만 넣는다({@link #insertIfAbsent} — 같은 파이프라인의 동시 실행이 같은 항목을 넣어도 유니크 위반으로 트랜잭션이 깨지지 않게).
+   *
+   * @return 새로 넣은 항목 id — 이미 있었으면 빈 값
+   */
+  public Optional<Long> insertSubject(long datasetId, GrantSubject s, Long grantedBy) {
+    return insertIfAbsent(datasetId, s.userId(), s.roleId(), grantedBy);
+  }
+
+  /** 대상 항목을 지운다. 지운 행 수(이미 없으면 0)를 돌려준다. */
+  public int deleteSubject(long datasetId, GrantSubject s) {
+    var g = DATASET_ACCESS_GRANT;
+    var subject = s.userId() != null ? g.USER_ID.eq(s.userId()) : g.ROLE_ID.eq(s.roleId());
+    return dsl.deleteFrom(g).where(g.DATASET_ID.eq(datasetId)).and(subject).execute();
   }
 
   public List<GrantRow> findByDataset(long datasetId) {

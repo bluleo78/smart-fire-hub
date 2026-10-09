@@ -301,6 +301,9 @@ public class PipelineAsyncRunner {
       executionRepository.updateStepExecution(
           stepExecId, "RUNNING", null, null, null, stepStartedAt, null);
 
+      // WD-30: 러너 TEMP 의 쓰기 후 허용 목록 확정 계획(출력 등급 처리가 채운다 — 허용 목록 필요 입력이 없으면 null).
+      PipelineSecurityGate.OutputAllowlistPlan allowlistPlan = null;
+
       // 출력 데이터셋 ID 및 테이블명 결정 (임시 데이터셋 포함)
       Long outputDatasetId = step.outputDatasetId();
 
@@ -513,8 +516,9 @@ public class PipelineAsyncRunner {
         // 분기를 타지 않기 때문이다(PipelineStepRepository 의 coalesce 폴백).
         if (outputDatasetId != null) {
           if (isSelect) {
-            pipelineSecurityGate.enforceOutputLevel(
-                access, outputDatasetId, step.id(), tempDatasetFresh, runAs);
+            allowlistPlan =
+                pipelineSecurityGate.enforceOutputLevel(
+                    access, outputDatasetId, step.id(), tempDatasetFresh, runAs);
           } else {
             pipelineSecurityGate.requireOutputVisible(outputDatasetId, runAs);
           }
@@ -938,8 +942,9 @@ public class PipelineAsyncRunner {
         // 출력 등급(판단 사항 5, SQL SELECT 스텝과 같은 규칙): 러너 TEMP 는 입력 최대 등급으로 상향·시드, 사용자 지정 출력은 실행 주체가
         // 볼 수 있어야 하고 입력보다 낮으면 자동 상향(S4, 스펙 §4.5). 실행기(AiClassifyExecutor)가 출력을 비우거나 쓰기 전에 둔다.
         if (outputDatasetId != null) {
-          pipelineSecurityGate.enforceOutputLevel(
-              aiInputAccess, outputDatasetId, step.id(), aiTempFresh, aiRunAs);
+          allowlistPlan =
+              pipelineSecurityGate.enforceOutputLevel(
+                  aiInputAccess, outputDatasetId, step.id(), aiTempFresh, aiRunAs);
         }
 
         // AiClassifyExecutor에 전달할 스텝 래퍼: 해결된 outputDatasetId 및 inputDatasetIds 반영
@@ -984,6 +989,10 @@ public class PipelineAsyncRunner {
       if (incrementalStep) {
         stepRepository.advanceCursor(step.id(), stepCursorCandidate, stepWasFullRebuild);
       }
+
+      // WD-30: 출력이 커밋된 뒤에만 러너 TEMP 허용 목록을 시드로 확정한다(넓힘 포함). 실패 경로(catch)는 여기 오지 않는다 — 쓰기 전 좁히기만
+      // 남는다(이전 실행 데이터가 남은 출력에 새 열람자를 넣지 않는다).
+      pipelineSecurityGate.completeOutputAllowlist(allowlistPlan);
 
       // 출력 행 수 계산 (출력 테이블이 있는 경우)
       Long outputRows = null;

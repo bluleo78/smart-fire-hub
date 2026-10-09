@@ -959,6 +959,125 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
     assertThat(waitForEnd(latestExecution(p))).isEqualTo("COMPLETED");
   }
 
+  /**
+   * WD-30 — 러너 TEMP 의 허용 목록은 매 실행 "허용 목록 필요 입력들의 교집합 ∪ {실행 주체}" 로 다시 계산된다. 입력 목록에서 빠진 사람은 TEMP 에서도
+   * 빠진다(예전: 늘어나기만 했다). 실행 주체는 남아 빈 목록(고아)이 생기지 않는다.
+   */
+  @Test
+  void run_tempAllowlist_isRecomputedEachRun_andShrinks() throws Exception {
+    String topTable = m + "_wd30";
+    long topId = table(topTable, "기밀");
+    insertRow(topTable, "t");
+    long first = userAt("기밀");
+    long second = userAt("기밀");
+    fx.grantUser(topId, first);
+    fx.grantUser(topId, second);
+    long p =
+        pipeline(
+            first,
+            List.of(
+                new PipelineStepRequest(
+                    "s1", null, "SQL", "SELECT v FROM " + qualified(topTable), null, null, null)));
+    assertThat(waitForEnd(executionService.executePipeline(p, first))).isEqualTo("COMPLETED");
+    long temp = tempOf(p, "s1");
+    assertThat(hasUserGrant(temp, first)).isTrue();
+    assertThat(hasUserGrant(temp, second)).isTrue();
+
+    inTenantFixture(
+        () ->
+            dsl.deleteFrom(DATASET_ACCESS_GRANT)
+                .where(DATASET_ACCESS_GRANT.DATASET_ID.eq(topId))
+                .and(DATASET_ACCESS_GRANT.USER_ID.eq(second))
+                .execute());
+    assertThat(waitForEnd(executionService.executePipeline(p, first))).isEqualTo("COMPLETED");
+    assertThat(hasUserGrant(temp, second)).isFalse();
+    assertThat(hasUserGrant(temp, first)).isTrue();
+  }
+
+  /**
+   * WD-30 설계 결정 13 — 쓰기 <b>전</b> 좁히기는 쓰기가 실패해도 남는다. 입력 목록에서 빠진 사람은 실패한 재실행 뒤에도 TEMP(이전 실행 데이터가 남아
+   * 있음)에서 빠져 있어야 한다. 쓰기 후 확정(completeOutputAllowlist)은 실패 경로에서 돌지 않으므로 이 TC 는 좁히기만 고정한다.
+   */
+  @Test
+  void run_tempAllowlist_narrowedBeforeWrite_evenWhenStepFails() throws Exception {
+    String topTable = m + "_wd30f";
+    long topId = table(topTable, "기밀");
+    insertRow(topTable, "1");
+    long first = userAt("기밀");
+    long second = userAt("기밀");
+    fx.grantUser(topId, first);
+    fx.grantUser(topId, second);
+    // 실행 시점에만 실패하는 SELECT — 가드·출력 등급 처리(좁히기)는 통과하고, 적재 중 형 변환이 실패한다.
+    long p =
+        pipeline(
+            first,
+            List.of(
+                new PipelineStepRequest(
+                    "s1",
+                    null,
+                    "SQL",
+                    "SELECT v::int AS n FROM " + qualified(topTable),
+                    null,
+                    null,
+                    null)));
+    assertThat(waitForEnd(executionService.executePipeline(p, first))).isEqualTo("COMPLETED");
+    long temp = tempOf(p, "s1");
+    assertThat(hasUserGrant(temp, second)).isTrue();
+
+    inTenantFixture(
+        () ->
+            dsl.deleteFrom(DATASET_ACCESS_GRANT)
+                .where(DATASET_ACCESS_GRANT.DATASET_ID.eq(topId))
+                .and(DATASET_ACCESS_GRANT.USER_ID.eq(second))
+                .execute());
+    insertRow(topTable, "x");
+    assertThat(waitForEnd(executionService.executePipeline(p, first))).isEqualTo("FAILED");
+    assertThat(hasUserGrant(temp, second)).isFalse();
+    assertThat(hasUserGrant(temp, first)).isTrue();
+  }
+
+  /**
+   * 교집합은 항목 단위 — 입력 허용 목록의 역할 항목이 TEMP 에 그대로 들어가고, 입력에 새로 추가된 사람은 다음 실행에 TEMP 에도 들어간다(쓰기 후 확정이 넓힘까지
+   * 맞춘다).
+   */
+  @Test
+  void run_tempAllowlist_carriesRoleEntries_andGrowsWithInput() throws Exception {
+    String topTable = m + "_wd30r";
+    long topId = table(topTable, "기밀");
+    insertRow(topTable, "t");
+    long runner = userAt("기밀");
+    long roleOnly = fx.createRole("pa_rr_" + System.nanoTime(), fx.levelId("기밀"), "dataset:read");
+    roles.add(roleOnly);
+    fx.grantUser(topId, runner);
+    fx.grantRole(topId, roleOnly);
+    long p =
+        pipeline(
+            runner,
+            List.of(
+                new PipelineStepRequest(
+                    "s1", null, "SQL", "SELECT v FROM " + qualified(topTable), null, null, null)));
+    assertThat(waitForEnd(executionService.executePipeline(p, runner))).isEqualTo("COMPLETED");
+    long temp = tempOf(p, "s1");
+    assertThat(hasRoleGrant(temp, roleOnly)).isTrue();
+
+    long late = userAt("기밀");
+    fx.grantUser(topId, late);
+    assertThat(waitForEnd(executionService.executePipeline(p, runner))).isEqualTo("COMPLETED");
+    assertThat(hasUserGrant(temp, late)).isTrue();
+    assertThat(hasRoleGrant(temp, roleOnly)).isTrue();
+  }
+
+  private boolean hasRoleGrant(long datasetId, long roleId) {
+    return inTenantFixture(
+        () ->
+            dsl.fetchExists(
+                DATASET_ACCESS_GRANT,
+                DATASET_ACCESS_GRANT
+                    .DATASET_ID
+                    .eq(datasetId)
+                    .and(DATASET_ACCESS_GRANT.ROLE_ID.eq(roleId))));
+  }
+
   private String qualified(String table) {
     return DataSchema.qualify(table);
   }

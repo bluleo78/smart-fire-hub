@@ -13,6 +13,7 @@ import com.smartfirehub.securitylevel.access.Decision;
 import com.smartfirehub.securitylevel.access.LevelPolicy;
 import com.smartfirehub.securitylevel.access.SqlAccessMode;
 import com.smartfirehub.securitylevel.access.SqlAccessResult;
+import com.smartfirehub.securitylevel.repository.DatasetAccessGrantRepository.GrantSubject;
 import com.smartfirehub.securitylevel.repository.SecurityLevelRepository;
 import com.smartfirehub.securitylevel.service.DatasetSecurityService;
 import com.smartfirehub.securitylevel.service.SecurityAuditRecorder;
@@ -126,11 +127,12 @@ public class PipelineSecurityGate {
    *       낮춰도 기존 데이터가 노출되지 않는다.
    *   <li>러너가 <b>재사용</b>하는 TEMP: 입력보다 낮으면 상향만 한다 — 이전 실행 데이터가 남아 있을 수 있어 절대 낮추지 않는다. 상향·시드 후 실행 주체가
    *       현재 등급·허용 목록으로 볼 수 없으면 쓰기 전에 거부한다(fail-closed).
-   *   <li>러너 소유 TEMP 공통: 입력 최대 등급이 허용 목록 필요면 실행 주체를 허용 목록에 (멱등) 넣는다 — 상향이 일어나지 않아도. 다른 실행 주체(수동 실행자
-   *       vs 트리거 생성자)가 같은 TEMP 를 재사용할 때 다음 스텝({@code {{#N}}})이 거부되지 않게 하고, 실행 주체가 아직 볼 수 없는 TEMP 에
-   *       쓰는 일이 없게 한다. 실행 주체는 이 스텝의 입력을 모두 볼 수 있음이 이미 판정됐으므로 새 열람자를 넓히지 않는다.
+   *   <li>러너 소유 TEMP 공통: 입력 최대 등급이 허용 목록 필요면 허용 목록을 시드(입력 교집합 ∪ {실행 주체})로 좁히고(실행 주체는 언제나 포함), 쓰기 성공
+   *       뒤 시드로 확정할 계획을 돌려준다(WD-30) — 상향이 일어나지 않아도. 다른 실행 주체(수동 실행자 vs 트리거 생성자)가 같은 TEMP 를 재사용할 때
+   *       다음 스텝({@code {{#N}}})이 거부되지 않게 하고, 실행 주체가 아직 볼 수 없는 TEMP 에 쓰는 일이 없게 한다. 실행 주체는 이 스텝의 입력을
+   *       모두 볼 수 있음이 이미 판정됐으므로 새 열람자를 넓히지 않는다.
    *   <li>사용자가 지정한 출력: 실행 주체가 볼 수 있어야 하고, 입력보다 낮으면 자동 상향(S4, 스펙 §4.5 — 출력은 입력보다 낮아질 수 없다). 상향 등급이
-   *       허용 목록 필요면 실행 주체가 목록에 들어간다(raiseForPipelineOutput). 낮추지는 않는다.
+   *       허용 목록 필요면 목록을 시드로 좁힌다(넓히지 않음). 낮추지는 않는다.
    * </ul>
    *
    * <p>SELECT 자동 적재는 래퍼({@code INSERT INTO 출력 ...})를 러너가 붙이므로 출력 테이블이 판정 문자열에 없다 — 그래서 여기서 따로 본다.
@@ -142,9 +144,10 @@ public class PipelineSecurityGate {
    *
    * @param stepId 이 스텝의 id — 출력이 이 스텝의 TEMP 인지 판정한다
    * @param freshTemp 이번 실행에서 새로 만든(빈) TEMP 인가 — 러너 소유 TEMP 일 때만 의미가 있다
+   * @return 러너 소유 TEMP 의 쓰기 후 허용 목록 확정 계획 — 허용 목록 필요 입력이 아니거나 지정 출력이면 null
    */
   @Transactional
-  public void enforceOutputLevel(
+  public OutputAllowlistPlan enforceOutputLevel(
       SqlAccessResult access, long outputDatasetId, long stepId, boolean freshTemp, RunAs runAs) {
     Long runAsUserId = runAs.userId();
     boolean runnerOwnedTemp = isStepTemp(outputDatasetId, stepId);
@@ -152,20 +155,29 @@ public class PipelineSecurityGate {
       requireOutputVisible(outputDatasetId, runAs);
     }
     LevelPolicy effective = access.effectiveLevel();
+    OutputAllowlistPlan plan = null;
     // effective == null: 테이블을 읽지 않는 SELECT(상수 등) — 전파할 등급이 없다.
     if (effective != null) {
       LevelPolicy out = levelOf(outputDatasetId);
-      if (out.rank() < effective.rank()) {
+      boolean raised = out.rank() < effective.rank();
+      if (raised) {
         // 스펙 §4.5: 출력은 입력보다 낮아질 수 없다 — 지정 출력이든 러너 TEMP 든 실패시키지 않고 자동 상향 + 상향 시각 + 감사(+이벤트 1건).
         datasetSecurityService.raiseForPipelineOutput(outputDatasetId, effective, runAsUserId);
       } else if (runnerOwnedTemp && freshTemp && out.rank() > effective.rank()) {
         // 새로 만든 빈 TEMP 만 입력 등급으로 정확히 맞춘다(낮추기 포함). 지정 출력·재사용 TEMP 는 절대 낮추지 않는다.
         datasetSecurityService.assignNewPipelineTempLevel(outputDatasetId, effective, runAsUserId);
       }
-      // 러너 TEMP 는 상향 여부와 무관하게 — 재사용 TEMP 를 다른 실행 주체가 쓸 때도 시드한다(위 Javadoc). 상향 경로에서 이미 넣었으면 멱등으로
-      // 건너뛴다. 지정 출력의 허용 목록은 사용자가 관리하므로 상향 때(raiseForPipelineOutput)만 실행 주체를 넣는다.
-      if (runnerOwnedTemp && effective.allowlistRequired()) {
-        datasetSecurityService.seedPipelineOutputRunAs(outputDatasetId, runAsUserId);
+      // 허용 목록(WD-30): 시드 = 허용 목록 필요 입력들의 항목 교집합 ∪ {실행 주체}. 쓰기 전에는 좁히기만 한다(기존 ∩ 시드 ∪ {실행 주체}).
+      // 러너 TEMP 는 상향 여부와 무관하게 매 실행 — 재사용 TEMP 를 다른 실행 주체가 쓸 때도 그 실행 주체가 들어가고(위 Javadoc), 쓰기 성공 뒤
+      // completeOutputAllowlist 가 시드로 정확히 맞춘다(넓힘 포함). 지정 출력은 사용자가 관리하는 목록이라 이번에 상향됐을 때만 좁히고 넓히지
+      // 않는다(계획 결정 13).
+      if (effective.allowlistRequired() && (runnerOwnedTemp || raised)) {
+        Set<GrantSubject> seed =
+            datasetSecurityService.pipelineOutputSeed(access.readDatasetIds(), runAsUserId);
+        datasetSecurityService.narrowPipelineOutputAllowlist(outputDatasetId, seed, runAsUserId);
+        if (runnerOwnedTemp) {
+          plan = new OutputAllowlistPlan(outputDatasetId, seed, runAsUserId);
+        }
       }
     }
     // 재사용 TEMP 는 상향·시드를 마친 <b>현재</b> 등급·허용 목록으로 실행 주체가 볼 수 있어야 쓴다(fail-closed, 쓰기 전). 예: 이전 실행이
@@ -175,6 +187,28 @@ public class PipelineSecurityGate {
     if (runnerOwnedTemp && !freshTemp) {
       requireOutputVisible(outputDatasetId, runAs);
     }
+    return plan;
+  }
+
+  /**
+   * 러너 소유 TEMP 허용 목록의 쓰기 후 확정 계획(WD-30). 출력 적재는 실행기 커넥션이라 허용 목록 변경과 한 트랜잭션으로 묶을 수 없다 — 그래서 쓰기 전에는
+   * 좁히기만 하고, 쓰기가 성공한 뒤 {@link #completeOutputAllowlist} 가 이 시드로 정확히 맞춘다.
+   *
+   * @param seed 이번 실행의 시드(허용 목록 필요 입력들의 항목 교집합 ∪ {실행 주체})
+   */
+  public record OutputAllowlistPlan(long datasetId, Set<GrantSubject> seed, long runAsUserId) {}
+
+  /**
+   * 러너 소유 TEMP 쓰기 성공 뒤 허용 목록을 시드로 확정한다(WD-30 — 입력 목록에서 빠진 사람은 빠지고, 새로 들어온 사람은 들어온다). 반드시 출력이 커밋된
+   * 뒤에만 부른다 — 실패 경로에서는 부르지 않아 쓰기 전 좁히기만 남는다. plan 이 null 이면(허용 목록 필요 입력 없음·지정 출력) 할 일이 없다.
+   */
+  @Transactional
+  public void completeOutputAllowlist(OutputAllowlistPlan plan) {
+    if (plan == null) {
+      return;
+    }
+    datasetSecurityService.resetPipelineOutputAllowlist(
+        plan.datasetId(), plan.seed(), plan.runAsUserId());
   }
 
   /**
@@ -267,7 +301,8 @@ public class PipelineSecurityGate {
   /**
    * DML 스텝의 쓰기 대상 중 입력 최대 등급보다 낮은 것을 자동 상향한다(스펙 §4.5 — 쓰기 하향은 파이프라인에서 거부가 아니라 상향). 쓰기 대상의 VIEW 는
    * 가드(checkStepSqlForRun)가 이미 판정했다. 반드시 실행(출력 비우기 선행 문장 포함)보다 먼저 부른다 — 낮은 등급에 높은 등급 데이터가 잠깐이라도 쓰이지
-   * 않게. 상향 등급이 허용 목록 필요면 실행 주체가 목록에 들어간다(raiseForPipelineOutput).
+   * 않게. 상향 등급이 허용 목록 필요면 그 대상의 허용 목록을 시드(입력 교집합 ∪ {실행 주체})로 좁힌다(WD-30 — 사용자가 관리하는 목록이라 넓히지 않고 쓰기 후
+   * 확정도 하지 않는다).
    */
   @Transactional
   public void propagateToWriteTargets(SqlAccessResult access, RunAs runAs) {
@@ -275,9 +310,17 @@ public class PipelineSecurityGate {
     if (effective == null) {
       return;
     }
+    Set<GrantSubject> seed = null;
     for (Long id : access.writeDatasetIds()) {
       if (levelOf(id).rank() < effective.rank()) {
         datasetSecurityService.raiseForPipelineOutput(id, effective, runAs.userId());
+        if (effective.allowlistRequired()) {
+          if (seed == null) {
+            seed =
+                datasetSecurityService.pipelineOutputSeed(access.readDatasetIds(), runAs.userId());
+          }
+          datasetSecurityService.narrowPipelineOutputAllowlist(id, seed, runAs.userId());
+        }
       }
     }
   }
@@ -286,8 +329,10 @@ public class PipelineSecurityGate {
    * PYTHON 스텝 출력 등급(스펙 §4.5, 공통 결정 R4). 입력 읽기를 SQL 처럼 판정할 수 없으므로 "스크립트가 읽을 수 있던 최대 등급"을 입력 등급으로 본다
    * — 흐름 C 의 슬롯 롤은 실행 주체 자격 이하이면서 허용 목록 필요가 아닌 등급까지만 읽게 하므로 그 범위의 최고 등급이다({@link
    * #pythonReadableTopLevel}). 실행 주체 자격 등급 자체가 아니다(예: ADMIN 자격 '기밀'은 허용 목록 등급이라 못 읽으므로 출력 = '민감').
-   * 그 범위에 허용 목록 등급이 없으므로 허용 목록 시드도 없다. 이후 처리는 SQL SELECT 출력과 같다({@link #enforceOutputLevel} — 지정
-   * 출력·재사용 TEMP 는 상향만, 새 TEMP 는 정확히 맞춤, 재사용 TEMP 는 쓰기 전 VIEW). 반드시 출력 비우기·맞바꿈·적재 전에 부른다.
+   * 그 범위에 허용 목록 등급이 없으므로 허용 목록 시드·좁히기·쓰기 후 확정도 없다(enforceOutputLevel 이 돌려주는 계획은 언제나 null — 그래서 반환하지
+   * 않는다). 지정 출력이 이미 허용 목록 등급이어도 상향이 없으므로 사용자 관리 목록을 건드리지 않고, 실행 주체가 그 목록으로 볼 수 있어야만 쓴다. 이후 처리는 SQL
+   * SELECT 출력과 같다({@link #enforceOutputLevel} — 지정 출력·재사용 TEMP 는 상향만, 새 TEMP 는 정확히 맞춤, 재사용 TEMP 는
+   * 쓰기 전 VIEW). 반드시 출력 비우기·맞바꿈·적재 전에 부른다.
    *
    * <p>범위가 비면(자격 이하 등급이 모두 허용 목록 필요, 또는 역할 없음) 스크립트가 읽을 수 있는 데이터셋이 없다 — 전파할 입력 등급이 없는 것으로 보고(SQL 의
    * 상수 SELECT 와 같은 규칙) 출력 VIEW 만 본다. 기본 등급으로 맞추면 실행 주체 자격보다 높아 자기 출력을 못 볼 수 있고, 최하위 등급으로 맞추면 그 등급이
@@ -301,6 +346,7 @@ public class PipelineSecurityGate {
       requireOutputVisible(outputDatasetId, runAs);
       return;
     }
+    // 계획 반환값은 버린다 — readable 은 허용 목록 필요가 아니므로 언제나 null 이다(R4).
     enforceOutputLevel(
         new SqlAccessResult(true, null, null, readable.get(), Set.of(), Set.of(), true),
         outputDatasetId,

@@ -13,6 +13,8 @@ import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.dto.AddAccessGrantRequest;
 import com.smartfirehub.securitylevel.dto.ChangeDatasetLevelRequest;
+import com.smartfirehub.securitylevel.repository.DatasetAccessGrantRepository;
+import com.smartfirehub.securitylevel.repository.DatasetAccessGrantRepository.GrantSubject;
 import com.smartfirehub.securitylevel.service.DatasetSecurityService;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.PausedTransactionRace;
@@ -21,6 +23,7 @@ import com.smartfirehub.support.TenantRlsTestSupport;
 import com.smartfirehub.support.TestUsers;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -525,5 +528,67 @@ class DatasetSecurityServiceTest extends IntegrationTestBase {
         .isInstanceOf(IllegalStateException.class);
     assertThat(service.listGrants(ds)).isEmpty();
     assertThat(auditCount(caller.userId(), "DATASET_ACCESS_GRANT_ADD")).isZero();
+  }
+
+  @Autowired private DatasetAccessGrantRepository grantRepository;
+
+  /** WD-30 좁히기 TC 공통 — 사용자 3명(a·b·c)과 실행 주체, 기밀 출력 데이터셋. */
+  private long[] wd30Users() {
+    long[] u = new long[4];
+    for (int i = 0; i < 4; i++) {
+      u[i] = fx.createUser("dss_wd30");
+      users.add(u[i]);
+    }
+    return u;
+  }
+
+  /** 좁히기: 기존 목록이 있으면 기존 ∩ 시드 ∪ {실행 주체} — 시드에만 있는 사람(c)은 쓰기 전에 넣지 않는다. */
+  @Test
+  void narrow_intersectsExisting_andKeepsRunAs() {
+    long[] u = wd30Users();
+    long a = u[0], b = u[1], c = u[2], runAs = u[3];
+    long out = dataset("기밀");
+    fx.grantUser(out, a);
+    fx.grantUser(out, b);
+    var seed = Set.of(GrantSubject.user(b), GrantSubject.user(c), GrantSubject.user(runAs));
+    inTenantFixture(() -> service.narrowPipelineOutputAllowlist(out, seed, runAs));
+    assertThat(subjects(out))
+        .containsExactlyInAnyOrder(GrantSubject.user(b), GrantSubject.user(runAs));
+  }
+
+  /** 기존 목록이 비었으면 시드 그대로(스펙 §4.5 — 빈 목록 고아 방지). */
+  @Test
+  void narrow_emptyExisting_takesSeed() {
+    long[] u = wd30Users();
+    long c = u[2], runAs = u[3];
+    long out = dataset("기밀");
+    var seed = Set.of(GrantSubject.user(c), GrantSubject.user(runAs));
+    inTenantFixture(() -> service.narrowPipelineOutputAllowlist(out, seed, runAs));
+    assertThat(subjects(out))
+        .containsExactlyInAnyOrder(GrantSubject.user(c), GrantSubject.user(runAs));
+  }
+
+  /** 감사는 바뀐 항목만 — 같은 시드로 다시 맞추면 추가·삭제 감사가 늘지 않는다(실행마다 감사가 쌓이지 않게). */
+  @Test
+  void reset_auditsOnlyChangedEntries() {
+    long[] u = wd30Users();
+    long a = u[0], b = u[1], runAs = u[3];
+    long out = dataset("기밀");
+    fx.grantUser(out, a);
+    var seed = Set.of(GrantSubject.user(b), GrantSubject.user(runAs));
+    inTenantFixture(() -> service.resetPipelineOutputAllowlist(out, seed, runAs));
+    assertThat(subjects(out))
+        .containsExactlyInAnyOrder(GrantSubject.user(b), GrantSubject.user(runAs));
+    // a 제거 1 + b·runAs 추가 2.
+    assertThat(auditCount(runAs, "DATASET_ACCESS_GRANT_REMOVE")).isEqualTo(1);
+    assertThat(auditCount(runAs, "DATASET_ACCESS_GRANT_ADD")).isEqualTo(2);
+    inTenantFixture(() -> service.resetPipelineOutputAllowlist(out, seed, runAs));
+    assertThat(auditCount(runAs, "DATASET_ACCESS_GRANT_REMOVE")).isEqualTo(1);
+    assertThat(auditCount(runAs, "DATASET_ACCESS_GRANT_ADD")).isEqualTo(2);
+  }
+
+  private Set<GrantSubject> subjects(long datasetId) {
+    return inTenantFixture(
+        () -> grantRepository.findSubjects(List.of(datasetId)).getOrDefault(datasetId, Set.of()));
   }
 }

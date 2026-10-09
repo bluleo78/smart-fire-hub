@@ -18,11 +18,15 @@ import com.smartfirehub.securitylevel.dto.GrantCandidatesResponse;
 import com.smartfirehub.securitylevel.event.DatasetSecurityLevelChangedEvent;
 import com.smartfirehub.securitylevel.repository.ActiveMembership;
 import com.smartfirehub.securitylevel.repository.DatasetAccessGrantRepository;
+import com.smartfirehub.securitylevel.repository.DatasetAccessGrantRepository.GrantSubject;
 import com.smartfirehub.securitylevel.repository.SecurityLevelRepository;
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
 import org.springframework.context.ApplicationEventPublisher;
@@ -71,9 +75,9 @@ public class DatasetSecurityService {
   }
 
   /**
-   * 러너 소유 TEMP 출력의 최소 전파(판단 사항 5): 입력 최대 등급으로 올리고 자동 상향 시각을 남긴다. 결과 등급이 허용 목록 필요면 {실행 주체}를 넣는다 —
-   * 비우면 다음 스텝(같은 실행 주체가 {@code {{#N}}} 로 읽는다)부터 못 보고, 아무도 못 보는 고아가 된다(스펙 §4.5). 일반 출력의 교집합 시드·자동
-   * 상향은 S4.
+   * 파이프라인 출력의 자동 상향(판단 사항 5, 스펙 §4.5): 입력 최대 등급으로 올리고 자동 상향 시각을 남긴다. 결과 등급이 허용 목록 필요면 호출자(게이트)가 바로
+   * 이어 {@link #narrowPipelineOutputAllowlist} 로 {실행 주체}를 포함한 시드로 좁힌다 — 비우면 다음 스텝부터 못 보는 고아가
+   * 된다(WD-30).
    *
    * <p>상향 여부(입력보다 낮은가)는 호출자(PipelineSecurityGate)가 판단한다 — 여기서는 지정 등급으로 옮기기만 한다.
    */
@@ -104,8 +108,9 @@ public class DatasetSecurityService {
   }
 
   /**
-   * 파이프라인 출력 등급 변경 공통부 — 이전 등급을 읽고, 등급(자동 상향이면 상향 시각도)을 바꾸고, 감사를 남긴다. 자동 상향은 결과 등급이 허용 목록 필요면 실행
-   * 주체를 감사 없이 넣는다 — 바로 뒤 {@link #seedPipelineOutputRunAs} 가 멱등으로 건너뛰므로 상향 1회에 감사가 하나(상향)만 남는다.
+   * 파이프라인 출력 등급 변경 공통부 — 이전 등급을 읽고, 등급(자동 상향이면 상향 시각도)을 바꾸고, 감사를 남긴다. 허용 목록은 여기서 건드리지 않는다 — 게이트가
+   * 좁히기({@link #narrowPipelineOutputAllowlist})·쓰기 후 확정({@link #resetPipelineOutputAllowlist})으로 따로
+   * 처리한다(WD-30).
    */
   private void setPipelineOutputLevel(
       long datasetId,
@@ -120,11 +125,6 @@ public class DatasetSecurityService {
       update = update.set(DATASET.SECURITY_LEVEL_AUTO_RAISED_AT, LocalDateTime.now());
     }
     update.where(DATASET.ID.eq(datasetId)).execute();
-    if (autoRaise
-        && level.allowlistRequired()
-        && !grantRepository.existsUser(datasetId, runAsUserId)) {
-      grantRepository.insertUser(datasetId, runAsUserId, runAsUserId);
-    }
     audit.record(
         runAsUserId,
         auditAction,
@@ -142,22 +142,105 @@ public class DatasetSecurityService {
   }
 
   /**
-   * 파이프라인 출력(러너 소유 TEMP)의 허용 목록에 실행 주체를 넣는다(멱등). 이미 있으면 아무것도 하지 않는다. 새로 넣을 때만 감사 {@code
-   * DATASET_ACCESS_GRANT_ADD} 를 남긴다 — 실행마다 감사가 쌓이지 않게.
+   * 파이프라인 출력 허용 목록 시드(스펙 §4.5, WD-30): 허용 목록 필요 입력들의 허용 항목 <b>교집합</b> ∪ {실행 주체}. 허용 목록 필요 입력이 없으면
+   * {실행 주체}. 교집합은 "모든 허용 목록 입력에 올라 있던 대상"만 남기므로 열람자를 넓히지 않는다. 교집합은 항목 단위다(계획 결정 12 — 역할 항목과 사용자 항목을
+   * 다른 대상으로 본다).
+   */
+  @Transactional(readOnly = true)
+  public Set<GrantSubject> pipelineOutputSeed(Collection<Long> inputDatasetIds, long runAsUserId) {
+    Set<Long> allowlisted = levelRepository.findAllowlistRequiredDatasetIds(inputDatasetIds);
+    Map<Long, Set<GrantSubject>> subjects = grantRepository.findSubjects(allowlisted);
+    Set<GrantSubject> seed = null;
+    for (Long id : allowlisted) {
+      Set<GrantSubject> s = subjects.getOrDefault(id, Set.of());
+      if (seed == null) {
+        seed = new HashSet<>(s);
+      } else {
+        seed.retainAll(s);
+      }
+    }
+    Set<GrantSubject> result = seed == null ? new HashSet<>() : seed;
+    result.add(GrantSubject.user(runAsUserId));
+    return result;
+  }
+
+  /**
+   * 출력 쓰기 <b>전</b> 허용 목록 좁히기(계획 결정 13): 기존 목록이 비었으면 시드, 아니면 기존 ∩ 시드 ∪ {실행 주체}. 출력 적재는 실행기 커넥션이라 이
+   * 변경과 한 트랜잭션으로 묶을 수 없다 — 그래서 쓰기 전에는 새 열람자를 넣지 않는다(이전 실행 데이터가 남은 상태에서 넓히면 그 데이터가 새 사람에게 보인다). 실행
+   * 주체는 이 스텝의 입력을 모두 볼 수 있음이 이미 판정됐으므로 언제나 넣는다(다음 스텝 {@code {{#N}}} 이 읽을 수 있고, 빈 목록 고아가 생기지 않게).
    */
   @Transactional
-  public void seedPipelineOutputRunAs(long datasetId, long runAsUserId) {
-    if (grantRepository.existsUser(datasetId, runAsUserId)) {
-      return;
+  public void narrowPipelineOutputAllowlist(
+      long datasetId, Set<GrantSubject> seed, long runAsUserId) {
+    Set<GrantSubject> current = currentSubjects(datasetId);
+    Set<GrantSubject> target;
+    if (current.isEmpty()) {
+      target = new HashSet<>(seed);
+    } else {
+      target = new HashSet<>(current);
+      target.retainAll(seed);
     }
-    long id = grantRepository.insertUser(datasetId, runAsUserId, runAsUserId);
-    audit.record(
-        runAsUserId,
-        "DATASET_ACCESS_GRANT_ADD",
-        "dataset",
-        String.valueOf(datasetId),
-        "파이프라인 실행 주체 허용 목록 시드",
-        Map.of("grantId", id, "type", "USER", "subjectId", runAsUserId));
+    target.add(GrantSubject.user(runAsUserId));
+    applyAllowlistDiff(datasetId, current, target, runAsUserId, "파이프라인 출력 허용 목록 좁히기(쓰기 전)");
+  }
+
+  /**
+   * 러너 소유 TEMP 쓰기 <b>성공 뒤</b> 허용 목록을 시드로 정확히 맞춘다(WD-30 — 매 실행 재계산, 넓힘 포함). 출력이 이번 실행 입력으로만 다시 채워진
+   * 뒤라 넓혀도 이전 데이터가 새 사람에게 보이지 않는다. 사용자 지정 출력에는 부르지 않는다(사용자가 관리하는 목록 — 호출자 책임).
+   */
+  @Transactional
+  public void resetPipelineOutputAllowlist(
+      long datasetId, Set<GrantSubject> seed, long runAsUserId) {
+    Set<GrantSubject> target = new HashSet<>(seed);
+    target.add(GrantSubject.user(runAsUserId));
+    applyAllowlistDiff(
+        datasetId, currentSubjects(datasetId), target, runAsUserId, "파이프라인 출력 허용 목록 재계산(쓰기 후)");
+  }
+
+  private Set<GrantSubject> currentSubjects(long datasetId) {
+    return grantRepository.findSubjects(List.of(datasetId)).getOrDefault(datasetId, Set.of());
+  }
+
+  /**
+   * 바뀐 항목만 반영·감사한다 — 같은 결과면 아무것도 하지 않아 실행마다 감사가 쌓이지 않는다. 추가 먼저, 삭제 나중(중간에 빈 목록이 되지 않게). 동시 실행이 먼저
+   * 넣은 항목은 새로 넣지 않으므로 감사도 남기지 않는다.
+   */
+  private void applyAllowlistDiff(
+      long datasetId,
+      Set<GrantSubject> current,
+      Set<GrantSubject> target,
+      long actor,
+      String description) {
+    for (GrantSubject s : target) {
+      if (current.contains(s)) {
+        continue;
+      }
+      grantRepository
+          .insertSubject(datasetId, s, actor)
+          .ifPresent(
+              id ->
+                  audit.record(
+                      actor,
+                      "DATASET_ACCESS_GRANT_ADD",
+                      "dataset",
+                      String.valueOf(datasetId),
+                      description,
+                      Map.of("grantId", id, "type", s.type(), "subjectId", s.subjectId())));
+    }
+    for (GrantSubject s : current) {
+      if (target.contains(s)) {
+        continue;
+      }
+      if (grantRepository.deleteSubject(datasetId, s) > 0) {
+        audit.record(
+            actor,
+            "DATASET_ACCESS_GRANT_REMOVE",
+            "dataset",
+            String.valueOf(datasetId),
+            description,
+            Map.of("type", s.type(), "subjectId", s.subjectId()));
+      }
+    }
   }
 
   /**

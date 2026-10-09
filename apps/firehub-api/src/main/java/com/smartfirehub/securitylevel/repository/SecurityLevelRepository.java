@@ -72,6 +72,21 @@ public class SecurityLevelRepository {
             .fetch(DATASET.ID));
   }
 
+  /** 주어진 데이터셋 중 등급이 allowlist_required 인 것(WD-30 — 파이프라인 출력 허용 목록 시드는 이 입력들의 허용 항목 교집합으로 계산한다). */
+  public Set<Long> findAllowlistRequiredDatasetIds(Collection<Long> datasetIds) {
+    if (datasetIds.isEmpty()) {
+      return Set.of();
+    }
+    return new HashSet<>(
+        dsl.select(DATASET.ID)
+            .from(DATASET)
+            .join(SECURITY_LEVEL)
+            .on(SECURITY_LEVEL.ID.eq(DATASET.SECURITY_LEVEL_ID))
+            .where(DATASET.ID.in(datasetIds))
+            .and(SECURITY_LEVEL.ALLOWLIST_REQUIRED.isTrue())
+            .fetch(DATASET.ID));
+  }
+
   /** 기본 등급(테넌트당 정확히 1개). */
   public Optional<LevelPolicy> findDefault() {
     return dsl.selectFrom(SECURITY_LEVEL)
