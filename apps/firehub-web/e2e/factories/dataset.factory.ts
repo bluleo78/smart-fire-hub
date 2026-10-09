@@ -55,6 +55,8 @@ export function createDataset(overrides?: Partial<DatasetResponse>): DatasetResp
     statusNote: null,
     statusUpdatedBy: null,
     statusUpdatedAt: null,
+    // S4: 서버가 조회자 기준으로 채운다. 기본은 허용 — 차단 시나리오는 overrides 로 false/undefined 를 준다.
+    exportAllowed: true,
     ...overrides,
   };
 }
@@ -85,6 +87,8 @@ export function createDatasetDetail(overrides?: Partial<DatasetDetailResponse>):
     statusUpdatedBy: null,
     statusUpdatedAt: null,
     linkedPipelines: [],
+    // S4: 서버가 조회자 기준으로 채운다. 기본은 허용 — 차단 시나리오는 overrides 로 false/undefined 를 준다.
+    exportAllowed: true,
     ...overrides,
   };
 }

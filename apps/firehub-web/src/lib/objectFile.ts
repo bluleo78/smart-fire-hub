@@ -1,6 +1,7 @@
 import { toast } from 'sonner';
 
-import { objectsApi } from '../api/objects';
+import { type ObjectDisposition, objectsApi } from '../api/objects';
+import { handleApiError } from './api-error';
 import { parseUtcDate } from './formatters';
 
 /**
@@ -28,18 +29,33 @@ export function formatObjectDate(iso: string | null): string {
  * presigned GET URL은 만료가 짧아 클릭 시점에 발급한다. 팝업 차단을 피하려고 탭을 동기적으로
  * 먼저 연 뒤 URL을 받아 이동시킨다(noopener는 window.open이 null을 반환하므로 사용하지 않는다).
  * 키의 마지막 세그먼트가 파일명이라 저장명도 원본명이 된다.
+ * disposition 기본은 inline(열기) — attachment(다운로드)는 서버가 내보내기 정책을 판정하므로 403 이면 서버 문구를 보인다.
  */
-export async function openObjectInNewTab(datasetId: number, key: string): Promise<void> {
+export async function openObjectInNewTab(
+  datasetId: number,
+  key: string,
+  disposition: ObjectDisposition = 'inline',
+): Promise<void> {
   const win = window.open('', '_blank');
   if (!win) {
     toast.error('팝업이 차단되어 파일을 열 수 없습니다');
     return;
   }
   try {
-    const { data: res } = await objectsApi.presignedUrl(datasetId, key);
+    const { data: res } = await objectsApi.presignedUrl(datasetId, key, disposition);
     win.location.href = res.url;
-  } catch {
+  } catch (error) {
     win.close();
-    toast.error('다운로드 URL 발급에 실패했습니다');
+    // 정책 거부(403)는 서버 사유 문구를 그대로 보인다 — 그 외 실패는 기존 일반 문구.
+    if (isAxiosForbidden(error)) {
+      handleApiError(error, '다운로드 URL 발급에 실패했습니다');
+    } else {
+      toast.error('다운로드 URL 발급에 실패했습니다');
+    }
   }
+}
+
+/** axios 403 응답인지 — 내보내기 정책 거부를 일반 실패와 구분한다. */
+function isAxiosForbidden(error: unknown): boolean {
+  return (error as { response?: { status?: number } } | null)?.response?.status === 403;
 }

@@ -591,7 +591,7 @@ export default function DatasetDetailPage() {
         )}
         {activeTab === 'objects' && (
           <div className="mt-6">
-            <DatasetObjectsTab datasetId={dataset.id} />
+            <DatasetObjectsTab datasetId={dataset.id} exportAllowed={dataset.exportAllowed === true} />
           </div>
         )}
       </Tabs>

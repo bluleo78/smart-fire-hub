@@ -1,4 +1,4 @@
-import { useInfiniteQuery,useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery,useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 
 import { analyticsApi } from '../../api/analytics';
@@ -199,6 +199,25 @@ export function useChartData(id: number | null | undefined, options?: {
       : undefined,
     refetchIntervalInBackground: false,
     refetchOnWindowFocus: false,
+  });
+}
+
+/**
+ * 대시보드 위젯들의 내보내기 가능 여부(S4) — 위젯 카드(useChartData)가 이미 받은 데이터를 캐시에서 관찰만 한다.
+ * enabled: false 라 이 훅은 요청을 보내지 않는다(위젯의 지연 로딩·자동 새로고침 주기를 건드리지 않게).
+ * 로드된 위젯 중 하나라도 denied 이거나 exportAllowed !== true 면 false. 아직 로드되지 않은 위젯은 화면·인쇄에 데이터가
+ * 없으므로 판정에서 뺀다 — 넣으면 화면 밖 위젯이 있는 긴 대시보드에서 허용 사용자도 PDF 를 못 쓴다.
+ */
+export function useDashboardExportAllowed(chartIds: number[]): boolean {
+  const uniqueIds = [...new Set(chartIds)];
+  return useQueries({
+    queries: uniqueIds.map((id) => ({
+      queryKey: ['analytics', 'charts', id, 'data'],
+      queryFn: () => analyticsApi.getChartData(id).then((r) => r.data),
+      enabled: false,
+    })),
+    combine: (results) =>
+      results.every((r) => r.data === undefined || (r.data.denied !== true && r.data.exportAllowed === true)),
   });
 }
 

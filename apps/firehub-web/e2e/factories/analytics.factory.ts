@@ -68,6 +68,9 @@ export function createQueryResult(overrides?: Partial<AnalyticsQueryResult>): An
     totalRows: 2,
     truncated: false,
     error: null,
+    // S4: 애드혹 실행 응답의 조회자 기준 내보내기 가능 + 실행 기록 id(쿼리 결과 내보내기용). 기본은 허용.
+    exportAllowed: true,
+    runId: 'run-test-1',
     ...overrides,
   };
 }

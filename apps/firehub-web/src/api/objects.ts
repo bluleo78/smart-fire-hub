@@ -23,6 +23,9 @@ export interface PresignedUrlResponse {
   expiresInSeconds: number;
 }
 
+/** presigned GET 의 응답 처리 방식 — inline: 브라우저에서 열기, attachment: 파일로 저장(내보내기 정책 대상) */
+export type ObjectDisposition = 'inline' | 'attachment';
+
 /** 업로드 대상 — 앱이 생성한 키 + 클라이언트가 PUT할 presigned URL */
 export interface UploadTarget {
   key: string;
@@ -39,9 +42,10 @@ export const objectsApi = {
   // 데이터셋 프리픽스 하위 오브젝트 목록(페이지네이션)
   list: (datasetId: number, params: { token?: string; size?: number }) =>
     client.get<ObjectListResponse>(`/datasets/${datasetId}/objects`, { params }),
-  // 오브젝트 단건 presigned GET URL
-  presignedUrl: (datasetId: number, key: string) =>
-    client.get<PresignedUrlResponse>(`/datasets/${datasetId}/objects/url`, { params: { key } }),
+  // 오브젝트 단건 presigned GET URL — inline(미리보기, 기본)은 열람 권한만, attachment(다운로드)는 서버가 내보내기 정책을
+  // 판정한다(S4). disposition 은 서명된 쿼리 파라미터라 클라이언트가 URL 을 고쳐 바꿀 수 없다.
+  presignedUrl: (datasetId: number, key: string, disposition: ObjectDisposition = 'inline') =>
+    client.get<PresignedUrlResponse>(`/datasets/${datasetId}/objects/url`, { params: { key, disposition } }),
   // presigned PUT URL 배치 발급 (앱이 "<prefix><filename>" 키 생성 — S3 방식)
   requestUploadUrls: (datasetId: number, body: { files: { filename: string }[] }) =>
     client.post<UploadUrlResponse>(`/datasets/${datasetId}/objects/upload-urls`, body),

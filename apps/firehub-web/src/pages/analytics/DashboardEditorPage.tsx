@@ -48,6 +48,7 @@ import {
   useAddWidget,
   useChartsInfinite,
   useDashboard,
+  useDashboardExportAllowed,
   useRemoveWidget,
   useUpdateWidget,
 } from '../../hooks/queries/useAnalytics';
@@ -253,6 +254,9 @@ export default function DashboardEditorPage() {
       handleApiError(dashboardError, '대시보드 정보를 불러오지 못했습니다.');
     }
   }, [isDashboardError, dashboardError]);
+
+  // 위젯 데이터 중 내보내기 불가(정책 차단·열람 불가)가 하나라도 있으면 PDF 내보내기를 숨긴다(보조 다운로드 → 숨김, S4).
+  const pdfExportAllowed = useDashboardExportAllowed((dashboard?.widgets ?? []).map((w) => w.chartId));
 
   const addWidgetMutation = useAddWidget(dashboardId!);
   const removeWidgetMutation = useRemoveWidget(dashboardId!);
@@ -570,17 +574,20 @@ export default function DashboardEditorPage() {
 
           {/* PDF 내보내기 (#99) — window.print()로 브라우저 인쇄 다이얼로그를 띄워
               "PDF로 저장" 옵션을 사용자가 선택하도록 한다. 별도 라이브러리 없이
-              가장 가벼운 1차 구현. 추후 puppeteer 기반 server-side 렌더링 추천. */}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => window.print()}
-            title="PDF로 내보내기 (인쇄 다이얼로그)"
-            className="h-8"
-            aria-label="PDF로 내보내기"
-          >
-            <Download className="h-3.5 w-3.5" />
-          </Button>
+              가장 가벼운 1차 구현. 추후 puppeteer 기반 server-side 렌더링 추천.
+              내보내기 불가 위젯이 있으면 숨긴다(S4 UI 수준 차단 — 브라우저 인쇄 자체는 막을 수 없다). */}
+          {pdfExportAllowed && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => window.print()}
+              title="PDF로 내보내기 (인쇄 다이얼로그)"
+              className="h-8"
+              aria-label="PDF로 내보내기"
+            >
+              <Download className="h-3.5 w-3.5" />
+            </Button>
+          )}
 
           <Button
             variant="outline"

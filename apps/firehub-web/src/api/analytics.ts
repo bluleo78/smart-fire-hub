@@ -57,6 +57,13 @@ export const analyticsApi = {
   executeAdhoc: (data: AnalyticsQueryRequest) =>
     client.post<AnalyticsQueryResult>('/analytics/queries/execute', data),
 
+  /**
+   * 화면에 그린 SQL 결과(AI 표 위젯)의 내보내기 가능 여부 — 서버 플래그를 실을 수 없는 화면이 다운로드를 보일지 묻는다(S4).
+   * 숨김·파싱 실패·정책 위반은 모두 false 로 온다(구분 불가).
+   */
+  exportCheck: (sql: string) =>
+    client.post<{ exportAllowed: boolean }>('/analytics/queries/export-check', { sql }),
+
   getSchema: () =>
     client.get<SchemaInfo>('/analytics/queries/schema'),
 

@@ -518,22 +518,25 @@ export default function DatasetListPage() {
                       >
                         <BarChart3 size={14} />
                       </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-7 w-7 p-0"
-                        title="내보내기"
-                        aria-label="내보내기"
-                        onClick={(e) => {
-                          // refs #95: navigate 가 아닌 ExportDialog 오픈 — 라벨/아이콘과 동작 일치
-                          e.stopPropagation();
-                          setExportDatasetId(dataset.id);
-                          setExportDatasetName(dataset.name);
-                          setExportOpen(true);
-                        }}
-                      >
-                        <Download size={14} />
-                      </Button>
+                      {/* 보조 다운로드 아이콘은 조회자 기준 내보내기 불가면 숨긴다(S4, 스펙 §5-4) — true 일 때만(fail-closed) */}
+                      {dataset.exportAllowed === true && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 w-7 p-0"
+                          title="내보내기"
+                          aria-label="내보내기"
+                          onClick={(e) => {
+                            // refs #95: navigate 가 아닌 ExportDialog 오픈 — 라벨/아이콘과 동작 일치
+                            e.stopPropagation();
+                            setExportDatasetId(dataset.id);
+                            setExportDatasetName(dataset.name);
+                            setExportOpen(true);
+                          }}
+                        >
+                          <Download size={14} />
+                        </Button>
+                      )}
                     </div>
 
                     {/* Delete button */}
