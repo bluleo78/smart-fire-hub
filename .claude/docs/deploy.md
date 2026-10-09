@@ -305,13 +305,17 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
   - **보안 등급 이름 경합**: 같은 이름으로 동시에 등급을 만들거나 이름을 바꾸면 예전의 코드 없는 일반 409 대신 409 `SECURITY_LEVEL_NAME_DUPLICATE` 로 답한다(사전 검사와 같은 코드).
 - **알려진 한계**(후속 — 괄호 안은 workplace WD 이슈 키):
   - **남은 이름 노출**(WD-31): 숨김 데이터셋의 **테이블명**이 다음 경로에는 남는다(내용·행은 아님).
-    - 파이프라인 스텝 SQL 원문(`scriptContent`)·저장 쿼리 SQL 원문(`sqlText`) 안의 테이블명 — 원문을 고치면 실행이 바뀌므로 가리지 않는다.
-    - `GET /charts`·`GET /charts/{id}` 의 `config`(컬럼명) — denied 데이터 응답에서만 뺐다(소유자가 재저장 시 덮어쓰지 않게 메타 조회는 유지).
-    - API 가져오기가 만든 파이프라인의 기본 이름(`<데이터셋 이름> API Import`)과 감사 로그 설명문.
+    - 파이프라인 스텝 SQL 원문(`scriptContent`)·저장 쿼리 SQL 원문(`sqlText`) 안의 테이블명 — **허용(결정, 2026-10-09 WD-31③)**: 원문을 고치면 실행이 바뀌므로 가리지 않는다.
+    - PYTHON 슬롯 롤도 `pg_catalog`·`information_schema` 로 테이블 **이름**은 볼 수 있다(SELECT 권한 없이도, WD-29 잔여).
+    - ~~차트 `config`~~ → V138 에서 해결: 저장 쿼리를 볼 수 없는 조회자에게 `config:null, configWithheld:true`(빌더 편집 잠금). 아래 V138 절의 알려진 한계 참고.
+    - ~~API 가져오기 기본 이름~~ → V138 에서 해결: 기본값 `API Import #<datasetId>`. **기존 파이프라인·트리거 이름은 이관하지 않는다**(배포 전에 만든 `<데이터셋 이름> API Import` 이름은 그대로 남는다 — 필요하면 소유자가 이름을 바꾼다). 감사 로그 설명의 데이터셋명은 허용(관리자 전용).
   - **실행 기록 원문 판정의 시점**(WD-27 잔여): 실행 단위·스텝 원문 공개는 **현재** 스텝 정의와 **현재** 등급으로 판정한다 — 실행 뒤 스텝 정의를 바꾸거나 등급을 내리면 과거 실행의 원문이 그 시점 기준으로는 못 볼 조회자에게 보일 수 있다. 판정 중 DB 예외가 나면 500 으로 끝난다(원문은 나가지 않는다).
   - **편집기 숨김 표시의 상한**(WD-31): 파이프라인 편집기·트리거 폼의 "열람 권한 없음" 잠금 표시는 데이터셋 목록(최대 1만 건) 안에서만 정확하다 — 1만 건을 넘는 테넌트에서는 볼 수 있는 데이터셋도 잠금으로 보일 수 있다(서버 판정에는 영향 없음).
   - **API_CALL·PYTHON 지정 출력은 같은 값 재전송도 판정한다**(WD-31): SQL 스텝과 달리 이미 저장된 지정 출력을 그대로 다시 보내도 편집자의 VIEW 를 본다 — 그 출력을 볼 자격을 잃은 편집자는 그 파이프라인을 저장할 수 없다(다른 편집자가 저장하거나 출력을 바꾼다).
-  - **PYTHON 입력 우회**(WD-29): PYTHON 스텝의 **입력 읽기**는 SQL 관문을 거치지 않는 알려진 우회 경로다(편집 화면 경고만, 강제는 후속). 출력 쓰기는 막혔다. 이 우회로 숨김 데이터를 읽은 PYTHON 스텝이 공개 출력에 쓰면, 그 스텝의 로그·오류 원문이 출력을 볼 수 있는 조회자에게 보일 수 있다(실행 기록 원문 판정이 입력을 모르기 때문).
+  - **PYTHON 입력 읽기**(WD-29): V138 배포 **전까지** PYTHON 스텝의 입력 읽기는 SQL 관문을 거치지 않는 알려진 우회 경로다(출력 쓰기는 막혔다). 이 우회로 숨김 데이터를 읽은 PYTHON 스텝이 공개 출력에 쓰면, 그 스텝의 로그·오류 원문이 출력을 볼 수 있는 조회자에게 보일 수 있다(실행 기록 원문 판정이 입력을 모르기 때문). **V138 부터** DB 권한(등급별 슬롯 롤)으로 막는다(아래 V138 절). 남은 한계:
+    - 허용 목록 등급 데이터는 PYTHON 에서 **아무도** 읽지 못한다(허용 목록은 사용자 단위라 롤로 표현할 수 없다, 보수적).
+    - 테이블 이름 노출(위 "남은 이름 노출").
+    - 등급 변경 직후 실행 중이던 스크립트는 시작 시점 권한으로 계속 읽는다. 다음 실행 직전 재동기화가 반영한다.
   - **GraphRAG 에 이미 적재된 내용과 등급 상향**(WD-28): 문서 적재·`graphrag_project_table`(표 투영)로 Neo4j 에 들어간 엔티티·관계·속성(표 행 값 포함)이 대상이다. 검수 인박스의 원문 근거는 V133·V134 배포에서 막혔다.
     - **V135 배포 전까지**: 데이터셋을 나중에 '민감'·'기밀'로 올려도 ai-agent 의 그래프 조회·채팅 검색으로 계속 노출된다(스펙 §7.5). **운영 절차**: 등급을 올리기 전에 그 데이터셋이 GraphRAG 에 적재됐는지(소유자 롤로 `SELECT * FROM dataset_graph_ingest WHERE dataset_id = <id>`) 확인하고, 적재돼 있으면 그래프에서 해당 데이터셋 유래 노드를 수동으로 정리한 뒤 올린다.
     - **V135 배포 후**: 출처 데이터셋을 볼 수 없는 사용자에게는 그 온톨로지의 그래프 읽기가 통째로 막히므로(아래 V135 절) 등급 상향 전 수동 정리는 필요 없다. 단 출처가 기록되지 않은 온톨로지는 게이트가 막지 못하므로(V135 절 알려진 한계), 그 경우에만 위 수동 정리를 한다. 삭제된 데이터셋이 출처인 온톨로지는 테넌트 관리자만 읽는다(V135 절).
@@ -482,6 +486,51 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
   - **쿼리 실행 기록 정리는 주기 작업이다** — `AnalyticsQueryRunCleanupService`(Spring `@Scheduled`, 기본 10분 주기·기동 1분 뒤 첫 실행, `firehub.analytics.query-run.cleanup.interval-ms`/`initial-delay-ms`)가 **ACTIVE 테넌트**를 돌며 1시간 지난 행을 지운다(`idx_analytics_query_run_created`). 따라서 SQL 원문은 최대 약 1시간 10분 남는다. 비활성·정지 테넌트의 행은 그 테넌트가 다시 ACTIVE 가 될 때까지 남는다(내보내기·조회는 만료 조건으로 막히고, 소유자 조회·RLS 로 제한).
   - PYTHON 출력 등급은 흐름 C 의 슬롯 롤 읽기 제한과 함께여야 실제 읽기와 일치한다(위 배포 모듈).
   - 지정 출력이 이미 입력과 같은(허용 목록 필요) 등급이면 상향이 없으므로 허용 목록을 좁히지 않는다 — 입력 목록에는 없고 출력 목록에만 있는 구성원이 출력을 볼 수 있다(대화형 SQL 의 rank 판정과 같은 성격).
+
+### V138 PYTHON 등급별 읽기 롤 · 차트 설정 가림 · API 가져오기 이름 (WD-29·WD-31②④, 계획 2026-10-09 · 배포일은 배포 시점에 갱신)
+
+- **번호:** 이 절은 V138 로 적었다(작성 시점 브랜치 기준 V136·V137 은 다른 흐름 예약). **병합 직전 실제 main 의 마이그레이션 목록을 다시 보고 최신 +1 로 재확인한다(R7, V122 충돌 전례)** — 다르면 파일 이름과 이 절의 번호를 함께 고친다.
+- **배포 결합:** 보안 흐름 A·B·C 를 한 번에 배포한다(api + web + ai-agent + **executor**). C 에서 반드시 함께 나가야 하는 조합은 다음과 같다.
+  - **api + executor 동시 필수.**
+    - 구 api + 신 executor: `readSlot` 이 없어 **모든 PYTHON 스텝이 422 로 실패**한다.
+    - 신 api + 구 executor: `readSlot` 을 무시하고 테넌트 롤로 실행한다. 즉 우회가 그대로 남는다.
+  - web 이 구버전이면 가려진 차트의 빌더가 `config:null` 에서 기본 설정으로 보이다가, 저장 시 config 를 보내 **기존 설정을 덮어쓸 수 있다**. web 도 함께 배포한다.
+  - 등급 정의 변경·데이터셋 등급 변경의 **재동기화 이벤트 발행은 흐름 B 소유**다(C 는 리스너만 둔다). C 단독 상태(또는 B 보다 먼저 배포된 상태)에서는 이벤트가 오지 않으므로, 등급을 바꾼 직후 슬롯 롤의 GRANT 는 잠시 옛 값이다 — 그래도 **PYTHON 실행 직전(JIT) 동기화**가 실행마다 GRANT 를 계산값에 맞추고, 기동 시·하루 1회(기본 03:20, `app.pipeline.python-read-sync.cron`) 전체 동기화가 드리프트를 회복하므로 실행 시점의 정합성은 지켜진다(2026-10-09 격리 라이브: 등급 하향 직후 슬롯 GRANT 0 → 다음 실행 직전 동기화가 반영).
+- **마이그레이션 V138:** ACTIVE 테넌트마다 `pipeline_py_t{id}_s1..s10` LOGIN 롤(NOINHERIT, NOSUPERUSER·NOCREATEROLE 등), `CONNECT`, DB 한정 `search_path`, 직접 부여된 `public` 스키마 권한 회수, 데이터 스키마가 있으면 `USAGE`. 비밀번호는 임의값으로 만들고 같은 기동의 AFTER_MIGRATE 콜백이 `PIPELINE_ROLE_PASSWORD_SECRET` 파생값(HMAC, 메시지=롤 이름)으로 맞춘다. 테이블 SELECT 는 api 기동 시 동기화(`PythonReadGrantSync`)가 건다. 테이블 변경이 없으므로 jOOQ 재생성은 필요 없다.
+  - 정지(SUSPENDED) 테넌트는 V138 이 롤을 만들지 않는다. **재개(정지→ACTIVE) 시 실행 롤과 슬롯 롤을 함께 보장**한다(감사 기록 뒤 마지막 단계, 실패하면 상태 변경이 롤백돼 재시도할 수 있다). `PIPELINE_ROLE_AUTO_PROVISION=false` 면 재개해도 만들지 않으므로 수동으로 만든다(그 테넌트의 PYTHON 은 "Python 읽기 롤이 준비되지 않았습니다" 로 실패).
+- **사전 점검(소유자 롤로 실행: `docker exec <db> psql -U app -d smartfirehub`):**
+  1. `select max(version::int) from flyway_schema_history` 가 이 마이그레이션 번호 −1 인지.
+  2. `select rolsuper, rolcreaterole from pg_roles where rolname = 'app'` — 둘 중 하나가 `t` 여야 V138 이 롤을 만들 수 있다(V83·V111 선례). 둘 다 `f` 면 V138 이 실패하고 api 가 기동하지 않는다.
+  3. 등급 상한: `SELECT tenant_id, count(*) FROM security_level GROUP BY 1 HAVING count(*) > 10` → 0행이어야 한다. 행이 있으면 11번째 이후 위치의 데이터셋은 PYTHON 에서 읽히지 않고, 그 자격자의 PYTHON 은 실패한다. 중단 후 상의한다.
+  4. PYTHON 스텝 보유 파이프라인: `SELECT p.tenant_id, count(DISTINCT p.id) FROM pipeline p JOIN pipeline_step s ON s.pipeline_id = p.id WHERE s.script_type = 'PYTHON' GROUP BY 1`
+  5. 허용 목록 등급 데이터셋: `SELECT d.tenant_id, l.name, count(*) FROM dataset d JOIN security_level l ON l.id = d.security_level_id WHERE l.allowlist_required GROUP BY 1, 2` — PYTHON 이 이 테이블을 읽고 있었다면 배포 후 실패한다.
+  6. **스크립트의 직접 쓰기**: `SELECT s.tenant_id, s.pipeline_id, s.id FROM pipeline_step s WHERE s.script_type = 'PYTHON' AND s.script_content ~* '\m(insert|update|delete|copy|truncate|create|drop|alter)\M'` — 슬롯 롤은 쓰기 권한이 없어 배포 후 실패한다. 행마다 출력을 stdout JSON 으로 바꾸도록 안내한다(근사 검색이다 — 문자열 리터럴·주석도 걸린다).
+  7. 테이블 소유자: `SELECT d.tenant_id, d.table_name, c.relowner::regrole FROM dataset d JOIN pg_namespace n ON n.nspname = CASE WHEN d.tenant_id = 1 THEN 'data' ELSE 'data_t' || d.tenant_id END JOIN pg_class c ON c.relnamespace = n.oid AND c.relname = d.table_name WHERE c.relowner <> 'app_tenant'::regrole` → 0행이어야 한다. 동기화는 런타임 롤(`app_tenant`)로 GRANT/REVOKE 하므로 **소유자가 아닌 테이블(예: app 소유 옛 테이블)은 고치지 못한다**. 결과는 두 갈래다.
+     - 과소권한(슬롯 롤에 SELECT 가 없어야 할 만큼 모자람): GRANT 가 경고만 내고 적용되지 않는다 → 그 테이블은 PYTHON 에서 읽히지 않는다(안전 쪽).
+     - **과권한이 남은 경우**(누군가 손으로 그 슬롯 롤에 SELECT 를 줬거나 등급이 올라감): REVOKE 가 실패해 "회수 실패"로 기록되고, **그 슬롯 롤로 도는 실행만** "Python 읽기 권한을 회수하지 못한 데이터가 있어 실행을 중단했습니다." 로 거부된다(다른 슬롯은 영향 없음). 이 쿼리의 행은 배포 전에 소유자를 `app_tenant` 로 옮기거나(`ALTER TABLE … OWNER TO app_tenant`) 상의한다. 배포 후 api 로그에 `회수 실패 N개`(N>0)가 보이면 이 쿼리부터 본다.
+  8. **슬롯 롤 접속 규칙(pg_hba)**: `SELECT line_number, type, database, user_name, auth_method FROM pg_hba_file_rules` — 새 롤 이름(`pipeline_py_t…`)이 api(로컬 경로)·executor 가 붙는 경로에서 허용되는지 본다(`all` 이거나 `pipeline_executor_t*` 가 허용되는 같은 규칙). 롤 이름을 나열한 규칙이면 새 이름이 빠져 있다. 막혀 있으면 배포 직후 **모든 PYTHON 스텝이 인증 실패**한다.
+- **배포 후 확인:**
+  - `SELECT count(*) FROM pg_roles WHERE rolname LIKE 'pipeline\_py\_t%'` = 10 × ACTIVE 테넌트 수.
+  - `SELECT rolname FROM pg_roles WHERE rolname LIKE 'pipeline\_py\_t%' AND (rolsuper OR rolcreaterole OR rolcreatedb OR rolbypassrls OR rolinherit)` → 0행(슬롯 롤에 강한 속성이 없음).
+  - api 로그에 `PYTHON 읽기 권한 동기화 완료(기동): 성공 N개 테넌트`(일부 실패면 `일부 실패(기동)` WARN — 실패 테넌트는 실행 직전·일 1회 동기화가 회복하지만 원인을 본다).
+  - `SELECT grantee, count(*) FROM information_schema.role_table_grants WHERE grantee LIKE 'pipeline\_py\_t1\_s%' AND privilege_type = 'SELECT' GROUP BY 1` — 높은 슬롯일수록 같거나 많다(공개 데이터셋이 없으면 s1 은 0행이 정상).
+  - 공개 데이터셋을 읽는 PYTHON 스텝 하나를 실행해 성공하는지.
+- **동작 변화:**
+  - PYTHON 스크립트의 `DB_URL` 은 실행 주체(수동=실행자, 트리거=트리거 생성자) 등급 슬롯 롤이다. 등급 밖·허용 목록 등급 테이블 SELECT 는 `permission denied`. 쓰기 불가. 출력은 stdout JSON 으로만 적재한다.
+  - **로컬(`app.executor.enabled=false`) 경로도 같다(R5)**: 스크립트는 슬롯 롤로 실행되고(`DB_URL` 은 `postgresql://슬롯롤:…@host:port/db` libpq URI), stdout JSON 을 **API 가** 실행기와 같은 규칙으로 적재한다 — 출력 지정 PYTHON 도 실패하지 않는다. 바뀐 점:
+    - 로컬 REPLACE 에서 stdout 이 JSON 행이 아니면(적재 0행) **원본을 유지**한다(#685 규칙, 실행기 켠 경로와 동일). 예전 로컬 경로는 스크립트 전에 출력을 비워 빈 테이블이 남았다.
+    - 비정상 종료 문구는 `Python 실행 실패(exit code N): <출력>`, 적재 실패 문구는 실행기 경로와 같은 `Python 실행 실패: Script succeeded but data insert failed: …`.
+    - 알려진 차이(로컬 전용 경로): TIMESTAMP 컬럼에 **오프셋이 붙은 값**(`…+09:00`, `…Z`)은 두 경로 모두 timestamptz 로 바인딩되어 세션 시간대의 벽시계 시각으로 저장되는데, 세션 시간대가 API(JDBC — JVM 기본 시간대)와 executor(psycopg2 — DB 기본 시간대)에서 다를 수 있어 저장 시각이 어긋날 수 있다. 오프셋 없는 값은 같다. GEOMETRY 는 API 관례(GeoJSON, SRID 4326)라 WKT/EWKT 입력은 두 경로가 다르다.
+  - 등급 추가는 10개까지(`SECURITY_LEVEL_LIMIT_EXCEEDED` 400).
+  - 차트 `config` 가림(저장 쿼리를 볼 수 없는 조회자에게 `config:null, configWithheld:true`, 빌더 편집 잠금), API 가져오기 기본 이름 `API Import #<id>`(기존 이름은 이관하지 않음).
+  - 역할 편집의 `pipeline:python_execute` 안내 문구가 등급 범위 읽기로 바뀌었다.
+- **알려진 한계:**
+  - 위 "남은 이름 노출"·"PYTHON 입력 읽기" 항목(V133·V134 절).
+  - 차트 `config` 가림은 **조회 시점의 저장 쿼리 판정**이다 — 작성자가 나중에 저장 쿼리 SQL 을 공개 데이터만 읽도록 바꾸면 옛 `config`(예전 컬럼명)는 더 이상 가려지지 않는다(작성자 자신의 변경이라 수용).
+  - `config` 가 가려진 소유자가 차트 타입을 MAP 으로 바꾸는 PUT 은, 기존 `config` 에 `spatialColumn` 이 있는지에 따라 검증 성공/400 이 갈린다 — 1비트 노출이며 영향이 작아 수용.
+  - 슬롯 GRANT 는 SELECT 만 본다 — 손으로 건 INSERT 등 비SELECT 권한은 동기화가 탐지·회수하지 않는다(GRANT 경로가 SELECT 만 주므로 제품 경로로는 생기지 않는다).
+- **롤백:** api·executor 를 **함께** 되돌린다(한쪽만 되돌리면 위 결합 문제). V138 롤은 남겨도 무해하다(구 코드는 쓰지 않는다). 지우려면 롤마다 `REVOKE ALL ON DATABASE … FROM r; DROP OWNED BY r; DROP ROLE r` 를 실행한다.
+- **번호:** 다음 신규 마이그레이션 = V139(위 재확인 결과에 맞춰 함께 고친다).
 
 ### opencode baseURL 사설망 점검 (이슈 #698)
 
