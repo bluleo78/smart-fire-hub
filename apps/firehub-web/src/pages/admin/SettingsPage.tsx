@@ -131,6 +131,7 @@ function DefaultHint({ show }: { show: boolean }) {
 
 function AdminSettingsPage() {
   // 「데이터 보안」 탭은 security:settings 보유자에게만(스펙 §5-1 탭별 권한 노출). 최종 판정은 서버.
+  // 같은 권한이 AI·임베딩 공급자의 자체 호스팅 선언도 가른다(S3 §5-5 — 서버 HostingDeclarationPolicy 와 같은 판정).
   const { permissions } = useMyPermissions();
   const canSecurity = permissions.has('security:settings');
   const [isSaving, setIsSaving] = useState(false);
@@ -540,6 +541,7 @@ function AdminSettingsPage() {
                 authStatus={authStatus}
                 isVerifying={isVerifying}
                 onVerifyAuth={verifyAuth}
+                canDeclareSelfHosted={canSecurity}
               />
 
               <Separator />
@@ -752,6 +754,7 @@ function AdminSettingsPage() {
             chatAgentType={cred.savedAgentType}
             chatConfigured={cred.configured}
             chatModel={settings['ai.model']?.value ?? form['ai.model']}
+            canDeclareSelfHosted={canSecurity}
           />
         </TabsContent>
         {/* 이메일 탭 — 폼 상태는 페이지가 소유한다(탭 전환에도 편집이 살아남는다) */}
@@ -761,7 +764,7 @@ function AdminSettingsPage() {
         {/* 임베딩 탭 — 폼 상태는 페이지가 소유한다(탭 전환에도 편집이 살아남고 이탈 가드에 dirty 를
             보고한다, #713 리뷰 fix round 1) */}
         <TabsContent value="embedding" className="mt-6">
-          <EmbeddingSettingsTab state={embedding} />
+          <EmbeddingSettingsTab state={embedding} canDeclareSelfHosted={canSecurity} />
         </TabsContent>
         {/* 데이터 보안 탭 — 자체 쿼리를 가지며 페이지 폼 상태와 무관 */}
         {canSecurity && (

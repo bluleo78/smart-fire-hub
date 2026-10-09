@@ -1,6 +1,7 @@
 import { Boxes, PlugZap, RefreshCw, RotateCcw, Save } from 'lucide-react';
 
 import type { EmbeddingProviderType } from '../../api/embedding';
+import { HostingLocationField } from '../../components/admin/HostingLocationField';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -69,7 +70,14 @@ function ReindexProgressRow({
  * 저장 흐름: 연결 테스트로 차원 측정 → 그 (모델, 차원)의 재임베딩 대상 수 조회 → 0 보다 크면 확인 창 → PUT.
  * 서버 PUT 은 클라이언트 측정값을 믿지 않고 다시 probe 하며, 판정식이 참이면 재임베딩 잡을 스스로 투입한다.
  */
-export default function EmbeddingSettingsTab({ state }: { state: EmbeddingSettingsFormState }) {
+export default function EmbeddingSettingsTab({
+  state,
+  canDeclareSelfHosted = false,
+}: {
+  state: EmbeddingSettingsFormState;
+  /** security:settings 보유 여부 — 자체 호스팅 선언 가능 여부(S3 §5-5). 페이지가 권한을 조회해 내려 준다. */
+  canDeclareSelfHosted?: boolean;
+}) {
   const {
     isLoading,
     isError,
@@ -77,6 +85,8 @@ export default function EmbeddingSettingsTab({ state }: { state: EmbeddingSettin
     config,
     status,
     form,
+    hostingDemoted,
+    canKeepSavedSelfHosted,
     testState,
     pending,
     busy,
@@ -188,6 +198,19 @@ export default function EmbeddingSettingsTab({ state }: { state: EmbeddingSettin
               }
             />
           </div>
+
+          <Separator />
+
+          {/* 호스팅 위치(S3 §5-5) — 임베딩 공급자도 자체 호스팅 선언이 있어야 자체 호스팅 전용 등급 데이터의 벡터를 만든다. */}
+          <HostingLocationField
+            id="embedding-hosting"
+            value={form.hosting}
+            onChange={(v) => setField({ hosting: v })}
+            readOnlyExternal={false}
+            canDeclareSelfHosted={canDeclareSelfHosted || canKeepSavedSelfHosted}
+            endpointUrl={form.baseUrl}
+            demoted={hostingDemoted}
+          />
 
           {form.provider === 'OPENAI' && (
             <>

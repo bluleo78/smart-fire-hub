@@ -33,11 +33,14 @@ export default function AiClassifySettingsTab({
   chatAgentType,
   chatConfigured,
   chatModel,
+  canDeclareSelfHosted = false,
 }: {
   state: UseAiClassifyFormResult;
   chatAgentType: AgentType;
   chatConfigured: boolean;
   chatModel: string;
+  /** security:settings 보유 여부 — 자체 호스팅 선언 가능 여부(S3 §5-5). 페이지가 권한을 조회해 내려 준다. */
+  canDeclareSelfHosted?: boolean;
 }) {
   const { cred } = state;
   const [clearOpen, setClearOpen] = useState(false);
@@ -105,6 +108,7 @@ export default function AiClassifySettingsTab({
               idPrefix="ai-classify"
               agentTypeDescription="AI 분류에 사용할 에이전트 유형"
               unconfiguredNotice={null}
+              canDeclareSelfHosted={canDeclareSelfHosted}
             />
             {!cred.loadFailed && !cred.isLocked && (
               <>

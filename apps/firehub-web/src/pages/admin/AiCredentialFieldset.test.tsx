@@ -11,7 +11,7 @@
  * 요소가 보이는지만 확인하는 테스트는 이 화면에서 가치가 없다(사용자가 스스로 검증할 수 없는
  * 주장일수록 그렇다).
  */
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -40,6 +40,8 @@ function makeCred(overrides: Partial<UseAiCredentialFormResult> = {}): UseAiCred
     setAgentType: vi.fn(),
     payload: { providerId: 'openai', baseURL: 'https://api.openai.com/v1', reasoningEffort: '' },
     setPayloadField: vi.fn(),
+    hostingDemoted: false,
+    canKeepSavedSelfHosted: false,
     secretInputs: {},
     setSecretInput: vi.fn(),
     secretFieldNames: ['apiKey'],
@@ -133,9 +135,11 @@ describe('AiCredentialFieldset — 테넌트 전용 단일 폼(#706)', () => {
    * <b>변종: 옛 "플랫폼 설정을 사용 / 우리 조직이 직접 설정" 라디오를 남겨 둔다.</b> 플랫폼 평면이
    * 사라져 "플랫폼 값"을 고를 곳이 없다 — 라디오가 남아 있으면 존재하지 않는 선택지를 약속한다.
    */
-  it('라디오가 없고 입력 폼(유형 Select + 유형별 필드)이 항상 보인다', () => {
+  it('평면 선택 라디오가 없고 입력 폼(유형 Select + 유형별 필드)이 항상 보인다', () => {
     renderFieldset(makeCred({ configured: true }));
-    expect(screen.queryByRole('radio')).not.toBeInTheDocument();
+    // S3 §5-5 의 「호스팅 위치」 라디오(opencode)만 있어야 한다 — 그 밖의 라디오(옛 평면 선택)는 없다.
+    const hostingRadios = within(screen.getByRole('radiogroup', { name: '호스팅 위치' })).getAllByRole('radio');
+    expect(screen.getAllByRole('radio')).toEqual(hostingRadios);
     expect(screen.queryByText(/플랫폼 설정을 사용/)).not.toBeInTheDocument();
     expect(screen.getByLabelText('에이전트 유형')).toBeInTheDocument();
     expect(screen.getByLabelText('기본 URL')).toBeInTheDocument();

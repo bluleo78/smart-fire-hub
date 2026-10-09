@@ -10,6 +10,8 @@ import {
   type EmbeddingStatus,
 } from '../api/embedding';
 import { extractApiError } from '../lib/api-error';
+import type { HostingLocation } from '../lib/hosting-location';
+import { isSameTransportTarget, normalizeHosting } from '../lib/hosting-location';
 import { useEmbeddingStatus, useReindexAllEmbeddings } from './queries/useEmbedding';
 import { useEmbeddingConfig, useSaveEmbeddingConfig } from './queries/useEmbeddingSettings';
 
@@ -19,10 +21,12 @@ export interface EmbeddingForm {
   model: string;
   baseUrl: string;
   apiKey: string;
+  /** 공급자 호스팅 위치 선언(S3 §5-5). 기본 외부. */
+  hosting: HostingLocation;
 }
 
-// 미설정 테넌트의 시작 폼. 기본값을 "적용 중인 값"처럼 보이지 않게 모델·주소는 비워 둔다.
-const EMPTY: EmbeddingForm = { provider: 'OLLAMA', model: '', baseUrl: '', apiKey: '' };
+// 미설정 테넌트의 시작 폼. 기본값을 "적용 중인 값"처럼 보이지 않게 모델·주소는 비워 둔다. 호스팅은 기본 외부(fail-safe).
+const EMPTY: EmbeddingForm = { provider: 'OLLAMA', model: '', baseUrl: '', apiKey: '', hosting: 'EXTERNAL' };
 
 // 저장 요청 뒤 입력이 바뀌어 저장을 멈췄을 때의 안내(#716).
 const STALE_SAVE_MESSAGE = '저장 중 입력이 바뀌어 저장하지 않았습니다. 다시 저장하세요.';
@@ -49,6 +53,13 @@ export interface EmbeddingSettingsFormState {
   status: EmbeddingStatus | undefined;
   form: EmbeddingForm;
   hasChanges: boolean;
+  /**
+   * provider·Base URL 이 바뀌어 자체 호스팅 선언을 외부로 되돌렸는가. 서버도 전송 대상이 바뀌면 선언을 유지하지 않으므로
+   * (231008d7) 화면이 먼저 같은 결과를 보여 주고 그 사실을 알린다.
+   */
+  hostingDemoted: boolean;
+  /** 저장된 자체 호스팅 선언을 같은 전송 대상 그대로 유지하는 상태인가 — 이때는 security:settings 없이도 서버가 허용한다. */
+  canKeepSavedSelfHosted: boolean;
   testState: EmbeddingTestState;
   pending: EmbeddingPendingSave | null;
   busy: boolean;
@@ -83,6 +94,7 @@ export function useEmbeddingSettingsForm(): EmbeddingSettingsFormState {
   const [testState, setTestState] = useState<EmbeddingTestState>(null);
   const [pending, setPending] = useState<EmbeddingPendingSave | null>(null);
   const [busy, setBusy] = useState(false);
+  const [hostingDemoted, setHostingDemoted] = useState(false);
 
   // 서버 설정 → 폼. 키는 값으로 내려오지 않으므로 항상 빈 칸에서 시작한다(비우면 유지).
   // 최초 성공 로드 때 한 번만 시드한다(useSmtpSettingsForm 의 didInitialLoad 와 같은 규칙) — config 가 바뀔
@@ -99,6 +111,7 @@ export function useEmbeddingSettingsForm(): EmbeddingSettingsFormState {
           model: config.model ?? '',
           baseUrl: config.baseUrl ?? '',
           apiKey: '',
+          hosting: normalizeHosting(config.hosting),
         }
       : EMPTY;
     setForm(seeded);
@@ -112,17 +125,46 @@ export function useEmbeddingSettingsForm(): EmbeddingSettingsFormState {
 
   // 입력이 바뀌면 직전 연결 테스트 결과는 더 이상 이 폼 값의 결과가 아니다 — 지워서 "연결 성공 · N차원"이
   // 바뀐 주소·모델에 대한 것처럼 보이지 않게 한다. 세대도 올려 진행 중 요청의 늦은 응답이 다시 채우지 못하게 한다.
-  const setField = useCallback((patch: Partial<EmbeddingForm>) => {
-    formSeqRef.current += 1;
-    setForm((f) => ({ ...f, ...patch }));
-    setTestState(null);
-  }, []);
+  // 전송 대상(provider·Base URL)이 저장값과 다른가 — api EmbeddingConfigService.targetChanged 와 같은 규칙(미설정은 "바뀜",
+  // Base URL 은 앞뒤 공백·끝 슬래시 무시). 모델은 목적지를 바꾸지 않으므로 보지 않는다.
+  const isTargetChanged = useCallback(
+    (f: EmbeddingForm) =>
+      !config?.configured || f.provider !== original.provider || !isSameTransportTarget(f.baseUrl, original.baseUrl),
+    [config?.configured, original],
+  );
+
+  const setField = useCallback(
+    (patch: Partial<EmbeddingForm>) => {
+      formSeqRef.current += 1;
+      // 한 이벤트에 한 번 불리는 입력 핸들러라 클로저의 form 으로 다음 값을 계산한다 — 호스팅 강등을 같은 갱신에 묶는다.
+      const next: EmbeddingForm = { ...form, ...patch };
+      if ('hosting' in patch) {
+        setHostingDemoted(false);
+      } else if (
+        ('provider' in patch || 'baseUrl' in patch) &&
+        next.hosting === 'SELF_HOSTED' &&
+        isTargetChanged(next)
+      ) {
+        // 자체 호스팅 선언은 "그 목적지"에 대한 것이라 목적지가 바뀌면 유지하지 않는다 — 그대로 실어 보내면 권한 없는
+        // 사용자는 403, 있는 사용자는 확인 창 없는 새 선언이 된다.
+        next.hosting = 'EXTERNAL';
+        setHostingDemoted(true);
+      }
+      setForm(next);
+      setTestState(null);
+    },
+    [form, isTargetChanged],
+  );
+
+  const canKeepSavedSelfHosted =
+    !!config?.configured && original.hosting === 'SELF_HOSTED' && !isTargetChanged(form);
 
   const hasChanges =
     form.provider !== original.provider ||
     form.model !== original.model ||
     form.baseUrl !== original.baseUrl ||
-    form.apiKey !== original.apiKey;
+    form.apiKey !== original.apiKey ||
+    form.hosting !== original.hosting;
 
   // 빈 키는 보내지 않는다 — 서버 계약상 "생략 = 기존 키 유지"다.
   const buildRequest = (): EmbeddingConfigRequest => ({
@@ -130,6 +172,8 @@ export function useEmbeddingSettingsForm(): EmbeddingSettingsFormState {
     model: form.model.trim(),
     baseUrl: form.baseUrl.trim(),
     ...(form.provider === 'OPENAI' && form.apiKey ? { apiKey: form.apiKey } : {}),
+    // 생략하면 서버가 대상 변경 여부로 유지/외부를 정한다 — 화면과 저장 결과가 어긋나지 않게 항상 지금 선택값을 싣는다.
+    hosting: form.hosting,
   });
 
   const handleTest = async () => {
@@ -163,8 +207,12 @@ export function useEmbeddingSettingsForm(): EmbeddingSettingsFormState {
       model: request.model,
       baseUrl: request.baseUrl,
       apiKey: '',
+      hosting: normalizeHosting(request.hosting),
     };
-    if (seq === formSeqRef.current) setForm(saved);
+    if (seq === formSeqRef.current) {
+      setForm(saved);
+      setHostingDemoted(false);
+    }
     setOriginal(saved);
   };
 
@@ -239,6 +287,8 @@ export function useEmbeddingSettingsForm(): EmbeddingSettingsFormState {
     status,
     form,
     hasChanges,
+    hostingDemoted,
+    canKeepSavedSelfHosted,
     testState,
     pending,
     busy,

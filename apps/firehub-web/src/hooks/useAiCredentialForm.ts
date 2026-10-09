@@ -7,6 +7,7 @@ import type { AgentType } from '../lib/ai-credential';
 import { AGENT_TYPES, CREDENTIAL_FIELDS } from '../lib/ai-credential';
 import { hasTypeChangedFromSaved } from '../lib/ai-credential-screen';
 import { extractApiError } from '../lib/api-error';
+import { isSameTransportTarget, normalizeHosting } from '../lib/hosting-location';
 import type {
   AiCredentialProbeRequest,
   AiCredentialProbeResponse,
@@ -28,6 +29,20 @@ function toStringPayload(raw: Record<string, unknown>): Record<string, string> {
     if (typeof value === 'string') out[key] = value;
   });
   return out;
+}
+
+/**
+ * opencode 호출의 실제 목적지를 정하는 payload 필드 — api `AiCredentialService.TRANSPORT_TARGET_FIELDS` 와 같다. 이 값이
+ * 바뀌면 기존 자체 호스팅 선언은 새 목적지에 대한 것이 아니므로 유지되지 않는다(서버도 같은 규칙으로 강등·권한 판정).
+ */
+const TRANSPORT_TARGET_FIELDS = ['providerId', 'baseURL'] as const;
+
+/**
+ * 저장·dirty 비교에 쓸 payload 필드 값. `hosting` 은 빈 값·모르는 값을 'EXTERNAL' 로 정규화한다 — 서버는 빈 문자열
+ * hosting 을 400 으로 거부하고, 키가 없는 저장 문서(=외부)와 화면의 '외부 서비스' 선택이 dirty 로 갈리면 안 되기 때문이다.
+ */
+function payloadFieldValue(payload: Record<string, string>, name: string): string {
+  return name === 'hosting' ? normalizeHosting(payload.hosting) : (payload[name] ?? '');
 }
 
 /** 저장 직후 서버가 확정한 값 — dirty 판정과 `canLoadModels` 의 "저장된 키" 가드에 쓴다. */
@@ -120,6 +135,18 @@ export interface UseAiCredentialFormResult {
    * "기본 URL 을 고치면 모델 칸이 미로드로 돌아간다"(설계서 "모델 칸 4상태" 절).
    */
   setPayloadField: (name: string, value: string) => void;
+  /**
+   * 전송 대상(공급자·기본 URL)이 바뀌어 자체 호스팅 선언을 외부로 되돌렸는가(S3 §5-5). 서버도 대상이 바뀌면 선언을
+   * 유지하지 않으므로, 화면이 먼저 같은 결과를 보여 주고 그 사실을 알린다 — 조용히 바뀌면 저장 뒤에야 알게 된다.
+   * 호스팅을 다시 고르거나 다시 시드·되돌리기·유형 전환하면 내려간다.
+   */
+  hostingDemoted: boolean;
+  /**
+   * 저장된 자체 호스팅 선언을 그대로 유지할 수 있는 상태인가 — 저장된 유형·전송 대상이 그대로이고 저장값이 자체
+   * 호스팅이다. 서버(`HostingDeclarationPolicy`)는 이 경우 security:settings 없이도 자체 호스팅 유지를 허용하므로,
+   * 화면도 권한 없는 사용자에게 이때만 자체 호스팅 라디오를 열어 둔다.
+   */
+  canKeepSavedSelfHosted: boolean;
   /**
    * 사용자가 지금 타이핑 중인 비밀 값. <b>빈 값 = 유지</b> — 저장 시 이 맵에서 비어 있지 않은
    * 값만 요청에 싣는다(생략된 필드는 서버가 "현재 값 유지"로 해석한다, PUT 계약). 서버 마스크를
@@ -243,6 +270,7 @@ export function useAiCredentialForm<R extends AiCredentialResponse = AiCredentia
   const [modelsError, setModelsError] = useState<string | null>(null);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [original, setOriginal] = useState<OriginalSnapshot>(EMPTY_ORIGINAL);
+  const [hostingDemoted, setHostingDemoted] = useState(false);
 
   /**
    * 모델 목록 세대(#721). `loadModels` 가 시작할 때 올리고 자기 번호를 기억했다가, 응답이 도착했을 때
@@ -289,6 +317,7 @@ export function useAiCredentialForm<R extends AiCredentialResponse = AiCredentia
     setPayloadState(nextPayload);
     setSecretInputsState({});
     setSecretFieldNames(data.secretFieldNames);
+    setHostingDemoted(false);
     invalidateModels();
     setOriginal({
       agentType: nextAgentType,
@@ -348,19 +377,53 @@ export function useAiCredentialForm<R extends AiCredentialResponse = AiCredentia
       // 유형이 바뀌면 payload/secret 모두 새로 시작한다 — 위 인터페이스 setAgentType 주석 참고.
       setPayloadState({});
       setSecretInputsState({});
+      setHostingDemoted(false);
       invalidateModels();
     },
     [agentType, invalidateModels],
   );
 
+  /**
+   * 이 payload 의 전송 대상이 저장된 문서와 다른가 — api `AiCredentialService.hostingOutcome` 의 targetChanged 와 같은
+   * 규칙(저장된 행 없음·유형 변경도 "바뀜", 값은 앞뒤 공백·끝 슬래시를 무시하고 비교).
+   */
+  const isTargetChanged = useCallback(
+    (p: Record<string, string>) =>
+      !original.configured ||
+      agentType !== original.agentType ||
+      TRANSPORT_TARGET_FIELDS.some((f) => !isSameTransportTarget(p[f], original.payload[f])),
+    [agentType, original],
+  );
+
   const setPayloadField = useCallback((name: string, value: string) => {
-    setPayloadState((prev) => ({ ...prev, [name]: value }));
+    // 한 이벤트에 한 번 불리는 입력 핸들러라 클로저의 payload 로 다음 값을 계산한다 — 호스팅 강등을 같은 갱신에 묶어야
+    // "주소는 바뀌었는데 화면은 아직 자체 호스팅"인 중간 상태가 생기지 않는다.
+    const next = { ...payload, [name]: value };
+    if (name === 'hosting') {
+      setHostingDemoted(false);
+    } else if (
+      (TRANSPORT_TARGET_FIELDS as readonly string[]).includes(name) &&
+      next.hosting === 'SELF_HOSTED' &&
+      isTargetChanged(next)
+    ) {
+      // 자체 호스팅 선언은 "그 목적지"에 대한 것이다 — 목적지가 바뀌면 서버도 선언을 유지하지 않는다(231008d7). 화면이
+      // 자체 호스팅을 그대로 실어 보내면 권한 없는 사용자는 403 을, 있는 사용자는 확인 없는 새 선언을 하게 된다.
+      next.hosting = 'EXTERNAL';
+      setHostingDemoted(true);
+    }
+    setPayloadState(next);
     if (name === 'baseURL') {
       // 기본 URL 이 바뀌면 그 URL 로 불러온 모델 목록은 더 이상 유효하지 않다 — 진행 중 요청의
       // 늦은 응답도 함께 버린다(#721).
       invalidateModels();
     }
-  }, [invalidateModels]);
+  }, [payload, isTargetChanged, invalidateModels]);
+
+  const canKeepSavedSelfHosted =
+    original.configured &&
+    agentType === original.agentType &&
+    normalizeHosting(original.payload.hosting) === 'SELF_HOSTED' &&
+    !isTargetChanged(payload);
 
   const setSecretInput = useCallback((name: string, value: string) => {
     setSecretInputsState((prev) => ({ ...prev, [name]: value }));
@@ -422,7 +485,7 @@ export function useAiCredentialForm<R extends AiCredentialResponse = AiCredentia
     agentType !== original.agentType ||
     CREDENTIAL_FIELDS[agentType]
       .filter((field) => field.plane === 'payload')
-      .some((field) => (payload[field.name] ?? '') !== (original.payload[field.name] ?? '')) ||
+      .some((field) => payloadFieldValue(payload, field.name) !== payloadFieldValue(original.payload, field.name)) ||
     Object.values(secretInputs).some((value) => value.trim() !== '');
 
   const save = useCallback(async (): Promise<boolean> => {
@@ -433,7 +496,7 @@ export function useAiCredentialForm<R extends AiCredentialResponse = AiCredentia
     fields
       .filter((field) => field.plane === 'payload')
       .forEach((field) => {
-        payloadOut[field.name] = payload[field.name] ?? '';
+        payloadOut[field.name] = payloadFieldValue(payload, field.name);
       });
     const secretOut: Record<string, string> = {};
     fields
@@ -478,6 +541,7 @@ export function useAiCredentialForm<R extends AiCredentialResponse = AiCredentia
     setAgentTypeState(original.agentType);
     setPayloadState(original.payload);
     setSecretInputsState({});
+    setHostingDemoted(false);
     invalidateModels();
   }, [original, invalidateModels]);
 
@@ -492,6 +556,8 @@ export function useAiCredentialForm<R extends AiCredentialResponse = AiCredentia
     setAgentType,
     payload,
     setPayloadField,
+    hostingDemoted,
+    canKeepSavedSelfHosted,
     secretInputs,
     setSecretInput,
     secretFieldNames: visibleSecretFieldNames,

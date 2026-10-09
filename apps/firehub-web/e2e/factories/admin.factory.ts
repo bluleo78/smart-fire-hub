@@ -197,6 +197,7 @@ export function createEmbeddingConfig(patch: Partial<EmbeddingConfigView> = {}):
     baseUrl: 'http://host.docker.internal:11434',
     dimension: 1024,
     apiKeyMasked: '',
+    hosting: 'EXTERNAL',
     ...patch,
   };
 }
@@ -209,6 +210,7 @@ export const UNCONFIGURED_EMBEDDING: EmbeddingConfigView = {
   baseUrl: null,
   dimension: null,
   apiKeyMasked: '',
+  hosting: 'EXTERNAL',
 };
 
 /** GET /admin/embedding/status 응답. */

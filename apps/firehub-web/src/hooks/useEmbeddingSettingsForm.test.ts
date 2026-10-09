@@ -41,6 +41,7 @@ const view = (model: string, baseUrl = 'http://h:11434'): EmbeddingConfigView =>
   baseUrl,
   dimension: 1024,
   apiKeyMasked: '',
+  hosting: 'EXTERNAL',
 });
 
 // axios 응답 모양만 흉내 낸다(훅은 .data 만 읽는다).
@@ -99,5 +100,53 @@ describe('useEmbeddingSettingsForm — 서버 설정 시드', () => {
 
     await waitFor(() => expect(hook.result.current.form.model).toBe('bge-m3'));
     expect(hook.result.current.hasChanges).toBe(false);
+  });
+});
+
+/** S3 §5-5 — 임베딩 공급자 호스팅 위치. 서버와 같은 규칙(전송 대상이 바뀌면 선언 유지 안 함)으로 화면이 먼저 강등한다. */
+describe('useEmbeddingSettingsForm — 호스팅 위치', () => {
+  const selfHosted = (): EmbeddingConfigView => ({ ...view('bge-m3'), hosting: 'SELF_HOSTED' });
+
+  it('저장된 호스팅을 시드하고 저장 요청에 명시한다', async () => {
+    mocked.getConfig.mockResolvedValue(res(selfHosted()));
+    mocked.testConfig.mockResolvedValue(res({ dimension: 1024 }));
+    mocked.getImpact.mockResolvedValue(res({ chunks: 0, datasets: 0, rowSearchIndexes: 0 }));
+    mocked.saveConfig.mockResolvedValue(res(selfHosted()));
+    const { hook } = setup();
+    await waitFor(() => expect(hook.result.current.form.hosting).toBe('SELF_HOSTED'));
+    expect(hook.result.current.canKeepSavedSelfHosted).toBe(true);
+
+    act(() => hook.result.current.setField({ model: 'bge-m3-v2' }));
+    await act(() => hook.result.current.handleSave());
+    expect(mocked.saveConfig).toHaveBeenCalledWith(expect.objectContaining({ hosting: 'SELF_HOSTED' }));
+  });
+
+  it('Base URL 을 바꾸면 자체 호스팅을 외부로 되돌리고 알린다', async () => {
+    mocked.getConfig.mockResolvedValue(res(selfHosted()));
+    const { hook } = setup();
+    await waitFor(() => expect(hook.result.current.form.hosting).toBe('SELF_HOSTED'));
+
+    act(() => hook.result.current.setField({ baseUrl: 'https://api.openai.com' }));
+    expect(hook.result.current.form.hosting).toBe('EXTERNAL');
+    expect(hook.result.current.hostingDemoted).toBe(true);
+    expect(hook.result.current.canKeepSavedSelfHosted).toBe(false);
+  });
+
+  it('끝 슬래시만 다른 Base URL 은 같은 목적지라 유지한다', async () => {
+    mocked.getConfig.mockResolvedValue(res(selfHosted()));
+    const { hook } = setup();
+    await waitFor(() => expect(hook.result.current.form.hosting).toBe('SELF_HOSTED'));
+
+    act(() => hook.result.current.setField({ baseUrl: 'http://h:11434/' }));
+    expect(hook.result.current.form.hosting).toBe('SELF_HOSTED');
+    expect(hook.result.current.hostingDemoted).toBe(false);
+  });
+
+  it('호스팅만 바꿔도 미저장 변경이다', async () => {
+    mocked.getConfig.mockResolvedValue(res(view('bge-m3')));
+    const { hook } = setup();
+    await waitFor(() => expect(hook.result.current.form.model).toBe('bge-m3'));
+    act(() => hook.result.current.setField({ hosting: 'SELF_HOSTED' }));
+    expect(hook.result.current.hasChanges).toBe(true);
   });
 });
