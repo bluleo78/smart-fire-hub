@@ -1,12 +1,16 @@
 package com.smartfirehub.securitylevel.ai;
 
 import com.smartfirehub.audit.service.AuditLogService;
+import com.smartfirehub.global.util.ClientIpExtractor;
 import com.smartfirehub.securitylevel.access.ProviderHosting;
 import com.smartfirehub.user.dto.UserResponse;
 import com.smartfirehub.user.repository.UserRepository;
+import jakarta.servlet.http.HttpServletRequest;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 /**
  * AI 공급자 호스팅 선언 변경 감사(공통 결정 R3). 호스팅 선언은 민감 데이터를 어느 공급자로 보낼지 정하는 보안 결정이라, 채팅·분류·임베딩 세 저장 지점에서 값이
@@ -46,6 +50,9 @@ public class HostingChangeAuditor {
         userId == null
             ? "system"
             : userRepository.findById(userId).map(UserResponse::username).orElse("unknown");
+    // 다른 관리 감사처럼 요청 IP·User-Agent 를 남긴다. 저장 지점이 컨트롤러 요청 안이라 시그니처를 늘리지 않고 현재 요청에서 읽는다 — 요청 밖(내부
+    // 경로)이면 null.
+    HttpServletRequest request = currentRequest();
     auditLogService.log(
         userId,
         actorName,
@@ -53,10 +60,17 @@ public class HostingChangeAuditor {
         RESOURCE,
         slot.name(),
         "AI 공급자 호스팅 선언 변경(" + slot.name() + "): " + before.name() + " → " + after.name(),
-        null,
-        null,
+        ClientIpExtractor.extract(request),
+        request == null ? null : request.getHeader("User-Agent"),
         "SUCCESS",
         null,
         Map.of("slot", slot.name(), "from", before.name(), "to", after.name()));
+  }
+
+  /** 현재 스레드의 HTTP 요청. 요청 문맥이 없으면 null. */
+  private static HttpServletRequest currentRequest() {
+    return RequestContextHolder.getRequestAttributes() instanceof ServletRequestAttributes attrs
+        ? attrs.getRequest()
+        : null;
   }
 }

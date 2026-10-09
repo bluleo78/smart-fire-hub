@@ -50,9 +50,15 @@ public class EmbeddingSettingsService {
    */
   public EmbeddingConfigView save(EmbeddingConfigRequest req, Long userId) {
     ProviderHosting before = configService.hosting();
-    // 생략 = 기존 선언 유지. 모르는 값은 400.
-    ProviderHosting after = req.hosting() == null ? before : parseHosting(req.hosting());
-    hostingPolicy.requireChangeAllowed(userId, before, after);
+    // 전송 대상(provider·Base URL)이 바뀌는가 — 자체 호스팅 선언은 그 목적지에 대한 것이므로 목적지가 바뀌면 유지하지 않는다.
+    boolean targetChanged = configService.targetChanged(req);
+    // 생략 = 대상이 그대로일 때만 기존 선언 유지, 대상이 바뀌면 외부(보수적). 모르는 값은 400.
+    ProviderHosting after =
+        req.hosting() != null
+            ? parseHosting(req.hosting())
+            : targetChanged ? ProviderHosting.EXTERNAL : before;
+    // 대상이 바뀌면서 자체 호스팅으로 남는 것(명시 선언)도 "올리는" 변경이라 security:settings 가 필요하다.
+    hostingPolicy.requireChangeAllowed(userId, before, after, targetChanged);
     EmbeddingConfig draft = configService.prepare(req);
     EmbeddingDimension dimension = measure(draft);
     configService.store(draft, dimension, after, userId);

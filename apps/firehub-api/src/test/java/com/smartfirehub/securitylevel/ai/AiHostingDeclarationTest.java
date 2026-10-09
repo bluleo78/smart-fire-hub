@@ -441,4 +441,186 @@ class AiHostingDeclarationTest extends IntegrationTestBase {
         .contains("\"from\": \"EXTERNAL\"")
         .contains("\"to\": \"SELF_HOSTED\"");
   }
+
+  // ---- 전송 대상 변경: 자체 호스팅 선언을 유지한 채 목적지만 바꾸는 우회 차단 ----
+
+  private static final String SEED_URL = "https://93.184.216.34/v1";
+  private static final String OTHER_URL = "https://93.184.216.35/v1";
+
+  /** 공인 IP 리터럴 opencode 를 자체 호스팅으로 심는다(서비스 직접 — 선언 권한 판정은 컨트롤러 몫). */
+  private void seedChatSelfHosted() {
+    Map<String, Object> payload = new java.util.HashMap<>();
+    payload.put("providerId", "corp");
+    payload.put("baseURL", SEED_URL);
+    payload.put("hosting", "SELF_HOSTED");
+    credentialService.save(
+        AiCredentialSlot.CHAT,
+        new AiCredentialUpsert("opencode", payload, Map.of("apiKey", "k")),
+        null);
+  }
+
+  /** apiKey 를 생략한 opencode PUT 본문 — 프로브를 건너뛰어 외부 접속 없이 저장 경로까지 간다. */
+  private static String opencodeBody(String baseUrl, String extraPayload) {
+    return "{\"agentType\":\"opencode\",\"payload\":{\"providerId\":\"corp\",\"baseURL\":\""
+        + baseUrl
+        + "\""
+        + extraPayload
+        + "},\"secret\":{}}";
+  }
+
+  private org.springframework.test.web.servlet.ResultActions putChat(long userId, String body)
+      throws Exception {
+    return mockMvc.perform(
+        put("/api/v1/settings/ai-credential")
+            .header("Authorization", bearer(userId))
+            .header("User-Agent", "hd-test-agent")
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(body));
+  }
+
+  @Test
+  void chatTargetChange_hostingOmitted_downgradesToExternal_andIsAudited() throws Exception {
+    long aiOnly = userWith("ai:settings");
+    seedChatSelfHosted();
+    putChat(aiOnly, opencodeBody(OTHER_URL, "")).andExpect(status().isNoContent());
+    TenantContext.set(DEFAULT_TEST_TENANT_ID);
+    assertThat(resolver.chat()).as("목적지가 바뀌면 선언을 유지하지 않는다").isEqualTo(ProviderHosting.EXTERNAL);
+    List<Record> audits = hostingAudits(aiOnly);
+    assertThat(audits).as("SELF→EXTERNAL 되돌림도 감사된다").hasSize(1);
+    assertThat(audits.get(0).get("meta", String.class))
+        .contains("\"from\": \"SELF_HOSTED\"")
+        .contains("\"to\": \"EXTERNAL\"");
+    // 감사 행에 요청 IP·User-Agent 가 남는다.
+    Record row =
+        TenantRlsTestSupport.runInTenantTransaction(
+            fixtureTransactionTemplate,
+            DEFAULT_TEST_TENANT_ID,
+            () ->
+                dsl.fetchOne(
+                    "select ip_address, user_agent from audit_log where user_id = ? and action_type = ?",
+                    aiOnly,
+                    HostingChangeAuditor.ACTION));
+    assertThat(row.get("ip_address", String.class)).isNotBlank();
+    assertThat(row.get("user_agent", String.class)).isEqualTo("hd-test-agent");
+  }
+
+  @Test
+  void chatTargetChange_explicitSelfHosted_withoutSecuritySettings_is403() throws Exception {
+    long aiOnly = userWith("ai:settings");
+    seedChatSelfHosted();
+    putChat(aiOnly, opencodeBody(OTHER_URL, ",\"hosting\":\"SELF_HOSTED\""))
+        .andExpect(status().isForbidden())
+        .andExpect(jsonPath("$.code").value(HostingDeclarationPolicy.FORBIDDEN_CODE));
+    TenantContext.set(DEFAULT_TEST_TENANT_ID);
+    assertThat(tenantSettings.findValue(AiCredentialSlot.CHAT.key()).orElseThrow())
+        .as("거부 시 기존 목적지 그대로")
+        .contains(SEED_URL)
+        .doesNotContain(OTHER_URL);
+    assertThat(resolver.chat()).isEqualTo(ProviderHosting.SELF_HOSTED);
+    assertThat(hostingAudits(aiOnly)).isEmpty();
+
+    // security:settings 가 있으면 새 목적지를 자체 호스팅으로 선언할 수 있다.
+    long sec = userWith("ai:settings", "security:settings");
+    putChat(sec, opencodeBody(OTHER_URL, ",\"hosting\":\"SELF_HOSTED\""))
+        .andExpect(status().isNoContent());
+    TenantContext.set(DEFAULT_TEST_TENANT_ID);
+    assertThat(resolver.chat()).isEqualTo(ProviderHosting.SELF_HOSTED);
+  }
+
+  @Test
+  void chatSameTarget_nonTargetChange_keepsSelfHosted_withoutSecuritySettings() throws Exception {
+    long aiOnly = userWith("ai:settings");
+    seedChatSelfHosted();
+    // 같은 목적지 전체 폼 재전송(끝 슬래시 차이 포함) + 목적지와 무관한 필드 변경은 선언을 유지한다.
+    putChat(aiOnly, opencodeBody(SEED_URL + "/", ",\"reasoningEffort\":\"high\""))
+        .andExpect(status().isNoContent());
+    TenantContext.set(DEFAULT_TEST_TENANT_ID);
+    assertThat(resolver.chat()).isEqualTo(ProviderHosting.SELF_HOSTED);
+    assertThat(hostingAudits(aiOnly)).isEmpty();
+  }
+
+  @Test
+  void chatSecretOnlyChange_keepsSelfHosted() {
+    seedChatSelfHosted();
+    Map<String, Object> payload = Map.of("providerId", "corp", "baseURL", SEED_URL);
+    AiCredentialUpsert secretOnly =
+        new AiCredentialUpsert("opencode", payload, Map.of("apiKey", "rotated"));
+    AiCredentialService.HostingOutcome outcome =
+        credentialService.previewHostingOutcome(AiCredentialSlot.CHAT, secretOnly);
+    assertThat(outcome.after()).isEqualTo(ProviderHosting.SELF_HOSTED);
+    assertThat(outcome.targetChanged()).isFalse();
+    credentialService.save(AiCredentialSlot.CHAT, secretOnly, null);
+    assertThat(resolver.chat()).isEqualTo(ProviderHosting.SELF_HOSTED);
+  }
+
+  @Test
+  void classifyTargetChange_hostingOmitted_downgradesToExternal() {
+    credentialService.saveClassify(opencode("SELF_HOSTED"), "corp/m1", null);
+    Map<String, Object> payload = Map.of("providerId", "corp", "baseURL", OTHER_URL);
+    AiCredentialUpsert moved = new AiCredentialUpsert("opencode", payload, Map.of());
+    assertThat(credentialService.previewHosting(AiCredentialSlot.CLASSIFY, moved))
+        .isEqualTo(ProviderHosting.EXTERNAL);
+    credentialService.saveClassify(moved, "corp/m1", null);
+    assertThat(credentialService.hosting(AiCredentialSlot.CLASSIFY))
+        .isEqualTo(ProviderHosting.EXTERNAL);
+  }
+
+  /** 임베딩을 자체 호스팅으로 심는다(서비스 직접). */
+  private void seedEmbedding(EmbeddingProviderType provider, String baseUrl, String apiKey) {
+    embeddingConfigService.store(
+        new EmbeddingConfig(provider, "m1", baseUrl, apiKey, 0),
+        EmbeddingDimension.of(1024),
+        ProviderHosting.SELF_HOSTED,
+        null);
+  }
+
+  @Test
+  void embeddingProviderChange_hostingOmitted_downgradesToExternal_andIsAudited() {
+    long aiOnly = userWith("ai:settings");
+    doReturn(1024).when(providerFactory).probeDimension(any());
+    seedEmbedding(EmbeddingProviderType.OLLAMA, OLLAMA, "");
+    embeddingSettingsService.save(
+        new EmbeddingConfigRequest("OPENAI", "m1", SEED_URL, "sk-x", null), aiOnly);
+    assertThat(resolver.embedding()).isEqualTo(ProviderHosting.EXTERNAL);
+    List<Record> audits = hostingAudits(aiOnly);
+    assertThat(audits).hasSize(1);
+    assertThat(audits.get(0).get("meta", String.class))
+        .contains("\"from\": \"SELF_HOSTED\"")
+        .contains("\"to\": \"EXTERNAL\"");
+
+    // provider 만 바뀌어도(같은 Base URL) 되돌린다.
+    seedEmbedding(EmbeddingProviderType.OPENAI, SEED_URL, "sk-x");
+    embeddingSettingsService.save(
+        new EmbeddingConfigRequest("OLLAMA", "m1", SEED_URL, null, null), aiOnly);
+    assertThat(resolver.embedding()).isEqualTo(ProviderHosting.EXTERNAL);
+  }
+
+  @Test
+  void embeddingProviderChange_explicitSelfHosted_withoutSecuritySettings_is403() {
+    long aiOnly = userWith("ai:settings");
+    doReturn(1024).when(providerFactory).probeDimension(any());
+    seedEmbedding(EmbeddingProviderType.OLLAMA, OLLAMA, "");
+    assertThatThrownBy(
+            () ->
+                embeddingSettingsService.save(
+                    new EmbeddingConfigRequest("OPENAI", "m1", SEED_URL, "sk-x", "SELF_HOSTED"),
+                    aiOnly))
+        .isInstanceOf(CodedApiException.class)
+        .extracting(e -> ((CodedApiException) e).code())
+        .isEqualTo(HostingDeclarationPolicy.FORBIDDEN_CODE);
+    assertThat(embeddingConfigService.view().provider()).isEqualTo("OLLAMA");
+    assertThat(resolver.embedding()).isEqualTo(ProviderHosting.SELF_HOSTED);
+    assertThat(hostingAudits(aiOnly)).isEmpty();
+  }
+
+  @Test
+  void embeddingSecretOnlyChange_keepsSelfHosted_withoutSecuritySettings() {
+    long aiOnly = userWith("ai:settings");
+    doReturn(1024).when(providerFactory).probeDimension(any());
+    seedEmbedding(EmbeddingProviderType.OPENAI, SEED_URL, "sk-old");
+    embeddingSettingsService.save(
+        new EmbeddingConfigRequest("OPENAI", "m1", SEED_URL + "/", "sk-new", null), aiOnly);
+    assertThat(resolver.embedding()).isEqualTo(ProviderHosting.SELF_HOSTED);
+    assertThat(hostingAudits(aiOnly)).isEmpty();
+  }
 }

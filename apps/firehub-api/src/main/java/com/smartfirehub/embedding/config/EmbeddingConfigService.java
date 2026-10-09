@@ -87,6 +87,34 @@ public class EmbeddingConfigService {
         .orElse(ProviderHosting.EXTERNAL);
   }
 
+  /**
+   * 요청의 전송 대상(provider, 정규화한 Base URL)이 저장된 값과 다른가. 복호화하지 않는다 — 손상된 암호문이 판정을 막지 않게 한다. 미설정·손상·모르는
+   * provider 는 "바뀜"(보수적: 기존 자체 호스팅 선언을 이어받지 않는다). 모델은 목적지를 바꾸지 않으므로 보지 않는다.
+   */
+  public boolean targetChanged(EmbeddingConfigRequest req) {
+    EmbeddingProviderType provider;
+    try {
+      provider = EmbeddingProviderType.parse(req.provider());
+    } catch (RuntimeException e) {
+      return true;
+    }
+    String baseUrl = UrlUtils.normalizeBaseUrl(req.baseUrl() == null ? "" : req.baseUrl().trim());
+    return readRaw()
+        .flatMap(
+            raw -> {
+              try {
+                return Optional.of(EmbeddingConfigDocument.parse(raw));
+              } catch (RuntimeException e) {
+                return Optional.empty();
+              }
+            })
+        .map(
+            p ->
+                p.provider() != provider
+                    || !UrlUtils.normalizeBaseUrl(p.baseUrl().trim()).equals(baseUrl))
+        .orElse(true);
+  }
+
   /** 화면용 읽기. 키는 마스킹만 내보낸다(평문·암호문 금지). */
   public EmbeddingConfigView view() {
     return resolveLenient()

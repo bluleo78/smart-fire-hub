@@ -80,8 +80,11 @@ public class AiCredentialController {
     AiCredentialUpsert upsert = toUpsert(request);
     ProviderHosting before = aiCredentialService.hosting(AiCredentialSlot.CHAT);
     // 자체 호스팅으로 올리는 선언은 security:settings 가 필요하다(스펙 §2.6) — 저장 전에 판정해 거부 시 아무것도 쓰지 않는다.
+    // 전송 대상(providerId/baseURL)이 바뀌면서 자체 호스팅으로 남는 것도 "올리는" 변경이다(선언 유지 우회 차단).
+    AiCredentialService.HostingOutcome outcome =
+        aiCredentialService.previewHostingOutcome(AiCredentialSlot.CHAT, upsert);
     hostingDeclarationPolicy.requireChangeAllowed(
-        userId, before, aiCredentialService.previewHosting(AiCredentialSlot.CHAT, upsert));
+        userId, before, outcome.after(), outcome.targetChanged());
     aiCredentialService.save(upsert, userId);
     // 저장이 성공한 뒤 저장된 값끼리 비교해 바뀌었을 때만 감사(R3) — 유형 변경으로 외부로 돌아가는 것도 변경이다.
     hostingChangeAuditor.recordIfChanged(

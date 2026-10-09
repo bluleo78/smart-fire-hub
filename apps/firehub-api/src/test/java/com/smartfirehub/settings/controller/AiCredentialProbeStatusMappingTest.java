@@ -96,6 +96,12 @@ class AiCredentialProbeStatusMappingTest {
     when(okCheck.ok()).thenReturn(true);
     when(opencodeProbeService.validateTargetOnly(org.mockito.ArgumentMatchers.anyString()))
         .thenReturn(okCheck);
+    // 컨트롤러가 저장 전 호스팅 결과(선언·전송 대상 변경)를 묻는다 — 목 기본값 null 이면 NPE 라, 매핑과 무관한 외부·불변 결과를 깐다.
+    when(aiCredentialService.previewHostingOutcome(
+            org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+        .thenReturn(
+            new AiCredentialService.HostingOutcome(
+                com.smartfirehub.securitylevel.access.ProviderHosting.EXTERNAL, false));
   }
 
   private void mockAuth(String... permissions) {
