@@ -13,7 +13,9 @@ import { SearchInput } from '@/components/ui/search-input';
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
@@ -46,7 +48,7 @@ import type { AuditLogResponse } from '@/types/auditLog';
  *   신규 actionType 추가 시 apps/firehub-api에서 `grep -rn "ONTOLOGY_" --include=*.java`로
  *   실제 audit() 호출부 전수를 대조해 이 배열을 갱신해야 한다.
  */
-const ACTION_TYPES = [
+const GENERAL_ACTION_TYPES = [
   { value: 'CREATE', label: '생성' },
   { value: 'UPDATE', label: '수정' },
   { value: 'DELETE', label: '삭제' },
@@ -70,15 +72,24 @@ const ACTION_TYPES = [
   { value: 'ONTOLOGY_PROPERTY_UPDATE', label: '속성 수정' },
   { value: 'ONTOLOGY_PROPERTY_DELETE', label: '속성 삭제' },
   { value: 'ONTOLOGY_DOMAIN_UPDATE', label: '도메인 수정' },
-  // 데이터셋 보안 등급(WD-17·WD-44) — apps/firehub-api securitylevel 패키지의 감사 호출부 전수.
-  // DATASET_ACCESS_DENIED·DATASET_ACCESS 는 SecurityAuditRecorder 상수(거부 1건 / 감사 등급 데이터셋 접근 1건).
-  // 내보내기 거부는 별도 액션이 아니라 DATASET_ACCESS_DENIED(metadata.action=EXPORT)로 남는다.
+];
+
+/**
+ * 데이터셋 보안 액션(WD-17·WD-44) — apps/firehub-api securitylevel 패키지의 감사 호출부 전수.
+ * - DATASET_ACCESS_DENIED·DATASET_ACCESS 는 SecurityAuditRecorder 상수(거부 1건 / 감사 등급 데이터셋 접근 1건).
+ * - 내보내기 거부는 별도 액션이 아니라 DATASET_ACCESS_DENIED(metadata.action=EXPORT)로 남는다.
+ */
+const DATASET_SECURITY_ACTION_TYPES = [
   { value: 'DATASET_ACCESS_DENIED', label: '데이터셋 접근 거부' },
   { value: 'DATASET_ACCESS', label: '감사 등급 데이터 접근' },
   { value: 'DATASET_SECURITY_LEVEL_CHANGE', label: '보안 등급 변경' },
   { value: 'DATASET_SECURITY_LEVEL_AUTO_RAISE', label: '보안 등급 자동 상향' },
   { value: 'DATASET_ACCESS_GRANT_ADD', label: '허용 목록 추가' },
   { value: 'DATASET_ACCESS_GRANT_REMOVE', label: '허용 목록 제거' },
+];
+
+/** 보안 등급 정책 액션 — 등급 정의(SecurityLevelService)와 역할 열람 등급(RoleClearanceService) 변경. */
+const LEVEL_POLICY_ACTION_TYPES = [
   { value: 'SECURITY_LEVEL_CREATE', label: '보안 등급 생성' },
   { value: 'SECURITY_LEVEL_UPDATE', label: '보안 등급 수정' },
   { value: 'SECURITY_LEVEL_DELETE', label: '보안 등급 삭제' },
@@ -86,6 +97,72 @@ const ACTION_TYPES = [
   { value: 'SECURITY_LEVEL_DEFAULT_CHANGE', label: '기본 보안 등급 변경' },
   { value: 'ROLE_CLEARANCE_CHANGE', label: '역할 열람 등급 변경' },
 ];
+
+/**
+ * 액션 필터 드롭다운 그룹 — 항목이 30개를 넘어 성격별로 나눠 찾기 쉽게 한다.
+ * 라벨 매핑(ACTION_LABEL_MAP)은 그룹과 무관하게 평면 목록(ACTION_TYPES)에서 만든다.
+ */
+const ACTION_GROUPS = [
+  { label: '일반', items: GENERAL_ACTION_TYPES },
+  { label: '데이터셋 보안', items: DATASET_SECURITY_ACTION_TYPES },
+  { label: '보안 등급 정책', items: LEVEL_POLICY_ACTION_TYPES },
+];
+
+/** 전체 액션 유형(평면) — 라벨 매핑용 */
+const ACTION_TYPES = ACTION_GROUPS.flatMap((g) => g.items);
+
+/**
+ * 접근 거부·감사 등급 접근 metadata 값 → 한글 라벨(WD-44).
+ * - action: AccessDenialAction enum, kind: SecurityAuditRecorder.AccessKind enum,
+ *   reason: DatasetAccessPolicy/DatasetAccessGuard 의 거부 코드 전수.
+ * - 모르는 코드(향후 추가)는 원문 그대로 보인다.
+ */
+const ACCESS_ACTION_LABELS: Record<string, string> = {
+  VIEW: '조회',
+  SQL: 'SQL',
+  PIPELINE: '파이프라인',
+  DATASET_REFS: '데이터셋 참조',
+  EXPORT: '내보내기',
+  AI: 'AI',
+};
+const ACCESS_KIND_LABELS: Record<string, string> = {
+  ROW_VIEW: '행 조회',
+  SQL: 'SQL',
+  PIPELINE: '파이프라인',
+  AI: 'AI',
+};
+const ACCESS_REASON_LABELS: Record<string, string> = {
+  CLEARANCE_INSUFFICIENT: '열람 등급 부족',
+  NOT_ON_ALLOWLIST: '허용 목록에 없음',
+  EXPORT_DENIED: '내보내기 금지 등급',
+  EXPORT_PERMISSION_REQUIRED: '제한 데이터 내보내기 권한 필요',
+  AI_DENIED: 'AI 사용 금지 등급',
+  AI_EXTERNAL_DENIED: '외부 AI 사용 금지 등급',
+  SHARE_DENIED: '외부 공유 금지 등급',
+  LEVEL_UNKNOWN: '등급 확인 불가',
+};
+
+/** metadata 값을 라벨 맵으로 바꾼다 — 없으면 원문 폴백. */
+function labelOf(map: Record<string, string>, value: unknown): string {
+  const raw = String(value);
+  return map[raw] ?? raw;
+}
+
+/**
+ * 접근 요약 항목 — DATASET_ACCESS_DENIED·DATASET_ACCESS 행만 대상.
+ * 관리자가 Metadata JSON 을 읽지 않아도 동작·종류·사유·테이블을 한 줄로 보게 한다. 항목이 없으면 빈 배열.
+ */
+function accessSummaryParts(log: AuditLogResponse): string[] {
+  if (log.actionType !== 'DATASET_ACCESS_DENIED' && log.actionType !== 'DATASET_ACCESS') return [];
+  const m = log.metadata;
+  if (!m) return [];
+  return [
+    m.action ? `동작: ${labelOf(ACCESS_ACTION_LABELS, m.action)}` : null,
+    m.kind ? `종류: ${labelOf(ACCESS_KIND_LABELS, m.kind)}` : null,
+    m.reason ? `사유: ${labelOf(ACCESS_REASON_LABELS, m.reason)}` : null,
+    m.tableName ? `테이블: ${String(m.tableName)}` : null,
+  ].filter((v): v is string => v !== null);
+}
 
 /**
  * 리소스 유형 옵션 목록
@@ -182,6 +259,7 @@ function AuditLogDetailDialog({
   onClose: () => void;
 }) {
   if (!log) return null;
+  const summaryParts = accessSummaryParts(log);
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
@@ -232,6 +310,14 @@ function AuditLogDetailDialog({
             </p>
           </div>
 
+          {/* 접근 요약(WD-44) — 접근 거부·감사 등급 접근 행에서 metadata 를 한국어 한 줄로. 항목이 없으면 숨김 */}
+          {summaryParts.length > 0 && (
+            <div>
+              <p className="text-muted-foreground mb-1 text-xs">접근 요약</p>
+              <p data-testid="audit-access-summary">{summaryParts.join(' · ')}</p>
+            </div>
+          )}
+
           {/* 에러 메시지 (실패인 경우) */}
           {log.errorMessage && (
             <div>
@@ -264,24 +350,6 @@ function AuditLogDetailDialog({
             - max-h-64 + overflow-auto 로 긴 payload 도 다이얼로그를 깨뜨리지 않게 함
             - metadata 가 null 이거나 빈 객체이면 섹션 자체를 숨김
           */}
-          {/*
-            접근 거부·감사 등급 접근 요약 줄(WD-44)
-            - 관리자가 Metadata JSON 을 읽지 않아도 동작·사유·테이블을 한 줄로 보게 한다.
-            - 키는 SecurityAuditRecorder 가 남기는 action/reason/tableName(거부), kind(접근)뿐이다.
-          */}
-          {(log.actionType === 'DATASET_ACCESS_DENIED' || log.actionType === 'DATASET_ACCESS') && log.metadata && (
-            <p className="text-sm" data-testid="audit-access-summary">
-              {[
-                log.metadata.action ? `동작: ${String(log.metadata.action)}` : null,
-                log.metadata.kind ? `종류: ${String(log.metadata.kind)}` : null,
-                log.metadata.reason ? `사유: ${String(log.metadata.reason)}` : null,
-                log.metadata.tableName ? `테이블: ${String(log.metadata.tableName)}` : null,
-              ]
-                .filter(Boolean)
-                .join(' · ')}
-            </p>
-          )}
-
           {log.metadata && Object.keys(log.metadata).length > 0 && (
             <div>
               <p className="text-muted-foreground mb-1 text-xs">Metadata</p>
@@ -418,13 +486,19 @@ export default function AuditLogListPage() {
         </Select>
 
         <Select value={actionType || 'all'} onValueChange={handleFilterChange(setActionType)}>
-          <SelectTrigger className="w-[140px]" aria-label="액션 유형 필터">
-            <SelectValue placeholder="액션 유형" />
+          {/* 폭 180px — '감사 등급 데이터 접근' 같은 긴 라벨이 잘리지 않게. 그래도 잘리면 title 로 전체 라벨을 보인다 */}
+          <SelectTrigger className="w-[180px]" aria-label="액션 유형 필터">
+            <SelectValue placeholder="액션 유형" title={actionType ? formatAuditAction(actionType) : '전체 액션'} />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">전체 액션</SelectItem>
-            {ACTION_TYPES.map((t) => (
-              <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+            {ACTION_GROUPS.map((g) => (
+              <SelectGroup key={g.label}>
+                <SelectLabel>{g.label}</SelectLabel>
+                {g.items.map((t) => (
+                  <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+                ))}
+              </SelectGroup>
             ))}
           </SelectContent>
         </Select>
