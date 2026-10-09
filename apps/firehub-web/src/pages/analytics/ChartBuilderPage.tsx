@@ -1,4 +1,4 @@
-import { ArrowLeft, BarChart2, Download, FileImage, FileType,LayoutDashboard,Loader2, Play,Save } from 'lucide-react';
+import { ArrowLeft, BarChart2, Download, FileImage, FileType,LayoutDashboard,Loader2, Lock, Play,Save } from 'lucide-react';
 import { useCallback,useEffect, useId, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -261,7 +261,7 @@ function SaveDialog({
           <DialogTitle>{isEdit ? '차트 수정' : '차트 저장'}</DialogTitle>
           {configWithheld ? (
             // 잠금 상태에서는 설정이 저장되지 않는다는 점을 눈에 보이게 알린다(WD-31②)
-            <DialogDescription>이름·설명·공유만 바꿀 수 있습니다.</DialogDescription>
+            <DialogDescription>차트 설정은 잠겨 있어 이름·설명·공유만 바꿀 수 있습니다.</DialogDescription>
           ) : (
             <DialogDescription className="sr-only">
               {isEdit ? '차트 설정을 수정하여 저장합니다.' : '차트 이름과 설정을 입력하여 저장합니다.'}
@@ -937,6 +937,10 @@ export default function ChartBuilderPage() {
                 )}
                 쿼리 실행
               </Button>
+              {configWithheld && (
+                // 비활성 이유를 컨트롤 바로 아래에 알린다(디자이너 리뷰)
+                <p className="text-xs text-muted-foreground">설정이 잠긴 차트는 쿼리를 바꾸거나 실행할 수 없습니다.</p>
+              )}
               {queryColumns.length > 0 && (
                 <p className="text-xs text-muted-foreground">
                   {queryColumns.length}개 컬럼, {queryRows.length}개 행 로드됨
@@ -949,7 +953,7 @@ export default function ChartBuilderPage() {
               타입만 바꿔 저장해도 보이지 않는 기존 config 와 어긋나므로 타입 선택기도 함께 잠근다. */}
           {configWithheld ? (
             <Card className="py-3 gap-2">
-              <CardContent className="px-4 py-6">
+              <CardContent className="px-4 py-2">
                 <ChartConfigWithheldNotice />
               </CardContent>
             </Card>
@@ -1004,8 +1008,15 @@ export default function ChartBuilderPage() {
           <Separator />
           <CardContent className="px-0 pt-0">
             {configWithheld ? (
-              // 설정이 가려진 차트는 미리보기를 그리지 않고 같은 높이에 잠금 안내를 둔다(WD-31②)
-              <ChartConfigWithheldNotice className="h-[400px] px-4" />
+              // 설정이 가려진 차트는 미리보기를 그리지 않는다(WD-31②). 정식 안내는 좌측 카드 한 곳에만 두고 여기는
+              // 보조 상태만 보인다 — 같은 문장이 두 번 보이거나 읽히지 않게(디자이너 리뷰). 모바일은 높이를 줄인다.
+              <div
+                data-testid="chart-preview-withheld"
+                className="flex h-[200px] flex-col items-center justify-center gap-1 px-4 text-center text-muted-foreground lg:h-[400px]"
+              >
+                <Lock className="h-5 w-5" aria-hidden="true" />
+                <p className="text-xs">미리보기를 표시할 수 없습니다.</p>
+              </div>
             ) : queryColumns.length === 0 ? (
               <div
                 className="flex flex-col items-center justify-center text-muted-foreground gap-2 px-4"

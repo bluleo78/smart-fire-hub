@@ -31,9 +31,17 @@ test.describe('차트 빌더 — 설정 가림 잠금 (WD-31②)', () => {
 
     await page.goto('/analytics/charts/5');
 
-    // 좌측 패널과 미리보기 두 곳에 같은 안내가 보인다
-    await expect(page.getByTestId('chart-config-withheld')).toHaveCount(2);
-    await expect(page.getByText(NOTICE).first()).toBeVisible();
+    // 정식 안내는 좌측 패널 한 곳에만 있다 — 같은 문장이 두 번 보이거나 읽히지 않는다(디자이너 리뷰)
+    await expect(page.getByTestId('chart-config-withheld')).toHaveCount(1);
+    await expect(page.getByText(NOTICE)).toHaveCount(1);
+    // 정적 안내라 라이브 영역(role=status)으로 읽히지 않는다
+    await expect(page.getByRole('status').filter({ hasText: NOTICE })).toHaveCount(0);
+    await expect(page.getByText(NOTICE)).toBeVisible();
+    await expect(page.getByTestId('chart-config-withheld')).toContainText('설정 잠김');
+    // 미리보기 자리는 같은 문장 대신 보조 상태만 보인다
+    await expect(page.getByTestId('chart-preview-withheld')).toHaveText('미리보기를 표시할 수 없습니다.');
+    // 비활성 이유를 컨트롤 아래에 알린다
+    await expect(page.getByText('설정이 잠긴 차트는 쿼리를 바꾸거나 실행할 수 없습니다.')).toBeVisible();
     // 차트 타입·축 설정 카드는 렌더링하지 않는다
     await expect(page.getByText('차트 타입', { exact: true })).toHaveCount(0);
     await expect(page.getByText('축 설정', { exact: true })).toHaveCount(0);
@@ -56,11 +64,11 @@ test.describe('차트 빌더 — 설정 가림 잠금 (WD-31②)', () => {
     );
 
     await page.goto('/analytics/charts/5');
-    await expect(page.getByText(NOTICE).first()).toBeVisible();
+    await expect(page.getByText(NOTICE)).toBeVisible();
     await page.getByRole('button', { name: '저장' }).click();
     const dialog = page.getByRole('dialog');
     // 잠금 상태에서는 설정이 저장되지 않는다는 설명을 보인다
-    await expect(dialog.getByText('이름·설명·공유만 바꿀 수 있습니다.')).toBeVisible();
+    await expect(dialog.getByText('차트 설정은 잠겨 있어 이름·설명·공유만 바꿀 수 있습니다.')).toBeVisible();
     await dialog.getByLabel('이름').fill('바뀐 이름');
     await dialog.getByRole('button', { name: '수정' }).click();
 
@@ -85,6 +93,7 @@ test.describe('차트 빌더 — 설정 가림 잠금 (WD-31②)', () => {
 
     await page.goto('/analytics/charts/6');
     await expect(page.getByTestId('chart-config-withheld')).toHaveCount(0);
+    await expect(page.getByTestId('chart-preview-withheld')).toHaveCount(0);
     await page.getByRole('button', { name: '저장' }).click();
     await page.getByRole('dialog').getByRole('button', { name: '수정' }).click();
 

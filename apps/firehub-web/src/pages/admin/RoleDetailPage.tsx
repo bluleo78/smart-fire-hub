@@ -297,8 +297,8 @@ export default function RoleDetailPage() {
                       // 더 이상 위험 경고가 아니라 범위 안내라 warning 대신 muted 로 둔다(WD-29).
                       // 한 줄을 다 쓰고(basis-full) 체크박스 폭+간격(pl-7)만큼 들여 권한 이름과 왼쪽을 맞춘다.
                       <span className="basis-full pl-7 text-xs text-muted-foreground">
-                        Python 스크립트는 실행 주체(직접 실행은 실행한 사용자, 트리거 실행은 트리거를 만든 사용자)의 열람
-                        등급 안의 데이터만 읽을 수 있습니다. 허용 목록이 필요한 등급의 데이터는 읽을 수 없습니다.
+                        Python 스크립트는 실행 주체의 열람 등급 안의 데이터만 읽습니다(트리거 실행은 트리거를 만든 사용자
+                        기준). 허용 목록이 필요한 등급은 읽을 수 없습니다.
                       </span>
                     )}
                   </div>

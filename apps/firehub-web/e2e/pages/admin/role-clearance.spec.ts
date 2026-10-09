@@ -253,8 +253,8 @@ test.describe('역할 편집 — 데이터 열람 등급', () => {
     await expect(page.getByRole('heading', { name: '보안', level: 3 })).toBeVisible();
     // WD-29 이후 Python 스텝은 실행 주체 등급 범위 안에서만 읽는다 — 우회 경고 대신 범위 안내를 보인다
     const notice = page.getByText(
-      'Python 스크립트는 실행 주체(직접 실행은 실행한 사용자, 트리거 실행은 트리거를 만든 사용자)의 열람 등급 안의 ' +
-        '데이터만 읽을 수 있습니다. 허용 목록이 필요한 등급의 데이터는 읽을 수 없습니다.',
+      'Python 스크립트는 실행 주체의 열람 등급 안의 데이터만 읽습니다(트리거 실행은 트리거를 만든 사용자 기준). ' +
+        '허용 목록이 필요한 등급은 읽을 수 없습니다.',
     );
     await expect(notice).toBeVisible();
     await expect(page.getByText('통제를 우회할 수 있습니다', { exact: false })).toHaveCount(0);
