@@ -15,6 +15,7 @@ import com.smartfirehub.securitylevel.dto.AccessGrantResponse;
 import com.smartfirehub.securitylevel.dto.AddAccessGrantRequest;
 import com.smartfirehub.securitylevel.dto.ChangeDatasetLevelRequest;
 import com.smartfirehub.securitylevel.dto.GrantCandidatesResponse;
+import com.smartfirehub.securitylevel.event.DatasetSecurityLevelChangedEvent;
 import com.smartfirehub.securitylevel.repository.ActiveMembership;
 import com.smartfirehub.securitylevel.repository.DatasetAccessGrantRepository;
 import com.smartfirehub.securitylevel.repository.SecurityLevelRepository;
@@ -24,6 +25,7 @@ import java.util.List;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -39,6 +41,9 @@ public class DatasetSecurityService {
   private final SecurityLevelRepository levelRepository;
   private final DatasetAccessGuard guard;
 
+  /** 등급 변경 도메인 이벤트 발행기 — 후속 처리(PYTHON 슬롯 GRANT 동기화·외부 벡터 정리)를 이 서비스와 떼어 놓는다(공통 결정 R2: 발행은 B 소유). */
+  private final ApplicationEventPublisher events;
+
   /**
    * clone 은 원본 등급을 상속하고 허용 목록을 복사한다(스펙 §4.2 2행, §4.5). 복사하지 않으면 허용 목록 필요 등급의 사본은 아무도 못 보는 고아가 된다.
    * 복제자는 원본을 볼 수 있었으므로 이미 목록에 있거나 역할로 충족한다.
@@ -46,6 +51,8 @@ public class DatasetSecurityService {
   @Transactional
   public void inheritFromSource(long sourceDatasetId, long newDatasetId, long actorUserId) {
     Long sourceLevel = levelRepository.findDatasetLevelId(sourceDatasetId);
+    // 이벤트의 변경 전 등급 — 새 데이터셋은 생성 시 테넌트 기본 등급을 받았으므로 그 값을 읽어 둔다.
+    Long before = levelRepository.findDatasetLevelId(newDatasetId);
     dsl.update(DATASET)
         .set(DATASET.SECURITY_LEVEL_ID, sourceLevel)
         .where(DATASET.ID.eq(newDatasetId))
@@ -59,6 +66,8 @@ public class DatasetSecurityService {
         "복제 원본 등급 상속",
         Map.of(
             "sourceDatasetId", sourceDatasetId, "toLevelId", sourceLevel, "copiedGrants", copied));
+    publishLevelChanged(
+        newDatasetId, before, sourceLevel, DatasetSecurityLevelChangedEvent.Cause.CLONE_INHERIT);
   }
 
   /**
@@ -123,6 +132,13 @@ public class DatasetSecurityService {
         String.valueOf(datasetId),
         auditDescription,
         Map.of("fromLevelId", fromId, "toLevelId", level.id()));
+    publishLevelChanged(
+        datasetId,
+        fromId,
+        level.id(),
+        autoRaise
+            ? DatasetSecurityLevelChangedEvent.Cause.AUTO_RAISE
+            : DatasetSecurityLevelChangedEvent.Cause.PIPELINE_TEMP_ASSIGN);
   }
 
   /**
@@ -166,8 +182,10 @@ public class DatasetSecurityService {
     String reason =
         SecurityLevelService.requireDowngradeReason(
             to.rank() < from.rank(), req.reason(), "등급을 낮추려면 사유(10자 이상)가 필요합니다.");
+    // 수동 변경은 자동 상향 표시를 지운다 — 남기면 하향 뒤에도 "자동 상향되었습니다" 배너가 남는다(계획 결정 15).
     dsl.update(DATASET)
         .set(DATASET.SECURITY_LEVEL_ID, to.id())
+        .set(DATASET.SECURITY_LEVEL_AUTO_RAISED_AT, (LocalDateTime) null)
         .where(DATASET.ID.eq(datasetId))
         .execute();
     // 허용 목록 필요 등급이면 (목록이 비었거나 본인이 못 보게 되는 경우) 본인을 시드한다(스펙 §2.4).
@@ -194,6 +212,20 @@ public class DatasetSecurityService {
         String.valueOf(datasetId),
         from.name() + " → " + to.name(),
         meta);
+    // 같은 등급으로의 변경도 UPDATE·감사를 그대로 하므로 이벤트도 낸다 — 구독자의 재동기화는 멱등이다.
+    publishLevelChanged(
+        datasetId, from.id(), to.id(), DatasetSecurityLevelChangedEvent.Cause.MANUAL);
+  }
+
+  /**
+   * 데이터셋 등급 변경 이벤트를 낸다. 반드시 {@code @Transactional} 메서드 안에서 불러야 한다 — 구독자는 AFTER_COMMIT 리스너라 커밋된 변경만
+   * 받고, 롤백되면 아무것도 받지 않는다. 리스너가 다른 스레드에서 돌 수 있어 tenantId 를 지금 컨텍스트에서 실어 보낸다.
+   */
+  private void publishLevelChanged(
+      long datasetId, Long fromId, long toId, DatasetSecurityLevelChangedEvent.Cause cause) {
+    events.publishEvent(
+        new DatasetSecurityLevelChangedEvent(
+            TenantContext.require("등급 변경 이벤트"), datasetId, fromId, toId, cause));
   }
 
   /** 허용 목록 조회(카드 표시용). */
