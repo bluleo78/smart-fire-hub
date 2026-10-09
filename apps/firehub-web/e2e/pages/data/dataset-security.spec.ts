@@ -104,6 +104,49 @@ test.describe('데이터셋 상세 — 보안', () => {
     await expect(dialog.getByRole('button', { name: '변경' })).toBeDisabled();
   });
 
+  // 서버(Task 3)는 수동 등급 변경 시 securityLevelAutoRaisedAt 을 지운다 — 웹은 재조회 값을 따라 배너를 거둬야 한다.
+  test('수동 등급 변경 후 재조회에서 자동 상향 배너가 사라진다', async ({ authenticatedPage: page }) => {
+    await setupAdminAuth(page);
+    await setup(page, '민감', { autoRaised: true, myRank: 4 });
+    let changed = false;
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets/1/security-level',
+      (route) => {
+        if (route.request().method() !== 'PUT') return route.fallback();
+        changed = true;
+        return route.fulfill({ status: 204 });
+      },
+    );
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets/1',
+      (route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(
+            createDatasetDetail({
+              id: 1,
+              name: '인사_평가_2026',
+              securityLevel: createLevelSummary(changed ? '기밀' : '민감'),
+              securityLevelAutoRaisedAt: changed ? null : '2026-10-07T09:00:00',
+            }),
+          ),
+        });
+      },
+    );
+    await page.goto('/data/datasets/1?tab=security');
+    await expect(page.getByText(/자동 상향되었습니다/)).toBeVisible();
+    await page.getByRole('button', { name: '보안 등급 변경' }).click();
+    const dialog = page.getByRole('dialog', { name: '보안 등급 변경' });
+    await dialog.getByRole('radio', { name: /기밀/ }).check();
+    await dialog.getByRole('button', { name: '변경' }).click();
+    await expect(dialog).toBeHidden();
+    expect(changed).toBe(true);
+    await expect(page.getByTestId('security-level-badge').first()).toHaveText('기밀');
+    await expect(page.getByText(/자동 상향되었습니다/)).toHaveCount(0);
+  });
+
   test('보안 탭 — 정책 칩, 자동 상향 배너, 허용 목록 카드', async ({ authenticatedPage: page }) => {
     await setupAdminAuth(page);
     await setup(page, '기밀', { autoRaised: true });

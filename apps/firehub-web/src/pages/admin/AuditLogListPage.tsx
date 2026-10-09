@@ -70,6 +70,21 @@ const ACTION_TYPES = [
   { value: 'ONTOLOGY_PROPERTY_UPDATE', label: '속성 수정' },
   { value: 'ONTOLOGY_PROPERTY_DELETE', label: '속성 삭제' },
   { value: 'ONTOLOGY_DOMAIN_UPDATE', label: '도메인 수정' },
+  // 데이터셋 보안 등급(WD-17·WD-44) — apps/firehub-api securitylevel 패키지의 감사 호출부 전수.
+  // DATASET_ACCESS_DENIED·DATASET_ACCESS 는 SecurityAuditRecorder 상수(거부 1건 / 감사 등급 데이터셋 접근 1건).
+  // 내보내기 거부는 별도 액션이 아니라 DATASET_ACCESS_DENIED(metadata.action=EXPORT)로 남는다.
+  { value: 'DATASET_ACCESS_DENIED', label: '데이터셋 접근 거부' },
+  { value: 'DATASET_ACCESS', label: '감사 등급 데이터 접근' },
+  { value: 'DATASET_SECURITY_LEVEL_CHANGE', label: '보안 등급 변경' },
+  { value: 'DATASET_SECURITY_LEVEL_AUTO_RAISE', label: '보안 등급 자동 상향' },
+  { value: 'DATASET_ACCESS_GRANT_ADD', label: '허용 목록 추가' },
+  { value: 'DATASET_ACCESS_GRANT_REMOVE', label: '허용 목록 제거' },
+  { value: 'SECURITY_LEVEL_CREATE', label: '보안 등급 생성' },
+  { value: 'SECURITY_LEVEL_UPDATE', label: '보안 등급 수정' },
+  { value: 'SECURITY_LEVEL_DELETE', label: '보안 등급 삭제' },
+  { value: 'SECURITY_LEVEL_REORDER', label: '보안 등급 순서 변경' },
+  { value: 'SECURITY_LEVEL_DEFAULT_CHANGE', label: '기본 보안 등급 변경' },
+  { value: 'ROLE_CLEARANCE_CHANGE', label: '역할 열람 등급 변경' },
 ];
 
 /**
@@ -77,6 +92,8 @@ const ACTION_TYPES = [
  * - 백엔드 호출부(AuthService/PipelineExecutionService/DatasetService/DataImportService/DataExportService/ApiConnectionNotifier)에서
  *   실제 사용 중인 resource 값 전수: auth/system/api_connection/pipeline/dataset (data_import는 dataimport 도메인에서 dataset으로 기록).
  * - #109 회귀: auth/system/api_connection 매핑 누락으로 영문 raw 값 노출되던 문제 해소.
+ * - security_level(SecurityLevelService — 등급 정의 생성·수정·삭제·순서·기본 등급),
+ *   query_result(QueryResultExportService — 쿼리 결과 서버 내보내기, resourceId=실행 기록 ID)도 사용 중이다.
  */
 const RESOURCES = [
   { value: 'auth', label: '인증' },
@@ -88,6 +105,8 @@ const RESOURCES = [
   { value: 'api_connection', label: 'API 연결' },
   { value: 'system', label: '시스템' },
   { value: 'ontology', label: '지식 모델' },
+  { value: 'security_level', label: '보안 등급' },
+  { value: 'query_result', label: '쿼리 결과' },
 ];
 
 /** 결과 필터 옵션 목록 */
@@ -245,6 +264,24 @@ function AuditLogDetailDialog({
             - max-h-64 + overflow-auto 로 긴 payload 도 다이얼로그를 깨뜨리지 않게 함
             - metadata 가 null 이거나 빈 객체이면 섹션 자체를 숨김
           */}
+          {/*
+            접근 거부·감사 등급 접근 요약 줄(WD-44)
+            - 관리자가 Metadata JSON 을 읽지 않아도 동작·사유·테이블을 한 줄로 보게 한다.
+            - 키는 SecurityAuditRecorder 가 남기는 action/reason/tableName(거부), kind(접근)뿐이다.
+          */}
+          {(log.actionType === 'DATASET_ACCESS_DENIED' || log.actionType === 'DATASET_ACCESS') && log.metadata && (
+            <p className="text-sm" data-testid="audit-access-summary">
+              {[
+                log.metadata.action ? `동작: ${String(log.metadata.action)}` : null,
+                log.metadata.kind ? `종류: ${String(log.metadata.kind)}` : null,
+                log.metadata.reason ? `사유: ${String(log.metadata.reason)}` : null,
+                log.metadata.tableName ? `테이블: ${String(log.metadata.tableName)}` : null,
+              ]
+                .filter(Boolean)
+                .join(' · ')}
+            </p>
+          )}
+
           {log.metadata && Object.keys(log.metadata).length > 0 && (
             <div>
               <p className="text-muted-foreground mb-1 text-xs">Metadata</p>
