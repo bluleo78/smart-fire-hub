@@ -24,7 +24,10 @@ import com.smartfirehub.pipeline.service.executor.ApiCallExecutor;
 import com.smartfirehub.pipeline.service.executor.ExecutorClient;
 import com.smartfirehub.pipeline.service.validator.PythonScriptValidator;
 import com.smartfirehub.pipeline.service.validator.SqlValidator;
+import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.securitylevel.access.SqlAccessResult;
+import com.smartfirehub.securitylevel.ai.AiCall;
+import com.smartfirehub.securitylevel.ai.AiHostingResolver;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -85,6 +88,12 @@ public class PipelineAsyncRunner {
   private final IncrementalCursorService incrementalCursorService;
   private final OutputTableSessionLock outputTableSessionLock;
   private final PipelineSecurityGate pipelineSecurityGate;
+
+  /** AI_CLASSIFY 입력의 AI 정책 판정(S3 §4.3) — PipelineSecurityGate(흐름 B 소유)를 고치지 않고 호출부에서 가드를 직접 부른다. */
+  private final DatasetAccessGuard datasetAccessGuard;
+
+  /** AI_CLASSIFY 가 실제로 쓸 분류 공급자의 호스팅 — 실행 시점 값으로 판정한다(저장 후 외부로 바뀐 경우를 막는다). */
+  private final AiHostingResolver aiHostingResolver;
 
   /**
    * 파이프라인을 비동기로 실행한다.
@@ -877,6 +886,12 @@ public class PipelineAsyncRunner {
         SqlAccessResult aiInputAccess =
             pipelineSecurityGate.checkStepInputsForRun(
                 aiRunAs, resolvedInputDatasetIds == null ? List.of() : resolvedInputDatasetIds);
+        // S3 §4.3: 실행 주체 기준 AI 판정(분류 호스팅) — 입력을 읽거나 TEMP 를 만들기 전. 이 러너는 별도 스레드라 요청 속성·AiCallContext
+        // ThreadLocal 이 없다 — 그래서 문맥에 기대지 않고 AiCall 을 명시로 넘긴다(fail-open 방지).
+        datasetAccessGuard.requireAiForDatasets(
+            aiRunAs.clearance(),
+            resolvedInputDatasetIds == null ? List.of() : resolvedInputDatasetIds,
+            new AiCall(aiHostingResolver.classify(), false));
         // 이번 실행에서 TEMP 를 새로 만들었는지(빈 테이블) — SQL 스텝과 같은 이유로 새 TEMP 만 입력 최대 등급으로 "정확히" 맞춘다.
         boolean aiTempFresh = false;
 

@@ -21,6 +21,8 @@ import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.securitylevel.access.DatasetAction;
 import com.smartfirehub.securitylevel.access.SqlAccessMode;
+import com.smartfirehub.securitylevel.ai.AiCall;
+import com.smartfirehub.securitylevel.ai.AiHostingResolver;
 import com.smartfirehub.user.repository.UserRepository;
 import java.util.HashMap;
 import java.util.List;
@@ -63,6 +65,9 @@ public class PipelineService {
 
   /** 실행 기록 조회자 자격(WD-27) — 원문 오류·로그를 보여 줄지 판정한다. */
   private final ClearanceResolver clearanceResolver;
+
+  /** AI_CLASSIFY 입력 판정의 분류 공급자 호스팅(S3 §4.3) — 채팅이 아니라 실제로 분류를 맡을 공급자 기준이다. */
+  private final AiHostingResolver aiHostingResolver;
 
   /**
    * 원문 오류를 볼 수 없는 조회자에게 스텝·실행 오류 대신 보여 주는 고정 문구(WD-27). 원문(PG 오류)에는 숨김 테이블명·행 값이 실릴 수 있어 일부만 지우지 않고
@@ -137,6 +142,13 @@ public class PipelineService {
         // 없다(SQL 스텝의 저장 판정과 같은 의미). 의존 스텝 출력 자동 해석분은 실행 시점에 판정된다.
         if (stepRequest.inputDatasetIds() != null && !stepRequest.inputDatasetIds().isEmpty()) {
           pipelineSecurityGate.checkStepInputsForSave(editorUserId, stepRequest.inputDatasetIds());
+          // S3 §4.3: AI_CLASSIFY 입력은 분류 공급자로 간다 — 편집자 기준 AI 판정(분류 호스팅). PipelineSecurityGate(흐름 B
+          // 소유)는 고치지
+          // 않고 여기서 가드를 직접 부른다. editorUserId 가 null 이면 바로 위 판정이 이미 거부했으므로 여기 오지 않는다.
+          datasetAccessGuard.requireAiForDatasets(
+              clearanceResolver.resolve(editorUserId),
+              stepRequest.inputDatasetIds(),
+              new AiCall(aiHostingResolver.classify(), false));
         }
       }
 
