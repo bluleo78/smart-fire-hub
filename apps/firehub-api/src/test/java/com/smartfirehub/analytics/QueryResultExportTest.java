@@ -219,6 +219,71 @@ class QueryResultExportTest extends IntegrationTestBase {
     assertThat(execute(u).get("exportAllowed")).isEqualTo(false);
   }
 
+  /** 실행 기록의 created_at 을 61분 전으로 돌린다(보존 1시간 경계 밖). */
+  private void ageRun(String runId) {
+    inTenantFixture(
+        () -> {
+          dsl.execute(
+              "UPDATE analytics_query_run SET created_at = now() - interval '61 minutes'"
+                  + " WHERE id = ?::uuid",
+              runId);
+        });
+  }
+
+  private int runCount(String runId) {
+    return inTenantFixture(
+        () ->
+            dsl.fetchOne("SELECT count(*) FROM analytics_query_run WHERE id = ?::uuid", runId)
+                .get(0, Integer.class));
+  }
+
+  /** 보존 1시간 — 만료 기록은 없는 id 와 같은 404 이고, 그 사용자의 다음 실행이 만료 행을 지운다. */
+  @Test
+  void expiredRun_isSameAsMissing_andPurgedOnNextInsert() throws Exception {
+    long u = userAt("공개", "analytics:read", "data:export");
+    String runId = (String) execute(u).get("runId");
+    ageRun(runId);
+    exportRun(runId, u)
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.code").value("QUERY_RUN_NOT_FOUND"))
+        .andExpect(jsonPath("$.message").value(NOT_FOUND_MESSAGE));
+    assertThat(runCount(runId)).isEqualTo(1);
+    // 다음 실행(삽입)이 같은 사용자의 만료 행을 지운다. 새 기록은 남는다.
+    String next = (String) execute(u).get("runId");
+    assertThat(runCount(runId)).isZero();
+    assertThat(runCount(next)).isEqualTo(1);
+  }
+
+  /** 실행 뒤 데이터셋이 조회자 자격 밖(숨김)으로 오르면 내보내기는 열람 거부 403 이고 감사된다 — 등급 이름은 싣지 않는다. */
+  @Test
+  void export_afterDatasetBecameHidden_isDeniedAndAudited() throws Exception {
+    long u = userAt("민감", "analytics:read", "data:export", "data:export_restricted");
+    String runId = (String) execute(u).get("runId");
+    setLevel("기밀");
+    exportRun(runId, u)
+        .andExpect(status().isForbidden())
+        .andExpect(jsonPath("$.code").value(org.hamcrest.Matchers.not("POLICY_BLOCKED")))
+        .andExpect(jsonPath("$.errors.levelName").doesNotExist());
+    Integer denials =
+        inTenantFixture(
+            () ->
+                dsl.fetchOne(
+                        "SELECT count(*) FROM audit_log WHERE user_id = ? AND action_type ="
+                            + " 'DATASET_ACCESS_DENIED' AND metadata ->> 'action' = 'SQL'",
+                        u)
+                    .get(0, Integer.class));
+    assertThat(denials).isEqualTo(1);
+  }
+
+  /** export-check 도 data:export 권한까지 본다 — 정책은 허용('공개')이어도 권한이 없으면 false. */
+  @Test
+  void exportCheck_isFalseWithoutDataExportPermission() throws Exception {
+    long u = userAt("공개", "analytics:read");
+    exportCheck(u, "SELECT v FROM " + qualified)
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.exportAllowed").value(false));
+  }
+
   @Test
   void exportAllowed_isFalseWithoutDataExportPermission() throws Exception {
     long u = userAt("공개", "analytics:read");
