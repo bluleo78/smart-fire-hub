@@ -791,19 +791,27 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
 
   /**
    * 코드리뷰 CR2 — 실행 시점: 실행 주체가 볼 수 없는 지정 출력에 PYTHON 스텝이 쓰지 못한다. 거부는 슬롯 준비·REPLACE 맞바꿈·적재 전에 구분 불가 문구로
-   * 나고, 숨김 데이터셋의 행은 그대로다(행 수로 확인).
+   * 나고, 숨김 데이터셋의 행은 그대로다(값으로 확인).
+   *
+   * <p>스크립트는 출력 컬럼 v 에 맞는 JSON 행을 stdout 으로 낸다 — 판정이 없으면 REPLACE 가 원본을 r1·r2 로 바꿔 행 단언이 실패한다(비JSON
+   * stdout 이면 판정이 없어도 0행 → 원본 유지라 단언이 공허했다, Task 5 리뷰 M4). 대조군: 볼 수 있는 실행 주체의 같은 실행은 COMPLETED 이고
+   * 실제로 원본을 r1·r2 로 바꾼다.
    */
   @Test
   void run_pythonStepWithHiddenExplicitOutput_failsAndKeepsRows() throws Exception {
     String outTable = m + "_pyout";
     long hiddenOut = table(outTable, "민감");
     insertRow(outTable, "keep");
-    long p = pipeline(pythonUserAt("민감"), List.of(pythonStep(hiddenOut)));
+    long sens = pythonUserAt("민감");
+    long p =
+        pipeline(
+            sens,
+            List.of(pythonJsonStep(hiddenOut, "[{\"v\": \"r1\"}, {\"v\": \"r2\"}]", "REPLACE")));
     long runner = pythonUserAt("공개");
     long exec = executionService.executePipeline(p, runner);
     assertThat(waitForEnd(exec)).isEqualTo("FAILED");
     assertThat(stepError(exec)).isEqualTo(DatasetAccessGuard.SQL_ACCESS_DENIED_MESSAGE);
-    assertThat(rowCount(outTable)).isEqualTo(1);
+    assertThat(values(outTable)).containsExactly("keep");
     // 코드리뷰 8: 거부가 트랜잭션(enforcePythonOutputLevel) 안에서 나도 거부 감사는 롤백되지 않고 정확히 1건(중복 판정 제거 후 이중 감사 없음).
     awaitSecurityAudit();
     int denials =
@@ -815,6 +823,10 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
                         runner)
                     .get(0, Integer.class));
     assertThat(denials).isEqualTo(1);
+
+    // 대조군: 출력을 볼 수 있는 실행 주체는 같은 스텝으로 실제 적재한다.
+    assertThat(waitForEnd(executionService.executePipeline(p, sens))).isEqualTo("COMPLETED");
+    assertThat(values(outTable)).containsExactly("r1", "r2");
   }
 
   /** API_CALL 도 같다 — 거부는 API 호출·REPLACE 맞바꿈 전에 구분 불가 메시지로 난다(호출 실패 메시지가 아니다). */
@@ -831,15 +843,15 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
   }
 
   /**
-   * 러너 TEMP 를 만드는 PYTHON 스텝(출력 미지정 + outputColumns v). stdout 이 JSON 이 아니라 적재 0행 — REPLACE 는 원본을
-   * 유지한다(#685, R5 이후 실행기 끈 경로도 같다).
+   * 러너 TEMP 를 만드는 PYTHON 스텝(출력 미지정 + outputColumns v). stdout 으로 v 컬럼 JSON 행 하나(r1)를 낸다 — REPLACE
+   * 실행이 끝까지 가면 TEMP 는 정확히 [r1] 이 되므로, 판정이 빠지면 행 단언이 실패한다(Task 5 리뷰 M4).
    */
   private static PipelineStepRequest pythonTempStep() {
     return new PipelineStepRequest(
         "step",
         null,
         "PYTHON",
-        "print('x')",
+        "print('[{\"v\": \"r1\"}]')",
         null,
         null,
         null,
@@ -881,8 +893,8 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
    * 쓰기 전에 구분 불가 메시지로 실패하고 TEMP 는 그대로(같은 id·행 수·등급)여야 한다.
    *
    * <p>대조군: 등급을 올리기 전에는 같은 실행 주체의 재실행이 보안 판정·슬롯 준비·실행·적재를 모두 통과해 <b>COMPLETED</b> 다(R5 이후 실행기 끈
-   * PYTHON 도 출력을 적재하므로 거부되지 않는다) — 이후의 실패가 다른 이유가 아니라 등급 때문임을 보인다. 스크립트 stdout 이 JSON 이 아니라 적재 0행 →
-   * 원본 유지(#685)라 행은 그대로다.
+   * PYTHON 도 출력을 적재하므로 거부되지 않는다) — 이후의 실패가 다른 이유가 아니라 등급 때문임을 보인다. 대조군 실행은 REPLACE 로 TEMP 를 [r1] 로
+   * 바꾸므로(손으로 넣은 a1 이 사라짐) 실제 적재가 일어났음이 보이고, 거부 실행 뒤 [keep, r1] 이 남는 것은 판정이 맞바꿈 전에 났다는 증거다.
    */
   @Test
   void run_pythonReusedTempRaisedAboveRunAs_failsAndKeepsTemp() throws Exception {
@@ -893,21 +905,20 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
     long temp = tempOf(p, "step");
     String tempTable = tableNameOf(temp);
 
-    // 대조군: 등급을 올리기 전 B 의 재실행은 판정을 통과해 끝까지 간다(COMPLETED). 비JSON stdout 이라 원본 유지.
+    // 대조군: 등급을 올리기 전 B 의 재실행은 판정을 통과해 끝까지 간다(COMPLETED) — REPLACE 적재로 a1 이 r1 로 바뀐다.
     insertRow(tempTable, "a1");
     long control = executionService.executePipeline(p, b);
     assertThat(waitForEnd(control)).isEqualTo("COMPLETED");
     assertThat(failedStepErrorOrNull(control)).isNull();
-    assertThat(rowCount(tempTable)).isEqualTo(1);
+    assertThat(values(tempTable)).containsExactly("r1");
 
     insertRow(tempTable, "keep");
-    int rowsBeforeDenied = rowCount(tempTable);
     setLevel(temp, "기밀");
     long exec = executionService.executePipeline(p, b);
     assertThat(waitForEnd(exec)).isEqualTo("FAILED");
     assertThat(stepError(exec)).isEqualTo(DatasetAccessGuard.SQL_ACCESS_DENIED_MESSAGE);
     assertThat(tempOf(p, "step")).isEqualTo(temp);
-    assertThat(rowCount(tempTable)).isEqualTo(rowsBeforeDenied).isEqualTo(2);
+    assertThat(values(tempTable)).containsExactly("keep", "r1");
     assertThat(levelOf(temp)).isEqualTo(fx.levelId("기밀"));
   }
 

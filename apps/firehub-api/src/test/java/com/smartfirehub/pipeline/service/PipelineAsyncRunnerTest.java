@@ -1305,7 +1305,9 @@ class PipelineAsyncRunnerTest {
     when(outputTableSessionLock.callLocked(eq("out_bad"), any()))
         .thenAnswer(inv -> inv.<java.util.function.Supplier<?>>getArgument(1).get());
     when(localPythonOutputLoader.load(eq("out_bad_tmp"), anyString(), any()))
-        .thenThrow(new ScriptExecutionException("Script succeeded but data insert failed: x"));
+        .thenThrow(
+            new ScriptExecutionException(
+                "Python 실행 실패: Script succeeded but data insert failed: x"));
 
     String status = runner.executeStep(7411L, step, 74L, "TestPipeline", userId, false);
 

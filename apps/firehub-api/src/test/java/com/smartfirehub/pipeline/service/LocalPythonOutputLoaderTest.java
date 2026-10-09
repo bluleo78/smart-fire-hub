@@ -2,7 +2,10 @@ package com.smartfirehub.pipeline.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
 
+import com.smartfirehub.dataset.service.DataTableRowService;
+import com.smartfirehub.pipeline.exception.ScriptExecutionException;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.time.LocalDate;
@@ -14,6 +17,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
+import org.springframework.transaction.PlatformTransactionManager;
 
 /**
  * executor({@code python_executor.py}) 의 stdout JSON 파싱·타입 변환과의 패리티(R5). 기대값은 executor 이미지와 같은
@@ -130,5 +134,19 @@ class LocalPythonOutputLoaderTest {
     extra.add(new LinkedHashMap<>(Map.of("a", 2, "z", 3)));
     LocalPythonOutputLoader.applyTypeConversion(extra, Map.of("a", "TEXT"));
     assertThat(extra.get(1).get("a")).isEqualTo("2");
+  }
+
+  /**
+   * 적재 실패 문구는 실행기 켠 경로의 사용자 문구("Python 실행 실패: " + executor 오류)와 같다 — 로컬 경로는 러너가 이 예외를 감싸지 않는다(Task
+   * 5 리뷰 M1). 첫 행 뒤 원소가 객체가 아니면 파싱 단계에서 실패한다(DB 접근 전).
+   */
+  @Test
+  void loadFailure_usesSameUserMessageAsExecutorPath() {
+    LocalPythonOutputLoader loader =
+        new LocalPythonOutputLoader(
+            mock(DataTableRowService.class), mock(PlatformTransactionManager.class));
+    assertThatThrownBy(() -> loader.load("t", "[{\"a\": 1}, 2]", Map.of()))
+        .isInstanceOf(ScriptExecutionException.class)
+        .hasMessageStartingWith("Python 실행 실패: Script succeeded but data insert failed: ");
   }
 }

@@ -122,7 +122,12 @@ public class ChartService {
     }
   }
 
-  /** Get a single chart without throwing — used for dashboard data loading. */
+  /**
+   * Get a single chart without throwing — used for dashboard data loading.
+   *
+   * <p>주의: config 를 가리지 않은 <b>원본</b>이다(WD-31②). 저장 쿼리를 볼 수 없는 조회자에게 config 가 새지 않도록, 이 결과를 응답에 직접
+   * 쓰지 말고 withholdDenied/deniedData 를 거쳐 내보낸다.
+   */
   // RLS 가 걸린 chart 를 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
   @Transactional(readOnly = true)
   public java.util.Optional<com.smartfirehub.analytics.dto.ChartResponse> getByIdOptional(

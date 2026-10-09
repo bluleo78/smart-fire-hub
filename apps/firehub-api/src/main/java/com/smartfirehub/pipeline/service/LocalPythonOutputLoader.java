@@ -56,8 +56,13 @@ import org.springframework.transaction.support.TransactionTemplate;
 @Component
 public class LocalPythonOutputLoader {
 
-  /** executor 의 적재 실패 문구와 같다 — 러너가 "Python 실행 실패: " 를 앞에 붙인다. */
-  static final String INSERT_FAILED_PREFIX = "Script succeeded but data insert failed: ";
+  /**
+   * 적재 실패 문구 접두. 실행기 켠 경로에서 사용자가 보는 문구는 러너가 executor 오류({@code "Script succeeded but data insert
+   * failed: ..."}) 앞에 {@code "Python 실행 실패: "} 를 붙인 것이다. 로컬 경로는 이 예외를 러너가 감싸지 않고 그대로 스텝 오류로 쓰므로, 두
+   * 경로의 사용자 문구가 같도록 여기서 같은 접두 전체를 붙인다.
+   */
+  static final String INSERT_FAILED_PREFIX =
+      "Python 실행 실패: Script succeeded but data insert failed: ";
 
   /**
    * Python {@code json.loads} 와 같은 규칙의 파서: 뒤따르는 내용 거부, NaN/Infinity 허용, 실수는 Double(Python float).
@@ -84,8 +89,8 @@ public class LocalPythonOutputLoader {
    * stdout 을 파싱·변환해 {@code tableName}(현재 테넌트 데이터 스키마)에 적재한다.
    *
    * @return 적재한 행 수(JSON 이 없거나 행이 아니면 0 — REPLACE 는 이 값으로 맞바꿈 여부를 정한다, #685)
-   * @throws ScriptExecutionException 적재 실패(executor 의 "Script succeeded but data insert failed" 와
-   *     같은 문구)
+   * @throws ScriptExecutionException 적재 실패 — 메시지는 실행기 켠 경로의 사용자 문구와 같다({@link
+   *     #INSERT_FAILED_PREFIX})
    */
   public long load(String tableName, String stdout, Map<String, String> columnTypeMap) {
     List<Map<String, Object>> rows;
