@@ -239,28 +239,32 @@ function ToolCallDisplay({ toolCall, isStreaming }: { toolCall: AIToolCall; isSt
         blocked ? 'border-warning bg-warning-subtle' : 'border-border/50 bg-background/50',
       )}
     >
-      <div className="flex items-center gap-1.5">
-        {/* 아이콘 칸 폭 고정(w-3.5) — 아래 차단 사유 줄의 pl-5(= w-3.5 + gap-1.5)가 이모지 글꼴 폭과 무관하게 라벨에 맞도록 */}
-        <span className="inline-flex w-3.5 shrink-0 justify-center">{icon}</span>
-        <span className="font-medium">{label}</span>
-        {detail && <span className="text-muted-foreground truncate">{detail}</span>}
-        {(hasResult || !isStreaming) &&
-          (blocked ? (
-            <span className="ml-auto flex shrink-0 items-center gap-1 text-warning">
-              <ShieldAlert className="h-3 w-3 shrink-0" aria-hidden="true" />
-              {'차단됨'}
-            </span>
-          ) : isFailed ? (
-            <span className="ml-auto shrink-0 text-destructive">{'✗ 실패'}</span>
-          ) : (
-            <span className="ml-auto shrink-0 text-success">{resultSummary ?? '✓ 완료'}</span>
-          ))}
-        {!hasResult && isStreaming && (
-          <span className="ml-auto shrink-0 animate-pulse text-warning">{'실행 중...'}</span>
-        )}
+      {/* 아이콘 칸과 본문 칸을 나눈다 — 차단 사유 줄이 본문 칸 안에 들어가 패딩 없이 라벨 시작선에 맞는다(이모지 폭 무관) */}
+      <div className="flex items-start gap-1.5">
+        <span className="shrink-0">{icon}</span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5">
+            <span className="font-medium">{label}</span>
+            {detail && <span className="text-muted-foreground truncate">{detail}</span>}
+            {(hasResult || !isStreaming) &&
+              (blocked ? (
+                <span className="ml-auto flex shrink-0 items-center gap-1 text-warning">
+                  <ShieldAlert className="h-3 w-3 shrink-0" aria-hidden="true" />
+                  {'차단됨'}
+                </span>
+              ) : isFailed ? (
+                <span className="ml-auto shrink-0 text-destructive">{'✗ 실패'}</span>
+              ) : (
+                <span className="ml-auto shrink-0 text-success">{resultSummary ?? '✓ 완료'}</span>
+              ))}
+            {!hasResult && isStreaming && (
+              <span className="ml-auto shrink-0 animate-pulse text-warning">{'실행 중...'}</span>
+            )}
+          </div>
+          {/* 차단 사유(등급 이름 + 정책) — LLM 문장이 아니라 구조화된 표식에서 만든다 */}
+          {blocked && <p className="mt-0.5 text-muted-foreground">{policyBlockedLabel(blocked)}</p>}
+        </div>
       </div>
-      {/* 차단 사유(등급 이름 + 정책) — LLM 문장이 아니라 구조화된 표식에서 만든다 */}
-      {blocked && <p className="mt-0.5 pl-5 text-muted-foreground">{policyBlockedLabel(blocked)}</p>}
     </div>
   );
 }

@@ -69,7 +69,8 @@ export function HostingLocationField({
     // Claude 는 Anthropic 서버에서만 돈다 — 선택지가 아니라 사실을 보여 준다.
     return (
       <div className="space-y-2">
-        <Label>호스팅 위치</Label>
+        {/* 읽기 전용 사실 표시라 연결할 입력 요소가 없다 — Label 대신 같은 스타일의 span (#432) */}
+        <span className="flex items-center gap-2 text-sm leading-none font-medium select-none">호스팅 위치</span>
         <p className="flex items-center gap-1.5 text-sm">
           <Server className="h-4 w-4 text-muted-foreground" aria-hidden />
           외부 서비스
@@ -91,7 +92,10 @@ export function HostingLocationField({
 
   return (
     <div className="space-y-2">
-      <Label id={`${id}-label`}>호스팅 위치</Label>
+      {/* 라디오 그룹 전체의 제목 — 단일 컨트롤이 없어 Label 대신 span + RadioGroup aria-labelledby (#432) */}
+      <span id={`${id}-label`} className="flex items-center gap-2 text-sm leading-none font-medium select-none">
+        호스팅 위치
+      </span>
       <RadioGroup
         aria-labelledby={`${id}-label`}
         value={value}
