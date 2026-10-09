@@ -125,6 +125,7 @@ function makeCred(overrides: Partial<UseAiCredentialFormResult> = {}): UseAiCred
     setPayloadField: vi.fn(),
     hostingDemoted: false,
     canKeepSavedSelfHosted: false,
+    savedHosting: 'EXTERNAL',
     secretInputs: {},
     setSecretInput: vi.fn(),
     secretFieldNames: ['apiKey'],

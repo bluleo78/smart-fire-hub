@@ -199,19 +199,6 @@ export default function EmbeddingSettingsTab({
             />
           </div>
 
-          <Separator />
-
-          {/* 호스팅 위치(S3 §5-5) — 임베딩 공급자도 자체 호스팅 선언이 있어야 자체 호스팅 전용 등급 데이터의 벡터를 만든다. */}
-          <HostingLocationField
-            id="embedding-hosting"
-            value={form.hosting}
-            onChange={(v) => setField({ hosting: v })}
-            readOnlyExternal={false}
-            canDeclareSelfHosted={canDeclareSelfHosted || canKeepSavedSelfHosted}
-            endpointUrl={form.baseUrl}
-            demoted={hostingDemoted}
-          />
-
           {form.provider === 'OPENAI' && (
             <>
               <Separator />
@@ -236,6 +223,20 @@ export default function EmbeddingSettingsTab({
               </div>
             </>
           )}
+
+          <Separator />
+
+          {/* 호스팅 위치(S3 §5-5) — 임베딩 공급자도 자체 호스팅 선언이 있어야 자체 호스팅 전용 등급 데이터의 벡터를
+              만든다. 연결 정보(Base URL·API 키)를 다 적은 뒤에 고르도록 그 아래에 둔다. */}
+          <HostingLocationField
+            id="embedding-hosting"
+            value={form.hosting}
+            onChange={(v) => setField({ hosting: v })}
+            readOnlyExternal={false}
+            canDeclareSelfHosted={canDeclareSelfHosted || canKeepSavedSelfHosted}
+            endpointUrl={form.baseUrl}
+            demoted={hostingDemoted}
+          />
 
           {testState && (
             <p

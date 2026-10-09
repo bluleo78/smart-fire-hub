@@ -679,16 +679,20 @@ describe('useAiCredentialForm — 호스팅 위치', () => {
     const { result } = await renderLoaded();
     act(() => result.current.setPayloadField('hosting', 'EXTERNAL'));
     expect(result.current.hasUnsavedInput).toBe(false);
+    expect(result.current.savedHosting).toBe('EXTERNAL');
   });
 
   it('저장된 자체 호스팅에서 기본 URL 을 바꾸면 외부로 되돌리고 알린다', async () => {
     mockedGet.mockResolvedValue({ data: selfHosted() } as never);
     const { result } = await renderLoaded();
     expect(result.current.canKeepSavedSelfHosted).toBe(true);
+    expect(result.current.savedHosting).toBe('SELF_HOSTED');
     act(() => result.current.setPayloadField('baseURL', 'https://api.openai.com/v1'));
     expect(result.current.payload.hosting).toBe('EXTERNAL');
     expect(result.current.hostingDemoted).toBe(true);
     expect(result.current.canKeepSavedSelfHosted).toBe(false);
+    // 저장값은 저장 전까지 그대로다 — AI 분류 탭 요약은 화면 편집이 아니라 실제로 쓰이는 값을 보여야 한다.
+    expect(result.current.savedHosting).toBe('SELF_HOSTED');
     await act(() => result.current.save());
     expect(mockedPut.mock.calls[0][0].payload).toMatchObject({ baseURL: 'https://api.openai.com/v1', hosting: 'EXTERNAL' });
   });

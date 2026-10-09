@@ -7,6 +7,7 @@ import type { AgentType } from '../lib/ai-credential';
 import { AGENT_TYPES, CREDENTIAL_FIELDS } from '../lib/ai-credential';
 import { hasTypeChangedFromSaved } from '../lib/ai-credential-screen';
 import { extractApiError } from '../lib/api-error';
+import type { HostingLocation } from '../lib/hosting-location';
 import { isSameTransportTarget, normalizeHosting } from '../lib/hosting-location';
 import type {
   AiCredentialProbeRequest,
@@ -147,6 +148,8 @@ export interface UseAiCredentialFormResult {
    * 화면도 권한 없는 사용자에게 이때만 자체 호스팅 라디오를 열어 둔다.
    */
   canKeepSavedSelfHosted: boolean;
+  /** 서버와 마지막으로 동기화된(=저장된) 호스팅 위치 — AI 분류 탭의 "채팅 설정 사용 중" 요약이 보여 준다. */
+  savedHosting: HostingLocation;
   /**
    * 사용자가 지금 타이핑 중인 비밀 값. <b>빈 값 = 유지</b> — 저장 시 이 맵에서 비어 있지 않은
    * 값만 요청에 싣는다(생략된 필드는 서버가 "현재 값 유지"로 해석한다, PUT 계약). 서버 마스크를
@@ -558,6 +561,7 @@ export function useAiCredentialForm<R extends AiCredentialResponse = AiCredentia
     setPayloadField,
     hostingDemoted,
     canKeepSavedSelfHosted,
+    savedHosting: normalizeHosting(original.payload.hosting),
     secretInputs,
     setSecretInput,
     secretFieldNames: visibleSecretFieldNames,

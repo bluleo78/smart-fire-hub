@@ -754,6 +754,7 @@ function AdminSettingsPage() {
             chatAgentType={cred.savedAgentType}
             chatConfigured={cred.configured}
             chatModel={settings['ai.model']?.value ?? form['ai.model']}
+            chatHosting={cred.savedHosting}
             canDeclareSelfHosted={canSecurity}
           />
         </TabsContent>

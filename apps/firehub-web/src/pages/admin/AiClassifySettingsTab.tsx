@@ -10,8 +10,12 @@ import { Separator } from '../../components/ui/separator';
 import type { UseAiClassifyFormResult } from '../../hooks/useAiClassifyForm';
 import type { AgentType } from '../../lib/ai-credential';
 import { AGENT_TYPE_LABELS, CLAUDE_MODEL_OPTIONS, withPreservedValue } from '../../lib/ai-credential-screen';
+import type { HostingLocation } from '../../lib/hosting-location';
 import { AiCredentialFieldset, OpencodeModelField } from './AiCredentialFieldset';
 import { ClearConfirmDialog } from './ClearConfirmDialog';
+
+/** 호스팅 위치 표시 이름 — 「호스팅 위치」 필드의 라디오 라벨과 같다. */
+const HOSTING_LABELS: Record<HostingLocation, string> = { EXTERNAL: '외부 서비스', SELF_HOSTED: '자체 호스팅' };
 
 const CLEAR_LABEL = '분류 전용 설정 해제';
 const CLEAR_BODY =
@@ -33,12 +37,15 @@ export default function AiClassifySettingsTab({
   chatAgentType,
   chatConfigured,
   chatModel,
+  chatHosting = 'EXTERNAL',
   canDeclareSelfHosted = false,
 }: {
   state: UseAiClassifyFormResult;
   chatAgentType: AgentType;
   chatConfigured: boolean;
   chatModel: string;
+  /** 채팅 자격증명의 저장된 호스팅 위치 — 분류가 채팅 설정을 이어받으면 분류 데이터도 그 공급자로 간다(S3 §5-5). */
+  chatHosting?: HostingLocation;
   /** security:settings 보유 여부 — 자체 호스팅 선언 가능 여부(S3 §5-5). 페이지가 권한을 조회해 내려 준다. */
   canDeclareSelfHosted?: boolean;
 }) {
@@ -96,6 +103,8 @@ export default function AiClassifySettingsTab({
               <dd>{chatConfigured ? AGENT_TYPE_LABELS[chatAgentType] : '설정되지 않음'}</dd>
               <dt className="text-muted-foreground">모델</dt>
               <dd>{chatModel}</dd>
+              <dt className="text-muted-foreground">호스팅 위치</dt>
+              <dd>{chatConfigured ? HOSTING_LABELS[chatHosting] : '설정되지 않음'}</dd>
             </dl>
             <Button type="button" variant="outline" onClick={state.startEditing}>
               분류 전용 설정하기
