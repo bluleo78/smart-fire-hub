@@ -301,7 +301,7 @@ public class PipelineAsyncRunner {
       executionRepository.updateStepExecution(
           stepExecId, "RUNNING", null, null, null, stepStartedAt, null);
 
-      // WD-30: 러너 TEMP 의 쓰기 후 허용 목록 확정 계획(출력 등급 처리가 채운다 — 허용 목록 필요 입력이 없으면 null).
+      // WD-30: 러너 TEMP 의 쓰기 후 허용 목록 확정 계획(출력 등급 처리가 채운다 — 허용 목록 필요 입력이 없거나 출력이 전부 교체되지 않으면 null).
       PipelineSecurityGate.OutputAllowlistPlan allowlistPlan = null;
 
       // 출력 데이터셋 ID 및 테이블명 결정 (임시 데이터셋 포함)
@@ -518,7 +518,14 @@ public class PipelineAsyncRunner {
           if (isSelect) {
             allowlistPlan =
                 pipelineSecurityGate.enforceOutputLevel(
-                    access, outputDatasetId, step.id(), tempDatasetFresh, runAs);
+                    access,
+                    outputDatasetId,
+                    step.id(),
+                    tempDatasetFresh,
+                    // 출력 전부 교체 = REPLACE 비우기 또는 증분 전체 재구축(위 preStatements 의 DELETE 와 같은 조건) — WD-30
+                    // 쓰기 후 넓힘 허용
+                    strategy == LoadStrategy.REPLACE || stepWasFullRebuild,
+                    runAs);
           } else {
             pipelineSecurityGate.requireOutputVisible(outputDatasetId, runAs);
           }
@@ -944,7 +951,14 @@ public class PipelineAsyncRunner {
         if (outputDatasetId != null) {
           allowlistPlan =
               pipelineSecurityGate.enforceOutputLevel(
-                  aiInputAccess, outputDatasetId, step.id(), aiTempFresh, aiRunAs);
+                  aiInputAccess,
+                  outputDatasetId,
+                  step.id(),
+                  aiTempFresh,
+                  // AiClassifyExecutor 는 명시적 "REPLACE" 일 때만 스테이징 맞바꿈으로 출력을 전부 교체한다(같은 판정) — WD-30
+                  // 쓰기 후 넓힘 허용
+                  "REPLACE".equalsIgnoreCase(loadStrategy),
+                  aiRunAs);
         }
 
         // AiClassifyExecutor에 전달할 스텝 래퍼: 해결된 outputDatasetId 및 inputDatasetIds 반영
@@ -990,7 +1004,8 @@ public class PipelineAsyncRunner {
         stepRepository.advanceCursor(step.id(), stepCursorCandidate, stepWasFullRebuild);
       }
 
-      // WD-30: 출력이 커밋된 뒤에만 러너 TEMP 허용 목록을 시드로 확정한다(넓힘 포함). 실패 경로(catch)는 여기 오지 않는다 — 쓰기 전 좁히기만
+      // WD-30: 출력이 커밋된 뒤에만 러너 TEMP 허용 목록을 시드로 확정한다(넓힘 포함 — 출력이 전부 교체된 실행만 계획이 있다). 실패 경로(catch)는 여기
+      // 오지 않는다 — 쓰기 전 좁히기만
       // 남는다(이전 실행 데이터가 남은 출력에 새 열람자를 넣지 않는다).
       pipelineSecurityGate.completeOutputAllowlist(allowlistPlan);
 

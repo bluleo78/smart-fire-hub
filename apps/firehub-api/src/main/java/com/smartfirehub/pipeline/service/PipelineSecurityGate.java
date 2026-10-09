@@ -127,10 +127,11 @@ public class PipelineSecurityGate {
    *       낮춰도 기존 데이터가 노출되지 않는다.
    *   <li>러너가 <b>재사용</b>하는 TEMP: 입력보다 낮으면 상향만 한다 — 이전 실행 데이터가 남아 있을 수 있어 절대 낮추지 않는다. 상향·시드 후 실행 주체가
    *       현재 등급·허용 목록으로 볼 수 없으면 쓰기 전에 거부한다(fail-closed).
-   *   <li>러너 소유 TEMP 공통: 입력 최대 등급이 허용 목록 필요면 허용 목록을 시드(입력 교집합 ∪ {실행 주체})로 좁히고(실행 주체는 언제나 포함), 쓰기 성공
-   *       뒤 시드로 확정할 계획을 돌려준다(WD-30) — 상향이 일어나지 않아도. 다른 실행 주체(수동 실행자 vs 트리거 생성자)가 같은 TEMP 를 재사용할 때
-   *       다음 스텝({@code {{#N}}})이 거부되지 않게 하고, 실행 주체가 아직 볼 수 없는 TEMP 에 쓰는 일이 없게 한다. 실행 주체는 이 스텝의 입력을
-   *       모두 볼 수 있음이 이미 판정됐으므로 새 열람자를 넓히지 않는다.
+   *   <li>러너 소유 TEMP 공통: 입력 최대 등급이 허용 목록 필요면 허용 목록을 시드(입력 교집합 ∪ {실행 주체})로 좁힌다(실행 주체는 언제나 포함) — 상향이
+   *       일어나지 않아도. 출력이 이번 실행으로 <b>전부 교체</b>될 때(새 TEMP·REPLACE·전체 재구축)만 쓰기 성공 뒤 시드로 확정(넓힘 포함)할 계획을
+   *       돌려준다(WD-30). APPEND/MERGE 는 이전 실행 행이 남아 넓히면 그 행이 새 열람자에게 보이므로 좁히기만 한다. 다른 실행 주체(수동 실행자 vs
+   *       트리거 생성자)가 같은 TEMP 를 재사용할 때 다음 스텝({@code {{#N}}})이 거부되지 않게 하고, 실행 주체가 아직 볼 수 없는 TEMP 에 쓰는
+   *       일이 없게 한다. 실행 주체는 이 스텝의 입력을 모두 볼 수 있음이 이미 판정됐으므로 새 열람자를 넓히지 않는다.
    *   <li>사용자가 지정한 출력: 실행 주체가 볼 수 있어야 하고, 입력보다 낮으면 자동 상향(S4, 스펙 §4.5 — 출력은 입력보다 낮아질 수 없다). 상향 등급이
    *       허용 목록 필요면 목록을 시드로 좁힌다(넓히지 않음). 낮추지는 않는다.
    * </ul>
@@ -144,11 +145,19 @@ public class PipelineSecurityGate {
    *
    * @param stepId 이 스텝의 id — 출력이 이 스텝의 TEMP 인지 판정한다
    * @param freshTemp 이번 실행에서 새로 만든(빈) TEMP 인가 — 러너 소유 TEMP 일 때만 의미가 있다
-   * @return 러너 소유 TEMP 의 쓰기 후 허용 목록 확정 계획 — 허용 목록 필요 입력이 아니거나 지정 출력이면 null
+   * @param outputFullyReplaced 이번 실행이 출력을 통째로 비우고 다시 채우는가(REPLACE 비우기·맞바꿈, 증분 전체 재구축) — 이전 실행 행이 남지
+   *     않아야만 쓰기 후 넓힘이 안전하다
+   * @return 러너 소유 TEMP 의 쓰기 후 허용 목록 확정 계획 — 허용 목록 필요 입력이 아니거나, 지정 출력이거나, 이전 실행 행이 남는
+   *     출력(APPEND/MERGE 재사용 TEMP)이면 null
    */
   @Transactional
   public OutputAllowlistPlan enforceOutputLevel(
-      SqlAccessResult access, long outputDatasetId, long stepId, boolean freshTemp, RunAs runAs) {
+      SqlAccessResult access,
+      long outputDatasetId,
+      long stepId,
+      boolean freshTemp,
+      boolean outputFullyReplaced,
+      RunAs runAs) {
     Long runAsUserId = runAs.userId();
     boolean runnerOwnedTemp = isStepTemp(outputDatasetId, stepId);
     if (!runnerOwnedTemp) {
@@ -169,13 +178,16 @@ public class PipelineSecurityGate {
       }
       // 허용 목록(WD-30): 시드 = 허용 목록 필요 입력들의 항목 교집합 ∪ {실행 주체}. 쓰기 전에는 좁히기만 한다(기존 ∩ 시드 ∪ {실행 주체}).
       // 러너 TEMP 는 상향 여부와 무관하게 매 실행 — 재사용 TEMP 를 다른 실행 주체가 쓸 때도 그 실행 주체가 들어가고(위 Javadoc), 쓰기 성공 뒤
-      // completeOutputAllowlist 가 시드로 정확히 맞춘다(넓힘 포함). 지정 출력은 사용자가 관리하는 목록이라 이번에 상향됐을 때만 좁히고 넓히지
+      // completeOutputAllowlist 가 시드로 정확히 맞춘다(넓힘 포함) — 단 출력이 이번 실행으로 전부 교체될 때만(리뷰 I1: APPEND/MERGE
+      // 재사용
+      // TEMP 는 이전 실행 행이 남아, 넓히면 그 행이 이번 입력 목록에만 있는 새 열람자에게 보인다). 지정 출력은 사용자가 관리하는 목록이라 이번에 상향됐을 때만
+      // 좁히고 넓히지
       // 않는다(계획 결정 13).
       if (effective.allowlistRequired() && (runnerOwnedTemp || raised)) {
         Set<GrantSubject> seed =
             datasetSecurityService.pipelineOutputSeed(access.readDatasetIds(), runAsUserId);
         datasetSecurityService.narrowPipelineOutputAllowlist(outputDatasetId, seed, runAsUserId);
-        if (runnerOwnedTemp) {
+        if (runnerOwnedTemp && (freshTemp || outputFullyReplaced)) {
           plan = new OutputAllowlistPlan(outputDatasetId, seed, runAsUserId);
         }
       }
@@ -346,12 +358,19 @@ public class PipelineSecurityGate {
       requireOutputVisible(outputDatasetId, runAs);
       return;
     }
-    // 계획 반환값은 버린다 — readable 은 허용 목록 필요가 아니므로 언제나 null 이다(R4).
+    // fail-closed 단언(R4): readable 은 정의상 allowlist_required 가 아니다. 이 전제가 깨지면(계산 규칙 변경 등) 아래 계획 반환값을
+    // 버리는
+    // 것이 쓰기 후 확정 누락이 되고, {실행 주체}만의 시드가 허용 목록 등급 출력에 붙는다 — 조용히 진행하지 않고 스텝을 실패시킨다.
+    if (readable.get().allowlistRequired()) {
+      throw new IllegalStateException("PYTHON 읽기 가능 최고 등급이 허용 목록 필요 등급입니다(R4 위반)");
+    }
+    // 계획 반환값은 버린다 — 위 단언으로 effective 가 허용 목록 필요가 아니므로 언제나 null 이다. 출력 교체 여부도 그래서 의미가 없다(false).
     enforceOutputLevel(
         new SqlAccessResult(true, null, null, readable.get(), Set.of(), Set.of(), true),
         outputDatasetId,
         stepId,
         freshTemp,
+        false,
         runAs);
   }
 

@@ -1067,6 +1067,106 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
     assertThat(hasRoleGrant(temp, roleOnly)).isTrue();
   }
 
+  /**
+   * 리뷰 I1 — APPEND 러너 TEMP 는 이전 실행 행이 남으므로 입력 허용 목록이 넓어져도 TEMP 목록은 넓어지지 않는다(쓰기 후 확정 없음, 좁히기만). 넓히면
+   * 이전 실행 행이 그 실행 때 입력을 볼 수 없던 사람에게 보인다.
+   */
+  @Test
+  void run_appendTemp_isNotWidenedByLaterInputGrant() throws Exception {
+    String topTable = m + "_wd30a";
+    long topId = table(topTable, "기밀");
+    insertRow(topTable, "t");
+    long runner = userAt("기밀");
+    fx.grantUser(topId, runner);
+    long p =
+        pipeline(
+            runner,
+            List.of(
+                new PipelineStepRequest(
+                    "s1",
+                    null,
+                    "SQL",
+                    "SELECT v FROM " + qualified(topTable),
+                    null,
+                    null,
+                    null,
+                    "APPEND")));
+    assertThat(waitForEnd(executionService.executePipeline(p, runner))).isEqualTo("COMPLETED");
+    long temp = tempOf(p, "s1");
+
+    long late = userAt("기밀");
+    fx.grantUser(topId, late);
+    assertThat(waitForEnd(executionService.executePipeline(p, runner))).isEqualTo("COMPLETED");
+    assertThat(hasUserGrant(temp, late)).isFalse();
+    assertThat(hasUserGrant(temp, runner)).isTrue();
+  }
+
+  /**
+   * 리뷰 M4 — 사용자 지정 출력이 허용 목록 등급으로 상향되면 기존 목록을 시드로 좁힐 뿐 넓히지 않는다(기존 ∩ 시드 ∪ {실행 주체}): 입력 목록에만 있는 사람은
+   * 들어오지 않고, 입력 목록에 없는 기존 항목은 빠진다.
+   */
+  @Test
+  void run_designatedOutputRaisedToAllowlist_narrowsExistingList_neverWidens() throws Exception {
+    String topTable = m + "_wd30i";
+    long topId = table(topTable, "기밀");
+    insertRow(topTable, "t");
+    long outId = table(m + "_wd30o", "공개");
+    long runner = userAt("기밀");
+    long inputOnly = userAt("기밀");
+    long outputOnly = userAt("기밀");
+    fx.grantUser(topId, runner);
+    fx.grantUser(topId, inputOnly);
+    fx.grantUser(outId, outputOnly);
+    long p =
+        pipeline(
+            runner,
+            List.of(
+                new PipelineStepRequest(
+                    "s1", null, "SQL", "SELECT v FROM " + qualified(topTable), outId, null, null)));
+    assertThat(waitForEnd(executionService.executePipeline(p, runner))).isEqualTo("COMPLETED");
+    assertThat(levelOf(outId)).isEqualTo(fx.levelId("기밀"));
+    assertThat(hasUserGrant(outId, runner)).isTrue();
+    assertThat(hasUserGrant(outId, inputOnly)).isFalse();
+    assertThat(hasUserGrant(outId, outputOnly)).isFalse();
+  }
+
+  /** 리뷰 M4 — DML 쓰기 대상이 허용 목록 등급으로 상향될 때도 같은 좁히기(넓히지 않음)를 한다. */
+  @Test
+  void run_dmlWriteTargetRaisedToAllowlist_narrowsExistingList_neverWidens() throws Exception {
+    String topTable = m + "_wd30j";
+    long topId = table(topTable, "기밀");
+    insertRow(topTable, "t");
+    String dmlTable = m + "_wd30d";
+    long dmlId = table(dmlTable, "공개");
+    long runner = userAt("기밀");
+    long inputOnly = userAt("기밀");
+    long outputOnly = userAt("기밀");
+    fx.grantUser(topId, runner);
+    fx.grantUser(topId, inputOnly);
+    fx.grantUser(dmlId, outputOnly);
+    long p =
+        pipeline(
+            runner,
+            List.of(
+                new PipelineStepRequest(
+                    "dml",
+                    null,
+                    "SQL",
+                    "INSERT INTO "
+                        + qualified(dmlTable)
+                        + " (v) SELECT v FROM "
+                        + qualified(topTable),
+                    dmlId,
+                    null,
+                    null,
+                    "APPEND")));
+    assertThat(waitForEnd(executionService.executePipeline(p, runner))).isEqualTo("COMPLETED");
+    assertThat(levelOf(dmlId)).isEqualTo(fx.levelId("기밀"));
+    assertThat(hasUserGrant(dmlId, runner)).isTrue();
+    assertThat(hasUserGrant(dmlId, inputOnly)).isFalse();
+    assertThat(hasUserGrant(dmlId, outputOnly)).isFalse();
+  }
+
   private boolean hasRoleGrant(long datasetId, long roleId) {
     return inTenantFixture(
         () ->
