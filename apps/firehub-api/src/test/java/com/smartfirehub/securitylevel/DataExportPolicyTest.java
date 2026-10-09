@@ -116,6 +116,7 @@ class DataExportPolicyTest extends IntegrationTestBase {
 
   /** 사용자의 거부 감사 행(action·reason·datasetId). */
   private List<Record> denials(long uid) {
+    awaitSecurityAudit();
     return inTenantFixture(
         () ->
             dsl.fetch(

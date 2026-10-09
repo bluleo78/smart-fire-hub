@@ -8,9 +8,11 @@ import com.smartfirehub.securitylevel.repository.SecurityLevelRepository;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.SecurityFixture;
 import com.smartfirehub.user.repository.UserRepository;
+import java.sql.Connection;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
+import javax.sql.DataSource;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -32,6 +34,7 @@ class SecurityAuditRecorderTest extends IntegrationTestBase {
   @Autowired private UserRepository userRepository;
   @Autowired private SecurityLevelRepository levelRepository;
   @Autowired private PlatformTransactionManager txManager;
+  @Autowired private DataSource dataSource;
 
   private SecurityFixture fx;
   private long actor;
@@ -56,15 +59,19 @@ class SecurityAuditRecorderTest extends IntegrationTestBase {
   }
 
   @AfterEach
-  void tearDown() {
+  void tearDown() throws Exception {
+    // 이 테스트가 만든 기록기의 비동기 기록을 다 쓴 뒤 정리하고, 실행기 스레드를 닫는다(테스트마다 새 기록기라 스레드가 쌓이지 않게).
+    assertThat(recorder.awaitIdle(Duration.ofSeconds(30))).isTrue();
+    recorder.shutdown();
     inTenantFixture(() -> dsl.execute("DELETE FROM audit_log WHERE user_id = ?", actor));
     fx.deleteDatasetRow(sensitive);
     fx.deleteDatasetRow(open);
     fx.deleteUser(actor);
   }
 
-  /** 이 테스트 사용자의 해당 action_type 감사 행 수. */
+  /** 이 테스트 사용자의 해당 action_type 감사 행 수(비동기 기록이 끝난 뒤). */
   private int count(String action) {
+    awaitRecorder();
     return inTenantFixture(
         () ->
             dsl.fetchOne(
@@ -137,5 +144,45 @@ class SecurityAuditRecorderTest extends IntegrationTestBase {
                         actor)
                     .get(0, String.class));
     assertThat(rid).isEqualTo(String.valueOf(sensitive));
+  }
+
+  /** 이 테스트의 기록기(빈이 아니라 직접 만든 것)가 실행기로 넘긴 기록을 모두 쓸 때까지 기다린다. */
+  private void awaitRecorder() {
+    try {
+      assertThat(recorder.awaitIdle(Duration.ofSeconds(30))).isTrue();
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      throw new AssertionError(e);
+    }
+  }
+
+  /**
+   * 풀 교착 방지(code-review 2) — 바깥 트랜잭션이 커넥션을 쥔 채 판정 경로가 감사를 부를 때 같은 스레드에서 커넥션을 하나 더 잡지 않는다. 테스트 풀은 최대
+   * 2개(application-test.yml)라, 바깥 트랜잭션 1개 + 여기서 직접 쥔 1개로 풀을 다 채운 뒤 감사를 부른다. 두 번째 커넥션을 기다리는 구현(예전
+   * REQUIRES_NEW 동기 기록)이면 Hikari connection-timeout(기본 30초)까지 막힌다. 기록은 바깥 트랜잭션이 끝난 뒤(롤백이어도) 실행기가
+   * 쓴다.
+   */
+  @Test
+  void auditInsideOuterTransaction_doesNotWaitForSecondConnection_andIsWrittenAfterCompletion()
+      throws Exception {
+    TransactionTemplate caller = new TransactionTemplate(txManager);
+    long[] elapsedMs = new long[1];
+    try (Connection held = dataSource.getConnection()) {
+      caller.executeWithoutResult(
+          s -> {
+            long t0 = System.nanoTime();
+            recorder.recordDenial(
+                actor, AccessDenialAction.VIEW, "CLEARANCE_INSUFFICIENT", sensitive, null);
+            recorder.recordAccess(
+                actor, SecurityAuditRecorder.AccessKind.SQL, List.of(sensitive, open));
+            elapsedMs[0] = (System.nanoTime() - t0) / 1_000_000;
+            s.setRollbackOnly();
+          });
+      assertThat(held.isValid(1)).isTrue();
+    }
+    // 커넥션을 더 기다렸다면 수 초~30초가 걸린다. 호출 스레드는 큐에 넣기만 한다.
+    assertThat(elapsedMs[0]).isLessThan(3_000);
+    assertThat(count("DATASET_ACCESS_DENIED")).isEqualTo(1);
+    assertThat(count("DATASET_ACCESS")).isEqualTo(1);
   }
 }

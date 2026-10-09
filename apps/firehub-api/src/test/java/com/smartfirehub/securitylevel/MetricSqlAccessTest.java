@@ -230,6 +230,7 @@ class MetricSqlAccessTest extends IntegrationTestBase {
         .isInstanceOf(CodedApiException.class)
         .extracting(e -> ((CodedApiException) e).code())
         .isEqualTo("DATASET_SQL_ACCESS_DENIED");
+    awaitSecurityAudit();
     Integer n =
         TenantRlsTestSupport.runInTenantTransaction(
             fixtureTransactionTemplate,

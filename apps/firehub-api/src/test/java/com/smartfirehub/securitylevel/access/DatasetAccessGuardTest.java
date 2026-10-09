@@ -387,6 +387,7 @@ class DatasetAccessGuardTest extends IntegrationTestBase {
         .hasMessageNotContaining("민감");
     assertThatThrownBy(() -> guard.requireAiForDatasets(c, List.of(999_999_999L), call))
         .isInstanceOf(CodedApiException.class);
+    awaitSecurityAudit();
     var rows =
         inTenantFixture(
             () ->

@@ -206,6 +206,7 @@ class QueryResultExportTest extends IntegrationTestBase {
         .andExpect(jsonPath("$.code").value("POLICY_BLOCKED"))
         .andExpect(jsonPath("$.message").value(MULTI_MESSAGE));
     // 거부는 감사된다(어느 데이터셋이 막았는지는 감사에만 — 응답에는 없다).
+    awaitSecurityAudit();
     Integer denials =
         inTenantFixture(
             () ->
@@ -264,6 +265,7 @@ class QueryResultExportTest extends IntegrationTestBase {
         .andExpect(status().isForbidden())
         .andExpect(jsonPath("$.code").value(org.hamcrest.Matchers.not("POLICY_BLOCKED")))
         .andExpect(jsonPath("$.errors.levelName").doesNotExist());
+    awaitSecurityAudit();
     Integer denials =
         inTenantFixture(
             () ->

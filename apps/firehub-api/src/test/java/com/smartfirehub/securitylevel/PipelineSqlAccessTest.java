@@ -254,6 +254,7 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
     long p = pipeline(editor, "SELECT v FROM " + qualified(secTable), null);
     long runner = userAt("공개");
     assertThat(waitForEnd(executionService.executePipeline(p, runner))).isEqualTo("FAILED");
+    awaitSecurityAudit();
     var row =
         inTenantFixture(
             () ->

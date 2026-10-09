@@ -430,6 +430,7 @@ class AiChatPathEnforcementTest extends IntegrationTestBase {
 
   /** 이 사용자의 접근 거부 감사 행(동작·사유·데이터셋·테이블). */
   private List<Record> denials(long uid) {
+    awaitSecurityAudit();
     return inTenantFixture(
         () ->
             dsl.fetch(
@@ -441,6 +442,7 @@ class AiChatPathEnforcementTest extends IntegrationTestBase {
 
   /** 이 사용자·데이터셋의 감사 등급 접근 기록 종류. */
   private List<String> accessKinds(long uid, long datasetId) {
+    awaitSecurityAudit();
     return inTenantFixture(
         () ->
             dsl.fetch(
@@ -482,8 +484,8 @@ class AiChatPathEnforcementTest extends IntegrationTestBase {
   }
 
   /**
-   * 데이터셋 /query(requireSql)의 POLICY_BLOCKED 도 AI 거부로 남는다(SQL 동작이 아니다). 경로 데이터셋은 공개라 인터셉터 requireView 를
-   * 통과하고, SQL 이 참조하는 민감 테이블에서 requireSql 이 막는다.
+   * 데이터셋 /query(requireSql)의 POLICY_BLOCKED 도 AI 거부로 남는다(SQL 동작이 아니다). 경로 데이터셋은 공개라 인터셉터
+   * requireView 를 통과하고, SQL 이 참조하는 민감 테이블에서 requireSql 이 막는다.
    */
   @Test
   void policyBlocked_datasetQuery_isAuditedAsAiDenial() throws Exception {

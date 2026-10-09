@@ -258,6 +258,7 @@ class OntologySourceDatasetsTest extends IntegrationTestBase {
 
   /** 이 사용자의 접근 거부 감사 행. */
   private List<Record> denials(long uid) {
+    awaitSecurityAudit();
     return inTenantFixture(
         () ->
             dsl.fetch(

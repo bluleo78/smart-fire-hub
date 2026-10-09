@@ -111,6 +111,7 @@ class AccessDenialAuditTest extends IntegrationTestBase {
   }
 
   private List<Record> audits(long uid, String action) {
+    awaitSecurityAudit();
     return inTenantFixture(
         () ->
             dsl.fetch(

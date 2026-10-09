@@ -1,14 +1,19 @@
 package com.smartfirehub.support;
 
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.securitylevel.service.SecurityAuditRecorder;
+import java.time.Duration;
 import java.util.function.Supplier;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.extension.AfterTestExecutionCallback;
+import org.junit.jupiter.api.extension.RegisterExtension;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.junit.jupiter.SpringExtension;
 import org.springframework.test.context.transaction.BeforeTransaction;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -51,6 +56,36 @@ public abstract class IntegrationTestBase {
   @AfterEach
   void clearTenantContext() {
     TenantContext.clear();
+  }
+
+  @Autowired private SecurityAuditRecorder securityAuditRecorder;
+
+  /**
+   * 테스트 메서드가 끝난 직후(@AfterEach 정리 <b>전</b>) 비동기 감사 기록을 비운다. audit_log.user_id 는 사용자 FK 라, 늦게 도착한 감사
+   * 행이 정리 중 "감사 삭제 → 사용자 삭제" 사이에 끼면 사용자 삭제가 FK 로 실패한다. 부모의 @AfterEach 는 자식 것보다 늦게 돌아 쓸 수 없어 확장 콜백을
+   * 쓴다.
+   */
+  @RegisterExtension
+  static final AfterTestExecutionCallback DRAIN_SECURITY_AUDIT =
+      context ->
+          SpringExtension.getApplicationContext(context)
+              .getBean(SecurityAuditRecorder.class)
+              .awaitIdle(Duration.ofSeconds(30));
+
+  /**
+   * 바깥 트랜잭션 완료 후 비동기로 넘어간 접근 거부·감사 등급 접근 기록(SecurityAuditRecorder)이 모두 쓰일 때까지 기다린다. 그 감사 행을
+   * 단언(있음·없음 모두)하거나 정리(DELETE)하기 직전에 부른다 — 부르지 않으면 "없음" 단언이 아직 안 쓴 행 때문에 공허하게 통과하거나, 정리 뒤에 행이 늦게
+   * 남는다.
+   */
+  protected void awaitSecurityAudit() {
+    try {
+      if (!securityAuditRecorder.awaitIdle(Duration.ofSeconds(30))) {
+        throw new AssertionError("보안 감사 비동기 기록이 30초 안에 끝나지 않았다");
+      }
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      throw new AssertionError(e);
+    }
   }
 
   /**
