@@ -184,7 +184,13 @@ public class GuardedSqlExecutor {
       Clearance c, NormalizedSql normalized) {
     // 끝 공백만 뗀 같은 문자열을 판정·실행한다(주석을 걷어낸 자리에 공백이 남을 수 있다 — 가드도 판정 시 strip 하므로 동일).
     String sql = normalized.text().strip();
-    guard.requireSql(c, sql, SqlAccessMode.INTERACTIVE);
+    // 폴러(@Scheduled 30초)의 판정은 사용자 요청이 아닌 내부 값 판정이다(설계 결정 3) — requireSql 을 쓰면 거부가 매 주기 감사돼
+    // 메트릭당 하루 ~1440행이 쌓이고, 사용자 SQL 거부로 오인된다. 그래서 judgeSql 로 판정만 하고 감사 없이 같은 403 을 던진다.
+    // 작업 생성·수정 시점(MetricSqlAccessChecker)의 거부는 사용자 요청이라 그대로 감사한다.
+    SqlAccessResult r = guard.judgeSql(c, sql, SqlAccessMode.INTERACTIVE).result();
+    if (!r.allowed()) {
+      throw new CodedApiException(HttpStatus.FORBIDDEN, r.code(), r.message());
+    }
     return executorClient.executeQuery(sql, 1, true);
   }
 }
