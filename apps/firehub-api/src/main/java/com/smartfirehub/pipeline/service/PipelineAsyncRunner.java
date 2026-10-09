@@ -1107,6 +1107,22 @@ public class PipelineAsyncRunner {
    *
    * @return 준비된 TEMP 데이터셋 id
    */
+  private Long ensureUnpropagatedStepTemp(
+      PipelineStepResponse step,
+      List<ColumnInfo> columns,
+      Long pipelineId,
+      String pipelineName,
+      Long userId,
+      PipelineSecurityGate.RunAs runAs,
+      String logLabel) {
+    StepTemp temp =
+        ensureStepTemp(step, columns, pipelineId, pipelineName, userId, runAs, logLabel);
+    if (!temp.fresh()) {
+      pipelineSecurityGate.requireOutputVisible(temp.datasetId(), runAs);
+    }
+    return temp.datasetId();
+  }
+
   /** PYTHON 적재 결과 — 실행 로그와 적재 행 수(REPLACE 맞바꿈 여부 판단 재료). */
   private record PythonLoad(String log, long rowsLoaded) {}
 
@@ -1136,22 +1152,6 @@ public class PipelineAsyncRunner {
       }
       throw e;
     }
-  }
-
-  private Long ensureUnpropagatedStepTemp(
-      PipelineStepResponse step,
-      List<ColumnInfo> columns,
-      Long pipelineId,
-      String pipelineName,
-      Long userId,
-      PipelineSecurityGate.RunAs runAs,
-      String logLabel) {
-    StepTemp temp =
-        ensureStepTemp(step, columns, pipelineId, pipelineName, userId, runAs, logLabel);
-    if (!temp.fresh()) {
-      pipelineSecurityGate.requireOutputVisible(temp.datasetId(), runAs);
-    }
-    return temp.datasetId();
   }
 
   /**

@@ -13,7 +13,6 @@ from app.config import Settings
 from app.tenant import (
     MAX_READ_SLOT,
     TenantResolutionError,
-    resolve_db_url,
     resolve_password,
     resolve_read_db_url,
     resolve_read_password,
@@ -90,32 +89,6 @@ def test_empty_secret_rejected():
     """secret 이 비면 모든 테넌트 비밀번호가 예측 가능해진다 → 조용히 넘기지 않는다."""
     with pytest.raises(TenantResolutionError):
         resolve_password(1, "")
-
-
-# ---------------------------------------------------------------------------
-# DB_URL 조립 — 공유 롤 자격증명이 새어 나가지 않아야 한다
-# ---------------------------------------------------------------------------
-
-def test_db_url_uses_tenant_role_not_shared_role():
-    settings = Settings(
-        db_host="db",
-        db_port=5432,
-        db_name="firehub",
-        db_user="pipeline_executor",
-        db_password="shared-role-password",
-        internal_service_token="t",
-        role_password_secret=TEST_ROLE_SECRET,
-    )
-
-    url = resolve_db_url(2, settings)
-
-    assert url == (
-        "postgresql://pipeline_executor_t2:"
-        f"{JAVA_DERIVED_PASSWORDS[2]}@db:5432/firehub"
-    )
-    # 공유 롤 이름·비밀번호가 사용자 스크립트로 새면 이 밴드의 통제가 무의미해진다.
-    assert "shared-role-password" not in url
-    assert "pipeline_executor:" not in url
 
 
 # ---------------------------------------------------------------------------

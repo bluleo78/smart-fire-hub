@@ -155,25 +155,6 @@ def _hmac_hex(secret: str, message: str) -> str:
     return digest[:_PASSWORD_LENGTH]
 
 
-def resolve_db_url(tenant_id: int, settings: "Settings") -> str:
-    """테넌트 실행 롤(pipeline_executor_t*) 자격증명으로 ``postgresql://`` URL 을 조립한다.
-
-    nsjail 경로와 비nsjail 경로가 **같은** 함수를 쓰도록 여기 한 곳에 둔다. 두 경로가 각자
-    문자열을 이어 붙이면 nsjail 설정에 따라 접속 주체가 조용히 갈릴 수 있다(#270 의 주석이
-    "동작이 일치한다"고 보장하는 지점이다).
-
-    **사용자 Python 스크립트의 ``DB_URL`` 로 쓰지 말 것(WD-29).** 이 롤(pipeline_executor_t*)은
-    테넌트의 모든 등급 데이터를 읽고 쓴다 — 스크립트에 넘기는 순간 등급 경계가 사라진다. 스크립트에는
-    ``resolve_read_db_url``(슬롯 롤)만 넘기고, executor 자신의 출력 적재는 ``get_connection`` 을 쓴다.
-    """
-    role = resolve_role(tenant_id)
-    password = resolve_password(tenant_id, settings.role_password_secret)
-    return (
-        f"postgresql://{role}:{password}"
-        f"@{settings.db_host}:{settings.db_port}/{settings.db_name}"
-    )
-
-
 def resolve_read_role(tenant_id: int, slot: int) -> str:
     """PYTHON 읽기 슬롯 롤 이름 — ``pipeline_py_t{id}_s{k}``.
 
@@ -193,7 +174,7 @@ def resolve_read_password(tenant_id: int, slot: int, secret: str) -> str:
 def resolve_read_db_url(tenant_id: int, slot: int, settings: "Settings") -> str:
     """사용자 스크립트에 넘길 DB_URL — 슬롯 롤로 **직접 로그인**한다(SET ROLE 아님: 스크립트가 RESET ROLE 로 되돌릴 수 있다).
 
-    테넌트 실행 롤(resolve_db_url)로 폴백하는 분기를 **절대 추가하지 말 것** — 슬롯 롤 인증 실패는
+    테넌트 실행 롤(pipeline_executor_t*) 자격증명으로 폴백하는 분기를 **절대 추가하지 말 것** — 슬롯 롤 인증 실패는
     실행 실패로 드러나야 한다(스펙 §4.2 fail-closed).
     """
     role = resolve_read_role(tenant_id, slot)

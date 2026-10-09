@@ -203,7 +203,7 @@ EXPECTED_TENANT_2_URL = (
 )
 
 
-def test_fallback_env_uses_tenant_role_credentials():
+def test_fallback_env_uses_read_slot_role_credentials():
     settings = make_settings(nsjail_enabled=False)
     with patch("app.services.python_executor.subprocess.run") as mock_run, \
          patch("app.services.python_executor.os.unlink"):
@@ -215,11 +215,11 @@ def test_fallback_env_uses_tenant_role_credentials():
     # P3-b2 — 테넌트 2 는 data_t2 를 받는다(테넌트 1 만 레거시 data 를 유지).
     assert env["DB_SCHEMA"] == "data_t2"
     # 공유 롤 자격증명(settings.db_user/db_password)이 스크립트로 새지 않는다.
-    assert "pipeline_executor:" not in env["DB_URL"]
+    assert "pipeline_executor_t" not in env["DB_URL"]
     assert settings.db_password not in env["DB_URL"]
 
 
-def test_nsjail_env_uses_tenant_role_credentials():
+def test_nsjail_env_uses_read_slot_role_credentials():
     settings = make_settings(nsjail_enabled=True)
     with patch("app.services.python_executor.subprocess.run") as mock_run, \
          patch("app.services.python_executor.os.unlink"):
