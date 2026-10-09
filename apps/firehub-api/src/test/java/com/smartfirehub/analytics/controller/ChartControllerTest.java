@@ -170,6 +170,6 @@ class ChartControllerTest {
     // ChartResponse 레코드는 필드가 많을 수 있으므로 Map 기반 실제 필드 세팅 대신 null/빈 값으로 생성한다.
     // 레코드 필드가 바뀌면 컴파일 에러로 즉시 감지된다.
     return new ChartResponse(
-        id, "name", null, 1L, "query", "bar", Map.of(), false, "user", 1L, null, null, 0L);
+        id, "name", null, 1L, "query", "bar", Map.of(), false, "user", 1L, null, null, 0L, false);
   }
 }

@@ -2,8 +2,12 @@ package com.smartfirehub.securitylevel;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.analytics.dto.ChartDataResponse;
+import com.smartfirehub.analytics.dto.ChartResponse;
 import com.smartfirehub.analytics.dto.DashboardDataResponse;
+import com.smartfirehub.analytics.dto.UpdateChartRequest;
 import com.smartfirehub.analytics.service.AnalyticsDashboardService;
 import com.smartfirehub.analytics.service.ChartService;
 import com.smartfirehub.global.tenant.DataSchema;
@@ -138,6 +142,7 @@ class ChartDeniedTest extends IntegrationTestBase {
         () -> {
           dashboards.forEach(id -> dsl.execute("delete from dashboard where id = ?", id));
           dsl.execute("delete from chart where created_by = ?", owner);
+          reassignedOwners.forEach(u -> dsl.execute("delete from chart where created_by = ?", u));
           dsl.execute("delete from saved_query where created_by = ?", owner);
         });
     datasets.forEach(fx::deleteDatasetRow);
@@ -373,5 +378,95 @@ class ChartDeniedTest extends IntegrationTestBase {
     assertThat(secAccessRows(warmer)).isEqualTo(1);
     assertThat(secAccessRows(hitter)).isEqualTo(1);
     assertThat(secAccessRows(denied)).isZero();
+  }
+
+  // ------------------------------------------------------------ WD-31② config 가림
+
+  private static final ObjectMapper JSON = new ObjectMapper();
+  private final List<Long> reassignedOwners = new ArrayList<>();
+
+  /** WD-31②: 저장 쿼리를 통과하지 못하는 조회자에게는 config(컬럼명)를 주지 않는다 — 단건·목록 모두. 볼 수 있는 차트는 그대로. */
+  @Test
+  void getAndList_withholdConfigForViewerWhoCannotRunSavedQuery() {
+    setConfig(secChart, Map.of("xAxis", "v", "yAxis", List.of("v")));
+    setConfig(pubChart, Map.of("xAxis", "v", "yAxis", List.of("v")));
+    long viewer = viewerAt("공개");
+    ChartResponse one = chartService.getById(secChart, viewer);
+    assertThat(one.config()).isNull();
+    assertThat(one.configWithheld()).isTrue();
+    var page = chartService.list(null, null, null, null, viewer, 0, 200);
+    ChartResponse listed =
+        page.content().stream().filter(c -> c.id().equals(secChart)).findFirst().orElseThrow();
+    assertThat(listed.config()).isNull();
+    assertThat(listed.configWithheld()).isTrue();
+    // 양성 대조: 볼 수 있는 차트는 단건·목록 모두 config 를 그대로 받는다.
+    ChartResponse pub = chartService.getById(pubChart, viewer);
+    assertThat(pub.configWithheld()).isFalse();
+    assertThat(pub.config()).containsEntry("xAxis", "v");
+    ChartResponse listedPub =
+        page.content().stream().filter(c -> c.id().equals(pubChart)).findFirst().orElseThrow();
+    assertThat(listedPub.configWithheld()).isFalse();
+    assertThat(listedPub.config()).containsEntry("xAxis", "v");
+  }
+
+  @Test
+  void viewerWhoCanRun_seesConfig() {
+    setConfig(secChart, Map.of("xAxis", "v", "yAxis", List.of("v")));
+    ChartResponse c = chartService.getById(secChart, viewerAt("민감"));
+    assertThat(c.configWithheld()).isFalse();
+    assertThat(c.config()).containsEntry("xAxis", "v");
+  }
+
+  /** 가려진 소유자가 config 없이 저장해도 기존 config 는 유지되고, 응답도 가린다. */
+  @Test
+  void update_withNullConfig_keepsStoredConfig_andResponseIsWithheld() {
+    setConfig(secChart, Map.of("xAxis", "v", "yAxis", List.of("v")));
+    long lowOwner = viewerAt("공개");
+    reassignOwner(secChart, lowOwner);
+    ChartResponse res =
+        chartService.update(
+            secChart, new UpdateChartRequest("새 이름", null, null, null, null), lowOwner);
+    assertThat(res.name()).isEqualTo("새 이름");
+    assertThat(res.config()).isNull();
+    assertThat(res.configWithheld()).isTrue();
+    assertThat(storedConfig(secChart)).containsEntry("xAxis", "v");
+  }
+
+  private void setConfig(long chartId, Map<String, Object> config) {
+    String json;
+    try {
+      json = JSON.writeValueAsString(config);
+    } catch (JsonProcessingException e) {
+      throw new IllegalStateException(e);
+    }
+    TenantRlsTestSupport.runInTenantTransaction(
+        fixtureTransactionTemplate,
+        DEFAULT_TEST_TENANT_ID,
+        () -> dsl.execute("update chart set config = ?::jsonb where id = ?", json, chartId));
+  }
+
+  /** 소유자를 바꾼다 — 자격이 낮은 소유자가 저장하는 경우를 만든다. tearDown 이 이 사용자 소유 차트도 지우도록 기록한다. */
+  private void reassignOwner(long chartId, long userId) {
+    reassignedOwners.add(userId);
+    TenantRlsTestSupport.runInTenantTransaction(
+        fixtureTransactionTemplate,
+        DEFAULT_TEST_TENANT_ID,
+        () -> dsl.execute("update chart set created_by = ? where id = ?", userId, chartId));
+  }
+
+  @SuppressWarnings("unchecked")
+  private Map<String, Object> storedConfig(long chartId) {
+    String json =
+        TenantRlsTestSupport.runInTenantTransaction(
+            fixtureTransactionTemplate,
+            DEFAULT_TEST_TENANT_ID,
+            () ->
+                dsl.fetchOne("select config::text from chart where id = ?", chartId)
+                    .get(0, String.class));
+    try {
+      return JSON.readValue(json, Map.class);
+    } catch (JsonProcessingException e) {
+      throw new IllegalStateException(e);
+    }
   }
 }

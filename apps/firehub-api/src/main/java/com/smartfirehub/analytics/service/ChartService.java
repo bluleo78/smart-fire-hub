@@ -12,6 +12,7 @@ import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.sql.GuardedSqlExecutor;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
@@ -39,8 +40,12 @@ public class ChartService {
       Long userId,
       int page,
       int size) {
+    // 저장 쿼리를 통과하지 못하는 조회자에게는 config(원본 컬럼명)를 가린다(WD-31②).
     List<ChartResponse> content =
-        chartRepository.findAll(search, chartType, savedQueryId, sharedOnly, userId, page, size);
+        withholdDenied(
+            chartRepository.findAll(
+                search, chartType, savedQueryId, sharedOnly, userId, page, size),
+            userId);
     long total = chartRepository.countAll(search, chartType, savedQueryId, sharedOnly, userId);
     int totalPages = (int) Math.ceil((double) total / size);
     return new PageResponse<>(content, page, size, total, totalPages);
@@ -61,9 +66,11 @@ public class ChartService {
       }
     }
     Long id = chartRepository.insert(req, userId);
-    return chartRepository
-        .findById(id, userId)
-        .orElseThrow(() -> new ChartNotFoundException("Chart not found after insert"));
+    return withholdDenied(
+        chartRepository
+            .findById(id, userId)
+            .orElseThrow(() -> new ChartNotFoundException("Chart not found after insert")),
+        userId);
   }
 
   /** Get a single chart — owner or any shared chart. */
@@ -72,9 +79,11 @@ public class ChartService {
   // 아래에서 같은 @Transactional(readOnly=true)로 열려 있어 프록시를 안 타도 무해하다.
   @Transactional(readOnly = true)
   public ChartResponse getById(Long id, Long userId) {
-    return chartRepository
-        .findById(id, userId)
-        .orElseThrow(() -> new ChartNotFoundException("Chart not found: " + id));
+    return withholdDenied(
+        chartRepository
+            .findById(id, userId)
+            .orElseThrow(() -> new ChartNotFoundException("Chart not found: " + id)),
+        userId);
   }
 
   /** Update a chart (owner only). */
@@ -94,9 +103,11 @@ public class ChartService {
       }
     }
     chartRepository.update(id, req, userId);
-    return chartRepository
-        .findByIdForOwner(id, userId)
-        .orElseThrow(() -> new ChartNotFoundException("Chart not found: " + id));
+    return withholdDenied(
+        chartRepository
+            .findByIdForOwner(id, userId)
+            .orElseThrow(() -> new ChartNotFoundException("Chart not found: " + id)),
+        userId);
   }
 
   /** Delete a chart (owner only). */
@@ -156,7 +167,12 @@ public class ChartService {
   // RLS 가 걸린 chart 를 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
   @Transactional(readOnly = true)
   public ChartDataResponse getChartData(Long id, Long userId) {
-    ChartResponse chart = getById(id, userId);
+    // getById 가 아니라 리포지토리 원본을 쓴다 — getById 의 config 가림 판정과 아래 판정이 같은 저장 쿼리를 두 번 판정하지 않게. 통과하면
+    // 조회자가 데이터를 보므로 config 를 그대로 주고, 거부면 deniedData 가 config 를 빈 맵으로 지운다.
+    ChartResponse chart =
+        chartRepository
+            .findById(id, userId)
+            .orElseThrow(() -> new ChartNotFoundException("Chart not found: " + id));
     String sqlText =
         chartRepository
             .findSavedQuerySqlText(id, userId)
@@ -176,10 +192,50 @@ public class ChartService {
   }
 
   /**
+   * 조회자가 차트의 저장 쿼리를 SQL 판정으로 통과하지 못하면 config 를 가린다(WD-31②, 스펙 §5.1). 저장 쿼리 id 단위로 요청 범위 캐시 — 목록에서
+   * 같은 쿼리를 쓰는 차트마다 다시 판정하지 않는다. 빈 SQL·사라진 저장 쿼리는 가릴 대상이 없다.
+   */
+  private List<ChartResponse> withholdDenied(List<ChartResponse> charts, Long userId) {
+    if (charts.isEmpty()) {
+      return charts;
+    }
+    Clearance viewer = clearanceResolver.resolve(userId);
+    Map<Long, Boolean> deniedByQuery = new HashMap<>();
+    return charts.stream()
+        .map(
+            c -> {
+              // computeIfAbsent 는 null 키를 허용하지 않는 구현이 있어(HashMap 은 허용) 저장 쿼리 없는 차트는 먼저 걸러낸다.
+              if (c.savedQueryId() == null) {
+                return c;
+              }
+              boolean denied =
+                  deniedByQuery.computeIfAbsent(c.savedQueryId(), q -> isDenied(viewer, q));
+              return denied ? c.withConfigWithheld() : c;
+            })
+        .toList();
+  }
+
+  private ChartResponse withholdDenied(ChartResponse chart, Long userId) {
+    return withholdDenied(List.of(chart), userId).get(0);
+  }
+
+  /**
+   * 저장 쿼리 SQL 을 조회자 자격으로 판정만 한다(실행 X). 파싱 불가 SQL 은 거부가 아니다(기존 200 + error 계약, 판정 토큰의 denied=false).
+   */
+  private boolean isDenied(Clearance viewer, Long savedQueryId) {
+    return chartRepository
+        .findSavedQuerySqlTextById(savedQueryId)
+        .filter(sql -> !sql.isBlank())
+        .map(sql -> judge(viewer, sql).denied())
+        .orElse(false);
+  }
+
+  /**
    * denied 위젯 응답 — queryResult 는 null 이 아닌 빈 결과(null 이면 차트 빌더 등 다른 소비자가 깨진다, 판단 사항 7). 거부 코드·원본 이름은
    * 싣지 않는다. chart 는 웹 잠금 상태가 쓰는 최소 메타만 남긴다 — config(원본 테이블의 컬럼명이 들어 있다)는 빈 맵, savedQueryName 은
-   * null. 빈 맵인 이유: config 를 순회하는 소비자(웹 ChartRenderer·ai-agent)가 null 에서 깨지지 않게. GET /charts/{id} 의
-   * config 는 소유자 재저장 덮어쓰기 위험 때문에 그대로 둔다(알려진 한계).
+   * null. 빈 맵인 이유: config 를 순회하는 소비자(웹 ChartRenderer·ai-agent)가 null 에서 깨지지 않게. 데이터 응답이라
+   * configWithheld=true 로 표시한다. GET/목록/저장 응답의 가림은 {@link #withholdDenied} 가 config=null 로 한다(그쪽은
+   * 재저장 시 "유지" 계약 때문에 null).
    */
   public static ChartDataResponse deniedData(ChartResponse chart) {
     ChartResponse minimal =
@@ -196,7 +252,8 @@ public class ChartService {
             chart.createdBy(),
             chart.createdAt(),
             chart.updatedAt(),
-            chart.dashboardCount());
+            chart.dashboardCount(),
+            true);
     return new ChartDataResponse(
         minimal,
         new com.smartfirehub.analytics.dto.AnalyticsQueryResponse(
