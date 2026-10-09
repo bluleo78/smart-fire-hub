@@ -105,9 +105,9 @@ class PipelineAsyncRunnerTest {
   @BeforeEach
   void setTenantContext() {
     TenantContext.set(1L);
-    // AI_CLASSIFY 분기가 실행 주체 자격(runAs.clearance())을 AI 판정에 넘긴다 — 목 기본값(null RunAs)이면 역참조에서 끊기므로 빈
-    // 자격의 RunAs 를
-    // 기본으로 둔다. 특정 RunAs 가 필요한 테스트는 자기 스텁으로 덮어쓴다. 쓰지 않는 테스트가 있어 lenient.
+    // AI_CLASSIFY 분기가 실행 주체 자격(runAs.clearance())을 AI 판정에 넘긴다.
+    // 목 기본값(null RunAs)이면 역참조에서 끊기므로 빈 자격의 RunAs 를 기본으로 둔다.
+    // 특정 RunAs 가 필요한 테스트는 자기 스텁으로 덮어쓴다. 쓰지 않는 테스트가 있어 lenient.
     lenient()
         .when(pipelineSecurityGate.runAs(any()))
         .thenAnswer(inv -> new PipelineSecurityGate.RunAs(inv.getArgument(0), null));

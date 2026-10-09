@@ -251,6 +251,33 @@ public class DatasetAccessGuard {
     }
   }
 
+  /**
+   * id 목록이 전부 VIEW + AI(+SHARE) 허용인가 — 예외 없이 값으로 답한다. 거부를 오류 응답이 아니라 원문 가림으로 바꾸는 호출부(파이프라인 실행 기록의
+   * 원문 오류·로그 공개 판정)가 쓴다. 없는 id·null id·볼 수 없는 id 는 불허(fail-closed), 빈 목록은 허용(LLM 으로 갈 데이터셋 값이 없다).
+   */
+  public boolean checkAiForDatasets(Clearance c, Collection<Long> datasetIds, AiCall call) {
+    if (datasetIds.isEmpty()) {
+      return true;
+    }
+    if (datasetIds.stream().anyMatch(Objects::isNull)) {
+      return false;
+    }
+    Map<Long, AccessFacts> facts = accessRepository.findFactsByDatasetIds(datasetIds, c);
+    for (Long id : datasetIds) {
+      AccessFacts f = facts.get(id);
+      if (f == null || !decide(c, f, DatasetAction.VIEW, null).allowed()) {
+        return false;
+      }
+      if (!decide(c, f, DatasetAction.AI, call.hosting()).allowed()) {
+        return false;
+      }
+      if (call.share() && !decide(c, f, DatasetAction.SHARE, null).allowed()) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   /** 이미 VIEW 를 통과한 사실에 AI·SHARE 를 판정한다. Decision 의 policyKey 를 그대로 싣는다. */
   void requireAiFacts(Clearance c, AccessFacts f, AiCall call) {
     Decision ai = decide(c, f, DatasetAction.AI, call.hosting());

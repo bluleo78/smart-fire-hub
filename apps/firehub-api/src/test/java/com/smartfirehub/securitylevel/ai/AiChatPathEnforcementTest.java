@@ -80,7 +80,8 @@ class AiChatPathEnforcementTest extends IntegrationTestBase {
             "dataset:read",
             "data:read",
             "analytics:read",
-            "analytics:write");
+            "analytics:write",
+            "data:import");
     roles.add(roleId);
     fx.assignRole(userId, roleId);
     publicId = realTable(marker + "_pub", "공개");
@@ -341,6 +342,68 @@ class AiChatPathEnforcementTest extends IntegrationTestBase {
     assertThat(listIds(ai(get("/api/v1/datasets?search=" + marker), "none")))
         .containsExactlyInAnyOrder(publicId, sensitiveId);
     assertThat(run(ai(get("/api/v1/datasets/" + sensitiveId), "none")).getStatus()).isEqualTo(200);
+  }
+
+  /** POST JSON 요청 빌더. */
+  private MockHttpServletRequestBuilder postJson(String path, String body) {
+    return post(path).contentType(MediaType.APPLICATION_JSON).content(body);
+  }
+
+  /**
+   * 행 검색(/datasets/{id}/rows/search)은 데이터셋 경로 인터셉터의 requireView 가 AI 판정까지 건다 — 핸들러(색인 미설정 등)보다 먼저
+   * 403 POLICY_BLOCKED. 대조군: 같은 AI 요청의 공개 데이터셋과 같은 사용자의 웹 요청은 정책 차단이 아니다(색인 미설정 응답은 상관없다).
+   */
+  @Test
+  void rowSearch_aiExternal_is403PolicyBlocked() throws Exception {
+    String body = "{\"query\":\"x\",\"mode\":\"KEYWORD\"}";
+    assertPolicyBlocked(
+        run(ai(postJson("/api/v1/datasets/" + sensitiveId + "/rows/search", body), null)),
+        "AI",
+        "민감",
+        "ai_policy");
+    for (MockHttpServletResponse r :
+        List.of(
+            run(ai(postJson("/api/v1/datasets/" + publicId + "/rows/search", body), null)),
+            run(web(postJson("/api/v1/datasets/" + sensitiveId + "/rows/search", body))))) {
+      assertThat(r.getStatus()).isNotEqualTo(403);
+      assertThat(r.getContentAsString()).doesNotContain("POLICY_BLOCKED");
+    }
+  }
+
+  /** 데이터셋 SQL 쿼리(/datasets/{id}/query) — AI 요청은 403 POLICY_BLOCKED, 같은 사용자의 웹 요청은 실행된다. */
+  @Test
+  void datasetQuery_aiExternal_isPolicyBlocked() throws Exception {
+    String body = "{\"sql\":\"SELECT * FROM " + sensitiveTable + "\",\"maxRows\":10}";
+    assertPolicyBlocked(
+        run(ai(postJson("/api/v1/datasets/" + sensitiveId + "/query", body), null)),
+        "AI",
+        "민감",
+        "ai_policy");
+    MockHttpServletResponse webResponse =
+        run(web(postJson("/api/v1/datasets/" + sensitiveId + "/query", body)));
+    assertThat(webResponse.getStatus()).as(webResponse.getContentAsString()).isEqualTo(200);
+  }
+
+  /**
+   * 카탈로그 키워드 검색(/datasets/search, find_datasets 경로) — AI 요청 결과에서 민감 데이터셋이 빠진다(visibleSql 의 AI 훅).
+   */
+  @Test
+  void catalogSearch_aiExternal_excludesSensitive() throws Exception {
+    String body = "{\"query\":\"" + marker + "\",\"mode\":\"KEYWORD\",\"topK\":20}";
+    // 대조군 먼저: 웹 요청이 두 데이터셋을 다 찾아야 AI 요청의 "제외"가 색인 부재가 아니라 정책 때문임이 드러난다.
+    assertThat(searchIds(web(postJson("/api/v1/datasets/search", body))))
+        .contains(publicId, sensitiveId);
+    assertThat(searchIds(ai(postJson("/api/v1/datasets/search", body), null)))
+        .contains(publicId)
+        .doesNotContain(sensitiveId);
+  }
+
+  private List<Long> searchIds(MockHttpServletRequestBuilder b) throws Exception {
+    MockHttpServletResponse r = run(b);
+    assertThat(r.getStatus()).as(r.getContentAsString()).isEqualTo(200);
+    List<Long> ids = new ArrayList<>();
+    om.readTree(r.getContentAsString()).forEach(n -> ids.add(n.get("datasetId").asLong()));
+    return ids;
   }
 
   /** 공개 등급까지만 보는 사용자(민감 데이터셋이 숨김). */

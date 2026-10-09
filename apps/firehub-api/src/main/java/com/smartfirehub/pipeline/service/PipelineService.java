@@ -21,12 +21,16 @@ import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.securitylevel.access.DatasetAction;
 import com.smartfirehub.securitylevel.access.SqlAccessMode;
+import com.smartfirehub.securitylevel.access.SqlAccessResult;
 import com.smartfirehub.securitylevel.ai.AiCall;
+import com.smartfirehub.securitylevel.ai.AiCallContext;
 import com.smartfirehub.securitylevel.ai.AiHostingResolver;
 import com.smartfirehub.user.repository.UserRepository;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -68,6 +72,9 @@ public class PipelineService {
 
   /** AI_CLASSIFY 입력 판정의 분류 공급자 호스팅(S3 §4.3) — 채팅이 아니라 실제로 분류를 맡을 공급자 기준이다. */
   private final AiHostingResolver aiHostingResolver;
+
+  /** AI 대행 요청 판별(S3 §4.3) — 실행 기록 원문이 LLM 으로 갈 때 관련 데이터셋의 AI(+SHARE) 정책까지 본다. */
+  private final AiCallContext aiCallContext;
 
   /**
    * 원문 오류를 볼 수 없는 조회자에게 스텝·실행 오류 대신 보여 주는 고정 문구(WD-27). 원문(PG 오류)에는 숨김 테이블명·행 값이 실릴 수 있어 일부만 지우지 않고
@@ -142,9 +149,9 @@ public class PipelineService {
         // 없다(SQL 스텝의 저장 판정과 같은 의미). 의존 스텝 출력 자동 해석분은 실행 시점에 판정된다.
         if (stepRequest.inputDatasetIds() != null && !stepRequest.inputDatasetIds().isEmpty()) {
           pipelineSecurityGate.checkStepInputsForSave(editorUserId, stepRequest.inputDatasetIds());
-          // S3 §4.3: AI_CLASSIFY 입력은 분류 공급자로 간다 — 편집자 기준 AI 판정(분류 호스팅). PipelineSecurityGate(흐름 B
-          // 소유)는 고치지
-          // 않고 여기서 가드를 직접 부른다. editorUserId 가 null 이면 바로 위 판정이 이미 거부했으므로 여기 오지 않는다.
+          // S3 §4.3: AI_CLASSIFY 입력은 분류 공급자로 간다 — 편집자 기준 AI 판정(분류 호스팅).
+          // PipelineSecurityGate(흐름 B 소유)는 고치지 않고 여기서 가드를 직접 부른다.
+          // editorUserId 가 null 이면 바로 위 판정이 이미 거부했으므로 여기 오지 않는다.
           datasetAccessGuard.requireAiForDatasets(
               clearanceResolver.resolve(editorUserId),
               stepRequest.inputDatasetIds(),
@@ -779,16 +786,20 @@ public class PipelineService {
     }
     boolean judged = false;
     boolean undetermined = false;
+    // AI 판정 대상 — 아래 VIEW 판정을 거친 데이터셋 전부(출력·명시 입력·{{#N}} 참조 출력·SQL 읽기/쓰기 대상).
+    Set<Long> touched = new LinkedHashSet<>();
     if (step.outputDatasetId() != null) {
       if (!canView(viewer, step.outputDatasetId())) {
         return false;
       }
+      touched.add(step.outputDatasetId());
       judged = true;
     }
     if (step.inputDatasetIds() != null && !step.inputDatasetIds().isEmpty()) {
       if (!datasetAccessGuard.checkDatasetReads(viewer, step.inputDatasetIds()).allowed()) {
         return false;
       }
+      touched.addAll(step.inputDatasetIds());
     }
     if ("SQL".equals(step.scriptType()) && step.scriptContent() != null) {
       // {{#N}} — step_order 의 N 번째 스텝(1-based)의 해석된 출력(러너 resolveStepReferences 와 같은 해석).
@@ -803,17 +814,21 @@ public class PipelineService {
           undetermined = true;
         } else if (!canView(viewer, refOutput)) {
           return false;
+        } else {
+          touched.add(refOutput);
         }
       }
       try {
-        if (!datasetAccessGuard
-            .checkSql(
+        SqlAccessResult sqlAccess =
+            datasetAccessGuard.checkSql(
                 viewer,
                 substituteStepReferencesForValidation(step.scriptContent()),
-                SqlAccessMode.PIPELINE_SAVE)
-            .allowed()) {
+                SqlAccessMode.PIPELINE_SAVE);
+        if (!sqlAccess.allowed()) {
           return false;
         }
+        touched.addAll(sqlAccess.readDatasetIds());
+        touched.addAll(sqlAccess.writeDatasetIds());
         judged = true;
       } catch (UnsafeSqlException e) {
         // 파싱 불가·모호 표기 — 판정할 수 없으므로 근거 없는 스텝과 같이 다룬다.
@@ -824,7 +839,16 @@ public class PipelineService {
         return false;
       }
     }
-    return (judged && !undetermined) || undeterminedAllowed;
+    Optional<AiCall> ai = aiCallContext.current();
+    if (ai.isEmpty()) {
+      return (judged && !undetermined) || undeterminedAllowed;
+    }
+    // AI 대행 요청(S3 §4.3): 원문(PG 오류·로그 — 행 값이 실릴 수 있다)이 외부 LLM 으로 간다. undeterminedAllowed 는 "이 사람이 봐도
+    // 된다"는 근거일 뿐 "LLM 으로 보내도 된다"는 근거가 아니므로 쓰지 않는다 — 근거가 있고 관련 데이터셋이 전부 AI(+SHARE) 허용일 때만
+    // 원문, 아니면 가림 문구(예외 대신 가림 — 실행 기록 자체는 계속 볼 수 있어야 한다).
+    return judged
+        && !undetermined
+        && datasetAccessGuard.checkAiForDatasets(viewer, touched, ai.get());
   }
 
   /** 조회자 기준 데이터셋 VIEW 여부(없는 데이터셋도 거부). */
