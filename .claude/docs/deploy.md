@@ -383,6 +383,23 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
     - 복원된다: 롤백 기간에 생긴 연결·매핑 중 **재배포 시점에 아직 남아 있는 것**(현재 `dataset_ontology`·`dataset_mapping` 행).
     - 복원되지 않는다: 롤백 기간 **안에서** 다른 온톨로지로 재연결됐거나 삭제된 매핑의 **옛** 온톨로지 출처. 그 사이 옛 온톨로지로 적재했다면 그래프에 내용이 남아 있는데 출처가 없어 누구나 읽는다(위 "출처 기록이 없는 온톨로지" 한계). 롤백 시작 시각 이후 `dataset_ontology.bound_at` 이 바뀐 데이터셋을 뽑아(`SELECT tenant_id, dataset_id, ontology_id, bound_at FROM dataset_ontology WHERE bound_at > '<롤백 시작 시각>'`) 그 기간의 `dataset_graph_ingest` 이력과 대조하고, 필요하면 옛 온톨로지 출처를 수동 INSERT 한다(위 재연결 점검과 같은 방식).
 
+### S3 AI 통제 (WD-39·WD-40·WD-31⑤, 마이그레이션 없음 · 계획 2026-10-09 · 배포일은 배포 시점에 갱신)
+
+- **api + web + ai-agent 동시 배포 필수.** api 만 올리면 ai-agent 가 POLICY_BLOCKED 를 일반 오류 문자열로 보이고, ai-agent 만 올리면 `X-AI-Purpose` 헤더를 받아 줄 api 가 없다. 흐름 B·C 와 함께 한 번에 배포한다(보충 스펙 1절).
+- 마이그레이션 없음. 다음 신규 마이그레이션 번호는 위 V135 절의 값 그대로다.
+- **배포 직후 가시성 변화(의도된 동작)**: 모든 AI 자격증명·임베딩 설정의 호스팅 위치가 기본 "외부"다. 그래서 `ai_policy = SELF_HOSTED_ONLY|DENY` 등급(기본 시드: 민감·기밀)의 데이터셋은
+  - AI 채팅의 데이터셋 목록·검색·스키마 목록에서 빠지고, 상세·행·SQL 도구는 "차단됨"(POLICY_BLOCKED)이 된다.
+  - 시맨틱 검색·행 검색의 의미 검색 대상에서 빠진다(행 검색은 키워드 검색만, 상태 `KEYWORD_ONLY`).
+  - AI_CLASSIFY 스텝은 저장·실행이 POLICY_BLOCKED 로 실패한다(분류 공급자가 외부로 선언된 동안).
+- **기동 시 1회 정리 잡**: 기동 완료 후 백그라운드에서 테넌트별로 정책 위반 벡터(메타 임베딩·문서 청크 벡터·행 검색 벡터)를 지우고 `tenant_settings.security.ai_vector_purge_v1 = done` 을 남긴다. 예외가 나거나 행 검색 색인 정리가 하나라도 실패한 테넌트는 플래그를 남기지 않아 다음 기동에 다시 돈다(정리는 멱등). 확인(소유자 롤): `SELECT tenant_id, value, updated_at FROM tenant_settings WHERE key = 'security.ai_vector_purge_v1';` — ACTIVE 테넌트 수와 행 수가 같아야 한다. 모자라면 api 로그의 "배포 시점 외부 벡터 정리" 경고를 본다. 끄려면 api 컨테이너 환경에 `SECURITY_AI_VECTOR_PURGE_STARTUP_ENABLED=false`(비상용 — `.env` 에만 두면 주입되지 않으니 compose 의 `environment` 에 넣는다).
+- **이후 정리 트리거**: 데이터셋 등급 변경·등급 정의 변경·임베딩 호스팅 선언 변경이 커밋되면 같은 정리가 비동기로 돈다(현재 상태 기준이라 방향과 무관하게 멱등).
+- **운영 조치(자체 호스팅 Ollama 를 쓰는 테넌트)**: 운영 임베딩은 호스트 Ollama(bge-m3)다. 관리자가 **설정 › 임베딩 › 호스팅 위치 = 자체 호스팅**을 저장하면 재임베딩 잡이 투입되고 행 검색 스윕이 의미 색인을 다시 만든다(수 분~). 자체 호스팅 선언에는 `security:settings` 권한이 필요하다. 채팅·분류 자격증명이 사내 opencode 게이트웨이면 같은 화면(AI 탭)에서 선언한다. **Claude 계열(sdk/cli/cli-api)은 항상 외부**라 선언할 수 없다.
+- **GraphRAG 기적재분은 자동 회수되지 않는다**(스펙 §7.5). 배포 전 민감·기밀 데이터셋을 GraphRAG 에 적재한 이력이 있으면 V133·V134 절의 수동 점검 절차를 따른다.
+- **공유 목적 규칙**: GraphRAG 적재·추론과 Proactive 리포트는 채팅·임베딩이 **둘 다** 자체 호스팅으로 선언돼야 민감 데이터를 쓴다(GraphRAG 가 엔티티 이름을 임베딩 공급자로도 보내기 때문).
+- 알려진 한계: Slack 인바운드 채팅(Slack 에서 묻고 Slack 으로 답)은 SHARE 판정을 하지 않는다(채팅과 같은 AI 판정만). 정리 시점에 이미 진행 중인 행 검색 동기화 주기는 다음 배치 전에 게이트를 다시 보고 멈추며, 남은 벡터는 다음 주기의 키워드 전용 재색인 때 사라진다.
+- 감사: 공급자 호스팅 선언 변경은 `audit_log.action_type = 'AI_PROVIDER_HOSTING_CHANGE'`(대상 슬롯·이전값·새값·사용자)로 남는다.
+- 롤백: 이미지만 이전 버전으로(api+web+ai-agent 함께). DB 는 그대로 둔다 — 구 코드는 `payload.hosting`·`embedding.config.hosting`·플래그 키를 읽지 않는다. 정리된 벡터는 롤백 후 재임베딩 판정식이 다시 만든다(외부 공급자로 다시 보내짐에 유의).
+
 ### opencode baseURL 사설망 점검 (이슈 #698)
 
 #693 의 SSRF 가드는 **저장 시점**에만 baseURL 을 검사한다. 그 가드가 생기기 전에 저장된 행에는

@@ -83,3 +83,9 @@ row-search:
   sync:
     # 테스트는 RowSearchSyncService 를 직접 호출한다. 백그라운드 스윕이 끼어들면 호출 횟수 단언이 흔들린다.
     enabled: false
+
+security:
+  ai-vector-purge:
+    # 배포 시점 1회 외부 벡터 정리(AiVectorPurgeStartupRunner)를 끈다 — 컨텍스트가 뜰 때마다 공유 테스트 DB 의 벡터를 지우면
+    # 무관한 임베딩 테스트가 흔들린다. 테스트는 runForCurrentTenant 를 직접 부른다.
+    startup-enabled: false

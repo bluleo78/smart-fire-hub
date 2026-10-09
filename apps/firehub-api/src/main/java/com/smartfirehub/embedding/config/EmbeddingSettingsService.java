@@ -14,8 +14,10 @@ import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.securitylevel.access.ProviderHosting;
 import com.smartfirehub.securitylevel.ai.HostingChangeAuditor;
 import com.smartfirehub.securitylevel.ai.HostingDeclarationPolicy;
+import com.smartfirehub.securitylevel.event.EmbeddingHostingChangedEvent;
 import com.smartfirehub.settings.service.AiCredentialService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 
 /**
@@ -34,6 +36,7 @@ public class EmbeddingSettingsService {
   private final TenantReembedJob reembedJob;
   private final HostingDeclarationPolicy hostingPolicy;
   private final HostingChangeAuditor hostingChangeAuditor;
+  private final ApplicationEventPublisher eventPublisher;
 
   public EmbeddingConfigView view() {
     return configService.view();
@@ -63,8 +66,14 @@ public class EmbeddingSettingsService {
     EmbeddingDimension dimension = measure(draft);
     configService.store(draft, dimension, after, userId);
     // 저장 성공 뒤에만 감사(R3) — 값이 같으면 기록하지 않는다.
+    ProviderHosting stored = configService.hosting();
     hostingChangeAuditor.recordIfChanged(
-        userId, HostingChangeAuditor.Slot.EMBEDDING, before, configService.hosting());
+        userId, HostingChangeAuditor.Slot.EMBEDDING, before, stored);
+    if (before != stored) {
+      // 스펙 §4.3 네 번째 정리 트리거. 실제 저장값 기준(감사와 같은 비교). 정리는 현재 상태 기준 멱등이라 방향과 무관하게 발행한다 —
+      // SELF→EXTERNAL 일 때만 실제로 지울 것이 생기고, 반대 방향은 아래 판정식이 재임베딩을 투입한다.
+      eventPublisher.publishEvent(new EmbeddingHostingChangedEvent(TenantContext.require()));
+    }
     // 판정식 한 규칙(스펙 §3.3-4): 이전 문서와 비교하지 않고, 지금 공간에 없는 벡터가 있으면 투입한다.
     EmbeddingSpace space = new EmbeddingSpace(dimension, draft.model());
     if (backlogService.hasWork(space)) {

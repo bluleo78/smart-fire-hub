@@ -350,6 +350,25 @@ public class DocumentChunkRepository {
         dsl, keep, EmbeddingDimension::chunkTable, TenantContext.require("다른 차원 벡터 정리"));
   }
 
+  /**
+   * 여러 데이터셋의 청크 벡터를 모든 차원에서 지운다(청크 본문 content 는 남겨 키워드 검색 유지). 정책 위반 외부 벡터 정리(AiVectorPurgeService,
+   * S3 §4.3)용 — 지운 행 수를 돌려준다. {@code tenant_id} 를 명시한다(조건 없는 DELETE 금지 규율).
+   */
+  public int deleteVectorsOf(List<Long> datasetIds) {
+    if (datasetIds.isEmpty()) return 0;
+    long tenantId = TenantContext.require("청크 벡터 정리");
+    Long[] ids = datasetIds.toArray(Long[]::new);
+    int deleted = 0;
+    for (EmbeddingDimension d : EmbeddingDimension.values()) {
+      deleted +=
+          dsl.execute(
+              "DELETE FROM " + d.chunkTable() + " WHERE tenant_id = ? AND dataset_id = ANY(?)",
+              tenantId,
+              ids);
+    }
+    return deleted;
+  }
+
   private static String missingPredicate(EmbeddingSpace space) {
     return "NOT EXISTS (SELECT 1 FROM "
         + space.dimension().chunkTable()

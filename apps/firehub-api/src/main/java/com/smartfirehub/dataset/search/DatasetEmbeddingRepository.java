@@ -100,6 +100,25 @@ public class DatasetEmbeddingRepository {
   }
 
   /**
+   * 여러 데이터셋의 모든 차원 벡터를 한 번에 지운다(카탈로그 행·source_text 는 남긴다). 정책 위반 외부 벡터 정리(AiVectorPurgeService, S3
+   * §4.3)용 — 지운 행 수를 돌려준다. RLS 와 별개로 {@code tenant_id} 를 명시한다(소유자 커넥션에서 불려도 남의 행을 지우지 않게).
+   */
+  public int deleteVectorsOf(List<Long> datasetIds) {
+    if (datasetIds.isEmpty()) return 0;
+    long tenantId = TenantContext.require("데이터셋 벡터 정리");
+    Long[] ids = datasetIds.toArray(Long[]::new);
+    int deleted = 0;
+    for (EmbeddingDimension d : EmbeddingDimension.values()) {
+      deleted +=
+          dsl.execute(
+              "DELETE FROM " + d.datasetTable() + " WHERE tenant_id = ? AND dataset_id = ANY(?)",
+              tenantId,
+              ids);
+    }
+    return deleted;
+  }
+
+  /**
    * 카탈로그 행 수(dataset_embedding). 진행률 분모 — 판정식과 같은 모집단이어야 100% 에 닿는다. {@code allowedSql} 은
    * EmbeddingAiGate#allowedDatasetSql("de.dataset_id") — 등급이 임베딩 공급자를 허용하지 않는 데이터셋은 모집단에서 빠진다(S3
    * §4.3).

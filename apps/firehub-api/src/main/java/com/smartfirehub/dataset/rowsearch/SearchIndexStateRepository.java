@@ -59,6 +59,19 @@ public class SearchIndexStateRepository {
         datasetId);
   }
 
+  /**
+   * 정책 정리(S3 §4.3): 상태 모델을 즉시 키워드 전용 표식으로 바꾼다 — 다음 스윕 전에도 검색이 키워드 경로를 타(질의 임베딩 안 함) 외부 공급자로 나가지
+   * 않는다. 해시를 비우고 백오프를 풀어 다음 스윕이 바로 전체 재색인하게 한다({@link #forceFull} 과 같은 방식).
+   */
+  public void markKeywordOnly(long datasetId, String keywordOnlyModel) {
+    dsl.execute(
+        "UPDATE dataset_search_index SET embedding_model = ?, config_hash = '', status = 'SYNCING',"
+            + CLEAR_BACKOFF
+            + " updated_at = now() WHERE dataset_id = ?",
+        keywordOnlyModel,
+        datasetId);
+  }
+
   /** 이번 스윕 대상: 백오프 대기 중이 아닌 것. */
   public List<Long> findDueDatasetIds() {
     return dsl.fetch(
