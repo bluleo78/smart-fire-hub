@@ -23,6 +23,11 @@ export interface ChatProviderOptions {
   temperature?: number;
   maxTokens?: number;
   abortSignal?: AbortSignal;
+  /**
+   * S3: 'share' 면 이 실행의 MCP 호출이 X-AI-Purpose: share 를 싣는다(Proactive 리포트 — 결과가 발송된다).
+   * 'share' 만 허용한다 — 'none'(AI 판정 제외)은 LLM 실행 경로에서 쓰이면 안 된다.
+   */
+  aiPurpose?: 'share';
 }
 
 export interface ChatProvider {

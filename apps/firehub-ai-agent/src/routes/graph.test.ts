@@ -306,3 +306,28 @@ describe('쓰기 라우트는 그래프 읽기 판정을 하지 않는다', () =
     expect(resolveReadableOntologyById).not.toHaveBeenCalled();
   });
 });
+
+// S3: 그래프 뷰어·HITL 승인은 사람이 직접 보는 경로라 api 를 purpose 'none' 으로 역호출해야 한다.
+// 빠뜨리면 api 가 AI 경로로 판정해, 외부 호스팅 테넌트에서 민감 등급 데이터셋이 뷰어·승인에서 막힌다.
+describe('그래프 라우트의 대행 목적(S3)', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("GET /graph 는 purpose 'none' 클라이언트로 읽기 판정을 한다", async () => {
+    vi.mocked(readWholeGraph).mockResolvedValue({ nodes: [], edges: [] });
+    const res = await request(app).get('/agent/graph?ontologyId=5').set(authHeader);
+    expect(res.status).toBe(200);
+    const client = vi.mocked(resolveReadableOntologyById).mock.calls[0][0] as { aiPurpose?: string };
+    expect(client.aiPurpose).toBe('none');
+  });
+
+  it("HITL 승인(merge-entities)도 purpose 'none' 클라이언트로 온톨로지를 해소한다", async () => {
+    mergeEntitiesMock.mockResolvedValue(undefined);
+    const res = await request(app)
+      .post('/agent/graph/merge-entities')
+      .set(authHeader)
+      .send({ entityType: 'Cause', nameA: 'a', nameB: 'b', datasetId: 900 });
+    expect(res.status).toBe(204);
+    const client = vi.mocked(resolveDatasetOntology).mock.calls[0][0] as { aiPurpose?: string };
+    expect(client.aiPurpose).toBe('none');
+  });
+});

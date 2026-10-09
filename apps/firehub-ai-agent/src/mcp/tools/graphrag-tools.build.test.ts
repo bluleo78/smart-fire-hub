@@ -69,6 +69,10 @@ function baseClient(overrides: Partial<any> = {}) {
     // 실제 ontology-source 를 쓰므로 그래프 읽기 판정(WD-28)도 기본은 "읽기 가능"으로 둔다.
     hasDelegatedUser: true,
     getOntologyGraphAccess: vi.fn().mockResolvedValue({ graphReadable: true }),
+    // S3: 적재·추론 도구는 등록 시 withPurpose('share') 클라이언트를 만든다 — 목은 자기 자신을 돌려준다.
+    withPurpose: vi.fn(function (this: unknown) {
+      return this;
+    }),
     ...overrides,
   };
 }
@@ -576,6 +580,52 @@ describe('graphrag_infer_ontology', () => {
     expect(out.skipped).toContainEqual(expect.objectContaining({ datasetId: 999 }));
     expect(out.basedOn).toEqual([{ datasetId: 2, name: '보고서', kind: 'document' }]);
     expect(client.createOntology).toHaveBeenCalled();
+  });
+
+  // S3(WD-39·WD-31⑤): 근거 수집은 share 목적 클라이언트로만 읽고, 정책 차단 데이터셋은 등급과 함께 skipped·출처 제외.
+  it('근거는 share 클라이언트로 읽고, POLICY_BLOCKED 데이터셋은 skipped 로 남기며 출처에서 뺀다', async () => {
+    completeMock.mockResolvedValue(entityJson('A'));
+    const share = {
+      getDataset: vi.fn().mockImplementation(async (id: number) => {
+        if (id === 2) {
+          throw Object.assign(new Error('API 오류 (403): 차단'), {
+            status: 403,
+            policyBlocked: { action: 'SHARE', levelName: '기밀', policyKey: 'share_policy', message: '공유 불가' },
+          });
+        }
+        return { id: 1, name: '보고서', storageType: 'DOCUMENT' };
+      }),
+      listDocumentChunks: vi.fn().mockResolvedValue([{ chunkId: 1, content: 'a' }]),
+    };
+    // 기본(채팅) 클라이언트의 데이터 읽기는 쓰이면 안 된다 — 목적 헤더 없이 읽으면 SHARE 판정이 빠진다.
+    const chatGetDataset = vi.fn().mockRejectedValue(new Error('채팅 클라이언트로 읽음'));
+    const chatListChunks = vi.fn().mockRejectedValue(new Error('채팅 클라이언트로 읽음'));
+    const client = baseClient({
+      listOntologies: vi.fn().mockResolvedValue([]),
+      getDataset: chatGetDataset,
+      listDocumentChunks: chatListChunks,
+      withPurpose: vi.fn().mockReturnValue(share),
+    });
+    const out = await findTool(client, 'graphrag_infer_ontology').handler({ domain: 'D', datasetIds: [1, 2] });
+
+    expect(client.withPurpose).toHaveBeenCalledWith('share');
+    expect(share.getDataset).toHaveBeenCalledWith(1);
+    expect(chatGetDataset).not.toHaveBeenCalled();
+    expect(chatListChunks).not.toHaveBeenCalled();
+    expect(out.skipped).toEqual([
+      { datasetId: 2, reason: expect.stringContaining("정책 차단: '기밀' 등급(share_policy)") },
+    ]);
+    expect(client.createOntology).toHaveBeenCalledWith(expect.objectContaining({ sourceDatasetIds: [1] }));
+  });
+
+  it('graphrag_propose_ontology 는 출처 없이(빈 배열) 생성한다', async () => {
+    const client = baseClient({ listOntologies: vi.fn().mockResolvedValue([]) });
+    await findTool(client, 'graphrag_propose_ontology').handler({
+      domain: 'P',
+      entities: [{ type: 'A', description: '', naming: '', resolution: 'exact', properties: [] }],
+      relations: [],
+    });
+    expect(client.createOntology).toHaveBeenCalledWith(expect.objectContaining({ sourceDatasetIds: [] }));
   });
 
   it('청크가 상한(40)보다 많으면 앞뒤 청크를 고르게 포함해 40건을 표본으로 뽑는다', async () => {

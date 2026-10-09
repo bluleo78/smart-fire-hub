@@ -6,6 +6,7 @@ import type {
 } from '@anthropic-ai/claude-agent-sdk';
 import { createTracker, FAILURE_WARN_HINT, type FailureTracker } from '../agent/failure-streak.js';
 import { FireHubApiClient } from './api-client.js';
+import { policyBlockedOf, policyBlockedResultText } from './policy-blocked.js';
 import { MCP_SERVER_NAME, MCP_SERVER_VERSION } from '../constants.js';
 import { registerCategoryTools } from './tools/category-tools.js';
 import { registerDatasetTools } from './tools/dataset-tools.js';
@@ -38,6 +39,42 @@ export type GraphragCredentials = Partial<
 
 type ToolResult = { content: Array<{ type: 'text'; text: string }>; isError?: boolean };
 
+/**
+ * 도구 핸들러가 던진 오류를 도구 결과로 바꾼다 — safeTool·createSafeTool·stdio 의 createMcpSafeTool 세 래퍼 공통.
+ * S3: api 정책 차단(POLICY_BLOCKED)은 웹이 "차단됨"으로 그릴 수 있게 원문 대신 고정 JSON 표식을 싣는다.
+ * blocked 는 래퍼가 연속 실패 경고 힌트를 덧붙이지 않게 하는 신호다(아래 withFailureHint 참고).
+ */
+export function toolErrorResult(
+  logTag: string,
+  name: string,
+  error: unknown,
+): { result: ToolResult; blocked: boolean } {
+  const message = error instanceof Error ? error.message : String(error);
+  console.error(`${logTag} ${name} failed: ${message}`);
+  const info = policyBlockedOf(error);
+  const text = info ? policyBlockedResultText(info) : message;
+  return { result: { content: [{ type: 'text', text }], isError: true }, blocked: info !== null };
+}
+
+/**
+ * 결과를 연속 실패 트래커에 기록하고, 임계에 닿으면 Tier1 경고 힌트를 1회 덧붙인다(세 래퍼 공통).
+ * 정책 차단(blocked)은 재시도로 풀리지 않는 결정이라 힌트를 붙이지 않는다 — 힌트 블록이 표식 JSON 뒤에 이어 붙으면
+ * 웹 파서(parsePolicyBlocked)가 깨진다. 카운트는 그대로 기록해 실행 루프의 Tier2 강제중단은 유지된다.
+ */
+export function withFailureHint(
+  tracker: FailureTracker,
+  name: string,
+  result: ToolResult,
+  blocked: boolean,
+): ToolResult {
+  const text = result.content.map((c) => c.text).join('');
+  const { warn } = tracker.record(name, text, result.isError ?? false);
+  if (warn && !blocked) {
+    return { content: [...result.content, { type: 'text', text: FAILURE_WARN_HINT }], isError: result.isError };
+  }
+  return result;
+}
+
 export function safeTool<Schema extends AnyZodRawShape>(
   name: string,
   description: string,
@@ -48,9 +85,7 @@ export function safeTool<Schema extends AnyZodRawShape>(
     try {
       return await handler(args);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error(`[MCP Tool] ${name} failed: ${message}`);
-      return { content: [{ type: 'text', text: message }], isError: true };
+      return toolErrorResult('[MCP Tool]', name, error).result;
     }
   });
 }
@@ -69,22 +104,13 @@ export function createSafeTool(tracker: FailureTracker): SafeToolFn {
   ) {
     return tool(name, description, schema, async (args: InferShape<Schema>): Promise<ToolResult> => {
       let result: ToolResult;
+      let blocked = false;
       try {
         result = await handler(args);
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        console.error(`[MCP Tool] ${name} failed: ${message}`);
-        result = { content: [{ type: 'text', text: message }], isError: true };
+        ({ result, blocked } = toolErrorResult('[MCP Tool]', name, error));
       }
-      const text = result.content.map((c) => c.text).join('');
-      const { warn } = tracker.record(name, text, result.isError ?? false);
-      if (warn) {
-        return {
-          ...result,
-          content: [...result.content, { type: 'text', text: FAILURE_WARN_HINT }],
-        };
-      }
-      return result;
+      return withFailureHint(tracker, name, result, blocked);
     });
   };
 }

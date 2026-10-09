@@ -909,6 +909,30 @@ describe('fetchSessionPermissionsFailClosed (Task 9)', () => {
     const options = callArgs?.[1] as { userPermissions?: string[] } | undefined;
     expect(options?.userPermissions).toEqual([]);
   });
+
+  // S3: Proactive 실행(aiPurpose 'share')이면 MCP 도구에 주입되는 api 클라이언트가 share 목적을 싣는다.
+  it("AS-S3: aiPurpose 'share' 를 FireHubApiClient 의 purpose 로 넘기고, 없으면 undefined", async () => {
+    const { FireHubApiClient } = await import('../mcp/api-client.js');
+    const { query } = await import('@anthropic-ai/claude-agent-sdk');
+    async function* fakeStream() {
+      yield {
+        type: 'result',
+        subtype: 'success',
+        session_id: 'sess-s3',
+        usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+      };
+    }
+    const { executeAgent } = await import('./agent-sdk.js');
+    for (const aiPurpose of ['share', undefined] as const) {
+      vi.mocked(FireHubApiClient).mockClear();
+      vi.mocked(query).mockReturnValue(fakeStream() as unknown as ReturnType<typeof query>);
+      const events = executeAgent({ message: 'hi', tenantId: 1, userId: 1, apiKey: 'sk-test', aiPurpose });
+      for await (const _event of events) {
+        void _event;
+      }
+      expect(vi.mocked(FireHubApiClient).mock.calls[0][4]).toEqual({ purpose: aiPurpose });
+    }
+  });
 });
 
 /**

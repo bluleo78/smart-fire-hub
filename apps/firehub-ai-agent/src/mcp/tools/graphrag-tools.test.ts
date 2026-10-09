@@ -58,6 +58,11 @@ import type { SafeToolFn, JsonResultFn } from '../firehub-mcp-server.js';
  * 프로토타입의 모든 메서드를 vi.fn() 으로 대체하여, 실제 MCP 서버(zod 스키마 검증 포함)를
  * 통해 도구를 호출해도 HTTP 요청 없이 동작하게 한다.
  */
+/** S3: 적재·추론 도구는 등록 시 withPurpose('share') 를 부른다 — 평범한 객체 목에 자기 자신을 돌려주는 withPurpose 를 단다. */
+function withSelfPurpose(client: FireHubApiClient): void {
+  (client as unknown as { withPurpose: () => FireHubApiClient }).withPurpose = () => client;
+}
+
 function createMockClient(): FireHubApiClient {
   const client = Object.create(FireHubApiClient.prototype);
   const methodNames = Object.getOwnPropertyNames(FireHubApiClient.prototype).filter(
@@ -66,6 +71,8 @@ function createMockClient(): FireHubApiClient {
   for (const name of methodNames) {
     client[name] = vi.fn().mockResolvedValue({ mocked: true });
   }
+  // S3: withPurpose 는 Promise 가 아니라 클라이언트를 돌려줘야 한다(GraphRAG 도구가 등록 시 share 클라이언트를 만든다).
+  client.withPurpose = vi.fn(() => client);
   return client as FireHubApiClient;
 }
 
@@ -77,6 +84,7 @@ function createMockClient(): FireHubApiClient {
 describe('registerGraphragTools — credentials.model 전달', () => {
   it('credentials.model 을 createCompleter 의 model 옵션으로 넘긴다', () => {
     const apiClient = {} as unknown as FireHubApiClient;
+    withSelfPurpose(apiClient);
     const safeTool = (() => undefined) as unknown as SafeToolFn;
     const jsonResult = (() => ({ content: [] })) as unknown as JsonResultFn;
 
@@ -95,6 +103,7 @@ describe('registerGraphragTools — credentials.model 전달', () => {
 
   it('credentials 가 없으면 model 도 undefined 로 넘긴다', () => {
     const apiClient = {} as unknown as FireHubApiClient;
+    withSelfPurpose(apiClient);
     const safeTool = (() => undefined) as unknown as SafeToolFn;
     const jsonResult = (() => ({ content: [] })) as unknown as JsonResultFn;
 
@@ -121,6 +130,7 @@ describe('graphrag_query 도구', () => {
       searchDocuments: vi.fn(),
       getOntologyById: vi.fn().mockResolvedValue({ domain: 'd', schemaVersion: 1, entities: [], relations: [] }),
     } as unknown as FireHubApiClient;
+    withSelfPurpose(apiClient);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const tools: any[] = registerGraphragTools(apiClient, safeTool, jsonResult);
     const query = tools.find((t) => t.name === 'graphrag_query');
@@ -141,6 +151,7 @@ describe('graphrag_query 도구', () => {
       searchDocuments: vi.fn(),
       getOntologyById: vi.fn().mockRejectedValue(new Error('존재하지 않는 온톨로지입니다: 999')),
     } as unknown as FireHubApiClient;
+    withSelfPurpose(apiClient);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const tools: any[] = registerGraphragTools(apiClient, safeTool, jsonResult);
     const query = tools.find((t) => t.name === 'graphrag_query');
@@ -157,6 +168,7 @@ describe('graphrag_query 도구', () => {
       readable: 'restricted',
     } as never);
     const apiClient = { searchDocuments: vi.fn(), getOntologyById: vi.fn() } as unknown as FireHubApiClient;
+    withSelfPurpose(apiClient);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const tools: any[] = registerGraphragTools(apiClient, safeTool, jsonResult);
     const query = tools.find((t) => t.name === 'graphrag_query');
@@ -177,6 +189,7 @@ describe('graphrag_query 도구', () => {
       readable: 'unavailable',
     } as never);
     const apiClient = { searchDocuments: vi.fn(), getOntologyById: vi.fn() } as unknown as FireHubApiClient;
+    withSelfPurpose(apiClient);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const tools: any[] = registerGraphragTools(apiClient, safeTool, jsonResult);
     const query = tools.find((t) => t.name === 'graphrag_query');
@@ -207,6 +220,7 @@ describe('graphrag_ingest 도구 — 적재 이력 best-effort 기록', () => {
     vi.mocked(ingestDataset).mockResolvedValue({ datasetId: 1, chunks: 10, entities: 20, relations: 15 });
     const recordGraphIngest = vi.fn().mockResolvedValue(undefined);
     const apiClient = { recordGraphIngest } as unknown as FireHubApiClient;
+    withSelfPurpose(apiClient);
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const tools: any[] = registerGraphragTools(apiClient, safeTool, jsonResult);
@@ -234,6 +248,7 @@ describe('graphrag_ingest 도구 — 적재 이력 best-effort 기록', () => {
     });
     const recordGraphIngest = vi.fn().mockResolvedValue(undefined);
     const apiClient = { recordGraphIngest } as unknown as FireHubApiClient;
+    withSelfPurpose(apiClient);
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const tools: any[] = registerGraphragTools(apiClient, safeTool, jsonResult);
@@ -250,6 +265,7 @@ describe('graphrag_ingest 도구 — 적재 이력 best-effort 기록', () => {
     vi.mocked(ingestDataset).mockResolvedValue({ datasetId: 1, chunks: 5, entities: 3, relations: 2 });
     const recordGraphIngest = vi.fn().mockRejectedValue(new Error('api down'));
     const apiClient = { recordGraphIngest } as unknown as FireHubApiClient;
+    withSelfPurpose(apiClient);
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const tools: any[] = registerGraphragTools(apiClient, safeTool, jsonResult);

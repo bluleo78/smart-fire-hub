@@ -16,10 +16,10 @@ import { FireHubApiClient } from './api-client.js';
 import { MCP_SERVER_NAME, MCP_SERVER_VERSION } from '../constants.js';
 import { isValidTenantId } from '../agent/tenant-paths.js';
 import type { SafeToolFn, JsonResultFn } from './firehub-mcp-server.js';
-import { registerAllTools } from './firehub-mcp-server.js';
+import { registerAllTools, toolErrorResult, withFailureHint } from './firehub-mcp-server.js';
 import { resolveStdioCredentials } from './stdio-credentials.js';
 import type { AnyZodRawShape, InferShape } from '@anthropic-ai/claude-agent-sdk';
-import { createTracker, FAILURE_WARN_HINT, type FailureTracker } from '../agent/failure-streak.js';
+import { createTracker, type FailureTracker } from '../agent/failure-streak.js';
 import { isOpenCodeSchemaCompat, sanitizeOutgoingMessage } from './schema-compat.js';
 
 type ToolResult = { content: Array<{ type: 'text'; text: string }>; isError?: boolean };
@@ -29,7 +29,7 @@ type ToolResult = { content: Array<{ type: 'text'; text: string }>; isError?: bo
  * 핸들러를 try/catch로 감싸고(기존 동작 유지), 연속 실패 트래커에 기록하여
  * 임계(WARN_AT)에 도달한 오류 결과엔 경고 힌트를 1회 덧붙인다.
  */
-function createMcpSafeTool(server: McpServer, tracker: FailureTracker): SafeToolFn {
+export function createMcpSafeTool(server: McpServer, tracker: FailureTracker): SafeToolFn {
   return function safeTool<Schema extends AnyZodRawShape>(
     name: string,
     description: string,
@@ -42,20 +42,17 @@ function createMcpSafeTool(server: McpServer, tracker: FailureTracker): SafeTool
       // Cast: AnyZodRawShape (Zod v4) 은 MCP SDK ZodRawShapeCompat 와 호환
       schema as Record<string, never>,
       async (args: Record<string, unknown>) => {
+        // 오류 변환·경고 힌트는 SDK 래퍼(createSafeTool)와 같은 헬퍼를 쓴다 — CLI·opencode 런타임도
+        // 이 래퍼를 거치므로, 여기만 갈리면 정책 차단 표식(S3)이 그 두 경로에서 사라진다.
         let result: ToolResult;
+        let blocked = false;
         try {
           result = await handler(args as InferShape<Schema>);
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          console.error(`[MCP Stdio Tool] ${name} failed: ${message}`);
-          result = { content: [{ type: 'text', text: message }], isError: true };
+          ({ result, blocked } = toolErrorResult('[MCP Stdio Tool]', name, error));
         }
-        const text = result.content.map((c) => c.text).join('');
-        const { warn } = tracker.record(name, text, result.isError ?? false);
-        const finalContent = warn
-          ? [...result.content, { type: 'text' as const, text: FAILURE_WARN_HINT }]
-          : result.content;
-        return { content: finalContent, isError: result.isError };
+        const final = withFailureHint(tracker, name, result, blocked);
+        return { content: final.content, isError: final.isError };
       },
     );
     // 반환값은 register*Tools() 호출부에서 사용되지 않음 — placeholder 반환
@@ -168,7 +165,10 @@ async function main(): Promise<void> {
   const userId = requireIdEnv('USER_ID');
   const tenantId = requireIdEnv('TENANT_ID');
 
-  const apiClient = new FireHubApiClient(apiBaseUrl, internalToken, userId, tenantId);
+  // S3: 부모(agent-cli·agent-opencode)가 Proactive 실행이면 AI_PURPOSE=share 를 심는다. 'share' 만 받는다 —
+  // 'none'(AI 판정 제외)은 LLM 이 부르는 이 프로세스에서 절대 쓰이면 안 되므로 다른 값은 모두 채팅으로 본다.
+  const purpose = process.env.AI_PURPOSE === 'share' ? 'share' : undefined;
+  const apiClient = new FireHubApiClient(apiBaseUrl, internalToken, userId, tenantId, { purpose });
 
   const server = new McpServer({
     name: MCP_SERVER_NAME,

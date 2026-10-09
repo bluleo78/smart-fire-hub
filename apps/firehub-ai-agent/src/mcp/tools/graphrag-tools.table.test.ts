@@ -38,6 +38,10 @@ function baseClient(overrides: Partial<any> = {}) {
     getOntologyById: vi.fn().mockResolvedValue(ontologyWire),
     queryDatasetData: vi.fn().mockResolvedValue({ rows: [{ c: 'A' }], totalPages: 1 }),
     recordGraphIngest: vi.fn().mockResolvedValue(undefined),
+    // S3: 적재·추론 도구는 등록 시 withPurpose('share') 클라이언트를 만든다 — 목은 자기 자신을 돌려준다.
+    withPurpose: vi.fn(function (this: unknown) {
+      return this;
+    }),
     ...overrides,
   };
 }

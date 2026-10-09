@@ -147,8 +147,9 @@ describe('Proactive MCP Tools', () => {
       await invokeTool(server, 'generate_report', baseArgs);
 
       // generate_report는 패스스루 도구 — API 호출 없음
+      // withPurpose(S3)는 API 호출이 아니라 등록 시 share 클라이언트를 만드는 팩토리라 제외한다.
       const methodNames = Object.getOwnPropertyNames(FireHubApiClient.prototype).filter(
-        (name) => name !== 'constructor',
+        (name) => name !== 'constructor' && name !== 'withPurpose',
       );
       for (const name of methodNames) {
         expect((client as unknown as Record<string, unknown>)[name]).not.toHaveBeenCalled();
@@ -312,8 +313,9 @@ describe('Proactive MCP Tools', () => {
     it('does not call apiClient (pure passthrough)', async () => {
       await invokeTool(server, 'show_report_builder', baseArgs);
 
+      // withPurpose(S3)는 API 호출이 아니라 등록 시 share 클라이언트를 만드는 팩토리라 제외한다.
       const methodNames = Object.getOwnPropertyNames(FireHubApiClient.prototype).filter(
-        (name) => name !== 'constructor',
+        (name) => name !== 'constructor' && name !== 'withPurpose',
       );
       for (const name of methodNames) {
         expect((client as unknown as Record<string, unknown>)[name]).not.toHaveBeenCalled();

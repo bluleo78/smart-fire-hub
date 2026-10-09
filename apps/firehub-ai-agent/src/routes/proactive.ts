@@ -50,6 +50,8 @@ interface ProactiveRequest {
   providerId?: string;
   /** opencode 전용 — 추론 강도. 현재 이 앱엔 사용처가 없다(ProviderConfig.reasoningEffort 참고). */
   reasoningEffort?: string;
+  /** S3: api(ProactiveAiClient)가 'share' 를 싣는다 — 리포트는 발송되므로 MCP 호출에 공유 목적을 건다. */
+  aiPurpose?: string;
 }
 
 interface OutputSection {
@@ -376,6 +378,8 @@ router.post('/proactive', express.json(), internalAuth, async (req: Request, res
       systemPrompt: systemPrompt,
       overrideSystemPrompt: true,
       maxTurns: MAX_AGENT_TURNS,
+      // 'share' 외의 값은 버린다 — 특히 'none'(AI 판정 제외)이 바디로 들어와도 LLM 실행에 실리면 안 된다.
+      aiPurpose: body.aiPurpose === 'share' ? 'share' : undefined,
     });
 
     for await (const event of events) {

@@ -2,6 +2,7 @@
 import { z } from 'zod/v4';
 import type { FireHubApiClient } from '../api-client.js';
 import type { SafeToolFn, JsonResultFn, GraphragCredentials } from '../firehub-mcp-server.js';
+import { policyBlockedOf } from '../policy-blocked.js';
 import { ingestDataset } from '../../graphrag/ingest.js';
 import { extractGraph } from '../../graphrag/extractor.js';
 import { createCompleter } from '../../graphrag/llm-completer.js';
@@ -229,8 +230,10 @@ async function createDraftOntology(
   domain: string,
   entities: unknown[],
   relations: unknown[],
+  sourceDatasetIds: number[] = [],
 ): Promise<{ ontologyId: number; domain: string; status: 'draft'; entityCount: number; relationCount: number }> {
-  const ontologyId = await apiClient.createOntology({ domain, entities, relations, status: 'draft' });
+  // sourceDatasetIds(S3, WD-31⑤): 추론 근거 데이터셋 — api 가 공유 정책으로 다시 판정하고 출처로 기록한다.
+  const ontologyId = await apiClient.createOntology({ domain, entities, relations, status: 'draft', sourceDatasetIds });
   return { ontologyId, domain, status: 'draft', entityCount: entities.length, relationCount: relations.length };
 }
 
@@ -252,6 +255,10 @@ export function registerGraphragTools(
   credentials?: GraphragCredentials,
 ) {
   const complete = createCompleter({ credentials, model: credentials?.model });
+  // S3 §4.3 GraphRAG 행: 적재·투영·추론은 결과가 공유 저장소(Neo4j·온톨로지)로 간다 — 이 도구들의 api 호출은 전부
+  // share 목적으로 보내 api 가 AI 판정에 SHARE 판정을 더하게 한다. 목적은 판정을 좁히기만 하므로 넓게 쓰는 쪽이 안전하다.
+  // 질의 도구(graphrag_query 등)는 결과가 채팅으로만 가므로 기본(채팅) 클라이언트를 쓴다.
+  const shareClient = apiClient.withPurpose('share');
 
   return [
     safeTool(
@@ -263,30 +270,31 @@ export function registerGraphragTools(
         await bootstrapConstraints();
         // 데이터셋에 바인딩된 온톨로지로 적재한다(미바인딩이면 예외 — 기본 온톨로지 폴백 없음).
         // ingest 당 1회 fetch → 청크 전반에 재사용.
-        const resolved = await resolveDatasetOntology(apiClient, args.datasetId);
+        const resolved = await resolveDatasetOntology(shareClient, args.datasetId);
         const ontology = resolved.ontology;
         const summary = await ingestDataset(
           {
-            listChunks: (id) => apiClient.listDocumentChunks(id),
+            listChunks: (id) => shareClient.listDocumentChunks(id),
             extract: (text) => extractGraph(text, { complete, ontology }),
             load: loadGraph,
             // 데이터셋 전역 시맨틱 엔티티 해소(semantic-resolver.ts)용 임베딩 — firehub-api 활성 provider 에 위임.
-            embed: (texts) => apiClient.embed(texts),
+            embed: (texts) => shareClient.embed(texts),
             // 임베딩 임계값 미달 근접쌍(코사인 0.5~0.78)을 LLM으로 재판단해 의미적 동의어를 추가 병합.
             link: (a, b, type) => semanticLink(complete, a, b, type),
             // HITL: 근접쌍 기존 결정 조회 + LLM "같다" 판정을 대기열에 등록.
-            lookupDecision: (a, b, type) => apiClient.lookupSynonymDecision(type, a, b),
+            lookupDecision: (a, b, type) => shareClient.lookupSynonymDecision(type, a, b),
             recordPending: (a, b, type, similarity, rationale, datasetId, sourceChunkIds) =>
-              apiClient.recordPendingSynonym(type, a, b, similarity, rationale, datasetId, sourceChunkIds),
+              shareClient.recordPendingSynonym(type, a, b, similarity, rationale, datasetId, sourceChunkIds),
             // 정규화 실패 속성 검수 등록(교정형).
             recordPropertyReview: (datasetId, chunkId, key, type, prop, dataType, raw) =>
-              apiClient.recordPropertyReview(datasetId, chunkId, key, type, prop, dataType, raw),
+              shareClient.recordPropertyReview(datasetId, chunkId, key, type, prop, dataType, raw),
             // 엔티티 추출 검수: 저신뢰 엔티티 기존 결정 조회 + 보류 엔티티(+관계) 큐 등록.
-            lookupEntityDecision: (type, name) => apiClient.lookupEntityDecision(type, name),
-            recordPendingEntity: (item) => apiClient.recordPendingEntity(item),
+            lookupEntityDecision: (type, name) => shareClient.lookupEntityDecision(type, name),
+            recordPendingEntity: (item) => shareClient.recordPendingEntity(item),
             // 관계 추출 검수: 저신뢰 관계 기존 결정 조회 + 보류 관계 큐 등록.
-            lookupRelationDecision: (subjectKey, relType, objectKey) => apiClient.lookupRelationDecision(subjectKey, relType, objectKey),
-            recordPendingRelation: (item) => apiClient.recordPendingRelation(item),
+            lookupRelationDecision: (subjectKey, relType, objectKey) =>
+              shareClient.lookupRelationDecision(subjectKey, relType, objectKey),
+            recordPendingRelation: (item) => shareClient.recordPendingRelation(item),
           },
           args.datasetId,
           ontology,
@@ -295,7 +303,7 @@ export function registerGraphragTools(
         // 적재 이력을 best-effort 로 기록한다(실패해도 적재 결과 반환에는 영향 없음).
         const failures = summary.extractionFailures ?? 0;
         try {
-          await apiClient.recordGraphIngest(args.datasetId, {
+          await shareClient.recordGraphIngest(args.datasetId, {
             schemaVersionAtIngest: ontology.schemaVersion,
             chunkCount: summary.chunks, nodeCount: summary.entities, edgeCount: summary.relations,
             extractionFailures: failures, status: failures > 0 ? 'PARTIAL' : 'SUCCESS',
@@ -313,25 +321,25 @@ export function registerGraphragTools(
       async (args: { datasetId: number }) => {
         // Neo4j 제약 보장 → 매핑 조회(active 게이트) → 바인딩 온톨로지 로드 → 투영.
         await bootstrapConstraints();
-        const mapping = await apiClient.getDatasetMapping(args.datasetId);
+        const mapping = await shareClient.getDatasetMapping(args.datasetId);
         if (mapping.status !== 'active') {
           throw new Error(`매핑이 active 상태가 아닙니다(현재: ${mapping.status ?? '없음'}). 먼저 매핑을 활성화하세요.`);
         }
         // 표는 id=1이 아닌 온톨로지에 바인딩될 수 있어 by-id로 로드한다(폴백 없음).
         // resolveOntologyById 를 거치는 이유: 이 왕복이 소유권 확인(RLS 경계)이고, 그것만이
         // 적재에 쓸 VerifiedOntologyId 를 만든다 — getOntologyById 직접 호출로는 타입이 맞지 않는다.
-        const { ontology, ontologyId } = await resolveOntologyById(apiClient, mapping.ontologyId);
+        const { ontology, ontologyId } = await resolveOntologyById(shareClient, mapping.ontologyId);
         const summary = await projectTableDataset(
           {
             fetchRows: (id, page, size) =>
-              apiClient.queryDatasetData(id, { page, size, includeTotalCount: true }) as Promise<DataPage>,
+              shareClient.queryDatasetData(id, { page, size, includeTotalCount: true }) as Promise<DataPage>,
             load: loadTableGraph,
           },
           args.datasetId, ontology, ontologyId, mapping.spec,
         );
         // 투영 이력 best-effort 기록(chunkCount에는 처리 행 수를 담는다 — 표엔 청크 개념이 없음).
         try {
-          await apiClient.recordGraphIngest(args.datasetId, {
+          await shareClient.recordGraphIngest(args.datasetId, {
             schemaVersionAtIngest: ontology.schemaVersion,
             chunkCount: summary.rowCount, nodeCount: summary.nodeCount, edgeCount: summary.edgeCount,
             extractionFailures: 0, status: 'SUCCESS',
@@ -354,7 +362,7 @@ export function registerGraphragTools(
         //    getDatasetMapping은 매핑이 없으면 404로 throw하므로 catch해서 상태를 구분한다.
         let existing: { status: string } | null = null;
         try {
-          existing = await apiClient.getDatasetMapping(args.datasetId);
+          existing = await shareClient.getDatasetMapping(args.datasetId);
         } catch (err) {
           // api-client 인터셉터가 던지는 에러는 status를 직접 실어 보낸다(#423).
           // response.status는 과거 형태/직접 axios 에러 호환을 위한 폴백.
@@ -370,14 +378,14 @@ export function registerGraphragTools(
           );
         }
         // 2) 온톨로지 바인딩 로드 — 미바인딩이면 백엔드 저장이 400이므로 사전 거부.
-        const binding = await apiClient.getDatasetOntology(args.datasetId);
+        const binding = await shareClient.getDatasetOntology(args.datasetId);
         if (binding.ontologyId == null) {
           throw new Error('데이터셋이 온톨로지에 바인딩되지 않았습니다. 먼저 온톨로지를 바인딩하세요.');
         }
-        const { ontology } = await resolveOntologyById(apiClient, binding.ontologyId);
+        const { ontology } = await resolveOntologyById(shareClient, binding.ontologyId);
         // 3) 컬럼 메타 + 행 표본을 동일 data 쿼리로 확보(최대 3페이지, ≤600행).
         const SAMPLE_ROW_CAP = 600;
-        const { columns, rows: sampleRows } = await sampleTableRows(apiClient, args.datasetId, SAMPLE_ROW_CAP);
+        const { columns, rows: sampleRows } = await sampleTableRows(shareClient, args.datasetId, SAMPLE_ROW_CAP);
         // 4) 프로파일 → 5) 추론(자체 conformance 필터로 부적합분 드롭).
         const profiles = profileColumns(columns, sampleRows);
         const result = await inferMapping({ complete }, ontology, profiles);
@@ -386,7 +394,7 @@ export function registerGraphragTools(
           throw new Error('추론 결과가 비었습니다(LLM 실패 또는 매핑 가능한 컬럼 없음). draft를 저장하지 않았습니다.');
         }
         // 7) draft 저장(PUT → status=draft).
-        await apiClient.saveDatasetMapping(args.datasetId, result.spec);
+        await shareClient.saveDatasetMapping(args.datasetId, result.spec);
         // 8) 요약 반환. confidence/dropped는 휘발성(draft엔 저장 안 됨).
         return jsonResult({
           datasetId: args.datasetId,
@@ -500,14 +508,24 @@ export function registerGraphragTools(
         // 데이터셋별 수집은 서로 독립이라 동시에 돈다 — 순차로 돌면 데이터셋 수만큼 HTTP 왕복이
         // 직렬로 쌓여, 여러 개를 넘기라고 안내하는 이 도구에서 LLM 호출 전 대기가 그대로 늘어난다.
         // allSettled 라 한 건이 실패해도 나머지는 진행하고, map 순서가 보존돼 basedOn/skipped 순서는 그대로다.
-        const settled = await Promise.allSettled(uniqueDatasetIds.map((id) => collectDatasetEvidence(apiClient, id)));
+        // 근거 수집은 데이터를 LLM 에 실어 온톨로지(공유 저장소)를 만드는 경로라 share 목적으로 읽는다(S3).
+        const settled = await Promise.allSettled(
+          uniqueDatasetIds.map((id) => collectDatasetEvidence(shareClient, id)),
+        );
         settled.forEach((result, i) => {
           const id = uniqueDatasetIds[i];
           if (result.status === 'rejected') {
             // 모델이 지어낸 id(404) 하나 때문에 여러 데이터셋짜리 요청 전체가 죽으면 안 된다 —
             // FILE 등 스킵 경로와 비대칭이었다. 조회 실패도 스킵 사유로 남기고 나머지는 계속 진행한다.
+            // 정책 차단(S3)은 등급 이름과 함께 사유를 남긴다 — 사용자가 왜 빠졌는지 알 수 있게.
             const err = result.reason as Error;
-            skipped.push({ datasetId: id, reason: `근거 수집 실패: ${err?.message ?? String(result.reason)}` });
+            const blocked = policyBlockedOf(result.reason);
+            skipped.push({
+              datasetId: id,
+              reason: blocked
+                ? `정책 차단: '${blocked.levelName}' 등급(${blocked.policyKey}) — ${blocked.message}`
+                : `근거 수집 실패: ${err?.message ?? String(result.reason)}`,
+            });
             return;
           }
           if ('skipReason' in result.value) skipped.push({ datasetId: id, reason: result.value.skipReason });
@@ -536,7 +554,10 @@ export function registerGraphragTools(
         }
 
         // 5) draft 저장.
-        const created = await createDraftOntology(apiClient, args.domain, result.entities, result.relations);
+        // 출처는 실제로 근거가 된 데이터셋만 — 스킵·차단된 것은 빼야 api 의 출처 판정이 막지 않는다.
+        const created = await createDraftOntology(
+          apiClient, args.domain, result.entities, result.relations, evidence.map((e) => e.datasetId),
+        );
 
         return jsonResult({
           ...created,
