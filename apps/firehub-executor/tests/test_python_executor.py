@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from app.config import Settings
+from app.tenant import TenantResolutionError
 from app.services.python_executor import (
     _parse_stdout_json,
     execute_python,
@@ -49,7 +50,7 @@ def test_simple_print_success():
     with patch("app.services.python_executor.subprocess.run") as mock_run, \
          patch("app.services.python_executor.os.unlink"):
         mock_run.return_value = make_completed_process(stdout="hello\n", returncode=0)
-        result = execute_python("print('hello')", None, settings, tenant_id=1)
+        result = execute_python("print('hello')", None, settings, tenant_id=1, read_slot=2)
 
     assert result.success is True
     assert "hello" in result.output
@@ -68,7 +69,7 @@ def test_script_failure_nonzero_exit():
         mock_run.return_value = make_completed_process(
             stdout="", stderr="NameError: name 'x' is not defined", returncode=1
         )
-        result = execute_python("x", None, settings, tenant_id=1)
+        result = execute_python("x", None, settings, tenant_id=1, read_slot=2)
 
     assert result.success is False
     assert result.exit_code == 1
@@ -87,7 +88,7 @@ def test_timeout_handling():
 
     with patch("app.services.python_executor.subprocess.run", side_effect=timeout_exc), \
          patch("app.services.python_executor.os.unlink"):
-        result = execute_python("import time; time.sleep(999)", 5, settings, tenant_id=1)
+        result = execute_python("import time; time.sleep(999)", 5, settings, tenant_id=1, read_slot=2)
 
     assert result.success is False
     assert result.exit_code == -1
@@ -103,7 +104,7 @@ def test_nsjail_command_construction():
     with patch("app.services.python_executor.subprocess.run") as mock_run, \
          patch("app.services.python_executor.os.unlink"):
         mock_run.return_value = make_completed_process(stdout="ok\n", returncode=0)
-        execute_python("print('ok')", None, settings, tenant_id=1)
+        execute_python("print('ok')", None, settings, tenant_id=1, read_slot=2)
 
     call_args = mock_run.call_args[0][0]  # positional first arg = cmd list
 
@@ -128,7 +129,7 @@ def test_fallback_mode_no_nsjail():
     with patch("app.services.python_executor.subprocess.run") as mock_run, \
          patch("app.services.python_executor.os.unlink"):
         mock_run.return_value = make_completed_process(stdout="", returncode=0)
-        execute_python("pass", None, settings, tenant_id=1)
+        execute_python("pass", None, settings, tenant_id=1, read_slot=2)
 
     call_args = mock_run.call_args[0][0]
     assert call_args[0] == "python3"
@@ -143,7 +144,7 @@ def test_fallback_env_isolation():
     with patch("app.services.python_executor.subprocess.run") as mock_run, \
          patch("app.services.python_executor.os.unlink"):
         mock_run.return_value = make_completed_process(stdout="", returncode=0)
-        execute_python("pass", None, settings, tenant_id=1)
+        execute_python("pass", None, settings, tenant_id=1, read_slot=2)
 
     call_kwargs = mock_run.call_args[1]
     env = call_kwargs["env"]
@@ -173,7 +174,7 @@ def test_nsjail_env_no_discrete_credentials():
     with patch("app.services.python_executor.subprocess.run") as mock_run, \
          patch("app.services.python_executor.os.unlink"):
         mock_run.return_value = make_completed_process(stdout="ok\n", returncode=0)
-        execute_python("print('ok')", None, settings, tenant_id=1)
+        execute_python("print('ok')", None, settings, tenant_id=1, read_slot=2)
 
     cmd = mock_run.call_args[0][0]
     # cmd 리스트에서 "--env" 다음에 오는 "KEY=VALUE" 들의 KEY 를 수집
@@ -189,13 +190,16 @@ def test_nsjail_env_no_discrete_credentials():
 
 
 # ---------------------------------------------------------------------------
-# 테넌트별 자격증명 주입 (P3-b1)
-#   nsjail·비nsjail **양쪽** 경로가 같은 테넌트 롤 자격증명을 넘겨야 한다. 한쪽만 바꾸면
+# 스크립트 자격증명 주입 (P3-b1 → WD-29)
+#   nsjail·비nsjail **양쪽** 경로가 같은 자격증명을 넘겨야 한다. 한쪽만 바꾸면
 #   배포의 NSJAIL_ENABLED 설정에 따라 접속 주체가 조용히 갈린다.
+#   WD-29 부터 스크립트는 테넌트 실행 롤이 아니라 **읽기 슬롯 롤**(pipeline_py_t{id}_s{k})로 직접 로그인한다.
 # ---------------------------------------------------------------------------
-TENANT_2_PASSWORD = "10c75c4b795e800a0381177d7352f8d4"  # Java 파생값 (tests/test_tenant.py 참고)
+# 기대값은 구현 함수(resolve_read_db_url)로 만들지 않고 리터럴로 적는다 — 같은 함수로 만들면 공허하다.
+# 값: hmac_sha256("test-tenant-pipeline-secret", "pipeline_py_t2_s2").hexdigest()[:32] (python3 -I 로 1회 계산)
+TENANT_2_SLOT_2_PASSWORD = "b77262beba276e68ed4c0a248e52d6e4"
 EXPECTED_TENANT_2_URL = (
-    f"postgresql://pipeline_executor_t2:{TENANT_2_PASSWORD}@localhost:5432/firehub"
+    f"postgresql://pipeline_py_t2_s2:{TENANT_2_SLOT_2_PASSWORD}@localhost:5432/firehub"
 )
 
 
@@ -204,7 +208,7 @@ def test_fallback_env_uses_tenant_role_credentials():
     with patch("app.services.python_executor.subprocess.run") as mock_run, \
          patch("app.services.python_executor.os.unlink"):
         mock_run.return_value = make_completed_process(stdout="", returncode=0)
-        execute_python("pass", None, settings, tenant_id=2)
+        execute_python("pass", None, settings, tenant_id=2, read_slot=2)
 
     env = mock_run.call_args[1]["env"]
     assert env["DB_URL"] == EXPECTED_TENANT_2_URL
@@ -220,7 +224,7 @@ def test_nsjail_env_uses_tenant_role_credentials():
     with patch("app.services.python_executor.subprocess.run") as mock_run, \
          patch("app.services.python_executor.os.unlink"):
         mock_run.return_value = make_completed_process(stdout="ok\n", returncode=0)
-        execute_python("print('ok')", None, settings, tenant_id=2)
+        execute_python("print('ok')", None, settings, tenant_id=2, read_slot=2)
 
     cmd = mock_run.call_args[0][0]
     envs = dict(
@@ -242,7 +246,7 @@ def test_both_branches_inject_identical_db_url():
         with patch("app.services.python_executor.subprocess.run") as mock_run, \
              patch("app.services.python_executor.os.unlink"):
             mock_run.return_value = make_completed_process(stdout="", returncode=0)
-            execute_python("pass", None, settings, tenant_id=7)
+            execute_python("pass", None, settings, tenant_id=7, read_slot=2)
         if nsjail:
             cmd = mock_run.call_args[0][0]
             urls[nsjail] = dict(
@@ -254,7 +258,9 @@ def test_both_branches_inject_identical_db_url():
             urls[nsjail] = mock_run.call_args[1]["env"]["DB_URL"]
 
     assert urls[True] == urls[False]
-    assert "pipeline_executor_t7" in urls[True]
+    assert "pipeline_py_t7_s2" in urls[True]
+    # 테넌트 실행 롤이 스크립트로 새지 않는다(WD-29 — 슬롯 롤만).
+    assert "pipeline_executor_t" not in urls[True]
 
 
 def test_missing_tenant_id_is_a_type_error():
@@ -265,6 +271,58 @@ def test_missing_tenant_id_is_a_type_error():
 
 
 # ---------------------------------------------------------------------------
+# 읽기 슬롯 필수·fail-closed (WD-29)
+# ---------------------------------------------------------------------------
+def test_missing_read_slot_is_a_type_error():
+    """read_slot 은 키워드 전용 필수 — 누락이 기본 슬롯·테넌트 롤로 조용히 떨어지지 않는다."""
+    settings = make_settings()
+    with pytest.raises(TypeError):
+        execute_python("pass", None, settings, tenant_id=1)  # type: ignore[call-arg]
+
+
+@pytest.mark.parametrize("bad", [0, 11, True])
+def test_invalid_read_slot_fails_before_running_script(bad):
+    """범위 밖·bool 슬롯은 스크립트를 띄우기 전에 예외 — 테넌트 롤로 대신 실행하지 않는다."""
+    settings = make_settings(nsjail_enabled=False)
+    with patch("app.services.python_executor.subprocess.run") as mock_run:
+        with pytest.raises(TenantResolutionError):
+            execute_python("pass", None, settings, tenant_id=1, read_slot=bad)
+    mock_run.assert_not_called()
+
+
+def test_script_env_never_contains_tenant_executor_role():
+    """스크립트에 넘기는 어떤 값에도 테넌트 실행 롤이 없다(fail-closed — 폴백 금지 고정)."""
+    for nsjail in (False, True):
+        settings = make_settings(nsjail_enabled=nsjail)
+        with patch("app.services.python_executor.subprocess.run") as mock_run, \
+             patch("app.services.python_executor.os.unlink"):
+            mock_run.return_value = make_completed_process(stdout="", returncode=0)
+            execute_python("pass", None, settings, tenant_id=3, read_slot=5)
+        blob = repr(mock_run.call_args)
+        assert "pipeline_py_t3_s5" in blob
+        assert "pipeline_executor_t" not in blob
+
+
+def test_stdout_rows_still_loaded_with_tenant_role_connection():
+    """출력 적재는 executor 가 테넌트 롤 커넥션으로 한다 — 스크립트 슬롯과 무관(스펙 §4.1 마지막 항)."""
+    settings = make_settings(nsjail_enabled=False)
+    mock_conn = MagicMock()
+    with patch("app.services.python_executor.subprocess.run") as mock_run, \
+         patch("app.services.python_executor.os.unlink"), \
+         patch("app.services.python_executor.insert_batch") as mock_insert, \
+         patch("app.services.python_executor.get_connection") as mock_get_conn:
+        mock_get_conn.return_value.__enter__ = MagicMock(return_value=mock_conn)
+        mock_get_conn.return_value.__exit__ = MagicMock(return_value=False)
+        mock_run.return_value = make_completed_process(stdout='[{"a": 1}]', returncode=0)
+        result = execute_python("pass", None, settings, tenant_id=4, read_slot=1, output_table="t")
+    assert result.success is True
+    assert result.rows_loaded == 1
+    # 적재 커넥션은 테넌트 4 의 것 — 슬롯 번호(1)가 커넥션 선택에 끼어들지 않는다.
+    assert mock_get_conn.call_args[0][0] == 4
+    mock_insert.assert_called_once_with(mock_conn, "t", [{"a": 1}])
+
+
+# ---------------------------------------------------------------------------
 # test_temp_file_cleanup
 # ---------------------------------------------------------------------------
 def test_temp_file_cleanup():
@@ -272,7 +330,7 @@ def test_temp_file_cleanup():
     with patch("app.services.python_executor.subprocess.run") as mock_run, \
          patch("app.services.python_executor.os.unlink") as mock_unlink:
         mock_run.return_value = make_completed_process(stdout="", returncode=0)
-        execute_python("pass", None, settings, tenant_id=1)
+        execute_python("pass", None, settings, tenant_id=1, read_slot=2)
 
     mock_unlink.assert_called_once()
     path_arg = mock_unlink.call_args[0][0]
@@ -287,7 +345,7 @@ def test_temp_file_cleanup_on_exception():
     settings = make_settings(nsjail_enabled=False)
     with patch("app.services.python_executor.subprocess.run", side_effect=RuntimeError("boom")), \
          patch("app.services.python_executor.os.unlink") as mock_unlink:
-        result = execute_python("pass", None, settings, tenant_id=1)
+        result = execute_python("pass", None, settings, tenant_id=1, read_slot=2)
 
     assert result.success is False
     mock_unlink.assert_called_once()
@@ -301,7 +359,7 @@ def test_execution_time_measurement():
     with patch("app.services.python_executor.subprocess.run") as mock_run, \
          patch("app.services.python_executor.os.unlink"):
         mock_run.return_value = make_completed_process(stdout="", returncode=0)
-        result = execute_python("pass", None, settings, tenant_id=1)
+        result = execute_python("pass", None, settings, tenant_id=1, read_slot=2)
 
     assert result.execution_time_ms >= 0
 
@@ -323,7 +381,7 @@ def test_stdout_json_auto_insert():
         mock_get_conn.return_value.__exit__ = MagicMock(return_value=False)
         mock_run.return_value = make_completed_process(stdout=rows_json, returncode=0)
         result = execute_python(
-            "print('[...]')", None, settings, tenant_id=1,
+            "print('[...]')", None, settings, tenant_id=1, read_slot=2,
             output_table="my_table",
         )
 
@@ -343,7 +401,7 @@ def test_stdout_non_json_no_error():
          patch("app.services.python_executor.os.unlink"):
         mock_run.return_value = make_completed_process(stdout="plain text output\n", returncode=0)
         result = execute_python(
-            "print('plain text output')", None, settings, tenant_id=1,
+            "print('plain text output')", None, settings, tenant_id=1, read_slot=2,
             output_table="my_table",
         )
 
@@ -361,7 +419,7 @@ def test_stdout_json_no_output_table():
     with patch("app.services.python_executor.subprocess.run") as mock_run, \
          patch("app.services.python_executor.os.unlink"):
         mock_run.return_value = make_completed_process(stdout=rows_json, returncode=0)
-        result = execute_python("print('[...]')", None, settings, tenant_id=1)
+        result = execute_python("print('[...]')", None, settings, tenant_id=1, read_slot=2)
 
     assert result.success is True
     assert result.rows_loaded == 0
@@ -388,7 +446,7 @@ def test_stderr_as_execution_log():
             returncode=0,
         )
         result = execute_python(
-            "...", None, settings, tenant_id=1,
+            "...", None, settings, tenant_id=1, read_slot=2,
             output_table="tbl",
         )
 
@@ -411,7 +469,7 @@ def test_script_failure_no_insert():
             returncode=1,
         )
         result = execute_python(
-            "bad script", None, settings, tenant_id=1,
+            "bad script", None, settings, tenant_id=1, read_slot=2,
             output_table="tbl",
         )
 
@@ -438,7 +496,7 @@ def test_insert_failure_returns_error():
             returncode=0,
         )
         result = execute_python(
-            "...", None, settings, tenant_id=1,
+            "...", None, settings, tenant_id=1, read_slot=2,
             output_table="nonexistent_table",
         )
 
@@ -482,7 +540,7 @@ def test_nsjail_keeps_error_level_diagnostics():
     with patch("app.services.python_executor.subprocess.run") as mock_run, \
          patch("app.services.python_executor.os.unlink"):
         mock_run.return_value = make_completed_process(stdout="ok\n", returncode=0)
-        execute_python("print('ok')", None, settings, tenant_id=1)
+        execute_python("print('ok')", None, settings, tenant_id=1, read_slot=2)
 
     cmd = mock_run.call_args[0][0]
     assert "--really_quiet" not in cmd, (
