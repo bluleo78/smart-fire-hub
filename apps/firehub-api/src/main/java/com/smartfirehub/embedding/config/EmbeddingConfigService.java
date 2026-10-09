@@ -11,6 +11,7 @@ import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.securitylevel.access.ProviderHosting;
 import com.smartfirehub.settings.repository.TenantSettingsRepository;
 import java.util.Optional;
+import java.util.function.Supplier;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -73,18 +74,7 @@ public class EmbeddingConfigService {
 
   /** 임베딩 공급자 호스팅 위치. 미설정·손상·값 없음은 외부(기본 외부 — 스펙 §3). 복호화하지 않는다. */
   public ProviderHosting hosting() {
-    return readRaw()
-        .flatMap(
-            raw -> {
-              try {
-                return Optional.of(EmbeddingConfigDocument.parse(raw).hosting());
-              } catch (RuntimeException e) {
-                log.warn("{} 문서를 해석할 수 없다 — 호스팅은 외부로 본다: {}", KEY, e.toString());
-                return Optional.empty();
-              }
-            })
-        .map(h -> "SELF_HOSTED".equals(h) ? ProviderHosting.SELF_HOSTED : ProviderHosting.EXTERNAL)
-        .orElse(ProviderHosting.EXTERNAL);
+    return hostingOf(readSnapshot());
   }
 
   /**
@@ -92,6 +82,37 @@ public class EmbeddingConfigService {
    * provider 는 "바뀜"(보수적: 기존 자체 호스팅 선언을 이어받지 않는다). 모델은 목적지를 바꾸지 않으므로 보지 않는다.
    */
   public boolean targetChanged(EmbeddingConfigRequest req) {
+    return targetChanged(readSnapshot(), req);
+  }
+
+  /**
+   * 저장된 문서를 <b>한 번</b> 읽어 파싱한 스냅샷(복호화 없음). 저장 흐름(EmbeddingSettingsService#save)이 호스팅·대상 변경·키 병합을 이
+   * 스냅샷 하나로 판정해 같은 행을 여러 번 읽지 않게 한다. 미설정·손상은 empty(로그만 — 호스팅은 외부, 대상은 "바뀜"으로 해석된다).
+   */
+  Optional<EmbeddingConfigDocument.Parsed> readSnapshot() {
+    return readRaw()
+        .flatMap(
+            raw -> {
+              try {
+                return Optional.of(EmbeddingConfigDocument.parse(raw));
+              } catch (RuntimeException e) {
+                log.warn("{} 문서를 해석할 수 없다 — 미설정으로 본다: {}", KEY, e.toString());
+                return Optional.empty();
+              }
+            });
+  }
+
+  /** 스냅샷 → 호스팅. 없음·값 없음·모르는 값은 외부(기본 외부). */
+  static ProviderHosting hostingOf(Optional<EmbeddingConfigDocument.Parsed> snapshot) {
+    return snapshot
+        .map(EmbeddingConfigDocument.Parsed::hosting)
+        .map(h -> "SELF_HOSTED".equals(h) ? ProviderHosting.SELF_HOSTED : ProviderHosting.EXTERNAL)
+        .orElse(ProviderHosting.EXTERNAL);
+  }
+
+  /** 스냅샷 기준 {@link #targetChanged(EmbeddingConfigRequest)} — 규칙은 같다(없음·모르는 provider = 바뀜). */
+  static boolean targetChanged(
+      Optional<EmbeddingConfigDocument.Parsed> snapshot, EmbeddingConfigRequest req) {
     EmbeddingProviderType provider;
     try {
       provider = EmbeddingProviderType.parse(req.provider());
@@ -99,15 +120,7 @@ public class EmbeddingConfigService {
       return true;
     }
     String baseUrl = UrlUtils.normalizeBaseUrl(req.baseUrl() == null ? "" : req.baseUrl().trim());
-    return readRaw()
-        .flatMap(
-            raw -> {
-              try {
-                return Optional.of(EmbeddingConfigDocument.parse(raw));
-              } catch (RuntimeException e) {
-                return Optional.empty();
-              }
-            })
+    return snapshot
         .map(
             p ->
                 p.provider() != provider
@@ -136,21 +149,30 @@ public class EmbeddingConfigService {
    * 가드(형식·SSRF) → 키 병합.
    */
   public EmbeddingConfig prepare(EmbeddingConfigRequest req) {
-    return prepareInternal(req, true);
+    return prepareInternal(req, true, this::resolveLenient);
+  }
+
+  /** {@link #prepare} 와 같되 키 병합에 이미 읽은 스냅샷을 쓴다(저장 흐름이 같은 행을 다시 읽지 않게). */
+  EmbeddingConfig prepare(
+      EmbeddingConfigRequest req, Optional<EmbeddingConfigDocument.Parsed> snapshot) {
+    return prepareInternal(req, true, () -> snapshot.flatMap(this::toConfigLenient));
   }
 
   /** 테스트 전용 — SSRF 가드(DNS 해석)만 건너뛰고 {@link #prepare} 와 같은 병합 규칙을 탄다. */
   EmbeddingConfig prepareForTest(EmbeddingConfigRequest req) {
-    return prepareInternal(req, false);
+    return prepareInternal(req, false, this::resolveLenient);
   }
 
   /** {@link #prepare} 본체. {@code checkTarget=false} 는 테스트 전용 경로뿐이다(가드 외 규칙은 동일). */
-  private EmbeddingConfig prepareInternal(EmbeddingConfigRequest req, boolean checkTarget) {
+  private EmbeddingConfig prepareInternal(
+      EmbeddingConfigRequest req,
+      boolean checkTarget,
+      Supplier<Optional<EmbeddingConfig>> storedLenient) {
     EmbeddingProviderType provider = EmbeddingProviderType.parse(req.provider());
     String model = requireModel(req.model());
     String baseUrl = req.baseUrl() == null ? "" : req.baseUrl().trim();
     if (checkTarget) targetGuard.check(provider, baseUrl);
-    return merge(provider, model, UrlUtils.normalizeBaseUrl(baseUrl), req.apiKey());
+    return merge(provider, model, UrlUtils.normalizeBaseUrl(baseUrl), req.apiKey(), storedLenient);
   }
 
   /**
@@ -192,15 +214,21 @@ public class EmbeddingConfigService {
    * 호스트로 보낼 수 있다(OpencodeProbeService 의 MSG_BASE_URL_MISMATCH 와 같은 규칙).
    */
   private EmbeddingConfig merge(
-      EmbeddingProviderType provider, String model, String baseUrl, String submittedKey) {
+      EmbeddingProviderType provider,
+      String model,
+      String baseUrl,
+      String submittedKey,
+      Supplier<Optional<EmbeddingConfig>> storedLenient) {
     if (provider == EmbeddingProviderType.OLLAMA) {
       return new EmbeddingConfig(provider, model, baseUrl, "", 0);
     }
     if (submittedKey != null && !submittedKey.isBlank()) {
       return new EmbeddingConfig(provider, model, baseUrl, submittedKey.trim(), 0);
     }
+    // 저장된 키는 필요할 때만(새 키 없음) 지연 복호화한다 — 손상된 암호문이 다른 판정을 막지 않게.
     EmbeddingConfig stored =
-        resolveLenient()
+        storedLenient
+            .get()
             .filter(c -> c.provider() == EmbeddingProviderType.OPENAI && !c.apiKey().isBlank())
             .orElseThrow(() -> new IllegalArgumentException(MSG_API_KEY_REQUIRED));
     if (!UrlUtils.normalizeBaseUrl(stored.baseUrl()).equals(baseUrl)) {
@@ -211,16 +239,17 @@ public class EmbeddingConfigService {
 
   /** 관용 해석 — 파싱·복호화 실패를 "미설정"으로(로그만). 화면과 병합 경로 전용. */
   private Optional<EmbeddingConfig> resolveLenient() {
-    return readRaw()
-        .flatMap(
-            raw -> {
-              try {
-                return Optional.of(toConfig(EmbeddingConfigDocument.parse(raw)));
-              } catch (RuntimeException e) {
-                log.warn("{} 문서가 손상돼 미설정으로 취급한다: {}", KEY, e.toString());
-                return Optional.empty();
-              }
-            });
+    return readSnapshot().flatMap(this::toConfigLenient);
+  }
+
+  /** 파싱된 문서 → 설정(복호화). 복호화 실패는 "미설정"으로(로그만) — resolveLenient 와 같은 관용 규칙. */
+  private Optional<EmbeddingConfig> toConfigLenient(EmbeddingConfigDocument.Parsed p) {
+    try {
+      return Optional.of(toConfig(p));
+    } catch (RuntimeException e) {
+      log.warn("{} 문서가 손상돼 미설정으로 취급한다: {}", KEY, e.toString());
+      return Optional.empty();
+    }
   }
 
   private EmbeddingConfig toConfig(EmbeddingConfigDocument.Parsed p) {

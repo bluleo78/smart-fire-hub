@@ -5,7 +5,6 @@ import static com.smartfirehub.jooq.Tables.SECURITY_LEVEL;
 
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
-import com.smartfirehub.securitylevel.access.LevelPolicy;
 import com.smartfirehub.securitylevel.access.ProviderHosting;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
@@ -73,18 +72,22 @@ public class EmbeddingAiGate {
     return allowedDatasetSql(datasetIdExpr, hostingResolver.embedding());
   }
 
-  /** 정적 형태(테스트·로그용). 값이 고정 enum 이름이라 인라인이 안전하다. aiAllowedForLevel 과 같은 규칙(null 호스팅 = 외부). */
-  public static String allowedDatasetSql(String datasetIdExpr, ProviderHosting hosting) {
-    String all = "'" + LevelPolicy.AiPolicy.ALL.name() + "'";
-    String allowed =
-        hosting == ProviderHosting.SELF_HOSTED
-            ? "(" + all + ",'" + LevelPolicy.AiPolicy.SELF_HOSTED_ONLY.name() + "')"
-            : "(" + all + ")";
-    return "EXISTS (SELECT 1 FROM dataset aig_d JOIN security_level aig_sl"
-        + " ON aig_sl.id = aig_d.security_level_id WHERE aig_d.id = "
-        + datasetIdExpr
-        + " AND aig_sl.ai_policy IN "
-        + allowed
-        + ")";
+  /**
+   * 호스팅을 정해 렌더한 술어(테스트용 진입점 겸 본체). ai_policy 규칙은 {@link DatasetAccessGuard#aiPolicyAllows} 하나를
+   * 인라인 렌더해 재사용한다 — 문자열로 규칙을 다시 쓰면 jOOQ 술어·순수 함수와 세 벌이 되어 한쪽만 바뀔 수 있다. 값은 고정 enum 이름뿐이라 인라인이
+   * 안전하다. 별칭(aig_d/aig_sl)은 호출부 SQL 의 별칭(de·c 등)과 겹치지 않게 고정한다. null 호스팅 = 외부.
+   */
+  String allowedDatasetSql(String datasetIdExpr, ProviderHosting hosting) {
+    var d = DATASET.as("aig_d");
+    var sl = SECURITY_LEVEL.as("aig_sl");
+    return dsl.renderInlined(
+        DSL.exists(
+            DSL.selectOne()
+                .from(d)
+                .join(sl)
+                .on(sl.ID.eq(d.SECURITY_LEVEL_ID))
+                // 호출부 SQL 의 데이터셋 id 식(코드 상수) — 바인드가 아니라 SQL 조각으로 그대로 들어간다.
+                .where(d.ID.eq(DSL.field(datasetIdExpr, Long.class)))
+                .and(DatasetAccessGuard.aiPolicyAllows(sl.AI_POLICY, hosting))));
   }
 }

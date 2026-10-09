@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { isLikelyPublicEndpoint, isSameTransportTarget, normalizeHosting } from './hosting-location';
+import {
+  isKnownPublicAiHost,
+  isLikelyPublicEndpoint,
+  isSameTransportTarget,
+  KNOWN_PUBLIC_AI_HOSTS,
+  normalizeHosting,
+} from './hosting-location';
 
 describe('isLikelyPublicEndpoint', () => {
   it.each([
@@ -45,5 +51,53 @@ describe('normalizeHosting', () => {
     ['self_hosted', 'EXTERNAL'],
   ])('%s → %s', (raw, expected) => {
     expect(normalizeHosting(raw)).toBe(expected);
+  });
+});
+
+// api KnownPublicAiHostsTest 와 같은 집합·같은 사례 표다 — 두 언어의 목록을 한 곳에 정의할 수 없어 같은 표로 일치를 고정한다.
+// 한쪽 행을 바꾸면 다른 쪽도 바꿀 것.
+describe('isKnownPublicAiHost', () => {
+  it('목록이 api KnownPublicAiHosts.HOSTS 와 같은 집합이다', () => {
+    expect([...KNOWN_PUBLIC_AI_HOSTS].sort()).toEqual(
+      [
+        'api.openai.com',
+        'api.anthropic.com',
+        'generativelanguage.googleapis.com',
+        'api.mistral.ai',
+        'api.cohere.com',
+        'api.cohere.ai',
+        'api.groq.com',
+        'openrouter.ai',
+        'api.together.xyz',
+        'api.deepseek.com',
+        'api.voyageai.com',
+        'api.fireworks.ai',
+        'api.perplexity.ai',
+        'api.x.ai',
+      ].sort(),
+    );
+  });
+
+  // "확실"(true)만 서버가 거부하고, 공용일 "가능성"만 있는 주소는 허용(false)한다.
+  it.each([
+    ['https://api.openai.com/v1', true],
+    ['HTTPS://API.OPENAI.COM/v1', true],
+    ['https://api.openai.com:443/v1', true],
+    ['https://api.openai.com./v1', true],
+    ['https://api.anthropic.com', true],
+    ['https://generativelanguage.googleapis.com/v1beta/openai', true],
+    ['https://openrouter.ai/api/v1', true],
+    ['https://api.mistral.ai/v1', true],
+    ['https://gateway.example.com', false],
+    ['https://openai.example.com/v1', false],
+    ['https://api.openai.com.evil.example/v1', false],
+    ['http://10.0.0.5:8000/v1', false],
+    ['http://localhost:11434', false],
+    ['http://ollama:11434', false],
+    ['http://llm.corp.internal', false],
+    ['not a url', false],
+    ['', false],
+  ])('%s → %s', (url, expected) => {
+    expect(isKnownPublicAiHost(url)).toBe(expected);
   });
 });

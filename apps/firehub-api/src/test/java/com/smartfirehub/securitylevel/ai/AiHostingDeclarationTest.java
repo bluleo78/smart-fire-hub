@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -269,6 +271,14 @@ class AiHostingDeclarationTest extends IntegrationTestBase {
   }
 
   @Test
+  void classify_corruptOwnSlot_isExternal_notChatFallback() {
+    // 분류 행이 있으면(손상이라도) 채팅으로 넘어가지 않는다 — 1회 읽기로 바꾼 classifyHosting 의 기존 동작 고정.
+    credentialService.save(AiCredentialSlot.CHAT, opencode("SELF_HOSTED"), null);
+    tenantSettings.upsert(AiCredentialSlot.CLASSIFY.key(), "{not json", null);
+    assertThat(resolver.classify()).isEqualTo(ProviderHosting.EXTERNAL);
+  }
+
+  @Test
   void embeddingHosting_isStoredInDocument() {
     EmbeddingConfig cfg =
         new EmbeddingConfig(EmbeddingProviderType.OLLAMA, "bge-m3", "http://ollama:11434", "", 0);
@@ -385,7 +395,7 @@ class AiHostingDeclarationTest extends IntegrationTestBase {
 
   /** 공인 IP 리터럴 opencode(apiKey 없음) — SSRF 가드는 DNS 없이 통과하고 프로브는 건너뛰므로 HTTP 경로로 선언 권한 판정까지 도달한다. */
   private static final String PUBLIC_OPENCODE_SELF_HOSTED =
-      "{\"agentType\":\"opencode\",\"payload\":{\"providerId\":\"corp\","
+      "{\"v\":1,\"agentType\":\"opencode\",\"payload\":{\"providerId\":\"corp\","
           + "\"baseURL\":\"https://93.184.216.34/v1\",\"hosting\":\"SELF_HOSTED\"},\"secret\":{}";
 
   @Test
@@ -461,7 +471,7 @@ class AiHostingDeclarationTest extends IntegrationTestBase {
 
   /** apiKey 를 생략한 opencode PUT 본문 — 프로브를 건너뛰어 외부 접속 없이 저장 경로까지 간다. */
   private static String opencodeBody(String baseUrl, String extraPayload) {
-    return "{\"agentType\":\"opencode\",\"payload\":{\"providerId\":\"corp\",\"baseURL\":\""
+    return "{\"v\":1,\"agentType\":\"opencode\",\"payload\":{\"providerId\":\"corp\",\"baseURL\":\""
         + baseUrl
         + "\""
         + extraPayload
@@ -622,5 +632,105 @@ class AiHostingDeclarationTest extends IntegrationTestBase {
         new EmbeddingConfigRequest("OPENAI", "m1", SEED_URL + "/", "sk-new", null), aiOnly);
     assertThat(resolver.embedding()).isEqualTo(ProviderHosting.SELF_HOSTED);
     assertThat(hostingAudits(aiOnly)).isEmpty();
+  }
+
+  // ---- 확실한 공용 AI 호스트의 자체 호스팅 선언 거부(KnownPublicAiHosts — 채팅·분류·임베딩 같은 규칙) ----
+
+  /** 확실한 공용 SaaS 주소(웹 사례 표와 같은 목록). */
+  private static final String PUBLIC_SAAS_URL = "https://api.openai.com/v1";
+
+  @Test
+  void embeddingSelfHosted_onKnownPublicHost_is400_evenWithSecuritySettings_andNothingStored() {
+    long sec = userWith("ai:settings", "security:settings");
+    doReturn(1024).when(providerFactory).probeDimension(any());
+    assertThatThrownBy(
+            () ->
+                embeddingSettingsService.save(
+                    new EmbeddingConfigRequest(
+                        "OPENAI", "m1", PUBLIC_SAAS_URL, "sk-x", "SELF_HOSTED"),
+                    sec))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage(KnownPublicAiHosts.MSG_SELF_HOSTED_PUBLIC);
+    // 외부 호출(probe) 전에 거부 — 아무것도 쓰지 않고 감사도 없다.
+    verify(providerFactory, never()).probeDimension(any());
+    assertThat(embeddingConfigService.view().configured()).isFalse();
+    assertThat(hostingAudits(sec)).isEmpty();
+  }
+
+  @Test
+  void embeddingMoveToKnownPublicHost_explicitSelfHosted_isRejected() {
+    // 자체 호스팅 행을 공용 주소로 옮기며 명시 선언하면 권한이 있어도 400 — 기존 행은 그대로.
+    long sec = userWith("ai:settings", "security:settings");
+    doReturn(1024).when(providerFactory).probeDimension(any());
+    seedEmbedding(EmbeddingProviderType.OPENAI, SEED_URL, "sk-x");
+    assertThatThrownBy(
+            () ->
+                embeddingSettingsService.save(
+                    new EmbeddingConfigRequest("OPENAI", "m1", PUBLIC_SAAS_URL, null, "SELF_HOSTED"),
+                    sec))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage(KnownPublicAiHosts.MSG_SELF_HOSTED_PUBLIC);
+    assertThat(embeddingConfigService.view().baseUrl()).isEqualTo(SEED_URL);
+    assertThat(resolver.embedding()).isEqualTo(ProviderHosting.SELF_HOSTED);
+  }
+
+  @Test
+  void embeddingSelfHostedKept_onKnownPublicHost_hostingOmitted_isRejected() {
+    // "생략 = 유지" 경로도 같은 판정: 공용 주소에 SELF_HOSTED 가 남는 재저장은 거부(규칙 이전에 저장된 행을 흉내 — store 는 판정하지 않는다).
+    long aiOnly = userWith("ai:settings");
+    doReturn(1024).when(providerFactory).probeDimension(any());
+    seedEmbedding(EmbeddingProviderType.OPENAI, PUBLIC_SAAS_URL, "sk-x");
+    assertThatThrownBy(
+            () ->
+                embeddingSettingsService.save(
+                    new EmbeddingConfigRequest("OPENAI", "m2", PUBLIC_SAAS_URL, null, null),
+                    aiOnly))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage(KnownPublicAiHosts.MSG_SELF_HOSTED_PUBLIC);
+    verify(providerFactory, never()).probeDimension(any());
+    assertThat(embeddingConfigService.view().model()).isEqualTo("m1");
+  }
+
+  @Test
+  void chatAndClassify_selfHostedOnKnownPublicHost_is400_andNothingStored() {
+    Map<String, Object> payload = new java.util.HashMap<>();
+    payload.put("providerId", "openai");
+    payload.put("baseURL", PUBLIC_SAAS_URL);
+    payload.put("hosting", "SELF_HOSTED");
+    AiCredentialUpsert req = new AiCredentialUpsert("opencode", payload, Map.of("apiKey", "k"));
+    assertThatThrownBy(() -> credentialService.save(AiCredentialSlot.CHAT, req, null))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage(KnownPublicAiHosts.MSG_SELF_HOSTED_PUBLIC);
+    assertThat(tenantSettings.findValue(AiCredentialSlot.CHAT.key())).isEmpty();
+    assertThatThrownBy(() -> credentialService.saveClassify(req, "openai/m1", null))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage(KnownPublicAiHosts.MSG_SELF_HOSTED_PUBLIC);
+    assertThat(tenantSettings.findValue(AiCredentialSlot.CLASSIFY.key())).isEmpty();
+
+    // 같은 공용 주소를 외부로 선언하는 것은 그대로 허용된다.
+    payload.put("hosting", "EXTERNAL");
+    credentialService.save(AiCredentialSlot.CHAT, req, null);
+    assertThat(resolver.chat()).isEqualTo(ProviderHosting.EXTERNAL);
+  }
+
+  @Test
+  void chatSelfHostedKept_whenOnlyHostingOmitted_onKnownPublicHost_isRejected() {
+    // 병합 결과를 보므로 "생략 = 유지" 경로도 덮인다: 같은 대상(공용)에 SELF_HOSTED 가 남는 저장은 거부.
+    // 공용 주소 SELF_HOSTED 행은 정상 경로로 만들 수 없어 원문으로 심는다(이 규칙 이전에 저장된 행을 흉내).
+    tenantSettings.upsert(
+        AiCredentialSlot.CHAT.key(),
+        "{\"v\":1,\"agentType\":\"opencode\",\"payload\":{\"providerId\":\"openai\",\"baseURL\":\""
+            + PUBLIC_SAAS_URL
+            + "\",\"hosting\":\"SELF_HOSTED\"},\"secret\":{}}",
+        null);
+    Map<String, Object> payload = Map.of("providerId", "openai", "baseURL", PUBLIC_SAAS_URL);
+    assertThatThrownBy(
+            () ->
+                credentialService.save(
+                    AiCredentialSlot.CHAT,
+                    new AiCredentialUpsert("opencode", payload, Map.of("apiKey", "k")),
+                    null))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage(KnownPublicAiHosts.MSG_SELF_HOSTED_PUBLIC);
   }
 }

@@ -4,7 +4,6 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.audit.service.AuditLogService;
-import com.smartfirehub.dataset.exception.DatasetNotFoundException;
 import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.exception.ExternalServiceException;
 import com.smartfirehub.global.security.DelegationHeaders;
@@ -17,10 +16,8 @@ import com.smartfirehub.ontology.dto.OntologySummary;
 import com.smartfirehub.ontology.graphread.GraphOntologySourceRepository;
 import com.smartfirehub.ontology.graphread.GraphReadGate;
 import com.smartfirehub.ontology.repository.OntologyRepository;
-import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
-import com.smartfirehub.securitylevel.access.DatasetAction;
 import com.smartfirehub.securitylevel.ai.AiCall;
 import com.smartfirehub.securitylevel.ai.AiHostingResolver;
 import com.smartfirehub.user.repository.UserRepository;
@@ -192,9 +189,9 @@ public class OntologyService {
    * WD-31⑤ 출처 데이터셋 판정(보충 스펙 §2.2). 추론 표본은 채팅 공급자로 갔고 결과 온톨로지는 공유 저장소이므로 각 출처에 VIEW + AI(공유 호스팅 규칙
    * forShare) + SHARE 를 요구한다.
    *
-   * <p>VIEW 만 먼저 전부 판정한다 — 볼 수 없는 id 는 없는 id 와 같은 404(존재 은닉). requireView 가 아니라 check(VIEW) 를 쓰는
-   * 이유: AI 대행 요청이면 requireView 의 가드 코어 훅이 그 자리에서 AI 까지 판정해, [볼 수 있으나 AI 불허, 숨김] 순서면 404 대신 403 이 나가
-   * 응답이 입력 순서에 달라진다. 전부 볼 수 있을 때만 정책 판정으로 넘어가므로 403 POLICY_BLOCKED 의 등급 이름은 이미 볼 수 있는 정보다.
+   * <p>사실은 한 번에 읽고(N+1 없음), VIEW 를 전부 먼저 판정한다 — 볼 수 없는 id 는 없는 id 와 같은 404(존재 은닉). requireView 의 AI 훅을
+   * 쓰지 않는 이유: 그 자리에서 AI 까지 판정하면 [볼 수 있으나 AI 불허, 숨김] 순서에서 404 대신 403 이 나가 응답이 입력 순서에 달라진다(가드의
+   * requireViewThenAiForDatasets 가 VIEW 전부 → 정책 순서를 보장한다).
    */
   private void requireSourceDatasetsAllowed(List<Long> sourceDatasetIds) {
     if (sourceDatasetIds.isEmpty()) {
@@ -203,15 +200,10 @@ public class OntologyService {
     if (sourceDatasetIds.stream().anyMatch(Objects::isNull)) {
       throw new IllegalArgumentException("출처 데이터셋 id 가 비어 있습니다.");
     }
-    Clearance caller = clearanceResolver.current();
-    for (Long dsId : sourceDatasetIds) {
-      // 메시지는 DatasetAccessGuard#requireView 의 404 와 바이트 단위로 같아야 한다(존재 은닉).
-      if (!datasetAccessGuard.check(caller, dsId, DatasetAction.VIEW, null).allowed()) {
-        throw new DatasetNotFoundException("Dataset not found: " + dsId);
-      }
-    }
-    datasetAccessGuard.requireAiForDatasets(
-        caller, sourceDatasetIds, new AiCall(aiHostingResolver.forShare(), true));
+    datasetAccessGuard.requireViewThenAiForDatasets(
+        clearanceResolver.current(),
+        sourceDatasetIds,
+        new AiCall(aiHostingResolver.forShare(), true));
   }
 
   // 상태 전이 판정. 허용: draft→active, active→archived, archived→active. 그 외 상태 변경은 거부.

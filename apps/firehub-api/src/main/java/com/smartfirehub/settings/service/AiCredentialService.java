@@ -8,6 +8,7 @@ import com.smartfirehub.apiconnection.service.EncryptionService;
 import com.smartfirehub.apiconnection.service.UrlUtils;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.securitylevel.access.ProviderHosting;
+import com.smartfirehub.securitylevel.ai.KnownPublicAiHosts;
 import com.smartfirehub.settings.model.AiCredential;
 import com.smartfirehub.settings.model.AiCredentialDocument;
 import com.smartfirehub.settings.model.AiCredentialSlot;
@@ -323,9 +324,14 @@ public class AiCredentialService {
 
   /** AI_CLASSIFY 가 실제로 쓸 공급자의 호스팅 — 분류 전용 행이 없으면 채팅 설정을 통째로 쓰므로 채팅 호스팅이다(#707 규칙과 같다). */
   public ProviderHosting classifyHosting() {
-    return readTenantRaw(AiCredentialSlot.CLASSIFY.key()).isPresent()
-        ? hosting(AiCredentialSlot.CLASSIFY)
-        : hosting(AiCredentialSlot.CHAT);
+    // 분류 행은 한 번만 읽는다 — 있으면 그 원문으로 판정(손상이면 채팅으로 넘어가지 않고 외부), 없을 때만 채팅 슬롯을 본다.
+    Optional<String> classifyRaw = readTenantRaw(AiCredentialSlot.CLASSIFY.key());
+    if (classifyRaw.isEmpty()) {
+      return hosting(AiCredentialSlot.CHAT);
+    }
+    return tryParse(classifyRaw.get(), AiCredentialSlot.CLASSIFY.key(), "HOSTING")
+        .map(AiCredentialService::hostingOf)
+        .orElse(ProviderHosting.EXTERNAL);
   }
 
   /**
@@ -419,6 +425,11 @@ public class AiCredentialService {
     }
     if ("SELF_HOSTED".equals(v) && !SELF_HOSTABLE_AGENT_TYPES.contains(doc.agentType())) {
       throw new IllegalArgumentException(MSG_CLAUDE_EXTERNAL_ONLY);
+    }
+    // 확실한 공용 AI SaaS 주소(api.openai.com 등)를 자체 호스팅이라 선언하면 '자체 호스팅 모델만' 등급 데이터가 외부로 나간다 — 병합 결과를
+    // 보므로 명시 선언·생략 유지 모두 덮인다(임베딩 설정 저장과 같은 규칙·같은 목록).
+    if ("SELF_HOSTED".equals(v)) {
+      KnownPublicAiHosts.requireNotKnownPublic(doc.payload().path("baseURL").asText(""));
     }
   }
 

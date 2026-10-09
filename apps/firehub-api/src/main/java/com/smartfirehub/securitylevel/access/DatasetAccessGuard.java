@@ -252,6 +252,31 @@ public class DatasetAccessGuard {
   }
 
   /**
+   * id 목록의 VIEW → AI(+SHARE) 강제 — {@link #requireAiForDatasets} 와 같되 VIEW 거부가 <b>존재하지 않는 데이터셋과 같은 404</b>다
+   * (단건 {@link #requireView} 와 같은 존재 은닉 계약을 쓰는 다건 입력 — 온톨로지 출처 등). 사실은 한 번에 읽는다(N+1 없음).
+   *
+   * <p>VIEW 를 전부 먼저 판정한다 — [볼 수 있으나 AI 불허, 숨김] 순서에서도 404 가 나가 응답이 입력 순서에 달라지지 않는다. 전부 볼 수 있을 때만
+   * 정책 판정으로 넘어가므로 403 POLICY_BLOCKED 의 등급 이름은 이미 볼 수 있는 정보다. null id 는 호출부가 먼저 거른다.
+   */
+  public void requireViewThenAiForDatasets(
+      Clearance c, Collection<Long> datasetIds, AiCall call) {
+    if (datasetIds.isEmpty()) {
+      return;
+    }
+    Map<Long, AccessFacts> facts = accessRepository.findFactsByDatasetIds(datasetIds, c);
+    for (Long id : datasetIds) {
+      AccessFacts f = facts.get(id);
+      if (f == null || !decide(c, f, DatasetAction.VIEW, null).allowed()) {
+        // 메시지는 requireView 의 404 와 바이트 단위로 같아야 한다(존재 은닉).
+        throw new DatasetNotFoundException("Dataset not found: " + id);
+      }
+    }
+    for (Long id : datasetIds) {
+      requireAiFacts(c, facts.get(id), call);
+    }
+  }
+
+  /**
    * id 목록이 전부 VIEW + AI(+SHARE) 허용인가 — 예외 없이 값으로 답한다. 거부를 오류 응답이 아니라 원문 가림으로 바꾸는 호출부(파이프라인 실행 기록의
    * 원문 오류·로그 공개 판정)가 쓴다. 없는 id·null id·볼 수 없는 id 는 불허(fail-closed), 빈 목록은 허용(LLM 으로 갈 데이터셋 값이 없다).
    */

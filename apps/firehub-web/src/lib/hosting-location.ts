@@ -47,3 +47,41 @@ export function isLikelyPublicEndpoint(url: string): boolean {
   if (/\.(internal|local|lan|corp)$/.test(host)) return false;
   return true;
 }
+
+/**
+ * 공용 호스팅이 <b>확실한</b> AI SaaS 호스트(스펙 §7.6 — 자체 호스팅 오선언 방지). 여기 있는 주소를 자체 호스팅으로 선언하면 api 가
+ * 400 으로 거부한다(api `KnownPublicAiHosts.HOSTS`). 두 언어에 한 곳으로 정의할 수 없어, 양쪽 테스트(hosting-location.test.ts ·
+ * KnownPublicAiHostsTest)가 같은 집합·같은 사례 표로 일치를 고정한다 — 한쪽만 고치면 그 표가 깨진다.
+ */
+export const KNOWN_PUBLIC_AI_HOSTS: ReadonlySet<string> = new Set([
+  'api.openai.com',
+  'api.anthropic.com',
+  'generativelanguage.googleapis.com',
+  'api.mistral.ai',
+  'api.cohere.com',
+  'api.cohere.ai',
+  'api.groq.com',
+  'openrouter.ai',
+  'api.together.xyz',
+  'api.deepseek.com',
+  'api.voyageai.com',
+  'api.fireworks.ai',
+  'api.perplexity.ai',
+  'api.x.ai',
+]);
+
+/**
+ * URL 의 호스트가 확실한 공용 AI SaaS 인가 — api `KnownPublicAiHosts.isKnownPublic` 과 같은 규칙. 호스트 정확 일치(소문자·끝 점 제거)이고
+ * 접미사 와일드카드는 쓰지 않는다(고객 소유 하위 도메인을 공용으로 오판하지 않게). 파싱 실패는 false(형식 오류는 URL 검증이 따로 막는다).
+ */
+export function isKnownPublicAiHost(url: string): boolean {
+  let host: string;
+  try {
+    host = new URL(url.trim()).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  // 끝 점(FQDN 표기 "api.openai.com.")을 떼야 같은 호스트가 목록을 우회하지 못한다 — api 와 같은 처리.
+  host = host.replace(/\.+$/, '');
+  return KNOWN_PUBLIC_AI_HOSTS.has(host);
+}

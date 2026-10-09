@@ -13,6 +13,9 @@ import com.smartfirehub.embedding.config.EmbeddingConfigService;
 import com.smartfirehub.embedding.config.EmbeddingProviderType;
 import com.smartfirehub.embedding.reembed.EmbeddingBacklogService;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
+import com.smartfirehub.securitylevel.access.DatasetAccessPolicy;
+import com.smartfirehub.securitylevel.access.LevelPolicy;
 import com.smartfirehub.securitylevel.access.ProviderHosting;
 import com.smartfirehub.settings.repository.TenantSettingsRepository;
 import com.smartfirehub.support.EmbeddingTestFixtures;
@@ -21,9 +24,11 @@ import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.SecurityFixture;
 import com.smartfirehub.support.TenantRlsTestSupport;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 import org.jooq.DSLContext;
+import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -207,5 +212,82 @@ class EmbeddingAiGateTest extends IntegrationTestBase {
     assertThat(gate.disallowedDatasetIds()).contains(sensId).doesNotContain(pubId);
     store(ProviderHosting.SELF_HOSTED);
     assertThat(gate.disallowedDatasetIds()).doesNotContain(sensId, pubId);
+  }
+
+  // ---- ai_policy × 호스팅 규칙: 남은 두 구현(jOOQ 술어 · 순수 함수)의 일치 ----
+
+  /** 호스팅 축 — enum 값 + null(호출자가 위치를 모름 = 외부로 본다). */
+  private static final List<ProviderHosting> HOSTINGS =
+      Arrays.asList(ProviderHosting.EXTERNAL, ProviderHosting.SELF_HOSTED, null);
+
+  /**
+   * jOOQ 술어(DatasetAccessGuard#aiPolicyAllows)를 DB 가 실제로 평가한 값이 순수 함수(aiAllowedForLevel)와 모든 정책 ×
+   * 호스팅(null 포함)에서 같다. 문자열 SQL 판(EmbeddingAiGate)은 이 술어를 렌더해 쓰므로 규칙 구현은 이 둘뿐이다.
+   */
+  @Test
+  void aiPolicyAllows_agreesWithAiAllowedForLevel_forEveryPolicyAndHosting() {
+    for (LevelPolicy.AiPolicy p : LevelPolicy.AiPolicy.values()) {
+      for (ProviderHosting h : HOSTINGS) {
+        Boolean sql =
+            dsl.fetchValue(DSL.field(DatasetAccessGuard.aiPolicyAllows(DSL.inline(p.name()), h)));
+        assertThat(sql)
+            .as("%s/%s", p, h)
+            .isEqualTo(DatasetAccessPolicy.aiAllowedForLevel(level(p), h));
+      }
+    }
+  }
+
+  /**
+   * 렌더된 문자열 술어(allowedDatasetSql)가 시드 4등급 × 호스팅(null 포함)에서 순수 함수와 같은 답을 낸다 — 렌더(별칭·조인·인라인)가 술어 의미를
+   * 바꾸지 않는다는 증거. 시드가 ALL·SELF_HOSTED_ONLY 를 모두 갖는지도 고정한다(공허한 일치 방지).
+   */
+  @Test
+  void allowedDatasetSql_agreesWithAiAllowedForLevel_forSeedLevelsAndHostings() {
+    List<Long> created = new ArrayList<>();
+    java.util.Set<LevelPolicy.AiPolicy> seen = new java.util.HashSet<>();
+    try {
+      for (String name : List.of("공개", "내부", "민감", "기밀")) {
+        long levelId = fx.levelId(name);
+        long ds = fx.createDatasetRow("eagm" + System.nanoTime(), levelId, creator);
+        created.add(ds);
+        LevelPolicy.AiPolicy p =
+            LevelPolicy.AiPolicy.valueOf(
+                inTenantFixture(
+                    () ->
+                        dsl.fetchValue("select ai_policy from security_level where id = ?", levelId)
+                            .toString()));
+        seen.add(p);
+        for (ProviderHosting h : HOSTINGS) {
+          String frag = gate.allowedDatasetSql("x.id", h);
+          Boolean sql =
+              inTenantFixture(
+                  () ->
+                      (Boolean)
+                          dsl.fetchValue(
+                              "select " + frag + " from (select ?::bigint as id) x", ds));
+          assertThat(sql)
+              .as("%s(%s)/%s", name, p, h)
+              .isEqualTo(DatasetAccessPolicy.aiAllowedForLevel(level(p), h));
+        }
+      }
+      assertThat(seen).contains(LevelPolicy.AiPolicy.ALL, LevelPolicy.AiPolicy.SELF_HOSTED_ONLY);
+    } finally {
+      created.forEach(fx::deleteDatasetRow);
+    }
+  }
+
+  /** ai_policy 만 의미 있는 등급 값(나머지 축은 판정과 무관). */
+  private static LevelPolicy level(LevelPolicy.AiPolicy p) {
+    return new LevelPolicy(
+        1L,
+        "L",
+        1,
+        false,
+        false,
+        false,
+        LevelPolicy.ExportPolicy.ALLOW,
+        p,
+        LevelPolicy.SharePolicy.ALLOW,
+        false);
   }
 }
