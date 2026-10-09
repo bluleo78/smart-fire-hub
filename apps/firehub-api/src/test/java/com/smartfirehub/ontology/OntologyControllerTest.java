@@ -59,6 +59,12 @@ class OntologyControllerTest {
   @MockitoBean private JwtProperties jwtProperties;
   // OntologyService 생성자 주입용(WD-28) — 판정은 GraphReadGateTest 가 실제 DB 로 검증한다.
   @MockitoBean private com.smartfirehub.ontology.graphread.GraphReadGate graphReadGate;
+  // OntologyService 생성자 주입용(WD-31⑤ 출처 판정·기록) — 판정은 OntologySourceDatasetsTest 가 실제 DB 로 검증한다.
+  @MockitoBean private com.smartfirehub.securitylevel.access.ClearanceResolver clearanceResolver;
+  @MockitoBean private com.smartfirehub.securitylevel.ai.AiHostingResolver aiHostingResolver;
+
+  @MockitoBean
+  private com.smartfirehub.ontology.graphread.GraphOntologySourceRepository sourceRepository;
 
   @BeforeEach
   void setUp() {

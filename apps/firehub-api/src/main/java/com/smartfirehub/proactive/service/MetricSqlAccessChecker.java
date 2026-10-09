@@ -6,8 +6,13 @@ import com.smartfirehub.pipeline.exception.UnsafeSqlException;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.securitylevel.access.SqlAccessMode;
+import com.smartfirehub.securitylevel.access.SqlAccessResult;
+import com.smartfirehub.securitylevel.ai.AiCall;
+import com.smartfirehub.securitylevel.ai.AiHostingResolver;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -22,6 +27,8 @@ public class MetricSqlAccessChecker {
 
   private final DatasetAccessGuard guard;
   private final ClearanceResolver clearanceResolver;
+  // 메트릭 값이 리포트 컨텍스트로 채팅 공급자에 가고 발송되므로 AI(공유 호스팅 규칙)·SHARE 도 판정한다.
+  private final AiHostingResolver aiHostingResolver;
 
   /**
    * 생성·수정 시점 — 하나라도 거부면 403. 파싱 불가 SQL 은 여기서 막지 않는다(기존처럼 폴러가 건너뛴다 — 저장 계약 불변).
@@ -42,7 +49,15 @@ public class MetricSqlAccessChecker {
           && metric.get("query") instanceof String query
           && !query.isBlank()) {
         try {
-          guard.requireSql(clearance, NormalizedSql.of(query).text(), SqlAccessMode.INTERACTIVE);
+          SqlAccessResult r =
+              guard.requireSql(
+                  clearance, NormalizedSql.of(query).text(), SqlAccessMode.INTERACTIVE);
+          // 메트릭 값은 이상 감지 시 리포트 컨텍스트로 채팅 공급자에 가고 발송된다(스펙 §4.2 Proactive 행) — 참조 데이터셋 전부
+          // AI(+SHARE). requireSql 이 VIEW 를 이미 통과시켰으므로 여기 거부는 등급 이름이 실린 403 POLICY_BLOCKED 다.
+          Set<Long> touched = new HashSet<>(r.readDatasetIds());
+          touched.addAll(r.writeDatasetIds());
+          guard.requireAiForDatasets(
+              clearance, touched, new AiCall(aiHostingResolver.forShare(), true));
         } catch (SqlQueryException | UnsafeSqlException e) {
           // 파싱 불가 SQL — 폴러의 기존 검증(metricSqlValidator)이 실행 전에 건너뛴다.
         }

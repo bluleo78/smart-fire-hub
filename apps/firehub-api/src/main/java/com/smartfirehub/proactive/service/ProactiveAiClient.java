@@ -84,6 +84,9 @@ public class ProactiveAiClient {
       // ai-agent 가 디스크 산출물 경로를 테넌트별로 가르는 데 쓴다(경로 스코핑 전용).
       // 이 경로는 @Scheduled/@Async 배경 잡에서 오므로 TenantScopedRunner 가 세운 컨텍스트를 읽는다.
       body.put("tenantId", TenantContext.require("프로액티브 AI 호출"));
+      // 리포트는 발송(공유)된다 — ai-agent 가 이 값을 읽어 실행 중 MCP 호출에 X-AI-Purpose: share 를 실어, API 가 AI 판정에
+      // 더해 SHARE 정책(공유 금지 등급 제외)까지 걸게 한다(스펙 §4.3 Proactive 행).
+      body.put("aiPurpose", "share");
 
       String responseBody =
           webClient

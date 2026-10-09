@@ -6,8 +6,11 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartfirehub.embedding.config.EmbeddingConfigService;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.settings.model.AiCredentialSlot;
+import com.smartfirehub.settings.repository.TenantSettingsRepository;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.SecurityFixture;
 import com.smartfirehub.support.TenantRlsTestSupport;
@@ -39,6 +42,7 @@ class HomeDatasetVisibilityTest extends IntegrationTestBase {
   @Autowired private JwtTokenProvider jwt;
   @Autowired private ObjectMapper om;
   @Autowired private com.smartfirehub.proactive.service.ProactiveContextCollector contextCollector;
+  @Autowired private TenantSettingsRepository tenantSettings;
 
   private SecurityFixture fx;
   private final List<Long> users = new ArrayList<>();
@@ -217,13 +221,34 @@ class HomeDatasetVisibilityTest extends IntegrationTestBase {
    * 비요청 경로 — proactive 리포트 컨텍스트 수집(비동기 러너)도 같은 홈 데이터를 쓴다. 요청 사용자가 없으므로 작업 소유자 자격으로 거른다: 못 보는 소유자의
    * 리포트 컨텍스트에는 숨김 데이터셋 이름이 없고, 볼 수 있는 소유자에게는 있다(소유자 자격이 아니라 "아무것도 못 봄"으로 돌면 공개 데이터셋도 빠진다 — 그 회귀도 같이
    * 잡는다).
+   *
+   * <p>S3(WD-39) 이후 컨텍스트는 AI(공유 호스팅 규칙)+SHARE 범위로도 걸러진다 — 민감(ai_policy SELF_HOSTED_ONLY)이 high
+   * 소유자에게 보이려면 채팅·임베딩이 자체 호스팅이어야 한다. 이 테스트는 소유자 자격 축만 보므로 자체 호스팅을 선언해 AI 축을 연다(AI·SHARE 축은
+   * ProactiveShareTest).
    */
   @Test
   void proactiveContext_filtersByJobOwnerClearance() {
-    String lowCtx = contextCollector.collectContext(java.util.Map.of(), null, lowUser);
-    String highCtx = contextCollector.collectContext(java.util.Map.of(), null, highUser);
-    assertThat(lowCtx).contains("sf_" + m + "_visible").doesNotContain("sf_" + m + "_hidden");
-    assertThat(highCtx).contains("sf_" + m + "_hidden");
+    TenantContext.set(DEFAULT_TEST_TENANT_ID);
+    tenantSettings.upsert(
+        AiCredentialSlot.CHAT.key(),
+        "{\"v\":1,\"agentType\":\"opencode\",\"payload\":{\"providerId\":\"corp\","
+            + "\"baseURL\":\"http://10.0.0.5/v1\",\"hosting\":\"SELF_HOSTED\"},\"secret\":{}}",
+        null);
+    tenantSettings.upsert(
+        EmbeddingConfigService.KEY,
+        "{\"v\":1,\"provider\":\"OLLAMA\",\"model\":\"bge-m3\",\"baseUrl\":\"http://ollama:11434\","
+            + "\"dimension\":1024,\"hosting\":\"SELF_HOSTED\",\"secret\":{\"apiKey\":\"\"}}",
+        null);
+    try {
+      String lowCtx = contextCollector.collectContext(java.util.Map.of(), null, lowUser);
+      String highCtx = contextCollector.collectContext(java.util.Map.of(), null, highUser);
+      assertThat(lowCtx).contains("sf_" + m + "_visible").doesNotContain("sf_" + m + "_hidden");
+      assertThat(highCtx).contains("sf_" + m + "_hidden");
+    } finally {
+      TenantContext.set(DEFAULT_TEST_TENANT_ID);
+      tenantSettings.delete(AiCredentialSlot.CHAT.key());
+      tenantSettings.delete(EmbeddingConfigService.KEY);
+    }
   }
 
   /**
