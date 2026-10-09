@@ -8,6 +8,7 @@ import com.smartfirehub.dataimport.service.DataExportService;
 import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
+import com.smartfirehub.securitylevel.ai.PolicyBlockedException;
 import com.smartfirehub.securitylevel.sql.GuardedSqlExecutor;
 import com.smartfirehub.user.repository.UserRepository;
 import java.time.LocalDate;
@@ -73,7 +74,7 @@ public class QueryResultExportService {
       // 구조적으로 막는다. 파싱 실패 SQL 은 기록되지 않으므로(성공한 SELECT 만 기록) 여기 오는 일은 정책 불가뿐이다.
       throw new CodedApiException(
           HttpStatus.FORBIDDEN,
-          DatasetAccessGuard.POLICY_BLOCKED_CODE,
+          PolicyBlockedException.CODE,
           DatasetAccessGuard.EXPORT_MULTI_MESSAGE,
           Map.of("action", "EXPORT", "policyKey", "export_policy"));
     }

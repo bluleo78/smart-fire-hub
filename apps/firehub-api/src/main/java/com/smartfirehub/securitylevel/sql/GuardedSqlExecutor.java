@@ -56,7 +56,9 @@ public class GuardedSqlExecutor {
     NormalizedSql normalized = NormalizedSql.of(sql);
     SqlAccessResult r = guard.requireSql(c, normalized.text(), SqlAccessMode.INTERACTIVE);
     // 감사 등급 데이터셋을 읽은 사용자 SQL 은 접근 기록을 남긴다(거부는 requireSql 이 감사한다).
-    auditRecorder.recordAccess(c.userId(), SecurityAuditRecorder.AccessKind.SQL, touched(r));
+    // AI 대행 요청이면 AI 종류로 남긴다(결과가 LLM 으로 간다 — 스펙 §4.6 "AI 도구 접근").
+    auditRecorder.recordAccess(
+        c.userId(), guard.accessKind(SecurityAuditRecorder.AccessKind.SQL), touched(r));
     return dataTableQueryService.executeQuery(normalized, maxRows);
   }
 
@@ -157,7 +159,9 @@ public class GuardedSqlExecutor {
       // 실행 시점(executeJudgedAnalytics)에 403 으로 드러날 때만 감사한다(위젯 denied 는 값 판정 — 설계 결정 3).
       if (v.result().allowed()) {
         auditRecorder.recordAccess(
-            c.userId(), SecurityAuditRecorder.AccessKind.SQL, touched(v.result()));
+            c.userId(),
+            guard.accessKind(SecurityAuditRecorder.AccessKind.SQL),
+            touched(v.result()));
       }
       return new AnalyticsJudgment(normalized, v, null, c);
     } catch (SqlQueryException | UnsafeSqlException e) {
@@ -184,7 +188,9 @@ public class GuardedSqlExecutor {
           "UNKNOWN", List.of(), List.of(), 0, 0L, 0, false, judgment.parseError);
     }
     // AI 대행 요청의 정책 차단은 상세(action·levelName·policyKey)가 실린 원래 예외로 — 값 결과만으로는 errors 맵을 잃는다.
+    // 실제 사유(AI_EXTERNAL_DENIED 등)는 AI 동작으로 감사한다 — 판정(judgeAnalytics)은 값이라 감사하지 않고 403 으로 드러나는 여기서만.
     if (judgment.verdict.blocked() != null) {
+      guard.auditDenial(judgment.clearance, AccessDenialAction.AI, judgment.verdict.denial());
       throw judgment.verdict.blocked();
     }
     SqlAccessResult r = judgment.verdict.result();
@@ -208,7 +214,12 @@ public class GuardedSqlExecutor {
     // 폴러(@Scheduled 30초)의 판정은 사용자 요청이 아닌 내부 값 판정이다(설계 결정 3) — requireSql 을 쓰면 거부가 매 주기 감사돼
     // 메트릭당 하루 ~1440행이 쌓이고, 사용자 SQL 거부로 오인된다. 그래서 judgeSql 로 판정만 하고 감사 없이 같은 403 을 던진다.
     // 작업 생성·수정 시점(MetricSqlAccessChecker)의 거부는 사용자 요청이라 그대로 감사한다.
-    SqlAccessResult r = guard.judgeSql(c, sql, SqlAccessMode.INTERACTIVE).result();
+    DatasetAccessGuard.SqlVerdict v = guard.judgeSql(c, sql, SqlAccessMode.INTERACTIVE);
+    // 공유 범위 AI 차단(흐름 A, MetricPollerService 가 AI 문맥으로 감쌈)은 원래 예외 그대로 — 역시 감사 없이.
+    if (v.blocked() != null) {
+      throw v.blocked();
+    }
+    SqlAccessResult r = v.result();
     if (!r.allowed()) {
       throw new CodedApiException(HttpStatus.FORBIDDEN, r.code(), r.message());
     }

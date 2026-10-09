@@ -386,7 +386,7 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
 ### S3 AI 통제 (WD-39·WD-40·WD-31⑤, 마이그레이션 없음 · 계획 2026-10-09 · 배포일은 배포 시점에 갱신)
 
 - **api + web + ai-agent 동시 배포 필수.** api 만 올리면 ai-agent 가 POLICY_BLOCKED 를 일반 오류 문자열로 보이고, ai-agent 만 올리면 `X-AI-Purpose` 헤더를 받아 줄 api 가 없다. 흐름 B·C 와 함께 한 번에 배포한다(보충 스펙 1절).
-- **A 단독 배포 금지 — A·B·C 동시 배포.** 등급 변경 이벤트(`DatasetSecurityLevelChangedEvent`·`SecurityLevelsChangedEvent`)는 흐름 B 의 `DatasetSecurityService`·`SecurityLevelService` 가 발행한다(공통 결정 R2). A 만 나가면 리스너는 있으나 발행자가 없어, 등급 상향·`ai_policy` 강화·등급 순서 변경 뒤의 외부 벡터 정리가 일어나지 않는다(기동 시 1회 정리와 임베딩 호스팅 변경 이벤트만 동작). 병합 후 main 에서 실제 등급 변경 → 벡터 정리 종단 테스트를 통과시킨 뒤에 배포한다.
+- **A 단독 배포 금지 — A·B·C 동시 배포.** 등급 변경 이벤트(`DatasetSecurityLevelChangedEvent`·`SecurityLevelsChangedEvent`)는 흐름 B 의 `DatasetSecurityService`·`SecurityLevelService` 가 발행한다(공통 결정 R2). A 만 나가면 리스너는 있으나 발행자가 없어, 등급 상향·`ai_policy` 강화·등급 순서 변경 뒤의 외부 벡터 정리가 일어나지 않는다(기동 시 1회 정리와 임베딩 호스팅 변경 이벤트만 동작). 병합 후 main 에서 실제 등급 변경 → 벡터 정리 종단 테스트(`AiVectorPurgeTest.realLevelChange_viaDatasetSecurityService_purgesThatDatasetAfterCommit`, 흐름 B 병합 시 추가)를 통과시킨 뒤에 배포한다.
 - 마이그레이션 없음. 다음 신규 마이그레이션 번호는 위 V135 절의 값 그대로다.
 - **배포 직후 가시성 변화(의도된 동작)**: 모든 AI 자격증명·임베딩 설정의 호스팅 위치가 기본 "외부"다. 그래서 `ai_policy = SELF_HOSTED_ONLY|DENY` 등급(기본 시드: 민감·기밀)의 데이터셋은
   - AI 채팅의 데이터셋 목록·검색·스키마 목록에서 빠지고, 상세·행·SQL 도구는 "차단됨"(POLICY_BLOCKED)이 된다.
@@ -454,9 +454,9 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
     - 자동 상향 시 상향 감사와 허용 목록 변경 감사(바뀐 항목만)가 함께 남는다.
   - 수동 등급 변경은 "자동 상향되었습니다" 배너를 지운다.
 - **감사(관리자 › 감사 로그, 액션 필터 '데이터셋 보안' 묶음):**
-  - `데이터셋 접근 거부`(DATASET_ACCESS_DENIED, 실패)는 VIEW(404 로 가려진 것 포함)·SQL·파이프라인·데이터셋 참조·내보내기 거부를 **실제 사유**와 함께 남긴다(테이블명 포함 — 관리자 전용 화면). 내보내기 거부는 별도 액션 없이 `metadata.action=EXPORT` 다.
-  - `감사 등급 데이터 접근`(DATASET_ACCESS)은 `audit_access` 등급(기본: 민감·기밀)의 행 조회·SQL·파이프라인 접근을 남긴다.
-  - **AI(POLICY_BLOCKED) 거부와 AI 접근의 감사 연결은 흐름 A 병합 후**(Task 10)에 들어간다 — 흐름 A 를 포함한 일괄 배포에서만 남는다.
+  - `데이터셋 접근 거부`(DATASET_ACCESS_DENIED, 실패)는 VIEW(404 로 가려진 것 포함)·SQL·파이프라인·데이터셋 참조·내보내기·AI 거부를 **실제 사유**와 함께 남긴다(테이블명 포함 — 관리자 전용 화면). 내보내기 거부는 별도 액션 없이 `metadata.action=EXPORT` 다.
+  - AI 거부(위 S3 절의 403 `POLICY_BLOCKED`)는 `metadata.action=AI` 이고 사유는 `AI_EXTERNAL_DENIED`(외부 공급자 불허)·`AI_DENIED`(AI 금지 등급)·`SHARE_DENIED`(공유 목적 차단) 중 하나다. 채팅 MCP 의 상세·행·SQL 도구, 온톨로지 출처·검수 근거·AI_CLASSIFY 저장/실행·메트릭 작업 저장 판정에서 남는다. 목록·검색·스키마에서 AI 불허 데이터셋이 빠지는 것(값 판정)과 메트릭 폴러의 공유 차단은 남기지 않는다.
+  - `감사 등급 데이터 접근`(DATASET_ACCESS)은 `audit_access` 등급(기본: 민감·기밀)의 행 조회·SQL·파이프라인·AI 접근을 남긴다. AI 대행 요청(채팅 MCP)의 데이터셋 상세·행·SQL 은 종류 `AI` 로 남는다(같은 사용자의 웹 요청은 `ROW_VIEW`·`SQL`). AI 대행 행 조회는 `AI` 와 `ROW_VIEW` 두 행이 남을 수 있다.
   - 메트릭 SQL 거부는 **작업 생성·수정**(사용자 요청)만 감사한다. 백그라운드 메트릭 폴러의 거부는 감사하지 않는다(30초마다 반복되는 내부 판정이라 감사 폭주).
   - 같은 (사용자, 데이터셋, 동작, 사유)는 **1분에 1건**으로 합친다 — api 인스턴스 메모리 기준이라 다중 인스턴스면 인스턴스 수만큼 남을 수 있다. 등급을 감사 등급으로 **올린 직후 1분 안의 첫 접근은 빠질 수 있다**.
   - 차트·대시보드 위젯의 "열람 권한 없음" 표시와 없는 데이터셋 id 는 거부로 남기지 않는다.

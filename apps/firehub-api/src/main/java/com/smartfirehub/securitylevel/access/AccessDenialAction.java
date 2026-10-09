@@ -9,7 +9,7 @@ package com.smartfirehub.securitylevel.access;
  *   <li>PIPELINE — 파이프라인 저장·실행 판정
  *   <li>DATASET_REFS — SQL 이 아닌 데이터셋 id 목록 판정(AI_CLASSIFY 입력·저장 쿼리 연결·트리거 감시)
  *   <li>EXPORT — 내보내기 정책 거부
- *   <li>AI — 흐름 A 의 POLICY_BLOCKED(Task 10 에서 연결)
+ *   <li>AI — 흐름 A 의 POLICY_BLOCKED(AI·공유 정책 차단 — 사유 AI_EXTERNAL_DENIED·AI_DENIED·SHARE_DENIED)
  * </ul>
  */
 public enum AccessDenialAction {
