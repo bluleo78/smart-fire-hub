@@ -93,14 +93,4 @@ public class AiCallContext {
       }
     }
   }
-
-  /** {@link #callWith} 의 반환값 없는 형태. */
-  public void runWith(AiCall call, Runnable work) {
-    callWith(
-        call,
-        () -> {
-          work.run();
-          return null;
-        });
-  }
 }

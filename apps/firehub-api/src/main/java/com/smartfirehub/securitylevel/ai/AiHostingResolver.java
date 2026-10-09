@@ -42,4 +42,9 @@ public class AiHostingResolver {
         ? ProviderHosting.SELF_HOSTED
         : ProviderHosting.EXTERNAL;
   }
+
+  /** 공유 목적 AI 경로 1건의 판정 입력 — 호스팅은 {@link #forShare()}, SHARE 정책도 요구한다(GraphRAG·Proactive 공통). */
+  public AiCall shareCall() {
+    return new AiCall(forShare(), true);
+  }
 }

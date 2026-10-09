@@ -12,7 +12,7 @@ import { pathToFileURL, fileURLToPath } from 'node:url';
 import { basename } from 'node:path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { FireHubApiClient } from './api-client.js';
+import { FireHubApiClient, parseSharePurpose } from './api-client.js';
 import { MCP_SERVER_NAME, MCP_SERVER_VERSION } from '../constants.js';
 import { isValidTenantId } from '../agent/tenant-paths.js';
 import type { SafeToolFn, JsonResultFn } from './firehub-mcp-server.js';
@@ -167,7 +167,7 @@ async function main(): Promise<void> {
 
   // S3: 부모(agent-cli·agent-opencode)가 Proactive 실행이면 AI_PURPOSE=share 를 심는다. 'share' 만 받는다 —
   // 'none'(AI 판정 제외)은 LLM 이 부르는 이 프로세스에서 절대 쓰이면 안 되므로 다른 값은 모두 채팅으로 본다.
-  const purpose = process.env.AI_PURPOSE === 'share' ? 'share' : undefined;
+  const purpose = parseSharePurpose(process.env.AI_PURPOSE);
   const apiClient = new FireHubApiClient(apiBaseUrl, internalToken, userId, tenantId, { purpose });
 
   const server = new McpServer({

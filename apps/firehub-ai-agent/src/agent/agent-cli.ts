@@ -28,7 +28,7 @@ import {
 import { claimSession } from './session-owner.js';
 import type { HistoryMessage, HistoryToolCall } from './transcript-reader.js';
 import { DEFAULT_MODEL, MAX_BUDGET_USD, COST_ALARM_TURNS } from '../constants.js';
-import { FireHubApiClient } from '../mcp/api-client.js';
+import { FireHubApiClient, type SharePurpose } from '../mcp/api-client.js';
 import {
   downloadChatFiles,
   cleanupChatFiles,
@@ -162,7 +162,7 @@ export function buildMcpConfig(
   apiBaseUrl: string,
   internalToken: string,
   credentials?: { apiKey?: string; oauthToken?: string },
-  aiPurpose?: 'share',
+  aiPurpose?: SharePurpose,
 ): object {
   const { command, args } = getStdioServerCommand();
   // stdio MCP 서버는 별도 프로세스이고 env 를 여기서 명시적으로 구성한다.

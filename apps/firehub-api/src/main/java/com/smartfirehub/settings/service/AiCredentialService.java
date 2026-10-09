@@ -341,14 +341,9 @@ public class AiCredentialService {
   public record HostingOutcome(ProviderHosting after, boolean targetChanged) {}
 
   /**
-   * 이 요청을 저장했을 때의 호스팅 — 컨트롤러가 선언 권한(security:settings)을 저장 전에 판정하려고 쓴다. 규칙은 {@link #mergeForSave} 와
-   * 같은 {@link #hostingOutcome} 한 곳이다.
+   * 이 요청을 저장했을 때의 호스팅과 전송 대상 변경 여부 — 컨트롤러가 선언 권한(security:settings)을 저장 전에 판정하려고 쓴다. 규칙은 {@link
+   * #mergeForSave} 와 같은 {@link #hostingOutcome} 한 곳이다.
    */
-  public ProviderHosting previewHosting(AiCredentialSlot slot, AiCredentialUpsert req) {
-    return previewHostingOutcome(slot, req).after();
-  }
-
-  /** {@link #previewHosting} 에 전송 대상 변경 여부까지 함께 돌려준다(컨트롤러가 다시 계산하지 않게). */
   public HostingOutcome previewHostingOutcome(AiCredentialSlot slot, AiCredentialUpsert req) {
     AiCredentialDocument existing =
         readTenantRaw(slot.key()).flatMap(raw -> tryParse(raw, slot.key(), "PREVIEW")).orElse(null);
@@ -371,8 +366,7 @@ public class AiCredentialService {
       Object requested = req.payload().get(HOSTING_FIELD);
       after =
           SELF_HOSTABLE_AGENT_TYPES.contains(req.agentType())
-                  && "SELF_HOSTED".equals(String.valueOf(requested))
-              ? ProviderHosting.SELF_HOSTED
+              ? ProviderHosting.fromStored(String.valueOf(requested))
               : ProviderHosting.EXTERNAL;
     } else {
       after = targetChanged ? ProviderHosting.EXTERNAL : hostingOf(existing);
@@ -407,9 +401,7 @@ public class AiCredentialService {
     if (!SELF_HOSTABLE_AGENT_TYPES.contains(doc.agentType())) {
       return ProviderHosting.EXTERNAL;
     }
-    return "SELF_HOSTED".equals(doc.payload().path(HOSTING_FIELD).asText(""))
-        ? ProviderHosting.SELF_HOSTED
-        : ProviderHosting.EXTERNAL;
+    return ProviderHosting.fromStored(doc.payload().path(HOSTING_FIELD).asText(""));
   }
 
   /**

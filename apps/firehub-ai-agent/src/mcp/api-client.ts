@@ -80,6 +80,20 @@ export type { ObjectItem, ObjectListResponse, PresignedUrlResponse };
 export type AiPurpose = 'share' | 'none';
 
 /**
+ * LLM 실행 경로(채팅·Proactive·stdio MCP)가 받을 수 있는 유일한 목적. 'none'(AI 판정 제외)은 LLM 이 부르는 경로에서 쓰이면 안 되므로
+ * 타입에서부터 뺀다.
+ */
+export type SharePurpose = Extract<AiPurpose, 'share'>;
+
+/**
+ * 외부 입력(요청 바디·환경 변수)의 목적 값을 해석한다. 정확히 'share' 일 때만 'share', 그 외(대소문자 다름·'none'·없음)는 모두
+ * undefined(채팅 = AI 판정만)다 — 특히 'none' 이 들어와도 LLM 실행에 실리지 않게 한 곳에서 거른다.
+ */
+export function parseSharePurpose(v: unknown): SharePurpose | undefined {
+  return v === 'share' ? 'share' : undefined;
+}
+
+/**
  * getOntologyById 캐시 수명. 한 에이전트 턴(수 초~수십 초)을 덮되, UI에서 온톨로지를 고친 뒤
  * 다음 턴에는 반드시 새 값을 보도록 짧게 잡는다.
  */
@@ -116,8 +130,6 @@ export class FireHubApiClient {
    * 인스턴스 필드라 프로토타입 기반 목(createMockClient)에는 없어 자동으로 false(읽기 불가)다(fail-closed).
    */
   readonly hasDelegatedUser: boolean;
-  /** 이 클라이언트가 싣는 대행 목적(X-AI-Purpose). 없으면 채팅(AI 판정). */
-  readonly aiPurpose?: AiPurpose;
   /** withPurpose 가 같은 대행 주체로 새 클라이언트를 만들 때 쓰는 생성자 인자. */
   private readonly ctorArgs: { baseURL: string; internalToken: string; userId: number; tenantId?: number };
 
@@ -140,7 +152,6 @@ export class FireHubApiClient {
     options?: { purpose?: AiPurpose },
   ) {
     this.ctorArgs = { baseURL, internalToken, userId, tenantId };
-    this.aiPurpose = options?.purpose;
     // 사용자 id 는 테넌트가 아니므로 테넌트 이름의 술어 대신 중립 이름의 양의 정수 검사를 쓴다.
     this.hasDelegatedUser = isPositiveInteger(userId);
     const headers: Record<string, string> = {

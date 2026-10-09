@@ -148,6 +148,7 @@ class EmbeddingAiGateTest extends IntegrationTestBase {
     assertThatThrownBy(() -> gate.allowedDatasetSql("de.dataset_id"))
         .isInstanceOf(RuntimeException.class);
     assertThatThrownBy(() -> gate.disallowedDatasetIds()).isInstanceOf(RuntimeException.class);
+    assertThatThrownBy(() -> gate.datasetDisallowed(sensId)).isInstanceOf(RuntimeException.class);
   }
 
   @Test
@@ -212,6 +213,16 @@ class EmbeddingAiGateTest extends IntegrationTestBase {
     assertThat(gate.disallowedDatasetIds()).contains(sensId).doesNotContain(pubId);
     store(ProviderHosting.SELF_HOSTED);
     assertThat(gate.disallowedDatasetIds()).doesNotContain(sensId, pubId);
+  }
+
+  /** 단건 불허 판정: 불허 등급만 참, 허용·없는 데이터셋은 거짓(없는 id 를 삭제 대상으로 보지 않는다), 호스팅 변경을 따른다. */
+  @Test
+  void datasetDisallowed_trueOnlyForExistingPolicyViolation() {
+    assertThat(gate.datasetDisallowed(sensId)).isTrue();
+    assertThat(gate.datasetDisallowed(pubId)).isFalse();
+    assertThat(gate.datasetDisallowed(Long.MAX_VALUE)).isFalse();
+    store(ProviderHosting.SELF_HOSTED);
+    assertThat(gate.datasetDisallowed(sensId)).isFalse();
   }
 
   // ---- ai_policy × 호스팅 규칙: 남은 두 구현(jOOQ 술어 · 순수 함수)의 일치 ----

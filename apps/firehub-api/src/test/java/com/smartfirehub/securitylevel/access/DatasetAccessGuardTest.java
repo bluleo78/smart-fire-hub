@@ -260,17 +260,28 @@ class DatasetAccessGuardTest extends IntegrationTestBase {
         .isTrue();
     assertThat(guard.check(c, secret, DatasetAction.SHARE, null).reasonCode())
         .isEqualTo("SHARE_DENIED");
-    // 공개 진입점(목록·문자열 SQL)도 같은 규칙: 외부 호스팅이면 공개·내부만.
+    // 목록(관례 이름)·문자열 SQL 렌더링도 같은 규칙: 외부 호스팅이면 공개·내부만.
     List<Long> viaPublic =
         inTenantFixture(
             () ->
                 dsl.select(field(name("dataset", "id"), Long.class))
                     .from(table(name("dataset")))
                     .where(field(name("dataset", "id"), Long.class).in(ids))
-                    .and(guard.visibleCondition(c, ProviderHosting.EXTERNAL))
+                    .and(
+                        guard.visibleCondition(
+                            c,
+                            field(name("dataset", "id"), Long.class),
+                            field(name("dataset", "security_level_id"), Long.class),
+                            new AiCall(ProviderHosting.EXTERNAL, false)))
                     .fetch(field(name("dataset", "id"), Long.class)));
     assertThat(viaPublic).containsExactlyInAnyOrder(ids.get(0), ids.get(1));
-    String frag = guard.visibleSql(c, ProviderHosting.SELF_HOSTED, "d");
+    String frag =
+        dsl.renderInlined(
+            guard.visibleCondition(
+                c,
+                field(name("d", "id"), Long.class),
+                field(name("d", "security_level_id"), Long.class),
+                new AiCall(ProviderHosting.SELF_HOSTED, false)));
     List<Long> viaSql =
         inTenantFixture(
             () ->
@@ -281,18 +292,27 @@ class DatasetAccessGuardTest extends IntegrationTestBase {
     assertThat(viaSql).containsExactlyInAnyOrderElementsOf(ids);
   }
 
-  /** S3 §4.3: 볼 수 없는 데이터셋은 기존과 같은 404(존재 은닉), 볼 수 있지만 AI 불허면 403 POLICY_BLOCKED + 등급 이름. */
+  /**
+   * S3 §4.3: 볼 수 없는 데이터셋은 기존과 같은 404(존재 은닉), 볼 수 있지만 AI 불허면 403 POLICY_BLOCKED + 등급 이름. 단건 입력도 운영
+   * 경로({@link DatasetAccessGuard#requireViewThenAiForDatasets})로 검증한다.
+   */
   @Test
   void requireAi_hiddenIs404_visibleButBlockedIs403WithDetails() {
     long low = user("공개", false);
     long ds = dataset("민감");
     Clearance lowC = clearanceResolver.resolve(low);
-    assertThatThrownBy(() -> guard.requireAi(lowC, ds, ProviderHosting.SELF_HOSTED))
+    assertThatThrownBy(
+            () ->
+                guard.requireViewThenAiForDatasets(
+                    lowC, List.of(ds), new AiCall(ProviderHosting.SELF_HOSTED, false)))
         .isInstanceOf(DatasetNotFoundException.class)
         .hasMessage("Dataset not found: " + ds);
     long high = user("기밀", false);
     Clearance highC = clearanceResolver.resolve(high);
-    assertThatThrownBy(() -> guard.requireAi(highC, ds, ProviderHosting.EXTERNAL))
+    assertThatThrownBy(
+            () ->
+                guard.requireViewThenAiForDatasets(
+                    highC, List.of(ds), new AiCall(ProviderHosting.EXTERNAL, false)))
         .isInstanceOfSatisfying(
             PolicyBlockedException.class,
             e -> {
@@ -303,7 +323,8 @@ class DatasetAccessGuardTest extends IntegrationTestBase {
                   .containsEntry("levelName", "민감")
                   .containsEntry("policyKey", "ai_policy");
             });
-    guard.requireAi(highC, ds, ProviderHosting.SELF_HOSTED); // 통과
+    guard.requireViewThenAiForDatasets(
+        highC, List.of(ds), new AiCall(ProviderHosting.SELF_HOSTED, false)); // 통과
   }
 
   /** S3 §4.3: 목록 강제 — 공유 목적이면 기밀(SHARE DENY)이 POLICY_BLOCKED(SHARE), 숨김 id 는 구분 불가 403. */

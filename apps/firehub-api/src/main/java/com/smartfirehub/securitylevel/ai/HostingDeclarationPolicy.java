@@ -22,14 +22,6 @@ public class HostingDeclarationPolicy {
   private final PermissionService permissionService;
 
   /**
-   * 전송 대상 변경이 없는 판정 — {@link #requireChangeAllowed(Long, ProviderHosting, ProviderHosting,
-   * boolean)} 참고.
-   */
-  public void requireChangeAllowed(Long userId, ProviderHosting before, ProviderHosting after) {
-    requireChangeAllowed(userId, before, after, false);
-  }
-
-  /**
    * "자체 호스팅으로 올리는" 변경이면 security:settings 를 요구한다. 올리는 변경은 두 가지다: EXTERNAL→SELF_HOSTED, 그리고 결과가
    * SELF_HOSTED 인 채 전송 대상(공급자·Base URL 등)이 바뀌는 것 — 후자는 이전 선언이 옛 목적지에 대한 것이라, 새 목적지를 자체 호스팅이라 말하는 것은
    * 새 선언이기 때문이다(막지 않으면 ai:settings 만으로 선언을 유지한 채 목적지를 외부로 돌릴 수 있다). 내리거나 그대로면 통과(더 보수적인 방향). {@code

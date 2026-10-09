@@ -187,7 +187,7 @@ public class MetricPollerService {
     /** 공유 목적 AI 문맥 — 호스팅은 forShare(채팅·임베딩 모두 자체 호스팅일 때만 자체 호스팅). */
     AiCall shareCall() {
       if (share == null) {
-        share = new AiCall(aiHostingResolver.forShare(), true);
+        share = aiHostingResolver.shareCall();
       }
       return share;
     }

@@ -83,11 +83,12 @@ class AiCallContextTest {
     assertThat(ctx.current()).isEmpty();
     // 중첩 범위: 안쪽이 끝나면 바깥 범위로 돌아온다.
     AiCall inner = new AiCall(ProviderHosting.SELF_HOSTED, false);
-    ctx.runWith(
+    ctx.callWith(
         call,
         () -> {
           assertThat(ctx.callWith(inner, ctx::current)).contains(inner);
           assertThat(ctx.current()).contains(call);
+          return null;
         });
     assertThat(ctx.current()).isEmpty();
   }

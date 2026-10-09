@@ -678,13 +678,11 @@ describe('FireHubApiClient', () => {
         .get('/dataset-categories')
         .reply(200, []);
       const shareClient = client.withPurpose('share');
-      expect(shareClient.aiPurpose).toBe('share');
       await shareClient.listCategories();
       expect(shared.isDone()).toBe(true);
       const plain = nock(BASE_URL, { badheaders: ['x-ai-purpose'] }).get('/dataset-categories').reply(200, []);
       await client.listCategories();
       expect(plain.isDone()).toBe(true);
-      expect(client.aiPurpose).toBeUndefined();
     });
 
     it('생성자 purpose "none" 은 X-AI-Purpose: none 을 싣는다(그래프 뷰어·HITL)', async () => {

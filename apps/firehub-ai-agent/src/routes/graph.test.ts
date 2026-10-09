@@ -2,6 +2,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
+import nock from 'nock';
+import type { FireHubApiClient } from '../mcp/api-client.js';
 
 // merge-entities/add-entity/add-relation 핸들러가 entityType→typeId 변환용 온톨로지를 fetch한다 —
 // 실제 HTTP 호출 없이 고정 온톨로지로 대체. datasetId 는 이제 필수 필드라(#678) "기본 온톨로지" 폴백은 없다.
@@ -312,22 +314,43 @@ describe('쓰기 라우트는 그래프 읽기 판정을 하지 않는다', () =
 describe('그래프 라우트의 대행 목적(S3)', () => {
   beforeEach(() => vi.clearAllMocks());
 
+  /**
+   * 해소 함수가 받은 클라이언트로 api 를 한 번 실제로 부르게 하고, 그 요청이 X-AI-Purpose: none 을 싣는지 nock 으로 확인할 범위.
+   * 내부 필드가 아니라 실제로 나가는 헤더를 본다. 기준 주소는 라우트(delegationClient)와 같은 규칙으로 정한다.
+   */
+  function expectNonePurposeCall(): nock.Scope {
+    const base = new URL(process.env.API_BASE_URL || 'http://localhost:8080/api/v1');
+    return nock(base.origin, { reqheaders: { 'x-ai-purpose': 'none' } })
+      .get(`${base.pathname.replace(/\/$/, '')}/dataset-categories`)
+      .reply(200, []);
+  }
+
   it("GET /graph 는 purpose 'none' 클라이언트로 읽기 판정을 한다", async () => {
     vi.mocked(readWholeGraph).mockResolvedValue({ nodes: [], edges: [] });
+    const scope = expectNonePurposeCall();
+    vi.mocked(resolveReadableOntologyById).mockImplementationOnce(async (client) => {
+      // 라우트가 넘긴 것은 실제 FireHubApiClient 다(해소 함수 시그니처는 좁은 인터페이스).
+      await (client as unknown as FireHubApiClient).listCategories();
+      return { ontology: boundOntology, ontologyId: 42, readable: 42 } as never;
+    });
     const res = await request(app).get('/agent/graph?ontologyId=5').set(authHeader);
     expect(res.status).toBe(200);
-    const client = vi.mocked(resolveReadableOntologyById).mock.calls[0][0] as { aiPurpose?: string };
-    expect(client.aiPurpose).toBe('none');
+    expect(scope.isDone()).toBe(true);
   });
 
   it("HITL 승인(merge-entities)도 purpose 'none' 클라이언트로 온톨로지를 해소한다", async () => {
     mergeEntitiesMock.mockResolvedValue(undefined);
+    const scope = expectNonePurposeCall();
+    vi.mocked(resolveDatasetOntology).mockImplementationOnce(async (client) => {
+      // 라우트가 넘긴 것은 실제 FireHubApiClient 다(해소 함수 시그니처는 좁은 인터페이스).
+      await (client as unknown as FireHubApiClient).listCategories();
+      return { ontology: boundOntology, ontologyId: 42 } as never;
+    });
     const res = await request(app)
       .post('/agent/graph/merge-entities')
       .set(authHeader)
       .send({ entityType: 'Cause', nameA: 'a', nameB: 'b', datasetId: 900 });
     expect(res.status).toBe(204);
-    const client = vi.mocked(resolveDatasetOntology).mock.calls[0][0] as { aiPurpose?: string };
-    expect(client.aiPurpose).toBe('none');
+    expect(scope.isDone()).toBe(true);
   });
 });

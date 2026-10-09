@@ -1,7 +1,7 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import fs from 'fs/promises';
-import { FireHubApiClient } from '../mcp/api-client.js';
+import { FireHubApiClient, type SharePurpose } from '../mcp/api-client.js';
 import { createFireHubMcpServer } from '../mcp/firehub-mcp-server.js';
 import { SYSTEM_PROMPT, FILE_ATTACHMENT_PROMPT } from './system-prompt.js';
 import { loadSubagents, buildSubagentGuide } from './subagent-loader.js';
@@ -73,7 +73,7 @@ export interface AgentOptions {
   oauthToken?: string;
   abortSignal?: AbortSignal;
   /** S3: 'share' 면 MCP 도구의 api 호출에 X-AI-Purpose: share 를 싣는다(ChatProviderOptions.aiPurpose 참고). */
-  aiPurpose?: 'share';
+  aiPurpose?: SharePurpose;
 }
 
 /**

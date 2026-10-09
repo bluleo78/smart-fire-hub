@@ -16,6 +16,7 @@ import { tmpdir } from 'os';
 import { createInterface } from 'readline';
 import { randomUUID } from 'crypto';
 import type { ChatProviderOptions, SSEEvent } from '../providers/types.js';
+import type { SharePurpose } from '../mcp/api-client.js';
 import {
   splitOpencodeModelOrNull,
   type OpencodeModelParts,
@@ -92,7 +93,7 @@ export interface BuildOpenCodeConfigOptions {
   /** opencode 가 공급자에게 그대로 넘기는 추론 강도. 빈 값/공백이면 "설정 안 함"이다. */
   reasoningEffort?: string;
   /** S3: 'share' 면 firehub MCP 프로세스가 X-AI-Purpose: share 를 싣는다(Proactive 리포트). */
-  aiPurpose?: 'share';
+  aiPurpose?: SharePurpose;
 }
 
 /**

@@ -219,16 +219,17 @@ class AiHostingDeclarationTest extends IntegrationTestBase {
     assertThatThrownBy(
             () ->
                 hostingPolicy.requireChangeAllowed(
-                    aiOnly, ProviderHosting.EXTERNAL, ProviderHosting.SELF_HOSTED))
+                    aiOnly, ProviderHosting.EXTERNAL, ProviderHosting.SELF_HOSTED, false))
         .isInstanceOf(CodedApiException.class)
         .extracting(e -> ((CodedApiException) e).code())
         .isEqualTo(HostingDeclarationPolicy.FORBIDDEN_CODE);
     // 내리는 방향·변화 없음은 허용
     hostingPolicy.requireChangeAllowed(
-        aiOnly, ProviderHosting.SELF_HOSTED, ProviderHosting.EXTERNAL);
+        aiOnly, ProviderHosting.SELF_HOSTED, ProviderHosting.EXTERNAL, false);
     hostingPolicy.requireChangeAllowed(
-        aiOnly, ProviderHosting.SELF_HOSTED, ProviderHosting.SELF_HOSTED);
-    hostingPolicy.requireChangeAllowed(sec, ProviderHosting.EXTERNAL, ProviderHosting.SELF_HOSTED);
+        aiOnly, ProviderHosting.SELF_HOSTED, ProviderHosting.SELF_HOSTED, false);
+    hostingPolicy.requireChangeAllowed(
+        sec, ProviderHosting.EXTERNAL, ProviderHosting.SELF_HOSTED, false);
   }
 
   @Test
@@ -249,15 +250,21 @@ class AiHostingDeclarationTest extends IntegrationTestBase {
 
   @Test
   void previewHosting_matchesWhatSaveWillStore() {
-    assertThat(credentialService.previewHosting(AiCredentialSlot.CHAT, opencode("SELF_HOSTED")))
+    assertThat(
+            credentialService
+                .previewHostingOutcome(AiCredentialSlot.CHAT, opencode("SELF_HOSTED"))
+                .after())
         .isEqualTo(ProviderHosting.SELF_HOSTED);
     credentialService.save(AiCredentialSlot.CHAT, opencode("SELF_HOSTED"), null);
-    assertThat(credentialService.previewHosting(AiCredentialSlot.CHAT, opencode(null)))
+    assertThat(
+            credentialService.previewHostingOutcome(AiCredentialSlot.CHAT, opencode(null)).after())
         .as("같은 유형·생략 = 유지")
         .isEqualTo(ProviderHosting.SELF_HOSTED);
     assertThat(
-            credentialService.previewHosting(
-                AiCredentialSlot.CHAT, new AiCredentialUpsert("sdk", Map.of(), Map.of())))
+            credentialService
+                .previewHostingOutcome(
+                    AiCredentialSlot.CHAT, new AiCredentialUpsert("sdk", Map.of(), Map.of()))
+                .after())
         .as("유형 변경 = 외부")
         .isEqualTo(ProviderHosting.EXTERNAL);
   }
@@ -568,7 +575,7 @@ class AiHostingDeclarationTest extends IntegrationTestBase {
     credentialService.saveClassify(opencode("SELF_HOSTED"), "corp/m1", null);
     Map<String, Object> payload = Map.of("providerId", "corp", "baseURL", OTHER_URL);
     AiCredentialUpsert moved = new AiCredentialUpsert("opencode", payload, Map.of());
-    assertThat(credentialService.previewHosting(AiCredentialSlot.CLASSIFY, moved))
+    assertThat(credentialService.previewHostingOutcome(AiCredentialSlot.CLASSIFY, moved).after())
         .isEqualTo(ProviderHosting.EXTERNAL);
     credentialService.saveClassify(moved, "corp/m1", null);
     assertThat(credentialService.hosting(AiCredentialSlot.CLASSIFY))
@@ -666,7 +673,8 @@ class AiHostingDeclarationTest extends IntegrationTestBase {
     assertThatThrownBy(
             () ->
                 embeddingSettingsService.save(
-                    new EmbeddingConfigRequest("OPENAI", "m1", PUBLIC_SAAS_URL, null, "SELF_HOSTED"),
+                    new EmbeddingConfigRequest(
+                        "OPENAI", "m1", PUBLIC_SAAS_URL, null, "SELF_HOSTED"),
                     sec))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage(KnownPublicAiHosts.MSG_SELF_HOSTED_PUBLIC);

@@ -60,7 +60,7 @@ public class ProactiveContextCollector {
       // 컨텍스트는 채팅 공급자로 가고 리포트로 발송된다(스펙 §4.3 Proactive 행) — 소유자 VIEW 에 더해 AI(공유 호스팅 규칙
       // forShare: 채팅·임베딩 모두 자체 호스팅이어야 자체 호스팅) + SHARE 를 통과한 데이터셋만 싣는다. 호스팅은 호출 스레드(테넌트
       // 컨텍스트 있음)에서 한 번 계산해 네 작업이 공유한다.
-      AiCall aiCall = new AiCall(aiHostingResolver.forShare(), true);
+      AiCall aiCall = aiHostingResolver.shareCall();
       var statsFuture = scopedAsync(tenantId, aiCall, () -> dashboardService.getStats(viewer));
       var healthFuture =
           scopedAsync(tenantId, aiCall, () -> dashboardService.getSystemHealth(viewer));

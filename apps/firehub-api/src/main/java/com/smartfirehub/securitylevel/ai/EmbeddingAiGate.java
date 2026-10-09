@@ -46,6 +46,28 @@ public class EmbeddingAiGate {
                     SECURITY_LEVEL.AI_POLICY, hostingResolver.embedding())));
   }
 
+  /**
+   * 현재 테넌트의 이 데이터셋이 지금 임베딩 공급자로 보낼 수 없는가(정리 대상 단건 판정 — {@link #disallowedDatasetIds()} 의 단건판).
+   * datasetAllowed 의 부정이 아니다: 없는(삭제된·다른 테넌트) 데이터셋은 false — 지울 근거가 없으므로 남의 id 로 삭제를 시도하지 않게 한다. 테넌트
+   * 문맥이 없으면 예외.
+   */
+  @Transactional(readOnly = true)
+  public boolean datasetDisallowed(long datasetId) {
+    long tenantId = TenantContext.require("임베딩 AI 불허 판정(데이터셋)");
+    return dsl.fetchExists(
+        dsl.selectOne()
+            .from(DATASET)
+            .join(SECURITY_LEVEL)
+            .on(SECURITY_LEVEL.ID.eq(DATASET.SECURITY_LEVEL_ID))
+            .where(DATASET.ID.eq(datasetId))
+            // RLS 와 별개로 테넌트를 명시한다 — 다른 테넌트 데이터셋을 불허(삭제 대상)로 보지 않게.
+            .and(DATASET.TENANT_ID.eq(tenantId))
+            .and(
+                DSL.not(
+                    DatasetAccessGuard.aiPolicyAllows(
+                        SECURITY_LEVEL.AI_POLICY, hostingResolver.embedding()))));
+  }
+
   /** 현재 테넌트에서 임베딩 공급자로 보낼 수 없는 데이터셋 id(정리 대상). 테넌트 문맥이 없으면 예외. */
   @Transactional(readOnly = true)
   public List<Long> disallowedDatasetIds() {
@@ -73,9 +95,9 @@ public class EmbeddingAiGate {
   }
 
   /**
-   * 호스팅을 정해 렌더한 술어(테스트용 진입점 겸 본체). ai_policy 규칙은 {@link DatasetAccessGuard#aiPolicyAllows} 하나를
-   * 인라인 렌더해 재사용한다 — 문자열로 규칙을 다시 쓰면 jOOQ 술어·순수 함수와 세 벌이 되어 한쪽만 바뀔 수 있다. 값은 고정 enum 이름뿐이라 인라인이
-   * 안전하다. 별칭(aig_d/aig_sl)은 호출부 SQL 의 별칭(de·c 등)과 겹치지 않게 고정한다. null 호스팅 = 외부.
+   * 호스팅을 정해 렌더한 술어(테스트용 진입점 겸 본체). ai_policy 규칙은 {@link DatasetAccessGuard#aiPolicyAllows} 하나를 인라인
+   * 렌더해 재사용한다 — 문자열로 규칙을 다시 쓰면 jOOQ 술어·순수 함수와 세 벌이 되어 한쪽만 바뀔 수 있다. 값은 고정 enum 이름뿐이라 인라인이 안전하다.
+   * 별칭(aig_d/aig_sl)은 호출부 SQL 의 별칭(de·c 등)과 겹치지 않게 고정한다. null 호스팅 = 외부.
    */
   String allowedDatasetSql(String datasetIdExpr, ProviderHosting hosting) {
     var d = DATASET.as("aig_d");

@@ -42,6 +42,7 @@ import {
 } from '../../hooks/useUnsavedChangesGuard';
 import { CLAUDE_MODEL_OPTIONS, typeChangeConfirmDescription, withPreservedValue } from '../../lib/ai-credential-screen';
 import { extractApiError } from '../../lib/api-error';
+import { HOSTING_DECLARE_PERMISSION } from '../../lib/hosting-location';
 import { isDecimalSyntax, isIntegerSyntax } from '../../lib/settings-number';
 import AiClassifySettingsTab from './AiClassifySettingsTab';
 import { AiCredentialFieldset, OpencodeModelField } from './AiCredentialFieldset';
@@ -133,7 +134,7 @@ function AdminSettingsPage() {
   // 「데이터 보안」 탭은 security:settings 보유자에게만(스펙 §5-1 탭별 권한 노출). 최종 판정은 서버.
   // 같은 권한이 AI·임베딩 공급자의 자체 호스팅 선언도 가른다(S3 §5-5 — 서버 HostingDeclarationPolicy 와 같은 판정).
   const { permissions } = useMyPermissions();
-  const canSecurity = permissions.has('security:settings');
+  const canSecurity = permissions.has(HOSTING_DECLARE_PERMISSION);
   const [isSaving, setIsSaving] = useState(false);
   const [authStatus, setAuthStatus] = useState<{ valid: boolean; email?: string; subscriptionType?: string } | null>(null);
   const [isVerifying, setIsVerifying] = useState(false);

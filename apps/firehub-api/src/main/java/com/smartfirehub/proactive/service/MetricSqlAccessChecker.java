@@ -43,6 +43,8 @@ public class MetricSqlAccessChecker {
       return;
     }
     var clearance = clearanceResolver.resolve(userId);
+    // 공유 목적 AI 판정 입력은 루프 밖에서 한 번만 — 데이터셋 메트릭이 판정까지 왔을 때만 지연 계산한다(호스팅 조회 반복 방지).
+    AiCall shareCall = null;
     for (Object o : metrics) {
       if (o instanceof Map<?, ?> metric
           && "dataset".equals(metric.get("source"))
@@ -56,8 +58,10 @@ public class MetricSqlAccessChecker {
           // AI(+SHARE). requireSql 이 VIEW 를 이미 통과시켰으므로 여기 거부는 등급 이름이 실린 403 POLICY_BLOCKED 다.
           Set<Long> touched = new HashSet<>(r.readDatasetIds());
           touched.addAll(r.writeDatasetIds());
-          guard.requireAiForDatasets(
-              clearance, touched, new AiCall(aiHostingResolver.forShare(), true));
+          if (shareCall == null) {
+            shareCall = aiHostingResolver.shareCall();
+          }
+          guard.requireAiForDatasets(clearance, touched, shareCall);
         } catch (SqlQueryException | UnsafeSqlException e) {
           // 파싱 불가 SQL — 폴러의 기존 검증(metricSqlValidator)이 실행 전에 건너뛴다.
         }

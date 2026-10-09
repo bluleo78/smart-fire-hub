@@ -34,7 +34,9 @@ vi.mock('@modelcontextprotocol/sdk/server/stdio.js', () => ({
 }));
 
 const apiClientCtorMock = vi.fn();
-vi.mock('./api-client.js', () => ({
+// parseSharePurpose 는 실제 구현을 쓴다 — 목적 해석 규칙(정확히 'share' 만)도 이 테스트가 함께 검증한다.
+vi.mock('./api-client.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./api-client.js')>()),
   FireHubApiClient: vi.fn(function FireHubApiClient(...args: unknown[]) {
     apiClientCtorMock(...args);
     return {};

@@ -192,37 +192,6 @@ public class DatasetAccessGuard {
         : all;
   }
 
-  /** 스펙 §4.1 visibleCondition(aiHosting) — AI 목록용(이름·설명도 LLM 으로 간다). DatasetRepository 관례 이름. */
-  public Condition visibleCondition(Clearance c, ProviderHosting hosting) {
-    return visibleCondition(
-        c,
-        field(name("dataset", "id"), Long.class),
-        field(name("dataset", "security_level_id"), Long.class),
-        new AiCall(hosting, false));
-  }
-
-  /** 문자열 SQL 호출부용 AI 변형({@link #visibleSql(Clearance, String)} 과 같은 렌더링 + ai_policy 술어). */
-  public String visibleSql(Clearance c, ProviderHosting hosting, String datasetAlias) {
-    return dsl.renderInlined(
-        visibleCondition(
-            c,
-            field(name(datasetAlias, "id"), Long.class),
-            field(name(datasetAlias, "security_level_id"), Long.class),
-            new AiCall(hosting, false)));
-  }
-
-  /**
-   * 단건 AI 강제: VIEW 실패는 존재하지 않는 데이터셋과 같은 404(존재 은닉), VIEW 통과 후 AI 불허면 403 POLICY_BLOCKED(등급 이름은 이미 볼
-   * 수 있는 정보).
-   */
-  public void requireAi(Clearance c, long datasetId, ProviderHosting hosting) {
-    AccessFacts f = accessRepository.findFactsByDatasetIds(List.of(datasetId), c).get(datasetId);
-    if (f == null || !decide(c, f, DatasetAction.VIEW, null).allowed()) {
-      throw new DatasetNotFoundException("Dataset not found: " + datasetId);
-    }
-    requireAiFacts(c, f, new AiCall(hosting, false));
-  }
-
   /**
    * id 목록(AI_CLASSIFY 입력·SQL 읽기/쓰기 집합·온톨로지 출처)의 AI(+SHARE) 강제. 볼 수 없는 id 는 {@link
    * #requireDatasetReads} 와 같은 구분 불가 403(DATASET_SQL_ACCESS_DENIED), 볼 수 있으나 정책 위반이면 첫 위반의
@@ -252,14 +221,13 @@ public class DatasetAccessGuard {
   }
 
   /**
-   * id 목록의 VIEW → AI(+SHARE) 강제 — {@link #requireAiForDatasets} 와 같되 VIEW 거부가 <b>존재하지 않는 데이터셋과 같은 404</b>다
-   * (단건 {@link #requireView} 와 같은 존재 은닉 계약을 쓰는 다건 입력 — 온톨로지 출처 등). 사실은 한 번에 읽는다(N+1 없음).
+   * id 목록의 VIEW → AI(+SHARE) 강제 — {@link #requireAiForDatasets} 와 같되 VIEW 거부가 <b>존재하지 않는 데이터셋과 같은
+   * 404</b>다 (단건 {@link #requireView} 와 같은 존재 은닉 계약을 쓰는 다건 입력 — 온톨로지 출처 등). 사실은 한 번에 읽는다(N+1 없음).
    *
-   * <p>VIEW 를 전부 먼저 판정한다 — [볼 수 있으나 AI 불허, 숨김] 순서에서도 404 가 나가 응답이 입력 순서에 달라지지 않는다. 전부 볼 수 있을 때만
-   * 정책 판정으로 넘어가므로 403 POLICY_BLOCKED 의 등급 이름은 이미 볼 수 있는 정보다. null id 는 호출부가 먼저 거른다.
+   * <p>VIEW 를 전부 먼저 판정한다 — [볼 수 있으나 AI 불허, 숨김] 순서에서도 404 가 나가 응답이 입력 순서에 달라지지 않는다. 전부 볼 수 있을 때만 정책
+   * 판정으로 넘어가므로 403 POLICY_BLOCKED 의 등급 이름은 이미 볼 수 있는 정보다. null id 는 호출부가 먼저 거른다.
    */
-  public void requireViewThenAiForDatasets(
-      Clearance c, Collection<Long> datasetIds, AiCall call) {
+  public void requireViewThenAiForDatasets(Clearance c, Collection<Long> datasetIds, AiCall call) {
     if (datasetIds.isEmpty()) {
       return;
     }

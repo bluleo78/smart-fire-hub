@@ -6,6 +6,7 @@ import type { AgentType, ProviderConfig } from '../providers/index.js';
 // '../providers/index.js' 를 통째로 목킹하므로(ProviderFactory 만 정의) 그 경로로 가져오면
 // 목이 정의하지 않은 값이라 undefined 가 되어 라우트가 깨진다.
 import { isKnownAgentType } from '../providers/types.js';
+import { parseSharePurpose } from '../mcp/api-client.js';
 import { internalAuth } from '../middleware/auth.js';
 import { isValidTenantId, proactiveReportDir } from '../agent/tenant-paths.js';
 import {
@@ -379,7 +380,7 @@ router.post('/proactive', express.json(), internalAuth, async (req: Request, res
       overrideSystemPrompt: true,
       maxTurns: MAX_AGENT_TURNS,
       // 'share' 외의 값은 버린다 — 특히 'none'(AI 판정 제외)이 바디로 들어와도 LLM 실행에 실리면 안 된다.
-      aiPurpose: body.aiPurpose === 'share' ? 'share' : undefined,
+      aiPurpose: parseSharePurpose(body.aiPurpose),
     });
 
     for await (const event of events) {

@@ -78,14 +78,6 @@ public class EmbeddingConfigService {
   }
 
   /**
-   * 요청의 전송 대상(provider, 정규화한 Base URL)이 저장된 값과 다른가. 복호화하지 않는다 — 손상된 암호문이 판정을 막지 않게 한다. 미설정·손상·모르는
-   * provider 는 "바뀜"(보수적: 기존 자체 호스팅 선언을 이어받지 않는다). 모델은 목적지를 바꾸지 않으므로 보지 않는다.
-   */
-  public boolean targetChanged(EmbeddingConfigRequest req) {
-    return targetChanged(readSnapshot(), req);
-  }
-
-  /**
    * 저장된 문서를 <b>한 번</b> 읽어 파싱한 스냅샷(복호화 없음). 저장 흐름(EmbeddingSettingsService#save)이 호스팅·대상 변경·키 병합을 이
    * 스냅샷 하나로 판정해 같은 행을 여러 번 읽지 않게 한다. 미설정·손상은 empty(로그만 — 호스팅은 외부, 대상은 "바뀜"으로 해석된다).
    */
@@ -106,11 +98,14 @@ public class EmbeddingConfigService {
   static ProviderHosting hostingOf(Optional<EmbeddingConfigDocument.Parsed> snapshot) {
     return snapshot
         .map(EmbeddingConfigDocument.Parsed::hosting)
-        .map(h -> "SELF_HOSTED".equals(h) ? ProviderHosting.SELF_HOSTED : ProviderHosting.EXTERNAL)
+        .map(ProviderHosting::fromStored)
         .orElse(ProviderHosting.EXTERNAL);
   }
 
-  /** 스냅샷 기준 {@link #targetChanged(EmbeddingConfigRequest)} — 규칙은 같다(없음·모르는 provider = 바뀜). */
+  /**
+   * 요청의 전송 대상(provider, 정규화한 Base URL)이 스냅샷의 저장값과 다른가. 복호화하지 않는다 — 손상된 암호문이 판정을 막지 않게 한다.
+   * 미설정·손상·모르는 provider 는 "바뀜"(보수적: 기존 자체 호스팅 선언을 이어받지 않는다). 모델은 목적지를 바꾸지 않으므로 보지 않는다.
+   */
   static boolean targetChanged(
       Optional<EmbeddingConfigDocument.Parsed> snapshot, EmbeddingConfigRequest req) {
     EmbeddingProviderType provider;

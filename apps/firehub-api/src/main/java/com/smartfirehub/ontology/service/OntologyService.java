@@ -18,7 +18,6 @@ import com.smartfirehub.ontology.graphread.GraphReadGate;
 import com.smartfirehub.ontology.repository.OntologyRepository;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
-import com.smartfirehub.securitylevel.ai.AiCall;
 import com.smartfirehub.securitylevel.ai.AiHostingResolver;
 import com.smartfirehub.user.repository.UserRepository;
 import java.time.Duration;
@@ -189,8 +188,8 @@ public class OntologyService {
    * WD-31⑤ 출처 데이터셋 판정(보충 스펙 §2.2). 추론 표본은 채팅 공급자로 갔고 결과 온톨로지는 공유 저장소이므로 각 출처에 VIEW + AI(공유 호스팅 규칙
    * forShare) + SHARE 를 요구한다.
    *
-   * <p>사실은 한 번에 읽고(N+1 없음), VIEW 를 전부 먼저 판정한다 — 볼 수 없는 id 는 없는 id 와 같은 404(존재 은닉). requireView 의 AI 훅을
-   * 쓰지 않는 이유: 그 자리에서 AI 까지 판정하면 [볼 수 있으나 AI 불허, 숨김] 순서에서 404 대신 403 이 나가 응답이 입력 순서에 달라진다(가드의
+   * <p>사실은 한 번에 읽고(N+1 없음), VIEW 를 전부 먼저 판정한다 — 볼 수 없는 id 는 없는 id 와 같은 404(존재 은닉). requireView 의 AI
+   * 훅을 쓰지 않는 이유: 그 자리에서 AI 까지 판정하면 [볼 수 있으나 AI 불허, 숨김] 순서에서 404 대신 403 이 나가 응답이 입력 순서에 달라진다(가드의
    * requireViewThenAiForDatasets 가 VIEW 전부 → 정책 순서를 보장한다).
    */
   private void requireSourceDatasetsAllowed(List<Long> sourceDatasetIds) {
@@ -201,9 +200,7 @@ public class OntologyService {
       throw new IllegalArgumentException("출처 데이터셋 id 가 비어 있습니다.");
     }
     datasetAccessGuard.requireViewThenAiForDatasets(
-        clearanceResolver.current(),
-        sourceDatasetIds,
-        new AiCall(aiHostingResolver.forShare(), true));
+        clearanceResolver.current(), sourceDatasetIds, aiHostingResolver.shareCall());
   }
 
   // 상태 전이 판정. 허용: draft→active, active→archived, archived→active. 그 외 상태 변경은 거부.
