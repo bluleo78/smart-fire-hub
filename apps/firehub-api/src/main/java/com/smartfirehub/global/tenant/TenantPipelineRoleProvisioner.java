@@ -83,13 +83,20 @@ public class TenantPipelineRoleProvisioner {
     return autoProvisionEnabled;
   }
 
-  /** 자동 프로비저닝이 켜져 있을 때만 {@link #ensureRole} 을 부른다. 근거는 필드 Javadoc 참조. */
+  /**
+   * 자동 프로비저닝이 켜져 있을 때만 {@link #ensureRole} 과 {@link #ensurePythonReadRoles} 를 부른다. 근거는 필드 Javadoc
+   * 참조.
+   *
+   * <p>슬롯 롤도 여기서 함께 만든다 — 신규 테넌트({@code PlatformTenantService})가 이 메서드 하나만 부르므로, 따로 두면 신규 테넌트의
+   * PYTHON 스텝이 첫 실행에서 인증 실패로 멈춘다.
+   */
   public void ensureRoleIfAutoProvisionEnabled(long tenantId) {
     if (!autoProvisionEnabled) {
       log.debug("테넌트 파이프라인 롤 자동 프로비저닝이 꺼져 있다 — 건너뛴다 (tenant={})", tenantId);
       return;
     }
     ensureRole(tenantId);
+    ensurePythonReadRoles(tenantId);
   }
 
   /**
@@ -152,6 +159,65 @@ public class TenantPipelineRoleProvisioner {
               name(roleName), name(database), name(schema));
         });
     log.info("테넌트 파이프라인 롤 준비 완료: {} (search_path={})", roleName, schema);
+  }
+
+  /**
+   * 테넌트의 PYTHON 읽기 슬롯 롤 10개({@code pipeline_py_t{id}_s{k}}, WD-29)를 접속 가능한 상태로 보장한다(스펙 §4.4).
+   * <b>멱등</b>이고, 자동 프로비저닝 플래그와 무관하다({@link #ensureRole} 과 같은 이유 — 기계장치는 항상 동작하고 플래그는 자동 호출부만 끈다).
+   *
+   * <p>스키마가 이미 있으면 USAGE 까지 건다. 스키마가 나중에 생기는 순서는 {@link TenantSchemaProvisioner} 가 생성 트랜잭션에서 건다 — 두
+   * 순서 모두에서 USAGE 가 빠지지 않게 하려는 것이다. 테이블 SELECT 는 여기서 다루지 않는다(PythonReadGrantSync, 런타임 롤 몫).
+   *
+   * <p>슬롯 롤은 {@code NOINHERIT} 등 최소 속성으로 만든다 — 사용자 스크립트가 이 자격증명을 그대로 들고 돌기 때문에, 다른 롤을 통해 권한이 새는 경로를
+   * 처음부터 닫는다. 10개를 한 트랜잭션으로 묶어 "일부 슬롯만 있는" 중간 상태가 남지 않게 한다.
+   */
+  public void ensurePythonReadRoles(long tenantId) {
+    String schema = DataSchema.forTenant(tenantId);
+    ownerDsl.transaction(
+        cfg -> {
+          DSLContext tx = DSL.using(cfg);
+          // ensureRole 과 같은 이유로 클러스터 전역 직렬화한다(기동 치유·테넌트 생성·롤링 업데이트 경합 시
+          // 23505·tuple concurrently updated 회피). 락 키는 실행 롤과 겹치지 않게 별도 문자열을 쓴다.
+          tx.execute(
+              "SELECT pg_advisory_xact_lock(hashtext({0})::bigint)",
+              inline("python_read_roles_t" + tenantId));
+          String database = currentDatabase(tx);
+          boolean schemaExists = TenantSchemaProvisioner.schemaExists(tx, schema);
+          for (int slot = 1; slot <= TenantPipelineRole.PYTHON_READ_SLOTS; slot++) {
+            String role = TenantPipelineRole.pythonReadRoleName(tenantId, slot);
+            String password = TenantPipelineRole.pythonReadPassword(tenantId, slot, passwordSecret);
+            if (TenantSchemaProvisioner.roleExists(tx, role)) {
+              tx.execute("ALTER ROLE {0} WITH LOGIN PASSWORD {1}", name(role), inline(password));
+            } else {
+              tx.execute(
+                  "CREATE ROLE {0} LOGIN PASSWORD {1}"
+                      + " NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOINHERIT",
+                  name(role), inline(password));
+            }
+            tx.execute("GRANT CONNECT ON DATABASE {0} TO {1}", name(database), name(role));
+            // ensureRole 과 같은 함정 — IN DATABASE 가 빠지면 클러스터 전 DB 에 search_path 가 걸린다.
+            tx.execute(
+                "ALTER ROLE {0} IN DATABASE {1} SET search_path TO {2}",
+                name(role), name(database), name(schema));
+            // 앱 메타데이터(public)를 사용자 스크립트가 읽지 못하게 한다. 멱등.
+            tx.execute("REVOKE ALL ON SCHEMA public FROM {0}", name(role));
+            if (schemaExists) {
+              tx.execute("GRANT USAGE ON SCHEMA {0} TO {1}", name(schema), name(role));
+            }
+          }
+        });
+    log.info("PYTHON 읽기 슬롯 롤 준비 완료: tenant={} (search_path={})", tenantId, schema);
+  }
+
+  /** 슬롯 롤 10개가 모두 있는가 — 기동 치유가 "없을 때만 만든다"를 판정할 때 쓴다. 하나라도 빠지면 false. */
+  public boolean pythonReadRolesExist(long tenantId) {
+    for (int slot = 1; slot <= TenantPipelineRole.PYTHON_READ_SLOTS; slot++) {
+      if (!TenantSchemaProvisioner.roleExists(
+          ownerDsl, TenantPipelineRole.pythonReadRoleName(tenantId, slot))) {
+        return false;
+      }
+    }
+    return true;
   }
 
   /**

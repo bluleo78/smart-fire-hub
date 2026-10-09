@@ -133,6 +133,17 @@ public class TenantSchemaProvisioner {
               // (런북 §1-4 경고, 정공법은 §6-8 백로그).
               tx.execute("REVOKE ALL ON SCHEMA public FROM {0}", name(executorRole));
             }
+
+            // PYTHON 읽기 슬롯 롤(WD-29) — 롤이 먼저 있고 스키마가 나중에 생기는 순서의 USAGE. 반대 순서는
+            // TenantPipelineRoleProvisioner.ensurePythonReadRoles 가 건다. 이미 있던 스키마는 위 단락 판정
+            // (executor 기본 권한)으로 이 블록에 다시 오지 않을 수 있으므로, 그 USAGE 는 V138·ensurePythonReadRoles 몫이다.
+            // 롤이 없으면 건너뛴다 — executor 롤과 같은 이유로 데이터셋 생성 전체를 막지 않는다.
+            for (int slot = 1; slot <= TenantPipelineRole.PYTHON_READ_SLOTS; slot++) {
+              String readRole = TenantPipelineRole.pythonReadRoleName(tenantId, slot);
+              if (roleExists(tx, readRole)) {
+                tx.execute("GRANT USAGE ON SCHEMA {0} TO {1}", name(schema), name(readRole));
+              }
+            }
           });
     } catch (DataAccessException e) {
       // 경합 흡수의 범위는 "진짜 생성 경합" 하나다 — 판정 기준이 "지금 존재하는가" 가 아니라

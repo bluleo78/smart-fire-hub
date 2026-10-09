@@ -40,9 +40,9 @@ public class FlywayCallbackConfig {
   }
 
   /**
-   * ACTIVE 테넌트마다 {@code pipeline_executor_t{id}} 롤의 비밀번호를 {@link TenantPipelineRole} 파생값으로 맞춘다. 롤
-   * 이름은 반드시 {@link TenantPipelineRole#roleName} 을 거쳐 조립한다(문자열 직접 조립 금지 — TenantPipelineRoleTest 가
-   * 규약을 고정한다).
+   * ACTIVE 테넌트마다 {@code pipeline_executor_t{id}} 롤과 PYTHON 읽기 슬롯 롤({@code pipeline_py_t{id}_s{k}})의
+   * 비밀번호를 {@link TenantPipelineRole} 파생값으로 맞춘다(테스트가 직접 부르도록 package-private). 롤 이름은 반드시 {@link
+   * TenantPipelineRole#roleName} 을 거쳐 조립한다(문자열 직접 조립 금지 — TenantPipelineRoleTest 가 규약을 고정한다).
    *
    * <p>롤 생성은 이 콜백의 일이 아니다 — {@code TenantPipelineRoleProvisioner} 가 테넌트 생성 시점에 만들고, {@code
    * TenantPipelineRoleBootstrap} 이 기동 시 기존 테넌트를 훑는다(#680). 여기에 넣지 않은 이유: Flyway 콜백은 원시 {@code
@@ -53,7 +53,7 @@ public class FlywayCallbackConfig {
    * 중인 다른 모든 테넌트까지 기동이 막히는 과잉 대응이 된다. 콜백은 마이그레이션 단계라 기동 치유({@code ApplicationReadyEvent})보다
    * <b>먼저</b> 돈다는 점도 같은 결론을 가리킨다 — 갓 만들어진 롤은 이미 파생 비밀번호를 갖고 태어나므로 이 콜백이 그것을 기다릴 이유가 없다.
    */
-  private static Map<String, String> resolveActiveTenantPipelineRolePasswords(
+  static Map<String, String> resolveActiveTenantPipelineRolePasswords(
       Connection connection, String secret) throws SQLException {
     Map<String, String> rolePasswords = new LinkedHashMap<>();
     try (Statement stmt = connection.createStatement();
@@ -64,6 +64,16 @@ public class FlywayCallbackConfig {
         String roleName = TenantPipelineRole.roleName(tenantId);
         if (roleExists(connection, roleName)) {
           rolePasswords.put(roleName, TenantPipelineRole.password(tenantId, secret));
+        }
+        // PYTHON 읽기 슬롯 롤(WD-29). V138 이 임의 비밀번호로 만든 롤을 여기서 파생값으로 맞춘다 — 빠지면 배포 직후
+        // 모든 PYTHON 스텝이 인증 실패로 멈춘다(FlywayCallbackConfigSlotRoleTest 가 고정). 없는 슬롯은 위와 같은
+        // 이유로 조용히 건너뛴다.
+        for (int slot = 1; slot <= TenantPipelineRole.PYTHON_READ_SLOTS; slot++) {
+          String readRole = TenantPipelineRole.pythonReadRoleName(tenantId, slot);
+          if (roleExists(connection, readRole)) {
+            rolePasswords.put(
+                readRole, TenantPipelineRole.pythonReadPassword(tenantId, slot, secret));
+          }
         }
       }
     }

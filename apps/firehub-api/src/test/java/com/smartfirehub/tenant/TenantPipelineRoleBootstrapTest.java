@@ -88,6 +88,19 @@ class TenantPipelineRoleBootstrapTest extends IntegrationTestBase {
       // ── 배포(=기동 치유) ──────────────────────────────────────────────────────
       bootstrap.healTenant(tenantId);
 
+      // PYTHON 읽기 슬롯 롤(WD-29)도 기동 치유가 만든다. 스키마가 먼저 있던 순서이므로 USAGE 는
+      // ensurePythonReadRoles 의 schemaExists 분기가 걸어야 한다.
+      for (int k = 1; k <= TenantPipelineRole.PYTHON_READ_SLOTS; k++) {
+        String slotRole = TenantPipelineRole.pythonReadRoleName(tenantId, k);
+        assertThat(roleExists(slotRole)).as("치유 후 슬롯 롤 %s", slotRole).isTrue();
+        assertThat(
+                ownerDsl()
+                    .fetchOne("select has_schema_privilege(?, ?, 'USAGE')", slotRole, schema)
+                    .get(0, Boolean.class))
+            .as("치유 후 슬롯 롤 %s 의 스키마 USAGE", slotRole)
+            .isTrue();
+      }
+
       // ── 같은 파이프라인이 이제 돈다 ───────────────────────────────────────────
       List<ColumnInfo> columns =
           TenantContext.runScopedGet(tenantId, () -> sqlColumnProbe.columnsWithTypes(sql));
@@ -102,6 +115,8 @@ class TenantPipelineRoleBootstrapTest extends IntegrationTestBase {
           // 먹고 다른 테스트의 풀을 축출하지 않도록 닫는다.
           tenantPipelineDataSources::closeAllPools,
           () -> TenantRlsTestSupport.dropPipelineLoginRole(ownerDsl(), roleName),
+          // 기동 치유가 슬롯 롤 10개도 만든다(WD-29) — 지우지 않으면 클러스터 전역에 LOGIN 롤이 누적된다.
+          () -> TenantRlsTestSupport.dropPythonReadRoles(ownerDsl(), tenantId),
           () -> TenantRlsTestSupport.deleteTenants(dsl, tenantId));
     }
   }
