@@ -215,9 +215,15 @@ class DataExportPolicyTest extends IntegrationTestBase {
         .andExpect(status().isOk());
   }
 
-  /** Review Focus 1 — 거부 감사는 REQUIRES_NEW 로 남는다(MockMvc 응답 뒤 행 존재). */
+  /**
+   * 데이터셋 내보내기 거부는 실제 사유·데이터셋 id 와 함께 EXPORT 동작으로 감사된다(403 응답 뒤 행 1건).
+   *
+   * <p>이 경로의 판정은 컨트롤러(트랜잭션 밖)라 호출자 롤백 상황을 만들지 못한다. 감사가 호출자 롤백에도 살아남는다는 증명은 {@code
+   * attachmentPresign_requiresExport_inlineDoesNot}(@Transactional 경로)과 {@code
+   * SecurityAuditRecorderTest.denial_survivesCallerRollback} 이 맡는다.
+   */
   @Test
-  void deniedExport_isAuditedEvenThoughServiceRollsBack() throws Exception {
+  void deniedExport_isAuditedWithActualReason() throws Exception {
     long ds = dataset("민감");
     long u = userAt("민감", "dataset:read", "data:export");
     mockMvc

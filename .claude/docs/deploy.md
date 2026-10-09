@@ -431,7 +431,7 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
     - '민감'(PERMISSION)은 `data:export_restricted` 권한이 있어야 한다.
     - 비동기 내보내기 파일은 **다운로드 시점** 등급으로 다시 판정한다(작업 생성 뒤 등급이 오르면 받을 수 없다).
     - 오브젝트 presign 은 `disposition` 파라미터로 나뉜다. 기본값 `inline`(미리보기·열기)은 VIEW 만 보고, `attachment`(다운로드)는 내보내기 판정을 거친다.
-    - 데이터셋 상세·목록·애드혹 쿼리 실행·차트 데이터 응답에 조회자별 `exportAllowed` 가 실린다. 쿼리 편집기 내보내기 가능 여부는 `POST /api/v1/analytics/queries/export-check` 로 미리 본다(값 판정, 감사 없음).
+    - 데이터셋 상세·목록·애드혹 쿼리 실행·차트 데이터 응답에 조회자별 `exportAllowed` 가 실린다. 쿼리 편집기의 내보내기 가능 여부는 애드혹 실행 응답의 `exportAllowed`+`runId` 로 정한다. `POST /api/v1/analytics/queries/export-check` 는 AI 표 위젯이 표시된 SQL 로 미리 보는 용도다(값 판정, 감사 없음).
   - 쿼리 결과 내보내기:
     - 화면의 행이 아니라 실행 기록(`analytics_query_run`, 1시간 보존)의 `runId` 로 서버가 지금 자격으로 다시 판정하고 다시 실행한다. 데이터가 그 사이 바뀌었으면 파일 내용도 바뀐다.
     - 기록이 없거나 남의 기록이거나 1시간이 지났으면 404 `QUERY_RUN_NOT_FOUND` "실행 기록을 찾을 수 없습니다. 쿼리를 다시 실행한 뒤 내보내세요." 다.
@@ -445,7 +445,7 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
     - SQL 스텝의 선언 입력도 전파 입력이다. 선언했지만 실행 주체가 볼 수 없는 입력이 있으면 실패한다.
   - **PYTHON 스텝 출력 등급**(공통 결정 R4): 실행 주체 자격 이하이면서 `allowlist_required` 가 아닌 등급 중 **최고 등급**이다(= 흐름 C 의 슬롯 롤로 실제 읽을 수 있는 최대 등급). 예: ADMIN(기밀) 트리거 → 기밀은 허용 목록 등급이라 PYTHON 이 못 읽으므로 출력은 '민감', 허용 목록 시드는 없다.
     - 그런 등급이 없는 실행 주체(역할 없음 등)가 돌리는 **출력 있는 PYTHON 스텝의 새 TEMP 는 실패한다**(fail-closed — 기본 등급 TEMP 를 볼 수 없는 실행 주체가 쓰게 두지 않는다). 실행 주체에게 역할(열람 등급)을 주면 풀린다.
-    - **사전 점검(소유자 롤 app):** `SELECT p.id, p.name, s.id step_id, s.output_dataset_id FROM pipeline_step s JOIN pipeline p ON p.id = s.pipeline_id WHERE s.script_type = 'PYTHON' AND s.output_dataset_id IS NOT NULL` — 행이 있으면 각 출력의 현재 등급을 실행 주체(트리거 생성자·수동 실행자) 자격 기준의 위 규칙 결과(자격 이하·허용 목록 아닌 최고 등급)와 비교해, 그보다 낮은 출력은 다음 실행에서 상향된다고 소유자에게 미리 알린다. 역할 없는 실행 주체의 트리거가 걸린 PYTHON 스텝도 이 목록에서 찾아 역할을 주거나 실행 주체를 바꾼다.
+    - **사전 점검(소유자 롤 app):** `SELECT p.id, p.name, s.id step_id, s.output_dataset_id, d.id temp_dataset_id FROM pipeline_step s JOIN pipeline p ON p.id = s.pipeline_id LEFT JOIN dataset d ON d.source_pipeline_step_id = s.id AND d.origin_type = 'TEMP' WHERE s.script_type = 'PYTHON' AND (s.output_dataset_id IS NOT NULL OR d.id IS NOT NULL)` — 지정 출력과 러너 TEMP(`temp_dataset_id`) 를 함께 본다. 행이 있으면 각 출력의 현재 등급을 실행 주체(트리거 생성자·수동 실행자) 자격 기준의 위 규칙 결과(자격 이하·허용 목록 아닌 최고 등급)와 비교해, 그보다 낮은 출력은 다음 실행에서 상향된다고 소유자에게 미리 알린다. 역할 없는 실행 주체의 트리거가 걸린 PYTHON 스텝도 이 목록에서 찾아 역할을 주거나 실행 주체를 바꾼다.
   - 허용 목록:
     - 러너 TEMP 의 허용 목록은 매 실행 "허용 목록 필요 입력들의 항목 교집합 ∪ {실행 주체}" 로 다시 계산된다(예전: 늘어나기만 함, WD-30).
     - 쓰기 **전**에는 좁히기만 한다(기존 ∩ 시드 ∪ {실행 주체}). 쓰기 성공 **뒤** 넓힘까지 포함해 시드로 확정하는 것은 **출력이 이번 실행으로 전부 교체된 경우**(새 TEMP·REPLACE·증분 전체 재구축)뿐이다. APPEND/MERGE 로 재사용하는 TEMP 는 이전 실행 행이 남으므로 좁히기만 한다 — 입력에 늦게 추가된 사람은 출력이 전부 교체되는 실행 전까지 그 TEMP 를 못 본다.
@@ -460,7 +460,7 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
   - 메트릭 SQL 거부는 **작업 생성·수정**(사용자 요청)만 감사한다. 백그라운드 메트릭 폴러의 거부는 감사하지 않는다(30초마다 반복되는 내부 판정이라 감사 폭주).
   - 같은 (사용자, 데이터셋, 동작, 사유)는 **1분에 1건**으로 합친다 — api 인스턴스 메모리 기준이라 다중 인스턴스면 인스턴스 수만큼 남을 수 있다. 등급을 감사 등급으로 **올린 직후 1분 안의 첫 접근은 빠질 수 있다**.
   - 차트·대시보드 위젯의 "열람 권한 없음" 표시와 없는 데이터셋 id 는 거부로 남기지 않는다.
-  - 감사 쓰기는 별도 트랜잭션(커넥션 1개 추가 사용)이다. 실패해도 요청은 그대로 처리되고 api 로그에 경고가 남는다.
+  - 감사 쓰기는 별도 트랜잭션(REQUIRES_NEW, 요청 커넥션과 별개로 풀에서 커넥션 1개 추가 사용)이다. 실패해도 요청은 그대로 처리되고 api 로그에 경고가 남는다. 거부가 폭주하면(1분 합치기 전 서로 다른 데이터셋·사유) 커넥션 풀 압박이 늘 수 있다.
 - **이벤트(내부 계약):**
   - `DatasetSecurityLevelChangedEvent`(MANUAL·AUTO_RAISE·PIPELINE_TEMP_ASSIGN·CLONE_INHERIT)
   - `SecurityLevelsChangedEvent`(CREATED·UPDATED·DELETED·REORDERED)
@@ -480,6 +480,7 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
   - 내보내기 추정(`GET /api/v1/datasets/{id}/export/estimate`)은 VIEW 만 본다(행 수는 이미 보이는 정보).
   - **쿼리 실행 기록의 만료 행은 같은 사용자가 다시 애드혹 실행할 때만 지워진다.** 다시 실행하지 않는 사용자의 SQL 원문은 테이블에 남는다(내보내기·조회는 만료 조건으로 막히고, 소유자 조회·RLS 로 제한). 후속: 전역 정리 스케줄러.
   - PYTHON 출력 등급은 흐름 C 의 슬롯 롤 읽기 제한과 함께여야 실제 읽기와 일치한다(위 배포 모듈).
+  - 지정 출력이 이미 입력과 같은(허용 목록 필요) 등급이면 상향이 없으므로 허용 목록을 좁히지 않는다 — 입력 목록에는 없고 출력 목록에만 있는 구성원이 출력을 볼 수 있다(대화형 SQL 의 rank 판정과 같은 성격).
 
 ### opencode baseURL 사설망 점검 (이슈 #698)
 

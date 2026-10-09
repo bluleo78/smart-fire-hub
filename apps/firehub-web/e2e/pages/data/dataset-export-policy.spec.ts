@@ -126,11 +126,44 @@ test.describe('데이터셋 내보내기 정책 UI', () => {
   });
 });
 
+/**
+ * FILE 데이터셋 오브젝트 열기/다운로드는 window.open 으로 빈 탭을 먼저 연 뒤 presign URL 로 이동시킨다.
+ * 실제 팝업을 띄우면 병렬 부하에서 팝업 생성·close 대기가 30초를 넘겨 흔들렸다 — 이 절은 window.open 을
+ * 가짜 창(앱 코드가 쓰는 location.href·close 만 가짐)으로 바꾸고, presign 요청의 disposition 과 가짜 창의
+ * 이동/닫힘만 단언한다(팝업 자체의 동작은 브라우저 소관).
+ */
 test.describe('FILE 데이터셋 오브젝트 — inline/attachment 분리', () => {
   const DATASET_ID = 7;
 
-  /** FILE 상세 + 오브젝트 1건 + presign 요청 캡처. 새 탭이 이동할 외부 URL 도 모킹한다. */
+  /** 가짜 창 기록 — 페이지 컨텍스트의 window.__openedWindows 에 쌓인다. */
+  type FakeWindow = { href: string; closed: boolean };
+
+  /** 페이지가 연 가짜 창들의 이동 주소·닫힘 여부를 읽는다. */
+  async function openedWindows(page: Page): Promise<FakeWindow[]> {
+    return page.evaluate(() =>
+      ((window as unknown as { __openedWindows?: { location: { href: string }; closed: boolean }[] })
+        .__openedWindows ?? []).map((w) => ({ href: w.location.href, closed: w.closed })),
+    );
+  }
+
+  /** FILE 상세 + 오브젝트 1건 + presign 요청 캡처. window.open 은 가짜 창으로 바꾼다. */
   async function setup(page: Page, exportAllowed: boolean) {
+    await page.addInitScript(() => {
+      const opened: { location: { href: string }; closed: boolean; close: () => void }[] = [];
+      (window as unknown as { __openedWindows: typeof opened }).__openedWindows = opened;
+      // openObjectInNewTab 은 반환 창의 location.href 대입과 close() 만 쓴다.
+      window.open = (() => {
+        const fake = {
+          location: { href: '' },
+          closed: false,
+          close() {
+            fake.closed = true;
+          },
+        };
+        opened.push(fake);
+        return fake;
+      }) as unknown as typeof window.open;
+    });
     await mockApi(
       page,
       'GET',
@@ -151,9 +184,6 @@ test.describe('FILE 데이터셋 오브젝트 — inline/attachment 분리', () 
       { url: 'https://example.com/download/report.md', expiresInSeconds: 300 },
       { capture: true },
     );
-    await page.context().route('https://example.com/**', (route) =>
-      route.fulfill({ status: 200, contentType: 'text/plain', body: 'file-bytes' }),
-    );
     await page.goto(`/data/datasets/${DATASET_ID}`);
     await page.getByRole('tab', { name: '오브젝트' }).click();
     await expect(page.getByRole('button', { name: 'report.md' })).toBeVisible();
@@ -165,18 +195,19 @@ test.describe('FILE 데이터셋 오브젝트 — inline/attachment 분리', () 
   }) => {
     const presign = await setup(page, true);
 
-    const popup1 = page.waitForEvent('popup');
     await page.getByRole('button', { name: '다운로드' }).click();
-    await (await popup1).close();
     await expect.poll(() => presign.requests.length).toBe(1);
     expect(presign.requests[0].searchParams.get('disposition')).toBe('attachment');
     expect(presign.requests[0].searchParams.get('key')).toBe('equip/report.md');
 
-    const popup2 = page.waitForEvent('popup');
     await page.getByRole('button', { name: 'report.md' }).click();
-    await (await popup2).close();
     await expect.poll(() => presign.requests.length).toBe(2);
     expect(presign.requests[1].searchParams.get('disposition')).toBe('inline');
+
+    // 두 번 모두 미리 연 창을 발급 URL 로 이동시킨다
+    await expect
+      .poll(async () => (await openedWindows(page)).map((w) => w.href))
+      .toEqual(['https://example.com/download/report.md', 'https://example.com/download/report.md']);
   });
 
   test('exportAllowed=false 면 다운로드 아이콘이 없고 이름 클릭(열기)은 inline 으로 남는다', async ({
@@ -185,9 +216,7 @@ test.describe('FILE 데이터셋 오브젝트 — inline/attachment 분리', () 
     const presign = await setup(page, false);
     await expect(page.getByRole('button', { name: '다운로드' })).toHaveCount(0);
 
-    const popup = page.waitForEvent('popup');
     await page.getByRole('button', { name: 'report.md' }).click();
-    await (await popup).close();
     await expect.poll(() => presign.requests.length).toBe(1);
     expect(presign.requests[0].searchParams.get('disposition')).toBe('inline');
   });
@@ -203,9 +232,9 @@ test.describe('FILE 데이터셋 오브젝트 — inline/attachment 분리', () 
       { status: 403, code: 'POLICY_BLOCKED', message, errors: { action: 'EXPORT', policyKey: 'export_policy' } },
       { status: 403 },
     );
-    const popup = page.waitForEvent('popup');
     await page.getByRole('button', { name: '다운로드' }).click();
-    await popup;
     await expect(page.getByText(message)).toBeVisible();
+    // 미리 연 창은 이동 없이 닫힌다
+    await expect.poll(() => openedWindows(page)).toEqual([{ href: '', closed: true }]);
   });
 });
