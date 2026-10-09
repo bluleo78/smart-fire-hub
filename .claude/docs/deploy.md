@@ -315,8 +315,8 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
   - **GraphRAG 에 이미 적재된 내용과 등급 상향**(WD-28): 문서 적재·`graphrag_project_table`(표 투영)로 Neo4j 에 들어간 엔티티·관계·속성(표 행 값 포함)이 대상이다. 검수 인박스의 원문 근거는 V133·V134 배포에서 막혔다.
     - **V135 배포 전까지**: 데이터셋을 나중에 '민감'·'기밀'로 올려도 ai-agent 의 그래프 조회·채팅 검색으로 계속 노출된다(스펙 §7.5). **운영 절차**: 등급을 올리기 전에 그 데이터셋이 GraphRAG 에 적재됐는지(소유자 롤로 `SELECT * FROM dataset_graph_ingest WHERE dataset_id = <id>`) 확인하고, 적재돼 있으면 그래프에서 해당 데이터셋 유래 노드를 수동으로 정리한 뒤 올린다.
     - **V135 배포 후**: 출처 데이터셋을 볼 수 없는 사용자에게는 그 온톨로지의 그래프 읽기가 통째로 막히므로(아래 V135 절) 등급 상향 전 수동 정리는 필요 없다. 단 출처가 기록되지 않은 온톨로지는 게이트가 막지 못하므로(V135 절 알려진 한계), 그 경우에만 위 수동 정리를 한다. 삭제된 데이터셋이 출처인 온톨로지는 테넌트 관리자만 읽는다(V135 절).
-  - 접근 거부 감사(누가 무엇에 거부됐는지)는 S4 로 이연 — 이번 배포에서는 관리 작업만 감사에 남는다(WD-30).
-  - 러너 TEMP 의 허용 목록은 늘어나기만 한다(REPLACE 때 재설정은 S4 전파 설계와 함께, WD-30).
+  - ~~접근 거부 감사는 S4 로 이연~~ → V137 절에서 해결(WD-30·WD-44).
+  - ~~러너 TEMP 허용 목록은 늘어나기만 한다~~ → V137 절에서 매 실행 재계산(WD-30).
   - 허용 목록의 사용자 항목은 `"user"` 행 삭제 시 함께 지워진다(`ON DELETE CASCADE`). **제품 코드에는 사용자 하드 삭제 경로가 없다**(멤버 제거·정지·전역 비활성은 행을 남긴다) — 그래서 역할 삭제와 달리 "유일 항목" 가드를 두지 않았다. 운영에서 사용자 행을 **수동으로** 지울 때는 먼저 `SELECT g.dataset_id FROM dataset_access_grant g JOIN dataset d ON d.id = g.dataset_id JOIN security_level l ON l.id = d.security_level_id WHERE g.user_id = <id> AND l.allowlist_required AND (SELECT count(*) FROM dataset_access_grant x WHERE x.dataset_id = g.dataset_id) = 1` (소유자 롤) 가 0행인지 확인한다. 같은 이유로, 유일 허용 항목인 사용자를 워크스페이스에서 **제거·정지**하면 그 데이터셋은 관리자 우회(admin_bypass) 외에는 아무도 못 본다 — 관리자가 허용 목록에 다른 항목을 추가해 복구한다(가드는 후속 판단).
   - **검수 결정은 데이터셋을 넘어 재사용된다**: V134 이후 검수 항목은 데이터셋마다 따로 생기지만, ingest 의 결정 조회(데이터셋 없이 이름으로 묻는 ai-agent 계약)는 조회자가 볼 수 있는 행 중 **가장 최근의 사람 결정**(승인·거부)을 따른다 — 데이터셋 Z 에서 내린 승인이 데이터셋 X 의 ingest 에도 적용된다(수용한 트레이드오프).
   - **서로 다른 이름의 등급을 동시에 만들면** 둘 다 같은 다음 순위를 잡아 순위 유일 제약(`uq_security_level_rank`) 위반이 되고, 코드 없는 일반 409 "Data integrity violation" 으로 끝난다(500 아님) — 다시 시도하면 성공한다. 이름 중복만 `SECURITY_LEVEL_NAME_DUPLICATE` 로 번역한다.
@@ -417,6 +417,69 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
 - **Slack 인바운드 채팅은 공유(SHARE) 목적으로 판정한다**: Slack 에서 묻고 Slack 으로 답하는 채팅은 답변이 외부 채널로 발송되므로 api(`SlackInboundService` → `AiChatRequestBuilder`)가 요청에 `aiPurpose=share` 를 싣고, ai-agent 가 그 실행의 MCP 호출에 `X-AI-Purpose: share` 를 붙인다. 그래서 채팅을 자체 호스팅으로 선언해도 `share_policy = DENY` 등급(기본 시드: 기밀) 데이터는 Slack 답변 경로에서 POLICY_BLOCKED 로 막히고, AI 판정도 공유 목적 호스팅 규칙(채팅·임베딩 모두 자체 호스팅일 때만 자체 호스팅으로 봄)을 따른다. 목적은 서버가 요청 출처로 정하며 ai-agent 는 'share' 외의 값을 버린다. 그 결과 Slack 채팅은 웹 채팅보다 좁다 — 기밀은 호스팅 선언과 무관하게 Slack 답변에서 막히고, 민감은 채팅·임베딩을 둘 다 자체 호스팅으로 선언해야 쓰인다. "웹에서는 되는데 Slack 에서는 막힌다" 문의에 대비해 Slack 연동 테넌트 관리자에게 미리 알린다. 그 밖의 알려진 한계: 정리 시점에 이미 진행 중인 임베딩 작업 전반(행 검색 동기화 주기·메타 재임베딩 배치)과 정리가 경합할 수 있다 — 진행 중 작업은 다음 배치 전에 게이트를 다시 보고 멈추며, 남은 벡터는 다음 주기(행 검색은 키워드 전용 재색인) 때 사라진다. 정리가 진행 중인 행 검색 재구축 주기와 겹치면 키워드 전용 전환이 백오프만큼(1분+) 늦어질 수 있다 — 그동안에도 노출이 늘지는 않는다(검색 술어가 불허 데이터셋을 거른다).
 - 감사: 공급자 호스팅 선언 변경은 `audit_log.action_type = 'AI_PROVIDER_HOSTING_CHANGE'`(대상 슬롯·이전값·새값·사용자)로 남는다.
 - 롤백: 이미지만 이전 버전으로(api+web+ai-agent 함께). DB 는 그대로 둔다 — 구 코드는 `payload.hosting`·`embedding.config.hosting`·플래그 키를 읽지 않는다. 정리된 벡터는 롤백 후 재임베딩 판정식이 다시 만든다(외부 공급자로 다시 보내짐에 유의).
+
+### V137 데이터셋 보안 S4 — 출구·전파·감사 (WD-42·43·44·30, 계획 2026-10-09 · 배포일은 배포 시점에 갱신)
+
+- **배포 모듈: api + web + ai-agent + executor 를 한 번에 배포한다**(흐름 A V136·B V137·C V138 일괄, 보충 스펙 §1). 세 흐름의 마이그레이션이 한 배포에서 함께 적용된다(V138 절 참고).
+  - api 와 web 은 반드시 함께 — 쿼리 결과 내보내기 엔드포인트가 바뀌었다. 구 web 은 없어진 `POST /api/v1/query-results/export` 를 불러 404 가 난다. 새 엔드포인트는 `POST /api/v1/analytics/queries/runs/{runId}/export`.
+  - 흐름 C(executor 슬롯 롤 읽기 제한)와도 반드시 함께 — 아래 PYTHON 출력 등급은 C 의 슬롯 롤이 실제로 읽을 수 있는 범위를 전제로 한다. B 만 먼저 나가면 PYTHON 이 앱 연결로 더 높은 등급을 읽고도 출력은 낮게 매겨질 수 있다(과소 등급).
+- **마이그레이션:** V137 `analytics_query_run`(새 테이블, RLS 형태 (a), FORCE 없음). 기존 데이터 변경 없음. 배포 전 스냅샷 규칙(V122 이상)은 그대로 따른다. **병합 직전에 실제 main 의 마이그레이션 목록을 다시 확인한다**(V122 충돌 전례).
+- **동작 변화(사용자 체감):**
+  - 내보내기:
+    - 내보내기는 `data:export` 권한 **그리고** 등급 `export_policy` 를 모두 만족해야 한다.
+    - '기밀'(export_policy=DENY) 데이터셋은 서버 내보내기·비동기 내보내기 파일 다운로드(`GET /api/v1/exports/{jobId}/file`)·파일형 데이터셋 오브젝트 다운로드(`GET /api/v1/datasets/{id}/objects/url?disposition=attachment`)가 403 `POLICY_BLOCKED` 다.
+    - '민감'(PERMISSION)은 `data:export_restricted` 권한이 있어야 한다.
+    - 비동기 내보내기 파일은 **다운로드 시점** 등급으로 다시 판정한다(작업 생성 뒤 등급이 오르면 받을 수 없다).
+    - 오브젝트 presign 은 `disposition` 파라미터로 나뉜다. 기본값 `inline`(미리보기·열기)은 VIEW 만 보고, `attachment`(다운로드)는 내보내기 판정을 거친다.
+    - 데이터셋 상세·목록·애드혹 쿼리 실행·차트 데이터 응답에 조회자별 `exportAllowed` 가 실린다. 쿼리 편집기 내보내기 가능 여부는 `POST /api/v1/analytics/queries/export-check` 로 미리 본다(값 판정, 감사 없음).
+  - 쿼리 결과 내보내기:
+    - 화면의 행이 아니라 실행 기록(`analytics_query_run`, 1시간 보존)의 `runId` 로 서버가 지금 자격으로 다시 판정하고 다시 실행한다. 데이터가 그 사이 바뀌었으면 파일 내용도 바뀐다.
+    - 기록이 없거나 남의 기록이거나 1시간이 지났으면 404 `QUERY_RUN_NOT_FOUND` "실행 기록을 찾을 수 없습니다. 쿼리를 다시 실행한 뒤 내보내세요." 다.
+    - **저장 쿼리 실행 결과는 서버 내보내기를 할 수 없다** — 저장 쿼리 실행(`POST /api/v1/analytics/queries/{id}/execute`)은 `runId` 를 만들지 않는다. 웹은 버튼을 비활성하고 편집기에서 다시 실행하라고 안내한다.
+  - 웹:
+    - 내보낼 수 없는 데이터의 주 내보내기 버튼은 비활성+툴팁이다.
+    - 보조 다운로드(목록 행 아이콘·선택 행 CSV·오브젝트 다운로드 아이콘·대시보드 PDF·AI 표/데이터셋 위젯 내보내기)는 숨긴다.
+  - 등급 전파:
+    - 파이프라인의 **지정 출력**이 입력보다 낮으면 예전에는 실패(`SQL_WRITE_DOWNGRADE`)였다. 이제 **자동 상향**하고 적재한다(대화형 SQL 의 쓰기 하향은 여전히 `SQL_WRITE_DOWNGRADE` 로 거부).
+    - DML 스텝(`INSERT INTO 낮은등급 SELECT … FROM 높은등급`)도 쓰기 대상을 자동 상향한다.
+    - SQL 스텝의 선언 입력도 전파 입력이다. 선언했지만 실행 주체가 볼 수 없는 입력이 있으면 실패한다.
+  - **PYTHON 스텝 출력 등급**(공통 결정 R4): 실행 주체 자격 이하이면서 `allowlist_required` 가 아닌 등급 중 **최고 등급**이다(= 흐름 C 의 슬롯 롤로 실제 읽을 수 있는 최대 등급). 예: ADMIN(기밀) 트리거 → 기밀은 허용 목록 등급이라 PYTHON 이 못 읽으므로 출력은 '민감', 허용 목록 시드는 없다.
+    - 그런 등급이 없는 실행 주체(역할 없음 등)가 돌리는 **출력 있는 PYTHON 스텝의 새 TEMP 는 실패한다**(fail-closed — 기본 등급 TEMP 를 볼 수 없는 실행 주체가 쓰게 두지 않는다). 실행 주체에게 역할(열람 등급)을 주면 풀린다.
+    - **사전 점검(소유자 롤 app):** `SELECT p.id, p.name, s.id step_id, s.output_dataset_id FROM pipeline_step s JOIN pipeline p ON p.id = s.pipeline_id WHERE s.script_type = 'PYTHON' AND s.output_dataset_id IS NOT NULL` — 행이 있으면 각 출력의 현재 등급을 실행 주체(트리거 생성자·수동 실행자) 자격 기준의 위 규칙 결과(자격 이하·허용 목록 아닌 최고 등급)와 비교해, 그보다 낮은 출력은 다음 실행에서 상향된다고 소유자에게 미리 알린다. 역할 없는 실행 주체의 트리거가 걸린 PYTHON 스텝도 이 목록에서 찾아 역할을 주거나 실행 주체를 바꾼다.
+  - 허용 목록:
+    - 러너 TEMP 의 허용 목록은 매 실행 "허용 목록 필요 입력들의 항목 교집합 ∪ {실행 주체}" 로 다시 계산된다(예전: 늘어나기만 함, WD-30).
+    - 쓰기 **전**에는 좁히기만 한다(기존 ∩ 시드 ∪ {실행 주체}). 쓰기 성공 **뒤** 넓힘까지 포함해 시드로 확정하는 것은 **출력이 이번 실행으로 전부 교체된 경우**(새 TEMP·REPLACE·증분 전체 재구축)뿐이다. APPEND/MERGE 로 재사용하는 TEMP 는 이전 실행 행이 남으므로 좁히기만 한다 — 입력에 늦게 추가된 사람은 출력이 전부 교체되는 실행 전까지 그 TEMP 를 못 본다.
+    - 교집합은 항목 단위다 — 한 입력엔 역할로, 다른 입력엔 사용자로 올라 있는 사람은 빠진다(보수적).
+    - 지정 출력은 상향된 실행에서만 좁히고 넓히지 않는다(사용자가 관리하는 목록).
+    - 자동 상향 시 상향 감사와 허용 목록 변경 감사(바뀐 항목만)가 함께 남는다.
+  - 수동 등급 변경은 "자동 상향되었습니다" 배너를 지운다.
+- **감사(관리자 › 감사 로그, 액션 필터 '데이터셋 보안' 묶음):**
+  - `데이터셋 접근 거부`(DATASET_ACCESS_DENIED, 실패)는 VIEW(404 로 가려진 것 포함)·SQL·파이프라인·데이터셋 참조·내보내기 거부를 **실제 사유**와 함께 남긴다(테이블명 포함 — 관리자 전용 화면). 내보내기 거부는 별도 액션 없이 `metadata.action=EXPORT` 다.
+  - `감사 등급 데이터 접근`(DATASET_ACCESS)은 `audit_access` 등급(기본: 민감·기밀)의 행 조회·SQL·파이프라인 접근을 남긴다.
+  - **AI(POLICY_BLOCKED) 거부와 AI 접근의 감사 연결은 흐름 A 병합 후**(Task 10)에 들어간다 — 흐름 A 를 포함한 일괄 배포에서만 남는다.
+  - 메트릭 SQL 거부는 **작업 생성·수정**(사용자 요청)만 감사한다. 백그라운드 메트릭 폴러의 거부는 감사하지 않는다(30초마다 반복되는 내부 판정이라 감사 폭주).
+  - 같은 (사용자, 데이터셋, 동작, 사유)는 **1분에 1건**으로 합친다 — api 인스턴스 메모리 기준이라 다중 인스턴스면 인스턴스 수만큼 남을 수 있다. 등급을 감사 등급으로 **올린 직후 1분 안의 첫 접근은 빠질 수 있다**.
+  - 차트·대시보드 위젯의 "열람 권한 없음" 표시와 없는 데이터셋 id 는 거부로 남기지 않는다.
+  - 감사 쓰기는 별도 트랜잭션(커넥션 1개 추가 사용)이다. 실패해도 요청은 그대로 처리되고 api 로그에 경고가 남는다.
+- **이벤트(내부 계약):**
+  - `DatasetSecurityLevelChangedEvent`(MANUAL·AUTO_RAISE·PIPELINE_TEMP_ASSIGN·CLONE_INHERIT)
+  - `SecurityLevelsChangedEvent`(CREATED·UPDATED·DELETED·REORDERED)
+  - 흐름 C 의 PYTHON 슬롯 롤 GRANT 동기화가 구독한다.
+- **배포 후 확인(소유자 롤):**
+  - `select max(version::int) from flyway_schema_history` = 세 흐름 중 가장 큰 번호(계획상 138 — 흐름 C 의 V138 이 빠진 배포라면 137).
+  - `SELECT count(*) FROM analytics_query_run` 이 쿼리 편집기 실행 뒤 늘어나는지 본다.
+  - `SELECT action_type, count(*) FROM audit_log WHERE action_type IN ('DATASET_ACCESS_DENIED','DATASET_ACCESS') AND action_time > now() - interval '1 hour' GROUP BY 1` 로 기록을 확인한다.
+- **롤백:**
+  - V137 은 새 테이블만 만든다. 이미지만 이전 버전(api+web 함께, 일괄 배포였으면 ai-agent·executor 도 함께)으로 되돌리면 된다(구 코드는 테이블을 모른다).
+  - 되돌리면 내보내기 정책·전파·접근 감사가 사라진다. 이미 자동 상향된 등급·재계산된 허용 목록은 그대로 남는다(되돌리지 않는다).
+- **알려진 한계:**
+  - **UI 수준 차단**이다 — 화면 데이터의 복사·캡처는 막지 못한다(스펙 §7.4).
+  - **inline presign URL 은 내보내기 판정을 거치지 않는다** — 파일형 데이터셋 상세의 오브젝트 **이름 클릭**(inline 열기)과 **ai-agent 경유**로 받은 inline URL 은 VIEW 만 보므로, 열린 파일을 브라우저에서 저장할 수 있다.
+  - AI 표 위젯의 내보내기 판정은 위젯에 표시된 SQL 기준이다. LLM 이 다른 SQL 의 결과를 표에 넣었으면 판정이 어긋날 수 있다(UI 수준).
+  - 대시보드 PDF 는 브라우저 인쇄라 숨김만 한다(Cmd+P 는 막지 못한다).
+  - 내보내기 추정(`GET /api/v1/datasets/{id}/export/estimate`)은 VIEW 만 본다(행 수는 이미 보이는 정보).
+  - **쿼리 실행 기록의 만료 행은 같은 사용자가 다시 애드혹 실행할 때만 지워진다.** 다시 실행하지 않는 사용자의 SQL 원문은 테이블에 남는다(내보내기·조회는 만료 조건으로 막히고, 소유자 조회·RLS 로 제한). 후속: 전역 정리 스케줄러.
+  - PYTHON 출력 등급은 흐름 C 의 슬롯 롤 읽기 제한과 함께여야 실제 읽기와 일치한다(위 배포 모듈).
 
 ### opencode baseURL 사설망 점검 (이슈 #698)
 
