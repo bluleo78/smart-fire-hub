@@ -1,47 +1,20 @@
 import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight } from "lucide-react"
 import * as React from "react"
 
+import { useHorizontalOverflow } from "@/hooks/useHorizontalOverflow"
 import { cn } from "@/lib/utils"
 
 function Table({ className, ...props }: React.ComponentProps<"table">) {
   // 가로 스크롤 인디케이터 상태 — 컨테이너 너비 변경/스크롤 시 갱신
   // 좁은 뷰포트(모바일)에서 테이블이 잘릴 때 사용자가 인지할 수 있도록
-  // 우측 페이드 그라데이션 + 안내 힌트를 노출한다.
-  const containerRef = React.useRef<HTMLDivElement>(null)
-  const [overflow, setOverflow] = React.useState({
-    canScrollLeft: false,
-    canScrollRight: false,
-  })
-
-  // 스크롤/리사이즈에 따라 좌/우 그라데이션 표시 여부 갱신
-  const updateOverflow = React.useCallback(() => {
-    const el = containerRef.current
-    if (!el) return
-    const { scrollLeft, scrollWidth, clientWidth } = el
-    setOverflow({
-      canScrollLeft: scrollLeft > 0,
-      canScrollRight: scrollLeft + clientWidth < scrollWidth - 1,
-    })
-  }, [])
-
-  React.useEffect(() => {
-    const el = containerRef.current
-    if (!el) return
-    updateOverflow()
-    el.addEventListener("scroll", updateOverflow, { passive: true })
-    const ro = new ResizeObserver(updateOverflow)
-    ro.observe(el)
-    if (el.firstElementChild) ro.observe(el.firstElementChild)
-    return () => {
-      el.removeEventListener("scroll", updateOverflow)
-      ro.disconnect()
-    }
-  }, [updateOverflow])
+  // 우측 페이드 그라데이션 + 안내 힌트를 노출한다. 계산은 데이터셋 상세 탭 바와 공유하는 훅에 있다.
+  const [container, setContainer] = React.useState<HTMLDivElement | null>(null)
+  const overflow = useHorizontalOverflow(container)
 
   return (
     <div className="relative w-full">
       <div
-        ref={containerRef}
+        ref={setContainer}
         data-slot="table-container"
         className="relative w-full overflow-x-auto"
       >

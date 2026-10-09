@@ -1,4 +1,17 @@
-import { ArrowLeft, BarChart2, Copy, FileCode, Pencil, Plus, Shield, ShieldCheck, Star, X } from 'lucide-react';
+import {
+  ArrowLeft,
+  BarChart2,
+  ChevronLeft,
+  ChevronRight,
+  Copy,
+  FileCode,
+  Pencil,
+  Plus,
+  Shield,
+  ShieldCheck,
+  Star,
+  X,
+} from 'lucide-react';
 import { useEffect, useLayoutEffect, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -33,6 +46,7 @@ import {
 } from '../../hooks/queries/useDatasets';
 import { useMyPermissions } from '../../hooks/queries/useMyPermissions';
 import { useAuth } from '../../hooks/useAuth';
+import { useHorizontalOverflow } from '../../hooks/useHorizontalOverflow';
 import { useRecentDatasets } from '../../hooks/useRecentDatasets';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
 import { handleApiError } from '../../lib/api-error';
@@ -104,6 +118,22 @@ export default function DatasetDetailPage() {
   // 자체 스크롤러를 가진 탭 — 페이지가 뷰포트 높이에 정확히 맞아야 이중 스크롤이 생기지 않는다.
   // 현재는 데이터 탭(가상 스크롤 테이블)뿐이다.
   const fillsHeight = activeTab === 'data';
+
+  // 탭 바 가로 스크롤 상태 — 잘린 쪽 페이드·화살표를 "스크롤 가능할 때만" 보이기 위해 추적한다(표 Table 과 같은 훅).
+  // 탭 바는 데이터셋 로드 뒤에 마운트되므로 콜백 ref(상태)로 받아 훅·효과가 마운트 시점에 다시 돌게 한다.
+  const [tabsListEl, setTabsListEl] = useState<HTMLDivElement | null>(null);
+  const tabsOverflow = useHorizontalOverflow(tabsListEl);
+  /** 화살표 배지 클릭 — 보이는 폭의 70% 만큼 넘긴다(마지막으로 보던 탭 일부가 남아 위치를 잃지 않게). */
+  const scrollTabs = (direction: -1 | 1) => {
+    tabsListEl?.scrollBy({ left: direction * tabsListEl.clientWidth * 0.7, behavior: 'smooth' });
+  };
+  // 활성 탭 끌어오기 — ?tab=history 로 바로 들어오거나 키보드로 뒤쪽 탭을 고르면 가로 스크롤 밖일 수 있다.
+  // inline/block 모두 'nearest': 이미 보이는 탭이면 움직이지 않고, 세로로는 페이지를 건드리지 않는다(기본값 block:'start' 는
+  // 탭을 바꿀 때마다 본문 스크롤을 탭 바 위치로 끌어올린다). scroll-px-10 이 페이드 폭만큼 여유를 둬 활성 탭이 페이드 밑에 숨지 않는다.
+  useEffect(() => {
+    const active = tabsListEl?.querySelector<HTMLElement>('[role="tab"][data-state="active"]');
+    active?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+  }, [tabsListEl, activeTab]);
 
   // searchParams가 외부에서 변경될 때(예: DatasetListPage의 ?tab=data 링크) activeTab을 동기화한다 (#170).
   // dataset도 의존성에 포함 — 데이터셋 로드 완료 시 storageType 기반 validTabs를 재계산하여
@@ -516,28 +546,93 @@ export default function DatasetDetailPage() {
           }, { replace: true });
         }}
       >
-        <TabsList className="border-b justify-start h-10 shrink-0 max-w-full overflow-x-auto">
-          <TabsTrigger value="info">정보</TabsTrigger>
-          {/* 「보안」 탭 — 표·문서·파일 모든 유형 공통(목업 s2) */}
-          <TabsTrigger value="security">
-            <ShieldCheck className="h-4 w-4" />
-            보안
-          </TabsTrigger>
-          {isDocument ? (
-            <TabsTrigger value="documents">문서</TabsTrigger>
-          ) : isFile ? (
-            <TabsTrigger value="objects">오브젝트</TabsTrigger>
-          ) : (
+        {/* 탭 바 — 좁은 화면(<sm)은 tabs.tsx 기본대로 줄바꿈(#345 Reflow)하고, sm 이상에서 탭이 본문 폭을 넘으면(지도 탭이 있는
+            표 데이터셋을 640px 근처에서 열 때 등) 가로 스크롤한다. 잘린 쪽에만 페이드 + 화살표 배지를 띄워 뒤에 탭이 더 있음을 알린다
+            (표 Table 의 #505 인디케이터와 같은 모양). 스크롤바는 이 36px 띠 안에서 탭 높이를 잠식하므로 숨기고, 화살표 배지를 눌러
+            넘길 수 있게 한다(키보드는 Radix 탭 목록의 좌우 화살표 + 아래 활성 탭 끌어오기).
+            overflow-x-auto 는 세로 넘침도 자르므로, 활성 밑줄(after:, 트리거 아래 5px)이 잘리지 않게 아래 여백을 1px 늘리고(pb-1)
+            세로 스크롤러가 되지 않게 overflow-y-hidden 을 둔다. */}
+        <div className="relative min-w-0 max-w-full shrink-0">
+          <TabsList
+            ref={setTabsListEl}
+            className={
+              'border-b justify-start h-10 shrink-0 max-w-full overflow-x-auto overflow-y-hidden scroll-px-10 pb-1 ' +
+              '[scrollbar-width:none]! [&::-webkit-scrollbar]:hidden'
+            }
+          >
+            <TabsTrigger value="info">정보</TabsTrigger>
+            {/* 「보안」 탭 — 표·문서·파일 모든 유형 공통(목업 s2) */}
+            <TabsTrigger value="security">
+              <ShieldCheck className="h-4 w-4" />
+              보안
+            </TabsTrigger>
+            {isDocument ? (
+              <TabsTrigger value="documents">문서</TabsTrigger>
+            ) : isFile ? (
+              <TabsTrigger value="objects">오브젝트</TabsTrigger>
+            ) : (
+              <>
+                <TabsTrigger value="columns">필드</TabsTrigger>
+                <TabsTrigger value="data">데이터</TabsTrigger>
+                <TabsTrigger value="search">검색</TabsTrigger>
+                {hasGeometry && <TabsTrigger value="map">지도</TabsTrigger>}
+                <TabsTrigger value="mapping">매핑</TabsTrigger>
+                <TabsTrigger value="history">이력</TabsTrigger>
+              </>
+            )}
+          </TabsList>
+          {tabsOverflow.canScrollLeft && (
             <>
-              <TabsTrigger value="columns">필드</TabsTrigger>
-              <TabsTrigger value="data">데이터</TabsTrigger>
-              <TabsTrigger value="search">검색</TabsTrigger>
-              {hasGeometry && <TabsTrigger value="map">지도</TabsTrigger>}
-              <TabsTrigger value="mapping">매핑</TabsTrigger>
-              <TabsTrigger value="history">이력</TabsTrigger>
+              <div
+                aria-hidden="true"
+                data-slot="tabs-fade-left"
+                className={
+                  'pointer-events-none absolute top-0 bottom-px left-0 w-10 ' +
+                  'bg-gradient-to-r from-background via-background/80 to-transparent'
+                }
+              />
+              {/* 마우스 사용자용 넘기기 — 키보드는 탭 목록 화살표로 이동하므로 탭 순서에서 뺀다. */}
+              <button
+                type="button"
+                tabIndex={-1}
+                aria-hidden="true"
+                data-slot="tabs-scroll-left"
+                onClick={() => scrollTabs(-1)}
+                className={
+                  'absolute left-0.5 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center ' +
+                  'rounded-full border bg-background shadow-sm'
+                }
+              >
+                <ChevronLeft className="h-3.5 w-3.5 text-foreground" />
+              </button>
             </>
           )}
-        </TabsList>
+          {tabsOverflow.canScrollRight && (
+            <>
+              <div
+                aria-hidden="true"
+                data-slot="tabs-fade-right"
+                className={
+                  'pointer-events-none absolute top-0 bottom-px right-0 w-10 ' +
+                  'bg-gradient-to-l from-background via-background/80 to-transparent'
+                }
+              />
+              <button
+                type="button"
+                tabIndex={-1}
+                aria-hidden="true"
+                data-slot="tabs-scroll-right"
+                onClick={() => scrollTabs(1)}
+                className={
+                  'absolute right-0.5 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center ' +
+                  'rounded-full border bg-background shadow-sm'
+                }
+              >
+                <ChevronRight className="h-3.5 w-3.5 text-foreground" />
+              </button>
+            </>
+          )}
+        </div>
 
         {activeTab === 'info' && (
           <div className="mt-6">
