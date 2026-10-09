@@ -240,7 +240,8 @@ function ToolCallDisplay({ toolCall, isStreaming }: { toolCall: AIToolCall; isSt
       )}
     >
       <div className="flex items-center gap-1.5">
-        <span>{icon}</span>
+        {/* 아이콘 칸 폭 고정(w-3.5) — 아래 차단 사유 줄의 pl-5(= w-3.5 + gap-1.5)가 이모지 글꼴 폭과 무관하게 라벨에 맞도록 */}
+        <span className="inline-flex w-3.5 shrink-0 justify-center">{icon}</span>
         <span className="font-medium">{label}</span>
         {detail && <span className="text-muted-foreground truncate">{detail}</span>}
         {(hasResult || !isStreaming) &&

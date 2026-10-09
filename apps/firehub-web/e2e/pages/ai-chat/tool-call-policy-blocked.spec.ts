@@ -49,7 +49,7 @@ async function openChatPanel(page: Page) {
   await page.getByPlaceholder('메시지를 입력하세요...').waitFor({ state: 'visible', timeout: 5000 });
 }
 
-/** ai-agent policyBlockedResultText 와 같은 키·순서의 표식. 뒤에 힌트 블록이 붙는 실제 형태도 흉내 낸다. */
+/** ai-agent policyBlockedResultText 와 같은 키·순서의 표식. 뒤에 힌트 블록을 덧붙여 파서가 첫 줄만 읽는지 방어적으로 확인한다(실제 차단 결과에는 힌트가 붙지 않는다). */
 function policyBlockedResult(action: 'AI' | 'SHARE', levelName: string): string {
   const marker = JSON.stringify({
     policyBlocked: true,

@@ -41,6 +41,9 @@ describe('parsePolicyBlocked', () => {
     expect(parsePolicyBlocked(marker({ policyBlocked: false }))).toBeNull();
     expect(parsePolicyBlocked(marker({ policyBlocked: 'true' }))).toBeNull();
     expect(parsePolicyBlocked(marker({ levelName: undefined }))).toBeNull();
+    // 계약 코드가 없거나 다르면 표식이 아니다 — 비슷한 키를 가진 일반 결과의 오표시 방지
+    expect(parsePolicyBlocked(marker({ code: undefined }))).toBeNull();
+    expect(parsePolicyBlocked(marker({ code: 'OTHER' }))).toBeNull();
   });
 
   it('사유 문구: AI 는 현재 AI 공급자, SHARE 는 공유·외부 발송', () => {

@@ -23,8 +23,11 @@ export function parsePolicyBlocked(result: string | undefined): PolicyBlockedInf
   // 표식은 JSON.stringify 한 줄이다(값 안의 개행은 \n 으로 이스케이프된다) — 뒤에 다른 블록이 이어 붙어도 첫 줄만 읽는다.
   const firstLine = result.split('\n', 1)[0];
   try {
-    const parsed = JSON.parse(firstLine) as Partial<PolicyBlockedInfo> & { policyBlocked?: unknown };
-    if (parsed.policyBlocked !== true || typeof parsed.levelName !== 'string') return null;
+    const parsed = JSON.parse(firstLine) as Partial<PolicyBlockedInfo> & { policyBlocked?: unknown; code?: unknown };
+    // ai-agent 계약 상수(code)까지 맞아야 표식으로 본다 — 우연히 비슷한 키를 가진 일반 도구 결과를 "차단됨"으로 오표시하지 않게
+    if (parsed.policyBlocked !== true || parsed.code !== 'POLICY_BLOCKED' || typeof parsed.levelName !== 'string') {
+      return null;
+    }
     return {
       action: String(parsed.action ?? ''),
       levelName: parsed.levelName,
