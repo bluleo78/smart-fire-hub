@@ -579,6 +579,34 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
   }
 
   /**
+   * 선언 입력도 실행 주체가 VIEW 할 수 있어야 한다(fail-closed, 계획 결정 10) — SQL 은 공개만 읽어도, 볼 수 없는 데이터셋을 선언 입력으로 넣으면
+   * 실행 전에 구분 불가 메시지로 실패하고 출력에 아무것도 쓰지 않는다. 대조군은 위
+   * run_declaredInputRaisesTempEvenIfSqlReadsOnlyPublic(같은 형태, 볼 수 있는 실행 주체 → COMPLETED).
+   */
+  @Test
+  void run_declaredHiddenInput_failsBeforeExecution() throws Exception {
+    long secId = tableId(secTable);
+    long editor = userAt("민감");
+    long p =
+        pipeline(
+            editor,
+            List.of(
+                new PipelineStepRequest(
+                    "s1",
+                    null,
+                    "SQL",
+                    "SELECT v FROM " + qualified(pubTable),
+                    lowOutId,
+                    List.of(secId),
+                    null)));
+    long exec = executionService.executePipeline(p, userAt("공개"));
+    assertThat(waitForEnd(exec)).isEqualTo("FAILED");
+    assertThat(stepError(exec)).isEqualTo(DatasetAccessGuard.SQL_ACCESS_DENIED_MESSAGE);
+    assertThat(rowCount(m + "_low")).isZero();
+    assertThat(levelOf(lowOutId)).isEqualTo(fx.levelId("공개"));
+  }
+
+  /**
    * 공통 결정 R4 — PYTHON 출력 = 실행 주체 자격 이하 & 허용 목록 아닌 최고 등급. '민감' 실행 주체 → '민감'. 스크립트 성패와 무관하게 쓰기 전에
    * 상향된다.
    */

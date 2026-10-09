@@ -936,7 +936,7 @@ public class PipelineAsyncRunner {
         }
 
         // 출력 등급(판단 사항 5, SQL SELECT 스텝과 같은 규칙): 러너 TEMP 는 입력 최대 등급으로 상향·시드, 사용자 지정 출력은 실행 주체가
-        // 볼 수 있어야 하고 입력보다 낮으면 실패(SQL_WRITE_DOWNGRADE). 실행기(AiClassifyExecutor)가 출력을 비우거나 쓰기 전에 둔다.
+        // 볼 수 있어야 하고 입력보다 낮으면 자동 상향(S4, 스펙 §4.5). 실행기(AiClassifyExecutor)가 출력을 비우거나 쓰기 전에 둔다.
         if (outputDatasetId != null) {
           pipelineSecurityGate.enforceOutputLevel(
               aiInputAccess, outputDatasetId, step.id(), aiTempFresh, aiRunAs);
