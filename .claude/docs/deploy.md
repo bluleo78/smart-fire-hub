@@ -508,12 +508,12 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
   7. 테이블 소유자: `SELECT d.tenant_id, d.table_name, c.relowner::regrole FROM dataset d JOIN pg_namespace n ON n.nspname = CASE WHEN d.tenant_id = 1 THEN 'data' ELSE 'data_t' || d.tenant_id END JOIN pg_class c ON c.relnamespace = n.oid AND c.relname = d.table_name WHERE c.relowner <> 'app_tenant'::regrole` → 0행이어야 한다. 동기화는 런타임 롤(`app_tenant`)로 GRANT/REVOKE 하므로 **소유자가 아닌 테이블(예: app 소유 옛 테이블)은 고치지 못한다**. 결과는 두 갈래다.
      - 과소권한(슬롯 롤에 SELECT 가 없어야 할 만큼 모자람): GRANT 가 경고만 내고 적용되지 않는다 → 그 테이블은 PYTHON 에서 읽히지 않는다(안전 쪽).
      - **과권한이 남은 경우**(누군가 손으로 그 슬롯 롤에 SELECT 를 줬거나 등급이 올라감): REVOKE 가 실패해 "회수 실패"로 기록되고, **그 슬롯 롤로 도는 실행만** "Python 읽기 권한을 회수하지 못한 데이터가 있어 실행을 중단했습니다." 로 거부된다(다른 슬롯은 영향 없음). 이 쿼리의 행은 배포 전에 소유자를 `app_tenant` 로 옮기거나(`ALTER TABLE … OWNER TO app_tenant`) 상의한다. 배포 후 api 로그에 `회수 실패 N개`(N>0)가 보이면 이 쿼리부터 본다.
-  8. **슬롯 롤 접속 규칙(pg_hba)**: `SELECT line_number, type, database, user_name, auth_method FROM pg_hba_file_rules` — 새 롤 이름(`pipeline_py_t…`)이 api(로컬 경로)·executor 가 붙는 경로에서 허용되는지 본다(`all` 이거나 `pipeline_executor_t*` 가 허용되는 같은 규칙). 롤 이름을 나열한 규칙이면 새 이름이 빠져 있다. 막혀 있으면 배포 직후 **모든 PYTHON 스텝이 인증 실패**한다.
+  8. **슬롯 롤 접속 규칙(pg_hba)**: `SELECT line_number, type, database, user_name, auth_method FROM pg_hba_file_rules` — 새 롤 이름(`pipeline_py_t…`)이 api(로컬 경로)·executor 가 붙는 경로에서 허용되는지 본다(`all` 이거나 `pipeline_executor_t*` 가 허용되는 같은 규칙). 롤 이름을 나열한 규칙이면 새 이름이 빠져 있다. 막혀 있으면 배포 직후 **모든 PYTHON 스텝이 인증 실패**한다. 슈퍼유저가 아니면 이 뷰는 권한 없음으로 실패한다 — 그때는 DB 호스트에서 `pg_hba.conf` 를 직접 확인한다.
 - **배포 후 확인:**
   - `SELECT count(*) FROM pg_roles WHERE rolname LIKE 'pipeline\_py\_t%'` = 10 × ACTIVE 테넌트 수.
   - `SELECT rolname FROM pg_roles WHERE rolname LIKE 'pipeline\_py\_t%' AND (rolsuper OR rolcreaterole OR rolcreatedb OR rolbypassrls OR rolinherit)` → 0행(슬롯 롤에 강한 속성이 없음).
   - api 로그에 `PYTHON 읽기 권한 동기화 완료(기동): 성공 N개 테넌트`(일부 실패면 `일부 실패(기동)` WARN — 실패 테넌트는 실행 직전·일 1회 동기화가 회복하지만 원인을 본다).
-  - `SELECT grantee, count(*) FROM information_schema.role_table_grants WHERE grantee LIKE 'pipeline\_py\_t1\_s%' AND privilege_type = 'SELECT' GROUP BY 1` — 높은 슬롯일수록 같거나 많다(공개 데이터셋이 없으면 s1 은 0행이 정상).
+  - `SELECT r.rolname, count(*) FROM pg_class c CROSS JOIN LATERAL aclexplode(c.relacl) a JOIN pg_roles r ON r.oid = a.grantee WHERE r.rolname LIKE 'pipeline\_py\_t1\_s%' AND a.privilege_type = 'SELECT' GROUP BY 1` (`information_schema.role_table_grants` 는 조회 롤이 grantor·grantee 가 아닌 권한을 숨기므로 카탈로그 ACL 을 직접 본다) — 높은 슬롯일수록 같거나 많다(공개 데이터셋이 없으면 s1 은 0행이 정상).
   - 공개 데이터셋을 읽는 PYTHON 스텝 하나를 실행해 성공하는지.
 - **동작 변화:**
   - PYTHON 스크립트의 `DB_URL` 은 실행 주체(수동=실행자, 트리거=트리거 생성자) 등급 슬롯 롤이다. 등급 밖·허용 목록 등급 테이블 SELECT 는 `permission denied`. 쓰기 불가. 출력은 stdout JSON 으로만 적재한다.
@@ -528,7 +528,7 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
   - 위 "남은 이름 노출"·"PYTHON 입력 읽기" 항목(V133·V134 절).
   - 차트 `config` 가림은 **조회 시점의 저장 쿼리 판정**이다 — 작성자가 나중에 저장 쿼리 SQL 을 공개 데이터만 읽도록 바꾸면 옛 `config`(예전 컬럼명)는 더 이상 가려지지 않는다(작성자 자신의 변경이라 수용).
   - `config` 가 가려진 소유자가 차트 타입을 MAP 으로 바꾸는 PUT 은, 기존 `config` 에 `spatialColumn` 이 있는지에 따라 검증 성공/400 이 갈린다 — 1비트 노출이며 영향이 작아 수용.
-  - 슬롯 GRANT 는 SELECT 만 본다 — 손으로 건 INSERT 등 비SELECT 권한은 동기화가 탐지·회수하지 않는다(GRANT 경로가 SELECT 만 주므로 제품 경로로는 생기지 않는다).
+  - 슬롯 GRANT 는 SELECT 만 본다 — 손으로 건 INSERT 등 비SELECT 권한은 동기화가 탐지·회수하지 않는다(GRANT 경로가 SELECT 만 주므로 제품 경로로는 생기지 않는다). 또한 PUBLIC 대상 GRANT(`GRANT SELECT … TO PUBLIC`)와 뷰를 통한 우회 읽기도 탐지하지 않는다(동기화는 슬롯 롤 대상 테이블 ACL 만 본다).
 - **롤백:** api·executor 를 **함께** 되돌린다(한쪽만 되돌리면 위 결합 문제). V138 롤은 남겨도 무해하다(구 코드는 쓰지 않는다). 지우려면 롤마다 `REVOKE ALL ON DATABASE … FROM r; DROP OWNED BY r; DROP ROLE r` 를 실행한다.
 - **번호:** 다음 신규 마이그레이션 = V139(위 재확인 결과에 맞춰 함께 고친다).
 
