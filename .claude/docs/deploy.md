@@ -255,7 +255,7 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
 - executor·ai-agent 는 재배포 불필요. executor 는 변경 없음. ai-agent 는 `src/mcp/api-client/analytics-api.ts` 의 **TypeScript 타입만** 바뀌었다(`Chart.savedQueryName` 을 `string | null` 로, `ChartData.denied?` 추가) — 이 필드를 읽는 런타임 코드가 없고 타입은 빌드 시 지워지므로 실행 동작이 같다.
 - 마이그레이션 V133: 전 테넌트에 4등급 시드 + 기존 데이터셋·역할=내부, 시스템 ADMIN=기밀 백필 → **배포 직후 가시성은 배포 전과 같다**(내부 이하는 허용 목록 없음).
 - 마이그레이션 V134(후속 수정, 같은 릴리스): GraphRAG 검수 항목 유일 인덱스 `uq_graph_review_item` 을 `(tenant_id, item_type, dedupe_key)` 에서 `(tenant_id, item_type, dataset_id, dedupe_key) NULLS NOT DISTINCT` 로 교체한다(인덱스 이름 유지). `NULLS NOT DISTINCT` 는 **PostgreSQL 15 이상** 문법이다 — 운영 DB 가 PG16 인지 배포 전에 확인한다(`select version()`). 새 키는 옛 키의 상위 집합이라 기존 행이 위반할 수 없다(아래 사전 확인 쿼리로 확인).
-- 다음 마이그레이션은 V135(아래 V135 절)다. **다음 신규 마이그레이션 번호 = V136**(V135 절과 같은 값 — 새 마이그레이션을 더하면 두 곳을 함께 갱신한다).
+- 다음 마이그레이션은 V135(아래 V135 절)·V136(아래 V136 절)이다. **다음 신규 마이그레이션 번호 = V137**(V135 절과 같은 값 — 새 마이그레이션을 더하면 두 곳을 함께 갱신한다).
 - **번호 확인**(V133·V134 작성 당시 기록): 2026-10-08 기준 main 의 최신 마이그레이션은 V132 였고 이 브랜치의 V133·V134 는 맞는 번호였다. **병합 직전에 실제 main 의 마이그레이션 목록을 다시 확인한다**(번호 충돌 전례 — V122). 배포 전 스냅샷 규칙(V122 이상)은 그대로 따른다.
 - 아래 확인 쿼리는 전부 **소유자 롤로 실행**한다(`docker exec <db> psql -U app -d smartfirehub`) — 런타임 롤 `app_tenant` 는 RLS 라 행이 0 으로 보여 확인이 공허해진다.
 - 배포 전 확인:
@@ -315,8 +315,8 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
   - **GraphRAG 에 이미 적재된 내용과 등급 상향**(WD-28): 문서 적재·`graphrag_project_table`(표 투영)로 Neo4j 에 들어간 엔티티·관계·속성(표 행 값 포함)이 대상이다. 검수 인박스의 원문 근거는 V133·V134 배포에서 막혔다.
     - **V135 배포 전까지**: 데이터셋을 나중에 '민감'·'기밀'로 올려도 ai-agent 의 그래프 조회·채팅 검색으로 계속 노출된다(스펙 §7.5). **운영 절차**: 등급을 올리기 전에 그 데이터셋이 GraphRAG 에 적재됐는지(소유자 롤로 `SELECT * FROM dataset_graph_ingest WHERE dataset_id = <id>`) 확인하고, 적재돼 있으면 그래프에서 해당 데이터셋 유래 노드를 수동으로 정리한 뒤 올린다.
     - **V135 배포 후**: 출처 데이터셋을 볼 수 없는 사용자에게는 그 온톨로지의 그래프 읽기가 통째로 막히므로(아래 V135 절) 등급 상향 전 수동 정리는 필요 없다. 단 출처가 기록되지 않은 온톨로지는 게이트가 막지 못하므로(V135 절 알려진 한계), 그 경우에만 위 수동 정리를 한다. 삭제된 데이터셋이 출처인 온톨로지는 테넌트 관리자만 읽는다(V135 절).
-  - ~~접근 거부 감사는 S4 로 이연~~ → V137 절에서 해결(WD-30·WD-44).
-  - ~~러너 TEMP 허용 목록은 늘어나기만 한다~~ → V137 절에서 매 실행 재계산(WD-30).
+  - ~~접근 거부 감사는 S4 로 이연~~ → V136 절에서 해결(WD-30·WD-44).
+  - ~~러너 TEMP 허용 목록은 늘어나기만 한다~~ → V136 절에서 매 실행 재계산(WD-30).
   - 허용 목록의 사용자 항목은 `"user"` 행 삭제 시 함께 지워진다(`ON DELETE CASCADE`). **제품 코드에는 사용자 하드 삭제 경로가 없다**(멤버 제거·정지·전역 비활성은 행을 남긴다) — 그래서 역할 삭제와 달리 "유일 항목" 가드를 두지 않았다. 운영에서 사용자 행을 **수동으로** 지울 때는 먼저 `SELECT g.dataset_id FROM dataset_access_grant g JOIN dataset d ON d.id = g.dataset_id JOIN security_level l ON l.id = d.security_level_id WHERE g.user_id = <id> AND l.allowlist_required AND (SELECT count(*) FROM dataset_access_grant x WHERE x.dataset_id = g.dataset_id) = 1` (소유자 롤) 가 0행인지 확인한다. 같은 이유로, 유일 허용 항목인 사용자를 워크스페이스에서 **제거·정지**하면 그 데이터셋은 관리자 우회(admin_bypass) 외에는 아무도 못 본다 — 관리자가 허용 목록에 다른 항목을 추가해 복구한다(가드는 후속 판단).
   - **검수 결정은 데이터셋을 넘어 재사용된다**: V134 이후 검수 항목은 데이터셋마다 따로 생기지만, ingest 의 결정 조회(데이터셋 없이 이름으로 묻는 ai-agent 계약)는 조회자가 볼 수 있는 행 중 **가장 최근의 사람 결정**(승인·거부)을 따른다 — 데이터셋 Z 에서 내린 승인이 데이터셋 X 의 ingest 에도 적용된다(수용한 트레이드오프).
   - **서로 다른 이름의 등급을 동시에 만들면** 둘 다 같은 다음 순위를 잡아 순위 유일 제약(`uq_security_level_rank`) 위반이 되고, 코드 없는 일반 409 "Data integrity violation" 으로 끝난다(500 아님) — 다시 시도하면 성공한다. 이름 중복만 `SECURITY_LEVEL_NAME_DUPLICATE` 로 번역한다.
@@ -337,7 +337,7 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
   - ai-agent 만 새 버전이면 판정 엔드포인트(`/ontology/{id}/graph-access`)가 404 다. 그러면 **모든 그래프 읽기가 막힌다**(fail-closed) — MCP 두 도구는 제한 문구, 시각화는 구 api 가 ai-agent 의 403 을 몰라 오류로 보인다. 쓰기(적재·검수 반영)는 영향 없다.
   - web 이 구버전이면 제한이 "그래프를 불러오지 못했습니다" 오류(재시도 버튼)로 보인다.
 - 마이그레이션 V135: `graph_ontology_source`(tenant_id, ontology_id, dataset_id, first_written_at) + RLS(`graph_ontology_source_tenant_isolation`, FORCE 없음) + 인덱스 `idx_graph_ontology_source_ontology(ontology_id)`(판정·CASCADE 용) + 백필. 백필은 현재 `dataset_ontology` 전부 ∪ `dataset_mapping` 전부(draft 포함)다. 이후 연결(`dataset_ontology`)·매핑 저장 때마다 출처를 삽입만 한다(재연결·매핑 삭제로 지우지 않음, 온톨로지 삭제 시 CASCADE).
-- **번호 확인**: 2026-10-08 기준 main 최신은 V134. **병합 직전에 실제 main 의 마이그레이션 목록을 다시 확인한다**(V122 충돌 전례). 배포 전 스냅샷 규칙(V122 이상)을 따른다. **다음 신규 마이그레이션 번호 = V136.**
+- **번호 확인**: 2026-10-08 기준 main 최신은 V134. **병합 직전에 실제 main 의 마이그레이션 목록을 다시 확인한다**(V122 충돌 전례). 배포 전 스냅샷 규칙(V122 이상)을 따른다. **다음 신규 마이그레이션 번호 = V137**(2026-10-10 갱신 — V136 = 데이터셋 보안 S4 `analytics_query_run`).
 - 아래 쿼리는 전부 **소유자 롤로 실행**한다(`docker exec <db> psql -U app -d smartfirehub`). `app_tenant` 는 RLS 때문에 0행으로 보여 공허해진다.
 - 배포 전 확인:
   - `select max(version::int) from flyway_schema_history` 가 134 인지.
@@ -418,12 +418,12 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
 - 감사: 공급자 호스팅 선언 변경은 `audit_log.action_type = 'AI_PROVIDER_HOSTING_CHANGE'`(대상 슬롯·이전값·새값·사용자)로 남는다.
 - 롤백: 이미지만 이전 버전으로(api+web+ai-agent 함께). DB 는 그대로 둔다 — 구 코드는 `payload.hosting`·`embedding.config.hosting`·플래그 키를 읽지 않는다. 정리된 벡터는 롤백 후 재임베딩 판정식이 다시 만든다(외부 공급자로 다시 보내짐에 유의).
 
-### V137 데이터셋 보안 S4 — 출구·전파·감사 (WD-42·43·44·30, 계획 2026-10-09 · 배포일은 배포 시점에 갱신)
+### V136 데이터셋 보안 S4 — 출구·전파·감사 (WD-42·43·44·30, 계획 2026-10-09 · 배포일은 배포 시점에 갱신)
 
-- **배포 모듈: api + web + ai-agent + executor 를 한 번에 배포한다**(흐름 A V136·B V137·C V138 일괄, 보충 스펙 §1). 세 흐름의 마이그레이션이 한 배포에서 함께 적용된다(V138 절 참고).
+- **배포 모듈: api + web + ai-agent + executor 를 한 번에 배포한다**(흐름 A 마이그레이션 없음·B V136·C V137 일괄, 보충 스펙 §1). 두 흐름의 마이그레이션이 한 배포에서 함께 적용된다(흐름 C 의 V137 절 참고).
   - api 와 web 은 반드시 함께 — 쿼리 결과 내보내기 엔드포인트가 바뀌었다. 구 web 은 없어진 `POST /api/v1/query-results/export` 를 불러 404 가 난다. 새 엔드포인트는 `POST /api/v1/analytics/queries/runs/{runId}/export`.
   - 흐름 C(executor 슬롯 롤 읽기 제한)와도 반드시 함께 — 아래 PYTHON 출력 등급은 C 의 슬롯 롤이 실제로 읽을 수 있는 범위를 전제로 한다. B 만 먼저 나가면 PYTHON 이 앱 연결로 더 높은 등급을 읽고도 출력은 낮게 매겨질 수 있다(과소 등급).
-- **마이그레이션:** V137 `analytics_query_run`(새 테이블, RLS 형태 (a), FORCE 없음). 기존 데이터 변경 없음. 배포 전 스냅샷 규칙(V122 이상)은 그대로 따른다. **병합 직전에 실제 main 의 마이그레이션 목록을 다시 확인한다**(V122 충돌 전례).
+- **마이그레이션:** V136 `analytics_query_run`(새 테이블, RLS 형태 (a), FORCE 없음). 기존 데이터 변경 없음. 배포 전 스냅샷 규칙(V122 이상)은 그대로 따른다. **병합 직전에 실제 main 의 마이그레이션 목록을 다시 확인한다**(V122 충돌 전례).
 - **동작 변화(사용자 체감):**
   - 내보내기:
     - 내보내기는 `data:export` 권한 **그리고** 등급 `export_policy` 를 모두 만족해야 한다.
@@ -466,11 +466,11 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
   - `SecurityLevelsChangedEvent`(CREATED·UPDATED·DELETED·REORDERED)
   - 흐름 C 의 PYTHON 슬롯 롤 GRANT 동기화가 구독한다.
 - **배포 후 확인(소유자 롤):**
-  - `select max(version::int) from flyway_schema_history` = 세 흐름 중 가장 큰 번호(계획상 138 — 흐름 C 의 V138 이 빠진 배포라면 137).
+  - `select max(version::int) from flyway_schema_history` = 세 흐름 중 가장 큰 번호(흐름 C 의 V137 — C 가 빠진 배포라면 136).
   - `SELECT count(*) FROM analytics_query_run` 이 쿼리 편집기 실행 뒤 늘어나는지 본다.
   - `SELECT action_type, count(*) FROM audit_log WHERE action_type IN ('DATASET_ACCESS_DENIED','DATASET_ACCESS') AND action_time > now() - interval '1 hour' GROUP BY 1` 로 기록을 확인한다.
 - **롤백:**
-  - V137 은 새 테이블만 만든다. 이미지만 이전 버전(api+web 함께, 일괄 배포였으면 ai-agent·executor 도 함께)으로 되돌리면 된다(구 코드는 테이블을 모른다).
+  - V136 은 새 테이블만 만든다. 이미지만 이전 버전(api+web 함께, 일괄 배포였으면 ai-agent·executor 도 함께)으로 되돌리면 된다(구 코드는 테이블을 모른다).
   - 되돌리면 내보내기 정책·전파·접근 감사가 사라진다. 이미 자동 상향된 등급·재계산된 허용 목록은 그대로 남는다(되돌리지 않는다).
 - **알려진 한계:**
   - **UI 수준 차단**이다 — 화면 데이터의 복사·캡처는 막지 못한다(스펙 §7.4).

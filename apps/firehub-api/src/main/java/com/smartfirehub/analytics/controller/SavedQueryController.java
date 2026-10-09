@@ -46,7 +46,7 @@ public class SavedQueryController {
   private final ClearanceResolver clearanceResolver;
   private final DatasetAccessGuard datasetAccessGuard;
 
-  /** 애드혹 실행 기록(V137) — 쿼리 결과 내보내기의 서버 재실행 근거. */
+  /** 애드혹 실행 기록(V136) — 쿼리 결과 내보내기의 서버 재실행 근거. */
   private final AnalyticsQueryRunRepository runRepository;
 
   /** 실행 기록 id 기반 쿼리 결과 내보내기(스펙 §4.4). */

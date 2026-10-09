@@ -15,7 +15,7 @@ import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 애드혹 분석 쿼리 실행 기록(V137 analytics_query_run) — 쿼리 결과 내보내기의 서버 재실행 근거(스펙 §4.4).
+ * 애드혹 분석 쿼리 실행 기록(V136 analytics_query_run) — 쿼리 결과 내보내기의 서버 재실행 근거(스펙 §4.4).
  *
  * <p>RLS 테이블이므로 클래스 레벨 {@code @Transactional} 을 둔다 — 컨트롤러가 트랜잭션 없이 부르므로, 이 경계가 있어야
  * TenantAwareTransactionManager 가 GUC(app.tenant_id)를 심어 tenant_id DEFAULT 와 정책이 동작한다.

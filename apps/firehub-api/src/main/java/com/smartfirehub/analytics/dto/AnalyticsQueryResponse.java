@@ -8,7 +8,7 @@ import java.util.Map;
  *
  * @param exportAllowed 조회자 기준 내보내기 가능(EXPORT 정책 AND data:export). 애드혹·저장 쿼리 실행 응답에만 싣는다 — 대시보드 공유
  *     캐시에 들어가는 결과는 null(조회자별 값은 ChartDataResponse.exportAllowed, 설계 결정 5).
- * @param runId 애드혹 실행 기록 id(쿼리 결과 내보내기용, V137 analytics_query_run). 그 외 null.
+ * @param runId 애드혹 실행 기록 id(쿼리 결과 내보내기용, V136 analytics_query_run). 그 외 null.
  */
 public record AnalyticsQueryResponse(
     String queryType,

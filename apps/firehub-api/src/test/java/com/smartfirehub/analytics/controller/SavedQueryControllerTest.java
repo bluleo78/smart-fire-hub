@@ -59,7 +59,7 @@ class SavedQueryControllerTest {
   @MockitoBean private JwtTokenProvider jwtTokenProvider;
   @MockitoBean private JwtProperties jwtProperties;
   @MockitoBean private PermissionService permissionService;
-  // 쿼리 결과 내보내기(V137): 애드혹 실행이 실행 기록을 남기고, 내보내기는 서비스가 재판정한다(실제 동작은 QueryResultExportTest).
+  // 쿼리 결과 내보내기(V136): 애드혹 실행이 실행 기록을 남기고, 내보내기는 서비스가 재판정한다(실제 동작은 QueryResultExportTest).
   @MockitoBean private AnalyticsQueryRunRepository runRepository;
   @MockitoBean private QueryResultExportService queryResultExportService;
 

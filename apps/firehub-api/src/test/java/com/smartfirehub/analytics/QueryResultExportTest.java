@@ -29,7 +29,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.web.servlet.MockMvc;
 
 /**
- * 스펙 §4.4 — 쿼리 결과 내보내기는 실행 기록 id(V137 analytics_query_run)로 서버가 재판정·재실행한다. 클라이언트 rows 직렬화는 없다.
+ * 스펙 §4.4 — 쿼리 결과 내보내기는 실행 기록 id(V136 analytics_query_run)로 서버가 재판정·재실행한다. 클라이언트 rows 직렬화는 없다.
  *
  * <p>테이블에는 실제 행(VALUE)을 넣는다 — 파일 본문에 그 값이 있어야 "서버가 다시 실행했다"는 단언이 공허하지 않다.
  */
