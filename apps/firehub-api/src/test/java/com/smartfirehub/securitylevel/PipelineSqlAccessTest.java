@@ -2,6 +2,7 @@ package com.smartfirehub.securitylevel;
 
 import static com.smartfirehub.jooq.Tables.DATASET;
 import static com.smartfirehub.jooq.Tables.DATASET_ACCESS_GRANT;
+import static com.smartfirehub.jooq.Tables.PIPELINE_STEP;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -1099,6 +1100,62 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
     assertThat(waitForEnd(executionService.executePipeline(p, runner))).isEqualTo("COMPLETED");
     assertThat(hasUserGrant(temp, late)).isFalse();
     assertThat(hasUserGrant(temp, runner)).isTrue();
+  }
+
+  /**
+   * 리뷰 I1(최종 수정) — 증분 APPEND 러너 TEMP 라도 전체 재생성 예약(stepWasFullRebuild)으로 출력을 통째로 비우고 다시 채운 실행은 이전 실행
+   * 행이 남지 않으므로 쓰기 후 확정이 넓힘까지 맞춘다: 입력에 늦게 추가된 사람이 TEMP 에도 들어간다. 대조군은 위
+   * run_appendTemp_isNotWidenedByLaterInputGrant (예약 없는 APPEND 는 넓히지 않음).
+   */
+  @Test
+  void run_incrementalFullRebuildTemp_isWidenedByLaterInputGrant() throws Exception {
+    String topTable = m + "_wd30fr";
+    long topId = table(topTable, "기밀");
+    insertRow(topTable, "t");
+    long runner = userAt("기밀");
+    fx.grantUser(topId, runner);
+    long p =
+        pipeline(
+            runner,
+            List.of(
+                new PipelineStepRequest(
+                    "s1",
+                    null,
+                    "SQL",
+                    "SELECT v FROM "
+                        + qualified(topTable)
+                        + " WHERE _updated_at >= {{last_run_at}}",
+                    null,
+                    null,
+                    null,
+                    "APPEND")));
+    assertThat(waitForEnd(executionService.executePipeline(p, runner))).isEqualTo("COMPLETED");
+    long temp = tempOf(p, "s1");
+
+    long late = userAt("기밀");
+    fx.grantUser(topId, late);
+    // 전체 재생성 예약 — 다음 실행은 책갈피를 무시하고 출력을 비운 뒤 전체를 다시 채운다(PipelineAsyncRunner 의 DELETE 선행 문장).
+    long stepId =
+        inTenantFixture(
+            () ->
+                dsl.select(PIPELINE_STEP.ID)
+                    .from(PIPELINE_STEP)
+                    .where(PIPELINE_STEP.PIPELINE_ID.eq(p))
+                    .fetchSingle(PIPELINE_STEP.ID));
+    pipelineService.setFullRebuildPending(p, stepId, true);
+    assertThat(waitForEnd(executionService.executePipeline(p, runner))).isEqualTo("COMPLETED");
+    assertThat(hasUserGrant(temp, late)).isTrue();
+    assertThat(hasUserGrant(temp, runner)).isTrue();
+    // 출력이 실제로 통째로 교체됐다(전체 재구축) — 입력 1행이 두 번 쌓이지 않고 1행.
+    assertThat(
+            rowCount(
+                inTenantFixture(
+                    () ->
+                        dsl.select(DATASET.TABLE_NAME)
+                            .from(DATASET)
+                            .where(DATASET.ID.eq(temp))
+                            .fetchSingle(DATASET.TABLE_NAME))))
+        .isEqualTo(1);
   }
 
   /**

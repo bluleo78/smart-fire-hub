@@ -225,11 +225,6 @@ public class DatasetAccessGuard {
     }
   }
 
-  /** 이미 VIEW 를 통과한 데이터셋(목록 행·상세)의 내보내기 가능 여부 — data:export 권한 AND 등급 export_policy. */
-  public boolean exportAllowed(Clearance c, LevelPolicy level) {
-    return level != null && exportAllowed(c, level.exportPolicy());
-  }
-
   /**
    * 현재 요청 사용자(조회자) 기준 내보내기 가능 여부 — 응답 등급 요약의 export_policy 문자열로 판정한다. 등급 요약이 없으면
    * false(fail-closed). 웹이 다운로드 UI 를 숨기는 데 쓴다(UI 수준 — 서버 강제는 require*).
@@ -243,7 +238,7 @@ public class DatasetAccessGuard {
         clearanceResolver.current(), LevelPolicy.ExportPolicy.valueOf(s.exportPolicy()));
   }
 
-  /** 권한 AND 정책 — 위 두 공개 메서드의 공통 본문. */
+  /** 권한 AND 정책 — exportAllowedForCurrent 의 본문(data:export 권한 AND 등급 export_policy). */
   private static boolean exportAllowed(Clearance c, LevelPolicy.ExportPolicy p) {
     return c.permissions().contains(EXPORT_PERMISSION)
         && DatasetAccessPolicy.exportPolicyAllows(p, c.permissions());

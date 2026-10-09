@@ -178,11 +178,9 @@ public class PipelineSecurityGate {
       }
       // 허용 목록(WD-30): 시드 = 허용 목록 필요 입력들의 항목 교집합 ∪ {실행 주체}. 쓰기 전에는 좁히기만 한다(기존 ∩ 시드 ∪ {실행 주체}).
       // 러너 TEMP 는 상향 여부와 무관하게 매 실행 — 재사용 TEMP 를 다른 실행 주체가 쓸 때도 그 실행 주체가 들어가고(위 Javadoc), 쓰기 성공 뒤
-      // completeOutputAllowlist 가 시드로 정확히 맞춘다(넓힘 포함) — 단 출력이 이번 실행으로 전부 교체될 때만(리뷰 I1: APPEND/MERGE
-      // 재사용
-      // TEMP 는 이전 실행 행이 남아, 넓히면 그 행이 이번 입력 목록에만 있는 새 열람자에게 보인다). 지정 출력은 사용자가 관리하는 목록이라 이번에 상향됐을 때만
-      // 좁히고 넓히지
-      // 않는다(계획 결정 13).
+      // completeOutputAllowlist 가 시드로 정확히 맞춘다(넓힘 포함) — 단 출력이 이번 실행으로 전부 교체될 때만.
+      // 리뷰 I1: APPEND/MERGE 재사용 TEMP 는 이전 실행 행이 남아, 넓히면 그 행이 이번 입력 목록에만 있는 새 열람자에게 보인다.
+      // 지정 출력은 사용자가 관리하는 목록이라 이번에 상향됐을 때만 좁히고 넓히지 않는다(계획 결정 13).
       if (effective.allowlistRequired() && (runnerOwnedTemp || raised)) {
         Set<GrantSubject> seed =
             datasetSecurityService.pipelineOutputSeed(access.readDatasetIds(), runAsUserId);
@@ -358,9 +356,9 @@ public class PipelineSecurityGate {
       requireOutputVisible(outputDatasetId, runAs);
       return;
     }
-    // fail-closed 단언(R4): readable 은 정의상 allowlist_required 가 아니다. 이 전제가 깨지면(계산 규칙 변경 등) 아래 계획 반환값을
-    // 버리는
-    // 것이 쓰기 후 확정 누락이 되고, {실행 주체}만의 시드가 허용 목록 등급 출력에 붙는다 — 조용히 진행하지 않고 스텝을 실패시킨다.
+    // fail-closed 단언(R4): readable 은 정의상 allowlist_required 가 아니다.
+    // 이 전제가 깨지면(계산 규칙 변경 등) 아래 계획 반환값을 버리는 것이 쓰기 후 확정 누락이 되고,
+    // {실행 주체}만의 시드가 허용 목록 등급 출력에 붙는다 — 조용히 진행하지 않고 스텝을 실패시킨다.
     if (readable.get().allowlistRequired()) {
       throw new IllegalStateException("PYTHON 읽기 가능 최고 등급이 허용 목록 필요 등급입니다(R4 위반)");
     }
