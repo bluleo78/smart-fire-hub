@@ -88,6 +88,8 @@ export function createChart(overrides?: Partial<Chart>): Chart {
       xAxis: 'name',
       yAxis: ['value'],
     },
+    // 설정 가림(WD-31②) 기본값 — 대부분의 테스트는 설정이 보이는 차트를 쓴다
+    configWithheld: false,
     isShared: false,
     createdByName: '테스트 사용자',
     createdBy: 1,

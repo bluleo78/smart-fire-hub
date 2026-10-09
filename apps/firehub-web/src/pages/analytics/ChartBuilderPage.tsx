@@ -4,6 +4,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { AxisConfigPanel } from '../../components/analytics/AxisConfigPanel';
+import { ChartConfigWithheldNotice } from '../../components/analytics/ChartConfigWithheldNotice';
 import { ChartRenderer } from '../../components/analytics/ChartRenderer';
 import { ChartTypeSelector } from '../../components/analytics/ChartTypeSelector';
 import {
@@ -235,6 +236,8 @@ interface SaveDialogProps {
   onSave: () => void;
   isSaving: boolean;
   isEdit: boolean;
+  /** 설정이 가려진 차트(WD-31②) — 이름·설명·공유만 바뀐다는 것을 보이는 설명으로 알린다. */
+  configWithheld?: boolean;
 }
 
 function SaveDialog({
@@ -249,15 +252,21 @@ function SaveDialog({
   onSave,
   isSaving,
   isEdit,
+  configWithheld = false,
 }: SaveDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>{isEdit ? '차트 수정' : '차트 저장'}</DialogTitle>
-          <DialogDescription className="sr-only">
-            {isEdit ? '차트 설정을 수정하여 저장합니다.' : '차트 이름과 설정을 입력하여 저장합니다.'}
-          </DialogDescription>
+          {configWithheld ? (
+            // 잠금 상태에서는 설정이 저장되지 않는다는 점을 눈에 보이게 알린다(WD-31②)
+            <DialogDescription>이름·설명·공유만 바꿀 수 있습니다.</DialogDescription>
+          ) : (
+            <DialogDescription className="sr-only">
+              {isEdit ? '차트 설정을 수정하여 저장합니다.' : '차트 이름과 설정을 입력하여 저장합니다.'}
+            </DialogDescription>
+          )}
         </DialogHeader>
         <div className="space-y-4 py-2">
           <div className="space-y-1.5">
@@ -477,6 +486,8 @@ export default function ChartBuilderPage() {
 
   // Existing chart (edit mode) — isError: 존재하지 않는 차트 ID(404 등) 접근 시 에러 감지
   const { data: existingChart, isLoading: chartLoading, isError: chartError } = useChart(chartId);
+  // 서버가 설정을 가린 차트(WD-31②) — 설정 패널·차트 타입·쿼리 실행을 잠그고, 저장 시 config·chartType 을 보내지 않는다(기존 값 유지).
+  const configWithheld = existingChart?.configWithheld === true;
 
   const executeQuery = useExecuteSavedQuery();
   const createChart = useCreateChart();
@@ -498,7 +509,8 @@ export default function ChartBuilderPage() {
     if (existingChart) {
       setSelectedQueryId(existingChart.savedQueryId);
       setChartType(existingChart.chartType);
-      setConfig(existingChart.config);
+      // 가려진 차트는 config 가 null 이다 — 기본 config 를 그대로 둬 렌더러가 null 에서 깨지지 않게 한다(WD-31②).
+      if (existingChart.config) setConfig(existingChart.config);
       setSaveForm({
         name: existingChart.name,
         description: existingChart.description ?? '',
@@ -642,55 +654,58 @@ export default function ChartBuilderPage() {
       toast.error('쿼리를 선택하세요.');
       return;
     }
-    if (chartType === 'MAP') {
-      if (!config.spatialColumn) {
-        toast.error('공간 컬럼을 선택하세요.');
+    // 가려진 차트는 설정을 바꿀 수 없고 보내지도 않으므로 축 검증을 건너뛴다(WD-31②).
+    if (!configWithheld) {
+      if (chartType === 'MAP') {
+        if (!config.spatialColumn) {
+          toast.error('공간 컬럼을 선택하세요.');
+          return;
+        }
+        // 선택된 공간 컬럼이 실제 GeoJSON 데이터를 포함하는지 검증
+        // — 저장 시점에 row 데이터를 기반으로 타입을 검사해 비공간 컬럼 저장을 차단한다
+        if (!isGeoJsonColumn(config.spatialColumn, queryRows)) {
+          toast.error('선택한 컬럼에 공간 데이터(GeoJSON)가 없습니다. GEOMETRY 타입 컬럼을 선택하세요.');
+          return;
+        }
+      } else if (chartType === 'CANDLESTICK') {
+        // 캔들스틱은 yAxis 대신 시가/고가/저가/종가 4개 컬럼 매핑이 필수 (#663).
+        // 하나라도 비어 있으면 CandlestickChartView가 0으로 폴백해 flat 캔들이 그려진다.
+        if (!config.xAxis) {
+          toast.error('X축을 설정하세요.');
+          return;
+        }
+        if (!config.open || !config.high || !config.low || !config.close) {
+          toast.error('시가/고가/저가/종가 컬럼을 모두 선택하세요.');
+          return;
+        }
+      } else if (chartType === 'HEATMAP') {
+        // 히트맵은 행(xAxis)/열(yAxis[0])/값(valueColumn) 3개 컬럼이 모두 필요하고
+        // 서로 겹치면 격자가 깨진다 (#664) — 저장 시점에 명시적으로 차단한다.
+        const col = config.yAxis[0];
+        if (!config.xAxis || !col || !config.valueColumn) {
+          toast.error('행, 열, 값(색상 기준) 컬럼을 모두 선택하세요.');
+          return;
+        }
+        if (config.xAxis === col || config.xAxis === config.valueColumn || col === config.valueColumn) {
+          toast.error('행, 열, 값 컬럼은 서로 달라야 합니다.');
+          return;
+        }
+      } else if (['BOXPLOT', 'HISTOGRAM'].includes(chartType)) {
+        // 이 타입들은 yAxis 대신 전용 컬럼 설정 사용 — xAxis만 필수
+        if (!config.xAxis) {
+          toast.error('X축을 설정하세요.');
+          return;
+        }
+      } else if (chartType === 'GAUGE') {
+        // 게이지는 yAxis[0]만 필수
+        if (config.yAxis.length === 0) {
+          toast.error('Y축(값 컬럼)을 설정하세요.');
+          return;
+        }
+      } else if (!config.xAxis || config.yAxis.length === 0) {
+        toast.error('X축과 Y축을 설정하세요.');
         return;
       }
-      // 선택된 공간 컬럼이 실제 GeoJSON 데이터를 포함하는지 검증
-      // — 저장 시점에 row 데이터를 기반으로 타입을 검사해 비공간 컬럼 저장을 차단한다
-      if (!isGeoJsonColumn(config.spatialColumn, queryRows)) {
-        toast.error('선택한 컬럼에 공간 데이터(GeoJSON)가 없습니다. GEOMETRY 타입 컬럼을 선택하세요.');
-        return;
-      }
-    } else if (chartType === 'CANDLESTICK') {
-      // 캔들스틱은 yAxis 대신 시가/고가/저가/종가 4개 컬럼 매핑이 필수 (#663).
-      // 하나라도 비어 있으면 CandlestickChartView가 0으로 폴백해 flat 캔들이 그려진다.
-      if (!config.xAxis) {
-        toast.error('X축을 설정하세요.');
-        return;
-      }
-      if (!config.open || !config.high || !config.low || !config.close) {
-        toast.error('시가/고가/저가/종가 컬럼을 모두 선택하세요.');
-        return;
-      }
-    } else if (chartType === 'HEATMAP') {
-      // 히트맵은 행(xAxis)/열(yAxis[0])/값(valueColumn) 3개 컬럼이 모두 필요하고
-      // 서로 겹치면 격자가 깨진다 (#664) — 저장 시점에 명시적으로 차단한다.
-      const col = config.yAxis[0];
-      if (!config.xAxis || !col || !config.valueColumn) {
-        toast.error('행, 열, 값(색상 기준) 컬럼을 모두 선택하세요.');
-        return;
-      }
-      if (config.xAxis === col || config.xAxis === config.valueColumn || col === config.valueColumn) {
-        toast.error('행, 열, 값 컬럼은 서로 달라야 합니다.');
-        return;
-      }
-    } else if (['BOXPLOT', 'HISTOGRAM'].includes(chartType)) {
-      // 이 타입들은 yAxis 대신 전용 컬럼 설정 사용 — xAxis만 필수
-      if (!config.xAxis) {
-        toast.error('X축을 설정하세요.');
-        return;
-      }
-    } else if (chartType === 'GAUGE') {
-      // 게이지는 yAxis[0]만 필수
-      if (config.yAxis.length === 0) {
-        toast.error('Y축(값 컬럼)을 설정하세요.');
-        return;
-      }
-    } else if (!config.xAxis || config.yAxis.length === 0) {
-      toast.error('X축과 Y축을 설정하세요.');
-      return;
     }
 
     try {
@@ -711,13 +726,16 @@ export default function ChartBuilderPage() {
       } else {
         await updateChart.mutateAsync({
           id: chartId!,
-          data: {
-            name: saveForm.name,
-            description: saveForm.description || undefined,
-            chartType,
-            config,
-            isShared: saveForm.isShared,
-          },
+          // 가려진 차트는 이름·설명·공유만 보낸다 — config·chartType 을 빼야 서버의 기존 설정이 덮어써지지 않는다(WD-31②).
+          data: configWithheld
+            ? { name: saveForm.name, description: saveForm.description || undefined, isShared: saveForm.isShared }
+            : {
+                name: saveForm.name,
+                description: saveForm.description || undefined,
+                chartType,
+                config,
+                isShared: saveForm.isShared,
+              },
         });
         toast.success('차트가 수정되었습니다.');
         setSaveDialogOpen(false);
@@ -786,40 +804,42 @@ export default function ChartBuilderPage() {
 
         {/* 차트 이미지 다운로드 (PNG/SVG) — 보고서·문서 첨부용 (이슈 #74).
             실행 결과가 있는데 정책상 내보내기 불가면 비활성+사유 툴팁(주 버튼, 스펙 §5-4). 실행 전 비활성은 기존 그대로
-            (사유가 정책이 아니므로 툴팁 없음). 트리거 안쪽을 감싸면 드롭다운 동작이 꼬이므로 분기로 나눈다. */}
-        {queryColumns.length > 0 && !exportAllowed ? (
-          <ExportBlockedTooltip blocked label="차트 다운로드">
-            <Button variant="outline" size="sm" className="gap-1.5" aria-label="차트 다운로드">
-              <Download className="h-4 w-4" />
-              다운로드
-            </Button>
-          </ExportBlockedTooltip>
-        ) : (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="outline"
-                size="sm"
-                className="gap-1.5"
-                disabled={queryColumns.length === 0}
-                aria-label="차트 다운로드"
-              >
+            (사유가 정책이 아니므로 툴팁 없음). 트리거 안쪽을 감싸면 드롭다운 동작이 꼬이므로 분기로 나눈다.
+            설정이 가려진 차트는 미리보기를 그릴 수 없으니 버튼을 아예 두지 않는다(WD-31②) — 내보내기 차단 툴팁보다 우선. */}
+        {!configWithheld &&
+          (queryColumns.length > 0 && !exportAllowed ? (
+            <ExportBlockedTooltip blocked label="차트 다운로드">
+              <Button variant="outline" size="sm" className="gap-1.5" aria-label="차트 다운로드">
                 <Download className="h-4 w-4" />
                 다운로드
               </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem onSelect={() => void handleDownloadChart('png')}>
-                <FileImage className="h-4 w-4" />
-                PNG 이미지로 저장
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => void handleDownloadChart('svg')}>
-                <FileType className="h-4 w-4" />
-                SVG 벡터로 저장
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        )}
+            </ExportBlockedTooltip>
+          ) : (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5"
+                  disabled={queryColumns.length === 0}
+                  aria-label="차트 다운로드"
+                >
+                  <Download className="h-4 w-4" />
+                  다운로드
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onSelect={() => void handleDownloadChart('png')}>
+                  <FileImage className="h-4 w-4" />
+                  PNG 이미지로 저장
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => void handleDownloadChart('svg')}>
+                  <FileType className="h-4 w-4" />
+                  SVG 벡터로 저장
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ))}
 
         {/* 대시보드 추가 (#97) — 차트가 저장된 상태에서만 활성화.
             저장 안 된 차트는 chartId가 없어 위젯으로 추가 불가. */}
@@ -870,8 +890,9 @@ export default function ChartBuilderPage() {
                 <Select
                   value={selectedQueryId ? String(selectedQueryId) : NO_QUERY}
                   onValueChange={handleQueryChange}
-                  // 목록을 모르는 상태(로딩·실패)에서 다른 쿼리로 덮어쓰지 못하도록 선택을 막는다 (#738)
-                  disabled={queriesLoading || queriesError}
+                  // 목록을 모르는 상태(로딩·실패)에서 다른 쿼리로 덮어쓰지 못하도록 선택을 막는다 (#738).
+                  // 설정이 가려진 차트도 막는다 — 쿼리를 바꾸면 보이지 않는 기존 설정과 어긋난다(WD-31②).
+                  disabled={queriesLoading || queriesError || configWithheld}
                 >
                   <SelectTrigger
                     id={`${baseId}-saved-query`}
@@ -907,7 +928,7 @@ export default function ChartBuilderPage() {
                 size="sm"
                 className="w-full gap-1.5"
                 onClick={handleRunQuery}
-                disabled={!selectedQueryId || isRunning}
+                disabled={!selectedQueryId || isRunning || configWithheld}
               >
                 {isRunning ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
@@ -924,36 +945,48 @@ export default function ChartBuilderPage() {
             </CardContent>
           </Card>
 
-          {/* Chart type */}
-          <Card className="py-3 gap-2">
-            <CardHeader className="px-4 pb-0">
-              <CardTitle className="text-sm">차트 타입</CardTitle>
-            </CardHeader>
-            <CardContent className="px-4">
-              <ChartTypeSelector value={chartType} onChange={handleChartTypeChange} />
-            </CardContent>
-          </Card>
+          {/* 설정이 가려진 차트(WD-31②)는 차트 타입·축 설정 대신 잠금 안내 한 장을 둔다.
+              타입만 바꿔 저장해도 보이지 않는 기존 config 와 어긋나므로 타입 선택기도 함께 잠근다. */}
+          {configWithheld ? (
+            <Card className="py-3 gap-2">
+              <CardContent className="px-4 py-6">
+                <ChartConfigWithheldNotice />
+              </CardContent>
+            </Card>
+          ) : (
+            <>
+            {/* Chart type */}
+            <Card className="py-3 gap-2">
+              <CardHeader className="px-4 pb-0">
+                <CardTitle className="text-sm">차트 타입</CardTitle>
+              </CardHeader>
+              <CardContent className="px-4">
+                <ChartTypeSelector value={chartType} onChange={handleChartTypeChange} />
+              </CardContent>
+            </Card>
 
-          {/* Axis config */}
-          <Card className="py-3 gap-2">
-            <CardHeader className="px-4 pb-0">
-              <CardTitle className="text-sm">축 설정</CardTitle>
-            </CardHeader>
-            <CardContent className="px-4">
-              {queryColumns.length === 0 ? (
-                <p className="text-xs text-muted-foreground">
-                  먼저 쿼리를 실행하여 컬럼을 불러오세요.
-                </p>
-              ) : (
-                <AxisConfigPanel
-                  chartType={chartType}
-                  columns={queryColumns}
-                  config={config}
-                  onChange={handleConfigChange}
-                />
-              )}
-            </CardContent>
-          </Card>
+            {/* Axis config */}
+            <Card className="py-3 gap-2">
+              <CardHeader className="px-4 pb-0">
+                <CardTitle className="text-sm">축 설정</CardTitle>
+              </CardHeader>
+              <CardContent className="px-4">
+                {queryColumns.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">
+                    먼저 쿼리를 실행하여 컬럼을 불러오세요.
+                  </p>
+                ) : (
+                  <AxisConfigPanel
+                    chartType={chartType}
+                    columns={queryColumns}
+                    config={config}
+                    onChange={handleConfigChange}
+                  />
+                )}
+              </CardContent>
+            </Card>
+            </>
+          )}
         </div>
 
         {/* Right: Preview — sticky so it stays visible while scrolling config */}
@@ -970,7 +1003,10 @@ export default function ChartBuilderPage() {
           </CardHeader>
           <Separator />
           <CardContent className="px-0 pt-0">
-            {queryColumns.length === 0 ? (
+            {configWithheld ? (
+              // 설정이 가려진 차트는 미리보기를 그리지 않고 같은 높이에 잠금 안내를 둔다(WD-31②)
+              <ChartConfigWithheldNotice className="h-[400px] px-4" />
+            ) : queryColumns.length === 0 ? (
               <div
                 className="flex flex-col items-center justify-center text-muted-foreground gap-2 px-4"
                 style={{ height: 400 }}
@@ -1016,6 +1052,7 @@ export default function ChartBuilderPage() {
         onSave={handleSave}
         isSaving={isSaving}
         isEdit={!isNew}
+        configWithheld={configWithheld}
       />
 
       {/*
