@@ -92,7 +92,9 @@ public class TenantSettingsRepository {
   public void upsert(String key, String value, Long userId) {
     Objects.requireNonNull(value, "tenant_settings.value 는 NOT NULL 이다 — 삭제는 delete(key) 를 쓸 것");
     long tenantId = TenantContext.require("tenant_settings 오버라이드 저장");
-    LocalDateTime now = LocalDateTime.now();
+    // 저장 시각은 DB 시계로 남긴다 — 이 값을 DB now() 로 기록된 다른 테이블 시각과 비교하는 소비자가 있다
+    // (EmbeddingReembedStateRepository.isFailedSinceLastConfigSave). 앱 시계를 쓰면 앱·DB 시계 차이만큼 판정이 뒤집힌다(WD-48).
+    Field<LocalDateTime> now = currentLocalDateTime();
     dsl.insertInto(TENANT_SETTINGS)
         .set(TENANT_ID, tenantId)
         .set(KEY, key)
