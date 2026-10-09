@@ -118,19 +118,36 @@ public class SearchIndexStateRepository {
         "UPDATE dataset_search_index SET sync_lease_until = NULL WHERE dataset_id = ?", datasetId);
   }
 
-  /** 전체 패스 시작 준비: 설정·모델·차원·원본 OID 를 기록하고 책갈피·진행 위치를 비운다. */
-  public void resetForFullPass(
-      long datasetId, String configHash, String model, int dim, long sourceOid) {
-    dsl.execute(
-        "UPDATE dataset_search_index SET config_hash = ?, embedding_model = ?, embedding_dim = ?,"
-            + " source_table_oid = ?,"
-            + RESET_PASS
-            + " status = 'SYNCING', updated_at = now() WHERE dataset_id = ?",
-        configHash,
-        model,
-        dim,
-        sourceOid,
-        datasetId);
+  /**
+   * 전체 패스 시작 준비: 설정·모델·차원·원본 OID 를 기록하고 책갈피·진행 위치를 비운다.
+   *
+   * <p><b>비교 후 갱신</b>: 상태 행의 embedding_model 이 아직 {@code expectedModel}(동기화가 임대를 잡고 읽은 값)일 때만 쓴다. 정책 정리
+   * (AiVectorPurgeService)는 임대 없이 {@link #markKeywordOnly} 로 모델을 키워드 전용 표식으로 바꾸는데, 진행 중인 동기화가 그 뒤에 무조건
+   * 덮어쓰면 표식이 실제 모델로 되돌아가 정리가 무력화된다. 키워드 전용→실제 모델(허용으로 바뀜) 전이도 이 메서드를 거치므로 "키워드 전용이면 거부" 가
+   * 아니라 "읽은 뒤 바뀌었으면 거부" 로 둔다.
+   *
+   * @return 갱신했으면 true, 그 사이 모델이 바뀌어(정리 개입) 쓰지 않았으면 false
+   */
+  public boolean resetForFullPass(
+      long datasetId,
+      String configHash,
+      String model,
+      int dim,
+      long sourceOid,
+      String expectedModel) {
+    return dsl.execute(
+            "UPDATE dataset_search_index SET config_hash = ?, embedding_model = ?, embedding_dim = ?,"
+                + " source_table_oid = ?,"
+                + RESET_PASS
+                + " status = 'SYNCING', updated_at = now()"
+                + " WHERE dataset_id = ? AND embedding_model IS NOT DISTINCT FROM ?",
+            configHash,
+            model,
+            dim,
+            sourceOid,
+            datasetId,
+            expectedModel)
+        == 1;
   }
 
   /**

@@ -90,10 +90,34 @@ class SearchIndexStateRepositoryTest extends IntegrationTestBase {
     assertThat(states.tryAcquireLease(datasetId, Duration.ofMinutes(10))).isTrue();
   }
 
+  /**
+   * 코드리뷰 A-3: 전체 패스 시작은 비교 후 갱신이다 — 동기화가 읽은 뒤 정책 정리가 모델을 키워드 전용으로 바꿨으면 덮어쓰지 않는다(정리 무력화 방지). 읽은
+   * 값 그대로면 쓴다(키워드 전용→실제 모델 재허용 전이도 이 경로).
+   */
+  @Test
+  void resetForFullPass_isCompareAndSet_onEmbeddingModel() {
+    states.createIfAbsent(datasetId);
+    String initial = states.find(datasetId).orElseThrow().embeddingModel();
+    assertThat(states.resetForFullPass(datasetId, "hash", "real", 1024, 42L, initial)).isTrue();
+    // 동기화가 "real" 을 읽은 뒤 정리가 끼어든다.
+    states.markKeywordOnly(datasetId, RowSearchSyncService.KEYWORD_ONLY_MODEL);
+    assertThat(states.resetForFullPass(datasetId, "hash", "real", 1024, 42L, "real")).isFalse();
+    var kept = states.find(datasetId).orElseThrow();
+    assertThat(kept.embeddingModel()).isEqualTo(RowSearchSyncService.KEYWORD_ONLY_MODEL);
+    assertThat(kept.configHash()).isEmpty();
+    // 재허용 전이: 읽은 값(키워드 전용)이 그대로면 실제 모델로 쓴다.
+    assertThat(
+            states.resetForFullPass(
+                datasetId, "hash", "real", 1024, 42L, RowSearchSyncService.KEYWORD_ONLY_MODEL))
+        .isTrue();
+    assertThat(states.find(datasetId).orElseThrow().embeddingModel()).isEqualTo("real");
+  }
+
   @Test
   void pass_progress_complete_and_failure_backoff() {
     states.createIfAbsent(datasetId);
-    states.resetForFullPass(datasetId, "hash", "fake", 1024, 42L);
+    states.resetForFullPass(
+        datasetId, "hash", "fake", 1024, 42L, states.find(datasetId).orElseThrow().embeddingModel());
     OffsetDateTime candidate = OffsetDateTime.now().minusSeconds(5);
     states.startPassIfNeeded(datasetId, candidate, 10L);
     states.startPassIfNeeded(datasetId, OffsetDateTime.now(), 99L); // 이미 시작된 패스는 후보·분모를 덮지 않는다

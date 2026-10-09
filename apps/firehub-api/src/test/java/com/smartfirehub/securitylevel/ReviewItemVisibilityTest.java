@@ -7,15 +7,20 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.smartfirehub.global.security.InternalCallHeaders;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.graphreview.repository.ReviewItemRepository;
+import com.smartfirehub.securitylevel.ai.PolicyBlockedException;
+import com.smartfirehub.settings.model.AiCredentialSlot;
+import com.smartfirehub.settings.repository.TenantSettingsRepository;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.SecurityFixture;
 import com.smartfirehub.support.TenantRlsTestSupport;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -41,6 +46,7 @@ class ReviewItemVisibilityTest extends IntegrationTestBase {
   @Autowired private JwtTokenProvider jwt;
   @Autowired private ObjectMapper om;
   @Autowired private ReviewItemRepository reviewRepo;
+  @Autowired private TenantSettingsRepository tenantSettings;
 
   private SecurityFixture fx;
   private final List<Long> users = new ArrayList<>();
@@ -628,6 +634,110 @@ class ReviewItemVisibilityTest extends IntegrationTestBase {
           other,
           () -> dsl.execute("delete from dataset where tenant_id = ?", other));
       TenantRlsTestSupport.deleteTenants(dsl, other);
+    }
+  }
+
+  // ── 코드리뷰 A-1: AI 대행 요청의 근거·승인은 AI 정책도 본다 ─────────────────────────────────
+
+  /** application-test.yml 의 agent.internal-token. */
+  private static final String INTERNAL_TOKEN = "test-internal-token";
+
+  /** ai-agent 의 MCP 대행 호출 재현(내부 토큰 + 대행 사용자·테넌트) — 목적 헤더 없음 = 채팅(AI 경로). */
+  private MockHttpServletResponse aiCall(String method, String path, long onBehalfOf)
+      throws Exception {
+    var req = "GET".equals(method) ? get(path) : post(path);
+    req.header("Authorization", "Internal " + INTERNAL_TOKEN)
+        .header(InternalCallHeaders.ON_BEHALF_OF, String.valueOf(onBehalfOf))
+        .header(InternalCallHeaders.ON_BEHALF_OF_TENANT, String.valueOf(DEFAULT_TEST_TENANT_ID));
+    return mockMvc.perform(req).andReturn().getResponse();
+  }
+
+  /** 근거 청크(원문 '기밀 원문')를 가진 항목을 만든다. */
+  private long insertItemWithChunk(long datasetId, String key, long chunkId) {
+    return TenantRlsTestSupport.runInTenantTransaction(
+        fixtureTransactionTemplate,
+        DEFAULT_TEST_TENANT_ID,
+        () -> {
+          reviewRepo.upsertPending(
+              itemType,
+              marker + "|" + key,
+              datasetId,
+              "similarity",
+              0.5,
+              "근거",
+              "{\"entityType\":\"T\",\"nameA\":\"기밀이름\",\"nameB\":\"b\",\"sourceChunkIds\":["
+                  + chunkId
+                  + "]}");
+          return ((Number)
+                  dsl.fetchValue(
+                      "select id from graph_review_item where item_type = ? and dedupe_key = ?",
+                      itemType,
+                      marker + "|" + key))
+              .longValue();
+        });
+  }
+
+  /**
+   * 민감(ai_policy=SELF_HOSTED_ONLY) 데이터셋 항목의 근거를 채팅 자격증명이 외부(미선언)인 상태에서 AI 대행으로 요청하면 403
+   * POLICY_BLOCKED 이고 원문이 실리지 않는다. 같은 사용자의 웹 요청은 원문이 열리고(대조군), 볼 수 없는 사용자의 AI 요청은 등급 이름 없이 없는 항목과
+   * 같은 404 다(VIEW 가 AI 판정보다 먼저). 승인도 같은 판정을 거쳐 막히고 항목은 pending 으로 남는다.
+   */
+  @Test
+  void aiRequest_evidenceAndApprove_ofAiDisallowedDataset_arePolicyBlocked_webStillOpens()
+      throws Exception {
+    TenantContext.set(DEFAULT_TEST_TENANT_ID);
+    Optional<String> savedChat = tenantSettings.findValue(AiCredentialSlot.CHAT.key());
+    tenantSettings.delete(AiCredentialSlot.CHAT.key());
+    try {
+      long chunk = insertChunk(hiddenDs);
+      long item = insertItemWithChunk(hiddenDs, "ai", chunk);
+      String evidence = "/api/v1/graphrag/review-items/" + item + "/evidence";
+
+      var blocked = aiCall("GET", evidence, high);
+      assertThat(blocked.getStatus()).isEqualTo(403);
+      JsonNode body = om.readTree(blocked.getContentAsString());
+      assertThat(body.path("code").asText()).isEqualTo(PolicyBlockedException.CODE);
+      assertThat(body.path("errors").path("action").asText()).isEqualTo("AI");
+      assertThat(body.path("errors").path("levelName").asText()).isEqualTo("민감");
+      assertThat(blocked.getContentAsString()).doesNotContain("기밀 원문");
+
+      // 대조군: 같은 사용자의 웹 요청은 원문을 받는다(판정이 모든 것을 막는 공허한 통과 방지).
+      var web = call("GET", evidence, high);
+      assertThat(web.getStatus()).isEqualTo(200);
+      assertThat(web.getContentAsString()).contains("기밀 원문");
+
+      // 숨김(볼 수 없음)은 AI 요청에서도 없는 항목과 같은 404 — 등급 이름이 실리지 않는다.
+      long missing = Long.MAX_VALUE - 7;
+      var hidden = aiCall("GET", evidence, low);
+      var none = aiCall("GET", "/api/v1/graphrag/review-items/" + missing + "/evidence", low);
+      assertThat(hidden.getStatus()).isEqualTo(404);
+      assertThat(normalized(hidden, item)).isEqualTo(normalized(none, missing));
+      assertThat(hidden.getContentAsString()).doesNotContain("민감");
+
+      // 승인도 같은 판정 — 그래프 변경 전에 막혀 pending 으로 남는다.
+      var approve = aiCall("POST", "/api/v1/graphrag/review-items/" + item + "/approve", high);
+      assertThat(approve.getStatus()).isEqualTo(403);
+      assertThat(om.readTree(approve.getContentAsString()).path("code").asText())
+          .isEqualTo(PolicyBlockedException.CODE);
+      String status =
+          TenantRlsTestSupport.runInTenantTransaction(
+              fixtureTransactionTemplate,
+              DEFAULT_TEST_TENANT_ID,
+              () ->
+                  dsl.fetchValue("select status from graph_review_item where id = ?", item)
+                      .toString());
+      assertThat(status).isEqualTo("pending");
+
+      // 양성 대조: AI 허용 등급(공개) 항목은 AI 요청에서도 근거가 열린다.
+      long visibleChunk = insertChunk(visibleDs);
+      long open = insertItemWithChunk(visibleDs, "ai_open", visibleChunk);
+      var allowed =
+          aiCall("GET", "/api/v1/graphrag/review-items/" + open + "/evidence", high);
+      assertThat(allowed.getStatus()).isEqualTo(200);
+      assertThat(allowed.getContentAsString()).contains("기밀 원문");
+    } finally {
+      TenantContext.set(DEFAULT_TEST_TENANT_ID);
+      savedChat.ifPresent(v -> tenantSettings.upsert(AiCredentialSlot.CHAT.key(), v, null));
     }
   }
 }

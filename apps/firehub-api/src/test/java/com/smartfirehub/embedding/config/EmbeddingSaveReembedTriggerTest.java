@@ -146,7 +146,13 @@ class EmbeddingSaveReembedTriggerTest extends IntegrationTestBase {
     datasets.upsertEmbedding(
         new EmbeddingSpace(EmbeddingDimension.D1024, "bge-m3"), doc.datasetId(), axis(1024, 0));
     searchIndexStates.createIfAbsent(doc.datasetId());
-    searchIndexStates.resetForFullPass(doc.datasetId(), "h", "bge-m3", 1024, 0L);
+    searchIndexStates.resetForFullPass(
+        doc.datasetId(),
+        "h",
+        "bge-m3",
+        1024,
+        0L,
+        searchIndexStates.find(doc.datasetId()).orElseThrow().embeddingModel());
 
     var sameSpace = settingsService.impact("bge-m3", 1024);
     assertThat(sameSpace.chunks()).isZero();

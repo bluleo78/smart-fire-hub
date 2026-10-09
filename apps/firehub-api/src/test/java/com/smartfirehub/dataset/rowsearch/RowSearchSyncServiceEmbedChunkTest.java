@@ -112,7 +112,14 @@ class RowSearchSyncServiceEmbedChunkTest {
             .toList();
     // 배치 분할 테스트가 키셋을 지키는 스텁으로 덮어쓰므로 lenient.
     lenient().when(reader.fetchChanged(eq("src"), any(), any(), eq(0L), anyInt())).thenReturn(rows);
-    when(index.existingHashes(any(), any())).thenReturn(Map.of());
+    // 첫 배치 전에 멈추는 시나리오(코드리뷰 A-3)는 배치를 읽지 않으므로 lenient.
+    lenient().when(index.existingHashes(any(), any())).thenReturn(Map.of());
+    // 비교 후 갱신(코드리뷰 A-3)은 기본적으로 성공 — 정리 개입 시나리오만 false 로 덮는다.
+    lenient()
+        .when(
+            states.resetForFullPass(
+                anyLong(), anyString(), anyString(), anyInt(), anyLong(), any()))
+        .thenReturn(true);
     lenient()
         .doAnswer(
             inv -> {
@@ -197,7 +204,8 @@ class RowSearchSyncServiceEmbedChunkTest {
             anyString(),
             eq(RowSearchSyncService.KEYWORD_ONLY_MODEL),
             eq(RowSearchSyncService.KEYWORD_ONLY_DIM),
-            anyLong());
+            anyLong(),
+            eq("m"));
     assertThat(upserted)
         .hasSize(ROWS)
         .allSatisfy(
@@ -218,7 +226,14 @@ class RowSearchSyncServiceEmbedChunkTest {
     assertThat(service().sync(ID)).isEqualTo(RowSearchSyncService.Outcome.COMPLETED);
 
     verify(index).recreate(any(), eq(1024));
-    verify(states).resetForFullPass(eq(ID), anyString(), eq("m"), eq(1024), anyLong());
+    verify(states)
+        .resetForFullPass(
+            eq(ID),
+            anyString(),
+            eq("m"),
+            eq(1024),
+            anyLong(),
+            eq(RowSearchSyncService.KEYWORD_ONLY_MODEL));
     assertThat(callSizes.stream().mapToInt(Integer::intValue).sum()).isEqualTo(ROWS);
     assertThat(upserted)
         .hasSize(ROWS)
@@ -248,13 +263,53 @@ class RowSearchSyncServiceEmbedChunkTest {
               int limit = inv.getArgument(4);
               return all.stream().filter(r -> r.id() > after).limit(limit).toList();
             });
-    when(aiGate.datasetAllowed(ID)).thenReturn(true, false);
+    // 주기 시작 판정 + 첫 배치 직전 재확인은 허용, 두 번째 배치 직전 재확인에서 불허.
+    when(aiGate.datasetAllowed(ID)).thenReturn(true, true, false);
     when(embeddingFactory.current()).thenReturn(recordingProvider());
 
     assertThat(service(32).sync(ID)).isEqualTo(RowSearchSyncService.Outcome.PARTIAL);
 
     assertThat(callSizes.stream().mapToInt(Integer::intValue).sum()).isEqualTo(32);
     assertThat(upserted).hasSize(32);
+    verify(states, never()).markCompleted(anyLong(), anyLong(), anyLong());
+  }
+
+  @Test
+  void becomesDisallowedBeforeFirstBatch_sendsNothingToProvider() {
+    // 코드리뷰 A-3: 주기 시작 판정과 첫 배치 사이(재색인·패스 시작 캡처)에 등급 상향·호스팅 외부 전환이 일어나면 첫 배치도 외부로 보내지 않는다.
+    prepare("m", 1024);
+    when(aiGate.datasetAllowed(ID)).thenReturn(true, false);
+    when(embeddingFactory.current()).thenReturn(recordingProvider());
+
+    assertThat(service(32).sync(ID)).isEqualTo(RowSearchSyncService.Outcome.PARTIAL);
+
+    assertThat(callSizes).isEmpty();
+    assertThat(upserted).isEmpty();
+    verify(reader, never()).fetchChanged(any(), any(), any(), anyLong(), anyInt());
+    verify(states, never()).markCompleted(anyLong(), anyLong(), anyLong());
+  }
+
+  @Test
+  void purgeIntervenesBeforeFullPassReset_doesNotOverwriteKeywordOnly_norEmbed() {
+    // 코드리뷰 A-3: 키워드 전용→허용 재색인을 시작하려는데 그 사이 정리(임대 없음)가 모델을 다시 키워드 전용으로 바꿨다 — 비교 후 갱신이 실패하면
+    // 덮어쓰지 않고(정리 표식 보존) 임베딩 없이 멈춘다. 결정적 재현: 저장소가 "읽은 뒤 바뀌었음"(false)을 돌려준다.
+    prepare(RowSearchSyncService.KEYWORD_ONLY_MODEL, RowSearchSyncService.KEYWORD_ONLY_DIM);
+    when(aiGate.datasetAllowed(ID)).thenReturn(true);
+    when(embeddingFactory.current()).thenReturn(recordingProvider());
+    when(states.resetForFullPass(
+            eq(ID),
+            anyString(),
+            eq("m"),
+            eq(1024),
+            anyLong(),
+            eq(RowSearchSyncService.KEYWORD_ONLY_MODEL)))
+        .thenReturn(false);
+
+    assertThat(service().sync(ID)).isEqualTo(RowSearchSyncService.Outcome.PARTIAL);
+
+    assertThat(callSizes).isEmpty();
+    assertThat(upserted).isEmpty();
+    verify(states, never()).startPassIfNeeded(anyLong(), any(), anyLong());
     verify(states, never()).markCompleted(anyLong(), anyLong(), anyLong());
   }
 }

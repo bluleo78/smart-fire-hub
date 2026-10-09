@@ -172,7 +172,12 @@ public class RowSearchSyncService {
             || !Objects.equals(state.embeddingDim(), dim);
     if (configChanged) {
       index.recreate(ref, dim); // 텍스트나 모델이 달라 재사용 불가
-      states.resetForFullPass(datasetId, config.configHash(), model, dim, oid);
+      // 임대 밖의 정책 정리가 그 사이 모델을 키워드 전용으로 바꿨으면 덮어쓰지 않고 멈춘다(비교 후 갱신 — 저장소 Javadoc). 방금 만든 색인은
+      // 비어 있고, 정리가 비운 config_hash 때문에 다음 주기가 키워드 전용으로 다시 만든다.
+      if (!states.resetForFullPass(
+          datasetId, config.configHash(), model, dim, oid, state.embeddingModel())) {
+        return Outcome.PARTIAL;
+      }
       state = states.find(datasetId).orElseThrow();
     } else if (state.sourceTableOid() == null || state.sourceTableOid() != oid) {
       index.rebuildReusing(ref, dim); // swap: id 가 다시 매겨졌다 — 이전 색인은 내용 주소 재사용용으로만
@@ -196,8 +201,9 @@ public class RowSearchSyncService {
     while (processed < maxRowsPerCycle) {
       // S3 §4.3: 한 주기(최대 maxRowsPerCycle 행·임대 10분) 도중 등급 상향·호스팅 외부 전환이 일어날 수 있다. 외부 공급자로 보내기
       // 전에 배치마다 다시 확인하고, 불허로 바뀌었으면 이 주기를 멈춘다(PARTIAL — 진행분은 저장됐고, 다음 주기의 모델 비교가 키워드
-      // 전용으로 전체 재색인하며 이미 만든 벡터도 테이블과 함께 사라진다). 첫 배치는 위에서 막 판정했으므로 다시 묻지 않는다.
-      if (provider != null && processed > 0 && !aiGate.datasetAllowed(datasetId)) {
+      // 전용으로 전체 재색인하며 이미 만든 벡터도 테이블과 함께 사라진다). 첫 배치도 다시 묻는다 — 위 판정과 첫 배치 사이에 재색인
+      // (recreate)·패스 시작 캡처가 끼어 있어, 그 사이의 등급 상향·정리를 놓치고 첫 배치를 외부로 보낼 수 있다.
+      if (provider != null && !aiGate.datasetAllowed(datasetId)) {
         return Outcome.PARTIAL;
       }
       List<SearchSourceReader.SourceRow> rows =

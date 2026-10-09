@@ -361,6 +361,100 @@ class AiVectorPurgeTest extends IntegrationTestBase {
     assertThat(hasVector(pubId)).isTrue();
   }
 
+  /** 벡터를 가진 데이터셋을 하나 더 만든다(내부 등급으로 만들고 벡터를 넣은 뒤 테스트가 등급을 바꾼다). */
+  private long datasetWithVector(String suffix, int axisIndex) {
+    long id =
+        fx.createDatasetRow("avp" + System.nanoTime() + suffix, fx.levelId("내부"), users.get(0));
+    TenantRlsTestSupport.runInTenantTransaction(
+        fixtureTransactionTemplate,
+        DEFAULT_TEST_TENANT_ID,
+        () ->
+            dsl.execute(
+                "insert into dataset_embedding (dataset_id, source_text) values (?, 'o')", id));
+    TenantContext.set(DEFAULT_TEST_TENANT_ID);
+    int dim = SPACE.dimension().size();
+    embeddingRepository.upsertEmbeddings(SPACE, List.of(id), List.of(axis(dim, axisIndex)));
+    return id;
+  }
+
+  /**
+   * 코드리뷰 A-4: 데이터셋 1건 등급 변경 이벤트는 그 데이터셋만 정리한다 — 다른 불허 데이터셋의 벡터는 건드리지 않는다(테넌트 전체 정리는 등급 정의·호스팅
+   * 이벤트와 배포 1회 잡의 몫). 다른 불허 데이터셋은 같은 메타 벡터 테이블에 둔다 — 테넌트 전체 정리라면 한 DELETE 문에서 둘 다 사라지므로 "하나만
+   * 사라짐"이 범위를 결정적으로 가른다.
+   */
+  @Test
+  void levelChangedEvent_purgesOnlyThatDataset_notOtherDisallowedOnes() throws Exception {
+    long otherId = datasetWithVector("_other", 3);
+    try {
+      setLevel(sensId, "민감");
+      setLevel(otherId, "민감");
+      TenantContext.clear();
+      publisher.publishEvent(
+          new DatasetSecurityLevelChangedEvent(
+              DEFAULT_TEST_TENANT_ID,
+              sensId,
+              fx.levelId("내부"),
+              fx.levelId("민감"),
+              DatasetSecurityLevelChangedEvent.Cause.MANUAL));
+      awaitTrue(() -> !hasVector(sensId));
+      assertThat(hasVector(otherId)).isTrue();
+      assertThat(hasVector(pubId)).isTrue();
+    } finally {
+      fx.deleteDatasetRow(otherId);
+    }
+  }
+
+  /** 데이터셋 범위 정리: 불허면 그것만 지우고 행 검색 표식·그래프 잔존 표시도 그 범위, 허용·없는 id 는 무동작, 두 번째는 멱등. */
+  @Test
+  void purgeDataset_scopesToOneDataset_andIsIdempotent_andIgnoresAllowedOrMissing() {
+    long otherId = datasetWithVector("_other2", 4);
+    try {
+      TenantRlsTestSupport.runInTenantTransaction(
+          fixtureTransactionTemplate,
+          DEFAULT_TEST_TENANT_ID,
+          () -> {
+            for (long id : List.of(sensId, otherId)) {
+              dsl.execute(
+                  "insert into dataset_search_index (dataset_id, embedding_model, embedding_dim,"
+                      + " config_hash) values (?, 'bge-m3', 1024, 'h')",
+                  id);
+            }
+          });
+      setLevel(sensId, "민감");
+      setLevel(otherId, "민감");
+      recordGraphIngest(sensId);
+      recordGraphIngest(otherId);
+      TenantContext.set(DEFAULT_TEST_TENANT_ID);
+
+      // 허용(공개) 데이터셋·없는 id 는 아무것도 하지 않는다.
+      var allowed = purgeService.purgeDataset(pubId);
+      assertThat(allowed.datasets()).isZero();
+      assertThat(hasVector(pubId)).isTrue();
+      assertThat(purgeService.purgeDataset(Long.MAX_VALUE - 3).datasets()).isZero();
+      assertThat(hasVector(sensId)).isTrue();
+
+      var first = purgeService.purgeDataset(sensId);
+      assertThat(first.datasets()).isEqualTo(1);
+      assertThat(first.datasetVectors()).isGreaterThanOrEqualTo(1);
+      assertThat(first.rowIndexes()).isEqualTo(1);
+      assertThat(first.graphResidueDatasetIds()).containsExactly(sensId);
+      assertThat(hasVector(sensId)).isFalse();
+      assertThat(searchStates.find(sensId).orElseThrow().embeddingModel())
+          .isEqualTo(RowSearchSyncService.KEYWORD_ONLY_MODEL);
+      // 범위 밖 불허 데이터셋은 그대로다.
+      assertThat(hasVector(otherId)).isTrue();
+      assertThat(searchStates.find(otherId).orElseThrow().embeddingModel()).isEqualTo("bge-m3");
+
+      var second = purgeService.purgeDataset(sensId);
+      assertThat(second.datasetVectors()).isZero();
+      assertThat(second.rowIndexes()).isZero();
+      assertThat(second.failures()).isZero();
+    } finally {
+      deleteGraphHistory(List.of(sensId, otherId), List.of());
+      fx.deleteDatasetRow(otherId);
+    }
+  }
+
   @Test
   void levelsChangedEvent_runsInEventTenant() throws Exception {
     setLevel(sensId, "민감");

@@ -65,7 +65,25 @@ public class AiVectorPurgeService {
    */
   public PurgeResult purgeDisallowed() {
     long tenantId = TenantContext.require("외부 벡터 정리");
-    List<Long> ids = gate.disallowedDatasetIds();
+    return purge(tenantId, gate.disallowedDatasetIds());
+  }
+
+  /**
+   * 현재 테넌트의 데이터셋 하나만 정리한다(데이터셋 1건 등급 변경 이벤트용 — 테넌트 전체를 다시 훑지 않는다). 그 데이터셋이 지금 불허일 때만 지우고, 허용이거나
+   * 없는(다른 테넌트·삭제된) 데이터셋이면 아무것도 하지 않는다(멱등, fail-closed 아님 — 지울 근거가 없다).
+   *
+   * <p>불허 판정은 {@link EmbeddingAiGate#disallowedDatasetIds()} 의 테넌트 한정 목록에 들어 있는지로 본다 — {@code
+   * datasetAllowed()==false} 는 없는 id·남의 테넌트 id 에도 참이라, 그걸 근거로 지우면 남의 id 로 삭제를 시도하게 된다. 테넌트 문맥이 없으면 예외.
+   */
+  public PurgeResult purgeDataset(long datasetId) {
+    long tenantId = TenantContext.require("외부 벡터 정리(데이터셋)");
+    List<Long> ids =
+        gate.disallowedDatasetIds().contains(datasetId) ? List.of(datasetId) : List.of();
+    return purge(tenantId, ids);
+  }
+
+  /** 불허 데이터셋 id 목록의 메타·청크·행 검색 벡터를 지우고 GraphRAG 잔존분을 표시한다(두 진입점 공통). */
+  private PurgeResult purge(long tenantId, List<Long> ids) {
     if (ids.isEmpty()) {
       return new PurgeResult(0, 0, 0, 0, 0, List.of());
     }

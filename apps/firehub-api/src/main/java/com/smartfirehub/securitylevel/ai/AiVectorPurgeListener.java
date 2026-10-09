@@ -25,11 +25,14 @@ public class AiVectorPurgeListener {
 
   private final AiVectorPurgeService purgeService;
 
-  /** 데이터셋 1건 등급 변경(수동·자동 상향·TEMP 지정·복제 상속). 현재 상태 기준 정리라 원인·방향과 무관하게 같은 메서드를 부른다. */
+  /**
+   * 데이터셋 1건 등급 변경(수동·자동 상향·TEMP 지정·복제 상속). 현재 상태 기준 정리라 원인·방향과 무관하게 같은 메서드를 부른다. 바뀐 것은 그 데이터셋
+   * 하나뿐이므로 그 데이터셋만 정리한다 — 테넌트 전체를 다시 훑으면 파이프라인 TEMP 자동 상향처럼 잦은 이벤트마다 전 데이터셋 정리가 반복된다.
+   */
   @Async("indexExecutor")
   @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
   public void onDatasetLevelChanged(DatasetSecurityLevelChangedEvent e) {
-    TenantContext.runScoped(e.tenantId(), purgeService::purgeDisallowed);
+    TenantContext.runScoped(e.tenantId(), () -> purgeService.purgeDataset(e.datasetId()));
   }
 
   /** 등급 정의 변경(ai_policy 강화·삭제 이동·순서 변경) — 데이터셋별 판정이 통째로 달라질 수 있어 테넌트 전체를 다시 본다. */
