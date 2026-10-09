@@ -6,6 +6,7 @@ package com.smartfirehub.jooq;
 
 import com.smartfirehub.jooq.tables.AiInferenceCache;
 import com.smartfirehub.jooq.tables.AiSession;
+import com.smartfirehub.jooq.tables.AnalyticsQueryRun;
 import com.smartfirehub.jooq.tables.AnomalyEvent;
 import com.smartfirehub.jooq.tables.ApiConnection;
 import com.smartfirehub.jooq.tables.AsyncJob;
@@ -142,6 +143,11 @@ public class Public extends SchemaImpl {
      * The table <code>public.ai_session</code>.
      */
     public final AiSession AI_SESSION = AiSession.AI_SESSION;
+
+    /**
+     * The table <code>public.analytics_query_run</code>.
+     */
+    public final AnalyticsQueryRun ANALYTICS_QUERY_RUN = AnalyticsQueryRun.ANALYTICS_QUERY_RUN;
 
     /**
      * The table <code>public.anomaly_event</code>.
@@ -1007,6 +1013,7 @@ public class Public extends SchemaImpl {
         return Arrays.asList(
             AiInferenceCache.AI_INFERENCE_CACHE,
             AiSession.AI_SESSION,
+            AnalyticsQueryRun.ANALYTICS_QUERY_RUN,
             AnomalyEvent.ANOMALY_EVENT,
             ApiConnection.API_CONNECTION,
             AsyncJob.ASYNC_JOB,

@@ -306,4 +306,36 @@ class ChartDeniedTest extends IntegrationTestBase {
     assertThat(m.get(pubChart).denied()).isFalse();
     assertThat(values(m.get(pubChart))).containsExactly(PUB_VALUE);
   }
+
+  /** 기존 역할을 떼고 지정 등급 자격 + 지정 권한만 가진 조회자(내보내기 플래그 확인용). */
+  private long viewerWith(String level, String... perms) {
+    long uid = fx.createUser("cd_e");
+    users.add(uid);
+    fx.removeUserRole(uid);
+    long rid = fx.createRole("cd_re_" + System.nanoTime(), fx.levelId(level), perms);
+    roles.add(rid);
+    fx.assignRole(uid, rid);
+    return uid;
+  }
+
+  /** Review Focus 2 — 공유 캐시를 다른 조회자가 데워도 exportAllowed 는 조회자별이다(설계 결정 5). */
+  @Test
+  void exportAllowed_isPerViewer_evenOnCacheHit() {
+    long permitted = viewerWith("민감", "analytics:read", "data:export", "data:export_restricted");
+    long restricted = viewerWith("민감", "analytics:read", "data:export");
+    // 내보내기 권한자가 먼저 캐시를 데운다.
+    Map<Long, ChartDataResponse> warm =
+        byChart(dashboardService.getDashboardData(dashboardId, permitted));
+    assertThat(warm.get(secChart).exportAllowed()).isTrue();
+    // 같은 캐시를 읽는 제한 조회자 — 결과는 보지만('민감' VIEW 통과) 내보내기 플래그는 자기 것('민감' PERMISSION, 권한 없음).
+    Map<Long, ChartDataResponse> hit =
+        byChart(dashboardService.getDashboardData(dashboardId, restricted));
+    assertThat(hit.get(secChart).denied()).isFalse();
+    assertThat(values(hit.get(secChart))).containsExactly(SEC_VALUE);
+    assertThat(hit.get(secChart).exportAllowed()).isFalse();
+    assertThat(hit.get(pubChart).exportAllowed()).isTrue();
+    // 단건 위젯 경로도 같은 계약.
+    assertThat(chartService.getChartData(secChart, restricted).exportAllowed()).isFalse();
+    assertThat(chartService.getChartData(secChart, permitted).exportAllowed()).isTrue();
+  }
 }

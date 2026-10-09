@@ -67,7 +67,11 @@ public class GuardedSqlExecutor {
    */
   public AnalyticsQueryResponse executeAnalytics(
       Clearance c, String sql, int maxRows, boolean readOnly) {
-    return executeJudgedAnalytics(judgeAnalytics(c, sql), maxRows, readOnly);
+    AnalyticsJudgment j = judgeAnalytics(c, sql);
+    AnalyticsQueryResponse r = executeJudgedAnalytics(j, maxRows, readOnly);
+    // 캐시되지 않는 직접 실행 응답(애드혹·저장 쿼리)에만 조회자 기준 내보내기 플래그를 싣는다(설계 결정 5). 대시보드 공유 캐시는
+    // executeJudgedAnalytics 결과를 담으므로 이 플래그가 다른 조회자에게 새지 않는다.
+    return r.withExportInfo(j.exportAllowedFor(), null);
   }
 
   /**
@@ -120,6 +124,23 @@ public class GuardedSqlExecutor {
     /** 판정한 자격. */
     public Clearance clearance() {
       return clearance;
+    }
+
+    /**
+     * 판정한 조회자가 이 결과를 실제로 내려받을 수 있는가 — EXPORT 정책 AND {@code data:export} 권한(내보내기 엔드포인트가
+     * {@code @RequirePermission("data:export")} 이므로). 웹이 다운로드 UI 를 숨기는 데 쓰는 UI 수준 플래그다.
+     */
+    public boolean exportAllowedFor() {
+      return exportAllowed()
+          && clearance.permissions().contains(DatasetAccessGuard.EXPORT_PERMISSION);
+    }
+
+    /** 허용 판정이 참조한 데이터셋 id(읽기 ∪ 쓰기) — 내보내기 거부 시 어느 데이터셋이 막는지 가리는 데 쓴다. 거부·파싱 실패면 빈 집합. */
+    public Set<Long> touchedDatasetIds() {
+      if (verdict == null || !verdict.result().allowed()) {
+        return Set.of();
+      }
+      return touched(verdict.result());
     }
   }
 

@@ -145,7 +145,7 @@ public class DatasetAccessGuard {
   public static final String EXPORT_PERMISSION = "data:export";
 
   /** 쿼리 결과(여러 데이터셋) 내보내기 거부 문구 — 어느 데이터셋이 막혔는지 드러내지 않는다. */
-  static final String EXPORT_MULTI_MESSAGE = "쿼리가 참조하는 데이터 중 보안 등급 정책상 내보낼 수 없는 데이터가 있습니다.";
+  public static final String EXPORT_MULTI_MESSAGE = "쿼리가 참조하는 데이터 중 보안 등급 정책상 내보낼 수 없는 데이터가 있습니다.";
 
   /** 현재 요청 사용자 기준 내보내기 강제. */
   public void requireExport(long datasetId) {

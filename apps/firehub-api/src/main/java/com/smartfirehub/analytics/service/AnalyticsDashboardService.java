@@ -168,6 +168,9 @@ public class AnalyticsDashboardService {
     Clearance viewer = clearanceResolver.resolve(userId);
     Map<Long, AnalyticsQueryResponse> resultByQuery = new HashMap<>();
     java.util.Set<Long> deniedQueries = new java.util.HashSet<>();
+    // 조회자별 내보내기 플래그 — 공유 캐시(queryResultCache) 밖에 둔다. 캐시 결과에 실으면 먼저 데운 조회자의 값이 다른 조회자에게 샌다(설계 결정 5,
+    // Review Focus 2). 빈 SQL·판정 없음은 false(fail-closed).
+    Map<Long, Boolean> exportByQuery = new HashMap<>();
     for (Long savedQueryId : new java.util.HashSet<>(chartIdToSavedQueryId.values())) {
       String sqlText = chartRepository.findSavedQuerySqlTextById(savedQueryId).orElse("");
       if (sqlText.isBlank()) {
@@ -180,6 +183,7 @@ public class AnalyticsDashboardService {
         deniedQueries.add(savedQueryId);
         continue;
       }
+      exportByQuery.put(savedQueryId, ChartService.exportAllowedFor(judgment));
       // 판정을 통과한 쿼리만 캐시에 닿는다. 캐시 미스면 방금 판정한 토큰을 그대로 실행한다(다시 판정하지 않는다 — 판정 = 실행). 결과를 지역
       // 맵에 담아 위젯 루프가 getIfPresent(만료·축출 시 null)에 의존하지 않게 한다.
       resultByQuery.put(
@@ -207,7 +211,10 @@ public class AnalyticsDashboardService {
             savedQueryId != null ? resultByQuery.get(savedQueryId) : null;
         chartData =
             new ChartDataResponse(
-                chartResponse, queryResult != null ? queryResult : emptyQueryResponse());
+                chartResponse,
+                queryResult != null ? queryResult : emptyQueryResponse(),
+                false,
+                savedQueryId != null && exportByQuery.getOrDefault(savedQueryId, false));
       }
       widgetDataList.add(new DashboardDataResponse.WidgetData(widget.id(), chartData));
     }

@@ -3,7 +3,6 @@ package com.smartfirehub.dataimport.controller;
 import com.smartfirehub.dataimport.dto.ExportEstimate;
 import com.smartfirehub.dataimport.dto.ExportRequest;
 import com.smartfirehub.dataimport.dto.ExportResult;
-import com.smartfirehub.dataimport.dto.QueryResultExportRequest;
 import com.smartfirehub.dataimport.service.DataExportService;
 import com.smartfirehub.global.security.RequirePermission;
 import com.smartfirehub.job.dto.AsyncJobStatusResponse;
@@ -20,8 +19,6 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.LocalDate;
-import java.time.format.DateTimeFormatter;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -124,26 +121,6 @@ public class DataExportController {
         .header("Content-Type", contentType)
         .header("Content-Disposition", buildContentDisposition(filename))
         .header("Content-Length", String.valueOf(filePath.toFile().length()))
-        .body(body);
-  }
-
-  @PostMapping("/query-results/export")
-  @RequirePermission("data:export")
-  public ResponseEntity<StreamingResponseBody> exportQueryResult(
-      @Valid @RequestBody QueryResultExportRequest request) {
-
-    StreamingResponseBody body =
-        exportService.exportQueryResult(request.columnNames(), request.rows(), request.format());
-
-    String filename =
-        "query_result_"
-            + LocalDate.now().format(DateTimeFormatter.BASIC_ISO_DATE)
-            + "."
-            + request.format().getExtension();
-
-    return ResponseEntity.ok()
-        .header("Content-Type", request.format().getContentType())
-        .header("Content-Disposition", buildContentDisposition(filename))
         .body(body);
   }
 

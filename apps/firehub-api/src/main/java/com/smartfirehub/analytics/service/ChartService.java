@@ -170,7 +170,16 @@ public class ChartService {
     if (judgment.denied()) {
       return deniedData(chart);
     }
-    return new ChartDataResponse(chart, executeJudged(judgment));
+    // 내보내기 플래그는 조회자 판정 토큰에서 계산한다(설계 결정 5 — 결과 캐시와 무관하게 조회자별).
+    return new ChartDataResponse(chart, executeJudged(judgment), false, exportAllowedFor(judgment));
+  }
+
+  /**
+   * 조회자 기준 차트 데이터 내보내기 가능 — 판정 토큰(조회자 자격으로 방금 판정)에서 계산하므로 대시보드 공유 결과 캐시와 무관하다(Review Focus 2).
+   * EXPORT 정책 AND data:export 권한.
+   */
+  public static boolean exportAllowedFor(GuardedSqlExecutor.AnalyticsJudgment judgment) {
+    return judgment.exportAllowedFor();
   }
 
   /**

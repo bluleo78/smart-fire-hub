@@ -8,7 +8,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.analytics.dto.*;
+import com.smartfirehub.analytics.repository.AnalyticsQueryRunRepository;
 import com.smartfirehub.analytics.service.AnalyticsQueryExecutionService;
+import com.smartfirehub.analytics.service.QueryResultExportService;
 import com.smartfirehub.analytics.service.SavedQueryService;
 import com.smartfirehub.global.config.SecurityConfig;
 import com.smartfirehub.global.dto.PageResponse;
@@ -25,6 +27,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -56,6 +59,9 @@ class SavedQueryControllerTest {
   @MockitoBean private JwtTokenProvider jwtTokenProvider;
   @MockitoBean private JwtProperties jwtProperties;
   @MockitoBean private PermissionService permissionService;
+  // 쿼리 결과 내보내기(V137): 애드혹 실행이 실행 기록을 남기고, 내보내기는 서비스가 재판정한다(실제 동작은 QueryResultExportTest).
+  @MockitoBean private AnalyticsQueryRunRepository runRepository;
+  @MockitoBean private QueryResultExportService queryResultExportService;
 
   @BeforeEach
   void setUp() {
@@ -263,6 +269,8 @@ class SavedQueryControllerTest {
     // readOnly 는 웹 애드혹에서 항상 true 로 강제된다(#66) — 관문에 true 로 넘어가야만 스텁이 맞는다.
     when(guardedSqlExecutor.executeAnalytics(eq(viewer), eq("SELECT 1"), eq(100), eq(true)))
         .thenReturn(sampleQueryResult());
+    UUID runId = UUID.fromString("11111111-2222-3333-4444-555555555555");
+    when(runRepository.insert(1L, "SELECT 1", 100)).thenReturn(runId);
 
     mockMvc
         .perform(
@@ -272,7 +280,9 @@ class SavedQueryControllerTest {
                 .content(objectMapper.writeValueAsString(request)))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.queryType").value("SELECT"))
-        .andExpect(jsonPath("$.columns[0]").value("col1"));
+        .andExpect(jsonPath("$.columns[0]").value("col1"))
+        // 성공한 SELECT 는 실행 기록 id 를 싣는다 — 쿼리 결과 내보내기의 근거(스펙 §4.4).
+        .andExpect(jsonPath("$.runId").value(runId.toString()));
   }
 
   // ── GET /api/v1/analytics/queries/{id} ─────────────────────────────────────
