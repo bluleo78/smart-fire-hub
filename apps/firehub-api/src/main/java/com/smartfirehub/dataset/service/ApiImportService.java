@@ -30,16 +30,17 @@ public class ApiImportService {
   @Transactional
   public ApiImportResponse createApiImport(Long datasetId, ApiImportRequest request, Long userId) {
     // 1. Verify dataset exists
-    var dataset =
-        datasetRepository
-            .findById(datasetId)
-            .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
+    datasetRepository
+        .findById(datasetId)
+        .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
 
-    // 2. Build pipeline name
+    // 2. 파이프라인 이름 — 기본값에 데이터셋 이름을 넣지 않는다(WD-31④): 파이프라인·트리거 목록은 데이터셋 등급 판정 대상이
+    // 아니라서, 이름에 넣으면 그 데이터셋을 볼 수 없는 사용자에게 이름이 새어 나간다. 사용자가 입력한 이름은 그대로 쓴다.
+    // 기본 트리거 이름(아래 5.)은 이 이름 + " Schedule" 이라 함께 데이터셋 이름이 빠진다.
     String pipelineName =
         (request.pipelineName() != null && !request.pipelineName().isBlank())
             ? request.pipelineName()
-            : dataset.name() + " API Import";
+            : "API Import #" + datasetId;
 
     // 3. Build the single API_CALL step
     String loadStrategy =
