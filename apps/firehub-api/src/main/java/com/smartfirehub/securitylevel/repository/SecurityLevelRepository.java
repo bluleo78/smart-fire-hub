@@ -8,9 +8,12 @@ import static com.smartfirehub.jooq.Tables.SECURITY_LEVEL;
 import com.smartfirehub.jooq.tables.records.SecurityLevelRecord;
 import com.smartfirehub.securitylevel.access.LevelPolicy;
 import com.smartfirehub.securitylevel.dto.SecurityLevelRequest;
+import java.util.Collection;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
@@ -52,6 +55,21 @@ public class SecurityLevelRepository {
         .from(DATASET)
         .where(DATASET.ID.eq(datasetId))
         .fetchSingle(DATASET.SECURITY_LEVEL_ID);
+  }
+
+  /** 주어진 데이터셋 중 등급의 audit_access 가 켜진 것(스펙 §4.6 — 감사 등급 접근 기록 대상). 접근 감사 기록기가 기록 대상을 거를 때 쓴다. */
+  public Set<Long> findAuditedDatasetIds(Collection<Long> datasetIds) {
+    if (datasetIds.isEmpty()) {
+      return Set.of();
+    }
+    return new HashSet<>(
+        dsl.select(DATASET.ID)
+            .from(DATASET)
+            .join(SECURITY_LEVEL)
+            .on(SECURITY_LEVEL.ID.eq(DATASET.SECURITY_LEVEL_ID))
+            .where(DATASET.ID.in(datasetIds))
+            .and(SECURITY_LEVEL.AUDIT_ACCESS.isTrue())
+            .fetch(DATASET.ID));
   }
 
   /** 기본 등급(테넌트당 정확히 1개). */
