@@ -176,6 +176,51 @@ class FileObjectStorageServiceTest {
     assertThat(putUrl).doesNotContain("minio:9000");
   }
 
+  /**
+   * 스펙 §4.4 — disposition 은 서명된 쿼리 파라미터(response-content-disposition)로 들어간다. 서명 대상이라 클라이언트가 inline
+   * 을 attachment 로 바꾸면 서명이 깨진다. 3-인자 호출은 기존 호환을 위해 inline 이다.
+   */
+  @Test
+  void presignedGetUrl_signsContentDisposition() {
+    MinioClient internal =
+        MinioClient.builder()
+            .endpoint("http://minio:9000")
+            .region("us-east-1")
+            .credentials("k", "s")
+            .build();
+    MinioClient publicClient =
+        MinioClient.builder()
+            .endpoint("http://public.example:9000")
+            .region("us-east-1")
+            .credentials("k", "s")
+            .build();
+    MinioProperties props =
+        new MinioProperties(
+            "http://minio:9000",
+            "http://public.example:9000",
+            "us-east-1",
+            "k",
+            "s",
+            "firehub-files",
+            300,
+            900);
+    FileObjectStorageService svc = new FileObjectStorageService(internal, publicClient, props);
+
+    String att = svc.presignedGetUrl("firehub-files", "dir/a.jpg", 300, "attachment").url();
+    String inl = svc.presignedGetUrl("firehub-files", "dir/a.jpg", 300, "inline").url();
+    String legacy = svc.presignedGetUrl("firehub-files", "dir/a.jpg", 300).url();
+
+    assertThat(att).contains("response-content-disposition=attachment");
+    assertThat(inl).contains("response-content-disposition=inline");
+    assertThat(legacy).contains("response-content-disposition=inline");
+    // 서명 대상 파라미터라야 변조가 서명 불일치가 된다 — 서명은 disposition 에 따라 달라진다.
+    assertThat(signature(att)).isNotEqualTo(signature(inl));
+  }
+
+  private static String signature(String url) {
+    return url.replaceAll(".*X-Amz-Signature=([0-9a-f]+).*", "$1");
+  }
+
   private Item mockItem(String key, long size) {
     Item item = org.mockito.Mockito.mock(Item.class);
     when(item.isDir()).thenReturn(false);

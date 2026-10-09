@@ -138,6 +138,117 @@ public class DatasetAccessGuard {
     aiCallContext.current().ifPresent(ai -> requireAiFacts(c, f, ai));
   }
 
+  /** 정책 차단 응답 코드(스펙 §4.3 계약). 흐름 A 의 AI 차단과 같은 코드라 병합 시 A 의 상수와 하나로 합친다(공통 결정 R6). */
+  public static final String POLICY_BLOCKED_CODE = "POLICY_BLOCKED";
+
+  /** 내보내기 엔드포인트 공통 권한 — exportAllowed 플래그는 이 권한까지 본다(UI 가 실제로 내려받을 수 있는가). */
+  public static final String EXPORT_PERMISSION = "data:export";
+
+  /** 쿼리 결과(여러 데이터셋) 내보내기 거부 문구 — 어느 데이터셋이 막혔는지 드러내지 않는다. */
+  static final String EXPORT_MULTI_MESSAGE = "쿼리가 참조하는 데이터 중 보안 등급 정책상 내보낼 수 없는 데이터가 있습니다.";
+
+  /** 현재 요청 사용자 기준 내보내기 강제. */
+  public void requireExport(long datasetId) {
+    requireExport(clearanceResolver.current(), datasetId);
+  }
+
+  /**
+   * 내보내기 강제(스펙 §4.4). VIEW 거부는 존재 은닉 404(VIEW 로 감사), 정책 거부는 403 POLICY_BLOCKED(EXPORT 로 감사). 등급 이름은
+   * VIEW 를 통과한 뒤에만 싣는다 — 사용자가 이미 볼 수 있는 정보다.
+   *
+   * <p>감사는 {@link SecurityAuditRecorder} 의 REQUIRES_NEW 로 남으므로 호출자 트랜잭션이 이 예외로 롤백돼도 거부 행은
+   * 남는다(Review Focus 1).
+   */
+  public void requireExport(Clearance c, long datasetId) {
+    AccessFacts f = accessRepository.findFactsByDatasetIds(List.of(datasetId), c).get(datasetId);
+    if (f == null) {
+      throw new DatasetNotFoundException("Dataset not found: " + datasetId);
+    }
+    Decision view = decide(c, f, DatasetAction.VIEW, null);
+    if (!view.allowed()) {
+      auditDenial(c, AccessDenialAction.VIEW, new DenialDetail(view.reasonCode(), datasetId, null));
+      throw new DatasetNotFoundException("Dataset not found: " + datasetId);
+    }
+    Decision d = decide(c, f, DatasetAction.EXPORT, null);
+    if (!d.allowed()) {
+      auditDenial(
+          c, AccessDenialAction.EXPORT, new DenialDetail(d.reasonCode(), datasetId, f.tableName()));
+      String levelName = f.level().name();
+      // 문구는 Global Constraints 바이트 지정 — PERMISSION 정책은 권한 안내, DENY 는 불가.
+      String message =
+          "EXPORT_PERMISSION_REQUIRED".equals(d.reasonCode())
+              ? "'" + levelName + "' 등급 데이터를 내보내려면 제한 데이터 내보내기 권한이 필요합니다."
+              : "'" + levelName + "' 등급 데이터는 내보낼 수 없습니다.";
+      throw new CodedApiException(
+          HttpStatus.FORBIDDEN,
+          POLICY_BLOCKED_CODE,
+          message,
+          Map.of("action", "EXPORT", "levelName", levelName, "policyKey", "export_policy"));
+    }
+  }
+
+  /**
+   * 파일 다운로드(presigned attachment) 강제 — 내보내기 엔드포인트와 달리 {@code @RequirePermission("data:export")} 가
+   * 없는 경로(dataset:read)라 data:export 권한을 여기서 먼저 본다. 권한이 없으면 인터셉터와 같은 403, 있으면 {@link
+   * #requireExport(Clearance, long)}.
+   */
+  public void requireExportDownload(long datasetId) {
+    Clearance c = clearanceResolver.current();
+    if (!c.permissions().contains(EXPORT_PERMISSION)) {
+      throw new org.springframework.security.access.AccessDeniedException(
+          "Missing required permission: " + EXPORT_PERMISSION);
+    }
+    requireExport(c, datasetId);
+  }
+
+  /** 여러 데이터셋(쿼리 결과) 내보내기 강제 — 하나라도 막히면 403(등급 이름 없음, 첫 차단 데이터셋을 감사). VIEW 는 SQL 판정이 이미 했다. */
+  public void requireExportAll(Clearance c, Collection<Long> datasetIds) {
+    Map<Long, AccessFacts> facts =
+        datasetIds.isEmpty() ? Map.of() : accessRepository.findFactsByDatasetIds(datasetIds, c);
+    for (Long id : datasetIds) {
+      AccessFacts f = facts.get(id);
+      Decision d =
+          f == null
+              ? Decision.deny("LEVEL_UNKNOWN", null, null)
+              : decide(c, f, DatasetAction.EXPORT, null);
+      if (!d.allowed()) {
+        auditDenial(
+            c,
+            AccessDenialAction.EXPORT,
+            new DenialDetail(d.reasonCode(), id, f == null ? null : f.tableName()));
+        throw new CodedApiException(
+            HttpStatus.FORBIDDEN,
+            POLICY_BLOCKED_CODE,
+            EXPORT_MULTI_MESSAGE,
+            Map.of("action", "EXPORT", "policyKey", "export_policy"));
+      }
+    }
+  }
+
+  /** 이미 VIEW 를 통과한 데이터셋(목록 행·상세)의 내보내기 가능 여부 — data:export 권한 AND 등급 export_policy. */
+  public boolean exportAllowed(Clearance c, LevelPolicy level) {
+    return level != null && exportAllowed(c, level.exportPolicy());
+  }
+
+  /**
+   * 현재 요청 사용자(조회자) 기준 내보내기 가능 여부 — 응답 등급 요약의 export_policy 문자열로 판정한다. 등급 요약이 없으면
+   * false(fail-closed). 웹이 다운로드 UI 를 숨기는 데 쓴다(UI 수준 — 서버 강제는 require*).
+   */
+  public boolean exportAllowedForCurrent(
+      com.smartfirehub.securitylevel.dto.SecurityLevelSummary s) {
+    if (s == null || s.exportPolicy() == null) {
+      return false;
+    }
+    return exportAllowed(
+        clearanceResolver.current(), LevelPolicy.ExportPolicy.valueOf(s.exportPolicy()));
+  }
+
+  /** 권한 AND 정책 — 위 두 공개 메서드의 공통 본문. */
+  private static boolean exportAllowed(Clearance c, LevelPolicy.ExportPolicy p) {
+    return c.permissions().contains(EXPORT_PERMISSION)
+        && DatasetAccessPolicy.exportPolicyAllows(p, c.permissions());
+  }
+
   /** 행위 판정. 데이터셋이 없으면 LEVEL_UNKNOWN 거부(존재 여부를 따로 드러내지 않는다). */
   public Decision check(
       Clearance c, long datasetId, DatasetAction action, ProviderHosting hosting) {

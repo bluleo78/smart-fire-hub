@@ -11,6 +11,7 @@ import com.smartfirehub.file.repository.FileDatasetConfigRepository.FileDatasetC
 import com.smartfirehub.file.service.FileObjectStorageService;
 import com.smartfirehub.file.service.ObjectKeyGenerator;
 import com.smartfirehub.global.security.RequirePermission;
+import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import java.util.ArrayList;
 import java.util.List;
 import org.springframework.http.ResponseEntity;
@@ -32,16 +33,21 @@ public class FileObjectController {
   private final FileDatasetConfigRepository configRepo;
   private final ObjectKeyGenerator keyGenerator;
 
+  /** presigned 다운로드(attachment) = 내보내기(스펙 §4.4) — 내보내기 정책 강제. */
+  private final DatasetAccessGuard guard;
+
   // 업로드 배치 상한: 대량 유입 대비 1회 다건 발급을 허용하되 남용을 막는다.
   private static final int MAX_UPLOAD_BATCH = 1000;
 
   public FileObjectController(
       FileObjectStorageService storage,
       FileDatasetConfigRepository configRepo,
-      ObjectKeyGenerator keyGenerator) {
+      ObjectKeyGenerator keyGenerator,
+      DatasetAccessGuard guard) {
     this.storage = storage;
     this.configRepo = configRepo;
     this.keyGenerator = keyGenerator;
+    this.guard = guard;
   }
 
   /** 데이터셋 프리픽스 하위 오브젝트 목록(페이지네이션). */
@@ -60,13 +66,27 @@ public class FileObjectController {
     return ResponseEntity.ok(storage.listObjects(cfg.bucket(), cfg.prefix(), token, cappedSize));
   }
 
-  /** 오브젝트 단건 presigned GET URL. key는 프리픽스 포함 전체 키. */
+  /**
+   * 오브젝트 단건 presigned GET URL. key는 프리픽스 포함 전체 키. disposition 기본 inline(미리보기 — 기존 호출 호환, 인터셉터 VIEW
+   * 만 본다), attachment(다운로드)는 내보내기 판정을 거친다(스펙 §4.4). inline URL 로도 사실상 저장할 수 있다는 점은 스펙 §7.4 의 UI 수준
+   * 한계다.
+   */
   // RLS 가 걸린 file_dataset_config 를 config()로 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
   @Transactional(readOnly = true)
   @GetMapping("/url")
   @RequirePermission("dataset:read")
   public ResponseEntity<PresignedUrlResponse> presignedUrl(
-      @PathVariable Long datasetId, @RequestParam String key) {
+      @PathVariable Long datasetId,
+      @RequestParam String key,
+      @RequestParam(defaultValue = "inline") String disposition) {
+    if (!"inline".equals(disposition) && !"attachment".equals(disposition)) {
+      throw new IllegalArgumentException("disposition 은 inline 또는 attachment 여야 합니다");
+    }
+    // 다운로드(attachment) = 내보내기. config 조회보다 먼저 — 정책 거부가 "FILE 데이터셋 아님" 같은 다른 오류에 가려지지 않게.
+    // 거부 감사는 REQUIRES_NEW 라 이 메서드의 readOnly 트랜잭션 롤백에 휩쓸리지 않는다.
+    if ("attachment".equals(disposition)) {
+      guard.requireExportDownload(datasetId);
+    }
     FileDatasetConfig cfg = config(datasetId);
     // 타 데이터셋 프리픽스로의 접근 차단(격리)
     if (!key.startsWith(cfg.prefix())) {
@@ -74,7 +94,7 @@ public class FileObjectController {
     }
     // 하드코딩 만료값 대신 설정(firehub.minio.presign-expiry-seconds)을 사용한다.
     return ResponseEntity.ok(
-        storage.presignedGetUrl(cfg.bucket(), key, storage.defaultPresignExpiry()));
+        storage.presignedGetUrl(cfg.bucket(), key, storage.defaultPresignExpiry(), disposition));
   }
 
   /** 업로드용 presigned PUT URL을 배치로 발급한다. 앱이 키를 생성하여 프리픽스 격리·규약을 강제한다. */

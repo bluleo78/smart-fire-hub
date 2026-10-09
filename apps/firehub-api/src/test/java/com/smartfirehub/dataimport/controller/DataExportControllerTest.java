@@ -59,6 +59,8 @@ class DataExportControllerTest {
 
   @MockitoBean private DataExportService exportService;
   @MockitoBean private AsyncJobService asyncJobService;
+  // 다운로드 시점 재판정용 조회(목은 빈 값 → 재판정 생략). 실제 재판정은 DataExportPolicyTest 가 검증.
+  @MockitoBean private com.smartfirehub.job.repository.AsyncJobRepository asyncJobRepository;
   @MockitoBean private UserRepository userRepository;
   @MockitoBean private PermissionService permissionService;
   @MockitoBean private JwtTokenProvider jwtTokenProvider;

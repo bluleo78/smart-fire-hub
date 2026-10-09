@@ -41,7 +41,13 @@ class FileObjectControllerTest {
   // 400으로 매핑되는지도 검증하기 위해 controller advice를 등록한다.
   MockMvc mvc =
       org.springframework.test.web.servlet.setup.MockMvcBuilders.standaloneSetup(
-              new FileObjectController(storage, configRepo, new ObjectKeyGenerator()))
+              new FileObjectController(
+                  storage,
+                  configRepo,
+                  new ObjectKeyGenerator(),
+                  // inline(기본) 경로는 가드를 부르지 않는다 — 실제 attachment 판정은 DataExportPolicyTest 가 검증.
+                  org.mockito.Mockito.mock(
+                      com.smartfirehub.securitylevel.access.DatasetAccessGuard.class)))
           .setControllerAdvice(new GlobalExceptionHandler())
           .build();
 
@@ -70,7 +76,7 @@ class FileObjectControllerTest {
         .thenReturn(Optional.of(new FileDatasetConfig(7L, "firehub-files", "equip/")));
     // 컨트롤러가 하드코딩값이 아닌 storage.defaultPresignExpiry()를 사용해 위임하는지 검증한다.
     when(storage.defaultPresignExpiry()).thenReturn(900);
-    when(storage.presignedGetUrl(eq("firehub-files"), eq("equip/a.jpg"), eq(900)))
+    when(storage.presignedGetUrl(eq("firehub-files"), eq("equip/a.jpg"), eq(900), eq("inline")))
         .thenReturn(new PresignedUrlResponse("http://minio/equip/a.jpg?sig=x", 900));
 
     mvc.perform(get("/api/v1/datasets/7/objects/url").param("key", "equip/a.jpg"))

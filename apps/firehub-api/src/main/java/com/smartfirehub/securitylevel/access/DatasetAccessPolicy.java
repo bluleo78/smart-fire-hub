@@ -56,15 +56,27 @@ public final class DatasetAccessPolicy {
     };
   }
 
-  private static Decision decideExport(AccessInput in, LevelPolicy level) {
-    return switch (level.exportPolicy()) {
-      case ALLOW -> Decision.allow(level.id());
-      case PERMISSION ->
-          in.permissions() != null && in.permissions().contains(EXPORT_RESTRICTED_PERMISSION)
-              ? Decision.allow(level.id())
-              : Decision.deny("EXPORT_PERMISSION_REQUIRED", level.id(), "export_policy");
-      case DENY -> Decision.deny("EXPORT_DENIED", level.id(), "export_policy");
+  /**
+   * EXPORT 정책만의 판정(VIEW 는 이미 통과한 경우, 스펙 §4.4). 목록 행·상세의 exportAllowed 플래그와 결정 함수가 같은 규칙을 쓰게 한 곳에
+   * 둔다.
+   */
+  public static boolean exportPolicyAllows(
+      LevelPolicy.ExportPolicy p, java.util.Set<String> permissions) {
+    return switch (p) {
+      case ALLOW -> true;
+      case PERMISSION -> permissions != null && permissions.contains(EXPORT_RESTRICTED_PERMISSION);
+      case DENY -> false;
     };
+  }
+
+  private static Decision decideExport(AccessInput in, LevelPolicy level) {
+    if (exportPolicyAllows(level.exportPolicy(), in.permissions())) {
+      return Decision.allow(level.id());
+    }
+    // 거부 사유 코드는 정책별로 구분한다 — 응답 문구(권한 필요/불가)와 감사 사유가 이 코드로 갈린다.
+    return level.exportPolicy() == LevelPolicy.ExportPolicy.PERMISSION
+        ? Decision.deny("EXPORT_PERMISSION_REQUIRED", level.id(), "export_policy")
+        : Decision.deny("EXPORT_DENIED", level.id(), "export_policy");
   }
 
   private static Decision decideAi(AccessInput in, LevelPolicy level) {

@@ -115,6 +115,20 @@ public class AsyncJobRepository {
         .execute();
   }
 
+  /**
+   * 데이터셋 대상 작업(resource = 'dataset')의 데이터셋 id. 내보내기 파일 다운로드 시점 재판정(스펙 §4.4)에 쓴다. 다른 자원의 작업(임포트 외
+   * API 연결 등)이거나 id 가 숫자가 아니면 빈 값 — 엉뚱한 데이터셋으로 판정하거나 500 이 나지 않게.
+   */
+  public Optional<Long> findDatasetResourceId(String jobId) {
+    return dsl.select(AJ_RESOURCE_ID)
+        .from(ASYNC_JOB)
+        .where(AJ_ID.eq(jobId))
+        .and(AJ_RESOURCE.eq("dataset"))
+        .fetchOptional(AJ_RESOURCE_ID)
+        .filter(v -> v != null && v.matches("\\d+"))
+        .map(Long::parseLong);
+  }
+
   public Optional<AsyncJobStatusResponse> findById(String id) {
     return dsl.select(
             AJ_ID,

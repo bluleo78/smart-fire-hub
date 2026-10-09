@@ -7,7 +7,9 @@ import com.smartfirehub.dataimport.dto.QueryResultExportRequest;
 import com.smartfirehub.dataimport.service.DataExportService;
 import com.smartfirehub.global.security.RequirePermission;
 import com.smartfirehub.job.dto.AsyncJobStatusResponse;
+import com.smartfirehub.job.repository.AsyncJobRepository;
 import com.smartfirehub.job.service.AsyncJobService;
+import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.user.repository.UserRepository;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -36,6 +38,12 @@ public class DataExportController {
   private final AsyncJobService asyncJobService;
   private final UserRepository userRepository;
 
+  /** 내보내기 정책 강제(스펙 §4.4) — 인터셉터 VIEW 다음, 서비스 @Transactional 밖에서 판정한다. */
+  private final DatasetAccessGuard guard;
+
+  /** 비동기 내보내기 파일의 대상 데이터셋 조회(다운로드 시점 재판정용). */
+  private final AsyncJobRepository asyncJobRepository;
+
   @GetMapping("/datasets/{datasetId}/export/estimate")
   @RequirePermission("data:export")
   public ResponseEntity<ExportEstimate> estimateExport(
@@ -60,6 +68,9 @@ public class DataExportController {
       HttpServletResponse httpResponse,
       Authentication authentication)
       throws IOException {
+
+    // 등급 export_policy 강제 — 거부는 403 POLICY_BLOCKED + 감사(REQUIRES_NEW 라 롤백에 휩쓸리지 않는다).
+    guard.requireExport(datasetId);
 
     Long userId = (Long) authentication.getPrincipal();
     String username =
@@ -92,6 +103,10 @@ public class DataExportController {
 
     Long userId = (Long) authentication.getPrincipal();
     Path filePath = exportService.getExportFile(jobId, userId);
+
+    // Review Focus 4 — 작업 생성 뒤 등급이 오를 수 있으므로 다운로드 시점 자격·등급으로 다시 판정한다. 데이터셋 내보내기 작업이
+    // 아니면(대상 없음) 판정하지 않는다.
+    asyncJobRepository.findDatasetResourceId(jobId).ifPresent(guard::requireExport);
 
     AsyncJobStatusResponse job = asyncJobService.getJobStatus(jobId, userId);
     String filename = (String) job.metadata().getOrDefault("filename", "export");
