@@ -20,6 +20,8 @@ import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.permission.service.PermissionService;
 import com.smartfirehub.platform.repository.PlatformRoleRepository;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
+import com.smartfirehub.securitylevel.ai.HostingChangeAuditor;
+import com.smartfirehub.securitylevel.ai.HostingDeclarationPolicy;
 import com.smartfirehub.settings.model.AiCredentialSlot;
 import com.smartfirehub.settings.service.AiCredentialService;
 import com.smartfirehub.settings.service.OpencodeProbeService;
@@ -64,6 +66,9 @@ class AiCredentialProbeStatusMappingTest {
   @Autowired private ObjectMapper objectMapper;
 
   @MockitoBean private AiCredentialService aiCredentialService;
+  // 컨트롤러 PUT 이 호스팅 선언 판정·감사(S3)를 부른다 — 이 슬라이스는 매핑만 보므로 목으로 둔다.
+  @MockitoBean private HostingDeclarationPolicy hostingDeclarationPolicy;
+  @MockitoBean private HostingChangeAuditor hostingChangeAuditor;
   @MockitoBean private OpencodeProbeService opencodeProbeService;
   @MockitoBean private SettingsService settingsService;
   @MockitoBean private PermissionService permissionService;

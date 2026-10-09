@@ -1,6 +1,9 @@
 package com.smartfirehub.settings.controller;
 
 import com.smartfirehub.global.security.RequirePermission;
+import com.smartfirehub.securitylevel.access.ProviderHosting;
+import com.smartfirehub.securitylevel.ai.HostingChangeAuditor;
+import com.smartfirehub.securitylevel.ai.HostingDeclarationPolicy;
 import com.smartfirehub.settings.dto.AiCredentialUpsertRequest;
 import com.smartfirehub.settings.dto.OpencodeProbeRequest;
 import com.smartfirehub.settings.model.AiCredentialSlot;
@@ -47,6 +50,8 @@ public class AiCredentialController {
   private final OpencodeProbeService opencodeProbeService;
   private final SettingsService settingsService;
   private final OpencodePutValidator opencodePutValidator;
+  private final HostingDeclarationPolicy hostingDeclarationPolicy;
+  private final HostingChangeAuditor hostingChangeAuditor;
 
   /** 화면용 조회. {@link AiCredentialService#read} 를 그대로 노출한다 — 미설정이면 {@code configured=false}. */
   @GetMapping
@@ -72,7 +77,18 @@ public class AiCredentialController {
       if (rejected.isPresent()) return rejected.get();
     }
     Long userId = (Long) authentication.getPrincipal();
-    aiCredentialService.save(toUpsert(request), userId);
+    AiCredentialUpsert upsert = toUpsert(request);
+    ProviderHosting before = aiCredentialService.hosting(AiCredentialSlot.CHAT);
+    // 자체 호스팅으로 올리는 선언은 security:settings 가 필요하다(스펙 §2.6) — 저장 전에 판정해 거부 시 아무것도 쓰지 않는다.
+    hostingDeclarationPolicy.requireChangeAllowed(
+        userId, before, aiCredentialService.previewHosting(AiCredentialSlot.CHAT, upsert));
+    aiCredentialService.save(upsert, userId);
+    // 저장이 성공한 뒤 저장된 값끼리 비교해 바뀌었을 때만 감사(R3) — 유형 변경으로 외부로 돌아가는 것도 변경이다.
+    hostingChangeAuditor.recordIfChanged(
+        userId,
+        HostingChangeAuditor.Slot.CHAT,
+        before,
+        aiCredentialService.hosting(AiCredentialSlot.CHAT));
     return ResponseEntity.noContent().build();
   }
 

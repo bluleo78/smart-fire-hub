@@ -8,6 +8,7 @@ import com.smartfirehub.embedding.EmbeddingSpace;
 import com.smartfirehub.embedding.config.dto.EmbeddingConfigRequest;
 import com.smartfirehub.embedding.config.dto.EmbeddingConfigView;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.securitylevel.access.ProviderHosting;
 import com.smartfirehub.settings.repository.TenantSettingsRepository;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
@@ -70,6 +71,22 @@ public class EmbeddingConfigService {
             });
   }
 
+  /** 임베딩 공급자 호스팅 위치. 미설정·손상·값 없음은 외부(기본 외부 — 스펙 §3). 복호화하지 않는다. */
+  public ProviderHosting hosting() {
+    return readRaw()
+        .flatMap(
+            raw -> {
+              try {
+                return Optional.of(EmbeddingConfigDocument.parse(raw).hosting());
+              } catch (RuntimeException e) {
+                log.warn("{} 문서를 해석할 수 없다 — 호스팅은 외부로 본다: {}", KEY, e.toString());
+                return Optional.empty();
+              }
+            })
+        .map(h -> "SELF_HOSTED".equals(h) ? ProviderHosting.SELF_HOSTED : ProviderHosting.EXTERNAL)
+        .orElse(ProviderHosting.EXTERNAL);
+  }
+
   /** 화면용 읽기. 키는 마스킹만 내보낸다(평문·암호문 금지). */
   public EmbeddingConfigView view() {
     return resolveLenient()
@@ -81,7 +98,8 @@ public class EmbeddingConfigService {
                     c.model(),
                     c.baseUrl(),
                     c.dimension() > 0 ? c.dimension() : null,
-                    c.apiKey().isBlank() ? "" : encryptionService.maskValue(c.apiKey())))
+                    c.apiKey().isBlank() ? "" : encryptionService.maskValue(c.apiKey()),
+                    hosting().name()))
         .orElseGet(EmbeddingConfigView::notConfigured);
   }
 
@@ -109,9 +127,10 @@ public class EmbeddingConfigService {
 
   /**
    * 측정 차원을 넣어 문서를 저장한다(현재 테넌트 행 하나, 통째 교체). {@code TenantSettingsRepository} 의 클래스 레벨 트랜잭션이 RLS GUC
-   * 를 세운다.
+   * 를 세운다. {@code hosting} 은 공급자 호스팅 위치 선언으로 문서 최상위에 같이 쓴다(권한 판정은 호출부 몫).
    */
-  public void store(EmbeddingConfig config, EmbeddingDimension dimension, Long userId) {
+  public void store(
+      EmbeddingConfig config, EmbeddingDimension dimension, ProviderHosting hosting, Long userId) {
     TenantContext.require("임베딩 설정 저장");
     String cipher =
         config.apiKey() == null || config.apiKey().isBlank()
@@ -120,7 +139,12 @@ public class EmbeddingConfigService {
     tenantSettingsRepository.upsert(
         KEY,
         EmbeddingConfigDocument.toJson(
-            config.provider(), config.model(), config.baseUrl(), dimension.size(), cipher),
+            config.provider(),
+            config.model(),
+            config.baseUrl(),
+            dimension.size(),
+            cipher,
+            hosting.name()),
         userId);
   }
 

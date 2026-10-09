@@ -10,6 +10,7 @@ import com.smartfirehub.embedding.EmbeddingException;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
 import com.smartfirehub.embedding.config.dto.EmbeddingConfigRequest;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.securitylevel.access.ProviderHosting;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TenantRlsTestSupport;
 import java.io.IOException;
@@ -74,7 +75,7 @@ class EmbeddingSettingsServiceTest extends IntegrationTestBase {
   }
 
   private static EmbeddingConfigRequest ollama(String model) {
-    return new EmbeddingConfigRequest("OLLAMA", model, OLLAMA.url("/").toString(), null);
+    return new EmbeddingConfigRequest("OLLAMA", model, OLLAMA.url("/").toString(), null, null);
   }
 
   @Test
@@ -142,7 +143,7 @@ class EmbeddingSettingsServiceTest extends IntegrationTestBase {
             () ->
                 configService.prepareForTest(
                     new EmbeddingConfigRequest(
-                        "OPENAI", "text-embedding-3-small", "https://api.openai.com", "")))
+                        "OPENAI", "text-embedding-3-small", "https://api.openai.com", "", null)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("API 키가 필요합니다");
   }
@@ -157,6 +158,7 @@ class EmbeddingSettingsServiceTest extends IntegrationTestBase {
             "sk-abcdef1234",
             0),
         com.smartfirehub.embedding.EmbeddingDimension.D1536,
+        ProviderHosting.EXTERNAL,
         null);
     String raw =
         inTenantFixture(
@@ -182,12 +184,13 @@ class EmbeddingSettingsServiceTest extends IntegrationTestBase {
             "sk-stored",
             0),
         com.smartfirehub.embedding.EmbeddingDimension.D1536,
+        ProviderHosting.EXTERNAL,
         null);
     // OpenAI 가드는 DNS 해석을 하므로 prepareForTest(가드 제외, 병합 규칙 동일)로 키 병합만 본다.
     EmbeddingConfig prepared =
         configService.prepareForTest(
             new EmbeddingConfigRequest(
-                "OPENAI", "text-embedding-3-large", "https://api.openai.com/", null));
+                "OPENAI", "text-embedding-3-large", "https://api.openai.com/", null, null));
     assertThat(prepared.apiKey()).isEqualTo("sk-stored");
   }
 
@@ -202,12 +205,17 @@ class EmbeddingSettingsServiceTest extends IntegrationTestBase {
             "sk-stored",
             0),
         com.smartfirehub.embedding.EmbeddingDimension.D1536,
+        ProviderHosting.EXTERNAL,
         null);
     assertThatThrownBy(
             () ->
                 configService.prepareForTest(
                     new EmbeddingConfigRequest(
-                        "OPENAI", "text-embedding-3-small", "https://evil.example.com", null)))
+                        "OPENAI",
+                        "text-embedding-3-small",
+                        "https://evil.example.com",
+                        null,
+                        null)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("Base URL 을 바꾸면 API 키를 다시 입력해야 합니다");
   }

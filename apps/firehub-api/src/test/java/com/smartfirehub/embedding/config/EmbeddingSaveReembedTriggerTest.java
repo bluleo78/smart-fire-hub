@@ -84,7 +84,7 @@ class EmbeddingSaveReembedTriggerTest extends IntegrationTestBase {
 
   private void save(String baseUrl, String model, int measured) {
     doReturn(measured).when(providerFactory).probeDimension(any());
-    settingsService.save(new EmbeddingConfigRequest("OLLAMA", model, baseUrl, null), null);
+    settingsService.save(new EmbeddingConfigRequest("OLLAMA", model, baseUrl, null, null), null);
   }
 
   @Test

@@ -18,7 +18,8 @@ class EmbeddingConfigDocumentTest {
             "text-embedding-3-small",
             "https://api.openai.com",
             1536,
-            "iv:cipher");
+            "iv:cipher",
+            "SELF_HOSTED");
     assertThat(json).contains("\"v\":1").contains("\"secret\":{\"apiKey\":\"iv:cipher\"}");
 
     EmbeddingConfigDocument.Parsed p = EmbeddingConfigDocument.parse(json);
@@ -27,6 +28,15 @@ class EmbeddingConfigDocumentTest {
     assertThat(p.baseUrl()).isEqualTo("https://api.openai.com");
     assertThat(p.dimension()).isEqualTo(1536);
     assertThat(p.apiKeyCipher()).isEqualTo("iv:cipher");
+    assertThat(p.hosting()).isEqualTo("SELF_HOSTED");
+  }
+
+  @Test
+  void documentWithoutHostingParsesAsExternal() {
+    // 호스팅 선언 이전에 저장된 문서 — 기본 외부(보수적).
+    EmbeddingConfigDocument.Parsed p =
+        EmbeddingConfigDocument.parse("{\"v\":1,\"provider\":\"OLLAMA\",\"model\":\"m\"}");
+    assertThat(p.hosting()).isEqualTo("EXTERNAL");
   }
 
   @Test

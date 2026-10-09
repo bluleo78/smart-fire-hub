@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.smartfirehub.apiconnection.service.EncryptionService;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.securitylevel.access.ProviderHosting;
 import com.smartfirehub.settings.model.AiCredential;
 import com.smartfirehub.settings.model.AiCredentialDocument;
 import com.smartfirehub.settings.model.AiCredentialSlot;
@@ -71,6 +72,22 @@ public class AiCredentialService {
    * 된다(손으로 고친 행이나 롤백된 배포가 남기는 것과 같은 상태를, 정상 쓰기 경로로 재현하는 셈).
    */
   private static final Set<String> KNOWN_AGENT_TYPES = Set.of("sdk", "cli", "cli-api", "opencode");
+
+  /** payload 안의 호스팅 위치 키. 값은 "EXTERNAL" | "SELF_HOSTED", 없으면 외부(S3 §3 — 기본 외부). */
+  public static final String HOSTING_FIELD = "hosting";
+
+  /** Claude 계열(sdk/cli/cli-api)에 자체 호스팅을 선언하려 할 때의 거부 문구(400). */
+  public static final String MSG_CLAUDE_EXTERNAL_ONLY = "Claude 계열 자격증명은 외부 서비스로만 선언할 수 있습니다";
+
+  /** 모르는 호스팅 값 거부 문구(400). 임베딩 설정 저장도 같은 문구를 쓴다. */
+  public static final String MSG_HOSTING_INVALID = "호스팅 위치는 EXTERNAL, SELF_HOSTED 중 하나여야 합니다";
+
+  /**
+   * 자체 호스팅을 선언할 수 있는 agentType. Claude 계열(sdk/cli/cli-api)은 Anthropic 서버로만 가므로 항상 외부다(스펙 §3 "서버
+   * 강제"). 저장 문자열 판별 자리라 {@link #toCredential} 과 같은 방식이다(sealed 타입 instanceof 금지 —
+   * AiCredentialSwitchGuardTest).
+   */
+  static final Set<String> SELF_HOSTABLE_AGENT_TYPES = Set.of("opencode");
 
   /**
    * 보안 리뷰 Fix3 — 이 세 유형은 저장할 때 그 유형이 실제로 읽는 비밀 필드 중 최소 하나가 비어 있지 않아야 한다(평면 구분이 사라져 이제 무조건 적용된다).
@@ -224,6 +241,8 @@ public class AiCredentialService {
     req.secret().forEach((name, value) -> doc.withSecret(name, encryptionService.encrypt(value)));
 
     // 병합이 끝난 doc 을 검사한다 — 아직 DB 에 쓰기 전이라 여기서 던져도 부수효과가 없다(Fix3).
+    // 호스팅 값도 병합 결과로 검사한다 — 같은 유형에서 생략하면 기존 값이 유지되므로 요청만 보면 안 된다.
+    validateHosting(doc);
     requireUsableSecret(doc, slot.key());
     return doc;
   }
@@ -271,6 +290,73 @@ public class AiCredentialService {
       // 로그에 실제 슬롯 키를 남긴다 — 채팅/분류 중 어느 행이 손상됐는지 운영에서 구분해야 한다(#707).
       log.warn("{} 문서가 손상돼 파싱할 수 없다({}) — 미설정으로 취급한다: {}", key, context, e.toString());
       return Optional.empty();
+    }
+  }
+
+  // ---- 공급자 호스팅 위치(S3 §3·§4.3) ----
+
+  /**
+   * 현재 테넌트 {@code slot} 의 공급자 호스팅 위치(S3 §4.3 — 판정 입력은 API 가 계산한다). 행 없음·손상·Claude 계열은 외부. 복호화하지 않는다
+   * — 호스팅은 비밀이 아니고, 손상된 암호문이 판정을 막지 않게 한다.
+   */
+  public ProviderHosting hosting(AiCredentialSlot slot) {
+    return readTenantRaw(slot.key())
+        .flatMap(raw -> tryParse(raw, slot.key(), "HOSTING"))
+        .map(AiCredentialService::hostingOf)
+        .orElse(ProviderHosting.EXTERNAL);
+  }
+
+  /** AI_CLASSIFY 가 실제로 쓸 공급자의 호스팅 — 분류 전용 행이 없으면 채팅 설정을 통째로 쓰므로 채팅 호스팅이다(#707 규칙과 같다). */
+  public ProviderHosting classifyHosting() {
+    return readTenantRaw(AiCredentialSlot.CLASSIFY.key()).isPresent()
+        ? hosting(AiCredentialSlot.CLASSIFY)
+        : hosting(AiCredentialSlot.CHAT);
+  }
+
+  /**
+   * 이 요청을 저장했을 때의 호스팅 — 컨트롤러가 선언 권한(security:settings)을 저장 전에 판정하려고 쓴다. 규칙은 {@link #mergeForSave} 와
+   * 같다: 요청에 hosting 이 있으면 그 값(Claude 계열이면 외부), 없으면 같은 유형일 때만 기존 값 유지, 유형이 바뀌면 외부.
+   */
+  public ProviderHosting previewHosting(AiCredentialSlot slot, AiCredentialUpsert req) {
+    // 키가 있으면(값이 null 이어도) 병합이 그 값으로 덮어쓰므로 요청 값이 곧 결과다.
+    if (req.payload().containsKey(HOSTING_FIELD)) {
+      Object requested = req.payload().get(HOSTING_FIELD);
+      return SELF_HOSTABLE_AGENT_TYPES.contains(req.agentType())
+              && "SELF_HOSTED".equals(String.valueOf(requested))
+          ? ProviderHosting.SELF_HOSTED
+          : ProviderHosting.EXTERNAL;
+    }
+    Optional<AiCredentialDocument> existing =
+        readTenantRaw(slot.key()).flatMap(raw -> tryParse(raw, slot.key(), "PREVIEW"));
+    return existing
+        .filter(d -> d.agentType().equals(req.agentType()))
+        .map(AiCredentialService::hostingOf)
+        .orElse(ProviderHosting.EXTERNAL);
+  }
+
+  /** 문서 → 호스팅. 자체 호스팅 불가 유형은 payload 값과 무관하게 외부(서버 강제). */
+  private static ProviderHosting hostingOf(AiCredentialDocument doc) {
+    if (!SELF_HOSTABLE_AGENT_TYPES.contains(doc.agentType())) {
+      return ProviderHosting.EXTERNAL;
+    }
+    return "SELF_HOSTED".equals(doc.payload().path(HOSTING_FIELD).asText(""))
+        ? ProviderHosting.SELF_HOSTED
+        : ProviderHosting.EXTERNAL;
+  }
+
+  /**
+   * 병합된 문서의 hosting 값 검증 — 모르는 값 400, Claude 계열의 자체 호스팅 선언 400. 쓰기 전이라 거부해도 부수효과 없다. Claude 계열은
+   * Anthropic 서버로만 가므로 "자체 호스팅" 선언을 받아 주면 민감 데이터가 외부로 나가는 오판정이 된다(스펙 §3 서버 강제).
+   */
+  private static void validateHosting(AiCredentialDocument doc) {
+    JsonNode h = doc.payload().get(HOSTING_FIELD);
+    if (h == null || h.isNull()) return;
+    String v = h.asText("");
+    if (!"EXTERNAL".equals(v) && !"SELF_HOSTED".equals(v)) {
+      throw new IllegalArgumentException(MSG_HOSTING_INVALID);
+    }
+    if ("SELF_HOSTED".equals(v) && !SELF_HOSTABLE_AGENT_TYPES.contains(doc.agentType())) {
+      throw new IllegalArgumentException(MSG_CLAUDE_EXTERNAL_ONLY);
     }
   }
 
