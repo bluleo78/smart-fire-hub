@@ -4,6 +4,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 
 import { Button } from '@/components/ui/button';
 import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
+import { RestrictedNotice } from '@/components/ui/restricted-notice';
 import { SearchInput } from '@/components/ui/search-input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -11,6 +12,7 @@ import { useOntologyById, useOntologyGraph, useOntologyList } from '@/hooks/quer
 import { useOntologyElementMutations } from '@/hooks/queries/useOntologyElement';
 import { useAuth } from '@/hooks/useAuth';
 import { useDirtyAggregator, useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
+import { GRAPH_READ_RESTRICTED_MESSAGE, isGraphReadRestricted } from '@/lib/api-error';
 import { createTypePalette } from '@/lib/ontology-colors';
 import { affectedRelationsFor, isLastActiveEntityType } from '@/lib/ontology-validation';
 import type { GraphNode } from '@/types/ontology';
@@ -47,6 +49,21 @@ function GraphError({ message, onRetry }: { message: string; onRetry: () => void
       <Button variant="outline" size="sm" onClick={onRetry}>
         다시 시도
       </Button>
+    </div>
+  );
+}
+
+// 그래프 읽기 제한(WD-28) — 출처 데이터셋 중 볼 수 없는 것이 있어 서버가 그래프를 내려주지 않은 상태.
+// 오류가 아니므로 GraphError(빨간 아이콘·재시도) 대신 실행 기록 가림과 같은 muted 자물쇠 박스를 쓴다.
+// 어느 데이터셋 때문인지는 밝히지 않는다(스펙 §2). 문구는 스펙 원문 상수(api-error.ts)이며 서버 message 를 쓰지 않는다.
+function GraphReadRestricted() {
+  return (
+    <div className="flex h-full items-center justify-center p-6">
+      <RestrictedNotice
+        message={GRAPH_READ_RESTRICTED_MESSAGE}
+        className="max-w-md"
+        data-testid="graph-read-restricted"
+      />
     </div>
   );
 }
@@ -176,6 +193,7 @@ export default function OntologyPage() {
     data: graph,
     isLoading: isGraphLoading,
     isError: isGraphError,
+    error: graphError,
     refetch: refetchGraph,
   } = useOntologyGraph(effectiveOntologyId);
 
@@ -202,6 +220,13 @@ export default function OntologyPage() {
   // canEdit이 꺼지면(예: 관리 다이얼로그에서 archived로 전이) 토글 state와 무관하게 즉시 닫혀야 하므로
   // modelEditMode를 곱해 파생시킨다(별도 effect로 끄는 대신).
   const showEditor = tab === 'schema' && modelEditMode && canEdit;
+  // 그래프 탐색 탭이 읽기 제한(WD-28) 상태인가 — 한 번만 계산해 본문·툴바·좌측 패널이 같은 판정을 쓴다.
+  // 제한 상태에선 그래프가 없어 이름 검색·타입 묶기·타입 필터가 눌러도 아무 효과가 없는 죽은 컨트롤이 되고,
+  // 색색의 타입 목록이 "표시할 수 없습니다" 옆에 있으면 필터만 바꾸면 보일 것처럼 읽힌다(디자인 검토 M-2) — 숨긴다.
+  // 온톨로지 선택기는 제한에서 벗어나는 유일한 출구라 유지한다. 스키마 탭은 판정 대상이 아니다.
+  const graphRestricted = tab === 'instance' && isGraphReadRestricted(graphError);
+  // 인스턴스 탭 그래프 도구(검색·타입 묶기)를 그릴지 — 읽기 제한이면 숨긴다(위 사유).
+  const showGraphTools = tab === 'instance' && !graphRestricted;
 
   // 온톨로지를 바꾸면 이전 선택/편집 상태가 새 컨텍스트에 잘못 남지 않도록 초기화한다.
   // useEffect 대신 렌더 중 이전 값 비교(React 권장 패턴)로 처리한다 — setState-in-effect의
@@ -407,6 +432,8 @@ export default function OntologyPage() {
       '그래프는 지식 모델에 적재된 데이터를 보여줍니다. 먼저 지식 모델을 만들어 주세요.',
     );
     if (gate) return gate;
+    // 제한은 오류보다 먼저 본다 — 같은 isError 이지만 사용자에게는 다른 상태다(재시도로 풀리지 않는다).
+    if (graphRestricted) return <GraphReadRestricted />;
     if (isGraphError) {
       return <GraphError message="그래프를 불러오지 못했습니다." onRetry={() => refetchGraph()} />;
     }
@@ -437,8 +464,9 @@ export default function OntologyPage() {
         {/* (리뷰 MIN-5) 편집 모드에서는 숨긴다 — ModelOutline이 TypeFilterPanel과 달리 collapsed prop을
             받지 않아, 편집 모드에서 이 버튼을 누르면 aria-pressed만 바뀌고 화면은 그대로였다(무력한 컨트롤).
             (#414) sm(640px) 미만에서는 TypeFilterPanel 자체가 collapsed 상태와 무관하게 항상 숨으므로
-            이 토글도 함께 숨긴다 — 안 그러면 눌러도 아무 효과가 없는 죽은 컨트롤이 된다. */}
-        {!showEditor && (
+            이 토글도 함께 숨긴다 — 안 그러면 눌러도 아무 효과가 없는 죽은 컨트롤이 된다.
+            읽기 제한(WD-28)에서도 숨긴다. */}
+        {!showEditor && !graphRestricted && (
           <Button
             variant="ghost"
             size="icon"
@@ -508,8 +536,8 @@ export default function OntologyPage() {
           {/* 404 실패는 saveState를 'error'로 만들지만 재시도 대상이 아니다(대상이 이미 삭제됨) —
               canRetry로 그 경우만 걸러 dead 버튼을 그리지 않는다(Task 4 리뷰 I-2). */}
           <SaveStatusChip state={saveState} onRetry={canRetry ? retry : undefined} />
-          {/* search-first: 검색을 캔버스 위 별도 줄이 아닌 툴바로 승격(인스턴스 탭에서만 의미 있음). */}
-          {tab === 'instance' && (
+          {/* search-first: 검색을 캔버스 위 별도 줄이 아닌 툴바로 승격(인스턴스 탭에서만 의미 있음, WD-28). */}
+          {showGraphTools && (
             <>
               <SearchInput placeholder="이름 검색" value={search} onChange={setSearch} className="w-64" />
               {/* 타입 묶기 토글 — 타입별 compound 번들로 접어 밀집을 줄인다. */}
@@ -554,7 +582,8 @@ export default function OntologyPage() {
             addEntityTypeButtonRef={addEntityTypeButtonRef}
             onDirtyChange={makeModelDirtyReporter('outline')}
           />
-        ) : (
+        ) : graphRestricted ? null : (
+          // 읽기 제한(WD-28)이면 그리지 않는다.
           <TypeFilterPanel
             entities={filterEntities}
             graph={graph}

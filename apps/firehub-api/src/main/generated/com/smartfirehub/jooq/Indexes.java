@@ -32,6 +32,7 @@ import com.smartfirehub.jooq.tables.DocumentChunkVec_1536;
 import com.smartfirehub.jooq.tables.DocumentFile;
 import com.smartfirehub.jooq.tables.FileDatasetConfig;
 import com.smartfirehub.jooq.tables.FlywaySchemaHistory;
+import com.smartfirehub.jooq.tables.GraphOntologySource;
 import com.smartfirehub.jooq.tables.GraphReviewItem;
 import com.smartfirehub.jooq.tables.JobrunrBackgroundjobservers;
 import com.smartfirehub.jooq.tables.JobrunrJobs;
@@ -162,6 +163,7 @@ public class Indexes {
     public static final Index IDX_DOCUMENT_FILE_STATUS = Internal.createIndex(DSL.name("idx_document_file_status"), DocumentFile.DOCUMENT_FILE, new OrderField[] { DocumentFile.DOCUMENT_FILE.STATUS }, false);
     public static final Index IDX_DOCUMENT_FILE_TENANT = Internal.createIndex(DSL.name("idx_document_file_tenant"), DocumentFile.DOCUMENT_FILE, new OrderField[] { DocumentFile.DOCUMENT_FILE.TENANT_ID }, false);
     public static final Index IDX_FILE_DATASET_CONFIG_TENANT = Internal.createIndex(DSL.name("idx_file_dataset_config_tenant"), FileDatasetConfig.FILE_DATASET_CONFIG, new OrderField[] { FileDatasetConfig.FILE_DATASET_CONFIG.TENANT_ID }, false);
+    public static final Index IDX_GRAPH_ONTOLOGY_SOURCE_ONTOLOGY = Internal.createIndex(DSL.name("idx_graph_ontology_source_ontology"), GraphOntologySource.GRAPH_ONTOLOGY_SOURCE, new OrderField[] { GraphOntologySource.GRAPH_ONTOLOGY_SOURCE.ONTOLOGY_ID }, false);
     public static final Index IDX_GRAPH_REVIEW_ITEM_STATUS = Internal.createIndex(DSL.name("idx_graph_review_item_status"), GraphReviewItem.GRAPH_REVIEW_ITEM, new OrderField[] { GraphReviewItem.GRAPH_REVIEW_ITEM.STATUS }, false);
     public static final Index IDX_GRAPH_REVIEW_ITEM_TENANT_STATUS = Internal.createIndex(DSL.name("idx_graph_review_item_tenant_status"), GraphReviewItem.GRAPH_REVIEW_ITEM, new OrderField[] { GraphReviewItem.GRAPH_REVIEW_ITEM.TENANT_ID, GraphReviewItem.GRAPH_REVIEW_ITEM.STATUS }, false);
     public static final Index IDX_GRAPH_REVIEW_ITEM_TYPE_STATUS = Internal.createIndex(DSL.name("idx_graph_review_item_type_status"), GraphReviewItem.GRAPH_REVIEW_ITEM, new OrderField[] { GraphReviewItem.GRAPH_REVIEW_ITEM.ITEM_TYPE, GraphReviewItem.GRAPH_REVIEW_ITEM.STATUS }, false);

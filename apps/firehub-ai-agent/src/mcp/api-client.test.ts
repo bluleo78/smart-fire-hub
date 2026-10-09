@@ -55,6 +55,24 @@ describe('FireHubApiClient', () => {
     expect(result.domain).toBe('화재조사 보고서');
   });
 
+  it('getOntologyGraphAccess 는 GET /ontology/{id}/graph-access 를 캐시 없이 매번 묻는다', async () => {
+    const scope = nock(BASE_URL)
+      .get('/ontology/7/graph-access')
+      .reply(200, { graphReadable: true })
+      .get('/ontology/7/graph-access')
+      .reply(200, { graphReadable: false });
+    expect(await client.getOntologyGraphAccess(7)).toEqual({ graphReadable: true });
+    // 등급 변경이 바로 반영돼야 한다 — getOntologyById 처럼 캐시하면 30초 늦는다.
+    expect(await client.getOntologyGraphAccess(7)).toEqual({ graphReadable: false });
+    expect(scope.isDone()).toBe(true);
+  });
+
+  it('hasDelegatedUser 는 userId 가 양의 정수일 때만 true 다', () => {
+    expect(client.hasDelegatedUser).toBe(true);
+    expect(new FireHubApiClient(BASE_URL, TOKEN, Number.NaN, TENANT_ID).hasDelegatedUser).toBe(false);
+    expect(new FireHubApiClient(BASE_URL, TOKEN, 0, TENANT_ID).hasDelegatedUser).toBe(false);
+  });
+
   it('recordGraphIngest 는 이력 POST 를 보낸다', async () => {
     const scope = nock(BASE_URL).post('/datasets/42/graph-ingests', (body) =>
       body.schemaVersionAtIngest === 1 && body.status === 'SUCCESS' && body.nodeCount === 20).reply(201, { id: 7 });

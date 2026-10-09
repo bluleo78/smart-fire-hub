@@ -66,6 +66,9 @@ function baseClient(overrides: Partial<any> = {}) {
     activateDatasetMapping: vi.fn().mockResolvedValue({ datasetId: 900, ontologyId: 1, status: 'active' }),
     createOntology: vi.fn().mockResolvedValue(7),
     listReviewItems: vi.fn().mockResolvedValue([]),
+    // 실제 ontology-source 를 쓰므로 그래프 읽기 판정(WD-28)도 기본은 "읽기 가능"으로 둔다.
+    hasDelegatedUser: true,
+    getOntologyGraphAccess: vi.fn().mockResolvedValue({ graphReadable: true }),
     ...overrides,
   };
 }
@@ -110,6 +113,14 @@ describe('graphrag_describe_ontology', () => {
       expect.objectContaining({ name: '피해액', dataType: 'number', unit: '원' }),
     ]);
     expect(out.relationTypes[0]).toMatchObject({ subject: 'Incident', relation: 'OCCURRED_AT' });
+  });
+
+  // WD-28: describe 는 스키마 조회(쓰기·스키마 경로)라 그래프 읽기 판정을 묻지 않는다 — 판정 장애·읽기 제한과 무관하게 동작한다.
+  it('그래프 읽기 판정 API 를 호출하지 않고, 판정 조회가 실패하는 상황에서도 동작한다', async () => {
+    const client = baseClient({ getOntologyGraphAccess: vi.fn().mockRejectedValue(new Error('503')) });
+    const out = await findTool(client, 'graphrag_describe_ontology').handler({ ontologyId: 7 });
+    expect(out.domain).toBe('fire');
+    expect(client.getOntologyGraphAccess).not.toHaveBeenCalled();
   });
 });
 
@@ -183,6 +194,35 @@ describe('graphrag_structured_query — 동적 스키마 검증', () => {
         filters: [{ property: '없는속성', operator: 'gt', value: 1 }],
       }),
     ).rejects.toThrow(/피해액/);
+    expect(structuredQueryMock).not.toHaveBeenCalled();
+  });
+
+  // WD-28: 출처 데이터셋 중 하나라도 못 보는 사용자에게는 구조 질의도 거부한다 — 실제 ontology-source 로 판정이 흐른다.
+  it('읽기 제한 온톨로지면 스펙 문구로 거부하고 구조 질의를 실행하지 않는다', async () => {
+    const client = baseClient({ getOntologyGraphAccess: vi.fn().mockResolvedValue({ graphReadable: false }) });
+    await expect(
+      findTool(client, 'graphrag_structured_query').handler({
+        ontologyId: 2,
+        entityType: 'Incident',
+        filters: [{ property: '피해액', operator: 'gt', value: 1 }],
+      }),
+    ).rejects.toThrow('이 지식그래프에는 열람 권한이 없는 데이터가 포함되어 있어 조회할 수 없습니다.');
+    expect(client.getOntologyGraphAccess).toHaveBeenCalledWith(2);
+    expect(structuredQueryMock).not.toHaveBeenCalled();
+  });
+
+  // 판정 조회 자체가 실패하면(네트워크·5xx 등) 읽기는 막되 "권한 없음" 대신 재시도 안내로 거부한다 — 실제 ontology-source 경유.
+  it('판정 조회가 실패하면 재시도 안내 문구로 거부하고 구조 질의를 실행하지 않는다', async () => {
+    const client = baseClient({ getOntologyGraphAccess: vi.fn().mockRejectedValue(new Error('Request failed with status code 503')) });
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await expect(
+      findTool(client, 'graphrag_structured_query').handler({
+        ontologyId: 2,
+        entityType: 'Incident',
+        filters: [{ property: '피해액', operator: 'gt', value: 1 }],
+      }),
+    ).rejects.toThrow('지식그래프 열람 권한을 확인하지 못했습니다. 잠시 후 다시 시도하세요.');
+    errSpy.mockRestore();
     expect(structuredQueryMock).not.toHaveBeenCalled();
   });
 

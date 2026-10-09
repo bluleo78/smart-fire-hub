@@ -9,6 +9,7 @@ import com.smartfirehub.jooq.Keys;
 import com.smartfirehub.jooq.Public;
 import com.smartfirehub.jooq.tables.DatasetMapping.DatasetMappingPath;
 import com.smartfirehub.jooq.tables.DatasetOntology.DatasetOntologyPath;
+import com.smartfirehub.jooq.tables.GraphOntologySource.GraphOntologySourcePath;
 import com.smartfirehub.jooq.tables.OntologyEntityType.OntologyEntityTypePath;
 import com.smartfirehub.jooq.tables.OntologyRelation.OntologyRelationPath;
 import com.smartfirehub.jooq.tables.Tenant.TenantPath;
@@ -219,6 +220,19 @@ public class Ontology extends TableImpl<OntologyRecord> {
             _datasetOntology = new DatasetOntologyPath(this, null, Keys.DATASET_ONTOLOGY__DATASET_ONTOLOGY_ONTOLOGY_ID_FKEY.getInverseKey());
 
         return _datasetOntology;
+    }
+
+    private transient GraphOntologySourcePath _graphOntologySource;
+
+    /**
+     * Get the implicit to-many join path to the
+     * <code>public.graph_ontology_source</code> table
+     */
+    public GraphOntologySourcePath graphOntologySource() {
+        if (_graphOntologySource == null)
+            _graphOntologySource = new GraphOntologySourcePath(this, null, Keys.GRAPH_ONTOLOGY_SOURCE__GRAPH_ONTOLOGY_SOURCE_ONTOLOGY_ID_FKEY.getInverseKey());
+
+        return _graphOntologySource;
     }
 
     private transient OntologyEntityTypePath _ontologyEntityType;

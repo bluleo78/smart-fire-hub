@@ -76,3 +76,24 @@ export async function handleApiErrorAsync(
   const message = await extractApiErrorAsync(error, fallback);
   toast.error(message);
 }
+
+/** 지식그래프 읽기 제한 코드(WD-28) — api GraphReadGate.RESTRICTED_CODE 와 같은 값. */
+const GRAPH_READ_RESTRICTED_CODE = 'GRAPH_READ_RESTRICTED';
+
+/**
+ * 그래프 읽기 제한 안내 문구(스펙 원문). 서버 message 를 쓰지 않고 web 이 이 상수를 쓴다 — 코드와 문구를 한곳에 둬
+ * 화면마다 문자열을 복제하다 어긋나는 일을 막는다.
+ */
+export const GRAPH_READ_RESTRICTED_MESSAGE =
+  '이 지식그래프에는 열람 권한이 없는 데이터가 포함되어 있어 표시할 수 없습니다.';
+
+/**
+ * 그래프 읽기 제한(403 + code) 인가. 메시지 문자열이 아니라 코드로 판별한다 — 화면 문구는 web 이 스펙 원문을 직접 쓴다.
+ */
+export function isGraphReadRestricted(error: unknown): boolean {
+  return (
+    axios.isAxiosError(error) &&
+    error.response?.status === 403 &&
+    (error.response.data as ErrorResponse | undefined)?.code === GRAPH_READ_RESTRICTED_CODE
+  );
+}

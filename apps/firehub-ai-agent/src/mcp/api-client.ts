@@ -78,6 +78,11 @@ export type { ObjectItem, ObjectListResponse, PresignedUrlResponse };
  */
 const ONTOLOGY_CACHE_TTL_MS = 30_000;
 
+/** 양의 정수인지 — 대행 사용자 id(X-On-Behalf-Of)가 성립하는 값인지 판정한다. */
+function isPositiveInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0;
+}
+
 export class FireHubApiClient {
   private client: AxiosInstance;
   /** id → 진행 중이거나 방금 끝난 온톨로지 조회. 인스턴스 단위(=테넌트 단위) — getOntologyById 주석 참고. */
@@ -99,6 +104,11 @@ export class FireHubApiClient {
   private _graphSource: ReturnType<typeof createGraphSourceApi>;
   private _review: ReturnType<typeof createReviewApi>;
   private _fileObject: ReturnType<typeof createFileObjectApi>;
+  /**
+   * 실제 사용자를 대행하는가(X-On-Behalf-Of 가 양의 정수) — true 일 때만 그래프 읽기 판정(WD-28)을 묻는다.
+   * 인스턴스 필드라 프로토타입 기반 목(createMockClient)에는 없어 자동으로 false(읽기 불가)다(fail-closed).
+   */
+  readonly hasDelegatedUser: boolean;
 
   /**
    * @param tenantId 원요청 테넌트(웹 세션 JWT 의 tenant 클레임에서 파생). 테넌트 헤더로 api 에
@@ -112,6 +122,8 @@ export class FireHubApiClient {
    *   단일 멤버십이 보장된 개발 스크립트에만 허용된다. 다른 파일들은 이 문단을 가리킨다.
    */
   constructor(baseURL: string, internalToken: string, userId: number, tenantId?: number) {
+    // 사용자 id 는 테넌트가 아니므로 테넌트 이름의 술어 대신 중립 이름의 양의 정수 검사를 쓴다.
+    this.hasDelegatedUser = isPositiveInteger(userId);
     const headers: Record<string, string> = {
       Authorization: `Internal ${internalToken}`,
       [ON_BEHALF_OF_HEADER]: String(userId),
@@ -670,6 +682,15 @@ export class FireHubApiClient {
     });
     this.ontologyCache.set(id, { at: Date.now(), promise });
     return promise;
+  }
+
+  /**
+   * 현재 대행 사용자가 이 온톨로지의 그래프를 읽을 수 있는가(GET /api/v1/ontology/{id}/graph-access, WD-28).
+   * getOntologyById 와 달리 **캐시하지 않는다** — 등급·허용 목록 변경이 다음 호출에 바로 반영돼야 한다.
+   */
+  async getOntologyGraphAccess(id: number): Promise<{ graphReadable: boolean }> {
+    const { data } = await this.client.get<{ graphReadable: boolean }>(`/ontology/${id}/graph-access`);
+    return data;
   }
 
   /**

@@ -1,4 +1,4 @@
-import { VerifiedOntologyId } from './verified-ontology-id.js';
+import { GraphReadableOntologyId, VerifiedOntologyId } from './verified-ontology-id.js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import neo4j from 'neo4j-driver';
 import { getSession, bootstrapConstraints, closeDriver } from './neo4j-client.js';
@@ -37,7 +37,7 @@ describe('retrieve (integration)', () => {
     const deps = {
       searchDocuments: async () => [{ chunkId: 500, fileName: 'report-01.md', content: '중앙로 상가건물 화재...' }],
     };
-    const result = await retrieve(deps, 9 as VerifiedOntologyId, '중앙로 상가건물 화재의 원인은?');
+    const result = await retrieve(deps, 9 as GraphReadableOntologyId, '중앙로 상가건물 화재의 원인은?');
     const names = result.nodes.map((n) => n.name).sort();
     expect(names).toContain('2026-001');
     expect(names).toContain('전기적 요인'); // 1홉 확장으로 원인 도달
@@ -76,7 +76,7 @@ describe('retrieve (integration)', () => {
     const deps = {
       searchDocuments: async () => [{ chunkId: 600, fileName: 'report-02.md', content: '2026-002 화재...' }],
     };
-    const result = await retrieve(deps, 9 as VerifiedOntologyId, '2026-002 화재는 어떤 규정을 위반했는가?');
+    const result = await retrieve(deps, 9 as GraphReadableOntologyId, '2026-002 화재는 어떤 규정을 위반했는가?');
     const names = result.nodes.map((n) => n.name);
     expect(names).toContain('2026-002');
     expect(names).toContain('소방시설법 제12조'); // 허브 자체는 포함(직접 연결)
@@ -112,7 +112,7 @@ describe('retrieve (integration)', () => {
     const deps = {
       searchDocuments: async () => [{ chunkId: 500, fileName: 'report-01.md', content: '중앙로 상가건물 화재...' }],
     };
-    const result = await retrieve(deps, 9 as VerifiedOntologyId, '중앙로 상가건물 화재의 원인은?');
+    const result = await retrieve(deps, 9 as GraphReadableOntologyId, '중앙로 상가건물 화재의 원인은?');
     const names = result.nodes.map((n) => n.name);
 
     expect(names).toContain('전기적 요인'); // 내 온톨로지의 1홉 이웃은 그대로 도달

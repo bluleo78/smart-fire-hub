@@ -13,7 +13,7 @@
 // 사건 중심 타입은 무조건 확장) OR degree < hubDegree(저차수 노드)"로 통일한다. 시드도 예외 없이
 // 이 규칙을 따른다 — 시드는 항상 결과에 "포함"되지만, 공유 Equipment/Regulation 시드는 고차수면
 // 더 이상 확장하지 않는 "종단(terminal)" 노드가 된다.
-import { VerifiedOntologyId } from './verified-ontology-id.js';
+import { GraphReadableOntologyId } from './verified-ontology-id.js';
 import neo4j from 'neo4j-driver';
 import { getSession } from './neo4j-client.js';
 
@@ -138,10 +138,11 @@ export async function expandSubgraph(
  * 지식 그래프 검색 — 문서검색으로 시드를 잡고 1~2홉 확장한 서브그래프를 돌려준다.
  *
  * ontologyId 는 필수다 — 스코프 규약과 그 근거는 neo4j-client.readWholeGraph 주석 참고.
+ * 읽기 판정(WD-28) → GraphReadableOntologyId(verified-ontology-id.ts) 참고.
  */
 export async function retrieve(
   deps: RetrieverDeps,
-  ontologyId: VerifiedOntologyId,
+  ontologyId: GraphReadableOntologyId,
   query: string,
   opts: RetrieveOptions = {},
 ): Promise<RetrievalResult> {

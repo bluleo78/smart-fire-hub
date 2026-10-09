@@ -20,7 +20,7 @@ vi.mock('../../graphrag/ontology-source.js', () => ({
     ontology: { domain: 'fire', schemaVersion: 1, entities: [], relations: [] },
     ontologyId: 42,
   }),
-  // id 기반 해소 — 읽기 도구(graphrag_query·structured_query)의 소유권 확인 겸 온톨로지 로딩.
+  // id 기반 해소 — 쓰기·스키마 도구(describe·project_table·infer_mapping)의 소유권 확인 겸 온톨로지 로딩. 판정 없음.
   // apiClient 를 실제와 같은 지점에서 호출한다: 그래야 "api 가 거부하면 Neo4j 를 조회하지 않는다"를
   // 테스트가 apiClient 목만으로 조종할 수 있다. 역직렬화는 생략하고 응답을 그대로 흘린다 —
   // vi.mock 팩토리는 호이스팅돼 모듈 import 를 참조할 수 없고, 이 테스트들이 보는 것은
@@ -29,6 +29,14 @@ vi.mock('../../graphrag/ontology-source.js', () => ({
   resolveOntologyById: vi.fn(async (apiClient: any, ontologyId: number) => ({
     ontology: await apiClient.getOntologyById(ontologyId),
     ontologyId,
+  })),
+  // 읽기 지점(graphrag_query·structured_query) 전용 해소 — 위와 같고 그래프 읽기 판정(WD-28)을 싣는다.
+  // 기본값은 "읽기 가능" — 제한·판정 실패 TC 는 mockResolvedValueOnce 로 'restricted'/'unavailable' 을 넣는다.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  resolveReadableOntologyById: vi.fn(async (apiClient: any, ontologyId: number) => ({
+    ontology: await apiClient.getOntologyById(ontologyId),
+    ontologyId,
+    readable: ontologyId,
   })),
 }));
 vi.mock('../../graphrag/neo4j-client.js', () => ({ bootstrapConstraints: vi.fn() }));
@@ -39,7 +47,7 @@ vi.mock('../../graphrag/loader.js', () => ({ loadGraph: vi.fn() }));
 import { retrieve } from '../../graphrag/retriever.js';
 import { registerGraphragTools } from './graphrag-tools.js';
 import { ingestDataset } from '../../graphrag/ingest.js';
-import { resolveDatasetOntology } from '../../graphrag/ontology-source.js';
+import { resolveDatasetOntology, resolveReadableOntologyById } from '../../graphrag/ontology-source.js';
 import { createCompleter } from '../../graphrag/llm-completer.js';
 import { FireHubApiClient } from '../api-client.js';
 import { createFireHubMcpServer } from '../firehub-mcp-server.js';
@@ -140,9 +148,50 @@ describe('graphrag_query 도구', () => {
     await expect(query.handler({ ontologyId: 999, query: '원인?' })).rejects.toThrow('존재하지 않는 온톨로지');
     expect(vi.mocked(retrieve)).not.toHaveBeenCalled();
   });
+
+  // WD-28: 출처 데이터셋 중 하나라도 못 보는 사용자에게는 그래프 읽기 자체를 거부한다 — 시드 검색조차 하지 않는다.
+  it('읽기 제한 온톨로지면 스펙 문구로 거부하고 그래프를 조회하지 않는다', async () => {
+    vi.mocked(resolveReadableOntologyById).mockResolvedValueOnce({
+      ontology: { domain: 'd', schemaVersion: 1, entities: [], relations: [] },
+      ontologyId: 9,
+      readable: 'restricted',
+    } as never);
+    const apiClient = { searchDocuments: vi.fn(), getOntologyById: vi.fn() } as unknown as FireHubApiClient;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const tools: any[] = registerGraphragTools(apiClient, safeTool, jsonResult);
+    const query = tools.find((t) => t.name === 'graphrag_query');
+
+    await expect(query.handler({ ontologyId: 9, query: '원인?' })).rejects.toThrow(
+      '이 지식그래프에는 열람 권한이 없는 데이터가 포함되어 있어 조회할 수 없습니다.',
+    );
+    expect(resolveReadableOntologyById).toHaveBeenCalledWith(apiClient, 9);
+    expect(vi.mocked(retrieve)).not.toHaveBeenCalled();
+    expect(apiClient.searchDocuments).not.toHaveBeenCalled();
+  });
+
+  // 판정 조회 자체가 실패하면 읽기는 막되 "권한 없음"이 아니라 재시도 안내로 거부한다.
+  it('판정 조회가 실패하면 재시도 안내 문구로 거부하고 그래프를 조회하지 않는다', async () => {
+    vi.mocked(resolveReadableOntologyById).mockResolvedValueOnce({
+      ontology: { domain: 'd', schemaVersion: 1, entities: [], relations: [] },
+      ontologyId: 9,
+      readable: 'unavailable',
+    } as never);
+    const apiClient = { searchDocuments: vi.fn(), getOntologyById: vi.fn() } as unknown as FireHubApiClient;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const tools: any[] = registerGraphragTools(apiClient, safeTool, jsonResult);
+    const query = tools.find((t) => t.name === 'graphrag_query');
+
+    await expect(query.handler({ ontologyId: 9, query: '원인?' })).rejects.toThrow(
+      '지식그래프 열람 권한을 확인하지 못했습니다. 잠시 후 다시 시도하세요.',
+    );
+    expect(vi.mocked(retrieve)).not.toHaveBeenCalled();
+    expect(apiClient.searchDocuments).not.toHaveBeenCalled();
+  });
 });
 
 describe('graphrag_ingest 도구 — 적재 이력 best-effort 기록', () => {
+  // 앞 describe 의 읽기 도구 호출 기록이 남아 있으면 "읽기 해소 미호출" 단언이 오탐한다.
+  beforeEach(() => vi.clearAllMocks());
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const jsonResult = ((data: any) => ({ content: [{ type: 'text', text: JSON.stringify(data) }] })) as unknown as JsonResultFn;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -174,6 +223,8 @@ describe('graphrag_ingest 도구 — 적재 이력 best-effort 기록', () => {
     expect(payload.ontologyId).toBe(42);
     // 배선이 args.datasetId 에 묶여 있는지(하드코딩된 다른 값이 아닌지) 확인한다.
     expect(resolveDatasetOntology).toHaveBeenCalledWith(apiClient, 1);
+    // 적재는 쓰기 경로다 — 그래프 읽기 판정(WD-28)을 하는 읽기 전용 해소를 타면 안 된다(판정 장애가 적재를 막는다).
+    expect(resolveReadableOntologyById).not.toHaveBeenCalled();
   });
 
   it('추출 실패가 있으면 status=PARTIAL 로 recordGraphIngest 를 호출한다', async () => {

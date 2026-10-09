@@ -13,17 +13,19 @@ const { mergeEntitiesMock, setEntityPropertyMock, addEntityMock, boundOntology }
 vi.mock('../graphrag/synonym-merge.js', () => ({ mergeEntities: mergeEntitiesMock }));
 vi.mock('../graphrag/property-mutation.js', () => ({ setEntityProperty: setEntityPropertyMock }));
 vi.mock('../graphrag/entity-add.js', () => ({ addEntity: addEntityMock }));
+vi.mock('../graphrag/relation-add.js', () => ({ addRelation: vi.fn().mockResolvedValue(undefined) }));
 vi.mock('../graphrag/neo4j-client.js', () => ({ readWholeGraph: vi.fn() }));
 vi.mock('../graphrag/ontology-source.js', () => ({
+  // 쓰기 라우트용 해소 — 테넌트 경계만, 그래프 읽기 판정 없음(WD-28).
   resolveDatasetOntology: vi.fn().mockResolvedValue({ ontology: boundOntology, ontologyId: 42 }),
-  // GET /graph 도 이 왕복(=RLS 경계)을 거친다 — 읽기 전용이라고 예외를 두지 않는다.
-  resolveOntologyById: vi.fn().mockResolvedValue({ ontology: boundOntology, ontologyId: 42 }),
+  // GET /graph 는 읽기 지점 전용 해소(=RLS 경계 + 읽기 판정)를 거친다 — 읽기 전용이라고 예외를 두지 않는다.
+  resolveReadableOntologyById: vi.fn().mockResolvedValue({ ontology: boundOntology, ontologyId: 42, readable: 42 }),
 }));
 
 process.env.INTERNAL_SERVICE_TOKEN = 'test-internal-token';
 
 import { readWholeGraph } from '../graphrag/neo4j-client.js';
-import { resolveDatasetOntology, resolveOntologyById } from '../graphrag/ontology-source.js';
+import { resolveDatasetOntology, resolveReadableOntologyById } from '../graphrag/ontology-source.js';
 import graphRouter from './graph.js';
 
 const app = express();
@@ -47,7 +49,7 @@ describe('GET /agent/graph', () => {
     expect(res.status).toBe(200);
     expect(res.body.nodes).toHaveLength(1);
     // 클라이언트가 준 5 를 그대로 쓰지 않고, RLS 왕복이 돌려준 값을 쓴다.
-    expect(resolveOntologyById).toHaveBeenCalledWith(expect.anything(), 5);
+    expect(resolveReadableOntologyById).toHaveBeenCalledWith(expect.anything(), 5);
     expect(readWholeGraph).toHaveBeenCalledWith(42);
   });
 
@@ -59,14 +61,14 @@ describe('GET /agent/graph', () => {
       .set('Authorization', 'Internal test-internal-token');
     expect(res.status).toBe(400);
     expect(res.body.error).toBe('missing delegation headers');
-    expect(resolveOntologyById).not.toHaveBeenCalled();
+    expect(resolveReadableOntologyById).not.toHaveBeenCalled();
     expect(readWholeGraph).not.toHaveBeenCalled();
   });
 
   // 남의 온톨로지는 RLS 때문에 "없는 것"과 같아져 해소 단계에서 예외가 난다 — 그 전에 Neo4j 를
   // 건드리면 이미 남의 데이터를 읽은 것이다.
   it('온톨로지 해소가 실패하면 Neo4j 를 조회하지 않는다', async () => {
-    vi.mocked(resolveOntologyById).mockRejectedValueOnce(new Error('존재하지 않는 온톨로지입니다: 5'));
+    vi.mocked(resolveReadableOntologyById).mockRejectedValueOnce(new Error('존재하지 않는 온톨로지입니다: 5'));
     const res = await request(app).get('/agent/graph?ontologyId=5').set(authHeader);
     expect(res.status).toBe(502);
     expect(readWholeGraph).not.toHaveBeenCalled();
@@ -83,6 +85,35 @@ describe('GET /agent/graph', () => {
   it('ontologyId 가 숫자가 아니면 400 이다', async () => {
     const res = await request(app).get('/agent/graph?ontologyId=abc').set(authHeader);
     expect(res.status).toBe(400);
+    expect(readWholeGraph).not.toHaveBeenCalled();
+  });
+
+  // WD-28: api 의 시각화 프록시는 403 본문에 GRAPH_READ_RESTRICTED 문자열이 있는지로 경합 상황을 판별해
+  // web 에 같은 403 을 넘긴다 — 그래서 code 필드가 본문에 반드시 있어야 한다.
+  it('읽기 판정이 restricted 면 403 GRAPH_READ_RESTRICTED 이고 Neo4j 를 조회하지 않는다', async () => {
+    vi.mocked(resolveReadableOntologyById).mockResolvedValueOnce(
+      { ontology: boundOntology, ontologyId: 42, readable: 'restricted' } as never,
+    );
+    const res = await request(app).get('/agent/graph?ontologyId=5').set(authHeader);
+    expect(res.status).toBe(403);
+    expect(res.headers['content-type']).toMatch(/application\/json/);
+    expect(res.body.code).toBe('GRAPH_READ_RESTRICTED');
+    expect(res.text).toContain('GRAPH_READ_RESTRICTED');
+    expect(res.body.message).toBe('이 지식그래프에는 열람 권한이 없는 데이터가 포함되어 있어 조회할 수 없습니다.');
+    expect(readWholeGraph).not.toHaveBeenCalled();
+  });
+
+  // 판정 조회 자체가 실패하면(네트워크·5xx·타임아웃·404) 권한 없음(403)이 아니라 502 GRAPH_READ_CHECK_FAILED 다 —
+  // api 프록시가 이를 일반 장애로 전달해야 web 이 자물쇠 안내 대신 재시도 가능한 오류를 보여 준다.
+  it('판정 조회 실패(unavailable)면 502 GRAPH_READ_CHECK_FAILED 이고 Neo4j 를 조회하지 않는다', async () => {
+    vi.mocked(resolveReadableOntologyById).mockResolvedValueOnce(
+      { ontology: boundOntology, ontologyId: 42, readable: 'unavailable' } as never,
+    );
+    const res = await request(app).get('/agent/graph?ontologyId=5').set(authHeader);
+    expect(res.status).toBe(502);
+    expect(res.body.code).toBe('GRAPH_READ_CHECK_FAILED');
+    expect(res.text).not.toContain('GRAPH_READ_RESTRICTED');
+    expect(res.body.message).toBe('지식그래프 열람 권한을 확인하지 못했습니다. 잠시 후 다시 시도하세요.');
     expect(readWholeGraph).not.toHaveBeenCalled();
   });
 
@@ -256,5 +287,22 @@ describe('POST /agent/graph/set-property', () => {
     expect(res.status).toBe(400);
     expect(res.body.error).toBe('missing delegation headers');
     expect(setEntityPropertyMock).not.toHaveBeenCalled();
+  });
+});
+
+// WD-28: 판정은 읽기 지점에서만 한다 — 쓰기 라우트(검수 반영)는 읽기 판정 해소를 타지 않아야 한다.
+// 탔다면 판정 장애·읽기 제한이 승인 반영을 막고, 쓰지도 않을 왕복이 생긴다(스펙 §6).
+describe('쓰기 라우트는 그래프 읽기 판정을 하지 않는다', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it.each([
+    ['/agent/graph/merge-entities', { entityType: 'Cause', nameA: 'a', nameB: 'b', datasetId: 900 }],
+    ['/agent/graph/set-property', { entityKey: '3:화재', propertyName: '피해액', dataType: 'number', value: '1', datasetId: 900 }],
+    ['/agent/graph/add-entity', { entityType: 'Inspection', name: '점검', datasetId: 900 }],
+    ['/agent/graph/add-relation', { subjectKey: 'a', relType: 'R', objectKey: 'b', datasetId: 900 }],
+  ])('%s 는 resolveDatasetOntology 만 쓰고 resolveReadableOntologyById 를 부르지 않는다', async (path, body) => {
+    await request(app).post(path).set(authHeader).send(body);
+    expect(resolveDatasetOntology).toHaveBeenCalledWith(expect.anything(), 900);
+    expect(resolveReadableOntologyById).not.toHaveBeenCalled();
   });
 });

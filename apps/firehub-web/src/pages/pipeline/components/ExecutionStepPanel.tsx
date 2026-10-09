@@ -1,8 +1,9 @@
-import { Lock, X } from 'lucide-react';
+import { X } from 'lucide-react';
 
 import { DurationText } from '@/components/pipeline/DurationText';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { RestrictedNotice } from '@/components/ui/restricted-notice';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { formatDate, getStatusBadgeVariant, getStatusLabel } from '@/lib/formatters';
@@ -23,12 +24,7 @@ interface ExecutionStepPanelProps {
  */
 function ExecutionErrorBody({ errorMessage, errorMasked }: { errorMessage: string; errorMasked?: boolean }) {
   if (errorMasked) {
-    return (
-      <p className="flex items-start gap-1.5 rounded bg-muted p-3 text-xs text-muted-foreground">
-        <Lock className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-        <span>{errorMessage}</span>
-      </p>
-    );
+    return <RestrictedNotice message={errorMessage} />;
   }
   // 개발자 디버깅용 기술적 원문 — 최대 높이 제한 + 스크롤
   return (

@@ -10,7 +10,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
 /**
- * V101 이 만든 온톨로지·그래프 8테이블의 스키마 형태를 카탈로그로 고정한다.
+ * V101 이 만든 온톨로지·그래프 8테이블과 V135 출처 테이블(합 9테이블)의 스키마 형태를 카탈로그로 고정한다.
  *
  * <p>왜 필요한가: (1) 유니크 인덱스는 RLS 와 무관하게 전역으로 적용되므로 접지 않으면 두 번째 테넌트가 같은 domain·dataset_id·dedupe_key 로
  * 쓸 때 "보이지도 않는 행"과 충돌한다. (2) tenant_id DEFAULT 가 GUC 를 읽지 않으면 앱이 값을 안 넣는 지금 구조에서 INSERT 가 NOT NULL
@@ -20,7 +20,9 @@ import org.springframework.beans.factory.annotation.Autowired;
  */
 class OntologyGraphSchemaTest extends IntegrationTestBase {
 
-  /** P2-d 범위의 8테이블. 모두 표준 정책(테넌트 필수) 대상이라 nullable 인 tenant_id 는 없다. */
+  /**
+   * P2-d 범위의 8테이블 + V135 graph_ontology_source. 모두 표준 정책(테넌트 필수) 대상이라 nullable 인 tenant_id 는 없다.
+   */
   private static final List<String> TABLES =
       List.of(
           "ontology",
@@ -30,7 +32,8 @@ class OntologyGraphSchemaTest extends IntegrationTestBase {
           "dataset_ontology",
           "dataset_mapping",
           "dataset_graph_ingest",
-          "graph_review_item");
+          "graph_review_item",
+          "graph_ontology_source");
 
   @Autowired private DSLContext dsl;
 
@@ -54,7 +57,7 @@ class OntologyGraphSchemaTest extends IntegrationTestBase {
   }
 
   @Test
-  @DisplayName("8테이블의 tenant_id 가 NOT NULL 이고 DEFAULT 가 GUC 를 읽는다")
+  @DisplayName("9테이블의 tenant_id 가 NOT NULL 이고 DEFAULT 가 GUC 를 읽는다")
   void tenantColumnsAreNotNullWithGucDefault() {
     for (String table : TABLES) {
       assertThat(columnIsNullable(table, "tenant_id")).as("%s.tenant_id nullable", table).isFalse();
@@ -67,7 +70,7 @@ class OntologyGraphSchemaTest extends IntegrationTestBase {
   }
 
   @Test
-  @DisplayName("8테이블 모두 tenant(id) 로 가는 FK 가 있다")
+  @DisplayName("9테이블 모두 tenant(id) 로 가는 FK 가 있다")
   void tenantForeignKeysExist() {
     for (String table : TABLES) {
       Integer fkCount =
@@ -109,7 +112,7 @@ class OntologyGraphSchemaTest extends IntegrationTestBase {
   }
 
   @Test
-  @DisplayName("V102 가 8테이블의 RLS 를 켰고 FORCE 는 꺼져 있다")
+  @DisplayName("V102 가 9테이블의 RLS 를 켰고 FORCE 는 꺼져 있다")
   void rlsEnabledWithoutForce() {
     // V101(컬럼)과 V102(정책)를 나눈 이유: 중간 커밋에서 온톨로지 UI·GraphRAG MCP 툴이 죽지 않게
     // 하기 위함이었다. V102 가 들어온 지금은 켜져 있어야 한다.
@@ -132,10 +135,10 @@ class OntologyGraphSchemaTest extends IntegrationTestBase {
   }
 
   @Test
-  @DisplayName("8테이블 모두 표준 형태의 격리 정책을 하나씩 갖는다")
+  @DisplayName("9테이블 모두 표준 형태의 격리 정책을 하나씩 갖는다")
   void standardIsolationPoliciesExist() {
     // 형태 (b)(IS NOT DISTINCT FROM)는 GUC 가 비면 NULL-vs-NULL 이 참이 되어 fail-open 이다.
-    // 이 8테이블은 tenant_id NOT NULL 이라 NULL 행이 없으므로 전부 표준 형태 (a) 여야 한다.
+    // 이 9테이블은 tenant_id NOT NULL 이라 NULL 행이 없으므로 전부 표준 형태 (a) 여야 한다.
     for (String table : TABLES) {
       String qual =
           (String)

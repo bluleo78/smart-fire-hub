@@ -1,7 +1,7 @@
 // 구조질의 seam 통합 테스트 — 실제 Neo4j에 loader로 속성값을 쓰고, structuredQuery로 필터해 읽어
 // "적재 → 구조질의" 왕복(spec DoD 항목 4)을 검증한다. 단위 테스트는 loader/query가 각각 getSession을
 // 모킹하므로 이 왕복(값이 실제로 저장·비교되는지, JS number로 되돌아오는지)은 통합에서만 잡힌다.
-import { VerifiedOntologyId } from './verified-ontology-id.js';
+import { GraphReadableOntologyId, VerifiedOntologyId } from './verified-ontology-id.js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { getSession, bootstrapConstraints, closeDriver } from './neo4j-client.js';
 import { loadGraph } from './loader.js';
@@ -30,7 +30,7 @@ afterAll(async () => { await closeDriver(); });
 
 describe('structuredQuery (integration) — 적재→구조질의 왕복', () => {
   it('피해액>1e8 필터가 매칭 사건만 반환하고, 값이 JS number로 왕복한다', async () => {
-    const res = await structuredQuery(CORE_ONTOLOGY, 9 as VerifiedOntologyId, 'Incident',
+    const res = await structuredQuery(CORE_ONTOLOGY, 9 as GraphReadableOntologyId, 'Incident',
       [{ property: '피해액', operator: 'gt', value: 100_000_000 }]);
 
     // 매칭은 큰불-2026 1건.
@@ -45,7 +45,7 @@ describe('structuredQuery (integration) — 적재→구조질의 왕복', () =>
   });
 
   it('경계값(피해액>=5천만, gte)은 두 건 모두 반환한다', async () => {
-    const res = await structuredQuery(CORE_ONTOLOGY, 9 as VerifiedOntologyId, 'Incident',
+    const res = await structuredQuery(CORE_ONTOLOGY, 9 as GraphReadableOntologyId, 'Incident',
       [{ property: '피해액', operator: 'gte', value: 50_000_000 }]);
     expect(res.entities.map((e) => e.name).sort()).toEqual(['작은불-2026', '큰불-2026']);
   });
@@ -67,12 +67,12 @@ describe('structuredQuery (integration) — 적재→구조질의 왕복', () =>
     }, 778, 1, otherOntologyId as VerifiedOntologyId);
 
     // 내 온톨로지(9)로 질의하면 남의 노드는 조건(피해액>1e8)을 만족해도 나오지 않는다.
-    const mine = await structuredQuery(CORE_ONTOLOGY, 9 as VerifiedOntologyId, 'Incident',
+    const mine = await structuredQuery(CORE_ONTOLOGY, 9 as GraphReadableOntologyId, 'Incident',
       [{ property: '피해액', operator: 'gt', value: 100_000_000 }]);
     expect(mine.entities.map((e) => e.name)).toEqual(['큰불-2026']);
 
     // 대칭 확인 — 술어가 "항상 빈 결과"가 아니라 진짜로 온톨로지를 가르는지.
-    const theirs = await structuredQuery(CORE_ONTOLOGY, otherOntologyId as VerifiedOntologyId, 'Incident',
+    const theirs = await structuredQuery(CORE_ONTOLOGY, otherOntologyId as GraphReadableOntologyId, 'Incident',
       [{ property: '피해액', operator: 'gt', value: 100_000_000 }]);
     expect(theirs.entities.map((e) => e.name)).toEqual(['남의불-2026']);
   });

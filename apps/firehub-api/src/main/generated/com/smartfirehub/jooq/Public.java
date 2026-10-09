@@ -35,6 +35,7 @@ import com.smartfirehub.jooq.tables.FileDatasetConfig;
 import com.smartfirehub.jooq.tables.FlywaySchemaHistory;
 import com.smartfirehub.jooq.tables.GeographyColumns;
 import com.smartfirehub.jooq.tables.GeometryColumns;
+import com.smartfirehub.jooq.tables.GraphOntologySource;
 import com.smartfirehub.jooq.tables.GraphReviewItem;
 import com.smartfirehub.jooq.tables.JobrunrBackgroundjobservers;
 import com.smartfirehub.jooq.tables.JobrunrJobs;
@@ -286,6 +287,11 @@ public class Public extends SchemaImpl {
      * The table <code>public.geometry_columns</code>.
      */
     public final GeometryColumns GEOMETRY_COLUMNS = GeometryColumns.GEOMETRY_COLUMNS;
+
+    /**
+     * The table <code>public.graph_ontology_source</code>.
+     */
+    public final GraphOntologySource GRAPH_ONTOLOGY_SOURCE = GraphOntologySource.GRAPH_ONTOLOGY_SOURCE;
 
     /**
      * The table <code>public.graph_review_item</code>.
@@ -1030,6 +1036,7 @@ public class Public extends SchemaImpl {
             FlywaySchemaHistory.FLYWAY_SCHEMA_HISTORY,
             GeographyColumns.GEOGRAPHY_COLUMNS,
             GeometryColumns.GEOMETRY_COLUMNS,
+            GraphOntologySource.GRAPH_ONTOLOGY_SOURCE,
             GraphReviewItem.GRAPH_REVIEW_ITEM,
             JobrunrBackgroundjobservers.JOBRUNR_BACKGROUNDJOBSERVERS,
             JobrunrJobs.JOBRUNR_JOBS,

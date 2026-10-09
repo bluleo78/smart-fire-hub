@@ -1,5 +1,5 @@
 // structured-query 단위 테스트 — 순수 빌더(화이트리스트/파라미터 조립)와 실행 함수(Neo4j 세션 모킹)를 검증한다.
-import { VerifiedOntologyId } from './verified-ontology-id.js';
+import { GraphReadableOntologyId, VerifiedOntologyId } from './verified-ontology-id.js';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import neo4j from 'neo4j-driver';
 
@@ -88,7 +88,7 @@ describe('structuredQuery', () => {
       ],
     });
 
-    const result = await structuredQuery(CORE_ONTOLOGY, 9 as VerifiedOntologyId, 'Incident',
+    const result = await structuredQuery(CORE_ONTOLOGY, 9 as GraphReadableOntologyId, 'Incident',
       [{ property: '피해액', operator: 'gt', value: 100_000_000 }]);
 
     expect(runMock).toHaveBeenCalledTimes(1);

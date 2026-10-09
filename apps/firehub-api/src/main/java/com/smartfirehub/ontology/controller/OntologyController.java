@@ -2,6 +2,7 @@ package com.smartfirehub.ontology.controller;
 
 import com.smartfirehub.global.security.RequirePermission;
 import com.smartfirehub.ontology.dto.CreateOntologyRequest;
+import com.smartfirehub.ontology.dto.GraphAccessResponse;
 import com.smartfirehub.ontology.dto.GraphResponse;
 import com.smartfirehub.ontology.dto.OntologyResponse;
 import com.smartfirehub.ontology.dto.OntologySummary;
@@ -30,6 +31,14 @@ public class OntologyController {
   @RequirePermission("dataset:read")
   public GraphResponse getGraph(@PathVariable Long id) {
     return ontologyService.getGraph(id);
+  }
+
+  // 그래프 읽기 판정(WD-28) — ai-agent 가 GraphReadableOntologyId 를 발급할지 묻는다. 온톨로지 스키마 응답과 분리해
+  // 캐시되지 않게 한다(GraphAccessResponse 주석). 권한은 그래프 조회와 같다.
+  @GetMapping("/ontology/{id}/graph-access")
+  @RequirePermission("dataset:read")
+  public GraphAccessResponse getGraphAccess(@PathVariable Long id) {
+    return ontologyService.getGraphAccess(id);
   }
 
   // 온톨로지 목록(요약). status 미지정 시 active만 — 바인딩 후보로 쓰이는 것이 이 목록의 주 용도다.

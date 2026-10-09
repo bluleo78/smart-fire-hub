@@ -20,7 +20,9 @@ const GRAPHRAG_DIR = dirname(fileURLToPath(import.meta.url));
 const SRC_DIR = dirname(GRAPHRAG_DIR);
 // routes 도 본다 — 라우트가 직접 Cypher 를 쓰지는 않지만, 스캔 범위를 graphrag 로 좁혀 두면
 // "옆 디렉터리에 새로 만들면 안 걸린다"가 성립한다.
-const SCAN_DIRS = [GRAPHRAG_DIR, join(SRC_DIR, 'routes')];
+// mcp 도 본다(WD-28 최종 리뷰) — 새 그래프 읽기 코드가 가장 생기기 쉬운 곳이 MCP 도구다. getSession() 이 export 돼 있어
+// 브랜드 타입은 읽기 세 함수만 지키므로, mcp 에서의 브랜드 캐스팅·스코프 없는 :Entity 조회도 이 트립와이어가 잡아야 한다.
+const SCAN_DIRS = [GRAPHRAG_DIR, join(SRC_DIR, 'routes'), join(SRC_DIR, 'mcp')];
 
 /**
  * 스코프 술어 없이 :Entity 를 MATCH 해도 되는 파일과 그 이유.
@@ -87,12 +89,14 @@ describe('그래프 조회 스코프 규약 (트립와이어)', () => {
 
   // 브랜드 타입의 생산 지점은 ontology-source.ts 하나여야 한다 — 다른 곳에서 캐스팅으로 만들면
   // "RLS 왕복을 거친 값"이라는 타입의 의미가 그 순간 사라진다.
-  it('VerifiedOntologyId 캐스팅은 ontology-source.ts 밖에서 일어나지 않는다', () => {
+  // GraphReadableOntologyId(그래프 읽기 판정, WD-28)도 같다 — 판정을 거치지 않은 캐스팅은 게이트 우회다.
+  it('VerifiedOntologyId·GraphReadableOntologyId 캐스팅은 ontology-source.ts 밖에서 일어나지 않는다', () => {
     const offenders: string[] = [];
     for (const dir of SCAN_DIRS) {
       for (const full of sourceFiles(dir)) {
         if (full.endsWith('ontology-source.ts')) continue;
-        if (readFileSync(full, 'utf8').includes('as VerifiedOntologyId')) {
+        const text = readFileSync(full, 'utf8');
+        if (text.includes('as VerifiedOntologyId') || text.includes('as GraphReadableOntologyId')) {
           offenders.push(relative(SRC_DIR, full));
         }
       }

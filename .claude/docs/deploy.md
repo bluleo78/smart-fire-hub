@@ -255,8 +255,8 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
 - executor·ai-agent 는 재배포 불필요. executor 는 변경 없음. ai-agent 는 `src/mcp/api-client/analytics-api.ts` 의 **TypeScript 타입만** 바뀌었다(`Chart.savedQueryName` 을 `string | null` 로, `ChartData.denied?` 추가) — 이 필드를 읽는 런타임 코드가 없고 타입은 빌드 시 지워지므로 실행 동작이 같다.
 - 마이그레이션 V133: 전 테넌트에 4등급 시드 + 기존 데이터셋·역할=내부, 시스템 ADMIN=기밀 백필 → **배포 직후 가시성은 배포 전과 같다**(내부 이하는 허용 목록 없음).
 - 마이그레이션 V134(후속 수정, 같은 릴리스): GraphRAG 검수 항목 유일 인덱스 `uq_graph_review_item` 을 `(tenant_id, item_type, dedupe_key)` 에서 `(tenant_id, item_type, dataset_id, dedupe_key) NULLS NOT DISTINCT` 로 교체한다(인덱스 이름 유지). `NULLS NOT DISTINCT` 는 **PostgreSQL 15 이상** 문법이다 — 운영 DB 가 PG16 인지 배포 전에 확인한다(`select version()`). 새 키는 옛 키의 상위 집합이라 기존 행이 위반할 수 없다(아래 사전 확인 쿼리로 확인).
-- **다음 신규 마이그레이션 번호 = V135.**
-- **번호 확인**: 2026-10-08 기준 main 의 최신 마이그레이션은 V132 이고 이 브랜치의 V133·V134 는 맞는 번호다. **병합 직전에 실제 main 의 마이그레이션 목록을 다시 확인한다**(번호 충돌 전례 — V122). 배포 전 스냅샷 규칙(V122 이상)은 그대로 따른다.
+- 다음 마이그레이션은 V135(아래 V135 절)다. **다음 신규 마이그레이션 번호 = V136**(V135 절과 같은 값 — 새 마이그레이션을 더하면 두 곳을 함께 갱신한다).
+- **번호 확인**(V133·V134 작성 당시 기록): 2026-10-08 기준 main 의 최신 마이그레이션은 V132 였고 이 브랜치의 V133·V134 는 맞는 번호였다. **병합 직전에 실제 main 의 마이그레이션 목록을 다시 확인한다**(번호 충돌 전례 — V122). 배포 전 스냅샷 규칙(V122 이상)은 그대로 따른다.
 - 아래 확인 쿼리는 전부 **소유자 롤로 실행**한다(`docker exec <db> psql -U app -d smartfirehub`) — 런타임 롤 `app_tenant` 는 RLS 라 행이 0 으로 보여 확인이 공허해진다.
 - 배포 전 확인:
   - `select max(version::int) from flyway_schema_history` 가 132 인지.
@@ -312,7 +312,9 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
   - **편집기 숨김 표시의 상한**(WD-31): 파이프라인 편집기·트리거 폼의 "열람 권한 없음" 잠금 표시는 데이터셋 목록(최대 1만 건) 안에서만 정확하다 — 1만 건을 넘는 테넌트에서는 볼 수 있는 데이터셋도 잠금으로 보일 수 있다(서버 판정에는 영향 없음).
   - **API_CALL·PYTHON 지정 출력은 같은 값 재전송도 판정한다**(WD-31): SQL 스텝과 달리 이미 저장된 지정 출력을 그대로 다시 보내도 편집자의 VIEW 를 본다 — 그 출력을 볼 자격을 잃은 편집자는 그 파이프라인을 저장할 수 없다(다른 편집자가 저장하거나 출력을 바꾼다).
   - **PYTHON 입력 우회**(WD-29): PYTHON 스텝의 **입력 읽기**는 SQL 관문을 거치지 않는 알려진 우회 경로다(편집 화면 경고만, 강제는 후속). 출력 쓰기는 막혔다. 이 우회로 숨김 데이터를 읽은 PYTHON 스텝이 공개 출력에 쓰면, 그 스텝의 로그·오류 원문이 출력을 볼 수 있는 조회자에게 보일 수 있다(실행 기록 원문 판정이 입력을 모르기 때문).
-  - **GraphRAG 에 이미 적재된 내용은 등급을 올려도 계속 읽힌다**(WD-28): 문서 적재·`graphrag_project_table`(표 투영)로 Neo4j 에 들어간 엔티티·관계·속성(표 행 값 포함)은 데이터셋을 나중에 '민감'·'기밀'로 올려도 ai-agent 의 그래프 조회·채팅 검색으로 계속 노출된다(스펙 §7.5 — 그래프 쪽 통제는 후속). **운영 절차**: 등급을 올리기 전에 그 데이터셋이 GraphRAG 에 적재됐는지(소유자 롤로 `SELECT * FROM dataset_graph_ingest WHERE dataset_id = <id>`) 확인하고, 적재돼 있으면 그래프에서 해당 데이터셋 유래 노드를 수동으로 정리한 뒤 올린다. 검수 인박스의 원문 근거는 이번 배포에서 막혔다.
+  - **GraphRAG 에 이미 적재된 내용과 등급 상향**(WD-28): 문서 적재·`graphrag_project_table`(표 투영)로 Neo4j 에 들어간 엔티티·관계·속성(표 행 값 포함)이 대상이다. 검수 인박스의 원문 근거는 V133·V134 배포에서 막혔다.
+    - **V135 배포 전까지**: 데이터셋을 나중에 '민감'·'기밀'로 올려도 ai-agent 의 그래프 조회·채팅 검색으로 계속 노출된다(스펙 §7.5). **운영 절차**: 등급을 올리기 전에 그 데이터셋이 GraphRAG 에 적재됐는지(소유자 롤로 `SELECT * FROM dataset_graph_ingest WHERE dataset_id = <id>`) 확인하고, 적재돼 있으면 그래프에서 해당 데이터셋 유래 노드를 수동으로 정리한 뒤 올린다.
+    - **V135 배포 후**: 출처 데이터셋을 볼 수 없는 사용자에게는 그 온톨로지의 그래프 읽기가 통째로 막히므로(아래 V135 절) 등급 상향 전 수동 정리는 필요 없다. 단 출처가 기록되지 않은 온톨로지는 게이트가 막지 못하므로(V135 절 알려진 한계), 그 경우에만 위 수동 정리를 한다. 삭제된 데이터셋이 출처인 온톨로지는 테넌트 관리자만 읽는다(V135 절).
   - 접근 거부 감사(누가 무엇에 거부됐는지)는 S4 로 이연 — 이번 배포에서는 관리 작업만 감사에 남는다(WD-30).
   - 러너 TEMP 의 허용 목록은 늘어나기만 한다(REPLACE 때 재설정은 S4 전파 설계와 함께, WD-30).
   - 허용 목록의 사용자 항목은 `"user"` 행 삭제 시 함께 지워진다(`ON DELETE CASCADE`). **제품 코드에는 사용자 하드 삭제 경로가 없다**(멤버 제거·정지·전역 비활성은 행을 남긴다) — 그래서 역할 삭제와 달리 "유일 항목" 가드를 두지 않았다. 운영에서 사용자 행을 **수동으로** 지울 때는 먼저 `SELECT g.dataset_id FROM dataset_access_grant g JOIN dataset d ON d.id = g.dataset_id JOIN security_level l ON l.id = d.security_level_id WHERE g.user_id = <id> AND l.allowlist_required AND (SELECT count(*) FROM dataset_access_grant x WHERE x.dataset_id = g.dataset_id) = 1` (소유자 롤) 가 0행인지 확인한다. 같은 이유로, 유일 허용 항목인 사용자를 워크스페이스에서 **제거·정지**하면 그 데이터셋은 관리자 우회(admin_bypass) 외에는 아무도 못 본다 — 관리자가 허용 목록에 다른 항목을 추가해 복구한다(가드는 후속 판단).
@@ -327,6 +329,59 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
        `BEGIN; DROP INDEX uq_graph_review_item; CREATE UNIQUE INDEX uq_graph_review_item ON graph_review_item (tenant_id, item_type, dedupe_key); DELETE FROM flyway_schema_history WHERE version = '134'; COMMIT;`
        V134 이력 행을 지우는 이유: 남겨 두면 재배포 때 Flyway 가 V134 를 적용된 것으로 보고 다시 돌리지 않아, 새 코드의 4열 `ON CONFLICT` 가 같은 42P10 으로 깨진다.
     4. 이전 이미지(api+web)로 기동한다.
+
+### V135 지식그래프 읽기 게이트 (WD-28, 계획 2026-10-08 · 배포일은 배포 시점에 갱신)
+
+- **api + ai-agent + web 동시 배포 필수.**
+  - api 만 새 버전이면 시각화(`/ontology/{id}/graph`)는 막히지만 MCP `graphrag_query`·`graphrag_structured_query` 는 구 ai-agent 가 판정 없이 읽는다.
+  - ai-agent 만 새 버전이면 판정 엔드포인트(`/ontology/{id}/graph-access`)가 404 다. 그러면 **모든 그래프 읽기가 막힌다**(fail-closed) — MCP 두 도구는 제한 문구, 시각화는 구 api 가 ai-agent 의 403 을 몰라 오류로 보인다. 쓰기(적재·검수 반영)는 영향 없다.
+  - web 이 구버전이면 제한이 "그래프를 불러오지 못했습니다" 오류(재시도 버튼)로 보인다.
+- 마이그레이션 V135: `graph_ontology_source`(tenant_id, ontology_id, dataset_id, first_written_at) + RLS(`graph_ontology_source_tenant_isolation`, FORCE 없음) + 인덱스 `idx_graph_ontology_source_ontology(ontology_id)`(판정·CASCADE 용) + 백필. 백필은 현재 `dataset_ontology` 전부 ∪ `dataset_mapping` 전부(draft 포함)다. 이후 연결(`dataset_ontology`)·매핑 저장 때마다 출처를 삽입만 한다(재연결·매핑 삭제로 지우지 않음, 온톨로지 삭제 시 CASCADE).
+- **번호 확인**: 2026-10-08 기준 main 최신은 V134. **병합 직전에 실제 main 의 마이그레이션 목록을 다시 확인한다**(V122 충돌 전례). 배포 전 스냅샷 규칙(V122 이상)을 따른다. **다음 신규 마이그레이션 번호 = V136.**
+- 아래 쿼리는 전부 **소유자 롤로 실행**한다(`docker exec <db> psql -U app -d smartfirehub`). `app_tenant` 는 RLS 때문에 0행으로 보여 공허해진다.
+- 배포 전 확인:
+  - `select max(version::int) from flyway_schema_history` 가 134 인지.
+  - **테넌트마다 기본 등급이 있는지** — 아래 미리 보기가 기본 등급(`is_default`)을 기준으로 하므로, 기본 등급이 없는 테넌트는 조용히 빠진다. 0행이어야 한다(행이 나오면 중단 후 상의).
+    `SELECT t.id FROM tenant t WHERE NOT EXISTS (SELECT 1 FROM security_level x WHERE x.tenant_id = t.id AND x.is_default)`
+  - **배포 직후 막힐 온톨로지 미리 보기** — 테넌트 기본 등급보다 rank 가 높거나 허용 목록이 필요한(`allowlist_required`) 등급의 출처를 가진 온톨로지. 등급 이름('내부' 등)은 관리 화면에서 바꿀 수 있으므로 이름으로 비교하지 않는다. 운영은 현재 데이터셋 92개가 전부 기본 등급('내부')이라 0행을 예상한다. 행이 나오면 해당 온톨로지를 그 등급을 볼 수 없는 사용자에게 막아도 되는지 상의한다.
+    `SELECT s.tenant_id, s.ontology_id, d.id AS dataset_id, sl.name AS level, sl.allowlist_required FROM (SELECT tenant_id, ontology_id, dataset_id FROM dataset_ontology UNION SELECT tenant_id, ontology_id, dataset_id FROM dataset_mapping) s JOIN dataset d ON d.id = s.dataset_id AND d.tenant_id = s.tenant_id JOIN security_level sl ON sl.id = d.security_level_id JOIN security_level dl ON dl.tenant_id = s.tenant_id AND dl.is_default WHERE sl.rank > dl.rank OR sl.allowlist_required`
+    이 쿼리는 근사치다 — 실제 판정은 사용자마다 역할의 최대 열람 등급·허용 목록·관리자 우회로 달라진다(기본 등급보다 낮은 역할만 가진 사용자는 0행이어도 막힐 수 있고, 높은 역할의 사용자는 행이 나와도 막히지 않는다). 역할이 없는 활성 사용자는 원래 어떤 데이터셋도 못 보므로 출처가 있는 그래프는 모두 막힌다.
+  - **재연결 이력 수동 점검 후보** — 첫 적재보다 바인딩 시각이 늦은 데이터셋이다. 다른 온톨로지로 재연결됐을 수 있고, 그 경우 옛 온톨로지 출처는 백필이 복원하지 못한다. 행마다 예전 온톨로지를 확인하고, 필요하면 수동으로 `INSERT INTO graph_ontology_source (tenant_id, ontology_id, dataset_id) VALUES (…) ON CONFLICT DO NOTHING` 한다(배포 후, 테이블이 생긴 뒤).
+    `SELECT g.tenant_id, g.dataset_id, min(g.ingested_at) AS first_ingest, o.ontology_id AS current_ontology, o.bound_at FROM dataset_graph_ingest g JOIN dataset_ontology o ON o.dataset_id = g.dataset_id AND o.tenant_id = g.tenant_id GROUP BY g.tenant_id, g.dataset_id, o.ontology_id, o.bound_at HAVING o.bound_at > min(g.ingested_at)`
+    (`ingested_at` 은 timestamp, `bound_at` 은 timestamptz 라 세션 시간대 기준으로 비교된다 — 경계 근처 행은 오탐일 수 있으니 행마다 확인한다.)
+- 배포 후 확인:
+  - `select max(version::int) from flyway_schema_history` = 135.
+  - 백필 건수: `SELECT count(*) FROM graph_ontology_source` ≥ `SELECT count(*) FROM (SELECT tenant_id, ontology_id, dataset_id FROM dataset_ontology UNION SELECT tenant_id, ontology_id, dataset_id FROM dataset_mapping) s`
+  - 일반 사용자로 지식그래프 "그래프 탐색" 탭과 채팅의 그래프 질문이 배포 전처럼 동작하는지(전부 '내부'면 막히는 사용자 없음).
+- 동작 변화:
+  - 온톨로지 그래프의 출처 데이터셋 중 하나라도 볼 수 없는 사용자는 그 온톨로지의 그래프 읽기 세 경로가 모두 막힌다. 어느 데이터셋 때문인지는 밝히지 않는다.
+    - 시각화("그래프 탐색" 탭): api 가 403 `GRAPH_READ_RESTRICTED` 를 돌려주고 web 은 오류색·재시도·토스트 없이 자물쇠 안내 `이 지식그래프에는 열람 권한이 없는 데이터가 포함되어 있어 표시할 수 없습니다.` 를 보인다. 제한 상태에선 이름 검색·타입 묶기·타입 필터를 숨긴다(온톨로지 선택기는 유지).
+    - MCP 두 도구(`graphrag_query`·`graphrag_structured_query`): `이 지식그래프에는 열람 권한이 없는 데이터가 포함되어 있어 조회할 수 없습니다.`
+    - ai-agent `/agent/graph` 도 대행 사용자 기준으로 다시 판정한다(이중 방어, 403 `GRAPH_READ_RESTRICTED`).
+  - 출처 중 **삭제된 데이터셋**(출처 행은 있는데 dataset 이 없음)이 하나라도 있는 온톨로지는 **테넌트 관리자만** 그래프를 읽는다(관리자 판정은 실행 기록 원문 공개와 같은 `Clearance.tenantAdmin`; 판정 불가면 막힘). 삭제된 데이터셋은 등급이 없어 판정할 수 없는데 그 내용은 그래프에 남아 있기 때문이다. 관리자도 남은 **존재하는** 출처는 일반 규칙대로 판정한다.
+  - 판정은 사용자 신원 기준이며 데이터셋 목록과 같은 규칙(`DatasetAccessGuard.visibleCondition`)을 쓴다 — 테넌트 관리자도 허용 목록이 필요한 등급에서는 그 등급에 `admin_bypass` 가 켜져 있지 않으면(V133 시드는 전부 꺼짐) 허용 목록 밖일 때 막힌다. 판정 조회(`graph-access`)는 읽기 지점(시각화·MCP 두 도구·평가 스크립트)에서만 한다 — 적재·표 투영·추론·describe·검수 반영은 판정을 묻지 않으므로 판정 장애와 무관하게 진행한다.
+  - 연결만 하고 적재하지 않은 데이터셋도 출처로 잡는다(안전 쪽 판정).
+  - 온톨로지 스키마(목록·요소 편집, "지식 모델" 탭)와 적재·표 투영·검수 반영은 그대로다.
+  - 실행 기록 오류 가림 문구(WD-27)도 같은 자물쇠 안내 컴포넌트를 쓰게 되어 어절 단위로 줄바꿈된다(표시만 바뀜).
+- 알려진 한계:
+  - **삭제된 출처가 있는 온톨로지는 일반 사용자에게 계속 막힌다.** 출처 행이 지워지지 않으므로 데이터셋을 지운 뒤에도 그 온톨로지는 관리자 전용으로 남는다. 일반 사용자에게 다시 열려면 아래 "출처는 지워지지 않아" 항목의 절차(Neo4j 잔존 확인 → 출처 행 삭제)를 그 삭제된 데이터셋 id 로 밟는다. 데이터셋이 지워지면 `document_chunk` 행도 남지 않아 `<chunkIds>` 를 구할 수 없을 수 있다. 그때는 `sourceDatasetIds` 조건만으로 확인하는데, 청크 id 만 남은 적재분은 이 조건으로 잡히지 않으므로 확신이 없으면 출처 행을 지우지 않는다(관리자 전용으로 둔다). 백필은 연결·매핑(데이터셋 삭제 시 함께 지워짐)에서만 오므로 배포 직후에는 이런 온톨로지가 없고, 배포 **이후** 데이터셋을 지울 때 생긴다.
+  - V135 이전에 다른 온톨로지로 적재했다가 재연결한 이력은 백필이 복원하지 못한다(위 수동 점검).
+  - 판정이 거칠다. 기밀 출처 하나가 섞이면 온톨로지 전체가 막힌다(노드 단위 판정은 S3 이후).
+  - **출처 기록이 없는 온톨로지는 신원이 있는 사용자 누구나 읽는다**(판정할 출처가 없으므로 통과). V135 이전 재연결로 출처가 빠진 온톨로지가 여기에 해당할 수 있다 — 위 재연결 수동 점검이 그 보완이다.
+  - **출처는 지워지지 않아 과잉 차단이 영구히 남을 수 있다.** draft 매핑만 만들었거나, 잘못 연결했다가 바로 바꾼 데이터셋도 출처로 남는다. 그 데이터셋이 높은 등급이면 그 온톨로지는 해당 등급을 못 보는 사용자 전원에게 계속 막힌다. 정리 도구는 없고, 해제는 소유자 롤 수작업뿐이다. **그 데이터셋의 내용이 그래프에 실제로 남아 있지 않음을 확인한 경우에만** 지운다.
+    1. Neo4j 에서 잔존 여부를 확인한다. `<O>`=온톨로지 id, `<D>`=데이터셋 id, `<chunkIds>`=`SELECT id FROM document_chunk WHERE dataset_id = <D>` 결과 목록. 두 쿼리가 모두 0 이어야 한다:
+       `MATCH (n:Entity {ontologyId: <O>}) WHERE <D> IN coalesce(n.sourceDatasetIds, []) OR any(c IN coalesce(n.sourceChunkIds, []) WHERE c IN [<chunkIds>]) RETURN count(n)`
+       `MATCH (a:Entity {ontologyId: <O>})-[r:REL]->(:Entity {ontologyId: <O>}) WHERE <D> IN coalesce(r.sourceDatasetIds, []) OR any(c IN coalesce(r.sourceChunkIds, []) WHERE c IN [<chunkIds>]) RETURN count(r)`
+    2. 0 이면 소유자 롤로 `DELETE FROM graph_ontology_source WHERE tenant_id = <T> AND ontology_id = <O> AND dataset_id = <D>` 한다. 그 데이터셋이 아직 그 온톨로지에 연결·매핑돼 있으면 다음 연결·매핑 저장 때 다시 기록되므로, 연결·매핑을 먼저 정리한다.
+  - **판정 조회 일시 장애는 읽기를 막되 "열람 권한 없음"과 구분해 알린다.** ai-agent 의 `graph-access` 호출이 네트워크·5xx·타임아웃·404 로 실패하면 fail-closed 로 읽기를 막는다. MCP 두 도구는 `지식그래프 열람 권한을 확인하지 못했습니다. 잠시 후 다시 시도하세요.` 를, ai-agent `/agent/graph` 는 502 `GRAPH_READ_CHECK_FAILED` 를 돌려준다. api 는 이 502 를 403 으로 바꾸지 않고 일반 오류(502)로 전달하므로 web 은 자물쇠 안내가 아니라 재시도 가능한 오류를 보인다(단 api 프록시는 ai-agent 를 부르기 전에 자기 판정을 먼저 하므로, 시각화에서 이 경우는 api 판정 통과 후 ai-agent 재판정만 실패한 드문 경우다). 이런 오류가 반복되면 ai-agent 로그의 `[graphrag] 그래프 읽기 판정 조회 실패` 와 api 로그를 먼저 확인한다.
+  - 온톨로지 스키마(타입·속성 이름)는 판정 대상이 아니다. `infer_ontology`·`infer_mapping` 은 데이터셋을 프로파일링해 이름을 만들므로, 숨김 데이터셋의 컬럼 의미가 스키마에 드러날 수 있다 → WD-31.
+- **롤백**:
+  - V135 는 새 테이블만 더하므로 **이미지만 이전 버전(api+ai-agent+web 함께)으로 되돌리면 된다**. DB 는 그대로 둔다(구 코드는 이 테이블을 읽지도 쓰지도 않는다). 롤백 동안은 게이트가 없어 배포 전 가시성으로 돌아간다.
+  - 롤백 기간에 새로 만든 연결·매핑은 출처가 기록되지 않는다. **재배포 직후 아래 백필 INSERT 를 소유자 롤로 한 번 다시 실행**한다(V135 의 BACKFILL 구간과 같은 문, `ON CONFLICT DO NOTHING` 이라 멱등):
+    `INSERT INTO graph_ontology_source (tenant_id, ontology_id, dataset_id) SELECT tenant_id, ontology_id, dataset_id FROM dataset_ontology UNION SELECT tenant_id, ontology_id, dataset_id FROM dataset_mapping ON CONFLICT DO NOTHING;`
+  - 이 재실행이 복원하는 것과 못 하는 것:
+    - 복원된다: 롤백 기간에 생긴 연결·매핑 중 **재배포 시점에 아직 남아 있는 것**(현재 `dataset_ontology`·`dataset_mapping` 행).
+    - 복원되지 않는다: 롤백 기간 **안에서** 다른 온톨로지로 재연결됐거나 삭제된 매핑의 **옛** 온톨로지 출처. 그 사이 옛 온톨로지로 적재했다면 그래프에 내용이 남아 있는데 출처가 없어 누구나 읽는다(위 "출처 기록이 없는 온톨로지" 한계). 롤백 시작 시각 이후 `dataset_ontology.bound_at` 이 바뀐 데이터셋을 뽑아(`SELECT tenant_id, dataset_id, ontology_id, bound_at FROM dataset_ontology WHERE bound_at > '<롤백 시작 시각>'`) 그 기간의 `dataset_graph_ingest` 이력과 대조하고, 필요하면 옛 온톨로지 출처를 수동 INSERT 한다(위 재연결 점검과 같은 방식).
 
 ### opencode baseURL 사설망 점검 (이슈 #698)
 
