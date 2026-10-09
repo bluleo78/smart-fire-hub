@@ -3,6 +3,7 @@ package com.smartfirehub.global.security;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.permission.service.PermissionService;
 import com.smartfirehub.platform.repository.PlatformRoleRepository;
+import com.smartfirehub.securitylevel.ai.AiCallContext;
 import com.smartfirehub.tenant.dto.MembershipResponse;
 import com.smartfirehub.tenant.repository.MembershipRepository;
 import jakarta.servlet.FilterChain;
@@ -131,6 +132,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
       resolveInternalTenant(userId, request.getHeader(InternalCallHeaders.ON_BEHALF_OF_TENANT))
           .ifPresent(TenantContext::set);
       setSecurityContext(userId);
+      // AI 경로 표시(S3 §4.3) — 대행 인증이 성공한 요청만. 판정은 가드가 이 표시를 읽어 한다(호스팅은 API 가 계산).
+      AiCallContext.markAiRequest(request, request.getHeader(InternalCallHeaders.AI_PURPOSE));
     } catch (NumberFormatException ignored) {
       // Invalid userId, skip authentication
     }

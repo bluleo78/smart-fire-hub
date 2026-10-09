@@ -7,7 +7,10 @@ import static org.jooq.impl.DSL.name;
 import static org.jooq.impl.DSL.table;
 
 import com.smartfirehub.dataset.exception.DatasetNotFoundException;
+import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.securitylevel.ai.AiCall;
+import com.smartfirehub.securitylevel.ai.PolicyBlockedException;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.SecurityFixture;
 import java.util.ArrayList;
@@ -204,6 +207,137 @@ class DatasetAccessGuardTest extends IntegrationTestBase {
                         pub)
                     .getValues(0, Long.class));
     assertThat(visible).containsExactly(pub);
+  }
+
+  /**
+   * S3 §4.3: AI 문맥 SQL 조각(ai_policy·share_policy 술어 포함)이 호스팅 2종 × share 여부 전 조합에서 가드 판정(AI
+   * [+SHARE])과 같은 답을 낸다. 기밀은 허용 목록에 올려 VIEW 를 통과시켜야 share 술어가 실제로 검증된다.
+   */
+  @Test
+  void aiVisibleCondition_agreesWithPolicy_acrossHostingAndShare() {
+    long uid = user("기밀", false);
+    Clearance c = clearanceResolver.resolve(uid);
+    List<Long> ids = new ArrayList<>();
+    for (String lv : List.of("공개", "내부", "민감", "기밀")) {
+      ids.add(dataset(lv));
+    }
+    long sens = ids.get(2);
+    long secret = ids.get(3);
+    fx.grantUser(secret, uid);
+    for (ProviderHosting h : ProviderHosting.values()) {
+      for (boolean share : List.of(false, true)) {
+        AiCall call = new AiCall(h, share);
+        List<Long> sqlVisible =
+            inTenantFixture(
+                () ->
+                    dsl.select(field(name("dataset", "id"), Long.class))
+                        .from(table(name("dataset")))
+                        .where(field(name("dataset", "id"), Long.class).in(ids))
+                        .and(
+                            guard.visibleCondition(
+                                c,
+                                field(name("dataset", "id"), Long.class),
+                                field(name("dataset", "security_level_id"), Long.class),
+                                call))
+                        .fetch(field(name("dataset", "id"), Long.class)));
+        for (long ds : ids) {
+          boolean policy =
+              guard.check(c, ds, DatasetAction.AI, h).allowed()
+                  && (!share || guard.check(c, ds, DatasetAction.SHARE, null).allowed());
+          assertThat(sqlVisible.contains(ds))
+              .as("ds=%d hosting=%s share=%s", ds, h, share)
+              .isEqualTo(policy);
+        }
+      }
+    }
+    // 앵커(시드 정책): VIEW 는 전부 통과, 외부 호스팅에서 민감은 AI 불가, 자체 호스팅이면 가능, 기밀은 SHARE 불가.
+    for (long ds : ids) {
+      assertThat(guard.check(c, ds, DatasetAction.VIEW, null).allowed()).isTrue();
+    }
+    assertThat(guard.check(c, sens, DatasetAction.AI, ProviderHosting.EXTERNAL).allowed())
+        .isFalse();
+    assertThat(guard.check(c, sens, DatasetAction.AI, ProviderHosting.SELF_HOSTED).allowed())
+        .isTrue();
+    assertThat(guard.check(c, secret, DatasetAction.SHARE, null).reasonCode())
+        .isEqualTo("SHARE_DENIED");
+    // 공개 진입점(목록·문자열 SQL)도 같은 규칙: 외부 호스팅이면 공개·내부만.
+    List<Long> viaPublic =
+        inTenantFixture(
+            () ->
+                dsl.select(field(name("dataset", "id"), Long.class))
+                    .from(table(name("dataset")))
+                    .where(field(name("dataset", "id"), Long.class).in(ids))
+                    .and(guard.visibleCondition(c, ProviderHosting.EXTERNAL))
+                    .fetch(field(name("dataset", "id"), Long.class)));
+    assertThat(viaPublic).containsExactlyInAnyOrder(ids.get(0), ids.get(1));
+    String frag = guard.visibleSql(c, ProviderHosting.SELF_HOSTED, "d");
+    List<Long> viaSql =
+        inTenantFixture(
+            () ->
+                dsl.fetch(
+                        "select d.id from dataset d where d.id in (?, ?, ?, ?) and " + frag,
+                        ids.toArray())
+                    .getValues(0, Long.class));
+    assertThat(viaSql).containsExactlyInAnyOrderElementsOf(ids);
+  }
+
+  /** S3 §4.3: 볼 수 없는 데이터셋은 기존과 같은 404(존재 은닉), 볼 수 있지만 AI 불허면 403 POLICY_BLOCKED + 등급 이름. */
+  @Test
+  void requireAi_hiddenIs404_visibleButBlockedIs403WithDetails() {
+    long low = user("공개", false);
+    long ds = dataset("민감");
+    Clearance lowC = clearanceResolver.resolve(low);
+    assertThatThrownBy(() -> guard.requireAi(lowC, ds, ProviderHosting.SELF_HOSTED))
+        .isInstanceOf(DatasetNotFoundException.class)
+        .hasMessage("Dataset not found: " + ds);
+    long high = user("기밀", false);
+    Clearance highC = clearanceResolver.resolve(high);
+    assertThatThrownBy(() -> guard.requireAi(highC, ds, ProviderHosting.EXTERNAL))
+        .isInstanceOfSatisfying(
+            PolicyBlockedException.class,
+            e -> {
+              assertThat(e.code()).isEqualTo("POLICY_BLOCKED");
+              assertThat(e.status().value()).isEqualTo(403);
+              assertThat(e.details())
+                  .containsEntry("action", "AI")
+                  .containsEntry("levelName", "민감")
+                  .containsEntry("policyKey", "ai_policy");
+            });
+    guard.requireAi(highC, ds, ProviderHosting.SELF_HOSTED); // 통과
+  }
+
+  /** S3 §4.3: 목록 강제 — 공유 목적이면 기밀(SHARE DENY)이 POLICY_BLOCKED(SHARE), 숨김 id 는 구분 불가 403. */
+  @Test
+  void requireAiForDatasets_shareDeniedForSecret_hiddenIsSqlAccessDenied() {
+    long high = user("기밀", false);
+    Clearance c = clearanceResolver.resolve(high);
+    long secret = dataset("기밀");
+    fx.grantUser(secret, high);
+    assertThatThrownBy(
+            () ->
+                guard.requireAiForDatasets(
+                    c, List.of(secret), new AiCall(ProviderHosting.SELF_HOSTED, true)))
+        .isInstanceOfSatisfying(
+            PolicyBlockedException.class,
+            e ->
+                assertThat(e.details())
+                    .containsEntry("action", "SHARE")
+                    .containsEntry("levelName", "기밀")
+                    .containsEntry("policyKey", "share_policy"));
+    guard.requireAiForDatasets(c, List.of(secret), new AiCall(ProviderHosting.SELF_HOSTED, false));
+
+    long low = user("공개", false);
+    Clearance lowC = clearanceResolver.resolve(low);
+    assertThatThrownBy(
+            () ->
+                guard.requireAiForDatasets(
+                    lowC, List.of(secret), new AiCall(ProviderHosting.SELF_HOSTED, false)))
+        .isInstanceOfSatisfying(
+            CodedApiException.class,
+            e -> {
+              assertThat(e).isNotInstanceOf(PolicyBlockedException.class);
+              assertThat(e.code()).isEqualTo(DatasetAccessGuard.SQL_ACCESS_DENIED_CODE);
+            });
   }
 
   private long adminRoleId() {

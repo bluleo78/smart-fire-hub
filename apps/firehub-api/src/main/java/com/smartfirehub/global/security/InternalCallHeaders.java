@@ -22,5 +22,11 @@ public final class InternalCallHeaders {
    */
   public static final String ON_BEHALF_OF_TENANT = "X-On-Behalf-Of-Tenant";
 
+  /**
+   * 대행 호출의 목적(S3 §4.3). "share" = 결과가 공유 저장소·발송으로 간다(SHARE 판정 추가), "none" = LLM 을 거치지 않는 대행(그래프
+   * 뷰어·HITL 승인 — AI 판정 제외). 생략 = 채팅(AI 판정). ai-agent 대응 상수는 constants.ts 의 AI_PURPOSE_HEADER.
+   */
+  public static final String AI_PURPOSE = "X-AI-Purpose";
+
   private InternalCallHeaders() {}
 }

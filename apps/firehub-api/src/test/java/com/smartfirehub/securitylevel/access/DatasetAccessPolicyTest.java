@@ -142,4 +142,38 @@ class DatasetAccessPolicyTest {
     assertThat(INTERNAL.restricted()).isFalse();
     assertThat(SENSITIVE.restricted()).isTrue();
   }
+
+  /** S3: 사용자 없는 등급 판정(aiAllowedForLevel)이 decide(AI) 와 모든 정책×호스팅에서 같은 답을 낸다. */
+  @Test
+  void aiAllowedForLevel_agreesWithDecideAi_forEveryPolicyAndHosting() {
+    for (AiPolicy p : AiPolicy.values()) {
+      for (ProviderHosting h : ProviderHosting.values()) {
+        LevelPolicy lv =
+            new LevelPolicy(
+                1L, "L", 1, false, false, false, ExportPolicy.ALLOW, p, SharePolicy.ALLOW, false);
+        boolean decided =
+            DatasetAccessPolicy.decide(
+                    new AccessInput(1, false, false, lv, DatasetAction.AI, Set.of(), h))
+                .allowed();
+        assertThat(DatasetAccessPolicy.aiAllowedForLevel(lv, h))
+            .as("%s/%s", p, h)
+            .isEqualTo(decided);
+      }
+    }
+  }
+
+  /** S3: 사용자 없는 공유 판정(shareAllowedForLevel)이 decide(SHARE) 와 같은 답을 낸다. */
+  @Test
+  void shareAllowedForLevel_agreesWithDecideShare() {
+    for (SharePolicy s : SharePolicy.values()) {
+      LevelPolicy lv =
+          new LevelPolicy(
+              1L, "L", 1, false, false, false, ExportPolicy.ALLOW, AiPolicy.ALL, s, false);
+      boolean decided =
+          DatasetAccessPolicy.decide(
+                  new AccessInput(1, false, false, lv, DatasetAction.SHARE, Set.of(), null))
+              .allowed();
+      assertThat(DatasetAccessPolicy.shareAllowedForLevel(lv)).as("%s", s).isEqualTo(decided);
+    }
+  }
 }
