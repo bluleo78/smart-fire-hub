@@ -18,6 +18,9 @@ import com.smartfirehub.proactive.repository.MetricSnapshotRepository.MetricSnap
 import com.smartfirehub.proactive.util.ProactiveTime;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
+import com.smartfirehub.securitylevel.ai.AiCall;
+import com.smartfirehub.securitylevel.ai.AiCallContext;
+import com.smartfirehub.securitylevel.ai.AiHostingResolver;
 import com.smartfirehub.securitylevel.sql.GuardedSqlExecutor;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -50,6 +53,10 @@ public class MetricPollerService {
   private final GuardedSqlExecutor guardedSqlExecutor;
   // 폴링에는 요청 인증이 없으므로 잡 소유자의 열람 자격을 직접 계산한다.
   private final ClearanceResolver clearanceResolver;
+  // 메트릭 값은 이상 감지 시 리포트 컨텍스트(currentValue·recentHistory)로 외부 LLM·메일·Slack 에 실린다(스펙 §4.2/§4.3) —
+  // 실행을 공유 목적 AI 범위로 감싸 관문이 VIEW 뒤에 AI(forShare 호스팅)+SHARE 까지 판정하게 한다.
+  private final AiCallContext aiCallContext;
+  private final AiHostingResolver aiHostingResolver;
 
   /**
    * 데이터셋 메트릭 SQL 검증기 — 애드혹 분석 쿼리({@code AnalyticsQueryExecutionService})와 같은 정책(현재 테넌트 데이터 스키마만,
@@ -157,10 +164,14 @@ public class MetricPollerService {
   /**
    * 잡 1회 평가 동안의 소유자 자격 메모. 데이터셋 메트릭이 처음 판정할 때 계산하고(시스템 메트릭만 있으면 계산하지 않는다) 같은 평가의 다음 메트릭이 재사용한다. 계산이
    * 실패하면 저장하지 않는다 — 다음 메트릭이 다시 시도해 메트릭별 실패 격리가 그대로다. 다음 폴링 주기는 새로 계산한다.
+   *
+   * <p>공유 목적 AI 문맥({@link #shareCall()})도 같은 규칙으로 잡당 한 번만 계산한다 — 호스팅 판정은 테넌트 설정(채팅·임베딩 자격증명)을 읽으므로
+   * 메트릭마다 다시 읽지 않는다.
    */
   private final class OwnerClearance {
     private final Long userId;
     private Clearance resolved;
+    private AiCall share;
 
     private OwnerClearance(Long userId) {
       this.userId = userId;
@@ -171,6 +182,14 @@ public class MetricPollerService {
         resolved = clearanceResolver.resolve(userId);
       }
       return resolved;
+    }
+
+    /** 공유 목적 AI 문맥 — 호스팅은 forShare(채팅·임베딩 모두 자체 호스팅일 때만 자체 호스팅). */
+    AiCall shareCall() {
+      if (share == null) {
+        share = new AiCall(aiHostingResolver.forShare(), true);
+      }
+      return share;
     }
   }
 
@@ -232,7 +251,14 @@ public class MetricPollerService {
       try {
         // 보안 등급(S2): 잡 소유자의 현재 자격으로 판정한 뒤 실행한다(생성 이후 자격이 낮아졌을 수 있다). 소유자가 없거나 ACTIVE
         // 멤버십이 없으면 자격이 비어 거부된다(fail-closed). readOnly=true·행 수 1 제한은 관문이 건다.
-        var result = guardedSqlExecutor.executeMetricQuery(ownerClearance.get(), normalized);
+        // 공유 범위(WD-39): 수집 값은 이상 감지 시 리포트로 외부 LLM·메일·Slack 에 실리므로 AI(forShare)+SHARE 도 판정한다 — 저장 시
+        // 판정을 거치지 않은 기존 잡도 여기서 막힌다. 차단은 PolicyBlockedException(CodedApiException)으로 아래 catch 가 코드만
+        // 남긴다.
+        Clearance clearance = ownerClearance.get();
+        var result =
+            aiCallContext.callWith(
+                ownerClearance.shareCall(),
+                () -> guardedSqlExecutor.executeMetricQuery(clearance, normalized));
         if (result.rows() != null
             && !result.rows().isEmpty()
             && result.rows().get(0) != null
@@ -248,10 +274,11 @@ public class MetricPollerService {
           return;
         }
       } catch (CodedApiException e) {
-        // 열람 거부 — 실패한 평가와 같이 이벤트 없이 건너뛴다. 사유(숨김 데이터셋 이름)는 남기지 않고 같은 주기에 반복돼도 경고 한 줄이다.
+        // 열람 거부·정책 차단(POLICY_BLOCKED) — 실패한 평가와 같이 이벤트 없이 건너뛴다. 코드만 남긴다 — 사유(숨김 데이터셋 이름)·
+        // 차단 등급 이름(errors 맵)은 남기지 않고 같은 주기에 반복돼도 경고 한 줄이다.
         log.warn(
-            "MetricPollerService: job {} metric '{}' skipped — owner cannot view referenced data"
-                + " ({})",
+            "MetricPollerService: job {} metric '{}' skipped — owner access or AI/share policy"
+                + " denied ({})",
             jobId,
             metricId,
             e.code());

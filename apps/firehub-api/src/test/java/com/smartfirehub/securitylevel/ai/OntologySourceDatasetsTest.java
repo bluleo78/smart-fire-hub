@@ -214,6 +214,21 @@ class OntologySourceDatasetsTest extends IntegrationTestBase {
     assertThat(createdOntologies()).isZero();
   }
 
+  /**
+   * 응답이 입력 순서에 달라지지 않는다: [볼 수 있으나 AI 불허(외부 호스팅의 민감), 숨김(기밀)] 순서여도 숨김 쪽 404 가 우선이다 — VIEW 를 전부 먼저 보기
+   * 때문. requireView(AI 대행 코어 훅)로 하나씩 판정하면 앞쪽 민감에서 403 POLICY_BLOCKED 가 먼저 나간다(변이 확인 대상).
+   */
+  @Test
+  void visibleBlockedThenHidden_isNotFound_regardlessOfOrder() throws Exception {
+    long sens = ds("민감");
+    long secret = fx.createDatasetRow(m + "_hid2", fx.levelId("기밀"), userId);
+    datasets.add(secret);
+    MockHttpServletResponse r = create(userId, List.of(sens, secret));
+    assertThat(r.getStatus()).isEqualTo(404);
+    assertThat(r.getContentAsString()).doesNotContain("POLICY_BLOCKED").doesNotContain("기밀");
+    assertThat(createdOntologies()).isZero();
+  }
+
   @Test
   void hiddenSource_isSameAsMissing() throws Exception {
     // 민감 자격 사용자에게 기밀 데이터셋은 자격 밖이다 — 존재를 드러내지 않아야 한다.

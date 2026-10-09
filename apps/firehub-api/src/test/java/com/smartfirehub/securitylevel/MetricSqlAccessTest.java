@@ -10,6 +10,7 @@ import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.smartfirehub.embedding.config.EmbeddingConfigService;
 import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.util.NormalizedSql;
@@ -21,6 +22,8 @@ import com.smartfirehub.proactive.service.MetricPollerService;
 import com.smartfirehub.proactive.service.ProactiveJobService;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.sql.GuardedSqlExecutor;
+import com.smartfirehub.settings.model.AiCredentialSlot;
+import com.smartfirehub.settings.repository.TenantSettingsRepository;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.SecurityFixture;
 import com.smartfirehub.support.TenantRlsTestSupport;
@@ -35,7 +38,10 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
-/** 스펙 §4.2 6행 + 판단 사항 9: 메트릭 SQL 은 생성·수정 시 작성자 기준, 폴링 시 소유자 기준. */
+/**
+ * 스펙 §4.2 6행 + 판단 사항 9: 메트릭 SQL 은 생성·수정 시 작성자 기준, 폴링 시 소유자 기준. 폴링 수집 값은 이상 감지 시 리포트로 외부 LLM·발송에
+ * 실리므로(§4.2/§4.3) 폴링 실행은 VIEW 뒤에 AI(forShare 호스팅)+SHARE 도 통과해야 한다(WD-39).
+ */
 class MetricSqlAccessTest extends IntegrationTestBase {
 
   @Autowired private DSLContext dsl;
@@ -44,6 +50,7 @@ class MetricSqlAccessTest extends IntegrationTestBase {
   @Autowired private GuardedSqlExecutor guardedSqlExecutor;
   @Autowired private ClearanceResolver clearanceResolver;
   @Autowired private MetricPollerService poller;
+  @Autowired private TenantSettingsRepository tenantSettings;
   @MockitoBean private ExecutorClient executorClient;
 
   private SecurityFixture fx;
@@ -63,11 +70,42 @@ class MetricSqlAccessTest extends IntegrationTestBase {
     sec = m + "_sec";
     datasets.add(fx.createDatasetRow(pub, fx.levelId("공개"), creator));
     datasets.add(fx.createDatasetRow(sec, fx.levelId("민감"), creator));
+    TenantContext.set(DEFAULT_TEST_TENANT_ID);
+    clearHosting();
+  }
+
+  /** 호스팅 선언 없음 = 외부 호스팅(기본). */
+  private void clearHosting() {
+    tenantSettings.delete(AiCredentialSlot.CHAT.key());
+    tenantSettings.delete(EmbeddingConfigService.KEY);
+  }
+
+  /** 채팅·임베딩을 자체 호스팅으로 선언한다 — forShare 는 둘 다 자체 호스팅이어야 자체 호스팅이다. */
+  private void declareSelfHosted() {
+    tenantSettings.upsert(
+        AiCredentialSlot.CHAT.key(),
+        "{\"v\":1,\"agentType\":\"opencode\",\"payload\":{\"providerId\":\"corp\","
+            + "\"baseURL\":\"http://10.0.0.5/v1\",\"hosting\":\"SELF_HOSTED\"},\"secret\":{}}",
+        null);
+    tenantSettings.upsert(
+        EmbeddingConfigService.KEY,
+        "{\"v\":1,\"provider\":\"OLLAMA\",\"model\":\"bge-m3\",\"baseUrl\":\"http://ollama:11434\","
+            + "\"dimension\":1024,\"hosting\":\"SELF_HOSTED\",\"secret\":{\"apiKey\":\"\"}}",
+        null);
+  }
+
+  private void stubExecutor() {
+    reset(executorClient);
+    when(executorClient.executeQuery(anyString(), anyInt(), anyBoolean()))
+        .thenReturn(
+            new QueryExecuteResult(
+                true, "SELECT", List.of("c"), List.of(Map.of("c", 1)), 1, 0, 0L, false, null));
   }
 
   @AfterEach
   void tearDown() {
     TenantContext.set(DEFAULT_TEST_TENANT_ID);
+    clearHosting();
     for (long u : users) {
       TenantRlsTestSupport.runInTenantTransaction(
           fixtureTransactionTemplate,
@@ -192,10 +230,48 @@ class MetricSqlAccessTest extends IntegrationTestBase {
     poller.poll();
     verify(executorClient, never()).executeQuery(anyString(), anyInt(), anyBoolean());
 
-    // 같은 SQL 이라도 자격이 충분한 소유자는 수집된다(판정이 SQL 이 아니라 소유자에 달렸음을 확인).
+    // 같은 SQL 이라도 자격이 충분한 소유자는 수집된다(판정이 SQL 이 아니라 소유자에 달렸음을 확인). 민감은 AI 가
+    // SELF_HOSTED_ONLY 라 폴링의 공유 범위 판정을 통과하도록 자체 호스팅을 선언한다.
+    declareSelfHosted();
     insertAnomalyJob(userAt("민감"), "SELECT count(*) FROM " + sec);
     poller.poll();
     verify(executorClient).executeQuery("SELECT count(*) FROM " + sec, 1, true);
+  }
+
+  /** WD-39: 외부 호스팅(선언 없음)에서는 볼 수 있는 민감 메트릭도 AI 불허라 executor 로 가지 않는다 — 저장 시 판정 없던 기존 잡 재현. */
+  @Test
+  void poller_externalHosting_skipsSensitiveMetric() {
+    stubExecutor();
+    insertAnomalyJob(userAt("민감"), "SELECT count(*) FROM " + sec);
+
+    poller.poll();
+    verify(executorClient, never()).executeQuery(anyString(), anyInt(), anyBoolean());
+  }
+
+  /** WD-39: 자체 호스팅이라 AI 는 통과해도 기밀(share_policy DENY)은 공유 불허라 수집하지 않는다. */
+  @Test
+  void poller_selfHosted_skipsShareDeniedMetric() {
+    stubExecutor();
+    declareSelfHosted();
+    String conf = "ms" + System.nanoTime() + "_conf";
+    long confId = fx.createDatasetRow(conf, fx.levelId("기밀"), users.get(0));
+    datasets.add(confId);
+    long owner = userAt("기밀");
+    fx.grantUser(confId, owner); // 기밀은 허용 목록 필수 — VIEW 는 통과시킨다
+    insertAnomalyJob(owner, "SELECT count(*) FROM " + conf);
+
+    poller.poll();
+    verify(executorClient, never()).executeQuery(anyString(), anyInt(), anyBoolean());
+  }
+
+  /** 대조군: 공개 메트릭은 외부 호스팅에서도 AI·SHARE 허용이라 수집된다. */
+  @Test
+  void poller_publicMetric_runsUnderExternalHosting() {
+    stubExecutor();
+    insertAnomalyJob(userAt("공개"), "SELECT count(*) FROM " + pub);
+
+    poller.poll();
+    verify(executorClient).executeQuery("SELECT count(*) FROM " + pub, 1, true);
   }
 
   /** 소유자가 ACTIVE 멤버십이 없으면(역할 제거) fail-closed 로 수집하지 않는다. */
