@@ -65,6 +65,8 @@ class TenantReembedJobTest extends IntegrationTestBase {
   private final AtomicInteger embedCalls = new AtomicInteger();
   private final List<String> embeddedTexts = new CopyOnWriteArrayList<>();
   private Runnable onFirstEmbed = () -> {};
+  // 테스트가 추가로 만든 데이터셋의 생성자 — 데이터셋이 지워진 뒤(cleanup) 지운다(FK).
+  private Long extraUserId;
 
   @BeforeEach
   void seed() {
@@ -81,6 +83,7 @@ class TenantReembedJobTest extends IntegrationTestBase {
     TenantRlsTestSupport.deleteTenants(
         dsl, tenant); // tenant_settings·embedding_reembed_state 는 CASCADE
     TenantRlsTestSupport.deleteUser(dsl, doc.userId());
+    if (extraUserId != null) TenantRlsTestSupport.deleteUser(dsl, extraUserId);
   }
 
   private void storeConfig(EmbeddingSpace space) {
@@ -127,6 +130,43 @@ class TenantReembedJobTest extends IntegrationTestBase {
 
   private <T> T inTenant(java.util.function.Supplier<T> s) {
     return TenantContext.runScopedGet(tenant, s);
+  }
+
+  @Test
+  void disallowedLevel_isNeverSentToProvider_andGetsNoVector() {
+    // S3 §4.3: 민감 등급 + 임베딩 호스팅 외부 — 재임베딩 잡이 그 데이터셋의 카탈로그·문서 청크 텍스트를 공급자로 보내지 않는다.
+    seedChunks(2);
+    DocFixture sens =
+        inTenantFixture(
+            tenant, () -> EmbeddingTestFixtures.createDocumentDataset(dsl, "reembedsens"));
+    extraUserId = sens.userId();
+    inTenantFixture(
+        tenant,
+        () -> {
+          // 테스트 테넌트는 기본 등급(내부)만 시드된다 — 시드와 같은 정책의 민감 등급을 만든다(테넌트 삭제가 함께 지운다).
+          long levelId =
+              dsl.fetchOne(
+                      "INSERT INTO security_level (rank, name, ai_policy)"
+                          + " VALUES (3, '민감', 'SELF_HOSTED_ONLY') RETURNING id")
+                  .get(0, Long.class);
+          dsl.execute(
+              "UPDATE dataset SET security_level_id = ? WHERE id = ?", levelId, sens.datasetId());
+        });
+    TenantContext.runScoped(
+        tenant,
+        () -> {
+          chunks.insertChunksOnly(
+              sens.fileId(), sens.datasetId(), List.of(new Chunk(0, "민감청크", 1)));
+          datasets.upsertSourceText(doc.datasetId(), "공개 카탈로그");
+          datasets.upsertSourceText(sens.datasetId(), "민감 카탈로그");
+        });
+
+    job.run(tenant);
+
+    assertThat(embeddedTexts).contains("c0", "c1", "공개 카탈로그").doesNotContain("민감청크", "민감 카탈로그");
+    assertThat(inTenant(() -> chunks.countEmbedded(NEW))).isEqualTo(2);
+    assertThat(inTenant(() -> datasets.countEmbedded(NEW))).isEqualTo(1);
+    assertThat(inTenant(() -> states.find()).orElseThrow().status()).isEqualTo("DONE");
   }
 
   @Test

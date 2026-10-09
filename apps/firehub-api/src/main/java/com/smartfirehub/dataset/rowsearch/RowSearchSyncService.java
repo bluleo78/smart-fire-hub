@@ -194,6 +194,12 @@ public class RowSearchSyncService {
     int processed = 0;
     boolean completed = false;
     while (processed < maxRowsPerCycle) {
+      // S3 §4.3: 한 주기(최대 maxRowsPerCycle 행·임대 10분) 도중 등급 상향·호스팅 외부 전환이 일어날 수 있다. 외부 공급자로 보내기
+      // 전에 배치마다 다시 확인하고, 불허로 바뀌었으면 이 주기를 멈춘다(PARTIAL — 진행분은 저장됐고, 다음 주기의 모델 비교가 키워드
+      // 전용으로 전체 재색인하며 이미 만든 벡터도 테이블과 함께 사라진다). 첫 배치는 위에서 막 판정했으므로 다시 묻지 않는다.
+      if (provider != null && processed > 0 && !aiGate.datasetAllowed(datasetId)) {
+        return Outcome.PARTIAL;
+      }
       List<SearchSourceReader.SourceRow> rows =
           reader.fetchChanged(
               ref.sourceTable(), config.columnNames(), state.syncCursor(), afterId, batchSize);

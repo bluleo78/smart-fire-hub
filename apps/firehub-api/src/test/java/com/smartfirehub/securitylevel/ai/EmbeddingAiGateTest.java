@@ -11,6 +11,7 @@ import com.smartfirehub.embedding.EmbeddingSpace;
 import com.smartfirehub.embedding.config.EmbeddingConfig;
 import com.smartfirehub.embedding.config.EmbeddingConfigService;
 import com.smartfirehub.embedding.config.EmbeddingProviderType;
+import com.smartfirehub.embedding.reembed.EmbeddingBacklogService;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.securitylevel.access.ProviderHosting;
 import com.smartfirehub.settings.repository.TenantSettingsRepository;
@@ -45,6 +46,7 @@ class EmbeddingAiGateTest extends IntegrationTestBase {
   @Autowired private TenantSettingsRepository tenantSettings;
   @Autowired private DatasetEmbeddingRepository embeddingRepository;
   @Autowired private DocumentChunkRepository chunkRepository;
+  @Autowired private EmbeddingBacklogService backlogService;
 
   private SecurityFixture fx;
   private long creator;
@@ -149,8 +151,11 @@ class EmbeddingAiGateTest extends IntegrationTestBase {
     long countExternal =
         embeddingRepository.countMissing(SPACE, gate.allowedDatasetSql("de.dataset_id"));
     long totalExternal = embeddingRepository.countAll(gate.allowedDatasetSql("de.dataset_id"));
+    long impactExternal = backlogService.impact(SPACE).datasets();
     store(ProviderHosting.SELF_HOSTED);
     assertThat(missingDatasetIds()).contains(pubId, sensId);
+    // 영향도·스윕 투입 판정(EmbeddingBacklogService)도 같은 술어를 쓴다 — 자체 호스팅 선언으로 민감 1건이 "할 일"로 들어온다.
+    assertThat(backlogService.impact(SPACE).datasets()).isEqualTo(impactExternal + 1);
     // 판정식·분모 모두 민감 데이터셋 1건만큼 늘어난다(같은 모집단).
     assertThat(embeddingRepository.countMissing(SPACE, gate.allowedDatasetSql("de.dataset_id")))
         .isEqualTo(countExternal + 1);

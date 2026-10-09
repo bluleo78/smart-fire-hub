@@ -110,7 +110,8 @@ class RowSearchSyncServiceEmbedChunkTest {
                     new SearchSourceReader.SourceRow(
                         i, Map.<String, Object>of("content", "행 " + i)))
             .toList();
-    when(reader.fetchChanged(eq("src"), any(), any(), eq(0L), anyInt())).thenReturn(rows);
+    // 배치 분할 테스트가 키셋을 지키는 스텁으로 덮어쓰므로 lenient.
+    lenient().when(reader.fetchChanged(eq("src"), any(), any(), eq(0L), anyInt())).thenReturn(rows);
     when(index.existingHashes(any(), any())).thenReturn(Map.of());
     lenient()
         .doAnswer(
@@ -145,6 +146,10 @@ class RowSearchSyncServiceEmbedChunkTest {
   }
 
   private RowSearchSyncService service() {
+    return service(100);
+  }
+
+  private RowSearchSyncService service(int batchSize) {
     return new RowSearchSyncService(
         index,
         states,
@@ -155,7 +160,7 @@ class RowSearchSyncServiceEmbedChunkTest {
         cursorService,
         aiGate,
         5000,
-        100);
+        batchSize);
   }
 
   @Test
@@ -222,5 +227,34 @@ class RowSearchSyncServiceEmbedChunkTest {
               assertThat(r.embedding()).isNotNull();
               assertThat(r.embeddingModel()).isEqualTo("m");
             });
+  }
+
+  @Test
+  void becomesDisallowedMidCycle_stopsBeforeNextBatch() {
+    // 한 주기 도중 등급 상향·호스팅 외부 전환 — 첫 배치(32행) 뒤 불허로 바뀌면 남은 배치를 외부 공급자로 보내지 않고 PARTIAL 로 멈춘다.
+    prepare("m", 1024);
+    List<SearchSourceReader.SourceRow> all =
+        LongStream.rangeClosed(1, ROWS)
+            .mapToObj(
+                i ->
+                    new SearchSourceReader.SourceRow(
+                        i, Map.<String, Object>of("content", "행 " + i)))
+            .toList();
+    // 키셋(afterId)·limit 을 지키는 원본 — 배치가 실제로 여러 번 나뉜다.
+    when(reader.fetchChanged(eq("src"), any(), any(), anyLong(), anyInt()))
+        .thenAnswer(
+            inv -> {
+              long after = inv.getArgument(3);
+              int limit = inv.getArgument(4);
+              return all.stream().filter(r -> r.id() > after).limit(limit).toList();
+            });
+    when(aiGate.datasetAllowed(ID)).thenReturn(true, false);
+    when(embeddingFactory.current()).thenReturn(recordingProvider());
+
+    assertThat(service(32).sync(ID)).isEqualTo(RowSearchSyncService.Outcome.PARTIAL);
+
+    assertThat(callSizes.stream().mapToInt(Integer::intValue).sum()).isEqualTo(32);
+    assertThat(upserted).hasSize(32);
+    verify(states, never()).markCompleted(anyLong(), anyLong(), anyLong());
   }
 }
