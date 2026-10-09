@@ -13,6 +13,7 @@ import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.securitylevel.access.SqlAccessMode;
 import com.smartfirehub.securitylevel.access.SqlAccessResult;
+import com.smartfirehub.securitylevel.ai.PolicyBlockedException;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -78,10 +79,18 @@ public class GuardedSqlExecutor {
     /** 정규화·파싱 실패 메시지(실행 시 200 + error 로 돌려준다). 성공이면 null. */
     private final String parseError;
 
-    private AnalyticsJudgment(NormalizedSql normalized, SqlAccessResult access, String parseError) {
+    /** AI·공유 정책 차단 상세(S3) — 실행 시 errors 맵이 실린 403 POLICY_BLOCKED 로 그대로 던진다. 아니면 null. */
+    private final PolicyBlockedException blocked;
+
+    private AnalyticsJudgment(
+        NormalizedSql normalized,
+        SqlAccessResult access,
+        String parseError,
+        PolicyBlockedException blocked) {
       this.normalized = normalized;
       this.access = access;
       this.parseError = parseError;
+      this.blocked = blocked;
     }
 
     /**
@@ -100,10 +109,11 @@ public class GuardedSqlExecutor {
   public AnalyticsJudgment judgeAnalytics(Clearance c, String sql) {
     try {
       NormalizedSql normalized = NormalizedSql.of(sql);
-      SqlAccessResult access = guard.checkSql(c, normalized.text(), SqlAccessMode.INTERACTIVE);
-      return new AnalyticsJudgment(normalized, access, null);
+      DatasetAccessGuard.SqlJudgement j =
+          guard.judgeSql(c, normalized.text(), SqlAccessMode.INTERACTIVE);
+      return new AnalyticsJudgment(normalized, j.result(), null, j.blocked());
     } catch (SqlQueryException | UnsafeSqlException e) {
-      return new AnalyticsJudgment(null, null, e.getMessage());
+      return new AnalyticsJudgment(null, null, e.getMessage(), null);
     }
   }
 
@@ -117,6 +127,10 @@ public class GuardedSqlExecutor {
     if (judgment.parseError != null) {
       return new AnalyticsQueryResponse(
           "UNKNOWN", List.of(), List.of(), 0, 0L, 0, false, judgment.parseError);
+    }
+    // AI 대행 요청의 정책 차단은 상세(action·levelName·policyKey)가 실린 원래 예외로 — 값 결과만으로는 errors 맵을 잃는다.
+    if (judgment.blocked != null) {
+      throw judgment.blocked;
     }
     SqlAccessResult r = judgment.access;
     if (!r.allowed()) {

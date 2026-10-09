@@ -2,6 +2,9 @@ package com.smartfirehub.dataset.rowsearch;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
@@ -16,6 +19,7 @@ import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TenantRlsTestSupport;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -40,6 +44,8 @@ class RowSearchServiceTest extends IntegrationTestBase {
   @MockitoBean private EmbeddingProviderFactory embeddingFactory;
 
   private final AtomicBoolean down = new AtomicBoolean(false);
+  // 가짜 공급자의 embed 호출 횟수 — 키워드 전용 데이터셋에서 질의 임베딩조차 시도하지 않는지 본다.
+  private final AtomicInteger embedCalls = new AtomicInteger();
   // 색인 이후 임베딩 모델·차원이 바뀐 상황(다음 스윕 전)을 흉내 내려고 가변으로 둔다.
   private volatile String model = "fake";
   private volatile int dim = 1024;
@@ -55,6 +61,7 @@ class RowSearchServiceTest extends IntegrationTestBase {
             inv ->
                 new EmbeddingProvider() {
                   public List<float[]> embed(List<String> texts) {
+                    embedCalls.incrementAndGet();
                     if (down.get()) throw new EmbeddingException("down");
                     return texts.stream()
                         .map(
@@ -313,5 +320,61 @@ class RowSearchServiceTest extends IntegrationTestBase {
         .hasMessageContaining("NUL");
     // 회귀 가드: NUL 이 없는 같은 요청은 그대로 동작한다.
     assertThat(service.search(datasetId, req("누수", "KEYWORD", null)).hits()).isNotEmpty();
+  }
+
+  /** 데이터셋 등급을 바꾼다(tenant 1 시드 등급 이름). */
+  private void setLevel(String levelName) {
+    inTenantFixture(
+        () ->
+            dsl.execute(
+                "UPDATE dataset SET security_level_id = (SELECT id FROM security_level WHERE name = ?)"
+                    + " WHERE id = ?",
+                levelName,
+                datasetId));
+  }
+
+  @Test
+  void hybrid_onKeywordOnlyIndex_returnsKeywordHits() {
+    // Review Focus 5: 민감 등급 + 임베딩 호스팅 외부(미선언 기본) → 다음 스윕이 키워드 전용(벡터 NULL, vector(1))으로 재색인한다.
+    setLevel("민감");
+    assertThat(sync.sync(datasetId)).isEqualTo(RowSearchSyncService.Outcome.COMPLETED);
+    long vectors =
+        inTenantFixture(
+            () ->
+                dsl.fetchOne(
+                        "SELECT count(*) FROM "
+                            + DataSchema.qualify(
+                                new IndexRef(DEFAULT_TEST_TENANT_ID, datasetId, SRC).indexTable())
+                            + " WHERE embedding IS NOT NULL OR embedding_model IS DISTINCT FROM ?",
+                        RowSearchSyncService.KEYWORD_ONLY_MODEL)
+                    .get(0, Long.class));
+    assertThat(vectors).isZero();
+
+    embedCalls.set(0);
+    clearInvocations(embeddingFactory);
+    var res = service.search(datasetId, req("누수", "HYBRID", null));
+
+    // 오류·degraded 없이 키워드 결과 + KEYWORD_ONLY. 질의 임베딩도 시도하지 않는다(공급자 해석조차 없음).
+    assertThat(res.indexStatus().status()).isEqualTo("KEYWORD_ONLY");
+    assertThat(res.degraded()).isFalse();
+    assertThat(res.hits()).extracting(h -> h.row().get("content")).contains("파이프 누수 신고", "누수 재발");
+    assertThat(res.hits()).allSatisfy(h -> assertThat(h.matchedBy()).containsExactly("KEYWORD"));
+    assertThat(embedCalls.get()).isZero();
+    verify(embeddingFactory, never()).current();
+
+    // SEMANTIC 은 빈 결과 + KEYWORD_ONLY(의미 검색 불가를 알린다), KEYWORD 는 그대로 동작.
+    var sem = service.search(datasetId, req("누수", "SEMANTIC", null));
+    assertThat(sem.hits()).isEmpty();
+    assertThat(sem.indexStatus().status()).isEqualTo("KEYWORD_ONLY");
+    var kw = service.search(datasetId, req("A-1023", "KEYWORD", null));
+    assertThat(kw.hits()).extracting(h -> h.row().get("content")).containsExactly("소음 민원 A-1023");
+    assertThat(embedCalls.get()).isZero();
+
+    // 등급 하향(내부)으로 다시 허용되면 다음 스윕이 실제 모델로 재색인하고 HYBRID 가 의미 검색까지 쓴다(Review Focus 2).
+    setLevel("내부");
+    sync.sync(datasetId);
+    var back = service.search(datasetId, req("누수", "HYBRID", null));
+    assertThat(back.indexStatus().status()).isEqualTo("IDLE");
+    assertThat(back.hits().get(0).matchedBy()).containsExactlyInAnyOrder("SEMANTIC", "KEYWORD");
   }
 }

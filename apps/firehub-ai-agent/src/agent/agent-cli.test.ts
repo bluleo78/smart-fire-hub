@@ -2175,3 +2175,15 @@ describe('executeCliAgent — 공급자 오류 (#711)', () => {
     expect(events.filter((e) => e.type === 'text').map((e) => (e as { content?: string }).content).join('')).toContain('정상 답변');
   });
 });
+
+// S3: Proactive 실행이면 stdio MCP 프로세스 env 에 AI_PURPOSE=share 를 심는다(stdio-server.ts main 이 읽는다).
+describe('buildMcpConfig — AI_PURPOSE(S3)', () => {
+  type Cfg = { mcpServers: { firehub: { env: Record<string, string> } } };
+  it("aiPurpose 'share' 면 env 에 AI_PURPOSE=share, 없으면 키 자체가 없다", async () => {
+    const { buildMcpConfig } = await import('./agent-cli.js');
+    const shared = buildMcpConfig(7, 3, 'http://api', 'tok', { apiKey: 'k' }, 'share') as Cfg;
+    expect(shared.mcpServers.firehub.env.AI_PURPOSE).toBe('share');
+    const chat = buildMcpConfig(7, 3, 'http://api', 'tok', { apiKey: 'k' }) as Cfg;
+    expect('AI_PURPOSE' in chat.mcpServers.firehub.env).toBe(false);
+  });
+});

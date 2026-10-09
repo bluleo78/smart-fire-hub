@@ -65,6 +65,22 @@ class ProactiveAiClientTest extends IntegrationTestBase {
   }
 
   /**
+   * 스펙 §4.3 Proactive 행: 리포트는 발송(공유)되므로 바디에 aiPurpose=share 를 싣는다 — ai-agent 가 이 값을 읽어 실행 중 MCP 호출에
+   * X-AI-Purpose: share 를 붙여야 API 가 SHARE 정책까지 건다. 빠지면 공유 금지 등급 데이터가 리포트로 나간다.
+   */
+  @Test
+  void execute_바디에_공유목적_aiPurpose_share를_싣는다() {
+    wireMock.stubFor(post(urlEqualTo("/agent/proactive")).willReturn(okJson("{\"sections\":[]}")));
+
+    client.execute(
+        1L, "prompt", "{}", new AiCredential.Sdk("oat-test", "sk-x"), null, null, Map.of());
+
+    wireMock.verify(
+        postRequestedFor(urlEqualTo("/agent/proactive"))
+            .withRequestBody(matchingJsonPath("$.aiPurpose", equalTo("share"))));
+  }
+
+  /**
    * 옵션 3 폐기(2026-09-19, 이슈 #693, Ruling #32) — proactive 바디에도 채팅과 동일하게
    * providerId/baseUrl/model/reasoningEffort 가 실려야 ai-agent 의 buildOpenCodeConfig 가 provider 블록을
    * 조립할 수 있다(model 은 top-level 필수 필드 — execute() 의 model 파라미터 javadoc 참고).

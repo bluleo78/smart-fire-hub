@@ -95,7 +95,8 @@ class DatasetEmbeddingVectorStoreTest extends IntegrationTestBase {
 
     assertThat(TenantContext.runScopedGet(tenant, () -> repo.countEmbedded(S1024))).isZero();
     assertThat(TenantContext.runScopedGet(tenant, () -> repo.countEmbedded(S1536))).isEqualTo(2);
-    assertThat(TenantContext.runScopedGet(tenant, () -> repo.countMissing(S1536))).isZero();
+    assertThat(TenantContext.runScopedGet(tenant, () -> repo.countMissing(S1536, ALL_VISIBLE)))
+        .isZero();
   }
 
   @Test
@@ -121,9 +122,11 @@ class DatasetEmbeddingVectorStoreTest extends IntegrationTestBase {
                 tenant,
                 () -> searchRepo.searchByCosine(otherModel, axis(1024, 0), null, 10, ALL_VISIBLE)))
         .isEmpty();
-    assertThat(TenantContext.runScopedGet(tenant, () -> repo.countMissing(otherModel)))
+    assertThat(TenantContext.runScopedGet(tenant, () -> repo.countMissing(otherModel, ALL_VISIBLE)))
         .isEqualTo(1);
-    assertThat(TenantContext.runScopedGet(tenant, () -> repo.findMissing(otherModel, 0L, 10)))
+    assertThat(
+            TenantContext.runScopedGet(
+                tenant, () -> repo.findMissing(otherModel, 0L, 10, ALL_VISIBLE)))
         .extracting(DatasetEmbeddingRepository.SourceTextRow::sourceText)
         .containsExactly("화재 통계");
   }

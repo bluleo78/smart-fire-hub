@@ -14,6 +14,7 @@ import com.smartfirehub.embedding.EmbeddingException;
 import com.smartfirehub.embedding.EmbeddingNotConfiguredException;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
 import com.smartfirehub.embedding.config.EmbeddingConfigService;
+import com.smartfirehub.securitylevel.ai.EmbeddingAiGate;
 import org.jobrunr.scheduling.JobScheduler;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -36,6 +37,7 @@ class TenantReembedJobFailurePathTest {
   @Mock EmbeddingBacklogService backlogService;
   @Mock DatasetEmbeddingBackfillService backfillService;
   @Mock JobScheduler jobScheduler;
+  @Mock EmbeddingAiGate aiGate;
 
   private TenantReembedJob job;
 
@@ -50,7 +52,8 @@ class TenantReembedJobFailurePathTest {
             stateRepository,
             backlogService,
             backfillService,
-            jobScheduler);
+            jobScheduler,
+            aiGate);
     when(stateRepository.tryAcquire(any())).thenReturn(true);
   }
 

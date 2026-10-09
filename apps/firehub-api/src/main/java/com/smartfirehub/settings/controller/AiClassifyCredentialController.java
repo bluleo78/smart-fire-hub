@@ -1,6 +1,9 @@
 package com.smartfirehub.settings.controller;
 
 import com.smartfirehub.global.security.RequirePermission;
+import com.smartfirehub.securitylevel.access.ProviderHosting;
+import com.smartfirehub.securitylevel.ai.HostingChangeAuditor;
+import com.smartfirehub.securitylevel.ai.HostingDeclarationPolicy;
 import com.smartfirehub.settings.dto.AiClassifyCredentialUpsertRequest;
 import com.smartfirehub.settings.dto.OpencodeProbeRequest;
 import com.smartfirehub.settings.model.AiCredentialSlot;
@@ -38,6 +41,8 @@ public class AiClassifyCredentialController {
   private final AiCredentialService aiCredentialService;
   private final OpencodeProbeService opencodeProbeService;
   private final OpencodePutValidator opencodePutValidator;
+  private final HostingDeclarationPolicy hostingDeclarationPolicy;
+  private final HostingChangeAuditor hostingChangeAuditor;
 
   /** 화면용 조회 — 미설정이면 {@code configured=false, model=""}. 비밀 값은 싣지 않는다. */
   @GetMapping
@@ -68,10 +73,23 @@ public class AiClassifyCredentialController {
       if (rejected.isPresent()) return rejected.get();
     }
     Long userId = (Long) authentication.getPrincipal();
-    aiCredentialService.saveClassify(
-        new AiCredentialUpsert(request.agentType(), request.payload(), request.secret()),
-        request.model(),
-        userId);
+    AiCredentialUpsert upsert =
+        new AiCredentialUpsert(request.agentType(), request.payload(), request.secret());
+    // 감사·권한 판정의 "이전 값"은 분류 슬롯에 선언된 값이다(슬롯이 없으면 외부) — 채팅을 따르는 실효 호스팅이 아니다.
+    ProviderHosting before = aiCredentialService.hosting(AiCredentialSlot.CLASSIFY);
+    // 자체 호스팅으로 올리는 선언은 security:settings 가 필요하다(스펙 §2.6) — 저장 전에 판정한다.
+    // 전송 대상(providerId/baseURL)이 바뀌면서 자체 호스팅으로 남는 것도 "올리는" 변경이다(선언 유지 우회 차단).
+    AiCredentialService.HostingOutcome outcome =
+        aiCredentialService.previewHostingOutcome(AiCredentialSlot.CLASSIFY, upsert);
+    hostingDeclarationPolicy.requireChangeAllowed(
+        userId, before, outcome.after(), outcome.targetChanged());
+    aiCredentialService.saveClassify(upsert, request.model(), userId);
+    // 저장 성공 뒤 저장된 값끼리 비교해 바뀌었을 때만 감사(R3).
+    hostingChangeAuditor.recordIfChanged(
+        userId,
+        HostingChangeAuditor.Slot.CLASSIFY,
+        before,
+        aiCredentialService.hosting(AiCredentialSlot.CLASSIFY));
     return ResponseEntity.noContent().build();
   }
 

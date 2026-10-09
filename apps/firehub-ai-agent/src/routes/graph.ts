@@ -44,7 +44,9 @@ function delegationClient(res: Response): FireHubApiClient {
   const { userId, tenantId } = res.locals.delegation as Delegation;
   const apiBaseUrl = process.env.API_BASE_URL || 'http://localhost:8080/api/v1';
   const internalToken = process.env.INTERNAL_SERVICE_TOKEN || '';
-  return new FireHubApiClient(apiBaseUrl, internalToken, userId, tenantId);
+  // S3: 그래프 렌더·HITL 승인은 사람이 직접 보는 경로이고 LLM 을 거치지 않는다 — purpose 'none' 으로 api 가 AI 경로로
+  // 판정하지 않게 한다. 빠뜨리면 외부 호스팅 테넌트에서 민감 등급 데이터셋이 그래프 뷰어·승인에서 막힌다.
+  return new FireHubApiClient(apiBaseUrl, internalToken, userId, tenantId, { purpose: 'none' });
 }
 
 /**

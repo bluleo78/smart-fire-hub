@@ -73,4 +73,17 @@ describe('ClaudeCliChatProvider', () => {
     expect(called.oauthToken).toBe('oauth-token');
     expect(called.useSubscription).toBe(true);
   });
+
+  // CLI-S3: 실행 옵션의 aiPurpose 'share' 를 executeCliAgent 로 넘긴다 — agent-cli 가 stdio MCP 프로세스에
+  // AI_PURPOSE=share 를 심어 X-AI-Purpose: share 를 싣게 한다(Slack 인바운드 채팅·Proactive).
+  it('CLI-S3: aiPurpose 를 executeCliAgent 로 그대로 넘긴다', async () => {
+    mockExecuteCliAgent.mockReturnValue(makeStream([{ type: 'done' }]));
+
+    const provider = new ClaudeCliChatProvider(true);
+    for await (const _ of provider.execute({ message: 'hi', tenantId: 1, userId: 1, aiPurpose: 'share' })) {
+      /* consume */
+    }
+
+    expect(mockExecuteCliAgent.mock.calls[0][0].aiPurpose).toBe('share');
+  });
 });

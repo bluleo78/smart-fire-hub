@@ -5,7 +5,10 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.smartfirehub.apiconnection.service.EncryptionService;
+import com.smartfirehub.apiconnection.service.UrlUtils;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.securitylevel.access.ProviderHosting;
+import com.smartfirehub.securitylevel.ai.KnownPublicAiHosts;
 import com.smartfirehub.settings.model.AiCredential;
 import com.smartfirehub.settings.model.AiCredentialDocument;
 import com.smartfirehub.settings.model.AiCredentialSlot;
@@ -71,6 +74,29 @@ public class AiCredentialService {
    * 된다(손으로 고친 행이나 롤백된 배포가 남기는 것과 같은 상태를, 정상 쓰기 경로로 재현하는 셈).
    */
   private static final Set<String> KNOWN_AGENT_TYPES = Set.of("sdk", "cli", "cli-api", "opencode");
+
+  /** payload 안의 호스팅 위치 키. 값은 "EXTERNAL" | "SELF_HOSTED", 없으면 외부(S3 §3 — 기본 외부). */
+  public static final String HOSTING_FIELD = "hosting";
+
+  /** Claude 계열(sdk/cli/cli-api)에 자체 호스팅을 선언하려 할 때의 거부 문구(400). */
+  public static final String MSG_CLAUDE_EXTERNAL_ONLY = "Claude 계열 자격증명은 외부 서비스로만 선언할 수 있습니다";
+
+  /** 모르는 호스팅 값 거부 문구(400). 임베딩 설정 저장도 같은 문구를 쓴다. */
+  public static final String MSG_HOSTING_INVALID = "호스팅 위치는 EXTERNAL, SELF_HOSTED 중 하나여야 합니다";
+
+  /**
+   * 자체 호스팅을 선언할 수 있는 agentType. Claude 계열(sdk/cli/cli-api)은 Anthropic 서버로만 가므로 항상 외부다(스펙 §3 "서버
+   * 강제"). 저장 문자열 판별 자리라 {@link #toCredential} 과 같은 방식이다(sealed 타입 instanceof 금지 —
+   * AiCredentialSwitchGuardTest).
+   */
+  static final Set<String> SELF_HOSTABLE_AGENT_TYPES = Set.of("opencode");
+
+  /**
+   * opencode 호출의 실제 목적지를 정하는 payload 필드({@code AiCredential.Opencode} 의 providerId·baseUrl, 캐시 신원과
+   * 같은 묶음). 이 값이 바뀌면 기존 자체 호스팅 선언은 새 목적지에 대한 것이 아니므로 유지하지 않는다({@link #hostingOutcome}).
+   * reasoningEffort·비밀·모델은 목적지를 바꾸지 않는다.
+   */
+  static final List<String> TRANSPORT_TARGET_FIELDS = List.of("providerId", "baseURL");
 
   /**
    * 보안 리뷰 Fix3 — 이 세 유형은 저장할 때 그 유형이 실제로 읽는 비밀 필드 중 최소 하나가 비어 있지 않아야 한다(평면 구분이 사라져 이제 무조건 적용된다).
@@ -216,14 +242,23 @@ public class AiCredentialService {
     // 요청에 있는 키만 덮어쓴다 — removeAll() 을 하지 않는다. 유형이 바뀐 경우는 doc 이 이미
     // AiCredentialDocument.empty() 로 시작해 payload 가 비어 있으므로, 이 한 줄로 "같은 유형=병합
     // / 다른 유형=통째 새로 시작"이 자연히 갈린다(위 save() javadoc 참고).
+    // 호스팅 결과는 병합 전 기존 문서로 판정한다(미리보기와 같은 규칙 한 곳 — hostingOutcome).
+    HostingOutcome outcome = hostingOutcome(existing, req);
     ObjectNode payloadNode = doc.payload();
     req.payload().forEach((key, value) -> payloadNode.set(key, MAPPER.valueToTree(value)));
+    // 같은 유형에서 전송 대상이 바뀌었는데 hosting 을 생략했으면, 병합이 남긴 기존 선언을 외부로 되돌린다 — 미리보기만 외부라 말하고 문서에
+    // SELF_HOSTED 가 남으면 실제 판정(hosting())은 여전히 자체 호스팅으로 읽어 security:settings 우회가 그대로 남는다.
+    if (!req.payload().containsKey(HOSTING_FIELD) && outcome.targetChanged() && !typeChanged) {
+      payloadNode.put(HOSTING_FIELD, ProviderHosting.EXTERNAL.name());
+    }
 
     // validate() 가 이미 null 값을 거부했으므로 여기서는 있는 그대로 암호화한다 — null 을 ""로
     // 되메우면 "null=거부"와 "생략=유지"가 코드상 구분 안 되는 지점이 다시 생긴다(Ruling #13).
     req.secret().forEach((name, value) -> doc.withSecret(name, encryptionService.encrypt(value)));
 
     // 병합이 끝난 doc 을 검사한다 — 아직 DB 에 쓰기 전이라 여기서 던져도 부수효과가 없다(Fix3).
+    // 호스팅 값도 병합 결과로 검사한다 — 같은 유형에서 생략하면 기존 값이 유지되므로 요청만 보면 안 된다.
+    validateHosting(doc);
     requireUsableSecret(doc, slot.key());
     return doc;
   }
@@ -271,6 +306,122 @@ public class AiCredentialService {
       // 로그에 실제 슬롯 키를 남긴다 — 채팅/분류 중 어느 행이 손상됐는지 운영에서 구분해야 한다(#707).
       log.warn("{} 문서가 손상돼 파싱할 수 없다({}) — 미설정으로 취급한다: {}", key, context, e.toString());
       return Optional.empty();
+    }
+  }
+
+  // ---- 공급자 호스팅 위치(S3 §3·§4.3) ----
+
+  /**
+   * 현재 테넌트 {@code slot} 의 공급자 호스팅 위치(S3 §4.3 — 판정 입력은 API 가 계산한다). 행 없음·손상·Claude 계열은 외부. 복호화하지 않는다
+   * — 호스팅은 비밀이 아니고, 손상된 암호문이 판정을 막지 않게 한다.
+   */
+  public ProviderHosting hosting(AiCredentialSlot slot) {
+    return readTenantRaw(slot.key())
+        .flatMap(raw -> tryParse(raw, slot.key(), "HOSTING"))
+        .map(AiCredentialService::hostingOf)
+        .orElse(ProviderHosting.EXTERNAL);
+  }
+
+  /** AI_CLASSIFY 가 실제로 쓸 공급자의 호스팅 — 분류 전용 행이 없으면 채팅 설정을 통째로 쓰므로 채팅 호스팅이다(#707 규칙과 같다). */
+  public ProviderHosting classifyHosting() {
+    // 분류 행은 한 번만 읽는다 — 있으면 그 원문으로 판정(손상이면 채팅으로 넘어가지 않고 외부), 없을 때만 채팅 슬롯을 본다.
+    Optional<String> classifyRaw = readTenantRaw(AiCredentialSlot.CLASSIFY.key());
+    if (classifyRaw.isEmpty()) {
+      return hosting(AiCredentialSlot.CHAT);
+    }
+    return tryParse(classifyRaw.get(), AiCredentialSlot.CLASSIFY.key(), "HOSTING")
+        .map(AiCredentialService::hostingOf)
+        .orElse(ProviderHosting.EXTERNAL);
+  }
+
+  /**
+   * 저장 결과 호스팅 판정. {@code after} 는 이 요청을 저장했을 때 남을 호스팅, {@code targetChanged} 는 실제 전송 대상(유형·{@link
+   * #TRANSPORT_TARGET_FIELDS})이 기존 문서와 달라지는지다 — 선언 권한 판정({@code HostingDeclarationPolicy})이 둘 다 쓴다.
+   */
+  public record HostingOutcome(ProviderHosting after, boolean targetChanged) {}
+
+  /**
+   * 이 요청을 저장했을 때의 호스팅과 전송 대상 변경 여부 — 컨트롤러가 선언 권한(security:settings)을 저장 전에 판정하려고 쓴다. 규칙은 {@link
+   * #mergeForSave} 와 같은 {@link #hostingOutcome} 한 곳이다.
+   */
+  public HostingOutcome previewHostingOutcome(AiCredentialSlot slot, AiCredentialUpsert req) {
+    AiCredentialDocument existing =
+        readTenantRaw(slot.key()).flatMap(raw -> tryParse(raw, slot.key(), "PREVIEW")).orElse(null);
+    return hostingOutcome(existing, req);
+  }
+
+  /**
+   * 저장 결과 호스팅의 단일 규칙(미리보기·병합 공용). 요청에 hosting 이 있으면 그 값(자체 호스팅 불가 유형이면 외부). 없으면 <b>유형과 전송 대상이 그대로일
+   * 때만</b> 기존 값을 유지하고, 유형이나 전송 대상(providerId/baseURL)이 바뀌면 외부로 되돌린다 — 자체 호스팅 선언은 "그 목적지"에 대한 선언이므로,
+   * 선언을 유지한 채 목적지만 외부로 바꾸면 security:settings 없이 민감 데이터를 외부로 보낼 수 있기 때문이다(유형 변경 규칙과 같은 취지).
+   */
+  private static HostingOutcome hostingOutcome(
+      AiCredentialDocument existing, AiCredentialUpsert req) {
+    boolean sameType = existing != null && req.agentType().equals(existing.agentType());
+    // 행 없음·유형 변경은 목적지가 새로 정해지는 것이므로 "바뀜"으로 본다.
+    boolean targetChanged = !sameType || transportTargetChanged(existing, req);
+    ProviderHosting after;
+    if (req.payload().containsKey(HOSTING_FIELD)) {
+      // 키가 있으면(값이 null 이어도) 병합이 그 값으로 덮어쓰므로 요청 값이 곧 결과다.
+      Object requested = req.payload().get(HOSTING_FIELD);
+      after =
+          SELF_HOSTABLE_AGENT_TYPES.contains(req.agentType())
+              ? ProviderHosting.fromStored(String.valueOf(requested))
+              : ProviderHosting.EXTERNAL;
+    } else {
+      after = targetChanged ? ProviderHosting.EXTERNAL : hostingOf(existing);
+    }
+    return new HostingOutcome(after, targetChanged);
+  }
+
+  /**
+   * 같은 유형에서 전송 대상 필드가 실제로 바뀌는가. 요청에 없는 필드는 병합 규칙상 기존 값이 유지되므로 바뀐 것이 아니다. 화면은 매번 전체 폼을 보내므로 키 존재가
+   * 아니라 <b>값</b>을 비교한다(같은 baseURL 재전송은 변경 아님). 끝 슬래시·앞뒤 공백 차이는 같은 목적지로 본다.
+   */
+  private static boolean transportTargetChanged(
+      AiCredentialDocument existing, AiCredentialUpsert req) {
+    for (String field : TRANSPORT_TARGET_FIELDS) {
+      if (!req.payload().containsKey(field)) continue;
+      Object requested = req.payload().get(field);
+      JsonNode stored = existing.payload().get(field);
+      String before = stored == null || stored.isNull() ? "" : stored.asText("");
+      String after = requested == null ? "" : String.valueOf(requested);
+      if (!normalizeTarget(before).equals(normalizeTarget(after))) return true;
+    }
+    return false;
+  }
+
+  /** 전송 대상 비교용 정규화(앞뒤 공백·끝 슬래시). */
+  private static String normalizeTarget(String raw) {
+    return UrlUtils.normalizeBaseUrl(raw.trim());
+  }
+
+  /** 문서 → 호스팅. 자체 호스팅 불가 유형은 payload 값과 무관하게 외부(서버 강제). */
+  private static ProviderHosting hostingOf(AiCredentialDocument doc) {
+    if (!SELF_HOSTABLE_AGENT_TYPES.contains(doc.agentType())) {
+      return ProviderHosting.EXTERNAL;
+    }
+    return ProviderHosting.fromStored(doc.payload().path(HOSTING_FIELD).asText(""));
+  }
+
+  /**
+   * 병합된 문서의 hosting 값 검증 — 모르는 값 400, Claude 계열의 자체 호스팅 선언 400. 쓰기 전이라 거부해도 부수효과 없다. Claude 계열은
+   * Anthropic 서버로만 가므로 "자체 호스팅" 선언을 받아 주면 민감 데이터가 외부로 나가는 오판정이 된다(스펙 §3 서버 강제).
+   */
+  private static void validateHosting(AiCredentialDocument doc) {
+    JsonNode h = doc.payload().get(HOSTING_FIELD);
+    if (h == null || h.isNull()) return;
+    String v = h.asText("");
+    if (!"EXTERNAL".equals(v) && !"SELF_HOSTED".equals(v)) {
+      throw new IllegalArgumentException(MSG_HOSTING_INVALID);
+    }
+    if ("SELF_HOSTED".equals(v) && !SELF_HOSTABLE_AGENT_TYPES.contains(doc.agentType())) {
+      throw new IllegalArgumentException(MSG_CLAUDE_EXTERNAL_ONLY);
+    }
+    // 확실한 공용 AI SaaS 주소(api.openai.com 등)를 자체 호스팅이라 선언하면 '자체 호스팅 모델만' 등급 데이터가 외부로 나간다 — 병합 결과를
+    // 보므로 명시 선언·생략 유지 모두 덮인다(임베딩 설정 저장과 같은 규칙·같은 목록).
+    if ("SELF_HOSTED".equals(v)) {
+      KnownPublicAiHosts.requireNotKnownPublic(doc.payload().path("baseURL").asText(""));
     }
   }
 

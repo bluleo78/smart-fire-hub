@@ -28,7 +28,7 @@ import {
 import { claimSession } from './session-owner.js';
 import type { HistoryMessage, HistoryToolCall } from './transcript-reader.js';
 import { DEFAULT_MODEL, MAX_BUDGET_USD, COST_ALARM_TURNS } from '../constants.js';
-import { FireHubApiClient } from '../mcp/api-client.js';
+import { FireHubApiClient, type SharePurpose } from '../mcp/api-client.js';
 import {
   downloadChatFiles,
   cleanupChatFiles,
@@ -156,12 +156,13 @@ export async function writeCliTranscript(
  * @param tenantId 원요청 테넌트. `TENANT_ID` 로 stdio MCP 프로세스에 주입해야 그 프로세스가 테넌트
  *   헤더를 붙인다(누락 시 api 동작은 FireHubApiClient 생성자 주석 참고).
  */
-function buildMcpConfig(
+export function buildMcpConfig(
   userId: number,
   tenantId: number,
   apiBaseUrl: string,
   internalToken: string,
   credentials?: { apiKey?: string; oauthToken?: string },
+  aiPurpose?: SharePurpose,
 ): object {
   const { command, args } = getStdioServerCommand();
   // stdio MCP 서버는 별도 프로세스이고 env 를 여기서 명시적으로 구성한다.
@@ -172,6 +173,8 @@ function buildMcpConfig(
     INTERNAL_SERVICE_TOKEN: internalToken,
     USER_ID: String(userId),
     TENANT_ID: String(tenantId),
+    // S3: Proactive 실행이면 stdio MCP 프로세스가 X-AI-Purpose: share 를 싣게 한다(stdio-server.ts main).
+    ...(aiPurpose ? { AI_PURPOSE: aiPurpose } : {}),
   };
   if (credentials?.oauthToken?.trim()) {
     env.CLAUDE_CODE_OAUTH_TOKEN = credentials.oauthToken;
@@ -246,6 +249,7 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
     oauthToken,
     abortSignal,
     useSubscription = true,
+    aiPurpose,
   } = options;
 
   // #708: 자격증명이 없으면 어떤 부수효과(세션 표식·파일 다운로드·임시 파일)도 만들기 전에
@@ -439,7 +443,7 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
   await writeFile(
     mcpConfigPath,
     JSON.stringify(
-      buildMcpConfig(userId, tenantId, apiBaseUrl, internalToken, { apiKey, oauthToken }),
+      buildMcpConfig(userId, tenantId, apiBaseUrl, internalToken, { apiKey, oauthToken }, aiPurpose),
       null,
       2,
     ),

@@ -53,6 +53,8 @@ test.describe('임베딩 설정 탭', () => {
       provider: 'OLLAMA',
       model: 'bge-m3',
       baseUrl: 'http://host.docker.internal:11434',
+      // S3 §5-5 — 화면은 호스팅 위치를 항상 명시한다(생략 시 서버가 대상 변경 여부로 강등하는 규칙과 어긋나지 않게).
+      hosting: 'EXTERNAL',
     });
     await expect(page.getByRole('alertdialog')).toHaveCount(0);
     await expect(page.getByText('임베딩 설정을 저장했습니다')).toBeVisible();
@@ -91,6 +93,8 @@ test.describe('임베딩 설정 탭', () => {
       provider: 'OLLAMA',
       model: 'bge-m3',
       baseUrl: 'http://host.docker.internal:11434',
+      // S3 §5-5 — 화면은 호스팅 위치를 항상 명시한다(생략 시 서버가 대상 변경 여부로 강등하는 규칙과 어긋나지 않게).
+      hosting: 'EXTERNAL',
     });
     await expect(page.getByText('연결 성공 · 1024차원')).toBeVisible();
 
@@ -143,6 +147,8 @@ test.describe('임베딩 설정 탭', () => {
       model: 'text-embedding-3-small',
       baseUrl: 'https://api.openai.com',
       apiKey: 'sk-test-1234',
+      // S3 §5-5 — 화면은 호스팅 위치를 항상 명시한다(생략 시 서버가 대상 변경 여부로 강등하는 규칙과 어긋나지 않게).
+      hosting: 'EXTERNAL',
     });
   });
 
@@ -382,6 +388,8 @@ test.describe('임베딩 설정 탭', () => {
       provider: 'OPENAI',
       model: 'text-embedding-3-small',
       baseUrl: 'https://proxy.example.com',
+      // S3 §5-5 — 화면은 호스팅 위치를 항상 명시한다(생략 시 서버가 대상 변경 여부로 강등하는 규칙과 어긋나지 않게).
+      hosting: 'EXTERNAL',
     });
     await expect(page.locator('p[role="status"]')).toHaveText('Base URL 을 바꾸면 API 키를 다시 입력해야 합니다');
     await expect(

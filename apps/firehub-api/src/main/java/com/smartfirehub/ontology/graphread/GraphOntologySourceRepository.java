@@ -7,6 +7,7 @@ import static org.jooq.impl.DSL.not;
 import static org.jooq.impl.DSL.selectOne;
 import static org.jooq.impl.DSL.table;
 
+import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.jooq.Condition;
 import org.jooq.DSLContext;
@@ -77,5 +78,33 @@ public class GraphOntologySourceRepository {
             .on(DATASET.ID.eq(GOS_DATASET_ID))
             .where(GOS_ONTOLOGY_ID.eq(ontologyId))
             .and(blocking));
+  }
+
+  /**
+   * 주어진 데이터셋 중 지식그래프에 내용이 쓰였을 수 있는 것(출처 기록 graph_ontology_source 또는 적재 이력 dataset_graph_ingest 가 있는
+   * 것)의 id 를 오름차순으로 돌려준다. 외부 벡터 정리(AiVectorPurgeService)가 "GraphRAG 기적재분 — 자동 회수 불가, 수동 정리 대상"(스펙
+   * §4.3·§7.5)을 표시하는 데 쓴다.
+   *
+   * <p>두 테이블을 합치는 이유: 적재 이력은 문서 GraphRAG 적재만 남고, 표 투영·추론 표본은 출처 기록에만 남는다. 출처 기록은 연결·매핑 저장 시점에 남으므로
+   * 실제 적재보다 넓을 수 있다 — 경고 용도라 넓게(안전 쪽) 잡는다. 상태(SUCCESS/FAILED)도 가리지 않는다 — 실패한 적재도 일부를 썼을 수 있다.
+   *
+   * <p>RLS 와 별개로 {@code tenant_id} 를 명시한다(소유자 커넥션에서 불려도 남의 테넌트 이력을 섞지 않게).
+   */
+  @Transactional(readOnly = true)
+  public List<Long> findDatasetsWithGraphHistory(long tenantId, List<Long> datasetIds) {
+    if (datasetIds.isEmpty()) {
+      return List.of();
+    }
+    Long[] ids = datasetIds.toArray(Long[]::new);
+    return dsl.fetch(
+            "SELECT dataset_id FROM graph_ontology_source WHERE tenant_id = ? AND dataset_id = ANY(?)"
+                + " UNION"
+                + " SELECT dataset_id FROM dataset_graph_ingest WHERE tenant_id = ? AND dataset_id = ANY(?)"
+                + " ORDER BY dataset_id",
+            tenantId,
+            ids,
+            tenantId,
+            ids)
+        .getValues(0, Long.class);
   }
 }

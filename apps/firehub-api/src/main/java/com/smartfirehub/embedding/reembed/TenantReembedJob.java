@@ -13,6 +13,7 @@ import com.smartfirehub.embedding.config.EmbeddingConfigService;
 import com.smartfirehub.embedding.config.dto.EmbeddingImpact;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.transaction.AfterCommitRunner;
+import com.smartfirehub.securitylevel.ai.EmbeddingAiGate;
 import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
@@ -49,6 +50,7 @@ public class TenantReembedJob {
   private final EmbeddingBacklogService backlogService;
   private final DatasetEmbeddingBackfillService datasetBackfillService;
   private final JobScheduler jobScheduler;
+  private final EmbeddingAiGate aiGate;
 
   /** 한 단계(청크·데이터셋)의 결말 — 끝까지 갔는지, 설정 변경으로 멈췄는지. */
   private enum Outcome {
@@ -151,7 +153,10 @@ public class TenantReembedJob {
     long afterId = 0L;
     while (true) {
       if (superseded(space)) return Outcome.SUPERSEDED;
-      List<ChunkContent> batch = chunkRepository.findMissing(space, afterId, BATCH);
+      // S3 §4.3: 등급 허용 술어는 배치마다 다시 만든다 — 도중에 호스팅이 외부로 바뀌면 다음 배치부터 민감 데이터를 보내지 않는다.
+      List<ChunkContent> batch =
+          chunkRepository.findMissing(
+              space, afterId, BATCH, aiGate.allowedDatasetSql("c.dataset_id"));
       if (batch.isEmpty()) return Outcome.COMPLETED;
       List<float[]> vectors = provider.embed(batch.stream().map(ChunkContent::content).toList());
       chunkRepository.upsertEmbeddings(
@@ -166,7 +171,10 @@ public class TenantReembedJob {
     long afterId = 0L;
     while (true) {
       if (superseded(space)) return Outcome.SUPERSEDED;
-      List<SourceTextRow> batch = datasetRepository.findMissing(space, afterId, BATCH);
+      // 배치마다 등급 허용 술어를 다시 만든다(위 청크 단계와 같은 이유).
+      List<SourceTextRow> batch =
+          datasetRepository.findMissing(
+              space, afterId, BATCH, aiGate.allowedDatasetSql("de.dataset_id"));
       if (batch.isEmpty()) return Outcome.COMPLETED;
       List<float[]> vectors =
           provider.embed(batch.stream().map(SourceTextRow::sourceText).toList());

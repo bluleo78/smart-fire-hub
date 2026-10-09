@@ -14,6 +14,7 @@ import com.smartfirehub.embedding.EmbeddingSpace;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.transaction.AfterCommitRunner;
 import com.smartfirehub.notification.service.NotificationService;
+import com.smartfirehub.securitylevel.ai.EmbeddingAiGate;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -36,6 +37,7 @@ public class DocumentIngestionService {
   private final EmbeddingProviderFactory embeddingProviderFactory;
   private final NotificationService notificationService;
   private final JobScheduler jobScheduler;
+  private final EmbeddingAiGate embeddingAiGate;
 
   /** 동기: 중복검사 + blob 저장 + document_file(PENDING) 생성 + 잡 enqueue. */
   // 메서드 레벨 트랜잭션을 두지 않는다 — 리포지토리가 자기 트랜잭션을 열어 GUC 를 보장하고,
@@ -106,6 +108,15 @@ public class DocumentIngestionService {
             if (chunks.isEmpty()) {
               // 추출 텍스트가 비어 청크가 없으면 임베딩 없이 0건으로 완료 처리한다.
               fileRepository.markCompleted(documentFileId, extracted.pageCount(), 0);
+            } else if (!embeddingAiGate.datasetAllowed(file.datasetId())) {
+              // S3 §4.3: 등급이 임베딩 공급자를 허용하지 않는다 — 문서 원문을 외부로 보내지 않고 본문만 저장한다(완료 처리·알림은 그대로).
+              // 이후 허용으로 바뀌면(호스팅 선언·등급 하향) 재임베딩 판정식이 이 청크들의 벡터를 채운다.
+              chunkRepository.insertChunksOnly(documentFileId, file.datasetId(), chunks);
+              fileRepository.markCompleted(documentFileId, extracted.pageCount(), chunks.size());
+              log.info(
+                  "Document ingested without embedding (AI 정책): file={} chunks={}",
+                  documentFileId,
+                  chunks.size());
             } else {
               fileRepository.updateStatus(documentFileId, "EMBEDDING");
               EmbeddingProvider provider = embeddingProviderFactory.current();

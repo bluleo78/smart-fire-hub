@@ -48,6 +48,9 @@ export const CREDENTIAL_FIELDS: Record<AgentType, FieldSpec[]> = {
     { name: 'baseURL', plane: 'payload', label: '기본 URL', kind: 'text', required: true },
     { name: 'apiKey', plane: 'secret', label: 'API 키' },
     { name: 'reasoningEffort', plane: 'payload', label: '추론 강도', kind: 'select' },
+    // 공급자 호스팅 위치(S3 §5-5, 'EXTERNAL'|'SELF_HOSTED'). opencode 만 자체 호스팅을 선언할 수 있다 — Claude 계열은
+    // 서버가 외부로 고정하므로 싣지 않는다. 저장·dirty 판정은 빈 값을 'EXTERNAL' 로 정규화한다(useAiCredentialForm).
+    { name: 'hosting', plane: 'payload', label: '호스팅 위치', kind: 'select' },
   ],
 };
 

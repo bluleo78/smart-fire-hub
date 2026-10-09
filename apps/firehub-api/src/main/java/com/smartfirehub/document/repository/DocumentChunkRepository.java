@@ -104,6 +104,31 @@ public class DocumentChunkRepository {
   }
 
   /**
+   * 벡터 없이 청크 본문만 넣는다 — 등급이 임베딩 공급자를 허용하지 않는 문서(S3 §4.3). 본문을 외부 공급자로 보내지 않으며, 이후 허용으로 바뀌면 재임베딩
+   * 판정식(countMissing/findMissing)이 이 청크들을 집어 벡터를 채운다.
+   */
+  public void insertChunksOnly(Long documentFileId, Long datasetId, List<Chunk> chunks) {
+    for (int start = 0; start < chunks.size(); start += BATCH_SIZE) {
+      int end = Math.min(start + BATCH_SIZE, chunks.size());
+      StringBuilder sql =
+          new StringBuilder(
+              "INSERT INTO document_chunk(document_file_id, dataset_id, chunk_index, content, token_count) VALUES ");
+      List<Object> params = new ArrayList<>();
+      for (int i = start; i < end; i++) {
+        if (i > start) sql.append(',');
+        sql.append("(?,?,?,?,?)");
+        Chunk c = chunks.get(i);
+        params.add(documentFileId);
+        params.add(datasetId);
+        params.add(c.index());
+        params.add(c.content());
+        params.add(c.tokenCount());
+      }
+      dsl.execute(sql.toString(), params.toArray());
+    }
+  }
+
+  /**
    * 기존 청크의 벡터를 {@code space} 로 옮긴다: 다른 차원 테이블의 같은 청크 행 DELETE + 현재 차원 테이블 UPSERT (같은 차원 안의 모델 교체도
    * ON CONFLICT 로 처리). 불변식 "한 청크의 벡터는 차원 테이블 전체에서 최대 1행"을 이 트랜잭션이 지킨다. 부모가 사라진 id 는 INSERT…SELECT 가
    * 0행이라 조용히 건너뛴다(재임베딩 중 문서 삭제 경합).
@@ -270,9 +295,13 @@ public class DocumentChunkRepository {
         .get(0, Long.class);
   }
 
-  /** 전체 청크 수. 재임베딩 진행률 계산의 분모. */
-  public long countAllChunks() {
-    return dsl.fetchOne("SELECT COUNT(*) FROM document_chunk").get(0, Long.class);
+  /**
+   * 전체 청크 수. 재임베딩 진행률 계산의 분모 — 판정식과 같은 모집단이어야 하므로 {@code allowedSql}(EmbeddingAiGate
+   * #allowedDatasetSql("c.dataset_id"))로 등급이 임베딩 공급자를 허용하지 않는 데이터셋의 청크를 뺀다(S3 §4.3).
+   */
+  public long countAllChunks(String allowedSql) {
+    return dsl.fetchOne("SELECT COUNT(*) FROM document_chunk c WHERE " + allowedSql)
+        .get(0, Long.class);
   }
 
   /** {@code space} 로 임베딩된 청크 수(RLS 로 현재 테넌트). 진행률 분자. */
@@ -283,18 +312,28 @@ public class DocumentChunkRepository {
         .get(0, Long.class);
   }
 
-  /** 재임베딩 판정식: 현재 차원 테이블에 현재 모델 벡터가 없는 청크 수. 영향도·저장 시 투입·잡이 같은 식을 쓴다. */
-  public long countMissing(EmbeddingSpace space) {
+  /**
+   * 재임베딩 판정식: 현재 차원 테이블에 현재 모델 벡터가 없고 <b>등급이 임베딩 공급자를 허용하는</b> 데이터셋의 청크 수. 영향도·저장 시 투입·잡이 같은 식을 쓴다.
+   * {@code allowedSql} 은 EmbeddingAiGate#allowedDatasetSql("c.dataset_id") — 정책 없는 오버로드는 두지 않는다.
+   */
+  public long countMissing(EmbeddingSpace space, String allowedSql) {
     return dsl.fetchOne(
-            "SELECT count(*) FROM document_chunk c WHERE " + missingPredicate(space), space.model())
+            "SELECT count(*) FROM document_chunk c WHERE "
+                + missingPredicate(space)
+                + " AND "
+                + allowedSql,
+            space.model())
         .get(0, Long.class);
   }
 
-  /** 판정식을 만족하는 청크를 id 순으로 {@code limit} 건(키셋 {@code afterChunkId} 이후). */
-  public List<ChunkContent> findMissing(EmbeddingSpace space, long afterChunkId, int limit) {
+  /** 판정식(등급 허용 포함)을 만족하는 청크를 id 순으로 {@code limit} 건(키셋 {@code afterChunkId} 이후). */
+  public List<ChunkContent> findMissing(
+      EmbeddingSpace space, long afterChunkId, int limit, String allowedSql) {
     return dsl.fetch(
             "SELECT c.id, c.content FROM document_chunk c WHERE c.id > ? AND "
                 + missingPredicate(space)
+                + " AND "
+                + allowedSql
                 + " ORDER BY c.id LIMIT ?",
             afterChunkId,
             space.model(),
@@ -309,6 +348,25 @@ public class DocumentChunkRepository {
   public int deleteOtherDimensions(EmbeddingDimension keep) {
     return VectorTables.deleteOtherDimensions(
         dsl, keep, EmbeddingDimension::chunkTable, TenantContext.require("다른 차원 벡터 정리"));
+  }
+
+  /**
+   * 여러 데이터셋의 청크 벡터를 모든 차원에서 지운다(청크 본문 content 는 남겨 키워드 검색 유지). 정책 위반 외부 벡터 정리(AiVectorPurgeService,
+   * S3 §4.3)용 — 지운 행 수를 돌려준다. {@code tenant_id} 를 명시한다(조건 없는 DELETE 금지 규율).
+   */
+  public int deleteVectorsOf(List<Long> datasetIds) {
+    if (datasetIds.isEmpty()) return 0;
+    long tenantId = TenantContext.require("청크 벡터 정리");
+    Long[] ids = datasetIds.toArray(Long[]::new);
+    int deleted = 0;
+    for (EmbeddingDimension d : EmbeddingDimension.values()) {
+      deleted +=
+          dsl.execute(
+              "DELETE FROM " + d.chunkTable() + " WHERE tenant_id = ? AND dataset_id = ANY(?)",
+              tenantId,
+              ids);
+    }
+    return deleted;
   }
 
   private static String missingPredicate(EmbeddingSpace space) {

@@ -8,6 +8,9 @@ import com.smartfirehub.proactive.dto.ProactiveJobExecutionResponse;
 import com.smartfirehub.proactive.repository.ProactiveJobExecutionRepository;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
+import com.smartfirehub.securitylevel.ai.AiCall;
+import com.smartfirehub.securitylevel.ai.AiCallContext;
+import com.smartfirehub.securitylevel.ai.AiHostingResolver;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -31,6 +34,9 @@ public class ProactiveContextCollector {
   private final ObjectMapper objectMapper;
   private final ProactiveJobExecutionRepository executionRepository;
   private final ClearanceResolver clearanceResolver;
+  // 컨텍스트가 채팅 공급자로 가고 리포트로 발송되므로 대시보드 조회를 AI+SHARE 범위로 감싼다(스펙 §4.3 Proactive 행).
+  private final AiCallContext aiCallContext;
+  private final AiHostingResolver aiHostingResolver;
 
   /**
    * 리포트 컨텍스트 수집.
@@ -51,11 +57,18 @@ public class ProactiveContextCollector {
           ownerUserId != null
               ? clearanceResolver.resolve(ownerUserId)
               : Clearance.none(-1L, tenantId);
-      var statsFuture = scopedAsync(tenantId, () -> dashboardService.getStats(viewer));
-      var healthFuture = scopedAsync(tenantId, () -> dashboardService.getSystemHealth(viewer));
-      var attentionFuture = scopedAsync(tenantId, () -> dashboardService.getAttentionItems(viewer));
+      // 컨텍스트는 채팅 공급자로 가고 리포트로 발송된다(스펙 §4.3 Proactive 행) — 소유자 VIEW 에 더해 AI(공유 호스팅 규칙
+      // forShare: 채팅·임베딩 모두 자체 호스팅이어야 자체 호스팅) + SHARE 를 통과한 데이터셋만 싣는다. 호스팅은 호출 스레드(테넌트
+      // 컨텍스트 있음)에서 한 번 계산해 네 작업이 공유한다.
+      AiCall aiCall = aiHostingResolver.shareCall();
+      var statsFuture = scopedAsync(tenantId, aiCall, () -> dashboardService.getStats(viewer));
+      var healthFuture =
+          scopedAsync(tenantId, aiCall, () -> dashboardService.getSystemHealth(viewer));
+      var attentionFuture =
+          scopedAsync(tenantId, aiCall, () -> dashboardService.getAttentionItems(viewer));
       var activityFuture =
-          scopedAsync(tenantId, () -> dashboardService.getActivityFeed(null, null, 0, 20, viewer));
+          scopedAsync(
+              tenantId, aiCall, () -> dashboardService.getActivityFeed(null, null, 0, 20, viewer));
       CompletableFuture.allOf(statsFuture, healthFuture, attentionFuture, activityFuture).join();
 
       // 1. Dashboard stats
@@ -150,10 +163,14 @@ public class ProactiveContextCollector {
    * 대시보드 조회가 <b>예외도 로그도 없이</b> 0행이 되고, {@code DataSchema} 를 거치는 조회는 예외를 던진다. 네 곳이 같은 감싸기를 복붙하고
    * 있었으므로 한 곳으로 모아 한 군데만 빠뜨리는 사고를 구조적으로 막는다.
    *
+   * <p>AI 범위({@link AiCallContext#callWith})도 같은 이유로 <b>작업 안에서</b> 다시 세운다 — ThreadLocal 이라 호출 스레드에서
+   * 세우면 풀 스레드의 대시보드 조회가 AI·SHARE 술어 없이 소유자 VIEW 만으로 걸러져 공유 금지(기밀) 데이터셋 이름이 리포트에 실린다.
+   *
    * <p>executor 는 일부러 넘기지 않는다 — 기존 동작({@code supplyAsync} 의 기본 풀)을 그대로 유지한다.
    */
-  private <T> CompletableFuture<T> scopedAsync(long tenantId, Supplier<T> call) {
-    return CompletableFuture.supplyAsync(() -> TenantContext.runScopedGet(tenantId, call));
+  private <T> CompletableFuture<T> scopedAsync(long tenantId, AiCall aiCall, Supplier<T> call) {
+    return CompletableFuture.supplyAsync(
+        () -> TenantContext.runScopedGet(tenantId, () -> aiCallContext.callWith(aiCall, call)));
   }
 
   /**

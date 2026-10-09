@@ -28,6 +28,13 @@ export const MCP_SERVER_VERSION = '1.0.0';
 export const ON_BEHALF_OF_HEADER = 'X-On-Behalf-Of';
 export const ON_BEHALF_OF_TENANT_HEADER = 'X-On-Behalf-Of-Tenant';
 
+/**
+ * 대행 호출 목적 헤더(S3). 'share' = 결과가 공유 저장소·발송으로 간다(api 가 AI 판정에 SHARE 판정을 더한다),
+ * 'none' = LLM 을 거치지 않는 대행(웹 그래프 뷰어·HITL 승인 — api 가 AI 경로로 판정하지 않는다).
+ * 생략 = 채팅(AI 판정). api 대응 상수: InternalCallHeaders.AI_PURPOSE.
+ */
+export const AI_PURPOSE_HEADER = 'X-AI-Purpose';
+
 /** API error message prefix */
 export const API_ERROR_PREFIX = 'API 오류';
 

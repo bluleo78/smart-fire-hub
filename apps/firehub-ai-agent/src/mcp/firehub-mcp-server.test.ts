@@ -4,6 +4,7 @@ import {
   buildAllMcpTools,
   filterToolsByPermissions,
   createSafeTool,
+  safeTool,
 } from './firehub-mcp-server.js';
 import { FireHubApiClient } from './api-client.js';
 import { createTracker, FAILURE_WARN_SENTINEL } from '../agent/failure-streak.js';
@@ -16,6 +17,8 @@ function createMockClient(): FireHubApiClient {
   for (const name of methodNames) {
     client[name] = vi.fn().mockResolvedValue({ mocked: true });
   }
+  // S3: withPurpose 는 Promise 가 아니라 클라이언트를 돌려줘야 한다(GraphRAG 도구가 등록 시 share 클라이언트를 만든다).
+  client.withPurpose = vi.fn(() => client);
   return client as FireHubApiClient;
 }
 
@@ -420,5 +423,73 @@ describe('createSafeTool Tier1 경고 주입', () => {
     fail = true;
     const r = await def.handler({}); // 다시 1 (warnAt=2 미달)
     expect(r.content.map((c) => c.text).join('')).not.toContain(FAILURE_WARN_SENTINEL);
+  });
+});
+
+// S3: api 정책 차단(403 POLICY_BLOCKED)을 웹이 파싱하는 고정 표식으로 싣는다.
+describe('POLICY_BLOCKED 도구 결과 표식(S3)', () => {
+  type Def = { handler: (a: unknown) => Promise<{ content: { text: string }[]; isError?: boolean }> };
+  const blockedError = () =>
+    Object.assign(new Error('API 오류 (403): 차단'), {
+      status: 403,
+      policyBlocked: { action: 'AI', levelName: '민감', policyKey: 'ai_policy', message: '차단' },
+    });
+
+  beforeEach(() => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  it('safeTool 은 POLICY_BLOCKED 오류를 고정 JSON 표식 + isError 로 돌려준다', async () => {
+    const def = safeTool('x', 'd', {}, async () => {
+      throw blockedError();
+    }) as unknown as Def;
+    const result = await def.handler({});
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(result.content[0].text)).toEqual({
+      policyBlocked: true,
+      code: 'POLICY_BLOCKED',
+      action: 'AI',
+      levelName: '민감',
+      policyKey: 'ai_policy',
+      message: '차단',
+    });
+  });
+
+  it('safeTool 의 일반 오류는 기존처럼 메시지 원문이다', async () => {
+    const def = safeTool('x', 'd', {}, async () => {
+      throw new Error('boom');
+    }) as unknown as Def;
+    const result = await def.handler({});
+    expect(result).toEqual({ content: [{ type: 'text', text: 'boom' }], isError: true });
+  });
+
+  it('createSafeTool 도 같은 표식을 싣는다', async () => {
+    const def = createSafeTool(createTracker())('x', 'd', {}, async () => {
+      throw blockedError();
+    }) as unknown as Def;
+    const result = await def.handler({});
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(result.content[0].text)).toMatchObject({ policyBlocked: true, levelName: '민감' });
+  });
+
+  it('같은 차단을 임계 횟수만큼 반복해도 경고 힌트를 붙이지 않아 표식 JSON 이 깨지지 않는다', async () => {
+    const def = createSafeTool(createTracker({ warnAt: 2, haltAt: 8 }))('x', 'd', {}, async () => {
+      throw blockedError();
+    }) as unknown as Def;
+    const results = [];
+    for (let i = 0; i < 3; i++) results.push(await def.handler({}));
+    for (const r of results) {
+      expect(r.content).toHaveLength(1);
+      expect(() => JSON.parse(r.content.map((c) => c.text).join(''))).not.toThrow();
+    }
+  });
+
+  it('일반 오류 반복에는 여전히 경고 힌트가 붙는다(차단 예외가 힌트를 끄지 않음)', async () => {
+    const def = createSafeTool(createTracker({ warnAt: 2, haltAt: 8 }))('x', 'd', {}, async () => {
+      throw new Error('boom');
+    }) as unknown as Def;
+    await def.handler({});
+    const second = await def.handler({});
+    expect(second.content.map((c) => c.text).join('')).toContain(FAILURE_WARN_SENTINEL);
   });
 });

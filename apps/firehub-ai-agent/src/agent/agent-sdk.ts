@@ -1,7 +1,7 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import fs from 'fs/promises';
-import { FireHubApiClient } from '../mcp/api-client.js';
+import { FireHubApiClient, type SharePurpose } from '../mcp/api-client.js';
 import { createFireHubMcpServer } from '../mcp/firehub-mcp-server.js';
 import { SYSTEM_PROMPT, FILE_ATTACHMENT_PROMPT } from './system-prompt.js';
 import { loadSubagents, buildSubagentGuide } from './subagent-loader.js';
@@ -72,6 +72,8 @@ export interface AgentOptions {
   apiKey?: string;
   oauthToken?: string;
   abortSignal?: AbortSignal;
+  /** S3: 'share' 면 MCP 도구의 api 호출에 X-AI-Purpose: share 를 싣는다(ChatProviderOptions.aiPurpose 참고). */
+  aiPurpose?: SharePurpose;
 }
 
 /**
@@ -135,7 +137,8 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
 
   const apiBaseUrl = process.env.API_BASE_URL || 'http://localhost:8080/api/v1';
   const internalToken = process.env.INTERNAL_SERVICE_TOKEN || '';
-  const apiClient = new FireHubApiClient(apiBaseUrl, internalToken, userId, tenantId);
+  // S3: Proactive 실행이면 share 목적 — 이 클라이언트가 MCP 도구 전체에 주입된다.
+  const apiClient = new FireHubApiClient(apiBaseUrl, internalToken, userId, tenantId, { purpose: options.aiPurpose });
 
   // 세션 사용자 권한 조회 + 첨부 파일 다운로드를 병렬 실행한다.
   // 두 작업은 서로 독립적이므로 순차 대기할 필요가 없다.

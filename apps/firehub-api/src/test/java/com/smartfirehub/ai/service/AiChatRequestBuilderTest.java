@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
 import com.smartfirehub.ai.service.AiChatRequestBuilder.Prepared;
+import com.smartfirehub.securitylevel.ai.AiCallContext;
 import com.smartfirehub.settings.model.AiBehaviorDefaults;
 import com.smartfirehub.settings.model.AiCredential;
 import com.smartfirehub.settings.service.AiCredentialService;
@@ -48,6 +49,27 @@ class AiChatRequestBuilderTest {
         .containsEntry("maxTurns", 7)
         // 저장값이 없는 동작 키는 코드 기본값
         .containsEntry("maxTokens", AiBehaviorDefaults.MAX_TOKENS);
+  }
+
+  @Test
+  @DisplayName("S3 — 공유(share) 경로면 바디에 aiPurpose=share 를 싣는다(Slack 발송 = SHARE)")
+  void prepare_share_putsSharePurpose() {
+    when(settingsService.getAsMap("ai")).thenReturn(Map.of("ai.model", "claude-sonnet-5"));
+    when(aiCredentialService.resolve()).thenReturn(new AiCredential.CliApi("sk-live"));
+
+    Prepared prepared = builder.prepare(7L, 42L, "", "hi", true);
+
+    assertThat(prepared.body()).containsEntry("aiPurpose", AiCallContext.PURPOSE_SHARE);
+  }
+
+  @Test
+  @DisplayName("S3 — 웹 채팅 경로(목적 없음)는 aiPurpose 키를 싣지 않는다 — 일반 AI 판정만 받는다")
+  void prepare_default_hasNoPurpose() {
+    when(settingsService.getAsMap("ai")).thenReturn(Map.of("ai.model", "claude-sonnet-5"));
+    when(aiCredentialService.resolve()).thenReturn(new AiCredential.CliApi("sk-live"));
+
+    assertThat(builder.prepare(7L, 42L, "", "hi").body()).doesNotContainKey("aiPurpose");
+    assertThat(builder.prepare(7L, 42L, "", "hi", false).body()).doesNotContainKey("aiPurpose");
   }
 
   @Test

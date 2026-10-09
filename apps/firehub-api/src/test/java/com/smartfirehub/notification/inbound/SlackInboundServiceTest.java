@@ -124,9 +124,9 @@ class SlackInboundServiceTest {
     when(aiSessionRepo.findBySlackContext(TEAM_ID, CHANNEL, THREAD_TS))
         .thenReturn(Optional.empty());
     // 새 스레드는 빈 sessionId 로, 기존 스레드는 그 세션 ID 로 바디를 만든다.
-    when(chatRequestBuilder.prepare(TENANT_ID, USER_ID, "", "hi"))
+    when(chatRequestBuilder.prepare(TENANT_ID, USER_ID, "", "hi", true))
         .thenReturn(new Prepared(NEW_BODY, null));
-    when(chatRequestBuilder.prepare(TENANT_ID, USER_ID, AGENT_SESSION_ID, "hi"))
+    when(chatRequestBuilder.prepare(TENANT_ID, USER_ID, AGENT_SESSION_ID, "hi", true))
         .thenReturn(new Prepared(RESUME_BODY, null));
     when(aiAgentClient.chat(NEW_BODY)).thenReturn(new ChatReply(AGENT_SESSION_ID, "AI 응답 텍스트"));
     when(aiAgentClient.chat(RESUME_BODY)).thenReturn(new ChatReply(AGENT_SESSION_ID, "AI 응답 텍스트"));
@@ -255,10 +255,23 @@ class SlackInboundServiceTest {
   }
 
   @Test
+  @DisplayName("S3 — Slack 답변은 발송되므로 공유 목적(share)으로 요청을 만들고 웹 채팅용(목적 없음) 바디는 쓰지 않는다")
+  void dispatch_buildsRequestWithSharePurpose() {
+    service.dispatch(TEAM_ID, makeEvent("hi"));
+
+    // 스펙 §4.3 "Slack 발송 = SHARE" — 목적 없는 4인자 경로(웹 채팅)로 만들면 share_policy 판정이 빠진다.
+    verify(chatRequestBuilder).prepare(TENANT_ID, USER_ID, "", "hi", true);
+    verify(chatRequestBuilder, never()).prepare(anyLong(), any(), anyString(), anyString());
+    verify(chatRequestBuilder, never())
+        .prepare(anyLong(), any(), anyString(), anyString(), eq(false));
+    verify(aiAgentClient).chat(NEW_BODY);
+  }
+
+  @Test
   @DisplayName("AI 자격증명 미설정 — ai-agent 를 부르지 않고 안내 문구를 본인에게만 보인다")
   void dispatch_credentialIncomplete_postsProblemWithoutCallingAgent() {
     String problem = "AI API 키 또는 OAuth 토큰이 설정되지 않았습니다.";
-    when(chatRequestBuilder.prepare(TENANT_ID, USER_ID, "", "hi"))
+    when(chatRequestBuilder.prepare(TENANT_ID, USER_ID, "", "hi", true))
         .thenReturn(new Prepared(null, problem));
 
     service.dispatch(TEAM_ID, makeEvent("hi"));

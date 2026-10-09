@@ -7,6 +7,7 @@ import type { AgentType, ProviderConfig } from '../providers/index.js';
 // '../providers/index.js' 를 통째로 목킹하므로(ProviderFactory 만 정의), 여기서 그 경로로
 // 가져오면 목이 정의하지 않은 값이라 undefined 가 되어 라우트가 깨진다.
 import { isKnownAgentType } from '../providers/types.js';
+import { parseSharePurpose } from '../mcp/api-client.js';
 import { internalAuth } from '../middleware/auth.js';
 import { readSessionTranscript } from '../agent/transcript-reader.js';
 import { checkSessionOwnership } from '../agent/session-owner.js';
@@ -47,6 +48,7 @@ router.post('/chat', internalAuth, async (req: Request, res: Response) => {
     reasoningEffort,
     navigationContext,
     screenContext,
+    aiPurpose,
   } = req.body;
 
   const hasMessage = message && typeof message === 'string';
@@ -141,6 +143,10 @@ router.post('/chat', internalAuth, async (req: Request, res: Response) => {
       temperature,
       maxTokens,
       abortSignal: undefined,
+      // S3: api 가 Slack 인바운드처럼 답변이 발송되는 경로에서만 'share' 를 싣는다(AiChatRequestBuilder) — 이 실행의
+      // MCP 호출이 X-AI-Purpose: share 를 붙여 share_policy 판정을 받게 한다. 'share' 외의 값은 버린다 — 특히
+      // 'none'(AI 판정 제외)이 바디로 들어와도 LLM 실행에 실리면 안 된다(proactive.ts 와 같은 규칙).
+      aiPurpose: parseSharePurpose(aiPurpose),
     });
 
     for await (const event of events) {

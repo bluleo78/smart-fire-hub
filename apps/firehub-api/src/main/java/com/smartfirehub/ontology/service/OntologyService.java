@@ -13,17 +13,23 @@ import com.smartfirehub.ontology.dto.GraphAccessResponse;
 import com.smartfirehub.ontology.dto.GraphResponse;
 import com.smartfirehub.ontology.dto.OntologyResponse;
 import com.smartfirehub.ontology.dto.OntologySummary;
+import com.smartfirehub.ontology.graphread.GraphOntologySourceRepository;
 import com.smartfirehub.ontology.graphread.GraphReadGate;
 import com.smartfirehub.ontology.repository.OntologyRepository;
+import com.smartfirehub.securitylevel.access.ClearanceResolver;
+import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
+import com.smartfirehub.securitylevel.ai.AiHostingResolver;
 import com.smartfirehub.user.repository.UserRepository;
 import java.time.Duration;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientException;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
@@ -47,6 +53,11 @@ public class OntologyService {
   private final GraphReadGate graphReadGate;
   // ai-agent 오류 본문의 code 필드를 읽기 위한 공용 ObjectMapper(스프링 빈).
   private final ObjectMapper objectMapper;
+  // WD-31⑤ 출처 판정·기록 — 요청자 자격, 데이터셋 가드, 공유 호스팅(채팅+임베딩), 출처 저장소.
+  private final ClearanceResolver clearanceResolver;
+  private final DatasetAccessGuard datasetAccessGuard;
+  private final AiHostingResolver aiHostingResolver;
+  private final GraphOntologySourceRepository sourceRepository;
 
   public OntologyService(
       @Value("${agent.url}") String agentUrl,
@@ -55,7 +66,11 @@ public class OntologyService {
       AuditLogService auditLogService,
       UserRepository userRepository,
       GraphReadGate graphReadGate,
-      ObjectMapper objectMapper) {
+      ObjectMapper objectMapper,
+      ClearanceResolver clearanceResolver,
+      DatasetAccessGuard datasetAccessGuard,
+      AiHostingResolver aiHostingResolver,
+      GraphOntologySourceRepository sourceRepository) {
     this.webClient =
         WebClient.builder()
             .baseUrl(agentUrl)
@@ -75,6 +90,10 @@ public class OntologyService {
     this.userRepository = userRepository;
     this.graphReadGate = graphReadGate;
     this.objectMapper = objectMapper;
+    this.clearanceResolver = clearanceResolver;
+    this.datasetAccessGuard = datasetAccessGuard;
+    this.aiHostingResolver = aiHostingResolver;
+    this.sourceRepository = sourceRepository;
   }
 
   // id 스코프 조회.
@@ -108,6 +127,9 @@ public class OntologyService {
   }
 
   // 신규 온톨로지 생성 — 검증(IllegalArgumentException→400) 후 삽입, 새 id 반환.
+  // @Transactional: 온톨로지 삽입과 출처(graph_ontology_source) 기록을 한 트랜잭션으로 묶는다 — 출처 기록이 실패했는데
+  // 온톨로지만 남으면 그래프 읽기 게이트(WD-28)가 "출처 없음 = 열림"으로 판정해 표본 등급을 따르지 않게 된다.
+  @Transactional
   public long createOntology(CreateOntologyRequest req) {
     // 오타 등 알 수 없는 status 문자열이 통과하면 "active".equals(status)가 false가 되어 완전성
     // 게이트를 조용히 건너뛰고, DB CHECK(status) 제약에서 500으로 터진다 — 여기서 400으로 막는다.
@@ -132,7 +154,11 @@ public class OntologyService {
       throw new IllegalStateException("이미 같은 도메인의 온톨로지가 있습니다: " + req.domain());
     }
 
+    requireSourceDatasetsAllowed(req.sourceDatasetIds());
+
     long id = ontologyRepository.createOntology(req);
+    // 판정을 통과한 출처만 기록한다(멱등 — 중복 id 는 한 행).
+    req.sourceDatasetIds().forEach(dsId -> sourceRepository.record(id, dsId));
 
     // 감사 로그 — 신규 생성된 온톨로지의 실제 id를 entityId로 기록한다(레거시처럼 "1" 고정 아님).
     var auth = SecurityContextHolder.getContext().getAuthentication();
@@ -156,6 +182,25 @@ public class OntologyService {
     }
 
     return id;
+  }
+
+  /**
+   * WD-31⑤ 출처 데이터셋 판정(보충 스펙 §2.2). 추론 표본은 채팅 공급자로 갔고 결과 온톨로지는 공유 저장소이므로 각 출처에 VIEW + AI(공유 호스팅 규칙
+   * forShare) + SHARE 를 요구한다.
+   *
+   * <p>사실은 한 번에 읽고(N+1 없음), VIEW 를 전부 먼저 판정한다 — 볼 수 없는 id 는 없는 id 와 같은 404(존재 은닉). requireView 의 AI
+   * 훅을 쓰지 않는 이유: 그 자리에서 AI 까지 판정하면 [볼 수 있으나 AI 불허, 숨김] 순서에서 404 대신 403 이 나가 응답이 입력 순서에 달라진다(가드의
+   * requireViewThenAiForDatasets 가 VIEW 전부 → 정책 순서를 보장한다).
+   */
+  private void requireSourceDatasetsAllowed(List<Long> sourceDatasetIds) {
+    if (sourceDatasetIds.isEmpty()) {
+      return;
+    }
+    if (sourceDatasetIds.stream().anyMatch(Objects::isNull)) {
+      throw new IllegalArgumentException("출처 데이터셋 id 가 비어 있습니다.");
+    }
+    datasetAccessGuard.requireViewThenAiForDatasets(
+        clearanceResolver.current(), sourceDatasetIds, aiHostingResolver.shareCall());
   }
 
   // 상태 전이 판정. 허용: draft→active, active→archived, archived→active. 그 외 상태 변경은 거부.

@@ -91,6 +91,16 @@ public class RowSearchService {
       return empty(state, "STALE");
     }
 
+    // S3 §4.3: 등급이 임베딩 공급자를 허용하지 않아 키워드만 색인된 데이터셋 — 질의 임베딩도, 의미 검색도 하지 않는다.
+    // HYBRID 도 오류·degraded 없이 키워드 결과를 KEYWORD_ONLY 상태로 돌려준다(벡터가 원래 없는 정상 상태라 degraded 가 아니다).
+    if (RowSearchSyncService.KEYWORD_ONLY_MODEL.equals(state.embeddingModel())) {
+      if ("SEMANTIC".equals(mode)) {
+        return empty(state, "KEYWORD_ONLY");
+      }
+      List<RankFusion.Fused<RowHit>> kw = single(index.keyword(ref, req.query(), filter, limit), 1);
+      return respond(ref, returnColumns, kw, state, "KEYWORD_ONLY", false);
+    }
+
     // 색인 벡터와 질의 벡터가 같은 모델·차원이어야 의미 검색이 성립한다. 모델이 바뀐 뒤 다음 스윕이 재색인하기 전에는
     // 같은 차원이면 조용히 틀린 결과, 다른 차원이면 pgvector 오류(500)가 나므로 의미 검색을 건너뛴다.
     // provider 는 의미 검색이 필요한 모드에서만 한 번 얻는다.
@@ -134,6 +144,17 @@ public class RowSearchService {
       }
     }
 
+    return respond(ref, returnColumns, fused, state, state.status(), degraded);
+  }
+
+  /** 순위가 매겨진 색인 결과로 원본 행을 조회해 응답을 조립한다(일반 경로·키워드 전용 경로 공용). */
+  private RowSearchResponse respond(
+      IndexRef ref,
+      List<String> returnColumns,
+      List<RankFusion.Fused<RowHit>> fused,
+      SearchIndexState state,
+      String status,
+      boolean degraded) {
     Map<Long, Map<String, Object>> rows =
         reader.fetchRows(
             ref.sourceTable(), returnColumns, fused.stream().map(f -> f.hit().rowId()).toList());
@@ -144,7 +165,7 @@ public class RowSearchService {
       List<String> matchedBy = f.sources().stream().map(SOURCE_NAMES::get).toList();
       hits.add(new RowSearchResponse.Hit(f.hit().rowId(), f.score(), matchedBy, row));
     }
-    return new RowSearchResponse(indexStatus(state, state.status()), degraded, hits);
+    return new RowSearchResponse(indexStatus(state, status), degraded, hits);
   }
 
   /** 결과 없이 색인 상태만 알리는 응답(첫 스윕 전·STALE·재색인 대기). */

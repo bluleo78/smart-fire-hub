@@ -11,7 +11,15 @@ import com.smartfirehub.embedding.config.dto.EmbeddingProbeResponse;
 import com.smartfirehub.embedding.reembed.EmbeddingBacklogService;
 import com.smartfirehub.embedding.reembed.TenantReembedJob;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.securitylevel.access.ProviderHosting;
+import com.smartfirehub.securitylevel.ai.HostingChangeAuditor;
+import com.smartfirehub.securitylevel.ai.HostingDeclarationPolicy;
+import com.smartfirehub.securitylevel.ai.KnownPublicAiHosts;
+import com.smartfirehub.securitylevel.event.EmbeddingHostingChangedEvent;
+import com.smartfirehub.settings.service.AiCredentialService;
+import java.util.Optional;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 
 /**
@@ -28,6 +36,9 @@ public class EmbeddingSettingsService {
   private final EmbeddingProviderFactory providerFactory;
   private final EmbeddingBacklogService backlogService;
   private final TenantReembedJob reembedJob;
+  private final HostingDeclarationPolicy hostingPolicy;
+  private final HostingChangeAuditor hostingChangeAuditor;
+  private final ApplicationEventPublisher eventPublisher;
 
   public EmbeddingConfigView view() {
     return configService.view();
@@ -38,17 +49,56 @@ public class EmbeddingSettingsService {
     return new EmbeddingProbeResponse(measure(configService.prepare(req)).size());
   }
 
-  /** 검증 → probe 로 차원 측정 → 저장. */
+  /**
+   * 호스팅 판정 → 검증 → probe 로 차원 측정 → 저장 → 호스팅이 바뀌었으면 감사. 자체 호스팅으로 올리는 선언은 security:settings 가 필요하다(스펙
+   * §2.6) — 외부 호출(probe) 전에 판정해 거부 시 아무것도 쓰지 않는다. 확실한 공용 AI SaaS 주소의 자체 호스팅 선언은 권한과 무관하게 400 이다
+   * (KnownPublicAiHosts — 채팅 자격증명과 같은 규칙).
+   *
+   * <p>저장된 문서는 처음에 <b>한 번만</b> 읽는다(스냅샷) — 호스팅·대상 변경·키 병합이 같은 시점의 값으로 판정되고, 같은 행을 여러 번 읽지 않는다.
+   */
   public EmbeddingConfigView save(EmbeddingConfigRequest req, Long userId) {
-    EmbeddingConfig draft = configService.prepare(req);
+    Optional<EmbeddingConfigDocument.Parsed> snapshot = configService.readSnapshot();
+    ProviderHosting before = EmbeddingConfigService.hostingOf(snapshot);
+    // 전송 대상(provider·Base URL)이 바뀌는가 — 자체 호스팅 선언은 그 목적지에 대한 것이므로 목적지가 바뀌면 유지하지 않는다.
+    boolean targetChanged = EmbeddingConfigService.targetChanged(snapshot, req);
+    // 생략 = 대상이 그대로일 때만 기존 선언 유지, 대상이 바뀌면 외부(보수적). 모르는 값은 400.
+    ProviderHosting after =
+        req.hosting() != null
+            ? parseHosting(req.hosting())
+            : targetChanged ? ProviderHosting.EXTERNAL : before;
+    // 대상이 바뀌면서 자체 호스팅으로 남는 것(명시 선언)도 "올리는" 변경이라 security:settings 가 필요하다.
+    hostingPolicy.requireChangeAllowed(userId, before, after, targetChanged);
+    if (after == ProviderHosting.SELF_HOSTED) {
+      // 명시 선언이든 유지든 결과가 자체 호스팅이면 목적지를 본다 — 공용 SaaS 를 자체 호스팅이라 저장하면 '자체 호스팅 모델만' 등급 데이터가
+      // 외부로 나간다. 검증·DNS·probe(외부 호출) 전이라 거부 시 아무것도 쓰지 않는다.
+      KnownPublicAiHosts.requireNotKnownPublic(req.baseUrl());
+    }
+    EmbeddingConfig draft = configService.prepare(req, snapshot);
     EmbeddingDimension dimension = measure(draft);
-    configService.store(draft, dimension, userId);
+    configService.store(draft, dimension, after, userId);
+    // 저장 성공 뒤에만 감사(R3) — 값이 같으면 기록하지 않는다. store 가 after 를 그대로 쓰므로 다시 읽지 않는다.
+    hostingChangeAuditor.recordIfChanged(
+        userId, HostingChangeAuditor.Slot.EMBEDDING, before, after);
+    if (before != after) {
+      // 스펙 §4.3 네 번째 정리 트리거. 실제 저장값 기준(감사와 같은 비교). 정리는 현재 상태 기준 멱등이라 방향과 무관하게 발행한다 —
+      // SELF→EXTERNAL 일 때만 실제로 지울 것이 생기고, 반대 방향은 아래 판정식이 재임베딩을 투입한다.
+      eventPublisher.publishEvent(new EmbeddingHostingChangedEvent(TenantContext.require()));
+    }
     // 판정식 한 규칙(스펙 §3.3-4): 이전 문서와 비교하지 않고, 지금 공간에 없는 벡터가 있으면 투입한다.
     EmbeddingSpace space = new EmbeddingSpace(dimension, draft.model());
     if (backlogService.hasWork(space)) {
       reembedJob.enqueue(TenantContext.require());
     }
     return configService.view();
+  }
+
+  /** "EXTERNAL"/"SELF_HOSTED" 외 값은 400(채팅 자격증명과 같은 문구). */
+  private static ProviderHosting parseHosting(String raw) {
+    try {
+      return ProviderHosting.valueOf(raw.trim());
+    } catch (IllegalArgumentException e) {
+      throw new IllegalArgumentException(AiCredentialService.MSG_HOSTING_INVALID);
+    }
   }
 
   /** 그 설정(model, dimension)으로 저장했을 때의 재임베딩 대상 수 — 판정식과 같은 쿼리(확인 창용). */

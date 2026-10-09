@@ -1,4 +1,4 @@
-import { Check, Copy, File as FileIcon, Image } from 'lucide-react';
+import { Check, Copy, File as FileIcon, Image, ShieldAlert } from 'lucide-react';
 import { Suspense, useCallback, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { useNavigate } from 'react-router-dom';
@@ -16,6 +16,7 @@ import { toast } from 'sonner';
 import { parseUtcDate } from '@/lib/formatters';
 
 import { useDataset } from '../../hooks/queries/useDatasets';
+import { parsePolicyBlocked, policyBlockedLabel } from '../../lib/policy-blocked';
 import { cn } from '../../lib/utils';
 import type { AIAttachment, AIMessage, AIToolCall } from '../../types/ai';
 import { useAI } from './AIProvider';
@@ -222,31 +223,48 @@ function ToolCallDisplay({ toolCall, isStreaming }: { toolCall: AIToolCall; isSt
   const { data: dataset } = useDataset(datasetId);
   const detail = formatToolDetail(toolCall.input, { datasetName: dataset?.name });
   const hasResult = toolCall.result !== undefined;
-  const resultSummary = hasResult && toolCall.result ? formatToolResult(toolCall.result) : null;
-  // isError가 true이면 MCP 도구 호출 실패 — 성공처럼 표시하지 않고 실패 상태로 구분
-  const isFailed = toolCall.isError === true;
+  // S3 §5-4: 정책 차단은 실패가 아니라 세 번째 상태 — 경고색·방패 아이콘·사유 한 줄, 재시도 없음.
+  // 표식 JSON 이 "완료" 요약으로 읽히지 않도록 차단 여부를 결과 요약보다 먼저 판정한다.
+  const blocked = hasResult ? parsePolicyBlocked(toolCall.result) : null;
+  const resultSummary = hasResult && toolCall.result && !blocked ? formatToolResult(toolCall.result) : null;
+  // isError가 true이면 MCP 도구 호출 실패 — 성공처럼 표시하지 않고 실패 상태로 구분(차단은 제외)
+  const isFailed = toolCall.isError === true && !blocked;
 
   return (
-    <div className="my-1 flex items-center gap-1.5 rounded border border-border/50 bg-background/50 px-2 py-1 text-xs">
-      <span>{icon}</span>
-      <span className="font-medium">{label}</span>
-      {detail && <span className="text-muted-foreground truncate">{detail}</span>}
-      {(hasResult || !isStreaming) && (
-        isFailed ? (
-          <span className="ml-auto shrink-0 text-destructive">
-            {'✗ 실패'}
-          </span>
-        ) : (
-          <span className="ml-auto shrink-0 text-success">
-            {resultSummary ?? '✓ 완료'}
-          </span>
-        )
+    <div
+      data-testid="tool-call"
+      // 차단 행만 경고 톤 카드로 칠해 여러 도구 행 사이에서 눈에 띄게 하고, 같은 경고색인 "실행 중..."과도 구분한다
+      className={cn(
+        'my-1 rounded border px-2 py-1 text-xs',
+        blocked ? 'border-warning bg-warning-subtle' : 'border-border/50 bg-background/50',
       )}
-      {!hasResult && isStreaming && (
-        <span className="ml-auto shrink-0 animate-pulse text-warning">
-          {'실행 중...'}
-        </span>
-      )}
+    >
+      {/* 아이콘 칸과 본문 칸을 나눈다 — 차단 사유 줄이 본문 칸 안에 들어가 패딩 없이 라벨 시작선에 맞는다(이모지 폭 무관) */}
+      <div className="flex items-start gap-1.5">
+        <span className="shrink-0">{icon}</span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5">
+            <span className="font-medium">{label}</span>
+            {detail && <span className="text-muted-foreground truncate">{detail}</span>}
+            {(hasResult || !isStreaming) &&
+              (blocked ? (
+                <span className="ml-auto flex shrink-0 items-center gap-1 text-warning">
+                  <ShieldAlert className="h-3 w-3 shrink-0" aria-hidden="true" />
+                  {'차단됨'}
+                </span>
+              ) : isFailed ? (
+                <span className="ml-auto shrink-0 text-destructive">{'✗ 실패'}</span>
+              ) : (
+                <span className="ml-auto shrink-0 text-success">{resultSummary ?? '✓ 완료'}</span>
+              ))}
+            {!hasResult && isStreaming && (
+              <span className="ml-auto shrink-0 animate-pulse text-warning">{'실행 중...'}</span>
+            )}
+          </div>
+          {/* 차단 사유(등급 이름 + 정책) — LLM 문장이 아니라 구조화된 표식에서 만든다 */}
+          {blocked && <p className="mt-0.5 text-muted-foreground">{policyBlockedLabel(blocked)}</p>}
+        </div>
+      </div>
     </div>
   );
 }

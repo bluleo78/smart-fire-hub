@@ -64,13 +64,34 @@ import {
   type PresignedUrlResponse,
 } from './api-client/file-object-api.js';
 import type { SerializedOntology, EntityType } from '../graphrag/ontology.js';
-import { ON_BEHALF_OF_HEADER, ON_BEHALF_OF_TENANT_HEADER } from '../constants.js';
+import { AI_PURPOSE_HEADER, ON_BEHALF_OF_HEADER, ON_BEHALF_OF_TENANT_HEADER } from '../constants.js';
+import { POLICY_BLOCKED_CODE, type PolicyBlockedInfo } from './policy-blocked.js';
 import { isValidTenantId } from '../agent/tenant-paths.js';
 
 export type { DocumentSearchHit };
 export type { DatasetSearchHit };
 export type { ChunkContent };
 export type { ObjectItem, ObjectListResponse, PresignedUrlResponse };
+
+/**
+ * 대행 호출 목적(S3, X-AI-Purpose). 'share' = 결과가 공유 저장소·발송으로 간다(GraphRAG·Proactive),
+ * 'none' = LLM 을 거치지 않는 대행(그래프 뷰어·HITL 승인 — routes/graph.ts 만 쓴다). 생략 = 채팅.
+ */
+export type AiPurpose = 'share' | 'none';
+
+/**
+ * LLM 실행 경로(채팅·Proactive·stdio MCP)가 받을 수 있는 유일한 목적. 'none'(AI 판정 제외)은 LLM 이 부르는 경로에서 쓰이면 안 되므로
+ * 타입에서부터 뺀다.
+ */
+export type SharePurpose = Extract<AiPurpose, 'share'>;
+
+/**
+ * 외부 입력(요청 바디·환경 변수)의 목적 값을 해석한다. 정확히 'share' 일 때만 'share', 그 외(대소문자 다름·'none'·없음)는 모두
+ * undefined(채팅 = AI 판정만)다 — 특히 'none' 이 들어와도 LLM 실행에 실리지 않게 한 곳에서 거른다.
+ */
+export function parseSharePurpose(v: unknown): SharePurpose | undefined {
+  return v === 'share' ? 'share' : undefined;
+}
 
 /**
  * getOntologyById 캐시 수명. 한 에이전트 턴(수 초~수십 초)을 덮되, UI에서 온톨로지를 고친 뒤
@@ -109,6 +130,8 @@ export class FireHubApiClient {
    * 인스턴스 필드라 프로토타입 기반 목(createMockClient)에는 없어 자동으로 false(읽기 불가)다(fail-closed).
    */
   readonly hasDelegatedUser: boolean;
+  /** withPurpose 가 같은 대행 주체로 새 클라이언트를 만들 때 쓰는 생성자 인자. */
+  private readonly ctorArgs: { baseURL: string; internalToken: string; userId: number; tenantId?: number };
 
   /**
    * @param tenantId 원요청 테넌트(웹 세션 JWT 의 tenant 클레임에서 파생). 테넌트 헤더로 api 에
@@ -121,7 +144,14 @@ export class FireHubApiClient {
    *   문맥에서 테넌트를 알 수 있는 경로(채팅·파이프라인·검수 승인)는 반드시 넘겨야 하고, 생략은
    *   단일 멤버십이 보장된 개발 스크립트에만 허용된다. 다른 파일들은 이 문단을 가리킨다.
    */
-  constructor(baseURL: string, internalToken: string, userId: number, tenantId?: number) {
+  constructor(
+    baseURL: string,
+    internalToken: string,
+    userId: number,
+    tenantId?: number,
+    options?: { purpose?: AiPurpose },
+  ) {
+    this.ctorArgs = { baseURL, internalToken, userId, tenantId };
     // 사용자 id 는 테넌트가 아니므로 테넌트 이름의 술어 대신 중립 이름의 양의 정수 검사를 쓴다.
     this.hasDelegatedUser = isPositiveInteger(userId);
     const headers: Record<string, string> = {
@@ -134,6 +164,10 @@ export class FireHubApiClient {
     // isValidTenantId 를 재사용한다(복제하면 강도가 갈린다 — tenant-paths.ts 주석 참고).
     if (isValidTenantId(tenantId)) {
       headers[ON_BEHALF_OF_TENANT_HEADER] = String(tenantId);
+    }
+    // S3: 목적 헤더 — api(AiCallContext.markAiRequest)가 share 면 SHARE 판정을 더하고, none 이면 AI 경로로 보지 않는다.
+    if (options?.purpose) {
+      headers[AI_PURPOSE_HEADER] = options.purpose;
     }
     this.client = axios.create({ baseURL, headers });
 
@@ -165,9 +199,21 @@ export class FireHubApiClient {
         // 원본 axios 에러의 HTTP status를 status 프로퍼티로 보존해서 던진다.
         // (과거엔 순수 Error로만 재던져 error.response가 유실됐고, 호출부가
         //  "404=아직 없음(정상)" 같은 상태코드 판별을 못 해 항상 재throw하는 결함이 있었다 — #423)
+        // S3: 정책 차단은 구조를 보존해 도구 결과 표식으로 옮긴다(policy-blocked.ts). 판정은 api 몫이다.
+        const errs = (data?.errors ?? {}) as Record<string, unknown>;
+        const policyBlocked: PolicyBlockedInfo | undefined =
+          data?.code === POLICY_BLOCKED_CODE
+            ? {
+                action: String(errs.action ?? ''),
+                levelName: String(errs.levelName ?? ''),
+                policyKey: String(errs.policyKey ?? ''),
+                message: String(data?.message ?? ''),
+              }
+            : undefined;
         throw Object.assign(new Error(`${API_ERROR_PREFIX} (${status}): ${apiMessage}`), {
           status,
           response: error.response,
+          ...(policyBlocked ? { policyBlocked } : {}),
         });
       },
     );
@@ -189,6 +235,16 @@ export class FireHubApiClient {
     this._graphSource = createGraphSourceApi(this.client);
     this._review = createReviewApi(this.client);
     this._fileObject = createFileObjectApi(this.client);
+  }
+
+  /**
+   * 같은 대행 주체(사용자·테넌트)로 목적 헤더만 다른 클라이언트를 만든다(S3). GraphRAG 적재·추론처럼 결과가 공유 저장소로
+   * 가는 도구가 'share' 로 부른다 — 목적은 api 판정을 좁히기만 하므로(SHARE 추가) 빠뜨리면 막혀야 할 것이 통과하는 쪽이다.
+   * 그래서 해당 도구는 데이터 읽기 전에 반드시 이 클라이언트를 쓴다. 온톨로지 캐시는 새 인스턴스라 공유하지 않는다.
+   */
+  withPurpose(purpose: AiPurpose): FireHubApiClient {
+    const { baseURL, internalToken, userId, tenantId } = this.ctorArgs;
+    return new FireHubApiClient(baseURL, internalToken, userId, tenantId, { purpose });
   }
 
   listCategories() {
@@ -644,6 +700,8 @@ export class FireHubApiClient {
     entities: unknown[];
     relations: unknown[];
     status: 'draft' | 'active';
+    /** S3(WD-31⑤): 추론 근거 데이터셋 — api 가 공유 정책으로 판정하고 출처로 기록한다. */
+    sourceDatasetIds?: number[];
   }): Promise<number> {
     const { data } = await this.client.post<number>('/ontologies', body);
     return data;

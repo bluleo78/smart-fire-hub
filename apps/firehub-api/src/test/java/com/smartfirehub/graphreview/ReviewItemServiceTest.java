@@ -20,6 +20,7 @@ import com.smartfirehub.graphreview.service.ReviewItemService;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.securitylevel.access.Decision;
+import com.smartfirehub.securitylevel.ai.AiCallContext;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -54,7 +55,8 @@ class ReviewItemServiceTest {
             chunkRepository,
             new ObjectMapper(),
             guard,
-            Mockito.mock(ClearanceResolver.class));
+            Mockito.mock(ClearanceResolver.class),
+            Mockito.mock(AiCallContext.class));
   }
 
   @Test

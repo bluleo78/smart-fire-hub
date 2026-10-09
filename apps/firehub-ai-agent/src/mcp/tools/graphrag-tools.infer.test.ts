@@ -51,6 +51,10 @@ function baseClient(overrides: Partial<any> = {}) {
       rows: [{ c: 'A' }], totalPages: 1,
     }),
     saveDatasetMapping: vi.fn().mockResolvedValue(undefined),
+    // S3: 적재·추론 도구는 등록 시 withPurpose('share') 클라이언트를 만든다 — 목은 자기 자신을 돌려준다.
+    withPurpose: vi.fn(function (this: unknown) {
+      return this;
+    }),
     ...overrides,
   };
 }
@@ -72,6 +76,20 @@ describe('graphrag_infer_mapping', () => {
     expect(client.saveDatasetMapping).toHaveBeenCalledTimes(1);
     expect(out.status).toBe('draft');
     expect(out.entityCount).toBe(1);
+  });
+
+  // S3: 매핑 추론은 표본 행을 LLM 에 실어 공유 저장소(매핑)를 만든다 — 데이터 읽기는 share 클라이언트로만.
+  it('표본 행은 withPurpose("share") 클라이언트로 읽는다', async () => {
+    const share = baseClient();
+    const client = baseClient({
+      queryDatasetData: vi.fn().mockRejectedValue(new Error('채팅 클라이언트로 읽음')),
+      withPurpose: vi.fn().mockReturnValue(share),
+    });
+    await findTool(client).handler({ datasetId: 900 });
+    expect(client.withPurpose).toHaveBeenCalledWith('share');
+    expect(share.queryDatasetData).toHaveBeenCalled();
+    expect(client.queryDatasetData).not.toHaveBeenCalled();
+    expect(share.saveDatasetMapping).toHaveBeenCalledTimes(1);
   });
 
   it('draft 매핑이 있으면 덮어쓴다', async () => {

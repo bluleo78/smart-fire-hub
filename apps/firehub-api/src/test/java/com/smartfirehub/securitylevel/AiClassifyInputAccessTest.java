@@ -21,6 +21,9 @@ import com.smartfirehub.pipeline.service.PipelineExecutionService;
 import com.smartfirehub.pipeline.service.PipelineService;
 import com.smartfirehub.pipeline.service.executor.AiClassifyExecutor;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
+import com.smartfirehub.securitylevel.ai.PolicyBlockedException;
+import com.smartfirehub.settings.model.AiCredentialSlot;
+import com.smartfirehub.settings.repository.TenantSettingsRepository;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.SecurityFixture;
 import com.smartfirehub.support.TenantRlsTestSupport;
@@ -49,6 +52,7 @@ class AiClassifyInputAccessTest extends IntegrationTestBase {
   @Autowired private DatasetService datasetService;
   @Autowired private PipelineService pipelineService;
   @Autowired private PipelineExecutionService executionService;
+  @Autowired private TenantSettingsRepository tenantSettings;
   @MockitoBean private AiClassifyExecutor aiClassifyExecutor;
 
   private SecurityFixture fx;
@@ -72,11 +76,27 @@ class AiClassifyInputAccessTest extends IntegrationTestBase {
     users.add(owner);
     secId = table(m + "_sec", "민감");
     lowOutId = table(m + "_low", "공개");
+    // S3: 기존 테스트는 열람 판정만 본다 — 분류 공급자(분류 전용 슬롯이 없으면 채팅)를 자체 호스팅으로 선언해 AI 정책이 끼어들지 않게 한다.
+    TenantContext.set(DEFAULT_TEST_TENANT_ID);
+    tenantSettings.delete(AiCredentialSlot.CLASSIFY.key());
+    declareChatSelfHosted();
+  }
+
+  /** 채팅 자격증명을 자체 호스팅 opencode 로 선언한다(테스트 전용 — 저장소 직접 기록). */
+  private void declareChatSelfHosted() {
+    TenantContext.set(DEFAULT_TEST_TENANT_ID);
+    tenantSettings.upsert(
+        AiCredentialSlot.CHAT.key(),
+        "{\"v\":1,\"agentType\":\"opencode\",\"payload\":{\"providerId\":\"corp\","
+            + "\"baseURL\":\"http://10.0.0.5/v1\",\"hosting\":\"SELF_HOSTED\"},\"secret\":{}}",
+        null);
   }
 
   @AfterEach
   void tearDown() {
     TenantContext.set(DEFAULT_TEST_TENANT_ID);
+    tenantSettings.delete(AiCredentialSlot.CHAT.key());
+    tenantSettings.delete(AiCredentialSlot.CLASSIFY.key());
     for (long p : pipelines) {
       List<Long> temps =
           inTenantFixture(
@@ -216,6 +236,48 @@ class AiClassifyInputAccessTest extends IntegrationTestBase {
     assertThat(waitForEnd(exec)).isEqualTo("FAILED");
     assertThat(stepError(exec)).contains("더 낮은 등급 데이터셋에 쓸 수 없습니다");
     verify(aiClassifyExecutor, never()).execute(any(), any(), any());
+  }
+
+  @Test
+  void save_externalClassifyHosting_sensitiveInput_isPolicyBlocked() {
+    tenantSettings.delete(AiCredentialSlot.CHAT.key()); // 외부(기본)
+    long editor = userAt("민감");
+    assertThatThrownBy(() -> aiPipeline(editor, secId, null))
+        .isInstanceOfSatisfying(
+            CodedApiException.class,
+            e -> assertThat(e.code()).isEqualTo(PolicyBlockedException.CODE));
+    // 대조군: AI 허용 등급(공개) 입력은 같은 외부 호스팅에서도 저장된다.
+    assertThat(aiPipeline(editor, lowOutId, null)).isPositive();
+  }
+
+  @Test
+  void save_classifySlotExternal_overridesSelfHostedChat() {
+    // 채팅은 자체 호스팅(setUp)이지만 분류 전용 슬롯이 외부면 분류 호스팅으로 판정한다 — 채팅 호스팅으로 판정하면 잘못된 공급자 기준이 된다.
+    TenantContext.set(DEFAULT_TEST_TENANT_ID);
+    tenantSettings.upsert(
+        AiCredentialSlot.CLASSIFY.key(),
+        "{\"v\":1,\"agentType\":\"opencode\",\"payload\":{\"providerId\":\"cloud\","
+            + "\"baseURL\":\"https://api.example.com/v1\",\"hosting\":\"EXTERNAL\"},\"secret\":{}}",
+        null);
+    long editor = userAt("민감");
+    assertThatThrownBy(() -> aiPipeline(editor, secId, null))
+        .isInstanceOfSatisfying(
+            CodedApiException.class,
+            e -> assertThat(e.code()).isEqualTo(PolicyBlockedException.CODE));
+  }
+
+  @Test
+  void run_hostingTurnedExternalAfterSave_failsBeforeExecutor() throws Exception {
+    long runner = userAt("민감");
+    long p = aiPipeline(runner, secId, null); // 자체 호스팅 상태에서 저장
+    TenantContext.set(DEFAULT_TEST_TENANT_ID);
+    tenantSettings.delete(AiCredentialSlot.CHAT.key()); // 이후 외부로 전환
+    long exec = executionService.executePipeline(p, runner);
+    assertThat(waitForEnd(exec)).isEqualTo("FAILED");
+    assertThat(stepError(exec)).contains("현재 AI 공급자로 보낼 수 없습니다");
+    verify(aiClassifyExecutor, never()).execute(any(), any(), any());
+    // 판정이 TEMP 생성보다 먼저다 — 차단된 실행은 출력 TEMP 를 남기지 않는다.
+    assertThat(tempLevel(p)).isNull();
   }
 
   private Long tempLevel(long pipelineId) {

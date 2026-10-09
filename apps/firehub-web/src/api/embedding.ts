@@ -1,3 +1,4 @@
+import type { HostingLocation } from '../lib/hosting-location';
 import { client } from './client';
 
 // 임베딩 현황 카운트 — total: 전체 대상 수, embedded: 현재 공간(차원·모델)으로 임베딩된 수
@@ -17,6 +18,8 @@ export interface EmbeddingConfigView {
   baseUrl: string | null;
   dimension: number | null;
   apiKeyMasked: string;
+  /** 공급자 호스팅 위치 선언(S3 §5-5). 미설정이면 'EXTERNAL'. */
+  hosting: HostingLocation;
 }
 
 /** 저장·연결 테스트 요청. apiKey 를 생략하면 저장된 키를 유지한다(Base URL 이 같을 때만). */
@@ -25,6 +28,11 @@ export interface EmbeddingConfigRequest {
   model: string;
   baseUrl: string;
   apiKey?: string;
+  /**
+   * 공급자 호스팅 위치 선언. 생략하면 provider·Base URL 이 그대로일 때만 기존 선언 유지(바뀌면 외부) — 화면은 혼란이
+   * 없게 항상 현재 선택값을 명시해 보낸다(전송 대상이 바뀌면 화면이 먼저 외부로 되돌리고 알린다).
+   */
+  hosting?: HostingLocation;
 }
 
 /** 연결 테스트 결과 — 실제 임베딩 1건으로 잰 차원. */

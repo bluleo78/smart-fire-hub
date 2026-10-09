@@ -17,9 +17,13 @@ import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.ontology.dto.GraphAccessResponse;
 import com.smartfirehub.ontology.dto.GraphResponse;
 import com.smartfirehub.ontology.dto.OntologyResponse;
+import com.smartfirehub.ontology.graphread.GraphOntologySourceRepository;
 import com.smartfirehub.ontology.graphread.GraphReadGate;
 import com.smartfirehub.ontology.repository.OntologyRepository;
 import com.smartfirehub.ontology.service.OntologyService;
+import com.smartfirehub.securitylevel.access.ClearanceResolver;
+import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
+import com.smartfirehub.securitylevel.ai.AiHostingResolver;
 import com.smartfirehub.user.repository.UserRepository;
 import java.util.List;
 import okhttp3.mockwebserver.MockResponse;
@@ -69,7 +73,12 @@ class OntologyServiceTest {
             mock(AuditLogService.class),
             mock(UserRepository.class),
             gate,
-            new ObjectMapper());
+            new ObjectMapper(),
+            // WD-31⑤ 출처 판정 협력자 — 이 단위 테스트는 출처 없는 요청만 보내므로 목으로 둔다(판정은 OntologySourceDatasetsTest).
+            mock(ClearanceResolver.class),
+            mock(DatasetAccessGuard.class),
+            mock(AiHostingResolver.class),
+            mock(GraphOntologySourceRepository.class));
   }
 
   @AfterEach

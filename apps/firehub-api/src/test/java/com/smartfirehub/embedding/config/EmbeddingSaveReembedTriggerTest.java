@@ -84,7 +84,7 @@ class EmbeddingSaveReembedTriggerTest extends IntegrationTestBase {
 
   private void save(String baseUrl, String model, int measured) {
     doReturn(measured).when(providerFactory).probeDimension(any());
-    settingsService.save(new EmbeddingConfigRequest("OLLAMA", model, baseUrl, null), null);
+    settingsService.save(new EmbeddingConfigRequest("OLLAMA", model, baseUrl, null, null), null);
   }
 
   @Test
@@ -146,7 +146,13 @@ class EmbeddingSaveReembedTriggerTest extends IntegrationTestBase {
     datasets.upsertEmbedding(
         new EmbeddingSpace(EmbeddingDimension.D1024, "bge-m3"), doc.datasetId(), axis(1024, 0));
     searchIndexStates.createIfAbsent(doc.datasetId());
-    searchIndexStates.resetForFullPass(doc.datasetId(), "h", "bge-m3", 1024, 0L);
+    searchIndexStates.resetForFullPass(
+        doc.datasetId(),
+        "h",
+        "bge-m3",
+        1024,
+        0L,
+        searchIndexStates.find(doc.datasetId()).orElseThrow().embeddingModel());
 
     var sameSpace = settingsService.impact("bge-m3", 1024);
     assertThat(sameSpace.chunks()).isZero();

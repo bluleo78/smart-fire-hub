@@ -31,6 +31,8 @@ function createMockClient(): FireHubApiClient {
   for (const name of methodNames) {
     client[name] = vi.fn().mockResolvedValue({ mocked: true });
   }
+  // S3: withPurpose 는 Promise 가 아니라 클라이언트를 돌려줘야 한다(GraphRAG 도구가 등록 시 share 클라이언트를 만든다).
+  client.withPurpose = vi.fn(() => client);
   return client as FireHubApiClient;
 }
 

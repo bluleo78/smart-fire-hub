@@ -12,6 +12,7 @@ import com.smartfirehub.embedding.config.EmbeddingProviderType;
 import com.smartfirehub.embedding.reembed.TenantReembedJob;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.tenant.TenantScopedRunner;
+import com.smartfirehub.securitylevel.access.ProviderHosting;
 import com.smartfirehub.support.EmbeddingTestFixtures;
 import com.smartfirehub.support.EmbeddingTestFixtures.DocFixture;
 import com.smartfirehub.support.IntegrationTestBase;
@@ -109,6 +110,7 @@ class EmbeddingTenantContextTest extends IntegrationTestBase {
                 new EmbeddingConfig(
                     EmbeddingProviderType.OLLAMA, model, server.url("/").toString(), "", 0),
                 EmbeddingDimension.D1024,
+                ProviderHosting.EXTERNAL,
                 null));
   }
 
@@ -153,6 +155,7 @@ class EmbeddingTenantContextTest extends IntegrationTestBase {
                 new EmbeddingConfig(
                     EmbeddingProviderType.OLLAMA, "model-a", "http://127.0.0.1:9", "", 0),
                 EmbeddingDimension.D1024,
+                ProviderHosting.EXTERNAL,
                 null));
 
     assertThatThrownBy(() -> TenantContext.runScoped(tenantA, () -> providerFactory.current()))

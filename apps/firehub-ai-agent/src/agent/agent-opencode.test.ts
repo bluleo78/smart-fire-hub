@@ -26,6 +26,12 @@ describe('buildOpenCodeConfig', () => {
     expect(Array.isArray(cfg.mcp.firehub.command)).toBe(true);
   });
 
+  // S3: Proactive 실행이면 stdio MCP 프로세스에 AI_PURPOSE=share 를 심는다(채팅은 심지 않는다).
+  it("aiPurpose 'share' 면 mcp.firehub 환경에 AI_PURPOSE=share 를 싣고, 없으면 키 자체가 없다", () => {
+    expect(buildOpenCodeConfig({ ...BASE, aiPurpose: 'share' }).mcp.firehub.environment.AI_PURPOSE).toBe('share');
+    expect('AI_PURPOSE' in buildOpenCodeConfig(BASE).mcp.firehub.environment).toBe(false);
+  });
+
   // GraphRAG 도구(stdio-server.ts)가 ambient ANTHROPIC_API_KEY 대신 이 테넌트의 opencode
   // provider 를 쓰도록 MCP 자식 env 에도 자격증명을 명시 전달해야 한다(Ruling #30).
   it('mcp.firehub 환경에 opencode 자격증명을 AI_CREDENTIAL_* 키로 전달한다', () => {

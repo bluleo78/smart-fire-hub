@@ -637,4 +637,69 @@ describe('FireHubApiClient', () => {
       expect(scope.isDone()).toBe(true); // 남의 인스턴스는 제 몫의 왕복을 했다.
     });
   });
+
+  // S3: 정책 차단 구조 보존 + 대행 목적 헤더.
+  describe('POLICY_BLOCKED (S3)', () => {
+    it('403 POLICY_BLOCKED 응답을 policyBlocked 정보가 붙은 오류로 던진다', async () => {
+      nock(BASE_URL)
+        .get('/datasets/5')
+        .reply(403, {
+          status: 403,
+          code: 'POLICY_BLOCKED',
+          message: "'민감' 등급 데이터는 현재 AI 공급자로 보낼 수 없습니다",
+          errors: { action: 'AI', levelName: '민감', policyKey: 'ai_policy' },
+        });
+      await expect(client.getDataset(5)).rejects.toMatchObject({
+        status: 403,
+        policyBlocked: {
+          action: 'AI',
+          levelName: '민감',
+          policyKey: 'ai_policy',
+          message: "'민감' 등급 데이터는 현재 AI 공급자로 보낼 수 없습니다",
+        },
+      });
+    });
+
+    it('다른 403(code 없음)에는 policyBlocked 를 붙이지 않는다', async () => {
+      nock(BASE_URL).get('/datasets/6').reply(403, { status: 403, message: '권한 없음' });
+      const err = await client.getDataset(6).catch((e: unknown) => e);
+      expect(err).toMatchObject({ status: 403 });
+      expect((err as { policyBlocked?: unknown }).policyBlocked).toBeUndefined();
+    });
+
+    it('withPurpose("share") 는 X-AI-Purpose 헤더를 싣고, 원 클라이언트는 싣지 않는다', async () => {
+      const shared = nock(BASE_URL, {
+        reqheaders: {
+          'x-ai-purpose': 'share',
+          'x-on-behalf-of': String(USER_ID),
+          'x-on-behalf-of-tenant': String(TENANT_ID),
+        },
+      })
+        .get('/dataset-categories')
+        .reply(200, []);
+      const shareClient = client.withPurpose('share');
+      await shareClient.listCategories();
+      expect(shared.isDone()).toBe(true);
+      const plain = nock(BASE_URL, { badheaders: ['x-ai-purpose'] }).get('/dataset-categories').reply(200, []);
+      await client.listCategories();
+      expect(plain.isDone()).toBe(true);
+    });
+
+    it('생성자 purpose "none" 은 X-AI-Purpose: none 을 싣는다(그래프 뷰어·HITL)', async () => {
+      const noneClient = new FireHubApiClient(BASE_URL, TOKEN, USER_ID, TENANT_ID, { purpose: 'none' });
+      const scope = nock(BASE_URL, { reqheaders: { 'x-ai-purpose': 'none' } })
+        .get('/dataset-categories')
+        .reply(200, []);
+      await noneClient.listCategories();
+      expect(scope.isDone()).toBe(true);
+    });
+
+    it('createOntology 는 sourceDatasetIds 를 바디에 싣는다', async () => {
+      const scope = nock(BASE_URL)
+        .post('/ontologies', (b) => Array.isArray(b.sourceDatasetIds) && b.sourceDatasetIds[0] === 3)
+        .reply(201, '9');
+      await client.createOntology({ domain: 'd', entities: [], relations: [], status: 'draft', sourceDatasetIds: [3] });
+      expect(scope.isDone()).toBe(true);
+    });
+  });
 });

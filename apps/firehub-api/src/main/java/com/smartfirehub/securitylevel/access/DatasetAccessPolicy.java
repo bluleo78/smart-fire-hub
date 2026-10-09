@@ -78,4 +78,21 @@ public final class DatasetAccessPolicy {
       case DENY -> Decision.deny("AI_DENIED", level.id(), "ai_policy");
     };
   }
+
+  /**
+   * 등급 정책만으로 본 AI 허용(사용자 없음 — 임베딩·SQL 조각과 같은 규칙). hosting 이 null 이면 decideAi 처럼 외부로 본다. decideAi 와의
+   * 일치는 DatasetAccessPolicyTest 가 고정한다.
+   */
+  public static boolean aiAllowedForLevel(LevelPolicy level, ProviderHosting hosting) {
+    return switch (level.aiPolicy()) {
+      case ALL -> true;
+      case SELF_HOSTED_ONLY -> hosting == ProviderHosting.SELF_HOSTED;
+      case DENY -> false;
+    };
+  }
+
+  /** 등급 정책만으로 본 공유 허용(GraphRAG 적재·리포트 발송 판정의 등급 부분). */
+  public static boolean shareAllowedForLevel(LevelPolicy level) {
+    return level.sharePolicy() == LevelPolicy.SharePolicy.ALLOW;
+  }
 }

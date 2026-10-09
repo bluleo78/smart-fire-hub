@@ -227,6 +227,39 @@ describe('Chat routes — integration tests', () => {
     expect(calledWith.tenantId).toBe(1);
   });
 
+  // S3: api(AiChatRequestBuilder)가 Slack 인바운드 요청에 실은 aiPurpose 'share' 를 실행 옵션으로 넘겨 MCP 호출이
+  // X-AI-Purpose: share 를 싣게 한다(옵션→헤더 전달은 agent-sdk/agent-cli/agent-opencode·api-client·stdio-server 테스트 몫).
+  describe('aiPurpose 전달(S3, Slack 발송 = SHARE)', () => {
+    const run = async (extra: Record<string, unknown>) => {
+      async function* fakeStream() {
+        yield { type: 'done' as const };
+      }
+      mockExecute.mockReturnValue(fakeStream());
+      await makeRequest(
+        createApp(),
+        'POST',
+        '/agent/chat',
+        { message: 'hi', tenantId: 1, userId: 1, apiKey: 'sk-test', agentType: 'sdk', ...extra },
+        { Authorization: `Internal ${VALID_TOKEN}` },
+      );
+      return mockExecute.mock.calls[0][0] as { aiPurpose?: string };
+    };
+
+    it("바디의 aiPurpose 'share' 를 provider.execute 로 넘긴다", async () => {
+      expect((await run({ aiPurpose: 'share' })).aiPurpose).toBe('share');
+    });
+
+    it('aiPurpose 가 없으면 넘기지 않는다(웹 채팅 — AI 판정만)', async () => {
+      expect((await run({})).aiPurpose).toBeUndefined();
+    });
+
+    it("'none' 등 다른 값은 버린다 — LLM 실행에서 AI 판정을 끄면 안 된다", async () => {
+      expect((await run({ aiPurpose: 'none' })).aiPurpose).toBeUndefined();
+      mockExecute.mockClear();
+      expect((await run({ aiPurpose: 'SHARE' })).aiPurpose).toBeUndefined();
+    });
+  });
+
   // CR-AT01 (Task 8): agentType 이 없으면 400 — 조용히 'sdk' 로 취급하지 않는다.
   // 6b1c6383 과금 회귀가 opencode 자격증명이 Claude SDK 경로로 새며 일어났으므로, agentType
   // 판별자 자체가 누락된 요청은 방어적으로 이 경계에서 걸러야 한다.

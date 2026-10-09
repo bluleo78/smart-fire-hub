@@ -13,7 +13,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const registerAllToolsMock = vi.fn();
-vi.mock('./firehub-mcp-server.js', () => ({
+// registerAllTools 만 가로채고 나머지(toolErrorResult·withFailureHint — createMcpSafeTool 이 쓰는 공통 헬퍼)는 실물을 쓴다.
+vi.mock('./firehub-mcp-server.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./firehub-mcp-server.js')>()),
   registerAllTools: (...args: unknown[]) => registerAllToolsMock(...args),
 }));
 
@@ -31,8 +33,12 @@ vi.mock('@modelcontextprotocol/sdk/server/stdio.js', () => ({
   }),
 }));
 
-vi.mock('./api-client.js', () => ({
-  FireHubApiClient: vi.fn(function FireHubApiClient() {
+const apiClientCtorMock = vi.fn();
+// parseSharePurpose 는 실제 구현을 쓴다 — 목적 해석 규칙(정확히 'share' 만)도 이 테스트가 함께 검증한다.
+vi.mock('./api-client.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./api-client.js')>()),
+  FireHubApiClient: vi.fn(function FireHubApiClient(...args: unknown[]) {
+    apiClientCtorMock(...args);
     return {};
   }),
 }));
@@ -95,5 +101,61 @@ describe('stdio-server main() — registerAllTools 로의 자격증명 배선(ho
       credentials?: Record<string, unknown>;
     };
     expect(options.credentials).toEqual({ apiKey: 'sk-anthropic', oauthToken: 'oat-anthropic' });
+  });
+});
+
+// S3: 부모(agent-cli·agent-opencode)가 심은 AI_PURPOSE 를 api 클라이언트의 목적 헤더로 잇는 배선.
+describe('stdio-server main() — AI_PURPOSE 배선(S3)', () => {
+  const originalEnv = { ...process.env };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env.USER_ID = '7';
+    process.env.TENANT_ID = '3';
+    process.env.ANTHROPIC_API_KEY = 'sk-anthropic';
+  });
+
+  afterEach(() => {
+    process.env = { ...originalEnv };
+  });
+
+  it("AI_PURPOSE=share 면 클라이언트를 purpose 'share' 로 만든다", async () => {
+    process.env.AI_PURPOSE = 'share';
+    const { main } = await import('./stdio-server.js');
+    await main();
+    expect(apiClientCtorMock).toHaveBeenCalledWith(expect.any(String), expect.any(String), 7, 3, { purpose: 'share' });
+  });
+
+  it("AI_PURPOSE=none 은 받지 않는다 — LLM 경로에서 AI 판정을 끄면 안 된다", async () => {
+    process.env.AI_PURPOSE = 'none';
+    const { main } = await import('./stdio-server.js');
+    await main();
+    const args = apiClientCtorMock.mock.calls[0];
+    expect(args.slice(2)).toEqual([7, 3, { purpose: undefined }]);
+  });
+});
+
+// S3: CLI·opencode 런타임의 도구 래퍼도 정책 차단을 고정 표식으로 싣는다(SDK 래퍼와 같은 헬퍼).
+describe('createMcpSafeTool — POLICY_BLOCKED 표식(S3)', () => {
+  it('차단 오류는 표식 JSON 하나만 싣고, 임계 반복에도 경고 힌트를 붙이지 않는다', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { createMcpSafeTool } = await import('./stdio-server.js');
+    const { createTracker } = await import('../agent/failure-streak.js');
+    const handlers: Array<(a: Record<string, unknown>) => Promise<{ content: { text: string }[]; isError?: boolean }>> =
+      [];
+    const fakeServer = {
+      tool: (_n: string, _d: string, _s: unknown, h: (typeof handlers)[number]) => handlers.push(h),
+    };
+    const safeTool = createMcpSafeTool(fakeServer as never, createTracker({ warnAt: 2, haltAt: 8 }));
+    safeTool('get_dataset', 'd', {}, async () => {
+      throw Object.assign(new Error('API 오류 (403): 차단'), {
+        policyBlocked: { action: 'AI', levelName: '민감', policyKey: 'ai_policy', message: '차단' },
+      });
+    });
+    let last: { content: { text: string }[]; isError?: boolean } | undefined;
+    for (let i = 0; i < 3; i++) last = await handlers[0]({});
+    expect(last!.isError).toBe(true);
+    expect(last!.content).toHaveLength(1);
+    expect(JSON.parse(last!.content[0].text)).toMatchObject({ policyBlocked: true, levelName: '민감' });
   });
 });

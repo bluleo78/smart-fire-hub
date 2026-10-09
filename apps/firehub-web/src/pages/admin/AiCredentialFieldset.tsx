@@ -2,6 +2,7 @@ import { AlertTriangle, ShieldCheck } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useState } from 'react';
 
+import { HostingLocationField } from '../../components/admin/HostingLocationField';
 import { Button } from '../../components/ui/button';
 import { InlineBanner } from '../../components/ui/inline-banner';
 import { Input } from '../../components/ui/input';
@@ -25,6 +26,7 @@ import {
   withPreservedValue,
   withProviderPrefix,
 } from '../../lib/ai-credential-screen';
+import { EXTERNAL_ONLY_AGENT_TYPES, normalizeHosting } from '../../lib/hosting-location';
 
 /**
  * AI 자격증명(`ai.credential`) 전용 화면 — 설계서 "화면 · 테넌트 화면" 절의 구현.
@@ -198,6 +200,11 @@ export interface AiCredentialFieldsetProps {
    * 아무것도 그리지 않는다 — 분류 탭에서 미설정은 "채팅 설정 사용"이라 경고가 틀린 말이다.
    */
   unconfiguredNotice?: ReactNode;
+  /**
+   * security:settings 보유 여부(S3 §5-5). 없으면 자체 호스팅으로 올릴 수 없다 — 서버가 403 HOSTING_DECLARATION_FORBIDDEN
+   * 으로 막으므로 화면도 미리 잠근다. 권한 조회는 호출부(페이지)가 한다 — 이 fieldset 은 훅을 부르지 않는 표현 컴포넌트다.
+   */
+  canDeclareSelfHosted?: boolean;
 }
 
 /** 하위 폼들이 공유하는 인증 확인 관련 props — 본체가 기본값을 채워 넘긴다. */
@@ -283,6 +290,7 @@ export function AiCredentialFieldset({
   idPrefix = 'ai-cred',
   agentTypeDescription = 'AI 채팅에 사용할 에이전트 유형',
   unconfiguredNotice,
+  canDeclareSelfHosted = false,
 }: AiCredentialFieldsetProps) {
   // 최초 조회(GET)가 실패하면 훅은 안전한 초기값(`configured:false, secretFieldNames:[]`)으로
   // 주저앉는다. 이 초기값을 평소 렌더 경로에 흘리면 "AI 설정이 없습니다"를 <b>사실</b>처럼
@@ -330,6 +338,7 @@ export function AiCredentialFieldset({
         authStatus={authStatus ?? null}
         isVerifying={isVerifying ?? false}
         onVerifyAuth={onVerifyAuth}
+        canDeclareSelfHosted={canDeclareSelfHosted}
       />
     </CredentialShell>
   );
@@ -343,10 +352,12 @@ function CredentialForm({
   authStatus,
   isVerifying,
   onVerifyAuth,
+  canDeclareSelfHosted,
 }: AuthProps & {
   cred: UseAiCredentialFormResult;
   idPrefix: string;
   agentTypeDescription: string;
+  canDeclareSelfHosted: boolean;
 }) {
   // 잠김(403)은 상위 `AiCredentialFieldset` 이 이미 걸렀으므로 여기 도달하면 항상 편집 가능하다 —
   // 그래서 입력칸들에 disabled 분기가 없다.
@@ -390,6 +401,18 @@ function CredentialForm({
           onVerifyAuth={onVerifyAuth}
         />
       )}
+
+      {/* 호스팅 위치(S3 §5-5) — 유형별 필드 다음. Claude 계열은 읽기 전용 "외부 서비스". 권한이 없어도 저장된 자체
+          호스팅 선언을 같은 목적지 그대로 유지하는 것은 서버가 허용하므로 그때는 잠그지 않는다. */}
+      <HostingLocationField
+        id={`${idPrefix}-hosting`}
+        value={normalizeHosting(cred.payload.hosting)}
+        onChange={(v) => cred.setPayloadField('hosting', v)}
+        readOnlyExternal={EXTERNAL_ONLY_AGENT_TYPES.has(cred.agentType)}
+        canDeclareSelfHosted={canDeclareSelfHosted || cred.canKeepSavedSelfHosted}
+        endpointUrl={cred.payload.baseURL}
+        demoted={cred.hostingDemoted}
+      />
     </div>
   );
 }

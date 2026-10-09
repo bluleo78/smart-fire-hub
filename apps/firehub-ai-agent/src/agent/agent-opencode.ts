@@ -16,6 +16,7 @@ import { tmpdir } from 'os';
 import { createInterface } from 'readline';
 import { randomUUID } from 'crypto';
 import type { ChatProviderOptions, SSEEvent } from '../providers/types.js';
+import type { SharePurpose } from '../mcp/api-client.js';
 import {
   splitOpencodeModelOrNull,
   type OpencodeModelParts,
@@ -91,6 +92,8 @@ export interface BuildOpenCodeConfigOptions {
   model: string;
   /** opencode 가 공급자에게 그대로 넘기는 추론 강도. 빈 값/공백이면 "설정 안 함"이다. */
   reasoningEffort?: string;
+  /** S3: 'share' 면 firehub MCP 프로세스가 X-AI-Purpose: share 를 싣는다(Proactive 리포트). */
+  aiPurpose?: SharePurpose;
 }
 
 /**
@@ -121,6 +124,7 @@ export function buildOpenCodeConfig(options: BuildOpenCodeConfigOptions): OpenCo
     apiKey,
     model,
     reasoningEffort,
+    aiPurpose,
   } = options;
 
   // provider 설정이 불완전하면 여기서 크게 실패한다 — 조용히 배포 측 전역 설정으로 떨어지거나
@@ -207,6 +211,8 @@ export function buildOpenCodeConfig(options: BuildOpenCodeConfigOptions): OpenCo
           USER_ID: String(userId),
           // 원요청 테넌트(누락 시 동작은 FireHubApiClient 생성자 주석 참고).
           TENANT_ID: String(tenantId),
+          // S3: Proactive 실행이면 stdio MCP 프로세스가 X-AI-Purpose: share 를 싣게 한다(stdio-server.ts main).
+          ...(aiPurpose ? { AI_PURPOSE: aiPurpose } : {}),
           // 게이트웨이 호환: tools/list 스키마에서 propertyNames 제거(2026-06-24 실측 400 회피).
           OPENCODE_SCHEMA_COMPAT: '1',
           // GraphRAG 도구(stdio-server.ts 가 등록)가 LLM completion 을 호출할 때 이 테넌트의
@@ -379,7 +385,7 @@ export async function* executeOpenCodeAgent(
   credentials: OpenCodeCredentials,
 ): AsyncGenerator<SSEEvent> {
   // fileIds(첨부)는 v1 범위 외 — 의도적으로 destructure 하지 않음.
-  const { message, tenantId, userId, systemPrompt, overrideSystemPrompt, abortSignal, model } = options;
+  const { message, tenantId, userId, systemPrompt, overrideSystemPrompt, abortSignal, model, aiPurpose } = options;
 
   const apiBaseUrl = process.env.API_BASE_URL ?? 'http://localhost:8080/api/v1';
   const internalToken = process.env.INTERNAL_SERVICE_TOKEN ?? '';
@@ -475,6 +481,7 @@ export async function* executeOpenCodeAgent(
     apiKey: credentials.apiKey,
     model: model ?? '',
     reasoningEffort: credentials.reasoningEffort,
+    aiPurpose,
   });
 
   // userWorkDir 는 세션 간 재사용되는 디렉터리다 — 이 변경 이전 버전이 여기에 opencode.json 을

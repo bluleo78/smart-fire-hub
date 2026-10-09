@@ -14,6 +14,7 @@ import com.smartfirehub.embedding.config.EmbeddingConfigService;
 import com.smartfirehub.embedding.config.EmbeddingProviderType;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.tenant.TenantScopedRunner;
+import com.smartfirehub.securitylevel.access.ProviderHosting;
 import com.smartfirehub.support.EmbeddingTestFixtures;
 import com.smartfirehub.support.EmbeddingTestFixtures.DocFixture;
 import com.smartfirehub.support.IntegrationTestBase;
@@ -74,6 +75,7 @@ class EmbeddingBacklogSweepSchedulerTest extends IntegrationTestBase {
                 new EmbeddingConfig(
                     EmbeddingProviderType.OLLAMA, space.model(), "http://unused", "", 0),
                 space.dimension(),
+                ProviderHosting.EXTERNAL,
                 null));
   }
 

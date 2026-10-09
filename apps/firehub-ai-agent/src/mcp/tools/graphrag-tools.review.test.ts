@@ -74,6 +74,10 @@ function baseClient(overrides: Partial<any> = {}) {
     listStaleGraphIngests: vi.fn().mockResolvedValue([
       { datasetId: 5, latestIngestedAt: '2026-01-01T00:00:00', schemaVersionAtIngest: 2, currentSchemaVersion: 3 },
     ]),
+    // S3: 적재·추론 도구는 등록 시 withPurpose('share') 클라이언트를 만든다 — 목은 자기 자신을 돌려준다.
+    withPurpose: vi.fn(function (this: unknown) {
+      return this;
+    }),
     ...overrides,
   };
 }

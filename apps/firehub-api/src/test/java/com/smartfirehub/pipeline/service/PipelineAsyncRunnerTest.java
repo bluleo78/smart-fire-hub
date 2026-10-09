@@ -27,6 +27,8 @@ import com.smartfirehub.pipeline.service.executor.ApiCallExecutor;
 import com.smartfirehub.pipeline.service.executor.ExecutorClient;
 import com.smartfirehub.pipeline.service.validator.PythonScriptValidator;
 import com.smartfirehub.pipeline.service.validator.SqlValidator;
+import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
+import com.smartfirehub.securitylevel.ai.AiHostingResolver;
 import java.time.OffsetDateTime;
 import java.util.Arrays;
 import java.util.List;
@@ -75,6 +77,9 @@ class PipelineAsyncRunnerTest {
   @Mock OutputTableSessionLock outputTableSessionLock;
   // 보안 등급 판정은 PipelineSqlAccessTest(통합)가 검증한다 — 여기서는 통과(목 기본값)로 두고 실행 로직만 본다.
   @Mock PipelineSecurityGate pipelineSecurityGate;
+  // S3 AI_CLASSIFY 입력 AI 판정 — 판정 자체는 AiClassifyInputAccessTest(통합)가 검증한다. 여기서는 통과(목 기본값)로 둔다.
+  @Mock DatasetAccessGuard datasetAccessGuard;
+  @Mock AiHostingResolver aiHostingResolver;
 
   @InjectMocks PipelineAsyncRunner runner;
 
@@ -100,6 +105,12 @@ class PipelineAsyncRunnerTest {
   @BeforeEach
   void setTenantContext() {
     TenantContext.set(1L);
+    // AI_CLASSIFY 분기가 실행 주체 자격(runAs.clearance())을 AI 판정에 넘긴다.
+    // 목 기본값(null RunAs)이면 역참조에서 끊기므로 빈 자격의 RunAs 를 기본으로 둔다.
+    // 특정 RunAs 가 필요한 테스트는 자기 스텁으로 덮어쓴다. 쓰지 않는 테스트가 있어 lenient.
+    lenient()
+        .when(pipelineSecurityGate.runAs(any()))
+        .thenAnswer(inv -> new PipelineSecurityGate.RunAs(inv.getArgument(0), null));
   }
 
   @AfterEach

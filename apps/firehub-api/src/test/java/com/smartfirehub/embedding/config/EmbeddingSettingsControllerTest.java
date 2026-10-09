@@ -59,7 +59,9 @@ class EmbeddingSettingsControllerTest {
   @Test
   void getReturnsView() throws Exception {
     when(settingsService.view())
-        .thenReturn(new EmbeddingConfigView(true, "OLLAMA", "bge-m3", "http://h:11434", 1024, ""));
+        .thenReturn(
+            new EmbeddingConfigView(
+                true, "OLLAMA", "bge-m3", "http://h:11434", 1024, "", "EXTERNAL"));
     mockMvc
         .perform(get("/api/v1/settings/embedding").header("Authorization", "Bearer admin"))
         .andExpect(status().isOk())
@@ -83,7 +85,9 @@ class EmbeddingSettingsControllerTest {
   @Test
   void putDelegatesWithUserId() throws Exception {
     when(settingsService.save(any(), eq(1L)))
-        .thenReturn(new EmbeddingConfigView(true, "OLLAMA", "bge-m3", "http://h:11434", 1024, ""));
+        .thenReturn(
+            new EmbeddingConfigView(
+                true, "OLLAMA", "bge-m3", "http://h:11434", 1024, "", "EXTERNAL"));
     mockMvc
         .perform(
             put("/api/v1/settings/embedding")
@@ -95,7 +99,7 @@ class EmbeddingSettingsControllerTest {
         .save(
             eq(
                 new EmbeddingConfigRequest(
-                    "OLLAMA", "bge-m3", "http://host.docker.internal:11434", null)),
+                    "OLLAMA", "bge-m3", "http://host.docker.internal:11434", null, null)),
             eq(1L));
   }
 

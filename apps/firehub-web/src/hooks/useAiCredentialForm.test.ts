@@ -658,3 +658,78 @@ describe('useAiCredentialForm — 엔드포인트 주입(#707 분류 탭 재사�
     expect(vi.mocked(toast.error)).not.toHaveBeenCalledWith('AI 자격증명을 불러오지 못했습니다.');
   });
 });
+
+/**
+ * S3 §5-5 호스팅 위치. 서버는 전송 대상(providerId/baseURL)이 바뀌면 자체 호스팅 선언을 유지하지 않고, 대상이 바뀐 채
+ * SELF_HOSTED 를 보내면 security:settings 를 요구한다(231008d7) — 화면이 같은 규칙으로 먼저 외부로 되돌려야 저장 결과와
+ * 화면이 어긋나지 않고, 권한 없는 사용자가 403 을 맞지 않는다.
+ */
+describe('useAiCredentialForm — 호스팅 위치', () => {
+  const selfHosted = () =>
+    makeResponse({ payload: { providerId: 'corp', baseURL: 'http://10.0.0.5/v1', reasoningEffort: '', hosting: 'SELF_HOSTED' } });
+
+  it('opencode 저장은 hosting 을 항상 명시한다 — 저장 문서에 키가 없으면 EXTERNAL', async () => {
+    const { result } = await renderLoaded();
+    act(() => result.current.setSecretInput('apiKey', 'sk-x'));
+    await act(() => result.current.save());
+    expect(mockedPut.mock.calls[0][0].payload.hosting).toBe('EXTERNAL');
+  });
+
+  it('키 없는 저장 문서와 "외부 서비스" 선택은 dirty 가 아니다', async () => {
+    const { result } = await renderLoaded();
+    act(() => result.current.setPayloadField('hosting', 'EXTERNAL'));
+    expect(result.current.hasUnsavedInput).toBe(false);
+    expect(result.current.savedHosting).toBe('EXTERNAL');
+  });
+
+  it('저장된 자체 호스팅에서 기본 URL 을 바꾸면 외부로 되돌리고 알린다', async () => {
+    mockedGet.mockResolvedValue({ data: selfHosted() } as never);
+    const { result } = await renderLoaded();
+    expect(result.current.canKeepSavedSelfHosted).toBe(true);
+    expect(result.current.savedHosting).toBe('SELF_HOSTED');
+    act(() => result.current.setPayloadField('baseURL', 'https://api.openai.com/v1'));
+    expect(result.current.payload.hosting).toBe('EXTERNAL');
+    expect(result.current.hostingDemoted).toBe(true);
+    expect(result.current.canKeepSavedSelfHosted).toBe(false);
+    // 저장값은 저장 전까지 그대로다 — AI 분류 탭 요약은 화면 편집이 아니라 실제로 쓰이는 값을 보여야 한다.
+    expect(result.current.savedHosting).toBe('SELF_HOSTED');
+    await act(() => result.current.save());
+    expect(mockedPut.mock.calls[0][0].payload).toMatchObject({ baseURL: 'https://api.openai.com/v1', hosting: 'EXTERNAL' });
+  });
+
+  it('끝 슬래시·공백만 다른 주소는 같은 목적지라 선언을 유지한다', async () => {
+    mockedGet.mockResolvedValue({ data: selfHosted() } as never);
+    const { result } = await renderLoaded();
+    act(() => result.current.setPayloadField('baseURL', ' http://10.0.0.5/v1/ '));
+    expect(result.current.payload.hosting).toBe('SELF_HOSTED');
+    expect(result.current.hostingDemoted).toBe(false);
+    expect(result.current.canKeepSavedSelfHosted).toBe(true);
+  });
+
+  it('공급자 변경도 전송 대상 변경이다', async () => {
+    mockedGet.mockResolvedValue({ data: selfHosted() } as never);
+    const { result } = await renderLoaded();
+    act(() => result.current.setPayloadField('providerId', 'openai'));
+    expect(result.current.payload.hosting).toBe('EXTERNAL');
+    expect(result.current.hostingDemoted).toBe(true);
+  });
+
+  it('호스팅을 다시 고르면 강등 안내가 내려간다', async () => {
+    mockedGet.mockResolvedValue({ data: selfHosted() } as never);
+    const { result } = await renderLoaded();
+    act(() => result.current.setPayloadField('baseURL', 'http://10.0.0.9/v1'));
+    act(() => result.current.setPayloadField('hosting', 'SELF_HOSTED'));
+    expect(result.current.hostingDemoted).toBe(false);
+    expect(result.current.payload.hosting).toBe('SELF_HOSTED');
+  });
+
+  it('Claude 계열 저장에는 hosting 을 싣지 않는다 — 서버가 외부로 고정한다', async () => {
+    mockedGet.mockResolvedValue({
+      data: makeResponse({ agentType: 'sdk', payload: {}, secretFieldNames: [] }),
+    } as never);
+    const { result } = await renderLoaded();
+    act(() => result.current.setSecretInput('apiKey', 'sk-ant'));
+    await act(() => result.current.save());
+    expect(mockedPut.mock.calls[0][0].payload).toEqual({});
+  });
+});

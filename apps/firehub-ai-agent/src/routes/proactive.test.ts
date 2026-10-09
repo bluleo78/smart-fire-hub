@@ -350,6 +350,38 @@ describe('Proactive routes — integration tests', () => {
     expect(body.usage.outputTokens).toBe(200);
   });
 
+  // S3: api(ProactiveAiClient)가 실은 aiPurpose 'share' 를 실행 옵션으로 넘겨 MCP 호출이 SHARE 판정을 받게 한다.
+  describe('aiPurpose 전달(S3)', () => {
+    const run = async (extra: Record<string, unknown>) => {
+      mockExecute.mockReturnValue(
+        (async function* () {
+          yield { type: 'text', content: '결과' };
+          yield { type: 'done', inputTokens: 1, outputTokens: 1 };
+        })(),
+      );
+      await makeRequest(
+        createApp(),
+        'POST',
+        '/agent/proactive',
+        { prompt: 'p', tenantId: 1, agentType: 'sdk', apiKey: 'k', context: { v: 1 }, ...extra },
+        { Authorization: `Internal ${VALID_TOKEN}` },
+      );
+      return mockExecute.mock.calls[0][0] as { aiPurpose?: string };
+    };
+
+    it("바디의 aiPurpose 'share' 를 provider.execute 로 넘긴다", async () => {
+      expect((await run({ aiPurpose: 'share' })).aiPurpose).toBe('share');
+    });
+
+    it('aiPurpose 가 없으면 넘기지 않는다', async () => {
+      expect((await run({})).aiPurpose).toBeUndefined();
+    });
+
+    it("'none' 등 다른 값은 버린다 — LLM 실행에서 AI 판정을 끄면 안 된다", async () => {
+      expect((await run({ aiPurpose: 'none' })).aiPurpose).toBeUndefined();
+    });
+  });
+
   it('TC4: POST /agent/proactive without template returns free-form response', async () => {
     const freeText = '자유 형식의 분석 결과입니다. 데이터를 바탕으로 인사이트를 제공합니다.';
 

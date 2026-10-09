@@ -5,6 +5,7 @@ import static org.jooq.impl.DSL.exists;
 import static org.jooq.impl.DSL.falseCondition;
 import static org.jooq.impl.DSL.field;
 import static org.jooq.impl.DSL.name;
+import static org.jooq.impl.DSL.noCondition;
 import static org.jooq.impl.DSL.selectOne;
 
 import com.smartfirehub.dataset.exception.DatasetNotFoundException;
@@ -14,6 +15,9 @@ import com.smartfirehub.global.util.SqlValidationUtils;
 import com.smartfirehub.pipeline.exception.UnsafeSqlException;
 import com.smartfirehub.pipeline.service.validator.PgLexicalAmbiguityCheck;
 import com.smartfirehub.pipeline.service.validator.SqlValidator;
+import com.smartfirehub.securitylevel.ai.AiCall;
+import com.smartfirehub.securitylevel.ai.AiCallContext;
+import com.smartfirehub.securitylevel.ai.PolicyBlockedException;
 import com.smartfirehub.securitylevel.repository.DatasetAccessRepository;
 import com.smartfirehub.securitylevel.repository.DatasetAccessRepository.AccessFacts;
 import java.util.Collection;
@@ -22,6 +26,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
@@ -42,6 +47,13 @@ public class DatasetAccessGuard {
   private final DatasetAccessRepository accessRepository;
   private final ClearanceResolver clearanceResolver;
   private final DSLContext dsl;
+
+  /**
+   * 현재 AI 문맥(S3 §4.3). 가시성 3-인자 조건·{@link #requireView(Clearance, long)}·대화형 {@link #checkSql} 이 이
+   * 값을 읽어 AI(+SHARE) 정책을 함께 건다 — 호출처마다 AI 변형을 고르게 하면 하나만 빠져도 이름·행이 LLM 으로 샌다. 비AI 문맥(웹 JWT·배경
+   * 작업)에서는 empty 라 기존 동작과 같다.
+   */
+  private final AiCallContext aiCallContext;
 
   /**
    * 참조 테이블 추출 전용 인스턴스 — 스프링 빈이 아니다. 스키마 허용 여부는 이 인스턴스가 아니라 {@link #checkSql} 이 테넌트 data 스키마와 대조해
@@ -75,9 +87,13 @@ public class DatasetAccessGuard {
    * rollback-only 로 만들지 않게 한다.
    */
   public void requireView(Clearance c, long datasetId) {
-    if (!check(c, datasetId, DatasetAction.VIEW, null).allowed()) {
+    AccessFacts f = accessRepository.findFactsByDatasetIds(List.of(datasetId), c).get(datasetId);
+    if (f == null || !decide(c, f, DatasetAction.VIEW, null).allowed()) {
       throw new DatasetNotFoundException("Dataset not found: " + datasetId);
     }
+    // AI 대행 요청·AI 범위면 VIEW 통과 후에만 AI(+SHARE) 판정(스펙 §4.3). 볼 수 없는 데이터셋은 위에서 404 로 존재를 숨기고(스펙
+    // §2.5), 볼 수 있는 것만 등급 이름이 실린 403 POLICY_BLOCKED 가 된다.
+    aiCallContext.current().ifPresent(ai -> requireAiFacts(c, f, ai));
   }
 
   /** 행위 판정. 데이터셋이 없으면 LEVEL_UNKNOWN 거부(존재 여부를 따로 드러내지 않는다). */
@@ -127,6 +143,19 @@ public class DatasetAccessGuard {
    */
   public Condition visibleCondition(
       Clearance c, Field<Long> datasetIdField, Field<Long> levelIdField) {
+    // AI 대행 요청·AI 범위(배경)이면 이름·설명도 LLM 으로 가므로 AI(+SHARE) 정책까지 건다(스펙 §4.3 2행). 모든 가시성 호출처(목록·검색·
+    // 스키마·태그·대시보드·저장 쿼리·검수·그래프 게이트)가 이 코어를 거치므로 한 곳의 훅으로 전부 덮인다. 비AI 문맥에서는 null 이라 기존 VIEW
+    // 규칙과 같은 SQL 이다.
+    return visibleCondition(c, datasetIdField, levelIdField, aiCallContext.current().orElse(null));
+  }
+
+  /**
+   * 가시성 조건 + (AI 문맥이면) 등급의 ai_policy·share_policy 술어(스펙 §4.3). ai 가 null 이면 기존 VIEW 규칙 그대로다. {@link
+   * DatasetAccessPolicy#aiAllowedForLevel}·{@link DatasetAccessPolicy#shareAllowedForLevel} 와의 일치는
+   * DatasetAccessGuardTest#aiVisibleCondition_agreesWithPolicy_acrossHostingAndShare 가 고정한다.
+   */
+  Condition visibleCondition(
+      Clearance c, Field<Long> datasetIdField, Field<Long> levelIdField, AiCall ai) {
     if (c.rank() == Clearance.NO_RANK) {
       return falseCondition();
     }
@@ -136,12 +165,124 @@ public class DatasetAccessGuard {
             .isFalse()
             .or(c.tenantAdmin() ? sl.ADMIN_BYPASS.isTrue() : falseCondition())
             .or(DatasetAccessRepository.onAllowlistCondition(c, datasetIdField));
+    // AI 문맥이면 이름·설명까지 LLM 으로 가므로 목록 단계에서 ai_policy(+공유 목적이면 share_policy)로 거른다.
+    Condition aiOk = ai == null ? noCondition() : aiPolicyAllows(sl.AI_POLICY, ai.hosting());
+    Condition shareOk =
+        ai != null && ai.share()
+            ? sl.SHARE_POLICY.eq(LevelPolicy.SharePolicy.ALLOW.name())
+            : noCondition();
     return exists(
         selectOne()
             .from(sl)
             .where(sl.ID.eq(levelIdField))
             .and(sl.RANK.le(c.rank()))
-            .and(allowlistOk));
+            .and(allowlistOk)
+            .and(aiOk)
+            .and(shareOk));
+  }
+
+  /**
+   * ai_policy 컬럼 술어 — 사용자 없는 경로(임베딩 SQL)도 쓴다. {@link DatasetAccessPolicy#aiAllowedForLevel} 과 같은
+   * 규칙(hosting null = 외부).
+   */
+  public static Condition aiPolicyAllows(Field<String> aiPolicyField, ProviderHosting hosting) {
+    Condition all = aiPolicyField.eq(LevelPolicy.AiPolicy.ALL.name());
+    return hosting == ProviderHosting.SELF_HOSTED
+        ? all.or(aiPolicyField.eq(LevelPolicy.AiPolicy.SELF_HOSTED_ONLY.name()))
+        : all;
+  }
+
+  /**
+   * id 목록(AI_CLASSIFY 입력·SQL 읽기/쓰기 집합·온톨로지 출처)의 AI(+SHARE) 강제. 볼 수 없는 id 는 {@link
+   * #requireDatasetReads} 와 같은 구분 불가 403(DATASET_SQL_ACCESS_DENIED), 볼 수 있으나 정책 위반이면 첫 위반의
+   * POLICY_BLOCKED.
+   */
+  public void requireAiForDatasets(Clearance c, Collection<Long> datasetIds, AiCall call) {
+    if (datasetIds.isEmpty()) {
+      return;
+    }
+    if (datasetIds.stream().anyMatch(Objects::isNull)) {
+      throw new CodedApiException(
+          HttpStatus.FORBIDDEN, SQL_ACCESS_DENIED_CODE, SQL_ACCESS_DENIED_MESSAGE);
+    }
+    Map<Long, AccessFacts> facts = accessRepository.findFactsByDatasetIds(datasetIds, c);
+    // VIEW 를 전부 먼저 확인한다 — 앞쪽 id 의 POLICY_BLOCKED(등급 이름)가 뒤쪽 숨김 id 의 거부보다 먼저 나가도 숨김 존재는 드러나지 않지만,
+    // 응답이 입력 순서에 따라 달라지지 않게 VIEW 계열 거부를 우선한다.
+    for (Long id : datasetIds) {
+      AccessFacts f = facts.get(id);
+      if (f == null || !decide(c, f, DatasetAction.VIEW, null).allowed()) {
+        throw new CodedApiException(
+            HttpStatus.FORBIDDEN, SQL_ACCESS_DENIED_CODE, SQL_ACCESS_DENIED_MESSAGE);
+      }
+    }
+    for (Long id : datasetIds) {
+      requireAiFacts(c, facts.get(id), call);
+    }
+  }
+
+  /**
+   * id 목록의 VIEW → AI(+SHARE) 강제 — {@link #requireAiForDatasets} 와 같되 VIEW 거부가 <b>존재하지 않는 데이터셋과 같은
+   * 404</b>다 (단건 {@link #requireView} 와 같은 존재 은닉 계약을 쓰는 다건 입력 — 온톨로지 출처 등). 사실은 한 번에 읽는다(N+1 없음).
+   *
+   * <p>VIEW 를 전부 먼저 판정한다 — [볼 수 있으나 AI 불허, 숨김] 순서에서도 404 가 나가 응답이 입력 순서에 달라지지 않는다. 전부 볼 수 있을 때만 정책
+   * 판정으로 넘어가므로 403 POLICY_BLOCKED 의 등급 이름은 이미 볼 수 있는 정보다. null id 는 호출부가 먼저 거른다.
+   */
+  public void requireViewThenAiForDatasets(Clearance c, Collection<Long> datasetIds, AiCall call) {
+    if (datasetIds.isEmpty()) {
+      return;
+    }
+    Map<Long, AccessFacts> facts = accessRepository.findFactsByDatasetIds(datasetIds, c);
+    for (Long id : datasetIds) {
+      AccessFacts f = facts.get(id);
+      if (f == null || !decide(c, f, DatasetAction.VIEW, null).allowed()) {
+        // 메시지는 requireView 의 404 와 바이트 단위로 같아야 한다(존재 은닉).
+        throw new DatasetNotFoundException("Dataset not found: " + id);
+      }
+    }
+    for (Long id : datasetIds) {
+      requireAiFacts(c, facts.get(id), call);
+    }
+  }
+
+  /**
+   * id 목록이 전부 VIEW + AI(+SHARE) 허용인가 — 예외 없이 값으로 답한다. 거부를 오류 응답이 아니라 원문 가림으로 바꾸는 호출부(파이프라인 실행 기록의
+   * 원문 오류·로그 공개 판정)가 쓴다. 없는 id·null id·볼 수 없는 id 는 불허(fail-closed), 빈 목록은 허용(LLM 으로 갈 데이터셋 값이 없다).
+   */
+  public boolean checkAiForDatasets(Clearance c, Collection<Long> datasetIds, AiCall call) {
+    if (datasetIds.isEmpty()) {
+      return true;
+    }
+    if (datasetIds.stream().anyMatch(Objects::isNull)) {
+      return false;
+    }
+    Map<Long, AccessFacts> facts = accessRepository.findFactsByDatasetIds(datasetIds, c);
+    for (Long id : datasetIds) {
+      AccessFacts f = facts.get(id);
+      if (f == null || !decide(c, f, DatasetAction.VIEW, null).allowed()) {
+        return false;
+      }
+      if (!decide(c, f, DatasetAction.AI, call.hosting()).allowed()) {
+        return false;
+      }
+      if (call.share() && !decide(c, f, DatasetAction.SHARE, null).allowed()) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /** 이미 VIEW 를 통과한 사실에 AI·SHARE 를 판정한다. Decision 의 policyKey 를 그대로 싣는다. */
+  void requireAiFacts(Clearance c, AccessFacts f, AiCall call) {
+    Decision ai = decide(c, f, DatasetAction.AI, call.hosting());
+    if (!ai.allowed()) {
+      throw new PolicyBlockedException(DatasetAction.AI, f.level().name(), ai.policyKey());
+    }
+    if (call.share()) {
+      Decision share = decide(c, f, DatasetAction.SHARE, null);
+      if (!share.allowed()) {
+        throw new PolicyBlockedException(DatasetAction.SHARE, f.level().name(), share.policyKey());
+      }
+    }
   }
 
   /**
@@ -201,12 +342,25 @@ public class DatasetAccessGuard {
    * 실패·빈 SQL·SELECT/DML 외 문장은 UnsafeSqlException(400) 이 그대로 올라간다.
    */
   public SqlAccessResult requireSql(Clearance c, String sql, SqlAccessMode mode) {
-    SqlAccessResult r = checkSql(c, sql, mode);
+    SqlJudgement j = judgeSql(c, sql, mode);
+    // AI 차단은 상세(action·levelName·policyKey)가 실린 원래 예외로 던진다 — 값 결과만으로는 errors 맵을 잃는다.
+    if (j.blocked() != null) {
+      throw j.blocked();
+    }
+    SqlAccessResult r = j.result();
     if (!r.allowed()) {
       throw new CodedApiException(HttpStatus.FORBIDDEN, r.code(), r.message());
     }
     return r;
   }
+
+  /**
+   * {@link #checkSql} 의 결과 + (AI 차단이면) 상세 예외. 거부를 값으로 받았다가 나중에 던지는 호출부(애널리틱스 판정 토큰)와 {@link
+   * #requireSql} 이 차단 응답의 errors 맵(action·levelName·policyKey)을 잃지 않게 한다.
+   *
+   * @param blocked AI·공유 정책 차단이면 그 예외(result 는 같은 코드의 denied), 아니면 null
+   */
+  public record SqlJudgement(SqlAccessResult result, PolicyBlockedException blocked) {}
 
   /**
    * 참조 테이블 → 데이터셋 매핑 → 판정(스펙 §4.1). 거부를 값으로 돌려준다(차트가 {@code denied} 로 쓴다).
@@ -229,6 +383,11 @@ public class DatasetAccessGuard {
    * 등)를 못 본다.
    */
   public SqlAccessResult checkSql(Clearance c, String sql, SqlAccessMode mode) {
+    return judgeSql(c, sql, mode).result();
+  }
+
+  /** {@link #checkSql} 본문 — 판정 결과와 (AI 차단이면) 상세 예외를 함께 돌려준다. 계약은 {@link #checkSql} 과 같다. */
+  public SqlJudgement judgeSql(Clearance c, String sql, SqlAccessMode mode) {
     if (sql == null || sql.isBlank()) {
       throw new UnsafeSqlException("SQL 이 비어 있습니다.");
     }
@@ -244,12 +403,12 @@ public class DatasetAccessGuard {
     Set<String> writeNames = new LinkedHashSet<>();
     for (SqlValidator.TableName t : refs.reads()) {
       if (!collect(t, dataSchema, mode, readNames)) {
-        return accessDenied();
+        return new SqlJudgement(accessDenied(), null);
       }
     }
     for (SqlValidator.TableName t : refs.writes()) {
       if (!collect(t, dataSchema, mode, writeNames)) {
-        return accessDenied();
+        return new SqlJudgement(accessDenied(), null);
       }
     }
 
@@ -260,7 +419,24 @@ public class DatasetAccessGuard {
     for (String name : all) {
       AccessFacts f = facts.get(name);
       if (f == null || !decide(c, f, DatasetAction.VIEW, null).allowed()) {
-        return accessDenied();
+        return new SqlJudgement(accessDenied(), null);
+      }
+    }
+
+    // 2-1) AI 대행 대화형 SQL(MCP 쿼리·차트·대시보드 위젯): 결과가 LLM 으로 가므로 읽기·쓰기 대상 전부 AI(+SHARE). VIEW 를 전부 통과한
+    //      뒤에만 오므로 숨김 테이블은 위의 구분 불가 거부가 먼저다(존재 은닉). 파이프라인 모드는 제외 — 파이프라인 SQL 은 LLM 으로 가지 않고,
+    //      AI_CLASSIFY 는 분류 공급자 호스팅으로 호출부가 따로 판정한다.
+    if (mode == SqlAccessMode.INTERACTIVE) {
+      Optional<AiCall> ai = aiCallContext.current();
+      if (ai.isPresent()) {
+        for (String name : all) {
+          try {
+            requireAiFacts(c, facts.get(name), ai.get());
+          } catch (PolicyBlockedException e) {
+            return new SqlJudgement(
+                SqlAccessResult.denied(PolicyBlockedException.CODE, e.getMessage()), e);
+          }
+        }
       }
     }
 
@@ -287,11 +463,14 @@ public class DatasetAccessGuard {
       if (mode != SqlAccessMode.PIPELINE_SAVE
           && effective != null
           && f.level().rank() < effective.rank()) {
-        return SqlAccessResult.denied(
-            SQL_WRITE_DOWNGRADE_CODE, "'" + effective.name() + "' 데이터를 더 낮은 등급 데이터셋에 쓸 수 없습니다");
+        return new SqlJudgement(
+            SqlAccessResult.denied(
+                SQL_WRITE_DOWNGRADE_CODE, "'" + effective.name() + "' 데이터를 더 낮은 등급 데이터셋에 쓸 수 없습니다"),
+            null);
       }
     }
-    return new SqlAccessResult(true, null, null, effective, readIds, writeIds, exportAllowed);
+    return new SqlJudgement(
+        new SqlAccessResult(true, null, null, effective, readIds, writeIds, exportAllowed), null);
   }
 
   /** VIEW 계열 거부 — 사유(숨김·매핑 없음·없는 테이블·다른 스키마)를 구분하지 않는 단일 결과. */

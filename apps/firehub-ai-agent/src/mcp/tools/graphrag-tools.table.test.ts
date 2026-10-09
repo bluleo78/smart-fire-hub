@@ -38,6 +38,10 @@ function baseClient(overrides: Partial<any> = {}) {
     getOntologyById: vi.fn().mockResolvedValue(ontologyWire),
     queryDatasetData: vi.fn().mockResolvedValue({ rows: [{ c: 'A' }], totalPages: 1 }),
     recordGraphIngest: vi.fn().mockResolvedValue(undefined),
+    // S3: 적재·추론 도구는 등록 시 withPurpose('share') 클라이언트를 만든다 — 목은 자기 자신을 돌려준다.
+    withPurpose: vi.fn(function (this: unknown) {
+      return this;
+    }),
     ...overrides,
   };
 }
@@ -59,6 +63,31 @@ describe('graphrag_project_table', () => {
     });
     await expect(findTool(client).handler({ datasetId: 900 })).rejects.toThrow();
     expect(client.queryDatasetData).not.toHaveBeenCalled();
+  });
+
+  // S3(WD-39) §4.3: 투영 결과는 공유 그래프로 간다 — 매핑·온톨로지·행 읽기와 이력 기록이 전부 share 목적 클라이언트로
+  // 가야 api 가 SHARE 판정을 더한다. 채팅 클라이언트로 되돌리면(SHARE 판정 누락 = fail-open) 아래 reject 목이 잡는다.
+  it('매핑·온톨로지·행 읽기와 이력 기록을 share 목적 클라이언트로만 한다', async () => {
+    const share = baseClient();
+    const chatReject = () => vi.fn().mockRejectedValue(new Error('채팅 클라이언트로 읽으면 안 된다'));
+    const client = baseClient({
+      getDatasetMapping: chatReject(),
+      getOntologyById: chatReject(),
+      queryDatasetData: chatReject(),
+      recordGraphIngest: chatReject(),
+      withPurpose: vi.fn().mockReturnValue(share),
+    });
+    const summary = await findTool(client).handler({ datasetId: 900 });
+    expect(client.withPurpose).toHaveBeenCalledWith('share');
+    expect(share.getDatasetMapping).toHaveBeenCalledWith(900);
+    expect(share.getOntologyById).toHaveBeenCalledWith(5);
+    expect(share.queryDatasetData).toHaveBeenCalledWith(900, expect.objectContaining({ includeTotalCount: true }));
+    expect(share.recordGraphIngest).toHaveBeenCalledTimes(1);
+    expect(summary.rowCount).toBe(1);
+    expect(client.getDatasetMapping).not.toHaveBeenCalled();
+    expect(client.getOntologyById).not.toHaveBeenCalled();
+    expect(client.queryDatasetData).not.toHaveBeenCalled();
+    expect(client.recordGraphIngest).not.toHaveBeenCalled();
   });
 
   it('이력 기록 실패는 무시하고 summary를 반환한다', async () => {
