@@ -47,6 +47,7 @@ router.post('/chat', internalAuth, async (req: Request, res: Response) => {
     reasoningEffort,
     navigationContext,
     screenContext,
+    aiPurpose,
   } = req.body;
 
   const hasMessage = message && typeof message === 'string';
@@ -141,6 +142,10 @@ router.post('/chat', internalAuth, async (req: Request, res: Response) => {
       temperature,
       maxTokens,
       abortSignal: undefined,
+      // S3: api 가 Slack 인바운드처럼 답변이 발송되는 경로에서만 'share' 를 싣는다(AiChatRequestBuilder) — 이 실행의
+      // MCP 호출이 X-AI-Purpose: share 를 붙여 share_policy 판정을 받게 한다. 'share' 외의 값은 버린다 — 특히
+      // 'none'(AI 판정 제외)이 바디로 들어와도 LLM 실행에 실리면 안 된다(proactive.ts 와 같은 규칙).
+      aiPurpose: aiPurpose === 'share' ? 'share' : undefined,
     });
 
     for await (const event of events) {

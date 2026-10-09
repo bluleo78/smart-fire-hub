@@ -1,5 +1,6 @@
 package com.smartfirehub.ai.service;
 
+import com.smartfirehub.securitylevel.ai.AiCallContext;
 import com.smartfirehub.settings.model.AiBehaviorDefaults;
 import com.smartfirehub.settings.model.AiCredential;
 import com.smartfirehub.settings.service.AiCredentialService;
@@ -47,6 +48,20 @@ public class AiChatRequestBuilder {
    * @param sessionId ai-agent 세션 ID. 새 세션이면 빈 문자열
    */
   public Prepared prepare(long tenantId, Long userId, String sessionId, String message) {
+    return prepare(tenantId, userId, sessionId, message, false);
+  }
+
+  /**
+   * 채팅 요청 바디를 만들되, 답변이 외부 채널로 발송되는 경로면 공유 목적을 싣는다.
+   *
+   * <p>S3 스펙 §4.3: Slack 발송은 SHARE 다. {@code share} 면 바디에 {@code aiPurpose=share} 를 실어 ai-agent 가 이
+   * 실행의 MCP 호출에 {@code X-AI-Purpose: share} 를 붙이게 하고, API 가 AI 판정에 더해 {@code share_policy}·공유 목적
+   * 호스팅 규칙까지 보게 한다. 목적은 호출부(서버)가 요청 출처로 정한다 — 웹 채팅 사용자 입력에서 오지 않는다.
+   *
+   * @param share 답변이 공유·발송되는 경로(Slack 인바운드)면 true, 웹 채팅이면 false
+   */
+  public Prepared prepare(
+      long tenantId, Long userId, String sessionId, String message, boolean share) {
     // agentType 의 출처는 resolve() 하나뿐이다 — 설정 맵에서 따로 읽지 말 것(두 출처가 있으면
     // 한쪽만 고쳐진다). 사용 가능 판정은 AiCredential 의 유형별 메서드에 있다(이슈 #695).
     // 미설정이면 설정 맵(조회 2회)을 읽기 전에 끝낸다.
@@ -91,6 +106,10 @@ public class AiChatRequestBuilder {
         "sessionMaxTokens",
         parseIntSafe(
             aiSettings.get("ai.session_max_tokens"), AiBehaviorDefaults.SESSION_MAX_TOKENS));
+    // 공유 목적은 share 일 때만 싣는다 — 키가 없으면 ai-agent 는 일반 채팅(AI 판정만)으로 실행한다.
+    if (share) {
+      body.put("aiPurpose", AiCallContext.PURPOSE_SHARE);
+    }
     return new Prepared(body, null);
   }
 

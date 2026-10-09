@@ -77,4 +77,17 @@ describe('ClaudeSdkChatProvider', () => {
     const called = mockExecuteAgent.mock.calls[0][0];
     expect(called.model).toBe('claude-opus-4-6');
   });
+
+  // SDK-05 (S3): 실행 옵션의 aiPurpose 'share' 를 executeAgent 로 넘긴다 — agent-sdk 가 이 값으로 MCP 대행 호출에
+  // X-AI-Purpose: share 를 싣는다(Slack 인바운드 채팅·Proactive). 여기서 빠지면 share_policy 판정이 조용히 사라진다.
+  it('SDK-05: aiPurpose 를 executeAgent 로 그대로 넘긴다', async () => {
+    mockExecuteAgent.mockReturnValue(makeStream([{ type: 'done' }]));
+
+    const provider = new ClaudeSdkChatProvider('sk-test', DEFAULT_MODEL);
+    for await (const _ of provider.execute({ message: 'hi', tenantId: 1, userId: 1, aiPurpose: 'share' })) {
+      /* consume */
+    }
+
+    expect(mockExecuteAgent.mock.calls[0][0].aiPurpose).toBe('share');
+  });
 });

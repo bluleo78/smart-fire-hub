@@ -252,8 +252,10 @@ public class SlackInboundService {
     // 5. 테넌트 자격증명·동작 설정으로 요청을 만든다. 미설정이면 ai-agent 를 부르지 않고 웹
     //    채팅과 같은 안내 문구를 본인에게만 보여 준다. 알 수 없는 agentType 은 예외가 dispatch 의
     //    일반 catch 까지 올라가 오류 로그로 남는다(fail-closed).
+    //    답변이 Slack 으로 발송되므로 공유 목적(share)으로 만든다(S3 스펙 §4.3 "Slack 발송 = SHARE") —
+    //    채팅을 자체 호스팅으로 선언해도 share_policy=DENY 데이터를 읽은 답변이 Slack 으로 나가지 않게 한다.
     AiChatRequestBuilder.Prepared prepared =
-        chatRequestBuilder.prepare(tenantId, userId, agentSessionId, text);
+        chatRequestBuilder.prepare(tenantId, userId, agentSessionId, text, true);
     if (prepared.problem() != null) {
       log.info("slack inbound — AI 자격증명 미설정/모델 불일치 (team={}, ts={})", teamId, ts);
       slackApiClient.postEphemeral(botToken, channel, slackUserId, prepared.problem());
