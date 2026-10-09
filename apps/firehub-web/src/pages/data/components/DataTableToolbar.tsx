@@ -29,11 +29,14 @@ export function DataTableToolbar({
   exportAllowed,
 }: DataTableToolbarProps) {
   return (
-    <div className="flex items-center gap-3">
+    // 좁은 화면(390px)에선 버튼이 한 줄에 다 들어가지 않아 가로로 넘치고 탭 바와 겹쳤다 — 줄바꿈으로 흘린다.
+    <div className="flex flex-wrap items-center gap-3">
       <SearchInput
         placeholder="데이터 검색..."
         value={dataSearch}
         onChange={onSearchChange}
+        // 줄바꿈 시 검색창이 남은 폭으로 눌려 아이콘만 남지 않게 최소 폭을 둔다(좁으면 한 줄을 통째로 쓴다)
+        className="min-w-[12rem]"
       />
       <Button
         variant={sqlEditorOpen ? 'default' : 'outline'}

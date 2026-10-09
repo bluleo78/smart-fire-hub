@@ -69,8 +69,8 @@ test.describe('데이터셋 내보내기 정책 UI', () => {
     await openDataTab(page);
     const btn = page.getByRole('button', { name: '내보내기' });
     await expect(btn).toBeDisabled();
-    // 비활성 버튼은 포인터 이벤트가 없어 래퍼(span role=group)에 호버한다 — 래퍼 이름도 사유 문구다(스크린리더)
-    const wrapper = page.getByRole('group', { name: BLOCKED });
+    // 비활성 버튼은 포인터 이벤트가 없어 래퍼(span role=group)에 호버한다 — 래퍼 이름은 '동작 — 사유'(스크린리더)
+    const wrapper = page.getByRole('group', { name: `내보내기 — ${BLOCKED}`, exact: true });
     await wrapper.hover();
     await expect(page.getByRole('tooltip')).toHaveText(BLOCKED);
   });

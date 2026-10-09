@@ -10,6 +10,8 @@ interface Props {
   blocked: boolean;
   /** 툴팁·접근 이름 문구 — 기본은 정책 차단 문구. 정책과 무관한 사유(실행 기록 없음 등)일 때만 바꾼다. */
   message?: string;
+  /** 감싼 동작 이름 — 스크린리더가 '무엇이' 막혔는지 먼저 듣도록 접근 이름 앞에 붙인다. */
+  label?: string;
   /** 감쌀 주 내보내기 버튼 — 차단이면 disabled 로 복제한다. */
   children: ReactElement<{ disabled?: boolean }>;
 }
@@ -20,7 +22,12 @@ interface Props {
  * disabled 버튼은 포인터 이벤트가 막혀 툴팁이 뜨지 않으므로 포커스 가능한 span 으로 감싼다(MemberDangerZone 관례).
  * AppLayout 의 TooltipProvider 는 Outlet 바깥이라 페이지 안에서 쓸 수 없어 로컬 Provider 로 감싼다.
  */
-export function ExportBlockedTooltip({ blocked, message = EXPORT_BLOCKED_MESSAGE, children }: Props) {
+export function ExportBlockedTooltip({
+  blocked,
+  message = EXPORT_BLOCKED_MESSAGE,
+  label = '내보내기',
+  children,
+}: Props) {
   if (!blocked) return children;
   return (
     <TooltipProvider>
@@ -30,13 +37,16 @@ export function ExportBlockedTooltip({ blocked, message = EXPORT_BLOCKED_MESSAGE
           <span
             tabIndex={0}
             role="group"
-            aria-label={message}
-            className="inline-flex rounded-md focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring"
+            aria-label={`${label} — ${message}`}
+            className="inline-flex cursor-not-allowed rounded-md focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring"
           >
             {cloneElement(children, { disabled: true })}
           </span>
         </TooltipTrigger>
-        <TooltipContent>{message}</TooltipContent>
+        {/* 긴 안내 문구가 좁은 화면(390px)에서 잘리지 않게 폭을 제한해 줄바꿈하고, 화면 가장자리와 16px 띄운다. */}
+        <TooltipContent collisionPadding={16} className="max-w-xs break-keep">
+          {message}
+        </TooltipContent>
       </Tooltip>
     </TooltipProvider>
   );

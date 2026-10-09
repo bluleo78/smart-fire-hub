@@ -135,7 +135,13 @@ export default function DatasetWidget({ input, onNavigate, displayMode }: Widget
     setFilters({});
   }
 
+  // 조회자 기준 내보내기 가능(S4) — 상세 응답의 exportAllowed 가 true 일 때만(없거나 null 이면 fail-closed).
+  // 위젯 내보내기는 화면 rows 를 브라우저에서 직렬화하는 보조 다운로드라 차단이면 숨긴다(스펙 §5-4).
+  const exportAllowed = dataset?.exportAllowed === true;
+
   function handleExport(format: 'csv' | 'json') {
+    // 버튼을 숨기지만 방어적으로 한 번 더 막는다(차단 데이터의 클라이언트 직렬화 금지)
+    if (!exportAllowed) return;
     const datasetName = dataset?.name ?? 'dataset';
     if (format === 'json') {
       const blob = new Blob([JSON.stringify(rows, null, 2)], { type: 'application/json' });
@@ -181,7 +187,7 @@ export default function DatasetWidget({ input, onNavigate, displayMode }: Widget
       navigateTo={`/data/datasets/${dataset.id}`}
       onNavigate={onNavigate}
       displayMode={displayMode}
-      actions={<ExportDropdown onExport={handleExport} />}
+      actions={exportAllowed ? <ExportDropdown onExport={handleExport} /> : undefined}
     >
       {/* Meta row — pill chips */}
       <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-1.5">

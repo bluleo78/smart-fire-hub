@@ -516,7 +516,7 @@ export default function DatasetDetailPage() {
           }, { replace: true });
         }}
       >
-        <TabsList className="border-b justify-start h-10 shrink-0">
+        <TabsList className="border-b justify-start h-10 shrink-0 max-w-full overflow-x-auto">
           <TabsTrigger value="info">정보</TabsTrigger>
           {/* 「보안」 탭 — 표·문서·파일 모든 유형 공통(목업 s2) */}
           <TabsTrigger value="security">

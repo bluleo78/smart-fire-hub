@@ -17,7 +17,7 @@ import { expect, test } from '../../fixtures/auth.fixture';
  * 보조(대시보드 PDF)는 숨긴다(스펙 §5-4).
  */
 const BLOCKED = '보안 등급 정책상 이 데이터는 내보낼 수 없습니다.';
-const RUN_MISSING = '쿼리를 다시 실행한 뒤 내보내세요.';
+const RUN_MISSING = "저장된 쿼리 실행 결과는 내보낼 수 없습니다. 편집기에서 '실행'을 눌러 다시 실행하세요.";
 const RESULT = createQueryResult({ columns: ['v'], rows: [{ v: 'x' }], totalRows: 1 });
 
 /** 저장 쿼리 편집기 진입 → 「실행」(애드혹 /execute) → 결과 표 대기 */
@@ -59,7 +59,8 @@ test.describe('쿼리 결과 내보내기 — 실행 기록 재실행', () => {
     await runInEditor(page);
     const btn = page.getByRole('button', { name: '내보내기' });
     await expect(btn).toBeDisabled();
-    await page.getByRole('group', { name: BLOCKED }).hover();
+    // 래퍼 접근 이름 = '동작 이름 — 사유'(스크린리더가 무엇이 막혔는지 먼저 듣는다)
+    await page.getByRole('group', { name: `내보내기 — ${BLOCKED}`, exact: true }).hover();
     await expect(page.getByRole('tooltip')).toHaveText(BLOCKED);
   });
 
@@ -115,7 +116,7 @@ test.describe('쿼리 결과 내보내기 — 실행 기록 재실행', () => {
     await expect(page.getByRole('columnheader', { name: 'v' })).toBeVisible();
 
     await expect(page.getByRole('button', { name: '내보내기' })).toBeDisabled();
-    await page.getByRole('group', { name: RUN_MISSING }).hover();
+    await page.getByRole('group', { name: `내보내기 — ${RUN_MISSING}`, exact: true }).hover();
     await expect(page.getByRole('tooltip')).toHaveText(RUN_MISSING);
   });
 });
@@ -149,7 +150,7 @@ test.describe('차트 빌더·대시보드 내보내기 정책', () => {
   test('차트 빌더 다운로드는 exportAllowed=false 면 비활성 + 정책 툴팁', async ({ authenticatedPage: page }) => {
     await runChartQuery(page, false);
     await expect(page.getByRole('button', { name: '차트 다운로드' })).toBeDisabled();
-    await page.getByRole('group', { name: BLOCKED }).hover();
+    await page.getByRole('group', { name: `차트 다운로드 — ${BLOCKED}`, exact: true }).hover();
     await expect(page.getByRole('tooltip')).toHaveText(BLOCKED);
   });
 
@@ -194,7 +195,8 @@ test.describe('차트 빌더·대시보드 내보내기 정책', () => {
   });
 
   test('대시보드 PDF 는 denied 위젯이 있어도 숨긴다', async ({ authenticatedPage: page }) => {
-    await dashboard(page, { denied: true, exportAllowed: false });
+    // exportAllowed 는 true 로 두어 denied 분기만으로 숨겨지는지 단독 검증한다
+    await dashboard(page, { denied: true, exportAllowed: true });
     await expect(page.getByTestId('widget-denied')).toBeVisible();
     await expect(page.getByRole('button', { name: 'PDF로 내보내기' })).toHaveCount(0);
   });

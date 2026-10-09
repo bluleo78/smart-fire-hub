@@ -788,7 +788,7 @@ export default function ChartBuilderPage() {
             실행 결과가 있는데 정책상 내보내기 불가면 비활성+사유 툴팁(주 버튼, 스펙 §5-4). 실행 전 비활성은 기존 그대로
             (사유가 정책이 아니므로 툴팁 없음). 트리거 안쪽을 감싸면 드롭다운 동작이 꼬이므로 분기로 나눈다. */}
         {queryColumns.length > 0 && !exportAllowed ? (
-          <ExportBlockedTooltip blocked>
+          <ExportBlockedTooltip blocked label="차트 다운로드">
             <Button variant="outline" size="sm" className="gap-1.5" aria-label="차트 다운로드">
               <Download className="h-4 w-4" />
               다운로드

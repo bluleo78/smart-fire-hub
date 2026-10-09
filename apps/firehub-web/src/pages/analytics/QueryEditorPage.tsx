@@ -382,7 +382,7 @@ function SaveDialog({
  * 실행 기록(runId) 없는 결과의 내보내기 안내 — 저장 쿼리 실행 결과(목록에서 「실행」)는 서버에 실행 기록이 남지 않아
  * 서버 재실행 내보내기를 할 수 없다. 편집기에서 다시 실행하면(애드혹 실행) 기록이 생긴다.
  */
-const QUERY_RUN_MISSING_MESSAGE = '쿼리를 다시 실행한 뒤 내보내세요.';
+const QUERY_RUN_MISSING_MESSAGE = "저장된 쿼리 실행 결과는 내보낼 수 없습니다. 편집기에서 '실행'을 눌러 다시 실행하세요.";
 
 const SQL_ACCESS_DENIAL_CODES = new Set(['DATASET_SQL_ACCESS_DENIED', 'SQL_WRITE_DOWNGRADE']);
 

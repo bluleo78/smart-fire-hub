@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { ChevronDown, ChevronsUpDown, ChevronUp, Code2 } from 'lucide-react';
+import { ChevronDown, ChevronsUpDown, ChevronUp, Code2, Download } from 'lucide-react';
 import { useMemo,useState } from 'react';
 import sql from 'react-syntax-highlighter/dist/esm/languages/prism/sql';
 import SyntaxHighlighter from 'react-syntax-highlighter/dist/esm/prism-light';
@@ -55,7 +55,7 @@ export default function TableWidget({ input, onNavigate, displayMode }: WidgetPr
 
   // AI 가 만든 표는 서버 플래그가 없다(입력은 LLM 이 조립) — 화면의 SQL 로 내보내기 가능 여부를 서버에 묻는다(S4).
   // 응답 전·실패·SQL 없음은 숨김(fail-closed). 숨김·파싱 실패·정책 위반은 서버가 모두 false 로 준다.
-  const { data: exportCheck } = useQuery({
+  const { data: exportCheck, isPending: exportCheckPending } = useQuery({
     queryKey: ['analytics', 'export-check', input.sql],
     queryFn: () => analyticsApi.exportCheck(input.sql).then((r) => r.data),
     enabled: Boolean(input.sql),
@@ -166,8 +166,23 @@ export default function TableWidget({ input, onNavigate, displayMode }: WidgetPr
         <Code2 className="h-3.5 w-3.5" />
         SQL
       </button>
-      {/* 보조 다운로드 → 차단이면 숨김(스펙 §5-4) */}
-      {exportAllowed && <ExportDropdown onExport={handleExport} />}
+      {/* 보조 다운로드 → 차단이면 숨김(스펙 §5-4). 판정 응답 전에는 같은 크기 자리만 잡아 둔다 — 허용으로 판정돼
+          버튼이 나타날 때 제목·SQL 버튼이 밀리지 않게(조작 불가, 스크린리더 비노출). */}
+      {exportAllowed ? (
+        <ExportDropdown onExport={handleExport} />
+      ) : (
+        exportCheckPending &&
+        Boolean(input.sql) && (
+          <span
+            aria-hidden="true"
+            data-testid="export-check-placeholder"
+            className="invisible flex items-center gap-1 px-1.5 py-0.5 text-xs"
+          >
+            <Download className="h-3.5 w-3.5" />
+            내보내기
+          </span>
+        )
+      )}
     </>
   );
 
