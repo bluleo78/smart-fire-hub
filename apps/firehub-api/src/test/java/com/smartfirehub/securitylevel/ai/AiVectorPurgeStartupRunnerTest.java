@@ -10,6 +10,7 @@ import static org.mockito.Mockito.when;
 
 import com.smartfirehub.global.tenant.TenantScopedRunner;
 import com.smartfirehub.settings.repository.TenantSettingsRepository;
+import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -36,7 +37,8 @@ class AiVectorPurgeStartupRunnerTest {
 
   @Test
   void success_setsFlag() {
-    when(purge.purgeDisallowed()).thenReturn(new AiVectorPurgeService.PurgeResult(1, 1, 0, 0, 0));
+    when(purge.purgeDisallowed())
+        .thenReturn(new AiVectorPurgeService.PurgeResult(1, 1, 0, 0, 0, List.of()));
     runner.runForCurrentTenant();
     verify(settings).upsert(AiVectorPurgeStartupRunner.FLAG_KEY, "done", null);
   }
@@ -51,7 +53,8 @@ class AiVectorPurgeStartupRunnerTest {
 
   @Test
   void partialFailure_doesNotSetFlag() {
-    when(purge.purgeDisallowed()).thenReturn(new AiVectorPurgeService.PurgeResult(2, 1, 0, 0, 1));
+    when(purge.purgeDisallowed())
+        .thenReturn(new AiVectorPurgeService.PurgeResult(2, 1, 0, 0, 1, List.of()));
     runner.runForCurrentTenant();
     verify(settings, never()).upsert(anyString(), anyString(), any());
   }

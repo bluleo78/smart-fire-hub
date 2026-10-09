@@ -389,15 +389,31 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
 - 마이그레이션 없음. 다음 신규 마이그레이션 번호는 위 V135 절의 값 그대로다.
 - **배포 직후 가시성 변화(의도된 동작)**: 모든 AI 자격증명·임베딩 설정의 호스팅 위치가 기본 "외부"다. 그래서 `ai_policy = SELF_HOSTED_ONLY|DENY` 등급(기본 시드: 민감·기밀)의 데이터셋은
   - AI 채팅의 데이터셋 목록·검색·스키마 목록에서 빠지고, 상세·행·SQL 도구는 "차단됨"(POLICY_BLOCKED)이 된다.
+  - **AI 채팅의 쓰기 도구도 막힌다**: `DatasetAccessInterceptor` 가 `/api/v1/datasets/{id}/**` 하위 **모든 메서드**(GET 뿐 아니라 행 추가·수정·삭제·truncate·가져오기·파일 업로드 등 POST/PUT/DELETE)에서 `requireView` 를 부르고, AI 대행 요청이면 그 안에서 AI 판정까지 한다. 그래서 민감·기밀 데이터셋은 채팅으로 쓰기도 POLICY_BLOCKED 다(웹 화면에서 사람이 직접 하는 쓰기는 영향 없음). "채팅으로 행을 넣어 달라"는 요청이 막힌다는 문의에 대비한다.
   - 시맨틱 검색·행 검색의 의미 검색 대상에서 빠진다(행 검색은 키워드 검색만, 상태 `KEYWORD_ONLY`).
   - AI_CLASSIFY 스텝은 저장·실행이 POLICY_BLOCKED 로 실패한다(분류 공급자가 외부로 선언된 동안).
+  - **운영 주의 — 민감 입력 AI_CLASSIFY 가 있는 파이프라인**: 저장 판정은 AI_CLASSIFY 의 **입력 전부를 저장할 때마다** 다시 본다(새로 추가한 입력만 보는 SQL·PYTHON·API_CALL 의 왕복 보존 규칙과 다르다 — `PipelineService.saveSteps`). 그래서 그런 파이프라인은 **다른 스텝·이름·설명만 고쳐도 저장되지 않는다.** 예약·트리거 실행도 실행 시점에 같은 판정(`PipelineAsyncRunner`)을 거쳐 **매 주기 반복 실패**한다. 해결은 분류 자격증명을 자체 호스팅으로 선언(사내 게이트웨이인 경우)하거나, 그 스텝의 입력을 바꾸거나, 스텝을 지우는 것뿐이다. 배포 전에 해당 파이프라인 소유자에게 알린다.
   - **운영 주의 — Proactive 이상탐지 데이터셋 메트릭**: 수집 값이 이상 감지 시 리포트(외부 LLM·메일·Slack)에 실리므로 폴링 실행도 공유 목적 규칙(아래)으로 판정한다. 배포 전에 저장된 민감·기밀 데이터셋 메트릭도 저장 시 판정을 거친 적이 없어 여기서 막힌다 — **민감 메트릭은 채팅·임베딩을 둘 다 자체 호스팅으로 선언하기 전까지, 기밀 메트릭은 `share_policy = DENY` 라 항상 폴링 수집이 중단된다**(api 로그에 `skipped … (POLICY_BLOCKED)` 경고, 이벤트·리포트 없음). 해당 잡 소유자에게 미리 알린다.
-- **기동 시 1회 정리 잡**: 기동 완료 후 백그라운드에서 테넌트별로 정책 위반 벡터(메타 임베딩·문서 청크 벡터·행 검색 벡터)를 지우고 `tenant_settings.security.ai_vector_purge_v1 = done` 을 남긴다. 예외가 나거나 행 검색 색인 정리가 하나라도 실패한 테넌트는 플래그를 남기지 않아 다음 기동에 다시 돈다(정리는 멱등). 확인(소유자 롤): `SELECT tenant_id, value, updated_at FROM tenant_settings WHERE key = 'security.ai_vector_purge_v1';` — ACTIVE 테넌트 수와 행 수가 같아야 한다. 모자라면 api 로그의 "배포 시점 외부 벡터 정리" 경고를 본다. 끄려면 api 컨테이너 환경에 `SECURITY_AI_VECTOR_PURGE_STARTUP_ENABLED=false`(비상용 — `.env` 에만 두면 주입되지 않으니 compose 의 `environment` 에 넣는다).
+- **기동 시 1회 정리 잡**: 기동 완료 후 백그라운드에서 테넌트별로 정책 위반 벡터(메타 임베딩·문서 청크 벡터·행 검색 벡터)를 지우고 `tenant_settings.security.ai_vector_purge_v1 = done` 을 남긴다. 예외가 나거나 행 검색 색인 정리가 하나라도 실패한 테넌트는 플래그를 남기지 않아 다음 기동에 다시 돈다(정리는 멱등). 확인(소유자 롤): `SELECT tenant_id, value, updated_at FROM tenant_settings WHERE key = 'security.ai_vector_purge_v1';` — **기동 시점에 ACTIVE 였던 테넌트**마다 한 행이 있어야 한다(잡은 기동 시 `TenantScopedRunner.forEachActiveTenant` 로 그때의 ACTIVE 테넌트만 돈다). 기동 뒤에 만들거나 다시 활성화한 테넌트, 기동 시 정지 상태였던 테넌트는 행이 없는 게 정상이다 — 다음 기동 때 처리된다. 현재 ACTIVE 수와 단순 비교하지 않는다. 모자라면 api 로그의 "배포 시점 외부 벡터 정리" 경고를 본다. 끄려면 api 컨테이너 환경에 `SECURITY_AI_VECTOR_PURGE_STARTUP_ENABLED=false`(프로퍼티 `security.ai-vector-purge.startup-enabled`, 기본 true — `.env` 에만 두면 주입되지 않으니 compose 의 `environment` 에 넣는다). 끈 채 기동하면 플래그도 남기지 않으므로, 다시 켜고 재기동하면 그때 1회 돈다.
+- **배포 순서 선택지 — 운영 임베딩이 자체 호스팅(Ollama)인 경우**: 그냥 배포하면 호스팅 기본값이 "외부"라 1회 잡이 민감 데이터셋의 벡터(실제로는 사내 Ollama 가 만든 것)를 지우고, 관리자가 자체 호스팅을 선언하는 순간 전부 다시 임베딩한다(불필요한 삭제 + 대량 재임베딩). 피하려면:
+  1. api 컨테이너 환경에 `SECURITY_AI_VECTOR_PURGE_STARTUP_ENABLED=false` 를 넣고 api+web+ai-agent 를 배포한다.
+  2. 테넌트 관리자(`security:settings` 보유)가 **설정 › 임베딩 › 호스팅 위치 = 자체 호스팅**을 저장한다(테넌트마다).
+  3. 환경 변수를 지우거나 `true` 로 바꾸고 api 를 재기동한다 — 1회 잡이 자체 호스팅 기준으로 돌아 기밀(`ai_policy = DENY`) 벡터만 지우고 플래그를 남긴다.
+  - 주의: 이 환경 변수는 **기동 시 1회 잡만** 끈다. 이벤트 기반 정리(데이터셋 등급 변경·등급 정의 변경·임베딩 호스팅 선언 변경 커밋 시)는 플래그와 무관하게 그대로 돈다 — 1~2 단계 사이에 등급을 바꾸면 그 시점의 호스팅("외부") 기준으로 민감 벡터가 지워진다. 1~2 단계 사이에는 등급 변경을 미룬다. 정리 전이라도 불허 데이터셋은 검색 술어·재임베딩 판정식에서 이미 빠지므로 남아 있는 벡터가 외부로 나가지는 않는다.
 - **이후 정리 트리거**: 데이터셋 등급 변경·등급 정의 변경·임베딩 호스팅 선언 변경이 커밋되면 같은 정리가 비동기로 돈다(현재 상태 기준이라 방향과 무관하게 멱등).
 - **운영 조치(자체 호스팅 Ollama 를 쓰는 테넌트)**: 운영 임베딩은 호스트 Ollama(bge-m3)다. 관리자가 **설정 › 임베딩 › 호스팅 위치 = 자체 호스팅**을 저장하면 재임베딩 잡이 투입되고 행 검색 스윕이 의미 색인을 다시 만든다(수 분~). 자체 호스팅 선언에는 `security:settings` 권한이 필요하다. 채팅·분류 자격증명이 사내 opencode 게이트웨이면 같은 화면(AI 탭)에서 선언한다. **Claude 계열(sdk/cli/cli-api)은 항상 외부**라 선언할 수 없다.
-- **GraphRAG 기적재분은 자동 회수되지 않는다**(스펙 §7.5). 배포 전 민감·기밀 데이터셋을 GraphRAG 에 적재한 이력이 있으면 V133·V134 절의 수동 점검 절차를 따른다.
+- **GraphRAG 기적재분은 자동 회수되지 않는다**(스펙 §7.5) — 정리 잡은 **수동 정리 대상을 표시만** 한다. 정리(1회 잡·이벤트)가 돌 때 불허 데이터셋 중 그래프에 내용이 쓰였을 수 있는 것(`dataset_graph_ingest` 적재 이력 또는 `graph_ontology_source` 출처 기록이 있는 것)을 api 로그에 경고로 남긴다: `외부 공급자 불허 데이터셋의 GraphRAG 기적재분 — 자동 회수 불가, 수동 정리 대상: tenant=…, datasets=[…]`(데이터셋 id 만). 회수하지 않으므로 정리가 돌 때마다 다시 찍힌다. 로그 없이 확인하려면(소유자 롤, 임베딩이 외부로 선언된 테넌트 기준 — 자체 호스팅 테넌트는 `ai_policy = 'DENY'` 만 해당):
+  ```sql
+  SELECT d.tenant_id, d.id AS dataset_id, d.name, sl.ai_policy
+  FROM dataset d JOIN security_level sl ON sl.id = d.security_level_id
+  WHERE sl.ai_policy <> 'ALL'
+    AND (EXISTS (SELECT 1 FROM dataset_graph_ingest g WHERE g.tenant_id = d.tenant_id AND g.dataset_id = d.id)
+      OR EXISTS (SELECT 1 FROM graph_ontology_source s WHERE s.tenant_id = d.tenant_id AND s.dataset_id = d.id))
+  ORDER BY d.tenant_id, d.id;
+  ```
+  출처 기록은 연결·매핑 저장 시점에 남아 실제 적재보다 넓을 수 있다(경고 용도라 넓게 잡음). 대상마다 그래프에서 해당 데이터셋 유래 노드를 수동으로 정리하거나, 정리 전까지 해당 온톨로지 그래프가 채팅(외부 LLM)으로 읽히는 것을 감수할지 판단한다 — V135 읽기 게이트는 VIEW 기준이라 AI 정책으로는 막지 않는다. 배포 전 이력은 V133·V134 절의 수동 점검 절차도 함께 따른다.
 - **공유 목적 규칙**: GraphRAG 적재·추론과 Proactive 리포트는 채팅·임베딩이 **둘 다** 자체 호스팅으로 선언돼야 민감 데이터를 쓴다(GraphRAG 가 엔티티 이름을 임베딩 공급자로도 보내기 때문).
-- 알려진 한계: Slack 인바운드 채팅(Slack 에서 묻고 Slack 으로 답)은 SHARE 판정을 하지 않는다(채팅과 같은 AI 판정만). 정리 시점에 이미 진행 중인 임베딩 작업 전반(행 검색 동기화 주기·메타 재임베딩 배치)과 정리가 경합할 수 있다 — 진행 중 작업은 다음 배치 전에 게이트를 다시 보고 멈추며, 남은 벡터는 다음 주기(행 검색은 키워드 전용 재색인) 때 사라진다. 정리가 진행 중인 행 검색 재구축 주기와 겹치면 키워드 전용 전환이 백오프만큼(1분+) 늦어질 수 있다 — 그동안에도 노출이 늘지는 않는다(검색 술어가 불허 데이터셋을 거른다).
+- **알려진 위험 — Slack 인바운드 채팅에는 SHARE 판정이 없다**: Slack 에서 묻고 Slack 으로 답하는 채팅은 웹 채팅과 같은 AI 판정(채팅 공급자 호스팅)만 하고 `share_policy` 를 보지 않는다. 그래서 **채팅 자격증명을 자체 호스팅으로 선언하면 `share_policy = DENY` 등급(기본 시드: 기밀) 데이터를 읽은 답변이 그대로 Slack 으로 나갈 수 있다**(외부 발송 차단이 Slack 응답 경로에는 없다). 채팅을 자체 호스팅으로 선언하는 테넌트가 Slack 연동을 쓰면 이 위험을 테넌트 관리자에게 알리고, 기밀 데이터셋을 쓰는 동안 Slack 연동을 끄는 것을 검토한다. 그 밖의 알려진 한계: 정리 시점에 이미 진행 중인 임베딩 작업 전반(행 검색 동기화 주기·메타 재임베딩 배치)과 정리가 경합할 수 있다 — 진행 중 작업은 다음 배치 전에 게이트를 다시 보고 멈추며, 남은 벡터는 다음 주기(행 검색은 키워드 전용 재색인) 때 사라진다. 정리가 진행 중인 행 검색 재구축 주기와 겹치면 키워드 전용 전환이 백오프만큼(1분+) 늦어질 수 있다 — 그동안에도 노출이 늘지는 않는다(검색 술어가 불허 데이터셋을 거른다).
 - 감사: 공급자 호스팅 선언 변경은 `audit_log.action_type = 'AI_PROVIDER_HOSTING_CHANGE'`(대상 슬롯·이전값·새값·사용자)로 남는다.
 - 롤백: 이미지만 이전 버전으로(api+web+ai-agent 함께). DB 는 그대로 둔다 — 구 코드는 `payload.hosting`·`embedding.config.hosting`·플래그 키를 읽지 않는다. 정리된 벡터는 롤백 후 재임베딩 판정식이 다시 만든다(외부 공급자로 다시 보내짐에 유의).
 

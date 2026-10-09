@@ -91,11 +91,16 @@ public class DatasetEmbeddingRepository {
 
   /**
    * 이 데이터셋의 모든 차원 벡터를 지운다(카탈로그 행·source_text 는 남긴다 — 키워드 검색 유지). 등급이 임베딩 공급자를 허용하지 않게 된 데이터셋의 남은 벡터
-   * 정리용(S3 §4.3).
+   * 정리용(S3 §4.3). deleteVectorsOf 와 같이 RLS 와 별개로 {@code tenant_id} 를 명시한다 — 소유자 커넥션에서 불려도 남의 테넌트 행을
+   * 지우지 않게. 테넌트 문맥이 없으면 예외(문맥 없이 돌면 조용히 0행이 된다).
    */
   public void deleteVectors(long datasetId) {
+    long tenantId = TenantContext.require("데이터셋 벡터 정리");
     for (EmbeddingDimension d : EmbeddingDimension.values()) {
-      dsl.execute("DELETE FROM " + d.datasetTable() + " WHERE dataset_id = ?", datasetId);
+      dsl.execute(
+          "DELETE FROM " + d.datasetTable() + " WHERE tenant_id = ? AND dataset_id = ?",
+          tenantId,
+          datasetId);
     }
   }
 

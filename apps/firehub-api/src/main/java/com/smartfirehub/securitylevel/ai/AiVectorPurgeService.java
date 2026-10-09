@@ -8,6 +8,7 @@ import com.smartfirehub.dataset.rowsearch.SearchIndexStateRepository;
 import com.smartfirehub.dataset.search.DatasetEmbeddingRepository;
 import com.smartfirehub.document.repository.DocumentChunkRepository;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.ontology.graphread.GraphOntologySourceRepository;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -21,7 +22,8 @@ import org.springframework.stereotype.Service;
  * 이 메서드 하나를 부른다. 반대 방향(허용으로 바뀜)은 지울 것이 없고 재임베딩 판정식·행 검색 모델 비교가 색인을 되살린다.
  *
  * <p>키워드 검색용 텍스트(dataset_embedding.source_text, document_chunk.content, 행 색인 source_text)는 남긴다.
- * GraphRAG 기적재분은 회수하지 않는다(스펙 §7.5).
+ * GraphRAG 기적재분은 회수하지 않는다(스펙 §7.5) — 대신 그래프 적재 이력이 있는 불허 데이터셋 id 를 경고 로그와 결과에 남겨 운영자의 수동 정리 대상으로
+ * 표시한다(스펙 §4.3 "경고 + 수동 정리 대상 표시").
  *
  * <p>트랜잭션을 열지 않는다 — 각 저장소가 클래스 레벨 트랜잭션으로 RLS GUC 를 세우고, 데이터셋 하나의 행 검색 정리 실패가 나머지를 되돌리지 않게 하기 위해서다.
  */
@@ -36,6 +38,7 @@ public class AiVectorPurgeService {
   private final SearchIndexStateRepository searchStates;
   private final RowSearchIndex rowSearchIndex;
   private final DatasetRepository datasetRepository;
+  private final GraphOntologySourceRepository graphSources;
 
   /**
    * 정리 결과(로그·테스트·배포 1회 잡의 완료 판정용).
@@ -45,9 +48,16 @@ public class AiVectorPurgeService {
    * @param chunkVectors 지운 청크 벡터 행 수
    * @param rowIndexes 키워드 전용으로 전환한 행 검색 색인 수
    * @param failures 정리에 실패한 행 검색 색인 수 — 0 이 아니면 배포 1회 잡이 완료 플래그를 남기지 않는다
+   * @param graphResidueDatasetIds 불허 데이터셋 중 지식그래프에 내용이 쓰였을 수 있는 것(수동 정리 대상). 회수하지 않으므로 정리할 때마다 다시
+   *     나온다 — 완료 판정(failures)에는 영향이 없다
    */
   public record PurgeResult(
-      int datasets, int datasetVectors, int chunkVectors, int rowIndexes, int failures) {}
+      int datasets,
+      int datasetVectors,
+      int chunkVectors,
+      int rowIndexes,
+      int failures,
+      List<Long> graphResidueDatasetIds) {}
 
   /**
    * 현재 테넌트(TenantContext) 정리. 테넌트 문맥이 없으면 예외 — 문맥 없이 돌면 RLS 0행으로 조용히 무동작이 된다. 행 검색 색인 하나의 실패는 나머지를
@@ -57,7 +67,7 @@ public class AiVectorPurgeService {
     long tenantId = TenantContext.require("외부 벡터 정리");
     List<Long> ids = gate.disallowedDatasetIds();
     if (ids.isEmpty()) {
-      return new PurgeResult(0, 0, 0, 0, 0);
+      return new PurgeResult(0, 0, 0, 0, 0, List.of());
     }
     int datasetVectors = datasetEmbeddingRepository.deleteVectorsOf(ids);
     int chunkVectors = chunkRepository.deleteVectorsOf(ids);
@@ -73,8 +83,17 @@ public class AiVectorPurgeService {
         log.warn("행 검색 벡터 정리 실패: tenant={}, dataset={}", tenantId, id, e);
       }
     }
+    List<Long> graphResidue = graphSources.findDatasetsWithGraphHistory(tenantId, ids);
+    if (!graphResidue.isEmpty()) {
+      // 그래프(Neo4j)는 자동으로 회수할 수 없다 — 운영자가 수동 정리할 대상을 남긴다. 데이터셋 id 만 쓴다(등급 이름·내용 금지).
+      log.warn(
+          "외부 공급자 불허 데이터셋의 GraphRAG 기적재분 — 자동 회수 불가, 수동 정리 대상: tenant={}, datasets={}",
+          tenantId,
+          graphResidue);
+    }
     PurgeResult result =
-        new PurgeResult(ids.size(), datasetVectors, chunkVectors, rowIndexes, failures);
+        new PurgeResult(
+            ids.size(), datasetVectors, chunkVectors, rowIndexes, failures, graphResidue);
     log.info("외부 벡터 정리: tenant={}, 결과={}", tenantId, result);
     return result;
   }

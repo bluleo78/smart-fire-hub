@@ -273,6 +273,78 @@ class AiVectorPurgeTest extends IntegrationTestBase {
     assertThat(purgeService.purgeDisallowed().rowIndexes()).isZero();
   }
 
+  /** 적재 이력(dataset_graph_ingest) 1행을 남긴다 — 문서 GraphRAG 적재가 있었던 것처럼. */
+  private void recordGraphIngest(long datasetId) {
+    TenantRlsTestSupport.runInTenantTransaction(
+        fixtureTransactionTemplate,
+        DEFAULT_TEST_TENANT_ID,
+        () ->
+            dsl.execute(
+                "insert into dataset_graph_ingest (dataset_id, schema_version_at_ingest) values (?, 1)",
+                datasetId));
+  }
+
+  /** 출처 기록(graph_ontology_source)을 남긴다 — 표 투영·매핑처럼 적재 이력 없이 그래프에 쓰인 경우. 온톨로지 id 를 돌려준다. */
+  private long recordGraphSource(long datasetId) {
+    return TenantRlsTestSupport.runInTenantTransaction(
+        fixtureTransactionTemplate,
+        DEFAULT_TEST_TENANT_ID,
+        () -> {
+          long ontologyId =
+              dsl.fetchOne(
+                      "insert into ontology (domain, status) values (?, 'active') returning id",
+                      "avp_onto_" + System.nanoTime())
+                  .get(0, Long.class);
+          dsl.execute(
+              "insert into graph_ontology_source (ontology_id, dataset_id) values (?, ?)",
+              ontologyId,
+              datasetId);
+          return ontologyId;
+        });
+  }
+
+  private void deleteGraphHistory(List<Long> datasetIds, List<Long> ontologyIds) {
+    TenantRlsTestSupport.runInTenantTransaction(
+        fixtureTransactionTemplate,
+        DEFAULT_TEST_TENANT_ID,
+        () -> {
+          datasetIds.forEach(
+              id -> dsl.execute("delete from dataset_graph_ingest where dataset_id = ?", id));
+          // 출처 행은 온톨로지 삭제 CASCADE 로 지워진다.
+          ontologyIds.forEach(id -> dsl.execute("delete from ontology where id = ?", id));
+        });
+  }
+
+  @Test
+  void purge_flagsDisallowedDatasetsWithGraphHistory_asManualCleanupTargets() {
+    // 불허(민감) + 적재 이력 → 표시, 불허(민감) + 출처 기록 → 표시, 허용(공개) + 이력 → 미표시, 불허 + 이력 없음 → 미표시.
+    long creator = users.get(0);
+    long srcOnlyId =
+        fx.createDatasetRow("avp" + System.nanoTime() + "_src", fx.levelId("민감"), creator);
+    List<Long> ontologies = new ArrayList<>();
+    try {
+      setLevel(sensId, "민감");
+      setLevel(doc.datasetId(), "민감");
+      recordGraphIngest(sensId);
+      recordGraphIngest(pubId);
+      ontologies.add(recordGraphSource(srcOnlyId));
+      ontologies.add(recordGraphSource(pubId));
+
+      var result = purgeService.purgeDisallowed();
+
+      assertThat(result.graphResidueDatasetIds())
+          .contains(sensId, srcOnlyId)
+          .doesNotContain(pubId, doc.datasetId());
+      // 회수하지 않으므로 다시 정리해도 계속 표시된다(멱등 — 완료 판정에는 영향 없음).
+      var second = purgeService.purgeDisallowed();
+      assertThat(second.graphResidueDatasetIds()).contains(sensId, srcOnlyId);
+      assertThat(second.failures()).isZero();
+    } finally {
+      deleteGraphHistory(List.of(sensId, pubId), ontologies);
+      fx.deleteDatasetRow(srcOnlyId);
+    }
+  }
+
   @Test
   void levelChangedEvent_runsInEventTenant_notPublisherThread() throws Exception {
     setLevel(sensId, "민감");
