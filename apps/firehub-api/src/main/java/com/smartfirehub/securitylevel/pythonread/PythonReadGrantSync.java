@@ -14,6 +14,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
@@ -52,14 +53,20 @@ public class PythonReadGrantSync {
    * @param levelsAsc 동기화에 쓴 등급 스냅샷(rank 오름차순) — prepareForRun 이 같은 스냅샷으로 슬롯을 계산해 계산 불일치 창을 없앤다
    * @param availableSlots 실제로 존재하는 슬롯 롤 번호
    * @param changedTables 권한을 바꾼 테이블 수
-   * @param revokeFailedTables 남는 권한을 회수하지 못한 테이블 — 과권한이 남았을 수 있어 prepareForRun 이 실행을 거부한다. GRANT
-   *     실패는 과소권한(안전)이라 로그만 남긴다
+   * @param revokeFailed 남는 권한을 회수하지 못한 테이블 → 과권한이 남았을 수 있는 슬롯 롤 이름들. prepareForRun 은 <b>실행 슬롯
+   *     롤</b>이 여기 들어 있을 때만 실행을 거부한다(다른 슬롯 롤의 과권한은 이 실행이 쓰지 않는 롤이라 무관). GRANT 실패는 과소권한(안전)이라 로그만 남긴다
    */
   public record SyncResult(
       List<LevelPolicy> levelsAsc,
       Set<Integer> availableSlots,
       int changedTables,
-      Set<String> revokeFailedTables) {}
+      Map<String, Set<String>> revokeFailed) {
+
+    /** 회수 실패 테이블 이름들(롤 구분 없이). */
+    public Set<String> revokeFailedTables() {
+      return revokeFailed.keySet();
+    }
+  }
 
   private final DSLContext dsl;
   private final SecurityLevelRepository levelRepository;
@@ -166,10 +173,27 @@ public class PythonReadGrantSync {
     if (!result.availableSlots().contains(slot)) {
       throw new PythonReadAccessException("Python 읽기 롤이 준비되지 않았습니다. 관리자에게 문의하세요.");
     }
-    if (!result.revokeFailedTables().isEmpty()) {
-      // 회수 실패 = 낮은 슬롯에 과권한이 남았을 수 있다. 테이블 이름은 사용자 메시지에 싣지 않는다(로그에만).
+    // 회수 실패 = 그 롤에 과권한이 남았을 수 있다. 거부는 이 실행이 접속할 슬롯 롤에 남은 경우로만 좁힌다 — 다른 슬롯 롤의 과권한은 이 스크립트가
+    // 쓸 수 없다(슬롯 롤끼리 멤버십이 없고 직접 로그인한다). 넓게 거부하면 테이블 하나의 회수 실패가 테넌트 PYTHON 전체를 멈춘다.
+    String slotRole = TenantPipelineRole.pythonReadRoleName(runAs.tenantId(), slot);
+    Set<String> overGranted = new TreeSet<>();
+    result
+        .revokeFailed()
+        .forEach(
+            (table, rolesLeft) -> {
+              if (rolesLeft.contains(slotRole)) {
+                overGranted.add(table);
+              }
+            });
+    if (!result.revokeFailed().isEmpty()) {
+      // 테이블 이름은 사용자 메시지에 싣지 않는다(로그에만).
       log.error(
-          "PYTHON 읽기 권한 회수 실패 테이블(tenant={}): {}", runAs.tenantId(), result.revokeFailedTables());
+          "PYTHON 읽기 권한 회수 실패(tenant={}, 실행 슬롯 {}): {}",
+          runAs.tenantId(),
+          slot,
+          result.revokeFailed());
+    }
+    if (!overGranted.isEmpty()) {
       throw new PythonReadAccessException("Python 읽기 권한을 회수하지 못한 데이터가 있어 실행을 중단했습니다. 관리자에게 문의하세요.");
     }
     return slot;
@@ -205,7 +229,7 @@ public class PythonReadGrantSync {
     List<LevelPolicy> levelsAsc = levelRepository.findAll(); // rank asc, 이 트랜잭션에 합류(RLS GUC)
     if (existingRoles.isEmpty()) {
       log.warn("PYTHON 읽기 슬롯 롤이 없다 — 동기화 생략(tenant={})", tenantId);
-      return new SyncResult(levelsAsc, availableSlots, 0, Set.of());
+      return new SyncResult(levelsAsc, availableSlots, 0, Map.of());
     }
     String[] roleArray = existingRoles.toArray(new String[0]);
 
@@ -247,7 +271,8 @@ public class PythonReadGrantSync {
     }
 
     int changed = 0;
-    Set<String> revokeFailed = new TreeSet<>();
+    // 테이블 → 과권한이 남았을 수 있는 슬롯 롤
+    Map<String, Set<String>> revokeFailed = new TreeMap<>();
     List<String> changedTables = new ArrayList<>();
     for (String table : physical) {
       // 데이터셋이 아닌 테이블(staging·_tmp 등)은 계산값이 "없음" — 남아 있는 슬롯 GRANT 는 회수한다.
@@ -268,7 +293,8 @@ public class PythonReadGrantSync {
           && !inSavepoint(
               () ->
                   dsl.execute("REVOKE ALL ON TABLE " + qualified + " FROM " + quoteAll(excess)))) {
-        revokeFailed.add(table); // 과권한이 남았을 수 있다 → prepareForRun 이 실행을 거부한다
+        // REVOKE 문장 전체가 되돌려졌다 — excess 롤 전부에 과권한이 남았을 수 있다(그 슬롯으로 실행하면 prepareForRun 이 거부).
+        revokeFailed.computeIfAbsent(table, x -> new TreeSet<>()).addAll(excess);
         continue;
       }
       if (!missing.isEmpty()
@@ -287,8 +313,9 @@ public class PythonReadGrantSync {
     if (!changedTables.isEmpty()) {
       for (var r : fetchSlotSelectGrants(schema, changedTables, roleArray)) {
         String table = r.get(0, String.class);
-        if (!desired.getOrDefault(table, Set.of()).contains(r.get(1, String.class))) {
-          revokeFailed.add(table);
+        String role = r.get(1, String.class);
+        if (!desired.getOrDefault(table, Set.of()).contains(role)) {
+          revokeFailed.computeIfAbsent(table, x -> new TreeSet<>()).add(role);
         }
       }
     }

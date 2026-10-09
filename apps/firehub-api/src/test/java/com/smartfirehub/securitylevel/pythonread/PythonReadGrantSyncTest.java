@@ -216,11 +216,13 @@ class PythonReadGrantSyncTest extends IntegrationTestBase {
   }
 
   /**
-   * 소유자가 아닌 테이블(app 소유)에 남은 과권한은 app_tenant 의 REVOKE 가 WARNING 만 내고 실패한다 — 재확인이 이를 회수 실패로 잡아 실행을
-   * 거부해야 한다(조용한 과권한 금지). 재확인 블록을 지우면 이 테스트가 실패한다(변이).
+   * 소유자가 아닌 테이블(app 소유)에 남은 과권한은 app_tenant 의 REVOKE 가 WARNING 만 내고 실패한다 — 재확인이 이를 회수 실패로 잡아, 그
+   * 과권한이 남은 <b>슬롯 1 롤로 실행하는</b> 주체(공개)는 거부해야 한다(조용한 과권한 금지). 다른 슬롯(내부=2)으로 실행하는 주체는 그 롤을 쓰지 않으므로 계속
+   * 실행된다(Task 3 리뷰 후속 — 테이블 하나의 회수 실패가 테넌트 PYTHON 전체를 멈추지 않게). 변이: 재확인 블록 제거 → 공개 거부 단언 실패, 슬롯 필터
+   * 제거(회수 실패 하나라도 있으면 거부) → 내부 슬롯 2 단언 실패.
    */
   @Test
-  void revokeThatSilentlyNoOps_isDetected_andRunIsRefused() {
+  void revokeThatSilentlyNoOps_refusesOnlyTheOverGrantedSlot() {
     String t = m + "_own";
     String s1 = TenantPipelineRole.pythonReadRoleName(DEFAULT_TEST_TENANT_ID, 1);
     ownerDsl().execute("CREATE TABLE " + ownerQualified(t) + " (v text)");
@@ -228,12 +230,46 @@ class PythonReadGrantSyncTest extends IntegrationTestBase {
     ownerDsl().execute("GRANT SELECT ON " + ownerQualified(t) + " TO app_tenant");
     ownerDsl().execute("GRANT SELECT ON " + ownerQualified(t) + " TO " + s1);
     long id = fx.createDatasetRow(t, fx.levelId("민감"), owner);
+    long publicUser = userAt("공개");
     long internalUser = userAt("내부");
     try {
       PythonReadGrantSync.SyncResult r = sync.syncTenant();
       assertThat(r.revokeFailedTables()).contains(t);
-      assertThatThrownBy(() -> sync.prepareForRun(clearanceResolver.resolve(internalUser)))
-          .isInstanceOf(PythonReadAccessException.class);
+      assertThat(r.revokeFailed().get(t)).containsExactly(s1);
+      assertThatThrownBy(() -> sync.prepareForRun(clearanceResolver.resolve(publicUser)))
+          .isInstanceOf(PythonReadAccessException.class)
+          .hasMessageContaining("회수하지 못한");
+      assertThat(sync.prepareForRun(clearanceResolver.resolve(internalUser)))
+          .as("슬롯 2 롤에는 과권한이 없다 — 실행 계속")
+          .isEqualTo(2);
+    } finally {
+      fx.deleteDatasetRow(id);
+      ownerDsl().execute("DROP TABLE IF EXISTS " + ownerQualified(t));
+    }
+  }
+
+  /**
+   * REVOKE 문장 자체가 오류로 되돌려지는 경우(app_tenant 에 권한이 전혀 없는 app 소유 테이블) — 그 테이블은 재확인 대상(changedTables)에도
+   * 들지 않으므로 savepoint 분기가 과권한 롤(excess)을 기록해야 한다. 슬롯 1 실행 주체(공개)는 거부, 슬롯 2(내부)는 통과. 변이: savepoint
+   * 분기의 excess 기록 제거 → 공개 거부 단언 실패.
+   */
+  @Test
+  void revokeThatErrors_recordsExcessRoles_andRefusesOnlyThatSlot() {
+    String t = m + "_noacl";
+    String s1 = TenantPipelineRole.pythonReadRoleName(DEFAULT_TEST_TENANT_ID, 1);
+    ownerDsl().execute("CREATE TABLE " + ownerQualified(t) + " (v text)");
+    ownerDsl().execute("REVOKE ALL ON " + ownerQualified(t) + " FROM app_tenant");
+    ownerDsl().execute("GRANT SELECT ON " + ownerQualified(t) + " TO " + s1);
+    long id = fx.createDatasetRow(t, fx.levelId("민감"), owner);
+    long publicUser = userAt("공개");
+    long internalUser = userAt("내부");
+    try {
+      PythonReadGrantSync.SyncResult r = sync.syncTenant();
+      assertThat(r.revokeFailed().get(t)).contains(s1);
+      assertThatThrownBy(() -> sync.prepareForRun(clearanceResolver.resolve(publicUser)))
+          .isInstanceOf(PythonReadAccessException.class)
+          .hasMessageContaining("회수하지 못한");
+      assertThat(sync.prepareForRun(clearanceResolver.resolve(internalUser))).isEqualTo(2);
     } finally {
       fx.deleteDatasetRow(id);
       ownerDsl().execute("DROP TABLE IF EXISTS " + ownerQualified(t));
