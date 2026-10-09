@@ -112,6 +112,23 @@ class SecurityLevelServiceTest extends IntegrationTestBase {
         name, false, false, ExportPolicy.ALLOW, AiPolicy.ALL, SharePolicy.ALLOW, false, null);
   }
 
+  /** 등급 상한 10(스펙 §4.1, WD-29) — 슬롯 롤이 10개뿐이라 11번째 등급은 PYTHON 에서 표현할 수 없다. */
+  @Test
+  void create_rejectsEleventhLevel() {
+    // 기본 4등급 + 6개 = 10개까지는 된다(경계 바로 아래는 허용).
+    for (int i = 0; i < SecurityLevelService.MAX_LEVELS - 4; i++) {
+      String name = "cap" + i;
+      asTenant(() -> service.create(req(name), actor));
+    }
+    assertThat(asTenant(() -> service.list()).size()).isEqualTo(SecurityLevelService.MAX_LEVELS);
+    assertThatThrownBy(() -> asTenant(() -> service.create(req("cap_over"), actor)))
+        .isInstanceOf(CodedApiException.class)
+        .hasMessage("보안 등급은 최대 10개까지 만들 수 있습니다.")
+        .extracting(e -> ((CodedApiException) e).code())
+        .isEqualTo("SECURITY_LEVEL_LIMIT_EXCEEDED");
+    assertThat(asTenant(() -> service.list()).size()).isEqualTo(SecurityLevelService.MAX_LEVELS);
+  }
+
   @Test
   void create_appendsAsTopRank_andSyncsSystemAdminToNewTop() {
     SecurityLevelResponse created = asTenant(() -> service.create(req("극비"), actor));

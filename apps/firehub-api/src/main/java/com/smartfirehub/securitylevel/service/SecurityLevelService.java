@@ -2,6 +2,7 @@ package com.smartfirehub.securitylevel.service;
 
 import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.global.tenant.TenantPipelineRole;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.access.LevelPolicy;
@@ -36,6 +37,12 @@ public class SecurityLevelService {
 
   /** 하향 사유 최소 길이(스펙 §4.7). DatasetSecurityService 도 같은 값을 쓴다. */
   public static final int MIN_DOWNGRADE_REASON = 10;
+
+  /**
+   * 테넌트 등급 개수 상한(스펙 §4.1, WD-29) — PYTHON 읽기 슬롯 롤 수와 같다. 슬롯 k 가 "rank 오름차순 k 번째 등급까지"를 읽으므로 등급이 이보다
+   * 많으면 그 위치를 표현할 롤이 없어 그 등급 자격자의 PYTHON 이 실행될 수 없다.
+   */
+  public static final int MAX_LEVELS = TenantPipelineRole.PYTHON_READ_SLOTS;
 
   /** 등급 이름 유니크 제약 이름(V133) — 경합으로 생긴 위반을 이 제약일 때만 이름 중복으로 번역한다. */
   private static final String NAME_UNIQUE_CONSTRAINT = "uq_security_level_name";
@@ -85,6 +92,14 @@ public class SecurityLevelService {
   /** 새 등급은 최상위로 추가한다(순서는 이후 ↑↓ 로 조정). ADMIN 은 새 최상위로 동기화. */
   @Transactional
   public SecurityLevelResponse create(SecurityLevelRequest req, long actor) {
+    // 상한 검사 — 이름 중복보다 먼저(어차피 만들 수 없는 요청). 동시 생성 경합으로 11번째가 생길 수는 있으나, 그 위치의
+    // 자격자는 prepareForRun 이 슬롯 범위 밖으로 fail-closed 거부한다(과권한 아님).
+    if (repository.findAll().size() >= MAX_LEVELS) {
+      throw new CodedApiException(
+          HttpStatus.BAD_REQUEST,
+          "SECURITY_LEVEL_LIMIT_EXCEEDED",
+          "보안 등급은 최대 " + MAX_LEVELS + "개까지 만들 수 있습니다.");
+    }
     rejectDuplicateName(req.name(), null);
     int nextRank = repository.findTop().rank() + 1;
     long id = withNameDuplicateAs409(() -> repository.insert(req, nextRank, actor));

@@ -68,6 +68,10 @@ app:
     # 기계장치 자체는 꺼지지 않는다 — TenantPipelineRoleProvisioner.ensureRole 은 이 플래그와
     # 무관하게 동작하며, 통합 테스트는 그것을 직접 부른다.
     role-auto-provision: false
+    # 기동·일 1회 전 테넌트 PYTHON 읽기 GRANT 동기화를 끈다(WD-29) — 공유 테스트 DB 의 수백 테넌트를 컨텍스트 기동마다 훑지 않게.
+    # 기계장치(PythonReadGrantSync)와 테이블 훅·이벤트 리스너는 꺼지지 않는다.
+    python-read-sync:
+      enabled: false
     tenant-pool:
       # 상한을 작게 잡아 TenantPipelineDataSourceRegistryTest 가 소수의 가짜 테넌트로도 LRU 축출을
       # 실제로 관측할 수 있게 한다. 이 레지스트리를 아직 이 태스크 외에는 아무도 쓰지 않는다.
