@@ -518,9 +518,9 @@ public class DatasetAccessGuard {
       AccessFacts f = facts.get(name);
       writeIds.add(f.datasetId());
       exportAllowed &= decide(c, f, DatasetAction.EXPORT, null).allowed();
-      // 4) 쓰기 하향 금지(스펙 §4.1): 쓰기 대상 rank ≥ 읽기 최대 rank. VIEW 를 모두 통과한 뒤에만 오는 분기라
-      //    메시지의 등급 이름은 사용자가 이미 볼 수 있는 정보다. PIPELINE_SAVE 는 VIEW 만 본다(판단 사항 4).
-      if (mode != SqlAccessMode.PIPELINE_SAVE
+      // 4) 쓰기 하향 금지(스펙 §4.1)는 대화형 SQL 만. 파이프라인 실행은 게이트가 쓰기 대상을 자동 상향한다(§4.5), 저장은 VIEW 만
+      //    본다(판단 사항 4). VIEW 를 모두 통과한 뒤에만 오는 분기라 메시지의 등급 이름은 사용자가 이미 볼 수 있는 정보다.
+      if (mode == SqlAccessMode.INTERACTIVE
           && effective != null
           && f.level().rank() < effective.rank()) {
         return new SqlVerdict(

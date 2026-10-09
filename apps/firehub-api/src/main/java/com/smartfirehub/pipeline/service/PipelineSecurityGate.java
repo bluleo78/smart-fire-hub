@@ -73,7 +73,8 @@ public class PipelineSecurityGate {
   }
 
   /**
-   * 실행 시점 — 실행 주체 기준 판정. DML 쓰기 대상의 하향은 거부한다(S2 임시 — S4 가 자동 상향으로 대체).
+   * 실행 시점 — 실행 주체 기준 판정(VIEW). DML 쓰기 대상의 하향은 여기서 거부하지 않는다 — 러너가 {@link #propagateToWriteTargets} 로
+   * 자동 상향한다(S4, 스펙 §4.5).
    *
    * @param resolvedSql 스텝 참조·증분 플레이스홀더를 치환한 뒤 실행기에 넘길 <b>바로 그 문자열</b>(가드 계약 — 다른 정규화본을 넘기면 판정한 테이블과
    *     실행되는 테이블이 갈라진다)
@@ -128,8 +129,8 @@ public class PipelineSecurityGate {
    *   <li>러너 소유 TEMP 공통: 입력 최대 등급이 허용 목록 필요면 실행 주체를 허용 목록에 (멱등) 넣는다 — 상향이 일어나지 않아도. 다른 실행 주체(수동 실행자
    *       vs 트리거 생성자)가 같은 TEMP 를 재사용할 때 다음 스텝({@code {{#N}}})이 거부되지 않게 하고, 실행 주체가 아직 볼 수 없는 TEMP 에
    *       쓰는 일이 없게 한다. 실행 주체는 이 스텝의 입력을 모두 볼 수 있음이 이미 판정됐으므로 새 열람자를 넓히지 않는다.
-   *   <li>사용자가 지정한 출력: 실행 주체가 볼 수 있어야 하고, 입력보다 낮으면 실패({@code SQL_WRITE_DOWNGRADE}) — 지정 출력의 자동 상향은
-   *       S4.
+   *   <li>사용자가 지정한 출력: 실행 주체가 볼 수 있어야 하고, 입력보다 낮으면 자동 상향(S4, 스펙 §4.5 — 출력은 입력보다 낮아질 수 없다). 상향 등급이
+   *       허용 목록 필요면 실행 주체가 목록에 들어간다(raiseForPipelineOutput). 낮추지는 않는다.
    * </ul>
    *
    * <p>SELECT 자동 적재는 래퍼({@code INSERT INTO 출력 ...})를 러너가 붙이므로 출력 테이블이 판정 문자열에 없다 — 그래서 여기서 따로 본다.
@@ -153,27 +154,17 @@ public class PipelineSecurityGate {
     LevelPolicy effective = access.effectiveLevel();
     // effective == null: 테이블을 읽지 않는 SELECT(상수 등) — 전파할 등급이 없다.
     if (effective != null) {
-      LevelPolicy out =
-          levelRepository
-              .findById(levelRepository.findDatasetLevelId(outputDatasetId))
-              .orElseThrow();
-      if (!runnerOwnedTemp) {
-        if (out.rank() < effective.rank()) {
-          // VIEW 를 통과한 뒤에만 오는 분기라 등급 이름은 실행 주체가 이미 볼 수 있는 정보다(가드의 쓰기 하향 메시지와 같은 문구).
-          throw new CodedApiException(
-              HttpStatus.FORBIDDEN,
-              DatasetAccessGuard.SQL_WRITE_DOWNGRADE_CODE,
-              "'" + effective.name() + "' 데이터를 더 낮은 등급 데이터셋에 쓸 수 없습니다");
-        }
-        return;
-      }
+      LevelPolicy out = levelOf(outputDatasetId);
       if (out.rank() < effective.rank()) {
+        // 스펙 §4.5: 출력은 입력보다 낮아질 수 없다 — 지정 출력이든 러너 TEMP 든 실패시키지 않고 자동 상향 + 상향 시각 + 감사(+이벤트 1건).
         datasetSecurityService.raiseForPipelineOutput(outputDatasetId, effective, runAsUserId);
-      } else if (freshTemp && out.rank() > effective.rank()) {
+      } else if (runnerOwnedTemp && freshTemp && out.rank() > effective.rank()) {
+        // 새로 만든 빈 TEMP 만 입력 등급으로 정확히 맞춘다(낮추기 포함). 지정 출력·재사용 TEMP 는 절대 낮추지 않는다.
         datasetSecurityService.assignNewPipelineTempLevel(outputDatasetId, effective, runAsUserId);
       }
-      // 상향 여부와 무관하게 — 재사용 TEMP 를 다른 실행 주체가 쓸 때도 시드한다(위 Javadoc). 상향 경로에서 이미 넣었으면 멱등으로 건너뛴다.
-      if (effective.allowlistRequired()) {
+      // 러너 TEMP 는 상향 여부와 무관하게 — 재사용 TEMP 를 다른 실행 주체가 쓸 때도 시드한다(위 Javadoc). 상향 경로에서 이미 넣었으면 멱등으로
+      // 건너뛴다. 지정 출력의 허용 목록은 사용자가 관리하므로 상향 때(raiseForPipelineOutput)만 실행 주체를 넣는다.
+      if (runnerOwnedTemp && effective.allowlistRequired()) {
         datasetSecurityService.seedPipelineOutputRunAs(outputDatasetId, runAsUserId);
       }
     }
@@ -189,7 +180,8 @@ public class PipelineSecurityGate {
   /**
    * 사용자가 지정한 출력 데이터셋을 실행 주체가 볼 수 있어야 한다. DML 스텝도 REPLACE 면 러너가 출력 비우기(DELETE) 선행 문장을 붙이므로, 이 판정이
    * 없으면 볼 수 없는 데이터셋을 비울 수 있다. 없는 데이터셋·숨김 데이터셋은 같은 거부(존재 은닉). 러너는 재사용·삭제할 TEMP 와 API_CALL·PYTHON 스텝에
-   * 들어온 출력(지정 출력·재사용 TEMP 모두 — 후속 F1)에도 같은 판정을 쓴다.
+   * 들어온 출력(지정 출력·재사용 TEMP 모두 — 후속 F1)에도 같은 판정을 쓴다. PYTHON 의 재사용 TEMP 쓰기 전 판정은 {@link
+   * #enforcePythonOutputLevel} 이 등급 처리 뒤에 한다.
    */
   public void requireOutputVisible(long outputDatasetId, RunAs runAs) {
     Decision d = guard.check(runAs.clearance(), outputDatasetId, DatasetAction.VIEW, null);
@@ -241,6 +233,100 @@ public class PipelineSecurityGate {
       return;
     }
     guard.requireDatasetReads(clearance(editorUserId), newDatasetIds);
+  }
+
+  /**
+   * SQL 스텝의 선언 입력(inputDatasetIds)을 판정 결과에 합친다(스펙 §4.5 "referencedTables ∪ 선언 입력", 계획 결정 10). 선언
+   * 입력도 실행 주체가 VIEW 할 수 있어야 한다(AI_CLASSIFY 입력과 같은 규칙, 구분 불가 403) — 선언만 하고 SQL 에서 읽지 않는 숨김 입력이 있어도
+   * 실패한다(fail-closed). 실효 등급은 둘의 최대, 내보내기 허용은 둘 다. 쓰기 대상은 SQL 판정의 것 그대로다.
+   *
+   * <p>선언 입력은 SQL 이 실제로 읽는다는 보장이 없어 감사 등급 접근 기록은 남기지 않는다(실제로 읽는 테이블은 {@link #checkStepSqlForRun} 이
+   * 이미 남겼다).
+   */
+  public SqlAccessResult mergeDeclaredInputs(
+      RunAs runAs, SqlAccessResult sqlAccess, Collection<Long> declaredInputIds) {
+    if (declaredInputIds == null || declaredInputIds.isEmpty()) {
+      return sqlAccess;
+    }
+    SqlAccessResult declared = guard.requireDatasetReads(runAs.clearance(), declaredInputIds);
+    LevelPolicy a = sqlAccess.effectiveLevel();
+    LevelPolicy b = declared.effectiveLevel();
+    LevelPolicy eff = a == null ? b : (b == null || a.rank() >= b.rank() ? a : b);
+    Set<Long> reads = new LinkedHashSet<>(sqlAccess.readDatasetIds());
+    reads.addAll(declared.readDatasetIds());
+    return new SqlAccessResult(
+        true,
+        null,
+        null,
+        eff,
+        reads,
+        sqlAccess.writeDatasetIds(),
+        sqlAccess.exportAllowed() && declared.exportAllowed());
+  }
+
+  /**
+   * DML 스텝의 쓰기 대상 중 입력 최대 등급보다 낮은 것을 자동 상향한다(스펙 §4.5 — 쓰기 하향은 파이프라인에서 거부가 아니라 상향). 쓰기 대상의 VIEW 는
+   * 가드(checkStepSqlForRun)가 이미 판정했다. 반드시 실행(출력 비우기 선행 문장 포함)보다 먼저 부른다 — 낮은 등급에 높은 등급 데이터가 잠깐이라도 쓰이지
+   * 않게. 상향 등급이 허용 목록 필요면 실행 주체가 목록에 들어간다(raiseForPipelineOutput).
+   */
+  @Transactional
+  public void propagateToWriteTargets(SqlAccessResult access, RunAs runAs) {
+    LevelPolicy effective = access.effectiveLevel();
+    if (effective == null) {
+      return;
+    }
+    for (Long id : access.writeDatasetIds()) {
+      if (levelOf(id).rank() < effective.rank()) {
+        datasetSecurityService.raiseForPipelineOutput(id, effective, runAs.userId());
+      }
+    }
+  }
+
+  /**
+   * PYTHON 스텝 출력 등급(스펙 §4.5, 공통 결정 R4). 입력 읽기를 SQL 처럼 판정할 수 없으므로 "스크립트가 읽을 수 있던 최대 등급"을 입력 등급으로 본다
+   * — 흐름 C 의 슬롯 롤은 실행 주체 자격 이하이면서 허용 목록 필요가 아닌 등급까지만 읽게 하므로 그 범위의 최고 등급이다({@link
+   * #pythonReadableTopLevel}). 실행 주체 자격 등급 자체가 아니다(예: ADMIN 자격 '기밀'은 허용 목록 등급이라 못 읽으므로 출력 = '민감').
+   * 그 범위에 허용 목록 등급이 없으므로 허용 목록 시드도 없다. 이후 처리는 SQL SELECT 출력과 같다({@link #enforceOutputLevel} — 지정
+   * 출력·재사용 TEMP 는 상향만, 새 TEMP 는 정확히 맞춤, 재사용 TEMP 는 쓰기 전 VIEW). 반드시 출력 비우기·맞바꿈·적재 전에 부른다.
+   *
+   * <p>범위가 비면(자격 이하 등급이 모두 허용 목록 필요, 또는 역할 없음) 스크립트가 읽을 수 있는 데이터셋이 없다 — 전파할 입력 등급이 없는 것으로 보고(SQL 의
+   * 상수 SELECT 와 같은 규칙) 출력 VIEW 만 본다. 기본 등급으로 맞추면 실행 주체 자격보다 높아 자기 출력을 못 볼 수 있고, 최하위 등급으로 맞추면 그 등급이
+   * 허용 목록 등급이라 시드가 필요해진다 — 둘 다 R4 의 전제와 어긋난다.
+   */
+  @Transactional
+  public void enforcePythonOutputLevel(
+      long outputDatasetId, long stepId, boolean freshTemp, RunAs runAs) {
+    var readable = pythonReadableTopLevel(levelRepository.findAll(), runAs.clearance().rank());
+    if (readable.isEmpty()) {
+      requireOutputVisible(outputDatasetId, runAs);
+      return;
+    }
+    enforceOutputLevel(
+        new SqlAccessResult(true, null, null, readable.get(), Set.of(), Set.of(), true),
+        outputDatasetId,
+        stepId,
+        freshTemp,
+        runAs);
+  }
+
+  /**
+   * PYTHON 스크립트가 읽을 수 있는 최고 등급(공통 결정 R4): rank ≤ 실행 주체 자격 rank 이고 {@code allowlist_required} 가 아닌
+   * 등급 중 rank 최대. 흐름 C 의 PYTHON 슬롯 위치 계산과 <b>같은 규칙</b>이어야 한다(C Task 10 의 일치 테스트) — 관리자
+   * 우회(admin_bypass) 등 다른 조건을 넣으면 두 계산이 어긋난다. 범위가 비면 empty.
+   *
+   * @param levels 현재 테넌트의 등급 전부
+   * @param clearanceRank 실행 주체 자격 rank({@link Clearance#NO_RANK} 면 언제나 empty)
+   */
+  public static java.util.Optional<LevelPolicy> pythonReadableTopLevel(
+      Collection<LevelPolicy> levels, int clearanceRank) {
+    return levels.stream()
+        .filter(l -> l.rank() <= clearanceRank && !l.allowlistRequired())
+        .max(java.util.Comparator.comparingInt(LevelPolicy::rank));
+  }
+
+  /** 데이터셋의 현재 등급(존재가 확인된 데이터셋에만). */
+  private LevelPolicy levelOf(long datasetId) {
+    return levelRepository.findById(levelRepository.findDatasetLevelId(datasetId)).orElseThrow();
   }
 
   /**

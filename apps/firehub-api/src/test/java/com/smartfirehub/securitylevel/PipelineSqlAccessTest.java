@@ -19,18 +19,25 @@ import com.smartfirehub.pipeline.service.PipelineExecutionService;
 import com.smartfirehub.pipeline.service.PipelineService;
 import com.smartfirehub.pipeline.service.TriggerService;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
+import com.smartfirehub.securitylevel.event.DatasetSecurityLevelChangedEvent;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.SecurityFixture;
 import com.smartfirehub.support.TenantRlsTestSupport;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationListener;
+import org.springframework.context.PayloadApplicationEvent;
+import org.springframework.context.event.ApplicationEventMulticaster;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.transaction.event.TransactionPhase;
+import org.springframework.transaction.event.TransactionalApplicationListener;
 
 /**
  * 스펙 §4.2 5행: 파이프라인 SQL 스텝은 저장 시 편집자, 실행 시 실행 주체(수동=실행자, 트리거=트리거 생성자) 기준으로 requireSql 판정한다. 판단 사항
@@ -47,6 +54,12 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
   @Autowired private PipelineService pipelineService;
   @Autowired private PipelineExecutionService executionService;
   @Autowired private TriggerService triggerService;
+  @Autowired private ApplicationEventMulticaster multicaster;
+
+  /** 커밋된 데이터셋 등급 변경 이벤트(전파의 "정확히 1회 발행" 단언용 — 테스트가 데이터셋 id 로 거른다). */
+  private final List<DatasetSecurityLevelChangedEvent> levelEvents = new CopyOnWriteArrayList<>();
+
+  private ApplicationListener<PayloadApplicationEvent<Object>> levelListener;
 
   private SecurityFixture fx;
   private final List<Long> users = new ArrayList<>();
@@ -73,6 +86,15 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
     table(pubTable, "공개");
     insertRow(pubTable, "p");
     lowOutId = table(m + "_low", "공개");
+    levelListener =
+        TransactionalApplicationListener.forPayload(
+            TransactionPhase.AFTER_COMMIT,
+            payload -> {
+              if (payload instanceof DatasetSecurityLevelChangedEvent e) {
+                levelEvents.add(e);
+              }
+            });
+    multicaster.addApplicationListener(levelListener);
   }
 
   /** 데이터셋을 만들고 등급을 직접 지정한다(등급 변경 API 의 자격 검사는 이 TC 의 관심사가 아니다). */
@@ -163,6 +185,7 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
 
   @AfterEach
   void tearDown() {
+    multicaster.removeApplicationListener(levelListener);
     TenantContext.set(DEFAULT_TEST_TENANT_ID);
     for (long p : pipelines) {
       // 러너가 만든 TEMP 출력(ptmp_<pipelineId>_*)부터 지운다.
@@ -480,14 +503,130 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
     assertThat(stepOutputs.get(0)).startsWith("ptmp_" + p + "_");
   }
 
+  /**
+   * 스펙 §4.5 — 지정 출력이 입력보다 낮으면 실패가 아니라 자동 상향 + 상향 시각 + 감사이고, 적재는 된다. 등급 변경 이벤트(AUTO_RAISE)는 정확히
+   * 1건(공통 결정 R2 — 발행은 DatasetSecurityService 한 곳).
+   */
   @Test
-  void run_explicitLowerOutput_failsWithoutWriting() throws Exception {
+  void run_explicitLowerOutput_isAutoRaisedAndWritten() throws Exception {
     long runner = userAt("민감");
     long p = pipeline(runner, "SELECT v FROM " + qualified(secTable), lowOutId);
     long exec = executionService.executePipeline(p, runner);
-    assertThat(waitForEnd(exec)).isEqualTo("FAILED");
-    assertThat(rowCount(m + "_low")).isZero();
-    assertThat(stepError(exec)).contains("더 낮은 등급");
+    assertThat(waitForEnd(exec)).isEqualTo("COMPLETED");
+    assertThat(rowCount(m + "_low")).isEqualTo(1);
+    assertThat(levelOf(lowOutId)).isEqualTo(fx.levelId("민감"));
+    assertThat(autoRaisedAt(lowOutId)).isNotNull();
+    assertThat(autoRaiseAuditCount(lowOutId)).isEqualTo(1);
+    assertThat(levelEventsFor(lowOutId))
+        .singleElement()
+        .satisfies(
+            e -> {
+              assertThat(e.cause()).isEqualTo(DatasetSecurityLevelChangedEvent.Cause.AUTO_RAISE);
+              assertThat(e.toLevelId()).isEqualTo(fx.levelId("민감"));
+            });
+  }
+
+  /** DML 스텝의 쓰기 대상도 입력보다 낮으면 자동 상향된다(PIPELINE_RUN 은 더 이상 쓰기 하향을 거부하지 않는다). 이벤트·감사는 1건. */
+  @Test
+  void run_dmlWriteToLowerTarget_isAutoRaised() throws Exception {
+    long runner = userAt("민감");
+    long p =
+        pipeline(
+            runner,
+            List.of(
+                new PipelineStepRequest(
+                    "dml",
+                    null,
+                    "SQL",
+                    "INSERT INTO "
+                        + qualified(m + "_low")
+                        + " (v) SELECT v FROM "
+                        + qualified(secTable),
+                    lowOutId,
+                    null,
+                    null,
+                    "APPEND")));
+    assertThat(waitForEnd(executionService.executePipeline(p, runner))).isEqualTo("COMPLETED");
+    assertThat(levelOf(lowOutId)).isEqualTo(fx.levelId("민감"));
+    assertThat(autoRaisedAt(lowOutId)).isNotNull();
+    assertThat(rowCount(m + "_low")).isEqualTo(1);
+    assertThat(autoRaiseAuditCount(lowOutId)).isEqualTo(1);
+    assertThat(levelEventsFor(lowOutId)).hasSize(1);
+  }
+
+  /**
+   * SQL 스텝의 선언 입력(inputDatasetIds)도 전파 입력이다(스펙 §4.5 "∪ 선언 입력"). SQL 은 공개만 읽어도 선언 입력이 민감이면 TEMP 는
+   * 민감.
+   */
+  @Test
+  void run_declaredInputRaisesTempEvenIfSqlReadsOnlyPublic() throws Exception {
+    long secId = tableId(secTable);
+    long runner = userAt("민감");
+    long p =
+        pipeline(
+            runner,
+            List.of(
+                new PipelineStepRequest(
+                    "s1",
+                    null,
+                    "SQL",
+                    "SELECT v FROM " + qualified(pubTable),
+                    null,
+                    List.of(secId),
+                    null)));
+    assertThat(waitForEnd(executionService.executePipeline(p, runner))).isEqualTo("COMPLETED");
+    assertThat(levelOf(tempOf(p, "s1"))).isEqualTo(fx.levelId("민감"));
+  }
+
+  /**
+   * 공통 결정 R4 — PYTHON 출력 = 실행 주체 자격 이하 & 허용 목록 아닌 최고 등급. '민감' 실행 주체 → '민감'. 스크립트 성패와 무관하게 쓰기 전에
+   * 상향된다.
+   */
+  @Test
+  void run_pythonOutput_isRaisedToHighestReadableLevel() throws Exception {
+    long out = table(m + "_pyl", "공개");
+    long runAs = pythonUserAt("민감");
+    long p = pipeline(runAs, List.of(pythonStep(out)));
+    waitForEnd(executionService.executePipeline(p, runAs));
+    assertThat(levelOf(out)).isEqualTo(fx.levelId("민감"));
+    assertThat(autoRaisedAt(out)).isNotNull();
+  }
+
+  /**
+   * 공통 결정 R4 — ADMIN 과 같은 최상위 자격('기밀', 허용 목록 등급) 실행 주체라도 PYTHON 은 '기밀'을 읽을 수 없으므로 출력은 '민감'이다(실행 주체
+   * 자격 등급 아님). 허용 목록 등급으로 가지 않으므로 실행 주체 시드도 없다.
+   */
+  @Test
+  void run_pythonOutput_ofTopClearanceRunAs_excludesAllowlistLevel() throws Exception {
+    long out = table(m + "_pya", "공개");
+    long runAs = pythonUserAt("기밀");
+    long p = pipeline(runAs, List.of(pythonStep(out)));
+    waitForEnd(executionService.executePipeline(p, runAs));
+    assertThat(levelOf(out)).isEqualTo(fx.levelId("민감"));
+    assertThat(hasUserGrant(out, runAs)).isFalse();
+  }
+
+  private java.time.LocalDateTime autoRaisedAt(long datasetId) {
+    return inTenantFixture(
+        () ->
+            dsl.select(DATASET.SECURITY_LEVEL_AUTO_RAISED_AT)
+                .from(DATASET)
+                .where(DATASET.ID.eq(datasetId))
+                .fetchOne(DATASET.SECURITY_LEVEL_AUTO_RAISED_AT));
+  }
+
+  private int autoRaiseAuditCount(long datasetId) {
+    return inTenantFixture(
+        () ->
+            dsl.fetchOne(
+                    "SELECT count(*) FROM audit_log WHERE action_type ="
+                        + " 'DATASET_SECURITY_LEVEL_AUTO_RAISE' AND resource_id = ?",
+                    String.valueOf(datasetId))
+                .get(0, Integer.class));
+  }
+
+  private List<DatasetSecurityLevelChangedEvent> levelEventsFor(long datasetId) {
+    return levelEvents.stream().filter(e -> e.datasetId() == datasetId).toList();
   }
 
   /** 대조군: 입력과 같은 등급의 지정 출력에는 쓴다 — 위 FAILED 가 컬럼 불일치 등이 아니라 하향 판정 때문임을 보인다. */

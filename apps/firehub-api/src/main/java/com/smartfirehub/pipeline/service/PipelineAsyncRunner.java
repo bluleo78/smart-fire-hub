@@ -418,7 +418,10 @@ public class PipelineAsyncRunner {
         // 스텝 실패가 되고, 메시지는 구분 불가 문구라 실행 이력에 숨김 데이터셋 이름이 남지 않는다.
         // 실행 주체 자격은 이 스텝에서 한 번만 계산해 이 스텝의 모든 판정(입력·TEMP 삭제 전·출력)에 쓴다.
         PipelineSecurityGate.RunAs runAs = pipelineSecurityGate.runAs(userId);
-        SqlAccessResult access = pipelineSecurityGate.checkStepSqlForRun(runAs, sql);
+        // 선언 입력(inputDatasetIds)도 전파 입력이다(스펙 §4.5) — 판정 문자열(sql)과 별개로 VIEW 판정 후 등급만 합친다.
+        SqlAccessResult access =
+            pipelineSecurityGate.mergeDeclaredInputs(
+                runAs, pipelineSecurityGate.checkStepSqlForRun(runAs, sql), step.inputDatasetIds());
         boolean isSelect = isSelectStatement(sql);
         // 이번 실행에서 SQL 스텝 출력을 위해 임시 데이터셋을 자동 생성/재사용했는지 여부.
         // 예약어 컬럼명 별칭 처리(renameReservedColumn*)는 이 경로에서만 적용해야 한다 — 사용자가
@@ -502,9 +505,10 @@ public class PipelineAsyncRunner {
           preStatements.add(OutputClearStatement.deleteAll(outputTableName));
         }
 
-        // 출력 등급(판단 사항 5): SELECT 는 러너가 붙이는 래퍼의 INSERT 대상이 판정 문자열에 없으므로 여기서 본다 — 러너가 만든
-        // TEMP 는 입력 최대 등급으로 상향, 지정 출력은 볼 수 있어야 하고 하향이면 실패. 사용자 DML 스텝의 지정 출력도 REPLACE 면
-        // 비우기(DELETE) 선행 문장의 대상이 되므로 실행 주체가 볼 수 있어야 한다. 아래 실행(선행 문장 포함)보다 먼저다.
+        // 출력 등급(판단 사항 5·스펙 §4.5): SELECT 는 러너가 붙이는 래퍼의 INSERT 대상이 판정 문자열에 없으므로 여기서 본다 — 러너가
+        // 만든 TEMP·지정 출력 모두 입력 최대 등급보다 낮으면 자동 상향(지정 출력은 볼 수 있어야 한다). 사용자 DML 스텝의 지정 출력도
+        // REPLACE 면 비우기(DELETE) 선행 문장의 대상이 되므로 실행 주체가 볼 수 있어야 하고, DML 쓰기 대상은 입력보다 낮으면 자동
+        // 상향한다. 아래 실행(선행 문장 포함)보다 먼저다.
         // 러너 소유 TEMP 여부는 게이트가 DB 로 판정한다 — 두 번째 실행부터 TEMP 는 step.outputDatasetId 로 들어와 위 자동 생성
         // 분기를 타지 않기 때문이다(PipelineStepRepository 의 coalesce 폴백).
         if (outputDatasetId != null) {
@@ -514,6 +518,10 @@ public class PipelineAsyncRunner {
           } else {
             pipelineSecurityGate.requireOutputVisible(outputDatasetId, runAs);
           }
+        }
+        if (!isSelect) {
+          // DML 쓰기 대상 자동 상향(스펙 §4.5) — 출력 지정이 없는 DML 도 대상이다. 가드는 PIPELINE_RUN 에서 쓰기 하향을 거부하지 않는다.
+          pipelineSecurityGate.propagateToWriteTargets(access, runAs);
         }
 
         if (isSelect && outputTableName != null && outputDatasetId != null) {
@@ -649,10 +657,11 @@ public class PipelineAsyncRunner {
         // escalation 코드 차단 — 저장 시 검증을 우회해 저장된 스텝(직접 DB 삽입 등)에 대한 실행 시 2차 방어 (#270)
         pythonScriptValidator.validate(step.scriptContent());
         // 보안 등급(코드리뷰 CR2·후속 F1): 이미 있던 출력은 실행 주체가 볼 수 있어야 쓴다 — 출력 비우기(실행기 끈 REPLACE truncate·실행기 켠
-        // REPLACE 맞바꿈)·적재보다 먼저다. 입력 읽기는 여전히 판정하지 않는다(알려진 우회, 배포 문서의 알려진 한계).
+        // REPLACE 맞바꿈)·적재보다 먼저다. 입력 읽기는 판정하지 않는 대신 출력 등급을 "스크립트가 읽을 수 있던 최대 등급"으로 올린다(아래).
         // 실행 주체 자격은 이 스텝에서 한 번만 계산해 이 스텝의 모든 판정(출력·TEMP 삭제 전)에 쓴다.
         PipelineSecurityGate.RunAs pyRunAs = pipelineSecurityGate.runAs(userId);
         requireExistingOutputVisible(outputDatasetId, pyRunAs);
+        boolean pyTempFresh = false;
         // outputDatasetId가 없고 pythonConfig에 outputColumns가 있으면 임시 데이터셋 자동 생성
         if (outputDatasetId == null && step.pythonConfig() != null) {
           com.smartfirehub.pipeline.dto.PythonStepConfig pythonStepConfig =
@@ -664,11 +673,19 @@ public class PipelineAsyncRunner {
                 pythonStepConfig.outputColumns().stream()
                     .map(col -> new ColumnInfo(col.name(), col.type()))
                     .toList();
-            outputDatasetId =
-                ensureUnpropagatedStepTemp(
+            StepTemp pyTemp =
+                ensureStepTemp(
                     step, pythonColumns, pipelineId, pipelineName, userId, pyRunAs, "Python ");
+            pyTempFresh = pyTemp.fresh();
+            outputDatasetId = pyTemp.datasetId();
             outputTableName = datasetRepository.findTableNameById(outputDatasetId).orElseThrow();
           }
+        }
+        // 출력 등급(스펙 §4.5·공통 결정 R4): 실행 주체 자격 이하 & 허용 목록 아닌 최고 등급으로 상향(새 TEMP 는 정확히 맞춤). 재사용 TEMP
+        // 의 "쓰기 전 VIEW" 도 여기서 본다(enforceOutputLevel). 출력 비우기·맞바꿈·적재보다 먼저다.
+        if (outputDatasetId != null) {
+          pipelineSecurityGate.enforcePythonOutputLevel(
+              outputDatasetId, step.id(), pyTempFresh, pyRunAs);
         }
         if (outputDatasetId == null) {
           log.warn("Python 스텝 '{}': 출력 데이터셋이 지정되지 않았습니다. 결과가 저장되지 않습니다.", step.name());
@@ -1005,8 +1022,8 @@ public class PipelineAsyncRunner {
   private record StepTemp(Long datasetId, boolean fresh) {}
 
   /**
-   * 러너 소유 TEMP 출력(SQL SELECT·AI_CLASSIFY, 그리고 {@link #ensureUnpropagatedStepTemp} 를 거친
-   * API_CALL·PYTHON)을 준비한다 — 없으면 만들고, 있으면 스키마가 같을 때 재사용, 바뀌었으면 지우고 다시 만든다.
+   * 러너 소유 TEMP 출력(SQL SELECT·AI_CLASSIFY·PYTHON, 그리고 {@link #ensureUnpropagatedStepTemp} 를 거친
+   * API_CALL)을 준비한다 — 없으면 만들고, 있으면 스키마가 같을 때 재사용, 바뀌었으면 지우고 다시 만든다.
    *
    * <p>코드리뷰 CR3: 재사용 TEMP 를 지우기 <b>전에</b> 실행 주체가 볼 수 있는지 본다. 이후 출력 등급 처리(enforceOutputLevel)는 새로 만든
    * TEMP 만 보므로, 여기서 막지 않으면 볼 수 없는 실행 주체(B)가 이전 실행 주체(A)의 결과 TEMP 를 통째로 지운다. 삭제·재생성 경로를 두 스텝 타입이 이 한
@@ -1043,12 +1060,13 @@ public class PipelineAsyncRunner {
   }
 
   /**
-   * API_CALL·PYTHON 스텝의 러너 소유 TEMP 출력을 준비한다(후속 F1). 삭제·재생성은 {@link #ensureStepTemp} 를 그대로 지나가 "삭제 전
-   * 판정"을 SQL·AI_CLASSIFY 와 공유하고, 재사용 TEMP 는 여기서 바로 "쓰기 전 판정"을 한다.
+   * API_CALL 스텝의 러너 소유 TEMP 출력을 준비한다(후속 F1). PYTHON 은 S4 부터 출력 등급 전파(enforcePythonOutputLevel)가 재사용
+   * TEMP 판정까지 하므로 이 메서드를 쓰지 않는다. 삭제·재생성은 {@link #ensureStepTemp} 를 그대로 지나가 "삭제 전 판정"을
+   * SQL·AI_CLASSIFY 와 공유하고, 재사용 TEMP 는 여기서 바로 "쓰기 전 판정"을 한다.
    *
    * <p>왜 재사용 판정을 여기서 하나: SQL·AI_CLASSIFY 는 입력 등급 전파(상향·시드) 뒤 {@code enforceOutputLevel} 이 재사용 TEMP
-   * 를 판정하지만, 이 두 스텝은 전파할 입력 등급이 없어(외부 API 데이터·입력 판정 없는 PYTHON) 그 단계가 없다. 판정이 없으면 관리자가 TEMP 등급을 실행
-   * 주체 자격보다 높인 뒤에도 실행 주체가 TEMP 를 비우고(REPLACE) 덮어쓴다. 새로 만든(빈) TEMP 는 이번 실행 주체가 방금 만든 것이라 제외한다(SQL
+   * 를 판정하지만, API_CALL 은 전파할 입력 등급이 없어(외부 API 데이터 — 기본 등급, 스펙 §4.5) 그 단계가 없다. 판정이 없으면 관리자가 TEMP 등급을
+   * 실행 주체 자격보다 높인 뒤에도 실행 주체가 TEMP 를 비우고(REPLACE) 덮어쓴다. 새로 만든(빈) TEMP 는 이번 실행 주체가 방금 만든 것이라 제외한다(SQL
    * 경로와 같은 규칙).
    *
    * @return 준비된 TEMP 데이터셋 id

@@ -184,16 +184,23 @@ class SqlAccessGuardTest extends IntegrationTestBase {
         .hasMessage("'민감' 데이터를 더 낮은 등급 데이터셋에 쓸 수 없습니다");
   }
 
-  /** PIPELINE_RUN 도 쓰기 하향을 거부하고, PIPELINE_SAVE 는 VIEW 만 본다(판단 사항 4·5). */
+  /**
+   * S4 — 쓰기 하향 거부는 대화형만. PIPELINE_RUN 은 허용하고 실효 등급·쓰기 대상을 돌려준다(게이트가 자동 상향, 스펙 §4.5), PIPELINE_SAVE
+   * 는 VIEW 만 본다(판단 사항 4).
+   */
   @Test
-  void writeDowngrade_pipelineRunRejects_pipelineSaveChecksViewOnly() {
+  void writeDowngrade_onlyInteractiveRejects() {
     Clearance c = userAt("민감");
     String downgrade = "INSERT INTO " + pub + " (a) SELECT a FROM " + high;
-    assertThatThrownBy(() -> guard.requireSql(c, downgrade, SqlAccessMode.PIPELINE_RUN))
+    var run = guard.requireSql(c, downgrade, SqlAccessMode.PIPELINE_RUN);
+    assertThat(run.allowed()).isTrue();
+    assertThat(run.effectiveLevel().name()).isEqualTo("민감");
+    assertThat(run.writeDatasetIds()).hasSize(1);
+    assertThat(guard.requireSql(c, downgrade, SqlAccessMode.PIPELINE_SAVE).allowed()).isTrue();
+    assertThatThrownBy(() -> guard.requireSql(c, downgrade, SqlAccessMode.INTERACTIVE))
         .isInstanceOf(CodedApiException.class)
         .extracting(e -> ((CodedApiException) e).code())
         .isEqualTo("SQL_WRITE_DOWNGRADE");
-    assertThat(guard.requireSql(c, downgrade, SqlAccessMode.PIPELINE_SAVE).allowed()).isTrue();
     assertThat(
             guard
                 .checkSql(c, "INSERT INTO " + hidden + " (a) SELECT 1", SqlAccessMode.PIPELINE_SAVE)
