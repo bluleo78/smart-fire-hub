@@ -273,6 +273,35 @@ class PythonReadGrantSyncTest extends IntegrationTestBase {
         .isInstanceOf(PythonReadAccessException.class);
   }
 
+  /**
+   * 실행 주체 테넌트와 TenantContext 테넌트가 다르면 슬롯을 계산하지 않고 거부한다(fail-closed). 컨텍스트는 테넌트 1(슬롯 롤 있음)이라 가드가 없으면
+   * 남의 테넌트 자격으로 슬롯 2 가 나온다 — 가드 제거 시 이 테스트가 실패한다(변이). 컨텍스트가 비어도 같은 거부.
+   */
+  @Test
+  void prepareForRun_rejectsTenantMismatch_andMissingContext() {
+    Clearance own = clearanceResolver.resolve(userAt("내부"));
+    Clearance foreign =
+        new Clearance(
+            own.userId(),
+            987_654_321L,
+            own.rank(),
+            own.roleIds(),
+            own.tenantAdmin(),
+            own.permissions());
+    assertThat(sync.prepareForRun(own)).as("대조군: 같은 테넌트면 슬롯 2").isEqualTo(2);
+    assertThatThrownBy(() -> sync.prepareForRun(foreign))
+        .isInstanceOf(PythonReadAccessException.class)
+        .hasMessageContaining("테넌트");
+    TenantContext.clear();
+    try {
+      assertThatThrownBy(() -> sync.prepareForRun(own))
+          .isInstanceOf(PythonReadAccessException.class)
+          .hasMessageContaining("테넌트");
+    } finally {
+      TenantContext.set(DEFAULT_TEST_TENANT_ID);
+    }
+  }
+
   /** 기본 USER 역할을 떼고 지정 등급 자격의 역할 하나만 가진 사용자. */
   private long userAt(String level) {
     long uid = fx.createUser("prs_u");

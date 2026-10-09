@@ -199,7 +199,9 @@ public class TenantPipelineRoleProvisioner {
             tx.execute(
                 "ALTER ROLE {0} IN DATABASE {1} SET search_path TO {2}",
                 name(role), name(database), name(schema));
-            // 앱 메타데이터(public)를 사용자 스크립트가 읽지 못하게 한다. 멱등.
+            // 이 롤에 '직접' 부여된 public 스키마 권한만 걷는다(멱등·방어적). PUBLIC 의사 롤 경유 USAGE 는 걷지 못해
+            // 스키마 안 이름 조회는 될 수 있다 — 앱 메타데이터(public 테이블)를 못 읽게 하는 실제 방어선은 테이블 권한(이 롤·
+            // PUBLIC 대상 SELECT GRANT 가 없음)이다.
             tx.execute("REVOKE ALL ON SCHEMA public FROM {0}", name(role));
             if (schemaExists) {
               tx.execute("GRANT USAGE ON SCHEMA {0} TO {1}", name(schema), name(role));

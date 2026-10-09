@@ -116,4 +116,50 @@ class PlatformTenantServiceRoleProvisioningTest {
     verify(tenantRepository, Mockito.never())
         .insertTenant(ArgumentMatchers.anyString(), ArgumentMatchers.anyString());
   }
+
+  private static TenantSummaryResponse tenantIn(String status) {
+    return new TenantSummaryResponse(42L, "jeonju", "전주시", status, 1, LocalDateTime.now());
+  }
+
+  /**
+   * 정지→재개 시 파이프라인 롤(실행 롤 + PYTHON 읽기 슬롯 롤)을 보장한다(WD-29) — V138·기동 치유는 ACTIVE 테넌트만 돌아 정지 중이던 테넌트는 슬롯
+   * 롤 없이 재개된다. 감사 뒤 마지막에 부른다. 호출을 지우면 이 테스트가 실패한다(변이).
+   */
+  @Test
+  void activate_fromSuspended_ensuresPipelineRoles_afterAudit() {
+    when(tenantRepository.findById(42L)).thenReturn(Optional.of(tenantIn("SUSPENDED")));
+
+    service.activate(42L, 1L);
+
+    InOrder order = inOrder(tenantRepository, auditRecorder, pipelineRoleProvisioner);
+    order.verify(tenantRepository).updateStatus(42L, "ACTIVE");
+    order
+        .verify(auditRecorder)
+        .record(eq(1L), eq("TENANT_ACTIVATE"), eq("tenant"), eq("42"), anyString(), anyMap());
+    order.verify(pipelineRoleProvisioner).ensureRoleIfAutoProvisionEnabled(42L);
+  }
+
+  /** 롤 보장 실패는 전파한다 — 삼키면 "ACTIVE 인데 롤 없음"이 커밋된다. 전파하면 @Transactional 이 상태 변경을 롤백한다. */
+  @Test
+  void activate_propagatesRoleProvisioningFailure() {
+    when(tenantRepository.findById(42L)).thenReturn(Optional.of(tenantIn("SUSPENDED")));
+    Mockito.doThrow(new IllegalStateException("CREATE ROLE 실패"))
+        .when(pipelineRoleProvisioner)
+        .ensureRoleIfAutoProvisionEnabled(42L);
+
+    assertThatThrownBy(() -> service.activate(42L, 1L))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("CREATE ROLE 실패");
+  }
+
+  /** 이미 ACTIVE 면 무변화 — 롤도 건드리지 않는다. 정지는 롤을 만들 이유가 없다. */
+  @Test
+  void activate_whenAlreadyActive_andSuspend_doNotTouchRoleProvisioner() {
+    when(tenantRepository.findById(42L)).thenReturn(Optional.of(tenantIn("ACTIVE")));
+    service.activate(42L, 1L);
+    service.suspend(42L, 1L);
+
+    verify(tenantRepository).updateStatus(42L, "SUSPENDED");
+    verifyNoInteractions(pipelineRoleProvisioner);
+  }
 }

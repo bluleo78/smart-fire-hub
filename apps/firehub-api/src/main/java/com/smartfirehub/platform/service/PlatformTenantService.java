@@ -76,11 +76,14 @@ public class PlatformTenantService {
         Map.of("tenantSlug", request.slug(), "tenantName", request.name()));
     // DB 롤 생성은 소유자 커넥션이라 이 트랜잭션에 묶이지 않는다 — 그래서 **일부러 마지막**이다.
     //
-    // 실패 두 가지를 구분할 것:
-    //  (a) 롤 생성 자체가 실패 → 그 자신의 트랜잭션이 롤백돼 **롤은 남지 않고**, 예외가 전파돼
-    //      위의 tenant/membership 삽입도 롤백된다. 아무것도 남지 않으므로 같은 slug 로 재시도하면 된다.
-    //  (b) 롤 생성은 커밋됐는데 그 **뒤**가 실패(아래 findById, 또는 커밋 자체) → 존재하지 않을
-    //      테넌트 id 의 고아 롤이 남는다. 무해하고 멱등이지만 남기는 남는다.
+    // 롤 생성은 **커밋 단위 두 개**다 — 실행 롤(ensureRole) 한 트랜잭션, 그 뒤 PYTHON 읽기 슬롯 롤 10개
+    // (ensurePythonReadRoles, WD-29) 한 트랜잭션. 실패 세 가지를 구분할 것:
+    //  (a) 실행 롤 생성이 실패 → 그 트랜잭션이 롤백돼 **롤은 남지 않고**, 예외가 전파돼 위의
+    //      tenant/membership 삽입도 롤백된다. 아무것도 남지 않으므로 같은 slug 로 재시도하면 된다.
+    //  (a') 실행 롤은 커밋됐는데 슬롯 롤 생성이 실패 → 슬롯 롤은 하나도 남지 않지만(10개가 한 트랜잭션)
+    //      실행 롤은 고아로 남고, 예외 전파로 tenant/membership 은 롤백된다. 재시도는 멱등이라 같은 slug 로 된다.
+    //  (b) 두 롤 생성은 커밋됐는데 그 **뒤**가 실패(아래 findById, 또는 커밋 자체) → 존재하지 않을
+    //      테넌트 id 의 고아 롤(실행 롤 + 슬롯 롤 10개)이 남는다. 무해하고 멱등이지만 남기는 남는다.
     // 이 호출을 마지막에 두는 이유가 바로 (b) 의 창을 최소화하는 것이다 — 앞에 두면 뒤따르는
     // 모든 단계의 실패가 전부 (b) 가 된다. 반대로 순서를 뒤집어 롤을 나중에 "언젠가" 만들게 하면
     // "행은 있고 롤은 없는" 테넌트 2와 똑같은 상태가 커밋과 함께 확정된다 — 그것이 이 장애다.
@@ -146,6 +149,13 @@ public class PlatformTenantService {
         String.valueOf(tenantId),
         description,
         Map.of("tenantSlug", tenant.slug(), "tenantName", tenant.name()));
+    if ("ACTIVE".equals(status)) {
+      // 재개 시 파이프라인 롤(실행 롤 + PYTHON 읽기 슬롯 롤)을 보장한다(WD-29). V138·기동 치유는 ACTIVE 테넌트만
+      // 돌므로, 그때 정지 상태였던 테넌트는 슬롯 롤 없이 재개되고 PYTHON 이 "롤이 준비되지 않았습니다"로 전부 거부된다
+      // (fail-closed 지만 가용성 결함). 멱등이고, 생성과 같은 이유로 감사 뒤 마지막에 두며 실패는 전파한다 — 삼키면
+      // "ACTIVE 인데 롤 없음"이 커밋으로 확정되고, 전파하면 상태 변경이 롤백돼 재시도할 수 있다.
+      pipelineRoleProvisioner.ensureRoleIfAutoProvisionEnabled(tenantId);
+    }
   }
 
   private TenantNotFoundException notFound(long tenantId) {

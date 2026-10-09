@@ -140,6 +140,16 @@ public class PythonReadGrantSync {
    * @return 실행에 쓸 슬롯 번호(1~10)
    */
   public int prepareForRun(Clearance runAs) {
+    // 테넌트 일치 확인을 맨 먼저 — 동기화(syncTenant)는 TenantContext 테넌트를, 슬롯 계산은 runAs 의 rank 를 쓴다. 둘이 다르면
+    // 남의 테넌트 등급 스냅샷으로 슬롯을 고르게 되므로(과권한 가능) 계산 전에 거부한다. 컨텍스트가 비어도 같은 예외(fail-closed).
+    Long contextTenant = TenantContext.get();
+    if (contextTenant == null || contextTenant != runAs.tenantId()) {
+      log.error(
+          "PYTHON 실행 주체 테넌트 불일치: runAs.tenant={} context.tenant={}",
+          runAs.tenantId(),
+          contextTenant);
+      throw new PythonReadAccessException("실행 주체의 테넌트가 현재 실행 테넌트와 달라 Python 스크립트를 실행할 수 없습니다.");
+    }
     if (runAs.rank() == Clearance.NO_RANK) {
       throw new PythonReadAccessException("실행 주체에게 열람 등급이 없어 Python 스크립트를 실행할 수 없습니다.");
     }

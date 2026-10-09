@@ -156,11 +156,15 @@ def _hmac_hex(secret: str, message: str) -> str:
 
 
 def resolve_db_url(tenant_id: int, settings: "Settings") -> str:
-    """사용자 Python 스크립트에 넘길 ``DB_URL`` 을 테넌트 롤 자격증명으로 조립한다.
+    """테넌트 실행 롤(pipeline_executor_t*) 자격증명으로 ``postgresql://`` URL 을 조립한다.
 
     nsjail 경로와 비nsjail 경로가 **같은** 함수를 쓰도록 여기 한 곳에 둔다. 두 경로가 각자
     문자열을 이어 붙이면 nsjail 설정에 따라 접속 주체가 조용히 갈릴 수 있다(#270 의 주석이
     "동작이 일치한다"고 보장하는 지점이다).
+
+    **사용자 Python 스크립트의 ``DB_URL`` 로 쓰지 말 것(WD-29).** 이 롤(pipeline_executor_t*)은
+    테넌트의 모든 등급 데이터를 읽고 쓴다 — 스크립트에 넘기는 순간 등급 경계가 사라진다. 스크립트에는
+    ``resolve_read_db_url``(슬롯 롤)만 넘기고, executor 자신의 출력 적재는 ``get_connection`` 을 쓴다.
     """
     role = resolve_role(tenant_id)
     password = resolve_password(tenant_id, settings.role_password_secret)
