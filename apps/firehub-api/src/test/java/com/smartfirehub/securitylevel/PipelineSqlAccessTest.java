@@ -223,6 +223,25 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
         .isEqualTo("COMPLETED");
   }
 
+  /** 보충 스펙 §3 — 파이프라인 실행 거부는 실행 주체를 행위자로 감사된다(실제 테이블명은 감사에만). */
+  @Test
+  void run_denied_isAuditedWithRunAsActor() throws Exception {
+    long editor = userAt("민감");
+    long p = pipeline(editor, "SELECT v FROM " + qualified(secTable), null);
+    long runner = userAt("공개");
+    assertThat(waitForEnd(executionService.executePipeline(p, runner))).isEqualTo("FAILED");
+    var row =
+        inTenantFixture(
+            () ->
+                dsl.fetchOne(
+                    "SELECT metadata->>'action' a, metadata->>'tableName' t FROM audit_log"
+                        + " WHERE user_id = ? AND action_type = 'DATASET_ACCESS_DENIED'",
+                    runner));
+    assertThat(row).isNotNull();
+    assertThat(row.get("a", String.class)).isEqualTo("PIPELINE");
+    assertThat(row.get("t", String.class)).isEqualTo(secTable);
+  }
+
   /**
    * 리터럴 안의 주석 기호 사이에 숨긴 참조(실측 우회 형태)도 실행 시점에 판정된다 — 러너가 실행기에 넘기는 바로 그 문자열을 판정하기 때문이다. 실행 이력의 오류
    * 메시지는 다른 사용자도 보므로 숨김 테이블 이름 없이 구분 불가 메시지만 남아야 한다.

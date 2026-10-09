@@ -4,17 +4,22 @@ import static com.smartfirehub.jooq.Tables.DATASET;
 
 import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.securitylevel.access.AccessDenialAction;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.securitylevel.access.DatasetAction;
+import com.smartfirehub.securitylevel.access.Decision;
 import com.smartfirehub.securitylevel.access.LevelPolicy;
 import com.smartfirehub.securitylevel.access.SqlAccessMode;
 import com.smartfirehub.securitylevel.access.SqlAccessResult;
 import com.smartfirehub.securitylevel.repository.SecurityLevelRepository;
 import com.smartfirehub.securitylevel.service.DatasetSecurityService;
+import com.smartfirehub.securitylevel.service.SecurityAuditRecorder;
 import java.util.Collection;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
 import org.springframework.http.HttpStatus;
@@ -39,6 +44,9 @@ public class PipelineSecurityGate {
   private final DatasetSecurityService datasetSecurityService;
   private final SecurityLevelRepository levelRepository;
   private final DSLContext dsl;
+
+  /** 실행 주체의 감사 등급 접근 기록(스펙 §4.6). 거부 감사는 가드(requireSql·requireDatasetReads·auditDenial)가 한다. */
+  private final SecurityAuditRecorder auditRecorder;
 
   /**
    * 한 스텝의 실행 주체 — userId 와 그 자격을 함께 들고 다닌다. 러너가 스텝마다 {@link #runAs} 로 한 번 만들어 그 스텝의 판정에 넘긴다(스텝 안
@@ -73,7 +81,15 @@ public class PipelineSecurityGate {
    *     SqlAccessResult#effectiveLevel()})을 쓴다
    */
   public SqlAccessResult checkStepSqlForRun(RunAs runAs, String resolvedSql) {
-    return guard.requireSql(runAs.clearance(), resolvedSql, SqlAccessMode.PIPELINE_RUN);
+    SqlAccessResult r =
+        guard.requireSql(runAs.clearance(), resolvedSql, SqlAccessMode.PIPELINE_RUN);
+    // 통과한 실행은 실행 주체를 행위자로 감사 등급 데이터셋 접근을 남긴다(읽기 ∪ 쓰기 대상). 실행 주체 미상이면 행위자가 없어 건너뛴다.
+    if (runAs.userId() != null) {
+      Set<Long> ids = new LinkedHashSet<>(r.readDatasetIds());
+      ids.addAll(r.writeDatasetIds());
+      auditRecorder.recordAccess(runAs.userId(), SecurityAuditRecorder.AccessKind.PIPELINE, ids);
+    }
+    return r;
   }
 
   /**
@@ -92,7 +108,13 @@ public class PipelineSecurityGate {
    * @return 판정 결과 — {@link #enforceOutputLevel} 이 입력 최대 등급을 쓴다(SQL SELECT 스텝과 같은 출력 규칙)
    */
   public SqlAccessResult checkStepInputsForRun(RunAs runAs, Collection<Long> inputDatasetIds) {
-    return guard.requireDatasetReads(runAs.clearance(), inputDatasetIds);
+    SqlAccessResult r = guard.requireDatasetReads(runAs.clearance(), inputDatasetIds);
+    // 통과한 입력 읽기는 감사 등급 접근으로 남긴다(실행 주체 미상이면 건너뜀).
+    if (runAs.userId() != null) {
+      auditRecorder.recordAccess(
+          runAs.userId(), SecurityAuditRecorder.AccessKind.PIPELINE, r.readDatasetIds());
+    }
+    return r;
   }
 
   /**
@@ -170,7 +192,13 @@ public class PipelineSecurityGate {
    * 들어온 출력(지정 출력·재사용 TEMP 모두 — 후속 F1)에도 같은 판정을 쓴다.
    */
   public void requireOutputVisible(long outputDatasetId, RunAs runAs) {
-    if (!guard.check(runAs.clearance(), outputDatasetId, DatasetAction.VIEW, null).allowed()) {
+    Decision d = guard.check(runAs.clearance(), outputDatasetId, DatasetAction.VIEW, null);
+    if (!d.allowed()) {
+      // 실행이 거부로 끝나는 지점 — 실제 사유를 감사에만 남긴다(없는 데이터셋 LEVEL_UNKNOWN 은 auditDenial 이 거른다).
+      guard.auditDenial(
+          runAs.clearance(),
+          AccessDenialAction.PIPELINE,
+          new DatasetAccessGuard.DenialDetail(d.reasonCode(), outputDatasetId, null));
       throw new CodedApiException(
           HttpStatus.FORBIDDEN,
           DatasetAccessGuard.SQL_ACCESS_DENIED_CODE,
