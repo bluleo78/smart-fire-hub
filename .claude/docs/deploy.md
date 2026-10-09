@@ -386,7 +386,7 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
 ### S3 AI 통제 (WD-39·WD-40·WD-31⑤, 마이그레이션 없음 · 계획 2026-10-09 · 배포일은 배포 시점에 갱신)
 
 - **api + web + ai-agent 동시 배포 필수.** api 만 올리면 ai-agent 가 POLICY_BLOCKED 를 일반 오류 문자열로 보이고, ai-agent 만 올리면 `X-AI-Purpose` 헤더를 받아 줄 api 가 없다. 흐름 B·C 와 함께 한 번에 배포한다(보충 스펙 1절).
-- **A 단독 배포 금지 — A·B·C 동시 배포.** 등급 변경 이벤트(`DatasetSecurityLevelChangedEvent`·`SecurityLevelsChangedEvent`)는 흐름 B 의 `DatasetSecurityService`·`SecurityLevelService` 가 발행한다(공통 결정 R2). A 만 나가면 리스너는 있으나 발행자가 없어, 등급 상향·`ai_policy` 강화·등급 순서 변경 뒤의 외부 벡터 정리가 일어나지 않는다(기동 시 1회 정리와 임베딩 호스팅 변경 이벤트만 동작). 병합 후 main 에서 실제 등급 변경 → 벡터 정리 종단 테스트(`AiVectorPurgeTest.realLevelChange_viaDatasetSecurityService_purgesThatDatasetAfterCommit`, 흐름 B 병합 시 추가)를 통과시킨 뒤에 배포한다.
+- **A 단독 배포 금지 — A·B·C 동시 배포.** 등급 변경 이벤트(`DatasetSecurityLevelChangedEvent`·`SecurityLevelsChangedEvent`)는 흐름 B 의 `DatasetSecurityService`·`SecurityLevelService` 가 발행한다(공통 결정 R2). A 만 나가면 리스너는 있으나 발행자가 없어, 등급 상향·`ai_policy` 강화·등급 순서 변경 뒤의 외부 벡터 정리가 일어나지 않는다(기동 시 1회 정리와 임베딩 호스팅 변경 이벤트만 동작). 병합 후 main 에서 실제 등급 변경 → 벡터 정리 종단 테스트(`AiVectorPurgeTest.realLevelChange_viaDatasetSecurityService_purgesThatDatasetAfterCommit`, 추가됨)를 통과시킨 뒤에 배포한다.
 - 마이그레이션 없음. 다음 신규 마이그레이션 번호는 위 V135 절의 값 그대로다.
 - **배포 직후 가시성 변화(의도된 동작)**: 모든 AI 자격증명·임베딩 설정의 호스팅 위치가 기본 "외부"다. 그래서 `ai_policy = SELF_HOSTED_ONLY|DENY` 등급(기본 시드: 민감·기밀)의 데이터셋은
   - AI 채팅의 데이터셋 목록·검색·스키마 목록에서 빠지고, 상세·행·SQL 도구는 "차단됨"(POLICY_BLOCKED)이 된다.
@@ -420,7 +420,7 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
 
 ### V136 데이터셋 보안 S4 — 출구·전파·감사 (WD-42·43·44·30, 계획 2026-10-09 · 배포일은 배포 시점에 갱신)
 
-- **배포 모듈: api + web + ai-agent + executor 를 한 번에 배포한다**(흐름 A 마이그레이션 없음·B V136·C V137 일괄, 보충 스펙 §1). 두 흐름의 마이그레이션이 한 배포에서 함께 적용된다(흐름 C 의 V137 절 참고).
+- **배포 모듈: api + web + ai-agent + executor 를 한 번에 배포한다**(흐름 A 마이그레이션 없음·B V136·C V137 일괄, 보충 스펙 §1). 두 흐름의 마이그레이션이 한 배포에서 함께 적용된다(흐름 C 의 V137 절 참고). **C 는 병합 직전 V137 로 재번호한다(현재 C 워크트리는 V138).**
   - api 와 web 은 반드시 함께 — 쿼리 결과 내보내기 엔드포인트가 바뀌었다. 구 web 은 없어진 `POST /api/v1/query-results/export` 를 불러 404 가 난다. 새 엔드포인트는 `POST /api/v1/analytics/queries/runs/{runId}/export`.
   - 흐름 C(executor 슬롯 롤 읽기 제한)와도 반드시 함께 — 아래 PYTHON 출력 등급은 C 의 슬롯 롤이 실제로 읽을 수 있는 범위를 전제로 한다. B 만 먼저 나가면 PYTHON 이 앱 연결로 더 높은 등급을 읽고도 출력은 낮게 매겨질 수 있다(과소 등급).
 - **마이그레이션:** V136 `analytics_query_run`(새 테이블, RLS 형태 (a), FORCE 없음). 기존 데이터 변경 없음. 배포 전 스냅샷 규칙(V122 이상)은 그대로 따른다. **병합 직전에 실제 main 의 마이그레이션 목록을 다시 확인한다**(V122 충돌 전례).

@@ -204,7 +204,12 @@ public class DatasetAccessGuard {
     requireExport(c, datasetId);
   }
 
-  /** 여러 데이터셋(쿼리 결과) 내보내기 강제 — 하나라도 막히면 403(등급 이름 없음, 첫 차단 데이터셋을 감사). VIEW 는 SQL 판정이 이미 했다. */
+  /**
+   * 여러 데이터셋(쿼리 결과) 내보내기 강제 — 하나라도 막히면 403(등급 이름 없음, 첫 차단 데이터셋을 감사). VIEW 는 SQL 판정이 이미 했다.
+   *
+   * <p>errors 에 levelName 이 없다 — 어느 데이터셋이 막았는지 숨긴다(흐름 A 의 POLICY_BLOCKED 형태와 다름). 웹·ai-agent 의
+   * policy-blocked 파서는 levelName 이 없으면 차단 표식이 아니라 일반 오류로 처리한다.
+   */
   public void requireExportAll(Clearance c, Collection<Long> datasetIds) {
     Map<Long, AccessFacts> facts =
         datasetIds.isEmpty() ? Map.of() : accessRepository.findFactsByDatasetIds(datasetIds, c);

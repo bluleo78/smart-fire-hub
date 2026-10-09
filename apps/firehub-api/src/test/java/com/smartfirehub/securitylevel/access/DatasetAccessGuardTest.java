@@ -369,4 +369,33 @@ class DatasetAccessGuardTest extends IntegrationTestBase {
                 .where(field(name("role", "name"), String.class).eq("ADMIN"))
                 .fetchSingle(field(name("role", "id"), Long.class)));
   }
+
+  /**
+   * 다건 AI 판정(requireAiForDatasets)의 VIEW 거부는 구분 불가 403 이고 실제 사유는 DATASET_REFS 동작으로 감사된다. HTTP
+   * 호출부(검수 근거·메트릭 저장·AI_CLASSIFY 저장)는 모두 VIEW 를 먼저 판정해 이 분기에 도달하지 않으므로 가드를 직접 부른다(방어선 고정). 없는 id 는
+   * "없음"이라 남지 않는다.
+   */
+  @Test
+  void requireAiForDatasets_hiddenId_is403_andAuditedAsDatasetRefs() {
+    long uid = user("공개", false);
+    long hidden = dataset("민감");
+    TenantContext.set(DEFAULT_TEST_TENANT_ID);
+    Clearance c = clearanceResolver.resolve(uid);
+    AiCall call = new AiCall(ProviderHosting.SELF_HOSTED, false);
+    assertThatThrownBy(() -> guard.requireAiForDatasets(c, List.of(hidden), call))
+        .isInstanceOf(CodedApiException.class)
+        .hasMessageNotContaining("민감");
+    assertThatThrownBy(() -> guard.requireAiForDatasets(c, List.of(999_999_999L), call))
+        .isInstanceOf(CodedApiException.class);
+    var rows =
+        inTenantFixture(
+            () ->
+                dsl.fetch(
+                    "SELECT resource_id, metadata->>'action' a FROM audit_log"
+                        + " WHERE user_id = ? AND action_type = 'DATASET_ACCESS_DENIED'",
+                    uid));
+    assertThat(rows).hasSize(1);
+    assertThat(rows.get(0).get("a", String.class)).isEqualTo("DATASET_REFS");
+    assertThat(rows.get(0).get("resource_id", String.class)).isEqualTo(String.valueOf(hidden));
+  }
 }
