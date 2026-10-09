@@ -2,6 +2,7 @@ package com.smartfirehub.securitylevel.pythonread;
 
 import static com.smartfirehub.jooq.Tables.DATASET;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 
 import com.smartfirehub.dataset.dto.CloneDatasetRequest;
 import com.smartfirehub.dataset.dto.CreateDatasetRequest;
@@ -231,6 +232,29 @@ class PythonReadGrantWiringTest extends IntegrationTestBase {
     assertThat(selectAs(1, pub)).isEqualTo("42501");
     sync.syncTableAfterCommit(pub);
     assertThat(selectAs(1, pub)).isNull();
+  }
+
+  /**
+   * 테넌트 컨텍스트가 없어도 예외를 던지지 않고(로그만) 호출자 트랜잭션의 커밋을 막지 않는다 — 예약 단계(require)도 try 안이라는 계약. require 를 try
+   * 밖으로 되돌리면 실패한다(변이).
+   */
+  @Test
+  void syncTableAfterCommit_withoutTenantContext_doesNotThrowOrBlockCommit() {
+    String pub = table("nctx", "공개");
+    revokeAllSlots(pub);
+    TenantContext.clear();
+    try {
+      assertThatCode(() -> sync.syncTableAfterCommit(pub)).doesNotThrowAnyException();
+      assertThatCode(
+              () ->
+                  fixtureTransactionTemplate.executeWithoutResult(
+                      status -> sync.syncTableAfterCommit(pub)))
+          .as("트랜잭션 안에서도 커밋이 막히지 않는다")
+          .doesNotThrowAnyException();
+    } finally {
+      TenantContext.set(DEFAULT_TEST_TENANT_ID);
+    }
+    assertThat(selectAs(1, pub)).as("컨텍스트 없으면 동기화는 건너뛴다(다음 동기화가 회복)").isEqualTo("42501");
   }
 
   // ---------------------------------------------------------------- 이벤트 리스너

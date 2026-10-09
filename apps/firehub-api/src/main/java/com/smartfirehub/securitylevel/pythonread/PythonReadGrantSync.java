@@ -115,27 +115,33 @@ public class PythonReadGrantSync {
    * 않는다, 스펙 §4.3). 다음 JIT·일 1회 동기화가 회복한다.
    */
   public void syncTableAfterCommit(String tableName) {
-    long tenantId = TenantContext.require("PYTHON 읽기 권한 동기화 예약");
-    Runnable work =
-        () -> {
-          try {
-            // afterCommit 콜백은 다른 컨텍스트에서 돌 수 있어 테넌트를 명시로 다시 세운다.
-            TenantContext.runScoped(tenantId, () -> syncTable(tableName));
-          } catch (RuntimeException e) {
-            log.warn(
-                "PYTHON 읽기 권한 동기화 실패(다음 동기화에서 회복): tenant={} table={}", tenantId, tableName, e);
-          }
-        };
-    if (TransactionSynchronizationManager.isSynchronizationActive()) {
-      TransactionSynchronizationManager.registerSynchronization(
-          new TransactionSynchronization() {
-            @Override
-            public void afterCommit() {
-              work.run();
+    // 예약 단계 전체를 try 안에 둔다 — 테넌트 컨텍스트 누락(require 실패)·동기화 등록 실패도 "로그만, 커밋을 막지 않는다" 계약에 든다.
+    // require 가 밖에 있으면 컨텍스트 없는 쓰기 경로에서 예외가 호출자 트랜잭션을 롤백시킨다(이중 방어선이 본 작업을 깨뜨림).
+    try {
+      long tenantId = TenantContext.require("PYTHON 읽기 권한 동기화 예약");
+      Runnable work =
+          () -> {
+            try {
+              // afterCommit 콜백은 다른 컨텍스트에서 돌 수 있어 테넌트를 명시로 다시 세운다.
+              TenantContext.runScoped(tenantId, () -> syncTable(tableName));
+            } catch (RuntimeException e) {
+              log.warn(
+                  "PYTHON 읽기 권한 동기화 실패(다음 동기화에서 회복): tenant={} table={}", tenantId, tableName, e);
             }
-          });
-    } else {
-      work.run();
+          };
+      if (TransactionSynchronizationManager.isSynchronizationActive()) {
+        TransactionSynchronizationManager.registerSynchronization(
+            new TransactionSynchronization() {
+              @Override
+              public void afterCommit() {
+                work.run();
+              }
+            });
+      } else {
+        work.run();
+      }
+    } catch (RuntimeException e) {
+      log.warn("PYTHON 읽기 권한 동기화 예약 실패(다음 동기화에서 회복): table={}", tableName, e);
     }
   }
 

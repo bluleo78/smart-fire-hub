@@ -1,6 +1,7 @@
 package com.smartfirehub.securitylevel.pythonread;
 
 import com.smartfirehub.global.tenant.TenantScopedRunner;
+import java.util.concurrent.atomic.AtomicInteger;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
@@ -53,10 +54,28 @@ public class PythonReadGrantScheduler {
     if (!enabled) {
       return;
     }
+    // 시도·성공 수를 센다 — forEachActiveTenant 가 테넌트별 예외를 삼키므로(로그만) 세지 않으면 일부 테넌트가 실패해도 "완료"만 남아
+    // 운영자가 부분 실패를 알아챌 수 없다. 실패 수 = 시도 − 성공(예외는 그대로 러너에 전파돼 테넌트별 오류 로그가 남는다).
+    AtomicInteger attempted = new AtomicInteger();
+    AtomicInteger succeeded = new AtomicInteger();
     try {
       // forEachActiveTenant 는 테넌트마다 TenantContext 를 세우고 테넌트별 예외를 삼키고 계속한다.
-      tenantScopedRunner.forEachActiveTenant(tenantId -> sync.syncTenant());
-      log.info("PYTHON 읽기 권한 동기화 완료({})", reason);
+      tenantScopedRunner.forEachActiveTenant(
+          tenantId -> {
+            attempted.incrementAndGet();
+            sync.syncTenant();
+            succeeded.incrementAndGet();
+          });
+      int failed = attempted.get() - succeeded.get();
+      if (failed == 0) {
+        log.info("PYTHON 읽기 권한 동기화 완료({}): 성공 {}개 테넌트", reason, succeeded.get());
+      } else {
+        log.warn(
+            "PYTHON 읽기 권한 동기화 일부 실패({}): 성공 {}개·실패 {}개 테넌트 — 실패 테넌트는 다음 주기·실행 직전 동기화가 회복",
+            reason,
+            succeeded.get(),
+            failed);
+      }
     } catch (RuntimeException e) {
       log.error("PYTHON 읽기 권한 전체 동기화 실패({}) — 다음 주기에 재시도", reason, e);
     }
