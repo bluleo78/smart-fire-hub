@@ -278,6 +278,55 @@ describe('graphrag_ingest 도구 — 적재 이력 best-effort 기록', () => {
   });
 });
 
+describe('graphrag_ingest 도구 — share 목적 클라이언트로 읽기(S3, WD-39)', () => {
+  beforeEach(() => vi.clearAllMocks());
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const jsonResult = ((data: any) => ({ content: [{ type: 'text', text: JSON.stringify(data) }] })) as unknown as JsonResultFn;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const safeTool = ((_n: string, _d: string, _s: any, handler: any) => ({ name: _n, handler })) as unknown as SafeToolFn;
+  const ontology = { domain: 'd', schemaVersion: 3, entities: [], relations: [] };
+
+  // §4.3: 적재 결과는 공유 그래프로 간다 — 온톨로지 해소·청크 읽기·임베딩·이력 기록이 share 목적이어야 api 가 SHARE 판정을
+  // 더한다. 채팅 클라이언트(withPurpose 미적용)로 되돌리면 SHARE 판정이 빠져 공유 불허 문서가 그래프로 새므로(fail-open),
+  // 채팅 쪽 데이터 메서드는 reject 하고 share 목은 별도 객체로 둬 어느 쪽으로 갔는지 구분한다.
+  it('온톨로지 해소·청크 읽기·임베딩·이력 기록을 share 클라이언트로만 한다', async () => {
+    vi.mocked(resolveDatasetOntology).mockResolvedValue({ ontology, ontologyId: 42 as VerifiedOntologyId });
+    // ingestDataset 은 목이다 — 넘겨받은 deps 의 읽기 함수를 실제로 불러 배선이 어느 클라이언트를 향하는지 드러낸다.
+    vi.mocked(ingestDataset).mockImplementation(async (deps, datasetId) => {
+      await deps.listChunks(datasetId);
+      await deps.embed(['a']);
+      return { datasetId, chunks: 1, entities: 0, relations: 0 };
+    });
+    const share = {
+      listDocumentChunks: vi.fn().mockResolvedValue([]),
+      embed: vi.fn().mockResolvedValue([[0.1]]),
+      recordGraphIngest: vi.fn().mockResolvedValue(undefined),
+    };
+    const chatReject = () => vi.fn().mockRejectedValue(new Error('채팅 클라이언트로 읽으면 안 된다'));
+    const chat = {
+      listDocumentChunks: chatReject(),
+      embed: chatReject(),
+      recordGraphIngest: chatReject(),
+      withPurpose: vi.fn().mockReturnValue(share),
+    };
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const tools: any[] = registerGraphragTools(chat as unknown as FireHubApiClient, safeTool, jsonResult);
+    const ingest = tools.find((t) => t.name === 'graphrag_ingest');
+    const out = await ingest.handler({ datasetId: 7 });
+
+    expect(chat.withPurpose).toHaveBeenCalledWith('share');
+    expect(resolveDatasetOntology).toHaveBeenCalledWith(share, 7);
+    expect(share.listDocumentChunks).toHaveBeenCalledWith(7);
+    expect(share.embed).toHaveBeenCalledWith(['a']);
+    expect(share.recordGraphIngest).toHaveBeenCalledWith(7, expect.objectContaining({ status: 'SUCCESS' }));
+    expect(JSON.parse(out.content[0].text).chunks).toBe(1);
+    expect(chat.listDocumentChunks).not.toHaveBeenCalled();
+    expect(chat.embed).not.toHaveBeenCalled();
+    expect(chat.recordGraphIngest).not.toHaveBeenCalled();
+  });
+});
+
 describe('graphrag_describe_ontology / graphrag_structured_query — ontologyId 필수화', () => {
   // 실제 MCP 서버(createFireHubMcpServer)를 통해 등록해야 zod 스키마 검증이 실제로 걸린다.
   // (이 파일 상단의 registerGraphragTools 직접 호출 + safeTool 스텁 조합은 zod 검증을 우회한다 —
