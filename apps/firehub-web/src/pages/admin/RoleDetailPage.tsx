@@ -36,8 +36,11 @@ import { RoleClearanceCard } from './components/RoleClearanceCard';
 
 /** 권한 카테고리 표시 이름 — 없는 키는 원문 그대로. 보안 등급 S1 의 신규 카테고리(목업 s3 "보안"). */
 const PERMISSION_CATEGORY_LABELS: Record<string, string> = { security: '보안' };
-/** 보안 등급 열람 통제를 우회할 수 있는 권한(스펙 §7.3 — 1차 조치: 권한 할당 화면 경고). */
-const BYPASS_WARNING_PERMISSIONS = new Set(['pipeline:python_execute']);
+/**
+ * 읽기 범위 안내를 붙일 권한. WD-29 이후 Python 스텝은 우회가 아니라 실행 주체 열람 등급 안에서만 읽으므로
+ * 위험 경고 대신 등급 범위·허용 목록 등급 제약을 알린다.
+ */
+const PYTHON_READ_NOTICE_PERMISSIONS = new Set(['pipeline:python_execute']);
 
 export default function RoleDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -276,7 +279,8 @@ export default function RoleDetailPage() {
               </h3>
               <div className="space-y-2">
                 {perms.map((perm) => (
-                  <div key={perm.id} className="flex items-center gap-3">
+                  // flex-wrap: 범위 안내처럼 긴 보조 문구가 설명을 좁은 칸으로 짜부라뜨리지 않고 다음 줄로 내려가게 한다
+                  <div key={perm.id} className="flex flex-wrap items-center gap-x-3 gap-y-1">
                     <Checkbox
                       id={`perm-${perm.id}`}
                       checked={selectedPermissionIds.includes(perm.id)}
@@ -289,9 +293,12 @@ export default function RoleDetailPage() {
                     {perm.description && (
                       <span className="text-sm text-muted-foreground">- {perm.description}</span>
                     )}
-                    {BYPASS_WARNING_PERMISSIONS.has(perm.code) && (
-                      <span className="text-xs text-warning">
-                        이 권한 보유자는 보안 등급 열람 통제를 우회할 수 있습니다(데이터 스키마 직접 접근).
+                    {PYTHON_READ_NOTICE_PERMISSIONS.has(perm.code) && (
+                      // 더 이상 위험 경고가 아니라 범위 안내라 warning 대신 muted 로 둔다(WD-29).
+                      // 한 줄을 다 쓰고(basis-full) 체크박스 폭+간격(pl-7)만큼 들여 권한 이름과 왼쪽을 맞춘다.
+                      <span className="basis-full pl-7 text-xs text-muted-foreground">
+                        Python 스크립트는 실행 주체(직접 실행은 실행한 사용자, 트리거 실행은 트리거를 만든 사용자)의 열람
+                        등급 안의 데이터만 읽을 수 있습니다. 허용 목록이 필요한 등급의 데이터는 읽을 수 없습니다.
                       </span>
                     )}
                   </div>
