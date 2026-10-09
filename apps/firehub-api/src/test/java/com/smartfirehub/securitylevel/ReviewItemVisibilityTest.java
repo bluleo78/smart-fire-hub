@@ -731,8 +731,7 @@ class ReviewItemVisibilityTest extends IntegrationTestBase {
       // 양성 대조: AI 허용 등급(공개) 항목은 AI 요청에서도 근거가 열린다.
       long visibleChunk = insertChunk(visibleDs);
       long open = insertItemWithChunk(visibleDs, "ai_open", visibleChunk);
-      var allowed =
-          aiCall("GET", "/api/v1/graphrag/review-items/" + open + "/evidence", high);
+      var allowed = aiCall("GET", "/api/v1/graphrag/review-items/" + open + "/evidence", high);
       assertThat(allowed.getStatus()).isEqualTo(200);
       assertThat(allowed.getContentAsString()).contains("기밀 원문");
     } finally {

@@ -9,8 +9,8 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
 /**
- * 확실한 공용 AI 호스트 판정. <b>웹 apps/firehub-web/src/lib/hosting-location.test.ts 의 'isKnownPublicAiHost' 사례 표와
- * 같은 행이다</b> — 두 언어의 목록을 한 곳에 정의할 수 없어 같은 표로 일치를 고정한다. 한쪽 행을 바꾸면 다른 쪽도 바꿀 것.
+ * 확실한 공용 AI 호스트 판정. <b>웹 apps/firehub-web/src/lib/hosting-location.test.ts 의 'isKnownPublicAiHost'
+ * 사례 표와 같은 행이다</b> — 두 언어의 목록을 한 곳에 정의할 수 없어 같은 표로 일치를 고정한다. 한쪽 행을 바꾸면 다른 쪽도 바꿀 것.
  */
 class KnownPublicAiHostsTest {
 

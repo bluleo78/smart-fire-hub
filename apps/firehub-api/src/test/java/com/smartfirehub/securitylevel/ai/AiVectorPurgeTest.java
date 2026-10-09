@@ -378,9 +378,9 @@ class AiVectorPurgeTest extends IntegrationTestBase {
   }
 
   /**
-   * 코드리뷰 A-4: 데이터셋 1건 등급 변경 이벤트는 그 데이터셋만 정리한다 — 다른 불허 데이터셋의 벡터는 건드리지 않는다(테넌트 전체 정리는 등급 정의·호스팅
-   * 이벤트와 배포 1회 잡의 몫). 다른 불허 데이터셋은 같은 메타 벡터 테이블에 둔다 — 테넌트 전체 정리라면 한 DELETE 문에서 둘 다 사라지므로 "하나만
-   * 사라짐"이 범위를 결정적으로 가른다.
+   * 코드리뷰 A-4: 데이터셋 1건 등급 변경 이벤트는 그 데이터셋만 정리한다 — 다른 불허 데이터셋의 벡터는 건드리지 않는다(테넌트 전체 정리는 등급 정의·호스팅 이벤트와
+   * 배포 1회 잡의 몫). 다른 불허 데이터셋은 같은 메타 벡터 테이블에 둔다 — 테넌트 전체 정리라면 한 DELETE 문에서 둘 다 사라지므로 "하나만 사라짐"이 범위를
+   * 결정적으로 가른다.
    */
   @Test
   void levelChangedEvent_purgesOnlyThatDataset_notOtherDisallowedOnes() throws Exception {

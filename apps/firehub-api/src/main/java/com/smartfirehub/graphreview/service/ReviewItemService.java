@@ -10,9 +10,9 @@ import com.smartfirehub.graphreview.dto.EvidenceChunk;
 import com.smartfirehub.graphreview.dto.ReviewItemRecord;
 import com.smartfirehub.graphreview.dto.ReviewItemResponse;
 import com.smartfirehub.graphreview.repository.ReviewItemRepository;
+import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
-import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.DatasetAction;
 import com.smartfirehub.securitylevel.ai.AiCallContext;
 import java.util.ArrayList;
@@ -425,10 +425,10 @@ public class ReviewItemService {
    * 항목을 가져오되, 현재 사용자가 출처 데이터셋을 볼 수 없으면 없는 항목과 같은 404 를 던진다(존재 은닉 — 데이터셋 id 도 싣지 않는다). 그래서
    * DatasetAccessGuard#requireView(데이터셋 id 를 담은 다른 404)가 아니라 판정 값만 쓴다.
    *
-   * <p>AI 대행 요청(graphrag_review_evidence·승인·거부 MCP 도구)이면 VIEW 통과 <b>뒤에</b> AI(+공유 목적이면 SHARE) 정책도 본다(스펙
-   * §4.3) — 근거 원문·엔티티 이름이 외부 LLM 으로 가기 때문이다. 예전에는 VIEW 만 봐서 ai_policy 불허 데이터셋의 문서 청크 원문이 그대로
-   * LLM 에 실렸다. 숨김 항목은 위 404 가 먼저 나가므로 등급 이름이 실린 403 POLICY_BLOCKED 는 볼 수 있는 항목에만 나간다. 웹(비AI) 요청은
-   * AI 문맥이 없어 기존 판정 그대로다.
+   * <p>AI 대행 요청(graphrag_review_evidence·승인·거부 MCP 도구)이면 VIEW 통과 <b>뒤에</b> AI(+공유 목적이면 SHARE) 정책도
+   * 본다(스펙 §4.3) — 근거 원문·엔티티 이름이 외부 LLM 으로 가기 때문이다. 예전에는 VIEW 만 봐서 ai_policy 불허 데이터셋의 문서 청크 원문이 그대로
+   * LLM 에 실렸다. 숨김 항목은 위 404 가 먼저 나가므로 등급 이름이 실린 403 POLICY_BLOCKED 는 볼 수 있는 항목에만 나간다. 웹(비AI) 요청은 AI
+   * 문맥이 없어 기존 판정 그대로다.
    */
   private ReviewItemRecord findVisibleOrThrow(long id) {
     ReviewItemRecord row = repo.findById(id).orElseThrow(() -> notFound(id));
@@ -442,8 +442,7 @@ public class ReviewItemService {
     // requireAi(hosting) 가 아니라 AiCall 그대로 넘긴다 — 공유 목적(share)의 SHARE 판정이 빠지지 않게.
     aiCallContext
         .current()
-        .ifPresent(
-            ai -> datasetAccessGuard.requireAiForDatasets(c, List.of(row.datasetId()), ai));
+        .ifPresent(ai -> datasetAccessGuard.requireAiForDatasets(c, List.of(row.datasetId()), ai));
     return row;
   }
 
