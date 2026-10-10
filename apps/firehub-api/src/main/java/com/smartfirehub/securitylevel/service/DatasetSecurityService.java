@@ -172,6 +172,10 @@ public class DatasetSecurityService {
   @Transactional
   public void narrowPipelineOutputAllowlist(
       long datasetId, Set<GrantSubject> seed, long runAsUserId) {
+    // 코드리뷰 CR1: 쓰기 후 확정(PipelineSecurityGate#completeOutputAllowlist)과 같은 데이터셋 행 잠금으로 직렬화한다 — 겹친
+    // 실행의 확정이
+    // 읽기→계산→쓰기 사이에 끼어 이 좁히기를 덮어쓰지(넓혀 두지) 못하게.
+    lockDatasetRow(datasetId);
     Set<GrantSubject> current = currentSubjects(datasetId);
     Set<GrantSubject> target;
     if (current.isEmpty()) {
@@ -192,10 +196,28 @@ public class DatasetSecurityService {
   @Transactional
   public void resetPipelineOutputAllowlist(
       long datasetId, Set<GrantSubject> seed, long runAsUserId) {
+    // 코드리뷰 CR1: 좁히기와 같은 행 잠금(호출자 게이트가 이미 잡았으면 같은 트랜잭션이라 재진입)
+    lockDatasetRow(datasetId);
     Set<GrantSubject> target = new HashSet<>(seed);
     target.add(GrantSubject.user(runAsUserId));
     applyAllowlistDiff(
         datasetId, currentSubjects(datasetId), target, runAsUserId, "파이프라인 출력 허용 목록 재계산(쓰기 후)");
+  }
+
+  /**
+   * 파이프라인 출력 허용 목록 변경(쓰기 전 좁히기·쓰기 후 확정)을 데이터셋 단위로 직렬화하는 행 잠금(코드리뷰 CR1). 호출 트랜잭션 끝까지 유지된다. 데이터셋이
+   * 없으면(동시 실행이 TEMP 를 지우고 다시 만든 경우) 잠글 행이 없을 뿐 — 이후 허용 목록 조회·변경도 대상이 없다.
+   *
+   * @return 데이터셋 행이 있어 잠갔으면 true
+   */
+  @Transactional
+  public boolean lockDatasetRow(long datasetId) {
+    return dsl.select(DATASET.ID)
+        .from(DATASET)
+        .where(DATASET.ID.eq(datasetId))
+        .forUpdate()
+        .fetchOptional()
+        .isPresent();
   }
 
   private Set<GrantSubject> currentSubjects(long datasetId) {

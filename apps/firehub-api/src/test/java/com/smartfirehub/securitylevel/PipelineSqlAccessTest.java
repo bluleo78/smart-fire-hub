@@ -16,17 +16,28 @@ import com.smartfirehub.pipeline.dto.CreatePipelineRequest;
 import com.smartfirehub.pipeline.dto.CreateTriggerRequest;
 import com.smartfirehub.pipeline.dto.PipelineStepRequest;
 import com.smartfirehub.pipeline.dto.TriggerType;
+import com.smartfirehub.pipeline.repository.PipelineExecutionRepository;
 import com.smartfirehub.pipeline.service.PipelineExecutionService;
+import com.smartfirehub.pipeline.service.PipelineSecurityGate;
 import com.smartfirehub.pipeline.service.PipelineService;
 import com.smartfirehub.pipeline.service.TriggerService;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
+import com.smartfirehub.securitylevel.access.LevelPolicy;
+import com.smartfirehub.securitylevel.access.SqlAccessResult;
 import com.smartfirehub.securitylevel.event.DatasetSecurityLevelChangedEvent;
+import com.smartfirehub.securitylevel.repository.DatasetAccessGrantRepository.GrantSubject;
+import com.smartfirehub.securitylevel.repository.SecurityLevelRepository;
+import com.smartfirehub.securitylevel.service.DatasetSecurityService;
 import com.smartfirehub.support.IntegrationTestBase;
+import com.smartfirehub.support.PausedTransactionRace;
 import com.smartfirehub.support.SecurityFixture;
 import com.smartfirehub.support.TenantRlsTestSupport;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.AfterEach;
@@ -56,6 +67,10 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
   @Autowired private PipelineExecutionService executionService;
   @Autowired private TriggerService triggerService;
   @Autowired private ApplicationEventMulticaster multicaster;
+  @Autowired private PipelineSecurityGate pipelineSecurityGate;
+  @Autowired private PipelineExecutionRepository executionRepository;
+  @Autowired private DatasetSecurityService datasetSecurityService;
+  @Autowired private SecurityLevelRepository levelRepository;
 
   /** 커밋된 데이터셋 등급 변경 이벤트(전파의 "정확히 1회 발행" 단언용 — 테스트가 데이터셋 id 로 거른다). */
   private final List<DatasetSecurityLevelChangedEvent> levelEvents = new CopyOnWriteArrayList<>();
@@ -1067,6 +1082,146 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
     assertThat(waitForEnd(executionService.executePipeline(p, runner))).isEqualTo("COMPLETED");
     assertThat(hasUserGrant(temp, late)).isTrue();
     assertThat(hasRoleGrant(temp, roleOnly)).isTrue();
+  }
+
+  /**
+   * 코드리뷰 CR1 — 같은 러너 TEMP 에 겹친 두 실행의 쓰기 순서와 확정 순서가 어긋나도 넓힘이 새지 않는다. 순서 "A 쓰기 → B 쓰기 → B 확정 → A 확정"
+   * 을 게이트 호출 순서로 고정한다(쓰기는 TEMP 데이터만 바꾸므로 허용 목록 관점에서는 두 실행의 쓰기 전 좁히기 뒤 어느 시점이든 같다). TEMP 의 데이터는 마지막에
+   * 쓴 B 의 것이므로 목록은 B 의 시드(B 입력 목록 ∩ ∪ {B})를 넘으면 안 된다 — A 입력에만 있는 제3자(outsider)와 A 가 들어오면 누출이다. 확정
+   * 직전 겹침 판정(PipelineExecutionRepository#hasOverlappingStepExecution)을 지우면 A 의 확정이 A 시드로 넓혀 실패한다.
+   */
+  @Test
+  void run_tempAllowlist_overlappingRuns_doNotWidenOverOtherRunsWrite() throws Exception {
+    String aTable = m + "_cr1a";
+    long aIn = table(aTable, "기밀");
+    insertRow(aTable, "a");
+    long bIn = table(m + "_cr1b", "기밀");
+    long runA = userAt("기밀");
+    long runB = userAt("기밀");
+    long outsider = userAt("기밀");
+    fx.grantUser(aIn, runA);
+    fx.grantUser(aIn, runB);
+    fx.grantUser(aIn, outsider);
+    fx.grantUser(bIn, runB);
+    // 첫 실행(겹침 없음)으로 러너 TEMP 를 만든다 — 목록 = A 입력 목록 {A, B, outsider}.
+    long p =
+        pipeline(
+            runA,
+            List.of(
+                new PipelineStepRequest(
+                    "s1", null, "SQL", "SELECT v FROM " + qualified(aTable), null, null, null)));
+    assertThat(waitForEnd(executionService.executePipeline(p, runA))).isEqualTo("COMPLETED");
+    long temp = tempOf(p, "s1");
+    long stepId = stepOf(p);
+    assertThat(hasUserGrant(temp, outsider)).isTrue();
+
+    LevelPolicy top = levelRepository.findById(fx.levelId("기밀")).orElseThrow();
+    long execA = runningStepExecution(p, runA, stepId);
+    long execB = runningStepExecution(p, runB, stepId);
+    // 두 실행의 쓰기 전 처리(좁히기) — A 다음 B. 둘 다 출력 전부 교체(REPLACE)라 확정 계획이 나온다.
+    PipelineSecurityGate.OutputAllowlistPlan planA =
+        pipelineSecurityGate.enforceOutputLevel(
+            new SqlAccessResult(true, null, null, top, Set.of(aIn), Set.of(), true),
+            temp,
+            stepId,
+            false,
+            true,
+            pipelineSecurityGate.runAs(runA));
+    PipelineSecurityGate.OutputAllowlistPlan planB =
+        pipelineSecurityGate.enforceOutputLevel(
+            new SqlAccessResult(true, null, null, top, Set.of(bIn), Set.of(), true),
+            temp,
+            stepId,
+            false,
+            true,
+            pipelineSecurityGate.runAs(runB));
+    assertThat(planA).isNotNull();
+    assertThat(planB).isNotNull();
+    // (A 쓰기 → B 쓰기) 뒤 B 가 먼저 확정한다 — A 는 아직 RUNNING.
+    pipelineSecurityGate.completeOutputAllowlist(planB, execB);
+    executionRepository.updateStepExecution(
+        execB, "COMPLETED", null, null, null, null, LocalDateTime.now(ZoneOffset.UTC));
+    // A 가 나중에 확정한다 — B 가 A 시작 뒤에 끝났으므로 겹침.
+    pipelineSecurityGate.completeOutputAllowlist(planA, execA);
+
+    assertThat(hasUserGrant(temp, outsider)).isFalse();
+    assertThat(hasUserGrant(temp, runA)).isFalse();
+    assertThat(hasUserGrant(temp, runB)).isTrue();
+  }
+
+  /**
+   * 코드리뷰 CR1 — 쓰기 후 확정(겹침 판정 + 시드로 맞춤)과 다른 실행의 쓰기 전 좁히기는 데이터셋 행 잠금으로 직렬화된다. 확정 트랜잭션을 커밋 전에 멈추면 좁히기가
+   * 기다려야 하고(secondBlocked), 기다린 뒤에는 확정이 넣은 항목까지 보고 좁힌다. 잠금이 없으면 좁히기가 확정 전 목록을 읽고 끝나 확정이 넣은 outsider
+   * 가 좁히기 뒤(그 실행의 데이터 위)에 남는다. 어느 쪽 FOR UPDATE 를 지워도 실패한다.
+   */
+  @Test
+  void completeOutputAllowlist_serializesWithOtherRunsNarrowing() throws Exception {
+    String aTable = m + "_cr1l";
+    long aIn = table(aTable, "기밀");
+    insertRow(aTable, "a");
+    long runA = userAt("기밀");
+    long runB = userAt("기밀");
+    long outsider = userAt("기밀");
+    fx.grantUser(aIn, runA);
+    long p =
+        pipeline(
+            runA,
+            List.of(
+                new PipelineStepRequest(
+                    "s1", null, "SQL", "SELECT v FROM " + qualified(aTable), null, null, null)));
+    assertThat(waitForEnd(executionService.executePipeline(p, runA))).isEqualTo("COMPLETED");
+    long temp = tempOf(p, "s1");
+    long stepId = stepOf(p);
+    // 입력 목록이 넓어졌다 — 다음(겹치지 않은) 실행 A 의 확정은 outsider 를 넣는다.
+    fx.grantUser(aIn, outsider);
+    LevelPolicy top = levelRepository.findById(fx.levelId("기밀")).orElseThrow();
+    long execA = runningStepExecution(p, runA, stepId);
+    PipelineSecurityGate.OutputAllowlistPlan planA =
+        pipelineSecurityGate.enforceOutputLevel(
+            new SqlAccessResult(true, null, null, top, Set.of(aIn), Set.of(), true),
+            temp,
+            stepId,
+            false,
+            true,
+            pipelineSecurityGate.runAs(runA));
+    assertThat(planA).isNotNull();
+
+    PausedTransactionRace.Outcome<Boolean> race =
+        PausedTransactionRace.run(
+            fixtureTransactionTemplate,
+            DEFAULT_TEST_TENANT_ID,
+            () -> pipelineSecurityGate.completeOutputAllowlist(planA, execA),
+            () -> {
+              // B 의 쓰기 전 좁히기(시드 {B}) — B 가 이어서 쓸 데이터 위의 목록 상한이다.
+              datasetSecurityService.narrowPipelineOutputAllowlist(
+                  temp, Set.of(GrantSubject.user(runB)), runB);
+              return true;
+            });
+
+    assertThat(race.secondError()).isNull();
+    assertThat(race.secondBlocked()).isTrue();
+    assertThat(hasUserGrant(temp, outsider)).isFalse();
+    assertThat(hasUserGrant(temp, runA)).isFalse();
+    assertThat(hasUserGrant(temp, runB)).isTrue();
+  }
+
+  /** 단일 스텝 파이프라인의 스텝 id. */
+  private long stepOf(long pipelineId) {
+    return inTenantFixture(
+        () ->
+            dsl.select(PIPELINE_STEP.ID)
+                .from(PIPELINE_STEP)
+                .where(PIPELINE_STEP.PIPELINE_ID.eq(pipelineId))
+                .fetchSingle(PIPELINE_STEP.ID));
+  }
+
+  /** 러너가 executeStep 첫머리에서 하듯 RUNNING(started_at=지금)으로 표시한 스텝 실행 행을 만든다(CR1 겹침 판정의 입력). */
+  private long runningStepExecution(long pipelineId, long executedBy, long stepId) {
+    long exec = executionRepository.createExecution(pipelineId, executedBy);
+    long stepExec = executionRepository.createStepExecution(exec, stepId);
+    executionRepository.updateStepExecution(
+        stepExec, "RUNNING", null, null, null, LocalDateTime.now(ZoneOffset.UTC), null);
+    return stepExec;
   }
 
   /**

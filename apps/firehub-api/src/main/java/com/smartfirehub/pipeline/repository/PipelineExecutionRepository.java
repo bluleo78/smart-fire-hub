@@ -152,6 +152,41 @@ public class PipelineExecutionRepository {
   }
 
   /**
+   * 같은 스텝의 다른 실행이 이 스텝 실행과 겹쳤는가(코드리뷰 CR1 — 러너 TEMP 쓰기 후 허용 목록 확정의 "마지막으로 쓴 실행이 나인가" 판정).
+   *
+   * <p>러너 TEMP 는 스텝마다 하나라 그 TEMP 에 쓰는 실행은 이 스텝의 실행들이다. 다른 실행이 지금 RUNNING 이거나, 이 실행이 시작된 뒤에
+   * 끝났으면(PENDING 이 아닌데 completed_at ≥ 이 실행의 started_at) 그 실행의 쓰기가 이 실행의 쓰기보다 뒤였을 수 있다 — 그러면 TEMP 의
+   * 데이터가 이 실행 것이라고 단정할 수 없다. 러너는 RUNNING 표시를 쓰기 전 좁히기보다 먼저 커밋하고 completed_at 은 확정 뒤에 쓰므로, 창이 겹친 실행은
+   * 이 조건에서 빠지지 않는다. 이 실행 행이 없거나 started_at 이 비어 판정할 수 없으면 겹친 것으로 본다(넓히지 않는 쪽이 안전 — 가용성 비용만).
+   *
+   * @param stepExecId 확정하려는 스텝 실행 id
+   * @return 겹친 실행이 있거나 판정할 수 없으면 true
+   */
+  public boolean hasOverlappingStepExecution(long stepExecId) {
+    var me =
+        dsl.select(PSE_STEP_ID, PSE_STARTED_AT)
+            .from(PIPELINE_STEP_EXECUTION)
+            .where(PSE_ID.eq(stepExecId))
+            .fetchOptional()
+            .orElse(null);
+    if (me == null || me.get(PSE_STEP_ID) == null || me.get(PSE_STARTED_AT) == null) {
+      return true;
+    }
+    return dsl.fetchExists(
+        dsl.selectOne()
+            .from(PIPELINE_STEP_EXECUTION)
+            .where(PSE_STEP_ID.eq(me.get(PSE_STEP_ID)))
+            .and(PSE_ID.ne(stepExecId))
+            .and(
+                PSE_STATUS
+                    .eq("RUNNING")
+                    .or(
+                        PSE_STATUS
+                            .ne("PENDING")
+                            .and(PSE_COMPLETED_AT.ge(me.get(PSE_STARTED_AT))))));
+  }
+
+  /**
    * 실행 중인 스텝의 진척만 갱신한다 — 상태는 건드리지 않는다(#691).
    *
    * <p>{@link #updateStepExecution} 은 상태를 반드시 쓰게 되어 있어, 진척을 남기려다 호출부가 관리하는 RUNNING/FAILED 전이를 덮어쓸 수

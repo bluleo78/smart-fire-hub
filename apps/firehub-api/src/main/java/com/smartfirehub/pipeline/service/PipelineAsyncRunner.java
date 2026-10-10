@@ -1006,8 +1006,10 @@ public class PipelineAsyncRunner {
 
       // WD-30: 출력이 커밋된 뒤에만 러너 TEMP 허용 목록을 시드로 확정한다(넓힘 포함 — 출력이 전부 교체된 실행만 계획이 있다). 실패 경로(catch)는 여기
       // 오지 않는다 — 쓰기 전 좁히기만
-      // 남는다(이전 실행 데이터가 남은 출력에 새 열람자를 넣지 않는다).
-      pipelineSecurityGate.completeOutputAllowlist(allowlistPlan);
+      // 남는다(이전 실행 데이터가 남은 출력에 새 열람자를 넣지 않는다). 같은 스텝의 다른 실행과 겹쳤으면 확정하지 않는다(코드리뷰 CR1 — 마지막으로
+      // 쓴 실행이 이 실행이라고 단정할 수 없다). 그 판정은 아래 COMPLETED 갱신(completed_at)보다 앞서야 겹친 실행 쪽에서도 이 실행이 RUNNING
+      // 으로 보인다.
+      pipelineSecurityGate.completeOutputAllowlist(allowlistPlan, stepExecId);
 
       // 출력 행 수 계산 (출력 테이블이 있는 경우)
       Long outputRows = null;

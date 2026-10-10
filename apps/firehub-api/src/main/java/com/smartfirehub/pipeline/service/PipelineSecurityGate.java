@@ -4,6 +4,7 @@ import static com.smartfirehub.jooq.Tables.DATASET;
 
 import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.pipeline.repository.PipelineExecutionRepository;
 import com.smartfirehub.securitylevel.access.AccessDenialAction;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
@@ -48,6 +49,9 @@ public class PipelineSecurityGate {
 
   /** 실행 주체의 감사 등급 접근 기록(스펙 §4.6). 거부 감사는 가드(requireSql·requireDatasetReads·auditDenial)가 한다. */
   private final SecurityAuditRecorder auditRecorder;
+
+  /** 쓰기 후 확정 직전 "같은 스텝의 다른 실행과 겹쳤는가" 판정용(코드리뷰 CR1). */
+  private final PipelineExecutionRepository executionRepository;
 
   /**
    * 한 스텝의 실행 주체 — userId 와 그 자격을 함께 들고 다닌다. 러너가 스텝마다 {@link #runAs} 로 한 번 만들어 그 스텝의 판정에 넘긴다(스텝 안
@@ -211,10 +215,29 @@ public class PipelineSecurityGate {
   /**
    * 러너 소유 TEMP 쓰기 성공 뒤 허용 목록을 시드로 확정한다(WD-30 — 입력 목록에서 빠진 사람은 빠지고, 새로 들어온 사람은 들어온다). 반드시 출력이 커밋된
    * 뒤에만 부른다 — 실패 경로에서는 부르지 않아 쓰기 전 좁히기만 남는다. plan 이 null 이면(허용 목록 필요 입력 없음·지정 출력) 할 일이 없다.
+   *
+   * <p><b>코드리뷰 CR1 — 마지막으로 쓴 실행만 넓힌다.</b> 출력 적재(실행기 커넥션)와 이 확정(앱 커넥션)은 한 트랜잭션이 아니어서, 같은 TEMP 에 실행 두
+   * 개가 겹치면 "A 쓰기 → B 쓰기 → B 확정 → A 확정" 처럼 쓰기 순서와 확정 순서가 어긋나 A 의 시드가 B 의 데이터 위에 덮일 수 있다(넓힘 누출). 그래서
+   * 데이터셋 행을 잠근 뒤({@link DatasetSecurityService#narrowPipelineOutputAllowlist} 의 쓰기 전 좁히기와 같은 잠금) 같은
+   * 스텝의 다른 실행이 이 실행과 겹쳤는지 본다. 겹쳤거나 판정할 수 없으면 <b>아무것도 하지 않는다</b> — 두 실행의 쓰기 전 좁히기가 이미 목록을 두 시드의 교집합
+   * 쪽으로 좁혀 두었으므로 그대로 두는 것이 안전하다(가용성 비용: 넓힘은 겹치지 않은 다음 실행까지 미뤄진다). 여기서 좁히기를 다시 부르면 안 된다 — 좁히기는 실행
+   * 주체를 무조건 넣으므로, 다른 실행이 이미 이 실행 주체를 뺀 목록(그 실행의 데이터)에 되돌려 넣는 넓힘이 된다.
+   *
+   * <p>잠금 순서가 원자성을 준다: 이 판정·확정이 커밋되기 전에는 겹친 실행의 쓰기 전 좁히기가 행 잠금에서 기다리고, 그 실행은 RUNNING 표시를 좁히기보다 먼저
+   * 커밋하므로 이 판정 시점에 이미 RUNNING 이면 여기서 보이고, 아니면 그 실행의 좁히기·쓰기는 이 확정 뒤에 온다.
+   *
+   * @param stepExecId 이 확정을 하는 스텝 실행 id(겹침 판정 기준)
    */
   @Transactional
-  public void completeOutputAllowlist(OutputAllowlistPlan plan) {
+  public void completeOutputAllowlist(OutputAllowlistPlan plan, long stepExecId) {
     if (plan == null) {
+      return;
+    }
+    if (!datasetSecurityService.lockDatasetRow(plan.datasetId())) {
+      // TEMP 가 사라졌다(겹친 실행이 스키마 변경으로 지우고 다시 만듦) — 확정할 대상이 없다.
+      return;
+    }
+    if (executionRepository.hasOverlappingStepExecution(stepExecId)) {
       return;
     }
     datasetSecurityService.resetPipelineOutputAllowlist(
