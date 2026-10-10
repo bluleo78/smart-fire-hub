@@ -119,16 +119,19 @@ test.describe('감사 로그 — 보안 등급 액션', () => {
     await req;
   });
 
-  test('액션 드롭다운은 일반·데이터셋 보안·보안 등급 정책 3그룹으로 나뉜다', async ({ authenticatedPage: page }) => {
+  test('액션 드롭다운은 일반·멤버 관리·데이터셋 보안·보안 설정 4그룹으로 나뉜다', async ({ authenticatedPage: page }) => {
     await page.goto('/admin/audit-logs');
     await page.getByRole('combobox', { name: '액션 유형 필터' }).click();
     const group = (name: string) => page.getByRole('group', { name, exact: true });
+    await expect(page.getByRole('group')).toHaveCount(4);
     await expect(group('일반').getByRole('option', { name: '생성', exact: true })).toHaveCount(1);
     await expect(group('일반').getByRole('option', { name: '도메인 수정', exact: true })).toHaveCount(1);
+    await expect(group('멤버 관리').getByRole('option')).toHaveCount(4);
     await expect(group('데이터셋 보안').getByRole('option')).toHaveCount(6);
     await expect(group('데이터셋 보안').getByRole('option', { name: '감사 등급 데이터 접근', exact: true })).toHaveCount(1);
-    await expect(group('보안 등급 정책').getByRole('option')).toHaveCount(6);
-    await expect(group('보안 등급 정책').getByRole('option', { name: '역할 열람 등급 변경', exact: true })).toHaveCount(1);
+    await expect(group('보안 설정').getByRole('option')).toHaveCount(7);
+    await expect(group('보안 설정').getByRole('option', { name: '역할 열람 등급 변경', exact: true })).toHaveCount(1);
+    await expect(group('보안 설정').getByRole('option', { name: 'AI 호스팅 위치 변경', exact: true })).toHaveCount(1);
     // 긴 라벨을 고르면 트리거 값에 전체 라벨 title 이 붙는다(잘려도 확인 가능).
     await group('데이터셋 보안').getByRole('option', { name: '감사 등급 데이터 접근', exact: true }).click();
     const trigger = page.getByRole('combobox', { name: '액션 유형 필터' });
@@ -197,5 +200,113 @@ test.describe('감사 로그 — 보안 등급 액션', () => {
     const dialog = page.getByRole('dialog');
     await expect(dialog.getByText('Metadata')).toBeVisible();
     await expect(dialog.getByTestId('audit-access-summary')).toHaveCount(0);
+  });
+});
+
+/**
+ * 감사 로그 — AI 호스팅 위치 변경·멤버 관리 액션(WD-49)
+ * - api 가 기록하던 AI_PROVIDER_HOSTING_CHANGE(resource ai_provider_hosting)·MEMBER_* 가 라벨 목록에 없어
+ *   영문 raw 로 보이고 액션 필터로 찾을 수 없던 결함의 회귀 가드.
+ */
+const HOSTING = createAuditLog({
+  id: 21,
+  username: 'hostadm',
+  actionType: 'AI_PROVIDER_HOSTING_CHANGE',
+  resource: 'ai_provider_hosting',
+  resourceId: 'EMBEDDING',
+  description: 'AI 공급자 호스팅 선언 변경(EMBEDDING): EXTERNAL → SELF_HOSTED',
+  metadata: { slot: 'EMBEDDING', from: 'EXTERNAL', to: 'SELF_HOSTED' },
+});
+const MEMBER_ADD = createAuditLog({
+  id: 22,
+  username: 'yoon',
+  actionType: 'MEMBER_ADD',
+  resource: 'user',
+  resourceId: '42',
+  description: '기존 계정을 멤버로 추가',
+});
+const MEMBER_SUSPEND = createAuditLog({ id: 23, username: 'kang', actionType: 'MEMBER_SUSPEND', resource: 'user' });
+const MEMBER_REACTIVATE = createAuditLog({ id: 24, username: 'cho', actionType: 'MEMBER_REACTIVATE', resource: 'user' });
+const MEMBER_REMOVE = createAuditLog({ id: 25, username: 'shin', actionType: 'MEMBER_REMOVE', resource: 'user' });
+
+test.describe('감사 로그 — AI 호스팅 위치·멤버 관리 액션(WD-49)', () => {
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await setupAdminAuth(page);
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/admin/audit-logs',
+      createPageResponse([HOSTING, MEMBER_ADD, MEMBER_SUSPEND, MEMBER_REACTIVATE, MEMBER_REMOVE]),
+    );
+  });
+
+  test('호스팅 변경·멤버 액션과 리소스가 영문 raw 대신 한글 라벨로 보인다', async ({ authenticatedPage: page }) => {
+    // 미등록 값은 console.warn 을 남긴다 — 경고가 하나도 없어야 전부 등록된 것이다.
+    const warnings: string[] = [];
+    page.on('console', (m) => {
+      if (m.type() === 'warning' && m.text().startsWith('[AuditLog]')) warnings.push(m.text());
+    });
+    await page.goto('/admin/audit-logs');
+    const row = (name: string) => page.getByRole('row').filter({ hasText: name });
+    await expect(row('hostadm').getByRole('cell', { name: 'AI 호스팅 위치 변경', exact: true })).toBeVisible();
+    await expect(row('hostadm').getByRole('cell', { name: 'AI 호스팅 위치', exact: true })).toBeVisible();
+    await expect(row('yoon').getByRole('cell', { name: '멤버 추가', exact: true })).toBeVisible();
+    await expect(row('yoon').getByRole('cell', { name: '사용자', exact: true })).toBeVisible();
+    await expect(row('kang').getByRole('cell', { name: '멤버십 정지', exact: true })).toBeVisible();
+    await expect(row('cho').getByRole('cell', { name: '멤버십 재활성화', exact: true })).toBeVisible();
+    await expect(row('shin').getByRole('cell', { name: '멤버 제거', exact: true })).toBeVisible();
+    for (const raw of ['AI_PROVIDER_HOSTING_CHANGE', 'ai_provider_hosting', 'MEMBER_ADD', 'MEMBER_SUSPEND']) {
+      await expect(page.getByRole('cell', { name: raw, exact: true })).toHaveCount(0);
+    }
+    expect(warnings).toEqual([]);
+  });
+
+  test('상세 다이얼로그도 호스팅 변경 액션·리소스를 한글로 보인다', async ({ authenticatedPage: page }) => {
+    await page.goto('/admin/audit-logs');
+    await page.getByRole('row').filter({ hasText: 'hostadm' }).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByText('AI 호스팅 위치 변경', { exact: true })).toBeVisible();
+    await expect(dialog.getByText('AI 호스팅 위치 (EMBEDDING)', { exact: true })).toBeVisible();
+    await expect(dialog.getByText('AI_PROVIDER_HOSTING_CHANGE', { exact: true })).toHaveCount(0);
+  });
+
+  test('액션 필터에서 「AI 호스팅 위치 변경」·「멤버 추가」를 고르면 actionType 쿼리가 실린다', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.goto('/admin/audit-logs');
+    await expect(page.getByRole('row').filter({ hasText: 'hostadm' })).toBeVisible();
+    const byAction = (value: string) =>
+      page.waitForRequest(
+        (r) =>
+          new URL(r.url()).pathname === '/api/v1/admin/audit-logs' &&
+          new URL(r.url()).searchParams.get('actionType') === value,
+      );
+    const group = (name: string) => page.getByRole('group', { name, exact: true });
+
+    let req = byAction('AI_PROVIDER_HOSTING_CHANGE');
+    await page.getByRole('combobox', { name: '액션 유형 필터' }).click();
+    await group('보안 설정').getByRole('option', { name: 'AI 호스팅 위치 변경', exact: true }).click();
+    await req;
+
+    req = byAction('MEMBER_ADD');
+    await page.getByRole('combobox', { name: '액션 유형 필터' }).click();
+    for (const label of ['멤버 추가', '멤버십 정지', '멤버십 재활성화', '멤버 제거']) {
+      await expect(group('멤버 관리').getByRole('option', { name: label, exact: true })).toHaveCount(1);
+    }
+    await group('멤버 관리').getByRole('option', { name: '멤버 추가', exact: true }).click();
+    await req;
+  });
+
+  test('리소스 필터의 「AI 호스팅 위치」 옵션이 resource 쿼리로 실린다', async ({ authenticatedPage: page }) => {
+    await page.goto('/admin/audit-logs');
+    await expect(page.getByRole('row').filter({ hasText: 'hostadm' })).toBeVisible();
+    const req = page.waitForRequest(
+      (r) =>
+        new URL(r.url()).pathname === '/api/v1/admin/audit-logs' &&
+        new URL(r.url()).searchParams.get('resource') === 'ai_provider_hosting',
+    );
+    await page.getByRole('combobox', { name: '리소스 필터' }).click();
+    await page.getByRole('option', { name: 'AI 호스팅 위치', exact: true }).click();
+    await req;
   });
 });
