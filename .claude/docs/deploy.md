@@ -528,7 +528,7 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
   - 위 "남은 이름 노출"·"PYTHON 입력 읽기" 항목(V133·V134 절).
   - 차트 `config` 가림은 **조회 시점의 저장 쿼리 판정**이다 — 작성자가 나중에 저장 쿼리 SQL 을 공개 데이터만 읽도록 바꾸면 옛 `config`(예전 컬럼명)는 더 이상 가려지지 않는다(작성자 자신의 변경이라 수용).
   - `config` 가 가려진 소유자가 차트 타입을 MAP 으로 바꾸는 PUT 은, 기존 `config` 에 `spatialColumn` 이 있는지에 따라 검증 성공/400 이 갈린다 — 1비트 노출이며 영향이 작아 수용.
-  - 슬롯 GRANT 는 SELECT 만 본다 — 손으로 건 INSERT 등 비SELECT 권한은 동기화가 탐지·회수하지 않는다(GRANT 경로가 SELECT 만 주므로 제품 경로로는 생기지 않는다). 또한 PUBLIC 대상 GRANT(`GRANT SELECT … TO PUBLIC`)와 뷰를 통한 우회 읽기도 탐지하지 않는다(동기화는 슬롯 롤 대상 테이블 ACL 만 본다).
+  - 슬롯 GRANT 는 SELECT 만 본다 — 손으로 건 INSERT 등 비SELECT 권한은 동기화가 탐지·회수하지 않는다(GRANT 경로가 SELECT 만 주므로 제품 경로로는 생기지 않는다). 또한 PUBLIC 대상 GRANT(`GRANT SELECT … TO PUBLIC`)는 탐지하지 않는다(동기화는 슬롯 롤 대상 ACL 만 본다). 뷰·구체화 뷰·외부 테이블에 슬롯 롤로 건 SELECT 는 동기화가 회수한다 — 뷰는 소유자 권한으로 바닥 테이블을 읽어 등급 경계를 우회하므로, 데이터셋 행이 뷰 이름을 가리켜도 슬롯 롤에는 주지 않는다(CR5). 단 뷰 소유자가 `app_tenant` 가 아니면(사전 점검 7 과 같은 이유) 회수가 실패해 그 슬롯 실행이 거부된다.
 - **롤백:** api·executor 를 **함께** 되돌린다(한쪽만 되돌리면 위 결합 문제). V137 롤은 남겨도 무해하다(구 코드는 쓰지 않는다). 지우려면 롤마다 `REVOKE ALL ON DATABASE … FROM r; DROP OWNED BY r; DROP ROLE r` 를 실행한다.
 - **번호:** 다음 신규 마이그레이션 = V138(위 재확인 결과에 맞춰 함께 고친다).
 

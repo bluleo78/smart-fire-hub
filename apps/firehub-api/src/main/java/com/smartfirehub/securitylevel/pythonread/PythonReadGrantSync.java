@@ -260,19 +260,29 @@ public class PythonReadGrantSync {
       desired.put(r.value1(), roles);
     }
 
-    // 실제: 스키마의 물리 테이블과 슬롯 롤에 걸린 SELECT
-    List<String> physical =
-        onlyTable == null
-            ? dsl.fetch(
-                    "select c.relname::text from pg_class c join pg_namespace n on n.oid = c.relnamespace"
-                        + " where n.nspname = {0} and c.relkind in ('r','p')",
-                    DSL.val(schema))
-                .getValues(0, String.class)
-            : dsl.fetch(
-                    "select c.relname::text from pg_class c join pg_namespace n on n.oid = c.relnamespace"
-                        + " where n.nspname = {0} and c.relkind in ('r','p') and c.relname = {1}",
-                    DSL.val(schema), DSL.val(onlyTable))
-                .getValues(0, String.class);
+    // 실제: 스키마의 관계(테이블·뷰·구체화 뷰·외부 테이블)와 슬롯 롤에 걸린 SELECT.
+    // 왜 뷰까지 보는가(CR5): 뷰는 소유자 권한으로 바닥 테이블을 읽는다 — 손으로(또는 SQL 스텝이) 슬롯 롤에 뷰 SELECT 를 걸면 등급 밖
+    // 테이블을 그 뷰로 우회해 읽는다. 테이블만 보면 이 GRANT 를 탐지·회수하지 못한다. 시퀀스('S')는 행 데이터가 없어 제외한다.
+    Map<String, Character> relkinds = new HashMap<>();
+    for (var r :
+        dsl.fetch(
+            "select c.relname::text, c.relkind::text from pg_class c"
+                + " join pg_namespace n on n.oid = c.relnamespace"
+                + " where n.nspname = {0} and c.relkind in ('r','p','v','m','f')"
+                + (onlyTable == null ? "" : " and c.relname = {1}"),
+            onlyTable == null
+                ? new Object[] {DSL.val(schema)}
+                : new Object[] {DSL.val(schema), DSL.val(onlyTable)})) {
+      relkinds.put(r.get(0, String.class), r.get(1, String.class).charAt(0));
+    }
+    List<String> physical = new ArrayList<>(relkinds.keySet());
+    // 관계별 계산값 — 일반·분할 테이블이 아닌 관계(뷰 등)는 데이터셋 행이 같은 이름을 가리켜도 "없음"이다. 뷰 GRANT 는 소유자 권한 읽기라
+    // 등급 경계를 지키지 못한다(fail-safe). 적용 루프와 재확인이 같은 규칙을 쓴다.
+    java.util.function.Function<String, Set<String>> wantOf =
+        t -> {
+          char kind = relkinds.get(t);
+          return kind == 'r' || kind == 'p' ? desired.getOrDefault(t, Set.of()) : Set.of();
+        };
     Map<String, Set<String>> actual = new HashMap<>();
     for (var r : fetchSlotSelectGrants(schema, physical, roleArray)) {
       actual
@@ -285,8 +295,8 @@ public class PythonReadGrantSync {
     Map<String, Set<String>> revokeFailed = new TreeMap<>();
     List<String> changedTables = new ArrayList<>();
     for (String table : physical) {
-      // 데이터셋이 아닌 테이블(staging·_tmp 등)은 계산값이 "없음" — 남아 있는 슬롯 GRANT 는 회수한다.
-      Set<String> want = desired.getOrDefault(table, Set.of());
+      // 데이터셋이 아닌 테이블(staging·_tmp 등)·뷰는 계산값이 "없음" — 남아 있는 슬롯 GRANT 는 회수한다.
+      Set<String> want = wantOf.apply(table);
       Set<String> have = actual.getOrDefault(table, Set.of());
       if (want.equals(have)) {
         continue;
@@ -324,7 +334,7 @@ public class PythonReadGrantSync {
       for (var r : fetchSlotSelectGrants(schema, changedTables, roleArray)) {
         String table = r.get(0, String.class);
         String role = r.get(1, String.class);
-        if (!desired.getOrDefault(table, Set.of()).contains(role)) {
+        if (!wantOf.apply(table).contains(role)) {
           revokeFailed.computeIfAbsent(table, x -> new TreeSet<>()).add(role);
         }
       }

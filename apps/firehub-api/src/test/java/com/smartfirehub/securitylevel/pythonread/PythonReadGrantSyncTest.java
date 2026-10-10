@@ -203,6 +203,41 @@ class PythonReadGrantSyncTest extends IntegrationTestBase {
     assertThat(r.revokeFailedTables()).doesNotContain(sens);
   }
 
+  /**
+   * 뷰 우회(CR5) — 뷰는 소유자(app_tenant) 권한으로 바닥 테이블을 읽으므로, 슬롯 1 롤에 손으로 건 뷰 SELECT 는 민감 테이블을 우회해 읽게 한다.
+   * 동기화는 데이터셋이 아닌 관계(뷰 포함)의 슬롯 GRANT 를 회수해야 한다. 변이: 수집 relkind 를 ('r','p') 로 되돌리면 회수 단언이 실패한다.
+   */
+  @Test
+  void strayGrantOnView_isRevokedBySync() {
+    String sens = table("sen", "민감");
+    String view = m + "_v";
+    String s1 = TenantPipelineRole.pythonReadRoleName(DEFAULT_TEST_TENANT_ID, 1);
+    sync.syncTenant();
+    TenantRlsTestSupport.runInTenantTransaction(
+        fixtureTransactionTemplate,
+        DEFAULT_TEST_TENANT_ID,
+        () -> {
+          dsl.execute(
+              "CREATE VIEW "
+                  + DataSchema.qualify(view)
+                  + " AS SELECT v FROM "
+                  + DataSchema.qualify(sens));
+          dsl.execute("GRANT SELECT ON " + DataSchema.qualify(view) + " TO " + s1);
+        });
+    try {
+      assertThat(selectAs(1, sens)).as("대조군: 테이블 직접 읽기는 거부").isEqualTo("42501");
+      assertThat(selectAs(1, view)).as("전제: 뷰로는 우회해 읽힌다").isNull();
+      PythonReadGrantSync.SyncResult r = sync.syncTenant();
+      assertThat(selectAs(1, view)).isEqualTo("42501");
+      assertThat(r.revokeFailedTables()).doesNotContain(view);
+    } finally {
+      TenantRlsTestSupport.runInTenantTransaction(
+          fixtureTransactionTemplate,
+          DEFAULT_TEST_TENANT_ID,
+          () -> dsl.execute("DROP VIEW IF EXISTS " + DataSchema.qualify(view)));
+    }
+  }
+
   /** REPLACE 맞바꿈(RENAME)은 ACL 을 잃는다 — syncTable 로 복원된다(Task 4 는 이것을 훅으로 자동화한다). */
   @Test
   void swapLosesGrants_syncTableRestores() {
