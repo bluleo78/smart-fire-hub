@@ -110,7 +110,10 @@ export interface Chart {
   name: string;
   description: string | null;
   chartType: ChartType;
-  config: ChartConfig;
+  /** 조회자가 저장 쿼리 데이터를 볼 수 없으면 null(WD-31②) — 단건·목록·저장 응답. denied 차트 데이터 응답에서는 빈 객체 */
+  config: ChartConfig | null;
+  /** config(원본 컬럼명)를 가렸는가(WD-31②). config 없이 저장하면 서버의 기존 config 가 유지된다 */
+  configWithheld?: boolean;
   savedQueryId: number;
   /** 조회자가 원본 데이터셋을 볼 수 없어 denied 인 차트 데이터 응답에서는 null(config 도 빈 객체) — 원본 메타 비노출 */
   savedQueryName: string | null;
@@ -133,6 +136,8 @@ export interface ChartList {
     createdByName: string;
     createdAt: string;
     updatedAt: string;
+    /** 조회자가 저장 쿼리 데이터를 볼 수 없어 config 를 가렸는가(WD-31②) */
+    configWithheld?: boolean;
   }>;
   totalElements: number;
   totalPages: number;

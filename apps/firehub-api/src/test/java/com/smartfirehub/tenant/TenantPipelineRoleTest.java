@@ -63,4 +63,48 @@ class TenantPipelineRoleTest {
     assertThatThrownBy(() -> TenantPipelineRole.roleName(-1L))
         .isInstanceOf(IllegalArgumentException.class);
   }
+
+  /**
+   * 슬롯 롤 비밀번호 교차 언어 벡터 — Python app/tenant.py 의 resolve_read_password 와 바이트 단위로 같아야 한다. 값은
+   * hmac.new(b"test-tenant-pipeline-secret", b"<롤 이름>", sha256).hexdigest()[:32] 로 계산했다(executor
+   * test_tenant.py 와 같은 상수).
+   */
+  @Test
+  void pythonReadPasswordMatchesCrossLanguageVectors() {
+    String secret = "test-tenant-pipeline-secret";
+    assertThat(TenantPipelineRole.pythonReadPassword(1, 1, secret))
+        .isEqualTo("1dd5681ab158149c2569b01c8a93a0ed");
+    assertThat(TenantPipelineRole.pythonReadPassword(2, 3, secret))
+        .isEqualTo("73a7e61046bfdb868a142bd1b5e3e196");
+    assertThat(TenantPipelineRole.pythonReadPassword(42, 10, secret))
+        .isEqualTo("a5a0aa64723b5c3e07a047b698eb9197");
+  }
+
+  // 슬롯 롤 이름 규약 — pipeline_py_t{tenantId}_s{slot}.
+  @Test
+  void pythonReadRoleNameConvention() {
+    assertThat(TenantPipelineRole.pythonReadRoleName(1, 1)).isEqualTo("pipeline_py_t1_s1");
+    assertThat(TenantPipelineRole.pythonReadRoleName(42, 10)).isEqualTo("pipeline_py_t42_s10");
+  }
+
+  /** 슬롯 범위 밖·0 이하 테넌트는 조립하지 않는다 — 없는 롤 이름을 만들어 "롤 없음"으로 늦게 터지는 것보다 즉시 실패가 낫다. */
+  @Test
+  void pythonReadRoleRejectsOutOfRange() {
+    assertThatThrownBy(() -> TenantPipelineRole.pythonReadRoleName(1, 0))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> TenantPipelineRole.pythonReadRoleName(1, 11))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> TenantPipelineRole.pythonReadRoleName(0, 1))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  /** 슬롯 롤 비밀번호는 같은 테넌트의 실행 롤 비밀번호와 달라야 한다(한쪽 유출이 다른 쪽 접속이 되지 않게). */
+  @Test
+  void pythonReadPasswordDiffersFromExecutorPassword() {
+    String secret = "test-tenant-pipeline-secret";
+    assertThat(TenantPipelineRole.pythonReadPassword(1, 1, secret))
+        .isNotEqualTo(TenantPipelineRole.password(1, secret));
+    assertThatThrownBy(() -> TenantPipelineRole.pythonReadPassword(1, 1, " "))
+        .isInstanceOf(IllegalStateException.class);
+  }
 }

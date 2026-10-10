@@ -316,7 +316,8 @@ public class ChartRepository {
         r.get(C_CREATED_BY),
         r.get(C_CREATED_AT),
         r.get(C_UPDATED_AT),
-        r.get("dashboard_count", Long.class));
+        r.get("dashboard_count", Long.class),
+        false);
   }
 
   private String mapToJson(Map<String, Object> map) {

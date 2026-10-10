@@ -12,7 +12,9 @@ import com.smartfirehub.dataset.dto.DatasetDetailResponse;
 import com.smartfirehub.dataset.exception.DatasetNotFoundException;
 import com.smartfirehub.pipeline.dto.PipelineDetailResponse;
 import com.smartfirehub.pipeline.dto.PipelineStepResponse;
+import com.smartfirehub.pipeline.dto.TriggerResponse;
 import com.smartfirehub.pipeline.service.PipelineService;
+import com.smartfirehub.pipeline.service.TriggerService;
 import com.smartfirehub.support.IntegrationTestBase;
 import java.util.List;
 import java.util.Map;
@@ -30,6 +32,8 @@ class ApiImportServiceTest extends IntegrationTestBase {
   @Autowired private DatasetService datasetService;
 
   @Autowired private PipelineService pipelineService;
+
+  @Autowired private TriggerService triggerService;
 
   @Autowired private DSLContext dsl;
 
@@ -150,7 +154,7 @@ class ApiImportServiceTest extends IntegrationTestBase {
   }
 
   @Test
-  void createApiImport_withAutoName_usesDatasetName() {
+  void createApiImport_withAutoName_usesDatasetIdNotName() {
     // Given - no pipelineName provided
     Map<String, Object> apiConfig =
         Map.of(
@@ -166,7 +170,31 @@ class ApiImportServiceTest extends IntegrationTestBase {
 
     // Then
     PipelineDetailResponse pipeline = pipelineService.getPipelineById(response.pipelineId());
-    assertThat(pipeline.name()).isEqualTo("API Import Dataset API Import");
+    // WD-31④: 기본 이름에 데이터셋 이름이 없다(파이프라인 목록은 데이터셋 등급 판정 대상이 아니다).
+    assertThat(pipeline.name()).isEqualTo("API Import #" + testDatasetId);
+    assertThat(pipeline.name()).doesNotContain("API Import Dataset");
+  }
+
+  /** 기본 트리거 이름에도 데이터셋 이름이 없다(WD-31④ — 파이프라인·트리거 목록에서 숨김 데이터셋 이름 노출). */
+  @Test
+  void createApiImport_withScheduleAndNoNames_triggerNameHasNoDatasetName() {
+    Map<String, Object> apiConfig = Map.of("url", "https://api.example.com/data", "method", "GET");
+    ApiImportRequest request =
+        new ApiImportRequest(
+            null,
+            null,
+            apiConfig,
+            null,
+            "APPEND",
+            false,
+            new ApiImportRequest.ScheduleConfig("0 6 * * *", null, null));
+
+    ApiImportResponse response =
+        apiImportService.createApiImport(testDatasetId, request, testUserId);
+
+    TriggerResponse trigger = triggerService.getTriggers(response.pipelineId()).get(0);
+    assertThat(trigger.name()).isEqualTo("API Import #" + testDatasetId + " Schedule");
+    assertThat(trigger.name()).doesNotContain("API Import Dataset");
   }
 
   @Test

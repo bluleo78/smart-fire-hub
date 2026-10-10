@@ -15,7 +15,8 @@ executor 는 별도 프로세스이므로 Java 의 ``TenantPipelineRole`` 을 �
 
 Java 쪽 대응 코드:
 ``apps/firehub-api/src/main/java/com/smartfirehub/global/tenant/TenantPipelineRole.java``
-(롤 이름·비밀번호), ``.../DataSchema.java`` (스키마명).
+(롤 이름·비밀번호, PYTHON 읽기 슬롯 롤 ``pythonReadRoleName``/``pythonReadPassword``),
+``.../DataSchema.java`` (스키마명).
 """
 from __future__ import annotations
 
@@ -42,6 +43,12 @@ _ROLE_PREFIX = "pipeline_executor_t"
 # HMAC 다이제스트를 hex 로 표기했을 때 비밀번호로 잘라 쓰는 길이(문자 수).
 # Java 쪽 TenantPipelineRole.PASSWORD_LENGTH 와 반드시 같아야 한다.
 _PASSWORD_LENGTH = 32
+
+# PYTHON 스텝 읽기 슬롯 수 — Java TenantPipelineRole.PYTHON_READ_SLOTS 와 같은 값.
+MAX_READ_SLOT = 10
+
+# 슬롯 롤 이름 접두사 — Java TenantPipelineRole.pythonReadRoleName 과 같은 형태(pipeline_py_t{id}_s{k}).
+_READ_ROLE_PREFIX = "pipeline_py_t"
 
 # 인용 없이 SQL 에 끼워 넣어도 안전한 식별자 모양. resolve_schema 의 반환값이 `SET search_path`
 # 문장에 문자열 보간으로 들어가므로, 조립점에서 모양을 한 번 확인한다.
@@ -120,26 +127,56 @@ def resolve_password(tenant_id: int, secret: str) -> str:
     단순 해시 연결이 아니라 HMAC 을 쓰는 이유는 길이 확장 공격을 피하고, secret 이 유출되지
     않는 한 다른 테넌트의 비밀번호를 유추할 수 없게 하기 위해서다.
     """
-    normalized = _require_tenant_id(tenant_id)
+    return _hmac_hex(secret, str(_require_tenant_id(tenant_id)))
+
+
+def _require_read_slot(slot: object) -> int:
+    """읽기 슬롯을 검증한다 — 모호하면 거부(fail-closed). bool 은 int 의 서브클래스라 먼저 막는다.
+
+    범위 밖 슬롯으로 없는 롤 이름을 만들면 접속 시점에야 "롤 없음"으로 늦게 터진다 — 조립 시점에 즉시 거부한다
+    (Java ``pythonReadRoleName`` 의 IllegalArgumentException 과 같은 판정).
+    """
+    if isinstance(slot, bool) or not isinstance(slot, int):
+        raise TenantResolutionError(f"read_slot 은 정수여야 합니다: {slot!r}")
+    if slot < 1 or slot > MAX_READ_SLOT:
+        raise TenantResolutionError(f"read_slot 은 1~{MAX_READ_SLOT} 이어야 합니다: {slot}")
+    return slot
+
+
+def _hmac_hex(secret: str, message: str) -> str:
+    """secret 을 키로 message 를 HMAC-SHA256 한 hex 앞 32자 — Java ``hmacHex`` 와 같은 규약.
+
+    실행 롤(메시지=tenant id 10진 문자열)과 슬롯 롤(메시지=롤 이름)이 같은 파생 함수를 공유하도록 한 곳에 둔다.
+    """
     if not secret:
         # 비밀값이 비어 있으면 모든 테넌트의 비밀번호가 예측 가능해진다 → 조용히 넘기지 않는다.
         raise TenantResolutionError("롤 비밀번호 파생 secret 이 비어 있습니다")
-    digest = hmac.new(
-        secret.encode("utf-8"), str(normalized).encode("utf-8"), hashlib.sha256
-    ).hexdigest()
+    digest = hmac.new(secret.encode("utf-8"), message.encode("utf-8"), hashlib.sha256).hexdigest()
     return digest[:_PASSWORD_LENGTH]
 
 
-def resolve_db_url(tenant_id: int, settings: "Settings") -> str:
-    """사용자 Python 스크립트에 넘길 ``DB_URL`` 을 테넌트 롤 자격증명으로 조립한다.
+def resolve_read_role(tenant_id: int, slot: int) -> str:
+    """PYTHON 읽기 슬롯 롤 이름 — ``pipeline_py_t{id}_s{k}``.
 
-    nsjail 경로와 비nsjail 경로가 **같은** 함수를 쓰도록 여기 한 곳에 둔다. 두 경로가 각자
-    문자열을 이어 붙이면 nsjail 설정에 따라 접속 주체가 조용히 갈릴 수 있다(#270 의 주석이
-    "동작이 일치한다"고 보장하는 지점이다).
+    슬롯 k 는 등급 위치 1..k 의(허용 목록 등급 제외) 데이터셋만 SELECT 할 수 있다(스펙 §4.1).
     """
-    role = resolve_role(tenant_id)
-    password = resolve_password(tenant_id, settings.role_password_secret)
-    return (
-        f"postgresql://{role}:{password}"
-        f"@{settings.db_host}:{settings.db_port}/{settings.db_name}"
-    )
+    return f"{_READ_ROLE_PREFIX}{_require_tenant_id(tenant_id)}_s{_require_read_slot(slot)}"
+
+
+def resolve_read_password(tenant_id: int, slot: int, secret: str) -> str:
+    """슬롯 롤 비밀번호 — HMAC(secret, 롤 이름). Java ``pythonReadPassword`` 와 바이트 단위로 같아야 한다.
+
+    메시지를 롤 이름으로 두므로 같은 테넌트의 실행 롤 비밀번호(메시지=숫자 문자열)와 값이 겹치지 않는다.
+    """
+    return _hmac_hex(secret, resolve_read_role(tenant_id, slot))
+
+
+def resolve_read_db_url(tenant_id: int, slot: int, settings: "Settings") -> str:
+    """사용자 스크립트에 넘길 DB_URL — 슬롯 롤로 **직접 로그인**한다(SET ROLE 아님: 스크립트가 RESET ROLE 로 되돌릴 수 있다).
+
+    테넌트 실행 롤(pipeline_executor_t*) 자격증명으로 폴백하는 분기를 **절대 추가하지 말 것** — 슬롯 롤 인증 실패는
+    실행 실패로 드러나야 한다(스펙 §4.2 fail-closed).
+    """
+    role = resolve_read_role(tenant_id, slot)
+    password = resolve_read_password(tenant_id, slot, settings.role_password_secret)
+    return f"postgresql://{role}:{password}@{settings.db_host}:{settings.db_port}/{settings.db_name}"

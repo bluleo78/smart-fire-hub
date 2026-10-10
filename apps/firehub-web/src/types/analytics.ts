@@ -149,7 +149,10 @@ export interface Chart {
   /** 조회자가 원본 데이터셋을 볼 수 없어 denied 인 차트 데이터 응답(`ChartDataResponse.chart`)에서는 null — 원본 메타 비노출(보안 등급) */
   savedQueryName: string | null;
   chartType: ChartType;
-  config: ChartConfig;
+  /** 조회자가 저장 쿼리의 데이터를 볼 수 없으면 null — configWithheld 가 true 다(WD-31②). */
+  config: ChartConfig | null;
+  /** 서버가 설정을 가렸는가. true 면 빌더는 편집을 잠그고 저장 시 config 를 보내지 않는다(기존 값 유지). */
+  configWithheld?: boolean;
   isShared: boolean;
   createdByName: string;
   createdBy: number;
@@ -164,6 +167,8 @@ export interface ChartListItem {
   savedQueryId: number;
   savedQueryName: string;
   chartType: ChartType;
+  /** 서버가 설정을 가린 차트인가(WD-31②) — 목록에는 config 가 없어 표시용 플래그만 둔다. */
+  configWithheld?: boolean;
   isShared: boolean;
   createdByName: string;
   createdAt: string;
@@ -188,7 +193,8 @@ export interface UpdateChartRequest {
 }
 
 export interface ChartDataResponse {
-  chart: Chart;
+  /** 데이터 응답의 chart 는 config 를 항상 객체로 준다(denied 면 빈 객체) — 단건 조회의 null 가림과 타입을 나눈다(WD-31②). */
+  chart: Omit<Chart, 'config' | 'configWithheld'> & { config: ChartConfig };
   queryResult: AnalyticsQueryResult;
   /**
    * 조회자가 원본 데이터셋을 볼 수 없음 — 위젯은 "열람 권한 없음" 상태를 그린다(스펙 §5-4).

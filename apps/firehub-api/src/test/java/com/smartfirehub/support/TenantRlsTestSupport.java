@@ -7,6 +7,7 @@ import static org.jooq.impl.DSL.name;
 import static org.jooq.impl.DSL.table;
 
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.global.tenant.TenantPipelineRole;
 import java.sql.SQLException;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
@@ -736,6 +737,17 @@ public final class TenantRlsTestSupport {
     ownerDsl.execute("REVOKE ALL ON DATABASE \"" + database + "\" FROM " + roleName);
     ownerDsl.execute("DROP OWNED BY " + roleName);
     ownerDsl.execute("DROP ROLE IF EXISTS " + roleName);
+  }
+
+  /**
+   * 테넌트의 PYTHON 읽기 슬롯 롤 10개({@code pipeline_py_t{id}_s{k}}, WD-29)를 지운다. 없는 슬롯은 건너뛴다.
+   *
+   * <p>슬롯 롤도 실제 LOGIN 롤이고 {@code GRANT CONNECT}·스키마 USAGE 를 갖고 있어 바로 {@code DROP ROLE} 하면 거부된다 —
+   * 그래서 REVOKE → DROP OWNED → DROP 순서를 아는 {@link #dropPipelineLoginRole} 한 곳을 그대로 거친다.
+   */
+  public static void dropPythonReadRoles(DSLContext ownerDsl, long tenantId) {
+    TenantPipelineRole.pythonReadRoleNames(tenantId)
+        .forEach(role -> dropPipelineLoginRole(ownerDsl, role));
   }
 
   /**

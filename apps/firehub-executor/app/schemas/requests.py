@@ -4,6 +4,9 @@ from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
+# 슬롯 상한은 tenant.py 한 곳에서 정한다 — 여기 숫자를 따로 두면 슬롯 수가 바뀔 때 검증과 롤 이름 조립이 어긋난다.
+from app.tenant import MAX_READ_SLOT
+
 
 class TenantScopedRequest(BaseModel):
     """테넌트 식별자를 **필수**로 요구하는 실행 요청의 공통 베이스.
@@ -41,6 +44,10 @@ class PythonExecuteRequest(TenantScopedRequest):
     timeout: Optional[int] = None
     output_table: Optional[str] = None
     column_type_map: Optional[dict] = None
+    # 실행 주체의 등급 읽기 슬롯(1~10, WD-29). **필수**이고 기본값이 없다 — 없으면 422.
+    # 기본값(또는 테넌트 롤 폴백)을 두면 구 API·위조 요청이 등급 밖 데이터를 읽는다.
+    # strict=True: "2"·2.5·True 같은 값이 조용히 정수로 바뀌지 않게(HMAC 메시지 표기가 Java 와 어긋난다).
+    read_slot: int = Field(alias="readSlot", ge=1, le=MAX_READ_SLOT, strict=True)
 
 
 class QueryExecuteRequest(TenantScopedRequest):

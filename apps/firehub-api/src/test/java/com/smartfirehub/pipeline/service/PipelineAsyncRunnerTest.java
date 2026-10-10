@@ -27,8 +27,11 @@ import com.smartfirehub.pipeline.service.executor.ApiCallExecutor;
 import com.smartfirehub.pipeline.service.executor.ExecutorClient;
 import com.smartfirehub.pipeline.service.validator.PythonScriptValidator;
 import com.smartfirehub.pipeline.service.validator.SqlValidator;
+import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.securitylevel.ai.AiHostingResolver;
+import com.smartfirehub.securitylevel.pythonread.PythonReadAccessException;
+import com.smartfirehub.securitylevel.pythonread.PythonReadGrantSync;
 import java.time.OffsetDateTime;
 import java.util.Arrays;
 import java.util.List;
@@ -80,6 +83,8 @@ class PipelineAsyncRunnerTest {
   // S3 AI_CLASSIFY 입력 AI 판정 — 판정 자체는 AiClassifyInputAccessTest(통합)가 검증한다. 여기서는 통과(목 기본값)로 둔다.
   @Mock DatasetAccessGuard datasetAccessGuard;
   @Mock AiHostingResolver aiHostingResolver;
+  @Mock PythonReadGrantSync pythonReadGrantSync;
+  @Mock LocalPythonOutputLoader localPythonOutputLoader;
 
   @InjectMocks PipelineAsyncRunner runner;
 
@@ -105,12 +110,18 @@ class PipelineAsyncRunnerTest {
   @BeforeEach
   void setTenantContext() {
     TenantContext.set(1L);
-    // AI_CLASSIFY 분기가 실행 주체 자격(runAs.clearance())을 AI 판정에 넘긴다.
-    // 목 기본값(null RunAs)이면 역참조에서 끊기므로 빈 자격의 RunAs 를 기본으로 둔다.
-    // 특정 RunAs 가 필요한 테스트는 자기 스텁으로 덮어쓴다. 쓰지 않는 테스트가 있어 lenient.
+    // AI_CLASSIFY 분기는 실행 주체 자격(runAs.clearance())을 AI 판정에 넘기고, PYTHON 분기는 같은 자격으로
+    // 읽기 슬롯을 준비한다(WD-29). 목 기본값(null RunAs)이면 역참조에서 끊기므로 빈 자격의 RunAs 를 기본으로
+    // 둔다 — 특정 RunAs 가 필요한 테스트는 자기 스텁으로 덮어쓴다. 쓰지 않는 테스트가 있어 lenient.
+    // 슬롯 준비는 기본 성공(슬롯 2).
     lenient()
         .when(pipelineSecurityGate.runAs(any()))
-        .thenAnswer(inv -> new PipelineSecurityGate.RunAs(inv.getArgument(0), null));
+        .thenAnswer(
+            inv -> {
+              Long u = inv.getArgument(0);
+              return new PipelineSecurityGate.RunAs(u, Clearance.none(u == null ? 0L : u, 1L));
+            });
+    lenient().when(pythonReadGrantSync.prepareForRun(any())).thenReturn(2);
   }
 
   @AfterEach
@@ -761,7 +772,7 @@ class PipelineAsyncRunnerTest {
     assertThat(status).isEqualTo("FAILED");
     verify(dataTableRowService, never()).truncateTable(anyString());
     verify(outputTableSessionLock, never()).callLocked(anyString(), any());
-    verify(pythonExecutor, never()).execute(anyString());
+    verify(pythonExecutor, never()).run(anyString(), anyInt());
   }
 
   /** CR2 — API_CALL(실행기 켠 REPLACE)도 맞바꿈용 임시 테이블 생성·호출 전에 실패한다. */
@@ -840,7 +851,7 @@ class PipelineAsyncRunnerTest {
     assertThat(status).isEqualTo("FAILED");
     verify(tempDatasetService, never()).deleteTempDataset(any());
     verify(tempDatasetService, never()).createTempDataset(any(), any(), any(), any(), any(), any());
-    verify(pythonExecutor, never()).execute(anyString());
+    verify(pythonExecutor, never()).run(anyString(), anyInt());
   }
 
   /** 후속 F1 — API_CALL 도 같다: 스키마가 바뀐 볼 수 없는 재사용 TEMP 는 지우지 않고, 호출 전에 실패한다. */
@@ -1150,36 +1161,64 @@ class PipelineAsyncRunnerTest {
   }
 
   /**
-   * 실행기를 끈 PYTHON + REPLACE 는 출력 테이블 세션 잠금 <b>안에서</b> 비우고 실행한다(#735). 자식 프로세스가 자기 커넥션으로 적재해 한
-   * 트랜잭션으로 묶을 수 없으므로, 비우기와 적재가 잠금 밖으로 새면 겹친 실행이 각자 비운 뒤 각자 적재한다. 잠금 목이 본문을 실행하지 않게 해 "잠금 밖에서는 아무것도
-   * 하지 않는다"를 먼저 고정하고, 이어서 본문을 돌려 순서(비우기 → 실행)를 확인한다.
+   * 실행기를 끈 PYTHON + REPLACE 는 출력 테이블 세션 잠금 <b>안에서</b> 임시 테이블 생성 → stdout JSON 적재 → 맞바꿈을 한다(#735,
+   * R5). createTempTable 은 고정 이름 {@code <출력>_tmp} 를 DROP IF EXISTS 후 재생성하므로, 이 구간이 잠금 밖으로 새면 겹친 실행이
+   * 서로의 _tmp 를 지우고 덮는다. 잠금 목이 본문을 실행하지 않게 해 "잠금 밖에서는 출력에 손대지 않는다"를 먼저 고정하고(스크립트 실행은 읽기 전용이라 잠금 밖),
+   * 이어서 본문을 돌려 순서를 확인한다. truncate 는 더 이상 없다.
    */
   @Test
-  void 실행기_꺼진_PYTHON_REPLACE는_출력_잠금_안에서만_비우고_실행한다() {
+  void 실행기_꺼진_PYTHON_REPLACE는_출력_잠금_안에서만_임시테이블에_적재하고_맞바꾼다() {
     Long outputDatasetId = 737L;
     Long userId = 1L;
     PipelineStepResponse step = replaceStep(7370L, "PYTHON", "print('x')", outputDatasetId);
 
     when(permissionChecker.hasPermission(userId, "pipeline:python_execute")).thenReturn(true);
     when(datasetRepository.findTableNameById(outputDatasetId)).thenReturn(Optional.of("out735_py"));
+    when(columnRepository.findByDatasetId(outputDatasetId)).thenReturn(List.of(col("v", false)));
+    when(pythonExecutor.run("print('x')", 2))
+        .thenReturn(new PythonScriptExecutor.RunResult(0, "[{\"v\": \"a\"}]\n", "warn\n"));
     @SuppressWarnings("unchecked")
-    ArgumentCaptor<java.util.function.Supplier<String>> body =
+    ArgumentCaptor<java.util.function.Supplier<Object>> body =
         ArgumentCaptor.forClass(java.util.function.Supplier.class);
-    when(outputTableSessionLock.callLocked(eq("out735_py"), body.capture())).thenReturn("py-log");
+    when(outputTableSessionLock.callLocked(eq("out735_py"), body.capture()))
+        .thenAnswer(inv -> body.getValue().get());
 
     String status = runner.executeStep(7371L, step, 73L, "TestPipeline", userId, false);
 
-    // 잠금 목은 본문을 실행하지 않았다 — 잠금 밖에서는 비우기도 실행도 일어나지 않아야 한다.
     assertThat(status).isEqualTo("COMPLETED");
     verify(dataTableRowService, never()).truncateTable(anyString());
-    verifyNoInteractions(pythonExecutor);
+    // 잠금 → 임시 테이블 → 적재(_tmp, stdout 그대로) → 맞바꿈 순서. 스크립트는 잠금 전에 돈다.
+    var order =
+        inOrder(pythonExecutor, outputTableSessionLock, dataTableService, localPythonOutputLoader);
+    order.verify(pythonExecutor).run("print('x')", 2);
+    order.verify(outputTableSessionLock).callLocked(eq("out735_py"), any());
+    order.verify(dataTableService).createTempTable("out735_py");
+    order
+        .verify(localPythonOutputLoader)
+        .load("out735_py_tmp", "[{\"v\": \"a\"}]\n", Map.of("v", "TEXT"));
+    order.verify(dataTableService).finishReplace("out735_py", 0L);
+  }
 
-    // 본문(잠금 안)은 비우기 → 자식 실행 순서다.
-    when(pythonExecutor.execute("print('x')")).thenReturn("child-log");
-    assertThat(body.getValue().get()).isEqualTo("child-log");
-    var order = org.mockito.Mockito.inOrder(dataTableRowService, pythonExecutor);
-    order.verify(dataTableRowService).truncateTable("out735_py");
-    order.verify(pythonExecutor).execute("print('x')");
+  /** 같은 셋업에서 잠금 목이 본문을 실행하지 않으면 출력(임시 테이블 생성·적재·맞바꿈)에 아무 일도 일어나지 않는다 — 쓰는 구간 전체가 잠금 안이다. */
+  @Test
+  void 실행기_꺼진_PYTHON_REPLACE는_잠금_밖에서_출력에_손대지_않는다() {
+    Long outputDatasetId = 737L;
+    Long userId = 1L;
+    PipelineStepResponse step = replaceStep(7372L, "PYTHON", "print('x')", outputDatasetId);
+
+    when(permissionChecker.hasPermission(userId, "pipeline:python_execute")).thenReturn(true);
+    when(datasetRepository.findTableNameById(outputDatasetId)).thenReturn(Optional.of("out735_py"));
+    when(pythonExecutor.run("print('x')", 2))
+        .thenReturn(new PythonScriptExecutor.RunResult(0, "[{\"v\": \"a\"}]", ""));
+    // 잠금 목은 본문을 실행하지 않고 null 을 돌려준다 — 이어지는 log() 에서 스텝이 실패하지만, 판정 대상은 상태가 아니라 부작용이다.
+    runner.executeStep(7373L, step, 73L, "TestPipeline", userId, false);
+
+    verify(outputTableSessionLock).callLocked(eq("out735_py"), any());
+
+    verify(dataTableService, never()).createTempTable(anyString());
+    verify(dataTableService, never()).finishReplace(anyString(), anyLong());
+    verify(dataTableRowService, never()).truncateTable(anyString());
+    verifyNoInteractions(localPythonOutputLoader);
   }
 
   /** 권한이 없어 거부되는 PYTHON 스텝은 출력을 비우지 않는다 — 비우기가 실행 직전으로 옮겨졌다(#735). */
@@ -1199,9 +1238,9 @@ class PipelineAsyncRunnerTest {
     verifyNoInteractions(outputTableSessionLock, pythonExecutor);
   }
 
-  /** 실행기를 끈 PYTHON + APPEND 는 비우지 않으므로 잠금도 잡지 않는다. */
+  /** 실행기를 끈 PYTHON + APPEND 는 출력 테이블에 바로 적재한다 — 임시 테이블·잠금·비우기 없음. */
   @Test
-  void 실행기_꺼진_PYTHON_APPEND는_잠금도_비우기도_없이_실행한다() {
+  void 실행기_꺼진_PYTHON_APPEND는_잠금도_임시테이블도_없이_출력에_적재한다() {
     Long outputDatasetId = 739L;
     Long userId = 1L;
     PipelineStepResponse step =
@@ -1210,14 +1249,207 @@ class PipelineAsyncRunnerTest {
 
     when(permissionChecker.hasPermission(userId, "pipeline:python_execute")).thenReturn(true);
     when(datasetRepository.findTableNameById(outputDatasetId)).thenReturn(Optional.of("out735_ap"));
-    when(pythonExecutor.execute("print('x')")).thenReturn("child-log");
+    when(pythonExecutor.run("print('x')", 2))
+        .thenReturn(new PythonScriptExecutor.RunResult(0, "[{\"v\": 1}]", ""));
+    when(localPythonOutputLoader.load(eq("out735_ap"), eq("[{\"v\": 1}]"), any())).thenReturn(1L);
 
     String status = runner.executeStep(7391L, step, 73L, "TestPipeline", userId, false);
 
     assertThat(status).isEqualTo("COMPLETED");
-    verify(pythonExecutor).execute("print('x')");
+    verify(localPythonOutputLoader).load(eq("out735_ap"), eq("[{\"v\": 1}]"), any());
     verify(dataTableRowService, never()).truncateTable(anyString());
+    verify(dataTableService, never()).createTempTable(anyString());
     verifyNoInteractions(outputTableSessionLock);
+  }
+
+  /**
+   * 로컬 스크립트가 비정상 종료하면 적재·임시 테이블 없이 실패한다. 오류에는 stderr(traceback)가 실린다(출력 있음 → stderr 만, executor
+   * 규칙).
+   */
+  @Test
+  void 실행기_꺼진_PYTHON_비정상종료는_적재없이_stderr로_실패한다() {
+    Long outputDatasetId = 740L;
+    Long userId = 1L;
+    PipelineStepResponse step = replaceStep(7400L, "PYTHON", "boom", outputDatasetId);
+    when(permissionChecker.hasPermission(userId, "pipeline:python_execute")).thenReturn(true);
+    when(datasetRepository.findTableNameById(outputDatasetId)).thenReturn(Optional.of("out_fail"));
+    when(pythonExecutor.run("boom", 2))
+        .thenReturn(new PythonScriptExecutor.RunResult(1, "[{\"v\": 1}]", "NameError: boom"));
+
+    String status = runner.executeStep(7401L, step, 74L, "TestPipeline", userId, false);
+
+    assertThat(status).isEqualTo("FAILED");
+    verify(executionRepository)
+        .updateStepExecution(
+            eq(7401L),
+            eq("FAILED"),
+            isNull(),
+            isNull(),
+            contains("NameError: boom"),
+            isNull(),
+            any());
+    verifyNoInteractions(localPythonOutputLoader, outputTableSessionLock);
+    verify(dataTableService, never()).createTempTable(anyString());
+  }
+
+  /** 로컬 적재가 실패하면 임시 테이블을 지우고 실패한다 — 원본은 그대로(맞바꿈 없음). */
+  @Test
+  void 실행기_꺼진_PYTHON_REPLACE_적재실패는_임시테이블을_지운다() {
+    Long outputDatasetId = 741L;
+    Long userId = 1L;
+    PipelineStepResponse step = replaceStep(7410L, "PYTHON", "print('x')", outputDatasetId);
+    when(permissionChecker.hasPermission(userId, "pipeline:python_execute")).thenReturn(true);
+    when(datasetRepository.findTableNameById(outputDatasetId)).thenReturn(Optional.of("out_bad"));
+    when(pythonExecutor.run("print('x')", 2))
+        .thenReturn(new PythonScriptExecutor.RunResult(0, "[{\"nope\": 1}]", ""));
+    when(outputTableSessionLock.callLocked(eq("out_bad"), any()))
+        .thenAnswer(inv -> inv.<java.util.function.Supplier<?>>getArgument(1).get());
+    when(localPythonOutputLoader.load(eq("out_bad_tmp"), anyString(), any()))
+        .thenThrow(
+            new ScriptExecutionException(
+                "Python 실행 실패: Script succeeded but data insert failed: x"));
+
+    String status = runner.executeStep(7411L, step, 74L, "TestPipeline", userId, false);
+
+    assertThat(status).isEqualTo("FAILED");
+    verify(dataTableService).dropTempTable("out_bad");
+    verify(dataTableService, never()).finishReplace(anyString(), anyLong());
+  }
+
+  /** 출력 없는 로컬 PYTHON 은 적재하지 않고, 실행 로그는 stdout+stderr 다(executor 와 같은 규칙). */
+  @Test
+  void 실행기_꺼진_PYTHON_출력없음은_stdout과_stderr를_로그로_남긴다() {
+    Long userId = 1L;
+    PipelineStepResponse step =
+        stepResponse(7420L, "py-noout", "PYTHON", "print('x')", null, List.of());
+    when(permissionChecker.hasPermission(userId, "pipeline:python_execute")).thenReturn(true);
+    when(pythonExecutor.run("print('x')", 2))
+        .thenReturn(new PythonScriptExecutor.RunResult(0, "out\n", "err\n"));
+
+    String status = runner.executeStep(7421L, step, 74L, "TestPipeline", userId, false);
+
+    assertThat(status).isEqualTo("COMPLETED");
+    verify(executionRepository)
+        .updateStepExecution(
+            eq(7421L), eq("COMPLETED"), any(), eq("out\nerr\n"), isNull(), any(), any());
+    verifyNoInteractions(localPythonOutputLoader, outputTableSessionLock);
+  }
+
+  /** 실행기 켠 PYTHON 은 실행 주체 슬롯을 실어 보낸다(출력 없음). */
+  @Test
+  void python_executorEnabled_sendsRunAsSlot() {
+    Long userId = 1L;
+    PipelineStepResponse step =
+        stepResponse(7430L, "py-slot", "PYTHON", "print('x')", null, List.of());
+    when(permissionChecker.hasPermission(userId, "pipeline:python_execute")).thenReturn(true);
+    when(pythonReadGrantSync.prepareForRun(any())).thenReturn(4);
+    when(executorClient.executePython(anyMap(), eq(4)))
+        .thenReturn(new ExecutorClient.PythonExecuteResult(true, "ok", 0, null, 10L, 0));
+
+    String status = runner.executeStep(7431L, step, 74L, "TestPipeline", userId, true);
+
+    assertThat(status).isEqualTo("COMPLETED");
+    verify(executorClient).executePython(anyMap(), eq(4));
+  }
+
+  /** 로컬 경로도 실행 주체 슬롯으로 스크립트를 띄운다. */
+  @Test
+  void python_executorDisabled_runsWithRunAsSlot() {
+    Long userId = 1L;
+    PipelineStepResponse step =
+        stepResponse(7440L, "py-slot-local", "PYTHON", "print('x')", null, List.of());
+    when(permissionChecker.hasPermission(userId, "pipeline:python_execute")).thenReturn(true);
+    when(pythonReadGrantSync.prepareForRun(any())).thenReturn(3);
+    when(pythonExecutor.run("print('x')", 3))
+        .thenReturn(new PythonScriptExecutor.RunResult(0, "", ""));
+
+    String status = runner.executeStep(7441L, step, 74L, "TestPipeline", userId, false);
+
+    assertThat(status).isEqualTo("COMPLETED");
+    verify(pythonExecutor).run("print('x')", 3);
+  }
+
+  /**
+   * CR2 — 실행 중 등급 정의 변경으로 슬롯 롤 세션이 끊겨 스크립트가 실패하면, 원인을 밝힌 문구로 스텝이 실패한다(실행기 켬/끔 두 경로). 끊긴 적이 없으면 예전
+   * 문구 그대로(대조군).
+   */
+  @Test
+  void python_failsWithClearMessage_whenSlotSessionsWereTerminatedDuringRun() {
+    Long userId = 1L;
+    PipelineStepResponse step =
+        stepResponse(7460L, "py-term", "PYTHON", "print('x')", null, List.of());
+    when(permissionChecker.hasPermission(userId, "pipeline:python_execute")).thenReturn(true);
+    when(pythonReadGrantSync.prepareForRun(any())).thenReturn(2);
+    when(executorClient.executePython(anyMap(), eq(2)))
+        .thenReturn(
+            new ExecutorClient.PythonExecuteResult(
+                false, "", 0, "terminating connection due to administrator command", 10L, 1));
+    when(pythonExecutor.run("print('x')", 2))
+        .thenReturn(new PythonScriptExecutor.RunResult(1, "", "terminating connection"));
+    when(pythonReadGrantSync.slotSessionsTerminatedSince(anyLong(), anyLong()))
+        .thenReturn(false, true, true);
+
+    assertThat(runner.executeStep(7461L, step, 74L, "TestPipeline", userId, true))
+        .isEqualTo("FAILED");
+    assertThat(runner.executeStep(7462L, step, 74L, "TestPipeline", userId, true))
+        .isEqualTo("FAILED");
+    assertThat(runner.executeStep(7463L, step, 74L, "TestPipeline", userId, false))
+        .isEqualTo("FAILED");
+
+    verify(executionRepository)
+        .updateStepExecution(
+            eq(7461L),
+            eq("FAILED"),
+            isNull(),
+            isNull(),
+            argThat(m -> m != null && m.startsWith("Python 실행 실패: terminating")),
+            isNull(),
+            any());
+    for (long id : new long[] {7462L, 7463L}) {
+      verify(executionRepository)
+          .updateStepExecution(
+              eq(id),
+              eq("FAILED"),
+              isNull(),
+              isNull(),
+              contains("실행 중 보안 등급 구성이 바뀌어 Python 읽기 연결을 끊었습니다"),
+              isNull(),
+              any());
+    }
+  }
+
+  /**
+   * 슬롯 준비 실패(JIT 동기화 실패·등급 없음) → executor·자식 프로세스를 부르지 않고, REPLACE 임시 테이블도 만들지 않고 스텝
+   * 실패(fail-closed). 실행기 켬/끔 두 경로 모두.
+   */
+  @Test
+  void python_prepareFails_doesNotExecute() {
+    Long userId = 1L;
+    Long outputDatasetId = 745L;
+    PipelineStepResponse step = replaceStep(7450L, "PYTHON", "print('x')", outputDatasetId);
+    when(permissionChecker.hasPermission(userId, "pipeline:python_execute")).thenReturn(true);
+    when(datasetRepository.findTableNameById(outputDatasetId)).thenReturn(Optional.of("out_deny"));
+    when(pythonReadGrantSync.prepareForRun(any()))
+        .thenThrow(new PythonReadAccessException("Python 읽기 권한을 준비하지 못해 실행을 중단했습니다."));
+
+    String executorOn = runner.executeStep(7451L, step, 74L, "TestPipeline", userId, true);
+    String executorOff = runner.executeStep(7452L, step, 74L, "TestPipeline", userId, false);
+
+    assertThat(executorOn).isEqualTo("FAILED");
+    assertThat(executorOff).isEqualTo("FAILED");
+    verify(executorClient, never()).executePython(anyMap(), anyInt());
+    verifyNoInteractions(pythonExecutor, localPythonOutputLoader, outputTableSessionLock);
+    verify(dataTableService, never()).createTempTable(anyString());
+    verify(dataTableRowService, never()).truncateTable(anyString());
+    verify(executionRepository)
+        .updateStepExecution(
+            eq(7451L),
+            eq("FAILED"),
+            isNull(),
+            isNull(),
+            contains("Python 읽기 권한을 준비하지 못해"),
+            isNull(),
+            any());
   }
 
   /**
@@ -1924,7 +2156,7 @@ class PipelineAsyncRunnerTest {
     when(datasetRepository.findTableNameById(outputDatasetId)).thenReturn(Optional.of("output_py"));
     when(columnRepository.findByDatasetId(outputDatasetId))
         .thenReturn(List.of(col("col1", false), col("col2", false)));
-    when(executorClient.executePython(any()))
+    when(executorClient.executePython(any(), anyInt()))
         .thenReturn(new ExecutorClient.PythonExecuteResult(true, "hello\n", 0, null, 100L, 0));
 
     // when — executorEnabled=true
@@ -1934,7 +2166,7 @@ class PipelineAsyncRunnerTest {
     // then: executorClient.executePython이 script + output_table + column_type_map 포함 Map으로 호출됨
     assertThat(status).isEqualTo("COMPLETED");
     ArgumentCaptor<Map> captor = ArgumentCaptor.forClass(Map.class);
-    verify(executorClient).executePython(captor.capture());
+    verify(executorClient).executePython(captor.capture(), eq(2));
     Map<String, Object> sentRequest = captor.getValue();
     assertThat(sentRequest).containsKey("script");
     assertThat(sentRequest).containsKey("output_table");
@@ -1973,7 +2205,7 @@ class PipelineAsyncRunnerTest {
     when(datasetRepository.findTableNameById(outputDatasetId))
         .thenReturn(Optional.of("output_replace"));
     when(columnRepository.findByDatasetId(outputDatasetId)).thenReturn(List.of(col("val", false)));
-    when(executorClient.executePython(any()))
+    when(executorClient.executePython(any(), anyInt()))
         .thenReturn(new ExecutorClient.PythonExecuteResult(true, "done", 0, null, 200L, 10));
 
     // when
@@ -2018,7 +2250,7 @@ class PipelineAsyncRunnerTest {
     when(datasetRepository.findTableNameById(outputDatasetId))
         .thenReturn(Optional.of("output_norows"));
     when(columnRepository.findByDatasetId(outputDatasetId)).thenReturn(List.of(col("val", false)));
-    when(executorClient.executePython(any()))
+    when(executorClient.executePython(any(), anyInt()))
         .thenReturn(new ExecutorClient.PythonExecuteResult(true, "", 0, null, 100L, 0));
 
     // when

@@ -96,12 +96,15 @@ function WidgetContent({ widget, chartData, dataLoading, dataFetching }: WidgetC
 
   // 데이터 응답에 실린 차트 정의가 최신이므로 우선 사용하고, 없으면 메타 조회 결과로 폴백
   const effectiveChart = chartData?.chart ?? chart;
+  // 메타 조회는 설정이 가려지면 config 가 null 이다(WD-31②). queryResult 가 있으면 데이터 응답(config 항상 객체)이
+  // 쓰이므로 실제로는 닿지 않지만, 렌더러가 null 에서 깨지지 않게 빈 설정으로 좁힌다.
+  const effectiveConfig = effectiveChart.config ?? { xAxis: '', yAxis: [] };
 
   return (
     <div className="relative h-full">
       <ChartRenderer
         chartType={effectiveChart.chartType}
-        config={effectiveChart.config}
+        config={effectiveConfig}
         data={queryResult.rows}
         columns={queryResult.columns}
         fillParent

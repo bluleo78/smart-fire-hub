@@ -28,6 +28,8 @@ import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.securitylevel.access.SqlAccessResult;
 import com.smartfirehub.securitylevel.ai.AiCall;
 import com.smartfirehub.securitylevel.ai.AiHostingResolver;
+import com.smartfirehub.securitylevel.pythonread.PythonReadAccessException;
+import com.smartfirehub.securitylevel.pythonread.PythonReadGrantSync;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -43,6 +45,8 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Queue;
 import java.util.Set;
+import java.util.function.Function;
+import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -88,6 +92,8 @@ public class PipelineAsyncRunner {
   private final IncrementalCursorService incrementalCursorService;
   private final OutputTableSessionLock outputTableSessionLock;
   private final PipelineSecurityGate pipelineSecurityGate;
+  private final PythonReadGrantSync pythonReadGrantSync;
+  private final LocalPythonOutputLoader localPythonOutputLoader;
 
   /** AI_CLASSIFY 입력의 AI 정책 판정(S3 §4.3) — PipelineSecurityGate(흐름 B 소유)를 고치지 않고 호출부에서 가드를 직접 부른다. */
   private final DatasetAccessGuard datasetAccessGuard;
@@ -332,9 +338,9 @@ public class PipelineAsyncRunner {
                     return LoadStrategy.REPLACE;
                   });
 
-      // Fix round 1, nit 5 — MERGE 는 SQL 스텝 전용 거부를 아래 로드 전략 블록(비SQL 타입만 타는 블록)에
-      // 두면 API_CALL/AI_CLASSIFY/실행기 켠 PYTHON 은 애초에 그 블록 진입 조건에서 제외돼 있어
-      // (바로 아래 if) 거기 도달하지 못한다 — 즉 레거시 PYTHON+MERGE 행이 실행기 켠 상태로 오면
+      // Fix round 1, nit 5 — MERGE 는 SQL 스텝 전용 거부를 특정 타입 분기 안에만 두면(예전에는 실행기 끈
+      // PYTHON 만 타던 로드 전략 블록에 있었다 — WD-29 에서 그 블록은 없어졌다) 다른 비SQL 타입은
+      // 거기 도달하지 못한다 — 즉 레거시 PYTHON+MERGE 행이 실행기 켠 상태로 오면
       // 아무 거부도 없이 그냥 APPEND 처럼(비우지 않고) 조용히 실행된다. 저장 시점(PipelineService.
       // saveSteps)이 이미 이 조합을 거부하지만, 그 우회(레거시 데이터 등)에 대한 2차 방어는 스텝
       // 타입을 가리지 않고 걸어야 의미가 있으므로 모든 타입 분기보다 앞에 둔다.
@@ -342,23 +348,12 @@ public class PipelineAsyncRunner {
         throw new ScriptExecutionException("MERGE 는 SQL 스텝 전용입니다");
       }
 
-      // 여기서 로드 전략을 직접 처리하는 유일한 경우는 <b>실행기를 끈 PYTHON 스텝</b>뿐이다.
-      // API_CALL·AI_CLASSIFY·실행기 켠 PYTHON 은 각 실행기가 임시 테이블 맞바꿈으로 직접 처리하고,
-      // SQL 스텝은 REPLACE 비우기를 본 문장과 같은 트랜잭션으로 보낼 DELETE 선행 문장으로 만든다
-      // (SQL 분기, Task 4 원자성 · #731/#735 직렬화). 스크립트 타입은 이 네 가지가 전부다(DB CHECK
-      // 제약 pipeline_step_script_type_check, V35).
-      //
-      // 실행기를 끈 PYTHON + REPLACE 는 여기서 <b>비울 대상만 정해 두고</b>, 실제 비우기는 아래 PYTHON
-      // 분기에서 자식 프로세스 실행 직전에 출력 테이블 세션 잠금 아래에서 한다(#735). 예전에는 여기서
-      // 바로 truncate 했는데, 그러면 같은 출력에 실행이 겹칠 때 두 실행이 각자 비운 뒤 각자 적재해
-      // 행이 중복된다. 대상은 예전과 같다 — 이 시점에 정해진(사용자가 지정한) 출력 테이블뿐이고,
-      // 아래에서 자동 생성되는 임시 데이터셋은 포함하지 않는다.
-      // 위에서 이미 MERGE+비SQL 조합을 걸렀으므로 여기 도달하는 전략은 REPLACE/APPEND 뿐이다
-      // (알 수 없는 값은 이미 REPLACE 로 폴백됐다).
-      final String localPythonReplaceTable =
-          "PYTHON".equals(step.scriptType()) && !executorEnabled && strategy != LoadStrategy.APPEND
-              ? outputTableName
-              : null;
+      // 로드 전략(비우기·맞바꿈)은 이제 모든 비SQL 경로가 임시 테이블 맞바꿈으로 처리한다 —
+      // API_CALL·AI_CLASSIFY·PYTHON(실행기 켬/끔 모두). SQL 스텝은 REPLACE 비우기를 본 문장과 같은
+      // 트랜잭션으로 보낼 DELETE 선행 문장으로 만든다(SQL 분기, Task 4 원자성 · #731/#735 직렬화).
+      // 예전의 "실행기 끈 PYTHON + REPLACE 는 truncate 후 자식이 직접 적재" 경로는 WD-29(R5)에서
+      // 없앴다 — 자식은 이제 읽기 전용 슬롯 롤이라 적재를 API 가 하고, 그 REPLACE 는 실행기 켠 경로와
+      // 같은 _tmp 맞바꿈이다(아래 PYTHON 분기).
 
       // 증분 처리 상태 — SQL 분기 안에서 정해지지만, 책갈피 전진은 실행 성공 이후(분기 밖)에 하므로
       // 메서드 스코프에 둔다.
@@ -669,7 +664,8 @@ public class PipelineAsyncRunner {
         pythonScriptValidator.validate(step.scriptContent());
         // 보안 등급(코드리뷰 CR2·후속 F1): 이미 있던 출력은 실행 주체가 볼 수 있어야 쓴다 — 판정은 아래 enforcePythonOutputLevel 이
         // 한 번 한다(코드리뷰 8). 그 호출 전까지 들어온 출력을 비우거나 쓰지 않으므로 "비우기·맞바꿈·적재 전" 순서가 지켜진다.
-        // 입력 읽기는 판정하지 않는 대신 출력 등급을 "스크립트가 읽을 수 있던 최대 등급"으로 올린다(아래).
+        // 입력 읽기는 SQL 관문으로 판정하지 않고 DB 권한(실행 주체 등급의 읽기 슬롯 롤, WD-29)으로 막는다. 출력 등급은 그 슬롯이 읽을 수
+        // 있던 최대 등급으로 올린다(아래, 공통 결정 R4).
         // 실행 주체 자격은 이 스텝에서 한 번만 계산해 이 스텝의 모든 판정(출력·TEMP 삭제 전)에 쓴다.
         PipelineSecurityGate.RunAs pyRunAs = pipelineSecurityGate.runAs(userId);
         boolean pyTempFresh = false;
@@ -699,78 +695,99 @@ public class PipelineAsyncRunner {
           pipelineSecurityGate.enforcePythonOutputLevel(
               outputDatasetId, step.id(), pyTempFresh, pyRunAs);
         }
+        // 등급별 읽기 슬롯(WD-29): 실행 직전 GRANT 를 계산값에 맞추고(JIT) 실행 주체 슬롯을 정한다. 실패하면 executor·자식 프로세스를 부르지
+        // 않는다(fail-closed) — 테넌트 실행 롤로 대체하는 경로는 없다.
+        // 위치: 위 보안 판정(enforcePythonOutputLevel 의 출력 VIEW·등급 상향)이 먼저 돌아 그 판정 테스트가
+        // 공허해지지 않고, REPLACE 임시 테이블 생성보다는 앞이라 준비 실패가 _tmp 를 만들거나 지우지 않는다.
+        // 트랜잭션: prepareForRun 은 REQUIRES_NEW 트랜잭션에서 advisory 잠금·REVOKE/GRANT 를 한다.
+        // 이 러너(executeAsync·executeStep)는 @Transactional 이 아니고(비동기 스레드,
+        // PipelineExecutionService 가 커밋 후 위임), 위 TEMP 생성 DDL 도 자기 트랜잭션에서 이미
+        // 커밋됐다 — 같은 테이블에 미커밋 DDL 을 쥔 바깥 트랜잭션이 없어 자기 교착이 생기지 않는다.
+        int readSlot;
+        // 실행 중 등급 정의 변경으로 슬롯 롤 세션이 끊겼는지 가리는 기준 시각(실패 문구용 — 판정 아님).
+        final long pyStartedAt = System.currentTimeMillis();
+        final long pyTenantId = pyRunAs.clearance().tenantId();
+        try {
+          readSlot = pythonReadGrantSync.prepareForRun(pyRunAs.clearance());
+        } catch (PythonReadAccessException e) {
+          throw new ScriptExecutionException(e.getMessage(), e);
+        }
+
         if (outputDatasetId == null) {
           log.warn("Python 스텝 '{}': 출력 데이터셋이 지정되지 않았습니다. 결과가 저장되지 않습니다.", step.name());
         }
+        // 컬럼 타입 맵 — executor 와 로컬 적재가 같은 규칙으로 stdout JSON 값을 변환한다(API_CALL 블록과 동일 패턴).
+        Map<String, String> columnTypeMap = null;
+        if (outputDatasetId != null) {
+          columnTypeMap = new HashMap<>();
+          for (DatasetColumnResponse col : columnRepository.findByDatasetId(outputDatasetId)) {
+            columnTypeMap.put(col.columnName(), col.dataType());
+          }
+        }
+        final String pyOutputTable = outputTableName;
+        final Map<String, String> pyColumnTypes = columnTypeMap;
 
         if (executorEnabled) {
-          // 컬럼 타입 맵 구성 (API_CALL 블록과 동일 패턴)
-          Map<String, String> columnTypeMap = null;
-          if (outputDatasetId != null) {
-            List<DatasetColumnResponse> columns = columnRepository.findByDatasetId(outputDatasetId);
-            columnTypeMap = new HashMap<>();
-            for (DatasetColumnResponse col : columns) {
-              columnTypeMap.put(col.columnName(), col.dataType());
-            }
-          }
-
-          // REPLACE 전략: 임시 테이블 생성 후 swap (API_CALL 패턴과 동일)
-          // 여기는 의도적으로 enum(strategy)이 아니라 원본 문자열을 본다 — strategy 는 알 수 없는 값을
-          // REPLACE 로 폴백하지만, 맞바꿈 경로는 "명시적으로 REPLACE 라고 적힌" 경우에만 타야 한다.
-          // 폴백을 여기까지 끌고 오면 알 수 없는 값이 갑자기 _tmp 생성·맞바꿈을 시작해 동작이 바뀐다.
-          String targetTable = outputTableName;
-          boolean isReplace = "REPLACE".equalsIgnoreCase(loadStrategy) && outputTableName != null;
-          if (isReplace) {
-            dataTableService.createTempTable(outputTableName);
-            targetTable = outputTableName + "_tmp";
-          }
-          try {
-            Map<String, Object> request = new LinkedHashMap<>();
-            request.put("script", step.scriptContent());
-            if (targetTable != null) {
-              request.put("output_table", targetTable);
-            }
-            if (columnTypeMap != null) {
-              request.put("column_type_map", columnTypeMap);
-            }
-            var result = executorClient.executePython(request);
-            if (!result.success()) {
-              throw new ScriptExecutionException("Python 실행 실패: " + result.error());
-            }
-            if (isReplace) {
-              // stdout 에 JSON 이 없거나 0행이면 맞바꾸지 않고 원본을 유지한다 — 판단은
-              // finishReplace 가 단독으로 갖는다(#685).
-              dataTableService.finishReplace(outputTableName, result.rowsLoaded());
-            }
-            executionLog = result.output();
-          } catch (Exception e) {
-            if (isReplace) {
-              try {
-                dataTableService.dropTempTable(outputTableName);
-              } catch (Exception dropEx) {
-                log.warn(
-                    "Failed to drop temp table after Python execution failure: {}",
-                    dropEx.getMessage());
-              }
-            }
-            throw e;
-          }
-        } else if (localPythonReplaceTable != null) {
-          // REPLACE: 출력 비우기와 자식 프로세스의 적재를 출력 테이블 세션 잠금 아래에서 한다(#735).
-          // 자식은 자기 커넥션으로 적재하므로 SQL 스텝처럼 한 트랜잭션으로 묶을 수 없다 — 대신 같은
-          // 키의 세션 잠금으로 "비우기~적재 종료" 구간을 덮는다. 같은 출력에 대한 다른 실행(PYTHON 이든
-          // SQL 스텝의 비우기+적재든)은 이 구간이 끝난 뒤에 자기 비우기를 시작한다. 잠금은 성공·실패와
-          // 무관하게 callLocked 가 푼다.
-          log.info("REPLACE strategy: Truncating output table: {}", localPythonReplaceTable);
+          // REPLACE 판정은 의도적으로 enum(strategy)이 아니라 원본 문자열을 본다 — strategy 는 알 수
+          // 없는 값을 REPLACE 로 폴백하지만, 이 경로의 맞바꿈은 "명시적으로 REPLACE 라고 적힌" 경우에만
+          // 탄다(예전부터의 동작, 바꾸지 않는다).
+          boolean isReplace = "REPLACE".equalsIgnoreCase(loadStrategy) && pyOutputTable != null;
           executionLog =
-              outputTableSessionLock.callLocked(
-                  localPythonReplaceTable,
-                  () -> {
-                    dataTableRowService.truncateTable(localPythonReplaceTable);
-                    return pythonExecutor.execute(step.scriptContent());
-                  });
+              loadPythonOutput(
+                      pyOutputTable,
+                      isReplace,
+                      targetTable -> {
+                        Map<String, Object> request = new LinkedHashMap<>();
+                        request.put("script", step.scriptContent());
+                        if (targetTable != null) {
+                          request.put("output_table", targetTable);
+                        }
+                        if (pyColumnTypes != null) {
+                          request.put("column_type_map", pyColumnTypes);
+                        }
+                        var result = executorClient.executePython(request, readSlot);
+                        if (!result.success()) {
+                          throw pythonRunFailure(
+                              "Python 실행 실패: " + result.error(), pyTenantId, pyStartedAt);
+                        }
+                        return new PythonLoad(result.output(), result.rowsLoaded());
+                      })
+                  .log();
         } else {
-          executionLog = pythonExecutor.execute(step.scriptContent());
+          // 로컬 경로(실행기 끔) — executor 와 같은 계약(R5): 스크립트는 읽기 슬롯 롤로 돌고 stdout 에
+          // JSON 행을 내며, 적재는 API 가 앱 연결로 한다(LocalPythonOutputLoader). 실행 로그는 출력
+          // 테이블이 있으면 stderr, 없으면 stdout+stderr(executor 와 동일). REPLACE 판정은 예전 로컬
+          // 경로 그대로 해석된 전략(알 수 없는 값 → REPLACE 폴백)을 쓴다.
+          boolean isReplace = strategy != LoadStrategy.APPEND && pyOutputTable != null;
+          PythonScriptExecutor.RunResult run = pythonExecutor.run(step.scriptContent(), readSlot);
+          String outputText = pyOutputTable != null ? run.stderr() : run.stdout() + run.stderr();
+          if (!run.succeeded()) {
+            throw pythonRunFailure(
+                "Python 실행 실패(exit code " + run.exitCode() + "): " + outputText,
+                pyTenantId,
+                pyStartedAt);
+          }
+          if (pyOutputTable == null) {
+            executionLog = outputText;
+          } else {
+            Supplier<PythonLoad> load =
+                () ->
+                    loadPythonOutput(
+                        pyOutputTable,
+                        isReplace,
+                        targetTable ->
+                            new PythonLoad(
+                                outputText,
+                                localPythonOutputLoader.load(
+                                    targetTable, run.stdout(), pyColumnTypes)));
+            // REPLACE 는 출력 테이블 세션 잠금 아래에서 _tmp 생성 → 적재 → 맞바꿈을 한다(#735).
+            // createTempTable 은 고정 이름 "<출력>_tmp" 를 DROP IF EXISTS 후 다시 만들므로, 같은 출력에
+            // 로컬 REPLACE 가 겹치면 서로의 _tmp 를 지우고 덮는다. 잠금 키는 SQL 스텝의 비우기+적재와
+            // 같아 그 경로와도 직렬화된다. 스크립트 실행(읽기 전용)은 잠금 밖 — 쓰는 구간만 덮는다.
+            executionLog =
+                (isReplace ? outputTableSessionLock.callLocked(pyOutputTable, load) : load.get())
+                    .log();
+          }
         }
       } else if ("API_CALL".equals(step.scriptType())) {
         ApiCallConfig apiCallConfig =
@@ -1114,6 +1131,37 @@ public class PipelineAsyncRunner {
     return temp.datasetId();
   }
 
+  /** PYTHON 적재 결과 — 실행 로그와 적재 행 수(REPLACE 맞바꿈 여부 판단 재료). */
+  private record PythonLoad(String log, long rowsLoaded) {}
+
+  /**
+   * PYTHON 출력 적재의 REPLACE 준비·마무리 — 실행기 켠 경로(executor 가 적재)와 끈 경로(API 가 stdout JSON 적재)가 같이 쓴다.
+   *
+   * <p>REPLACE 면 {@code <출력>_tmp} 를 만들고 그 이름으로 {@code load} 를 부른 뒤, 적재 행 수로 맞바꿈 여부를 {@link
+   * DataTableService#finishReplace} 에 맡긴다(0행·JSON 없음이면 원본 유지 — 판단은 거기 단독, #685). 실패하면 임시 테이블을 지우고
+   * 예외를 다시 던진다 — 원본은 그대로다. REPLACE 가 아니면 출력 테이블(없으면 null)로 바로 부른다.
+   */
+  private PythonLoad loadPythonOutput(
+      String outputTable, boolean isReplace, Function<String, PythonLoad> load) {
+    if (!isReplace) {
+      return load.apply(outputTable);
+    }
+    dataTableService.createTempTable(outputTable);
+    try {
+      PythonLoad result = load.apply(outputTable + "_tmp");
+      dataTableService.finishReplace(outputTable, result.rowsLoaded());
+      return result;
+    } catch (RuntimeException e) {
+      try {
+        dataTableService.dropTempTable(outputTable);
+      } catch (Exception dropEx) {
+        log.warn(
+            "Failed to drop temp table after Python execution failure: {}", dropEx.getMessage());
+      }
+      throw e;
+    }
+  }
+
   /**
    * API_CALL 스텝에 들어온 출력(사용자 지정 출력, 또는 재실행에서 {@code PipelineStepRepository.findByPipelineId} 의
    * coalesce 폴백으로 들어온 이 스텝의 재사용 TEMP)을 실행 주체가 볼 수 있어야 한다(코드리뷰 CR2·후속 F1). 반드시 출력 비우기·맞바꿈용 임시 테이블
@@ -1422,6 +1470,20 @@ public class PipelineAsyncRunner {
       return false;
     }
     return isCteFollowedBySelect(upper);
+  }
+
+  /**
+   * PYTHON 실행 실패 예외. 실행 중 등급 정의 변경으로 이 테넌트의 슬롯 롤 세션이 끊겼다면(PythonReadGrantSync 가 새 GRANT 커밋 전에 끊는다)
+   * 원인을 앞에 밝힌다 — 스크립트 출력에는 "terminating connection due to administrator command" 만 남아 사용자가 원인을 알 수
+   * 없다. 판정에는 쓰지 않는다(끊김 자체가 fail-closed 이고, 이 문구는 안내일 뿐).
+   */
+  private ScriptExecutionException pythonRunFailure(
+      String message, long tenantId, long startedAtMillis) {
+    if (pythonReadGrantSync.slotSessionsTerminatedSince(tenantId, startedAtMillis)) {
+      return new ScriptExecutionException(
+          "실행 중 보안 등급 구성이 바뀌어 Python 읽기 연결을 끊었습니다. 다시 실행하세요. — " + message);
+    }
+    return new ScriptExecutionException(message);
   }
 
   /**

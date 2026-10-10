@@ -3,6 +3,7 @@ package com.smartfirehub.global.tenant;
 import static org.jooq.impl.DSL.field;
 import static org.jooq.impl.DSL.name;
 
+import java.util.List;
 import javax.sql.DataSource;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -133,6 +134,10 @@ public class TenantSchemaProvisioner {
               // (런북 §1-4 경고, 정공법은 §6-8 백로그).
               tx.execute("REVOKE ALL ON SCHEMA public FROM {0}", name(executorRole));
             }
+
+            // PYTHON 읽기 슬롯 롤(WD-29) — 롤이 먼저 있고 스키마가 나중에 생기는 순서의 USAGE. 반대 순서와 이미 있던
+            // 스키마의 누락 복구는 TenantPipelineRoleProvisioner(ensurePythonReadRoles·기동 치유)가 같은 메서드로 건다.
+            grantPythonReadSchemaUsage(tx, tenantId, schema);
           });
     } catch (DataAccessException e) {
       // 경합 흡수의 범위는 "진짜 생성 경합" 하나다 — 판정 기준이 "지금 존재하는가" 가 아니라
@@ -246,6 +251,28 @@ public class TenantSchemaProvisioner {
   public static boolean roleExists(DSLContext dsl, String roleName) {
     return dsl.fetchExists(
         dsl.selectOne().from("pg_roles").where(field("rolname", String.class).eq(roleName)));
+  }
+
+  /**
+   * 테넌트 PYTHON 읽기 슬롯 롤 중 <b>있는</b> 것에 스키마 USAGE 가 빠져 있으면 건다 — 슬롯 롤 USAGE 를 거는 유일한 자바 지점(CR10). 스키마
+   * 생성 트랜잭션(롤 먼저 → 스키마 나중), {@code ensurePythonReadRoles}(스키마 먼저 → 롤 나중), 기동 치유(롤은 있는데 USAGE 만 빠진
+   * 상태)가 모두 이것을 부른다. 존재·보유 판정을 한 번 조회로 하고 빠진 롤에만 GRANT 해, 이미 완비된 테넌트에서는 카탈로그 쓰기가 없다. 없는 롤은 건너뛴다 —
+   * executor 롤과 같은 이유로 데이터셋 생성 전체를 막지 않는다. 스키마는 호출자가 있음을 보장한다.
+   *
+   * @return USAGE 를 새로 건 롤 수
+   */
+  static int grantPythonReadSchemaUsage(DSLContext tx, long tenantId, String schema) {
+    String[] roles = TenantPipelineRole.pythonReadRoleNames(tenantId).toArray(new String[0]);
+    List<String> missing =
+        tx.fetch(
+                "select r.rolname::text from pg_roles r where r.rolname::text = any({0}::text[])"
+                    + " and not has_schema_privilege(r.oid, {1}, 'USAGE') order by 1",
+                DSL.val(roles), DSL.val(schema))
+            .getValues(0, String.class);
+    for (String role : missing) {
+      tx.execute("GRANT USAGE ON SCHEMA {0} TO {1}", name(schema), name(role));
+    }
+    return missing.size();
   }
 
   /**

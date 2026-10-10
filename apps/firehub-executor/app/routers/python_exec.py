@@ -20,6 +20,8 @@ async def execute_python(
         request.timeout,
         settings,
         tenant_id=request.tenant_id,
+        # 스크립트 DB_URL 을 이 슬롯 롤로 만든다(WD-29) — 요청 모델에서 이미 1~10 정수로 검증됐다.
+        read_slot=request.read_slot,
         output_table=request.output_table,
         column_type_map=request.column_type_map,
     )

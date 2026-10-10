@@ -527,6 +527,26 @@ describe('Analytics MCP Tools', () => {
     expect(result.isError).toBe(true);
   });
 
+  it('list_charts 는 configWithheld 차트(config:null)를 그대로 전달하고 깨지지 않는다 (WD-31②)', async () => {
+    (client.listCharts as ReturnType<typeof vi.fn>).mockResolvedValue({
+      content: [
+        {
+          id: 7, name: '가려진 차트', description: null, chartType: 'BAR', savedQueryId: 3, savedQueryName: 'q',
+          isShared: true, createdByName: 'u', createdAt: '2026-10-09T00:00:00Z', updatedAt: '2026-10-09T00:00:00Z',
+          config: null, configWithheld: true,
+        },
+      ],
+      totalElements: 1, totalPages: 1, number: 0, size: 20,
+    });
+
+    const result = await invokeTool(server, 'list_charts', {});
+
+    expect(result.isError).toBeUndefined();
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.content[0].configWithheld).toBe(true);
+    expect(parsed.content[0].config).toBeNull();
+  });
+
   // --- get_chart_data ---
   it('get_chart_data calls apiClient.getChartData with chartId', async () => {
     const mockChartData = {
@@ -564,6 +584,28 @@ describe('Analytics MCP Tools', () => {
     expect(parsed.chart.id).toBe(3);
     expect(parsed.queryResult.totalRows).toBe(1);
     expect(result.isError).toBeUndefined();
+  });
+
+  it('get_chart_data 는 denied 차트(config 빈 객체·configWithheld)를 그대로 전달한다 (WD-31②)', async () => {
+    (client.getChartData as ReturnType<typeof vi.fn>).mockResolvedValue({
+      chart: {
+        id: 8, name: '숨김', description: null, chartType: 'BAR', config: {}, configWithheld: true, savedQueryId: 5,
+        savedQueryName: null, isShared: true, createdBy: 1, createdByName: 'u',
+        createdAt: '2026-10-09T00:00:00Z', updatedAt: '2026-10-09T00:00:00Z',
+      },
+      queryResult: {
+        queryType: 'SELECT', columns: [], rows: [], affectedRows: 0, executionTimeMs: 0, totalRows: 0,
+        truncated: false, error: null,
+      },
+      denied: true,
+    });
+
+    const result = await invokeTool(server, 'get_chart_data', { chartId: 8 });
+
+    expect(result.isError).toBeUndefined();
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.chart.configWithheld).toBe(true);
+    expect(parsed.denied).toBe(true);
   });
 
   it('get_chart_data returns isError when chart not found', async () => {

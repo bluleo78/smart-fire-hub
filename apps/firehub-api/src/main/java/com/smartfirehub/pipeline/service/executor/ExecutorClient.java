@@ -2,6 +2,7 @@ package com.smartfirehub.pipeline.service.executor;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.global.tenant.TenantPipelineRole;
 import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -97,14 +98,24 @@ public class ExecutorClient {
   /**
    * Python 실행 요청. POST /execute/python Timeout: 1890s (30분 nsjail + 60s subprocess + 30s HTTP
    * buffer)
+   *
+   * @param readSlot 실행 주체의 읽기 슬롯(1~10, PythonReadGrantSync.prepareForRun). executor 는 이 슬롯 롤로 스크립트를
+   *     접속시킨다 — 없거나 범위 밖이면 executor 가 422 로 거부한다(테넌트 롤 폴백 없음, WD-29). 여기서도 먼저 막아 잘못된 값이 네트워크로 나가지
+   *     않게 한다.
    */
-  public PythonExecuteResult executePython(Map<String, Object> request) {
+  public PythonExecuteResult executePython(Map<String, Object> request, int readSlot) {
+    if (readSlot < 1 || readSlot > TenantPipelineRole.PYTHON_READ_SLOTS) {
+      throw new IllegalArgumentException(
+          "readSlot 은 1~" + TenantPipelineRole.PYTHON_READ_SLOTS + " 이어야 합니다: " + readSlot);
+    }
+    Map<String, Object> body = withTenant(request); // withTenant 가 이미 복사본을 돌려준다
+    body.put("readSlot", readSlot);
     return guardSize(
         () ->
             webClient
                 .post()
                 .uri("/execute/python")
-                .bodyValue(withTenant(request))
+                .bodyValue(body)
                 .retrieve()
                 .bodyToMono(PythonExecuteResult.class)
                 .timeout(Duration.ofSeconds(1890))

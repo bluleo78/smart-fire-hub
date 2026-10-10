@@ -3,7 +3,9 @@ package com.smartfirehub.global.tenant;
 import java.nio.charset.StandardCharsets;
 import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
 import java.util.HexFormat;
+import java.util.List;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 
@@ -32,6 +34,12 @@ public final class TenantPipelineRole {
   private static final int PASSWORD_LENGTH = 32;
 
   private static final String HMAC_ALGORITHM = "HmacSHA256";
+
+  /**
+   * PYTHON 스텝 읽기 슬롯 수(스펙 §4.1). 테넌트 등급 개수 상한과 같은 값이다(SecurityLevelService 가 이 상수를 쓴다). Python
+   * {@code app/tenant.py} 의 {@code MAX_READ_SLOT} 과 같아야 한다.
+   */
+  public static final int PYTHON_READ_SLOTS = 10;
 
   private TenantPipelineRole() {}
 
@@ -66,6 +74,55 @@ public final class TenantPipelineRole {
    * @return 32자 소문자 hex 문자열
    */
   public static String password(long tenantId, String secret) {
+    // 메시지는 tenantId 10진 문자열 — 기존 규약 그대로(슬롯 롤은 롤 이름을 메시지로 써서 값이 겹치지 않는다).
+    return hmacHex(secret, Long.toString(tenantId));
+  }
+
+  /**
+   * PYTHON 스텝 전용 읽기 슬롯 롤 이름 — {@code pipeline_py_t{tenantId}_s{slot}}.
+   *
+   * <p>슬롯 k 는 "등급을 rank 오름차순으로 나열했을 때 k 번째까지의 등급"을 읽는 롤이다(스펙 §4.1). 등급 id 가 아니라 위치에 묶이므로 순서 변경은 롤
+   * 변경이 아니라 GRANT 재동기화다.
+   *
+   * @throws IllegalArgumentException tenantId 가 0 이하이거나 slot 이 1~{@link #PYTHON_READ_SLOTS} 밖일 때 —
+   *     없는 롤 이름을 만들어 접속 시점에 "롤 없음"으로 늦게 터지는 것보다 조립 시점 즉시 실패가 낫다
+   */
+  public static String pythonReadRoleName(long tenantId, int slot) {
+    if (tenantId <= 0) {
+      throw new IllegalArgumentException("tenantId 는 양수여야 합니다: " + tenantId);
+    }
+    if (slot < 1 || slot > PYTHON_READ_SLOTS) {
+      throw new IllegalArgumentException(
+          "Python 읽기 슬롯은 1~" + PYTHON_READ_SLOTS + " 이어야 합니다: " + slot);
+    }
+    return "pipeline_py_t" + tenantId + "_s" + slot;
+  }
+
+  /**
+   * 테넌트의 슬롯 롤 이름 전부(s1..s{@link #PYTHON_READ_SLOTS}, 슬롯 순서) — 세션 종료·USAGE 부여·동기화·존재 확인이 같은 목록을 쓰도록
+   * 한 곳에서 만든다. 인덱스 {@code k-1} 이 슬롯 k 다.
+   */
+  public static List<String> pythonReadRoleNames(long tenantId) {
+    List<String> names = new ArrayList<>(PYTHON_READ_SLOTS);
+    for (int slot = 1; slot <= PYTHON_READ_SLOTS; slot++) {
+      names.add(pythonReadRoleName(tenantId, slot));
+    }
+    return List.copyOf(names);
+  }
+
+  /**
+   * 슬롯 롤 비밀번호 — HMAC-SHA256(secret, 롤 이름). 메시지를 롤 이름으로 둬서 테넌트 실행 롤(메시지=tenantId 숫자 문자열)과 값이 겹치지
+   * 않는다(롤 이름에는 문자가 섞여 있어 숫자 문자열과 충돌할 수 없다). Python {@code resolve_read_password} 와 바이트 단위로 같아야 한다.
+   */
+  public static String pythonReadPassword(long tenantId, int slot, String secret) {
+    return hmacHex(secret, pythonReadRoleName(tenantId, slot));
+  }
+
+  /**
+   * {@code secret} 을 키로 {@code message} 를 HMAC-SHA256 한 hex 앞 32자. 실행 롤·슬롯 롤 비밀번호가 같은 파생 규약을 공유하도록
+   * 한 곳에 둔다. 빈 secret 은 거부한다(예측 가능한 비밀번호 방지).
+   */
+  private static String hmacHex(String secret, String message) {
     // 빈 secret 을 거부한다 — 이것이 없으면 prod fail-closed 의도가 무력화된다.
     //
     // 왜 `@Value` 만으로는 부족한가: `application-prod.yml` 의 `${PIPELINE_ROLE_PASSWORD_SECRET}`
@@ -83,7 +140,7 @@ public final class TenantPipelineRole {
     try {
       Mac mac = Mac.getInstance(HMAC_ALGORITHM);
       mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), HMAC_ALGORITHM));
-      byte[] digest = mac.doFinal(Long.toString(tenantId).getBytes(StandardCharsets.UTF_8));
+      byte[] digest = mac.doFinal(message.getBytes(StandardCharsets.UTF_8));
       // HexFormat 은 이 저장소의 기존 관용구다(AuthService·OAuthStateService·AiClassifyExecutor 등 5곳).
       return HexFormat.of().formatHex(digest).substring(0, PASSWORD_LENGTH);
     } catch (NoSuchAlgorithmException | InvalidKeyException e) {

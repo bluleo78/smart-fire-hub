@@ -4,6 +4,7 @@ import static com.smartfirehub.jooq.Tables.DATASET;
 
 import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.global.tenant.TenantPipelineRole;
 import com.smartfirehub.pipeline.repository.PipelineExecutionRepository;
 import com.smartfirehub.securitylevel.access.AccessDenialAction;
 import com.smartfirehub.securitylevel.access.Clearance;
@@ -399,11 +400,19 @@ public class PipelineSecurityGate {
    * 등급 중 rank 최대. 흐름 C 의 PYTHON 슬롯 위치 계산과 <b>같은 규칙</b>이어야 한다(C Task 10 의 일치 테스트) — 관리자
    * 우회(admin_bypass) 등 다른 조건을 넣으면 두 계산이 어긋난다. 범위가 비면 empty.
    *
+   * <p>실행 주체 자격의 위치(자격 rank 이하 등급 수)가 슬롯 롤 수(10)를 넘으면 그 위치를 표현할 슬롯 롤이 없어 PYTHON 이 아무것도 읽지 못하고 실행
+   * 자체가 거부된다(등급 상한 10 의 동시 생성 경합으로만 생긴다). 이때도 empty — 출력 등급을 올리지 않고 출력 VIEW 만 본다. R4 일치
+   * 테스트(PythonReadLevelParityTest)가 찾은 차이를 R4("슬롯 롤로 읽을 수 있는 범위") 기준으로 맞췄다.
+   *
    * @param levels 현재 테넌트의 등급 전부
    * @param clearanceRank 실행 주체 자격 rank({@link Clearance#NO_RANK} 면 언제나 empty)
    */
   public static java.util.Optional<LevelPolicy> pythonReadableTopLevel(
       Collection<LevelPolicy> levels, int clearanceRank) {
+    if (levels.stream().filter(l -> l.rank() <= clearanceRank).count()
+        > TenantPipelineRole.PYTHON_READ_SLOTS) {
+      return java.util.Optional.empty();
+    }
     return levels.stream()
         .filter(l -> l.rank() <= clearanceRank && !l.allowlistRequired())
         .max(java.util.Comparator.comparingInt(LevelPolicy::rank));

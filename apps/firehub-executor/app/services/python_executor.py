@@ -15,7 +15,7 @@ from app.config import Settings
 from app.db.connection import get_connection
 from app.schemas.responses import PythonExecuteResponse
 from app.services.db_utils import insert_batch
-from app.tenant import resolve_db_url, resolve_schema
+from app.tenant import resolve_read_db_url, resolve_schema
 
 logger = logging.getLogger(__name__)
 
@@ -26,10 +26,11 @@ def execute_python(
     settings: Settings,
     *,
     tenant_id: int,
+    read_slot: int,
     output_table: Optional[str] = None,
     column_type_map: Optional[dict] = None,
 ) -> PythonExecuteResponse:
-    """사용자 Python 스크립트를 실행한다. ``tenant_id`` 는 **키워드 전용 필수** 인자다.
+    """사용자 Python 스크립트를 실행한다. ``tenant_id``·``read_slot`` 은 **키워드 전용 필수** 인자다.
 
     키워드 전용인 이유: 위치 인자로 두면 이관하지 않은 호출부가 값을 ``output_table`` 자리에
     조용히 넣을 수 있다. 키워드 전용이면 누락이 곧 ``TypeError`` 다.
@@ -37,13 +38,21 @@ def execute_python(
     이 함수가 자식 프로세스에 넘기는 ``DB_URL``/``DB_SCHEMA`` 는 **테넌트별**이다 — 이 경로에는
     SQL 문장 검증기가 없어서(사용자 코드가 psycopg2 로 임의 문장을 실행한다) 격리를 강제하는
     유일한 수단이 접속 롤의 권한이다.
+
+    ``DB_URL`` 은 테넌트 실행 롤이 아니라 **읽기 슬롯 롤**(``pipeline_py_t{id}_s{k}``)로 직접 로그인한다
+    (WD-29). 슬롯 롤은 등급 위치 1..k 데이터셋만 SELECT 할 수 있어 실행 주체의 등급 밖 데이터를 읽지
+    못한다. SET ROLE 이 아니라 직접 로그인인 이유는 스크립트가 RESET ROLE 로 되돌릴 수 있어서다.
+    슬롯이 잘못되면 스크립트를 띄우기 전에 ``TenantResolutionError`` — 테넌트 롤 폴백은 없다(fail-closed).
+    stdout JSON 출력 적재만 테넌트 롤 커넥션(``get_connection``)으로 executor 가 한다.
     """
     effective_timeout = timeout if timeout is not None else settings.python_timeout
 
     # nsjail 경로와 비nsjail 경로가 **같은 값**을 쓰도록 한 번만 파생한다.
     # (두 경로가 각자 조립하면 배포 설정에 따라 접속 주체가 조용히 갈린다 — #270 주석이
     #  "동작이 일치한다"고 보장하는 지점이므로 한쪽만 바꾸면 그 보장이 깨진다.)
-    tenant_db_url = resolve_db_url(tenant_id, settings)
+    # 스크립트는 실행 주체 슬롯 롤로 **직접 로그인**한다(WD-29). 슬롯 검증 실패는 여기서 예외 —
+    # 스크립트를 띄우기 전에 끝난다. 테넌트 롤은 아래 출력 적재(get_connection)에만 쓴다(폴백 아님).
+    script_db_url = resolve_read_db_url(tenant_id, read_slot, settings)
     tenant_schema = resolve_schema(tenant_id)
 
     script_path = None
@@ -95,8 +104,8 @@ def execute_python(
                 # DB 접근은 DB_URL 하나로 충분(psycopg2.connect(os.environ["DB_URL"])).
                 # 개별 자격증명 키(DB_USER/DB_PASSWORD/DB_HOST/...)는 공격 표면을 늘릴 뿐이라 주입하지 않는다.
                 # nsjail 비활성 경로(아래)도 동일하게 DB_URL 만 제공하므로 동작이 일치한다. (#270)
-                # 자격증명은 공유 롤이 아니라 **요청 테넌트의 롤**이다(P3-b1).
-                "--env", f"DB_URL={tenant_db_url}",
+                # 자격증명은 공유 롤도 테넌트 실행 롤도 아닌 **실행 주체의 읽기 슬롯 롤**이다(P3-b1 → WD-29).
+                "--env", f"DB_URL={script_db_url}",
                 "--env", f"DB_SCHEMA={tenant_schema}",
                 "--env", f"PYTHONPATH=/opt/python-packages",
                 "--env", "PATH=/usr/bin:/usr/local/bin",
@@ -115,7 +124,7 @@ def execute_python(
             # DB_URL에도 패스워드가 포함되나, 개별 키 노출보다 공격 표면을 최소화. (#89)
             env = {
                 # nsjail 경로와 **같은** 파생값을 쓴다(위 주석 참고).
-                "DB_URL": tenant_db_url,
+                "DB_URL": script_db_url,
                 "DB_SCHEMA": tenant_schema,
                 "PATH": "/usr/bin:/usr/local/bin",
                 "HOME": "/tmp",

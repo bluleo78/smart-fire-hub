@@ -790,20 +790,28 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
   }
 
   /**
-   * 코드리뷰 CR2 — 실행 시점: 실행 주체가 볼 수 없는 지정 출력에 PYTHON 스텝이 쓰지 못한다. 실행기 끈 REPLACE 는 스크립트 실행 전에 출력을
-   * truncate 하므로, 관문이 없으면 스크립트 성패와 무관하게 숨김 데이터셋이 비워진다 — 행 수로 확인한다. 거부 메시지는 구분 불가 문구.
+   * 코드리뷰 CR2 — 실행 시점: 실행 주체가 볼 수 없는 지정 출력에 PYTHON 스텝이 쓰지 못한다. 거부는 슬롯 준비·REPLACE 맞바꿈·적재 전에 구분 불가 문구로
+   * 나고, 숨김 데이터셋의 행은 그대로다(값으로 확인).
+   *
+   * <p>스크립트는 출력 컬럼 v 에 맞는 JSON 행을 stdout 으로 낸다 — 판정이 없으면 REPLACE 가 원본을 r1·r2 로 바꿔 행 단언이 실패한다(비JSON
+   * stdout 이면 판정이 없어도 0행 → 원본 유지라 단언이 공허했다, Task 5 리뷰 M4). 대조군: 볼 수 있는 실행 주체의 같은 실행은 COMPLETED 이고
+   * 실제로 원본을 r1·r2 로 바꾼다.
    */
   @Test
   void run_pythonStepWithHiddenExplicitOutput_failsAndKeepsRows() throws Exception {
     String outTable = m + "_pyout";
     long hiddenOut = table(outTable, "민감");
     insertRow(outTable, "keep");
-    long p = pipeline(pythonUserAt("민감"), List.of(pythonStep(hiddenOut)));
+    long sens = pythonUserAt("민감");
+    long p =
+        pipeline(
+            sens,
+            List.of(pythonJsonStep(hiddenOut, "[{\"v\": \"r1\"}, {\"v\": \"r2\"}]", "REPLACE")));
     long runner = pythonUserAt("공개");
     long exec = executionService.executePipeline(p, runner);
     assertThat(waitForEnd(exec)).isEqualTo("FAILED");
     assertThat(stepError(exec)).isEqualTo(DatasetAccessGuard.SQL_ACCESS_DENIED_MESSAGE);
-    assertThat(rowCount(outTable)).isEqualTo(1);
+    assertThat(values(outTable)).containsExactly("keep");
     // 코드리뷰 8: 거부가 트랜잭션(enforcePythonOutputLevel) 안에서 나도 거부 감사는 롤백되지 않고 정확히 1건(중복 판정 제거 후 이중 감사 없음).
     awaitSecurityAudit();
     int denials =
@@ -815,6 +823,10 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
                         runner)
                     .get(0, Integer.class));
     assertThat(denials).isEqualTo(1);
+
+    // 대조군: 출력을 볼 수 있는 실행 주체는 같은 스텝으로 실제 적재한다.
+    assertThat(waitForEnd(executionService.executePipeline(p, sens))).isEqualTo("COMPLETED");
+    assertThat(values(outTable)).containsExactly("r1", "r2");
   }
 
   /** API_CALL 도 같다 — 거부는 API 호출·REPLACE 맞바꿈 전에 구분 불가 메시지로 난다(호출 실패 메시지가 아니다). */
@@ -831,14 +843,15 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
   }
 
   /**
-   * 러너 TEMP 를 만드는 PYTHON 스텝(출력 미지정 + outputColumns v). 실행기 끈 REPLACE 는 스크립트 실행 전에 출력을 truncate 한다.
+   * 러너 TEMP 를 만드는 PYTHON 스텝(출력 미지정 + outputColumns v). stdout 으로 v 컬럼 JSON 행 하나(r1)를 낸다 — REPLACE
+   * 실행이 끝까지 가면 TEMP 는 정확히 [r1] 이 되므로, 판정이 빠지면 행 단언이 실패한다(Task 5 리뷰 M4).
    */
   private static PipelineStepRequest pythonTempStep() {
     return new PipelineStepRequest(
         "step",
         null,
         "PYTHON",
-        "print('x')",
+        "print('[{\"v\": \"r1\"}]')",
         null,
         null,
         null,
@@ -876,11 +889,12 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
 
   /**
    * 후속 F1 — API_CALL·PYTHON 의 러너 TEMP 재사용에도 실행 주체 VIEW 판정이 있다. 재실행에서 TEMP 는 coalesce 폴백으로 "들어온 출력"이
-   * 되는데, 예전 판정은 러너 TEMP 를 건너뛰어 볼 수 없는 실행 주체가 TEMP 를 비우고(실행기 끈 PYTHON REPLACE 는 실행 전 truncate) 덮어썼다.
-   * 관리자가 TEMP 등급을 실행 주체 자격보다 높이면 다음 실행은 쓰기 전에 구분 불가 메시지로 실패하고 TEMP 는 그대로(같은 id·행 수·등급)여야 한다.
+   * 되는데, 예전 판정은 러너 TEMP 를 건너뛰어 볼 수 없는 실행 주체가 TEMP 를 비우고 덮어썼다. 관리자가 TEMP 등급을 실행 주체 자격보다 높이면 다음 실행은
+   * 쓰기 전에 구분 불가 메시지로 실패하고 TEMP 는 그대로(같은 id·행 수·등급)여야 한다.
    *
-   * <p>대조군: 등급을 올리기 전에는 같은 실행 주체의 재실행이 보안 판정으로 막히지 않는다(PYTHON 은 truncate 까지 도달해 행이 0 이 된다) — 실패가 다른
-   * 이유가 아니라 등급 때문임을 보인다.
+   * <p>대조군: 등급을 올리기 전에는 같은 실행 주체의 재실행이 보안 판정·슬롯 준비·실행·적재를 모두 통과해 <b>COMPLETED</b> 다(R5 이후 실행기 끈
+   * PYTHON 도 출력을 적재하므로 거부되지 않는다) — 이후의 실패가 다른 이유가 아니라 등급 때문임을 보인다. 대조군 실행은 REPLACE 로 TEMP 를 [r1] 로
+   * 바꾸므로(손으로 넣은 a1 이 사라짐) 실제 적재가 일어났음이 보이고, 거부 실행 뒤 [keep, r1] 이 남는 것은 판정이 맞바꿈 전에 났다는 증거다.
    */
   @Test
   void run_pythonReusedTempRaisedAboveRunAs_failsAndKeepsTemp() throws Exception {
@@ -891,13 +905,12 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
     long temp = tempOf(p, "step");
     String tempTable = tableNameOf(temp);
 
-    // 대조군: 등급을 올리기 전 B 의 재실행은 판정을 통과해 truncate 에 닿는다.
+    // 대조군: 등급을 올리기 전 B 의 재실행은 판정을 통과해 끝까지 간다(COMPLETED) — REPLACE 적재로 a1 이 r1 로 바뀐다.
     insertRow(tempTable, "a1");
     long control = executionService.executePipeline(p, b);
-    waitForEnd(control);
-    assertThat(failedStepErrorOrNull(control))
-        .isNotEqualTo(DatasetAccessGuard.SQL_ACCESS_DENIED_MESSAGE);
-    assertThat(rowCount(tempTable)).isZero();
+    assertThat(waitForEnd(control)).isEqualTo("COMPLETED");
+    assertThat(failedStepErrorOrNull(control)).isNull();
+    assertThat(values(tempTable)).containsExactly("r1");
 
     insertRow(tempTable, "keep");
     setLevel(temp, "기밀");
@@ -905,7 +918,7 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
     assertThat(waitForEnd(exec)).isEqualTo("FAILED");
     assertThat(stepError(exec)).isEqualTo(DatasetAccessGuard.SQL_ACCESS_DENIED_MESSAGE);
     assertThat(tempOf(p, "step")).isEqualTo(temp);
-    assertThat(rowCount(tempTable)).isEqualTo(1);
+    assertThat(values(tempTable)).containsExactly("keep", "r1");
     assertThat(levelOf(temp)).isEqualTo(fx.levelId("기밀"));
   }
 
@@ -934,6 +947,137 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
     assertThat(tempOf(p, "step")).isEqualTo(temp);
     assertThat(rowCount(tempTable)).isEqualTo(1);
     assertThat(levelOf(temp)).isEqualTo(fx.levelId("기밀"));
+  }
+
+  // ---------------------------------------------------------------------------
+  // 로컬(실행기 끔) PYTHON 출력 적재 — R5: stdout JSON 을 API 가 적재(executor 계약)
+  // ---------------------------------------------------------------------------
+
+  /** stdout 에 JSON 행 배열을 내는 PYTHON 스텝(DB 접속 없음 — 호스트 python3 에 psycopg2 가 없어도 돈다). */
+  private static PipelineStepRequest pythonJsonStep(
+      Long outputDatasetId, String json, String strategy) {
+    return new PipelineStepRequest(
+        "step", null, "PYTHON", "print('" + json + "')", outputDatasetId, null, null, strategy);
+  }
+
+  private List<String> values(String t) {
+    return inTenantFixture(
+        () ->
+            dsl.fetch("SELECT v FROM " + DataSchema.qualify(t) + " ORDER BY v")
+                .getValues(0, String.class));
+  }
+
+  /** REPLACE: 원본 행을 stdout JSON 행으로 바꾼다. 두 번 돌려도 누적되지 않는다(_tmp 맞바꿈). */
+  @Test
+  void run_localPythonReplace_loadsStdoutJsonRows() throws Exception {
+    String out = m + "_pyjs";
+    long outId = table(out, "공개");
+    insertRow(out, "old");
+    long user = pythonUserAt("공개");
+    long p =
+        pipeline(
+            user, List.of(pythonJsonStep(outId, "[{\"v\": \"r1\"}, {\"v\": \"r2\"}]", "REPLACE")));
+
+    assertThat(waitForEnd(executionService.executePipeline(p, user))).isEqualTo("COMPLETED");
+    assertThat(values(out)).containsExactly("r1", "r2");
+    assertThat(waitForEnd(executionService.executePipeline(p, user))).isEqualTo("COMPLETED");
+    assertThat(values(out)).containsExactly("r1", "r2");
+  }
+
+  /** APPEND: 실행마다 stdout JSON 행을 더한다. */
+  @Test
+  void run_localPythonAppend_accumulatesStdoutJsonRows() throws Exception {
+    String out = m + "_pyap";
+    long outId = table(out, "공개");
+    insertRow(out, "old");
+    long user = pythonUserAt("공개");
+    long p =
+        pipeline(
+            user, List.of(pythonJsonStep(outId, "[{\"v\": \"a\"}, {\"v\": \"b\"}]", "APPEND")));
+
+    assertThat(waitForEnd(executionService.executePipeline(p, user))).isEqualTo("COMPLETED");
+    assertThat(rowCount(out)).isEqualTo(3);
+    assertThat(waitForEnd(executionService.executePipeline(p, user))).isEqualTo("COMPLETED");
+    assertThat(rowCount(out)).isEqualTo(5);
+  }
+
+  /**
+   * 동작 변화(R5): 예전 로컬 REPLACE 는 스크립트 전에 출력을 비웠다 — 비JSON stdout 이면 빈 테이블이 남았다. 이제 실행기 켠 경로와 같이 0행이면
+   * 원본을 유지한다(#685).
+   */
+  @Test
+  void run_localPythonReplace_nonJsonStdout_keepsOriginalRows() throws Exception {
+    String out = m + "_pynj";
+    long outId = table(out, "공개");
+    insertRow(out, "old");
+    long user = pythonUserAt("공개");
+    long p = pipeline(user, List.of(pythonStep(outId)));
+
+    assertThat(waitForEnd(executionService.executePipeline(p, user))).isEqualTo("COMPLETED");
+    assertThat(values(out)).containsExactly("old");
+  }
+
+  /** 타입 있는 컬럼: executor 와 같은 변환(INTEGER·DECIMAL·BOOLEAN·DATE·TIMESTAMP)으로 적재된다. 변환 실패 값은 NULL. */
+  @Test
+  void run_localPython_typedColumns_areConvertedLikeExecutor() throws Exception {
+    String out = m + "_pyty";
+    long outId =
+        datasetService
+            .createDataset(
+                new CreateDatasetRequest(
+                    out,
+                    out,
+                    null,
+                    null,
+                    "TABLE",
+                    "SOURCE",
+                    List.of(
+                        new DatasetColumnRequest(
+                            "n", "n", "INTEGER", null, true, false, null, false),
+                        new DatasetColumnRequest(
+                            "d", "d", "DECIMAL", null, true, false, null, false),
+                        new DatasetColumnRequest(
+                            "b", "b", "BOOLEAN", null, true, false, null, false),
+                        new DatasetColumnRequest(
+                            "dt", "dt", "DATE", null, true, false, null, false),
+                        new DatasetColumnRequest(
+                            "ts", "ts", "TIMESTAMP", null, true, false, null, false)),
+                    null),
+                owner)
+            .id();
+    datasets.add(outId);
+    setLevel(outId, "공개");
+    long user = pythonUserAt("공개");
+    String json =
+        "[{\"n\": \"9000000000\", \"d\": 1.5, \"b\": \"yes\", \"dt\": \"2024-02-29\","
+            + " \"ts\": \"2024-01-02 03:04:05\"},"
+            + " {\"n\": \"1.0\", \"d\": \"x\", \"b\": 0, \"dt\": \"nope\", \"ts\": \"nope\"}]";
+    long p = pipeline(user, List.of(pythonJsonStep(outId, json, "REPLACE")));
+
+    assertThat(waitForEnd(executionService.executePipeline(p, user))).isEqualTo("COMPLETED");
+    var rows =
+        inTenantFixture(
+            () ->
+                dsl.fetch(
+                    "SELECT n, d, b, dt, ts FROM "
+                        + DataSchema.qualify(out)
+                        + " ORDER BY n NULLS LAST"));
+    assertThat(rows).hasSize(2);
+    assertThat(rows.get(0).get("n", Long.class))
+        .as("BIGINT 범위 — ?::integer 캐스트면 넘친다")
+        .isEqualTo(9_000_000_000L);
+    assertThat(rows.get(0).get("d", java.math.BigDecimal.class)).isEqualByComparingTo("1.5");
+    assertThat(rows.get(0).get("b", Boolean.class)).isTrue();
+    assertThat(rows.get(0).get("dt", java.time.LocalDate.class))
+        .isEqualTo(java.time.LocalDate.of(2024, 2, 29));
+    assertThat(rows.get(0).get("ts", java.time.LocalDateTime.class))
+        .isEqualTo(java.time.LocalDateTime.of(2024, 1, 2, 3, 4, 5));
+    // 변환 실패 → NULL(오류 아님), BOOLEAN 0 → false
+    assertThat(rows.get(1).get("n")).isNull();
+    assertThat(rows.get(1).get("d")).isNull();
+    assertThat(rows.get(1).get("b", Boolean.class)).isFalse();
+    assertThat(rows.get(1).get("dt")).isNull();
+    assertThat(rows.get(1).get("ts")).isNull();
   }
 
   private String tableNameOf(long datasetId) {

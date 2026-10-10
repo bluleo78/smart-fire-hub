@@ -114,7 +114,10 @@ export function ApiImportWizard({
   const [fieldMappings, setFieldMappings] = useState<FieldMapping[]>([]);
 
   // Step 4 state
-  const [pipelineName, setPipelineName] = useState(`${datasetName} API Import`);
+  // 기본 이름에 데이터셋 이름을 넣지 않는다(WD-31④) — 파이프라인 목록은 데이터셋 등급 판정을 거치지 않아
+  // 그 데이터셋을 볼 수 없는 사용자에게 이름이 새어 나간다. 데이터셋 id 만 쓴다.
+  const defaultPipelineName = `API Import #${datasetId}`;
+  const [pipelineName, setPipelineName] = useState(defaultPipelineName);
   const [loadStrategy, setLoadStrategy] = useState('REPLACE');
   const [executeImmediately, setExecuteImmediately] = useState(true);
   const [scheduleEnabled, setScheduleEnabled] = useState(false);
@@ -218,7 +221,7 @@ export function ApiImportWizard({
 
     createApiImport.mutate(
       {
-        pipelineName: pipelineName || `${datasetName} API Import`,
+        pipelineName: pipelineName || defaultPipelineName,
         apiConfig: buildApiConfig(),
         loadStrategy,
         executeImmediately,
@@ -705,7 +708,7 @@ export function ApiImportWizard({
                 id={`${baseId}-pipelineName`}
                 value={pipelineName}
                 onChange={(e) => setPipelineName(e.target.value)}
-                placeholder={`${datasetName} API Import`}
+                placeholder={defaultPipelineName}
               />
             </div>
 

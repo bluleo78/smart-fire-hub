@@ -89,7 +89,8 @@ class AnalyticsDashboardServiceUnitTest {
             userId,
             LocalDateTime.now(),
             LocalDateTime.now(),
-            0L);
+            0L,
+            false);
 
     AnalyticsQueryResponse queryResponse =
         new AnalyticsQueryResponse("SELECT 1", List.of(), List.of(), 0, 0L, 0, false, null);
@@ -164,7 +165,8 @@ class AnalyticsDashboardServiceUnitTest {
             userId,
             LocalDateTime.now(),
             LocalDateTime.now(),
-            0L);
+            0L,
+            false);
     ChartResponse chartResponse2 =
         new ChartResponse(
             chartId2,
@@ -179,7 +181,8 @@ class AnalyticsDashboardServiceUnitTest {
             userId,
             LocalDateTime.now(),
             LocalDateTime.now(),
-            0L);
+            0L,
+            false);
 
     AnalyticsQueryResponse queryResponse =
         new AnalyticsQueryResponse("SELECT 1", List.of(), List.of(), 0, 0L, 0, false, null);

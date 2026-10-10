@@ -117,6 +117,13 @@ public class TenantPipelineRoleBootstrap {
     if (!roleProvisioner.roleExists(tenantId)) {
       roleProvisioner.ensureRole(tenantId);
     }
+    // PYTHON 읽기 슬롯 롤(WD-29)도 같은 원칙 — 없을 때만 만든다. 비밀번호 회전은 RolePasswordSyncCallback 몫.
+    if (!roleProvisioner.pythonReadRolesExist(tenantId)) {
+      roleProvisioner.ensurePythonReadRoles(tenantId);
+    }
+    // 스키마 USAGE 는 롤 존재 여부와 무관하게 확인한다(CR10) — 롤은 있는데 USAGE 만 빠진 상태는 위 판정으로는 안 고쳐진다.
+    // 이미 완비면 조회 한 번이다.
+    roleProvisioner.ensurePythonReadSchemaUsage(tenantId);
     healSchemaGrants(tenantId);
   }
 

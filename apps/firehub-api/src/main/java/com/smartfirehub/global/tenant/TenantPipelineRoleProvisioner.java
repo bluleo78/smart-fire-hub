@@ -3,6 +3,8 @@ package com.smartfirehub.global.tenant;
 import static org.jooq.impl.DSL.inline;
 import static org.jooq.impl.DSL.name;
 
+import java.util.ArrayList;
+import java.util.List;
 import javax.sql.DataSource;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -76,6 +78,49 @@ public class TenantPipelineRoleProvisioner {
   }
 
   /**
+   * 테넌트 PYTHON 읽기 슬롯 롤({@code pipeline_py_t{id}_s1..s10})의 활성 세션을 모두 끊는다 — 등급 정의 변경 재동기화가 새 GRANT 를
+   * 커밋하기 전에 부른다(PythonReadGrantSync, WD-29 CR2). 런타임 롤(app_tenant)은 슬롯 롤 세션을 끊을 권한이
+   * 없어(pg_signal_backend·슬롯 롤 멤버 아님, 실측) 슬롯 롤 수명을 맡은 이 클래스의 소유자 연결로 한다.
+   *
+   * <p>대상은 정확한 롤 이름 목록으로만 고른다(LIKE 금지 — 다른 테넌트 롤 오인 방지). {@code pg_terminate_backend(pid, 5000)} 은
+   * 대상이 실제로 끝날 때까지(최대 5초) 기다려, 호출자가 이 뒤에 커밋하는 GRANT 를 그 세션이 보지 못한다. false 는 시간 초과이거나 조회와 종료 사이에 이미
+   * 끝난 세션(경고만)이라, 아직 살아 있는지 다시 본다. 남아 있거나 권한이 없으면 예외 — 호출자 트랜잭션(넓히는 GRANT)을 되돌린다(fail-closed).
+   *
+   * @return 끊은(종료 신호를 보낸) 세션 수
+   */
+  public int terminatePythonReadSessions(long tenantId) {
+    String[] roles = TenantPipelineRole.pythonReadRoleNames(tenantId).toArray(new String[0]);
+    var results =
+        ownerDsl.fetch(
+            "select pid, pg_terminate_backend(pid, 5000) from pg_stat_activity"
+                + " where usename::text = any({0}::text[])",
+            DSL.val(roles));
+    List<Integer> unconfirmed = new ArrayList<>();
+    for (var r : results) {
+      if (!Boolean.TRUE.equals(r.get(1, Boolean.class))) {
+        unconfirmed.add(r.get(0, Integer.class));
+      }
+    }
+    if (!unconfirmed.isEmpty()) {
+      int alive =
+          ownerDsl
+              .fetchOne(
+                  "select count(*)::int from pg_stat_activity where pid = any({0}::int[])",
+                  DSL.val(unconfirmed.toArray(new Integer[0])))
+              .get(0, Integer.class);
+      if (alive > 0) {
+        log.error(
+            "PYTHON 슬롯 롤 세션 종료 실패: tenant={} 대상 {}개 중 {}개가 끝나지 않음",
+            tenantId,
+            results.size(),
+            alive);
+        throw new IllegalStateException("PYTHON 슬롯 롤 세션을 끊지 못해 등급 변경 재동기화를 되돌렸습니다.");
+      }
+    }
+    return results.size();
+  }
+
+  /**
    * 자동 프로비저닝 스위치의 현재 값. 이 플래그를 읽어야 하는 곳이 두 군데(테넌트 생성 호출부와 기동 치유 루프)라, 프로퍼티 이름을 양쪽에 적는 대신 여기 한 곳에서만
    * 읽는다.
    */
@@ -83,13 +128,20 @@ public class TenantPipelineRoleProvisioner {
     return autoProvisionEnabled;
   }
 
-  /** 자동 프로비저닝이 켜져 있을 때만 {@link #ensureRole} 을 부른다. 근거는 필드 Javadoc 참조. */
+  /**
+   * 자동 프로비저닝이 켜져 있을 때만 {@link #ensureRole} 과 {@link #ensurePythonReadRoles} 를 부른다. 근거는 필드 Javadoc
+   * 참조.
+   *
+   * <p>슬롯 롤도 여기서 함께 만든다 — 신규 테넌트({@code PlatformTenantService})가 이 메서드 하나만 부르므로, 따로 두면 신규 테넌트의
+   * PYTHON 스텝이 첫 실행에서 인증 실패로 멈춘다.
+   */
   public void ensureRoleIfAutoProvisionEnabled(long tenantId) {
     if (!autoProvisionEnabled) {
       log.debug("테넌트 파이프라인 롤 자동 프로비저닝이 꺼져 있다 — 건너뛴다 (tenant={})", tenantId);
       return;
     }
     ensureRole(tenantId);
+    ensurePythonReadRoles(tenantId);
   }
 
   /**
@@ -152,6 +204,90 @@ public class TenantPipelineRoleProvisioner {
               name(roleName), name(database), name(schema));
         });
     log.info("테넌트 파이프라인 롤 준비 완료: {} (search_path={})", roleName, schema);
+  }
+
+  /**
+   * 테넌트의 PYTHON 읽기 슬롯 롤 10개({@code pipeline_py_t{id}_s{k}}, WD-29)를 접속 가능한 상태로 보장한다(스펙 §4.4).
+   * <b>멱등</b>이고, 자동 프로비저닝 플래그와 무관하다({@link #ensureRole} 과 같은 이유 — 기계장치는 항상 동작하고 플래그는 자동 호출부만 끈다).
+   *
+   * <p>스키마가 이미 있으면 USAGE 까지 건다. 스키마가 나중에 생기는 순서는 {@link TenantSchemaProvisioner} 가 생성 트랜잭션에서 건다 — 두
+   * 순서 모두에서 USAGE 가 빠지지 않게 하려는 것이다. 테이블 SELECT 는 여기서 다루지 않는다(PythonReadGrantSync, 런타임 롤 몫).
+   *
+   * <p>슬롯 롤은 {@code NOINHERIT} 등 최소 속성으로 만든다 — 사용자 스크립트가 이 자격증명을 그대로 들고 돌기 때문에, 다른 롤을 통해 권한이 새는 경로를
+   * 처음부터 닫는다. 10개를 한 트랜잭션으로 묶어 "일부 슬롯만 있는" 중간 상태가 남지 않게 한다.
+   */
+  public void ensurePythonReadRoles(long tenantId) {
+    String schema = DataSchema.forTenant(tenantId);
+    ownerDsl.transaction(
+        cfg -> {
+          DSLContext tx = DSL.using(cfg);
+          // ensureRole 과 같은 이유로 클러스터 전역 직렬화한다(기동 치유·테넌트 생성·롤링 업데이트 경합 시
+          // 23505·tuple concurrently updated 회피). 락 키는 실행 롤과 겹치지 않게 별도 문자열을 쓴다.
+          tx.execute(
+              "SELECT pg_advisory_xact_lock(hashtext({0})::bigint)",
+              inline("python_read_roles_t" + tenantId));
+          String database = currentDatabase(tx);
+          boolean schemaExists = TenantSchemaProvisioner.schemaExists(tx, schema);
+          for (int slot = 1; slot <= TenantPipelineRole.PYTHON_READ_SLOTS; slot++) {
+            String role = TenantPipelineRole.pythonReadRoleName(tenantId, slot);
+            String password = TenantPipelineRole.pythonReadPassword(tenantId, slot, passwordSecret);
+            if (TenantSchemaProvisioner.roleExists(tx, role)) {
+              tx.execute("ALTER ROLE {0} WITH LOGIN PASSWORD {1}", name(role), inline(password));
+            } else {
+              tx.execute(
+                  "CREATE ROLE {0} LOGIN PASSWORD {1}"
+                      + " NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOINHERIT",
+                  name(role), inline(password));
+            }
+            tx.execute("GRANT CONNECT ON DATABASE {0} TO {1}", name(database), name(role));
+            // ensureRole 과 같은 함정 — IN DATABASE 가 빠지면 클러스터 전 DB 에 search_path 가 걸린다.
+            tx.execute(
+                "ALTER ROLE {0} IN DATABASE {1} SET search_path TO {2}",
+                name(role), name(database), name(schema));
+            // 이 롤에 '직접' 부여된 public 스키마 권한만 걷는다(멱등·방어적). PUBLIC 의사 롤 경유 USAGE 는 걷지 못해
+            // 스키마 안 이름 조회는 될 수 있다 — 앱 메타데이터(public 테이블)를 못 읽게 하는 실제 방어선은 테이블 권한(이 롤·
+            // PUBLIC 대상 SELECT GRANT 가 없음)이다.
+            tx.execute("REVOKE ALL ON SCHEMA public FROM {0}", name(role));
+          }
+          if (schemaExists) {
+            TenantSchemaProvisioner.grantPythonReadSchemaUsage(tx, tenantId, schema);
+          }
+        });
+    log.info("PYTHON 읽기 슬롯 롤 준비 완료: tenant={} (search_path={})", tenantId, schema);
+  }
+
+  /**
+   * 스키마가 있으면 슬롯 롤의 스키마 USAGE 누락을 복구한다(CR10) — 기동 치유가 롤 존재 여부와 무관하게 부른다. 롤은 다 있는데 USAGE 만 빠진 상태(운영자
+   * 수동 REVOKE·부분 복원)는 "롤이 없을 때만 만든다" 판정으로는 영영 안 고쳐지고, 그 테넌트 PYTHON 이 {@code permission denied for
+   * schema} 로 멈추기 때문이다. 이미 완비면 조회 한 번뿐이다(카탈로그 쓰기 없음). 스키마가 없으면 아무것도 하지 않는다 — 지연 생성 설계 유지.
+   *
+   * @return USAGE 를 새로 건 롤 수
+   */
+  public int ensurePythonReadSchemaUsage(long tenantId) {
+    String schema = DataSchema.forTenant(tenantId);
+    return ownerDsl.transactionResult(
+        cfg -> {
+          DSLContext tx = DSL.using(cfg);
+          if (!TenantSchemaProvisioner.schemaExists(tx, schema)) {
+            return 0;
+          }
+          return TenantSchemaProvisioner.grantPythonReadSchemaUsage(tx, tenantId, schema);
+        });
+  }
+
+  /**
+   * 슬롯 롤 10개가 모두 있는가 — 기동 치유가 "없을 때만 만든다"를 판정할 때 쓴다. 하나라도 빠지면 false. 테넌트마다 기동 시 부르므로 롤별 조회 대신
+   * pg_roles 를 한 번만 본다.
+   */
+  public boolean pythonReadRolesExist(long tenantId) {
+    List<String> roles = TenantPipelineRole.pythonReadRoleNames(tenantId);
+    Integer found =
+        ownerDsl
+            .fetchOne(
+                "select count(*)::int from pg_roles where rolname::text = any({0}::text[])",
+                DSL.val(roles.toArray(new String[0])))
+            .get(0, Integer.class);
+    return found == roles.size();
   }
 
   /**

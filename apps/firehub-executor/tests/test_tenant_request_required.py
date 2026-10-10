@@ -20,7 +20,8 @@ from app.schemas.requests import (
 BODIES_WITHOUT_TENANT = {
     "/execute/sql": {"query": "SELECT 1"},
     "/execute/query": {"query": "SELECT 1", "max_rows": 10, "read_only": True},
-    "/execute/python": {"script": "print(1)"},
+    # readSlot 은 PYTHON 의 필수 필드(WD-29)라 넣어 둔다 — 여기서는 tenantId 누락만 검사한다.
+    "/execute/python": {"script": "print(1)", "readSlot": 1},
     "/execute/api-call": {
         "url": "http://public.example.com/api",
         "data_path": "$.items",
@@ -40,7 +41,7 @@ def test_camelcase_wire_name_is_accepted():
     payloads = {
         SqlExecuteRequest: {"query": "SELECT 1"},
         QueryExecuteRequest: {"query": "SELECT 1"},
-        PythonExecuteRequest: {"script": "pass"},
+        PythonExecuteRequest: {"script": "pass", "readSlot": 1},
         ApiCallExecuteRequest: {
             "url": "http://public.example.com/api",
             "data_path": "$.items",
@@ -74,4 +75,34 @@ def test_non_positive_or_non_integer_tenant_id_is_rejected(
         json={"query": "SELECT 1", "tenantId": bad},
     )
 
+    assert response.status_code == 422, response.text
+
+
+# ---------------------------------------------------------------------------
+# PYTHON 읽기 슬롯 readSlot 필수 (WD-29)
+#   readSlot 이 없거나 모호하면 422 — 기본 슬롯이나 테넌트 실행 롤로 폴백하지 않는다.
+# ---------------------------------------------------------------------------
+def test_python_read_slot_wire_name_is_accepted():
+    """Java 가 보내는 이름(readSlot)이 실제로 받아들여져야 한다 — alias 가 깨지면 모든 PYTHON 이 422."""
+    parsed = PythonExecuteRequest.model_validate({"script": "pass", "tenantId": 2, "readSlot": 3})
+    assert parsed.read_slot == 3
+
+
+def test_missing_read_slot_is_rejected(test_client: TestClient, mock_auth_header: dict):
+    """readSlot 이 없으면 422 — 구 API(readSlot 미전송)가 테넌트 롤로 실행되는 조합을 막는다."""
+    response = test_client.post(
+        "/execute/python", headers=mock_auth_header, json={"script": "print(1)", "tenantId": 1}
+    )
+    assert response.status_code == 422, response.text
+    assert "readSlot" in response.text
+
+
+@pytest.mark.parametrize("bad", [0, 11, -1, "2", 2.5, True])
+def test_out_of_range_or_non_integer_read_slot_is_rejected(bad, test_client: TestClient, mock_auth_header: dict):
+    """범위 밖·문자열·소수·bool 은 422. 조용한 정수 강제 변환은 HMAC 메시지(롤 이름) 표기를 Java 와 어긋나게 한다."""
+    response = test_client.post(
+        "/execute/python",
+        headers=mock_auth_header,
+        json={"script": "print(1)", "tenantId": 1, "readSlot": bad},
+    )
     assert response.status_code == 422, response.text

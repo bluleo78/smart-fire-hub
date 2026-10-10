@@ -154,7 +154,7 @@ class ExecutorClientTest {
                         }
                         """)));
 
-    var result = executorClient().executePython(Map.of("script", "print('hello')"));
+    var result = executorClient().executePython(Map.of("script", "print('hello')"), 2);
 
     assertThat(result.success()).isTrue();
     assertThat(result.output()).isEqualTo("hello\n");
@@ -194,7 +194,8 @@ class ExecutorClientTest {
                 Map.of(
                     "script", "print('done')",
                     "output_table", "my_table_tmp",
-                    "column_type_map", Map.of("col1", "TEXT", "col2", "INTEGER")));
+                    "column_type_map", Map.of("col1", "TEXT", "col2", "INTEGER")),
+                2);
 
     assertThat(result.success()).isTrue();
     assertThat(result.rowsLoaded()).isEqualTo(5);
@@ -221,7 +222,7 @@ class ExecutorClientTest {
                         """)));
 
     var result =
-        executorClient().executePython(Map.of("script", "import json; print(json.dumps([]))"));
+        executorClient().executePython(Map.of("script", "import json; print(json.dumps([]))"), 2);
 
     assertThat(result.success()).isTrue();
     assertThat(result.rowsLoaded()).isEqualTo(42);
@@ -247,7 +248,7 @@ class ExecutorClientTest {
                         }
                         """)));
 
-    var result = executorClient().executePython(Map.of("script", "invalid python !!!@#"));
+    var result = executorClient().executePython(Map.of("script", "invalid python !!!@#"), 2);
 
     assertThat(result.success()).isFalse();
     assertThat(result.exitCode()).isEqualTo(1);
@@ -260,7 +261,7 @@ class ExecutorClientTest {
         post(urlEqualTo("/execute/python"))
             .willReturn(aResponse().withStatus(500).withBody("Internal Server Error")));
 
-    assertThatThrownBy(() -> executorClient().executePython(Map.of("script", "print('hello')")))
+    assertThatThrownBy(() -> executorClient().executePython(Map.of("script", "print('hello')"), 2))
         .isInstanceOf(Exception.class);
   }
 
@@ -452,7 +453,7 @@ class ExecutorClientTest {
 
     executorClient().executeSql("SELECT 1");
     executorClient().executeQuery("SELECT 1", 10, true);
-    executorClient().executePython(Map.of("script", "pass"));
+    executorClient().executePython(Map.of("script", "pass"), 2);
     executorClient().executeApiCall(Map.of("url", "https://example.com"));
 
     for (String path :
@@ -461,6 +462,29 @@ class ExecutorClientTest {
           postRequestedFor(urlEqualTo(path))
               .withRequestBody(matchingJsonPath("$.tenantId", equalTo("1"))));
     }
+  }
+
+  /** readSlot 이 본문에 실린다(WD-29) — executor 는 이 값이 없으면 422(fail-closed). 테넌트 id 와 함께 실린다. */
+  @Test
+  void executePython_sendsReadSlot() {
+    stubOkFor("/execute/python", "{\"success\": true}");
+
+    executorClient().executePython(Map.of("script", "pass"), 3);
+
+    wireMock.verify(
+        postRequestedFor(urlEqualTo("/execute/python"))
+            .withRequestBody(matchingJsonPath("$.readSlot", equalTo("3")))
+            .withRequestBody(matchingJsonPath("$.tenantId", equalTo("1"))));
+  }
+
+  /** 범위 밖 슬롯(0·11)은 요청을 보내지 않고 즉시 거부한다 — 잘못된 값이 네트워크로 나가지 않게. */
+  @Test
+  void executePython_rejectsOutOfRangeSlotWithoutCalling() {
+    assertThatThrownBy(() -> executorClient().executePython(Map.of("script", "pass"), 0))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> executorClient().executePython(Map.of("script", "pass"), 11))
+        .isInstanceOf(IllegalArgumentException.class);
+    wireMock.verify(0, postRequestedFor(urlEqualTo("/execute/python")));
   }
 
   /** 테넌트가 없으면 요청을 보내지 않고 즉시 실패한다 — 조용히 남의 테넌트로 실행되지 않게. */
@@ -519,7 +543,7 @@ class ExecutorClientTest {
             + "\",\"exit_code\":0,\"error\":null,\"execution_time_ms\":1,\"rows_loaded\":0}");
     ExecutorClient smallLimit = smallLimitClient(4 * 1024);
 
-    assertThatThrownBy(() -> smallLimit.executePython(Map.of("script", "print('x')")))
+    assertThatThrownBy(() -> smallLimit.executePython(Map.of("script", "print('x')"), 2))
         .isInstanceOf(ExecutorResponseTooLargeException.class);
   }
 

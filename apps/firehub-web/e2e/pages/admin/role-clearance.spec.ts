@@ -227,7 +227,7 @@ test.describe('역할 편집 — 데이터 열람 등급', () => {
     await expect(card.getByRole('radio')).toHaveCount(0);
   });
 
-  test('권한 할당에 "보안" 카테고리와 PYTHON 우회 경고', async ({ authenticatedPage: page }) => {
+  test('권한 할당에 "보안" 카테고리와 PYTHON 등급 범위 읽기 안내', async ({ authenticatedPage: page }) => {
     await setupRoleDetailMocks(page, 3, false);
     await mockApi(page, 'GET', '/api/v1/roles/3/clearance', {
       roleId: 3,
@@ -251,8 +251,14 @@ test.describe('역할 편집 — 데이터 열람 등급', () => {
     ]);
     await page.goto('/admin/roles/3');
     await expect(page.getByRole('heading', { name: '보안', level: 3 })).toBeVisible();
-    await expect(
-      page.getByText('이 권한 보유자는 보안 등급 열람 통제를 우회할 수 있습니다', { exact: false }),
-    ).toBeVisible();
+    // WD-29 이후 Python 스텝은 실행 주체 등급 범위 안에서만 읽는다 — 우회 경고 대신 범위 안내를 보인다
+    const notice = page.getByText(
+      'Python 스크립트는 실행 주체의 열람 등급 안의 데이터만 읽습니다(트리거 실행은 트리거를 만든 사용자 기준). ' +
+        '허용 목록이 필요한 등급은 읽을 수 없습니다.',
+    );
+    await expect(notice).toBeVisible();
+    await expect(page.getByText('통제를 우회할 수 있습니다', { exact: false })).toHaveCount(0);
+    await notice.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: 'test-results/tc/role-clearance/python-read-notice.png' });
   });
 });

@@ -11,9 +11,12 @@ import pytest
 
 from app.config import Settings
 from app.tenant import (
+    MAX_READ_SLOT,
     TenantResolutionError,
-    resolve_db_url,
     resolve_password,
+    resolve_read_db_url,
+    resolve_read_password,
+    resolve_read_role,
     resolve_role,
     resolve_schema,
 )
@@ -89,26 +92,50 @@ def test_empty_secret_rejected():
 
 
 # ---------------------------------------------------------------------------
-# DB_URL 조립 — 공유 롤 자격증명이 새어 나가지 않아야 한다
+# PYTHON 읽기 슬롯 롤(pipeline_py_t{id}_s{k}) — Java TenantPipelineRole.pythonRead* 와의 언어 간 합의
 # ---------------------------------------------------------------------------
 
-def test_db_url_uses_tenant_role_not_shared_role():
-    settings = Settings(
-        db_host="db",
-        db_port=5432,
-        db_name="firehub",
-        db_user="pipeline_executor",
-        db_password="shared-role-password",
-        internal_service_token="t",
-        role_password_secret=TEST_ROLE_SECRET,
-    )
+# Java TenantPipelineRole.pythonReadPassword 와 같은 상수(TenantPipelineRoleTest 에도 같은 값이 있다).
+# hmac.new(b"test-tenant-pipeline-secret", b"<롤 이름>", sha256).hexdigest()[:32] 로 계산했고,
+# Java 테스트가 같은 값으로 통과하는 것을 확인했다.
+JAVA_DERIVED_READ_PASSWORDS = {
+    (1, 1): "1dd5681ab158149c2569b01c8a93a0ed",
+    (2, 3): "73a7e61046bfdb868a142bd1b5e3e196",
+    (42, 10): "a5a0aa64723b5c3e07a047b698eb9197",
+}
 
-    url = resolve_db_url(2, settings)
 
-    assert url == (
-        "postgresql://pipeline_executor_t2:"
-        f"{JAVA_DERIVED_PASSWORDS[2]}@db:5432/firehub"
+@pytest.mark.parametrize("key,expected", sorted(JAVA_DERIVED_READ_PASSWORDS.items()))
+def test_read_password_matches_java_derivation(key, expected):
+    tenant_id, slot = key
+    assert resolve_read_password(tenant_id, slot, TEST_ROLE_SECRET) == expected
+
+
+def test_read_role_name_convention():
+    assert resolve_read_role(1, 1) == "pipeline_py_t1_s1"
+    assert resolve_read_role(42, 10) == "pipeline_py_t42_s10"
+    assert MAX_READ_SLOT == 10
+
+
+# 범위 밖·모호한 슬롯은 거부(fail-closed) — bool 은 int 서브클래스라 별도로 막혀야 한다.
+@pytest.mark.parametrize("bad", [0, 11, -1, True, False, "2", 2.0, None])
+def test_invalid_read_slot_rejected(bad):
+    with pytest.raises(TenantResolutionError):
+        resolve_read_role(1, bad)
+
+
+# 슬롯 롤 비밀번호는 실행 롤 비밀번호와 달라야 하고, 빈 secret 은 거부한다.
+def test_read_password_differs_from_executor_password():
+    assert resolve_read_password(1, 1, TEST_ROLE_SECRET) != resolve_password(1, TEST_ROLE_SECRET)
+    with pytest.raises(TenantResolutionError):
+        resolve_read_password(1, 1, "")
+
+
+# 스크립트에 넘기는 DB_URL 은 슬롯 롤로 직접 로그인한다 — 테넌트 실행 롤이 섞이면 안 된다.
+def test_read_db_url_uses_slot_role_never_tenant_role():
+    settings = Settings.model_construct(
+        db_host="h", db_port=5432, db_name="d", role_password_secret=TEST_ROLE_SECRET
     )
-    # 공유 롤 이름·비밀번호가 사용자 스크립트로 새면 이 밴드의 통제가 무의미해진다.
-    assert "shared-role-password" not in url
-    assert "pipeline_executor:" not in url
+    url = resolve_read_db_url(2, 3, settings)
+    assert url == "postgresql://pipeline_py_t2_s3:73a7e61046bfdb868a142bd1b5e3e196@h:5432/d"
+    assert "pipeline_executor_t" not in url

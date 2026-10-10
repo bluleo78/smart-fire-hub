@@ -7,6 +7,7 @@ import com.smartfirehub.dataset.exception.InvalidTableNameException;
 import com.smartfirehub.dataset.rowsearch.IndexRef;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantSchemaProvisioner;
+import com.smartfirehub.securitylevel.pythonread.PythonReadGrantSync;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -21,6 +22,14 @@ public class DataTableService {
 
   private final DSLContext dsl;
   private final TenantSchemaProvisioner schemaProvisioner;
+
+  /**
+   * PYTHON 읽기 슬롯 GRANT 훅(WD-29). 새 테이블(생성·클론)과 RENAME 맞바꿈(ACL 을 잃는다) 뒤에 커밋 후 계산값을 맞춘다. 반드시 {@link
+   * PythonReadGrantSync#syncTableAfterCommit} 경유 — 미커밋 트랜잭션 안에서 동기화를 직접 부르면 새 연결이 그 트랜잭션을 기다려 자기
+   * 교착한다.
+   */
+  private final PythonReadGrantSync pythonReadGrantSync;
+
   private static final Pattern VALID_NAME = Pattern.compile("^[a-z][a-z0-9_]*$");
 
   /** 행 변경 시각 시스템 컬럼 — 파이프라인 증분 처리({{last_run_at}})의 기준. 트리거가 관리한다. */
@@ -187,6 +196,8 @@ public class DataTableService {
       uniqueSql.append(")");
       dsl.execute(uniqueSql.toString());
     }
+    // PYTHON 읽기 슬롯 GRANT — 새 테이블은 ACL 이 비어 있다. 커밋 후 데이터셋 등급 기준으로 맞춘다.
+    pythonReadGrantSync.syncTableAfterCommit(tableName);
   }
 
   public void addColumn(String tableName, DatasetColumnRequest column) {
@@ -428,6 +439,9 @@ public class DataTableService {
                   + seq
                   + "\"");
         });
+    // PYTHON 읽기 슬롯 GRANT — RENAME 으로 들어온 _tmp 테이블은 원본 ACL 을 갖지 않는다. 맞바꿈 트랜잭션 블록 뒤라
+    // 바깥 트랜잭션이 없으면 즉시, 있으면 그 커밋 후 복원한다.
+    pythonReadGrantSync.syncTableAfterCommit(tableName);
   }
 
   /**
@@ -582,6 +596,8 @@ public class DataTableService {
         createGistIndex(targetTable, col.columnName());
       }
     }
+    // PYTHON 읽기 슬롯 GRANT — CTAS 복제본은 새 테이블이라 ACL 이 비어 있다.
+    pythonReadGrantSync.syncTableAfterCommit(targetTable);
   }
 
   private static final Set<String> NUMERIC_TYPES = Set.of("INTEGER", "DECIMAL");
