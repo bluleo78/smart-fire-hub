@@ -91,6 +91,19 @@ public class SecurityLevelRepository {
         .fetchOptional(SecurityLevelRepository::toPolicy);
   }
 
+  /**
+   * 이 테넌트의 등급 정의 변경(생성·삭제·순서)을 직렬화하는 트랜잭션 단위 advisory 잠금(커밋·롤백 때 풀린다). 호출자 트랜잭션에 합류해야 의미가 있다 — 트랜잭션
+   * 없이 부르면 이 메서드의 트랜잭션이 끝나며 곧바로 풀린다.
+   *
+   * <p>왜(CR1): 등급 수 상한 검사(count)와 다음 rank(최상위+1) 계산이 잠금 없이 분리돼 있으면 동시 생성이 같은 상태를 읽는다. 키는 PYTHON 읽기
+   * 동기화 잠금(python_read_sync_t*)과 다르게 둔다 — 등급 변경 트랜잭션이 커밋 후 동기화를 기다리게 하지 않는다.
+   */
+  public void lockTenantLevelDefinitions(long tenantId) {
+    dsl.execute(
+        "SELECT pg_advisory_xact_lock(hashtextextended({0}, 0))",
+        DSL.val("security_level_defs_t" + tenantId));
+  }
+
   /** 최상위 등급(rank 최대). 테넌트에는 항상 1개 이상 있다(기본 등급 삭제 불가). */
   public LevelPolicy findTop() {
     return dsl.selectFrom(SECURITY_LEVEL)

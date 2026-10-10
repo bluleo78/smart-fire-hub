@@ -92,8 +92,12 @@ public class SecurityLevelService {
   /** 새 등급은 최상위로 추가한다(순서는 이후 ↑↓ 로 조정). ADMIN 은 새 최상위로 동기화. */
   @Transactional
   public SecurityLevelResponse create(SecurityLevelRequest req, long actor) {
-    // 상한 검사 — 이름 중복보다 먼저(어차피 만들 수 없는 요청). 동시 생성 경합으로 11번째가 생길 수는 있으나, 그 위치의
-    // 자격자는 prepareForRun 이 슬롯 범위 밖으로 fail-closed 거부한다(과권한 아님).
+    // 테넌트 등급 정의 변경 직렬화(CR1) — 상한 검사(count)와 nextRank(최상위+1)를 한 원자 구간으로 만든다. 잠금이 없으면 동시 생성 둘이 같은
+    // 개수·같은 최상위를 읽어, 상한을 넘기거나(11번째) 순위 유일 제약 위반(코드 없는 오류)으로 끝난다. 잠금은 count 보다 먼저 —
+    // READ COMMITTED 라 잠금 뒤 문장은 앞선 생성의 커밋을 본다.
+    repository.lockTenantLevelDefinitions(TenantContext.require("등급 정의 변경 잠금"));
+    // 상한 검사 — 이름 중복보다 먼저(어차피 만들 수 없는 요청). 그래도 상한을 넘은 상태(배포 전 데이터 등)가 생기면 그 위치의 자격자는
+    // prepareForRun 이 슬롯 범위 밖으로 fail-closed 거부한다(과권한 아님, PipelineSecurityGate 의 위치>10 보정도 방어선).
     if (repository.findAll().size() >= MAX_LEVELS) {
       throw new CodedApiException(
           HttpStatus.BAD_REQUEST,
@@ -169,6 +173,8 @@ public class SecurityLevelService {
    */
   @Transactional
   public void delete(long id, DeleteSecurityLevelRequest req, long actor) {
+    // 생성·순서 변경과 같은 잠금 — 동시 생성의 nextRank 계산이 삭제 중인 순위 집합을 읽지 않게 등급 정의 변경을 한 줄로 세운다(CR1).
+    repository.lockTenantLevelDefinitions(TenantContext.require("등급 정의 변경 잠금"));
     LevelPolicy target = require(id);
     if (target.isDefault()) {
       throw new CodedApiException(
@@ -268,6 +274,8 @@ public class SecurityLevelService {
   /** 순서 적용 — rank 일괄 갱신(UNIQUE 지연) 후 시스템 ADMIN 을 새 최상위로 재동기화한다(판단 사항 13). 영향 요약을 감사 메타에 함께 남긴다. */
   @Transactional
   public void applyReorder(List<Long> orderedIds, long actor) {
+    // 생성·삭제와 같은 잠금(CR1) — 순열 검증이 동시 생성으로 늘어난 등급을 놓치지 않게 한다.
+    repository.lockTenantLevelDefinitions(TenantContext.require("등급 정의 변경 잠금"));
     // previewReorder 가 순열 검증을 포함한다(잘못된 목록이면 여기서 400).
     ReorderPreviewResponse impact = previewReorder(orderedIds);
     Map<Long, Integer> newRanks = new HashMap<>();

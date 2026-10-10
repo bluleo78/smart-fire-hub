@@ -24,12 +24,20 @@ import com.smartfirehub.securitylevel.repository.SecurityLevelRepository;
 import com.smartfirehub.securitylevel.service.DatasetSecurityService;
 import com.smartfirehub.securitylevel.service.SecurityLevelService;
 import com.smartfirehub.support.IntegrationTestBase;
+import com.smartfirehub.support.PostgresTestContainer;
 import com.smartfirehub.support.TenantRlsTestSupport;
 import com.smartfirehub.support.TestUsers;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.AfterEach;
@@ -251,6 +259,103 @@ class SecurityEventsTest extends IntegrationTestBase {
     assertThat(captured).isEmpty();
     assertThat(asTenant(() -> levelRepository.findAll().size()))
         .isEqualTo(SecurityLevelService.MAX_LEVELS);
+  }
+
+  /**
+   * 동시 생성 직렬화(CR1) — 등급 9개에서 두 생성이 겹치면 하나만 성공하고 다른 하나는 상한(SECURITY_LEVEL_LIMIT_EXCEEDED)으로 거부되며, 최종
+   * 10개· CREATED 1건이다. 인터리빙을 결정적으로 만든다: A 가 삽입 후 트랜잭션을 연 채 멈추고, B 가 잠금 대기에 들어간 것을 pg_stat_activity
+   * 로 확인한 뒤 A 를 커밋한다. 변이: 생성의 잠금을 지우면 B 는 A 와 같은 nextRank 로 순위 유일 제약에서 기다리다 DuplicateKeyException
+   * 으로 끝나 코드 단언이 실패한다(상한 검사가 A 의 미커밋 행을 못 본다).
+   */
+  @Test
+  void concurrentCreate_atNineLevels_onlyOneSucceeds_otherHitsLimit() throws Exception {
+    int existing = asTenant(() -> levelRepository.findAll().size());
+    for (int i = existing; i < SecurityLevelService.MAX_LEVELS - 1; i++) {
+      String name = "동시채움" + i;
+      asTenant(() -> securityLevelService.create(req(name, false), actor));
+    }
+    captured.clear();
+    TransactionTemplate tt = new TransactionTemplate(txManager);
+    CountDownLatch aInserted = new CountDownLatch(1);
+    CountDownLatch releaseA = new CountDownLatch(1);
+    AtomicReference<Throwable> aError = new AtomicReference<>();
+    AtomicReference<Throwable> bError = new AtomicReference<>();
+    Thread a =
+        new Thread(
+            () -> {
+              try {
+                TenantContext.runScoped(
+                    tenantId,
+                    () ->
+                        tt.executeWithoutResult(
+                            status -> {
+                              securityLevelService.create(req("동시A", false), actor);
+                              aInserted.countDown();
+                              try {
+                                releaseA.await(30, TimeUnit.SECONDS);
+                              } catch (InterruptedException e) {
+                                Thread.currentThread().interrupt();
+                              }
+                            }));
+              } catch (Throwable e) {
+                aError.set(e);
+                aInserted.countDown();
+              }
+            });
+    Thread b =
+        new Thread(
+            () -> {
+              try {
+                asTenant(() -> securityLevelService.create(req("동시B", false), actor));
+              } catch (Throwable e) {
+                bError.set(e);
+              }
+            });
+    a.start();
+    try {
+      assertThat(aInserted.await(30, TimeUnit.SECONDS)).isTrue();
+      assertThat(aError.get()).isNull();
+      b.start();
+      // B 가 잠금(advisory 또는 — 변이 시 — 순위 유일 인덱스) 대기에 들어갈 때까지 기다린다. 테스트 풀(2)은 A·B 가 쥐고 있어 소유자 롤로 따로
+      // 붙는다(슈퍼유저라 다른 롤 세션의 대기 상태도 보인다).
+      long deadline = System.currentTimeMillis() + 15_000;
+      boolean bWaiting = false;
+      try (Connection watcher =
+              DriverManager.getConnection(
+                  PostgresTestContainer.INSTANCE.getJdbcUrl(),
+                  PostgresTestContainer.INSTANCE.getUsername(),
+                  PostgresTestContainer.INSTANCE.getPassword());
+          PreparedStatement ps =
+              watcher.prepareStatement(
+                  "select exists (select 1 from pg_stat_activity where datname = current_database()"
+                      + " and wait_event_type = 'Lock' and (query ilike '%pg_advisory_xact_lock%'"
+                      + " or query ilike '%insert into%security_level%'))")) {
+        while (!bWaiting && System.currentTimeMillis() < deadline) {
+          try (ResultSet rs = ps.executeQuery()) {
+            rs.next();
+            bWaiting = rs.getBoolean(1);
+          }
+          if (!bWaiting) {
+            Thread.sleep(50);
+          }
+        }
+      }
+      assertThat(bWaiting).as("전제: B 가 A 커밋을 기다린다").isTrue();
+    } finally {
+      releaseA.countDown();
+      a.join(30_000);
+      b.join(30_000);
+    }
+    assertThat(aError.get()).isNull();
+    assertThat(bError.get())
+        .isInstanceOf(CodedApiException.class)
+        .satisfies(
+            e ->
+                assertThat(((CodedApiException) e).code())
+                    .isEqualTo("SECURITY_LEVEL_LIMIT_EXCEEDED"));
+    assertThat(asTenant(() -> levelRepository.findAll().size()))
+        .isEqualTo(SecurityLevelService.MAX_LEVELS);
+    assertThat(levelEvents()).hasSize(1);
   }
 
   /** allowlist_required 만 바꾼 수정도 UPDATED 1건 — 구독자(C)는 허용 목록 등급 여부로 슬롯 범위를 다시 계산한다. */
