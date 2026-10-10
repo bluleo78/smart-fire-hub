@@ -4,9 +4,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.smartfirehub.global.tenant.TenantPipelineRole;
 import com.smartfirehub.support.IntegrationTestBase;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Proxy;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -39,6 +42,56 @@ class FlywayCallbackConfigSlotRoleTest extends IntegrationTestBase {
       }
       // 기존 실행 롤 동기화가 슬롯 루프 추가로 깨지지 않았는지
       assertThat(m).containsEntry("pipeline_executor_t1", TenantPipelineRole.password(1, SECRET));
+    }
+  }
+
+  /**
+   * 롤 존재 확인은 pg_roles 한 번(CR9) — 예전엔 테넌트당 11번 왕복했다. 롤이 하나도 없는 ACTIVE 테넌트는 조용히 건너뛴다(같은 커넥션의 롤백될 트랜잭션
+   * 안에서 테넌트 행만 넣어 본다).
+   */
+  @Test
+  void resolvesRoleExistenceWithOneQuery_andSkipsTenantWithoutRoles() throws SQLException {
+    try (Connection c = owner.getConnection()) {
+      c.setAutoCommit(false);
+      try {
+        long bare;
+        try (var st = c.createStatement();
+            var rs =
+                st.executeQuery(
+                    "INSERT INTO tenant (slug, name, status) VALUES ('cr9-bare', 'cr9', 'ACTIVE')"
+                        + " RETURNING id")) {
+          rs.next();
+          bare = rs.getLong(1);
+        }
+        AtomicInteger prepared = new AtomicInteger();
+        Connection counting =
+            (Connection)
+                Proxy.newProxyInstance(
+                    Connection.class.getClassLoader(),
+                    new Class<?>[] {Connection.class},
+                    (proxy, method, args) -> {
+                      if (method.getName().equals("prepareStatement")) {
+                        prepared.incrementAndGet();
+                      }
+                      try {
+                        return method.invoke(c, args);
+                      } catch (InvocationTargetException e) {
+                        throw e.getCause();
+                      }
+                    });
+
+        Map<String, String> m =
+            FlywayCallbackConfig.resolveActiveTenantPipelineRolePasswords(counting, SECRET);
+
+        assertThat(prepared).as("pg_roles 조회는 한 번").hasValue(1);
+        assertThat(m).containsKey("pipeline_executor_t1");
+        assertThat(m)
+            .doesNotContainKeys(
+                TenantPipelineRole.roleName(bare), TenantPipelineRole.pythonReadRoleName(bare, 1));
+      } finally {
+        c.rollback();
+        c.setAutoCommit(true);
+      }
     }
   }
 }
