@@ -62,4 +62,20 @@ class PipelineSecurityGatePythonLevelTest {
     assertThat(PipelineSecurityGate.pythonReadableTopLevel(allowlistBottom, 2)).isEmpty();
     assertThat(PipelineSecurityGate.pythonReadableTopLevel(DEFAULTS, Clearance.NO_RANK)).isEmpty();
   }
+
+  /**
+   * 자격 위치가 슬롯 롤 수(10)를 넘으면(등급 상한 경합으로 생긴 11번째 등급 자격) 슬롯 롤이 없어 PYTHON 이 아무것도 못 읽는다 — empty(R4, 흐름 C
+   * 슬롯 계산과 일치). 위치 10 이하는 그대로 계산한다. 상한 검사를 지우면 '11' 이 나와 실패한다(변이).
+   */
+  @Test
+  void clearanceBeyondSlotCount_isEmpty() {
+    List<LevelPolicy> eleven =
+        java.util.stream.IntStream.rangeClosed(1, 11)
+            .mapToObj(r -> level(r, "L" + r, r, false))
+            .toList();
+    assertThat(PipelineSecurityGate.pythonReadableTopLevel(eleven, 11)).isEmpty();
+    assertThat(PipelineSecurityGate.pythonReadableTopLevel(eleven, 10))
+        .map(LevelPolicy::name)
+        .hasValue("L10");
+  }
 }
