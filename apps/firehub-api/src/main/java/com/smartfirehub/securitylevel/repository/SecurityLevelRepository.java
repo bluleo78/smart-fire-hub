@@ -16,6 +16,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
+import org.jooq.Condition;
 import org.jooq.DSLContext;
 import org.jooq.impl.DSL;
 import org.springframework.stereotype.Repository;
@@ -59,21 +60,17 @@ public class SecurityLevelRepository {
 
   /** 주어진 데이터셋 중 등급의 audit_access 가 켜진 것(스펙 §4.6 — 감사 등급 접근 기록 대상). 접근 감사 기록기가 기록 대상을 거를 때 쓴다. */
   public Set<Long> findAuditedDatasetIds(Collection<Long> datasetIds) {
-    if (datasetIds.isEmpty()) {
-      return Set.of();
-    }
-    return new HashSet<>(
-        dsl.select(DATASET.ID)
-            .from(DATASET)
-            .join(SECURITY_LEVEL)
-            .on(SECURITY_LEVEL.ID.eq(DATASET.SECURITY_LEVEL_ID))
-            .where(DATASET.ID.in(datasetIds))
-            .and(SECURITY_LEVEL.AUDIT_ACCESS.isTrue())
-            .fetch(DATASET.ID));
+    return findDatasetIdsWhereLevel(datasetIds, SECURITY_LEVEL.AUDIT_ACCESS.isTrue());
   }
 
   /** 주어진 데이터셋 중 등급이 allowlist_required 인 것(WD-30 — 파이프라인 출력 허용 목록 시드는 이 입력들의 허용 항목 교집합으로 계산한다). */
   public Set<Long> findAllowlistRequiredDatasetIds(Collection<Long> datasetIds) {
+    return findDatasetIdsWhereLevel(datasetIds, SECURITY_LEVEL.ALLOWLIST_REQUIRED.isTrue());
+  }
+
+  /** 주어진 데이터셋 중 등급이 조건을 만족하는 것 — 등급 플래그별 필터 조회의 공통 본문. 빈 입력은 조회 없이 빈 집합. */
+  private Set<Long> findDatasetIdsWhereLevel(
+      Collection<Long> datasetIds, Condition levelCondition) {
     if (datasetIds.isEmpty()) {
       return Set.of();
     }
@@ -83,7 +80,7 @@ public class SecurityLevelRepository {
             .join(SECURITY_LEVEL)
             .on(SECURITY_LEVEL.ID.eq(DATASET.SECURITY_LEVEL_ID))
             .where(DATASET.ID.in(datasetIds))
-            .and(SECURITY_LEVEL.ALLOWLIST_REQUIRED.isTrue())
+            .and(levelCondition)
             .fetch(DATASET.ID));
   }
 

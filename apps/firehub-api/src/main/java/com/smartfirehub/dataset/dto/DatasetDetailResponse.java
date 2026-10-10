@@ -32,58 +32,6 @@ public record DatasetDetailResponse(
     // 조회자 기준 내보내기 가능 여부(S4, 스펙 §4.4) — data:export 권한 AND 등급 export_policy. 웹이 다운로드 UI 를 숨긴다.
     boolean exportAllowed) {
 
-  /** exportAllowed 를 모르는 생성 경로용 호환 생성자 — 내보내기 불가(false, fail-closed). */
-  public DatasetDetailResponse(
-      Long id,
-      String name,
-      String tableName,
-      String description,
-      CategoryResponse category,
-      String storageType,
-      String originType,
-      String createdBy,
-      List<DatasetColumnResponse> columns,
-      long rowCount,
-      LocalDateTime createdAt,
-      LocalDateTime updatedAt,
-      String updatedBy,
-      boolean isFavorite,
-      List<String> tags,
-      String status,
-      String statusNote,
-      String statusUpdatedBy,
-      LocalDateTime statusUpdatedAt,
-      List<LinkedPipelineInfo> linkedPipelines,
-      Long sourcePipelineStepId,
-      SecurityLevelSummary securityLevel,
-      LocalDateTime securityLevelAutoRaisedAt) {
-    this(
-        id,
-        name,
-        tableName,
-        description,
-        category,
-        storageType,
-        originType,
-        createdBy,
-        columns,
-        rowCount,
-        createdAt,
-        updatedAt,
-        updatedBy,
-        isFavorite,
-        tags,
-        status,
-        statusNote,
-        statusUpdatedBy,
-        statusUpdatedAt,
-        linkedPipelines,
-        sourcePipelineStepId,
-        securityLevel,
-        securityLevelAutoRaisedAt,
-        false);
-  }
-
   /** 등급을 모르는 생성 경로(테스트)용 호환 생성자 — 등급 필드는 null. */
   public DatasetDetailResponse(
       Long id,

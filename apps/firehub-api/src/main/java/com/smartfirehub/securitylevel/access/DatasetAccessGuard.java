@@ -125,10 +125,7 @@ public class DatasetAccessGuard {
   public void requireView(Clearance c, long datasetId) {
     AccessFacts f = accessRepository.findFactsByDatasetIds(List.of(datasetId), c).get(datasetId);
     // 없는 데이터셋은 LEVEL_UNKNOWN — auditDenial 이 "없음"으로 보고 남기지 않는다.
-    Decision d =
-        f == null
-            ? Decision.deny("LEVEL_UNKNOWN", null, null)
-            : decide(c, f, DatasetAction.VIEW, null);
+    Decision d = viewDecision(c, f);
     if (!d.allowed()) {
       // 실제 사유는 감사에만 남긴다 — 응답은 "없음"과 같은 404 그대로.
       auditDenial(c, AccessDenialAction.VIEW, new DenialDetail(d.reasonCode(), datasetId, null));
@@ -149,6 +146,18 @@ public class DatasetAccessGuard {
 
   /** 쿼리 결과(여러 데이터셋) 내보내기 거부 문구 — 어느 데이터셋이 막혔는지 드러내지 않는다. */
   public static final String EXPORT_MULTI_MESSAGE = "쿼리가 참조하는 데이터 중 보안 등급 정책상 내보낼 수 없는 데이터가 있습니다.";
+
+  /**
+   * 쿼리 결과(여러 데이터셋) 내보내기 거부 응답 — levelName 없이 어느 데이터셋이 막혔는지 숨긴다. 가드와 쿼리 결과 내보내기 서비스가 같은 응답 형태를 쓰도록 한
+   * 곳에서 만든다.
+   */
+  public static CodedApiException exportMultiBlocked() {
+    return new CodedApiException(
+        HttpStatus.FORBIDDEN,
+        PolicyBlockedException.CODE,
+        EXPORT_MULTI_MESSAGE,
+        Map.of("action", "EXPORT", "policyKey", "export_policy"));
+  }
 
   /** 현재 요청 사용자 기준 내보내기 강제. */
   public void requireExport(long datasetId) {
@@ -224,11 +233,7 @@ public class DatasetAccessGuard {
             c,
             AccessDenialAction.EXPORT,
             new DenialDetail(d.reasonCode(), id, f == null ? null : f.tableName()));
-        throw new CodedApiException(
-            HttpStatus.FORBIDDEN,
-            PolicyBlockedException.CODE,
-            EXPORT_MULTI_MESSAGE,
-            Map.of("action", "EXPORT", "policyKey", "export_policy"));
+        throw exportMultiBlocked();
       }
     }
   }
@@ -365,10 +370,11 @@ public class DatasetAccessGuard {
     // VIEW 를 전부 먼저 확인한다 — 앞쪽 id 의 POLICY_BLOCKED(등급 이름)가 뒤쪽 숨김 id 의 거부보다 먼저 나가도 숨김 존재는 드러나지 않지만,
     // 응답이 입력 순서에 따라 달라지지 않게 VIEW 계열 거부를 우선한다.
     for (Long id : datasetIds) {
-      AccessFacts f = facts.get(id);
-      if (f == null || !decide(c, f, DatasetAction.VIEW, null).allowed()) {
+      Decision view = viewDecision(c, facts.get(id));
+      if (!view.allowed()) {
         // 실제 사유(숨김·없음)는 감사에만 — 응답은 구분 불가 403. 없는 id 는 LEVEL_UNKNOWN 이라 남지 않는다.
-        auditDenial(c, AccessDenialAction.DATASET_REFS, viewDenial(c, f, id));
+        auditDenial(
+            c, AccessDenialAction.DATASET_REFS, new DenialDetail(view.reasonCode(), id, null));
         throw new CodedApiException(
             HttpStatus.FORBIDDEN, SQL_ACCESS_DENIED_CODE, SQL_ACCESS_DENIED_MESSAGE);
       }
@@ -393,10 +399,10 @@ public class DatasetAccessGuard {
     }
     Map<Long, AccessFacts> facts = accessRepository.findFactsByDatasetIds(datasetIds, c);
     for (Long id : datasetIds) {
-      AccessFacts f = facts.get(id);
-      if (f == null || !decide(c, f, DatasetAction.VIEW, null).allowed()) {
+      Decision view = viewDecision(c, facts.get(id));
+      if (!view.allowed()) {
         // 메시지는 requireView 의 404 와 바이트 단위로 같아야 한다(존재 은닉). 실제 사유는 VIEW 로 감사(requireView 와 같은 규칙).
-        auditDenial(c, AccessDenialAction.VIEW, viewDenial(c, f, id));
+        auditDenial(c, AccessDenialAction.VIEW, new DenialDetail(view.reasonCode(), id, null));
         throw new DatasetNotFoundException("Dataset not found: " + id);
       }
     }
@@ -473,11 +479,14 @@ public class DatasetAccessGuard {
     return null;
   }
 
-  /** id 목록 판정의 VIEW 거부 상세 — 없는 데이터셋은 LEVEL_UNKNOWN(감사 제외), 그 외는 VIEW 판정의 실제 사유. */
-  private DenialDetail viewDenial(Clearance c, AccessFacts f, Long id) {
-    String reason =
-        f == null ? "LEVEL_UNKNOWN" : decide(c, f, DatasetAction.VIEW, null).reasonCode();
-    return new DenialDetail(reason, id, null);
+  /**
+   * VIEW 판정 — 없는 데이터셋(f == null)은 LEVEL_UNKNOWN 거부(auditDenial 이 "없음"으로 보고 남기지 않는다). 단건·다건 VIEW 강제가
+   * 같은 판정을 한 번만 계산해 허용 여부와 감사 사유에 함께 쓴다.
+   */
+  private Decision viewDecision(Clearance c, AccessFacts f) {
+    return f == null
+        ? Decision.deny("LEVEL_UNKNOWN", null, null)
+        : decide(c, f, DatasetAction.VIEW, null);
   }
 
   /**

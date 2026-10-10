@@ -15,16 +15,12 @@ import com.smartfirehub.analytics.service.QueryResultExportService;
 import com.smartfirehub.analytics.service.SavedQueryService;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.global.security.RequirePermission;
-import com.smartfirehub.global.util.NormalizedSql;
+import com.smartfirehub.global.util.ContentDispositions;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
-import com.smartfirehub.securitylevel.access.SqlAccessMode;
-import com.smartfirehub.securitylevel.access.SqlAccessResult;
 import com.smartfirehub.securitylevel.sql.GuardedSqlExecutor;
 import jakarta.validation.Valid;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
@@ -115,14 +111,10 @@ public class SavedQueryController {
       @PathVariable UUID runId, @Valid @RequestBody QueryRunExportRequest request) {
     QueryResultExportService.ExportFile f =
         queryResultExportService.export(runId, request.format(), clearanceResolver.current());
-    // DataExportController 와 같은 파일 이름 규칙 — 안전 문자만 남기고 RFC 5987 인코딩 이름을 함께 싣는다.
-    String sanitized = f.filename().replaceAll("[^a-zA-Z0-9가-힣._\\-]", "_");
-    String encoded = URLEncoder.encode(sanitized, StandardCharsets.UTF_8).replace("+", "%20");
+    // DataExportController 와 같은 파일 이름 규칙(안전 문자 + RFC 5987 인코딩 이름).
     return ResponseEntity.ok()
         .header("Content-Type", f.contentType())
-        .header(
-            "Content-Disposition",
-            "attachment; filename=\"" + sanitized + "\"; filename*=UTF-8''" + encoded)
+        .header("Content-Disposition", ContentDispositions.attachment(f.filename()))
         .body(f.body());
   }
 
@@ -137,13 +129,8 @@ public class SavedQueryController {
     Clearance c = clearanceResolver.current();
     boolean allowed;
     try {
-      SqlAccessResult r =
-          datasetAccessGuard.checkSql(
-              c, NormalizedSql.of(request.sql()).text(), SqlAccessMode.INTERACTIVE);
-      allowed =
-          r.allowed()
-              && r.exportAllowed()
-              && c.permissions().contains(DatasetAccessGuard.EXPORT_PERMISSION);
+      // 애널리틱스 판정 토큰의 "정책 AND data:export 권한" 규칙을 그대로 쓴다 — 정규화·파싱 실패 토큰은 false, 판정은 값이라 감사하지 않는다.
+      allowed = guardedSqlExecutor.judgeAnalytics(c, request.sql()).exportAllowedFor();
     } catch (RuntimeException e) {
       // 정규화·파싱 실패도 false — 실패 사유를 돌려주면 숨김과 구분되는 신호가 된다.
       allowed = false;

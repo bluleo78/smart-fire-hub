@@ -91,9 +91,8 @@ public class PipelineSecurityGate {
         guard.requireSql(runAs.clearance(), resolvedSql, SqlAccessMode.PIPELINE_RUN);
     // 통과한 실행은 실행 주체를 행위자로 감사 등급 데이터셋 접근을 남긴다(읽기 ∪ 쓰기 대상). 실행 주체 미상이면 행위자가 없어 건너뛴다.
     if (runAs.userId() != null) {
-      Set<Long> ids = new LinkedHashSet<>(r.readDatasetIds());
-      ids.addAll(r.writeDatasetIds());
-      auditRecorder.recordAccess(runAs.userId(), SecurityAuditRecorder.AccessKind.PIPELINE, ids);
+      auditRecorder.recordAccess(
+          runAs.userId(), SecurityAuditRecorder.AccessKind.PIPELINE, r.touchedDatasetIds());
     }
     return r;
   }

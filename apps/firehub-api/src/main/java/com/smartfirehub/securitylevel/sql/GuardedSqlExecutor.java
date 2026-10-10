@@ -15,7 +15,6 @@ import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.securitylevel.access.SqlAccessMode;
 import com.smartfirehub.securitylevel.access.SqlAccessResult;
 import com.smartfirehub.securitylevel.service.SecurityAuditRecorder;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
@@ -61,8 +60,7 @@ public class GuardedSqlExecutor {
     // 3).
     // AI 대행 요청이면 AI 종류로 남긴다(결과가 LLM 으로 간다 — 스펙 §4.6 "AI 도구 접근").
     if (response.error() == null) {
-      auditRecorder.recordAccess(
-          c.userId(), guard.accessKind(SecurityAuditRecorder.AccessKind.SQL), touched(r));
+      recordDelivered(c, r);
     }
     return response;
   }
@@ -148,7 +146,7 @@ public class GuardedSqlExecutor {
       if (verdict == null || !verdict.result().allowed()) {
         return Set.of();
       }
-      return touched(verdict.result());
+      return verdict.result().touchedDatasetIds();
     }
   }
 
@@ -167,13 +165,6 @@ public class GuardedSqlExecutor {
     } catch (SqlQueryException | UnsafeSqlException e) {
       return new AnalyticsJudgment(null, null, e.getMessage(), c);
     }
-  }
-
-  /** 읽기 ∪ 쓰기 대상 데이터셋 id — 접근 감사 대상. */
-  private static Set<Long> touched(SqlAccessResult r) {
-    Set<Long> ids = new LinkedHashSet<>(r.readDatasetIds());
-    ids.addAll(r.writeDatasetIds());
-    return ids;
   }
 
   /**
@@ -217,10 +208,13 @@ public class GuardedSqlExecutor {
     if (judgment.verdict == null || !judgment.verdict.result().allowed()) {
       return;
     }
+    recordDelivered(judgment.clearance, judgment.verdict.result());
+  }
+
+  /** 허용 결과가 조회자에게 나갈 때의 감사 등급 접근 기록 — 데이터셋 /query 와 애널리틱스가 같은 규칙(읽기 ∪ 쓰기, AI 문맥이면 AI 종류)을 쓴다. */
+  private void recordDelivered(Clearance c, SqlAccessResult r) {
     auditRecorder.recordAccess(
-        judgment.clearance.userId(),
-        guard.accessKind(SecurityAuditRecorder.AccessKind.SQL),
-        touched(judgment.verdict.result()));
+        c.userId(), guard.accessKind(SecurityAuditRecorder.AccessKind.SQL), r.touchedDatasetIds());
   }
 
   /**

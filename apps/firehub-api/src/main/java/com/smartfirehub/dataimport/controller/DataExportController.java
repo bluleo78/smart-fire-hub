@@ -5,6 +5,7 @@ import com.smartfirehub.dataimport.dto.ExportRequest;
 import com.smartfirehub.dataimport.dto.ExportResult;
 import com.smartfirehub.dataimport.service.DataExportService;
 import com.smartfirehub.global.security.RequirePermission;
+import com.smartfirehub.global.util.ContentDispositions;
 import com.smartfirehub.job.dto.AsyncJobStatusResponse;
 import com.smartfirehub.job.repository.AsyncJobRepository;
 import com.smartfirehub.job.service.AsyncJobService;
@@ -15,8 +16,6 @@ import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
@@ -87,7 +86,8 @@ public class DataExportController {
     // HttpServletResponse에 직접 쓰는 방식으로 우회한다.
     httpResponse.setStatus(HttpServletResponse.SC_OK);
     httpResponse.setContentType(result.contentType());
-    httpResponse.setHeader("Content-Disposition", buildContentDisposition(result.filename()));
+    httpResponse.setHeader(
+        "Content-Disposition", ContentDispositions.attachment(result.filename()));
     result.streamingBody().writeTo(httpResponse.getOutputStream());
     httpResponse.flushBuffer();
     return null;
@@ -119,14 +119,8 @@ public class DataExportController {
 
     return ResponseEntity.ok()
         .header("Content-Type", contentType)
-        .header("Content-Disposition", buildContentDisposition(filename))
+        .header("Content-Disposition", ContentDispositions.attachment(filename))
         .header("Content-Length", String.valueOf(filePath.toFile().length()))
         .body(body);
-  }
-
-  private String buildContentDisposition(String filename) {
-    String sanitized = filename.replaceAll("[^a-zA-Z0-9가-힣._\\-]", "_");
-    String encoded = URLEncoder.encode(sanitized, StandardCharsets.UTF_8).replace("+", "%20");
-    return "attachment; filename=\"" + sanitized + "\"; filename*=UTF-8''" + encoded;
   }
 }

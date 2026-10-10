@@ -9,7 +9,6 @@ import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.securitylevel.ai.AiCallContext;
-import com.smartfirehub.securitylevel.ai.PolicyBlockedException;
 import com.smartfirehub.securitylevel.sql.GuardedSqlExecutor;
 import com.smartfirehub.user.repository.UserRepository;
 import java.time.LocalDate;
@@ -97,11 +96,7 @@ public class QueryResultExportService {
       guard.requireExportAll(c, j.touchedDatasetIds());
       // 백스톱(fail-closed): SQL 판정은 내보내기 불가인데 데이터셋별 재판정이 통과한 경우에도 내보내지 않는다 — 두 판정의 불일치로 새는 길을
       // 구조적으로 막는다. 파싱 실패 SQL 은 기록되지 않으므로(성공한 SELECT 만 기록) 여기 오는 일은 정책 불가뿐이다.
-      throw new CodedApiException(
-          HttpStatus.FORBIDDEN,
-          PolicyBlockedException.CODE,
-          DatasetAccessGuard.EXPORT_MULTI_MESSAGE,
-          Map.of("action", "EXPORT", "policyKey", "export_policy"));
+      throw DatasetAccessGuard.exportMultiBlocked();
     }
     // 거부면 executeJudgedAnalytics 가 감사 + 403. 내보내기는 읽기 전용으로만 재실행한다.
     AnalyticsQueryResponse r = guardedSqlExecutor.executeJudgedAnalytics(j, run.maxRows(), true);
