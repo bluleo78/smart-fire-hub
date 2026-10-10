@@ -15,12 +15,11 @@ import org.springframework.transaction.support.TransactionTemplate;
 /**
  * tenant_settings 저장 시각이 DB 시계로 기록되는지 고정한다(WD-48).
  *
- * <p>임베딩 백로그 스윕은 이 시각을 DB now() 로 기록된 embedding_reembed_state.updated_at 과 비교한다. 앱(JVM) 시계로
- * 기록하면 앱·DB 시계 차이만큼 "설정 변경 없이 실패한 테넌트"를 "실패 뒤 설정을 저장한 테넌트"로 오판해 잡을 다시 넣는다.
+ * <p>임베딩 백로그 스윕은 이 시각을 DB now() 로 기록된 embedding_reembed_state.updated_at 과 비교한다. 앱(JVM) 시계로 기록하면
+ * 앱·DB 시계 차이만큼 "설정 변경 없이 실패한 테넌트"를 "실패 뒤 설정을 저장한 테넌트"로 오판해 잡을 다시 넣는다.
  *
- * <p>판별 방법: 한 트랜잭션 안에서 저장한 뒤 {@code localtimestamp}(트랜잭션 시작 시각, DB 시계)와 정확히 같은지 본다. DB 시계로
- * 기록했다면 마이크로초까지 일치하고, 앱 시계로 기록했다면 트랜잭션 시작 이후의 다른 순간이라 어긋난다 — 시계 차이가 0 이어도 결정적으로
- * 구별된다.
+ * <p>판별 방법: 한 트랜잭션 안에서 저장한 뒤 {@code localtimestamp}(트랜잭션 시작 시각, DB 시계)와 정확히 같은지 본다. DB 시계로 기록했다면
+ * 마이크로초까지 일치하고, 앱 시계로 기록했다면 트랜잭션 시작 이후의 다른 순간이라 어긋난다 — 시계 차이가 0 이어도 결정적으로 구별된다.
  */
 class TenantSettingsUpdatedAtClockTest extends IntegrationTestBase {
 
@@ -54,9 +53,9 @@ class TenantSettingsUpdatedAtClockTest extends IntegrationTestBase {
         () -> {
           repository.upsert("embedding.config", value, null);
           return dsl.fetchValue(
-              "SELECT updated_at = localtimestamp FROM tenant_settings WHERE tenant_id = ? AND key ="
-                  + " 'embedding.config'",
-              tenant)
+                  "SELECT updated_at = localtimestamp FROM tenant_settings WHERE tenant_id = ? AND key ="
+                      + " 'embedding.config'",
+                  tenant)
               .equals(Boolean.TRUE);
         });
   }
