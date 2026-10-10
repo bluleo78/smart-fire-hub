@@ -10,6 +10,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.analytics.repository.AnalyticsQueryRunRepository;
+import com.smartfirehub.analytics.service.AnalyticsQueryRunCleanupService;
+import com.smartfirehub.global.security.InternalCallHeaders;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantContext;
@@ -47,6 +49,10 @@ class QueryResultExportTest extends IntegrationTestBase {
   @Autowired private JwtTokenProvider jwt;
   @Autowired private ObjectMapper om;
   @Autowired private AnalyticsQueryRunRepository runRepository;
+  @Autowired private AnalyticsQueryRunCleanupService cleanupService;
+
+  /** application-test.yml 의 내부 토큰 — ai-agent 의 MCP 대행 호출 재현용. */
+  private static final String INTERNAL_TOKEN = "test-internal-token";
 
   private SecurityFixture fx;
   private final List<Long> users = new ArrayList<>();
@@ -140,6 +146,7 @@ class QueryResultExportTest extends IntegrationTestBase {
       inTenantFixture(
           () -> {
             dsl.execute("DELETE FROM analytics_query_run WHERE user_id = ?", u);
+            dsl.execute("DELETE FROM saved_query WHERE created_by = ?", u);
           });
     }
     fx.deleteDatasetRow(ds);
@@ -240,9 +247,9 @@ class QueryResultExportTest extends IntegrationTestBase {
                 .get(0, Integer.class));
   }
 
-  /** 보존 1시간 — 만료 기록은 없는 id 와 같은 404 이고, 그 사용자의 다음 실행이 만료 행을 지운다. */
+  /** 보존 1시간 — 만료 기록은 없는 id 와 같은 404 이다. */
   @Test
-  void expiredRun_isSameAsMissing_andPurgedOnNextInsert() throws Exception {
+  void expiredRun_isSameAsMissing() throws Exception {
     long u = userAt("공개", "analytics:read", "data:export");
     String runId = (String) execute(u).get("runId");
     ageRun(runId);
@@ -250,11 +257,123 @@ class QueryResultExportTest extends IntegrationTestBase {
         .andExpect(status().isNotFound())
         .andExpect(jsonPath("$.code").value("QUERY_RUN_NOT_FOUND"))
         .andExpect(jsonPath("$.message").value(NOT_FOUND_MESSAGE));
-    assertThat(runCount(runId)).isEqualTo(1);
-    // 다음 실행(삽입)이 같은 사용자의 만료 행을 지운다. 새 기록은 남는다.
-    String next = (String) execute(u).get("runId");
-    assertThat(runCount(runId)).isZero();
-    assertThat(runCount(next)).isEqualTo(1);
+  }
+
+  /**
+   * code-review 7 — 주기 정리는 다시 실행하지 않는 사용자의 만료 행도 지운다(예전에는 같은 사용자의 다음 삽입 때만 지워 원문이 무기한 남았다). 보존 기간 안
+   * 행은 남는다(대조군).
+   *
+   * <p>정리 호출 전 TenantContext 를 비운다 — 스레드에 테넌트가 남아 있으면 정리의 테넌트 순회를 지워도 통과하는 공허한 테스트가 된다.
+   */
+  @Test
+  void cleanup_deletesExpiredRunsOfAllUsers_keepsFreshOnes() throws Exception {
+    long idle = userAt("공개", "analytics:read", "data:export");
+    long active = userAt("공개", "analytics:read", "data:export");
+    String expired = (String) execute(idle).get("runId");
+    ageRun(expired);
+    String fresh = (String) execute(active).get("runId");
+    // 다른 사용자의 실행(삽입)은 남의 만료 행을 지우지 않는다 — 정리 전까지 남아 있다.
+    assertThat(runCount(expired)).isEqualTo(1);
+
+    TenantContext.clear();
+    cleanupService.cleanupExpired();
+
+    assertThat(runCount(expired)).isZero();
+    assertThat(runCount(fresh)).isEqualTo(1);
+  }
+
+  /** ai-agent 의 MCP 대행 호출(내부 토큰 + 대행 사용자·테넌트) — AI 경로로 표시된다. */
+  private Map<?, ?> executeAsAi(long uid) throws Exception {
+    String body =
+        om.writeValueAsString(Map.of("sql", "SELECT v FROM " + qualified, "maxRows", 100));
+    String json =
+        mockMvc
+            .perform(
+                post("/api/v1/analytics/queries/execute")
+                    .header("Authorization", "Internal " + INTERNAL_TOKEN)
+                    .header(InternalCallHeaders.ON_BEHALF_OF, String.valueOf(uid))
+                    .header(
+                        InternalCallHeaders.ON_BEHALF_OF_TENANT,
+                        String.valueOf(DEFAULT_TEST_TENANT_ID))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(body))
+            .andExpect(status().isOk())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+    return om.readValue(json, Map.class);
+  }
+
+  /** 이 사용자의 실행 기록 행 수. */
+  private int runsOf(long uid) {
+    return inTenantFixture(
+        () ->
+            dsl.fetchOne("SELECT count(*) FROM analytics_query_run WHERE user_id = ?", uid)
+                .get(0, Integer.class));
+  }
+
+  /**
+   * code-review 7 — AI 대행 실행은 실행 기록을 남기지 않는다(AI 는 내보내기를 쓰지 않는다). 대조군: 같은 사용자의 웹 실행은 남긴다 — AI 쪽 0건이
+   * 인증 실패나 실행 실패가 아님을 보이려고 AI 응답의 결과 행도 확인한다.
+   */
+  @Test
+  void aiOnBehalfExecute_leavesNoRun_butWebExecuteDoes() throws Exception {
+    long u = userAt("공개", "analytics:read", "data:export");
+    Map<?, ?> ai = executeAsAi(u);
+    assertThat(ai.get("error")).isNull();
+    assertThat((List<?>) ai.get("rows")).hasSize(1);
+    assertThat(ai.get("runId")).isNull();
+    assertThat(runsOf(u)).isZero();
+
+    assertThat((String) execute(u).get("runId")).isNotBlank();
+    assertThat(runsOf(u)).isEqualTo(1);
+  }
+
+  /**
+   * code-review 4 — 저장 쿼리 실행(/{id}/execute)도 실행 기록을 남겨, 그 runId 로 결과를 내보낼 수 있다(예전에는 runId 가 없어 저장
+   * 쿼리 결과를 내보낼 수 없었다).
+   */
+  @Test
+  void savedQueryExecute_returnsRunId_andExportSucceeds() throws Exception {
+    long u = userAt("공개", "analytics:read", "analytics:write", "data:export");
+    String created =
+        mockMvc
+            .perform(
+                post("/api/v1/analytics/queries")
+                    .header("Authorization", token(u))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(
+                        om.writeValueAsString(
+                            Map.of("name", "qre-saved", "sqlText", "SELECT v FROM " + qualified))))
+            .andExpect(status().isCreated())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+    long queryId = om.readTree(created).get("id").asLong();
+
+    String json =
+        mockMvc
+            .perform(
+                post("/api/v1/analytics/queries/" + queryId + "/execute")
+                    .header("Authorization", token(u)))
+            .andExpect(status().isOk())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+    Map<?, ?> r = om.readValue(json, Map.class);
+    assertThat(r.get("exportAllowed")).isEqualTo(true);
+    String runId = (String) r.get("runId");
+    assertThat(runId).isNotBlank();
+
+    var started = exportRun(runId, u).andExpect(request().asyncStarted()).andReturn();
+    String csv =
+        mockMvc
+            .perform(asyncDispatch(started))
+            .andExpect(status().isOk())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+    assertThat(csv).contains(VALUE);
   }
 
   /** 실행 뒤 데이터셋이 조회자 자격 밖(숨김)으로 오르면 내보내기는 열람 거부 403 이고 감사된다 — 등급 이름은 싣지 않는다. */

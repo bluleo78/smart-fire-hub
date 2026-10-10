@@ -10,7 +10,6 @@ import com.smartfirehub.analytics.dto.SavedQueryListResponse;
 import com.smartfirehub.analytics.dto.SavedQueryResponse;
 import com.smartfirehub.analytics.dto.SchemaInfoResponse;
 import com.smartfirehub.analytics.dto.UpdateSavedQueryRequest;
-import com.smartfirehub.analytics.repository.AnalyticsQueryRunRepository;
 import com.smartfirehub.analytics.service.AnalyticsQueryExecutionService;
 import com.smartfirehub.analytics.service.QueryResultExportService;
 import com.smartfirehub.analytics.service.SavedQueryService;
@@ -45,9 +44,6 @@ public class SavedQueryController {
   private final GuardedSqlExecutor guardedSqlExecutor;
   private final ClearanceResolver clearanceResolver;
   private final DatasetAccessGuard datasetAccessGuard;
-
-  /** 애드혹 실행 기록(V136) — 쿼리 결과 내보내기의 서버 재실행 근거. */
-  private final AnalyticsQueryRunRepository runRepository;
 
   /** 실행 기록 id 기반 쿼리 결과 내보내기(스펙 §4.4). */
   private final QueryResultExportService queryResultExportService;
@@ -104,12 +100,8 @@ public class SavedQueryController {
     // Web UI 애드혹 쿼리는 항상 readOnly=true 강제 — DELETE/UPDATE 허용 금지 (#66)
     // 보안 등급(S2): 실행자 자격으로 참조 데이터셋을 판정한다. 응답에는 조회자 기준 exportAllowed 가 실린다.
     AnalyticsQueryResponse r = guardedSqlExecutor.executeAnalytics(c, request.sql(), maxRows, true);
-    // 성공한 SELECT 만 실행 기록을 남긴다 — 내보내기는 이 id 로 서버가 다시 판정·실행한다(스펙 §4.4). 원문을 그대로 남긴다(재판정이 다시
-    // 정규화하므로 판정 = 실행이 유지된다). 사용자 미상 자격(-1)은 기록하지 않는다(user FK).
-    if (r.error() == null && "SELECT".equals(r.queryType()) && c.userId() > 0) {
-      UUID runId = runRepository.insert(c.userId(), request.sql(), maxRows);
-      r = r.withExportInfo(r.exportAllowed(), runId.toString());
-    }
+    // 성공한 사용자 SELECT 만 실행 기록을 남긴다 — 내보내기는 이 id 로 서버가 다시 판정·실행한다(스펙 §4.4). AI 대행은 남기지 않는다.
+    r = queryResultExportService.attachRun(c, request.sql(), maxRows, r);
     return ResponseEntity.ok(r);
   }
 

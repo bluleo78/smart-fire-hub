@@ -36,6 +36,14 @@ notification:
     # 여기서 끄는 것과 같은 자리다.
     initial_delay_ms: 3600000
 
+firehub:
+  analytics:
+    query-run:
+      cleanup:
+        # 쿼리 실행 기록 주기 정리의 첫 실행을 스위트 길이 밖으로 민다 — 기록을 일부러 만료시킨 테스트(QueryResultExportTest)
+        # 사이에 정리가 끼어들어 단언이 흔들리지 않게. 정리 동작은 AnalyticsQueryRunCleanupServiceTest 가 직접 호출해 검증한다.
+        initial-delay-ms: 86400000
+
 app:
   login-attempts:
     cleanup:

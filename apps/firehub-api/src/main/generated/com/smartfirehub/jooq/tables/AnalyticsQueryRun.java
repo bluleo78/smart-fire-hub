@@ -160,7 +160,7 @@ public class AnalyticsQueryRun extends TableImpl<AnalyticsQueryRunRecord> {
 
     @Override
     public List<Index> getIndexes() {
-        return Arrays.asList(Indexes.IDX_ANALYTICS_QUERY_RUN_USER);
+        return Arrays.asList(Indexes.IDX_ANALYTICS_QUERY_RUN_CREATED, Indexes.IDX_ANALYTICS_QUERY_RUN_USER);
     }
 
     @Override

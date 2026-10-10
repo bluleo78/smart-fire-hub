@@ -8,6 +8,7 @@ import com.smartfirehub.dataimport.service.DataExportService;
 import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
+import com.smartfirehub.securitylevel.ai.AiCallContext;
 import com.smartfirehub.securitylevel.ai.PolicyBlockedException;
 import com.smartfirehub.securitylevel.sql.GuardedSqlExecutor;
 import com.smartfirehub.user.repository.UserRepository;
@@ -42,6 +43,30 @@ public class QueryResultExportService {
   private final DataExportService dataExportService;
   private final AuditLogService auditLogService;
   private final UserRepository userRepository;
+  private final AiCallContext aiCallContext;
+
+  /**
+   * 사용자 실행 결과에 실행 기록(runId)을 붙인다 — 애드혹 /execute 와 저장 쿼리 /{id}/execute 가 같은 규칙으로 부른다(code-review
+   * 4·7).
+   *
+   * <p>기록하는 것: 성공한 SELECT, 사용자 자격(userId &gt; 0 — 미상 자격 -1 은 user FK 위반). SQL 원문을 그대로 남긴다(내보내기 재판정이
+   * 다시 정규화하므로 판정 = 실행이 유지된다). 저장 쿼리는 실행 시점의 SQL 스냅샷과 실행자를 남긴다 — 이후 저장 쿼리가 수정돼도 화면 결과와 같은 SQL 을
+   * 내보낸다.
+   *
+   * <p>기록하지 않는 것: AI 대행 요청(ai-agent — {@link AiCallContext#current()} 가 있으면). AI 는 내보내기를 쓰지 않고(웹 AI
+   * 표 위젯은 export-check 로 판정), 채팅 도구 호출마다 SQL 원문이 쌓이기만 했다. 차트 데이터·대시보드 조회는 이 메서드를 부르지 않는다.
+   */
+  public AnalyticsQueryResponse attachRun(
+      Clearance c, String sql, int maxRows, AnalyticsQueryResponse r) {
+    if (r.error() != null
+        || !"SELECT".equals(r.queryType())
+        || c.userId() <= 0
+        || aiCallContext.current().isPresent()) {
+      return r;
+    }
+    UUID runId = runRepository.insert(c.userId(), sql, maxRows);
+    return r.withExportInfo(r.exportAllowed(), runId.toString());
+  }
 
   /** 내보낼 파일 — 본문·이름·형식. */
   public record ExportFile(StreamingResponseBody body, String filename, String contentType) {}

@@ -1,8 +1,7 @@
 package com.smartfirehub.analytics.repository;
 
+import static com.smartfirehub.jooq.Tables.ANALYTICS_QUERY_RUN;
 import static org.jooq.impl.DSL.field;
-import static org.jooq.impl.DSL.name;
-import static org.jooq.impl.DSL.table;
 
 import java.time.OffsetDateTime;
 import java.util.Optional;
@@ -10,7 +9,6 @@ import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
 import org.jooq.Field;
-import org.jooq.Table;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -18,9 +16,8 @@ import org.springframework.transaction.annotation.Transactional;
  * 애드혹 분석 쿼리 실행 기록(V136 analytics_query_run) — 쿼리 결과 내보내기의 서버 재실행 근거(스펙 §4.4).
  *
  * <p>RLS 테이블이므로 클래스 레벨 {@code @Transactional} 을 둔다 — 컨트롤러가 트랜잭션 없이 부르므로, 이 경계가 있어야
- * TenantAwareTransactionManager 가 GUC(app.tenant_id)를 심어 tenant_id DEFAULT 와 정책이 동작한다.
- *
- * <p>새 테이블은 jOOQ 코드젠 대신 plain-SQL {@code table(name(..))} 로 참조한다.
+ * TenantAwareTransactionManager 가 GUC(app.tenant_id)를 심어 tenant_id DEFAULT 와 정책이 동작한다. 배경 정리({@link
+ * #deleteExpired})도 이 경계 덕분에 TenantScopedRunner 가 세운 테넌트의 GUC 로 돈다.
  */
 @Repository
 @RequiredArgsConstructor
@@ -28,22 +25,11 @@ import org.springframework.transaction.annotation.Transactional;
 public class AnalyticsQueryRunRepository {
 
   /**
-   * 보존 기간(1시간) — 이보다 오래된 기록은 내보내기에 쓰지 않고, 같은 사용자의 다음 삽입 때 지운다. DB 시계(now())로 비교한다 — created_at 이 DB
-   * DEFAULT now() 라서 앱 시계와 섞으면 두 시계 차이만큼 경계가 어긋난다(WD-48 과 같은 함정).
+   * 보존 기간(1시간) — 이보다 오래된 기록은 내보내기에 쓰지 않고, 주기 정리(AnalyticsQueryRunCleanupService)가 지운다. DB
+   * 시계(now())로 비교한다 — created_at 이 DB DEFAULT now() 라서 앱 시계와 섞으면 두 시계 차이만큼 경계가 어긋난다(WD-48 과 같은 함정).
    */
   private static final Field<OffsetDateTime> RETENTION_CUTOFF =
       field("now() - interval '1 hour'", OffsetDateTime.class);
-
-  private static final Table<?> RUN = table(name("analytics_query_run"));
-  private static final Field<UUID> ID = field(name("analytics_query_run", "id"), UUID.class);
-  private static final Field<Long> USER_ID =
-      field(name("analytics_query_run", "user_id"), Long.class);
-  private static final Field<String> SQL_TEXT =
-      field(name("analytics_query_run", "sql_text"), String.class);
-  private static final Field<Integer> MAX_ROWS =
-      field(name("analytics_query_run", "max_rows"), Integer.class);
-  private static final Field<OffsetDateTime> CREATED_AT =
-      field(name("analytics_query_run", "created_at"), OffsetDateTime.class);
 
   private final DSLContext dsl;
 
@@ -51,18 +37,27 @@ public class AnalyticsQueryRunRepository {
   public record Run(UUID id, String sqlText, int maxRows) {}
 
   /**
-   * 기록을 남기고 id 를 돌려준다. 같은 사용자의 보존 기간 지난 기록을 함께 지운다 — ai-agent 도 같은 실행 엔드포인트를 써서 행이 계속 쌓이므로 별도 스케줄러
-   * 없이 삽입 시점에 정리한다.
+   * 기록을 남기고 id 를 돌려준다. 만료 행 정리는 삽입 경로가 아니라 주기 정리({@link #deleteExpired})가 맡는다 — 삽입 때 사용자별로 지우면 다시
+   * 실행하지 않는 사용자의 SQL 원문이 무기한 남았다(code-review 7).
    */
   public UUID insert(long userId, String sqlText, int maxRows) {
-    dsl.deleteFrom(RUN).where(USER_ID.eq(userId)).and(CREATED_AT.lt(RETENTION_CUTOFF)).execute();
-    return dsl.insertInto(RUN)
-        .set(USER_ID, userId)
-        .set(SQL_TEXT, sqlText)
-        .set(MAX_ROWS, maxRows)
-        .returning(ID)
+    return dsl.insertInto(ANALYTICS_QUERY_RUN)
+        .set(ANALYTICS_QUERY_RUN.USER_ID, userId)
+        .set(ANALYTICS_QUERY_RUN.SQL_TEXT, sqlText)
+        .set(ANALYTICS_QUERY_RUN.MAX_ROWS, maxRows)
+        .returning(ANALYTICS_QUERY_RUN.ID)
         .fetchOne()
-        .get(ID);
+        .get(ANALYTICS_QUERY_RUN.ID);
+  }
+
+  /**
+   * 현재 테넌트(GUC)의 보존 기간 지난 기록을 모두 지우고 지운 행 수를 돌려준다. 주기 정리가 테넌트마다 부른다 — RLS 가 현재 테넌트 행만 보이게 하므로 테넌트
+   * 컨텍스트 없이 부르면 0행이다. created_at 단독 범위라 idx_analytics_query_run_created 를 탄다.
+   */
+  public int deleteExpired() {
+    return dsl.deleteFrom(ANALYTICS_QUERY_RUN)
+        .where(ANALYTICS_QUERY_RUN.CREATED_AT.lt(RETENTION_CUTOFF))
+        .execute();
   }
 
   /**
@@ -71,11 +66,17 @@ public class AnalyticsQueryRunRepository {
    */
   @Transactional(readOnly = true)
   public Optional<Run> findOwned(UUID id, long userId) {
-    return dsl.select(ID, SQL_TEXT, MAX_ROWS)
-        .from(RUN)
-        .where(ID.eq(id))
-        .and(USER_ID.eq(userId))
-        .and(CREATED_AT.ge(RETENTION_CUTOFF))
-        .fetchOptional(r -> new Run(r.get(ID), r.get(SQL_TEXT), r.get(MAX_ROWS)));
+    return dsl.select(
+            ANALYTICS_QUERY_RUN.ID, ANALYTICS_QUERY_RUN.SQL_TEXT, ANALYTICS_QUERY_RUN.MAX_ROWS)
+        .from(ANALYTICS_QUERY_RUN)
+        .where(ANALYTICS_QUERY_RUN.ID.eq(id))
+        .and(ANALYTICS_QUERY_RUN.USER_ID.eq(userId))
+        .and(ANALYTICS_QUERY_RUN.CREATED_AT.ge(RETENTION_CUTOFF))
+        .fetchOptional(
+            r ->
+                new Run(
+                    r.get(ANALYTICS_QUERY_RUN.ID),
+                    r.get(ANALYTICS_QUERY_RUN.SQL_TEXT),
+                    r.get(ANALYTICS_QUERY_RUN.MAX_ROWS)));
   }
 }

@@ -431,11 +431,12 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
     - '민감'(PERMISSION)은 `data:export_restricted` 권한이 있어야 한다.
     - 비동기 내보내기 파일은 **다운로드 시점** 등급으로 다시 판정한다(작업 생성 뒤 등급이 오르면 받을 수 없다).
     - 오브젝트 presign 은 `disposition` 파라미터로 나뉜다. 기본값 `inline`(미리보기·열기)은 VIEW 만 보고, `attachment`(다운로드)는 내보내기 판정을 거친다.
-    - 데이터셋 상세·목록·애드혹 쿼리 실행·차트 데이터 응답에 조회자별 `exportAllowed` 가 실린다. 쿼리 편집기의 내보내기 가능 여부는 애드혹 실행 응답의 `exportAllowed`+`runId` 로 정한다. `POST /api/v1/analytics/queries/export-check` 는 AI 표 위젯이 표시된 SQL 로 미리 보는 용도다(값 판정, 감사 없음).
+    - 데이터셋 상세·목록·애드혹 쿼리 실행·저장 쿼리 실행·차트 데이터 응답에 조회자별 `exportAllowed` 가 실린다. 쿼리 편집기의 내보내기 가능 여부는 실행 응답(애드혹 `/execute`·저장 쿼리 `/{id}/execute`)의 `exportAllowed`+`runId` 로 정한다. `POST /api/v1/analytics/queries/export-check` 는 AI 표 위젯이 표시된 SQL 로 미리 보는 용도다(값 판정, 감사 없음).
   - 쿼리 결과 내보내기:
     - 화면의 행이 아니라 실행 기록(`analytics_query_run`, 1시간 보존)의 `runId` 로 서버가 지금 자격으로 다시 판정하고 다시 실행한다. 데이터가 그 사이 바뀌었으면 파일 내용도 바뀐다.
     - 기록이 없거나 남의 기록이거나 1시간이 지났으면 404 `QUERY_RUN_NOT_FOUND` "실행 기록을 찾을 수 없습니다. 쿼리를 다시 실행한 뒤 내보내세요." 다.
-    - **저장 쿼리 실행 결과는 서버 내보내기를 할 수 없다** — 저장 쿼리 실행(`POST /api/v1/analytics/queries/{id}/execute`)은 `runId` 를 만들지 않는다. 웹은 버튼을 비활성하고 편집기에서 다시 실행하라고 안내한다.
+    - 실행 기록은 **사용자 실행 엔드포인트**(애드혹 `POST /api/v1/analytics/queries/execute`, 저장 쿼리 `POST /api/v1/analytics/queries/{id}/execute`)의 성공한 SELECT 만 남긴다 — 저장 쿼리는 실행 시점의 SQL 과 실행자 소유로 남아, 목록 「실행」 결과도 바로 내보낼 수 있다(차트 빌더의 쿼리 실행도 같은 엔드포인트라 기록이 남는다). **AI 대행 요청**(ai-agent 의 채팅 도구 호출)과 차트 데이터·대시보드 조회는 남기지 않는다. `runId` 가 없는 결과(구버전 응답 등)면 웹은 버튼을 비활성하고 "실행 기록이 없습니다. 쿼리를 다시 실행한 뒤 내보내세요." 를 보인다.
+    - 내려받는 파일 이름은 응답 `Content-Disposition` 의 `filename*`(RFC 5987, 한글 `_상위N행` 접미사 포함)을 웹이 그대로 쓴다.
   - 웹:
     - 내보낼 수 없는 데이터의 주 내보내기 버튼은 비활성+툴팁이다.
     - 보조 다운로드(목록 행 아이콘·선택 행 CSV·오브젝트 다운로드 아이콘·대시보드 PDF·AI 표/데이터셋 위젯 내보내기)는 숨긴다.
@@ -478,7 +479,7 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
   - AI 표 위젯의 내보내기 판정은 위젯에 표시된 SQL 기준이다. LLM 이 다른 SQL 의 결과를 표에 넣었으면 판정이 어긋날 수 있다(UI 수준).
   - 대시보드 PDF 는 브라우저 인쇄라 숨김만 한다(Cmd+P 는 막지 못한다).
   - 내보내기 추정(`GET /api/v1/datasets/{id}/export/estimate`)은 VIEW 만 본다(행 수는 이미 보이는 정보).
-  - **쿼리 실행 기록의 만료 행은 같은 사용자가 다시 애드혹 실행할 때만 지워진다.** 다시 실행하지 않는 사용자의 SQL 원문은 테이블에 남는다(내보내기·조회는 만료 조건으로 막히고, 소유자 조회·RLS 로 제한). 후속: 전역 정리 스케줄러.
+  - **쿼리 실행 기록 정리는 주기 작업이다** — `AnalyticsQueryRunCleanupService`(Spring `@Scheduled`, 기본 10분 주기·기동 1분 뒤 첫 실행, `firehub.analytics.query-run.cleanup.interval-ms`/`initial-delay-ms`)가 **ACTIVE 테넌트**를 돌며 1시간 지난 행을 지운다(`idx_analytics_query_run_created`). 따라서 SQL 원문은 최대 약 1시간 10분 남는다. 비활성·정지 테넌트의 행은 그 테넌트가 다시 ACTIVE 가 될 때까지 남는다(내보내기·조회는 만료 조건으로 막히고, 소유자 조회·RLS 로 제한).
   - PYTHON 출력 등급은 흐름 C 의 슬롯 롤 읽기 제한과 함께여야 실제 읽기와 일치한다(위 배포 모듈).
   - 지정 출력이 이미 입력과 같은(허용 목록 필요) 등급이면 상향이 없으므로 허용 목록을 좁히지 않는다 — 입력 목록에는 없고 출력 목록에만 있는 구성원이 출력을 볼 수 있다(대화형 SQL 의 rank 판정과 같은 성격).
 

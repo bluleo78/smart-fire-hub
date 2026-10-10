@@ -31,6 +31,9 @@ public class SavedQueryService {
   private final ClearanceResolver clearanceResolver;
   private final DatasetAccessGuard datasetAccessGuard;
 
+  /** 사용자 실행 결과에 실행 기록(runId)을 붙인다(애드혹 실행과 같은 규칙). */
+  private final QueryResultExportService queryResultExportService;
+
   /**
    * 응답의 연결 데이터셋 이름 가시성(보안 등급, 스펙 §2.5) — 조회자가 볼 수 없는 데이터셋은 이름만 null, datasetId 는 유지(웹 편집기가 PUT 으로
    * 되돌려 보내는 참조를 지우지 않게).
@@ -162,13 +165,18 @@ public class SavedQueryService {
         .orElseThrow(() -> new SavedQueryNotFoundException("Clone failed"));
   }
 
-  /** Execute a saved query by ID. */
+  /**
+   * Execute a saved query by ID. 성공한 사용자 SELECT 는 애드혹 실행과 같은 규칙으로 실행 기록(runId)을 남긴다 — 저장 쿼리 결과도 서버
+   * 재실행 내보내기를 할 수 있게(code-review 4). 기록은 실행 시점 SQL 스냅샷·실행자 소유다.
+   */
   @Transactional
   public AnalyticsQueryResponse executeById(Long id, int maxRows, boolean readOnly, Long userId) {
     SavedQueryResponse query = getById(id, userId);
     // 저장 쿼리 실행도 실행자 기준 판정 — 공유 쿼리를 자격 없는 사람이 실행하는 경로(스펙 §4.2 3행).
-    return guardedSqlExecutor.executeAnalytics(
-        clearanceResolver.resolve(userId), query.sqlText(), maxRows, readOnly);
+    Clearance c = clearanceResolver.resolve(userId);
+    AnalyticsQueryResponse r =
+        guardedSqlExecutor.executeAnalytics(c, query.sqlText(), maxRows, readOnly);
+    return queryResultExportService.attachRun(c, query.sqlText(), maxRows, r);
   }
 
   /** Get distinct folder names visible to the user. */
