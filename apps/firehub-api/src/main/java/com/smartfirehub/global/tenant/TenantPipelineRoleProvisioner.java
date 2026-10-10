@@ -76,6 +76,52 @@ public class TenantPipelineRoleProvisioner {
   }
 
   /**
+   * 테넌트 PYTHON 읽기 슬롯 롤({@code pipeline_py_t{id}_s1..s10})의 활성 세션을 모두 끊는다 — 등급 정의 변경 재동기화가 새 GRANT 를
+   * 커밋하기 전에 부른다(PythonReadGrantSync, WD-29 CR2). 런타임 롤(app_tenant)은 슬롯 롤 세션을 끊을 권한이
+   * 없어(pg_signal_backend·슬롯 롤 멤버 아님, 실측) 슬롯 롤 수명을 맡은 이 클래스의 소유자 연결로 한다.
+   *
+   * <p>대상은 정확한 롤 이름 목록으로만 고른다(LIKE 금지 — 다른 테넌트 롤 오인 방지). {@code pg_terminate_backend(pid, 5000)} 은
+   * 대상이 실제로 끝날 때까지(최대 5초) 기다려, 호출자가 이 뒤에 커밋하는 GRANT 를 그 세션이 보지 못한다. false 는 시간 초과이거나 조회와 종료 사이에 이미
+   * 끝난 세션(경고만)이라, 아직 살아 있는지 다시 본다. 남아 있거나 권한이 없으면 예외 — 호출자 트랜잭션(넓히는 GRANT)을 되돌린다(fail-closed).
+   *
+   * @return 끊은(종료 신호를 보낸) 세션 수
+   */
+  public int terminatePythonReadSessions(long tenantId) {
+    String[] roles = new String[TenantPipelineRole.PYTHON_READ_SLOTS];
+    for (int slot = 1; slot <= TenantPipelineRole.PYTHON_READ_SLOTS; slot++) {
+      roles[slot - 1] = TenantPipelineRole.pythonReadRoleName(tenantId, slot);
+    }
+    var results =
+        ownerDsl.fetch(
+            "select pid, pg_terminate_backend(pid, 5000) from pg_stat_activity"
+                + " where usename::text = any({0}::text[])",
+            DSL.val(roles));
+    java.util.List<Integer> unconfirmed = new java.util.ArrayList<>();
+    for (var r : results) {
+      if (!Boolean.TRUE.equals(r.get(1, Boolean.class))) {
+        unconfirmed.add(r.get(0, Integer.class));
+      }
+    }
+    if (!unconfirmed.isEmpty()) {
+      int alive =
+          ownerDsl
+              .fetchOne(
+                  "select count(*)::int from pg_stat_activity where pid = any({0}::int[])",
+                  DSL.val(unconfirmed.toArray(new Integer[0])))
+              .get(0, Integer.class);
+      if (alive > 0) {
+        log.error(
+            "PYTHON 슬롯 롤 세션 종료 실패: tenant={} 대상 {}개 중 {}개가 끝나지 않음",
+            tenantId,
+            results.size(),
+            alive);
+        throw new IllegalStateException("PYTHON 슬롯 롤 세션을 끊지 못해 등급 변경 재동기화를 되돌렸습니다.");
+      }
+    }
+    return results.size();
+  }
+
+  /**
    * 자동 프로비저닝 스위치의 현재 값. 이 플래그를 읽어야 하는 곳이 두 군데(테넌트 생성 호출부와 기동 치유 루프)라, 프로퍼티 이름을 양쪽에 적는 대신 여기 한 곳에서만
    * 읽는다.
    */
