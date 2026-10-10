@@ -200,6 +200,57 @@ class GuardedSqlExecutorTest extends IntegrationTestBase {
         .isEqualTo("DATASET_SQL_ACCESS_DENIED");
   }
 
+  /**
+   * 감사 등급 접근(DATASET_ACCESS)은 허용 판정이 아니라 실행이 성공해 결과가 나간 뒤에 남는다(코드리뷰 3 과 같은 규칙). 판정은 통과하지만 실행이 실패하는
+   * SQL(0 으로 나누기 → 200 + error)·판정 거부(403)는 0건, 같은 데이터셋을 성공적으로 읽으면 1건. 실패 → 성공 순서인 이유: 레코더의 1분 병합
+   * 창이 성공 뒤 같은 사용자·데이터셋 기록을 합치므로, 반대 순서면 "0건"이 공허하게 통과한다.
+   */
+  @Test
+  void datasetQuery_recordsAuditAccessOnlyAfterSuccessfulExecution() {
+    String sens = "gse" + System.nanoTime() + "_sens";
+    dsl.execute("CREATE TABLE " + schema + "." + sens + " (a int)");
+    try {
+      dsl.execute("INSERT INTO " + schema + "." + sens + " VALUES (1)");
+      long sensId = fx.createDatasetRow(sens, fx.levelId("민감"), creator);
+      datasets.add(sensId);
+      asUser(userId);
+
+      SqlQueryResponse failed =
+          datasetDataService.executeQuery(
+              sensId, new SqlQueryRequest("SELECT a / 0 AS x FROM " + sens, 100), userId);
+      assertThat(failed.error()).as("전제: 판정은 통과하고 실행이 실패한다").isNotBlank();
+      assertThatThrownBy(
+              () ->
+                  datasetDataService.executeQuery(
+                      sensId,
+                      new SqlQueryRequest("SELECT s.a FROM " + sens + " s, " + hidden + " h", 100),
+                      userId))
+          .isInstanceOf(CodedApiException.class);
+      assertThat(accessRows(userId, sensId)).isZero();
+
+      SqlQueryResponse ok =
+          datasetDataService.executeQuery(
+              sensId, new SqlQueryRequest("SELECT a FROM " + sens, 100), userId);
+      assertThat(ok.error()).isNull();
+      assertThat(accessRows(userId, sensId)).isEqualTo(1);
+    } finally {
+      dsl.execute("DROP TABLE IF EXISTS " + schema + "." + sens);
+    }
+  }
+
+  /** 이 사용자·데이터셋의 감사 등급 접근(DATASET_ACCESS) 행 수(비동기 기록이 끝난 뒤). */
+  private int accessRows(long uid, long datasetId) {
+    awaitSecurityAudit();
+    return inTenantFixture(
+        () ->
+            dsl.fetchOne(
+                    "SELECT count(*) FROM audit_log WHERE user_id = ? AND action_type ="
+                        + " 'DATASET_ACCESS' AND resource_id = ?",
+                    uid,
+                    String.valueOf(datasetId))
+                .get(0, Integer.class));
+  }
+
   /** 애널리틱스 오류 계약 — 정규화·판정 전 파싱 오류는 예외가 아니라 200 + error 필드(웹 쿼리 편집기 표시 유지). */
   @Test
   void analytics_syntaxAndNormalizationErrors_returnErrorField() {

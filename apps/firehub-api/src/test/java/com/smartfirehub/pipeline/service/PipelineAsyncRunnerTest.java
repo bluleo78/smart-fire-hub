@@ -741,7 +741,7 @@ class PipelineAsyncRunnerTest {
 
   /**
    * 코드리뷰 CR2 — PYTHON(실행기 끈 REPLACE)은 스크립트 실행 전에 지정 출력을 truncate 한다. 실행 주체가 그 출력을 볼 수 없으면 비우기·실행 전에
-   * 실패해야 한다.
+   * 실패해야 한다. 판정은 enforcePythonOutputLevel 하나가 한다(코드리뷰 8 — 예전 중복 판정 requireOutputVisible 제거).
    */
   @Test
   void executeStep_pythonHiddenExplicitOutput_failsBeforeTruncateOrRun() {
@@ -752,7 +752,9 @@ class PipelineAsyncRunnerTest {
     when(datasetRepository.findTableNameById(out)).thenReturn(Optional.of("hidden_out"));
     PipelineSecurityGate.RunAs runAs = new PipelineSecurityGate.RunAs(userId, null);
     when(pipelineSecurityGate.runAs(userId)).thenReturn(runAs);
-    doThrow(outputDenied()).when(pipelineSecurityGate).requireOutputVisible(out, runAs);
+    doThrow(outputDenied())
+        .when(pipelineSecurityGate)
+        .enforcePythonOutputLevel(out, stepId, false, runAs);
 
     String status = runner.executeStep(stepExecId, py, pipelineId, "TestPipeline", userId, false);
 

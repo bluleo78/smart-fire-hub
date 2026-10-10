@@ -667,11 +667,11 @@ public class PipelineAsyncRunner {
         }
         // escalation 코드 차단 — 저장 시 검증을 우회해 저장된 스텝(직접 DB 삽입 등)에 대한 실행 시 2차 방어 (#270)
         pythonScriptValidator.validate(step.scriptContent());
-        // 보안 등급(코드리뷰 CR2·후속 F1): 이미 있던 출력은 실행 주체가 볼 수 있어야 쓴다 — 출력 비우기(실행기 끈 REPLACE truncate·실행기 켠
-        // REPLACE 맞바꿈)·적재보다 먼저다. 입력 읽기는 판정하지 않는 대신 출력 등급을 "스크립트가 읽을 수 있던 최대 등급"으로 올린다(아래).
+        // 보안 등급(코드리뷰 CR2·후속 F1): 이미 있던 출력은 실행 주체가 볼 수 있어야 쓴다 — 판정은 아래 enforcePythonOutputLevel 이
+        // 한 번 한다(코드리뷰 8). 그 호출 전까지 들어온 출력을 비우거나 쓰지 않으므로 "비우기·맞바꿈·적재 전" 순서가 지켜진다.
+        // 입력 읽기는 판정하지 않는 대신 출력 등급을 "스크립트가 읽을 수 있던 최대 등급"으로 올린다(아래).
         // 실행 주체 자격은 이 스텝에서 한 번만 계산해 이 스텝의 모든 판정(출력·TEMP 삭제 전)에 쓴다.
         PipelineSecurityGate.RunAs pyRunAs = pipelineSecurityGate.runAs(userId);
-        requireExistingOutputVisible(outputDatasetId, pyRunAs);
         boolean pyTempFresh = false;
         // outputDatasetId가 없고 pythonConfig에 outputColumns가 있으면 임시 데이터셋 자동 생성
         if (outputDatasetId == null && step.pythonConfig() != null) {
@@ -692,8 +692,9 @@ public class PipelineAsyncRunner {
             outputTableName = datasetRepository.findTableNameById(outputDatasetId).orElseThrow();
           }
         }
-        // 출력 등급(스펙 §4.5·공통 결정 R4): 실행 주체 자격 이하 & 허용 목록 아닌 최고 등급으로 상향(새 TEMP 는 정확히 맞춤). 재사용 TEMP
-        // 의 "쓰기 전 VIEW" 도 여기서 본다(enforceOutputLevel). 출력 비우기·맞바꿈·적재보다 먼저다.
+        // 출력 등급(스펙 §4.5·공통 결정 R4): 실행 주체 자격 이하 & 허용 목록 아닌 최고 등급으로 상향(새 TEMP 는 정확히 맞춤). 들어온 출력
+        // (지정 출력·재사용 TEMP)의 "쓰기 전 VIEW" 도 여기서 본다(enforceOutputLevel). 출력 비우기·맞바꿈·적재보다 먼저다. 거부되면 이
+        // 트랜잭션의 상향도 롤백되고, 거부 감사는 트랜잭션 완료 후(커밋·롤백 무관) 기록된다.
         if (outputDatasetId != null) {
           pipelineSecurityGate.enforcePythonOutputLevel(
               outputDatasetId, step.id(), pyTempFresh, pyRunAs);
@@ -1114,9 +1115,10 @@ public class PipelineAsyncRunner {
   }
 
   /**
-   * API_CALL·PYTHON 스텝에 들어온 출력(사용자 지정 출력, 또는 재실행에서 {@code PipelineStepRepository.findByPipelineId}
-   * 의 coalesce 폴백으로 들어온 이 스텝의 재사용 TEMP)을 실행 주체가 볼 수 있어야 한다(코드리뷰 CR2·후속 F1). 반드시 출력 비우기·맞바꿈용 임시 테이블
-   * 생성·적재 전에 부른다.
+   * API_CALL 스텝에 들어온 출력(사용자 지정 출력, 또는 재실행에서 {@code PipelineStepRepository.findByPipelineId} 의
+   * coalesce 폴백으로 들어온 이 스텝의 재사용 TEMP)을 실행 주체가 볼 수 있어야 한다(코드리뷰 CR2·후속 F1). 반드시 출력 비우기·맞바꿈용 임시 테이블
+   * 생성·적재 전에 부른다. PYTHON 은 {@code PipelineSecurityGate#enforcePythonOutputLevel} 이 같은 판정을 하므로 부르지
+   * 않는다(코드리뷰 8).
    *
    * <p>들어온 출력은 이번 실행 전부터 있던 데이터셋이라 러너 TEMP 든 아니든 같은 판정을 한다. 예전 판정({@code
    * PipelineSecurityGate.requireExplicitOutputVisible})은 러너 TEMP 를 건너뛰도록 쓰여 있었는데, 그 TEMP 판별이 트랜잭션

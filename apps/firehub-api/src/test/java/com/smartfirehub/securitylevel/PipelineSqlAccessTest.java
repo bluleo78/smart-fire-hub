@@ -799,10 +799,22 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
     long hiddenOut = table(outTable, "민감");
     insertRow(outTable, "keep");
     long p = pipeline(pythonUserAt("민감"), List.of(pythonStep(hiddenOut)));
-    long exec = executionService.executePipeline(p, pythonUserAt("공개"));
+    long runner = pythonUserAt("공개");
+    long exec = executionService.executePipeline(p, runner);
     assertThat(waitForEnd(exec)).isEqualTo("FAILED");
     assertThat(stepError(exec)).isEqualTo(DatasetAccessGuard.SQL_ACCESS_DENIED_MESSAGE);
     assertThat(rowCount(outTable)).isEqualTo(1);
+    // 코드리뷰 8: 거부가 트랜잭션(enforcePythonOutputLevel) 안에서 나도 거부 감사는 롤백되지 않고 정확히 1건(중복 판정 제거 후 이중 감사 없음).
+    awaitSecurityAudit();
+    int denials =
+        inTenantFixture(
+            () ->
+                dsl.fetchOne(
+                        "SELECT count(*) FROM audit_log WHERE user_id = ? AND action_type ="
+                            + " 'DATASET_ACCESS_DENIED' AND metadata ->> 'action' = 'PIPELINE'",
+                        runner)
+                    .get(0, Integer.class));
+    assertThat(denials).isEqualTo(1);
   }
 
   /** API_CALL 도 같다 — 거부는 API 호출·REPLACE 맞바꿈 전에 구분 불가 메시지로 난다(호출 실패 메시지가 아니다). */

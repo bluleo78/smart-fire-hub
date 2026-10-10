@@ -186,7 +186,7 @@ public class AnalyticsDashboardService {
         deniedQueries.add(savedQueryId);
         continue;
       }
-      exportByQuery.put(savedQueryId, ChartService.exportAllowedFor(judgment));
+      exportByQuery.put(savedQueryId, judgment.exportAllowedFor());
       // 판정을 통과한 쿼리만 캐시에 닿는다. 캐시 미스면 방금 판정한 토큰을 그대로 실행한다(다시 판정하지 않는다 — 판정 = 실행). 결과를 지역
       // 맵에 담아 위젯 루프가 getIfPresent(만료·축출 시 null)에 의존하지 않게 한다.
       // 이 조회자가 로더를 실제로 돌렸는지 — 돌렸으면 실행 지점이 감사 등급 접근을 이미 남겼다. 아니면(남이 데운 캐시, 동시 로드 대기 포함) 받은

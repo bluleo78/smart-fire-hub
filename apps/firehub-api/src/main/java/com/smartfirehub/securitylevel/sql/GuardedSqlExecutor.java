@@ -55,11 +55,16 @@ public class GuardedSqlExecutor {
   public SqlQueryResponse executeDatasetQuery(Clearance c, String sql, int maxRows) {
     NormalizedSql normalized = NormalizedSql.of(sql);
     SqlAccessResult r = guard.requireSql(c, normalized.text(), SqlAccessMode.INTERACTIVE);
-    // 감사 등급 데이터셋을 읽은 사용자 SQL 은 접근 기록을 남긴다(거부는 requireSql 이 감사한다).
+    SqlQueryResponse response = dataTableQueryService.executeQuery(normalized, maxRows);
+    // 감사 등급 데이터셋을 읽은 사용자 SQL 은 접근 기록을 남긴다(거부는 requireSql 이 감사한다). 허용 판정이 아니라 실행이 성공해 결과가
+    // 나가는 지점에서 남긴다 — 검증 예외·실행 오류(200 + error)는 데이터가 나가지 않았다(executeJudgedAnalytics 와 같은 규칙, 코드리뷰
+    // 3).
     // AI 대행 요청이면 AI 종류로 남긴다(결과가 LLM 으로 간다 — 스펙 §4.6 "AI 도구 접근").
-    auditRecorder.recordAccess(
-        c.userId(), guard.accessKind(SecurityAuditRecorder.AccessKind.SQL), touched(r));
-    return dataTableQueryService.executeQuery(normalized, maxRows);
+    if (response.error() == null) {
+      auditRecorder.recordAccess(
+          c.userId(), guard.accessKind(SecurityAuditRecorder.AccessKind.SQL), touched(r));
+    }
+    return response;
   }
 
   /**
@@ -130,7 +135,8 @@ public class GuardedSqlExecutor {
 
     /**
      * 판정한 조회자가 이 결과를 실제로 내려받을 수 있는가 — EXPORT 정책 AND {@code data:export} 권한(내보내기 엔드포인트가
-     * {@code @RequirePermission("data:export")} 이므로). 웹이 다운로드 UI 를 숨기는 데 쓰는 UI 수준 플래그다.
+     * {@code @RequirePermission("data:export")} 이므로). 웹이 다운로드 UI 를 숨기는 데 쓰는 UI 수준 플래그다. 조회자 자격으로 방금
+     * 판정한 토큰에서 계산하므로 대시보드 공유 결과 캐시와 무관하게 조회자별이다(설계 결정 5).
      */
     public boolean exportAllowedFor() {
       return exportAllowed()

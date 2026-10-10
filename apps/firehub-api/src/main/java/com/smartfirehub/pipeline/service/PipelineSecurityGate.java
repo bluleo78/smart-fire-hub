@@ -246,9 +246,9 @@ public class PipelineSecurityGate {
 
   /**
    * 사용자가 지정한 출력 데이터셋을 실행 주체가 볼 수 있어야 한다. DML 스텝도 REPLACE 면 러너가 출력 비우기(DELETE) 선행 문장을 붙이므로, 이 판정이
-   * 없으면 볼 수 없는 데이터셋을 비울 수 있다. 없는 데이터셋·숨김 데이터셋은 같은 거부(존재 은닉). 러너는 재사용·삭제할 TEMP 와 API_CALL·PYTHON 스텝에
-   * 들어온 출력(지정 출력·재사용 TEMP 모두 — 후속 F1)에도 같은 판정을 쓴다. PYTHON 의 재사용 TEMP 쓰기 전 판정은 {@link
-   * #enforcePythonOutputLevel} 이 등급 처리 뒤에 한다.
+   * 없으면 볼 수 없는 데이터셋을 비울 수 있다. 없는 데이터셋·숨김 데이터셋은 같은 거부(존재 은닉). 러너는 재사용·삭제할 TEMP 와 API_CALL 스텝에 들어온
+   * 출력(지정 출력·재사용 TEMP 모두 — 후속 F1)에도 같은 판정을 쓴다. PYTHON 스텝에 들어온 출력의 쓰기 전 판정은 {@link
+   * #enforcePythonOutputLevel} 이 한다(지정 출력은 등급 처리 전, 재사용 TEMP 는 등급 처리 뒤 — 코드리뷰 8).
    */
   public void requireOutputVisible(long outputDatasetId, RunAs runAs) {
     Decision d = guard.check(runAs.clearance(), outputDatasetId, DatasetAction.VIEW, null);
