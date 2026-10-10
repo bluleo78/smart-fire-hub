@@ -134,6 +134,37 @@ class DataTableRowServiceTest extends IntegrationTestBase {
     assertThat(dataTableRowService.countRows(tableName)).isEqualTo(3L);
   }
 
+  /**
+   * 넓은 테이블(CR7 회귀 가드): 140컬럼 × 500행은 한 문장이면 바인드 70,000개로 PG 프로토콜 한도(65535)를 넘지만, jOOQ 가 PostgreSQL
+   * 에서 바인드 32767개를 넘으면 값을 리터럴로 인라인하므로 드라이버 한도에 닿지 않고 전부 적재된다. 이 동작(jOOQ 설정·버전)이 바뀌면 여기서 드러난다.
+   */
+  @Test
+  void insertBatch_wideTable_loadsBeyondDriverBindLimit() {
+    List<DatasetColumnRequest> defs = new ArrayList<>();
+    List<String> columns = new ArrayList<>();
+    for (int c = 0; c < 140; c++) {
+      String name = "c" + c;
+      columns.add(name);
+      defs.add(new DatasetColumnRequest(name, name, "TEXT", null, true, false, null));
+    }
+    datasetService.createDataset(
+        new CreateDatasetRequest(
+            "insert_batch_wide", "insert_batch_wide", null, null, "TABLE", "SOURCE", defs, null),
+        testUserId);
+    List<Map<String, Object>> rows = new ArrayList<>();
+    for (int r = 0; r < 500; r++) {
+      Map<String, Object> row = new java.util.HashMap<>();
+      for (String col : columns) {
+        row.put(col, col + "_" + r);
+      }
+      rows.add(row);
+    }
+
+    dataTableRowService.insertBatch("insert_batch_wide", columns, rows, Map.of());
+
+    assertThat(dataTableRowService.countRows("insert_batch_wide")).isEqualTo(500L);
+  }
+
   /** 엣지 케이스: 빈 rows 목록으로 insertBatch 호출 시 예외 없이 종료되고 행이 삽입되지 않아야 한다. */
   @Test
   void insertBatch_emptyRows_noException() {
