@@ -1,18 +1,14 @@
 package com.smartfirehub.pipeline.service;
 
-import static com.smartfirehub.jooq.Tables.DATASET;
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.smartfirehub.dataset.dto.CreateDatasetRequest;
-import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.service.DatasetService;
-import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.pythonread.PythonReadGrantSync;
 import com.smartfirehub.support.IntegrationTestBase;
+import com.smartfirehub.support.PythonReadTestTables;
 import com.smartfirehub.support.SecurityFixture;
-import com.smartfirehub.support.TenantRlsTestSupport;
 import java.net.URI;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -110,32 +106,9 @@ class PythonScriptExecutorSlotAccessTest extends IntegrationTestBase {
   /** 물리 테이블 + 행 1개 + 등급 직접 지정(PythonReadGrantSyncTest.table 과 같은 방식). */
   private String table(String suffix, String level) {
     String t = m + "_" + suffix;
-    long id =
-        datasetService
-            .createDataset(
-                new CreateDatasetRequest(
-                    t,
-                    t,
-                    null,
-                    null,
-                    "TABLE",
-                    "SOURCE",
-                    List.of(
-                        new DatasetColumnRequest("v", "v", "TEXT", null, true, false, null, false)),
-                    null),
-                owner)
-            .id();
-    datasets.add(id);
-    TenantRlsTestSupport.runInTenantTransaction(
-        fixtureTransactionTemplate,
-        DEFAULT_TEST_TENANT_ID,
-        () -> {
-          dsl.update(DATASET)
-              .set(DATASET.SECURITY_LEVEL_ID, fx.levelId(level))
-              .where(DATASET.ID.eq(id))
-              .execute();
-          dsl.execute("INSERT INTO " + DataSchema.qualify(t) + " (v) VALUES ('row')");
-        });
+    datasets.add(
+        new PythonReadTestTables(datasetService, dsl, fixtureTransactionTemplate, fx)
+            .create(t, level, owner));
     return t;
   }
 

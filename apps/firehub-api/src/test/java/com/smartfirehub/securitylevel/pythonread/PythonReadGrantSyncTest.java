@@ -4,8 +4,6 @@ import static com.smartfirehub.jooq.Tables.DATASET;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.smartfirehub.dataset.dto.CreateDatasetRequest;
-import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.dataset.service.DatasetService;
 import com.smartfirehub.global.tenant.DataSchema;
@@ -15,6 +13,7 @@ import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.PostgresTestContainer;
+import com.smartfirehub.support.PythonReadTestTables;
 import com.smartfirehub.support.SecurityFixture;
 import com.smartfirehub.support.TenantRlsTestSupport;
 import java.sql.Connection;
@@ -74,48 +73,15 @@ class PythonReadGrantSyncTest extends IntegrationTestBase {
   /** PipelineSqlAccessTest.table 과 같은 방식: 물리 테이블 + 행 1개 + 등급 직접 지정. */
   private String table(String suffix, String level) {
     String t = m + "_" + suffix;
-    long id =
-        datasetService
-            .createDataset(
-                new CreateDatasetRequest(
-                    t,
-                    t,
-                    null,
-                    null,
-                    "TABLE",
-                    "SOURCE",
-                    List.of(
-                        new DatasetColumnRequest("v", "v", "TEXT", null, true, false, null, false)),
-                    null),
-                owner)
-            .id();
-    datasets.add(id);
-    TenantRlsTestSupport.runInTenantTransaction(
-        fixtureTransactionTemplate,
-        DEFAULT_TEST_TENANT_ID,
-        () -> {
-          dsl.update(DATASET)
-              .set(DATASET.SECURITY_LEVEL_ID, fx.levelId(level))
-              .where(DATASET.ID.eq(id))
-              .execute();
-          dsl.execute("INSERT INTO " + DataSchema.qualify(t) + " (v) VALUES ('row')");
-        });
+    datasets.add(
+        new PythonReadTestTables(datasetService, dsl, fixtureTransactionTemplate, fx)
+            .create(t, level, owner));
     return t;
   }
 
   /** 슬롯 롤로 실제 로그인해 SELECT 한다. 권한 오류면 SQLState 를 돌려준다(성공이면 null). */
   private String selectAs(int slot, String table) {
-    String role = TenantPipelineRole.pythonReadRoleName(DEFAULT_TEST_TENANT_ID, slot);
-    String pw = TenantPipelineRole.pythonReadPassword(DEFAULT_TEST_TENANT_ID, slot, secret);
-    try (Connection c =
-            DriverManager.getConnection(PostgresTestContainer.INSTANCE.getJdbcUrl(), role, pw);
-        Statement s = c.createStatement()) {
-      s.executeQuery(
-          "SELECT v FROM " + DataSchema.forTenant(DEFAULT_TEST_TENANT_ID) + ".\"" + table + "\"");
-      return null;
-    } catch (SQLException e) {
-      return e.getSQLState();
-    }
+    return PythonReadTestTables.selectAs(slot, table, secret);
   }
 
   private DSLContext ownerDsl() {

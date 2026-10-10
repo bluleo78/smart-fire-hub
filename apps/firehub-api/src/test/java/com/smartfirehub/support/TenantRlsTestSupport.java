@@ -746,9 +746,8 @@ public final class TenantRlsTestSupport {
    * 그래서 REVOKE → DROP OWNED → DROP 순서를 아는 {@link #dropPipelineLoginRole} 한 곳을 그대로 거친다.
    */
   public static void dropPythonReadRoles(DSLContext ownerDsl, long tenantId) {
-    for (int slot = 1; slot <= TenantPipelineRole.PYTHON_READ_SLOTS; slot++) {
-      dropPipelineLoginRole(ownerDsl, TenantPipelineRole.pythonReadRoleName(tenantId, slot));
-    }
+    TenantPipelineRole.pythonReadRoleNames(tenantId)
+        .forEach(role -> dropPipelineLoginRole(ownerDsl, role));
   }
 
   /**

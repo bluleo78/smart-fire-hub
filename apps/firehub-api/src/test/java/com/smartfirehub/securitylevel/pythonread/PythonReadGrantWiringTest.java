@@ -5,8 +5,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 
 import com.smartfirehub.dataset.dto.CloneDatasetRequest;
-import com.smartfirehub.dataset.dto.CreateDatasetRequest;
-import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.dataset.service.DatasetService;
 import com.smartfirehub.global.tenant.DataSchema;
@@ -22,6 +20,7 @@ import com.smartfirehub.securitylevel.service.DatasetSecurityService;
 import com.smartfirehub.securitylevel.service.SecurityLevelService;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.PostgresTestContainer;
+import com.smartfirehub.support.PythonReadTestTables;
 import com.smartfirehub.support.SecurityFixture;
 import com.smartfirehub.support.TenantRlsTestSupport;
 import java.sql.Connection;
@@ -31,7 +30,6 @@ import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
-import java.util.StringJoiner;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.sql.DataSource;
 import org.jooq.DSLContext;
@@ -93,32 +91,9 @@ class PythonReadGrantWiringTest extends IntegrationTestBase {
    */
   private String table(String suffix, String level) {
     String t = m + "_" + suffix;
-    long id =
-        datasetService
-            .createDataset(
-                new CreateDatasetRequest(
-                    t,
-                    t,
-                    null,
-                    null,
-                    "TABLE",
-                    "SOURCE",
-                    List.of(
-                        new DatasetColumnRequest("v", "v", "TEXT", null, true, false, null, false)),
-                    null),
-                owner)
-            .id();
-    datasets.add(id);
-    TenantRlsTestSupport.runInTenantTransaction(
-        fixtureTransactionTemplate,
-        DEFAULT_TEST_TENANT_ID,
-        () -> {
-          dsl.update(DATASET)
-              .set(DATASET.SECURITY_LEVEL_ID, fx.levelId(level))
-              .where(DATASET.ID.eq(id))
-              .execute();
-          dsl.execute("INSERT INTO " + DataSchema.qualify(t) + " (v) VALUES ('row')");
-        });
+    datasets.add(
+        new PythonReadTestTables(datasetService, dsl, fixtureTransactionTemplate, fx)
+            .create(t, level, owner));
     return t;
   }
 
@@ -128,10 +103,8 @@ class PythonReadGrantWiringTest extends IntegrationTestBase {
 
   /** 슬롯 롤 10개의 SELECT 를 전부 걷는다(런타임 롤 = 테이블 소유자). "GRANT 가 없는 테이블" 출발 상태를 만든다. */
   private void revokeAllSlots(String table) {
-    StringJoiner roles = new StringJoiner(", ");
-    for (int k = 1; k <= TenantPipelineRole.PYTHON_READ_SLOTS; k++) {
-      roles.add(TenantPipelineRole.pythonReadRoleName(DEFAULT_TEST_TENANT_ID, k));
-    }
+    String roles =
+        String.join(", ", TenantPipelineRole.pythonReadRoleNames(DEFAULT_TEST_TENANT_ID));
     TenantRlsTestSupport.runInTenantTransaction(
         fixtureTransactionTemplate,
         DEFAULT_TEST_TENANT_ID,
@@ -140,17 +113,7 @@ class PythonReadGrantWiringTest extends IntegrationTestBase {
 
   /** 슬롯 롤로 실제 로그인해 SELECT 한다. 권한 오류면 SQLState 를 돌려준다(성공이면 null). */
   private String selectAs(int slot, String table) {
-    String role = TenantPipelineRole.pythonReadRoleName(DEFAULT_TEST_TENANT_ID, slot);
-    String pw = TenantPipelineRole.pythonReadPassword(DEFAULT_TEST_TENANT_ID, slot, secret);
-    try (Connection c =
-            DriverManager.getConnection(PostgresTestContainer.INSTANCE.getJdbcUrl(), role, pw);
-        Statement s = c.createStatement()) {
-      s.executeQuery(
-          "SELECT v FROM " + DataSchema.forTenant(DEFAULT_TEST_TENANT_ID) + ".\"" + table + "\"");
-      return null;
-    } catch (SQLException e) {
-      return e.getSQLState();
-    }
+    return PythonReadTestTables.selectAs(slot, table, secret);
   }
 
   /** 발행 스레드의 테넌트를 일부러 엉뚱하게 두고, 커밋(또는 롤백)되는 트랜잭션 안에서 이벤트를 발행한다. */
