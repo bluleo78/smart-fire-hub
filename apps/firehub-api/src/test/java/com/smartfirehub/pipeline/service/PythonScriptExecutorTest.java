@@ -93,9 +93,8 @@ class PythonScriptExecutorTest extends IntegrationTestBase {
   void buildEnvironment_usesSlotRoleNotTenantRole() {
     Map<String, String> env = pythonScriptExecutor.buildEnvironment(2L, 3);
 
-    assertThat(env.get("DB_USER")).isEqualTo("pipeline_py_t2_s3");
-    assertThat(env.get("DB_PASSWORD"))
-        .isEqualTo(TenantPipelineRole.pythonReadPassword(2, 3, rolePasswordSecret));
+    // executor 계약과 같이 DB_URL·DB_SCHEMA 만 — 개별 자격증명 키는 없다(CR8)
+    assertThat(env).containsOnlyKeys("DB_URL", "DB_SCHEMA", "PATH", "HOME");
     assertThat(env.get("DB_URL"))
         .startsWith(
             "postgresql://pipeline_py_t2_s3:"

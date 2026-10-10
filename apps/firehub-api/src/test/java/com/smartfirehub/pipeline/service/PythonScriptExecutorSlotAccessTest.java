@@ -13,6 +13,7 @@ import com.smartfirehub.securitylevel.pythonread.PythonReadGrantSync;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.SecurityFixture;
 import com.smartfirehub.support.TenantRlsTestSupport;
+import java.net.URI;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
@@ -29,7 +30,8 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 
 /**
  * 로컬 PYTHON 경로의 슬롯 밖 읽기 거부(R5) — 자식 프로세스가 받는 <b>바로 그 환경값</b>({@link
- * PythonScriptExecutor#buildEnvironment} 의 DB_URL 호스트·DB_USER·DB_PASSWORD)으로 JDBC 실접속해 확인한다.
+ * PythonScriptExecutor#buildEnvironment} 의 DB_URL — libpq URI 안의 롤·비밀번호·호스트를 그대로 풀어서)으로 JDBC 실접속해
+ * 확인한다. URI 안 자격증명으로 실제 로그인이 되는지도 이로써 검증된다(자식에겐 개별 DB_USER·DB_PASSWORD 키가 없다, CR8).
  *
  * <p>왜 자식 프로세스가 아니라 JDBC 인가: 호스트 python3(환경을 비운 자식은 HOME=/tmp 라 사용자 site-packages 를 못 본다)에 psycopg2
  * 가 없어, 스크립트에서 DB 를 읽으면 ImportError 로 실패한다 — 그 실패를 "권한 거부"로 세면 공허하다. 그래서 같은 자격증명으로 Java 에서 접속하고, 슬롯
@@ -70,11 +72,14 @@ class PythonScriptExecutorSlotAccessTest extends IntegrationTestBase {
     assertThat(slot).isEqualTo(2);
 
     Map<String, String> env = pythonScriptExecutor.buildEnvironment(DEFAULT_TEST_TENANT_ID, slot);
-    String jdbcUrl =
-        "jdbc:postgresql://" + env.get("DB_URL").substring(env.get("DB_URL").indexOf('@') + 1);
+    assertThat(env).doesNotContainKeys("DB_USER", "DB_PASSWORD");
+    // postgresql://role:pw@host:port/db 를 풀어 JDBC 로 — psycopg2.connect(DB_URL) 이 쓰는 것과 같은 자격증명
+    URI uri = URI.create(env.get("DB_URL"));
+    assertThat(uri.getScheme()).isEqualTo("postgresql");
+    String[] userInfo = uri.getUserInfo().split(":", 2);
+    String jdbcUrl = "jdbc:postgresql://" + uri.getHost() + ":" + uri.getPort() + uri.getPath();
 
-    try (Connection c =
-            DriverManager.getConnection(jdbcUrl, env.get("DB_USER"), env.get("DB_PASSWORD"));
+    try (Connection c = DriverManager.getConnection(jdbcUrl, userInfo[0], userInfo[1]);
         Statement s = c.createStatement()) {
       // 대조군: 슬롯 안 테이블은 읽힌다 — 이것이 없으면 로그인 실패도 "거부"로 통과한다.
       try (var rs = s.executeQuery("SELECT v FROM " + env.get("DB_SCHEMA") + ".\"" + pub + "\"")) {

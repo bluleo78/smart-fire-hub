@@ -200,9 +200,10 @@ public class PythonScriptExecutor {
     // DB_URL 은 executor 와 같은 libpq URI(슬롯 롤 자격증명 포함) — 같은 스크립트가
     // psycopg2.connect(os.environ["DB_URL"]) 로 두 경로에서
     // 똑같이 접속한다(R5). 예전에는 JDBC URL 을 그대로 넘겨 파이썬이 쓸 수 없었다.
+    // 개별 자격증명 키(DB_USER·DB_PASSWORD)는 넣지 않는다 — executor 계약과 같이 DB_URL·DB_SCHEMA 만(CR8). 같은 비밀을 두 곳에
+    // 두면
+    // 스크립트가 env 를 덤프할 때 노출 면만 늘고, 두 경로에서 쓸 수 있는 키가 갈라진다.
     env.put("DB_URL", libpqUrl(pipelineDbUrl, role, password));
-    env.put("DB_USER", role);
-    env.put("DB_PASSWORD", password);
     env.put("DB_SCHEMA", DataSchema.forTenant(tenantId));
     env.put("PATH", "/usr/bin:/usr/local/bin");
     env.put("HOME", "/tmp");
