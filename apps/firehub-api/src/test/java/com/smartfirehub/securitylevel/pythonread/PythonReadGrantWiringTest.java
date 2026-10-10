@@ -291,8 +291,9 @@ class PythonReadGrantWiringTest extends IntegrationTestBase {
 
   /**
    * 실제 순서 변경 → 커밋되는 같은 트랜잭션에서 REORDERED 발행 → 슬롯 판정이 새 위치를 따라 뒤집힌다. 맨 아래 두 등급(공개·내부)의 rank 를 맞바꾸면 공개
-   * 테이블은 위치 2 가 되어 슬롯 1 이 못 읽고, 내부 테이블은 위치 1 이 되어 슬롯 1 이 읽는다. 발행은 흐름 B 소유라(R2) 서비스가 아니라 테스트가 직접 한다.
-   * 리스너 본문을 지우면 ACL 이 옛 순서에 남아 실패한다(변이).
+   * 테이블은 위치 2 가 되어 슬롯 1 이 못 읽고, 내부 테이블은 위치 1 이 되어 슬롯 1 이 읽는다. 리스너 단독 검증이라 테스트가 직접 발행한다 — B 병합 후
+   * applyReorder 도 발행하므로 이 테스트에선 2번 발행된다(재동기화는 멱등). 서비스 발행만의 종단은
+   * applyReorder_viaService_flipsSlotAccessAfterCommit. 리스너 본문을 지우면 ACL 이 옛 순서에 남아 실패한다(변이).
    */
   @Test
   void reorderLevels_withReorderedEvent_flipsSlotAccess() {
