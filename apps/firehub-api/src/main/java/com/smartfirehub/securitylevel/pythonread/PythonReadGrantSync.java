@@ -51,16 +51,18 @@ public class PythonReadGrantSync {
    * 동기화 결과.
    *
    * @param levelsAsc 동기화에 쓴 등급 스냅샷(rank 오름차순) — prepareForRun 이 같은 스냅샷으로 슬롯을 계산해 계산 불일치 창을 없앤다
-   * @param availableSlots 실제로 존재하는 슬롯 롤 번호
+   * @param availableSlots 실제로 존재하는 슬롯 롤 번호(실행 준비 동기화면 실행 슬롯만 본다)
    * @param changedTables 권한을 바꾼 테이블 수
    * @param revokeFailed 남는 권한을 회수하지 못한 테이블 → 과권한이 남았을 수 있는 슬롯 롤 이름들. prepareForRun 은 <b>실행 슬롯
    *     롤</b>이 여기 들어 있을 때만 실행을 거부한다(다른 슬롯 롤의 과권한은 이 실행이 쓰지 않는 롤이라 무관). GRANT 실패는 과소권한(안전)이라 로그만 남긴다
+   * @param runSlot 실행 준비 동기화(prepareForRun)에서 같은 등급 스냅샷으로 계산한 실행 슬롯(범위 밖이면 그 값 그대로), 그 밖의 동기화는 0
    */
   public record SyncResult(
       List<LevelPolicy> levelsAsc,
       Set<Integer> availableSlots,
       int changedTables,
-      Map<String, Set<String>> revokeFailed) {
+      Map<String, Set<String>> revokeFailed,
+      int runSlot) {
 
     /** 회수 실패 테이블 이름들(롤 구분 없이). */
     public Set<String> revokeFailedTables() {
@@ -87,12 +89,12 @@ public class PythonReadGrantSync {
 
   /** 현재 테넌트 전체 재동기화. 실패는 예외(호출부가 로그/실패를 정한다). */
   public SyncResult syncTenant() {
-    return requiresNew.execute(status -> syncInTx(null));
+    return requiresNew.execute(status -> syncInTx(null, null));
   }
 
   /** 테이블 하나만 재동기화(생성·클론·맞바꿈 직후 — RENAME 맞바꿈은 ACL 을 잃는다). */
   public void syncTable(String tableName) {
-    requiresNew.execute(status -> syncInTx(tableName));
+    requiresNew.execute(status -> syncInTx(tableName, null));
   }
 
   /** 데이터셋 하나 — 테이블 이름을 찾아 syncTable. 물리 테이블이 없는 데이터셋(문서·파일형)은 할 일이 없다. */
@@ -146,9 +148,11 @@ public class PythonReadGrantSync {
   }
 
   /**
-   * PYTHON 실행 직전 준비(JIT) — 테넌트 동기화 후 같은 등급 스냅샷으로 실행 주체의 슬롯 k 를 계산한다. 어떤 실패든 {@link
-   * PythonReadAccessException}(fail-closed). 테넌트 실행 롤(pipeline_executor_t*)로 대체하는 경로는 없다 — 그 롤은 모든
-   * 등급을 읽으므로 대체하는 순간 등급 경계가 사라진다.
+   * PYTHON 실행 직전 준비(JIT) — 잠금 안에서 읽은 등급 스냅샷으로 실행 주체의 슬롯 k 를 계산하고, <b>그 슬롯 롤 하나의</b> ACL 만 계산값에 맞춘다
+   * (CR3 — 매 스텝 10개 롤 전부를 맞추지 않는다. 다른 슬롯은 이 스크립트가 접속하지 않는 롤이라 이벤트·일 1회·그 슬롯의 실행이 맞춘다). 실행 슬롯의 과권한은
+   * 매번 실제 ACL 로 확인하므로 손으로 건 GRANT 도 회수하거나(실패하면) 거부한다 — "마지막 동기화 이후 변경 없음" 단락은 이 확인을 건너뛰게 되므로 쓰지
+   * 않는다. 어떤 실패든 {@link PythonReadAccessException}(fail-closed). 테넌트 실행 롤(pipeline_executor_t*)로
+   * 대체하는 경로는 없다 — 그 롤은 모든 등급을 읽으므로 대체하는 순간 등급 경계가 사라진다.
    *
    * @return 실행에 쓸 슬롯 번호(1~10)
    */
@@ -168,11 +172,11 @@ public class PythonReadGrantSync {
     }
     SyncResult result;
     try {
-      result = syncTenant();
+      result = requiresNew.execute(status -> syncInTx(null, runAs.rank()));
     } catch (RuntimeException e) {
       throw new PythonReadAccessException("Python 읽기 권한을 준비하지 못해 실행을 중단했습니다.", e);
     }
-    int slot = PythonReadSlots.slotFor(result.levelsAsc(), runAs.rank());
+    int slot = result.runSlot();
     if (slot < 1 || slot > TenantPipelineRole.PYTHON_READ_SLOTS) {
       throw new PythonReadAccessException("실행 주체의 열람 등급이 Python 읽기 슬롯 범위(1~10)를 벗어났습니다.");
     }
@@ -205,8 +209,13 @@ public class PythonReadGrantSync {
     return slot;
   }
 
-  /** onlyTable 이 null 이면 스키마 전체, 아니면 그 테이블만. 트랜잭션(=테넌트 GUC) 안에서 호출된다. */
-  private SyncResult syncInTx(String onlyTable) {
+  /**
+   * 트랜잭션(=테넌트 GUC) 안에서 호출된다.
+   *
+   * @param onlyTable null 이면 스키마 전체, 아니면 그 테이블만
+   * @param runRank null 이면 슬롯 롤 전부, 아니면 그 자격 rank 의 실행 슬롯 롤 하나만(실행 준비) — 슬롯은 잠금 뒤 읽은 등급 스냅샷으로 계산한다
+   */
+  private SyncResult syncInTx(String onlyTable, Integer runRank) {
     long tenantId = TenantContext.require("PYTHON 읽기 권한 동기화");
     // 같은 테넌트 동기화 직렬화(트랜잭션 종료 시 자동 해제).
     dsl.execute(
@@ -218,13 +227,27 @@ public class PythonReadGrantSync {
     for (int k = 1; k <= TenantPipelineRole.PYTHON_READ_SLOTS; k++) {
       slotRoleNames.add(TenantPipelineRole.pythonReadRoleName(tenantId, k));
     }
+    List<LevelPolicy> levelsAsc = levelRepository.findAll(); // rank asc, 이 트랜잭션에 합류(RLS GUC)
+    // 다룰 슬롯: 실행 준비면 실행 슬롯 하나(범위 밖이면 없음 — prepareForRun 이 거부), 아니면 전부.
+    int runSlot = 0;
+    List<String> targetRoles = new ArrayList<>();
+    if (runRank == null) {
+      targetRoles.addAll(slotRoleNames);
+    } else {
+      runSlot = PythonReadSlots.slotFor(levelsAsc, runRank);
+      if (runSlot >= 1 && runSlot <= TenantPipelineRole.PYTHON_READ_SLOTS) {
+        targetRoles.add(slotRoleNames.get(runSlot - 1));
+      }
+    }
     // 존재하는 슬롯 롤만 다룬다 — 없는 롤에 GRANT 하면 오류다. 없는 슬롯은 prepareForRun 이 거부한다.
     Set<String> existingRoles =
-        new HashSet<>(
-            dsl.fetch(
-                    "select rolname::text from pg_roles where rolname::text = any({0}::text[])",
-                    DSL.val(slotRoleNames.toArray(new String[0])))
-                .getValues(0, String.class));
+        targetRoles.isEmpty()
+            ? Set.of()
+            : new HashSet<>(
+                dsl.fetch(
+                        "select rolname::text from pg_roles where rolname::text = any({0}::text[])",
+                        DSL.val(targetRoles.toArray(new String[0])))
+                    .getValues(0, String.class));
     Set<Integer> availableSlots = new TreeSet<>();
     for (int k = 1; k <= TenantPipelineRole.PYTHON_READ_SLOTS; k++) {
       if (existingRoles.contains(slotRoleNames.get(k - 1))) {
@@ -232,10 +255,11 @@ public class PythonReadGrantSync {
       }
     }
 
-    List<LevelPolicy> levelsAsc = levelRepository.findAll(); // rank asc, 이 트랜잭션에 합류(RLS GUC)
     if (existingRoles.isEmpty()) {
-      log.warn("PYTHON 읽기 슬롯 롤이 없다 — 동기화 생략(tenant={})", tenantId);
-      return new SyncResult(levelsAsc, availableSlots, 0, Map.of());
+      if (runRank == null) {
+        log.warn("PYTHON 읽기 슬롯 롤이 없다 — 동기화 생략(tenant={})", tenantId);
+      }
+      return new SyncResult(levelsAsc, availableSlots, 0, Map.of(), runSlot);
     }
     String[] roleArray = existingRoles.toArray(new String[0]);
 
@@ -346,7 +370,7 @@ public class PythonReadGrantSync {
           changed,
           revokeFailed.size());
     }
-    return new SyncResult(levelsAsc, availableSlots, changed, revokeFailed);
+    return new SyncResult(levelsAsc, availableSlots, changed, revokeFailed, runSlot);
   }
 
   /** 주어진 테이블들에 슬롯 롤이 가진 SELECT 권한(테이블명, 롤명) 쌍. 테이블 목록이 비면 빈 결과. */

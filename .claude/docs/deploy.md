@@ -495,7 +495,7 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
     - 구 api + 신 executor: `readSlot` 이 없어 **모든 PYTHON 스텝이 422 로 실패**한다.
     - 신 api + 구 executor: `readSlot` 을 무시하고 테넌트 롤로 실행한다. 즉 우회가 그대로 남는다.
   - web 이 구버전이면 가려진 차트의 빌더가 `config:null` 에서 기본 설정으로 보이다가, 저장 시 config 를 보내 **기존 설정을 덮어쓸 수 있다**. web 도 함께 배포한다.
-  - 등급 정의 변경·데이터셋 등급 변경의 **재동기화 이벤트 발행은 흐름 B 소유**다(C 는 리스너만 둔다). C 단독 상태(또는 B 보다 먼저 배포된 상태)에서는 이벤트가 오지 않으므로, 등급을 바꾼 직후 슬롯 롤의 GRANT 는 잠시 옛 값이다 — 그래도 **PYTHON 실행 직전(JIT) 동기화**가 실행마다 GRANT 를 계산값에 맞추고, 기동 시·하루 1회(기본 03:20, `app.pipeline.python-read-sync.cron`) 전체 동기화가 드리프트를 회복하므로 실행 시점의 정합성은 지켜진다(2026-10-09 격리 라이브: 등급 하향 직후 슬롯 GRANT 0 → 다음 실행 직전 동기화가 반영).
+  - 등급 정의 변경·데이터셋 등급 변경의 **재동기화 이벤트 발행은 흐름 B 소유**다(C 는 리스너만 둔다). C 단독 상태(또는 B 보다 먼저 배포된 상태)에서는 이벤트가 오지 않으므로, 등급을 바꾼 직후 슬롯 롤의 GRANT 는 잠시 옛 값이다 — 그래도 **PYTHON 실행 직전(JIT) 동기화**가 실행마다 그 실행이 접속할 슬롯 롤의 GRANT 를 계산값에 맞추고(다른 슬롯은 건드리지 않는다), 기동 시·하루 1회(기본 03:20, `app.pipeline.python-read-sync.cron`) 전체 동기화가 드리프트를 회복하므로 실행 시점의 정합성은 지켜진다(2026-10-09 격리 라이브: 등급 하향 직후 슬롯 GRANT 0 → 다음 실행 직전 동기화가 반영).
 - **마이그레이션 V137:** ACTIVE 테넌트마다 `pipeline_py_t{id}_s1..s10` LOGIN 롤(NOINHERIT, NOSUPERUSER·NOCREATEROLE 등), `CONNECT`, DB 한정 `search_path`, 직접 부여된 `public` 스키마 권한 회수, 데이터 스키마가 있으면 `USAGE`. 비밀번호는 임의값으로 만들고 같은 기동의 AFTER_MIGRATE 콜백이 `PIPELINE_ROLE_PASSWORD_SECRET` 파생값(HMAC, 메시지=롤 이름)으로 맞춘다. 테이블 SELECT 는 api 기동 시 동기화(`PythonReadGrantSync`)가 건다. 테이블 변경이 없으므로 jOOQ 재생성은 필요 없다.
   - 정지(SUSPENDED) 테넌트는 V137 이 롤을 만들지 않는다. **재개(정지→ACTIVE) 시 실행 롤과 슬롯 롤을 함께 보장**한다(감사 기록 뒤 마지막 단계, 실패하면 상태 변경이 롤백돼 재시도할 수 있다). `PIPELINE_ROLE_AUTO_PROVISION=false` 면 재개해도 만들지 않으므로 수동으로 만든다(그 테넌트의 PYTHON 은 "Python 읽기 롤이 준비되지 않았습니다" 로 실패).
 - **사전 점검(소유자 롤로 실행: `docker exec <db> psql -U app -d smartfirehub`):**

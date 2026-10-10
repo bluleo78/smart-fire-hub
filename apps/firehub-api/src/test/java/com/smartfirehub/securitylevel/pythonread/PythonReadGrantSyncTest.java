@@ -334,6 +334,30 @@ class PythonReadGrantSyncTest extends IntegrationTestBase {
     }
   }
 
+  /**
+   * 실행 준비는 실행 슬롯 롤 하나만 맞춘다(CR3) — 그 슬롯에 손으로 건 과권한은 실행 전에 회수되고(fail-closed: 실행 슬롯에 과권한이 남은 채 실행되지
+   * 않는다), 이 실행이 쓰지 않는 다른 슬롯의 과권한은 건드리지 않는다(전체 동기화가 회수). 변이: 실행 슬롯 한정 제거(전 슬롯 동기화) → 슬롯 1 잔존 단언 실패,
+   * 실행 준비의 동기화 제거 → 슬롯 2 회수 단언 실패.
+   */
+  @Test
+  void prepareForRun_syncsOnlyTheRunSlot_revokingItsStrayGrant() {
+    String sens = table("sen", "민감");
+    sync.syncTenant();
+    String s1 = TenantPipelineRole.pythonReadRoleName(DEFAULT_TEST_TENANT_ID, 1);
+    String s2 = TenantPipelineRole.pythonReadRoleName(DEFAULT_TEST_TENANT_ID, 2);
+    TenantRlsTestSupport.runInTenantTransaction(
+        fixtureTransactionTemplate,
+        DEFAULT_TEST_TENANT_ID,
+        () -> dsl.execute("GRANT SELECT ON " + DataSchema.qualify(sens) + " TO " + s1 + ", " + s2));
+    assertThat(selectAs(2, sens)).as("전제: 슬롯 2 과권한").isNull();
+    long internalUser = userAt("내부");
+    assertThat(sync.prepareForRun(clearanceResolver.resolve(internalUser))).isEqualTo(2);
+    assertThat(selectAs(2, sens)).as("실행 슬롯의 과권한은 실행 전에 회수").isEqualTo("42501");
+    assertThat(selectAs(1, sens)).as("다른 슬롯은 실행 준비가 건드리지 않는다").isNull();
+    sync.syncTenant();
+    assertThat(selectAs(1, sens)).as("전체 동기화가 회수").isEqualTo("42501");
+  }
+
   @Test
   void prepareForRun_returnsSlotOfRunAs_andFailsClosedWithoutRank() {
     long internalUser = userAt("내부");
