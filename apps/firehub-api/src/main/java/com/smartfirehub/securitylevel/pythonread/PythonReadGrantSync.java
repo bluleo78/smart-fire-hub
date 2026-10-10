@@ -239,12 +239,16 @@ public class PythonReadGrantSync {
     }
     String[] roleArray = existingRoles.toArray(new String[0]);
 
-    // 계산값: 데이터셋 테이블 → SELECT 를 받아야 할 슬롯 롤 집합
+    // 계산값: 데이터셋 테이블 → SELECT 를 받아야 할 슬롯 롤 집합. 테이블 하나만 맞출 때(생성·맞바꿈 훅)는 그 테이블의 데이터셋 행만 읽는다 —
+    // 쓰기 경로마다 테넌트 데이터셋 전체를 읽지 않게(CR4).
     Map<String, Set<String>> desired = new HashMap<>();
     for (var r :
         dsl.select(DATASET.TABLE_NAME, DATASET.SECURITY_LEVEL_ID)
             .from(DATASET)
-            .where(DATASET.TABLE_NAME.isNotNull())
+            .where(
+                onlyTable == null
+                    ? DATASET.TABLE_NAME.isNotNull()
+                    : DATASET.TABLE_NAME.eq(onlyTable))
             .fetch()) {
       Set<String> roles = new TreeSet<>();
       for (int k : PythonReadSlots.grantSlotsFor(levelsAsc, r.value2())) {
