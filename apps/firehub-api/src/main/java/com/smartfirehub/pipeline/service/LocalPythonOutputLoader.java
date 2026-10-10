@@ -13,6 +13,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.time.format.ResolverStyle;
@@ -104,6 +105,7 @@ public class LocalPythonOutputLoader {
     }
     try {
       applyTypeConversion(rows, columnTypeMap);
+      toSessionLocalTimestamps(rows);
       List<String> columns = new ArrayList<>(rows.get(0).keySet());
       transactionTemplate.executeWithoutResult(
           status ->
@@ -112,6 +114,23 @@ public class LocalPythonOutputLoader {
       return rows.size();
     } catch (RuntimeException e) {
       throw new ScriptExecutionException(INSERT_FAILED_PREFIX + e.getMessage(), e);
+    }
+  }
+
+  /**
+   * 오프셋 있는 시각({@link OffsetDateTime})을 이 JVM 시간대의 {@link LocalDateTime} 으로 바꾼다. 데이터셋 TIMESTAMP 는
+   * 물리적으로 {@code timestamp without time zone} 이고, jOOQ 평문 SQL 은 OffsetDateTime 을 varchar 로 바인딩해 PG
+   * 가 "timestamp 인데 character varying" 으로 거부한다(오프셋·Z 가 붙은 시각 하나로 적재 전체가 실패하던 결함). executor 는
+   * psycopg2 가 aware datetime 을 timestamptz 로 보내 PG 가 세션 TimeZone 으로 내리므로, 같은 일을 이 API 세션의
+   * TimeZone(PgJDBC 가 JVM 기본 시간대를 세션에 넣는다)으로 한다. 운영 이미지는 JVM·DB 모두 UTC 라 두 경로 결과가 같다.
+   */
+  static void toSessionLocalTimestamps(List<Map<String, Object>> rows) {
+    for (Map<String, Object> row : rows) {
+      for (Map.Entry<String, Object> e : row.entrySet()) {
+        if (e.getValue() instanceof OffsetDateTime odt) {
+          e.setValue(odt.atZoneSameInstant(ZoneId.systemDefault()).toLocalDateTime());
+        }
+      }
     }
   }
 
@@ -417,8 +436,8 @@ public class LocalPythonOutputLoader {
 
   /**
    * Python 3.12 datetime.fromisoformat — 날짜(위와 같은 형식) + 선택적 [구분자 한 글자 + 시각[.분수] + 오프셋]. 분수는 6자리 넘으면
-   * 잘린다. 오프셋이 있으면 {@link OffsetDateTime}(timestamptz 로 바인딩 — psycopg2 의 aware datetime 과 같다), 없으면
-   * {@link LocalDateTime}.
+   * 잘린다. 오프셋이 있으면 {@link OffsetDateTime}(적재 직전 {@link #toSessionLocalTimestamps} 가 세션 시간대 시각으로
+   * 내린다), 없으면 {@link LocalDateTime}.
    */
   static Object parseIsoDateTime(String s) {
     int dateLen;
