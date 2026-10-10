@@ -702,6 +702,9 @@ public class PipelineAsyncRunner {
         // PipelineExecutionService 가 커밋 후 위임), 위 TEMP 생성 DDL 도 자기 트랜잭션에서 이미
         // 커밋됐다 — 같은 테이블에 미커밋 DDL 을 쥔 바깥 트랜잭션이 없어 자기 교착이 생기지 않는다.
         int readSlot;
+        // 실행 중 등급 정의 변경으로 슬롯 롤 세션이 끊겼는지 가리는 기준 시각(실패 문구용 — 판정 아님).
+        final long pyStartedAt = System.currentTimeMillis();
+        final long pyTenantId = pyRunAs.clearance().tenantId();
         try {
           readSlot = pythonReadGrantSync.prepareForRun(pyRunAs.clearance());
         } catch (PythonReadAccessException e) {
@@ -742,7 +745,8 @@ public class PipelineAsyncRunner {
                         }
                         var result = executorClient.executePython(request, readSlot);
                         if (!result.success()) {
-                          throw new ScriptExecutionException("Python 실행 실패: " + result.error());
+                          throw pythonRunFailure(
+                              "Python 실행 실패: " + result.error(), pyTenantId, pyStartedAt);
                         }
                         return new PythonLoad(result.output(), result.rowsLoaded());
                       })
@@ -756,8 +760,10 @@ public class PipelineAsyncRunner {
           PythonScriptExecutor.RunResult run = pythonExecutor.run(step.scriptContent(), readSlot);
           String outputText = pyOutputTable != null ? run.stderr() : run.stdout() + run.stderr();
           if (!run.succeeded()) {
-            throw new ScriptExecutionException(
-                "Python 실행 실패(exit code " + run.exitCode() + "): " + outputText);
+            throw pythonRunFailure(
+                "Python 실행 실패(exit code " + run.exitCode() + "): " + outputText,
+                pyTenantId,
+                pyStartedAt);
           }
           if (pyOutputTable == null) {
             executionLog = outputText;
@@ -1462,6 +1468,20 @@ public class PipelineAsyncRunner {
       return false;
     }
     return isCteFollowedBySelect(upper);
+  }
+
+  /**
+   * PYTHON 실행 실패 예외. 실행 중 등급 정의 변경으로 이 테넌트의 슬롯 롤 세션이 끊겼다면(PythonReadGrantSync 가 새 GRANT 커밋 전에 끊는다)
+   * 원인을 앞에 밝힌다 — 스크립트 출력에는 "terminating connection due to administrator command" 만 남아 사용자가 원인을 알 수
+   * 없다. 판정에는 쓰지 않는다(끊김 자체가 fail-closed 이고, 이 문구는 안내일 뿐).
+   */
+  private ScriptExecutionException pythonRunFailure(
+      String message, long tenantId, long startedAtMillis) {
+    if (pythonReadGrantSync.slotSessionsTerminatedSince(tenantId, startedAtMillis)) {
+      return new ScriptExecutionException(
+          "실행 중 보안 등급 구성이 바뀌어 Python 읽기 연결을 끊었습니다. 다시 실행하세요. — " + message);
+    }
+    return new ScriptExecutionException(message);
   }
 
   /**

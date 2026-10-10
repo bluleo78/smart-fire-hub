@@ -1370,6 +1370,55 @@ class PipelineAsyncRunnerTest {
   }
 
   /**
+   * CR2 — 실행 중 등급 정의 변경으로 슬롯 롤 세션이 끊겨 스크립트가 실패하면, 원인을 밝힌 문구로 스텝이 실패한다(실행기 켬/끔 두 경로). 끊긴 적이 없으면 예전
+   * 문구 그대로(대조군).
+   */
+  @Test
+  void python_failsWithClearMessage_whenSlotSessionsWereTerminatedDuringRun() {
+    Long userId = 1L;
+    PipelineStepResponse step =
+        stepResponse(7460L, "py-term", "PYTHON", "print('x')", null, List.of());
+    when(permissionChecker.hasPermission(userId, "pipeline:python_execute")).thenReturn(true);
+    when(pythonReadGrantSync.prepareForRun(any())).thenReturn(2);
+    when(executorClient.executePython(anyMap(), eq(2)))
+        .thenReturn(
+            new ExecutorClient.PythonExecuteResult(
+                false, "", 0, "terminating connection due to administrator command", 10L, 1));
+    when(pythonExecutor.run("print('x')", 2))
+        .thenReturn(new PythonScriptExecutor.RunResult(1, "", "terminating connection"));
+    when(pythonReadGrantSync.slotSessionsTerminatedSince(anyLong(), anyLong()))
+        .thenReturn(false, true, true);
+
+    assertThat(runner.executeStep(7461L, step, 74L, "TestPipeline", userId, true))
+        .isEqualTo("FAILED");
+    assertThat(runner.executeStep(7462L, step, 74L, "TestPipeline", userId, true))
+        .isEqualTo("FAILED");
+    assertThat(runner.executeStep(7463L, step, 74L, "TestPipeline", userId, false))
+        .isEqualTo("FAILED");
+
+    verify(executionRepository)
+        .updateStepExecution(
+            eq(7461L),
+            eq("FAILED"),
+            isNull(),
+            isNull(),
+            argThat(m -> m != null && m.startsWith("Python 실행 실패: terminating")),
+            isNull(),
+            any());
+    for (long id : new long[] {7462L, 7463L}) {
+      verify(executionRepository)
+          .updateStepExecution(
+              eq(id),
+              eq("FAILED"),
+              isNull(),
+              isNull(),
+              contains("실행 중 보안 등급 구성이 바뀌어 Python 읽기 연결을 끊었습니다"),
+              isNull(),
+              any());
+    }
+  }
+
+  /**
    * 슬롯 준비 실패(JIT 동기화 실패·등급 없음) → executor·자식 프로세스를 부르지 않고, REPLACE 임시 테이블도 만들지 않고 스텝
    * 실패(fail-closed). 실행기 켬/끔 두 경로 모두.
    */

@@ -26,11 +26,14 @@ public class PythonReadGrantListener {
 
   private final PythonReadGrantSync sync;
 
-  /** 등급 정의 변경(추가·수정·삭제·순서) — 등급 위치가 바뀌므로 테넌트 전체를 다시 맞춘다. */
+  /**
+   * 등급 정의 변경(추가·수정·삭제·순서) — 등급 위치가 바뀌므로 테넌트 전체를 다시 맞추고, 새 GRANT 커밋 전에 실행 중인 슬롯 롤 세션을 끊는다(실행 중 스크립트가
+   * 넓어진 슬롯으로 자격 밖 등급을 읽지 못하게 — {@link PythonReadGrantSync#syncTenantForLevelsChange()}).
+   */
   @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
   public void onLevelsChanged(SecurityLevelsChangedEvent event) {
     try {
-      TenantContext.runScoped(event.tenantId(), sync::syncTenant);
+      TenantContext.runScoped(event.tenantId(), sync::syncTenantForLevelsChange);
     } catch (RuntimeException e) {
       log.warn(
           "등급 정의 변경 후 PYTHON 읽기 권한 동기화 실패(다음 동기화에서 회복): tenant={} kind={}",
@@ -40,7 +43,10 @@ public class PythonReadGrantListener {
     }
   }
 
-  /** 데이터셋 하나의 등급 변경 — 그 데이터셋 테이블만 다시 맞춘다. */
+  /**
+   * 데이터셋 하나의 등급 변경 — 그 데이터셋 테이블만 다시 맞춘다. 세션은 끊지 않는다: 슬롯↔등급 위치 대응은 그대로라, 등급을 내려 늘어나는 GRANT 는 이미 그
+   * 등급을 볼 자격이 있는 슬롯에만 가고(실행 주체 자격 안), 올려 줄어드는 GRANT 는 다음 쿼리부터 막힌다.
+   */
   @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
   public void onDatasetLevelChanged(DatasetSecurityLevelChangedEvent event) {
     try {

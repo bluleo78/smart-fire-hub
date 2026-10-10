@@ -16,10 +16,14 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
+import javax.sql.DataSource;
 import lombok.extern.slf4j.Slf4j;
 import org.jooq.DSLContext;
+import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -71,17 +75,29 @@ public class PythonReadGrantSync {
   }
 
   private final DSLContext dsl;
+
+  /**
+   * 슬롯 롤 세션 종료 전용(소유자 롤 app 풀). 런타임 롤(app_tenant)은 pg_signal_backend 멤버도, 슬롯 롤 멤버도 아니어서 슬롯 롤 세션을 끊을
+   * 수 없다(실측) — 그 권한을 런타임 롤에 주는 것은 클러스터 전역 권한 확대라 하지 않는다. app 은 슈퍼유저(사전 점검 2)라 끊을 수 있다.
+   */
+  private final DSLContext ownerDsl;
+
   private final SecurityLevelRepository levelRepository;
   private final TransactionTemplate requiresNew;
+
+  /** 테넌트 → 마지막으로 슬롯 롤 세션을 끊은 시각(epoch ms). 러너가 끊긴 스텝의 실패 문구를 명확히 하는 데만 쓴다(판정에는 쓰지 않는다). */
+  private final Map<Long, Long> slotSessionsTerminatedAt = new ConcurrentHashMap<>();
 
   /**
    * txManager 는 @Primary TenantAwareTransactionManager — 트랜잭션 시작 때 TenantContext 를 RLS GUC 로 주입한다.
    */
   public PythonReadGrantSync(
       DSLContext dsl,
+      @Qualifier("schemaOwnerDataSource") DataSource schemaOwnerDataSource,
       SecurityLevelRepository levelRepository,
       PlatformTransactionManager txManager) {
     this.dsl = dsl;
+    this.ownerDsl = DSL.using(schemaOwnerDataSource, SQLDialect.POSTGRES);
     this.levelRepository = levelRepository;
     this.requiresNew = new TransactionTemplate(txManager);
     this.requiresNew.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
@@ -89,12 +105,35 @@ public class PythonReadGrantSync {
 
   /** 현재 테넌트 전체 재동기화. 실패는 예외(호출부가 로그/실패를 정한다). */
   public SyncResult syncTenant() {
-    return requiresNew.execute(status -> syncInTx(null, null));
+    return requiresNew.execute(status -> syncInTx(null, null, false));
+  }
+
+  /**
+   * 등급 정의 변경(추가·수정·삭제·순서) 뒤 테넌트 전체 재동기화 — <b>새 GRANT 를 커밋하기 전에</b> 그 테넌트 슬롯 롤의 활성 세션을 모두 끊는다(CR2).
+   *
+   * <p><b>왜 끊는가.</b> 슬롯 k 는 "rank 오름차순 k 번째 등급까지"다. 순서 변경·삭제(위치 당김)·허용 목록 해제는 같은 슬롯 롤에 새 등급 테이블을
+   * GRANT 한다. PostgreSQL 은 매 쿼리마다 권한을 보므로, 옛 위치로 슬롯을 받아 실행 중이던 스크립트(최대 30분)가 다음 쿼리부터 자격 밖 등급을 읽는다.
+   * 회수(좁아짐)는 다음 쿼리부터 막히므로 안전하고, 위험한 쪽은 넓어짐뿐이다.
+   *
+   * <p><b>왜 이 동기화의 GRANT 차이가 아니라 이벤트 기준으로 전부 끊는가.</b> 리스너는 커밋 후에 잠금을 다투므로, 그 사이 실행 준비·일 1회 동기화가 새
+   * 경계의 GRANT 를 먼저 걸 수 있다 — 그러면 이 동기화의 차이는 비어 아무도 끊지 않는데 실행 중 세션은 이미 넓어져 있다. 이벤트는 무엇이 바뀌었는지 싣지
+   * 않아(이름만 바꾼 UPDATED 포함) 등급 정의 변경마다 끊는다 — 드문 관리 작업이라 수용한다.
+   *
+   * <p>끊기에 실패하면(권한 없음·시간 초과) 예외로 이 동기화 트랜잭션을 되돌린다 — 이 경로가 넓힌 GRANT 는 커밋되지 않는다.
+   */
+  public SyncResult syncTenantForLevelsChange() {
+    return requiresNew.execute(status -> syncInTx(null, null, true));
+  }
+
+  /** sinceMillis 이후 이 테넌트의 슬롯 롤 세션을 끊었는가 — 러너가 실패 문구를 고르는 데만 쓴다. */
+  public boolean slotSessionsTerminatedSince(long tenantId, long sinceMillis) {
+    Long at = slotSessionsTerminatedAt.get(tenantId);
+    return at != null && at >= sinceMillis;
   }
 
   /** 테이블 하나만 재동기화(생성·클론·맞바꿈 직후 — RENAME 맞바꿈은 ACL 을 잃는다). */
   public void syncTable(String tableName) {
-    requiresNew.execute(status -> syncInTx(tableName, null));
+    requiresNew.execute(status -> syncInTx(tableName, null, false));
   }
 
   /** 데이터셋 하나 — 테이블 이름을 찾아 syncTable. 물리 테이블이 없는 데이터셋(문서·파일형)은 할 일이 없다. */
@@ -172,7 +211,7 @@ public class PythonReadGrantSync {
     }
     SyncResult result;
     try {
-      result = requiresNew.execute(status -> syncInTx(null, runAs.rank()));
+      result = requiresNew.execute(status -> syncInTx(null, runAs.rank(), false));
     } catch (RuntimeException e) {
       throw new PythonReadAccessException("Python 읽기 권한을 준비하지 못해 실행을 중단했습니다.", e);
     }
@@ -214,8 +253,10 @@ public class PythonReadGrantSync {
    *
    * @param onlyTable null 이면 스키마 전체, 아니면 그 테이블만
    * @param runRank null 이면 슬롯 롤 전부, 아니면 그 자격 rank 의 실행 슬롯 롤 하나만(실행 준비) — 슬롯은 잠금 뒤 읽은 등급 스냅샷으로 계산한다
+   * @param terminateSlotSessions true 면 잠금 직후(이 트랜잭션의 GRANT 가 커밋되기 전) 테넌트 슬롯 롤 세션을 모두 끊는다 — {@link
+   *     #syncTenantForLevelsChange()}
    */
-  private SyncResult syncInTx(String onlyTable, Integer runRank) {
+  private SyncResult syncInTx(String onlyTable, Integer runRank, boolean terminateSlotSessions) {
     long tenantId = TenantContext.require("PYTHON 읽기 권한 동기화");
     // 같은 테넌트 동기화 직렬화(트랜잭션 종료 시 자동 해제).
     dsl.execute(
@@ -226,6 +267,10 @@ public class PythonReadGrantSync {
     List<String> slotRoleNames = new ArrayList<>();
     for (int k = 1; k <= TenantPipelineRole.PYTHON_READ_SLOTS; k++) {
       slotRoleNames.add(TenantPipelineRole.pythonReadRoleName(tenantId, k));
+    }
+    if (terminateSlotSessions) {
+      // 잠금 안·GRANT 커밋 전 — 끊긴 뒤 새로 붙는 세션은 아직 옛(이 트랜잭션 전) GRANT 를 본다. 실행 준비도 같은 잠금을 기다린다.
+      terminateSlotSessions(tenantId, slotRoleNames);
     }
     List<LevelPolicy> levelsAsc = levelRepository.findAll(); // rank asc, 이 트랜잭션에 합류(RLS GUC)
     // 다룰 슬롯: 실행 준비면 실행 슬롯 하나(범위 밖이면 없음 — prepareForRun 이 거부), 아니면 전부.
@@ -371,6 +416,46 @@ public class PythonReadGrantSync {
           revokeFailed.size());
     }
     return new SyncResult(levelsAsc, availableSlots, changed, revokeFailed, runSlot);
+  }
+
+  /**
+   * 테넌트 슬롯 롤의 활성 세션을 모두 끊는다(소유자 롤 연결). 대상은 정확한 롤 이름 목록으로만 고른다(LIKE 금지 — 다른 테넌트 롤 오인 방지). {@code
+   * pg_terminate_backend(pid, 5000)} 은 대상이 실제로 끝날 때까지(최대 5초) 기다려, 반환 뒤 커밋하는 GRANT 를 그 세션이 보지 못한다.
+   * 하나라도 끝나지 않았거나 권한이 없으면 예외 — 호출 트랜잭션(넓히는 GRANT)을 되돌린다(fail-closed).
+   */
+  private void terminateSlotSessions(long tenantId, List<String> roleNames) {
+    var results =
+        ownerDsl.fetch(
+            "select pid, pg_terminate_backend(pid, 5000) from pg_stat_activity"
+                + " where usename::text = any({0}::text[])",
+            DSL.val(roleNames.toArray(new String[0])));
+    // false = 시간 초과이거나, 조회와 종료 사이에 이미 끝난 세션(경고만). 후자는 성공이므로 아직 살아 있는지 다시 본다.
+    List<Integer> unconfirmed = new ArrayList<>();
+    for (var r : results) {
+      if (!Boolean.TRUE.equals(r.get(1, Boolean.class))) {
+        unconfirmed.add(r.get(0, Integer.class));
+      }
+    }
+    if (!unconfirmed.isEmpty()) {
+      int alive =
+          ownerDsl
+              .fetchOne(
+                  "select count(*)::int from pg_stat_activity where pid = any({0}::int[])",
+                  DSL.val(unconfirmed.toArray(new Integer[0])))
+              .get(0, Integer.class);
+      if (alive > 0) {
+        log.error(
+            "PYTHON 슬롯 롤 세션 종료 실패: tenant={} 대상 {}개 중 {}개가 끝나지 않음",
+            tenantId,
+            results.size(),
+            alive);
+        throw new IllegalStateException("PYTHON 슬롯 롤 세션을 끊지 못해 등급 변경 재동기화를 되돌렸습니다.");
+      }
+    }
+    if (!results.isEmpty()) {
+      slotSessionsTerminatedAt.put(tenantId, System.currentTimeMillis());
+      log.warn("등급 정의 변경으로 실행 중인 PYTHON 슬롯 롤 세션 {}개를 끊었다(tenant={})", results.size(), tenantId);
+    }
   }
 
   /** 주어진 테이블들에 슬롯 롤이 가진 SELECT 권한(테이블명, 롤명) 쌍. 테이블 목록이 비면 빈 결과. */

@@ -33,11 +33,14 @@ import java.util.List;
 import java.util.Set;
 import java.util.StringJoiner;
 import java.util.concurrent.atomic.AtomicReference;
+import javax.sql.DataSource;
 import org.jooq.DSLContext;
+import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -66,6 +69,10 @@ class PythonReadGrantWiringTest extends IntegrationTestBase {
 
   @Value("${app.pipeline.role-password-secret}")
   private String secret;
+
+  @Autowired
+  @Qualifier("schemaOwnerDataSource")
+  private DataSource schemaOwnerDataSource;
 
   private SecurityFixture fx;
   private final List<Long> datasets = new ArrayList<>();
@@ -327,6 +334,107 @@ class PythonReadGrantWiringTest extends IntegrationTestBase {
       reorderAndPublish(original, event);
     }
     assertThat(selectAs(1, pub)).as("원복 후 공개는 다시 슬롯 1 이 읽는다").isNull();
+  }
+
+  /** 슬롯 롤로 로그인한 연결 — 실행 중인 PYTHON 스크립트의 DB 세션을 흉내 낸다. */
+  private Connection openSlotSession(int slot) throws SQLException {
+    return DriverManager.getConnection(
+        PostgresTestContainer.INSTANCE.getJdbcUrl(),
+        TenantPipelineRole.pythonReadRoleName(DEFAULT_TEST_TENANT_ID, slot),
+        TenantPipelineRole.pythonReadPassword(DEFAULT_TEST_TENANT_ID, slot, secret));
+  }
+
+  /** 연결로 쿼리 하나를 돌린다 — 성공하면 null, 실패하면 SQLState(끊긴 연결이면 57P01·08xxx). */
+  private static String queryState(Connection c) {
+    try (Statement st = c.createStatement()) {
+      st.execute("SELECT 1");
+      return null;
+    } catch (SQLException e) {
+      return e.getSQLState() == null ? "closed" : e.getSQLState();
+    }
+  }
+
+  /**
+   * CR2 권한 실측(이 테스트 DB): 런타임 롤 app_tenant 는 pg_signal_backend 멤버도 슬롯 롤 멤버도 아니라 슬롯 롤 세션을 끊을 수 없고,
+   * 소유자 롤(app, schemaOwnerDataSource)은 슈퍼유저라 끊을 수 있다. 끊기를 소유자 연결로 하는 근거이며, 이 전제가 바뀌면 이 테스트가 먼저 알린다.
+   */
+  @Test
+  void terminatePrivilege_runtimeRoleCannot_ownerRoleCan() {
+    String s1 = TenantPipelineRole.pythonReadRoleName(DEFAULT_TEST_TENANT_ID, 1);
+    assertThat(
+            dsl.fetchValue(
+                "select pg_has_role(current_user, 'pg_signal_backend', 'USAGE') or pg_has_role(current_user, {0}, 'USAGE')"
+                    + " or (select rolsuper from pg_roles where rolname = current_user)",
+                DSL.val(s1)))
+        .as("런타임 롤(app_tenant)은 슬롯 롤 세션을 끊을 권한이 없다")
+        .isEqualTo(false);
+    assertThat(
+            DSL.using(schemaOwnerDataSource, org.jooq.SQLDialect.POSTGRES)
+                .fetchValue("select rolsuper from pg_roles where rolname = current_user"))
+        .as("소유자 롤(app)은 슈퍼유저")
+        .isEqualTo(true);
+  }
+
+  /**
+   * CR2 — 등급 정의 변경 이벤트는 새 GRANT 커밋 전에 그 테넌트 슬롯 롤의 활성 세션을 끊는다(실행 중 스크립트가 넓어진 슬롯으로 자격 밖 등급을 읽지 못하게).
+   * 변이: 리스너 경로의 세션 종료 호출을 지우면 연결이 살아 남아 실패한다.
+   */
+  @Test
+  void levelsChangedEvent_terminatesRunningSlotSessions() throws SQLException {
+    try (Connection running = openSlotSession(2)) {
+      assertThat(queryState(running)).as("대조군: 이벤트 전에는 살아 있다").isNull();
+      publishInTx(
+          new SecurityLevelsChangedEvent(
+              DEFAULT_TEST_TENANT_ID, SecurityLevelsChangedEvent.Kind.REORDERED, null),
+          true);
+      assertThat(queryState(running)).as("등급 정의 변경 후 슬롯 롤 세션은 끊긴다").isNotNull();
+    }
+    assertThat(sync.slotSessionsTerminatedSince(DEFAULT_TEST_TENANT_ID, 0L))
+        .as("러너 실패 문구용 표식")
+        .isTrue();
+  }
+
+  /**
+   * 데이터셋 하나의 등급 변경은 세션을 끊지 않는다 — 슬롯↔등급 위치 대응이 그대로라 늘어나는 GRANT 는 이미 자격 있는 슬롯에만 가고, 줄어드는 GRANT 는 다음
+   * 쿼리부터 막힌다(PostgreSQL 은 매 쿼리 권한을 본다). 끊긴 연결이 아닌 권한 오류(42501)로 막히는 것을 함께 단언한다.
+   */
+  @Test
+  void datasetLevelChangedEvent_doesNotTerminate_butRevokesFromNextQuery() throws SQLException {
+    String t = table("dl_live", "공개");
+    long id = lastDatasetId();
+    sync.syncTenant();
+    try (Connection running = openSlotSession(1);
+        Statement st = running.createStatement()) {
+      String sql =
+          "SELECT v FROM " + DataSchema.forTenant(DEFAULT_TEST_TENANT_ID) + ".\"" + t + "\"";
+      st.executeQuery(sql).close();
+      TenantRlsTestSupport.runInTenantTransaction(
+          fixtureTransactionTemplate,
+          DEFAULT_TEST_TENANT_ID,
+          () ->
+              dsl.update(DATASET)
+                  .set(DATASET.SECURITY_LEVEL_ID, fx.levelId("민감"))
+                  .where(DATASET.ID.eq(id))
+                  .execute());
+      publishInTx(
+          new DatasetSecurityLevelChangedEvent(
+              DEFAULT_TEST_TENANT_ID,
+              id,
+              fx.levelId("공개"),
+              fx.levelId("민감"),
+              DatasetSecurityLevelChangedEvent.Cause.MANUAL),
+          true);
+      assertThatCode(() -> st.executeQuery("SELECT 1").close())
+          .as("세션은 살아 있다")
+          .doesNotThrowAnyException();
+      String deniedState = null;
+      try {
+        st.executeQuery(sql).close();
+      } catch (SQLException e) {
+        deniedState = e.getSQLState();
+      }
+      assertThat(deniedState).as("같은 세션의 다음 쿼리부터 권한 오류로 거부").isEqualTo("42501");
+    }
   }
 
   /** 테넌트 트랜잭션 안에서 순서를 적용하고 같은 트랜잭션에서 이벤트를 발행한다(커밋 후 리스너 실행). */
