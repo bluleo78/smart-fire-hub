@@ -88,14 +88,32 @@ const DATASET_SECURITY_ACTION_TYPES = [
   { value: 'DATASET_ACCESS_GRANT_REMOVE', label: '허용 목록 제거' },
 ];
 
-/** 보안 등급 정책 액션 — 등급 정의(SecurityLevelService)와 역할 열람 등급(RoleClearanceService) 변경. */
-const LEVEL_POLICY_ACTION_TYPES = [
+/**
+ * 보안 설정 액션 — 등급 정의(SecurityLevelService)·역할 열람 등급(RoleClearanceService) 변경과
+ * AI 공급자 호스팅 위치 선언 변경(HostingChangeAuditor, WD-49).
+ * - 호스팅 위치 선언은 security:settings 권한이 필요한 보안 결정이고, 등급의 AI 정책(외부 AI 금지 등)이 실제로 걸리는지를 바꾼다 —
+ *   그래서 등급 정책과 같은 그룹에 둔다. 화면 용어(설정 › 호스팅 위치)를 그대로 쓴다.
+ */
+const SECURITY_SETTINGS_ACTION_TYPES = [
   { value: 'SECURITY_LEVEL_CREATE', label: '보안 등급 생성' },
   { value: 'SECURITY_LEVEL_UPDATE', label: '보안 등급 수정' },
   { value: 'SECURITY_LEVEL_DELETE', label: '보안 등급 삭제' },
   { value: 'SECURITY_LEVEL_REORDER', label: '보안 등급 순서 변경' },
   { value: 'SECURITY_LEVEL_DEFAULT_CHANGE', label: '기본 보안 등급 변경' },
   { value: 'ROLE_CLEARANCE_CHANGE', label: '역할 열람 등급 변경' },
+  { value: 'AI_PROVIDER_HOSTING_CHANGE', label: 'AI 호스팅 위치 변경' },
+];
+
+/**
+ * 멤버 관리 액션(WD-2·WD-3, UserService.audit) — 워크스페이스 멤버 추가·멤버십 정지/재활성화·제거.
+ * - 기록은 되고 있었지만 매핑이 없어 영문 raw 로 보이고 필터로 찾을 수 없었다(WD-49).
+ * - 문구는 사용자 관리 화면의 토스트·배지("멤버십이 정지되었습니다", "워크스페이스에서 제거")와 맞춘다.
+ */
+const MEMBER_ACTION_TYPES = [
+  { value: 'MEMBER_ADD', label: '멤버 추가' },
+  { value: 'MEMBER_SUSPEND', label: '멤버십 정지' },
+  { value: 'MEMBER_REACTIVATE', label: '멤버십 재활성화' },
+  { value: 'MEMBER_REMOVE', label: '멤버 제거' },
 ];
 
 /**
@@ -104,8 +122,9 @@ const LEVEL_POLICY_ACTION_TYPES = [
  */
 const ACTION_GROUPS = [
   { label: '일반', items: GENERAL_ACTION_TYPES },
+  { label: '멤버 관리', items: MEMBER_ACTION_TYPES },
   { label: '데이터셋 보안', items: DATASET_SECURITY_ACTION_TYPES },
-  { label: '보안 등급 정책', items: LEVEL_POLICY_ACTION_TYPES },
+  { label: '보안 설정', items: SECURITY_SETTINGS_ACTION_TYPES },
 ];
 
 /** 전체 액션 유형(평면) — 라벨 매핑용 */
@@ -171,6 +190,8 @@ function accessSummaryParts(log: AuditLogResponse): string[] {
  * - #109 회귀: auth/system/api_connection 매핑 누락으로 영문 raw 값 노출되던 문제 해소.
  * - security_level(SecurityLevelService — 등급 정의 생성·수정·삭제·순서·기본 등급),
  *   query_result(QueryResultExportService — 쿼리 결과 서버 내보내기, resourceId=실행 기록 ID)도 사용 중이다.
+ * - 신규 action/resource 추가 시 apps/firehub-api 에서 `auditLogService.log(`·`audit.record(` 호출부 전수를 대조한다.
+ *   운영자 평면 감사(tenant·TENANT_*·플랫폼 계정 조치)는 tenant_id 가 NULL 이라 이 화면(테넌트 감사)에는 나오지 않는다.
  */
 const RESOURCES = [
   { value: 'auth', label: '인증' },
@@ -184,6 +205,8 @@ const RESOURCES = [
   { value: 'ontology', label: '지식 모델' },
   { value: 'security_level', label: '보안 등급' },
   { value: 'query_result', label: '쿼리 결과' },
+  // HostingChangeAuditor.RESOURCE — resourceId 는 슬롯 이름(CHAT/CLASSIFY/EMBEDDING)이다(WD-49).
+  { value: 'ai_provider_hosting', label: 'AI 호스팅 위치' },
 ];
 
 /** 결과 필터 옵션 목록 */
