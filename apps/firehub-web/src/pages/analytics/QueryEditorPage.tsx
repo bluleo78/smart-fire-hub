@@ -377,13 +377,13 @@ function SaveDialog({
 // QueryEditorPage
 // ============================================================
 
-/** 서버 SQL 관문의 열람 거부 코드(DatasetAccessGuard) — 이 코드의 403 이면 화면의 이전 결과를 비운다. */
 /**
  * 실행 기록(runId) 없는 결과의 내보내기 안내 — 애드혹·저장 쿼리 실행 모두 서버가 실행 기록을 남기지만(code-review 4), 구버전 응답 등
  * runId 가 없으면 서버로 보낼 근거가 없다. 서버 404(QUERY_RUN_NOT_FOUND) 문구와 같은 흐름으로 다시 실행을 안내한다.
  */
 const QUERY_RUN_MISSING_MESSAGE = '실행 기록이 없습니다. 쿼리를 다시 실행한 뒤 내보내세요.';
 
+/** 서버 SQL 관문의 열람 거부 코드(DatasetAccessGuard) — 이 코드의 403 이면 화면의 이전 결과를 비운다. */
 const SQL_ACCESS_DENIAL_CODES = new Set(['DATASET_SQL_ACCESS_DENIED', 'SQL_WRITE_DOWNGRADE']);
 
 /** 실행 실패가 SQL 열람 거부(403 + 거부 코드)인지 판별한다. */

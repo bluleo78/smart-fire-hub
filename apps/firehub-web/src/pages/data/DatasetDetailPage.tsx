@@ -581,57 +581,8 @@ export default function DatasetDetailPage() {
               </>
             )}
           </TabsList>
-          {tabsOverflow.canScrollLeft && (
-            <>
-              <div
-                aria-hidden="true"
-                data-slot="tabs-fade-left"
-                className={
-                  'pointer-events-none absolute top-0 bottom-px left-0 w-10 ' +
-                  'bg-gradient-to-r from-background via-background/80 to-transparent'
-                }
-              />
-              {/* 마우스 사용자용 넘기기 — 키보드는 탭 목록 화살표로 이동하므로 탭 순서에서 뺀다. */}
-              <button
-                type="button"
-                tabIndex={-1}
-                aria-hidden="true"
-                data-slot="tabs-scroll-left"
-                onClick={() => scrollTabs(-1)}
-                className={
-                  'absolute left-0.5 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center ' +
-                  'rounded-full border bg-background shadow-sm'
-                }
-              >
-                <ChevronLeft className="h-3.5 w-3.5 text-foreground" />
-              </button>
-            </>
-          )}
-          {tabsOverflow.canScrollRight && (
-            <>
-              <div
-                aria-hidden="true"
-                data-slot="tabs-fade-right"
-                className={
-                  'pointer-events-none absolute top-0 bottom-px right-0 w-10 ' +
-                  'bg-gradient-to-l from-background via-background/80 to-transparent'
-                }
-              />
-              <button
-                type="button"
-                tabIndex={-1}
-                aria-hidden="true"
-                data-slot="tabs-scroll-right"
-                onClick={() => scrollTabs(1)}
-                className={
-                  'absolute right-0.5 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center ' +
-                  'rounded-full border bg-background shadow-sm'
-                }
-              >
-                <ChevronRight className="h-3.5 w-3.5 text-foreground" />
-              </button>
-            </>
-          )}
+          {tabsOverflow.canScrollLeft && <TabsScrollEdge side="left" onScroll={() => scrollTabs(-1)} />}
+          {tabsOverflow.canScrollRight && <TabsScrollEdge side="right" onScroll={() => scrollTabs(1)} />}
         </div>
 
         {activeTab === 'info' && (
@@ -712,5 +663,50 @@ export default function DatasetDetailPage() {
       {/* 매핑 탭·기본 정보 인라인 편집 미저장 변경 이탈 가드 — 사이드바 링크 클릭/뒤로가기 등 라우트 이탈 시 확인 (#502, #635) */}
       {unsavedChangesDialog}
     </div>
+  );
+}
+
+/** 탭 바 가장자리의 방향별 클래스·아이콘 — Tailwind 가 클래스를 찾도록 문자열을 통째로 둔다. */
+const TABS_SCROLL_EDGE = {
+  left: {
+    fade:
+      'pointer-events-none absolute top-0 bottom-px left-0 w-10 ' +
+      'bg-gradient-to-r from-background via-background/80 to-transparent',
+    button:
+      'absolute left-0.5 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center ' +
+      'rounded-full border bg-background shadow-sm',
+    Icon: ChevronLeft,
+  },
+  right: {
+    fade:
+      'pointer-events-none absolute top-0 bottom-px right-0 w-10 ' +
+      'bg-gradient-to-l from-background via-background/80 to-transparent',
+    button:
+      'absolute right-0.5 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center ' +
+      'rounded-full border bg-background shadow-sm',
+    Icon: ChevronRight,
+  },
+} as const;
+
+/**
+ * 탭 바가 넘칠 때 한쪽 가장자리의 페이드와 넘기기 버튼 — 왼쪽·오른쪽이 방향만 다른 같은 마크업이라 한 컴포넌트로 그린다.
+ * 마우스 사용자용 넘기기라 키보드 탭 순서에서 뺀다(키보드는 탭 목록 화살표로 이동한다).
+ */
+function TabsScrollEdge({ side, onScroll }: { side: 'left' | 'right'; onScroll: () => void }) {
+  const { fade, button, Icon } = TABS_SCROLL_EDGE[side];
+  return (
+    <>
+      <div aria-hidden="true" data-slot={`tabs-fade-${side}`} className={fade} />
+      <button
+        type="button"
+        tabIndex={-1}
+        aria-hidden="true"
+        data-slot={`tabs-scroll-${side}`}
+        onClick={onScroll}
+        className={button}
+      >
+        <Icon className="h-3.5 w-3.5 text-foreground" />
+      </button>
+    </>
   );
 }

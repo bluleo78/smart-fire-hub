@@ -1,11 +1,10 @@
-import { useQuery } from '@tanstack/react-query';
 import { ChevronDown, ChevronsUpDown, ChevronUp, Code2, Download } from 'lucide-react';
 import { useMemo,useState } from 'react';
 import sql from 'react-syntax-highlighter/dist/esm/languages/prism/sql';
 import SyntaxHighlighter from 'react-syntax-highlighter/dist/esm/prism-light';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 
-import { analyticsApi } from '../../../api/analytics';
+import { useExportCheck } from '../../../hooks/queries/useAnalytics';
 import { downloadBlob, downloadCsv } from '../../../lib/download';
 import { ActiveFilterChips } from './table/ActiveFilterChips';
 import { CellRenderer } from './table/CellRenderer';
@@ -55,13 +54,7 @@ export default function TableWidget({ input, onNavigate, displayMode }: WidgetPr
 
   // AI 가 만든 표는 서버 플래그가 없다(입력은 LLM 이 조립) — 화면의 SQL 로 내보내기 가능 여부를 서버에 묻는다(S4).
   // 응답 전·실패·SQL 없음은 숨김(fail-closed). 숨김·파싱 실패·정책 위반은 서버가 모두 false 로 준다.
-  const { data: exportCheck, isPending: exportCheckPending } = useQuery({
-    queryKey: ['analytics', 'export-check', input.sql],
-    queryFn: () => analyticsApi.exportCheck(input.sql).then((r) => r.data),
-    enabled: Boolean(input.sql),
-    staleTime: 60_000,
-    retry: false,
-  });
+  const { data: exportCheck, isPending: exportCheckPending } = useExportCheck(input.sql);
   const exportAllowed = exportCheck?.exportAllowed === true;
 
   // Compute unique values per column from full dataset
