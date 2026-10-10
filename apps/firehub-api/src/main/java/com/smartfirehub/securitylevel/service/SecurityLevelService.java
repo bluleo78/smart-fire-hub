@@ -1,6 +1,7 @@
 package com.smartfirehub.securitylevel.service;
 
 import com.smartfirehub.global.exception.CodedApiException;
+import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.access.LevelPolicy;
@@ -11,6 +12,7 @@ import com.smartfirehub.securitylevel.dto.ReorderPreviewResponse;
 import com.smartfirehub.securitylevel.dto.SecurityLevelRequest;
 import com.smartfirehub.securitylevel.dto.SecurityLevelResponse;
 import com.smartfirehub.securitylevel.dto.SecurityLevelUsage;
+import com.smartfirehub.securitylevel.event.SecurityLevelsChangedEvent;
 import com.smartfirehub.securitylevel.repository.SecurityLevelRepository;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -21,6 +23,7 @@ import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.postgresql.util.PSQLException;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -41,6 +44,9 @@ public class SecurityLevelService {
   private final ClearanceResolver clearanceResolver;
   private final SecurityAuditRecorder audit;
   private final AllowlistSeeder allowlistSeeder;
+
+  /** 등급 정의 변경 이벤트 발행기(공통 결정 R2: 발행은 이 서비스에서만, 변경마다 정확히 1번). */
+  private final ApplicationEventPublisher events;
 
   @Transactional(readOnly = true)
   public List<SecurityLevelResponse> list() {
@@ -91,6 +97,7 @@ public class SecurityLevelService {
         String.valueOf(id),
         req.name(),
         Map.of("rank", nextRank));
+    publishLevelsChanged(SecurityLevelsChangedEvent.Kind.CREATED, id);
     return SecurityLevelResponse.of(repository.findById(id).orElseThrow());
   }
 
@@ -116,6 +123,8 @@ public class SecurityLevelService {
     meta.put("seededGrants", seeded);
     audit.record(
         actor, "SECURITY_LEVEL_UPDATE", "security_level", String.valueOf(id), req.name(), meta);
+    // 이름만 바꿔도 낸다 — 정책(allowlist_required·ai_policy 등) 변경 여부를 여기서 가리지 않고 구독자가 테넌트 전체를 다시 맞춘다.
+    publishLevelsChanged(SecurityLevelsChangedEvent.Kind.UPDATED, id);
     return SecurityLevelResponse.of(require(id));
   }
 
@@ -185,6 +194,8 @@ public class SecurityLevelService {
     meta.put("reason", req == null ? null : req.reason());
     audit.record(
         actor, "SECURITY_LEVEL_DELETE", "security_level", String.valueOf(id), target.name(), meta);
+    // 데이터셋 일괄 이동(moveDatasets)은 데이터셋별 이벤트 대신 이 DELETED 하나로 알린다(계획 결정 14).
+    publishLevelsChanged(SecurityLevelsChangedEvent.Kind.DELETED, id);
   }
 
   /**
@@ -257,6 +268,13 @@ public class SecurityLevelService {
         null,
         null,
         Map.of("orderedIds", orderedIds, "impact", impact.roles()));
+    publishLevelsChanged(SecurityLevelsChangedEvent.Kind.REORDERED, null);
+  }
+
+  /** 등급 정의 변경 이벤트를 낸다 — {@code @Transactional} 메서드 안에서만 부른다(AFTER_COMMIT 구독자는 롤백된 변경을 받지 않는다). */
+  private void publishLevelsChanged(SecurityLevelsChangedEvent.Kind kind, Long levelId) {
+    events.publishEvent(
+        new SecurityLevelsChangedEvent(TenantContext.require("등급 정의 변경 이벤트"), kind, levelId));
   }
 
   /**

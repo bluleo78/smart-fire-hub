@@ -50,6 +50,10 @@ class DatasetControllerTest {
   // 컨트롤러가 검색 가시성 자격을 위해 ClearanceResolver 를 주입받는다 — 슬라이스에선 목(서비스도 목이라 값은 쓰이지 않는다).
   @MockitoBean private ClearanceResolver clearanceResolver;
 
+  // 행 조회 감사(스펙 §4.6) — DatasetController 의존성이라 슬라이스 컨텍스트에 mock 등록
+  @MockitoBean
+  private com.smartfirehub.securitylevel.service.SecurityAuditRecorder securityAuditRecorder;
+
   @Autowired private MockMvc mockMvc;
 
   @Autowired private ObjectMapper objectMapper;

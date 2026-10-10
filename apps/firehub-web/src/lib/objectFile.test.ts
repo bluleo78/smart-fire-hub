@@ -1,3 +1,4 @@
+import { AxiosError, type AxiosResponse } from 'axios';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { objectsApi } from '../api/objects';
@@ -69,8 +70,8 @@ describe('openObjectInNewTab', () => {
 
     // 팝업 차단 회피: 탭을 먼저 동기적으로 연다.
     expect(openSpy).toHaveBeenCalledWith('', '_blank');
-    // 발급은 datasetId + 전체 key 로 이뤄진다.
-    expect(objectsApi.presignedUrl).toHaveBeenCalledWith(7, 'equip/report.md');
+    // 발급은 datasetId + 전체 key 로 이뤄진다. disposition 기본은 inline(열기 — 내보내기 정책 비대상).
+    expect(objectsApi.presignedUrl).toHaveBeenCalledWith(7, 'equip/report.md', 'inline');
     expect(fakeWin.location.href).toBe('https://minio.example/download/report.md');
     expect(toastError).not.toHaveBeenCalled();
   });
@@ -82,6 +83,30 @@ describe('openObjectInNewTab', () => {
 
     expect(objectsApi.presignedUrl).not.toHaveBeenCalled();
     expect(toastError).toHaveBeenCalledWith('팝업이 차단되어 파일을 열 수 없습니다');
+  });
+
+  it('attachment 를 지정하면 그대로 발급 요청에 싣는다(다운로드 — 서버가 내보내기 정책 판정)', async () => {
+    (objectsApi.presignedUrl as ReturnType<typeof vi.fn>).mockResolvedValue({
+      data: { url: 'https://minio.example/download/report.md', expiresInSeconds: 300 },
+    });
+
+    await openObjectInNewTab(7, 'equip/report.md', 'attachment');
+
+    expect(objectsApi.presignedUrl).toHaveBeenCalledWith(7, 'equip/report.md', 'attachment');
+  });
+
+  it('정책 거부(403)면 탭을 닫고 서버 사유 문구를 보인다', async () => {
+    const message = "'기밀' 등급 데이터는 내보낼 수 없습니다.";
+    const err = new AxiosError('Forbidden', 'ERR_BAD_REQUEST', undefined, undefined, {
+      status: 403,
+      data: { status: 403, code: 'POLICY_BLOCKED', message, errors: { action: 'EXPORT' } },
+    } as AxiosResponse);
+    (objectsApi.presignedUrl as ReturnType<typeof vi.fn>).mockRejectedValue(err);
+
+    await openObjectInNewTab(7, 'equip/report.md', 'attachment');
+
+    expect(fakeWin.close).toHaveBeenCalled();
+    expect(toastError).toHaveBeenCalledWith(message);
   });
 
   it('URL 발급 실패 시 열어둔 탭을 닫고 에러 토스트를 띄운다', async () => {

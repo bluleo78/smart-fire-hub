@@ -9,6 +9,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.analytics.dto.*;
 import com.smartfirehub.analytics.service.AnalyticsQueryExecutionService;
+import com.smartfirehub.analytics.service.QueryResultExportService;
 import com.smartfirehub.analytics.service.SavedQueryService;
 import com.smartfirehub.global.config.SecurityConfig;
 import com.smartfirehub.global.dto.PageResponse;
@@ -25,6 +26,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -56,6 +58,8 @@ class SavedQueryControllerTest {
   @MockitoBean private JwtTokenProvider jwtTokenProvider;
   @MockitoBean private JwtProperties jwtProperties;
   @MockitoBean private PermissionService permissionService;
+  // 쿼리 결과 내보내기(V136): 실행 기록 부착(attachRun)·내보내기 재판정은 서비스가 맡는다(실제 동작은 QueryResultExportTest).
+  @MockitoBean private QueryResultExportService queryResultExportService;
 
   @BeforeEach
   void setUp() {
@@ -261,8 +265,14 @@ class SavedQueryControllerTest {
     Clearance viewer = Clearance.none(1L, 1L);
     when(clearanceResolver.current()).thenReturn(viewer);
     // readOnly 는 웹 애드혹에서 항상 true 로 강제된다(#66) — 관문에 true 로 넘어가야만 스텁이 맞는다.
+    AnalyticsQueryResponse executed = sampleQueryResult();
     when(guardedSqlExecutor.executeAnalytics(eq(viewer), eq("SELECT 1"), eq(100), eq(true)))
-        .thenReturn(sampleQueryResult());
+        .thenReturn(executed);
+    UUID runId = UUID.fromString("11111111-2222-3333-4444-555555555555");
+    // 실행 기록 규칙(SELECT·사용자·AI 제외)은 QueryResultExportService.attachRun 이 소유한다 — 여기서는 원문·행 상한을 넘기는 배선만
+    // 본다.
+    when(queryResultExportService.attachRun(viewer, "SELECT 1", 100, executed))
+        .thenReturn(executed.withExportInfo(true, runId.toString()));
 
     mockMvc
         .perform(
@@ -272,7 +282,9 @@ class SavedQueryControllerTest {
                 .content(objectMapper.writeValueAsString(request)))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.queryType").value("SELECT"))
-        .andExpect(jsonPath("$.columns[0]").value("col1"));
+        .andExpect(jsonPath("$.columns[0]").value("col1"))
+        // 성공한 SELECT 는 실행 기록 id 를 싣는다 — 쿼리 결과 내보내기의 근거(스펙 §4.4).
+        .andExpect(jsonPath("$.runId").value(runId.toString()));
   }
 
   // ── GET /api/v1/analytics/queries/{id} ─────────────────────────────────────

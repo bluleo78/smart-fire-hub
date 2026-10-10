@@ -8,6 +8,7 @@ import com.smartfirehub.jooq.Keys;
 import com.smartfirehub.jooq.Public;
 import com.smartfirehub.jooq.tables.AiInferenceCache.AiInferenceCachePath;
 import com.smartfirehub.jooq.tables.AiSession.AiSessionPath;
+import com.smartfirehub.jooq.tables.AnalyticsQueryRun.AnalyticsQueryRunPath;
 import com.smartfirehub.jooq.tables.AnomalyEvent.AnomalyEventPath;
 import com.smartfirehub.jooq.tables.ApiConnection.ApiConnectionPath;
 import com.smartfirehub.jooq.tables.AsyncJob.AsyncJobPath;
@@ -253,6 +254,19 @@ public class Tenant extends TableImpl<TenantRecord> {
             _aiSession = new AiSessionPath(this, null, Keys.AI_SESSION__AI_SESSION_TENANT_ID_FKEY.getInverseKey());
 
         return _aiSession;
+    }
+
+    private transient AnalyticsQueryRunPath _analyticsQueryRun;
+
+    /**
+     * Get the implicit to-many join path to the
+     * <code>public.analytics_query_run</code> table
+     */
+    public AnalyticsQueryRunPath analyticsQueryRun() {
+        if (_analyticsQueryRun == null)
+            _analyticsQueryRun = new AnalyticsQueryRunPath(this, null, Keys.ANALYTICS_QUERY_RUN__ANALYTICS_QUERY_RUN_TENANT_ID_FKEY.getInverseKey());
+
+        return _analyticsQueryRun;
     }
 
     private transient AnomalyEventPath _anomalyEvent;

@@ -19,6 +19,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import org.jooq.DSLContext;
+import org.jooq.Record;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -249,5 +250,51 @@ class OntologySourceDatasetsTest extends IntegrationTestBase {
     assertThat(h.path("errors")).isEqualTo(x.path("errors"));
     assertThat(hidden.getContentAsString()).doesNotContain("기밀");
     assertThat(createdOntologies()).isZero();
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // 흐름 B(S4) 감사 연결 — 다건 강제(requireViewThenAiForDatasets)의 거부·허용도 감사에 남는다.
+  // ---------------------------------------------------------------------------------------------
+
+  /** 이 사용자의 접근 거부 감사 행. */
+  private List<Record> denials(long uid) {
+    awaitSecurityAudit();
+    return inTenantFixture(
+        () ->
+            dsl.fetch(
+                "SELECT resource_id, metadata->>'action' a, metadata->>'reason' r FROM audit_log"
+                    + " WHERE user_id = ? AND action_type = 'DATASET_ACCESS_DENIED' ORDER BY id",
+                uid));
+  }
+
+  /** 출처 중 AI 불허(외부 호스팅의 민감)는 실제 사유 AI_EXTERNAL_DENIED 로 AI 동작 거부 감사에 남는다. */
+  @Test
+  void aiBlockedSource_isAuditedAsAiDenial() throws Exception {
+    long pub = ds("공개");
+    long sens = ds("민감");
+    assertThat(create(userId, List.of(pub, sens)).getStatus()).isEqualTo(403);
+    assertThat(denials(userId))
+        .extracting(
+            r ->
+                r.get("a", String.class)
+                    + "/"
+                    + r.get("r", String.class)
+                    + "/"
+                    + r.get("resource_id", String.class))
+        .containsExactly("AI/AI_EXTERNAL_DENIED/" + sens);
+  }
+
+  /** 숨김 출처의 404 는 실제 사유와 함께 VIEW 거부로 남고, 없는 id 의 404 는 남지 않는다("없음"은 거부가 아니다). */
+  @Test
+  void hiddenSource_isAuditedAsViewDenial_missingIsNot() throws Exception {
+    long secret = fx.createDatasetRow(m + "_hid3", fx.levelId("기밀"), userId);
+    datasets.add(secret);
+    assertThat(create(userId, List.of(secret)).getStatus()).isEqualTo(404);
+    assertThat(create(userId, List.of(999_999_999L)).getStatus()).isEqualTo(404);
+    List<Record> rows = denials(userId);
+    assertThat(rows).hasSize(1);
+    assertThat(rows.get(0).get("a", String.class)).isEqualTo("VIEW");
+    assertThat(rows.get(0).get("resource_id", String.class)).isEqualTo(String.valueOf(secret));
+    assertThat(rows.get(0).get("r", String.class)).isNotBlank().isNotEqualTo("LEVEL_UNKNOWN");
   }
 }

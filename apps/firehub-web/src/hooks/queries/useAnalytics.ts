@@ -1,4 +1,4 @@
-import { useInfiniteQuery,useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery,useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 
 import { analyticsApi } from '../../api/analytics';
@@ -182,6 +182,17 @@ export function useChart(id: number | null) {
   });
 }
 
+/**
+ * 차트 데이터 쿼리의 키·조회 함수 — useChartData 와 useDashboardExportAllowed 가 같은 캐시 항목을 봐야 하므로 한 곳에 둔다.
+ * 키가 어긋나면 enabled: false 관찰자가 늘 undefined 를 받아 내보내기 판정이 조용히 "전부 허용"이 된다.
+ */
+function chartDataQuery(id: number) {
+  return {
+    queryKey: ['analytics', 'charts', id, 'data'],
+    queryFn: () => analyticsApi.getChartData(id).then((r) => r.data),
+  };
+}
+
 export function useChartData(id: number | null | undefined, options?: {
   refetchInterval?: number;
   enabled?: boolean;
@@ -191,14 +202,42 @@ export function useChartData(id: number | null | undefined, options?: {
   // 컴포넌트가 다시 렌더될 때마다 타이머를 처음부터 재시작했다. 주기보다 자주 렌더되면 자동 새로고침이 영영 발화하지 않는다.
   const [jitterFactor] = useState(() => 1 + (Math.random() - 0.5) * 0.2);
   return useQuery({
-    queryKey: ['analytics', 'charts', id, 'data'],
-    queryFn: () => analyticsApi.getChartData(id!).then((r) => r.data),
+    ...chartDataQuery(id!),
     enabled: options?.enabled !== false && !!id,
     refetchInterval: options?.refetchInterval
       ? Math.round(options.refetchInterval * jitterFactor)
       : undefined,
     refetchIntervalInBackground: false,
     refetchOnWindowFocus: false,
+  });
+}
+
+/**
+ * 대시보드 위젯들의 내보내기 가능 여부(S4) — 위젯 카드(useChartData)가 이미 받은 데이터를 캐시에서 관찰만 한다.
+ * enabled: false 라 이 훅은 요청을 보내지 않는다(위젯의 지연 로딩·자동 새로고침 주기를 건드리지 않게).
+ * 로드된 위젯 중 하나라도 denied 이거나 exportAllowed !== true 면 false. 아직 로드되지 않은 위젯은 화면·인쇄에 데이터가
+ * 없으므로 판정에서 뺀다 — 넣으면 화면 밖 위젯이 있는 긴 대시보드에서 허용 사용자도 PDF 를 못 쓴다.
+ */
+export function useDashboardExportAllowed(chartIds: number[]): boolean {
+  const uniqueIds = [...new Set(chartIds)];
+  return useQueries({
+    queries: uniqueIds.map((id) => ({ ...chartDataQuery(id), enabled: false })),
+    combine: (results) =>
+      results.every((r) => r.data === undefined || (r.data.denied !== true && r.data.exportAllowed === true)),
+  });
+}
+
+/**
+ * 화면 표시 데이터(AI 표 위젯)의 SQL 내보내기 가능 여부(S4) — 서버가 판정만 한다(실행·감사 없음).
+ * 응답 전·실패·SQL 없음은 호출부가 숨김으로 다룬다(fail-closed). 같은 SQL 은 60초 동안 다시 묻지 않는다.
+ */
+export function useExportCheck(sql: string | undefined) {
+  return useQuery({
+    queryKey: ['analytics', 'export-check', sql],
+    queryFn: () => analyticsApi.exportCheck(sql!).then((r) => r.data),
+    enabled: Boolean(sql),
+    staleTime: 60_000,
+    retry: false,
   });
 }
 

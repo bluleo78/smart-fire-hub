@@ -175,7 +175,7 @@ test.describe('쿼리 에디터 심화', () => {
 
     // Excel 내보내기 API 모킹
     await page.route(
-      (url) => url.pathname === '/api/v1/query-results/export',
+      (url) => url.pathname === '/api/v1/analytics/queries/runs/run-test-1/export',
       (route) => {
         if (route.request().method() === 'POST') {
           return route.fulfill({
@@ -222,7 +222,7 @@ test.describe('쿼리 에디터 심화', () => {
 
     let exportCalled = false;
     await page.route(
-      (url) => url.pathname === '/api/v1/query-results/export',
+      (url) => url.pathname === '/api/v1/analytics/queries/runs/run-test-1/export',
       (route) => {
         exportCalled = true;
         return route.fulfill({ status: 200, contentType: 'text/csv', body: 'id,name,value' });
@@ -267,7 +267,7 @@ test.describe('쿼리 에디터 심화', () => {
 
     let exportCalled = false;
     await page.route(
-      (url) => url.pathname === '/api/v1/query-results/export',
+      (url) => url.pathname === '/api/v1/analytics/queries/runs/run-test-1/export',
       (route) => {
         exportCalled = true;
         return route.fulfill({ status: 200, contentType: 'text/csv', body: 'id,name,value' });
@@ -313,7 +313,7 @@ test.describe('쿼리 에디터 심화', () => {
       dialogShown = true;
     });
     await page.route(
-      (url) => url.pathname === '/api/v1/query-results/export',
+      (url) => url.pathname === '/api/v1/analytics/queries/runs/run-test-1/export',
       (route) => {
         exportCalled = true;
         return route.fulfill({ status: 200, contentType: 'text/csv', body: 'id,name,value' });

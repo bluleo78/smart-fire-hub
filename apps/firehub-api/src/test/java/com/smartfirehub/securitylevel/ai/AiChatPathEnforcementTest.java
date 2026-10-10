@@ -22,6 +22,7 @@ import com.smartfirehub.support.TenantRlsTestSupport;
 import java.util.ArrayList;
 import java.util.List;
 import org.jooq.DSLContext;
+import org.jooq.Record;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -421,5 +422,134 @@ class AiChatPathEnforcementTest extends IntegrationTestBase {
     roles.add(lowRole);
     fx.assignRole(low, lowRole);
     return low;
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // 흐름 B(S4) 감사 연결 — POLICY_BLOCKED 거부는 AI 동작·실제 사유로, 감사 등급 AI 접근은 AI 종류로 남는다(보충 스펙 §3, 스펙 §4.6).
+  // ---------------------------------------------------------------------------------------------
+
+  /** 이 사용자의 접근 거부 감사 행(동작·사유·데이터셋·테이블). */
+  private List<Record> denials(long uid) {
+    awaitSecurityAudit();
+    return inTenantFixture(
+        () ->
+            dsl.fetch(
+                "SELECT resource_id, metadata->>'action' a, metadata->>'reason' r,"
+                    + " metadata->>'tableName' t FROM audit_log"
+                    + " WHERE user_id = ? AND action_type = 'DATASET_ACCESS_DENIED' ORDER BY id",
+                uid));
+  }
+
+  /** 이 사용자·데이터셋의 감사 등급 접근 기록 종류. */
+  private List<String> accessKinds(long uid, long datasetId) {
+    awaitSecurityAudit();
+    return inTenantFixture(
+        () ->
+            dsl.fetch(
+                    "SELECT metadata->>'kind' k FROM audit_log WHERE user_id = ?"
+                        + " AND action_type = 'DATASET_ACCESS' AND resource_id = ? ORDER BY id",
+                    uid,
+                    String.valueOf(datasetId))
+                .getValues("k", String.class));
+  }
+
+  /** 상세 경로(requireView 의 AI 판정) POLICY_BLOCKED 는 실제 사유 AI_EXTERNAL_DENIED 로 AI 동작 거부 감사에 남는다. */
+  @Test
+  void policyBlocked_isAuditedAsAiDenial() throws Exception {
+    assertPolicyBlocked(
+        run(ai(get("/api/v1/datasets/" + sensitiveId), null)), "AI", "민감", "ai_policy");
+    // 대조군: 허용 요청(AI 공개·웹 민감)은 거부 감사를 더하지 않는다.
+    assertThat(run(ai(get("/api/v1/datasets/" + publicId), null)).getStatus()).isEqualTo(200);
+    assertThat(run(web(get("/api/v1/datasets/" + sensitiveId))).getStatus()).isEqualTo(200);
+    List<Record> rows = denials(userId);
+    assertThat(rows).hasSize(1);
+    assertThat(rows.get(0).get("a", String.class)).isEqualTo("AI");
+    assertThat(rows.get(0).get("r", String.class)).isEqualTo("AI_EXTERNAL_DENIED");
+    assertThat(rows.get(0).get("resource_id", String.class)).isEqualTo(String.valueOf(sensitiveId));
+  }
+
+  /**
+   * 애드혹 SQL(judgeSql 값 판정 → executeJudgedAnalytics 에서 던짐)의 POLICY_BLOCKED 도 테이블 이름과 함께 AI 거부로 남는다.
+   */
+  @Test
+  void policyBlocked_adhocSql_isAuditedAsAiDenialWithTable() throws Exception {
+    assertPolicyBlocked(
+        run(ai(sql("SELECT * FROM " + sensitiveTable), null)), "AI", "민감", "ai_policy");
+    List<Record> rows = denials(userId);
+    assertThat(rows).hasSize(1);
+    assertThat(rows.get(0).get("a", String.class)).isEqualTo("AI");
+    assertThat(rows.get(0).get("r", String.class)).isEqualTo("AI_EXTERNAL_DENIED");
+    assertThat(rows.get(0).get("t", String.class)).isEqualTo(sensitiveTable);
+    assertThat(rows.get(0).get("resource_id", String.class)).isEqualTo(String.valueOf(sensitiveId));
+  }
+
+  /**
+   * 데이터셋 /query(requireSql)의 POLICY_BLOCKED 도 AI 거부로 남는다(SQL 동작이 아니다). 경로 데이터셋은 공개라 인터셉터
+   * requireView 를 통과하고, SQL 이 참조하는 민감 테이블에서 requireSql 이 막는다.
+   */
+  @Test
+  void policyBlocked_datasetQuery_isAuditedAsAiDenial() throws Exception {
+    String body = "{\"sql\":\"SELECT * FROM " + sensitiveTable + "\",\"maxRows\":10}";
+    assertPolicyBlocked(
+        run(ai(postJson("/api/v1/datasets/" + publicId + "/query", body), null)),
+        "AI",
+        "민감",
+        "ai_policy");
+    assertThat(denials(userId))
+        .extracting(r -> r.get("a", String.class) + "/" + r.get("r", String.class))
+        .containsOnly("AI/AI_EXTERNAL_DENIED");
+  }
+
+  /** 공유 목적 차단(share_policy=DENY)은 사유 SHARE_DENIED 로 AI 동작 거부에 남는다. */
+  @Test
+  void sharePurposeBlocked_isAuditedWithShareReason() throws Exception {
+    declareChatSelfHosted();
+    declareEmbeddingSelfHosted();
+    long secretId = fx.createDatasetRow(marker + "_secret", fx.levelId("기밀"), creator);
+    fx.grantUser(secretId, userId);
+    try {
+      assertPolicyBlocked(
+          run(ai(get("/api/v1/datasets/" + secretId), "share")), "SHARE", "기밀", "share_policy");
+      List<Record> rows = denials(userId);
+      assertThat(rows).hasSize(1);
+      assertThat(rows.get(0).get("a", String.class)).isEqualTo("AI");
+      assertThat(rows.get(0).get("r", String.class)).isEqualTo("SHARE_DENIED");
+    } finally {
+      fx.deleteDatasetRow(secretId);
+    }
+  }
+
+  /** 값 판정(목록·스키마의 AI 가시성 술어)은 거부로 남기지 않는다(설계 결정 3). */
+  @Test
+  void aiVisibilityFilter_isNotAudited() throws Exception {
+    assertThat(listIds(ai(get("/api/v1/datasets?search=" + marker), null)))
+        .doesNotContain(sensitiveId);
+    assertThat(run(ai(get("/api/v1/analytics/queries/schema"), null)).getStatus()).isEqualTo(200);
+    assertThat(denials(userId)).isEmpty();
+  }
+
+  /**
+   * 감사 등급(민감) 데이터를 AI 가 허용 판정으로 읽으면 AI 종류 접근으로 남는다 — 같은 사용자의 웹 SQL 은 SQL 종류(대조군). 감사 등급이 아닌 공개
+   * 데이터셋은 남지 않는다.
+   */
+  @Test
+  void aiAllowedAccess_onAuditLevel_isRecordedAsAiKind() throws Exception {
+    declareChatSelfHosted();
+    assertThat(run(ai(get("/api/v1/datasets/" + sensitiveId), null)).getStatus()).isEqualTo(200);
+    assertThat(run(ai(get("/api/v1/datasets/" + publicId), null)).getStatus()).isEqualTo(200);
+    assertThat(accessKinds(userId, sensitiveId)).containsExactly("AI");
+    assertThat(accessKinds(userId, publicId)).isEmpty();
+    assertThat(run(web(sql("SELECT * FROM " + sensitiveTable))).getStatus()).isEqualTo(200);
+    assertThat(accessKinds(userId, sensitiveId)).containsExactly("AI", "SQL");
+    assertThat(denials(userId)).isEmpty();
+  }
+
+  /** AI 애드혹 SQL 의 감사 등급 접근은 SQL 이 아니라 AI 종류로 남는다. */
+  @Test
+  void aiAdhocSql_onAuditLevel_isRecordedAsAiKind() throws Exception {
+    declareChatSelfHosted();
+    MockHttpServletResponse r = run(ai(sql("SELECT * FROM " + sensitiveTable), null));
+    assertThat(r.getStatus()).as(r.getContentAsString()).isEqualTo(200);
+    assertThat(accessKinds(userId, sensitiveId)).containsExactly("AI");
   }
 }

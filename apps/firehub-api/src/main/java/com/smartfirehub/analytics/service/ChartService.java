@@ -170,7 +170,9 @@ public class ChartService {
     if (judgment.denied()) {
       return deniedData(chart);
     }
-    return new ChartDataResponse(chart, executeJudged(judgment));
+    // 내보내기 플래그는 조회자 판정 토큰에서 계산한다(설계 결정 5 — 결과 캐시와 무관하게 조회자별).
+    return new ChartDataResponse(
+        chart, executeJudged(judgment), false, judgment.exportAllowedFor());
   }
 
   /**

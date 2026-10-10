@@ -24,10 +24,13 @@ import com.smartfirehub.embedding.config.EmbeddingSettingsService;
 import com.smartfirehub.embedding.config.dto.EmbeddingConfigRequest;
 import com.smartfirehub.embedding.reembed.TenantReembedJob;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.access.ProviderHosting;
+import com.smartfirehub.securitylevel.dto.ChangeDatasetLevelRequest;
 import com.smartfirehub.securitylevel.event.DatasetSecurityLevelChangedEvent;
 import com.smartfirehub.securitylevel.event.EmbeddingHostingChangedEvent;
 import com.smartfirehub.securitylevel.event.SecurityLevelsChangedEvent;
+import com.smartfirehub.securitylevel.service.DatasetSecurityService;
 import com.smartfirehub.settings.repository.TenantSettingsRepository;
 import com.smartfirehub.settings.service.SettingsOverridePolicy;
 import com.smartfirehub.support.EmbeddingTestFixtures;
@@ -84,6 +87,8 @@ class AiVectorPurgeTest extends IntegrationTestBase {
   @Autowired private EmbeddingAiGate gate;
   @Autowired private ApplicationEventPublisher publisher;
   @Autowired private ApplicationEvents events;
+  @Autowired private DatasetSecurityService datasetSecurityService;
+  @Autowired private ClearanceResolver clearanceResolver;
 
   /** 임베딩 저장의 probe(외부 호출)를 차원만 돌려주게 바꾼다. */
   @MockitoSpyBean private EmbeddingProviderFactory providerFactory;
@@ -552,5 +557,31 @@ class AiVectorPurgeTest extends IntegrationTestBase {
   void flagKey_isNotWritableThroughGenericSettings() {
     assertThat(SettingsOverridePolicy.isTenantOverridable(AiVectorPurgeStartupRunner.FLAG_KEY))
         .isFalse();
+  }
+
+  /**
+   * 공통 결정 R2 종단(흐름 B 발행 → 흐름 A 구독): 실제 등급 변경 서비스로 데이터셋을 외부 호스팅에서 AI 불허인 '민감'(SELF_HOSTED_ONLY)으로
+   * 올리면, 서비스 트랜잭션 커밋 뒤 이벤트를 받은 리스너가 그 데이터셋 벡터만 정리한다. 이벤트를 테스트가 직접 발행하지 않는다 — 발행 줄이 빠지면 벡터가 남아 10초
+   * 대기에서 실패한다.
+   */
+  @Test
+  void realLevelChange_viaDatasetSecurityService_purgesThatDatasetAfterCommit() throws Exception {
+    long changer = fx.createUser("avp_chg");
+    users.add(changer);
+    fx.removeUserRole(changer);
+    long rid = fx.createRole("avp_chg_" + System.nanoTime(), fx.levelId("기밀"), "dataset:read");
+    roles.add(rid);
+    fx.assignRole(changer, rid);
+    TenantContext.set(DEFAULT_TEST_TENANT_ID);
+    assertThat(hasVector(sensId)).as("전제: 변경 전에는 벡터가 있다").isTrue();
+
+    datasetSecurityService.changeLevel(
+        sensId,
+        new ChangeDatasetLevelRequest(fx.levelId("민감"), null),
+        clearanceResolver.resolve(changer));
+
+    awaitTrue(() -> !hasVector(sensId));
+    // 같은 테넌트의 허용(공개) 데이터셋 벡터는 그대로다 — 등급 변경 1건은 그 데이터셋만 정리한다.
+    assertThat(hasVector(pubId)).isTrue();
   }
 }

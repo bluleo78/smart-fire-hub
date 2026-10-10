@@ -61,6 +61,8 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
   const [addRowOpen, setAddRowOpen] = useState(false);
   const [editRowState, setEditRowState] = useState<{ open: boolean; rowId: number; data: Record<string, unknown> } | null>(null);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  // 조회자 기준 내보내기 가능(S4) — 서버가 명시적으로 true 를 준 경우만 허용(없거나 null 이면 fail-closed).
+  const exportAllowed = dataset.exportAllowed === true;
 
   const parentRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -228,6 +230,7 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
         onImport={() => setImportDialogOpen(true)}
         onExport={() => setExportDialogOpen(true)}
         onApiImport={() => setApiWizardOpen(true)}
+        exportAllowed={exportAllowed}
       />
 
       {sqlEditorOpen && (
@@ -241,7 +244,8 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
       <SelectionActionBar
         selectedCount={selectedCount}
         onDeleteSelected={() => setDeleteDialogOpen(true)}
-        onExportSelected={handleExportSelected}
+        // 보조 다운로드(선택 행 CSV)는 차단이면 숨긴다 — 주 버튼만 비활성+툴팁으로 사유를 안내한다(스펙 §5-4)
+        onExportSelected={exportAllowed ? handleExportSelected : undefined}
         onClearSelection={clearSelection}
       />
 
@@ -478,7 +482,8 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
         </Suspense>
       )}
 
-      {exportDialogOpen && (
+      {/* 차단이면 다이얼로그 자체를 열지 않는다 — 버튼 비활성과 이중 방어(서버도 다시 판정) */}
+      {exportDialogOpen && exportAllowed && (
         <Suspense fallback={null}>
           <ExportDialog
             open={exportDialogOpen}

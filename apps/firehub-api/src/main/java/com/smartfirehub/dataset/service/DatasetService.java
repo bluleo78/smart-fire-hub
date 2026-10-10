@@ -293,6 +293,14 @@ public class DatasetService {
             securityLevelId,
             access);
     int totalPages = (int) Math.ceil((double) totalElements / size);
+    // 조회자별 내보내기 가능 여부(스펙 §4.4) — 리포지토리 행은 조회자를 모르므로 여기서 채운다(자격은 요청 단위 캐시).
+    content =
+        content.stream()
+            .map(
+                r ->
+                    r.withExportAllowed(
+                        datasetAccessGuard.exportAllowedForCurrent(r.securityLevel())))
+            .toList();
     return new PageResponse<>(content, page, size, totalElements, totalPages);
   }
 
@@ -374,7 +382,9 @@ public class DatasetService {
         linkedPipelines,
         dataset.sourcePipelineStepId(),
         dataset.securityLevel(),
-        dataset.securityLevelAutoRaisedAt());
+        dataset.securityLevelAutoRaisedAt(),
+        // 조회자(요청 사용자) 기준 — 요청 밖 호출은 자격 없음(fail-closed)으로 false.
+        datasetAccessGuard.exportAllowedForCurrent(dataset.securityLevel()));
   }
 
   @Transactional

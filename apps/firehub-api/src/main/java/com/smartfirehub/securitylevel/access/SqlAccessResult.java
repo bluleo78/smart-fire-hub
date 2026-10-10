@@ -1,5 +1,6 @@
 package com.smartfirehub.securitylevel.access;
 
+import java.util.LinkedHashSet;
 import java.util.Set;
 
 /**
@@ -27,6 +28,13 @@ public record SqlAccessResult(
   public SqlAccessResult {
     readDatasetIds = Set.copyOf(readDatasetIds);
     writeDatasetIds = Set.copyOf(writeDatasetIds);
+  }
+
+  /** 읽기 ∪ 쓰기 대상 데이터셋 id — 감사 등급 접근 기록의 대상. SQL 관문·파이프라인 게이트가 같은 합집합을 쓴다. */
+  public Set<Long> touchedDatasetIds() {
+    Set<Long> ids = new LinkedHashSet<>(readDatasetIds);
+    ids.addAll(writeDatasetIds);
+    return ids;
   }
 
   /** 거부 결과. 등급·데이터셋 id 는 싣지 않는다 — 거부 사유 외의 정보를 흘리지 않기 위해. */

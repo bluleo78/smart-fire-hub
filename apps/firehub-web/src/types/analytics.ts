@@ -64,6 +64,13 @@ export interface AnalyticsQueryResult {
   totalRows: number;
   truncated: boolean;
   error: string | null;
+  /**
+   * 조회자 기준 내보내기 가능(S4). 애드혹·저장 쿼리 실행 응답에만 실린다 — 대시보드 공유 캐시 결과는 null.
+   * `=== true` 일 때만 허용한다(fail-closed).
+   */
+  exportAllowed?: boolean | null;
+  /** 애드혹 실행 기록 id — 쿼리 결과 내보내기는 이 id 로 서버가 재판정·재실행한다. 저장 쿼리 실행 등은 null. */
+  runId?: string | null;
 }
 
 export interface SchemaTable {
@@ -189,6 +196,8 @@ export interface ChartDataResponse {
    * 그래서 denied 분기는 chart.config 를 읽지 않고 먼저 반환해야 한다(DashboardWidgetCard).
    */
   denied?: boolean;
+  /** 조회자 기준 차트 데이터 내보내기 가능 — 공유 캐시와 무관하게 매 요청 계산된다(S4). 없으면 불가로 본다. */
+  exportAllowed?: boolean;
 }
 
 // ============================================================

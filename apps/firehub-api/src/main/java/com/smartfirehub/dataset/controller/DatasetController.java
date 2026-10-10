@@ -14,6 +14,7 @@ import com.smartfirehub.dataset.service.DatasetTagService;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.global.security.RequirePermission;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
+import com.smartfirehub.securitylevel.service.SecurityAuditRecorder;
 import jakarta.validation.Valid;
 import java.util.List;
 import java.util.Map;
@@ -36,6 +37,9 @@ public class DatasetController {
   private final DatasetSearchService datasetSearchService;
   private final ClearanceResolver clearanceResolver;
   private final DatasetEmbeddingBackfillService datasetEmbeddingBackfillService;
+
+  /** 감사 등급(audit_access) 데이터셋 행 조회 기록(스펙 §4.6). */
+  private final SecurityAuditRecorder auditRecorder;
 
   @GetMapping
   @RequirePermission("dataset:read")
@@ -234,7 +238,10 @@ public class DatasetController {
       @RequestParam(required = false) Double bboxMinLon,
       @RequestParam(required = false) Double bboxMinLat,
       @RequestParam(required = false) Double bboxMaxLon,
-      @RequestParam(required = false) Double bboxMaxLat) {
+      @RequestParam(required = false) Double bboxMaxLat,
+      Authentication authentication) {
+    // 스펙 §4.6 — 감사 등급(audit_access) 데이터셋의 행 조회 기록. 인터셉터가 VIEW 를 이미 통과시켰다.
+    recordRowView(authentication, id);
     page = Math.max(0, page);
     size = Math.max(1, Math.min(size, 200));
     String sanitizedSearch =
@@ -395,7 +402,10 @@ public class DatasetController {
 
   @GetMapping("/{id}/data/rows/{rowId}")
   @RequirePermission("data:read")
-  public ResponseEntity<RowDataResponse> getRow(@PathVariable Long id, @PathVariable Long rowId) {
+  public ResponseEntity<RowDataResponse> getRow(
+      @PathVariable Long id, @PathVariable Long rowId, Authentication authentication) {
+    // 스펙 §4.6 — 감사 등급 데이터셋의 단건 행 조회 기록(인터셉터가 VIEW 를 이미 통과시켰다).
+    recordRowView(authentication, id);
     RowDataResponse response = datasetDataService.getRow(id, rowId);
     return ResponseEntity.ok(response);
   }
@@ -424,5 +434,16 @@ public class DatasetController {
     Long userId = (Long) authentication.getPrincipal();
     DatasetDetailResponse response = datasetService.cloneDataset(id, request, userId);
     return ResponseEntity.status(HttpStatus.CREATED).body(response);
+  }
+
+  /**
+   * 행 조회 접근 감사. 사용자 id 는 인증 주체(Long)에서 바로 꺼낸다 — 자격 전체 계산(ClearanceResolver)은 필요 없다. 감사 등급 여부 판정과 1분
+   * 합치기는 기록기가 한다.
+   */
+  private void recordRowView(Authentication authentication, long datasetId) {
+    if (authentication != null && authentication.getPrincipal() instanceof Long userId) {
+      auditRecorder.recordAccess(
+          userId, SecurityAuditRecorder.AccessKind.ROW_VIEW, List.of(datasetId));
+    }
   }
 }

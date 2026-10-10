@@ -20,9 +20,3 @@ export interface ExportRequest {
   search?: string;
   geometryColumn?: string;
 }
-
-export interface QueryResultExportRequest {
-  columnNames: string[];
-  rows: Record<string, unknown>[];
-  format: ExportFormat;
-}

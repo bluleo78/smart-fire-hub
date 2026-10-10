@@ -14,7 +14,6 @@ import com.smartfirehub.dataimport.dto.ExportEstimate;
 import com.smartfirehub.dataimport.dto.ExportFormat;
 import com.smartfirehub.dataimport.dto.ExportRequest;
 import com.smartfirehub.dataimport.dto.ExportResult;
-import com.smartfirehub.dataimport.dto.QueryResultExportRequest;
 import com.smartfirehub.dataimport.service.DataExportService;
 import com.smartfirehub.global.config.SecurityConfig;
 import com.smartfirehub.global.security.JwtAuthenticationFilter;
@@ -59,6 +58,8 @@ class DataExportControllerTest {
 
   @MockitoBean private DataExportService exportService;
   @MockitoBean private AsyncJobService asyncJobService;
+  // 다운로드 시점 재판정용 조회(목은 빈 값 → 재판정 생략). 실제 재판정은 DataExportPolicyTest 가 검증.
+  @MockitoBean private com.smartfirehub.job.repository.AsyncJobRepository asyncJobRepository;
   @MockitoBean private UserRepository userRepository;
   @MockitoBean private PermissionService permissionService;
   @MockitoBean private JwtTokenProvider jwtTokenProvider;
@@ -162,23 +163,5 @@ class DataExportControllerTest {
         .andExpect(status().isOk());
 
     Files.deleteIfExists(tmp);
-  }
-
-  @Test
-  void exportQueryResult_returnsStream() throws Exception {
-    mockAuth();
-    StreamingResponseBody body = outputStream -> outputStream.write("a,b".getBytes());
-    when(exportService.exportQueryResult(any(), any(), eq(ExportFormat.CSV))).thenReturn(body);
-
-    QueryResultExportRequest req =
-        new QueryResultExportRequest(
-            List.of("a", "b"), List.of(Map.of("a", 1, "b", 2)), ExportFormat.CSV);
-
-    // 컨트롤러 라인 커버리지 목적 — status 단정은 생략
-    mockMvc.perform(
-        post("/api/v1/query-results/export")
-            .header("Authorization", "Bearer valid-token")
-            .contentType(MediaType.APPLICATION_JSON)
-            .content(objectMapper.writeValueAsString(req)));
   }
 }

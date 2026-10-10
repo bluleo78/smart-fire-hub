@@ -130,13 +130,15 @@ test.describe('쿼리 에디터 페이지', () => {
       createQueryResult({ queryType: 'SELECT', rows: [{ id: 1, name: '항목 1', value: 100 }] }),
     );
 
-    // 내보내기 API 모킹 (blob 응답)
+    // 내보내기 API 모킹 (blob 응답) — S4: 화면 rows 가 아니라 실행 기록 id(runId) 경로 + 형식만 보낸다
     let exportCalled = false;
+    let exportPayload: unknown = null;
     await page.route(
-      (url) => url.pathname === '/api/v1/query-results/export',
+      (url) => url.pathname === '/api/v1/analytics/queries/runs/run-test-1/export',
       (route) => {
         if (route.request().method() === 'POST') {
           exportCalled = true;
+          exportPayload = route.request().postDataJSON();
           return route.fulfill({
             status: 200,
             contentType: 'text/csv',
@@ -163,8 +165,9 @@ test.describe('쿼리 에디터 페이지', () => {
     // "CSV로 내보내기" 메뉴 아이템 클릭
     await page.getByRole('menuitem', { name: 'CSV로 내보내기' }).click();
 
-    // 내보내기 API 호출 검증
+    // 내보내기 API 호출 검증 — 본문은 형식뿐(rows·columnNames 를 싣지 않는다)
     await expect.poll(() => exportCalled).toBe(true);
+    expect(exportPayload).toEqual({ format: 'CSV' });
   });
 
   test('쿼리 실행 오류 시 에러 메시지가 결과 영역에 표시된다', async ({

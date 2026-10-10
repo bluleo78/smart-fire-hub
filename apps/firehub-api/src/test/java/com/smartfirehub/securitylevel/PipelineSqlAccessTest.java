@@ -2,6 +2,7 @@ package com.smartfirehub.securitylevel;
 
 import static com.smartfirehub.jooq.Tables.DATASET;
 import static com.smartfirehub.jooq.Tables.DATASET_ACCESS_GRANT;
+import static com.smartfirehub.jooq.Tables.PIPELINE_STEP;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -15,22 +16,40 @@ import com.smartfirehub.pipeline.dto.CreatePipelineRequest;
 import com.smartfirehub.pipeline.dto.CreateTriggerRequest;
 import com.smartfirehub.pipeline.dto.PipelineStepRequest;
 import com.smartfirehub.pipeline.dto.TriggerType;
+import com.smartfirehub.pipeline.repository.PipelineExecutionRepository;
 import com.smartfirehub.pipeline.service.PipelineExecutionService;
+import com.smartfirehub.pipeline.service.PipelineSecurityGate;
 import com.smartfirehub.pipeline.service.PipelineService;
 import com.smartfirehub.pipeline.service.TriggerService;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
+import com.smartfirehub.securitylevel.access.LevelPolicy;
+import com.smartfirehub.securitylevel.access.SqlAccessResult;
+import com.smartfirehub.securitylevel.event.DatasetSecurityLevelChangedEvent;
+import com.smartfirehub.securitylevel.repository.DatasetAccessGrantRepository.GrantSubject;
+import com.smartfirehub.securitylevel.repository.SecurityLevelRepository;
+import com.smartfirehub.securitylevel.service.DatasetSecurityService;
 import com.smartfirehub.support.IntegrationTestBase;
+import com.smartfirehub.support.PausedTransactionRace;
 import com.smartfirehub.support.SecurityFixture;
 import com.smartfirehub.support.TenantRlsTestSupport;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.CopyOnWriteArrayList;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationListener;
+import org.springframework.context.PayloadApplicationEvent;
+import org.springframework.context.event.ApplicationEventMulticaster;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.transaction.event.TransactionPhase;
+import org.springframework.transaction.event.TransactionalApplicationListener;
 
 /**
  * 스펙 §4.2 5행: 파이프라인 SQL 스텝은 저장 시 편집자, 실행 시 실행 주체(수동=실행자, 트리거=트리거 생성자) 기준으로 requireSql 판정한다. 판단 사항
@@ -47,6 +66,16 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
   @Autowired private PipelineService pipelineService;
   @Autowired private PipelineExecutionService executionService;
   @Autowired private TriggerService triggerService;
+  @Autowired private ApplicationEventMulticaster multicaster;
+  @Autowired private PipelineSecurityGate pipelineSecurityGate;
+  @Autowired private PipelineExecutionRepository executionRepository;
+  @Autowired private DatasetSecurityService datasetSecurityService;
+  @Autowired private SecurityLevelRepository levelRepository;
+
+  /** 커밋된 데이터셋 등급 변경 이벤트(전파의 "정확히 1회 발행" 단언용 — 테스트가 데이터셋 id 로 거른다). */
+  private final List<DatasetSecurityLevelChangedEvent> levelEvents = new CopyOnWriteArrayList<>();
+
+  private ApplicationListener<PayloadApplicationEvent<Object>> levelListener;
 
   private SecurityFixture fx;
   private final List<Long> users = new ArrayList<>();
@@ -73,6 +102,15 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
     table(pubTable, "공개");
     insertRow(pubTable, "p");
     lowOutId = table(m + "_low", "공개");
+    levelListener =
+        TransactionalApplicationListener.forPayload(
+            TransactionPhase.AFTER_COMMIT,
+            payload -> {
+              if (payload instanceof DatasetSecurityLevelChangedEvent e) {
+                levelEvents.add(e);
+              }
+            });
+    multicaster.addApplicationListener(levelListener);
   }
 
   /** 데이터셋을 만들고 등급을 직접 지정한다(등급 변경 API 의 자격 검사는 이 TC 의 관심사가 아니다). */
@@ -163,6 +201,7 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
 
   @AfterEach
   void tearDown() {
+    multicaster.removeApplicationListener(levelListener);
     TenantContext.set(DEFAULT_TEST_TENANT_ID);
     for (long p : pipelines) {
       // 러너가 만든 TEMP 출력(ptmp_<pipelineId>_*)부터 지운다.
@@ -221,6 +260,26 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
     assertThat(waitForEnd(executionService.executePipeline(p, userAt("공개")))).isEqualTo("FAILED");
     assertThat(waitForEnd(executionService.executePipeline(p, userAt("민감"))))
         .isEqualTo("COMPLETED");
+  }
+
+  /** 보충 스펙 §3 — 파이프라인 실행 거부는 실행 주체를 행위자로 감사된다(실제 테이블명은 감사에만). */
+  @Test
+  void run_denied_isAuditedWithRunAsActor() throws Exception {
+    long editor = userAt("민감");
+    long p = pipeline(editor, "SELECT v FROM " + qualified(secTable), null);
+    long runner = userAt("공개");
+    assertThat(waitForEnd(executionService.executePipeline(p, runner))).isEqualTo("FAILED");
+    awaitSecurityAudit();
+    var row =
+        inTenantFixture(
+            () ->
+                dsl.fetchOne(
+                    "SELECT metadata->>'action' a, metadata->>'tableName' t FROM audit_log"
+                        + " WHERE user_id = ? AND action_type = 'DATASET_ACCESS_DENIED'",
+                    runner));
+    assertThat(row).isNotNull();
+    assertThat(row.get("a", String.class)).isEqualTo("PIPELINE");
+    assertThat(row.get("t", String.class)).isEqualTo(secTable);
   }
 
   /**
@@ -461,14 +520,158 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
     assertThat(stepOutputs.get(0)).startsWith("ptmp_" + p + "_");
   }
 
+  /**
+   * 스펙 §4.5 — 지정 출력이 입력보다 낮으면 실패가 아니라 자동 상향 + 상향 시각 + 감사이고, 적재는 된다. 등급 변경 이벤트(AUTO_RAISE)는 정확히
+   * 1건(공통 결정 R2 — 발행은 DatasetSecurityService 한 곳).
+   */
   @Test
-  void run_explicitLowerOutput_failsWithoutWriting() throws Exception {
+  void run_explicitLowerOutput_isAutoRaisedAndWritten() throws Exception {
     long runner = userAt("민감");
     long p = pipeline(runner, "SELECT v FROM " + qualified(secTable), lowOutId);
     long exec = executionService.executePipeline(p, runner);
+    assertThat(waitForEnd(exec)).isEqualTo("COMPLETED");
+    assertThat(rowCount(m + "_low")).isEqualTo(1);
+    assertThat(levelOf(lowOutId)).isEqualTo(fx.levelId("민감"));
+    assertThat(autoRaisedAt(lowOutId)).isNotNull();
+    assertThat(autoRaiseAuditCount(lowOutId)).isEqualTo(1);
+    assertThat(levelEventsFor(lowOutId))
+        .singleElement()
+        .satisfies(
+            e -> {
+              assertThat(e.cause()).isEqualTo(DatasetSecurityLevelChangedEvent.Cause.AUTO_RAISE);
+              assertThat(e.toLevelId()).isEqualTo(fx.levelId("민감"));
+            });
+  }
+
+  /** DML 스텝의 쓰기 대상도 입력보다 낮으면 자동 상향된다(PIPELINE_RUN 은 더 이상 쓰기 하향을 거부하지 않는다). 이벤트·감사는 1건. */
+  @Test
+  void run_dmlWriteToLowerTarget_isAutoRaised() throws Exception {
+    long runner = userAt("민감");
+    long p =
+        pipeline(
+            runner,
+            List.of(
+                new PipelineStepRequest(
+                    "dml",
+                    null,
+                    "SQL",
+                    "INSERT INTO "
+                        + qualified(m + "_low")
+                        + " (v) SELECT v FROM "
+                        + qualified(secTable),
+                    lowOutId,
+                    null,
+                    null,
+                    "APPEND")));
+    assertThat(waitForEnd(executionService.executePipeline(p, runner))).isEqualTo("COMPLETED");
+    assertThat(levelOf(lowOutId)).isEqualTo(fx.levelId("민감"));
+    assertThat(autoRaisedAt(lowOutId)).isNotNull();
+    assertThat(rowCount(m + "_low")).isEqualTo(1);
+    assertThat(autoRaiseAuditCount(lowOutId)).isEqualTo(1);
+    assertThat(levelEventsFor(lowOutId)).hasSize(1);
+  }
+
+  /**
+   * SQL 스텝의 선언 입력(inputDatasetIds)도 전파 입력이다(스펙 §4.5 "∪ 선언 입력"). SQL 은 공개만 읽어도 선언 입력이 민감이면 TEMP 는
+   * 민감.
+   */
+  @Test
+  void run_declaredInputRaisesTempEvenIfSqlReadsOnlyPublic() throws Exception {
+    long secId = tableId(secTable);
+    long runner = userAt("민감");
+    long p =
+        pipeline(
+            runner,
+            List.of(
+                new PipelineStepRequest(
+                    "s1",
+                    null,
+                    "SQL",
+                    "SELECT v FROM " + qualified(pubTable),
+                    null,
+                    List.of(secId),
+                    null)));
+    assertThat(waitForEnd(executionService.executePipeline(p, runner))).isEqualTo("COMPLETED");
+    assertThat(levelOf(tempOf(p, "s1"))).isEqualTo(fx.levelId("민감"));
+  }
+
+  /**
+   * 선언 입력도 실행 주체가 VIEW 할 수 있어야 한다(fail-closed, 계획 결정 10) — SQL 은 공개만 읽어도, 볼 수 없는 데이터셋을 선언 입력으로 넣으면
+   * 실행 전에 구분 불가 메시지로 실패하고 출력에 아무것도 쓰지 않는다. 대조군은 위
+   * run_declaredInputRaisesTempEvenIfSqlReadsOnlyPublic(같은 형태, 볼 수 있는 실행 주체 → COMPLETED).
+   */
+  @Test
+  void run_declaredHiddenInput_failsBeforeExecution() throws Exception {
+    long secId = tableId(secTable);
+    long editor = userAt("민감");
+    long p =
+        pipeline(
+            editor,
+            List.of(
+                new PipelineStepRequest(
+                    "s1",
+                    null,
+                    "SQL",
+                    "SELECT v FROM " + qualified(pubTable),
+                    lowOutId,
+                    List.of(secId),
+                    null)));
+    long exec = executionService.executePipeline(p, userAt("공개"));
     assertThat(waitForEnd(exec)).isEqualTo("FAILED");
+    assertThat(stepError(exec)).isEqualTo(DatasetAccessGuard.SQL_ACCESS_DENIED_MESSAGE);
     assertThat(rowCount(m + "_low")).isZero();
-    assertThat(stepError(exec)).contains("더 낮은 등급");
+    assertThat(levelOf(lowOutId)).isEqualTo(fx.levelId("공개"));
+  }
+
+  /**
+   * 공통 결정 R4 — PYTHON 출력 = 실행 주체 자격 이하 & 허용 목록 아닌 최고 등급. '민감' 실행 주체 → '민감'. 스크립트 성패와 무관하게 쓰기 전에
+   * 상향된다.
+   */
+  @Test
+  void run_pythonOutput_isRaisedToHighestReadableLevel() throws Exception {
+    long out = table(m + "_pyl", "공개");
+    long runAs = pythonUserAt("민감");
+    long p = pipeline(runAs, List.of(pythonStep(out)));
+    waitForEnd(executionService.executePipeline(p, runAs));
+    assertThat(levelOf(out)).isEqualTo(fx.levelId("민감"));
+    assertThat(autoRaisedAt(out)).isNotNull();
+  }
+
+  /**
+   * 공통 결정 R4 — ADMIN 과 같은 최상위 자격('기밀', 허용 목록 등급) 실행 주체라도 PYTHON 은 '기밀'을 읽을 수 없으므로 출력은 '민감'이다(실행 주체
+   * 자격 등급 아님). 허용 목록 등급으로 가지 않으므로 실행 주체 시드도 없다.
+   */
+  @Test
+  void run_pythonOutput_ofTopClearanceRunAs_excludesAllowlistLevel() throws Exception {
+    long out = table(m + "_pya", "공개");
+    long runAs = pythonUserAt("기밀");
+    long p = pipeline(runAs, List.of(pythonStep(out)));
+    waitForEnd(executionService.executePipeline(p, runAs));
+    assertThat(levelOf(out)).isEqualTo(fx.levelId("민감"));
+    assertThat(hasUserGrant(out, runAs)).isFalse();
+  }
+
+  private java.time.LocalDateTime autoRaisedAt(long datasetId) {
+    return inTenantFixture(
+        () ->
+            dsl.select(DATASET.SECURITY_LEVEL_AUTO_RAISED_AT)
+                .from(DATASET)
+                .where(DATASET.ID.eq(datasetId))
+                .fetchOne(DATASET.SECURITY_LEVEL_AUTO_RAISED_AT));
+  }
+
+  private int autoRaiseAuditCount(long datasetId) {
+    return inTenantFixture(
+        () ->
+            dsl.fetchOne(
+                    "SELECT count(*) FROM audit_log WHERE action_type ="
+                        + " 'DATASET_SECURITY_LEVEL_AUTO_RAISE' AND resource_id = ?",
+                    String.valueOf(datasetId))
+                .get(0, Integer.class));
+  }
+
+  private List<DatasetSecurityLevelChangedEvent> levelEventsFor(long datasetId) {
+    return levelEvents.stream().filter(e -> e.datasetId() == datasetId).toList();
   }
 
   /** 대조군: 입력과 같은 등급의 지정 출력에는 쓴다 — 위 FAILED 가 컬럼 불일치 등이 아니라 하향 판정 때문임을 보인다. */
@@ -596,10 +799,22 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
     long hiddenOut = table(outTable, "민감");
     insertRow(outTable, "keep");
     long p = pipeline(pythonUserAt("민감"), List.of(pythonStep(hiddenOut)));
-    long exec = executionService.executePipeline(p, pythonUserAt("공개"));
+    long runner = pythonUserAt("공개");
+    long exec = executionService.executePipeline(p, runner);
     assertThat(waitForEnd(exec)).isEqualTo("FAILED");
     assertThat(stepError(exec)).isEqualTo(DatasetAccessGuard.SQL_ACCESS_DENIED_MESSAGE);
     assertThat(rowCount(outTable)).isEqualTo(1);
+    // 코드리뷰 8: 거부가 트랜잭션(enforcePythonOutputLevel) 안에서 나도 거부 감사는 롤백되지 않고 정확히 1건(중복 판정 제거 후 이중 감사 없음).
+    awaitSecurityAudit();
+    int denials =
+        inTenantFixture(
+            () ->
+                dsl.fetchOne(
+                        "SELECT count(*) FROM audit_log WHERE user_id = ? AND action_type ="
+                            + " 'DATASET_ACCESS_DENIED' AND metadata ->> 'action' = 'PIPELINE'",
+                        runner)
+                    .get(0, Integer.class));
+    assertThat(denials).isEqualTo(1);
   }
 
   /** API_CALL 도 같다 — 거부는 API 호출·REPLACE 맞바꿈 전에 구분 불가 메시지로 난다(호출 실패 메시지가 아니다). */
@@ -771,6 +986,421 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
             .id();
     triggerService.fireTrigger(trig2, Map.of());
     assertThat(waitForEnd(latestExecution(p))).isEqualTo("COMPLETED");
+  }
+
+  /**
+   * WD-30 — 러너 TEMP 의 허용 목록은 매 실행 "허용 목록 필요 입력들의 교집합 ∪ {실행 주체}" 로 다시 계산된다. 입력 목록에서 빠진 사람은 TEMP 에서도
+   * 빠진다(예전: 늘어나기만 했다). 실행 주체는 남아 빈 목록(고아)이 생기지 않는다.
+   */
+  @Test
+  void run_tempAllowlist_isRecomputedEachRun_andShrinks() throws Exception {
+    String topTable = m + "_wd30";
+    long topId = table(topTable, "기밀");
+    insertRow(topTable, "t");
+    long first = userAt("기밀");
+    long second = userAt("기밀");
+    fx.grantUser(topId, first);
+    fx.grantUser(topId, second);
+    long p =
+        pipeline(
+            first,
+            List.of(
+                new PipelineStepRequest(
+                    "s1", null, "SQL", "SELECT v FROM " + qualified(topTable), null, null, null)));
+    assertThat(waitForEnd(executionService.executePipeline(p, first))).isEqualTo("COMPLETED");
+    long temp = tempOf(p, "s1");
+    assertThat(hasUserGrant(temp, first)).isTrue();
+    assertThat(hasUserGrant(temp, second)).isTrue();
+
+    inTenantFixture(
+        () ->
+            dsl.deleteFrom(DATASET_ACCESS_GRANT)
+                .where(DATASET_ACCESS_GRANT.DATASET_ID.eq(topId))
+                .and(DATASET_ACCESS_GRANT.USER_ID.eq(second))
+                .execute());
+    assertThat(waitForEnd(executionService.executePipeline(p, first))).isEqualTo("COMPLETED");
+    assertThat(hasUserGrant(temp, second)).isFalse();
+    assertThat(hasUserGrant(temp, first)).isTrue();
+  }
+
+  /**
+   * WD-30 설계 결정 13 — 쓰기 <b>전</b> 좁히기는 쓰기가 실패해도 남는다. 입력 목록에서 빠진 사람은 실패한 재실행 뒤에도 TEMP(이전 실행 데이터가 남아
+   * 있음)에서 빠져 있어야 한다. 쓰기 후 확정(completeOutputAllowlist)은 실패 경로에서 돌지 않으므로 이 TC 는 좁히기만 고정한다.
+   */
+  @Test
+  void run_tempAllowlist_narrowedBeforeWrite_evenWhenStepFails() throws Exception {
+    String topTable = m + "_wd30f";
+    long topId = table(topTable, "기밀");
+    insertRow(topTable, "1");
+    long first = userAt("기밀");
+    long second = userAt("기밀");
+    fx.grantUser(topId, first);
+    fx.grantUser(topId, second);
+    // 실행 시점에만 실패하는 SELECT — 가드·출력 등급 처리(좁히기)는 통과하고, 적재 중 형 변환이 실패한다.
+    long p =
+        pipeline(
+            first,
+            List.of(
+                new PipelineStepRequest(
+                    "s1",
+                    null,
+                    "SQL",
+                    "SELECT v::int AS n FROM " + qualified(topTable),
+                    null,
+                    null,
+                    null)));
+    assertThat(waitForEnd(executionService.executePipeline(p, first))).isEqualTo("COMPLETED");
+    long temp = tempOf(p, "s1");
+    assertThat(hasUserGrant(temp, second)).isTrue();
+
+    inTenantFixture(
+        () ->
+            dsl.deleteFrom(DATASET_ACCESS_GRANT)
+                .where(DATASET_ACCESS_GRANT.DATASET_ID.eq(topId))
+                .and(DATASET_ACCESS_GRANT.USER_ID.eq(second))
+                .execute());
+    insertRow(topTable, "x");
+    assertThat(waitForEnd(executionService.executePipeline(p, first))).isEqualTo("FAILED");
+    assertThat(hasUserGrant(temp, second)).isFalse();
+    assertThat(hasUserGrant(temp, first)).isTrue();
+  }
+
+  /**
+   * 교집합은 항목 단위 — 입력 허용 목록의 역할 항목이 TEMP 에 그대로 들어가고, 입력에 새로 추가된 사람은 다음 실행에 TEMP 에도 들어간다(쓰기 후 확정이 넓힘까지
+   * 맞춘다).
+   */
+  @Test
+  void run_tempAllowlist_carriesRoleEntries_andGrowsWithInput() throws Exception {
+    String topTable = m + "_wd30r";
+    long topId = table(topTable, "기밀");
+    insertRow(topTable, "t");
+    long runner = userAt("기밀");
+    long roleOnly = fx.createRole("pa_rr_" + System.nanoTime(), fx.levelId("기밀"), "dataset:read");
+    roles.add(roleOnly);
+    fx.grantUser(topId, runner);
+    fx.grantRole(topId, roleOnly);
+    long p =
+        pipeline(
+            runner,
+            List.of(
+                new PipelineStepRequest(
+                    "s1", null, "SQL", "SELECT v FROM " + qualified(topTable), null, null, null)));
+    assertThat(waitForEnd(executionService.executePipeline(p, runner))).isEqualTo("COMPLETED");
+    long temp = tempOf(p, "s1");
+    assertThat(hasRoleGrant(temp, roleOnly)).isTrue();
+
+    long late = userAt("기밀");
+    fx.grantUser(topId, late);
+    assertThat(waitForEnd(executionService.executePipeline(p, runner))).isEqualTo("COMPLETED");
+    assertThat(hasUserGrant(temp, late)).isTrue();
+    assertThat(hasRoleGrant(temp, roleOnly)).isTrue();
+  }
+
+  /**
+   * 코드리뷰 CR1 — 같은 러너 TEMP 에 겹친 두 실행의 쓰기 순서와 확정 순서가 어긋나도 넓힘이 새지 않는다. 순서 "A 쓰기 → B 쓰기 → B 확정 → A 확정"
+   * 을 게이트 호출 순서로 고정한다(쓰기는 TEMP 데이터만 바꾸므로 허용 목록 관점에서는 두 실행의 쓰기 전 좁히기 뒤 어느 시점이든 같다). TEMP 의 데이터는 마지막에
+   * 쓴 B 의 것이므로 목록은 B 의 시드(B 입력 목록 ∩ ∪ {B})를 넘으면 안 된다 — A 입력에만 있는 제3자(outsider)와 A 가 들어오면 누출이다. 확정
+   * 직전 겹침 판정(PipelineExecutionRepository#hasOverlappingStepExecution)을 지우면 A 의 확정이 A 시드로 넓혀 실패한다.
+   */
+  @Test
+  void run_tempAllowlist_overlappingRuns_doNotWidenOverOtherRunsWrite() throws Exception {
+    String aTable = m + "_cr1a";
+    long aIn = table(aTable, "기밀");
+    insertRow(aTable, "a");
+    long bIn = table(m + "_cr1b", "기밀");
+    long runA = userAt("기밀");
+    long runB = userAt("기밀");
+    long outsider = userAt("기밀");
+    fx.grantUser(aIn, runA);
+    fx.grantUser(aIn, runB);
+    fx.grantUser(aIn, outsider);
+    fx.grantUser(bIn, runB);
+    // 첫 실행(겹침 없음)으로 러너 TEMP 를 만든다 — 목록 = A 입력 목록 {A, B, outsider}.
+    long p =
+        pipeline(
+            runA,
+            List.of(
+                new PipelineStepRequest(
+                    "s1", null, "SQL", "SELECT v FROM " + qualified(aTable), null, null, null)));
+    assertThat(waitForEnd(executionService.executePipeline(p, runA))).isEqualTo("COMPLETED");
+    long temp = tempOf(p, "s1");
+    long stepId = stepOf(p);
+    assertThat(hasUserGrant(temp, outsider)).isTrue();
+
+    LevelPolicy top = levelRepository.findById(fx.levelId("기밀")).orElseThrow();
+    long execA = runningStepExecution(p, runA, stepId);
+    long execB = runningStepExecution(p, runB, stepId);
+    // 두 실행의 쓰기 전 처리(좁히기) — A 다음 B. 둘 다 출력 전부 교체(REPLACE)라 확정 계획이 나온다.
+    PipelineSecurityGate.OutputAllowlistPlan planA =
+        pipelineSecurityGate.enforceOutputLevel(
+            new SqlAccessResult(true, null, null, top, Set.of(aIn), Set.of(), true),
+            temp,
+            stepId,
+            false,
+            true,
+            pipelineSecurityGate.runAs(runA));
+    PipelineSecurityGate.OutputAllowlistPlan planB =
+        pipelineSecurityGate.enforceOutputLevel(
+            new SqlAccessResult(true, null, null, top, Set.of(bIn), Set.of(), true),
+            temp,
+            stepId,
+            false,
+            true,
+            pipelineSecurityGate.runAs(runB));
+    assertThat(planA).isNotNull();
+    assertThat(planB).isNotNull();
+    // (A 쓰기 → B 쓰기) 뒤 B 가 먼저 확정한다 — A 는 아직 RUNNING.
+    pipelineSecurityGate.completeOutputAllowlist(planB, execB);
+    executionRepository.updateStepExecution(
+        execB, "COMPLETED", null, null, null, null, LocalDateTime.now(ZoneOffset.UTC));
+    // A 가 나중에 확정한다 — B 가 A 시작 뒤에 끝났으므로 겹침.
+    pipelineSecurityGate.completeOutputAllowlist(planA, execA);
+
+    assertThat(hasUserGrant(temp, outsider)).isFalse();
+    assertThat(hasUserGrant(temp, runA)).isFalse();
+    assertThat(hasUserGrant(temp, runB)).isTrue();
+  }
+
+  /**
+   * 코드리뷰 CR1 — 쓰기 후 확정(겹침 판정 + 시드로 맞춤)과 다른 실행의 쓰기 전 좁히기는 데이터셋 행 잠금으로 직렬화된다. 확정 트랜잭션을 커밋 전에 멈추면 좁히기가
+   * 기다려야 하고(secondBlocked), 기다린 뒤에는 확정이 넣은 항목까지 보고 좁힌다. 잠금이 없으면 좁히기가 확정 전 목록을 읽고 끝나 확정이 넣은 outsider
+   * 가 좁히기 뒤(그 실행의 데이터 위)에 남는다. 어느 쪽 FOR UPDATE 를 지워도 실패한다.
+   */
+  @Test
+  void completeOutputAllowlist_serializesWithOtherRunsNarrowing() throws Exception {
+    String aTable = m + "_cr1l";
+    long aIn = table(aTable, "기밀");
+    insertRow(aTable, "a");
+    long runA = userAt("기밀");
+    long runB = userAt("기밀");
+    long outsider = userAt("기밀");
+    fx.grantUser(aIn, runA);
+    long p =
+        pipeline(
+            runA,
+            List.of(
+                new PipelineStepRequest(
+                    "s1", null, "SQL", "SELECT v FROM " + qualified(aTable), null, null, null)));
+    assertThat(waitForEnd(executionService.executePipeline(p, runA))).isEqualTo("COMPLETED");
+    long temp = tempOf(p, "s1");
+    long stepId = stepOf(p);
+    // 입력 목록이 넓어졌다 — 다음(겹치지 않은) 실행 A 의 확정은 outsider 를 넣는다.
+    fx.grantUser(aIn, outsider);
+    LevelPolicy top = levelRepository.findById(fx.levelId("기밀")).orElseThrow();
+    long execA = runningStepExecution(p, runA, stepId);
+    PipelineSecurityGate.OutputAllowlistPlan planA =
+        pipelineSecurityGate.enforceOutputLevel(
+            new SqlAccessResult(true, null, null, top, Set.of(aIn), Set.of(), true),
+            temp,
+            stepId,
+            false,
+            true,
+            pipelineSecurityGate.runAs(runA));
+    assertThat(planA).isNotNull();
+
+    PausedTransactionRace.Outcome<Boolean> race =
+        PausedTransactionRace.run(
+            fixtureTransactionTemplate,
+            DEFAULT_TEST_TENANT_ID,
+            () -> pipelineSecurityGate.completeOutputAllowlist(planA, execA),
+            () -> {
+              // B 의 쓰기 전 좁히기(시드 {B}) — B 가 이어서 쓸 데이터 위의 목록 상한이다.
+              datasetSecurityService.narrowPipelineOutputAllowlist(
+                  temp, Set.of(GrantSubject.user(runB)), runB);
+              return true;
+            });
+
+    assertThat(race.secondError()).isNull();
+    assertThat(race.secondBlocked()).isTrue();
+    assertThat(hasUserGrant(temp, outsider)).isFalse();
+    assertThat(hasUserGrant(temp, runA)).isFalse();
+    assertThat(hasUserGrant(temp, runB)).isTrue();
+  }
+
+  /** 단일 스텝 파이프라인의 스텝 id. */
+  private long stepOf(long pipelineId) {
+    return inTenantFixture(
+        () ->
+            dsl.select(PIPELINE_STEP.ID)
+                .from(PIPELINE_STEP)
+                .where(PIPELINE_STEP.PIPELINE_ID.eq(pipelineId))
+                .fetchSingle(PIPELINE_STEP.ID));
+  }
+
+  /** 러너가 executeStep 첫머리에서 하듯 RUNNING(started_at=지금)으로 표시한 스텝 실행 행을 만든다(CR1 겹침 판정의 입력). */
+  private long runningStepExecution(long pipelineId, long executedBy, long stepId) {
+    long exec = executionRepository.createExecution(pipelineId, executedBy);
+    long stepExec = executionRepository.createStepExecution(exec, stepId);
+    executionRepository.updateStepExecution(
+        stepExec, "RUNNING", null, null, null, LocalDateTime.now(ZoneOffset.UTC), null);
+    return stepExec;
+  }
+
+  /**
+   * 리뷰 I1 — APPEND 러너 TEMP 는 이전 실행 행이 남으므로 입력 허용 목록이 넓어져도 TEMP 목록은 넓어지지 않는다(쓰기 후 확정 없음, 좁히기만). 넓히면
+   * 이전 실행 행이 그 실행 때 입력을 볼 수 없던 사람에게 보인다.
+   */
+  @Test
+  void run_appendTemp_isNotWidenedByLaterInputGrant() throws Exception {
+    String topTable = m + "_wd30a";
+    long topId = table(topTable, "기밀");
+    insertRow(topTable, "t");
+    long runner = userAt("기밀");
+    fx.grantUser(topId, runner);
+    long p =
+        pipeline(
+            runner,
+            List.of(
+                new PipelineStepRequest(
+                    "s1",
+                    null,
+                    "SQL",
+                    "SELECT v FROM " + qualified(topTable),
+                    null,
+                    null,
+                    null,
+                    "APPEND")));
+    assertThat(waitForEnd(executionService.executePipeline(p, runner))).isEqualTo("COMPLETED");
+    long temp = tempOf(p, "s1");
+
+    long late = userAt("기밀");
+    fx.grantUser(topId, late);
+    assertThat(waitForEnd(executionService.executePipeline(p, runner))).isEqualTo("COMPLETED");
+    assertThat(hasUserGrant(temp, late)).isFalse();
+    assertThat(hasUserGrant(temp, runner)).isTrue();
+  }
+
+  /**
+   * 리뷰 I1(최종 수정) — 증분 APPEND 러너 TEMP 라도 전체 재생성 예약(stepWasFullRebuild)으로 출력을 통째로 비우고 다시 채운 실행은 이전 실행
+   * 행이 남지 않으므로 쓰기 후 확정이 넓힘까지 맞춘다: 입력에 늦게 추가된 사람이 TEMP 에도 들어간다. 대조군은 위
+   * run_appendTemp_isNotWidenedByLaterInputGrant (예약 없는 APPEND 는 넓히지 않음).
+   */
+  @Test
+  void run_incrementalFullRebuildTemp_isWidenedByLaterInputGrant() throws Exception {
+    String topTable = m + "_wd30fr";
+    long topId = table(topTable, "기밀");
+    insertRow(topTable, "t");
+    long runner = userAt("기밀");
+    fx.grantUser(topId, runner);
+    long p =
+        pipeline(
+            runner,
+            List.of(
+                new PipelineStepRequest(
+                    "s1",
+                    null,
+                    "SQL",
+                    "SELECT v FROM "
+                        + qualified(topTable)
+                        + " WHERE _updated_at >= {{last_run_at}}",
+                    null,
+                    null,
+                    null,
+                    "APPEND")));
+    assertThat(waitForEnd(executionService.executePipeline(p, runner))).isEqualTo("COMPLETED");
+    long temp = tempOf(p, "s1");
+
+    long late = userAt("기밀");
+    fx.grantUser(topId, late);
+    // 전체 재생성 예약 — 다음 실행은 책갈피를 무시하고 출력을 비운 뒤 전체를 다시 채운다(PipelineAsyncRunner 의 DELETE 선행 문장).
+    long stepId =
+        inTenantFixture(
+            () ->
+                dsl.select(PIPELINE_STEP.ID)
+                    .from(PIPELINE_STEP)
+                    .where(PIPELINE_STEP.PIPELINE_ID.eq(p))
+                    .fetchSingle(PIPELINE_STEP.ID));
+    pipelineService.setFullRebuildPending(p, stepId, true);
+    assertThat(waitForEnd(executionService.executePipeline(p, runner))).isEqualTo("COMPLETED");
+    assertThat(hasUserGrant(temp, late)).isTrue();
+    assertThat(hasUserGrant(temp, runner)).isTrue();
+    // 출력이 실제로 통째로 교체됐다(전체 재구축) — 입력 1행이 두 번 쌓이지 않고 1행.
+    assertThat(
+            rowCount(
+                inTenantFixture(
+                    () ->
+                        dsl.select(DATASET.TABLE_NAME)
+                            .from(DATASET)
+                            .where(DATASET.ID.eq(temp))
+                            .fetchSingle(DATASET.TABLE_NAME))))
+        .isEqualTo(1);
+  }
+
+  /**
+   * 리뷰 M4 — 사용자 지정 출력이 허용 목록 등급으로 상향되면 기존 목록을 시드로 좁힐 뿐 넓히지 않는다(기존 ∩ 시드 ∪ {실행 주체}): 입력 목록에만 있는 사람은
+   * 들어오지 않고, 입력 목록에 없는 기존 항목은 빠진다.
+   */
+  @Test
+  void run_designatedOutputRaisedToAllowlist_narrowsExistingList_neverWidens() throws Exception {
+    String topTable = m + "_wd30i";
+    long topId = table(topTable, "기밀");
+    insertRow(topTable, "t");
+    long outId = table(m + "_wd30o", "공개");
+    long runner = userAt("기밀");
+    long inputOnly = userAt("기밀");
+    long outputOnly = userAt("기밀");
+    fx.grantUser(topId, runner);
+    fx.grantUser(topId, inputOnly);
+    fx.grantUser(outId, outputOnly);
+    long p =
+        pipeline(
+            runner,
+            List.of(
+                new PipelineStepRequest(
+                    "s1", null, "SQL", "SELECT v FROM " + qualified(topTable), outId, null, null)));
+    assertThat(waitForEnd(executionService.executePipeline(p, runner))).isEqualTo("COMPLETED");
+    assertThat(levelOf(outId)).isEqualTo(fx.levelId("기밀"));
+    assertThat(hasUserGrant(outId, runner)).isTrue();
+    assertThat(hasUserGrant(outId, inputOnly)).isFalse();
+    assertThat(hasUserGrant(outId, outputOnly)).isFalse();
+  }
+
+  /** 리뷰 M4 — DML 쓰기 대상이 허용 목록 등급으로 상향될 때도 같은 좁히기(넓히지 않음)를 한다. */
+  @Test
+  void run_dmlWriteTargetRaisedToAllowlist_narrowsExistingList_neverWidens() throws Exception {
+    String topTable = m + "_wd30j";
+    long topId = table(topTable, "기밀");
+    insertRow(topTable, "t");
+    String dmlTable = m + "_wd30d";
+    long dmlId = table(dmlTable, "공개");
+    long runner = userAt("기밀");
+    long inputOnly = userAt("기밀");
+    long outputOnly = userAt("기밀");
+    fx.grantUser(topId, runner);
+    fx.grantUser(topId, inputOnly);
+    fx.grantUser(dmlId, outputOnly);
+    long p =
+        pipeline(
+            runner,
+            List.of(
+                new PipelineStepRequest(
+                    "dml",
+                    null,
+                    "SQL",
+                    "INSERT INTO "
+                        + qualified(dmlTable)
+                        + " (v) SELECT v FROM "
+                        + qualified(topTable),
+                    dmlId,
+                    null,
+                    null,
+                    "APPEND")));
+    assertThat(waitForEnd(executionService.executePipeline(p, runner))).isEqualTo("COMPLETED");
+    assertThat(levelOf(dmlId)).isEqualTo(fx.levelId("기밀"));
+    assertThat(hasUserGrant(dmlId, runner)).isTrue();
+    assertThat(hasUserGrant(dmlId, inputOnly)).isFalse();
+    assertThat(hasUserGrant(dmlId, outputOnly)).isFalse();
+  }
+
+  private boolean hasRoleGrant(long datasetId, long roleId) {
+    return inTenantFixture(
+        () ->
+            dsl.fetchExists(
+                DATASET_ACCESS_GRANT,
+                DATASET_ACCESS_GRANT
+                    .DATASET_ID
+                    .eq(datasetId)
+                    .and(DATASET_ACCESS_GRANT.ROLE_ID.eq(roleId))));
   }
 
   private String qualified(String table) {

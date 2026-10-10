@@ -28,7 +28,9 @@ public record DatasetDetailResponse(
     Long sourcePipelineStepId,
     // 보안 등급(S1). 상세 헤더 배지와 「보안」 탭 정책 칩이 쓴다.
     SecurityLevelSummary securityLevel,
-    LocalDateTime securityLevelAutoRaisedAt) {
+    LocalDateTime securityLevelAutoRaisedAt,
+    // 조회자 기준 내보내기 가능 여부(S4, 스펙 §4.4) — data:export 권한 AND 등급 export_policy. 웹이 다운로드 UI 를 숨긴다.
+    boolean exportAllowed) {
 
   /** 등급을 모르는 생성 경로(테스트)용 호환 생성자 — 등급 필드는 null. */
   public DatasetDetailResponse(
@@ -76,7 +78,8 @@ public record DatasetDetailResponse(
         linkedPipelines,
         sourcePipelineStepId,
         null,
-        null);
+        null,
+        false);
   }
 
   public record LinkedPipelineInfo(Long id, String name, boolean isActive) {}

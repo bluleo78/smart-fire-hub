@@ -1,14 +1,18 @@
+import { Download } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
+import { Button } from '../../../components/ui/button';
 import { useObjectList, useUploadObjects } from '../../../hooks/queries/useObjects';
 import { formatObjectDate, formatObjectSize, openObjectInNewTab } from '../../../lib/objectFile';
 import { collectEntries, filesToItems } from '../../../lib/uploadTree';
 
 /**
  * FILE 데이터셋 오브젝트 브라우저 탭 — 업로드(드래그앤드롭) + S3 스타일 목록(이름/크기/수정일) + 무한스크롤.
- * 실제 S3처럼 키의 마지막 세그먼트를 파일명으로 표시하고, 행 클릭 시 presigned GET으로 열기/다운로드한다.
+ * 실제 S3처럼 키의 마지막 세그먼트를 파일명으로 표시한다. 이름 클릭은 inline(브라우저에서 열기), 다운로드 아이콘은
+ * attachment(파일 저장) presign 을 요청한다 — attachment 는 서버가 내보내기 정책을 판정하므로(S4) 조회자 기준
+ * 내보내기 불가(exportAllowed=false)면 아이콘을 숨긴다(보조 다운로드 → 숨김, 스펙 §5-4).
  */
-export function DatasetObjectsTab({ datasetId }: { datasetId: number }) {
+export function DatasetObjectsTab({ datasetId, exportAllowed }: { datasetId: number; exportAllowed: boolean }) {
   const { data, isLoading, hasNextPage, fetchNextPage, isFetchingNextPage } =
     useObjectList(datasetId);
   const upload = useUploadObjects(datasetId);
@@ -122,25 +126,45 @@ export function DatasetObjectsTab({ datasetId }: { datasetId: number }) {
         <div className="p-6 text-muted-foreground">오브젝트가 없습니다.</div>
       ) : (
         <>
-          {/* S3 스타일 목록: 이름 / 크기 / 수정일. 행 클릭으로 열기/다운로드. */}
+          {/* S3 스타일 목록: 이름 / 크기 / 수정일 / 다운로드. 이름 클릭은 열기(inline), 아이콘은 저장(attachment).
+              차단이어도 4번째 칸은 비워 둔다 — 행마다 열 폭이 달라져 크기·수정일 정렬이 흔들리지 않게.
+              모바일(<sm)은 수정일 칸을 빼 이름 칸이 0폭으로 눌리지 않게 한다. */}
           <div className="overflow-hidden rounded-md border">
-            <div className="grid grid-cols-[1fr_6rem_12rem] gap-4 border-b bg-muted/50 px-4 py-2 text-xs font-medium text-muted-foreground">
+            <div className="grid grid-cols-[1fr_5rem_2.5rem] gap-4 border-b bg-muted/50 px-4 py-2 text-xs font-medium text-muted-foreground sm:grid-cols-[1fr_6rem_12rem_2.5rem]">
               <span>이름</span>
               <span className="text-right">크기</span>
-              <span className="text-right">수정일</span>
+              <span className="hidden text-right sm:block">수정일</span>
+              <span aria-hidden="true" />
             </div>
             {items.map((o) => (
-              <button
+              <div
                 key={o.key}
-                type="button"
-                onClick={() => openObjectInNewTab(datasetId, o.key)}
-                title={o.key}
-                className="grid w-full grid-cols-[1fr_6rem_12rem] items-center gap-4 border-b px-4 py-2 text-left text-sm last:border-b-0 hover:bg-accent"
+                className="grid min-h-10 grid-cols-[1fr_5rem_2.5rem] items-center gap-4 border-b px-4 text-sm last:border-b-0 hover:bg-accent sm:grid-cols-[1fr_6rem_12rem_2.5rem]"
               >
-                <span className="truncate">{o.name}</span>
+                <button
+                  type="button"
+                  onClick={() => openObjectInNewTab(datasetId, o.key, 'inline')}
+                  title={o.key}
+                  className="truncate py-2 text-left hover:underline"
+                >
+                  {o.name}
+                </button>
                 <span className="text-right text-muted-foreground">{formatObjectSize(o.size)}</span>
-                <span className="text-right text-muted-foreground">{formatObjectDate(o.lastModified)}</span>
-              </button>
+                <span className="hidden text-right text-muted-foreground sm:block">{formatObjectDate(o.lastModified)}</span>
+                <span className="flex justify-end">
+                  {exportAllowed && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      aria-label="다운로드"
+                      title="다운로드"
+                      onClick={() => openObjectInNewTab(datasetId, o.key, 'attachment')}
+                    >
+                      <Download className="h-4 w-4" />
+                    </Button>
+                  )}
+                </span>
+              </div>
             ))}
           </div>
           {hasNextPage && (

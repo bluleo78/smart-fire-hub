@@ -25,6 +25,11 @@ export interface DatasetResponse {
   securityLevel?: SecurityLevelSummary | null;
   /** 파이프라인 입력 등급에 따른 자동 상향 시각(「보안」 탭 배너). */
   securityLevelAutoRaisedAt?: string | null;
+  /**
+   * 조회자 기준 내보내기 가능(EXPORT 정책 AND data:export 권한, S4). 웹은 `=== true` 일 때만 다운로드 UI 를 연다 —
+   * 없거나 null 이면(구버전 응답·다른 생성 경로) 막는다(fail-closed, 스펙 §5-4).
+   */
+  exportAllowed?: boolean | null;
 }
 
 export interface FavoriteToggleResponse {
@@ -79,6 +84,11 @@ export interface DatasetDetailResponse {
   securityLevel?: SecurityLevelSummary | null;
   /** 파이프라인 입력 등급에 따른 자동 상향 시각(「보안」 탭 배너). */
   securityLevelAutoRaisedAt?: string | null;
+  /**
+   * 조회자 기준 내보내기 가능(EXPORT 정책 AND data:export 권한, S4). 웹은 `=== true` 일 때만 다운로드 UI 를 연다 —
+   * 없거나 null 이면(구버전 응답·다른 생성 경로) 막는다(fail-closed, 스펙 §5-4).
+   */
+  exportAllowed?: boolean | null;
 }
 
 export interface CreateDatasetRequest {

@@ -146,6 +146,8 @@ export async function setupDashboardEditorMocks(
       rows: [{ name: '항목 A', value: 100 }],
       totalRows: 1,
     }),
+    // S4: 조회자 기준 내보내기 가능 — 대시보드 PDF 버튼 노출 조건(기본 허용)
+    exportAllowed: true,
   });
   // 위젯 추가 다이얼로그에서 사용할 차트 목록
   await mockApi(page, 'GET', '/api/v1/analytics/charts', createPageResponse([]));

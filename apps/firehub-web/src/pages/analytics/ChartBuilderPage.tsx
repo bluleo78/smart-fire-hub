@@ -32,6 +32,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '../../components/ui/dropdown-menu';
+import { ExportBlockedTooltip } from '../../components/ui/ExportBlockedTooltip';
 import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
 import {
@@ -452,6 +453,9 @@ export default function ChartBuilderPage() {
   });
   const [queryColumns, setQueryColumns] = useState<string[]>([]);
   const [queryRows, setQueryRows] = useState<Record<string, unknown>[]>([]);
+  // 마지막 실행 결과의 조회자 기준 내보내기 가능(S4) — 차트 이미지도 원본 데이터를 담으므로 같은 정책을 따른다.
+  // 서버가 true 를 준 경우만 허용(fail-closed).
+  const [exportAllowed, setExportAllowed] = useState(false);
   const [saveDialogOpen, setSaveDialogOpen] = useState(false);
   // 대시보드 추가 다이얼로그 상태 (#97)
   const [addToDashboardOpen, setAddToDashboardOpen] = useState(false);
@@ -552,6 +556,7 @@ export default function ChartBuilderPage() {
       }
       setQueryColumns(result.columns);
       setQueryRows(result.rows);
+      setExportAllowed(result.exportAllowed === true);
       toast.success(`${result.rows.length}행 로드됨 (${result.executionTimeMs}ms)`);
 
       // Auto-recommend chart type and config only for new charts
@@ -589,6 +594,7 @@ export default function ChartBuilderPage() {
     setSelectedQueryId(nextId);
     setQueryColumns([]);
     setQueryRows([]);
+    setExportAllowed(false);
   };
 
   const handleSaveClick = () => {
@@ -778,31 +784,42 @@ export default function ChartBuilderPage() {
           )}
         </div>
 
-        {/* 차트 이미지 다운로드 (PNG/SVG) — 보고서·문서 첨부용 (이슈 #74) */}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-1.5"
-              disabled={queryColumns.length === 0}
-              aria-label="차트 다운로드"
-            >
+        {/* 차트 이미지 다운로드 (PNG/SVG) — 보고서·문서 첨부용 (이슈 #74).
+            실행 결과가 있는데 정책상 내보내기 불가면 비활성+사유 툴팁(주 버튼, 스펙 §5-4). 실행 전 비활성은 기존 그대로
+            (사유가 정책이 아니므로 툴팁 없음). 트리거 안쪽을 감싸면 드롭다운 동작이 꼬이므로 분기로 나눈다. */}
+        {queryColumns.length > 0 && !exportAllowed ? (
+          <ExportBlockedTooltip blocked label="차트 다운로드">
+            <Button variant="outline" size="sm" className="gap-1.5" aria-label="차트 다운로드">
               <Download className="h-4 w-4" />
               다운로드
             </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem onSelect={() => void handleDownloadChart('png')}>
-              <FileImage className="h-4 w-4" />
-              PNG 이미지로 저장
-            </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => void handleDownloadChart('svg')}>
-              <FileType className="h-4 w-4" />
-              SVG 벡터로 저장
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+          </ExportBlockedTooltip>
+        ) : (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5"
+                disabled={queryColumns.length === 0}
+                aria-label="차트 다운로드"
+              >
+                <Download className="h-4 w-4" />
+                다운로드
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onSelect={() => void handleDownloadChart('png')}>
+                <FileImage className="h-4 w-4" />
+                PNG 이미지로 저장
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => void handleDownloadChart('svg')}>
+                <FileType className="h-4 w-4" />
+                SVG 벡터로 저장
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
 
         {/* 대시보드 추가 (#97) — 차트가 저장된 상태에서만 활성화.
             저장 안 된 차트는 chartId가 없어 위젯으로 추가 불가. */}

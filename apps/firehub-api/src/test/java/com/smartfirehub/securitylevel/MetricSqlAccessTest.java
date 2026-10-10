@@ -216,6 +216,34 @@ class MetricSqlAccessTest extends IntegrationTestBase {
         .isTrue();
   }
 
+  /**
+   * 폴러 판정은 사용자 요청이 아닌 내부 값 판정이다(설계 결정 3) — 30초마다 같은 거부가 반복되므로 감사하면 폭주·오탐이 된다. 거부(403)는 그대로 던지되
+   * DATASET_ACCESS_DENIED 행은 남기지 않는다.
+   */
+  @Test
+  void pollTimeDenial_isNotAudited() {
+    reset(executorClient);
+    long low = userAt("공개");
+    NormalizedSql q = NormalizedSql.of("SELECT count(*) FROM " + sec);
+    assertThatThrownBy(
+            () -> guardedSqlExecutor.executeMetricQuery(clearanceResolver.resolve(low), q))
+        .isInstanceOf(CodedApiException.class)
+        .extracting(e -> ((CodedApiException) e).code())
+        .isEqualTo("DATASET_SQL_ACCESS_DENIED");
+    awaitSecurityAudit();
+    Integer n =
+        TenantRlsTestSupport.runInTenantTransaction(
+            fixtureTransactionTemplate,
+            DEFAULT_TEST_TENANT_ID,
+            () ->
+                dsl.fetchOne(
+                        "SELECT count(*) FROM audit_log WHERE user_id = ?"
+                            + " AND action_type = 'DATASET_ACCESS_DENIED'",
+                        low)
+                    .get(0, Integer.class));
+    assertThat(n).isZero();
+  }
+
   /** 폴러 실행 경로 — 자격이 낮아진 소유자의 메트릭은 executor 로 가지 않고, 충분한 소유자는 간다. */
   @Test
   void poller_skipsDeniedOwner_andRunsAllowedOwner() {

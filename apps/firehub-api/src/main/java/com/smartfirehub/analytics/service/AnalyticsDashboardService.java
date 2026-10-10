@@ -43,6 +43,9 @@ public class AnalyticsDashboardService {
   private final SavedQueryRepository savedQueryRepository;
   private final ClearanceResolver clearanceResolver;
 
+  /** 캐시 히트 시 조회자별 감사 등급 접근 기록(실행은 chartService.executeJudged 가 한다). */
+  private final GuardedSqlExecutor guardedSqlExecutor;
+
   /**
    * 대시보드 결과 캐시 키 — 저장 쿼리 id 와 <b>그 요청에서 판정한 SQL 원문</b>. id 만 키로 쓰면 소유자가 SQL 을 바꾼 뒤(TTL 60초 안) 새 SQL
    * 로 판정을 통과한 조회자가 옛 SQL(판정받지 않은 테이블)의 결과를 캐시 히트로 받는다. 원문이 같으면 정규화본(판정·실행 문자열)도 같다 — 정규화는 결정적이다.
@@ -168,6 +171,9 @@ public class AnalyticsDashboardService {
     Clearance viewer = clearanceResolver.resolve(userId);
     Map<Long, AnalyticsQueryResponse> resultByQuery = new HashMap<>();
     java.util.Set<Long> deniedQueries = new java.util.HashSet<>();
+    // 조회자별 내보내기 플래그 — 공유 캐시(queryResultCache) 밖에 둔다. 캐시 결과에 실으면 먼저 데운 조회자의 값이 다른 조회자에게 샌다(설계 결정 5,
+    // Review Focus 2). 빈 SQL·판정 없음은 false(fail-closed).
+    Map<Long, Boolean> exportByQuery = new HashMap<>();
     for (Long savedQueryId : new java.util.HashSet<>(chartIdToSavedQueryId.values())) {
       String sqlText = chartRepository.findSavedQuerySqlTextById(savedQueryId).orElse("");
       if (sqlText.isBlank()) {
@@ -180,12 +186,23 @@ public class AnalyticsDashboardService {
         deniedQueries.add(savedQueryId);
         continue;
       }
+      exportByQuery.put(savedQueryId, judgment.exportAllowedFor());
       // 판정을 통과한 쿼리만 캐시에 닿는다. 캐시 미스면 방금 판정한 토큰을 그대로 실행한다(다시 판정하지 않는다 — 판정 = 실행). 결과를 지역
       // 맵에 담아 위젯 루프가 getIfPresent(만료·축출 시 null)에 의존하지 않게 한다.
-      resultByQuery.put(
-          savedQueryId,
+      // 이 조회자가 로더를 실제로 돌렸는지 — 돌렸으면 실행 지점이 감사 등급 접근을 이미 남겼다. 아니면(남이 데운 캐시, 동시 로드 대기 포함) 받은
+      // 결과를 이 조회자에게 넘기는 것이므로 조회자별로 남긴다(공유 캐시 값 안에 넣지 않는다).
+      boolean[] loadedHere = {false};
+      AnalyticsQueryResponse result =
           queryResultCache.get(
-              new QueryCacheKey(savedQueryId, sqlText), k -> chartService.executeJudged(judgment)));
+              new QueryCacheKey(savedQueryId, sqlText),
+              k -> {
+                loadedHere[0] = true;
+                return chartService.executeJudged(judgment);
+              });
+      if (!loadedHere[0] && result.error() == null) {
+        guardedSqlExecutor.recordDelivered(judgment);
+      }
+      resultByQuery.put(savedQueryId, result);
     }
 
     // 4. Build widget data list
@@ -207,7 +224,10 @@ public class AnalyticsDashboardService {
             savedQueryId != null ? resultByQuery.get(savedQueryId) : null;
         chartData =
             new ChartDataResponse(
-                chartResponse, queryResult != null ? queryResult : emptyQueryResponse());
+                chartResponse,
+                queryResult != null ? queryResult : emptyQueryResponse(),
+                false,
+                savedQueryId != null && exportByQuery.getOrDefault(savedQueryId, false));
       }
       widgetDataList.add(new DashboardDataResponse.WidgetData(widget.id(), chartData));
     }

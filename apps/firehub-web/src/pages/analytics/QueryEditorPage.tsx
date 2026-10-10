@@ -38,6 +38,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '../../components/ui/dropdown-menu';
+import { ExportBlockedTooltip } from '../../components/ui/ExportBlockedTooltip';
 import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
 import {
@@ -58,8 +59,8 @@ import {
   useUpdateSavedQuery,
 } from '../../hooks/queries/useAnalytics';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
-import { extractApiError, handleApiError } from '../../lib/api-error';
-import { downloadBlob } from '../../lib/download';
+import { extractApiError, handleApiError, handleApiErrorAsync } from '../../lib/api-error';
+import { downloadBlob, filenameFromContentDisposition } from '../../lib/download';
 import { cn } from '../../lib/utils';
 import type { AnalyticsQueryResult } from '../../types/analytics';
 import type { ExportFormat } from '../../types/export';
@@ -376,6 +377,12 @@ function SaveDialog({
 // QueryEditorPage
 // ============================================================
 
+/**
+ * 실행 기록(runId) 없는 결과의 내보내기 안내 — 애드혹·저장 쿼리 실행 모두 서버가 실행 기록을 남기지만(code-review 4), 구버전 응답 등
+ * runId 가 없으면 서버로 보낼 근거가 없다. 서버 404(QUERY_RUN_NOT_FOUND) 문구와 같은 흐름으로 다시 실행을 안내한다.
+ */
+const QUERY_RUN_MISSING_MESSAGE = '실행 기록이 없습니다. 쿼리를 다시 실행한 뒤 내보내세요.';
+
 /** 서버 SQL 관문의 열람 거부 코드(DatasetAccessGuard) — 이 코드의 403 이면 화면의 이전 결과를 비운다. */
 const SQL_ACCESS_DENIAL_CODES = new Set(['DATASET_SQL_ACCESS_DENIED', 'SQL_WRITE_DOWNGRADE']);
 
@@ -593,6 +600,12 @@ export default function QueryEditorPage() {
 
   const handleQueryExport = async (format: ExportFormat) => {
     if (!result || result.error || result.columns.length === 0) return;
+    // 내보내기는 화면 rows 가 아니라 실행 기록 id 로 서버가 다시 판정·실행한다(S4) — 기록이 없는 결과(구버전 응답 등)는
+    // 서버로 보낼 근거가 없으므로 다시 실행하도록 안내한다. 버튼도 비활성이지만 방어적으로 한 번 더 막는다.
+    if (!result.runId) {
+      toast.error(QUERY_RUN_MISSING_MESSAGE);
+      return;
+    }
 
     // 결과가 서버 maxRows 캡으로 잘린 경우, 메모리상의 result.rows는 전체가 아니라
     // 상위 N행뿐이다. 이를 그대로 내보내면 사용자가 전체 데이터를 받았다고
@@ -605,15 +618,14 @@ export default function QueryEditorPage() {
     }
 
     try {
-      const response = await exportsApi.exportQueryResult({
-        columnNames: result.columns,
-        rows: result.rows,
-        format,
-      });
+      const response = await exportsApi.exportQueryRun(result.runId, format);
+      // 파일 이름은 서버가 정한다(Content-Disposition) — 서버가 다시 실행한 결과 기준이라 잘림 접미사(_상위N행, #658)도 화면 상태가
+      // 아니라 실제 파일 내용과 맞는다. 헤더가 없을 때만 같은 규칙의 이름을 화면 상태로 만든다.
       const ext = format === 'CSV' ? 'csv' : 'xlsx';
-      // truncated인 경우 파일명에도 잘림 사실을 남겨 파일만 봐도 알 수 있게 한다.
       const suffix = result.truncated ? `_상위${result.rows.length}행` : '';
-      const filename = `query_result_${new Date().toISOString().slice(0, 10).replace(/-/g, '')}${suffix}.${ext}`;
+      const fallback = `query_result_${new Date().toISOString().slice(0, 10).replace(/-/g, '')}${suffix}.${ext}`;
+      const disposition = response.headers['content-disposition'];
+      const filename = filenameFromContentDisposition(typeof disposition === 'string' ? disposition : null, fallback);
       downloadBlob(filename, response.data as Blob);
       if (result.truncated) {
         toast.warning(`상위 ${result.rows.length}행만 내보내졌습니다. 전체 결과가 아닙니다.`);
@@ -621,7 +633,8 @@ export default function QueryEditorPage() {
         toast.success('파일이 다운로드되었습니다.');
       }
     } catch (error) {
-      handleApiError(error, '내보내기에 실패했습니다.');
+      // blob 응답이라 오류 본문도 Blob 으로 온다 — 비동기로 풀어 서버 문구(404 QUERY_RUN_NOT_FOUND·403 정책 거부)를 보인다.
+      await handleApiErrorAsync(error, '내보내기에 실패했습니다.');
     }
   };
 
@@ -821,25 +834,40 @@ export default function QueryEditorPage() {
                   )}
                 </div>
                 <div className="flex items-center gap-2">
-                  {/* Export dropdown */}
+                  {/* 내보내기 — 조회자 기준 정책 차단(exportAllowed !== true)이나 실행 기록 없음(runId 없음)이면 드롭다운 대신
+                      비활성 버튼+사유 툴팁만 그린다(주 버튼 → 비활성, 스펙 §5-4). DropdownMenuTrigger 안쪽을 감싸면 트리거가
+                      span 이 되어 동작이 꼬이므로 분기로 나눈다. */}
                   {!result.error && result.queryType === 'SELECT' && result.rows.length > 0 && (
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
+                    result.exportAllowed === true && result.runId ? (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="outline" size="sm" className="gap-1.5">
+                            <Download className="h-4 w-4" />
+                            내보내기
+                            <ChevronDown className="h-3 w-3" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem onClick={() => handleQueryExport('CSV')}>
+                            CSV로 내보내기
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => handleQueryExport('EXCEL')}>
+                            Excel로 내보내기
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    ) : (
+                      <ExportBlockedTooltip
+                        blocked
+                        message={result.exportAllowed === true ? QUERY_RUN_MISSING_MESSAGE : undefined}
+                      >
                         <Button variant="outline" size="sm" className="gap-1.5">
                           <Download className="h-4 w-4" />
                           내보내기
                           <ChevronDown className="h-3 w-3" />
                         </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={() => handleQueryExport('CSV')}>
-                          CSV로 내보내기
-                        </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => handleQueryExport('EXCEL')}>
-                          Excel로 내보내기
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
+                      </ExportBlockedTooltip>
+                    )
                   )}
                   {/* Phase 2: Create Chart button */}
                   <Button

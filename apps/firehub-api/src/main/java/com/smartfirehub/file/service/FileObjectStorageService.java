@@ -85,6 +85,20 @@ public class FileObjectStorageService {
    * 다운로드 저장명은 URL 경로에서 자연히 원본명이 된다.
    */
   public PresignedUrlResponse presignedGetUrl(String bucket, String objectKey, int expirySeconds) {
+    return presignedGetUrl(bucket, objectKey, expirySeconds, "inline");
+  }
+
+  /**
+   * disposition("inline" 미리보기 / "attachment" 다운로드)을 <b>서명된</b> response-content-disposition 쿼리
+   * 파라미터로 넣는다 — 클라이언트가 값을 바꾸면 서명이 깨진다. attachment 는 내보내기 판정(requireExport)을 거친 호출자만 요청한다(스펙 §4.4).
+   */
+  public PresignedUrlResponse presignedGetUrl(
+      String bucket, String objectKey, int expirySeconds, String disposition) {
+    // 키의 마지막 세그먼트가 원본 파일명(S3 방식) — RFC 5987 로 인코딩해 한글 파일명도 그대로 저장되게 한다.
+    String fileName = objectKey.substring(objectKey.lastIndexOf('/') + 1);
+    String encoded =
+        java.net.URLEncoder.encode(fileName, java.nio.charset.StandardCharsets.UTF_8)
+            .replace("+", "%20");
     try {
       // presign은 공개 엔드포인트 클라이언트로 서명해야 브라우저가 직접 GET할 수 있다.
       String url =
@@ -94,6 +108,10 @@ public class FileObjectStorageService {
                   .bucket(bucket)
                   .object(objectKey)
                   .expiry(expirySeconds)
+                  .extraQueryParams(
+                      java.util.Map.of(
+                          "response-content-disposition",
+                          disposition + "; filename*=UTF-8''" + encoded))
                   .build());
       return new PresignedUrlResponse(url, expirySeconds);
     } catch (Exception e) {

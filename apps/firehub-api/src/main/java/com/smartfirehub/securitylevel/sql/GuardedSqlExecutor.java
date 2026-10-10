@@ -9,12 +9,14 @@ import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.util.NormalizedSql;
 import com.smartfirehub.pipeline.exception.UnsafeSqlException;
 import com.smartfirehub.pipeline.service.executor.ExecutorClient;
+import com.smartfirehub.securitylevel.access.AccessDenialAction;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.securitylevel.access.SqlAccessMode;
 import com.smartfirehub.securitylevel.access.SqlAccessResult;
-import com.smartfirehub.securitylevel.ai.PolicyBlockedException;
+import com.smartfirehub.securitylevel.service.SecurityAuditRecorder;
 import java.util.List;
+import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -42,14 +44,25 @@ public class GuardedSqlExecutor {
   private final AnalyticsQueryExecutionService analyticsExecution;
   private final ExecutorClient executorClient;
 
+  /** 감사 등급 접근 기록(스펙 §4.6). 거부 감사는 가드(requireSql·auditDenial)가 한다. */
+  private final SecurityAuditRecorder auditRecorder;
+
   /**
    * 데이터셋 /query — 정규화 실패({@link SqlQueryException})·파싱 실패({@link UnsafeSqlException})는 기존과 같이
    * 예외(400), 열람 거부는 403.
    */
   public SqlQueryResponse executeDatasetQuery(Clearance c, String sql, int maxRows) {
     NormalizedSql normalized = NormalizedSql.of(sql);
-    guard.requireSql(c, normalized.text(), SqlAccessMode.INTERACTIVE);
-    return dataTableQueryService.executeQuery(normalized, maxRows);
+    SqlAccessResult r = guard.requireSql(c, normalized.text(), SqlAccessMode.INTERACTIVE);
+    SqlQueryResponse response = dataTableQueryService.executeQuery(normalized, maxRows);
+    // 감사 등급 데이터셋을 읽은 사용자 SQL 은 접근 기록을 남긴다(거부는 requireSql 이 감사한다). 허용 판정이 아니라 실행이 성공해 결과가
+    // 나가는 지점에서 남긴다 — 검증 예외·실행 오류(200 + error)는 데이터가 나가지 않았다(executeJudgedAnalytics 와 같은 규칙, 코드리뷰
+    // 3).
+    // AI 대행 요청이면 AI 종류로 남긴다(결과가 LLM 으로 간다 — 스펙 §4.6 "AI 도구 접근").
+    if (response.error() == null) {
+      recordDelivered(c, r);
+    }
+    return response;
   }
 
   /**
@@ -59,7 +72,11 @@ public class GuardedSqlExecutor {
    */
   public AnalyticsQueryResponse executeAnalytics(
       Clearance c, String sql, int maxRows, boolean readOnly) {
-    return executeJudgedAnalytics(judgeAnalytics(c, sql), maxRows, readOnly);
+    AnalyticsJudgment j = judgeAnalytics(c, sql);
+    AnalyticsQueryResponse r = executeJudgedAnalytics(j, maxRows, readOnly);
+    // 캐시되지 않는 직접 실행 응답(애드혹·저장 쿼리)에만 조회자 기준 내보내기 플래그를 싣는다(설계 결정 5). 대시보드 공유 캐시는
+    // executeJudgedAnalytics 결과를 담으므로 이 플래그가 다른 조회자에게 새지 않는다.
+    return r.withExportInfo(j.exportAllowedFor(), null);
   }
 
   /**
@@ -73,24 +90,24 @@ public class GuardedSqlExecutor {
     /** 판정·실행할 정규화본. 정규화·파싱 실패면 null. */
     private final NormalizedSql normalized;
 
-    /** 판정 결과. 정규화·파싱 실패면 null. */
-    private final SqlAccessResult access;
+    /** 판정 결과 + 감사용 거부 상세. 정규화·파싱 실패면 null. */
+    private final DatasetAccessGuard.SqlVerdict verdict;
 
     /** 정규화·파싱 실패 메시지(실행 시 200 + error 로 돌려준다). 성공이면 null. */
     private final String parseError;
 
-    /** AI·공유 정책 차단 상세(S3) — 실행 시 errors 맵이 실린 403 POLICY_BLOCKED 로 그대로 던진다. 아니면 null. */
-    private final PolicyBlockedException blocked;
+    /** 판정한 자격 — 거부 감사의 행위자, 내보내기 플래그 계산에 쓴다. */
+    private final Clearance clearance;
 
     private AnalyticsJudgment(
         NormalizedSql normalized,
-        SqlAccessResult access,
+        DatasetAccessGuard.SqlVerdict verdict,
         String parseError,
-        PolicyBlockedException blocked) {
+        Clearance clearance) {
       this.normalized = normalized;
-      this.access = access;
+      this.verdict = verdict;
       this.parseError = parseError;
-      this.blocked = blocked;
+      this.clearance = clearance;
     }
 
     /**
@@ -98,7 +115,38 @@ public class GuardedSqlExecutor {
      * 된다.
      */
     public boolean denied() {
-      return access != null && !access.allowed();
+      return verdict != null && !verdict.result().allowed();
+    }
+
+    /**
+     * 허용이고 참조(읽기·쓰기) 데이터셋 전부가 EXPORT 정책을 통과하는가(스펙 §4.4). {@code data:export} 권한은 호출자가 따로 본다. 정규화·파싱
+     * 실패는 false.
+     */
+    public boolean exportAllowed() {
+      return verdict != null && verdict.result().allowed() && verdict.result().exportAllowed();
+    }
+
+    /** 판정한 자격. */
+    public Clearance clearance() {
+      return clearance;
+    }
+
+    /**
+     * 판정한 조회자가 이 결과를 실제로 내려받을 수 있는가 — EXPORT 정책 AND {@code data:export} 권한(내보내기 엔드포인트가
+     * {@code @RequirePermission("data:export")} 이므로). 웹이 다운로드 UI 를 숨기는 데 쓰는 UI 수준 플래그다. 조회자 자격으로 방금
+     * 판정한 토큰에서 계산하므로 대시보드 공유 결과 캐시와 무관하게 조회자별이다(설계 결정 5).
+     */
+    public boolean exportAllowedFor() {
+      return exportAllowed()
+          && clearance.permissions().contains(DatasetAccessGuard.EXPORT_PERMISSION);
+    }
+
+    /** 허용 판정이 참조한 데이터셋 id(읽기 ∪ 쓰기) — 내보내기 거부 시 어느 데이터셋이 막는지 가리는 데 쓴다. 거부·파싱 실패면 빈 집합. */
+    public Set<Long> touchedDatasetIds() {
+      if (verdict == null || !verdict.result().allowed()) {
+        return Set.of();
+      }
+      return verdict.result().touchedDatasetIds();
     }
   }
 
@@ -109,11 +157,13 @@ public class GuardedSqlExecutor {
   public AnalyticsJudgment judgeAnalytics(Clearance c, String sql) {
     try {
       NormalizedSql normalized = NormalizedSql.of(sql);
-      DatasetAccessGuard.SqlJudgement j =
+      DatasetAccessGuard.SqlVerdict v =
           guard.judgeSql(c, normalized.text(), SqlAccessMode.INTERACTIVE);
-      return new AnalyticsJudgment(normalized, j.result(), null, j.blocked());
+      // 판정은 값이라 감사하지 않는다 — 허용 판정만으로는 데이터가 나가지 않는다(내보내기 재판정이 정책 거부로 끝나거나 위젯이 denied 일 수
+      // 있다). 감사 등급 접근은 결과가 실제로 조회자에게 가는 지점(executeJudgedAnalytics 성공, 캐시 히트 recordDelivered)에서 남긴다.
+      return new AnalyticsJudgment(normalized, v, null, c);
     } catch (SqlQueryException | UnsafeSqlException e) {
-      return new AnalyticsJudgment(null, null, e.getMessage(), null);
+      return new AnalyticsJudgment(null, null, e.getMessage(), c);
     }
   }
 
@@ -129,14 +179,42 @@ public class GuardedSqlExecutor {
           "UNKNOWN", List.of(), List.of(), 0, 0L, 0, false, judgment.parseError);
     }
     // AI 대행 요청의 정책 차단은 상세(action·levelName·policyKey)가 실린 원래 예외로 — 값 결과만으로는 errors 맵을 잃는다.
-    if (judgment.blocked != null) {
-      throw judgment.blocked;
+    // 실제 사유(AI_EXTERNAL_DENIED 등)는 AI 동작으로 감사한다 — 판정(judgeAnalytics)은 값이라 감사하지 않고 403 으로 드러나는 여기서만.
+    if (judgment.verdict.blocked() != null) {
+      guard.auditDenial(judgment.clearance, AccessDenialAction.AI, judgment.verdict.denial());
+      throw judgment.verdict.blocked();
     }
-    SqlAccessResult r = judgment.access;
+    SqlAccessResult r = judgment.verdict.result();
     if (!r.allowed()) {
+      // 사용자 요청이 403 으로 끝나는 지점이라 실제 사유·테이블을 감사한다(응답에는 싣지 않는다).
+      guard.auditDenial(judgment.clearance, AccessDenialAction.SQL, judgment.verdict.denial());
       throw new CodedApiException(HttpStatus.FORBIDDEN, r.code(), r.message());
     }
-    return analyticsExecution.execute(judgment.normalized, maxRows, readOnly);
+    AnalyticsQueryResponse response =
+        analyticsExecution.execute(judgment.normalized, maxRows, readOnly);
+    // 실제로 실행돼 결과가 나가는 지점에서 감사 등급 접근을 남긴다(실행 오류 응답은 데이터가 없으므로 남기지 않는다).
+    if (response.error() == null) {
+      recordDelivered(judgment);
+    }
+    return response;
+  }
+
+  /**
+   * 허용 판정 토큰의 결과를 조회자에게 넘길 때 감사 등급 접근을 남긴다. {@link #executeJudgedAnalytics} 가 실행 성공 뒤 부르고, 대시보드는 공유
+   * 캐시 히트(이 조회자가 실행하지 않고 남이 데운 결과를 받음)일 때 조회자별로 부른다 — 캐시 안에 넣으면 먼저 데운 조회자만 남는다. 거부·파싱 실패 토큰은 아무것도
+   * 남기지 않는다.
+   */
+  public void recordDelivered(AnalyticsJudgment judgment) {
+    if (judgment.verdict == null || !judgment.verdict.result().allowed()) {
+      return;
+    }
+    recordDelivered(judgment.clearance, judgment.verdict.result());
+  }
+
+  /** 허용 결과가 조회자에게 나갈 때의 감사 등급 접근 기록 — 데이터셋 /query 와 애널리틱스가 같은 규칙(읽기 ∪ 쓰기, AI 문맥이면 AI 종류)을 쓴다. */
+  private void recordDelivered(Clearance c, SqlAccessResult r) {
+    auditRecorder.recordAccess(
+        c.userId(), guard.accessKind(SecurityAuditRecorder.AccessKind.SQL), r.touchedDatasetIds());
   }
 
   /**
@@ -148,7 +226,18 @@ public class GuardedSqlExecutor {
       Clearance c, NormalizedSql normalized) {
     // 끝 공백만 뗀 같은 문자열을 판정·실행한다(주석을 걷어낸 자리에 공백이 남을 수 있다 — 가드도 판정 시 strip 하므로 동일).
     String sql = normalized.text().strip();
-    guard.requireSql(c, sql, SqlAccessMode.INTERACTIVE);
+    // 폴러(@Scheduled 30초)의 판정은 사용자 요청이 아닌 내부 값 판정이다(설계 결정 3) — requireSql 을 쓰면 거부가 매 주기 감사돼
+    // 메트릭당 하루 ~1440행이 쌓이고, 사용자 SQL 거부로 오인된다. 그래서 judgeSql 로 판정만 하고 감사 없이 같은 403 을 던진다.
+    // 작업 생성·수정 시점(MetricSqlAccessChecker)의 거부는 사용자 요청이라 그대로 감사한다.
+    DatasetAccessGuard.SqlVerdict v = guard.judgeSql(c, sql, SqlAccessMode.INTERACTIVE);
+    // 공유 범위 AI 차단(흐름 A, MetricPollerService 가 AI 문맥으로 감쌈)은 원래 예외 그대로 — 역시 감사 없이.
+    if (v.blocked() != null) {
+      throw v.blocked();
+    }
+    SqlAccessResult r = v.result();
+    if (!r.allowed()) {
+      throw new CodedApiException(HttpStatus.FORBIDDEN, r.code(), r.message());
+    }
     return executorClient.executeQuery(sql, 1, true);
   }
 }

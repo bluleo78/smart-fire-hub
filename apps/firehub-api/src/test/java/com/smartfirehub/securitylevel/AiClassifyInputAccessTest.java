@@ -228,14 +228,22 @@ class AiClassifyInputAccessTest extends IntegrationTestBase {
     assertThat(tempLevel(p)).isEqualTo(fx.levelId("민감"));
   }
 
+  /** S4(스펙 §4.5) — 입력보다 낮은 지정 출력은 실패가 아니라 실행기 호출 전에 입력 등급으로 자동 상향된다. */
   @Test
-  void run_explicitLowerOutput_failsWithDowngradeBeforeExecutor() throws Exception {
+  void run_explicitLowerOutput_isAutoRaisedBeforeExecutor() throws Exception {
     long runner = userAt("민감");
     long p = aiPipeline(runner, secId, lowOutId);
     long exec = executionService.executePipeline(p, runner);
-    assertThat(waitForEnd(exec)).isEqualTo("FAILED");
-    assertThat(stepError(exec)).contains("더 낮은 등급 데이터셋에 쓸 수 없습니다");
-    verify(aiClassifyExecutor, never()).execute(any(), any(), any());
+    assertThat(waitForEnd(exec)).isEqualTo("COMPLETED");
+    verify(aiClassifyExecutor, times(1)).execute(any(), any(), any());
+    assertThat(
+            inTenantFixture(
+                () ->
+                    dsl.select(DATASET.SECURITY_LEVEL_ID)
+                        .from(DATASET)
+                        .where(DATASET.ID.eq(lowOutId))
+                        .fetchSingle(DATASET.SECURITY_LEVEL_ID)))
+        .isEqualTo(fx.levelId("민감"));
   }
 
   @Test

@@ -6,6 +6,7 @@ package com.smartfirehub.jooq;
 
 import com.smartfirehub.jooq.tables.AiInferenceCache;
 import com.smartfirehub.jooq.tables.AiSession;
+import com.smartfirehub.jooq.tables.AnalyticsQueryRun;
 import com.smartfirehub.jooq.tables.AnomalyEvent;
 import com.smartfirehub.jooq.tables.ApiConnection;
 import com.smartfirehub.jooq.tables.AsyncJob;
@@ -84,6 +85,7 @@ import com.smartfirehub.jooq.tables.UserChannelPreference;
 import com.smartfirehub.jooq.tables.UserRole;
 import com.smartfirehub.jooq.tables.records.AiInferenceCacheRecord;
 import com.smartfirehub.jooq.tables.records.AiSessionRecord;
+import com.smartfirehub.jooq.tables.records.AnalyticsQueryRunRecord;
 import com.smartfirehub.jooq.tables.records.AnomalyEventRecord;
 import com.smartfirehub.jooq.tables.records.ApiConnectionRecord;
 import com.smartfirehub.jooq.tables.records.AsyncJobRecord;
@@ -181,6 +183,7 @@ public class Keys {
 
     public static final UniqueKey<AiInferenceCacheRecord> AI_INFERENCE_CACHE_PKEY = Internal.createUniqueKey(AiInferenceCache.AI_INFERENCE_CACHE, DSL.name("ai_inference_cache_pkey"), new TableField[] { AiInferenceCache.AI_INFERENCE_CACHE.ID }, true);
     public static final UniqueKey<AiSessionRecord> AI_SESSION_PKEY = Internal.createUniqueKey(AiSession.AI_SESSION, DSL.name("ai_session_pkey"), new TableField[] { AiSession.AI_SESSION.ID }, true);
+    public static final UniqueKey<AnalyticsQueryRunRecord> ANALYTICS_QUERY_RUN_PKEY = Internal.createUniqueKey(AnalyticsQueryRun.ANALYTICS_QUERY_RUN, DSL.name("analytics_query_run_pkey"), new TableField[] { AnalyticsQueryRun.ANALYTICS_QUERY_RUN.ID }, true);
     public static final UniqueKey<AnomalyEventRecord> ANOMALY_EVENT_PKEY = Internal.createUniqueKey(AnomalyEvent.ANOMALY_EVENT, DSL.name("anomaly_event_pkey"), new TableField[] { AnomalyEvent.ANOMALY_EVENT.ID }, true);
     public static final UniqueKey<ApiConnectionRecord> API_CONNECTION_PKEY = Internal.createUniqueKey(ApiConnection.API_CONNECTION, DSL.name("api_connection_pkey"), new TableField[] { ApiConnection.API_CONNECTION.ID }, true);
     public static final UniqueKey<AsyncJobRecord> ASYNC_JOB_PKEY = Internal.createUniqueKey(AsyncJob.ASYNC_JOB, DSL.name("async_job_pkey"), new TableField[] { AsyncJob.ASYNC_JOB.ID }, true);
@@ -289,6 +292,8 @@ public class Keys {
     public static final ForeignKey<AiInferenceCacheRecord, TenantRecord> AI_INFERENCE_CACHE__AI_INFERENCE_CACHE_TENANT_ID_FKEY = Internal.createForeignKey(AiInferenceCache.AI_INFERENCE_CACHE, DSL.name("ai_inference_cache_tenant_id_fkey"), new TableField[] { AiInferenceCache.AI_INFERENCE_CACHE.TENANT_ID }, Keys.TENANT_PKEY, new TableField[] { Tenant.TENANT.ID }, true);
     public static final ForeignKey<AiSessionRecord, TenantRecord> AI_SESSION__AI_SESSION_TENANT_ID_FKEY = Internal.createForeignKey(AiSession.AI_SESSION, DSL.name("ai_session_tenant_id_fkey"), new TableField[] { AiSession.AI_SESSION.TENANT_ID }, Keys.TENANT_PKEY, new TableField[] { Tenant.TENANT.ID }, true);
     public static final ForeignKey<AiSessionRecord, UserRecord> AI_SESSION__AI_SESSION_USER_ID_FKEY = Internal.createForeignKey(AiSession.AI_SESSION, DSL.name("ai_session_user_id_fkey"), new TableField[] { AiSession.AI_SESSION.USER_ID }, Keys.USER_PKEY, new TableField[] { User.USER.ID }, true);
+    public static final ForeignKey<AnalyticsQueryRunRecord, TenantRecord> ANALYTICS_QUERY_RUN__ANALYTICS_QUERY_RUN_TENANT_ID_FKEY = Internal.createForeignKey(AnalyticsQueryRun.ANALYTICS_QUERY_RUN, DSL.name("analytics_query_run_tenant_id_fkey"), new TableField[] { AnalyticsQueryRun.ANALYTICS_QUERY_RUN.TENANT_ID }, Keys.TENANT_PKEY, new TableField[] { Tenant.TENANT.ID }, true);
+    public static final ForeignKey<AnalyticsQueryRunRecord, UserRecord> ANALYTICS_QUERY_RUN__ANALYTICS_QUERY_RUN_USER_ID_FKEY = Internal.createForeignKey(AnalyticsQueryRun.ANALYTICS_QUERY_RUN, DSL.name("analytics_query_run_user_id_fkey"), new TableField[] { AnalyticsQueryRun.ANALYTICS_QUERY_RUN.USER_ID }, Keys.USER_PKEY, new TableField[] { User.USER.ID }, true);
     public static final ForeignKey<AnomalyEventRecord, ProactiveJobRecord> ANOMALY_EVENT__ANOMALY_EVENT_JOB_ID_FKEY = Internal.createForeignKey(AnomalyEvent.ANOMALY_EVENT, DSL.name("anomaly_event_job_id_fkey"), new TableField[] { AnomalyEvent.ANOMALY_EVENT.JOB_ID }, Keys.PROACTIVE_JOB_PKEY, new TableField[] { ProactiveJob.PROACTIVE_JOB.ID }, true);
     public static final ForeignKey<AnomalyEventRecord, TenantRecord> ANOMALY_EVENT__ANOMALY_EVENT_TENANT_ID_FKEY = Internal.createForeignKey(AnomalyEvent.ANOMALY_EVENT, DSL.name("anomaly_event_tenant_id_fkey"), new TableField[] { AnomalyEvent.ANOMALY_EVENT.TENANT_ID }, Keys.TENANT_PKEY, new TableField[] { Tenant.TENANT.ID }, true);
     public static final ForeignKey<ApiConnectionRecord, UserRecord> API_CONNECTION__API_CONNECTION_CREATED_BY_FKEY = Internal.createForeignKey(ApiConnection.API_CONNECTION, DSL.name("api_connection_created_by_fkey"), new TableField[] { ApiConnection.API_CONNECTION.CREATED_BY }, Keys.USER_PKEY, new TableField[] { User.USER.ID }, true);

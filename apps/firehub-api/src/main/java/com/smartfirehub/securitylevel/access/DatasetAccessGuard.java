@@ -20,6 +20,8 @@ import com.smartfirehub.securitylevel.ai.AiCallContext;
 import com.smartfirehub.securitylevel.ai.PolicyBlockedException;
 import com.smartfirehub.securitylevel.repository.DatasetAccessRepository;
 import com.smartfirehub.securitylevel.repository.DatasetAccessRepository.AccessFacts;
+import com.smartfirehub.securitylevel.service.SecurityAuditRecorder;
+import com.smartfirehub.securitylevel.service.SecurityAuditRecorder.AccessKind;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
@@ -48,6 +50,9 @@ public class DatasetAccessGuard {
   private final ClearanceResolver clearanceResolver;
   private final DSLContext dsl;
 
+  /** 거부 감사 기록기(보충 스펙 §3). 사용자 요청의 거부로 드러나는 require* 지점만 부른다 — 값 판정(check·checkSql)은 부르지 않는다. */
+  private final SecurityAuditRecorder auditRecorder;
+
   /**
    * 현재 AI 문맥(S3 §4.3). 가시성 3-인자 조건·{@link #requireView(Clearance, long)}·대화형 {@link #checkSql} 이 이
    * 값을 읽어 AI(+SHARE) 정책을 함께 건다 — 호출처마다 AI 변형을 고르게 하면 하나만 빠져도 이름·행이 LLM 으로 샌다. 비AI 문맥(웹 JWT·배경
@@ -74,6 +79,37 @@ public class DatasetAccessGuard {
   /** 파이프라인 저장 검증이 {@code {{#N}}} 을 치환한 더미 테이블 이름(판단 사항 4). */
   private static final Pattern STEP_REF_PLACEHOLDER = Pattern.compile("step_ref_\\d+");
 
+  /** 거부 상세 — 감사에만 쓴다. 응답·실행 이력에는 절대 싣지 않는다(존재 은닉, 스펙 §2.5). */
+  public record DenialDetail(String reasonCode, Long datasetId, String tableName) {}
+
+  /**
+   * SQL 판정 결과 + 거부 상세 + (AI 차단이면) 상세 예외. {@link SqlAccessResult} 는 응답·실행 이력으로 나가므로 상세를 거기 싣지 않고 여기
+   * 따로 둔다. 거부를 값으로 받았다가 나중에 던지는 호출부(애널리틱스 판정 토큰)와 {@link #requireSql} 이 차단 응답의 errors
+   * 맵(action·levelName· policyKey)을 잃지 않게 blocked 를 함께 싣는다(흐름 A·B 통합 — 판정 결과 레코드는 이것 하나다).
+   *
+   * @param denial 거부 상세(감사 전용), 허용이면 null
+   * @param blocked AI·공유 정책 차단이면 그 예외(result 는 같은 코드의 denied), 아니면 null
+   */
+  public record SqlVerdict(
+      SqlAccessResult result, DenialDetail denial, PolicyBlockedException blocked) {
+
+    /** AI 차단이 아닌 판정(허용·VIEW 계열·쓰기 하향 거부). */
+    public SqlVerdict(SqlAccessResult result, DenialDetail denial) {
+      this(result, denial, null);
+    }
+  }
+
+  /**
+   * 거부를 감사한다(보충 스펙 §3). 없는 데이터셋(LEVEL_UNKNOWN)은 거부가 아니라 "없음"이므로 남기지 않는다. 판정만 하는 값
+   * 경로(check·checkSql) 는 이 메서드를 부르지 않는다 — 사용자 요청의 거부로 드러나는 지점(require*·게이트·실행기)만 부른다.
+   */
+  public void auditDenial(Clearance c, AccessDenialAction action, DenialDetail d) {
+    if (d == null || "LEVEL_UNKNOWN".equals(d.reasonCode())) {
+      return;
+    }
+    auditRecorder.recordDenial(c.userId(), action, d.reasonCode(), d.datasetId(), d.tableName());
+  }
+
   /** 현재 요청 사용자 기준 VIEW 강제. */
   public void requireView(long datasetId) {
     requireView(clearanceResolver.current(), datasetId);
@@ -88,12 +124,137 @@ public class DatasetAccessGuard {
    */
   public void requireView(Clearance c, long datasetId) {
     AccessFacts f = accessRepository.findFactsByDatasetIds(List.of(datasetId), c).get(datasetId);
-    if (f == null || !decide(c, f, DatasetAction.VIEW, null).allowed()) {
+    // 없는 데이터셋은 LEVEL_UNKNOWN — auditDenial 이 "없음"으로 보고 남기지 않는다.
+    Decision d = viewDecision(c, f);
+    if (!d.allowed()) {
+      // 실제 사유는 감사에만 남긴다 — 응답은 "없음"과 같은 404 그대로.
+      auditDenial(c, AccessDenialAction.VIEW, new DenialDetail(d.reasonCode(), datasetId, null));
       throw new DatasetNotFoundException("Dataset not found: " + datasetId);
     }
     // AI 대행 요청·AI 범위면 VIEW 통과 후에만 AI(+SHARE) 판정(스펙 §4.3). 볼 수 없는 데이터셋은 위에서 404 로 존재를 숨기고(스펙
-    // §2.5), 볼 수 있는 것만 등급 이름이 실린 403 POLICY_BLOCKED 가 된다.
-    aiCallContext.current().ifPresent(ai -> requireAiFacts(c, f, ai));
+    // §2.5), 볼 수 있는 것만 등급 이름이 실린 403 POLICY_BLOCKED 가 된다. 거부는 requireAiFacts 가 AI 동작으로 감사하고, 허용이면
+    // 감사 등급 데이터셋의 AI 접근을 남긴다(스펙 §4.6 "AI 도구 접근").
+    Optional<AiCall> ai = aiCallContext.current();
+    if (ai.isPresent()) {
+      requireAiFacts(c, f, ai.get());
+      auditRecorder.recordAccess(c.userId(), AccessKind.AI, List.of(datasetId));
+    }
+  }
+
+  /** 내보내기 엔드포인트 공통 권한 — exportAllowed 플래그는 이 권한까지 본다(UI 가 실제로 내려받을 수 있는가). */
+  public static final String EXPORT_PERMISSION = "data:export";
+
+  /** 쿼리 결과(여러 데이터셋) 내보내기 거부 문구 — 어느 데이터셋이 막혔는지 드러내지 않는다. */
+  public static final String EXPORT_MULTI_MESSAGE = "쿼리가 참조하는 데이터 중 보안 등급 정책상 내보낼 수 없는 데이터가 있습니다.";
+
+  /**
+   * 쿼리 결과(여러 데이터셋) 내보내기 거부 응답 — levelName 없이 어느 데이터셋이 막혔는지 숨긴다. 가드와 쿼리 결과 내보내기 서비스가 같은 응답 형태를 쓰도록 한
+   * 곳에서 만든다.
+   */
+  public static CodedApiException exportMultiBlocked() {
+    return new CodedApiException(
+        HttpStatus.FORBIDDEN,
+        PolicyBlockedException.CODE,
+        EXPORT_MULTI_MESSAGE,
+        Map.of("action", "EXPORT", "policyKey", "export_policy"));
+  }
+
+  /** 현재 요청 사용자 기준 내보내기 강제. */
+  public void requireExport(long datasetId) {
+    requireExport(clearanceResolver.current(), datasetId);
+  }
+
+  /**
+   * 내보내기 강제(스펙 §4.4). VIEW 거부는 존재 은닉 404(VIEW 로 감사), 정책 거부는 403 POLICY_BLOCKED(EXPORT 로 감사). 등급 이름은
+   * VIEW 를 통과한 뒤에만 싣는다 — 사용자가 이미 볼 수 있는 정보다.
+   *
+   * <p>감사는 {@link SecurityAuditRecorder} 의 REQUIRES_NEW 로 남으므로 호출자 트랜잭션이 이 예외로 롤백돼도 거부 행은
+   * 남는다(Review Focus 1).
+   */
+  public void requireExport(Clearance c, long datasetId) {
+    AccessFacts f = accessRepository.findFactsByDatasetIds(List.of(datasetId), c).get(datasetId);
+    if (f == null) {
+      throw new DatasetNotFoundException("Dataset not found: " + datasetId);
+    }
+    Decision view = decide(c, f, DatasetAction.VIEW, null);
+    if (!view.allowed()) {
+      auditDenial(c, AccessDenialAction.VIEW, new DenialDetail(view.reasonCode(), datasetId, null));
+      throw new DatasetNotFoundException("Dataset not found: " + datasetId);
+    }
+    Decision d = decide(c, f, DatasetAction.EXPORT, null);
+    if (!d.allowed()) {
+      auditDenial(
+          c, AccessDenialAction.EXPORT, new DenialDetail(d.reasonCode(), datasetId, f.tableName()));
+      String levelName = f.level().name();
+      // 문구는 Global Constraints 바이트 지정 — PERMISSION 정책은 권한 안내, DENY 는 불가.
+      String message =
+          "EXPORT_PERMISSION_REQUIRED".equals(d.reasonCode())
+              ? "'" + levelName + "' 등급 데이터를 내보내려면 제한 데이터 내보내기 권한이 필요합니다."
+              : "'" + levelName + "' 등급 데이터는 내보낼 수 없습니다.";
+      throw new CodedApiException(
+          HttpStatus.FORBIDDEN,
+          PolicyBlockedException.CODE,
+          message,
+          Map.of("action", "EXPORT", "levelName", levelName, "policyKey", "export_policy"));
+    }
+  }
+
+  /**
+   * 파일 다운로드(presigned attachment) 강제 — 내보내기 엔드포인트와 달리 {@code @RequirePermission("data:export")} 가
+   * 없는 경로(dataset:read)라 data:export 권한을 여기서 먼저 본다. 권한이 없으면 인터셉터와 같은 403, 있으면 {@link
+   * #requireExport(Clearance, long)}.
+   */
+  public void requireExportDownload(long datasetId) {
+    Clearance c = clearanceResolver.current();
+    if (!c.permissions().contains(EXPORT_PERMISSION)) {
+      throw new org.springframework.security.access.AccessDeniedException(
+          "Missing required permission: " + EXPORT_PERMISSION);
+    }
+    requireExport(c, datasetId);
+  }
+
+  /**
+   * 여러 데이터셋(쿼리 결과) 내보내기 강제 — 하나라도 막히면 403(등급 이름 없음, 첫 차단 데이터셋을 감사). VIEW 는 SQL 판정이 이미 했다.
+   *
+   * <p>errors 에 levelName 이 없다 — 어느 데이터셋이 막았는지 숨긴다(흐름 A 의 POLICY_BLOCKED 형태와 다름). 웹·ai-agent 의
+   * policy-blocked 파서는 levelName 이 없으면 차단 표식이 아니라 일반 오류로 처리한다.
+   */
+  public void requireExportAll(Clearance c, Collection<Long> datasetIds) {
+    Map<Long, AccessFacts> facts =
+        datasetIds.isEmpty() ? Map.of() : accessRepository.findFactsByDatasetIds(datasetIds, c);
+    for (Long id : datasetIds) {
+      AccessFacts f = facts.get(id);
+      Decision d =
+          f == null
+              ? Decision.deny("LEVEL_UNKNOWN", null, null)
+              : decide(c, f, DatasetAction.EXPORT, null);
+      if (!d.allowed()) {
+        auditDenial(
+            c,
+            AccessDenialAction.EXPORT,
+            new DenialDetail(d.reasonCode(), id, f == null ? null : f.tableName()));
+        throw exportMultiBlocked();
+      }
+    }
+  }
+
+  /**
+   * 현재 요청 사용자(조회자) 기준 내보내기 가능 여부 — 응답 등급 요약의 export_policy 문자열로 판정한다. 등급 요약이 없으면
+   * false(fail-closed). 웹이 다운로드 UI 를 숨기는 데 쓴다(UI 수준 — 서버 강제는 require*).
+   */
+  public boolean exportAllowedForCurrent(
+      com.smartfirehub.securitylevel.dto.SecurityLevelSummary s) {
+    if (s == null || s.exportPolicy() == null) {
+      return false;
+    }
+    return exportAllowed(
+        clearanceResolver.current(), LevelPolicy.ExportPolicy.valueOf(s.exportPolicy()));
+  }
+
+  /** 권한 AND 정책 — exportAllowedForCurrent 의 본문(data:export 권한 AND 등급 export_policy). */
+  private static boolean exportAllowed(Clearance c, LevelPolicy.ExportPolicy p) {
+    return c.permissions().contains(EXPORT_PERMISSION)
+        && DatasetAccessPolicy.exportPolicyAllows(p, c.permissions());
   }
 
   /** 행위 판정. 데이터셋이 없으면 LEVEL_UNKNOWN 거부(존재 여부를 따로 드러내지 않는다). */
@@ -209,8 +370,11 @@ public class DatasetAccessGuard {
     // VIEW 를 전부 먼저 확인한다 — 앞쪽 id 의 POLICY_BLOCKED(등급 이름)가 뒤쪽 숨김 id 의 거부보다 먼저 나가도 숨김 존재는 드러나지 않지만,
     // 응답이 입력 순서에 따라 달라지지 않게 VIEW 계열 거부를 우선한다.
     for (Long id : datasetIds) {
-      AccessFacts f = facts.get(id);
-      if (f == null || !decide(c, f, DatasetAction.VIEW, null).allowed()) {
+      Decision view = viewDecision(c, facts.get(id));
+      if (!view.allowed()) {
+        // 실제 사유(숨김·없음)는 감사에만 — 응답은 구분 불가 403. 없는 id 는 LEVEL_UNKNOWN 이라 남지 않는다.
+        auditDenial(
+            c, AccessDenialAction.DATASET_REFS, new DenialDetail(view.reasonCode(), id, null));
         throw new CodedApiException(
             HttpStatus.FORBIDDEN, SQL_ACCESS_DENIED_CODE, SQL_ACCESS_DENIED_MESSAGE);
       }
@@ -218,6 +382,8 @@ public class DatasetAccessGuard {
     for (Long id : datasetIds) {
       requireAiFacts(c, facts.get(id), call);
     }
+    // 허용이어도 접근 기록은 남기지 않는다 — 다건 판정은 저장·생성·실행 전 정책 확인이라 데이터가 이 자리에서 AI 로 가지 않는다(실제 전달은
+    // requireView·SQL 관문이 AI 종류로 남긴다).
   }
 
   /**
@@ -233,15 +399,18 @@ public class DatasetAccessGuard {
     }
     Map<Long, AccessFacts> facts = accessRepository.findFactsByDatasetIds(datasetIds, c);
     for (Long id : datasetIds) {
-      AccessFacts f = facts.get(id);
-      if (f == null || !decide(c, f, DatasetAction.VIEW, null).allowed()) {
-        // 메시지는 requireView 의 404 와 바이트 단위로 같아야 한다(존재 은닉).
+      Decision view = viewDecision(c, facts.get(id));
+      if (!view.allowed()) {
+        // 메시지는 requireView 의 404 와 바이트 단위로 같아야 한다(존재 은닉). 실제 사유는 VIEW 로 감사(requireView 와 같은 규칙).
+        auditDenial(c, AccessDenialAction.VIEW, new DenialDetail(view.reasonCode(), id, null));
         throw new DatasetNotFoundException("Dataset not found: " + id);
       }
     }
     for (Long id : datasetIds) {
       requireAiFacts(c, facts.get(id), call);
     }
+    // 허용이어도 접근 기록은 남기지 않는다 — 다건 판정은 저장·생성·실행 전 정책 확인이라 데이터가 이 자리에서 AI 로 가지 않는다(실제 전달은
+    // requireView·SQL 관문이 AI 종류로 남긴다).
   }
 
   /**
@@ -271,18 +440,61 @@ public class DatasetAccessGuard {
     return true;
   }
 
-  /** 이미 VIEW 를 통과한 사실에 AI·SHARE 를 판정한다. Decision 의 policyKey 를 그대로 싣는다. */
+  /**
+   * 이미 VIEW 를 통과한 사실에 AI·SHARE 를 강제한다. 위반이면 실제 사유(AI_EXTERNAL_DENIED·AI_DENIED·SHARE_DENIED)를 AI
+   * 동작으로 감사한 뒤 던진다 — 강제(require*) 경로 전용. 값 판정(judgeSql·checkAiForDatasets)은 {@link #judgeAiFacts} 를
+   * 써서 감사하지 않는다.
+   */
   void requireAiFacts(Clearance c, AccessFacts f, AiCall call) {
+    AiBlock b = judgeAiFacts(c, f, call);
+    if (b != null) {
+      auditDenial(
+          c, AccessDenialAction.AI, new DenialDetail(b.reasonCode(), f.datasetId(), f.tableName()));
+      throw b.exception();
+    }
+  }
+
+  /**
+   * AI·SHARE 정책 위반 — 응답으로 나갈 예외와 감사용 실제 사유를 함께 든다. 공유 목적 차단(SHARE_DENIED)도 AI 호출에서 생기므로 감사 동작은 AI
+   * 하나다(사유로 구분).
+   */
+  private record AiBlock(PolicyBlockedException exception, String reasonCode) {}
+
+  /** 이미 VIEW 를 통과한 사실의 AI(먼저)·SHARE 값 판정. 위반이면 첫 위반, 허용이면 null. 감사하지 않는다. */
+  private AiBlock judgeAiFacts(Clearance c, AccessFacts f, AiCall call) {
     Decision ai = decide(c, f, DatasetAction.AI, call.hosting());
     if (!ai.allowed()) {
-      throw new PolicyBlockedException(DatasetAction.AI, f.level().name(), ai.policyKey());
+      return new AiBlock(
+          new PolicyBlockedException(DatasetAction.AI, f.level().name(), ai.policyKey()),
+          ai.reasonCode());
     }
     if (call.share()) {
       Decision share = decide(c, f, DatasetAction.SHARE, null);
       if (!share.allowed()) {
-        throw new PolicyBlockedException(DatasetAction.SHARE, f.level().name(), share.policyKey());
+        return new AiBlock(
+            new PolicyBlockedException(DatasetAction.SHARE, f.level().name(), share.policyKey()),
+            share.reasonCode());
       }
     }
+    return null;
+  }
+
+  /**
+   * VIEW 판정 — 없는 데이터셋(f == null)은 LEVEL_UNKNOWN 거부(auditDenial 이 "없음"으로 보고 남기지 않는다). 단건·다건 VIEW 강제가
+   * 같은 판정을 한 번만 계산해 허용 여부와 감사 사유에 함께 쓴다.
+   */
+  private Decision viewDecision(Clearance c, AccessFacts f) {
+    return f == null
+        ? Decision.deny("LEVEL_UNKNOWN", null, null)
+        : decide(c, f, DatasetAction.VIEW, null);
+  }
+
+  /**
+   * 감사 등급 접근 기록의 종류 — AI 대행 요청·AI 범위면 {@link AccessKind#AI}(결과가 LLM 으로 간다), 아니면 주어진 종류. SQL 관문처럼 같은
+   * 경로를 웹과 AI 가 함께 쓰는 곳이 쓴다.
+   */
+  public AccessKind accessKind(AccessKind nonAi) {
+    return aiCallContext.current().isPresent() ? AccessKind.AI : nonAi;
   }
 
   /**
@@ -306,8 +518,16 @@ public class DatasetAccessGuard {
    * @return 빈 목록이면 허용 + 실효 등급 null(전파할 등급 없음)
    */
   public SqlAccessResult checkDatasetReads(Clearance c, Collection<Long> datasetIds) {
+    return judgeDatasetReads(c, datasetIds).result();
+  }
+
+  /**
+   * {@link #checkDatasetReads} 와 같은 판정 + 감사용 거부 상세. null·없는 id 는 LEVEL_UNKNOWN 상세라 {@link
+   * #auditDenial} 이 남기지 않는다("없음"은 거부가 아니다).
+   */
+  private SqlVerdict judgeDatasetReads(Clearance c, Collection<Long> datasetIds) {
     if (datasetIds.stream().anyMatch(Objects::isNull)) {
-      return accessDenied();
+      return deniedVerdict("LEVEL_UNKNOWN", null, null);
     }
     Map<Long, AccessFacts> facts =
         datasetIds.isEmpty() ? Map.of() : accessRepository.findFactsByDatasetIds(datasetIds, c);
@@ -316,8 +536,12 @@ public class DatasetAccessGuard {
     Set<Long> ids = new LinkedHashSet<>();
     for (Long id : datasetIds) {
       AccessFacts f = facts.get(id);
-      if (f == null || !decide(c, f, DatasetAction.VIEW, null).allowed()) {
-        return accessDenied();
+      if (f == null) {
+        return deniedVerdict("LEVEL_UNKNOWN", id, null);
+      }
+      Decision d = decide(c, f, DatasetAction.VIEW, null);
+      if (!d.allowed()) {
+        return deniedVerdict(d.reasonCode(), id, null);
       }
       ids.add(id);
       if (effective == null || f.level().rank() > effective.rank()) {
@@ -325,16 +549,18 @@ public class DatasetAccessGuard {
       }
       exportAllowed &= decide(c, f, DatasetAction.EXPORT, null).allowed();
     }
-    return new SqlAccessResult(true, null, null, effective, ids, Set.of(), exportAllowed);
+    return new SqlVerdict(
+        new SqlAccessResult(true, null, null, effective, ids, Set.of(), exportAllowed), null);
   }
 
   /** {@link #checkDatasetReads} 를 강제한다 — 거부 시 403 {@link CodedApiException}(SQL 경로와 같은 코드·메시지). */
   public SqlAccessResult requireDatasetReads(Clearance c, Collection<Long> datasetIds) {
-    SqlAccessResult r = checkDatasetReads(c, datasetIds);
-    if (!r.allowed()) {
-      throw new CodedApiException(HttpStatus.FORBIDDEN, r.code(), r.message());
+    SqlVerdict v = judgeDatasetReads(c, datasetIds);
+    if (!v.result().allowed()) {
+      auditDenial(c, AccessDenialAction.DATASET_REFS, v.denial());
+      throw new CodedApiException(HttpStatus.FORBIDDEN, v.result().code(), v.result().message());
     }
-    return r;
+    return v.result();
   }
 
   /**
@@ -342,25 +568,23 @@ public class DatasetAccessGuard {
    * 실패·빈 SQL·SELECT/DML 외 문장은 UnsafeSqlException(400) 이 그대로 올라간다.
    */
   public SqlAccessResult requireSql(Clearance c, String sql, SqlAccessMode mode) {
-    SqlJudgement j = judgeSql(c, sql, mode);
-    // AI 차단은 상세(action·levelName·policyKey)가 실린 원래 예외로 던진다 — 값 결과만으로는 errors 맵을 잃는다.
-    if (j.blocked() != null) {
-      throw j.blocked();
+    SqlVerdict v = judgeSql(c, sql, mode);
+    // AI 차단은 상세(action·levelName·policyKey)가 실린 원래 예외로 던진다 — 값 결과만으로는 errors 맵을 잃는다. 실제 사유는 AI
+    // 동작으로 감사한다(값 판정 judgeSql 은 감사하지 않으므로 던지는 여기서).
+    if (v.blocked() != null) {
+      auditDenial(c, AccessDenialAction.AI, v.denial());
+      throw v.blocked();
     }
-    SqlAccessResult r = j.result();
-    if (!r.allowed()) {
-      throw new CodedApiException(HttpStatus.FORBIDDEN, r.code(), r.message());
+    if (!v.result().allowed()) {
+      // 대화형(애드혹·데이터셋 /query·메트릭)은 SQL, 파이프라인 저장·실행은 PIPELINE 으로 구분해 남긴다.
+      auditDenial(
+          c,
+          mode == SqlAccessMode.INTERACTIVE ? AccessDenialAction.SQL : AccessDenialAction.PIPELINE,
+          v.denial());
+      throw new CodedApiException(HttpStatus.FORBIDDEN, v.result().code(), v.result().message());
     }
-    return r;
+    return v.result();
   }
-
-  /**
-   * {@link #checkSql} 의 결과 + (AI 차단이면) 상세 예외. 거부를 값으로 받았다가 나중에 던지는 호출부(애널리틱스 판정 토큰)와 {@link
-   * #requireSql} 이 차단 응답의 errors 맵(action·levelName·policyKey)을 잃지 않게 한다.
-   *
-   * @param blocked AI·공유 정책 차단이면 그 예외(result 는 같은 코드의 denied), 아니면 null
-   */
-  public record SqlJudgement(SqlAccessResult result, PolicyBlockedException blocked) {}
 
   /**
    * 참조 테이블 → 데이터셋 매핑 → 판정(스펙 §4.1). 거부를 값으로 돌려준다(차트가 {@code denied} 로 쓴다).
@@ -386,8 +610,12 @@ public class DatasetAccessGuard {
     return judgeSql(c, sql, mode).result();
   }
 
-  /** {@link #checkSql} 본문 — 판정 결과와 (AI 차단이면) 상세 예외를 함께 돌려준다. 계약은 {@link #checkSql} 과 같다. */
-  public SqlJudgement judgeSql(Clearance c, String sql, SqlAccessMode mode) {
+  /**
+   * {@link #checkSql} 과 같은 판정 + 감사용 거부 상세 + (AI 차단이면) 상세 예외. 규칙·순서·메시지는 checkSql Javadoc 그대로다 —
+   * 응답으로 나가는 {@link SqlAccessResult} 는 거부 사유를 구분하지 않고, 상세(실제 사유·테이블·데이터셋)는 {@link DenialDetail} 에만
+   * 싣는다.
+   */
+  public SqlVerdict judgeSql(Clearance c, String sql, SqlAccessMode mode) {
     if (sql == null || sql.isBlank()) {
       throw new UnsafeSqlException("SQL 이 비어 있습니다.");
     }
@@ -403,12 +631,12 @@ public class DatasetAccessGuard {
     Set<String> writeNames = new LinkedHashSet<>();
     for (SqlValidator.TableName t : refs.reads()) {
       if (!collect(t, dataSchema, mode, readNames)) {
-        return new SqlJudgement(accessDenied(), null);
+        return deniedVerdict("SQL_OTHER_SCHEMA", null, t.schema() + "." + t.name());
       }
     }
     for (SqlValidator.TableName t : refs.writes()) {
       if (!collect(t, dataSchema, mode, writeNames)) {
-        return new SqlJudgement(accessDenied(), null);
+        return deniedVerdict("SQL_OTHER_SCHEMA", null, t.schema() + "." + t.name());
       }
     }
 
@@ -418,8 +646,12 @@ public class DatasetAccessGuard {
     Map<String, AccessFacts> facts = accessRepository.findFactsByTableNames(all, c);
     for (String name : all) {
       AccessFacts f = facts.get(name);
-      if (f == null || !decide(c, f, DatasetAction.VIEW, null).allowed()) {
-        return new SqlJudgement(accessDenied(), null);
+      if (f == null) {
+        return deniedVerdict("SQL_UNMAPPED_TABLE", null, name);
+      }
+      Decision d = decide(c, f, DatasetAction.VIEW, null);
+      if (!d.allowed()) {
+        return deniedVerdict(d.reasonCode(), f.datasetId(), name);
       }
     }
 
@@ -430,11 +662,14 @@ public class DatasetAccessGuard {
       Optional<AiCall> ai = aiCallContext.current();
       if (ai.isPresent()) {
         for (String name : all) {
-          try {
-            requireAiFacts(c, facts.get(name), ai.get());
-          } catch (PolicyBlockedException e) {
-            return new SqlJudgement(
-                SqlAccessResult.denied(PolicyBlockedException.CODE, e.getMessage()), e);
+          AccessFacts f = facts.get(name);
+          AiBlock b = judgeAiFacts(c, f, ai.get());
+          if (b != null) {
+            // 값 판정 — 감사는 이 결과를 던지는 지점(requireSql·executeJudgedAnalytics)이 denial 로 한다.
+            return new SqlVerdict(
+                SqlAccessResult.denied(PolicyBlockedException.CODE, b.exception().getMessage()),
+                new DenialDetail(b.reasonCode(), f.datasetId(), name),
+                b.exception());
           }
         }
       }
@@ -458,24 +693,29 @@ public class DatasetAccessGuard {
       AccessFacts f = facts.get(name);
       writeIds.add(f.datasetId());
       exportAllowed &= decide(c, f, DatasetAction.EXPORT, null).allowed();
-      // 4) 쓰기 하향 금지(스펙 §4.1): 쓰기 대상 rank ≥ 읽기 최대 rank. VIEW 를 모두 통과한 뒤에만 오는 분기라
-      //    메시지의 등급 이름은 사용자가 이미 볼 수 있는 정보다. PIPELINE_SAVE 는 VIEW 만 본다(판단 사항 4).
-      if (mode != SqlAccessMode.PIPELINE_SAVE
+      // 4) 쓰기 하향 금지(스펙 §4.1)는 대화형 SQL 만. 파이프라인 실행은 게이트가 쓰기 대상을 자동 상향한다(§4.5), 저장은 VIEW 만
+      //    본다(판단 사항 4). VIEW 를 모두 통과한 뒤에만 오는 분기라 메시지의 등급 이름은 사용자가 이미 볼 수 있는 정보다.
+      if (mode == SqlAccessMode.INTERACTIVE
           && effective != null
           && f.level().rank() < effective.rank()) {
-        return new SqlJudgement(
+        return new SqlVerdict(
             SqlAccessResult.denied(
                 SQL_WRITE_DOWNGRADE_CODE, "'" + effective.name() + "' 데이터를 더 낮은 등급 데이터셋에 쓸 수 없습니다"),
-            null);
+            new DenialDetail(SQL_WRITE_DOWNGRADE_CODE, f.datasetId(), name));
       }
     }
-    return new SqlJudgement(
+    return new SqlVerdict(
         new SqlAccessResult(true, null, null, effective, readIds, writeIds, exportAllowed), null);
   }
 
   /** VIEW 계열 거부 — 사유(숨김·매핑 없음·없는 테이블·다른 스키마)를 구분하지 않는 단일 결과. */
   private static SqlAccessResult accessDenied() {
     return SqlAccessResult.denied(SQL_ACCESS_DENIED_CODE, SQL_ACCESS_DENIED_MESSAGE);
+  }
+
+  /** VIEW 계열 거부 판정 — 응답은 구분 불가 단일 결과, 실제 사유·대상은 감사용 상세에만. */
+  private static SqlVerdict deniedVerdict(String reason, Long datasetId, String tableName) {
+    return new SqlVerdict(accessDenied(), new DenialDetail(reason, datasetId, tableName));
   }
 
   /**
