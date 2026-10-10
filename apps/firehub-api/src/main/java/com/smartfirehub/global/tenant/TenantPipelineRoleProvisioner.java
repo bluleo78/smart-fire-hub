@@ -249,12 +249,31 @@ public class TenantPipelineRoleProvisioner {
             // 스키마 안 이름 조회는 될 수 있다 — 앱 메타데이터(public 테이블)를 못 읽게 하는 실제 방어선은 테이블 권한(이 롤·
             // PUBLIC 대상 SELECT GRANT 가 없음)이다.
             tx.execute("REVOKE ALL ON SCHEMA public FROM {0}", name(role));
-            if (schemaExists) {
-              tx.execute("GRANT USAGE ON SCHEMA {0} TO {1}", name(schema), name(role));
-            }
+          }
+          if (schemaExists) {
+            TenantSchemaProvisioner.grantPythonReadSchemaUsage(tx, tenantId, schema);
           }
         });
     log.info("PYTHON 읽기 슬롯 롤 준비 완료: tenant={} (search_path={})", tenantId, schema);
+  }
+
+  /**
+   * 스키마가 있으면 슬롯 롤의 스키마 USAGE 누락을 복구한다(CR10) — 기동 치유가 롤 존재 여부와 무관하게 부른다. 롤은 다 있는데 USAGE 만 빠진 상태(운영자
+   * 수동 REVOKE·부분 복원)는 "롤이 없을 때만 만든다" 판정으로는 영영 안 고쳐지고, 그 테넌트 PYTHON 이 {@code permission denied for
+   * schema} 로 멈추기 때문이다. 이미 완비면 조회 한 번뿐이다(카탈로그 쓰기 없음). 스키마가 없으면 아무것도 하지 않는다 — 지연 생성 설계 유지.
+   *
+   * @return USAGE 를 새로 건 롤 수
+   */
+  public int ensurePythonReadSchemaUsage(long tenantId) {
+    String schema = DataSchema.forTenant(tenantId);
+    return ownerDsl.transactionResult(
+        cfg -> {
+          DSLContext tx = DSL.using(cfg);
+          if (!TenantSchemaProvisioner.schemaExists(tx, schema)) {
+            return 0;
+          }
+          return TenantSchemaProvisioner.grantPythonReadSchemaUsage(tx, tenantId, schema);
+        });
   }
 
   /** 슬롯 롤 10개가 모두 있는가 — 기동 치유가 "없을 때만 만든다"를 판정할 때 쓴다. 하나라도 빠지면 false. */

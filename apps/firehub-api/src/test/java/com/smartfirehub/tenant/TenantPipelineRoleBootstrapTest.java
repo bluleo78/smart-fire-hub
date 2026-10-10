@@ -121,6 +121,46 @@ class TenantPipelineRoleBootstrapTest extends IntegrationTestBase {
     }
   }
 
+  /**
+   * 롤은 다 있는데 스키마 USAGE 만 빠진 상태(운영자 수동 REVOKE·부분 복원)를 기동 치유가 복구한다(CR10). 예전엔 "슬롯 롤이 없을 때만 만든다" 판정
+   * 뒤에만 USAGE 를 걸어, 이 상태의 테넌트 PYTHON 은 permission denied for schema 로 영구히 멈췄다.
+   */
+  @Test
+  void healTenant_restoresMissingSlotSchemaUsageEvenWhenRolesExist() {
+    long tenantId = TENANT_BASE + 22;
+    TenantRlsTestSupport.insertActiveTenant(dsl, tenantId);
+    String schema = DataSchema.forTenant(tenantId);
+    String roleName = TenantPipelineRole.roleName(tenantId);
+    String s4 = TenantPipelineRole.pythonReadRoleName(tenantId, 4);
+    String s7 = TenantPipelineRole.pythonReadRoleName(tenantId, 7);
+    try {
+      bootstrap.healTenant(tenantId); // 롤 + 슬롯 롤(스키마 없음)
+      TenantContext.runScoped(tenantId, schemaProvisioner::ensureCurrentTenantSchema);
+      assertThat(schemaUsage(s4, schema)).as("전제: 스키마 생성 시 USAGE").isTrue();
+      ownerDsl().execute("REVOKE USAGE ON SCHEMA " + schema + " FROM " + s4 + ", " + s7);
+      assertThat(schemaUsage(s4, schema)).as("전제: USAGE 회수됨").isFalse();
+
+      bootstrap.healTenant(tenantId);
+
+      for (int k = 1; k <= TenantPipelineRole.PYTHON_READ_SLOTS; k++) {
+        String slotRole = TenantPipelineRole.pythonReadRoleName(tenantId, k);
+        assertThat(schemaUsage(slotRole, schema)).as("치유 후 %s 의 스키마 USAGE", slotRole).isTrue();
+      }
+    } finally {
+      TenantRlsTestSupport.cleanupAll(
+          () -> TenantRlsTestSupport.dropSchemasCreatedByThisTest(ownerDsl(), schema),
+          () -> TenantRlsTestSupport.dropPythonReadRoles(ownerDsl(), tenantId),
+          () -> TenantRlsTestSupport.dropPipelineLoginRole(ownerDsl(), roleName),
+          () -> TenantRlsTestSupport.deleteTenants(dsl, tenantId));
+    }
+  }
+
+  private boolean schemaUsage(String role, String schema) {
+    return ownerDsl()
+        .fetchOne("select has_schema_privilege(?, ?, 'USAGE')", role, schema)
+        .get(0, Boolean.class);
+  }
+
   private boolean roleExists(String roleName) {
     return TenantRlsTestSupport.roleExists(ownerDsl(), roleName);
   }
