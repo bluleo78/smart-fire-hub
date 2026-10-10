@@ -69,9 +69,9 @@ class PythonReadRoleProvisioningTest extends IntegrationTestBase {
         .get(0, Boolean.class);
   }
 
-  /** V138 + AFTER_MIGRATE 콜백 — 테넌트 1 의 슬롯 롤 10개가 파생 비밀번호로 실제 로그인된다(배포 직후 상태). */
+  /** V137 + AFTER_MIGRATE 콜백 — 테넌트 1 의 슬롯 롤 10개가 파생 비밀번호로 실제 로그인된다(배포 직후 상태). */
   @Test
-  void v138_tenant1SlotRolesLoginWithDerivedPassword() throws SQLException {
+  void v137_tenant1SlotRolesLoginWithDerivedPassword() throws SQLException {
     for (int k = 1; k <= TenantPipelineRole.PYTHON_READ_SLOTS; k++) {
       String role = TenantPipelineRole.pythonReadRoleName(1, k);
       assertThat(loginAs(role, TenantPipelineRole.pythonReadPassword(1, k, secret)))

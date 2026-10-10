@@ -1,4 +1,4 @@
--- V138: PYTHON 스텝 등급별 읽기 슬롯 롤(WD-29, 스펙 2026-10-09 §4.1·§4.4).
+-- V137: PYTHON 스텝 등급별 읽기 슬롯 롤(WD-29, 스펙 2026-10-09 §4.1·§4.4).
 --
 -- 테넌트마다 pipeline_py_t{id}_s{k}(k=1..10) LOGIN 롤을 만든다. 슬롯 k 는 "등급 rank 오름차순 k 번째까지"의
 -- 데이터셋을 읽는 롤이다. 테이블 SELECT 는 여기서 주지 않는다 — 앱의 PythonReadGrantSync(런타임 app_tenant,

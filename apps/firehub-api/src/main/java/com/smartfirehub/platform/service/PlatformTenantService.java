@@ -150,7 +150,7 @@ public class PlatformTenantService {
         description,
         Map.of("tenantSlug", tenant.slug(), "tenantName", tenant.name()));
     if ("ACTIVE".equals(status)) {
-      // 재개 시 파이프라인 롤(실행 롤 + PYTHON 읽기 슬롯 롤)을 보장한다(WD-29). V138·기동 치유는 ACTIVE 테넌트만
+      // 재개 시 파이프라인 롤(실행 롤 + PYTHON 읽기 슬롯 롤)을 보장한다(WD-29). V137·기동 치유는 ACTIVE 테넌트만
       // 돌므로, 그때 정지 상태였던 테넌트는 슬롯 롤 없이 재개되고 PYTHON 이 "롤이 준비되지 않았습니다"로 전부 거부된다
       // (fail-closed 지만 가용성 결함). 멱등이고, 생성과 같은 이유로 감사 뒤 마지막에 두며 실패는 전파한다 — 삼키면
       // "ACTIVE 인데 롤 없음"이 커밋으로 확정되고, 전파하면 상태 변경이 롤백돼 재시도할 수 있다.

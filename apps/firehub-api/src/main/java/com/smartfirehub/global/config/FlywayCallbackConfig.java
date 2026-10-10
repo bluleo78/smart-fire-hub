@@ -65,7 +65,7 @@ public class FlywayCallbackConfig {
         if (roleExists(connection, roleName)) {
           rolePasswords.put(roleName, TenantPipelineRole.password(tenantId, secret));
         }
-        // PYTHON 읽기 슬롯 롤(WD-29). V138 이 임의 비밀번호로 만든 롤을 여기서 파생값으로 맞춘다 — 빠지면 배포 직후
+        // PYTHON 읽기 슬롯 롤(WD-29). V137 이 임의 비밀번호로 만든 롤을 여기서 파생값으로 맞춘다 — 빠지면 배포 직후
         // 모든 PYTHON 스텝이 인증 실패로 멈춘다(FlywayCallbackConfigSlotRoleTest 가 고정). 없는 슬롯은 위와 같은
         // 이유로 조용히 건너뛴다.
         for (int slot = 1; slot <= TenantPipelineRole.PYTHON_READ_SLOTS; slot++) {

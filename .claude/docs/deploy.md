@@ -255,7 +255,7 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
 - executor·ai-agent 는 재배포 불필요. executor 는 변경 없음. ai-agent 는 `src/mcp/api-client/analytics-api.ts` 의 **TypeScript 타입만** 바뀌었다(`Chart.savedQueryName` 을 `string | null` 로, `ChartData.denied?` 추가) — 이 필드를 읽는 런타임 코드가 없고 타입은 빌드 시 지워지므로 실행 동작이 같다.
 - 마이그레이션 V133: 전 테넌트에 4등급 시드 + 기존 데이터셋·역할=내부, 시스템 ADMIN=기밀 백필 → **배포 직후 가시성은 배포 전과 같다**(내부 이하는 허용 목록 없음).
 - 마이그레이션 V134(후속 수정, 같은 릴리스): GraphRAG 검수 항목 유일 인덱스 `uq_graph_review_item` 을 `(tenant_id, item_type, dedupe_key)` 에서 `(tenant_id, item_type, dataset_id, dedupe_key) NULLS NOT DISTINCT` 로 교체한다(인덱스 이름 유지). `NULLS NOT DISTINCT` 는 **PostgreSQL 15 이상** 문법이다 — 운영 DB 가 PG16 인지 배포 전에 확인한다(`select version()`). 새 키는 옛 키의 상위 집합이라 기존 행이 위반할 수 없다(아래 사전 확인 쿼리로 확인).
-- 다음 마이그레이션은 V135(아래 V135 절)·V136(아래 V136 절)이다. **다음 신규 마이그레이션 번호 = V137**(V135 절과 같은 값 — 새 마이그레이션을 더하면 두 곳을 함께 갱신한다).
+- 다음 마이그레이션은 V135(아래 V135 절)·V136(아래 V136 절)이다. **다음 신규 마이그레이션 번호 = V138**(V135 절과 같은 값 — 새 마이그레이션을 더하면 두 곳을 함께 갱신한다).
 - **번호 확인**(V133·V134 작성 당시 기록): 2026-10-08 기준 main 의 최신 마이그레이션은 V132 였고 이 브랜치의 V133·V134 는 맞는 번호였다. **병합 직전에 실제 main 의 마이그레이션 목록을 다시 확인한다**(번호 충돌 전례 — V122). 배포 전 스냅샷 규칙(V122 이상)은 그대로 따른다.
 - 아래 확인 쿼리는 전부 **소유자 롤로 실행**한다(`docker exec <db> psql -U app -d smartfirehub`) — 런타임 롤 `app_tenant` 는 RLS 라 행이 0 으로 보여 확인이 공허해진다.
 - 배포 전 확인:
@@ -307,12 +307,12 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
   - **남은 이름 노출**(WD-31): 숨김 데이터셋의 **테이블명**이 다음 경로에는 남는다(내용·행은 아님).
     - 파이프라인 스텝 SQL 원문(`scriptContent`)·저장 쿼리 SQL 원문(`sqlText`) 안의 테이블명 — **허용(결정, 2026-10-09 WD-31③)**: 원문을 고치면 실행이 바뀌므로 가리지 않는다.
     - PYTHON 슬롯 롤도 `pg_catalog`·`information_schema` 로 테이블 **이름**은 볼 수 있다(SELECT 권한 없이도, WD-29 잔여).
-    - ~~차트 `config`~~ → V138 에서 해결: 저장 쿼리를 볼 수 없는 조회자에게 `config:null, configWithheld:true`(빌더 편집 잠금). 아래 V138 절의 알려진 한계 참고.
-    - ~~API 가져오기 기본 이름~~ → V138 에서 해결: 기본값 `API Import #<datasetId>`. **기존 파이프라인·트리거 이름은 이관하지 않는다**(배포 전에 만든 `<데이터셋 이름> API Import` 이름은 그대로 남는다 — 필요하면 소유자가 이름을 바꾼다). 감사 로그 설명의 데이터셋명은 허용(관리자 전용).
+    - ~~차트 `config`~~ → V137 에서 해결: 저장 쿼리를 볼 수 없는 조회자에게 `config:null, configWithheld:true`(빌더 편집 잠금). 아래 V137 절의 알려진 한계 참고.
+    - ~~API 가져오기 기본 이름~~ → V137 에서 해결: 기본값 `API Import #<datasetId>`. **기존 파이프라인·트리거 이름은 이관하지 않는다**(배포 전에 만든 `<데이터셋 이름> API Import` 이름은 그대로 남는다 — 필요하면 소유자가 이름을 바꾼다). 감사 로그 설명의 데이터셋명은 허용(관리자 전용).
   - **실행 기록 원문 판정의 시점**(WD-27 잔여): 실행 단위·스텝 원문 공개는 **현재** 스텝 정의와 **현재** 등급으로 판정한다 — 실행 뒤 스텝 정의를 바꾸거나 등급을 내리면 과거 실행의 원문이 그 시점 기준으로는 못 볼 조회자에게 보일 수 있다. 판정 중 DB 예외가 나면 500 으로 끝난다(원문은 나가지 않는다).
   - **편집기 숨김 표시의 상한**(WD-31): 파이프라인 편집기·트리거 폼의 "열람 권한 없음" 잠금 표시는 데이터셋 목록(최대 1만 건) 안에서만 정확하다 — 1만 건을 넘는 테넌트에서는 볼 수 있는 데이터셋도 잠금으로 보일 수 있다(서버 판정에는 영향 없음).
   - **API_CALL·PYTHON 지정 출력은 같은 값 재전송도 판정한다**(WD-31): SQL 스텝과 달리 이미 저장된 지정 출력을 그대로 다시 보내도 편집자의 VIEW 를 본다 — 그 출력을 볼 자격을 잃은 편집자는 그 파이프라인을 저장할 수 없다(다른 편집자가 저장하거나 출력을 바꾼다).
-  - **PYTHON 입력 읽기**(WD-29): V138 배포 **전까지** PYTHON 스텝의 입력 읽기는 SQL 관문을 거치지 않는 알려진 우회 경로다(출력 쓰기는 막혔다). 이 우회로 숨김 데이터를 읽은 PYTHON 스텝이 공개 출력에 쓰면, 그 스텝의 로그·오류 원문이 출력을 볼 수 있는 조회자에게 보일 수 있다(실행 기록 원문 판정이 입력을 모르기 때문). **V138 부터** DB 권한(등급별 슬롯 롤)으로 막는다(아래 V138 절). 남은 한계:
+  - **PYTHON 입력 읽기**(WD-29): V137 배포 **전까지** PYTHON 스텝의 입력 읽기는 SQL 관문을 거치지 않는 알려진 우회 경로다(출력 쓰기는 막혔다). 이 우회로 숨김 데이터를 읽은 PYTHON 스텝이 공개 출력에 쓰면, 그 스텝의 로그·오류 원문이 출력을 볼 수 있는 조회자에게 보일 수 있다(실행 기록 원문 판정이 입력을 모르기 때문). **V137 부터** DB 권한(등급별 슬롯 롤)으로 막는다(아래 V137 절). 남은 한계:
     - 허용 목록 등급 데이터는 PYTHON 에서 **아무도** 읽지 못한다(허용 목록은 사용자 단위라 롤로 표현할 수 없다, 보수적).
     - 테이블 이름 노출(위 "남은 이름 노출").
     - 등급 변경 직후 실행 중이던 스크립트는 시작 시점 권한으로 계속 읽는다. 다음 실행 직전 재동기화가 반영한다.
@@ -341,7 +341,7 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
   - ai-agent 만 새 버전이면 판정 엔드포인트(`/ontology/{id}/graph-access`)가 404 다. 그러면 **모든 그래프 읽기가 막힌다**(fail-closed) — MCP 두 도구는 제한 문구, 시각화는 구 api 가 ai-agent 의 403 을 몰라 오류로 보인다. 쓰기(적재·검수 반영)는 영향 없다.
   - web 이 구버전이면 제한이 "그래프를 불러오지 못했습니다" 오류(재시도 버튼)로 보인다.
 - 마이그레이션 V135: `graph_ontology_source`(tenant_id, ontology_id, dataset_id, first_written_at) + RLS(`graph_ontology_source_tenant_isolation`, FORCE 없음) + 인덱스 `idx_graph_ontology_source_ontology(ontology_id)`(판정·CASCADE 용) + 백필. 백필은 현재 `dataset_ontology` 전부 ∪ `dataset_mapping` 전부(draft 포함)다. 이후 연결(`dataset_ontology`)·매핑 저장 때마다 출처를 삽입만 한다(재연결·매핑 삭제로 지우지 않음, 온톨로지 삭제 시 CASCADE).
-- **번호 확인**: 2026-10-08 기준 main 최신은 V134. **병합 직전에 실제 main 의 마이그레이션 목록을 다시 확인한다**(V122 충돌 전례). 배포 전 스냅샷 규칙(V122 이상)을 따른다. **다음 신규 마이그레이션 번호 = V137**(2026-10-10 갱신 — V136 = 데이터셋 보안 S4 `analytics_query_run`).
+- **번호 확인**: 2026-10-08 기준 main 최신은 V134. **병합 직전에 실제 main 의 마이그레이션 목록을 다시 확인한다**(V122 충돌 전례). 배포 전 스냅샷 규칙(V122 이상)을 따른다. **다음 신규 마이그레이션 번호 = V138**(2026-10-10 갱신 — V136 = 데이터셋 보안 S4 `analytics_query_run`, V137 = 흐름 C PYTHON 읽기 슬롯 롤).
 - 아래 쿼리는 전부 **소유자 롤로 실행**한다(`docker exec <db> psql -U app -d smartfirehub`). `app_tenant` 는 RLS 때문에 0행으로 보여 공허해진다.
 - 배포 전 확인:
   - `select max(version::int) from flyway_schema_history` 가 134 인지.
@@ -424,7 +424,7 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
 
 ### V136 데이터셋 보안 S4 — 출구·전파·감사 (WD-42·43·44·30, 계획 2026-10-09 · 배포일은 배포 시점에 갱신)
 
-- **배포 모듈: api + web + ai-agent + executor 를 한 번에 배포한다**(흐름 A 마이그레이션 없음·B V136·C V137 일괄, 보충 스펙 §1). 두 흐름의 마이그레이션이 한 배포에서 함께 적용된다(흐름 C 의 V137 절 참고). **C 는 병합 직전 V137 로 재번호한다(현재 C 워크트리는 V138).**
+- **배포 모듈: api + web + ai-agent + executor 를 한 번에 배포한다**(흐름 A 마이그레이션 없음·B V136·C V137 일괄, 보충 스펙 §1). 두 흐름의 마이그레이션이 한 배포에서 함께 적용된다(흐름 C 의 V137 절 참고). C 는 rebase 후 V137 로 재번호됐다(2026-10-10).
   - api 와 web 은 반드시 함께 — 쿼리 결과 내보내기 엔드포인트가 바뀌었다. 구 web 은 없어진 `POST /api/v1/query-results/export` 를 불러 404 가 난다. 새 엔드포인트는 `POST /api/v1/analytics/queries/runs/{runId}/export`.
   - 흐름 C(executor 슬롯 롤 읽기 제한)와도 반드시 함께 — 아래 PYTHON 출력 등급은 C 의 슬롯 롤이 실제로 읽을 수 있는 범위를 전제로 한다. B 만 먼저 나가면 PYTHON 이 앱 연결로 더 높은 등급을 읽고도 출력은 낮게 매겨질 수 있다(과소 등급).
 - **마이그레이션:** V136 `analytics_query_run`(새 테이블, RLS 형태 (a), FORCE 없음). 기존 데이터 변경 없음. 배포 전 스냅샷 규칙(V122 이상)은 그대로 따른다. **병합 직전에 실제 main 의 마이그레이션 목록을 다시 확인한다**(V122 충돌 전례).
@@ -487,20 +487,20 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
   - PYTHON 출력 등급은 흐름 C 의 슬롯 롤 읽기 제한과 함께여야 실제 읽기와 일치한다(위 배포 모듈).
   - 지정 출력이 이미 입력과 같은(허용 목록 필요) 등급이면 상향이 없으므로 허용 목록을 좁히지 않는다 — 입력 목록에는 없고 출력 목록에만 있는 구성원이 출력을 볼 수 있다(대화형 SQL 의 rank 판정과 같은 성격).
 
-### V138 PYTHON 등급별 읽기 롤 · 차트 설정 가림 · API 가져오기 이름 (WD-29·WD-31②④, 계획 2026-10-09 · 배포일은 배포 시점에 갱신)
+### V137 PYTHON 등급별 읽기 롤 · 차트 설정 가림 · API 가져오기 이름 (WD-29·WD-31②④, 계획 2026-10-09 · 배포일은 배포 시점에 갱신)
 
-- **번호:** 이 절은 V138 로 적었다(작성 시점 브랜치 기준 V136·V137 은 다른 흐름 예약). **병합 직전 실제 main 의 마이그레이션 목록을 다시 보고 최신 +1 로 재확인한다(R7, V122 충돌 전례)** — 다르면 파일 이름과 이 절의 번호를 함께 고친다.
+- **번호:** V137(2026-10-10 main 위 rebase 시 확인 — main 최신 V136 `analytics_query_run` +1, 공통 결정 R7. 작성 당시 V138 이었다). **병합 직전 실제 main 의 마이그레이션 목록을 한 번 더 확인한다(V122 충돌 전례)** — 다르면 파일 이름과 이 절의 번호를 함께 고친다.
 - **배포 결합:** 보안 흐름 A·B·C 를 한 번에 배포한다(api + web + ai-agent + **executor**). C 에서 반드시 함께 나가야 하는 조합은 다음과 같다.
   - **api + executor 동시 필수.**
     - 구 api + 신 executor: `readSlot` 이 없어 **모든 PYTHON 스텝이 422 로 실패**한다.
     - 신 api + 구 executor: `readSlot` 을 무시하고 테넌트 롤로 실행한다. 즉 우회가 그대로 남는다.
   - web 이 구버전이면 가려진 차트의 빌더가 `config:null` 에서 기본 설정으로 보이다가, 저장 시 config 를 보내 **기존 설정을 덮어쓸 수 있다**. web 도 함께 배포한다.
   - 등급 정의 변경·데이터셋 등급 변경의 **재동기화 이벤트 발행은 흐름 B 소유**다(C 는 리스너만 둔다). C 단독 상태(또는 B 보다 먼저 배포된 상태)에서는 이벤트가 오지 않으므로, 등급을 바꾼 직후 슬롯 롤의 GRANT 는 잠시 옛 값이다 — 그래도 **PYTHON 실행 직전(JIT) 동기화**가 실행마다 GRANT 를 계산값에 맞추고, 기동 시·하루 1회(기본 03:20, `app.pipeline.python-read-sync.cron`) 전체 동기화가 드리프트를 회복하므로 실행 시점의 정합성은 지켜진다(2026-10-09 격리 라이브: 등급 하향 직후 슬롯 GRANT 0 → 다음 실행 직전 동기화가 반영).
-- **마이그레이션 V138:** ACTIVE 테넌트마다 `pipeline_py_t{id}_s1..s10` LOGIN 롤(NOINHERIT, NOSUPERUSER·NOCREATEROLE 등), `CONNECT`, DB 한정 `search_path`, 직접 부여된 `public` 스키마 권한 회수, 데이터 스키마가 있으면 `USAGE`. 비밀번호는 임의값으로 만들고 같은 기동의 AFTER_MIGRATE 콜백이 `PIPELINE_ROLE_PASSWORD_SECRET` 파생값(HMAC, 메시지=롤 이름)으로 맞춘다. 테이블 SELECT 는 api 기동 시 동기화(`PythonReadGrantSync`)가 건다. 테이블 변경이 없으므로 jOOQ 재생성은 필요 없다.
-  - 정지(SUSPENDED) 테넌트는 V138 이 롤을 만들지 않는다. **재개(정지→ACTIVE) 시 실행 롤과 슬롯 롤을 함께 보장**한다(감사 기록 뒤 마지막 단계, 실패하면 상태 변경이 롤백돼 재시도할 수 있다). `PIPELINE_ROLE_AUTO_PROVISION=false` 면 재개해도 만들지 않으므로 수동으로 만든다(그 테넌트의 PYTHON 은 "Python 읽기 롤이 준비되지 않았습니다" 로 실패).
+- **마이그레이션 V137:** ACTIVE 테넌트마다 `pipeline_py_t{id}_s1..s10` LOGIN 롤(NOINHERIT, NOSUPERUSER·NOCREATEROLE 등), `CONNECT`, DB 한정 `search_path`, 직접 부여된 `public` 스키마 권한 회수, 데이터 스키마가 있으면 `USAGE`. 비밀번호는 임의값으로 만들고 같은 기동의 AFTER_MIGRATE 콜백이 `PIPELINE_ROLE_PASSWORD_SECRET` 파생값(HMAC, 메시지=롤 이름)으로 맞춘다. 테이블 SELECT 는 api 기동 시 동기화(`PythonReadGrantSync`)가 건다. 테이블 변경이 없으므로 jOOQ 재생성은 필요 없다.
+  - 정지(SUSPENDED) 테넌트는 V137 이 롤을 만들지 않는다. **재개(정지→ACTIVE) 시 실행 롤과 슬롯 롤을 함께 보장**한다(감사 기록 뒤 마지막 단계, 실패하면 상태 변경이 롤백돼 재시도할 수 있다). `PIPELINE_ROLE_AUTO_PROVISION=false` 면 재개해도 만들지 않으므로 수동으로 만든다(그 테넌트의 PYTHON 은 "Python 읽기 롤이 준비되지 않았습니다" 로 실패).
 - **사전 점검(소유자 롤로 실행: `docker exec <db> psql -U app -d smartfirehub`):**
-  1. `select max(version::int) from flyway_schema_history` 가 이 마이그레이션 번호 −1 인지.
-  2. `select rolsuper, rolcreaterole from pg_roles where rolname = 'app'` — 둘 중 하나가 `t` 여야 V138 이 롤을 만들 수 있다(V83·V111 선례). 둘 다 `f` 면 V138 이 실패하고 api 가 기동하지 않는다.
+  1. `select max(version::int) from flyway_schema_history` 가 135 인지(A·B·C 동시 배포 — V136·V137 이 한 기동에서 함께 적용된다. 이미 V136 만 나갔다면 136).
+  2. `select rolsuper, rolcreaterole from pg_roles where rolname = 'app'` — 둘 중 하나가 `t` 여야 V137 이 롤을 만들 수 있다(V83·V111 선례). 둘 다 `f` 면 V137 이 실패하고 api 가 기동하지 않는다.
   3. 등급 상한: `SELECT tenant_id, count(*) FROM security_level GROUP BY 1 HAVING count(*) > 10` → 0행이어야 한다. 행이 있으면 11번째 이후 위치의 데이터셋은 PYTHON 에서 읽히지 않고, 그 자격자의 PYTHON 은 실패한다. 중단 후 상의한다.
   4. PYTHON 스텝 보유 파이프라인: `SELECT p.tenant_id, count(DISTINCT p.id) FROM pipeline p JOIN pipeline_step s ON s.pipeline_id = p.id WHERE s.script_type = 'PYTHON' GROUP BY 1`
   5. 허용 목록 등급 데이터셋: `SELECT d.tenant_id, l.name, count(*) FROM dataset d JOIN security_level l ON l.id = d.security_level_id WHERE l.allowlist_required GROUP BY 1, 2` — PYTHON 이 이 테이블을 읽고 있었다면 배포 후 실패한다.
@@ -529,8 +529,8 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
   - 차트 `config` 가림은 **조회 시점의 저장 쿼리 판정**이다 — 작성자가 나중에 저장 쿼리 SQL 을 공개 데이터만 읽도록 바꾸면 옛 `config`(예전 컬럼명)는 더 이상 가려지지 않는다(작성자 자신의 변경이라 수용).
   - `config` 가 가려진 소유자가 차트 타입을 MAP 으로 바꾸는 PUT 은, 기존 `config` 에 `spatialColumn` 이 있는지에 따라 검증 성공/400 이 갈린다 — 1비트 노출이며 영향이 작아 수용.
   - 슬롯 GRANT 는 SELECT 만 본다 — 손으로 건 INSERT 등 비SELECT 권한은 동기화가 탐지·회수하지 않는다(GRANT 경로가 SELECT 만 주므로 제품 경로로는 생기지 않는다). 또한 PUBLIC 대상 GRANT(`GRANT SELECT … TO PUBLIC`)와 뷰를 통한 우회 읽기도 탐지하지 않는다(동기화는 슬롯 롤 대상 테이블 ACL 만 본다).
-- **롤백:** api·executor 를 **함께** 되돌린다(한쪽만 되돌리면 위 결합 문제). V138 롤은 남겨도 무해하다(구 코드는 쓰지 않는다). 지우려면 롤마다 `REVOKE ALL ON DATABASE … FROM r; DROP OWNED BY r; DROP ROLE r` 를 실행한다.
-- **번호:** 다음 신규 마이그레이션 = V139(위 재확인 결과에 맞춰 함께 고친다).
+- **롤백:** api·executor 를 **함께** 되돌린다(한쪽만 되돌리면 위 결합 문제). V137 롤은 남겨도 무해하다(구 코드는 쓰지 않는다). 지우려면 롤마다 `REVOKE ALL ON DATABASE … FROM r; DROP OWNED BY r; DROP ROLE r` 를 실행한다.
+- **번호:** 다음 신규 마이그레이션 = V138(위 재확인 결과에 맞춰 함께 고친다).
 
 ### opencode baseURL 사설망 점검 (이슈 #698)
 
