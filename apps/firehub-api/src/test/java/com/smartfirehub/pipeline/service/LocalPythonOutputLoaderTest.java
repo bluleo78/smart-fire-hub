@@ -54,6 +54,26 @@ class LocalPythonOutputLoaderTest {
     assertThat(c(true, "DECIMAL")).isNull();
   }
 
+  /**
+   * 비유한수: executor 는 Decimal(str(v)) 로 NaN/Infinity 를 만들고 psycopg2 가 그 전부를 'NaN'::numeric 으로
+   * 보낸다(CR6) — 로컬 경로도 Double.NaN 을 넘겨 NUMERIC 에 NaN 이 들어가게 한다. Python 이 거부하는 철자(infinit·nan.5)는
+   * None.
+   */
+  @Test
+  void decimal_nonFinite_becomesNaNLikePsycopg2() {
+    assertThat(c(Double.NaN, "DECIMAL")).isEqualTo(Double.NaN);
+    assertThat(c(Double.POSITIVE_INFINITY, "NUMERIC")).isEqualTo(Double.NaN);
+    assertThat(c(Double.NEGATIVE_INFINITY, "FLOAT")).isEqualTo(Double.NaN);
+    for (String s : List.of("NaN", " -nan ", "Infinity", "-inf", "inFINity", "sNaN5", "nan1_0")) {
+      assertThat(c(s, "DOUBLE")).as(s).isEqualTo(Double.NaN);
+    }
+    assertThat(c("infinit", "DECIMAL")).isNull();
+    assertThat(c("nan.5", "DECIMAL")).isNull();
+    // INTEGER·TEXT 는 그대로 Python 규칙: int('nan') 은 ValueError, str(nan) 은 'nan'
+    assertThat(c(Double.NaN, "INTEGER")).isNull();
+    assertThat(c(Double.POSITIVE_INFINITY, "TEXT")).isEqualTo("inf");
+  }
+
   @Test
   void boolean_matchesPythonTruthTable() {
     assertThat(c(true, "BOOLEAN")).isEqualTo(true);
@@ -117,6 +137,11 @@ class LocalPythonOutputLoaderTest {
     assertThat(LocalPythonOutputLoader.parseStdoutJson("{\"a\":1}")).isNull();
     assertThat(LocalPythonOutputLoader.parseStdoutJson("x")).isNull();
     assertThat(LocalPythonOutputLoader.parseStdoutJson("[]")).isNull();
+    // json.dumps 는 float nan/inf 를 NaN/Infinity/-Infinity 토큰으로 쓰고 json.loads 는 받아들인다
+    assertThat(
+            LocalPythonOutputLoader.parseStdoutJson("[{\"a\":NaN,\"b\":Infinity,\"c\":-Infinity}]"))
+        .containsExactly(
+            Map.of("a", Double.NaN, "b", Double.POSITIVE_INFINITY, "c", Double.NEGATIVE_INFINITY));
     assertThat(LocalPythonOutputLoader.parseStdoutJson("")).isNull();
   }
 

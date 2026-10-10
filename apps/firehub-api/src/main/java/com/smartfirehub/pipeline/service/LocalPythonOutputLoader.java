@@ -209,6 +209,14 @@ public class LocalPythonOutputLoader {
       Pattern.compile(
           "[+-]?(?:[0-9](?:_?[0-9])*(?:\\.(?:[0-9](?:_?[0-9])*)?)?|\\.[0-9](?:_?[0-9])*)(?:[eE][+-]?[0-9](?:_?[0-9])*)?");
 
+  /**
+   * Python Decimal() 문자열 문법 중 비유한수 — NaN·sNaN(뒤에 진단 숫자 허용)·Inf·Infinity, 부호 선택, 대소문자 무시. JSON 의
+   * {@code NaN}/{@code Infinity} 토큰은 float 로 읽혀 str() 이 {@code nan}/{@code inf} 가 되므로 이 문법으로 들어온다.
+   */
+  private static final Pattern PY_DECIMAL_NON_FINITE =
+      Pattern.compile(
+          "[+-]?(?:inf(?:inity)?|s?nan(?:[0-9](?:_?[0-9])*)?)", Pattern.CASE_INSENSITIVE);
+
   /** 값 하나를 대상 타입으로 바꾼다. 실패하면 null(원본과 같이 경고만). 알 수 없는 타입은 그대로. */
   static Object convertSingle(Object value, String dtype) {
     if (value == null) {
@@ -230,6 +238,13 @@ public class LocalPythonOutputLoader {
         }
         case "DECIMAL", "NUMERIC", "FLOAT", "DOUBLE" -> {
           String s = pyStr(value).strip();
+          // executor 는 Decimal('nan'/'inf'...) 를 만들고 psycopg2 는 비유한 Decimal 을 부호·종류와 무관하게 전부
+          // 'NaN'::numeric 으로 보낸다(Infinity 도 NaN — psycopg2 2.9 Decimal 어댑터 실측). 같은 결과가 되도록 NaN 을
+          // 넘긴다
+          // (float8 NaN 이 NUMERIC 컬럼에 대입 캐스트되어 NaN 이 된다). BigDecimal 은 NaN 을 표현하지 못한다.
+          if (PY_DECIMAL_NON_FINITE.matcher(s).matches()) {
+            return Double.NaN;
+          }
           if (!PY_DECIMAL.matcher(s).matches()) {
             throw new NumberFormatException("invalid Decimal literal: '" + s + "'");
           }
