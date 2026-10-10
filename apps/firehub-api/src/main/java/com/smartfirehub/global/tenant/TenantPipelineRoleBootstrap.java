@@ -117,8 +117,7 @@ public class TenantPipelineRoleBootstrap {
     if (!roleProvisioner.roleExists(tenantId)) {
       roleProvisioner.ensureRole(tenantId);
     }
-    // PYTHON 읽기 슬롯 롤(WD-29)도 같은 원칙 — 없을 때만 만든다. 비밀번호 회전은 RolePasswordSyncCallback 이
-    // 한다.
+    // PYTHON 읽기 슬롯 롤(WD-29)도 같은 원칙 — 없을 때만 만든다. 비밀번호 회전은 RolePasswordSyncCallback 몫.
     if (!roleProvisioner.pythonReadRolesExist(tenantId)) {
       roleProvisioner.ensurePythonReadRoles(tenantId);
     }

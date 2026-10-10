@@ -45,6 +45,8 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Queue;
 import java.util.Set;
+import java.util.function.Function;
+import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -768,7 +770,7 @@ public class PipelineAsyncRunner {
           if (pyOutputTable == null) {
             executionLog = outputText;
           } else {
-            java.util.function.Supplier<PythonLoad> load =
+            Supplier<PythonLoad> load =
                 () ->
                     loadPythonOutput(
                         pyOutputTable,
@@ -1140,7 +1142,7 @@ public class PipelineAsyncRunner {
    * 예외를 다시 던진다 — 원본은 그대로다. REPLACE 가 아니면 출력 테이블(없으면 null)로 바로 부른다.
    */
   private PythonLoad loadPythonOutput(
-      String outputTable, boolean isReplace, java.util.function.Function<String, PythonLoad> load) {
+      String outputTable, boolean isReplace, Function<String, PythonLoad> load) {
     if (!isReplace) {
       return load.apply(outputTable);
     }

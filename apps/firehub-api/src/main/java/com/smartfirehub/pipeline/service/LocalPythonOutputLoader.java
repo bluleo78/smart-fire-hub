@@ -9,6 +9,7 @@ import com.smartfirehub.pipeline.exception.ScriptExecutionException;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.time.DateTimeException;
+import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -17,6 +18,7 @@ import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.time.format.ResolverStyle;
+import java.time.temporal.IsoFields;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -258,9 +260,8 @@ public class LocalPythonOutputLoader {
         case "DECIMAL", "NUMERIC", "FLOAT", "DOUBLE" -> {
           String s = pyStr(value).strip();
           // executor 는 Decimal('nan'/'inf'...) 를 만들고 psycopg2 는 비유한 Decimal 을 부호·종류와 무관하게 전부
-          // 'NaN'::numeric 으로 보낸다(Infinity 도 NaN — psycopg2 2.9 Decimal 어댑터 실측). 같은 결과가 되도록 NaN 을
-          // 넘긴다
-          // (float8 NaN 이 NUMERIC 컬럼에 대입 캐스트되어 NaN 이 된다). BigDecimal 은 NaN 을 표현하지 못한다.
+          // 'NaN'::numeric 으로 보낸다(Infinity 도 NaN — psycopg2 2.9 실측). 같은 결과가 되도록 NaN 을 넘긴다
+          // (float8 NaN 이 NUMERIC 컬럼에 대입 캐스트되어 NaN). BigDecimal 은 NaN 을 표현하지 못한다.
           if (PY_DECIMAL_NON_FINITE.matcher(s).matches()) {
             return Double.NaN;
           }
@@ -417,11 +418,9 @@ public class LocalPythonOutputLoader {
       if (week < 1 || day < 1 || day > 7) {
         throw new DateTimeException("Invalid isoformat string: '" + s + "'");
       }
-      LocalDate weekOne =
-          LocalDate.of(year, 1, 4).with(java.time.temporal.IsoFields.WEEK_OF_WEEK_BASED_YEAR, 1);
-      LocalDate result =
-          weekOne.with(java.time.DayOfWeek.MONDAY).plusWeeks(week - 1L).plusDays(day - 1L);
-      if (result.get(java.time.temporal.IsoFields.WEEK_BASED_YEAR) != year) {
+      LocalDate weekOne = LocalDate.of(year, 1, 4).with(IsoFields.WEEK_OF_WEEK_BASED_YEAR, 1);
+      LocalDate result = weekOne.with(DayOfWeek.MONDAY).plusWeeks(week - 1L).plusDays(day - 1L);
+      if (result.get(IsoFields.WEEK_BASED_YEAR) != year) {
         throw new DateTimeException("Invalid week: " + week);
       }
       return result;

@@ -262,10 +262,7 @@ public class TenantSchemaProvisioner {
    * @return USAGE 를 새로 건 롤 수
    */
   static int grantPythonReadSchemaUsage(DSLContext tx, long tenantId, String schema) {
-    String[] roles = new String[TenantPipelineRole.PYTHON_READ_SLOTS];
-    for (int slot = 1; slot <= TenantPipelineRole.PYTHON_READ_SLOTS; slot++) {
-      roles[slot - 1] = TenantPipelineRole.pythonReadRoleName(tenantId, slot);
-    }
+    String[] roles = TenantPipelineRole.pythonReadRoleNames(tenantId).toArray(new String[0]);
     List<String> missing =
         tx.fetch(
                 "select r.rolname::text from pg_roles r where r.rolname::text = any({0}::text[])"

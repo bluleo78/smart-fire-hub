@@ -18,9 +18,12 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 import org.jooq.DSLContext;
+import org.jooq.Record;
+import org.jooq.Result;
 import org.jooq.impl.DSL;
 import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
@@ -263,10 +266,7 @@ public class PythonReadGrantSync {
         DSL.val("python_read_sync_t" + tenantId));
     String schema = DataSchema.current();
 
-    List<String> slotRoleNames = new ArrayList<>();
-    for (int k = 1; k <= TenantPipelineRole.PYTHON_READ_SLOTS; k++) {
-      slotRoleNames.add(TenantPipelineRole.pythonReadRoleName(tenantId, k));
-    }
+    List<String> slotRoleNames = TenantPipelineRole.pythonReadRoleNames(tenantId);
     if (terminateSlotSessions) {
       // 잠금 안·GRANT 커밋 전 — 끊긴 뒤 새로 붙는 세션은 아직 옛(이 트랜잭션 전) GRANT 를 본다. 실행 준비도 같은 잠금을 기다린다.
       int terminated = roleProvisioner.terminatePythonReadSessions(tenantId);
@@ -350,7 +350,7 @@ public class PythonReadGrantSync {
     List<String> physical = new ArrayList<>(relkinds.keySet());
     // 관계별 계산값 — 일반·분할 테이블이 아닌 관계(뷰 등)는 데이터셋 행이 같은 이름을 가리켜도 "없음"이다. 뷰 GRANT 는 소유자 권한 읽기라
     // 등급 경계를 지키지 못한다(fail-safe). 적용 루프와 재확인이 같은 규칙을 쓴다.
-    java.util.function.Function<String, Set<String>> wantOf =
+    Function<String, Set<String>> wantOf =
         t -> {
           char kind = relkinds.get(t);
           return kind == 'r' || kind == 'p' ? desired.getOrDefault(t, Set.of()) : Set.of();
@@ -422,8 +422,7 @@ public class PythonReadGrantSync {
   }
 
   /** 주어진 테이블들에 슬롯 롤이 가진 SELECT 권한(테이블명, 롤명) 쌍. 테이블 목록이 비면 빈 결과. */
-  private org.jooq.Result<org.jooq.Record> fetchSlotSelectGrants(
-      String schema, List<String> tables, String[] roles) {
+  private Result<Record> fetchSlotSelectGrants(String schema, List<String> tables, String[] roles) {
     if (tables.isEmpty()) {
       return dsl.newResult();
     }

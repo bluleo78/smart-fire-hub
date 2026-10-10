@@ -3,6 +3,8 @@ package com.smartfirehub.global.tenant;
 import static org.jooq.impl.DSL.inline;
 import static org.jooq.impl.DSL.name;
 
+import java.util.ArrayList;
+import java.util.List;
 import javax.sql.DataSource;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -87,16 +89,13 @@ public class TenantPipelineRoleProvisioner {
    * @return 끊은(종료 신호를 보낸) 세션 수
    */
   public int terminatePythonReadSessions(long tenantId) {
-    String[] roles = new String[TenantPipelineRole.PYTHON_READ_SLOTS];
-    for (int slot = 1; slot <= TenantPipelineRole.PYTHON_READ_SLOTS; slot++) {
-      roles[slot - 1] = TenantPipelineRole.pythonReadRoleName(tenantId, slot);
-    }
+    String[] roles = TenantPipelineRole.pythonReadRoleNames(tenantId).toArray(new String[0]);
     var results =
         ownerDsl.fetch(
             "select pid, pg_terminate_backend(pid, 5000) from pg_stat_activity"
                 + " where usename::text = any({0}::text[])",
             DSL.val(roles));
-    java.util.List<Integer> unconfirmed = new java.util.ArrayList<>();
+    List<Integer> unconfirmed = new ArrayList<>();
     for (var r : results) {
       if (!Boolean.TRUE.equals(r.get(1, Boolean.class))) {
         unconfirmed.add(r.get(0, Integer.class));
@@ -276,15 +275,19 @@ public class TenantPipelineRoleProvisioner {
         });
   }
 
-  /** 슬롯 롤 10개가 모두 있는가 — 기동 치유가 "없을 때만 만든다"를 판정할 때 쓴다. 하나라도 빠지면 false. */
+  /**
+   * 슬롯 롤 10개가 모두 있는가 — 기동 치유가 "없을 때만 만든다"를 판정할 때 쓴다. 하나라도 빠지면 false. 테넌트마다 기동 시 부르므로 롤별 조회 대신
+   * pg_roles 를 한 번만 본다.
+   */
   public boolean pythonReadRolesExist(long tenantId) {
-    for (int slot = 1; slot <= TenantPipelineRole.PYTHON_READ_SLOTS; slot++) {
-      if (!TenantSchemaProvisioner.roleExists(
-          ownerDsl, TenantPipelineRole.pythonReadRoleName(tenantId, slot))) {
-        return false;
-      }
-    }
-    return true;
+    List<String> roles = TenantPipelineRole.pythonReadRoleNames(tenantId);
+    Integer found =
+        ownerDsl
+            .fetchOne(
+                "select count(*)::int from pg_roles where rolname::text = any({0}::text[])",
+                DSL.val(roles.toArray(new String[0])))
+            .get(0, Integer.class);
+    return found == roles.size();
   }
 
   /**

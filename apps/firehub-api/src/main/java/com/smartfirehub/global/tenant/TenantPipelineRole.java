@@ -3,7 +3,9 @@ package com.smartfirehub.global.tenant;
 import java.nio.charset.StandardCharsets;
 import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
 import java.util.HexFormat;
+import java.util.List;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 
@@ -94,6 +96,18 @@ public final class TenantPipelineRole {
           "Python 읽기 슬롯은 1~" + PYTHON_READ_SLOTS + " 이어야 합니다: " + slot);
     }
     return "pipeline_py_t" + tenantId + "_s" + slot;
+  }
+
+  /**
+   * 테넌트의 슬롯 롤 이름 전부(s1..s{@link #PYTHON_READ_SLOTS}, 슬롯 순서) — 세션 종료·USAGE 부여·동기화·존재 확인이 같은 목록을 쓰도록
+   * 한 곳에서 만든다. 인덱스 {@code k-1} 이 슬롯 k 다.
+   */
+  public static List<String> pythonReadRoleNames(long tenantId) {
+    List<String> names = new ArrayList<>(PYTHON_READ_SLOTS);
+    for (int slot = 1; slot <= PYTHON_READ_SLOTS; slot++) {
+      names.add(pythonReadRoleName(tenantId, slot));
+    }
+    return List.copyOf(names);
   }
 
   /**
