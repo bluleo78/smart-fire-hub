@@ -17,7 +17,7 @@ import { expect, test } from '../../fixtures/auth.fixture';
  * 보조(대시보드 PDF)는 숨긴다(스펙 §5-4).
  */
 const BLOCKED = '보안 등급 정책상 이 데이터는 내보낼 수 없습니다.';
-const RUN_MISSING = "저장된 쿼리 실행 결과는 내보낼 수 없습니다. 편집기에서 '실행'을 눌러 다시 실행하세요.";
+const RUN_MISSING = '실행 기록이 없습니다. 쿼리를 다시 실행한 뒤 내보내세요.';
 const RESULT = createQueryResult({ columns: ['v'], rows: [{ v: 'x' }], totalRows: 1 });
 
 /** 저장 쿼리 편집기 진입 → 「실행」(애드혹 /execute) → 결과 표 대기 */
@@ -95,26 +95,53 @@ test.describe('쿼리 결과 내보내기 — 실행 기록 재실행', () => {
     await expect(page.getByText(message)).toBeVisible();
   });
 
-  test('목록 「실행」(저장 쿼리 실행, runId 없음) 결과는 내보내기 비활성 + 다시 실행 안내', async ({
-    authenticatedPage: page,
-  }) => {
+  /** 쿼리 목록 → 행 「실행」(저장 쿼리 /{id}/execute) → 편집기로 이동해 결과 표 대기. runId 만 바꿔 끼운다. */
+  async function runFromList(page: Page, runId: string | null) {
     await setupQueryListMocks(page, 1);
     await mockApi(page, 'GET', '/api/v1/analytics/queries/1', createSavedQuery({ id: 1 }));
     await mockApi(page, 'GET', '/api/v1/analytics/queries/schema', { tables: [] });
     await mockApi(page, 'GET', '/api/v1/analytics/queries/folders', []);
-    // 저장 쿼리 /{id}/execute 응답은 runId 가 null 이다(실행 기록을 남기지 않는 경로)
-    await mockApi(page, 'POST', '/api/v1/analytics/queries/1/execute', {
-      ...RESULT,
-      exportAllowed: true,
-      runId: null,
-    });
+    await mockApi(page, 'POST', '/api/v1/analytics/queries/1/execute', { ...RESULT, exportAllowed: true, runId });
     await page.goto('/analytics/queries');
     const row = page.getByRole('row').filter({ hasText: '저장 쿼리 1' });
     await row.hover();
     await row.getByLabel('실행').click();
     await expect(page).toHaveURL('/analytics/queries/1');
     await expect(page.getByRole('columnheader', { name: 'v' })).toBeVisible();
+  }
 
+  test('목록 「실행」(저장 쿼리 실행) 결과도 runId 로 내보낸다 — 파일 이름은 서버가 정한다', async ({
+    authenticatedPage: page,
+  }) => {
+    // 저장 쿼리 /{id}/execute 도 실행 기록을 남겨 runId 를 싣는다(code-review 4)
+    await runFromList(page, 'run-5');
+    const serverName = 'query_result_20261010_상위1000행.csv';
+    const disposition =
+      `attachment; filename="query_result_20261010_.csv"; filename*=UTF-8''${encodeURIComponent(serverName)}`;
+    let exportPayload: unknown = null;
+    await page.route(
+      (url) => url.pathname === '/api/v1/analytics/queries/runs/run-5/export',
+      (route) => {
+        exportPayload = route.request().postDataJSON();
+        return route.fulfill({
+          status: 200,
+          contentType: 'text/csv',
+          headers: { 'Content-Disposition': disposition },
+          body: 'v\nx\n',
+        });
+      },
+    );
+    const download = page.waitForEvent('download');
+    await page.getByRole('button', { name: '내보내기' }).click();
+    await page.getByRole('menuitem', { name: 'CSV로 내보내기' }).click();
+    // 화면 결과(1행, 잘림 없음)로 만든 이름이 아니라 서버가 정한 한글 이름(filename*)으로 저장된다
+    expect((await download).suggestedFilename()).toBe(serverName);
+    expect(exportPayload).toEqual({ format: 'CSV' });
+    await expect(page.getByText('파일이 다운로드되었습니다.')).toBeVisible();
+  });
+
+  test('runId 가 없는 결과(구버전 응답)는 내보내기 비활성 + 다시 실행 안내', async ({ authenticatedPage: page }) => {
+    await runFromList(page, null);
     await expect(page.getByRole('button', { name: '내보내기' })).toBeDisabled();
     await page.getByRole('group', { name: `내보내기 — ${RUN_MISSING}`, exact: true }).hover();
     await expect(page.getByRole('tooltip')).toHaveText(RUN_MISSING);
