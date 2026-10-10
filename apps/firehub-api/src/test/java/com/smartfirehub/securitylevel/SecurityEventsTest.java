@@ -3,7 +3,9 @@ package com.smartfirehub.securitylevel;
 import static com.smartfirehub.jooq.Tables.DATASET;
 import static com.smartfirehub.jooq.Tables.SECURITY_LEVEL;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.tenant.TenantProvisioningService;
 import com.smartfirehub.securitylevel.access.Clearance;
@@ -226,6 +228,29 @@ class SecurityEventsTest extends IntegrationTestBase {
                       s.setRollbackOnly();
                     }));
     assertThat(captured).isEmpty();
+  }
+
+  /**
+   * 등급 상한 10(흐름 C, WD-29) — 11번째 생성은 SECURITY_LEVEL_LIMIT_EXCEEDED 로 거부되고 CREATED 이벤트를 내지 않는다(상한
+   * 검사가 발행보다 앞, 거부는 롤백). 상한 검사를 지우면 11번째가 만들어져 CREATED 1건이 잡혀 실패한다(변이).
+   */
+  @Test
+  void levelCreate_beyondLimit_isRejectedAndPublishesNothing() {
+    int existing = asTenant(() -> levelRepository.findAll().size());
+    for (int i = existing; i < SecurityLevelService.MAX_LEVELS; i++) {
+      String name = "상한" + i;
+      asTenant(() -> securityLevelService.create(req(name, false), actor));
+    }
+    captured.clear();
+    assertThatThrownBy(() -> asTenant(() -> securityLevelService.create(req("열한째", false), actor)))
+        .isInstanceOf(CodedApiException.class)
+        .satisfies(
+            e ->
+                assertThat(((CodedApiException) e).code())
+                    .isEqualTo("SECURITY_LEVEL_LIMIT_EXCEEDED"));
+    assertThat(captured).isEmpty();
+    assertThat(asTenant(() -> levelRepository.findAll().size()))
+        .isEqualTo(SecurityLevelService.MAX_LEVELS);
   }
 
   /** allowlist_required 만 바꾼 수정도 UPDATED 1건 — 구독자(C)는 허용 목록 등급 여부로 슬롯 범위를 다시 계산한다. */

@@ -12,10 +12,13 @@ import com.smartfirehub.dataset.service.DatasetService;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.tenant.TenantPipelineRole;
+import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.LevelPolicy;
+import com.smartfirehub.securitylevel.dto.ChangeDatasetLevelRequest;
 import com.smartfirehub.securitylevel.event.DatasetSecurityLevelChangedEvent;
 import com.smartfirehub.securitylevel.event.SecurityLevelsChangedEvent;
 import com.smartfirehub.securitylevel.repository.SecurityLevelRepository;
+import com.smartfirehub.securitylevel.service.DatasetSecurityService;
 import com.smartfirehub.securitylevel.service.SecurityLevelService;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.PostgresTestContainer;
@@ -27,6 +30,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.StringJoiner;
 import java.util.concurrent.atomic.AtomicReference;
 import org.jooq.DSLContext;
@@ -58,6 +62,7 @@ class PythonReadGrantWiringTest extends IntegrationTestBase {
   @Autowired private ApplicationEventPublisher events;
   @Autowired private SecurityLevelService levelService;
   @Autowired private SecurityLevelRepository levelRepository;
+  @Autowired private DatasetSecurityService datasetSecurityService;
 
   @Value("${app.pipeline.role-password-secret}")
   private String secret;
@@ -332,6 +337,74 @@ class PythonReadGrantWiringTest extends IntegrationTestBase {
           levelService.applyReorder(orderedIds, owner);
           events.publishEvent(event);
         });
+  }
+
+  // ------------------------------------------------ 서비스 발행 → 리스너 종단(R2, B 병합 후)
+
+  /**
+   * 데이터셋 등급 변경을 흐름 B 의 서비스(DatasetSecurityService.changeLevel)로만 한다 — 테스트는 이벤트를 발행하지도, 동기화를 부르지도
+   * 않는다. 커밋 후 B 의 MANUAL 발행 → C 리스너가 그 테이블을 재동기화해 공개→민감 상향이 슬롯 1 접근을 즉시 42501 로 뒤집고 슬롯 3 은 유지한다(JIT
+   * 를 기다리지 않는다). B 의 changeLevel 발행 줄을 지우면 슬롯 1 이 계속 읽어 실패한다(변이).
+   */
+  @Test
+  void changeLevel_viaService_revokesLowerSlotAfterCommit() {
+    String t = table("chg", "공개");
+    long id = lastDatasetId();
+    sync.syncTenant();
+    assertThat(selectAs(1, t)).as("출발: 공개(위치 1)는 슬롯 1 이 읽는다").isNull();
+
+    // 변경자 자격: '민감' rank(본인 자격보다 높은 등급으로는 지정할 수 없다). 허용 목록 등급으로 가지 않으므로 역할·권한 집합은 비워도 된다.
+    int sensRank =
+        TenantRlsTestSupport.runInTenantTransaction(
+            fixtureTransactionTemplate,
+            DEFAULT_TEST_TENANT_ID,
+            () -> levelRepository.findById(fx.levelId("민감")).orElseThrow().rank());
+    Clearance classifier =
+        new Clearance(owner, DEFAULT_TEST_TENANT_ID, sensRank, Set.of(), false, Set.of());
+    datasetSecurityService.changeLevel(
+        id, new ChangeDatasetLevelRequest(fx.levelId("민감"), null), classifier);
+
+    assertThat(selectAs(1, t)).as("민감(위치 3)으로 상향 → 슬롯 1 거부").isEqualTo("42501");
+    assertThat(selectAs(2, t)).isEqualTo("42501");
+    assertThat(selectAs(3, t)).as("슬롯 3 은 유지").isNull();
+  }
+
+  /**
+   * 등급 순서 변경을 흐름 B 의 서비스(SecurityLevelService.applyReorder)로만 한다 — 테스트 본문은 이벤트를 직접 발행하지 않고 동기화도 부르지
+   * 않는다. 커밋 후 B 의 REORDERED 발행 → 리스너가 테넌트 전체를 새 위치로 맞춘다. B 의 applyReorder 발행 줄을 지우면 ACL 이 옛 순서에 남아
+   * 실패한다(변이). 원복은 다른 테스트를 위해 직접 발행까지 해서 확실히 되돌린다.
+   */
+  @Test
+  void applyReorder_viaService_flipsSlotAccessAfterCommit() {
+    String pub = table("rs_pub", "공개");
+    String internal = table("rs_int", "내부");
+    sync.syncTenant();
+    assertThat(selectAs(1, pub)).as("출발: 공개(위치 1)는 슬롯 1 이 읽는다").isNull();
+    assertThat(selectAs(1, internal)).as("출발: 내부(위치 2)는 슬롯 1 이 못 읽는다").isEqualTo("42501");
+
+    List<Long> original =
+        TenantRlsTestSupport.runInTenantTransaction(
+            fixtureTransactionTemplate,
+            DEFAULT_TEST_TENANT_ID,
+            () -> levelRepository.findAll().stream().map(LevelPolicy::id).toList());
+    assertThat(original.subList(0, 2))
+        .as("전제: 맨 아래 두 등급이 공개·내부")
+        .containsExactly(fx.levelId("공개"), fx.levelId("내부"));
+    List<Long> swapped = new ArrayList<>(original);
+    swapped.set(0, original.get(1));
+    swapped.set(1, original.get(0));
+    try {
+      levelService.applyReorder(swapped, owner); // 서비스 자체 트랜잭션 — 커밋 후 B 의 발행이 리스너에 닿는다
+      assertThat(selectAs(1, pub)).as("공개가 위치 2 로 → 슬롯 1 거부").isEqualTo("42501");
+      assertThat(selectAs(2, pub)).isNull();
+      assertThat(selectAs(1, internal)).as("내부가 위치 1 로 → 슬롯 1 허용").isNull();
+    } finally {
+      reorderAndPublish(
+          original,
+          new SecurityLevelsChangedEvent(
+              DEFAULT_TEST_TENANT_ID, SecurityLevelsChangedEvent.Kind.REORDERED, null));
+    }
+    assertThat(selectAs(1, pub)).as("원복 후 공개는 다시 슬롯 1 이 읽는다").isNull();
   }
 
   /** 데이터셋 등급 변경 이벤트 → 커밋 후 그 데이터셋 테이블만 재동기화. */
