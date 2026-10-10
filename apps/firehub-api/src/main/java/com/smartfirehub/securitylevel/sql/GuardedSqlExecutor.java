@@ -155,14 +155,8 @@ public class GuardedSqlExecutor {
       NormalizedSql normalized = NormalizedSql.of(sql);
       DatasetAccessGuard.SqlVerdict v =
           guard.judgeSql(c, normalized.text(), SqlAccessMode.INTERACTIVE);
-      // 허용이면 감사 등급 접근을 기록한다 — 대시보드 캐시 히트도 이 판정을 지나므로 빠지지 않는다. 거부는 값이라 여기서 감사하지 않고
-      // 실행 시점(executeJudgedAnalytics)에 403 으로 드러날 때만 감사한다(위젯 denied 는 값 판정 — 설계 결정 3).
-      if (v.result().allowed()) {
-        auditRecorder.recordAccess(
-            c.userId(),
-            guard.accessKind(SecurityAuditRecorder.AccessKind.SQL),
-            touched(v.result()));
-      }
+      // 판정은 값이라 감사하지 않는다 — 허용 판정만으로는 데이터가 나가지 않는다(내보내기 재판정이 정책 거부로 끝나거나 위젯이 denied 일 수
+      // 있다). 감사 등급 접근은 결과가 실제로 조회자에게 가는 지점(executeJudgedAnalytics 성공, 캐시 히트 recordDelivered)에서 남긴다.
       return new AnalyticsJudgment(normalized, v, null, c);
     } catch (SqlQueryException | UnsafeSqlException e) {
       return new AnalyticsJudgment(null, null, e.getMessage(), c);
@@ -199,7 +193,28 @@ public class GuardedSqlExecutor {
       guard.auditDenial(judgment.clearance, AccessDenialAction.SQL, judgment.verdict.denial());
       throw new CodedApiException(HttpStatus.FORBIDDEN, r.code(), r.message());
     }
-    return analyticsExecution.execute(judgment.normalized, maxRows, readOnly);
+    AnalyticsQueryResponse response =
+        analyticsExecution.execute(judgment.normalized, maxRows, readOnly);
+    // 실제로 실행돼 결과가 나가는 지점에서 감사 등급 접근을 남긴다(실행 오류 응답은 데이터가 없으므로 남기지 않는다).
+    if (response.error() == null) {
+      recordDelivered(judgment);
+    }
+    return response;
+  }
+
+  /**
+   * 허용 판정 토큰의 결과를 조회자에게 넘길 때 감사 등급 접근을 남긴다. {@link #executeJudgedAnalytics} 가 실행 성공 뒤 부르고, 대시보드는 공유
+   * 캐시 히트(이 조회자가 실행하지 않고 남이 데운 결과를 받음)일 때 조회자별로 부른다 — 캐시 안에 넣으면 먼저 데운 조회자만 남는다. 거부·파싱 실패 토큰은 아무것도
+   * 남기지 않는다.
+   */
+  public void recordDelivered(AnalyticsJudgment judgment) {
+    if (judgment.verdict == null || !judgment.verdict.result().allowed()) {
+      return;
+    }
+    auditRecorder.recordAccess(
+        judgment.clearance.userId(),
+        guard.accessKind(SecurityAuditRecorder.AccessKind.SQL),
+        touched(judgment.verdict.result()));
   }
 
   /**

@@ -338,4 +338,40 @@ class ChartDeniedTest extends IntegrationTestBase {
     assertThat(chartService.getChartData(secChart, restricted).exportAllowed()).isFalse();
     assertThat(chartService.getChartData(secChart, permitted).exportAllowed()).isTrue();
   }
+
+  /** 이 조회자의 '민감' 데이터셋 감사 등급 접근(DATASET_ACCESS) 행 수(비동기 기록이 끝난 뒤). */
+  private int secAccessRows(long uid) {
+    awaitSecurityAudit();
+    return TenantRlsTestSupport.runInTenantTransaction(
+        fixtureTransactionTemplate,
+        DEFAULT_TEST_TENANT_ID,
+        () ->
+            dsl.fetchOne(
+                    "SELECT count(*) FROM audit_log WHERE user_id = ? AND action_type ="
+                        + " 'DATASET_ACCESS' AND resource_id = ?",
+                    uid,
+                    String.valueOf(datasets.get(0)))
+                .get(0, Integer.class));
+  }
+
+  /**
+   * code-review 3 — 감사 등급 접근은 결과를 실제로 받은 조회자마다 남는다. 공유 캐시를 데운 조회자(실행)뿐 아니라 캐시 히트로 받은 조회자도 남고, 위젯이
+   * denied 인 조회자(실행·전달 없음)는 남지 않는다.
+   */
+  @Test
+  void auditAccess_isRecordedPerViewer_onCacheMissAndHit_butNotForDeniedWidget() {
+    long warmer = viewerAt("민감");
+    long hitter = viewerAt("민감");
+    long denied = viewerAt("공개");
+    dashboardService.getDashboardData(dashboardId, warmer);
+    Map<Long, ChartDataResponse> hit =
+        byChart(dashboardService.getDashboardData(dashboardId, hitter));
+    assertThat(values(hit.get(secChart))).containsExactly(SEC_VALUE);
+    assertThat(
+            byChart(dashboardService.getDashboardData(dashboardId, denied)).get(secChart).denied())
+        .isTrue();
+    assertThat(secAccessRows(warmer)).isEqualTo(1);
+    assertThat(secAccessRows(hitter)).isEqualTo(1);
+    assertThat(secAccessRows(denied)).isZero();
+  }
 }

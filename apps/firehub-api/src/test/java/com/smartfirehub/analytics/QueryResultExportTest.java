@@ -9,6 +9,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartfirehub.analytics.repository.AnalyticsQueryRunRepository;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantContext;
@@ -45,6 +46,7 @@ class QueryResultExportTest extends IntegrationTestBase {
   @Autowired private PasswordEncoder encoder;
   @Autowired private JwtTokenProvider jwt;
   @Autowired private ObjectMapper om;
+  @Autowired private AnalyticsQueryRunRepository runRepository;
 
   private SecurityFixture fx;
   private final List<Long> users = new ArrayList<>();
@@ -331,5 +333,49 @@ class QueryResultExportTest extends IntegrationTestBase {
             .getResponse()
             .getStatus();
     assertThat(s).isEqualTo(404);
+  }
+
+  /** 실행 없이 실행 기록만 심는다 — 앞선 실행의 감사 등급 접근 기록과 섞이지 않게 내보내기 경로 하나만 본다. */
+  private String seedRun(long uid) {
+    return inTenantFixture(() -> runRepository.insert(uid, "SELECT v FROM " + qualified, 100))
+        .toString();
+  }
+
+  /** 이 사용자의 감사 등급 접근(DATASET_ACCESS) 행 수(비동기 기록이 끝난 뒤). */
+  private int accessRows(long uid) {
+    awaitSecurityAudit();
+    return inTenantFixture(
+        () ->
+            dsl.fetchOne(
+                    "SELECT count(*) FROM audit_log WHERE user_id = ? AND action_type ="
+                        + " 'DATASET_ACCESS' AND resource_id = ?",
+                    uid,
+                    String.valueOf(ds))
+                .get(0, Integer.class));
+  }
+
+  /**
+   * code-review 3 — 내보내기 재판정이 열람은 허용하지만 정책상 내보내기를 막으면(403 POLICY_BLOCKED) 데이터가 나가지 않았으므로 감사 등급
+   * 접근(DATASET_ACCESS SUCCESS)이 남지 않는다. 예전에는 허용 판정만으로 남았다.
+   */
+  @Test
+  void exportPolicyDenied_leavesNoAccessSuccess() throws Exception {
+    setLevel("기밀");
+    long u = userAt("기밀", "analytics:read", "data:export", "data:export_restricted");
+    fx.grantUser(ds, u);
+    exportRun(seedRun(u), u)
+        .andExpect(status().isForbidden())
+        .andExpect(jsonPath("$.code").value("POLICY_BLOCKED"));
+    assertThat(accessRows(u)).isZero();
+  }
+
+  /** 대조군 — 내보내기가 실제로 재실행돼 파일이 나가면 감사 등급 접근이 1건 남는다(위 0건이 기록 경로 고장이 아님을 보인다). */
+  @Test
+  void exportDelivered_leavesOneAccessSuccess() throws Exception {
+    setLevel("민감");
+    long u = userAt("민감", "analytics:read", "data:export", "data:export_restricted");
+    var started = exportRun(seedRun(u), u).andExpect(request().asyncStarted()).andReturn();
+    mockMvc.perform(asyncDispatch(started)).andExpect(status().isOk());
+    assertThat(accessRows(u)).isEqualTo(1);
   }
 }

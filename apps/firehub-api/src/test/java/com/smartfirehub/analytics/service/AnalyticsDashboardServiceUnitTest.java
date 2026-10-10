@@ -39,6 +39,7 @@ class AnalyticsDashboardServiceUnitTest {
   @Mock private SavedQueryRepository savedQueryRepository;
   // 보안 등급(S2): 캐시 채움이 조회자 자격으로 실행된다 — 자격 계산 자체는 이 테스트의 관심사가 아니다(null 이 전달돼도 무방).
   @Mock private ClearanceResolver clearanceResolver;
+  @Mock private GuardedSqlExecutor guardedSqlExecutor;
 
   @InjectMocks private AnalyticsDashboardService dashboardService;
 
