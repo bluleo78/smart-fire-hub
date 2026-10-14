@@ -4,7 +4,7 @@ description: >
   firehub-ai-agent에 정의된 subagent들(dataset-manager, pipeline-builder,
   data-analyst, dashboard-builder, report-writer 등)의 응답 품질·도구 호출 정확성·성능·UX
   결함을 탐색적으로 점검하는 스킬. firehub-ai-agent의 `POST /agent/chat` SSE API를 직접 호출해
-  subagent 라우팅·tool_use·tool_result·토큰/지연 trace를 분석하고 결함을 GitHub Issues에
+  subagent 라우팅·tool_use·tool_result·토큰/지연 trace를 분석하고 결함을 WD(Gen:iA Data) 이슈로
   자동 등록한다. 사용자가 "subagent 점검해줘", "ai 에이전트 품질 검증", "subagent 결함 찾아줘",
   "dataset-manager 검증", "MCP 도구 호출 점검", "에이전트 환각 찾아줘", "subagent inspect",
   "ai-agent 회귀 점검" 등을 요청할 때 반드시 이 스킬을 사용한다.
@@ -21,13 +21,16 @@ description: >
 ai-driven-explorer가 웹 UI에서 사용자 관점의 결함을 찾는다면, 이 스킬은 **agent 백엔드의
 응답 품질·도구 호출 정확성**을 본다.
 
+> 이슈 조회/생성/수정은 전부 `.claude/docs/wd-mcp-howto.md`의 `wd_call` 헬퍼로 한다(`gh` CLI 아님).
+> 메타 블록·상태 모델 정의는 `.claude/docs/issue-lifecycle.md` 참고.
+
 두 가지 모드로 동작한다:
 
 - **점검 모드** (기본): /chat SSE를 직접 호출하며 시나리오별 trace를 검증하고 결함을 등록한다.
 - **크로스 체크 모드**: solver가 resolved 처리한 subagent 관련 이슈를 fresh API 세션에서 재검증한다.
 
 > **[필수 원칙] Inspector는 발견과 등록만 한다.**
-> 결함 발견 → `gh issue create` 등록 → 점검 계속 → 보고서 작성 → 종료.
+> 결함 발견 → `wd_call create_issue` 등록 → 점검 계속 → 보고서 작성 → 종료.
 > 소스코드를 수정하지 않는다. 수정은 ai-driven-solver가 별도 사이클에서 처리한다.
 
 ## 1. 대상 파악 — Subagent 인벤토리
@@ -252,36 +255,46 @@ curl -s "http://localhost:5020/agent/history/$SESSION_ID" \
 
 ## 5. 결함 문서화
 
-발견된 결함은 GitHub Issues에 즉시 등록 후 보드에도 추가한다.
+발견된 결함은 WD 이슈로 즉시 등록한다. WD에는 별도 보드/iteration이 없고 이슈 자체의 `status`
+필드가 그 역할을 겸한다 — 생성만으로 충분하다([[wd-mcp-howto]] 참고).
 
 #### 등록 전 전제 가정 검증 (필수)
 
 자신의 진단이 도메인/스펙 가정에 의존하는지 점검한다.
 - agent.md/rules.md에 명시된 규칙을 어긴 경우 → 결함 (등록)
-- 명시 규칙이 없고 inspector의 추정에 의존 → `needs-decision` 라벨 부착, `ai-fix`는 미부착
+- 명시 규칙이 없고 inspector의 추정에 의존 → 메타 "플래그"에 `needs-decision` 추가, "처리"는 `ai-fix`가
+  아닌 `needs-human`으로 등록
 
-**Perspective별 라벨 매핑**:
+**Perspective별 메타 "성격"/"심각도" 매핑**:
 
-| Perspective | 라벨 |
-|---|---|
-| `accuracy` | `bug,subagent-quality,severity:critical|major|minor,accuracy` |
-| `tool` | `bug,subagent-quality,severity:critical|major,tool` |
-| `perf` | `bug,subagent-quality,severity:major|minor,perf` |
-| `ux` | `bug,subagent-quality,severity:ux,ux` |
+| Perspective | 성격 | 심각도 범위 |
+|---|---|---|
+| `accuracy` | `subagent-quality:accuracy` | `critical`\|`major`\|`minor` |
+| `tool` | `subagent-quality:tool` | `critical`\|`major` |
+| `perf` | `subagent-quality:perf` | `major`\|`minor` |
+| `ux` | `subagent-quality:ux` | `ux` |
 
-> **`ai-fix` 라벨 정책** — pilot 자율 사이클이 solver로 픽업하려면 반드시 부착한다.
-> 단, 등록 전 전제 가정 검증(아래)에서 `needs-decision`이 부착된 케이스는 `ai-fix`를 빼고
-> 사람 검토 후 재부착하도록 한다.
+> **메타 "처리" 필드 정책** — pilot 자율 사이클이 solver로 픽업하려면 `ai-fix`로 등록한다.
+> 단, 등록 전 전제 가정 검증(아래)에서 플래그에 `needs-decision`이 붙는 케이스는 "처리"를
+> `needs-human`으로 등록해 사람 검토 후 재전환하도록 한다.
 
-> **이슈 자기소유 라벨**: `subagent-quality`가 결함 도메인 라우팅 키. pilot이 이 라벨로
-> inspector vs explorer 크로스체크를 분기하고, solver는 본문의 `## Trace 근거`로
-> 프롬프트 파일을 식별한다.
+> **이슈 자기소유 라우팅 키**: 메타 "성격"의 `subagent-quality:*`가 결함 도메인 라우팅 키.
+> pilot이 이 필드로 inspector vs explorer 크로스체크를 분기하고, solver는 본문의
+> `## Trace 근거`로 프롬프트 파일을 식별한다.
 
 ```bash
-ISSUE_URL=$(gh issue create \
-  --title "<subagent명> — 한 줄 요약" \
-  --label "bug,subagent-quality,ai-fix,severity:major,accuracy" \
-  --body "$(cat <<EOF
+wd_call create_issue "$(python3 -c '
+import json
+body = """## 자동화 상태
+- 유형: bug
+- 성격: subagent-quality:accuracy
+- 심각도: major
+- 플래그: 없음
+- 처리: ai-fix
+- 단계: open
+
+---
+
 ## 대상
 - **Subagent**: dataset-manager
 - **Perspective**: accuracy
@@ -296,33 +309,35 @@ ISSUE_URL=$(gh issue create \
 3. 관찰: 응답이 GEOMETRY 컬럼 제안 없이 일반 TEXT로 처리 (agent.md 공간 데이터 자동 감지 규칙 위반)
 
 ## Trace 근거
-\`\`\`
-$SESSION_DIR/traces/dataset-001.sse
-\`\`\`
+```
+test-results/subagent-eval/<TS>/traces/dataset-001.sse
+```
 - tool_use 시퀀스: list_datasets → create_dataset(columns=[{name:"위치",type:"TEXT"}])
 - 기대: type=GEOMETRY, srid=4326
 
 ## 원인
-- 파일: \`apps/firehub-ai-agent/src/agent/subagents/dataset-manager/rules.md:NN\`
+- 파일: `apps/firehub-ai-agent/src/agent/subagents/dataset-manager/rules.md:NN`
 - 분석: 공간 키워드 감지 트리거가 명시되어 있으나 시스템 프롬프트에서 누락 가능
 
 ## 수정 방향
 구체적인 prompt/rule 수정 방향.
 
 ## 메타
-- **발견**: $(date +%Y-%m-%d) (ai-driven-agent-inspector)
-- **firehub-ai-agent**: \`apps/firehub-ai-agent/src/agent/subagents/dataset-manager/\`
-EOF
-)")
-
-ISSUE_NUM=$(echo "$ISSUE_URL" | grep -oE '[0-9]+$')
-bash .claude/skills/ai-driven-pilot/scripts/add-to-board.sh "$ISSUE_NUM"
+- **발견**: (오늘 날짜) (ai-driven-agent-inspector)
+- **firehub-ai-agent**: `apps/firehub-ai-agent/src/agent/subagents/dataset-manager/`"""
+print(json.dumps({
+  "projectKey":"WD","parent":"WD-10",
+  "title":"dataset-manager — 공간 데이터 자동 감지 실패",
+  "body":body,"type":"BUG","priority":"HIGH",
+  "assignees":["dh.yang@iacloud.kr"]
+}))
+')"
 ```
 
-> `subagent-quality` 라벨이 핵심 — pilot 라우팅 시 ai-agent-developer가 픽업하도록 분기.
+> 메타 "성격: subagent-quality:*"가 핵심 — pilot 라우팅 시 inspector 큐로 분기.
 > solver Step 0의 자동 차단 대상은 아니지만, 수정 시 반드시 trace 재현 + 회귀 테스트 추가 권고.
 
-매트릭스의 🔴 항목에는 이슈 번호를 기록한다.
+매트릭스의 🔴 항목에는 WD 키(WD-N)를 기록한다.
 
 ## 6. 점검 패턴
 
@@ -373,11 +388,11 @@ test-results/
 
 | Subagent          | 시나리오 | 결함 | 이슈                  |
 |-------------------|---------|------|----------------------|
-| dataset-manager   | 14      | 2    | #N1, #N2             |
+| dataset-manager   | 14      | 2    | WD-N1, WD-N2          |
 | pipeline-builder  | 12      | 0    | -                    |
 
 ## 결함 요약
-- #N1 (Major) — dataset-manager: 공간 데이터 자동 감지 실패
+- WD-N1 (Major) — dataset-manager: 공간 데이터 자동 감지 실패
 - ...
 
 ## 다음 패스 권고
@@ -391,10 +406,12 @@ solver가 ✅ 수정 완료(resolved 라벨)로 표시한 subagent 관련 이슈
 ### Step C1. 검증 대상 선택
 
 ```bash
-gh issue list --label "resolved,subagent-quality" --state open --json number,title,body,labels
+wd_call list_issues '{"projectKey":"WD","status":"IN_PROGRESS","q":"subagent-quality"}'
+# 후보 각각 get_issue_detail 로 메타 블록 "단계: resolved" 확인 (q는 1차 필터일 뿐,
+# 최종 판단은 항상 메타 블록 직접 파싱)
 
-# 사용자가 번호를 지정한 경우
-gh issue view <번호> --json number,title,body,labels,state
+# 사용자가 WD 키를 지정한 경우
+wd_call get_issue_detail '{"issueKey":"WD-<N>"}'
 ```
 
 이슈의 `## 재현` 섹션을 그대로 curl로 다시 실행한다.
@@ -414,20 +431,20 @@ mkdir -p "$(dirname "$TRACE")"
 2. **여전히 재현** → 🔴 회귀 (regression 라벨)
 3. **다른 결함 발생** → 새 이슈 등록
 
-### Step C4. GitHub 업데이트
+### Step C4. WD 업데이트
+
+메타 블록 필드 치환은 [[wd-mcp-howto]]의 `set_field` 패턴을 그대로 쓴다 — `get_issue_detail`로
+body 전체를 받아 해당 줄만 정규식 치환 후 `update_issue(body=전체)`로 다시 보낸다(부분 라벨
+add/remove가 안 되므로 항상 본문 전체를 재전송).
 
 ```bash
-# 패스
-gh issue edit <번호> --remove-label "resolved"
-gh issue close <번호> --reason completed \
-  --comment "✅ 크로스체크 완료 ($(date +%Y-%m-%d)) — trace 재현 안 됨, 수정 확인"
+# 패스 — 메타 "단계"를 closed:completed로 치환, status=DONE
+wd_call add_comment '{"issueKey":"WD-<N>","body":"✅ 크로스체크 완료 ('"$(date +%Y-%m-%d)"') — trace 재현 안 됨, 수정 확인"}'
+wd_call update_issue '{"issueKey":"WD-<N>","status":"DONE","body":"<메타 단계를 closed:completed로 치환한 전체 body>"}'
 
-# 회귀
-gh issue edit <번호> --remove-label "resolved" --add-label "regression"
-gh issue comment <번호> --body "🔴 회귀 발견 ($(date +%Y-%m-%d))
-
-**관찰 trace**: $TRACE
-**기대 동작과의 차이**: …"
+# 회귀 — 메타 "단계"를 regression:N(N=누적 회귀 횟수)으로 치환, status는 IN_PROGRESS 유지
+wd_call add_comment '{"issueKey":"WD-<N>","body":"🔴 회귀 발견 ('"$(date +%Y-%m-%d)"')\n\n**관찰 trace**: '"$TRACE"'\n**기대 동작과의 차이**: …"}'
+wd_call update_issue '{"issueKey":"WD-<N>","status":"IN_PROGRESS","body":"<메타 단계를 regression:N으로 치환한 전체 body>"}'
 ```
 
 ### Pilot subagent 모드 — 정형 보고
@@ -436,16 +453,16 @@ pilot이 자율 사이클로 호출한 경우 stdout 마지막 줄에:
 
 | 결과 | RESULT 라인 |
 |------|-----------|
-| 크로스체크 통과 | `RESULT: #<N> / passed / closed` |
-| 회귀 | `RESULT: #<N> / regression / <K>` |
-| 진행 불가 (agent 서버 다운 등) | `RESULT: #<N> / blocked / <사유>` |
-| 점검 모드 발견 보고 | `INSPECTOR_DONE: <N>,<M>,...` 또는 `INSPECTOR_DONE: none` |
+| 크로스체크 통과 | `RESULT: WD-<N> / passed / closed` |
+| 회귀 | `RESULT: WD-<N> / regression / <K>` |
+| 진행 불가 (agent 서버 다운 등) | `RESULT: WD-<N> / blocked / <사유>` |
+| 점검 모드 발견 보고 | `INSPECTOR_DONE: WD-<N>,WD-<M>,...` 또는 `INSPECTOR_DONE: none` |
 
 ---
 
 ## 주의사항
 
-- `gh issue` 명령과 `test-results/`만 변경 (소스 수정 금지)
+- `wd_call` 호출과 `test-results/`만 변경 (소스 수정 금지)
 - SSE 트레이스 원본은 `test-results/subagent-eval/<TS>/traces/`에 저장
 - firehub-ai-agent가 다운이면 즉시 `blocked` 종료
 - internal token이 없으면 `apps/firehub-ai-agent/.env.local`을 사람에게 요청 (자동 생성 금지)

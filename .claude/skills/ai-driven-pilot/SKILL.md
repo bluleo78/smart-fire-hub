@@ -1,24 +1,26 @@
 ---
 name: ai-driven-pilot
-description: ai-driven-explorer / ai-driven-solver / ai-driven-agent-inspector를 subagent로 자율 호출하여 GitHub 이슈 사이클(신규 발견 → 수정 → 크로스체크 → close)을 **여러 이슈에 걸쳐 연속 자율 운영**하는 스킬. UI 결함은 explorer, AI subagent(firehub-ai-agent) 품질 결함은 inspector가 담당하며, 수정은 solver가 단일 채널로 처리. 사용자가 "파일럿 켜줘", "오토파일럿 시작", "이슈 자동 처리해줘", "야간 사이클 돌려줘", "이슈 다 처리해줘", "버그 자율 처리", "auto pilot", "autopilot 모드", "쌓인 이슈 정리해줘" 같이 **여러 이슈를 자율로 처리**하려는 의도가 보일 때 반드시 이 스킬을 사용한다. "55번 이슈 처리해줘"처럼 **단일 이슈 지정**은 ai-driven-solver로 라우팅. 자율 사이클이지만 회귀 3회·security 라벨·테스트/훅 반복 실패 등 임계값에 도달하면 일시정지하고 사람에게 에스컬레이션한다.
+description: ai-driven-explorer / ai-driven-solver / ai-driven-agent-inspector를 subagent로 자율 호출하여 WD(Gen:iA Data) 이슈 사이클(신규 발견 → 수정 → 크로스체크 → close)을 **여러 이슈에 걸쳐 연속 자율 운영**하는 스킬. UI 결함은 explorer, AI subagent(firehub-ai-agent) 품질 결함은 inspector가 담당하며, 수정은 solver가 단일 채널로 처리. 사용자가 "파일럿 켜줘", "오토파일럿 시작", "이슈 자동 처리해줘", "야간 사이클 돌려줘", "이슈 다 처리해줘", "버그 자율 처리", "auto pilot", "autopilot 모드", "쌓인 이슈 정리해줘" 같이 **여러 이슈를 자율로 처리**하려는 의도가 보일 때 반드시 이 스킬을 사용한다. "WD-55 처리해줘"처럼 **단일 이슈 지정**은 ai-driven-solver로 라우팅. 자율 사이클이지만 회귀 3회·security 플래그·테스트/훅 반복 실패 등 임계값에 도달하면 일시정지하고 사람에게 에스컬레이션한다.
 ---
 
 # AI-Driven Pilot
 
 자율 이슈 사이클 운영 스킬. 사람은 보조석에서 모니터링·에스컬레이션만 처리한다.
 
-> 이슈 라이프사이클 다이어그램·라벨 정의: `.claude/docs/issue-lifecycle.md`
+> 이슈 라이프사이클·메타 블록 정의: `.claude/docs/issue-lifecycle.md`
+> WD 호출 방법(curl 레시피, `wd_call` 헬퍼): `.claude/docs/wd-mcp-howto.md` — **이 스킬의 모든 "이슈 조회/생성/수정"은
+> 이 문서의 `wd_call` 헬퍼를 통해 한다.** `gh` CLI는 쓰지 않는다(2026-10-15부로 GitHub Issues에서 WD로 전환).
 > 하위 도구: `ai-driven-explorer` (UI 탐색·크로스체크), `ai-driven-agent-inspector` (subagent 품질 점검·크로스체크), `ai-driven-solver` (수정)
 >
 > **결함 도메인 라우팅**:
-> - `subagent-quality` 라벨 있음 → inspector 큐 (resolved면 inspector 크로스체크, 신규면 solver — solver 호출 시 inspector trace 첨부 사실을 본문에서 인지)
-> - 그 외 → explorer 큐 (resolved면 explorer 크로스체크, 신규면 solver)
+> - 메타 "성격"이 `subagent-quality:*` → inspector 큐 (단계=resolved면 inspector 크로스체크, 단계=open이면 solver — solver 호출 시 inspector trace 첨부 사실을 본문에서 인지)
+> - 그 외(`ui`) → explorer 큐 (단계=resolved면 explorer 크로스체크, 단계=open이면 solver)
 
 ## 핵심 원칙
 
 - **Pilot은 결정 주체**. explorer/solver는 도구. Pilot이 큐를 보고 우선순위 정하고 subagent로 호출만 한다.
 - 사이클 진입은 **사용자 명시적 승인 필수**. 한 번 켜면 큐가 비거나 에스컬레이션이 발생할 때까지 자율 동작.
-- **모든 자율 결정은 GitHub 이슈 코멘트로 기록** → 사후 감사 가능.
+- **모든 자율 결정은 WD 이슈 코멘트로 기록** → 사후 감사 가능.
 - 에스컬레이션 = 일시정지·보고. pilot이 임의로 우회·생략하지 않는다.
 - subagent 호출은 메인 컨텍스트 보호용. 누적 이슈 50건도 메인 컨텍스트 안 터짐.
 - **solver/explorer는 한 번에 1개만 실행**. 동시 실행 시 pre-commit hook(Gradle 테스트)이 병렬로 돌아 DB 연결 풀 고갈 → flaky 실패 → 재시도 낭비. 이전 subagent 완료 후 다음 dispatch.
@@ -30,6 +32,9 @@ description: ai-driven-explorer / ai-driven-solver / ai-driven-agent-inspector�
 하나라도 실패면 사용자에게 보고 후 **중단**. pilot이 임의로 환경을 바꾸지 않는다.
 
 ```bash
+# 0) wd_call 헬퍼 로드 (.claude/docs/wd-mcp-howto.md 의 함수 정의를 그대로 source)
+#    이후 모든 이슈 조회/생성/수정은 wd_call 로.
+
 # 1) 작업 트리 깨끗?
 git status --porcelain | head -1
 # 출력 있으면 dirty → "stash 또는 commit 후 다시 호출하세요" 안내 후 종료
@@ -43,20 +48,14 @@ curl -sf http://localhost:5173 > /dev/null && echo OK || echo NOPE
 # NOPE이면 "pnpm dev 실행 후 다시 호출" 안내 후 종료
 
 # 3b) subagent-quality 큐가 있으면 firehub-ai-agent도 헬스체크
-if gh issue list --label "subagent-quality" --state open --limit 1 --json number -q '.[0].number' | grep -q .; then
+if wd_call list_issues '{"projectKey":"WD","q":"subagent-quality"}' | grep -q issueKey; then
   curl -sf http://localhost:5020/agent/health > /dev/null && echo OK || echo NOPE_AI
   # NOPE_AI면 inspector 액션만 skip하고 explorer 큐는 계속 (전체 중단 X)
 fi
 
-# 4) 미정리 pilot 라벨 잔존 체크 (이전 사이클이 비정상 종료된 흔적)
-gh issue list --label "pilot:processing" --state open --json number
+# 4) 미정리 processing 잔존 체크 (이전 사이클이 비정상 종료된 흔적)
+wd_call list_issues '{"projectKey":"WD","q":"단계: processing"}'
 # 출력 있으면 사용자에게 "이전 처리 중이던 이슈입니다, 정리하고 시작할까요?"
-
-# 4b) 보드 iteration sweep — open 이슈 중 iteration 미배정/옛 iteration이면 현재로 이관
-# GitHub Projects v2는 iteration roll-over를 자동 수행하지 않으므로 새 iteration 시작 후
-# 미완료 이슈가 옛/없음 상태로 남는다. status는 보존 (in_review 등 기존 상태 유지).
-bash .claude/skills/ai-driven-pilot/scripts/sweep-iteration.sh
-# 출력 예: "✅ #117: none → Iteration 3" 라인이 있으면 이번에 이관된 건. 결과만 사용자에게 보고.
 
 # 5) 미정리 pilot playwright 세션 잔존 체크 (이전 사이클이 close 안 한 흔적)
 playwright-cli list 2>&1 | grep -E "browser \"p[sce][0-9a-f]+\"" | head
@@ -65,6 +64,9 @@ playwright-cli list 2>&1 | grep -E "browser \"p[sce][0-9a-f]+\"" | head
 # `playwright-cli kill-all` 사용을 사용자에게 제안. 좀비는 보통 소켓 경로가 길어 발생 →
 # 세션 이름이 짧은 `ps<N>`/`pc<N>`/`pe<rand>` 컨벤션을 따르면 거의 발생하지 않음.
 ```
+
+GitHub Projects 시절의 "보드 iteration sweep"(4b 단계)은 **WD 전환에서는 없다** — WD에 GitHub Projects 같은 별도
+보드/iteration 개념이 없고, 이슈 자체의 `status` 필드가 그 역할을 겸한다([[wd-mcp-howto]] 참고).
 
 ---
 
@@ -83,7 +85,7 @@ playwright-cli list 2>&1 | grep -E "browser \"p[sce][0-9a-f]+\"" | head
 해석한 한도를 사용자에게 한 번 더 확인:
 ```
 파일럿 시작 — 한도: [무제한 / 1시간 / 5건]
-진행 중 라벨: pilot:processing (사람 개입 필요 시 ai-fix 제거 + 보드 backlog 이동)
+진행 중 표시: 메타 "단계: processing" (사람 개입 필요 시 "처리"를 needs-human으로, status=TODO로 전환)
 시작할까요?
 ```
 
@@ -97,26 +99,27 @@ WHILE 큐가 비어있지 않음 AND 한도 미도달 AND 사용자 중단 신�
   3.2 다음 액션 한 개 선정 (우선순위)
   3.3 에스컬레이션 트리거 사전 검사
   3.4 subagent 호출 (explorer 또는 solver)
-  3.5 결과 수신 → 라벨 정리 → 다음 루프
+  3.5 결과 수신 → 메타 블록 정리 → 다음 루프
 ```
 
 ### 3.1 현황 분류
 
 ```bash
-gh issue list --state open --json number,title,labels --limit 100 > /tmp/issues.json
+wd_call list_issues '{"projectKey":"WD","status":"TODO,IN_PROGRESS"}'
+# 후보 각각 get_issue_detail 로 본문 메타 블록을 파싱 (q 는 1차 필터일 뿐 — 최종 판단은 메타 블록 직접 파싱)
 
 # 분류 우선순위 (위에서부터 검사 — 첫 매칭에서 바로 분류 결정):
-# 1. resolved 라벨 있음 → 크로스체크 큐 (ai-fix 무관)
-#    - subagent-quality 라벨 함께 → inspector 크로스체크 (액션 B')
+# 1. 메타 "단계: resolved" 또는 "단계: regression:N" → 크로스체크 큐 (처리=needs-human 이어도 무관)
+#    - 성격이 subagent-quality:* → inspector 크로스체크 (액션 B')
 #    - 아니면 → explorer 크로스체크 (액션 B)
 #    이유: solver fix가 이미 적용된 상태. 검증은 사람 게이트 없이 진행해야
-#    "In review" 단계에서 멈추지 않음. ai-fix를 사람이 떼도 검증은 끝까지 마침.
-# 2. ai-fix 라벨 없음 → 사람 큐 (스킵) — 신규/회귀 처리의 단일 게이트.
-#    (security / deferred / on-hold / needs-info 등 다른 라벨은 분류에 영향 없음.
-#     처리 제외하려면 사람이 ai-fix를 떼면 됨.)
-# 3. regression 라벨 + ai-fix 있음 → solver 재처리 큐
-# 4. ai-fix + severity:* + 위 어디에도 안 속함 → 신규 솔버 큐
-#    (subagent-quality 라벨이 있어도 수정은 solver 단일 채널. solver는 본문의
+#    "검증 대기" 단계에서 멈추지 않음. 처리가 needs-human이어도 검증은 끝까지 마침.
+# 2. 메타 "처리: needs-human" → 사람 큐 (스킵) — 신규/회귀 처리의 단일 게이트.
+#    (플래그의 security / deferred / on-hold / needs-info 는 분류에 영향 없음.
+#     처리 제외하려면 사람이 "처리"를 needs-human 으로 바꾸면 됨.)
+# 3. 메타 "단계: regression:N" + "처리: ai-fix" → solver 재처리 큐
+# 4. "처리: ai-fix" + 심각도 있음 + 위 어디에도 안 속함(단계=open) → 신규 솔버 큐
+#    (성격이 subagent-quality:* 여도 수정은 solver 단일 채널. solver는 본문의
 #     "## Trace 근거" 섹션을 통해 inspector trace 위치를 인지.)
 ```
 
@@ -124,26 +127,28 @@ gh issue list --state open --json number,title,labels --limit 100 > /tmp/issues.
 
 | 순위 | 조건 | 사유 |
 |------|------|------|
-| 1 | `regression` + `severity:critical` | 회귀 + 치명도 → 가장 위험 |
-| 2 | `regression` + 기타 severity | 회귀는 신뢰 회복이 우선 |
-| 3 | `resolved` 라벨 | 검증 빨리 끝내야 다음 사이클 가능 |
-| 4 | 신규 + `severity:critical` | 치명도 |
-| 5 | 신규 + `severity:major` | |
-| 6 | 신규 + `severity:minor` | |
-| 7 | 신규 + `severity:ux` | |
+| 1 | `단계: regression:N` + 심각도=critical | 회귀 + 치명도 → 가장 위험 |
+| 2 | `단계: regression:N` + 기타 심각도 | 회귀는 신뢰 회복이 우선 |
+| 3 | `단계: resolved` | 검증 빨리 끝내야 다음 사이클 가능 |
+| 4 | 신규(`단계: open`) + 심각도=critical | 치명도 |
+| 5 | 신규 + 심각도=major | |
+| 6 | 신규 + 심각도=minor | |
+| 7 | 신규 + 심각도=ux | |
 | — | 큐 전체가 빔 | 탐색 1회 (선택, Section 3.6) |
 
 ### 3.3 에스컬레이션 트리거 (사전 검사)
 
-이슈에 트리거 조건이 이미 충족되어 있으면 **subagent 호출 자체를 안 함**. ai-fix 라벨 제거 + 보드 `backlog` 이동으로 사람 큐로 빼고 다음으로.
+이슈에 트리거 조건이 이미 충족되어 있으면 **subagent 호출 자체를 안 함**. 메타 "처리"를 needs-human으로 바꾸고
+status를 TODO로 되돌려 사람 큐로 빼고 다음으로.
 
 | 트리거 | 검사 방법 | 동작 |
 |--------|----------|------|
-| **회귀 3회+** | 이슈 코멘트에서 "🔴 회귀 발견" 카운트 | `ai-fix` 제거 + 코멘트 "회귀 3회 도달, 사람 검토 필요" + 보드 `backlog` + skip |
+| **회귀 3회+** | `get_issue_detail(allComments:true)`로 댓글에서 "🔴 회귀 발견" 카운트 | 메타 "처리"→needs-human + 코멘트 "회귀 3회 도달, 사람 검토 필요" + status=TODO + skip |
 
-> 처리 제외 신호는 **ai-fix 라벨 제거 + 보드 backlog 이동** 단일 채널. `pilot:escalated` 라벨은 사용하지 않는다 (상태는 보드로만 표현).
+> 처리 제외 신호는 **메타 "처리: needs-human" 전환 + status=TODO** 단일 채널. 별도 에스컬레이션 마커는 쓰지 않는다
+> (상태는 메타 블록 하나로만 표현).
 
-### 3.3.1 사람 개입 판단 기준 (자동 처리 vs backlog)
+### 3.3.1 사람 개입 판단 기준 (자동 처리 vs 사람 큐)
 
 dispatch 직전 pilot이 1차로, dispatch 후 solver가 2차로 **종합 판단**한다. 단일 항목 매칭으로 자동 결정하지 않고, 아래 축들을 함께 보고 "이 이슈를 자율 사이클로 끝낼 수 있는가"를 판단한다.
 
@@ -160,49 +165,47 @@ dispatch 직전 pilot이 1차로, dispatch 후 solver가 2차로 **종합 판단
 > **전제 검증은 다른 축보다 우선**: 가정이 흔들리면 fix 자체가 by-design을 결함으로 만드는 사고로 이어진다. 가정 의존이 강하면 다른 축이 모두 단순해도 needs_human.
 
 판단 방법:
-- 위 축들을 종합해 **"자율 사이클로 안전하게 끝낼 수 있다"는 확신이 서면 자동 처리**, 아니면 backlog.
+- 위 축들을 종합해 **"자율 사이클로 안전하게 끝낼 수 있다"는 확신이 서면 자동 처리**, 아니면 사람 큐.
 - 단일 축이 "사람 개입" 쪽이어도 다른 축들이 모두 단순하면 자동 처리 가능 (예: 변경 범위는 약간 넓지만 패턴이 명확하고 옵션 없음).
-- 반대로 모든 축이 약하게 "사람 개입" 쪽으로 기울면 backlog (개별 축 임계값 미달이라도).
-- 의심 시 **보수적으로 backlog** (잘못 자동 처리해 회귀를 만드는 비용이 사람 검토 1회보다 큼).
+- 반대로 모든 축이 약하게 "사람 개입" 쪽으로 기울면 사람 큐 (개별 축 임계값 미달이라도).
+- 의심 시 **보수적으로 사람 큐** (잘못 자동 처리해 회귀를 만드는 비용이 사람 검토 1회보다 큼).
 
-판단 결과 backlog면 `ai-fix` 제거 + 보드 `backlog` + 코멘트(어느 축이 결정적이었는지 한두 줄). solver가 분석 중 발견 시 `needs_human` 결과로 보고.
+판단 결과 사람 큐면 메타 "처리"→needs-human + status=TODO + 코멘트(어느 축이 결정적이었는지 한두 줄). solver가 분석 중 발견 시 `needs_human` 결과로 보고.
 
 ### 3.4 Subagent 호출
 
-호출 직전 `pilot:processing` 라벨 부착 + 보드 배정 + **Status → "In progress"** 전환 (Section 3.6 참조):
+호출 직전 메타 "단계"를 `processing`으로, status를 `IN_PROGRESS`로 전환:
 ```bash
-gh issue edit <번호> --add-label "pilot:processing"
-# 보드에 추가 + 현재 iteration 배정 (이미 있으면 idempotent)
-bash .claude/skills/ai-driven-pilot/scripts/add-to-board.sh <번호>
-# 상태 전환
-bash .claude/skills/ai-driven-pilot/scripts/board-status.sh <번호> in_progress
+# body 메타 블록의 "단계" 줄만 치환해 전체 body를 다시 보낸다 ([[wd-mcp-howto]] set_field 참고)
+wd_call update_issue '{"issueKey":"WD-<N>","status":"IN_PROGRESS","body":"<치환된 전체 body>"}'
 ```
 
 **액션별 subagent 프롬프트** (자기완결적이어야 함 — subagent는 메인 대화 못 봄).
 
-> 세션 이름 전달 방식: Agent SDK는 환경변수를 격리하므로 SESSION_NAME 환경변수 직접 전달이 불가하다. prompt 본문에 `SESSION=ps<N>` 형태로 export 명령을 박아넣어 subagent가 첫 명령으로 실행하도록 한다. solver/explorer는 `${SESSION_NAME:-default}` 폴백을 갖고 있어 양쪽 호환.
+> 세션 이름 전달 방식: Agent SDK는 환경변수를 격리하므로 SESSION_NAME 환경변수 직접 전달이 불가하다. prompt 본문에 `SESSION=ps<N>` 형태로 export 명령을 박아넣어 subagent가 첫 명령으로 실행하도록 한다(`<N>`은 WD 키의 숫자 부분, 예 WD-293 → `ps293`). solver/explorer는 `${SESSION_NAME:-default}` 폴백을 갖고 있어 양쪽 호환.
 
 #### A. 신규/재처리 → solver
 ```
 Agent(
   subagent_type="general-purpose",
-  description="이슈 #N solver 처리",
-  prompt="""ai-driven-solver 스킬을 사용하여 GitHub 이슈 #N을 처리하라.
+  description="이슈 WD-N solver 처리",
+  prompt="""ai-driven-solver 스킬을 사용하여 WD 이슈 WD-N을 처리하라. 이슈 조회/수정은 `.claude/docs/wd-mcp-howto.md`의
+wd_call 헬퍼로 한다(gh 아님).
 
 배경:
 - 이 작업은 ai-driven-pilot이 자율 사이클로 호출함
-- **playwright-cli 세션 이름은 `ps<N>` 사용** (예: 이슈 #45 → `ps45`). 짧게 쓰는 이유: macOS Unix 소켓 경로 104바이트 한도 — 이름이 길면 소켓 생성 실패 → 좀비 세션 발생. 첫 명령은 `SESSION=ps<N>`으로 export 후 진행.
+- **playwright-cli 세션 이름은 `ps<N>` 사용** (예: 이슈 WD-45 → `ps45`). 짧게 쓰는 이유: macOS Unix 소켓 경로 104바이트 한도 — 이름이 길면 소켓 생성 실패 → 좀비 세션 발생. 첫 명령은 `SESSION=ps<N>`으로 export 후 진행.
 - 작업 종료 시(정상/실패 무관) 반드시 `playwright-cli -s=$SESSION close` 실행해 세션 leak 방지.
-- 처리 완료 후 stdout 마지막 줄에 다음 중 하나로 보고 (이슈 번호 #N 포함):
-  RESULT: #N / success / <커밋해시> / <변경파일수>
-  RESULT: #N / test_failed_2 / <마지막 실패 메시지>
-  RESULT: #N / hook_failed_2 / <어느 단계>
-  RESULT: #N / reproduce_failed / <사유>
-  RESULT: #N / blocked / <사유>
+- 처리 완료 후 stdout 마지막 줄에 다음 중 하나로 보고 (이슈 키 WD-N 포함):
+  RESULT: WD-N / success / <커밋해시> / <변경파일수>
+  RESULT: WD-N / test_failed_2 / <마지막 실패 메시지>
+  RESULT: WD-N / hook_failed_2 / <어느 단계>
+  RESULT: WD-N / reproduce_failed / <사유>
+  RESULT: WD-N / blocked / <사유>
 
 자율 사이클이므로 사용자 확인 단계는 skip하고 솔버의 자체 판단으로 진행하라.
 단, 다음은 자동 진행 금지 — 그대로 결과 보고:
-- 사전 재현이 안 됨 → reproduce_failed (solver가 needs-info 라벨 부착)
+- 사전 재현이 안 됨 → reproduce_failed (solver가 메타 플래그에 needs-info 추가)
 - 테스트 2회 실패 → test_failed_2
 - 훅 2회 실패 → hook_failed_2
 - 수정 방향에 대한 **사람의 결정이 필요**하다고 판단될 때 → needs_human / <이유 한 줄>
@@ -215,17 +218,18 @@ Agent(
 ```
 Agent(
   subagent_type="general-purpose",
-  description="이슈 #N 크로스체크",
-  prompt="""ai-driven-explorer 스킬을 크로스체크 모드로 사용하여 이슈 #N을 검증하라.
+  description="이슈 WD-N 크로스체크",
+  prompt="""ai-driven-explorer 스킬을 크로스체크 모드로 사용하여 WD 이슈 WD-N을 검증하라. 이슈 조회/수정은
+`.claude/docs/wd-mcp-howto.md`의 wd_call 헬퍼로 한다.
 
 배경:
 - 이 작업은 ai-driven-pilot이 자율 사이클로 호출함
-- **playwright-cli 세션 이름은 `pc<N>` 사용** (예: 이슈 #38 → `pc38`). 짧게 쓰는 이유는 solver와 동일 (소켓 경로 한도). `SESSION=pc<N>`으로 export 후 진행.
+- **playwright-cli 세션 이름은 `pc<N>` 사용** (예: 이슈 WD-38 → `pc38`). 짧게 쓰는 이유는 solver와 동일 (소켓 경로 한도). `SESSION=pc<N>`으로 export 후 진행.
 - 작업 종료 시(통과/회귀/blocked 무관) 반드시 `playwright-cli -s=$SESSION close` 실행해 세션 leak 방지.
-- 검증 완료 후 stdout 마지막 줄에 다음 중 하나로 보고 (이슈 번호 #N 포함):
-  RESULT: #N / passed / closed
-  RESULT: #N / regression / <회귀 회차>
-  RESULT: #N / blocked / <사유>
+- 검증 완료 후 stdout 마지막 줄에 다음 중 하나로 보고 (이슈 키 WD-N 포함):
+  RESULT: WD-N / passed / closed
+  RESULT: WD-N / regression / <회귀 회차>
+  RESULT: WD-N / blocked / <사유>
 
 자율 사이클이므로 사용자 확인 단계는 skip하고 explorer의 자체 판단으로 진행하라.
 """
@@ -236,19 +240,20 @@ Agent(
 ```
 Agent(
   subagent_type="general-purpose",
-  description="이슈 #N inspector 크로스체크",
-  prompt="""ai-driven-agent-inspector 스킬을 크로스체크 모드로 사용하여 이슈 #N을 검증하라.
+  description="이슈 WD-N inspector 크로스체크",
+  prompt="""ai-driven-agent-inspector 스킬을 크로스체크 모드로 사용하여 WD 이슈 WD-N을 검증하라. 이슈 조회/수정은
+`.claude/docs/wd-mcp-howto.md`의 wd_call 헬퍼로 한다.
 
 배경:
 - 이 작업은 ai-driven-pilot이 자율 사이클로 호출함
-- 이 이슈는 `subagent-quality` 라벨로 firehub-ai-agent의 subagent 결함이다.
+- 이 이슈는 메타 "성격: subagent-quality:*"로 firehub-ai-agent의 subagent 결함이다.
 - playwright-cli는 사용하지 않는다. 대신 `POST http://localhost:5020/agent/chat`을 curl로 직접 호출한다.
 - INTERNAL_SERVICE_TOKEN은 `apps/firehub-ai-agent/.env.local`에서 읽는다.
 - 세션 디렉토리: `test-results/subagent-eval/$(date +%Y-%m-%dT%H-%M)/traces/crosscheck-<N>.sse`
-- 검증 완료 후 stdout 마지막 줄에 다음 중 하나로 보고 (이슈 번호 #N 포함):
-  RESULT: #N / passed / closed
-  RESULT: #N / regression / <회귀 회차>
-  RESULT: #N / blocked / <사유>     (예: ai-agent 서버 다운)
+- 검증 완료 후 stdout 마지막 줄에 다음 중 하나로 보고 (이슈 키 WD-N 포함):
+  RESULT: WD-N / passed / closed
+  RESULT: WD-N / regression / <회귀 회차>
+  RESULT: WD-N / blocked / <사유>     (예: ai-agent 서버 다운)
 
 자율 사이클이므로 사용자 확인 단계는 skip하고 inspector의 자체 판단으로 진행하라.
 """
@@ -257,21 +262,22 @@ Agent(
 
 #### C. 큐 빔 → 탐색 (선택)
 
-큐가 완전히 빈 경우만, 한 사이클당 1회까지. 사용자가 "탐색도 해줘" 옵션을 켰을 때만 작동. 탐색은 특정 이슈에 귀속되지 않으므로 `pilot:processing` 라벨/보드 in_progress 전환은 **하지 않는다** — 발견된 신규 이슈는 explorer가 자체적으로 보드에 추가한다.
+큐가 완전히 빈 경우만, 한 사이클당 1회까지. 사용자가 "탐색도 해줘" 옵션을 켰을 때만 작동. 탐색은 특정 이슈에 귀속되지 않으므로 메타 "단계: processing" 전환은 **하지 않는다** — 발견된 신규 이슈는 explorer가 자체적으로 WD에 생성한다.
 
 ```
 Agent(
   subagent_type="general-purpose",
   description="탐색 사이클 1회",
-  prompt="""ai-driven-explorer 스킬을 탐색 모드로 사용하여 신규 버그를 발견·등록하라.
+  prompt="""ai-driven-explorer 스킬을 탐색 모드로 사용하여 신규 버그를 발견·등록하라. 이슈 생성은
+`.claude/docs/wd-mcp-howto.md`의 wd_call 헬퍼로 WD(projectKey=WD, parent=WD-10 또는 해당 기능 에픽)에 한다(gh 아님).
 
 배경:
 - 이 작업은 ai-driven-pilot이 자율 사이클로 호출함
-- **playwright-cli 세션 이름은 `pe<rand4>` 사용** (탐색은 이슈 번호 없으니 짧은 hex suffix). 짧게 쓰는 이유는 동일 (소켓 경로 한도). `SESSION=pe$(openssl rand -hex 2)`로 export 후 진행.
+- **playwright-cli 세션 이름은 `pe<rand4>` 사용** (탐색은 이슈 키가 아직 없으니 짧은 hex suffix). 짧게 쓰는 이유는 동일 (소켓 경로 한도). `SESSION=pe$(openssl rand -hex 2)`로 export 후 진행.
 - 작업 종료 시 반드시 `playwright-cli -s=$SESSION close` 실행해 세션 leak 방지.
-- 발견된 이슈는 `gh issue create` 직후 explorer 스킬의 안내에 따라 `add-to-board.sh`로 보드에 자동 추가됨.
+- 발견된 이슈는 `wd_call create_issue`로 생성(메타 블록 포함, 처리=ai-fix 기본).
 - 탐색 완료 후 stdout 마지막 줄에 다음 중 하나로 보고:
-  EXPLORER_DONE: <N>,<M>,...     (1건 이상 발견)
+  EXPLORER_DONE: WD-N,WD-M,...   (1건 이상 발견)
   EXPLORER_DONE: none            (탐색했으나 신규 없음)
   EXPLORER_DONE: blocked: <사유>  (브라우저 기동 실패 등)
 
@@ -284,7 +290,7 @@ pilot의 탐색 결과 처리:
 
 | explorer 결과 | pilot 동작 |
 |--------------|-----------|
-| `EXPLORER_DONE: <N>,<M>,...` | 큐를 재스캔(3.1)하고 발견된 이슈를 신규 솔버 큐로 처리. 발견된 이슈는 explorer가 이미 보드 추가까지 완료한 상태. **사용자 확인 없이 자동으로 루프 계속** |
+| `EXPLORER_DONE: WD-N,WD-M,...` | 큐를 재스캔(3.1)하고 발견된 이슈를 신규 솔버 큐로 처리. **사용자 확인 없이 자동으로 루프 계속** |
 | `EXPLORER_DONE: none` | 큐도 비고 탐색도 신규 없음 → 사이클 정상 종료 |
 | `EXPLORER_DONE: blocked: <사유>` | 일시정지, 코멘트 없이 종료 (특정 이슈에 귀속되지 않음) |
 | EXPLORER_DONE 라인 없거나 형식 깨짐 | `blocked` 처리 + 일시정지 |
@@ -298,15 +304,16 @@ Agent(
   subagent_type="general-purpose",
   description="subagent inspector 탐색 1회",
   prompt="""ai-driven-agent-inspector 스킬을 점검 모드로 사용하여 firehub-ai-agent subagent들의 신규 결함을 발견·등록하라.
+이슈 생성은 `.claude/docs/wd-mcp-howto.md`의 wd_call 헬퍼로 WD에 한다.
 
 배경:
 - 이 작업은 ai-driven-pilot이 자율 사이클로 호출함
 - POST http://localhost:5020/agent/chat (Authorization: Internal <token>)를 직접 호출.
 - 한 패스는 한 perspective(accuracy/tool/perf/ux) × 한 subagent로 집중.
   대상 selection: `test-results/subagent-eval/.coverage-matrix-accuracy.md`의 ⬜ 항목 우선.
-- 발견된 이슈는 `gh issue create` 직후 inspector 스킬 안내에 따라 `add-to-board.sh`로 보드에 자동 추가됨 (라벨: bug,subagent-quality,severity:*,<perspective>).
+- 발견된 이슈는 `wd_call create_issue`로 생성(메타: 성격=subagent-quality:<perspective>, 심각도=*, 처리=ai-fix).
 - 탐색 완료 후 stdout 마지막 줄에 다음 중 하나로 보고:
-  INSPECTOR_DONE: <N>,<M>,...     (1건 이상 발견)
+  INSPECTOR_DONE: WD-N,WD-M,...   (1건 이상 발견)
   INSPECTOR_DONE: none            (점검했으나 신규 없음)
   INSPECTOR_DONE: blocked: <사유>  (ai-agent 다운 등)
 
@@ -319,55 +326,26 @@ pilot의 inspector 탐색 결과 처리:
 
 | inspector 결과 | pilot 동작 |
 |--------------|-----------|
-| `INSPECTOR_DONE: <N>,<M>,...` | 큐 재스캔(3.1) → 발견 이슈가 solver 큐(신규 + ai-fix)로 자동 진입. **다음 루프 계속** |
+| `INSPECTOR_DONE: WD-N,WD-M,...` | 큐 재스캔(3.1) → 발견 이슈가 solver 큐(신규 + ai-fix)로 자동 진입. **다음 루프 계속** |
 | `INSPECTOR_DONE: none` | inspector 측 신규 없음. explorer 탐색(액션 C)도 옵션이면 그쪽으로, 아니면 사이클 정상 종료 |
 | `INSPECTOR_DONE: blocked: <사유>` | 일시정지 |
 | INSPECTOR_DONE 라인 없거나 형식 깨짐 | `blocked` + 일시정지 |
 
-### 3.5 결과 수신 → 라벨 정리
+### 3.5 결과 수신 → 메타 블록 정리
 
-```bash
-# 처리 라벨 제거
-gh issue edit <번호> --remove-label "pilot:processing"
-```
+RESULT 형식: `RESULT: WD-<N> / <상태> / <부가정보>`.
 
-RESULT 형식: `RESULT: #<N> / <상태> / <부가정보>` — `#<N>`은 처리한 이슈 번호 (정수, gh 컨벤션).
+**Sanity check**: pilot이 dispatch한 이슈 키와 RESULT의 `WD-<N>`이 다르면 → `blocked` 처리 + 일시정지 (subagent가 잘못된 이슈 건드린 사고).
 
-**Sanity check**: pilot이 dispatch한 이슈 번호와 RESULT의 `#<N>`이 다르면 → `blocked` 처리 + 일시정지 (subagent가 잘못된 이슈 건드린 사고).
-
-| subagent RESULT (`#<N> /` 이후) | pilot 동작 | 보드 상태 전환 |
+| subagent RESULT (`WD-N /` 이후) | pilot 동작 | 메타 "단계" / WD status |
 |-----------------|-----------|-----------|
-| `success` | 진행 카운트 +1, 다음 루프 | `in_review` (crosscheck 대기) |
-| `passed` (크로스체크 통과) | close는 explorer가 이미 함, 카운트 +1, 다음 루프 | `done` |
-| `regression` (회귀 K회) | 다음 루프 (K < 3이면 다음 사이클에서 solver가 다시 잡음). K ≥ 3 도달은 3.3 트리거가 ai-fix 제거 + backlog 이동으로 사람 큐 이동 처리. | 변경 없음 |
-| `needs_human` | `ai-fix` 라벨 제거 + 이슈 코멘트(이유·난이도·brainstorm/plan 필요 여부) + 일시정지 X, **다음 루프 계속** | `backlog` (사람 결정 후 ai-fix 재부착) |
-| `blocked / non_bug_perspective` | 정상 라우팅 (라벨 보고 거른 것). 일시정지 X, **다음 루프 계속**. ai-fix 라벨이 없어 다음 사이클에서도 사람 큐로 분류됨 | `backlog` (사람이 검토 후 ai-fix 부착) |
-| `test_failed_2` / `hook_failed_2` / `reproduce_failed` / `blocked` (위 외) | `ai-fix` 라벨 제거 + 코멘트(원인 + 사람 개입 필요 사유) + **사이클 일시정지** (환경/분석 문제는 다음 이슈에서도 반복될 가능성) | `backlog` (사람 검토 후 ai-fix 재부착) |
-| RESULT 라인 자체가 없거나 형식 깨짐 | `ai-fix` 라벨 제거 + `pilot:processing` 제거 + 일시정지 (silent failure 방지) | `backlog` |
-
----
-
-## 3.6 GitHub Projects 보드 상태 동기화
-
-이슈 사이클 단계(solver 시작 → 수정 완료 → 검증 통과 → 에스컬레이션)에 맞춰 보드 Status 필드를 자동 전환한다.
-
-스크립트:
-- `bash .claude/skills/ai-driven-pilot/scripts/add-to-board.sh <이슈번호>` — 보드 추가 + 현재 iteration 배정 + Status=backlog (이슈 등록 시 1회)
-- `bash .claude/skills/ai-driven-pilot/scripts/board-status.sh <이슈번호> <상태>` — Status 전환만 (상태값: `backlog` | `in_progress` | `in_review` | `done`)
-
-보드에 없는 이슈는 `add-to-board.sh`가 자동 추가. `board-status.sh`는 이미 보드에 있는 이슈에만 동작.
-
-### 상태 전환 매핑
-
-| 타이밍 | 보드 Status | 이유 |
-|--------|------------|------|
-| solver 호출 직전 | `in_progress` | 작업 시작 |
-| solver RESULT: success | `in_review` | crosscheck 대기 (resolved 상태 — 처리 방안 이미 적용됨, 사람 리뷰만 필요) |
-| crosscheck RESULT: passed | `done` | 완료 |
-| solver RESULT: needs_human / blocked / non_bug_perspective | `backlog` | 사람 결정 필요 (ai-fix 제거 — 난이도/범위/brainstorm·plan 필요 사유는 코멘트에 기록) |
-| 회귀 3회+ / test_failed_2 / hook_failed_2 / reproduce_failed / RESULT 누락 | `backlog` | 사람 개입 필요 (ai-fix 제거) |
-
-보드에 없는 이슈(ITEM_ID 조회 실패)는 조용히 스킵 — 파일럿 흐름 중단 없음.
+| `success` | 진행 카운트 +1, 다음 루프 | `resolved` / IN_PROGRESS (crosscheck 대기) |
+| `passed` (크로스체크 통과) | close는 explorer/inspector가 이미 함, 카운트 +1, 다음 루프 | `closed:completed` / DONE |
+| `regression` (회귀 K회) | 다음 루프 (K < 3이면 다음 사이클에서 solver가 다시 잡음). K ≥ 3 도달은 3.3 트리거가 처리→needs-human + status=TODO 로 사람 큐 이동 처리. | `regression:K` / IN_PROGRESS |
+| `needs_human` | 메타 "처리"→needs-human + 이슈 코멘트(이유·난이도·brainstorm/plan 필요 여부) + 일시정지 X, **다음 루프 계속** | status=TODO (사람 결정 후 ai-fix 재부착) |
+| `blocked / non_bug_perspective` | 정상 라우팅 (분류 자체가 안 맞은 것). 일시정지 X, **다음 루프 계속**. 처리가 needs-human 이 아니라면 다음 사이클에서도 같은 분류로 다시 걸릴 수 있어 사람이 메타를 조정해야 함 | status=TODO (사람이 검토 후 조정) |
+| `test_failed_2` / `hook_failed_2` / `reproduce_failed` / `blocked` (위 외) | 메타 "처리"→needs-human + 코멘트(원인 + 사람 개입 필요 사유) + **사이클 일시정지** (환경/분석 문제는 다음 이슈에서도 반복될 가능성) | status=TODO (사람 검토 후 ai-fix 재부착) |
+| RESULT 라인 자체가 없거나 형식 깨짐 | 메타 "처리"→needs-human + "단계"를 open 으로 되돌림 + 일시정지 (silent failure 방지) | status=TODO |
 
 ---
 
@@ -384,10 +362,8 @@ RESULT 형식: `RESULT: #<N> / <상태> / <부가정보>` — `#<N>`은 처리�
 종료 사유와 무관하게 **반드시 다음 정리 수행**:
 
 ```bash
-# 1) pilot:processing 라벨 잔존 제거 (subagent가 비정상 종료한 흔적)
-for issue in $(gh issue list --label "pilot:processing" --state open --json number -q '.[].number'); do
-  gh issue edit $issue --remove-label "pilot:processing"
-done
+# 1) 메타 "단계: processing" 잔존 제거 (subagent가 비정상 종료한 흔적)
+#    해당 이슈들을 get_issue_detail 로 찾아 "단계"를 open 으로 되돌리고 status=TODO 로 전환
 
 # 2) pilot 관련 playwright 세션 잔존 close (subagent가 close 누락한 흔적)
 # `sort -u` 안 쓰는 이유: 같은 이름 중복 등록 시 모두 닫기 위함.
@@ -408,39 +384,39 @@ done
 ## 파일럿 사이클 — 시작 YYYY-MM-DDTHH:MM / 종료 HH:MM (총 N분)
 
 처리 완료: M건
-- #45 (Major) — solver fix → resolved → crosscheck pass → close
-- #38 (Minor) — crosscheck pass → close
-- #99 (Critical) — solver fix → resolved (다음 사이클 크로스체크 대상)
-- #102 (UX) — solver fix → resolved → crosscheck regression (회귀 1회)
+- WD-45 (Major) — solver fix → resolved → crosscheck pass → close
+- WD-38 (Minor) — crosscheck pass → close
+- WD-99 (Critical) — solver fix → resolved (다음 사이클 크로스체크 대상)
+- WD-102 (UX) — solver fix → resolved → crosscheck regression (회귀 1회)
 
-사람 개입 필요 (ai-fix 제거 + 보드 backlog 이동): K건
-- #21 — 회귀 3회 도달
-- #15 — solver test_failed_2 (테스트 두 번 실패)
-- #99 — needs_human (난이도 높음, plan 필요)
+사람 개입 필요 (처리→needs-human + status=TODO): K건
+- WD-21 — 회귀 3회 도달
+- WD-15 — solver test_failed_2 (테스트 두 번 실패)
+- WD-99 — needs_human (난이도 높음, plan 필요)
 
-스킵 (ai-fix 없음): L건
-- #18 — 사람 검토 대기
+스킵 (처리=needs-human): L건
+- WD-18 — 사람 검토 대기
 
 종료 사유: 큐 소진 / 한도 도달 / 일시정지(상세)
-다음 사이클 추천: backlog의 사람 검토 종료 항목에 ai-fix 재부착 시 자동 재처리
+다음 사이클 추천: 사람 검토 종료 항목에 "처리: ai-fix" 재부착 시 자동 재처리
 ```
 
 ---
 
 ## 5. 일시정지 / 중단
 
-- 사용자가 "파일럿 멈춰" / "오토파일럿 끄기" 발화 → **진행 중인 subagent 완료 대기** 후 그래스풀 중단 (라벨 정리)
-- 강제 중단(세션 종료) 시 `pilot:processing` 라벨이 남을 수 있음 → 다음 시작 시 사전 점검 4번 항목에서 감지
+- 사용자가 "파일럿 멈춰" / "오토파일럿 끄기" 발화 → **진행 중인 subagent 완료 대기** 후 그래스풀 중단 (메타 블록 정리)
+- 강제 중단(세션 종료) 시 메타 "단계: processing"이 남을 수 있음 → 다음 시작 시 사전 점검 4번 항목에서 감지
 
 ---
 
 ## 주의사항
 
 - **메인 브랜치 직접 작업** 환경: pre-commit 훅(lint/typecheck/e2e/gradle test)이 자동 차단망 역할. PR 라인 한도 같은 별도 게이트는 두지 않음.
-- 모든 자율 close 결정은 **반드시 explorer 크로스체크를 거침**. solver의 fix만으로 close 되지 않는다 (라이프사이클 모델).
-- 처리 제외 게이트는 **ai-fix 라벨 단일 채널** (신규/회귀 한정). 사람 개입이 필요하다고 판단되면 (난이도/처리범위/brainstorming·plan 필요 등) pilot이 ai-fix를 자동 제거하고 보드 `backlog`로 이동. 사람이 검토 후 ai-fix 재부착 시 자동 재처리. `pilot:escalated` 라벨은 사용하지 않는다.
-- **크로스체크는 ai-fix 게이트에서 제외**: `resolved` 라벨만 있으면 explorer 큐에 진입. solver fix가 이미 적용된 상태이므로 사람의 ai-fix 재부착 없이도 검증을 마쳐야 "In review" 정체를 방지한다.
-- `success` (resolved 상태) → 보드 `in_review`. 처리 방안이 이미 적용되어 있으므로 사람의 리뷰 또는 explorer 크로스체크만 필요한 단계.
+- 모든 자율 close 결정은 **반드시 explorer/inspector 크로스체크를 거침**. solver의 fix만으로 close 되지 않는다 (라이프사이클 모델).
+- 처리 제외 게이트는 **메타 "처리" 필드 단일 채널** (신규/회귀 한정). 사람 개입이 필요하다고 판단되면 (난이도/처리범위/brainstorming·plan 필요 등) pilot이 "처리"를 자동으로 needs-human 으로 바꾸고 status=TODO 로 되돌린다. 사람이 검토 후 "처리: ai-fix"로 재부착 시 자동 재처리. 별도 에스컬레이션 마커는 쓰지 않는다.
+- **크로스체크는 처리 게이트에서 제외**: 메타 "단계: resolved"만 있으면 explorer/inspector 큐에 진입. solver fix가 이미 적용된 상태이므로 처리가 needs-human 이어도 검증을 마쳐야 "검증 대기" 정체를 방지한다.
+- `success` (resolved 상태) → status IN_PROGRESS 유지(단계만 resolved로). 처리 방안이 이미 적용되어 있으므로 사람의 리뷰 또는 explorer/inspector 크로스체크만 필요한 단계.
 - subagent 호출 자체가 사용자가 명시적으로 켰을 때만 발생. cron 등 자동 트리거는 안정 확인 후 별도 검토.
 - subagent의 RESULT 보고가 없거나 파싱 실패 시 → `blocked` 처리하고 일시정지 (silent failure 방지).
-- 이슈 라이프사이클 변경 (라벨 set, close reason 등)은 모두 `.claude/docs/issue-lifecycle.md` 모델을 따른다. pilot이 별도 라벨 체계를 만들지 않는다 (단, `pilot:processing` 메타 라벨만 도입 — 동시 처리 방지용).
+- 이슈 라이프사이클 변경(메타 블록 필드, close 사유 등)은 모두 `.claude/docs/issue-lifecycle.md` 모델을 따른다. WD 호출은 전부 `.claude/docs/wd-mcp-howto.md`의 `wd_call`을 통한다 — `gh` CLI는 이 파일럿 흐름에서 쓰지 않는다.

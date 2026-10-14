@@ -8,7 +8,7 @@ description: >
   관점(perspective)별 패스도 지원: "디자인 검증/UX 검토" → design, "접근성 검증/a11y" → a11y, "성능 검증/perf" → perf.
   관점 미지정 시 기본 bug 패스(security/error/async/critical 등).
   또한 "크로스체크해줘", "fix 확인해줘", "이슈 수정 검증해줘",
-  "resolved 라벨 검증" 같이 ai-driven-solver가 resolved 처리한 GitHub Issue를 재검증하는 요청에도 반드시 이 스킬을 사용한다.
+  "resolved 라벨 검증" 같이 ai-driven-solver가 resolved 처리한 WD 이슈를 재검증하는 요청에도 반드시 이 스킬을 사용한다.
   TC 명세서 기반 자동화 회귀 테스트가 아닌, 탐색적/인간적 관점의 자유로운 테스트에 특화되어 있다.
 ---
 
@@ -16,16 +16,17 @@ description: >
 
 이 스킬은 두 가지 모드로 동작한다:
 
-- **탐색 모드** (기본): 사람이 브라우저를 직접 쓰듯이 자유롭게 탐색하며 새 버그를 발견하고 GitHub Issues에 등록한다.
+- **탐색 모드** (기본): 사람이 브라우저를 직접 쓰듯이 자유롭게 탐색하며 새 버그를 발견하고 WD(Gen:iA Data) 이슈 트래커에 등록한다.
 - **크로스 체크 모드**: `ai-driven-solver`가 수정한 이슈를 독립 fresh 세션에서 재검증한다.
 
 **모드 결정**: 사용자 요청에 "크로스체크", "이슈 수정 검증", "fix 확인", "resolved 라벨" 키워드가 있으면 크로스 체크 모드로 진입한다. 아니면 탐색 모드.
 ("수정 확인" 같이 solver의 일상 작업과 겹치는 모호한 표현은 트리거에서 제외한다.)
 
-> 이슈 라이프사이클 전체 다이어그램·라벨 정의는 `.claude/docs/issue-lifecycle.md` 참조.
+> 이슈 라이프사이클 전체 다이어그램·메타 블록 필드 정의는 `.claude/docs/issue-lifecycle.md` 참조.
+> WD 호출 방법(curl 레시피, `wd_call` 헬퍼)은 `.claude/docs/wd-mcp-howto.md` 참조 — **이슈 조회/생성/수정은 전부 이 헬퍼로 한다.** `gh issue` 계열 명령은 쓰지 않는다(2026-10-15부로 GitHub Issues에서 WD로 전환).
 
 > **[필수 원칙] Explorer는 발견과 등록만 한다.**
-> 버그 발견 → `gh issue create` 등록 → 탐색 계속 → 보고서 작성 → 종료.
+> 버그 발견 → `wd_call create_issue` 등록 → 탐색 계속 → 보고서 작성 → 종료.
 > `ai-driven-solver`는 절대 자동으로 시작하지 않는다. Solver는 사용자가 명시적으로 별도 요청할 때만 독립 실행한다.
 > 이유: 같은 사이클에서 탐색+수정을 섞으면 컨텍스트가 오염되고 하네스 관점(발견 vs 수정)이 무너진다.
 
@@ -42,7 +43,7 @@ description: >
 >
 > Explorer가 등록할 수 있는 채팅 UI 결함은 **UI 자체의 문제**만:
 > 입력창 동작, 메시지 렌더링/스크롤, 첨부 업로드, 세션 ID 표시, SSE 연결 끊김 시 UI 반응 등.
-> 백엔드 응답 생성 로직 결함은 `subagent-quality` 라벨이 붙어야 하고, 그건 inspector가 trace로 잡는다.
+> 백엔드 응답 생성 로직 결함은 메타 "성격: subagent-quality:*"가 붙어야 하고, 그건 inspector가 trace로 잡는다.
 >
 > **모드별 처리**:
 > - 사용자 직접 호출: 발견 시 사용자에게 "inspector로 점검 권장" 1회 안내 후 등록 안 함.
@@ -233,7 +234,7 @@ find . -name "App.tsx" -o -name "App.jsx" | grep src | head -3
 ```bash
 grep -ri "TODO\|hidden\|disabled\|coming soon\|미구현" src/ | head -10
 cat CLAUDE.md
-gh issue list --state open --limit 30 --json number,title,labels  # 이미 알려진 이슈 제외
+wd_call list_issues '{"projectKey":"WD","status":"TODO,IN_PROGRESS"}'  # 이미 알려진 이슈 제외 (본문 메타 블록으로 확인)
 ```
 
 ### 탐색 범위·우선순위·시나리오 질문
@@ -399,7 +400,8 @@ playwright-cli -s=$SESSION run-code "page.on('response', async r => { if(r.url()
 
 ## 7. 버그 문서화
 
-발견된 버그는 GitHub Issues에 즉시 등록 후 **프로젝트 보드에도 추가**한다 (사람이 보드에서 즉시 볼 수 있도록).
+발견된 버그는 `wd_call create_issue`로 WD에 즉시 등록한다 (WD는 별도 프로젝트 보드가 없고, 이슈 자체의 `status` 필드가
+그 역할을 겸한다 — `.claude/docs/wd-mcp-howto.md` 참조).
 
 #### 등록 전 전제 가정 검증 (필수)
 
@@ -410,31 +412,39 @@ playwright-cli -s=$SESSION run-code "page.on('response', async r => { if(r.url()
 - 동일 시스템에 다른 해석 가능성이 존재 (예: username을 일반 ID로 볼 수도 이메일로 볼 수도 있는 경우)
 
 해당 시 처리:
-- `bug` 대신 또는 함께 `needs-decision` 라벨 부착
-- 본문에 `## 전제 가정` 섹션 추가하여 explorer가 채택한 가정과 그 근거(또는 근거 부재)를 명시
-- **`ai-fix` 라벨은 부착하지 않는다** — 사용자가 가정을 확인 후 수동으로 부여
-- 보드 Status는 `backlog` 그대로 (자동 처리 큐 진입 차단)
+- 메타 블록 "플래그"에 `needs-decision` 추가
+- 본문(메타 블록 아래 `---` 이후)에 `## 전제 가정` 섹션 추가하여 explorer가 채택한 가정과 그 근거(또는 근거 부재)를 명시
+- **메타 "처리"는 `needs-human`으로 등록** — 사용자가 가정을 확인 후 수동으로 `ai-fix`로 전환
+- WD `status`는 `TODO` 그대로 (자동 처리 큐 진입 차단)
 
 근거가 명확하고 가정 의존이 없으면 평소대로 등록.
 
-**Perspective별 라벨 매핑** (반드시 perspective에 맞는 라벨을 부착해야 pilot이 올바르게 라우팅):
+**Perspective별 메타 매핑** (반드시 perspective에 맞는 "성격"·"심각도"·"플래그"를 채워야 pilot이 올바르게 라우팅):
 
-| Perspective | 기본 라벨 (심각도는 케이스별 조정) | 본문 형식 (Section 7 템플릿) |
-|---|---|---|
-| `bug` (default) | `bug,severity:critical\|major\|minor\|ux` | 아래 템플릿 그대로 (현상/재현/원인/수정 방향/메타) |
-| `design` | `bug,severity:ux,design` (또는 `severity:major,design`) | `references/perspectives/design.md` §6 (현상/영향/비교/수정 방향/메타) |
-| `a11y` | `bug,severity:ux,a11y` (또는 `severity:critical,a11y`) | `references/perspectives/a11y.md` §7 (WCAG SC 명시) |
-| `perf` | `bug,severity:major,perf` (또는 `severity:critical,perf`) | `references/perspectives/perf.md` §7 (측정값·DevTools 캡처 첨부) |
-| security 결함 | `bug,severity:critical,security` (perspective와 무관, 발견 즉시 부착) | bug 본문 + 보안 영향 항목 |
+| Perspective | 메타 "성격" | 메타 "심각도" (케이스별 조정) | 메타 "플래그" | 본문 형식 (Section 7 템플릿) |
+|---|---|---|---|---|
+| `bug` (default) | `ui` | `critical\|major\|minor\|ux` | 없음 | 아래 템플릿 그대로 (현상/재현/원인/수정 방향/메타) |
+| `design` | `ui` | `ux` (또는 `major`) | `design` | `references/perspectives/design.md` §6 (현상/영향/비교/수정 방향/메타) |
+| `a11y` | `ui` | `ux` (또는 `critical`) | `a11y` | `references/perspectives/a11y.md` §7 (WCAG SC 명시) |
+| `perf` | `ui` | `major` (또는 `critical`) | 없음 | `references/perspectives/perf.md` §7 (측정값·DevTools 캡처 첨부) |
+| security 결함 | `ui` | `critical` (perspective와 무관, 발견 즉시 부착) | `security` | bug 본문 + 보안 영향 항목 |
 
-> **이 라벨이 solver 차단의 핵심**: design/a11y/perf 라벨이 부착되면 solver Step 0이 자율 처리 부적합으로 차단한다. `security`는 자동 차단 대상이 아니며 (코드 레벨 fix 가능한 경우 多), Step 2.1 종합 판단으로 진행 여부를 결정한다.
+> **이 메타 필드가 solver 차단의 핵심**: `design`/`a11y` 플래그가 붙으면 solver Step 0이 자율 처리 부적합으로 차단한다. `security`는 자동 차단 대상이 아니며 (코드 레벨 fix 가능한 경우 多), Step 2.1 종합 판단으로 진행 여부를 결정한다.
 
 ```bash
 # bug perspective 기본 템플릿 (다른 perspective는 perspectives/<name>.md 참조)
-ISSUE_URL=$(gh issue create \
-  --title "컴포넌트명 — 한 줄 요약" \
-  --label "bug,severity:critical" \
-  --body "$(cat <<'EOF'
+RESP=$(wd_call create_issue "$(python3 -c '
+import json
+body = """## 자동화 상태
+- 유형: bug
+- 성격: ui
+- 심각도: critical
+- 플래그: 없음
+- 처리: ai-fix
+- 단계: open
+
+---
+
 ## 현상
 한 문장으로 설명.
 
@@ -452,21 +462,25 @@ ISSUE_URL=$(gh issue create \
 ## 메타
 - **컴포넌트**: `파일경로:라인번호`
 - **발견**: YYYY-MM-DD (playwright 탐색 테스트)
-EOF
-)")
-
-# 이슈 번호 추출 후 보드에 추가 (현재 iteration + Status=ready)
-ISSUE_NUM=$(echo "$ISSUE_URL" | grep -oE '[0-9]+$')
-bash .claude/skills/ai-driven-pilot/scripts/add-to-board.sh "$ISSUE_NUM"
+"""
+print(json.dumps({
+  "projectKey":"WD","parent":"WD-10",
+  "title":"컴포넌트명 — 한 줄 요약",
+  "body":body,"type":"BUG","priority":"HIGH",
+  "assignees":["dh.yang@iacloud.kr"]
+}))
+')")
+# 응답에서 신규 issueKey(WD-N) 추출해 매트릭스·보고서에 기록
 ```
 
-> 보드 추가 스크립트는 ai-driven-pilot 스킬 소속이지만 발견 직후 가시성을 위해 explorer에서도 호출한다. 스크립트가 idempotent라 중복 호출돼도 안전.
+> 기능에 안 묶이는 일반 버그는 `parent:"WD-10"`(버그 수정 및 이슈 대응) 아래. 특정 기능 작업 중 발견이면 그 기능의
+> 에픽(모르면 WD-10) 아래, 일반 사용성 개선은 `WD-1` 아래.
 
-심각도별 라벨: `severity:critical` / `severity:major` / `severity:minor` / `severity:ux`
+심각도별 값: `critical` / `major` / `minor` / `ux` (메타 "심각도" 필드에 기록)
 
-**보안 이슈는 `security` 라벨 추가**: SQL/DML 우회, 크로스 스키마 접근, IDOR, 권한 우회, 민감 데이터 노출(비밀번호 해시·토큰 등), XSS, CSRF, 대량 할당 등 Section 3 보안 체크리스트로 발견된 버그는 `bug,severity:critical,security` 형태로 등록한다. `security` 라벨은 솔버 Step 0의 자동 차단 대상이 아니며, Step 2.1 종합 판단(전제 검증 포함)으로 자율 처리/사람 검토 분기.
+**보안 이슈는 메타 "플래그"에 `security` 추가**: SQL/DML 우회, 크로스 스키마 접근, IDOR, 권한 우회, 민감 데이터 노출(비밀번호 해시·토큰 등), XSS, CSRF, 대량 할당 등 Section 3 보안 체크리스트로 발견된 버그는 성격=`ui`, 심각도=`critical`, 플래그=`security`로 등록한다. `security` 플래그는 솔버 Step 0의 자동 차단 대상이 아니며, Step 2.1 종합 판단(전제 검증 포함)으로 자율 처리/사람 검토 분기.
 
-커버리지 매트릭스의 🔴 항목에는 `gh issue view <번호> --json number,title`로 확인한 이슈 번호를 기록한다.
+커버리지 매트릭스의 🔴 항목에는 `wd_call get_issue_detail '{"issueKey":"WD-<N>"}'`로 확인한 이슈 키(`WD-N`)를 기록한다.
 
 ## 8. 최종 보고서
 
@@ -504,20 +518,20 @@ playwright-cli -s=$SESSION close
 ### Step C1. 검증 대상 선택
 
 ```bash
-# 크로스체크 대기 중인 이슈 조회 (label: resolved, state: open)
-gh issue list --label "resolved" --state open --json number,title
+# 크로스체크 대기 중인 이슈 조회 (메타 "단계: resolved", status: IN_PROGRESS)
+wd_call list_issues '{"projectKey":"WD","status":"IN_PROGRESS","q":"단계: resolved"}'
+# q는 1차 필터일 뿐 — 후보 각각 get_issue_detail로 메타 블록 직접 재확인
 
-# legacy 호환 (이전 모델로 처리된 이슈도 함께 잡으려면)
-gh issue list --state all --search "(label:resolved state:open) OR (label:crosscheck-pending state:closed)" --json number,title
-
-# 사용자가 번호를 지정한 경우
-gh issue view <번호> --json number,title,body,labels,state
+# 사용자가 이슈 키를 지정한 경우
+wd_call get_issue_detail '{"issueKey":"WD-<N>"}'
 ```
 
-- 사용자가 번호를 지정하면 해당 이슈만
-- 지정 없으면 `resolved` 라벨이 붙은 open 이슈 전체를 대상으로 한다
+- 사용자가 이슈 키를 지정하면 해당 이슈만
+- 지정 없으면 메타 "단계: resolved"인 이슈 전체를 대상으로 한다
+- 2026-10-15 이전 GitHub Issues(`bluleo78/smart-fire-hub`)에 남아있던 이슈를 옮겨와 계속 다루는 경우, 그 WD 이슈 본문에
+  "출처: smart-fire-hub GitHub #N" 한 줄이 포함돼 있는지로 식별한다 (legacy 라벨 체계는 쓰지 않음).
 
-각 이슈에서 추출할 정보 (`gh issue view <번호>`):
+각 이슈에서 추출할 정보 (`wd_call get_issue_detail '{"issueKey":"WD-<N>"}'`):
 - `## 재현` 섹션 — 브라우저에서 그대로 따라갈 단계
 - `## 수정 방향` 섹션 — 무엇이 고쳐졌어야 하는지 (기대 동작 유추)
 - `## 메타` 섹션의 컴포넌트 — 어느 페이지/기능에서 테스트해야 하는지
@@ -526,11 +540,11 @@ gh issue view <번호> --json number,title,body,labels,state
 
 기존 탐색 세션과 반드시 **다른 이름**을 사용한다 (상태 오염 방지):
 
-> **환경 헬스체크 (pilot subagent로 호출된 경우 필수)**: 진입 직후 `curl -sf http://localhost:5173 > /dev/null && echo OK || echo NOPE`. NOPE이면 `RESULT: #N / blocked / dev_server_down`으로 즉시 종료.
+> **환경 헬스체크 (pilot subagent로 호출된 경우 필수)**: 진입 직후 `curl -sf http://localhost:5173 > /dev/null && echo OK || echo NOPE`. NOPE이면 `RESULT: WD-N / blocked / dev_server_down`으로 즉시 종료.
 
 **세션 이름 규약**:
 - 사용자 직접 호출: `SESSION="crosscheck#$(openssl rand -hex 3)"` (random)
-- Pilot subagent 호출: `pc<이슈번호>` (예: 이슈 #38 → `pc38`). 이슈 번호가 unique하므로 random 불필요. 이름을 짧게 유지하는 이유 — macOS Unix 소켓 경로 한도(104바이트)를 넘기면 socket bind 실패로 좀비 발생.
+- Pilot subagent 호출: `pc<이슈번호>` (예: 이슈 WD-38 → `pc38`). 이슈 번호가 unique하므로 random 불필요. 이름을 짧게 유지하는 이유 — macOS Unix 소켓 경로 한도(104바이트)를 넘기면 socket bind 실패로 좀비 발생.
 - 환경변수 `SESSION_NAME`이 있으면 그 값 그대로 사용:
 
 ```bash
@@ -556,35 +570,28 @@ cp .playwright-cli/page-TIMESTAMP.png test-results/issues/<번호>/crosscheck.pn
 
 ### Step C3b. 크로스체크 중 새 이슈 발견 시
 
-크로스체크 도중 **기존에 없던 버그**를 발견하면 섹션 7의 `gh issue create` 명령으로 즉시 등록한다.
+크로스체크 도중 **기존에 없던 버그**를 발견하면 섹션 7의 `wd_call create_issue` 명령으로 즉시 등록한다.
 **재현 방법이 매우 중요**하다 — 정확한 단계가 없으면 나중에 재현·수정이 불가능하다.
 발견 출처는 `(크로스체크 중 발견)`으로 명시한다.
 
-### Step C4. GitHub Issues 업데이트
+### Step C4. WD 이슈 업데이트
 
-**수정 확인 (패스)**:
+**수정 확인 (패스)**: 메타 "단계"를 `closed:completed`로 치환해 본문 전체를 다시 쓰고, status를 `DONE`으로 전환 ([[wd-mcp-howto]] `set_field` 패턴 참고):
 ```bash
-# resolved 라벨 제거 + 이슈 닫기 (정상 최종)
-gh issue edit <번호> --remove-label "resolved"
-gh issue close <번호> --reason completed \
-  --comment "✅ 크로스체크 완료 (YYYY-MM-DD) — 버그 재현 안 됨, 수정 확인됨"
-
-# legacy 호환: closed+crosscheck-pending 이슈는 이렇게 정리
-# gh issue edit <번호> --remove-label "crosscheck-pending" --add-label "crosscheck-passed"
+wd_call update_issue '{"issueKey":"WD-<N>","status":"DONE","body":"<단계=closed:completed로 치환된 전체 body>"}'
+wd_call add_comment '{"issueKey":"WD-<N>","body":"✅ 크로스체크 완료 (YYYY-MM-DD) — 버그 재현 안 됨, 수정 확인됨"}'
 ```
 
-**회귀 발견** (reopen 불필요 — 이슈는 이미 OPEN):
+**회귀 발견**: 메타 "단계"를 `regression:K`(K=누적 회귀 회차)로 치환, status는 `IN_PROGRESS` 유지:
 ```bash
-gh issue edit <번호> --remove-label "resolved" --add-label "regression"
-gh issue comment <번호> --body "🔴 회귀 발견 (크로스체크 YYYY-MM-DD)
+wd_call update_issue '{"issueKey":"WD-<N>","status":"IN_PROGRESS","body":"<단계=regression:K로 치환된 전체 body>"}'
+wd_call add_comment '{"issueKey":"WD-<N>","body":"🔴 회귀 발견 (크로스체크 YYYY-MM-DD)
 
 **관찰 결과**: 재현 단계 실행 시 관찰한 내용.
-**solver 검증과의 차이**: 어떤 조건이 달랐는지 명시."
-
-# legacy 이슈(closed+crosscheck-pending)에서 회귀가 발견된 경우만 reopen 필요:
-# gh issue reopen <번호>
-# gh issue edit <번호> --remove-label "crosscheck-pending" --add-label "regression"
+**solver 검증과의 차이**: 어떤 조건이 달랐는지 명시."}'
 ```
+
+> 회귀 회차 K는 `wd_call get_issue_detail '{"issueKey":"WD-<N>","allComments":true}'`로 댓글 전체의 "🔴 회귀 발견" 개수 + 1.
 
 ### Step C5. 최종 요약 보고 + 세션 종료
 
@@ -593,10 +600,10 @@ gh issue comment <번호> --body "🔴 회귀 발견 (크로스체크 YYYY-MM-DD
 ```
 ## 크로스 체크 결과 — YYYY-MM-DD
 
-| 이슈  | 제목                         | 결과       | 비고                |
-|-------|------------------------------|------------|---------------------|
-| #48   | 활성 토글 피드백 없음        | ✅ 확인    | -                   |
-| #49   | 설명 필드 에러 미표시        | 🔴 회귀    | 수정 코드 미반영     |
+| 이슈   | 제목                         | 결과       | 비고                |
+|--------|------------------------------|------------|---------------------|
+| WD-48  | 활성 토글 피드백 없음        | ✅ 확인    | -                   |
+| WD-49  | 설명 필드 에러 미표시        | 🔴 회귀    | 수정 코드 미반영     |
 ```
 
 보고 후 **반드시 세션 close** (leak 방지):
@@ -616,11 +623,11 @@ playwright-cli -s=$SESSION close
 
 | 결과 | RESULT 라인 |
 |------|-----------|
-| 통과 (close 완료, regression 라벨 유지·resolved 제거) | `RESULT: #<N> / passed / closed` |
-| 회귀 (regression 부착, 회귀 회차 K) | `RESULT: #<N> / regression / <K>` |
-| 진행 불가 (재현 단계 자체가 모호 등) | `RESULT: #<N> / blocked / <사유>` |
+| 통과 (단계=closed:completed, status=DONE) | `RESULT: WD-<N> / passed / closed` |
+| 회귀 (단계=regression:K, status=IN_PROGRESS 유지) | `RESULT: WD-<N> / regression / <K>` |
+| 진행 불가 (재현 단계 자체가 모호 등) | `RESULT: WD-<N> / blocked / <사유>` |
 
-`<N>`은 검증한 이슈 번호. 회귀 회차 `<K>`: 이슈 코멘트의 "🔴 회귀 발견" 카운트 + 1.
+`<N>`은 검증한 이슈 키의 숫자 부분. 회귀 회차 `<K>`: 이슈 코멘트의 "🔴 회귀 발견" 카운트 + 1.
 
 #### 탐색 모드 — `EXPLORER_DONE:` 형식
 
@@ -628,17 +635,17 @@ playwright-cli -s=$SESSION close
 
 | 결과 | EXPLORER_DONE 라인 |
 |------|-----------|
-| 1건 이상 발견 (모두 보드에 추가됨) | `EXPLORER_DONE: <N>,<M>,...` |
+| 1건 이상 발견 | `EXPLORER_DONE: WD-<N>,WD-<M>,...` |
 | 신규 이슈 없음 (탐색은 했으나 깨끗함) | `EXPLORER_DONE: none` |
 | 진행 불가 (브라우저 기동 실패 등) | `EXPLORER_DONE: blocked: <사유>` |
 
-탐색 모드도 발견된 이슈는 Section 7의 `gh issue create` 직후 `add-to-board.sh`로 보드에 자동 추가되므로, pilot이 다음 사이클 분류 시 신규 솔버 큐에서 즉시 잡을 수 있다.
+탐색 모드도 발견된 이슈는 Section 7의 `wd_call create_issue`로 등록 즉시 `status`가 WD에 반영되므로, pilot이 다음 사이클 분류 시 신규 솔버 큐에서 즉시 잡을 수 있다.
 
 ---
 
 ## 주의사항
 
-- GitHub Issues(`gh issue create/comment/edit`)와 `test-results/` 폴더에만 변경한다 (소스코드 수정 금지)
+- WD 이슈(`wd_call create_issue/add_comment/update_issue`)와 `test-results/` 폴더에만 변경한다 (소스코드 수정 금지)
 - 스냅샷 파일은 `/tmp/`에 임시 저장 (프로젝트에 커밋하지 않음)
 - 스크린샷은 `test-results/exploratory/<YYYY-MM-DDTHH-MM>/screenshots/` 또는 `test-results/issues/<번호>/`에 저장
 - 미구현/숨김 처리된 기능은 CLAUDE.md나 소스코드 주석으로 먼저 확인 후 버그 제외 판단
