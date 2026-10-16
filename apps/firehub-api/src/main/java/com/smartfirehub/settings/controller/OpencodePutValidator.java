@@ -40,6 +40,32 @@ public class OpencodePutValidator {
   private final OpencodeProbeService opencodeProbeService;
 
   /**
+   * {@link #validate} 의 결과 — 저장을 막아야 하면 {@code block} 에 그 응답을, 막지 않되 사용자에게 알려야 할 사정이 있으면
+   * {@code warning} 에 문구를 담는다(WD-50). 저장을 통과시킨다는 점에서 "차단 아님"은 같지만, 과거 반환 타입({@code
+   * Optional<ResponseEntity<...>>} 의 빈 값)은 그 둘을 구분할 통로가 없었다.
+   */
+  public record ValidationOutcome(
+      Optional<ResponseEntity<Map<String, Object>>> block, Optional<String> warning) {
+
+    private static final ValidationOutcome PASS = new ValidationOutcome(Optional.empty(), Optional.empty());
+
+    /** 막을 것도 경고할 것도 없다 — 조용히 저장 진행. */
+    public static ValidationOutcome pass() {
+      return PASS;
+    }
+
+    /** 저장은 통과시키되, 호출부가 응답에 실어 사용자에게 보여줘야 하는 경고. */
+    public static ValidationOutcome passWithWarning(String warning) {
+      return new ValidationOutcome(Optional.empty(), Optional.of(warning));
+    }
+
+    /** 저장을 막는다 — 호출부는 이 응답을 그대로 돌려준다. */
+    public static ValidationOutcome block(ResponseEntity<Map<String, Object>> response) {
+      return new ValidationOutcome(Optional.of(response), Optional.empty());
+    }
+  }
+
+  /**
    * opencode PUT 검증. 순서(비싼 것을 뒤로 미룬다):
    *
    * <ol>
@@ -71,9 +97,10 @@ public class OpencodePutValidator {
    * @param model 공급자 정합성·소속 검사에 쓸 모델 — 채팅은 저장된 {@code ai.model}, 분류는 요청 모델
    * @param slot 프로브를 부를 자격증명 슬롯(채팅/분류). {@code apiKey} 가 실려 있을 때만 프로브까지 오므로 여기서 이 슬롯의 저장 키를 대신 읽는
    *     폴백 분기는 돌지 않는다 — 슬롯은 프로브 호출을 어느 자격증명의 행위로 기록·해석할지만 정한다
-   * @return 막아야 하면 그 응답, 통과하면 {@link Optional#empty()}
+   * @return 막아야 하면 {@code block} 에 그 응답을 담은 {@link ValidationOutcome}, 통과(필요하면 경고와 함께)하면 {@code
+   *     block} 이 비어 있는 {@link ValidationOutcome}
    */
-  public Optional<ResponseEntity<Map<String, Object>>> validate(
+  public ValidationOutcome validate(
       Map<String, Object> payload,
       Map<String, String> secret,
       String model,
@@ -81,25 +108,25 @@ public class OpencodePutValidator {
     Optional<OpencodeCredentialValidation.Problem> effortProblem =
         OpencodeCredentialValidation.checkReasoningEffort(payload);
     if (effortProblem.isPresent()) {
-      return Optional.of(OpencodeCredentialValidation.problemResponse(effortProblem.get()));
+      return ValidationOutcome.block(OpencodeCredentialValidation.problemResponse(effortProblem.get()));
     }
 
     String providerId = OpencodeCredentialValidation.strOrEmpty(payload.get("providerId"));
     String baseURL = OpencodeCredentialValidation.strOrEmpty(payload.get("baseURL"));
     if (providerId.isBlank() || baseURL.isBlank()) {
-      return Optional.empty();
+      return ValidationOutcome.pass();
     }
 
     Optional<OpencodeCredentialValidation.Problem> consistency =
         OpencodeCredentialValidation.checkProviderConsistency(providerId, model);
     if (consistency.isPresent()) {
-      return Optional.of(OpencodeCredentialValidation.problemResponse(consistency.get()));
+      return ValidationOutcome.block(OpencodeCredentialValidation.problemResponse(consistency.get()));
     }
 
     // userinfo 거부(#707) — SSRF 가드보다 먼저, 네트워크 없이 끊는다. 가드는 userinfo 를 버린 URI 로
     // 검사하므로 이 값을 통과시킨다(MSG_BASE_URL_USERINFO javadoc 참고).
     if (hasUserInfo(baseURL)) {
-      return Optional.of(
+      return ValidationOutcome.block(
           ResponseEntity.badRequest().body(Map.of("message", MSG_BASE_URL_USERINFO)));
     }
 
@@ -117,7 +144,7 @@ public class OpencodePutValidator {
     OpencodeProbeService.TargetCheck targetCheck = opencodeProbeService.validateTargetOnly(baseURL);
     if (!targetCheck.ok()) {
       ProbeResult failure = targetCheck.failure();
-      return Optional.of(
+      return ValidationOutcome.block(
           ResponseEntity.status(OpencodeCredentialValidation.statusFor(failure.reason()))
               .body(Map.of("message", failure.message())));
     }
@@ -127,7 +154,7 @@ public class OpencodePutValidator {
       // 재사용할 apiKey 가 없다 — 네트워크 프로브(모델 목록 조회·소속 검사)만 건너뛰고 통과시킨다.
       // baseURL 자체의 안전성 검사는 위에서 이미 끝났다. save() 가 "생략=유지"를 스스로 지키므로
       // 저장 자체는 정상 진행된다(위 javadoc).
-      return Optional.empty();
+      return ValidationOutcome.pass();
     }
 
     ProbeResult result;
@@ -138,17 +165,29 @@ public class OpencodePutValidator {
       // 돌지 않는다) baseURL 형식 검사는 위 targetCheck 가 이미 끝냈으므로, 지금 이 자리에서
       // 실제로 던져질 수 있는 것은 없다(OpencodeProbeService#probe 의 @throws 문서 참고).
       // 그래도 남겨 둔다 — 그 두 전제 중 하나가 바뀌면 500 이 아니라 400 으로 떨어져야 한다.
-      return Optional.of(ResponseEntity.badRequest().body(Map.of("message", e.getMessage())));
+      return ValidationOutcome.block(ResponseEntity.badRequest().body(Map.of("message", e.getMessage())));
     }
     if (!result.ok()) {
-      return Optional.of(
+      // WD-50: "/models 엔드포인트 자체가 없다"(404)는 "공급자가 진짜로 거부했다"(401/403/5xx 등)와
+      // 다르다 — 전자는 채팅(chat/completions)엔 영향이 없는 모델 목록 API 하나의 부재일 뿐이라,
+      // 저장을 막는 대신 경고로 낮춘다. 그 외 PROVIDER_REJECTED(401/403/5xx)나 TIMEOUT 등 다른
+      // Reason 은 기존대로 차단한다 — status 문자열 파싱이 아니라 httpStatus 구조화 필드로 구분한다.
+      if (result.reason() == ProbeResult.Reason.PROVIDER_REJECTED
+          && Integer.valueOf(404).equals(result.httpStatus())) {
+        return ValidationOutcome.passWithWarning(
+            "이 게이트웨이는 모델 목록 조회(/models)를 지원하지 않습니다 — 자격증명은 저장됐지만 모델 선택 화면에서"
+                + " 목록을 불러올 수 없습니다. 채팅 자체는 정상 동작할 수 있습니다.");
+      }
+      return ValidationOutcome.block(
           ResponseEntity.status(OpencodeCredentialValidation.statusFor(result.reason()))
               .body(Map.of("message", result.message())));
     }
 
     Optional<OpencodeCredentialValidation.Problem> membership =
         OpencodeCredentialValidation.checkModelMembership(model, result.models());
-    return membership.map(OpencodeCredentialValidation::problemResponse);
+    return membership
+        .map(p -> ValidationOutcome.block(OpencodeCredentialValidation.problemResponse(p)))
+        .orElseGet(ValidationOutcome::pass);
   }
 
   /**

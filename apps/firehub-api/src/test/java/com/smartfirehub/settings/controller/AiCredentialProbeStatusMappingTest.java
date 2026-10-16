@@ -177,6 +177,54 @@ class AiCredentialProbeStatusMappingTest {
   }
 
   /**
+   * WD-50 — PROVIDER_REJECTED 라도 httpStatus 가 401(인증 거부, 404 아님)이면 기존대로 422 차단. 아래
+   * {@code PUT_모델목록_미지원_게이트웨이는_저장되고_경고를_반환한다()} 와 짝을 이뤄 "404 만" 경고로 낮춘다는 구분을 증명한다.
+   */
+  @Test
+  void PUT_공급자_거부_401은_여전히_422이고_저장하지_않는다() throws Exception {
+    mockAuth("ai:settings");
+    when(settingsService.getValue("ai.model")).thenReturn(Optional.empty());
+    when(opencodeProbeService.probe(
+            eq(AiCredentialSlot.CHAT), any(OpencodeProbeService.TargetCheck.class), any()))
+        .thenReturn(new ProbeResult(false, List.of(), "공급자가 거부했습니다 (status=401)", Reason.PROVIDER_REJECTED, 401));
+
+    mockMvc
+        .perform(
+            put("/api/v1/settings/ai-credential")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(content(opencodeBody())))
+        .andExpect(status().isUnprocessableEntity());
+
+    verify(aiCredentialService, org.mockito.Mockito.never()).save(any(), any());
+  }
+
+  /**
+   * WD-50 — {@code /models} 가 404(엔드포인트 자체가 없음)이면 "공급자가 진짜로 거부했다"와 달리 저장을 막지 않는다. 자격증명은
+   * 그대로 저장되고(채팅은 /models 없이도 동작), 응답에 경고 문구만 실린다. 200(기존 204 와 구분)으로 호출부가 경고가 있었음을 알 수 있다.
+   */
+  @Test
+  void PUT_모델목록_미지원_게이트웨이는_저장되고_경고를_반환한다() throws Exception {
+    mockAuth("ai:settings");
+    when(settingsService.getValue("ai.model")).thenReturn(Optional.empty());
+    when(opencodeProbeService.probe(
+            eq(AiCredentialSlot.CHAT), any(OpencodeProbeService.TargetCheck.class), any()))
+        .thenReturn(
+            new ProbeResult(false, List.of(), "공급자가 요청을 거부했습니다 (status=404)", Reason.PROVIDER_REJECTED, 404));
+
+    mockMvc
+        .perform(
+            put("/api/v1/settings/ai-credential")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(content(opencodeBody())))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.warning").exists());
+
+    verify(aiCredentialService).save(any(), eq(1L));
+  }
+
+  /**
    * 뮤테이션 체크: 서로 다른 두 Reason(UNREACHABLE=502, PROVIDER_REJECTED=422)이 같은 상태로 뭉개지면 위 두 테스트 중 하나가 바로
    * RED 가 된다 — 이 테스트는 그 대비가 실제로 서로 다른 값임을 한 곳에서 다시 확인한다.
    */

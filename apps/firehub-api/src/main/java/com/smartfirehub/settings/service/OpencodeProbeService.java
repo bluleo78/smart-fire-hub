@@ -128,8 +128,17 @@ public class OpencodeProbeService {
    *     message} 를 파싱하지 말고 {@link Reason} 을 봐라.
    * @param reason 실패 종류를 식별하는 열거형(성공이면 {@link Reason#OK}). Task 7 컨트롤러가 이 값을 스펙의 "저장 시 검증" 절
    *     400/422/502/504 표에 대응하는 HTTP 상태로 매핑한다 — 한국어 문구를 문자열 매칭해 분기하면 문구가 바뀔 때마다 그 매핑이 조용히 깨진다.
+   * @param httpStatus {@code reason == PROVIDER_REJECTED} 일 때 공급자가 실제로 돌려준 HTTP 상태 코드(그 외에는 {@code
+   *     null}). WD-50 — "/models 를 지원하지 않는 게이트웨이"(404)와 "인증 거부 등 진짜 실패"(401/403/5xx)를 {@code
+   *     message} 문자열을 파싱하지 않고 구분하려고 둔다 — {@link OpencodePutValidator} 가 404 만 저장 차단에서 경고로 낮춘다.
    */
-  public record ProbeResult(boolean ok, List<String> models, String message, Reason reason) {
+  public record ProbeResult(
+      boolean ok, List<String> models, String message, Reason reason, Integer httpStatus) {
+
+    /** 4-인자 호출부(대부분의 실패 경로) 호환용 — {@code httpStatus} 를 모르는 실패는 {@code null} 로 둔다. */
+    public ProbeResult(boolean ok, List<String> models, String message, Reason reason) {
+      this(ok, models, message, reason, null);
+    }
 
     /**
      * {@code ok() ⇔ reason == Reason.OK} 불변식을 생성 시점에 강제한다.
@@ -569,7 +578,8 @@ public class OpencodeProbeService {
                                   false,
                                   List.of(),
                                   MSG_PROVIDER_REJECTED + " (status=" + code + ")",
-                                  ProbeResult.Reason.PROVIDER_REJECTED));
+                                  ProbeResult.Reason.PROVIDER_REJECTED,
+                                  code));
                     }
                     return response.bodyToMono(String.class).map(OpencodeProbeService::parseModels);
                   })

@@ -63,14 +63,16 @@ public class AiClassifyCredentialController {
       return ResponseEntity.badRequest()
           .body(Map.of("message", AiCredentialService.MSG_CLASSIFY_MODEL_REQUIRED));
     }
+    Optional<String> opencodeWarning = Optional.empty();
     if ("opencode".equals(request.agentType())) {
-      Optional<ResponseEntity<Map<String, Object>>> rejected =
+      OpencodePutValidator.ValidationOutcome outcome =
           opencodePutValidator.validate(
               request.payload(),
               request.secret(),
               request.model().trim(),
               AiCredentialSlot.CLASSIFY);
-      if (rejected.isPresent()) return rejected.get();
+      if (outcome.block().isPresent()) return outcome.block().get();
+      opencodeWarning = outcome.warning();
     }
     Long userId = (Long) authentication.getPrincipal();
     AiCredentialUpsert upsert =
@@ -90,7 +92,10 @@ public class AiClassifyCredentialController {
         HostingChangeAuditor.Slot.CLASSIFY,
         before,
         aiCredentialService.hosting(AiCredentialSlot.CLASSIFY));
-    return ResponseEntity.noContent().build();
+    // WD-50: 경고가 있으면(/models 미지원 게이트웨이) 200 + warning 바디, 없으면 기존처럼 204.
+    return opencodeWarning
+        .<ResponseEntity<?>>map(warning -> ResponseEntity.ok(Map.of("warning", warning)))
+        .orElseGet(() -> ResponseEntity.noContent().build());
   }
 
   /** 설정 해제 — 두 키를 함께 지운다. 이미 미설정이어도 204(멱등). */

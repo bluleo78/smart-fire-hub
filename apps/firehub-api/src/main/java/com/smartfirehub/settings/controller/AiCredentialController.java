@@ -68,13 +68,15 @@ public class AiCredentialController {
   @RequirePermission("ai:settings")
   public ResponseEntity<?> put(
       Authentication authentication, @RequestBody AiCredentialUpsertRequest request) {
+    Optional<String> opencodeWarning = Optional.empty();
     if ("opencode".equals(request.agentType())) {
       // 채팅 경로는 저장된 ai.model 과 대조한다(순환 잠금 이유 — OpencodeCredentialValidation 참고).
       String storedAiModel = settingsService.getValue("ai.model").orElse(null);
-      Optional<ResponseEntity<Map<String, Object>>> rejected =
+      OpencodePutValidator.ValidationOutcome outcome =
           opencodePutValidator.validate(
               request.payload(), request.secret(), storedAiModel, AiCredentialSlot.CHAT);
-      if (rejected.isPresent()) return rejected.get();
+      if (outcome.block().isPresent()) return outcome.block().get();
+      opencodeWarning = outcome.warning();
     }
     Long userId = (Long) authentication.getPrincipal();
     AiCredentialUpsert upsert = toUpsert(request);
@@ -92,7 +94,10 @@ public class AiCredentialController {
         HostingChangeAuditor.Slot.CHAT,
         before,
         aiCredentialService.hosting(AiCredentialSlot.CHAT));
-    return ResponseEntity.noContent().build();
+    // WD-50: 경고가 있으면(/models 미지원 게이트웨이) 200 + warning 바디, 없으면 기존처럼 204.
+    return opencodeWarning
+        .<ResponseEntity<?>>map(warning -> ResponseEntity.ok(Map.of("warning", warning)))
+        .orElseGet(() -> ResponseEntity.noContent().build());
   }
 
   /**

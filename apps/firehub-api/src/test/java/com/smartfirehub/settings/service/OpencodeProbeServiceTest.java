@@ -484,6 +484,25 @@ class OpencodeProbeServiceTest {
     // 상태 코드(숫자)는 진단에 남기되, 이유 문구(reason phrase)·본문은 담지 않는다는 설계 결정을
     // 명시적으로 고정한다.
     assertThat(r.message()).isEqualTo(OpencodeProbeService.MSG_PROVIDER_REJECTED + " (status=401)");
+    // WD-50 — httpStatus 구조화 필드도 message 문자열과 같은 값으로 채워져야 OpencodePutValidator 가
+    // 문자열 파싱 없이 404 만 가려낼 수 있다.
+    assertThat(r.httpStatus()).isEqualTo(401);
+  }
+
+  /**
+   * WD-50 — {@code /models} 엔드포인트 자체가 없는 게이트웨이(404)도 PROVIDER_REJECTED 로 분류되지만,
+   * {@code httpStatus()} 가 정확히 404 를 들고 나가야 {@link OpencodePutValidator} 가 이 경우만 저장
+   * 차단에서 경고로 낮출 수 있다.
+   */
+  @Test
+  void models_엔드포인트_없음_404는_httpStatus를_담는다() {
+    wireMock.stubFor(get("/v1/models").willReturn(aResponse().withStatus(404)));
+
+    OpencodeProbeService service = wireMockService(mock(AiCredentialService.class));
+    var r = service.probe(wireMockUrl("/v1"), "k");
+    assertThat(r.ok()).isFalse();
+    assertThat(r.reason()).isEqualTo(Reason.PROVIDER_REJECTED);
+    assertThat(r.httpStatus()).isEqualTo(404);
   }
 
   @Test
