@@ -32,7 +32,11 @@ export const settingsApi = {
   // "플랫폼 값으로 복귀"(DELETE) 경로는 없다 — 서버도 DELETE 를 405 로 거부한다.
   getAiCredential: () => client.get<AiCredentialResponse>('/settings/ai-credential'),
 
-  putAiCredential: (data: AiCredentialUpsertPayload) => client.put('/settings/ai-credential', data),
+  // WD-50: 공급자가 /models 를 지원하지 않는 등 완전 검증은 못 했지만 자격증명 자체는 저장된
+  // 경우 서버가 200 + {warning} 을 준다(무경고면 204, 바디 없음) — 응답 타입을 명시해
+  // 호출부가 경고 유무를 분기할 수 있게 한다(WD-52).
+  putAiCredential: (data: AiCredentialUpsertPayload) =>
+    client.put<{ warning?: string } | undefined>('/settings/ai-credential', data),
 
   // opencode 전용 모델 목록 조회. 인증된 외부 호출(임의 baseURL 에 Bearer 전송)을 일으키므로
   // 쓰기 권한(`ai:settings`)이 필요하다 — 조회 전용처럼 보여도 GET 이 아니라 POST 인 이유다.
@@ -47,7 +51,9 @@ export const settingsApi = {
  */
 export const aiClassifyCredentialApi = {
   get: () => client.get<AiClassifyCredentialResponse>('/settings/ai-classify-credential'),
-  put: (data: AiClassifyCredentialUpsertPayload) => client.put('/settings/ai-classify-credential', data),
+  // WD-52: putAiCredential 과 같은 이유로 응답 타입에 warning 을 명시한다.
+  put: (data: AiClassifyCredentialUpsertPayload) =>
+    client.put<{ warning?: string } | undefined>('/settings/ai-classify-credential', data),
   delete: () => client.delete('/settings/ai-classify-credential'),
   probe: (data: AiCredentialProbeRequest) =>
     client.post<AiCredentialProbeResponse>('/settings/ai-classify-credential/probe', data),

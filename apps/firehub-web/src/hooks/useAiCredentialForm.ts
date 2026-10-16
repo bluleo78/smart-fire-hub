@@ -71,7 +71,9 @@ const EMPTY_ORIGINAL: OriginalSnapshot = {
  */
 export interface AiCredentialEndpoints<R extends AiCredentialResponse = AiCredentialResponse> {
   get: () => Promise<{ data: R }>;
-  put: (data: AiCredentialUpsertPayload) => Promise<unknown>;
+  // WD-52: 서버가 완전 검증은 못 했지만 저장은 한 경우 200 + {warning} 을 준다(무경고면 204,
+  // data 가 undefined) — save() 가 경고 유무를 분기할 수 있도록 응답을 버리지 않는다.
+  put: (data: AiCredentialUpsertPayload) => Promise<{ data?: { warning?: string } }>;
   probe: (data: AiCredentialProbeRequest) => Promise<{ data: AiCredentialProbeResponse }>;
 }
 
@@ -510,8 +512,12 @@ export function useAiCredentialForm<R extends AiCredentialResponse = AiCredentia
         // 사라진다 — 이 폼에는 필드 단위 삭제 제스처가 없으므로 빈 문자열은 절대 보내지 않는다.
         if (typed && typed.trim() !== '') secretOut[field.name] = typed;
       });
+    let saveWarning: string | undefined;
     try {
-      await api.put({ agentType, payload: payloadOut, secret: secretOut });
+      const response = await api.put({ agentType, payload: payloadOut, secret: secretOut });
+      // WD-52: 무경고 저장은 204(바디 없음)라 response.data 가 undefined 다 — 경고가 있을 때만
+      // 서버가 200 + {warning} 을 준다(PROVIDER_REJECTED 등 완전 검증은 못 했지만 저장은 한 경우).
+      saveWarning = response.data?.warning;
     } catch (err) {
       // 서버 400(비밀 필수 규칙 등)의 한국어 메시지를 그대로 보여준다.
       toast.error(extractApiError(err, '저장에 실패했습니다.'));
@@ -525,7 +531,12 @@ export function useAiCredentialForm<R extends AiCredentialResponse = AiCredentia
     try {
       await fetchAndApply();
       setStaleNotice(null);
-      toast.success('저장했습니다.');
+      // WD-52: 경고가 있으면 "저장했습니다" 로 뭉개지 않고 서버 메시지를 그대로 보여준다.
+      if (saveWarning) {
+        toast.warning(saveWarning);
+      } else {
+        toast.success('저장했습니다.');
+      }
     } catch {
       // 저장은 성공했고 다시 읽기가 실패했다 — SMTP/AI 다른 탭과 같은 문구.
       const message =

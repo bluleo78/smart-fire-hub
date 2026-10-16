@@ -193,6 +193,44 @@ test.describe('테넌트별 AI 자격증명 — 유형별 화면과 미설정 �
   });
 
   /**
+   * WD-52 — 서버가 PROVIDER_REJECTED(예: `/models` 미지원 opencode 게이트웨이)처럼 완전 검증은
+   * 못 했지만 저장 자체는 한 경우 `200 + {warning}` 을 준다(WD-50, `AiCredentialController` 97~100줄).
+   * 프론트가 이 바디를 읽지 않아 일반 성공과 구분 없이 "저장했습니다."만 뜨던 결함 — 경고 토스트로
+   * 분기되고, 일반 성공 토스트는 뜨지 않아야 한다.
+   */
+  test('저장 응답에 warning 이 있으면 "저장했습니다." 대신 경고 토스트가 뜬다', async ({ authenticatedPage: page }) => {
+    const rejectionWarning =
+      '공급자가 /models 를 지원하지 않아 모델 목록 검증을 건너뛰었습니다. 자격증명은 저장되었습니다.';
+    await mockAiCredential(
+      page,
+      createAiCredential({ agentType: 'sdk', configured: false, payload: {}, secretFieldNames: [] }),
+    );
+    let putCount = 0;
+    // mockAiCredential 보다 나중에 등록한 라우트가 먼저 잡는다 — PUT 만 200+warning 으로
+    // 가로채고 GET 은 그대로 넘긴다(위 400 거부 테스트와 같은 패턴).
+    await page.route(
+      (url) => url.pathname === '/api/v1/settings/ai-credential',
+      (route) => {
+        if (route.request().method() !== 'PUT') return route.fallback();
+        putCount += 1;
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ warning: rejectionWarning }),
+        });
+      },
+    );
+    await page.goto('/admin/settings');
+
+    await page.locator('#ai-cred-oauth-token').fill('sk-ant-oat01-first');
+    await page.getByRole('button', { name: '저장' }).click();
+
+    await expect.poll(() => putCount).toBe(1);
+    await expect(page.getByText(rejectionWarning)).toBeVisible({ timeout: 8000 });
+    await expect(page.getByText('저장했습니다.')).toHaveCount(0);
+  });
+
+  /**
    * 브리프 시나리오 2 — "유형(맨 앞) → 유형별 필드"(설계서 §180 공통 레이아웃). opencode 는
    * Anthropic 인증 개념이 없으므로 OAuth 토큰이 사라지는 것까지 같은 화면에서 고정한다.
    */
