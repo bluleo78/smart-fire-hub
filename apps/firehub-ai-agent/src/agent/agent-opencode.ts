@@ -23,7 +23,7 @@ import {
 } from '../providers/opencode-model.js';
 import { getStdioServerCommand } from '../mcp/stdio-server-command.js';
 import { OPENCODE_MCP_CREDENTIAL_ENV } from '../mcp/opencode-mcp-credential-env.js';
-import { OPENCODE_SYSTEM_PROMPT } from './system-prompt.js';
+import { OPENCODE_SYSTEM_PROMPT, OPENCODE_UI_ONLY_TOOLS } from './system-prompt.js';
 import { resolveSystemPrompt } from './prompt-utils.js';
 // 트랜스크립트: CLI 와 동일 포맷/경로로 저장하면 history 엔드포인트가 그대로 읽는다.
 import { readCliTranscript, writeCliTranscript, type CliTranscript } from './agent-cli.js';
@@ -193,6 +193,12 @@ export function buildOpenCodeConfig(options: BuildOpenCodeConfigOptions): OpenCo
       webfetch: 'deny',
       // firehub MCP 도구만 허용 (네이밍/패턴은 Task 1 확정값으로 교체)
       'firehub_*': 'allow',
+      // WD-64: 프롬프트가 "UI 안내"로 규정한 생성·설계 도구는 개별 deny. 반드시 위 allow **뒤**에
+      // 둬야 한다 — opencode(1.18.34 확인)는 규칙을 findLast(마지막 일치 우선)로 평가하고, 마지막
+      // 일치가 pattern '*' 의 deny 인 도구는 모델의 도구 목록에서 아예 빠진다. 같은 이유로
+      // `tools: { firehub_x: false }` 는 쓰지 않는다 — tools 규칙은 permission 보다 앞에 놓여
+      // 'firehub_*' allow 에 덮인다(`opencode debug agent build` 로 실측).
+      ...Object.fromEntries(OPENCODE_UI_ONLY_TOOLS.map((tool) => [`firehub_${tool}`, 'deny'])),
     },
     // 위임(task) 전면 차단 + 빌트인 general 비활성화.
     //  - 약한 모델(gemma)이 firehub 전용 subagent 대신 빌트인 general 로 위임하면,
