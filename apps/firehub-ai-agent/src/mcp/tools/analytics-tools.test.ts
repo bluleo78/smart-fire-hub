@@ -36,6 +36,12 @@ describe('Analytics MCP Tools', () => {
   });
 
   // --- execute_analytics_query ---
+  // WD-66: 결과를 읽는 도구 설명 자체에 "집계는 SQL 로" 규칙을 둬 opencode·cli 경로 모두에 적용한다.
+  it('execute_analytics_query 설명이 원시 행 암산 대신 집계 SQL 계산을 지시한다 (WD-66)', () => {
+    const entry = server.instance._registeredTools['execute_analytics_query'];
+    expect(entry.description).toContain('원시 행으로 직접 계산하지 말고 집계 SQL');
+  });
+
   it('execute_analytics_query calls apiClient.executeAnalyticsQuery with sql and maxRows', async () => {
     const mockResult = {
       queryType: 'SELECT',

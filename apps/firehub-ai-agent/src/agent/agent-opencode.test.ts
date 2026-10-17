@@ -244,6 +244,21 @@ describe('OPENCODE_SYSTEM_PROMPT', () => {
     expect(section).toContain('PII 원문 리터럴');
   });
 
+  // WD-66 (배경은 system-prompt.ts JSDoc)
+  it('집계 수치는 원시 행 암산 대신 집계 SQL 결과를 인용하도록 조회·분석 흐름 섹션에서 지시한다 (WD-66)', () => {
+    const section = promptSection('데이터 조회·분석 흐름');
+    expect(section).toContain('집계 수치는 SQL 로 계산');
+    expect(section).toContain('암산 금지');
+    // 0 나눗셈 방지(NULLIF) — 예시를 그대로 베껴도 전월 0 인 달에서 쿼리가 깨지지 않게
+    expect(section).toContain('NULLIF(');
+    // 억·만 단위 변환도 암산이라(사례1 의 10배 오차) SQL 에서 계산하게 한다
+    expect(section).toContain('단위 변환도 암산하지 말고 SQL 에서 계산');
+    // 요청 기간 데이터가 없어 가용 데이터로 예비 요약할 때도 동일 적용
+    expect(section).toContain('가용 데이터로 대신 요약');
+    // 순서 엄수 섹션이므로 집계 단계가 위젯 표시 단계보다 앞서야 요약 수치가 집계 결과에서 나온다
+    expect(section.indexOf('집계 수치는 SQL 로 계산')).toBeLessThan(section.indexOf('결과 표시'));
+  });
+
   // GraphRAG 조회는 opencode 경로에도 필요하지만, 구축·검수 결정은 다단계 가드 흐름이라
   // 약한 모델에서 깨진다 — 읽기만 안내하고 쓰기는 UI 로 보내는 경계를 고정한다.
   it('GraphRAG 는 읽기 전용으로만 안내하고 구축·검수 결정 도구는 배제한다', () => {
