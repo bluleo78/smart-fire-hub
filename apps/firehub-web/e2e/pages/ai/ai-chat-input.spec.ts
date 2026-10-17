@@ -120,6 +120,45 @@ test.describe('ChatInput — 키보드 동작', () => {
     // 전송 후 입력창이 비워져야 한다 (handleSend → setMessage(''))
     await expect(chatInput).toHaveValue('', { timeout: 3000 });
   });
+
+  test('IME 조합 확정용 Enter는 메시지를 전송하지 않는다 (WD-54)', async ({ authenticatedPage: page }) => {
+    // 전송이 발생하면 호출될 API를 모킹해두고, 호출 여부로 "전송 안 됨"을 검증한다.
+    let chatCalled = false;
+    await page.route(
+      (url) => url.pathname === '/api/v1/ai/chat',
+      (route) => {
+        chatCalled = true;
+        return route.fulfill({
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' },
+          body: 'data: {"type":"done","inputTokens":1}\n\n',
+        });
+      },
+    );
+
+    await openSidePanel(page);
+
+    const chatInput = page.getByPlaceholder('메시지를 입력하세요...');
+    await chatInput.fill('안녕하세요');
+
+    // 실제 브라우저의 CJK IME 조합 이벤트 시퀀스를 흉내낸다:
+    // compositionstart → keydown(Enter, isComposing:true, 조합 확정용) → compositionend.
+    // KeyboardEvent 생성자는 isComposing 옵션을 지원하므로, React가 감싸는
+    // e.nativeEvent.isComposing에 그대로 반영된다.
+    await chatInput.evaluate((el) => {
+      el.dispatchEvent(new CompositionEvent('compositionstart'));
+      el.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true, isComposing: true }),
+      );
+      el.dispatchEvent(new CompositionEvent('compositionend'));
+    });
+
+    // isComposing 가드가 없다면 handleSend()가 호출되어 입력값이 비워지고 /ai/chat이 호출된다.
+    // 가드가 있으면 입력값이 그대로 유지되고 전송 API가 호출되지 않아야 한다.
+    await page.waitForTimeout(300);
+    await expect(chatInput).toHaveValue('안녕하세요');
+    expect(chatCalled).toBe(false);
+  });
 });
 
 test.describe('ChatInput — 파일 첨부', () => {

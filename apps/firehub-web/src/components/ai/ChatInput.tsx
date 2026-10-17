@@ -123,7 +123,10 @@ export function ChatInput({
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    // 한글/일본어/중국어 등 IME 조합 확정용 Enter는 전송 트리거로 처리하지 않는다.
+    // CJK IME는 조합을 확정할 때도 네이티브 keydown에 key: 'Enter'를 실어 보내므로
+    // e.nativeEvent.isComposing으로 "전송 의도 Enter"와 구분한다 (WD-54).
+    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       handleSend();
     }
