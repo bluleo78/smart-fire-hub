@@ -837,7 +837,7 @@ describe('fetchSessionPermissionsFailClosed (Task 9)', () => {
   });
 
   it('AS-T9-1: returns permission codes on success', async () => {
-    const { fetchSessionPermissionsFailClosed } = await import('./agent-sdk.js');
+    const { fetchSessionPermissionsFailClosed } = await import('../mcp/session-permissions.js');
     const apiClient = {
       getSessionPermissions: vi.fn().mockResolvedValue(['dataset:read', 'dataset:delete']),
     } as unknown as import('../mcp/api-client.js').FireHubApiClient;
@@ -847,7 +847,7 @@ describe('fetchSessionPermissionsFailClosed (Task 9)', () => {
   });
 
   it('AS-T9-2: returns [] (fail-closed) when backend errors', async () => {
-    const { fetchSessionPermissionsFailClosed } = await import('./agent-sdk.js');
+    const { fetchSessionPermissionsFailClosed } = await import('../mcp/session-permissions.js');
     const apiClient = {
       getSessionPermissions: vi.fn().mockRejectedValue(new Error('API 오류 (500): boom')),
     } as unknown as import('../mcp/api-client.js').FireHubApiClient;
@@ -856,6 +856,19 @@ describe('fetchSessionPermissionsFailClosed (Task 9)', () => {
     // 중요: undefined 가 아닌 빈 배열이어야 T8 필터가 파괴 도구를 차단(fail-closed)한다
     expect(result).toEqual([]);
     expect(result).not.toBeUndefined();
+  });
+
+  it('AS-T9-2b: 요청 타임아웃을 api 클라이언트에 넘긴다 (WD-63 — 멈춘 api 가 stdio 핸드셰이크를 막지 않게)', async () => {
+    const { fetchSessionPermissionsFailClosed, SESSION_PERMISSIONS_TIMEOUT_MS } = await import(
+      '../mcp/session-permissions.js'
+    );
+    const getSessionPermissions = vi.fn().mockResolvedValue([]);
+    const apiClient = { getSessionPermissions } as unknown as import('../mcp/api-client.js').FireHubApiClient;
+
+    await fetchSessionPermissionsFailClosed(apiClient);
+    await fetchSessionPermissionsFailClosed(apiClient, undefined, 1234);
+    expect(getSessionPermissions).toHaveBeenNthCalledWith(1, SESSION_PERMISSIONS_TIMEOUT_MS);
+    expect(getSessionPermissions).toHaveBeenNthCalledWith(2, 1234);
   });
 
   it('AS-T9-3: executeAgent still runs and passes userPermissions=[] to MCP server on permission fetch failure', async () => {

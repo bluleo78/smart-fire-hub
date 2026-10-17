@@ -12,6 +12,8 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
+const originalConsole = { log: console.log, info: console.info, debug: console.debug };
+
 const registerAllToolsMock = vi.fn();
 // registerAllTools 만 가로채고 나머지(toolErrorResult·withFailureHint — createMcpSafeTool 이 쓰는 공통 헬퍼)는 실물을 쓴다.
 vi.mock('./firehub-mcp-server.js', async (importOriginal) => ({
@@ -39,7 +41,8 @@ vi.mock('./api-client.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./api-client.js')>()),
   FireHubApiClient: vi.fn(function FireHubApiClient(...args: unknown[]) {
     apiClientCtorMock(...args);
-    return {};
+    // main() 이 세션 권한을 조회한다(WD-63) — 이 파일은 권한이 아니라 자격증명·목적 배선을 보므로 성공 응답을 준다.
+    return { getSessionPermissions: vi.fn().mockResolvedValue([]) };
   }),
 }));
 
@@ -57,6 +60,8 @@ describe('stdio-server main() — registerAllTools 로의 자격증명 배선(ho
 
   afterEach(() => {
     process.env = { ...originalEnv };
+    // main() 이 console.log/info/debug 를 stderr 로 돌리므로 원복한다(같은 워커의 다른 테스트로 새지 않게)
+    Object.assign(console, originalConsole);
   });
 
   it('AI_CREDENTIAL_AGENT_TYPE=opencode 면 ambient ANTHROPIC_API_KEY 가 아니라 테넌트 provider 자격증명이 registerAllTools 에 전달된다', async () => {
@@ -117,6 +122,8 @@ describe('stdio-server main() — AI_PURPOSE 배선(S3)', () => {
 
   afterEach(() => {
     process.env = { ...originalEnv };
+    // main() 이 console.log/info/debug 를 stderr 로 돌리므로 원복한다(같은 워커의 다른 테스트로 새지 않게)
+    Object.assign(console, originalConsole);
   });
 
   it("AI_PURPOSE=share 면 클라이언트를 purpose 'share' 로 만든다", async () => {

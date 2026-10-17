@@ -3,6 +3,7 @@ import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import fs from 'fs/promises';
 import { FireHubApiClient, type SharePurpose } from '../mcp/api-client.js';
 import { createFireHubMcpServer } from '../mcp/firehub-mcp-server.js';
+import { fetchSessionPermissionsFailClosed } from '../mcp/session-permissions.js';
 import { SYSTEM_PROMPT, FILE_ATTACHMENT_PROMPT } from './system-prompt.js';
 import { loadSubagents, buildSubagentGuide } from './subagent-loader.js';
 import {
@@ -76,31 +77,6 @@ export interface AgentOptions {
   aiPurpose?: SharePurpose;
 }
 
-/**
- * 세션 사용자 권한 조회 — fail-closed 래퍼.
- *
- * 백엔드 `/auth/me/permissions` 호출에 실패하면 빈 배열(`[]`)로 폴백한다.
- * 권한 필터는 `undefined`를 "전부 허용(permissive)"으로, `[]`를 "요구 권한 있는
- * 파괴 도구 전부 차단(fail-closed)"으로 해석하므로, 실패 경로에서는 반드시 `[]` 를
- * 반환해야 기본 차단이 유지된다.
- *
- * 단위 테스트 가능하도록 executeAgent 바깥에 정의한다.
- */
-export async function fetchSessionPermissionsFailClosed(
-  apiClient: FireHubApiClient,
-  tag: () => string = () => '[Claude]',
-): Promise<string[]> {
-  try {
-    return await apiClient.getSessionPermissions();
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.warn(
-      `${tag()} [AI Chat] failed to fetch session permissions, defaulting to [] (fail-closed): ${message}`,
-    );
-    return [];
-  }
-}
-
 export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEvent> {
   const {
     message,
@@ -145,7 +121,7 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
   // 권한 조회 실패 시 빈 배열로 폴백해 파괴 도구를 차단한다(fail-closed).
   const chatFilesDir = sdkChatFilesDir(tenantId, userId, Date.now());
   const [userPermissions, downloadResult] = await Promise.all([
-    fetchSessionPermissionsFailClosed(apiClient, tag),
+    fetchSessionPermissionsFailClosed(apiClient, () => `${tag()} [AI Chat]`),
     fileIds?.length
       ? downloadChatFiles(apiClient, fileIds, chatFilesDir)
       : Promise.resolve(null),
