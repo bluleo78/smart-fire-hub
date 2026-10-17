@@ -44,6 +44,14 @@ public class AiSessionRepository {
 
   private final DSLContext dsl;
 
+  /**
+   * ai_session.title 컬럼의 DB 제약(VARCHAR(255))과 동일한 상한. 프론트가 트렁케이트를 빠뜨리거나(예: 클라이언트 버그) 길이
+   * 제한 없는 다른 호출자가 생기더라도, 제목이 길다는 이유로 세션 row 자체가 INSERT 실패(409)하는 일이 없도록 저장 직전에 항상
+   * 여기서 한 번 더 잘라낸다(WD-58). 제목 길이와 세션 생성 가능 여부를 분리하는 것이 핵심 — 제목이 잘려도 대화 이력은 반드시
+   * 영속화돼야 한다.
+   */
+  private static final int TITLE_MAX_LENGTH = 255;
+
   private static final Table<?> AI_SESSION = table(name("ai_session"));
   private static final Field<Long> ID = field(name("ai_session", "id"), Long.class);
   private static final Field<Long> USER_ID = field(name("ai_session", "user_id"), Long.class);
@@ -200,7 +208,7 @@ public class AiSessionRepository {
             .set(SESSION_ID, request.sessionId())
             .set(CONTEXT_TYPE, request.contextType())
             .set(CONTEXT_RESOURCE_ID, request.contextResourceId())
-            .set(TITLE, request.title())
+            .set(TITLE, truncateTitle(request.title()))
             .set(CREATED_AT, currentLocalDateTime())
             .set(UPDATED_AT, currentLocalDateTime())
             .returningResult(ID)
@@ -212,10 +220,18 @@ public class AiSessionRepository {
 
   public void updateTitle(Long id, String title) {
     dsl.update(AI_SESSION)
-        .set(TITLE, title)
+        .set(TITLE, truncateTitle(title))
         .set(UPDATED_AT, currentLocalDateTime())
         .where(ID.eq(id))
         .execute();
+  }
+
+  /** title이 {@link #TITLE_MAX_LENGTH}를 넘으면 잘라낸다(WD-58). null은 그대로 둔다. */
+  private static String truncateTitle(String title) {
+    if (title == null || title.length() <= TITLE_MAX_LENGTH) {
+      return title;
+    }
+    return title.substring(0, TITLE_MAX_LENGTH);
   }
 
   public void delete(Long id) {
@@ -296,7 +312,7 @@ public class AiSessionRepository {
     return dsl.insertInto(AI_SESSION)
         .set(USER_ID, userId)
         .set(SESSION_ID, aiAgentSessionId)
-        .set(TITLE, title)
+        .set(TITLE, truncateTitle(title))
         .set(CHANNEL_SOURCE, "SLACK")
         .set(SLACK_TEAM_ID, teamId)
         .set(SLACK_CHANNEL_ID, channelId)

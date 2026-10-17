@@ -108,6 +108,42 @@ class AiSessionServiceTest extends IntegrationTestBase {
     assertThat(result.updatedAt()).isNotNull();
   }
 
+  /**
+   * WD-58 — 제목이 DB 컬럼 한도(VARCHAR(255))를 넘더라도 세션 row 자체는 반드시 생성돼야 한다. 과거에는 title을 그대로
+   * INSERT해 DataIntegrityViolationException(409)이 나고 세션 row 자체가 만들어지지 않아 대화가 통째로 유실됐다.
+   */
+  @Test
+  void createSession_titleExceeds255_persistsSessionWithTruncatedTitle() {
+    UserResponse user =
+        TestUsers.createMember(
+            dsl,
+            fixtureTransactionTemplate,
+            passwordEncoder,
+            "longtitleuser",
+            "longtitle@example.com",
+            "Password123",
+            "Long Title User",
+            DEFAULT_TEST_TENANT_ID);
+    Long userId = user.id();
+
+    String longTitle = "가".repeat(300);
+
+    AiSessionResponse result =
+        aiSessionService.createSession(
+            userId, new CreateAiSessionRequest("session-long-title", null, null, longTitle));
+
+    // 세션 row는 반드시 생성되고, 제목은 255자로 잘려 저장된다
+    assertThat(result.id()).isNotNull();
+    assertThat(result.sessionId()).isEqualTo("session-long-title");
+    assertThat(result.title()).hasSize(255);
+    assertThat(result.title()).isEqualTo(longTitle.substring(0, 255));
+
+    // 새로고침(재조회) 시에도 세션이 사라지지 않고 그대로 조회된다
+    List<AiSessionResponse> sessions = aiSessionService.getSessions(userId, 0, 20);
+    assertThat(sessions).hasSize(1);
+    assertThat(sessions.get(0).sessionId()).isEqualTo("session-long-title");
+  }
+
   @Test
   void verifySessionOwnership_ownSession_noException() {
     UserResponse user =

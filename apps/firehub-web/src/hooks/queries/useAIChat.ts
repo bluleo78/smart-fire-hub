@@ -10,6 +10,17 @@ import { getInvalidationKeys } from '../../components/ai/widgets/invalidationMap
 import { buildNavigationContext } from '../../components/ai/widgets/routes';
 import type { AIAttachment, AIMessage, AIStreamEvent, CanvasLayout } from '../../types/ai';
 
+// ai_session.title 컬럼은 DB에서 VARCHAR(255) — 서버가 한 번 더 방어하지만(WD-58), 애초에
+// 과도하게 긴 원문을 그대로 보내지 않도록 전송 전 여기서도 안전하게 잘라낸다.
+const SESSION_TITLE_MAX_LENGTH = 200;
+
+/** 새 세션 제목으로 쓸 문자열을 안전한 길이로 트렁케이트한다(말줄임표 포함). */
+function buildSessionTitle(content: string): string {
+  const trimmed = content.trim();
+  if (trimmed.length <= SESSION_TITLE_MAX_LENGTH) return trimmed;
+  return `${trimmed.slice(0, SESSION_TITLE_MAX_LENGTH)}…`;
+}
+
 export function useAISessions(page = 0, size = 20) {
   return useQuery({
     queryKey: ['ai-sessions', page, size],
@@ -250,9 +261,14 @@ export function useAIChat(options?: {
               const isNewSession = !currentSessionId;
               setCurrentSessionId(event.sessionId);
               if (isNewSession) {
-                aiApi.createSession({ sessionId: event.sessionId, title: content || '파일 첨부' })
+                const title = content ? buildSessionTitle(content) : '파일 첨부';
+                aiApi.createSession({ sessionId: event.sessionId, title })
                   .then(() => queryClient.invalidateQueries({ queryKey: ['ai-sessions'] }))
-                  .catch(() => {}); // 실패해도 채팅 흐름 유지
+                  .catch(err => {
+                    // 세션 "제목 저장"만 실패하는 게 아니라 세션 row 자체가 생성되지 않을 수 있어
+                    // (WD-58) 채팅 흐름은 유지하되 콘솔에 남겨 조기에 발견할 수 있게 한다.
+                    console.warn('[AI] createSession 실패 — 세션이 영속화되지 않았을 수 있습니다', err);
+                  });
               }
             }
             break;
