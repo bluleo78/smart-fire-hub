@@ -1,0 +1,70 @@
+# work-loop 격리 라이브 스택용 인프라(compose).
+# - 루트 docker-compose.yml 을 재사용하지 않는다: 그쪽은 고정 container_name(neo4j)과 ./db-data 바인드 마운트를
+#   쓰므로 같이 띄우면 다른 세션의 개발 DB·컨테이너와 충돌한다.
+# - 프로젝트 이름(-p $LIVE_STACK_NAME)과 명명 볼륨으로 격리하고, 포트는 127.0.0.1 에만 바인드한다.
+# - 포트는 scripts/work-loop-stack.sh 가 환경변수로 주입한다(기본 6xxx 대역).
+services:
+  db:
+    build:
+      context: ../..
+      dockerfile: docker/postgres/Dockerfile
+    environment:
+      POSTGRES_DB: smartfirehub
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+    ports:
+      - "127.0.0.1:${WL_DB_PORT:-6432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d smartfirehub"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  # FILE 데이터셋용 S3 호환 스토리지 — api 의 기본 MinIO(9000, 개발 세션 소유)를 건드리지 않도록 별도로 띄운다.
+  minio:
+    image: minio/minio:RELEASE.2025-04-08T15-41-24Z
+    command: server /data --console-address ":9001"
+    ports:
+      - "127.0.0.1:${WL_MINIO_PORT:-6900}:9000"
+      - "127.0.0.1:${WL_MINIO_CONSOLE_PORT:-6901}:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_API_CORS_ALLOW_ORIGIN: http://localhost:${WL_WEB_PORT:-6173},http://127.0.0.1:${WL_WEB_PORT:-6173}
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  # 버킷 자동 생성(일회성)
+  minio-init:
+    image: minio/mc:RELEASE.2025-04-08T15-39-49Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 minioadmin minioadmin &&
+      mc mb --ignore-existing local/firehub-files"
+
+  # GraphRAG 그래프 DB — 선택(WL_WITH_NEO4J=1 / --with-neo4j 일 때만 graph 프로필로 기동)
+  neo4j:
+    image: neo4j:5.26-community
+    profiles: ["graph"]
+    ports:
+      - "127.0.0.1:${WL_NEO4J_HTTP_PORT:-6474}:7474"
+      - "127.0.0.1:${WL_NEO4J_BOLT_PORT:-6687}:7687"
+    environment:
+      NEO4J_AUTH: neo4j/firehub-graph-dev
+    volumes:
+      - neo4jdata:/data
+
+volumes:
+  pgdata:
+  miniodata:
+  neo4jdata:
