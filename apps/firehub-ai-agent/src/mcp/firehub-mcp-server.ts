@@ -199,13 +199,23 @@ export function filterToolsByPermissions<T extends { name: string }>(
   tools: T[],
   userPermissions: string[] | undefined,
 ): T[] {
-  // 후방호환: 권한 정보가 전혀 제공되지 않으면 기존 동작을 유지한다.
+  // 후방호환: 권한 정보가 전혀 제공되지 않으면 배열을 그대로 돌려준다(원소를 들여다보지 않는다).
   if (userPermissions === undefined) return tools;
-  return tools.filter((tool) => {
-    const required = TOOL_PERMISSION_REQUIREMENTS[tool.name];
-    if (!required) return true; // 권한 요구가 없는 도구는 항상 허용
-    return userPermissions.includes(required);
-  });
+  return tools.filter((tool) => isToolPermitted(tool.name, userPermissions));
+}
+
+/**
+ * 도구 하나가 세션 사용자 권한으로 허용되는지 판정한다(상태 해석은 {@link filterToolsByPermissions} 와 같다).
+ *
+ * stdio MCP 서버는 safeTool 이 server.tool() 로 즉시 등록하므로 반환 배열 필터로는 등록을 막을 수
+ * 없다 — 그래서 등록 시점에 이 판정을 직접 쓴다(WD-63, stdio-server.ts createMcpSafeTool).
+ */
+export function isToolPermitted(name: string, userPermissions: string[] | undefined): boolean {
+  // 후방호환: 권한 정보가 전혀 제공되지 않으면 기존 동작(전부 허용)을 유지한다.
+  if (userPermissions === undefined) return true;
+  const required = TOOL_PERMISSION_REQUIREMENTS[name];
+  if (!required) return true; // 권한 요구가 없는 도구는 항상 허용
+  return userPermissions.includes(required);
 }
 
 /** registerAllTools/buildAllMcpTools의 공통 옵션 */

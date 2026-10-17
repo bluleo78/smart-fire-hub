@@ -668,9 +668,12 @@ export class FireHubApiClient {
    * 현재 세션 사용자의 권한 코드 목록을 조회한다.
    * MCP 파괴적 도구(delete_dataset 등) 필터링(fail-closed)에 사용되며,
    * 호출부에서 실패 시 빈 배열로 폴백하여 도구가 기본 차단되도록 한다.
+   *
+   * @param timeoutMs 요청 타임아웃(ms). 공용 axios 클라이언트엔 타임아웃이 없어, 이 값이 없으면 api 가
+   *   멈췄을 때 호출부(stdio MCP 핸드셰이크 등)가 함께 멈춘다. 초과 시 요청을 취소하고 reject 한다.
    */
-  async getSessionPermissions(): Promise<string[]> {
-    const { data } = await this.client.get<string[]>('/auth/me/permissions');
+  async getSessionPermissions(timeoutMs?: number): Promise<string[]> {
+    const { data } = await this.client.get<string[]>('/auth/me/permissions', { timeout: timeoutMs });
     return data;
   }
 

@@ -16,11 +16,20 @@ import { FireHubApiClient, parseSharePurpose } from './api-client.js';
 import { MCP_SERVER_NAME, MCP_SERVER_VERSION } from '../constants.js';
 import { isValidTenantId } from '../agent/tenant-paths.js';
 import type { SafeToolFn, JsonResultFn } from './firehub-mcp-server.js';
-import { registerAllTools, toolErrorResult, withFailureHint } from './firehub-mcp-server.js';
+import {
+  isToolPermitted,
+  registerAllTools,
+  toolErrorResult,
+  withFailureHint,
+} from './firehub-mcp-server.js';
+import { fetchSessionPermissionsFailClosed } from './session-permissions.js';
 import { resolveStdioCredentials } from './stdio-credentials.js';
 import type { AnyZodRawShape, InferShape } from '@anthropic-ai/claude-agent-sdk';
 import { createTracker, type FailureTracker } from '../agent/failure-streak.js';
 import { isOpenCodeSchemaCompat, sanitizeOutgoingMessage } from './schema-compat.js';
+
+/** stdio 서버의 권한 조회 타임아웃(ms) — main() 의 주석 참고 */
+const STDIO_PERMISSIONS_TIMEOUT_MS = 3_000;
 
 type ToolResult = { content: Array<{ type: 'text'; text: string }>; isError?: boolean };
 
@@ -28,35 +37,48 @@ type ToolResult = { content: Array<{ type: 'text'; text: string }>; isError?: bo
  * createMcpSafeTool: McpServer.tool() 시그니처에 맞춘 safeTool + Tier1 경고 주입.
  * 핸들러를 try/catch로 감싸고(기존 동작 유지), 연속 실패 트래커에 기록하여
  * 임계(WARN_AT)에 도달한 오류 결과엔 경고 힌트를 1회 덧붙인다.
+ *
+ * userPermissions 가 주어지면 세션 사용자에게 허용되지 않는 도구는 server.tool() 로 등록하지 않는다
+ * (WD-63). stdio 경로는 등록이 곧 노출이라, registerAllTools 의 반환 배열 필터만으로는 파괴 도구가
+ * tools/list 에 그대로 남는다 — SDK 경로(createSdkMcpServer 에 필터된 배열 전달)와 같은 효과를 내려면
+ * 등록 시점에 막아야 한다. undefined 는 isToolPermitted 의 후방호환 의미(전부 허용)를 따른다.
  */
-export function createMcpSafeTool(server: McpServer, tracker: FailureTracker): SafeToolFn {
+export function createMcpSafeTool(
+  server: McpServer,
+  tracker: FailureTracker,
+  userPermissions?: string[],
+): SafeToolFn {
   return function safeTool<Schema extends AnyZodRawShape>(
     name: string,
     description: string,
     schema: Schema,
     handler: (args: InferShape<Schema>) => Promise<ToolResult>,
   ) {
-    server.tool(
-      name,
-      description,
-      // Cast: AnyZodRawShape (Zod v4) 은 MCP SDK ZodRawShapeCompat 와 호환
-      schema as Record<string, never>,
-      async (args: Record<string, unknown>) => {
-        // 오류 변환·경고 힌트는 SDK 래퍼(createSafeTool)와 같은 헬퍼를 쓴다 — CLI·opencode 런타임도
-        // 이 래퍼를 거치므로, 여기만 갈리면 정책 차단 표식(S3)이 그 두 경로에서 사라진다.
-        let result: ToolResult;
-        let blocked = false;
-        try {
-          result = await handler(args as InferShape<Schema>);
-        } catch (error) {
-          ({ result, blocked } = toolErrorResult('[MCP Stdio Tool]', name, error));
-        }
-        const final = withFailureHint(tracker, name, result, blocked);
-        return { content: final.content, isError: final.isError };
-      },
-    );
-    // 반환값은 register*Tools() 호출부에서 사용되지 않음 — placeholder 반환
-    return undefined as unknown as ReturnType<SafeToolFn>;
+    // 권한 없는 도구는 등록 자체를 건너뛴다 — 에이전트가 도구 존재를 인지하지 못하게 한다.
+    if (isToolPermitted(name, userPermissions)) {
+      server.tool(
+        name,
+        description,
+        // Cast: AnyZodRawShape (Zod v4) 은 MCP SDK ZodRawShapeCompat 와 호환
+        schema as Record<string, never>,
+        async (args: Record<string, unknown>) => {
+          // 오류 변환·경고 힌트는 SDK 래퍼(createSafeTool)와 같은 헬퍼를 쓴다 — CLI·opencode 런타임도
+          // 이 래퍼를 거치므로, 여기만 갈리면 정책 차단 표식(S3)이 그 두 경로에서 사라진다.
+          let result: ToolResult;
+          let blocked = false;
+          try {
+            result = await handler(args as InferShape<Schema>);
+          } catch (error) {
+            ({ result, blocked } = toolErrorResult('[MCP Stdio Tool]', name, error));
+          }
+          const final = withFailureHint(tracker, name, result, blocked);
+          return { content: final.content, isError: final.isError };
+        },
+      );
+    }
+    // 반환값은 등록에 쓰이지 않지만 registerAllTools 의 권한 필터가 tool.name 을 읽으므로
+    // undefined 가 아니라 { name } placeholder 를 돌려준다(undefined 면 필터가 TypeError 로 기동을 깬다).
+    return { name } as unknown as ReturnType<SafeToolFn>;
   } as SafeToolFn;
 }
 
@@ -157,6 +179,12 @@ export function shouldWarnNotMain(argv1: string | undefined, metaUrl: string): b
 }
 
 async function main(): Promise<void> {
+  // stdio 전송에서 stdout 은 JSON-RPC 전용 채널이다. FireHubApiClient 의 요청 로그(console.log)가
+  // stdout 에 섞이면 클라이언트가 비-JSON 줄을 받는다 — WD-63 부터 권한 조회가 initialize 응답보다
+  // 먼저 api 를 부르므로 핸드셰이크 앞에 로그가 끼게 된다. 이 프로세스의 일반 로그는 stderr 로 돌린다.
+  // console.info/debug 도 기본 stdout 이므로 함께 돌린다.
+  console.log = console.info = console.debug = (...args: unknown[]) => console.error(...args);
+
   const apiBaseUrl = process.env.API_BASE_URL ?? 'http://localhost:8080/api/v1';
   const internalToken = process.env.INTERNAL_SERVICE_TOKEN ?? '';
   // USER_ID 와 TENANT_ID 는 둘 다 필수다. TENANT_ID 를 빠뜨리면 api 가 멤버십 역추론 폴백을
@@ -175,9 +203,18 @@ async function main(): Promise<void> {
     version: MCP_SERVER_VERSION,
   });
 
-  // 연속 실패 트래커 생성 후 safeTool 래퍼에 주입 (Tier1 경고 주입용)
+  // WD-63: SDK 경로와 같은 fail-closed 권한 조회 — 실패하면 [] 라 권한 요구 도구는 전부 빠진다.
+  // 도구 등록(server.tool)·connect 이전에 끝나야 tools/list 가 처음부터 필터된 목록이 된다.
+  // 타임아웃은 opencode 의 로컬 MCP 도구 조회 기본 대기(5초)보다 짧게 잡아, 초과 시에도 fail-closed 목록으로 응답한다.
+  const userPermissions = await fetchSessionPermissionsFailClosed(
+    apiClient,
+    () => '[MCP Stdio]',
+    STDIO_PERMISSIONS_TIMEOUT_MS,
+  );
+
+  // 연속 실패 트래커 생성 후 safeTool 래퍼에 주입 (Tier1 경고 주입용) + 권한 게이팅
   const tracker = createTracker();
-  const safeTool = createMcpSafeTool(server, tracker);
+  const safeTool = createMcpSafeTool(server, tracker, userPermissions);
 
   // Register all FireHub tools (공통 함수 사용)
   // GraphRAG 도구는 LLM completion 을 호출하므로 자격증명이 필요하다 — resolveStdioCredentials
@@ -185,6 +222,7 @@ async function main(): Promise<void> {
   // 심어 준 값이라 ambient 가 아니다. 자격증명이 비어 있으면 GraphRAG 호출 시점에 명확히 실패한다
   // (#708 — 환경/키체인 폴백 없음).
   registerAllTools(apiClient, safeTool, jsonResult, {
+    userPermissions,
     credentials: resolveStdioCredentials(process.env),
   });
 
@@ -203,7 +241,7 @@ async function main(): Promise<void> {
   await server.connect(transport);
 
   console.error(
-    `[MCP Stdio] FireHub MCP server running (userId=${userId}${isOpenCodeSchemaCompat() ? ', opencode-schema-compat' : ''})`,
+    `[MCP Stdio] FireHub MCP server running (userId=${userId}, permissions=${userPermissions.length}${isOpenCodeSchemaCompat() ? ', opencode-schema-compat' : ''})`,
   );
 }
 

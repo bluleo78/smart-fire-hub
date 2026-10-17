@@ -524,6 +524,12 @@ describe('FireHubApiClient', () => {
 
       await expect(client.getSessionPermissions()).rejects.toThrow(/API 오류 \(500\)/);
     });
+
+    it('timeoutMs 를 넘기면 응답이 늦을 때 요청을 끊고 reject 한다 (WD-63)', async () => {
+      nock(BASE_URL).get('/auth/me/permissions').delay(500).reply(200, ['dataset:read']);
+
+      await expect(client.getSessionPermissions(50)).rejects.toThrow();
+    });
   });
 
   // --- FILE(오브젝트) 데이터셋 ---
