@@ -34,6 +34,9 @@ import { AdminActionableError } from './admin-actionable-error.js';
 import { assertNoAmbientOpencodeAuth } from './opencode-ambient-auth-guard.js';
 import { claimSession } from './session-owner.js';
 import type { HistoryMessage, HistoryToolCall } from './transcript-reader.js';
+import { MAX_BUDGET_USD, COST_ALARM_TOKENS, COST_ALARM_TURNS } from '../constants.js';
+import { createTracker, buildHaltMessage } from './failure-streak.js';
+import { totalInputTokens } from './token-usage.js';
 
 /**
  * 요청별 opencode.json(이제는 파일이 아니라 OPENCODE_CONFIG_CONTENT 로 전달되는 값)의 형태.
@@ -251,6 +254,7 @@ export function normalizeFirehubToolName(toolName: string): string {
  *  - type="text": part.text → [{type:'text', content}]
  *  - type="tool_use": part.type="tool", part.tool, part.state.{input,output}
  *    → completed 상태에서 tool_use + tool_result 둘 다 emit (toolName 은 mcp__firehub__ 로 정규화)
+ *    → error 상태(part.state.error)도 tool_use + tool_result(isError=true) 로 emit (WD-60)
  *  - type="step_finish": part.reason="stop" → done(with tokens), 그 외 → turn
  *  - type="step_start" 등 무시 대상 → []
  *  - type="error": error 이벤트로 변환
@@ -261,7 +265,7 @@ export function parseOpenCodeEvent(msg: Record<string, unknown>): SSEEvent[] {
   const part = (msg.part ?? {}) as {
     text?: unknown;
     tool?: unknown;
-    state?: { status?: unknown; input?: unknown; output?: unknown };
+    state?: { status?: unknown; input?: unknown; output?: unknown; error?: unknown };
     tokens?: { input?: unknown; output?: unknown };
     reason?: unknown;
   };
@@ -269,14 +273,25 @@ export function parseOpenCodeEvent(msg: Record<string, unknown>): SSEEvent[] {
     case 'text':
       return part.text ? [{ type: 'text', content: String(part.text) }] : [];
     case 'tool_use': {
-      // 실측: completed 상태에서만 input+output 이 모두 채워진다.
-      // running 등 중간 상태는 무시(중복 tool_use 이벤트 방지).
-      if (part.state?.status !== 'completed') return [];
       // 프론트엔드 위젯 매칭을 위해 mcp__firehub__ 형식으로 정규화(Claude 경로와 동일 계약).
       const toolName = normalizeFirehubToolName(String(part.tool ?? ''));
+      // WD-60: 도구 실패. opencode 의 MCP 래퍼는 isError 결과(firehub safeTool 의 실패)를 throw 로
+      // 바꾸므로, 실패는 output 없이 state.status="error" + state.error(오류문)로 온다(1.18.34 소스
+      // 확인 — `opencode run --format json` 은 completed/error 둘 다 tool_use 로 내보낸다). 예전처럼
+      // 버리면 실패가 프론트에도, 연속 실패 트래커(failure-streak)에도 보이지 않아 Tier2 강제 중단이
+      // 영영 걸리지 않는다. SDK 경로와 같은 isError 필드로 싣는다(프론트 useAIChat 이 이미 읽는다).
+      // 실측: completed/error 상태에서만 결과가 채워진다(completed=output, error=error).
+      // running 등 중간 상태는 무시(중복 tool_use 이벤트 방지).
+      const status = part.state?.status;
+      if (status !== 'completed' && status !== 'error') return [];
+      const isError = status === 'error';
+      const raw = isError ? part.state?.error : part.state?.output;
+      // 문자열이 아니면(형태 변경 대비) JSON 으로 — "[object Object]" 로 뭉개지면 서로 다른 오류가
+      // failure-streak 에서 같은 키로 합산돼 엉뚱하게 중단된다.
+      const result = typeof raw === 'string' ? raw : raw == null ? '' : isError ? JSON.stringify(raw) : String(raw);
       return [
         { type: 'tool_use', toolName, input: part.state?.input },
-        { type: 'tool_result', toolName, result: String(part.state?.output ?? '') },
+        { type: 'tool_result', toolName, result, ...(isError ? { isError: true } : {}) },
       ];
     }
     case 'step_finish': {
@@ -302,6 +317,52 @@ export function parseOpenCodeEvent(msg: Record<string, unknown>): SSEEvent[] {
     default:
       return [];
   }
+}
+
+/** step_finish 한 건에서 읽어 낸 비용 가드용 사용량. */
+export interface OpenCodeStepUsage {
+  /** 이 스텝의 컨텍스트 입력 토큰 = input + cache.read + cache.write. */
+  contextTokens: number;
+  outputTokens: number;
+  /** 이 스텝의 USD 비용. 공급자가 보고하지 않으면 0. */
+  costUsd: number;
+  /** reason="stop" — 최종 답이 완성된 마지막 스텝인지. */
+  isFinal: boolean;
+}
+
+/**
+ * step_finish 이벤트(원본 JSON)에서 비용 가드용 사용량을 읽는다 (WD-60).
+ *
+ * <p><b>왜 원본에서 읽나</b>: parseOpenCodeEvent 는 SSE 로 나갈 값만 남기므로 `part.cost` 와
+ * cache 토큰을 버린다.
+ *
+ * <p><b>토큰 합산 기준</b>: opencode 의 `tokens.input` 은 캐시 적중분을 <b>빼고</b> 센다(실측 픽스처:
+ * input 77, cache.read 3136). input 만 더하면 캐시가 잘 맞는 긴 대화일수록 알람이 늦어진다 —
+ * SDK/CLI 경로의 totalInputTokens(input + cache read + cache creation)와 같은 의미가 되도록
+ * cache.read/cache.write 를 더한다.
+ *
+ * <p><b>cost 는 스텝별 값</b>이다(opencode 1.18.34 소스: `assistantMessage.cost += v.cost` 후
+ * step-finish 파트에 `cost: v.cost` 를 싣는다) — 그래서 호출부가 누적한다.
+ */
+export function readOpenCodeStepUsage(msg: Record<string, unknown>): OpenCodeStepUsage {
+  const part = (msg.part ?? {}) as {
+    reason?: unknown;
+    cost?: unknown;
+    tokens?: { input?: unknown; output?: unknown; cache?: { read?: unknown; write?: unknown } };
+  };
+  const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+  const tokens = part.tokens ?? {};
+  return {
+    // 캐시 합산 규칙은 #336 헬퍼 하나로 — 경로마다 복제하면 합산 누락이 재발한다.
+    contextTokens: totalInputTokens({
+      input_tokens: num(tokens.input),
+      cache_read_input_tokens: num(tokens.cache?.read),
+      cache_creation_input_tokens: num(tokens.cache?.write),
+    }),
+    outputTokens: num(tokens.output),
+    costUsd: num(part.cost),
+    isFinal: part.reason === 'stop',
+  };
 }
 
 /**
@@ -542,7 +603,19 @@ export async function* executeOpenCodeAgent(
   child.stderr?.on('data', (c: Buffer) => stderrChunks.push(c.toString()));
 
   const rl = createInterface({ input: child.stdout!, crlfDelay: Infinity });
-  let sawDone = false;
+  // 종결 이벤트(정상 done 또는 안전장치가 낸 error)를 이미 보냈는지. finally 가 "결과 없이 종료"
+  // error 를 덧붙일지 판단한다 — error 는 정확히 한 번만 나가야 한다(#711, agent-sdk.ts 참조).
+  let sawTerminal = false;
+
+  // WD-60: SDK/CLI 경로에 있던 비용·실패 안전장치(#277, failure-streak)를 이 경로에도 건다.
+  //  - opencode run 에는 USD 예산 상한 옵션이 없다(1.18.34 `opencode run --help` 확인, 설정 스키마의
+  //    maxSteps 는 턴 수 상한이라 별개 이슈 WD-59). 그래서 step_finish 사용량을 앱에서 누적한다.
+  //  - 호출(요청) 스코프 상태다 — SDK/CLI 경로와 같다.
+  const haltTracker = createTracker();
+  let costTurns = 0;
+  let costTokens = 0;
+  let costUsd = 0;
+  let costAlarmEmitted = false;
   // init yield: 세션 id 는 opencode 첫 이벤트에서 캡처 후 emit(아래).
   // isResume 가 아닌 경우 여기서 임시 firehubSessionId 를 먼저 emit 하고
   // opencodeSessionId 캡처 후 트랜스크립트 저장 시 함께 보존.
@@ -565,14 +638,69 @@ export async function* executeOpenCodeAgent(
       if (!opencodeSessionId && typeof parsedMsg.sessionID === 'string') {
         opencodeSessionId = parsedMsg.sessionID;
       }
+      // WD-60: 비용 가드 — 스텝(=모델 턴) 하나가 끝날 때마다 사용량을 누적한다. 이 스텝의
+      // turn/done 을 내보내기 <b>전에</b> 처리한다: 마지막 스텝에서 알람이 나면 done 뒤로 밀려
+      // 종결 이후 이벤트가 되고, 예산 초과면 다음 스텝이 시작되기 전에 끊어야 하기 때문이다.
+      if (parsedMsg.type === 'step_finish') {
+        const usage = readOpenCodeStepUsage(parsedMsg);
+        costTurns++;
+        costTokens += usage.contextTokens;
+        costUsd += usage.costUsd;
+        // #277 소프트 알람: 누적 토큰 또는 턴 수가 임계를 넘으면 1회만 알린다(중단 안 함).
+        // 이벤트 형태는 SDK 경로(agent-sdk.ts)와 같다 — {tokens, turns, message}.
+        if (!costAlarmEmitted && (costTokens >= COST_ALARM_TOKENS || costTurns >= COST_ALARM_TURNS)) {
+          costAlarmEmitted = true;
+          console.warn(`[OpenCode Agent] [cost-alarm] 누적 ${costTokens} 토큰 / ${costTurns} 턴 — 비싼 작업 진행 중`);
+          yield {
+            type: 'cost_alarm',
+            tokens: costTokens,
+            turns: costTurns,
+            message: `이 작업이 누적 ${costTokens.toLocaleString()} 토큰을 소비하며 진행 중입니다.`,
+          };
+        }
+        // #277 하드 상한: 누적 USD 가 MAX_BUDGET_USD 이상이면 자식을 끊고 CLI 경로와 같은 안내로
+        // 끝낸다(자식 kill 은 아래 finally 가 한다).
+        //  - 공급자가 비용을 보고하지 않으면(cost 0/없음) 누적이 0 에 머물러 이 상한은 <b>적용되지
+        //    않는다</b>. 테넌트가 붙이는 OpenAI 호환 공급자는 opencode 모델 카탈로그에 단가가 없어
+        //    실측 cost 가 0 이었다 — 그 경우엔 위 토큰/턴 알람만 남는다.
+        //  - 마지막(stop) 스텝은 끊지 않는다: 답이 이미 완성됐고 이후 추가 비용이 없으므로, 끊으면
+        //    지출은 그대로인데 결과만 버리게 된다.
+        if (!usage.isFinal && costUsd >= MAX_BUDGET_USD) {
+          console.warn(`[OpenCode Agent] [budget] 누적 $${costUsd.toFixed(4)} ≥ $${MAX_BUDGET_USD} — killing child`);
+          sawTerminal = true;
+          await saveTranscript();
+          yield {
+            type: 'error',
+            message: `이 작업이 비용 한도($${MAX_BUDGET_USD})에 도달해 자동 중단되었습니다. 범위를 좁혀 다시 시도해 주세요.`,
+            inputTokens: usage.contextTokens,
+            outputTokens: usage.outputTokens,
+          };
+          return;
+        }
+      }
       for (const ev of parseOpenCodeEvent(parsedMsg)) {
         // 트랜스크립트 누적
         if (ev.type === 'text') assistantText += String(ev.content ?? '');
         else if (ev.type === 'tool_use') assistantToolCalls.push({ name: String(ev.toolName ?? ''), input: (ev.input as Record<string, unknown>) ?? {} });
         else if (ev.type === 'tool_result' && assistantToolCalls.length > 0) assistantToolCalls[assistantToolCalls.length - 1].result = String(ev.result ?? '');
         else if (ev.type === 'turn') commitAssistant();
-        else if (ev.type === 'done') { sawDone = true; await saveTranscript(); }
+        else if (ev.type === 'done') { sawTerminal = true; await saveTranscript(); }
         yield ev;
+        // WD-60 Tier2: 같은 도구가 같은 오류로 연속 실패하면 강제 중단한다(CLI 경로와 같은 순서 —
+        // 실패 결과를 프론트에 먼저 전달한 뒤 중단 error). 같은 도구가 한 번 성공하면 리셋된다.
+        if (ev.type === 'tool_result') {
+          const toolName = String(ev.toolName ?? '');
+          const resultText = String(ev.result ?? '');
+          const { halt } = haltTracker.record(toolName, resultText, ev.isError === true);
+          if (halt) {
+            const haltMessage = buildHaltMessage(toolName, resultText);
+            console.warn(`[OpenCode Agent] [failure-streak] ${haltMessage} — killing child`);
+            sawTerminal = true;
+            await saveTranscript();
+            yield { type: 'error', message: haltMessage };
+            return; // 자식 kill 은 finally 가 한다
+          }
+        }
       }
     }
   } finally {
@@ -583,8 +711,8 @@ export async function* executeOpenCodeAgent(
     await saveTranscript().catch(() => {}); // done 누락(비정상 종료)에도 진행분 보존
     const stderr = stderrChunks.join('');
     if (stderr) console.error('[OpenCode Agent] stderr:', stderr);
-    // 정상 done 이벤트가 없었으면(프로세스 비정상 종료 등) 에러로 마감
-    if (!sawDone) {
+    // 종결 이벤트가 없었으면(프로세스 비정상 종료 등) 에러로 마감
+    if (!sawTerminal) {
       yield { type: 'error', message: stderr || 'OpenCode agent terminated without result' };
     }
   }
