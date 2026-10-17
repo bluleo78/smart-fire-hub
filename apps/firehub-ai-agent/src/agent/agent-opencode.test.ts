@@ -1,4 +1,7 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'fs';
+import { dirname, join } from 'path';
+import { fileURLToPath } from 'url';
 import { parseOpenCodeEvent, buildOpenCodeConfig, buildOpenCodeRunArgs, normalizeFirehubToolName } from './agent-opencode.js';
 import { OPENCODE_SYSTEM_PROMPT, OPENCODE_UI_ONLY_TOOLS, SYSTEM_PROMPT } from './system-prompt.js';
 import { buildAllMcpTools } from '../mcp/firehub-mcp-server.js';
@@ -177,6 +180,12 @@ describe('buildOpenCodeRunArgs', () => {
 });
 
 describe('OPENCODE_SYSTEM_PROMPT', () => {
+  /** `## <제목>` 섹션 본문을 찾는다 — 전체 문자열 검사는 문장이 다른 섹션으로 옮겨져도 통과하므로 섹션 단위로 본다. */
+  const promptSection = (title: string): string => {
+    const section = OPENCODE_SYSTEM_PROMPT.split(/^## /m).find((s) => s.startsWith(title));
+    expect(section).toBeDefined();
+    return section!;
+  };
   it('위임을 금지하고 직접 처리·요약을 지시한다 (가짜 위임 태그 방지)', () => {
     // 위임 라우팅을 그대로 주면 약한 모델이 막힌 위임을 텍스트로 흉내내 응답이 깨진다.
     expect(OPENCODE_SYSTEM_PROMPT).toContain('위임 금지');
@@ -190,8 +199,7 @@ describe('OPENCODE_SYSTEM_PROMPT', () => {
   it('UI 안내 전용 블록을 별도 섹션으로 두고 차단 도구명을 모두 나열한다 (WD-64)', () => {
     // 프롬프트 전체가 아니라 **이 섹션 안에서** 확인한다 — 도구명은 같은 상수로 보간되므로 전체 문자열
     // 검사는 문장이 다른 섹션으로 옮겨지거나 지워져도 통과해 버린다.
-    const section = OPENCODE_SYSTEM_PROMPT.split(/^## /m).find((s) => s.startsWith('생성·설계 요청은 UI 안내'));
-    expect(section).toBeDefined();
+    const section = promptSection('생성·설계 요청은 UI 안내');
     expect(section).toContain('차단되어 있어 호출할 수 없다');
     for (const tool of OPENCODE_UI_ONLY_TOOLS) {
       expect(section).toContain(`\`${tool}\``);
@@ -217,6 +225,23 @@ describe('OPENCODE_SYSTEM_PROMPT', () => {
     expect(OPENCODE_SYSTEM_PROMPT).toContain('PII 마스킹');
     expect(OPENCODE_SYSTEM_PROMPT).toContain('파괴 작업 2턴 확인');
     expect(OPENCODE_SYSTEM_PROMPT).toContain('get_dataset_references');
+  });
+
+  // WD-65: cli 의 data-analyst rules.md(#576) 규칙이 opencode PII 섹션에도 있어야 한다(배경은 system-prompt.ts JSDoc).
+  it('PII 값 자체가 답인 경우의 마스킹 규칙을 PII 섹션 안에 두고 rules.md 와 동기화한다 (WD-65, #576)', () => {
+    const section = promptSection('PII 마스킹');
+    const rules = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), 'subagents/data-analyst/rules.md'),
+      'utf-8',
+    );
+    // 두 경로 공통 핵심: 집계 우선과 마스킹 의무는 별개 축
+    for (const doc of [section, rules]) expect(doc).toContain('별개의 축');
+    // opencode 측: 중복(HAVING) 예시·마스킹 값+건수 예시·SQL 단계 마스킹 안내
+    expect(section).toContain('HAVING');
+    expect(section).toContain('`a***@e***.com` (2건)');
+    expect(section).toContain('SQL 단계에서 마스킹');
+    // 위젯 sql 은 화면에 표시되므로 PII 원문 리터럴을 SQL 에 박지 않는다(라이브 검증에서 실측된 우회 경로)
+    expect(section).toContain('PII 원문 리터럴');
   });
 
   // GraphRAG 조회는 opencode 경로에도 필요하지만, 구축·검수 결정은 다단계 가드 흐름이라
