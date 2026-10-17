@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { parseOpenCodeEvent, buildOpenCodeConfig, buildOpenCodeRunArgs, normalizeFirehubToolName } from './agent-opencode.js';
-import { OPENCODE_SYSTEM_PROMPT, SYSTEM_PROMPT } from './system-prompt.js';
+import { OPENCODE_SYSTEM_PROMPT, OPENCODE_UI_ONLY_TOOLS, SYSTEM_PROMPT } from './system-prompt.js';
+import { buildAllMcpTools } from '../mcp/firehub-mcp-server.js';
+import { FireHubApiClient } from '../mcp/api-client.js';
 
 // 공통 테스트 fixture — 세션 배선 필드는 이 describe 의 관심사가 아니므로 고정값으로 묶는다.
 const BASE: Parameters<typeof buildOpenCodeConfig>[0] = {
@@ -113,6 +115,42 @@ describe('buildOpenCodeConfig', () => {
     expect(cfg.permission.webfetch).toBe('deny');
   });
 
+  // WD-64: 값뿐 아니라 키 순서(allow 뒤 deny)까지 고정한다 — 이유는 buildOpenCodeConfig 의 permission 주석.
+  it('UI 안내 전용 생성·설계 도구를 firehub_* allow 뒤에서 개별 deny 한다 (WD-64)', () => {
+    const cfg = buildOpenCodeConfig(BASE);
+    const keys = Object.keys(cfg.permission);
+    const allowIdx = keys.indexOf('firehub_*');
+    expect(allowIdx).toBeGreaterThan(-1);
+    expect(OPENCODE_UI_ONLY_TOOLS.length).toBeGreaterThan(0);
+    for (const tool of OPENCODE_UI_ONLY_TOOLS) {
+      const key = `firehub_${tool}`;
+      expect(cfg.permission[key]).toBe('deny');
+      expect(keys.indexOf(key)).toBeGreaterThan(allowIdx);
+    }
+  });
+
+  // 손으로 쓴 도구명에 오타가 있거나 MCP 도구 이름이 바뀌면 opencode 는 모르는 키를 무시해 deny 가 조용히
+  // 무효가 된다(해당 도구는 'firehub_*' allow 로 다시 열림) — 실제 등록된 도구명과 대조한다.
+  it('차단 목록의 모든 도구가 실제 firehub MCP 도구로 등록돼 있다 (WD-64)', () => {
+    const client = Object.create(FireHubApiClient.prototype) as FireHubApiClient;
+    client.withPurpose = () => client;
+    const registered = new Set(buildAllMcpTools(client).map((t) => t.name));
+    for (const tool of OPENCODE_UI_ONLY_TOOLS) {
+      expect(registered.has(tool), tool).toBe(true);
+    }
+  });
+
+  it('차단 목록은 이슈 사례의 생성 도구를 포함하고 기존 파이프라인 실행·조회는 막지 않는다 (WD-64)', () => {
+    expect(OPENCODE_UI_ONLY_TOOLS).toEqual(
+      expect.arrayContaining(['create_dataset', 'start_import', 'create_pipeline', 'update_pipeline', 'create_dashboard', 'create_report_template']),
+    );
+    const cfg = buildOpenCodeConfig(BASE);
+    // execute_pipeline 단독(기존 파이프라인 실행)은 프롬프트 2턴 확인으로 통제한다 — config 차단 대상 아님.
+    expect(cfg.permission.firehub_execute_pipeline).toBeUndefined();
+    expect(cfg.permission.firehub_list_datasets).toBeUndefined();
+    expect(cfg.permission.firehub_navigate_to).toBeUndefined();
+  });
+
   it('메인(build) 에서 task 위임을 전면 차단하고 빌트인 general 을 비활성화한다 (#0 보안)', () => {
     // 위임 차단으로 firehub 도구 직접 호출을 강제 — 비격리 general 서브에이전트 누수 방지.
     const cfg = buildOpenCodeConfig(BASE);
@@ -146,6 +184,32 @@ describe('OPENCODE_SYSTEM_PROMPT', () => {
     expect(OPENCODE_SYSTEM_PROMPT).toContain('결과 요약 필수');
     // 위임 중심 SYSTEM_PROMPT 의 라우팅 표 헤더가 섞이지 않았는지 (회귀 가드)
     expect(OPENCODE_SYSTEM_PROMPT).not.toContain('전문 에이전트에게 위임하세요');
+  });
+
+  // WD-64: UI 안내 규칙이 "사용 불가" 목록 속 한 줄이라 약한 모델이 무시했다 — 독립 강조 블록으로 승격.
+  it('UI 안내 전용 블록을 별도 섹션으로 두고 차단 도구명을 모두 나열한다 (WD-64)', () => {
+    // 프롬프트 전체가 아니라 **이 섹션 안에서** 확인한다 — 도구명은 같은 상수로 보간되므로 전체 문자열
+    // 검사는 문장이 다른 섹션으로 옮겨지거나 지워져도 통과해 버린다.
+    const section = OPENCODE_SYSTEM_PROMPT.split(/^## /m).find((s) => s.startsWith('생성·설계 요청은 UI 안내'));
+    expect(section).toBeDefined();
+    expect(section).toContain('차단되어 있어 호출할 수 없다');
+    for (const tool of OPENCODE_UI_ONLY_TOOLS) {
+      expect(section).toContain(`\`${tool}\``);
+    }
+    // 탐색 없이 즉시 안내 + 최종 텍스트 마무리 + 로컬 테스트 불가 고지
+    expect(section).toContain('firehub_navigate_to');
+    expect(section).toMatch(/설계·탐색을 시작하지 말고 즉시/);
+    expect(section).toMatch(/반드시 최종 텍스트로 마무리/);
+    expect(section).toMatch(/로컬 테스트·코드 실행 불가/);
+    // navigate_to 의 실제 type 값으로 안내하도록 매핑을 박아 둔다(웹 routes.ts 의 type 과 일치해야 함)
+    for (const type of ['dataset_new', 'pipeline_new', 'dashboard', 'ai_insights_templates']) {
+      expect(section).toContain(`\`${type}\``);
+    }
+  });
+
+  it('파이프라인 실행을 파괴 작업과 같은 수준의 2턴 확인으로 통제한다 (WD-64)', () => {
+    expect(OPENCODE_SYSTEM_PROMPT).toMatch(/^## 파이프라인 실행 2턴 확인/m);
+    expect(OPENCODE_SYSTEM_PROMPT).toContain('execute_pipeline');
   });
 
   it('안전 통제(PII 마스킹·파괴 2턴 확인)를 보존한다', () => {
