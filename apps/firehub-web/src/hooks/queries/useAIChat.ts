@@ -97,6 +97,20 @@ export function useAIChat(options?: {
     };
   }, [revokeAllBlobUrls]);
 
+  // 스트리밍/업로드 중 새로고침·탭 닫기·주소창 직접 이동 시 메시지가 경고 없이
+  // 통째로 유실되는 것을 막는다 (WD-56). 패널이 상주하는 AIProvider 전역에서
+  // 쓰이므로 인앱 SPA 라우팅(useUnsavedChangesGuard)과 달리 브라우저 레벨
+  // 네비게이션만 막으면 충분하다.
+  useEffect(() => {
+    if (!isStreaming && !isUploading) return;
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [isStreaming, isUploading]);
+
   const sendMessage = useCallback(async (content: string, files?: File[]) => {
     messagesCommittedRef.current = false;
 
