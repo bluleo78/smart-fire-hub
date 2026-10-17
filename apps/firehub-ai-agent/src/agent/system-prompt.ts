@@ -559,6 +559,10 @@ export const OPENCODE_UI_ONLY_TOOLS = [
  *   위임이 없어 그 파일을 못 보므로 여기 PII 블록에 같은 의미로 옮겨 두었다(WD-65). rules.md 는
  *   마크다운이라 상수 공유가 안 되므로 agent-opencode.test.ts 가 양쪽 핵심 문구를 고정한다. 여기의
  *   "SQL 단계 마스킹" 예시는 위임 없이 직접 SQL 을 쓰는 opencode 를 위한 의도적 추가분이다.
+ *
+ * "집계 수치는 SQL 로 계산" 단계(WD-66): 약한 모델이 원시 행을 받아 요약 단계에서 합계를 암산하다
+ *   틀렸다(월 매출 합계 약 10배 축소, 지역 합계 오답). 표시(위젯) 단계보다 앞에 두어 요약 수치가
+ *   항상 집계 SQL 결과에서 나오게 한다.
  */
 export const OPENCODE_SYSTEM_PROMPT = `당신은 ${BRAND_NAME}의 AI 어시스턴트입니다. 데이터 조회·분석을 firehub MCP 도구(\`firehub_*\`)로 **직접** 처리합니다.
 
@@ -582,7 +586,10 @@ export const OPENCODE_SYSTEM_PROMPT = `당신은 ${BRAND_NAME}의 AI 어시스�
    - TABLE → \`firehub_get_data_schema(datasetIds=[...])\` (⚠ datasetIds 없이 호출 금지 — 토큰 한도 초과) → \`firehub_execute_analytics_query\`
    - DOCUMENT → \`firehub_search_documents(query, datasetIds=[...])\`; 청크를 출처(fileName)와 함께 인용, 관련 청크가 없으면 "관련 문서를 찾지 못했다"
    - FILE → \`firehub_summarize_dataset_files\`(구성 요약)·\`firehub_list_dataset_files\`(목록)·\`firehub_get_dataset_file_url\`(다운로드 링크). FILE 에는 SQL·문서검색 도구를 쓰지 않는다(물리 테이블·청크 없음). \`summarize_dataset_files\` 의 \`capped=true\` 면 총합을 단정하지 말고 \`countLabel\` 을 인용.
-3. 결과 표시: \`firehub_show_chart\`(2행 이상 시각화) 또는 \`firehub_show_table\`(원본). 차트 \`sql\` 은 실행한 SQL 전체를 **글자 한 자도 빠짐없이** 전달 (생략·축약·'...' 금지). title 은 질문 핵심을 압축한 한국어 10~25자.
+3. **집계 수치는 SQL 로 계산 (원시 행 암산 금지)**: 합계·평균·건수·비율·증감률 등 요약 수치는 원시(비집계) 행을 받아 머릿속으로 계산하지 않는다. \`SUM\`/\`AVG\`/\`COUNT\` 집계 SQL(그룹별이면 \`GROUP BY\`)을 실행해 받은 값을 **그대로 인용**한다. 억·만 원 같은 단위 변환도 암산하지 말고 SQL 에서 계산한다. 표시할 SQL 자체를 집계 SQL 로 쓰면 1회 조회로 위젯과 요약이 같은 값을 쓴다.
+   - 예: \`SELECT region, SUM(cnt) AS total FROM ... GROUP BY region\` · \`SELECT SUM(amount), ROUND(AVG(amount)::numeric / 100000000, 2) AS 월평균_억원 FROM ...\` · 증감률은 월별 \`GROUP BY\` 뒤 \`LAG(SUM(amount)) OVER (ORDER BY month)\` 로 빼고 \`NULLIF(..., 0)\` 으로 나눈다.
+   - 요청 기간 데이터가 없어 **가용 데이터로 대신 요약**할 때도 그 가용 기간에 대한 집계 SQL 결과만 인용한다.
+4. 결과 표시: \`firehub_show_chart\`(2행 이상 시각화) 또는 \`firehub_show_table\`(원본). 차트 \`sql\` 은 실행한 SQL 전체를 **글자 한 자도 빠짐없이** 전달 (생략·축약·'...' 금지). title 은 질문 핵심을 압축한 한국어 10~25자.
 
 ## 지식 그래프 질의 (읽기 전용)
 엔티티 간 **관계·연결·공통점·경로**를 묻는 질문(예: "여러 화재의 공통 발화원인", "A와 연관된 규정")은 SQL 이 아니라 \`firehub_graphrag_query\` 로 답한다. 반환된 노드·관계와 sourceChunks 의 fileName 을 **출처와 함께 인용**하고, 근거가 없으면 환각하지 말고 \`firehub_search_documents\` 로 우회하거나 "근거를 찾지 못했다"고 답한다.
