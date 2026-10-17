@@ -186,6 +186,9 @@ describe('OPENCODE_SYSTEM_PROMPT', () => {
     expect(section).toBeDefined();
     return section!;
   };
+  /** 서브에이전트 rules.md 원문 — cli 경로 규칙과 opencode 프롬프트의 의미 동기화를 확인할 때 쓴다. */
+  const readSubagentRules = (name: string): string =>
+    readFileSync(join(dirname(fileURLToPath(import.meta.url)), `subagents/${name}/rules.md`), 'utf-8');
   it('위임을 금지하고 직접 처리·요약을 지시한다 (가짜 위임 태그 방지)', () => {
     // 위임 라우팅을 그대로 주면 약한 모델이 막힌 위임을 텍스트로 흉내내 응답이 깨진다.
     expect(OPENCODE_SYSTEM_PROMPT).toContain('위임 금지');
@@ -230,10 +233,7 @@ describe('OPENCODE_SYSTEM_PROMPT', () => {
   // WD-65: cli 의 data-analyst rules.md(#576) 규칙이 opencode PII 섹션에도 있어야 한다(배경은 system-prompt.ts JSDoc).
   it('PII 값 자체가 답인 경우의 마스킹 규칙을 PII 섹션 안에 두고 rules.md 와 동기화한다 (WD-65, #576)', () => {
     const section = promptSection('PII 마스킹');
-    const rules = readFileSync(
-      join(dirname(fileURLToPath(import.meta.url)), 'subagents/data-analyst/rules.md'),
-      'utf-8',
-    );
+    const rules = readSubagentRules('data-analyst');
     // 두 경로 공통 핵심: 집계 우선과 마스킹 의무는 별개 축
     for (const doc of [section, rules]) expect(doc).toContain('별개의 축');
     // opencode 측: 중복(HAVING) 예시·마스킹 값+건수 예시·SQL 단계 마스킹 안내
@@ -257,6 +257,43 @@ describe('OPENCODE_SYSTEM_PROMPT', () => {
     expect(section).toContain('가용 데이터로 대신 요약');
     // 순서 엄수 섹션이므로 집계 단계가 위젯 표시 단계보다 앞서야 요약 수치가 집계 결과에서 나온다
     expect(section.indexOf('집계 수치는 SQL 로 계산')).toBeLessThan(section.indexOf('결과 표시'));
+  });
+
+  // WD-67: 조회 도구 호출 없이 "데이터셋 ID 99999 은 존재하지 않습니다 (404)" 처럼 존재 여부와
+  // 상태 코드를 지어냈다. cli 쪽 pipeline-builder rules.md 의 같은 회귀(#574) 규칙을 일반화해 옮긴다.
+  it('조회 없이 리소스 존재 여부를 단정하지 않도록 응답 출력 규칙 섹션에서 지시한다 (WD-67, #574)', () => {
+    const section = promptSection('응답 출력 규칙');
+    // 규칙 줄(하위 bullet 포함)만 잘라 본다 — 섹션 전체 검사는 다른 줄의 단어로 통과해 버린다.
+    const start = section.indexOf('존재 여부 단정 금지');
+    expect(start).toBeGreaterThan(-1);
+    const nextTop = section.indexOf('\n- ', start);
+    const rule = section.slice(start, nextTop === -1 ? undefined : nextTop);
+    // 실제로 받은 조회 결과가 근거여야 하고, 이번 턴 ID 조회 도구를 먼저 호출한다
+    expect(rule).toContain('실제로 받은 조회 tool_result');
+    for (const tool of ['get_dataset', 'get_pipeline']) expect(rule).toContain(`\`${tool}\``);
+    // 2턴 확인 흐름(Turn 1 조회 → Turn 2 실행)과 모순되지 않게 Turn 1 결과 재사용을 허용한다
+    expect(rule).toContain('Turn 1 조회 결과를 근거로 써도 된다');
+    // 상태 코드 지어내기 "금지" 문장 자체를 고정한다
+    expect(rule).toContain('404 같은 상태 코드나 오류 문구를 **지어내지 않는다**');
+    // 의미 검색·페이지 목록이 비었다고 "존재하지 않는다"고 하지 않는다(그건 ID 조회 not found 만)
+    expect(rule).toMatch(/`find_datasets`.*`list_\*`.*"찾지 못했다"로만/);
+    // 조회 안 했으면 미검증 표현
+    expect(rule).toContain('아직 확인하지 않았습니다');
+    // cli 쪽 원 규칙(#574)이 사라지면 두 경로의 의미 동기화 근거가 없어진다 — 메인 SYSTEM_PROMPT 와 rules.md 둘 다
+    expect(SYSTEM_PROMPT).toContain('무검증 확인 진술 금지 (#574)');
+    expect(readSubagentRules('pipeline-builder')).toContain('존재/미존재 진술 전 검증 의무');
+    // 같은 안내를 표현만 바꿔 두 번 쓴 사례(WD-67) — opencode 는 text part 를 한 번씩만 내보내므로(실측)
+    // 코드 중복이 아니라 모델 재생성이다. 절대 규칙의 단일 최종 텍스트에 "한 응답 안 재서술 금지"를 둔다.
+    expect(promptSection('절대 규칙')).toContain('표현만 바꿔 다시 쓰지 않는다');
+  });
+
+  // WD-67: UI 안내 블록의 "탐색 없이 즉시 안내" 와 위 존재 확인 규칙이 충돌하지 않도록,
+  // 안내만 할 때는 존재 여부를 말하지 않는다는 조정 문구를 UI 안내 섹션에 둔다.
+  it('UI 안내 시 조회하지 않았으면 대상 존재 여부를 말하지 않게 한다 (WD-67)', () => {
+    const section = promptSection('생성·설계 요청은 UI 안내');
+    // 확인 조회는 기존 1~2회 한도 안에서, 안 했으면 존재 여부를 말하지 않고 안내만
+    expect(section).toContain('위 1~2회 조회 안에서');
+    expect(section).toContain('조회하지 않았으면 존재 여부·오류 코드를 말하지 말고 화면 안내만 한다');
   });
 
   // GraphRAG 조회는 opencode 경로에도 필요하지만, 구축·검수 결정은 다단계 가드 흐름이라
