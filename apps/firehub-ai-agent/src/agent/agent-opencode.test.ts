@@ -211,6 +211,28 @@ describe('parseOpenCodeEvent', () => {
     expect(evs).toEqual([]);
   });
 
+  it('tool_use 이벤트(error)를 tool_use + tool_result(isError=true, result=state.error) 로 반환한다 (WD-60)', () => {
+    // opencode 는 MCP isError 결과를 throw 로 바꿔 state.status="error", state.error=오류문 으로
+    // 내보낸다(output 없음). 무시하면 실패가 프론트·연속 실패 트래커에 보이지 않는다.
+    const evs = parseOpenCodeEvent({
+      type: 'tool_use',
+      part: { type: 'tool', tool: 'firehub_execute_sql', state: { status: 'error', input: { q: 1 }, error: 'boom' } },
+    });
+    expect(evs).toEqual([
+      { type: 'tool_use', toolName: 'mcp__firehub__execute_sql', input: { q: 1 } },
+      { type: 'tool_result', toolName: 'mcp__firehub__execute_sql', result: 'boom', isError: true },
+    ]);
+  });
+
+  it('state.error 가 문자열이 아니면 "[object Object]" 대신 JSON 으로 싣는다 (WD-60)', () => {
+    // 서로 다른 오류가 같은 문자열로 뭉개지면 failure-streak 가 엉뚱하게 합산해 중단한다.
+    const evs = parseOpenCodeEvent({
+      type: 'tool_use',
+      part: { type: 'tool', tool: 'firehub_execute_sql', state: { status: 'error', input: {}, error: { message: 'boom' } } },
+    });
+    expect(evs[1]).toMatchObject({ type: 'tool_result', result: '{"message":"boom"}', isError: true });
+  });
+
   it('step_finish(reason=stop)를 done+tokens 로 변환한다', () => {
     const evs = parseOpenCodeEvent({
       type: 'step_finish',
