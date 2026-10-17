@@ -387,6 +387,19 @@ export function useAIChat(options?: {
       },
       (error) => {
         console.error('AI stream error:', error);
+        // fetch() 자체가 실패해 SSE 스트림이 열리지도 못한 경우(오프라인/DNS/연결 실패 등).
+        // 서버가 보낸 'error' 이벤트 분기(위 case 'error')와 동일하게, 낙관적으로만 표시되던
+        // userMessage를 messages에 커밋하고 에러 안내를 함께 추가해 메시지가 소리소문 없이
+        // 사라지지 않도록 한다.
+        if (!messagesCommittedRef.current) {
+          messagesCommittedRef.current = true;
+          setMessages(prev => [...prev, userMessage, {
+            id: `error-${Date.now()}`,
+            role: 'assistant' as const,
+            content: '오류: 네트워크 연결에 실패했습니다. 다시 시도해주세요.',
+            timestamp: new Date().toISOString(),
+          }]);
+        }
         setIsStreaming(false);
         setIsThinking(false);
         clearCompaction();

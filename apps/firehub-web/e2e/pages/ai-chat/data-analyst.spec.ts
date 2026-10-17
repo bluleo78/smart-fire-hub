@@ -506,6 +506,52 @@ test.describe('AI 챗 data-analyst', () => {
   });
 
   /**
+   * DA-09: fetch() 자체 실패(네트워크 끊김) → 메시지가 소실되지 않고 오류 안내가 표시된다 (WD-53)
+   *
+   * SSE 연결이 수립되기 전에 fetch() 자체가 reject되는 경우(오프라인, DNS/연결 실패 등)는
+   * 서버가 'error' 이벤트를 보내는 DA-03/DA-08과는 다른 코드 경로(streamAIChat의 onError 콜백,
+   * useAIChat.ts의 fetch-level 콜백)를 탄다.
+   *
+   * 수정 전: onError 콜백이 setMessages를 호출하지 않아 pendingUserMessage만 지워지고
+   *          사용자가 입력한 메시지가 messages 배열에 한 번도 커밋되지 못한 채 사라졌다
+   *          (토스트/에러 말풍선도 없이 빈 welcome 화면으로 복귀).
+   * 수정 후: SSE error 이벤트 분기와 동일하게 userMessage를 커밋하고 에러 안내 assistant
+   *          메시지를 함께 추가한다.
+   *
+   * route.abort()로 /api/v1/ai/chat 요청 자체를 실패시켜 fetch()가
+   * TypeError('Failed to fetch')로 reject되는 조건을 재현한다.
+   */
+  test('DA-09: fetch 자체 실패 → 입력 메시지가 사라지지 않고 오류가 표시된다', async ({ authenticatedPage: page }) => {
+    await mockAiSessions(page, 'data-analyst-session-fetchfail');
+
+    await page.route(
+      (url) => url.pathname === '/api/v1/ai/chat',
+      async (route) => {
+        if (route.request().method() !== 'POST') return route.fallback();
+        // 네트워크 요청 자체를 실패시킨다 — fetch()가 TypeError로 reject된다.
+        await route.abort('failed');
+      },
+    );
+
+    await openChatPanel(page);
+
+    const chatInput = page.getByPlaceholder('메시지를 입력하세요...');
+    await chatInput.fill('fetch 실패 재현 메시지');
+    await chatInput.press('Enter');
+
+    // 수정 후: 사용자가 입력한 메시지가 messages에 커밋되어 채팅창에 남아 있어야 한다.
+    await expect(page.getByText('fetch 실패 재현 메시지')).toBeVisible({ timeout: 10_000 });
+
+    // 수정 후: 오류를 알리는 안내 메시지가 함께 표시되어야 한다.
+    await expect(page.getByText(/오류.*네트워크|네트워크.*실패/).first()).toBeVisible({
+      timeout: 10_000,
+    });
+
+    // 빈 welcome 화면으로 돌아가지 않아야 한다.
+    await expect(page.getByText('AI 어시스턴트에게 물어보세요')).not.toBeVisible();
+  });
+
+  /**
    * DA-05: 새 세션 시작 → 메시지 목록이 초기화되고 빈 상태 문구가 표시된다
    * useAIChat.startNewSession(): messages/currentSessionId/streamingMessage를 모두 초기화한다.
    */
