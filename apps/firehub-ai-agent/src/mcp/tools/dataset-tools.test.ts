@@ -67,6 +67,8 @@ describe('Dataset MCP Tools', () => {
         datasetId: 42,
         datasetName: '테스트화재신고',
         deletedAt: '2026-09-09T04:41:00.000Z',
+        // WD-68: 약한 모델이 ISO 를 직접 변환하다 틀리므로 같은 순간의 KST 표기를 병기한다
+        deletedAtKst: '2026-09-09 13:41',
       });
 
       vi.useRealTimers();
@@ -81,7 +83,9 @@ describe('Dataset MCP Tools', () => {
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.datasetName).toBeNull();
       expect(typeof parsed.deletedAt).toBe('string');
+      expect(parsed.deletedAtKst).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
     });
+
 
     it('returns isError on API failure', async () => {
       (client.deleteDataset as ReturnType<typeof vi.fn>).mockRejectedValue(

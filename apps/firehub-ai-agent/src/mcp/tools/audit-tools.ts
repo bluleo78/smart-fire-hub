@@ -1,13 +1,14 @@
 import { z } from 'zod/v4';
 import type { FireHubApiClient } from '../api-client.js';
 import type { SafeToolFn, JsonResultFn } from '../firehub-mcp-server.js';
+import { KST_UTC_OFFSET } from './kst-time.js';
 
 /**
  * 감사 조회 경계에 붙일 오프셋(WD-11).
  * 채팅에는 사용자 시간대가 실려 오지 않으므로, 다른 도구(트리거·프로액티브 기본값)와 같은 관례로 Asia/Seoul(KST)을 쓴다.
  * KST 고정, 서머타임 없음 — 그래서 상수 오프셋이면 충분하다. 사용자별 시간대가 생기면 다시 일반화한다.
  */
-export const AUDIT_QUERY_UTC_OFFSET = '+09:00';
+export const AUDIT_QUERY_UTC_OFFSET = KST_UTC_OFFSET;
 
 const HAS_OFFSET = /(Z|[+-]\d{2}:?\d{2})$/i;
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
