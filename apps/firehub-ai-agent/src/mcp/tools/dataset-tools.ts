@@ -2,6 +2,7 @@ import { z } from 'zod/v4';
 import type { FireHubApiClient } from '../api-client.js';
 import type { RowSearchBody } from '../api-client/dataset-api.js';
 import type { SafeToolFn, JsonResultFn } from '../firehub-mcp-server.js';
+import { formatKst } from './kst-time.js';
 
 export function registerDatasetTools(
   apiClient: FireHubApiClient,
@@ -217,11 +218,15 @@ export function registerDatasetTools(
         await apiClient.deleteDataset(args.id);
         // 백엔드 DELETE 응답은 본문이 없어(204) 삭제 시각을 제공하지 않는다.
         // ai-agent 서버가 삭제 요청을 처리 완료한 시각을 서버 타임스탬프로 기록해 반환한다.
+        // WD-68: 약한 모델이 ISO(UTC)를 KST 로 직접 옮기다 월을 틀렸다 — 같은 순간의 KST 표기를 병기해
+        // 모델은 deletedAtKst 를 그대로 인용만 하게 한다. 두 필드가 어긋나지 않도록 Date 는 한 번만 만든다.
+        const deletedAt = new Date();
         return jsonResult({
           success: true,
           datasetId: args.id,
           datasetName: dataset?.name ?? null,
-          deletedAt: new Date().toISOString(),
+          deletedAt: deletedAt.toISOString(),
+          deletedAtKst: formatKst(deletedAt),
         });
       },
     ),

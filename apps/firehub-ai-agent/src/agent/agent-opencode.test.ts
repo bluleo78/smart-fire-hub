@@ -186,6 +186,14 @@ describe('OPENCODE_SYSTEM_PROMPT', () => {
     expect(section).toBeDefined();
     return section!;
   };
+  /** 섹션 안에서 `marker` 로 시작하는 규칙 줄(하위 bullet 포함)만 잘라낸다 — 섹션 전체 검사는 다른 줄의 단어로 통과해 버린다. */
+  const promptRule = (title: string, marker: string): string => {
+    const section = promptSection(title);
+    const start = section.indexOf(marker);
+    expect(start).toBeGreaterThan(-1);
+    const nextTop = section.indexOf('\n- ', start);
+    return section.slice(start, nextTop === -1 ? undefined : nextTop);
+  };
   /** 서브에이전트 rules.md 원문 — cli 경로 규칙과 opencode 프롬프트의 의미 동기화를 확인할 때 쓴다. */
   const readSubagentRules = (name: string): string =>
     readFileSync(join(dirname(fileURLToPath(import.meta.url)), `subagents/${name}/rules.md`), 'utf-8');
@@ -262,12 +270,7 @@ describe('OPENCODE_SYSTEM_PROMPT', () => {
   // WD-67: 조회 도구 호출 없이 "데이터셋 ID 99999 은 존재하지 않습니다 (404)" 처럼 존재 여부와
   // 상태 코드를 지어냈다. cli 쪽 pipeline-builder rules.md 의 같은 회귀(#574) 규칙을 일반화해 옮긴다.
   it('조회 없이 리소스 존재 여부를 단정하지 않도록 응답 출력 규칙 섹션에서 지시한다 (WD-67, #574)', () => {
-    const section = promptSection('응답 출력 규칙');
-    // 규칙 줄(하위 bullet 포함)만 잘라 본다 — 섹션 전체 검사는 다른 줄의 단어로 통과해 버린다.
-    const start = section.indexOf('존재 여부 단정 금지');
-    expect(start).toBeGreaterThan(-1);
-    const nextTop = section.indexOf('\n- ', start);
-    const rule = section.slice(start, nextTop === -1 ? undefined : nextTop);
+    const rule = promptRule('응답 출력 규칙', '존재 여부 단정 금지');
     // 실제로 받은 조회 결과가 근거여야 하고, 이번 턴 ID 조회 도구를 먼저 호출한다
     expect(rule).toContain('실제로 받은 조회 tool_result');
     for (const tool of ['get_dataset', 'get_pipeline']) expect(rule).toContain(`\`${tool}\``);
@@ -285,6 +288,30 @@ describe('OPENCODE_SYSTEM_PROMPT', () => {
     // 같은 안내를 표현만 바꿔 두 번 쓴 사례(WD-67) — opencode 는 text part 를 한 번씩만 내보내므로(실측)
     // 코드 중복이 아니라 모델 재생성이다. 절대 규칙의 단일 최종 텍스트에 "한 응답 안 재서술 금지"를 둔다.
     expect(promptSection('절대 규칙')).toContain('표현만 바꿔 다시 쓰지 않는다');
+  });
+
+  // WD-68: 삭제 2턴 흐름의 Turn 2 에서 영어 tool_result 뒤 영어로 답하고, deletedAt(ISO)을 KST 로
+  // 직접 옮기다 월을 틀렸다. 한국어 고정은 절대 규칙에, 시각 인용은 파괴 작업 Turn 2 규칙에 둔다.
+  it('응답 언어를 한국어로 고정하고 확인 턴·영어 tool_result 에도 적용한다 (WD-68)', () => {
+    const rule = promptRule('절대 규칙', '한국어 응답 고정');
+    expect(rule).toContain('모든 응답(요약·안내·확인 질문·오류 설명 포함)은 한국어로 작성한다');
+    // 실패가 난 정확한 조건 — 영어 tool_result/오류 뒤, 짧은 긍정 뒤의 확인 턴
+    expect(rule).toContain('tool_result·오류 메시지가 영어여도');
+    expect(rule).toContain('확인 턴(Turn 2)');
+  });
+
+  it('파괴 작업 Turn 2 요약의 시각은 *Kst 필드를 그대로 인용하게 한다 (WD-68, #571)', () => {
+    const rule = promptRule('파괴 작업 2턴 확인', '**Turn 2**');
+    expect(rule).toContain('`deletedAtKst`');
+    expect(rule).toContain('시각은 tool_result 의 `*Kst` 필드를 그대로 인용하고 직접 변환·추정하지 않는다');
+    // *Kst 는 현재 delete_dataset 만 돌려준다 — 다른 파괴 도구 결과에서 시각을 지어내지 않게 한다
+    expect(rule).toContain('`*Kst` 필드가 없는 도구 결과에는 시각을 적지 않는다');
+    // 예시는 헬퍼 출력 형식 그대로여야 모델이 다른 형식으로 바꿔 쓰지 않는다
+    expect(rule).toMatch(/\d{4}-\d{2}-\d{2} \d{2}:\d{2}\(KST\)에 삭제되었습니다/);
+    // opencode 는 위임이 차단돼 있어 위임 안내는 절대 규칙(위임 금지)과 모순 — 남기지 않는다
+    expect(rule).not.toContain('dataset-manager');
+    // cli 쪽 원 규칙(#571 시각 출처)과 의미 동기화 근거 — rules.md 는 이번에 바꾸지 않는다
+    expect(readSubagentRules('dataset-manager')).toContain('시각 출처는 `delete_dataset` tool_result');
   });
 
   // WD-67: UI 안내 블록의 "탐색 없이 즉시 안내" 와 위 존재 확인 규칙이 충돌하지 않도록,
