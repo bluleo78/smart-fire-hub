@@ -21,7 +21,9 @@ export interface ChatProviderOptions {
   systemPrompt?: string;
   /** true이면 systemPrompt가 기본 SYSTEM_PROMPT를 완전히 대체한다 (프로액티브 등 전용 프롬프트용) */
   overrideSystemPrompt?: boolean;
+  /** WD-59: opencode 만 반영한다(라우트가 AGENT_RUN_SETTING_SUPPORT 로 다른 공급자에는 넘기지 않는다). */
   temperature?: number;
+  /** WD-59: opencode 만 반영한다(OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX env — openCodeOutputTokenEnv). */
   maxTokens?: number;
   abortSignal?: AbortSignal;
   /**
@@ -139,6 +141,29 @@ export const KNOWN_AGENT_TYPES: readonly AgentType[] = ['sdk', 'cli', 'cli-api',
 export function isKnownAgentType(value: unknown): value is AgentType {
   return typeof value === 'string' && (KNOWN_AGENT_TYPES as readonly string[]).includes(value);
 }
+
+/** 설정 › AI 에이전트의 실행 설정 중 공급자에 따라 반영 여부가 갈리는 세 항목(ai.max_turns·ai.temperature·ai.max_tokens). */
+export type AgentRunSetting = 'maxTurns' | 'temperature' | 'maxTokens';
+
+/**
+ * WD-59: 공급자별로 실행 설정이 <b>실제로</b> 반영되는지의 단일 출처. 라우트(chat.ts)는 false 인 값을 공급자에 넘기지 않는다.
+ *
+ * - maxTurns: sdk 는 query() maxTurns, cli/cli-api 는 claude CLI `--max-turns`(--help 에는 없는 숨은 옵션 — SDK 도
+ *   이 인자로 CLI 에 넘긴다), opencode 는 agent.build.steps(buildOpenCodeConfig).
+ * - temperature·maxTokens: opencode 만 반영한다(agent.build.temperature, OUTPUT_TOKEN_MAX env). Claude Agent SDK Options 에는
+ *   두 필드가 없고 CLI 에도 인자가 없다. maxTokens 는 CLAUDE_CODE_MAX_OUTPUT_TOKENS env 로 걸 수는 있지만 연결하지 않는다 —
+ *   그 env 는 하위 에이전트(report-writer 의 파일 쓰기처럼 큰 도구 입력 포함)와 thinking 예산까지 한꺼번에 묶고, 이 경로는
+ *   격리 스택에서 실제 실행으로 검증할 수 없다(Claude 자격증명 필요). 필요하면 별도 이슈로 다룬다.
+ *
+ * <b>firehub-web `src/lib/ai-credential.ts` 의 `AI_BEHAVIOR_SETTING_SUPPORT` 와 같은 사실이어야 한다</b>(앱 간 코드 공유가 없어
+ * 각자 상수를 둔다 — 한쪽을 바꾸면 다른 쪽도 함께 고친다).
+ */
+export const AGENT_RUN_SETTING_SUPPORT: Readonly<Record<AgentType, Readonly<Record<AgentRunSetting, boolean>>>> = {
+  sdk: { maxTurns: true, temperature: false, maxTokens: false },
+  cli: { maxTurns: true, temperature: false, maxTokens: false },
+  'cli-api': { maxTurns: true, temperature: false, maxTokens: false },
+  opencode: { maxTurns: true, temperature: true, maxTokens: true },
+};
 
 export interface ProviderConfig {
   agentType: AgentType;

@@ -1,7 +1,7 @@
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { SSEEvent } from './agent-sdk.js';
 import { truncate } from '../utils.js';
-import { MAX_BUDGET_USD } from '../constants.js';
+import { MAX_BUDGET_USD, MAX_TURNS_REACHED_MESSAGE } from '../constants.js';
 import {
   classifyAssistantError,
   resolveResultError,
@@ -504,7 +504,8 @@ export function processMessage(
           ? { message: `이 작업이 비용 한도($${MAX_BUDGET_USD})에 도달해 자동 중단되었습니다. 범위를 좁혀 다시 시도해 주세요.` }
           : pending
             ? resolveResultError(pending, rawError)
-            : { message: rawError || 'max_turns_exceeded' };
+            : // WD-59: 최대 턴 수 도달은 'max_turns_exceeded' 원문 대신 안내한다(보류한 공급자 오류가 있으면 그쪽이 우선).
+              { message: msg.subtype === 'error_max_turns' ? MAX_TURNS_REACHED_MESSAGE : rawError || 'max_turns_exceeded' };
         console.error(`${tag()} ✗ Session failed: ${fields.message}`);
         events.push({
           type: 'error',

@@ -4,6 +4,14 @@ export const DEFAULT_MODEL = 'claude-sonnet-5';
 /** Default max agent turns */
 export const DEFAULT_MAX_TURNS = 10;
 
+/**
+ * WD-59: 최대 턴 수(설정 › AI 에이전트)에 닿아 실행이 끝났을 때의 안내. SDK·CLI 는 result `error_max_turns` 로 끝나는데,
+ * 예전엔 SDK 가 'max_turns_exceeded', CLI 가 영문 기본 문구를 그대로 내보냈다. opencode 는 상한에서 오류 없이 마지막
+ * 스텝에 "텍스트로만 답하라"는 지시를 덧붙여 정상 종료하므로 이 문구를 쓰지 않는다.
+ */
+export const MAX_TURNS_REACHED_MESSAGE =
+  '최대 턴 수에 도달해 작업을 끝까지 마치지 못했습니다. 요청 범위를 좁혀 다시 시도하거나, 관리자에게 설정 › AI 에이전트의 최대 턴 수를 늘려 달라고 요청해 주세요.';
+
 /** Default text truncation length */
 export const DEFAULT_TRUNCATE_LENGTH = 200;
 

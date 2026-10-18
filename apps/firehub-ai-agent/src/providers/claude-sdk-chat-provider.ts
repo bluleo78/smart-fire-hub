@@ -22,8 +22,6 @@ export class ClaudeSdkChatProvider implements ChatProvider {
       maxTurns: options.maxTurns,
       systemPrompt: options.systemPrompt,
       overrideSystemPrompt: options.overrideSystemPrompt,
-      temperature: options.temperature,
-      maxTokens: options.maxTokens,
       apiKey: this.apiKey,
       oauthToken: this.oauthToken,
       abortSignal: options.abortSignal,

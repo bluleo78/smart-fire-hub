@@ -68,8 +68,6 @@ export interface AgentOptions {
   systemPrompt?: string;
   /** true이면 systemPrompt가 기본 SYSTEM_PROMPT를 완전히 대체한다 */
   overrideSystemPrompt?: boolean;
-  temperature?: number;
-  maxTokens?: number;
   apiKey?: string;
   oauthToken?: string;
   abortSignal?: AbortSignal;
@@ -88,8 +86,6 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
     maxTurns = Number(process.env.MAX_TURNS) || DEFAULT_MAX_TURNS,
     systemPrompt,
     overrideSystemPrompt,
-    temperature,
-    maxTokens,
     apiKey,
     oauthToken,
     abortSignal,
@@ -248,8 +244,6 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
       maxTurns,
       // #277: 쿼리 전체(서브에이전트 턴 포함) USD 예산 하드 캡. 초과 시 error_max_budget_usd.
       maxBudgetUsd: MAX_BUDGET_USD,
-      ...(temperature !== undefined ? { temperature } : {}),
-      ...(maxTokens !== undefined ? { maxTokens } : {}),
       abortController,
       env: cleanEnv,
       mcpServers: {

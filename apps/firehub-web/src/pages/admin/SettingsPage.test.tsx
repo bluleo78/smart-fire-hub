@@ -525,3 +525,70 @@ describe('SettingsPage — AI 동작 설정은 테넌트 전용 평면 설정으
     expect(screen.getByLabelText('세션 최대 토큰')).toBeEnabled();
   });
 });
+
+/**
+ * WD-59 — 최대 턴 수·Temperature·최대 응답 토큰은 공급자별로 실제 반영 여부가 다르다(AI_BEHAVIOR_SETTING_SUPPORT).
+ * 반영되지 않는 칸은 비활성화하고 안내를 붙인다. 값 자체는 그대로 둔다(공급자를 바꿔도 보존).
+ */
+describe('SettingsPage — 공급자별로 반영되지 않는 실행 설정은 비활성화한다(WD-59)', () => {
+  const UNSUPPORTED = '현재 공급자에서는 적용되지 않습니다';
+  const row = (label: string) => screen.getByLabelText(label).closest('div.space-y-2') as HTMLElement;
+
+  it('opencode 면 최대 턴 수·Temperature·최대 응답 토큰 모두 활성이고 안내가 없다', () => {
+    mockedUseAiCredentialForm.mockReturnValue(makeCred({ agentType: 'opencode' }));
+    mockedUseSettingsOverrideForm.mockReturnValue(makeBehavior());
+
+    render(<SettingsPage />);
+
+    for (const label of ['최대 턴 수', 'Temperature', '최대 응답 토큰']) {
+      expect(screen.getByLabelText(label)).toBeEnabled();
+      expect(within(row(label)).queryByText(UNSUPPORTED)).not.toBeInTheDocument();
+    }
+  });
+
+  it.each(['sdk', 'cli', 'cli-api'] as const)(
+    '%s 면 최대 턴 수만 활성이고 Temperature·최대 응답 토큰은 비활성 + 안내(값은 유지)',
+    (agentType) => {
+      mockedUseAiCredentialForm.mockReturnValue(makeCred({ agentType }));
+      mockedUseSettingsOverrideForm.mockReturnValue(makeBehavior());
+
+      render(<SettingsPage />);
+
+      expect(screen.getByLabelText('최대 턴 수')).toBeEnabled();
+      expect(within(row('최대 턴 수')).queryByText(UNSUPPORTED)).not.toBeInTheDocument();
+      for (const label of ['Temperature', '최대 응답 토큰']) {
+        expect(screen.getByLabelText(label)).toBeDisabled();
+        expect(within(row(label)).getByText(UNSUPPORTED)).toBeInTheDocument();
+      }
+      // 저장된 값은 비활성 상태에서도 그대로 보인다 — 공급자를 다시 바꾸면 그 값이 쓰인다.
+      expect(screen.getByLabelText('Temperature')).toHaveValue(0.5);
+      expect(screen.getByLabelText('최대 응답 토큰')).toHaveValue(4096);
+    },
+  );
+
+  // 리뷰 반영: 다른 유형에서 남은 잘못된 값이 잠긴 칸에 있으면 저장이 막히고 고칠 수 없다 — 오류가 붙은 칸은 열어 둔다.
+  it('반영 안 되는 칸이라도 검증 오류가 붙어 있으면 편집할 수 있게 열어 둔다', () => {
+    mockedUseAiCredentialForm.mockReturnValue(makeCred({ agentType: 'sdk' }));
+    mockedUseSettingsOverrideForm.mockReturnValue(
+      makeBehavior({ errors: { 'ai.temperature': '0.0~1.0 사이의 값을 입력하세요' } } as never),
+    );
+
+    render(<SettingsPage />);
+
+    expect(screen.getByLabelText('Temperature')).toBeEnabled();
+    expect(screen.getByLabelText('최대 응답 토큰')).toBeDisabled();
+  });
+
+  // 자격증명 조회 실패·403 이면 실제 유형을 모른다(agentType 은 초기값 sdk) — 잠그거나 "적용되지 않습니다"를 띄우지 않는다.
+  it.each([{ loadFailed: true }, { isLocked: true }])('유형을 모르면(%o) 잠그지 않는다', (state) => {
+    mockedUseAiCredentialForm.mockReturnValue(makeCred({ agentType: 'sdk', ...state }));
+    mockedUseSettingsOverrideForm.mockReturnValue(makeBehavior());
+
+    render(<SettingsPage />);
+
+    for (const label of ['Temperature', '최대 응답 토큰']) {
+      expect(screen.getByLabelText(label)).toBeEnabled();
+      expect(within(row(label)).queryByText(UNSUPPORTED)).not.toBeInTheDocument();
+    }
+  });
+});

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import express from 'express';
 import chatRouter from './chat.js';
+import { AGENT_RUN_SETTING_SUPPORT } from '../providers/types.js';
 
 // Mock ProviderFactory and transcript-reader to avoid actual Claude API calls
 const mockExecute = vi.fn();
@@ -231,6 +232,44 @@ describe('Chat routes — integration tests', () => {
     expect(calledWith.userId).toBe(99);
     // 테넌트가 provider 까지 흘러야 디스크 경로가 테넌트별로 갈린다.
     expect(calledWith.tenantId).toBe(1);
+  });
+
+  // WD-59: 공급자가 실제로 반영하지 못하는 실행 설정은 넘기지 않는다 — 지원 여부는 AGENT_RUN_SETTING_SUPPORT 가 단일 출처다.
+  describe('AI 실행 설정 전달(WD-59)', () => {
+    const run = async (agentType: string) => {
+      async function* fakeStream() {
+        yield { type: 'done' as const };
+      }
+      mockExecute.mockReturnValue(fakeStream());
+      await makeRequest(
+        createApp(),
+        'POST',
+        '/agent/chat',
+        { message: 'hi', tenantId: 1, userId: 1, apiKey: 'sk', agentType, maxTurns: 4, temperature: 0.3, maxTokens: 2048 },
+        { Authorization: `Internal ${VALID_TOKEN}` },
+      );
+      return mockExecute.mock.calls[0][0] as { maxTurns?: number; temperature?: number; maxTokens?: number };
+    };
+
+    it('opencode 는 최대 턴 수·temperature·최대 응답 토큰을 모두 넘긴다', async () => {
+      expect(await run('opencode')).toMatchObject({ maxTurns: 4, temperature: 0.3, maxTokens: 2048 });
+    });
+
+    it.each(['sdk', 'cli', 'cli-api'])('%s 는 최대 턴 수만 넘기고 temperature·최대 응답 토큰은 넘기지 않는다', async (agentType) => {
+      const opts = await run(agentType);
+      expect(opts.maxTurns).toBe(4);
+      expect(opts.temperature).toBeUndefined();
+      expect(opts.maxTokens).toBeUndefined();
+    });
+
+    it('지원 매트릭스 — web(firehub-web src/lib/ai-credential.ts)의 AI_BEHAVIOR_SETTING_SUPPORT 와 같은 사실이어야 한다', () => {
+      expect(AGENT_RUN_SETTING_SUPPORT).toEqual({
+        sdk: { maxTurns: true, temperature: false, maxTokens: false },
+        cli: { maxTurns: true, temperature: false, maxTokens: false },
+        'cli-api': { maxTurns: true, temperature: false, maxTokens: false },
+        opencode: { maxTurns: true, temperature: true, maxTokens: true },
+      });
+    });
   });
 
   // S3: api(AiChatRequestBuilder)가 Slack 인바운드 요청에 실은 aiPurpose 'share' 를 실행 옵션으로 넘겨 MCP 호출이
