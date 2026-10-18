@@ -22,9 +22,16 @@ export interface AttachmentMeta {
   category: string;
 }
 
-/** Replace characters that break Claude CLI's Read tool (spaces, etc.) */
-function sanitizeFilename(name: string): string {
-  return name.replace(/\s+/g, '_');
+/**
+ * 다운로드 파일명을 만든다 — 공백은 Claude CLI Read 도구를 깨므로 `_` 로 바꾸고, 경로 구분자는 버린다.
+ *
+ * <p>WD-55: 원본 이름은 업로드한 사용자가 정한 값이다. `../../opencode.json` 같은 이름을 그대로 쓰면
+ * 다운로드 디렉터리를 벗어나 작업 디렉터리의 opencode.json·AGENTS.md(opencode 가 설정·시스템 지시로
+ * 읽는다)를 덮어쓸 수 있다. 마지막 세그먼트만 남기고, 그것도 쓸 수 없으면 `file-<id>` 로 대신한다.
+ */
+function sanitizeFilename(name: string, fileId: number): string {
+  const base = (name.split(/[\\/]/).pop() ?? '').replace(/\s+/g, '_');
+  return base === '' || base === '.' || base === '..' ? `file-${fileId}` : base;
 }
 
 export async function downloadChatFiles(
@@ -38,7 +45,7 @@ export async function downloadChatFiles(
     fileIds.map(async (fileId) => {
       const info = await apiClient.getFileInfo(fileId);
       const content = await apiClient.downloadFile(fileId);
-      const safeName = sanitizeFilename(info.originalName);
+      const safeName = sanitizeFilename(info.originalName, fileId);
       const localPath = path.join(downloadDir, safeName);
       await fs.writeFile(localPath, content);
       return {
@@ -89,14 +96,18 @@ export function formatAttachmentLine(file: DownloadedFile, includeCategory: bool
 }
 
 /**
- * 비이미지 파일 배열을 텍스트 안내 섹션으로 변환한다 (SDK/CLI 경로 공통 포맷).
+ * 비이미지 파일 배열을 텍스트 안내 섹션으로 변환한다 (SDK/CLI/opencode 경로 공통 포맷).
  *
+ * @param guide 섹션 끝 안내 문장. opencode 경로는 Read 도구가 꺼져 있어 다른 문장을 넘긴다(WD-55).
  * @returns "[첨부 파일]\n- ...\nRead 도구로 ..." 형식의 문자열. 파일이 없으면 빈 문자열.
  */
-export function buildNonImageAttachmentSection(files: DownloadedFile[]): string {
+export function buildNonImageAttachmentSection(
+  files: DownloadedFile[],
+  guide = 'Read 도구로 읽을 수 있습니다.',
+): string {
   if (files.length === 0) return '';
   const lines = files.map((f) => formatAttachmentLine(f, true)).join('\n');
-  return `[첨부 파일]\n${lines}\nRead 도구로 읽을 수 있습니다.`;
+  return `[첨부 파일]\n${lines}\n${guide}`;
 }
 
 /** DownloadedFile 배열 → AttachmentMeta 배열 변환 */
