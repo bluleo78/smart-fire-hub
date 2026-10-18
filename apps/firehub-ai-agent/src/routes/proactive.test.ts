@@ -4,6 +4,7 @@ import proactiveRouter, {
   buildSectionPrompt,
   parseSections,
   detectAgentFailure,
+  buildProactiveSystemPrompt,
 } from './proactive.js';
 
 const mockExecute = vi.hoisted(() => vi.fn());
@@ -380,6 +381,28 @@ describe('Proactive routes — integration tests', () => {
     it("'none' 등 다른 값은 버린다 — LLM 실행에서 AI 판정을 끄면 안 된다", async () => {
       expect((await run({ aiPurpose: 'none' })).aiPurpose).toBeUndefined();
     });
+  });
+
+  // WD-62: opencode 는 하위 에이전트·호스트 Write 가 없어 리포트 파일을 MCP 도구로 쓴다 — 그 도구가 쓸
+  // 디렉터리(reportDir)를 실행 옵션으로 넘겨야 opencode 실행기가 MCP 프로세스 env 에 주입할 수 있다.
+  it('WD-62: 실행 옵션으로 reportDir 을 넘긴다(테넌트 세그먼트가 담긴 proactive-report 경로)', async () => {
+    mockExecute.mockReturnValue(
+      (async function* () {
+        yield { type: 'text', content: '결과' };
+        yield { type: 'done', inputTokens: 1, outputTokens: 1 };
+      })(),
+    );
+    await makeRequest(
+      createApp(),
+      'POST',
+      '/agent/proactive',
+      { prompt: 'p', tenantId: 3, userId: 7, agentType: 'opencode', apiKey: 'k', context: { v: 1 } },
+      { Authorization: `Internal ${VALID_TOKEN}` },
+    );
+    const opts = mockExecute.mock.calls[0][0] as { reportDir?: string; systemPrompt: string };
+    expect(opts.reportDir).toMatch(/proactive-report[\\/]t3[\\/]7-\d+$/);
+    // opencode 실행이면 프롬프트도 도구 저장 지침을 쓴다(아래 buildProactiveSystemPrompt 테스트 참고).
+    expect(opts.systemPrompt).toContain('firehub_write_report_file');
   });
 
   it('TC4: POST /agent/proactive without template returns free-form response', async () => {
@@ -762,5 +785,62 @@ describe('parseSections', () => {
     };
     const result = parseSections(text, template as Parameters<typeof parseSections>[1]);
     expect(result[0].data).toEqual([{ title: 'A', value: '1', description: 'd' }]);
+  });
+});
+
+// WD-62: opencode 경로는 report-writer 위임이 불가능(task deny·Write 비활성)하므로 프롬프트가 갈린다.
+describe('buildProactiveSystemPrompt', () => {
+  const DIR = '/tmp/proactive-report/t3/7-1';
+  const TEMPLATE = {
+    sections: [
+      { key: 'summary', label: '요약', type: 'text' },
+      { key: 'kpi', label: '주요 지표', type: 'cards' },
+    ],
+    output_format: 'html',
+  };
+
+  it('sdk/cli 는 기존대로 report-writer 위임과 저장 디렉터리를 지시한다(동작 불변)', () => {
+    for (const agentType of ['sdk', 'cli', 'cli-api'] as const) {
+      const p = buildProactiveSystemPrompt(TEMPLATE, DIR, agentType);
+      expect(p).toContain('report-writer');
+      expect(p).toContain(`${DIR}/report.html`);
+      expect(p).not.toContain('write_report_file');
+    }
+  });
+
+  it('opencode 는 위임·Agent 도구를 언급하지 않고 write_report_file 로 세 파일을 저장하게 한다', () => {
+    const p = buildProactiveSystemPrompt(TEMPLATE, DIR, 'opencode');
+    // 막힌 위임을 언급하면 약한 모델이 `<call:Agent ...>` 를 텍스트로 흉내 낸다(2026-06-24 인시던트).
+    expect(p).not.toMatch(/report-writer|위임|Agent 도구|WebSearch/);
+    expect(p).toContain('firehub_write_report_file');
+    for (const name of ['report.html', 'report.md', 'summary.md']) expect(p).toContain(name);
+    // 도구는 파일명만 받는다 — 절대경로를 보여 주면 모델이 경로를 인자로 넣으려 한다.
+    expect(p).not.toContain(DIR);
+  });
+
+  it('opencode 프롬프트에 report-writer 의 핵심 작성 규칙을 요약해 담는다', () => {
+    const p = buildProactiveSystemPrompt(TEMPLATE, DIR, 'opencode');
+    expect(p).toContain('<!DOCTYPE html>');
+    expect(p).toMatch(/CSS 2\.1/);
+    expect(p).toMatch(/flex/i);
+    expect(p).toMatch(/SVG/);
+    expect(p).toMatch(/외부 리소스/);
+    expect(p).toContain('<section>');
+    expect(p).toMatch(/3~5줄/);
+    expect(p).toContain('```json');
+    // 집계 수치는 집계 SQL 도구로(WD-66 과 같은 규칙) — 오버라이드로 OPENCODE_SYSTEM_PROMPT 가 빠지므로 여기 있어야 한다.
+    expect(p).toContain('firehub_execute_analytics_query');
+    // 파일 저장이 실패하면 라우트가 최종 텍스트로 폴백한다 — "저장했습니다" 한 줄이 리포트 본문으로 발송되지 않게
+    // 최종 응답을 요약 자체로 지시한다(#350 과 같은 거짓 성공 방지).
+    expect(p).toMatch(/최종 응답으로 summary\.md 와 같은 요약/);
+    // 양식 섹션 구조는 그대로 실린다.
+    expect(p).toContain('- 요약 (key: summary, type: text)');
+    expect(p).toContain('- 주요 지표 (key: kpi, type: cards)');
+  });
+
+  it('opencode 에서 양식이 없으면 자유 형식 지시를 위임 문구 없이 쓴다', () => {
+    const p = buildProactiveSystemPrompt(undefined, DIR, 'opencode');
+    expect(p).toContain('자유 형식');
+    expect(p).not.toMatch(/위임/);
   });
 });

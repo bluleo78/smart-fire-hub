@@ -313,6 +313,12 @@ describe('destructive tool filtering', () => {
     expect(tools.find((t) => t.name === 'drop_dataset_column')).toBeDefined();
   });
 
+  // WD-62: SDK 경로는 report-writer 하위 에이전트의 Write 로 리포트를 쓴다 — 리포트 쓰기 MCP 도구는
+  // reportDir 을 주입받는 stdio 서버 전용이라 SDK 인메모리 서버에는 절대 실리지 않아야 한다.
+  it('SDK 도구 목록에는 write_report_file 이 없다 (WD-62)', () => {
+    expect(buildAllMcpTools(client).find((t) => t.name === 'write_report_file')).toBeUndefined();
+  });
+
   it('includes all tools when userPermissions is undefined (backwards compat)', () => {
     const tools = buildAllMcpTools(client);
     expect(tools.find((t) => t.name === 'delete_dataset')).toBeDefined();

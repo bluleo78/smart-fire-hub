@@ -120,56 +120,128 @@ export function buildSectionPrompt(sections: TemplateSection[], depth = 1): stri
   return prompt;
 }
 
-function buildProactiveSystemPrompt(template: Template | undefined, reportDir: string): string {
-  let prompt =
-    '당신은 프로액티브 AI 분석가입니다. 응답은 반드시 한국어로 작성하세요.\n\n' +
-    '## 작업 절차\n\n' +
-    '1. **분석**: 컨텍스트 데이터를 분석하세요. 필요하면 도구로 추가 데이터를 수집하세요.\n' +
-    '   - 데이터셋 조회: query_dataset_data, get_data_schema, list_datasets, get_dataset\n' +
-    '   - 웹 검색: WebSearch\n' +
-    '2. **리포트 작성 위임**: 분석이 완료되면 **report-writer** 에이전트에게 리포트 작성을 위임하세요.\n\n' +
-    '## report-writer 위임 방법\n\n' +
-    'Agent 도구로 report-writer를 호출하세요. 프롬프트에 다음을 **모두** 포함하세요:\n\n' +
-    '1. **분석 결과**: 수집/분석한 데이터와 인사이트\n' +
-    '2. **리포트 양식**: 아래 제공되는 섹션 구조와 지시문\n' +
-    `3. **파일 저장 디렉토리**: ${reportDir}\n` +
-    `   - HTML 리포트: ${reportDir}/report.html (웹 뷰어용)\n` +
-    `   - 마크다운 리포트: ${reportDir}/report.md (PDF/이메일용, HTML과 동일 내용)\n` +
-    `   - 요약 텍스트: ${reportDir}/summary.md (채팅 알림용, 3~5줄)\n\n` +
-    '**중요**: generate_report, show_chart 등 UI 도구를 호출하지 마세요. 리포트 생성은 반드시 report-writer에게 위임하세요.\n\n';
+/**
+ * opencode 전용 리포트 작성 지침 (WD-62).
+ *
+ * <p>opencode 는 task 위임과 호스트 Write 가 막혀 report-writer 하위 에이전트를 쓸 수 없다. 그래서
+ * report-writer(src/agent/subagents/report-writer/agent.md)의 핵심 작성 규칙을 요약해 메인 프롬프트에 싣고,
+ * 세 파일은 reportDir 전용 MCP 도구(write_report_file)로 저장하게 한다. 위임·Agent 도구는 일절 언급하지
+ * 않는다 — 막힌 위임을 언급하면 약한 모델이 `<call:Agent ...>` 를 텍스트로 흉내 낸다(2026-06-24 인시던트).
+ * 저장 경로도 보여 주지 않는다 — 도구는 파일명만 받는다.
+ */
+const OPENCODE_REPORT_GUIDE =
+  '당신은 프로액티브 AI 분석가입니다. 응답은 반드시 한국어로 작성하세요.\n\n' +
+  '## 작업 절차\n\n' +
+  '1. **분석**: 컨텍스트 데이터를 분석하세요. 필요하면 firehub 도구로 추가 데이터를 수집하세요.\n' +
+  '   - 데이터셋 조회: firehub_list_datasets, firehub_get_dataset, firehub_get_data_schema(datasetIds 지정), firehub_query_dataset_data\n' +
+  '   - 합계·평균·건수·증감률 등 요약 수치는 원시 행을 암산하지 말고 **firehub_execute_analytics_query** 로 집계 SQL(SUM/AVG/COUNT, GROUP BY)을 실행해 받은 값을 그대로 인용하세요.\n' +
+  '2. **리포트 작성·저장**: 분석이 끝나면 직접 리포트를 작성해 **firehub_write_report_file** 도구로 세 파일을 저장하세요.\n' +
+  '   - fileName=report.html — 웹 뷰어용 HTML 리포트\n' +
+  '   - fileName=report.md — PDF/이메일용 마크다운 리포트 (HTML과 동일 내용)\n' +
+  '   - fileName=summary.md — 채팅 알림용 요약 (3~5줄)\n' +
+  '   - 파일마다 한 번씩, 세 파일을 **모두** 저장해야 실행이 완료됩니다. 경로는 지정하지 않습니다.\n' +
+  '3. 저장 후 최종 응답으로 summary.md 와 같은 요약(3~5줄)을 출력하세요. 저장 완료 안내 같은 문구만 남기지 마세요.\n\n' +
+  '**중요**: show_chart·show_table·generate_report 등 화면 표시 도구를 호출하지 마세요. 리포트는 위 세 파일로만 전달됩니다.\n\n' +
+  '## report.html 작성 규칙\n\n' +
+  '- `<!DOCTYPE html>` 로 시작하는 자기완결형 HTML: `<html lang="ko">`, `<head>`(meta charset, title, `<style>` 인라인), `<body>` 안 `<div class="report-container">`.\n' +
+  '- 외부 리소스(CDN, 이미지 URL, 외부 스크립트) 참조 금지.\n' +
+  '- **CSS 2.1 만 사용**(PDF 변환기 제약): flex·grid 금지, `<table>`·float·`margin: 0 auto` 로 배치. KPI 카드는 `<table>` 기반 그리드.\n' +
+  "- 폰트 `font-family: 'Nanum Gothic', 'Malgun Gothic', sans-serif;` 본문 14px·제목 24px·소제목 18px. 색: #228be6 #40c057 #fab005 #fa5252 #868e96.\n" +
+  '- 차트는 인라인 SVG 로 직접 그립니다(viewBox, 축 라벨·범례·데이터 라벨 포함).\n' +
+  '- 섹션마다 `<section>` + `<h2>`(양식 label 을 그대로, 이모지·번호 금지), 섹션 사이 `<hr class="section-divider">`.\n\n' +
+  '## report.md 작성 규칙\n\n' +
+  '- HTML 과 동일한 내용. 섹션마다 `## 섹션라벨`(label 그대로) 헤더, 하위는 `###` 이하.\n' +
+  '- 표·목록·강조를 활용하세요. `cards` 타입 섹션은 설명 뒤에 JSON 코드 블록을 넣으세요:\n' +
+  '```json\n[{"title": "...", "value": "...", "description": "..."}]\n```\n\n' +
+  '## summary.md 작성 규칙\n\n' +
+  '- 마크다운 3~5줄, 첫 줄부터 내용(인사말 금지): **주요 발견** 1~2줄 + **권고사항** 1~2줄.\n\n' +
+  '## 작성 원칙\n\n' +
+  '- 데이터 나열이 아닌 인사이트 중심으로, 변화는 절대값과 변화율(%)을 함께 제시하세요.\n' +
+  '- 확신이 낮으면 "~로 보입니다"로 표현하고, 조회하지 않은 수치는 지어내지 마세요.\n' +
+  '- 비밀번호·토큰·개인식별정보는 리포트에 넣지 말고 마스킹하거나 집계로 대체하세요.\n' +
+  '- 저장 전에 HTML 의 `<section>` 수가 양식 섹션 수와 같은지 확인하세요.\n\n';
 
-  if (template) {
-    prompt += '## 리포트 양식 (report-writer에게 전달할 것)\n\n';
-    if (template.style) {
-      prompt += `작성 스타일: ${template.style}\n\n`;
-    }
-    prompt += '섹션 구조:\n';
-    for (const section of template.sections) {
-      if (section.static || section.type === 'divider') continue;
-      if (section.type === 'group') {
-        prompt += `\n### ${section.label}\n`;
-        if (section.instruction) prompt += `  지시: ${section.instruction}\n`;
-        if (section.children) {
-          for (const child of section.children) {
-            prompt += `  - ${child.label} (key: ${child.key}, type: ${child.type || 'text'})`;
-            if (child.instruction) prompt += `: ${child.instruction}`;
-            prompt += '\n';
-          }
-        }
-        continue;
+/** 실행 경로별로 달라지는 프로액티브 프롬프트 조각 — 양식 목록을 감싸는 머리·꼬리 문구. */
+interface ProactivePromptParts {
+  header: string;
+  templateHeading: string;
+  noTemplate: string;
+  footer: string;
+}
+
+/** sdk/cli: report-writer 하위 에이전트에게 reportDir 저장을 위임한다(기존 동작 — 문구를 바꾸지 않는다). */
+function delegationPromptParts(reportDir: string): ProactivePromptParts {
+  return {
+    header:
+      '당신은 프로액티브 AI 분석가입니다. 응답은 반드시 한국어로 작성하세요.\n\n' +
+      '## 작업 절차\n\n' +
+      '1. **분석**: 컨텍스트 데이터를 분석하세요. 필요하면 도구로 추가 데이터를 수집하세요.\n' +
+      '   - 데이터셋 조회: query_dataset_data, get_data_schema, list_datasets, get_dataset\n' +
+      '   - 웹 검색: WebSearch\n' +
+      '2. **리포트 작성 위임**: 분석이 완료되면 **report-writer** 에이전트에게 리포트 작성을 위임하세요.\n\n' +
+      '## report-writer 위임 방법\n\n' +
+      'Agent 도구로 report-writer를 호출하세요. 프롬프트에 다음을 **모두** 포함하세요:\n\n' +
+      '1. **분석 결과**: 수집/분석한 데이터와 인사이트\n' +
+      '2. **리포트 양식**: 아래 제공되는 섹션 구조와 지시문\n' +
+      `3. **파일 저장 디렉토리**: ${reportDir}\n` +
+      `   - HTML 리포트: ${reportDir}/report.html (웹 뷰어용)\n` +
+      `   - 마크다운 리포트: ${reportDir}/report.md (PDF/이메일용, HTML과 동일 내용)\n` +
+      `   - 요약 텍스트: ${reportDir}/summary.md (채팅 알림용, 3~5줄)\n\n` +
+      '**중요**: generate_report, show_chart 등 UI 도구를 호출하지 마세요. 리포트 생성은 반드시 report-writer에게 위임하세요.\n\n',
+    templateHeading: '## 리포트 양식 (report-writer에게 전달할 것)\n\n',
+    noTemplate: '## 리포트 양식\n\n양식 없음. 자유 형식으로 분석 결과 리포트를 작성하도록 위임하세요.\n',
+    footer: `\n리포트 저장 디렉토리: ${reportDir}\n`,
+  };
+}
+
+/**
+ * opencode: 위임 대신 직접 작성·write_report_file 저장(WD-62). 위임 문구와 저장 경로를 일절 넣지 않는다 —
+ * 경로가 보이면 파일명만 받는 도구에 경로를 넣으려 한다.
+ */
+const OPENCODE_PROMPT_PARTS: ProactivePromptParts = {
+  header: OPENCODE_REPORT_GUIDE,
+  templateHeading: '## 리포트 양식\n\n',
+  noTemplate: '## 리포트 양식\n\n양식 없음. 자유 형식으로 분석 결과 리포트를 작성하세요.\n',
+  footer: '',
+};
+
+/** 양식의 섹션 구조를 프롬프트용 목록으로 만든다(정적·구분선 섹션 제외, 그룹은 하위 섹션을 들여 씀). */
+function buildTemplateSectionList(template: Template): string {
+  let list = template.style ? `작성 스타일: ${template.style}\n\n` : '';
+  list += '섹션 구조:\n';
+  for (const section of template.sections) {
+    if (section.static || section.type === 'divider') continue;
+    if (section.type === 'group') {
+      list += `\n### ${section.label}\n`;
+      if (section.instruction) list += `  지시: ${section.instruction}\n`;
+      for (const child of section.children ?? []) {
+        list += `  - ${child.label} (key: ${child.key}, type: ${child.type || 'text'})`;
+        if (child.instruction) list += `: ${child.instruction}`;
+        list += '\n';
       }
-      prompt += `- ${section.label} (key: ${section.key}, type: ${section.type || 'text'})`;
-      if (section.instruction) prompt += `: ${section.instruction}`;
-      prompt += '\n';
+      continue;
     }
-  } else {
-    prompt += '## 리포트 양식\n\n';
-    prompt += '양식 없음. 자유 형식으로 분석 결과 리포트를 작성하도록 위임하세요.\n';
+    list += `- ${section.label} (key: ${section.key}, type: ${section.type || 'text'})`;
+    if (section.instruction) list += `: ${section.instruction}`;
+    list += '\n';
   }
+  return list;
+}
 
-  prompt += `\n리포트 저장 디렉토리: ${reportDir}\n`;
-
-  return prompt;
+/**
+ * 프로액티브 실행의 시스템 프롬프트를 만든다.
+ *
+ * <p>sdk/cli 는 report-writer 하위 에이전트에게 reportDir 저장을 위임하고(기존 동작), opencode 는 위임이
+ * 불가능하므로 {@link OPENCODE_REPORT_GUIDE} 로 직접 작성·write_report_file 저장을 지시한다(WD-62).
+ */
+export function buildProactiveSystemPrompt(
+  template: Template | undefined,
+  reportDir: string,
+  agentType: AgentType,
+): string {
+  const parts = agentType === 'opencode' ? OPENCODE_PROMPT_PARTS : delegationPromptParts(reportDir);
+  const body = template ? parts.templateHeading + buildTemplateSectionList(template) : parts.noTemplate;
+  return parts.header + body + parts.footer;
 }
 
 function getSectionTypeGuide(type?: string): string | null {
@@ -339,12 +411,12 @@ router.post('/proactive', express.json(), internalAuth, async (req: Request, res
     res.status(400).json({ error: 'tenantId is required and must be a positive integer' });
     return;
   }
-  // report-writer가 HTML 리포트 + 요약을 저장할 임시 디렉토리
+  // 리포트 세 파일(HTML·마크다운·요약)이 저장될 임시 디렉토리 — sdk/cli 는 report-writer 가, opencode 는 write_report_file 도구가 쓴다
   // 리포트 산출 디렉터리도 테넌트를 담는다(코드리뷰 지적). 같은 `tmpdir` 의 첨부 다운로드에는
   // 세그먼트를 넣었는데 여기만 빼면, 한 테넌트의 에이전트가 Glob/Read 로 `proactive-report-*` 를
   // 훑어 남의 리포트 본문을 읽을 수 있다 — tenant-paths.ts 가 없애려던 비대칭 그 자체다.
   const reportDir = proactiveReportDir(tenantId, userId, Date.now());
-  const systemPrompt = buildProactiveSystemPrompt(body.template, reportDir);
+  const systemPrompt = buildProactiveSystemPrompt(body.template, reportDir, agentType);
   const initialUserMessage = `${body.prompt}\n\n컨텍스트:\n${JSON.stringify(body.context)}`;
 
   let rawText = '';
@@ -381,6 +453,8 @@ router.post('/proactive', express.json(), internalAuth, async (req: Request, res
       maxTurns: MAX_AGENT_TURNS,
       // 'share' 외의 값은 버린다 — 특히 'none'(AI 판정 제외)이 바디로 들어와도 LLM 실행에 실리면 안 된다.
       aiPurpose: parseSharePurpose(body.aiPurpose),
+      // WD-62: opencode 실행기가 이 값을 MCP 프로세스 env 로 넘겨 write_report_file 을 이 디렉터리 전용으로 연다.
+      reportDir,
     });
 
     for await (const event of events) {
