@@ -198,6 +198,15 @@ public class PythonReadGrantSync {
    * @return 실행에 쓸 슬롯 번호(1~10)
    */
   public int prepareForRun(Clearance runAs) {
+    return prepareForRun(runAs, runAs.rank());
+  }
+
+  /**
+   * {@link #prepareForRun(Clearance)} 와 같되, 슬롯을 실행 주체 자격 rank 가 아니라 {@code readRank}(스텝이 다루는 데이터의 최고 등급 —
+   * PipelineSecurityGate.pythonReadRank)로 고른다. readRank 는 자격 rank 이하여야 한다 — 넘으면 자격 밖 등급을 읽게 되므로 거부한다
+   * (fail-closed).
+   */
+  public int prepareForRun(Clearance runAs, int readRank) {
     // 테넌트 일치 확인을 맨 먼저 — 동기화(syncTenant)는 TenantContext 테넌트를, 슬롯 계산은 runAs 의 rank 를 쓴다. 둘이 다르면
     // 남의 테넌트 등급 스냅샷으로 슬롯을 고르게 되므로(과권한 가능) 계산 전에 거부한다. 컨텍스트가 비어도 같은 예외(fail-closed).
     Long contextTenant = TenantContext.get();
@@ -211,9 +220,12 @@ public class PythonReadGrantSync {
     if (runAs.rank() == Clearance.NO_RANK) {
       throw new PythonReadAccessException("실행 주체에게 열람 등급이 없어 Python 스크립트를 실행할 수 없습니다.");
     }
+    if (readRank > runAs.rank()) {
+      throw new PythonReadAccessException("Python 읽기 범위가 실행 주체의 열람 등급을 넘어 실행할 수 없습니다.");
+    }
     SyncResult result;
     try {
-      result = requiresNew.execute(status -> syncInTx(null, runAs.rank(), false));
+      result = requiresNew.execute(status -> syncInTx(null, readRank, false));
     } catch (RuntimeException e) {
       throw new PythonReadAccessException("Python 읽기 권한을 준비하지 못해 실행을 중단했습니다.", e);
     }

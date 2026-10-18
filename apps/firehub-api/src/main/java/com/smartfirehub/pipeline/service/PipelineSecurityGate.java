@@ -20,6 +20,7 @@ import com.smartfirehub.securitylevel.repository.SecurityLevelRepository;
 import com.smartfirehub.securitylevel.service.DatasetSecurityService;
 import com.smartfirehub.securitylevel.service.SecurityAuditRecorder;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -373,8 +374,8 @@ public class PipelineSecurityGate {
    */
   @Transactional
   public void enforcePythonOutputLevel(
-      long outputDatasetId, long stepId, boolean freshTemp, RunAs runAs) {
-    var readable = pythonReadableTopLevel(levelRepository.findAll(), runAs.clearance().rank());
+      long outputDatasetId, long stepId, boolean freshTemp, RunAs runAs, int readRank) {
+    var readable = pythonReadableTopLevel(levelRepository.findAll(), readRank);
     if (readable.isEmpty()) {
       requireOutputVisible(outputDatasetId, runAs);
       return;
@@ -416,6 +417,56 @@ public class PipelineSecurityGate {
     return levels.stream()
         .filter(l -> l.rank() <= clearanceRank && !l.allowlistRequired())
         .max(java.util.Comparator.comparingInt(LevelPolicy::rank));
+  }
+
+  /**
+   * PYTHON 스텝의 읽기 rank — 슬롯 롤 선택({@link
+   * com.smartfirehub.securitylevel.pythonread.PythonReadGrantSync#prepareForRun(Clearance, int)})과 출력 등급
+   * 계산({@link #enforcePythonOutputLevel})이 <b>같은 값</b>을 쓴다.
+   *
+   * <p><b>왜 실행 주체 자격이 아니라 스텝이 다루는 데이터로 정하는가.</b> 예전에는 "실행 주체가 읽을 수 있던 최고 등급"으로 슬롯과 출력 등급을
+   * 정했다. 그러면 외부 API 만 부르는 스크립트도 ADMIN(기밀 자격)이 돌리면 출력이 무조건 '민감'이 되고, 그 출력을 읽는 AI_CLASSIFY 가 외부
+   * 공급자 차단으로 매번 실패했다(운영 전주시 뉴스 수집 파이프라인). 이제 스크립트가 읽을 수 있는 범위를 <b>선언 입력 + 자기 출력</b>의 최고
+   * 등급으로 좁힌다 — 자기 출력은 어차피 쓰는 테이블이라(중복 제거용 조회 등) 읽어도 새로 새는 것이 없다. 실행 주체 자격은 상한으로만 쓴다.
+   *
+   * <p><b>WD-29 우회 차단은 유지된다.</b> 선언하지 않은 상위 등급 데이터셋은 슬롯 롤에 GRANT 가 없어 읽을 수 없고(permission denied), 상위 등급
+   * 입력을 선언하면 그 등급까지 읽는 대신 출력이 그 등급으로 상향된다. 선언 입력도 출력도 없으면 가장 낮은 등급만 읽는다.
+   *
+   * @param outputDatasetId 출력(지정 출력·러너 TEMP), 없으면 null
+   * @param declaredInputIds 스텝의 선언 입력(없어진 데이터셋은 건너뛴다)
+   * @return 실행 주체 자격 rank 이하인 rank. 실행 주체가 읽을 수 있는 등급이 없으면 자격 rank 그대로(그 경우의 거부·VIEW 판정은 기존대로)
+   */
+  // 트랜잭션 필수: 러너 스레드에서 불리므로 트랜잭션이 테넌트 GUC 를 걸어야 RLS 아래에서 데이터셋 등급이 보인다.
+  @Transactional(readOnly = true)
+  public int pythonReadRank(Long outputDatasetId, Collection<Long> declaredInputIds, RunAs runAs) {
+    List<LevelPolicy> levels = levelRepository.findAll();
+    int clearanceRank = runAs.clearance().rank();
+    var cap = pythonReadableTopLevel(levels, clearanceRank);
+    if (cap.isEmpty() || levels.isEmpty()) {
+      return clearanceRank;
+    }
+    Set<Long> datasetIds = new HashSet<>();
+    if (declaredInputIds != null) {
+      datasetIds.addAll(declaredInputIds);
+    }
+    if (outputDatasetId != null) {
+      datasetIds.add(outputDatasetId);
+    }
+    Set<Long> levelIds =
+        datasetIds.isEmpty()
+            ? Set.of()
+            : dsl.selectDistinct(DATASET.SECURITY_LEVEL_ID)
+                .from(DATASET)
+                .where(DATASET.ID.in(datasetIds))
+                .fetchSet(DATASET.SECURITY_LEVEL_ID);
+    int base =
+        levels.stream()
+            .filter(l -> levelIds.contains(l.id()))
+            .mapToInt(LevelPolicy::rank)
+            .max()
+            // 다루는 데이터셋이 없으면 가장 낮은 등급만 읽는다.
+            .orElse(levels.stream().mapToInt(LevelPolicy::rank).min().getAsInt());
+    return Math.min(base, cap.get().rank());
   }
 
   /** 데이터셋의 현재 등급(존재가 확인된 데이터셋에만). */

@@ -691,9 +691,13 @@ public class PipelineAsyncRunner {
         // 출력 등급(스펙 §4.5·공통 결정 R4): 실행 주체 자격 이하 & 허용 목록 아닌 최고 등급으로 상향(새 TEMP 는 정확히 맞춤). 들어온 출력
         // (지정 출력·재사용 TEMP)의 "쓰기 전 VIEW" 도 여기서 본다(enforceOutputLevel). 출력 비우기·맞바꿈·적재보다 먼저다. 거부되면 이
         // 트랜잭션의 상향도 롤백되고, 거부 감사는 트랜잭션 완료 후(커밋·롤백 무관) 기록된다.
+        // 읽기 rank: 실행 주체 자격이 아니라 이 스텝이 다루는 데이터(선언 입력 + 자기 출력)의 최고 등급(자격이 상한). 슬롯 선택과 출력 등급이
+        // 같은 값을 쓴다 — 외부 API 만 부르는 스크립트가 실행 주체 자격 때문에 출력이 '민감'으로 올라가던 결함 수정.
+        int pyReadRank =
+            pipelineSecurityGate.pythonReadRank(outputDatasetId, step.inputDatasetIds(), pyRunAs);
         if (outputDatasetId != null) {
           pipelineSecurityGate.enforcePythonOutputLevel(
-              outputDatasetId, step.id(), pyTempFresh, pyRunAs);
+              outputDatasetId, step.id(), pyTempFresh, pyRunAs, pyReadRank);
         }
         // 등급별 읽기 슬롯(WD-29): 실행 직전 GRANT 를 계산값에 맞추고(JIT) 실행 주체 슬롯을 정한다. 실패하면 executor·자식 프로세스를 부르지
         // 않는다(fail-closed) — 테넌트 실행 롤로 대체하는 경로는 없다.
@@ -708,7 +712,7 @@ public class PipelineAsyncRunner {
         final long pyStartedAt = System.currentTimeMillis();
         final long pyTenantId = pyRunAs.clearance().tenantId();
         try {
-          readSlot = pythonReadGrantSync.prepareForRun(pyRunAs.clearance());
+          readSlot = pythonReadGrantSync.prepareForRun(pyRunAs.clearance(), pyReadRank);
         } catch (PythonReadAccessException e) {
           throw new ScriptExecutionException(e.getMessage(), e);
         }
