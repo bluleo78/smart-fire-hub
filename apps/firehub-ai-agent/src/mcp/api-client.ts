@@ -67,6 +67,7 @@ import type { SerializedOntology, EntityType } from '../graphrag/ontology.js';
 import { AI_PURPOSE_HEADER, ON_BEHALF_OF_HEADER, ON_BEHALF_OF_TENANT_HEADER } from '../constants.js';
 import { POLICY_BLOCKED_CODE, type PolicyBlockedInfo } from './policy-blocked.js';
 import { isValidTenantId } from '../agent/tenant-paths.js';
+import { isPositiveInteger } from '../utils.js';
 
 export type { DocumentSearchHit };
 export type { DatasetSearchHit };
@@ -98,11 +99,6 @@ export function parseSharePurpose(v: unknown): SharePurpose | undefined {
  * 다음 턴에는 반드시 새 값을 보도록 짧게 잡는다.
  */
 const ONTOLOGY_CACHE_TTL_MS = 30_000;
-
-/** 양의 정수인지 — 대행 사용자 id(X-On-Behalf-Of)가 성립하는 값인지 판정한다. */
-function isPositiveInteger(value: unknown): value is number {
-  return typeof value === 'number' && Number.isInteger(value) && value > 0;
-}
 
 export class FireHubApiClient {
   private client: AxiosInstance;

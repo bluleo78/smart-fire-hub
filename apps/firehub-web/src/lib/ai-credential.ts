@@ -60,6 +60,28 @@ export const CREDENTIAL_FIELDS: Record<AgentType, FieldSpec[]> = {
  */
 export const AGENT_TYPES: readonly AgentType[] = ['sdk', 'cli', 'cli-api', 'opencode'];
 
+/** 공급자에 따라 반영 여부가 갈리는 AI 실행 설정 키(설정 › AI 에이전트). */
+export type AiBehaviorRunSettingKey = 'ai.max_turns' | 'ai.temperature' | 'ai.max_tokens';
+
+/**
+ * WD-59: 유형(공급자)별로 실행 설정이 실제 AI 실행에 반영되는지. 화면은 false 인 칸을 비활성화하고 안내를 붙인다
+ * (값 저장 자체는 그대로 — 공급자를 바꾸면 보존된 값이 쓰인다).
+ *
+ * - 최대 턴 수: 네 유형 모두(sdk=query maxTurns, cli/cli-api=claude `--max-turns`, opencode=agent steps).
+ * - Temperature·최대 응답 토큰: opencode 만(Claude Agent SDK·CLI 에는 해당 설정이 없다).
+ *
+ * <b>firehub-ai-agent `src/providers/types.ts` 의 `AGENT_RUN_SETTING_SUPPORT` 와 같은 사실이어야 한다</b> — 앱 간 코드
+ * 공유가 없어 각자 상수를 두므로 한쪽을 바꾸면 다른 쪽도 함께 고친다(근거는 그쪽 주석).
+ */
+export const AI_BEHAVIOR_SETTING_SUPPORT: Readonly<
+  Record<AgentType, Readonly<Record<AiBehaviorRunSettingKey, boolean>>>
+> = {
+  sdk: { 'ai.max_turns': true, 'ai.temperature': false, 'ai.max_tokens': false },
+  cli: { 'ai.max_turns': true, 'ai.temperature': false, 'ai.max_tokens': false },
+  'cli-api': { 'ai.max_turns': true, 'ai.temperature': false, 'ai.max_tokens': false },
+  opencode: { 'ai.max_turns': true, 'ai.temperature': true, 'ai.max_tokens': true },
+};
+
 /**
  * opencode 추론 강도 후보. **권위 있는 집합이 아니다** — opencode 가 공급자에게 그대로 넘기는
  * 값이라 실제 지원 여부는 공급자마다 다르고 런타임에야 드러난다(과금되는 completion 호출로

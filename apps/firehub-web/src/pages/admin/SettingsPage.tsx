@@ -40,6 +40,7 @@ import {
   useDirtyAggregator,
   useUnsavedChangesGuard,
 } from '../../hooks/useUnsavedChangesGuard';
+import { AI_BEHAVIOR_SETTING_SUPPORT, type AiBehaviorRunSettingKey } from '../../lib/ai-credential';
 import { CLAUDE_MODEL_OPTIONS, typeChangeConfirmDescription, withPreservedValue } from '../../lib/ai-credential-screen';
 import { extractApiError } from '../../lib/api-error';
 import { HOSTING_DECLARE_PERMISSION } from '../../lib/hosting-location';
@@ -116,6 +117,15 @@ const NUMBER_RULES: {
     message: '10,000~200,000 사이의 정수를 입력하세요',
   },
 ];
+
+/**
+ * WD-59: 현재 고른 공급자(자격증명 유형)에서 반영되지 않는 실행 설정 칸 아래에 붙는 안내.
+ * 칸은 비활성화하지만 값은 지우지 않는다 — 공급자를 다시 바꾸면 그 값이 그대로 쓰인다.
+ */
+function UnsupportedHint({ show }: { show: boolean }) {
+  if (!show) return null;
+  return <p className="text-sm text-muted-foreground">현재 공급자에서는 적용되지 않습니다</p>;
+}
 
 /**
  * 저장한 적 없는(=코드 기본값이 적용 중인) 필드 라벨 옆에 붙는 작은 힌트.
@@ -455,6 +465,16 @@ function AdminSettingsPage() {
   }, [embeddingReporter, embeddingDirty]);
   const { dialog: unsavedDialog } = useUnsavedChangesGuard(isAnyDirty);
 
+  // WD-59: 공급자별 실행 설정 반영 여부. 저장된 유형이 아니라 지금 고른 유형 기준이라, 유형 선택만 바꿔도 표시가 따라 바뀐다.
+  const runSupport = AI_BEHAVIOR_SETTING_SUPPORT[cred.agentType];
+  // 자격증명 조회가 실패·403 이면 cred.agentType 은 초기값(sdk)일 뿐 실제 유형을 모른다 — 그때는 잠그지 않는다
+  // (opencode 테넌트에 "적용되지 않습니다"를 잘못 띄우지 않게).
+  const agentTypeKnown = !cred.loadFailed && !cred.isLocked;
+  // 반영 안 되는 칸은 잠그되, 검증 오류가 붙은 칸은 열어 둔다 — 다른 유형에서 잘못 입력한 값이 남은 채 유형을 바꾸면
+  // 잠긴 칸의 오류가 저장을 막는데 고칠 방법이 없어진다. 고쳐서 검증을 통과하면 다시 잠긴다.
+  const runUnsupported = (key: AiBehaviorRunSettingKey) => agentTypeKnown && !runSupport[key];
+  const runFieldLocked = (key: AiBehaviorRunSettingKey) => runUnsupported(key) && !errors[key];
+
   if (behaviorLoading || cred.isLoading) {
     return (
       <div className="max-w-2xl mx-auto space-y-6 p-6">
@@ -612,11 +632,13 @@ function AdminSettingsPage() {
                   className="w-full max-w-md"
                   value={form['ai.max_turns']}
                   onChange={(e) => updateField('ai.max_turns', e.target.value)}
+                  disabled={runFieldLocked('ai.max_turns')}
                 />
                 {errors['ai.max_turns'] && (
                   <p className="text-sm text-destructive">{errors['ai.max_turns']}</p>
                 )}
                 <p className="text-sm text-muted-foreground">에이전트가 도구를 사용할 수 있는 최대 반복 횟수 (1~50)</p>
+                <UnsupportedHint show={runUnsupported('ai.max_turns')} />
               </div>
 
               <Separator />
@@ -638,11 +660,13 @@ function AdminSettingsPage() {
                   className="w-full max-w-md"
                   value={form['ai.temperature']}
                   onChange={(e) => updateField('ai.temperature', e.target.value)}
+                  disabled={runFieldLocked('ai.temperature')}
                 />
                 {errors['ai.temperature'] && (
                   <p className="text-sm text-destructive">{errors['ai.temperature']}</p>
                 )}
                 <p className="text-sm text-muted-foreground">응답의 창의성 수준 (0.0: 결정적, 1.0: 창의적)</p>
+                <UnsupportedHint show={runUnsupported('ai.temperature')} />
               </div>
 
               <Separator />
@@ -663,11 +687,13 @@ function AdminSettingsPage() {
                   className="w-full max-w-md"
                   value={form['ai.max_tokens']}
                   onChange={(e) => updateField('ai.max_tokens', e.target.value)}
+                  disabled={runFieldLocked('ai.max_tokens')}
                 />
                 {errors['ai.max_tokens'] && (
                   <p className="text-sm text-destructive">{errors['ai.max_tokens']}</p>
                 )}
                 <p className="text-sm text-muted-foreground">AI 응답의 최대 토큰 수 (1~65536)</p>
+                <UnsupportedHint show={runUnsupported('ai.max_tokens')} />
               </div>
 
               <Separator />

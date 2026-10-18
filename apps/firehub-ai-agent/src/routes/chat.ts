@@ -6,7 +6,7 @@ import type { AgentType, ProviderConfig } from '../providers/index.js';
 // providers/index.js 가 아니라 providers/types.js 에서 직접 가져온다 — chat.test.ts 가
 // '../providers/index.js' 를 통째로 목킹하므로(ProviderFactory 만 정의), 여기서 그 경로로
 // 가져오면 목이 정의하지 않은 값이라 undefined 가 되어 라우트가 깨진다.
-import { isKnownAgentType } from '../providers/types.js';
+import { AGENT_RUN_SETTING_SUPPORT, isKnownAgentType } from '../providers/types.js';
 import { parseSharePurpose } from '../mcp/api-client.js';
 import { internalAuth } from '../middleware/auth.js';
 import { readSessionTranscript } from '../agent/transcript-reader.js';
@@ -153,6 +153,8 @@ router.post('/chat', internalAuth, async (req: Request, res: Response) => {
       reasoningEffort: typeof reasoningEffort === 'string' ? reasoningEffort : undefined,
     };
     const provider = ProviderFactory.createChatProvider(providerConfig);
+    // WD-59: 이 공급자가 반영하지 못하는 실행 설정은 넘기지 않는다(지원 여부의 단일 출처는 AGENT_RUN_SETTING_SUPPORT).
+    const support = AGENT_RUN_SETTING_SUPPORT[agentType];
     const events = provider.execute({
       message: message || '',
       sessionId: requestedSessionId,
@@ -164,8 +166,8 @@ router.post('/chat', internalAuth, async (req: Request, res: Response) => {
       systemPrompt: [systemPrompt, navigationContext, screenContext]
         .filter(Boolean)
         .join('\n\n') || undefined,
-      temperature,
-      maxTokens,
+      temperature: support.temperature ? temperature : undefined,
+      maxTokens: support.maxTokens ? maxTokens : undefined,
       // WD-57: 명시적 취소(POST /agent/chat/:sessionId/cancel)만 이 신호를 abort 한다 — 클라이언트 연결 끊김은
       // 여전히 작업을 계속한다(위 close 핸들러). 공급자는 abort 시 자식을 kill(SDK 는 abort)하고 진행분을 저장한다.
       abortSignal: controller.signal,

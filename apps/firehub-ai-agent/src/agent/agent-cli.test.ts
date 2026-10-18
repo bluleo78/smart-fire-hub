@@ -15,7 +15,7 @@ import { readFileSync, existsSync } from 'fs';
 import { mkdir, readFile, writeFile } from 'fs/promises';
 import { useTempHome } from './temp-home.fixture.js';
 import { join } from 'path';
-import { MAX_BUDGET_USD, COST_ALARM_TURNS } from '../constants.js';
+import { MAX_BUDGET_USD, COST_ALARM_TURNS, MAX_TURNS_REACHED_MESSAGE } from '../constants.js';
 
 // child_process.spawn을 모킹하여 실제 CLI를 띄우지 않고 인자만 검증한다.
 const spawnMock = vi.fn();
@@ -1255,6 +1255,29 @@ describe('executeCliAgent — #277 비용 가드레일', () => {
     expect(String(errs[0].message)).toContain('비용 한도');
   });
 
+  // WD-59: --max-turns 상한에 닿으면 CLI 는 result.result 없이 error_max_turns 로 끝난다 — 영문 기본 문구 대신 안내를 낸다.
+  it('CLI-MAXTURNS-ERR: result error_max_turns → 최대 턴 수 안내 error 이벤트', async () => {
+    spawnMock.mockReturnValue(
+      makeFakeChildWithLines([
+        JSON.stringify({ type: 'result', subtype: 'error_max_turns', session_id: 's', usage: { input_tokens: 1, output_tokens: 1 } }),
+      ]),
+    );
+    const events: Array<{ type: string; message?: string }> = [];
+    for await (const e of executeCliAgent({
+      message: 'hi',
+      tenantId: 1,
+      userId: 1,
+      useSubscription: false,
+      apiKey: 'sk-test',
+    } as never)) {
+      events.push(e as { type: string; message?: string });
+    }
+    const errs = events.filter((e) => e.type === 'error');
+    expect(errs).toHaveLength(1);
+    expect(errs[0].message).toBe(MAX_TURNS_REACHED_MESSAGE);
+    expect(events.some((e) => e.type === 'done')).toBe(false);
+  });
+
   it('CLI-AUTH-ERR: result.result 에 "Not logged in" 포함 시 한국어 인증 안내 error 이벤트 (#410)', async () => {
     const lines = [
       JSON.stringify({
@@ -2185,5 +2208,48 @@ describe('buildMcpConfig — AI_PURPOSE(S3)', () => {
     expect(shared.mcpServers.firehub.env.AI_PURPOSE).toBe('share');
     const chat = buildMcpConfig(7, 3, 'http://api', 'tok', { apiKey: 'k' }) as Cfg;
     expect('AI_PURPOSE' in chat.mcpServers.firehub.env).toBe(false);
+  });
+});
+
+// WD-59: 설정 › AI 에이전트의 최대 턴 수를 claude CLI 의 --max-turns 로 넘긴다.
+// `claude --help` 에는 없지만 CLI 가 받는 숨은 옵션이다(Agent SDK 의 maxTurns 도 이 인자로 CLI 에 전달된다).
+describe('executeCliAgent — 최대 턴 수(--max-turns, WD-59)', () => {
+  beforeEach(() => {
+    spawnMock.mockReset();
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  /** 성공 결과 한 줄로 끝나는 가짜 자식을 띄우고 spawn 인자를 돌려준다. */
+  async function spawnArgs(extra: Record<string, unknown>): Promise<string[]> {
+    spawnMock.mockReturnValue(
+      makeFakeChildWithLines([JSON.stringify({ type: 'result', subtype: 'success', session_id: 's' })]),
+    );
+    for await (const _ of executeCliAgent({
+      message: 'test',
+      tenantId: 1,
+      userId: 1,
+      useSubscription: false,
+      apiKey: 'sk-test',
+      ...extra,
+    } as never)) {
+      /* consume */
+    }
+    return spawnMock.mock.calls[0][1] as string[];
+  }
+
+  it('maxTurns 가 있으면 --max-turns <값> 을 넘긴다', async () => {
+    const args = await spawnArgs({ maxTurns: 3 });
+    const i = args.indexOf('--max-turns');
+    expect(i).toBeGreaterThan(-1);
+    expect(args[i + 1]).toBe('3');
+  });
+
+  it('maxTurns 가 없거나 양의 정수가 아니면 --max-turns 를 넘기지 않는다(CLI 기본값 유지)', async () => {
+    expect(await spawnArgs({})).not.toContain('--max-turns');
+    spawnMock.mockReset();
+    expect(await spawnArgs({ maxTurns: 0 })).not.toContain('--max-turns');
   });
 });

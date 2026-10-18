@@ -45,6 +45,7 @@ import {
 } from './file-downloader.js';
 import type { HistoryMessage, HistoryToolCall } from './transcript-reader.js';
 import { MAX_BUDGET_USD, COST_ALARM_TOKENS, COST_ALARM_TURNS } from '../constants.js';
+import { isPositiveInteger } from '../utils.js';
 import { createTracker, buildHaltMessage } from './failure-streak.js';
 import { totalInputTokens } from './token-usage.js';
 
@@ -68,6 +69,8 @@ export interface OpenCodeConfig {
         {
           modalities: { input: string[]; output: string[] };
           options?: { reasoningEffort: string };
+          /** WD-59: 모델의 temperature 능력. 사용자 정의 모델은 기본 false 라 이게 없으면 agent temperature 가 요청에 실리지 않는다. */
+          temperature?: boolean;
         }
       >;
     }
@@ -76,7 +79,13 @@ export interface OpenCodeConfig {
   permission: Record<string, string>;
   // 에이전트별 설정: 위임(task) 차단 + 빌트인 general 비활성 (#0 보안 + 응답 정상화).
   agent: {
-    build: { permission: { task: Record<string, string> } };
+    build: {
+      permission: { task: Record<string, string> };
+      /** WD-59: 최대 턴 수 — 도달하면 opencode 가 마지막 스텝에 텍스트로만 답하라는 지시를 덧붙인다(도구 목록은 그대로라 소프트 상한). */
+      steps?: number;
+      /** WD-59: 샘플링 temperature. */
+      temperature?: number;
+    };
     general: { disable: boolean };
   };
   mcp: {
@@ -109,6 +118,10 @@ export interface BuildOpenCodeConfigOptions {
   aiPurpose?: SharePurpose;
   /** WD-62: Proactive 실행의 리포트 디렉터리 — 있으면 MCP 프로세스가 write_report_file 을 이 디렉터리 전용으로 연다. */
   reportDir?: string;
+  /** WD-59: 설정 › AI 에이전트의 최대 턴 수(ai.max_turns) → agent.build.steps. */
+  maxTurns?: number;
+  /** WD-59: 설정 › AI 에이전트의 Temperature(ai.temperature) → agent.build.temperature. */
+  temperature?: number;
 }
 
 /**
@@ -141,6 +154,8 @@ export function buildOpenCodeConfig(options: BuildOpenCodeConfigOptions): OpenCo
     reasoningEffort,
     aiPurpose,
     reportDir,
+    maxTurns,
+    temperature,
   } = options;
 
   // provider 설정이 불완전하면 여기서 크게 실패한다 — 조용히 배포 측 전역 설정으로 떨어지거나
@@ -169,6 +184,14 @@ export function buildOpenCodeConfig(options: BuildOpenCodeConfigOptions): OpenCo
   // 빈 문자열/공백은 "설정 안 함"이다 — 그대로 opencode 에 보내면 400 이 된다(iacloud_eis 실측).
   const effort = typeof reasoningEffort === 'string' ? reasoningEffort.trim() : undefined;
 
+  // WD-59: 실행 설정. 요청 바디에서 온 검증 안 된 값이라 유효한 숫자만 싣는다(아니면 키 자체를 생략해 opencode 기본값 유지).
+  // 키 위치는 opencode 1.18.34 소스로 확인했다(최대 응답 토큰은 설정이 아니라 env — openCodeOutputTokenEnv 참고):
+  //  - steps: agent 설정의 턴 상한(`maxSteps` 는 deprecated 별칭). `steps ?? Infinity` 와 비교해 마지막 스텝엔 텍스트 답변 지시를 덧붙인다(도구는 그대로 — 소프트 상한, 비용 가드가 백스톱).
+  //  - temperature: `model.capabilities.temperature ? agent.temperature : undefined` — 사용자 정의 모델(카탈로그에 없는
+  //    공급자)은 능력 기본값이 false 라 모델 쪽 `temperature: true` 를 함께 줘야 실린다. 값이 없을 땐 능력도 켜지 않는다.
+  const steps = isPositiveInteger(maxTurns) ? maxTurns : undefined;
+  const temp = typeof temperature === 'number' && Number.isFinite(temperature) && temperature >= 0 ? temperature : undefined;
+
   const { command, args } = getStdioServerCommand();
   const resolvedModel = `${providerId}/${modelID}`;
 
@@ -188,6 +211,7 @@ export function buildOpenCodeConfig(options: BuildOpenCodeConfigOptions): OpenCo
             // (iacloud_eis 실측 — 이론이 아니라 실제로 재현된 버그).
             modalities: { input: ['text', 'image'], output: ['text'] },
             ...(effort ? { options: { reasoningEffort: effort } } : {}),
+            ...(temp !== undefined ? { temperature: true } : {}),
           },
         },
       },
@@ -220,7 +244,11 @@ export function buildOpenCodeConfig(options: BuildOpenCodeConfigOptions): OpenCo
     //  - 메인(build)에서 task 를 deny 하면 firehub 도구 직접 호출로 강제되고(실측 정상),
     //    OPENCODE_SYSTEM_PROMPT 가 위임 대신 직접처리·요약을 지시한다.
     agent: {
-      build: { permission: { task: { '*': 'deny' } } },
+      build: {
+        permission: { task: { '*': 'deny' } },
+        ...(steps !== undefined ? { steps } : {}),
+        ...(temp !== undefined ? { temperature: temp } : {}),
+      },
       general: { disable: true },
     },
     mcp: {
@@ -483,6 +511,22 @@ function buildOpenCodeAttachmentMessage(message: string, files: DownloadedFile[]
   return `${sections.join('\n\n')}\n\n${message || '첨부된 파일을 분석해주세요.'}`;
 }
 
+/**
+ * WD-59: 설정 › AI 에이전트의 최대 응답 토큰(ai.max_tokens)을 opencode 자식 env 로 만든다.
+ *
+ * <p><b>왜 설정(모델 limit.output)이 아니라 env 인가</b>: opencode(1.18.34)의 요청 max_tokens 는
+ * `min(model.limit.output, OUTPUT_TOKEN_MAX) || OUTPUT_TOKEN_MAX` 이고, OUTPUT_TOKEN_MAX 는 이 env 가 있으면 그 값,
+ * 없으면 32000 이다. 모델 `limit` 은 `context` 가 필수라 함께 줘야 하는데, 카탈로그(models.dev)에 있는 공급자(예: neuralwatt)는
+ * 그 값이 카탈로그 context 를 덮어써 opencode 자체 컴팩션·오버플로 판정이 바뀐다(실측: 0 을 주면 262128 → 0). env 는 context 를
+ * 건드리지 않고 상한만 낮춘다 — 모델 상한보다 크면 모델 상한이 이긴다. 실측(가짜 공급자 서버로 요청 캡처): max_tokens=2048 확인.
+ *
+ * <p>이름에 EXPERIMENTAL 이 붙은 플래그라 opencode 업그레이드 시 이름이 바뀌면 조용히 32000 으로 돌아간다 — 버전을 올릴 때
+ * 이 env 가 여전히 있는지 확인한다. 양의 정수가 아니면 빈 객체(=opencode 기본값).
+ */
+export function openCodeOutputTokenEnv(maxTokens: unknown): Record<string, string> {
+  return isPositiveInteger(maxTokens) ? { OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX: String(maxTokens) } : {};
+}
+
 /** opencode CLI 스폰에 필요한 테넌트 opencode provider 자격증명. ProviderFactory 가 생성 시점에 채운다. */
 export interface OpenCodeCredentials {
   providerId: string;
@@ -542,8 +586,21 @@ export async function* executeOpenCodeAgent(
   options: ChatProviderOptions,
   credentials: OpenCodeCredentials,
 ): AsyncGenerator<SSEEvent> {
-  const { message, tenantId, userId, fileIds, systemPrompt, overrideSystemPrompt, abortSignal, model, aiPurpose, reportDir } =
-    options;
+  const {
+    message,
+    tenantId,
+    userId,
+    fileIds,
+    systemPrompt,
+    overrideSystemPrompt,
+    abortSignal,
+    model,
+    aiPurpose,
+    reportDir,
+    maxTurns,
+    temperature,
+    maxTokens,
+  } = options;
 
   const apiBaseUrl = process.env.API_BASE_URL ?? 'http://localhost:8080/api/v1';
   const internalToken = process.env.INTERNAL_SERVICE_TOKEN ?? '';
@@ -641,6 +698,8 @@ export async function* executeOpenCodeAgent(
     reasoningEffort: credentials.reasoningEffort,
     aiPurpose,
     reportDir,
+    maxTurns,
+    temperature,
   });
 
   // userWorkDir 는 세션 간 재사용되는 디렉터리다 — 이 변경 이전 버전이 여기에 opencode.json 을
@@ -674,6 +733,7 @@ export async function* executeOpenCodeAgent(
     );
   }
   childEnv.OPENCODE_CONFIG_CONTENT = JSON.stringify(openCodeConfig);
+  Object.assign(childEnv, openCodeOutputTokenEnv(maxTokens));
 
   childEnv.XDG_CONFIG_HOME = await getSharedXdgConfigDir();
 
@@ -736,7 +796,7 @@ export async function* executeOpenCodeAgent(
 
   // WD-60: SDK/CLI 경로에 있던 비용·실패 안전장치(#277, failure-streak)를 이 경로에도 건다.
   //  - opencode run 에는 USD 예산 상한 옵션이 없다(1.18.34 `opencode run --help` 확인, 설정 스키마의
-  //    maxSteps 는 턴 수 상한이라 별개 이슈 WD-59). 그래서 step_finish 사용량을 앱에서 누적한다.
+  //    steps 는 턴 수 상한 — WD-59 에서 agent.build.steps 로 연결). 그래서 step_finish 사용량을 앱에서 누적한다.
   //  - 호출(요청) 스코프 상태다 — SDK/CLI 경로와 같다.
   const haltTracker = createTracker();
   let costTurns = 0;

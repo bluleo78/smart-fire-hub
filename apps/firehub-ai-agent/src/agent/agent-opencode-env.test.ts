@@ -158,6 +158,23 @@ describe('executeOpenCodeAgent — 자식 프로세스 env/디스크 배선', ()
     expect(parsed.mcp.firehub.environment.FIREHUB_REPORT_DIR).toBe('/tmp/proactive-report/t3/7-9');
   });
 
+  // WD-59: 테넌트 AI 설정(최대 턴 수·Temperature·최대 응답 토큰)이 opencode 자식 설정까지 도달해야 한다.
+  it('실행 옵션의 maxTurns·temperature 는 OPENCODE_CONFIG_CONTENT 에, maxTokens 는 OUTPUT_TOKEN_MAX env 로 싣는다 (WD-59)', async () => {
+    await driveToInit({ ...OPTIONS, maxTurns: 2, temperature: 0.3, maxTokens: 4096 });
+    const env = spawnEnv();
+    const parsed = JSON.parse(env.OPENCODE_CONFIG_CONTENT);
+    expect(parsed.agent.build.steps).toBe(2);
+    expect(parsed.agent.build.temperature).toBe(0.3);
+    const [modelEntry] = Object.values(parsed.provider[CREDENTIALS.providerId].models) as Array<Record<string, unknown>>;
+    expect(modelEntry.temperature).toBe(true);
+    expect(env.OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX).toBe('4096');
+  });
+
+  it('maxTokens 가 없으면 OUTPUT_TOKEN_MAX env 를 두지 않는다 (WD-59)', async () => {
+    await driveToInit();
+    expect('OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX' in spawnEnv()).toBe(false);
+  });
+
   it('reportDir 이 없으면(일반 채팅) MCP 환경에 FIREHUB_REPORT_DIR 가 없다 (WD-62)', async () => {
     await driveToInit();
     const parsed = JSON.parse(spawnEnv().OPENCODE_CONFIG_CONTENT);

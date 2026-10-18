@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { processMessage, createDesignGuardRelayState } from './process-message.js';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
-import { MAX_BUDGET_USD } from '../constants.js';
+import { MAX_BUDGET_USD, MAX_TURNS_REACHED_MESSAGE } from '../constants.js';
 
 // console 출력 억제
 beforeEach(() => {
@@ -248,6 +248,22 @@ describe('processMessage', () => {
     expect(result[0].type).toBe('error');
     expect(String(result[0].message)).toContain('비용 한도');
     expect(String(result[0].message)).toContain(String(MAX_BUDGET_USD));
+  });
+
+  // WD-59: 최대 턴 수 도달은 영문 원문/'max_turns_exceeded' 대신 설정 위치를 알려 주는 한국어 안내로 끝난다.
+  it('PM-MAXTURNS: result error_max_turns → 최대 턴 수 안내 error 이벤트', () => {
+    const msg = {
+      type: 'result',
+      subtype: 'error_max_turns',
+      session_id: 'sess-t',
+      errors: [],
+      usage: { input_tokens: 10, output_tokens: 5 },
+    } as unknown as SDKMessage;
+
+    const result = processMessage(msg, tag, false);
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({ type: 'error', message: MAX_TURNS_REACHED_MESSAGE });
   });
 
   // PM-13: unknown type — 빈 배열 반환

@@ -7,6 +7,7 @@ import {
   buildOpenCodeConfig,
   buildOpenCodeRunArgs,
   normalizeFirehubToolName,
+  openCodeOutputTokenEnv,
   transcriptToolInput,
 } from './agent-opencode.js';
 import { OPENCODE_SYSTEM_PROMPT, OPENCODE_UI_ONLY_TOOLS, SYSTEM_PROMPT } from './system-prompt.js';
@@ -189,6 +190,60 @@ describe('buildOpenCodeConfig', () => {
     const cfg = buildOpenCodeConfig(BASE);
     expect(cfg.agent.build.permission.task['*']).toBe('deny');
     expect(cfg.agent.general.disable).toBe(true);
+  });
+});
+
+// WD-59: 설정 › AI 에이전트의 최대 턴 수·Temperature·최대 응답 토큰을 opencode 설정으로 반영한다.
+// 키 위치는 opencode 1.18.34 소스로 확인했다(구현 주석 참고).
+describe('buildOpenCodeConfig — AI 실행 설정 (WD-59)', () => {
+  const model = (cfg: ReturnType<typeof buildOpenCodeConfig>) => cfg.provider.openai.models['gpt-4o'];
+
+  it('maxTurns 를 메인(build) 에이전트의 steps 로 싣는다 — deprecated maxSteps 가 아니라 steps', () => {
+    const cfg = buildOpenCodeConfig({ ...BASE, maxTurns: 7 });
+    expect(cfg.agent.build.steps).toBe(7);
+    expect('maxSteps' in cfg.agent.build).toBe(false);
+    // 기존 위임 차단은 그대로다.
+    expect(cfg.agent.build.permission.task['*']).toBe('deny');
+  });
+
+  it('temperature 는 agent.build.temperature 와 모델 temperature 능력(true)을 함께 싣는다', () => {
+    // 사용자 정의 모델은 temperature 능력 기본값이 false 라 능력 없이 값만 주면 요청에 실리지 않는다.
+    const cfg = buildOpenCodeConfig({ ...BASE, temperature: 0.2 });
+    expect(cfg.agent.build.temperature).toBe(0.2);
+    expect(model(cfg).temperature).toBe(true);
+  });
+
+  it('temperature 0 도 유효한 값으로 싣는다', () => {
+    const cfg = buildOpenCodeConfig({ ...BASE, temperature: 0 });
+    expect(cfg.agent.build.temperature).toBe(0);
+    expect(model(cfg).temperature).toBe(true);
+  });
+
+  it('값이 없으면 해당 키를 아예 싣지 않는다(기존 설정과 동일)', () => {
+    const cfg = buildOpenCodeConfig(BASE);
+    expect('steps' in cfg.agent.build).toBe(false);
+    expect('temperature' in cfg.agent.build).toBe(false);
+    expect('temperature' in model(cfg)).toBe(false);
+    // 모델 limit 은 쓰지 않는다 — context 가 필수라 카탈로그 공급자의 context 를 덮어쓴다(openCodeOutputTokenEnv 주석).
+    expect('limit' in model(cfg)).toBe(false);
+  });
+
+  it('숫자가 아니거나 범위 밖인 값은 싣지 않는다(요청 바디는 검증되지 않은 값이다)', () => {
+    const cfg = buildOpenCodeConfig({ ...BASE, maxTurns: 0, temperature: Number.NaN });
+    expect('steps' in cfg.agent.build).toBe(false);
+    expect('temperature' in cfg.agent.build).toBe(false);
+    expect('temperature' in model(cfg)).toBe(false);
+  });
+});
+
+// WD-59: 최대 응답 토큰은 설정이 아니라 opencode 의 OUTPUT_TOKEN_MAX env 로 건다.
+describe('openCodeOutputTokenEnv (WD-59)', () => {
+  it('양의 정수면 OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX 로 만든다', () => {
+    expect(openCodeOutputTokenEnv(4096)).toEqual({ OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX: '4096' });
+  });
+
+  it.each([undefined, 0, -1, 1.5, '4096', Number.NaN])('%s 면 빈 객체(opencode 기본값 유지)', (v) => {
+    expect(openCodeOutputTokenEnv(v)).toEqual({});
   });
 });
 

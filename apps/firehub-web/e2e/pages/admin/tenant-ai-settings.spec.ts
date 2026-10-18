@@ -930,7 +930,9 @@ test.describe('AI 동작 설정 — 테넌트 전용 평면 설정', () => {
     // 플랫폼 상속·재정의 개념은 AI 탭 어디에도 없다
     await expect(panel.getByText(/재정의|플랫폼|오버라이드|상속/)).toHaveCount(0);
     await expect(panel.getByRole('button', { name: /재정의 해제/ })).toHaveCount(0);
-    for (const id of ['ai-model', 'ai-max-turns', 'ai-temperature', 'ai-max-tokens', 'ai-session-max-tokens', 'ai-system-prompt']) {
+    // 잠금(tenantEditable) 개념은 없다. Temperature·최대 응답 토큰은 WD-59 의 공급자별 비활성(sdk 미반영)이라 제외한다
+    // — 아래 'AI 실행 설정 — 공급자별 반영 여부' describe 가 따로 검증한다.
+    for (const id of ['ai-model', 'ai-max-turns', 'ai-session-max-tokens', 'ai-system-prompt']) {
       await expect(page.locator(`#${id}`)).toBeEnabled();
     }
 
@@ -968,6 +970,88 @@ test.describe('AI 동작 설정 — 테넌트 전용 평면 설정', () => {
     await expect(defaultHint(fieldBox(page, 'ai-max-turns'))).toHaveCount(0);
     // 다른 필드는 여전히 기본값이다
     await expect(defaultHint(fieldBox(page, 'ai-temperature'))).toBeVisible();
+  });
+});
+
+/**
+ * WD-59 — 최대 턴 수·Temperature·최대 응답 토큰은 공급자(자격증명 유형)마다 실제 반영 여부가 다르다.
+ * 사실의 단일 출처는 `src/lib/ai-credential.ts` 의 `AI_BEHAVIOR_SETTING_SUPPORT`(ai-agent 의 AGENT_RUN_SETTING_SUPPORT 와 짝):
+ * 최대 턴 수는 네 유형 모두, Temperature·최대 응답 토큰은 opencode 만. 반영 안 되는 칸은 비활성 + 안내이고 값은 보존한다.
+ *
+ * <b>뮤테이션 대상</b>: 지원 표를 전부 true 로 바꾸면 sdk 비활성 단언이, 비활성 판정을 저장된 유형(savedAgentType)으로
+ * 바꾸면 "유형 선택만 바꿔도 즉시 바뀐다" 단언이 빨개진다.
+ */
+test.describe('AI 실행 설정 — 공급자별 반영 여부(WD-59)', () => {
+  const UNSUPPORTED = '현재 공급자에서는 적용되지 않습니다';
+  const OPENCODE_CREDENTIAL = createAiCredential({
+    agentType: 'opencode',
+    configured: true,
+    payload: { providerId: 'openai', baseURL: 'https://api.openai.com/v1' },
+    secretFieldNames: ['apiKey'],
+  });
+
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await setupAdminAuth(page);
+  });
+
+  test('sdk 면 Temperature·최대 응답 토큰이 비활성 + 안내이고, 유형을 OpenCode 로 바꾸면 즉시 활성으로 바뀐다', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockAiCredential(page, createAiCredential({ agentType: 'sdk' }));
+    await setupSettingsMocks(page, {
+      ai: createAiSettings({ 'ai.temperature': { overridden: true, value: '0.3' } }),
+    });
+    await page.goto('/admin/settings');
+
+    // 최대 턴 수는 sdk 에서도 반영된다(query maxTurns).
+    await expect(page.locator('#ai-max-turns')).toBeEnabled();
+    await expect(fieldBox(page, 'ai-max-turns').getByText(UNSUPPORTED)).toHaveCount(0);
+    for (const id of ['ai-temperature', 'ai-max-tokens']) {
+      await expect(page.locator(`#${id}`)).toBeDisabled();
+      await expect(fieldBox(page, id).getByText(UNSUPPORTED)).toBeVisible();
+    }
+    // 저장된 값은 비활성 상태에서도 그대로 보인다(공급자 전환 시 보존).
+    await expect(page.locator('#ai-temperature')).toHaveValue('0.3');
+    await page.setViewportSize({ width: 1280, height: 2400 });
+    await page.screenshot({ path: screenshotPath('wd59-sdk-disabled.png'), fullPage: true });
+
+    // 저장 전 유형 선택만 바꿔도 표시가 따라 바뀐다 — 사용자가 고르는 유형 기준이다.
+    await page.locator('#ai-cred-agent-type').click();
+    await page.getByRole('option', { name: 'OpenCode', exact: true }).click();
+    for (const id of ['ai-max-turns', 'ai-temperature', 'ai-max-tokens']) {
+      await expect(page.locator(`#${id}`)).toBeEnabled();
+      await expect(fieldBox(page, id).getByText(UNSUPPORTED)).toHaveCount(0);
+    }
+    await expect(page.locator('#ai-temperature')).toHaveValue('0.3');
+  });
+
+  test('opencode 에서 Temperature·최대 응답 토큰을 고쳐 저장하면 그 값이 PUT 페이로드에 실린다', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockAiCredential(page, OPENCODE_CREDENTIAL);
+    const saveCapture = await mockApi(page, 'PUT', '/api/v1/settings', {}, { capture: true });
+    await setupSettingsMocks(page);
+    await page.goto('/admin/settings');
+
+    for (const id of ['ai-max-turns', 'ai-temperature', 'ai-max-tokens']) {
+      await expect(page.locator(`#${id}`)).toBeEnabled();
+      await expect(fieldBox(page, id).getByText(UNSUPPORTED)).toHaveCount(0);
+    }
+    await page.setViewportSize({ width: 1280, height: 2400 });
+    await page.screenshot({ path: screenshotPath('wd59-opencode-enabled.png'), fullPage: true });
+
+    await page.locator('#ai-max-turns').fill('2');
+    await page.locator('#ai-temperature').fill('0.2');
+    await page.locator('#ai-max-tokens').fill('2048');
+    await page.getByRole('button', { name: '저장' }).click();
+
+    const req = await saveCapture.waitForRequest();
+    expect((req.payload as { settings: Record<string, string> }).settings).toEqual({
+      'ai.max_turns': '2',
+      'ai.temperature': '0.2',
+      'ai.max_tokens': '2048',
+    });
+    await expect(page.getByText('설정이 저장되었습니다.')).toBeVisible({ timeout: 8000 });
   });
 });
 

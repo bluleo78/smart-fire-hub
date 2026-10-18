@@ -27,7 +27,8 @@ import {
 } from './tenant-paths.js';
 import { claimSession } from './session-owner.js';
 import type { HistoryMessage, HistoryToolCall } from './transcript-reader.js';
-import { DEFAULT_MODEL, MAX_BUDGET_USD, COST_ALARM_TURNS } from '../constants.js';
+import { DEFAULT_MODEL, MAX_BUDGET_USD, COST_ALARM_TURNS, MAX_TURNS_REACHED_MESSAGE } from '../constants.js';
+import { isPositiveInteger } from '../utils.js';
 import { FireHubApiClient, type SharePurpose } from '../mcp/api-client.js';
 import {
   downloadChatFiles,
@@ -243,6 +244,7 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
     userId,
     fileIds,
     model,
+    maxTurns,
     systemPrompt,
     overrideSystemPrompt,
     apiKey,
@@ -518,6 +520,13 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
 
   // #260: subagent 정의는 `--agents` 인자 대신 `userWorkDir/.claude/agents/*.md`
   // 파일로 전달한다(위 writeSubagentDefinitions 호출). argv 크기 한계 회피.
+
+  // WD-59: 설정 › AI 에이전트의 최대 턴 수. `--max-turns` 는 `claude --help` 에 없는 숨은 옵션이지만 CLI 가 받는다
+  // (2.1.302 실측: 숫자가 아니면 "must be a number" 로 거부, Agent SDK 의 maxTurns 도 이 인자로 CLI 에 넘긴다).
+  // 양의 정수가 아닌 값은 넘기지 않아 CLI 기본값을 유지한다.
+  if (isPositiveInteger(maxTurns)) {
+    cliArgs.push('--max-turns', String(maxTurns));
+  }
 
   // 세션 재개: Claude Code의 내부 session ID로 이전 컨텍스트 복원
   if (isResume && claudeSessionId) {
@@ -1055,6 +1064,10 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
             inputTokens,
             outputTokens,
           };
+        } else if (msg.subtype === 'error_max_turns' && !pendingProviderError) {
+          // WD-59: --max-turns 상한 도달. result.result 가 없어 아래 분기로 가면 영문 기본 문구가 그대로 노출된다.
+          // 앞서 보류한 공급자 오류(요청 한도 등)가 있으면 그게 진짜 원인이라 아래 분기에 맡긴다.
+          yield { type: 'error', message: MAX_TURNS_REACHED_MESSAGE, inputTokens, outputTokens };
           // `error` 하나만 보면 안 된다(코드리뷰 지적): CLI 는 `error_during_execution` 같은
           // 다른 error_* subtype 도 쓰는데, 그것들이 아래 else 로 빠지면 **빈 응답이 성공으로
           // 보고된다**. 재개 실패가 정확히 그 형태였다. 접두사로 판정해 새 subtype 이 생겨도
