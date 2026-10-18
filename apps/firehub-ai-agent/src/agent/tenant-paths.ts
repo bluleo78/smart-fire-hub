@@ -123,6 +123,12 @@ export function sdkChatFilesDir(tenantId: number, userId: number, stamp: string 
 }
 
 /**
+ * 프로액티브 리포트 디렉터리의 루트 세그먼트 이름. write_report_file 도구(WD-62)가 이 세그먼트 아래 구성요소에
+ * 심볼릭 링크가 끼지 않았는지 검사하는 기준점으로 쓴다 — 이름이 두 곳에서 갈리면 검사가 항상 실패한다.
+ */
+export const PROACTIVE_REPORT_ROOT = 'proactive-report';
+
+/**
  * 프로액티브 리포트(HTML + 요약)를 에이전트가 써 넣는 임시 디렉터리.
  *
  * <p>{@link sdkChatFilesDir} 와 같은 이유로 여기 모았다 — 같은 `tmpdir` 안에서 한 종류만
@@ -133,5 +139,5 @@ export function proactiveReportDir(
   userId: number,
   stamp: string | number,
 ): string {
-  return join(tmpdir(), 'proactive-report', tenantSegment(tenantId), `${userId}-${stamp}`);
+  return join(tmpdir(), PROACTIVE_REPORT_ROOT, tenantSegment(tenantId), `${userId}-${stamp}`);
 }

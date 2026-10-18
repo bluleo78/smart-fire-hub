@@ -29,6 +29,11 @@ export interface ChatProviderOptions {
    * 'share' 만 허용한다 — 'none'(AI 판정 제외)은 LLM 실행 경로에서 쓰이면 안 된다.
    */
   aiPurpose?: SharePurpose;
+  /**
+   * WD-62: Proactive 실행의 리포트 산출 디렉터리. opencode 실행기만 읽어 MCP 프로세스 env 로 주입한다
+   * (write_report_file 도구가 이 디렉터리에만 쓴다). SDK·CLI 는 report-writer 하위 에이전트 경로를 쓰므로 무시한다.
+   */
+  reportDir?: string;
 }
 
 export interface ChatProvider {

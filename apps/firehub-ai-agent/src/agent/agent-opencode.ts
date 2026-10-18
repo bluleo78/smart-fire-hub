@@ -23,6 +23,7 @@ import {
 } from '../providers/opencode-model.js';
 import { getStdioServerCommand } from '../mcp/stdio-server-command.js';
 import { OPENCODE_MCP_CREDENTIAL_ENV } from '../mcp/opencode-mcp-credential-env.js';
+import { REPORT_DIR_ENV, WRITE_REPORT_FILE_TOOL } from '../mcp/tools/report-file-tools.js';
 import { OPENCODE_SYSTEM_PROMPT, OPENCODE_UI_ONLY_TOOLS } from './system-prompt.js';
 import { resolveSystemPrompt } from './prompt-utils.js';
 // 트랜스크립트: CLI 와 동일 포맷/경로로 저장하면 history 엔드포인트가 그대로 읽는다.
@@ -97,6 +98,8 @@ export interface BuildOpenCodeConfigOptions {
   reasoningEffort?: string;
   /** S3: 'share' 면 firehub MCP 프로세스가 X-AI-Purpose: share 를 싣는다(Proactive 리포트). */
   aiPurpose?: SharePurpose;
+  /** WD-62: Proactive 실행의 리포트 디렉터리 — 있으면 MCP 프로세스가 write_report_file 을 이 디렉터리 전용으로 연다. */
+  reportDir?: string;
 }
 
 /**
@@ -128,6 +131,7 @@ export function buildOpenCodeConfig(options: BuildOpenCodeConfigOptions): OpenCo
     model,
     reasoningEffort,
     aiPurpose,
+    reportDir,
   } = options;
 
   // provider 설정이 불완전하면 여기서 크게 실패한다 — 조용히 배포 측 전역 설정으로 떨어지거나
@@ -222,6 +226,9 @@ export function buildOpenCodeConfig(options: BuildOpenCodeConfigOptions): OpenCo
           TENANT_ID: String(tenantId),
           // S3: Proactive 실행이면 stdio MCP 프로세스가 X-AI-Purpose: share 를 싣게 한다(stdio-server.ts main).
           ...(aiPurpose ? { AI_PURPOSE: aiPurpose } : {}),
+          // WD-62: opencode 는 호스트 Write·하위 에이전트가 없어 리포트 세 파일을 이 디렉터리 전용 MCP 도구로 쓴다.
+          // 경로는 모델 인자가 아니라 여기서만 정해진다. 일반 채팅엔 키가 없어 도구도 등록되지 않는다.
+          ...(reportDir ? { [REPORT_DIR_ENV]: reportDir } : {}),
           // 게이트웨이 호환: tools/list 스키마에서 propertyNames 제거(2026-06-24 실측 400 회피).
           OPENCODE_SCHEMA_COMPAT: '1',
           // GraphRAG 도구(stdio-server.ts 가 등록)가 LLM completion 을 호출할 때 이 테넌트의
@@ -323,6 +330,19 @@ export function parseOpenCodeEvent(msg: Record<string, unknown>): SSEEvent[] {
     default:
       return [];
   }
+}
+
+/**
+ * 트랜스크립트에 남길 도구 입력. write_report_file 의 content(리포트 전문, 파일당 최대 5MB)는 글자 수로 바꾼다 (WD-62).
+ *
+ * <p>왜: 트랜스크립트는 지워지지 않는 테넌트 디스크 산출물이다. 전문을 그대로 두면 실행마다 수 MB 가 쌓이고,
+ * proactive 라우트가 reportDir 을 지워도 리포트 본문이 두 번째 위치에 남는다.
+ */
+export function transcriptToolInput(toolName: string, input: Record<string, unknown>): Record<string, unknown> {
+  if (toolName !== normalizeFirehubToolName(`firehub_${WRITE_REPORT_FILE_TOOL}`) || typeof input.content !== 'string') {
+    return input;
+  }
+  return { ...input, content: `[${input.content.length}자 생략]` };
 }
 
 /** step_finish 한 건에서 읽어 낸 비용 가드용 사용량. */
@@ -452,7 +472,8 @@ export async function* executeOpenCodeAgent(
   credentials: OpenCodeCredentials,
 ): AsyncGenerator<SSEEvent> {
   // fileIds(첨부)는 v1 범위 외 — 의도적으로 destructure 하지 않음.
-  const { message, tenantId, userId, systemPrompt, overrideSystemPrompt, abortSignal, model, aiPurpose } = options;
+  const { message, tenantId, userId, systemPrompt, overrideSystemPrompt, abortSignal, model, aiPurpose, reportDir } =
+    options;
 
   const apiBaseUrl = process.env.API_BASE_URL ?? 'http://localhost:8080/api/v1';
   const internalToken = process.env.INTERNAL_SERVICE_TOKEN ?? '';
@@ -549,6 +570,7 @@ export async function* executeOpenCodeAgent(
     model: model ?? '',
     reasoningEffort: credentials.reasoningEffort,
     aiPurpose,
+    reportDir,
   });
 
   // userWorkDir 는 세션 간 재사용되는 디렉터리다 — 이 변경 이전 버전이 여기에 opencode.json 을
@@ -687,7 +709,10 @@ export async function* executeOpenCodeAgent(
       for (const ev of parseOpenCodeEvent(parsedMsg)) {
         // 트랜스크립트 누적
         if (ev.type === 'text') assistantText += String(ev.content ?? '');
-        else if (ev.type === 'tool_use') assistantToolCalls.push({ name: String(ev.toolName ?? ''), input: (ev.input as Record<string, unknown>) ?? {} });
+        else if (ev.type === 'tool_use') {
+          const name = String(ev.toolName ?? '');
+          assistantToolCalls.push({ name, input: transcriptToolInput(name, (ev.input as Record<string, unknown>) ?? {}) });
+        }
         else if (ev.type === 'tool_result' && assistantToolCalls.length > 0) assistantToolCalls[assistantToolCalls.length - 1].result = String(ev.result ?? '');
         else if (ev.type === 'turn') commitAssistant();
         else if (ev.type === 'done') { sawTerminal = true; await saveTranscript(); }

@@ -2,10 +2,17 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
-import { parseOpenCodeEvent, buildOpenCodeConfig, buildOpenCodeRunArgs, normalizeFirehubToolName } from './agent-opencode.js';
+import {
+  parseOpenCodeEvent,
+  buildOpenCodeConfig,
+  buildOpenCodeRunArgs,
+  normalizeFirehubToolName,
+  transcriptToolInput,
+} from './agent-opencode.js';
 import { OPENCODE_SYSTEM_PROMPT, OPENCODE_UI_ONLY_TOOLS, SYSTEM_PROMPT } from './system-prompt.js';
 import { buildAllMcpTools } from '../mcp/firehub-mcp-server.js';
 import { FireHubApiClient } from '../mcp/api-client.js';
+import { REPORT_DIR_ENV } from '../mcp/tools/report-file-tools.js';
 
 // 공통 테스트 fixture — 세션 배선 필드는 이 describe 의 관심사가 아니므로 고정값으로 묶는다.
 const BASE: Parameters<typeof buildOpenCodeConfig>[0] = {
@@ -130,6 +137,29 @@ describe('buildOpenCodeConfig', () => {
       expect(cfg.permission[key]).toBe('deny');
       expect(keys.indexOf(key)).toBeGreaterThan(allowIdx);
     }
+  });
+
+  // WD-62: Proactive 실행이면 리포트 쓰기 도구가 쓸 디렉터리를 MCP 프로세스 env 로 주입한다(모델이 고르지 못함).
+  it('reportDir 가 있으면 mcp.firehub 환경에 FIREHUB_REPORT_DIR 를 싣고, 없으면 키 자체가 없다 (WD-62)', () => {
+    const dir = '/tmp/proactive-report/t3/7-1';
+    expect(buildOpenCodeConfig({ ...BASE, reportDir: dir }).mcp.firehub.environment[REPORT_DIR_ENV]).toBe(dir);
+    expect(REPORT_DIR_ENV in buildOpenCodeConfig(BASE).mcp.firehub.environment).toBe(false);
+  });
+
+  // WD-62: opencode(1.18.34)는 permission 규칙을 findLast 로 평가한다 — 키 존재가 아니라 "마지막 일치 규칙"이
+  // allow 인지로 판정해야 WD-64 의 개별 deny 와 충돌하지 않음을 증명할 수 있다.
+  it('firehub_write_report_file 의 마지막 일치 permission 규칙은 allow 다 (WD-62)', () => {
+    const cfg = buildOpenCodeConfig({ ...BASE, reportDir: '/tmp/r' });
+    const matches = (pattern: string, name: string) =>
+      new RegExp(`^${pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')}$`).test(name);
+    const verdict = (name: string) =>
+      Object.entries(cfg.permission)
+        .filter(([pattern]) => matches(pattern, name))
+        .at(-1)?.[1];
+    expect(verdict('firehub_write_report_file')).toBe('allow');
+    // 비교 기준이 실제로 동작하는지(공허하지 않은지) — WD-64 차단 도구는 deny 로 판정돼야 한다.
+    expect(verdict('firehub_create_dataset')).toBe('deny');
+    expect(OPENCODE_UI_ONLY_TOOLS as readonly string[]).not.toContain('write_report_file');
   });
 
   // 손으로 쓴 도구명에 오타가 있거나 MCP 도구 이름이 바뀌면 opencode 는 모르는 키를 무시해 deny 가 조용히
@@ -456,5 +486,19 @@ describe('parseOpenCodeEvent', () => {
     const doneEv = events.find((e) => e!.type === 'done');
     expect(doneEv!.inputTokens).toBe(77);
     expect(doneEv!.outputTokens).toBe(4);
+  });
+});
+
+// WD-62: 리포트 전문이 지워지지 않는 트랜스크립트에 남지 않게 한다.
+describe('transcriptToolInput', () => {
+  it('write_report_file 의 content 는 글자 수로 바꾸고 fileName 은 남긴다', () => {
+    expect(
+      transcriptToolInput('mcp__firehub__write_report_file', { fileName: 'report.html', content: '<html>본문</html>' }),
+    ).toEqual({ fileName: 'report.html', content: '[15자 생략]' });
+  });
+
+  it('다른 도구의 입력은 그대로 둔다', () => {
+    const input = { sql: 'SELECT 1', content: '그대로' };
+    expect(transcriptToolInput('mcp__firehub__execute_analytics_query', input)).toBe(input);
   });
 });

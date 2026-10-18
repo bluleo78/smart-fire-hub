@@ -103,6 +103,24 @@ describe('stdio-server main() — 세션 사용자 권한으로 도구 등록 �
     expect(mcpServerConnectMock).toHaveBeenCalledTimes(1);
   });
 
+  // WD-62: 리포트 쓰기 도구는 부모가 reportDir 을 주입한 실행(opencode Proactive)에서만 노출된다.
+  it('FIREHUB_REPORT_DIR 가 주입되면 write_report_file 을 등록한다 (WD-62)', async () => {
+    getSessionPermissionsMock.mockResolvedValue([]);
+    process.env.FIREHUB_REPORT_DIR = '/tmp/proactive-report/t3/7-1';
+    const { main } = await import('./stdio-server.js');
+    await main();
+    expect(registeredToolNames).toContain('write_report_file');
+  });
+
+  it('FIREHUB_REPORT_DIR 가 없으면(일반 채팅·CLI) write_report_file 을 등록하지 않는다 (WD-62)', async () => {
+    getSessionPermissionsMock.mockResolvedValue([]);
+    delete process.env.FIREHUB_REPORT_DIR;
+    const { main } = await import('./stdio-server.js');
+    await main();
+    expect(registeredToolNames).not.toContain('write_report_file');
+    expect(registeredToolNames).toContain(UNGATED);
+  });
+
   it('main() 이후 console.log/info 는 stderr(console.error)로 간다 — stdout 은 JSON-RPC 전용', async () => {
     getSessionPermissionsMock.mockResolvedValue([]);
     const { main } = await import('./stdio-server.js');

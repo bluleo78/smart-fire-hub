@@ -151,6 +151,19 @@ describe('executeOpenCodeAgent — 자식 프로세스 env/디스크 배선', ()
     expect(existsSync(join(workDir, 'opencode.json'))).toBe(false);
   });
 
+  // WD-62: proactive 라우트가 실은 reportDir 이 opencode 자식에게 넘기는 MCP env 까지 도달해야 한다.
+  it('실행 옵션의 reportDir 을 OPENCODE_CONFIG_CONTENT 의 MCP 환경으로 전달한다 (WD-62)', async () => {
+    await driveToInit({ ...OPTIONS, reportDir: '/tmp/proactive-report/t3/7-9' });
+    const parsed = JSON.parse(spawnEnv().OPENCODE_CONFIG_CONTENT);
+    expect(parsed.mcp.firehub.environment.FIREHUB_REPORT_DIR).toBe('/tmp/proactive-report/t3/7-9');
+  });
+
+  it('reportDir 이 없으면(일반 채팅) MCP 환경에 FIREHUB_REPORT_DIR 가 없다 (WD-62)', async () => {
+    await driveToInit();
+    const parsed = JSON.parse(spawnEnv().OPENCODE_CONFIG_CONTENT);
+    expect('FIREHUB_REPORT_DIR' in parsed.mcp.firehub.environment).toBe(false);
+  });
+
   it('userWorkDir 에 남아있던 과거 opencode.json 파일을 지운다', async () => {
     const workDir = opencodeWorkspaceDir(OPTIONS.tenantId, OPTIONS.userId);
     await mkdir(workDir, { recursive: true });
