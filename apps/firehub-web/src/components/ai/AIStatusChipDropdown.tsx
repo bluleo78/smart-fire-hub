@@ -132,10 +132,6 @@ function QuickInput({
             e.preventDefault();
             handleSend();
           }
-          if (e.key === 'Escape') {
-            e.preventDefault();
-            onCloseDropdown();
-          }
         }}
         placeholder="AI에게 질문하기..."
         className="flex-1 rounded-lg border border-border/50 bg-muted/30 px-3 py-1.5 text-xs text-foreground placeholder:text-muted-foreground outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary transition-colors"
@@ -196,12 +192,6 @@ export function AIStatusChipDropdown({
         marginTop: 8,
         opacity: visible ? 1 : 0,
         transform: `translateX(-50%) translateY(${visible ? '0' : '4px'})`,
-      }}
-      onKeyDown={(e) => {
-        if (e.key === 'Escape') {
-          e.preventDefault();
-          onCloseDropdown();
-        }
       }}
     >
       <div className="p-3 space-y-3">
