@@ -16,7 +16,7 @@ import { tmpdir } from 'os';
 import { createInterface } from 'readline';
 import { randomUUID } from 'crypto';
 import type { ChatProviderOptions, SSEEvent } from '../providers/types.js';
-import type { SharePurpose } from '../mcp/api-client.js';
+import { FireHubApiClient, type SharePurpose } from '../mcp/api-client.js';
 import {
   splitOpencodeModelOrNull,
   type OpencodeModelParts,
@@ -34,6 +34,15 @@ import { assertSafeCompletionTarget } from '../providers/ssrf-guard.js';
 import { AdminActionableError } from './admin-actionable-error.js';
 import { assertNoAmbientOpencodeAuth } from './opencode-ambient-auth-guard.js';
 import { claimSession } from './session-owner.js';
+import {
+  buildNonImageAttachmentSection,
+  cleanupChatFiles,
+  downloadChatFiles,
+  formatAttachmentLine,
+  saveSessionAttachments,
+  toAttachmentMeta,
+  type DownloadedFile,
+} from './file-downloader.js';
 import type { HistoryMessage, HistoryToolCall } from './transcript-reader.js';
 import { MAX_BUDGET_USD, COST_ALARM_TOKENS, COST_ALARM_TURNS } from '../constants.js';
 import { createTracker, buildHaltMessage } from './failure-streak.js';
@@ -406,10 +415,72 @@ export function buildOpenCodeRunArgs(
   message: string,
   workDir: string,
   resumeSessionId?: string,
+  attachPaths: string[] = [],
 ): string[] {
   const args = ['run', message, '--dir', workDir, '--format', 'json'];
+  // WD-55: 첨부는 파일마다 `--file <경로>` 를 반복한다. -f 는 yargs array 옵션이라 뒤따르는 위치
+  // 인자를 삼키므로, 메시지는 반드시 위처럼 맨 앞(run 다음)에 둔다.
+  for (const p of attachPaths) args.push('--file', p);
   if (resumeSessionId) args.push('--session', resumeSessionId);
   return args;
+}
+
+/** opencode 내부 Read 가 본문으로 인라인할 수 있는 텍스트 계열 MIME(이미지 외). */
+const OPENCODE_TEXT_LIKE_MIMES = new Set(['application/json', 'application/xml', 'application/x-yaml', 'application/csv']);
+
+/**
+ * `opencode run --file` 로 넘길 첨부인지 (WD-55).
+ *
+ * <p><b>왜 --file 인가</b>: opencode 경로는 내장 read 도구를 꺼 두었으므로(buildOpenCodeConfig) 경로만
+ * 알려 주면 모델이 내용을 볼 방법이 없다. `--file` 로 넘긴 로컬 파일은 opencode(1.18.34 소스
+ * `cli/cmd/run.ts`·`session/prompt.ts`)가 프롬프트 조립 시 내부 Read 를 권한 확인 없이 직접 실행해,
+ * 텍스트는 본문(50KB/2000줄 상한)으로, png/jpeg/gif/webp 는 이미지 파트로 사용자 메시지에 붙인다.
+ *
+ * <p><b>왜 xlsx/docx/pdf 는 빼는가</b>: 내부 Read 가 바이너리를 "Cannot read binary file" 로 거부하며
+ * session error 이벤트를 낸다(실측) — 정상 진행 중인데 프론트엔 오류로 보인다. 이런 파일은 섹션의
+ * fileId 로 firehub 도구(preview_csv 등)를 쓰게 둔다.
+ */
+const isImageFile = (file: DownloadedFile) => file.mimeType.startsWith('image/');
+
+function isOpenCodeInlineAttachment(file: DownloadedFile): boolean {
+  return isImageFile(file) || file.mimeType.startsWith('text/') || OPENCODE_TEXT_LIKE_MIMES.has(file.mimeType);
+}
+
+/**
+ * 이미지를 첨부한 요청이 실패했을 때 원래 오류 뒤에 덧붙이는 안내.
+ * 원인을 단정하지 않는다 — 인증·쿼터·네트워크 오류일 수도 있으므로 원문을 앞에 그대로 둔다.
+ */
+export const OPENCODE_IMAGE_UNSUPPORTED_NOTICE =
+  '이미지를 첨부한 요청입니다. 현재 모델이 이미지를 읽을 수 없는 경우에도 이 오류가 날 수 있으니, 이미지 입력을 지원하는 모델인지 확인하거나 이미지 없이 다시 시도해 주세요.';
+
+/**
+ * 첨부 안내를 붙인 사용자 메시지를 만든다 (WD-55).
+ *
+ * <p>비이미지는 SDK/CLI 와 같은 「[첨부 파일]」 섹션(fileId 포함 — MCP 임포트 도구 인자, #264)이고,
+ * 이미지는 줄 목록과 함께 "못 보면 추측하지 말고 안내하라"는 지시를 붙인다. 이미지 미지원 모델에
+ * 이미지를 보내면 공급자가 오류 없이 이미지를 버리고 모델이 내용을 지어내는 경우가 있어서다.
+ * 단 best-effort 다 — 텍스트 전용 모델이 이 지시를 무시하고 파일명·크기로 내용을 지어낸 실측이
+ * 있다(WD-55 라이브 c2-r3). 확실한 해법은 사전 모델 기능 확인이며 이 함수의 범위 밖이다.
+ */
+function buildOpenCodeAttachmentMessage(message: string, files: DownloadedFile[]): string {
+  const images = files.filter(isImageFile);
+  const others = files.filter((f) => !isImageFile(f));
+  const sections: string[] = [];
+  if (others.length > 0) {
+    sections.push(
+      buildNonImageAttachmentSection(
+        others,
+        '텍스트 계열 파일 내용은 이 메시지에 함께 첨부되어 있습니다. 그 밖의 파일은 fileId 로 firehub 도구를 사용하세요.',
+      ),
+    );
+  }
+  if (images.length > 0) {
+    const lines = images.map((f) => formatAttachmentLine(f, false)).join('\n');
+    sections.push(
+      `[첨부 이미지]\n${lines}\n이미지는 이 메시지에 함께 첨부되어 있습니다. 이미지 내용이 실제로 보이지 않으면 추측하지 말고 "현재 모델은 이미지를 읽을 수 없습니다"라고 안내하세요.`,
+    );
+  }
+  return `${sections.join('\n\n')}\n\n${message || '첨부된 파일을 분석해주세요.'}`;
 }
 
 /** opencode CLI 스폰에 필요한 테넌트 opencode provider 자격증명. ProviderFactory 가 생성 시점에 채운다. */
@@ -471,8 +542,7 @@ export async function* executeOpenCodeAgent(
   options: ChatProviderOptions,
   credentials: OpenCodeCredentials,
 ): AsyncGenerator<SSEEvent> {
-  // fileIds(첨부)는 v1 범위 외 — 의도적으로 destructure 하지 않음.
-  const { message, tenantId, userId, systemPrompt, overrideSystemPrompt, abortSignal, model, aiPurpose, reportDir } =
+  const { message, tenantId, userId, fileIds, systemPrompt, overrideSystemPrompt, abortSignal, model, aiPurpose, reportDir } =
     options;
 
   const apiBaseUrl = process.env.API_BASE_URL ?? 'http://localhost:8080/api/v1';
@@ -589,10 +659,6 @@ export async function* executeOpenCodeAgent(
   const effectiveSystemPrompt = resolveSystemPrompt(OPENCODE_SYSTEM_PROMPT, systemPrompt, overrideSystemPrompt);
   await writeFile(join(userWorkDir, 'AGENTS.md'), effectiveSystemPrompt, 'utf-8');
 
-  // 재개: opencode 자체 발급 세션 id(ses_...) 를 --session 에 전달.
-  // OpenCode 가 외부 id 를 수용하지 않으므로 첫 이벤트 sessionID 를 캡처해 저장/재사용.
-  const cliArgs = buildOpenCodeRunArgs(message || '', userWorkDir, isResume ? opencodeSessionId : undefined);
-
   // 자식 프로세스 환경 구성 — **허용 목록**으로 빈 객체에서 조립한다(이슈 #696).
   //
   // #693 은 여기를 denylist(알려진 자격증명 이름을 지우는 방식)로 막았다. 그 목록은 닫힌 목록이
@@ -617,11 +683,42 @@ export async function* executeOpenCodeAgent(
   // 확인해 이 요청만 막는다(아래 함수 주석에 왜 기동 실패가 아닌지 적어 뒀다).
   await assertNoAmbientOpencodeAuth(childEnv);
 
-  const child = spawn('opencode', cliArgs, {
-    cwd: userWorkDir,
-    env: childEnv,
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  // WD-55: 첨부 다운로드 — throw 하는 검사(SSRF·설정·ambient 인증)를 모두 통과한 뒤에 받아야 정리 누락이 없다.
+  // 테넌트·사용자 격리 워크스페이스 아래 요청별 무작위 디렉터리(동시 요청이 서로의 파일을 지우지 않게)이고,
+  // 다운로드 실패(만료/삭제)는 SDK/CLI 경로처럼 경고만 남기고 받은 파일로 진행한다.
+  const chatFilesDir = join(userWorkDir, 'chat-files', randomUUID());
+  let attachedFiles: DownloadedFile[] = [];
+  if (fileIds?.length) {
+    const apiClient = new FireHubApiClient(apiBaseUrl, internalToken, userId, tenantId);
+    const { files, failed } = await downloadChatFiles(apiClient, fileIds, chatFilesDir);
+    if (failed > 0) console.warn(`[OpenCode Agent] ${failed}개 파일 다운로드 실패 (만료/삭제됨)`);
+    attachedFiles = files;
+    // 히스토리에서 첨부를 표시하기 위한 사이드카(CLI 경로와 동일, best-effort).
+    if (files.length > 0) saveSessionAttachments(tenantId, firehubSessionId, toAttachmentMeta(files)).catch(() => {});
+  }
+  const hasImage = attachedFiles.some(isImageFile);
+
+  // 재개: opencode 자체 발급 세션 id(ses_...) 를 --session 에 전달.
+  // OpenCode 가 외부 id 를 수용하지 않으므로 첫 이벤트 sessionID 를 캡처해 저장/재사용.
+  const cliArgs = buildOpenCodeRunArgs(
+    attachedFiles.length > 0 ? buildOpenCodeAttachmentMessage(message, attachedFiles) : message || '',
+    userWorkDir,
+    isResume ? opencodeSessionId : undefined,
+    attachedFiles.filter(isOpenCodeInlineAttachment).map((f) => f.localPath),
+  );
+
+  let child: ReturnType<typeof spawn>;
+  try {
+    child = spawn('opencode', cliArgs, {
+      cwd: userWorkDir,
+      env: childEnv,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+  } catch (err) {
+    // 동기 spawn 실패(예: 메시지의 NUL 바이트 → ERR_INVALID_ARG_VALUE)는 아래 try/finally 밖이다.
+    await cleanupChatFiles(chatFilesDir);
+    throw err;
+  }
 
   if (abortSignal) {
     abortSignal.addEventListener('abort', () => child.kill('SIGTERM'), { once: true });
@@ -716,6 +813,12 @@ export async function* executeOpenCodeAgent(
         else if (ev.type === 'tool_result' && assistantToolCalls.length > 0) assistantToolCalls[assistantToolCalls.length - 1].result = String(ev.result ?? '');
         else if (ev.type === 'turn') commitAssistant();
         else if (ev.type === 'done') { sawTerminal = true; await saveTranscript(); }
+        // WD-55: 이미지를 첨부한 요청의 오류는 이미지 미지원 모델/공급자 거부일 수 있다 — 원문만
+        // 내보내면 사용자는 왜 실패했는지 모른다. 원문은 앞에 그대로 두고 가능성을 덧붙인다.
+        if (ev.type === 'error' && hasImage) {
+          yield { ...ev, message: `${String(ev.message ?? '')}\n\n${OPENCODE_IMAGE_UNSUPPORTED_NOTICE}` };
+          continue;
+        }
         yield ev;
         // WD-60 Tier2: 같은 도구가 같은 오류로 연속 실패하면 강제 중단한다(CLI 경로와 같은 순서 —
         // 실패 결과를 프론트에 먼저 전달한 뒤 중단 error). 같은 도구가 한 번 성공하면 리셋된다.
@@ -740,6 +843,9 @@ export async function* executeOpenCodeAgent(
     // XDG 설정 디렉터리는 <b>지우지 않는다</b> — 프로세스 공용이라 여기서 지우면 다른 요청의
     // 캐시까지 날린다(재검토 D1). 수명·정리 방침은 getSharedXdgConfigDir 주석 참고.
     await saveTranscript().catch(() => {}); // done 누락(비정상 종료)에도 진행분 보존
+    // WD-55: 첨부 임시 파일 정리 — opencode 는 프롬프트 조립 시 파일을 메시지에 담아 세션에 저장하므로
+    // 실행이 끝나면 원본은 필요 없다(재개 시에도 세션 이력의 첨부 파트를 쓴다).
+    await cleanupChatFiles(chatFilesDir);
     const stderr = stderrChunks.join('');
     if (stderr) console.error('[OpenCode Agent] stderr:', stderr);
     // 종결 이벤트가 없었으면(프로세스 비정상 종료 등) 에러로 마감

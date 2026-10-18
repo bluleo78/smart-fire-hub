@@ -109,6 +109,23 @@ describe('downloadChatFiles', () => {
     expect(result.files[0].originalName).toBe('면담 노트.txt');
   });
 
+  // FD-03c (WD-55): 업로드 원본 이름의 경로 구분자로 다운로드 디렉터리를 벗어나지 못한다 — opencode 는
+  // 워크스페이스의 opencode.json·AGENTS.md 를 설정/시스템 지시로 읽으므로 덮어쓰기가 곧 설정 탈취다.
+  it.each([
+    ['../../opencode.json', 'opencode.json'],
+    ['..\\..\\AGENTS.md', 'AGENTS.md'],
+    ['..', 'file-1'],
+    ['', 'file-1'],
+  ])('FD-03c: 원본 이름 %j 는 디렉터리 안의 %j 로 저장된다', async (originalName, expected) => {
+    const apiClient = makeApiClient({
+      getFileInfo: vi.fn().mockResolvedValue({ id: 1, originalName, mimeType: 'text/plain', fileCategory: 'TEXT', fileSize: 1 }),
+    } as Partial<FireHubApiClient>);
+
+    const result = await downloadChatFiles(apiClient, [1], TEST_DIR);
+
+    expect(result.files[0].localPath).toBe(path.join(TEST_DIR, expected));
+  });
+
   // FD-04: handles partial failures with Promise.allSettled
   it('FD-04: partial failure — failed files counted, successful files returned', async () => {
     const apiClient = makeApiClient({
