@@ -148,4 +148,22 @@ public class AiController {
 
     return emitter;
   }
+
+  /**
+   * WD-57: 진행 중인 채팅 응답을 서버에서도 멈춘다. 웹의 "응답 중단"은 브라우저 연결만 끊는데, ai-agent 는 연결이 끊겨도 작업을 계속하도록 설계돼
+   * 있어(의도) 명시적 취소가 따로 필요하다.
+   *
+   * <p>소유 검증은 {@link AiSessionService#verifyNotOthersSession} — 채팅과 같은 기준이다. 세션 기록(ai_session)은 웹이
+   * init 이벤트를 받은 뒤 비동기로 만들고 실패할 수도 있어(WD-58), 기록 존재를 요구하면 첫 턴 중단이 403 이 된다. ai-agent 가 실행을 시작한
+   * 테넌트·사용자와 다시 대조한다.
+   */
+  @PostMapping("/chat/{sessionId}/cancel")
+  @RequirePermission("ai:write")
+  public ResponseEntity<Void> cancelChat(
+      Authentication authentication, @PathVariable String sessionId) {
+    Long userId = (Long) authentication.getPrincipal();
+    aiSessionService.verifyNotOthersSession(userId, sessionId);
+    aiAgentProxyService.cancelChat(sessionId, userId);
+    return ResponseEntity.noContent().build();
+  }
 }

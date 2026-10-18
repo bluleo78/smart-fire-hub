@@ -14,6 +14,14 @@ import { checkSessionOwnership } from '../agent/session-owner.js';
 import { isValidTenantId } from '../agent/tenant-paths.js';
 import { AdminActionableError } from '../agent/admin-actionable-error.js';
 import { buildClaudeChildEnv, VERIFY_MAX_RETRIES } from '../agent/claude-child-env.js';
+import {
+  acquireSessionRun,
+  cancelSessionRun,
+  registerNewSessionRun,
+  releaseSessionRun,
+  SESSION_BUSY_WAIT_MS,
+  type SessionRun,
+} from '../agent/session-runs.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -87,6 +95,22 @@ router.post('/chat', internalAuth, async (req: Request, res: Response) => {
     return;
   }
 
+  // WD-57 세션 가드: 같은 세션의 이전 실행이 아직 돌고 있으면 잠깐 기다리고, 그래도 남아 있으면 409 로 거절한다.
+  // 겹쳐 돌면 트랜스크립트 전체 덮어쓰기로 턴이 유실되고 응답이 섞인다. SSE 헤더를 보내기 **전에** 판정해야
+  // 상태 코드로 거절할 수 있다. 새 세션(sessionId 없음)은 아직 겹칠 상대가 없으므로 init 에서 등록한다(아래).
+  const requestedSessionId = typeof sessionId === 'string' && sessionId ? sessionId : undefined;
+  let run: SessionRun | null = null;
+  if (requestedSessionId) {
+    run = await acquireSessionRun(tenantId, requestedSessionId, userId, SESSION_BUSY_WAIT_MS);
+    if (!run) {
+      console.warn(`[Agent] 세션 ${requestedSessionId} 은 이전 실행이 진행 중이라 새 요청을 거절한다(409)`);
+      res.status(409).json({ code: 'session_busy', error: '이전 응답을 처리 중입니다. 잠시 후 다시 시도해 주세요.' });
+      return;
+    }
+  }
+  // 공급자에 넘길 취소 신호. 새 세션은 init 전에 실행이 시작되므로 컨트롤러를 먼저 만들어 두고 등록 때 넘긴다.
+  const controller = run?.controller ?? new AbortController();
+
   // Set SSE headers
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -131,7 +155,7 @@ router.post('/chat', internalAuth, async (req: Request, res: Response) => {
     const provider = ProviderFactory.createChatProvider(providerConfig);
     const events = provider.execute({
       message: message || '',
-      sessionId: sessionId || undefined,
+      sessionId: requestedSessionId,
       tenantId,
       userId,
       fileIds: hasFileIds ? (fileIds as number[]) : undefined,
@@ -142,7 +166,9 @@ router.post('/chat', internalAuth, async (req: Request, res: Response) => {
         .join('\n\n') || undefined,
       temperature,
       maxTokens,
-      abortSignal: undefined,
+      // WD-57: 명시적 취소(POST /agent/chat/:sessionId/cancel)만 이 신호를 abort 한다 — 클라이언트 연결 끊김은
+      // 여전히 작업을 계속한다(위 close 핸들러). 공급자는 abort 시 자식을 kill(SDK 는 abort)하고 진행분을 저장한다.
+      abortSignal: controller.signal,
       // S3: api 가 Slack 인바운드처럼 답변이 발송되는 경로에서만 'share' 를 싣는다(AiChatRequestBuilder) — 이 실행의
       // MCP 호출이 X-AI-Purpose: share 를 붙여 share_policy 판정을 받게 한다. 'share' 외의 값은 버린다 — 특히
       // 'none'(AI 판정 제외)이 바디로 들어와도 LLM 실행에 실리면 안 된다(proactive.ts 와 같은 규칙).
@@ -150,7 +176,13 @@ router.post('/chat', internalAuth, async (req: Request, res: Response) => {
     });
 
     for await (const event of events) {
-      if (clientDisconnected) continue;
+      // 새 세션은 첫 init 에서 받은 id 로 등록한다 — 첫 턴도 취소할 수 있고, 첫 턴 중 같은 세션으로 들어온 요청이 가드에 걸린다.
+      if (!run && event.type === 'init' && typeof event.sessionId === 'string') {
+        run = registerNewSessionRun(tenantId, event.sessionId, userId, controller);
+      }
+      // 취소된 뒤의 이벤트(공급자의 종결 error 등)는 중계하지 않는다 — 사용자가 이미 멈춘 응답이다.
+      // 루프는 끝까지 소비해 공급자의 정리(트랜스크립트 저장)가 끝난 뒤에 슬롯을 놓는다.
+      if (clientDisconnected || controller.signal.aborted) continue;
 
       const eventType = event.type;
       const eventData = JSON.stringify(event);
@@ -183,13 +215,41 @@ router.post('/chat', internalAuth, async (req: Request, res: Response) => {
     if (!res.headersSent) {
       res.status(500).json({ error: isActionable ? userMessage : 'Internal server error' });
     } else {
-      res.write(`event: error\n`);
-      res.write(`data: ${JSON.stringify({ type: 'error', message: userMessage })}\n\n`);
+      // 취소된 실행의 뒤늦은 오류는 알리지 않는다(사용자가 이미 멈춘 응답) — 응답만 닫는다.
+      if (!controller.signal.aborted) {
+        res.write(`event: error\n`);
+        res.write(`data: ${JSON.stringify({ type: 'error', message: userMessage })}\n\n`);
+      }
       res.end();
     }
   } finally {
     clearInterval(pingTimer);
+    // 정상 종료·오류·취소 어느 경로든 여기서 슬롯을 놓는다. 공급자 제너레이터의 finally(트랜스크립트 저장)가
+    // 끝난 뒤라 다음 실행은 최신 기록을 읽는다 — done 이벤트 시점에 놓으면 그 저장과 경합한다.
+    if (run) releaseSessionRun(run);
   }
+});
+
+/**
+ * WD-57: 진행 중 채팅 실행 취소. 사용자가 "응답 중단"을 눌렀을 때 firehub-api 가 부른다.
+ *
+ * <p>1차 소유권 검증(세션이 남의 것이 아님)은 firehub-api 가 하고, 여기서는 실행을 시작한 테넌트·사용자와 일치할
+ * 때만 취소한다. 실행이 없거나 주인이 다르면 존재를 알리지 않고 404. 취소는 신호만 보내고 즉시 202 로 답한다 —
+ * 정리가 끝나 슬롯이 풀리는 것은 /chat 라우트의 finally 다.
+ */
+router.post('/chat/:sessionId/cancel', internalAuth, (req: Request, res: Response) => {
+  const sessionId = req.params.sessionId as string;
+  const { tenantId, userId } = req.body ?? {};
+  if (!isValidTenantId(tenantId) || typeof userId !== 'number') {
+    res.status(400).json({ error: 'tenantId and userId are required' });
+    return;
+  }
+  if (!cancelSessionRun(tenantId, sessionId, userId)) {
+    res.status(404).json({ error: 'Not found' });
+    return;
+  }
+  console.log(`[Agent] 세션 ${sessionId} 실행 취소 요청 — 공급자 실행을 중단한다`);
+  res.status(202).json({ cancelled: true });
 });
 
 // Session listing placeholder

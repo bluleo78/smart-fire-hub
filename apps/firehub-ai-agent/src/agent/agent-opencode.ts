@@ -722,6 +722,8 @@ export async function* executeOpenCodeAgent(
 
   if (abortSignal) {
     abortSignal.addEventListener('abort', () => child.kill('SIGTERM'), { once: true });
+    // WD-57: spawn 전 준비 단계(트랜스크립트 읽기·첨부 다운로드 등) 중 이미 취소됐으면 리스너가 불리지 않는다 — 즉시 끝낸다.
+    if (abortSignal.aborted) child.kill('SIGTERM');
   }
 
   const stderrChunks: string[] = [];

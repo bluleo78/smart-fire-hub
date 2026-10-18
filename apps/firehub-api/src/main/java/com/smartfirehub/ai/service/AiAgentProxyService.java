@@ -17,6 +17,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 import reactor.netty.http.client.HttpClient;
 
 @Service
@@ -24,6 +25,21 @@ import reactor.netty.http.client.HttpClient;
 public class AiAgentProxyService {
 
   private static final Duration TIMEOUT = Duration.ofMinutes(5);
+
+  /** WD-57: 같은 세션의 이전 응답이 아직 처리 중이라 ai-agent 가 새 요청을 거절했음을 웹에 알리는 오류 코드. */
+  private static final String SESSION_BUSY_CODE = "session_busy";
+
+  private static final String SESSION_BUSY_MESSAGE = "이전 응답을 처리 중입니다. 잠시 후 다시 시도해 주세요.";
+
+  /**
+   * WD-57: ai-agent 가 409(같은 세션 실행 중)로 거절했음을 나타낸다. 다른 비 2xx 와 구분해야 웹에 "연결 실패"가 아니라 "이전 응답 처리 중" 안내를
+   * 보낼 수 있다.
+   */
+  static final class SessionBusyException extends RuntimeException {
+    SessionBusyException() {
+      super("Agent session busy");
+    }
+  }
 
   private final WebClient webClient;
   private final ObjectMapper objectMapper;
@@ -160,6 +176,9 @@ public class AiAgentProxyService {
         .accept(MediaType.TEXT_EVENT_STREAM)
         .exchangeToFlux(
             response -> {
+              if (response.statusCode().value() == 409) {
+                return response.releaseBody().thenMany(Flux.error(new SessionBusyException()));
+              }
               if (!response.statusCode().is2xxSuccessful()) {
                 return response
                     .bodyToMono(String.class)
@@ -174,6 +193,33 @@ public class AiAgentProxyService {
                   new ParameterizedTypeReference<ServerSentEvent<String>>() {});
             })
         .timeout(TIMEOUT);
+  }
+
+  /**
+   * WD-57: 진행 중인 채팅 실행을 취소한다(사용자가 "응답 중단"을 누름). ai-agent 가 실행의 abort 신호를 당겨 자식 프로세스를 끝내고 그때까지의 기록을
+   * 저장한다.
+   *
+   * <p>테넌트·사용자를 함께 실어 ai-agent 가 실행 주인과 대조하게 한다. 진행 중 실행이 없으면(404 — 이미 끝났거나 아직 시작 전) 할 일이 없으므로 조용히
+   * 끝낸다(멱등). 그 밖의 실패(ai-agent 재기동·지연)도 경고만 남긴다 — 화면의 중단은 이미 끝났고, 취소 실패로 사용자에게 500 을 줄 이유가 없다.
+   */
+  public void cancelChat(String sessionId, Long userId) {
+    long tenantId = TenantContext.require("AI 챗 취소");
+    try {
+      webClient
+          .post()
+          .uri("/agent/chat/{sessionId}/cancel", sessionId)
+          .header("Authorization", "Internal " + internalToken)
+          .contentType(MediaType.APPLICATION_JSON)
+          .bodyValue(Map.of("tenantId", tenantId, "userId", userId))
+          .retrieve()
+          .onStatus(
+              status -> status.value() == 404,
+              response -> response.releaseBody().then(Mono.empty()))
+          .toBodilessEntity()
+          .block(Duration.ofSeconds(2));
+    } catch (RuntimeException e) {
+      log.warn("[AI Chat] 세션 {} 실행 취소 실패 — 화면에서만 중단됨: {}", sessionId, e.getMessage());
+    }
   }
 
   public void streamChat(
@@ -279,6 +325,24 @@ public class AiAgentProxyService {
           }
         },
         error -> {
+          // WD-57: 같은 세션의 이전 실행이 남아 있어 거절된 경우. SSE(200)가 이미 열려 있어 409 상태를 그대로 줄 수 없으므로
+          // 코드가 붙은 오류 이벤트로 전달하고 정상 종료한다 — 웹이 이 코드로 "이전 응답 처리 중" 안내를 띄운다.
+          if (error instanceof SessionBusyException) {
+            log.info("[AI Chat] 세션 {} 이전 실행이 처리 중이라 요청이 거절됨", sessionId);
+            try {
+              emitter.send(
+                  SseEmitter.event()
+                      .data(
+                          objectMapper.writeValueAsString(
+                              Map.of(
+                                  "type", "error",
+                                  "code", SESSION_BUSY_CODE,
+                                  "message", SESSION_BUSY_MESSAGE))));
+              emitter.complete();
+            } catch (IOException ignored) {
+            }
+            return;
+          }
           log.error("[AI Chat] Agent stream error: {}", error.getMessage());
           try {
             String payload =

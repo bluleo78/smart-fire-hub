@@ -373,6 +373,90 @@ class AiAgentProxyServiceTest extends IntegrationTestBase {
   }
 
   /**
+   * WD-57: ai-agent 가 같은 세션의 이전 실행이 남아 있어 409 로 거절하면, 브라우저에는 이미 200 SSE 가 열려 있으므로 상태 코드 대신 {@code
+   * code=session_busy} 오류 이벤트로 전달하고 정상 종료(complete)한다 — completeWithError 로 끝내면 웹은 네트워크 오류로 오인한다.
+   */
+  @Test
+  void streamChat_agent가_409면_session_busy_오류이벤트로_전달하고_정상종료한다() throws IOException {
+    when(settingsService.getAsMap("ai")).thenReturn(Map.of("ai.model", "claude-sonnet-5"));
+    when(aiCredentialService.resolve()).thenReturn(new AiCredential.Sdk("oat-test", ""));
+    wireMock.stubFor(
+        post(urlEqualTo("/agent/chat"))
+            .willReturn(
+                aResponse()
+                    .withStatus(409)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("{\"code\":\"session_busy\",\"error\":\"이전 응답을 처리 중입니다\"}")));
+
+    SseEmitter emitter = spy(new SseEmitter());
+    aiAgentProxyService.streamChat(emitter, "hi", "sess-busy", List.of(), 1L, null, null);
+
+    await().atMost(Duration.ofSeconds(3)).untilAsserted(() -> verify(emitter).complete());
+    verify(emitter, org.mockito.Mockito.never())
+        .completeWithError(org.mockito.ArgumentMatchers.any());
+    ArgumentCaptor<SseEmitter.SseEventBuilder> eventCaptor =
+        ArgumentCaptor.forClass(SseEmitter.SseEventBuilder.class);
+    verify(emitter, org.mockito.Mockito.atLeastOnce()).send(eventCaptor.capture());
+    String allSent =
+        eventCaptor.getAllValues().stream()
+            .flatMap(b -> b.build().stream())
+            .map(d -> d.getData().toString())
+            .reduce("", String::concat);
+    assertThat(allSent).contains("\"code\":\"session_busy\"").contains("이전 응답을 처리 중입니다");
+    assertThat(allSent).doesNotContain("Agent connection failed");
+  }
+
+  /** WD-57: 취소 프록시는 테넌트(요청 스레드의 컨텍스트)와 사용자 id 를 바디에 실어 ai-agent 의 취소 엔드포인트를 부른다. */
+  @Test
+  void cancelChat_테넌트와_사용자를_실어_agent_취소엔드포인트를_부른다() {
+    wireMock.stubFor(
+        post(urlEqualTo("/agent/chat/sess-1/cancel"))
+            .willReturn(aResponse().withStatus(202).withBody("{\"cancelled\":true}")));
+
+    aiAgentProxyService.cancelChat("sess-1", 42L);
+
+    wireMock.verify(
+        postRequestedFor(urlEqualTo("/agent/chat/sess-1/cancel"))
+            .withHeader("Authorization", matching("Internal .+"))
+            .withRequestBody(
+                matchingJsonPath("$.tenantId", equalTo(String.valueOf(DEFAULT_TEST_TENANT_ID))))
+            .withRequestBody(matchingJsonPath("$.userId", equalTo("42"))));
+  }
+
+  /** WD-57: 진행 중 실행이 없으면(ai-agent 404) 이미 끝난 응답을 멈춘 것이므로 오류가 아니다 — 멱등. */
+  @Test
+  void cancelChat_진행중_실행이_없으면_조용히_끝난다() {
+    wireMock.stubFor(
+        post(urlEqualTo("/agent/chat/sess-gone/cancel"))
+            .willReturn(aResponse().withStatus(404).withBody("{\"error\":\"Not found\"}")));
+
+    aiAgentProxyService.cancelChat("sess-gone", 42L);
+
+    wireMock.verify(1, postRequestedFor(urlEqualTo("/agent/chat/sess-gone/cancel")));
+  }
+
+  /** WD-57: ai-agent 가 오류(5xx)를 내도 취소 실패는 사용자 오류로 올리지 않는다 — 화면 중단은 이미 끝났다. */
+  @Test
+  void cancelChat_agent오류여도_예외를_올리지_않는다() {
+    wireMock.stubFor(
+        post(urlEqualTo("/agent/chat/sess-err/cancel")).willReturn(aResponse().withStatus(500)));
+
+    aiAgentProxyService.cancelChat("sess-err", 42L);
+
+    wireMock.verify(1, postRequestedFor(urlEqualTo("/agent/chat/sess-err/cancel")));
+  }
+
+  /** WD-57: 테넌트 컨텍스트가 없으면 취소 호출도 나가지 않는다(fail-closed). */
+  @Test
+  void cancelChat_테넌트컨텍스트가_없으면_실패하고_호출이_나가지_않는다() {
+    TenantContext.clear();
+
+    assertThatThrownBy(() -> aiAgentProxyService.cancelChat("sess-1", 42L))
+        .isInstanceOf(MissingTenantScopeException.class);
+    wireMock.verify(0, postRequestedFor(urlEqualTo("/agent/chat/sess-1/cancel")));
+  }
+
+  /**
    * 세션 이력 조회가 테넌트를 쿼리 파라미터로 실어 보내는지 확인한다.
    *
    * <p>ai-agent 는 트랜스크립트를 테넌트별 디렉터리에 저장하므로 이 값이 없으면 400 이고, 값이 틀리면 남의 테넌트 디렉터리를 뒤진다 — 경로 파생 입력이라

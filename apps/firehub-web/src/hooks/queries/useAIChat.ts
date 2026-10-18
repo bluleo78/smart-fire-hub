@@ -64,6 +64,11 @@ export function useAIChat(options?: {
   const streamingContentRef = useRef<Partial<AIMessage> | null>(null);
   // 스트리밍 중단 시 메시지 유실 방지용 — messages[]에 커밋되기 전 userMessage 보관
   const pendingUserMessageObjRef = useRef<AIMessage | null>(null);
+  // WD-57: 진행 중인 스트림의 세션 id. 새 세션은 init 이벤트에서야 알게 되는데 stopStreaming 은 그 직후에도
+  // 불릴 수 있어 state(다음 렌더에 반영)가 아니라 ref 로 읽는다.
+  const streamSessionIdRef = useRef<string | null>(null);
+  // WD-57: 보낸 취소 요청. 다음 전송은 이것이 끝난 뒤에 나가야 취소가 새 요청의 실행을 잘못 멈추지 않는다.
+  const pendingCancelRef = useRef<Promise<void> | null>(null);
 
   /**
    * 압축 진행 표시 해제.
@@ -124,6 +129,14 @@ export function useAIChat(options?: {
 
   const sendMessage = useCallback(async (content: string, files?: File[]) => {
     messagesCommittedRef.current = false;
+
+    // WD-57: 직전에 누른 "응답 중단"의 서버 취소가 아직 가는 중이면 먼저 도착시킨다. 순서가 뒤집히면
+    // 늦게 도착한 취소가 이 새 요청의 실행을 멈출 수 있다. (실패해도 진행 — 서버 가드가 겹침을 막는다)
+    if (pendingCancelRef.current) {
+      await pendingCancelRef.current;
+      pendingCancelRef.current = null;
+    }
+    streamSessionIdRef.current = currentSessionId;
 
     // Upload files first if any
     let attachments: AIAttachment[] = [];
@@ -258,6 +271,7 @@ export function useAIChat(options?: {
         switch (event.type) {
           case 'init':
             if (event.sessionId) {
+              streamSessionIdRef.current = event.sessionId;
               const isNewSession = !currentSessionId;
               setCurrentSessionId(event.sessionId);
               if (isNewSession) {
@@ -391,7 +405,13 @@ export function useAIChat(options?: {
             if (typeof event.inputTokens === 'number') {
               setContextTokens(event.inputTokens);
             }
-            if (!messagesCommittedRef.current) {
+            // WD-57: 같은 세션의 이전 응답이 아직 처리 중이라 서버가 거절했다. 이 메시지는 처리되지 않았으므로
+            // 보낸 대화로 남기지 않고(새로고침하면 없는 턴이 된다) 안내만 띄운다.
+            if (event.code === 'session_busy') {
+              messagesCommittedRef.current = true;
+              toast.error(event.message || '이전 응답을 처리 중입니다. 잠시 후 다시 시도해 주세요.');
+              pendingUserMessageObjRef.current = null;
+            } else if (!messagesCommittedRef.current) {
               messagesCommittedRef.current = true;
               const isMaxTurns = event.message === 'max_turns_exceeded';
               const errorMsg = isMaxTurns
@@ -450,6 +470,15 @@ export function useAIChat(options?: {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
+      // WD-57: 브라우저 연결만 끊으면 서버는 작업을 계속한다(의도된 설계) — 서버 실행도 명시적으로 취소한다.
+      // 실패해도 화면의 중단은 그대로 둔다. 새 세션의 init 전이면 세션 id 를 몰라 취소할 수 없다.
+      const sessionId = streamSessionIdRef.current;
+      if (sessionId) {
+        pendingCancelRef.current = aiApi.cancelChat(sessionId).then(
+          () => undefined,
+          (err) => console.warn('[AI] 서버 응답 취소 실패 — 화면에서만 중단됩니다', err),
+        );
+      }
     }
     // abort 직후 플래그를 세워 onEnd 콜백의 이중 커밋 방지
     messagesCommittedRef.current = true;

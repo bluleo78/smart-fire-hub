@@ -268,6 +268,49 @@ class AiControllerTest {
         .streamChat(any(), eq("hello"), eq("my-session-id"), any(), eq(1L), any(), any());
   }
 
+  /** WD-57: 응답 중단 — 본인(또는 기록 없는) 세션이면 ai-agent 취소를 프록시하고 204. */
+  @Test
+  void cancelChat_ownSession_proxiesCancelAndReturnsNoContent() throws Exception {
+    mockAuthentication("ai:write");
+
+    mockMvc
+        .perform(
+            post("/api/v1/ai/chat/my-session-id/cancel")
+                .header("Authorization", "Bearer valid-token"))
+        .andExpect(status().isNoContent());
+    verify(aiSessionService).verifyNotOthersSession(1L, "my-session-id");
+    verify(aiAgentProxyService).cancelChat("my-session-id", 1L);
+  }
+
+  /** WD-57: 남의 세션 실행은 취소할 수 없다 — ai-agent 로 넘기기 전에 403. */
+  @Test
+  void cancelChat_otherUserSession_returnsForbiddenWithoutCallingAgent() throws Exception {
+    mockAuthentication("ai:write");
+    doThrow(new AccessDeniedException("Access denied for AI session: other-session-id"))
+        .when(aiSessionService)
+        .verifyNotOthersSession(1L, "other-session-id");
+
+    mockMvc
+        .perform(
+            post("/api/v1/ai/chat/other-session-id/cancel")
+                .header("Authorization", "Bearer valid-token"))
+        .andExpect(status().isForbidden());
+    verify(aiAgentProxyService, never()).cancelChat(any(), any());
+  }
+
+  /** WD-57: 채팅 쓰기 권한이 없으면 취소도 못 한다. */
+  @Test
+  void cancelChat_withoutWritePermission_returnsForbidden() throws Exception {
+    mockAuthentication("ai:read");
+
+    mockMvc
+        .perform(
+            post("/api/v1/ai/chat/my-session-id/cancel")
+                .header("Authorization", "Bearer valid-token"))
+        .andExpect(status().isForbidden());
+    verify(aiAgentProxyService, never()).cancelChat(any(), any());
+  }
+
   @Test
   void chat_withNoMessageAndNoFileIds_returnsBadRequest() throws Exception {
     mockAuthentication("ai:write");
