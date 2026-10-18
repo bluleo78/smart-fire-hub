@@ -544,6 +544,8 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
   // Propagate abort signal
   if (abortSignal) {
     abortSignal.addEventListener('abort', () => child.kill('SIGTERM'), { once: true });
+    // WD-57: spawn 전 준비 단계 중 이미 취소됐으면 리스너가 불리지 않는다 — 즉시 끝낸다.
+    if (abortSignal.aborted) child.kill('SIGTERM');
   }
 
   const stderrChunks: string[] = [];

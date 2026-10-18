@@ -77,6 +77,8 @@ export interface AIStreamEvent {
   /** tool_result 이벤트에서 MCP 도구 호출 실패 여부 */
   isError?: boolean;
   message?: string;
+  /** error 이벤트의 구분 코드. 'session_busy' = 같은 세션의 이전 응답이 아직 처리 중이라 거절됨(WD-57) */
+  code?: string;
   inputTokens?: number;
   status?: 'started' | 'completed';
   preTokens?: number;

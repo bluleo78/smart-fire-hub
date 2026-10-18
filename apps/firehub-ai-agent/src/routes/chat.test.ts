@@ -24,6 +24,12 @@ vi.mock('../agent/session-owner.js', () => ({
   checkSessionOwnership: (...args: unknown[]) => mockCheckOwnership(...args),
 }));
 
+// WD-57: 세션 가드 대기 시간을 줄여 409 경로 테스트가 실제 5초를 기다리지 않게 한다(레지스트리 로직은 그대로).
+vi.mock('../agent/session-runs.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../agent/session-runs.js')>()),
+  SESSION_BUSY_WAIT_MS: 50,
+}));
+
 // child_process.execFile 모킹 — 실제 claude CLI 호출 방지
 const mockExecFile = vi.fn();
 vi.mock('child_process', () => ({
@@ -629,5 +635,187 @@ describe('API 키 / CLI OAuth 검증 엔드포인트 — 명령어 인젝션 방
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ valid: false });
+  });
+});
+
+/**
+ * WD-57 — 응답 중단 시 서버 실행 취소 + 같은 세션 동시 실행 가드.
+ *
+ * <p>여러 요청이 겹치는 상황을 재현해야 하므로 서버를 하나 띄워 두고 fetch 를 동시에 보낸다(makeRequest 는
+ * 요청마다 서버를 새로 띄우고 본문 끝까지 기다려 겹침을 만들 수 없다).
+ */
+describe('채팅 취소·세션 가드 (WD-57)', () => {
+  const VALID_TOKEN = 'test-internal-token';
+  const auth = { Authorization: `Internal ${VALID_TOKEN}`, 'Content-Type': 'application/json' };
+  let server: ReturnType<express.Express['listen']>;
+  let base = '';
+
+  beforeEach(async () => {
+    process.env.INTERNAL_SERVICE_TOKEN = VALID_TOKEN;
+    vi.clearAllMocks();
+    mockCheckOwnership.mockResolvedValue('unknown');
+    await new Promise<void>((resolve) => {
+      server = createApp().listen(0, () => resolve());
+    });
+    const addr = server.address() as { port: number };
+    base = `http://localhost:${addr.port}/agent`;
+  });
+
+  afterEach(async () => {
+    delete process.env.INTERNAL_SERVICE_TOKEN;
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  /** abort 될 때까지 멈춰 있는 실행 — 공급자가 abortSignal 로 자식을 kill 하는 상황을 흉내낸다. */
+  function blockingRun(initSessionId: string) {
+    return (opts: { abortSignal?: AbortSignal }) =>
+      (async function* () {
+        yield { type: 'init' as const, sessionId: initSessionId };
+        yield { type: 'text' as const, content: '부분 응답' };
+        await new Promise<void>((resolve) => opts.abortSignal?.addEventListener('abort', () => resolve()));
+        // 공급자는 abort 뒤에도 정리(트랜스크립트 저장)를 마치고 종결 이벤트를 낼 수 있다
+        yield { type: 'error' as const, message: 'terminated' };
+      })();
+  }
+
+  function chat(body: Record<string, unknown>) {
+    return fetch(`${base}/chat`, {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({ message: 'hi', tenantId: 1, userId: 42, agentType: 'opencode', ...body }),
+    });
+  }
+
+  function cancel(sessionId: string, body: Record<string, unknown> = { tenantId: 1, userId: 42 }) {
+    return fetch(`${base}/chat/${sessionId}/cancel`, { method: 'POST', headers: auth, body: JSON.stringify(body) });
+  }
+
+  /** 첫 실행이 시작돼 init 을 내보낼 때까지 기다린다. */
+  async function waitForExecute(times = 1) {
+    await vi.waitFor(() => expect(mockExecute).toHaveBeenCalledTimes(times));
+  }
+
+  it('WD57-01: 진행 중 실행을 취소하면 공급자에 넘긴 abortSignal 이 abort 되고 202', async () => {
+    mockExecute.mockImplementation(blockingRun('sess-a'));
+    const first = chat({ sessionId: 'sess-a' });
+    await waitForExecute();
+
+    const res = await cancel('sess-a');
+    expect(res.status).toBe(202);
+    const signal = mockExecute.mock.calls[0][0].abortSignal as AbortSignal;
+    expect(signal.aborted).toBe(true);
+
+    // 취소된 실행의 응답은 끝까지 정리되고 닫힌다 — 취소 뒤 종결 이벤트는 중계하지 않는다
+    const text = await (await first).text();
+    expect(text).toContain('부분 응답');
+    expect(text).not.toContain('terminated');
+  });
+
+  it('WD57-02: 다른 사용자·다른 테넌트의 취소는 404 이고 실행을 건드리지 않는다', async () => {
+    mockExecute.mockImplementation(blockingRun('sess-b'));
+    const first = chat({ sessionId: 'sess-b' });
+    await waitForExecute();
+
+    expect((await cancel('sess-b', { tenantId: 1, userId: 7 })).status).toBe(404);
+    expect((await cancel('sess-b', { tenantId: 2, userId: 42 })).status).toBe(404);
+    const signal = mockExecute.mock.calls[0][0].abortSignal as AbortSignal;
+    expect(signal.aborted).toBe(false);
+
+    await cancel('sess-b');
+    await (await first).text();
+  });
+
+  it('WD57-03: 진행 중 실행이 없으면 취소는 404, 바디가 잘못되면 400, 내부 토큰 없으면 401', async () => {
+    expect((await cancel('nothing-running')).status).toBe(404);
+    expect((await cancel('sess-x', { userId: 42 })).status).toBe(400);
+    const noAuth = await fetch(`${base}/chat/sess-x/cancel`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tenantId: 1, userId: 42 }),
+    });
+    expect(noAuth.status).toBe(401);
+  });
+
+  it('WD57-04: 같은 세션에 겹친 요청은 대기 후에도 이전 실행이 남아 있으면 SSE 없이 409 JSON', async () => {
+    mockExecute.mockImplementation(blockingRun('sess-c'));
+    const first = chat({ sessionId: 'sess-c' });
+    await waitForExecute();
+
+    const second = await chat({ sessionId: 'sess-c' });
+    expect(second.status).toBe(409);
+    expect(second.headers.get('content-type')).toContain('application/json');
+    expect(await second.json()).toMatchObject({ code: 'session_busy' });
+    // 겹친 요청은 공급자를 아예 부르지 않는다
+    expect(mockExecute).toHaveBeenCalledTimes(1);
+
+    await cancel('sess-c');
+    await (await first).text();
+  });
+
+  it('WD57-05: 이전 실행이 대기 시간 안에 끝나면(취소 직후 전송) 409 없이 이어서 처리된다', async () => {
+    mockExecute.mockImplementationOnce(blockingRun('sess-d')).mockImplementationOnce(async function* () {
+      yield { type: 'init' as const, sessionId: 'sess-d' };
+      yield { type: 'done' as const };
+    });
+    const first = chat({ sessionId: 'sess-d' });
+    await waitForExecute();
+
+    // 이슈 재현 순서: 중단(취소)과 다음 메시지가 거의 동시에 도착
+    const secondPromise = chat({ sessionId: 'sess-d', message: 'A' });
+    await cancel('sess-d');
+    const second = await secondPromise;
+    expect(second.status).toBe(200);
+    expect(await second.text()).toContain('"type":"done"');
+    await (await first).text();
+  });
+
+  it('WD57-06: 새 세션(sessionId 없음)은 가드를 거치지 않고, init 의 id 로 등록돼 첫 턴도 취소할 수 있다', async () => {
+    mockExecute.mockImplementation(blockingRun('oc-new-1'));
+    const first = chat({});
+    await waitForExecute();
+
+    // init 으로 받은 id 로 이어 보내면 가드에 걸린다(첫 턴이 아직 진행 중)
+    const overlapped = await chat({ sessionId: 'oc-new-1' });
+    expect(overlapped.status).toBe(409);
+
+    expect((await cancel('oc-new-1')).status).toBe(202);
+    await (await first).text();
+  });
+
+  it('WD57-07: 실행이 정상 종료·예외로 끝나도 슬롯을 놓아 다음 요청이 바로 들어간다', async () => {
+    mockExecute
+      .mockImplementationOnce(async function* () {
+        yield { type: 'init' as const, sessionId: 'sess-e' };
+        yield { type: 'done' as const };
+      })
+      .mockImplementationOnce(async function* () {
+        yield { type: 'init' as const, sessionId: 'sess-e' };
+        throw new Error('boom');
+      })
+      .mockImplementationOnce(async function* () {
+        yield { type: 'done' as const };
+      });
+
+    expect((await chat({ sessionId: 'sess-e' })).status).toBe(200);
+    expect(await (await chat({ sessionId: 'sess-e' })).text()).toContain('Agent 처리 중 오류가 발생했습니다');
+    const third = await chat({ sessionId: 'sess-e' });
+    expect(third.status).toBe(200);
+    await third.text();
+    expect(mockExecute).toHaveBeenCalledTimes(3);
+  });
+
+  it('WD57-08: 공급자 생성이 실패해도 슬롯을 놓는다', async () => {
+    const { ProviderFactory } = await import('../providers/index.js');
+    vi.mocked(ProviderFactory.createChatProvider).mockImplementationOnce(() => {
+      throw new Error('no provider');
+    });
+    await (await chat({ sessionId: 'sess-f' })).text();
+
+    mockExecute.mockImplementationOnce(async function* () {
+      yield { type: 'done' as const };
+    });
+    const next = await chat({ sessionId: 'sess-f' });
+    expect(next.status).toBe(200);
+    await next.text();
   });
 });

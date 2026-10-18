@@ -136,6 +136,8 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
   const abortController = new AbortController();
   if (abortSignal) {
     abortSignal.addEventListener('abort', () => abortController.abort(), { once: true });
+    // WD-57: 준비 단계(권한 조회·첨부 다운로드) 중 이미 취소됐으면 리스너가 다시 불리지 않으므로 지금 반영한다.
+    if (abortSignal.aborted) abortController.abort();
   }
 
   // #708: 자식 env 는 공용 헬퍼로 만든다 — ambient 자격증명(ANTHROPIC_API_KEY/AUTH_TOKEN/BASE_URL,

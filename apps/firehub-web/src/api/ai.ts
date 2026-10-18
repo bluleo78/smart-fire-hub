@@ -12,6 +12,9 @@ export const aiApi = {
     client.delete(`/ai/sessions/${id}`),
   getSessionMessages: (sessionId: string) =>
     client.get<AIMessage[]>(`/ai/sessions/${sessionId}/messages`),
+  /** 진행 중인 응답을 서버에서도 멈춘다(WD-57) — fetch abort 만으로는 서버 작업이 계속된다. */
+  cancelChat: (sessionId: string) =>
+    client.post<void>(`/ai/chat/${encodeURIComponent(sessionId)}/cancel`),
 };
 
 export function streamAIChat(
