@@ -624,30 +624,48 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
   }
 
   /**
-   * 공통 결정 R4 — PYTHON 출력 = 실행 주체 자격 이하 & 허용 목록 아닌 최고 등급. '민감' 실행 주체 → '민감'. 스크립트 성패와 무관하게 쓰기 전에
-   * 상향된다.
+   * PYTHON 출력 등급은 실행 주체 자격이 아니라 스텝이 다루는 데이터(선언 입력 + 자기 출력)로 정한다. 선언 입력이 없으면 실행 주체가 '민감'이어도 출력은
+   * 그대로다 — 외부 API 만 부르는 스크립트의 출력이 실행 주체 자격 때문에 상향되던 결함(운영 전주시 뉴스 수집)의 회귀 테스트.
    */
   @Test
-  void run_pythonOutput_isRaisedToHighestReadableLevel() throws Exception {
+  void run_pythonOutput_withoutDeclaredInputs_keepsOutputLevel() throws Exception {
     long out = table(m + "_pyl", "공개");
     long runAs = pythonUserAt("민감");
     long p = pipeline(runAs, List.of(pythonStep(out)));
     waitForEnd(executionService.executePipeline(p, runAs));
-    assertThat(levelOf(out)).isEqualTo(fx.levelId("민감"));
-    assertThat(autoRaisedAt(out)).isNotNull();
+    assertThat(levelOf(out)).isEqualTo(fx.levelId("공개"));
+    assertThat(autoRaisedAt(out)).isNull();
   }
 
-  /**
-   * 공통 결정 R4 — ADMIN 과 같은 최상위 자격('기밀', 허용 목록 등급) 실행 주체라도 PYTHON 은 '기밀'을 읽을 수 없으므로 출력은 '민감'이다(실행 주체
-   * 자격 등급 아님). 허용 목록 등급으로 가지 않으므로 실행 주체 시드도 없다.
-   */
+  /** ADMIN 과 같은 최상위 자격('기밀') 실행 주체라도 선언 입력이 없으면 출력 등급은 바뀌지 않고, 허용 목록 시드도 없다. */
   @Test
-  void run_pythonOutput_ofTopClearanceRunAs_excludesAllowlistLevel() throws Exception {
-    long out = table(m + "_pya", "공개");
+  void run_pythonOutput_ofTopClearanceRunAs_withoutInputs_keepsOutputLevel() throws Exception {
+    long out = table(m + "_pya", "내부");
     long runAs = pythonUserAt("기밀");
     long p = pipeline(runAs, List.of(pythonStep(out)));
     waitForEnd(executionService.executePipeline(p, runAs));
+    assertThat(levelOf(out)).isEqualTo(fx.levelId("내부"));
+    assertThat(hasUserGrant(out, runAs)).isFalse();
+  }
+
+  /**
+   * 상위 등급 입력을 선언하면 그 등급까지 읽는 대신 출력이 그 등급으로 상향된다(WD-29 쓰기 하향 우회 차단 유지). 스크립트 성패와 무관하게 쓰기 전에
+   * 상향된다.
+   */
+  @Test
+  void run_pythonOutput_isRaisedToDeclaredInputLevel() throws Exception {
+    long in = table(m + "_pyin", "민감");
+    long out = table(m + "_pyr", "공개");
+    long runAs = pythonUserAt("기밀");
+    long p =
+        pipeline(
+            runAs,
+            List.of(
+                new PipelineStepRequest(
+                    "step", null, "PYTHON", "print('x')", out, List.of(in), null, "REPLACE")));
+    waitForEnd(executionService.executePipeline(p, runAs));
     assertThat(levelOf(out)).isEqualTo(fx.levelId("민감"));
+    assertThat(autoRaisedAt(out)).isNotNull();
     assertThat(hasUserGrant(out, runAs)).isFalse();
   }
 

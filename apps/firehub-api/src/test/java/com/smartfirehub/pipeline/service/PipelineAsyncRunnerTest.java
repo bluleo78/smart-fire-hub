@@ -121,7 +121,7 @@ class PipelineAsyncRunnerTest {
               Long u = inv.getArgument(0);
               return new PipelineSecurityGate.RunAs(u, Clearance.none(u == null ? 0L : u, 1L));
             });
-    lenient().when(pythonReadGrantSync.prepareForRun(any())).thenReturn(2);
+    lenient().when(pythonReadGrantSync.prepareForRun(any(), anyInt())).thenReturn(2);
   }
 
   @AfterEach
@@ -765,7 +765,7 @@ class PipelineAsyncRunnerTest {
     when(pipelineSecurityGate.runAs(userId)).thenReturn(runAs);
     doThrow(outputDenied())
         .when(pipelineSecurityGate)
-        .enforcePythonOutputLevel(out, stepId, false, runAs);
+        .enforcePythonOutputLevel(out, stepId, false, runAs, 0);
 
     String status = runner.executeStep(stepExecId, py, pipelineId, "TestPipeline", userId, false);
 
@@ -1342,7 +1342,7 @@ class PipelineAsyncRunnerTest {
     PipelineStepResponse step =
         stepResponse(7430L, "py-slot", "PYTHON", "print('x')", null, List.of());
     when(permissionChecker.hasPermission(userId, "pipeline:python_execute")).thenReturn(true);
-    when(pythonReadGrantSync.prepareForRun(any())).thenReturn(4);
+    when(pythonReadGrantSync.prepareForRun(any(), anyInt())).thenReturn(4);
     when(executorClient.executePython(anyMap(), eq(4)))
         .thenReturn(new ExecutorClient.PythonExecuteResult(true, "ok", 0, null, 10L, 0));
 
@@ -1359,7 +1359,7 @@ class PipelineAsyncRunnerTest {
     PipelineStepResponse step =
         stepResponse(7440L, "py-slot-local", "PYTHON", "print('x')", null, List.of());
     when(permissionChecker.hasPermission(userId, "pipeline:python_execute")).thenReturn(true);
-    when(pythonReadGrantSync.prepareForRun(any())).thenReturn(3);
+    when(pythonReadGrantSync.prepareForRun(any(), anyInt())).thenReturn(3);
     when(pythonExecutor.run("print('x')", 3))
         .thenReturn(new PythonScriptExecutor.RunResult(0, "", ""));
 
@@ -1379,7 +1379,7 @@ class PipelineAsyncRunnerTest {
     PipelineStepResponse step =
         stepResponse(7460L, "py-term", "PYTHON", "print('x')", null, List.of());
     when(permissionChecker.hasPermission(userId, "pipeline:python_execute")).thenReturn(true);
-    when(pythonReadGrantSync.prepareForRun(any())).thenReturn(2);
+    when(pythonReadGrantSync.prepareForRun(any(), anyInt())).thenReturn(2);
     when(executorClient.executePython(anyMap(), eq(2)))
         .thenReturn(
             new ExecutorClient.PythonExecuteResult(
@@ -1429,7 +1429,7 @@ class PipelineAsyncRunnerTest {
     PipelineStepResponse step = replaceStep(7450L, "PYTHON", "print('x')", outputDatasetId);
     when(permissionChecker.hasPermission(userId, "pipeline:python_execute")).thenReturn(true);
     when(datasetRepository.findTableNameById(outputDatasetId)).thenReturn(Optional.of("out_deny"));
-    when(pythonReadGrantSync.prepareForRun(any()))
+    when(pythonReadGrantSync.prepareForRun(any(), anyInt()))
         .thenThrow(new PythonReadAccessException("Python 읽기 권한을 준비하지 못해 실행을 중단했습니다."));
 
     String executorOn = runner.executeStep(7451L, step, 74L, "TestPipeline", userId, true);

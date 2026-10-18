@@ -448,7 +448,8 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
     - 파이프라인의 **지정 출력**이 입력보다 낮으면 예전에는 실패(`SQL_WRITE_DOWNGRADE`)였다. 이제 **자동 상향**하고 적재한다(대화형 SQL 의 쓰기 하향은 여전히 `SQL_WRITE_DOWNGRADE` 로 거부).
     - DML 스텝(`INSERT INTO 낮은등급 SELECT … FROM 높은등급`)도 쓰기 대상을 자동 상향한다.
     - SQL 스텝의 선언 입력도 전파 입력이다. 선언했지만 실행 주체가 볼 수 없는 입력이 있으면 실패한다.
-  - **PYTHON 스텝 출력 등급**(공통 결정 R4): 실행 주체 자격 이하이면서 `allowlist_required` 가 아닌 등급 중 **최고 등급**이다(= 흐름 C 의 슬롯 롤로 실제 읽을 수 있는 최대 등급). 예: ADMIN(기밀) 트리거 → 기밀은 허용 목록 등급이라 PYTHON 이 못 읽으므로 출력은 '민감', 허용 목록 시드는 없다.
+  - **PYTHON 스텝 출력 등급**(공통 결정 R4, 2026-10-19 수정): 스텝이 다루는 데이터 — **선언 입력 + 자기 출력**의 최고 등급이다(실행 주체 자격은 상한, 허용 목록 등급 제외). 슬롯 롤도 같은 등급까지만 읽는다 — 선언하지 않은 상위 등급 데이터셋은 읽을 수 없고(permission denied), 상위 등급 입력을 선언하면 출력이 그 등급으로 상향된다. 선언 입력도 출력도 없으면 가장 낮은 등급만 읽는다.
+    - 수정 전(2026-10-18 배포분)에는 실행 주체 자격으로 정해, ADMIN(기밀) 트리거의 PYTHON 출력이 외부 API 만 불러도 무조건 '민감'으로 올라갔다(운영 전주시 뉴스 수집 → 뉴스 AI 분석 AI_CLASSIFY 차단 위험). 그 버전이 이미 상향한 데이터셋이 있으면 수동으로 내린다(`dataset.security_level_auto_raised_at` 이 채워진 행).
     - 그런 등급이 없는 실행 주체(역할 없음 등)가 돌리는 **출력 있는 PYTHON 스텝의 새 TEMP 는 실패한다**(fail-closed — 기본 등급 TEMP 를 볼 수 없는 실행 주체가 쓰게 두지 않는다). 실행 주체에게 역할(열람 등급)을 주면 풀린다.
     - **사전 점검(소유자 롤 app):** `SELECT p.id, p.name, s.id step_id, s.output_dataset_id, d.id temp_dataset_id FROM pipeline_step s JOIN pipeline p ON p.id = s.pipeline_id LEFT JOIN dataset d ON d.source_pipeline_step_id = s.id AND d.origin_type = 'TEMP' WHERE s.script_type = 'PYTHON' AND (s.output_dataset_id IS NOT NULL OR d.id IS NOT NULL)` — 지정 출력과 러너 TEMP(`temp_dataset_id`) 를 함께 본다. 행이 있으면 각 출력의 현재 등급을 실행 주체(트리거 생성자·수동 실행자) 자격 기준의 위 규칙 결과(자격 이하·허용 목록 아닌 최고 등급)와 비교해, 그보다 낮은 출력은 다음 실행에서 상향된다고 소유자에게 미리 알린다. 역할 없는 실행 주체의 트리거가 걸린 PYTHON 스텝도 이 목록에서 찾아 역할을 주거나 실행 주체를 바꾼다.
   - 허용 목록:
