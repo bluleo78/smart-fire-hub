@@ -61,7 +61,7 @@ export function KeyboardShortcutsHelp() {
           <ShortcutRow keys={['?']} description="이 도움말 토글" />
           <ShortcutRow keys={['Cmd/Ctrl', 'K']} description="AI 채팅 패널 열기/닫기" />
           <ShortcutRow keys={['Cmd/Ctrl', 'S']} description="현재 폼 저장 (지원 페이지: 데이터셋 생성)" />
-          <ShortcutRow keys={['Esc']} description="다이얼로그/패널 닫기" />
+          <ShortcutRow keys={['Esc']} description="다이얼로그/패널 닫기, AI 전체 화면 → 사이드 패널" />
         </div>
         <p className="text-xs text-muted-foreground">
           입력 필드에 포커스가 있을 때는 단축키가 비활성화됩니다.

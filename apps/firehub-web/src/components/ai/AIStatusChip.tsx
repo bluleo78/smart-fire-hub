@@ -224,6 +224,25 @@ export function AIStatusChip() {
     };
   }, []);
 
+  /**
+   * 드롭다운 Escape 닫기 — 칩·드롭다운 내부 포커스 모두 이 리스너 하나로 처리한다.
+   * 호버로 연 드롭다운은 포커스가 드롭다운 밖(본문·채팅 입력창)에 있을 수 있어 요소 단위 onKeyDown 으로는
+   * Escape 를 받지 못한다. 열려 있는 동안 document 에서 받아 닫고 preventDefault 로 소비해,
+   * 전체 화면의 Escape(사이드 패널 복귀, WD-61)가 함께 실행되지 않게 한다.
+   */
+  useEffect(() => {
+    if (!showDropdown) return;
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key !== 'Escape') return;
+      // 빠른 질문 입력창의 한글 조합 취소용 Escape 로는 닫지 않는다 (AIFullScreen 과 같은 기준)
+      if (e.isComposing || e.keyCode === 229) return;
+      e.preventDefault();
+      setShowDropdown(false);
+    }
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [showDropdown]);
+
   const handleMouseEnter = useCallback(() => {
     clearTimeout(closeTimerRef.current);
     if (!showDropdown) {
@@ -320,10 +339,6 @@ export function AIStatusChip() {
             if (e.key === 'Enter' || e.key === ' ') {
               e.preventDefault();
               handleClick();
-            }
-            if (e.key === 'Escape' && showDropdown) {
-              e.preventDefault();
-              setShowDropdown(false);
             }
           }}
           style={style}
