@@ -219,6 +219,26 @@ class DataTableQueryServiceTest extends IntegrationTestBase {
     assertThat(response.error()).isNull();
   }
 
+  /**
+   * WD-91: 첫 키워드 바로 뒤에 구두점이 붙어도(공백 없음) PostgreSQL 이 받는 문장이므로 실행한다. 예전엔 공백으로만 첫 단어를 잘라 {@code
+   * SELECT*FROM} 을 명령어가 아닌 것으로 거부했다. DML 도 같은 규칙으로 DML 로 분류돼야 한다(행 수 반환 경로).
+   */
+  @Test
+  void executeQuery_punctuationRightAfterKeyword_isClassifiedAndExecuted() {
+    SqlQueryResponse select =
+        dataTableQueryService.executeQuery("SELECT*FROM " + testTableName, 100);
+    assertThat(select.error()).isNull();
+    assertThat(select.queryType()).isEqualTo("SELECT");
+    assertThat(select.rows()).hasSize(3);
+
+    SqlQueryResponse update =
+        dataTableQueryService.executeQuery(
+            "UPDATE\"" + testTableName + "\" SET value = 99 WHERE name = 'Row1'", 100);
+    assertThat(update.error()).isNull();
+    assertThat(update.queryType()).isEqualTo("UPDATE");
+    assertThat(update.affectedRows()).isEqualTo(1);
+  }
+
   // =========================================================================
   // DML 정상 케이스
   // =========================================================================

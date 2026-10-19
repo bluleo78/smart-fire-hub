@@ -8,6 +8,7 @@ import com.smartfirehub.dataset.dto.CreateDatasetRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.service.DatasetService;
 import com.smartfirehub.support.IntegrationTestBase;
+import java.util.ArrayList;
 import java.util.List;
 import org.jooq.DSLContext;
 import org.jooq.impl.DSL;
@@ -182,6 +183,93 @@ class AnalyticsQueryExecutionServiceTest extends IntegrationTestBase {
 
     assertThat(response.error()).isNotNull();
     assertThat(response.error()).contains("SELECT");
+  }
+
+  // =========================================================================
+  // WD-91: 첫 키워드 바로 뒤 구두점 — PostgreSQL 어휘 규칙대로 첫 키워드를 뽑는다
+  // =========================================================================
+
+  /**
+   * {@code SELECT*FROM}·{@code select(a)} 는 PostgreSQL 이 받는 SELECT 다 — 실행해 행을 돌려준다(예전엔 첫 단어 검사에서
+   * 거부).
+   */
+  @Test
+  void execute_punctuationRightAfterSelect_readOnlyTrue_returnsRows() {
+    AnalyticsQueryResponse star = executionService.execute("SELECT*FROM data.exec_test", 100, true);
+    assertThat(star.error()).isNull();
+    assertThat(star.queryType()).isEqualTo("SELECT");
+    assertThat(star.rows()).hasSize(2);
+
+    AnalyticsQueryResponse paren =
+        executionService.execute("select(name) from data.exec_test where value = 10", 100, true);
+    assertThat(paren.error()).isNull();
+    assertThat(paren.queryType()).isEqualTo("SELECT");
+    assertThat(paren.rows()).hasSize(1);
+  }
+
+  /**
+   * 같은 규칙으로 DML 은 DML 로 분류돼 읽기 전용이 계속 거부한다 — 구두점이 붙은 DML 이 SELECT 로 새면 안 된다. CTE 안 DML 도 {@code
+   * WITH"d"AS(...)} 처럼 붙여 써서 첫 단어 검사를 지나도 읽기 전용 검사가 막고, 실제로 지워지지 않는다.
+   */
+  @Test
+  void execute_punctuationRightAfterDmlKeyword_readOnlyTrue_isRejectedAndNothingChanges() {
+    List<String> dml =
+        List.of(
+            "DELETE*FROM data.exec_test",
+            "UPDATE\"data\".exec_test SET value = 99",
+            "WITH\"d\"AS(DELETE FROM data.exec_test RETURNING *)SELECT*FROM\"d\"",
+            "WITH d AS(DELETE FROM data.exec_test RETURNING *)SELECT*FROM d");
+    for (String sql : dml) {
+      AnalyticsQueryResponse response = executionService.execute(sql, 100, true);
+      // AST 검증기도 이들을 거부하므로 "오류가 났다"만으로는 분류를 증명하지 못한다 — 읽기 전용 검사가 거부했는지 문구로 본다.
+      assertThat(response.error()).as(sql).contains("SELECT 쿼리만");
+      assertThat(response.rows()).as(sql).isEmpty();
+    }
+    assertThat(dsl.fetchOne("SELECT count(*) FROM data.exec_test").get(0, Integer.class))
+        .isEqualTo(2);
+    assertThat(
+            dsl.fetchOne("SELECT count(*) FROM data.exec_test WHERE value = 99")
+                .get(0, Integer.class))
+        .isZero();
+  }
+
+  /**
+   * 보안(WD-91 리뷰): CTE 이름·따옴표 식별자에 SELECT 가 들어 있어도 본문이 DML 이면 DML 이다. 예전 본문 키워드 탐지는 단어 경계 없이 {@code
+   * startsWith("SELECT")} 를 봐서 {@code selected}·{@code "select"} 를 본문 SELECT 로 오인해 읽기 전용 검사를 통과시켰고,
+   * 직접 경로가 DELETE·UPDATE 를 그대로 실행했다. 읽기 전용이 거부했는지 문구로 보고, 행이 그대로인지 확인한다.
+   */
+  @Test
+  void execute_cteNameContainingSelect_withDmlBody_readOnlyTrue_isRejectedAndNothingChanges() {
+    List<String> dml =
+        List.of(
+            "WITH selected AS (SELECT 1) DELETE FROM data.exec_test",
+            "WITH \"select\" AS (SELECT 1) UPDATE data.exec_test SET value = 99",
+            "WITH\"selected\"AS(SELECT 1)DELETE FROM data.exec_test",
+            // 최상위 LIMIT 이 있으면 행 제한을 덧붙이지 않아 문법 오류로 우연히 막히지도 않는다 — 실제로 쓰기가 일어나던 형태.
+            "WITH selected AS (SELECT 1) INSERT INTO data.exec_test (name, value)"
+                + " SELECT 'Mallory', 99 LIMIT 1 RETURNING *");
+    List<String> errors = new ArrayList<>();
+    for (String sql : dml) {
+      errors.add(executionService.execute(sql, 100, true).error());
+    }
+    // 행 변화를 먼저 본다 — 분류가 틀리면 어떤 쓰기가 실제로 일어났는지가 결함의 실체다.
+    assertThat(dsl.fetchOne("SELECT count(*) FROM data.exec_test").get(0, Integer.class))
+        .isEqualTo(2);
+    assertThat(
+            dsl.fetchOne("SELECT count(*) FROM data.exec_test WHERE value = 99")
+                .get(0, Integer.class))
+        .isZero();
+    for (int k = 0; k < dml.size(); k++) {
+      assertThat(errors.get(k)).as(dml.get(k)).contains("SELECT 쿼리만");
+    }
+  }
+
+  /** {@code SELECT$x} 는 PostgreSQL 에서 식별자 하나다(SELECT 가 아님) — 글자만 보는 규칙이면 SELECT 로 오분류된다. */
+  @Test
+  void execute_selectFollowedByIdentifierChar_isRejected() {
+    AnalyticsQueryResponse response =
+        executionService.execute("SELECT$x FROM data.exec_test", 100, true);
+    assertThat(response.error()).startsWith("SQL 문법 오류").contains("'SELECT$x'");
   }
 
   // #511: readOnly 검사는 MCP AI 도구 호출과 웹 UI 애드혹 쿼리 실행이 동일 플래그를 공유해 호출

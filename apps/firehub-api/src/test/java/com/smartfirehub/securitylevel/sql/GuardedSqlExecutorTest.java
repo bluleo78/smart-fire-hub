@@ -172,6 +172,64 @@ class GuardedSqlExecutorTest extends IntegrationTestBase {
     assertThat(d.rows()).hasSize(1);
   }
 
+  /**
+   * 보안(WD-91 리뷰): 분석 관문의 읽기 전용은 CTE 이름·따옴표 식별자에 SELECT 가 들어 있는 DML 본문을 거부한다. 예전엔 본문 키워드를 단어 경계 없이
+   * 찾아 SELECT 로 분류했고, 관문을 지나 DELETE·UPDATE 가 실제로 실행됐다.
+   */
+  @Test
+  void analyticsReadOnly_rejectsDmlBodyBehindCteNamedLikeSelect_andNothingChanges() {
+    List<String> dml =
+        List.of(
+            "WITH selected AS (SELECT 1) DELETE FROM " + pub,
+            "WITH \"select\" AS (SELECT 1) UPDATE " + pub + " SET a = 2",
+            "WITH\"selected\"AS(SELECT 1)DELETE FROM " + pub,
+            // 최상위 LIMIT 이 있으면 행 제한을 덧붙이지 않아 문법 오류로 우연히 막히지도 않는다.
+            "WITH selected AS (SELECT 1) INSERT INTO " + pub + " SELECT 7 LIMIT 1 RETURNING *");
+    List<String> errors = new ArrayList<>();
+    for (String sql : dml) {
+      errors.add(gate.executeAnalytics(viewer, sql, 100, true).error());
+    }
+    // 행 변화를 먼저 본다 — 분류가 틀리면 실제로 일어난 쓰기가 결함의 실체다.
+    assertThat(dsl.fetchOne("SELECT count(*) FROM " + schema + "." + pub).get(0, Integer.class))
+        .isEqualTo(1);
+    assertThat(dsl.fetchOne("SELECT a FROM " + schema + "." + pub).get(0, Integer.class))
+        .isEqualTo(1);
+    for (int k = 0; k < dml.size(); k++) {
+      assertThat(errors.get(k)).as(dml.get(k)).contains("SELECT 쿼리만");
+    }
+  }
+
+  /**
+   * WD-91: 첫 키워드 바로 뒤에 구두점이 붙은 SELECT({@code SELECT*FROM}, {@code select(a)})도 관문(열람 판정 포함)을 지나 두
+   * 경로에서 실행된다. 열람 판정은 그대로라 숨은 테이블은 붙여 써도 거부되고, 붙여 쓴 CTE 안 DELETE 는 읽기 전용에서 실행되지 않는다.
+   */
+  @Test
+  void punctuationRightAfterKeyword_executesThroughBothPaths_andGatesStillHold() {
+    AnalyticsQueryResponse a = gate.executeAnalytics(viewer, "SELECT*FROM " + pub, 100, true);
+    assertThat(a.error()).isNull();
+    assertThat(a.rows()).hasSize(1);
+    assertThat(a.rows().get(0).get("a")).isEqualTo(1);
+
+    assertThatThrownBy(() -> gate.executeAnalytics(viewer, "SELECT*FROM " + hidden, 100, true))
+        .isInstanceOf(CodedApiException.class)
+        .extracting(e -> ((CodedApiException) e).code())
+        .isEqualTo("DATASET_SQL_ACCESS_DENIED");
+
+    AnalyticsQueryResponse cte =
+        gate.executeAnalytics(
+            viewer, "WITH\"d\"AS(DELETE FROM " + pub + " RETURNING *)SELECT*FROM\"d\"", 100, true);
+    assertThat(cte.error()).isNotNull();
+    assertThat(dsl.fetchOne("SELECT count(*) FROM " + schema + "." + pub).get(0, Integer.class))
+        .isEqualTo(1);
+
+    asUser(userId);
+    SqlQueryResponse d =
+        datasetDataService.executeQuery(
+            pubId, new SqlQueryRequest("select(a) from " + pub, 100), userId);
+    assertThat(d.error()).isNull();
+    assertThat(d.rows()).hasSize(1);
+  }
+
   @Test
   void hiddenTable_isDeniedOnBothPaths() {
     assertThatThrownBy(() -> gate.executeAnalytics(viewer, "SELECT a FROM " + hidden, 100, true))

@@ -243,6 +243,97 @@ def _is_ident_cont(ch: str) -> bool:
     return _is_ident_start(ch) or ("0" <= ch <= "9") or ch == "$"
 
 
+def _leading_keyword(sql: str) -> str | None:
+    """SQL 맨 앞 키워드 후보 토큰(PostgreSQL 식별자 규칙, 원문 그대로). 식별자 첫 글자로 시작하지 않으면 None.
+
+    짝 구현: Java ``SqlLexicalMask.leadingKeyword`` 참조(규칙 근거·공용 픽스처 ``sql-lexical-vectors.json`` 의 ``leading``).
+    """
+    if not sql or not _is_ident_start(sql[0]):
+        return None
+    end = 1
+    while end < len(sql) and _is_ident_cont(sql[end]):
+        end += 1
+    return sql[:end]
+
+
+# ASCII 소문자 → 대문자 변환표. str.upper() 는 ``ſ``(U+017F)를 ``S`` 로 접어, PostgreSQL 에선 식별자인
+# ``ſelect`` 를 SELECT 로 오인하게 만든다 — 키워드 판정은 ASCII 만 대문자로 바꾼다(Java maskedUpper 와 짝).
+_ASCII_UPPER = str.maketrans("abcdefghijklmnopqrstuvwxyz", "ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+# Java removeTrailingSemicolon 과 같은 끝 세미콜론 패턴(Java \s 는 ASCII 공백만이라 re.ASCII 로 맞춘다).
+# 운영 경로(_normalize_sql 을 거친 입력)에선 no-op 이고, 픽스처를 Java 와 같은 입력으로 대조하려고 둔다.
+_TRAILING_SEMICOLON = re.compile(r";\s*$", re.ASCII)
+# 데이터 수정 CTE 안에 올 수 있는 키워드(이슈 #227)와 WITH 뒤 본문 키워드(PostgreSQL 15+ 는 WITH … MERGE 도 받는다).
+_CTE_INNER_DML_KEYWORDS = ("DELETE", "UPDATE", "INSERT", "MERGE", "TRUNCATE")
+_CTE_BODY_KEYWORDS = ("SELECT", "INSERT", "UPDATE", "DELETE", "MERGE")
+
+
+def _first_keyword(sql: str) -> str | None:
+    """SQL 첫 키워드를 ASCII 대문자로 돌려준다. 맨 앞 토큰이 없거나 비ASCII 문자가 섞여 있으면 None.
+
+    PostgreSQL 키워드는 ASCII 뿐이라 ``ſelect``·``ınsert`` 는 키워드가 아니라 식별자다(WD-91 리뷰).
+    **Java ``SqlValidationUtils.firstKeyword`` 와 짝이다.**
+    """
+    token = _leading_keyword(sql)
+    if token is None or not token.isascii():
+        return None
+    return token.upper()
+
+
+def _keyword_at(text: str, i: int, keywords: tuple[str, ...]) -> str | None:
+    """``text[i]`` 에서 ``keywords`` 중 하나가 토큰 전체로 시작하면 그 키워드, 아니면 None.
+
+    앞뒤가 식별자 글자(ident_cont)가 아니어야 한다 — ``SELECTED``·``X$DELETE``·``INSERTED_AT`` 은 PostgreSQL 에서
+    식별자 하나라 키워드가 아니다. **Java ``SqlLexicalMask.keywordAt`` 와 짝이다.**
+    """
+    if i > 0 and _is_ident_cont(text[i - 1]):
+        return None
+    for kw in keywords:
+        end = i + len(kw)
+        if text.startswith(kw, i) and (end >= len(text) or not _is_ident_cont(text[end])):
+            return kw
+    return None
+
+
+def _find_keyword_at_depth(masked_upper: str, top_level: bool, keywords: tuple[str, ...]) -> str | None:
+    """괄호 깊이를 추적하며 ``keywords`` 중 처음 나오는 키워드 토큰. ``top_level`` 이면 깊이 0(본문), 아니면 깊이 1
+    이상(CTE 정의 안)만 본다. 없으면 None. 짝 구현: Java ``SqlValidationUtils.findKeywordAtDepth``."""
+    depth = 0
+    for i, c in enumerate(masked_upper):
+        if c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+        elif (depth == 0) if top_level else (depth >= 1):
+            kw = _keyword_at(masked_upper, i, keywords)
+            if kw is not None:
+                return kw
+    return None
+
+
+def _detect_query_type(sql: str) -> str:
+    """문 타입을 분류한다. **Java ``SqlValidationUtils.detectQueryType`` 와 같은 결과를 낸다.**
+
+    비WITH 문은 첫 키워드(키워드가 없거나 비ASCII 면 ``UNKNOWN``). WITH 문은 주석·문자열·따옴표 식별자·달러
+    인용을 가린 뒤(``_mask_sql``) CTE 안 데이터 수정 키워드 → 최상위 본문 키워드 순으로 토큰 단위로 찾는다.
+
+    왜 executor 에도 두나(WD-91 리뷰): 예전엔 WITH 로 시작하면 무조건 SELECT 로 보아, api 를 거치지 않고 온
+    ``WITH d AS (DELETE … RETURNING *) SELECT …`` 를 read_only 에서도 실행했다. 두 구현은 공용 픽스처
+    ``query-type-vectors.json`` 으로 같은 분류를 검증한다 — 한쪽만 고치지 말 것.
+    """
+    without_semicolon = _TRAILING_SEMICOLON.sub("", sql)
+    first_word = _first_keyword(without_semicolon)
+    if first_word is None:
+        return "UNKNOWN"
+    if first_word == "WITH":
+        masked = _mask_sql(without_semicolon).translate(_ASCII_UPPER)
+        inner = _find_keyword_at_depth(masked, False, _CTE_INNER_DML_KEYWORDS)
+        if inner is not None:
+            return inner
+        # 본문 키워드를 못 찾으면(괄호로 감싼 본문·VALUES·TABLE 등) SELECT 로 단정하지 않는다(fail-closed).
+        return _find_keyword_at_depth(masked, True, _CTE_BODY_KEYWORDS) or "UNKNOWN"
+    return first_word
+
+
 def _mask_sql(sql: str) -> str:
     """주석을 공백으로, 리터럴(문자열·따옴표 식별자·달러 인용) 내용을 ``x`` 로 가린 같은 길이 문자열을 만든다.
 
@@ -520,13 +611,10 @@ def execute_query(
         )
 
     # 2. Detect query type
-    first_word = clean_sql.upper().split()[0]
-    if first_word == "WITH":
-        query_type = "SELECT"
-    elif first_word in ("SELECT", "INSERT", "UPDATE", "DELETE"):
-        query_type = first_word
-    else:
-        query_type = "UNKNOWN"
+    # api SqlValidationUtils.detectQueryType 과 같은 규칙으로 분류한다(WD-91) — 첫 키워드는 PostgreSQL 어휘
+    # 규칙으로, WITH 문은 CTE 안 DML·본문 키워드까지 본다. 응답의 query_type 은 네 가지 외엔 UNKNOWN 이다.
+    detected = _detect_query_type(clean_sql)
+    query_type = detected if detected in ("SELECT", "INSERT", "UPDATE", "DELETE") else "UNKNOWN"
 
     # 3. read_only check
     is_select = query_type == "SELECT"
@@ -534,7 +622,7 @@ def execute_query(
         return QueryExecuteResponse(
             success=False,
             query_type=query_type,
-            error=f"read_only mode does not allow {first_word} statements",
+            error=f"read_only mode does not allow {detected} statements",
             execution_time_ms=int((time.perf_counter() - start) * 1000),
         )
 
@@ -542,13 +630,22 @@ def execute_query(
 
     try:
         # 4. Transaction setup
+        # 읽기 전용 요청은 트랜잭션 자체를 READ ONLY 로 연다(WD-91 리뷰) — 위 분류가 어떤 형태를 놓쳐도 DB 가
+        # 쓰기(데이터 수정 CTE·쓰기 함수·nextval 등)를 거부하는 2차 방어선이다. READ ONLY 전환은 트랜잭션 중간에도
+        # 허용되고, 커넥션 반납 시 롤백으로 트랜잭션이 끝나 다음 요청에는 남지 않는다.
         # 스키마명은 테넌트에서 파생한다(하드코딩 'data' 제거). public 은 PostGIS 함수 때문에 유지.
         # 보간이 안전한 이유는 resolve_schema 가 _require_tenant_id 로 정규화한 값만 반환하기
         # 때문이다(사용자 입력이 아니라 리터럴+테넌트 id 에서만 파생된다) — 식별자 모양 검증
         # (_SAFE_IDENTIFIER)은 그 위의 휴면 방어선이다(tenant.py 참조).
-        cursor.execute(f"SET LOCAL search_path = '{schema}', 'public'")
-        cursor.execute("SET LOCAL statement_timeout = '30s'")
-        cursor.execute("SAVEPOINT analytics_query")
+        # 파라미터 없는 설정 문장들은 한 번의 execute 로 보내 왕복을 줄인다(순서 유지 — READ ONLY 가 첫 문장).
+        setup = [
+            f"SET LOCAL search_path = '{schema}', 'public'",
+            "SET LOCAL statement_timeout = '30s'",
+            "SAVEPOINT analytics_query",
+        ]
+        if read_only:
+            setup.insert(0, "SET TRANSACTION READ ONLY")
+        cursor.execute("; ".join(setup))
 
         if is_select:
             # 최상위 행 제한이 없거나 LIMIT ALL 이면 max_rows 를 적용한다(#749 — FETCH FIRST 도 사용자 제한).

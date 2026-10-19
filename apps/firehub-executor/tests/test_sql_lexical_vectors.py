@@ -14,7 +14,13 @@ from pathlib import Path
 
 import pytest
 
-from app.services.query_executor import _apply_row_limit, _has_limit, _mask_sql, _normalize_sql
+from app.services.query_executor import (
+    _apply_row_limit,
+    _has_limit,
+    _leading_keyword,
+    _mask_sql,
+    _normalize_sql,
+)
 
 # tests → firehub-executor → apps
 _FIXTURE = (
@@ -29,6 +35,9 @@ def test_fixture_has_vectors():
     assert len(_VECTORS["mask"]) >= 10
     assert len(_VECTORS["stripTrailing"]) >= 20
     assert len(_VECTORS["rowLimit"]) >= 20
+    assert len(_VECTORS["leading"]) >= 30
+    # null 벡터가 실제로 있어야 "키워드 없음" 판정도 대조된다.
+    assert any(case["keyword"] is None for case in _VECTORS["leading"])
 
 
 @pytest.mark.parametrize("case", _VECTORS["mask"], ids=lambda c: repr(c["sql"]))
@@ -55,3 +64,9 @@ def test_top_level_row_limit_detection_matches_fixture(case):
 def test_apply_row_limit_matches_fixture(case):
     """사용자 제한은 존중, LIMIT ALL/NULL 은 max_rows 로 치환, 없으면 덧붙인다(#749)."""
     assert _apply_row_limit(case["sql"], _ROW_LIMIT_MAX_ROWS) == case["applied"]
+
+
+@pytest.mark.parametrize("case", _VECTORS["leading"], ids=lambda c: repr(c["sql"]))
+def test_leading_keyword_matches_fixture(case):
+    """SQL 맨 앞 키워드 후보 토큰이 Java ``SqlLexicalMask.leadingKeyword`` 와 같다(WD-91)."""
+    assert _leading_keyword(case["sql"]) == case["keyword"]

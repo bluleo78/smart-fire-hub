@@ -64,6 +64,25 @@ class SqlLexicalMaskTest {
     return rows.stream();
   }
 
+  /** WD-91: 맨 앞 키워드 후보 토큰. null 벡터는 NullNode.asText() 가 문자열 "null" 이라 직접 null 로 바꾼다. */
+  static Stream<Arguments> leadingVectors() {
+    List<Arguments> rows = new ArrayList<>();
+    FIXTURE
+        .get("leading")
+        .forEach(
+            v -> {
+              JsonNode kw = v.get("keyword");
+              rows.add(Arguments.of(v.get("sql").asText(), kw.isNull() ? null : kw.asText()));
+            });
+    return rows.stream();
+  }
+
+  @ParameterizedTest(name = "[{index}] {0}")
+  @MethodSource("leadingVectors")
+  void 맨_앞_키워드_토큰이_픽스처와_같다(String sql, String expected) {
+    assertThat(SqlLexicalMask.leadingKeyword(sql)).isEqualTo(expected);
+  }
+
   /** 픽스처의 applied 는 maxRows=10 기준이다(픽스처 _설명 참조). */
   private static final int ROW_LIMIT_MAX_ROWS = 10;
 
@@ -106,6 +125,7 @@ class SqlLexicalMaskTest {
     assertThat(FIXTURE.get("mask").size()).isGreaterThanOrEqualTo(10);
     assertThat(FIXTURE.get("stripTrailing").size()).isGreaterThanOrEqualTo(20);
     assertThat(FIXTURE.get("rowLimit").size()).isGreaterThanOrEqualTo(20);
+    assertThat(FIXTURE.get("leading").size()).isGreaterThanOrEqualTo(30);
   }
 
   // ---------------------------------------------------------------------------------------------

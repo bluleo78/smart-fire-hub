@@ -283,7 +283,8 @@ public final class SqlLexicalMask {
     return tokens;
   }
 
-  private static boolean isAscii(String s) {
+  /** 모든 문자가 ASCII 인지. 첫 키워드 판정({@code SqlValidationUtils.firstKeyword})도 쓰도록 패키지 공개다. */
+  static boolean isAscii(String s) {
     for (int k = 0; k < s.length(); k++) {
       if (s.charAt(k) >= 0x80) {
         return false;
@@ -388,6 +389,51 @@ public final class SqlLexicalMask {
       }
     }
     return j < n && sql.charAt(j) == '$' ? j + 1 : -1;
+  }
+
+  /**
+   * SQL 맨 앞의 키워드 후보를 PostgreSQL 스캐너의 식별자 규칙(ident_start ident_cont*)대로 잘라 원문 그대로 돌려준다. 첫 글자가 식별자 첫
+   * 글자가 아니면({@code (}·{@code "}·숫자·{@code $}·공백 등) 키워드가 없으므로 null 이다. 앞 공백은 건너뛰지 않는다 — 호출부가 이미 걷어낸
+   * 문자열을 넘긴다.
+   *
+   * <p>왜 글자만이 아니라 식별자 규칙인가(WD-91): PostgreSQL 에서 {@code SELECT$x}·{@code SELECT_1} 은 키워드가 아니라 식별자
+   * 하나다. 영문자만 끊어 읽으면 이들을 SELECT 로 오분류해 읽기 전용 검사를 지나게 된다. 반대로 {@code SELECT*FROM}·{@code select(a)}
+   * 는 키워드 뒤에서 토큰이 끝나므로 SELECT 다. 0x80 이상 문자(NBSP·한글 등)도 PostgreSQL 에선 식별자 글자다. 이 함수는 어휘 토큰만 자른다 —
+   * 비ASCII 가 섞여 키워드가 될 수 없는 토큰을 거르는 일은 호출부({@code SqlValidationUtils.firstKeyword})가 한다.
+   *
+   * <p><b>executor {@code query_executor._leading_keyword} 와 짝이다.</b> 두 구현은 공용 픽스처 {@code
+   * fixtures/sql-lexical-vectors.json} 의 {@code leading} 벡터로 같은 결과를 검증한다 — 한쪽 규칙만 고치지 말 것.
+   */
+  public static String leadingKeyword(String sql) {
+    if (sql.isEmpty() || !isIdentStart(sql.charAt(0))) {
+      return null;
+    }
+    int end = 1;
+    while (end < sql.length() && isIdentCont(sql.charAt(end))) {
+      end++;
+    }
+    return sql.substring(0, end);
+  }
+
+  /**
+   * {@code text} 의 {@code i} 위치에서 {@code keywords} 중 하나가 <b>토큰 전체로</b> 시작하면 그 키워드를, 아니면 null 을
+   * 돌려준다. 앞뒤가 식별자 글자(ident_cont)가 아니어야 한다 — {@code SELECTED}·{@code X$DELETE}·{@code INSERTED_AT} 은
+   * PostgreSQL 에서 식별자 하나라 키워드가 아니다(WD-91 리뷰: 경계 없이 {@code startsWith} 로 보면 CTE 이름 {@code selected}
+   * 를 본문 SELECT 로 오인했다).
+   *
+   * @param text {@link #mask} 로 주석·리터럴을 가리고 ASCII 대문자로 바꾼 SQL
+   */
+  static String keywordAt(String text, int i, String... keywords) {
+    if (i > 0 && isIdentCont(text.charAt(i - 1))) {
+      return null;
+    }
+    for (String kw : keywords) {
+      int end = i + kw.length();
+      if (text.startsWith(kw, i) && (end >= text.length() || !isIdentCont(text.charAt(end)))) {
+        return kw;
+      }
+    }
+    return null;
   }
 
   /** PostgreSQL 식별자 첫 글자(ident_start): ASCII 글자·밑줄·0x80 이상 문자(서로게이트 포함). */

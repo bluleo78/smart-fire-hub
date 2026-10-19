@@ -96,6 +96,131 @@ def test_with_query_treated_as_select():
     assert result.query_type == "SELECT"
 
 
+# ---------------------------------------------------------------------------
+# WD-91: 첫 키워드 바로 뒤 구두점 — PostgreSQL 어휘 규칙으로 첫 키워드를 뽑는다
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "SELECT*FROM data.sales",
+        "select(a) from data.sales",
+        'SELECT"a" FROM data.sales',
+        'WITH"d" AS (SELECT 1 AS a) SELECT*FROM"d"',
+    ],
+)
+def test_read_only_allows_select_with_punctuation_right_after_keyword(query):
+    """공백 없이 구두점이 붙은 SELECT 도 PostgreSQL 이 받는 SELECT 다 — 읽기 전용에서 실행해 행을 돌려준다.
+
+    예전엔 공백으로만 첫 단어를 잘라 ``SELECT*FROM`` 을 UNKNOWN 으로 보고 거부했다(운영 경로).
+    """
+    cursor = make_cursor(
+        description=[("a", 23, None, None, None, None, None)],
+        fetchall_return=[(1,)],
+    )
+    conn = make_conn(cursor)
+
+    result = execute_query(query, max_rows=1000, read_only=True, conn=conn, tenant_id=1)
+
+    assert result.success is True, result.error
+    assert result.query_type == "SELECT"
+    assert result.rows == [{"a": 1}]
+
+
+@pytest.mark.parametrize(
+    "query, query_type",
+    [
+        ("DELETE*FROM t", "DELETE"),
+        ('UPDATE"t" SET a = 1', "UPDATE"),
+        ("INSERT(a) VALUES (1)", "INSERT"),
+    ],
+)
+def test_read_only_rejects_dml_with_punctuation_right_after_keyword(query, query_type):
+    """같은 규칙으로 구두점이 붙은 DML 은 DML 로 분류돼 읽기 전용이 거부한다 — 실행(cursor)까지 가지 않는다."""
+    conn = MagicMock()
+
+    result = execute_query(query, max_rows=1000, read_only=True, conn=conn, tenant_id=1)
+
+    assert result.success is False
+    assert result.query_type == query_type
+    assert query_type in result.error
+    conn.cursor.assert_not_called()
+
+
+@pytest.mark.parametrize("query", ["SELECT$x FROM t", "SELECT_1 FROM t", "SELECT$$x$$", "(SELECT 1)", "$1"])
+def test_read_only_rejects_non_keyword_start(query):
+    """식별자 글자($·_·숫자)가 이어지면 PostgreSQL 에선 식별자 하나라 SELECT 가 아니다. 키워드로 시작하지 않으면 UNKNOWN."""
+    conn = MagicMock()
+
+    result = execute_query(query, max_rows=1000, read_only=True, conn=conn, tenant_id=1)
+
+    assert result.success is False
+    assert result.query_type == "UNKNOWN"
+    assert "None" not in result.error
+    conn.cursor.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# 보안(WD-91 리뷰): WITH 문 분류 — CTE 안 DML·본문 키워드를 api 와 같은 규칙으로 본다
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "query, query_type",
+    [
+        ('WITH"d"AS(DELETE FROM t RETURNING *)SELECT*FROM"d"', "DELETE"),
+        ("WITH d AS (UPDATE t SET a = 1 RETURNING *) SELECT * FROM d", "UPDATE"),
+        ("WITH selected AS (SELECT 1) DELETE FROM t", "DELETE"),
+        ('WITH "select" AS (SELECT 1) UPDATE t SET a=1', "UPDATE"),
+        ("WITH selected AS (SELECT 1) INSERT INTO t SELECT 7 LIMIT 1 RETURNING *", "INSERT"),
+    ],
+)
+def test_read_only_rejects_data_modifying_with(query, query_type):
+    """WITH 로 시작해도 CTE 안이나 본문이 DML 이면 읽기 전용이 거부한다 — 실행(cursor)까지 가지 않는다.
+
+    예전엔 WITH 면 무조건 SELECT 로 보고 실행했다. api 를 거치지 않고 executor 에 직접 온 요청도 막아야 한다.
+    """
+    conn = MagicMock()
+
+    result = execute_query(query, max_rows=1000, read_only=True, conn=conn, tenant_id=1)
+
+    assert result.success is False
+    assert result.query_type == query_type
+    conn.cursor.assert_not_called()
+
+
+def test_read_only_runs_in_read_only_transaction():
+    """읽기 전용 요청은 사용자 SQL 전에 트랜잭션을 READ ONLY 로 연다 — 분류가 틀려도 DB 가 쓰기를 거부하는 2차 방어선."""
+    executed = []
+    cursor = make_cursor(
+        description=[("a", 23, None, None, None, None, None)],
+        fetchall_return=[(1,)],
+    )
+    cursor.execute.side_effect = lambda sql, *a, **k: executed.append(sql)
+    conn = make_conn(cursor)
+
+    result = execute_query("SELECT 1 AS a", max_rows=10, read_only=True, conn=conn, tenant_id=1)
+
+    assert result.success is True
+    # 설정 문장은 한 번의 execute 로 묶여 나가고, READ ONLY 가 그 첫 문장이며 사용자 SQL 보다 앞선다.
+    assert executed[0].startswith("SET TRANSACTION READ ONLY; ")
+    user_sql_index = next(i for i, s in enumerate(executed) if s.startswith("SELECT 1 AS a"))
+    assert user_sql_index > 0
+
+
+def test_read_write_does_not_force_read_only_transaction():
+    """쓰기 허용 요청(read_only=False)은 READ ONLY 를 걸지 않는다 — DML 이 실행·커밋돼야 한다."""
+    executed = []
+    cursor = make_cursor(rowcount=1)
+    cursor.execute.side_effect = lambda sql, *a, **k: executed.append(sql)
+    conn = make_conn(cursor)
+
+    result = execute_query("UPDATE t SET a = 1", max_rows=10, read_only=False, conn=conn, tenant_id=1)
+
+    assert result.success is True
+    assert not any("READ ONLY" in s for s in executed)
+    conn.commit.assert_called_once()
+
+
 def test_limit_auto_added():
     """Query without LIMIT should have LIMIT appended before execution."""
     executed_sqls = []
