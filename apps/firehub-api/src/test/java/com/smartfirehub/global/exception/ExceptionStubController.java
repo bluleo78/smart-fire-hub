@@ -18,6 +18,8 @@ import com.smartfirehub.user.exception.UserNotFoundException;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import java.util.List;
+import org.postgresql.util.PSQLException;
+import org.postgresql.util.ServerErrorMessage;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -147,6 +149,25 @@ public class ExceptionStubController {
                   + " \"ck_dataset_status\"";
         };
     throw new DataIntegrityViolationException("SQL [...]", new RuntimeException(causeMsg));
+  }
+
+  /**
+   * DB 데이터 오류(SQLState 22xxx)를 담은 무결성 위반 (WD-98). 실제 jOOQ/Spring 래핑처럼 SQL 문·내부 테이블명이 바깥 메시지에, 서버
+   * 구조화 오류가 원인에 실린다 — 응답이 한국어 사유 400 이고 원문이 새지 않는지 검증한다. kind=duplicate 는 23505(22xxx 아님) 대조군.
+   */
+  @GetMapping("/data-integrity-violation-data-error/{kind}")
+  public void dataIntegrityViolationDataError(@PathVariable String kind) {
+    String raw =
+        switch (kind) {
+          case "numeric" -> "SERROR\0C22003\0Mnumeric field overflow\0";
+          case "varchar" ->
+              "SERROR\0C22001\0Mvalue too long for type character varying(3)\0ccode\0";
+          default ->
+              "SERROR\0C23505\0Mduplicate key value violates unique constraint \"uk_secret\"\0";
+        };
+    throw new DataIntegrityViolationException(
+        "SQL [insert into data.\"secret_tbl\" (code) values (?)]; ERROR: " + kind,
+        new PSQLException(new ServerErrorMessage(raw)));
   }
 
   @GetMapping("/account-locked")

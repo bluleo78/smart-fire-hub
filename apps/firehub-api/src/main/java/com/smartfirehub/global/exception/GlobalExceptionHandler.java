@@ -18,6 +18,7 @@ import com.smartfirehub.dataimport.exception.ImportValidationException;
 import com.smartfirehub.dataimport.exception.UnsupportedFileTypeException;
 import com.smartfirehub.dataset.exception.*;
 import com.smartfirehub.dataset.rowsearch.SearchIndexNotConfiguredException;
+import com.smartfirehub.dataset.service.DataExceptionTranslator;
 import com.smartfirehub.embedding.EmbeddingException;
 import com.smartfirehub.file.exception.FileNotFoundException;
 import com.smartfirehub.file.exception.FileSizeLimitExceededException;
@@ -164,6 +165,19 @@ public class GlobalExceptionHandler {
       DataIntegrityViolationException ex, HttpServletRequest request) {
     // 클라이언트 입력이 유발하는 409이므로 error가 아닌 warn. 원문 메시지는 여기서만 노출된다.
     log.warn("Data integrity violation on {}: {}", request.getRequestURI(), ex.getMessage(), ex);
+
+    // DB 데이터 오류(SQLState 22xxx — 글자 수·숫자 범위·날짜·NUL 등)는 입력 오류라 원문 없는 한국어 사유로 400. 그 밖의 제약 위반은
+    // 아래 기존 분류(409)를 그대로 탄다.
+    String dataErrorReason = DataExceptionTranslator.describe(ex);
+    if (dataErrorReason != null) {
+      ErrorResponse response =
+          buildError(
+              HttpStatus.BAD_REQUEST,
+              "저장할 수 없는 값이 있어 처리하지 못했습니다: " + dataErrorReason,
+              null,
+              request);
+      return ResponseEntity.badRequest().body(response);
+    }
 
     String message = "Data integrity violation";
     if (ex.getCause() != null) {

@@ -155,9 +155,7 @@ public final class RowFilterCompiler {
         case "TEXT", "VARCHAR" -> s;
         case "INTEGER" -> {
           // 에이전트 JSON 의 5.0 은 Double("5.0")로 들어온다 — 소수부가 0 인 값만 정수로 받고 5.5 는 거부한다.
-          BigDecimal d = new BigDecimal(s);
-          if (d.stripTrailingZeros().scale() > 0) throw new IllegalArgumentException();
-          yield d.longValueExact();
+          yield ColumnPhysicalType.toExactBigint(new BigDecimal(s), s);
         }
         case "DECIMAL" -> new BigDecimal(s);
         case "BOOLEAN" -> {

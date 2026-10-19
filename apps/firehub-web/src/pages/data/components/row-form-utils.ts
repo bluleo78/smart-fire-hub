@@ -3,7 +3,120 @@ import { z } from 'zod';
 import { cellTimestampToLocalInput, isFormattableDateString } from '../../../lib/formatters';
 import type { DatasetColumnResponse } from '../../../types/dataset';
 
-export function buildRowZodSchema(columns: DatasetColumnResponse[], mode: 'add' | 'edit' = 'edit') {
+// ---------------------------------------------------------------------------
+// (WD-98) 물리 타입 한도 — 서버 행 API 엄격 모드(ColumnPhysicalType.enforceLimitsStrict)와 같은 판정
+// ---------------------------------------------------------------------------
+
+// 원본: apps/firehub-api/src/main/java/com/smartfirehub/dataset/service/ColumnPhysicalType.java — 값을 바꾸면 함께 바꾼다.
+/** DECIMAL 의 물리 타입 NUMERIC(18,6) 정수부 허용 자릿수(18 - 6). */
+const DECIMAL_INTEGER_DIGITS = 12;
+/** DECIMAL 의 물리 타입 NUMERIC(18,6) 소수 자릿수. */
+const DECIMAL_SCALE = 6;
+/** 길이 미지정 VARCHAR 의 물리 타입 길이 — VARCHAR(255). */
+const DEFAULT_VARCHAR_LENGTH = 255;
+/** INTEGER 의 물리 타입 BIGINT 범위. */
+const BIGINT_MIN = -(2n ** 63n);
+const BIGINT_MAX = 2n ** 63n - 1n;
+
+const NUMBER_FORMAT_MSG = '숫자를 입력하세요.';
+
+/** 부호·정수부·소수부·지수부로 된 숫자 리터럴(type=number 입력이 허용하는 `1e-7` 같은 지수 표기 포함). */
+const NUMBER_LITERAL_RE = /^([+-]?)(\d*)(?:\.(\d*))?(?:[eE]([+-]?\d+))?$/;
+
+interface NumberLiteral {
+  negative: boolean;
+  /** 앞 0·끝 0 을 뺀 유효숫자(값이 0 이면 빈 문자열). */
+  significand: string;
+  /** 정수부 자릿수(앞 0 제외). */
+  integerDigits: number;
+  /** 소수부 자릿수(끝 0 제외). */
+  fractionDigits: number;
+}
+
+/**
+ * 입력 원문을 숫자 리터럴로 해석한다 — 숫자로 바꾸지 않고 자릿수만 센다. `Number()` 를 거치면 `0.0000001` 이 `1e-7` 이 되고
+ * 유효숫자 16자리 이상이 깎여 판정이 어긋난다. 앞 0·끝 0 은 값이 바뀌지 않으므로 자릿수에 넣지 않고(`0001.5000000` 은
+ * 1자리·1자리), 지수는 자릿수 계산에만 써서 `1e999999999` 도 큰 수를 만들지 않는다. 숫자 리터럴이 아니면 null.
+ */
+function parseNumberLiteral(raw: unknown): NumberLiteral | null {
+  if (typeof raw !== 'string' && typeof raw !== 'number') return null;
+  const match = NUMBER_LITERAL_RE.exec(String(raw).trim());
+  if (!match) return null;
+  const [, sign, intPart = '', fracPart = '', expPart] = match;
+  const digits = intPart + fracPart;
+  if (digits.length === 0) return null;
+  const firstNonZero = digits.search(/[1-9]/);
+  if (firstNonZero < 0) return { negative: false, significand: '', integerDigits: 0, fractionDigits: 0 };
+  const significantEnd = digits.replace(/0+$/, '').length;
+  // digits 기준 소수점 위치. 지수가 너무 커 Number 가 Infinity 가 돼도 아래 비교는 그대로 맞다.
+  const pointPos = intPart.length + (expPart ? Number(expPart) : 0);
+  return {
+    negative: sign === '-',
+    significand: digits.slice(firstNonZero, significantEnd),
+    integerDigits: Math.max(0, pointPos - firstNonZero),
+    fractionDigits: Math.max(0, significantEnd - pointPos),
+  };
+}
+
+/** (WD-98) DECIMAL 입력 검사 — 형식 오류·정수부 12자리 초과·소수부 7자리 이상이면 안내 문구, 통과하면 null. */
+export function decimalInputError(raw: unknown): string | null {
+  const n = parseNumberLiteral(raw);
+  if (!n) return NUMBER_FORMAT_MSG;
+  if (n.integerDigits > DECIMAL_INTEGER_DIGITS) {
+    return `정수부는 최대 ${DECIMAL_INTEGER_DIGITS}자리까지 입력할 수 있습니다.`;
+  }
+  if (n.fractionDigits > DECIMAL_SCALE) return `소수점 아래는 최대 ${DECIMAL_SCALE}자리까지 입력할 수 있습니다.`;
+  return null;
+}
+
+/** (WD-98) INTEGER 입력 검사 — 형식 오류·정수 아님·BIGINT 범위 밖이면 안내 문구, 통과하면 null. 범위는 BigInt 로 정확히 비교한다. */
+export function integerInputError(raw: unknown): string | null {
+  const n = parseNumberLiteral(raw);
+  if (!n) return NUMBER_FORMAT_MSG;
+  if (n.fractionDigits > 0) return '정수를 입력하세요.';
+  const outOfRange = `정수 범위를 벗어났습니다(허용 범위: ${BIGINT_MIN} ~ ${BIGINT_MAX}).`;
+  // BIGINT 는 최대 19자리 — 그보다 길면 펼치지 않고 바로 범위 밖이다.
+  if (n.integerDigits > 19) return outOfRange;
+  const magnitude = n.significand + '0'.repeat(n.integerDigits - n.significand.length);
+  const value = BigInt((n.negative ? '-' : '') + (magnitude || '0'));
+  return value < BIGINT_MIN || value > BIGINT_MAX ? outOfRange : null;
+}
+
+/**
+ * (WD-98) INTEGER·DECIMAL 폼 필드 — 입력 원문으로 검사하고, 숫자로 바꾸지 않고 앞뒤 공백만 뗀 문자열로 보낸다. JS 숫자(double)로
+ * 보내면 2^53 을 넘는 정수(9007199254740993)나 유효숫자 16자리 이상의 소수가 조용히 다른 값으로 저장된다. 서버가 문자열을 정확히 파싱한다.
+ *
+ * @param initial 편집 폼 초기값(비교용 정규화 문자열). API 가 숫자를 JSON 숫자로 주어 JS double 로 표시되므로 저장값
+ *   `999999999999.999999` 가 `1000000000000`(13자리)처럼 보인다 — 초기값과 같은(손대지 않은) 칸은 검사하지 않는다(어차피 전송 안 함, #772).
+ */
+function numericField(col: DatasetColumnResponse, check: (raw: unknown) => string | null, initial?: string) {
+  const numeric = z
+    .unknown()
+    .superRefine((v, ctx) => {
+      if (initial !== undefined && v !== undefined && normalizeForCompare(v, col.dataType) === initial) return;
+      const message = check(v);
+      if (message) ctx.addIssue({ code: 'custom', message });
+    })
+    .transform((v) => String(v).trim());
+  // (#674) 빈 문자열은 검사 전에 undefined 로 바꾼다 — NOT NULL 이면 형식 오류(필수), NULL 허용이면 optional 로 통과해
+  // cleanFormValues 가 null 로 보낸다(예전 coerce 경로에서 `Number('') === 0` 이 0 으로 저장되던 함정).
+  return z.preprocess((v) => (v === '' ? undefined : v), col.isNullable ? numeric.optional() : numeric);
+}
+
+/**
+ * (WD-98) VARCHAR 값이 한도 안인지 PostgreSQL 처럼 문자(코드포인트) 수로 판정한다 — `s.length`(UTF-16)는 이모지 같은
+ * 보조 문자를 2자로 센다. 코드포인트 수 ≤ UTF-16 길이이므로 UTF-16 길이로 이미 한도 안이면 펼치지 않는다(대부분의 값).
+ */
+function withinCodePointLimit(s: string, limit: number): boolean {
+  return s.length <= limit || [...s].length <= limit;
+}
+
+/** @param initialValues (WD-98) 편집 폼 초기값 — 손대지 않은 숫자 칸은 한도 검사를 건너뛴다(numericField 참고). */
+export function buildRowZodSchema(
+  columns: DatasetColumnResponse[],
+  mode: 'add' | 'edit' = 'edit',
+  initialValues?: Record<string, unknown>,
+) {
   const shape: Record<string, z.ZodTypeAny> = {};
   for (const col of columns) {
     // (#673) 이 앱의 테이블 생성 폼에는 auto-increment 옵션이 없어 PK는 항상 사용자가
@@ -14,33 +127,27 @@ export function buildRowZodSchema(columns: DatasetColumnResponse[], mode: 'add' 
     let field: z.ZodTypeAny;
     switch (col.dataType) {
       case 'INTEGER':
-        field = z.coerce.number({ error: '숫자를 입력하세요.' }).int({ error: '정수를 입력하세요.' });
-        // (#674) 이전에는 `.optional().or(z.literal('').transform(() => undefined))` 형태였는데
-        // union의 첫 대안(coerce.number())이 먼저 시도되고 `Number('') === 0`이라 빈 문자열이
-        // 0으로 "성공" 파싱돼 버렸다. 이 falsy-0 함정은 NOT NULL 컬럼에도 동일하게 적용되어
-        // 필수 숫자 필드를 비워도 검증을 통과해 0이 저장되는 문제가 있었다(발견 당시 함께 수정).
-        // z.preprocess로 빈 문자열을 coerce 이전에 undefined로 바꿔 원천 차단한다 — NOT NULL이면
-        // undefined가 coerce.number()에서 NaN이 되어 그대로 검증 실패(필수 처리), NULL 허용이면
-        // .optional()로 undefined를 통과시켜 cleanFormValues가 null로 변환하게 한다.
-        field = z.preprocess((v) => (v === '' ? undefined : v), col.isNullable ? field.optional() : field);
+      case 'DECIMAL': {
+        const initial = initialValues ? normalizeForCompare(initialValues[col.columnName], col.dataType) : undefined;
+        field = numericField(col, col.dataType === 'INTEGER' ? integerInputError : decimalInputError, initial);
         break;
-      case 'DECIMAL':
-        field = z.coerce.number({ error: '숫자를 입력하세요.' });
-        // (#674) INTEGER와 동일한 이유로 preprocess 적용 (NOT NULL 포함).
-        field = z.preprocess((v) => (v === '' ? undefined : v), col.isNullable ? field.optional() : field);
-        break;
+      }
       case 'BOOLEAN':
         field = z.boolean();
         // NULL 허용 컬럼은 true/false 외에 null(값 없음)도 유효한 값으로 허용한다.
         // (#670) 그렇지 않으면 tri-state UI가 null을 선택해도 Zod 검증에서 걸러진다.
         if (col.isNullable) field = field.nullable().optional();
         break;
-      case 'VARCHAR':
-        field = z.string();
-        if (col.maxLength) field = (field as z.ZodString).max(col.maxLength, `최대 ${col.maxLength}자`);
-        if (col.isNullable) field = field.optional().or(z.literal(''));
-        else field = (field as z.ZodString).min(1, '필수 입력 항목입니다.');
+      case 'VARCHAR': {
+        // (WD-98) 길이 미지정 VARCHAR 도 물리 타입은 VARCHAR(255) 라 같은 한도로 막는다. 길이는 서버·PG 와 같은
+        // 문자(코드포인트) 수로 센다 — z.string().max() 는 UTF-16 단위라 이모지 5자를 VARCHAR(5) 초과로 잘못 막았다.
+        const limit = col.maxLength ?? DEFAULT_VARCHAR_LENGTH;
+        let str = z.string();
+        if (!col.isNullable) str = str.min(1, '필수 입력 항목입니다.');
+        const limited = str.refine((v) => withinCodePointLimit(v, limit), `최대 ${limit}자`);
+        field = col.isNullable ? limited.optional().or(z.literal('')) : limited;
         break;
+      }
       case 'GEOMETRY': {
         // GeoJSON 유효성 검증: type 필드가 GeoJSON 표준 값인지 확인
         const GEOJSON_TYPES = [

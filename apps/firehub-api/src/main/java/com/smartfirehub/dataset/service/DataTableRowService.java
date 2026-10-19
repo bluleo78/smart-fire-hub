@@ -55,7 +55,8 @@ public class DataTableRowService {
     if (upper.contains("TIMESTAMP")) return "?::timestamp";
     if (upper.contains("BOOLEAN")) return "?::boolean";
     if (upper.contains("BIGINT")) return "?::bigint";
-    if (upper.contains("INTEGER") || upper.contains("INT")) return "?::integer";
+    // 데이터셋 INTEGER 의 물리 타입은 BIGINT(DataTableService#mapDataType) — int4 로 캐스트하면 2^31 이상이 넘친다.
+    if (upper.contains("INTEGER") || upper.contains("INT")) return "?::bigint";
     if (upper.contains("NUMERIC")) return "?::numeric";
     if (upper.contains("DATE")) return "?::date";
     return "?";

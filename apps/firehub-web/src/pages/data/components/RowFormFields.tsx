@@ -159,7 +159,6 @@ export function RowFormFields({
               <Input
                 id={`${idPrefix}-${col.columnName}`}
                 type="text"
-                maxLength={col.dataType === 'VARCHAR' && col.maxLength ? col.maxLength : undefined}
                 {...form.register(col.columnName)}
               />
             )}

@@ -46,7 +46,6 @@ export function EditRowDialog({ open, onOpenChange, datasetId, columns, rowId, i
   const editableColumns = useMemo(() => columns.filter((c) => !c.isPrimaryKey), [columns]);
   // (#672) 사용자 정의 PK(NOT NULL) 컬럼 — 편집 폼에서는 읽기 전용으로만 노출한다.
   const primaryKeyColumns = useMemo(() => columns.filter((c) => c.isPrimaryKey), [columns]);
-  const schema = useMemo(() => buildRowZodSchema(columns), [columns]);
 
   // (#672·#772) PK 컬럼은 폼 상태에 싣지 않는다 — 저장은 바뀐 칸만 보내고, 서버 부분 업데이트가
   // 요청에 없는 컬럼(PK 포함)의 DB 값을 그대로 유지한다.
@@ -57,6 +56,8 @@ export function EditRowDialog({ open, onOpenChange, datasetId, columns, rowId, i
     }
     return vals;
   }, [editableColumns, initialData]);
+  // (WD-98) 초기값을 넘겨 손대지 않은 DECIMAL 칸은 자릿수 검사를 건너뛴다(JS double 표시로 13자리처럼 보이는 저장값 대비).
+  const schema = useMemo(() => buildRowZodSchema(columns, 'edit', defaultValues), [columns, defaultValues]);
 
   // (#772) date/datetime-local 입력이 담을 수 없는 기존 값(±infinity·BC·5자리 연도 등)을 가진 컬럼 —
   // 원문 텍스트 입력으로 렌더링해 빈칸으로 보이거나 빈칸이 NULL 로 저장되는 일을 막는다.

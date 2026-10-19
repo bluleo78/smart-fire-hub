@@ -7,12 +7,14 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.smartfirehub.dataset.dto.*;
 import com.smartfirehub.dataset.exception.DatasetNotFoundException;
 import com.smartfirehub.support.IntegrationTestBase;
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
@@ -426,7 +428,7 @@ class DatasetDataServiceTest extends IntegrationTestBase {
                 datasetDataService.addRow(
                     dataset.id(), new RowDataRequest(Map.of("col", "toolongvalue"))))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("max length");
+        .hasMessageContaining("Column 'col': 최대 5자까지 입력할 수 있습니다(입력 12자)");
   }
 
   /** 정상: INTEGER 타입 숫자 값 저장 성공 */
@@ -1031,5 +1033,280 @@ class DatasetDataServiceTest extends IntegrationTestBase {
             () ->
                 datasetDataService.updateRow(dataset.id(), 999_999L, new RowDataRequest(Map.of())))
         .isInstanceOf(com.smartfirehub.dataset.exception.RowNotFoundException.class);
+  }
+
+  // =========================================================================
+  // 물리 타입 한도 검사 + DB 데이터 오류 번역 (WD-98)
+  // =========================================================================
+
+  /** 물리 컬럼 값을 텍스트로 읽는다 — 검증이 정규화한 "실제 저장값"을 DB 기준으로 확인하기 위함. */
+  private String readRawText(String tableName, String column, Long rowId) {
+    return dsl.fetchOne(
+            "SELECT \"" + column + "\"::text AS v FROM data.\"" + tableName + "\" WHERE id = ?",
+            rowId)
+        .get("v", String.class);
+  }
+
+  /**
+   * 회귀(WD-98): 소수 정수부 13자리는 INSERT 의 영어 「Data integrity violation」(409)이 아니라, 검증 단계에서 필드명과 한국어 사유가
+   * 담긴 400(IllegalArgumentException)으로 거부된다. 사유 문구까지 고정한다 — DB 오류 번역(같은 400·한국어)만으로도 통과하면 검증이 빠져도
+   * 모르기 때문이다.
+   */
+  @Test
+  void addRow_decimal_integerPart13Digits_rejectedWithKoreanReason() {
+    DatasetDetailResponse dataset =
+        createSingleColumnDataset("wd98_dec_13", "price", "DECIMAL", null, true);
+
+    assertThatThrownBy(
+            () ->
+                datasetDataService.addRow(
+                    dataset.id(),
+                    new RowDataRequest(Map.of("price", new BigDecimal("1234567890123")))))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Column 'price': 정수부는 최대 12자리까지 입력할 수 있습니다")
+        .hasMessageNotContaining("저장하지 못했습니다");
+  }
+
+  /** 정상(WD-98): 정수부 12자리·소수 6자리 경계 값은 그대로 저장된다. */
+  @Test
+  void addRow_decimal_integerPart12Digits_saved() {
+    DatasetDetailResponse dataset =
+        createSingleColumnDataset("wd98_dec_12", "price", "DECIMAL", null, true);
+
+    RowDataResponse row =
+        datasetDataService.addRow(
+            dataset.id(),
+            new RowDataRequest(Map.of("price", new BigDecimal("-999999999999.999999"))));
+
+    assertThat(readRawText(dataset.tableName(), "price", row.id()))
+        .isEqualTo("-999999999999.999999");
+  }
+
+  /**
+   * 회귀(WD-98): 행 API 는 엄격 모드 — 소수부 7자리 이상(끝 0 제외)은 반올림 저장하지 않고 거부한다(임포트는 PG 규칙대로 반올림). JSON 숫자가
+   * Double 로 들어오는 경우(1.0E-7 표기)와 문자열 모두 같다. 끝 0 만 붙은 값은 저장값이 같아 통과한다.
+   */
+  @Test
+  void addRow_decimal_sevenFractionDigits_rejectedStrict() {
+    DatasetDetailResponse dataset =
+        createSingleColumnDataset("wd98_dec_strict", "price", "DECIMAL", null, true);
+
+    for (Object value : List.of(0.0000001, "0.0000001", "1.1234567", "1e-7")) {
+      assertThatThrownBy(
+              () ->
+                  datasetDataService.addRow(
+                      dataset.id(), new RowDataRequest(Map.of("price", value))))
+          .as("value=%s", value)
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("Column 'price': 소수점 아래는 최대 6자리까지 입력할 수 있습니다");
+    }
+
+    RowDataResponse trailingZeros =
+        datasetDataService.addRow(dataset.id(), new RowDataRequest(Map.of("price", "1.5000000")));
+    assertThat(readRawText(dataset.tableName(), "price", trailingZeros.id())).isEqualTo("1.500000");
+  }
+
+  /**
+   * 회귀(WD-98): 웹 폼이 보내는 문자열 DECIMAL 은 정확히 저장된다 — JSON 숫자(JS double)로 보내던 때는 유효숫자 18자리 값이
+   * 123456789012.12346 으로 깎였다. 형식이 틀린 문자열은 형식 오류다.
+   */
+  @Test
+  void addRow_decimal_string18SignificantDigits_savedExactly() {
+    DatasetDetailResponse dataset =
+        createSingleColumnDataset("wd98_dec_exact", "price", "DECIMAL", null, true);
+
+    RowDataResponse row =
+        datasetDataService.addRow(
+            dataset.id(), new RowDataRequest(Map.of("price", "123456789012.123456")));
+    assertThat(readRawText(dataset.tableName(), "price", row.id()))
+        .isEqualTo("123456789012.123456");
+
+    for (String bad : List.of("1,000", "NaN", " ", "12abc")) {
+      assertThatThrownBy(
+              () ->
+                  datasetDataService.addRow(dataset.id(), new RowDataRequest(Map.of("price", bad))))
+          .as("value=%s", bad)
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("Column 'price': Expected numeric value");
+    }
+  }
+
+  /**
+   * 회귀(WD-98): INTEGER 는 값이 조용히 바뀌지 않는다 — 예전 {@code longValue()} 는 2^64+1 → 1, 1.9 → 1, 1e30 →
+   * Long.MAX 로 저장했다. 정수가 아니면 형식 오류, BIGINT 범위 밖이면 범위 오류(임포트와 같은 문구). 정수 값의 Double(3.0)과 경계 값은 저장된다.
+   */
+  @Test
+  void addRow_integer_inexactValues_rejected() {
+    DatasetDetailResponse dataset =
+        createSingleColumnDataset("wd98_int_exact", "num", "INTEGER", null, true);
+
+    assertThatThrownBy(
+            () ->
+                datasetDataService.addRow(
+                    dataset.id(),
+                    new RowDataRequest(
+                        Map.of(
+                            "num",
+                            java.math.BigInteger.TWO.pow(64).add(java.math.BigInteger.ONE)))))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Column 'num': 정수 범위를 벗어났습니다: 18446744073709551617");
+    assertThatThrownBy(
+            () -> datasetDataService.addRow(dataset.id(), new RowDataRequest(Map.of("num", 1e30))))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Column 'num': 정수 범위를 벗어났습니다");
+    assertThatThrownBy(
+            () -> datasetDataService.addRow(dataset.id(), new RowDataRequest(Map.of("num", 1.9))))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Column 'num': 정수 형식이 아닙니다: 1.9");
+
+    RowDataResponse whole =
+        datasetDataService.addRow(dataset.id(), new RowDataRequest(Map.of("num", 3.0)));
+    RowDataResponse max =
+        datasetDataService.addRow(dataset.id(), new RowDataRequest(Map.of("num", Long.MAX_VALUE)));
+    assertThat(readRawText(dataset.tableName(), "num", whole.id())).isEqualTo("3");
+    assertThat(readRawText(dataset.tableName(), "num", max.id()))
+        .isEqualTo(String.valueOf(Long.MAX_VALUE));
+  }
+
+  /**
+   * 회귀(WD-98): 웹 폼은 INTEGER 도 입력 원문 문자열로 보낸다 — JS 숫자는 2^53 을 넘는 BIGINT 를 깎는다(9007199254740993 →
+   * 9007199254740992). 문자열은 정확히 저장되고, 정수가 아니거나 범위를 넘는 문자열은 숫자와 같은 사유로 거부된다.
+   */
+  @Test
+  void addRow_integer_stringBeyond2pow53_savedExactly() {
+    DatasetDetailResponse dataset =
+        createSingleColumnDataset("wd98_int_str", "num", "INTEGER", null, true);
+
+    RowDataResponse row =
+        datasetDataService.addRow(
+            dataset.id(), new RowDataRequest(Map.of("num", " 9007199254740993 ")));
+    assertThat(readRawText(dataset.tableName(), "num", row.id())).isEqualTo("9007199254740993");
+
+    assertThatThrownBy(
+            () -> datasetDataService.addRow(dataset.id(), new RowDataRequest(Map.of("num", "1.9"))))
+        .hasMessageContaining("Column 'num': 정수 형식이 아닙니다: 1.9");
+    assertThatThrownBy(
+            () ->
+                datasetDataService.addRow(
+                    dataset.id(), new RowDataRequest(Map.of("num", "9223372036854775808"))))
+        .hasMessageContaining("Column 'num': 정수 범위를 벗어났습니다: 9223372036854775808");
+  }
+
+  /** 회귀(WD-98): 행 API 는 엄격 모드 — 초과분이 공백뿐이어도(PG 는 잘라 저장) 길이 초과로 거부한다. */
+  @Test
+  void addRow_varchar_trailingSpaceOverflow_rejectedStrict() {
+    DatasetDetailResponse dataset =
+        createSingleColumnDataset("wd98_vc_space", "col", "VARCHAR", 3, true);
+
+    assertThatThrownBy(
+            () ->
+                datasetDataService.addRow(dataset.id(), new RowDataRequest(Map.of("col", "abc  "))))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Column 'col': 최대 3자까지 입력할 수 있습니다(입력 5자)");
+  }
+
+  /** 회귀(WD-98): VARCHAR 길이는 UTF-16 이 아니라 문자(코드포인트) 수로 센다 — 이모지 5자는 VARCHAR(5)에 들어간다. */
+  @Test
+  void addRow_varchar_fiveEmojiInVarchar5_saved() {
+    DatasetDetailResponse dataset =
+        createSingleColumnDataset("wd98_emoji", "col", "VARCHAR", 5, true);
+    String emoji = "😀😀😀😀😀"; // UTF-16 길이 10, 코드포인트 5
+
+    RowDataResponse row =
+        datasetDataService.addRow(dataset.id(), new RowDataRequest(Map.of("col", emoji)));
+
+    assertThat(readRawText(dataset.tableName(), "col", row.id())).isEqualTo(emoji);
+  }
+
+  /** 회귀(WD-98): 길이 미지정 VARCHAR(물리 VARCHAR(255))도 검사한다 — 256자는 DB 오류가 아니라 검증 단계 사유로 거부된다. */
+  @Test
+  void addRow_varchar_unspecifiedLength_256Chars_rejected() {
+    DatasetDetailResponse dataset =
+        createSingleColumnDataset("wd98_vc_default", "col", "VARCHAR", null, true);
+
+    assertThatThrownBy(
+            () ->
+                datasetDataService.addRow(
+                    dataset.id(), new RowDataRequest(Map.of("col", "a".repeat(256)))))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Column 'col': 최대 255자까지 입력할 수 있습니다(입력 256자)");
+  }
+
+  /** 회귀(WD-98): NUL 문자는 INSERT 의 22021 이 아니라 검증 단계에서 거부된다(TEXT·VARCHAR 모두). */
+  @Test
+  void addRow_textWithNul_rejected() {
+    DatasetDetailResponse dataset =
+        createSingleColumnDataset("wd98_nul", "col", "TEXT", null, true);
+
+    assertThatThrownBy(
+            () ->
+                datasetDataService.addRow(
+                    dataset.id(), new RowDataRequest(Map.of("col", "a\u0000b"))))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Column 'col': 저장할 수 없는 문자(NUL)가 포함되어 있습니다");
+  }
+
+  /** 회귀(WD-98): 행 수정도 같은 검사를 거친다 — 정수부 13자리·길이 초과는 거부, 경계 값은 저장. */
+  @Test
+  void updateRow_appliesSamePhysicalLimits() {
+    List<DatasetColumnRequest> columns =
+        List.of(
+            new DatasetColumnRequest("price", "가격", "DECIMAL", null, true, false, null),
+            new DatasetColumnRequest("code", "코드", "VARCHAR", 3, true, false, null));
+    DatasetDetailResponse dataset =
+        datasetService.createDataset(
+            new CreateDatasetRequest(
+                "WD98 Update", "wd98_update", null, null, "TABLE", "SOURCE", columns, null),
+            testUserId);
+    RowDataResponse added =
+        datasetDataService.addRow(
+            dataset.id(), new RowDataRequest(Map.of("price", 1, "code", "abc")));
+
+    assertThatThrownBy(
+            () ->
+                datasetDataService.updateRow(
+                    dataset.id(),
+                    added.id(),
+                    new RowDataRequest(Map.of("price", new BigDecimal("12345678901234")))))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Column 'price': 정수부는 최대 12자리까지 입력할 수 있습니다");
+    assertThatThrownBy(
+            () ->
+                datasetDataService.updateRow(
+                    dataset.id(), added.id(), new RowDataRequest(Map.of("code", "abcd"))))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Column 'code': 최대 3자까지 입력할 수 있습니다(입력 4자)");
+
+    datasetDataService.updateRow(
+        dataset.id(),
+        added.id(),
+        new RowDataRequest(Map.of("price", new BigDecimal("123456789012.5"), "code", "😀😀😀")));
+    assertThat(readRawText(dataset.tableName(), "price", added.id()))
+        .isEqualTo("123456789012.500000");
+    assertThat(readRawText(dataset.tableName(), "code", added.id())).isEqualTo("😀😀😀");
+  }
+
+  /**
+   * 회귀(WD-98): 검증을 통과한 값이 쓰기에서 DB 데이터 오류(22xxx)로 실패하면, 실제 jOOQ/Spring 체인이 {@link
+   * DataIntegrityViolationException} 을 내고 {@link DataExceptionTranslator#describe} 가 한국어 사유를 찾는다 —
+   * 전역 처리기가 이 사유로 400 을 만든다(응답 형태는 GlobalExceptionHandlerTest). 메타데이터(VARCHAR(10))와 물리
+   * 컬럼(VARCHAR(3))을 어긋나게 해 22001 을 일으킨다. 실패 뒤 트랜잭션이 중단(25P02)되므로 이후 DB 문은 실행하지 않는다.
+   */
+  @Test
+  void addRow_dbDataError_reachesHandlerAsTranslatableIntegrityViolation() {
+    DatasetDetailResponse dataset =
+        createSingleColumnDataset("wd98_db_err", "code", "VARCHAR", 10, true);
+    dsl.execute(
+        "ALTER TABLE data.\"" + dataset.tableName() + "\" ALTER COLUMN code TYPE varchar(3)");
+
+    assertThatThrownBy(
+            () ->
+                datasetDataService.addRow(
+                    dataset.id(), new RowDataRequest(Map.of("code", "abcdef"))))
+        .isInstanceOf(DataIntegrityViolationException.class)
+        .satisfies(
+            e ->
+                assertThat(DataExceptionTranslator.describe(e))
+                    .isEqualTo("글자 수 제한(최대 3자)을 넘는 값이 있습니다"));
   }
 }

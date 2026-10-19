@@ -250,6 +250,40 @@ class GlobalExceptionHandlerTest {
         .andExpect(jsonPath("$.message", not(containsString("ck_dataset_status"))));
   }
 
+  /**
+   * (WD-98) DB 데이터 오류(22xxx)는 영어 「Data integrity violation」(409)이 아니라 한국어 사유의 400 이다. SQL 문·내부
+   * 테이블명·DB 원문은 응답에 새지 않는다.
+   */
+  @Test
+  void dataIntegrityViolation_dataError22xxx_returns400WithKoreanReason() throws Exception {
+    mockMvc
+        .perform(get("/test/exception/data-integrity-violation-data-error/numeric"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.status").value(400))
+        .andExpect(
+            jsonPath("$.message")
+                .value("저장할 수 없는 값이 있어 처리하지 못했습니다: 숫자 범위를 넘는 값이 있습니다(소수 컬럼은 정수부 최대 12자리)"))
+        .andExpect(jsonPath("$.message", not(containsString("Data integrity"))))
+        .andExpect(jsonPath("$.message", not(containsString("secret_tbl"))))
+        .andExpect(jsonPath("$.message", not(containsString("overflow"))));
+
+    mockMvc
+        .perform(get("/test/exception/data-integrity-violation-data-error/varchar"))
+        .andExpect(status().isBadRequest())
+        .andExpect(
+            jsonPath("$.message")
+                .value("저장할 수 없는 값이 있어 처리하지 못했습니다: 'code' 컬럼에 글자 수 제한(최대 3자)을 넘는 값이 있습니다"));
+  }
+
+  /** (WD-98) 22xxx 가 아닌 제약조건 위반(중복 키 23505)은 기존 409 문구 그대로다 — 범위 밖(WD-99). */
+  @Test
+  void dataIntegrityViolation_nonDataError_keeps409() throws Exception {
+    mockMvc
+        .perform(get("/test/exception/data-integrity-violation-data-error/duplicate"))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.message").value("Data integrity violation: duplicate entry"));
+  }
+
   @Test
   void methodArgumentNotValid_returns400_withFieldErrors() throws Exception {
     mockMvc

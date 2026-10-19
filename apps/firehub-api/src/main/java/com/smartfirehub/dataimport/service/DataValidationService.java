@@ -40,7 +40,7 @@ public class DataValidationService {
   // 리터럴을 여러 곳에 흩뿌리지 않고 상수 하나로 묶어 두 곳이 어긋나지 않게 한다.
   static final String REQUIRED_FIELD_EMPTY = "필수 값이 비어 있습니다";
 
-  /** 콤마 제거 후 부호와 숫자로만 이뤄진 값 — 정수 형식은 맞지만 BIGINT 범위를 넘는 경우를 형식 오류와 구분하기 위한 패턴. */
+  /** 콤마 제거 후 부호와 숫자로만 이뤄진 정수 리터럴 — 이 형식이 아니면 형식 오류, 맞으면 BIGINT 범위만 남는다. */
   private static final Pattern INTEGER_LITERAL = Pattern.compile("[+-]?\\d+");
 
   public ValidationResult validate(
@@ -132,23 +132,11 @@ public class DataValidationService {
       case "INTEGER" -> {
         // 천단위 콤마(예: "38,344") 제거 후 파싱. 임포트 데이터에 흔한 형식.
         String digits = value.replace(",", "");
-        try {
-          yield Long.parseLong(digits);
-        } catch (NumberFormatException e) {
-          // 숫자로만 이뤄졌는데 파싱이 실패했다면 형식이 아니라 BIGINT(물리 타입) 범위 초과다 — 사용자가 "형식"을 고치려
-          // 헤매지 않도록 사유를 구분한다.
-          if (INTEGER_LITERAL.matcher(digits).matches()) {
-            throw new Exception(
-                "정수 범위를 벗어났습니다: "
-                    + value
-                    + " (허용 범위: "
-                    + Long.MIN_VALUE
-                    + " ~ "
-                    + Long.MAX_VALUE
-                    + ")");
-          }
+        if (!INTEGER_LITERAL.matcher(digits).matches()) {
           throw new Exception("정수 형식이 아닙니다: " + value);
         }
+        // 부호와 숫자만으로 된 값 — 형식이 아니라 BIGINT 범위만 남는다(초과 시 범위 사유로 구분, 행 API 와 같은 판정·문구).
+        yield ColumnPhysicalType.toExactBigint(new BigDecimal(digits), value);
       }
       case "DECIMAL" -> {
         try {

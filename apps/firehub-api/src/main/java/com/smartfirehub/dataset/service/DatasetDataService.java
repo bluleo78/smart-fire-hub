@@ -484,32 +484,26 @@ public class DatasetDataService {
     return result;
   }
 
+  /**
+   * 요청 값을 컬럼 타입의 Java 값으로 바꾼 뒤 물리 타입 한도를 엄격 모드로 검사한다 — 사람이 직접 입력한 값이라 저장값이 입력값과 달라질 값(소수부 7자리 이상,
+   * 길이 초과)은 반올림·절단하지 않고 거부한다(웹 행 폼과 같은 판정, 임포트는 관대 모드).
+   */
   private Object convertValue(DatasetColumnResponse col, Object value) {
+    return ColumnPhysicalType.enforceLimitsStrict(
+        convertFormat(col, value), col.dataType(), col.maxLength());
+  }
+
+  /** 요청 값의 형식만 컬럼 타입에 맞춰 변환한다 — 물리 한도 검사는 {@link #convertValue} 가 이어서 한다. */
+  private Object convertFormat(DatasetColumnResponse col, Object value) {
     return switch (col.dataType()) {
       case "TEXT", "VARCHAR" -> {
         if (!(value instanceof String s)) {
           throw new IllegalArgumentException("Expected string value");
         }
-        if ("VARCHAR".equals(col.dataType())
-            && col.maxLength() != null
-            && s.length() > col.maxLength()) {
-          throw new IllegalArgumentException(
-              "Value exceeds max length " + col.maxLength() + " (actual: " + s.length() + ")");
-        }
         yield s;
       }
-      case "INTEGER" -> {
-        if (value instanceof Number n) {
-          yield n.longValue();
-        }
-        throw new IllegalArgumentException("Expected numeric value");
-      }
-      case "DECIMAL" -> {
-        if (value instanceof Number n) {
-          yield new BigDecimal(n.toString());
-        }
-        throw new IllegalArgumentException("Expected numeric value");
-      }
+      case "INTEGER" -> ColumnPhysicalType.toExactBigint(parseNumber(value), value);
+      case "DECIMAL" -> parseNumber(value);
       case "BOOLEAN" -> {
         if (value instanceof Boolean b) {
           yield b;
@@ -545,6 +539,30 @@ public class DatasetDataService {
       }
       default -> throw new IllegalArgumentException("Unknown data type: " + col.dataType());
     };
+  }
+
+  /** 숫자 문자열 길이 상한 — Jackson 의 JSON 숫자 길이 기본 상한(1000자)과 맞춰 거대한 문자열 파싱 비용을 막는다. */
+  private static final int MAX_NUMBER_STRING_LENGTH = 1000;
+
+  /**
+   * 숫자 입력(문자열 또는 JSON 숫자)을 값 그대로 BigDecimal 로 바꾼다 — 지수 표기 허용, 천단위 콤마·NaN·Infinity 는 형식 오류.
+   *
+   * <p>웹 행 폼은 입력 원문 문자열을 보내 정확히 파싱된다. JSON 숫자(API·AI 에이전트 호출)도 받지만 Jackson 이 JSON 소수를 Double 로 읽어
+   * 유효숫자 약 15~17자리를 넘는 값은 이미 깎여 있다 — 정확한 값이 필요한 호출자는 문자열로 보내야 한다.
+   */
+  private static BigDecimal parseNumber(Object value) {
+    if (!(value instanceof String) && !(value instanceof Number)) {
+      throw new IllegalArgumentException("Expected numeric value");
+    }
+    String s = value.toString().trim();
+    if (s.isEmpty() || s.length() > MAX_NUMBER_STRING_LENGTH) {
+      throw new IllegalArgumentException("Expected numeric value");
+    }
+    try {
+      return new BigDecimal(s);
+    } catch (NumberFormatException e) {
+      throw new IllegalArgumentException("Expected numeric value");
+    }
   }
 
   /** Builds a column name → data type map from column metadata. */

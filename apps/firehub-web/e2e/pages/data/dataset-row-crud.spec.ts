@@ -123,13 +123,13 @@ test.describe('데이터셋 상세 — 행 추가/편집', () => {
     // 제출 (다이얼로그 내 "추가" 버튼)
     await page.getByRole('dialog').getByRole('button', { name: '추가' }).click();
 
-    // POST payload 검증 — { data: { id: 3, name: 'Carol', amount: 30 } }
+    // POST payload 검증 — { data: { id: '3', name: 'Carol', amount: '30' } }
     const captured = await addCapture.waitForRequest();
     const payload = captured.payload as { data: Record<string, unknown> };
     expect(payload.data).toMatchObject({
-      id: 3, // (#673) PK도 사용자가 입력한 값이 그대로 페이로드에 포함되어야 한다
+      id: '3', // (#673) PK도 사용자가 입력한 값이 그대로 페이로드에 포함되어야 한다
       name: 'Carol',
-      amount: 30, // cleanFormValues 가 INTEGER 를 Number 로 변환
+      amount: '30', // (WD-98) INTEGER 는 입력 문자열 그대로 보낸다(JS 숫자는 2^53 초과 정수를 깎는다)
     });
   });
 
@@ -182,7 +182,7 @@ test.describe('데이터셋 상세 — 행 추가/편집', () => {
     const payload = captured.payload as { data: Record<string, unknown> };
     expect(payload.data).toMatchObject({
       name: 'Alice Updated',
-      amount: 99,
+      amount: '99',
     });
   });
 
@@ -825,7 +825,7 @@ test.describe('데이터셋 상세 — 행 추가/편집', () => {
     const captured = await addCapture.waitForRequest();
     const payload = captured.payload as { data: Record<string, unknown> };
     expect(payload.data).toMatchObject({
-      id: 1,
+      id: '1',
       label: '테스트',
       geom: '{"type":"Point","coordinates":[126.97,37.56]}',
     });
@@ -1001,7 +1001,7 @@ test.describe('데이터셋 상세 — 행 추가/편집', () => {
 
     const captured = await addCapture.waitForRequest();
     const payload = captured.payload as { data: Record<string, unknown> };
-    expect(payload.data.row_key).toBe(99);
+    expect(payload.data.row_key).toBe('99');
     expect(payload.data.label).toBe('새행');
   });
 
@@ -1248,5 +1248,173 @@ test.describe('데이터셋 상세 — 시간대에 없는 벽시계 시각 표�
 
     const payload = (await capture.waitForRequest()).payload as { data: Record<string, unknown> };
     expect(payload.data).toEqual({ label: 'dst_e' });
+  });
+});
+
+/**
+ * (WD-98) 행 추가·편집의 물리 타입 한도 — DECIMAL=NUMERIC(18,6)(정수부 12자리·소수 6자리), VARCHAR 는 문자 수.
+ *
+ * 수정 전에는 정수부 13자리가 서버까지 가서 영문 「Data integrity violation」으로 실패했고, 소수 7자리는
+ * 「행이 추가되었습니다.」 뒤 반올림된 다른 값(0.000000)이 저장됐다. 이제 입력 단계에서 안내하고 요청을 보내지 않는다.
+ */
+test.describe('데이터셋 상세 — 행 추가/편집 소수 자릿수·글자 수 한도 (WD-98)', () => {
+  const limitDataset = createDatasetDetail({
+    id: 7,
+    rowCount: 1,
+    columns: [
+      createColumn({ id: 1, columnName: 'id', displayName: 'ID', dataType: 'INTEGER', isPrimaryKey: true }),
+      createColumn({
+        id: 2,
+        columnName: 'price',
+        displayName: '가격',
+        dataType: 'DECIMAL',
+        isPrimaryKey: false,
+        isNullable: true,
+        columnOrder: 1,
+      }),
+      createColumn({
+        id: 3,
+        columnName: 'code',
+        displayName: '코드',
+        dataType: 'VARCHAR',
+        maxLength: 5,
+        isPrimaryKey: false,
+        isNullable: true,
+        columnOrder: 2,
+      }),
+    ],
+  });
+
+  /**
+   * 상세·데이터 조회를 모킹하고, 행 쓰기(POST/PUT) 요청을 모두 기록한다 — 막혀야 할 때 0건인지 확인하기 위함.
+   * priceLiteral 은 데이터 응답 JSON 에 그대로 넣는 DECIMAL 리터럴 — 서버처럼 JSON 숫자로 보내야 브라우저의 double 변환이 재현된다.
+   */
+  async function setup(page: import('@playwright/test').Page, priceLiteral = '12.5') {
+    await mockApi(page, 'GET', '/api/v1/datasets/7', limitDataset);
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', createCategories());
+    await mockApi(page, 'GET', '/api/v1/datasets/7/queries', createPageResponse([]));
+    await mockApi(page, 'GET', '/api/v1/datasets/tags', []);
+    await mockApi(page, 'GET', '/api/v1/datasets/7/stats', []);
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets/7/data',
+      (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            columns: limitDataset.columns,
+            rows: [{ id: 1, price: '__PRICE__', code: 'abc' }],
+            page: 0,
+            size: 50,
+            totalElements: 1,
+            totalPages: 1,
+          }).replace('"__PRICE__"', priceLiteral),
+        }),
+    );
+
+    const writes: { method: string; body: { data: Record<string, unknown> } }[] = [];
+    await page.route(
+      (url) => url.pathname.startsWith('/api/v1/datasets/7/data/rows'),
+      (route) => {
+        const req = route.request();
+        if (req.method() === 'GET') return route.fallback();
+        writes.push({ method: req.method(), body: req.postDataJSON() });
+        return route.fulfill({
+          status: req.method() === 'POST' ? 201 : 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ id: 2, data: {}, createdAt: null }),
+        });
+      },
+    );
+
+    await page.goto('/data/datasets/7');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible({ timeout: 10000 });
+    await page.getByRole('tab', { name: '데이터' }).click();
+    return writes;
+  }
+
+  async function openAddDialog(page: import('@playwright/test').Page) {
+    await page.getByRole('button', { name: /행 추가/ }).click();
+    await expect(page.getByRole('dialog').getByRole('heading', { name: '행 추가' })).toBeVisible();
+    await page.locator('#add-id').fill('2');
+  }
+
+  for (const { value, message } of [
+    { value: '12345678901234', message: '정수부는 최대 12자리까지 입력할 수 있습니다.' },
+    { value: '0.0000001', message: '소수점 아래는 최대 6자리까지 입력할 수 있습니다.' },
+  ]) {
+    test(`소수 ${value} 입력 시 「${message}」 안내가 뜨고 요청을 보내지 않는다`, async ({
+      authenticatedPage: page,
+    }) => {
+      const writes = await setup(page);
+      await openAddDialog(page);
+
+      await page.locator('#add-price').fill(value);
+      await page.getByRole('dialog').getByRole('button', { name: '추가' }).click();
+
+      await expect(page.getByRole('dialog').getByText(message)).toBeVisible();
+      await expect(page.getByRole('dialog')).toBeVisible();
+      await expect(page.getByText('행이 추가되었습니다.')).toHaveCount(0);
+      expect(writes).toHaveLength(0);
+    });
+  }
+
+  test('숫자는 double 로 깎이지 않고 입력 문자열 그대로, 이모지 5자(VARCHAR(5))도 그대로 전송된다', async ({
+    authenticatedPage: page,
+  }) => {
+    const writes = await setup(page);
+    await page.getByRole('button', { name: /행 추가/ }).click();
+    await expect(page.getByRole('dialog').getByRole('heading', { name: '행 추가' })).toBeVisible();
+
+    // JS 숫자로 보내면 9007199254740992 · 123456789012.12346 이 된다
+    await page.locator('#add-id').fill('9007199254740993');
+    await page.locator('#add-price').fill('123456789012.123456');
+    await page.locator('#add-code').fill('😀😀😀😀😀');
+    await page.getByRole('dialog').getByRole('button', { name: '추가' }).click();
+
+    await expect(page.getByText('행이 추가되었습니다.')).toBeVisible();
+    expect(writes).toHaveLength(1);
+    expect(writes[0].method).toBe('POST');
+    expect(writes[0].body.data).toEqual({
+      id: '9007199254740993',
+      price: '123456789012.123456',
+      code: '😀😀😀😀😀',
+    });
+  });
+
+  test('저장값이 double 표시로 13자리처럼 보여도(999999999999.999999) 손대지 않으면 다른 칸 편집이 저장된다', async ({
+    authenticatedPage: page,
+  }) => {
+    const writes = await setup(page, '999999999999.999999');
+
+    await page.getByRole('cell', { name: 'abc' }).dblclick();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByRole('heading', { name: /행 편집 \(ID: 1\)/ })).toBeVisible();
+    // 브라우저가 JSON 숫자를 double 로 읽어 정수부 13자리로 보인다 — 이 칸은 건드리지 않는다
+    await expect(page.locator('#edit-price')).toHaveValue('1000000000000');
+
+    await page.locator('#edit-code').fill('xyz');
+    await dialog.getByRole('button', { name: '저장' }).click();
+
+    await expect(page.getByText('행이 수정되었습니다.')).toBeVisible();
+    expect(writes).toHaveLength(1);
+    expect(writes[0].method).toBe('PUT');
+    // 손대지 않은 price 는 전송하지 않는다(#772) — 서버 값이 그대로 남는다
+    expect(writes[0].body.data).toEqual({ code: 'xyz' });
+  });
+
+  test('행 편집에서도 정수부 13자리는 안내하고 PUT 을 보내지 않는다', async ({ authenticatedPage: page }) => {
+    const writes = await setup(page);
+
+    await page.getByRole('cell', { name: 'abc' }).dblclick();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByRole('heading', { name: /행 편집 \(ID: 1\)/ })).toBeVisible();
+
+    await page.locator('#edit-price').fill('1234567890123');
+    await dialog.getByRole('button', { name: '저장' }).click();
+
+    await expect(dialog.getByText('정수부는 최대 12자리까지 입력할 수 있습니다.')).toBeVisible();
+    await expect(page.getByText('행이 수정되었습니다.')).toHaveCount(0);
+    expect(writes).toHaveLength(0);
   });
 });
