@@ -2,6 +2,7 @@ package com.smartfirehub.pipeline.service.validator;
 
 import com.smartfirehub.dataset.rowsearch.IndexRef;
 import com.smartfirehub.global.tenant.DataSchema;
+import com.smartfirehub.global.util.SqlValidationUtils;
 import com.smartfirehub.pipeline.exception.UnsafeSqlException;
 import com.smartfirehub.pipeline.service.LastRunAtPlaceholder;
 import java.io.BufferedReader;
@@ -33,7 +34,10 @@ import net.sf.jsqlparser.JSQLParserException;
 import net.sf.jsqlparser.expression.AnalyticExpression;
 import net.sf.jsqlparser.expression.Function;
 import net.sf.jsqlparser.expression.StringValue;
+import net.sf.jsqlparser.parser.CCJSqlParserConstants;
 import net.sf.jsqlparser.parser.CCJSqlParserUtil;
+import net.sf.jsqlparser.parser.ParseException;
+import net.sf.jsqlparser.parser.Token;
 import net.sf.jsqlparser.schema.Column;
 import net.sf.jsqlparser.schema.Table;
 import net.sf.jsqlparser.statement.Statement;
@@ -784,6 +788,54 @@ public class SqlValidator {
     }
   }
 
+  /**
+   * 파싱 실패 메시지 공통 머리말. "문법 오류"라 하지 않는다 — {@code AS MATERIALIZED} 처럼 PG 에선 맞지만 JSqlParser 가 모르는 구문도
+   * 여기로 온다.
+   */
+  private static final String UNPARSABLE_PREFIX = "SQL 을 해석할 수 없습니다";
+
+  /** 오류 토큰을 얻지 못한 파싱 실패(시간 초과·어휘 오류·null 결과)의 메시지. */
+  private static final String UNPARSABLE_SQL_MESSAGE = UNPARSABLE_PREFIX + ". 철자와 괄호·따옴표 짝을 확인하세요.";
+
+  /** 원인 사슬 탐색 상한 — 비정상적으로 깊은 사슬에서 끝없이 돌지 않게 한다. */
+  private static final int MAX_CAUSE_DEPTH = 10;
+
+  /**
+   * 파싱 실패를 사용자가 고칠 수 있는 한국어 메시지로 바꾼다(파서 영문 원문은 싣지 않는다). CTE 안 데이터 수정 문이면 그 원인을, 아니면 오류 자리 토큰을 알린다.
+   * 행·열은 싣지 않는다 — 검증 문자열이 주석 제거·자리표시자 치환을 거쳐 편집기 원문과 위치가 다르다.
+   */
+  private static String parseFailureMessage(String sql, JSQLParserException e) {
+    String cteDml = SqlValidationUtils.cteInnerDmlKeyword(sql);
+    if (cteDml != null) {
+      return "WITH 절 안에서 데이터를 바꾸는 문(" + cteDml + ")은 실행할 수 없습니다.";
+    }
+    Token at = unexpectedToken(e);
+    if (at == null) {
+      return UNPARSABLE_SQL_MESSAGE;
+    }
+    if (at.kind == CCJSqlParserConstants.EOF || at.image == null || at.image.isBlank()) {
+      return UNPARSABLE_PREFIX + ": 문장이 예상보다 일찍 끝났습니다. 빠진 부분이나 괄호·따옴표 짝을 확인하세요.";
+    }
+    return UNPARSABLE_PREFIX
+        + ": '"
+        + SqlValidationUtils.displayToken(at.image)
+        + "' 근처를 확인하세요. 철자 오류이거나 지원하지 않는 구문일 수 있습니다.";
+  }
+
+  /**
+   * 원인 사슬에서 {@link ParseException} 을 찾아 파서가 받아들이지 못한 토큰({@code currentToken.next})을 돌려준다. 예외가
+   * {@code JSQLParserException → ExecutionException → ParseException} 으로 감싸여 오므로 사슬을 따라 내려간다.
+   */
+  private static Token unexpectedToken(Throwable e) {
+    Throwable t = e;
+    for (int depth = 0; t != null && depth < MAX_CAUSE_DEPTH; depth++, t = t.getCause()) {
+      if (t instanceof ParseException pe) {
+        return pe.currentToken == null ? null : pe.currentToken.next;
+      }
+    }
+    return null;
+  }
+
   /** JSqlParser로 파싱하고 단일 스테이트먼트인지 확인한다. */
   private Statement parseSingleStatement(String sql) {
     // PG 와 JSqlParser 가 주석·문자열 경계를 다르게 자르는 표기를 먼저 거부한다 — 그 틈에 넣은 테이블 참조는 JSqlParser 에겐
@@ -794,13 +846,14 @@ public class SqlValidator {
     try {
       parsed = CCJSqlParserUtil.parseStatements(sql, PARSE_EXECUTOR, null);
     } catch (JSQLParserException e) {
-      throw new UnsafeSqlException("SQL 파싱 실패: " + e.getMessage(), e);
+      // 파서 영문 원문은 메시지에 싣지 않고 원인 예외로만 남긴다.
+      throw new UnsafeSqlException(parseFailureMessage(sql, e), e);
     }
     if (parsed == null) {
       // 선행 결함(#385 재재재리뷰 minor 1) — 특정 입력(깊은 우편향 표현식 등)에서 parseStatements 가
       // 예외 대신 null 을 돌려줄 수 있다. 이 null 검사가 없으면 바로 아래 parsed.getStatements() 에서
       // NPE 가 새어 나가 컨트롤러 레벨에서 400 대신 500 이 된다 — UnsafeSqlException 으로 명시 변환한다.
-      throw new UnsafeSqlException("SQL 파싱 실패: 파서가 결과를 반환하지 않았습니다.");
+      throw new UnsafeSqlException(UNPARSABLE_SQL_MESSAGE);
     }
 
     List<Statement> statements = parsed.getStatements();

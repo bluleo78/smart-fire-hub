@@ -322,6 +322,32 @@ class GuardedSqlExecutorTest extends IntegrationTestBase {
     return id;
   }
 
+  /**
+   * 웹 쿼리 편집기 경로(읽기 전용 애널리틱스)의 오류가 200 + error 필드로 원인별 한국어 메시지를 싣는다. 문구 상세는 SqlValidationUtilsTest·
+   * SqlValidatorTest 가 본다 — 여기서는 경로 연결만 확인한다.
+   */
+  @Test
+  void analytics_rejectedSql_returnsCauseSpecificErrorField() {
+    AnalyticsQueryResponse typo = gate.executeAnalytics(viewer, "SELEC a FROM " + pub, 100, true);
+    assertThat(typo.queryType()).isEqualTo("UNKNOWN");
+    assertThat(typo.error()).startsWith("SQL 문법 오류").contains("'SELEC'");
+
+    AnalyticsQueryResponse multi = gate.executeAnalytics(viewer, "SELECT 1; SELECT 2", 100, true);
+    assertThat(multi.error()).startsWith("SQL 문장은 한 번에 하나만");
+
+    AnalyticsQueryResponse cte =
+        gate.executeAnalytics(
+            viewer, "WITH d AS (DELETE FROM " + pub + " RETURNING *) SELECT * FROM d", 100, true);
+    assertThat(cte.queryType()).isEqualTo("UNKNOWN");
+    assertThat(cte.error()).startsWith("WITH 절 안에서").contains("DELETE");
+    // 거부만 됐는지 — CTE 의 DELETE 가 실행되지 않았다(행이 그대로 남아 있다).
+    assertThat(dsl.fetchOne("SELECT count(*) FROM " + schema + "." + pub).get(0, Integer.class))
+        .isEqualTo(1);
+
+    AnalyticsQueryResponse drop = gate.executeAnalytics(viewer, "DROP TABLE " + pub, 100, true);
+    assertThat(drop.error()).startsWith("DROP 문은");
+  }
+
   /** 요청 경로의 principal(Long userId)을 세운다 — ClearanceResolver.current() 가 읽는다. */
   private static void asUser(long uid) {
     SecurityContextHolder.getContext()

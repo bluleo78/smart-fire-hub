@@ -233,7 +233,7 @@ class AnalyticsQueryExecutionServiceTest extends IntegrationTestBase {
     AnalyticsQueryResponse response = executionService.execute("SELECT 1; SELECT 2", 100, false);
 
     assertThat(response.error()).isNotNull();
-    assertThat(response.error()).containsIgnoringCase("multiple");
+    assertThat(response.error()).contains("SQL 문장은 한 번에 하나만 실행할 수 있습니다");
   }
 
   // =========================================================================

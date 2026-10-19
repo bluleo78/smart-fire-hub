@@ -213,7 +213,7 @@ class DataSchemaGrantIsolationTest extends IntegrationTestBase {
 
     assertThatThrownBy(() -> validator.validate("SELECT * FROM U&\"data_t9901\"." + PROBE_TABLE))
         .isInstanceOf(UnsafeSqlException.class)
-        .hasMessageContaining("SQL 파싱 실패");
+        .hasMessageStartingWith("SQL 을 해석할 수 없습니다");
   }
 
   // ---------------------------------------------------------------------------

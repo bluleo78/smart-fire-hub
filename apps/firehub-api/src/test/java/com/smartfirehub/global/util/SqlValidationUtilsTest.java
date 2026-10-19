@@ -1,8 +1,15 @@
 package com.smartfirehub.global.util;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.smartfirehub.dataset.exception.SqlQueryException;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 /**
  * SqlValidationUtils 단위 테스트.
@@ -166,5 +173,103 @@ class SqlValidationUtilsTest {
     String result = SqlValidationUtils.stripStringLiterals(sql);
     assertThat(result).doesNotContain("it");
     assertThat(result).doesNotContain("fine");
+  }
+
+  // ─── stripAndValidate: 거부 메시지 ─────────────────────────────────────────
+  // 허용 문장 목록은 어떤 메시지에도 싣지 않는다 — 읽기 전용 애널리틱스와 DML 을 허용하는 데이터셋 SQL 탭이 이 검사를 공유한다.
+
+  private static final String TYPO = "SQL 문법 오류: '%s' 은(는) SQL 명령어가 아닙니다. 철자를 확인하세요.";
+
+  static Stream<Arguments> rejectedSqlMessages() {
+    return Stream.of(
+        Arguments.of(
+            "SELECT 1; SELECT 2", "SQL 문장은 한 번에 하나만 실행할 수 있습니다. 세미콜론(;)으로 나뉜 문장을 하나씩 실행하세요."),
+        Arguments.of("", "실행할 SQL 이 없습니다."),
+        Arguments.of("   ", "실행할 SQL 이 없습니다."),
+        Arguments.of("-- 주석만\n", "실행할 SQL 이 없습니다."),
+        Arguments.of("/* 블록 주석만 */", "실행할 SQL 이 없습니다."),
+        Arguments.of(";", "실행할 SQL 이 없습니다."),
+        // 오타는 원문 대소문자 그대로 토큰을 보여준다.
+        Arguments.of("SELEC region FROM sales", TYPO.formatted("SELEC")),
+        Arguments.of("selcet * from t", TYPO.formatted("selcet")),
+        Arguments.of("SELEC*FROM t", TYPO.formatted("SELEC*FROM")),
+        Arguments.of("선택 a FROM t", TYPO.formatted("선택")),
+        // 알려진 명령어(허용 안 됨)는 오타와 다른 메시지다. 구두점이 붙어도 선행 영문자열로 판별한다.
+        Arguments.of("drop table data.t", "DROP 문은 실행할 수 없습니다."),
+        Arguments.of("TRUNCATE data.t", "TRUNCATE 문은 실행할 수 없습니다."),
+        Arguments.of("EXPLAIN SELECT 1", "EXPLAIN 문은 실행할 수 없습니다."),
+        Arguments.of("vacuum(full) t", "VACUUM 문은 실행할 수 없습니다."),
+        // 허용 키워드에 구두점이 붙어 첫 토큰이 달라진 경우(예전에도 거부) — 공백 안내.
+        Arguments.of("SELECT*FROM t", "'SELECT' 뒤에 공백을 넣어 다시 실행하세요."),
+        Arguments.of("select(a) from t", "'select' 뒤에 공백을 넣어 다시 실행하세요."),
+        // (SELECT 1) 은 예전에도 거부됐다. PG 에선 맞는 문장이라 "문법 오류"라 하지 않는다.
+        Arguments.of("(SELECT 1)", "괄호로 시작하는 문장은 실행할 수 없습니다. SELECT 나 WITH 로 시작하게 바꿔 주세요."),
+        Arguments.of("1 + 1", "SQL 문장은 SELECT·WITH 같은 SQL 명령어로 시작해야 합니다."));
+  }
+
+  @ParameterizedTest
+  @MethodSource("rejectedSqlMessages")
+  void stripAndValidate_rejected_returnsCauseSpecificMessage(String sql, String message) {
+    assertThatThrownBy(() -> SqlValidationUtils.stripAndValidate(sql))
+        .isInstanceOf(SqlQueryException.class)
+        .hasMessage(message);
+  }
+
+  /** 회귀 가드 — 허용 목록·끝 세미콜론 처리는 그대로다(대소문자 무관). */
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "SELECT 1",
+        "SELECT 1;",
+        "with x as (select 1) select * from x",
+        "INSERT INTO t VALUES (1)",
+        "update t set a = 1",
+        "DELETE FROM t"
+      })
+  void stripAndValidate_allowedKeywords_stillAccepted(String sql) {
+    assertThat(SqlValidationUtils.stripAndValidate(sql)).isEqualTo(sql);
+  }
+
+  // ─── cteInnerDmlKeyword (파싱 실패 메시지 전용) ─────────────────────────────
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "with d as (delete from sales returning *) select * from d",
+        // 앞 주석이 있어도 WITH 문으로 본다.
+        "/* note */ WITH d AS (DELETE FROM t RETURNING *) SELECT * FROM d"
+      })
+  void cteInnerDmlKeyword_detectsDmlInsideCte(String sql) {
+    assertThat(SqlValidationUtils.cteInnerDmlKeyword(sql)).isEqualTo("DELETE");
+  }
+
+  /** 주석·리터럴·큰따옴표 식별자·달러 인용 속 DML 단어, WITH 가 아닌 문장은 CTE 안 DML 이 아니다. */
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "WITH a AS ( -- delete old\n SELECT id FROM t) SELEC * FROM a",
+        "WITH a AS (SELECT \"update\" FROM t) SELECT 1",
+        "WITH a AS (SELECT $$delete$$, $q$insert$q$ /* merge */ FROM t) SELECT 1",
+        "WITH x AS (SELECT 'delete me' AS t) SELECT * FROM x",
+        "SELECT * FROM (DELETE FROM t) x"
+      })
+  void cteInnerDmlKeyword_ignoresMaskedWordsAndNonWith(String sql) {
+    assertThat(SqlValidationUtils.cteInnerDmlKeyword(sql)).isNull();
+  }
+
+  @Test
+  void detectQueryType_unchangedByMessageOnlyMasking() {
+    // 판정(detectQueryType)은 메시지 전용 가림을 쓰지 않는다 — 큰따옴표 식별자 속 DML 단어도 DML 로 본다(보수적 판정 유지).
+    assertThat(
+            SqlValidationUtils.detectQueryType(
+                "WITH a AS (SELECT \"update\" FROM t) SELECT * FROM a"))
+        .isEqualTo("UPDATE");
+  }
+
+  @Test
+  void displayToken_collapsesWhitespaceAndTruncates() {
+    assertThat(SqlValidationUtils.displayToken("'a\n  b'")).isEqualTo("'a b'");
+    assertThat(SqlValidationUtils.displayToken("y".repeat(31))).isEqualTo("y".repeat(30) + "…");
+    assertThat(SqlValidationUtils.displayToken("y".repeat(30))).isEqualTo("y".repeat(30));
   }
 }

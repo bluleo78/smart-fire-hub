@@ -9,6 +9,7 @@ import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.pipeline.exception.UnsafeSqlException;
 import com.smartfirehub.pipeline.service.MergeSqlBuilder;
 import java.util.List;
+import java.util.regex.Pattern;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -616,7 +617,9 @@ class SqlValidatorTest {
    * 단언을 특정 경로의 메시지가 아니라 "둘 중 하나로 거부됐다"에 건다 — 중첩 단수를 더 올리는 쪽(169→600 전례)은 파싱 예산 초과 확률만 키워 오히려 반대
    * 방향이다.
    */
-  private static final String REJECTED_BEYOND_LIMIT = "순회 깊이|파서가 결과를 반환하지 않았습니다";
+  private static final String UNPARSABLE_MESSAGE = "SQL 을 해석할 수 없습니다. 철자와 괄호·따옴표 짝을 확인하세요.";
+
+  private static final String REJECTED_BEYOND_LIMIT = "순회 깊이|" + Pattern.quote(UNPARSABLE_MESSAGE);
 
   /** {@code WHERE a IN (SELECT ...)} 를 {@code depth} 단 중첩하고 최내부에 {@code innermost}를 심는다. */
   private static String deepNestedWhereIn(int depth, String innermost) {
@@ -1310,5 +1313,72 @@ class SqlValidatorTest {
                 validator.validate(
                     "WITH x AS (SELECT a FROM data.src) INSERT INTO data.dst SELECT a FROM x"))
         .doesNotThrowAnyException();
+  }
+
+  // --- 파싱 실패 메시지: 한국어 + 오류 자리 토큰, 파서 원문·행열 미노출 ---
+
+  /** 오류 자리 토큰만 알린다. 파서 원문("Encountered …")은 원인 예외로만 남는다. */
+  @Test
+  void parseFailure_reportsOffendingToken() {
+    assertThatThrownBy(() -> validator.validate("SELECT a\nFROM data.t\nWHERE a = 1 zz zz"))
+        .isInstanceOf(UnsafeSqlException.class)
+        .hasMessage("SQL 을 해석할 수 없습니다: 'zz' 근처를 확인하세요. 철자 오류이거나 지원하지 않는 구문일 수 있습니다.")
+        .hasRootCauseInstanceOf(net.sf.jsqlparser.parser.ParseException.class);
+  }
+
+  /** 문장이 중간에 끝나면(EOF 토큰) 빈 토큰 대신 "일찍 끝났습니다"로 안내한다. */
+  @Test
+  void parseFailure_atEndOfInput_saysStatementEndedEarly() {
+    assertThatThrownBy(() -> validator.validate("SELECT a FROM data.t ORDER BY"))
+        .isInstanceOf(UnsafeSqlException.class)
+        .hasMessage("SQL 을 해석할 수 없습니다: 문장이 예상보다 일찍 끝났습니다. 빠진 부분이나 괄호·따옴표 짝을 확인하세요.");
+  }
+
+  /** 어휘 오류(파서가 모르는 문자 ¤)는 TokenMgrException 이라 오류 토큰이 없다 — 일반 안내로 돌린다. */
+  @Test
+  void parseFailure_lexicalError_fallsBackToGenericMessage() {
+    assertThatThrownBy(() -> validator.validate("SELECT a ¤ FROM data.t"))
+        .isInstanceOf(UnsafeSqlException.class)
+        .hasMessage(UNPARSABLE_MESSAGE);
+  }
+
+  /** JSqlParser 5.0 이 파싱하지 못하는 데이터 수정 CTE 는 일반 안내 대신 원인(CTE 안의 DELETE)을 알린다. */
+  @Test
+  void parseFailure_dataModifyingCte_namesTheDml() {
+    assertThatThrownBy(
+            () ->
+                validator.validate(
+                    "WITH d AS (DELETE FROM data.sales RETURNING *) SELECT * FROM d"))
+        .isInstanceOf(UnsafeSqlException.class)
+        .hasMessage("WITH 절 안에서 데이터를 바꾸는 문(DELETE)은 실행할 수 없습니다.");
+  }
+
+  /**
+   * 주석·큰따옴표 식별자·달러 인용 속 DML 단어는 CTE 안 DML 로 안내하지 않는다. 태그 달러 인용($t$…$t$)은 PgLexicalAmbiguityCheck 가
+   * 먼저 거부하므로 $$…$$ 만 본다.
+   */
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "WITH a AS ( -- delete old\n SELECT id FROM data.t) SELEC * FROM a",
+        "WITH a AS (SELECT \"update\" FROM data.t) SELECT * FROM a WHER x",
+        "WITH a AS (SELECT $$delete$$ AS c, /* insert */ 1 FROM data.t) SELECT * FROM a WHER x"
+      })
+  void parseFailure_dmlWordInCommentOrQuotedIdentifier_isNotReportedAsCteDml(String sql) {
+    assertThatThrownBy(() -> validator.validate(sql))
+        .isInstanceOf(UnsafeSqlException.class)
+        .hasMessageStartingWith("SQL 을 해석할 수 없습니다")
+        .hasMessageNotContaining("WITH 절 안에서");
+  }
+
+  /** 오류 자리 토큰이 길면 잘라서 싣는다. */
+  @Test
+  void parseFailure_longOffendingToken_isTruncated() {
+    String longIdent = "z".repeat(200);
+    assertThatThrownBy(
+            () -> validator.validate("SELECT a FROM data.t " + longIdent + " " + longIdent))
+        .isInstanceOf(UnsafeSqlException.class)
+        .hasMessageContaining("'" + "z".repeat(30) + "…'")
+        .hasMessageNotContaining("z".repeat(31));
   }
 }

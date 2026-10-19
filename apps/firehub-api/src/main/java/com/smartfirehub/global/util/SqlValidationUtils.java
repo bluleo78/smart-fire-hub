@@ -1,7 +1,10 @@
 package com.smartfirehub.global.util;
 
 import com.smartfirehub.dataset.exception.SqlQueryException;
+import java.util.Locale;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Shared SQL preprocessing utilities used by DataTableQueryService and
@@ -17,6 +20,68 @@ public final class SqlValidationUtils {
 
   private static final Set<String> ALLOWED_KEYWORDS =
       Set.of("SELECT", "INSERT", "UPDATE", "DELETE", "WITH");
+
+  /**
+   * 허용 목록 밖의 알려진 SQL 명령어. 거부 메시지를 "DROP 문은 실행할 수 없습니다"(금지)와 "철자를 확인하세요"(명령어 아님) 중 고르는 데만 쓴다 — 판정은
+   * {@link #ALLOWED_KEYWORDS} 만 본다.
+   */
+  private static final Set<String> KNOWN_DISALLOWED_COMMANDS =
+      Set.of(
+          "DROP",
+          "CREATE",
+          "ALTER",
+          "TRUNCATE",
+          "GRANT",
+          "REVOKE",
+          "COPY",
+          "MERGE",
+          "CALL",
+          "DO",
+          "SET",
+          "RESET",
+          "SHOW",
+          "VACUUM",
+          "ANALYZE",
+          "ANALYSE",
+          "EXPLAIN",
+          "BEGIN",
+          "START",
+          "COMMIT",
+          "ROLLBACK",
+          "LOCK",
+          "COMMENT",
+          "REINDEX",
+          "CLUSTER",
+          "REFRESH",
+          "DISCARD",
+          "LISTEN",
+          "NOTIFY",
+          "UNLISTEN",
+          "PREPARE",
+          "EXECUTE",
+          "DEALLOCATE",
+          "DECLARE",
+          "FETCH",
+          "MOVE",
+          "CLOSE",
+          "IMPORT",
+          "SECURITY",
+          "VALUES",
+          "TABLE",
+          "CHECKPOINT",
+          "LOAD",
+          "SAVEPOINT",
+          "RELEASE",
+          "ABORT",
+          "END");
+
+  /** 구두점이 붙은 첫 토큰({@code SELECT*FROM})에서 명령어 부분을 뽑는다. */
+  private static final Pattern LEADING_ASCII_LETTERS = Pattern.compile("^[A-Za-z]+");
+
+  private static final Pattern WHITESPACE = Pattern.compile("\\s+");
+
+  /** 메시지에 싣는 사용자 입력 조각의 최대 길이(코드 포인트) — 거대한 입력이 오류 표시를 덮지 않게 한다. */
+  private static final int MAX_TOKEN_DISPLAY_LENGTH = 30;
 
   private SqlValidationUtils() {}
 
@@ -38,16 +103,69 @@ public final class SqlValidationUtils {
     // Reject multi-statement SQL (semicolons not at the very end)
     String withoutTrailingSemicolon = stripped.replaceAll(";\\s*$", "");
     if (withoutTrailingSemicolon.contains(";")) {
-      throw new SqlQueryException("Multiple statements are not allowed.");
+      // 허용 문장 목록은 싣지 않는다 — 읽기 전용 애널리틱스와 DML 을 허용하는 데이터셋 SQL 탭이 이 검사를 공유한다.
+      throw new SqlQueryException("SQL 문장은 한 번에 하나만 실행할 수 있습니다. 세미콜론(;)으로 나뉜 문장을 하나씩 실행하세요.");
     }
 
-    String firstWord = stripped.split("\\s+")[0].toUpperCase();
+    String firstToken = stripped.split("\\s+")[0];
+    String firstWord = firstToken.toUpperCase();
     if (!ALLOWED_KEYWORDS.contains(firstWord)) {
-      throw new SqlQueryException(
-          "Only SELECT, INSERT, UPDATE, DELETE, and WITH statements are allowed.");
+      throw new SqlQueryException(rejectedStartMessage(withoutTrailingSemicolon, firstToken));
     }
 
     return stripped;
+  }
+
+  /**
+   * 첫 단어 검사에서 거부된 SQL 의 원인별 메시지를 고른다(판정은 호출부가 끝냈다). 빈 SQL · 허용 키워드에 구두점이 붙음 · 금지 명령어 · 괄호/기호 시작 · 그
+   * 밖(오타)으로 나눠, 사용자가 문법 오류인지 금지된 문장인지 알 수 있게 한다.
+   */
+  private static String rejectedStartMessage(String withoutTrailingSemicolon, String firstToken) {
+    if (withoutTrailingSemicolon.isBlank()) {
+      return "실행할 SQL 이 없습니다.";
+    }
+    Matcher leading = LEADING_ASCII_LETTERS.matcher(firstToken);
+    if (leading.find()) {
+      String word = leading.group();
+      String upper = word.toUpperCase(Locale.ROOT);
+      if (ALLOWED_KEYWORDS.contains(upper)) {
+        // 키워드 바로 뒤에 구두점이 붙어 첫 토큰이 키워드와 달라졌다 — 공백을 넣으면 첫 단어 검사를 지난다.
+        return "'" + word + "' 뒤에 공백을 넣어 다시 실행하세요.";
+      }
+      if (KNOWN_DISALLOWED_COMMANDS.contains(upper)) {
+        return upper + " 문은 실행할 수 없습니다.";
+      }
+    } else if (!Character.isLetter(firstToken.codePointAt(0))) {
+      // (SELECT 1) 은 PG 에선 맞는 문장이라 "문법 오류"라 하지 않는다. 기호·숫자 시작은 토큰 대신 시작 규칙만 안내한다.
+      return firstToken.startsWith("(")
+          ? "괄호로 시작하는 문장은 실행할 수 없습니다. SELECT 나 WITH 로 시작하게 바꿔 주세요."
+          : "SQL 문장은 SELECT·WITH 같은 SQL 명령어로 시작해야 합니다.";
+    }
+    return "SQL 문법 오류: '" + displayToken(firstToken) + "' 은(는) SQL 명령어가 아닙니다. 철자를 확인하세요.";
+  }
+
+  /** 메시지에 실을 사용자 입력 조각을 공백 한 칸으로 접고, 길면 코드 포인트 단위로 잘라 "…"를 붙인다. */
+  public static String displayToken(String token) {
+    String collapsed = WHITESPACE.matcher(token.strip()).replaceAll(" ");
+    if (collapsed.codePointCount(0, collapsed.length()) <= MAX_TOKEN_DISPLAY_LENGTH) {
+      return collapsed;
+    }
+    return collapsed.substring(0, collapsed.offsetByCodePoints(0, MAX_TOKEN_DISPLAY_LENGTH)) + "…";
+  }
+
+  /**
+   * WITH 문의 CTE 안에 있는 데이터 수정 키워드를 돌려준다(없으면 null). 파싱 실패 메시지 전용 — 판정은 {@link #detectQueryType} 이 한다.
+   *
+   * <p>{@link SqlLexicalMask#mask} 로 주석·리터럴·큰따옴표 식별자·달러 인용을 먼저 가려, 그 안의 DML 단어({@code -- delete
+   * old}, {@code "update"})를 원인으로 잘못 안내하지 않게 한다.
+   */
+  public static String cteInnerDmlKeyword(String sql) {
+    String masked =
+        removeTrailingSemicolon(SqlLexicalMask.mask(sql).strip()).toUpperCase(Locale.ROOT);
+    if (!"WITH".equals(masked.split("\\s+")[0])) {
+      return null;
+    }
+    return detectCteInnerDml(masked);
   }
 
   /**

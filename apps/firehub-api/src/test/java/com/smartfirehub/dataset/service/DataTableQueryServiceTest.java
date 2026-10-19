@@ -395,7 +395,17 @@ class DataTableQueryServiceTest extends IntegrationTestBase {
                 dataTableQueryService.executeQuery(
                     "SELECT 1; DROP TABLE data." + testTableName, 100))
         .isInstanceOf(SqlQueryException.class)
-        .hasMessageContaining("Multiple statements");
+        .hasMessageContaining("SQL 문장은 한 번에 하나만 실행할 수 있습니다");
+  }
+
+  /** 데이터셋 SQL 탭의 오타는 허용 문장 목록이 아니라 토큰을 짚는 문법 오류로 답한다(문구 상세는 SqlValidationUtilsTest). */
+  @Test
+  void executeQuery_typoFirstWord_returnsSyntaxErrorNamingToken() {
+    assertThatThrownBy(
+            () -> dataTableQueryService.executeQuery("SELEC * FROM data." + testTableName, 100))
+        .isInstanceOf(SqlQueryException.class)
+        .hasMessageStartingWith("SQL 문법 오류")
+        .hasMessageContaining("'SELEC'");
   }
 
   /** 보안: GRANT 문은 SqlQueryException을 발생시켜야 한다 */
