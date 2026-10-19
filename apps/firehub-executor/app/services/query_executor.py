@@ -446,6 +446,19 @@ def _normalize_sql(sql: str) -> str:
     return sql[:end].lstrip(_PG_WHITESPACE)
 
 
+def detect_statement_type(sql: str) -> str:
+    """주석을 지우지 않은 SQL 한 문장의 문 타입(``_detect_query_type`` 과 같은 값)을 돌려준다 — 공개 헬퍼(WD-93).
+
+    ``_detect_query_type`` 은 주석이 걷힌 입력을 가정한다(애널리틱스는 API 가 미리 걷어 보낸다). 파이프라인 SQL
+    실행(``sql_executor``)은 사용자 원문을 그대로 받으므로 앞 주석은 어휘 인지로(마스크), 끝
+    주석·세미콜론은 ``_normalize_sql`` 로 걷어낸 뒤 분류한다.
+    """
+    # 앞 주석: 주석을 지운 사본이 아니라 마스크 위 첫 코드 위치에서 원문을 자른다 — 문자열 속 ``--``·``/*`` 를 주석으로 오인하지 않는다.
+    masked = _mask_sql(sql)
+    start = len(masked) - len(masked.lstrip(_PG_WHITESPACE))
+    return _detect_query_type(_normalize_sql(sql[start:]))
+
+
 def _tokenize_masked(masked: str) -> list[tuple[str, int, int, int]]:
     """마스크 위의 토큰을 ``(대문자 텍스트, 시작, 끝, 괄호 깊이)`` 로 나눈다.
 

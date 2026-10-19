@@ -49,6 +49,7 @@ import net.sf.jsqlparser.statement.select.AllTableColumns;
 import net.sf.jsqlparser.statement.select.PlainSelect;
 import net.sf.jsqlparser.statement.select.Select;
 import net.sf.jsqlparser.statement.select.SelectItem;
+import net.sf.jsqlparser.statement.select.TableStatement;
 import net.sf.jsqlparser.statement.select.WithItem;
 import net.sf.jsqlparser.statement.update.Update;
 import org.springframework.stereotype.Component;
@@ -705,8 +706,30 @@ public class SqlValidator {
           "percentile_disc",
           "mode");
 
-  /** 검증 실패 시 {@link UnsafeSqlException}을 던진다. */
-  public void validate(String scriptContent) {
+  /**
+   * 검증을 통과한 SQL 한 문장의 종류 — 파싱한 AST 의 최상위 문장 타입으로 정한다(WD-93).
+   *
+   * <p>파이프라인 SQL 스텝은 이 값으로 "조회 결과를 출력에 적재(INSERT/MERGE 래핑)할지, 사용자 DML 로 그대로 실행할지"를 가른다. 예전에는 첫
+   * 단어·{@code startsWith} 같은 어휘 규칙으로 따로 판정해서 앞 주석({@code -- 설명\nSELECT …})·CTE 이름({@code WITH
+   * updated AS …})·{@code VALUES}·괄호 시작 문을 DML 로 오판했다. 그러면 결과는 버려지고 REPLACE 출력만 비운 채 COMPLETED 가
+   * 됐다(조용한 손실). 검증이 이미 파싱한 AST 를 쓰면 판정과 검증이 같은 해석을 공유하고, 파싱 실패는 판정 불가가 아니라 검증 실패가 된다(DML 경로로 새지
+   * 않는다).
+   */
+  public enum StatementKind {
+    /**
+     * {@link Select} — PlainSelect·SetOperationList(UNION 등)·ParenthesedSelect·Values·WITH … SELECT
+     * 를 모두 포함한다.
+     */
+    QUERY,
+    /** {@link Insert}·{@link Update}·{@link Delete}(WITH … 로 시작해도 본문 기준). */
+    DML
+  }
+
+  /**
+   * 검증 실패 시 {@link UnsafeSqlException}을 던지고, 통과하면 문장 종류를 돌려준다. 종류는 검증과 같은 파싱 결과에서 얻는다 — 판정을 위해 다시
+   * 파싱하지 않고, 검증한 문자열과 판정한 문자열이 갈릴 틈도 없다.
+   */
+  public StatementKind validate(String scriptContent) {
     if (scriptContent == null || scriptContent.isBlank()) {
       throw new UnsafeSqlException("SQL 스크립트가 비어 있습니다.");
     }
@@ -724,6 +747,8 @@ public class SqlValidator {
     requireNoReservedPseudoColumns(collected.columns());
     requireNoOidAliasTypes(collected.colDataTypes(), collected.selectItems());
     requireNoSelectInto(collected.plainSelects());
+    // requireDmlOrSelect 를 통과했으므로 Select 가 아니면 Insert/Update/Delete 다.
+    return statement instanceof Select ? StatementKind.QUERY : StatementKind.DML;
   }
 
   /**
@@ -867,8 +892,16 @@ public class SqlValidator {
     return statements.get(0);
   }
 
-  /** 최상위 statement가 SELECT / INSERT / UPDATE / DELETE 중 하나인지 검사한다. */
+  /**
+   * 최상위 statement가 SELECT / INSERT / UPDATE / DELETE 중 하나인지 검사한다.
+   *
+   * <p>{@code TABLE t} 는 Select 지만 거부한다(WD-94) — 파이프라인 러너의 래핑(probe·INSERT·MERGE)을 JSqlParser 가
+   * 해석하지 못해 실행 때마다 실패하므로, 저장 시점에 고칠 방법과 함께 알린다.
+   */
   private void requireDmlOrSelect(Statement statement) {
+    if (statement instanceof TableStatement) {
+      throw new UnsafeSqlException("TABLE 문은 실행할 수 없습니다. SELECT 컬럼, … FROM <테이블> 형태로 바꿔 주세요.");
+    }
     if (statement instanceof Select
         || statement instanceof Insert
         || statement instanceof Update

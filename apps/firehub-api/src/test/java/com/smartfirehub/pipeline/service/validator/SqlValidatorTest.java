@@ -1381,4 +1381,72 @@ class SqlValidatorTest {
         .hasMessageContaining("'" + "z".repeat(30) + "…'")
         .hasMessageNotContaining("z".repeat(31));
   }
+
+  // --- 문장 종류 판정 (WD-93) — 파이프라인이 "조회 결과를 적재할지, DML 로 실행할지"를 여기서 가른다 ---
+
+  /** 조회(QUERY)로 판정돼야 하는 문장. 진짜 조회를 DML 로 보면 결과는 버려지고 REPLACE 출력만 비워진 채 완료된다. */
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "SELECT a FROM data.t",
+        "select*from data.t",
+        "  \n\t SELECT a FROM data.t;",
+        // 앞 주석 — 예전 어휘 판정(stripLeading + startsWith)은 주석을 걷지 않아 DML 로 봤다.
+        "-- 설명\nSELECT a FROM data.t",
+        "/* note */ SELECT a FROM data.t",
+        "-- it's\n/* x */ -- y\nselect a from data.t",
+        // CTE 이름에 DML 단어가 든 경우 — 예전 최상위 startsWith 스캔이 본문 키워드로 오인했다.
+        "WITH updated AS (SELECT a FROM data.t) SELECT * FROM updated",
+        "WITH deleted_rows AS (SELECT a FROM data.t) SELECT a FROM deleted_rows",
+        "WITH \"update_at\" AS (SELECT a FROM data.t) SELECT a FROM \"update_at\"",
+        "WITH x AS (SELECT a FROM data.t)\n-- delete old rows later\nSELECT a FROM x",
+        // 예전에 DML 로 보던 조회 형태 — AST 는 모두 Select 다(WD-94).
+        "VALUES (1, 'a')",
+        "(SELECT a FROM data.t)",
+        "(SELECT a FROM data.t) UNION (SELECT a FROM data.s)",
+        "SELECT a FROM data.t UNION ALL SELECT a FROM data.s",
+        "WITH x AS (SELECT a FROM data.t) (SELECT a FROM x)"
+      })
+  void 조회_문장은_QUERY_로_판정한다(String sql) {
+    assertThat(validator.validate(sql)).as(sql).isEqualTo(SqlValidator.StatementKind.QUERY);
+  }
+
+  /** DML 로 판정돼야 하는 문장 — 러너가 감싸지 않고 그대로 실행한다. */
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "INSERT INTO data.t (a) SELECT a FROM data.s",
+        "UPDATE data.t SET a = 1",
+        "delete from data.t",
+        "-- SELECT 처럼 보이는 주석\nDELETE FROM data.t",
+        "/* select */ UPDATE data.t SET a = 1",
+        // CTE 이름이 selected 여도 본문은 DELETE 다 — 예전엔 SELECTED 의 SELECT 를 본문으로 오인했다.
+        "WITH selected AS (SELECT a FROM data.s) DELETE FROM data.t WHERE a IN (SELECT a FROM selected)",
+        "WITH x AS (SELECT a FROM data.s) INSERT INTO data.t (a) SELECT a FROM x",
+        "WITH x AS (SELECT a FROM data.s) UPDATE data.t SET a = 1 WHERE a IN (SELECT a FROM x)"
+      })
+  void DML_문장은_DML_로_판정한다(String sql) {
+    assertThat(validator.validate(sql)).as(sql).isEqualTo(SqlValidator.StatementKind.DML);
+  }
+
+  /**
+   * 판정할 수 없는 문장은 DML 경로로 새지 않고 검증 실패다 — 데이터를 바꾸는 CTE(본문이 SELECT 여도 PostgreSQL 이 안의 DML 을 실행한다),
+   * PostgreSQL 에선 키워드가 아닌 식별자(ſelect·SELECT_1), 주석만 있는 문장.
+   */
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "WITH d AS (DELETE FROM data.t RETURNING *) SELECT * FROM d",
+        "WITH d AS (UPDATE data.t SET a = 1 RETURNING a) SELECT a FROM d",
+        // TABLE 문은 러너가 감싸지 못해(JSqlParser 가 감싼 형태를 해석 못 함) 저장 시점에 거부한다(WD-94).
+        "TABLE data.t",
+        "ſelect 1",
+        "SELECT_1 FROM data.t",
+        "-- 주석만"
+      })
+  void 판정할_수_없는_문장은_검증_실패다(String sql) {
+    assertThatThrownBy(() -> validator.validate(sql))
+        .as(sql)
+        .isInstanceOf(UnsafeSqlException.class);
+  }
 }

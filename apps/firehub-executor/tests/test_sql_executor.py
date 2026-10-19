@@ -2,6 +2,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from app.services.query_executor import detect_statement_type
 from app.services.sql_executor import execute_sql
 from app.schemas.responses import SqlExecuteResponse
 
@@ -209,3 +210,63 @@ def test_empty_select_returns_empty_rows():
     assert result.success is True
     assert result.rows == []
     assert result.row_count == 0
+
+
+@pytest.mark.parametrize(
+    "query, description",
+    [
+        # WD-93 — 선행 문장 없는(APPEND·출력 없음) WITH DML 도 쓰기다. 예전에는 첫 단어 WITH 로 읽기로 보고 fetchall 을 불러
+        # "no results to fetch" 로 실패했다(실제 PostgreSQL 에서 확인).
+        ('WITH x AS (SELECT 1 AS v) DELETE FROM "data"."t" WHERE id IN (SELECT v FROM x)', None),
+        # RETURNING 이 있어도 쓰기다. 예전에는 행만 읽고 커밋하지 않아 풀 반납 시 롤백됐다(성공으로 보고된 무동작). 쓰기 경로는
+        # 결과 행을 읽지 않는다 — 러너는 실행 로그만 쓰고, 큰 결과를 응답에 실으면 커밋 뒤에 API 쪽에서 실패할 수 있다.
+        ('WITH x AS (SELECT 1 AS v) DELETE FROM "data"."t" WHERE id IN (SELECT v FROM x) RETURNING id', [("id",)]),
+        # 회귀 가드 — WITH 없는 DML + RETURNING.
+        ('UPDATE "data"."t" SET a = 1 RETURNING id', [("id",)]),
+        # 앞 주석 속 SELECT 단어에 속지 않는다.
+        ('-- SELECT 처럼 보이는 주석\nWITH x AS (SELECT 1 AS v) DELETE FROM "data"."t" WHERE id IN (SELECT v FROM x)', None),
+    ],
+)
+def test_write_without_pre_statements_commits_without_fetching(query, description):
+    cursor = MagicMock()
+    cursor.rowcount = 2
+    cursor.description = description
+    conn = make_conn(cursor)
+
+    result = execute_sql(query, conn)
+
+    assert result.success
+    assert result.rows is None
+    assert result.row_count == 2
+    cursor.fetchall.assert_not_called()
+    conn.commit.assert_called_once()
+
+
+def test_leading_comment_select_without_pre_statements_is_read():
+    # 앞 주석은 어휘 인지로 걷은 뒤 분류한다 — 주석 붙은 SELECT 도 읽기 경로(행 반환, 커밋 없음)다.
+    cursor = MagicMock()
+    cursor.description = [("a",)]
+    cursor.fetchall.return_value = [(1,)]
+    conn = make_conn(cursor)
+
+    result = execute_sql("-- it's\n/* note */ SELECT 1 AS a", conn)
+
+    assert result.success
+    assert result.rows == [{"a": 1}]
+    conn.commit.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "sql, expected",
+    [
+        ("SELECT 1", "SELECT"),
+        ("-- a\n/* b */ select 1", "SELECT"),
+        ("'--x'", "UNKNOWN"),
+        ("/* 닫히지 않음 SELECT 1", "UNKNOWN"),
+        ("-- 주석만", "UNKNOWN"),
+        ("WITH x AS (SELECT 1) UPDATE t SET a = 1; -- 끝 주석", "UPDATE"),
+        ("WITH d AS (DELETE FROM t RETURNING *) SELECT * FROM d", "DELETE"),
+    ],
+)
+def test_detect_statement_type_skips_comments_lexically(sql, expected):
+    assert detect_statement_type(sql) == expected

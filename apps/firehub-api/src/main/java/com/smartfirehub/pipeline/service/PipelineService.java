@@ -205,13 +205,13 @@ public class PipelineService {
         validatePythonStep(stepRequest);
       }
 
-      // SQL 스텝 안전 정책(단일 statement + DML + data 스키마 + 위험 함수 차단) 검증 (#136)
-      // {{#N}} 스텝 참조는 유효한 SQL 문법이 아니므로, 실행 시점과 동일하게 먼저 더미 테이블
-      // 참조로 치환한 뒤 검증한다 — 그렇지 않으면 UI가 권장하는 표준 사용법이 저장 단계에서
-      // 항상 파싱 실패로 거부된다 (#643).
+      // SQL 스텝 안전 정책(단일 statement + DML + data 스키마 + 위험 함수 차단) 검증 (#136)과 조회/DML 판정(WD-93, 아래
+      // MERGE 검증이 쓴다)을 한 번에 한다. {{#N}} 스텝 참조는 유효한 SQL 문법이 아니므로, 실행 시점과 동일하게 먼저 더미
+      // 테이블 참조로 치환한 뒤 검증한다 — 그렇지 않으면 UI가 권장하는 표준 사용법이 저장 단계에서 항상 파싱 실패로 거부된다 (#643).
+      boolean sqlStepIsQuery = false;
       if ("SQL".equals(stepRequest.scriptType())) {
         String substituted = substituteStepReferencesForValidation(stepRequest.scriptContent());
-        sqlValidator.validate(substituted);
+        sqlStepIsQuery = validateAndJudgeQuery(substituted);
         // 보안 등급(S2): 편집자가 볼 수 없는 데이터셋을 참조하는 스텝은 저장할 수 없다(스펙 §4.2 5행). 검증한 바로 그
         // 문자열을 판정한다(가드 계약). {{#N}} 더미는 판정에서 빠지고 실행 시점에 실제 테이블로 판정된다(판단 사항 4).
         pipelineSecurityGate.checkStepSqlForSave(editorUserId, substituted);
@@ -245,7 +245,7 @@ public class PipelineService {
         // 출력 비우기 판단과 SELECT 래핑 두 블록이 모두 스킵돼(둘 다 SELECT 자동 적재 경로 전용) MERGE 가
         // 조용히 아무 의미도 없는 채로 사용자 SQL 이 그대로 실행된다 — PK 없음과 같은 무동작 부류라 저장
         // 시점에 막는다.
-        if (!isSelectAsRunnerWouldJudge(stepRequest.scriptContent())) {
+        if (!sqlStepIsQuery) {
           throw new IllegalArgumentException(
               "MERGE 로드 전략은 SELECT 스텝에만 사용할 수 있습니다(INSERT/UPDATE/DELETE 는 지원하지 않습니다): "
                   + stepRequest.name());
@@ -308,14 +308,28 @@ public class PipelineService {
   }
 
   /**
-   * 실행 시점(PipelineAsyncRunner)이 내릴 것과 <b>똑같은</b> "이게 SELECT 인가" 판단을 저장/조회 시점에 내린다.
+   * SQL 을 검증하고, 실행 시점(PipelineAsyncRunner)이 내릴 것과 <b>똑같은</b> "조회인가" 판정을 돌려준다. 검증에 실패하면 {@link
+   * UnsafeSqlException} 을 던진다(저장 거부) — 판정 불가를 DML 로 보고 넘어가는 경로가 없다.
    *
-   * <p>두 시점의 판단이 갈리면 저장은 SELECT 로 통과했는데 실행은 DML 로 보고 다르게 도는(또는 상세 조회가 실제와 다른 전체 재생성 모드를 보여주는) 결함이
-   * 생긴다. 그래서 치환 + 판별의 조합 자체를 이 메서드 하나로 고정하고, 호출하는 쪽은 언제나 이것만 쓴다.
+   * <p>판정은 러너와 같은 {@link SqlValidator#validate} 의 반환값(파싱한 AST 의 문장 종류)이다(WD-93). 두 시점의 판단이 갈리면 저장은
+   * 조회로 통과했는데 실행은 DML 로 보고 다르게 도는(또는 상세 조회가 실제와 다른 전체 재생성 모드를 보여주는) 결함이 생긴다.
+   *
+   * @param substituted {@link #substituteStepReferencesForValidation} 을 거친 SQL — 러너도 치환한 문자열을 검증한다
    */
-  private boolean isSelectAsRunnerWouldJudge(String scriptContent) {
-    return PipelineAsyncRunner.isSelectStatement(
-        substituteStepReferencesForValidation(scriptContent));
+  private boolean validateAndJudgeQuery(String substituted) {
+    return sqlValidator.validate(substituted) == SqlValidator.StatementKind.QUERY;
+  }
+
+  /**
+   * 상세 조회용 {@link #validateAndJudgeQuery} — 검증에 실패하면 false. 조회 화면을 검증 실패로 깨면 안 되고, 지금 정책으로 검증을 통과하지
+   * 못하는 저장본(정책 강화 이전 행 등)은 실행 시점에도 같은 검증으로 실패하므로 "출력 재생성"이 일어날 일이 없다.
+   */
+  private boolean judgeQueryOrFalse(String scriptContent) {
+    try {
+      return validateAndJudgeQuery(substituteStepReferencesForValidation(scriptContent));
+    } catch (UnsafeSqlException e) {
+      return false;
+    }
   }
 
   /**
@@ -392,7 +406,7 @@ public class PipelineService {
    *
    * <p>{@code fullRebuildMode} 는 문자열 경고가 아니라 별도 필드로 노출한다 — 웹 UI(Task 8)가 문구를 파싱하지 않고도 "전체 재생성"(출력
    * 재작성)과 "전체 재읽기"(출력은 그대로, 입력만 전체)를 정확히 갈라 라벨을 붙이도록 하기 위해서다. 판정은 저장 시점 MERGE 검증(#saveSteps)과 같은
-   * {@link #isSelectAsRunnerWouldJudge}로 내린다.
+   * 검증+판정을 실패 시 false 로 감싼 {@link #judgeQueryOrFalse}로 내린다.
    */
   private PipelineStepResponse attachIncrementalMeta(PipelineStepResponse step) {
     // 증분 스텝이 아니면 경고도 재생성 모드도 없다(둘 다 기본값 유지) — 판정은 실행기와 같은 헬퍼(#739).
@@ -412,7 +426,7 @@ public class PipelineService {
       warnings.add("APPEND 와 {{last_run_at}} 을 함께 쓰면 수정된 행이 한 줄 더 추가되어 중복됩니다. MERGE 를 권장합니다.");
     }
     String fullRebuildMode =
-        isSelectAsRunnerWouldJudge(step.scriptContent())
+        judgeQueryOrFalse(step.scriptContent())
             ? PipelineStepResponse.FULL_REBUILD_MODE_REBUILD_OUTPUT
             : PipelineStepResponse.FULL_REBUILD_MODE_READ_ALL;
     return step.withIncrementalMeta(warnings, fullRebuildMode);

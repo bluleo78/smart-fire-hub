@@ -408,7 +408,9 @@ public class PipelineAsyncRunner {
 
         // 실행 직전 재검증 — 저장 이후 정책 변경/우회 방지. probe/wrappedSql 결합은 이 검증 통과 후이므로
         // 단일 statement·세미콜론 없음이 보장되어 구조적으로 안전하다. (#136)
-        sqlValidator.validate(sql);
+        // 조회/DML 판정도 이 검증이 파싱한 AST 로 얻는다(WD-93) — 저장 시점(PipelineService#validateAndJudgeQuery)과
+        // 같은 메서드다. 예전 어휘 판정은 앞 주석·CTE 이름·VALUES 등을 DML 로 오판해 REPLACE 출력만 비운 채 완료됐다.
+        boolean isSelect = sqlValidator.validate(sql) == SqlValidator.StatementKind.QUERY;
         // 보안 등급(S2, 스펙 §4.2 5행): 실행 주체(수동=요청자, 트리거=트리거 생성자) 기준 판정. 판정 문자열은 스텝 참조·증분
         // 플레이스홀더를 치환하고 위에서 검증한 바로 이 sql 이다 — DML 분기는 이 문자열을 그대로, SELECT 분기는 러너가 만든
         // INSERT/MERGE 래퍼 + 이 문자열을 실행하므로 판정한 테이블 = 실행되는 테이블이다(가드 계약). 원문(scriptContent)이나
@@ -420,7 +422,6 @@ public class PipelineAsyncRunner {
         SqlAccessResult access =
             pipelineSecurityGate.mergeDeclaredInputs(
                 runAs, pipelineSecurityGate.checkStepSqlForRun(runAs, sql), step.inputDatasetIds());
-        boolean isSelect = isSelectStatement(sql);
         // 이번 실행에서 SQL 스텝 출력을 위해 임시 데이터셋을 자동 생성/재사용했는지 여부.
         // 예약어 컬럼명 별칭 처리(renameReservedColumn*)는 이 경로에서만 적용해야 한다 — 사용자가
         // 명시적으로 지정한 기존 데이터셋(outputDatasetId가 원래부터 있던 경우)은 실제로 "id"라는
@@ -1456,27 +1457,6 @@ public class PipelineAsyncRunner {
   }
 
   /**
-   * SQL 문장이 SELECT(또는 CTE + SELECT)인지 판별한다.
-   *
-   * <p>WITH 절로 시작하는 CTE 구문은 본문 키워드(SELECT / INSERT / UPDATE / DELETE / MERGE)를 파싱하여 실제 DML 여부를
-   * 확인한다.
-   *
-   * <p>패키지 전용 static — {@code PipelineService.saveSteps}가 MERGE 로드 전략은 SELECT 스텝에만 허용된다는 저장 시점
-   * 검증(Fix round 1, must 3)에 같은 판별 로직을 재사용한다. 인스턴스 상태를 쓰지 않는 순수 문자열 판별이라 static 으로 승격해도 동작이 바뀌지
-   * 않는다.
-   */
-  static boolean isSelectStatement(String sql) {
-    String upper = sql.stripLeading().toUpperCase();
-    if (upper.startsWith("SELECT")) {
-      return true;
-    }
-    if (!upper.startsWith("WITH")) {
-      return false;
-    }
-    return isCteFollowedBySelect(upper);
-  }
-
-  /**
    * PYTHON 실행 실패 예외. 실행 중 등급 정의 변경으로 이 테넌트의 슬롯 롤 세션이 끊겼다면(PythonReadGrantSync 가 새 GRANT 커밋 전에 끊는다)
    * 원인을 앞에 밝힌다 — 스크립트 출력에는 "terminating connection due to administrator command" 만 남아 사용자가 원인을 알 수
    * 없다. 판정에는 쓰지 않는다(끊김 자체가 fail-closed 이고, 이 문구는 안내일 뿐).
@@ -1488,44 +1468,6 @@ public class PipelineAsyncRunner {
           "실행 중 보안 등급 구성이 바뀌어 Python 읽기 연결을 끊었습니다. 다시 실행하세요. — " + message);
     }
     return new ScriptExecutionException(message);
-  }
-
-  /**
-   * WITH 절이 있는 SQL에서 CTE 정의를 건너뛴 후 본문이 SELECT인지 확인한다.
-   *
-   * <p>괄호 깊이를 추적하여 최상위 레벨에 도달한 뒤 첫 번째 키워드를 검사한다.
-   */
-  private static boolean isCteFollowedBySelect(String upperSql) {
-    int depth = 0;
-    int len = upperSql.length();
-    int i = 0;
-
-    while (i < len) {
-      char c = upperSql.charAt(i);
-      if (c == '(') {
-        depth++;
-        i++;
-      } else if (c == ')') {
-        depth--;
-        i++;
-      } else if (depth == 0) {
-        // 최상위 레벨에서 키워드를 확인한다
-        if (upperSql.startsWith("SELECT", i)) {
-          return true;
-        }
-        if (upperSql.startsWith("INSERT", i)
-            || upperSql.startsWith("UPDATE", i)
-            || upperSql.startsWith("DELETE", i)
-            || upperSql.startsWith("MERGE", i)) {
-          return false;
-        }
-        i++;
-      } else {
-        i++;
-      }
-    }
-    // 키워드를 찾지 못한 경우 안전하게 false 반환 (DML로 간주)
-    return false;
   }
 
   /**

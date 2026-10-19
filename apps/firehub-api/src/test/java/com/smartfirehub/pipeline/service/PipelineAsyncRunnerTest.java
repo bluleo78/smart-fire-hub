@@ -44,6 +44,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
 
@@ -74,7 +75,9 @@ class PipelineAsyncRunnerTest {
   @Mock PermissionChecker permissionChecker;
   @Mock TempDatasetService tempDatasetService;
   @Mock ExecutorClient executorClient;
-  @Mock SqlValidator sqlValidator;
+  // 러너는 조회/DML 판정을 검증기 반환값(파싱한 AST 의 문장 종류)으로 받는다(WD-93) — 목이면 판정 규칙을 테스트에 다시 적게 되므로 실제
+  // 검증기를 쓴다. 테스트 SQL 이 미한정 테이블을 쓸 수 있게 허용형(data 스키마 + 미한정 허용) 정책이다.
+  @Spy SqlValidator sqlValidator = new SqlValidator("data", true);
   @Mock PythonScriptValidator pythonScriptValidator;
   @Mock IncrementalCursorService incrementalCursorService;
   @Mock OutputTableSessionLock outputTableSessionLock;
@@ -191,7 +194,7 @@ class PipelineAsyncRunnerTest {
 
     when(pipelineRepository.findCreatedByIdById(pipelineId)).thenReturn(Optional.of(userId));
     when(pipelineRepository.findNameById(pipelineId)).thenReturn(Optional.of("TestPipeline"));
-    when(sqlExecutor.execute(List.of(), "BAD SQL")).thenThrow(new RuntimeException("SQL error"));
+    // "BAD SQL" 은 실행 직전 재검증(SqlValidator)에서 파싱 실패로 스텝이 실패한다 — 실행기까지 가지 않는다(WD-93: 검증기가 판정도 한다).
 
     // when
     runner.executeAsync(
@@ -371,7 +374,7 @@ class PipelineAsyncRunnerTest {
   }
 
   // ------------------------------------------------------------------ //
-  // isSelectStatement / CTE DML 오분류 방지 테스트 (#159)
+  // 조회/DML 판정(SqlValidator#validate 의 문장 종류) — CTE DML 오분류 방지 테스트 (#159)
   // ------------------------------------------------------------------ //
 
   @Test

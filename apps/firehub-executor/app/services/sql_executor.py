@@ -1,4 +1,5 @@
 from app.schemas.responses import SqlExecuteResponse
+from app.services.query_executor import detect_statement_type
 from app.validators.sql_validator import (
     SqlValidationError,
     output_lock_key,
@@ -27,11 +28,12 @@ def execute_sql(query: str, conn, pre_statements=()) -> SqlExecuteResponse:
             error=str(exc),
         )
 
-    stripped = query.strip().upper()
     # 선행 문장이 있으면 "출력 비우기 + 쓰기"인 쓰기 트랜잭션이다.
     # SELECT 로 오판해 커밋을 건너뛰면 DELETE 로 비운 내용이 롤백되지 않고 남을 수 있으므로
     # pre_statements 가 있을 때는 무조건 쓰기 경로(커밋)로 취급한다.
-    is_select = not pre_statements and (stripped.startswith("SELECT") or stripped.startswith("WITH"))
+    # 문 종류는 애널리틱스와 같은 분류기(앞 주석은 어휘 인지로 걷음)로 정한다(WD-93) — 예전엔 WITH 로 시작하면 읽기로 봐서 CTE DML 이
+    # 실패하거나(no results to fetch) 커밋 없이 끝났다. 분류기가 틀려도 커밋 쪽으로만 틀린다.
+    is_select = not pre_statements and detect_statement_type(query) == "SELECT"
 
     try:
         with conn.cursor() as cursor:
