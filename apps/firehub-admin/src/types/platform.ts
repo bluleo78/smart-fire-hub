@@ -49,10 +49,83 @@ export interface TenantMemberResponse {
   status: string;
 }
 
+/** 데이터셋 저장소 백엔드. 서버 `DataStoreBackend` 와 1:1. */
+export type DataStoreBackend = 'POSTGRESQL' | 'TIBERO' | 'MYSQL';
+
+/** 외부 저장소 계정 프로비저닝 방식. 서버 `DataStoreProvisionMode` 와 1:1. */
+export type DataStoreProvisionMode = 'DBA_AUTO' | 'SCRIPT';
+
+/** DBA 접속 계정. 비밀번호는 서버가 저장하지 않고 응답에도 돌려주지 않는다. */
+export interface DbaCredentials {
+  username: string;
+  password: string;
+}
+
+/** 테넌트 생성 시 선택하는 저장소 설정. 서버 `DataStoreSetupRequest` 와 1:1 — PostgreSQL 이면 이 객체 자체를 보내지 않는다. */
+export interface DataStoreSetupRequest {
+  backend: DataStoreBackend;
+  host: string;
+  port: number;
+  /** Tibero SID. */
+  database: string;
+  tablespace?: string;
+  mode: DataStoreProvisionMode;
+  /** DBA_AUTO 에서만. */
+  dba?: DbaCredentials;
+}
+
 export interface CreateTenantRequest {
   slug: string;
   name: string;
   ownerUserId: number;
+  dataStore?: DataStoreSetupRequest;
+}
+
+/** `POST /tenants` 응답. SCRIPT 모드일 때만 `dataStoreSetupScript` 가 온다(1회만 표시되는 비밀 포함). */
+export interface TenantCreatedResponse extends TenantSummaryResponse {
+  dataStoreSetupScript?: string;
+}
+
+/** `GET /tenants/data-store/backends` 한 항목. */
+export interface DataStoreBackendOption {
+  backend: DataStoreBackend;
+  available: boolean;
+}
+
+/** `POST /tenants/data-store/test` 응답. */
+export interface ConnectionTestResult {
+  ok: boolean;
+  serverVersion: string | null;
+  missingPrivileges: string[] | null;
+  message: string | null;
+}
+
+/** `GET /tenants/{id}/data-store` 응답. PostgreSQL 이면 `backend` 외에는 null/빈 배열이다. */
+export interface TenantDataStoreResponse {
+  backend: DataStoreBackend;
+  host: string | null;
+  port: number | null;
+  database: string | null;
+  schemaName: string | null;
+  tablespace: string | null;
+  mode: DataStoreProvisionMode | null;
+  /** 'PENDING' | 'READY' */
+  status: string | null;
+  accountUsernames: string[];
+}
+
+export interface AccountCheck {
+  username: string;
+  ok: boolean;
+  message: string | null;
+}
+
+/** `POST /tenants/{id}/data-store/verify` 응답. */
+export interface DataStoreVerifyResponse {
+  status: string;
+  /** 감사 기록과 같은 값. PASSWORDS_CHANGED 는 확인 중 비밀번호가 재발급된 경우다. */
+  result: 'READY' | 'FAILED' | 'PASSWORDS_CHANGED';
+  checks: AccountCheck[];
 }
 
 /** `GET /api/platform/users?q=` 응답 1건. 열거 표면을 넓히지 않도록 최소 3필드다. */

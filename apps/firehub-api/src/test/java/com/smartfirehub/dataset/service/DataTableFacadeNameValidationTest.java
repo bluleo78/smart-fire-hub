@@ -1,9 +1,11 @@
 package com.smartfirehub.dataset.service;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
 
 import com.smartfirehub.dataset.exception.InvalidTableNameException;
 import com.smartfirehub.dataset.storage.DataStoreResolver;
+import com.smartfirehub.dataset.storage.TenantDataStoreRepository;
 import com.smartfirehub.global.tenant.TenantContext;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -17,7 +19,8 @@ import org.junit.jupiter.api.Test;
  */
 class DataTableFacadeNameValidationTest {
 
-  private final DataStoreResolver resolver = new DataStoreResolver(List.of(), List.of());
+  private final DataStoreResolver resolver =
+      new DataStoreResolver(List.of(), List.of(), mock(TenantDataStoreRepository.class));
   private final DataTableService tableService = new DataTableService(resolver);
   private final DataTableRowService rowService = new DataTableRowService(resolver);
 

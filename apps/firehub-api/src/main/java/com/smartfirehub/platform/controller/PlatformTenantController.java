@@ -1,10 +1,18 @@
 package com.smartfirehub.platform.controller;
 
+import com.smartfirehub.dataset.storage.external.ConnectionTestResult;
 import com.smartfirehub.global.security.RequirePermission;
 import com.smartfirehub.platform.dto.CreateTenantRequest;
+import com.smartfirehub.platform.dto.DataStoreBackendOption;
+import com.smartfirehub.platform.dto.DataStoreConnectionTestRequest;
+import com.smartfirehub.platform.dto.DataStoreScriptResponse;
+import com.smartfirehub.platform.dto.DataStoreVerifyResponse;
+import com.smartfirehub.platform.dto.TenantCreatedResponse;
+import com.smartfirehub.platform.dto.TenantDataStoreResponse;
 import com.smartfirehub.platform.dto.TenantMemberResponse;
 import com.smartfirehub.platform.dto.TenantSummaryResponse;
 import com.smartfirehub.platform.service.PlatformTenantService;
+import com.smartfirehub.platform.service.TenantDataStoreSetupService;
 import jakarta.validation.Valid;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
@@ -34,6 +42,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class PlatformTenantController {
 
   private final PlatformTenantService tenantService;
+  private final TenantDataStoreSetupService dataStoreService;
 
   @GetMapping
   @RequirePermission("platform:tenant:read")
@@ -50,7 +59,7 @@ public class PlatformTenantController {
   /** 테넌트 생성. 초기 Owner 지정과 기본 시드가 한 트랜잭션에서 일어난다. */
   @PostMapping
   @RequirePermission("platform:tenant:create")
-  public ResponseEntity<TenantSummaryResponse> create(
+  public ResponseEntity<TenantCreatedResponse> create(
       @Valid @RequestBody CreateTenantRequest request, Authentication authentication) {
     // 운영자 id 는 감사 행위자로 쓰인다(WD-12) — 계정 조치 컨트롤러와 같은 방식으로 principal 에서 꺼낸다.
     return ResponseEntity.status(HttpStatus.CREATED)
@@ -75,5 +84,49 @@ public class PlatformTenantController {
   @RequirePermission("platform:member:read")
   public ResponseEntity<List<TenantMemberResponse>> members(@PathVariable long tenantId) {
     return ResponseEntity.ok(tenantService.members(tenantId));
+  }
+
+  // ── 데이터셋 저장소(WD-73) ────────────────────────────────────────────────
+  // 리터럴 경로(/data-store/...)는 /{tenantId} 와 겹치지 않는다 — Spring 은 리터럴 매핑을 우선하고,
+  // {tenantId} 는 long 이라 "data-store" 가 와도 매칭되지 않는다.
+
+  /** 선택 가능한 저장소 백엔드와 사용 가능 여부. */
+  @GetMapping("/data-store/backends")
+  @RequirePermission("platform:tenant:create")
+  public ResponseEntity<List<DataStoreBackendOption>> dataStoreBackends() {
+    return ResponseEntity.ok(dataStoreService.availableBackends());
+  }
+
+  /** 생성 전 DBA 연결 테스트. 접속 실패도 200 {@code ok=false} 로 돌려준다. */
+  @PostMapping("/data-store/test")
+  @RequirePermission("platform:tenant:create")
+  public ResponseEntity<ConnectionTestResult> testDataStoreConnection(
+      @Valid @RequestBody DataStoreConnectionTestRequest request) {
+    return ResponseEntity.ok(dataStoreService.testConnection(request));
+  }
+
+  /** 테넌트의 저장소 설정(비밀 없음). */
+  @GetMapping("/{tenantId}/data-store")
+  @RequirePermission("platform:tenant:read")
+  public ResponseEntity<TenantDataStoreResponse> dataStore(@PathVariable long tenantId) {
+    return ResponseEntity.ok(dataStoreService.detail(tenantId));
+  }
+
+  /** 저장된 계정 전부로 접속해 검증하고 모두 성공하면 READY 로 바꾼다. */
+  @PostMapping("/{tenantId}/data-store/verify")
+  @RequirePermission("platform:tenant:create")
+  public ResponseEntity<DataStoreVerifyResponse> verifyDataStore(
+      @PathVariable long tenantId, Authentication authentication) {
+    return ResponseEntity.ok(
+        dataStoreService.verify(tenantId, (Long) authentication.getPrincipal()));
+  }
+
+  /** PENDING 스크립트 모드 저장소의 비밀번호를 교체하고 새 스크립트를 돌려준다. */
+  @PostMapping("/{tenantId}/data-store/script")
+  @RequirePermission("platform:tenant:create")
+  public ResponseEntity<DataStoreScriptResponse> reissueDataStoreScript(
+      @PathVariable long tenantId, Authentication authentication) {
+    return ResponseEntity.ok(
+        dataStoreService.reissueScript(tenantId, (Long) authentication.getPrincipal()));
   }
 }

@@ -8,6 +8,7 @@ import { tenantsApi } from '@/api/tenants';
 import { MembershipRoleBadge } from '@/components/MembershipRoleBadge';
 import { MembershipStatusBadge } from '@/components/MembershipStatusBadge';
 import { PermissionDeniedBanner } from '@/components/PermissionDeniedBanner';
+import { TenantDataStoreCard } from '@/components/tenant/TenantDataStoreCard';
 import { TenantStatusBadge } from '@/components/TenantStatusBadge';
 import {
   AlertDialog,
@@ -213,6 +214,12 @@ export default function TenantDetailPage() {
           </div>
         </CardContent>
       </Card>
+
+      {/* WD-73: 데이터셋 저장소(PostgreSQL 이면 이름만, 외부 저장소면 접속 정보·상태·확인/재발급). */}
+      <TenantDataStoreCard
+        tenantId={tenantId}
+        canManage={hasPermission('platform:tenant:create')}
+      />
 
       <Card>
         <CardHeader>

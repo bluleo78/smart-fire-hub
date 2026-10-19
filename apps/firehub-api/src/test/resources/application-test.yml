@@ -45,6 +45,8 @@ firehub:
         initial-delay-ms: 86400000
 
 app:
+  data-store:
+    tibero-enabled: true
   login-attempts:
     cleanup:
       enabled: false

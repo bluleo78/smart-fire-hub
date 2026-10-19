@@ -4,7 +4,6 @@ import axios from 'axios';
 import { AlertTriangle, CheckCircle2, Copy, Info, Loader2, RefreshCw } from 'lucide-react';
 import { type RefObject, useEffect, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
-import { toast } from 'sonner';
 
 import { accountsApi } from '@/api/accounts';
 import { Button } from '@/components/ui/button';
@@ -20,6 +19,7 @@ import { FormField } from '@/components/ui/form-field';
 import { InlineBanner } from '@/components/ui/inline-banner';
 import { Input } from '@/components/ui/input';
 import { PasswordInput } from '@/components/ui/password-input';
+import { copyText } from '@/lib/clipboard';
 import { isForbidden, serverMessage } from '@/lib/http-errors';
 import { generateTemporaryPassword } from '@/lib/temp-password';
 import type { CreateAccountFormData } from '@/lib/validations/account';
@@ -37,16 +37,6 @@ interface CreateAccountDialogProps {
   onCreated?: (account: PlatformAccountResponse) => void;
   /** 다이얼로그를 연 요소가 닫힘과 함께 사라질 때 포커스를 대신 받을 요소(예: Owner 선택 상태). */
   restoreFocusRef?: RefObject<HTMLElement | null>;
-}
-
-/** 클립보드 복사 + 토스트(웹 멤버 추가와 같은 규칙: 복사 확인은 toast.info). */
-async function copyText(text: string) {
-  try {
-    await navigator.clipboard.writeText(text);
-    toast.info('클립보드에 복사되었습니다');
-  } catch {
-    toast.error('복사하지 못했습니다');
-  }
 }
 
 /**

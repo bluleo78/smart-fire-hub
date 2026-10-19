@@ -116,7 +116,10 @@ class TenantOwnerAdminProvisioningTest extends IntegrationTestBase {
   /** 앱 경로(운영자 평면 API 가 쓰는 서비스). 멤버십 삽입·시드·배정이 한 트랜잭션에서 끝난다. */
   private long createTenantViaService(Long ownerId) {
     String slug = "v121-app-" + System.nanoTime();
-    return platformTenantService.create(new CreateTenantRequest(slug, slug, ownerId), ownerId).id();
+    return platformTenantService
+        .create(new CreateTenantRequest(slug, slug, ownerId), ownerId)
+        .tenant()
+        .id();
   }
 
   /**

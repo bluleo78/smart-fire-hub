@@ -5,6 +5,7 @@ import type {
   PlatformMeResponse,
   PlatformTokenResponse,
   PlatformUserResponse,
+  TenantDataStoreResponse,
   TenantMemberResponse,
   TenantSummaryResponse,
 } from '../../src/types/platform';
@@ -117,4 +118,40 @@ export function createAuditPage(
   overrides: Partial<PageResponse<PlatformAuditLogResponse>> = {},
 ): PageResponse<PlatformAuditLogResponse> {
   return { content, page: 0, size: 20, totalElements: content.length, totalPages: content.length > 0 ? 1 : 0, ...overrides };
+}
+
+/** 테넌트 저장소 조회 응답. 기본은 PostgreSQL(backend 외 전부 null). */
+export function createDataStore(
+  overrides: Partial<TenantDataStoreResponse> = {},
+): TenantDataStoreResponse {
+  return {
+    backend: 'POSTGRESQL',
+    host: null,
+    port: null,
+    database: null,
+    schemaName: null,
+    tablespace: null,
+    mode: null,
+    status: null,
+    accountUsernames: [],
+    ...overrides,
+  };
+}
+
+/** Tibero 저장소 조회 응답. 기본은 DBA_AUTO·READY. */
+export function createTiberoDataStore(
+  overrides: Partial<TenantDataStoreResponse> = {},
+): TenantDataStoreResponse {
+  return createDataStore({
+    backend: 'TIBERO',
+    host: '192.168.179.80',
+    port: 8629,
+    database: 'tibero',
+    schemaName: 'GENIA_T7',
+    tablespace: 'USR',
+    mode: 'DBA_AUTO',
+    status: 'READY',
+    accountUsernames: ['GENIA_T7', 'GENIA_T7_RO'],
+    ...overrides,
+  });
 }

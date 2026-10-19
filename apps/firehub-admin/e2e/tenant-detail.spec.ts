@@ -1,4 +1,11 @@
-import { createMember, createTenant } from './factories/platform.factory';
+import type { Page } from '@playwright/test';
+
+import {
+  createDataStore,
+  createMember,
+  createTenant,
+  createTiberoDataStore,
+} from './factories/platform.factory';
 import { mockApi } from './fixtures/api-mock';
 import { expect, loginAs, test } from './fixtures/auth.fixture';
 
@@ -241,6 +248,8 @@ test.describe('테넌트 상세', () => {
   }) => {
     await mockApi(page, 'GET', '/api/platform/tenants/1', ACTIVE);
     await mockApi(page, 'GET', '/api/platform/tenants/1/members', {}, { status: 500 });
+    // 저장소 카드(WD-73)도 실패하면 자기 "다시 시도" 버튼을 그려 아래 단언이 두 개를 잡는다 — 정상 응답으로 고정한다.
+    await mockApi(page, 'GET', '/api/platform/tenants/1/data-store', createDataStore());
     await page.goto('/tenants/1');
 
     await expect(page.getByText('기본 정보')).toBeVisible();
@@ -284,5 +293,169 @@ test.describe('테넌트 상세', () => {
     // (같은 파일)가 고정한다.
     await expect(page.getByText('테넌트를 찾을 수 없습니다.')).not.toBeVisible();
     await expect(page.getByRole('button', { name: '다시 시도' })).toBeVisible();
+  });
+
+  test.describe('데이터셋 저장소 카드 (WD-73)', () => {
+    async function openDetail(page: Page, store: unknown) {
+      await mockApi(page, 'GET', '/api/platform/tenants/1', ACTIVE);
+      await mockApi(page, 'GET', '/api/platform/tenants/1/members', MEMBERS);
+      await mockApi(page, 'GET', '/api/platform/tenants/1/data-store', store);
+      await page.goto('/tenants/1');
+      await expect(page.getByTestId('data-store-card')).toBeVisible();
+    }
+
+    test('PostgreSQL 테넌트는 저장소 카드에 PostgreSQL 만 보인다', async ({ authenticatedPage: page }) => {
+      await openDetail(page, createDataStore());
+      const card = page.getByTestId('data-store-card');
+      await expect(card).toContainText('데이터셋 저장소');
+      await expect(card).toContainText('PostgreSQL');
+      await expect(card).not.toContainText('테이블스페이스');
+      await expect(card.getByRole('button', { name: '연결 확인' })).toHaveCount(0);
+    });
+
+    test('Tibero PENDING — 연결 확인 성공 시 READY 로 바뀐다', async ({ authenticatedPage: page }) => {
+      let ready = false;
+      await mockApi(page, 'GET', '/api/platform/tenants/1', ACTIVE);
+      await mockApi(page, 'GET', '/api/platform/tenants/1/members', MEMBERS);
+      await page.route(
+        (url) => url.pathname === '/api/platform/tenants/1/data-store',
+        (route) =>
+          route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify(
+              createTiberoDataStore({ status: ready ? 'READY' : 'PENDING', mode: 'SCRIPT' }),
+            ),
+          }),
+      );
+      await page.route(
+        (url) => url.pathname === '/api/platform/tenants/1/data-store/verify',
+        (route) => {
+          ready = true;
+          return route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({
+              status: 'READY',
+              result: 'READY',
+              checks: [{ username: 'GENIA_T7', ok: true, message: null }],
+            }),
+          });
+        },
+      );
+      await page.goto('/tenants/1');
+
+      const card = page.getByTestId('data-store-card');
+      await expect(card).toContainText('Tibero');
+      await expect(card).toContainText('192.168.179.80:8629/tibero');
+      await expect(card).toContainText('GENIA_T7');
+      await expect(card).toContainText('USR');
+      await expect(card).toContainText('확인 필요');
+      await card.getByRole('button', { name: '연결 확인' }).click();
+
+      await expect(card).toContainText('사용 가능');
+      await expect(card.getByRole('button', { name: '연결 확인' })).toHaveCount(0);
+      await expect(card.getByRole('button', { name: '스크립트 재발급' })).toHaveCount(0);
+    });
+
+    test('Tibero PENDING — 연결 확인 실패 계정을 목록으로 보여 준다', async ({ authenticatedPage: page }) => {
+      await openDetail(page, createTiberoDataStore({ status: 'PENDING', mode: 'SCRIPT' }));
+      await mockApi(page, 'POST', '/api/platform/tenants/1/data-store/verify', {
+        status: 'PENDING',
+        result: 'FAILED',
+        checks: [
+          { username: 'GENIA_T7', ok: true, message: null },
+          { username: 'GENIA_T7_RO', ok: false, message: '계정이 아직 없습니다.' },
+          { username: 'GENIA_T7_S1', ok: false, message: '비밀번호가 맞지 않습니다.' },
+        ],
+      });
+      const card = page.getByTestId('data-store-card');
+      await card.getByRole('button', { name: '연결 확인' }).click();
+
+      await expect(
+        card.getByRole('listitem').filter({ hasText: 'GENIA_T7_RO — 계정이 아직 없습니다.' }),
+      ).toBeVisible();
+      await expect(
+        card.getByRole('listitem').filter({ hasText: 'GENIA_T7_S1 — 비밀번호가 맞지 않습니다.' }),
+      ).toBeVisible();
+      await expect(card.getByRole('listitem')).toHaveCount(2);
+      await expect(card).toContainText('확인 필요');
+    });
+
+    test('확인 중 비밀번호가 재발급되면(PASSWORDS_CHANGED) 안내하고 READY 로 바꾸지 않는다', async ({ authenticatedPage: page }) => {
+      await openDetail(page, createTiberoDataStore({ status: 'PENDING', mode: 'SCRIPT' }));
+      await mockApi(page, 'POST', '/api/platform/tenants/1/data-store/verify', {
+        status: 'PENDING',
+        result: 'PASSWORDS_CHANGED',
+        checks: [{ username: 'GENIA_T7', ok: true, message: null }],
+      });
+      const card = page.getByTestId('data-store-card');
+      await card.getByRole('button', { name: '연결 확인' }).click();
+
+      await expect(
+        page.getByText('확인 중 비밀번호가 재발급되었습니다. 새 스크립트를 실행한 뒤 다시 확인하세요.'),
+      ).toBeVisible();
+      await expect(card).toContainText('확인 필요');
+      await expect(card.getByRole('button', { name: '연결 확인' })).toBeVisible();
+    });
+
+    test('Tibero PENDING 스크립트 모드 — 스크립트 재발급 대화상자', async ({ authenticatedPage: page }) => {
+      await openDetail(page, createTiberoDataStore({ status: 'PENDING', mode: 'SCRIPT' }));
+      await mockApi(page, 'POST', '/api/platform/tenants/1/data-store/script', {
+        script: 'CREATE USER "GENIA_T7" IDENTIFIED BY "new";',
+      });
+      await page.getByRole('button', { name: '스크립트 재발급' }).click();
+
+      const dialog = page.getByRole('dialog');
+      await expect(dialog).toContainText('CREATE USER "GENIA_T7" IDENTIFIED BY "new";');
+      await expect(dialog).toContainText('이 스크립트는 다시 표시되지 않습니다.');
+      await dialog.getByRole('button', { name: '확인' }).click();
+      await expect(dialog).toHaveCount(0);
+      // 상세에 그대로 남는다(생성 흐름과 달리 이동하지 않는다).
+      await expect(page).toHaveURL('/tenants/1');
+    });
+
+    test('platform:tenant:create 가 없으면 PENDING 이어도 연결 확인·재발급 버튼이 없다', async ({ page }) => {
+      await loginAs(page, ['platform:tenant:read']);
+      await openDetail(page, createTiberoDataStore({ status: 'PENDING', mode: 'SCRIPT' }));
+      const card = page.getByTestId('data-store-card');
+      // 조회 권한만으로 저장소 정보는 보인다.
+      await expect(card).toContainText('Tibero');
+      await expect(card).toContainText('확인 필요');
+      await expect(card).toContainText('DBA가 스크립트로 생성');
+      await expect(card.getByRole('button', { name: '연결 확인' })).toHaveCount(0);
+      await expect(card.getByRole('button', { name: '스크립트 재발급' })).toHaveCount(0);
+    });
+
+    test('재발급하면 이전 연결 확인 실패 목록을 지운다', async ({ authenticatedPage: page }) => {
+      await openDetail(page, createTiberoDataStore({ status: 'PENDING', mode: 'SCRIPT' }));
+      await mockApi(page, 'POST', '/api/platform/tenants/1/data-store/verify', {
+        status: 'PENDING',
+        result: 'FAILED',
+        checks: [{ username: 'GENIA_T7_RO', ok: false, message: '계정이 아직 없습니다.' }],
+      });
+      await mockApi(page, 'POST', '/api/platform/tenants/1/data-store/script', {
+        script: 'CREATE USER "GENIA_T7" IDENTIFIED BY "new";',
+      });
+      const card = page.getByTestId('data-store-card');
+      await card.getByRole('button', { name: '연결 확인' }).click();
+      await expect(card.getByRole('listitem')).toHaveCount(1);
+
+      await card.getByRole('button', { name: '스크립트 재발급' }).click();
+      const dialog = page.getByRole('dialog');
+      await expect(dialog.getByRole('region', { name: '스크립트 본문' })).toContainText('IDENTIFIED BY "new"');
+      await dialog.getByRole('button', { name: '확인' }).click();
+
+      await expect(dialog).toHaveCount(0);
+      await expect(card.getByRole('listitem')).toHaveCount(0);
+      await expect(card).not.toContainText('다음 계정을 확인하지 못했습니다.');
+    });
+
+    test('READY 에서는 재발급 버튼이 없다', async ({ authenticatedPage: page }) => {
+      await openDetail(page, createTiberoDataStore({ status: 'READY', mode: 'SCRIPT' }));
+      await expect(page.getByTestId('data-store-card')).toContainText('사용 가능');
+      await expect(page.getByRole('button', { name: '스크립트 재발급' })).toHaveCount(0);
+      await expect(page.getByRole('button', { name: '연결 확인' })).toHaveCount(0);
+    });
   });
 });

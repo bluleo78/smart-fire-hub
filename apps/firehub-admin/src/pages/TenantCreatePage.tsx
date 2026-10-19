@@ -2,22 +2,25 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft } from 'lucide-react';
 import { useState } from 'react';
-import { useForm } from 'react-hook-form';
+import { FormProvider, useForm } from 'react-hook-form';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { tenantsApi } from '@/api/tenants';
 import { OwnerPicker } from '@/components/OwnerPicker';
+import { DataStoreFields } from '@/components/tenant/DataStoreFields';
+import { DataStoreScriptDialog } from '@/components/tenant/DataStoreScriptDialog';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { FormField } from '@/components/ui/form-field';
 import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
 import { useAuth } from '@/hooks/useAuth';
+import { DEFAULT_BACKEND } from '@/lib/data-store-labels';
 import { isForbidden, serverMessage } from '@/lib/http-errors';
 import type { CreateTenantFormData } from '@/lib/validations/tenant';
 import { createTenantSchema } from '@/lib/validations/tenant';
-import type { PlatformUserResponse } from '@/types/platform';
+import type { CreateTenantRequest, PlatformUserResponse } from '@/types/platform';
 
 /**
  * 테넌트 생성. 서버는 테넌트 행 + 초기 Owner + 기본 시드를 한 트랜잭션으로 만든다.
@@ -37,12 +40,31 @@ export default function TenantCreatePage() {
   const [owner, setOwner] = useState<PlatformUserResponse | null>(null);
   const [serverFieldError, setServerFieldError] = useState<string | null>(null);
 
+  // SCRIPT 모드로 만들면 응답에 스크립트가 온다 — 운영자가 확인할 때까지 상세로 이동하지 않고 여기 보관한다.
+  const [created, setCreated] = useState<{ id: number; script: string } | null>(null);
+
+  const form = useForm<CreateTenantFormData>({
+    resolver: zodResolver(createTenantSchema),
+    // 저장소 기본값: PostgreSQL(기존 흐름). Tibero 를 고르면 포트 8629·테이블스페이스 USR·DBA 자동 생성이 미리 채워진다.
+    defaultValues: {
+      dataStore: {
+        backend: DEFAULT_BACKEND,
+        host: '',
+        port: '8629',
+        database: '',
+        tablespace: 'USR',
+        mode: 'DBA_AUTO',
+        dbaUsername: '',
+        dbaPassword: '',
+      },
+    },
+  });
   const {
     register,
     handleSubmit,
     setValue,
     formState: { errors },
-  } = useForm<CreateTenantFormData>({ resolver: zodResolver(createTenantSchema) });
+  } = form;
 
   /**
    * 픽커의 선택/해제를 표시 상태와 폼 값에 **동시에** 반영한다.
@@ -61,8 +83,10 @@ export default function TenantCreatePage() {
     }
   };
 
+  // gcTime: 0 — 응답(스크립트 = 계정 비밀번호)과 변수(DBA 비밀번호)가 관찰자가 없어지는 즉시 TanStack 캐시에서 사라지게 한다.
   const createMutation = useMutation({
-    mutationFn: (data: CreateTenantFormData) => tenantsApi.create(data).then((r) => r.data),
+    gcTime: 0,
+    mutationFn: (data: CreateTenantRequest) => tenantsApi.create(data).then((r) => r.data),
     onSuccess: (tenant) => {
       toast.success('테넌트가 생성되었습니다.');
       // 전역 staleTime(30_000)이 있어 무효화 없이 목록으로 돌아가면 방금 만든 테넌트가
@@ -72,10 +96,16 @@ export default function TenantCreatePage() {
       // 존재한 적이 없는 새 쿼리 키라 무효화할 대상이 없다(정지/활성화는 이미 캐시된
       // 기존 상세를 갱신하는 경우라 다르다).
       void queryClient.invalidateQueries({ queryKey: ['platform-tenants'] });
+      if (tenant.dataStoreSetupScript) {
+        // 스크립트는 다시 볼 수 없다 — 대화상자 "확인" 이 이동을 맡는다.
+        setCreated({ id: tenant.id, script: tenant.dataStoreSetupScript });
+        return;
+      }
       navigate(`/tenants/${tenant.id}`, { replace: true });
     },
     onError: (error) => {
-      const message = serverMessage(error);
+      // 422(DATA_STORE_PROVISIONING_FAILED)도 서버 문구를 그대로 보인다 — 접속 실패 사유를 프런트가 재현할 수 없다.
+      const message = serverMessage(error, [400, 422]);
       if (message) {
         setServerFieldError(message);
         return;
@@ -95,7 +125,25 @@ export default function TenantCreatePage() {
   // zod 가 이미 `ownerUserId` 를 포함해 전부 통과시킨 뒤에만 호출된다 — 여기서 다시 검사하지 않는다.
   const onSubmit = (data: CreateTenantFormData) => {
     setServerFieldError(null);
-    createMutation.mutate(data);
+    const { dataStore: ds, ...base } = data;
+    const request: CreateTenantRequest = { ...base };
+    // PostgreSQL 이면 dataStore 키를 아예 보내지 않는다 — 기존 페이로드와 바이트 단위로 같게 유지한다.
+    if (ds.backend !== 'POSTGRESQL') {
+      const tablespace = ds.tablespace.trim();
+      request.dataStore = {
+        backend: ds.backend,
+        host: ds.host.trim(),
+        port: Number(ds.port),
+        database: ds.database.trim(),
+        ...(tablespace ? { tablespace } : {}),
+        mode: ds.mode,
+        // SCRIPT 모드는 DBA 자격이 필요 없다(보내지 않는다).
+        ...(ds.mode === 'DBA_AUTO'
+          ? { dba: { username: ds.dbaUsername.trim(), password: ds.dbaPassword } }
+          : {}),
+      };
+    }
+    createMutation.mutate(request);
   };
 
   return (
@@ -113,6 +161,7 @@ export default function TenantCreatePage() {
         <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">테넌트 생성</h1>
       </div>
 
+      <FormProvider {...form}>
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-6" noValidate>
         <Card>
           <CardContent className="space-y-4 pt-6">
@@ -139,6 +188,11 @@ export default function TenantCreatePage() {
               canCreateAccount={hasPermission('platform:tenant:create')}
             />
 
+            <Separator />
+
+            {/* 생성이 성공하면 연결 테스트 뮤테이션(DBA 비밀번호를 변수로 보관)을 비운다. */}
+            <DataStoreFields submitted={createMutation.isSuccess} />
+
             {serverFieldError && <p className="text-sm text-destructive">{serverFieldError}</p>}
           </CardContent>
         </Card>
@@ -152,6 +206,19 @@ export default function TenantCreatePage() {
           </Button>
         </div>
       </form>
+      </FormProvider>
+
+      <DataStoreScriptDialog
+        script={created?.script ?? null}
+        onConfirm={() => {
+          if (!created) return;
+          const { id } = created;
+          // 생성 응답(스크립트 = 계정 비밀번호)을 뮤테이션 상태와 화면 상태에서 지운 뒤 이동한다(캐시는 gcTime: 0 이 비운다).
+          createMutation.reset();
+          setCreated(null);
+          navigate(`/tenants/${id}`, { replace: true });
+        }}
+      />
     </div>
   );
 }

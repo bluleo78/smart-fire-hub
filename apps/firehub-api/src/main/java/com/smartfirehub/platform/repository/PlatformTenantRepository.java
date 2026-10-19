@@ -64,6 +64,14 @@ public class PlatformTenantRepository {
             .where(field(name("slug"), String.class).eq(slug)));
   }
 
+  /** 테넌트가 있는지. 존재만 확인하는 호출처가 멤버 수 집계까지 하는 {@link #findById} 를 부르지 않게 한다. */
+  public boolean existsById(long tenantId) {
+    return dsl.fetchExists(
+        dsl.selectOne()
+            .from(table(name("tenant")))
+            .where(field(name("id"), Long.class).eq(tenantId)));
+  }
+
   /** 전체 테넌트 목록(id 오름차순) + 멤버 수 집계. */
   public List<TenantSummaryResponse> findAll() {
     return dsl.fetch(

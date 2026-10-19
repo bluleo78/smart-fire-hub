@@ -299,6 +299,181 @@ class PlatformTenantControllerTest extends IntegrationTestBase {
         .andExpect(status().isForbidden());
   }
 
+  // ── WD-73: 테넌트 저장소 선택 ───────────────────────────────────────────────
+
+  /** dataStore 없는 기존 요청은 그대로 201 이고 응답에 스크립트 키도, 저장소 행도 없다(PostgreSQL 회귀 방지). */
+  @Test
+  void create_withoutDataStore_unchanged_noStoreRow() throws Exception {
+    String slug = "wd73-plain-" + System.nanoTime();
+
+    MockHttpServletResponse response = createTenant(slug, ownerUserId);
+
+    assertThat(response.getStatus()).isEqualTo(201);
+    createdTenant = tenantIdBySlug(slug);
+    var json = objectMapper.readTree(response.getContentAsString());
+    assertThat(json.has("dataStoreSetupScript")).isFalse();
+    assertThat(json.get("slug").asText()).isEqualTo(slug);
+    assertThat(storeRowCount(createdTenant)).isZero();
+  }
+
+  /** SCRIPT 모드: 최상위 필드는 그대로(언랩) + 스크립트 1회, PENDING 행과 계정 12개, 감사에 비밀 없음. */
+  @Test
+  void create_tiberoScriptMode_returnsScriptOnce_pendingRow() throws Exception {
+    String slug = "wd73-script-" + System.nanoTime();
+
+    MockHttpServletResponse response =
+        createTenantWithBody(
+            slug,
+            "\"dataStore\":{\"backend\":\"TIBERO\",\"host\":\"db.example.com\",\"port\":8629,"
+                + "\"database\":\"TIBERO\",\"mode\":\"SCRIPT\"}");
+
+    assertThat(response.getStatus()).isEqualTo(201);
+    createdTenant = tenantIdBySlug(slug);
+    var json = objectMapper.readTree(response.getContentAsString());
+    assertThat(json.get("id").asLong()).isEqualTo(createdTenant);
+    assertThat(json.get("slug").asText()).isEqualTo(slug);
+    assertThat(json.has("memberCount")).isTrue();
+    String script = json.get("dataStoreSetupScript").asText();
+    assertThat(script).contains("CREATE USER \"GENIA_T" + createdTenant + "\"");
+
+    var row =
+        dsl.fetchOne(
+            "select status, provision_mode, schema_name from tenant_data_store where tenant_id = ?",
+            createdTenant);
+    assertThat(row.get("status", String.class)).isEqualTo("PENDING");
+    assertThat(row.get("provision_mode", String.class)).isEqualTo("SCRIPT");
+    assertThat(row.get("schema_name", String.class)).isEqualTo("GENIA_T" + createdTenant);
+    assertThat(
+            dsl.fetchOne(
+                    "select count(*) from tenant_data_store_account where tenant_id = ?",
+                    createdTenant)
+                .get(0, Integer.class))
+        .isEqualTo(12);
+
+    // 저장된 값은 평문이 아니다.
+    java.util.regex.Matcher m =
+        java.util.regex.Pattern.compile("IDENTIFIED BY \"([A-Za-z0-9]+)\"").matcher(script);
+    List<String> passwords = new java.util.ArrayList<>();
+    while (m.find()) {
+      passwords.add(m.group(1));
+    }
+    assertThat(passwords).hasSize(12);
+    List<String> stored =
+        dsl.fetch(
+                "select password_enc from tenant_data_store_account where tenant_id = ?",
+                createdTenant)
+            .map(r -> r.get(0, String.class));
+    for (String pw : passwords) {
+      assertThat(stored).doesNotContain(pw);
+    }
+
+    // 감사: 백엔드는 남고 비밀번호는 어디에도 없다.
+    String metadata =
+        TenantRlsTestSupport.runInTenantTransaction(
+            tx,
+            null,
+            () ->
+                dsl.fetchOne(
+                        "select metadata::text from audit_log where action_type = 'TENANT_CREATE'"
+                            + " and resource = 'tenant' and resource_id = ?",
+                        String.valueOf(createdTenant))
+                    .get(0, String.class));
+    assertThat(metadata).contains("\"dataStoreBackend\"").contains("TIBERO");
+    for (String pw : passwords) {
+      assertThat(metadata).doesNotContain(pw);
+    }
+  }
+
+  /** DBA 자동 + 드라이버 없음: 422 와 고정 코드, 테넌트는 롤백돼 남지 않고 응답에 DBA 비밀번호가 없다. */
+  @Test
+  void create_tiberoDbaAuto_driverMissing_422_andNoTenantCreated() throws Exception {
+    String slug = "wd73-dba-" + System.nanoTime();
+
+    MockHttpServletResponse response =
+        createTenantWithBody(
+            slug,
+            "\"dataStore\":{\"backend\":\"TIBERO\",\"host\":\"db.example.com\",\"port\":8629,"
+                + "\"database\":\"TIBERO\",\"mode\":\"DBA_AUTO\","
+                + "\"dba\":{\"username\":\"sys\",\"password\":\"TopSecretDbaPw1\"}}");
+
+    assertThat(response.getStatus()).isEqualTo(422);
+    String body = response.getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
+    assertThat(objectMapper.readTree(body).get("code").asText())
+        .isEqualTo("DATA_STORE_PROVISIONING_FAILED");
+    assertThat(body).contains("드라이버").doesNotContain("TopSecretDbaPw1");
+    assertThat(tenantIdBySlugOrNull(slug)).isNull();
+  }
+
+  /** host 에 JDBC 파라미터 주입 문자가 있으면 400. */
+  @Test
+  void create_invalidHost_400() throws Exception {
+    String slug = "wd73-badhost-" + System.nanoTime();
+
+    MockHttpServletResponse response =
+        createTenantWithBody(
+            slug,
+            "\"dataStore\":{\"backend\":\"TIBERO\",\"host\":\"db;sslmode=off\",\"port\":8629,"
+                + "\"database\":\"TIBERO\",\"mode\":\"SCRIPT\"}");
+
+    assertThat(response.getStatus()).isEqualTo(400);
+    assertThat(response.getContentAsString()).doesNotContain("sslmode");
+    assertThat(tenantIdBySlugOrNull(slug)).isNull();
+  }
+
+  /**
+   * tablespace 형식 검사는 DTO 의 Bean Validation({@code TABLESPACE_REGEX})이 맡는다 — 서비스 validate 는 형식을 다시
+   * 보지 않으므로 컨트롤러에서 400 으로 걸러져야 한다.
+   */
+  @Test
+  void create_invalidTablespace_400() throws Exception {
+    String slug = "wd73-badts-" + System.nanoTime();
+
+    MockHttpServletResponse response =
+        createTenantWithBody(
+            slug,
+            "\"dataStore\":{\"backend\":\"TIBERO\",\"host\":\"db.example.com\",\"port\":8629,"
+                + "\"database\":\"TIBERO\",\"tablespace\":\"USR\\\" QUOTA\",\"mode\":\"SCRIPT\"}");
+
+    assertThat(response.getStatus()).isEqualTo(400);
+    assertThat(tenantIdBySlugOrNull(slug)).isNull();
+  }
+
+  /** MYSQL 은 항상 사용 불가 — 400 과 고정 코드, 테넌트 미생성. */
+  @Test
+  void create_mysql_400_backendUnavailable() throws Exception {
+    String slug = "wd73-mysql-" + System.nanoTime();
+
+    MockHttpServletResponse response =
+        createTenantWithBody(
+            slug,
+            "\"dataStore\":{\"backend\":\"MYSQL\",\"host\":\"db.example.com\",\"port\":3306,"
+                + "\"database\":\"x\",\"mode\":\"SCRIPT\"}");
+
+    assertThat(response.getStatus()).isEqualTo(400);
+    assertThat(objectMapper.readTree(response.getContentAsString()).get("code").asText())
+        .isEqualTo("DATA_STORE_BACKEND_UNAVAILABLE");
+    assertThat(tenantIdBySlugOrNull(slug)).isNull();
+  }
+
+  private long storeRowCount(long tenantId) {
+    return dsl.fetchOne("select count(*) from tenant_data_store where tenant_id = ?", tenantId)
+        .get(0, Long.class);
+  }
+
+  /** dataStore JSON 조각을 덧붙여 생성 요청을 보낸다. */
+  private MockHttpServletResponse createTenantWithBody(String slug, String extraJsonMember)
+      throws Exception {
+    return mockMvc
+        .perform(
+            authed(post("/api/platform/tenants"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    "{\"slug\":\"%s\",\"name\":\"%s\",\"ownerUserId\":%d,%s}"
+                        .formatted(slug, slug, ownerUserId, extraJsonMember)))
+        .andReturn()
+        .getResponse();
+  }
+
   // ── 헬퍼 ────────────────────────────────────────────────────────────────────
 
   private MockHttpServletResponse createTenant(String slug, Long ownerId) throws Exception {

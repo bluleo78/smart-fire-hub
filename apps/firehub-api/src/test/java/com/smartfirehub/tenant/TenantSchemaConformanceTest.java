@@ -71,8 +71,12 @@ class TenantSchemaConformanceTest extends IntegrationTestBase {
    * <p>{@code oauth_state}(V106, P2-f)가 여기 영구로 들어가는 이유: 그 컬럼은 격리 수단이 아니라 <b>OAuth 콜백에서 테넌트를 되찾는 운반
    * 수단</b>이다. 콜백은 permitAll 이라 컨텍스트가 없고, RLS 를 켜면 {@code consume(state)} 이 0행을 보고 테넌트를 영영 되찾지 못한다.
    * 따라서 아래 {@link #IN_FLIGHT_RLS_PENDING}(밴드가 끝나면 비워야 하는 임시 목록)이 아니라 여기가 맞다.
+   *
+   * <p>{@code tenant_data_store}·{@code tenant_data_store_account}(V138, WD-73)가 영구로 들어가는 이유: 테넌트
+   * 생성이 운영자 컨텍스트(테넌트 미선택)에서 실행되고 연결 정보는 플랫폼 운영자 소관인 전역 설정 테이블이라 RLS 를 걸면 생성·백엔드 해석이 0행/실패가 된다.
    */
-  private static final Set<String> RLS_DISABLED_ALLOWLIST = Set.of("membership", "oauth_state");
+  private static final Set<String> RLS_DISABLED_ALLOWLIST =
+      Set.of("membership", "oauth_state", "tenant_data_store", "tenant_data_store_account");
 
   /**
    * 밴드 진행 중 임시 허용 목록 — <b>커밋 시점에 반드시 비어 있어야 한다.</b>

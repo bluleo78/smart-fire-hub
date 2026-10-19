@@ -6,10 +6,13 @@ import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.smartfirehub.dataset.storage.external.DataStoreProvisioningException;
 import com.smartfirehub.global.tenant.TenantPipelineRoleProvisioner;
 import com.smartfirehub.global.tenant.TenantProvisioningService;
 import com.smartfirehub.platform.dto.CreateTenantRequest;
@@ -17,6 +20,8 @@ import com.smartfirehub.platform.dto.TenantSummaryResponse;
 import com.smartfirehub.platform.repository.PlatformTenantRepository;
 import com.smartfirehub.platform.service.PlatformAuditRecorder;
 import com.smartfirehub.platform.service.PlatformTenantService;
+import com.smartfirehub.platform.service.TenantDataStoreSetupService;
+import com.smartfirehub.platform.service.TenantDataStoreSetupService.SetupOutcome;
 import com.smartfirehub.user.dto.UserResponse;
 import com.smartfirehub.user.repository.UserRepository;
 import java.time.LocalDateTime;
@@ -45,6 +50,7 @@ class PlatformTenantServiceRoleProvisioningTest {
   @Mock UserRepository userRepository;
   @Mock TenantPipelineRoleProvisioner pipelineRoleProvisioner;
   @Mock PlatformAuditRecorder auditRecorder;
+  @Mock TenantDataStoreSetupService dataStoreSetupService;
 
   @InjectMocks PlatformTenantService service;
 
@@ -58,6 +64,9 @@ class PlatformTenantServiceRoleProvisioningTest {
     when(userRepository.findById(7L)).thenReturn(Optional.of(OWNER));
     when(tenantRepository.slugExists("jeonju")).thenReturn(false);
     when(tenantRepository.insertTenant("jeonju", "전주시")).thenReturn(42L);
+    // 저장소 선택이 없는 요청 — 저장소 설정은 아무 일도 하지 않는다(WD-73). 실패 시나리오에서는 setUp 에
+    // 닿지 않을 수 있으므로 lenient 로 둔다.
+    lenient().when(dataStoreSetupService.setUp(42L, null)).thenReturn(SetupOutcome.none());
   }
 
   @Test
@@ -85,6 +94,38 @@ class PlatformTenantServiceRoleProvisioningTest {
         .verify(auditRecorder)
         .record(eq(1L), eq("TENANT_CREATE"), eq("tenant"), eq("42"), anyString(), anyMap());
     auditOrder.verify(pipelineRoleProvisioner).ensureRoleIfAutoProvisionEnabled(42L);
+
+    // WD-73: 외부 저장소 설정(행 저장 + 외부 생성)은 시드 뒤·감사 앞·롤 생성 앞 — 보상이 있는 쪽이 먼저 실패해야 고아 롤이
+    // 남지 않고, 감사가 실패해도 롤백 보상이 외부 계정을 지운다.
+    InOrder storeOrder =
+        inOrder(provisioningService, dataStoreSetupService, auditRecorder, pipelineRoleProvisioner);
+    storeOrder.verify(provisioningService).provisionDefaults(42L);
+    storeOrder.verify(dataStoreSetupService).setUp(42L, null);
+    storeOrder
+        .verify(auditRecorder)
+        .record(eq(1L), eq("TENANT_CREATE"), eq("tenant"), eq("42"), anyString(), anyMap());
+    storeOrder.verify(pipelineRoleProvisioner).ensureRoleIfAutoProvisionEnabled(42L);
+  }
+
+  /**
+   * 외부 계정 생성(DBA_AUTO)이 실패하면(흔한 원인: DBA 비밀번호 오입력) 파이프라인 롤을 만들지 않는다 — 롤은 이 트랜잭션 롤백으로 지워지지 않아, 롤 생성이
+   * 앞에 있으면 재시도마다 고아 롤 11개가 쌓인다(WD-73).
+   */
+  @Test
+  void create_externalProvisionFails_neverCreatesPipelineRoles() {
+    givenValidRequest();
+    when(dataStoreSetupService.setUp(42L, null))
+        .thenThrow(new DataStoreProvisioningException("DBA 접속 실패: 연결 실패: ORA-01017"));
+
+    assertThatThrownBy(() -> service.create(REQUEST, 1L))
+        .isInstanceOf(DataStoreProvisioningException.class)
+        .hasMessageContaining("DBA 접속 실패");
+
+    verify(dataStoreSetupService).setUp(42L, null);
+    verify(pipelineRoleProvisioner, never()).ensureRoleIfAutoProvisionEnabled(anyLong());
+    verify(auditRecorder, never())
+        .record(anyLong(), anyString(), anyString(), anyString(), anyString(), anyMap());
+    verify(tenantRepository, never()).findById(anyLong());
   }
 
   /**
