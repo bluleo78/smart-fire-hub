@@ -379,7 +379,7 @@ public class PythonReadGrantSync {
     Map<String, Set<String>> revokeFailed = new TreeMap<>();
     List<String> changedTables = new ArrayList<>();
     for (String table : physical) {
-      // 데이터셋이 아닌 테이블(staging·_tmp 등)·뷰는 계산값이 "없음" — 남아 있는 슬롯 GRANT 는 회수한다.
+      // 데이터셋이 아닌 테이블(staging·REPLACE 임시 테이블 등)·뷰는 계산값이 "없음" — 남아 있는 슬롯 GRANT 는 회수한다.
       Set<String> want = wantOf.apply(table);
       Set<String> have = actual.getOrDefault(table, Set.of());
       if (want.equals(have)) {

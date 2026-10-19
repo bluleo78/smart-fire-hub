@@ -6,10 +6,25 @@ import { z } from 'zod';
 export const tableNameRegex = /^[a-z][a-z0-9_]*$/;
 const columnNameRegex = /^[a-z][a-z0-9_]*$/;
 
+// 테이블명·칼럼명 길이 상한 — 백엔드 DataTableService.MAX_TABLE_NAME_LENGTH / MAX_COLUMN_NAME_LENGTH 와 같아야 한다(근거는 그 javadoc).
+export const MAX_TABLE_NAME_LENGTH = 56;
+export const MAX_COLUMN_NAME_LENGTH = 63;
+export const TABLE_NAME_MAX_MESSAGE = `테이블명은 ${MAX_TABLE_NAME_LENGTH}자 이하여야 합니다`;
+export const COLUMN_NAME_MAX_MESSAGE = `칼럼명은 ${MAX_COLUMN_NAME_LENGTH}자 이하여야 합니다`;
+
+/**
+ * 칼럼명 길이 상한 위반이면 메시지를, 아니면 undefined 를 돌려준다.
+ * zod 폼이 아닌 즉시 반영 입력(파이프라인 출력 칼럼 등)이 같은 상한·문구로 인라인 오류를 띄우도록 공유한다.
+ * maxLength 로 조용히 자르지 않는 이유: 붙여넣은 긴 이름이 잘려 다른 칼럼과 같은 이름이 되는 것을 사용자가 모르게 된다.
+ */
+export function columnNameLengthError(name: string): string | undefined {
+  return name.length > MAX_COLUMN_NAME_LENGTH ? COLUMN_NAME_MAX_MESSAGE : undefined;
+}
+
 export const datasetColumnSchema = z.object({
   columnName: z.string()
     .min(1, '칼럼명을 입력하세요')
-    .max(100, '칼럼명은 100자 이하여야 합니다')
+    .max(MAX_COLUMN_NAME_LENGTH, COLUMN_NAME_MAX_MESSAGE)
     .regex(columnNameRegex, '영문 소문자, 숫자, 밑줄만 사용 가능합니다 (소문자로 시작)'),
   displayName: z.string().max(100).optional().or(z.literal('')),
   dataType: z.enum(['TEXT', 'VARCHAR', 'INTEGER', 'DECIMAL', 'BOOLEAN', 'DATE', 'TIMESTAMP', 'GEOMETRY'], {
@@ -32,7 +47,7 @@ export const createDatasetSchema = z.object({
   name: z.string().min(1, '데이터셋 이름을 입력하세요').max(100, '이름은 100자 이하여야 합니다'),
   tableName: z.string()
     .min(1, '테이블명을 입력하세요')
-    .max(100, '테이블명은 100자 이하여야 합니다')
+    .max(MAX_TABLE_NAME_LENGTH, TABLE_NAME_MAX_MESSAGE)
     .regex(tableNameRegex, '영문 소문자, 숫자, 밑줄만 사용 가능합니다 (소문자로 시작)'),
   description: z.string().optional().or(z.literal('')),
   categoryId: z.number().optional(),
@@ -57,7 +72,7 @@ export const addColumnSchema = datasetColumnSchema;
 export const updateColumnSchema = z.object({
   columnName: z.string()
     .min(1, '칼럼명을 입력하세요')
-    .max(100, '칼럼명은 100자 이하여야 합니다')
+    .max(MAX_COLUMN_NAME_LENGTH, COLUMN_NAME_MAX_MESSAGE)
     .regex(columnNameRegex, '영문 소문자, 숫자, 밑줄만 사용 가능합니다 (소문자로 시작)'),
   displayName: z.string().max(100).optional().or(z.literal('')),
   dataType: z.enum(['TEXT', 'VARCHAR', 'INTEGER', 'DECIMAL', 'BOOLEAN', 'DATE', 'TIMESTAMP', 'GEOMETRY'], {

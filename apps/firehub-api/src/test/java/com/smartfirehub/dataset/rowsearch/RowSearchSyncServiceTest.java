@@ -193,7 +193,7 @@ class RowSearchSyncServiceTest extends IntegrationTestBase {
           dataTableService.createTempTable(SRC);
           dsl.execute(
               "INSERT INTO "
-                  + DataSchema.qualify(SRC + "_tmp")
+                  + DataSchema.qualify(DataTableService.tempTableName(SRC))
                   + " (content, status) VALUES ('c','x'),('z','x')");
           dataTableService.swapTable(SRC);
         });

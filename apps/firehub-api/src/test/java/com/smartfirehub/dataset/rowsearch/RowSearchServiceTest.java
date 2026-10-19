@@ -189,7 +189,7 @@ class RowSearchServiceTest extends IntegrationTestBase {
           dataTableService.createTempTable(SRC);
           dsl.execute(
               "INSERT INTO "
-                  + DataSchema.qualify(SRC + "_tmp")
+                  + DataSchema.qualify(DataTableService.tempTableName(SRC))
                   + " (content, status) VALUES ('전혀 다른 행', '완료')");
           dataTableService.swapTable(SRC);
         });

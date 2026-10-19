@@ -32,7 +32,9 @@ final class RowSearchTestSupport {
                             tx.execute("DELETE FROM dataset_column WHERE dataset_id = ?", id);
                             tx.execute("DELETE FROM dataset WHERE id = ?", id);
                           });
-                  tx.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(srcTable + "_tmp"));
+                  tx.execute(
+                      "DROP TABLE IF EXISTS "
+                          + DataSchema.qualify(DataTableService.tempTableName(srcTable)));
                   tx.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(srcTable));
                 }));
   }

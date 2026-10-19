@@ -210,7 +210,10 @@ class PythonReadGrantSyncTest extends IntegrationTestBase {
     String pub = table("pub", "공개");
     sync.syncTenant();
     dataTableService.createTempTable(pub);
-    dsl.execute("INSERT INTO " + DataSchema.qualify(pub + "_tmp") + " (v) VALUES ('new')");
+    dsl.execute(
+        "INSERT INTO "
+            + DataSchema.qualify(DataTableService.tempTableName(pub))
+            + " (v) VALUES ('new')");
     dataTableService.swapTable(pub);
     sync.syncTable(pub);
     assertThat(selectAs(1, pub)).isNull();

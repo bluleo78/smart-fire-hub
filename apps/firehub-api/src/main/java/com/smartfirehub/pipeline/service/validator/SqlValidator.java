@@ -1,6 +1,7 @@
 package com.smartfirehub.pipeline.service.validator;
 
 import com.smartfirehub.dataset.rowsearch.IndexRef;
+import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.util.SqlValidationUtils;
 import com.smartfirehub.pipeline.exception.UnsafeSqlException;
@@ -1014,11 +1015,18 @@ public class SqlValidator {
     }
   }
 
-  /** 행 검색 색인 테이블(fh_search_*)은 시스템 소유다 — 사용자 SQL 에서 참조를 막는다. */
+  /**
+   * 시스템 소유 테이블은 사용자 SQL 에서 참조를 막는다 — 행 검색 색인(fh_search_*)과 REPLACE 임시 테이블(rtmp_*). 임시 테이블은 적재 중인
+   * 데이터를 담고 데이터셋 등급 판정 대상이 아니므로 SQL 로 읽거나 쓰게 두면 안 된다.
+   */
   private static void rejectSearchIndexTable(String name) {
-    // 접두사 정본은 행 검색 도메인(IndexRef)에 있다 — 파이프라인 검증기가 그 값을 그대로 참조해 어긋나지 않게 한다.
-    if (name.toLowerCase().startsWith(IndexRef.TABLE_PREFIX)) {
+    // 접두사 정본은 각 도메인(IndexRef·DataTableService)에 있다 — 검증기가 그 값을 그대로 참조해 어긋나지 않게 한다.
+    String lower = name.toLowerCase();
+    if (lower.startsWith(IndexRef.TABLE_PREFIX)) {
       throw new UnsafeSqlException("검색 색인 테이블은 SQL 로 조회·수정할 수 없습니다: '" + name + "'");
+    }
+    if (lower.startsWith(DataTableService.TEMP_TABLE_PREFIX)) {
+      throw new UnsafeSqlException("시스템 임시 테이블은 SQL 로 조회·수정할 수 없습니다: '" + name + "'");
     }
   }
 

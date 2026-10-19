@@ -527,6 +527,40 @@ test.describe('데이터셋 상세 페이지', () => {
     await expect(page.getByText(/영소문자로 시작/)).toBeVisible();
   });
 
+  // WD-95: 복제 대상 테이블명도 새 데이터셋과 같은 56자 상한 — 넘으면 메시지가 보이고 clone POST 가 나가지 않는다.
+  test('복제 다이얼로그 — 57자 테이블명은 메시지가 보이고 요청하지 않으며 56자는 요청한다 (WD-95)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDetailPageMocks(page, 1);
+    const cloneCapture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/datasets/1/clone',
+      createDatasetDetail({ id: 2, name: '테스트 데이터셋_copy' }),
+      { capture: true },
+    );
+    await mockApi(page, 'GET', '/api/v1/datasets/2', createDatasetDetail({ id: 2, name: '테스트 데이터셋_copy' }));
+
+    await page.goto('/data/datasets/1');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible();
+    await page.getByRole('button', { name: '복제' }).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+
+    const tableNameInput = page.getByLabel('테이블 이름 *');
+    await tableNameInput.fill('t_' + 'x'.repeat(55));
+    await page.getByRole('dialog').getByRole('button', { name: '복제' }).click();
+    await expect(page.getByText('테이블명은 56자 이하여야 합니다')).toBeVisible();
+    await page.waitForTimeout(300);
+    expect(cloneCapture.requests).toHaveLength(0);
+
+    // 경계값 56자는 통과해 그대로 전송된다.
+    const ok = 't_' + 'x'.repeat(54);
+    await tableNameInput.fill(ok);
+    await page.getByRole('dialog').getByRole('button', { name: '복제' }).click();
+    const req = await cloneCapture.waitForRequest();
+    expect(req.payload).toMatchObject({ tableName: ok });
+  });
+
   test('TEMP 타입 데이터셋은 임시 배지를 표시한다', async ({ authenticatedPage: page }) => {
     const detail = createDatasetDetail({ id: 1, storageType: 'TABLE', originType: 'TEMP' });
     await mockApi(page, 'GET', '/api/v1/datasets/1', detail);

@@ -704,7 +704,7 @@ class DataTableServiceTest extends IntegrationTestBase {
     // 스테이징에 새 내용을 적재한 뒤 스왑한다 (REPLACE 적재 전략의 실제 순서)
     dataTableService.createTempTable(tableName);
     dataTableRowService.insertBatch(
-        tableName + "_tmp", List.of("name"), List.of(Map.of("name", "new")));
+        DataTableService.tempTableName(tableName), List.of("name"), List.of(Map.of("name", "new")));
     dataTableService.swapTable(tableName);
 
     // 원본 이름이 스테이징 내용을 담는다 — DROP 과 RENAME 이 둘 다 올바른 스키마에 닿았다는 증거
@@ -724,7 +724,10 @@ class DataTableServiceTest extends IntegrationTestBase {
     Long tmpSeq =
         dsl.selectCount()
             .from("pg_sequences")
-            .where("schemaname = 'data' AND sequencename = '" + tableName + "_tmp_id_seq'")
+            .where(
+                "schemaname = 'data' AND sequencename = '"
+                    + DataTableService.tempTableName(tableName)
+                    + "_id_seq'")
             .fetchOne(0, Long.class);
     assertThat(tmpSeq).as("tmp 시퀀스 이름은 남아 있으면 안 된다").isEqualTo(0);
 
@@ -762,7 +765,10 @@ class DataTableServiceTest extends IntegrationTestBase {
     Long tmpTable =
         dsl.selectCount()
             .from("pg_tables")
-            .where("schemaname = 'data' AND tablename = '" + tableName + "_tmp'")
+            .where(
+                "schemaname = 'data' AND tablename = '"
+                    + DataTableService.tempTableName(tableName)
+                    + "'")
             .fetchOne(0, Long.class);
     assertThat(tmpTable).as("임시 테이블은 정리돼야 한다 — 남으면 다음 실행이 걸린다").isEqualTo(0);
   }
@@ -778,7 +784,7 @@ class DataTableServiceTest extends IntegrationTestBase {
 
     dataTableService.createTempTable(tableName);
     dataTableRowService.insertBatch(
-        tableName + "_tmp", List.of("name"), List.of(Map.of("name", "new")));
+        DataTableService.tempTableName(tableName), List.of("name"), List.of(Map.of("name", "new")));
     dataTableService.finishReplace(tableName, 1);
 
     List<String> names =

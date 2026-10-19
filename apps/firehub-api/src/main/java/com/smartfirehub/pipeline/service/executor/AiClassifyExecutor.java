@@ -146,7 +146,7 @@ public class AiClassifyExecutor {
 
     if (isReplace) {
       dataTableService.createTempTable(outputTableName);
-      targetTable = outputTableName + "_tmp";
+      targetTable = DataTableService.tempTableName(outputTableName);
     }
 
     // 3. Output column names: source_id + each outputColumn
@@ -282,7 +282,7 @@ public class AiClassifyExecutor {
       // 후속 스텝은 의존성 규칙에 따라 SKIPPED 된다.
       //
       // APPEND 에서는 중간에 실패하면 부분 행이 실제 테이블에 남는다 — 모아 두던 시절에는 남지
-      // 않았다. 의도한 맞바꿈이다: 원자성은 REPLACE 의 스테이징 테이블(t_tmp → swapTable)이 맡고,
+      // 않았다. 의도한 맞바꿈이다: 원자성은 REPLACE 의 스테이징 테이블(임시 테이블 → swapTable)이 맡고,
       // API_CALL 도 APPEND 에서 이미 부분 행을 남긴다. 전손 위험이 부분 적재보다 크다(#690).
       if (written == 0) {
         throw new IllegalStateException(
@@ -340,7 +340,7 @@ public class AiClassifyExecutor {
    * <p>예전에는 모든 배치의 결과를 List 에 모아 두었다가 루프가 끝난 뒤 한 번에 적재했다. 그래서 재시작·OOM·배포 어느 것이든 그때까지의 분류가 전부 사라졌고,
    * 힙 사용량이 입력 행 수에 비례했다. 타입 변환({@link #coerceRowValues})은 행 단위라 전체 결과를 기다릴 이유가 없고, {@code
    * DataTableRowService} 에는 {@code @Transactional} 이 없어 각 INSERT 가 곧바로 커밋된다 — 그래서 도중에 죽어도 그때까지의 진척이
-   * {@code t_tmp} 에 남는다. 빈 배치는 삽입하지 않는다.
+   * 임시 테이블에 남는다. 빈 배치는 삽입하지 않는다.
    */
   private long writeBatch(
       String targetTable,

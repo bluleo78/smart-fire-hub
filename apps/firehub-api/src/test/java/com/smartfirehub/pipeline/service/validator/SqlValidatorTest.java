@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.pipeline.exception.UnsafeSqlException;
@@ -1211,6 +1212,25 @@ class SqlValidatorTest {
     assertThatThrownBy(() -> adhoc.validate("SELECT * FROM fh_search_12_prev"))
         .isInstanceOf(UnsafeSqlException.class)
         .hasMessageContaining("검색 색인");
+  }
+
+  @Test
+  void rejectsReplaceTempTables_qualifiedUnqualifiedAndUpperCase() {
+    // REPLACE 임시 테이블(rtmp_*)은 적재 중 데이터를 담는 시스템 소유 — 색인 테이블과 같은 방식으로 SQL 참조를 막는다(WD-95)
+    String tmp = DataTableService.tempTableName("orders");
+    assertThatThrownBy(() -> validator.validate("SELECT * FROM data.\"" + tmp + "\""))
+        .isInstanceOf(UnsafeSqlException.class)
+        .hasMessageContaining("시스템 임시 테이블");
+    assertThatThrownBy(() -> validator.validate("DELETE FROM data.\"" + tmp.toUpperCase() + "\""))
+        .isInstanceOf(UnsafeSqlException.class)
+        .hasMessageContaining("시스템 임시 테이블");
+    var adhoc = SqlValidator.forAdhocDataSchemaQueries();
+    assertThatThrownBy(() -> adhoc.validate("SELECT * FROM " + tmp))
+        .isInstanceOf(UnsafeSqlException.class)
+        .hasMessageContaining("시스템 임시 테이블");
+    // 접두어가 아닌 위치의 rtmp 는 막지 않는다(일반 데이터셋 이름)
+    assertThatCode(() -> validator.validate("SELECT * FROM data.\"orders_rtmp_x\""))
+        .doesNotThrowAnyException();
   }
 
   @Test

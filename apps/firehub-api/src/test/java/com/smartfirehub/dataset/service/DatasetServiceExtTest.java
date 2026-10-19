@@ -96,11 +96,12 @@ class DatasetServiceExtTest extends IntegrationTestBase {
 
   @Test
   void createDataset_nullablePrimaryKey_throwsException() {
-    // PK 컬럼은 nullable 불가
+    // PK 컬럼은 nullable 불가. 컬럼명은 예약어(id)가 아니어야 한다 — 예약어 검사가 카탈로그 저장 전에 먼저 걸리므로(WD-95) 이 테스트가 보려는
+    // nullable PK 검사까지 가지 못한다.
     List<DatasetColumnRequest> columns =
         List.of(
             new DatasetColumnRequest(
-                "id", "ID", "INTEGER", null, true /* nullable */, false, null, true /* isPK */));
+                "pk_id", "ID", "INTEGER", null, true /* nullable */, false, null, true /* isPK */));
 
     assertThatThrownBy(
             () ->

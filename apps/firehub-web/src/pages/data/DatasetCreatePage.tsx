@@ -14,7 +14,7 @@ import { useCategories, useCreateDataset, useDatasets } from '../../hooks/querie
 import { handleApiError } from '../../lib/api-error';
 import { getOriginTypeLabel, getStorageTypeLabel } from '../../lib/formatters';
 import type { CreateDatasetFormData } from '../../lib/validations/dataset';
-import { createDatasetSchema, tableNameRegex } from '../../lib/validations/dataset';
+import { createDatasetSchema } from '../../lib/validations/dataset';
 import { SchemaBuilder } from './components/SchemaBuilder';
 
 export default function DatasetCreatePage() {
@@ -110,8 +110,8 @@ export default function DatasetCreatePage() {
     );
   // (#644) 폼이 mode: 'onSubmit'이라 formState.errors.tableName은 최초 제출 전까지 비어있다.
   // 입력 중 "사용 가능" 메시지가 형식 오류를 무시하고 표시되는 것을 막기 위해
-  // 정규식을 직접 재검사하여 형식 유효성을 판정한다.
-  const isTableNameFormatValid = tableNameRegex.test(debouncedTableName);
+  // 스키마의 tableName 규칙(형식·길이 상한)을 직접 재검사한다 — 규칙을 여기 따로 베끼면 둘이 어긋난다.
+  const isTableNameFormatValid = createDatasetSchema.shape.tableName.safeParse(debouncedTableName).success;
 
   // 전역 Cmd/Ctrl+S 단축키로 폼 저장 (#100).
   // 브라우저 기본 "페이지 저장" 다이얼로그를 preventDefault하고 requestSubmit으로 폼 검증을 거쳐 onSubmit 실행.

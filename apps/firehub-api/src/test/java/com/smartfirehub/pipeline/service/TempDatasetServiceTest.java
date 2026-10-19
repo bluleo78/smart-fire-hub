@@ -1,11 +1,14 @@
 package com.smartfirehub.pipeline.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.*;
 
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
+import com.smartfirehub.dataset.exception.InvalidTableNameException;
 import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
+import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.dataset.service.DatasetService;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -134,6 +137,40 @@ class TempDatasetServiceTest {
     List<ColumnInfo> newCols = List.of(new ColumnInfo("name", "TEXT"));
 
     assertThat(tempDatasetService.hasSchemaChanged(datasetId, newCols)).isFalse();
+  }
+
+  // ------------------------------------------------------------------ //
+  // validateColumnsForNewTemp (WD-95)
+  // ------------------------------------------------------------------ //
+
+  /**
+   * 옛 TEMP 를 지우기 전 사전 검증 — 실제 생성과 같은 규칙(이름 길이 상한·예약어·타입)을 쓰는지 확인한다. 검증 메서드는 DB 를 쓰지 않으므로 실제 {@link
+   * DataTableService} 를 의존성 없이 만들어 쓴다(목으로 두면 검증 자체가 사라져 공허해진다).
+   */
+  @Test
+  void validateColumnsForNewTemp_63자는_통과하고_64자_예약어_미지원타입은_거부된다() {
+    TempDatasetService service =
+        new TempDatasetService(
+            datasetRepository,
+            datasetService,
+            columnRepository,
+            new DataTableService(null, null, null));
+    String col63 = "c_" + "x".repeat(61);
+    String col64 = "c_" + "x".repeat(62);
+
+    service.validateColumnsForNewTemp(List.of(new ColumnInfo(col63, "TEXT")));
+
+    assertThatThrownBy(
+            () -> service.validateColumnsForNewTemp(List.of(new ColumnInfo(col64, "TEXT"))))
+        .isInstanceOf(InvalidTableNameException.class)
+        .hasMessage("필드명은 최대 63자까지 쓸 수 있습니다(입력 64자)");
+    assertThatThrownBy(
+            () -> service.validateColumnsForNewTemp(List.of(new ColumnInfo("id", "TEXT"))))
+        .isInstanceOf(InvalidTableNameException.class)
+        .hasMessageContaining("시스템 예약어");
+    assertThatThrownBy(
+            () -> service.validateColumnsForNewTemp(List.of(new ColumnInfo("ok", "NOPE"))))
+        .isInstanceOf(IllegalArgumentException.class);
   }
 
   // ------------------------------------------------------------------ //

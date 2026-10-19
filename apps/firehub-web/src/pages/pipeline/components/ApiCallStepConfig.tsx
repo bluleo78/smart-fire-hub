@@ -42,8 +42,10 @@ import { Separator } from '@/components/ui/separator';
 import { Textarea } from '@/components/ui/textarea';
 import { useApiConnectionsSelectable } from '@/hooks/queries/useApiConnections';
 import { cn } from '@/lib/utils';
+import { columnNameLengthError } from '@/lib/validations/dataset';
 
 import ApiCallPreview from './ApiCallPreview';
+import { InlineFieldError } from './InlineFieldError';
 
 interface FieldMapping {
   sourceField: string;
@@ -679,34 +681,44 @@ export default function ApiCallStepConfig({
               <span></span>
             </div>
           )}
-          {fieldMappings.map((mapping, i) => (
-            <div key={i} className="grid grid-cols-[1fr_1fr_auto] gap-1 items-center">
-              <Input
-                className="h-7 text-xs"
-                placeholder="sourceField"
-                value={mapping.sourceField}
-                disabled={readOnly}
-                onChange={(e) => handleMappingChange(i, 'sourceField', e.target.value)}
-              />
-              <Input
-                className="h-7 text-xs"
-                placeholder="target_col"
-                value={mapping.targetColumn}
-                disabled={readOnly}
-                onChange={(e) => handleMappingChange(i, 'targetColumn', e.target.value)}
-              />
-              {!readOnly && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7 shrink-0"
-                  onClick={() => handleRemoveMapping(i)}
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </Button>
-              )}
-            </div>
-          ))}
+          {fieldMappings.map((mapping, i) => {
+            // 출력 데이터셋이 없으면 대상 컬럼이 임시 데이터셋의 칼럼명이 된다 — 길이 상한은 columnNameLengthError 참고.
+            const targetError = columnNameLengthError(mapping.targetColumn);
+            const targetErrorId = `${baseId}-target-col-error-${i}`;
+            return (
+              <div key={i} className="space-y-0.5">
+                <div className="grid grid-cols-[1fr_1fr_auto] gap-1 items-center">
+                  <Input
+                    className="h-7 text-xs"
+                    placeholder="sourceField"
+                    value={mapping.sourceField}
+                    disabled={readOnly}
+                    onChange={(e) => handleMappingChange(i, 'sourceField', e.target.value)}
+                  />
+                  <Input
+                    className="h-7 text-xs"
+                    placeholder="target_col"
+                    value={mapping.targetColumn}
+                    aria-invalid={!!targetError}
+                    aria-describedby={targetError ? targetErrorId : undefined}
+                    disabled={readOnly}
+                    onChange={(e) => handleMappingChange(i, 'targetColumn', e.target.value)}
+                  />
+                  {!readOnly && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 shrink-0"
+                      onClick={() => handleRemoveMapping(i)}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  )}
+                </div>
+                <InlineFieldError id={targetErrorId} message={targetError} />
+              </div>
+            );
+          })}
           {!readOnly && (
             <Button
               variant="outline"

@@ -698,7 +698,8 @@ class ApiCallExecutorTest {
     verify(dataTableService).createTempTable("rep_table");
 
     // Rows must be inserted into the _tmp table, not the original
-    verify(dataTableRowService).insertBatch(eq("rep_table_tmp"), anyList(), anyList());
+    verify(dataTableRowService)
+        .insertBatch(eq(DataTableService.tempTableName("rep_table")), anyList(), anyList());
     verify(dataTableRowService, never()).insertBatch(eq("rep_table"), anyList(), anyList());
 
     // On success, swap must be called

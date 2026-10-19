@@ -5,6 +5,7 @@ import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
+import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.dataset.service.DatasetService;
 import java.util.List;
 import java.util.Optional;
@@ -18,6 +19,7 @@ public class TempDatasetService {
   private final DatasetRepository datasetRepository;
   private final DatasetService datasetService;
   private final DatasetColumnRepository columnRepository;
+  private final DataTableService dataTableService;
 
   /** Find the dataset ID for an existing temp dataset linked to the given pipeline step (FK). */
   public Optional<Long> findExistingTempDataset(Long stepId) {
@@ -62,13 +64,7 @@ public class TempDatasetService {
     String tableName = "ptmp_" + pipelineId + "_" + sanitizedName;
     String datasetName = pipelineName + " > " + stepName + " (자동생성)";
 
-    List<DatasetColumnRequest> columnRequests =
-        columns.stream()
-            .map(
-                c ->
-                    new DatasetColumnRequest(
-                        c.name(), c.name(), c.appType(), null, true, false, null, false))
-            .toList();
+    List<DatasetColumnRequest> columnRequests = toColumnRequests(columns);
 
     CreateDatasetRequest request =
         new CreateDatasetRequest(
@@ -83,6 +79,25 @@ public class TempDatasetService {
 
     // 예약 출처 필드(TEMP·스텝 id)는 러너 전용 진입점으로만 쓸 수 있다 — 일반 createDataset 은 거부한다.
     return datasetService.createPipelineTempDataset(request, userId).id();
+  }
+
+  /**
+   * 새 TEMP 데이터셋 컬럼이 생성 검증({@link DataTableService#validateNewColumns})을 통과하는지 미리 확인한다. 스키마가 바뀐 TEMP
+   * 는 "옛 것 삭제 → 새로 생성" 이라, 러너가 삭제 전에 불러 실패할 생성이면 옛 TEMP 를 그대로 둔다. 실제 생성과 같은 요청({@link
+   * #toColumnRequests})으로 검증한다.
+   */
+  public void validateColumnsForNewTemp(List<ColumnInfo> columns) {
+    dataTableService.validateNewColumns(toColumnRequests(columns));
+  }
+
+  /** TEMP 컬럼 정보를 데이터셋 컬럼 생성 요청으로 바꾼다 — 사전 검증과 실제 생성이 같은 요청을 쓰게 하는 단일 지점. */
+  private static List<DatasetColumnRequest> toColumnRequests(List<ColumnInfo> columns) {
+    return columns.stream()
+        .map(
+            c ->
+                new DatasetColumnRequest(
+                    c.name(), c.name(), c.appType(), null, true, false, null, false))
+        .toList();
   }
 
   /** Delete a temp dataset (used when schema has changed). */

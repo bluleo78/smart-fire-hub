@@ -10,6 +10,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { columnNameLengthError } from '@/lib/validations/dataset';
+
+import { InlineFieldError } from './InlineFieldError';
 
 const COLUMN_TYPES = ['TEXT', 'INTEGER', 'DECIMAL', 'BOOLEAN', 'DATE', 'TIMESTAMP'];
 
@@ -29,6 +32,8 @@ function getColumnError(col: OutputColumn, index: number, all: OutputColumn[]): 
   if (!/^[a-z][a-z0-9_]*$/.test(col.name)) {
     return '소문자, 숫자, 밑줄(_)만 사용 가능하며 소문자로 시작해야 합니다';
   }
+  const lengthError = columnNameLengthError(col.name);
+  if (lengthError) return lengthError;
   const duplicate = all.findIndex((c, i) => i !== index && c.name === col.name);
   if (duplicate !== -1) {
     return '중복된 컬럼명입니다';
@@ -119,12 +124,7 @@ export default function PythonOutputColumns({
                 <div className="grid grid-cols-[1fr_140px_auto] gap-1.5 items-center">
                   <Input
                     id={inputId}
-                    className={[
-                      'h-7 text-xs font-mono',
-                      error ? 'border-destructive focus-visible:ring-destructive' : '',
-                    ]
-                      .filter(Boolean)
-                      .join(' ')}
+                    className="h-7 text-xs font-mono"
                     placeholder="column_name"
                     value={col.name}
                     disabled={readOnly}
@@ -169,16 +169,7 @@ export default function PythonOutputColumns({
                 </div>
 
                 {/* Inline validation error */}
-                {error && (
-                  <p
-                    id={errorId}
-                    className="text-[0.75rem] text-destructive pl-0.5"
-                    role="alert"
-                    aria-live="polite"
-                  >
-                    {error}
-                  </p>
-                )}
+                <InlineFieldError id={errorId} message={error} />
               </div>
             );
           })}

@@ -15,11 +15,11 @@ import org.springframework.stereotype.Component;
 /**
  * 출력 테이블 단위 직렬화 잠금의 <b>세션 범위</b> 판(#735) — "출력 교체 + 적재"를 한 트랜잭션으로 묶을 수 없는 경로 전용이다.
  *
- * <p><b>누가 쓰는가.</b> 실행기를 끈 PYTHON 스텝의 REPLACE 뿐이다. WD-29(R5) 이후 그 경로는 API 가 {@code <출력>_tmp} 를 만들고
- * (고정 이름을 DROP IF EXISTS 후 재생성), 스크립트 stdout JSON 을 거기에 적재한 뒤 맞바꾼다 — 세 단계가 각자 커밋되는 여러 문장이라 한 트랜잭션
- * 범위 잠금({@link SqlScriptExecutor#OUTPUT_LOCK_SQL})으로 덮을 수 없다. 잠금이 없으면 같은 출력에 겹친 실행이 서로의 {@code
- * _tmp} 를 지우고 덮는다(#735 의 목적이 그대로 남는다). 예전(WD-29 이전)에는 "truncate 후 자식 프로세스가 자기 커넥션으로 적재" 구간을 덮었다.
- * SQL 스텝은 이 클래스를 쓰지 않는다 — 트랜잭션 범위 잠금이 커밋·롤백 때 저절로 풀려 더 안전하다.
+ * <p><b>누가 쓰는가.</b> 실행기를 끈 PYTHON 스텝의 REPLACE 뿐이다. WD-29(R5) 이후 그 경로는 API 가 출력의 임시 테이블({@code
+ * DataTableService.tempTableName}, 고정 이름을 DROP IF EXISTS 후 재생성)을 만들고, 스크립트 stdout JSON 을 거기에 적재한 뒤
+ * 맞바꾼다 — 세 단계가 각자 커밋되는 여러 문장이라 한 트랜잭션 범위 잠금({@link SqlScriptExecutor#OUTPUT_LOCK_SQL})으로 덮을 수 없다.
+ * 잠금이 없으면 같은 출력에 겹친 실행이 서로의 임시 테이블을 지우고 덮는다(#735 의 목적이 그대로 남는다). 예전(WD-29 이전)에는 "truncate 후 자식
+ * 프로세스가 자기 커넥션으로 적재" 구간을 덮었다. SQL 스텝은 이 클래스를 쓰지 않는다 — 트랜잭션 범위 잠금이 커밋·롤백 때 저절로 풀려 더 안전하다.
  *
  * <p><b>키는 SQL 경로와 같다.</b> {@link OutputClearStatement#deleteAll} 이 만든 선행 문장에서 {@link
  * SqlScriptExecutor#outputLockKey} 로 뽑는다(직접 조립하지 않는다 — 어긋나면 두 경로가 서로를 못 본다). PostgreSQL 의 세션

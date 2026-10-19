@@ -8,6 +8,7 @@ import com.smartfirehub.dataset.rowsearch.IndexRef;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantSchemaProvisioner;
 import com.smartfirehub.securitylevel.pythonread.PythonReadGrantSync;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -15,6 +16,7 @@ import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
 import org.springframework.stereotype.Service;
+import org.springframework.util.DigestUtils;
 
 @Service
 @RequiredArgsConstructor
@@ -32,6 +34,24 @@ public class DataTableService {
 
   private static final Pattern VALID_NAME = Pattern.compile("^[a-z][a-z0-9_]*$");
 
+  /**
+   * 새로 만드는 테이블명의 최대 길이(WD-95).
+   *
+   * <p>PostgreSQL 은 식별자를 63바이트에서 조용히 자른다({@link #VALID_NAME} 이 ASCII 만 허용하므로 글자 수 = 바이트 수). 상한이 없으면
+   * 앞 63자가 같은 두 이름이 같은 물리 테이블이 돼 고아 회수 DROP 이 남의 데이터를 지우고, 63자 넘는 컬럼명은 조회 결과 키가 메타데이터와 어긋난다. 테이블은
+   * 63 이 아니라 56 인데, 이름이 V125 와 같은 규약으로 고정된 {@code ix_<table>_upd}(+7)까지 63 안에 들어와야 하기 때문이다.
+   */
+  public static final int MAX_TABLE_NAME_LENGTH = 56;
+
+  /** 새로 만드는 컬럼명의 최대 길이 — 근거는 {@link #MAX_TABLE_NAME_LENGTH}. */
+  public static final int MAX_COLUMN_NAME_LENGTH = 63;
+
+  /**
+   * REPLACE 적재용 임시 테이블 접두어 — 사용자 테이블명으로는 예약한다({@link #rejectReservedTableName}). 이름 조립은 {@link
+   * #tempTableName} 단독.
+   */
+  public static final String TEMP_TABLE_PREFIX = "rtmp_";
+
   /** 행 변경 시각 시스템 컬럼 — 파이프라인 증분 처리({{last_run_at}})의 기준. 트리거가 관리한다. */
   public static final String UPDATED_AT_COLUMN = "_updated_at";
 
@@ -40,8 +60,8 @@ public class DataTableService {
       Set.of("id", "import_id", "created_at", UPDATED_AT_COLUMN);
 
   /**
-   * _updated_at 트리거를 (재)설치한다. CREATE TABLE ... LIKE 는 트리거를 복사하지 않으므로 새 테이블·임시(_tmp) 테이블·복제 테이블 모두 이
-   * 메서드를 거쳐야 한다.
+   * _updated_at 트리거를 (재)설치한다. CREATE TABLE ... LIKE 는 트리거를 복사하지 않으므로 새 테이블·REPLACE 임시 테이블·복제 테이블 모두
+   * 이 메서드를 거쳐야 한다.
    */
   private void installUpdatedAtTrigger(String tableName) {
     String q = DataSchema.qualify(tableName);
@@ -96,17 +116,81 @@ public class DataTableService {
     }
   }
 
-  /** 행 검색 색인 테이블 이름(fh_search_{datasetId})과 충돌하지 않도록 사용자 테이블 이름에서 예약한다. */
-  private void rejectReservedTableName(String tableName) {
-    if (tableName.startsWith(IndexRef.TABLE_PREFIX)) {
+  /**
+   * <b>새로 만드는</b> 테이블명 검증 — 형식({@link #validateName}) + 길이 상한({@link #MAX_TABLE_NAME_LENGTH}) + 시스템
+   * 예약 접두어({@link #rejectReservedTableName}). 물리 테이블을 만들지 않는 DOCUMENT/FILE 데이터셋도 이 이름 공간을 쓰므로 같은
+   * 검사를 받는다.
+   *
+   * <p>새 이름이 생기는 경로(생성·복제)에서만 쓴다. 기존 이름을 다루는 경로는 {@link #validateName} 만 쓴다 — 상한 전에 만들어진 긴 이름 데이터셋이
+   * 계속 동작해야 한다.
+   */
+  public void validateNewTableName(String tableName) {
+    validateName(tableName);
+    if (tableName.length() > MAX_TABLE_NAME_LENGTH) {
       throw new InvalidTableNameException(
-          "'" + IndexRef.TABLE_PREFIX + "' 로 시작하는 이름은 시스템 예약어입니다: " + tableName);
+          "테이블명은 최대 " + MAX_TABLE_NAME_LENGTH + "자까지 쓸 수 있습니다(입력 " + tableName.length() + "자)");
+    }
+    rejectReservedTableName(tableName);
+  }
+
+  /**
+   * <b>새로 만드는</b> 컬럼명 검증 — 시스템 예약어({@link #SYSTEM_COLUMNS}) + 형식 + 길이 상한({@link
+   * #MAX_COLUMN_NAME_LENGTH}). 생성·추가·이름 변경에서만 쓴다.
+   */
+  public void validateNewColumnName(String columnName) {
+    // 예약어를 형식보다 먼저 본다 — _updated_at 처럼 형식에도 걸리는 이름에 "예약어"라는 정확한 이유를 준다.
+    if (SYSTEM_COLUMNS.contains(columnName.toLowerCase())) {
+      throw new InvalidTableNameException(
+          "컬럼명 '" + columnName + "'은 시스템 예약어입니다. (예약어: id, import_id, created_at, _updated_at)");
+    }
+    validateName(columnName);
+    if (columnName.length() > MAX_COLUMN_NAME_LENGTH) {
+      throw new InvalidTableNameException(
+          "필드명은 최대 " + MAX_COLUMN_NAME_LENGTH + "자까지 쓸 수 있습니다(입력 " + columnName.length() + "자)");
+    }
+  }
+
+  /**
+   * <b>새로 만드는</b> 컬럼 정의 전체 검증 — 이름({@link #validateNewColumnName})과 데이터 타입(VARCHAR 길이 포함).
+   *
+   * <p>{@link #createTable} 이 고아 회수 DROP 전에 부르고, "옛 것을 지우고 새로 만드는" 호출부(파이프라인 TEMP 재생성)도 지우기 전에 부른다.
+   */
+  public void validateNewColumns(List<DatasetColumnRequest> columns) {
+    for (DatasetColumnRequest col : columns) {
+      validateNewColumnName(col.columnName());
+      // 타입 오류(알 수 없는 타입·VARCHAR 길이 범위)도 DDL 조립 전에 낸다 — 결과는 버리고 검사만 한다.
+      mapDataType(col.dataType(), col.maxLength());
+    }
+  }
+
+  /**
+   * REPLACE 적재용 임시 테이블 이름 — {@code rtmp_} + 원본 이름의 MD5(32자 hex) = 항상 37자.
+   *
+   * <p>원본 이름에 접미사를 붙이지 않는 이유: {@code <table>_tmp} 는 긴 테이블에서 63바이트로 잘려 원본 이름 자체가 될 수 있고(63자면 정리 DROP
+   * 이 원본을 지운다), 실제 데이터셋 {@code orders_tmp} 가 있으면 {@code orders} 의 REPLACE 가 그것을 지운다. 고정 길이 예약 접두어
+   * 이름은 어느 쪽과도 겹치지 않고, 시퀀스 {@code <tmp>_id_seq}(44자)까지 잘리지 않는다. 생성·맞바꿈·정리·적재 대상 계산이 모두 이 메서드만 쓴다.
+   */
+  public static String tempTableName(String tableName) {
+    return TEMP_TABLE_PREFIX
+        + DigestUtils.md5DigestAsHex(tableName.getBytes(StandardCharsets.UTF_8));
+  }
+
+  /**
+   * 시스템이 쓰는 테이블 이름 공간을 사용자 테이블 이름에서 예약한다 — 행 검색 색인({@code fh_search_{datasetId}})과 REPLACE 임시
+   * 테이블({@link #TEMP_TABLE_PREFIX}).
+   */
+  private void rejectReservedTableName(String tableName) {
+    for (String prefix : List.of(IndexRef.TABLE_PREFIX, TEMP_TABLE_PREFIX)) {
+      if (tableName.startsWith(prefix)) {
+        throw new InvalidTableNameException("'" + prefix + "' 로 시작하는 이름은 시스템 예약어입니다: " + tableName);
+      }
     }
   }
 
   public void createTable(String tableName, List<DatasetColumnRequest> columns) {
-    validateName(tableName);
-    rejectReservedTableName(tableName);
+    // 검증은 전부 아래 고아 회수 DROP 보다 먼저다 — 실패할 요청이 DROP 을 일으키지 않게 한다.
+    validateNewTableName(tableName);
+    validateNewColumns(columns);
     // 스키마가 없으면 만든다 — 신규 테넌트의 첫 데이터셋 생성이 여기서 지연 생성을 트리거한다.
     // DROP TABLE IF EXISTS(바로 아래)가 대상 스키마 자체를 요구하므로 반드시 그보다 먼저다.
     schemaProvisioner.ensureCurrentTenantSchema();
@@ -137,15 +221,8 @@ public class DataTableService {
     sql.append("id BIGSERIAL PRIMARY KEY, ");
     sql.append("import_id BIGINT, ");
 
-    // id, import_id, created_at, _updated_at은 시스템 예약 컬럼명 — 사용자 지정 불가
+    // 컬럼 정의는 위 validateNewColumns 에서 이미 검증했다(예약어·이름·타입).
     for (DatasetColumnRequest col : columns) {
-      if (SYSTEM_COLUMNS.contains(col.columnName().toLowerCase())) {
-        throw new InvalidTableNameException(
-            "컬럼명 '"
-                + col.columnName()
-                + "'은 시스템 예약어입니다. (예약어: id, import_id, created_at, _updated_at)");
-      }
-      validateName(col.columnName());
       sql.append("\"").append(col.columnName()).append("\" ");
       sql.append(mapDataType(col.dataType(), col.maxLength()));
       if (!col.isNullable()) {
@@ -201,16 +278,9 @@ public class DataTableService {
   }
 
   public void addColumn(String tableName, DatasetColumnRequest column) {
+    // 테이블은 기존 이름이라 형식만, 컬럼은 새 이름이라 생성과 같은 검증(예약어·길이·타입)을 한다.
     validateName(tableName);
-    validateName(column.columnName());
-
-    // id, import_id, created_at, _updated_at은 시스템 예약 컬럼명 — addColumn 시에도 차단
-    if (SYSTEM_COLUMNS.contains(column.columnName().toLowerCase())) {
-      throw new InvalidTableNameException(
-          "컬럼명 '"
-              + column.columnName()
-              + "'은 시스템 예약어입니다. (예약어: id, import_id, created_at, _updated_at)");
-    }
+    validateNewColumns(List.of(column));
 
     StringBuilder sql = new StringBuilder();
     sql.append("ALTER TABLE ").append(DataSchema.qualify(tableName)).append(" ");
@@ -353,13 +423,13 @@ public class DataTableService {
   }
 
   /**
-   * Creates a temporary staging table {@code "{tableName}_tmp"} in the current tenant's data schema
+   * Creates a temporary staging table {@link #tempTableName} in the current tenant's data schema
    * with the same structure as the original table (using PostgreSQL's LIKE ... INCLUDING ALL). Used
    * by the REPLACE load strategy to safely stage new data before swapping.
    */
   public void createTempTable(String tableName) {
     validateName(tableName);
-    String tmpName = tableName + "_tmp";
+    String tmpName = tempTableName(tableName);
     // Drop any leftover temp table from a previous failed run
     dsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(tmpName));
     dsl.execute(
@@ -392,7 +462,7 @@ public class DataTableService {
   }
 
   /**
-   * Atomically replaces {@code "{tableName}"} with {@code "{tableName}_tmp"} (both in the current
+   * Atomically replaces {@code "{tableName}"} with {@link #tempTableName} (both in the current
    * tenant's data schema) by dropping the original and renaming the tmp table inside a single
    * transaction. Called only after all data has been successfully inserted into the tmp table.
    */
@@ -420,10 +490,23 @@ public class DataTableService {
 
   public void swapTable(String tableName) {
     validateName(tableName);
-    String tmpName = tableName + "_tmp";
+    String tmpName = tempTableName(tableName);
     dsl.transaction(
         cfg -> {
           var txDsl = org.jooq.impl.DSL.using(cfg);
+          // 원본 id 시퀀스의 실제 이름을 DROP 전에 읽어 둔다 — 원본을 지우면 소유 시퀀스도 함께 사라지고 그 이름을 임시 시퀀스가 물려받는다.
+          // 이름을 규칙으로 다시 만들지 않는 이유: PostgreSQL 은 긴 테이블의 시퀀스 이름을 잘라 짓고 충돌하면 번호를 붙이므로, 앞부분이 같은
+          // 긴 테이블 둘에서 규칙으로 만든 이름은 다른 테이블의 시퀀스와 겹칠 수 있다.
+          String seq =
+              (String)
+                  txDsl.fetchValue(
+                      "SELECT s.relname::text FROM pg_class s WHERE s.oid = pg_get_serial_sequence(?, 'id')::regclass",
+                      DataSchema.qualify(tableName));
+          if (seq == null) {
+            // 원본을 지우기 전이라 안전하게 멈춘다 — 시퀀스 이름 없이 맞바꾸면 다음 REPLACE 의 임시 시퀀스 정리가 살아있는 시퀀스에 닿는다.
+            throw new IllegalStateException(
+                "테이블 '" + tableName + "' 의 id 시퀀스를 찾을 수 없어 교체(REPLACE) 적재를 할 수 없습니다");
+          }
           // 파괴 연산 — 스키마 해석이 틀리면 남의 테넌트 테이블을 지운다. 반드시 헬퍼 경유.
           txDsl.execute("DROP TABLE " + DataSchema.qualify(tableName));
           // RENAME TO 의 새 이름은 스키마를 붙이지 않는다(PostgreSQL 문법). 스키마는 원본을 따라간다.
@@ -431,7 +514,6 @@ public class DataTableService {
               "ALTER TABLE " + DataSchema.qualify(tmpName) + " RENAME TO \"" + tableName + "\"");
           // 시퀀스 리네임을 빠뜨리면 스왑 후 nextval 이 옛 이름의 시퀀스를 가리킨 채 조용히 동작한다.
           String tmpSeq = tmpName + "_id_seq";
-          String seq = tableName + "_id_seq";
           txDsl.execute(
               "ALTER SEQUENCE IF EXISTS "
                   + DataSchema.qualify(tmpSeq)
@@ -439,25 +521,25 @@ public class DataTableService {
                   + seq
                   + "\"");
         });
-    // PYTHON 읽기 슬롯 GRANT — RENAME 으로 들어온 _tmp 테이블은 원본 ACL 을 갖지 않는다. 맞바꿈 트랜잭션 블록 뒤라
+    // PYTHON 읽기 슬롯 GRANT — RENAME 으로 들어온 임시 테이블은 원본 ACL 을 갖지 않는다. 맞바꿈 트랜잭션 블록 뒤라
     // 바깥 트랜잭션이 없으면 즉시, 있으면 그 커밋 후 복원한다.
     pythonReadGrantSync.syncTableAfterCommit(tableName);
   }
 
   /**
-   * Drops the temporary staging table {@code "{tableName}_tmp"} in the current tenant's data schema
-   * if it exists. Called on failure to preserve the original table's data.
+   * Drops the temporary staging table {@link #tempTableName} in the current tenant's data schema if
+   * it exists. Called on failure to preserve the original table's data.
    */
   public void dropTempTable(String tableName) {
     validateName(tableName);
-    String tmpName = tableName + "_tmp";
+    String tmpName = tempTableName(tableName);
     dsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(tmpName));
   }
 
   public void renameColumn(String tableName, String oldName, String newName) {
     validateName(tableName);
     validateName(oldName);
-    validateName(newName);
+    validateNewColumnName(newName);
     String sql =
         "ALTER TABLE "
             + DataSchema.qualify(tableName)
@@ -472,7 +554,8 @@ public class DataTableService {
   public void renameIndex(String tableName, String oldColName, String newColName) {
     validateName(tableName);
     validateName(oldColName);
-    validateName(newColName);
+    // 새 컬럼명 — renameColumn 보다 먼저 불리므로 여기서도 상한을 봐 인덱스만 바뀐 채 실패하지 않게 한다.
+    validateNewColumnName(newColName);
     String oldIndex = "idx_" + tableName + "_" + oldColName;
     String newIndex = "idx_" + tableName + "_" + newColName;
     String sql =
@@ -541,8 +624,8 @@ public class DataTableService {
       List<String> userColumns,
       List<DatasetColumnResponse> columnDefs) {
     validateName(sourceTable);
-    validateName(targetTable);
-    rejectReservedTableName(targetTable);
+    // 복제본 테이블명만 새 이름이다 — 원본·컬럼은 기존 이름이라 형식만 본다.
+    validateNewTableName(targetTable);
     for (String col : userColumns) {
       validateName(col);
     }

@@ -139,7 +139,7 @@ export function registerPipelineTools(
               pythonConfig: z
                 .object({
                   outputColumns: z.array(z.object({
-                    name: z.string().describe('컬럼명 (snake_case)'),
+                    name: z.string().describe('컬럼명 (snake_case, 최대 63자)'),
                     type: z.enum(['TEXT', 'INTEGER', 'DECIMAL', 'BOOLEAN', 'DATE', 'TIMESTAMP']).describe('컬럼 타입'),
                   })).optional().describe('출력 컬럼 정의. 출력 데이터셋 미지정 시 임시 데이터셋 자동 생성에 사용'),
                 })
@@ -215,7 +215,7 @@ export function registerPipelineTools(
               pythonConfig: z
                 .object({
                   outputColumns: z.array(z.object({
-                    name: z.string().describe('컬럼명 (snake_case)'),
+                    name: z.string().describe('컬럼명 (snake_case, 최대 63자)'),
                     type: z.enum(['TEXT', 'INTEGER', 'DECIMAL', 'BOOLEAN', 'DATE', 'TIMESTAMP']).describe('컬럼 타입'),
                   })).optional().describe('출력 컬럼 정의. 출력 데이터셋 미지정 시 임시 데이터셋 자동 생성에 사용'),
                 })

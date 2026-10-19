@@ -313,6 +313,29 @@ test.describe('데이터셋 상세 — 컬럼 탭', () => {
     });
   });
 
+  // WD-95: 63자를 넘는 필드명은 PostgreSQL 이 잘라 저장해 값이 "-" 로 보였다 — 제출 단계에서 막고 POST 를 보내지 않는다.
+  test('필드 추가 — 64자 필드명은 메시지가 보이고 POST 요청이 발생하지 않는다 (WD-95)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupMocks(page);
+    const addCapture = await mockApi(page, 'POST', '/api/v1/datasets/5/columns', {}, { capture: true });
+
+    await page.goto('/data/datasets/5');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible({ timeout: 10000 });
+    await page.getByRole('tab', { name: '필드' }).click();
+    await expect(page.getByRole('heading', { name: /필드 목록/ })).toBeVisible({ timeout: 10000 });
+
+    await page.getByRole('button', { name: '필드 추가' }).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await page.getByLabel('필드명 *').fill('c_' + 'x'.repeat(62));
+    await page.getByRole('dialog').getByRole('button', { name: '추가' }).click();
+
+    await expect(page.getByText('칼럼명은 63자 이하여야 합니다')).toBeVisible({ timeout: 5000 });
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await page.waitForTimeout(300);
+    expect(addCapture.requests).toHaveLength(0);
+  });
+
   test('필드 추가 — 예약 컬럼명(id) 제출 시 에러 토스트가 표시된다', async ({
     authenticatedPage: page,
   }) => {

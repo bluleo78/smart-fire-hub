@@ -133,7 +133,8 @@ export function registerDatasetTools(
       '새 데이터셋을 생성합니다. 데이터셋 생성 시 data 스키마에 실제 PostgreSQL 테이블이 생성됩니다.',
       {
         name: z.string().describe('데이터셋 이름'),
-        tableName: z.string().describe('테이블 이름 ([a-z][a-z0-9_]* 패턴)'),
+        // WD-95: 서버 상한(56자)을 넘으면 400 — PostgreSQL 이 63바이트에서 이름을 잘라 기존 테이블과 겹치는 것을 막는 상한이다.
+        tableName: z.string().describe('테이블 이름 ([a-z][a-z0-9_]* 패턴, 최대 56자)'),
         description: z.string().optional().describe('데이터셋 설명'),
         categoryId: z.number().optional().describe('카테고리 ID'),
         originType: z
@@ -143,7 +144,7 @@ export function registerDatasetTools(
         columns: z
           .array(
             z.object({
-              columnName: z.string().describe('컬럼 이름 ([a-z][a-z0-9_]* 패턴)'),
+              columnName: z.string().describe('컬럼 이름 ([a-z][a-z0-9_]* 패턴, 최대 63자)'),
               displayName: z.string().describe('표시 이름'),
               dataType: z
                 .string()
@@ -236,7 +237,7 @@ export function registerDatasetTools(
       '데이터셋에 컬럼을 추가합니다. GEOMETRY 컬럼의 경우 SRID 4326을 권장합니다.',
       {
         datasetId: z.number().describe('데이터셋 ID'),
-        columnName: z.string().describe('컬럼 이름 ([a-z][a-z0-9_]* 패턴)'),
+        columnName: z.string().describe('컬럼 이름 ([a-z][a-z0-9_]* 패턴, 최대 63자)'),
         displayName: z.string().describe('표시 이름'),
         // #597: 자유 문자열이면 지원하지 않는 값(예: MONEY)이 그대로 백엔드로 전달되어
         // DB CHECK 제약조건 위반(409, opaque 메시지)으로만 걸러졌다.

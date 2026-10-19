@@ -145,15 +145,15 @@ public class DatasetService {
 
   /** 생성 본체 — 출처 필드 검사는 두 공개 진입점이 맡는다. */
   private DatasetDetailResponse createDatasetInternal(CreateDatasetRequest request, Long userId) {
-    dataTableService.validateName(request.tableName());
+    // 새 이름 검증은 저장 유형 분기·중복 검사·카탈로그 저장보다 먼저다 — 상한을 넘는 이름은 원래 문자열 비교인 중복 검사를 통과해
+    // 버리고, 카탈로그(VARCHAR(100))에 먼저 닿으면 400 이 아니라 제약 오류가 된다. 근거는
+    // DataTableService.MAX_TABLE_NAME_LENGTH.
+    dataTableService.validateNewTableName(request.tableName());
 
     // DOCUMENT/FILE 데이터셋은 컬럼 정의가 없어 columns 가 null 로 들어올 수 있다(로봇 등 프로그래매틱
-    // API 호출 시). 아래 컬럼 검증 루프에서 NPE 가 나지 않도록 null 을 빈 목록으로 정규화한다.
+    // API 호출 시). 아래 검증에서 NPE 가 나지 않도록 null 을 빈 목록으로 정규화한다.
     List<DatasetColumnRequest> columns = request.columns() != null ? request.columns() : List.of();
-
-    for (DatasetColumnRequest col : columns) {
-      dataTableService.validateName(col.columnName());
-    }
+    dataTableService.validateNewColumns(columns);
 
     // Validate PK columns: must be NOT NULL, and GEOMETRY type cannot be a primary key (#199)
     for (DatasetColumnRequest col : columns) {
@@ -467,7 +467,18 @@ public class DatasetService {
             .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
     rejectIfDocument(dataset.storageType(), "컬럼 관리");
 
-    dataTableService.validateName(request.columnName());
+    DatasetColumnRequest colRequest =
+        new DatasetColumnRequest(
+            request.columnName(),
+            request.displayName(),
+            request.dataType(),
+            request.maxLength(),
+            request.isNullable(),
+            request.isIndexed(),
+            request.description(),
+            request.isPrimaryKey());
+    // 카탈로그 저장 전에 새 컬럼(예약어·이름 길이·타입)을 검증한다 — 생성 경로와 같은 이유.
+    dataTableService.validateNewColumns(List.of(colRequest));
 
     long rowCount = dataTableRowService.countRows(dataset.tableName());
     if (rowCount > 0 && !request.isNullable()) {
@@ -487,16 +498,6 @@ public class DatasetService {
 
     int nextOrder = columnRepository.getMaxOrder(datasetId) + 1;
 
-    DatasetColumnRequest colRequest =
-        new DatasetColumnRequest(
-            request.columnName(),
-            request.displayName(),
-            request.dataType(),
-            request.maxLength(),
-            request.isNullable(),
-            request.isIndexed(),
-            request.description(),
-            request.isPrimaryKey());
     DatasetColumnResponse column = columnRepository.save(datasetId, colRequest, nextOrder);
     dataTableService.addColumn(dataset.tableName(), colRequest);
 
@@ -548,7 +549,7 @@ public class DatasetService {
       if (rowCount > 0) {
         throw new ColumnModificationException("Cannot rename column when dataset has data");
       }
-      dataTableService.validateName(request.columnName());
+      // 새 이름 검증은 renameIndex·renameColumn(DDL 계층)이 한다.
       if (column.isIndexed()) {
         dataTableService.renameIndex(
             dataset.tableName(), column.columnName(), request.columnName());
@@ -991,7 +992,8 @@ public class DatasetService {
     List<DatasetColumnResponse> sourceColumns = columnRepository.findByDatasetId(sourceId);
 
     // 2. Validate new names don't already exist
-    dataTableService.validateName(request.tableName());
+    // 새 테이블명 검증은 중복 검사보다 먼저다(생성 경로와 같은 이유).
+    dataTableService.validateNewTableName(request.tableName());
     if (datasetRepository.existsByName(request.name())) {
       throw new DuplicateDatasetNameException("Dataset name already exists: " + request.name());
     }

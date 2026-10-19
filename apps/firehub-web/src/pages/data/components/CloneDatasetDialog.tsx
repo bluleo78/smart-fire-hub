@@ -14,6 +14,11 @@ import { Switch } from '../../../components/ui/switch';
 import { Textarea } from '../../../components/ui/textarea';
 import { useCloneDataset } from '../../../hooks/queries/useDatasets';
 import { handleApiError } from '../../../lib/api-error';
+import {
+  MAX_TABLE_NAME_LENGTH,
+  TABLE_NAME_MAX_MESSAGE,
+  tableNameRegex,
+} from '../../../lib/validations/dataset';
 import type { DatasetDetailResponse } from '../../../types/dataset';
 
 interface CloneDatasetDialogProps {
@@ -27,7 +32,9 @@ const cloneSchema = z.object({
   tableName: z
     .string()
     .min(1, '테이블 이름을 입력하세요.')
-    .regex(/^[a-z][a-z0-9_]*$/, '영소문자로 시작하며 영소문자, 숫자, _만 허용됩니다.'),
+    // 형식·길이 상한은 새 데이터셋 생성과 같은 규칙(lib/validations/dataset)을 쓴다.
+    .max(MAX_TABLE_NAME_LENGTH, TABLE_NAME_MAX_MESSAGE)
+    .regex(tableNameRegex, '영소문자로 시작하며 영소문자, 숫자, _만 허용됩니다.'),
   description: z.string().optional(),
   includeData: z.boolean(),
   includeTags: z.boolean(),

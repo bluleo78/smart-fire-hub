@@ -353,7 +353,7 @@ public class PipelineAsyncRunner {
       // 트랜잭션으로 보낼 DELETE 선행 문장으로 만든다(SQL 분기, Task 4 원자성 · #731/#735 직렬화).
       // 예전의 "실행기 끈 PYTHON + REPLACE 는 truncate 후 자식이 직접 적재" 경로는 WD-29(R5)에서
       // 없앴다 — 자식은 이제 읽기 전용 슬롯 롤이라 적재를 API 가 하고, 그 REPLACE 는 실행기 켠 경로와
-      // 같은 _tmp 맞바꿈이다(아래 PYTHON 분기).
+      // 같은 임시 테이블 맞바꿈이다(아래 PYTHON 분기).
 
       // 증분 처리 상태 — SQL 분기 안에서 정해지지만, 책갈피 전진은 실행 성공 이후(분기 밖)에 하므로
       // 메서드 스코프에 둔다.
@@ -703,7 +703,7 @@ public class PipelineAsyncRunner {
         // 등급별 읽기 슬롯(WD-29): 실행 직전 GRANT 를 계산값에 맞추고(JIT) 실행 주체 슬롯을 정한다. 실패하면 executor·자식 프로세스를 부르지
         // 않는다(fail-closed) — 테넌트 실행 롤로 대체하는 경로는 없다.
         // 위치: 위 보안 판정(enforcePythonOutputLevel 의 출력 VIEW·등급 상향)이 먼저 돌아 그 판정 테스트가
-        // 공허해지지 않고, REPLACE 임시 테이블 생성보다는 앞이라 준비 실패가 _tmp 를 만들거나 지우지 않는다.
+        // 공허해지지 않고, REPLACE 임시 테이블 생성보다는 앞이라 준비 실패가 임시 테이블을 만들거나 지우지 않는다.
         // 트랜잭션: prepareForRun 은 REQUIRES_NEW 트랜잭션에서 advisory 잠금·REVOKE/GRANT 를 한다.
         // 이 러너(executeAsync·executeStep)는 @Transactional 이 아니고(비동기 스레드,
         // PipelineExecutionService 가 커밋 후 위임), 위 TEMP 생성 DDL 도 자기 트랜잭션에서 이미
@@ -785,9 +785,10 @@ public class PipelineAsyncRunner {
                                 outputText,
                                 localPythonOutputLoader.load(
                                     targetTable, run.stdout(), pyColumnTypes)));
-            // REPLACE 는 출력 테이블 세션 잠금 아래에서 _tmp 생성 → 적재 → 맞바꿈을 한다(#735).
-            // createTempTable 은 고정 이름 "<출력>_tmp" 를 DROP IF EXISTS 후 다시 만들므로, 같은 출력에
-            // 로컬 REPLACE 가 겹치면 서로의 _tmp 를 지우고 덮는다. 잠금 키는 SQL 스텝의 비우기+적재와
+            // REPLACE 는 출력 테이블 세션 잠금 아래에서 임시 테이블 생성 → 적재 → 맞바꿈을 한다(#735).
+            // createTempTable 은 출력마다 고정된 이름(DataTableService.tempTableName)을 DROP IF EXISTS 후 다시
+            // 만들므로, 같은 출력에
+            // 로컬 REPLACE 가 겹치면 서로의 임시 테이블을 지우고 덮는다. 잠금 키는 SQL 스텝의 비우기+적재와
             // 같아 그 경로와도 직렬화된다. 스크립트 실행(읽기 전용)은 잠금 밖 — 쓰는 구간만 덮는다.
             executionLog =
                 (isReplace ? outputTableSessionLock.callLocked(pyOutputTable, load) : load.get())
@@ -832,7 +833,7 @@ public class PipelineAsyncRunner {
           //      지킬 원본이 없다.
           // REPLACE 비우기는 아래 두 경로가 이미 원자적으로 처리한다 — 실행기 켠 경로는
           // createTempTable → finishReplace 맞바꿈(이 블록 바로 아래), 끈 경로는 ApiCallExecutor
-          // 내부의 동일한 t_tmp 맞바꿈이다. 실패 시 dropTempTable 로 이전 행이 그대로 남는다.
+          // 내부의 동일한 임시 테이블 맞바꿈이다. 실패 시 dropTempTable 로 이전 행이 그대로 남는다.
         }
 
         // 정확한 타입 변환을 위해 데이터셋 메타데이터에서 컬럼 타입 맵 구성
@@ -853,7 +854,7 @@ public class PipelineAsyncRunner {
           boolean isReplace = "REPLACE".equalsIgnoreCase(loadStrategy) && outputTableName != null;
           if (isReplace) {
             dataTableService.createTempTable(outputTableName);
-            targetTable = outputTableName + "_tmp";
+            targetTable = DataTableService.tempTableName(outputTableName);
           }
           try {
             Map<String, Object> request =
@@ -1096,6 +1097,8 @@ public class PipelineAsyncRunner {
         log.info("Reusing existing temp dataset {} for {}step {}", dsId, logLabel, step.name());
         return new StepTemp(dsId, false);
       }
+      // 새 컬럼을 옛 TEMP 를 지우기 전에 검증한다 — 지운 뒤 생성이 실패하면 이전 출력이 사라진다.
+      tempDatasetService.validateColumnsForNewTemp(columns);
       log.info("Schema changed for {}step {}, recreating temp dataset", logLabel, step.name());
       pipelineSecurityGate.requireOutputVisible(dsId, runAs);
       tempDatasetService.deleteTempDataset(dsId);
@@ -1142,9 +1145,9 @@ public class PipelineAsyncRunner {
   /**
    * PYTHON 출력 적재의 REPLACE 준비·마무리 — 실행기 켠 경로(executor 가 적재)와 끈 경로(API 가 stdout JSON 적재)가 같이 쓴다.
    *
-   * <p>REPLACE 면 {@code <출력>_tmp} 를 만들고 그 이름으로 {@code load} 를 부른 뒤, 적재 행 수로 맞바꿈 여부를 {@link
-   * DataTableService#finishReplace} 에 맡긴다(0행·JSON 없음이면 원본 유지 — 판단은 거기 단독, #685). 실패하면 임시 테이블을 지우고
-   * 예외를 다시 던진다 — 원본은 그대로다. REPLACE 가 아니면 출력 테이블(없으면 null)로 바로 부른다.
+   * <p>REPLACE 면 임시 테이블({@link DataTableService#tempTableName})을 만들고 그 이름으로 {@code load} 를 부른 뒤, 적재
+   * 행 수로 맞바꿈 여부를 {@link DataTableService#finishReplace} 에 맡긴다(0행·JSON 없음이면 원본 유지 — 판단은 거기 단독,
+   * #685). 실패하면 임시 테이블을 지우고 예외를 다시 던진다 — 원본은 그대로다. REPLACE 가 아니면 출력 테이블(없으면 null)로 바로 부른다.
    */
   private PythonLoad loadPythonOutput(
       String outputTable, boolean isReplace, Function<String, PythonLoad> load) {
@@ -1153,7 +1156,7 @@ public class PipelineAsyncRunner {
     }
     dataTableService.createTempTable(outputTable);
     try {
-      PythonLoad result = load.apply(outputTable + "_tmp");
+      PythonLoad result = load.apply(DataTableService.tempTableName(outputTable));
       dataTableService.finishReplace(outputTable, result.rowsLoaded());
       return result;
     } catch (RuntimeException e) {

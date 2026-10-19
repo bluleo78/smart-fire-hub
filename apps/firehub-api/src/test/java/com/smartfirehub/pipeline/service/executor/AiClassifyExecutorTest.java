@@ -333,7 +333,9 @@ class AiClassifyExecutorTest {
     // REPLACE → 임시 테이블 생성 + 스왑
     verify(dataTableService).createTempTable("output_table");
     verify(dataTableService).swapTable("output_table");
-    verify(dataTableRowService).insertBatch(eq("output_table_tmp"), anyList(), anyList(), anyMap());
+    verify(dataTableRowService)
+        .insertBatch(
+            eq(DataTableService.tempTableName("output_table")), anyList(), anyList(), anyMap());
   }
 
   // -----------------------------------------------------------------------
@@ -665,7 +667,8 @@ class AiClassifyExecutorTest {
     assertThat(result.outputRows()).isEqualTo(3);
     // 핵심 단언: 루프 끝의 한 번이 아니라 배치마다 한 번씩
     verify(dataTableRowService, times(3))
-        .insertBatch(eq("output_table_tmp"), anyList(), anyList(), anyMap());
+        .insertBatch(
+            eq(DataTableService.tempTableName("output_table")), anyList(), anyList(), anyMap());
     verify(dataTableService).swapTable("output_table");
   }
 
@@ -697,7 +700,8 @@ class AiClassifyExecutorTest {
 
     // 첫 배치는 예외 전에 이미 적재됐다 — 모아 두던 구현에서는 0회였다.
     verify(dataTableRowService, times(1))
-        .insertBatch(eq("output_table_tmp"), anyList(), anyList(), anyMap());
+        .insertBatch(
+            eq(DataTableService.tempTableName("output_table")), anyList(), anyList(), anyMap());
     verify(dataTableService).dropTempTable("output_table");
     verify(dataTableService, never()).swapTable(anyString());
   }

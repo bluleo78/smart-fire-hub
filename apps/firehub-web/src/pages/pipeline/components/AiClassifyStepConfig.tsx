@@ -31,7 +31,10 @@ import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { useDataset } from '@/hooks/queries/useDatasets';
+import { columnNameLengthError } from '@/lib/validations/dataset';
 import type { AiClassifyConfig } from '@/types/pipeline';
+
+import { InlineFieldError } from './InlineFieldError';
 
 const COLUMN_TYPES = ['TEXT', 'INTEGER', 'DECIMAL', 'BOOLEAN', 'DATE', 'TIMESTAMP'];
 
@@ -258,44 +261,54 @@ export default function AiClassifyStepConfig({
               <span>타입</span>
               <span></span>
             </div>
-            {outputColumns.map((col, i) => (
-              <div key={i} className="grid grid-cols-[1fr_140px_auto] gap-1.5 items-center">
-                <Input
-                  className="h-7 text-xs font-mono"
-                  placeholder="column_name"
-                  value={col.name}
-                  disabled={readOnly}
-                  pattern="[a-z][a-z0-9_]*"
-                  onChange={(e) => updateOutputColumn(i, 'name', e.target.value)}
-                />
-                <Select
-                  value={col.type}
-                  disabled={readOnly}
-                  onValueChange={(v) => updateOutputColumn(i, 'type', v)}
-                >
-                  <SelectTrigger className="h-7 text-xs w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {COLUMN_TYPES.map((t) => (
-                      <SelectItem key={t} value={t}>
-                        {t}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {!readOnly && (
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive"
-                    onClick={() => removeOutputColumn(i)}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
-                )}
-              </div>
-            ))}
+            {outputColumns.map((col, i) => {
+              // 출력 컬럼은 임시 데이터셋의 칼럼명이 된다 — 길이 상한은 columnNameLengthError 참고.
+              const nameError = columnNameLengthError(col.name);
+              const nameErrorId = `${baseId}-ai-col-error-${i}`;
+              return (
+                <div key={i} className="space-y-0.5">
+                  <div className="grid grid-cols-[1fr_140px_auto] gap-1.5 items-center">
+                    <Input
+                      className="h-7 text-xs font-mono"
+                      placeholder="column_name"
+                      value={col.name}
+                      disabled={readOnly}
+                      pattern="[a-z][a-z0-9_]*"
+                      aria-invalid={!!nameError}
+                      aria-describedby={nameError ? nameErrorId : undefined}
+                      onChange={(e) => updateOutputColumn(i, 'name', e.target.value)}
+                    />
+                    <Select
+                      value={col.type}
+                      disabled={readOnly}
+                      onValueChange={(v) => updateOutputColumn(i, 'type', v)}
+                    >
+                      <SelectTrigger className="h-7 text-xs w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {COLUMN_TYPES.map((t) => (
+                          <SelectItem key={t} value={t}>
+                            {t}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {!readOnly && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive"
+                        onClick={() => removeOutputColumn(i)}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
+                  </div>
+                  <InlineFieldError id={nameErrorId} message={nameError} />
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

@@ -93,7 +93,8 @@ public class ApiCallExecutor {
     }
 
     // The actual insert target: temp table for REPLACE, original for APPEND
-    String insertTarget = isReplace ? outputTableName + "_tmp" : outputTableName;
+    String insertTarget =
+        isReplace ? DataTableService.tempTableName(outputTableName) : outputTableName;
 
     long startTime = System.currentTimeMillis();
     int maxDurationMs =

@@ -7,6 +7,7 @@ import static org.mockito.Mockito.*;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.apiconnection.service.ApiConnectionService;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
+import com.smartfirehub.dataset.exception.InvalidTableNameException;
 import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.service.DataTableRowService;
@@ -555,6 +556,36 @@ class PipelineAsyncRunnerTest {
     ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
     verify(sqlExecutor).execute(anyList(), sqlCaptor.capture());
     assertThat(sqlCaptor.getValue()).startsWith("INSERT INTO data.\"ptmp_12_plain_select_abcd\"");
+  }
+
+  /**
+   * WD-95: 스키마가 바뀐 TEMP 는 "옛 것 삭제 → 새로 생성" 이다. 새 컬럼이 생성 검증(예: 63자 초과)에 걸리면 삭제가 먼저 일어나 이전 출력이 사라지던
+   * 순서를, 검증을 삭제 전으로 당겨 막는다 — 검증이 실패하면 deleteTempDataset·createTempDataset 이 호출되지 않아야 한다. (검증 규칙 자체는
+   * TempDatasetServiceTest 가 실제 DataTableService 로 고정한다.)
+   */
+  @Test
+  void executeStep_schemaChangedTemp_invalidNewColumns_keepsOldTempWithoutDeleting() {
+    Long pipelineId = 13L;
+    Long userId = 1L;
+    Long stepId = 203L;
+    Long oldTempId = 500L;
+    PipelineStepResponse sqlStep =
+        stepResponse(
+            stepId, "long-col", "SQL", "SELECT name FROM data.\"source\"", null, List.of());
+    stubProbeColumns("name");
+
+    when(tempDatasetService.findExistingTempDataset(stepId)).thenReturn(Optional.of(oldTempId));
+    when(tempDatasetService.hasSchemaChanged(eq(oldTempId), any())).thenReturn(true);
+    doThrow(new InvalidTableNameException("필드명은 최대 63자까지 쓸 수 있습니다(입력 64자)"))
+        .when(tempDatasetService)
+        .validateColumnsForNewTemp(any());
+
+    String status = runner.executeStep(303L, sqlStep, pipelineId, "TestPipeline", userId, false);
+
+    assertThat(status).isEqualTo("FAILED");
+    verify(tempDatasetService, never()).deleteTempDataset(any());
+    verify(tempDatasetService, never())
+        .createTempDataset(any(), any(), anyString(), any(), anyString(), any());
   }
 
   @Test
@@ -1165,9 +1196,9 @@ class PipelineAsyncRunnerTest {
 
   /**
    * 실행기를 끈 PYTHON + REPLACE 는 출력 테이블 세션 잠금 <b>안에서</b> 임시 테이블 생성 → stdout JSON 적재 → 맞바꿈을 한다(#735,
-   * R5). createTempTable 은 고정 이름 {@code <출력>_tmp} 를 DROP IF EXISTS 후 재생성하므로, 이 구간이 잠금 밖으로 새면 겹친 실행이
-   * 서로의 _tmp 를 지우고 덮는다. 잠금 목이 본문을 실행하지 않게 해 "잠금 밖에서는 출력에 손대지 않는다"를 먼저 고정하고(스크립트 실행은 읽기 전용이라 잠금 밖),
-   * 이어서 본문을 돌려 순서를 확인한다. truncate 는 더 이상 없다.
+   * R5). createTempTable 은 출력마다 고정된 임시 이름({@code tempTableName})을 DROP IF EXISTS 후 재생성하므로, 이 구간이 잠금
+   * 밖으로 새면 겹친 실행이 서로의 _tmp 를 지우고 덮는다. 잠금 목이 본문을 실행하지 않게 해 "잠금 밖에서는 출력에 손대지 않는다"를 먼저 고정하고(스크립트 실행은
+   * 읽기 전용이라 잠금 밖), 이어서 본문을 돌려 순서를 확인한다. truncate 는 더 이상 없다.
    */
   @Test
   void 실행기_꺼진_PYTHON_REPLACE는_출력_잠금_안에서만_임시테이블에_적재하고_맞바꾼다() {
@@ -1198,7 +1229,8 @@ class PipelineAsyncRunnerTest {
     order.verify(dataTableService).createTempTable("out735_py");
     order
         .verify(localPythonOutputLoader)
-        .load("out735_py_tmp", "[{\"v\": \"a\"}]\n", Map.of("v", "TEXT"));
+        .load(
+            DataTableService.tempTableName("out735_py"), "[{\"v\": \"a\"}]\n", Map.of("v", "TEXT"));
     order.verify(dataTableService).finishReplace("out735_py", 0L);
   }
 
@@ -1307,7 +1339,8 @@ class PipelineAsyncRunnerTest {
         .thenReturn(new PythonScriptExecutor.RunResult(0, "[{\"nope\": 1}]", ""));
     when(outputTableSessionLock.callLocked(eq("out_bad"), any()))
         .thenAnswer(inv -> inv.<java.util.function.Supplier<?>>getArgument(1).get());
-    when(localPythonOutputLoader.load(eq("out_bad_tmp"), anyString(), any()))
+    when(localPythonOutputLoader.load(
+            eq(DataTableService.tempTableName("out_bad")), anyString(), any()))
         .thenThrow(
             new ScriptExecutionException(
                 "Python 실행 실패: Script succeeded but data insert failed: x"));
