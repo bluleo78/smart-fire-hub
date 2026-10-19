@@ -133,7 +133,7 @@ public interface DataRowStore {
       Map<String, Object> row,
       Map<String, String> columnTypes);
 
-  /** id 로 행 한 건을 조회한다. 없으면 null. */
+  /** id 로 행 한 건을 조회한다. 대상 행이 없으면 null 이 아니라 RowNotFoundException 을 던진다. */
   Map<String, Object> getRow(
       String tableName, List<String> columns, long rowId, Map<String, String> columnTypes);
 
