@@ -7,7 +7,7 @@ import java.util.Map;
 import org.springframework.stereotype.Component;
 
 /**
- * 테넌트가 사용하는 데이터셋 저장소 백엔드를 해석하고 그 구현({@link DataTableStore})을 돌려준다(WD-72).
+ * 테넌트가 사용하는 데이터셋 저장소 백엔드를 해석하고 그 구현({@link DataTableStore}, {@link DataRowStore})을 돌려준다(WD-72).
  *
  * <p>구현체들은 생성 시 백엔드별로 색인한다. 같은 백엔드 구현이 둘이면 어느 쪽이 쓰일지 모호하므로 기동 시점에 실패시킨다.
  */
@@ -17,11 +17,20 @@ public class DataStoreResolver {
   private final Map<DataStoreBackend, DataTableStore> tableStores =
       new EnumMap<>(DataStoreBackend.class);
 
-  public DataStoreResolver(List<DataTableStore> tableStores) {
+  private final Map<DataStoreBackend, DataRowStore> rowStores =
+      new EnumMap<>(DataStoreBackend.class);
+
+  public DataStoreResolver(List<DataTableStore> tableStores, List<DataRowStore> rowStores) {
     for (DataTableStore store : tableStores) {
       DataTableStore previous = this.tableStores.put(store.backend(), store);
       if (previous != null) {
         throw new IllegalStateException("데이터셋 저장소 구현이 중복됨: " + store.backend());
+      }
+    }
+    for (DataRowStore store : rowStores) {
+      DataRowStore previous = this.rowStores.put(store.backend(), store);
+      if (previous != null) {
+        throw new IllegalStateException("데이터셋 행 저장소 구현이 중복됨: " + store.backend());
       }
     }
   }
@@ -42,6 +51,16 @@ public class DataStoreResolver {
     DataTableStore store = tableStores.get(backend);
     if (store == null) {
       throw new IllegalStateException("데이터셋 저장소 구현 없음: " + backend);
+    }
+    return store;
+  }
+
+  /** 현재 테넌트 백엔드의 행 조회·적재 스토어. 구현이 등록돼 있지 않으면 예외를 던진다. */
+  public DataRowStore rowStore() {
+    DataStoreBackend backend = currentBackend();
+    DataRowStore store = rowStores.get(backend);
+    if (store == null) {
+      throw new IllegalStateException("데이터셋 행 저장소 구현 없음: " + backend);
     }
     return store;
   }
