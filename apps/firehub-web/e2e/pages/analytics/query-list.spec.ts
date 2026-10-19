@@ -350,7 +350,7 @@ test.describe('쿼리 목록 페이지', () => {
     authenticatedPage: page,
   }) => {
     // 서버(Task 3 C1)는 조회자가 볼 수 없는 연결 데이터셋의 이름만 null 로 주고 datasetId 는 유지한다.
-    // datasetId 도 null 인 행(연결 없음)은 기존처럼 cross-dataset 이다 — 두 상태가 구분돼야 한다.
+    // datasetId 도 null 인 행(연결 없음)은 "-" 이다 — 두 상태가 구분돼야 한다.
     await mockApi(
       page,
       'GET',
@@ -372,10 +372,11 @@ test.describe('쿼리 목록 페이지', () => {
     await expect(restricted).toHaveClass(/text-muted-foreground/);
     await expect(restricted).not.toHaveClass(/destructive/);
     await expect(restricted.locator('svg')).toHaveAttribute('aria-hidden', 'true');
-    await expect(hiddenRow.getByText('cross-dataset')).toHaveCount(0);
+    await expect(hiddenRow.getByTestId('query-dataset-none')).toHaveCount(0);
 
     const noLinkRow = page.getByRole('row').filter({ hasText: '연결 없는 쿼리' });
-    await expect(noLinkRow.getByText('cross-dataset')).toBeVisible();
+    // WD-90: 내부 용어 "cross-dataset" 대신 폴더·차트 빈 칸과 같은 "-" 를 보인다
+    await expect(noLinkRow.getByTestId('query-dataset-none')).toHaveText('-');
     await expect(noLinkRow.getByTestId('query-dataset-restricted')).toHaveCount(0);
 
     const visibleRow = page.getByRole('row').filter({ hasText: '공개 연결 쿼리' });

@@ -223,7 +223,7 @@ export default function QueryListPage() {
                     ) : query.datasetId != null ? (
                       // 연결 데이터셋은 있지만 조회자가 볼 수 없다(보안 등급 — 서버가 이름만 null 로 준다). 권한 부족은 오류가 아니므로
                       // 위젯 잠금 상태와 같은 문구·아이콘의 차분한 표시만 한다(오류색·토스트 금지). 삭제된 데이터셋은 서버가 datasetId 를
-                      // null 로 만들어(ON DELETE SET NULL) 아래 cross-dataset 으로 간다.
+                      // null 로 만들어(ON DELETE SET NULL) 아래 「연결 없음」으로 간다.
                       <span
                         className="flex items-center gap-1 whitespace-nowrap text-sm text-muted-foreground"
                         data-testid="query-dataset-restricted"
@@ -232,7 +232,10 @@ export default function QueryListPage() {
                         열람 권한 없음
                       </span>
                     ) : (
-                      <span className="text-muted-foreground text-sm">cross-dataset</span>
+                      // 연결 데이터셋 없음(편집기로 저장한 쿼리 대부분) — 내부 용어 대신 같은 표의 다른 빈 칸(폴더·차트)과 같은 "-" (WD-90)
+                      <span className="text-muted-foreground text-sm" data-testid="query-dataset-none">
+                        -
+                      </span>
                     )}
                   </TableCell>
                   <TableCell>
