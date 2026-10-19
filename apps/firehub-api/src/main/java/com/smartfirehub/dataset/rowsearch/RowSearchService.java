@@ -6,6 +6,7 @@ import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.rowsearch.dto.RowSearchRequest;
 import com.smartfirehub.dataset.rowsearch.dto.RowSearchResponse;
+import com.smartfirehub.dataset.service.ColumnPhysicalType;
 import com.smartfirehub.embedding.EmbeddingException;
 import com.smartfirehub.embedding.EmbeddingProvider;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
@@ -54,7 +55,7 @@ public class RowSearchService {
     // NUL 은 PostgreSQL text 바인딩에서 거부돼 409 "Data integrity violation" 으로 새어 나간다 — 읽기 요청에 맞지
     // 않는 상태·문구이므로, 다른 잘못된 입력처럼 원인을 알려주는 400 으로 먼저 거부한다(조용히 지우지 않는다:
     // 호출자가 보낸 검색어와 실제 검색어가 달라지면 결과를 설명할 수 없다).
-    if (req.query().indexOf(RowFilterCompiler.NUL) >= 0) {
+    if (req.query().indexOf(ColumnPhysicalType.NUL) >= 0) {
       throw new IllegalArgumentException("검색어에 사용할 수 없는 문자(NUL)가 있습니다");
     }
     String mode = req.mode() == null ? "HYBRID" : req.mode().toUpperCase(Locale.ROOT);

@@ -94,14 +94,20 @@ public class DataTableService {
     return switch (dataType) {
       case "TEXT" -> "TEXT";
       case "VARCHAR" -> {
-        int len = maxLength != null ? maxLength : 255;
+        int len = maxLength != null ? maxLength : ColumnPhysicalType.DEFAULT_VARCHAR_LENGTH;
         if (len < 1 || len > 10000) {
           throw new IllegalArgumentException("VARCHAR length must be between 1 and 10000");
         }
         yield "VARCHAR(" + len + ")";
       }
       case "INTEGER" -> "BIGINT";
-      case "DECIMAL" -> "NUMERIC(18,6)";
+      // 값 검사(ColumnPhysicalType.enforceLimits)와 같은 상수로 조립해야 "검증 통과 == INSERT 성공"이 유지된다.
+      case "DECIMAL" ->
+          "NUMERIC("
+              + ColumnPhysicalType.DECIMAL_PRECISION
+              + ","
+              + ColumnPhysicalType.DECIMAL_SCALE
+              + ")";
       case "BOOLEAN" -> "BOOLEAN";
       case "DATE" -> "DATE";
       case "TIMESTAMP" -> "TIMESTAMP";

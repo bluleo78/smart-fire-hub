@@ -1,5 +1,6 @@
 package com.smartfirehub.dataset.rowsearch;
 
+import com.smartfirehub.dataset.service.ColumnPhysicalType;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -24,12 +25,6 @@ public final class RowFilterCompiler {
   private static final Set<String> OPS =
       Set.of("eq", "neq", "in", "gt", "gte", "lt", "lte", "is_null", "is_not_null");
   private static final int MAX_IN = 100;
-
-  /**
-   * NUL(0x00) 문자. PostgreSQL text 는 NUL 을 담을 수 없어 바인딩 단계에서 오류가 나고, 그 오류는
-   * DataIntegrityViolationException 으로 번역돼 읽기 요청인데도 409 로 응답된다 — 입력 검증에서 먼저 막는다.
-   */
-  static final char NUL = '\u0000';
 
   /** 공백 구분 날짜시간(yyyy-MM-dd HH:mm[:ss]) — 임포트·UI 에서 흔히 쓰는 표기. */
   private static final DateTimeFormatter SPACE_DATE_TIME =
@@ -152,7 +147,7 @@ public final class RowFilterCompiler {
     String s = v.toString();
     // NUL 은 어떤 타입으로도 해석되지 않지만 TEXT/VARCHAR 는 그대로 바인딩돼 PostgreSQL 이 거부한다(→ 409).
     // 아래 타입 오류 메시지는 값을 그대로 싣기 때문에, NUL 이 응답에 섞이지 않도록 변환 전에 따로 거부한다.
-    if (s.indexOf(NUL) >= 0) {
+    if (s.indexOf(ColumnPhysicalType.NUL) >= 0) {
       throw new IllegalArgumentException(at + "값에 사용할 수 없는 문자(NUL)가 있습니다");
     }
     try {

@@ -3,6 +3,8 @@ package com.smartfirehub.dataimport.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.smartfirehub.dataimport.dto.ColumnMappingEntry;
+import com.smartfirehub.dataimport.dto.ValidationErrorDetail;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -471,5 +473,221 @@ class DataValidationServiceTest {
 
     assertThat(result.rows()).hasSize(2);
     assertThat(result.removedCount()).isEqualTo(1);
+  }
+
+  // -----------------------------------------------------------------------
+  // 물리 타입 제약 — VARCHAR(n) 길이 / NUMERIC(18,6) 정수부 / BIGINT 범위 (WD-96)
+  //
+  // 형식 변환만 통과시키면 사전검증은 "성공"인데 INSERT 가 DB 오류로 잡 전체를 실패시키고 사용자는 행·칸을 모른다.
+  // 세 경로(validate·validateWithMapping·toRows)가 공유하는 convertRowOrNull 에서 거부되는지 행 단위로 확인한다.
+  // -----------------------------------------------------------------------
+
+  /** 한 칸 검증 결과 — 통과하면 value(정규화된 저장값), 거부되면 error. */
+  record Cell(Object value, ValidationErrorDetail error) {}
+
+  /** 한 칸짜리 행을 매핑 경로(웹이 쓰는 경로)로 검증한다. 통합 테스트도 같은 도우미를 쓴다. */
+  static Cell validateCell(
+      DataValidationService service, DatasetColumnResponse column, String value) {
+    Map<String, String> row = new HashMap<>();
+    row.put(column.columnName(), value);
+    DataValidationService.ValidationResultWithDetails vr =
+        service.validateWithMapping(
+            List.of(row),
+            List.of(column),
+            List.of(new ColumnMappingEntry(column.columnName(), column.columnName())));
+    return vr.errors().isEmpty()
+        ? new Cell(vr.validRows().get(0).get(0), null)
+        : new Cell(null, vr.errors().get(0));
+  }
+
+  private static DatasetColumnResponse varcharCol(String name, Integer maxLength) {
+    return new DatasetColumnResponse(
+        1L, name, name, "VARCHAR", maxLength, true, false, null, 0, false);
+  }
+
+  @Test
+  void varchar_exactlyMaxLength_isAccepted_andOneMore_isRejectedWithCounts() {
+    DatasetColumnResponse code = varcharCol("code", 10);
+
+    assertThat(validateCell(service, code, "a".repeat(10)).error()).isNull();
+
+    var err = validateCell(service, code, "a".repeat(13)).error();
+    assertThat(err).isNotNull();
+    assertThat(err.rowNumber()).isEqualTo(1);
+    assertThat(err.columnName()).isEqualTo("code");
+    assertThat(err.error()).isEqualTo("최대 10자까지 입력할 수 있습니다(입력 13자)");
+  }
+
+  @Test
+  void varchar_countsKoreanAndEmojiAsOneCharacterEach_likePostgres() {
+    DatasetColumnResponse code = varcharCol("code", 10);
+    // 이모지(😀)는 UTF-16 2단위지만 PostgreSQL 기준 1자 — length() 로 세면 5개만으로도 10을 채워 오검출한다.
+    String tenEmoji = "😀".repeat(10);
+    assertThat(tenEmoji.length()).isEqualTo(20);
+    assertThat(validateCell(service, code, tenEmoji).error()).isNull();
+    assertThat(validateCell(service, code, "가".repeat(10)).error()).isNull();
+
+    assertThat(validateCell(service, code, "😀".repeat(11)).error().error())
+        .isEqualTo("최대 10자까지 입력할 수 있습니다(입력 11자)");
+    assertThat(validateCell(service, code, "가".repeat(11)).error().error())
+        .isEqualTo("최대 10자까지 입력할 수 있습니다(입력 11자)");
+  }
+
+  @Test
+  void varchar_countsValueAfterTrimAndQuoteStrip_whichIsWhatGetsStored() {
+    DatasetColumnResponse code = varcharCol("code", 5);
+    // 저장되는 값은 trim·따옴표 제거 후 "abcde"(5자) — 원문 길이(9자)로 세면 안 된다.
+    assertThat(validateCell(service, code, "  \"abcde\"").error()).isNull();
+  }
+
+  @Test
+  void varchar_withoutMaxLength_usesPhysicalDefault255() {
+    // 길이 미지정 VARCHAR 는 물리 타입이 VARCHAR(255) — 검사 생략이 아니라 255 로 막아야 한다.
+    DatasetColumnResponse code = varcharCol("code", null);
+    assertThat(validateCell(service, code, "a".repeat(255)).error()).isNull();
+    assertThat(validateCell(service, code, "a".repeat(256)).error().error())
+        .isEqualTo("최대 255자까지 입력할 수 있습니다(입력 256자)");
+  }
+
+  @Test
+  void text_hasNoLengthLimit() {
+    assertThat(validateCell(service, col("memo", "TEXT", true), "a".repeat(20_000)).error())
+        .isNull();
+  }
+
+  @Test
+  void decimal_integerPart12Digits_isAccepted_13Digits_isRejected() {
+    DatasetColumnResponse amount = col("amount", "DECIMAL", true);
+
+    assertThat(validateCell(service, amount, "123456789012").error()).isNull();
+    assertThat(validateCell(service, amount, "123456789012.123456").error()).isNull();
+    assertThat(validateCell(service, amount, "-999999999999.999999").error()).isNull();
+    // 소수부 6자리 초과는 PG 가 반올림 저장하므로 오류가 아니다(WD-98 범위).
+    assertThat(validateCell(service, amount, "1.1234567").error()).isNull();
+
+    var err = validateCell(service, amount, "12345678901234").error();
+    assertThat(err).isNotNull();
+    assertThat(err.columnName()).isEqualTo("amount");
+    assertThat(err.error()).isEqualTo("정수부는 최대 12자리까지 입력할 수 있습니다");
+    assertThat(validateCell(service, amount, "1234567890123").error().error())
+        .contains("정수부는 최대 12자리");
+    assertThat(validateCell(service, amount, "-1234567890123").error().error())
+        .contains("정수부는 최대 12자리");
+    assertThat(validateCell(service, amount, "1,234,567,890,123").error().error())
+        .contains("정수부는 최대 12자리");
+  }
+
+  @Test
+  void decimal_exponentNotation_isJudgedByValue() {
+    DatasetColumnResponse amount = col("amount", "DECIMAL", true);
+    assertThat(validateCell(service, amount, "1E11").error()).isNull();
+    assertThat(validateCell(service, amount, "1.5E-3").error()).isNull();
+    assertThat(validateCell(service, amount, "1E12").error().error()).contains("정수부는 최대 12자리");
+    assertThat(validateCell(service, amount, "-1E13").error().error()).contains("정수부는 최대 12자리");
+  }
+
+  @Test
+  void decimal_hugeExponent_isRejectedQuickly_withoutExpandingTheNumber() {
+    // "1E999999999" 를 펼치면(setScale/toPlainString) 거대한 수를 할당한다 — compareTo 만으로 즉시 판정해야 한다.
+    DatasetColumnResponse amount = col("amount", "DECIMAL", true);
+    long start = System.nanoTime();
+    assertThat(validateCell(service, amount, "1E999999999").error().error())
+        .contains("정수부는 최대 12자리");
+    assertThat(validateCell(service, amount, "1E-999999999").error()).isNull();
+    assertThat(System.nanoTime() - start).isLessThan(2_000_000_000L);
+  }
+
+  @Test
+  void decimal_valueThatRoundsUpTo13IntegerDigits_isRejected() {
+    // PG 는 소수 6자리로 반올림한 뒤 정밀도를 검사한다 — 정수부 12자리라도 반올림으로 10^12 가 되면 overflow.
+    DatasetColumnResponse amount = col("amount", "DECIMAL", true);
+    assertThat(validateCell(service, amount, "999999999999.9999994").error()).isNull();
+    assertThat(validateCell(service, amount, "999999999999.9999995").error().error())
+        .contains("반올림하면 정수부가 13자리")
+        .contains("정수부는 최대 12자리");
+    assertThat(validateCell(service, amount, "-999999999999.9999995").error().error())
+        .contains("반올림하면");
+  }
+
+  @Test
+  void integer_bigintBoundary_andOverflowHasRangeMessage() throws Exception {
+    assertThat(service.convertValue(String.valueOf(Long.MAX_VALUE), "INTEGER"))
+        .isEqualTo(Long.MAX_VALUE);
+    assertThat(service.convertValue(String.valueOf(Long.MIN_VALUE), "INTEGER"))
+        .isEqualTo(Long.MIN_VALUE);
+
+    // Long.MAX_VALUE + 1 — 형식은 정수인데 BIGINT 범위 밖: "형식 아님"이 아니라 범위 초과로 안내한다.
+    assertThatThrownBy(() -> service.convertValue("9223372036854775808", "INTEGER"))
+        .hasMessageContaining("정수 범위를 벗어났습니다")
+        .hasMessageContaining("9223372036854775807");
+    assertThatThrownBy(() -> service.convertValue("-99,999,999,999,999,999,999", "INTEGER"))
+        .hasMessageContaining("정수 범위를 벗어났습니다");
+    // 숫자가 아닌 값은 기존 형식 오류 그대로
+    assertThatThrownBy(() -> service.convertValue("12a", "INTEGER"))
+        .hasMessageContaining("정수 형식이 아닙니다");
+  }
+
+  @Test
+  void physicalLimit_violation_isReportedByAllThreePaths() {
+    DatasetColumnResponse code = varcharCol("code", 3);
+    Map<String, String> row = new HashMap<>();
+    row.put("code", "abcd");
+
+    // 매핑 없는 경로 — 요약 문자열에 행·칸·사유
+    DataValidationService.ValidationResult plain =
+        service.validate(List.of(row), List.of(code), 249);
+    assertThat(plain.errors()).containsExactly("250행 'code' 컬럼 - 최대 3자까지 입력할 수 있습니다(입력 4자)");
+
+    // 삽입 변환(toRows)은 검증을 통과한 행만 받으므로, 제약 위반 행이 오면 조용히 넣지 않고 불변식 위반으로 실패한다.
+    assertThatThrownBy(() -> service.toRows(List.of(row), List.of(code), null))
+        .isInstanceOf(IllegalStateException.class);
+  }
+
+  @Test
+  void decimal_isNormalizedToPhysicalScale6_withPgRounding() {
+    DatasetColumnResponse amount = col("amount", "DECIMAL", true);
+    // 0.5 는 0 에서 먼 쪽으로 — 음수도 절댓값 기준(PG numeric 과 동일; DB 대조 테스트로 고정)
+    assertThat(validateCell(service, amount, "1.1234565").value())
+        .isEqualTo(new BigDecimal("1.123457"));
+    assertThat(validateCell(service, amount, "-0.0000005").value())
+        .isEqualTo(new BigDecimal("-0.000001"));
+    assertThat(validateCell(service, amount, "0.0000004").value())
+        .isEqualTo(new BigDecimal("0.000000"));
+    assertThat(validateCell(service, amount, "1.5").value()).isEqualTo(new BigDecimal("1.500000"));
+    assertThat(validateCell(service, amount, "1E11").value())
+        .isEqualTo(new BigDecimal("100000000000.000000"));
+  }
+
+  @Test
+  void decimal_tinyExponentAndLongFraction_areNormalizedInsteadOfFailingInDb() {
+    // PG numeric 은 지수 -1000 미만·소수부 1000자리 초과 리터럴을 22003 으로 거부한다 — 정규화해 넘기면 0/반올림 값으로 저장된다.
+    DatasetColumnResponse amount = col("amount", "DECIMAL", true);
+    assertThat(validateCell(service, amount, "1E-1001").value())
+        .isEqualTo(new BigDecimal("0.000000"));
+    assertThat(validateCell(service, amount, "-1E-1001").value())
+        .isEqualTo(new BigDecimal("0.000000"));
+    assertThat(validateCell(service, amount, "0." + "1".repeat(1500)).value())
+        .isEqualTo(new BigDecimal("0.111111"));
+  }
+
+  @Test
+  void varchar_excessOnlySpaces_isTruncatedLikePostgres_otherwiseRejected() {
+    DatasetColumnResponse code = varcharCol("code", 3);
+    // 따옴표 안 공백은 trim 뒤에도 남는다 — 초과분이 전부 공백이면 PG 처럼 잘라 저장한다(SQL 표준).
+    assertThat(validateCell(service, code, "\"abc   \"").value()).isEqualTo("abc");
+    assertThat(validateCell(service, code, "\"😀😀😀  \"").value()).isEqualTo("😀😀😀");
+    assertThat(validateCell(service, code, "\"abc  d\"").error().error())
+        .isEqualTo("최대 3자까지 입력할 수 있습니다(입력 6자)");
+    // 탭은 PG 기준 공백이 아니다
+    assertThat(validateCell(service, code, "\"abc\t\"").error()).isNotNull();
+  }
+
+  @Test
+  void nulCharacter_inTextOrVarchar_isRejectedWithRowAndColumn() {
+    var textErr = validateCell(service, col("memo", "TEXT", true), "a\u0000b").error();
+    assertThat(textErr.columnName()).isEqualTo("memo");
+    assertThat(textErr.error()).isEqualTo("저장할 수 없는 문자(NUL)가 포함되어 있습니다");
+    assertThat(validateCell(service, varcharCol("code", 10), "a\u0000b").error().error())
+        .isEqualTo("저장할 수 없는 문자(NUL)가 포함되어 있습니다");
   }
 }

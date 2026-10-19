@@ -3,6 +3,7 @@ package com.smartfirehub.dataimport.service;
 import com.smartfirehub.dataimport.dto.ColumnMappingEntry;
 import com.smartfirehub.dataimport.dto.ValidationErrorDetail;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
+import com.smartfirehub.dataset.service.ColumnPhysicalType;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -10,6 +11,7 @@ import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.*;
 import java.util.HashSet;
+import java.util.regex.Pattern;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -37,6 +39,9 @@ public class DataValidationService {
   // 필수값 누락 사유 문구. validate()가 요약 문자열을 조립할 때 이 값과 동일한지 비교해 문구를 분기하므로,
   // 리터럴을 여러 곳에 흩뿌리지 않고 상수 하나로 묶어 두 곳이 어긋나지 않게 한다.
   static final String REQUIRED_FIELD_EMPTY = "필수 값이 비어 있습니다";
+
+  /** 콤마 제거 후 부호와 숫자로만 이뤄진 값 — 정수 형식은 맞지만 BIGINT 범위를 넘는 경우를 형식 오류와 구분하기 위한 패턴. */
+  private static final Pattern INTEGER_LITERAL = Pattern.compile("[+-]?\\d+");
 
   public ValidationResult validate(
       List<Map<String, String>> rows, List<DatasetColumnResponse> columns) {
@@ -125,10 +130,23 @@ public class DataValidationService {
     return switch (dataType) {
       case "TEXT", "VARCHAR" -> value;
       case "INTEGER" -> {
+        // 천단위 콤마(예: "38,344") 제거 후 파싱. 임포트 데이터에 흔한 형식.
+        String digits = value.replace(",", "");
         try {
-          // 천단위 콤마(예: "38,344") 제거 후 파싱. 임포트 데이터에 흔한 형식.
-          yield Long.parseLong(value.replace(",", ""));
+          yield Long.parseLong(digits);
         } catch (NumberFormatException e) {
+          // 숫자로만 이뤄졌는데 파싱이 실패했다면 형식이 아니라 BIGINT(물리 타입) 범위 초과다 — 사용자가 "형식"을 고치려
+          // 헤매지 않도록 사유를 구분한다.
+          if (INTEGER_LITERAL.matcher(digits).matches()) {
+            throw new Exception(
+                "정수 범위를 벗어났습니다: "
+                    + value
+                    + " (허용 범위: "
+                    + Long.MIN_VALUE
+                    + " ~ "
+                    + Long.MAX_VALUE
+                    + ")");
+          }
           throw new Exception("정수 형식이 아닙니다: " + value);
         }
       }
@@ -353,7 +371,14 @@ public class DataValidationService {
 
       // Convert and validate based on data type
       try {
-        Object convertedValue = convertValue(rawValue.trim(), column.dataType());
+        // 형식 변환에 성공해도 물리 타입 제약(VARCHAR 길이·NUMERIC 정밀도·NUL 문자)을 넘으면 INSERT 단계에서 DB 오류로 잡
+        // 전체가 실패하고 사용자는 행·칸을 알 수 없다(WD-96). 사전검증·임포트 검증·삽입 변환이 모두 이 메서드를 지나므로 여기서
+        // 거부하고, 통과한 값은 DB 가 실제로 저장할 값으로 정규화해 넘긴다.
+        Object convertedValue =
+            ColumnPhysicalType.enforceLimits(
+                convertValue(rawValue.trim(), column.dataType()),
+                column.dataType(),
+                column.maxLength());
         convertedRow.add(convertedValue);
       } catch (Exception e) {
         errorSink.add(

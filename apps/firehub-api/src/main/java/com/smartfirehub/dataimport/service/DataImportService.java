@@ -11,6 +11,7 @@ import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.dto.DatasetResponse;
 import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
+import com.smartfirehub.dataset.service.DataExceptionTranslator;
 import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.global.tenant.TenantContext;
@@ -1082,6 +1083,14 @@ public class DataImportService {
   }
 
   private String toUserFriendlyMessage(Exception e) {
+    // DB 단계 데이터 오류(SQLState 22xxx)는 원인 체인의 SQLState 로 먼저 판정한다 — 메시지 문자열 매칭(아래 "Connection" 등)은
+    // 예외 메시지에 실린 SQL 문 텍스트에 걸릴 수 있어 순서상 앞에 둔다(WD-96).
+    // 사유 문장은 행 검증이 빠뜨린 값(메타데이터와 물리 타입 불일치 등)이 INSERT 에서 실패한 경우에도 무엇을 고칠지 알려 준다.
+    String dataErrorReason = DataExceptionTranslator.describe(e);
+    if (dataErrorReason != null) {
+      return "데이터 오류로 임포트에 실패했습니다: " + dataErrorReason + ". 파일의 값 또는 컬럼 설정을 확인해주세요.";
+    }
+
     String msg = e.getMessage() != null ? e.getMessage() : "";
 
     // Duplicate key (data table or async_job)
