@@ -154,7 +154,7 @@ class TempDatasetServiceTest {
             datasetRepository,
             datasetService,
             columnRepository,
-            new DataTableService(null, null, null));
+            new DataTableService(null));
     String col63 = "c_" + "x".repeat(61);
     String col64 = "c_" + "x".repeat(62);
 
