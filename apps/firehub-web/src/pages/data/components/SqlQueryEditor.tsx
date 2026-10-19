@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { AlertCircle, BarChart3,CheckCircle2, ExternalLink, Loader2, Play } from 'lucide-react';
-import { lazy,Suspense, useCallback, useState } from 'react';
+import { lazy,Suspense, useCallback, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
@@ -9,6 +9,7 @@ import { Button } from '../../../components/ui/button';
 import { Card } from '../../../components/ui/card';
 import { InlineBanner } from '../../../components/ui/inline-banner';
 import { useExecuteQuery } from '../../../hooks/queries/useDatasets';
+import { RUN_SHORTCUT_LABEL } from '../../../lib/sql-run-shortcut-label';
 import type { ErrorResponse } from '../../../types/auth';
 import type { DatasetColumnResponse, SqlQueryResponse } from '../../../types/dataset';
 import { SqlQueryHistory } from './SqlQueryHistory';
@@ -32,7 +33,12 @@ export function SqlQueryEditor({ datasetId, columns }: SqlQueryEditorProps) {
 
   const executeQuery = useExecuteQuery(datasetId);
 
+  // 실행 중 표시. 단축키 재입력·키 반복으로 같은 SQL 이 또 나가지 않게 막는다 — 버튼만 비활성이라 DML 이 두 번 적용될 수
+  // 있다(WD-87). isPending 은 다시 그려져야 바뀌어 빠른 연타를 놓치므로 렌더와 무관한 ref 로 판정한다.
+  const runningRef = useRef(false);
+
   const handleExecute = useCallback(async () => {
+    if (runningRef.current) return;
     const trimmed = sql.trim();
     if (!trimmed) {
       toast.error('SQL 쿼리를 입력하세요.');
@@ -40,6 +46,7 @@ export function SqlQueryEditor({ datasetId, columns }: SqlQueryEditorProps) {
     }
     setError(null);
     setResult(null);
+    runningRef.current = true;
     try {
       const data = await executeQuery.mutateAsync({ sql: trimmed });
       setResult(data);
@@ -53,6 +60,8 @@ export function SqlQueryEditor({ datasetId, columns }: SqlQueryEditorProps) {
       } else {
         setError('쿼리 실행에 실패했습니다.');
       }
+    } finally {
+      runningRef.current = false;
     }
   }, [sql, executeQuery]);
 
@@ -74,7 +83,8 @@ export function SqlQueryEditor({ datasetId, columns }: SqlQueryEditorProps) {
           onSelect={handleLoadFromHistory}
         />
         <div className="flex-1" />
-        <span className="text-xs text-muted-foreground">Cmd+Enter로 실행</span>
+        {/* 단축키 안내는 플랫폼별(Cmd/Ctrl) — 분석 쿼리 편집기와 같은 문구(WD-87) */}
+        <span className="text-xs text-muted-foreground">{RUN_SHORTCUT_LABEL}</span>
         <Button
           size="sm"
           onClick={handleExecute}

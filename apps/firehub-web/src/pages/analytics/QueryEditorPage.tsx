@@ -61,6 +61,8 @@ import {
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
 import { extractApiError, handleApiError, handleApiErrorAsync } from '../../lib/api-error';
 import { downloadBlob, filenameFromContentDisposition } from '../../lib/download';
+import { sqlRunShortcut } from '../../lib/sql-run-shortcut';
+import { RUN_SHORTCUT_LABEL } from '../../lib/sql-run-shortcut-label';
 import { cn } from '../../lib/utils';
 import type { AnalyticsQueryResult } from '../../types/analytics';
 import type { ExportFormat } from '../../types/export';
@@ -105,18 +107,13 @@ function AnalyticsSqlEditor({
         oneDark,
         history(),
         autocompletion(),
+        // 실행 단축키 — 기본 키맵보다 우선해야 Mod-Enter 가 빈 줄 대신 실행된다(WD-87)
+        sqlRunShortcut(() => onExecuteRef.current()),
         keymap.of([
           ...completionKeymap,
           ...defaultKeymap,
           ...historyKeymap,
           ...searchKeymap,
-          {
-            key: 'Mod-Enter',
-            run: () => {
-              onExecuteRef.current();
-              return true;
-            },
-          },
         ]),
         EditorView.updateListener.of((update) => {
           if (update.docChanged) {
@@ -506,11 +503,17 @@ export default function QueryEditorPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isNew]);
 
+  // 실행 중 표시. 단축키 재입력·키 반복으로 같은 SQL 이 또 나가지 않게 막는다 — 버튼만 비활성이라 DML 이 두 번 적용될 수
+  // 있다(WD-87). isPending 은 다시 그려져야 바뀌어 빠른 연타를 놓치므로 렌더와 무관한 ref 로 판정한다.
+  const runningRef = useRef(false);
+
   const handleExecute = useCallback(async () => {
+    if (runningRef.current) return;
     if (!sql.trim()) {
       toast.error('실행할 SQL을 입력하세요.');
       return;
     }
+    runningRef.current = true;
     try {
       const res = await executeQuery.mutateAsync({ sql, maxRows: 1000 });
       setResult(res);
@@ -529,6 +532,8 @@ export default function QueryEditorPage() {
         setResult(null);
       }
       handleApiError(error, '쿼리 실행에 실패했습니다.');
+    } finally {
+      runningRef.current = false;
     }
   }, [sql, executeQuery]);
 
@@ -800,7 +805,7 @@ export default function QueryEditorPage() {
               )}
             </Button>
             <span className="text-xs text-muted-foreground">
-              {/mac/i.test(navigator.userAgent) ? 'Cmd' : 'Ctrl'}+Enter로 실행
+              {RUN_SHORTCUT_LABEL}
             </span>
           </div>
 

@@ -7,6 +7,8 @@ import { oneDark } from '@codemirror/theme-one-dark';
 import { EditorView, keymap } from '@codemirror/view';
 import { useEffect,useRef } from 'react';
 
+import { sqlRunShortcut } from '../../../lib/sql-run-shortcut';
+
 interface CodeMirrorEditorProps {
   value: string;
   onChange: (value: string) => void;
@@ -39,17 +41,12 @@ export function CodeMirrorEditor({ value, onChange, onExecute, columnNames }: Co
         oneDark,
         history(),
         autocompletion(),
+        // 실행 단축키 — 기본 키맵보다 우선해야 Mod-Enter 가 빈 줄 대신 실행된다(WD-87)
+        sqlRunShortcut(() => onExecuteRef.current()),
         keymap.of([
           ...defaultKeymap,
           ...historyKeymap,
           ...searchKeymap,
-          {
-            key: 'Mod-Enter',
-            run: () => {
-              onExecuteRef.current();
-              return true;
-            },
-          },
         ]),
         EditorView.updateListener.of((update) => {
           if (update.docChanged) {
