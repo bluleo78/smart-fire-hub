@@ -86,6 +86,61 @@ class AnalyticsQueryExecutionServiceTest extends IntegrationTestBase {
   }
 
   // =========================================================================
+  // 같은 이름 컬럼 (WD-85) — 행을 이름 키 Map 으로 담으므로 겹치면 앞 값이 덮였다
+  // =========================================================================
+
+  @Test
+  void execute_duplicateColumnNames_keepsEachValueUnderUniqueName() {
+    AnalyticsQueryResponse response = executionService.execute("SELECT 1 AS a, 2 AS a", 100, true);
+
+    assertThat(response.error()).isNull();
+    assertThat(response.columns()).containsExactly("a", "a_2");
+    assertThat(response.rows().get(0)).containsEntry("a", 1).containsEntry("a_2", 2);
+  }
+
+  @Test
+  void execute_duplicateColumnNames_skipsSuffixAlreadyTakenByUserColumn() {
+    // 사용자가 이미 a_2 를 쓰면 다음 빈 번호(a_3)를 붙인다
+    AnalyticsQueryResponse response =
+        executionService.execute("SELECT 1 AS a, 2 AS a_2, 3 AS a", 100, true);
+
+    assertThat(response.columns()).containsExactly("a", "a_2", "a_3");
+    assertThat(response.rows().get(0))
+        .containsEntry("a", 1)
+        .containsEntry("a_2", 2)
+        .containsEntry("a_3", 3);
+  }
+
+  @Test
+  void execute_joinWithSameColumnNames_returnsBothSidesValues() {
+    AnalyticsQueryResponse response =
+        executionService.execute(
+            "SELECT s.name, t.name FROM data.exec_test s JOIN data.exec_test t"
+                + " ON t.value = s.value + 10",
+            100,
+            true);
+
+    assertThat(response.columns()).containsExactly("name", "name_2");
+    assertThat(response.rows()).hasSize(1);
+    assertThat(response.rows().get(0))
+        .containsEntry("name", "Alice")
+        .containsEntry("name_2", "Bob");
+  }
+
+  @Test
+  void execute_duplicateColumnNamesWithGeometry_wrapsWithUniqueNames() {
+    // GEOMETRY 가 있으면 ST_AsGeoJSON 래핑 CTE 로 다시 실행한다 — 이름이 겹치면 바깥 SELECT 가 모호해 실패했다
+    AnalyticsQueryResponse response =
+        executionService.execute(
+            "SELECT 1 AS id, 2 AS id, ST_SetSRID(ST_MakePoint(127, 37), 4326) AS geom", 100, true);
+
+    assertThat(response.error()).isNull();
+    assertThat(response.columns()).containsExactly("id", "id_2", "geom");
+    assertThat(response.rows().get(0)).containsEntry("id", 1).containsEntry("id_2", 2);
+    assertThat(String.valueOf(response.rows().get(0).get("geom"))).contains("\"Point\"");
+  }
+
+  // =========================================================================
   // DML execution — readOnly flag enforcement
   // =========================================================================
 

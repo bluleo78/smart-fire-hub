@@ -457,7 +457,7 @@ def test_build_geojson_wrapped_sql():
     column_metas = [("id", False), ("geom", True), ("name", False)]
     result = _build_geojson_wrapped_sql("SELECT id, geom, name FROM t", column_metas)
 
-    assert result.startswith("WITH _src AS (\nSELECT id, geom, name FROM t\n) SELECT")
+    assert result.startswith('WITH _src("id", "geom", "name") AS (\nSELECT id, geom, name FROM t\n) SELECT')
     assert 'public.ST_AsGeoJSON("geom") AS "geom"' in result
     assert '"id"' in result
     assert '"name"' in result
@@ -894,3 +894,82 @@ def test_original_failure_without_sqlstate_still_retries_with_wrap():
 
     assert result.success is True
     assert any("ST_AsGeoJSON" in s for s in executed), executed
+
+
+# ---------------------------------------------------------------------------
+# 같은 이름 컬럼 (WD-85) — 행을 이름 키 dict 로 담으므로 겹치면 앞 값이 덮였다
+# ---------------------------------------------------------------------------
+
+def test_duplicate_column_names_keep_each_value_under_unique_name():
+    cursor = make_cursor(
+        description=[("a", 23, None, None, None, None, None), ("a", 23, None, None, None, None, None)],
+        fetchall_return=[(1, 2)],
+    )
+    conn = make_conn(cursor)
+
+    result = execute_query("SELECT 1 AS a, 2 AS a", max_rows=1000, read_only=True, conn=conn, tenant_id=1)
+
+    assert result.success is True
+    assert result.columns == ["a", "a_2"]
+    assert result.rows == [{"a": 1, "a_2": 2}]
+
+
+def test_build_geojson_wrapped_sql_aliases_duplicate_names_in_cte():
+    """CTE 별칭으로 고유 이름을 붙여 바깥 SELECT 의 같은 이름이 모호해지지 않게 한다."""
+    sql = _build_geojson_wrapped_sql("SELECT 1 AS id, 2 AS id, g", [("id", False), ("id_2", False), ("g", True)])
+
+    assert sql.startswith('WITH _src("id", "id_2", "g") AS (\n')
+    assert sql.endswith('SELECT "id", "id_2", public.ST_AsGeoJSON("g") AS "g" FROM _src')
+
+
+def test_duplicate_column_names_with_geometry_wrap_uses_unique_names():
+    """성공 경로 geometry 래핑에서도 같은 이름 컬럼이 각 값을 유지한다."""
+    GEOM_OID = 16000
+    executed_sqls = []
+    state = {"wrapped": False}
+
+    cursor = MagicMock()
+    cursor.rowcount = 0
+    cursor.description = [
+        ("id", 23, None, None, None, None, None),
+        ("id", 23, None, None, None, None, None),
+        ("geom", GEOM_OID, None, None, None, None, None),
+    ]
+
+    def execute_side(sql, *args, **kwargs):
+        executed_sqls.append(sql)
+        if "ST_AsGeoJSON" in sql:
+            state["wrapped"] = True
+            # CTE 별칭 덕분에 래핑 결과의 컬럼 이름은 이미 고유하다
+            cursor.description = [
+                ("id", 23, None, None, None, None, None),
+                ("id_2", 23, None, None, None, None, None),
+                ("geom", 25, None, None, None, None, None),
+            ]
+
+    def fetchall_side():
+        if state["wrapped"]:
+            return [(1, 2, '{"type":"Point","coordinates":[1,2]}')]
+        return [(1, 2, "0101000000AABBCCDD")]
+
+    cursor.execute.side_effect = execute_side
+    cursor.fetchall.side_effect = fetchall_side
+
+    geom_cursor = MagicMock()
+    geom_cursor.fetchall.return_value = [(GEOM_OID,)]
+    side_conn = MagicMock()
+    side_conn.cursor.return_value = geom_cursor
+    cursor.connection = side_conn
+
+    conn = MagicMock()
+    conn.cursor.return_value = cursor
+
+    result = execute_query(
+        "SELECT a.id, b.id, a.geom FROM t a JOIN t b ON true", max_rows=1000, read_only=True, conn=conn, tenant_id=1
+    )
+
+    assert result.success is True
+    wrapped = [s for s in executed_sqls if "ST_AsGeoJSON" in s]
+    assert wrapped and wrapped[0].startswith('WITH _src("id", "id_2", "geom") AS (')
+    assert result.columns == ["id", "id_2", "geom"]
+    assert result.rows == [{"id": 1, "id_2": 2, "geom": '{"type":"Point","coordinates":[1,2]}'}]

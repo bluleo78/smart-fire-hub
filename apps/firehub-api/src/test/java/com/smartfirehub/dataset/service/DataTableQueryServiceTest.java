@@ -104,6 +104,16 @@ class DataTableQueryServiceTest extends IntegrationTestBase {
     assertThat(response.columns()).contains("name", "value");
   }
 
+  /** 정상: 같은 이름 컬럼은 고유 이름으로 나뉘어 각 값을 그대로 담는다 — 앞 값이 덮이면 안 된다(WD-85) */
+  @Test
+  void executeQuery_select_duplicateColumnNames_keepsEachValue() {
+    SqlQueryResponse response = dataTableQueryService.executeQuery("SELECT 1 AS a, 2 AS a", 100);
+
+    assertThat(response.error()).isNull();
+    assertThat(response.columns()).containsExactly("a", "a_2");
+    assertThat(response.rows().get(0)).containsEntry("a", 1).containsEntry("a_2", 2);
+  }
+
   /** 정상: LIMIT 없는 SELECT에 maxRows가 자동으로 주입된다 */
   @Test
   void executeQuery_select_withoutLimit_injectsMaxRows() {

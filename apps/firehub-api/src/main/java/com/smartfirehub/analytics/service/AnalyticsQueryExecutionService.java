@@ -9,6 +9,7 @@ import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.util.AdhocResultValues;
 import com.smartfirehub.global.util.AdhocSqlStatements;
 import com.smartfirehub.global.util.NormalizedSql;
+import com.smartfirehub.global.util.ResultColumnNames;
 import com.smartfirehub.global.util.SqlLexicalMask;
 import com.smartfirehub.global.util.SqlValidationUtils;
 import com.smartfirehub.pipeline.exception.UnsafeSqlException;
@@ -241,13 +242,19 @@ public class AnalyticsQueryExecutionService {
           result = AdhocSqlStatements.fetch(dsl, wrappedSql);
         }
 
+        // 행을 컬럼 이름 키 Map 으로 담으므로 JOIN 의 id·region 처럼 이름이 겹치면 앞 값이 덮인다(WD-85).
+        // 겹치는 이름에 번호를 붙여 고유하게 만들고, 값은 이름이 아닌 위치로 읽는다. 아래 GeoJSON 래핑은 이
+        // 이름을 CTE 별칭으로 붙이므로 래핑한 결과의 컬럼도 같은 이름·순서다.
+        List<String> columns = ResultColumnNames.unique(result.fields());
+
         // Detect GEOMETRY/GEOGRAPHY columns from successfully fetched PGobject data
         // (covers cases where JDBC read succeeded but data is raw binary)
-        Set<String> geomColumns = detectGeometryColumns(result);
+        Set<Integer> geomColumns = detectGeometryColumns(result);
         if (!geomColumns.isEmpty()) {
+          // 같은 이름 컬럼이 있어도 위치로 판정한다(WD-85)
           List<ColumnMeta> metas = new ArrayList<>();
-          for (var field : result.fields()) {
-            metas.add(new ColumnMeta(field.getName(), geomColumns.contains(field.getName())));
+          for (int i = 0; i < columns.size(); i++) {
+            metas.add(new ColumnMeta(columns.get(i), geomColumns.contains(i)));
           }
           String wrappedSql = buildGeoJsonWrappedSql(cleanSql, metas);
           // 판정은 사용자 SQL 로 한다 — 래핑 CTE 안의 제한은 최상위가 아니다. LIMIT ALL 이면 안쪽은
@@ -260,17 +267,12 @@ public class AnalyticsQueryExecutionService {
 
         long executionTimeMs = System.currentTimeMillis() - startTime;
 
-        List<String> columns = new ArrayList<>();
-        for (var field : result.fields()) {
-          columns.add(field.getName());
-        }
-
         List<Map<String, Object>> rows = new ArrayList<>();
         for (var record : result) {
           Map<String, Object> row = new HashMap<>();
-          for (var field : result.fields()) {
+          for (int i = 0; i < columns.size(); i++) {
             // jsonb/json/xml/interval 등 Jackson 이 못 쓰는 값은 PG 텍스트로 바꾼다(#756)
-            row.put(field.getName(), AdhocResultValues.toResponseValue(record.get(field)));
+            row.put(columns.get(i), AdhocResultValues.toResponseValue(record.get(i)));
           }
           rows.add(row);
         }
@@ -494,13 +496,15 @@ public class AnalyticsQueryExecutionService {
    * Detect GEOMETRY/GEOGRAPHY columns by inspecting PGobject type via reflection. PostgreSQL driver
    * is runtime-only, so we cannot import PGobject directly.
    */
-  private Set<String> detectGeometryColumns(org.jooq.Result<?> result) {
-    Set<String> geomColumns = new LinkedHashSet<>();
+  private Set<Integer> detectGeometryColumns(org.jooq.Result<?> result) {
+    // 이름이 겹치는 컬럼도 구분하도록 위치(0부터)로 돌려준다(WD-85)
+    Set<Integer> geomColumns = new LinkedHashSet<>();
     if (result.isEmpty()) return geomColumns;
 
     var firstRecord = result.get(0);
-    for (var field : result.fields()) {
-      Object val = firstRecord.get(field);
+    int fieldCount = result.fields().length;
+    for (int i = 0; i < fieldCount; i++) {
+      Object val = firstRecord.get(i);
       if (val != null && "org.postgresql.util.PGobject".equals(val.getClass().getName())) {
         try {
           String pgType = (String) val.getClass().getMethod("getType").invoke(val);
@@ -509,7 +513,7 @@ public class AnalyticsQueryExecutionService {
           if (pgType != null
               && (pgType.toLowerCase().contains("geometry")
                   || pgType.toLowerCase().contains("geography"))) {
-            geomColumns.add(field.getName());
+            geomColumns.add(i);
           }
         } catch (ReflectiveOperationException ignored) {
           // Not accessible — skip
@@ -528,7 +532,8 @@ public class AnalyticsQueryExecutionService {
    */
   private List<ColumnMeta> detectColumnsViaMetadata(String sql) {
     List<ColumnMeta> columns = new ArrayList<>();
-    String metaSql = "SELECT * FROM (" + sql + ") _geom_detect LIMIT 0";
+    // 사용자 SQL 을 자기 줄에 얹는다(#741) — 끝이 한 줄 주석(--)이면 닫는 괄호까지 주석이 된다(executor 와 같은 형태)
+    String metaSql = "SELECT * FROM (\n" + sql + "\n) _geom_detect LIMIT 0";
     dsl.connection(
         conn -> {
           // 사용자 SQL 이 들어가므로 정적 Statement 로 원문 그대로 보낸다(#753 — ? 를 바인드 자리로 오해하지 않게).
@@ -546,6 +551,11 @@ public class AnalyticsQueryExecutionService {
             }
           }
         });
+    // 래핑 CTE 가 컬럼을 이름으로 가리키므로 겹치는 이름은 고유하게 바꾼다(WD-85)
+    List<String> unique = ResultColumnNames.unique(columns.stream().map(ColumnMeta::name).toList());
+    for (int i = 0; i < unique.size(); i++) {
+      columns.set(i, new ColumnMeta(unique.get(i), columns.get(i).isGeometry()));
+    }
     return columns;
   }
 
@@ -554,9 +564,17 @@ public class AnalyticsQueryExecutionService {
    * NOT append LIMIT — caller adds it if needed.
    */
   private String buildGeoJsonWrappedSql(String originalSql, List<ColumnMeta> columns) {
-    StringBuilder sb = new StringBuilder("WITH _src AS (");
+    // CTE 컬럼 별칭으로 원래 이름 대신 columns 의 (고유한) 이름을 붙인다 — 같은 이름 컬럼이 있으면
+    // 바깥 SELECT 의 "id" 가 모호해 실행이 실패하기 때문이다(WD-85).
+    StringBuilder sb = new StringBuilder("WITH _src(");
+    for (int i = 0; i < columns.size(); i++) {
+      if (i > 0) sb.append(", ");
+      sb.append("\"").append(columns.get(i).name().replace("\"", "\"\"")).append("\"");
+    }
+    sb.append(") AS (\n");
     sb.append(originalSql);
-    sb.append(") SELECT ");
+    // 사용자 SQL 을 자기 줄에 얹는다(#741) — 끝의 한 줄 주석(--)이 닫는 괄호를 삼키지 않게
+    sb.append("\n) SELECT ");
     boolean first = true;
     for (var col : columns) {
       if (!first) sb.append(", ");

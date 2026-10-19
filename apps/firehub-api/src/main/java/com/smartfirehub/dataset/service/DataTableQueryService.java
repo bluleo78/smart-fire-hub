@@ -6,6 +6,7 @@ import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.util.AdhocResultValues;
 import com.smartfirehub.global.util.AdhocSqlStatements;
 import com.smartfirehub.global.util.NormalizedSql;
+import com.smartfirehub.global.util.ResultColumnNames;
 import com.smartfirehub.global.util.SqlLexicalMask;
 import com.smartfirehub.global.util.SqlValidationUtils;
 import com.smartfirehub.pipeline.service.validator.SqlValidator;
@@ -108,23 +109,26 @@ public class DataTableQueryService {
         // Filter out system columns (id, import_id, created_at, _updated_at)
         Set<String> systemColumns = DataTableService.SYSTEM_COLUMNS;
 
-        List<String> columns = new ArrayList<>();
+        List<String> visibleNames = new ArrayList<>();
         List<Integer> visibleIndices = new ArrayList<>();
         for (int i = 0; i < result.fields().length; i++) {
           String colName = result.fields()[i].getName();
           if (!systemColumns.contains(colName)) {
-            columns.add(colName);
+            visibleNames.add(colName);
             visibleIndices.add(i);
           }
         }
+        // 행을 이름 키 Map 으로 담으므로 JOIN 의 같은 이름 컬럼은 고유하게 바꾼다 — 안 그러면 앞 값이 덮인다(WD-85)
+        List<String> columns = ResultColumnNames.unique(visibleNames);
 
         List<Map<String, Object>> rows = new ArrayList<>();
         for (var record : result) {
           Map<String, Object> row = new HashMap<>();
-          for (int idx : visibleIndices) {
+          for (int i = 0; i < visibleIndices.size(); i++) {
             // jsonb/json/xml/interval 등 Jackson 이 못 쓰는 값은 PG 텍스트로 바꾼다(#756)
             row.put(
-                record.field(idx).getName(), AdhocResultValues.toResponseValue(record.get(idx)));
+                columns.get(i),
+                AdhocResultValues.toResponseValue(record.get(visibleIndices.get(i))));
           }
           rows.add(row);
         }

@@ -51,6 +51,36 @@ def _fetch_geom_oids(conn) -> frozenset[int]:
     return oids
 
 
+def _unique_column_names(names: List[str]) -> List[str]:
+    """결과 컬럼 이름을 겹치지 않게 만든다(WD-85).
+
+    행을 컬럼 이름 키 dict 로 돌려주므로 JOIN 의 id·region 처럼 이름이 겹치면 앞 값이 뒤 값으로 덮였다.
+    처음 나온 이름은 그대로 두고, 두 번째부터 같은 이름에는 _2, _3 … 을 붙인다. 사용자가 직접 쓴 이름
+    (예: a_2)과 겹치는 번호는 건너뛴다. api 의 ResultColumnNames.unique 와 같은 규칙이어야 저장한 차트가
+    실행 경로(직접/executor)와 상관없이 같은 컬럼을 찾는다 — 공용 픽스처
+    firehub-api/src/test/resources/fixtures/result-column-name-vectors.json 으로 대조한다.
+    """
+    original = set(names)
+    used: set[str] = set()
+    result: List[str] = []
+    for name in names:
+        unique = name
+        if name in used:
+            n = 2
+            # 뒤에 나올 사용자 컬럼 이름과도 겹치지 않게 원래 이름 전체를 피한다
+            while f"{name}_{n}" in used or f"{name}_{n}" in original:
+                n += 1
+            unique = f"{name}_{n}"
+        used.add(unique)
+        result.append(unique)
+    return result
+
+
+def _column_names(cursor) -> List[str]:
+    """커서 결과의 컬럼 이름을 고유하게 바꿔 돌려준다(WD-85)."""
+    return _unique_column_names([d[0] for d in cursor.description]) if cursor.description else []
+
+
 def _detect_geometry_columns(cursor, sql: str) -> List[Tuple[str, bool]]:
     """Detect column names and whether they are geometry via LIMIT 0 + pg_type lookup."""
     conn = cursor.connection
@@ -62,11 +92,13 @@ def _detect_geometry_columns(cursor, sql: str) -> List[Tuple[str, bool]]:
 
     geom_oids = _fetch_geom_oids(conn)
 
-    columns: List[Tuple[str, bool]] = []
-    for desc in meta_cursor.description or []:
-        col_name = desc[0]
-        type_oid = desc[1]  # type_code in psycopg2
-        columns.append((col_name, type_oid in geom_oids))
+    descs = list(meta_cursor.description or [])
+    # 래핑 CTE 가 컬럼을 이름으로 가리키므로 겹치는 이름은 고유하게 바꾼다(WD-85)
+    names = _unique_column_names([desc[0] for desc in descs])
+    # desc[1] = type_code in psycopg2
+    columns: List[Tuple[str, bool]] = [
+        (name, desc[1] in geom_oids) for name, desc in zip(names, descs)
+    ]
 
     meta_cursor.close()
     return columns
@@ -85,8 +117,11 @@ def _build_geojson_wrapped_sql(
             )
         else:
             select_parts.append(f'"{escaped}"')
+    # CTE 컬럼 별칭으로 원래 이름 대신 column_metas 의 (고유한) 이름을 붙인다 — 같은 이름 컬럼이 있으면
+    # 바깥 SELECT 의 "id" 가 모호해 실행이 실패하기 때문이다(WD-85).
+    aliases = ", ".join('"' + col_name.replace('"', '""') + '"' for col_name, _ in column_metas)
     # 사용자 SQL 을 자기 줄에 얹는다(#741) — 위 _detect_geometry_columns 와 같은 이유.
-    return f"WITH _src AS (\n{original_sql}\n) SELECT {', '.join(select_parts)} FROM _src"
+    return f"WITH _src({aliases}) AS (\n{original_sql}\n) SELECT {', '.join(select_parts)} FROM _src"
 
 
 def _exec_geojson_wrapped(
@@ -99,7 +134,7 @@ def _exec_geojson_wrapped(
     if not _has_limit(clean_sql):
         wrapped_sql = _add_limit(wrapped_sql, max_rows)
     cursor.execute(wrapped_sql)
-    columns = [d[0] for d in cursor.description] if cursor.description else []
+    columns = _column_names(cursor)
     raw_rows = cursor.fetchall()
     return columns, [dict(zip(columns, row)) for row in raw_rows]
 
@@ -525,7 +560,8 @@ def execute_query(
 
             try:
                 cursor.execute(sql_to_run)
-                columns = [desc[0] for desc in cursor.description] if cursor.description else []
+                # 행을 이름 키 dict 로 담으므로 같은 이름 컬럼은 고유하게 바꾼다 — 안 그러면 앞 값이 덮인다(WD-85)
+                columns = _column_names(cursor)
                 raw_rows = cursor.fetchall()
                 rows = [dict(zip(columns, row)) for row in raw_rows]
             except Exception as exc:
@@ -556,8 +592,9 @@ def execute_query(
             if rows and original_error is None and cursor.description:
                 desc_snapshot = list(cursor.description)
                 geom_oids = _fetch_geom_oids(cursor.connection)
+                # 이름은 위에서 고유하게 만든 columns 를 쓴다 — 래핑 CTE 별칭·컬럼 격리가 이름으로 구분한다(WD-85)
                 column_metas = [
-                    (desc[0], desc[1] in geom_oids) for desc in desc_snapshot
+                    (name, desc[1] in geom_oids) for name, desc in zip(columns, desc_snapshot)
                 ]
                 if any(is_geom for _, is_geom in column_metas):
                     orig_columns, orig_rows = columns, rows

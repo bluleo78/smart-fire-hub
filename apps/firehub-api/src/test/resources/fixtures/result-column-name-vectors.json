@@ -1,0 +1,16 @@
+{
+  "_comment": "WD-85 — api ResultColumnNames.unique 와 executor query_executor._unique_column_names 가 함께 읽는 공용 벡터. 한쪽 규칙만 바꾸면 다른 쪽 테스트가 깨진다.",
+  "unique": [
+    {"in": ["a"], "out": ["a"]},
+    {"in": ["id", "name", "region"], "out": ["id", "name", "region"]},
+    {"in": [], "out": []},
+    {"in": ["a", "a"], "out": ["a", "a_2"]},
+    {"in": ["a", "a", "a"], "out": ["a", "a_2", "a_3"]},
+    {"in": ["a", "a_2", "a"], "out": ["a", "a_2", "a_3"]},
+    {"in": ["a", "a", "a_2"], "out": ["a", "a_3", "a_2"]},
+    {"in": ["id", "id", "region", "region"], "out": ["id", "id_2", "region", "region_2"]},
+    {"in": ["?column?", "?column?"], "out": ["?column?", "?column?_2"]},
+    {"in": ["이름", "이름"], "out": ["이름", "이름_2"]},
+    {"in": ["A", "a", "a"], "out": ["A", "a", "a_2"]}
+  ]
+}
