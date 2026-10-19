@@ -28,8 +28,18 @@ class DataTableRowServiceFacadeTest extends IntegrationTestBase {
   private static final List<DatasetColumnRequest> COLUMNS =
       List.of(new DatasetColumnRequest("name", "Name", "TEXT", null, true, false, null));
 
+  /** 타입 힌트가 SQL 을 바꾸는 컬럼(INTEGER → ?::integer)을 포함한 정의 — 두 오버로드가 다른 SQL 을 만든다. */
+  private static final List<DatasetColumnRequest> TYPED_COLUMNS =
+      List.of(
+          new DatasetColumnRequest("name", "Name", "TEXT", null, true, false, null),
+          new DatasetColumnRequest("qty", "Qty", "INTEGER", null, true, false, null));
+
   private static List<Map<String, Object>> twoRows() {
     return List.of(Map.of("name", "a"), Map.of("name", "b"));
+  }
+
+  private static List<Map<String, Object>> twoTypedRows() {
+    return List.of(Map.of("name", "a", "qty", 1), Map.of("name", "b", "qty", 2));
   }
 
   @Test
@@ -37,18 +47,29 @@ class DataTableRowServiceFacadeTest extends IntegrationTestBase {
   void 짧은_오버로드와_긴_오버로드는_같은_결과를_만든다() {
     String shortTable = "facade_rows_s_" + System.nanoTime();
     String longTable = "facade_rows_l_" + System.nanoTime();
-    dataTableService.createTable(shortTable, COLUMNS);
-    dataTableService.createTable(longTable, COLUMNS);
+    dataTableService.createTable(shortTable, TYPED_COLUMNS);
+    dataTableService.createTable(longTable, TYPED_COLUMNS);
 
-    dataTableRowService.insertBatch(shortTable, List.of("name"), twoRows());
-    dataTableRowService.insertBatch(longTable, List.of("name"), twoRows(), Map.of("name", "TEXT"));
+    var cols = List.of("name", "qty");
+    // 짧은 오버로드는 타입 힌트 없이(?), 긴 오버로드는 ?::integer 로 SQL 을 만든다 — 그래도 결과는 같아야 한다.
+    dataTableRowService.insertBatch(shortTable, cols, twoTypedRows());
+    dataTableRowService.insertBatch(
+        longTable, cols, twoTypedRows(), Map.of("name", "TEXT", "qty", "INTEGER"));
 
     var shortRows = names(shortTable);
     var longRows = names(longTable);
     assertThat(longRows).isEqualTo(shortRows).containsExactly("a", "b");
+    assertThat(qtys(longTable)).isEqualTo(qtys(shortTable)).containsExactly(1L, 2L);
     // 같은 두 행을 두 테이블에 넣었으므로 합계는 4 — 각 테이블은 2행
     assertThat(dataTableRowService.countRows(shortTable) + dataTableRowService.countRows(longTable))
         .isEqualTo(4);
+  }
+
+  /** 테이블의 qty 컬럼 값만 조회 순서대로 뽑는다. */
+  private List<Object> qtys(String table) {
+    return dataTableRowService.queryData(table, List.of("qty"), null, 0, 10).stream()
+        .map(r -> r.get("qty"))
+        .toList();
   }
 
   /** 테이블의 name 컬럼 값만 조회 순서대로 뽑는다. */

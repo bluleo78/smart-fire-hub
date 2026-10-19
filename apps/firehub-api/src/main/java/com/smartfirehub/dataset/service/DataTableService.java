@@ -230,6 +230,8 @@ public class DataTableService {
    * @param rowsWritten 임시 테이블에 실제로 적재된 행 수
    */
   public void finishReplace(String tableName, long rowsWritten) {
+    // 테넌트 해석 전에 이름부터 검증한다(기존 동작 유지).
+    DataTableNames.validate(tableName);
     resolver.tableStore().finishReplace(tableName, rowsWritten);
   }
 

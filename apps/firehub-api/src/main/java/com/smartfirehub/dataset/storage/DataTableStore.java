@@ -24,7 +24,13 @@ public interface DataTableStore {
   /** 이 구현이 담당하는 백엔드. */
   DataStoreBackend backend();
 
-  /** 테이블을 만든다. 이름·컬럼 정의가 잘못되면 예외를 던진다. 호출자 트랜잭션에 참여한다. */
+  /**
+   * 테이블을 만든다. 이름·컬럼 정의가 잘못되면 예외를 던진다. 호출자 트랜잭션에 참여한다.
+   *
+   * <p>계약: 같은 이름의 기존 테이블(고아 테이블)이 있으면 먼저 지운다. 이어서 시스템 컬럼과 사용자 컬럼으로 테이블을 만들고, 인덱스 지정 컬럼의 인덱스와 PK 컬럼
+   * 기준 유니크 인덱스를 만들며, {@value #UPDATED_AT_COLUMN} 갱신 트리거와 인덱스를 설치한다. 마지막으로 Python 읽기 슬롯 GRANT 를 커밋
+   * 후에 맞추도록 예약한다.
+   */
   void createTable(String tableName, List<DatasetColumnRequest> columns);
 
   /** 기존 테이블에 컬럼을 추가한다. 호출자 트랜잭션에 참여한다. */
@@ -45,10 +51,29 @@ public interface DataTableStore {
   /** REPLACE 적재용 임시(staging) 테이블 {@code {tableName}_tmp} 를 만든다. */
   void createTempTable(String tableName);
 
-  /** REPLACE 적재를 마무리한다 — 쓴 행이 있으면 맞바꾸고, 없으면 임시 테이블만 버린다. */
-  void finishReplace(String tableName, long rowsWritten);
+  /**
+   * REPLACE 적재를 마무리한다 — <b>쓴 행이 있을 때만</b> 맞바꾸고, 없으면 임시 테이블만 버린다.
+   *
+   * <p>"빈 결과는 기존 데이터를 파괴하지 않는다"는 제품 결정(#685)이다. 이 판단이 실행기마다 흩어져 있던 탓에 호출부 중 일부가 무조건 {@link
+   * #swapTable} 을 불렀고, 2026-09-18 운영에서 AI 분류가 전량 실패해 0행이 나오자 빈 임시 테이블이 원본을 덮어 10건이 사라졌다. 정책을 {@code
+   * swapTable} 안에 숨기면 "swap" 이름이 거짓말이 되므로 이름이 있는 이 자리에 둔다.
+   *
+   * <p>백엔드 중립 규칙이므로 {@code default} 로 제공한다. 구현체는 이 메서드를 재정의해 무조건 맞바꾸면 안 된다 — {@link
+   * #swapTable}·{@link #dropTempTable} 만 구현한다.
+   *
+   * <p>부분 실패(일부 배치만 성공)는 구분하지 않는다 — 성공한 행이 있으면 맞바꾼다. 그것이 {@code onError=CONTINUE} 를 고른 쪽의 선택이다.
+   *
+   * @param rowsWritten 임시 테이블에 실제로 적재된 행 수
+   */
+  default void finishReplace(String tableName, long rowsWritten) {
+    if (rowsWritten > 0) {
+      swapTable(tableName);
+    } else {
+      dropTempTable(tableName);
+    }
+  }
 
-  /** 임시 테이블과 원본을 맞바꾼다. 호출자 트랜잭션에 참여한다. */
+  /** 임시 테이블과 원본을 맞바꾼다. 원본 삭제와 리네임을 구현체 자체의 트랜잭션 블록 안에서 원자적으로 실행한다(호출자 트랜잭션이 있으면 그 안에 중첩된다). */
   void swapTable(String tableName);
 
   /** 임시(staging) 테이블이 있으면 버린다. 실패 시 원본 보존용. */
