@@ -6,11 +6,11 @@ import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.exception.InvalidTableNameException;
 import com.smartfirehub.dataset.rowsearch.IndexRef;
 import com.smartfirehub.dataset.storage.DataStoreResolver;
+import com.smartfirehub.dataset.storage.DataTableNames;
 import com.smartfirehub.dataset.storage.DataTableStore;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Set;
-import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.util.DigestUtils;
@@ -19,8 +19,8 @@ import org.springframework.util.DigestUtils;
  * 데이터셋 테이블 DDL 파사드 — 테넌트 저장소 백엔드에 위임(WD-72).
  *
  * <p>호출부는 이 클래스만 알면 된다. 실제 SQL 은 {@link DataStoreResolver} 가 현재 테넌트 기준으로 고른 {@link DataTableStore}
- * 구현이 실행하며, 호출자의 트랜잭션에 그대로 참여한다. 이름 검증({@link #validateName})처럼 백엔드와 무관한 순수 검증과, 기본 인자만 채워 다른
- * 오버로드로 넘기는 편의 오버로드는 여기에 남긴다.
+ * 구현이 실행하며, 호출자의 트랜잭션에 그대로 참여한다. 이름 검증({@link #validateName})처럼 백엔드와 무관한 순수 검증과, 기본 인자만 채워 다른 오버로드로
+ * 넘기는 편의 오버로드는 여기에 남긴다.
  */
 @Service
 @RequiredArgsConstructor
@@ -28,12 +28,10 @@ public class DataTableService {
 
   private final DataStoreResolver resolver;
 
-  private static final Pattern VALID_NAME = Pattern.compile("^[a-z][a-z0-9_]*$");
-
   /**
    * 새로 만드는 테이블명의 최대 길이(WD-95).
    *
-   * <p>PostgreSQL 은 식별자를 63바이트에서 조용히 자른다({@link #VALID_NAME} 이 ASCII 만 허용하므로 글자 수 = 바이트 수). 상한이 없으면
+   * <p>PostgreSQL 은 식별자를 63바이트에서 조용히 자른다({@link DataTableNames} 이 ASCII 만 허용하므로 글자 수 = 바이트 수). 상한이 없으면
    * 앞 63자가 같은 두 이름이 같은 물리 테이블이 돼 고아 회수 DROP 이 남의 데이터를 지우고, 63자 넘는 컬럼명은 조회 결과 키가 메타데이터와 어긋난다. 테이블은
    * 63 이 아니라 56 인데, 이름이 V125 와 같은 규약으로 고정된 {@code ix_<table>_upd}(+7)까지 63 안에 들어와야 하기 때문이다.
    */
@@ -86,9 +84,7 @@ public class DataTableService {
 
   /** 이름이 {@code [a-z][a-z0-9_]*} 패턴인지 검증한다(백엔드 무관). 어긋나면 {@link InvalidTableNameException}. */
   public void validateName(String name) {
-    if (!VALID_NAME.matcher(name).matches()) {
-      throw new InvalidTableNameException("Invalid name: " + name + ". Must match [a-z][a-z0-9_]*");
-    }
+    DataTableNames.validate(name);
   }
 
   /**
@@ -182,23 +178,40 @@ public class DataTableService {
 
   public void setColumnIndex(
       String tableName, String columnName, boolean indexed, String columnType) {
+    // 테넌트 해석 전에 이름부터 검증한다(기존 동작 유지).
+    DataTableNames.validate(tableName);
+    DataTableNames.validate(columnName);
     resolver.tableStore().setColumnIndex(tableName, columnName, indexed, columnType);
   }
 
   public void recreatePrimaryKeyIndex(String tableName, List<String> pkColumnNames) {
+    // 테넌트 해석 전에 이름부터 검증한다(기존 동작 유지).
+    DataTableNames.validate(tableName);
+    for (String pkCol : pkColumnNames) {
+      DataTableNames.validate(pkCol);
+    }
     resolver.tableStore().recreatePrimaryKeyIndex(tableName, pkColumnNames);
   }
 
   public void createPrimaryKeyIndexConcurrently(String tableName, List<String> pkColumnNames) {
+    // 테넌트 해석 전에 이름부터 검증한다(기존 동작 유지).
+    DataTableNames.validate(tableName);
+    for (String pkCol : pkColumnNames) {
+      DataTableNames.validate(pkCol);
+    }
     resolver.tableStore().createPrimaryKeyIndexConcurrently(tableName, pkColumnNames);
   }
 
   public void dropTable(String tableName) {
+    // 테넌트 해석 전에 이름부터 검증한다(기존 동작 유지).
+    DataTableNames.validate(tableName);
     resolver.tableStore().dropTable(tableName);
   }
 
   /** REPLACE 적재용 임시(staging) 테이블 {@link #tempTableName} 을 만든다. */
   public void createTempTable(String tableName) {
+    // 테넌트 해석 전에 이름부터 검증한다(기존 동작 유지).
+    DataTableNames.validate(tableName);
     resolver.tableStore().createTempTable(tableName);
   }
 
@@ -221,11 +234,15 @@ public class DataTableService {
   }
 
   public void swapTable(String tableName) {
+    // 테넌트 해석 전에 이름부터 검증한다(기존 동작 유지).
+    DataTableNames.validate(tableName);
     resolver.tableStore().swapTable(tableName);
   }
 
   /** 임시(staging) 테이블이 있으면 버린다. 실패 시 원본 데이터를 보존하기 위해 호출한다. */
   public void dropTempTable(String tableName) {
+    // 테넌트 해석 전에 이름부터 검증한다(기존 동작 유지).
+    DataTableNames.validate(tableName);
     resolver.tableStore().dropTempTable(tableName);
   }
 
@@ -256,16 +273,25 @@ public class DataTableService {
       String dataType,
       Integer maxLength,
       String currentDataType) {
+    // 테넌트 해석 전에 이름부터 검증한다(기존 동작 유지).
+    DataTableNames.validate(tableName);
+    DataTableNames.validate(columnName);
     resolver
         .tableStore()
         .alterColumnType(tableName, columnName, dataType, maxLength, currentDataType);
   }
 
   public void setColumnNullable(String tableName, String columnName, boolean nullable) {
+    // 테넌트 해석 전에 이름부터 검증한다(기존 동작 유지).
+    DataTableNames.validate(tableName);
+    DataTableNames.validate(columnName);
     resolver.tableStore().setColumnNullable(tableName, columnName, nullable);
   }
 
   public void dropColumn(String tableName, String columnName) {
+    // 테넌트 해석 전에 이름부터 검증한다(기존 동작 유지).
+    DataTableNames.validate(tableName);
+    DataTableNames.validate(columnName);
     resolver.tableStore().dropColumn(tableName, columnName);
   }
 
@@ -285,6 +311,7 @@ public class DataTableService {
 
   public List<ColumnStatsResponse> getColumnStats(
       String tableName, List<DatasetColumnResponse> columns) {
+    DataTableNames.validate(tableName);
     return resolver.tableStore().getColumnStats(tableName, columns);
   }
 }

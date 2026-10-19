@@ -42,9 +42,9 @@ class DataTableServiceFacadeTest extends IntegrationTestBase {
         .hasMessage("rollback");
     Integer count =
         dsl.fetchOne(
-            "select count(*) from information_schema.tables where table_schema = ? and table_name = ?",
-            DataSchema.forTenant(DEFAULT_TEST_TENANT_ID),
-            table)
+                "select count(*) from information_schema.tables where table_schema = ? and table_name = ?",
+                DataSchema.forTenant(DEFAULT_TEST_TENANT_ID),
+                table)
             .get(0, Integer.class);
     assertThat(count).isZero();
   }

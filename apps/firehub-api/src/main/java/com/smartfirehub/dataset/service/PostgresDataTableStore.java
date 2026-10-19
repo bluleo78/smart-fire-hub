@@ -6,6 +6,7 @@ import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.exception.InvalidTableNameException;
 import com.smartfirehub.dataset.rowsearch.IndexRef;
 import com.smartfirehub.dataset.storage.DataStoreBackend;
+import com.smartfirehub.dataset.storage.DataTableNames;
 import com.smartfirehub.dataset.storage.DataTableStore;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantSchemaProvisioner;
@@ -13,7 +14,6 @@ import com.smartfirehub.securitylevel.pythonread.PythonReadGrantSync;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
-import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
 import org.springframework.stereotype.Component;
@@ -42,8 +42,6 @@ public class PostgresDataTableStore implements DataTableStore {
    * 교착한다.
    */
   private final PythonReadGrantSync pythonReadGrantSync;
-
-  private static final Pattern VALID_NAME = Pattern.compile("^[a-z][a-z0-9_]*$");
 
   /**
    * _updated_at 트리거를 (재)설치한다. CREATE TABLE ... LIKE 는 트리거를 복사하지 않으므로 새 테이블·임시(_tmp) 테이블·복제 테이블 모두 이
@@ -102,12 +100,6 @@ public class PostgresDataTableStore implements DataTableStore {
     };
   }
 
-  public void validateName(String name) {
-    if (!VALID_NAME.matcher(name).matches()) {
-      throw new InvalidTableNameException("Invalid name: " + name + ". Must match [a-z][a-z0-9_]*");
-    }
-  }
-
   /**
    * 행 검색 색인 테이블 이름(fh_search_{datasetId})과 REPLACE 임시 테이블({@link DataTableService#TEMP_TABLE_PREFIX})에
    * 충돌하지 않도록 사용자 테이블 이름에서 예약한다. 파사드({@link DataTableService#validateNewTableName})가 먼저 걸러내지만,
@@ -123,7 +115,7 @@ public class PostgresDataTableStore implements DataTableStore {
 
   @Override
   public void createTable(String tableName, List<DatasetColumnRequest> columns) {
-    validateName(tableName);
+    DataTableNames.validate(tableName);
     rejectReservedTableName(tableName);
     // 스키마가 없으면 만든다 — 신규 테넌트의 첫 데이터셋 생성이 여기서 지연 생성을 트리거한다.
     // DROP TABLE IF EXISTS(바로 아래)가 대상 스키마 자체를 요구하므로 반드시 그보다 먼저다.
@@ -163,7 +155,7 @@ public class PostgresDataTableStore implements DataTableStore {
                 + col.columnName()
                 + "'은 시스템 예약어입니다. (예약어: id, import_id, created_at, _updated_at)");
       }
-      validateName(col.columnName());
+      DataTableNames.validate(col.columnName());
       sql.append("\"").append(col.columnName()).append("\" ");
       sql.append(mapDataType(col.dataType(), col.maxLength()));
       if (!col.isNullable()) {
@@ -220,8 +212,8 @@ public class PostgresDataTableStore implements DataTableStore {
 
   @Override
   public void addColumn(String tableName, DatasetColumnRequest column) {
-    validateName(tableName);
-    validateName(column.columnName());
+    DataTableNames.validate(tableName);
+    DataTableNames.validate(column.columnName());
 
     // id, import_id, created_at, _updated_at은 시스템 예약 컬럼명 — addColumn 시에도 차단
     if (SYSTEM_COLUMNS.contains(column.columnName().toLowerCase())) {
@@ -254,8 +246,8 @@ public class PostgresDataTableStore implements DataTableStore {
   @Override
   public void setColumnIndex(
       String tableName, String columnName, boolean indexed, String columnType) {
-    validateName(tableName);
-    validateName(columnName);
+    DataTableNames.validate(tableName);
+    DataTableNames.validate(columnName);
 
     String indexName = "idx_" + tableName + "_" + columnName;
 
@@ -312,9 +304,9 @@ public class PostgresDataTableStore implements DataTableStore {
 
   @Override
   public void recreatePrimaryKeyIndex(String tableName, List<String> pkColumnNames) {
-    validateName(tableName);
+    DataTableNames.validate(tableName);
     for (String col : pkColumnNames) {
-      validateName(col);
+      DataTableNames.validate(col);
     }
     // Drop existing PK index if exists
     String dropSql = "DROP INDEX IF EXISTS " + DataSchema.qualify("ux_" + tableName + "_pk");
@@ -339,9 +331,9 @@ public class PostgresDataTableStore implements DataTableStore {
 
   @Override
   public void createPrimaryKeyIndexConcurrently(String tableName, List<String> pkColumnNames) {
-    validateName(tableName);
+    DataTableNames.validate(tableName);
     for (String col : pkColumnNames) {
-      validateName(col);
+      DataTableNames.validate(col);
     }
     if (pkColumnNames.isEmpty()) return;
 
@@ -366,7 +358,7 @@ public class PostgresDataTableStore implements DataTableStore {
 
   @Override
   public void dropTable(String tableName) {
-    validateName(tableName);
+    DataTableNames.validate(tableName);
     String sql = "DROP TABLE IF EXISTS " + DataSchema.qualify(tableName);
     dsl.execute(sql);
   }
@@ -379,7 +371,7 @@ public class PostgresDataTableStore implements DataTableStore {
    */
   @Override
   public void createTempTable(String tableName) {
-    validateName(tableName);
+    DataTableNames.validate(tableName);
     String tmpName = DataTableService.tempTableName(tableName);
     // Drop any leftover temp table from a previous failed run
     dsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(tmpName));
@@ -443,7 +435,7 @@ public class PostgresDataTableStore implements DataTableStore {
 
   @Override
   public void swapTable(String tableName) {
-    validateName(tableName);
+    DataTableNames.validate(tableName);
     String tmpName = DataTableService.tempTableName(tableName);
     dsl.transaction(
         cfg -> {
@@ -486,16 +478,16 @@ public class PostgresDataTableStore implements DataTableStore {
    */
   @Override
   public void dropTempTable(String tableName) {
-    validateName(tableName);
+    DataTableNames.validate(tableName);
     String tmpName = DataTableService.tempTableName(tableName);
     dsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(tmpName));
   }
 
   @Override
   public void renameColumn(String tableName, String oldName, String newName) {
-    validateName(tableName);
-    validateName(oldName);
-    validateName(newName);
+    DataTableNames.validate(tableName);
+    DataTableNames.validate(oldName);
+    DataTableNames.validate(newName);
     String sql =
         "ALTER TABLE "
             + DataSchema.qualify(tableName)
@@ -509,9 +501,9 @@ public class PostgresDataTableStore implements DataTableStore {
 
   @Override
   public void renameIndex(String tableName, String oldColName, String newColName) {
-    validateName(tableName);
-    validateName(oldColName);
-    validateName(newColName);
+    DataTableNames.validate(tableName);
+    DataTableNames.validate(oldColName);
+    DataTableNames.validate(newColName);
     String oldIndex = "idx_" + tableName + "_" + oldColName;
     String newIndex = "idx_" + tableName + "_" + newColName;
     String sql =
@@ -526,8 +518,8 @@ public class PostgresDataTableStore implements DataTableStore {
       String dataType,
       Integer maxLength,
       String currentDataType) {
-    validateName(tableName);
-    validateName(columnName);
+    DataTableNames.validate(tableName);
+    DataTableNames.validate(columnName);
 
     // GEOMETRY로/에서의 타입 변환은 차단한다 (PostgreSQL이 GEOMETRY CAST를 지원하지 않음)
     if ("GEOMETRY".equalsIgnoreCase(dataType) || "GEOMETRY".equalsIgnoreCase(currentDataType)) {
@@ -551,8 +543,8 @@ public class PostgresDataTableStore implements DataTableStore {
 
   @Override
   public void setColumnNullable(String tableName, String columnName, boolean nullable) {
-    validateName(tableName);
-    validateName(columnName);
+    DataTableNames.validate(tableName);
+    DataTableNames.validate(columnName);
     String sql =
         "ALTER TABLE "
             + DataSchema.qualify(tableName)
@@ -565,8 +557,8 @@ public class PostgresDataTableStore implements DataTableStore {
 
   @Override
   public void dropColumn(String tableName, String columnName) {
-    validateName(tableName);
-    validateName(columnName);
+    DataTableNames.validate(tableName);
+    DataTableNames.validate(columnName);
     String sql =
         "ALTER TABLE " + DataSchema.qualify(tableName) + " DROP COLUMN \"" + columnName + "\"";
     dsl.execute(sql);
@@ -578,11 +570,11 @@ public class PostgresDataTableStore implements DataTableStore {
       String targetTable,
       List<String> userColumns,
       List<DatasetColumnResponse> columnDefs) {
-    validateName(sourceTable);
-    validateName(targetTable);
+    DataTableNames.validate(sourceTable);
+    DataTableNames.validate(targetTable);
     rejectReservedTableName(targetTable);
     for (String col : userColumns) {
-      validateName(col);
+      DataTableNames.validate(col);
     }
 
     // Build column list for SELECT
@@ -643,7 +635,7 @@ public class PostgresDataTableStore implements DataTableStore {
   @Override
   public List<ColumnStatsResponse> getColumnStats(
       String tableName, List<DatasetColumnResponse> columns) {
-    validateName(tableName);
+    DataTableNames.validate(tableName);
 
     // Set statement_timeout to 30 seconds for profiling queries
     dsl.execute("SET LOCAL statement_timeout = '30s'");
@@ -657,7 +649,7 @@ public class PostgresDataTableStore implements DataTableStore {
     List<ColumnStatsResponse> result = new ArrayList<>();
 
     for (DatasetColumnResponse col : columns) {
-      validateName(col.columnName());
+      DataTableNames.validate(col.columnName());
       String colName = col.columnName();
       String dataType = col.dataType();
 

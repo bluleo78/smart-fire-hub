@@ -3,8 +3,10 @@ package com.smartfirehub.dataset.service;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.dto.SpatialFilter;
 import com.smartfirehub.dataset.exception.RowNotFoundException;
+import com.smartfirehub.dataset.storage.DataColumnTypes;
 import com.smartfirehub.dataset.storage.DataRowStore;
 import com.smartfirehub.dataset.storage.DataStoreBackend;
+import com.smartfirehub.dataset.storage.DataTableNames;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.util.TemporalSafeFetch;
 import java.util.ArrayList;
@@ -24,15 +26,14 @@ import org.springframework.stereotype.Component;
  * 동작 변경 없음.
  *
  * <p>호출자의 트랜잭션에 그대로 참여한다(별도 {@code @Transactional} 없음). 파사드({@code DataTableRowService})가 {@link
- * com.smartfirehub.dataset.storage.DataStoreResolver} 로 이 구현을 골라 위임한다. 이름 검증은 같은 백엔드의 {@link
- * PostgresDataTableStore} 를 직접 주입받아 쓴다(백엔드가 섞여 엮이지 않도록).
+ * com.smartfirehub.dataset.storage.DataStoreResolver} 로 이 구현을 골라 위임한다. 이름 검증은 백엔드 중립 {@link
+ * DataTableNames} 를 쓴다.
  */
 @Component
 @RequiredArgsConstructor
 public class PostgresDataRowStore implements DataRowStore {
 
   private final DSLContext dsl;
-  private final PostgresDataTableStore tableStore;
 
   @Override
   public DataStoreBackend backend() {
@@ -41,8 +42,8 @@ public class PostgresDataRowStore implements DataRowStore {
 
   // --- GEOMETRY helpers ---
 
-  static boolean isGeometry(String colName, Map<String, String> columnTypes) {
-    return columnTypes != null && "GEOMETRY".equalsIgnoreCase(columnTypes.get(colName));
+  private static boolean isGeometry(String colName, Map<String, String> columnTypes) {
+    return DataColumnTypes.isGeometry(colName, columnTypes);
   }
 
   /** Returns ST_AsGeoJSON("col") AS "col" for GEOMETRY, otherwise "col". */
@@ -80,12 +81,12 @@ public class PostgresDataRowStore implements DataRowStore {
       String sortBy,
       String sortDir,
       Map<String, String> columnTypes) {
-    tableStore.validateName(tableName);
+    DataTableNames.validate(tableName);
     for (String col : columns) {
-      tableStore.validateName(col);
+      DataTableNames.validate(col);
     }
     if (sortBy != null) {
-      tableStore.validateName(sortBy);
+      DataTableNames.validate(sortBy);
     }
 
     StringBuilder sql = new StringBuilder();
@@ -149,19 +150,19 @@ public class PostgresDataRowStore implements DataRowStore {
       int size,
       SpatialFilter spatialFilter) {
     List<String> columnNames = columns.stream().map(DatasetColumnResponse::columnName).toList();
-    tableStore.validateName(tableName);
+    DataTableNames.validate(tableName);
     for (String col : columnNames) {
-      tableStore.validateName(col);
+      DataTableNames.validate(col);
     }
     if (sortBy != null) {
-      tableStore.validateName(sortBy);
+      DataTableNames.validate(sortBy);
     }
 
     // Resolve geometry column if spatial filter present
     String geomCol = null;
     if (spatialFilter != null) {
       geomCol =
-          DataTableRowService.resolveGeometryColumn(
+          DataColumnTypes.resolveGeometryColumn(
               columns, columnTypes, spatialFilter.geometryColumn());
     }
 
@@ -283,13 +284,13 @@ public class PostgresDataRowStore implements DataRowStore {
       String search,
       SpatialFilter spatialFilter) {
     List<String> columnNames = columns.stream().map(DatasetColumnResponse::columnName).toList();
-    tableStore.validateName(tableName);
+    DataTableNames.validate(tableName);
 
     // Resolve geometry column if spatial filter present
     String geomCol = null;
     if (spatialFilter != null) {
       geomCol =
-          DataTableRowService.resolveGeometryColumn(
+          DataColumnTypes.resolveGeometryColumn(
               columns, columnTypes, spatialFilter.geometryColumn());
     }
 
@@ -356,7 +357,7 @@ public class PostgresDataRowStore implements DataRowStore {
   @Override
   public long countRows(
       String tableName, List<String> columns, String search, Map<String, String> columnTypes) {
-    tableStore.validateName(tableName);
+    DataTableNames.validate(tableName);
 
     StringBuilder sql = new StringBuilder();
     sql.append("SELECT COUNT(*) FROM ").append(DataSchema.qualify(tableName));
@@ -411,9 +412,9 @@ public class PostgresDataRowStore implements DataRowStore {
 
   @Override
   public boolean checkDataUniqueness(String tableName, List<String> pkColumnNames) {
-    tableStore.validateName(tableName);
+    DataTableNames.validate(tableName);
     for (String col : pkColumnNames) {
-      tableStore.validateName(col);
+      DataTableNames.validate(col);
     }
     StringBuilder sql = new StringBuilder();
     sql.append("SELECT COUNT(*) = COUNT(DISTINCT (");
@@ -428,9 +429,9 @@ public class PostgresDataRowStore implements DataRowStore {
   @Override
   public List<Map<String, Object>> findDuplicateRows(
       String tableName, List<String> pkColumnNames, int limit) {
-    tableStore.validateName(tableName);
+    DataTableNames.validate(tableName);
     for (String col : pkColumnNames) {
-      tableStore.validateName(col);
+      DataTableNames.validate(col);
     }
     StringBuilder sql = new StringBuilder();
     sql.append("SELECT ");
@@ -466,9 +467,9 @@ public class PostgresDataRowStore implements DataRowStore {
       List<String> columns,
       List<Map<String, Object>> rows,
       Map<String, String> columnTypes) {
-    tableStore.validateName(tableName);
+    DataTableNames.validate(tableName);
     for (String col : columns) {
-      tableStore.validateName(col);
+      DataTableNames.validate(col);
     }
 
     if (rows.isEmpty()) {
@@ -523,9 +524,9 @@ public class PostgresDataRowStore implements DataRowStore {
       List<Map<String, Object>> rows,
       BiConsumer<Integer, Integer> progressCallback,
       Map<String, String> columnTypes) {
-    tableStore.validateName(tableName);
+    DataTableNames.validate(tableName);
     for (String col : columns) {
-      tableStore.validateName(col);
+      DataTableNames.validate(col);
     }
 
     if (rows.isEmpty()) {
@@ -584,9 +585,9 @@ public class PostgresDataRowStore implements DataRowStore {
       List<Map<String, Object>> rows,
       Long importId,
       Map<String, String> columnTypes) {
-    tableStore.validateName(tableName);
+    DataTableNames.validate(tableName);
     for (String col : columns) {
-      tableStore.validateName(col);
+      DataTableNames.validate(col);
     }
 
     if (rows.isEmpty()) {
@@ -642,9 +643,9 @@ public class PostgresDataRowStore implements DataRowStore {
       Long importId,
       BiConsumer<Integer, Integer> progressCallback,
       Map<String, String> columnTypes) {
-    tableStore.validateName(tableName);
+    DataTableNames.validate(tableName);
     for (String col : columns) {
-      tableStore.validateName(col);
+      DataTableNames.validate(col);
     }
 
     if (rows.isEmpty()) {
@@ -705,12 +706,12 @@ public class PostgresDataRowStore implements DataRowStore {
       List<Map<String, Object>> rows,
       Long importId,
       Map<String, String> columnTypes) {
-    tableStore.validateName(tableName);
+    DataTableNames.validate(tableName);
     for (String col : columns) {
-      tableStore.validateName(col);
+      DataTableNames.validate(col);
     }
     for (String pkCol : pkColumns) {
-      tableStore.validateName(pkCol);
+      DataTableNames.validate(pkCol);
     }
 
     if (rows.isEmpty()) {
@@ -816,12 +817,12 @@ public class PostgresDataRowStore implements DataRowStore {
       Long importId,
       BiConsumer<Integer, Integer> progressCallback,
       Map<String, String> columnTypes) {
-    tableStore.validateName(tableName);
+    DataTableNames.validate(tableName);
     for (String col : columns) {
-      tableStore.validateName(col);
+      DataTableNames.validate(col);
     }
     for (String pkCol : pkColumns) {
-      tableStore.validateName(pkCol);
+      DataTableNames.validate(pkCol);
     }
 
     if (rows.isEmpty()) {
@@ -920,7 +921,7 @@ public class PostgresDataRowStore implements DataRowStore {
 
   @Override
   public int deleteRows(String tableName, List<Long> rowIds) {
-    tableStore.validateName(tableName);
+    DataTableNames.validate(tableName);
     if (rowIds == null || rowIds.isEmpty()) return 0;
     String sql = "DELETE FROM " + DataSchema.qualify(tableName) + " WHERE id = ANY(?)";
     Long[] idArray = rowIds.toArray(new Long[0]);
@@ -929,7 +930,7 @@ public class PostgresDataRowStore implements DataRowStore {
 
   @Override
   public void truncateTable(String tableName) {
-    tableStore.validateName(tableName);
+    DataTableNames.validate(tableName);
     // 파괴 연산 — 스키마를 손으로 적지 않고 헬퍼로 한정한다(잘못 해석되면 교차 테넌트 삭제).
     String sql = "TRUNCATE TABLE " + DataSchema.qualify(tableName);
     dsl.execute(sql);
@@ -941,9 +942,9 @@ public class PostgresDataRowStore implements DataRowStore {
       List<String> columns,
       Map<String, Object> row,
       Map<String, String> columnTypes) {
-    tableStore.validateName(tableName);
+    DataTableNames.validate(tableName);
     for (String col : columns) {
-      tableStore.validateName(col);
+      DataTableNames.validate(col);
     }
 
     StringBuilder sql = new StringBuilder();
@@ -975,9 +976,9 @@ public class PostgresDataRowStore implements DataRowStore {
       List<String> columns,
       Map<String, Object> row,
       Map<String, String> columnTypes) {
-    tableStore.validateName(tableName);
+    DataTableNames.validate(tableName);
     for (String col : columns) {
-      tableStore.validateName(col);
+      DataTableNames.validate(col);
     }
 
     StringBuilder sql = new StringBuilder();
@@ -1006,9 +1007,9 @@ public class PostgresDataRowStore implements DataRowStore {
   @Override
   public Map<String, Object> getRow(
       String tableName, List<String> columns, long rowId, Map<String, String> columnTypes) {
-    tableStore.validateName(tableName);
+    DataTableNames.validate(tableName);
     for (String col : columns) {
-      tableStore.validateName(col);
+      DataTableNames.validate(col);
     }
 
     StringBuilder sql = new StringBuilder();
@@ -1047,14 +1048,14 @@ public class PostgresDataRowStore implements DataRowStore {
    */
   @Override
   public String createStagingTable(String targetTableName, List<String> columns) {
-    tableStore.validateName(targetTableName);
+    DataTableNames.validate(targetTableName);
     for (String col : columns) {
-      tableStore.validateName(col);
+      DataTableNames.validate(col);
     }
 
     // UUID hex(32자, [0-9a-f])는 항상 [a-z][a-z0-9_]* 패턴을 만족한다.
     String stagingTable = "stg_import_" + UUID.randomUUID().toString().replace("-", "");
-    tableStore.validateName(stagingTable);
+    DataTableNames.validate(stagingTable);
 
     Map<String, String> columnDdl = introspectColumnDdl(targetTableName, columns);
 
@@ -1137,9 +1138,9 @@ public class PostgresDataRowStore implements DataRowStore {
       List<String> columns,
       List<Map<String, Object>> rows,
       BiConsumer<Integer, Integer> progressCallback) {
-    tableStore.validateName(stagingTable);
+    DataTableNames.validate(stagingTable);
     for (String col : columns) {
-      tableStore.validateName(col);
+      DataTableNames.validate(col);
     }
 
     if (rows.isEmpty()) {
@@ -1211,13 +1212,13 @@ public class PostgresDataRowStore implements DataRowStore {
       List<String> columns,
       List<String> pkColumns,
       Long importId) {
-    tableStore.validateName(stagingTable);
-    tableStore.validateName(targetTableName);
+    DataTableNames.validate(stagingTable);
+    DataTableNames.validate(targetTableName);
     for (String col : columns) {
-      tableStore.validateName(col);
+      DataTableNames.validate(col);
     }
     for (String pkCol : pkColumns) {
-      tableStore.validateName(pkCol);
+      DataTableNames.validate(pkCol);
     }
 
     if (pkColumns.isEmpty()) {
@@ -1290,13 +1291,13 @@ public class PostgresDataRowStore implements DataRowStore {
   @Override
   public void promoteStagingToReplace(
       String stagingTable, String targetTableName, List<String> columns, List<String> pkColumns) {
-    tableStore.validateName(stagingTable);
-    tableStore.validateName(targetTableName);
+    DataTableNames.validate(stagingTable);
+    DataTableNames.validate(targetTableName);
     for (String col : columns) {
-      tableStore.validateName(col);
+      DataTableNames.validate(col);
     }
     for (String pkCol : pkColumns) {
-      tableStore.validateName(pkCol);
+      DataTableNames.validate(pkCol);
     }
 
     if (pkColumns.isEmpty()) {
@@ -1341,7 +1342,7 @@ public class PostgresDataRowStore implements DataRowStore {
   /** staging 테이블을 삭제한다. import job 완료(성공/실패 무관) 후 항상 호출되어야 한다. */
   @Override
   public void dropStagingTable(String stagingTable) {
-    tableStore.validateName(stagingTable);
+    DataTableNames.validate(stagingTable);
     dsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(stagingTable));
   }
 }

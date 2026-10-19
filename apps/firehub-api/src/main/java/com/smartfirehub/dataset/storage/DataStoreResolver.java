@@ -4,6 +4,7 @@ import com.smartfirehub.global.tenant.TenantContext;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
 import org.springframework.stereotype.Component;
 
 /**
@@ -14,28 +15,43 @@ import org.springframework.stereotype.Component;
 @Component
 public class DataStoreResolver {
 
-  private final Map<DataStoreBackend, DataTableStore> tableStores =
-      new EnumMap<>(DataStoreBackend.class);
-
-  private final Map<DataStoreBackend, DataRowStore> rowStores =
-      new EnumMap<>(DataStoreBackend.class);
+  private final Map<DataStoreBackend, DataTableStore> tableStores;
+  private final Map<DataStoreBackend, DataRowStore> rowStores;
 
   public DataStoreResolver(List<DataTableStore> tableStores, List<DataRowStore> rowStores) {
-    for (DataTableStore store : tableStores) {
-      DataTableStore previous = this.tableStores.put(store.backend(), store);
-      if (previous != null) {
-        throw new IllegalStateException("데이터셋 저장소 구현이 중복됨: " + store.backend());
-      }
-    }
-    for (DataRowStore store : rowStores) {
-      DataRowStore previous = this.rowStores.put(store.backend(), store);
-      if (previous != null) {
-        throw new IllegalStateException("데이터셋 행 저장소 구현이 중복됨: " + store.backend());
-      }
-    }
+    this.tableStores = index(tableStores, DataTableStore::backend, "데이터셋 저장소 구현이 중복됨: ");
+    this.rowStores = index(rowStores, DataRowStore::backend, "데이터셋 행 저장소 구현이 중복됨: ");
   }
 
-  /** 테넌트의 저장소 백엔드. 이번 단계에서는 모든 테넌트가 PostgreSQL 이다. */
+  /** 구현 목록을 백엔드별로 색인한다. 같은 백엔드가 둘이면 어느 쪽을 쓸지 모호하므로 즉시 실패시킨다. */
+  private static <T> Map<DataStoreBackend, T> index(
+      List<T> stores, Function<T, DataStoreBackend> backendOf, String duplicateMessage) {
+    Map<DataStoreBackend, T> indexed = new EnumMap<>(DataStoreBackend.class);
+    for (T store : stores) {
+      T previous = indexed.put(backendOf.apply(store), store);
+      if (previous != null) {
+        throw new IllegalStateException(duplicateMessage + backendOf.apply(store));
+      }
+    }
+    return indexed;
+  }
+
+  /** 색인에서 백엔드 구현을 찾는다. 등록돼 있지 않으면 예외를 던진다. */
+  private static <T> T lookup(
+      Map<DataStoreBackend, T> stores, DataStoreBackend backend, String missingMessage) {
+    T store = stores.get(backend);
+    if (store == null) {
+      throw new IllegalStateException(missingMessage + backend);
+    }
+    return store;
+  }
+
+  /**
+   * 테넌트의 저장소 백엔드. 이번 단계에서는 모든 테넌트가 PostgreSQL 이다.
+   *
+   * <p>WD-73 이 이 메서드를 테넌트별 조회로 대체한다. 파사드 호출마다 불리므로 그 조회는 반드시 캐시해야 하고, 테넌트 저장소 설정이 바뀔 때 캐시를 무효화하는
+   * 지점도 함께 마련해야 한다.
+   */
   public DataStoreBackend backendFor(long tenantId) {
     return DataStoreBackend.POSTGRESQL;
   }
@@ -47,21 +63,11 @@ public class DataStoreResolver {
 
   /** 현재 테넌트 백엔드의 DDL 스토어. 구현이 등록돼 있지 않으면 예외를 던진다. */
   public DataTableStore tableStore() {
-    DataStoreBackend backend = currentBackend();
-    DataTableStore store = tableStores.get(backend);
-    if (store == null) {
-      throw new IllegalStateException("데이터셋 저장소 구현 없음: " + backend);
-    }
-    return store;
+    return lookup(tableStores, currentBackend(), "데이터셋 저장소 구현 없음: ");
   }
 
   /** 현재 테넌트 백엔드의 행 조회·적재 스토어. 구현이 등록돼 있지 않으면 예외를 던진다. */
   public DataRowStore rowStore() {
-    DataStoreBackend backend = currentBackend();
-    DataRowStore store = rowStores.get(backend);
-    if (store == null) {
-      throw new IllegalStateException("데이터셋 행 저장소 구현 없음: " + backend);
-    }
-    return store;
+    return lookup(rowStores, currentBackend(), "데이터셋 행 저장소 구현 없음: ");
   }
 }

@@ -2,8 +2,10 @@ package com.smartfirehub.dataset.service;
 
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.dto.SpatialFilter;
+import com.smartfirehub.dataset.storage.DataColumnTypes;
 import com.smartfirehub.dataset.storage.DataRowStore;
 import com.smartfirehub.dataset.storage.DataStoreResolver;
+import com.smartfirehub.dataset.storage.DataTableNames;
 import java.util.List;
 import java.util.Map;
 import java.util.function.BiConsumer;
@@ -37,19 +39,7 @@ public class DataTableRowService {
    */
   public static String resolveGeometryColumn(
       List<DatasetColumnResponse> columns, Map<String, String> columnTypes, String geometryColumn) {
-    if (geometryColumn != null) {
-      if (!PostgresDataRowStore.isGeometry(geometryColumn, columnTypes)) {
-        throw new IllegalArgumentException("컬럼 '" + geometryColumn + "'은 GEOMETRY 타입이 아닙니다.");
-      }
-      return geometryColumn;
-    }
-    // auto-select first GEOMETRY column
-    for (DatasetColumnResponse col : columns) {
-      if (PostgresDataRowStore.isGeometry(col.columnName(), columnTypes)) {
-        return col.columnName();
-      }
-    }
-    throw new IllegalArgumentException("데이터셋에 GEOMETRY 컬럼이 없습니다.");
+    return DataColumnTypes.resolveGeometryColumn(columns, columnTypes, geometryColumn);
   }
 
   public List<Map<String, Object>> queryData(
@@ -77,6 +67,14 @@ public class DataTableRowService {
       String sortBy,
       String sortDir,
       Map<String, String> columnTypes) {
+    // 테넌트 해석 전에 이름부터 검증한다(기존 동작 유지).
+    DataTableNames.validate(tableName);
+    for (String col : columns) {
+      DataTableNames.validate(col);
+    }
+    if (sortBy != null) {
+      DataTableNames.validate(sortBy);
+    }
     return resolver
         .rowStore()
         .queryData(tableName, columns, search, page, size, sortBy, sortDir, columnTypes);
@@ -105,6 +103,11 @@ public class DataTableRowService {
       int page,
       int size,
       SpatialFilter spatialFilter) {
+    // 테넌트 해석 전에 이름부터 검증한다(기존 동작 유지).
+    DataTableNames.validate(tableName);
+    if (sortBy != null) {
+      DataTableNames.validate(sortBy);
+    }
     return resolver
         .rowStore()
         .queryData(
@@ -126,6 +129,8 @@ public class DataTableRowService {
       Map<String, String> columnTypes,
       String search,
       SpatialFilter spatialFilter) {
+    // 테넌트 해석 전에 이름부터 검증한다(기존 동작 유지).
+    DataTableNames.validate(tableName);
     return resolver.rowStore().countRows(tableName, columns, columnTypes, search, spatialFilter);
   }
 
@@ -139,15 +144,30 @@ public class DataTableRowService {
 
   public long countRows(
       String tableName, List<String> columns, String search, Map<String, String> columnTypes) {
+    // 테넌트 해석 전에 이름부터 검증한다(기존 동작 유지).
+    DataTableNames.validate(tableName);
+    for (String col : columns) {
+      DataTableNames.validate(col);
+    }
     return resolver.rowStore().countRows(tableName, columns, search, columnTypes);
   }
 
   public boolean checkDataUniqueness(String tableName, List<String> pkColumnNames) {
+    // 테넌트 해석 전에 이름부터 검증한다(기존 동작 유지).
+    DataTableNames.validate(tableName);
+    for (String pkCol : pkColumnNames) {
+      DataTableNames.validate(pkCol);
+    }
     return resolver.rowStore().checkDataUniqueness(tableName, pkColumnNames);
   }
 
   public List<Map<String, Object>> findDuplicateRows(
       String tableName, List<String> pkColumnNames, int limit) {
+    // 테넌트 해석 전에 이름부터 검증한다(기존 동작 유지).
+    DataTableNames.validate(tableName);
+    for (String pkCol : pkColumnNames) {
+      DataTableNames.validate(pkCol);
+    }
     return resolver.rowStore().findDuplicateRows(tableName, pkColumnNames, limit);
   }
 
@@ -160,6 +180,11 @@ public class DataTableRowService {
       List<String> columns,
       List<Map<String, Object>> rows,
       Map<String, String> columnTypes) {
+    // 테넌트 해석 전에 이름부터 검증한다(기존 동작 유지).
+    DataTableNames.validate(tableName);
+    for (String col : columns) {
+      DataTableNames.validate(col);
+    }
     resolver.rowStore().insertBatch(tableName, columns, rows, columnTypes);
   }
 
@@ -177,6 +202,11 @@ public class DataTableRowService {
       List<Map<String, Object>> rows,
       BiConsumer<Integer, Integer> progressCallback,
       Map<String, String> columnTypes) {
+    // 테넌트 해석 전에 이름부터 검증한다(기존 동작 유지).
+    DataTableNames.validate(tableName);
+    for (String col : columns) {
+      DataTableNames.validate(col);
+    }
     resolver
         .rowStore()
         .insertBatchWithProgress(tableName, columns, rows, progressCallback, columnTypes);
@@ -193,6 +223,11 @@ public class DataTableRowService {
       List<Map<String, Object>> rows,
       Long importId,
       Map<String, String> columnTypes) {
+    // 테넌트 해석 전에 이름부터 검증한다(기존 동작 유지).
+    DataTableNames.validate(tableName);
+    for (String col : columns) {
+      DataTableNames.validate(col);
+    }
     resolver.rowStore().insertBatch(tableName, columns, rows, importId, columnTypes);
   }
 
@@ -212,6 +247,11 @@ public class DataTableRowService {
       Long importId,
       BiConsumer<Integer, Integer> progressCallback,
       Map<String, String> columnTypes) {
+    // 테넌트 해석 전에 이름부터 검증한다(기존 동작 유지).
+    DataTableNames.validate(tableName);
+    for (String col : columns) {
+      DataTableNames.validate(col);
+    }
     resolver
         .rowStore()
         .insertBatchWithProgress(tableName, columns, rows, importId, progressCallback, columnTypes);
@@ -245,6 +285,14 @@ public class DataTableRowService {
       List<Map<String, Object>> rows,
       Long importId,
       Map<String, String> columnTypes) {
+    // 테넌트 해석 전에 이름부터 검증한다(기존 동작 유지).
+    DataTableNames.validate(tableName);
+    for (String col : columns) {
+      DataTableNames.validate(col);
+    }
+    for (String pkCol : pkColumns) {
+      DataTableNames.validate(pkCol);
+    }
     return resolver
         .rowStore()
         .upsertBatch(tableName, columns, pkColumns, rows, importId, columnTypes);
@@ -269,6 +317,14 @@ public class DataTableRowService {
       Long importId,
       BiConsumer<Integer, Integer> progressCallback,
       Map<String, String> columnTypes) {
+    // 테넌트 해석 전에 이름부터 검증한다(기존 동작 유지).
+    DataTableNames.validate(tableName);
+    for (String col : columns) {
+      DataTableNames.validate(col);
+    }
+    for (String pkCol : pkColumns) {
+      DataTableNames.validate(pkCol);
+    }
     return resolver
         .rowStore()
         .upsertBatchWithProgress(
@@ -276,10 +332,14 @@ public class DataTableRowService {
   }
 
   public int deleteRows(String tableName, List<Long> rowIds) {
+    // 테넌트 해석 전에 이름부터 검증한다(기존 동작 유지).
+    DataTableNames.validate(tableName);
     return resolver.rowStore().deleteRows(tableName, rowIds);
   }
 
   public void truncateTable(String tableName) {
+    // 테넌트 해석 전에 이름부터 검증한다(기존 동작 유지).
+    DataTableNames.validate(tableName);
     resolver.rowStore().truncateTable(tableName);
   }
 
@@ -292,6 +352,11 @@ public class DataTableRowService {
       List<String> columns,
       Map<String, Object> row,
       Map<String, String> columnTypes) {
+    // 테넌트 해석 전에 이름부터 검증한다(기존 동작 유지).
+    DataTableNames.validate(tableName);
+    for (String col : columns) {
+      DataTableNames.validate(col);
+    }
     return resolver.rowStore().insertRow(tableName, columns, row, columnTypes);
   }
 
@@ -306,6 +371,11 @@ public class DataTableRowService {
       List<String> columns,
       Map<String, Object> row,
       Map<String, String> columnTypes) {
+    // 테넌트 해석 전에 이름부터 검증한다(기존 동작 유지).
+    DataTableNames.validate(tableName);
+    for (String col : columns) {
+      DataTableNames.validate(col);
+    }
     resolver.rowStore().updateRow(tableName, rowId, columns, row, columnTypes);
   }
 
@@ -315,10 +385,20 @@ public class DataTableRowService {
 
   public Map<String, Object> getRow(
       String tableName, List<String> columns, long rowId, Map<String, String> columnTypes) {
+    // 테넌트 해석 전에 이름부터 검증한다(기존 동작 유지).
+    DataTableNames.validate(tableName);
+    for (String col : columns) {
+      DataTableNames.validate(col);
+    }
     return resolver.rowStore().getRow(tableName, columns, rowId, columnTypes);
   }
 
   public String createStagingTable(String targetTableName, List<String> columns) {
+    // 테넌트 해석 전에 이름부터 검증한다(기존 동작 유지).
+    DataTableNames.validate(targetTableName);
+    for (String col : columns) {
+      DataTableNames.validate(col);
+    }
     return resolver.rowStore().createStagingTable(targetTableName, columns);
   }
 
@@ -327,6 +407,11 @@ public class DataTableRowService {
       List<String> columns,
       List<Map<String, Object>> rows,
       BiConsumer<Integer, Integer> progressCallback) {
+    // 테넌트 해석 전에 이름부터 검증한다(기존 동작 유지).
+    DataTableNames.validate(stagingTable);
+    for (String col : columns) {
+      DataTableNames.validate(col);
+    }
     resolver
         .rowStore()
         .insertStagingBatchWithProgress(stagingTable, columns, rows, progressCallback);
@@ -338,6 +423,15 @@ public class DataTableRowService {
       List<String> columns,
       List<String> pkColumns,
       Long importId) {
+    // 테넌트 해석 전에 이름부터 검증한다(기존 동작 유지).
+    DataTableNames.validate(stagingTable);
+    DataTableNames.validate(targetTableName);
+    for (String col : columns) {
+      DataTableNames.validate(col);
+    }
+    for (String pkCol : pkColumns) {
+      DataTableNames.validate(pkCol);
+    }
     return resolver
         .rowStore()
         .promoteStagingToUpsert(stagingTable, targetTableName, columns, pkColumns, importId);
@@ -345,10 +439,21 @@ public class DataTableRowService {
 
   public void promoteStagingToReplace(
       String stagingTable, String targetTableName, List<String> columns, List<String> pkColumns) {
+    // 테넌트 해석 전에 이름부터 검증한다(기존 동작 유지).
+    DataTableNames.validate(stagingTable);
+    DataTableNames.validate(targetTableName);
+    for (String col : columns) {
+      DataTableNames.validate(col);
+    }
+    for (String pkCol : pkColumns) {
+      DataTableNames.validate(pkCol);
+    }
     resolver.rowStore().promoteStagingToReplace(stagingTable, targetTableName, columns, pkColumns);
   }
 
   public void dropStagingTable(String stagingTable) {
+    // 테넌트 해석 전에 이름부터 검증한다(기존 동작 유지).
+    DataTableNames.validate(stagingTable);
     resolver.rowStore().dropStagingTable(stagingTable);
   }
 }

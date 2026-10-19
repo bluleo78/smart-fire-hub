@@ -16,8 +16,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 /**
  * 파사드({@link DataTableRowService}) → 행 스토어 위임(WD-72)이 오버로드 동작과 호출자 트랜잭션 경계를 바꾸지 않음을 고정한다.
  *
- * <p>클래스 레벨 {@code @Transactional} 을 쓰지 않는다 — 롤백 테스트는 테스트 자신이 트랜잭션을 열어야 하므로, 동등성 테스트만 메서드 레벨로
- * 트랜잭션을 건다.
+ * <p>클래스 레벨 {@code @Transactional} 을 쓰지 않는다 — 롤백 테스트는 테스트 자신이 트랜잭션을 열어야 하므로, 동등성 테스트만 메서드 레벨로 트랜잭션을
+ * 건다.
  */
 class DataTableRowServiceFacadeTest extends IntegrationTestBase {
 
@@ -43,19 +43,19 @@ class DataTableRowServiceFacadeTest extends IntegrationTestBase {
     dataTableRowService.insertBatch(shortTable, List.of("name"), twoRows());
     dataTableRowService.insertBatch(longTable, List.of("name"), twoRows(), Map.of("name", "TEXT"));
 
-    var shortRows =
-        dataTableRowService.queryData(shortTable, List.of("name"), null, 0, 10).stream()
-            .map(r -> r.get("name"))
-            .toList();
-    var longRows =
-        dataTableRowService.queryData(longTable, List.of("name"), null, 0, 10).stream()
-            .map(r -> r.get("name"))
-            .toList();
+    var shortRows = names(shortTable);
+    var longRows = names(longTable);
     assertThat(longRows).isEqualTo(shortRows).containsExactly("a", "b");
     // 같은 두 행을 두 테이블에 넣었으므로 합계는 4 — 각 테이블은 2행
-    assertThat(
-            dataTableRowService.countRows(shortTable) + dataTableRowService.countRows(longTable))
+    assertThat(dataTableRowService.countRows(shortTable) + dataTableRowService.countRows(longTable))
         .isEqualTo(4);
+  }
+
+  /** 테이블의 name 컬럼 값만 조회 순서대로 뽑는다. */
+  private List<Object> names(String table) {
+    return dataTableRowService.queryData(table, List.of("name"), null, 0, 10).stream()
+        .map(r -> r.get("name"))
+        .toList();
   }
 
   @Test
