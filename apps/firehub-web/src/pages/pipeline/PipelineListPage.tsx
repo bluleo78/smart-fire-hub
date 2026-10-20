@@ -7,8 +7,8 @@ import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
 import { SimplePagination } from '@/components/ui/simple-pagination';
 import { TableEmptyRow } from '@/components/ui/table-empty';
 import { TableSkeletonRows } from '@/components/ui/table-skeleton';
-import { handleApiError } from '@/lib/api-error';
-import { iGa } from '@/lib/utils';
+import { handleApiError, isForbiddenError } from '@/lib/api-error';
+import { cn, iGa } from '@/lib/utils';
 
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
@@ -32,7 +32,9 @@ export default function PipelineListPage() {
   const [page, setPage] = useState(0);
   const size = 10;
 
-  const { data: pipelinesData, isLoading } = usePipelines({ page, size });
+  const { data: pipelinesData, isLoading, isError, error } = usePipelines({ page, size });
+  // 조회 실패를 빈 목록으로 그리지 않는다 (WD-122) — 403 이면 권한 안내, 그 밖은 불러오기 실패 안내.
+  const isForbidden = isError && isForbiddenError(error);
   const deletePipeline = useDeletePipeline();
 
   /**
@@ -92,12 +94,15 @@ export default function PipelineListPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">파이프라인 관리</h1>
-        <Button asChild>
-          <Link to="/pipelines/new">
-            <Plus className="h-4 w-4" />
-            파이프라인 추가
-          </Link>
-        </Button>
+        {/* 조회 권한이 없으면 만들어도 볼 수 없으니 추가 버튼을 숨긴다 (WD-122). */}
+        {!isForbidden && (
+          <Button asChild>
+            <Link to="/pipelines/new">
+              <Plus className="h-4 w-4" />
+              파이프라인 추가
+            </Link>
+          </Button>
+        )}
       </div>
 
       {/* 클라이언트 사이드 정렬 범위 안내 — 정렬 활성 시에만 표시하여 혼동 방지 (이슈 #165) */}
@@ -182,6 +187,15 @@ export default function PipelineListPage() {
                   </TableCell>
                 </TableRow>
               ))
+            ) : isError ? (
+              <TableRow>
+                <TableCell
+                  colSpan={7}
+                  className={cn('py-12 text-center', isForbidden ? 'text-muted-foreground' : 'text-destructive')}
+                >
+                  {isForbidden ? '파이프라인을 볼 권한이 없습니다. 관리자에게 권한을 요청하세요.' : '파이프라인 목록을 불러오지 못했습니다.'}
+                </TableCell>
+              </TableRow>
             ) : (
               <TableEmptyRow colSpan={7} message="파이프라인이 없습니다." />
             )}

@@ -212,14 +212,35 @@ test.describe('파이프라인 목록 페이지', () => {
     await expect(page.getByText(/현재 페이지 내 정렬이 적용됩니다/)).toBeVisible();
   });
 
-  test('서버 에러(500) 시 목록이 비어 있다', async ({ authenticatedPage: page }) => {
-    // 500 에러 응답으로 모킹
+  test('서버 에러(500) 시 빈 목록이 아니라 불러오기 실패 안내를 보인다 (WD-122)', async ({ authenticatedPage: page }) => {
     await mockApi(page, 'GET', '/api/v1/pipelines', {}, { status: 500 });
 
     await page.goto('/pipelines');
 
-    // 서버 에러 시 빈 상태 메시지 확인
-    await expect(page.getByText('파이프라인이 없습니다.')).toBeVisible();
+    const table = page.getByRole('table', { name: '파이프라인 목록' });
+    await expect(table.getByText('파이프라인 목록을 불러오지 못했습니다.')).toBeVisible();
+    await expect(table.getByText('파이프라인이 없습니다.')).toHaveCount(0);
+    // 권한 문제는 아니므로 추가 버튼은 그대로 둔다
+    await expect(page.getByRole('link', { name: '파이프라인 추가' })).toBeVisible();
+  });
+
+  test('조회 권한이 없으면(403) 권한 안내를 보이고 추가 버튼을 숨긴다 (WD-122)', async ({ authenticatedPage: page }) => {
+    const listCapture = await mockApi(
+      page,
+      'GET',
+      '/api/v1/pipelines',
+      { status: 403, error: 'Forbidden', message: 'Missing required permission: pipeline:read' },
+      { status: 403, capture: true },
+    );
+
+    await page.goto('/pipelines');
+
+    const table = page.getByRole('table', { name: '파이프라인 목록' });
+    await expect(table.getByText('파이프라인을 볼 권한이 없습니다. 관리자에게 권한을 요청하세요.')).toBeVisible();
+    await expect(table.getByText('파이프라인이 없습니다.')).toHaveCount(0);
+    await expect(page.getByRole('link', { name: '파이프라인 추가' })).toHaveCount(0);
+    // 403 은 재시도해도 같으니 한 번만 요청한다
+    expect(listCapture.requests).toHaveLength(1);
   });
 
   test('파이프라인 목록 페이지네이션이 렌더링된다', async ({ authenticatedPage: page }) => {

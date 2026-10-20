@@ -77,6 +77,11 @@ export async function handleApiErrorAsync(
   toast.error(message);
 }
 
+/** 권한 부족(403) 응답인가 — 목록 조회 실패를 「데이터 없음」과 구분해 권한 안내를 보일 때 쓴다 (WD-122). */
+export function isForbiddenError(error: unknown): boolean {
+  return axios.isAxiosError(error) && error.response?.status === 403;
+}
+
 /** 지식그래프 읽기 제한 코드(WD-28) — api GraphReadGate.RESTRICTED_CODE 와 같은 값. */
 const GRAPH_READ_RESTRICTED_CODE = 'GRAPH_READ_RESTRICTED';
 

@@ -1,7 +1,7 @@
 import { toast } from 'sonner';
 
 import { type ObjectDisposition, objectsApi } from '../api/objects';
-import { handleApiError } from './api-error';
+import { handleApiError, isForbiddenError } from './api-error';
 import { parseUtcDate } from './formatters';
 
 /**
@@ -47,15 +47,10 @@ export async function openObjectInNewTab(
   } catch (error) {
     win.close();
     // 정책 거부(403)는 서버 사유 문구를 그대로 보인다 — 그 외 실패는 기존 일반 문구.
-    if (isAxiosForbidden(error)) {
+    if (isForbiddenError(error)) {
       handleApiError(error, '다운로드 URL 발급에 실패했습니다');
     } else {
       toast.error('다운로드 URL 발급에 실패했습니다');
     }
   }
-}
-
-/** axios 403 응답인지 — 내보내기 정책 거부를 일반 실패와 구분한다. */
-function isAxiosForbidden(error: unknown): boolean {
-  return (error as { response?: { status?: number } } | null)?.response?.status === 403;
 }

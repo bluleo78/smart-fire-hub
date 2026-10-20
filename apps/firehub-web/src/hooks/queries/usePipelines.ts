@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef } from 'react';
 
 import { pipelinesApi } from '../../api/pipelines';
+import { isForbiddenError } from '../../lib/api-error';
 import { fetchAllPages } from '../../lib/fetch-all-pages';
 import type { CreateTriggerRequest, PipelineExecutionResponse, UpdatePipelineRequest, UpdateTriggerRequest } from '../../types/pipeline';
 
@@ -9,6 +10,8 @@ export function usePipelines(params: { page?: number; size?: number }) {
   return useQuery({
     queryKey: ['pipelines', params],
     queryFn: () => pipelinesApi.getPipelines(params).then(r => r.data),
+    // 권한 부족(403)은 다시 시도해도 같다 — 바로 권한 안내를 보이도록 재시도하지 않는다 (WD-122).
+    retry: (failureCount, error) => !isForbiddenError(error) && failureCount < 1,
   });
 }
 
