@@ -963,6 +963,40 @@ test.describe('파이프라인 트리거 탭', () => {
     const withoutCard = page.getByText('다음 실행 미등록 트리거').locator('..').locator('..');
     await expect(withoutCard.getByText(/다음 실행:/)).toHaveCount(0);
   });
+
+  /**
+   * 회귀 테스트 (WD-114): 비활성 트리거는 실행되지 않으므로 「다음 실행」을 보이지 않아야 한다. 서버가 옛 응답처럼 nextFireTime 을
+   * 실어 보내도(배포 순서·옛 캐시) 화면이 「비활성」 배지와 다음 실행 시각을 함께 보여 주지 않는지 확인한다.
+   */
+  test('스케줄 트리거 — 비활성 트리거에는 "다음 실행"이 표시되지 않는다 (WD-114)', async ({
+    authenticatedPage: page,
+  }) => {
+    const enabled = createTrigger({
+      id: 22,
+      name: '켜진 스케줄',
+      triggerType: 'SCHEDULE',
+      isEnabled: true,
+      nextFireTime: '2026-09-13T09:00:00Z',
+    });
+    const disabled = createTrigger({
+      id: 23,
+      name: '꺼진 스케줄',
+      triggerType: 'SCHEDULE',
+      isEnabled: false,
+      nextFireTime: '2026-09-13T09:00:00Z',
+    });
+
+    await setupTriggerTabMocks(page, { triggers: [enabled, disabled] });
+    await gotoTriggerTab(page);
+
+    const enabledCard = page.locator('[data-slot="card"]').filter({ hasText: '켜진 스케줄' });
+    await expect(enabledCard.getByText('활성', { exact: true })).toBeVisible();
+    await expect(enabledCard.getByText(/다음 실행:/)).toBeVisible();
+
+    const disabledCard = page.locator('[data-slot="card"]').filter({ hasText: '꺼진 스케줄' });
+    await expect(disabledCard.getByText('비활성', { exact: true })).toBeVisible();
+    await expect(disabledCard.getByText(/다음 실행:/)).toHaveCount(0);
+  });
   /**
    * 보안 등급(Task 3 D1, 디자인 검토 3절): 볼 수 없는 감시 대상은 이름 대신 잠금 칩("열람 권한 없음", X 없음)으로 보이고,
    * 주기만 바꿔 저장해도 PUT config.datasetIds 에 그대로 남는다(서버는 새로 추가된 id 만 판정).

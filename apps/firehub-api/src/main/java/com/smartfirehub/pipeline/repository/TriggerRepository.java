@@ -83,6 +83,13 @@ public class TriggerRepository {
     Map<String, Object> triggerState = parseJsonb(r.get(T_TRIGGER_STATE));
     // nextFireTime 은 trigger_state(jsonb) 안에 저장돼 있다 (#676) — DTO 최상위 필드로 꺼내
     // 프론트엔드가 별도 파싱 없이 trigger.nextFireTime 으로 바로 읽을 수 있게 한다.
+    // 비활성 트리거는 실행되지 않으므로 "다음 실행"을 내보내지 않는다(WD-114). 끌 때 trigger_state 의 값은 지우지 않고(이미 꺼진
+    // 옛 행, 끄는 순간 돌던 발화가 끝나며 다시 쓴 값 포함) 읽을 때 한 곳에서 거른다 — 최상위 필드뿐 아니라 triggerState 원본에서도
+    // 빼야 원본 JSON 을 그대로 읽는 AI 에이전트 등 모든 소비자가 같은 답을 본다. 다시 켜면 등록 시 새 값으로 덮어쓴다.
+    boolean isEnabled = r.get(T_IS_ENABLED);
+    if (!isEnabled) {
+      triggerState.remove("nextFireTime");
+    }
     Object nextFireTimeValue = triggerState.get("nextFireTime");
     return new TriggerResponse(
         r.get(T_ID),
@@ -90,7 +97,7 @@ public class TriggerRepository {
         r.get(T_TRIGGER_TYPE),
         r.get(T_NAME),
         r.get(T_DESCRIPTION),
-        r.get(T_IS_ENABLED),
+        isEnabled,
         parseJsonb(r.get(T_CONFIG)),
         triggerState,
         nextFireTimeValue == null ? null : nextFireTimeValue.toString(),

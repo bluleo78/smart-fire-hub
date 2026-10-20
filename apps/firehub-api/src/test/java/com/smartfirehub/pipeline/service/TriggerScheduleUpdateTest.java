@@ -295,4 +295,35 @@ class TriggerScheduleUpdateTest extends IntegrationTestBase {
     assertThat(scheduledFuture(created.id())).isSameAs(oldFuture);
     assertThat(oldFuture.isCancelled()).isFalse();
   }
+
+  /**
+   * 비활성 트리거는 실행되지 않으므로 응답에 "다음 실행"이 없어야 한다(WD-114). 끄는 경로(토글·수정)와 목록·단건 조회 모두 같고, 다시 켜면 새로 등록된 다음
+   * 실행 시각이 돌아와야 한다 — 숨김이 켜진 트리거까지 지우면 안 된다.
+   */
+  @Test
+  void disabledTrigger_hidesNextFireTime_andReEnableRestoresIt() {
+    TriggerResponse created = createSchedule("0 3 * * *");
+    assertThat(triggerService.getTriggerById(created.id()).nextFireTime()).isNotNull();
+
+    triggerService.toggleTrigger(created.id(), false);
+    TriggerResponse disabled = triggerService.getTriggerById(created.id());
+    assertThat(disabled.isEnabled()).isFalse();
+    assertThat(disabled.nextFireTime()).isNull();
+    // 원본 triggerState 를 그대로 읽는 소비자(AI 에이전트 list_triggers)에게도 옛 시각이 새지 않아야 한다.
+    assertThat(disabled.triggerState()).doesNotContainKey("nextFireTime");
+    assertThat(schedulerService.isScheduled(created.id())).isFalse();
+    assertThat(triggerService.getTriggers(pipelineId))
+        .filteredOn(t -> t.id().equals(created.id()))
+        .singleElement()
+        .satisfies(t -> assertThat(t.nextFireTime()).isNull());
+
+    triggerService.toggleTrigger(created.id(), true);
+    assertThat(inZone(triggerService.getTriggerById(created.id()).nextFireTime(), "UTC").getHour())
+        .isEqualTo(3);
+
+    triggerService.updateTrigger(
+        created.id(), new UpdateTriggerRequest("매일새벽", false, null, null), userId);
+    assertThat(triggerService.getTriggerById(created.id()).nextFireTime()).isNull();
+    assertThat(schedulerService.isScheduled(created.id())).isFalse();
+  }
 }

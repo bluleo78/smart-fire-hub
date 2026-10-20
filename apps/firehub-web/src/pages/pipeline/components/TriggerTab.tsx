@@ -160,7 +160,8 @@ export default function TriggerTab({ pipelineId }: TriggerTabProps) {
                           {trigger.description}
                         </p>
                       )}
-                      {trigger.nextFireTime && (
+                      {/* 비활성 트리거는 실행되지 않으므로 「다음 실행」을 보이지 않는다(WD-114) */}
+                      {trigger.isEnabled && trigger.nextFireTime && (
                         <p className="text-xs text-muted-foreground mt-0.5">
                           다음 실행: {formatDate(trigger.nextFireTime)}
                         </p>
