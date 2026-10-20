@@ -622,7 +622,6 @@ public class DataImportService {
                 + errorCountFinal
                 + "건)"
                 + (sampleError != null ? " — 예: " + sampleError : "");
-        asyncJobService.failJob(jobId, failMessage);
 
         Object errorsForJson = hasMappings ? detailErrorsAccum : simpleErrorsAccum;
         String errorJson = objectMapper.writeValueAsString(Map.of("errors", errorsForJson));
@@ -659,6 +658,8 @@ public class DataImportService {
 
         log.error(
             "Import failed: validation error(s) found for dataset {} — {}", datasetId, failMessage);
+        // 감사 로그 뒤·return 직전 — 순서 규칙은 failImport 참조
+        failImport(jobId, failMessage, userId, datasetId, datasetNameForNotification);
         return;
       }
 
@@ -808,7 +809,6 @@ public class DataImportService {
 
       // UPSERT에서 NULL PK가 발견되면 promote 없이 실패 처리(기존과 동일 메시지/감사 로그).
       if (importMode == ImportMode.UPSERT && pkNullFound[0]) {
-        asyncJobService.failJob(jobId, "Primary key validation failed: NULL values in PK columns");
         String pkErrorJson = objectMapper.writeValueAsString(Map.of("errors", pkErrorsAccum));
         auditLogService.log(
             userId,
@@ -832,6 +832,13 @@ public class DataImportService {
                 importModeName,
                 "errorDetails",
                 pkErrorJson));
+        // 감사 로그 뒤·return 직전 — 순서 규칙은 failImport 참조
+        failImport(
+            jobId,
+            "Primary key validation failed: NULL values in PK columns",
+            userId,
+            datasetId,
+            datasetNameForNotification);
         return;
       }
 
@@ -907,10 +914,8 @@ public class DataImportService {
       log.error("Import failed for dataset {}", datasetId, e);
 
       String userMessage = toUserFriendlyMessage(e);
-      asyncJobService.failJob(jobId, userMessage);
-
-      notificationService.notifyImportCompleted(
-          userId, datasetId, datasetNameForNotification, false);
+      // 예외 경로는 기존대로 감사 로그보다 먼저 실패 처리·알림을 한다(감사 로그가 던져도 알림은 이미 1번 나감).
+      failImport(jobId, userMessage, userId, datasetId, datasetNameForNotification);
 
       Map<String, Object> metadata =
           Map.of(
@@ -958,6 +963,28 @@ public class DataImportService {
       // 여기서 TenantContext 를 지우지 않는다 — 스코프 해제는 호출부의 runScoped 가 담당한다.
       // 이 정리(임시 파일·staging DROP)는 RLS 대상 테이블을 건드리므로 스코프 안이어야 한다.
     }
+  }
+
+  /**
+   * 임포트 잡을 실패(FAILED)로 끝내고 요청자에게 「임포트 실패」 알림(토스트·알림함)을 보낸다. 임포트가 실패로 끝나는 모든 지점은 이 메서드 하나를 거친다 — 잡
+   * 상태와 알림을 따로 부르던 시절, WD-96 fail-fast 전환으로 생긴 return 경로(검증 실패·기본 키 빈 값)에서 알림만 빠졌던 결함(WD-102)이 실패
+   * 지점이 늘어날 때 되풀이되지 않게 한다.
+   *
+   * <p>호출 순서 규칙(같은 실패에 알림이 정확히 한 번 가도록):
+   *
+   * <ul>
+   *   <li>return 으로 끝나는 실패 경로는 감사 로그까지 남긴 <b>뒤</b>, return 직전에 부른다. 그 앞의 직렬화·감사 로그 저장이 던지면 catch 가
+   *       이 메서드를 대신 한 번 부르므로, 여기를 먼저 부르면 알림이 두 번 간다.
+   *   <li>catch 경로는 감사 로그 <b>앞</b>에서 부른다(기존 동작). 감사 로그가 던져도 실패 처리·알림은 이미 끝나 있다.
+   * </ul>
+   *
+   * @param failMessage 잡에 남길 실패 사유(진행 화면에 그대로 보인다)
+   * @param datasetName 알림 문구에 넣을 데이터셋 이름
+   */
+  private void failImport(
+      String jobId, String failMessage, Long userId, Long datasetId, String datasetName) {
+    asyncJobService.failJob(jobId, failMessage);
+    notificationService.notifyImportCompleted(userId, datasetId, datasetName, false);
   }
 
   public List<ImportResponse> getImportsByDatasetId(Long datasetId) {
