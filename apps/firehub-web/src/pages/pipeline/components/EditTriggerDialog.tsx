@@ -123,7 +123,8 @@ export function EditTriggerDialog({ open, onOpenChange, pipelineId, trigger }: E
         triggerId: trigger.id,
         data: {
           name: name.trim(),
-          description: description.trim() || undefined,
+          // 빈 설명도 빈 문자열로 보내야 서버가 "지움"으로 처리한다(WD-113) — undefined 면 키가 빠져 "바꾸지 않음"이 된다.
+          description: description.trim(),
           config,
         },
       });

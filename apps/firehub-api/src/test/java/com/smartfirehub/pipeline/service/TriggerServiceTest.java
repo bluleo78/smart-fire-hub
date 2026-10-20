@@ -171,6 +171,28 @@ class TriggerServiceTest extends IntegrationTestBase {
     assertThat(updated.description()).isEqualTo("Updated desc");
   }
 
+  /**
+   * 설명을 지우고 저장하면 실제로 지워지고(빈 문자열 = 지움), 설명 키 없이(null) 보낸 부분 수정은 기존 설명을 그대로 둔다(WD-113). 예전엔 빈 설명도
+   * null 로 와서 "바꾸지 않음"으로 처리돼 옛 설명이 남았다.
+   */
+  @Test
+  void updateTrigger_blankDescriptionClears_nullKeepsExisting() {
+    TriggerResponse created =
+        triggerService.createTrigger(
+            pipelineId,
+            new CreateTriggerRequest("With desc", TriggerType.API, "Original desc", Map.of()),
+            testUserId);
+
+    triggerService.updateTrigger(
+        created.id(), new UpdateTriggerRequest("Renamed", null, null, null), testUserId);
+    assertThat(triggerService.getTriggerById(created.id()).description())
+        .isEqualTo("Original desc");
+
+    triggerService.updateTrigger(
+        created.id(), new UpdateTriggerRequest("Renamed", null, "", null), testUserId);
+    assertThat(triggerService.getTriggerById(created.id()).description()).isNull();
+  }
+
   @Test
   void deleteTrigger_success() {
     TriggerResponse created =

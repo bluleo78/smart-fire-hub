@@ -177,6 +177,39 @@ test.describe('파이프라인 트리거 탭', () => {
     await expect(page.getByRole('dialog')).not.toBeVisible();
   });
 
+  /**
+   * 회귀 방지 테스트 (WD-113)
+   * 설명을 모두 지우고 저장하면 PUT 에 빈 문자열 description 이 실려야 서버가 "지움"으로 처리한다.
+   * 예전엔 `trim() || undefined` 로 키가 빠져 "바꾸지 않음"이 되고, 「수정되었습니다」 후에도 옛 설명이 남았다.
+   */
+  test('트리거 편집 — 설명을 지우고 저장하면 빈 description 이 PUT 에 실린다 (WD-113)', async ({
+    authenticatedPage: page,
+  }) => {
+    const existing = createTrigger({
+      id: 6,
+      name: '설명 있는 스케줄',
+      description: '지울 설명',
+      triggerType: 'SCHEDULE',
+      config: { cron: '0 0 9 * * *', timezone: 'Asia/Seoul', concurrencyPolicy: 'SKIP' },
+    });
+    await setupTriggerTabMocks(page, { triggers: [existing] });
+    const updateCapture = await mockApi(page, 'PUT', '/api/v1/pipelines/1/triggers/6', '', { capture: true });
+
+    await gotoTriggerTab(page);
+    await page.getByRole('button').filter({ has: page.locator('.lucide-ellipsis') }).first().click();
+    await page.getByRole('menuitem', { name: '편집' }).click();
+
+    const dialog = page.getByRole('dialog');
+    const desc = dialog.getByLabel('설명');
+    await expect(desc).toHaveValue('지울 설명');
+    await desc.fill('');
+    await dialog.getByRole('button', { name: '저장' }).click();
+
+    const req = await updateCapture.waitForRequest();
+    expect(req.payload).toHaveProperty('description', '');
+    expect(req.payload).toMatchObject({ name: '설명 있는 스케줄' });
+  });
+
   test('트리거 편집 — 이름 변경 후 PUT payload 검증', async ({ authenticatedPage: page }) => {
     const existing = createTrigger({
       id: 5,

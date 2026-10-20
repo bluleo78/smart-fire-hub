@@ -215,8 +215,10 @@ public class TriggerRepository {
     if (req.name() != null) {
       query = query.set(T_NAME, req.name());
     }
+    // description 이 null 이면 "바꾸지 않음"(부분 수정 — AI 에이전트 등), 빈 문자열이면 "지움"으로 본다(WD-113).
+    // 예전엔 웹이 빈 설명을 키째 빼고 보내 null 과 구분이 안 돼, 설명을 지우고 저장해도 옛 설명이 남았다.
     if (req.description() != null) {
-      query = query.set(T_DESCRIPTION, req.description());
+      query = query.set(T_DESCRIPTION, req.description().isBlank() ? null : req.description());
     }
     if (req.isEnabled() != null) {
       query = query.set(T_IS_ENABLED, req.isEnabled());
