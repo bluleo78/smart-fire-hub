@@ -4,7 +4,7 @@ import { useMemo } from 'react';
 import type { ChartConfig, ChartType } from '../../types/analytics';
 import { AreaChartView } from './AreaChartView';
 import { BarChartView } from './BarChartView';
-import { findMissingChartColumns, normalizeYAxis } from './chart-missing-columns';
+import { findMissingChartColumns, resolveChartAxes } from './chart-missing-columns';
 import { LineChartView } from './LineChartView';
 import { MapChartView } from './MapChartView';
 import { HeatmapChartView } from './nivo/HeatmapChartView';
@@ -131,17 +131,8 @@ export function ChartRenderer({
 
   // Auto-infer xAxis/yAxis from columns when not provided.
   // yAxis 가 아예 없는 설정(AI 챗에서 LLM 이 빠뜨린 경우 등)에서 .length 로 TypeError 가 나지 않게 빈 배열로 정규화한다(WD-88).
-  const config = normalizeYAxis(rawConfig);
-  if ((!config.xAxis || config.yAxis.length === 0) && columns.length >= 2) {
-    if (!config.xAxis) {
-      config.xAxis = columns[0];
-    }
-    if (config.yAxis.length === 0) {
-      // For numeric columns, use remaining columns as yAxis
-      const remaining = columns.filter(c => c !== config.xAxis);
-      config.yAxis = remaining.length > 0 ? remaining : [columns[1]];
-    }
-  }
+  // 추론 규칙은 resolveChartAxes 하나로 AI 챗 rows 정규화(WD-104)와 공유한다.
+  const config = resolveChartAxes(rawConfig, columns);
 
   // 0행 결과에서도 이름이 틀렸으면 컬럼 안내가 「데이터가 없습니다」보다 우선한다(축을 고쳐야 데이터가 보이므로).
   if (missingColumns.length > 0) {

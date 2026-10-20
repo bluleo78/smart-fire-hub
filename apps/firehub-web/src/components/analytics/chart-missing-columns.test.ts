@@ -8,7 +8,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { ChartConfig, ChartType } from '../../types/analytics';
-import { findMissingChartColumns, normalizeYAxis, toggleYAxisColumn } from './chart-missing-columns';
+import { findMissingChartColumns, normalizeYAxis, resolveChartAxes, toggleYAxisColumn } from './chart-missing-columns';
 
 /** 기본 설정에 덮어쓸 값만 받는 헬퍼 */
 function cfg(overrides: Partial<ChartConfig>): ChartConfig {
@@ -203,5 +203,28 @@ describe('normalizeYAxis (WD-88 simplify)', () => {
     expect(out).toEqual({ xAxis: 'a', yAxis: [] });
     expect(out).not.toBe(raw);
     expect('yAxis' in raw).toBe(false);
+  });
+});
+
+/** 축 자동 추론 — ChartRenderer 와 AI 챗 rows 정규화(WD-104)가 공유하는 규칙 */
+describe('resolveChartAxes', () => {
+  it('비어 있는 xAxis 는 첫 컬럼, yAxis 는 나머지 컬럼으로 채운다', () => {
+    expect(resolveChartAxes({ xAxis: '', yAxis: [] }, ['a', 'b', 'c'])).toMatchObject({ xAxis: 'a', yAxis: ['b', 'c'] });
+  });
+
+  it('xAxis 만 있으면 그 칸을 뺀 나머지가 yAxis 가 되고, 나머지가 없으면 [columns[1]] 이다', () => {
+    expect(resolveChartAxes({ xAxis: 'b', yAxis: [] }, ['a', 'b'])).toMatchObject({ xAxis: 'b', yAxis: ['a'] });
+    expect(resolveChartAxes({ xAxis: 'a', yAxis: [] }, ['a', 'a'])).toMatchObject({ xAxis: 'a', yAxis: ['a'] });
+  });
+
+  it('컬럼이 2개 미만이면 추론하지 않고, 설정이 있으면 그대로 두며 원본을 바꾸지 않는다', () => {
+    expect(resolveChartAxes({ xAxis: '', yAxis: [] }, ['a'])).toMatchObject({ xAxis: '', yAxis: [] });
+    const raw = { xAxis: 'x', yAxis: ['y'] };
+    const resolved = resolveChartAxes(raw, ['x', 'y', 'z']);
+    expect(resolved).toMatchObject({ xAxis: 'x', yAxis: ['y'] });
+    expect(resolved).not.toBe(raw);
+    const missingY = { xAxis: '' } as unknown as ChartConfig;
+    resolveChartAxes(missingY, ['a', 'b']);
+    expect(missingY.xAxis).toBe('');
   });
 });

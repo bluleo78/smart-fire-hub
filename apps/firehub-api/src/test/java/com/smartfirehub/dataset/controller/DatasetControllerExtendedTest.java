@@ -25,6 +25,7 @@ import com.smartfirehub.permission.service.PermissionService;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
@@ -438,6 +439,86 @@ class DatasetControllerExtendedTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(req)))
         .andExpect(status().isOk());
+  }
+
+  /**
+   * WD-104: 데이터셋 SQL 탭 응답도 WD-101 과 같은 규칙으로 정밀도를 잃는 숫자만 문자열로 낸다. 사용자 SELECT 는 데이터셋 컬럼에 없는 타입도 만들므로
+   * BigInteger(NUMERIC(p≥19,0) 식)와 배열 원소까지 확인한다.
+   */
+  @Test
+  void executeQuery_serializesUnsafeNumbersAsStrings() throws Exception {
+    Map<String, Object> row = precisionRow();
+    row.put("big_integer_unsafe", new BigInteger("12345678901234567890123"));
+    row.put("big_integer_negative", new BigInteger("-9007199254740992"));
+    row.put("big_integer_max_safe", BigInteger.valueOf(9007199254740991L));
+    row.put("big_integer_small", BigInteger.valueOf(5));
+    row.put("float_value", 1.5f);
+    row.put("short_value", (short) 7);
+    row.put(
+        "decimal_array",
+        new Object[] {new BigDecimal("123456789012.123456"), new BigDecimal("1.500000"), null});
+    row.put("bigint_list", List.of(9007199254740993L, 5L));
+    SqlQueryRequest req = new SqlQueryRequest("SELECT 1", 100);
+    SqlQueryResponse resp =
+        new SqlQueryResponse("SELECT", List.of("big_decimal"), List.of(row), 1, 3L, null);
+    when(datasetDataService.executeQuery(anyLong(), any(), anyLong())).thenReturn(resp);
+
+    mockMvc
+        .perform(
+            post("/api/v1/datasets/1/query")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(req)))
+        .andExpect(status().isOk())
+        // 응답 메타 필드는 그대로 숫자다
+        .andExpect(jsonPath("$.affectedRows").isNumber())
+        .andExpect(jsonPath("$.executionTimeMs").isNumber())
+        .andExpect(jsonPath("$.rows[0].id").isNumber())
+        .andExpect(jsonPath("$.rows[0].id").value(7))
+        .andExpect(jsonPath("$.rows[0].big_decimal").isString())
+        .andExpect(jsonPath("$.rows[0].big_decimal").value("123456789012.123456"))
+        .andExpect(jsonPath("$.rows[0].unsafe_bigint").isString())
+        .andExpect(jsonPath("$.rows[0].unsafe_bigint").value("9007199254740993"))
+        .andExpect(jsonPath("$.rows[0].unsafe_negative").isString())
+        .andExpect(jsonPath("$.rows[0].unsafe_negative").value("-9007199254740993"))
+        .andExpect(jsonPath("$.rows[0].max_safe").isNumber())
+        .andExpect(jsonPath("$.rows[0].min_long").isString())
+        .andExpect(jsonPath("$.rows[0].min_long").value(String.valueOf(Long.MIN_VALUE)))
+        .andExpect(jsonPath("$.rows[0].small_bigint").isNumber())
+        .andExpect(jsonPath("$.rows[0].small_bigint").value(5))
+        .andExpect(jsonPath("$.rows[0].small_int").isNumber())
+        .andExpect(jsonPath("$.rows[0].trailing_half").isString())
+        .andExpect(jsonPath("$.rows[0].trailing_half").value("1.5"))
+        .andExpect(jsonPath("$.rows[0].trailing_int").isString())
+        .andExpect(jsonPath("$.rows[0].trailing_int").value("100"))
+        .andExpect(jsonPath("$.rows[0].zero_scaled").isString())
+        .andExpect(jsonPath("$.rows[0].zero_scaled").value("0"))
+        .andExpect(jsonPath("$.rows[0].double_value").isNumber())
+        .andExpect(jsonPath("$.rows[0].float_value").isNumber())
+        .andExpect(jsonPath("$.rows[0].short_value").isNumber())
+        .andExpect(jsonPath("$.rows[0].text_value").value("가나다"))
+        .andExpect(jsonPath("$.rows[0].big_integer_unsafe").isString())
+        .andExpect(jsonPath("$.rows[0].big_integer_unsafe").value("12345678901234567890123"))
+        .andExpect(jsonPath("$.rows[0].big_integer_negative").isString())
+        .andExpect(jsonPath("$.rows[0].big_integer_negative").value("-9007199254740992"))
+        .andExpect(jsonPath("$.rows[0].big_integer_max_safe").isNumber())
+        .andExpect(jsonPath("$.rows[0].big_integer_small").isNumber())
+        .andExpect(jsonPath("$.rows[0].big_integer_small").value(5))
+        .andExpect(jsonPath("$.rows[0].decimal_array[0]").isString())
+        .andExpect(jsonPath("$.rows[0].decimal_array[0]").value("123456789012.123456"))
+        .andExpect(jsonPath("$.rows[0].decimal_array[1]").value("1.5"))
+        .andExpect(jsonPath("$.rows[0].bigint_list[0]").isString())
+        .andExpect(jsonPath("$.rows[0].bigint_list[0]").value("9007199254740993"))
+        .andExpect(jsonPath("$.rows[0].bigint_list[1]").isNumber())
+        // value(String) 는 숫자도 문자열로 바꿔 통과시키므로 원문으로 타입·null 까지 고정한다.
+        .andExpect(content().string(containsString("\"big_decimal\":\"123456789012.123456\"")))
+        .andExpect(content().string(containsString("\"unsafe_bigint\":\"9007199254740993\"")))
+        .andExpect(content().string(containsString("\"max_safe\":9007199254740991")))
+        .andExpect(content().string(containsString("\"big_integer_max_safe\":9007199254740991")))
+        .andExpect(
+            content()
+                .string(containsString("\"decimal_array\":[\"123456789012.123456\",\"1.5\",null]")))
+        .andExpect(content().string(containsString("\"empty_value\":null")));
   }
 
   @Test

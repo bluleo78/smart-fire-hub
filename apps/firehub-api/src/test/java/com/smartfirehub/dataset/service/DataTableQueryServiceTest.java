@@ -4,6 +4,8 @@ import static com.smartfirehub.jooq.Tables.*;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dataset.dto.*;
 import com.smartfirehub.dataset.exception.SqlQueryException;
 import com.smartfirehub.support.IntegrationTestBase;
@@ -31,6 +33,7 @@ class DataTableQueryServiceTest extends IntegrationTestBase {
   @Autowired private DatasetService datasetService;
   @Autowired private DatasetDataService datasetDataService;
   @Autowired private DSLContext dsl;
+  @Autowired private ObjectMapper objectMapper;
 
   /** 테스트용 사용자 ID */
   private Long testUserId;
@@ -762,5 +765,77 @@ class DataTableQueryServiceTest extends IntegrationTestBase {
     assertThat(response.error()).isNotNull();
     assertThat(currentValues()).containsExactly(10, 20, 30);
     assertThat(dsl.fetchValue("SELECT 1", Integer.class)).isEqualTo(1);
+  }
+
+  // =========================================================================
+  // SQL 탭 응답 JSON 정밀도 (WD-104)
+  // =========================================================================
+
+  /**
+   * 정상: 실제 사용자 SELECT 결과를 앱 ObjectMapper 로 쓰면 JS double 로 깎이는 값만 문자열이다. 집계·캐스팅 결과 타입은 jOOQ 가
+   * 고르므로(sum(bigint)=BigDecimal, count=Long, numeric(30,0)=BigInteger, 배열=Object[]) 실제 DB 로 그 전제까지
+   * 잇는다 — 컨트롤러 슬라이스 테스트는 목 값만 쓴다.
+   */
+  @Test
+  void executeQuery_responseJson_keepsPrecisionOfUnsafeNumbers() throws Exception {
+    SqlQueryResponse response =
+        dataTableQueryService.executeQuery(
+            "SELECT 123456789012.123456::numeric(18,6) AS dec_val,"
+                + " 1.500000::numeric(18,6) AS trailing_val,"
+                + " 9007199254740993::bigint AS unsafe_big,"
+                + " 5::bigint AS small_big,"
+                + " 42 AS int4,"
+                + " 0.1::float8 AS dbl,"
+                + " NULL::numeric AS nul,"
+                + " (SELECT count(*) FROM "
+                + testTableName
+                + ") AS cnt,"
+                + " (SELECT sum(x) FROM (VALUES (9007199254740993::bigint), (1::bigint)) v(x))"
+                + " AS sum_big,"
+                + " (SELECT avg(value) FROM "
+                + testTableName
+                + ") AS avg_value,"
+                + " 12345678901234567890123::numeric(30,0) AS cast30,"
+                + " 12::numeric(30,0) AS cast30_small,"
+                + " ARRAY[123456789012.123456, 1.5] AS dec_arr",
+            10);
+    assertThat(response.error()).isNull();
+
+    JsonNode row = objectMapper.readTree(objectMapper.writeValueAsString(response)).at("/rows/0");
+
+    assertThat(row.get("dec_val").isTextual()).isTrue();
+    assertThat(row.get("dec_val").asText()).isEqualTo("123456789012.123456");
+    assertThat(row.get("trailing_val").isTextual()).isTrue();
+    assertThat(row.get("trailing_val").asText()).isEqualTo("1.5");
+    assertThat(row.get("unsafe_big").isTextual()).isTrue();
+    assertThat(row.get("unsafe_big").asText()).isEqualTo("9007199254740993");
+    assertThat(row.get("small_big").isNumber()).isTrue();
+    assertThat(row.get("small_big").asLong()).isEqualTo(5L);
+    assertThat(row.get("int4").isNumber()).isTrue();
+    assertThat(row.get("int4").asInt()).isEqualTo(42);
+    assertThat(row.get("dbl").isNumber()).isTrue();
+    assertThat(row.get("dbl").asDouble()).isEqualTo(0.1d);
+    assertThat(row.get("nul").isNull()).isTrue();
+    // count(*) 는 bigint(Long) — 작은 값이라 숫자 그대로
+    assertThat(row.get("cnt").isNumber()).isTrue();
+    assertThat(row.get("cnt").asLong()).isEqualTo(3L);
+    // sum(bigint) 는 numeric(BigDecimal) — 2^53 을 넘는 합이 깎이지 않아야 한다
+    assertThat(row.get("sum_big").isTextual()).isTrue();
+    assertThat(row.get("sum_big").asText()).isEqualTo("9007199254740994");
+    // avg 는 numeric — 끝자리 0 이 지워진 문자열(10·20·30 의 평균 20.0000…)
+    assertThat(row.get("avg_value").isTextual()).isTrue();
+    assertThat(row.get("avg_value").asText()).isEqualTo("20");
+    // numeric(30,0) 은 BigInteger — 안전 범위 밖만 문자열
+    assertThat(row.get("cast30").isTextual()).isTrue();
+    assertThat(row.get("cast30").asText()).isEqualTo("12345678901234567890123");
+    assertThat(row.get("cast30_small").isNumber()).isTrue();
+    assertThat(row.get("cast30_small").asLong()).isEqualTo(12L);
+    // 배열 원소도 같은 규칙
+    JsonNode arr = row.get("dec_arr");
+    assertThat(arr.isArray()).isTrue();
+    assertThat(arr.get(0).isTextual()).isTrue();
+    assertThat(arr.get(0).asText()).isEqualTo("123456789012.123456");
+    assertThat(arr.get(1).isTextual()).isTrue();
+    assertThat(arr.get(1).asText()).isEqualTo("1.5");
   }
 }

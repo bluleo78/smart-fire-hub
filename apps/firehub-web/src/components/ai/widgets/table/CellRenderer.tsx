@@ -1,3 +1,4 @@
+import { PLAIN_DECIMAL_RE } from '../../../../lib/plain-decimal';
 import { cn } from '../../../../lib/utils';
 
 /* 셀 상태 표시 색상 — 시맨틱 토큰 사용 */
@@ -26,11 +27,8 @@ interface CellRendererProps {
   isNumericColumn?: boolean;
 }
 
-/**
- * 서버가 보내는 10진 숫자 문자열(선택 '-'·정수부·선택 소수부). 서버는 BigDecimal.toPlainString·Long.toString 만 보내므로
- * 앞자리 0 은 지우지 않고, '+'·지수 표기는 정규식에 맞지 않아 기존 Number 경로로 표시된다.
- */
-const PLAIN_DECIMAL_RE = /^(-?)(\d+)(\.\d+)?$/;
+// 서버 숫자 문자열 패턴은 lib/plain-decimal 공용(WD-104). 서버는 BigDecimal.toPlainString·Long.toString 만 보내므로
+// 앞자리 0 은 지우지 않고, '+'·지수 표기는 정규식에 맞지 않아 기존 Number 경로로 표시된다.
 
 /**
  * 숫자 문자열을 Number 로 바꾸지 않고 정수부에만 천 단위 쉼표를 넣는다(WD-101).

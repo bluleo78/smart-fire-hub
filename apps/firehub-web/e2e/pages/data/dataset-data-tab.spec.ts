@@ -611,4 +611,77 @@ test.describe('데이터셋 상세 — 데이터 탭', () => {
     await expect(page.locator('#edit-big')).toHaveValue('9007199254740993');
     await expect(page.locator('#edit-small')).toHaveValue('5');
   });
+
+  // (WD-104) SQL 탭 결과도 NUMERIC(18,6)·BIGINT·집계(sum(bigint)=numeric)·numeric(30,0) 값이 JSON 숫자로 오면 JS double 로
+  // 깎였다. API 는 이제 정밀도를 잃는 값을 문자열로(배열 원소 포함), 작은 정수는 숫자로 보낸다. 그 응답이 결과 표에 한 자리도
+  // 바뀌지 않고 그대로 보이는지 고정한다 — mock 응답이 이미 문자열이라 표시 회귀 가드이며, 직렬화 자체는 백엔드 TC 가 검증한다.
+  test('SQL 결과 표가 정밀도를 잃는 소수·큰 정수 문자열 응답을 그대로 표시한다 (WD-104)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDataTabMocks(page);
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets/1/data',
+      (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            columns: datasetDetail.columns,
+            rows: [{ _id: 101, id: 1, name: 'Alice', amount: 10 }],
+            page: 0,
+            size: 50,
+            totalElements: 1,
+            totalPages: 1,
+          }),
+        }),
+    );
+    // 서버(DatasetRowValuesSerializer)가 보내는 모양: 소수·2^53 밖 정수·배열 원소는 문자열, 작은 정수는 숫자
+    const execute = await mockApi(
+      page,
+      'POST',
+      '/api/v1/datasets/1/query',
+      {
+        queryType: 'SELECT',
+        columns: ['price', 'big', 'total', 'wide', 'cnt', 'arr', 'missing'],
+        rows: [
+          {
+            price: '123456789012.123456',
+            big: '9007199254740993',
+            total: '9007199254740994',
+            wide: '12345678901234567890123',
+            cnt: 3,
+            arr: ['123456789012.123456', '1.5'],
+            missing: null,
+          },
+        ],
+        affectedRows: 1,
+        executionTimeMs: 4,
+        error: null,
+      },
+      { capture: true },
+    );
+
+    await page.goto('/data/datasets/1');
+    await page.getByRole('tab', { name: '데이터' }).click();
+    await expect(page.getByText('Alice')).toBeVisible();
+    await page.getByRole('button', { name: /SQL/ }).click();
+
+    await page.locator('.cm-content').click();
+    await page.keyboard.type('SELECT price FROM t');
+    await page.getByRole('button', { name: '실행' }).click();
+    await execute.waitForRequest();
+
+    // SQL 결과 표는 "1행 반환" 안내 바로 아래에 있다 — 데이터 그리드와 구분하려고 헤더 이름으로 잡는다
+    const result = page.locator('table').filter({ has: page.getByRole('columnheader', { name: 'wide' }) });
+    await expect(result.getByRole('cell', { name: '123456789012.123456', exact: true })).toBeVisible();
+    await expect(result.getByRole('cell', { name: '9007199254740993', exact: true })).toBeVisible();
+    await expect(result.getByRole('cell', { name: '9007199254740994', exact: true })).toBeVisible();
+    await expect(result.getByRole('cell', { name: '12345678901234567890123', exact: true })).toBeVisible();
+    await expect(result.getByRole('cell', { name: '3', exact: true })).toBeVisible();
+    await expect(result.getByRole('cell', { name: '123456789012.123456,1.5', exact: true })).toBeVisible();
+    await expect(result.getByRole('cell', { name: 'NULL', exact: true })).toBeVisible();
+    // 깎인 값이 어디에도 보이면 안 된다
+    await expect(result).not.toContainText('123456789012.12346');
+    await expect(result).not.toContainText('9007199254740992');
+  });
 });

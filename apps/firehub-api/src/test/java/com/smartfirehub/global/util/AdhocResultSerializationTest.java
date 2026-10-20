@@ -148,8 +148,12 @@ class AdhocResultSerializationTest extends IntegrationTestBase {
     assertJsonOnBothPaths("ARRAY[[NULL,2]]", "[[null,2]]");
     assertJsonOnBothPaths("ARRAY[[[1,2]],[[3,4]]]", "[[[1,2]],[[3,4]]]");
     assertJsonOnBothPaths("ARRAY[[true,false]]", "[[true,false]]");
-    // numeric 원소는 같은 경로의 1차원 numeric 원소와 같은 형태(JSON 숫자)
-    assertJsonOnBothPaths("ARRAY[[1.5,NULL],[2,3]]::numeric[]", "[[1.5,null],[2,3]]");
+    // numeric 원소는 같은 경로의 1차원 numeric 원소와 같은 형태 — 분석 경로는 JSON 숫자, 데이터셋 SQL 탭은
+    // 정밀도 보존을 위해 문자열(WD-104, DatasetRowValuesSerializer)
+    String numeric2d = "ARRAY[[1.5,NULL],[2,3]]::numeric[]";
+    assertThat(analyticsValue(numeric2d)).isEqualTo(objectMapper.readTree("[[1.5,null],[2,3]]"));
+    assertThat(datasetValue(numeric2d))
+        .isEqualTo(objectMapper.readTree("[[\"1.5\",null],[\"2\",\"3\"]]"));
     // 하한이 1 이 아닌 배열 — executor 처럼 하한은 버리고 값은 보존
     assertJsonOnBothPaths("'[0:1][0:1]={{1,2},{3,4}}'::int[]", "[[1,2],[3,4]]");
     // 원소 형태는 같은 경로의 1차원 배열 원소와 같다(날짜·시각·uuid·bytea·jsonb·interval 등)
@@ -163,15 +167,27 @@ class AdhocResultSerializationTest extends IntegrationTestBase {
             "'{\"k\":1}'::jsonb",
             "interval '1 year 2 days'",
             "1.25::numeric")) {
-      JsonNode oneDim = analyticsValue("ARRAY[" + elem + "]").get(0);
-      JsonNode expected =
-          objectMapper.createArrayNode().add(objectMapper.createArrayNode().add(oneDim));
+      // 경로마다 자기 1차원 원소와 비교한다(데이터셋 SQL 탭은 numeric 을 문자열로 내보낸다 — WD-104)
+      JsonNode analyticsOneDim = analyticsValue("ARRAY[" + elem + "]").get(0);
       assertThat(analyticsValue("ARRAY[[" + elem + "]]"))
           .as("analytics 2D %s", elem)
-          .isEqualTo(expected);
+          .isEqualTo(
+              objectMapper
+                  .createArrayNode()
+                  .add(objectMapper.createArrayNode().add(analyticsOneDim)));
+      JsonNode datasetOneDim = datasetValue("ARRAY[" + elem + "]").get(0);
+      if (!elem.endsWith("::numeric")) {
+        // numeric 외 원소는 두 경로가 여전히 같은 형태다
+        assertThat(datasetOneDim).as("1D parity %s", elem).isEqualTo(analyticsOneDim);
+      } else {
+        assertThat(datasetOneDim.isTextual()).as("dataset numeric 1D is string").isTrue();
+      }
       assertThat(datasetValue("ARRAY[[" + elem + "]]"))
           .as("dataset 2D %s", elem)
-          .isEqualTo(expected);
+          .isEqualTo(
+              objectMapper
+                  .createArrayNode()
+                  .add(objectMapper.createArrayNode().add(datasetOneDim)));
     }
     assertJsonOnBothPaths("ARRAY[['{\"k\":1}'::jsonb]]", "[[\"{\\\"k\\\": 1}\"]]");
     assertJsonOnBothPaths("ARRAY[[interval '1 day']]", "[[\"1 day\"]]");

@@ -22,6 +22,7 @@ import {
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { Switch } from '../ui/switch';
+import { normalizeChartRows } from './chart-numeric-rows';
 
 SyntaxHighlighter.registerLanguage('sql', sql);
 
@@ -202,6 +203,13 @@ export function InlineChartWidget({
     [chartType, config, columns, rows],
   );
 
+  // WD-104: 데이터셋 조회·SQL 탭 결과를 옮긴 rows 는 소수가 문자열("1.5")이라, recharts 로 넘기기 직전에 값 축 칸의
+  // 숫자 문자열만 Number 로 바꾼다(파이 조각이 사라지는 등). 카테고리(x축) 칸은 그대로 둔다 — chart-numeric-rows.ts 참고.
+  const chartRows = useMemo(
+    () => normalizeChartRows(chartType, config, columns, rows),
+    [chartType, config, columns, rows],
+  );
+
   // 클립보드 복사 — 모달 안에서 전체 SQL을 빠르게 복사할 수 있도록 제공
   async function handleCopySql() {
     try {
@@ -240,7 +248,7 @@ export function InlineChartWidget({
           <ChartRenderer
             chartType={chartType}
             config={config}
-            data={rows}
+            data={chartRows}
             columns={columns}
             height={300}
             missingColumnsHint={AI_MISSING_COLUMNS_HINT}

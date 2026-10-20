@@ -11,6 +11,28 @@ export function normalizeYAxis(config: ChartConfig): ChartConfig {
   return { ...config, yAxis: Array.isArray(config.yAxis) ? config.yAxis : [] };
 }
 
+/**
+ * 렌더러가 실제로 쓰는 축 설정을 돌려준다 — yAxis 를 배열로 맞추고, 비어 있는 xAxis/yAxis 를 결과 컬럼으로 자동 추론한다.
+ *
+ * 규칙(컬럼이 2개 이상일 때만): xAxis 가 없으면 columns[0], yAxis 가 없으면 xAxis 를 뺀 나머지 컬럼(없으면 [columns[1]]).
+ * ChartRenderer 와 AI 챗 차트 rows 정규화(chart-numeric-rows, WD-104)가 같은 축을 보도록 한곳에 둔다.
+ * 원본은 건드리지 않고 항상 새 객체를 돌려준다(normalizeYAxis 사본 위에서 덮어쓴다).
+ */
+export function resolveChartAxes(rawConfig: ChartConfig, columns: string[]): ChartConfig {
+  const config = normalizeYAxis(rawConfig);
+  if ((!config.xAxis || config.yAxis.length === 0) && columns.length >= 2) {
+    if (!config.xAxis) {
+      config.xAxis = columns[0];
+    }
+    if (config.yAxis.length === 0) {
+      // For numeric columns, use remaining columns as yAxis
+      const remaining = columns.filter((c) => c !== config.xAxis);
+      config.yAxis = remaining.length > 0 ? remaining : [columns[1]];
+    }
+  }
+  return config;
+}
+
 /** 차트 타입 하나가 config 에서 읽는 컬럼 필드 목록(비어 있을 수 있음) */
 type UsedColumnFields = (config: ChartConfig) => (string | undefined)[];
 
