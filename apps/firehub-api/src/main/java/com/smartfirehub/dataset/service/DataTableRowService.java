@@ -194,6 +194,13 @@ public class DataTableRowService {
     return resolver.rowStore().checkDataUniqueness(tableName, pkColumnNames);
   }
 
+  /** 컬럼에 NULL 값이 있는지 검사한다. 테넌트 해석 전에 이름부터 검증한다. */
+  public boolean hasNulls(String tableName, String columnName) {
+    DataTableNames.validate(tableName);
+    DataTableNames.validate(columnName);
+    return resolver.rowStore().hasNulls(tableName, columnName);
+  }
+
   public List<Map<String, Object>> findDuplicateRows(
       String tableName, List<String> pkColumnNames, int limit) {
     // 테넌트 해석 전에 이름부터 검증한다(기존 동작 유지).

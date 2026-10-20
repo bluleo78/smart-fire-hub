@@ -9,6 +9,7 @@ import com.smartfirehub.dataset.storage.DataStoreBackend;
 import com.smartfirehub.dataset.storage.DataTableNames;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.util.TemporalSafeFetch;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -215,7 +216,7 @@ public class PostgresDataRowStore implements DataRowStore {
             .append("\" AS TEXT) ILIKE ? ESCAPE '\\'");
       }
       sql.append(")");
-      String pattern = "%" + escapeIlike(search) + "%";
+      String pattern = "%" + DataTableNames.escapeLike(search) + "%";
       for (int i = 0; i < searchableColumns.size(); i++) {
         paramList.add(pattern);
       }
@@ -323,7 +324,7 @@ public class PostgresDataRowStore implements DataRowStore {
             .append("\" AS TEXT) ILIKE ? ESCAPE '\\'");
       }
       sql.append(")");
-      String pattern = "%" + escapeIlike(search) + "%";
+      String pattern = "%" + DataTableNames.escapeLike(search) + "%";
       for (int i = 0; i < searchableColumns.size(); i++) {
         paramList.add(pattern);
       }
@@ -402,16 +403,12 @@ public class PostgresDataRowStore implements DataRowStore {
     }
     sql.append(")");
 
-    String pattern = "%" + escapeIlike(search) + "%";
+    String pattern = "%" + DataTableNames.escapeLike(search) + "%";
     Object[] params = new Object[searchableColumns.size()];
     for (int i = 0; i < searchableColumns.size(); i++) {
       params[i] = pattern;
     }
     return params;
-  }
-
-  private String escapeIlike(String input) {
-    return input.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
   }
 
   @Override
@@ -428,6 +425,20 @@ public class PostgresDataRowStore implements DataRowStore {
     }
     sql.append(")) AS is_unique FROM ").append(DataSchema.qualify(tableName));
     return Boolean.TRUE.equals(dsl.fetchOne(sql.toString()).get(0, Boolean.class));
+  }
+
+  /** 컬럼에 NULL 이 한 건이라도 있는지 확인한다(EXISTS 라 첫 NULL 에서 멈춘다). */
+  @Override
+  public boolean hasNulls(String tableName, String columnName) {
+    DataTableNames.validate(tableName);
+    DataTableNames.validate(columnName);
+    String sql =
+        "SELECT EXISTS (SELECT 1 FROM "
+            + DataSchema.qualify(tableName)
+            + " WHERE \""
+            + columnName
+            + "\" IS NULL)";
+    return Boolean.TRUE.equals(dsl.fetchOne(sql).get(0, Boolean.class));
   }
 
   @Override
@@ -1348,5 +1359,14 @@ public class PostgresDataRowStore implements DataRowStore {
   public void dropStagingTable(String stagingTable) {
     DataTableNames.validate(stagingTable);
     dsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(stagingTable));
+  }
+
+  /**
+   * PostgreSQL 은 0 을 돌려준다 — PG 의 고아 staging 은 {@code StagingTableCleanupService} 가 테넌트 {@code data}
+   * 스키마를 직접 열거해 정리하며(나이 기준 없이 활성 작업 게이트만), 그 경로는 그대로 둔다. 이 메서드는 외부 저장소 백엔드용이다.
+   */
+  @Override
+  public int dropStaleStagingTables(long tenantId, Duration minAge) {
+    return 0;
   }
 }

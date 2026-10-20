@@ -102,6 +102,19 @@ public class TenantDataStoreRepository {
                     TenantDataStoreStatus.valueOf(r.get(STATUS))));
   }
 
+  /**
+   * 지정한 백엔드의 READY 저장소를 가진 테넌트 id(오름차순). 배경 작업(고아 스테이징 정리 등)이 외부 저장소 테넌트만 순회할 때 쓴다 — PENDING 저장소는
+   * 풀을 만들 수 없으므로 제외한다.
+   */
+  public List<Long> findReadyTenantIds(DataStoreBackend backend) {
+    return dsl.select(TENANT_ID)
+        .from(STORE)
+        .where(BACKEND.eq(backend.name()))
+        .and(STATUS.eq(TenantDataStoreStatus.READY.name()))
+        .orderBy(TENANT_ID)
+        .fetch(TENANT_ID);
+  }
+
   /** 테넌트의 계정 목록. 역할 선언 순서(OWNER, RO, S1..S10)로 돌려준다 — 문자열 정렬이면 S10 이 S2 앞에 온다. */
   public List<StoredAccount> findAccounts(long tenantId) {
     return dsl

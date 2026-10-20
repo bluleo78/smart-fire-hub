@@ -70,6 +70,18 @@ class TenantDataStoreRepositoryTest extends IntegrationTestBase {
   }
 
   @Test
+  void findReadyTenantIds_onlyReadyStoresOfThatBackend() {
+    long id = newTenant();
+    repository.insert(row(id), accounts(id, "enc-"));
+    // PENDING 은 풀을 만들 수 없으므로 배경 작업 대상이 아니다.
+    assertThat(repository.findReadyTenantIds(DataStoreBackend.TIBERO)).doesNotContain(id);
+
+    repository.updateStatus(id, TenantDataStoreStatus.READY);
+    assertThat(repository.findReadyTenantIds(DataStoreBackend.TIBERO)).contains(id);
+    assertThat(repository.findReadyTenantIds(DataStoreBackend.MYSQL)).doesNotContain(id);
+  }
+
+  @Test
   void findBackend_returnsEmptyWhenNoRow() {
     long id = newTenant();
     assertThat(repository.findBackend(id)).isEmpty();

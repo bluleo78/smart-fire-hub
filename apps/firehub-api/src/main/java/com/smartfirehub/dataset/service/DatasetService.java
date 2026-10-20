@@ -677,7 +677,12 @@ public class DatasetService {
 
     long rowCount = dataTableRowService.countRows(dataset.tableName());
 
-    if (request.columnName() != null && !request.columnName().equals(column.columnName())) {
+    // 1단계: 던질 수 있는 검증을 모두 끝낸 뒤에 물리 DDL 을 실행한다. PG 는 DDL 도 트랜잭션이라 검증 실패 시 함께 롤백되지만, 외부
+    // 저장소(Tibero)의 DDL 은 자동 커밋이라 DDL 뒤에 검증이 실패하면 메타데이터는 그대로인데 물리 컬럼만 바뀐 채 남는다(WD-74).
+    // 검증들의 상대 순서는 예전 그대로 두어, 여러 조건이 동시에 걸릴 때 어떤 예외가 나는지도 바뀌지 않게 한다.
+    boolean renaming =
+        request.columnName() != null && !request.columnName().equals(column.columnName());
+    if (renaming) {
       // 다른 필드와 같은 이름으로 바꾸려 하면 DDL(renameIndex·renameColumn) 전에 거부한다(WD-99). 자기 자신은 비교에서
       // 뺀다(excludeColumnId). 목록 전체 대신 EXISTS 한 번으로 묻는다.
       if (columnRepository.existsByDatasetIdAndColumnName(
@@ -687,7 +692,88 @@ public class DatasetService {
       if (rowCount > 0) {
         throw new ColumnModificationException("데이터가 있는 데이터셋에서는 필드명을 바꿀 수 없습니다.");
       }
-      // 새 이름 검증은 renameIndex·renameColumn(DDL 계층)이 한다.
+      // 새 이름 검증(예약어·형식·길이 상한)을 DDL 전에 미리 한다. renameIndex·renameColumn 도 같은 검증을 하지만, 그건 DDL 직전이라
+      // 그 앞의 다른 검증이 실패하는 경우를 막지 못한다.
+      dataTableService.validateNewColumnName(request.columnName());
+    }
+
+    boolean typeChanging =
+        request.dataType() != null && !request.dataType().equals(column.dataType());
+    boolean sizeChanging =
+        !typeChanging
+            && request.dataType() != null
+            && "VARCHAR".equals(request.dataType())
+            && request.maxLength() != null
+            && !request.maxLength().equals(column.maxLength());
+    if (typeChanging) {
+      // 검색 대상 필드를 TEXT/VARCHAR 밖 타입으로 바꾸면 색인 텍스트를 만들 수 없다 — 먼저 해제하게 한다(409).
+      if (!SearchIndexSettingsService.SEARCHABLE_TYPES.contains(request.dataType())
+          && searchColumnRepository.isSearchable(columnId)) {
+        throw new IllegalStateException(
+            "검색 대상 필드는 TEXT/VARCHAR 이외 타입으로 바꿀 수 없습니다. 검색 탭에서 먼저 해제하세요.");
+      }
+      if (rowCount > 0) {
+        throw new ColumnModificationException("데이터가 있는 데이터셋에서는 필드의 데이터 타입을 바꿀 수 없습니다.");
+      }
+    } else if (sizeChanging) {
+      if (rowCount > 0) {
+        throw new ColumnModificationException("데이터가 있는 데이터셋에서는 필드 길이를 바꿀 수 없습니다.");
+      }
+    }
+
+    // Prevent making PK column nullable
+    if (request.isNullable() != null
+        && request.isNullable()
+        && (request.isPrimaryKey() != null ? request.isPrimaryKey() : column.isPrimaryKey())) {
+      throw primaryKeyNullable(column.columnName());
+    }
+
+    // Handle primary key changes (검증만 — 인덱스 재생성은 메타 저장 뒤)
+    if (request.isPrimaryKey() != null && request.isPrimaryKey() != column.isPrimaryKey()) {
+      if (request.isPrimaryKey()) {
+        // Setting as PK: validate NOT NULL
+        boolean nullable =
+            request.isNullable() != null ? request.isNullable() : column.isNullable();
+        if (nullable) {
+          throw primaryKeyNullable(column.columnName());
+        }
+        // NULL 검사가 중복 검사보다 먼저여야 한다. 중복 검사(COUNT DISTINCT)는 NULL 을 세지 않아, NULL 만 있는 컬럼이
+        // "중복값" 메시지로 둔갑한다. 예전에는 setColumnNullable 이 먼저 실행돼 NOT NULL 메시지가 났으므로 그 동작을 유지한다.
+        // 데이터가 있으면 이름 변경은 거부되므로 현재 물리 이름은 column.columnName() 이다.
+        if (rowCount > 0
+            && request.isNullable() != null
+            && !request.isNullable()
+            && column.isNullable()
+            && dataTableRowService.hasNulls(dataset.tableName(), column.columnName())) {
+          throw new ColumnModificationException(
+              "NOT NULL 로 변경할 수 없습니다: 컬럼 '" + column.columnName() + "' 에 NULL 값이 존재합니다.");
+        }
+        // Check data uniqueness if dataset has data.
+        // 데이터가 있으면 이름 변경은 위에서 이미 거부됐으므로, 이 검사는 DDL 전이어도 지금 물리 이름 그대로 읽는다.
+        if (rowCount > 0) {
+          List<DatasetColumnResponse> allColumns = columnRepository.findByDatasetId(datasetId);
+          String colName =
+              request.columnName() != null ? request.columnName() : column.columnName();
+          List<String> pkColNames = new java.util.ArrayList<>();
+          for (DatasetColumnResponse c : allColumns) {
+            if (c.isPrimaryKey() || c.id().equals(columnId)) {
+              String name = c.id().equals(columnId) ? colName : c.columnName();
+              if (!pkColNames.contains(name)) {
+                pkColNames.add(name);
+              }
+            }
+          }
+          if (!pkColNames.contains(colName)) pkColNames.add(colName);
+
+          if (!dataTableRowService.checkDataUniqueness(dataset.tableName(), pkColNames)) {
+            throw new ColumnModificationException("기본 키를 설정할 수 없습니다. 데이터에 중복값이 존재합니다.");
+          }
+        }
+      }
+    }
+
+    // 2단계: 물리 DDL — 이름 → 타입·크기 → NULL 허용 → 인덱스 순(예전과 같은 순서).
+    if (renaming) {
       // GEOMETRY 필드는 인덱스를 켜지 않아도 GiST 가 자동으로 붙으므로 함께 이름을 맞춘다(WD-100). 그 밖의 필드는 인덱스가 있을 때만.
       if (column.isIndexed() || "GEOMETRY".equalsIgnoreCase(column.dataType())) {
         dataTableService.renameIndex(
@@ -698,31 +784,7 @@ public class DatasetService {
       mappingReferenceService.renameColumn(datasetId, column.columnName(), request.columnName());
     }
 
-    if (request.dataType() != null && !request.dataType().equals(column.dataType())) {
-      // 검색 대상 필드를 TEXT/VARCHAR 밖 타입으로 바꾸면 색인 텍스트를 만들 수 없다 — 먼저 해제하게 한다(409).
-      if (!SearchIndexSettingsService.SEARCHABLE_TYPES.contains(request.dataType())
-          && searchColumnRepository.isSearchable(columnId)) {
-        throw new IllegalStateException(
-            "검색 대상 필드는 TEXT/VARCHAR 이외 타입으로 바꿀 수 없습니다. 검색 탭에서 먼저 해제하세요.");
-      }
-      if (rowCount > 0) {
-        throw new ColumnModificationException("데이터가 있는 데이터셋에서는 필드의 데이터 타입을 바꿀 수 없습니다.");
-      }
-      String currentColName =
-          request.columnName() != null ? request.columnName() : column.columnName();
-      dataTableService.alterColumnType(
-          dataset.tableName(),
-          currentColName,
-          request.dataType(),
-          request.maxLength(),
-          column.dataType());
-    } else if (request.dataType() != null
-        && "VARCHAR".equals(request.dataType())
-        && request.maxLength() != null
-        && !request.maxLength().equals(column.maxLength())) {
-      if (rowCount > 0) {
-        throw new ColumnModificationException("데이터가 있는 데이터셋에서는 필드 길이를 바꿀 수 없습니다.");
-      }
+    if (typeChanging || sizeChanging) {
       String currentColName =
           request.columnName() != null ? request.columnName() : column.columnName();
       dataTableService.alterColumnType(
@@ -758,45 +820,6 @@ public class DatasetService {
       String resolvedType = request.dataType() != null ? request.dataType() : column.dataType();
       dataTableService.setColumnIndex(
           dataset.tableName(), currentColName, request.isIndexed(), resolvedType);
-    }
-
-    // Prevent making PK column nullable
-    if (request.isNullable() != null
-        && request.isNullable()
-        && (request.isPrimaryKey() != null ? request.isPrimaryKey() : column.isPrimaryKey())) {
-      throw primaryKeyNullable(column.columnName());
-    }
-
-    // Handle primary key changes
-    if (request.isPrimaryKey() != null && request.isPrimaryKey() != column.isPrimaryKey()) {
-      if (request.isPrimaryKey()) {
-        // Setting as PK: validate NOT NULL
-        boolean nullable =
-            request.isNullable() != null ? request.isNullable() : column.isNullable();
-        if (nullable) {
-          throw primaryKeyNullable(column.columnName());
-        }
-        // Check data uniqueness if dataset has data
-        if (rowCount > 0) {
-          List<DatasetColumnResponse> allColumns = columnRepository.findByDatasetId(datasetId);
-          String colName =
-              request.columnName() != null ? request.columnName() : column.columnName();
-          List<String> pkColNames = new java.util.ArrayList<>();
-          for (DatasetColumnResponse c : allColumns) {
-            if (c.isPrimaryKey() || c.id().equals(columnId)) {
-              String name = c.id().equals(columnId) ? colName : c.columnName();
-              if (!pkColNames.contains(name)) {
-                pkColNames.add(name);
-              }
-            }
-          }
-          if (!pkColNames.contains(colName)) pkColNames.add(colName);
-
-          if (!dataTableRowService.checkDataUniqueness(dataset.tableName(), pkColNames)) {
-            throw new ColumnModificationException("기본 키를 설정할 수 없습니다. 데이터에 중복값이 존재합니다.");
-          }
-        }
-      }
     }
 
     // 이름 변경이 사전 검사를 지나 카탈로그 유니크 제약에 걸리는 경우도 같은 409 로(WD-99).

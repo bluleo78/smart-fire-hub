@@ -3,6 +3,7 @@ package com.smartfirehub.dataset.storage;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.dto.SpatialFilter;
 import com.smartfirehub.dataset.service.DataTableRowService;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.function.BiConsumer;
@@ -74,6 +75,9 @@ public interface DataRowStore {
 
   /** PK 컬럼 조합이 모든 행에서 유일한지 검사한다. */
   boolean checkDataUniqueness(String tableName, List<String> pkColumnNames);
+
+  /** 컬럼에 NULL 값이 한 건이라도 있는지 검사한다(NOT NULL 지정 전 사전 검사용). */
+  boolean hasNulls(String tableName, String columnName);
 
   /** PK 컬럼 조합이 중복된 행을 최대 limit 건 조회한다. */
   List<Map<String, Object>> findDuplicateRows(
@@ -179,4 +183,13 @@ public interface DataRowStore {
 
   /** staging 테이블이 있으면 삭제한다. import job 종료(성공·실패 무관) 뒤 항상 호출한다. */
   void dropStagingTable(String stagingTable);
+
+  /**
+   * 만든 지 {@code minAge} 가 지난 고아 staging 테이블을 지우고 지운 개수를 돌려준다(WD-74). 워커가 강제 종료돼 finally 의 {@link
+   * #dropStagingTable} 이 돌지 못한 경우를 회수한다. 테넌트 컨텍스트 없이 부를 수 있도록 {@code tenantId} 를 직접 받는다.
+   *
+   * <p>{@code StagingTableCleanupService} 가 활성 작업 게이트 아래에서 외부 저장소 백엔드의 READY 테넌트마다 부른다. PostgreSQL
+   * 은 그 서비스가 {@code data} 스키마를 직접 열거해 정리하므로 이 메서드를 쓰지 않는다(0 을 돌려준다).
+   */
+  int dropStaleStagingTables(long tenantId, Duration minAge);
 }

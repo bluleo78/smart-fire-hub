@@ -1,13 +1,19 @@
 package com.smartfirehub.dataimport.service;
 
 import com.smartfirehub.dataset.service.DataTableRowService;
+import com.smartfirehub.dataset.storage.DataRowStore;
+import com.smartfirehub.dataset.storage.DataStoreBackend;
+import com.smartfirehub.dataset.storage.DataStoreResolver;
+import com.smartfirehub.dataset.storage.TenantDataStoreRepository;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantScopedRunner;
+import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.jooq.DSLContext;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -44,6 +50,18 @@ public class StagingTableCleanupService {
   private final TenantScopedRunner tenantScopedRunner;
   // 테넌트별 카탈로그 조회 구간의 트랜잭션 경계(아래 findStagingTables 주석 참고).
   private final TransactionTemplate transactionTemplate;
+  // 외부 저장소(Tibero 등) 테넌트 목록 — 그 테넌트의 staging 은 PG 가 아니라 외부 스키마에 있다(WD-74 A8).
+  private final TenantDataStoreRepository tenantDataStoreRepository;
+  // 백엔드별 행 저장소 — 외부 백엔드의 고아 staging 정리를 그 구현에 맡긴다(구체 구현에 의존하지 않는다).
+  private final DataStoreResolver dataStoreResolver;
+
+  /**
+   * 외부 저장소 고아 staging 으로 볼 최소 나이({@code app.data-store.staging-min-age}, 기본 1시간). PG 스윕에는 나이 기준이
+   * 없고(활성 작업 게이트만 있다) 외부 스윕도 같은 게이트 뒤에서만 돈다 — 이 나이는 그 위에 얹은 이중 안전장치다: 게이트 확인과 DROP 사이에 막 시작된 임포트의
+   * staging 은 만든 지 몇 초라 대상이 되지 않는다.
+   */
+  @Value("${app.data-store.staging-min-age:PT1H}")
+  private final Duration stagingMinAge;
 
   /** JobRunr 작업이 "활성"으로 간주되는 상태 집합(대기/예약/실행 중). 이 중 하나라도 있으면 정리를 건너뛴다. */
   private static final String ACTIVE_JOB_STATES = "('SCHEDULED', 'ENQUEUED', 'PROCESSING')";
@@ -88,7 +106,45 @@ public class StagingTableCleanupService {
       log.debug("활성 JobRunr 작업 존재 — 고아 staging 정리 건너뜀");
       return 0;
     }
-    return sweepActiveTenants(true);
+    int dropped = sweepActiveTenants(true);
+    // PG 스윕 뒤 외부 저장소 테넌트를 같은 게이트 아래에서 정리한다.
+    return dropped + sweepExternalTenants(true);
+  }
+
+  /**
+   * 외부 저장소 백엔드(PostgreSQL 이 아니고 행 저장소 구현이 등록된 것 — 현재 Tibero)마다 READY 테넌트를 순회해 오래된 고아 staging 테이블을
+   * 지운다(WD-74 A8). 외부 테넌트의 staging 은 {@code data} 스키마가 아니라 테넌트 외부 스키마에 있어 PG 스윕이 보지 못한다. 실제 삭제는 그
+   * 백엔드의 {@link DataRowStore#dropStaleStagingTables} 가 맡는다.
+   *
+   * <p>순회는 PG 스윕과 같은 {@link TenantScopedRunner#forEachTenant} 를 쓴다 — 테넌트마다 컨텍스트를 세우고, 한 테넌트의 실패(연결
+   * 불가·권한 등)는 로그만 남기고 다음 테넌트를 계속한다. 게이트 재확인 규칙도 PG 스윕과 같다.
+   *
+   * @param recheckGatePerTenant 테넌트마다 활성 작업 게이트를 재확인할지(프로덕션 경로는 true)
+   * @return 지운 staging 테이블 총 개수
+   */
+  int sweepExternalTenants(boolean recheckGatePerTenant) {
+    AtomicInteger total = new AtomicInteger();
+    for (DataStoreBackend backend : dataStoreResolver.rowStoreBackends()) {
+      if (backend == DataStoreBackend.POSTGRESQL) {
+        continue; // PG 는 위의 data 스키마 스윕이 맡는다.
+      }
+      DataRowStore rowStore = dataStoreResolver.rowStore(backend);
+      List<Long> tenantIds = tenantDataStoreRepository.findReadyTenantIds(backend);
+      tenantScopedRunner.forEachTenant(
+          tenantIds,
+          tenantId -> {
+            if (recheckGatePerTenant && hasActiveJobs()) {
+              log.debug("순회 중 활성 JobRunr 작업 감지 — {} 테넌트 {} 스윕 건너뜀", backend, tenantId);
+              return;
+            }
+            int dropped = rowStore.dropStaleStagingTables(tenantId, stagingMinAge);
+            if (dropped > 0) {
+              log.info("테넌트 {} {} 고아 staging 테이블 {}개 정리 완료", tenantId, backend, dropped);
+            }
+            total.addAndGet(dropped);
+          });
+    }
+    return total.get();
   }
 
   /**

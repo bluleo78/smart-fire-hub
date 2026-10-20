@@ -80,6 +80,10 @@ dependencies {
     implementation("io.jsonwebtoken:jjwt-api:0.12.6")
     runtimeOnly("io.jsonwebtoken:jjwt-impl:0.12.6")
     runtimeOnly("io.jsonwebtoken:jjwt-jackson:0.12.6")
+    // Tibero JDBC 드라이버 — Maven Central 에 없고 라이선스상 저장소에 커밋하지 않는다(*.jar 는 gitignore).
+    // 개발자가 apps/firehub-api/libs/ 에 tibero*.jar 를 직접 넣으면 런타임 클래스패스에 포함된다.
+    // libs 폴더가 없거나 비어 있어도 fileTree 는 빈 집합이라 빌드·테스트는 그대로 동작한다.
+    runtimeOnly(fileTree("libs") { include("tibero*.jar") })
     // PG driver — implementation 으로 둬서 OutboxListenerLoop가 PGConnection을 직접 사용할 수 있음
     implementation("org.postgresql:postgresql")
     // CSV/Excel 파싱
@@ -129,6 +133,8 @@ dependencies {
     // SQL 실행 단일 관문(GuardedSqlExecutor) 우회 금지 규칙(스펙 §4.1). 로컬 Gradle 캐시에 있는 버전.
     testImplementation("com.tngtech.archunit:archunit:1.3.0")
     testRuntimeOnly("org.postgresql:postgresql")
+    // Tibero 실서버 테스트용 드라이버(위 runtimeOnly 와 같은 이유로 선택적, 없으면 빈 집합)
+    testRuntimeOnly(fileTree("libs") { include("tibero*.jar") })
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 

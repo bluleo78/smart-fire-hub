@@ -3,7 +3,9 @@ package com.smartfirehub.dataset.storage;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.smartfirehub.dataset.dto.ColumnStatsResponse;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
+import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.exception.RowNotFoundException;
 import com.smartfirehub.dataset.service.DataTableRowService.UpsertResult;
 import com.smartfirehub.support.IntegrationTestBase;
@@ -18,6 +20,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * 데이터셋 저장소 백엔드 계약 테스트 스위트(WD-72).
@@ -62,6 +66,9 @@ public abstract class DataStoreContractTest extends IntegrationTestBase {
         "active", "BOOLEAN",
         "born", "DATE");
   }
+
+  /** 트랜잭션 경계가 필요한 계약(교체 중 실패·read-your-writes)을 검증하는 템플릿. */
+  @Autowired private TransactionTemplate contractTx;
 
   private static final Logger log = LoggerFactory.getLogger(DataStoreContractTest.class);
 
@@ -269,5 +276,243 @@ public abstract class DataStoreContractTest extends IntegrationTestBase {
     assertThat(rowStore().countRows(table, COLUMNS, null, columnTypes())).isEqualTo(1);
     assertThatThrownBy(() -> rowStore().getRow(table, COLUMNS, id2, columnTypes()))
         .isInstanceOf(RowNotFoundException.class);
+  }
+
+  /** 계약 테이블 컬럼 정의(복제·통계 입력용). 시스템 컬럼은 포함하지 않는다. */
+  private static List<DatasetColumnResponse> columnDefs() {
+    String[][] defs = {
+      {"name", "TEXT"},
+      {"qty", "INTEGER"},
+      {"price", "DECIMAL"},
+      {"active", "BOOLEAN"},
+      {"born", "DATE"}
+    };
+    List<DatasetColumnResponse> list = new ArrayList<>();
+    for (int i = 0; i < defs.length; i++) {
+      list.add(
+          new DatasetColumnResponse(
+              (long) i, defs[i][0], defs[i][0], defs[i][1], null, true, false, null, i, false));
+    }
+    return list;
+  }
+
+  /** 결과 맵에서 대소문자 무시로 키를 찾는다(백엔드별 별칭 표기 차이 흡수). */
+  private static Object valueIgnoreCase(Map<String, Object> map, String key) {
+    return map.entrySet().stream()
+        .filter(e -> e.getKey().equalsIgnoreCase(key))
+        .map(Map.Entry::getValue)
+        .findFirst()
+        .orElse(null);
+  }
+
+  @Test
+  void 복제_후_같은_행() {
+    String source = createContractTable(false);
+    rowStore()
+        .insertBatch(
+            source,
+            COLUMNS,
+            List.of(
+                row("a", 1, "1.5", true, "2020-01-01"), row("b", 2, "2.5", false, "2020-02-02")),
+            columnTypes());
+
+    String target = newTableName();
+    cleanups.add(() -> tableStore().dropTable(target));
+    tableStore().cloneTable(source, target, COLUMNS, columnDefs());
+
+    List<Map<String, Object>> copied =
+        rowStore().queryData(target, COLUMNS, null, 0, 100, "qty", "ASC", columnTypes());
+    assertThat(copied).extracting(r -> r.get("name")).containsExactly("a", "b");
+    assertThat(copied).extracting(r -> asLong(r.get("qty"))).containsExactly(1L, 2L);
+    assertThat((BigDecimal) copied.get(1).get("price")).isEqualByComparingTo("2.5");
+    assertThat(asLocalDate(copied.get(0).get("born"))).isEqualTo(LocalDate.of(2020, 1, 1));
+    // 복제본은 독립 테이블이다 — 원본에 행을 더해도 복제본은 그대로다.
+    rowStore().insertBatch(source, COLUMNS, List.of(row("c", 3, "3", true, null)), columnTypes());
+    assertThat(rowStore().countRows(target, COLUMNS, null, columnTypes())).isEqualTo(2);
+  }
+
+  @Test
+  void 컬럼_추가_이름변경_삭제() {
+    String table = createContractTable(false);
+    tableStore()
+        .addColumn(
+            table, new DatasetColumnRequest("memo", "Memo", "TEXT", null, true, false, null));
+    List<String> withMemo = new ArrayList<>(COLUMNS);
+    withMemo.add("memo");
+    Map<String, String> types = new HashMap<>(columnTypes());
+    types.put("memo", "TEXT");
+    Map<String, Object> r = row("m", 1, "1", true, null);
+    r.put("memo", "hello");
+    rowStore().insertBatch(table, withMemo, List.of(r), types);
+    assertThat(
+            rowStore()
+                .queryData(table, withMemo, null, 0, 10, null, "ASC", types)
+                .get(0)
+                .get("memo"))
+        .isEqualTo("hello");
+
+    // 이름 변경 후에는 새 이름으로 같은 값이 읽힌다.
+    tableStore().renameColumn(table, "memo", "note");
+    List<String> withNote = new ArrayList<>(COLUMNS);
+    withNote.add("note");
+    Map<String, String> noteTypes = new HashMap<>(columnTypes());
+    noteTypes.put("note", "TEXT");
+    assertThat(
+            rowStore()
+                .queryData(table, withNote, null, 0, 10, null, "ASC", noteTypes)
+                .get(0)
+                .get("note"))
+        .isEqualTo("hello");
+
+    // 삭제 후에는 그 컬럼을 읽을 수 없고 기존 컬럼은 그대로다.
+    tableStore().dropColumn(table, "note");
+    assertThatThrownBy(
+            () -> rowStore().queryData(table, withNote, null, 0, 10, null, "ASC", noteTypes))
+        .isInstanceOf(RuntimeException.class);
+    assertThat(queryAll(table)).hasSize(1);
+  }
+
+  @Test
+  void 컬럼_통계() {
+    String table = createContractTable(false);
+    rowStore()
+        .insertBatch(
+            table,
+            COLUMNS,
+            List.of(
+                row("a", 10, "1", true, null),
+                row("a", 20, "2", true, null),
+                row("b", 30, "3", false, null),
+                row("c", null, "4", false, null)),
+            columnTypes());
+
+    List<ColumnStatsResponse> stats = tableStore().getColumnStats(table, columnDefs());
+
+    ColumnStatsResponse qty =
+        stats.stream().filter(s -> "qty".equals(s.columnName())).findFirst().orElseThrow();
+    assertThat(qty.totalCount()).isEqualTo(4);
+    assertThat(qty.nullCount()).isEqualTo(1);
+    assertThat(qty.distinctCount()).isEqualTo(3);
+    assertThat(new BigDecimal(qty.minValue())).isEqualByComparingTo("10");
+    assertThat(new BigDecimal(qty.maxValue())).isEqualByComparingTo("30");
+    assertThat(qty.avgValue()).isEqualTo(20.0);
+    assertThat(qty.sampled()).isFalse();
+    ColumnStatsResponse name =
+        stats.stream().filter(s -> "name".equals(s.columnName())).findFirst().orElseThrow();
+    assertThat(name.distinctCount()).isEqualTo(3);
+    assertThat(name.topValues().get(0).value()).isEqualTo("a");
+    assertThat(name.topValues().get(0).count()).isEqualTo(2);
+  }
+
+  @Test
+  void 스테이징_upsert_반영_마지막_행_우선() {
+    String table = createContractTable(true);
+    rowStore().insertBatch(table, COLUMNS, List.of(row("x", 1, "1", true, null)), columnTypes());
+
+    String staging = rowStore().createStagingTable(table, COLUMNS);
+    cleanups.add(() -> rowStore().dropStagingTable(staging));
+    // 같은 PK "y" 가 두 번 — 마지막 값(qty=22)이 이겨야 하고, 기존 PK "x" 는 갱신된다.
+    rowStore()
+        .insertStagingBatchWithProgress(
+            staging,
+            COLUMNS,
+            List.of(
+                row("x", 100, "1", true, null),
+                row("y", 21, "2", false, null),
+                row("y", 22, "3", false, null)),
+            (done, total) -> {});
+
+    UpsertResult result =
+        rowStore().promoteStagingToUpsert(staging, table, COLUMNS, List.of("name"), null);
+
+    assertThat(result).isEqualTo(new UpsertResult(1, 1));
+    assertThat(rowStore().countRows(table, COLUMNS, null, columnTypes())).isEqualTo(2);
+    Map<String, Long> qtyByName = new HashMap<>();
+    queryAll(table).forEach(r -> qtyByName.put((String) r.get("name"), asLong(r.get("qty"))));
+    assertThat(qtyByName).containsEntry("x", 100L).containsEntry("y", 22L);
+  }
+
+  @Test
+  void NULL_존재_검사() {
+    String table = createContractTable(false);
+    rowStore()
+        .insertBatch(table, COLUMNS, List.of(row("a", 1, "1", true, "2020-01-01")), columnTypes());
+    assertThat(rowStore().hasNulls(table, "born")).isFalse();
+
+    rowStore().insertBatch(table, COLUMNS, List.of(row("b", 2, "2", true, null)), columnTypes());
+    assertThat(rowStore().hasNulls(table, "born")).isTrue();
+  }
+
+  @Test
+  void 유일성_검사와_중복_행() {
+    String table = createContractTable(false);
+    rowStore()
+        .insertBatch(
+            table,
+            COLUMNS,
+            List.of(row("a", 1, "1", true, null), row("b", 2, "2", true, null)),
+            columnTypes());
+    assertThat(rowStore().checkDataUniqueness(table, List.of("name"))).isTrue();
+    assertThat(rowStore().findDuplicateRows(table, List.of("name"), 10)).isEmpty();
+
+    rowStore().insertBatch(table, COLUMNS, List.of(row("a", 3, "3", true, null)), columnTypes());
+
+    assertThat(rowStore().checkDataUniqueness(table, List.of("name"))).isFalse();
+    List<Map<String, Object>> dups = rowStore().findDuplicateRows(table, List.of("name"), 10);
+    assertThat(dups).hasSize(1);
+    assertThat(valueIgnoreCase(dups.get(0), "name")).isEqualTo("a");
+    assertThat(asLong(valueIgnoreCase(dups.get(0), "duplicate_count"))).isEqualTo(2L);
+  }
+
+  /** 교체(비우기+입력) 도중 예외가 나면 트랜잭션이 롤백되어 기존 행이 그대로 남아야 한다(데이터 소실 방지). */
+  @Test
+  void 교체_중_실패하면_기존_행_유지() {
+    String table = createContractTable(false);
+    rowStore()
+        .insertBatch(
+            table,
+            COLUMNS,
+            List.of(row("old1", 1, "1", true, null), row("old2", 2, "2", true, null)),
+            columnTypes());
+
+    assertThatThrownBy(
+            () ->
+                contractTx.executeWithoutResult(
+                    status -> {
+                      rowStore().truncateTable(table);
+                      rowStore()
+                          .insertBatch(
+                              table,
+                              COLUMNS,
+                              List.of(row("new1", 9, "9", true, null)),
+                              columnTypes());
+                      throw new IllegalStateException("교체 도중 실패");
+                    }))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("교체 도중 실패");
+
+    assertThat(queryAll(table))
+        .extracting(r -> r.get("name"))
+        .containsExactlyInAnyOrder("old1", "old2");
+  }
+
+  /** 같은 트랜잭션 안에서 insertRow 직후 getRow 가 방금 넣은 미커밋 행을 봐야 한다(read-your-writes). */
+  @Test
+  void 행_추가_직후_단건조회() {
+    String table = createContractTable(false);
+
+    Map<String, Object> got =
+        contractTx.execute(
+            status -> {
+              Long id =
+                  rowStore()
+                      .insertRow(table, COLUMNS, row("fresh", 7, "7.5", true, null), columnTypes());
+              return rowStore().getRow(table, COLUMNS, id, columnTypes());
+            });
+
+    assertThat(got.get("name")).isEqualTo("fresh");
+    assertThat(asLong(got.get("qty"))).isEqualTo(7L);
+    // 커밋 후에도 남아 있다.
+    assertThat(rowStore().countRows(table, COLUMNS, null, columnTypes())).isEqualTo(1);
   }
 }

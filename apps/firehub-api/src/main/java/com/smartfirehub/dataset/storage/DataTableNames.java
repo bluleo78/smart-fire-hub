@@ -39,4 +39,15 @@ public final class DataTableNames {
   public static String md5Hex(String value) {
     return DigestUtils.md5DigestAsHex(value.getBytes(StandardCharsets.UTF_8));
   }
+
+  /**
+   * LIKE/ILIKE 검색어의 {@code \}·{@code %}·{@code _} 를 {@code \} 로 이스케이프한다(호출 SQL 은 {@code ESCAPE
+   * '\'}).
+   *
+   * <p>사용자 입력이 와일드카드로 새지 않게 하는 규칙이 백엔드마다 같아야 하므로 한 곳에 둔다. 앞뒤 {@code %} 는 붙이지 않는다 — 감싸는 방식은 각 저장소가
+   * 정한다.
+   */
+  public static String escapeLike(String input) {
+    return input.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
+  }
 }

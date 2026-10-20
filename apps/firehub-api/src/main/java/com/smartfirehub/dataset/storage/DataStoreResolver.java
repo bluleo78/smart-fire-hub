@@ -3,9 +3,11 @@ package com.smartfirehub.dataset.storage;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.smartfirehub.global.tenant.TenantContext;
+import java.util.Collections;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Function;
 import org.springframework.stereotype.Component;
 
@@ -90,6 +92,16 @@ public class DataStoreResolver {
 
   /** 현재 테넌트 백엔드의 행 조회·적재 스토어. 구현이 등록돼 있지 않으면 예외를 던진다. */
   public DataRowStore rowStore() {
-    return lookup(rowStores, currentBackend(), "데이터셋 행 저장소 구현 없음: ");
+    return rowStore(currentBackend());
+  }
+
+  /** 지정한 백엔드의 행 스토어. 테넌트 컨텍스트를 보지 않으므로 테넌트 밖(스케줄러 등)에서 백엔드별로 순회할 때 쓴다. 구현이 등록돼 있지 않으면 예외를 던진다. */
+  public DataRowStore rowStore(DataStoreBackend backend) {
+    return lookup(rowStores, backend, "데이터셋 행 저장소 구현 없음: ");
+  }
+
+  /** 행 스토어 구현이 등록된 백엔드 목록(열거 순서). 구현이 없는 백엔드(예: MySQL)는 빠진다. */
+  public Set<DataStoreBackend> rowStoreBackends() {
+    return Collections.unmodifiableSet(rowStores.keySet());
   }
 }

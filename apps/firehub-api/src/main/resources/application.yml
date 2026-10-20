@@ -50,6 +50,11 @@ app:
   data-store:
     # Tibero 저장소 선택 허용 여부(WD-73). 구현 완료 전에는 운영에서 끈다.
     tibero-enabled: ${DATA_STORE_TIBERO_ENABLED:false}
+    # 외부 저장소(Tibero 등) 고아 staging 테이블로 보고 지울 최소 나이(ISO-8601). 활성 작업 게이트 위에 얹은 이중 안전장치.
+    staging-min-age: ${DATA_STORE_STAGING_MIN_AGE:PT1H}
+    tibero:
+      # 테넌트별 Tibero 소유 계정 풀의 동시 보유 상한(LRU 축출). 풀당 최대 4 커넥션.
+      max-pools: ${DATA_STORE_TIBERO_MAX_POOLS:8}
   branding:
     # 화이트라벨링용 브랜드명. 배포처별로 APP_BRANDING_NAME 환경변수로 덮어쓴다. 미설정 시 기본값 사용.
     name: ${APP_BRANDING_NAME:Smart Fire Hub}
