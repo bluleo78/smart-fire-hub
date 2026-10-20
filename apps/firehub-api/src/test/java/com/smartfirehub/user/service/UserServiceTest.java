@@ -91,6 +91,23 @@ class UserServiceTest extends IntegrationTestBase {
     assertThat(result.size()).isEqualTo(20);
   }
 
+  /** WD-124: 붙여 넣은 검색어의 앞뒤 공백 때문에 있는 사용자가 0건으로 나오지 않는다 — 목록과 전체 건수 모두. */
+  @Test
+  void getUsers_searchWithSurroundingWhitespace_findsSameAsTrimmed() {
+    PageResponse<UserListResponse> trimmed = userService.getUsers("testuser@example.com", 0, 20);
+    PageResponse<UserListResponse> padded =
+        userService.getUsers("  testuser@example.com \t", 0, 20);
+
+    assertThat(padded.content())
+        .extracting(UserListResponse::username)
+        .contains("testuser@example.com");
+    assertThat(padded.content())
+        .extracting(UserListResponse::username)
+        .containsExactlyElementsOf(
+            trimmed.content().stream().map(UserListResponse::username).toList());
+    assertThat(padded.totalElements()).isEqualTo(trimmed.totalElements());
+  }
+
   /**
    * 목록 조회도 상세 조회처럼 역할을 함께 반환해야 한다(#586) — admin-manager subagent가 list_users() 한 번의 호출만으로 "역할" 컬럼을
    * 채울 수 있어야 하므로, 목록 응답에 역할이 실려 있는지 회귀 테스트로 고정한다.

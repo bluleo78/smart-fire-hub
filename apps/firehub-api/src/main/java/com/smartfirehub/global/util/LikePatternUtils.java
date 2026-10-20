@@ -41,11 +41,17 @@ public final class LikePatternUtils {
   /**
    * Build a "contains" LIKE pattern: %escaped_input%.
    *
+   * <p>검색어 앞뒤 공백은 지운다 (WD-124) — 이름·이메일을 복사해 붙여 넣으면 공백이 딸려 와 「 bulk01 」처럼 되고, 그대로 쓰면 있는 항목이 0건으로
+   * 나온다. 목록 검색이 모두 이 헬퍼를 거치므로 여기서 한 번에 다룬다(호출자는 이미 공백뿐인 검색어를 걸러 낸다).
+   *
+   * <p>{@code strip()} 이 아니라 {@code trim()} 인 이유: 호출자의 공백·길이 검사(예: 플랫폼 사용자 검색 하한 2자)가 trim 기준이라, 더
+   * 많이 지우면 검사를 통과한 검색어가 여기서 빈 문자열이 되어 {@code %%} 로 전체를 긁을 수 있다.
+   *
    * @param input the raw user search input
    * @return pattern string for use with {@code .likeIgnoreCase(pattern, '\\')}
    */
   public static String containsPattern(String input) {
-    return "%" + escape(input) + "%";
+    return "%" + escape(input == null ? null : input.trim()) + "%";
   }
 
   /**

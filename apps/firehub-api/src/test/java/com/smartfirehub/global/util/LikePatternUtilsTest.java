@@ -50,4 +50,11 @@ class LikePatternUtilsTest {
   void containsPattern_escapesBeforeWrapping() {
     assertThat(LikePatternUtils.containsPattern("100%_done")).isEqualTo("%100\\%\\_done%");
   }
+
+  /** WD-124: 붙여 넣은 검색어의 앞뒤 공백 때문에 0건이 나오지 않게 지운다 — 가운데 공백은 남긴다. */
+  @Test
+  void containsPattern_stripsLeadingAndTrailingWhitespace() {
+    assertThat(LikePatternUtils.containsPattern(" bulk01 ")).isEqualTo("%bulk01%");
+    assertThat(LikePatternUtils.containsPattern("\t홍 길동\n")).isEqualTo("%홍 길동%");
+  }
 }
