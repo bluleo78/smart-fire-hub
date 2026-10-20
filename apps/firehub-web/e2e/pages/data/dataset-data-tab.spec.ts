@@ -554,4 +554,61 @@ test.describe('데이터셋 상세 — 데이터 탭', () => {
     await page.getByRole('button', { name: /SQL/ }).click();
     await expect(page.getByRole('button', { name: /실행|Run/ }).first()).toBeVisible();
   });
+
+  // (WD-101) NUMERIC(18,6)·BIGINT 값이 JSON 숫자로 오면 JS double 로 깎여 123456789012.12346·9007199254740992 로
+  // 보였다. 이제 API 는 정밀도를 잃는 값을 문자열로 보내므로(작은 정수·행 id 는 숫자 유지), 그 응답이 그리드와 편집
+  // 다이얼로그에 한 자리도 바뀌지 않고 그대로 보이는지 고정한다.
+  test('정밀도를 잃는 소수·큰 정수 문자열 응답이 그리드와 편집 다이얼로그에 그대로 표시된다 (WD-101)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDataTabMocks(page);
+    const numericDetail = createDatasetDetail({
+      id: 1,
+      rowCount: 1,
+      columns: [
+        createColumn({ id: 1, columnName: 'label', displayName: '라벨', dataType: 'TEXT', isPrimaryKey: false, columnOrder: 0 }),
+        createColumn({ id: 2, columnName: 'price', displayName: '가격', dataType: 'DECIMAL', isPrimaryKey: false, columnOrder: 1 }),
+        createColumn({ id: 3, columnName: 'big', displayName: '큰수', dataType: 'INTEGER', isPrimaryKey: false, columnOrder: 2 }),
+        createColumn({ id: 4, columnName: 'small', displayName: '작은수', dataType: 'INTEGER', isPrimaryKey: false, columnOrder: 3 }),
+      ],
+    });
+    // 나중에 등록한 라우트가 우선 — 숫자 컬럼이 있는 상세로 덮어쓴다
+    await mockApi(page, 'GET', '/api/v1/datasets/1', numericDetail);
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets/1/data',
+      (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          // 서버(DatasetRowValuesSerializer)가 보내는 모양: 소수·2^53 밖 정수는 문자열, 행 id·작은 정수는 숫자
+          body: JSON.stringify({
+            columns: numericDetail.columns,
+            rows: [{ id: 1, label: 'precise', price: '123456789012.123456', big: '9007199254740993', small: 5 }],
+            page: 0,
+            size: 50,
+            totalElements: 1,
+            totalPages: 1,
+          }),
+        }),
+    );
+
+    await page.goto('/data/datasets/1');
+    await page.getByRole('tab', { name: '데이터' }).click();
+
+    const table = page.locator('table');
+    await expect(table.getByRole('cell', { name: '123456789012.123456', exact: true })).toBeVisible();
+    await expect(table.getByRole('cell', { name: '9007199254740993', exact: true })).toBeVisible();
+    await expect(table.getByRole('cell', { name: '5', exact: true })).toBeVisible();
+    // 깎인 값이 어디에도 보이면 안 된다
+    await expect(table).not.toContainText('123456789012.12346');
+    await expect(table).not.toContainText('9007199254740992');
+
+    // 편집 다이얼로그도 같은 값으로 열려야 한다 — 행 id 가 숫자로 남아 있어야 편집 대상이 잡힌다
+    await table.getByRole('cell', { name: 'precise' }).dblclick();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByRole('heading', { name: /행 편집 \(ID: 1\)/ })).toBeVisible();
+    await expect(page.locator('#edit-price')).toHaveValue('123456789012.123456');
+    await expect(page.locator('#edit-big')).toHaveValue('9007199254740993');
+    await expect(page.locator('#edit-small')).toHaveValue('5');
+  });
 });

@@ -4,10 +4,13 @@ import static com.smartfirehub.jooq.Tables.*;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dataset.dto.*;
 import com.smartfirehub.dataset.exception.DatasetNotFoundException;
 import com.smartfirehub.support.IntegrationTestBase;
 import java.math.BigDecimal;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.jooq.DSLContext;
@@ -32,6 +35,7 @@ class DatasetDataServiceTest extends IntegrationTestBase {
   @Autowired private DatasetService datasetService;
   @Autowired private DatasetDataService datasetDataService;
   @Autowired private DSLContext dsl;
+  @Autowired private ObjectMapper objectMapper;
 
   /** 테스트용 사용자 ID */
   private Long testUserId;
@@ -698,7 +702,7 @@ class DatasetDataServiceTest extends IntegrationTestBase {
         createSingleColumnDataset("type_nullable", "opt", "TEXT", null, true);
 
     // null 값은 Map.of()로 표현할 수 없으므로 HashMap 사용
-    Map<String, Object> data = new java.util.HashMap<>();
+    Map<String, Object> data = new HashMap<>();
     data.put("opt", null);
     RowDataResponse row = datasetDataService.addRow(dataset.id(), new RowDataRequest(data));
 
@@ -712,7 +716,7 @@ class DatasetDataServiceTest extends IntegrationTestBase {
     DatasetDetailResponse dataset =
         createSingleColumnDataset("type_not_null", "required_col", "TEXT", null, false);
 
-    Map<String, Object> data = new java.util.HashMap<>();
+    Map<String, Object> data = new HashMap<>();
     data.put("required_col", null);
     assertThatThrownBy(() -> datasetDataService.addRow(dataset.id(), new RowDataRequest(data)))
         .isInstanceOf(IllegalArgumentException.class)
@@ -878,7 +882,7 @@ class DatasetDataServiceTest extends IntegrationTestBase {
         datasetDataService.addRow(dataset.id(), new RowDataRequest(Map.of("active", true)));
 
     // HashMap 사용 — Map.of는 null 값을 허용하지 않으므로 명시적 null 요청을 표현하려면 HashMap 필요
-    Map<String, Object> nullActive = new java.util.HashMap<>();
+    Map<String, Object> nullActive = new HashMap<>();
     nullActive.put("active", null);
     datasetDataService.updateRow(dataset.id(), added.id(), new RowDataRequest(nullActive));
 
@@ -891,7 +895,7 @@ class DatasetDataServiceTest extends IntegrationTestBase {
   void updateRow_nullableBooleanOmittedFromRequest_keepsExistingNull() {
     DatasetDetailResponse dataset =
         createSingleColumnDataset("bool_null_keep", "flag", "BOOLEAN", null, true);
-    Map<String, Object> initialNull = new java.util.HashMap<>();
+    Map<String, Object> initialNull = new HashMap<>();
     initialNull.put("flag", null);
     RowDataResponse added =
         datasetDataService.addRow(dataset.id(), new RowDataRequest(initialNull));
@@ -929,7 +933,7 @@ class DatasetDataServiceTest extends IntegrationTestBase {
             dataset.id(), new RowDataRequest(Map.of("row_key", 1, "label", "before")));
 
     // label은 NOT NULL인데 빈 문자열이 아닌 null을 명시적으로 보냄 — 여전히 검증 실패해야 함
-    Map<String, Object> invalid = new java.util.HashMap<>();
+    Map<String, Object> invalid = new HashMap<>();
     invalid.put("label", null);
     assertThatThrownBy(
             () ->
@@ -1308,5 +1312,67 @@ class DatasetDataServiceTest extends IntegrationTestBase {
             e ->
                 assertThat(DataExceptionTranslator.describe(e))
                     .isEqualTo("글자 수 제한(최대 3자)을 넘는 값이 있습니다"));
+  }
+
+  // =========================================================================
+  // 행 응답 JSON 정밀도 (WD-101)
+  // =========================================================================
+
+  /**
+   * 정상: 실제 DB 의 NUMERIC(18,6)·BIGINT 값이 앱 ObjectMapper 로 직렬화될 때 JS double 로 깎이는 값은 문자열로, 작은 정수는 숫자로
+   * 나간다. 컨트롤러 슬라이스 테스트는 목 값만 쓰므로, 행 조회가 실제로 BigDecimal·Long 을 돌려준다는 전제까지 여기서 잇는다.
+   */
+  @Test
+  void rowResponses_jsonKeepsDecimalAndUnsafeBigintPrecision() throws Exception {
+    List<DatasetColumnRequest> columns =
+        List.of(
+            new DatasetColumnRequest("price", "Price", "DECIMAL", null, true, false, null),
+            new DatasetColumnRequest("big", "Big", "INTEGER", null, true, false, null),
+            new DatasetColumnRequest("small", "Small", "INTEGER", null, true, false, null),
+            new DatasetColumnRequest("half", "Half", "DECIMAL", null, true, false, null),
+            new DatasetColumnRequest("empty", "Empty", "DECIMAL", null, true, false, null));
+    DatasetDetailResponse dataset =
+        datasetService.createDataset(
+            new CreateDatasetRequest(
+                "Precision", "wd101_precision", null, null, "TABLE", "SOURCE", columns, null),
+            testUserId);
+    Map<String, Object> input = new HashMap<>();
+    input.put("price", "123456789012.123456");
+    input.put("big", "9007199254740993");
+    input.put("small", 5);
+    input.put("half", "1.5");
+    input.put("empty", null);
+    RowDataResponse added = datasetDataService.addRow(dataset.id(), new RowDataRequest(input));
+
+    // 목록 조회(데이터 탭 그리드)
+    JsonNode listed =
+        objectMapper
+            .readTree(
+                objectMapper.writeValueAsString(
+                    datasetDataService.getDatasetData(dataset.id(), null, 0, 10)))
+            .path("rows")
+            .path(0);
+    assertThat(listed.path("price").isTextual()).isTrue();
+    assertThat(listed.path("price").asText()).isEqualTo("123456789012.123456");
+    assertThat(listed.path("big").isTextual()).isTrue();
+    assertThat(listed.path("big").asText()).isEqualTo("9007199254740993");
+    assertThat(listed.path("small").isIntegralNumber()).isTrue();
+    assertThat(listed.path("small").asLong()).isEqualTo(5L);
+    assertThat(listed.path("half").asText()).isEqualTo("1.5");
+    assertThat(listed.path("empty").isNull()).isTrue();
+    // 행 id 는 웹이 typeof === 'number' 로 걸러 쓰므로 숫자로 남아야 한다.
+    assertThat(listed.path("id").isIntegralNumber()).isTrue();
+
+    // 단건 조회(행 편집 다이얼로그)
+    JsonNode single =
+        objectMapper
+            .readTree(
+                objectMapper.writeValueAsString(
+                    datasetDataService.getRow(dataset.id(), added.id())))
+            .path("data");
+    assertThat(single.path("price").asText()).isEqualTo("123456789012.123456");
+    assertThat(single.path("big").isTextual()).isTrue();
+    assertThat(single.path("big").asText()).isEqualTo("9007199254740993");
+    assertThat(single.path("small").isIntegralNumber()).isTrue();
   }
 }

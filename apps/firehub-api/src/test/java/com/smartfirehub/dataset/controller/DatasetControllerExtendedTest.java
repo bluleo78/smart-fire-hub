@@ -1,5 +1,6 @@
 package com.smartfirehub.dataset.controller;
 
+import static org.hamcrest.Matchers.containsString;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.when;
@@ -23,7 +24,9 @@ import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.permission.service.PermissionService;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -503,6 +506,107 @@ class DatasetControllerExtendedTest {
         .perform(get("/api/v1/datasets/1/data/rows/5").header("Authorization", "Bearer test-token"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.id").value(5));
+  }
+
+  // ── 행 값 정밀도(WD-101) ─────────────────────────────────────────────────────────
+
+  /**
+   * WD-101 테스트용 행 — JS double 로 깎이는 값(큰 소수·2^53 밖 정수)과 깎이지 않는 값(작은 정수·Double)·소수 끝자리 0·null 을 섞는다.
+   * null 이 들어가야 하므로 Map.of 대신 HashMap 을 쓴다.
+   */
+  private static Map<String, Object> precisionRow() {
+    Map<String, Object> row = new HashMap<>();
+    row.put("id", 7L);
+    row.put("big_decimal", new BigDecimal("123456789012.123456"));
+    row.put("unsafe_bigint", 9007199254740993L);
+    row.put("unsafe_negative", -9007199254740993L);
+    row.put("max_safe", 9007199254740991L);
+    row.put("min_long", Long.MIN_VALUE);
+    row.put("small_bigint", 5L);
+    row.put("small_int", 42);
+    row.put("trailing_half", new BigDecimal("1.500000"));
+    row.put("trailing_int", new BigDecimal("100.000000"));
+    row.put("zero_scaled", new BigDecimal("0E-6"));
+    row.put("double_value", 2.5d);
+    row.put("text_value", "가나다");
+    row.put("empty_value", null);
+    return row;
+  }
+
+  @Test
+  void getData_serializesUnsafeNumbersAsStrings() throws Exception {
+    // 데이터 탭 그리드 응답: 소수는 항상 문자열(끝자리 0 제거·지수 표기 없음), 정수는 ±(2^53-1) 밖에서만 문자열이어야 한다.
+    DataQueryResponse resp =
+        new DataQueryResponse(List.of(), List.of(precisionRow()), 0, 50, 1L, 1);
+    when(datasetDataService.getDatasetData(
+            anyLong(), any(), anyInt(), anyInt(), any(), any(), anyBoolean(), any()))
+        .thenReturn(resp);
+
+    mockMvc
+        .perform(get("/api/v1/datasets/1/data").header("Authorization", "Bearer test-token"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.rows[0].id").isNumber())
+        .andExpect(jsonPath("$.rows[0].id").value(7))
+        .andExpect(jsonPath("$.rows[0].big_decimal").isString())
+        .andExpect(jsonPath("$.rows[0].big_decimal").value("123456789012.123456"))
+        .andExpect(jsonPath("$.rows[0].unsafe_bigint").isString())
+        .andExpect(jsonPath("$.rows[0].unsafe_bigint").value("9007199254740993"))
+        .andExpect(jsonPath("$.rows[0].unsafe_negative").value("-9007199254740993"))
+        .andExpect(jsonPath("$.rows[0].max_safe").isNumber())
+        .andExpect(jsonPath("$.rows[0].min_long").value(String.valueOf(Long.MIN_VALUE)))
+        .andExpect(jsonPath("$.rows[0].small_bigint").isNumber())
+        .andExpect(jsonPath("$.rows[0].small_bigint").value(5))
+        .andExpect(jsonPath("$.rows[0].small_int").isNumber())
+        .andExpect(jsonPath("$.rows[0].trailing_half").value("1.5"))
+        .andExpect(jsonPath("$.rows[0].trailing_int").value("100"))
+        .andExpect(jsonPath("$.rows[0].zero_scaled").value("0"))
+        .andExpect(jsonPath("$.rows[0].double_value").isNumber())
+        .andExpect(jsonPath("$.rows[0].text_value").value("가나다"))
+        // jsonPath value(String) 는 숫자도 문자열로 바꿔 비교해 통과시키므로 isString 과 원문으로 타입까지 확인한다.
+        .andExpect(content().string(containsString("\"big_decimal\":\"123456789012.123456\"")))
+        .andExpect(content().string(containsString("\"unsafe_bigint\":\"9007199254740993\"")))
+        .andExpect(content().string(containsString("\"max_safe\":9007199254740991")))
+        .andExpect(content().string(containsString("\"empty_value\":null")));
+  }
+
+  @Test
+  void getRow_serializesUnsafeNumbersAsStrings() throws Exception {
+    // 단건 조회(행 편집 다이얼로그)도 같은 규칙 — 최상위 id 는 Long 필드라 숫자 그대로다.
+    RowDataResponse resp = new RowDataResponse(5L, precisionRow(), LocalDateTime.now());
+    when(datasetDataService.getRow(anyLong(), anyLong())).thenReturn(resp);
+
+    mockMvc
+        .perform(get("/api/v1/datasets/1/data/rows/5").header("Authorization", "Bearer test-token"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.id").isNumber())
+        .andExpect(jsonPath("$.data.big_decimal").isString())
+        .andExpect(jsonPath("$.data.big_decimal").value("123456789012.123456"))
+        .andExpect(jsonPath("$.data.unsafe_bigint").isString())
+        .andExpect(jsonPath("$.data.unsafe_bigint").value("9007199254740993"))
+        .andExpect(jsonPath("$.data.small_bigint").isNumber())
+        .andExpect(jsonPath("$.data.trailing_half").value("1.5"))
+        .andExpect(jsonPath("$.data.zero_scaled").value("0"))
+        .andExpect(content().string(containsString("\"empty_value\":null")));
+  }
+
+  @Test
+  void addRow_serializesUnsafeNumbersAsStrings() throws Exception {
+    // 행 추가 응답도 RowDataResponse 라 같은 규칙을 따른다.
+    RowDataRequest req = new RowDataRequest(Map.of("big_decimal", "123456789012.123456"));
+    RowDataResponse resp = new RowDataResponse(8L, precisionRow(), LocalDateTime.now());
+    when(datasetDataService.addRow(anyLong(), any())).thenReturn(resp);
+
+    mockMvc
+        .perform(
+            post("/api/v1/datasets/1/data/rows")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(req)))
+        .andExpect(status().isCreated())
+        .andExpect(jsonPath("$.data.big_decimal").isString())
+        .andExpect(jsonPath("$.data.big_decimal").value("123456789012.123456"))
+        .andExpect(jsonPath("$.data.unsafe_bigint").isString())
+        .andExpect(jsonPath("$.data.unsafe_bigint").value("9007199254740993"));
   }
 
   // ── API 임포트 / 클론 ──────────────────────────────────────────────────────────
