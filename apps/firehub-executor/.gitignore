@@ -23,3 +23,7 @@ htmlcov/
 
 # Environment
 .env
+
+# Tibero ODBC 드라이버(라이선스 바이너리)는 커밋하지 않는다. 디렉터리만 .gitkeep 으로 유지한다.
+drivers/tibero/*
+!drivers/tibero/.gitkeep

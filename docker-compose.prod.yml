@@ -73,6 +73,9 @@ services:
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       ENCRYPTION_MASTER_KEY: ${ENCRYPTION_MASTER_KEY:?ENCRYPTION_MASTER_KEY is required}
       AGENT_INTERNAL_TOKEN: ${AGENT_INTERNAL_TOKEN:?AGENT_INTERNAL_TOKEN is required}
+      # executor 호출·기술자 엔드포인트 인증 토큰. executor 의 EXECUTOR_INTERNAL_SERVICE_TOKEN 과 **같은 .env 키**
+      # (EXECUTOR_INTERNAL_TOKEN)를 읽는다. 이 매핑이 없으면 .env 를 바꿔도 api 는 기본값을 써서 401 이 난다.
+      EXECUTOR_INTERNAL_TOKEN: ${EXECUTOR_INTERNAL_TOKEN:-executor-token}
       PIPELINE_EXECUTOR_PASSWORD: ${PIPELINE_EXECUTOR_PASSWORD:?PIPELINE_EXECUTOR_PASSWORD is required}
       # 테넌트별 파이프라인 롤(pipeline_executor_t{id}) 비밀번호 파생 HMAC 키(P3-b1/V111).
       # api 와 executor 가 각자 독립적으로 같은 비밀번호를 파생하므로 두 값이 **반드시 동일**해야 한다
@@ -116,6 +119,8 @@ services:
       # 모든 파이프라인 스텝에서 인증 실패한다(조용히 남의 테넌트에 붙는 일은 없다).
       EXECUTOR_ROLE_PASSWORD_SECRET: ${PIPELINE_ROLE_PASSWORD_SECRET}
       EXECUTOR_INTERNAL_SERVICE_TOKEN: ${EXECUTOR_INTERNAL_TOKEN:-executor-token}
+      # 테넌트 저장소 기술자(/internal/executor/**)를 조회할 api 주소(WD-75). 같은 네트워크의 api 서비스를 가리킨다.
+      EXECUTOR_API_BASE_URL: http://api:8080
       EXECUTOR_NSJAIL_ENABLED: "true"
       EXECUTOR_NSJAIL_PATH: /usr/sbin/nsjail
       EXECUTOR_PYTHON_PACKAGES_DIR: /opt/python-packages

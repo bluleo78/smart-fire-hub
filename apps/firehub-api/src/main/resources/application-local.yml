@@ -36,6 +36,8 @@ app:
       password: pipeline_exec_pwd
   executor:
     enabled: false  # local dev: direct execution (no executor service needed)
+    # 로컬은 기본 토큰(dev-executor-token)으로 저장소 기술자 엔드포인트를 쓸 수 있게 한다. 다른 프로필에는 두지 않는다.
+    allow-default-token: true
   embedding:
     ollama-allowed-base-urls: http://host.docker.internal:11434,http://localhost:11434
 

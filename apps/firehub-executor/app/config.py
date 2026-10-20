@@ -48,6 +48,18 @@ class Settings(BaseSettings):
     tenant_pool_max: int = 4
     tenant_pool_limit: int = 8
 
+    # 데이터셋 저장소 기술자 조회(WD-75). 백엔드(PG/Tibero) 선택은 요청 페이로드가 아니라
+    # api 의 기술자 조회로만 정한다 — api 주소·캐시 TTL·조회 타임아웃이 그 설정이다.
+    # 기본값은 compose·k8s 공통 api 서비스 주소(서비스명 api, 포트 8080) — api 가 executor 를 http://executor:8000 으로
+    # 부르는 것과 같은 관례다. 배포 설정에 값이 빠져도 PG 실행이 깨지지 않게 한다. 로컬 개발(api 5010)은 env 로 덮어쓴다.
+    api_base_url: str = "http://api:8080"
+    data_store_cache_ttl_seconds: float = 60.0
+    data_store_lookup_timeout_seconds: float = 5.0
+
+    # Tibero 접속/질의 타임아웃(초). 공유 서버가 멈춰도 executor 워커가 무한정 붙잡히지 않게 한다.
+    tibero_connect_timeout_seconds: int = 10
+    tibero_query_timeout_seconds: int = 30
+
 
 @lru_cache
 def get_settings() -> Settings:

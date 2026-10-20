@@ -72,6 +72,10 @@ public class SecurityConfig {
                     .authenticated()
                     .requestMatchers("/api/v1/**")
                     .authenticated()
+                    // executor 전용 내부 경로. 토큰은 컨트롤러가 검증하고, nginx 가 프록시하지 않는 경로다.
+                    // (anyRequest 가 어차피 permitAll 이지만 의도를 드러내려고 명시한다.)
+                    .requestMatchers("/internal/executor/**")
+                    .permitAll()
                     .anyRequest()
                     .permitAll())
         // 인증 실패 시 403 대신 401을 반환하여 프론트엔드의 토큰 갱신 인터셉터가 동작하도록 한다.

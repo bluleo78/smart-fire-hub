@@ -584,6 +584,22 @@ SELECT value::jsonb -> 'payload' ->> 'baseUrl' AS base_url
 > 노출해야 한다 — 경고 로그 하나를 얻자고 열기에는 그 문이 너무 크다. 사용 시점 가드가 실제
 > 차단을 이미 담당하므로, 남은 것은 위 질의로 충분한 **가시성** 문제다.
 
+### 외부 저장소 executor 연결 (WD-75, 마이그레이션 없음)
+
+executor 는 실행 요청 앞단에서 api 의 테넌트 저장소 기술자(`GET /internal/executor/tenants/{id}/data-store`)로 백엔드를 정한다. 성공 결과만 캐시한다 — PG 기술자는 프로세스 수명 동안 만료 없이(테넌트 백엔드는 생성 후 바뀌지 않는다), Tibero 기술자는 60초(비밀번호 회전 대비). 실패는 캐시하지 않는다. 그래서 PG 테넌트는 워커 프로세스(uvicorn 4개)마다 테넌트별 첫 실행 때만 api 를 부르고, 그 뒤로는 api 재기동·과부하와 무관하게 돈다. 이번 단계에서 Tibero 테넌트는 네 실행 라우트(query/sql/api-call/python) 모두 `success=false` + 한국어 오류를 돌려주며, 실제 Tibero 실행은 후속 이슈(WD-76~78)다. PG 테넌트의 실행 경로는 그대로다.
+
+- **배포 순서**: api → executor 순서로(또는 함께) 배포한다. 새 executor 와 옛 api 가 붙으면 기술자 엔드포인트가 없어 모든 실행이 "api 를 먼저 배포하세요" 오류로 실패한다(PG 로 폴백하지 않는다 — fail-closed).
+- **`EXECUTOR_API_BASE_URL`**: executor 가 api 를 찾는 주소. 기본값은 `http://api:8080` 이다 — compose 서비스명과 k8s Service 이름(`~/k8s/smart-fire-hub` 의 `api`, 포트 8080)이 모두 `api:8080` 이라 값이 없어도 동작한다(api 가 executor 를 `http://executor:8000` 으로 부르는 것과 같은 관례). api 서비스명·포트가 다른 환경에서만 명시한다. 주소가 틀리면 기술자 조회가 실패하고, 실패는 캐시하지 않으므로 PG 테넌트를 포함한 **모든 실행이 매번 실패한다**(PG 로 폴백하지 않는다). executor 는 이 값이 명시되지 않았으면 기동 로그에 WARNING 을 한 번 남긴다 — 서비스명이 기본과 같으면 무시해도 된다. 로컬 개발(api 5010)은 `EXECUTOR_API_BASE_URL=http://localhost:5010` 으로 덮어쓴다.
+- **토큰 체크리스트(필수)**: Tibero 백엔드 테넌트를 어떤 환경에서 쓰기 전에, api 의 `EXECUTOR_INTERNAL_TOKEN` 과 executor 의 `EXECUTOR_INTERNAL_SERVICE_TOKEN` 을 **같은 비기본 시크릿**으로 맞춘다. compose 에서는 `.env` 의 `EXECUTOR_INTERNAL_TOKEN` 키 하나가 api(`EXECUTOR_INTERNAL_TOKEN`)와 executor(`EXECUTOR_INTERNAL_SERVICE_TOKEN`) 양쪽에 매핑된다. 이 키를 바꾸면 두 서비스를 함께 재기동한다(한쪽만 바뀌면 api↔executor 호출이 401). 비어 있거나 기본값(`executor-token`, `dev-executor-token`)이면 api 가 평문 비밀번호가 담긴 Tibero 기술자 조회를 503 `EXECUTOR_TOKEN_NOT_CONFIGURED` 로 거부한다.
+  - PG 테넌트는 기본 토큰으로도 계속 동작한다(PG 기술자에는 비밀번호가 없다).
+  - 운영 Helm 차트(`~/k8s/smart-fire-hub`)의 `values.yaml` 은 현재 기본 토큰을 쓴다. Tibero 테넌트를 켜기 전에 차트 값 `secrets.executorInternalToken` 을 바꿔야 한다.
+  - `app.executor.allow-default-token=true` 는 로컬·테스트 프로파일 전용이며 운영에서 켜지 않는다.
+- **노출 확인**: Ingress·nginx 가 `/internal/**` 를 외부에 노출하지 않는지 확인한다(평문 비밀번호를 내는 경로다. web·admin nginx 는 `/api/` 만 프록시한다).
+- **드라이버 반입**: `apps/firehub-executor/drivers/tibero/` 에 `libtbodbc.so` 와 의존 so 를 둔다. 커밋하지 않는다.
+  - **아키텍처 주의**: `scripts/deploy.sh` 는 `linux/amd64,linux/arm64` 멀티 플랫폼으로 빌드하고, 두 플랫폼이 같은 `drivers/` 디렉터리를 복사한다. 그래서 대상 아키텍처와 맞지 않는 `.so` 도 그대로 등록되고, 빌드는 성공하지만 **접속 시점에야** 로드 실패로 드러난다. 운영 노드 아키텍처에 맞는 드라이버 하나만 넣거나, 아키텍처별로 `--platform` 을 나눠 따로 빌드한다.
+- **이미지 확인**: `docker run --rm <img> odbcinst -q -d` 로 Tibero ODBC 드라이버가 등록됐는지 본다.
+- **롤백**: 이미지만 되돌린다. 마이그레이션은 없다.
+
 ### 부분 배포 (빌드+push 완료 후 컨테이너만 재시작)
 
 ```bash

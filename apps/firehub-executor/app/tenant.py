@@ -118,6 +118,15 @@ def resolve_role(tenant_id: int) -> str:
     return f"{_ROLE_PREFIX}{_require_tenant_id(tenant_id)}"
 
 
+def resolve_tibero_owner(tenant_id: int) -> str:
+    """Tibero 테넌트 소유 계정(=스키마) 이름 — ``GENIA_T{id}``. api 의 규약을 미러한다.
+
+    api 가 준 기술자의 schema·owner 가 이 값과 같은지 대조하는 데 쓴다(어긋나면 거부).
+    검증은 다른 파생 함수와 같은 ``_require_tenant_id`` 를 재사용한다.
+    """
+    return f"GENIA_T{_require_tenant_id(tenant_id)}"
+
+
 def resolve_password(tenant_id: int, secret: str) -> str:
     """테넌트 롤 비밀번호를 ``secret`` 으로부터 결정적으로 파생한다(32자 소문자 hex).
 

@@ -30,9 +30,26 @@ async def _retry_init_pool_forever(settings) -> None:
             interval = min(interval * 2, _RETRY_MAX_INTERVAL_SECONDS)
 
 
+def warn_if_api_base_url_unset(settings) -> None:
+    """``EXECUTOR_API_BASE_URL`` 을 명시하지 않았으면 기동 시 경고를 한 번 남긴다(기동은 막지 않는다).
+
+    executor 는 테넌트 저장소 기술자를 api 에서 조회해야 실행할 수 있다(WD-75). 기본값은 compose·k8s 의 api 서비스명
+    주소라 배포 환경에서는 대개 맞지만, 서비스명이 다르거나 로컬 개발(api 5010)이면 조회가 실패해 모든 실행이 fail-closed
+    로 실패한다. 이 executor 에는 운영 환경을 가리는 설정이 없으므로 "환경변수·.env 로 명시했는가"(``model_fields_set``)로
+    판정한다. 주소 값은 싣지 않는다(자격증명이 섞일 수 있다).
+    """
+    if "api_base_url" not in settings.model_fields_set:
+        logger.warning(
+            "EXECUTOR_API_BASE_URL 이 설정되지 않아 기본 api 주소(서비스명 api)를 사용합니다 — api 서비스명이 다르거나 "
+            "로컬 개발이면 저장소 기술자 조회가 실패해 모든 실행 요청이 실패합니다. 필요하면 api 주소를 명시하세요."
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
+    # 설정 누락은 경고만 한다 — 로컬·격리 환경 기동(health check 등)을 막지 않는다.
+    warn_if_api_base_url_unset(settings)
     retry_task = None
     try:
         init_pool(settings)

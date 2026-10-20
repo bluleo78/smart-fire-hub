@@ -1,0 +1,12 @@
+{
+  "sessionInitSql": "BEGIN EXECUTE IMMEDIATE 'ALTER SESSION SET NLS_DATE_FORMAT=''YYYY-MM-DD'''; EXECUTE IMMEDIATE 'ALTER SESSION SET NLS_TIMESTAMP_FORMAT=''YYYY-MM-DD HH24:MI:SS.FF6'''; EXECUTE IMMEDIATE 'ALTER SESSION SET NLS_NUMERIC_CHARACTERS=''.,'''; END;",
+  "ownerUsername": [
+    {"tenantId": 7, "out": "GENIA_T7"},
+    {"tenantId": 43259, "out": "GENIA_T43259"}
+  ],
+  "sequenceName": [
+    {"schema": "GENIA_T7", "table": "sales", "out": "SQ_683D10AA89"},
+    {"schema": "genia_t43259", "table": "order_items", "out": "SQ_57BF7EBEAF"},
+    {"schema": "GENIA_T2", "table": "t", "out": "SQ_53E3F9B707"}
+  ]
+}
