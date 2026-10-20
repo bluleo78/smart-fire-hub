@@ -20,6 +20,7 @@ import com.smartfirehub.permission.service.PermissionService;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
+import com.smartfirehub.securitylevel.ai.AiCallContext;
 import com.smartfirehub.securitylevel.sql.GuardedSqlExecutor;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -60,6 +61,7 @@ class SavedQueryControllerTest {
   @MockitoBean private PermissionService permissionService;
   // 쿼리 결과 내보내기(V136): 실행 기록 부착(attachRun)·내보내기 재판정은 서비스가 맡는다(실제 동작은 QueryResultExportTest).
   @MockitoBean private QueryResultExportService queryResultExportService;
+  @MockitoBean private AiCallContext aiCallContext;
 
   @BeforeEach
   void setUp() {

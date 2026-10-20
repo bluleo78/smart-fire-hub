@@ -20,6 +20,7 @@ import com.smartfirehub.global.util.ContentDispositions;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
+import com.smartfirehub.securitylevel.ai.AiCallContext;
 import com.smartfirehub.securitylevel.sql.GuardedSqlExecutor;
 import jakarta.validation.Valid;
 import java.util.List;
@@ -44,6 +45,9 @@ public class SavedQueryController {
 
   /** 실행 기록 id 기반 쿼리 결과 내보내기(스펙 §4.4). */
   private final QueryResultExportService queryResultExportService;
+
+  /** AI 대행 호출 판별 — 결과 표 원문(exactValues)은 웹 결과 표 경로에만 싣는다(WD-105). */
+  private final AiCallContext aiCallContext;
 
   @GetMapping
   @RequirePermission("analytics:read")
@@ -99,7 +103,8 @@ public class SavedQueryController {
     AnalyticsQueryResponse r = guardedSqlExecutor.executeAnalytics(c, request.sql(), maxRows, true);
     // 성공한 사용자 SELECT 만 실행 기록을 남긴다 — 내보내기는 이 id 로 서버가 다시 판정·실행한다(스펙 §4.4). AI 대행은 남기지 않는다.
     r = queryResultExportService.attachRun(c, request.sql(), maxRows, r);
-    return ResponseEntity.ok(r);
+    // 웹 결과 표 경로 — 깎이는 NUMERIC·BIGINT 칸만 원문을 exactValues 로 함께 싣는다(WD-105).
+    return ResponseEntity.ok(withTableExactValues(r));
   }
 
   /**
@@ -187,7 +192,20 @@ public class SavedQueryController {
     int maxRows = request != null && request.maxRows() != null ? request.maxRows() : 1000;
     // #178 analytics:read 권한만 요구하는 엔드포인트이므로 클라이언트 readOnly 값을 무시하고
     // 항상 readOnly=true 강제 — INSERT/UPDATE/DELETE 등 쓰기 SQL 우회 차단.
-    return ResponseEntity.ok(savedQueryService.executeById(id, maxRows, true, userId));
+    // 저장 쿼리 실행 결과도 쿼리 편집기 결과 표로 넘어가므로(QueryListPage → location.state) 같은 원문을 싣는다(WD-105).
+    return ResponseEntity.ok(
+        withTableExactValues(savedQueryService.executeById(id, maxRows, true, userId)));
+  }
+
+  /**
+   * 웹 결과 표 경로 응답에 원문을 싣는다(WD-105) — 브라우저 double 로 깎이는 NUMERIC·BIGINT 칸만 exactValues 로, rows 는 숫자
+   * 그대로.
+   *
+   * <p>AI 대행 호출(ai-agent MCP 도구)은 같은 엔드포인트를 쓰지만 결과 표가 아니다. ai-agent 는 응답을 통째로 LLM 에 넘기고 토큰 한도에 맞춰
+   * rows 만 잘라 내므로, 실으면 토큰만 늘고 잘린 rows 와 행 인덱스가 어긋난다 — 실행 기록(attachRun)과 같은 기준으로 뺀다.
+   */
+  private AnalyticsQueryResponse withTableExactValues(AnalyticsQueryResponse r) {
+    return aiCallContext.current().isPresent() ? r : r.withExactValues();
   }
 
   @PostMapping("/{id}/clone")

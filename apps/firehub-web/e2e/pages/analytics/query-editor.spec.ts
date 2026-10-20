@@ -480,6 +480,62 @@ test.describe('쿼리 에디터 페이지', () => {
   });
 
   /**
+   * 회귀 테스트 — WD-105
+   * 서버는 rows 의 NUMERIC·BIGINT 를 JSON 숫자로 보내므로(차트·대시보드가 숫자로 쓴다) 브라우저 파서가 double 로 깎는다.
+   * 깎이는 칸만 exactValues 에 원문이 함께 오고, 결과 표는 그 칸에 원문을 그대로 보여야 한다.
+   * 본문은 실제 서버 JSON 처럼 원문 자릿수 숫자 리터럴을 그대로 담은 문자열로 보낸다 — JS 객체로 만들면 테스트 코드에서 이미 깎인다.
+   */
+  test('결과 표는 정밀도를 잃는 칸에 exactValues 원문을 보이고 깎인 숫자는 보이지 않는다 (WD-105)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupQueryEditorMocks(page, 1);
+    const body = `{
+      "queryType": "SELECT",
+      "columns": ["dec", "neg", "big", "arr", "plain"],
+      "rows": [
+        {"dec": 123456789012.123456, "neg": -987654321098.000001, "big": 9007199254740993,
+         "arr": [123456789012.123456, null], "plain": 1.5},
+        {"dec": 2.5, "neg": -1, "big": 42, "arr": [1, 2], "plain": null}
+      ],
+      "affectedRows": 2, "executionTimeMs": 5, "totalRows": 2, "truncated": false, "error": null,
+      "exportAllowed": true, "runId": "run-wd105",
+      "exactValues": {"0": {"dec": "123456789012.123456", "neg": "-987654321098.000001",
+        "big": "9007199254740993", "arr": "[123456789012.123456,null]"}}
+    }`;
+    await page.route(
+      (url) => url.pathname === '/api/v1/analytics/queries/execute',
+      (route) => route.fulfill({ status: 200, contentType: 'application/json', body }),
+    );
+
+    await page.goto('/analytics/queries/1');
+    await expect(page.getByText('테스트 쿼리')).toBeVisible();
+    await page.getByRole('button', { name: '실행' }).click();
+
+    const table = page.getByRole('table');
+    // 원문이 그대로(쉼표·반올림 없이) 보이고, title(마우스 올림)도 원문이다
+    for (const exact of [
+      '123456789012.123456',
+      '-987654321098.000001',
+      '9007199254740993',
+      '[123456789012.123456,null]',
+    ]) {
+      const cell = table.getByRole('cell', { name: exact, exact: true });
+      await expect(cell).toBeVisible();
+      await expect(cell).toHaveAttribute('title', exact);
+    }
+    // 브라우저 double 로 깎인 값은 어디에도 보이지 않는다
+    for (const truncated of ['123456789012.12346', '-987654321098', '9007199254740992', '[123456789012.12346,null]']) {
+      await expect(table.getByRole('cell', { name: truncated, exact: true })).toHaveCount(0);
+    }
+    // 원문이 없는 칸·행은 기존처럼 rows 값을 그린다(숫자·배열·null)
+    await expect(table.getByRole('cell', { name: '1.5', exact: true })).toBeVisible();
+    await expect(table.getByRole('cell', { name: '2.5', exact: true })).toBeVisible();
+    await expect(table.getByRole('cell', { name: '42', exact: true })).toBeVisible();
+    await expect(table.getByRole('cell', { name: '[1,2]', exact: true })).toBeVisible();
+    await expect(table.locator('span.italic.text-xs').filter({ hasText: '-' })).toHaveCount(1);
+  });
+
+  /**
    * 회귀 테스트 — 이슈 #21
    * 존재하지 않는 쿼리 ID 접근 시 빈 에디터 대신 에러 안내가 표시되어야 한다.
    */

@@ -224,29 +224,34 @@ function ResultTable({ result }: ResultTableProps) {
           </tr>
         </thead>
         <tbody>
-          {result.rows.map((row, i) => (
-            <tr key={i} className="hover:bg-muted/40 transition-colors">
-              {result.columns.map((col) => {
-                const val = row[col];
-                return (
-                  <td
-                    key={col}
-                    className="px-3 py-1.5 border-b whitespace-nowrap max-w-[200px] truncate"
-                    title={val != null ? (typeof val === 'object' ? JSON.stringify(val) : String(val)) : undefined}
-                  >
-                    {val == null ? (
-                      // null 값은 시각적으로 구분되는 dash로 표시 (빈 셀과 달리 null임을 명시)
-                      <span className="text-muted-foreground italic text-xs select-none">-</span>
-                    ) : typeof val === 'object' ? (
-                      JSON.stringify(val)
-                    ) : (
-                      String(val)
-                    )}
-                  </td>
-                );
-              })}
-            </tr>
-          ))}
+          {result.rows.map((row, i) => {
+            // 이 행에서 브라우저 double 로 깎이는 칸의 서버 원문(WD-105). rows 숫자는 이미 깎였으므로 원문이 있으면 그것을 보인다.
+            const exactRow = result.exactValues?.[i];
+            return (
+              <tr key={i} className="hover:bg-muted/40 transition-colors">
+                {result.columns.map((col) => {
+                  const val = row[col];
+                  const exact = exactRow?.[col];
+                  const text =
+                    exact ?? (val == null ? undefined : typeof val === 'object' ? JSON.stringify(val) : String(val));
+                  return (
+                    <td
+                      key={col}
+                      className="px-3 py-1.5 border-b whitespace-nowrap max-w-[200px] truncate"
+                      title={text}
+                    >
+                      {text === undefined ? (
+                        // null 값은 시각적으로 구분되는 dash로 표시 (빈 셀과 달리 null임을 명시)
+                        <span className="text-muted-foreground italic text-xs select-none">-</span>
+                      ) : (
+                        text
+                      )}
+                    </td>
+                  );
+                })}
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>

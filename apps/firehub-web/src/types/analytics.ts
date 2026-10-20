@@ -71,6 +71,12 @@ export interface AnalyticsQueryResult {
   exportAllowed?: boolean | null;
   /** 애드혹 실행 기록 id — 쿼리 결과 내보내기는 이 id 로 서버가 재판정·재실행한다. 저장 쿼리 실행 등은 null. */
   runId?: string | null;
+  /**
+   * 결과 표 전용 원문(WD-105) — 행 인덱스 → { 컬럼명: 원문 텍스트 }. rows 의 NUMERIC·BIGINT 는 차트·대시보드가 숫자로 쓰므로
+   * JSON 숫자로 오는데, 그중 브라우저 double 로 깎이는 칸(예: 123456789012.123456, 9007199254740993)만 원문이 여기 실린다.
+   * 애드혹·저장 쿼리 실행 응답에만 있고, 깎이는 칸이 없으면 생략된다. 차트·대시보드 경로는 쓰지 않는다.
+   */
+  exactValues?: Record<string, Record<string, string>>;
 }
 
 export interface SchemaTable {

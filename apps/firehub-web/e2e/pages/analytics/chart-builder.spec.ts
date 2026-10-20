@@ -144,6 +144,41 @@ test.describe('차트 빌더 페이지', () => {
     expect(req.payload).toMatchObject({ name: '화재 현황 차트' });
   });
 
+  /**
+   * 회귀 테스트 — WD-105
+   * exactValues 는 쿼리 편집기 결과 표 전용이다. 차트 빌더(미리보기·자동 설정)는 rows 숫자를 그대로 써야 한다 —
+   * 원문이 rows 를 덮으면 차트·대시보드의 typeof number 소비자가 깨진다. 구분이 되도록 exactValues 에 rows 와 다른 값을 넣는다.
+   */
+  test('차트 빌더는 exactValues 를 쓰지 않고 rows 숫자를 그대로 쓴다 (WD-105)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupNewChartBuilderMocks(page);
+    // 컬럼 1개 → TABLE 자동 추천 → 미리보기 표에 rows 값이 글자로 보인다
+    await mockApi(
+      page,
+      'POST',
+      '/api/v1/analytics/queries/1/execute',
+      createQueryResult({
+        columns: ['amount'],
+        rows: [{ amount: 100 }, { amount: 200 }],
+        totalRows: 2,
+        exactValues: { '0': { amount: '777' } },
+      }),
+    );
+
+    await page.goto('/analytics/charts/new');
+    await page.getByRole('combobox').click();
+    await page.getByRole('option', { name: '저장 쿼리 1' }).click();
+    await page.getByRole('button', { name: '쿼리 실행' }).click();
+    await expect(page.getByText('1개 컬럼, 2개 행 로드됨')).toBeVisible();
+    await expect(page.getByRole('button', { name: '테이블' })).toHaveAttribute('data-variant', 'default');
+
+    const table = page.getByRole('table');
+    await expect(table.getByRole('cell', { name: '100', exact: true })).toBeVisible();
+    await expect(table.getByRole('cell', { name: '200', exact: true })).toBeVisible();
+    await expect(table.getByRole('cell', { name: '777', exact: true })).toHaveCount(0);
+  });
+
   test('기존 차트 수정 저장 — 수정 다이얼로그에서 PUT payload 검증', async ({
     authenticatedPage: page,
   }) => {
