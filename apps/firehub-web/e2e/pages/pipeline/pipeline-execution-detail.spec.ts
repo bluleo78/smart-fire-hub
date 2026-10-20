@@ -228,7 +228,9 @@ test.describe('파이프라인 실행 상세 — ExecutionStepPanel', () => {
     await setupPipelineEditorMocks(page, 1);
 
     // FAILED 스텝 포함 실행 상세
-    const technicalErrorMsg = 'Invalid name: ?column?. Must match [a-z][a-z0-9_]*';
+    // 서버가 저장하는 SQL 결과 컬럼명 오류 문구(WD-111) — 예전 영어 'Invalid name: ?column?. Must match …' 대신 고칠 방법을 담은 한국어.
+    const technicalErrorMsg =
+      "SQL 결과 컬럼 이름 '?column?' 은 쓸 수 없습니다. 계산 컬럼에는 AS 로 이름을 붙여 주세요(예: SELECT 1 AS value). 컬럼 이름은 영문 소문자로 시작하고 영문 소문자·숫자·밑줄만 쓸 수 있습니다.";
     const detail = createExecutionDetail({
       id: 1,
       pipelineId: 1,
@@ -311,6 +313,60 @@ test.describe('파이프라인 실행 상세 — ExecutionStepPanel', () => {
     await expectMutedMaskedBlock(page, maskedMsg);
     await page.screenshot({ path: `${MASKED_SCREENSHOT_DIR}/step-masked.png` });
   });
+
+  // 건너뜀(SKIPPED) 스텝은 오류가 아니라 "실행하지 않은 이유"다(WD-111). 저장 문구가 새 한국어든, 옛 실행 기록의 영어든, 원문이 가려진
+  // 조회자의 가림 문구든 상태만 보고 같은 중립 안내를 낸다 — 「스텝 실행 중 오류가 발생했습니다」·「오류 상세」·빨간 원문 블록이 없어야 한다.
+  for (const { label, errorMessage, errorMasked } of [
+    { label: '새 한국어 문구', errorMessage: '선행 스텝이 실패하거나 건너뛰어져 이 스텝은 실행하지 않았습니다.', errorMasked: false },
+    { label: '옛 영어 문구', errorMessage: 'Dependency failed or skipped', errorMasked: false },
+    {
+      label: '가림 문구',
+      errorMessage: '이 스텝의 상세 오류는 관련 데이터를 볼 수 있는 사용자에게만 표시됩니다.',
+      errorMasked: true,
+    },
+  ]) {
+    test(`SKIPPED 스텝(${label})은 오류 안내 없이 건너뛴 이유를 중립 안내로 보여 준다 (WD-111)`, async ({ authenticatedPage: page }) => {
+      await setupPipelineEditorMocks(page, 1);
+      const detail = createExecutionDetail({
+        id: 1,
+        pipelineId: 1,
+        status: 'FAILED',
+        stepExecutions: [
+          createStepExecution({
+            id: 1,
+            stepName: '데이터 추출',
+            status: 'SKIPPED',
+            errorMessage,
+            errorMasked,
+            startedAt: null,
+            completedAt: '2024-01-01T00:00:10Z',
+          }),
+        ],
+        startedAt: '2024-01-01T00:00:00Z',
+        completedAt: '2024-01-01T00:00:10Z',
+      });
+      await mockApi(page, 'GET', '/api/v1/pipelines/1/executions/1', detail);
+
+      await page.goto('/pipelines/1');
+      await page.getByRole('tab', { name: /실행|이력/ }).click();
+      await page.getByRole('row').nth(1).click();
+      await expect(page.getByText('실행 정보')).toBeVisible({ timeout: 5000 });
+      await page.locator('.react-flow__node').first().click();
+
+      const notice = page.getByTestId('skipped-step-notice');
+      await expect(notice).toBeVisible({ timeout: 5000 });
+      await expect(notice).toContainText('건너뛴 이유');
+      await expect(notice).toContainText('선행 스텝이 실패하거나 건너뛰어져 이 스텝은 실행하지 않았습니다.');
+      // 중립 안내: 오류 문구·오류 제목·오류색·원문 블록이 없다.
+      await expect(page.getByText(/스텝 실행 중 오류가 발생했습니다/)).toHaveCount(0);
+      await expect(page.getByText('오류 상세')).toHaveCount(0);
+      await expect(notice.locator('pre')).toHaveCount(0);
+      await expect(notice.locator('[class*="destructive"]')).toHaveCount(0);
+      // 저장 문구(옛 영어·가림 문구)는 그대로 보이지 않는다.
+      await expect(page.getByText('Dependency failed or skipped')).toHaveCount(0);
+      await expect(page.getByText('이 스텝의 상세 오류는 관련 데이터를 볼 수 있는 사용자에게만 표시됩니다.')).toHaveCount(0);
+    });
+  }
 
   test('가려진 실행 단위 오류(errorMasked)에는 "아래 오류 정보를 참고하세요" 가 빠지고 실패 사실만 안내한다 (WD-27)', async ({ authenticatedPage: page }) => {
     await setupPipelineEditorMocks(page, 1);

@@ -17,9 +17,17 @@ public final class DataTableNames {
 
   private DataTableNames() {}
 
+  /**
+   * 이름이 {@code [a-z][a-z0-9_]*} 패턴인지 — 예외 없이 판정만 한다. 호출 문맥에 맞는 안내를 따로 내야 하는 곳(파이프라인 SQL 결과 컬럼명,
+   * WD-111)이 정규식을 복사하지 않고 같은 규칙을 쓰게 한다.
+   */
+  public static boolean isValid(String name) {
+    return name != null && VALID_NAME.matcher(name).matches();
+  }
+
   /** 이름이 {@code [a-z][a-z0-9_]*} 패턴인지 검증한다. 어긋나면 {@link InvalidTableNameException}. */
   public static void validate(String name) {
-    if (!VALID_NAME.matcher(name).matches()) {
+    if (!isValid(name)) {
       throw new InvalidTableNameException("Invalid name: " + name + ". Must match [a-z][a-z0-9_]*");
     }
   }

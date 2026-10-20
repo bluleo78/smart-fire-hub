@@ -361,7 +361,10 @@ class PipelineExecutionErrorExposureTest extends IntegrationTestBase {
 
     JsonNode clearedStep = getJson(url, userAt("민감")).get("stepExecutions").get(0);
     String raw = clearedStep.get("errorMessage").asText();
-    assertThat(raw).contains("SECRETVALUE42").contains(secTable);
+    // 양성 대조는 행 값(SECRETVALUE42)으로 한다. 예전에는 테이블명도 원문에 있었지만 그것은 jOOQ 가 메아리한 내부 SQL(SQL [INSERT …])
+    // 에서 온 것이고, WD-111 부터 저장 문구는 한국어 안내 + PG 원문(주 메시지·DETAIL)만이라 내부 SQL 이 없다. 행 값은 PG 원문에 그대로
+    // 남으므로 가림이 실제로 원문을 감추는지는 여전히 이 값으로 증명된다.
+    assertThat(raw).contains("SECRETVALUE42").contains("원인: ERROR:").doesNotContain("SQL [");
     assertThat(clearedStep.get("errorMasked").asBoolean()).isFalse();
   }
 

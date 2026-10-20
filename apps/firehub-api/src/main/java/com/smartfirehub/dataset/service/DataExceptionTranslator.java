@@ -35,15 +35,27 @@ public final class DataExceptionTranslator {
     // 바깥 예외 메시지에는 SQL 문과 사용자 값(예: 값 자체가 "character varying(10)")이 섞여 있어 서버 구조화 오류만 신뢰한다.
     ServerErrorMessage sem =
         dataError instanceof PSQLException pe ? pe.getServerErrorMessage() : null;
-    String columnPart =
-        sem != null && sem.getColumn() != null && !sem.getColumn().isBlank()
-            ? "'" + sem.getColumn() + "' 컬럼에 "
-            : "";
-    return switch (dataError.getSQLState()) {
+    return describeDataError(
+        dataError.getSQLState(),
+        sem != null ? sem.getColumn() : null,
+        sem != null ? sem.getMessage() : null);
+  }
+
+  /**
+   * SQLState 22xxx 하나를 사유 문장으로 바꾼다 — {@link #describe} 와 파이프라인 스텝 오류 안내(WD-111, {@code
+   * PipelineSqlErrorMessages})가 같은 문구를 쓰도록 한곳에 둔다. 파이프라인 실행기(firehub-executor)는 예외 객체가 아니라
+   * SQLState·컬럼·서버 메시지 필드만 돌려주므로 예외가 아닌 필드로 받는다.
+   *
+   * @param sqlState 22 로 시작하는 SQLState
+   * @param column 서버 구조화 오류의 컬럼명(없으면 null)
+   * @param serverMessage 서버 구조화 오류의 주 메시지(길이 상한을 읽는 데만 쓴다, 없으면 null)
+   */
+  public static String describeDataError(String sqlState, String column, String serverMessage) {
+    String columnPart = column != null && !column.isBlank() ? "'" + column + "' 컬럼에 " : "";
+    return switch (sqlState) {
       case "22001" -> {
         // string_data_right_truncation — VARCHAR(N) 초과. 길이 N 만 안내한다.
-        Matcher m =
-            VARCHAR_LIMIT.matcher(sem != null && sem.getMessage() != null ? sem.getMessage() : "");
+        Matcher m = VARCHAR_LIMIT.matcher(serverMessage != null ? serverMessage : "");
         String limit = m.find() ? "(최대 " + m.group(1) + "자)" : "";
         yield columnPart + "글자 수 제한" + limit + "을 넘는 값이 있습니다";
       }

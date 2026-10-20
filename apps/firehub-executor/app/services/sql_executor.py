@@ -1,5 +1,7 @@
-from app.schemas.responses import SqlExecuteResponse
-from app.services.query_executor import detect_statement_type
+from typing import Optional
+
+from app.schemas.responses import PgErrorInfo, SqlExecuteResponse
+from app.services.query_executor import detect_statement_type, sqlstate
 from app.validators.sql_validator import (
     SqlValidationError,
     output_lock_key,
@@ -84,4 +86,30 @@ def execute_sql(query: str, conn, pre_statements=()) -> SqlExecuteResponse:
             row_count=0,
             execution_log="",
             error=str(exc),
+            pg_error=pg_error_info(exc),
         )
+
+
+def pg_error_info(exc: BaseException) -> Optional[PgErrorInfo]:
+    """psycopg2 오류에서 SQLState·주 메시지·DETAIL·HINT·컬럼을 꺼낸다(WD-111). PG 오류가 아니면 None.
+
+    SQLState 판별은 애드혹 질의 실행기와 같은 ``query_executor.sqlstate`` 를 쓴다. 주 메시지 등은 ``diag`` 에서
+    읽는다 — ``str(exc)`` 는 위치 표시 줄(내부 SQL)까지 담는다.
+    psycopg2 를 직접 import 하지 않고 속성으로 판별해, 목(mock) 예외나 다른 드라이버 예외에서도 안전하게 None 이 된다.
+    """
+    sql_state = sqlstate(exc)
+    if not sql_state:
+        return None
+    diag = getattr(exc, "diag", None)
+
+    def field(name: str) -> Optional[str]:
+        value = getattr(diag, name, None) if diag is not None else None
+        return value if isinstance(value, str) and value else None
+
+    return PgErrorInfo(
+        sql_state=sql_state,
+        message=field("message_primary"),
+        detail=field("message_detail"),
+        hint=field("message_hint"),
+        column=field("column_name"),
+    )

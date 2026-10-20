@@ -35,6 +35,21 @@ def _rows_to_json(rows: Optional[list]) -> Optional[list]:
     ]
 
 
+class PgErrorInfo(BaseModel):
+    """PostgreSQL 오류의 구조화 필드(WD-111).
+
+    API 는 ``sql_state`` 로 흔한 오류를 분류해 고칠 방법을 담은 한국어 안내를 앞에 두고, 원문은 주 메시지·DETAIL·HINT 만
+    남긴다. ``error`` 문자열(``str(exc)``)에는 psycopg2 가 붙인 ``LINE 1: INSERT INTO …`` 위치 표시 줄에 러너가 감싼 내부 SQL
+    이 실리고 SQLState 도 없어서 그대로는 분류할 수 없다.
+    """
+
+    sql_state: str
+    message: Optional[str] = None
+    detail: Optional[str] = None
+    hint: Optional[str] = None
+    column: Optional[str] = None
+
+
 class SqlExecuteResponse(BaseModel):
     success: bool
     rows: Optional[list] = None
@@ -42,6 +57,8 @@ class SqlExecuteResponse(BaseModel):
     row_count: int
     execution_log: str
     error: Optional[str] = None
+    # PG 오류로 실패했을 때만 채운다(검증 거부·연결 오류 등은 None). 기존 필드는 그대로라 구버전 API 와도 호환된다.
+    pg_error: Optional[PgErrorInfo] = None
 
     # 파이프라인 SQL 스텝 SELECT 도 같은 연결 풀·같은 행 값을 내보내므로 같은 직렬화 경계를 둔다(#763).
     @field_serializer("rows")

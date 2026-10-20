@@ -176,7 +176,10 @@ public class SqlScriptExecutor {
       return "SQL executed successfully";
     } catch (Exception e) {
       log.error("SQL execution failed", e);
-      throw new ScriptExecutionException("SQL execution failed: " + e.getMessage(), e);
+      // 저장 문구는 "SQL 실행 실패: 한국어 안내\n원인: PG 원문"(WD-111). e.getMessage() 는 jOOQ 가 실행한 SQL 전체
+      // (러너가 감싼 INSERT INTO … / MERGE …)를 "SQL [...]" 로 메아리하므로 쓰지 않는다.
+      throw new ScriptExecutionException(
+          PipelineSqlErrorMessages.describe(PipelineSqlErrorMessages.EXECUTION_PREFIX, e), e);
     }
   }
 }

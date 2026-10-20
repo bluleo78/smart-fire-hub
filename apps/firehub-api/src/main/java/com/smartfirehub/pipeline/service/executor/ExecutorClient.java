@@ -203,13 +203,39 @@ public class ExecutorClient {
       boolean truncated,
       String error) {}
 
+  /**
+   * SQL 실행 응답.
+   *
+   * @param pgError 실패가 PostgreSQL 오류일 때의 구조화 필드(SQLState·주 메시지·DETAIL·HINT·컬럼, WD-111) — 스텝 오류를
+   *     SQLState 로 분류한 한국어 안내 + 원문으로 만드는 데 쓴다. 검증 거부처럼 PG 오류가 아니거나 이 필드를 보내지 않는 구버전 실행기면 null 이고,
+   *     그때는 {@code error} 문자열만 쓴다.
+   */
   public record SqlExecuteResult(
       boolean success,
       List<Map<String, Object>> rows,
       List<String> columns,
       @JsonProperty("row_count") int rowCount,
       @JsonProperty("execution_log") String executionLog,
-      String error) {}
+      String error,
+      @JsonProperty("pg_error") PgError pgError) {}
+
+  /**
+   * PostgreSQL 서버 구조화 오류 중 사용자 문구에 쓰는 필드만. firehub-executor SQL 실행 응답의 {@code pg_error}(필드명
+   * snake_case) — 실행기와의 통신 계약이라 응답 레코드 옆에 둔다. 로컬 경로(예외 원인 사슬)도 {@code
+   * PipelineSqlErrorMessages#pgErrorOf} 로 같은 모양을 만든다.
+   *
+   * @param sqlState SQLState 5자리
+   * @param message 주 메시지(ERROR 줄)
+   * @param detail DETAIL(없으면 null)
+   * @param hint HINT(없으면 null)
+   * @param column 오류가 난 컬럼명(데이터 오류·NOT NULL 위반 등에서만, 없으면 null)
+   */
+  public record PgError(
+      @JsonProperty("sql_state") String sqlState,
+      String message,
+      String detail,
+      String hint,
+      String column) {}
 
   public record ApiCallExecuteResult(
       boolean success,

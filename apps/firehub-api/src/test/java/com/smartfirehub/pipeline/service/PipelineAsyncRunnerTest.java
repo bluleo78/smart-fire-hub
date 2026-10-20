@@ -208,7 +208,7 @@ class PipelineAsyncRunnerTest {
             eq("SKIPPED"),
             isNull(),
             isNull(),
-            contains("Dependency"),
+            eq(PipelineSqlErrorMessages.SKIPPED_MESSAGE),
             isNull(),
             any());
   }
@@ -1022,7 +1022,7 @@ class PipelineAsyncRunnerTest {
     when(executorClient.executeSql(anyString(), anyList()))
         .thenReturn(
             new ExecutorClient.SqlExecuteResult(
-                true, List.of(), List.of(), 0, "2 rows affected", null));
+                true, List.of(), List.of(), 0, "2 rows affected", null, null));
 
     // when
     String status =
@@ -1064,7 +1064,7 @@ class PipelineAsyncRunnerTest {
     when(executorClient.executeSql(anyString(), anyList()))
         .thenReturn(
             new ExecutorClient.SqlExecuteResult(
-                true, List.of(), List.of(), 0, "2 rows affected", null));
+                true, List.of(), List.of(), 0, "2 rows affected", null, null));
 
     // when
     String status =
@@ -1164,7 +1164,7 @@ class PipelineAsyncRunnerTest {
     when(executorClient.executeSql(anyString(), anyList()))
         .thenReturn(
             new ExecutorClient.SqlExecuteResult(
-                true, List.of(), List.of(), 1, "1 row(s) affected", null));
+                true, List.of(), List.of(), 1, "1 row(s) affected", null, null));
 
     String status = runner.executeStep(7351L, step, 73L, "TestPipeline", 1L, true);
 
@@ -1585,7 +1585,7 @@ class PipelineAsyncRunnerTest {
     when(executorClient.executeSql(anyString(), anyList()))
         .thenReturn(
             new ExecutorClient.SqlExecuteResult(
-                true, List.of(), List.of(), 0, "2 rows affected", null));
+                true, List.of(), List.of(), 0, "2 rows affected", null, null));
 
     // when
     String status =
@@ -1648,7 +1648,8 @@ class PipelineAsyncRunnerTest {
                 List.of(),
                 0,
                 null,
-                "ERROR: ON CONFLICT DO UPDATE command cannot affect row a second time"));
+                "ERROR: ON CONFLICT DO UPDATE command cannot affect row a second time",
+                null));
 
     // when
     String status =
@@ -1702,8 +1703,8 @@ class PipelineAsyncRunnerTest {
     when(sqlExecutor.execute(anyList(), anyString()))
         .thenThrow(
             new ScriptExecutionException(
-                "SQL execution failed: ERROR: ON CONFLICT DO UPDATE command cannot affect row a"
-                    + " second time"));
+                "SQL 실행 실패: 한 번에 처리할 행 안에서 같은 키가 두 번 이상 나옵니다.\n원인: ERROR: ON CONFLICT DO UPDATE"
+                    + " command cannot affect row a second time"));
 
     // when
     String status =
@@ -1765,7 +1766,8 @@ class PipelineAsyncRunnerTest {
                 0,
                 null,
                 "ERROR: there is no unique or exclusion constraint matching the ON CONFLICT"
-                    + " specification"));
+                    + " specification",
+                null));
 
     // when
     String status =
@@ -3169,6 +3171,141 @@ class PipelineAsyncRunnerTest {
         null,
         null,
         null);
+  }
+
+  // ── WD-111: 스텝 오류 문구 = 한국어 안내 + 원인 원문(내부 SQL 없음) ─────────────────────────────
+
+  /**
+   * 실행기 켠 경로(운영 기본값 app.executor.enabled=true) — 실행기가 구조화 오류(pg_error)를 주면 SQLState 로 분류한 안내 + 주
+   * 메시지·DETAIL 만 저장하고, 오류 문자열(str(exc))의 위치 표시 줄에 실린 러너 INSERT 문은 저장하지 않는다.
+   */
+  @Test
+  void 실행기_SQL_실패는_SQLState_안내와_원문만_저장하고_내부_INSERT_문은_싣지_않는다() {
+    Long stepExecId = 3601L;
+    Long outputDatasetId = 3602L;
+    PipelineStepResponse sqlStep =
+        stepResponseWithOutput(
+            3600L, "dup-step", "SQL", "SELECT k FROM data.\"src\"", outputDatasetId, List.of());
+    when(datasetRepository.findTableNameById(outputDatasetId))
+        .thenReturn(Optional.of("out_orders"));
+    when(columnRepository.findByDatasetId(outputDatasetId)).thenReturn(List.of(col("k", true)));
+    stubProbeColumns("k");
+    when(executorClient.executeSql(anyString(), anyList()))
+        .thenReturn(
+            new ExecutorClient.SqlExecuteResult(
+                false,
+                null,
+                null,
+                0,
+                "",
+                "duplicate key value violates unique constraint \"ux_out_orders_pk\"\n"
+                    + "DETAIL:  Key (k)=(1) already exists.\n"
+                    + "LINE 1: INSERT INTO \"data\".\"out_orders\" (\"k\") SELECT k FROM ...\n",
+                new ExecutorClient.PgError(
+                    "23505",
+                    "duplicate key value violates unique constraint \"ux_out_orders_pk\"",
+                    "Key (k)=(1) already exists.",
+                    null,
+                    null)));
+
+    String status = runner.executeStep(stepExecId, sqlStep, 36L, "TestPipeline", 1L, true);
+
+    assertThat(status).isEqualTo("FAILED");
+    ArgumentCaptor<String> errorCaptor = ArgumentCaptor.forClass(String.class);
+    verify(executionRepository)
+        .updateStepExecution(
+            eq(stepExecId),
+            eq("FAILED"),
+            isNull(),
+            isNull(),
+            errorCaptor.capture(),
+            isNull(),
+            any());
+    assertThat(errorCaptor.getValue())
+        .isEqualTo(
+            "SQL 실행 실패: 같은 키 값이 이미 있습니다. 출력 데이터셋의 기본 키(또는 유니크) 컬럼에 이미 있는 값이나 SQL 결과 안에서 겹치는"
+                + " 값이 들어갔습니다. 로드 전략(REPLACE·APPEND·MERGE)과 기본 키 설정을 확인하세요.\n"
+                + "원인: ERROR: duplicate key value violates unique constraint \"ux_out_orders_pk\"\n"
+                + "DETAIL: Key (k)=(1) already exists.")
+        .doesNotContain("INSERT INTO");
+  }
+
+  /**
+   * 구조화 오류를 보내지 않는 구버전 실행기(배포 순서 어긋남)·PG 오류가 아닌 실패는 오류 문자열을 쓰되, 위치 표시 줄(LINE n: …내부 SQL…)과 캐럿 줄은
+   * 걷어낸다. 안내는 추측해 붙이지 않는다.
+   */
+  @Test
+  void 구조화_오류가_없는_실행기_실패는_위치_표시_줄만_걷어낸다() {
+    Long stepExecId = 3611L;
+    Long outputDatasetId = 3612L;
+    PipelineStepResponse sqlStep =
+        stepResponseWithOutput(
+            3610L, "old-exec", "SQL", "SELECT k FROM data.\"src\"", outputDatasetId, List.of());
+    when(datasetRepository.findTableNameById(outputDatasetId))
+        .thenReturn(Optional.of("out_orders"));
+    when(columnRepository.findByDatasetId(outputDatasetId)).thenReturn(List.of(col("k", false)));
+    stubProbeColumns("k");
+    when(executorClient.executeSql(anyString(), anyList()))
+        .thenReturn(
+            new ExecutorClient.SqlExecuteResult(
+                false,
+                null,
+                null,
+                0,
+                "",
+                "syntax error at or near \"FORM\"\n"
+                    + "LINE 1: INSERT INTO \"data\".\"out_orders\" (\"k\") SELECT k FORM x\n"
+                    + "                                                       ^\n",
+                null));
+
+    runner.executeStep(stepExecId, sqlStep, 37L, "TestPipeline", 1L, true);
+
+    ArgumentCaptor<String> errorCaptor = ArgumentCaptor.forClass(String.class);
+    verify(executionRepository)
+        .updateStepExecution(
+            eq(stepExecId),
+            eq("FAILED"),
+            isNull(),
+            isNull(),
+            errorCaptor.capture(),
+            isNull(),
+            any());
+    assertThat(errorCaptor.getValue())
+        .isEqualTo("SQL 실행 실패: syntax error at or near \"FORM\"")
+        .doesNotContain("INSERT INTO");
+  }
+
+  /**
+   * 별칭 없는 식 컬럼(?column?)은 TEMP 를 만들기 전에 SQL 문맥의 한국어 안내(AS 로 이름 붙이기)로 실패한다 — 데이터셋 공용 검증의 영어
+   * 문구(Invalid name …)가 저장되지 않고, TEMP 생성도 시도하지 않는다.
+   */
+  @Test
+  void 별칭_없는_식_컬럼은_AS_안내로_실패하고_TEMP_를_만들지_않는다() {
+    Long stepExecId = 3621L;
+    PipelineStepResponse sqlStep =
+        stepResponse(3620L, "expr-step", "SQL", "SELECT 1", null, List.of());
+    stubProbeColumns("?column?");
+
+    String status = runner.executeStep(stepExecId, sqlStep, 38L, "TestPipeline", 1L, false);
+
+    assertThat(status).isEqualTo("FAILED");
+    ArgumentCaptor<String> errorCaptor = ArgumentCaptor.forClass(String.class);
+    verify(executionRepository)
+        .updateStepExecution(
+            eq(stepExecId),
+            eq("FAILED"),
+            isNull(),
+            isNull(),
+            errorCaptor.capture(),
+            isNull(),
+            any());
+    assertThat(errorCaptor.getValue())
+        .isEqualTo(
+            "SQL 결과 컬럼 이름 '?column?' 은 쓸 수 없습니다. 계산 컬럼에는 AS 로 이름을 붙여 주세요(예: SELECT 1 AS value)."
+                + " 컬럼 이름은 영문 소문자로 시작하고 영문 소문자·숫자·밑줄만 쓸 수 있습니다.")
+        .doesNotContain("Invalid name");
+    verify(tempDatasetService, never()).createTempDataset(any(), any(), any(), any(), any(), any());
+    verify(tempDatasetService, never()).deleteTempDataset(any());
   }
 
   private PipelineStepResponse stepResponseWithOutput(

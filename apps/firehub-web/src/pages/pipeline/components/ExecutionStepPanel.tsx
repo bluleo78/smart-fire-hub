@@ -41,6 +41,28 @@ function ExecutionErrorBody({ errorMessage, errorMasked }: { errorMessage: strin
   );
 }
 
+/**
+ * 건너뜀(SKIPPED) 스텝 안내(WD-111) — 오류가 아니라 실행하지 않은 이유이므로 오류 문구·빨간 원문 블록을 쓰지 않고 중립 문장 하나로 보여 준다.
+ *
+ * 저장된 문구는 쓰지 않는다: 옛 실행 기록에는 영어 "Dependency failed or skipped" 가 남아 있고(마이그레이션으로 바꾸지 않음), 원문이 가려진
+ * 조회자(WD-27)에게는 가림 문구가 온다. 어느 쪽이든 SKIPPED 의 뜻은 하나라 상태만으로 같은 안내를 낸다.
+ *
+ * 첫 문장은 서버 `PipelineSqlErrorMessages.SKIPPED_MESSAGE`(firehub-api)와 같다 — 문구를 바꾸면 함께 고칠 것.
+ */
+function SkippedStepNotice() {
+  return (
+    <>
+      <Separator />
+      <div className="space-y-2" data-testid="skipped-step-notice">
+        <p className="text-muted-foreground text-xs font-medium">건너뛴 이유</p>
+        <p className="text-xs text-muted-foreground">
+          선행 스텝이 실패하거나 건너뛰어져 이 스텝은 실행하지 않았습니다. 선행 스텝의 오류를 해결한 뒤 다시 실행하세요.
+        </p>
+      </div>
+    </>
+  );
+}
+
 function StepDetails({
   step,
 }: {
@@ -78,7 +100,9 @@ function StepDetails({
           <span>{step.outputRows != null ? step.outputRows.toLocaleString() : '-'}</span>
         </div>
 
-        {step.errorMessage && (
+        {step.status === 'SKIPPED' ? (
+          <SkippedStepNotice />
+        ) : step.errorMessage && (
           <>
             <Separator />
             {/* 에러 섹션: 사용자 친화적 안내 + 기술적 원문을 스크롤 영역에 표시 */}

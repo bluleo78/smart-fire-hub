@@ -147,15 +147,18 @@ _RUNTIME_SQLSTATE_CLASSES = ("22",)
 _RUNTIME_SQLSTATES = frozenset({"57014"})
 
 
-def _sqlstate(exc: BaseException) -> str | None:
-    """psycopg2 예외의 SQLSTATE(pgcode). 서버가 준 오류가 아니면(파이썬 쪽 변환 오류 등) None."""
+def sqlstate(exc: BaseException) -> str | None:
+    """psycopg2 예외의 SQLSTATE(pgcode). 서버가 준 오류가 아니면(파이썬 쪽 변환 오류 등) None.
+
+    파이프라인 SQL 실행(sql_executor.pg_error_info, WD-111)도 같은 판별을 쓴다 — 공개 함수로 둔다.
+    """
     code = getattr(exc, "pgcode", None)
     return code if isinstance(code, str) else None
 
 
 def _is_user_sql_runtime_error(exc: BaseException) -> bool:
     """사용자 SQL 실행 중에 난 오류라서 geometry 래핑 재시도로 결과가 바뀌지 않는 경우 True(#779)."""
-    code = _sqlstate(exc)
+    code = sqlstate(exc)
     if code is None:
         return False
     return code in _RUNTIME_SQLSTATES or code[:2] in _RUNTIME_SQLSTATE_CLASSES
@@ -167,7 +170,7 @@ def _is_wrap_analysis_error(exc: BaseException) -> bool:
     컬럼 단위 격리 시험은 LIMIT 0 이라 이런 해석 단계 오류만 가려낼 수 있다. 실행 중 오류나 SQLSTATE 가
     없는 오류에서 격리를 돌리면 모든 컬럼이 시험을 통과해 방금 실패한 같은 래핑 SQL 을 또 실행하게 된다.
     """
-    code = _sqlstate(exc)
+    code = sqlstate(exc)
     return code is not None and code[:2] == "42"
 
 

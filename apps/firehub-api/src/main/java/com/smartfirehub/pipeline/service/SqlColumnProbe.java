@@ -63,7 +63,11 @@ public class SqlColumnProbe {
           .map(f -> new ColumnInfo(f.getName(), mapJooqTypeToAppType(f.getDataType())))
           .toList();
     } catch (Exception e) {
-      throw new ScriptExecutionException("SQL 컬럼 타입 분석 실패: " + extractRootCauseMessage(e), e);
+      // 저장 문구는 "접두: 한국어 안내\n원인: PG 원문"(WD-111). 원문은 서버 구조화 오류의 메시지·DETAIL·HINT 만 — jOOQ 메아리의
+      // probe 래핑(SELECT * FROM (...) AS _probe LIMIT 0)과 그 기준 Position 은 사용자가 쓰지 않은 내부 구현이라 싣지
+      // 않는다(#662).
+      throw new ScriptExecutionException(
+          PipelineSqlErrorMessages.describe(PipelineSqlErrorMessages.PROBE_PREFIX, e), e);
     }
   }
 
@@ -103,27 +107,6 @@ public class SqlColumnProbe {
                   // VerbatimSql 참고). jOOQ plain SQL fetch 는 {fn …}·{d '…'} 를 다시 써서 보낸다.
                   return VerbatimSql.fetch(cfg.dsl(), probeSql);
                 }));
-  }
-
-  /**
-   * SQL 컬럼 스키마 추론용 probe 쿼리 실행 실패 시, 사용자에게 보여줄 근본 원인 메시지를 추출한다(#662).
-   *
-   * <p>jOOQ가 던지는 {@code DataAccessException.getMessage()}는 "jOOQ; bad SQL grammar [<probe SQL 원문>]"
-   * 형식으로 {@code SELECT * FROM (...) AS _probe LIMIT 0}처럼 사용자가 작성하지 않은 내부 구현 세부사항(probe 래핑)을 그대로
-   * 노출한다. 반면 실제 DB(PostgreSQL 등)가 반환한 구체적 원인(예: "relation ... does not exist")은 {@code
-   * getCause()}에만 담겨 있어 그대로는 사용자에게 전달되지 않는다. 이 메서드는 cause 체인을 우선 사용해 근본 원인만 뽑아내고, cause가 없거나 메시지가
-   * 비어 있을 때만 원래 메시지로 폴백한다.
-   *
-   * @param e probe 쿼리 실행 중 발생한 예외
-   * @return 사용자에게 노출할 근본 원인 메시지 (probe SQL 구문 등 내부 구현 디테일 제거)
-   */
-  private String extractRootCauseMessage(Exception e) {
-    Throwable cause = e.getCause();
-    if (cause != null && cause.getMessage() != null && !cause.getMessage().isBlank()) {
-      return cause.getMessage();
-    }
-    // cause가 없으면 원본 예외 메시지로 폴백 (probe SQL 원문이 포함될 수 있으나 최소한의 정보는 제공)
-    return e.getMessage();
   }
 
   /** jOOQ 가 돌려준 DB 타입을 앱의 데이터셋 컬럼 타입 어휘로 옮긴다. */

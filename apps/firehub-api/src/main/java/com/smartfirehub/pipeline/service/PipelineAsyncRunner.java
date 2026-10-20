@@ -8,6 +8,7 @@ import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.dataset.service.DataTableService;
+import com.smartfirehub.dataset.storage.DataTableNames;
 import com.smartfirehub.global.security.PermissionChecker;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.pipeline.dto.LoadStrategy;
@@ -162,13 +163,15 @@ public class PipelineAsyncRunner {
         }
 
         if (!canExecute) {
-          // 의존 스텝 실패/스킵으로 이 스텝도 SKIPPED 처리
+          // 의존 스텝 실패/스킵으로 이 스텝도 SKIPPED 처리. 저장 문구는 오류가 아니라 실행하지 않은 이유다(WD-111 — 예전 영어
+          // "Dependency failed or skipped" 는 오류처럼 읽혔다. 이미 저장된 옛 문구는 바꾸지 않고 웹이 SKIPPED 면 중립 안내로
+          // 보인다).
           executionRepository.updateStepExecution(
               stepExecId,
               "SKIPPED",
               null,
               null,
-              "Dependency failed or skipped",
+              PipelineSqlErrorMessages.SKIPPED_MESSAGE,
               null,
               LocalDateTime.now(ZoneOffset.UTC));
           stepStatuses.put(step.id(), "SKIPPED");
@@ -448,6 +451,10 @@ public class PipelineAsyncRunner {
           // 출력 컬럼명 검증은 그대로 유지한다.
           probedColumns = sqlColumnProbe.columnsWithTypes(sql);
           List<ColumnInfo> selectColumns = renameReservedColumns(probedColumns);
+          // 결과 컬럼명이 데이터셋 이름 규칙에 맞는지 TEMP 생성 전에 본다(WD-111). 맞지 않으면 데이터셋 공용 검증의
+          // 영어 문구(Invalid name: ?column?. Must match …)로 실패해, 별칭 없는 식 컬럼(SELECT 1 → ?column?)에 AS 를
+          // 붙이면 된다는 걸 알 수 없었다. 규칙은 DataTableNames 하나를 쓰고, 안내는 이 경로에서만 SQL 문맥으로 낸다.
+          rejectInvalidResultColumnNames(selectColumns);
 
           StepTemp temp =
               ensureStepTemp(step, selectColumns, pipelineId, pipelineName, userId, runAs, "");
@@ -624,18 +631,28 @@ public class PipelineAsyncRunner {
           if (executorEnabled) {
             var result = executorClient.executeSql(wrappedSql, preStatements);
             if (!result.success()) {
-              String translated = translateMergeError(isMerge, result.error(), mergePkColumns);
+              String translated =
+                  isMerge
+                      ? PipelineSqlErrorMessages.describeMergeError(
+                          result.pgError(), result.error(), mergePkColumns)
+                      : null;
               if (translated != null) {
                 throw new ScriptExecutionException(translated);
               }
-              throw new ScriptExecutionException("SQL 실행 실패: " + result.error());
+              throw new ScriptExecutionException(
+                  PipelineSqlErrorMessages.describeExecutorError(
+                      PipelineSqlErrorMessages.EXECUTION_PREFIX, result.pgError(), result.error()));
             }
             executionLog = result.executionLog();
           } else {
             try {
               executionLog = sqlExecutor.execute(preStatements, wrappedSql);
             } catch (ScriptExecutionException e) {
-              String translated = translateMergeError(isMerge, e.getMessage(), mergePkColumns);
+              String translated =
+                  isMerge
+                      ? PipelineSqlErrorMessages.describeMergeError(
+                          PipelineSqlErrorMessages.pgErrorOf(e), e.getMessage(), mergePkColumns)
+                      : null;
               if (translated != null) {
                 throw new ScriptExecutionException(translated, e);
               }
@@ -650,7 +667,9 @@ public class PipelineAsyncRunner {
           if (executorEnabled) {
             var result = executorClient.executeSql(sql, preStatements);
             if (!result.success()) {
-              throw new ScriptExecutionException("SQL 실행 실패: " + result.error());
+              throw new ScriptExecutionException(
+                  PipelineSqlErrorMessages.describeExecutorError(
+                      PipelineSqlErrorMessages.EXECUTION_PREFIX, result.pgError(), result.error()));
             }
             executionLog = result.executionLog();
           } else {
@@ -1479,40 +1498,6 @@ public class PipelineAsyncRunner {
   }
 
   /**
-   * MERGE 실행 오류 메시지를 한국어 안내로 번역한다. 번역 대상이 아니면 {@code null}을 돌려줘 호출부가 원본 오류를 그대로 쓰게 한다.
-   *
-   * <p>두 가지 PostgreSQL 오류 문구를 처리한다(Fix round 1, must 2 / must 4):
-   *
-   * <ul>
-   *   <li>{@link MergeSqlBuilder#DUPLICATE_KEY_PG_MESSAGE} — SELECT 가 같은 PK 를 두 번 이상 낼 때.
-   *   <li>{@link MergeSqlBuilder#NO_UNIQUE_CONSTRAINT_PG_MESSAGE} — PK 유니크 인덱스(이름은 {@code
-   *       ux_<table>_pk} 이거나 REPLACE·긴 이름이면 다를 수 있다)가 (동시 생성 실패 등으로) INVALID 상태라
-   *       메타데이터(is_primary_key=true)와 실제 제약이 어긋날 때.
-   * </ul>
-   *
-   * <p>executor 켠 경로({@code result.error()})와 끈 경로({@code sqlExecutor.execute} 가 던지는 {@link
-   * ScriptExecutionException#getMessage()}) 양쪽이 이 메서드 하나를 공유한다 — 번역 문구가 두 곳에서 갈리는 사고를 막는다.
-   */
-  private static String translateMergeError(
-      boolean isMerge, String rawMessage, List<String> pkColumns) {
-    if (!isMerge || rawMessage == null) {
-      return null;
-    }
-    if (rawMessage.contains(MergeSqlBuilder.DUPLICATE_KEY_PG_MESSAGE)) {
-      return "SQL 결과에 같은 키("
-          + String.join(", ", pkColumns)
-          + ")가 두 번 이상 나옵니다. "
-          + "키별로 한 행만 나오도록 SQL을 수정하세요.";
-    }
-    if (rawMessage.contains(MergeSqlBuilder.NO_UNIQUE_CONSTRAINT_PG_MESSAGE)) {
-      return "출력 데이터셋의 PK("
-          + String.join(", ", pkColumns)
-          + ") 유니크 인덱스가 유효하지 않습니다. 데이터셋 설정에서 PK 를 다시 지정한 뒤 다시 실행하세요.";
-    }
-    return null;
-  }
-
-  /**
    * SELECT 결과 컬럼명 중 시스템 예약어(id/import_id/created_at/_updated_at)와 충돌하는 이름을 자동으로 안전한 이름으로 바꾼다(#645).
    *
    * <p>{@code SELECT * FROM {{#N}}}처럼 이전 스텝(또는 실제 데이터셋)의 출력을 그대로 재사용하면, 모든 데이터셋 물리 테이블이 자동으로 갖는 시스템
@@ -1560,6 +1545,26 @@ public class PipelineAsyncRunner {
       result.add(candidate);
     }
     return result;
+  }
+
+  /**
+   * SQL SELECT 결과로 러너 TEMP 를 만들기 전에 결과 컬럼명을 데이터셋 이름 규칙({@link DataTableNames#isValid})으로 확인하고, 어긋나면
+   * SQL 에서 고칠 방법을 담은 한국어 안내로 실패시킨다(WD-111).
+   *
+   * <p>별칭 없는 식 컬럼은 PostgreSQL 이 {@code ?column?} 같은 이름을 붙이고, 따옴표로 대문자·공백을 넣은 별칭도 규칙에 맞지 않는다. 데이터셋
+   * 공용 검증 문구는 데이터셋 생성 화면 등 다른 호출처와 공유하므로 바꾸지 않고, SQL 문맥의 안내(AS 로 이름 붙이기)는 이 경로에서만 낸다. 예약어 별칭 처리 뒤의
+   * 이름을 받는다 — {@code _updated_at} 같은 예약어는 이미 {@code updated_at_1} 로 바뀌어 여기 걸리지 않는다.
+   */
+  private static void rejectInvalidResultColumnNames(List<ColumnInfo> columns) {
+    for (ColumnInfo column : columns) {
+      if (!DataTableNames.isValid(column.name())) {
+        throw new ScriptExecutionException(
+            "SQL 결과 컬럼 이름 '"
+                + column.name()
+                + "' 은 쓸 수 없습니다. 계산 컬럼에는 AS 로 이름을 붙여 주세요(예: SELECT 1 AS value)."
+                + " 컬럼 이름은 영문 소문자로 시작하고 영문 소문자·숫자·밑줄만 쓸 수 있습니다.");
+      }
+    }
   }
 
   /** {@link #renameReservedColumnNames(List)}의 {@link ColumnInfo} 목록 버전 (타입 정보는 그대로 보존). */

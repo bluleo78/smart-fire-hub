@@ -270,3 +270,66 @@ def test_leading_comment_select_without_pre_statements_is_read():
 )
 def test_detect_statement_type_skips_comments_lexically(sql, expected):
     assert detect_statement_type(sql) == expected
+
+
+class _FakeDiag:
+    """psycopg2 ``Diagnostics`` 흉내 — 실제 오류 객체와 같은 속성 이름만 둔다."""
+
+    def __init__(self, primary, detail=None, hint=None, column=None):
+        self.message_primary = primary
+        self.message_detail = detail
+        self.message_hint = hint
+        self.column_name = column
+
+
+class _FakePgError(Exception):
+    """psycopg2 ``Error`` 흉내 — ``pgcode``(SQLState)·``diag`` 와, 위치 표시 줄에 내부 SQL 이 실린 ``str()``."""
+
+    def __init__(self, text, pgcode, diag):
+        super().__init__(text)
+        self.pgcode = pgcode
+        self.diag = diag
+
+
+def test_pg_error_returns_structured_sqlstate_and_fields():
+    # WD-111: API 가 SQLState 로 오류를 분류하고 원문을 주 메시지·DETAIL 만으로 만들 수 있게 구조화 필드를 함께 보낸다.
+    cursor = MagicMock()
+    cursor.execute.side_effect = _FakePgError(
+        'duplicate key value violates unique constraint "ux_out_pk"\n'
+        "DETAIL:  Key (k)=(1) already exists.\n",
+        "23505",
+        _FakeDiag('duplicate key value violates unique constraint "ux_out_pk"', "Key (k)=(1) already exists."),
+    )
+    conn = make_conn(cursor)
+
+    result = execute_sql('INSERT INTO "data"."out" ("k") SELECT 1', conn)
+
+    assert result.success is False
+    assert result.pg_error is not None
+    assert result.pg_error.sql_state == "23505"
+    assert result.pg_error.message == 'duplicate key value violates unique constraint "ux_out_pk"'
+    assert result.pg_error.detail == "Key (k)=(1) already exists."
+    assert result.pg_error.hint is None
+    # 기존 error 문자열은 그대로 유지한다(구버전 API 호환).
+    assert "duplicate key" in result.error
+    dumped = result.model_dump()
+    assert dumped["pg_error"]["sql_state"] == "23505"
+
+
+def test_non_pg_error_has_no_structured_fields():
+    # PG 오류가 아닌 실패(연결 끊김·목 예외)는 SQLState 가 없으므로 pg_error 를 비운다 — API 는 error 문자열만 쓴다.
+    cursor = MagicMock()
+    cursor.execute.side_effect = Exception("DB connection lost")
+    conn = make_conn(cursor)
+
+    result = execute_sql("SELECT 1", conn)
+
+    assert result.success is False
+    assert result.pg_error is None
+
+
+def test_validation_error_has_no_structured_fields():
+    result = execute_sql("DROP TABLE users", MagicMock())
+
+    assert result.success is False
+    assert result.pg_error is None

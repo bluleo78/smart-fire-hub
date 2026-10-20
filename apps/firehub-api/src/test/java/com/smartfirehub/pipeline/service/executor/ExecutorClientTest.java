@@ -63,6 +63,67 @@ class ExecutorClientTest {
   // executeSql
   // -------------------------------------------------------------------------
 
+  /**
+   * 실행기가 PG 오류의 구조화 필드(pg_error, snake_case)를 보내면 그대로 받는다(WD-111) — 러너가 이 SQLState 로 한국어 안내를 고른다.
+   * 구조화 필드가 없는 응답(구버전 실행기)은 pgError=null 로 받아 오류 문자열만 쓴다.
+   */
+  @Test
+  void executeSql_failure_deserializesStructuredPgError() {
+    wireMock.stubFor(
+        post(urlEqualTo("/execute/sql"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody(
+                        """
+                        {
+                            "success": false,
+                            "rows": null,
+                            "columns": null,
+                            "row_count": 0,
+                            "execution_log": "",
+                            "error": "duplicate key value violates unique constraint \\"ux\\"",
+                            "pg_error": {
+                                "sql_state": "23505",
+                                "message": "duplicate key value violates unique constraint \\"ux\\"",
+                                "detail": "Key (k)=(1) already exists.",
+                                "hint": null,
+                                "column": null
+                            }
+                        }
+                        """)));
+
+    ExecutorClient.SqlExecuteResult result = executorClient().executeSql("INSERT INTO t SELECT 1");
+
+    assertThat(result.success()).isFalse();
+    assertThat(result.pgError()).isNotNull();
+    assertThat(result.pgError().sqlState()).isEqualTo("23505");
+    assertThat(result.pgError().message())
+        .isEqualTo("duplicate key value violates unique constraint \"ux\"");
+    assertThat(result.pgError().detail()).isEqualTo("Key (k)=(1) already exists.");
+    assertThat(result.pgError().hint()).isNull();
+  }
+
+  @Test
+  void executeSql_failureWithoutPgError_hasNullPgError() {
+    wireMock.stubFor(
+        post(urlEqualTo("/execute/sql"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody(
+                        """
+                        {"success": false, "row_count": 0, "execution_log": "", "error": "boom"}
+                        """)));
+
+    ExecutorClient.SqlExecuteResult result = executorClient().executeSql("SELECT 1");
+
+    assertThat(result.error()).isEqualTo("boom");
+    assertThat(result.pgError()).isNull();
+  }
+
   @Test
   void executeSql_success() {
     wireMock.stubFor(

@@ -160,8 +160,11 @@ SQL 저장·실행이 스키마 때문에 실패했을 때, **오류 메시지�
 ### `permission denied for schema X` — SQL을 고치지 마라
 
 ```
-SQL 컬럼 타입 분석 실패: ERROR: permission denied for schema data_t2
+SQL 컬럼 타입 분석 실패: 실행 계정에 이 대상에 대한 권한이 없습니다. SQL 문제가 아니라 권한 설정 문제이므로 관리자에게 확인을 요청하세요.
+원인: ERROR: permission denied for schema data_t2
 ```
+
+(스텝 오류는 "한국어 안내 + `원인:` PG 원문" 형태다(WD-111). 판단은 `원인:` 뒤 원문의 `permission denied for schema X` 로 한다. 예전 실행 기록은 안내 없이 `SQL 컬럼 타입 분석 실패: ERROR: permission denied …` 로만 남아 있을 수 있다 — 같은 뜻이다.)
 
 이것은 **스키마 이름이 틀렸다는 뜻이 아니다.** 이름 `X`는 맞고, 실행 계정에 그 스키마 접근 권한이 없다는 뜻이다 — 운영자가 DB 롤 권한을 부여해야 풀리는 문제이며 SQL 수정으로는 절대 해결되지 않는다.
 
