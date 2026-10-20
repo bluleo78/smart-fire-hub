@@ -39,7 +39,11 @@ public interface DataTableStore {
   /** 컬럼 인덱스를 만들거나 지운다. {@code columnType} 은 인덱스 종류 판단용(없으면 null). 호출자 트랜잭션에 참여한다. */
   void setColumnIndex(String tableName, String columnName, boolean indexed, String columnType);
 
-  /** PK 컬럼 기준 유니크 인덱스를 다시 만든다. 호출자 트랜잭션에 참여한다. */
+  /**
+   * PK 컬럼 기준 유니크 인덱스를 다시 만든다 — 그 테이블의 기존 PK 유니크 인덱스를 <b>이름이 아니라 카탈로그로</b> 모두 찾아 지운 뒤(REPLACE 맞바꿈이
+   * 이름을 바꿔 놓은 것·옛 PK 잔존분 포함, WD-103) PK 컬럼이 있으면 하나 만든다. 시스템 PK({@code id})는 건드리지 않는다. 호출자 트랜잭션에
+   * 참여한다.
+   */
   void recreatePrimaryKeyIndex(String tableName, List<String> pkColumnNames);
 
   /** PK 유니크 인덱스를 잠금 없이(CONCURRENTLY) 만든다. 트랜잭션 밖에서 호출해야 한다. */

@@ -260,9 +260,9 @@ public class DataTableRowService {
   /**
    * Upsert a batch of rows using PostgreSQL's ON CONFLICT DO UPDATE.
    *
-   * <p>The conflict target is the unique index on pkColumns (ux_{tableName}_pk). created_at is
-   * intentionally excluded from DO UPDATE SET to preserve the original creation timestamp on
-   * subsequent updates.
+   * <p>The conflict target is the unique index on pkColumns (기본 이름 ux_{tableName}_pk — REPLACE 맞바꿈
+   * 뒤에는 다른 이름일 수 있으나 ON CONFLICT 는 컬럼 목록으로 추론하므로 무관하다). created_at is intentionally excluded from
+   * DO UPDATE SET to preserve the original creation timestamp on subsequent updates.
    *
    * <p>PostgreSQL xmax trick: when a row is freshly inserted, its xmax system column is 0. When it
    * is updated (DELETE + re-insert under the hood), xmax holds the transaction ID of the deleting

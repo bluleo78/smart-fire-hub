@@ -69,6 +69,12 @@ public class PostgresDataTableStore implements DataTableStore {
    * V125__pipeline_incremental_updated_at_indexes} 와 반드시 같아야 한다 — 규약을 둘로 늘리면 V125 가 이미 있는 인덱스를 못
    * 알아보고 중복 인덱스를 만든다. 여기서는 CONCURRENTLY 를 쓰지 않는다: 이 경로는 방금 만든 <b>빈</b> 테이블에만 쓰이므로 빌드가 즉시 끝나고, 데이터셋
    * 생성 트랜잭션 안에서 실행되기 때문에 CONCURRENTLY 자체가 불가능하다.
+   *
+   * <p>REPLACE 맞바꿈({@link #swapTable}) 뒤에는 이 인덱스 이름이 PostgreSQL 기본 이름({@code
+   * rtmp_<md5>__updated_at_idx})으로 바뀐다(WD-103 조사). 지금은 무해하다 — 런타임에 이 이름으로 다시 만들거나 지우는 코드가 없고(이 메서드는
+   * 방금 만든 테이블에만 쓰인다), V125 는 이미 적용이 끝난 일회성 마이그레이션이다. 다만 V125 의 WARN 로그가 안내하는 수동 수리 명령({@code CREATE
+   * INDEX CONCURRENTLY IF NOT EXISTS "ix_<table>_upd"})을 맞바꿈을 거친 테이블에 돌리면 {@code _updated_at} 인덱스가
+   * 하나 더 생긴다. 이 이름으로 무언가를 찾거나 지우는 코드를 새로 만든다면 PK 유니크·필드 인덱스처럼 카탈로그로 찾아야 한다.
    */
   private void createUpdatedAtIndex(String tableName) {
     dsl.execute(
@@ -188,23 +194,21 @@ public class PostgresDataTableStore implements DataTableStore {
       }
     }
 
-    // Create unique index for primary key columns
-    List<DatasetColumnRequest> pkColumns =
-        columns.stream().filter(DatasetColumnRequest::isPrimaryKey).toList();
-    if (!pkColumns.isEmpty()) {
-      StringBuilder uniqueSql = new StringBuilder();
-      uniqueSql
-          .append("CREATE UNIQUE INDEX \"ux_")
-          .append(tableName)
-          .append("_pk\" ON ")
-          .append(DataSchema.qualify(tableName))
-          .append(" (");
-      for (int i = 0; i < pkColumns.size(); i++) {
-        if (i > 0) uniqueSql.append(", ");
-        uniqueSql.append("\"").append(pkColumns.get(i).columnName()).append("\"");
-      }
-      uniqueSql.append(")");
-      dsl.execute(uniqueSql.toString());
+    // PK 유니크 인덱스 — 이름은 recreatePrimaryKeyIndex 와 같은 규칙으로 고른다(WD-103). 같은 스키마에 ux_<table>_pk 라는 이름의
+    // 다른 객체(예: 사용자 테이블 "ux_orders_pk")가 있어도 이름 중복으로 실패하지 않고 해시 이름을 쓴다.
+    List<String> pkColumnNames =
+        columns.stream()
+            .filter(DatasetColumnRequest::isPrimaryKey)
+            .map(DatasetColumnRequest::columnName)
+            .toList();
+    if (!pkColumnNames.isEmpty()) {
+      // 방금 만든 빈 테이블이라 지울 PK 유니크가 있을 수 없다 — 찾기·DROP 을 건너뛴다(WD-100 createFieldIndex 의 freshTable 경로와
+      // 같은 취지). 스키마 단위 잠금도 잡지 않는다: 후보 이름(ux_<table>_pk·ux_<md5(table)>)은 테이블마다 달라서, 이름을 두고 경합할 수
+      // 있는 것은 같은 이름의 테이블을 동시에 만드는 요청뿐인데 그 둘은 CREATE TABLE 에서 먼저 부딪친다. PK 있는 데이터셋 생성마다 테넌트
+      // 전역 잠금을 잡지 않으려는 것이다.
+      dsl.execute(
+          primaryKeyUniqueIndexDdl(
+              tableName, pkColumnNames, requirePrimaryKeyIndexName(dsl, tableName), false));
     }
     // PYTHON 읽기 슬롯 GRANT — 새 테이블은 ACL 이 비어 있다. 커밋 후 데이터셋 등급 기준으로 맞춘다.
     pythonReadGrantSync.syncTableAfterCommit(tableName);
@@ -344,9 +348,23 @@ public class PostgresDataTableStore implements DataTableStore {
    */
   private String chooseFieldIndexName(
       String tableName, String columnName, FieldIndexKind kind, String selfName) {
-    String preferred = preferredFieldIndexName(tableName, columnName, kind);
-    String hashed = hashedFieldIndexName(tableName, columnName, kind);
-    Set<String> taken = takenRelationNames(preferred, hashed);
+    return pickFreeName(
+        dsl,
+        preferredFieldIndexName(tableName, columnName, kind),
+        hashedFieldIndexName(tableName, columnName, kind),
+        selfName);
+  }
+
+  /**
+   * 규칙 이름이 63바이트 안이고 스키마에서 비어 있으면 그것을, 아니면 해시 이름을 고른다. 필드 인덱스({@link #chooseFieldIndexName})와 PK
+   * 유니크 인덱스(WD-103)가 같은 규칙을 쓴다.
+   *
+   * @param ctx 조회에 쓸 컨텍스트 — 호출자가 연 트랜잭션 블록 안이면 그 트랜잭션의 것({@code DSL.using(cfg)})을 넘긴다
+   * @param selfName 이름을 바꾸는 인덱스 자신의 현재 이름(없으면 {@code null}) — "사용 중"으로 세지 않는다
+   * @return 쓸 수 있는 이름. 두 후보가 모두 이미 쓰이고 있으면 {@code null}
+   */
+  private String pickFreeName(DSLContext ctx, String preferred, String hashed, String selfName) {
+    Set<String> taken = takenRelationNames(ctx, preferred, hashed);
     if (selfName != null) {
       taken.remove(selfName);
     }
@@ -357,9 +375,9 @@ public class PostgresDataTableStore implements DataTableStore {
   }
 
   /** 후보 이름 중 현재 테넌트 데이터 스키마에서 이미 쓰이는(테이블·인덱스·시퀀스 등) 것 — 한 번의 조회로 묻는다. */
-  private Set<String> takenRelationNames(String... candidates) {
+  private Set<String> takenRelationNames(DSLContext ctx, String... candidates) {
     return new HashSet<>(
-        dsl.fetch(
+        ctx.fetch(
                 "SELECT c.relname::text FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace"
                     + " WHERE n.nspname = ? AND c.relname = ANY(?::text[])",
                 DataSchema.current(),
@@ -377,9 +395,9 @@ public class PostgresDataTableStore implements DataTableStore {
    * <p>호출자 트랜잭션 안에서 불려야 의미가 있다 — 이 DDL 의 호출부({@code DatasetService} 의 생성·컬럼 추가·필드 수정·복제)는 모두
    * {@code @Transactional} 이다.
    */
-  private void lockFieldIndexNames() {
+  private void lockFieldIndexNames(DSLContext ctx) {
     // 잠금 키 = 'fh_field_index:' || 스키마명. 스키마명은 바인드로 넘긴다(소스에서 스키마명을 문자열로 잇지 않는다는 DataSchema 규약).
-    dsl.execute(
+    ctx.execute(
         "SELECT pg_advisory_xact_lock(hashtextextended('fh_field_index:' || ?, 0))",
         DataSchema.current());
   }
@@ -393,8 +411,8 @@ public class PostgresDataTableStore implements DataTableStore {
    *   <li>현재 테넌트 데이터 스키마의 그 테이블에 걸려 있다.
    *   <li>키 컬럼이 정확히 하나({@code indnatts = 1})이고 그것이 그 컬럼({@code indkey[0]} 의 attname)이다.
    *   <li>식(expression)·부분(predicate) 인덱스가 아니다({@code indexprs}·{@code indpred} 가 NULL).
-   *   <li>UNIQUE·PRIMARY KEY 가 아니다 — 시스템 PK({@code id})와 사용자 PK 유니크 인덱스({@code ux_<table>_pk}, 단일
-   *       컬럼 PK 포함)를 건드리지 않는다.
+   *   <li>UNIQUE·PRIMARY KEY 가 아니다 — 시스템 PK({@code id})와 사용자 PK 유니크 인덱스(이름 무관, {@link
+   *       #findPrimaryKeyUniqueIndexes}, 단일 컬럼 PK 포함)를 건드리지 않는다.
    *   <li>접근 방법이 btree 또는 gist 다(우리가 만드는 두 종류).
    * </ul>
    *
@@ -436,13 +454,13 @@ public class PostgresDataTableStore implements DataTableStore {
    * <p>{@code CREATE INDEX IF NOT EXISTS} 를 쓰지 않는다 — IF NOT EXISTS 는 "그 <b>이름</b>이 있는가"만 봐서, 이름이 겹친
    * 다른 필드의 인덱스가 있으면 이 필드의 인덱스를 조용히 건너뛰었다(메타데이터는 「인덱스 있음」인데 실제로는 없음). 대신 카탈로그로 "이 컬럼에 이미 있는가"를 보고(옛
    * 잘린 이름으로 이미 있으면 중복 생성하지 않는다), 없으면 비어 있는 이름을 골라 그냥 CREATE 한다. 그래서 건너뛰기는 "이 컬럼에 이미 있음" 일 때뿐이다. 확인과
-   * 생성 사이의 경합은 {@link #lockFieldIndexNames} 가 막는다.
+   * 생성 사이의 경합은 {@link #lockFieldIndexNames(DSLContext)} 가 막는다.
    *
    * @param freshTable 같은 트랜잭션에서 방금 만든 테이블이면 {@code true} — 필드 인덱스가 있을 수 없으므로 확인 조회를 건너뛴다.
    */
   private void createFieldIndex(
       String tableName, String columnName, FieldIndexKind kind, boolean freshTable) {
-    lockFieldIndexNames();
+    lockFieldIndexNames(dsl);
     if (!freshTable
         && findFieldIndexes(tableName, columnName).stream().anyMatch(i -> i.kind() == kind)) {
       return;
@@ -465,33 +483,190 @@ public class PostgresDataTableStore implements DataTableStore {
             + "\")");
   }
 
+  /**
+   * 기존 규칙의 PK 유니크 인덱스 이름 {@code ux_<table>_pk}. 63바이트 안에 들어올 때만 쓴다 — 지금 만드는 테이블(최대 56자)은 항상 62자 안이라
+   * 잘리지 않지만, WD-95 이전에 만든 57~63자 테이블은 이 이름이 63바이트를 넘는다.
+   */
+  static String preferredPrimaryKeyIndexName(String tableName) {
+    return "ux_" + tableName + "_pk";
+  }
+
+  /**
+   * 고정 길이 해시 PK 유니크 인덱스 이름 {@code ux_<md5 32자>} — 35자. 접두어를 필드 인덱스 해시 이름({@code idx_<md5>})과 달리 해
+   * 서로 겹치지 않게 하고, 해시 입력 구분자 {@code ':'}(이름 규칙에 들어올 수 없는 문자)로 다른 이름과 같은 입력이 되지 않게 한다.
+   */
+  static String hashedPrimaryKeyIndexName(String tableName) {
+    return "ux_" + DataTableNames.md5Hex(tableName + ":pk");
+  }
+
+  /**
+   * 카탈로그에서 그 테이블의 <b>PK 유니크 인덱스</b>(사용자가 지정한 기본 키 필드의 유니크 인덱스)를 모두 찾는다(WD-103). 이름은 보지 않는다.
+   *
+   * <p>이름을 보지 않는 이유: REPLACE 적재({@link #createTempTable} 의 {@code LIKE ... INCLUDING ALL})는 인덱스 이름을
+   * 복사하지 않고 PostgreSQL 기본 이름({@code rtmp_<md5>_<col>_idx}, 겹치면 숫자 접미사)을 새로 짓는다. 맞바꿈({@link
+   * #swapTable}) 뒤에는 {@code ux_<table>_pk} 라는 이름이 사라지므로, 이름으로 찾던 예전 코드는 PK 를 해제·변경해도 옛 유니크 인덱스를 지우지
+   * 못했다(옛 PK 필드에 같은 값을 넣으면 「중복 키」, PK 를 바꾸면 유니크 두 개가 함께 걸림).
+   *
+   * <p><b>PK 유니크 인덱스로 보는 기준</b> — 우리가 데이터셋 테이블에 만드는 유니크 인덱스는 시스템 PK({@code id}, {@code
+   * <table>_pkey})와 이 PK 유니크 인덱스
+   * 둘뿐이다(createTable·recreatePrimaryKeyIndex·createPrimaryKeyIndexConcurrently 외에는 데이터 스키마에 유니크를
+   * 만드는 곳이 없고, 마이그레이션의 유니크는 모두 public 스키마 테이블 대상이다). 그래서 아래를 모두 만족하는 인덱스를 PK 유니크로 본다.
+   *
+   * <ul>
+   *   <li>현재 테넌트 데이터 스키마의 그 테이블에 걸려 있다(REPLACE 임시 테이블 {@code rtmp_*}·행 검색 색인 {@code fh_search_*} 는
+   *       다른 테이블이라 닿지 않는다).
+   *   <li>UNIQUE 이고 PRIMARY KEY 가 <b>아니다</b> — 시스템 PK({@code indisprimary}, REPLACE 뒤에는 {@code
+   *       rtmp_<md5>_pkey} 라는 이름)는 절대 건드리지 않는다.
+   *   <li>제약(UNIQUE·PRIMARY KEY·EXCLUDE 제약)이 소유한 인덱스가 아니다 — 우리는 제약이 아니라 인덱스로만 만든다. 제약이 소유한 인덱스는
+   *       {@code DROP INDEX} 로 지울 수도 없다.
+   *   <li>btree 이고, 식(expression)·부분(predicate) 인덱스가 아니다(우리가 만드는 모양).
+   *   <li>키 컬럼에 시스템 컬럼({@link #SYSTEM_COLUMNS})이 없다 — 사용자 PK 필드는 시스템 예약어일 수 없다.
+   * </ul>
+   *
+   * <p>INVALID 인덱스({@code indisvalid=false}, CONCURRENTLY 생성 실패 잔재)도 포함한다 — INVALID 여도 유니크 검사는 계속
+   * 걸릴 수 있어 남겨 두면 같은 결함이 된다. 키 컬럼 집합이 지금 메타데이터 PK 와 같은지는 보지 않는다 — 다른 집합(옛 PK)의 잔존 유니크도 함께 정리하기
+   * 위해서다. 사용자 인덱스를 잡지 않는 근거는 {@link #findFieldIndexes} 와 같다(앱 사용자는 데이터 스키마에 DDL 을 할 수 없다).
+   */
+  private List<PkUniqueIndex> findPrimaryKeyUniqueIndexes(DSLContext ctx, String tableName) {
+    return ctx.fetch(
+            "SELECT ic.relname::text AS index_name, i.indisvalid AS valid"
+                + " FROM pg_index i"
+                + " JOIN pg_class ic ON ic.oid = i.indexrelid"
+                + " JOIN pg_class tc ON tc.oid = i.indrelid"
+                + " JOIN pg_namespace n ON n.oid = tc.relnamespace"
+                + " JOIN pg_am am ON am.oid = ic.relam"
+                + " WHERE n.nspname = ? AND tc.relname = ?"
+                + " AND i.indisunique AND NOT i.indisprimary"
+                + " AND i.indexprs IS NULL AND i.indpred IS NULL"
+                + " AND am.amname = 'btree'"
+                + " AND NOT EXISTS (SELECT 1 FROM pg_constraint c"
+                + "   WHERE c.conrelid = i.indrelid AND c.conindid = i.indexrelid)"
+                + " AND NOT EXISTS (SELECT 1 FROM pg_attribute a"
+                + "   WHERE a.attrelid = tc.oid AND a.attnum = ANY(i.indkey::int2[])"
+                + "   AND a.attname = ANY(?::text[]))"
+                + " ORDER BY ic.relname",
+            DataSchema.current(),
+            tableName,
+            SYSTEM_COLUMNS.toArray(String[]::new))
+        .map(
+            r ->
+                new PkUniqueIndex(
+                    r.get("index_name", String.class), r.get("valid", Boolean.class)));
+  }
+
+  /** 카탈로그에서 찾은 PK 유니크 인덱스 한 개 — 실제 이름과 VALID 여부(CONCURRENTLY 실패 잔재는 false). */
+  private record PkUniqueIndex(String name, boolean valid) {}
+
+  /**
+   * 그 테이블의 PK 유니크 인덱스를 실제 이름으로 지운다 — 트랜잭션 경로({@link #replacePrimaryKeyUniqueIndex})와 CONCURRENTLY
+   * 경로가 함께 쓴다. 호출자가 {@link #lockFieldIndexNames(DSLContext)} 를 먼저 잡는다.
+   *
+   * @param keepName 남길 인덱스 이름(방금 만든 새 PK 유니크). 없으면 {@code null} — 모두 지운다
+   * @param invalidOnly {@code true} 면 INVALID 인덱스(CONCURRENTLY 실패 잔재)만 지운다
+   */
+  private void dropPrimaryKeyUniqueIndexes(
+      DSLContext ctx, String tableName, String keepName, boolean invalidOnly) {
+    for (PkUniqueIndex index : findPrimaryKeyUniqueIndexes(ctx, tableName)) {
+      if (index.name().equals(keepName) || (invalidOnly && index.valid())) {
+        continue;
+      }
+      ctx.execute("DROP INDEX " + DataSchema.qualify(index.name()));
+    }
+  }
+
+  /**
+   * 그 테이블의 PK 유니크 인덱스를 모두(카탈로그 기준, 옛 PK 잔존분 포함) 지우고, PK 필드가 있으면 새로 하나 만든다(WD-103). 호출자 트랜잭션 안에서 불린다
+   * — 실패하면 DROP 까지 함께 롤백되므로 "옛 것은 지웠는데 새 것은 없음" 상태가 남지 않는다.
+   *
+   * <p>순서가 중요하다: 잠금 → 찾기 → 실제 이름으로 지우기 → <b>그 뒤에</b> 새 이름 고르기 → 만들기. 지우기 전에 이름을 고르면 이미 {@code
+   * ux_<table>_pk} 를 가진 자기 인덱스에 막혀 해시 이름으로 바뀐다. 잠금은 필드 인덱스와 같은 스키마 단위 잠금을 쓴다 — 인덱스 이름은 스키마 단위 이름
+   * 공간을 공유하고, 같은 테이블의 PK 변경 두 건이 동시에 "찾기"를 하면 두 번째가 이미 지워진 인덱스를 지우려다 실패한다.
+   */
+  private void replacePrimaryKeyUniqueIndex(String tableName, List<String> pkColumnNames) {
+    lockFieldIndexNames(dsl);
+    dropPrimaryKeyUniqueIndexes(dsl, tableName, null, false);
+    if (pkColumnNames.isEmpty()) {
+      return;
+    }
+    dsl.execute(
+        primaryKeyUniqueIndexDdl(
+            tableName, pkColumnNames, requirePrimaryKeyIndexName(dsl, tableName), false));
+  }
+
+  /** PK 유니크 인덱스 이름을 고른다. 후보(규칙·해시)가 모두 쓰이고 있으면 실패시킨다 — 조용히 건너뛰면 PK 가 걸리지 않은 채 남는다. */
+  private String requirePrimaryKeyIndexName(DSLContext ctx, String tableName) {
+    String name =
+        pickFreeName(
+            ctx,
+            preferredPrimaryKeyIndexName(tableName),
+            hashedPrimaryKeyIndexName(tableName),
+            null);
+    if (name == null) {
+      throw new IllegalStateException("기본 키 유니크 인덱스 이름을 정할 수 없습니다(후보 이름이 모두 사용 중): " + tableName);
+    }
+    return name;
+  }
+
+  /**
+   * PK 유니크 인덱스 생성 DDL 을 조립한다 — {@code CREATE UNIQUE INDEX [CONCURRENTLY] "<이름>" ON <스키마>.<테이블>
+   * ("<컬럼>", ...)}.
+   *
+   * <p>세 경로(createTable·recreatePrimaryKeyIndex·createPrimaryKeyIndexConcurrently)가 같은 모양을 쓰도록 한 곳에
+   * 둔다. 제약({@code ADD CONSTRAINT ... UNIQUE})이 아니라 인덱스로 만드는 이유: 기존 테이블이 모두 이 모양이고, {@link
+   * #findPrimaryKeyUniqueIndexes} 가 "제약이 소유하지 않은 유니크 인덱스"를 PK 유니크로 식별한다. 컬럼 순서는 호출자가 준 PK 순서 그대로다 —
+   * ON CONFLICT 추론은 컬럼 집합으로 하므로 순서는 동작에 영향이 없다. 이름·컬럼은 호출자가 이미 {@link DataTableNames#validate} 로 거른
+   * 값이다.
+   */
+  private static String primaryKeyUniqueIndexDdl(
+      String tableName, List<String> pkColumnNames, String indexName, boolean concurrently) {
+    StringBuilder sql = new StringBuilder("CREATE UNIQUE INDEX ");
+    if (concurrently) {
+      sql.append("CONCURRENTLY ");
+    }
+    sql.append("\"").append(indexName).append("\" ON ").append(DataSchema.qualify(tableName));
+    sql.append(" (");
+    for (int i = 0; i < pkColumnNames.size(); i++) {
+      if (i > 0) sql.append(", ");
+      sql.append("\"").append(pkColumnNames.get(i)).append("\"");
+    }
+    return sql.append(")").toString();
+  }
+
   @Override
   public void recreatePrimaryKeyIndex(String tableName, List<String> pkColumnNames) {
     DataTableNames.validate(tableName);
     for (String col : pkColumnNames) {
       DataTableNames.validate(col);
     }
-    // Drop existing PK index if exists
-    String dropSql = "DROP INDEX IF EXISTS " + DataSchema.qualify("ux_" + tableName + "_pk");
-    dsl.execute(dropSql);
-
-    // Create new index if there are PK columns
-    if (!pkColumnNames.isEmpty()) {
-      StringBuilder sql = new StringBuilder();
-      sql.append("CREATE UNIQUE INDEX \"ux_")
-          .append(tableName)
-          .append("_pk\" ON ")
-          .append(DataSchema.qualify(tableName))
-          .append(" (");
-      for (int i = 0; i < pkColumnNames.size(); i++) {
-        if (i > 0) sql.append(", ");
-        sql.append("\"").append(pkColumnNames.get(i)).append("\"");
-      }
-      sql.append(")");
-      dsl.execute(sql.toString());
-    }
+    // 이름(ux_<table>_pk)으로 추측해 지우지 않는다(WD-103) — REPLACE 를 거친 테이블은 이름이 달라 옛 PK 유니크가 남았다.
+    replacePrimaryKeyUniqueIndex(tableName, pkColumnNames);
   }
 
+  /**
+   * PK 유니크 인덱스를 CONCURRENTLY 로 만든다. 식별 기준·이름 규칙은 {@link #recreatePrimaryKeyIndex} 와 같다(WD-103).
+   *
+   * <p>2026-10-20 기준 제품 코드에 호출부가 없다(파사드 통과 메서드만 있음). 그래도 같은 결함을 남기지 않도록 맞춘다.
+   *
+   * <p><b>순서 — 새 것을 먼저 만들고 옛 것은 성공 뒤에 지운다.</b> CONCURRENTLY 는 트랜잭션 밖에서 돌아 실패해도 앞선 DROP 을 되돌릴 수 없다.
+   * 옛 것을 먼저 지우면 빌드가 실패할 때(새 PK 컬럼에 중복값, 취소 등) 유효한 PK 유니크가 하나도 남지 않는다.
+   *
+   * <ol>
+   *   <li>짧은 잠금 트랜잭션: INVALID PK 유니크(앞선 CONCURRENTLY 실패 잔재)를 지우고, 기존 PK 유니크와 겹치지 않는 자유 이름을 고른다. 잔재를
+   *       여기서 지우지 않으면 실패가 거듭될 때 두 후보 이름이 모두 막혀 다시는 이름을 고를 수 없다.
+   *   <li>잠금 없이 {@code CREATE UNIQUE INDEX CONCURRENTLY <새 이름>}. 실패하면 새 인덱스는 INVALID 로 남지만 옛 PK
+   *       유니크는 그대로 유효하다. 남은 INVALID 는 다음 호출의 1단계가 정리한다(찾기는 INVALID 를 포함한다).
+   *   <li>성공 뒤 다시 잠금 트랜잭션: 다시 찾아 새 이름을 뺀 PK 유니크(옛 PK·잔존분)를 모두 지운다.
+   * </ol>
+   *
+   * <p>잠금을 단계별 트랜잭션으로 나누는 이유: autocommit 에서 {@code pg_advisory_xact_lock} 은 그 문장이 끝나자마자 풀려 아무것도 막지
+   * 못하고, 세션 잠금을 일반 {@code dsl.execute} 로 잡으면 잠금·해제가 풀의 서로 다른 커넥션에서 실행돼 잠금이 샐 수 있다. 잠금을 쥔 채
+   * CONCURRENTLY 를 돌리면 안 된다 — CONCURRENTLY 는 더 오래된 스냅샷을 가진 <b>모든</b> 트랜잭션이 끝나기를 기다리는데, 그중 하나가 이 잠금을
+   * 기다리고 있으면 서로를 기다리는 교착이 된다.
+   *
+   * <p>같은 테이블에 이 메서드가 동시에 두 번 불리는 경우는 직렬화하지 않는다. 둘이 같은 이름을 고르면 뒤쪽 빌드가 "already exists" 로 실패하는데, 그때도
+   * 옛 PK 유니크는 남아 있으므로 허용한다. 한쪽의 1단계가 다른 쪽의 빌드 중인(아직 INVALID 인) 인덱스를 지우려 들면 테이블 잠금에서 그 빌드가 끝나기를
+   * 기다리거나 교착 검출로 한쪽이 실패할 수 있다 — 호출부가 없는 지금은 받아들이고, 호출부를 만들 때 테이블 단위 직렬화를 함께 정한다.
+   */
   @Override
   public void createPrimaryKeyIndexConcurrently(String tableName, List<String> pkColumnNames) {
     DataTableNames.validate(tableName);
@@ -500,23 +675,27 @@ public class PostgresDataTableStore implements DataTableStore {
     }
     if (pkColumnNames.isEmpty()) return;
 
-    // Drop existing PK index if exists
-    String dropSql = "DROP INDEX IF EXISTS " + DataSchema.qualify("ux_" + tableName + "_pk");
-    dsl.execute(dropSql);
+    // 1) 잔재 정리 + 이름 고르기 — 람다 안에서는 그 트랜잭션의 연결(DSL.using(cfg))만 쓴다(swapTable 과 같은 관례).
+    String indexName =
+        dsl.transactionResult(
+            cfg -> {
+              DSLContext tx = org.jooq.impl.DSL.using(cfg);
+              lockFieldIndexNames(tx);
+              dropPrimaryKeyUniqueIndexes(tx, tableName, null, true);
+              return requirePrimaryKeyIndexName(tx, tableName);
+            });
 
-    // CREATE INDEX CONCURRENTLY cannot run inside a transaction
-    StringBuilder sql = new StringBuilder();
-    sql.append("CREATE UNIQUE INDEX CONCURRENTLY \"ux_")
-        .append(tableName)
-        .append("_pk\" ON ")
-        .append(DataSchema.qualify(tableName))
-        .append(" (");
-    for (int i = 0; i < pkColumnNames.size(); i++) {
-      if (i > 0) sql.append(", ");
-      sql.append("\"").append(pkColumnNames.get(i)).append("\"");
-    }
-    sql.append(")");
-    dsl.execute(sql.toString());
+    // 2) CREATE INDEX CONCURRENTLY cannot run inside a transaction — 잠금 없이 실행한다. 실패하면 예외가 그대로 나가고 옛
+    // PK 유니크는 남는다.
+    dsl.execute(primaryKeyUniqueIndexDdl(tableName, pkColumnNames, indexName, true));
+
+    // 3) 성공 뒤 옛 PK 유니크(새 이름 제외)를 지운다.
+    dsl.transaction(
+        cfg -> {
+          DSLContext tx = org.jooq.impl.DSL.using(cfg);
+          lockFieldIndexNames(tx);
+          dropPrimaryKeyUniqueIndexes(tx, tableName, indexName, false);
+        });
   }
 
   @Override
@@ -596,6 +775,9 @@ public class PostgresDataTableStore implements DataTableStore {
           // RENAME TO 의 새 이름은 스키마를 붙이지 않는다(PostgreSQL 문법). 스키마는 원본을 따라간다.
           txDsl.execute(
               "ALTER TABLE " + DataSchema.qualify(tmpName) + " RENAME TO \"" + tableName + "\"");
+          // 인덱스 이름은 되돌리지 않는다(WD-103) — 임시 테이블이 LIKE 로 받은 PostgreSQL 기본 이름(rtmp_<md5>_*)이 그대로 남는다.
+          // PK 유니크·필드 인덱스는 이름이 아니라 카탈로그로 찾으므로(findPrimaryKeyUniqueIndexes·findFieldIndexes) 동작에 영향이
+          // 없고, 이미 운영에 남은 맞바꿈 이력 테이블도 같은 방식으로 처리된다. _updated_at 인덱스는 createUpdatedAtIndex 주석 참고.
           // 시퀀스 리네임을 빠뜨리면 스왑 후 nextval 이 옛 이름의 시퀀스를 가리킨 채 조용히 동작한다.
           String tmpSeq = tmpName + "_id_seq";
           txDsl.execute(
@@ -644,7 +826,7 @@ public class PostgresDataTableStore implements DataTableStore {
     DataTableNames.validate(newColName);
     // 컬럼 이름 변경(renameColumn) 전에 불린다는 계약이다 — 카탈로그를 옛 컬럼 이름으로 찾는다.
     // 이름을 규칙으로 추측하지 않고(WD-100) 그 컬럼의 필드 인덱스를 모두(B-tree·GiST) 찾아 새 규칙 이름으로 맞춘다.
-    lockFieldIndexNames();
+    lockFieldIndexNames(dsl);
     for (FieldIndex index : findFieldIndexes(tableName, oldColName)) {
       String target = chooseFieldIndexName(tableName, newColName, index.kind(), index.name());
       if (target == null) {

@@ -20,9 +20,9 @@ public final class MergeSqlBuilder {
    * PostgreSQL 이 {@code ON CONFLICT (컬럼...)} 에 대응하는 유니크/제외 제약이 없을 때 내는 오류 문구. (Fix round 1, must 4)
    *
    * <p>저장·실행 시점 모두 {@code dataset_column.is_primary_key} 메타데이터로 PK 존재를 확인하지만, {@code
-   * createPrimaryKeyIndexConcurrently} 로 만든 {@code ux_<table>_pk} 인덱스가 (동시 생성 실패 등으로) INVALID 상태로
-   * 남을 수 있다 — 메타데이터는 여전히 true 인데 실제 유니크 제약은 없는 상태다. 이때 PostgreSQL 은 이 문구로 거부한다. 사용자용 메시지로 번역할 때 이
-   * 상수를 함께 검사한다.
+   * createPrimaryKeyIndexConcurrently} 로 만든 PK 유니크 인덱스(이름은 {@code ux_<table>_pk}, REPLACE 를 거쳤거나
+   * 이름이 길면 다를 수 있다 — WD-103)가 (동시 생성 실패 등으로) INVALID 상태로 남을 수 있다 — 메타데이터는 여전히 true 인데 실제 유니크 제약은 없는
+   * 상태다. 이때 PostgreSQL 은 이 문구로 거부한다. 사용자용 메시지로 번역할 때 이 상수를 함께 검사한다.
    */
   public static final String NO_UNIQUE_CONSTRAINT_PG_MESSAGE =
       "there is no unique or exclusion constraint matching the ON CONFLICT specification";

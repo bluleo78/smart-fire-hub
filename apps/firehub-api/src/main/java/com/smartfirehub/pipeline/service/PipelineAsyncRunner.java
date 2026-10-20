@@ -557,8 +557,9 @@ public class PipelineAsyncRunner {
           // 었는데 이 스키마에서는 성립하지 않는다:
           //  - 물리 PK 는 DataTableService 가 id BIGSERIAL PRIMARY KEY 로 **따로** 만든다.
           //  - id/import_id/created_at 은 시스템 예약어라 dataset_column 에 애초에 들어올 수 없다.
-          //  - is_primary_key 가 붙은 컬럼은 평범한 NOT NULL 컬럼 + UNIQUE 인덱스(ux_<table>_pk)일
-          //    뿐이고 기본값도 없다 — 즉 대리키가 아니라 **사용자가 값을 넣어야 하는 업무 키**다.
+          //  - is_primary_key 가 붙은 컬럼은 평범한 NOT NULL 컬럼 + PK 유니크 인덱스(이름은
+          //    ux_<table>_pk, REPLACE·긴 이름이면 다를 수 있다 — WD-103)일 뿐이고 기본값도 없다
+          //    — 즉 대리키가 아니라 **사용자가 값을 넣어야 하는 업무 키**다.
           // 그래서 빼면 개수 불일치로 실패하고, SELECT 에서도 빼면 이번엔 NOT NULL 위반이 난다.
           // 어느 쪽으로도 성공할 수 없었다.
           // 출력 데이터셋 컬럼 메타데이터는 여기서 한 번만 읽는다 — 아래 MERGE 분기의 PK 목록도 같은
@@ -588,8 +589,9 @@ public class PipelineAsyncRunner {
           String wrappedSql;
           List<String> mergePkColumns = List.of();
           if (isMerge) {
-            // MERGE 는 출력 데이터셋의 기존 PK(ux_<table>_pk 유니크 인덱스, dataset_column.is_primary_key
-            // 로 기록됨)를 그대로 재사용한다 — 사용자가 별도로 병합 키를 고르지 않는다. 저장 시점
+            // MERGE 는 출력 데이터셋의 기존 PK(PK 유니크 인덱스 — 이름은 ux_<table>_pk 이거나
+            // REPLACE·긴 이름이면 다를 수 있다, dataset_column.is_primary_key 로 기록됨)를 그대로
+            // 재사용한다 — 사용자가 별도로 병합 키를 고르지 않는다. 저장 시점
             // (PipelineService.saveSteps)에 PK 존재가 이미 검증됐지만, 저장 이후 데이터셋 스키마가
             // 바뀌었을 수 있어(컬럼 삭제 등) 실행 시점에도 다시 확인한다 — 조용히 APPEND 로 격하되면
             // 안 되므로 여기서 명확히 실패시킨다.
@@ -1480,8 +1482,9 @@ public class PipelineAsyncRunner {
    *
    * <ul>
    *   <li>{@link MergeSqlBuilder#DUPLICATE_KEY_PG_MESSAGE} — SELECT 가 같은 PK 를 두 번 이상 낼 때.
-   *   <li>{@link MergeSqlBuilder#NO_UNIQUE_CONSTRAINT_PG_MESSAGE} — {@code ux_<table>_pk} 인덱스가 (동시
-   *       생성 실패 등으로) INVALID 상태라 메타데이터(is_primary_key=true)와 실제 제약이 어긋날 때.
+   *   <li>{@link MergeSqlBuilder#NO_UNIQUE_CONSTRAINT_PG_MESSAGE} — PK 유니크 인덱스(이름은 {@code
+   *       ux_<table>_pk} 이거나 REPLACE·긴 이름이면 다를 수 있다)가 (동시 생성 실패 등으로) INVALID 상태라
+   *       메타데이터(is_primary_key=true)와 실제 제약이 어긋날 때.
    * </ul>
    *
    * <p>executor 켠 경로({@code result.error()})와 끈 경로({@code sqlExecutor.execute} 가 던지는 {@link
