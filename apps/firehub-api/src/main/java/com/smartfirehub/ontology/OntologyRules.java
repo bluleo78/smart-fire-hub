@@ -35,8 +35,10 @@ public final class OntologyRules {
 
   // resolution 열거 검증. typeName은 에러 문구에만 쓰인다(리네임 중이면 새 이름, 아니면 현재 이름을
   // 호출부가 골라 넘긴다) — updateEntityType의 부분 필드 경로도 이 메서드로 통일해 문구 복제를 없앤다.
+  // null 을 먼저 거른다 — RESOLUTIONS 는 List.of 불변 리스트라 contains(null) 이 NPE 를 던져, 값이 빠진 요청이
+  // 「무엇이 틀렸는지」 400 대신 500 「예기치 않은 오류」로 떨어졌다(WD-132).
   public static void validateResolution(String resolution, String typeName) {
-    if (!RESOLUTIONS.contains(resolution)) {
+    if (resolution == null || !RESOLUTIONS.contains(resolution)) {
       throw new IllegalArgumentException("resolution은 embedding 또는 exact여야 합니다: " + typeName);
     }
   }

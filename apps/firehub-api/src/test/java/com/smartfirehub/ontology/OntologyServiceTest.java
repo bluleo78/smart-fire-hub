@@ -332,6 +332,23 @@ class OntologyServiceTest {
     verify(repository, never()).createOntology(any());
   }
 
+  // WD-132: resolution 이 빠진(null) 엔티티 타입도 잘못된 값과 같은 400 안내로 거부해야 한다 — 예전에는
+  // 불변 리스트 contains(null) 의 NPE 로 500 「예기치 않은 오류」가 났다.
+  @Test
+  void createOntology_는_resolution이_빠진_엔티티_타입을_400_안내로_거부한다() {
+    var missing =
+        new com.smartfirehub.ontology.dto.CreateOntologyRequest(
+            "resolution 누락 도메인",
+            List.of(new OntologyResponse.EntityType("Building", "건물", "명명", null, List.of())),
+            List.of(),
+            "draft");
+
+    assertThatThrownBy(() -> service.createOntology(missing))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("resolution은 embedding 또는 exact여야 합니다: Building");
+    verify(repository, never()).createOntology(any());
+  }
+
   // archived 상태로는 생성할 수 없다 — 은퇴는 운영을 마친 것에 대한 조치이지 생성 시점의 선택이 아니다.
   @Test
   void createOntology_는_archived_생성을_거부한다() {
