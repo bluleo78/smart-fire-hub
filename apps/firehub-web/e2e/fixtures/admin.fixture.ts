@@ -94,6 +94,8 @@ export async function setupRoleListMocks(page: Page) {
     createRole({ id: 2, name: 'ADMIN', description: '시스템 관리자', isSystem: true }),
     createRole({ id: 3, name: 'EDITOR', description: '편집자', isSystem: false }),
   ]);
+  // 삭제 확인 창이 사용자 수를 묻는다(WD-123) — 기본은 0명. 수를 바꿔야 하는 테스트는 나중에 같은 경로를 다시 모킹한다.
+  await mockApi(page, 'GET', '/api/v1/roles/3/clearance', { roleId: 3, securityLevelId: 1, userCount: 0, fixed: false });
 }
 
 /**

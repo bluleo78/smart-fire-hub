@@ -37,11 +37,16 @@ export function useAccessGrants(datasetId: number, enabled = true) {
   });
 }
 
-/** 역할의 열람 자격(등급). */
-export function useRoleClearance(roleId: number) {
+/**
+ * 역할의 열람 자격(등급)과 이 역할 사용자 수.
+ * options: 역할 삭제 확인 창(WD-123)처럼 열 때만·늘 새로 물어야 하는 곳이 enabled·staleTime 을 넘긴다.
+ */
+export function useRoleClearance(roleId: number, options?: { enabled?: boolean; staleTime?: number }) {
   return useQuery({
     queryKey: ['roles', roleId, 'clearance'],
     queryFn: () => securityLevelsApi.getRoleClearance(roleId).then((r) => r.data),
-    enabled: !!roleId,
+    enabled: !!roleId && (options?.enabled ?? true),
+    // 넘겼을 때만 덮는다 — staleTime: undefined 를 그대로 두면 전역 기본(30초)이 아니라 0 으로 바뀐다.
+    ...(options?.staleTime !== undefined && { staleTime: options.staleTime }),
   });
 }

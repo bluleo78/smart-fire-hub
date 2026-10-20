@@ -127,6 +127,103 @@ test.describe('역할 관리 페이지', () => {
     expect(req).toBeTruthy();
   });
 
+  /** WD-123: 사용 중인 역할을 지우면 그 사용자들이 권한을 잃으므로 확인 창에 영향받는 사람 수를 보인다. */
+  test('사용자가 있는 역할을 삭제하려 하면 확인 창에 영향받는 사용자 수가 보인다 (WD-123)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupRoleListMocks(page);
+    const clearanceCapture = await mockApi(
+      page,
+      'GET',
+      '/api/v1/roles/3/clearance',
+      { roleId: 3, securityLevelId: 1, userCount: 2, fixed: false },
+      { capture: true },
+    );
+    const deleteCapture = await mockApi(page, 'DELETE', '/api/v1/roles/3', {}, { capture: true });
+    await page.goto('/admin/roles');
+
+    await page.getByRole('button', { name: 'EDITOR 역할 삭제' }).click();
+    const dialog = page.getByRole('alertdialog');
+    await expect(dialog.getByTestId('role-delete-impact')).toHaveText(
+      '이 역할을 쓰는 사용자 2명이 이 역할의 권한을 즉시 잃습니다.',
+    );
+    // 창을 연 역할(id=3)의 사용자 수를 물었다
+    expect(clearanceCapture.requests).toHaveLength(1);
+
+    // 안내를 본 뒤에도 삭제는 그대로 된다
+    await dialog.getByRole('button', { name: '삭제', exact: true }).click();
+    await deleteCapture.waitForRequest();
+  });
+
+  test('사용자가 없는 역할은 영향 안내 없이 일반 확인 창만 보인다 (WD-123)', async ({ authenticatedPage: page }) => {
+    await setupRoleListMocks(page);
+    await mockApi(page, 'GET', '/api/v1/roles/3/clearance', { roleId: 3, securityLevelId: 1, userCount: 0, fixed: false });
+    await page.goto('/admin/roles');
+
+    await page.getByRole('button', { name: 'EDITOR 역할 삭제' }).click();
+    const dialog = page.getByRole('alertdialog');
+    await expect(dialog.getByText(/정말 삭제/)).toBeVisible();
+    await expect(dialog.getByText('이 역할을 쓰는 사용자를 확인하는 중…')).toHaveCount(0);
+    await expect(dialog.getByTestId('role-delete-impact')).toHaveCount(0);
+    await expect(dialog.getByText(/불러오지 못했습니다/)).toHaveCount(0);
+  });
+
+  test('사용자 수 조회가 실패하면 영향 가능성 경고를 보이고 삭제는 막지 않는다 (WD-123)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupRoleListMocks(page);
+    await mockApi(page, 'GET', '/api/v1/roles/3/clearance', { message: 'error' }, { status: 500 });
+    await page.goto('/admin/roles');
+
+    await page.getByRole('button', { name: 'EDITOR 역할 삭제' }).click();
+    const dialog = page.getByRole('alertdialog');
+    await expect(
+      dialog.getByText('이 역할을 쓰는 사용자 수를 불러오지 못했습니다. 사용자가 있다면 이 역할의 권한을 잃습니다.'),
+    ).toBeVisible({ timeout: 10000 });
+    await expect(dialog.getByRole('button', { name: '삭제', exact: true })).toBeEnabled();
+  });
+
+  test('창을 다시 열면 사용자 수를 새로 묻고, 확인하는 동안에는 삭제 버튼이 막힌다 (WD-123)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupRoleListMocks(page);
+    // 첫 조회는 0명, 두 번째 조회는 그 사이 다른 화면에서 역할을 받은 2명 — 두 번째 응답은 release 전까지 붙잡아 둔다.
+    let calls = 0;
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    await page.route(
+      (url) => url.pathname === '/api/v1/roles/3/clearance',
+      async (route) => {
+        calls += 1;
+        const userCount = calls === 1 ? 0 : 2;
+        if (calls > 1) await held;
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ roleId: 3, securityLevelId: 1, userCount, fixed: false }),
+        });
+      },
+    );
+    await page.goto('/admin/roles');
+
+    await page.getByRole('button', { name: 'EDITOR 역할 삭제' }).click();
+    const dialog = page.getByRole('alertdialog');
+    await expect(dialog.getByRole('button', { name: '삭제', exact: true })).toBeEnabled();
+    await expect(dialog.getByTestId('role-delete-impact')).toHaveCount(0);
+    await dialog.getByRole('button', { name: '취소' }).click();
+
+    await page.getByRole('button', { name: 'EDITOR 역할 삭제' }).click();
+    // 캐시된 0명을 쓰지 않고 다시 묻는 중 — 안내를 보기 전에 지우지 못하게 막는다
+    await expect(dialog.getByText('이 역할을 쓰는 사용자를 확인하는 중…')).toBeVisible();
+    await expect(dialog.getByRole('button', { name: '삭제', exact: true })).toBeDisabled();
+    release();
+    await expect(dialog.getByTestId('role-delete-impact')).toHaveText(
+      '이 역할을 쓰는 사용자 2명이 이 역할의 권한을 즉시 잃습니다.',
+    );
+    await expect(dialog.getByRole('button', { name: '삭제', exact: true })).toBeEnabled();
+    expect(calls).toBe(2);
+  });
+
   test('역할 삭제 확인 버튼은 destructive 다 (WD-5)', async ({ authenticatedPage: page }) => {
     await setupRoleListMocks(page);
     await page.goto('/admin/roles');

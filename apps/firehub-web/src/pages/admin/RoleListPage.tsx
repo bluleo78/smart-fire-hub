@@ -1,14 +1,16 @@
 import { zodResolver } from '@hookform/resolvers/zod';
-import { Plus, Trash2 } from 'lucide-react';
-import { useCallback,useEffect, useState } from 'react';
+import { AlertTriangle, Plus, Trash2 } from 'lucide-react';
+import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
 import { FormField } from '@/components/ui/form-field';
+import { InlineBanner } from '@/components/ui/inline-banner';
 import { TableEmptyRow } from '@/components/ui/table-empty';
 import { TableSkeletonRows } from '@/components/ui/table-skeleton';
+import { useRoleClearance } from '@/hooks/queries/useSecurityLevels';
 import { extractApiError, handleApiError } from '@/lib/api-error';
 import { iGa } from '@/lib/utils';
 
@@ -35,6 +37,64 @@ import {
 import type { CreateRoleFormData } from '../../lib/validations/role';
 import { createRoleSchema } from '../../lib/validations/role';
 import type { RoleResponse } from '../../types/role';
+
+/**
+ * 사용자 정의 역할의 삭제 버튼 + 확인 창 (WD-123).
+ * 지우면 이 역할을 쓰는 사용자가 이 역할의 권한을 잃으므로, 창을 열 때마다 사용자 수를 새로 물어 영향 안내를 보인다
+ * (역할 상세 열람 등급 카드와 같은 수). 다른 화면에서 역할을 부여·회수했을 수 있어 캐시를 쓰지 않고(staleTime 0),
+ * 수를 확인하는 동안에는 안내를 보기 전에 지우지 않도록 삭제 버튼을 막는다. 조회가 실패하면 경고만 하고 삭제는 막지 않는다.
+ */
+function RoleDeleteButton({ role, onConfirm }: { role: RoleResponse; onConfirm: () => void }) {
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const { data, isFetching, isError } = useRoleClearance(role.id, { enabled: open, staleTime: 0 });
+
+  let impact: ReactNode = null;
+  if (isFetching) {
+    impact = <p className="text-sm text-muted-foreground">이 역할을 쓰는 사용자를 확인하는 중…</p>;
+  } else if (isError || !data) {
+    impact = (
+      <InlineBanner variant="warning" icon={<AlertTriangle />}>
+        이 역할을 쓰는 사용자 수를 불러오지 못했습니다. 사용자가 있다면 이 역할의 권한을 잃습니다.
+      </InlineBanner>
+    );
+  } else if (data.userCount > 0) {
+    impact = (
+      <InlineBanner variant="destructive" icon={<AlertTriangle />} data-testid="role-delete-impact">
+        이 역할을 쓰는 사용자 {data.userCount}명이 이 역할의 권한을 즉시 잃습니다.
+      </InlineBanner>
+    );
+  }
+
+  return (
+    <>
+      {/* 삭제 버튼 — 아이콘만 있으므로 스크린 리더를 위해 aria-label 필수 */}
+      <Button
+        ref={triggerRef}
+        variant="outline"
+        size="sm"
+        aria-label={`${role.name} 역할 삭제`}
+        onClick={(e) => {
+          // 행 클릭(상세로 이동)으로 번지지 않게 막는다 — DeleteConfirmDialog 의 트리거 모드와 같은 처리.
+          e.stopPropagation();
+          setOpen(true);
+        }}
+      >
+        <Trash2 className="h-4 w-4" />
+      </Button>
+      <DeleteConfirmDialog
+        open={open}
+        onOpenChange={setOpen}
+        entityName="역할"
+        itemName={role.name}
+        onConfirm={onConfirm}
+        restoreFocusRef={triggerRef}
+        details={impact}
+        confirmDisabled={isFetching}
+      />
+    </>
+  );
+}
 
 export default function RoleListPage() {
   const navigate = useNavigate();
@@ -178,21 +238,7 @@ export default function RoleListPage() {
                   <TableCell>{role.description ?? '-'}</TableCell>
                   <TableCell>
                     {!role.isSystem && (
-                      <DeleteConfirmDialog
-                        entityName="역할"
-                        itemName={role.name}
-                        onConfirm={() => handleDelete(role)}
-                        trigger={
-                          /* 삭제 버튼 — 아이콘만 있으므로 스크린 리더를 위해 aria-label 필수 */
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            aria-label={`${role.name} 역할 삭제`}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        }
-                      />
+                      <RoleDeleteButton role={role} onConfirm={() => handleDelete(role)} />
                     )}
                   </TableCell>
                 </TableRow>
