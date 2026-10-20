@@ -82,7 +82,10 @@ public interface DataTableStore {
   /** 컬럼 이름을 바꾼다. 호출자 트랜잭션에 참여한다. */
   void renameColumn(String tableName, String oldName, String newName);
 
-  /** 컬럼명 변경에 맞춰 해당 컬럼 인덱스 이름을 바꾼다. */
+  /**
+   * 컬럼명 변경에 맞춰 해당 컬럼의 필드 인덱스 이름을 바꾼다. {@link #renameColumn} <b>전에</b> 부른다 — 구현은 옛 컬럼 이름으로 인덱스를 찾는다.
+   * 인덱스가 없으면 아무것도 하지 않고, 새 이름이 다른 객체와 겹치면 오류 대신 이름을 그대로 둔다(WD-100).
+   */
   void renameIndex(String tableName, String oldColName, String newColName);
 
   /** 컬럼 타입을 바꾼다. {@code currentDataType} 은 변환 가능 여부 판단용(없으면 null). 호출자 트랜잭션에 참여한다. */

@@ -8,12 +8,10 @@ import com.smartfirehub.dataset.rowsearch.IndexRef;
 import com.smartfirehub.dataset.storage.DataStoreResolver;
 import com.smartfirehub.dataset.storage.DataTableNames;
 import com.smartfirehub.dataset.storage.DataTableStore;
-import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
-import org.springframework.util.DigestUtils;
 
 /**
  * 데이터셋 테이블 DDL 파사드 — 테넌트 저장소 백엔드에 위임(WD-72).
@@ -142,8 +140,7 @@ public class DataTableService {
    * 이름은 어느 쪽과도 겹치지 않고, 시퀀스 {@code <tmp>_id_seq}(44자)까지 잘리지 않는다. 생성·맞바꿈·정리·적재 대상 계산이 모두 이 메서드만 쓴다.
    */
   public static String tempTableName(String tableName) {
-    return TEMP_TABLE_PREFIX
-        + DigestUtils.md5DigestAsHex(tableName.getBytes(StandardCharsets.UTF_8));
+    return TEMP_TABLE_PREFIX + DataTableNames.md5Hex(tableName);
   }
 
   /**

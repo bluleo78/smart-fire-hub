@@ -640,7 +640,8 @@ public class DatasetService {
         throw new ColumnModificationException("데이터가 있는 데이터셋에서는 필드명을 바꿀 수 없습니다.");
       }
       // 새 이름 검증은 renameIndex·renameColumn(DDL 계층)이 한다.
-      if (column.isIndexed()) {
+      // GEOMETRY 필드는 인덱스를 켜지 않아도 GiST 가 자동으로 붙으므로 함께 이름을 맞춘다(WD-100). 그 밖의 필드는 인덱스가 있을 때만.
+      if (column.isIndexed() || "GEOMETRY".equalsIgnoreCase(column.dataType())) {
         dataTableService.renameIndex(
             dataset.tableName(), column.columnName(), request.columnName());
       }

@@ -12,18 +12,24 @@ import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantSchemaProvisioner;
 import com.smartfirehub.securitylevel.pythonread.PythonReadGrantSync;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.jooq.DSLContext;
 import org.springframework.stereotype.Component;
 
 /**
  * PostgreSQL 데이터셋 저장소의 DDL 구현(WD-72). 기존 {@code DataTableService} 의 본문을 그대로 이사한 것이다 — 동작 변경 없음.
  *
+ * <p>WD-100 이후 필드 인덱스는 이름 규칙으로 추측하지 않고 카탈로그로 찾는다 — {@link #findFieldIndexes} 와 {@link
+ * #chooseFieldIndexName} 참고(긴 테이블명에서 63바이트로 잘린 이름이 다른 필드와 겹치던 결함).
+ *
  * <p>호출자의 트랜잭션에 그대로 참여한다(별도 {@code @Transactional} 없음). 파사드({@code DataTableService})가 {@link
  * DataStoreResolver} 로 이 구현을 골라 위임하므로, 새 백엔드를 추가해도 호출부는 바뀌지 않는다.
  */
+@Slf4j
 @Component
 @RequiredArgsConstructor
 public class PostgresDataTableStore implements DataTableStore {
@@ -174,17 +180,11 @@ public class PostgresDataTableStore implements DataTableStore {
     installUpdatedAtTrigger(tableName);
     createUpdatedAtIndex(tableName);
 
-    // Create indexes for indexed columns
+    // 필드 인덱스 — GEOMETRY 는 항상 GiST, 나머지는 인덱스를 켠 필드만 B-tree. 방금 만든 테이블이라 기존 인덱스 확인은 건너뛴다.
     for (DatasetColumnRequest col : columns) {
-      if (col.isIndexed()) {
-        createColumnIndex(tableName, col.columnName(), col.dataType());
-      }
-    }
-
-    // Auto-create GiST index for all GEOMETRY columns (even if not marked indexed)
-    for (DatasetColumnRequest col : columns) {
-      if ("GEOMETRY".equalsIgnoreCase(col.dataType()) && !col.isIndexed()) {
-        createGistIndex(tableName, col.columnName());
+      FieldIndexKind kind = autoIndexKind(col.dataType(), col.isIndexed());
+      if (kind != null) {
+        createFieldIndex(tableName, col.columnName(), kind, true);
       }
     }
 
@@ -233,13 +233,10 @@ public class PostgresDataTableStore implements DataTableStore {
 
     dsl.execute(sql.toString());
 
-    if (column.isIndexed()) {
-      createColumnIndex(tableName, column.columnName(), column.dataType());
-    }
-
-    // Auto-create GiST index for GEOMETRY columns even if not explicitly indexed
-    if ("GEOMETRY".equalsIgnoreCase(column.dataType()) && !column.isIndexed()) {
-      createGistIndex(tableName, column.columnName());
+    // 필드 인덱스 — 규칙은 createTable 과 같다.
+    FieldIndexKind kind = autoIndexKind(column.dataType(), column.isIndexed());
+    if (kind != null) {
+      createFieldIndex(tableName, column.columnName(), kind, false);
     }
   }
 
@@ -249,57 +246,223 @@ public class PostgresDataTableStore implements DataTableStore {
     DataTableNames.validate(tableName);
     DataTableNames.validate(columnName);
 
-    String indexName = "idx_" + tableName + "_" + columnName;
-
     if (indexed) {
-      if ("GEOMETRY".equalsIgnoreCase(columnType)) {
-        createGistIndex(tableName, columnName);
-      } else {
-        String sql =
-            "CREATE INDEX IF NOT EXISTS \""
-                + indexName
-                + "\" ON "
-                + DataSchema.qualify(tableName)
-                + " (\""
-                + columnName
-                + "\")";
-        dsl.execute(sql);
+      createFieldIndex(tableName, columnName, FieldIndexKind.forColumnType(columnType), false);
+    } else {
+      // 이름을 규칙으로 다시 만들어 지우지 않는다(WD-100) — 잘린 옛 이름·REPLACE 맞바꿈이 남긴 이름은 규칙과 다르고, 규칙 이름이 다른
+      // 필드(또는 다른 테이블)의 인덱스와 같을 수 있다. 카탈로그에서 "이 컬럼의 필드 인덱스"만 찾아 실제 이름으로 지운다.
+      // GiST 는 지우지 않는다 — GEOMETRY 필드는 인덱스 설정과 무관하게 항상 GiST 를 갖는다(생성·컬럼 추가·복제가 모두 자동으로 붙인다).
+      // 끄기가 GiST 까지 지우면 공간 질의가 순차 스캔으로 떨어진다. 우리가 GiST 를 만드는 곳은 GEOMETRY 컬럼뿐이다.
+      for (FieldIndex index : findFieldIndexes(tableName, columnName)) {
+        if (index.kind() == FieldIndexKind.BTREE) {
+          dsl.execute("DROP INDEX " + DataSchema.qualify(index.name()));
+        }
       }
-    } else {
-      // Drop both B-tree and GiST index variants
-      dsl.execute("DROP INDEX IF EXISTS " + DataSchema.qualify(indexName));
-      dsl.execute("DROP INDEX IF EXISTS " + DataSchema.qualify(indexName + "_gist"));
     }
   }
 
-  private void createColumnIndex(String tableName, String columnName, String dataType) {
+  /**
+   * 테이블 생성·컬럼 추가 시 자동으로 붙는 필드 인덱스의 종류 — GEOMETRY 는 인덱스 설정과 무관하게 항상 GiST, 나머지는 인덱스를 켰을 때만 B-tree.
+   *
+   * @return 붙일 인덱스가 없으면 {@code null}
+   */
+  private static FieldIndexKind autoIndexKind(String dataType, boolean indexed) {
     if ("GEOMETRY".equalsIgnoreCase(dataType)) {
-      createGistIndex(tableName, columnName);
-    } else {
-      String indexName = "idx_" + tableName + "_" + columnName;
-      String sql =
-          "CREATE INDEX IF NOT EXISTS \""
-              + indexName
-              + "\" ON "
-              + DataSchema.qualify(tableName)
-              + " (\""
-              + columnName
-              + "\")";
-      dsl.execute(sql);
+      return FieldIndexKind.GIST;
+    }
+    return indexed ? FieldIndexKind.BTREE : null;
+  }
+
+  /** PostgreSQL 식별자 최대 길이(NAMEDATALEN-1). 넘는 이름은 오류 없이 잘린다. 이름 규칙은 ASCII 만 허용하므로 글자 수 = 바이트 수. */
+  static final int PG_MAX_IDENTIFIER_LENGTH = 63;
+
+  /**
+   * 데이터셋 필드 인덱스의 종류. {@code amName} 은 카탈로그(pg_am)의 접근 방법 이름, {@code nameSuffix} 는 이름 규칙의 접미사다.
+   * GEOMETRY 필드는 GiST, 나머지는 B-tree 를 쓴다.
+   */
+  enum FieldIndexKind {
+    BTREE("btree", ""),
+    GIST("gist", "_gist");
+
+    final String amName;
+    final String nameSuffix;
+
+    FieldIndexKind(String amName, String nameSuffix) {
+      this.amName = amName;
+      this.nameSuffix = nameSuffix;
+    }
+
+    static FieldIndexKind forColumnType(String columnType) {
+      return "GEOMETRY".equalsIgnoreCase(columnType) ? GIST : BTREE;
+    }
+
+    /** 카탈로그 조회({@link #findFieldIndexes})가 btree·gist 만 거르므로 두 값만 들어온다. */
+    static FieldIndexKind fromAmName(String amName) {
+      return switch (amName) {
+        case "btree" -> BTREE;
+        case "gist" -> GIST;
+        default -> throw new IllegalStateException("필드 인덱스가 아닌 접근 방법: " + amName);
+      };
     }
   }
 
-  private void createGistIndex(String tableName, String columnName) {
-    String indexName = "idx_" + tableName + "_" + columnName + "_gist";
-    String sql =
-        "CREATE INDEX IF NOT EXISTS \""
+  /** 카탈로그에서 찾은 필드 인덱스 한 개 — 실제 이름과 종류. */
+  private record FieldIndex(String name, FieldIndexKind kind) {}
+
+  /**
+   * 기존 규칙의 필드 인덱스 이름 {@code idx_<table>_<column>}(+{@code _gist}). 63바이트 안에 들어올 때만 쓴다 — 짧은 이름의 기존
+   * 인덱스 이름과 동작을 바꾸지 않기 위해서다.
+   */
+  static String preferredFieldIndexName(String tableName, String columnName, FieldIndexKind kind) {
+    return "idx_" + tableName + "_" + columnName + kind.nameSuffix;
+  }
+
+  /**
+   * 고정 길이 해시 이름 {@code idx_<md5 32자>}(+{@code _gist}) — 최대 41자. 기존 규칙 이름이 63바이트를 넘거나 이미 다른 객체가 쓰고
+   * 있을 때 쓴다(WD-95 의 {@code rtmp_<md5>} 관례).
+   *
+   * <p>해시 입력의 구분자 {@code ':'} 는 이름 규칙({@code [a-z][a-z0-9_]*})에 들어올 수 없는 문자다. {@code _} 로 이으면 테이블
+   * {@code a_b}·컬럼 {@code c} 와 테이블 {@code a}·컬럼 {@code b_c} 가 같은 입력이 된다. 종류도 입력에 넣어 같은 컬럼의
+   * B-tree·GiST 가 겹치지 않게 한다. md5 를 자르지 않는 이유: 41자로도 한도 안이라 자를 이득이 없고, 자를수록 서로 다른 필드가 겹칠 확률만 커진다.
+   */
+  static String hashedFieldIndexName(String tableName, String columnName, FieldIndexKind kind) {
+    return "idx_"
+        + DataTableNames.md5Hex(tableName + ":" + columnName + ":" + kind.amName)
+        + kind.nameSuffix;
+  }
+
+  /**
+   * 새로 만들(또는 이름을 바꿀) 필드 인덱스의 이름을 고른다. 기존 규칙 이름이 63바이트 안이고 스키마에서 비어 있으면 그것을, 아니면 해시 이름을 쓴다.
+   *
+   * <p>"비어 있는지"는 테이블 단위가 아니라 <b>스키마 단위</b>로 본다 — PostgreSQL 에서 인덱스 이름은 같은 스키마의 테이블·시퀀스·다른 테이블의 인덱스와
+   * 이름 공간을 공유한다. 63바이트 안인 규칙 이름도 서로 다른 필드끼리 겹칠 수 있다(위의 {@code a_b}/{@code c} 대 {@code a}/{@code
+   * b_c}, 또는 잘린 옛 이름 {@code idx_<t>_abc} 가 63자 규칙 이름 {@code idx_<t>_abc} 와 같은 경우).
+   *
+   * @param selfName 이름을 바꾸는 인덱스 자신의 현재 이름(생성이면 {@code null}). 자기 이름은 "사용 중"으로 세지 않는다 — 세면 이미 규칙 이름을
+   *     가진 인덱스가 자기 자신에 막혀 해시 이름으로 바뀐다.
+   * @return 쓸 수 있는 이름. 두 후보가 모두 이미 쓰이고 있으면 {@code null}
+   */
+  private String chooseFieldIndexName(
+      String tableName, String columnName, FieldIndexKind kind, String selfName) {
+    String preferred = preferredFieldIndexName(tableName, columnName, kind);
+    String hashed = hashedFieldIndexName(tableName, columnName, kind);
+    Set<String> taken = takenRelationNames(preferred, hashed);
+    if (selfName != null) {
+      taken.remove(selfName);
+    }
+    if (preferred.length() <= PG_MAX_IDENTIFIER_LENGTH && !taken.contains(preferred)) {
+      return preferred;
+    }
+    return taken.contains(hashed) ? null : hashed;
+  }
+
+  /** 후보 이름 중 현재 테넌트 데이터 스키마에서 이미 쓰이는(테이블·인덱스·시퀀스 등) 것 — 한 번의 조회로 묻는다. */
+  private Set<String> takenRelationNames(String... candidates) {
+    return new HashSet<>(
+        dsl.fetch(
+                "SELECT c.relname::text FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace"
+                    + " WHERE n.nspname = ? AND c.relname = ANY(?::text[])",
+                DataSchema.current(),
+                candidates)
+            .getValues(0, String.class));
+  }
+
+  /**
+   * 필드 인덱스의 「확인 → 이름 고르기 → CREATE/RENAME」을 스키마 단위로 직렬화한다(트랜잭션 범위 advisory 잠금, 커밋·롤백 때 풀린다).
+   *
+   * <p>왜 필요한가: 확인과 생성 사이에 다른 트랜잭션이 끼면, 같은 컬럼을 동시에 켜는 두 요청(더블클릭)이나 같은 이름을 고른 다른 테이블끼리 둘 다 같은 이름으로
+   * CREATE 해 두 번째가 이름 중복(500)으로 실패한다. 미커밋 인덱스는 카탈로그 조회에 보이지 않으므로 확인만으로는 막을 수 없다. 잠금을 쥔 뒤의 조회는 앞선
+   * 트랜잭션의 커밋을 보므로, 두 번째 요청은 "이미 있음"으로 건너뛴다. 인덱스 이름은 스키마 단위로 유일하므로 잠금도 스키마 단위다.
+   *
+   * <p>호출자 트랜잭션 안에서 불려야 의미가 있다 — 이 DDL 의 호출부({@code DatasetService} 의 생성·컬럼 추가·필드 수정·복제)는 모두
+   * {@code @Transactional} 이다.
+   */
+  private void lockFieldIndexNames() {
+    // 잠금 키 = 'fh_field_index:' || 스키마명. 스키마명은 바인드로 넘긴다(소스에서 스키마명을 문자열로 잇지 않는다는 DataSchema 규약).
+    dsl.execute(
+        "SELECT pg_advisory_xact_lock(hashtextextended('fh_field_index:' || ?, 0))",
+        DataSchema.current());
+  }
+
+  /**
+   * 카탈로그에서 그 테이블의 그 컬럼에 걸린 <b>필드 인덱스</b>를 찾는다(WD-100). 이름은 보지 않는다.
+   *
+   * <p><b>필드 인덱스로 보는 기준</b> — 아래를 모두 만족하는 인덱스다.
+   *
+   * <ul>
+   *   <li>현재 테넌트 데이터 스키마의 그 테이블에 걸려 있다.
+   *   <li>키 컬럼이 정확히 하나({@code indnatts = 1})이고 그것이 그 컬럼({@code indkey[0]} 의 attname)이다.
+   *   <li>식(expression)·부분(predicate) 인덱스가 아니다({@code indexprs}·{@code indpred} 가 NULL).
+   *   <li>UNIQUE·PRIMARY KEY 가 아니다 — 시스템 PK({@code id})와 사용자 PK 유니크 인덱스({@code ux_<table>_pk}, 단일
+   *       컬럼 PK 포함)를 건드리지 않는다.
+   *   <li>접근 방법이 btree 또는 gist 다(우리가 만드는 두 종류).
+   * </ul>
+   *
+   * <p>이름을 보지 않는 이유: 같은 필드의 인덱스가 여러 이름으로 존재한다 — 규칙 이름, 63바이트에서 잘린 옛 이름, 해시 이름, 그리고 REPLACE
+   * 적재({@link #createTempTable} 의 {@code LIKE ... INCLUDING ALL})가 맞바꿈 뒤 남기는 PostgreSQL 기본
+   * 이름({@code rtmp_<md5>_<col>_idx}). 이름으로 고르면 이 중 일부를 놓치거나 다른 필드의 인덱스를 잡는다.
+   *
+   * <p>이 기준이 사용자 인덱스를 잡지 않는 근거: 앱 사용자는 데이터 스키마에 인덱스를 만들 수 없다(SQL 스텝은 SELECT/DML 만 허용, PYTHON 읽기 슬롯은
+   * 읽기 전용). {@code _updated_at} 인덱스({@code ix_<table>_upd})는 시스템 컬럼 위라 필드 이름으로는 닿지 않는다.
+   */
+  private List<FieldIndex> findFieldIndexes(String tableName, String columnName) {
+    return dsl.fetch(
+            "SELECT ic.relname::text AS index_name, am.amname::text AS am_name"
+                + " FROM pg_index i"
+                + " JOIN pg_class ic ON ic.oid = i.indexrelid"
+                + " JOIN pg_class tc ON tc.oid = i.indrelid"
+                + " JOIN pg_namespace n ON n.oid = tc.relnamespace"
+                + " JOIN pg_am am ON am.oid = ic.relam"
+                + " JOIN pg_attribute a ON a.attrelid = tc.oid AND a.attnum = i.indkey[0]"
+                + " WHERE n.nspname = ? AND tc.relname = ? AND a.attname = ?"
+                + " AND i.indnatts = 1"
+                + " AND i.indexprs IS NULL AND i.indpred IS NULL"
+                + " AND NOT i.indisunique AND NOT i.indisprimary"
+                + " AND am.amname IN ('btree', 'gist')"
+                + " ORDER BY ic.relname",
+            DataSchema.current(),
+            tableName,
+            columnName)
+        .map(
+            r ->
+                new FieldIndex(
+                    r.get("index_name", String.class),
+                    FieldIndexKind.fromAmName(r.get("am_name", String.class))));
+  }
+
+  /**
+   * 그 컬럼에 그 종류의 필드 인덱스가 없을 때만 만든다(WD-100).
+   *
+   * <p>{@code CREATE INDEX IF NOT EXISTS} 를 쓰지 않는다 — IF NOT EXISTS 는 "그 <b>이름</b>이 있는가"만 봐서, 이름이 겹친
+   * 다른 필드의 인덱스가 있으면 이 필드의 인덱스를 조용히 건너뛰었다(메타데이터는 「인덱스 있음」인데 실제로는 없음). 대신 카탈로그로 "이 컬럼에 이미 있는가"를 보고(옛
+   * 잘린 이름으로 이미 있으면 중복 생성하지 않는다), 없으면 비어 있는 이름을 골라 그냥 CREATE 한다. 그래서 건너뛰기는 "이 컬럼에 이미 있음" 일 때뿐이다. 확인과
+   * 생성 사이의 경합은 {@link #lockFieldIndexNames} 가 막는다.
+   *
+   * @param freshTable 같은 트랜잭션에서 방금 만든 테이블이면 {@code true} — 필드 인덱스가 있을 수 없으므로 확인 조회를 건너뛴다.
+   */
+  private void createFieldIndex(
+      String tableName, String columnName, FieldIndexKind kind, boolean freshTable) {
+    lockFieldIndexNames();
+    if (!freshTable
+        && findFieldIndexes(tableName, columnName).stream().anyMatch(i -> i.kind() == kind)) {
+      return;
+    }
+    String indexName = chooseFieldIndexName(tableName, columnName, kind, null);
+    if (indexName == null) {
+      // 규칙 이름과 해시 이름이 모두 다른 객체에 쓰이고 있다 — 사실상 일어나지 않지만, 조용히 건너뛰면 결함이 그대로 재현되므로 실패시킨다.
+      throw new IllegalStateException(
+          "필드 '" + columnName + "' 의 인덱스 이름을 정할 수 없습니다(후보 이름이 모두 사용 중): " + tableName);
+    }
+    String using = kind == FieldIndexKind.GIST ? " USING GIST" : "";
+    dsl.execute(
+        "CREATE INDEX \""
             + indexName
             + "\" ON "
             + DataSchema.qualify(tableName)
-            + " USING GIST (\""
+            + using
+            + " (\""
             + columnName
-            + "\")";
-    dsl.execute(sql);
+            + "\")");
   }
 
   @Override
@@ -479,11 +642,29 @@ public class PostgresDataTableStore implements DataTableStore {
     DataTableNames.validate(tableName);
     DataTableNames.validate(oldColName);
     DataTableNames.validate(newColName);
-    String oldIndex = "idx_" + tableName + "_" + oldColName;
-    String newIndex = "idx_" + tableName + "_" + newColName;
-    String sql =
-        "ALTER INDEX IF EXISTS " + DataSchema.qualify(oldIndex) + " RENAME TO \"" + newIndex + "\"";
-    dsl.execute(sql);
+    // 컬럼 이름 변경(renameColumn) 전에 불린다는 계약이다 — 카탈로그를 옛 컬럼 이름으로 찾는다.
+    // 이름을 규칙으로 추측하지 않고(WD-100) 그 컬럼의 필드 인덱스를 모두(B-tree·GiST) 찾아 새 규칙 이름으로 맞춘다.
+    lockFieldIndexNames();
+    for (FieldIndex index : findFieldIndexes(tableName, oldColName)) {
+      String target = chooseFieldIndexName(tableName, newColName, index.kind(), index.name());
+      if (target == null) {
+        // 새 이름 후보(규칙·해시)가 모두 다른 객체에 쓰이고 있으면 이름만 그대로 두고 컬럼 이름 바꾸기는 계속한다. 인덱스 자체는 살아 있고,
+        // 끄기·켜기·다음 이름 바꾸기는 이름이 아니라 카탈로그로 찾으므로 동작에 영향이 없다 — 예전처럼 겹치는 이름으로 RENAME 해 500 을 내는 것보다
+        // 낫다. 다만 사실상 일어나지 않아야 하는 상태이므로 원인을 추적할 수 있게 경고를 남긴다.
+        log.warn(
+            "필드 인덱스 이름을 새 컬럼 이름에 맞추지 못해 그대로 둡니다(후보 이름이 모두 사용 중): table={}, column={}->{}, index={}",
+            tableName,
+            oldColName,
+            newColName,
+            index.name());
+        continue;
+      }
+      if (target.equals(index.name())) {
+        continue;
+      }
+      dsl.execute(
+          "ALTER INDEX " + DataSchema.qualify(index.name()) + " RENAME TO \"" + target + "\"");
+    }
   }
 
   @Override
@@ -598,7 +779,8 @@ public class PostgresDataTableStore implements DataTableStore {
     // Recreate GiST indexes for GEOMETRY columns (CTAS does not copy indexes)
     for (DatasetColumnResponse col : columnDefs) {
       if ("GEOMETRY".equalsIgnoreCase(col.dataType())) {
-        createGistIndex(targetTable, col.columnName());
+        // CTAS 로 방금 만든 테이블이라 기존 인덱스 확인은 건너뛴다.
+        createFieldIndex(targetTable, col.columnName(), FieldIndexKind.GIST, true);
       }
     }
     // PYTHON 읽기 슬롯 GRANT — CTAS 복제본은 새 테이블이라 ACL 이 비어 있다.

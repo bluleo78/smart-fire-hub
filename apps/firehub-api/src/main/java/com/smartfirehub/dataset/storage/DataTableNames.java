@@ -1,7 +1,9 @@
 package com.smartfirehub.dataset.storage;
 
 import com.smartfirehub.dataset.exception.InvalidTableNameException;
+import java.nio.charset.StandardCharsets;
 import java.util.regex.Pattern;
+import org.springframework.util.DigestUtils;
 
 /**
  * 데이터셋 테이블·컬럼 이름 검증 — 백엔드와 무관한 단일 규칙(WD-72).
@@ -20,5 +22,13 @@ public final class DataTableNames {
     if (!VALID_NAME.matcher(name).matches()) {
       throw new InvalidTableNameException("Invalid name: " + name + ". Must match [a-z][a-z0-9_]*");
     }
+  }
+
+  /**
+   * 문자열의 MD5(32자 소문자 hex). 길이 한도가 있는 식별자를 고정 길이로 만들 때 쓴다 — REPLACE 임시 테이블({@code rtmp_<md5>})과 긴 필드
+   * 인덱스 이름({@code idx_<md5>}, WD-100)이 같은 규칙을 쓰도록 한 곳에 둔다. 보안 용도가 아니라 이름 분산용이다.
+   */
+  public static String md5Hex(String value) {
+    return DigestUtils.md5DigestAsHex(value.getBytes(StandardCharsets.UTF_8));
   }
 }
