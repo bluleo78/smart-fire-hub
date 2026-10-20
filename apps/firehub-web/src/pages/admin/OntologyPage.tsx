@@ -8,9 +8,8 @@ import { RestrictedNotice } from '@/components/ui/restricted-notice';
 import { SearchInput } from '@/components/ui/search-input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { useOntologyById, useOntologyGraph, useOntologyList } from '@/hooks/queries/useOntology';
+import { useCanWriteOntology, useOntologyById, useOntologyGraph, useOntologyList } from '@/hooks/queries/useOntology';
 import { useOntologyElementMutations } from '@/hooks/queries/useOntologyElement';
-import { useAuth } from '@/hooks/useAuth';
 import { useDirtyAggregator, useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import { GRAPH_READ_RESTRICTED_MESSAGE, isForbiddenError, isGraphReadRestricted } from '@/lib/api-error';
 import { createTypePalette } from '@/lib/ontology-colors';
@@ -155,7 +154,8 @@ export default function OntologyPage() {
   // pane이 숨겨지거나 다른 내용을 보여주는 중일 수 있어 캔버스/아웃라인 요청이 기댈 수 없다 —
   // canvasDeleteEntityId와 대칭인 controlled open 인스턴스를 별도로 둔다.
   const [canvasDeleteRelationId, setCanvasDeleteRelationId] = useState<number | null>(null);
-  const { isAdmin } = useAuth();
+  // 편집 진입점(새 온톨로지·관리·수정 모드)은 역할 이름이 아니라 서버와 같은 ontology:write 권한으로 연다 (WD-128).
+  const canWriteOntology = useCanWriteOntology();
 
   // (#484) 지식 모델 3-pane 인스펙터(아웃라인 도메인명 + 타입/관계 인스펙터의 자동저장 필드)에
   // useUnsavedChangesGuard를 연결한다. 파이프라인 에디터 등 이슈 #86에서 도입된 다른 5개 편집기와
@@ -206,7 +206,7 @@ export default function OntologyPage() {
 
   // 편집 가능 여부 — 편집 버튼과 빈 상태 CTA가 동일 조건을 각각 조합하던 것을 하나로 합쳤다.
   // archived는 서버가 409로 거부하므로 애초에 진입점을 보여주지 않는다. 모드 토글도 같은 조건을 재사용한다.
-  const canEdit = isAdmin && selectedOntology?.status !== 'archived';
+  const canEdit = canWriteOntology && selectedOntology?.status !== 'archived';
 
   // 요소 단위 편집 뮤테이션(Task 1) — 이 훅은 OntologyPage에서 "단 한 번만" 호출하고 반환 객체
   // 전체를 인스펙터(Task 4/5)에 prop으로 내려준다. 인스펙터가 이 훅을 다시 호출하면 saveState가
@@ -429,7 +429,7 @@ export default function OntologyPage() {
       return (
         <GraphEmptyNoOntology
           description={emptyDescription}
-          onCreate={isAdmin ? () => setCreateOpen(true) : undefined}
+          onCreate={canWriteOntology ? () => setCreateOpen(true) : undefined}
         />
       );
     }
@@ -502,16 +502,16 @@ export default function OntologyPage() {
         {/* 온톨로지 선택기(고정 220px)까지 들어오며 항목이 늘었다 — 이 그룹도 outer 툴바처럼
             max-md에서 줄바꿈해야 320px 리플로우(#345)와 640~900px 겹침(#402)이 깨지지 않는다. */}
         <div className="ml-auto flex flex-wrap items-center justify-end gap-x-2 gap-y-1 md:flex-nowrap">
-          {/* 온톨로지 선택기 — 두 탭이 공유한다(#677 후속). 비-ADMIN도 볼 수 있지만 관리 진입점은 없다. */}
+          {/* 온톨로지 선택기 — 두 탭이 공유한다(#677 후속). 편집 권한(ontology:write)이 없으면 관리 진입점은 없다. */}
           {ontologies && ontologies.length > 0 && (
             <OntologySelect
               ontologies={ontologies}
               value={effectiveOntologyId}
               onChange={setSelectedOntologyId}
-              onManage={isAdmin ? () => setManageOpen(true) : undefined}
+              onManage={canWriteOntology ? () => setManageOpen(true) : undefined}
             />
           )}
-          {tab === 'schema' && isAdmin && (
+          {tab === 'schema' && canWriteOntology && (
             <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setCreateOpen(true)}>
               <Plus className="h-4 w-4" />
               새 온톨로지
@@ -522,7 +522,7 @@ export default function OntologyPage() {
               모드"를 그대로 유지한다 — 원래는 모달의 "편집" 버튼과 Playwright getByRole 부분 일치
               strict mode 충돌을 피하기 위한 이름이었지만, 지금은 순전히 하위 호환 때문이다: 다수의
               기존 E2E가 이미 "수정 모드" 텍스트로 이 버튼을 찾으므로 이름을 바꾸면 그 셀렉터가 전부
-              깨진다. 같은 canEdit 조건을 재사용한다: 비-ADMIN·archived 온톨로지에는 노출되지 않는다. */}
+              깨진다. 같은 canEdit 조건을 재사용한다: 편집 권한이 없거나 archived 온톨로지에는 노출되지 않는다. */}
           {tab === 'schema' && canEdit && selectedSchema && (
             <Button
               variant={modelEditMode ? 'secondary' : 'outline'}

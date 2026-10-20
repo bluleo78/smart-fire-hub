@@ -2,8 +2,21 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 
 import { ontologyApi } from '@/api/ontology';
+import { useMyPermissions } from '@/hooks/queries/useMyPermissions';
+import { useAuth } from '@/hooks/useAuth';
 import { handleApiError } from '@/lib/api-error';
 import type { CreateOntologyRequest, OntologyStatus } from '@/types/ontology';
+
+/**
+ * 지식 모델(온톨로지) 편집 권한 — 서버 OntologyController·OntologyElementController 가 판정하는 `ontology:write` 와
+ * 같은 기준이다(WD-128). 예전에는 역할 이름(isAdmin)으로만 판정해, 역할에 이 권한을 줘도 화면에서는 편집할 수 없었다.
+ * ADMIN 은 AdminOrPermissionRoute 와 같게 권한 목록과 상관없이 허용한다. 최종 판정은 서버 — 여기는 노출 결정용.
+ */
+export function useCanWriteOntology(): boolean {
+  const { isAdmin } = useAuth();
+  const { permissions } = useMyPermissions();
+  return isAdmin || permissions.has('ontology:write');
+}
 
 /**
  * 한 온톨로지의 인스턴스 그래프. 스코프는 서버가 잡는다(근거는 OntologyService.getGraph 참고).
