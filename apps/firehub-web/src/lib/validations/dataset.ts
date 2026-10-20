@@ -21,6 +21,40 @@ export function columnNameLengthError(name: string): string | undefined {
   return name.length > MAX_COLUMN_NAME_LENGTH ? COLUMN_NAME_MAX_MESSAGE : undefined;
 }
 
+// 이름 중복 안내 (WD-99) — 문구는 각 화면의 입력 라벨을 따른다: 생성 화면(라벨 「칼럼명」)은 COLUMN_NAME_DUPLICATE_MESSAGE,
+// 필드 추가·수정 다이얼로그(라벨 「필드명」)는 FIELD_NAME_DUPLICATE_MESSAGE. 서버도 같은 경우를 409 로 거부하지만,
+// 화면이 먼저 막아 일반 무결성 오류까지 가지 않게 한다.
+export const COLUMN_NAME_DUPLICATE_MESSAGE = '이미 있는 칼럼명입니다';
+export const FIELD_NAME_DUPLICATE_MESSAGE = '이미 있는 필드명입니다';
+
+// 시스템 예약 칼럼명 — 백엔드 DataTableService.SYSTEM_COLUMNS 와 같아야 한다(물리 테이블이 직접 쓰는 이름).
+// 예약어 안내가 중복 안내보다 먼저 보이게 하는 데 쓴다(예약어 이름이 기존 필드처럼 보여도 진짜 이유는 예약어다):
+// 필드 추가·수정 다이얼로그는 제출 시 이 검사를 중복보다 먼저 하고, 생성 화면은 예약어를 중복으로 세지 않아 서버의 예약어 안내가 뜬다.
+export const SYSTEM_COLUMN_NAMES = ['id', 'import_id', 'created_at', '_updated_at'] as const;
+export const RESERVED_COLUMN_NAME_MESSAGE = `시스템 예약어라 쓸 수 없는 이름입니다 (예약어: ${SYSTEM_COLUMN_NAMES.join(', ')})`;
+
+/** 시스템 예약 칼럼명이면 안내 문구를, 아니면 undefined 를 돌려준다(서버와 같이 소문자로 비교). */
+export function reservedColumnNameError(name: string): string | undefined {
+  return (SYSTEM_COLUMN_NAMES as readonly string[]).includes(name.toLowerCase())
+    ? RESERVED_COLUMN_NAME_MESSAGE
+    : undefined;
+}
+
+/**
+ * 필드 목록에서 앞서 나온 이름과 같은 칼럼의 인덱스를 돌려준다(첫 번째는 원본으로 보고 제외).
+ */
+export function findDuplicateColumnIndexes(names: string[]): number[] {
+  const seen = new Set<string>();
+  const duplicates: number[] = [];
+  names.forEach((name, index) => {
+    // 빈 이름·예약어는 각자의 안내가 따로 뜨므로 중복으로 세지 않는다(예약어 안내가 중복 안내에 가려지지 않게).
+    if (name === '' || reservedColumnNameError(name)) return;
+    if (seen.has(name)) duplicates.push(index);
+    else seen.add(name);
+  });
+  return duplicates;
+}
+
 export const datasetColumnSchema = z.object({
   columnName: z.string()
     .min(1, '칼럼명을 입력하세요')
@@ -58,6 +92,15 @@ export const createDatasetSchema = z.object({
   // DOCUMENT·FILE 데이터셋은 동적 컬럼이 없으므로 빈 배열 허용. 그 외 유형은 최소 1개 필요.
   if (data.storageType !== 'DOCUMENT' && data.storageType !== 'FILE' && data.columns.length === 0) {
     ctx.addIssue({ code: 'custom', path: ['columns'], message: '최소 1개의 칼럼을 정의하세요' });
+  }
+  // 같은 이름 칼럼이 둘 이상이면 뒤에 나온 칸에 안내하고 제출을 막는다 (WD-99).
+  // 경로를 columns.<i>.columnName 으로 두어 SchemaBuilder 의 칸별 오류 자리에 그대로 뜬다.
+  for (const index of findDuplicateColumnIndexes(data.columns.map((c) => c.columnName))) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['columns', index, 'columnName'],
+      message: COLUMN_NAME_DUPLICATE_MESSAGE,
+    });
   }
 });
 

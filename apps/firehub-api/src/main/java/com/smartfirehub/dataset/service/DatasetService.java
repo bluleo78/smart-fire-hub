@@ -41,10 +41,12 @@ import com.smartfirehub.user.repository.UserRepository;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.util.function.Supplier;
 import lombok.RequiredArgsConstructor;
 import org.jooq.Condition;
 import org.jooq.DSLContext;
 import org.jooq.exception.IntegrityConstraintViolationException;
+import org.postgresql.util.ServerErrorMessage;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
@@ -74,6 +76,69 @@ public class DatasetService {
 
   /** FILE 데이터셋 생성 요청에 클라이언트가 프리픽스를 지정했을 때의 오류 코드(400). */
   public static final String FILE_PREFIX_NOT_ALLOWED_CODE = "FILE_PREFIX_NOT_ALLOWED";
+
+  /**
+   * 같은 데이터셋에 같은 이름의 필드를 만들거나(추가·생성) 다른 필드 이름으로 바꾸려 할 때의 오류 코드(409, WD-99).
+   *
+   * <p>사전 검사가 없으면 카탈로그 유니크 인덱스(dataset_id, column_name) 위반이 무결성 처리기의 일반 문구로만 새어 나가 사용자가 어느 필드가 문제인지
+   * 알 수 없다. 그래서 카탈로그 저장·DDL 전에 필드명을 실어 거부한다.
+   */
+  public static final String COLUMN_NAME_DUPLICATE_CODE = "COLUMN_NAME_DUPLICATE";
+
+  /**
+   * 카탈로그 dataset_column 의 (dataset_id, column_name) 유니크 제약 이름 — V2 의 이름 없는 {@code UNIQUE
+   * (dataset_id, column_name)} 에 PostgreSQL 이 붙인 기본 이름이다(이후 마이그레이션에서 바뀐 적 없음). 사전 검사를 지나 이 제약에
+   * 걸리면(동시 추가 등) 쓰기 지점이 이 이름으로 알아보고 같은 409 로 바꾼다({@link #withColumnNameUniqueAs409}). 실제 DB 가 이 이름을
+   * 보고하는지는 통합 테스트가 고정한다.
+   */
+  private static final String COLUMN_NAME_UNIQUE_CONSTRAINT =
+      "dataset_column_dataset_id_column_name_key";
+
+  /** 필드명 중복 문구 — 사전 검사는 뒤에 「: 필드명」을 붙이고, 제약 위반 변환은 DB 원문을 쓰지 않으려 이름 없이 쓴다. */
+  private static final String COLUMN_NAME_DUPLICATE_MESSAGE = "이미 있는 필드명입니다";
+
+  /** 필드명 중복 409 — 사전 검사(생성·추가·이름 변경)가 같은 코드·문구를 쓰도록 한곳에서 만든다. */
+  private static CodedApiException duplicateColumnName(String columnName) {
+    return new CodedApiException(
+        HttpStatus.CONFLICT,
+        COLUMN_NAME_DUPLICATE_CODE,
+        COLUMN_NAME_DUPLICATE_MESSAGE + ": " + columnName);
+  }
+
+  /**
+   * dataset_column 쓰기를 실행하고, 필드명 유니크 제약 위반이면 사전 검사와 같은 코드의 409 로 바꾼다(WD-99) — 보안 등급 이름의 {@code
+   * SecurityLevelService.withNameDuplicateAs409} 와 같은 방식.
+   *
+   * <p>왜: 사전 검사와 쓰기 사이에 같은 이름이 동시에 들어오면 사전 검사는 미커밋 행을 못 봐 통과하고, 쓰기가 유니크 제약에서 끝난다. 그대로 두면 전역 처리기의 일반
+   * 중복 문구(코드 없음)가 되어 화면이 필드명 중복 안내를 못 한다. 필드명은 DB 세부 원문에서 꺼내지 않는다(원문 비노출). 다른 제약 위반은 그대로 던진다.
+   */
+  private static <T> T withColumnNameUniqueAs409(Supplier<T> write) {
+    try {
+      return write.get();
+    } catch (DataIntegrityViolationException e) {
+      ServerErrorMessage serverError = DataExceptionTranslator.findServerError(e);
+      if (serverError != null
+          && COLUMN_NAME_UNIQUE_CONSTRAINT.equals(serverError.getConstraint())) {
+        throw new CodedApiException(
+            HttpStatus.CONFLICT, COLUMN_NAME_DUPLICATE_CODE, COLUMN_NAME_DUPLICATE_MESSAGE);
+      }
+      throw e;
+    }
+  }
+
+  /** 반환값 없는 쓰기용 {@link #withColumnNameUniqueAs409(Supplier)}. */
+  private static void withColumnNameUniqueAs409(Runnable write) {
+    withColumnNameUniqueAs409(
+        () -> {
+          write.run();
+          return null;
+        });
+  }
+
+  /** 기본 키 필드의 NULL 허용 거부 — 생성·추가·수정·기본 키 일괄 설정이 같은 문구를 쓴다. */
+  private static ColumnModificationException primaryKeyNullable(String columnName) {
+    return new ColumnModificationException("기본 키 필드는 NULL 을 허용할 수 없습니다: " + columnName);
+  }
 
   /**
    * FILE 데이터셋의 저장 프리픽스 — 항상 서버가 {@code datasets/<데이터셋 id>/} 로 만든다.
@@ -155,16 +220,24 @@ public class DatasetService {
     List<DatasetColumnRequest> columns = request.columns() != null ? request.columns() : List.of();
     dataTableService.validateNewColumns(columns);
 
+    // 요청 안의 필드명 중복은 카탈로그 저장 전에 거부한다(WD-99) — 그대로 두면 saveBatch 가 유니크 인덱스에 걸려 어느 필드인지 없는
+    // 일반 무결성 오류가 된다. 이름 규칙(소문자만 허용)이 대소문자 변형을 막으므로 문자열 그대로 비교한다.
+    Set<String> seenColumnNames = new java.util.HashSet<>();
+    for (DatasetColumnRequest col : columns) {
+      if (!seenColumnNames.add(col.columnName())) {
+        throw duplicateColumnName(col.columnName());
+      }
+    }
+
     // Validate PK columns: must be NOT NULL, and GEOMETRY type cannot be a primary key (#199)
     for (DatasetColumnRequest col : columns) {
       if (col.isPrimaryKey() && col.isNullable()) {
-        throw new ColumnModificationException(
-            "Primary key column '" + col.columnName() + "' cannot be nullable");
+        throw primaryKeyNullable(col.columnName());
       }
       // GEOMETRY 컬럼은 GiST 인덱스만 지원하며 B-tree UNIQUE INDEX 생성 불가 → PK 거부
       if (col.isPrimaryKey() && "GEOMETRY".equals(col.dataType())) {
         throw new ColumnModificationException(
-            "GEOMETRY column '" + col.columnName() + "' cannot be a primary key");
+            "지오메트리(GEOMETRY) 필드는 기본 키로 지정할 수 없습니다: " + col.columnName());
       }
     }
 
@@ -178,17 +251,17 @@ public class DatasetService {
     }
 
     if (datasetRepository.existsByName(request.name())) {
-      throw new DuplicateDatasetNameException("Dataset name already exists: " + request.name());
+      throw new DuplicateDatasetNameException("이미 있는 데이터셋 이름입니다: " + request.name());
     }
     if (datasetRepository.existsByTableName(request.tableName())) {
-      throw new DuplicateDatasetNameException("Table name already exists: " + request.tableName());
+      throw new DuplicateDatasetNameException("이미 있는 테이블명입니다: " + request.tableName());
     }
 
     if (request.categoryId() != null) {
       categoryRepository
           .findById(request.categoryId())
           .orElseThrow(
-              () -> new CategoryNotFoundException("Category not found: " + request.categoryId()));
+              () -> new CategoryNotFoundException("카테고리를 찾을 수 없습니다: " + request.categoryId()));
     }
 
     DatasetResponse dataset = datasetRepository.save(request, userId);
@@ -196,7 +269,7 @@ public class DatasetService {
     // dataset.table_name 은 메타데이터 식별자로만 쓰이며, 컬럼 영속화/물리 테이블 생성을 건너뛴다.
     if (isTableBacked(request.storageType())) {
       // TABLE 데이터셋만 동적 data.<table> 물리 테이블과 컬럼을 만든다.
-      columnRepository.saveBatch(dataset.id(), request.columns());
+      withColumnNameUniqueAs409(() -> columnRepository.saveBatch(dataset.id(), request.columns()));
       dataTableService.createTable(request.tableName(), request.columns());
     } else if (FILE_TYPE.equals(request.storageType())) {
       // FILE 데이터셋은 MinIO 버킷/프리픽스 매핑만 저장한다(개별 파일 행 없음).
@@ -397,7 +470,7 @@ public class DatasetService {
       categoryRepository
           .findById(request.categoryId())
           .orElseThrow(
-              () -> new CategoryNotFoundException("Category not found: " + request.categoryId()));
+              () -> new CategoryNotFoundException("카테고리를 찾을 수 없습니다: " + request.categoryId()));
     }
 
     datasetRepository.update(id, request, userId);
@@ -480,34 +553,45 @@ public class DatasetService {
     // 카탈로그 저장 전에 새 컬럼(예약어·이름 길이·타입)을 검증한다 — 생성 경로와 같은 이유.
     dataTableService.validateNewColumns(List.of(colRequest));
 
+    // 같은 이름 필드가 이미 있으면 카탈로그 저장·DDL 전에 거부한다(WD-99) — 그대로 두면 columnRepository.save 가 유니크 인덱스에
+    // 걸려 「어느 필드인지」 없는 일반 무결성 오류가 된다. 목록은 한 번만 읽어 아래 PK 인덱스 재구성에도 쓴다.
+    List<DatasetColumnResponse> existingColumns = columnRepository.findByDatasetId(datasetId);
+    boolean nameTaken =
+        existingColumns.stream().anyMatch(c -> c.columnName().equals(request.columnName()));
+    if (nameTaken) {
+      throw duplicateColumnName(request.columnName());
+    }
+
     long rowCount = dataTableRowService.countRows(dataset.tableName());
     if (rowCount > 0 && !request.isNullable()) {
       throw new ColumnModificationException(
-          "Cannot add non-nullable column to dataset with existing data");
+          "데이터가 있는 데이터셋에는 NULL 허용을 끈 필드를 추가할 수 없습니다. NULL 허용으로 추가한 뒤 값을 채우고 바꾸세요.");
     }
 
     // PK validation
     if (request.isPrimaryKey() && rowCount > 0) {
       throw new ColumnModificationException(
-          "Cannot add primary key column to dataset with existing data. "
-              + "Add the column first, populate it, then designate it as primary key.");
+          "데이터가 있는 데이터셋에는 기본 키 필드를 추가할 수 없습니다. 필드를 먼저 추가해 값을 채운 뒤 기본 키로 지정하세요.");
     }
     if (request.isPrimaryKey() && request.isNullable()) {
-      throw new ColumnModificationException("Primary key column cannot be nullable");
+      throw primaryKeyNullable(request.columnName());
     }
 
     int nextOrder = columnRepository.getMaxOrder(datasetId) + 1;
 
-    DatasetColumnResponse column = columnRepository.save(datasetId, colRequest, nextOrder);
+    DatasetColumnResponse column =
+        withColumnNameUniqueAs409(() -> columnRepository.save(datasetId, colRequest, nextOrder));
     dataTableService.addColumn(dataset.tableName(), colRequest);
 
     if (request.isPrimaryKey()) {
-      List<DatasetColumnResponse> allColumns = columnRepository.findByDatasetId(datasetId);
-      List<String> pkColumnNames =
-          allColumns.stream()
-              .filter(DatasetColumnResponse::isPrimaryKey)
-              .map(DatasetColumnResponse::columnName)
-              .toList();
+      // 기존 PK 필드(컬럼 순서대로) 뒤에 방금 추가한 필드를 붙인다 — 새 필드는 최대 순서 + 1 이라 다시 읽은 결과와 순서가 같다.
+      List<String> pkColumnNames = new ArrayList<>();
+      for (DatasetColumnResponse c : existingColumns) {
+        if (c.isPrimaryKey()) {
+          pkColumnNames.add(c.columnName());
+        }
+      }
+      pkColumnNames.add(column.columnName());
       dataTableService.recreatePrimaryKeyIndex(dataset.tableName(), pkColumnNames);
     }
 
@@ -528,26 +612,32 @@ public class DatasetService {
     DatasetColumnResponse column =
         columnRepository
             .findById(columnId)
-            .orElseThrow(() -> new IllegalArgumentException("Column not found: " + columnId));
+            .orElseThrow(() -> new IllegalArgumentException("필드를 찾을 수 없습니다: " + columnId));
 
     Long columnDatasetId =
         columnRepository
             .findDatasetIdByColumnId(columnId)
-            .orElseThrow(() -> new IllegalArgumentException("Column not found: " + columnId));
+            .orElseThrow(() -> new IllegalArgumentException("필드를 찾을 수 없습니다: " + columnId));
 
     if (!columnDatasetId.equals(datasetId)) {
-      throw new IllegalArgumentException("Column does not belong to this dataset");
+      throw new IllegalArgumentException("이 데이터셋의 필드가 아닙니다: " + columnId);
     }
 
     if (request.dataType() != null && !VALID_DATA_TYPES.contains(request.dataType())) {
-      throw new ColumnModificationException("Invalid data type: " + request.dataType());
+      throw new ColumnModificationException("알 수 없는 데이터 타입입니다: " + request.dataType());
     }
 
     long rowCount = dataTableRowService.countRows(dataset.tableName());
 
     if (request.columnName() != null && !request.columnName().equals(column.columnName())) {
+      // 다른 필드와 같은 이름으로 바꾸려 하면 DDL(renameIndex·renameColumn) 전에 거부한다(WD-99). 자기 자신은 비교에서
+      // 뺀다(excludeColumnId). 목록 전체 대신 EXISTS 한 번으로 묻는다.
+      if (columnRepository.existsByDatasetIdAndColumnName(
+          datasetId, request.columnName(), columnId)) {
+        throw duplicateColumnName(request.columnName());
+      }
       if (rowCount > 0) {
-        throw new ColumnModificationException("Cannot rename column when dataset has data");
+        throw new ColumnModificationException("데이터가 있는 데이터셋에서는 필드명을 바꿀 수 없습니다.");
       }
       // 새 이름 검증은 renameIndex·renameColumn(DDL 계층)이 한다.
       if (column.isIndexed()) {
@@ -565,7 +655,7 @@ public class DatasetService {
             "검색 대상 필드는 TEXT/VARCHAR 이외 타입으로 바꿀 수 없습니다. 검색 탭에서 먼저 해제하세요.");
       }
       if (rowCount > 0) {
-        throw new ColumnModificationException("Cannot change data type when dataset has data");
+        throw new ColumnModificationException("데이터가 있는 데이터셋에서는 필드의 데이터 타입을 바꿀 수 없습니다.");
       }
       String currentColName =
           request.columnName() != null ? request.columnName() : column.columnName();
@@ -580,7 +670,7 @@ public class DatasetService {
         && request.maxLength() != null
         && !request.maxLength().equals(column.maxLength())) {
       if (rowCount > 0) {
-        throw new ColumnModificationException("Cannot change column size when dataset has data");
+        throw new ColumnModificationException("데이터가 있는 데이터셋에서는 필드 길이를 바꿀 수 없습니다.");
       }
       String currentColName =
           request.columnName() != null ? request.columnName() : column.columnName();
@@ -623,7 +713,7 @@ public class DatasetService {
     if (request.isNullable() != null
         && request.isNullable()
         && (request.isPrimaryKey() != null ? request.isPrimaryKey() : column.isPrimaryKey())) {
-      throw new ColumnModificationException("Primary key column cannot be nullable");
+      throw primaryKeyNullable(column.columnName());
     }
 
     // Handle primary key changes
@@ -633,7 +723,7 @@ public class DatasetService {
         boolean nullable =
             request.isNullable() != null ? request.isNullable() : column.isNullable();
         if (nullable) {
-          throw new ColumnModificationException("Primary key column cannot be nullable");
+          throw primaryKeyNullable(column.columnName());
         }
         // Check data uniqueness if dataset has data
         if (rowCount > 0) {
@@ -658,7 +748,8 @@ public class DatasetService {
       }
     }
 
-    columnRepository.update(columnId, request);
+    // 이름 변경이 사전 검사를 지나 카탈로그 유니크 제약에 걸리는 경우도 같은 409 로(WD-99).
+    withColumnNameUniqueAs409(() -> columnRepository.update(columnId, request));
 
     // Recreate PK index if PK flag changed
     if (request.isPrimaryKey() != null && request.isPrimaryKey() != column.isPrimaryKey()) {
@@ -718,7 +809,7 @@ public class DatasetService {
     for (Long id : pkIds) {
       DatasetColumnResponse c = byId.get(id);
       if (c == null) {
-        throw new IllegalArgumentException("Column not found in dataset " + datasetId + ": " + id);
+        throw new IllegalArgumentException("이 데이터셋에 없는 필드입니다: " + id);
       }
       targetCols.add(c);
     }
@@ -726,8 +817,7 @@ public class DatasetService {
     // 모든 PK 컬럼이 NOT NULL 이어야 한다
     for (DatasetColumnResponse c : targetCols) {
       if (c.isNullable()) {
-        throw new ColumnModificationException(
-            "Primary key column cannot be nullable: " + c.columnName());
+        throw primaryKeyNullable(c.columnName());
       }
     }
 
@@ -758,20 +848,20 @@ public class DatasetService {
     DatasetColumnResponse column =
         columnRepository
             .findById(columnId)
-            .orElseThrow(() -> new IllegalArgumentException("Column not found: " + columnId));
+            .orElseThrow(() -> new IllegalArgumentException("필드를 찾을 수 없습니다: " + columnId));
 
     Long columnDatasetId =
         columnRepository
             .findDatasetIdByColumnId(columnId)
-            .orElseThrow(() -> new IllegalArgumentException("Column not found: " + columnId));
+            .orElseThrow(() -> new IllegalArgumentException("필드를 찾을 수 없습니다: " + columnId));
 
     if (!columnDatasetId.equals(datasetId)) {
-      throw new IllegalArgumentException("Column does not belong to this dataset");
+      throw new IllegalArgumentException("이 데이터셋의 필드가 아닙니다: " + columnId);
     }
 
     List<DatasetColumnResponse> columns = columnRepository.findByDatasetId(datasetId);
     if (columns.size() <= 1) {
-      throw new ColumnModificationException("Cannot delete the last column of a dataset");
+      throw new ColumnModificationException("데이터셋의 마지막 필드는 삭제할 수 없습니다.");
     }
 
     // 삭제 전에 검색 대상 여부를 잡아 둔다(삭제 후에는 컬럼 행이 없어 판정할 수 없다).
@@ -816,10 +906,10 @@ public class DatasetService {
     Set<Long> requestIds = new java.util.HashSet<>(request.columnIds());
 
     if (requestIds.size() != request.columnIds().size()) {
-      throw new IllegalArgumentException("Duplicate column IDs in request");
+      throw new IllegalArgumentException("필드 순서 요청에 같은 필드가 두 번 들어 있습니다.");
     }
     if (!existingIds.equals(requestIds)) {
-      throw new IllegalArgumentException("Column IDs must match exactly with dataset columns");
+      throw new IllegalArgumentException("필드 순서 요청이 데이터셋의 필드 목록과 일치하지 않습니다.");
     }
 
     columnRepository.updateOrders(datasetId, request.columnIds());
@@ -995,10 +1085,10 @@ public class DatasetService {
     // 새 테이블명 검증은 중복 검사보다 먼저다(생성 경로와 같은 이유).
     dataTableService.validateNewTableName(request.tableName());
     if (datasetRepository.existsByName(request.name())) {
-      throw new DuplicateDatasetNameException("Dataset name already exists: " + request.name());
+      throw new DuplicateDatasetNameException("이미 있는 데이터셋 이름입니다: " + request.name());
     }
     if (datasetRepository.existsByTableName(request.tableName())) {
-      throw new DuplicateDatasetNameException("Table name already exists: " + request.tableName());
+      throw new DuplicateDatasetNameException("이미 있는 테이블명입니다: " + request.tableName());
     }
 
     // 3. Create new dataset record
@@ -1035,7 +1125,7 @@ public class DatasetService {
               col.isPrimaryKey());
       columnRequests.add(colReq);
     }
-    columnRepository.saveBatch(newDataset.id(), columnRequests);
+    withColumnNameUniqueAs409(() -> columnRepository.saveBatch(newDataset.id(), columnRequests));
 
     // 5. Clone table data or create empty schema
     List<String> userColumnNames =

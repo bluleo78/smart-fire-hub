@@ -3,6 +3,7 @@ package com.smartfirehub.dataset.service;
 import static com.smartfirehub.jooq.Tables.*;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
 
 import com.smartfirehub.dataset.dto.*;
 import com.smartfirehub.dataset.exception.CategoryNotFoundException;
@@ -10,6 +11,7 @@ import com.smartfirehub.dataset.exception.ColumnModificationException;
 import com.smartfirehub.dataset.exception.DatasetNotFoundException;
 import com.smartfirehub.dataset.exception.DuplicateDatasetNameException;
 import com.smartfirehub.global.dto.PageResponse;
+import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TestUsers;
 import java.util.List;
@@ -18,6 +20,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -110,7 +113,7 @@ class DatasetServiceExtTest extends IntegrationTestBase {
                         "NullPK", "null_pk", null, null, "TABLE", "SOURCE", columns, null),
                     testUserId))
         .isInstanceOf(ColumnModificationException.class)
-        .hasMessageContaining("nullable");
+        .hasMessage("기본 키 필드는 NULL 을 허용할 수 없습니다: pk_id");
   }
 
   @Test
@@ -390,7 +393,7 @@ class DatasetServiceExtTest extends IntegrationTestBase {
                     new AddColumnRequest(
                         "new_col", "New Col", "TEXT", null, false /* not nullable */, false, null)))
         .isInstanceOf(ColumnModificationException.class)
-        .hasMessageContaining("non-nullable");
+        .hasMessageContaining("데이터가 있는 데이터셋에는 NULL 허용을 끈 필드를 추가할 수 없습니다");
   }
 
   @Test
@@ -427,7 +430,7 @@ class DatasetServiceExtTest extends IntegrationTestBase {
                         null,
                         true /* isPK */)))
         .isInstanceOf(ColumnModificationException.class)
-        .hasMessageContaining("nullable");
+        .hasMessage("기본 키 필드는 NULL 을 허용할 수 없습니다: pk_col");
   }
 
   @Test
@@ -473,7 +476,7 @@ class DatasetServiceExtTest extends IntegrationTestBase {
                     colId,
                     new UpdateColumnRequest("new_name", null, null, null, null, false, null, null)))
         .isInstanceOf(ColumnModificationException.class)
-        .hasMessageContaining("rename");
+        .hasMessage("데이터가 있는 데이터셋에서는 필드명을 바꿀 수 없습니다.");
   }
 
   @Test
@@ -493,7 +496,7 @@ class DatasetServiceExtTest extends IntegrationTestBase {
                     colId,
                     new UpdateColumnRequest(null, null, "INTEGER", null, null, false, null, null)))
         .isInstanceOf(ColumnModificationException.class)
-        .hasMessageContaining("data type");
+        .hasMessage("데이터가 있는 데이터셋에서는 필드의 데이터 타입을 바꿀 수 없습니다.");
   }
 
   // 데이터 존재 여부와 무관하게 NULL 허용 토글을 허용한다 (#117).
@@ -575,7 +578,7 @@ class DatasetServiceExtTest extends IntegrationTestBase {
                     col1Id,
                     new UpdateColumnRequest(null, "New Name", null, null, null, false, null, null)))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("not belong");
+        .hasMessageContaining("이 데이터셋의 필드가 아닙니다");
   }
 
   // =========================================================================
@@ -601,7 +604,7 @@ class DatasetServiceExtTest extends IntegrationTestBase {
 
     assertThatThrownBy(() -> datasetService.deleteColumn(ds2.id(), col1Id))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("not belong");
+        .hasMessageContaining("이 데이터셋의 필드가 아닙니다");
   }
 
   // =========================================================================
@@ -663,7 +666,7 @@ class DatasetServiceExtTest extends IntegrationTestBase {
 
     assertThatThrownBy(() -> datasetService.updatePrimaryKeys(ds.id(), List.of(aId)))
         .isInstanceOf(ColumnModificationException.class)
-        .hasMessageContaining("nullable");
+        .hasMessage("기본 키 필드는 NULL 을 허용할 수 없습니다: a");
   }
 
   @Test
@@ -676,6 +679,108 @@ class DatasetServiceExtTest extends IntegrationTestBase {
 
     assertThatThrownBy(() -> datasetService.updatePrimaryKeys(ds.id(), List.of(999_999L)))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("not found");
+        .hasMessage("이 데이터셋에 없는 필드입니다: 999999");
+  }
+
+  // =========================================================================
+  // 필드명 중복 사전 검사 (WD-99) — 카탈로그 유니크 인덱스의 영어 일반 문구 대신 필드명을 실은 한국어 409
+  // =========================================================================
+
+  /** 필드명 중복 409 인지(상태·코드·문구) 한곳에서 확인한다. */
+  private static void assertDuplicateColumnName(Throwable e, String columnName) {
+    assertThat(e).isInstanceOf(CodedApiException.class);
+    CodedApiException coded = (CodedApiException) e;
+    assertThat(coded.status()).isEqualTo(HttpStatus.CONFLICT);
+    assertThat(coded.code()).isEqualTo(DatasetService.COLUMN_NAME_DUPLICATE_CODE);
+    assertThat(coded.getMessage()).isEqualTo("이미 있는 필드명입니다: " + columnName);
+  }
+
+  @Test
+  void addColumn_existingName_rejectedBeforeCatalogSave() {
+    // 빈 데이터셋 + NULL 허용 — 데이터 유무·NOT NULL 검사가 먼저 걸리지 않게 해 중복 검사만 본다.
+    DatasetDetailResponse ds = createSimpleDataset("AddColDup", "add_col_dup_ext");
+
+    Throwable thrown =
+        catchThrowable(
+            () ->
+                datasetService.addColumn(
+                    ds.id(), new AddColumnRequest("col1", "Dup", "TEXT", null, true, false, null)));
+
+    assertDuplicateColumnName(thrown, "col1");
+    // 카탈로그에 두 번째 col1 이 생기지 않았다.
+    assertThat(
+            dsl.fetchCount(
+                DATASET_COLUMN,
+                DATASET_COLUMN.DATASET_ID.eq(ds.id()).and(DATASET_COLUMN.COLUMN_NAME.eq("col1"))))
+        .isEqualTo(1);
+  }
+
+  @Test
+  void createDataset_duplicateColumnNamesInRequest_rejectedBeforeSave() {
+    List<DatasetColumnRequest> columns =
+        List.of(
+            new DatasetColumnRequest("code", "Code 1", "TEXT", null, true, false, null),
+            new DatasetColumnRequest("name", "Name", "TEXT", null, true, false, null),
+            new DatasetColumnRequest("code", "Code 2", "INTEGER", null, true, false, null));
+
+    Throwable thrown =
+        catchThrowable(
+            () ->
+                datasetService.createDataset(
+                    new CreateDatasetRequest(
+                        "DupCols", "dup_cols_ext", null, null, "TABLE", "SOURCE", columns, null),
+                    testUserId));
+
+    assertDuplicateColumnName(thrown, "code");
+    // 데이터셋 카탈로그 행이 남지 않았다(저장 전에 거부).
+    assertThat(dsl.fetchCount(DATASET, DATASET.TABLE_NAME.eq("dup_cols_ext"))).isZero();
+  }
+
+  @Test
+  void updateColumn_renameToOtherExistingName_rejectedBeforeDdl() {
+    // 빈 데이터셋 — 「데이터가 있으면 이름 변경 불가」가 먼저 걸리지 않게 한다.
+    DatasetDetailResponse ds =
+        createDatasetWithColumns(
+            "RenameDup",
+            "rename_dup_ext",
+            List.of(
+                new DatasetColumnRequest("title", "Title", "TEXT", null, true, false, null),
+                new DatasetColumnRequest("body", "Body", "TEXT", null, true, false, null)));
+    Long bodyId = ds.columns().get(1).id();
+
+    Throwable thrown =
+        catchThrowable(
+            () ->
+                datasetService.updateColumn(
+                    ds.id(),
+                    bodyId,
+                    new UpdateColumnRequest("title", null, null, null, null, false, null, null)));
+
+    assertDuplicateColumnName(thrown, "title");
+    assertThat(
+            dsl.select(DATASET_COLUMN.COLUMN_NAME)
+                .from(DATASET_COLUMN)
+                .where(DATASET_COLUMN.ID.eq(bodyId))
+                .fetchOne(DATASET_COLUMN.COLUMN_NAME))
+        .isEqualTo("body");
+  }
+
+  @Test
+  void updateColumn_keepOwnName_isNotADuplicate() {
+    // 자기 이름을 그대로 보내는 수정(표시명만 변경)은 중복이 아니다 — 자기 자신을 빼고 비교하는지 고정한다.
+    DatasetDetailResponse ds =
+        createDatasetWithColumns(
+            "RenameSelf",
+            "rename_self_ext",
+            List.of(new DatasetColumnRequest("title", "Title", "TEXT", null, true, false, null)));
+    Long titleId = ds.columns().get(0).id();
+
+    datasetService.updateColumn(
+        ds.id(),
+        titleId,
+        new UpdateColumnRequest("title", "새 표시명", null, null, null, false, null, null));
+
+    assertThat(datasetService.getDatasetById(ds.id(), testUserId).columns().get(0).displayName())
+        .isEqualTo("새 표시명");
   }
 }

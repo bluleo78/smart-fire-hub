@@ -395,7 +395,7 @@ class DatasetServiceTest extends IntegrationTestBase {
                 datasetService.reorderColumns(
                     dataset.id(), new ReorderColumnsRequest(incompleteIds)))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("Column IDs must match exactly");
+        .hasMessage("필드 순서 요청이 데이터셋의 필드 목록과 일치하지 않습니다.");
   }
 
   @Test
@@ -428,7 +428,7 @@ class DatasetServiceTest extends IntegrationTestBase {
                 datasetService.reorderColumns(
                     dataset.id(), new ReorderColumnsRequest(duplicateIds)))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("Duplicate column IDs");
+        .hasMessage("필드 순서 요청에 같은 필드가 두 번 들어 있습니다.");
   }
 
   @Test

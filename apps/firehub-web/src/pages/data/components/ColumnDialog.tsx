@@ -14,7 +14,12 @@ import { Label } from '../../../components/ui/label';
 import { useAddColumn } from '../../../hooks/queries/useDatasets';
 import { handleApiError } from '../../../lib/api-error';
 import type { AddColumnFormData, UpdateColumnFormData } from '../../../lib/validations/dataset';
-import { addColumnSchema, updateColumnSchema } from '../../../lib/validations/dataset';
+import {
+  addColumnSchema,
+  FIELD_NAME_DUPLICATE_MESSAGE,
+  reservedColumnNameError,
+  updateColumnSchema,
+} from '../../../lib/validations/dataset';
 import type { DatasetColumnResponse } from '../../../types/dataset';
 import { ColumnTypeSelect } from './ColumnTypeSelect';
 
@@ -25,6 +30,8 @@ interface ColumnDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   hasData?: boolean;
+  /** 데이터셋의 현재 필드 목록 — 필드명 중복을 서버 왕복 전에 막는 데 쓴다 (WD-99). */
+  existingColumns?: Pick<DatasetColumnResponse, 'id' | 'columnName'>[];
 }
 
 const DEFAULT_VALUES: AddColumnFormData = {
@@ -45,6 +52,7 @@ export function ColumnDialog({
   open,
   onOpenChange,
   hasData = false,
+  existingColumns = [],
 }: ColumnDialogProps) {
   const title = mode === 'add' ? '필드 추가' : '필드 수정';
   const submitLabel = mode === 'add' ? '추가' : '수정';
@@ -59,11 +67,18 @@ export function ColumnDialog({
   // edit 모드에서는 애초에 성공할 수 없는 선택을 UI 단에서 막는다 (#539).
   const isCurrentColumnGeometry = mode === 'edit' && column?.dataType === 'GEOMETRY';
 
+  // 데이터가 있는 데이터셋에 NOT NULL 필드를 추가하면 기존 행이 채울 값이 없어 서버가 항상 거부한다 (WD-99).
+  // 실패할 선택을 미리 막도록 추가 모드에서는 「NULL 허용」을 켠 채 잠근다(수정 모드의 데이터 보유 잠금과 같은 판정 = 행 수).
+  const isNullableLockedForData = mode === 'add' && hasData;
+
   const form = useForm<AddColumnFormData>({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     resolver: zodResolver(schema) as any,
     defaultValues: DEFAULT_VALUES,
   });
+
+  // 화면 표시·전송에 쓰는 NULL 허용 값 — 잠금 상태면 폼 값과 무관하게 켠 상태다(잠금 전 값이 남아 있어도 실패할 요청을 만들지 않는다).
+  const isNullable = isNullableLockedForData || form.watch('isNullable');
 
   // Populate form when editing an existing column
   useEffect(() => {
@@ -84,6 +99,23 @@ export function ColumnDialog({
   }, [column, open, mode, form]);
 
   const onSubmit = async (data: AddColumnFormData | UpdateColumnFormData) => {
+    // 이름 칸 사전 검사 (WD-99) — 예약어 → 중복 순서(서버 validateNewColumnName 과 같은 우선순위). 수정 모드는 이름을 바꿀 때만
+    // 본다(기존 이름을 그대로 두는 수정까지 막지 않는다).
+    const nameChanged = mode === 'add' || data.columnName !== column?.columnName;
+    const reservedError = nameChanged ? reservedColumnNameError(data.columnName) : undefined;
+    if (reservedError) {
+      form.setError('columnName', { type: 'reserved', message: reservedError });
+      return;
+    }
+    // 같은 데이터셋의 다른 필드와 같은 이름이면 서버의 일반 무결성 오류까지 가지 않고 이름 칸에서 막는다.
+    // 수정 모드는 자기 자신을 빼고 비교한다(이름을 그대로 두는 수정은 중복이 아니다).
+    const isDuplicateName = existingColumns.some(
+      (c) => c.columnName === data.columnName && c.id !== column?.id,
+    );
+    if (isDuplicateName) {
+      form.setError('columnName', { type: 'duplicate', message: FIELD_NAME_DUPLICATE_MESSAGE });
+      return;
+    }
     try {
       if (mode === 'add') {
         await addColumn.mutateAsync({
@@ -91,7 +123,7 @@ export function ColumnDialog({
           displayName: data.displayName || undefined,
           dataType: data.dataType,
           maxLength: data.maxLength || undefined,
-          isNullable: data.isNullable,
+          isNullable,
           isIndexed: data.isIndexed,
           isPrimaryKey: data.isPrimaryKey ?? false,
           description: data.description || undefined,
@@ -130,6 +162,12 @@ export function ColumnDialog({
           {mode === 'edit' && hasData && (
             <InlineBanner>
               데이터가 있는 경우 필드명, 데이터 타입, 길이는 변경할 수 없습니다.
+            </InlineBanner>
+          )}
+
+          {isNullableLockedForData && (
+            <InlineBanner>
+              데이터가 있는 데이터셋에는 NULL 허용을 끈 필드를 추가할 수 없습니다.
             </InlineBanner>
           )}
 
@@ -210,14 +248,17 @@ export function ColumnDialog({
           <div className="flex items-center space-x-2">
             <Checkbox
               id="isNullable"
-              checked={form.watch('isNullable')}
+              checked={isNullable}
               onCheckedChange={(checked) =>
                 form.setValue('isNullable', checked as boolean)
               }
-              // NULL 허용 토글은 데이터 존재 여부와 무관하게 허용한다 (#117).
+              // 수정 모드: NULL 허용 토글은 데이터 존재 여부와 무관하게 허용한다 (#117).
               // NOT NULL 로 조이려는데 NULL 데이터가 존재하면 백엔드가 거부하고,
               // ColumnDialog 의 onSubmit 이 토스트로 안내한다. (PK 컬럼은 제외)
-              disabled={mode === 'edit' && (column?.isPrimaryKey ?? false)}
+              // 추가 모드: 데이터가 있으면 켠 채로 잠근다 (WD-99, 위 isNullableLockedForData).
+              disabled={
+                isNullableLockedForData || (mode === 'edit' && (column?.isPrimaryKey ?? false))
+              }
             />
             <Label htmlFor="isNullable" className="text-sm font-normal cursor-pointer">
               NULL 허용

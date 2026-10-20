@@ -50,7 +50,9 @@ import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import lombok.extern.slf4j.Slf4j;
+import org.postgresql.util.ServerErrorMessage;
 import org.slf4j.MDC;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
@@ -179,21 +181,51 @@ public class GlobalExceptionHandler {
       return ResponseEntity.badRequest().body(response);
     }
 
-    String message = "Data integrity violation";
+    // 분류(중복/외래 키/체크)는 원인 메시지로 판정하고, 사용자 문구는 원문 없이 고정한다. 외래 키는 방향(삭제·연결)을 서버 구조화
+    // 오류까지 보고 가린다.
+    String message = "데이터 무결성 오류로 저장할 수 없습니다";
     if (ex.getCause() != null) {
       String causeMsg = ex.getCause().getMessage();
       if (causeMsg != null && causeMsg.contains("duplicate key")) {
-        message = "Data integrity violation: duplicate entry";
+        message = "이미 같은 값이 있어 저장할 수 없습니다";
       } else if (causeMsg != null && causeMsg.contains("foreign key")) {
-        message = "Data integrity violation: referenced record not found";
+        message =
+            describeForeignKeyViolation(causeMsg, DataExceptionTranslator.findServerError(ex));
       } else if (causeMsg != null && causeMsg.contains("check constraint")) {
-        message = "Data integrity violation: constraint check failed";
+        message = "입력값이 제약 조건을 만족하지 않습니다";
       }
-      // 위 셋 중 어디에도 분류되지 않는 원인은 일반화된 기본 문구를 그대로 사용한다.
-      // (과거에는 causeMsg를 이어붙여 스키마 정보가 사용자에게 노출됐다)
+      // 위 셋 중 어디에도 분류되지 않는 원인은 기본 문구 그대로다 — causeMsg 를 붙이면 스키마 정보가 샌다.
     }
     ErrorResponse response = buildError(HttpStatus.CONFLICT, message, null, request);
     return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
+  }
+
+  /**
+   * 외래 키 위반(23503)의 방향을 가려 문구를 고른다(WD-99). 한 문구로는 한 방향에서 반대 뜻이 된다.
+   *
+   * <ul>
+   *   <li>삭제·키 변경 쪽(다른 곳에서 참조 중): 메시지 {@code update or delete on table}, 세부 {@code is still
+   *       referenced}
+   *   <li>삽입·수정 쪽(연결 대상 없음): 메시지 {@code insert or update on table}, 세부 {@code is not present}
+   * </ul>
+   *
+   * <p>원문은 판별에만 쓰고 응답에 싣지 않는다. 판별할 수 없으면 방향 없는 중립 문구다.
+   */
+  private static String describeForeignKeyViolation(
+      String causeMsg, ServerErrorMessage serverError) {
+    StringBuilder text = new StringBuilder(causeMsg != null ? causeMsg : "");
+    if (serverError != null) {
+      text.append('\n').append(Objects.toString(serverError.getMessage(), ""));
+      text.append('\n').append(Objects.toString(serverError.getDetail(), ""));
+    }
+    String all = text.toString();
+    if (all.contains("still referenced") || all.contains("update or delete on table")) {
+      return "다른 곳에서 사용 중이라 삭제할 수 없습니다";
+    }
+    if (all.contains("is not present") || all.contains("insert or update on table")) {
+      return "연결할 항목을 찾을 수 없습니다";
+    }
+    return "연결된 항목 때문에 처리할 수 없습니다";
   }
 
   /**

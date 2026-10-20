@@ -1142,7 +1142,7 @@ class DataImportServiceTest extends IntegrationTestBase {
   }
 
   // 참고: UPSERT NULL-PK fail-fast 경로(validatePrimaryKeys의 NULL 체크)는 DatasetService가
-  // "Primary key column cannot be nullable"로 PK 컬럼의 isNullable=true 생성 자체를 막기 때문에,
+  // "기본 키 필드는 NULL 을 허용할 수 없습니다"로 PK 컬럼의 isNullable=true 생성 자체를 막기 때문에,
   // 일반 validate()가 먼저 필수값 누락으로 걸러 실질적으로 도달 불가능한 방어 코드다(기존 코드도 동일).
   // 이 제약으로 인해 공개 API로는 이 경로를 재현하는 테스트를 구성할 수 없어 별도 테스트를 추가하지 않는다.
 

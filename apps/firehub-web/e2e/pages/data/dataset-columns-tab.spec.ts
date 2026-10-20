@@ -336,22 +336,13 @@ test.describe('데이터셋 상세 — 컬럼 탭', () => {
     expect(addCapture.requests).toHaveLength(0);
   });
 
-  test('필드 추가 — 예약 컬럼명(id) 제출 시 에러 토스트가 표시된다', async ({
+  // WD-99: 예약어는 서버 왕복 전에 이름 칸에서 막고, 중복 안내보다 먼저 보인다 — 이 목업은 "id" 를 일반 필드로 갖고 있어
+  // 중복 검사가 먼저면 「이미 있는 필드명입니다」로 진짜 이유(예약어)를 가린다.
+  test('필드 추가 — 예약 컬럼명(id) 제출 시 중복이 아니라 예약어 안내가 보이고 POST 요청이 발생하지 않는다', async ({
     authenticatedPage: page,
   }) => {
     await setupMocks(page);
-
-    // POST → 400 예약어 에러 모킹 (백엔드 #5 수정 후 실제로 반환하는 응답)
-    await page.route('**/api/v1/datasets/5/columns', (route) => {
-      if (route.request().method() === 'POST') {
-        return route.fulfill({
-          status: 400,
-          contentType: 'application/json',
-          body: JSON.stringify({ message: "컬럼명 'id'은 시스템 예약어입니다. (예약어: id, import_id, created_at)" }),
-        });
-      }
-      return route.continue();
-    });
+    const addCapture = await mockApi(page, 'POST', '/api/v1/datasets/5/columns', {}, { capture: true });
 
     await page.goto('/data/datasets/5');
     await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible({ timeout: 10000 });
@@ -359,16 +350,17 @@ test.describe('데이터셋 상세 — 컬럼 탭', () => {
     await expect(page.getByRole('heading', { name: /필드 목록/ })).toBeVisible({ timeout: 10000 });
 
     await page.getByRole('button', { name: '필드 추가' }).click();
-    await expect(page.getByRole('dialog')).toBeVisible();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toBeVisible();
 
-    // 예약어 "id" 입력 후 추가
-    await page.getByLabel('필드명 *').fill('id');
-    await page.getByRole('dialog').getByRole('button', { name: '추가' }).click();
+    await dialog.getByLabel('필드명 *').fill('id');
+    await dialog.getByRole('button', { name: '추가' }).click();
 
-    // 에러 토스트가 표시된다 (handleApiError → toast.error)
-    await expect(page.getByText(/예약어/).first()).toBeVisible({ timeout: 5000 });
-    // 다이얼로그가 닫히지 않는다
-    await expect(page.getByRole('dialog')).toBeVisible();
+    await expect(dialog.getByText(/시스템 예약어라 쓸 수 없는 이름입니다/)).toBeVisible({ timeout: 5000 });
+    await expect(dialog.getByText('이미 있는 필드명입니다')).toHaveCount(0);
+    await expect(dialog).toBeVisible();
+    await page.waitForTimeout(300);
+    expect(addCapture.requests).toHaveLength(0);
   });
 
   test('필드 편집 버튼 클릭 시 ColumnDialog(edit) 가 열리고 기존 값이 채워진다', async ({

@@ -193,6 +193,19 @@ public class DatasetColumnRepository {
     dsl.deleteFrom(DATASET_COLUMN).where(COL_DATASET_ID.eq(datasetId)).execute();
   }
 
+  /**
+   * 같은 데이터셋에 이 이름의 필드가 있는지 — 필드명 중복 사전 검사(WD-99). {@code excludeColumnId} 는 비교에서 뺄 필드(이름 변경 시 자기
+   * 자신)이며 null 이면 모두 비교한다. 목록 전체를 읽지 않도록 EXISTS 한 번으로 묻는다.
+   */
+  public boolean existsByDatasetIdAndColumnName(
+      Long datasetId, String columnName, Long excludeColumnId) {
+    var condition = COL_DATASET_ID.eq(datasetId).and(COL_COLUMN_NAME.eq(columnName));
+    if (excludeColumnId != null) {
+      condition = condition.and(COL_ID.ne(excludeColumnId));
+    }
+    return dsl.fetchExists(DATASET_COLUMN, condition);
+  }
+
   public Optional<Long> findDatasetIdByColumnId(Long columnId) {
     return dsl.select(COL_DATASET_ID)
         .from(DATASET_COLUMN)

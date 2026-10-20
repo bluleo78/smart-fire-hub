@@ -144,6 +144,12 @@ public class ExceptionStubController {
           case "fk" ->
               "ERROR: insert or update on table \"dataset_column\" violates foreign key"
                   + " constraint \"fk_dataset\"";
+          // 삭제 쪽 외래 키 위반 — 다른 곳에서 참조 중인 행을 지움(WD-99)
+          case "fk-delete" ->
+              "ERROR: update or delete on table \"api_connection\" violates foreign key"
+                  + " constraint \"fk_step_conn\" on table \"pipeline_step\"";
+          // 방향을 알 수 없는 외래 키 위반 문구(WD-99)
+          case "fk-unknown" -> "ERROR: violates foreign key constraint \"fk_x\"";
           default ->
               "ERROR: new row for relation \"dataset\" violates check constraint"
                   + " \"ck_dataset_status\"";
@@ -168,6 +174,20 @@ public class ExceptionStubController {
     throw new DataIntegrityViolationException(
         "SQL [insert into data.\"secret_tbl\" (code) values (?)]; ERROR: " + kind,
         new PSQLException(new ServerErrorMessage(raw)));
+  }
+
+  /**
+   * PostgreSQL 구조화 오류(세부)를 실은 외래 키 위반 (WD-99) — 메시지에 방향 단서가 없고 세부(still referenced)로만 삭제 쪽임을 알 수 있는
+   * 경우다.
+   */
+  @GetMapping("/data-integrity-violation-pg/fk-delete-detail")
+  public void dataIntegrityViolationPgFkDeleteDetail() {
+    throw new DataIntegrityViolationException(
+        "SQL [delete from api_connection ...]; ERROR: fk",
+        new PSQLException(
+            new ServerErrorMessage(
+                "SERROR\0C23503\0Mviolates foreign key constraint \"fk_y\"\0DKey (id)=(7) is still"
+                    + " referenced from table \"pipeline_step\".\0nfk_y\0")));
   }
 
   @GetMapping("/account-locked")

@@ -306,6 +306,9 @@ export const DatasetColumnsTab = React.memo(function DatasetColumnsTab({
           datasetId={datasetId}
           open={addColumnOpen}
           onOpenChange={setAddColumnOpen}
+          // 데이터 보유 시 NULL 허용 잠금·필드명 중복 사전 차단 (WD-99)
+          hasData={hasData}
+          existingColumns={dataset.columns}
         />
         <ColumnDialog
           mode="edit"
@@ -313,7 +316,8 @@ export const DatasetColumnsTab = React.memo(function DatasetColumnsTab({
           column={selectedColumn}
           open={editColumnOpen}
           onOpenChange={setEditColumnOpen}
-          hasData={(dataset.rowCount ?? 0) > 0}
+          hasData={hasData}
+          existingColumns={dataset.columns}
         />
         <PrimaryKeysDialog
           datasetId={datasetId}

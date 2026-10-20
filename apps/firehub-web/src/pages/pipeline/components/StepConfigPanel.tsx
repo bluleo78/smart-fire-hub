@@ -31,6 +31,7 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { useDataset } from '@/hooks/queries/useDatasets';
 import { formatDate } from '@/lib/formatters';
+import { SYSTEM_COLUMN_NAMES } from '@/lib/validations/dataset';
 import type { PipelineStepResponse } from '@/types/pipeline';
 
 import type { EditorAction, EditorStep,PipelineEditorState } from '../hooks/usePipelineEditor';
@@ -467,7 +468,8 @@ export default function StepConfigPanel({
                       {'{{#N}}은 해당 스텝의 출력 데이터셋으로 치환됩니다. 명시적 데이터셋은 data."tableName" 형식을 사용하세요.'}
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      {'SELECT * 사용 시 결과에 시스템 컬럼(id, import_id, created_at, _updated_at)이 포함될 수 있습니다. 이 컬럼들은 임시 데이터셋 저장 시 자동으로 별칭(예: id_1)이 붙습니다.'}
+                      {/* 시스템 컬럼 목록은 필드명 예약어와 같은 출처(백엔드 SYSTEM_COLUMNS 와 같아야 하는 상수)를 쓴다 */}
+                      {`SELECT * 사용 시 결과에 시스템 컬럼(${SYSTEM_COLUMN_NAMES.join(', ')})이 포함될 수 있습니다. 이 컬럼들은 임시 데이터셋 저장 시 자동으로 별칭(예: id_1)이 붙습니다.`}
                     </p>
                   </div>
                 )}

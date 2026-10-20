@@ -209,7 +209,7 @@ class GlobalExceptionHandlerTest {
         .andExpect(status().isConflict())
         .andExpect(jsonPath("$.status").value(409))
         .andExpect(jsonPath("$.error").value("Conflict"))
-        .andExpect(jsonPath("$.message").value("Data integrity violation"));
+        .andExpect(jsonPath("$.message").value("데이터 무결성 오류로 저장할 수 없습니다"));
   }
 
   /**
@@ -222,32 +222,59 @@ class GlobalExceptionHandlerTest {
         .perform(get("/test/exception/data-integrity-violation-unclassified"))
         .andExpect(status().isConflict())
         .andExpect(jsonPath("$.status").value(409))
-        .andExpect(jsonPath("$.message").value("Data integrity violation"))
+        .andExpect(jsonPath("$.message").value("데이터 무결성 오류로 저장할 수 없습니다"))
         .andExpect(jsonPath("$.message", not(containsString("dataset_mapping"))))
         .andExpect(jsonPath("$.message", not(containsString("tenant_id"))))
         .andExpect(jsonPath("$.message", not(containsString("relation"))));
   }
 
-  /** 분류되는 세 원인의 사용자 메시지는 #320 수정 이후에도 그대로여야 한다. 체크 제약만 원문 concat 부분을 제거했다. */
+  /**
+   * 분류되는 세 원인은 각자 고정된 사용자 메시지를 갖는다(#320 — 원문 concat 없음). WD-99 부터 영어 원문 대신 한국어 문구다 — 화면이 이 문구를 그대로
+   * 띄운다.
+   */
   @Test
   void dataIntegrityViolation_classifiedCauses_keepStableMessagesWithoutRawDetail()
       throws Exception {
     mockMvc
         .perform(get("/test/exception/data-integrity-violation/duplicate"))
         .andExpect(status().isConflict())
-        .andExpect(jsonPath("$.message").value("Data integrity violation: duplicate entry"));
+        .andExpect(jsonPath("$.message").value("이미 같은 값이 있어 저장할 수 없습니다"));
 
     mockMvc
         .perform(get("/test/exception/data-integrity-violation/fk"))
         .andExpect(status().isConflict())
-        .andExpect(
-            jsonPath("$.message").value("Data integrity violation: referenced record not found"));
+        .andExpect(jsonPath("$.message").value("연결할 항목을 찾을 수 없습니다"));
 
     mockMvc
         .perform(get("/test/exception/data-integrity-violation/check"))
         .andExpect(status().isConflict())
-        .andExpect(jsonPath("$.message").value("Data integrity violation: constraint check failed"))
+        .andExpect(jsonPath("$.message").value("입력값이 제약 조건을 만족하지 않습니다"))
         .andExpect(jsonPath("$.message", not(containsString("ck_dataset_status"))));
+  }
+
+  /**
+   * (WD-99) 외래 키 위반은 방향에 따라 문구가 다르다 — 삭제 쪽(다른 곳에서 참조 중)과 삽입·수정 쪽(연결 대상 없음)을 한 문구로 쓰면 한쪽에서 반대 뜻이 된다.
+   * 판별할 수 없으면 중립 문구다. 어느 경우에도 테이블·제약 이름 원문은 응답에 없다.
+   */
+  @Test
+  void dataIntegrityViolation_foreignKey_messageFollowsDirection() throws Exception {
+    mockMvc
+        .perform(get("/test/exception/data-integrity-violation/fk-delete"))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.message").value("다른 곳에서 사용 중이라 삭제할 수 없습니다"))
+        .andExpect(jsonPath("$.message", not(containsString("pipeline_step"))));
+
+    // 메시지에 방향 단서가 없어도 PostgreSQL 세부(still referenced)로 삭제 쪽임을 안다.
+    mockMvc
+        .perform(get("/test/exception/data-integrity-violation-pg/fk-delete-detail"))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.message").value("다른 곳에서 사용 중이라 삭제할 수 없습니다"));
+
+    mockMvc
+        .perform(get("/test/exception/data-integrity-violation/fk-unknown"))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.message").value("연결된 항목 때문에 처리할 수 없습니다"))
+        .andExpect(jsonPath("$.message", not(containsString("fk_x"))));
   }
 
   /**
@@ -275,13 +302,13 @@ class GlobalExceptionHandlerTest {
                 .value("저장할 수 없는 값이 있어 처리하지 못했습니다: 'code' 컬럼에 글자 수 제한(최대 3자)을 넘는 값이 있습니다"));
   }
 
-  /** (WD-98) 22xxx 가 아닌 제약조건 위반(중복 키 23505)은 기존 409 문구 그대로다 — 범위 밖(WD-99). */
+  /** (WD-98) 22xxx 가 아닌 제약조건 위반(중복 키 23505)은 400 이 아니라 409 중복 문구다(WD-99 부터 한국어). */
   @Test
   void dataIntegrityViolation_nonDataError_keeps409() throws Exception {
     mockMvc
         .perform(get("/test/exception/data-integrity-violation-data-error/duplicate"))
         .andExpect(status().isConflict())
-        .andExpect(jsonPath("$.message").value("Data integrity violation: duplicate entry"));
+        .andExpect(jsonPath("$.message").value("이미 같은 값이 있어 저장할 수 없습니다"));
   }
 
   @Test

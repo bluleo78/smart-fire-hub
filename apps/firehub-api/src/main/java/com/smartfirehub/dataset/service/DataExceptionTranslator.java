@@ -67,6 +67,28 @@ public final class DataExceptionTranslator {
   }
 
   /**
+   * 원인 체인(getCause)과 각 SQLException 의 연쇄 예외(getNextException)에서 PostgreSQL 서버 구조화 오류(SQLState·제약
+   * 이름·세부)를 찾는다(없으면 null). 배치 실행은 바깥 BatchUpdateException 이 제약 이름 없이 오고 실제 오류는 연쇄 예외에 있어 둘 다 본다.
+   *
+   * <p>제약 이름으로 도메인 오류를 고르는 쓰기 지점(필드명·보안 등급 이름 중복)과 전역 무결성 처리기(외래 키 방향)가 함께 쓴다.
+   */
+  public static ServerErrorMessage findServerError(Throwable e) {
+    Throwable t = e;
+    for (int i = 0; t != null && i < MAX_DEPTH; i++, t = t.getCause()) {
+      if (!(t instanceof SQLException se)) {
+        continue;
+      }
+      SQLException cur = se;
+      for (int j = 0; cur != null && j < MAX_DEPTH; j++, cur = cur.getNextException()) {
+        if (cur instanceof PSQLException pe && pe.getServerErrorMessage() != null) {
+          return pe.getServerErrorMessage();
+        }
+      }
+    }
+    return null;
+  }
+
+  /**
    * 원인 체인(getCause)과 각 SQLException 의 연쇄 예외(getNextException)에서 SQLState 22xxx 예외를 찾는다. 서버 구조화 오류를
    * 가진 {@link PSQLException} 을 우선한다 — 바깥 BatchUpdateException 도 같은 SQLState 를 달고 오지만 컬럼·원문 메시지가 없다.
    */

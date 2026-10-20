@@ -19,7 +19,6 @@ import org.jooq.DSLContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -439,31 +438,7 @@ class DatasetNameLengthTest extends IntegrationTestBase {
   // ---------------------------------------------------------------------------------------------
   // ⑥ 사전 검증이 다른 오류 분류를 바꾸지 않는다 / 예약 이름 공간
   // ---------------------------------------------------------------------------------------------
-
-  @Test
-  void 생성시_같은_컬럼명을_두번_주면_기존처럼_중복_제약오류다() {
-    // 컬럼 사전 검증은 카탈로그 저장 전에 돌지만 중복 판정은 하지 않는다 — 중복은 dataset_column 유니크 제약(→ 409)이 맡는다.
-    Throwable thrown =
-        catchThrowable(
-            () ->
-                createDataset(
-                    "wd95_dup_cols",
-                    List.of(
-                        new DatasetColumnRequest("val", "V1", "TEXT", null, true, false, null),
-                        new DatasetColumnRequest("val", "V2", "TEXT", null, true, false, null))));
-    assertThat(thrown).isInstanceOf(DataIntegrityViolationException.class);
-  }
-
-  @Test
-  void addColumn으로_기존_컬럼명을_주면_기존처럼_중복_제약오류다() {
-    DatasetDetailResponse ds = createDataset("wd95_dup_add", ONE_COLUMN);
-    Throwable thrown =
-        catchThrowable(
-            () ->
-                datasetService.addColumn(
-                    ds.id(), new AddColumnRequest("val", "V", "TEXT", null, true, false, null)));
-    assertThat(thrown).isInstanceOf(DataIntegrityViolationException.class);
-  }
+  // (필드명 중복의 409 변환은 DatasetServiceExtTest·DatasetColumnNameRaceTest 가 본다 — WD-99)
 
   @Test
   void DOCUMENT_데이터셋도_예약_접두어_테이블명을_쓸_수_없다() {

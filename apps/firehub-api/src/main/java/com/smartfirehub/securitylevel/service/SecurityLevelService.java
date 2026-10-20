@@ -1,5 +1,6 @@
 package com.smartfirehub.securitylevel.service;
 
+import com.smartfirehub.dataset.service.DataExceptionTranslator;
 import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.tenant.TenantPipelineRole;
@@ -23,7 +24,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
-import org.postgresql.util.PSQLException;
+import org.postgresql.util.ServerErrorMessage;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
@@ -382,14 +383,10 @@ public class SecurityLevelService {
     }
   }
 
-  /** 예외 원인 사슬에서 PostgreSQL 이 보고한 위반 제약 이름을 찾는다(없으면 null). */
+  /** 예외 원인 사슬(연쇄 예외 포함)에서 PostgreSQL 이 보고한 위반 제약 이름을 찾는다(없으면 null). */
   private static String violatedConstraint(Throwable e) {
-    for (Throwable c = e; c != null; c = c.getCause()) {
-      if (c instanceof PSQLException psql && psql.getServerErrorMessage() != null) {
-        return psql.getServerErrorMessage().getConstraint();
-      }
-    }
-    return null;
+    ServerErrorMessage serverError = DataExceptionTranslator.findServerError(e);
+    return serverError != null ? serverError.getConstraint() : null;
   }
 
   private LevelPolicy require(long id) {
