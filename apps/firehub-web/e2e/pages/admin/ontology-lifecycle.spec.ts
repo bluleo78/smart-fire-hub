@@ -104,6 +104,34 @@ test.describe('온톨로지 생명주기', () => {
     await expect(page.getByRole('button', { name: '활성화' })).toBeHidden();
   });
 
+  // WD-128: 편집 진입점은 역할 이름(ADMIN)이 아니라 서버와 같은 ontology:write 권한으로 연다.
+  test('비-ADMIN이라도 ontology:write 권한이 있으면 생성·수정 모드·활성화를 쓸 수 있다 (WD-128)', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockApi(page, 'GET', '/api/v1/users/me', {
+      id: 2, username: 'kgedit', email: 'kgedit@test.com', roles: [{ id: 5, name: 'KG_EDITOR' }], enabled: true,
+    });
+    await mockApi(page, 'GET', '/api/v1/auth/me/permissions', ['dataset:read', 'ontology:write']);
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/ontology/3',
+      createOntologySchema({ domain: '소방시설 점검', entities: [], relations: [] }),
+    );
+    const transition = await mockApi(page, 'PATCH', '/api/v1/ontology/3/status', {}, { capture: true });
+    await page.goto('/knowledge-graph/model');
+
+    await expect(page.getByRole('button', { name: '새 온톨로지' })).toBeVisible();
+    await expect(page.getByRole('button', { name: '수정 모드' })).toBeVisible();
+
+    // draft 온톨로지 배너의 활성화 액션도 열리고, 누르면 상태 전이 요청이 나간다.
+    await page.getByRole('combobox', { name: '온톨로지 선택' }).click();
+    await page.getByRole('option', { name: '소방시설 점검' }).click();
+    await page.getByTestId('ontology-status-banner').getByRole('button', { name: '활성화' }).click();
+    await expect.poll(() => transition.requests.length).toBe(1);
+    expect(transition.requests[0].payload).toEqual({ status: 'active' });
+  });
+
   test('관리 다이얼로그가 카운트와 수정일을 셀 단위로 보여준다', async ({ authenticatedPage: page }) => {
     await page.goto('/knowledge-graph/model');
     await page.getByRole('combobox', { name: '온톨로지 선택' }).click();

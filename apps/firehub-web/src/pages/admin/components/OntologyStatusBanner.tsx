@@ -2,8 +2,7 @@ import { AlertTriangle, Archive } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { InlineBanner } from '@/components/ui/inline-banner';
-import { useOntologyStatusTransition } from '@/hooks/queries/useOntology';
-import { useAuth } from '@/hooks/useAuth';
+import { useCanWriteOntology, useOntologyStatusTransition } from '@/hooks/queries/useOntology';
 import type { OntologySummary } from '@/types/ontology';
 
 interface OntologyStatusBannerProps {
@@ -15,10 +14,10 @@ interface OntologyStatusBannerProps {
  * 툴바에 버튼을 얹는 대신 배너로 둔 이유: draft·archived는 버튼이 아니라 설명이 필요한 상태이고,
  * 툴바에 조건부 버튼을 얹으면 선택에 따라 컨트롤 개수가 흔들려 레이아웃이 재배치된다.
  * 배너의 설명 문구는 비-ADMIN에게도 유용하므로("왜 데이터셋에 연결할 수 없는지") 그대로 노출하되,
- * 상태 전이 액션(활성화/복귀)은 ADMIN 전용 — 스펙상 비-ADMIN에게 배너 액션을 노출하지 않는다.
+ * 상태 전이 액션(활성화/복귀)은 편집 권한(ontology:write) 보유자 전용 — 서버와 같은 기준이다(WD-128).
  */
 export default function OntologyStatusBanner({ ontology }: OntologyStatusBannerProps) {
-  const { isAdmin } = useAuth();
+  const canWrite = useCanWriteOntology();
   const { transition, isPending } = useOntologyStatusTransition();
 
   // active는 정상 상태 — 배너를 띄우지 않는다.
@@ -44,7 +43,7 @@ export default function OntologyStatusBanner({ ontology }: OntologyStatusBannerP
       icon={isDraft ? <AlertTriangle /> : <Archive />}
       className="mb-4"
       actions={
-        isAdmin ? (
+        canWrite ? (
           <Button size="sm" onClick={run} disabled={isPending}>
             {actionLabel}
           </Button>
