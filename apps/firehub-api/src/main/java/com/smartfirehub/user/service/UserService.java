@@ -193,7 +193,9 @@ public class UserService {
 
     if (email != null && !email.equals(user.email())) {
       if (userRepository.existsByEmailExcludingUser(email, userId)) {
-        throw new EmailAlreadyExistsException("Email already exists: " + email);
+        // 웹은 서버 message 를 그대로 보여 주므로 사용자가 읽을 한국어 문구로 던진다 (WD-120) — 가입·멤버 추가의 「이미 사용 중인 이메일입니다.」에
+        // 다음 행동을 덧붙인다.
+        throw new EmailAlreadyExistsException("이미 사용 중인 이메일입니다. 다른 이메일을 입력하세요.");
       }
     }
 

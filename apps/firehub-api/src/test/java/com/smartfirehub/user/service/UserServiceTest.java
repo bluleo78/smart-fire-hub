@@ -157,7 +157,9 @@ class UserServiceTest extends IntegrationTestBase {
         .execute();
 
     assertThatThrownBy(() -> userService.updateProfile(testUserId, "New Name", "taken@example.com"))
-        .isInstanceOf(EmailAlreadyExistsException.class);
+        .isInstanceOf(EmailAlreadyExistsException.class)
+        // 화면에 그대로 보이는 문구라 영어 원문·남의 이메일 노출 없이 한국어 안내여야 한다 (WD-120)
+        .hasMessage("이미 사용 중인 이메일입니다. 다른 이메일을 입력하세요.");
   }
 
   @Test
