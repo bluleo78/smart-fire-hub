@@ -39,11 +39,12 @@ public class NotificationService {
 
     boolean failed = "FAILED".equals(event.status());
     String severity = failed ? "WARNING" : "INFO";
-    String title = failed ? "Pipeline Failed" : "Pipeline Completed";
+    // 사용자 화면에 토스트·알림으로 그대로 보이는 문구라 한국어로 쓴다(WD-97)
+    String title = failed ? "파이프라인 실행 실패" : "파이프라인 실행 완료";
     String description =
         failed
-            ? "Pipeline execution #" + event.executionId() + " failed."
-            : "Pipeline execution #" + event.executionId() + " completed successfully.";
+            ? "파이프라인 실행(#" + event.executionId() + ")이 실패했습니다."
+            : "파이프라인 실행(#" + event.executionId() + ")이 완료되었습니다.";
 
     NotificationEvent notification =
         new NotificationEvent(
@@ -64,11 +65,12 @@ public class NotificationService {
       Long userId, Long datasetId, String datasetName, boolean success) {
     String severity = success ? "INFO" : "WARNING";
     String eventType = success ? "IMPORT_COMPLETED" : "IMPORT_FAILED";
-    String title = success ? "Import Completed" : "Import Failed";
+    // 실패는 WARNING 이라 우하단 토스트로 뜬다 — 같은 화면의 임포트 다이얼로그(「임포트 실패」)와 말을 맞춘다(WD-97)
+    String title = success ? "임포트 완료" : "임포트 실패";
     String description =
         success
-            ? "Data import into dataset '" + datasetName + "' completed successfully."
-            : "Data import into dataset '" + datasetName + "' failed.";
+            ? "'" + datasetName + "' 데이터셋 임포트가 완료되었습니다."
+            : "'" + datasetName + "' 데이터셋 임포트에 실패했습니다.";
 
     NotificationEvent notification =
         new NotificationEvent(
@@ -120,7 +122,8 @@ public class NotificationService {
             UUID.randomUUID().toString(),
             eventType,
             isDown ? "WARNING" : "INFO",
-            isDown ? "API Connection Down" : "API Connection Up",
+            // 끊김은 WARNING 이라 토스트로 뜬다 — 본문(ApiConnectionNotifier)처럼 제목도 한국어로(WD-97)
+            isDown ? "API 연결 끊김" : "API 연결 복구",
             message,
             "API_CONNECTION",
             metadata != null ? (Long) metadata.getOrDefault("apiConnectionId", null) : null,
@@ -161,8 +164,8 @@ public class NotificationService {
             UUID.randomUUID().toString(),
             "DATASET_CHANGED",
             "INFO",
-            "Dataset Changed",
-            "Dataset '" + datasetName + "' has been updated.",
+            "데이터셋 변경",
+            "'" + datasetName + "' 데이터셋이 변경되었습니다.",
             "DATASET",
             datasetId,
             Map.of("datasetName", datasetName),

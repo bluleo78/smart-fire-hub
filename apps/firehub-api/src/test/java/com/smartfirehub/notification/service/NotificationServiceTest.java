@@ -78,7 +78,7 @@ class NotificationServiceTest extends IntegrationTestBase {
     NotificationEvent notification = captor.getValue();
     assertThat(notification.eventType()).isEqualTo("PIPELINE_FAILED");
     assertThat(notification.severity()).isEqualTo("WARNING");
-    assertThat(notification.title()).isEqualTo("Pipeline Failed");
+    assertThat(notification.title()).isEqualTo("파이프라인 실행 실패");
   }
 
   /**
@@ -114,7 +114,7 @@ class NotificationServiceTest extends IntegrationTestBase {
     assertThat(notification.entityType()).isEqualTo("DATASET");
     assertThat(notification.entityId()).isEqualTo(100L);
     assertThat(notification.metadata()).containsEntry("datasetName", "Sales Data");
-    assertThat(notification.title()).isEqualTo("Import Completed");
+    assertThat(notification.title()).isEqualTo("임포트 완료");
   }
 
   /** 정상: 임포트 실패 시 registry.broadcast()가 IMPORT_FAILED 이벤트 + WARNING severity로 호출되어야 한다. */
@@ -128,7 +128,7 @@ class NotificationServiceTest extends IntegrationTestBase {
     NotificationEvent notification = captor.getValue();
     assertThat(notification.eventType()).isEqualTo("IMPORT_FAILED");
     assertThat(notification.severity()).isEqualTo("WARNING");
-    assertThat(notification.title()).isEqualTo("Import Failed");
+    assertThat(notification.title()).isEqualTo("임포트 실패");
     assertThat(notification.description()).contains("Bad Data");
   }
 
@@ -151,7 +151,7 @@ class NotificationServiceTest extends IntegrationTestBase {
     assertThat(notification.entityType()).isEqualTo("DATASET");
     assertThat(notification.entityId()).isEqualTo(50L);
     assertThat(notification.metadata()).containsEntry("datasetName", "Geo Dataset");
-    assertThat(notification.title()).isEqualTo("Dataset Changed");
+    assertThat(notification.title()).isEqualTo("데이터셋 변경");
   }
 
   /** 정상: 각 NotificationEvent는 고유한 UUID id를 가져야 한다. 두 번 호출 시 서로 다른 id가 생성되어야 한다. */

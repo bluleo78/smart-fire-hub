@@ -34,7 +34,7 @@ class NotificationServiceUnitTest {
 
   /**
    * 정상: COMPLETED 상태 이벤트 수신 시 registry.broadcast()가 올바른 인자로 호출되어야 한다. severity=INFO,
-   * eventType=PIPELINE_COMPLETED, title="Pipeline Completed"
+   * eventType=PIPELINE_COMPLETED, title="파이프라인 실행 완료"
    */
   @Test
   void onPipelineCompleted_success_broadcastsWithCorrectEvent() {
@@ -48,7 +48,9 @@ class NotificationServiceUnitTest {
     NotificationEvent notification = captor.getValue();
     assertThat(notification.eventType()).isEqualTo("PIPELINE_COMPLETED");
     assertThat(notification.severity()).isEqualTo("INFO");
-    assertThat(notification.title()).isEqualTo("Pipeline Completed");
+    assertThat(notification.title()).isEqualTo("파이프라인 실행 완료");
+    // 토스트·알림에 그대로 보이는 문구라 한국어여야 한다(WD-97)
+    assertThat(notification.description()).isEqualTo("파이프라인 실행(#100)이 완료되었습니다.");
     assertThat(notification.entityType()).isEqualTo("PIPELINE");
     assertThat(notification.entityId()).isEqualTo(10L);
     assertThat(notification.metadata()).containsEntry("executionId", 100L);
@@ -74,7 +76,9 @@ class NotificationServiceUnitTest {
     NotificationEvent notification = captor.getValue();
     assertThat(notification.eventType()).isEqualTo("PIPELINE_FAILED");
     assertThat(notification.severity()).isEqualTo("WARNING");
-    assertThat(notification.title()).isEqualTo("Pipeline Failed");
+    assertThat(notification.title()).isEqualTo("파이프라인 실행 실패");
+    // 실패는 WARNING 이라 우하단 토스트로 뜬다 — 한국어여야 한다(WD-97)
+    assertThat(notification.description()).isEqualTo("파이프라인 실행(#200)이 실패했습니다.");
   }
 
   // =========================================================================
@@ -106,11 +110,11 @@ class NotificationServiceUnitTest {
     NotificationEvent notification = captor.getValue();
     assertThat(notification.eventType()).isEqualTo("IMPORT_COMPLETED");
     assertThat(notification.severity()).isEqualTo("INFO");
-    assertThat(notification.title()).isEqualTo("Import Completed");
+    assertThat(notification.title()).isEqualTo("임포트 완료");
     assertThat(notification.entityType()).isEqualTo("DATASET");
     assertThat(notification.entityId()).isEqualTo(100L);
     assertThat(notification.metadata()).containsEntry("datasetName", "Sales Data");
-    assertThat(notification.description()).contains("Sales Data");
+    assertThat(notification.description()).isEqualTo("'Sales Data' 데이터셋 임포트가 완료되었습니다.");
   }
 
   // =========================================================================
@@ -128,8 +132,9 @@ class NotificationServiceUnitTest {
     NotificationEvent notification = captor.getValue();
     assertThat(notification.eventType()).isEqualTo("IMPORT_FAILED");
     assertThat(notification.severity()).isEqualTo("WARNING");
-    assertThat(notification.title()).isEqualTo("Import Failed");
-    assertThat(notification.description()).contains("Bad Data");
+    assertThat(notification.title()).isEqualTo("임포트 실패");
+    // 실패는 WARNING 이라 우하단 토스트로 뜬다 — 영어 원문이 섞이지 않아야 한다(WD-97)
+    assertThat(notification.description()).isEqualTo("'Bad Data' 데이터셋 임포트에 실패했습니다.");
   }
 
   // =========================================================================
@@ -159,7 +164,8 @@ class NotificationServiceUnitTest {
     assertThat(notification.entityType()).isEqualTo("DATASET");
     assertThat(notification.entityId()).isEqualTo(50L);
     assertThat(notification.metadata()).containsEntry("datasetName", "Geo Dataset");
-    assertThat(notification.title()).isEqualTo("Dataset Changed");
+    assertThat(notification.title()).isEqualTo("데이터셋 변경");
+    assertThat(notification.description()).isEqualTo("'Geo Dataset' 데이터셋이 변경되었습니다.");
   }
 
   /** 테넌트 컨텍스트가 없으면 아무에게도 보내지 않는다(fail-closed). */
@@ -184,5 +190,32 @@ class NotificationServiceUnitTest {
     verify(registry, times(2)).broadcast(eq(1L), captor.capture());
 
     assertThat(captor.getAllValues().get(0).id()).isNotEqualTo(captor.getAllValues().get(1).id());
+  }
+
+  // =========================================================================
+  // broadcastApiConnectionStatus
+  // =========================================================================
+
+  /** API 연결 끊김은 WARNING 이라 토스트로 뜬다 — 제목도 본문처럼 한국어여야 한다(WD-97). */
+  @Test
+  void broadcastApiConnectionStatus_titlesAreKorean() {
+    com.smartfirehub.global.tenant.TenantContext.set(1L);
+    try {
+      notificationService.broadcastApiConnectionStatus(
+          "API_CONNECTION_DOWN", "API 연결 'a'이(가) 응답하지 않습니다", java.util.Map.of());
+      notificationService.broadcastApiConnectionStatus(
+          "API_CONNECTION_UP", "API 연결 'a'이(가) 복구되었습니다", java.util.Map.of());
+    } finally {
+      com.smartfirehub.global.tenant.TenantContext.clear();
+    }
+
+    ArgumentCaptor<NotificationEvent> captor = forClass(NotificationEvent.class);
+    verify(registry, org.mockito.Mockito.times(2))
+        .broadcastToTenant(eq(1L), captor.capture(), any());
+    assertThat(captor.getAllValues())
+        .extracting(NotificationEvent::severity, NotificationEvent::title)
+        .containsExactly(
+            org.assertj.core.groups.Tuple.tuple("WARNING", "API 연결 끊김"),
+            org.assertj.core.groups.Tuple.tuple("INFO", "API 연결 복구"));
   }
 }
