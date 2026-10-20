@@ -135,9 +135,23 @@ export default function RoleDetailPage() {
         name: data.name,
         description: data.description || undefined,
       });
-      const { data: updatedRole } = await rolesApi.getRoleById(role.id);
-      setRole(updatedRole);
+      // 저장한 값을 폼의 새 기준값으로 삼는다 (WD-119) — 안 하면 isDirty 가 true 로 남아 저장 직후 이동에도
+      // 「저장하지 않은 변경사항」 경고가 뜬다. keepValues: 저장 요청 중에 더 입력한 내용은 지우지 않는다 —
+      // reset 은 isDirty 를 false 로 두므로, 저장값과 달라진 칸은 setValue 로 다시 dirty 표시한다.
+      const saved = { name: data.name, description: data.description ?? '' };
+      form.reset(saved, { keepValues: true });
+      for (const key of ['name', 'description'] as const) {
+        const current = form.getValues(key) ?? '';
+        if (current !== saved[key]) form.setValue(key, current, { shouldDirty: true });
+      }
       toast.success('역할 정보가 업데이트되었습니다.');
+      try {
+        const { data: updatedRole } = await rolesApi.getRoleById(role.id);
+        setRole(updatedRole);
+      } catch {
+        // 저장은 이미 됐다 — 재조회만 실패했으면 실패 안내 대신 화면 값을 저장한 값으로 맞춘다.
+        setRole(prev => (prev ? { ...prev, name: data.name, description: data.description || null } : prev));
+      }
     } catch (error) {
       if (axios.isAxiosError(error) && error.response?.data) {
         const errData = error.response.data as ErrorResponse;

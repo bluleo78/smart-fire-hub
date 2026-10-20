@@ -12,6 +12,15 @@ import { expect, test } from '../../fixtures/auth.fixture';
  * - 역할 목록, 생성 다이얼로그, 시스템 역할 보호, 커스텀 역할 삭제를 검증한다.
  * - AdminRoute 통과를 위해 ADMIN 역할로 users/me를 오버라이드한다.
  */
+/** 역할 정보 카드의 「저장」 — 권한 저장·열람 등급 저장 버튼과 섞이지 않게 카드 안으로 좁힌다 (WD-119). */
+async function saveRoleInfo(page: import('@playwright/test').Page) {
+  await page
+    .locator('[data-slot="card"]')
+    .filter({ hasText: '역할 정보' })
+    .getByRole('button', { name: '저장', exact: true })
+    .click();
+}
+
 test.describe('역할 관리 페이지', () => {
   test.beforeEach(async ({ authenticatedPage: page }) => {
     // AdminRoute 통과를 위해 ADMIN 역할로 오버라이드
@@ -532,6 +541,65 @@ test.describe('역할 관리 페이지', () => {
       await page.getByRole('button', { name: '목록으로 돌아가기' }).click();
       await expect(page.getByRole('alertdialog')).not.toBeVisible();
       await expect(page).toHaveURL(/\/admin\/roles$/);
+    });
+
+    /**
+     * WD-119 회귀 방지 — 이름·설명 저장 성공 뒤 폼 기준값을 바꾸지 않아 isDirty 가 남고,
+     * 「역할 정보가 업데이트되었습니다」 직후 이동해도 미저장 경고가 떴다.
+     */
+    test('역할 정보를 저장한 직후 「목록으로 돌아가기」는 경고 없이 이동한다 (WD-119)', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupRoleDetailMocks(page, 3, false);
+      const update = await mockApi(page, 'PUT', '/api/v1/roles/3', {}, { capture: true });
+      await page.goto('/admin/roles/3');
+
+      await page.getByLabel('설명').fill('저장한 뒤 경고가 없어야 하는 설명');
+      await saveRoleInfo(page);
+      expect((await update.waitForRequest()).payload).toMatchObject({
+        description: '저장한 뒤 경고가 없어야 하는 설명',
+      });
+      await expect(page.getByText('역할 정보가 업데이트되었습니다.')).toBeVisible();
+      // 저장한 값이 입력란에 그대로 남는다(기준값만 바뀜)
+      await expect(page.getByLabel('설명')).toHaveValue('저장한 뒤 경고가 없어야 하는 설명');
+
+      await setupRoleListMocks(page);
+      await page.getByRole('button', { name: '목록으로 돌아가기' }).click();
+      await expect(page).toHaveURL(/\/admin\/roles$/);
+      await expect(page.getByRole('alertdialog')).toHaveCount(0);
+    });
+
+    test('역할 정보 저장이 실패하면 미저장 상태가 남아 경고가 뜬다 (WD-119)', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupRoleDetailMocks(page, 3, false);
+      await mockApi(page, 'PUT', '/api/v1/roles/3', { message: '저장 실패' }, { status: 400 });
+      await page.goto('/admin/roles/3');
+
+      await page.getByLabel('설명').fill('실패한 저장');
+      await saveRoleInfo(page);
+      await expect(page.getByText('저장 실패')).toBeVisible();
+
+      await page.getByRole('button', { name: '목록으로 돌아가기' }).click();
+      await expect(page.getByRole('alertdialog')).toBeVisible();
+      await expect(page).toHaveURL(/\/admin\/roles\/3$/);
+    });
+
+    test('역할 정보를 저장한 뒤 다시 고치면 경고가 다시 뜬다 (WD-119)', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupRoleDetailMocks(page, 3, false);
+      await mockApi(page, 'PUT', '/api/v1/roles/3', {});
+      await page.goto('/admin/roles/3');
+
+      await page.getByLabel('설명').fill('첫 저장');
+      await saveRoleInfo(page);
+      await expect(page.getByText('역할 정보가 업데이트되었습니다.')).toBeVisible();
+
+      await page.getByLabel('설명').fill('두 번째 미저장 수정');
+      await page.getByRole('button', { name: '목록으로 돌아가기' }).click();
+      await expect(page.getByRole('alertdialog')).toBeVisible();
+      await expect(page).toHaveURL(/\/admin\/roles\/3$/);
     });
 
     test('dirty 상태가 아니면 목록으로 돌아가기 클릭 시 다이얼로그 없이 즉시 이동한다', async ({
