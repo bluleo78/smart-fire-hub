@@ -330,6 +330,11 @@ test.describe('문서 데이터셋 상세', () => {
    * 미바인딩 상태면 GraphRAG 적재가 거부되므로, 문서 업로드 전에 먼저 연결하도록 유도해야 한다.
    */
   test.describe('온톨로지 연결', () => {
+    // 연결 카드는 dataset:write 가 있을 때만 선택·연결 버튼을 보인다(WD-131).
+    test.beforeEach(async ({ authenticatedPage: page }) => {
+      await mockApi(page, 'GET', '/api/v1/auth/me/permissions', ['dataset:read', 'dataset:write']);
+    });
+
     test('미바인딩 상태면 온톨로지 연결 카드가 보이고, 연결하면 사라지고 연결된 온톨로지가 표시된다', async ({
       authenticatedPage: page,
     }) => {

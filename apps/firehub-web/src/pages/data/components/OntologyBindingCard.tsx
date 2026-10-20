@@ -5,6 +5,7 @@ import { Button } from '../../../components/ui/button';
 import { Label } from '../../../components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
 import { useBindOntology, useOntologyList } from '../../../hooks/queries/useMapping';
+import { useMyPermissions } from '../../../hooks/queries/useMyPermissions';
 import { handleApiError } from '../../../lib/api-error';
 
 interface OntologyBindingCardProps {
@@ -16,6 +17,10 @@ interface OntologyBindingCardProps {
  * 바인딩이 없으면 백엔드가 매핑 저장·활성화를 거부하므로, 매핑 편집의 선행 단계다.
  */
 export function OntologyBindingCard({ datasetId }: OntologyBindingCardProps) {
+  // 연결은 서버가 dataset:write 로 막는다 — 권한이 없으면 선택·연결 대신 안내만 보인다(WD-131).
+  // 매핑 탭·문서 탭이 함께 쓰는 카드라 권한 판정을 카드 안에 둔다.
+  const { permissions, isLoading: isPermissionsLoading } = useMyPermissions();
+  const canEdit = isPermissionsLoading || permissions.has('dataset:write');
   const { data: ontologies, isLoading } = useOntologyList();
   const bindOntology = useBindOntology(datasetId);
   // Select는 문자열 값만 다루므로 ID를 문자열로 보관하고 전송 직전에 숫자로 바꾼다.
@@ -40,6 +45,12 @@ export function OntologyBindingCard({ datasetId }: OntologyBindingCardProps) {
         </p>
       </div>
 
+      {!canEdit ? (
+        <p className="text-sm text-muted-foreground" data-testid="ontology-binding-readonly">
+          온톨로지가 아직 연결되지 않았습니다. 연결하려면 데이터셋 쓰기 권한이 필요합니다. 관리자에게 권한을 요청하세요.
+        </p>
+      ) : (
+        <>
       <div className="space-y-2 max-w-sm">
         <Label htmlFor="ontology-select">온톨로지 *</Label>
         <Select value={selected} onValueChange={setSelected}>
@@ -59,6 +70,8 @@ export function OntologyBindingCard({ datasetId }: OntologyBindingCardProps) {
       <Button onClick={handleBind} disabled={!selected || isLoading || bindOntology.isPending}>
         {bindOntology.isPending ? '연결 중...' : '연결'}
       </Button>
+        </>
+      )}
     </div>
   );
 }

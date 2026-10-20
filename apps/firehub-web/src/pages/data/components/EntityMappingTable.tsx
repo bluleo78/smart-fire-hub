@@ -6,9 +6,13 @@ import type { DraftEntity } from '../../../lib/mapping-spec';
 
 interface EntityMappingTableProps {
   entities: DraftEntity[];
-  onAdd: () => void;
-  onEdit: (entity: DraftEntity) => void;
-  onDelete: (entity: DraftEntity) => void;
+  /**
+   * 편집 콜백. 셋 다 없으면 조회 전용 — 추가 버튼과 액션 열을 그리지 않는다(WD-131: dataset:write 가 없으면
+   * 누르면 늘 403 인 편집 버튼을 보여 주지 않는다).
+   */
+  onAdd?: () => void;
+  onEdit?: (entity: DraftEntity) => void;
+  onDelete?: (entity: DraftEntity) => void;
   /** 삭제 확인 다이얼로그가 닫힐 때 사라진 행 대신 포커스를 받을 지점(#328). */
   addButtonRef?: RefObject<HTMLButtonElement | null>;
 }
@@ -21,13 +25,16 @@ export function EntityMappingTable({
   onDelete,
   addButtonRef,
 }: EntityMappingTableProps) {
+  const editable = onAdd != null && onEdit != null && onDelete != null;
   return (
     <div className="space-y-2" data-testid="entity-mapping-table">
       <div className="flex items-center justify-between">
         <h3 className="text-base leading-6 font-semibold">엔티티 매핑 ({entities.length}개)</h3>
-        <Button ref={addButtonRef} variant="outline" size="sm" onClick={onAdd}>
-          엔티티 매핑 추가
-        </Button>
+        {editable && (
+          <Button ref={addButtonRef} variant="outline" size="sm" onClick={onAdd}>
+            엔티티 매핑 추가
+          </Button>
+        )}
       </div>
 
       <div className="rounded-md border">
@@ -37,13 +44,13 @@ export function EntityMappingTable({
               <TableHead>엔티티 타입</TableHead>
               <TableHead>이름 컬럼</TableHead>
               <TableHead>속성</TableHead>
-              <TableHead className="w-32">액션</TableHead>
+              {editable && <TableHead className="w-32">액션</TableHead>}
             </TableRow>
           </TableHeader>
           <TableBody>
             {entities.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={4} className="text-center text-sm text-muted-foreground">
+                <TableCell colSpan={editable ? 4 : 3} className="text-center text-sm text-muted-foreground">
                   아직 엔티티 매핑이 없습니다.
                 </TableCell>
               </TableRow>
@@ -57,16 +64,18 @@ export function EntityMappingTable({
                       ? '-'
                       : e.properties.map((p) => `${p.column} → ${p.propertyName}`).join(', ')}
                   </TableCell>
-                  <TableCell>
-                    <div className="flex gap-1">
-                      <Button variant="ghost" size="sm" onClick={() => onEdit(e)}>
-                        수정
-                      </Button>
-                      <Button variant="ghost" size="sm" onClick={() => onDelete(e)}>
-                        삭제
-                      </Button>
-                    </div>
-                  </TableCell>
+                  {editable && (
+                    <TableCell>
+                      <div className="flex gap-1">
+                        <Button variant="ghost" size="sm" onClick={() => onEdit(e)}>
+                          수정
+                        </Button>
+                        <Button variant="ghost" size="sm" onClick={() => onDelete(e)}>
+                          삭제
+                        </Button>
+                      </div>
+                    </TableCell>
+                  )}
                 </TableRow>
               ))
             )}

@@ -21,6 +21,7 @@ import {
   useOntologyList,
   useSaveMapping,
 } from '../../../hooks/queries/useMapping';
+import { useMyPermissions } from '../../../hooks/queries/useMyPermissions';
 import { handleApiError } from '../../../lib/api-error';
 import type { DraftEntity, DraftRelation, MappingDraft } from '../../../lib/mapping-spec';
 import { countRelationsReferencing, emptyDraft, entityLabel, nextDraftId, removeEntity, toDraft, toSpec } from '../../../lib/mapping-spec';
@@ -61,6 +62,10 @@ export function DatasetMappingTab({ dataset, datasetId, onDirtyChange }: Dataset
   const { data: ontologiesAll } = useOntologyList('all');
   const ontologySummary = ontologiesAll?.find((o) => o.id === ontologyId);
   const { data: mapping, isLoading: mappingLoading } = useMapping(datasetId);
+  // 저장·활성화·연결은 서버가 dataset:write 로 막는다 — 권한이 없으면 편집 진입점을 모두 숨기고 조회 전용으로 보인다
+  // (WD-131). 최종 판정은 서버이고 여기는 노출 결정용이다.
+  const { permissions, isLoading: isPermissionsLoading } = useMyPermissions();
+  const canEdit = permissions.has('dataset:write');
   const saveMapping = useSaveMapping(datasetId);
   const activateMapping = useActivateMapping(datasetId);
 
@@ -120,7 +125,7 @@ export function DatasetMappingTab({ dataset, datasetId, onDirtyChange }: Dataset
   // 서버 매핑이 로드되거나 저장으로 갱신되면 로컬 draft를 서버 기준으로 되돌린다.
   useEffect(() => {
     if (mappingLoading) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- 서버 응답(mapping)으로 로컬 draft를 시드/재동기화
+     
     setDraft(mapping ? toDraft(mapping.spec) : emptyDraft());
     setDirty(false);
   }, [mapping, mappingLoading]);
@@ -254,6 +259,8 @@ export function DatasetMappingTab({ dataset, datasetId, onDirtyChange }: Dataset
               저장되지 않은 변경
             </span>
           )}
+          {canEdit && (
+          <>
           <Button
             onClick={handleSave}
             // 미변경 상태의 재저장은 status를 draft로 되돌리는 부작용만 남기므로 막는다.
@@ -272,6 +279,8 @@ export function DatasetMappingTab({ dataset, datasetId, onDirtyChange }: Dataset
           >
             {activateMapping.isPending ? '활성화 중...' : '활성화'}
           </Button>
+          </>
+          )}
         </div>
       </div>
 
@@ -281,6 +290,13 @@ export function DatasetMappingTab({ dataset, datasetId, onDirtyChange }: Dataset
         active면 배너 자체가 null을 반환하므로 평소엔 아무것도 렌더링되지 않는다.
       */}
       {ontologySummary && <OntologyStatusBanner ontology={ontologySummary} />}
+
+      {/* 조회만 가능한 사용자에게 편집 버튼이 없는 이유를 알린다 — 권한을 불러오는 중에는 깜빡이지 않게 숨긴다. */}
+      {!isPermissionsLoading && !canEdit && (
+        <p className="text-sm text-muted-foreground" data-testid="mapping-readonly-notice">
+          매핑을 편집하려면 데이터셋 쓰기 권한이 필요합니다. 관리자에게 권한을 요청하세요.
+        </p>
+      )}
 
       <p className="text-sm text-muted-foreground" data-testid="mapping-summary">
         엔티티 {draft.entities.length}개 · 관계 {draft.relations.length}개
@@ -293,15 +309,17 @@ export function DatasetMappingTab({ dataset, datasetId, onDirtyChange }: Dataset
       */}
       {draft.entities.length === 0 && draft.relations.length === 0 && (
         <p className="text-sm text-muted-foreground" data-testid="mapping-empty">
-          아직 매핑이 없습니다. 엔티티 매핑을 추가해 직접 만들거나, AI 채팅으로 자동 추론을 요청할 수 있습니다.
+          {canEdit
+            ? '아직 매핑이 없습니다. 엔티티 매핑을 추가해 직접 만들거나, AI 채팅으로 자동 추론을 요청할 수 있습니다.'
+            : '아직 매핑이 없습니다.'}
         </p>
       )}
 
       <EntityMappingTable
         entities={draft.entities}
-        onAdd={handleEntityAdd}
-        onEdit={handleEntityEdit}
-        onDelete={setDeletingEntity}
+        onAdd={canEdit ? handleEntityAdd : undefined}
+        onEdit={canEdit ? handleEntityEdit : undefined}
+        onDelete={canEdit ? setDeletingEntity : undefined}
         addButtonRef={entityAddRef}
       />
 
@@ -323,9 +341,9 @@ export function DatasetMappingTab({ dataset, datasetId, onDirtyChange }: Dataset
       <RelationMappingTable
         relations={draft.relations}
         entities={draft.entities}
-        onAdd={handleRelationAdd}
-        onEdit={handleRelationEdit}
-        onDelete={setDeletingRelation}
+        onAdd={canEdit ? handleRelationAdd : undefined}
+        onEdit={canEdit ? handleRelationEdit : undefined}
+        onDelete={canEdit ? setDeletingRelation : undefined}
         addButtonRef={relationAddRef}
       />
 

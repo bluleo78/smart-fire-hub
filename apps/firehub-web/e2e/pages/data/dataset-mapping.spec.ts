@@ -20,9 +20,13 @@ import { expect, test } from '../../fixtures/auth.fixture';
 
 const MAPPING_URL = `/data/datasets/${MAPPING_DATASET_ID}?tab=mapping`;
 
-/** 매핑 탭 렌더에 필요한 공통 목. bound=false면 미바인딩 상태를 만든다. */
-async function setupMappingMocks(page: Page, opts: { bound?: boolean } = {}) {
-  const { bound = true } = opts;
+/**
+ * 매핑 탭 렌더에 필요한 공통 목. bound=false면 미바인딩 상태를 만든다.
+ * canWrite=false면 조회 전용 사용자(dataset:read 만) — 편집 진입점이 숨는다(WD-131).
+ */
+async function setupMappingMocks(page: Page, opts: { bound?: boolean; canWrite?: boolean } = {}) {
+  const { bound = true, canWrite = true } = opts;
+  await mockApi(page, 'GET', '/api/v1/auth/me/permissions', canWrite ? ['dataset:read', 'dataset:write'] : ['dataset:read']);
   await mockApi(page, 'GET', '/api/v1/categories', []);
   await mockApi(page, 'GET', `/api/v1/datasets/${MAPPING_DATASET_ID}`, createMappingDataset());
   await mockApi(page, 'GET', `/api/v1/datasets/${MAPPING_DATASET_ID}/ontology`, createBinding(bound ? MAPPING_ONTOLOGY_ID : null));
@@ -31,6 +35,58 @@ async function setupMappingMocks(page: Page, opts: { bound?: boolean } = {}) {
 }
 
 test.describe('데이터셋 매핑 탭', () => {
+  // WD-131: 저장·활성화·연결은 서버가 dataset:write 로 막는다 — 권한이 없으면 누르면 늘 403 인 편집 진입점을 숨긴다.
+  test('dataset:write 가 없으면 매핑을 조회만 할 수 있고 편집 버튼이 없다 (WD-131)', async ({ authenticatedPage: page }) => {
+    await setupMappingMocks(page, { canWrite: false });
+    await mockApi(page, 'GET', `/api/v1/datasets/${MAPPING_DATASET_ID}/mapping`, createMappingResponse({ status: 'active' }));
+    const writes: string[] = [];
+    await page.route(
+      (url) => url.pathname.startsWith(`/api/v1/datasets/${MAPPING_DATASET_ID}/mapping`),
+      (route) => {
+        if (route.request().method() !== 'GET') writes.push(route.request().method());
+        return route.fallback();
+      },
+    );
+    await page.goto(MAPPING_URL);
+
+    const tab = page.getByTestId('mapping-tab');
+    // 매핑 내용은 그대로 보인다(조회는 가능)
+    await expect(page.getByTestId('mapping-status')).toHaveText('활성');
+    await expect(tab.getByTestId('entity-mapping-table').getByRole('row')).not.toHaveCount(1);
+    await expect(page.getByTestId('mapping-readonly-notice')).toHaveText(
+      '매핑을 편집하려면 데이터셋 쓰기 권한이 필요합니다. 관리자에게 권한을 요청하세요.',
+    );
+    // 편집 진입점이 하나도 없다
+    await expect(page.getByTestId('mapping-save-button')).toHaveCount(0);
+    await expect(page.getByTestId('mapping-activate-button')).toHaveCount(0);
+    await expect(tab.getByRole('button', { name: /엔티티 매핑 추가|관계 매핑 추가|^수정$|^삭제$/ })).toHaveCount(0);
+    await expect(tab.getByRole('columnheader', { name: '액션' })).toHaveCount(0);
+    expect(writes).toHaveLength(0);
+  });
+
+  test('dataset:write 가 없으면 미바인딩 데이터셋에 연결 대신 안내만 보인다 (WD-131)', async ({ authenticatedPage: page }) => {
+    await setupMappingMocks(page, { bound: false, canWrite: false });
+    await page.goto(MAPPING_URL);
+
+    const card = page.getByTestId('ontology-binding-card');
+    await expect(card.getByTestId('ontology-binding-readonly')).toHaveText(
+      '온톨로지가 아직 연결되지 않았습니다. 연결하려면 데이터셋 쓰기 권한이 필요합니다. 관리자에게 권한을 요청하세요.',
+    );
+    await expect(card.getByTestId('ontology-select')).toHaveCount(0);
+    await expect(card.getByRole('button', { name: '연결' })).toHaveCount(0);
+  });
+
+  test('dataset:write 가 있으면 편집 버튼이 보이고 조회 전용 안내는 없다 (WD-131)', async ({ authenticatedPage: page }) => {
+    await setupMappingMocks(page);
+    await mockApi(page, 'GET', `/api/v1/datasets/${MAPPING_DATASET_ID}/mapping`, createMappingResponse({ status: 'active' }));
+    await page.goto(MAPPING_URL);
+
+    await expect(page.getByTestId('mapping-save-button')).toBeVisible();
+    await expect(page.getByTestId('mapping-activate-button')).toBeVisible();
+    await expect(page.getByRole('button', { name: '엔티티 매핑 추가' })).toBeVisible();
+    await expect(page.getByTestId('mapping-readonly-notice')).toHaveCount(0);
+  });
+
   test('미바인딩 데이터셋은 온톨로지 연결 카드를 보여주고, 선택한 온톨로지 ID를 PUT으로 보낸다', async ({
     authenticatedPage: page,
   }) => {
