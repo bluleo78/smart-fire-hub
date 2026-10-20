@@ -305,6 +305,126 @@ test.describe('파이프라인 트리거 탭', () => {
     await expect.poll(() => apiCalled).toBe(true);
   });
 
+  /**
+   * 회귀 방지 테스트 (WD-107)
+   * 스케줄 트리거를 편집해 프리셋("매일 09:00", 5필드)으로 바꿔 저장하면 서버가 6필드로 정규화·재등록하고
+   * 다음 실행 시각을 새 cron 기준으로 갱신한다. 화면은 저장 후 목록을 다시 읽어 새 "다음 실행"을 보여야 한다
+   * (결함 당시엔 스케줄이 사라진 채 옛 03:00 이 그대로 남았다).
+   * 목록 GET 모킹은 PUT 전후로 응답이 바뀌는 상태형이다 — 고정 응답이면 재조회 여부를 증명하지 못한다.
+   */
+  test('트리거 편집 — 프리셋으로 cron 을 바꿔 저장하면 "다음 실행"이 새 시각으로 갱신된다 (WD-107)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 서버가 생성 시 정규화해 돌려주는 형태(6필드)와 trigger_state 에서 꺼낸 UTC nextFireTime 을 그대로 흉내 낸다.
+    const OLD_NEXT = '2026-10-20T18:00:00Z'; // 03:00 Asia/Seoul
+    const NEW_NEXT = '2026-10-21T00:00:00Z'; // 09:00 Asia/Seoul
+    const existing = createTrigger({
+      id: 5,
+      name: '매일새벽',
+      description: '',
+      triggerType: 'SCHEDULE',
+      config: { cron: '0 0 3 * * *', timezone: 'Asia/Seoul', concurrencyPolicy: 'SKIP' },
+      nextFireTime: OLD_NEXT,
+    });
+    const updated = {
+      ...existing,
+      config: { cron: '0 0 9 * * *', timezone: 'Asia/Seoul', concurrencyPolicy: 'SKIP' },
+      nextFireTime: NEW_NEXT,
+    };
+    await setupTriggerTabMocks(page, { triggers: [existing] });
+
+    // 목록 GET: PUT 이 성공한 뒤부터는 갱신된 트리거를 돌려준다(나중에 등록한 route 가 우선한다).
+    let saved = false;
+    await page.route(
+      (url) => url.pathname === '/api/v1/pipelines/1/triggers',
+      (route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify([saved ? updated : existing]),
+        });
+      },
+    );
+    let putPayload: unknown = null;
+    await page.route(
+      (url) => url.pathname === '/api/v1/pipelines/1/triggers/5',
+      (route) => {
+        if (route.request().method() !== 'PUT') return route.fallback();
+        putPayload = route.request().postDataJSON();
+        saved = true;
+        // 실제 API 는 204 No Content 를 돌려준다.
+        return route.fulfill({ status: 204, body: '' });
+      },
+    );
+
+    // 화면과 같은 방식(ko-KR 로케일, 브라우저 시간대)으로 기대 문구를 만든다 — 실행 환경 시간대에 묶이지 않게.
+    // 문자열 파싱 시간대 함정(#691)을 피하려고 UTC epoch 숫자로 넘긴다.
+    await gotoTriggerTab(page);
+    const [oldText, newText] = await page.evaluate(
+      ([a, b]) =>
+        // eslint-disable-next-line no-restricted-syntax -- 서버 문자열이 아니라 UTC epoch 숫자다
+        [new Date(a).toLocaleString('ko-KR'), new Date(b).toLocaleString('ko-KR')],
+      [Date.UTC(2026, 9, 20, 18), Date.UTC(2026, 9, 21, 0)],
+    );
+    await expect(page.getByText(`다음 실행: ${oldText}`)).toBeVisible();
+
+    await page.getByRole('button').filter({ has: page.locator('.lucide-ellipsis') }).first().click();
+    await page.getByRole('menuitem', { name: '편집' }).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByText('트리거 편집')).toBeVisible();
+
+    await dialog.getByRole('button', { name: '매일 09:00' }).click();
+    await dialog.getByRole('button', { name: '저장' }).click();
+
+    // 웹 프리셋은 5필드를 보낸다 — 정규화는 서버 책임이다.
+    await expect.poll(() => putPayload).toMatchObject({ config: { cron: '0 9 * * *' } });
+    await expect(page.getByText('트리거 "매일새벽"이 수정되었습니다.')).toBeVisible();
+    await expect(dialog).toBeHidden();
+
+    // 저장 후 재조회로 "다음 실행"이 새 시각으로 바뀌고 옛 시각은 사라져야 한다.
+    await expect(page.getByText(`다음 실행: ${newText}`)).toBeVisible();
+    await expect(page.getByText(`다음 실행: ${oldText}`)).toHaveCount(0);
+  });
+
+  /**
+   * 회귀 방지 테스트 (WD-107)
+   * 서버가 수정 요청의 cron 을 거부(400)하면 서버 문구를 그대로 보여 주고 다이얼로그를 닫지 않아야 한다 —
+   * "수정되었습니다"처럼 성공으로 보이면 안 된다.
+   */
+  test('트리거 편집 — 서버가 cron 을 거부하면(400) 서버 오류 문구를 보여 주고 다이얼로그를 유지한다 (WD-107)', async ({
+    authenticatedPage: page,
+  }) => {
+    const existing = createTrigger({
+      id: 5,
+      name: '매일새벽',
+      triggerType: 'SCHEDULE',
+      config: { cron: '0 0 3 * * *', timezone: 'Asia/Seoul', concurrencyPolicy: 'SKIP' },
+    });
+    await setupTriggerTabMocks(page, { triggers: [existing] });
+    // 실제 GlobalExceptionHandler(IllegalArgumentException → 400) 응답 형태를 흉내 낸다.
+    await mockApi(
+      page,
+      'PUT',
+      '/api/v1/pipelines/1/triggers/5',
+      { status: 400, error: 'Bad Request', message: '유효하지 않은 cron 표현식입니다: 0 9 * * *' },
+      { status: 400 },
+    );
+
+    await gotoTriggerTab(page);
+    await page.getByRole('button').filter({ has: page.locator('.lucide-ellipsis') }).first().click();
+    await page.getByRole('menuitem', { name: '편집' }).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByText('트리거 편집')).toBeVisible();
+
+    await dialog.getByRole('button', { name: '매일 09:00' }).click();
+    await dialog.getByRole('button', { name: '저장' }).click();
+
+    await expect(page.getByText('유효하지 않은 cron 표현식입니다: 0 9 * * *')).toBeVisible();
+    await expect(page.getByText('트리거 "매일새벽"이 수정되었습니다.')).toHaveCount(0);
+    await expect(dialog.getByText('트리거 편집')).toBeVisible();
+  });
+
   test('트리거 삭제 — 확인 다이얼로그 후 DELETE 호출', async ({ authenticatedPage: page }) => {
     const existing = createTrigger({ id: 7, name: '삭제 대상 트리거' });
     await setupTriggerTabMocks(page, { triggers: [existing] });
