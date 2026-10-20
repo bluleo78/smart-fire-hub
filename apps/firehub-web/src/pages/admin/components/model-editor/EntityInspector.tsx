@@ -7,8 +7,9 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
-import type { OntologyElementMutations } from '@/hooks/queries/useOntologyElement';
+import { type OntologyElementMutations, useOntologyMappingUsage } from '@/hooks/queries/useOntologyElement';
 import { type ReportDirty,useDirtyAggregator } from '@/hooks/useUnsavedChangesGuard';
+import { mappingUsageFor } from '@/lib/ontology-mapping-usage';
 import {
   affectedRelationsFor,
   DATA_TYPES,
@@ -17,9 +18,10 @@ import {
   validateEntityTypeName,
   validatePropertyName,
 } from '@/lib/ontology-validation';
-import type { EntityTypeDef, OntologySchema, OntologyStatus, Property } from '@/types/ontology';
+import type { ElementMappingUsage, EntityTypeDef, OntologySchema, OntologyStatus, Property } from '@/types/ontology';
 
 import DeleteTypeConfirm from './DeleteTypeConfirm';
+import MappingUsageWarning from './MappingUsageWarning';
 import { useAutosaveText } from './useAutosaveText';
 
 interface Props {
@@ -64,6 +66,8 @@ interface PropertyRowProps {
     unit?: string;
   }) => unknown;
   onDelete: () => void;
+  // WD-129: 이 속성을 쓰는 데이터셋 매핑 — 있으면 삭제 확인 창이 안내하고 삭제를 막는다(서버도 409 로 거부).
+  mappingUsage: ElementMappingUsage | null;
   // (#484) 이 행(이름/단위/설명 3필드 OR)의 dirty 상태를 부모(EditEntityForm)의 useDirtyAggregator에
   // 보고한다 — 행마다 key(property.id)로 makeReporter를 받아 독립적으로 보고한다.
   onDirtyChange: ReportDirty;
@@ -72,7 +76,7 @@ interface PropertyRowProps {
 // 속성 한 행 — 이름/타입/단위/설명을 각각 독립적으로 자동 저장한다. 배열 안에서 훅을 쓰므로
 // 반드시 별도 컴포넌트로 분리해야 한다(같은 렌더에서 훅 호출 횟수가 배열 길이에 따라 달라지면
 // react-hooks 규칙 위반) — key={property.id}로 속성이 추가/삭제될 때만 마운트/언마운트된다.
-function PropertyRow({ entityType, property, existingNames, onUpdate, onDelete, onDirtyChange }: PropertyRowProps) {
+function PropertyRow({ entityType, property, existingNames, onUpdate, onDelete, mappingUsage, onDirtyChange }: PropertyRowProps) {
   const nameField = useAutosaveText(
     property.name,
     (name) => onUpdate({ name }),
@@ -141,6 +145,8 @@ function PropertyRow({ entityType, property, existingNames, onUpdate, onDelete, 
           entityName="속성"
           itemName={`${entityType}.${property.name}`}
           onConfirm={onDelete}
+          details={<MappingUsageWarning subject="이 속성은" usage={mappingUsage} />}
+          confirmDisabled={mappingUsage != null}
           trigger={
             <Button
               variant="ghost"
@@ -418,6 +424,8 @@ function EditEntityForm({
   // 이 타입을 끝점으로 쓰는 관계 — 삭제 확인 다이얼로그가 "함께 지워질 관계"로 보여준다(FK CASCADE).
   // OntologyPage(캔버스 Delete 키 삭제)와 계산이 완전히 같아 ontology-validation.ts로 옮겼다(리뷰 M-3).
   const affectedRelations = affectedRelationsFor(schema, entity.id);
+  // WD-129: 이 타입·속성을 쓰는 데이터셋 매핑 — 삭제 확인 창이 확정 전에 보여 주고 막는다. 요소 id 키라 리네임으로 낡지 않는다.
+  const { data: mappingUsage } = useOntologyMappingUsage(mutations.ontologyId);
 
   const typeErrorId = `entity-type-name-error-${entity.id}`;
   // active 온톨로지의 마지막 엔티티 타입인지(M-4.2, S2 최종 리뷰) — 서버가 이 조합을 400으로
@@ -516,6 +524,7 @@ function EditEntityForm({
               existingNames={entity.properties.map((p) => p.name)}
               onUpdate={(req) => mutations.updateProperty(entity.id, prop.id, req)}
               onDirtyChange={makePropertyReporter(String(prop.id))}
+              mappingUsage={mappingUsageFor(mappingUsage, 'property', prop.id)}
               onDelete={() =>
                 void mutations.deleteProperty(entity.id, prop.id).then((result) => {
                   // 삭제 성공 시에만 옮긴다 — 실패하면 행이 그대로 남아 있으므로 포커스를 옮길
@@ -590,6 +599,7 @@ function EditEntityForm({
       <DeleteTypeConfirm
         entity={entity}
         affectedRelations={affectedRelations}
+        mappingUsage={mappingUsageFor(mappingUsage, 'entityType', entity.id)}
         restoreFocusRef={restoreFocusRef}
         onConfirm={() => {
           void mutations.deleteEntityType(entity.id).then((result) => {

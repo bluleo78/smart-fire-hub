@@ -5,6 +5,7 @@ import {
 } from '../../factories/mapping.factory';
 import {
   createEntityTypeMutation,
+  createMappingUsage,
   createOntologyGraph,
   createOntologySchema,
   createPropertyMutation,
@@ -1619,5 +1620,145 @@ test.describe('지식 모델 편집기 — 자동저장 이탈 가드(#484)', ()
 
     await expect(page.getByRole('alertdialog')).toBeHidden();
     await expect(page).toHaveURL(/\/knowledge-graph\/explore$/);
+  });
+});
+
+/**
+ * WD-129: 데이터셋 매핑은 지식 모델 요소를 이름으로 참조한다. 매핑이 쓰는 요소를 지우면 매핑이 없는 요소를 가리킨 채 남으므로,
+ * 서버는 그런 삭제를 409 로 막고(ONTOLOGY_ELEMENT_IN_USE_BY_MAPPING) 삭제 확인 창은 확정 전에 어느 데이터셋 매핑이 쓰는지
+ * 보여 주며 확인 버튼을 막는다. 사용처 응답은 요소 id 키다(리네임으로 낡지 않음).
+ */
+test.describe('지식 모델 편집기 — 데이터셋 매핑 사용처 삭제 차단(WD-129)', () => {
+  // setupOntologyMocks 의 기본 사용처(없음)를 덮어쓴 뒤 화면을 연다 — page.route 는 나중에 등록한 것이 앞선다.
+  // 인스펙터가 열리는 순간 사용처를 묻기 때문에 덮어쓰기가 화면 진입보다 먼저여야 한다.
+  async function openEditor(page: import('@playwright/test').Page, usage: ReturnType<typeof createMappingUsage>) {
+    await setupAdminAuth(page);
+    await setupOntologyMocks(page);
+    await mockApi(page, 'GET', '/api/v1/ontology/1/mapping-usage', usage);
+    await page.goto('/knowledge-graph/model');
+    await page.getByRole('button', { name: '수정 모드' }).click();
+  }
+
+  // 지정 경로로 DELETE 가 나갔는지 기록한다 — 확인 버튼이 막혀 있으면 요청이 전혀 없어야 한다.
+  async function trackDelete(page: import('@playwright/test').Page, path: string) {
+    const state = { called: false };
+    await page.route(
+      (url) => url.pathname === path,
+      (route) => {
+        if (route.request().method() !== 'DELETE') return route.fallback();
+        state.called = true;
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(createVersionOnly()) });
+      },
+    );
+    return state;
+  }
+
+  test('매핑이 쓰는 타입은 삭제 확인 창이 데이터셋 이름을 보이고 확인 버튼을 막는다', async ({ authenticatedPage: page }) => {
+    await openEditor(page, createMappingUsage({ entityTypes: { '2': { datasets: [{ datasetId: 7, datasetName: '화재사건표' }], hiddenCount: 0 } } }));
+    const deleted = await trackDelete(page, '/api/v1/ontology/1/entity-types/2');
+    await page.getByTestId('outline-entity-2').click(); // Building
+
+    await page.getByTestId('entity-delete-trigger').click();
+
+    const dialog = page.getByRole('alertdialog');
+    await expect(dialog.getByTestId('delete-mapping-usage')).toHaveText(
+      '이 타입은 「화재사건표」 데이터셋 매핑에서 사용 중이라 삭제할 수 없습니다. 매핑에서 먼저 빼 주세요.',
+    );
+    await expect(page.getByTestId('entity-delete-confirm')).toBeDisabled();
+    // 막힌 버튼을 강제로 눌러도 DELETE 는 나가지 않는다.
+    await page.getByTestId('entity-delete-confirm').click({ force: true });
+    await expect(dialog).toBeVisible();
+    expect(deleted.called).toBe(false);
+  });
+
+  test('매핑이 쓰지 않는 타입은 안내 없이 평소처럼 삭제할 수 있다', async ({ authenticatedPage: page }) => {
+    // 다른 타입(Building=2)만 쓰는 매핑 — Damage(4)는 막히지 않아야 한다(과잉 차단 방지).
+    await openEditor(page, createMappingUsage({ entityTypes: { '2': { datasets: [{ datasetId: 7, datasetName: '화재사건표' }], hiddenCount: 0 } } }));
+    // 사용처 응답이 도착한 뒤에 창을 연다 — 응답 전이면 "모름 = 막지 않음"이라 확인 버튼이 활성이어도 이 단언이 공허해진다.
+    const usageLoaded = page.waitForResponse((r) => new URL(r.url()).pathname === '/api/v1/ontology/1/mapping-usage');
+    await page.getByTestId('outline-entity-4').click();
+    await usageLoaded;
+    await page.getByTestId('entity-delete-trigger').click();
+
+    await expect(page.getByRole('alertdialog')).toBeVisible();
+    await expect(page.getByTestId('delete-mapping-usage')).toHaveCount(0);
+    await expect(page.getByTestId('entity-delete-confirm')).toBeEnabled();
+  });
+
+  test('매핑이 쓰는 속성은 삭제 확인 창이 막고, 볼 수 없는 데이터셋은 개수로 알린다', async ({ authenticatedPage: page }) => {
+    await openEditor(
+      page,
+      // 볼 수 없는 데이터셋은 서버가 id·이름 없이 개수로만 준다(존재 은닉).
+      createMappingUsage({
+        entityTypes: { '4': { datasets: [{ datasetId: 7, datasetName: '화재사건표' }], hiddenCount: 1 } },
+        properties: { '1': { datasets: [{ datasetId: 7, datasetName: '화재사건표' }], hiddenCount: 1 } }, // Damage.피해액
+      }),
+    );
+    const deleted = await trackDelete(page, '/api/v1/ontology/1/entity-types/4/properties/1');
+    await page.getByTestId('outline-entity-4').click();
+
+    await page.getByTestId('property-row-1').getByLabel('Damage 속성 삭제').click();
+
+    const dialog = page.getByRole('alertdialog');
+    await expect(dialog.getByTestId('delete-mapping-usage')).toHaveText(
+      '이 속성은 「화재사건표」 데이터셋과 볼 수 없는 데이터셋 1개의 매핑에서 사용 중이라 삭제할 수 없습니다. 매핑에서 먼저 빼 주세요.',
+    );
+    await expect(dialog.getByRole('button', { name: '삭제' })).toBeDisabled();
+    expect(deleted.called).toBe(false);
+  });
+
+  test('매핑이 쓰는 관계는 삭제 확인 창이 막는다', async ({ authenticatedPage: page }) => {
+    await openEditor(
+      page,
+      createMappingUsage({ relations: { '4': { datasets: [{ datasetId: 7, datasetName: '화재사건표' }], hiddenCount: 0 } } }),
+    );
+    const deleted = await trackDelete(page, '/api/v1/ontology/1/relations/4');
+    await page.getByTestId('outline-relation-4').click(); // Building → HAS_EQUIPMENT → Equipment
+
+    await page.getByTestId('relation-delete-trigger').click();
+
+    const dialog = page.getByRole('alertdialog');
+    await expect(dialog.getByTestId('delete-mapping-usage')).toHaveText(
+      '이 관계는 「화재사건표」 데이터셋 매핑에서 사용 중이라 삭제할 수 없습니다. 매핑에서 먼저 빼 주세요.',
+    );
+    await expect(dialog.getByRole('button', { name: '삭제' })).toBeDisabled();
+    expect(deleted.called).toBe(false);
+  });
+
+  test('사용처가 낡아 확인을 통과해도 서버 409 문구가 토스트로 뜨고 재시도는 주지 않는다', async ({
+    authenticatedPage: page,
+  }) => {
+    // 화면은 "사용처 없음"으로 알고 있지만, 그 사이 다른 사람이 매핑에 이 속성을 넣었다 — 서버가 최종 방어선이다.
+    await openEditor(page, createMappingUsage());
+    const serverMessage =
+      '「Damage.피해액」 속성은 「화재사건표」 데이터셋 매핑에서 사용 중이라 삭제할 수 없습니다. 매핑에서 먼저 빼 주세요.';
+    await page.route(
+      (url) => url.pathname === '/api/v1/ontology/1/entity-types/4/properties/1',
+      (route) => {
+        if (route.request().method() !== 'DELETE') return route.fallback();
+        return route.fulfill({
+          status: 409,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            status: 409,
+            error: 'Conflict',
+            code: 'ONTOLOGY_ELEMENT_IN_USE_BY_MAPPING',
+            message: serverMessage,
+          }),
+        });
+      },
+    );
+    await page.getByTestId('outline-entity-4').click();
+
+    await page.getByTestId('property-row-1').getByLabel('Damage 속성 삭제').click();
+    await page.getByRole('alertdialog').getByRole('button', { name: '삭제' }).click();
+
+    // 서버 message(어느 데이터셋인지)가 그대로 뜬다.
+    await expect(page.getByText(serverMessage)).toBeVisible();
+    // 속성은 그대로 남는다.
+    await expect(page.getByTestId('property-row-1')).toBeVisible();
+    // 매핑에서 빼기 전엔 다시 해도 같은 409 라 재시도 어포던스가 없다.
+    await expect(page.getByTestId('save-status-chip')).toHaveAttribute('data-state', 'error');
+    await expect(page.getByTestId('save-status-retry')).toHaveCount(0);
   });
 });

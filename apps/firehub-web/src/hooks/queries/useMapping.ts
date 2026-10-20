@@ -4,6 +4,8 @@ import axios from 'axios';
 import { mappingApi } from '@/api/mapping';
 import type { MappingResponse, MappingSpec } from '@/types/mapping';
 
+import { MAPPING_USAGE_QUERY_PREFIX } from './useOntologyElement';
+
 // 온톨로지 관심사는 useOntology.ts가 소유한다. 기존 import 경로를 깨지 않도록 여기서 다시 내보낸다.
 export { useOntologyById, useOntologyList } from './useOntology';
 
@@ -54,6 +56,10 @@ export function useSaveMapping(datasetId: number) {
     mutationFn: (spec: MappingSpec) => mappingApi.saveMapping(datasetId, spec).then((r) => r.data),
     onSuccess: (data) => {
       queryClient.setQueryData(['datasets', datasetId, 'mapping'], data);
+      // WD-129: 지식 모델 삭제 확인 창의 매핑 사용처가 이 저장으로 바뀐다(요소를 넣거나 뺌). "매핑에서 먼저 빼 주세요" 안내를
+      // 따라 뺀 뒤 편집기로 돌아왔을 때 낡은 "사용 중" 이 확인 버튼을 계속 막지 않게 모든 온톨로지의 사용처를 무효화한다
+      // (바인딩된 온톨로지 id 를 여기서는 모른다).
+      queryClient.invalidateQueries({ queryKey: [MAPPING_USAGE_QUERY_PREFIX] });
     },
   });
 }

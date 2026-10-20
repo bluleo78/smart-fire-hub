@@ -11,13 +11,18 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
-import type { EntityTypeDef, Triple } from '@/types/ontology';
+import type { ElementMappingUsage, EntityTypeDef, Triple } from '@/types/ontology';
+
+import MappingUsageWarning from './MappingUsageWarning';
 
 interface CommonProps {
   entity: EntityTypeDef;
   // 이 타입을 끝점으로 쓰는 관계 — 삭제 시 FK CASCADE로 서버가 함께 지운다. 삭제 전에 몇 개가,
   // 어떤 이름으로 함께 사라지는지 사용자에게 미리 보여줘야 한다(브리프 필수 항목).
   affectedRelations: Triple[];
+  // WD-129: 이 타입을 쓰는 데이터셋 매핑. 하나라도 있으면 삭제할 수 없다(서버가 409 로 거부한다) — 확정 전에 안내하고
+  // 확인 버튼을 막는다. 사용처가 없거나 아직 모르면 null 이고 막지 않는다(최종 판정은 서버).
+  mappingUsage: ElementMappingUsage | null;
   onConfirm: () => void;
   // 삭제 확정 시 트리거(entity-delete-trigger) 자신이 EntityInspector와 함께 사라진다(삭제 성공
   // → onDeleted → 선택 해제 → 인스펙터가 다른 내용으로 교체) — 공유 dialog.tsx의 기본 포커스
@@ -42,12 +47,14 @@ type Props = CommonProps & ({ trigger: ReactNode; open?: never; onOpenChange?: n
 export default function DeleteTypeConfirm({
   entity,
   affectedRelations,
+  mappingUsage,
   onConfirm,
   trigger,
   open,
   onOpenChange,
   restoreFocusRef,
 }: Props) {
+  const blockedByMapping = mappingUsage != null;
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       {trigger && <AlertDialogTrigger asChild>{trigger}</AlertDialogTrigger>}
@@ -57,6 +64,7 @@ export default function DeleteTypeConfirm({
           <AlertDialogDescription asChild>
             <div className="space-y-2 text-left">
               <p>&quot;{entity.type}&quot; 타입을 삭제하면 되돌릴 수 없습니다.</p>
+              <MappingUsageWarning subject="이 타입은" usage={mappingUsage} />
               {affectedRelations.length > 0 && (
                 <div data-testid="delete-type-affected-relations">
                   <p className="font-medium text-foreground">
@@ -76,7 +84,12 @@ export default function DeleteTypeConfirm({
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>취소</AlertDialogCancel>
-          <AlertDialogAction variant="destructive" onClick={onConfirm} data-testid="entity-delete-confirm">
+          <AlertDialogAction
+            variant="destructive"
+            onClick={onConfirm}
+            disabled={blockedByMapping}
+            data-testid="entity-delete-confirm"
+          >
             삭제
           </AlertDialogAction>
         </AlertDialogFooter>

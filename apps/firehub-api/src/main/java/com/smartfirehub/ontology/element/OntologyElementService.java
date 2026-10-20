@@ -1,6 +1,7 @@
 package com.smartfirehub.ontology.element;
 
 import com.smartfirehub.audit.service.AuditLogService;
+import com.smartfirehub.mapping.service.MappingReferenceService;
 import com.smartfirehub.ontology.OntologyRules;
 import com.smartfirehub.ontology.dto.OntologyResponse;
 import com.smartfirehub.ontology.element.dto.ElementDtos.CreateEntityTypeRequest;
@@ -37,6 +38,9 @@ public class OntologyElementService {
   private final OntologyRepository ontologyRepository;
   private final AuditLogService auditLogService;
   private final UserRepository userRepository;
+  // WD-129: 데이터셋 매핑은 요소를 이름으로 참조한다 — 이름 변경은 매핑에 연쇄 반영하고, 매핑이 쓰는 요소의 삭제는 막는다.
+  // 같은 트랜잭션에 합류하므로 지식 모델 변경과 매핑 갱신이 함께 커밋/롤백된다.
+  private final MappingReferenceService mappingReferences;
 
   // 검증 규칙·상수·문구는 OntologyRules가 단일 소유한다 — 여기에 다시 선언하지 않는다.
   // 프론트 e2e가 문구로 단언하므로, 두 서비스가 같은 문구를 쓴다는 보장이 주석 규약이 아니라
@@ -45,8 +49,11 @@ public class OntologyElementService {
   // 편집 가능 상태인지 확인하고 현재 status를 돌려준다.
   // archived 거부 사유: 그 스키마로 이미 적재된 데이터와 어긋나기 때문이며, 고치려면 먼저 복귀시켜야
   // 한다(전체 스키마 PUT 시절에도 같은 이유로 거부했다 — 이제 이 규칙의 유일한 소유자가 여기다).
+  // WD-129: 모든 요소 뮤테이션의 첫 호출이라 여기서 온톨로지 행을 잠근다(lockAndFindStatus 주석) — 이후 읽는 현재 이름·
+  // 매핑 사용 여부가 잠금 뒤의 커밋된 값이어야 동시 리네임(A→B, A→C)이나 매핑 저장과 어긋나지 않는다. 이 호출보다 앞에 다른
+  // 조회를 두지 말 것.
   public String assertEditable(long ontologyId) {
-    String status = ontologyRepository.findStatusById(ontologyId);
+    String status = ontologyRepository.lockAndFindStatus(ontologyId);
     if ("archived".equals(status)) {
       throw new IllegalStateException("은퇴한 온톨로지는 편집할 수 없습니다. 먼저 복귀시키세요.");
     }
@@ -136,6 +143,10 @@ public class OntologyElementService {
     }
 
     elementRepository.updateEntityType(entityTypeId, req);
+    // WD-129: 이름이 실제로 바뀐 경우에만 매핑(draft·active)의 entityType 을 새 이름으로 맞춘다.
+    if (req.type() != null && !req.type().equals(currentName)) {
+      mappingReferences.renameEntityType(ontologyId, currentName, req.type());
+    }
     int version = bumpVersion(ontologyId);
     audit(
         "ONTOLOGY_TYPE_UPDATE",
@@ -154,6 +165,9 @@ public class OntologyElementService {
     if ("active".equals(status) && elementRepository.countEntityTypes(ontologyId) <= 1) {
       throw new IllegalArgumentException("엔티티 타입은 최소 1개 이상이어야 합니다.");
     }
+    // WD-129: 매핑이 이 타입을 쓰면 409 — 지우면 매핑이 없는 타입을 가리킨 채 남는다. 타입 하나만 보면 그 속성과 함께 지워질
+    // 관계를 매핑한 경우까지 덮인다(MappingReferenceService.usesType 주석).
+    mappingReferences.assertEntityTypeUnused(ontologyId, name);
 
     // FK CASCADE가 지우기 "전에" 무엇이 함께 사라지는지 확보한다.
     List<Long> deletedRelationIds = elementRepository.findRelationIdsTouching(entityTypeId);
@@ -216,6 +230,10 @@ public class OntologyElementService {
     }
 
     elementRepository.updateProperty(propertyId, req);
+    // WD-129: 이 타입의 매핑 안에서만 속성명을 새 이름으로 맞춘다(속성명은 타입 안에서만 유일).
+    if (req.name() != null && !req.name().equals(currentName)) {
+      mappingReferences.renameProperty(ontologyId, typeName, currentName, req.name());
+    }
     int version = bumpVersion(ontologyId);
     audit("ONTOLOGY_PROPERTY_UPDATE", ontologyId, "속성 수정 — " + typeName + "." + currentName);
     return new PropertyMutation(version, findProperty(ontologyId, entityTypeId, propertyId));
@@ -226,6 +244,8 @@ public class OntologyElementService {
     assertEditable(ontologyId);
     String typeName = requireType(ontologyId, entityTypeId);
     String name = requireProperty(entityTypeId, propertyId);
+    // WD-129: 매핑이 이 속성을 쓰면 409.
+    mappingReferences.assertPropertyUnused(ontologyId, typeName, name);
 
     elementRepository.deleteProperty(propertyId);
     int version = bumpVersion(ontologyId);
@@ -307,6 +327,11 @@ public class OntologyElementService {
     }
 
     elementRepository.updateRelation(relationId, req);
+    // WD-129: 끝점 타입까지 같은 관계 매핑만 새 관계명으로 맞춘다(같은 관계명이 다른 타입 쌍에도 있을 수 있다).
+    if (req.relation() != null && !req.relation().equals(current.relation())) {
+      mappingReferences.renameRelation(
+          ontologyId, current.subject(), current.relation(), req.relation(), current.object());
+    }
     int version = bumpVersion(ontologyId);
     audit(
         "ONTOLOGY_RELATION_UPDATE",
@@ -319,6 +344,9 @@ public class OntologyElementService {
   public VersionOnly deleteRelation(long ontologyId, long relationId) {
     assertEditable(ontologyId);
     OntologyResponse.Triple current = requireRelation(ontologyId, relationId);
+    // WD-129: 매핑이 이 트리플을 쓰면 409.
+    mappingReferences.assertRelationUnused(
+        ontologyId, current.subject(), current.relation(), current.object());
 
     elementRepository.deleteRelation(relationId);
     int version = bumpVersion(ontologyId);

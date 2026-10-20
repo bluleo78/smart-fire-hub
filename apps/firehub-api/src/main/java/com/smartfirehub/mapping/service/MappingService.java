@@ -83,6 +83,10 @@ public class MappingService {
             .findOntologyIdByDataset(datasetId)
             .orElseThrow(
                 () -> new IllegalArgumentException("데이터셋이 온톨로지에 바인딩되지 않았습니다: " + datasetId));
+    // WD-129: 스키마를 읽기 전에 온톨로지 행을 공유 잠금한다 — 진행 중인 요소 이름 변경·삭제(행을 배타 잠금)가 끝난 뒤의
+    // 스키마로 검증해야, 옛 이름을 저장하거나 방금 삭제 검사를 통과한 요소를 새로 참조하는 일이 없다. 호출자(save/activate)의
+    // 트랜잭션이 끝날 때까지 유지된다.
+    ontologyRepository.lockForShare(ontologyId);
     OntologyResponse ontology = ontologyRepository.findById(ontologyId);
 
     // 컬럼명→컬럼타입. 존재 확인뿐 아니라 속성 dataType 호환 검사에도 원본 타입이 필요하다.

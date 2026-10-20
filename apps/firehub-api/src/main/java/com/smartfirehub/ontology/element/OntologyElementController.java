@@ -1,6 +1,8 @@
 package com.smartfirehub.ontology.element;
 
 import com.smartfirehub.global.security.RequirePermission;
+import com.smartfirehub.mapping.dto.OntologyMappingUsage;
+import com.smartfirehub.mapping.service.MappingReferenceService;
 import com.smartfirehub.ontology.element.dto.ElementDtos.CreateEntityTypeRequest;
 import com.smartfirehub.ontology.element.dto.ElementDtos.CreatePropertyRequest;
 import com.smartfirehub.ontology.element.dto.ElementDtos.CreateRelationRequest;
@@ -15,6 +17,7 @@ import com.smartfirehub.ontology.element.dto.ElementDtos.UpdateRelationRequest;
 import com.smartfirehub.ontology.element.dto.ElementDtos.VersionOnly;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -32,6 +35,15 @@ import org.springframework.web.bind.annotation.RestController;
 public class OntologyElementController {
 
   private final OntologyElementService elementService;
+  private final MappingReferenceService mappingReferences;
+
+  // WD-129: 요소별 데이터셋 매핑 사용처 — 삭제 확인 창이 확정 전에 "어느 데이터셋 매핑이 쓰는지"를 보여 주고 확인을 막는 데 쓴다.
+  // 권한은 스키마 조회(GET /ontology/{id})와 같은 dataset:read 다. 데이터셋 이름은 조회자의 보안 등급 가시성으로 걸러진다.
+  @GetMapping("/mapping-usage")
+  @RequirePermission("dataset:read")
+  public OntologyMappingUsage mappingUsage(@PathVariable long ontologyId) {
+    return mappingReferences.usage(ontologyId);
+  }
 
   @PatchMapping
   @RequirePermission("ontology:write")

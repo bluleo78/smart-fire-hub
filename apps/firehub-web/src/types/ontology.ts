@@ -87,3 +87,15 @@ export interface CreateRelationRequest {
 }
 // 끝점은 수정 대상이 아니다. 끝점이 바뀌면 다른 관계이므로 삭제 후 재생성이다.
 export interface UpdateRelationRequest { relation?: string | null; description?: string | null }
+
+// WD-129: 요소별 데이터셋 매핑 사용처(GET /ontology/{id}/mapping-usage). 매핑 spec 은 요소를 이름으로 참조하지만
+// 서버가 현재 스키마로 이름→id 를 풀어 준다 — id 키라서 리네임 직후에도 캐시가 어긋나지 않는다.
+// 사용처가 있는 요소만 담긴다. 조회자가 볼 수 없는 데이터셋(보안 등급)은 존재 은닉을 위해 id·이름 없이 hiddenCount 로만 온다.
+export interface MappingUsageDataset { datasetId: number; datasetName: string }
+export interface ElementMappingUsage { datasets: MappingUsageDataset[]; hiddenCount: number }
+export interface OntologyMappingUsage {
+  // 요소 id(JSON 객체 키라 문자열) → 사용처
+  entityTypes: Record<string, ElementMappingUsage>;
+  properties: Record<string, ElementMappingUsage>;
+  relations: Record<string, ElementMappingUsage>;
+}

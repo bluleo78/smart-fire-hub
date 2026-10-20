@@ -4,6 +4,7 @@ import type {
   CreateRelationRequest,
   EntityTypeDeletion,
   EntityTypeMutation,
+  OntologyMappingUsage,
   PatchOntologyRequest,
   PropertyMutation,
   RelationMutation,
@@ -41,4 +42,6 @@ export const ontologyElementApi = {
     client.patch<RelationMutation>(`/ontology/${id}/relations/${relId}`, req),
   deleteRelation: (id: number, relId: number) =>
     client.delete<VersionOnly>(`/ontology/${id}/relations/${relId}`),
+  // WD-129: 요소별 데이터셋 매핑 사용처 — 삭제 확인 창이 확정 전에 "어느 데이터셋 매핑이 쓰는지"를 보여 주고 확인을 막는다.
+  getMappingUsage: (id: number) => client.get<OntologyMappingUsage>(`/ontology/${id}/mapping-usage`),
 };

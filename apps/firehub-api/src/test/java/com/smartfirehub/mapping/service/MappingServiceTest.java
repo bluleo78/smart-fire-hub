@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -116,6 +117,31 @@ class MappingServiceTest {
     assertThat(res.status()).isEqualTo("draft");
     assertThat(res.ontologyId()).isEqualTo(1L);
     verify(mappingRepository).upsert(eq(DS), eq(1L), anyString(), eq("draft"), eq(42L));
+  }
+
+  // WD-129: 스키마를 읽기 전에 온톨로지 행을 공유 잠금해야 진행 중인 요소 이름 변경·삭제가 끝난 뒤의 스키마로 검증한다.
+  // 순서가 뒤바뀌면(읽고 나서 잠금) 옛 스키마로 검증한 채 저장해 옛 이름이 남는다.
+  @Test
+  void save_스키마를_읽기_전에_온톨로지를_공유잠금한다() {
+    service.save(DS, validSpec(), 42L);
+    var order = inOrder(ontologyRepository);
+    order.verify(ontologyRepository).lockForShare(1L);
+    order.verify(ontologyRepository).findById(1L);
+  }
+
+  @Test
+  void activate_스키마를_읽기_전에_온톨로지를_공유잠금한다() {
+    when(mappingRepository.findByDataset(DS))
+        .thenReturn(
+            Optional.of(
+                new StoredMapping(
+                    1L,
+                    "{\"entities\":[{\"entityType\":\"Building\",\"nameColumn\":\"bld\",\"properties\":[]}],\"relations\":[]}",
+                    "draft")));
+    service.activate(DS, 42L);
+    var order = inOrder(ontologyRepository);
+    order.verify(ontologyRepository).lockForShare(1L);
+    order.verify(ontologyRepository).findById(1L);
   }
 
   @Test

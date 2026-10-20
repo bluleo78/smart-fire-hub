@@ -227,6 +227,27 @@ public class OntologyRepository {
     return record.get(O_STATUS);
   }
 
+  // WD-129: 요소 편집 트랜잭션의 첫 문장 — 온톨로지 행을 잠그고 상태를 읽는다.
+  // 요소 이름 변경·삭제는 같은 온톨로지의 매핑(dataset_mapping)까지 손대거나 그 사용 여부로 판정하므로, 동시에 도는 매핑
+  // 저장(MappingService — 이 행을 FOR SHARE 로 잡는다)·다른 요소 편집과 직렬화돼야 한다. 잠금 순서는 항상 온톨로지 행 →
+  // 매핑 행이다(교착 방지). NO KEY UPDATE 인 이유: FOR SHARE 와는 충돌해 매핑 저장을 기다리게 하면서도, 이 온톨로지를 FK 로
+  // 참조하는 단순 삽입(KEY SHARE — 바인딩·출처 기록 등)까지 막지는 않는다.
+  public String lockAndFindStatus(long ontologyId) {
+    var record =
+        dsl.select(O_STATUS).from(ONTOLOGY).where(O_ID.eq(ontologyId)).forNoKeyUpdate().fetchOne();
+    if (record == null) {
+      throw new IllegalArgumentException("존재하지 않는 온톨로지입니다: " + ontologyId);
+    }
+    return record.get(O_STATUS);
+  }
+
+  // WD-129: 매핑 저장·활성화가 검증 전에 잡는 공유 잠금. 요소 편집(lockAndFindStatus)이 끝날 때까지 기다렸다가 바뀐 스키마로
+  // 검증하게 해, "옛 스키마로 검증하고 옛 이름으로 저장"하거나 "삭제 검사를 통과한 직후 참조를 추가"하는 틈을 없앤다.
+  // 매핑 저장끼리는 서로 막지 않는다(SHARE 는 서로 호환).
+  public void lockForShare(long ontologyId) {
+    dsl.select(O_ID).from(ONTOLOGY).where(O_ID.eq(ontologyId)).forShare().fetch();
+  }
+
   // 상태만 전이시킨다. 스키마 내용을 건드리지 않으므로 schema_version은 올리지 않는다
   // (버전은 "스키마가 몇 번 바뀌었나"를 뜻하고, 적재 노드의 schemaVersion 스탬프와 짝을 이룬다).
   public void updateStatus(long ontologyId, String status) {

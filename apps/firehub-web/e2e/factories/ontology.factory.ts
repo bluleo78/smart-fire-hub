@@ -10,6 +10,7 @@ import type {
   EntityTypeMutation,
   GraphData,
   GraphNode,
+  OntologyMappingUsage,
   OntologySchema,
   Property,
   PropertyMutation,
@@ -134,4 +135,12 @@ export function createRelationMutation(relation: Triple, schemaVersion = 2): Rel
 
 export function createVersionOnly(schemaVersion = 2): VersionOnly {
   return { schemaVersion };
+}
+
+/**
+ * WD-129: 요소별 데이터셋 매핑 사용처(GET /ontology/{id}/mapping-usage). 기본값은 "아무 매핑도 쓰지 않음"(사용처 있는 요소만 담긴다) —
+ * 삭제 확인 창이 평소처럼 열리고 확인 버튼이 활성이다. 테스트는 필요한 요소 id 만 덮어쓴다(키는 요소 id 문자열).
+ */
+export function createMappingUsage(overrides: Partial<OntologyMappingUsage> = {}): OntologyMappingUsage {
+  return { entityTypes: {}, properties: {}, relations: {}, ...overrides };
 }

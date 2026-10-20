@@ -4,6 +4,7 @@ import { createOntologySummaries,MAPPING_ONTOLOGY_ID } from '../../factories/map
 import {
   createEntityTypeDeletion,
   createEntityTypeMutation,
+  createMappingUsage,
   createOntologyGraph,
   createOntologySchema,
   createRelationMutation,
@@ -1440,6 +1441,97 @@ test.describe('SchemaGraph — 캔버스 Delete 키 삭제', () => {
       label: document.activeElement?.getAttribute('aria-label'),
     }));
     expect(activeElement).toEqual({ tag: 'BUTTON', label: '타입 추가' });
+  });
+});
+
+/**
+ * WD-129: 캔버스 Delete 키 삭제 확인 창(OntologyPage 의 controlled 인스턴스)도 인스펙터 경로와 같이 데이터셋 매핑 사용처를
+ * 보여 주고 확인 버튼을 막는다. 이 창은 열릴 때 사용처를 묻는다(useOntologyMappingUsage 의 enabled).
+ */
+test.describe('SchemaGraph — 캔버스 Delete 키 삭제의 매핑 사용처 차단(WD-129)', () => {
+  // 위 describe 의 선택 헬퍼와 같다 — describe 스코프 함수라 다시 둔다.
+  async function tap(page: Page, kind: 'nodes' | 'edges', label: string) {
+    await page.evaluate(
+      ([k, lbl]) => {
+        (
+          window as unknown as { __ontologySchemaCy: Record<string, (sel: string) => { emit(e: string): void }> }
+        ).__ontologySchemaCy[k](`[label = "${lbl}"]`).emit('tap');
+      },
+      [kind, label] as const,
+    );
+  }
+
+  async function edgeRelationId(page: Page, label: string): Promise<number> {
+    return page.evaluate(
+      (lbl) =>
+        Number(
+          (
+            window as unknown as { __ontologySchemaCy: { edges(sel: string): { data(k: string): unknown } } }
+          ).__ontologySchemaCy.edges(`[label = "${lbl}"]`).data('relationId'),
+        ),
+      label,
+    );
+  }
+
+  // 지정 경로 접두사로 DELETE 가 나갔는지 기록한다 — 확인 버튼이 막혀 있으면 요청이 전혀 없어야 한다.
+  async function trackDelete(page: Page, pathPrefix: string) {
+    const state = { called: false };
+    await page.route(
+      (url) => url.pathname.startsWith(pathPrefix),
+      (route) => {
+        if (route.request().method() !== 'DELETE') return route.fallback();
+        state.called = true;
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(createVersionOnly()) });
+      },
+    );
+    return state;
+  }
+
+  const used = { datasets: [{ datasetId: 7, datasetName: '화재사건표' }], hiddenCount: 0 };
+
+  test('매핑이 쓰는 타입 노드에서 Delete 를 누르면 안내가 뜨고 확인이 막힌다', async ({ authenticatedPage: page }) => {
+    await setupAdminAuth(page);
+    await setupOntologyMocks(page);
+    await page.goto('/knowledge-graph/model');
+    await enterEditMode(page);
+    // 숫자 id 를 하드코딩하지 않는다 — 캔버스에서 라벨로 파생한 id 로 사용처를 덮어쓴다(기본 "사용처 없음" 보다 나중 등록이 앞선다).
+    const building = await nodeScreenPosition(page, 'Building');
+    await mockApi(page, 'GET', '/api/v1/ontology/1/mapping-usage', createMappingUsage({ entityTypes: { [String(building.id)]: used } }));
+    const deleted = await trackDelete(page, `/api/v1/ontology/1/entity-types/${building.id}`);
+
+    await tap(page, 'nodes', 'Building');
+    await expect(page.getByTestId('entity-inspector')).toBeVisible();
+    await page.keyboard.press('Delete');
+
+    await expect(page.getByRole('heading', { name: 'Building 타입 삭제' })).toBeVisible();
+    await expect(page.getByRole('alertdialog').getByTestId('delete-mapping-usage')).toHaveText(
+      '이 타입은 「화재사건표」 데이터셋 매핑에서 사용 중이라 삭제할 수 없습니다. 매핑에서 먼저 빼 주세요.',
+    );
+    await expect(page.getByTestId('entity-delete-confirm')).toBeDisabled();
+    await page.getByTestId('entity-delete-confirm').click({ force: true });
+    expect(deleted.called).toBe(false);
+  });
+
+  test('매핑이 쓰는 관계 엣지에서 Delete 를 누르면 안내가 뜨고 확인이 막힌다', async ({ authenticatedPage: page }) => {
+    await setupAdminAuth(page);
+    await setupOntologyMocks(page);
+    await page.goto('/knowledge-graph/model');
+    await enterEditMode(page);
+    const relationId = await edgeRelationId(page, 'OCCURRED_AT');
+    await mockApi(page, 'GET', '/api/v1/ontology/1/mapping-usage', createMappingUsage({ relations: { [String(relationId)]: used } }));
+    const deleted = await trackDelete(page, '/api/v1/ontology/1/relations/');
+
+    await tap(page, 'edges', 'OCCURRED_AT');
+    await expect(page.getByTestId('relation-inspector')).toBeVisible();
+    await page.keyboard.press('Delete');
+
+    const dialog = page.getByRole('alertdialog');
+    await expect(dialog.getByText('Incident → OCCURRED_AT → Building')).toBeVisible();
+    await expect(dialog.getByTestId('delete-mapping-usage')).toHaveText(
+      '이 관계는 「화재사건표」 데이터셋 매핑에서 사용 중이라 삭제할 수 없습니다. 매핑에서 먼저 빼 주세요.',
+    );
+    await expect(dialog.getByRole('button', { name: '삭제' })).toBeDisabled();
+    expect(deleted.called).toBe(false);
   });
 });
 

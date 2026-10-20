@@ -1,11 +1,12 @@
 import type { QueryClient } from '@tanstack/react-query';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import { ontologyElementApi } from '@/api/ontology-element';
 import { handleApiError } from '@/lib/api-error';
+import { isMappingInUseError } from '@/lib/ontology-mapping-usage';
 import type {
   CreateEntityTypeRequest,
   CreatePropertyRequest,
@@ -18,6 +19,29 @@ import type {
 } from '@/types/ontology';
 
 export type SaveState = 'idle' | 'saving' | 'saved' | 'error';
+
+/**
+ * WD-129: 요소별 데이터셋 매핑 사용처 캐시 키. ['ontology', id] 아래에 두지 않는다 — 그 키는 스키마 캐시라
+ * commitMutation 이 그 모양(OntologySchema)을 전제로 읽고 쓴다.
+ */
+export const MAPPING_USAGE_QUERY_PREFIX = 'ontology-mapping-usage';
+export const mappingUsageQueryKey = (ontologyId: number) => [MAPPING_USAGE_QUERY_PREFIX, ontologyId] as const;
+
+/**
+ * WD-129: 요소별 데이터셋 매핑 사용처. 삭제 확인 창이 확정 전에 "이 요소를 쓰는 데이터셋 매핑"을 보여 주고 확인을 막는다.
+ * 응답이 요소 id 키라 리네임으로는 낡지 않는다. 조회 실패·조회 중에는 막지 않는다 — 최종 판정은 삭제 API 의 409 다.
+ * ontologyId 가 -1(미선택 자리값, OntologyPage)이면 묻지 않는다.
+ */
+export function useOntologyMappingUsage(ontologyId: number, enabled = true) {
+  return useQuery({
+    queryKey: mappingUsageQueryKey(ontologyId),
+    queryFn: () => ontologyElementApi.getMappingUsage(ontologyId).then((r) => r.data),
+    enabled: enabled && ontologyId > 0,
+    // 인스펙터·확인 창이 마운트될 때마다 다시 묻는다. 낡은 "사용 중" 은 사용자가 매핑에서 뺀 뒤에도 확인 버튼을 막아 되돌릴 길이
+    // 없으므로(서버 409 와 달리 화면이 스스로 풀지 못한다) 캐시를 믿지 않는다. 응답은 요소 id 목록뿐이라 작다.
+    staleTime: 0,
+  });
+}
 
 /**
  * 뮤테이션 응답 공통 처리.
@@ -121,6 +145,12 @@ export function useOntologyElementMutations(ontologyId: number) {
         if (axios.isAxiosError(error) && error.response?.status === 404) {
           toast.error('이미 삭제된 요소입니다 — 최신 상태로 새로고침했습니다.');
           queryClient.invalidateQueries({ queryKey });
+        } else if (isMappingInUseError(error)) {
+          // WD-129: 데이터셋 매핑이 쓰는 요소의 삭제 거부(409). 서버 문구(어느 데이터셋인지)를 그대로 보이고, 매핑에서 빼기
+          // 전에는 다시 해도 같은 409 라 재시도를 주지 않는다(404 와 같은 이유). 확인 창이 낡은 사용처로 열렸던 것이므로
+          // 사용처를 다시 받아 다음 확인 창부터 미리 막는다.
+          handleApiError(error, '매핑에서 사용 중이라 삭제할 수 없습니다.');
+          queryClient.invalidateQueries({ queryKey: mappingUsageQueryKey(ontologyId) });
         } else {
           handleApiError(error, '저장에 실패했습니다.');
           lastFailedRef.current = () => {
@@ -132,7 +162,7 @@ export function useOntologyElementMutations(ontologyId: number) {
         return undefined;
       }
     },
-    [begin, finish, queryClient, queryKey],
+    [begin, finish, ontologyId, queryClient, queryKey],
   );
   // 렌더 중 ref를 직접 대입하면 안 되므로(react-hooks 규칙) 커밋 이후 effect에서 동기화한다 —
   // runMutation은 통상 안정적이라 재시도 시점에는 이미 최신 값으로 갱신돼 있다.
@@ -317,6 +347,9 @@ export function useOntologyElementMutations(ontologyId: number) {
   );
 
   return {
+    // WD-129: 하위 편집기(EntityInspector 등)가 같은 온톨로지의 매핑 사용처를 묻는 데 쓴다 — ontologyId 를 따로 prop 으로
+    // 받으면 mutations 와 다른 id 를 가리킬 수 있어(Task 4 리뷰 M-4) 이 값 하나만 진실의 원천으로 둔다.
+    ontologyId,
     patchDomain,
     addEntityType,
     updateEntityType,

@@ -24,7 +24,12 @@ import {
 } from '../factories/admin.factory';
 import { createAdminUserDetail, createRole, createUser, createUserDetail } from '../factories/auth.factory';
 import { createOntologySummaries } from '../factories/mapping.factory';
-import { createOntologyGraph, createOntologySchema, createSecondOntologySchema } from '../factories/ontology.factory';
+import {
+  createMappingUsage,
+  createOntologyGraph,
+  createOntologySchema,
+  createSecondOntologySchema,
+} from '../factories/ontology.factory';
 import { createPageResponse, mockApi } from './api-mock';
 
 /**
@@ -507,6 +512,9 @@ export async function setupOntologyMocks(page: Page) {
   await mockApi(page, 'GET', '/api/v1/ontologies', createOntologySummaries());
   await mockApi(page, 'GET', '/api/v1/ontology/1', createOntologySchema());
   await mockApi(page, 'GET', '/api/v1/ontology/2', createSecondOntologySchema());
+  // WD-129: 편집기 인스펙터가 삭제 확인 창용 매핑 사용처를 묻는다 — 기본은 "사용처 없음"(삭제 확인이 평소대로 활성).
+  await mockApi(page, 'GET', '/api/v1/ontology/1/mapping-usage', createMappingUsage());
+  await mockApi(page, 'GET', '/api/v1/ontology/2/mapping-usage', createMappingUsage());
 }
 
 /**

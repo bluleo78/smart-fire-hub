@@ -6,11 +6,13 @@ import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import type { OntologyElementMutations } from '@/hooks/queries/useOntologyElement';
+import { type OntologyElementMutations, useOntologyMappingUsage } from '@/hooks/queries/useOntologyElement';
 import type { ReportDirty } from '@/hooks/useUnsavedChangesGuard';
+import { mappingUsageFor } from '@/lib/ontology-mapping-usage';
 import { validateRelationName, validateTripleUniqueness } from '@/lib/ontology-validation';
 import type { OntologySchema, Triple } from '@/types/ontology';
 
+import MappingUsageWarning from './MappingUsageWarning';
 import { useAutosaveText } from './useAutosaveText';
 
 interface Props {
@@ -325,6 +327,9 @@ function EditRelationForm({
   const descriptionField = useAutosaveText(relation.description, (value) =>
     mutations.updateRelation(relation.id, { description: value }),
   );
+  // WD-129: 이 관계(트리플)를 쓰는 데이터셋 매핑 — 있으면 삭제 확인 창이 안내하고 삭제를 막는다(서버도 409 로 거부).
+  const { data: ontologyMappingUsage } = useOntologyMappingUsage(mutations.ontologyId);
+  const mappingUsage = mappingUsageFor(ontologyMappingUsage, 'relation', relation.id);
 
   // (#484) 이름/설명 필드 중 하나라도 dirty면 부모에 보고하고, 언마운트 시(다른 관계 선택으로
   // key={relation.id}가 바뀌거나 다른 종류 선택/생성 폼 전환) false로 되돌려 유령 dirty를 막는다
@@ -401,6 +406,8 @@ function EditRelationForm({
       <DeleteConfirmDialog
         entityName="관계"
         itemName={`${relation.subject} → ${relation.relation} → ${relation.object}`}
+        details={<MappingUsageWarning subject="이 관계는" usage={mappingUsage} />}
+        confirmDisabled={mappingUsage != null}
         onConfirm={() =>
           void mutations.deleteRelation(relation.id).then((result) => {
             // 포커스를 먼저 옮긴 뒤 onDeleted를 호출한다(I-1, S2 최종 리뷰) — EntityInspector의

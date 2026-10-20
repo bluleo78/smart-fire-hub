@@ -9,16 +9,18 @@ import { SearchInput } from '@/components/ui/search-input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useCanWriteOntology, useOntologyById, useOntologyGraph, useOntologyList } from '@/hooks/queries/useOntology';
-import { useOntologyElementMutations } from '@/hooks/queries/useOntologyElement';
+import { useOntologyElementMutations, useOntologyMappingUsage } from '@/hooks/queries/useOntologyElement';
 import { useDirtyAggregator, useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import { GRAPH_READ_RESTRICTED_MESSAGE, isForbiddenError, isGraphReadRestricted } from '@/lib/api-error';
 import { createTypePalette } from '@/lib/ontology-colors';
+import { mappingUsageFor } from '@/lib/ontology-mapping-usage';
 import { affectedRelationsFor, isLastActiveEntityType } from '@/lib/ontology-validation';
 import type { GraphNode } from '@/types/ontology';
 
 import InstanceGraph from './components/InstanceGraph';
 import DeleteTypeConfirm from './components/model-editor/DeleteTypeConfirm';
 import EntityInspector from './components/model-editor/EntityInspector';
+import MappingUsageWarning from './components/model-editor/MappingUsageWarning';
 import ModelOutline from './components/model-editor/ModelOutline';
 import RelationInspector from './components/model-editor/RelationInspector';
 import SaveStatusChip from './components/model-editor/SaveStatusChip';
@@ -368,6 +370,13 @@ export default function OntologyPage() {
   // 사라지면 find가 undefined를 내 다이얼로그가 조용히 안 뜬다).
   const canvasDeleteRelation =
     canvasDeleteRelationId != null ? selectedSchema?.relations.find((r) => r.id === canvasDeleteRelationId) : undefined;
+  // WD-129: 캔버스 Delete 키 삭제 확인 창도 데이터셋 매핑 사용처를 보여 주고 막는다. 창이 열릴 때만 묻는다 — 캔버스를 보는 것만으로
+  // 사용처를 조회하지 않게 한다(인스펙터와 같은 캐시 키라 이미 받아 둔 값이 있으면 그대로 쓴다).
+  const { data: mappingUsage } = useOntologyMappingUsage(
+    elementMutations.ontologyId,
+    canvasDeleteEntity != null || canvasDeleteRelation != null,
+  );
+  const canvasDeleteRelationMappingUsage = mappingUsageFor(mappingUsage, 'relation', canvasDeleteRelationId ?? undefined);
 
   // 캔버스에서 Delete로 엔티티 타입 삭제를 요청 — EntityInspector의 isLastActiveType과 같은 조건
   // (isLastActiveEntityType, ontology-validation.ts, 리뷰 M-3)을 선반영한다(서버가 400으로 거부하는
@@ -808,6 +817,7 @@ export default function OntologyPage() {
         <DeleteTypeConfirm
           entity={canvasDeleteEntity}
           affectedRelations={canvasDeleteAffectedRelations}
+          mappingUsage={mappingUsageFor(mappingUsage, 'entityType', canvasDeleteEntityId ?? undefined)}
           open
           onOpenChange={(o) => {
             if (!o) setCanvasDeleteEntityId(null);
@@ -849,6 +859,8 @@ export default function OntologyPage() {
         <DeleteConfirmDialog
           entityName="관계"
           itemName={`${canvasDeleteRelation.subject} → ${canvasDeleteRelation.relation} → ${canvasDeleteRelation.object}`}
+          details={<MappingUsageWarning subject="이 관계는" usage={canvasDeleteRelationMappingUsage} />}
+          confirmDisabled={canvasDeleteRelationMappingUsage != null}
           open
           onOpenChange={(o) => {
             if (!o) setCanvasDeleteRelationId(null);
