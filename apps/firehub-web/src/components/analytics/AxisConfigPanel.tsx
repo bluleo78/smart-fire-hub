@@ -12,6 +12,7 @@ import {
 } from '../ui/select';
 import { Switch } from '../ui/switch';
 import { Tabs, TabsList, TabsTrigger } from '../ui/tabs';
+import { toggleYAxisColumn } from './chart-missing-columns';
 
 interface AxisConfigPanelProps {
   chartType: ChartType;
@@ -382,11 +383,9 @@ export function AxisConfigPanel({ chartType, columns, config, onChange }: AxisCo
                       id={`y-${col}`}
                       checked={checked}
                       onCheckedChange={(v) => {
-                        if (v) {
-                          update({ yAxis: [...config.yAxis, col] });
-                        } else {
-                          update({ yAxis: config.yAxis.filter((c) => c !== col) });
-                        }
+                        // WD-88: 결과에 없는 이름(해제할 체크박스가 없음)을 걷어 내고, 새로 체크한 컬럼은
+                        // 첫 누락 항목 자리에 넣는다 — 규칙과 이유는 toggleYAxisColumn 주석 참고.
+                        update({ yAxis: toggleYAxisColumn(config.yAxis, col, Boolean(v), columns) });
                       }}
                     />
                     <label

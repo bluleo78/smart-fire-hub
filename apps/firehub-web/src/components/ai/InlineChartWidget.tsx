@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Component, useState } from 'react';
+import { Component, useMemo, useState } from 'react';
 import sql from 'react-syntax-highlighter/dist/esm/languages/prism/sql';
 import SyntaxHighlighter from 'react-syntax-highlighter/dist/esm/prism-light';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
@@ -8,6 +8,7 @@ import { toast } from 'sonner';
 import { analyticsApi } from '../../api/analytics';
 import type { ChartConfig, ChartType } from '../../types/analytics';
 import { CHART_TYPE_LABELS } from '../../types/analytics';
+import { findMissingChartColumns } from '../analytics/chart-missing-columns';
 import { ChartRenderer } from '../analytics/ChartRenderer';
 import { Button } from '../ui/button';
 import {
@@ -25,6 +26,12 @@ import { Switch } from '../ui/switch';
 SyntaxHighlighter.registerLanguage('sql', sql);
 
 const codeStyle = oneDark as Record<string, React.CSSProperties>;
+
+/**
+ * AI 챗 인라인 차트의 컬럼 누락 해결 문구(WD-88). AI 챗 차트에는 저장된 쿼리도 차트 편집 화면도 없으므로
+ * 위젯·편집기용 기본 문구("차트 편집에서 축을 다시 고르세요") 대신 AI 에게 다시 요청하라고 안내한다.
+ */
+const AI_MISSING_COLUMNS_HINT = '차트 설정의 컬럼 이름이 결과와 맞지 않습니다. AI에게 차트를 다시 그려 달라고 요청하세요.';
 
 // ─── Error Boundary ──────────────────────────────────────────────────────────
 
@@ -187,6 +194,14 @@ export function InlineChartWidget({
   const [sqlDialogOpen, setSqlDialogOpen] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
 
+  // WD-88: 설정 컬럼이 결과에 없으면 ChartRenderer 가 차트 대신 안내를 보여 준다. 이때 「차트로 저장」을 열어 두면
+  // 깨진 설정이 그대로 저장되므로 버튼을 숨긴다(표 위젯 내보내기처럼 쓸 수 없는 동작은 숨기는 기존 관례).
+  // ChartRenderer 와 같은 함수·같은 입력(원본 config, columns, rows)으로 판단해 두 곳의 결론이 어긋나지 않게 한다.
+  const hasMissingColumns = useMemo(
+    () => findMissingChartColumns(chartType, config, columns, rows).length > 0,
+    [chartType, config, columns, rows],
+  );
+
   // 클립보드 복사 — 모달 안에서 전체 SQL을 빠르게 복사할 수 있도록 제공
   async function handleCopySql() {
     try {
@@ -228,6 +243,7 @@ export function InlineChartWidget({
             data={rows}
             columns={columns}
             height={300}
+            missingColumnsHint={AI_MISSING_COLUMNS_HINT}
           />
         </ChartErrorBoundary>
       </div>
@@ -285,17 +301,19 @@ export function InlineChartWidget({
         </DialogContent>
       </Dialog>
 
-      {/* Footer */}
-      <div className="flex justify-end px-3 py-2 border-t border-border bg-muted/20">
-        <Button
-          size="sm"
-          variant="outline"
-          className="text-xs h-7"
-          onClick={() => setDialogOpen(true)}
-        >
-          차트로 저장
-        </Button>
-      </div>
+      {/* Footer — 컬럼 누락 안내가 보일 때는 깨진 설정을 저장하지 못하게 숨긴다(WD-88) */}
+      {!hasMissingColumns && (
+        <div className="flex justify-end px-3 py-2 border-t border-border bg-muted/20">
+          <Button
+            size="sm"
+            variant="outline"
+            className="text-xs h-7"
+            onClick={() => setDialogOpen(true)}
+          >
+            차트로 저장
+          </Button>
+        </div>
+      )}
 
       <SaveDialog
         open={dialogOpen}

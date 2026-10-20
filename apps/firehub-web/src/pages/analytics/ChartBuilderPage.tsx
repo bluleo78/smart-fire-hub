@@ -4,6 +4,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { AxisConfigPanel } from '../../components/analytics/AxisConfigPanel';
+import { findMissingChartColumns } from '../../components/analytics/chart-missing-columns';
 import { ChartConfigWithheldNotice } from '../../components/analytics/ChartConfigWithheldNotice';
 import { ChartRenderer } from '../../components/analytics/ChartRenderer';
 import { ChartTypeSelector } from '../../components/analytics/ChartTypeSelector';
@@ -656,6 +657,14 @@ export default function ChartBuilderPage() {
     }
     // 가려진 차트는 설정을 바꿀 수 없고 보내지도 않으므로 축 검증을 건너뛴다(WD-31②).
     if (!configWithheld) {
+      // WD-88: 원본 쿼리의 컬럼 이름이 바뀌어 설정이 결과에 없는 컬럼을 가리키면, 미리보기에 안내만 뜬 채로
+      // 깨진 설정이 저장될 수 있다. 쿼리를 실행해 결과 컬럼을 알 때만(queryColumns 가 있을 때) 저장을 막는다.
+      // 타입별 검증보다 먼저 둔다 — 이름이 틀린 경우 "공간 데이터 없음" 같은 덜 정확한 안내보다 원인을 바로 알려 준다.
+      const missingColumns = findMissingChartColumns(chartType, config, queryColumns, queryRows);
+      if (missingColumns.length > 0) {
+        toast.error(`쿼리 결과에 없는 컬럼이 있어 저장할 수 없습니다: ${missingColumns.join(', ')}`);
+        return;
+      }
       if (chartType === 'MAP') {
         if (!config.spatialColumn) {
           toast.error('공간 컬럼을 선택하세요.');

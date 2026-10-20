@@ -102,3 +102,15 @@ describe('InlineChartWidget SQL 다이얼로그 (#204)', () => {
     expect(screen.getByTestId('inline-chart-sql-copy')).toBeInTheDocument();
   });
 });
+
+describe('InlineChartWidget 컬럼 누락 시 저장 버튼 (WD-88)', () => {
+  it('설정 컬럼이 결과에 없으면 「차트로 저장」을 숨겨 깨진 설정 저장을 막는다', () => {
+    render(<InlineChartWidget {...baseProps} config={{ xAxis: 'region', yAxis: ['b'] }} />);
+    expect(screen.queryByRole('button', { name: '차트로 저장' })).toBeNull();
+  });
+
+  it('columns 가 표시 라벨이어도 row 키로 컬럼이 있으면 「차트로 저장」을 보인다', () => {
+    render(<InlineChartWidget {...baseProps} columns={['이름', '값']} />);
+    expect(screen.getByRole('button', { name: '차트로 저장' })).toBeInTheDocument();
+  });
+});
