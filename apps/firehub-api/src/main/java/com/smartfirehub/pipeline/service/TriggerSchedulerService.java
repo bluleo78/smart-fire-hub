@@ -5,6 +5,7 @@ import com.smartfirehub.global.tenant.TenantScopedRunner;
 import com.smartfirehub.pipeline.dto.TriggerResponse;
 import com.smartfirehub.pipeline.repository.TriggerEventRepository;
 import com.smartfirehub.pipeline.repository.TriggerRepository;
+import com.smartfirehub.proactive.util.ProactiveCron;
 import jakarta.annotation.PostConstruct;
 import java.time.Instant;
 import java.time.ZoneId;
@@ -13,6 +14,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Lazy;
@@ -102,53 +104,119 @@ public class TriggerSchedulerService {
    * <p>등록 성공 시 {@code CronTrigger} 기준으로 다음 발화 시각을 계산해 {@code trigger_state.nextFireTime}에
    * 기록한다(#676) — 이 값이 없으면 프론트엔드의 "다음 실행" 표시와 {@link #detectMissedFire} 가 둘 다 전제로 삼는 값이 영영 채워지지 않는다.
    * 계산 결과는 {@code compute()} 밖으로 홀더를 통해 전달한 뒤 쓴다 — bin lock 을 잡은 채 DB I/O(트랜잭션)를 하지 않기 위함이다.
+   *
+   * @throws IllegalArgumentException cron·시간대로 스케줄을 만들 수 없을 때. 이때 기존 스케줄과 {@code nextFireTime} 은
+   *     그대로 남는다(WD-107). 호출자 대부분이 커밋 후(afterCommit)에 부르므로 이 예외로 DB 를 되돌릴 수는 없다 — 저장 경로는 커밋 전에
+   *     {@code TriggerService.validateScheduleConfig} 로 같은 검증을 먼저 거쳐 여기까지 오지 않게 한다.
    */
   public void registerSchedule(Long triggerId, Map<String, Object> config) {
     final long tenantId = TenantContext.require();
     final AtomicReference<Instant> nextFireHolder = new AtomicReference<>();
+    // 다음 발화가 없어 스케줄을 걸지 못했는지 compute() 밖으로 전달한다(WD-107).
+    final AtomicBoolean noNextFire = new AtomicBoolean(false);
+
+    // 새 CronTrigger 를 compute() 밖에서 먼저 만든다(WD-107). 예전에는 compute() 안에서 기존 스케줄을 먼저 cancel 한 뒤
+    // 생성에 실패하면 null 을 돌려줘, 잘못된 cron 으로 수정하는 순간 멀쩡하던 옛 스케줄까지 사라지고 오류는 로그로만 남았다.
+    // 여기서 실패하면 맵을 건드리기 전이라 옛 스케줄이 그대로 남고, 예외는 호출자에게 전달돼 성공처럼 보이지 않는다.
+    // 5필드 cron 은 정규화해 받아들인다 — 이 결함으로 5필드가 저장된 기존 행도 재기동·토글 시 다시 등록되게 하기 위함이다.
+    // 정규화 규칙은 proactive 잡과 같은 ProactiveCron.normalize 를 재사용한다(검증 쪽 validateScheduleConfig 도 같은 것을
+    // 쓴다).
+    final Object rawCron = config.get("cron");
+    final String cronExpression =
+        ProactiveCron.normalize(rawCron == null ? null : rawCron.toString());
+    final String timezone = String.valueOf(config.getOrDefault("timezone", "Asia/Seoul"));
+    final CronTrigger cronTrigger;
+    try {
+      cronTrigger = new CronTrigger(cronExpression, ZoneId.of(timezone));
+    } catch (RuntimeException e) {
+      log.error(
+          "Failed to register cron schedule for trigger {} (cron '{}', timezone '{}'): {}",
+          triggerId,
+          cronExpression,
+          timezone,
+          e.getMessage());
+      throw new IllegalArgumentException(
+          "스케줄을 등록할 수 없습니다. cron 표현식 또는 시간대가 올바르지 않습니다: " + cronExpression + " / " + timezone, e);
+    }
 
     scheduledTasks.compute(
         triggerId,
         (id, existing) -> {
+          // 새 스케줄을 먼저 건 뒤에 옛 스케줄을 취소한다 — schedule() 자체가 실패(예: 풀 거부)해도 예외가 compute() 밖으로
+          // 나가 맵이 바뀌지 않으므로, 옛 스케줄이 취소된 채 대체 없이 사라지는 일이 없다.
+          ScheduledFuture<?> future =
+              taskScheduler.schedule(
+                  () ->
+                      TenantContext.runScoped(
+                          tenantId,
+                          () -> {
+                            triggerService.fireTrigger(triggerId, Map.of());
+                            // 발화 직후 다음 실행 시각을 재계산해 갱신한다 — 그래야 매 발화마다
+                            // "다음 실행" 표시와 missed-fire 감지 기준이 최신으로 유지된다.
+                            writeNextFireTime(
+                                triggerId, cronTrigger.nextExecution(new SimpleTriggerContext()));
+                          }),
+                  cronTrigger);
           if (existing != null) {
             existing.cancel(false);
           }
-
-          String cronExpression = (String) config.get("cron");
-          String timezone = (String) config.getOrDefault("timezone", "Asia/Seoul");
-
-          try {
-            CronTrigger cronTrigger = new CronTrigger(cronExpression, ZoneId.of(timezone));
-            ScheduledFuture<?> future =
-                taskScheduler.schedule(
-                    () ->
-                        TenantContext.runScoped(
-                            tenantId,
-                            () -> {
-                              triggerService.fireTrigger(triggerId, Map.of());
-                              // 발화 직후 다음 실행 시각을 재계산해 갱신한다 — 그래야 매 발화마다
-                              // "다음 실행" 표시와 missed-fire 감지 기준이 최신으로 유지된다.
-                              writeNextFireTime(
-                                  triggerId, cronTrigger.nextExecution(new SimpleTriggerContext()));
-                            }),
-                    cronTrigger);
-            // 최초 등록 시점의 다음 발화 시각. compute() 밖(락 해제 후)에서 DB에 반영한다.
-            nextFireHolder.set(cronTrigger.nextExecution(new SimpleTriggerContext()));
-            log.info(
-                "Registered schedule trigger {} with cron '{}' timezone '{}' (tenant={})",
+          if (future == null) {
+            // 문법은 맞지만 다음 발화가 없는 cron(예: 2월 30일)이면 schedule() 이 null 을 돌려준다. 새 설정으로는 돌 스케줄이
+            // 없으므로 옛 스케줄은 취소하고 항목을 지운다 — nextFireTime 도 compute() 밖에서 비워 옛 시각이 남지 않게 한다.
+            log.warn(
+                "Schedule trigger {} has no next execution for cron '{}' timezone '{}' — not scheduled",
                 triggerId,
                 cronExpression,
-                timezone,
-                tenantId);
-            return future;
-          } catch (Exception e) {
-            log.error(
-                "Failed to register cron schedule for trigger {}: {}", triggerId, e.getMessage());
+                timezone);
+            noNextFire.set(true);
             return null;
           }
+          // 최초 등록 시점의 다음 발화 시각. compute() 밖(락 해제 후)에서 DB에 반영한다.
+          nextFireHolder.set(cronTrigger.nextExecution(new SimpleTriggerContext()));
+          log.info(
+              "Registered schedule trigger {} with cron '{}' timezone '{}' (tenant={})",
+              triggerId,
+              cronExpression,
+              timezone,
+              tenantId);
+          return future;
         });
 
+    if (noNextFire.get()) {
+      triggerRepository.clearNextFireTime(triggerId);
+      return;
+    }
     writeNextFireTime(triggerId, nextFireHolder.get());
+  }
+
+  /**
+   * 이 트리거의 스케줄이 현재 이 인스턴스에 걸려 있는지 알려 준다(WD-107).
+   *
+   * <p>config 를 바꾸지 않는 수정(이름·설명 변경)에서 이미 돌고 있는 스케줄을 굳이 다시 등록하지 않기 위해 쓴다 — 재등록은 다음 실행 시각 재기록 등 부수
+   * 효과가 있고, 저장된 값이 잘못된 옛 행이면 실패할 수도 있다.
+   */
+  public boolean isScheduled(Long triggerId) {
+    return scheduledTasks.containsKey(triggerId);
+  }
+
+  /**
+   * 커밋 후(afterCommit) 경로 전용 재등록. 실패해도 예외를 던지지 않고 경고 로그와 함께 "스케줄 없음" 상태로 정리한다(WD-107).
+   *
+   * <p>afterCommit 시점에는 DB 가 이미 커밋돼 예외로 되돌릴 수 없고, 던지면 저장은 됐는데 응답만 오류가 되는 부분 성공이 생긴다. 잘못된 값의 본 방어선은
+   * 커밋 전 검증({@code TriggerService.validateScheduleConfig})이므로, 여기까지 온 실패(검증 이전에 저장된 옛 잘못된 행 등)는 DB
+   * 의 새 설정과 어긋나는 옛 스케줄을 남기지 않도록 내리고 "다음 실행"도 비운다.
+   */
+  public void registerScheduleAfterCommit(Long triggerId, Map<String, Object> config) {
+    try {
+      registerSchedule(triggerId, config);
+    } catch (RuntimeException e) {
+      log.warn(
+          "Schedule trigger {} could not be registered after commit; left unscheduled: {}",
+          triggerId,
+          e.getMessage());
+      unregisterSchedule(triggerId);
+      triggerRepository.clearNextFireTime(triggerId);
+    }
   }
 
   /**

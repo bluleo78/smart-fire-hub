@@ -8,6 +8,7 @@ import com.smartfirehub.pipeline.repository.PipelineRepository;
 import com.smartfirehub.pipeline.repository.TriggerEventRepository;
 import com.smartfirehub.pipeline.repository.TriggerRepository;
 import com.smartfirehub.pipeline.repository.TriggerTenantResolver;
+import com.smartfirehub.proactive.util.ProactiveCron;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import java.net.InetAddress;
@@ -15,7 +16,10 @@ import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
+import java.time.DateTimeException;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.util.*;
 import javax.crypto.Cipher;
 import javax.crypto.Mac;
@@ -187,7 +191,8 @@ public class TriggerService {
           new TransactionSynchronization() {
             @Override
             public void afterCommit() {
-              schedulerService.registerSchedule(triggerId, finalConfig);
+              // 커밋 후 등록 실패는 응답을 깨지 않고 "스케줄 없음"으로 정리한다(WD-107) — 본 방어선은 위 커밋 전 검증이다.
+              schedulerService.registerScheduleAfterCommit(triggerId, finalConfig);
             }
           });
     }
@@ -257,18 +262,45 @@ public class TriggerService {
           updatedConfig.get("datasetIds"), existing.config().get("datasetIds"), userId);
     }
 
+    // SCHEDULE: 생성과 같은 검증·정규화를 저장 전에 적용한다(WD-107). 예전에는 수정 경로가 이를 건너뛰어 5필드 cron(웹 프리셋
+    // "매일 09:00" 등)이나 잘못된 cron 이 그대로 저장됐고, 커밋 후 등록만 실패해 204 "수정되었습니다" 뒤로 스케줄이 사라졌다.
+    // 기존 config 위에 요청 config 를 덮어 병합한 뒤 검증한다 — 수정 요청이 cron 만 보내도 기존 timezone·concurrencyPolicy
+    // 가 지워지지 않게 하기 위함이다(SCHEDULE config 키는 이 셋뿐이라 병합으로 남는 낡은 키가 없다). config 를 보내지 않은 수정(이름만
+    // 바꾸기·끄기)은 검증하지 않는다 — 이미 잘못 저장된 값 때문에 이름 변경·비활성화까지 막히지 않게 한다.
+    if ("SCHEDULE".equals(existing.triggerType()) && request.config() != null) {
+      Map<String, Object> merged = new HashMap<>(existing.config());
+      merged.putAll(request.config());
+      validateScheduleConfig(merged);
+      // 저장(repository.update)과 커밋 후 재등록이 모두 정규화된 config 를 쓰도록 요청을 바꿔 끼운다.
+      request =
+          new UpdateTriggerRequest(
+              request.name(), request.isEnabled(), request.description(), merged);
+    } else if ("SCHEDULE".equals(existing.triggerType())
+        && !existing.isEnabled()
+        && Boolean.TRUE.equals(request.isEnabled())) {
+      // config 없이 꺼진 트리거를 켜는 수정은 토글로 켜기와 같다 — 저장된 config 로 실제로 스케줄을 걸 수 있는지 커밋 전에 확인한다.
+      // 사본으로 검증해 저장값은 건드리지 않는다(등록 시 5필드는 어차피 정규화된다).
+      validateScheduleConfig(new HashMap<>(existing.config()));
+    }
+
     triggerRepository.update(triggerId, request, userId);
 
     // If schedule trigger, re-register after commit
     if ("SCHEDULE".equals(existing.triggerType())) {
-      Map<String, Object> config = request.config() != null ? request.config() : existing.config();
+      boolean configChanged = request.config() != null;
+      Map<String, Object> config = configChanged ? request.config() : existing.config();
       boolean enabled = request.isEnabled() != null ? request.isEnabled() : existing.isEnabled();
       TransactionSynchronizationManager.registerSynchronization(
           new TransactionSynchronization() {
             @Override
             public void afterCommit() {
               if (enabled) {
-                schedulerService.registerSchedule(triggerId, config);
+                // config 를 바꾸지 않은 수정(이름·설명)이고 이미 돌고 있는 스케줄이 있으면 다시 등록하지 않는다(WD-107) — 바뀐 게 없고,
+                // 저장값이 검증 이전의 잘못된 옛 행이면 재등록이 실패할 수도 있다.
+                if (!configChanged && schedulerService.isScheduled(triggerId)) {
+                  return;
+                }
+                schedulerService.registerScheduleAfterCommit(triggerId, config);
               } else {
                 schedulerService.unregisterSchedule(triggerId);
               }
@@ -315,6 +347,12 @@ public class TriggerService {
       }
     }
 
+    // 스케줄 트리거를 켤 때는 저장된 config 로 실제로 스케줄을 걸 수 있는지 커밋 전에 확인해 400 으로 막는다(WD-107). 예전엔 검증 없이
+    // 켜져 커밋 후 등록만 조용히 실패했다. 사본으로 검증해 저장값은 건드리지 않는다. 끄는 것은 잘못 저장된 값이 있어도 막지 않는다.
+    if (enabled && "SCHEDULE".equals(existing.triggerType())) {
+      validateScheduleConfig(new HashMap<>(existing.config()));
+    }
+
     triggerRepository.updateEnabled(triggerId, enabled);
 
     // Update scheduler after commit
@@ -324,7 +362,7 @@ public class TriggerService {
             @Override
             public void afterCommit() {
               if (enabled) {
-                schedulerService.registerSchedule(triggerId, existing.config());
+                schedulerService.registerScheduleAfterCommit(triggerId, existing.config());
               } else {
                 schedulerService.unregisterSchedule(triggerId);
               }
@@ -703,17 +741,33 @@ public class TriggerService {
     // cron 형식 검증 및 정규화 (#55)
     // Spring CronExpression은 6필드(초 분 시 일 월 요일) 형식만 수용.
     // 5필드(Unix 표준: 분 시 일 월 요일) 입력은 앞에 "0 "을 붙여 정규화.
+    // 정규화 규칙은 등록(TriggerSchedulerService.registerSchedule)과 같은 ProactiveCron.normalize 를
+    // 쓴다(WD-107).
     String cron = config.get("cron").toString().trim();
-    String normalizedCron = cron.split("\\s+").length == 5 ? "0 " + cron : cron;
+    String normalizedCron = ProactiveCron.normalize(cron);
     if (!CronExpression.isValidExpression(normalizedCron)) {
       throw new IllegalArgumentException("유효하지 않은 cron 표현식입니다: " + cron);
     }
     config.put("cron", normalizedCron);
-    if (!config.containsKey("timezone")) {
+    // 키가 없거나 null 이면 기본값을 채운다 — null 이 그대로 저장되면 등록 시 "null" 시간대로 실패한다.
+    if (config.get("timezone") == null) {
       config.put("timezone", "Asia/Seoul");
     }
-    if (!config.containsKey("concurrencyPolicy")) {
+    if (config.get("concurrencyPolicy") == null) {
       config.put("concurrencyPolicy", "SKIP");
+    }
+    // 시간대도 커밋 전에 검증한다(WD-107). 여기서 거르지 않으면 저장은 성공하고 커밋 후 스케줄 등록(ZoneId.of)만 실패해,
+    // 화면엔 "수정되었습니다"가 뜨는데 스케줄은 돌지 않는 상태가 된다.
+    String timezone = config.get("timezone").toString();
+    try {
+      ZoneId.of(timezone);
+    } catch (DateTimeException e) {
+      throw new IllegalArgumentException("유효하지 않은 시간대입니다: " + timezone);
+    }
+    // 문법은 맞아도 다음 실행 시각이 없는 cron(예: 2월 30일 "0 0 0 30 2 *")은 거부한다(WD-107). 저장되면 스케줄러가 걸 수 있는 스케줄이
+    // 없어 아무 때도 실행되지 않는데, 화면엔 "수정되었습니다"가 떠 성공처럼 보인다.
+    if (CronExpression.parse(normalizedCron).next(ZonedDateTime.now(ZoneId.of(timezone))) == null) {
+      throw new IllegalArgumentException("다음 실행 시각이 없는 cron 표현식입니다: " + cron);
     }
     // Validate concurrency policy
     String policy = config.get("concurrencyPolicy").toString();

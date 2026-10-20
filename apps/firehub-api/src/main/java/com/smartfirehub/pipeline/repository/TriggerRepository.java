@@ -269,6 +269,27 @@ public class TriggerRepository {
             });
   }
 
+  /**
+   * {@code trigger_state.nextFireTime} 을 지운다(WD-107).
+   *
+   * <p>스케줄을 걸 수 없거나(다음 발화가 없는 cron, 커밋 후 등록 실패) 스케줄이 없는 상태로 남을 때, 화면의 "다음 실행"에 옛 시각이 거짓으로 남지 않게 하기
+   * 위함이다. {@link #mergeNextFireTime} 과 같은 이유로 afterCommit 콜백 안에서 불리므로 {@code REQUIRES_NEW} 로 연다.
+   */
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public void clearNextFireTime(Long id) {
+    findById(id)
+        .ifPresent(
+            trigger -> {
+              if (trigger.triggerState() == null
+                  || !trigger.triggerState().containsKey("nextFireTime")) {
+                return;
+              }
+              Map<String, Object> updatedState = new HashMap<>(trigger.triggerState());
+              updatedState.remove("nextFireTime");
+              updateTriggerState(id, updatedState);
+            });
+  }
+
   public int disableByUpstreamPipelineId(Long upstreamPipelineId) {
     return dsl.update(PIPELINE_TRIGGER)
         .set(T_IS_ENABLED, false)
