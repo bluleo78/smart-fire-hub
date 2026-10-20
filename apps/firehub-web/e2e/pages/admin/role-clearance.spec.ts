@@ -261,4 +261,37 @@ test.describe('역할 편집 — 데이터 열람 등급', () => {
     await notice.scrollIntoViewIfNeeded();
     await page.screenshot({ path: 'test-results/tc/role-clearance/python-read-notice.png' });
   });
+  /** WD-118: 열람 등급만 골라 두고 저장하지 않은 채 나가려 하면 이탈 경고가 뜬다 — 카드가 자기 draft 를 따로 들고 있어 가드가 몰랐다. */
+  test('열람 등급을 바꾸고 저장하지 않은 채 「목록으로 돌아가기」를 누르면 이탈 경고가 뜬다 (WD-118)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupRoleDetailMocks(page, 3, false);
+    await mockApi(page, 'GET', '/api/v1/roles/3/clearance', {
+      roleId: 3,
+      securityLevelId: 2,
+      userCount: 14,
+      fixed: false,
+    });
+    await mockApi(page, 'POST', '/api/v1/roles/3/clearance/preview', {
+      callerLostDatasetCount: 0,
+      topLevelRoleCountAfter: 1,
+      roleUserCount: 14,
+    });
+    await page.goto('/admin/roles/3');
+    const card = page.getByTestId('role-clearance-card');
+    await card.getByRole('radio', { name: /민감/ }).check();
+
+    await page.getByRole('button', { name: '목록으로 돌아가기' }).click();
+    await expect(page.getByRole('alertdialog')).toBeVisible();
+    await expect(page.getByText('저장하지 않은 변경사항이 있습니다. 이탈하시겠습니까?')).toBeVisible();
+    await expect(page).toHaveURL(/\/admin\/roles\/3$/);
+
+    // 원래 등급으로 되돌리면 경고 없이 이동한다
+    await page.getByRole('button', { name: '취소' }).click();
+    await card.getByRole('radio', { name: /내부/ }).check();
+    await mockApi(page, 'GET', '/api/v1/roles', []);
+    await page.getByRole('button', { name: '목록으로 돌아가기' }).click();
+    await expect(page.getByRole('alertdialog')).not.toBeVisible();
+    await expect(page).toHaveURL(/\/admin\/roles$/);
+  });
 });

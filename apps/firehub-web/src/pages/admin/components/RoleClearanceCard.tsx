@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
-import { useId, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 
 import { securityLevelsApi } from '../../../api/security-levels';
@@ -30,7 +30,14 @@ import { cumulativeDescription } from '../../../lib/security-level';
  * ① 저장 후 최상위 열람 역할이 0개가 되면 저장 비활성+배너, ② 본인 자격이 내려가면 확인 다이얼로그.
  * 시스템 ADMIN(fixed)은 편집 불가 — 최상위 고정 표시만 한다.
  */
-export function RoleClearanceCard({ roleId }: { roleId: number }) {
+export function RoleClearanceCard({
+  roleId,
+  onDirtyChange,
+}: {
+  roleId: number;
+  /** 미저장 등급 선택 여부가 바뀔 때 알린다 — 역할 상세의 이탈 경고가 이 카드의 변경도 알 수 있게(WD-118). */
+  onDirtyChange?: (dirty: boolean) => void;
+}) {
   const qc = useQueryClient();
   const { data: clearance } = useRoleClearance(roleId);
   const { data: rawLevels = [] } = useSecurityLevels();
@@ -45,6 +52,11 @@ export function RoleClearanceCard({ roleId }: { roleId: number }) {
   const current = clearance ? String(clearance.securityLevelId) : '';
   const selected = draft ?? current;
   const changed = !!clearance && !clearance.fixed && selected !== current;
+
+  // 등급을 골라 두고 저장하지 않은 상태를 부모에 알린다 — 카드가 자기 draft 를 따로 들고 있어 부모 가드가 모르면 이탈 시 조용히 버려진다(WD-118).
+  useEffect(() => {
+    onDirtyChange?.(changed);
+  }, [changed, onDirtyChange]);
 
   // 미리보기는 "어느 서버 상태에서 어느 등급으로 바꾸는 결과인지"를 쿼리 키로 묶는다 — 선택을 빠르게 바꾸거나
   // 저장 뒤 같은 등급을 다시 골라도 이전 결과(예: 손실 0)로 본인 하락 확인을 건너뛰지 않게 하기 위함.

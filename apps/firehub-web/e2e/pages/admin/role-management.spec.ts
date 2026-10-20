@@ -1,3 +1,4 @@
+import { createPermission, createRoleDetail } from '../../factories/admin.factory';
 import {
   setupAdminAuth,
   setupRoleDetailMocks,
@@ -450,6 +451,86 @@ test.describe('역할 관리 페이지', () => {
       await setupRoleListMocks(page);
       await page.getByRole('button', { name: '이탈' }).click();
 
+      await expect(page).toHaveURL(/\/admin\/roles$/);
+    });
+
+    /**
+     * WD-118 회귀 방지 — 가드가 이름·설명 폼의 isDirty 만 봐서, 권한 체크박스만 바꾸고 이동하면
+     * 경고 없이 변경이 버려졌다. 권한 체크 변경도 미저장 변경으로 봐야 한다.
+     */
+    test('권한 체크만 바꾸고 "목록으로 돌아가기"를 누르면 이탈 다이얼로그가 표시된다 (WD-118)', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupRoleDetailMocks(page, 3, false);
+      await page.goto('/admin/roles/3');
+
+      const pipelineRead = page.getByRole('checkbox', { name: /PIPELINE_READ/ });
+      await pipelineRead.click();
+      await expect(pipelineRead).toBeChecked();
+
+      await page.getByRole('button', { name: '목록으로 돌아가기' }).click();
+      await expect(page.getByRole('alertdialog')).toBeVisible();
+      await expect(
+        page.getByText('저장하지 않은 변경사항이 있습니다. 이탈하시겠습니까?'),
+      ).toBeVisible();
+      await expect(page).toHaveURL(/\/admin\/roles\/3$/);
+
+      // 취소하면 체크한 권한이 그대로 남아 있어야 한다
+      await page.getByRole('button', { name: '취소' }).click();
+      await expect(pipelineRead).toBeChecked();
+    });
+
+    test('권한 체크를 바꿨다가 원래대로 되돌리면 다이얼로그 없이 이동한다 (WD-118)', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupRoleDetailMocks(page, 3, false);
+      await page.goto('/admin/roles/3');
+
+      const pipelineRead = page.getByRole('checkbox', { name: /PIPELINE_READ/ });
+      await pipelineRead.click();
+      await pipelineRead.click();
+      await expect(pipelineRead).not.toBeChecked();
+
+      await setupRoleListMocks(page);
+      await page.getByRole('button', { name: '목록으로 돌아가기' }).click();
+      await expect(page.getByRole('alertdialog')).not.toBeVisible();
+      await expect(page).toHaveURL(/\/admin\/roles$/);
+    });
+
+    test('권한을 저장한 뒤에는 다이얼로그 없이 이동한다 (WD-118)', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupRoleDetailMocks(page, 3, false);
+      // 저장 뒤 재조회는 새 권한(PIPELINE_READ 포함)을 돌려준다 — 기준이 저장 상태로 바뀌어야 경고가 사라진다.
+      const saved = createRoleDetail({
+        id: 3,
+        name: 'EDITOR',
+        isSystem: false,
+        permissions: [
+          ...createRoleDetail().permissions,
+          createPermission({ id: 3, code: 'PIPELINE_READ', category: 'PIPELINE' }),
+        ],
+      });
+      const saveCapture = await mockApi(
+        page,
+        'PUT',
+        '/api/v1/roles/3/permissions',
+        {},
+        { capture: true },
+      );
+      await page.goto('/admin/roles/3');
+
+      const pipelineRead = page.getByRole('checkbox', { name: /PIPELINE_READ/ });
+      await pipelineRead.click();
+      await mockApi(page, 'GET', '/api/v1/roles/3', saved);
+      await page.getByRole('button', { name: '권한 저장' }).click();
+      expect((await saveCapture.waitForRequest()).payload).toEqual({ permissionIds: [1, 2, 3] });
+      await expect(page.getByText('권한이 저장되었습니다.')).toBeVisible();
+      await expect(pipelineRead).toBeChecked();
+
+      await setupRoleListMocks(page);
+      await page.getByRole('button', { name: '목록으로 돌아가기' }).click();
+      await expect(page.getByRole('alertdialog')).not.toBeVisible();
       await expect(page).toHaveURL(/\/admin\/roles$/);
     });
 

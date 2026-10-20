@@ -64,10 +64,21 @@ export default function RoleDetailPage() {
     },
   });
 
-  // 이름/설명 폼이 저장되지 않은 채로 이탈하는 것을 막는 가드 (#636) — 목록으로 돌아가기 버튼은
+  // 권한 체크박스가 마지막으로 저장된(불러온) 권한과 달라졌는지 (WD-118) — 순서 무관 비교.
+  // 이름·설명 폼만 보던 가드가 권한 체크 변경을 몰라, 저장 없이 이동하면 경고 없이 버려졌다.
+  // 집합으로 비교해 같은 id 가 두 번 들어가도 변경으로 보지 않는다.
+  const permissionsDirty = useMemo(() => {
+    const saved = new Set(role?.permissions.map(p => p.id) ?? []);
+    const selected = new Set(selectedPermissionIds);
+    return selected.size !== saved.size || [...selected].some(id => !saved.has(id));
+  }, [selectedPermissionIds, role]);
+  // 열람 등급 카드(RoleClearanceCard)는 자기 draft 를 따로 들고 있어 변경 여부를 콜백으로 받아 둔다 (WD-118).
+  const [clearanceDirty, setClearanceDirty] = useState(false);
+
+  // 이름/설명 폼·권한 체크·열람 등급이 저장되지 않은 채로 이탈하는 것을 막는 가드 (#636, WD-118) — 목록으로 돌아가기 버튼은
   // navigate() 대신 requestNavigate를 통해서만 이동해야 dirty 시 확인 다이얼로그가 뜬다.
   const { dialog: unsavedChangesDialog, requestNavigate } = useUnsavedChangesGuard(
-    form.formState.isDirty,
+    form.formState.isDirty || permissionsDirty || clearanceDirty,
   );
 
   useEffect(() => {
@@ -109,8 +120,9 @@ export default function RoleDetailPage() {
   }, [allPermissions]);
 
   const handlePermissionToggle = (permId: number, checked: boolean) => {
+    // 이미 선택된 id 를 다시 넣지 않는다 — 중복 id 가 PUT 에 실리거나 변경 판정을 흐리지 않게.
     setSelectedPermissionIds(prev =>
-      checked ? [...prev, permId] : prev.filter(id => id !== permId)
+      checked ? (prev.includes(permId) ? prev : [...prev, permId]) : prev.filter(id => id !== permId)
     );
   };
 
@@ -239,7 +251,7 @@ export default function RoleDetailPage() {
       </Card>
 
       {/* 데이터 열람 등급 — 권한과 성격이 달라 별도 Card·별도 저장(목업 s3) */}
-      <RoleClearanceCard roleId={role.id} />
+      <RoleClearanceCard roleId={role.id} onDirtyChange={setClearanceDirty} />
 
       <Separator />
 
