@@ -15,6 +15,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { useMyPermissions } from '@/hooks/queries/useMyPermissions';
 import {
   REVIEW_ITEMS_QUERY_KEY,
   useApproveReviewItem, useRejectReviewItem, useReviewItemEvidence, useReviewItemsPending,
@@ -196,6 +197,11 @@ export default function ReviewInboxPage() {
   } = useReviewItemsPending(filter);
   // 조회 권한 부족(403) — 「항목 없음」 대신 권한 안내를 보이는 기준 (WD-126).
   const isForbidden = isError && isForbiddenError(error);
+  // 승인·적재·정정·거부는 서버가 dataset:write 로 막는다 — 권한이 없으면 누르면 늘 실패하는 버튼을 그리지 않는다 (WD-127).
+  // 최종 판정은 서버이고 여기는 노출 결정용이다. 조치 열을 통째로 빼므로 표의 열 수도 함께 바뀐다.
+  const { permissions, isLoading: isPermissionsLoading } = useMyPermissions();
+  const canDecide = permissions.has('dataset:write');
+  const colCount = canDecide ? 4 : 3;
   // 무한스크롤 페이지 배열을 표가 쓰는 단일 목록으로 펼친다(#422).
   const pending = data?.pages.flat();
   const approve = useApproveReviewItem();
@@ -287,6 +293,12 @@ export default function ReviewInboxPage() {
           속성 정규화는 정정값을 입력해 반영합니다. 저신뢰 엔티티는 승인 시 관계와 함께 그래프에 적재됩니다.
           저신뢰 관계는 승인 시 그래프 엣지로 적재됩니다.
         </p>
+        {/* 조회만 가능한 사용자에게 조치 버튼이 없는 이유를 알린다 — 권한을 불러오는 중에는 깜빡이지 않게 숨긴다. */}
+        {!isPermissionsLoading && !canDecide && !isForbidden && (
+          <p data-testid="review-readonly-notice" className="text-muted-foreground mt-2 text-sm">
+            검수 항목을 승인·거부하려면 데이터셋 쓰기 권한이 필요합니다. 관리자에게 권한을 요청하세요.
+          </p>
+        )}
       </div>
 
       <Tabs value={filter ?? 'all'} onValueChange={(v) => setFilter(v === 'all' ? undefined : (v as ReviewItemType))}>
@@ -307,18 +319,18 @@ export default function ReviewInboxPage() {
             <TableHead>종류</TableHead>
             <TableHead>내용</TableHead>
             <TableHead>신호</TableHead>
-            <TableHead className="text-right">조치</TableHead>
+            {canDecide && <TableHead className="text-right">조치</TableHead>}
           </TableRow>
         </TableHeader>
         <TableBody>
           {isLoading && (
-            <TableRow><TableCell colSpan={4} className="text-muted-foreground text-center">불러오는 중...</TableCell></TableRow>
+            <TableRow><TableCell colSpan={colCount} className="text-muted-foreground text-center">불러오는 중...</TableCell></TableRow>
           )}
           {/* 조회 실패를 「항목 없음」으로 그리지 않는다 (WD-126) — 403 이면 권한 안내, 그 밖은 불러오기 실패 안내.
               이미 받은 행이 있는 상태에서 「더 보기」만 실패한 경우는 행을 그대로 둔다. */}
           {!isLoading && isError && (pending?.length ?? 0) === 0 && (
             <TableRow>
-              <TableCell colSpan={4} className={cn('text-center', isForbidden ? 'text-muted-foreground' : 'text-destructive')}>
+              <TableCell colSpan={colCount} className={cn('text-center', isForbidden ? 'text-muted-foreground' : 'text-destructive')}>
                 {isForbidden
                   ? 'AI 검수 항목을 볼 권한이 없습니다. 관리자에게 권한을 요청하세요.'
                   : '검수 항목을 불러오지 못했습니다.'}
@@ -326,10 +338,13 @@ export default function ReviewInboxPage() {
             </TableRow>
           )}
           {!isLoading && !isError && (pending?.length ?? 0) === 0 && (
-            <TableRow><TableCell colSpan={4} className="text-muted-foreground text-center">검수 대기 중인 항목이 없습니다.</TableCell></TableRow>
+            <TableRow><TableCell colSpan={colCount} className="text-muted-foreground text-center">검수 대기 중인 항목이 없습니다.</TableCell></TableRow>
           )}
           {pending?.map((row) => (
-            <ReviewRow key={row.id} row={row} processing={processingId === row.id} onRequestConfirm={setConfirmTarget} />
+            <ReviewRow
+              key={row.id} row={row} processing={processingId === row.id} canDecide={canDecide}
+              onRequestConfirm={setConfirmTarget}
+            />
           ))}
         </TableBody>
       </Table>
@@ -386,10 +401,12 @@ export default function ReviewInboxPage() {
 function ReviewRow(props: {
   row: ReviewItemResponse;
   processing: boolean;
+  /** dataset:write 가 있어야 조치 열·정정값 입력을 그린다 (WD-127). */
+  canDecide: boolean;
   /** 즉시 확정하지 않고 페이지 레벨 확인 다이얼로그를 연다(정정값은 이 시점 스냅샷). */
   onRequestConfirm: (target: ConfirmTarget) => void;
 }) {
-  const { row, processing, onRequestConfirm } = props;
+  const { row, processing, canDecide, onRequestConfirm } = props;
   const [showEvidence, setShowEvidence] = useState(false);
   const [correctedValue, setCorrectedValue] = useState('');
   const isProperty = row.itemType === 'property_normalization';
@@ -422,7 +439,7 @@ function ReviewRow(props: {
             <PropertyContent
               itemId={row.id}
               payload={row.payload as PropertyPayload} reason={row.reason}
-              value={correctedValue} onChange={setCorrectedValue}
+              value={correctedValue} onChange={setCorrectedValue} editable={canDecide}
               error={correctedValue.trim() === '' ? null : correctionError}
             />
           )}
@@ -447,6 +464,7 @@ function ReviewRow(props: {
             </button>
           </div>
         </TableCell>
+        {canDecide && (
         <TableCell className="text-right space-x-2 whitespace-nowrap">
           {/* #311 회귀 가드 — 정정값이 비었거나 형식 위반이면 트리거 자체가 비활성이라 다이얼로그도 열리지 않는다. */}
           {/* 조치는 전부 비가역이므로 접근 가능한 이름이 어떤 행인지 식별해야 한다(#342, SC 2.4.6/4.1.2).
@@ -460,12 +478,13 @@ function ReviewRow(props: {
             aria-label={`${targetSummary} — 거부`}
             onClick={() => onRequestConfirm({ row, action: 'reject' })}>거부</Button>
         </TableCell>
+        )}
       </TableRow>
       {showEvidence && (
         <TableRow>
           {/* 토글이 aria-controls로 가리키는 패널 컨테이너. 로딩 → 결과 전환이 비동기로 조용히 일어나므로
               aria-live/aria-busy로 고지한다(#338, SC 4.1.3). */}
-          <TableCell colSpan={4} className="bg-muted/40">
+          <TableCell colSpan={canDecide ? 4 : 3} className="bg-muted/40">
             {/* id/live region은 <td>가 아니라 내부 div에 둔다 — td에 role을 덮으면 표 셀 시맨틱이 깨진다. */}
             <div id={evidencePanelId} aria-label={`${targetSummary} 원문 근거`} role="group">
               <EvidencePanel id={row.id} />
@@ -490,8 +509,10 @@ function PropertyContent(props: {
   /** 오류 노드 id를 행 단위로 유일화하기 위해 필요 — 같은 표에 여러 행이 동시에 렌더된다(#340). */
   itemId: number;
   payload: PropertyPayload; reason: string | null; value: string; onChange: (v: string) => void; error: string | null;
+  /** 정정값 입력은 적용 권한이 있을 때만 그린다 — 적용할 수 없는 입력칸은 할 수 있는 일처럼 보인다 (WD-127). */
+  editable: boolean;
 }) {
-  const { itemId, payload, reason, value, onChange, error } = props;
+  const { itemId, payload, reason, value, onChange, error, editable } = props;
   // aria-invalid만으로는 "유효하지 않음"까지만 낭독된다. 사유 노드에 id를 주고 aria-describedby로 묶어야
   // 무엇이 잘못됐는지가 전달된다(#340, SC 3.3.1/1.3.1). #300 매핑 다이얼로그와 같은 배선 패턴.
   const errorId = `review-correction-error-${itemId}`;
@@ -499,12 +520,14 @@ function PropertyContent(props: {
     <div className="space-y-1">
       <div><Badge variant="outline">{payload.entityType}.{payload.propertyName}</Badge> 원문: <span className="font-medium">“{payload.rawText}”</span></div>
       {reason && <div className="text-xs text-muted-foreground">{reason}</div>}
+      {editable && (
       <Input
         className="max-w-xs" placeholder={payload.dataType === 'number' ? '정정 숫자(예: 30000000)' : payload.dataType === 'date' ? 'YYYY-MM-DD' : '정정 텍스트'}
         value={value} onChange={(e) => onChange(e.target.value)}
         aria-invalid={error !== null} aria-label={`${payload.propertyName} 정정값`}
         aria-describedby={error ? errorId : undefined}
       />
+      )}
       {/* role="alert": 입력 도중 뒤늦게 등장하는 오류라 포커스를 옮기지 않고도 즉시 고지되어야 한다. */}
       {error && <div id={errorId} role="alert" className="text-xs text-destructive">{error}</div>}
     </div>

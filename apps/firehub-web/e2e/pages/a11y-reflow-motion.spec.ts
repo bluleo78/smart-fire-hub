@@ -434,6 +434,11 @@ test.describe('320px 리플로우 — 페이지네이션 (#356)', () => {
 });
 
 test.describe('동작 줄이기 (#344)', () => {
+  // 조치 버튼은 dataset:write 가 있을 때만 그려진다(WD-127) — 다이얼로그를 열려면 쓰기 권한을 준다.
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/v1/auth/me/permissions', ['dataset:read', 'dataset:write']);
+  });
+
   test('reduce 설정에서 확인 다이얼로그의 확대 애니메이션이 감쇠된다', async ({ authenticatedPage: page }) => {
     await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createSynonymReviewItem()]);
     await page.emulateMedia({ reducedMotion: 'reduce' });

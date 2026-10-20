@@ -292,7 +292,10 @@ class UserControllerTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(
                     "{\"email\":\"n@acme.io\",\"name\":\"N\",\"temporaryPassword\":\"TempPass1x\",\"roleIds\":[2]}"))
-        .andExpect(status().isForbidden());
+        .andExpect(status().isForbidden())
+        // WD-127: 웹이 그대로 토스트로 보여 주는 문구라 영어 원문이 아닌 한국어 안내여야 한다
+        .andExpect(
+            jsonPath("$.message").value("이 작업을 할 권한이 없습니다. 관리자에게 권한을 요청하세요. (필요 권한: role:assign)"));
     verify(userService, never()).addMember(any(), any());
   }
 
@@ -324,7 +327,10 @@ class UserControllerTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(
                     "{\"email\":\"n@acme.io\",\"name\":\"N\",\"temporaryPassword\":\"TempPass1x\",\"roleIds\":[]}"))
-        .andExpect(status().isForbidden());
+        .andExpect(status().isForbidden())
+        // WD-127: @RequirePermission 인터셉터의 403 도 한국어 안내 + 필요 권한 코드
+        .andExpect(
+            jsonPath("$.message").value("이 작업을 할 권한이 없습니다. 관리자에게 권한을 요청하세요. (필요 권한: user:write)"));
   }
 
   @Test

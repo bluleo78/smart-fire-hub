@@ -10,6 +10,7 @@ import static org.jooq.impl.DSL.selectOne;
 
 import com.smartfirehub.dataset.exception.DatasetNotFoundException;
 import com.smartfirehub.global.exception.CodedApiException;
+import com.smartfirehub.global.security.PermissionInterceptor;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.util.SqlValidationUtils;
 import com.smartfirehub.pipeline.exception.UnsafeSqlException;
@@ -208,7 +209,7 @@ public class DatasetAccessGuard {
     Clearance c = clearanceResolver.current();
     if (!c.permissions().contains(EXPORT_PERMISSION)) {
       throw new org.springframework.security.access.AccessDeniedException(
-          "Missing required permission: " + EXPORT_PERMISSION);
+          PermissionInterceptor.missingPermissionMessage(EXPORT_PERMISSION));
     }
     requireExport(c, datasetId);
   }

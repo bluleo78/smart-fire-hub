@@ -4,6 +4,7 @@ import com.smartfirehub.auth.controller.RefreshTokenCookies;
 import com.smartfirehub.auth.service.AuthService;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.global.security.AllowedDuringPasswordChange;
+import com.smartfirehub.global.security.PermissionInterceptor;
 import com.smartfirehub.global.security.RequirePermission;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.user.dto.*;
@@ -99,7 +100,8 @@ public class UserController {
         authentication.getAuthorities().stream()
             .anyMatch(a -> "role:assign".equals(a.getAuthority()));
     if (assignsRoles && !canAssign) {
-      throw new AccessDeniedException("Missing required permission: role:assign");
+      throw new AccessDeniedException(
+          PermissionInterceptor.missingPermissionMessage("role:assign"));
     }
     Long callerId = (Long) authentication.getPrincipal();
     return ResponseEntity.status(HttpStatus.CREATED).body(userService.addMember(request, callerId));

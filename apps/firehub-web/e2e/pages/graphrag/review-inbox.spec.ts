@@ -3,6 +3,57 @@ import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 
 test.describe('AI 검수 인박스', () => {
+  // 기본은 검수 권한(dataset:write)이 있는 사용자 — 조치 버튼은 이 권한이 있을 때만 그려진다(WD-127).
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/v1/auth/me/permissions', ['dataset:read', 'dataset:write']);
+  });
+
+  // WD-127: 조회만 가능한 사용자에게 누르면 늘 403 인 조치 버튼·정정값 입력을 그리지 않고, 이유를 한 줄로 알린다.
+  test('dataset:write 가 없으면 조치 열·정정값 입력이 없고 조회 전용 안내가 보인다 (WD-127)', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockApi(page, 'GET', '/api/v1/auth/me/permissions', ['dataset:read']);
+    await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createSynonymReviewItem(), createPropertyReviewItem()]);
+    // 승인·거부 요청이 한 번도 나가지 않아야 한다
+    const decisions: string[] = [];
+    await page.route((url) => /^\/api\/v1\/graphrag\/review-items\/\d+\/(approve|reject)$/.test(url.pathname), (route) => {
+      decisions.push(route.request().url());
+      return route.fulfill({ status: 403, contentType: 'application/json', body: '{}' });
+    });
+    await page.goto('/knowledge-graph/review');
+
+    const table = page.getByTestId('review-inbox-table');
+    // 항목 내용은 그대로 보인다(조회는 가능)
+    await expect(table.getByText('전기적 요인')).toBeVisible();
+    await expect(table.getByText('“수천만원대”')).toBeVisible();
+    await expect(page.getByTestId('review-readonly-notice')).toHaveText(
+      '검수 항목을 승인·거부하려면 데이터셋 쓰기 권한이 필요합니다. 관리자에게 권한을 요청하세요.',
+    );
+    // 조치 열·버튼·정정값 입력이 없다
+    await expect(table.getByRole('columnheader', { name: '조치' })).toHaveCount(0);
+    await expect(table.getByRole('button', { name: /승인|적재|정정 적용|거부/ })).toHaveCount(0);
+    await expect(table.getByRole('textbox')).toHaveCount(0);
+    // 근거 패널은 줄어든 열 수(3)에 맞춰 펼쳐진다
+    await page.route((url) => /^\/api\/v1\/graphrag\/review-items\/\d+\/evidence$/.test(url.pathname), (route) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
+    await table.getByRole('button', { name: /원문 근거 보기/ }).first().click();
+    await expect(table.locator('td[colspan="3"]')).toHaveCount(1);
+    expect(decisions).toHaveLength(0);
+  });
+
+  test('dataset:write 가 있으면 조치 열과 버튼이 보이고 조회 전용 안내는 없다 (WD-127)', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createSynonymReviewItem(), createPropertyReviewItem()]);
+    await page.goto('/knowledge-graph/review');
+
+    const table = page.getByTestId('review-inbox-table');
+    await expect(table.getByRole('columnheader', { name: '조치' })).toBeVisible();
+    await expect(table.getByRole('button', { name: /거부$/ })).toHaveCount(2);
+    await expect(table.getByRole('textbox')).toHaveCount(1);
+    await expect(page.getByTestId('review-readonly-notice')).toHaveCount(0);
+  });
+
   // WD-126: 조회 실패를 「항목 없음」으로 그리지 않는다 — 403 은 권한 안내(재시도 없이 1회 요청), 그 밖은 불러오기 실패 안내.
   test('검수 항목 조회가 403 이면 「없습니다」 대신 권한 안내를 보인다 (WD-126)', async ({ authenticatedPage: page }) => {
     const capture = await mockApi(

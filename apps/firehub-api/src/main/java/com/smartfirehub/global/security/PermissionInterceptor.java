@@ -16,6 +16,15 @@ import org.springframework.web.servlet.HandlerInterceptor;
 @Component
 public class PermissionInterceptor implements HandlerInterceptor {
 
+  /**
+   * 권한 부족 403 의 사용자용 문구. 웹은 서버 message 를 그대로 토스트로 보여 주므로 영어 원문("Missing required permission: …")이
+   * 화면에 뜨던 것을 한국어 안내로 바꾼다(WD-127). 필요 권한 코드는 관리자가 어떤 권한을 줘야 하는지 알 수 있게 괄호로 남긴다. 인터셉터 밖에서 같은 403 을
+   * 던지는 곳(UserController·DatasetAccessGuard)도 이 문구를 쓴다.
+   */
+  public static String missingPermissionMessage(String permission) {
+    return "이 작업을 할 권한이 없습니다. 관리자에게 권한을 요청하세요. (필요 권한: " + permission + ")";
+  }
+
   @Override
   public boolean preHandle(
       @NonNull HttpServletRequest request,
@@ -51,7 +60,7 @@ public class PermissionInterceptor implements HandlerInterceptor {
 
     for (String requiredPermission : annotation.value()) {
       if (!userPermissions.contains(requiredPermission)) {
-        throw new AccessDeniedException("Missing required permission: " + requiredPermission);
+        throw new AccessDeniedException(missingPermissionMessage(requiredPermission));
       }
     }
 
