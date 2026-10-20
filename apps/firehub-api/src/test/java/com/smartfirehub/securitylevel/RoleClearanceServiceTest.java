@@ -148,7 +148,7 @@ class RoleClearanceServiceTest extends SecurityLevelServiceTest {
                 .set(DATASET_ACCESS_GRANT.DATASET_ID, ds)
                 .set(DATASET_ACCESS_GRANT.ROLE_ID, r)
                 .execute());
-    assertThatThrownBy(() -> asTenant(() -> roleService.deleteRole(r)))
+    assertThatThrownBy(() -> asTenant(() -> roleService.deleteRole(r, actor)))
         .isInstanceOf(CodedApiException.class)
         .extracting(e -> ((CodedApiException) e).code())
         .isEqualTo("ROLE_SOLE_ALLOWLIST_ENTRY");
@@ -195,7 +195,7 @@ class RoleClearanceServiceTest extends SecurityLevelServiceTest {
             tenantId,
             () -> datasetSecurityService.removeGrant(ds, userGrant, actor),
             () -> {
-              roleService.deleteRole(r);
+              roleService.deleteRole(r, actor);
               return null;
             });
 
@@ -222,7 +222,7 @@ class RoleClearanceServiceTest extends SecurityLevelServiceTest {
         PausedTransactionRace.run(
             fixtureTransactionTemplate,
             tenantId,
-            () -> roleService.deleteRole(r),
+            () -> roleService.deleteRole(r, actor),
             () -> {
               datasetSecurityService.removeGrant(ds, userGrant, actor);
               return null;

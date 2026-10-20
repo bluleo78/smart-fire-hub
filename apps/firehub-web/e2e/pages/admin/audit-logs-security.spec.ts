@@ -119,14 +119,15 @@ test.describe('감사 로그 — 보안 등급 액션', () => {
     await req;
   });
 
-  test('액션 드롭다운은 일반·멤버 관리·데이터셋 보안·보안 설정 4그룹으로 나뉜다', async ({ authenticatedPage: page }) => {
+  test('액션 드롭다운은 일반·멤버 관리·역할·권한·데이터셋 보안·보안 설정 5그룹으로 나뉜다', async ({ authenticatedPage: page }) => {
     await page.goto('/admin/audit-logs');
     await page.getByRole('combobox', { name: '액션 유형 필터' }).click();
     const group = (name: string) => page.getByRole('group', { name, exact: true });
-    await expect(page.getByRole('group')).toHaveCount(4);
+    await expect(page.getByRole('group')).toHaveCount(5);
     await expect(group('일반').getByRole('option', { name: '생성', exact: true })).toHaveCount(1);
     await expect(group('일반').getByRole('option', { name: '도메인 수정', exact: true })).toHaveCount(1);
     await expect(group('멤버 관리').getByRole('option')).toHaveCount(4);
+    await expect(group('역할·권한').getByRole('option')).toHaveCount(5);
     await expect(group('데이터셋 보안').getByRole('option')).toHaveCount(6);
     await expect(group('데이터셋 보안').getByRole('option', { name: '감사 등급 데이터 접근', exact: true })).toHaveCount(1);
     await expect(group('보안 설정').getByRole('option')).toHaveCount(7);

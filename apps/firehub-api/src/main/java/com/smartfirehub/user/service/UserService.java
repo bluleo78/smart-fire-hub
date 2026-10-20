@@ -18,12 +18,14 @@ import com.smartfirehub.user.dto.UserListResponse;
 import com.smartfirehub.user.dto.UserResponse;
 import com.smartfirehub.user.exception.UserNotFoundException;
 import com.smartfirehub.user.repository.UserRepository;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
@@ -239,6 +241,10 @@ public class UserService {
         user.id(),
         created ? "새 계정을 만들어 멤버로 추가" : "기존 계정을 멤버로 추가",
         Map.of("created", created, "roleIds", List.copyOf(roleIds)));
+    // 멤버 추가로 준 역할(ADMIN 포함)도 역할 부여다 — ROLE_ASSIGN 으로 남겨야 「역할·권한」 필터에서 누가 ADMIN 을 줬는지 빠짐없이
+    // 찾는다(WD-117).
+    // 새 멤버십이라 이 테넌트의 변경 전 역할은 없다.
+    auditRoleAssign(callerId, user.id(), List.of(), roleRepository.findByUserId(user.id()));
     return new AddMemberResponse(user.id(), created);
   }
 
@@ -356,6 +362,9 @@ public class UserService {
    * ADMIN 2명" 을 보고 통과해 0 명이 된다. setUserActive·removeMember 와 <b>같은</b> 테넌트 잠금이라 세 경로가 서로 직렬화된다.
    *
    * <p>roleIds 가 null 이면 빈 목록(전체 제거)으로 본다 — 예전에는 setRoles 에서 NPE(500)가 났다.
+   *
+   * <p>감사(WD-117): 실제로 역할이 바뀌었으면 ROLE_ASSIGN 감사에 변경 전/후 역할 이름과 추가·제거분을 남긴다 — 누가 ADMIN 을 줬는지 추적할 수
+   * 있어야 한다. 전/후는 요청 id 가 아니라 교체 전/후 실제 저장 상태로 계산하고, 차이가 없으면 setUserActive 의 무변경 규칙처럼 기록하지 않는다.
    */
   @Transactional
   public void setUserRoles(Long userId, List<Long> roleIds, Long callerId) {
@@ -378,7 +387,33 @@ public class UserService {
     if (removesAdmin && isLastActiveAdmin(userId, membership, tenantId)) {
       throw new IllegalStateException("이 워크스페이스의 마지막 활성 ADMIN 에게서 ADMIN 역할을 뺄 수 없습니다");
     }
+    List<RoleResponse> before = roleRepository.findByUserId(userId);
     userRepository.setRoles(userId, requested);
+    List<RoleResponse> after = roleRepository.findByUserId(userId);
+    auditRoleAssign(callerId, userId, before, after);
+  }
+
+  /**
+   * 역할 교체 감사(ROLE_ASSIGN). 역할 id 집합으로 차이를 내고, metadata 에는 사람이 읽을 이름을 싣는다. 목록은 findByUserId 의 역할 id
+   * 오름차순 그대로라 결정적이다. 차이가 없으면 아무것도 남기지 않는다.
+   */
+  private void auditRoleAssign(
+      Long callerId, Long userId, List<RoleResponse> before, List<RoleResponse> after) {
+    Set<Long> beforeIds = before.stream().map(RoleResponse::id).collect(Collectors.toSet());
+    Set<Long> afterIds = after.stream().map(RoleResponse::id).collect(Collectors.toSet());
+    if (beforeIds.equals(afterIds)) {
+      return; // 실제 변경 없음 — 감사 생략
+    }
+    Map<String, Object> metadata = new LinkedHashMap<>();
+    metadata.put("before", before.stream().map(RoleResponse::name).toList());
+    metadata.put("after", after.stream().map(RoleResponse::name).toList());
+    metadata.put(
+        "added",
+        after.stream().filter(r -> !beforeIds.contains(r.id())).map(RoleResponse::name).toList());
+    metadata.put(
+        "removed",
+        before.stream().filter(r -> !afterIds.contains(r.id())).map(RoleResponse::name).toList());
+    audit(callerId, "ROLE_ASSIGN", userId, "역할 변경", metadata);
   }
 
   /**

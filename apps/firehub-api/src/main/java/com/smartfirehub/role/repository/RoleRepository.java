@@ -83,6 +83,23 @@ public class RoleRepository {
         .execute();
   }
 
+  /**
+   * 역할 행을 FOR UPDATE 로 잠근다(WD-117). 같은 역할의 권한을 동시에 교체하면 두 트랜잭션이 같은 "변경 전" 권한을 읽어 감사의 추가·제거가 틀어지므로,
+   * 권한 교체 전에 역할 단위로 직렬화한다.
+   */
+  public void lockById(Long id) {
+    dsl.selectOne().from(ROLE).where(ROLE.ID.eq(id)).forUpdate().fetch();
+  }
+
+  /** 이 역할을 가진 사용자 id(현재 테넌트, RLS, 오름차순) — 역할 삭제 감사에 권한을 잃는 사용자를 남기기 위해 쓴다(WD-117). */
+  public List<Long> findUserIdsByRoleId(Long roleId) {
+    return dsl.select(USER_ROLE.USER_ID)
+        .from(USER_ROLE)
+        .where(USER_ROLE.ROLE_ID.eq(roleId))
+        .orderBy(USER_ROLE.USER_ID)
+        .fetch(USER_ROLE.USER_ID);
+  }
+
   public void deleteById(Long id) {
     dsl.deleteFrom(ROLE).where(ROLE.ID.eq(id)).execute();
   }

@@ -269,4 +269,23 @@ class MemberAddServiceTest extends IntegrationTestBase {
                     .toString());
     assertThat(metadata).contains("\"created\": true");
   }
+
+  /** WD-117: 멤버 추가로 준 역할(ADMIN 포함)도 ROLE_ASSIGN 감사로 남아 「역할·권한」 필터에서 찾을 수 있다. */
+  @Test
+  void addMember_withAdmin_writesRoleAssignAudit() {
+    String email = "admin-grant-" + System.nanoTime() + "@acme.io";
+    long adminRoleA = roleId(tenantA, "ADMIN");
+    AddMemberResponse res = addInA(new AddMemberRequest(email, "관리자", TEMP, List.of(adminRoleA)));
+
+    String metadata =
+        inTenantFixture(
+            tenantA,
+            () ->
+                dsl.fetchValue(
+                        "select metadata::text from audit_log where action_type = 'ROLE_ASSIGN'"
+                            + " and resource = 'user' and resource_id = ?",
+                        String.valueOf(res.userId()))
+                    .toString());
+    assertThat(metadata).contains("\"before\": []").contains("\"ADMIN\"");
+  }
 }

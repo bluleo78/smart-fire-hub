@@ -11,6 +11,7 @@ import com.smartfirehub.role.exception.SystemRoleModificationException;
 import com.smartfirehub.support.IntegrationTestBase;
 import java.util.List;
 import org.jooq.DSLContext;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
@@ -21,6 +22,24 @@ class RoleServiceTest extends IntegrationTestBase {
   @Autowired private RoleService roleService;
 
   @Autowired private DSLContext dsl;
+
+  /**
+   * 감사 로그 행위자(WD-117) — audit_log.user_id 는 "user"(id) FK 라 실제 사용자여야 한다. 클래스가 @Transactional 이라 테스트
+   * 트랜잭션 안에서 넣고 함께 롤백된다(감사 행도 같은 트랜잭션이라 FK 를 만족한다).
+   */
+  private Long callerId;
+
+  @BeforeEach
+  void setUpCaller() {
+    callerId =
+        dsl.insertInto(USER)
+            .set(USER.USERNAME, "role-caller-" + System.nanoTime() + "@example.com")
+            .set(USER.PASSWORD, "x")
+            .set(USER.NAME, "Role Caller")
+            .returning(USER.ID)
+            .fetchOne()
+            .getId();
+  }
 
   @Test
   void getAllRoles_returnsList() {
@@ -50,7 +69,7 @@ class RoleServiceTest extends IntegrationTestBase {
 
   @Test
   void createRole_success() {
-    RoleResponse result = roleService.createRole("MODERATOR", "Moderator role");
+    RoleResponse result = roleService.createRole("MODERATOR", "Moderator role", callerId);
 
     assertThat(result.id()).isNotNull();
     assertThat(result.name()).isEqualTo("MODERATOR");
@@ -59,16 +78,16 @@ class RoleServiceTest extends IntegrationTestBase {
 
   @Test
   void createRole_duplicateName_throwsException() {
-    assertThatThrownBy(() -> roleService.createRole("ADMIN", "Duplicate"))
+    assertThatThrownBy(() -> roleService.createRole("ADMIN", "Duplicate", callerId))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("이미 존재하는 역할 이름입니다");
   }
 
   @Test
   void updateRole_success() {
-    RoleResponse created = roleService.createRole("MODERATOR", "Moderator");
+    RoleResponse created = roleService.createRole("MODERATOR", "Moderator", callerId);
 
-    roleService.updateRole(created.id(), "MOD", "Updated moderator");
+    roleService.updateRole(created.id(), "MOD", "Updated moderator", callerId);
 
     RoleDetailResponse updated = roleService.getRoleById(created.id());
     assertThat(updated.name()).isEqualTo("MOD");
@@ -80,15 +99,15 @@ class RoleServiceTest extends IntegrationTestBase {
     Long adminRoleId =
         dsl.select(ROLE.ID).from(ROLE).where(ROLE.NAME.eq("ADMIN")).fetchOne(ROLE.ID);
 
-    assertThatThrownBy(() -> roleService.updateRole(adminRoleId, "RENAMED", "Try rename"))
+    assertThatThrownBy(() -> roleService.updateRole(adminRoleId, "RENAMED", "Try rename", callerId))
         .isInstanceOf(SystemRoleModificationException.class);
   }
 
   @Test
   void deleteRole_success() {
-    RoleResponse created = roleService.createRole("MODERATOR", "Moderator");
+    RoleResponse created = roleService.createRole("MODERATOR", "Moderator", callerId);
 
-    roleService.deleteRole(created.id());
+    roleService.deleteRole(created.id(), callerId);
 
     assertThatThrownBy(() -> roleService.getRoleById(created.id()))
         .isInstanceOf(RoleNotFoundException.class);
@@ -99,13 +118,14 @@ class RoleServiceTest extends IntegrationTestBase {
     Long adminRoleId =
         dsl.select(ROLE.ID).from(ROLE).where(ROLE.NAME.eq("ADMIN")).fetchOne(ROLE.ID);
 
-    assertThatThrownBy(() -> roleService.deleteRole(adminRoleId))
+    assertThatThrownBy(() -> roleService.deleteRole(adminRoleId, callerId))
         .isInstanceOf(SystemRoleModificationException.class);
   }
 
   @Test
   void setRolePermissions_customRole_success() {
-    RoleResponse customRole = roleService.createRole("CUSTOM_ROLE", "Custom role for test");
+    RoleResponse customRole =
+        roleService.createRole("CUSTOM_ROLE", "Custom role for test", callerId);
 
     List<Long> permissionIds =
         dsl.select(PERMISSION.ID)
@@ -113,7 +133,7 @@ class RoleServiceTest extends IntegrationTestBase {
             .where(PERMISSION.CATEGORY.eq("user"))
             .fetch(PERMISSION.ID);
 
-    roleService.setRolePermissions(customRole.id(), permissionIds);
+    roleService.setRolePermissions(customRole.id(), permissionIds, callerId);
 
     RoleDetailResponse detail = roleService.getRoleById(customRole.id());
     assertThat(detail.permissions()).hasSize(permissionIds.size());
@@ -130,7 +150,7 @@ class RoleServiceTest extends IntegrationTestBase {
             .where(PERMISSION.CATEGORY.eq("user"))
             .fetch(PERMISSION.ID);
 
-    assertThatThrownBy(() -> roleService.setRolePermissions(adminRoleId, permissionIds))
+    assertThatThrownBy(() -> roleService.setRolePermissions(adminRoleId, permissionIds, callerId))
         .isInstanceOf(SystemRoleModificationException.class)
         .hasMessageContaining("Cannot modify permissions of system role");
   }

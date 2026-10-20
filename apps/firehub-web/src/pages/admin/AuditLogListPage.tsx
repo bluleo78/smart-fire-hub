@@ -117,12 +117,27 @@ const MEMBER_ACTION_TYPES = [
 ];
 
 /**
+ * 역할·권한 액션(WD-117) — UserService.setUserRoles(사용자 역할 교체)·RoleService(역할 생성·수정·삭제·권한 교체).
+ * - ROLE_ASSIGN 은 resource=user(대상 사용자), 나머지는 resource=role(대상 역할)로 남는다.
+ * - 누가 ADMIN 을 줬는지·역할 권한을 바꿨는지 추적하는 핵심 보안 기록이라 멤버 관리와 따로 묶는다.
+ * - '역할 열람 등급 변경'(ROLE_CLEARANCE_CHANGE)은 보안 등급 정책이라 「보안 설정」 그룹에 그대로 둔다.
+ */
+const ROLE_ACTION_TYPES = [
+  { value: 'ROLE_ASSIGN', label: '사용자 역할 변경' },
+  { value: 'ROLE_CREATE', label: '역할 생성' },
+  { value: 'ROLE_UPDATE', label: '역할 수정' },
+  { value: 'ROLE_DELETE', label: '역할 삭제' },
+  { value: 'ROLE_PERMISSIONS_UPDATE', label: '역할 권한 변경' },
+];
+
+/**
  * 액션 필터 드롭다운 그룹 — 항목이 30개를 넘어 성격별로 나눠 찾기 쉽게 한다.
  * 라벨 매핑(ACTION_LABEL_MAP)은 그룹과 무관하게 평면 목록(ACTION_TYPES)에서 만든다.
  */
 const ACTION_GROUPS = [
   { label: '일반', items: GENERAL_ACTION_TYPES },
   { label: '멤버 관리', items: MEMBER_ACTION_TYPES },
+  { label: '역할·권한', items: ROLE_ACTION_TYPES },
   { label: '데이터셋 보안', items: DATASET_SECURITY_ACTION_TYPES },
   { label: '보안 설정', items: SECURITY_SETTINGS_ACTION_TYPES },
 ];
@@ -183,11 +198,52 @@ function accessSummaryParts(log: AuditLogResponse): string[] {
   ].filter((v): v is string => v !== null);
 }
 
+/** metadata 의 문자열 배열 값 — 배열이 아니거나 비면 빈 배열(요약에서 그 항목을 뺀다). */
+function stringList(value: unknown): string[] {
+  return Array.isArray(value) ? value.map(String) : [];
+}
+
+/** ROLE_UPDATE 의 바뀐 칸 요약(WD-117). 값이 없으면 「(없음)」으로 보인다 — 설명을 지운 변경도 읽히게. */
+function roleUpdateSummaryParts(before: unknown, after: unknown): string[] {
+  const b = (before ?? {}) as Record<string, unknown>;
+  const a = (after ?? {}) as Record<string, unknown>;
+  const show = (v: unknown) => (v == null || v === '' ? '(없음)' : String(v));
+  return (
+    [
+      ['name', '이름'],
+      ['description', '설명'],
+    ] as const
+  )
+    .filter(([key]) => (b[key] ?? null) !== (a[key] ?? null))
+    .map(([key, label]) => `${label}: ${show(b[key])} → ${show(a[key])}`);
+}
+
+/**
+ * 역할·권한 변경 요약 항목(WD-117) — ROLE_ASSIGN(역할 이름)·ROLE_PERMISSIONS_UPDATE(권한 코드)·ROLE_UPDATE(바뀐 칸) 행만 대상.
+ * metadata.added/removed 를 "추가: … · 제거: …" 한 줄로 보여, 관리자가 JSON 을 읽지 않아도 무엇이 바뀌었는지 알게 한다.
+ * 비어 있는 쪽은 생략하고, 둘 다 비면 빈 배열(필드 자체를 숨김).
+ */
+function roleChangeSummaryParts(log: AuditLogResponse): string[] {
+  const m = log.metadata;
+  if (!m) return [];
+  // ROLE_UPDATE 는 before/after 스냅샷({name, description})을 남긴다 — 바뀐 칸만 "이름: A → B" 로 보인다.
+  if (log.actionType === 'ROLE_UPDATE') return roleUpdateSummaryParts(m.before, m.after);
+  if (log.actionType !== 'ROLE_ASSIGN' && log.actionType !== 'ROLE_PERMISSIONS_UPDATE') return [];
+  const added = stringList(m.added);
+  const removed = stringList(m.removed);
+  return [
+    added.length > 0 ? `추가: ${added.join(', ')}` : null,
+    removed.length > 0 ? `제거: ${removed.join(', ')}` : null,
+  ].filter((v): v is string => v !== null);
+}
+
 /**
  * 리소스 유형 옵션 목록
  * - 백엔드 호출부(AuthService/PipelineExecutionService/DatasetService/DataImportService/DataExportService/ApiConnectionNotifier)에서
  *   실제 사용 중인 resource 값 전수: auth/system/api_connection/pipeline/dataset (data_import는 dataimport 도메인에서 dataset으로 기록).
  * - #109 회귀: auth/system/api_connection 매핑 누락으로 영문 raw 값 노출되던 문제 해소.
+ * - role(RoleService — 역할 생성·수정·삭제·권한 교체, resourceId=역할 ID)·user(UserService — 멤버 관리·역할 교체 ROLE_ASSIGN,
+ *   resourceId=대상 사용자 ID)도 사용 중이다(WD-117).
  * - security_level(SecurityLevelService — 등급 정의 생성·수정·삭제·순서·기본 등급),
  *   query_result(QueryResultExportService — 쿼리 결과 서버 내보내기, resourceId=실행 기록 ID)도 사용 중이다.
  * - 신규 action/resource 추가 시 apps/firehub-api 에서 `auditLogService.log(`·`audit.record(` 호출부 전수를 대조한다.
@@ -283,6 +339,7 @@ function AuditLogDetailDialog({
 }) {
   if (!log) return null;
   const summaryParts = accessSummaryParts(log);
+  const changeSummaryParts = roleChangeSummaryParts(log);
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
@@ -338,6 +395,14 @@ function AuditLogDetailDialog({
             <div>
               <p className="text-muted-foreground mb-1 text-xs">접근 요약</p>
               <p data-testid="audit-access-summary">{summaryParts.join(' · ')}</p>
+            </div>
+          )}
+
+          {/* 변경 요약(WD-117) — 역할 교체·역할 권한 교체 행에서 추가·제거분을 한 줄로. 항목이 없으면 숨김 */}
+          {changeSummaryParts.length > 0 && (
+            <div>
+              <p className="text-muted-foreground mb-1 text-xs">변경 요약</p>
+              <p data-testid="audit-change-summary">{changeSummaryParts.join(' · ')}</p>
             </div>
           )}
 

@@ -6,6 +6,8 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.reset;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.auth.dto.LoginRequest;
 import com.smartfirehub.auth.service.AuthService;
 import com.smartfirehub.global.tenant.TenantContext;
@@ -51,6 +53,7 @@ class MembershipLifecycleServiceTest extends IntegrationTestBase {
   @Autowired private MembershipRepository membershipRepository;
   @Autowired private AuthService authService;
   @Autowired private TenantProvisioningService provisioningService;
+  @Autowired private ObjectMapper objectMapper;
 
   private long tenantA;
   private long tenantB;
@@ -412,6 +415,94 @@ class MembershipLifecycleServiceTest extends IntegrationTestBase {
             tenantA,
             () -> dsl.fetchCount(dsl.selectOne().from("user_role").where("user_id = ?", admin)));
     assertThat(roleCount).isEqualTo(1);
+  }
+
+  /**
+   * 이 테넌트 audit_log 에서 대상 사용자의 ROLE_ASSIGN 행(id 순). resource 까지 거는 이유: user id 와 role id 는 둘 다 문자열
+   * resource_id 라 숫자가 겹칠 수 있다.
+   */
+  private List<org.jooq.Record> roleAssignAudits(long targetUserId) {
+    return inTenantFixture(
+        tenantA,
+        () ->
+            dsl.fetch(
+                "select user_id, username, tenant_id, description, result, metadata::text as metadata"
+                    + " from audit_log where action_type = 'ROLE_ASSIGN' and resource = 'user'"
+                    + " and resource_id = ? order by id",
+                String.valueOf(targetUserId)));
+  }
+
+  private JsonNode metadataOf(org.jooq.Record row) throws Exception {
+    return objectMapper.readTree(row.get("metadata", String.class));
+  }
+
+  private static List<String> texts(JsonNode array) {
+    List<String> out = new ArrayList<>();
+    array.forEach(n -> out.add(n.asText()));
+    return out;
+  }
+
+  /** WD-117: ADMIN 부여는 ROLE_ASSIGN 감사로 남고, 행위자(owner)·테넌트·전/후·추가분이 기록된다. */
+  @Test
+  void setUserRoles_grantAdmin_writesRoleAssignAudit() throws Exception {
+    long userRole = roleIdInA("USER");
+    long adminRole = roleIdInA("ADMIN");
+    String ownerName = userRepository.findById(owner).orElseThrow().username();
+
+    inA(() -> userService.setUserRoles(member, List.of(userRole, adminRole), owner));
+
+    List<org.jooq.Record> rows = roleAssignAudits(member);
+    assertThat(rows).hasSize(1);
+    org.jooq.Record row = rows.get(0);
+    assertThat(row.get("user_id", Long.class)).isEqualTo(owner);
+    assertThat(row.get("username", String.class)).isEqualTo(ownerName);
+    assertThat(row.get("tenant_id", Long.class)).isEqualTo(tenantA);
+    assertThat(row.get("result", String.class)).isEqualTo("SUCCESS");
+    assertThat(row.get("description", String.class)).isEqualTo("역할 변경");
+    JsonNode meta = metadataOf(row);
+    assertThat(texts(meta.get("before"))).containsExactly("USER");
+    assertThat(texts(meta.get("after"))).containsExactlyInAnyOrder("ADMIN", "USER");
+    assertThat(texts(meta.get("added"))).containsExactly("ADMIN");
+    assertThat(texts(meta.get("removed"))).isEmpty();
+  }
+
+  /** WD-117: ADMIN 회수도 ROLE_ASSIGN 으로 남고 제거분이 기록된다(다른 활성 ADMIN owner 가 남는 경우). */
+  @Test
+  void setUserRoles_revokeAdmin_writesRemovedInAudit() throws Exception {
+    long userRole = roleIdInA("USER");
+
+    inA(() -> userService.setUserRoles(admin, List.of(userRole), owner));
+
+    List<org.jooq.Record> rows = roleAssignAudits(admin);
+    assertThat(rows).hasSize(1);
+    assertThat(rows.get(0).get("user_id", Long.class)).isEqualTo(owner);
+    JsonNode meta = metadataOf(rows.get(0));
+    assertThat(texts(meta.get("before"))).containsExactlyInAnyOrder("ADMIN", "USER");
+    assertThat(texts(meta.get("after"))).containsExactly("USER");
+    assertThat(texts(meta.get("added"))).isEmpty();
+    assertThat(texts(meta.get("removed"))).containsExactly("ADMIN");
+  }
+
+  /** WD-117: 역할이 그대로인 요청(member 는 이미 USER 만)은 감사를 남기지 않는다 — setUserActive 무변경 규칙과 같다. */
+  @Test
+  void setUserRoles_noChange_writesNoAudit() {
+    long userRole = roleIdInA("USER");
+
+    inA(() -> userService.setUserRoles(member, List.of(userRole), owner));
+
+    assertThat(roleAssignAudits(member)).isEmpty();
+  }
+
+  /** WD-117: 거부된 변경(마지막 활성 ADMIN 강등 409)은 롤백되므로 감사도 남지 않는다. */
+  @Test
+  void setUserRoles_rejected_writesNoAudit() {
+    stripOwnerAdmin();
+    long userRole = roleIdInA("USER");
+
+    assertThatThrownBy(() -> inA(() -> userService.setUserRoles(admin, List.of(userRole), owner)))
+        .isInstanceOf(IllegalStateException.class);
+
+    assertThat(roleAssignAudits(admin)).isEmpty();
   }
 
   /** 정지된 ADMIN 의 강등은 활성 ADMIN 수를 줄이지 않으므로 허용. */
