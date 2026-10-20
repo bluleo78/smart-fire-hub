@@ -172,6 +172,27 @@ public class TriggerRepository {
         .fetch(this::mapToResponse);
   }
 
+  /**
+   * 활성 PIPELINE_CHAIN 연쇄 간선 한 줄 — 트리거 id, 그 트리거가 실행하는(하류) 파이프라인 id, config 의 상류 id 원문.
+   *
+   * <p>상류 id 는 원문(text)으로 돌려준다. SQL 에서 {@code ::bigint} 로 바꾸면 숫자로 읽을 수 없는 값 하나가 조회 전체를 실패시키므로, 해석은
+   * 저장 시 검사와 같은 규칙으로 서비스가 한다.
+   */
+  public record ChainEdgeRow(long triggerId, long pipelineId, String upstreamPipelineId) {}
+
+  /**
+   * 현재 테넌트(RLS)의 활성 PIPELINE_CHAIN 간선을 한 번에 읽는다(WD-106). 저장 시 순환·길이 검사가 노드마다 조회하지 않고(N+1) 메모리 그래프로
+   * 판정하기 위한 것이다.
+   */
+  public List<ChainEdgeRow> findEnabledChainEdges() {
+    return dsl.select(
+            T_ID, T_PIPELINE_ID, field("{0}->>'upstreamPipelineId'", String.class, T_CONFIG))
+        .from(PIPELINE_TRIGGER)
+        .where(T_TRIGGER_TYPE.eq("PIPELINE_CHAIN"))
+        .and(T_IS_ENABLED.eq(true))
+        .fetch(r -> new ChainEdgeRow(r.value1(), r.value2(), r.value3()));
+  }
+
   public Long create(
       Long pipelineId, CreateTriggerRequest req, Map<String, Object> config, Long userId) {
     return dsl.insertInto(PIPELINE_TRIGGER)

@@ -4,6 +4,7 @@ import com.smartfirehub.global.exception.CryptoException;
 import com.smartfirehub.pipeline.dto.*;
 import com.smartfirehub.pipeline.exception.CyclicTriggerDependencyException;
 import com.smartfirehub.pipeline.exception.TriggerNotFoundException;
+import com.smartfirehub.pipeline.repository.PipelineRepository;
 import com.smartfirehub.pipeline.repository.TriggerEventRepository;
 import com.smartfirehub.pipeline.repository.TriggerRepository;
 import com.smartfirehub.pipeline.repository.TriggerTenantResolver;
@@ -31,12 +32,24 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 @Service
 public class TriggerService {
 
-  private static final int MAX_CHAIN_DEPTH = 10;
+  /**
+   * 연쇄(PIPELINE_CHAIN) 한 줄기에 허용하는 최대 단계 수(간선 수). 저장 시에는 새 연쇄가 들어가는 가장 긴 줄기가 이 값을 넘으면 거부하고, 실행 시에는 이
+   * 값을 넘는 단계의 발화를 건너뛴다 — 두 곳이 같은 값을 써야 "저장은 됐는데 실행에서 잘리는" 연쇄가 생기지 않는다(WD-106).
+   */
+  static final int MAX_CHAIN_DEPTH = 10;
+
+  /**
+   * 연쇄 발화 params 에 싣는 깊이 키(WD-106). {@link TriggerEventService} 가 넣고 {@link #fireTrigger} 가 상한 판정에
+   * 쓰며, FIRED 이벤트 detail 에 남아 다음 단계가 이어 받는다.
+   */
+  public static final String CHAIN_DEPTH_PARAM = "chainDepth";
 
   private final TriggerRepository triggerRepository;
   private final TriggerEventRepository triggerEventRepository;
   // 비인증 경로의 테넌트 해석 전용. 해싱은 이 서비스에 남기고 조회만 위임한다.
   private final TriggerTenantResolver triggerTenantResolver;
+  // 순환 안내 문구에 파이프라인 이름을 싣기 위한 조회 전용(WD-106).
+  private final PipelineRepository pipelineRepository;
   private final PipelineService pipelineService;
   private final TriggerSchedulerService schedulerService;
   // DATASET_CHANGE 감시 대상 VIEW 판정(보안 등급) — 저장하는 사용자가 볼 수 없는 데이터셋을 감시 대상으로 넣지 못하게.
@@ -47,6 +60,7 @@ public class TriggerService {
       TriggerRepository triggerRepository,
       TriggerEventRepository triggerEventRepository,
       TriggerTenantResolver triggerTenantResolver,
+      PipelineRepository pipelineRepository,
       @Lazy PipelineService pipelineService,
       @Lazy TriggerSchedulerService schedulerService,
       DatasetAccessGuard datasetAccessGuard,
@@ -54,6 +68,7 @@ public class TriggerService {
     this.triggerRepository = triggerRepository;
     this.triggerEventRepository = triggerEventRepository;
     this.triggerTenantResolver = triggerTenantResolver;
+    this.pipelineRepository = pipelineRepository;
     this.pipelineService = pipelineService;
     this.schedulerService = schedulerService;
     this.datasetAccessGuard = datasetAccessGuard;
@@ -115,18 +130,17 @@ public class TriggerService {
         processedConfig.put("tokenHash", tokenHash);
       }
       case PIPELINE_CHAIN -> {
-        Object upstreamIdObj = processedConfig.get("upstreamPipelineId");
-        if (upstreamIdObj == null) {
+        Long upstreamPipelineId = chainUpstreamOf(processedConfig);
+        if (upstreamPipelineId == null) {
           throw new IllegalArgumentException(
-              "upstreamPipelineId is required for PIPELINE_CHAIN trigger");
+              "연쇄 트리거에는 먼저 끝나야 할 파이프라인(upstreamPipelineId)을 지정해야 합니다.");
         }
-        Long upstreamPipelineId = ((Number) upstreamIdObj).longValue();
         if (upstreamPipelineId.equals(pipelineId)) {
-          throw new CyclicTriggerDependencyException("Pipeline cannot trigger itself");
+          throw new CyclicTriggerDependencyException(SELF_CHAIN_MESSAGE);
         }
-        validatePipelineChain(pipelineId, upstreamPipelineId);
-        String condition = (String) processedConfig.getOrDefault("condition", "SUCCESS");
-        TriggerCondition.valueOf(condition); // validate
+        // 새 트리거는 활성 상태로 만들어지므로 곧바로 연쇄 그래프의 간선이 된다 — 순환·길이를 검사한다.
+        validatePipelineChain(pipelineId, upstreamPipelineId, null);
+        validateChainCondition(processedConfig.getOrDefault("condition", "SUCCESS"));
       }
       case WEBHOOK -> {
         String webhookId = UUID.randomUUID().toString();
@@ -219,16 +233,9 @@ public class TriggerService {
       validateAllowedIps(request.config());
     }
 
-    // If PIPELINE_CHAIN and upstreamPipelineId is changing, validate
-    if ("PIPELINE_CHAIN".equals(existing.triggerType()) && request.config() != null) {
-      Object upstreamIdObj = request.config().get("upstreamPipelineId");
-      if (upstreamIdObj != null) {
-        Long upstreamPipelineId = ((Number) upstreamIdObj).longValue();
-        if (upstreamPipelineId.equals(existing.pipelineId())) {
-          throw new CyclicTriggerDependencyException("Pipeline cannot trigger itself");
-        }
-        validatePipelineChain(existing.pipelineId(), upstreamPipelineId);
-      }
+    // PIPELINE_CHAIN: 수정 후의 상태(상류·활성 여부)로 연쇄 간선이 새로 생기거나 바뀌면 검사한다(WD-106).
+    if ("PIPELINE_CHAIN".equals(existing.triggerType())) {
+      validateChainOnUpdate(existing, request);
     }
 
     // DATASET_CHANGE 트리거 업데이트 시 폴링 주기·디바운스 범위 검증
@@ -298,6 +305,16 @@ public class TriggerService {
             .findById(triggerId)
             .orElseThrow(() -> new TriggerNotFoundException("Trigger not found: " + triggerId));
 
+    // 꺼져 있던 연쇄 트리거를 켜면 그 순간 연쇄 간선이 생긴다 — 꺼진 동안 반대 방향 연쇄가 추가됐을 수 있으므로 여기서도
+    // 순환·길이를 검사한다(WD-106). 꺼진 트리거는 순환 계산에서 빠지므로 생성·수정 검사만으로는 이 경로가 비어 있었다.
+    if (enabled && "PIPELINE_CHAIN".equals(existing.triggerType())) {
+      // 켤 때만 상류를 해석한다 — 끄는 것은 잘못 저장된 값이 있어도 막지 않는다.
+      Long upstreamPipelineId = chainUpstreamOf(existing.config());
+      if (addsNewActiveChainEdge(existing, upstreamPipelineId, enabled)) {
+        validatePipelineChain(existing.pipelineId(), upstreamPipelineId, existing.id());
+      }
+    }
+
     triggerRepository.updateEnabled(triggerId, enabled);
 
     // Update scheduler after commit
@@ -351,6 +368,27 @@ public class TriggerService {
 
     if (!trigger.isEnabled()) {
       log.info("Trigger {} is disabled, skipping", triggerId);
+      return;
+    }
+
+    // 실행 시 연쇄 깊이 방어(WD-106): 저장 시 검사를 빠져나간 순환(검사 결함 이전에 저장된 것 포함)이 있어도 연쇄가 끝없이
+    // 서로를 부르지 않게, 상한을 넘는 단계는 발화하지 않고 건너뜀 이벤트로 남긴다. 깊이는 연쇄 트리거에만 의미가 있다 —
+    // 다른 유형의 params 는 외부 호출자가 채우므로 판정에 쓰지 않는다.
+    if ("PIPELINE_CHAIN".equals(trigger.triggerType())
+        && params.get(CHAIN_DEPTH_PARAM) instanceof Number depth
+        && depth.intValue() > MAX_CHAIN_DEPTH) {
+      log.warn(
+          "PIPELINE_CHAIN 트리거 {} 발화를 건너뛴다: 연쇄 깊이 {} 가 상한 {} 를 넘는다 (pipeline={}). "
+              + "연쇄가 순환하고 있을 수 있다 — 트리거 구성을 확인할 것.",
+          triggerId,
+          depth.intValue(),
+          MAX_CHAIN_DEPTH,
+          trigger.pipelineId());
+      Map<String, Object> detail = new HashMap<>(params);
+      detail.put(
+          "reason",
+          "연쇄 실행이 최대 " + MAX_CHAIN_DEPTH + "단계를 넘어 더 실행하지 않았습니다. 파이프라인 연쇄가 서로를 부르는 순환인지 확인해 주세요.");
+      triggerEventRepository.create(triggerId, trigger.pipelineId(), null, "SKIPPED", detail);
       return;
     }
 
@@ -410,33 +448,128 @@ public class TriggerService {
     }
   }
 
-  /** DFS cycle detection for pipeline chain triggers. */
-  public void validatePipelineChain(Long targetPipelineId, Long upstreamPipelineId) {
-    Set<Long> visited = new HashSet<>();
-    visited.add(targetPipelineId);
-    dfsCheckCycle(upstreamPipelineId, targetPipelineId, visited, 0);
+  /** 자기 자신을 상류로 지정한 연쇄 거부 문구. */
+  private static final String SELF_CHAIN_MESSAGE = "파이프라인은 자기 자신이 끝났을 때 다시 실행되도록 연결할 수 없습니다.";
+
+  /**
+   * 연쇄 트리거 config 에서 상류 파이프라인 id 를 꺼낸다. 없으면 null, 숫자로 읽을 수 없으면 400.
+   *
+   * <p>해석 규칙은 그래프 적재와 같은 {@link ChainGraph#parseUpstreamId} 다 — 실행 시 조회가 {@code ::bigint} 로 읽으므로 숫자
+   * 문자열도 살아 있는 간선이고, 저장 검사가 그것을 숫자가 아니라고 건너뛰면 안 된다.
+   */
+  private static Long chainUpstreamOf(Map<String, Object> config) {
+    return ChainGraph.parseUpstreamId(config == null ? null : config.get("upstreamPipelineId"));
   }
 
-  private void dfsCheckCycle(
-      Long currentPipelineId, Long targetPipelineId, Set<Long> visited, int depth) {
-    if (depth > MAX_CHAIN_DEPTH) {
-      throw new CyclicTriggerDependencyException(
-          "Pipeline chain depth exceeds maximum of " + MAX_CHAIN_DEPTH);
+  /** 연쇄 실행 조건 값 검증 — SUCCESS·FAILURE·ANY 중 하나여야 한다. */
+  private static void validateChainCondition(Object condition) {
+    try {
+      TriggerCondition.valueOf((String) condition);
+    } catch (IllegalArgumentException | ClassCastException | NullPointerException e) {
+      throw new IllegalArgumentException("연쇄 실행 조건(condition)은 SUCCESS·FAILURE·ANY 중 하나여야 합니다.");
     }
+  }
 
-    // Find all chain triggers where currentPipelineId is the downstream pipeline
-    List<TriggerResponse> chainTriggers =
-        triggerRepository.findEnabledChainTriggersByUpstreamId(currentPipelineId);
-    for (TriggerResponse trigger : chainTriggers) {
-      Long downstreamPipelineId = trigger.pipelineId();
-      if (downstreamPipelineId.equals(targetPipelineId)) {
-        throw new CyclicTriggerDependencyException("Cyclic trigger dependency detected");
-      }
-      if (!visited.contains(downstreamPipelineId)) {
-        visited.add(downstreamPipelineId);
-        dfsCheckCycle(downstreamPipelineId, targetPipelineId, visited, depth + 1);
+  /**
+   * 수정·토글 <b>뒤</b>의 간선이 <b>이전에 없던 활성 간선</b>인가 — 저장 시 순환·길이 검사를 할지 정하는 단일 술어(WD-106).
+   *
+   * <p>참: 뒤 상태가 활성이고 상류가 있으며, (이전에 꺼져 있었거나 상류가 바뀌었다). 꺼진 채 상류만 바꾸는 수정은 간선이 아니라 검사하지 않고 켤 때 검사한다.
+   * 이름·설명만 바꾸는 수정도 검사하지 않는다 — 결함 이전에 저장된 순환 트리거라도 끄거나 고칠 수 있어야 하고, 그런 순환은 실행 시 깊이 방어가 막는다.
+   */
+  private static boolean addsNewActiveChainEdge(
+      TriggerResponse existing, Long upstreamAfter, boolean enabledAfter) {
+    if (!enabledAfter || upstreamAfter == null) {
+      return false;
+    }
+    // 이전 상류는 관대하게 읽는다 — 결함 이전에 저장된 잘못된 값 때문에 수정 자체가 막히면 안 된다.
+    Long upstreamBefore =
+        ChainGraph.parseUpstreamIdOrNull(existing.config().get("upstreamPipelineId"));
+    return !existing.isEnabled() || !upstreamAfter.equals(upstreamBefore);
+  }
+
+  /**
+   * 연쇄 트리거 수정 시 검사(WD-106). 자기 자신 참조는 활성 여부와 무관하게 잘못된 구성이므로 늘 거부하고(기존 동작), 순환·길이는 {@link
+   * #addsNewActiveChainEdge} 가 참일 때만 본다.
+   */
+  private void validateChainOnUpdate(TriggerResponse existing, UpdateTriggerRequest request) {
+    // config 를 보내면 저장소가 config 전체를 바꾼다 — 그 안의 상류가 수정 후의 상류다(새 값은 엄격히 해석). config 를 보내지 않으면
+    // 저장된 상류가 그대로다 — 결함 이전의 잘못된 값 때문에 이름만 바꾸는 수정이 막히지 않게 관대하게 읽는다.
+    Long upstreamAfter =
+        request.config() != null
+            ? chainUpstreamOf(request.config())
+            : ChainGraph.parseUpstreamIdOrNull(existing.config().get("upstreamPipelineId"));
+    if (upstreamAfter == null) {
+      return;
+    }
+    if (upstreamAfter.equals(existing.pipelineId())) {
+      throw new CyclicTriggerDependencyException(SELF_CHAIN_MESSAGE);
+    }
+    boolean enabledAfter = request.isEnabled() != null ? request.isEnabled() : existing.isEnabled();
+    if (addsNewActiveChainEdge(existing, upstreamAfter, enabledAfter)) {
+      validatePipelineChain(existing.pipelineId(), upstreamAfter, existing.id());
+    }
+  }
+
+  /**
+   * 새 연쇄 간선 「upstream 이 끝나면 target 을 실행」을 더해도 되는지 검사한다(WD-106).
+   *
+   * <p>테넌트의 활성 연쇄 간선을 쿼리 한 번으로 읽어 {@link ChainGraph} 로 판정한다(노드마다 조회하던 N+1 제거). 판정 규칙:
+   *
+   * <ul>
+   *   <li><b>순환</b>: target 에서 하류를 따라 upstream 에 닿으면 순환이다(upstream → target → … → upstream). 예전 구현은
+   *       upstream 의 하류에서 target 을 찾아(=중복 경로 검사) A↔B 는 통과시키고 다이아몬드는 거부했다.
+   *   <li><b>이미 있는 순환</b>: 새 간선이 이어지는 줄기에 결함 이전에 저장된 순환이 있으면, 실행이 끝없이 이어지므로 그 순환을 먼저 끊으라고 안내한다.
+   *   <li><b>길이</b>: (upstream 위쪽 최장) + 1 + (target 아래쪽 최장) 이 {@link #MAX_CHAIN_DEPTH} 를 넘으면 거부한다.
+   *       실행 시 방어와 같은 상한이라, 저장이 허용한 연쇄는 실행에서 잘리지 않는다.
+   * </ul>
+   *
+   * <p>꺼진 트리거는 그래프에 넣지 않는다 — 실행 시에도 발화하지 않기 때문이다.
+   *
+   * @param excludeTriggerId 수정·토글 중인 트리거 id(그 트리거의 지금 간선은 바뀔 것이므로 그래프에서 뺀다). 생성이면 null
+   */
+  private void validatePipelineChain(
+      Long targetPipelineId, Long upstreamPipelineId, Long excludeTriggerId) {
+    List<ChainGraph.Edge> edges = new ArrayList<>();
+    for (TriggerRepository.ChainEdgeRow row : triggerRepository.findEnabledChainEdges()) {
+      // 숫자로 읽을 수 없는 상류는 실행 시 조회에서도 간선이 될 수 없다 — 건너뛴다.
+      Long upstream = ChainGraph.parseUpstreamIdOrNull(row.upstreamPipelineId());
+      if (upstream != null) {
+        edges.add(new ChainGraph.Edge(row.triggerId(), upstream, row.pipelineId()));
       }
     }
+    ChainGraph.Verdict verdict =
+        ChainGraph.of(edges, excludeTriggerId)
+            .check(targetPipelineId, upstreamPipelineId, MAX_CHAIN_DEPTH);
+    switch (verdict) {
+      case ChainGraph.Ok ok -> {}
+      case ChainGraph.NewCycle c ->
+          throw new CyclicTriggerDependencyException(
+              "이 연쇄를 추가하면 파이프라인 실행이 서로를 끝없이 부르는 순환이 생깁니다: " + describePipelines(c.path()));
+      case ChainGraph.ExistingCycle c ->
+          throw new CyclicTriggerDependencyException(
+              "이 연쇄가 이어지는 파이프라인들 사이에 이미 서로를 끝없이 부르는 순환이 있습니다: "
+                  + describePipelines(c.path())
+                  + ". 그 순환을 먼저 끊어 주세요.");
+      case ChainGraph.TooLong t ->
+          throw new CyclicTriggerDependencyException(
+              "이 연쇄를 추가하면 이어지는 연쇄 실행이 "
+                  + t.length()
+                  + "단계가 되어 최대 "
+                  + MAX_CHAIN_DEPTH
+                  + "단계를 넘습니다. 연쇄를 나누거나 줄여 주세요.");
+    }
+  }
+
+  /**
+   * 파이프라인 id 목록을 "이름 → 이름" 으로 옮긴다. 이름은 같은 테넌트의 파이프라인 목록(연쇄 상류 선택 목록)에서 이미 보이는 값이라 새로 드러나는 정보가 아니다.
+   * 이름을 찾지 못하면(삭제 경합 등) id 로 대신한다.
+   */
+  private String describePipelines(List<Long> pipelineIds) {
+    List<String> labels = new ArrayList<>();
+    for (Long id : pipelineIds) {
+      labels.add(pipelineRepository.findNameById(id).map(n -> "「" + n + "」").orElse("#" + id));
+    }
+    return String.join(" → ", labels);
   }
 
   /**

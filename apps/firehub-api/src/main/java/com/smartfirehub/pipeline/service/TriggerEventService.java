@@ -7,6 +7,7 @@ import com.smartfirehub.global.tenant.TenantScopedRunner;
 import com.smartfirehub.notification.service.NotificationService;
 import com.smartfirehub.pipeline.dto.TriggerResponse;
 import com.smartfirehub.pipeline.event.PipelineCompletedEvent;
+import com.smartfirehub.pipeline.repository.TriggerEventRepository;
 import com.smartfirehub.pipeline.repository.TriggerRepository;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
@@ -25,6 +26,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 public class TriggerEventService {
 
   private final TriggerRepository triggerRepository;
+  // 연쇄 깊이(WD-106) — 완료된 실행이 연쇄의 몇 번째 단계였는지 그 실행의 FIRED 이벤트에서 읽는다.
+  private final TriggerEventRepository triggerEventRepository;
   private final TriggerService triggerService;
   private final DatasetRepository datasetRepository;
   private final DSLContext dsl;
@@ -35,6 +38,7 @@ public class TriggerEventService {
 
   public TriggerEventService(
       TriggerRepository triggerRepository,
+      TriggerEventRepository triggerEventRepository,
       @Lazy TriggerService triggerService,
       DatasetRepository datasetRepository,
       DSLContext dsl,
@@ -42,6 +46,7 @@ public class TriggerEventService {
       TenantScopedRunner tenantScopedRunner,
       TransactionTemplate transactionTemplate) {
     this.triggerRepository = triggerRepository;
+    this.triggerEventRepository = triggerEventRepository;
     this.triggerService = triggerService;
     this.datasetRepository = datasetRepository;
     this.dsl = dsl;
@@ -81,6 +86,18 @@ public class TriggerEventService {
 
     List<TriggerResponse> triggers =
         triggerRepository.findEnabledChainTriggersByUpstreamId(event.pipelineId());
+    if (triggers.isEmpty()) {
+      return;
+    }
+
+    // 실행 시 연쇄 깊이 방어(WD-106): 완료된 실행이 연쇄의 d 번째 단계였다면 이번 발화는 d+1 단계다. 수동·스케줄·API 로
+    // 시작된 실행은 0 단계다. 이 값을 params 로 넘기면 fireTrigger 가 상한을 넘는 발화를 건너뛰고, 넘지 않으면 FIRED 이벤트
+    // detail 에 남겨 다음 단계가 이어 받는다 — 저장 시 검사를 빠져나간 순환(이미 DB 에 있는 것 포함)이 끝없이 돌지 않게 한다.
+    int chainDepth =
+        triggerEventRepository
+                .findChainDepthOfExecution(event.pipelineId(), event.executionId())
+                .orElse(0)
+            + 1;
 
     for (TriggerResponse trigger : triggers) {
       try {
@@ -92,7 +109,12 @@ public class TriggerEventService {
               condition,
               event.status());
           triggerService.fireTrigger(
-              trigger.id(), Map.of("upstreamExecutionId", event.executionId()));
+              trigger.id(),
+              Map.of(
+                  "upstreamExecutionId",
+                  event.executionId(),
+                  TriggerService.CHAIN_DEPTH_PARAM,
+                  chainDepth));
         }
       } catch (Exception e) {
         log.error("Failed to process chain trigger {}: {}", trigger.id(), e.getMessage(), e);
