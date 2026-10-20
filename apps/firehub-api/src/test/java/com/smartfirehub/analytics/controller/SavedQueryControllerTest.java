@@ -378,4 +378,42 @@ class SavedQueryControllerTest {
         .andExpect(status().isCreated())
         .andExpect(jsonPath("$.id").value(1));
   }
+
+  // ── GET /api/v1/analytics/queries/{id}/delete-impact (WD-86) ───────────────
+
+  @Test
+  void getDeleteImpact_withWritePermission_returnsImpact() throws Exception {
+    when(savedQueryService.getDeleteImpact(7L, 1L))
+        .thenReturn(
+            new DeleteImpactResponse(
+                List.of(new DeleteImpactResponse.ItemRef(10L, "지역별 매출")),
+                1,
+                3,
+                List.of(new DeleteImpactResponse.ItemRef(20L, "영업 현황")),
+                1));
+
+    mockMvc
+        .perform(
+            get("/api/v1/analytics/queries/7/delete-impact")
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.charts[0].name").value("지역별 매출"))
+        .andExpect(jsonPath("$.hiddenChartCount").value(1))
+        .andExpect(jsonPath("$.widgetCount").value(3))
+        .andExpect(jsonPath("$.dashboards[0].name").value("영업 현황"))
+        .andExpect(jsonPath("$.hiddenDashboardCount").value(1));
+  }
+
+  /** 삭제의 사전 조회라 삭제와 같은 analytics:write 를 요구한다 — 읽기 권한만으로는 남의 자산 개수를 엿볼 수 없다. */
+  @Test
+  void getDeleteImpact_readOnlyUser_returnsForbidden() throws Exception {
+    when(permissionService.getUserPermissions(1L)).thenReturn(Set.of("analytics:read"));
+
+    mockMvc
+        .perform(
+            get("/api/v1/analytics/queries/7/delete-impact")
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isForbidden());
+    verify(savedQueryService, never()).getDeleteImpact(anyLong(), anyLong());
+  }
 }

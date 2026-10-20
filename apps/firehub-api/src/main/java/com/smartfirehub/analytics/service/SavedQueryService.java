@@ -2,10 +2,13 @@ package com.smartfirehub.analytics.service;
 
 import com.smartfirehub.analytics.dto.AnalyticsQueryResponse;
 import com.smartfirehub.analytics.dto.CreateSavedQueryRequest;
+import com.smartfirehub.analytics.dto.DeleteImpactResponse;
 import com.smartfirehub.analytics.dto.SavedQueryListResponse;
 import com.smartfirehub.analytics.dto.SavedQueryResponse;
 import com.smartfirehub.analytics.dto.UpdateSavedQueryRequest;
 import com.smartfirehub.analytics.exception.SavedQueryNotFoundException;
+import com.smartfirehub.analytics.repository.AnalyticsDashboardRepository;
+import com.smartfirehub.analytics.repository.ChartRepository;
 import com.smartfirehub.analytics.repository.SavedQueryRepository;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.securitylevel.access.Clearance;
@@ -33,6 +36,11 @@ public class SavedQueryService {
 
   /** 사용자 실행 결과에 실행 기록(runId)을 붙인다(애드혹 실행과 같은 규칙). */
   private final QueryResultExportService queryResultExportService;
+
+  /** 삭제 영향 범위(WD-86) — 쿼리를 지우면 CASCADE 로 함께 사라지는 차트·위젯을 센다. */
+  private final ChartRepository chartRepository;
+
+  private final AnalyticsDashboardRepository dashboardRepository;
 
   /**
    * 응답의 연결 데이터셋 이름 가시성(보안 등급, 스펙 §2.5) — 조회자가 볼 수 없는 데이터셋은 이름만 null, datasetId 는 유지(웹 편집기가 PUT 으로
@@ -130,6 +138,26 @@ public class SavedQueryService {
     if (!deleted) {
       throw new SavedQueryNotFoundException("Saved query not found: " + id);
     }
+  }
+
+  /**
+   * 저장 쿼리 삭제 시 함께 사라지는 차트·대시보드 위젯(WD-86). 삭제 확인 창이 "함께 삭제되는 항목"을 보여 주는 데 쓴다.
+   *
+   * <p>삭제와 같은 관문(소유자만, 남의 것·없는 것은 같은 404)을 쓴다 — 지울 수 없는 쿼리의 영향 범위는 의미가 없고, 소유자가 아닌 사람에게 "볼 수 없는 항목
+   * n개"를 알려 주면 남의 자산 존재가 새어 나간다. 개수는 전부, 이름은 볼 수 있는 것만({@link DeleteImpactResponse}).
+   */
+  // RLS 가 걸린 chart/dashboard/dashboard_widget 을 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 되어
+  // "연결 없음"(일반 확인 창)으로 위장된다.
+  @Transactional(readOnly = true)
+  public DeleteImpactResponse getDeleteImpact(Long id, Long userId) {
+    savedQueryRepository
+        .findByIdForOwner(id, userId, DSL.trueCondition())
+        .orElseThrow(() -> new SavedQueryNotFoundException("Saved query not found: " + id));
+    List<DeleteImpactResponse.ChartRawRef> charts =
+        chartRepository.findImpactRefsBySavedQueryId(id, userId);
+    List<Long> chartIds = charts.stream().map(DeleteImpactResponse.ChartRawRef::id).toList();
+    return DeleteImpactResponse.forQuery(
+        charts, dashboardRepository.findImpactByChartIds(chartIds, userId));
   }
 
   /**

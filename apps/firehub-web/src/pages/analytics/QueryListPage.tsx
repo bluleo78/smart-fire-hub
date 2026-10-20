@@ -13,9 +13,9 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
+import { AnalyticsDeleteConfirmDialog } from '../../components/analytics/AnalyticsDeleteConfirmDialog';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
-import { DeleteConfirmDialog } from '../../components/ui/delete-confirm-dialog';
 import { SearchInput } from '../../components/ui/search-input';
 import {
   Select,
@@ -283,8 +283,10 @@ export default function QueryListPage() {
                       >
                         <Pencil size={13} />
                       </Button>
-                      <DeleteConfirmDialog
-                        entityName="쿼리"
+                      {/* WD-86: 함께 삭제되는 항목(CASCADE)을 창을 열 때 조회해 보여 준다 */}
+                      <AnalyticsDeleteConfirmDialog
+                        kind="query"
+                        id={query.id}
                         itemName={query.name}
                         onConfirm={() => handleDelete(query.id, query.name)}
                         trigger={

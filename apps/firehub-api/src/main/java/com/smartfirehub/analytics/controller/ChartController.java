@@ -3,6 +3,7 @@ package com.smartfirehub.analytics.controller;
 import com.smartfirehub.analytics.dto.ChartDataResponse;
 import com.smartfirehub.analytics.dto.ChartResponse;
 import com.smartfirehub.analytics.dto.CreateChartRequest;
+import com.smartfirehub.analytics.dto.DeleteImpactResponse;
 import com.smartfirehub.analytics.dto.UpdateChartRequest;
 import com.smartfirehub.analytics.service.ChartService;
 import com.smartfirehub.global.dto.PageResponse;
@@ -71,6 +72,18 @@ public class ChartController {
     Long userId = (Long) authentication.getPrincipal();
     chartService.delete(id, userId);
     return ResponseEntity.noContent().build();
+  }
+
+  /**
+   * 삭제 영향 범위(WD-86) — 이 차트를 지우면 CASCADE 로 함께 사라지는 대시보드 위젯. 삭제 확인 창이 연다. 삭제의 사전 조회라 삭제와 같은
+   * 권한(analytics:write)·소유자 관문을 쓴다.
+   */
+  @GetMapping("/{id}/delete-impact")
+  @RequirePermission("analytics:write")
+  public ResponseEntity<DeleteImpactResponse> getDeleteImpact(
+      @PathVariable Long id, Authentication authentication) {
+    Long userId = (Long) authentication.getPrincipal();
+    return ResponseEntity.ok(chartService.getDeleteImpact(id, userId));
   }
 
   @GetMapping("/{id}/data")

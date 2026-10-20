@@ -12,6 +12,7 @@ import type {
   DashboardDataResponse,
   DashboardListItem,
   DashboardWidget,
+  DeleteImpact,
   SavedQuery,
   SavedQueryListItem,
   SchemaInfo,
@@ -22,6 +23,9 @@ import type {
 } from '../types/analytics';
 import type { PageResponse } from '../types/common';
 import { client } from './client';
+
+/** 삭제 영향 범위 조회 시간 제한 — 넘으면 조회 실패로 보고 경고만 남긴 채 삭제를 허용한다(조회가 삭제를 무한정 막지 않게). */
+export const DELETE_IMPACT_TIMEOUT_MS = 10_000;
 
 export const analyticsApi = {
   // ============================================================
@@ -47,6 +51,7 @@ export const analyticsApi = {
 
   deleteQuery: (id: number) =>
     client.delete(`/analytics/queries/${id}`),
+
 
   executeSavedQuery: (id: number) =>
     client.post<AnalyticsQueryResult>(`/analytics/queries/${id}/execute`),
@@ -93,6 +98,17 @@ export const analyticsApi = {
 
   deleteChart: (id: number) =>
     client.delete(`/analytics/charts/${id}`),
+
+
+  /**
+   * 삭제 영향 범위(WD-86) — 이 쿼리·차트를 지우면 함께 사라지는 차트·대시보드 위젯. 소유자만(남의 것·없는 것은 404).
+   * timeout: 조회가 삭제를 무한정 막지 않게 끊는다(넘으면 호출부가 실패로 보고 경고 + 삭제 허용).
+   */
+  getDeleteImpact: (kind: 'query' | 'chart', id: number, signal?: AbortSignal) =>
+    client.get<DeleteImpact>(`/analytics/${kind === 'query' ? 'queries' : 'charts'}/${id}/delete-impact`, {
+      signal,
+      timeout: DELETE_IMPACT_TIMEOUT_MS,
+    }),
 
   getChartData: (id: number) =>
     client.get<ChartDataResponse>(`/analytics/charts/${id}/data`),

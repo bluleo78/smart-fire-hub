@@ -9,9 +9,9 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
+import { AnalyticsDeleteConfirmDialog } from '../../components/analytics/AnalyticsDeleteConfirmDialog';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
-import { DeleteConfirmDialog } from '../../components/ui/delete-confirm-dialog';
 import { SearchInput } from '../../components/ui/search-input';
 import { SimplePagination } from '../../components/ui/simple-pagination';
 import {
@@ -183,8 +183,10 @@ export default function ChartListPage() {
                       >
                         <Pencil size={13} />
                       </Button>
-                      <DeleteConfirmDialog
-                        entityName="차트"
+                      {/* WD-86: 함께 삭제되는 항목(CASCADE)을 창을 열 때 조회해 보여 준다 */}
+                      <AnalyticsDeleteConfirmDialog
+                        kind="chart"
+                        id={chart.id}
                         itemName={chart.name}
                         onConfirm={() => handleDelete(chart.id, chart.name)}
                         trigger={

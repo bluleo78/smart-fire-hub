@@ -15,6 +15,9 @@ const inlineBannerVariants = cva(
         info: "border-info bg-info-subtle",
         success: "border-success bg-success-subtle",
         caution: "border-caution bg-caution-subtle",
+        // 되돌릴 수 없는 파괴적 결과(함께 삭제되는 항목 등) 경고. destructive 는 -subtle 토큰이 없어 배경만 5% 틴트를 쓰고,
+        // 경계를 만드는 보더는 다른 variant 와 같이 실색이다.
+        destructive: "border-destructive bg-destructive/5",
       },
     },
     defaultVariants: {
@@ -30,6 +33,7 @@ const iconToneByVariant: Record<NonNullable<VariantProps<typeof inlineBannerVari
   info: "text-info",
   success: "text-success",
   caution: "text-caution",
+  destructive: "text-destructive",
 }
 
 function InlineBanner({
@@ -40,7 +44,8 @@ function InlineBanner({
   actions,
   children,
   ...props
-}: React.ComponentProps<"div"> &
+  // title 은 HTML 툴팁 속성(string)이 아니라 배너 제목(ReactNode)이다 — div 의 title 타입과 교차해 노드를 못 받던 것을 뺀다.
+}: Omit<React.ComponentProps<"div">, "title"> &
   VariantProps<typeof inlineBannerVariants> & {
     icon?: React.ReactNode
     title?: React.ReactNode

@@ -1,9 +1,10 @@
 import {
+  createDeleteImpact,
   createQueryResult,
   createSavedQuery,
   createSavedQueryListItem,
 } from '../../factories/analytics.factory';
-import { setupQueryListMocks } from '../../fixtures/analytics.fixture';
+import { mockDeleteImpact, openFirstRowDeleteDialog, setupQueryListMocks } from '../../fixtures/analytics.fixture';
 import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 
@@ -149,6 +150,7 @@ test.describe('쿼리 목록 페이지', () => {
         return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
       },
     );
+    await mockDeleteImpact(page);
     await mockApi(page, 'DELETE', '/api/v1/analytics/queries/11', {});
 
     await page.goto('/analytics/queries');
@@ -387,5 +389,206 @@ test.describe('쿼리 목록 페이지', () => {
     await expect(page.locator('[data-sonner-toast]')).toHaveCount(0);
     await expect(page.getByRole('alert')).toHaveCount(0);
     await page.screenshot({ path: 'test-results/tc/security-level-name-masking/query-list-restricted.png' });
+  });
+});
+
+/**
+ * WD-86: 저장 쿼리를 지우면 그 쿼리의 차트와 차트를 쓰는 대시보드 위젯이 DB CASCADE 로 함께 사라진다.
+ * 확인 창이 열릴 때 영향 범위를 조회해 빨간 상자로 보여 주고, 연결이 없으면 지금과 같은 일반 확인 창이어야 한다.
+ */
+test.describe('쿼리 삭제 — 함께 삭제되는 항목 안내 (WD-86)', () => {
+  test('연결된 차트·위젯이 있으면 빨간 상자에 차트·위젯·대시보드를 보이고, 확인하면 DELETE 를 호출한다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupQueryListMocks(page, 2);
+    await mockDeleteImpact(
+      page,
+      createDeleteImpact({
+        charts: [
+          { id: 10, name: '지역별 매출' },
+          { id: 11, name: '월 추이' },
+        ],
+        hiddenChartCount: 1,
+        widgetCount: 3,
+        dashboards: [
+          { id: 20, name: '영업 현황' },
+          { id: 21, name: '경영 요약' },
+        ],
+      }),
+    );
+    const deleteCapture = await mockApi(page, 'DELETE', '/api/v1/analytics/queries/1', {}, { capture: true });
+    await page.goto('/analytics/queries');
+
+    // 창을 열 때 해당 쿼리의 영향 범위를 조회한다(목록 진입만으로는 조회하지 않는다).
+    const impactRequest = page.waitForRequest((r) => r.url().includes('/delete-impact'));
+    const dialog = await openFirstRowDeleteDialog(page);
+    expect(new URL((await impactRequest).url()).pathname).toBe('/api/v1/analytics/queries/1/delete-impact');
+
+    const box = dialog.getByTestId('delete-impact');
+    await expect(box).toBeVisible();
+    await expect(box.getByText('함께 삭제되는 항목', { exact: true })).toBeVisible();
+    // 볼 수 있는 이름은 나열하고, 볼 수 없는 차트는 개수만 보인다.
+    await expect(box.getByRole('listitem').nth(0)).toHaveText(
+      '이 쿼리로 만든 차트 3개 (지역별 매출, 월 추이, 볼 수 없는 차트 1개)',
+    );
+    await expect(box.getByRole('listitem').nth(1)).toHaveText(
+      '그 차트를 쓰는 대시보드 위젯 3개 (대시보드 2곳: 영업 현황, 경영 요약)',
+    );
+
+    await dialog.getByRole('button', { name: '삭제' }).click();
+    const req = await deleteCapture.waitForRequest();
+    expect(req.url.pathname).toBe('/api/v1/analytics/queries/1');
+  });
+
+  test('연결된 것이 없으면 안내 상자 없이 일반 확인 창을 보인다', async ({ authenticatedPage: page }) => {
+    // setupQueryListMocks 가 기본값("연결 없음") 영향 범위를 모킹한다.
+    await setupQueryListMocks(page, 2);
+    await page.goto('/analytics/queries');
+
+    const dialog = await openFirstRowDeleteDialog(page);
+    await expect(dialog.getByText(/정말 삭제하시겠습니까\? 이 작업은 되돌릴 수 없습니다\./)).toBeVisible();
+    // 조회가 끝나 삭제 버튼이 켜진 뒤에도 안내 상자·로딩 문구가 없어야 한다(로딩 상태와 구분).
+    await expect(dialog.getByRole('button', { name: '삭제' })).toBeEnabled();
+    await expect(dialog.getByTestId('delete-impact')).toHaveCount(0);
+    await expect(dialog.getByText('함께 삭제되는 항목을 확인하는 중…')).toHaveCount(0);
+  });
+
+  test('영향 범위를 확인하는 동안에는 삭제 버튼이 꺼져 있다', async ({ authenticatedPage: page }) => {
+    await setupQueryListMocks(page, 2);
+    // 응답을 붙잡아 두어 로딩 상태를 관찰한다.
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await page.route(
+      (url) => url.pathname === '/api/v1/analytics/queries/1/delete-impact',
+      async (route) => {
+        await gate;
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(createDeleteImpact({ widgetCount: 1, dashboards: [{ id: 20, name: '영업 현황' }] })),
+        });
+      },
+    );
+    await page.goto('/analytics/queries');
+
+    const dialog = await openFirstRowDeleteDialog(page);
+    await expect(dialog.getByText('함께 삭제되는 항목을 확인하는 중…')).toBeVisible();
+    await expect(dialog.getByRole('button', { name: '삭제' })).toBeDisabled();
+
+    release();
+    await expect(dialog.getByTestId('delete-impact')).toBeVisible();
+    await expect(dialog.getByRole('button', { name: '삭제' })).toBeEnabled();
+  });
+
+  test('창을 닫았다 다시 열면 이전 결과를 쓰지 않고 다시 확인하는 동안 삭제 버튼이 꺼져 있다', async ({
+    authenticatedPage: page,
+  }) => {
+    // 처음에는 "연결 없음" — 다시 열 때 그 사이 생긴 연결을 확인하기 전에 옛 결과로 삭제가 켜지면 안 된다.
+    await setupQueryListMocks(page, 2);
+    await page.goto('/analytics/queries');
+    const dialog = await openFirstRowDeleteDialog(page);
+    await expect(dialog.getByRole('button', { name: '삭제' })).toBeEnabled();
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await page.route(
+      (url) => url.pathname === '/api/v1/analytics/queries/1/delete-impact',
+      async (route) => {
+        await gate;
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(
+            createDeleteImpact({ charts: [{ id: 10, name: '새 차트' }], widgetCount: 0 }),
+          ),
+        });
+      },
+    );
+    await openFirstRowDeleteDialog(page);
+    await expect(dialog.getByText('함께 삭제되는 항목을 확인하는 중…')).toBeVisible();
+    await expect(dialog.getByRole('button', { name: '삭제' })).toBeDisabled();
+
+    release();
+    await expect(dialog.getByTestId('delete-impact')).toContainText('이 쿼리로 만든 차트 1개 (새 차트)');
+    await expect(dialog.getByRole('button', { name: '삭제' })).toBeEnabled();
+  });
+
+  test('영향 범위 조회가 실패하면 함께 삭제될 수 있음을 알리고 삭제는 그대로 할 수 있다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupQueryListMocks(page, 2);
+    await mockDeleteImpact(page, createDeleteImpact(), 500);
+    const deleteCapture = await mockApi(page, 'DELETE', '/api/v1/analytics/queries/1', {}, { capture: true });
+    await page.goto('/analytics/queries');
+
+    const dialog = await openFirstRowDeleteDialog(page);
+    const box = dialog.getByTestId('delete-impact');
+    // 실패를 "연결 없음"(상자 없음)으로 보이게 하지 않는다.
+    await expect(box.getByText('함께 삭제되는 항목을 불러오지 못했습니다')).toBeVisible();
+    await expect(box).toContainText('이 쿼리로 만든 차트와 그 차트를 쓰는 대시보드 위젯이 있다면 함께 삭제됩니다.');
+
+    await dialog.getByRole('button', { name: '삭제' }).click();
+    const req = await deleteCapture.waitForRequest();
+    expect(req.url.pathname).toBe('/api/v1/analytics/queries/1');
+  });
+  test('남의 공유 쿼리라 영향 조회가 404 면 본인 것만 지울 수 있다고 알리고 삭제 버튼을 끈다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupQueryListMocks(page, 2);
+    await mockDeleteImpact(page, createDeleteImpact(), 404);
+    let deleteCalled = false;
+    await page.route(
+      (url) => url.pathname === '/api/v1/analytics/queries/1',
+      (route) => {
+        if (route.request().method() !== 'DELETE') return route.fallback();
+        deleteCalled = true;
+        return route.fulfill({ status: 404, contentType: 'application/json', body: '{}' });
+      },
+    );
+    await page.goto('/analytics/queries');
+
+    const dialog = await openFirstRowDeleteDialog(page);
+    await expect(dialog.getByTestId('delete-not-owner')).toHaveText('본인이 만든 항목만 삭제할 수 있습니다.');
+    // 서버 장애용 빨간 "함께 삭제될 수 있음" 경고와 구분된다.
+    await expect(dialog.getByTestId('delete-impact')).toHaveCount(0);
+    await expect(dialog.getByRole('button', { name: '삭제' })).toBeDisabled();
+    expect(deleteCalled).toBe(false);
+  });
+
+  test('영향 조회가 10초 안에 끝나지 않으면 조회 실패로 보고 경고와 함께 삭제를 허용한다', async ({
+    authenticatedPage: page,
+  }) => {
+    // 시간 제한은 axios timeout(XHR 네이티브 타이머)이라 Playwright 가짜 시계로 앞당길 수 없다 — 실제 10초를 기다린다.
+    test.setTimeout(40_000);
+    await setupQueryListMocks(page, 2);
+    // 응답하지 않는 영향 조회.
+    await page.route(
+      (url) => url.pathname === '/api/v1/analytics/queries/1/delete-impact',
+      () => new Promise<void>(() => {}),
+    );
+    const deleteCapture = await mockApi(page, 'DELETE', '/api/v1/analytics/queries/1', {}, { capture: true });
+    await page.goto('/analytics/queries');
+
+    const dialog = await openFirstRowDeleteDialog(page);
+    await expect(dialog.getByText('함께 삭제되는 항목을 확인하는 중…')).toBeVisible();
+    await expect(dialog.getByRole('button', { name: '삭제' })).toBeDisabled();
+
+    // 시간 제한 전에는 여전히 확인 중이다.
+    await page.waitForTimeout(8_000);
+    await expect(dialog.getByRole('button', { name: '삭제' })).toBeDisabled();
+    await expect(dialog.getByTestId('delete-impact').getByText('함께 삭제되는 항목을 불러오지 못했습니다')).toBeVisible({
+      timeout: 10_000,
+    });
+    await expect(dialog.getByRole('button', { name: '삭제' })).toBeEnabled();
+
+    await dialog.getByRole('button', { name: '삭제' }).click();
+    const req = await deleteCapture.waitForRequest();
+    expect(req.url.pathname).toBe('/api/v1/analytics/queries/1');
   });
 });

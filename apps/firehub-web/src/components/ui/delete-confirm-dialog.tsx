@@ -24,6 +24,12 @@ interface CommonProps {
   // (#647) 이름만으로는 항목을 구분할 수 없는 화면(예: 이름 중복이 가능한 API 연결)에서 ID/URL
   // 등 추가 식별 정보를 함께 보여줘 오삭제를 방지한다. 지정하지 않으면 기존과 동일하게 이름만 표시.
   extraDetail?: string;
+  // (WD-86) 확인 문구 아래에 덧붙일 블록 — 예: 함께 삭제되는 항목 안내 상자. Description(<p>) 밖에 두므로 목록 등
+  // 블록 요소를 넣을 수 있다. 창 내용 안에서 렌더되므로 열려 있을 때만 마운트되고(닫힘 애니메이션 동안은 유지) 닫히면
+  // 언마운트된다 — 열 때만 조회하는 안내를 그대로 넣을 수 있다. 지정하지 않으면 기존과 동일.
+  details?: ReactNode;
+  // (WD-86) 확인 버튼 비활성화 — 안내 내용을 아직 불러오는 중에 사용자가 내용을 보기 전에 확정하지 못하게 한다.
+  confirmDisabled?: boolean;
 }
 
 // 클릭으로 여는 기존 사용처(예: RelationInspector의 "관계 삭제" 버튼)는 trigger를 넘긴다. 트리거
@@ -42,6 +48,8 @@ export function DeleteConfirmDialog({
   onOpenChange,
   restoreFocusRef,
   extraDetail,
+  details,
+  confirmDisabled,
 }: DeleteConfirmDialogProps) {
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
@@ -60,11 +68,14 @@ export function DeleteConfirmDialog({
             {extraDetail && <> ({extraDetail})</>}
           </AlertDialogDescription>
         </AlertDialogHeader>
+        {details}
         <AlertDialogFooter>
           <AlertDialogCancel>취소</AlertDialogCancel>
           {/* WD-5: 이 컴포넌트는 정의상 "되돌릴 수 없는 삭제" 확인이다(제목·문구 고정). 디자인 시스템 04 §D 에 따라
               확인 버튼은 항상 destructive — 호출처 prop 으로 열지 않는다(한 곳만 빠져도 같은 결함이 재발한다). */}
-          <AlertDialogAction variant="destructive" onClick={onConfirm}>삭제</AlertDialogAction>
+          <AlertDialogAction variant="destructive" onClick={onConfirm} disabled={confirmDisabled}>
+            삭제
+          </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>

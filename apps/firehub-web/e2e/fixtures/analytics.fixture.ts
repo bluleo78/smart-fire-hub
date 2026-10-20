@@ -1,11 +1,12 @@
 import type { Page } from '@playwright/test';
 
-import type { Dashboard } from '../../src/types/analytics';
+import type { Dashboard, DeleteImpact } from '../../src/types/analytics';
 import {
   createChart,
   createChartListItem,
   createDashboard,
   createDashboardListItem,
+  createDeleteImpact,
   createQueryResult,
   createSavedQuery,
   createSavedQueryList,
@@ -18,6 +19,42 @@ import { createPageResponse, mockApi } from './api-mock';
  * - 쿼리/차트/대시보드 페이지 테스트에서 공통으로 사용하는 API 모킹 함수를 제공한다.
  * - 백엔드 없이 분석 관련 E2E 테스트를 실행할 수 있도록 지원한다.
  */
+
+/** 삭제 영향 범위 엔드포인트 경로 — GET /api/v1/analytics/{queries|charts}/{id}/delete-impact */
+const DELETE_IMPACT_PATH = /^\/api\/v1\/analytics\/(queries|charts)\/\d+\/delete-impact$/;
+
+/**
+ * 삭제 영향 범위 API 모킹(WD-86) — 쿼리·차트 삭제 확인 창이 열릴 때 부른다.
+ * 나중에 등록한 route 가 우선하므로, 목록 셋업의 기본값("연결 없음")을 테스트에서 다시 불러 덮어쓸 수 있다.
+ * @param impact - 응답 본문(기본값: 연결 없음)
+ * @param status - 응답 상태(실패 경로 검증용)
+ */
+export async function mockDeleteImpact(
+  page: Page,
+  impact: DeleteImpact = createDeleteImpact(),
+  status = 200,
+) {
+  await page.route(
+    (url) => DELETE_IMPACT_PATH.test(url.pathname),
+    (route) => {
+      if (route.request().method() !== 'GET') return route.fallback();
+      return route.fulfill({
+        status,
+        contentType: 'application/json',
+        body: JSON.stringify(status === 200 ? impact : { status, error: 'Internal Server Error', message: '오류' }),
+      });
+    },
+  );
+}
+
+/**
+ * 목록 첫 행의 삭제 확인 창을 열고 창 locator 를 돌려준다(WD-86 영향 범위 안내 테스트 공통).
+ * 삭제 아이콘 버튼과 창의 확인 버튼 이름이 모두 "삭제"라, 열기 전에는 목록 쪽 버튼만 집힌다.
+ */
+export async function openFirstRowDeleteDialog(page: Page) {
+  await page.getByRole('button', { name: '삭제' }).first().click();
+  return page.getByRole('alertdialog');
+}
 
 /**
  * 쿼리 목록 페이지 API 모킹
@@ -32,6 +69,7 @@ export async function setupQueryListMocks(page: Page, count = 5) {
     createPageResponse(createSavedQueryList(count)),
   );
   await mockApi(page, 'GET', '/api/v1/analytics/queries/folders', []);
+  await mockDeleteImpact(page);
 }
 
 /**
@@ -78,6 +116,7 @@ export async function setupChartListMocks(page: Page, count = 3) {
     createChartListItem({ id: i + 1, name: `테스트 차트 ${i + 1}` }),
   );
   await mockApi(page, 'GET', '/api/v1/analytics/charts', createPageResponse(charts));
+  await mockDeleteImpact(page);
 }
 
 /**

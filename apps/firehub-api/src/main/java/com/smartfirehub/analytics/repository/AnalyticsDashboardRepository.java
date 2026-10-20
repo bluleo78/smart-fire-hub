@@ -4,10 +4,12 @@ import static org.jooq.impl.DSL.*;
 
 import com.smartfirehub.analytics.dto.CreateDashboardRequest;
 import com.smartfirehub.analytics.dto.DashboardResponse;
+import com.smartfirehub.analytics.dto.DeleteImpactResponse;
 import com.smartfirehub.analytics.dto.UpdateDashboardRequest;
 import com.smartfirehub.global.util.LikePatternUtils;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
@@ -47,6 +49,8 @@ public class AnalyticsDashboardRepository {
   private static final Table<?> DW = table(name("dashboard_widget"));
   private static final Field<Long> DW_DASHBOARD_ID =
       field(name("dashboard_widget", "dashboard_id"), Long.class);
+  private static final Field<Long> DW_CHART_ID =
+      field(name("dashboard_widget", "chart_id"), Long.class);
 
   // user table
   private static final Table<?> USER_TABLE = table(name("user"));
@@ -54,13 +58,43 @@ public class AnalyticsDashboardRepository {
   private static final Field<String> U_NAME_ALIAS =
       field(name("user", "name"), String.class).as("created_by_name");
 
+  /** 조회자에게 보이는 대시보드 — 본인 소유이거나 공유된 것. 목록·단건·삭제 영향 범위(WD-86)가 같은 규칙을 쓰도록 한 곳에 둔다. */
+  private static Condition visibleTo(Long userId) {
+    return D_CREATED_BY.eq(userId).or(D_IS_SHARED.isTrue());
+  }
+
+  /**
+   * 주어진 차트들을 위젯으로 쓰는 대시보드와 대시보드별 위젯 수(WD-86 삭제 영향 범위). 차트를 지우면 CASCADE 가 대시보드 가시성과 무관하게 위젯을 전부 지우므로
+   * 사용자 필터를 걸지 않고, 대신 visible 을 함께 돌려 호출자가 볼 수 없는 이름을 버리게 한다. 위젯 수와 대시보드 목록을 한 쿼리(대시보드별 GROUP BY)로
+   * 얻어 두 값이 서로 어긋나지 않게 한다. RLS 가 테넌트 범위를 한정하므로 트랜잭션 안에서 불러야 한다.
+   */
+  public List<DeleteImpactResponse.DashboardRawRef> findImpactByChartIds(
+      Collection<Long> chartIds, Long userId) {
+    if (chartIds.isEmpty()) {
+      return List.of();
+    }
+    Field<Boolean> visible = field(visibleTo(userId));
+    Field<Integer> widgetCount = count().as("widget_count");
+    return dsl.select(D_ID, D_NAME, visible, widgetCount)
+        .from(DW)
+        .join(D)
+        .on(DW_DASHBOARD_ID.eq(D_ID))
+        .where(DW_CHART_ID.in(chartIds))
+        .groupBy(D_ID, D_NAME, D_CREATED_BY, D_IS_SHARED)
+        .orderBy(D_NAME.asc(), D_ID.asc())
+        .fetch(
+            r ->
+                new DeleteImpactResponse.DashboardRawRef(
+                    r.value1(), r.value2(), Boolean.TRUE.equals(r.value3()), r.value4()));
+  }
+
   public List<DashboardResponse> findAll(
       String search, Boolean sharedOnly, Long userId, int page, int size) {
     List<Condition> conditions = new ArrayList<>();
     if (Boolean.TRUE.equals(sharedOnly)) {
       conditions.add(D_IS_SHARED.isTrue());
     } else {
-      conditions.add(D_CREATED_BY.eq(userId).or(D_IS_SHARED.isTrue()));
+      conditions.add(visibleTo(userId));
     }
 
     if (search != null && !search.isBlank()) {
@@ -108,7 +142,7 @@ public class AnalyticsDashboardRepository {
     if (Boolean.TRUE.equals(sharedOnly)) {
       conditions.add(D_IS_SHARED.isTrue());
     } else {
-      conditions.add(D_CREATED_BY.eq(userId).or(D_IS_SHARED.isTrue()));
+      conditions.add(visibleTo(userId));
     }
 
     if (search != null && !search.isBlank()) {
@@ -138,7 +172,7 @@ public class AnalyticsDashboardRepository {
             .from(D)
             .join(USER_TABLE)
             .on(D_CREATED_BY.eq(U_ID))
-            .where(D_ID.eq(id).and(D_CREATED_BY.eq(userId).or(D_IS_SHARED.isTrue())))
+            .where(D_ID.eq(id).and(visibleTo(userId)))
             .fetchOne();
 
     if (r == null) return Optional.empty();

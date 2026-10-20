@@ -1,5 +1,5 @@
-import { createChartListItem } from '../../factories/analytics.factory';
-import { setupChartListMocks } from '../../fixtures/analytics.fixture';
+import { createChartListItem, createDeleteImpact } from '../../factories/analytics.factory';
+import { mockDeleteImpact, openFirstRowDeleteDialog, setupChartListMocks } from '../../fixtures/analytics.fixture';
 import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 
@@ -132,6 +132,7 @@ test.describe('차트 목록 페이지', () => {
         return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
       },
     );
+    await mockDeleteImpact(page);
     await mockApi(page, 'DELETE', '/api/v1/analytics/charts/11', {});
 
     await page.goto('/analytics/charts');
@@ -251,5 +252,72 @@ test.describe('차트 목록 페이지', () => {
     const tableBox = await table.boundingBox();
     expect(tableBox?.width ?? 0).toBeLessThanOrEqual(viewportWidth);
     await expect(dataRow.getByLabel('삭제')).toBeVisible();
+  });
+});
+
+/** WD-86: 차트를 지우면 그 차트를 쓰는 대시보드 위젯이 DB CASCADE 로 함께 사라진다 — 확인 창이 이를 알려야 한다. */
+test.describe('차트 삭제 — 함께 삭제되는 항목 안내 (WD-86)', () => {
+  test('이 차트를 쓰는 대시보드 위젯이 있으면 빨간 상자에 위젯·대시보드를 보이고, 확인하면 DELETE 를 호출한다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupChartListMocks(page, 2);
+    await mockDeleteImpact(
+      page,
+      createDeleteImpact({ widgetCount: 2, dashboards: [{ id: 20, name: '영업 현황' }], hiddenDashboardCount: 1 }),
+    );
+    const deleteCapture = await mockApi(page, 'DELETE', '/api/v1/analytics/charts/1', {}, { capture: true });
+    await page.goto('/analytics/charts');
+
+    const impactRequest = page.waitForRequest((r) => r.url().includes('/delete-impact'));
+    const dialog = await openFirstRowDeleteDialog(page);
+    expect(new URL((await impactRequest).url()).pathname).toBe('/api/v1/analytics/charts/1/delete-impact');
+
+    const box = dialog.getByTestId('delete-impact');
+    await expect(box.getByText('함께 삭제되는 항목', { exact: true })).toBeVisible();
+    // 차트 삭제에는 "이 쿼리로 만든 차트" 줄이 없다. 볼 수 없는 대시보드는 개수만.
+    await expect(box.getByRole('listitem')).toHaveCount(1);
+    await expect(box.getByRole('listitem')).toHaveText(
+      '이 차트를 쓰는 대시보드 위젯 2개 (대시보드 2곳: 영업 현황, 볼 수 없는 대시보드 1곳)',
+    );
+
+    await dialog.getByRole('button', { name: '삭제' }).click();
+    const req = await deleteCapture.waitForRequest();
+    expect(req.url.pathname).toBe('/api/v1/analytics/charts/1');
+  });
+
+  test('쓰는 대시보드가 없으면 안내 상자 없이 일반 확인 창을 보인다', async ({ authenticatedPage: page }) => {
+    await setupChartListMocks(page, 2);
+    await page.goto('/analytics/charts');
+
+    const dialog = await openFirstRowDeleteDialog(page);
+    await expect(dialog.getByRole('button', { name: '삭제' })).toBeEnabled();
+    await expect(dialog.getByTestId('delete-impact')).toHaveCount(0);
+  });
+
+  test('영향 범위 조회가 실패하면 위젯이 함께 삭제될 수 있음을 알리고 삭제는 그대로 할 수 있다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupChartListMocks(page, 2);
+    await mockDeleteImpact(page, createDeleteImpact(), 500);
+    const deleteCapture = await mockApi(page, 'DELETE', '/api/v1/analytics/charts/1', {}, { capture: true });
+    await page.goto('/analytics/charts');
+
+    const dialog = await openFirstRowDeleteDialog(page);
+    const box = dialog.getByTestId('delete-impact');
+    await expect(box.getByText('함께 삭제되는 항목을 불러오지 못했습니다')).toBeVisible();
+    await expect(box).toContainText('이 차트를 쓰는 대시보드 위젯이 있다면 함께 삭제됩니다.');
+
+    await dialog.getByRole('button', { name: '삭제' }).click();
+    const req = await deleteCapture.waitForRequest();
+    expect(req.url.pathname).toBe('/api/v1/analytics/charts/1');
+  });
+  test('남의 공유 차트라 영향 조회가 404 면 쿼리와 같은 안내로 삭제 버튼을 끈다', async ({ authenticatedPage: page }) => {
+    await setupChartListMocks(page, 2);
+    await mockDeleteImpact(page, createDeleteImpact(), 404);
+    await page.goto('/analytics/charts');
+
+    const dialog = await openFirstRowDeleteDialog(page);
+    await expect(dialog.getByTestId('delete-not-owner')).toHaveText('본인이 만든 항목만 삭제할 수 있습니다.');
+    await expect(dialog.getByRole('button', { name: '삭제' })).toBeDisabled();
   });
 });

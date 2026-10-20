@@ -298,6 +298,7 @@ import { Toaster } from "sonner";
 | `info` | 정보성 안내 (표시 건수 제한, 은퇴 상태) |
 | `success` | 완료 상태의 지속적 표시 |
 | `caution` | `warning`보다 강한 주의 |
+| `destructive` | 되돌릴 수 없는 파괴적 결과 경고(예: 삭제 확인 창의 "함께 삭제되는 항목", WD-86). `-subtle` 토큰이 없어 배경은 `bg-destructive/5`, 보더는 실색 `border-destructive` |
 
 ### 사용 예
 

@@ -160,6 +160,24 @@ export interface Chart {
   updatedAt: string;
 }
 
+/** 삭제 영향 범위 항목 — 조회자가 볼 수 있는 차트·대시보드의 id 와 이름(WD-86). */
+export interface DeleteImpactItem {
+  id: number;
+  name: string;
+}
+
+/**
+ * 저장 쿼리·차트 삭제 시 DB CASCADE 로 함께 사라지는 항목(WD-86). 개수는 전부 세고, 이름은 조회자가 볼 수 있는 것(본인 소유 또는
+ * 공유)만 온다 — 볼 수 없는 것은 hidden*Count 로 개수만. 차트 삭제 영향에서는 charts 가 항상 비어 있다.
+ */
+export interface DeleteImpact {
+  charts: DeleteImpactItem[];
+  hiddenChartCount: number;
+  widgetCount: number;
+  dashboards: DeleteImpactItem[];
+  hiddenDashboardCount: number;
+}
+
 export interface ChartListItem {
   id: number;
   name: string;

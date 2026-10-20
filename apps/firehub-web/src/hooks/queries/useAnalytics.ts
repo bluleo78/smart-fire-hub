@@ -92,6 +92,9 @@ export function useDeleteSavedQuery() {
     mutationFn: (id: number) => analyticsApi.deleteQuery(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['analytics', 'queries'] });
+      // (WD-86) 쿼리를 지우면 DB CASCADE 로 그 쿼리의 차트와 차트를 쓰는 대시보드 위젯도 사라진다 — 목록·대시보드 캐시도 갱신한다.
+      queryClient.invalidateQueries({ queryKey: ['analytics', 'charts'] });
+      queryClient.invalidateQueries({ queryKey: ['analytics', 'dashboards'] });
     },
   });
 }
@@ -270,7 +273,23 @@ export function useDeleteChart() {
     mutationFn: (id: number) => analyticsApi.deleteChart(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['analytics', 'charts'] });
+      // (WD-86) 차트를 지우면 DB CASCADE 로 그 차트를 쓰는 대시보드 위젯도 사라진다 — 대시보드 캐시도 갱신한다.
+      queryClient.invalidateQueries({ queryKey: ['analytics', 'dashboards'] });
     },
+  });
+}
+
+/**
+ * 삭제 영향 범위(WD-86) — 삭제 확인 창 내용 안에서 쓰므로 창이 열려 있을 때만 마운트되어 조회한다.
+ * gcTime 0: 창이 닫혀 언마운트되면 결과를 버린다 — 다시 열면 새로 조회한다(그 사이 생긴 차트·위젯을 놓치지 않게).
+ * retry false: 실패(시간 초과 포함)하면 바로 안내로 넘어간다(재시도 동안 삭제가 막혀 있지 않게).
+ */
+export function useDeleteImpact(kind: 'query' | 'chart', id: number) {
+  return useQuery({
+    queryKey: ['analytics', 'delete-impact', kind, id],
+    queryFn: ({ signal }) => analyticsApi.getDeleteImpact(kind, id, signal).then((r) => r.data),
+    gcTime: 0,
+    retry: false,
   });
 }
 

@@ -11,6 +11,7 @@ import type {
   Dashboard,
   DashboardListItem,
   DashboardWidget,
+  DeleteImpact,
   SavedQuery,
   SavedQueryListItem,
   SchemaInfo,
@@ -198,4 +199,16 @@ export function createSavedQueryList(count: number): SavedQueryListItem[] {
       name: `저장 쿼리 ${i + 1}`,
     }),
   );
+}
+
+/** 삭제 영향 범위(WD-86) 응답 생성 — 기본값은 "연결된 항목 없음". */
+export function createDeleteImpact(overrides?: Partial<DeleteImpact>): DeleteImpact {
+  return {
+    charts: [],
+    hiddenChartCount: 0,
+    widgetCount: 0,
+    dashboards: [],
+    hiddenDashboardCount: 0,
+    ...overrides,
+  };
 }

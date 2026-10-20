@@ -3,9 +3,11 @@ package com.smartfirehub.analytics.service;
 import com.smartfirehub.analytics.dto.ChartDataResponse;
 import com.smartfirehub.analytics.dto.ChartResponse;
 import com.smartfirehub.analytics.dto.CreateChartRequest;
+import com.smartfirehub.analytics.dto.DeleteImpactResponse;
 import com.smartfirehub.analytics.dto.UpdateChartRequest;
 import com.smartfirehub.analytics.exception.ChartNotFoundException;
 import com.smartfirehub.analytics.exception.SavedQueryNotFoundException;
+import com.smartfirehub.analytics.repository.AnalyticsDashboardRepository;
 import com.smartfirehub.analytics.repository.ChartRepository;
 import com.smartfirehub.analytics.repository.SavedQueryRepository;
 import com.smartfirehub.global.dto.PageResponse;
@@ -28,6 +30,9 @@ public class ChartService {
   private final SavedQueryRepository savedQueryRepository;
   private final GuardedSqlExecutor guardedSqlExecutor;
   private final ClearanceResolver clearanceResolver;
+
+  /** 삭제 영향 범위(WD-86) — 차트를 지우면 CASCADE 로 함께 사라지는 대시보드 위젯을 센다. */
+  private final AnalyticsDashboardRepository dashboardRepository;
 
   /** List charts with optional filters and pagination. */
   // RLS 가 걸린 chart 를 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
@@ -120,6 +125,20 @@ public class ChartService {
     if (!deleted) {
       throw new ChartNotFoundException("Chart not found: " + id);
     }
+  }
+
+  /**
+   * 차트 삭제 시 함께 사라지는 대시보드 위젯(WD-86). 삭제와 같은 관문(소유자만, 남의 것·없는 것은 같은 404)을 쓴다 — 이유는 {@link
+   * SavedQueryService#getDeleteImpact} 와 같다. 차트 자체가 삭제 대상이라 charts 는 항상 빈 목록이다.
+   */
+  // RLS 가 걸린 chart/dashboard/dashboard_widget 을 읽는다 — 트랜잭션이 없으면 조용히 0행("연결 없음"으로 위장)이 된다.
+  @Transactional(readOnly = true)
+  public DeleteImpactResponse getDeleteImpact(Long id, Long userId) {
+    chartRepository
+        .findByIdForOwner(id, userId)
+        .orElseThrow(() -> new ChartNotFoundException("Chart not found: " + id));
+    return DeleteImpactResponse.forChart(
+        dashboardRepository.findImpactByChartIds(List.of(id), userId));
   }
 
   /**

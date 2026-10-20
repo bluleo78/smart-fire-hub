@@ -4,6 +4,8 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -16,6 +18,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.analytics.dto.ChartDataResponse;
 import com.smartfirehub.analytics.dto.ChartResponse;
 import com.smartfirehub.analytics.dto.CreateChartRequest;
+import com.smartfirehub.analytics.dto.DeleteImpactResponse;
 import com.smartfirehub.analytics.dto.UpdateChartRequest;
 import com.smartfirehub.analytics.service.ChartService;
 import com.smartfirehub.global.config.SecurityConfig;
@@ -126,6 +129,37 @@ class ChartControllerTest {
     mockMvc
         .perform(delete("/api/v1/analytics/charts/5").header("Authorization", "Bearer valid-token"))
         .andExpect(status().isNoContent());
+  }
+
+  @Test
+  void getDeleteImpact_withWritePermission_returnsImpact() throws Exception {
+    mockAuth("analytics:write");
+    when(chartService.getDeleteImpact(eq(5L), eq(1L)))
+        .thenReturn(
+            new DeleteImpactResponse(
+                List.of(), 0, 2, List.of(new DeleteImpactResponse.ItemRef(20L, "영업 현황")), 1));
+
+    mockMvc
+        .perform(
+            get("/api/v1/analytics/charts/5/delete-impact")
+                .header("Authorization", "Bearer valid-token"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.widgetCount").value(2))
+        .andExpect(jsonPath("$.dashboards[0].name").value("영업 현황"))
+        .andExpect(jsonPath("$.hiddenDashboardCount").value(1));
+  }
+
+  /** 삭제의 사전 조회(WD-86)라 삭제와 같은 analytics:write 를 요구한다. */
+  @Test
+  void getDeleteImpact_readOnlyUser_returnsForbidden() throws Exception {
+    mockAuth("analytics:read");
+
+    mockMvc
+        .perform(
+            get("/api/v1/analytics/charts/5/delete-impact")
+                .header("Authorization", "Bearer valid-token"))
+        .andExpect(status().isForbidden());
+    verify(chartService, never()).getDeleteImpact(anyLong(), anyLong());
   }
 
   @Test

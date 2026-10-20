@@ -5,6 +5,7 @@ import static org.jooq.impl.DSL.*;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.analytics.dto.ChartResponse;
 import com.smartfirehub.analytics.dto.CreateChartRequest;
+import com.smartfirehub.analytics.dto.DeleteImpactResponse;
 import com.smartfirehub.analytics.dto.UpdateChartRequest;
 import com.smartfirehub.global.util.LikePatternUtils;
 import java.time.LocalDateTime;
@@ -67,6 +68,11 @@ public class ChartRepository {
   private static final Field<Long> DW_CHART_ID =
       field(name("dashboard_widget", "chart_id"), Long.class);
 
+  /** 조회자에게 보이는 차트 — 본인 소유이거나 공유된 것. 목록·단건·삭제 영향 범위(WD-86)가 같은 규칙을 쓰도록 한 곳에 둔다. */
+  private static Condition visibleTo(Long userId) {
+    return C_CREATED_BY.eq(userId).or(C_IS_SHARED.isTrue());
+  }
+
   public List<ChartResponse> findAll(
       String search,
       String chartType,
@@ -84,7 +90,7 @@ public class ChartRepository {
     if (Boolean.TRUE.equals(sharedOnly)) {
       conditions.add(C_IS_SHARED.isTrue());
     } else {
-      conditions.add(C_CREATED_BY.eq(userId).or(C_IS_SHARED.isTrue()));
+      conditions.add(visibleTo(userId));
     }
 
     if (search != null && !search.isBlank()) {
@@ -142,7 +148,7 @@ public class ChartRepository {
     if (Boolean.TRUE.equals(sharedOnly)) {
       conditions.add(C_IS_SHARED.isTrue());
     } else {
-      conditions.add(C_CREATED_BY.eq(userId).or(C_IS_SHARED.isTrue()));
+      conditions.add(visibleTo(userId));
     }
 
     if (search != null && !search.isBlank()) {
@@ -188,7 +194,7 @@ public class ChartRepository {
             .on(C_SAVED_QUERY_ID.eq(SQ_ID))
             .join(USER_TABLE)
             .on(C_CREATED_BY.eq(U_ID))
-            .where(C_ID.eq(id).and(C_CREATED_BY.eq(userId).or(C_IS_SHARED.isTrue())))
+            .where(C_ID.eq(id).and(visibleTo(userId)))
             .fetchOne();
 
     if (r == null) return Optional.empty();
@@ -226,6 +232,24 @@ public class ChartRepository {
     return Optional.of(mapToResponse(r));
   }
 
+  /**
+   * 저장 쿼리를 참조하는 <b>모든</b> 차트를 가시성 판정과 함께 돌려준다(WD-86 삭제 영향 범위). 쿼리를 지우면 CASCADE 가 조회자의 가시성과 무관하게 전부
+   * 지우므로 사용자 필터를 걸지 않고, 대신 목록 조회와 같은 규칙(본인 소유 또는 공유)으로 visible 을 계산한다 — 호출자가 볼 수 없는 이름을 버린다. RLS 가
+   * 테넌트 범위를 한정하므로 트랜잭션 안에서 불러야 한다.
+   */
+  public List<DeleteImpactResponse.ChartRawRef> findImpactRefsBySavedQueryId(
+      Long savedQueryId, Long userId) {
+    Field<Boolean> visible = field(visibleTo(userId));
+    return dsl.select(C_ID, C_NAME, visible)
+        .from(C)
+        .where(C_SAVED_QUERY_ID.eq(savedQueryId))
+        .orderBy(C_NAME.asc(), C_ID.asc())
+        .fetch(
+            r ->
+                new DeleteImpactResponse.ChartRawRef(
+                    r.value1(), r.value2(), Boolean.TRUE.equals(r.value3())));
+  }
+
   /** Returns the saved_query_id for a given chart (no user filter — internal use). */
   public Long findSavedQueryId(Long chartId) {
     return dsl.select(C_SAVED_QUERY_ID).from(C).where(C_ID.eq(chartId)).fetchOne(C_SAVED_QUERY_ID);
@@ -248,7 +272,7 @@ public class ChartRepository {
             .from(C)
             .join(SQ)
             .on(C_SAVED_QUERY_ID.eq(SQ_ID))
-            .where(C_ID.eq(chartId).and(C_CREATED_BY.eq(userId).or(C_IS_SHARED.isTrue())))
+            .where(C_ID.eq(chartId).and(visibleTo(userId)))
             .fetchOne(sqSqlText);
 
     return Optional.ofNullable(result);
