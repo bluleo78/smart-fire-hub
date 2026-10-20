@@ -12,6 +12,11 @@ const generateId = (): string =>
 
 export interface EditorStep {
   tempId: string;
+  /**
+   * 서버에 저장된 스텝 id(WD-108). 상세 응답에서 불러온 스텝에만 있고 새로 추가한 스텝은 없다.
+   * 저장 시 그대로 보내 서버가 같은 스텝을 제자리 갱신하게 하고(과거 실행 기록 유지), 실행 상세에서 스텝 기록을 찾는 키로 쓴다.
+   */
+  id?: number;
   name: string;
   description: string;
   scriptType: 'SQL' | 'PYTHON' | 'API_CALL' | 'AI_CLASSIFY';
@@ -136,6 +141,7 @@ export function buildStateFromDetail(detail: PipelineDetailResponse): PipelineEd
     tempIdMap.set(step.name, tempId);
     return {
       tempId,
+      id: step.id,
       name: step.name,
       description: step.description ?? '',
       scriptType: step.scriptType as EditorStep['scriptType'],

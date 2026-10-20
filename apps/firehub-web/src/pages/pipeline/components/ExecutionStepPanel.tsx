@@ -1,4 +1,5 @@
 import { X } from 'lucide-react';
+import { useState } from 'react';
 
 import { DurationText } from '@/components/pipeline/DurationText';
 import { Badge } from '@/components/ui/badge';
@@ -9,9 +10,15 @@ import { Separator } from '@/components/ui/separator';
 import { formatDate, getStatusBadgeVariant, getStatusLabel } from '@/lib/formatters';
 import type { ExecutionDetailResponse, StepExecutionResponse } from '@/types/pipeline';
 
+import { deletedStepExecutions, findStepExecution } from '../utils/step-execution';
+
 interface ExecutionStepPanelProps {
   execution: ExecutionDetailResponse;
-  selectedStepName: string | null;
+  /**
+   * DAG 에서 선택한 스텝(없으면 요약 화면). name 은 헤더 표시용, id 는 실행 기록을 찾는 서버 스텝 id 다(WD-108) —
+   * 저장 전 새 스텝은 id 가 없다.
+   */
+  selectedStep?: { id?: number; name: string };
   onClose: () => void;
 }
 
@@ -142,7 +149,7 @@ function StepNotExecuted({ execution }: { execution: ExecutionDetailResponse }) 
       <ScrollArea className="h-full">
         <div className="p-4 space-y-3 text-sm">
           <p className="text-muted-foreground text-xs">
-            이 스텝은 실행되지 않았습니다. 스텝이 실행되기 전 파이프라인 실행이 중단됐을 수 있습니다.
+            이 스텝은 실행되지 않았습니다. 스텝이 실행되기 전 파이프라인 실행이 중단됐거나, 이 실행 이후에 추가된 스텝일 수 있습니다.
           </p>
           {execution.errorMessage && (
             <ExecutionErrorMessage errorMessage={execution.errorMessage} errorMasked={execution.errorMasked} />
@@ -153,7 +160,59 @@ function StepNotExecuted({ execution }: { execution: ExecutionDetailResponse }) 
   );
 }
 
-function ExecutionSummary({ execution }: { execution: ExecutionDetailResponse }) {
+/**
+ * 실행 이후 파이프라인 정의에서 삭제된 스텝의 기록 목록(WD-108).
+ *
+ * DAG 는 현재 정의의 스텝만 그리므로, 이 실행 때 있었지만 지금은 지워진 스텝은 노드가 없다. 그 기록(상태·오류·출력행)이
+ * 사라진 것처럼 보이지 않도록 요약 화면에 이름·「삭제된 스텝」 표시·상태와 함께 나열하고, 누르면 상세를 보여 준다.
+ */
+function DeletedStepList({
+  steps,
+  onSelect,
+}: {
+  steps: StepExecutionResponse[];
+  onSelect: (stepExecutionId: number) => void;
+}) {
+  if (steps.length === 0) return null;
+  return (
+    <>
+      <Separator />
+      <div className="space-y-2">
+        <p className="text-muted-foreground text-xs font-medium">삭제된 스텝</p>
+        <p className="text-xs text-muted-foreground">
+          이 실행 이후 파이프라인에서 삭제된 스텝입니다. 실행 당시 기록은 그대로 남아 있습니다.
+        </p>
+        <ul className="space-y-1">
+          {steps.map((se) => (
+            <li key={se.id}>
+              <button
+                type="button"
+                className="w-full flex items-center justify-between gap-2 rounded px-2 py-1.5 text-left text-xs hover:bg-muted"
+                onClick={() => onSelect(se.id)}
+              >
+                <span className="flex items-center gap-1.5 min-w-0">
+                  <span className="truncate">{se.stepName}</span>
+                  <Badge variant="outline" className="shrink-0">삭제된 스텝</Badge>
+                </span>
+                <Badge variant={getStatusBadgeVariant(se.status)} className="shrink-0">
+                  {getStatusLabel(se.status)}
+                </Badge>
+              </button>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </>
+  );
+}
+
+function ExecutionSummary({
+  execution,
+  onSelectDeleted,
+}: {
+  execution: ExecutionDetailResponse;
+  onSelectDeleted: (stepExecutionId: number) => void;
+}) {
   const total = execution.stepExecutions.length;
   const completed = execution.stepExecutions.filter(s => s.status === 'COMPLETED').length;
   const failed = execution.stepExecutions.filter(s => s.status === 'FAILED').length;
@@ -233,6 +292,8 @@ function ExecutionSummary({ execution }: { execution: ExecutionDetailResponse })
             </div>
           </div>
 
+          <DeletedStepList steps={deletedStepExecutions(execution.stepExecutions)} onSelect={onSelectDeleted} />
+
           <Separator />
 
           <p className="text-muted-foreground text-xs">
@@ -246,30 +307,50 @@ function ExecutionSummary({ execution }: { execution: ExecutionDetailResponse })
 
 export function ExecutionStepPanel({
   execution,
-  selectedStepName,
+  selectedStep,
   onClose,
 }: ExecutionStepPanelProps) {
   // 스텝을 선택하지 않은 경우(null)와, 선택했지만 해당 스텝의 실행 레코드가 아예 없는 경우
-  // (undefined — 스텝 실행 전 파이프라인이 실패한 경우 등)를 명확히 구분한다(#517).
+  // (undefined — 스텝 실행 전 파이프라인이 실패했거나, 이 실행 이후 새로 추가된 스텝)를 명확히 구분한다(#517).
   // 이전에는 둘 다 "요약 화면"으로 뭉뚱그려져, 헤더는 "스텝: {name}"인데 본문은 전체 요약이
-  // 반복 표시되는 모순된 UX였다.
-  const step = execution.stepExecutions.find(se => se.stepName === selectedStepName);
+  // 반복 표시되는 모순된 UX였다. 기록은 스텝 id 로 찾는다(WD-108 — 이름이 바뀌어도 같은 스텝, 삭제된 동명 스텝과 섞이지 않음).
+  const step = findStepExecution(execution.stepExecutions, selectedStep?.id);
+
+  // 요약의 「삭제된 스텝」 목록에서 고른 기록(DAG 노드가 없어 편집기 선택 상태로는 표현할 수 없다). DAG 선택이 우선한다.
+  const [deletedSelectionId, setDeletedSelectionId] = useState<number | null>(null);
+  const deletedStep =
+    selectedStep === undefined && deletedSelectionId !== null
+      ? execution.stepExecutions.find((se) => se.id === deletedSelectionId && se.stepId === null)
+      : undefined;
+
+  const handleClose = () => {
+    setDeletedSelectionId(null);
+    onClose();
+  };
 
   return (
     <div className="w-[400px] border-l h-full flex flex-col overflow-hidden">
       <div className="flex items-center justify-between px-4 py-2 border-b shrink-0">
         <span className="text-sm font-medium truncate">
-          {selectedStepName ? `스텝: ${selectedStepName}` : '실행 정보'}
+          {selectedStep?.name
+            ? `스텝: ${selectedStep.name}`
+            : deletedStep
+              ? `스텝: ${deletedStep.stepName} (삭제된 스텝)`
+              : '실행 정보'}
         </span>
-        {selectedStepName && (
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onClose}>
+        {(selectedStep?.name || deletedStep) && (
+          <Button variant="ghost" size="icon" className="h-7 w-7" aria-label="스텝 상세 닫기" onClick={handleClose}>
             <X className="h-4 w-4" />
           </Button>
         )}
       </div>
 
-      {selectedStepName === null ? (
-        <ExecutionSummary execution={execution} />
+      {selectedStep === undefined ? (
+        deletedStep ? (
+          <StepDetails step={deletedStep} />
+        ) : (
+          <ExecutionSummary execution={execution} onSelectDeleted={setDeletedSelectionId} />
+        )
       ) : step ? (
         <StepDetails step={step} />
       ) : (

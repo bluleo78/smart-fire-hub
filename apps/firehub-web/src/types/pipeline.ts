@@ -72,6 +72,11 @@ export interface CreatePipelineRequest {
 }
 
 export interface PipelineStepRequest {
+  /**
+   * 기존 스텝 id(WD-108) — 수정 저장 시 같은 스텝을 가리킨다. 보내면 서버가 그 스텝을 제자리 갱신(id 유지)해
+   * 과거 실행 기록이 이어지고 이름을 바꿔도 같은 스텝으로 남는다. 새 스텝은 생략한다.
+   */
+  id?: number;
   name: string;
   description?: string;
   scriptType: 'SQL' | 'PYTHON' | 'API_CALL' | 'AI_CLASSIFY';
@@ -130,7 +135,9 @@ export interface ExecutionDetailResponse {
 
 export interface StepExecutionResponse {
   id: number;
-  stepId: number;
+  /** 현재 정의의 스텝 id. null 이면 그 스텝이 실행 이후 정의에서 삭제됐다는 뜻이다(WD-108 — 기록은 남는다). */
+  stepId: number | null;
+  /** 실행 당시 스텝 이름(스냅샷) — 이후 스텝 이름이 바뀌거나 삭제돼도 그 실행 기준 이름이 온다. */
   stepName: string;
   status: 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'SKIPPED';
   outputRows: number | null;

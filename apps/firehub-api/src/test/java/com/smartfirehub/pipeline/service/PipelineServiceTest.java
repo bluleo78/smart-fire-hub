@@ -1044,7 +1044,7 @@ class PipelineServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * 재저장 이월 — {@code updatePipeline} 은 스텝을 전부 지우고 다시 넣어 스텝 id 가 바뀌므로, 책갈피는 이름을 키로 이월돼야 한다. 이월하지 않으면
+   * 재저장 이월 — {@code updatePipeline} 은 같은 스텝을 제자리 갱신하므로(WD-108) 스텝 id 와 책갈피가 그대로 남아야 한다. 남지 않으면
    * 파이프라인을 저장할 때마다 전체를 다시 읽는다.
    */
   @Test
@@ -1071,7 +1071,7 @@ class PipelineServiceTest extends IntegrationTestBase {
 
     Long oldStepId =
         stepRepository.findStepIdByPipelineAndName(created.id(), "stepA").orElseThrow();
-    stepRepository.advanceCursor(oldStepId, bookmark, true);
+    stepRepository.advanceCursor(oldStepId, bookmark, true, pkOutputDatasetId);
     stepRepository.setFullRebuildPending(oldStepId, true);
 
     pipelineService.updatePipeline(
@@ -1094,7 +1094,7 @@ class PipelineServiceTest extends IntegrationTestBase {
 
     Long newStepId =
         stepRepository.findStepIdByPipelineAndName(created.id(), "stepA").orElseThrow();
-    assertThat(newStepId).as("스텝은 삭제·재생성되므로 id 가 바뀐다").isNotEqualTo(oldStepId);
+    assertThat(newStepId).as("같은 스텝은 제자리 갱신되므로 id 가 유지된다(WD-108)").isEqualTo(oldStepId);
 
     StepCursor cursor = stepRepository.findCursor(newStepId).orElseThrow();
     assertThat(cursor.lastRunAt()).isEqualTo(bookmark);
@@ -1125,7 +1125,7 @@ class PipelineServiceTest extends IntegrationTestBase {
 
     Long oldStepId =
         stepRepository.findStepIdByPipelineAndName(created.id(), "stepA").orElseThrow();
-    stepRepository.advanceCursor(oldStepId, bookmark, true);
+    stepRepository.advanceCursor(oldStepId, bookmark, true, pkOutputDatasetId);
     stepRepository.setFullRebuildPending(oldStepId, true);
 
     // 같은 이름, 다른 출력 데이터셋(PK 없음 → APPEND 로 바꾼다).
@@ -1182,7 +1182,7 @@ class PipelineServiceTest extends IntegrationTestBase {
 
     Long oldStepId =
         stepRepository.findStepIdByPipelineAndName(created.id(), "stepA").orElseThrow();
-    stepRepository.advanceCursor(oldStepId, bookmark, true);
+    stepRepository.advanceCursor(oldStepId, bookmark, true, pkOutputDatasetId);
     pipelineService.setFullRebuildPending(created.id(), oldStepId, true);
 
     // {{last_run_at}} 을 뺀 SQL 로 저장 — 실행기가 더 이상 증분 경로를 타지 않는 스텝이 된다.
@@ -1230,9 +1230,9 @@ class PipelineServiceTest extends IntegrationTestBase {
   }
 
   /**
-   * 출력이 null(임시 데이터셋 자동 생성)인 스텝은 이월하지 않는다 — {@code null == null} 을 "같은 출력"으로 보면 안 된다. 임시 데이터셋은
-   * {@code source_pipeline_step_id} = 스텝 id 로 묶여 있어, 재저장으로 id 가 바뀌면 러너가 빈 임시 데이터셋을 새로 만든다. 거기에 책갈피만
-   * 이어받으면 이전 실행분이 통째로 빠진 채 변경분만 쌓인다.
+   * 출력이 null(임시 데이터셋 자동 생성)이고 러너 TEMP 도 아직 없는 스텝은 이월하지 않는다 — {@code null == null} 을 "같은 출력"으로 보면 안
+   * 된다(출력이 한 번도 정해진 적 없는데 책갈피만 남으면 첫 TEMP 가 이전 구간 없이 만들어진다). 러너 TEMP 가 있는 경우는 {@link
+   * #updatePipeline_nullOutputDataset_keepsCursorWithSameRunnerTemp}.
    */
   @Test
   void updatePipeline_nullOutputDataset_doesNotCarryCursorOver() {
@@ -1250,7 +1250,8 @@ class PipelineServiceTest extends IntegrationTestBase {
 
     Long oldStepId =
         stepRepository.findStepIdByPipelineAndName(created.id(), "stepA").orElseThrow();
-    stepRepository.advanceCursor(oldStepId, bookmark, true);
+    stepRepository.advanceCursor(
+        oldStepId, bookmark, true, null); // 출력 미지정 + 러너 TEMP 없음 — 해석된 출력이 null
 
     pipelineService.updatePipeline(
         created.id(),
@@ -1271,13 +1272,433 @@ class PipelineServiceTest extends IntegrationTestBase {
   }
 
   /**
+   * 출력 미지정 스텝이라도 러너 TEMP 가 있으면 책갈피를 이어받는다(WD-108). 제자리 갱신으로 스텝 id 가 유지되므로 TEMP({@code
+   * source_pipeline_step_id} = 스텝 id)도 그대로 이어지고, 다음 실행은 같은 TEMP 에 변경분만 더한다. 여기서 책갈피를 버리면 전체를 다시 읽어
+   * APPEND 가 같은 행을 한 번 더 쌓는다.
+   */
+  @Test
+  void updatePipeline_nullOutputDataset_keepsCursorWithSameRunnerTemp() {
+    java.time.OffsetDateTime bookmark = java.time.OffsetDateTime.parse("2026-09-19T01:02:03Z");
+
+    PipelineDetailResponse created =
+        pipelineService.createPipeline(
+            new CreatePipelineRequest(
+                "Cursor Temp Pipeline",
+                "test",
+                List.of(
+                    new PipelineStepRequest(
+                        "stepA", "a", "SQL", INCREMENTAL_SQL, null, null, null, "APPEND"))),
+            testUserId);
+    Long stepId = stepRepository.findStepIdByPipelineAndName(created.id(), "stepA").orElseThrow();
+    // 러너가 첫 실행에서 만든 TEMP 를 흉내 낸다 — 바인딩(source_pipeline_step_id)만 의미가 있다.
+    dsl.update(DATASET)
+        .set(DATASET.SOURCE_PIPELINE_STEP_ID, stepId)
+        .where(DATASET.ID.eq(outputDatasetId))
+        .execute();
+    stepRepository.advanceCursor(stepId, bookmark, true, outputDatasetId); // 위에서 묶은 러너 TEMP
+
+    pipelineService.updatePipeline(
+        created.id(),
+        new UpdatePipelineRequest(
+            "Cursor Temp Pipeline",
+            "test",
+            null,
+            List.of(
+                new PipelineStepRequest(
+                    "stepA", "a-edited", "SQL", INCREMENTAL_SQL, null, null, null, "APPEND"))),
+        testUserId);
+
+    assertThat(stepRepository.findStepIdByPipelineAndName(created.id(), "stepA").orElseThrow())
+        .isEqualTo(stepId);
+    assertThat(stepRepository.findCursor(stepId).orElseThrow().lastRunAt())
+        .as("같은 러너 TEMP 에 이어 쌓이므로 책갈피를 유지한다")
+        .isEqualTo(bookmark);
+  }
+
+  // --- WD-108: 파이프라인 정의를 고쳐 저장해도 과거 실행 기록이 남는다 ---
+
+  @Autowired
+  private com.smartfirehub.pipeline.repository.PipelineExecutionRepository executionRepository;
+
+  /** 테스트용 SQL 스텝(출력 = outputDatasetId, REPLACE). */
+  private PipelineStepRequest sqlStep(String name, String script, List<String> dependsOn) {
+    return new PipelineStepRequest(name, null, "SQL", script, outputDatasetId, null, dependsOn);
+  }
+
+  /** 같은 정의에 기존 스텝 id 를 실어 보낸다(웹 편집기가 하는 방식). */
+  private static PipelineStepRequest withId(PipelineStepRequest r, Long id) {
+    return new PipelineStepRequest(
+        r.name(),
+        r.description(),
+        r.scriptType(),
+        r.scriptContent(),
+        r.outputDatasetId(),
+        r.inputDatasetIds(),
+        r.dependsOnStepNames(),
+        r.loadStrategy(),
+        r.apiConfig(),
+        r.aiConfig(),
+        r.pythonConfig(),
+        r.apiConnectionId(),
+        id);
+  }
+
+  private Map<String, Long> stepIdsByName(Long pipelineId) {
+    Map<String, Long> m = new java.util.HashMap<>();
+    for (PipelineStepResponse st : stepRepository.findByPipelineId(pipelineId)) {
+      m.put(st.name(), st.id());
+    }
+    return m;
+  }
+
+  /** 실행 레코드를 만들고(비동기 러너는 테스트 트랜잭션이 커밋되지 않아 돌지 않는다) 스텝별 결과를 직접 기록한다. */
+  private Long runWithResults(Long pipelineId, Map<String, Object[]> resultsByStepName) {
+    Long execId = pipelineService.executePipeline(pipelineId, testUserId).id();
+    Map<Long, String> nameById = new java.util.HashMap<>();
+    stepIdsByName(pipelineId).forEach((n, sid) -> nameById.put(sid, n));
+    java.time.LocalDateTime t = java.time.LocalDateTime.of(2026, 10, 1, 0, 0);
+    for (StepExecutionResponse se : executionRepository.findStepExecutionsByExecutionId(execId)) {
+      Object[] r = resultsByStepName.get(nameById.get(se.stepId()));
+      if (r != null) {
+        executionRepository.updateStepExecution(
+            se.id(), (String) r[0], (Integer) r[1], null, (String) r[2], t, t.plusSeconds(5));
+      }
+    }
+    return execId;
+  }
+
+  /** 인증 사용자로 실행 상세를 읽는다 — 원문 오류 노출 판정(WD-27)이 조회자를 본다. 실행 주체 본인이라 원문이 보여야 한다. */
+  private ExecutionDetailResponse executionDetailAsRunner(Long pipelineId, Long execId) {
+    org.springframework.security.core.context.SecurityContextHolder.getContext()
+        .setAuthentication(
+            new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
+                testUserId, null, List.of()));
+    try {
+      return pipelineService.getExecutionById(pipelineId, execId);
+    } finally {
+      org.springframework.security.core.context.SecurityContextHolder.clearContext();
+    }
+  }
+
+  /**
+   * (a) 사용자 현상 그대로: 실패한 실행을 보고 설명만 바꿔 저장해도(스텝은 그대로 다시 보냄, id 없이 — 이름으로 식별하는 클라이언트) 그 실행의 스텝
+   * 상태·오류·적재 행 수가 그대로 남는다. 예전에는 스텝이 삭제·재생성되며 CASCADE 로 기록이 통째로 지워졌다.
+   */
+  @Test
+  void 설명만_바꿔_저장해도_과거_실행의_스텝_상태_오류_행수가_남는다() {
+    PipelineDetailResponse created =
+        pipelineService.createPipeline(
+            new CreatePipelineRequest(
+                "WD108 Desc Pipeline",
+                "원래 설명",
+                List.of(
+                    sqlStep("추출", "SELECT * FROM data.src_table", null),
+                    sqlStep("변환", "SELECT * FROM data.dst_table", List.of("추출")))),
+            testUserId);
+    Map<String, Long> idsBefore = stepIdsByName(created.id());
+    Long execId =
+        runWithResults(
+            created.id(),
+            Map.of(
+                "추출", new Object[] {"COMPLETED", 42, null},
+                "변환", new Object[] {"FAILED", null, "column \"x\" does not exist"}));
+
+    pipelineService.updatePipeline(
+        created.id(),
+        new UpdatePipelineRequest(
+            "WD108 Desc Pipeline",
+            "설명만 바꿈",
+            null,
+            List.of(
+                sqlStep("추출", "SELECT * FROM data.src_table", null),
+                sqlStep("변환", "SELECT * FROM data.dst_table", List.of("추출")))),
+        testUserId);
+
+    assertThat(stepIdsByName(created.id())).as("같은 스텝은 id 가 유지된다").isEqualTo(idsBefore);
+    ExecutionDetailResponse detail = executionDetailAsRunner(created.id(), execId);
+    assertThat(detail.stepExecutions()).hasSize(2);
+    StepExecutionResponse extract =
+        detail.stepExecutions().stream()
+            .filter(se -> se.stepName().equals("추출"))
+            .findFirst()
+            .orElseThrow();
+    StepExecutionResponse transform =
+        detail.stepExecutions().stream()
+            .filter(se -> se.stepName().equals("변환"))
+            .findFirst()
+            .orElseThrow();
+    assertThat(extract.stepId()).isEqualTo(idsBefore.get("추출"));
+    assertThat(extract.status()).isEqualTo("COMPLETED");
+    assertThat(extract.outputRows()).isEqualTo(42);
+    assertThat(transform.stepId()).isEqualTo(idsBefore.get("변환"));
+    assertThat(transform.status()).isEqualTo("FAILED");
+    assertThat(transform.errorMessage()).isEqualTo("column \"x\" does not exist");
+    assertThat(transform.errorMasked()).isFalse();
+  }
+
+  /**
+   * (b) id 를 실어 보내면 이름·스크립트·순서·의존을 바꿔도 같은 스텝 id 가 유지되고 의존이 새 이름 체계로 정확히 다시 이어진다. 두 스텝의 이름을 맞바꾸는
+   * 저장(변환↔적재)도 UNIQUE (pipeline_id, name) 에 걸리지 않아야 한다. 과거 실행 기록은 같은 stepId 로 이어지되 이름은 실행 당시 스냅샷이다.
+   */
+  @Test
+  void id를_보내면_이름_스크립트_순서_의존을_바꿔도_같은_스텝_id가_유지되고_의존이_정확하다() {
+    PipelineDetailResponse created =
+        pipelineService.createPipeline(
+            new CreatePipelineRequest(
+                "WD108 Edit Pipeline",
+                "test",
+                List.of(
+                    sqlStep("추출", "SELECT * FROM data.src_table", null),
+                    sqlStep("변환", "SELECT * FROM data.src_table", List.of("추출")),
+                    sqlStep("적재", "SELECT * FROM data.dst_table", List.of("추출")))),
+            testUserId);
+    Map<String, Long> ids = stepIdsByName(created.id());
+    Long execId =
+        runWithResults(
+            created.id(),
+            Map.of(
+                "추출", new Object[] {"COMPLETED", 1, null},
+                "변환", new Object[] {"COMPLETED", 2, null},
+                "적재", new Object[] {"FAILED", null, "boom"}));
+
+    // 순서 뒤집기 + 추출→추출v2 이름 변경 + 변환↔적재 이름 맞바꾸기 + 스크립트 변경 + 의존 재배선.
+    pipelineService.updatePipeline(
+        created.id(),
+        new UpdatePipelineRequest(
+            "WD108 Edit Pipeline",
+            "test",
+            null,
+            List.of(
+                withId(
+                    sqlStep("변환", "SELECT code FROM data.dst_table", List.of("추출v2")),
+                    ids.get("적재")),
+                withId(
+                    sqlStep("적재", "SELECT code FROM data.src_table", List.of("변환")), ids.get("변환")),
+                withId(sqlStep("추출v2", "SELECT * FROM data.src_table", null), ids.get("추출")))),
+        testUserId);
+
+    List<PipelineStepResponse> after = stepRepository.findByPipelineId(created.id());
+    assertThat(after).extracting(PipelineStepResponse::name).containsExactly("변환", "적재", "추출v2");
+    Map<String, PipelineStepResponse> byName = new java.util.HashMap<>();
+    after.forEach(st -> byName.put(st.name(), st));
+    assertThat(byName.get("추출v2").id()).isEqualTo(ids.get("추출"));
+    assertThat(byName.get("변환").id()).isEqualTo(ids.get("적재"));
+    assertThat(byName.get("적재").id()).isEqualTo(ids.get("변환"));
+    assertThat(byName.get("변환").scriptContent()).isEqualTo("SELECT code FROM data.dst_table");
+    assertThat(byName.get("변환").dependsOnStepNames()).containsExactly("추출v2");
+    assertThat(byName.get("적재").dependsOnStepNames()).containsExactly("변환");
+    assertThat(byName.get("추출v2").dependsOnStepNames()).isEmpty();
+    // 의존 행이 남은 것이 정확히 2개뿐인지(옛 엣지 잔재 없음)
+    Long depCount =
+        dsl.selectCount()
+            .from(PIPELINE_STEP_DEPENDENCY)
+            .where(PIPELINE_STEP_DEPENDENCY.STEP_ID.in(ids.values()))
+            .fetchOne(0, Long.class);
+    assertThat(depCount).isEqualTo(2L);
+
+    // 과거 실행: 같은 stepId 로 이어지고, 이름은 실행 당시 스냅샷.
+    List<StepExecutionResponse> history =
+        executionRepository.findStepExecutionsByExecutionId(execId);
+    assertThat(history)
+        .extracting(
+            StepExecutionResponse::stepId,
+            StepExecutionResponse::stepName,
+            StepExecutionResponse::status)
+        .containsExactlyInAnyOrder(
+            org.assertj.core.groups.Tuple.tuple(ids.get("추출"), "추출", "COMPLETED"),
+            org.assertj.core.groups.Tuple.tuple(ids.get("변환"), "변환", "COMPLETED"),
+            org.assertj.core.groups.Tuple.tuple(ids.get("적재"), "적재", "FAILED"));
+  }
+
+  /**
+   * (c) 요청에서 빠진 스텝만 지워지고, 그 스텝의 과거 실행 기록은 step_id NULL + 실행 당시 이름으로 남아 실행 상세 응답에 나온다. 남은 스텝은 id 를
+   * 유지한다.
+   */
+  @Test
+  void 스텝을_지우면_과거_기록은_stepId_NULL과_이름으로_남고_실행_상세에_나온다() {
+    PipelineDetailResponse created =
+        pipelineService.createPipeline(
+            new CreatePipelineRequest(
+                "WD108 Delete Pipeline",
+                "test",
+                List.of(
+                    sqlStep("남김", "SELECT * FROM data.src_table", null),
+                    sqlStep("지움", "SELECT * FROM data.dst_table", List.of("남김")))),
+            testUserId);
+    Map<String, Long> ids = stepIdsByName(created.id());
+    Long execId =
+        runWithResults(
+            created.id(),
+            Map.of(
+                "남김", new Object[] {"COMPLETED", 3, null},
+                "지움", new Object[] {"FAILED", 0, "지워질 스텝의 오류"}));
+
+    pipelineService.updatePipeline(
+        created.id(),
+        new UpdatePipelineRequest(
+            "WD108 Delete Pipeline",
+            "test",
+            null,
+            List.of(withId(sqlStep("남김", "SELECT * FROM data.src_table", null), ids.get("남김")))),
+        testUserId);
+
+    assertThat(stepIdsByName(created.id()))
+        .containsOnlyKeys("남김")
+        .containsEntry("남김", ids.get("남김"));
+    Long stepRowsForDeleted =
+        dsl.selectCount()
+            .from(PIPELINE_STEP)
+            .where(PIPELINE_STEP.ID.eq(ids.get("지움")))
+            .fetchOne(0, Long.class);
+    assertThat(stepRowsForDeleted).isZero();
+
+    var raw =
+        dsl.select(PIPELINE_STEP_EXECUTION.STEP_ID, PIPELINE_STEP_EXECUTION.STEP_NAME)
+            .from(PIPELINE_STEP_EXECUTION)
+            .where(PIPELINE_STEP_EXECUTION.EXECUTION_ID.eq(execId))
+            .and(PIPELINE_STEP_EXECUTION.STEP_NAME.eq("지움"))
+            .fetchOne();
+    assertThat(raw).as("지운 스텝의 실행 행이 남아 있어야 한다").isNotNull();
+    assertThat(raw.value1()).isNull();
+
+    ExecutionDetailResponse detail = executionDetailAsRunner(created.id(), execId);
+    assertThat(detail.stepExecutions()).hasSize(2);
+    StepExecutionResponse deleted =
+        detail.stepExecutions().stream()
+            .filter(se -> se.stepId() == null)
+            .findFirst()
+            .orElseThrow();
+    assertThat(deleted.stepName()).isEqualTo("지움");
+    assertThat(deleted.status()).isEqualTo("FAILED");
+    assertThat(deleted.outputRows()).isZero();
+    // 지운 스텝은 판정 근거(현재 정의)가 없으므로 실행 주체 본인·관리자에게만 원문이 보인다(WD-27 fail-closed) — 여기 조회자는 실행 주체다.
+    assertThat(deleted.errorMessage()).isEqualTo("지워질 스텝의 오류");
+    assertThat(deleted.errorMasked()).isFalse();
+  }
+
+  /** (d) 새 스텝은 새 id 로 추가되고 기존 스텝 id 는 유지된다. 그 이전 실행에는 새 스텝 기록이 없다(웹: 「이 스텝은 실행되지 않았습니다」). */
+  @Test
+  void 스텝을_추가하면_새_id로_만들어지고_기존_스텝_id와_과거_기록은_유지된다() {
+    PipelineDetailResponse created =
+        pipelineService.createPipeline(
+            new CreatePipelineRequest(
+                "WD108 Add Pipeline",
+                "test",
+                List.of(sqlStep("기존", "SELECT * FROM data.src_table", null))),
+            testUserId);
+    Map<String, Long> ids = stepIdsByName(created.id());
+    Long execId = runWithResults(created.id(), Map.of("기존", new Object[] {"COMPLETED", 5, null}));
+
+    pipelineService.updatePipeline(
+        created.id(),
+        new UpdatePipelineRequest(
+            "WD108 Add Pipeline",
+            "test",
+            null,
+            List.of(
+                withId(sqlStep("기존", "SELECT * FROM data.src_table", null), ids.get("기존")),
+                sqlStep("새스텝", "SELECT * FROM data.dst_table", List.of("기존")))),
+        testUserId);
+
+    Map<String, Long> after = stepIdsByName(created.id());
+    assertThat(after.get("기존")).isEqualTo(ids.get("기존"));
+    assertThat(after.get("새스텝")).isNotNull().isNotEqualTo(ids.get("기존"));
+    assertThat(pipelineService.getPipelineById(created.id()).steps())
+        .filteredOn(st -> st.name().equals("새스텝"))
+        .singleElement()
+        .satisfies(st -> assertThat(st.dependsOnStepNames()).containsExactly("기존"));
+    assertThat(executionRepository.findStepExecutionsByExecutionId(execId))
+        .extracting(StepExecutionResponse::stepId)
+        .containsExactly(ids.get("기존"));
+  }
+
+  /** 다른 파이프라인의 스텝 id 를 실어 보내면 거부한다 — 그대로 쓰면 다른 파이프라인의 스텝 행을 고치게 된다. 같은 id 두 번도 거부한다. */
+  @Test
+  void 이_파이프라인에_없는_스텝_id나_중복_id는_거부한다() {
+    PipelineDetailResponse a =
+        pipelineService.createPipeline(
+            new CreatePipelineRequest(
+                "WD108 A", "t", List.of(sqlStep("a1", "SELECT * FROM data.src_table", null))),
+            testUserId);
+    PipelineDetailResponse b =
+        pipelineService.createPipeline(
+            new CreatePipelineRequest(
+                "WD108 B", "t", List.of(sqlStep("b1", "SELECT * FROM data.src_table", null))),
+            testUserId);
+    Long foreignStepId = stepIdsByName(b.id()).get("b1");
+    Long ownStepId = stepIdsByName(a.id()).get("a1");
+
+    assertThatThrownBy(
+            () ->
+                pipelineService.updatePipeline(
+                    a.id(),
+                    new UpdatePipelineRequest(
+                        "WD108 A",
+                        "t",
+                        null,
+                        List.of(
+                            withId(
+                                sqlStep("hijack", "SELECT * FROM data.src_table", null),
+                                foreignStepId))),
+                    testUserId))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                pipelineService.updatePipeline(
+                    a.id(),
+                    new UpdatePipelineRequest(
+                        "WD108 A",
+                        "t",
+                        null,
+                        List.of(
+                            withId(sqlStep("x1", "SELECT * FROM data.src_table", null), ownStepId),
+                            withId(
+                                sqlStep("x2", "SELECT * FROM data.src_table", null), ownStepId))),
+                    testUserId))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThat(stepIdsByName(b.id())).containsEntry("b1", foreignStepId);
+  }
+
+  /**
+   * 책갈피 전진 가드(WD-108): 스텝이 제자리 갱신되므로, 실행 도중 출력이 바뀌어 저장됐으면 끝난 실행이 새 출력의 책갈피를 전진시키면 안 된다(새 출력은 그 구간을
+   * 받은 적이 없다). 실제로 쓴 출력과 현재 출력이 같을 때만 전진한다.
+   */
+  @Test
+  void 책갈피_전진은_실제로_쓴_출력이_현재_출력과_같을_때만_한다() {
+    PipelineDetailResponse created =
+        pipelineService.createPipeline(
+            new CreatePipelineRequest(
+                "WD108 Guard Pipeline",
+                "t",
+                List.of(
+                    new PipelineStepRequest(
+                        "stepA",
+                        "a",
+                        "SQL",
+                        INCREMENTAL_SQL,
+                        pkOutputDatasetId,
+                        null,
+                        null,
+                        "MERGE"))),
+            testUserId);
+    Long stepId = stepRepository.findStepIdByPipelineAndName(created.id(), "stepA").orElseThrow();
+    java.time.OffsetDateTime t1 = java.time.OffsetDateTime.parse("2026-10-01T00:00:00Z");
+
+    stepRepository.advanceCursor(stepId, t1, false, outputDatasetId);
+    assertThat(stepRepository.findCursor(stepId).orElseThrow().lastRunAt())
+        .as("다른 출력에 쓴 실행은 전진시키지 않는다")
+        .isNull();
+
+    stepRepository.advanceCursor(stepId, t1, false, pkOutputDatasetId);
+    assertThat(stepRepository.findCursor(stepId).orElseThrow().lastRunAt()).isEqualTo(t1);
+  }
+
+  /**
    * 책갈피 이월이 <b>스텝 이름을 키로 쓸 수 있는 근거</b>를 실측으로 고정한다.
    *
-   * <p>{@code updatePipeline} 은 스텝을 전부 지우고 다시 넣어 id 가 바뀌므로 이월 키가 이름이고, {@code restoreCursor} 의
-   * {@code WHERE pipeline_id = ? AND name = ?} 가 한 행만 맞힌다는 전제도 같은 곳에서 온다 — {@code pipeline_step} 의
-   * {@code UNIQUE (pipeline_id, name)}(V3:24) 이다. 그 제약이 사라지면 이월 설계 전체가 재검토 대상이므로, 여기서 제약의 존재 자체를
-   * 단언한다. ({@code findCursorsByPipelineId} 는 그래도 {@code fetchGroups} 로 중복을 견디게 해 두었다 — 제약이 사라졌을 때
-   * "편집 불가"가 아니라 "이월 안 함"으로 degrade 시키기 위해서다.)
+   * <p>{@code updatePipeline} 은 요청에 스텝 id 가 없을 때 이름으로 기존 스텝을 찾아 제자리 갱신한다(WD-108) — 이름이 파이프라인 안에서
+   * 고유하다는 전제는 {@code pipeline_step} 의 {@code UNIQUE (pipeline_id, name)}(V3:24) 에서 온다. 그 제약이 사라지면
+   * 같은 스텝 판정이 재검토 대상이므로, 여기서 제약의 존재 자체를 단언한다.
    */
   @Test
   void pipelineStepName_isUniquePerPipeline() {

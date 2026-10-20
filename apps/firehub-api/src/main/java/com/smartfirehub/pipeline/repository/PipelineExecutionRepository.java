@@ -77,6 +77,9 @@ public class PipelineExecutionRepository {
   private static final Field<java.time.OffsetDateTime> PSE_INJECTED_LAST_RUN_AT =
       field(
           name("pipeline_step_execution", "injected_last_run_at"), java.time.OffsetDateTime.class);
+  // 실행 당시 스텝 이름 스냅샷(V139, WD-108). 스텝이 정의에서 지워지면 step_id 는 NULL 이 되고 이 이름만 남는다.
+  private static final Field<String> PSE_STEP_NAME =
+      field(name("pipeline_step_execution", "step_name"), String.class);
 
   private static final Table<?> USER_TABLE = table(name("user"));
   private static final Field<Long> U_ID = field(name("user", "id"), Long.class);
@@ -142,10 +145,15 @@ public class PipelineExecutionRepository {
     query.where(PE_ID.eq(executionId)).execute();
   }
 
-  public Long createStepExecution(Long executionId, Long stepId) {
+  /**
+   * 스텝 실행 행을 PENDING 으로 만든다. 스텝 이름을 함께 떠 둔다(WD-108) — 이후 스텝이 정의에서 지워져 {@code step_id} 가 NULL 이
+   * 되어도(V139 ON DELETE SET NULL) 실행 상세가 "어느 스텝의 기록인지"를 보여 줄 수 있어야 하고, 이름이 바뀌어도 그 실행 당시 이름이 남는다.
+   */
+  public Long createStepExecution(Long executionId, Long stepId, String stepName) {
     return dsl.insertInto(PIPELINE_STEP_EXECUTION)
         .set(PSE_EXECUTION_ID, executionId)
         .set(PSE_STEP_ID, stepId)
+        .set(PSE_STEP_NAME, stepName)
         .set(PSE_STATUS, "PENDING")
         .returning(PSE_ID)
         .fetchOne(r -> r.get(PSE_ID));
@@ -336,11 +344,20 @@ public class PipelineExecutionRepository {
         .fetchOptional(PE_EXECUTED_BY);
   }
 
+  /**
+   * 실행의 스텝 기록 전체를 실행 당시 기준으로 돌려준다.
+   *
+   * <p>LEFT JOIN 인 이유(WD-108): 정의에서 지워진 스텝의 기록은 {@code step_id} 가 NULL 이라 INNER JOIN 이면 응답에서 통째로
+   * 빠진다 — 사용자가 본 "파이프라인을 고쳐 저장하면 과거 실행 기록이 사라진다" 결함의 조회 쪽 절반이다. 이름은 실행 당시 스냅샷({@code step_name})을
+   * 먼저 쓰고, 스냅샷이 없는 행(V139 백필 이전에 만들어져 아직 비어 있는 경우 등)만 현재 스텝 이름으로 채운다. {@code stepId} 가 null 이면 "지금
+   * 정의에 없는(삭제된) 스텝의 기록"이라는 뜻이다 — 웹은 이 값으로 삭제된 스텝을 구분한다.
+   */
   public List<StepExecutionResponse> findStepExecutionsByExecutionId(Long executionId) {
+    Field<String> stepName = coalesce(PSE_STEP_NAME, PS_NAME).as("resolved_step_name");
     return dsl.select(
             PSE_ID,
             PSE_STEP_ID,
-            PS_NAME,
+            stepName,
             PSE_STATUS,
             PSE_OUTPUT_ROWS,
             PSE_LOG,
@@ -348,7 +365,7 @@ public class PipelineExecutionRepository {
             PSE_STARTED_AT,
             PSE_COMPLETED_AT)
         .from(PIPELINE_STEP_EXECUTION)
-        .join(PIPELINE_STEP)
+        .leftJoin(PIPELINE_STEP)
         .on(PSE_STEP_ID.eq(PS_ID))
         .where(PSE_EXECUTION_ID.eq(executionId))
         .orderBy(PSE_ID.asc())
@@ -357,7 +374,7 @@ public class PipelineExecutionRepository {
                 new StepExecutionResponse(
                     r.get(PSE_ID),
                     r.get(PSE_STEP_ID),
-                    r.get(PS_NAME),
+                    r.get(stepName),
                     r.get(PSE_STATUS),
                     r.get(PSE_OUTPUT_ROWS),
                     r.get(PSE_LOG),

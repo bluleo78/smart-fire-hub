@@ -37,6 +37,8 @@ export function usePipelineSave({
     if (!validate()) return false;
 
     const stepsRequest: PipelineStepRequest[] = state.steps.map((step) => ({
+      // 기존 스텝 id 를 함께 보내 서버가 같은 스텝을 제자리 갱신하게 한다(WD-108) — 이름을 바꿔도 과거 실행 기록이 이어진다.
+      id: step.id,
       name: step.name.trim(),
       description: step.description || undefined,
       scriptType: step.scriptType,

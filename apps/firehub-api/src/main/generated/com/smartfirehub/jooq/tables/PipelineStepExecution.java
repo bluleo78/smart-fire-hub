@@ -78,7 +78,7 @@ public class PipelineStepExecution extends TableImpl<PipelineStepExecutionRecord
     /**
      * The column <code>public.pipeline_step_execution.step_id</code>.
      */
-    public final TableField<PipelineStepExecutionRecord, Long> STEP_ID = createField(DSL.name("step_id"), SQLDataType.BIGINT.nullable(false), this, "");
+    public final TableField<PipelineStepExecutionRecord, Long> STEP_ID = createField(DSL.name("step_id"), SQLDataType.BIGINT, this, "");
 
     /**
      * The column <code>public.pipeline_step_execution.status</code>.
@@ -120,6 +120,11 @@ public class PipelineStepExecution extends TableImpl<PipelineStepExecutionRecord
      * <code>public.pipeline_step_execution.injected_last_run_at</code>.
      */
     public final TableField<PipelineStepExecutionRecord, OffsetDateTime> INJECTED_LAST_RUN_AT = createField(DSL.name("injected_last_run_at"), SQLDataType.TIMESTAMPWITHTIMEZONE(6), this, "");
+
+    /**
+     * The column <code>public.pipeline_step_execution.step_name</code>.
+     */
+    public final TableField<PipelineStepExecutionRecord, String> STEP_NAME = createField(DSL.name("step_name"), SQLDataType.VARCHAR(100), this, "");
 
     private PipelineStepExecution(Name alias, Table<PipelineStepExecutionRecord> aliased) {
         this(alias, aliased, (Field<?>[]) null, null);

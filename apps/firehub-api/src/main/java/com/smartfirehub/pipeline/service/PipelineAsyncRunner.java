@@ -1027,7 +1027,10 @@ public class PipelineAsyncRunner {
       // "이번 실행이 실제로 전체 재생성이었을 때"만 해제한다(advanceCursor Javadoc) — 실패하면 예약이
       // 그대로 유지돼 다음 실행이 다시 시도하고, 이번 실행 도중 새로 켜진 예약도 잃지 않는다.
       if (incrementalStep) {
-        stepRepository.advanceCursor(step.id(), stepCursorCandidate, stepWasFullRebuild);
+        // 실제로 쓴 출력(outputDatasetId — 러너 TEMP 포함)을 함께 넘긴다(WD-108): 저장이 스텝을 제자리 갱신하므로 실행 도중 출력이 바뀌어
+        // 저장됐으면 새 출력의 책갈피를 전진시키지 않아야 한다(리포지토리 Javadoc).
+        stepRepository.advanceCursor(
+            step.id(), stepCursorCandidate, stepWasFullRebuild, outputDatasetId);
       }
 
       // WD-30: 출력이 커밋된 뒤에만 러너 TEMP 허용 목록을 시드로 확정한다(넓힘 포함 — 출력이 전부 교체된 실행만 계획이 있다). 실패 경로(catch)는 여기

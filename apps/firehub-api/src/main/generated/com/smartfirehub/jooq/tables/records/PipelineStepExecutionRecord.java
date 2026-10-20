@@ -177,6 +177,20 @@ public class PipelineStepExecutionRecord extends UpdatableRecordImpl<PipelineSte
         return (OffsetDateTime) get(10);
     }
 
+    /**
+     * Setter for <code>public.pipeline_step_execution.step_name</code>.
+     */
+    public void setStepName(String value) {
+        set(11, value);
+    }
+
+    /**
+     * Getter for <code>public.pipeline_step_execution.step_name</code>.
+     */
+    public String getStepName() {
+        return (String) get(11);
+    }
+
     // -------------------------------------------------------------------------
     // Primary key information
     // -------------------------------------------------------------------------
@@ -200,7 +214,7 @@ public class PipelineStepExecutionRecord extends UpdatableRecordImpl<PipelineSte
     /**
      * Create a detached, initialised PipelineStepExecutionRecord
      */
-    public PipelineStepExecutionRecord(Long id, Long executionId, Long stepId, String status, Integer outputRows, String log, String errorMessage, LocalDateTime startedAt, LocalDateTime completedAt, Long tenantId, OffsetDateTime injectedLastRunAt) {
+    public PipelineStepExecutionRecord(Long id, Long executionId, Long stepId, String status, Integer outputRows, String log, String errorMessage, LocalDateTime startedAt, LocalDateTime completedAt, Long tenantId, OffsetDateTime injectedLastRunAt, String stepName) {
         super(PipelineStepExecution.PIPELINE_STEP_EXECUTION);
 
         setId(id);
@@ -214,6 +228,7 @@ public class PipelineStepExecutionRecord extends UpdatableRecordImpl<PipelineSte
         setCompletedAt(completedAt);
         setTenantId(tenantId);
         setInjectedLastRunAt(injectedLastRunAt);
+        setStepName(stepName);
         resetChangedOnNotNull();
     }
 }

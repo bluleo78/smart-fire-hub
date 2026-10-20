@@ -624,8 +624,8 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
   }
 
   /**
-   * PYTHON 출력 등급은 실행 주체 자격이 아니라 스텝이 다루는 데이터(선언 입력 + 자기 출력)로 정한다. 선언 입력이 없으면 실행 주체가 '민감'이어도 출력은
-   * 그대로다 — 외부 API 만 부르는 스크립트의 출력이 실행 주체 자격 때문에 상향되던 결함(운영 전주시 뉴스 수집)의 회귀 테스트.
+   * PYTHON 출력 등급은 실행 주체 자격이 아니라 스텝이 다루는 데이터(선언 입력 + 자기 출력)로 정한다. 선언 입력이 없으면 실행 주체가 '민감'이어도 출력은 그대로다
+   * — 외부 API 만 부르는 스크립트의 출력이 실행 주체 자격 때문에 상향되던 결함(운영 전주시 뉴스 수집)의 회귀 테스트.
    */
   @Test
   void run_pythonOutput_withoutDeclaredInputs_keepsOutputLevel() throws Exception {
@@ -649,8 +649,7 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
   }
 
   /**
-   * 상위 등급 입력을 선언하면 그 등급까지 읽는 대신 출력이 그 등급으로 상향된다(WD-29 쓰기 하향 우회 차단 유지). 스크립트 성패와 무관하게 쓰기 전에
-   * 상향된다.
+   * 상위 등급 입력을 선언하면 그 등급까지 읽는 대신 출력이 그 등급으로 상향된다(WD-29 쓰기 하향 우회 차단 유지). 스크립트 성패와 무관하게 쓰기 전에 상향된다.
    */
   @Test
   void run_pythonOutput_isRaisedToDeclaredInputLevel() throws Exception {
@@ -1392,7 +1391,7 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
   /** 러너가 executeStep 첫머리에서 하듯 RUNNING(started_at=지금)으로 표시한 스텝 실행 행을 만든다(CR1 겹침 판정의 입력). */
   private long runningStepExecution(long pipelineId, long executedBy, long stepId) {
     long exec = executionRepository.createExecution(pipelineId, executedBy);
-    long stepExec = executionRepository.createStepExecution(exec, stepId);
+    long stepExec = executionRepository.createStepExecution(exec, stepId, "running-step");
     executionRepository.updateStepExecution(
         stepExec, "RUNNING", null, null, null, LocalDateTime.now(ZoneOffset.UTC), null);
     return stepExec;

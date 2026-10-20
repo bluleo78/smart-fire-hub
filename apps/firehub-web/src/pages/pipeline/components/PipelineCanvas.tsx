@@ -19,6 +19,7 @@ import { Button } from '@/components/ui/button';
 import type { ExecutionDetailResponse } from '@/types/pipeline';
 
 import type { EditorAction,PipelineEditorState } from '../hooks/usePipelineEditor';
+import { findStepExecution } from '../utils/step-execution';
 import { AddStepEdge } from './AddStepEdge';
 import { StepNode, type StepNodeData, type StepNodeType } from './StepNode';
 
@@ -77,9 +78,8 @@ export function PipelineCanvas({
         isSelected: step.tempId === state.selectedStepId,
         hasError: state.validationErrors.some((e) => e.stepTempId === step.tempId),
         hasOutgoingEdge: outgoingSet.has(step.tempId),
-        executionStatus: executionData?.stepExecutions?.find(
-          (se) => se.stepName === step.name,
-        )?.status,
+        // 실행 기록은 스텝 id 로 찾는다(WD-108) — 이름으로 찾으면 삭제된 동명 스텝의 기록이 새 스텝에 붙는다.
+        executionStatus: findStepExecution(executionData?.stepExecutions, step.id)?.status,
         readOnly,
         onDelete: readOnly
           ? undefined
@@ -107,10 +107,9 @@ export function PipelineCanvas({
         type: 'addStep',
         data: { readOnly, onInsertBetween },
         animated:
-          executionData?.stepExecutions?.find(
-            (se) =>
-              se.stepName ===
-              state.steps.find((s) => s.tempId === depTempId)?.name,
+          findStepExecution(
+            executionData?.stepExecutions,
+            state.steps.find((s) => s.tempId === depTempId)?.id,
           )?.status === 'RUNNING',
       })),
     ),

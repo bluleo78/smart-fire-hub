@@ -178,9 +178,10 @@ export default function PipelineEditorPage() {
     [allDatasets],
   );
 
-  const selectedStepName = state.selectedStepId
-    ? (state.steps.find((s) => s.tempId === state.selectedStepId)?.name ?? null)
-    : null;
+  // 실행 상세 패널에 넘길 선택 스텝 — 이름(헤더 표시)과 서버 id(실행 기록 조회 키, WD-108)를 함께 넘긴다
+  const selectedEditorStep = state.selectedStepId
+    ? state.steps.find((s) => s.tempId === state.selectedStepId)
+    : undefined;
 
   const pipelineInfo = pipelineData
     ? {
@@ -349,7 +350,9 @@ export default function PipelineEditorPage() {
               </div>
               <ExecutionStepPanel
                 execution={executionData}
-                selectedStepName={selectedStepName}
+                selectedStep={
+                  selectedEditorStep ? { id: selectedEditorStep.id, name: selectedEditorStep.name } : undefined
+                }
                 onClose={() => dispatch({ type: 'SELECT_STEP', payload: { tempId: null } })}
               />
             </div>

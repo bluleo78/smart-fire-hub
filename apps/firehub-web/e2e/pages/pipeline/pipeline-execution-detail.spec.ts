@@ -10,7 +10,12 @@
 
 import type { Page } from '@playwright/test';
 
-import { createExecutionDetail, createStepExecution } from '../../factories/pipeline.factory';
+import {
+  createExecutionDetail,
+  createPipelineDetail,
+  createStep,
+  createStepExecution,
+} from '../../factories/pipeline.factory';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { setupPipelineEditorMocks } from '../../fixtures/pipeline.fixture';
@@ -376,5 +381,140 @@ test.describe('파이프라인 실행 상세 — ExecutionStepPanel', () => {
     await expect(page.getByText(execErrorMsg)).toBeVisible();
     // ExecutionSummary 전용 안내 문구는 더 이상 보이지 않아야 한다
     await expect(page.getByText(/DAG에서 스텝을 클릭/)).toHaveCount(0);
+  });
+
+  // --- WD-108: 파이프라인 정의를 고쳐도 과거 실행 기록이 남는다 ---
+
+  test('실행 이후 정의에서 삭제된 스텝의 기록이 요약에 「삭제된 스텝」으로 보이고, 눌러서 상태·오류·출력행을 볼 수 있다 (WD-108)', async ({ authenticatedPage: page }) => {
+    await setupPipelineEditorMocks(page, 1);
+    // 현재 정의: 데이터 추출(1)·데이터 변환(2). 실행 당시에는 '옛 정제' 스텝이 더 있었고 지금은 지워졌다(stepId=null).
+    const detail = createExecutionDetail({
+      id: 2,
+      status: 'FAILED',
+      stepExecutions: [
+        createStepExecution({ id: 11, stepId: 1, stepName: '데이터 추출', status: 'COMPLETED' }),
+        createStepExecution({ id: 12, stepId: 2, stepName: '데이터 변환', status: 'COMPLETED' }),
+        createStepExecution({
+          id: 13,
+          stepId: null,
+          stepName: '옛 정제',
+          status: 'FAILED',
+          outputRows: 7,
+          log: null,
+          errorMessage: 'column "legacy" does not exist',
+        }),
+      ],
+    });
+    await mockApi(page, 'GET', '/api/v1/pipelines/1/executions/2', detail);
+
+    await page.goto('/pipelines/1');
+    await page.getByRole('tab', { name: /실행|이력/ }).click();
+    await page.getByRole('row').nth(2).click();
+
+    await expect(page.getByText('실행 정보')).toBeVisible({ timeout: 5000 });
+    // 스텝 현황은 실행 당시 기록 전체 기준이다(삭제된 스텝 포함 3개)
+    await expect(page.getByText('완료 2/3')).toBeVisible();
+    await expect(page.getByText('삭제된 스텝', { exact: true }).first()).toBeVisible();
+    const deletedEntry = page.getByRole('button', { name: /옛 정제/ });
+    await expect(deletedEntry).toBeVisible();
+    await expect(deletedEntry).toContainText('삭제된 스텝');
+    await expect(deletedEntry).toContainText('실패');
+
+    await deletedEntry.click();
+    await expect(page.getByText('스텝: 옛 정제 (삭제된 스텝)')).toBeVisible();
+    await expect(page.getByText('column "legacy" does not exist')).toBeVisible();
+    await expect(page.getByText('7', { exact: true })).toBeVisible();
+    await expect(page.getByText('이 스텝은 실행되지 않았습니다')).toHaveCount(0);
+
+    // 닫으면 요약으로 돌아간다
+    await page.getByRole('button', { name: '스텝 상세 닫기' }).click();
+    await expect(page.getByText('실행 정보')).toBeVisible();
+  });
+
+  test('이름이 바뀐 기존 스텝도 스텝 id 로 실행 기록을 찾아 상태·오류를 보여 준다 (WD-108)', async ({ authenticatedPage: page }) => {
+    await setupPipelineEditorMocks(page, 1);
+    // 실행 당시 이름은 '옛 변환'(스냅샷), 지금 정의의 같은 스텝(id=2) 이름은 '데이터 변환'.
+    const detail = createExecutionDetail({
+      id: 2,
+      status: 'FAILED',
+      stepExecutions: [
+        createStepExecution({ id: 21, stepId: 1, stepName: '데이터 추출', status: 'COMPLETED' }),
+        createStepExecution({
+          id: 22,
+          stepId: 2,
+          stepName: '옛 변환',
+          status: 'FAILED',
+          outputRows: 95,
+          errorMessage: '데이터 변환 오류: 타입 불일치',
+        }),
+      ],
+    });
+    await mockApi(page, 'GET', '/api/v1/pipelines/1/executions/2', detail);
+
+    await page.goto('/pipelines/1');
+    await page.getByRole('tab', { name: /실행|이력/ }).click();
+    await page.getByRole('row').nth(2).click();
+    await expect(page.getByText('실행 정보')).toBeVisible({ timeout: 5000 });
+    // 현재 정의에 있는 스텝이라 「삭제된 스텝」 목록에는 나오지 않는다
+    await expect(page.getByText('삭제된 스텝', { exact: true })).toHaveCount(0);
+
+    await page.locator('.react-flow__node', { hasText: '데이터 변환' }).click();
+    await expect(page.getByText('스텝: 데이터 변환')).toBeVisible();
+    await expect(page.getByText('데이터 변환 오류: 타입 불일치')).toBeVisible();
+    await expect(page.getByText('95', { exact: true })).toBeVisible();
+    await expect(page.getByText('이 스텝은 실행되지 않았습니다')).toHaveCount(0);
+  });
+
+  test('실행 이후 새로 추가된 스텝은 지워진 동명 스텝의 기록과 섞이지 않고 「실행되지 않았습니다」를 보여 준다 (WD-108)', async ({ authenticatedPage: page }) => {
+    await setupPipelineEditorMocks(page, 1);
+    // 현재 정의의 '데이터 변환'(id=3)은 실행 이후 새로 만든 스텝이다. 실행 당시의 '데이터 변환'(옛 id)은 지워져 stepId=null.
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/pipelines/1',
+      createPipelineDetail({
+        steps: [
+          createStep(),
+          createStep({ id: 3, name: '데이터 변환', stepOrder: 1, dependsOnStepNames: ['데이터 추출'] }),
+        ],
+      }),
+    );
+    const detail = createExecutionDetail({
+      id: 2,
+      status: 'FAILED',
+      stepExecutions: [
+        createStepExecution({ id: 31, stepId: 1, stepName: '데이터 추출', status: 'COMPLETED' }),
+        createStepExecution({ id: 32, stepId: null, stepName: '데이터 변환', status: 'FAILED', errorMessage: '옛 오류' }),
+      ],
+    });
+    await mockApi(page, 'GET', '/api/v1/pipelines/1/executions/2', detail);
+
+    await page.goto('/pipelines/1');
+    await page.getByRole('tab', { name: /실행|이력/ }).click();
+    await page.getByRole('row').nth(2).click();
+    await expect(page.getByText('실행 정보')).toBeVisible({ timeout: 5000 });
+    await expect(page.getByRole('button', { name: /데이터 변환.*삭제된 스텝/ })).toBeVisible();
+
+    await page.locator('.react-flow__node', { hasText: '데이터 변환' }).click();
+    await expect(page.getByText('이 스텝은 실행되지 않았습니다')).toBeVisible();
+    await expect(page.getByText('옛 오류')).toHaveCount(0);
+  });
+
+  test('편집 후 저장하면 기존 스텝의 id 를 함께 보내 서버가 같은 스텝을 제자리 갱신한다 (WD-108)', async ({ authenticatedPage: page }) => {
+    await setupPipelineEditorMocks(page, 1);
+    const putCapture = await mockApi(page, 'PUT', '/api/v1/pipelines/1', {}, { capture: true });
+
+    await page.goto('/pipelines/1');
+    await page.getByRole('button', { name: '수정' }).click();
+    await page.locator('.react-flow__node', { hasText: '데이터 변환' }).click();
+    await page.locator('#step-description').fill('설명만 바꾼 저장');
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+
+    const req = await putCapture.waitForRequest();
+    const payload = req.payload as { steps: Array<{ id?: number; name: string }> };
+    expect(payload.steps.map((st) => [st.id, st.name])).toEqual([
+      [1, '데이터 추출'],
+      [2, '데이터 변환'],
+    ]);
   });
 });

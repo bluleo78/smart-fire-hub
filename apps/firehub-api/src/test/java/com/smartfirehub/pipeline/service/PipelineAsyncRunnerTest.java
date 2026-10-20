@@ -2567,7 +2567,7 @@ class PipelineAsyncRunnerTest {
               return null;
             })
         .when(stepRepository)
-        .advanceCursor(any(), any(), anyBoolean());
+        .advanceCursor(any(), any(), anyBoolean(), any());
     when(sqlExecutor.execute(anyList(), anyString()))
         .thenAnswer(
             inv -> {
@@ -2581,7 +2581,7 @@ class PipelineAsyncRunnerTest {
     assertThat(status).isEqualTo("COMPLETED");
     assertThat(advancedBeforeOutputCommit).as("책갈피는 출력이 커밋된 뒤에만 전진해야 한다").isFalse();
     assertThat(advanced).as("성공 실행은 책갈피를 전진시켜야 한다").isTrue();
-    verify(stepRepository).advanceCursor(stepId, candidate, false);
+    verify(stepRepository).advanceCursor(eq(stepId), eq(candidate), eq(false), any());
   }
 
   /** 후보값은 SQL 실행 <b>전에</b> 캡처돼야 한다 — 실행 중 커밋된 행을 다음 실행이 놓치지 않기 위해서다. */
@@ -2636,7 +2636,7 @@ class PipelineAsyncRunnerTest {
     String status = runner.executeStep(stepExecId, step, 72L, "P", 1L, false);
 
     assertThat(status).isEqualTo("FAILED");
-    verify(stepRepository, never()).advanceCursor(any(), any(), anyBoolean());
+    verify(stepRepository, never()).advanceCursor(any(), any(), anyBoolean(), any());
     // 주입값 기록은 실행 전에 하므로 실패해도 남는다 — "어디서부터 읽으려 했는가"의 진단 근거.
     verify(executionRepository).setInjectedLastRunAt(stepExecId, bookmark);
   }
@@ -2703,7 +2703,7 @@ class PipelineAsyncRunnerTest {
         .containsExactly(OutputClearStatement.deleteAll("incremental_out"));
     verify(executionRepository).setInjectedLastRunAt(stepExecId, null);
     // 예약을 소비한 실행만 예약을 해제한다.
-    verify(stepRepository).advanceCursor(eq(stepId), any(), eq(true));
+    verify(stepRepository).advanceCursor(eq(stepId), any(), eq(true), any());
   }
 
   /**
@@ -2787,7 +2787,7 @@ class PipelineAsyncRunnerTest {
 
     runner.executeStep(807L, step, 77L, "P", 1L, false);
 
-    verify(stepRepository).advanceCursor(eq(stepId), any(), eq(false));
+    verify(stepRepository).advanceCursor(eq(stepId), any(), eq(false), any());
   }
 
   /** 레거시 REPLACE + 증분 조합은 실행 시점에도 거부한다(저장 시점 검증 우회에 대한 2차 방어). */
@@ -2804,7 +2804,7 @@ class PipelineAsyncRunnerTest {
     String status = runner.executeStep(stepExecId, step, 75L, "P", 1L, false);
 
     assertThat(status).isEqualTo("FAILED");
-    verify(stepRepository, never()).advanceCursor(any(), any(), anyBoolean());
+    verify(stepRepository, never()).advanceCursor(any(), any(), anyBoolean(), any());
     verify(executionRepository)
         .updateStepExecution(
             eq(stepExecId), eq("FAILED"), isNull(), isNull(), contains("MERGE"), isNull(), any());

@@ -81,6 +81,25 @@ public class PipelineStepRepository {
   private static final Table<?> DATASET = table(name("dataset"));
   private static final Field<Long> D_ID = field(name("dataset", "id"), Long.class);
   private static final Field<String> D_NAME = field(name("dataset", "name"), String.class);
+  // 러너 TEMP(출력 미지정 스텝용 임시 데이터셋)가 어느 스텝 것인지 — V36. 출력 해석 규칙의 유일한 근거다.
+  private static final Field<Long> D_SOURCE_PIPELINE_STEP_ID =
+      field(name("dataset", "source_pipeline_step_id"), Long.class);
+
+  /**
+   * 이름을 바꿀 스텝을 잠시 비켜 두는 임시 이름의 접두사(WD-108, {@link #renameStepTemporarily}). 뒤에 스텝 id 를 붙여 파이프라인 안에서
+   * 겹치지 않게 하고, 같은 트랜잭션 안에서 곧바로 최종 이름으로 덮인다.
+   */
+  private static final String RENAMING_PLACEHOLDER_PREFIX = "__renaming_";
+
+  /**
+   * 스텝의 "해석된" 출력 데이터셋 id 식 — 지정 출력이 있으면 그것, 없으면 그 스텝의 러너 TEMP({@code source_pipeline_step_id} = 스텝
+   * id). 화면 응답({@link #findByPipelineId})과 책갈피 전진 가드({@link #advanceCursor})가 같은 규칙을 쓰도록 한 곳에 둔다.
+   */
+  private static Field<Long> resolvedOutputDatasetId() {
+    return coalesce(
+        PS_OUTPUT_DATASET_ID,
+        field(select(D_ID).from(DATASET).where(D_SOURCE_PIPELINE_STEP_ID.eq(PS_ID)).limit(1)));
+  }
 
   /** 실행·내부 경로용 — 출력 데이터셋 이름을 가리지 않는다(러너·트리거 스레드에는 요청 사용자가 없어 가시성 조건을 만들 수 없다). */
   public List<PipelineStepResponse> findByPipelineId(Long pipelineId) {
@@ -98,14 +117,7 @@ public class PipelineStepRepository {
   public List<PipelineStepResponse> findByPipelineId(
       Long pipelineId, Condition outputDatasetNameVisible) {
     // output_dataset_id가 null이면 source_pipeline_step_id로 임시 데이터셋 폴백
-    var resolvedOutputExpr =
-        coalesce(
-            PS_OUTPUT_DATASET_ID,
-            field(
-                select(D_ID)
-                    .from(DATASET)
-                    .where(field(name("dataset", "source_pipeline_step_id"), Long.class).eq(PS_ID))
-                    .limit(1)));
+    var resolvedOutputExpr = resolvedOutputDatasetId();
 
     var steps =
         dsl.select(
@@ -236,36 +248,6 @@ public class PipelineStepRepository {
   }
 
   public Long saveStep(Long pipelineId, PipelineStepRequest request, int stepOrder) {
-    JSONB apiConfigJsonb = null;
-    if (request.apiConfig() != null) {
-      try {
-        String json = objectMapper.writeValueAsString(request.apiConfig());
-        apiConfigJsonb = JSONB.jsonb(json);
-      } catch (JsonProcessingException e) {
-        throw new SerializationException("Failed to serialize apiConfig", e);
-      }
-    }
-
-    JSONB aiConfigJsonb = null;
-    if (request.aiConfig() != null) {
-      try {
-        String json = objectMapper.writeValueAsString(request.aiConfig());
-        aiConfigJsonb = JSONB.jsonb(json);
-      } catch (JsonProcessingException e) {
-        throw new SerializationException("Failed to serialize aiConfig", e);
-      }
-    }
-
-    JSONB pythonConfigJsonb = null;
-    if (request.pythonConfig() != null) {
-      try {
-        String json = objectMapper.writeValueAsString(request.pythonConfig());
-        pythonConfigJsonb = JSONB.jsonb(json);
-      } catch (JsonProcessingException e) {
-        throw new SerializationException("Failed to serialize pythonConfig", e);
-      }
-    }
-
     var insert =
         dsl.insertInto(PIPELINE_STEP)
             .set(PS_PIPELINE_ID, pipelineId)
@@ -278,12 +260,64 @@ public class PipelineStepRepository {
             .set(
                 PS_LOAD_STRATEGY,
                 request.loadStrategy() != null ? request.loadStrategy() : "REPLACE")
-            .set(PS_API_CONFIG, apiConfigJsonb)
-            .set(PS_AI_CONFIG, aiConfigJsonb)
-            .set(PS_PYTHON_CONFIG, pythonConfigJsonb)
+            .set(PS_API_CONFIG, toJsonb(request.apiConfig(), "apiConfig"))
+            .set(PS_AI_CONFIG, toJsonb(request.aiConfig(), "aiConfig"))
+            .set(PS_PYTHON_CONFIG, toJsonb(request.pythonConfig(), "pythonConfig"))
             .set(PS_API_CONNECTION_ID, request.apiConnectionId());
 
     return insert.returning(PS_ID).fetchOne(r -> r.get(PS_ID));
+  }
+
+  /**
+   * 기존 스텝을 제자리 갱신한다(WD-108) — id 를 유지해야 과거 실행 기록(pipeline_step_execution.step_id)과 러너 TEMP
+   * (dataset.source_pipeline_step_id)가 같은 스텝에 계속 이어진다. 저장 요청이 담는 정의 필드만 바꾸고, 책갈피({@code
+   * last_run_at}·{@code full_rebuild_pending})와 {@code created_at} 은 건드리지 않는다 — 책갈피는 호출부가 이월 규칙으로
+   * 따로 정한다({@link #setCursor}).
+   *
+   * <p>{@code pipelineId} 를 조건에 함께 거는 이유: 호출부가 이 파이프라인의 스텝 id 만 넘기도록 검증하지만, 리포지토리 단에서도 다른 파이프라인의 행을
+   * 고칠 수 없게 이중으로 막는다.
+   */
+  public void updateStep(Long pipelineId, Long stepId, PipelineStepRequest request, int stepOrder) {
+    dsl.update(PIPELINE_STEP)
+        .set(PS_NAME, request.name())
+        .set(PS_DESCRIPTION, request.description())
+        .set(PS_SCRIPT_TYPE, request.scriptType())
+        .set(PS_SCRIPT_CONTENT, request.scriptContent())
+        .set(PS_OUTPUT_DATASET_ID, request.outputDatasetId())
+        .set(PS_STEP_ORDER, stepOrder)
+        .set(PS_LOAD_STRATEGY, request.loadStrategy() != null ? request.loadStrategy() : "REPLACE")
+        .set(PS_API_CONFIG, toJsonb(request.apiConfig(), "apiConfig"))
+        .set(PS_AI_CONFIG, toJsonb(request.aiConfig(), "aiConfig"))
+        .set(PS_PYTHON_CONFIG, toJsonb(request.pythonConfig(), "pythonConfig"))
+        .set(PS_API_CONNECTION_ID, request.apiConnectionId())
+        .where(PS_ID.eq(stepId).and(PS_PIPELINE_ID.eq(pipelineId)))
+        .execute();
+  }
+
+  /**
+   * 이름을 바꿀 스텝에 잠시 겹치지 않는 임시 이름을 준다(WD-108).
+   *
+   * <p>{@code UNIQUE (pipeline_id, name)}(V3:24)은 문장마다 즉시 검사된다. 두 스텝의 이름을 맞바꾸는 저장(A→B, B→A)을 차례로
+   * UPDATE 하면 첫 문장에서 아직 B 인 행과 충돌한다. 이름이 바뀌는 스텝을 먼저 전부 임시 이름으로 비켜 두면 이후 최종 이름 UPDATE 가 서로 부딪히지 않는다.
+   * 임시 이름은 같은 트랜잭션 안에서 곧바로 최종 이름으로 덮인다(실패하면 롤백).
+   */
+  public void renameStepTemporarily(Long pipelineId, Long stepId) {
+    dsl.update(PIPELINE_STEP)
+        .set(PS_NAME, RENAMING_PLACEHOLDER_PREFIX + stepId)
+        .where(PS_ID.eq(stepId).and(PS_PIPELINE_ID.eq(pipelineId)))
+        .execute();
+  }
+
+  /** 맵 설정값(api/ai/python config)을 JSONB 로 직렬화한다. null 은 null 로 둔다. */
+  private JSONB toJsonb(Map<String, Object> value, String label) {
+    if (value == null) {
+      return null;
+    }
+    try {
+      return JSONB.jsonb(objectMapper.writeValueAsString(value));
+    } catch (JsonProcessingException e) {
+      throw new SerializationException("Failed to serialize " + label, e);
+    }
   }
 
   public void saveStepInput(Long stepId, Long datasetId) {
@@ -307,17 +341,57 @@ public class PipelineStepRepository {
             .from(PIPELINE_STEP)
             .where(PS_PIPELINE_ID.eq(pipelineId))
             .fetch(r -> r.get(PS_ID));
+    deleteSteps(pipelineId, stepIds);
+  }
 
-    if (!stepIds.isEmpty()) {
-      // Delete dependencies
-      dsl.deleteFrom(PIPELINE_STEP_DEPENDENCY).where(PSD_STEP_ID.in(stepIds)).execute();
-
-      // Delete inputs
-      dsl.deleteFrom(PIPELINE_STEP_INPUT).where(PSI_STEP_ID.in(stepIds)).execute();
-
-      // Delete steps
-      dsl.deleteFrom(PIPELINE_STEP).where(PS_PIPELINE_ID.eq(pipelineId)).execute();
+  /**
+   * 지정한 스텝들을 입력·의존과 함께 지운다(WD-108 — 저장 요청에서 빠진 스텝만 지울 때 쓴다).
+   *
+   * <p>이 스텝들의 과거 실행 기록은 지워지지 않는다 — V139 가 {@code pipeline_step_execution.step_id} FK 를 {@code ON
+   * DELETE SET NULL} 로 바꿨으므로 기록은 {@code step_name} 스냅샷과 함께 남고 스텝 연결만 끊긴다. 의존은 양방향({@code
+   * step_id}·{@code depends_on_step_id})을 모두 지운다 — 남은 스텝이 지워진 스텝을 가리키는 엣지는 FK CASCADE 로도 지워지지만,
+   * 명시적으로 지워 두면 FK 정의가 바뀌어도 의미가 흔들리지 않는다.
+   */
+  public void deleteSteps(Long pipelineId, Collection<Long> stepIds) {
+    if (stepIds.isEmpty()) {
+      return;
     }
+    clearInputsAndDependencies(stepIds);
+    dsl.deleteFrom(PIPELINE_STEP)
+        .where(PS_PIPELINE_ID.eq(pipelineId).and(PS_ID.in(stepIds)))
+        .execute();
+  }
+
+  /**
+   * 제자리 갱신할 스텝들의 입력·의존을 비운다(WD-108). 저장 요청이 입력·의존 전체를 다시 보내므로(전체 교체 계약) 남길 행을 골라내지 않고 비운 뒤 다시 넣는다 —
+   * 스텝 행(id)은 그대로라 실행 기록은 영향이 없다.
+   */
+  public void clearInputsAndDependencies(Collection<Long> stepIds) {
+    if (stepIds.isEmpty()) {
+      return;
+    }
+    dsl.deleteFrom(PIPELINE_STEP_DEPENDENCY)
+        .where(PSD_STEP_ID.in(stepIds).or(PSD_DEPENDS_ON_STEP_ID.in(stepIds)))
+        .execute();
+    dsl.deleteFrom(PIPELINE_STEP_INPUT).where(PSI_STEP_ID.in(stepIds)).execute();
+  }
+
+  /**
+   * 스텝별 러너 TEMP(실행기가 출력 미지정 스텝용으로 만든 임시 데이터셋) id 를 한 번에 읽는다(스텝 id → TEMP id, TEMP 없는 스텝은 맵에 없음).
+   * {@link #resolvedOutputDatasetId} 의 폴백과 같은 규칙({@code source_pipeline_step_id} = 스텝 id)이며, 한 스텝에
+   * TEMP 가 여럿이면 그 식의 {@code LIMIT 1} 처럼 하나만 쓴다.
+   */
+  public Map<Long, Long> findTempDatasetIdsByStepIds(Collection<Long> stepIds) {
+    Map<Long, Long> result = new HashMap<>();
+    if (stepIds.isEmpty()) {
+      return result;
+    }
+    dsl.select(D_SOURCE_PIPELINE_STEP_ID, D_ID)
+        .from(DATASET)
+        .where(D_SOURCE_PIPELINE_STEP_ID.in(stepIds))
+        .fetch()
+        .forEach(r -> result.putIfAbsent(r.get(D_SOURCE_PIPELINE_STEP_ID), r.get(D_ID)));
+    return result;
   }
 
   /** 스텝 증분 책갈피 조회. 스텝이 없으면 빈 Optional. */
@@ -343,14 +417,28 @@ public class PipelineStepRepository {
    * 예약을 읽은 뒤(=이번 실행은 증분으로 돌기로 확정된 뒤) 운영자가 켠 예약이 전체 재생성을 한 번도 하지 않은 채 사라진다. 반대로 "이번 실행이 실제로 전체
    * 재생성이었을 때" 해제하면, 그 사이에 켜진 예약을 함께 해제하더라도 이미 전체를 다시 만든 뒤이므로 무해하다.
    *
+   * <p><b>스텝의 현재 출력이 이번 실행이 실제로 쓴 출력과 같을 때만 전진한다(WD-108).</b> 저장이 스텝을 제자리 갱신(id 유지)하게 되면서, 실행 도중
+   * 사용자가 그 스텝의 출력 데이터셋을 바꿔 저장하면 끝난 실행이 <b>새 출력</b>의 책갈피를 전진시킬 수 있게 됐다 — 새 출력은 그 구간 데이터를 받은 적이 없으므로
+   * 다음 실행부터 그 구간이 영원히 빈다(조용한 데이터 누락). 예전에는 저장이 스텝 id 를 바꿨기 때문에 이 갱신이 사라진 id 에 맞아 아무 일도 없었다. 출력 비교는
+   * {@link #resolvedOutputDatasetId}(지정 출력, 없으면 러너 TEMP)로 한다. 스텝이 그 사이 지워졌으면 0행 갱신이다.
+   *
    * @param wasFullRebuild 이번 실행이 전체 재생성이었는지(예약을 소비했는지)
+   * @param writtenOutputDatasetId 이번 실행이 실제로 적재한 출력 데이터셋 id(러너가 만든 TEMP 포함, 출력 없는 사용자 DML 은 null)
    */
-  public void advanceCursor(Long stepId, OffsetDateTime candidate, boolean wasFullRebuild) {
+  public void advanceCursor(
+      Long stepId, OffsetDateTime candidate, boolean wasFullRebuild, Long writtenOutputDatasetId) {
     var query = dsl.update(PIPELINE_STEP).set(PS_LAST_RUN_AT, candidate);
     if (wasFullRebuild) {
       query = query.set(PS_FULL_REBUILD_PENDING, false);
     }
-    query.where(PS_ID.eq(stepId)).execute();
+    int updated =
+        query
+            .where(PS_ID.eq(stepId))
+            .and(resolvedOutputDatasetId().isNotDistinctFrom(writtenOutputDatasetId))
+            .execute();
+    if (updated == 0) {
+      log.warn("스텝 {} 의 출력이 실행 도중 바뀌었거나 스텝이 지워져 증분 책갈피를 전진시키지 않습니다(다음 실행이 해당 구간을 다시 읽습니다)", stepId);
+    }
   }
 
   /** 전체 재생성 예약(해제). 예약은 다음 성공 실행에서만 해제된다 — 실패하면 유지된다. */
@@ -362,61 +450,14 @@ public class PipelineStepRepository {
   }
 
   /**
-   * 파이프라인 재저장(스텝 전체 삭제·재생성) 전에 이름별 책갈피를 떠 둔다.
-   *
-   * <p>{@code PipelineService.updatePipeline} 은 스텝을 통째로 지우고 다시 넣으므로 스텝 id 가 매번 바뀐다 — 이월의 키가 id 가
-   * 아니라 이름인 이유다.
-   *
-   * <p><b>이름 중복은 현재 DB 가 막는다</b> — {@code pipeline_step} 에 {@code UNIQUE (pipeline_id, name)} 제약이
-   * 있고(V3:24, 이후 어떤 마이그레이션도 드롭하지 않는다) 이름을 이월 키로 쓸 수 있는 근거가 바로 그 제약이다. {@code
-   * PipelineServiceTest.pipelineStepName_isUniquePerPipeline} 이 그 불변식을 실측으로 고정한다.
-   *
-   * <p>그럼에도 {@code fetchMap} 이 아니라 {@code fetchGroups} 를 쓰는 이유는 <b>고장 방향</b> 때문이다. 언젠가 그 제약이 사라지면
-   * {@code fetchMap} 은 {@code InvalidResultException} 을 던지고, 이 호출은 {@code deleteByPipelineId} 보다 먼저
-   * 일어나므로 <b>해당 파이프라인 편집이 통째로 불가능</b>해진다. 반면 여기서 중복 이름을 버리면 "이월하지 않음"(=전체를 다시 읽음)으로 degrade 될 뿐이다 —
-   * 이름만으로는 어느 책갈피를 이어받을지 정할 수도 없으므로 그쪽이 옳은 답이기도 하다.
+   * 책갈피를 지정 값으로 맞춘다(WD-108 — 제자리 갱신 저장의 이월 규칙 적용). 이월하지 않을 때는 {@code (null, false)} 로 "한 번도 실행되지 않은
+   * 스텝"과 같은 상태로 되돌린다.
    */
-  public Map<String, StepCursor> findCursorsByPipelineId(Long pipelineId) {
-    Map<String, List<StepCursor>> byName =
-        dsl.select(PS_NAME, PS_LAST_RUN_AT, PS_FULL_REBUILD_PENDING, PS_OUTPUT_DATASET_ID)
-            .from(PIPELINE_STEP)
-            .where(PS_PIPELINE_ID.eq(pipelineId))
-            .fetchGroups(
-                r -> r.get(PS_NAME),
-                r ->
-                    new StepCursor(
-                        r.get(PS_LAST_RUN_AT),
-                        Boolean.TRUE.equals(r.get(PS_FULL_REBUILD_PENDING)),
-                        r.get(PS_OUTPUT_DATASET_ID)));
-
-    Map<String, StepCursor> result = new HashMap<>();
-    byName.forEach(
-        (stepName, cursors) -> {
-          if (cursors.size() == 1) {
-            result.put(stepName, cursors.get(0));
-          } else {
-            log.warn(
-                "파이프라인 {} 의 스텝 이름 '{}' 이 {}건 중복이라 증분 책갈피를 이월하지 않습니다(전체를 다시 읽습니다)",
-                pipelineId,
-                stepName,
-                cursors.size());
-          }
-        });
-    return result;
-  }
-
-  /**
-   * 재저장으로 새로 만들어진 스텝(이름 기준)에 책갈피를 복원한다.
-   *
-   * <p>이 {@code WHERE} 가 한 행만 맞히는 근거는 {@code UNIQUE (pipeline_id, name)}(V3:24)이다. 그 제약이 사라져도
-   * {@link #findCursorsByPipelineId} 가 중복 이름을 애초에 돌려주지 않으므로 이 메서드가 동명의 스텝 전부를 갱신하는 일은 없다.
-   */
-  public void restoreCursor(
-      Long pipelineId, String stepName, OffsetDateTime lastRunAt, boolean pending) {
+  public void setCursor(Long stepId, OffsetDateTime lastRunAt, boolean pending) {
     dsl.update(PIPELINE_STEP)
         .set(PS_LAST_RUN_AT, lastRunAt)
         .set(PS_FULL_REBUILD_PENDING, pending)
-        .where(PS_PIPELINE_ID.eq(pipelineId).and(PS_NAME.eq(stepName)))
+        .where(PS_ID.eq(stepId))
         .execute();
   }
 

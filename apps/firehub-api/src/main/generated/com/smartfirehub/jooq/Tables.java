@@ -90,6 +90,8 @@ import com.smartfirehub.jooq.tables.StSubdivide;
 import com.smartfirehub.jooq.tables.SystemSettings;
 import com.smartfirehub.jooq.tables.Tenant;
 import com.smartfirehub.jooq.tables.TenantCanary;
+import com.smartfirehub.jooq.tables.TenantDataStore;
+import com.smartfirehub.jooq.tables.TenantDataStoreAccount;
 import com.smartfirehub.jooq.tables.TenantSettings;
 import com.smartfirehub.jooq.tables.TriggerEvent;
 import com.smartfirehub.jooq.tables.UploadedFiles;
@@ -946,6 +948,16 @@ public class Tables {
      * RLS 격리 회귀 가드. 삭제하지 말 것 — RlsIsolationTest 가 사용한다
      */
     public static final TenantCanary TENANT_CANARY = TenantCanary.TENANT_CANARY;
+
+    /**
+     * 테넌트별 외부 데이터셋 저장소 설정 — 전역, RLS 미적용. 행이 없으면 PostgreSQL
+     */
+    public static final TenantDataStore TENANT_DATA_STORE = TenantDataStore.TENANT_DATA_STORE;
+
+    /**
+     * 외부 저장소 접속 계정(OWNER/RO/S1..S10) — 전역, RLS 미적용. 비밀번호는 암호화 저장
+     */
+    public static final TenantDataStoreAccount TENANT_DATA_STORE_ACCOUNT = TenantDataStoreAccount.TENANT_DATA_STORE_ACCOUNT;
 
     /**
      * P7-b 테넌트 설정 오버라이드. 행이 없으면 system_settings(플랫폼 기본값)로 폴백한다.

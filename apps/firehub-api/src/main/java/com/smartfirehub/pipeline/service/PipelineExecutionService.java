@@ -168,7 +168,7 @@ public class PipelineExecutionService {
     // 중간에 예외 발생 시 @Transactional이 createExecution 포함 전체를 롤백한다
     Map<Long, Long> stepIdToStepExecId = new HashMap<>();
     for (PipelineStepResponse step : steps) {
-      Long stepExecId = executionRepository.createStepExecution(executionId, step.id());
+      Long stepExecId = executionRepository.createStepExecution(executionId, step.id(), step.name());
       stepIdToStepExecId.put(step.id(), stepExecId);
     }
 

@@ -122,7 +122,8 @@ class PipelineExecutionServiceTest {
     when(stepRepository.findByPipelineId(pipelineId)).thenReturn(List.of(sqlStep));
     when(executionRepository.createExecution(pipelineId, userId, "MANUAL", null))
         .thenReturn(executionId);
-    when(executionRepository.createStepExecution(executionId, stepId)).thenReturn(stepExecId);
+    when(executionRepository.createStepExecution(eq(executionId), eq(stepId), any()))
+        .thenReturn(stepExecId);
     when(pipelineRepository.findNameById(pipelineId)).thenReturn(Optional.of("TestPipeline"));
 
     // when
@@ -130,7 +131,7 @@ class PipelineExecutionServiceTest {
 
     // then
     assertThat(result).isEqualTo(executionId);
-    verify(executionRepository).createStepExecution(executionId, stepId);
+    verify(executionRepository).createStepExecution(eq(executionId), eq(stepId), any());
     verify(executionRepository).createExecution(pipelineId, userId, "MANUAL", null);
     // asyncRunner.executeAsync가 호출되었는지 확인
     verify(asyncRunner)
@@ -202,16 +203,18 @@ class PipelineExecutionServiceTest {
     when(stepRepository.findByPipelineId(pipelineId)).thenReturn(List.of(step1, step2));
     when(executionRepository.createExecution(pipelineId, userId, "MANUAL", null))
         .thenReturn(executionId);
-    when(executionRepository.createStepExecution(executionId, step1Id)).thenReturn(210L);
-    when(executionRepository.createStepExecution(executionId, step2Id)).thenReturn(211L);
+    when(executionRepository.createStepExecution(eq(executionId), eq(step1Id), any()))
+        .thenReturn(210L);
+    when(executionRepository.createStepExecution(eq(executionId), eq(step2Id), any()))
+        .thenReturn(211L);
     when(pipelineRepository.findNameById(pipelineId)).thenReturn(Optional.of("MultiStepPipeline"));
 
     // when
     service.executePipeline(pipelineId, userId);
 
     // then: 두 스텝 모두 실행 레코드 생성됨
-    verify(executionRepository).createStepExecution(executionId, step1Id);
-    verify(executionRepository).createStepExecution(executionId, step2Id);
+    verify(executionRepository).createStepExecution(eq(executionId), eq(step1Id), any());
+    verify(executionRepository).createStepExecution(eq(executionId), eq(step2Id), any());
 
     // asyncRunner에 의존성 맵이 올바르게 전달되는지 확인
     ArgumentCaptor<java.util.Map> depMapCaptor = ArgumentCaptor.forClass(java.util.Map.class);
@@ -288,9 +291,10 @@ class PipelineExecutionServiceTest {
     when(stepRepository.findByPipelineId(pipelineId)).thenReturn(List.of(step1, step2));
     when(executionRepository.createExecution(pipelineId, userId, "MANUAL", null))
         .thenReturn(executionId);
-    when(executionRepository.createStepExecution(executionId, step1Id)).thenReturn(220L);
+    when(executionRepository.createStepExecution(eq(executionId), eq(step1Id), any()))
+        .thenReturn(220L);
     // 두 번째 스텝 실행 레코드 생성 시 DB 오류 시뮬레이션
-    when(executionRepository.createStepExecution(executionId, step2Id))
+    when(executionRepository.createStepExecution(eq(executionId), eq(step2Id), any()))
         .thenThrow(new RuntimeException("DB connection lost"));
 
     // when / then: 예외가 전파되어야 한다

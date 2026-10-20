@@ -62,6 +62,7 @@ import com.smartfirehub.jooq.tables.RolePermission.RolePermissionPath;
 import com.smartfirehub.jooq.tables.SavedQuery.SavedQueryPath;
 import com.smartfirehub.jooq.tables.SecurityLevel.SecurityLevelPath;
 import com.smartfirehub.jooq.tables.SlackWorkspace.SlackWorkspacePath;
+import com.smartfirehub.jooq.tables.TenantDataStore.TenantDataStorePath;
 import com.smartfirehub.jooq.tables.TenantSettings.TenantSettingsPath;
 import com.smartfirehub.jooq.tables.TriggerEvent.TriggerEventPath;
 import com.smartfirehub.jooq.tables.UploadedFiles.UploadedFilesPath;
@@ -993,6 +994,19 @@ public class Tenant extends TableImpl<TenantRecord> {
             _slackWorkspace = new SlackWorkspacePath(this, null, Keys.SLACK_WORKSPACE__SLACK_WORKSPACE_TENANT_ID_FKEY.getInverseKey());
 
         return _slackWorkspace;
+    }
+
+    private transient TenantDataStorePath _tenantDataStore;
+
+    /**
+     * Get the implicit to-many join path to the
+     * <code>public.tenant_data_store</code> table
+     */
+    public TenantDataStorePath tenantDataStore() {
+        if (_tenantDataStore == null)
+            _tenantDataStore = new TenantDataStorePath(this, null, Keys.TENANT_DATA_STORE__TENANT_DATA_STORE_TENANT_ID_FKEY.getInverseKey());
+
+        return _tenantDataStore;
     }
 
     private transient TenantSettingsPath _tenantSettings;

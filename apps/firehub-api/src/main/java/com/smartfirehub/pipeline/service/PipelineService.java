@@ -102,8 +102,8 @@ public class PipelineService {
     PipelineResponse pipeline =
         pipelineRepository.save(request.name(), request.description(), userId);
 
-    // Save steps
-    saveSteps(pipeline.id(), request.steps(), userId, Set.of(), Set.of());
+    // Save steps — 새 파이프라인이므로 요청에 스텝 id 가 와도 무시하고 전부 새로 만든다(existingStepIds = 전부 null).
+    saveSteps(pipeline.id(), request.steps(), userId, Set.of(), Set.of(), null);
 
     // Return full detail
     return getPipelineById(pipeline.id());
@@ -117,13 +117,15 @@ public class PipelineService {
    *     건너뛴다(왕복 보존, 아래 SQL·AI_CLASSIFY 출력 판정 참고). 새 파이프라인은 빈 집합
    * @param previouslySavedInputIds 이 파이프라인에 저장 전부터 있던 입력 데이터셋 id — SQL·PYTHON·API_CALL 입력의 같은 왕복 보존
    *     규칙(WD-21)
+   * @param existingStepIds 요청 순서대로, 제자리 갱신할 기존 스텝 id(새 스텝은 null) — WD-108. null 이면 전부 새 스텝(생성 경로)
    */
   private void saveSteps(
       Long pipelineId,
       List<PipelineStepRequest> stepRequests,
       Long editorUserId,
       Set<Long> previouslySavedOutputIds,
-      Set<Long> previouslySavedInputIds) {
+      Set<Long> previouslySavedInputIds,
+      List<Long> existingStepIds) {
     if (stepRequests == null || stepRequests.isEmpty()) {
       return;
     }
@@ -262,8 +264,16 @@ public class PipelineService {
         }
       }
 
-      // Save step
-      Long stepId = stepRepository.saveStep(pipelineId, stepRequest, i);
+      // Save step — 기존 스텝이면 id 를 유지한 채 제자리 갱신하고(과거 실행 기록·러너 TEMP 연결 유지, WD-108), 새 스텝만 INSERT 한다.
+      // 검증은 위에서 두 경우 모두 똑같이 끝났다.
+      Long existingStepId = existingStepIds != null ? existingStepIds.get(i) : null;
+      Long stepId;
+      if (existingStepId != null) {
+        stepRepository.updateStep(pipelineId, existingStepId, stepRequest, i);
+        stepId = existingStepId;
+      } else {
+        stepId = stepRepository.saveStep(pipelineId, stepRequest, i);
+      }
       stepNameToId.put(stepRequest.name(), stepId);
 
       // Save input datasets
@@ -491,52 +501,152 @@ public class PipelineService {
     pipelineRepository.update(
         id, request.name(), request.description(), request.isActive(), userId);
 
-    // Delete old steps and save new ones (full replacement)
+    // 스텝 전체 교체 계약(요청이 스텝 목록 전체를 담는다)은 그대로지만, 저장 방식은 제자리 갱신이다(WD-108).
+    // 예전에는 스텝을 전부 지우고 새 id 로 다시 만들었다 — pipeline_step_execution.step_id 가 ON DELETE CASCADE(V3)라
+    // 저장 한 번(설명만 바꿔도)에 과거 실행의 스텝 상태·오류·적재 행 수가 통째로 지워졌다. 이제 같은 스텝은 id 를 유지한 채
+    // UPDATE, 새 스텝만 INSERT, 요청에서 빠진 스텝만 DELETE 한다(지워진 스텝의 기록은 V139 의 SET NULL + step_name 스냅샷으로
+    // 남는다).
     if (request.steps() != null) {
-      // 스텝은 전체 삭제·재생성되므로 스텝 id 가 매번 바뀐다 — 증분 책갈피를 이름 기준으로 떠 두었다가
-      // 복원한다. 복원하지 않으면 파이프라인을 한 번 저장할 때마다 책갈피가 사라져 매번 전체를 다시 읽는다.
-      //
-      // 출력 데이터셋이 바뀐 스텝은 이월하지 않는다 — 새 출력은 과거 실행분을 받은 적이 없는데 책갈피만
-      // 이어받으면 그 구간이 영원히 비는(=조용한 데이터 누락) 결과가 된다. 전체 읽기로 되돌리는 쪽이 안전하다.
-      //
-      // 출력이 null(임시 데이터셋 자동 생성)인 스텝도 이월하지 않는다 — null == null 은 "같은 출력"이
-      // 아니다. 임시 데이터셋은 source_pipeline_step_id = 스텝 id 로 묶여 있는데 재저장으로 id 가 바뀌면
-      // 러너가 기존 임시 데이터셋을 찾지 못하고 빈 것을 새로 만든다. 그 새 출력에 책갈피만 이어받으면
-      // 이전 실행분이 통째로 빠진 채 변경분만 쌓인다.
-      Map<String, StepCursor> cursors = stepRepository.findCursorsByPipelineId(id);
-      // 왕복 보존용 기존 출력 id — 스텝 삭제 전에 뜬다. 이름이 아니라 파이프라인 전체 집합으로 비교한다(스텝 이름을 바꿔도 같은 출력을
+      List<PipelineStepResponse> existingSteps = stepRepository.findByPipelineId(id);
+      // 왕복 보존용 기존 출력·입력 id — 이름이 아니라 파이프라인 전체 집합으로 비교한다(스텝 이름을 바꿔도 같은 출력을
       // 되돌려 보내는 저장이 막히지 않게). 웹은 해석된 출력(TEMP 폴백 포함)을 되돌려 보내므로 해석된 값을 쓴다.
       Set<Long> previouslySavedOutputIds = new java.util.HashSet<>();
       Set<Long> previouslySavedInputIds = new java.util.HashSet<>();
-      for (PipelineStepResponse existing : stepRepository.findByPipelineId(id)) {
+      for (PipelineStepResponse existing : existingSteps) {
         if (existing.outputDatasetId() != null) {
           previouslySavedOutputIds.add(existing.outputDatasetId());
         }
         previouslySavedInputIds.addAll(existing.inputDatasetIds());
       }
-      stepRepository.deleteByPipelineId(id);
-      saveSteps(id, request.steps(), userId, previouslySavedOutputIds, previouslySavedInputIds);
-      // 새로 저장하는 쪽의 동명 스텝은 따로 거를 필요가 없다 — pipeline_step 에는
-      // UNIQUE (pipeline_id, name) 제약이 있어(V3:24) saveSteps 가 이 루프에 닿기 전에 실패하고
-      // 트랜잭션 전체가 롤백된다. 이름을 이월 키로 쓸 수 있는 근거도 그 제약이다.
-      for (PipelineStepRequest s : request.steps()) {
-        StepCursor c = cursors.get(s.name());
-        if (c != null
-            && c.outputDatasetId() != null
-            && java.util.Objects.equals(c.outputDatasetId(), s.outputDatasetId())) {
-          // 재생성 예약은 새 스텝이 증분 스텝일 때만 이월한다(#734). 실행기(PipelineAsyncRunner)는
-          // "SQL 스텝 + {{last_run_at}} 사용"일 때만 증분 경로를 타며 그 경로에서만 예약을 소비·해제한다.
-          // 그래서 예약 API(setFullRebuildPending)도 비증분 스텝의 예약을 거부한다 — 저장 경로로 같은
-          // 상태를 만들면 화면에 안 보이고 취소도 못 하는 예약이 남았다가, 나중에 {{last_run_at}} 을 다시
-          // 넣는 순간 확인 없이 출력 전체를 지운다. 비증분으로 저장하면 예약은 버린다(다시 증분으로
-          // 되돌려도 되살아나지 않는다). 책갈피(lastRunAt) 이월 여부는 별개 사안이라 기존대로 둔다.
-          boolean newStepIncremental =
-              LastRunAtPlaceholder.isIncrementalStep(s.scriptType(), s.scriptContent());
-          stepRepository.restoreCursor(
-              id, s.name(), c.lastRunAt(), c.fullRebuildPending() && newStepIncremental);
+
+      // 1) 요청 스텝 ↔ 기존 스텝 짝짓기(요청 순서대로 짝지은 기존 스텝, 새 스텝은 null).
+      List<PipelineStepResponse> matchedSteps = matchExistingSteps(existingSteps, request.steps());
+      // Stream.toList() 는 null 원소를 허용한다 — 새 스텝 자리는 null id 로 saveSteps 에 넘어간다.
+      List<Long> matchedStepIds =
+          matchedSteps.stream().map(m -> m == null ? null : m.id()).toList();
+
+      // 2) 요청에서 빠진 스텝만 지운다 — 먼저 지워야 그 이름을 새·이름 바뀐 스텝이 쓸 수 있다(UNIQUE (pipeline_id, name)).
+      Set<Long> keptIds = new java.util.HashSet<>(matchedStepIds);
+      keptIds.remove(null);
+      List<Long> removedIds =
+          existingSteps.stream()
+              .map(PipelineStepResponse::id)
+              .filter(sid -> !keptIds.contains(sid))
+              .toList();
+      stepRepository.deleteSteps(id, removedIds);
+
+      // 3) 남는 스텝의 입력·의존을 비운다 — 요청이 전체를 다시 보내므로 saveSteps 가 새 이름→id 맵으로 다시 잇는다.
+      stepRepository.clearInputsAndDependencies(keptIds);
+
+      // 4) 이름이 바뀌는 스텝은 임시 이름으로 비켜 둔다 — 이름 맞바꾸기(A↔B)도 UNIQUE 에 걸리지 않게(리포지토리 Javadoc).
+      for (int i = 0; i < matchedSteps.size(); i++) {
+        PipelineStepResponse before = matchedSteps.get(i);
+        if (before != null && !before.name().equals(request.steps().get(i).name())) {
+          stepRepository.renameStepTemporarily(id, before.id());
+        }
+      }
+
+      // 5) 검증 + 제자리 갱신/새로 저장 + 입력·의존 재연결.
+      saveSteps(
+          id,
+          request.steps(),
+          userId,
+          previouslySavedOutputIds,
+          previouslySavedInputIds,
+          matchedStepIds);
+
+      // 6) 남은 스텝의 증분 책갈피 이월 규칙. 스텝 행이 그대로라 책갈피도 그대로 남아 있으므로 "버려야 할 때"만 되돌린다.
+      //
+      // 출력 데이터셋이 바뀐 스텝은 책갈피를 버린다 — 새 출력은 과거 실행분을 받은 적이 없는데 책갈피만 이어받으면 그 구간이
+      // 영원히 비는(=조용한 데이터 누락) 결과가 된다. 전체 읽기로 되돌리는 쪽이 안전하다. 비교는 "해석된" 출력(지정 출력, 없으면 이
+      // 스텝의 러너 TEMP)으로 한다 — 스텝 id 가 유지되므로 출력 미지정 스텝의 러너 TEMP(source_pipeline_step_id = 스텝 id)도
+      // 그대로 이어진다. 예전(삭제·재생성)에는 id 가 바뀌어 러너가 빈 TEMP 를 새로 만들었기 때문에 출력 미지정 스텝의 책갈피를 버렸지만,
+      // 이제 같은 TEMP 에 계속 쌓이므로 버리면 오히려 전체를 다시 읽어 APPEND 가 중복을 만든다.
+      // 스크립트(SQL)만 바뀐 경우는 예전처럼 이어받는다(이름 기준 이월 시절과 같은 의미).
+      // 출력을 비워 보낸 스텝의 해석값(러너 TEMP)은 남는 스텝 전체를 한 번에 읽어 둔다(스텝마다 조회하지 않음).
+      Map<Long, Long> tempByStepId = stepRepository.findTempDatasetIdsByStepIds(keptIds);
+      for (int i = 0; i < matchedSteps.size(); i++) {
+        PipelineStepResponse before = matchedSteps.get(i);
+        if (before == null) {
+          continue; // 새 스텝 — 책갈피 없음(기본값)
+        }
+        Long sid = before.id();
+        PipelineStepRequest s = request.steps().get(i);
+        Long newResolvedOutput =
+            s.outputDatasetId() != null ? s.outputDatasetId() : tempByStepId.get(sid);
+        boolean sameOutput =
+            before.outputDatasetId() != null
+                && java.util.Objects.equals(before.outputDatasetId(), newResolvedOutput);
+        // 재생성 예약은 새 스텝이 증분 스텝일 때만 이월한다(#734). 실행기(PipelineAsyncRunner)는
+        // "SQL 스텝 + {{last_run_at}} 사용"일 때만 증분 경로를 타며 그 경로에서만 예약을 소비·해제한다.
+        // 그래서 예약 API(setFullRebuildPending)도 비증분 스텝의 예약을 거부한다 — 저장 경로로 같은
+        // 상태를 만들면 화면에 안 보이고 취소도 못 하는 예약이 남았다가, 나중에 {{last_run_at}} 을 다시
+        // 넣는 순간 확인 없이 출력 전체를 지운다. 비증분으로 저장하면 예약은 버린다(다시 증분으로
+        // 되돌려도 되살아나지 않는다). 책갈피(lastRunAt) 이월 여부는 별개 사안이라 기존대로 둔다.
+        boolean newStepIncremental =
+            LastRunAtPlaceholder.isIncrementalStep(s.scriptType(), s.scriptContent());
+        if (!sameOutput) {
+          stepRepository.setCursor(sid, null, false);
+        } else if (before.fullRebuildPending() && !newStepIncremental) {
+          stepRepository.setCursor(sid, before.lastRunAt(), false);
         }
       }
     }
+  }
+
+  /**
+   * 수정 요청의 각 스텝이 어느 기존 스텝과 "같은 스텝"인지 정한다(WD-108). 결과는 요청 순서대로 짝지은 기존 스텝(저장 전 상태)이며 새 스텝은 null 이다.
+   *
+   * <p>판정 순서:
+   *
+   * <ol>
+   *   <li>요청에 스텝 id 가 있으면 그것으로 찾는다 — 웹 편집기는 상세 응답의 스텝 id 를 그대로 되돌려 보내므로 이름을 바꿔도 같은 스텝으로 남는다. 이
+   *       파이프라인의 현재 스텝이 아닌 id(다른 파이프라인의 스텝, 이미 지워진 스텝)는 거부한다 — 그대로 쓰면 다른 파이프라인의 스텝 행을 고치게 되고, 조용히 새
+   *       스텝으로 바꾸면 사용자가 모르는 사이 기록이 끊긴다. 한 요청에 같은 id 가 두 번 와도 거부한다.
+   *   <li>id 가 없으면 이름으로 찾는다 — AI 에이전트 도구 등 id 를 모르는 클라이언트와 저장 직후 아직 재조회 전인 새 스텝을 위해서다. 이름은 파이프라인
+   *       안에서 고유하다({@code UNIQUE (pipeline_id, name)}, V3:24 — 웹도 의존을 이름으로 잇는다). 이미 id 로 짝지어진 스텝은
+   *       다시 짝짓지 않는다.
+   * </ol>
+   */
+  private List<PipelineStepResponse> matchExistingSteps(
+      List<PipelineStepResponse> existingSteps, List<PipelineStepRequest> stepRequests) {
+    Map<Long, PipelineStepResponse> existingById = new HashMap<>();
+    Map<String, PipelineStepResponse> existingByName = new HashMap<>();
+    for (PipelineStepResponse existing : existingSteps) {
+      existingById.put(existing.id(), existing);
+      existingByName.put(existing.name(), existing);
+    }
+
+    List<PipelineStepResponse> matched =
+        new java.util.ArrayList<>(java.util.Collections.nCopies(stepRequests.size(), null));
+    Set<Long> claimed = new java.util.HashSet<>();
+    // 1차: 명시 id
+    for (int i = 0; i < stepRequests.size(); i++) {
+      Long requestedId = stepRequests.get(i).id();
+      if (requestedId == null) {
+        continue;
+      }
+      if (!existingById.containsKey(requestedId)) {
+        throw new IllegalArgumentException(
+            "이 파이프라인에 없는 스텝입니다(다른 곳에서 먼저 수정됐을 수 있습니다. 새로고침 후 다시 저장하세요): "
+                + stepRequests.get(i).name());
+      }
+      if (!claimed.add(requestedId)) {
+        throw new IllegalArgumentException("같은 스텝이 요청에 두 번 들어 있습니다: " + stepRequests.get(i).name());
+      }
+      matched.set(i, existingById.get(requestedId));
+    }
+    // 2차: id 없는 스텝은 아직 짝지어지지 않은 같은 이름의 기존 스텝
+    for (int i = 0; i < stepRequests.size(); i++) {
+      if (matched.get(i) != null || stepRequests.get(i).id() != null) {
+        continue;
+      }
+      PipelineStepResponse byName = existingByName.get(stepRequests.get(i).name());
+      if (byName != null && claimed.add(byName.id())) {
+        matched.set(i, byName);
+      }
+    }
+    return matched;
   }
 
   private void validateAiClassifyStep(PipelineStepRequest step) {
