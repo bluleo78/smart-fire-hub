@@ -30,6 +30,7 @@ import { Tabs, TabsContent,TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAllDatasets } from '@/hooks/queries/useDatasets';
 import { useExecutePipeline, useExecution, useExecutions,usePipeline } from '@/hooks/queries/usePipelines';
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
+import { handleApiError } from '@/lib/api-error';
 import { formatDate, getStatusBadgeVariant, getStatusLabel } from '@/lib/formatters';
 import type { PipelineExecutionResponse } from '@/types/pipeline';
 
@@ -140,8 +141,10 @@ export default function PipelineEditorPage() {
     try {
       await executeMutation.mutateAsync();
       toast.success('파이프라인 실행이 시작되었습니다.');
-    } catch {
-      toast.error('파이프라인 실행에 실패했습니다.');
+    } catch (error) {
+      // 서버가 보낸 사유(비활성 파이프라인·보안 등급 403 등)를 그대로 보여 준다(WD-110).
+      // 예전엔 사유를 버리고 고정 문구만 띄워 왜 실패했는지 알 수 없었다. 사유가 없을 때만 고정 문구를 쓴다.
+      handleApiError(error, '파이프라인 실행에 실패했습니다.');
     }
   };
 
@@ -156,8 +159,9 @@ export default function PipelineEditorPage() {
       const newExecId = res.data.id;
       toast.success('파이프라인을 다시 실행했습니다.');
       navigate(`/pipelines/${pipelineId}/executions/${newExecId}`);
-    } catch {
-      toast.error('재실행에 실패했습니다.');
+    } catch (error) {
+      // 실행 버튼과 같은 이유로 서버 사유를 보여 준다(WD-110).
+      handleApiError(error, '재실행에 실패했습니다.');
     }
   };
 

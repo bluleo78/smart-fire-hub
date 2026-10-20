@@ -343,7 +343,7 @@ class GlobalExceptionHandlerTest {
         .andExpect(status().isInternalServerError())
         .andExpect(jsonPath("$.status").value(500))
         .andExpect(jsonPath("$.error").value("Internal Server Error"))
-        .andExpect(jsonPath("$.message").value("An unexpected error occurred"));
+        .andExpect(jsonPath("$.message").value("예기치 않은 오류가 발생했습니다. 잠시 후 다시 시도하세요."));
   }
 
   /** 지원하지 않는 HTTP 메서드 요청 시 500 대신 405 반환 확인 (#197) */

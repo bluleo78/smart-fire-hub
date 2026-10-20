@@ -763,8 +763,11 @@ public class GlobalExceptionHandler {
   @ExceptionHandler(Exception.class)
   public ResponseEntity<ErrorResponse> handleException(Exception ex, HttpServletRequest request) {
     log.error("Unhandled exception", ex);
+    // 화면이 서버 message 를 그대로 토스트로 보여 주므로(handleApiError) 사용자 안내 문장으로 쓴다(WD-110).
+    // 예전 영어 문구("An unexpected error occurred")가 실행 실패 등에서 그대로 노출됐다.
     ErrorResponse response =
-        buildError(HttpStatus.INTERNAL_SERVER_ERROR, "An unexpected error occurred", null, request);
+        buildError(
+            HttpStatus.INTERNAL_SERVER_ERROR, "예기치 않은 오류가 발생했습니다. 잠시 후 다시 시도하세요.", null, request);
     return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
   }
 }

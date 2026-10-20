@@ -12,6 +12,7 @@ import com.smartfirehub.dataset.service.DatasetService;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.pipeline.dto.*;
 import com.smartfirehub.pipeline.exception.CyclicDependencyException;
+import com.smartfirehub.pipeline.exception.PipelineInactiveException;
 import com.smartfirehub.pipeline.exception.PipelineNotFoundException;
 import com.smartfirehub.pipeline.exception.UnsafePythonScriptException;
 import com.smartfirehub.pipeline.exception.UnsafeSqlException;
@@ -631,6 +632,32 @@ class PipelineServiceTest extends IntegrationTestBase {
             .where(PIPELINE_STEP.PIPELINE_ID.eq(pipelineId))
             .fetchOne(0, Long.class);
     assertThat(stepCount).isEqualTo(0);
+  }
+
+  /**
+   * 비활성 파이프라인 실행 거부 문구는 화면 토스트에 그대로 보이므로 한국어 안내여야 하고, 실행 기록을 남기지 않는다(WD-110). 예전 문구는 "Pipeline N is
+   * inactive and cannot be executed" 영어 원문이었다.
+   */
+  @Test
+  void executePipeline_inactivePipeline_rejectedWithKoreanReason() {
+    PipelineDetailResponse pipeline =
+        pipelineService.createPipeline(
+            new CreatePipelineRequest("Inactive Pipeline", "Description", List.of()), testUserId);
+    pipelineService.updatePipeline(
+        pipeline.id(),
+        new UpdatePipelineRequest("Inactive Pipeline", "Description", false, null),
+        testUserId);
+
+    assertThatThrownBy(() -> pipelineService.executePipeline(pipeline.id(), testUserId))
+        .isInstanceOf(PipelineInactiveException.class)
+        .hasMessage("비활성 파이프라인은 실행할 수 없습니다. 파이프라인 편집에서 활성화한 뒤 다시 실행하세요.");
+
+    Long executionCount =
+        dsl.selectCount()
+            .from(PIPELINE_EXECUTION)
+            .where(PIPELINE_EXECUTION.PIPELINE_ID.eq(pipeline.id()))
+            .fetchOne(0, Long.class);
+    assertThat(executionCount).isZero();
   }
 
   @Test

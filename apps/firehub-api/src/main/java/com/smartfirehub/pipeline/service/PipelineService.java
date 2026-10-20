@@ -734,9 +734,9 @@ public class PipelineService {
             .orElseThrow(() -> new PipelineNotFoundException("Pipeline not found: " + pipelineId));
 
     // 비활성 파이프라인은 수동 실행 불가 — 활성화 후 재시도해야 함 (#187)
+    // 이 문구는 화면 토스트에 그대로 보이므로 사용자 안내 문장으로 쓴다(WD-110).
     if (!pipeline.isActive()) {
-      throw new PipelineInactiveException(
-          "Pipeline " + pipelineId + " is inactive and cannot be executed");
+      throw new PipelineInactiveException("비활성 파이프라인은 실행할 수 없습니다. 파이프라인 편집에서 활성화한 뒤 다시 실행하세요.");
     }
 
     // Get user display name
