@@ -62,4 +62,10 @@ set +e
   --tests com.smartfirehub.dataset.storage.tibero.TiberoDataStoreContractTest \
   -i 2>&1 | grep -E '^[[:space:]]*PROBE |[[:space:]]>[[:space:]].*[[:space:]](PASSED|FAILED|SKIPPED)$|^BUILD (SUCCESSFUL|FAILED)|tests completed'
 status=${PIPESTATUS[0]}
+# 테스트별 PASSED 줄은 gradle 로그 설정에 따라 안 찍힐 수 있으므로, 결과 XML 의 클래스별 합계를 함께 보여 준다.
+for report in "$ROOT_DIR"/apps/firehub-api/build/test-results/test/TEST-com.smartfirehub.dataset.storage.tibero.Tibero{DialectProbe,DataStoreContract}Test.xml; do
+  [[ -r "$report" ]] || continue
+  grep -o '<testsuite [^>]*' "$report" | grep -oE '(name|tests|skipped|failures|errors)="[^"]*"' | tr '\n' ' '
+  echo
+done
 exit "$status"

@@ -35,9 +35,16 @@ class JdbcExternalDbConnectorTest {
     assertThatThrownBy(mysql::jdbcUrl).isInstanceOf(IllegalArgumentException.class);
   }
 
+  /** 드라이버 없음 — 없는 클래스명을 주입해, 개발 머신에 실제 드라이버 jar 가 있어도 늘 같은 조건으로 검증한다. */
   @Test
   void open_missingDriver_clearMessage() {
-    JdbcExternalDbConnector connector = new JdbcExternalDbConnector();
+    JdbcExternalDbConnector connector =
+        new JdbcExternalDbConnector(
+            "com.smartfirehub.test.NoSuchTiberoDriver",
+            Duration.ofSeconds(2),
+            (url, props) -> {
+              throw new AssertionError("드라이버가 없으면 접속을 시도하지 않아야 한다");
+            });
     try {
       assertThatThrownBy(() -> connector.open(TARGET, "u", "p"))
           .isInstanceOf(ExternalDbConnectionException.class)

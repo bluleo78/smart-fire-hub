@@ -570,7 +570,7 @@ public class TiberoDataTableStore implements DataTableStore {
           execute(tenantId, sql);
         } catch (RuntimeException e) {
           if ((createsSequence || createsTable)
-              && TiberoErrors.hasCode(e, TiberoDialect.NAME_ALREADY_USED)) {
+              && TiberoErrors.hasAnyCode(e, TiberoDialect.NAME_ALREADY_USED)) {
             throw tableExists(tableName, e);
           }
           throw e;

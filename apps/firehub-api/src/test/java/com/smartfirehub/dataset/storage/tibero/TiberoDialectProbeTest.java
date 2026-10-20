@@ -8,6 +8,7 @@ import java.sql.Statement;
 import java.sql.Types;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -343,26 +344,30 @@ class TiberoDialectProbeTest {
   @Test
   void not_found_error_codes() {
     String t = P + "ERR";
-    probeCode("error_table_not_found", 942, "SELECT 1 FROM " + P + "NOPE");
-    probeCode("error_sequence_not_found", 2289, "SELECT " + P + "NOSEQ.NEXTVAL FROM DUAL");
-    probeCode("error_index_not_found", 1418, "DROP INDEX " + P + "NOIDX");
+    probeCode("error_table_not_found", TiberoDialect.NotFound.TABLE, "SELECT 1 FROM " + P + "NOPE");
+    probeCode(
+        "error_sequence_not_found",
+        TiberoDialect.NotFound.SEQUENCE,
+        "SELECT " + P + "NOSEQ.NEXTVAL FROM DUAL");
+    probeCode("error_index_not_found", TiberoDialect.NotFound.INDEX, "DROP INDEX " + P + "NOIDX");
     try {
       createTracked("CREATE TABLE " + t + " (C NUMBER)", "DROP TABLE " + t);
       probeCode(
           "error_constraint_not_found",
-          2443,
+          TiberoDialect.NotFound.CONSTRAINT,
           "ALTER TABLE " + t + " DROP CONSTRAINT " + P + "NOCON");
-      // RENAME 은 DROP 과 다른 코드로 "없음" 을 알린다(Oracle 23292) — NotFound.CONSTRAINT 가 둘 다 받는다(A1).
+      // Oracle 은 RENAME 을 DROP 과 다른 코드(23292)로 알린다 — NotFound.CONSTRAINT 가 둘 다 받는다(A1). Tibero 는 둘
+      // 다 -7076.
       probeCode(
           "error_constraint_not_found_on_rename",
-          23292,
+          TiberoDialect.NotFound.CONSTRAINT,
           "ALTER TABLE " + t + " RENAME CONSTRAINT " + P + "NOCON TO " + P + "NOCON2");
     } catch (SQLException e) {
       unsupported("error_constraint_not_found", e);
     }
   }
 
-  /** 같은 이름의 테이블·시퀀스를 다시 만들 때의 코드(A4 — 기대 955, TiberoDialect.NAME_ALREADY_USED). */
+  /** 같은 이름의 테이블·시퀀스를 다시 만들 때의 코드(A4 — TiberoDialect.NAME_ALREADY_USED, Tibero 실측 -7102). */
   @Test
   void name_already_used_error_codes() {
     String t = P + "DUP_T";
@@ -370,16 +375,20 @@ class TiberoDialectProbeTest {
     try {
       createTracked("CREATE TABLE " + t + " (C NUMBER)", "DROP TABLE " + t);
       createTracked("CREATE SEQUENCE " + sq, "DROP SEQUENCE " + sq);
-      probeCode("error_table_name_used", 955, "CREATE TABLE " + t + " (C NUMBER)");
-      probeCode("error_sequence_name_used", 955, "CREATE SEQUENCE " + sq);
+      probeCode(
+          "error_table_name_used",
+          TiberoDialect.NAME_ALREADY_USED,
+          "CREATE TABLE " + t + " (C NUMBER)");
+      probeCode(
+          "error_sequence_name_used", TiberoDialect.NAME_ALREADY_USED, "CREATE SEQUENCE " + sq);
     } catch (SQLException e) {
       unsupported("name_already_used_error_codes", e);
     }
   }
 
   /**
-   * 무결성 위반 코드(A2) — 커넥션 래퍼가 이 코드로 409 계열 Spring 예외를 고른다. 다르면 {@code TiberoDialect} 의 상수만 바꾼다. 기대:
-   * 중복 키 1, NOT NULL 삽입 1400, NULL 있는 컬럼 NOT NULL 켜기 2296, 길이 초과 12899.
+   * 무결성 위반 코드(A2) — 커넥션 래퍼가 이 코드로 409 계열 Spring 예외를 고른다. 다르면 {@code TiberoDialect} 의 상수만 바꾼다.
+   * Tibero 실측: 중복 키 -10007, NOT NULL 삽입 -10005, NULL 있는 컬럼 NOT NULL 켜기 -7045, 길이 초과 -11048.
    */
   @Test
   void integrity_error_codes() {
@@ -391,11 +400,22 @@ class TiberoDialectProbeTest {
               + " (ID NUMBER PRIMARY KEY, NN NUMBER NOT NULL, S VARCHAR2(3), N NUMBER)",
           "DROP TABLE " + t);
       exec("INSERT INTO " + t + " VALUES (1, 1, 'a', NULL)");
-      probeCode("error_unique_violation", 1, "INSERT INTO " + t + " VALUES (1, 1, 'b', 1)");
-      probeCode("error_not_null_insert", 1400, "INSERT INTO " + t + " VALUES (2, NULL, 'c', 1)");
       probeCode(
-          "error_not_null_enable_nulls_found", 2296, "ALTER TABLE " + t + " MODIFY (N NOT NULL)");
-      probeCode("error_value_too_large", 12899, "INSERT INTO " + t + " VALUES (3, 1, 'abcd', 1)");
+          "error_unique_violation",
+          TiberoDialect.UNIQUE_VIOLATION,
+          "INSERT INTO " + t + " VALUES (1, 1, 'b', 1)");
+      probeCode(
+          "error_not_null_insert",
+          TiberoDialect.NOT_NULL_INSERT,
+          "INSERT INTO " + t + " VALUES (2, NULL, 'c', 1)");
+      probeCode(
+          "error_not_null_enable_nulls_found",
+          TiberoDialect.NOT_NULL_ENABLE_NULLS_FOUND,
+          "ALTER TABLE " + t + " MODIFY (N NOT NULL)");
+      probeCode(
+          "error_value_too_large",
+          TiberoDialect.VALUE_TOO_LARGE,
+          "INSERT INTO " + t + " VALUES (3, 1, 'abcd', 1)");
     } catch (SQLException e) {
       unsupported("integrity_error_codes", e);
     }
@@ -477,17 +497,33 @@ class TiberoDialectProbeTest {
     }
   }
 
-  /** 실패해야 하는 SQL 을 실행해 오류 코드를 기대값과 비교한다. */
-  private void probeCode(String name, int expected, String sql) {
+  /**
+   * 실패해야 하는 SQL 을 실행해, 실제 오류가 운영 코드의 판별 규칙({@link TiberoDialect} 의 코드 묶음)에 걸리는지 확인한다. 숫자 하나와 비교하지
+   * 않고 운영 판별을 그대로 써서, 실서버 코드가 바뀌면 이 확인이 곧바로 DIFFERS 로 드러나게 한다.
+   */
+  private void probeCode(String name, Set<Integer> expected, String sql) {
     try {
       exec(sql);
       report(name, "UNSUPPORTED", "statement unexpectedly succeeded");
     } catch (SQLException e) {
-      boolean match = e.getErrorCode() == expected;
+      boolean match = TiberoErrors.hasAnyCode(e, expected);
       report(
           name,
           String.valueOf(e.getErrorCode()),
           (match ? "matches expected " : "DIFFERS from expected ") + expected + "; " + describe(e));
+    }
+  }
+
+  /** {@link TiberoDialect.NotFound} 판별용 {@link #probeCode} — 종류의 코드 묶음을 그대로 쓴다. */
+  private void probeCode(String name, TiberoDialect.NotFound expected, String sql) {
+    try {
+      exec(sql);
+      report(name, "UNSUPPORTED", "statement unexpectedly succeeded");
+    } catch (SQLException e) {
+      report(
+          name,
+          String.valueOf(e.getErrorCode()),
+          (expected.matches(e) ? "matches " : "DIFFERS from ") + expected + "; " + describe(e));
     }
   }
 

@@ -10,6 +10,7 @@ import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TenantRlsTestSupport;
+import com.smartfirehub.support.TiberoDriverAssumptions;
 import java.nio.charset.StandardCharsets;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.AfterEach;
@@ -121,6 +122,7 @@ class PlatformTenantDataStoreControllerTest extends IntegrationTestBase {
   /** 드라이버가 없어도 500 이 아니라 200 + ok=false 와 한국어 사유, 비밀번호는 응답에 없다. */
   @Test
   void test_driverMissing_200_okFalseWithReason() throws Exception {
+    TiberoDriverAssumptions.assumeDriverAbsent();
     MockHttpServletResponse res =
         postJson(
             "/api/platform/tenants/data-store/test",

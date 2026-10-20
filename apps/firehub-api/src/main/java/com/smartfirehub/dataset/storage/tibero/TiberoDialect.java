@@ -4,6 +4,8 @@ import com.smartfirehub.dataset.storage.DataStoreBackend;
 import com.smartfirehub.dataset.storage.DataStoreFeatureUnsupportedException;
 import java.util.Locale;
 import java.util.Set;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * Tibero 방언 사실(상수·타입 매핑) 모음.
@@ -20,19 +22,21 @@ public final class TiberoDialect {
   public static final int MAX_IDENTIFIER_LENGTH = 30;
 
   /**
-   * "객체 없음" 오류 종류. Tibero 코드는 아직 실서버로 확인하지 못했으므로(WD-71) 판별은 코드와 메시지의 {@code ORA-xxxxx} 표기를 모두
-   * 본다({@link TiberoErrors#hasCode}). 같은 "없음" 이 문장에 따라 다른 코드로 나올 수 있어(제약 DROP 은 2443, RENAME 은
-   * 23292) 코드를 여러 개 받는다. Task 5 의 방언 확인 결과가 다르면 여기 값만 바꾼다.
+   * "객체 없음" 오류 종류. 판별은 코드와 메시지 표기를 모두 본다({@link TiberoErrors#hasCode}).
+   *
+   * <p>실서버 확인(Tibero 7.2, 2026-10-20): Tibero 는 ORA 코드가 아니라 <b>음수 자체 코드</b>를 돌려준다(예: 테이블 없음 -8033,
+   * 메시지 {@code JDBC-8033:...}). Oracle 호환 코드(양수)도 함께 두어 Oracle 계열 서버에서도 같은 판별이 되게 한다. 같은 "없음" 이 문장에
+   * 따라 다른 코드로 나올 수 있어(Oracle 의 제약 DROP 2443 / RENAME 23292) 코드를 여러 개 받는다.
    */
   public enum NotFound {
     /** 테이블·뷰 없음. */
-    TABLE(942),
+    TABLE(942, -8033),
     /** 시퀀스 없음. */
-    SEQUENCE(2289),
-    /** 인덱스 없음. */
-    INDEX(1418),
-    /** 제약 조건 없음 — DROP CONSTRAINT 는 ORA-02443, RENAME CONSTRAINT 는 ORA-23292 로 알린다. */
-    CONSTRAINT(2443, 23292);
+    SEQUENCE(2289, -8034),
+    /** 인덱스 없음 — Tibero 는 "스키마 객체가 없거나 유효하지 않음"(-7071)으로 알린다. */
+    INDEX(1418, -7071),
+    /** 제약 조건 없음 — Oracle 은 DROP 2443·RENAME 23292, Tibero 는 둘 다 -7076. */
+    CONSTRAINT(2443, 23292, -7076);
 
     private final int[] codes;
 
@@ -51,24 +55,28 @@ public final class TiberoDialect {
     }
   }
 
+  // 아래 오류 코드 묶음은 {Oracle 호환 양수 코드, Tibero 음수 자체 코드} 쌍이다(NotFound 와 같은 이유 — 실서버 확인 결과).
+
   /** 이름이 이미 다른 객체에 쓰이고 있음(테이블·시퀀스 생성 충돌). */
-  public static final int NAME_ALREADY_USED = 955;
+  public static final Set<Integer> NAME_ALREADY_USED = Set.of(955, -7102);
 
   /** 고유 제약 위반(중복 키) — Spring {@code DuplicateKeyException} 으로 바꾼다. */
-  public static final int UNIQUE_VIOLATION = 1;
+  public static final Set<Integer> UNIQUE_VIOLATION = Set.of(1, -10007);
 
   /** NOT NULL 컬럼에 NULL 삽입 — {@code DataIntegrityViolationException}. */
-  public static final int NOT_NULL_INSERT = 1400;
+  public static final Set<Integer> NOT_NULL_INSERT = Set.of(1400, -10005);
 
   /** NULL 값이 있어 NOT NULL 제약을 켤 수 없음 — {@code DataIntegrityViolationException}. */
-  public static final int NOT_NULL_ENABLE_NULLS_FOUND = 2296;
+  public static final Set<Integer> NOT_NULL_ENABLE_NULLS_FOUND = Set.of(2296, -7045);
 
   /** 값이 컬럼 길이보다 큼 — {@code DataIntegrityViolationException}(TEXT 4000 바이트 초과 등). */
-  public static final int VALUE_TOO_LARGE = 12899;
+  public static final Set<Integer> VALUE_TOO_LARGE = Set.of(12899, -11048);
 
   /** 무결성 위반으로 바꿀 오류 코드(중복 키 제외). */
   public static final Set<Integer> INTEGRITY_VIOLATIONS =
-      Set.of(NOT_NULL_INSERT, NOT_NULL_ENABLE_NULLS_FOUND, VALUE_TOO_LARGE);
+      Stream.of(NOT_NULL_INSERT, NOT_NULL_ENABLE_NULLS_FOUND, VALUE_TOO_LARGE)
+          .flatMap(Set::stream)
+          .collect(Collectors.toUnmodifiableSet());
 
   /** VARCHAR2 최대 바이트 길이. */
   public static final int MAX_VARCHAR = 4000;

@@ -767,6 +767,25 @@ class ExternalStoreConnectionsTest {
     }
   }
 
+  /** 실서버(Tibero 7.2)가 돌려준 음수 자체 코드도 같은 Spring 예외로 바뀐다(코드·SQLState·메시지는 실측 그대로). */
+  @Test
+  void translate_tiberoNativeCodes() throws Exception {
+    Throwable dup =
+        failWith(
+            new SQLException("JDBC-10007:UNIQUE constraint violation ('S'.'C').", "23000", -10007));
+    assertThat(dup).isInstanceOf(org.springframework.dao.DuplicateKeyException.class);
+    for (int code : new int[] {-10005, -7045, -11048}) {
+      Throwable e = failWith(new SQLException("JDBC" + code + ":x", "23000", code));
+      assertThat(e)
+          .as("code %d", code)
+          .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class)
+          .isNotInstanceOf(org.springframework.dao.DuplicateKeyException.class);
+    }
+    // 코드가 비어 있어도 메시지의 JDBC-xxxx: 표기로 인식한다.
+    assertThat(failWith(new SQLException("JDBC-10007:UNIQUE constraint violation")))
+        .isInstanceOf(org.springframework.dao.DuplicateKeyException.class);
+  }
+
   @Test
   void translate_messageTagOnly_stillRecognised() throws Exception {
     // 드라이버가 코드를 비워 두고 메시지에만 ORA 표기를 싣는 경우.

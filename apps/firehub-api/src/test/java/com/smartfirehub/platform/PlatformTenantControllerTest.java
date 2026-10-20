@@ -14,6 +14,7 @@ import com.smartfirehub.platform.service.PlatformTenantService;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.OpenedSseStreams;
 import com.smartfirehub.support.TenantRlsTestSupport;
+import com.smartfirehub.support.TiberoDriverAssumptions;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
@@ -479,6 +480,7 @@ class PlatformTenantControllerTest extends IntegrationTestBase {
   /** DBA 자동 + 드라이버 없음: 422 와 고정 코드, 테넌트는 롤백돼 남지 않고 응답에 DBA 비밀번호가 없다. */
   @Test
   void create_tiberoDbaAuto_driverMissing_422_andNoTenantCreated() throws Exception {
+    TiberoDriverAssumptions.assumeDriverAbsent();
     String slug = "wd73-dba-" + System.nanoTime();
 
     MockHttpServletResponse response =

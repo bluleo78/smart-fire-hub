@@ -424,22 +424,20 @@ public class ExternalStoreConnections {
 
   /**
    * Tibero 오류 번역기. 먼저 {@link TiberoDialect} 의 명시 매핑(중복 키·NOT NULL 삽입·NOT NULL 켜기 실패·길이 초과 — 코드 또는
-   * 메시지의 {@code ORA-xxxxx} 표기)을 보고, 없으면 Spring 기본 {@code sql-error-codes.xml} 의 Oracle 항목(코드 표)을
-   * 쓴다. 그것도 못 하면 Spring 기본 대체 번역(SQLException 하위 타입 → SQLState) 을 탄다. Tibero 의 실제 코드가 ORA 와
-   * 다르면(WD-71 미확인) {@code TiberoDialect} 값만 바꾸면 되도록 명시 매핑을 Oracle 표보다 앞에 둔다.
+   * 메시지 표기)을 보고, 없으면 Spring 기본 {@code sql-error-codes.xml} 의 Oracle 항목(코드 표)을 쓴다. 그것도 못 하면 Spring
+   * 기본 대체 번역(SQLException 하위 타입 → SQLState) 을 탄다. 실서버의 Tibero 코드는 ORA 와 다른 음수 자체 코드라(-10007 등)
+   * Oracle 표로는 잡히지 않으므로 명시 매핑을 Oracle 표보다 앞에 둔다.
    */
   private static final SQLErrorCodeSQLExceptionTranslator TRANSLATOR =
       new SQLErrorCodeSQLExceptionTranslator("Oracle") {
         @Override
         protected DataAccessException customTranslate(String task, String sql, SQLException ex) {
           String message = buildMessage(task, sql, ex);
-          if (TiberoErrors.hasCode(ex, TiberoDialect.UNIQUE_VIOLATION)) {
+          if (TiberoErrors.hasAnyCode(ex, TiberoDialect.UNIQUE_VIOLATION)) {
             return new DuplicateKeyException(message, ex);
           }
-          for (int code : TiberoDialect.INTEGRITY_VIOLATIONS) {
-            if (TiberoErrors.hasCode(ex, code)) {
-              return new DataIntegrityViolationException(message, ex);
-            }
+          if (TiberoErrors.hasAnyCode(ex, TiberoDialect.INTEGRITY_VIOLATIONS)) {
+            return new DataIntegrityViolationException(message, ex);
           }
           return null;
         }

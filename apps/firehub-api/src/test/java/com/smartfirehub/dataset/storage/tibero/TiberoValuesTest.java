@@ -206,6 +206,39 @@ class TiberoValuesTest {
     assertThat(TiberoErrors.hasCode(new java.sql.SQLException("ORA-942 short"), 942)).isFalse();
   }
 
+  /** 실서버(Tibero 7.2) 음수 자체 코드 — 코드와 메시지 표기 모두 인식하고, 부호·자릿수가 다른 코드와는 섞이지 않는다. */
+  @Test
+  void notFound_matchesTiberoNativeCodes() {
+    assertThat(
+            TiberoDialect.NotFound.TABLE.matches(
+                new java.sql.SQLException(
+                    "JDBC-8033:Specified schema object was not found.", "42S02", -8033)))
+        .isTrue();
+    assertThat(
+            TiberoDialect.NotFound.SEQUENCE.matches(new java.sql.SQLException("x", "42000", -8034)))
+        .isTrue();
+    assertThat(TiberoDialect.NotFound.INDEX.matches(new java.sql.SQLException("x", "72000", -7071)))
+        .isTrue();
+    assertThat(
+            TiberoDialect.NotFound.CONSTRAINT.matches(
+                new java.sql.SQLException("x", "72000", -7076)))
+        .isTrue();
+    // 코드가 비어 있어도 메시지 표기(JDBC-8033:)로 인식한다.
+    assertThat(
+            TiberoDialect.NotFound.TABLE.matches(
+                new RuntimeException(new java.sql.SQLException("JDBC-8033:not found"))))
+        .isTrue();
+    // 양수 8033 이나 더 긴 코드(-80331)와는 맞지 않는다.
+    assertThat(TiberoDialect.NotFound.TABLE.matches(new java.sql.SQLException("x", "42000", 8033)))
+        .isFalse();
+    assertThat(TiberoDialect.NotFound.TABLE.matches(new java.sql.SQLException("JDBC-80331:x")))
+        .isFalse();
+    assertThat(
+            TiberoErrors.hasAnyCode(
+                new java.sql.SQLException("x", "72000", -7102), TiberoDialect.NAME_ALREADY_USED))
+        .isTrue();
+  }
+
   @Test
   void bind_integerAsIs() throws Exception {
     TiberoValues.bind(ps, 1, 5);
