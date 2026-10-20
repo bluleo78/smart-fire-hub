@@ -13,6 +13,7 @@ import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.pipeline.dto.*;
 import com.smartfirehub.pipeline.exception.CyclicDependencyException;
 import com.smartfirehub.pipeline.exception.PipelineInactiveException;
+import com.smartfirehub.pipeline.exception.PipelineNameConflictException;
 import com.smartfirehub.pipeline.exception.PipelineNotFoundException;
 import com.smartfirehub.pipeline.exception.UnsafePythonScriptException;
 import com.smartfirehub.pipeline.exception.UnsafeSqlException;
@@ -658,6 +659,42 @@ class PipelineServiceTest extends IntegrationTestBase {
             .where(PIPELINE_EXECUTION.PIPELINE_ID.eq(pipeline.id()))
             .fetchOne(0, Long.class);
     assertThat(executionCount).isZero();
+  }
+
+  /**
+   * 이름 중복 409 문구는 저장 토스트에 그대로 보이므로 한국어 안내여야 한다(WD-112). 생성·이름 변경 두 경로 모두 같은 문구를 쓰고, 거부된 저장은 아무것도
+   * 바꾸지 않는다.
+   */
+  @Test
+  void duplicateName_rejectedWithKoreanMessage_onCreateAndRename() {
+    pipelineService.createPipeline(
+        new CreatePipelineRequest("dup_name", "Description", List.of()), testUserId);
+    PipelineDetailResponse other =
+        pipelineService.createPipeline(
+            new CreatePipelineRequest("other_name", "Description", List.of()), testUserId);
+
+    assertThatThrownBy(
+            () ->
+                pipelineService.createPipeline(
+                    new CreatePipelineRequest("dup_name", "Description", List.of()), testUserId))
+        .isInstanceOf(PipelineNameConflictException.class)
+        .hasMessage("같은 이름의 파이프라인이 이미 있습니다: 'dup_name'. 다른 이름을 입력하세요.");
+
+    assertThatThrownBy(
+            () ->
+                pipelineService.updatePipeline(
+                    other.id(),
+                    new UpdatePipelineRequest("dup_name", "Description", true, null),
+                    testUserId))
+        .isInstanceOf(PipelineNameConflictException.class)
+        .hasMessage("같은 이름의 파이프라인이 이미 있습니다: 'dup_name'. 다른 이름을 입력하세요.");
+
+    Long dupCount =
+        dsl.selectCount()
+            .from(PIPELINE)
+            .where(PIPELINE.NAME.eq("dup_name"))
+            .fetchOne(0, Long.class);
+    assertThat(dupCount).isEqualTo(1);
   }
 
   @Test

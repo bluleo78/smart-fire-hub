@@ -87,12 +87,19 @@ public class PipelineService {
   public static final String WITHHELD_EXECUTION_ERROR_MESSAGE =
       "이 실행의 상세 오류는 관련 데이터를 볼 수 있는 사용자에게만 표시됩니다.";
 
+  /**
+   * 이름 중복 409 의 사용자 안내 문구(WD-112). 웹이 서버 message 를 그대로 토스트로 보여 주므로 한국어 안내 문장으로 쓴다 — 예전엔 "Pipeline
+   * with name '…' already exists" 영어 원문이 그대로 노출됐다. 생성·수정이 같은 문구를 쓰도록 한곳에 둔다.
+   */
+  static String duplicateNameMessage(String name) {
+    return "같은 이름의 파이프라인이 이미 있습니다: '" + name + "'. 다른 이름을 입력하세요.";
+  }
+
   @Transactional
   public PipelineDetailResponse createPipeline(CreatePipelineRequest request, Long userId) {
     // 이름 중복 검사 — 동일 이름의 파이프라인이 존재하면 409 반환 (#181)
     if (pipelineRepository.existsByName(request.name())) {
-      throw new PipelineNameConflictException(
-          "Pipeline with name '" + request.name() + "' already exists");
+      throw new PipelineNameConflictException(duplicateNameMessage(request.name()));
     }
 
     // Validate DAG (cycle detection)
@@ -487,8 +494,7 @@ public class PipelineService {
     if (request.name() != null) {
       String currentName = pipelineRepository.findNameById(id).orElse(null);
       if (!request.name().equals(currentName) && pipelineRepository.existsByName(request.name())) {
-        throw new PipelineNameConflictException(
-            "Pipeline with name '" + request.name() + "' already exists");
+        throw new PipelineNameConflictException(duplicateNameMessage(request.name()));
       }
     }
 
