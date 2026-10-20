@@ -9,7 +9,8 @@ import { Label } from '@/components/ui/label';
 
 interface ApiTriggerFormProps {
   config: {
-    allowedIps: string[];
+    /** API·AI 로 만든 트리거는 저장된 config 에 이 키가 없을 수 있다(WD-109) — 없으면 빈 목록으로 본다. */
+    allowedIps?: string[];
   };
   onChange: (config: ApiTriggerFormProps['config']) => void;
   /** Set after creation to display the one-time token */
@@ -38,6 +39,10 @@ export default function ApiTriggerForm({ config, onChange, generatedToken, isEdi
   const ipHelpId = `${baseId}-ip-help`;
   const ipErrorId = `${baseId}-ip-error`;
   const allowedIpsErrorId = `${baseId}-allowed-ips-error`;
+  // 저장된 config 에 allowedIps 가 없으면(IP 제한 없이 API·AI 로 만든 트리거) 빈 목록으로 다룬다(WD-109).
+  // 예전엔 config.allowedIps.length 에서 바로 터져 편집 다이얼로그를 여는 순간 페이지 전체가 오류 화면이 됐다.
+  // 서버도 키가 없으면 빈 목록(제한 없음)으로 해석한다(ExternalTriggerController).
+  const allowedIps = config.allowedIps ?? [];
 
   const handleCopy = async (text: string) => {
     await navigator.clipboard.writeText(text);
@@ -55,18 +60,18 @@ export default function ApiTriggerForm({ config, onChange, generatedToken, isEdi
       return;
     }
 
-    if (config.allowedIps.includes(ip)) {
+    if (allowedIps.includes(ip)) {
       setIpError('이미 추가된 IP입니다');
       return;
     }
 
     setIpError('');
-    onChange({ ...config, allowedIps: [...config.allowedIps, ip] });
+    onChange({ ...config, allowedIps: [...allowedIps, ip] });
     setIpInput('');
   };
 
   const handleRemoveIp = (ip: string) => {
-    onChange({ ...config, allowedIps: config.allowedIps.filter((i) => i !== ip) });
+    onChange({ ...config, allowedIps: allowedIps.filter((i) => i !== ip) });
   };
 
   const curlExample = generatedToken
@@ -170,9 +175,9 @@ export default function ApiTriggerForm({ config, onChange, generatedToken, isEdi
         {ipError && (
           <p id={ipErrorId} className="text-sm text-destructive">{ipError}</p>
         )}
-        {config.allowedIps.length > 0 && (
+        {allowedIps.length > 0 && (
           <div className="flex flex-wrap gap-1">
-            {config.allowedIps.map((ip) => (
+            {allowedIps.map((ip) => (
               <Badge key={ip} variant="secondary" className="cursor-pointer" onClick={() => handleRemoveIp(ip)}>
                 {ip} &times;
               </Badge>

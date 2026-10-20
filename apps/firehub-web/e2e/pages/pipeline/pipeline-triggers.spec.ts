@@ -552,6 +552,47 @@ test.describe('파이프라인 트리거 탭', () => {
     await expect(page.getByText('api-token-abc123', { exact: true })).toBeVisible();
   });
 
+  /**
+   * 회귀 방지 테스트 (WD-109)
+   * IP 제한 없이 API·AI 로 만든 API 트리거는 저장된 config 에 allowedIps 키가 없다.
+   * ApiTriggerForm 이 config.allowedIps.length 를 바로 읽어, 편집을 누르는 순간 페이지 전체가 오류 화면이 되던 결함.
+   */
+  test('API 트리거 편집 — allowedIps 가 없는 트리거도 편집 창이 열리고 IP 를 추가해 저장할 수 있다 (WD-109)', async ({
+    authenticatedPage: page,
+  }) => {
+    const existing = createTrigger({
+      id: 13,
+      name: 'IP 제한 없는 API 트리거',
+      triggerType: 'API',
+      config: {},
+    });
+    await setupTriggerTabMocks(page, { triggers: [existing] });
+    const errors: string[] = [];
+    page.on('pageerror', (e) => errors.push(e.message));
+
+    const updateCapture = await mockApi(page, 'PUT', '/api/v1/pipelines/1/triggers/13', '', { capture: true });
+
+    await gotoTriggerTab(page);
+    await expect(page.getByText('IP 제한 없는 API 트리거')).toBeVisible();
+    await page.getByRole('button').filter({ has: page.locator('.lucide-ellipsis') }).first().click();
+    await page.getByRole('menuitem', { name: '편집' }).click();
+
+    // 오류 화면 대신 편집 창이 열리고 IP 제한 입력이 보인다
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByText('트리거 편집')).toBeVisible();
+    await expect(dialog.getByLabel('IP 제한 (선택)')).toBeVisible();
+    expect(errors).toEqual([]);
+
+    // 빈 목록에서 IP 를 추가하면 배지가 보이고 PUT 에 실린다
+    await dialog.getByLabel('IP 제한 (선택)').fill('10.0.0.0/24');
+    await dialog.getByRole('button', { name: '추가' }).click();
+    await expect(dialog.getByText('10.0.0.0/24')).toBeVisible();
+    await dialog.getByRole('button', { name: '저장' }).click();
+
+    const req = await updateCapture.waitForRequest();
+    expect(req.payload).toMatchObject({ name: 'IP 제한 없는 API 트리거', config: { allowedIps: ['10.0.0.0/24'] } });
+  });
+
   test('DATASET_CHANGE 트리거 추가 — 데이터셋 선택 없이 생성 시 에러가 표시된다', async ({
     authenticatedPage: page,
   }) => {
