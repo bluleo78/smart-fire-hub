@@ -3,8 +3,9 @@ import { z } from 'zod';
 import { PASSWORD_POLICY } from '../temp-password';
 
 export const updateProfileSchema = z.object({
-  // 이름은 1자 이상 100자 이하 — DB 컬럼 제약과 일치시켜 서버 500 방지 (#26)
-  name: z.string().min(1, '이름을 입력하세요').max(100, '이름은 100자 이하여야 합니다'),
+  // 이름은 1자 이상 50자 이하 — DB 컬럼(user.name VARCHAR(50))·멤버 추가 폼과 같은 상한 (WD-125).
+  // 100자로 두면 51~100자가 화면 검증을 통과한 뒤 저장 때 서버가 거부했다.
+  name: z.string().min(1, '이름을 입력하세요').max(50, '이름은 50자 이하여야 합니다'),
   email: z.string().email('유효한 이메일을 입력하세요').optional().or(z.literal('')),
 });
 

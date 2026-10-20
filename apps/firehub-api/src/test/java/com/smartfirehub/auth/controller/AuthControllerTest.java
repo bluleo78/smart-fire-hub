@@ -2,6 +2,7 @@ package com.smartfirehub.auth.controller;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -102,6 +103,23 @@ class AuthControllerTest {
         .andExpect(status().isCreated())
         .andExpect(jsonPath("$.username").value("test@example.com"))
         .andExpect(jsonPath("$.name").value("Test User"));
+  }
+
+  /** WD-125: 가입 이름 상한도 DB 컬럼과 같은 50자 — 51자는 검증 400 으로 막고 가입을 시도하지 않는다. */
+  @Test
+  void signup_nameOver50_returnsBadRequestWithoutSignup() throws Exception {
+    SignupRequest request =
+        new SignupRequest("test@example.com", "test@example.com", "Password123", "가".repeat(51));
+
+    mockMvc
+        .perform(
+            post("/api/v1/auth/signup")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.name").value("이름은 50자 이하여야 합니다"));
+
+    verify(authService, never()).signup(any());
   }
 
   @Test

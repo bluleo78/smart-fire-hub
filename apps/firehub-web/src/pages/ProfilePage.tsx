@@ -113,11 +113,11 @@ export default function ProfilePage() {
               htmlFor="profile-name"
               error={profileForm.formState.errors.name?.message}
             >
-              {/* maxLength를 Zod 스키마(100자)와 일치시켜 브라우저 레벨에서 입력을 차단한다 (#26) */}
+              {/* maxLength를 Zod 스키마·DB 컬럼(50자)과 일치시켜 브라우저 레벨에서 입력을 차단한다 (#26, WD-125) */}
               <Input
                 id="profile-name"
                 type="text"
-                maxLength={100}
+                maxLength={50}
                 {...profileForm.register('name')}
               />
             </FormField>

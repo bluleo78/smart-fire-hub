@@ -14,4 +14,5 @@ public record SignupRequest(
             regexp = "^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d).+$",
             message = "비밀번호는 대문자, 소문자, 숫자를 각각 1자 이상 포함해야 합니다")
         String password,
-    @NotBlank String name) {}
+    // 이름 상한은 DB 컬럼(user.name VARCHAR(50))과 같다 — 없으면 51자부터 DB 오류로 거부된다 (WD-125)
+    @NotBlank @Size(max = 50, message = "이름은 50자 이하여야 합니다") String name) {}

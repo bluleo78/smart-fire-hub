@@ -102,6 +102,42 @@ class UserControllerTest {
     verify(userService).updateProfile(1L, "New Name", "new@example.com");
   }
 
+  /** WD-125: 이름 상한은 DB 컬럼과 같은 50자 — 51자는 DB 오류가 아니라 검증 400(이름 칸 오류)으로 막고 저장하지 않는다. */
+  @Test
+  void updateMe_nameOver50_returnsBadRequestWithoutSaving() throws Exception {
+    mockAuthentication();
+    UpdateProfileRequest request = new UpdateProfileRequest("가".repeat(51), "new@example.com");
+
+    mockMvc
+        .perform(
+            put("/api/v1/users/me")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.name").value("이름은 50자 이하여야 합니다"));
+
+    verify(userService, never()).updateProfile(any(), any(), any());
+  }
+
+  /** WD-125: 정확히 50자는 통과한다(경계). */
+  @Test
+  void updateMe_name50_returnsNoContent() throws Exception {
+    mockAuthentication();
+    String name50 = "가".repeat(50);
+    UpdateProfileRequest request = new UpdateProfileRequest(name50, "new@example.com");
+
+    mockMvc
+        .perform(
+            put("/api/v1/users/me")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+        .andExpect(status().isNoContent());
+
+    verify(userService).updateProfile(1L, name50, "new@example.com");
+  }
+
   /** 비밀번호 변경도 인증만 요구한다(WD-2) — 권한 0·테넌트 미선택 토큰으로도 204. */
   @Test
   void changePassword_authenticated_returnsNoContent() throws Exception {

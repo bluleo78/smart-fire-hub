@@ -138,10 +138,10 @@ test.describe('프로필 페이지', () => {
   });
 
   /**
-   * 회귀 테스트 (이슈 #26): 이름 필드 maxLength=100 초과 입력은 브라우저에서 100자로 잘린다
-   * JavaScript로 직접 Zod max() 에러를 유발하여 에러 메시지와 API 미호출을 검증
+   * 회귀 테스트 (이슈 #26, WD-125): 이름 상한은 DB 컬럼과 같은 50자 — 51자는 화면에서 막혀 저장 요청이 나가지 않는다.
+   * maxLength 를 우회해 51자를 직접 넣어 Zod max(50) 에러를 유발하고 에러 메시지와 API 미호출을 검증
    */
-  test('이름 100자 초과 → 유효성 에러 메시지가 표시되고 API 호출이 안 된다 (이슈 #26)', async ({ authenticatedPage: page }) => {
+  test('이름 50자 초과 → 유효성 에러 메시지가 표시되고 API 호출이 안 된다 (이슈 #26, WD-125)', async ({ authenticatedPage: page }) => {
     await page.goto('/profile');
 
     // PUT API 호출 감지용 — 호출되면 실패
@@ -158,18 +158,18 @@ test.describe('프로필 페이지', () => {
     );
 
     await expect(page.locator('#profile-name')).toBeVisible({ timeout: 5000 });
-    // maxLength 속성을 우회하여 101자를 직접 주입 — Zod max(100) 검증 트리거 (#26)
+    // maxLength 속성을 우회하여 51자를 직접 주입 — Zod max(50) 검증 트리거 (#26, WD-125)
     await page.evaluate(() => {
       const input = document.querySelector('#profile-name') as HTMLInputElement;
       const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
-      nativeInputValueSetter?.call(input, 'A'.repeat(101));
+      nativeInputValueSetter?.call(input, 'A'.repeat(51));
       input.dispatchEvent(new Event('input', { bubbles: true }));
       input.dispatchEvent(new Event('change', { bubbles: true }));
     });
     await page.getByRole('button', { name: '저장' }).first().click();
 
-    // Zod max(100) 에러 메시지 표시
-    await expect(page.getByText('이름은 100자 이하여야 합니다')).toBeVisible({ timeout: 5000 });
+    // Zod max(50) 에러 메시지 표시
+    await expect(page.getByText('이름은 50자 이하여야 합니다')).toBeVisible({ timeout: 5000 });
     // API가 호출되지 않아야 한다
     expect(apiCalled).toBe(false);
   });
@@ -177,11 +177,34 @@ test.describe('프로필 페이지', () => {
   /**
    * 회귀 테스트 (이슈 #26): 이름 필드 maxLength 속성 검증 — HTML 레벨 입력 차단
    */
-  test('이름 필드는 maxLength=100 속성을 가진다 (이슈 #26)', async ({ authenticatedPage: page }) => {
+  test('이름 필드는 maxLength=50 속성을 가진다 (이슈 #26, WD-125)', async ({ authenticatedPage: page }) => {
     await page.goto('/profile');
     await expect(page.locator('#profile-name')).toBeVisible({ timeout: 5000 });
-    // input의 maxLength 속성이 100임을 확인
-    await expect(page.locator('#profile-name')).toHaveAttribute('maxlength', '100');
+    // input의 maxLength 속성이 DB 컬럼과 같은 50임을 확인
+    await expect(page.locator('#profile-name')).toHaveAttribute('maxlength', '50');
+  });
+
+  /** WD-125: 상한 경계 — 정확히 50자는 화면 검증을 통과해 그대로 저장 요청에 실린다. */
+  test('이름 50자는 그대로 저장 요청에 실린다 (WD-125)', async ({ authenticatedPage: page }) => {
+    await page.goto('/profile');
+    let payload: { name?: string } | undefined;
+    await page.route(
+      (url) => url.pathname === '/api/v1/users/me',
+      (route) => {
+        if (route.request().method() === 'PUT') {
+          payload = route.request().postDataJSON();
+          return route.fulfill({ status: 204, body: '' });
+        }
+        return route.fallback();
+      },
+    );
+    await expect(page.locator('#profile-name')).toBeVisible({ timeout: 5000 });
+    const name50 = '가'.repeat(50);
+    await page.locator('#profile-name').fill(name50 + '초과');
+    // 브라우저 maxLength 가 50자에서 자른다
+    await expect(page.locator('#profile-name')).toHaveValue(name50);
+    await page.getByRole('button', { name: '저장' }).first().click();
+    await expect.poll(() => payload?.name).toBe(name50);
   });
 
   /**

@@ -19,8 +19,8 @@ export const signupSchema = z
       ),
     // 비밀번호 확인 필드: password와 일치해야 함 (refine에서 검증)
     confirmPassword: z.string().min(1, "비밀번호 확인을 입력하세요"),
-    // 이름 필드: 1자 이상 100자 이하 — DB 컬럼 제약과 일치, 100자 초과 시 서버 500 방지
-    name: z.string().min(1, "이름을 입력하세요").max(100, "이름은 100자 이하여야 합니다"),
+    // 이름 필드: 1자 이상 50자 이하 — DB 컬럼(user.name VARCHAR(50))과 같은 상한 (WD-125)
+    name: z.string().min(1, "이름을 입력하세요").max(50, "이름은 50자 이하여야 합니다"),
     email: z.email("유효한 이메일을 입력하세요").optional().or(z.literal('')),
   })
   .refine((data) => data.password === data.confirmPassword, {
