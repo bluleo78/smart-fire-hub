@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 
 import { ontologyApi } from '@/api/ontology';
-import { handleApiError, isGraphReadRestricted } from '@/lib/api-error';
+import { handleApiError } from '@/lib/api-error';
 import type { CreateOntologyRequest, OntologyStatus } from '@/types/ontology';
 
 /**
@@ -21,8 +21,7 @@ export const useOntologyGraph = (ontologyId: number | null | undefined) =>
     queryFn: () => ontologyApi.getGraph(ontologyId as number).then((r) => r.data),
     enabled: ontologyId != null,
     staleTime: 5 * 60 * 1000,
-    // 읽기 제한(403 GRAPH_READ_RESTRICTED, WD-28)은 다시 물어도 같은 답이다 — 전역 retry:1 을 이 경우만 끈다.
-    retry: (failureCount, error) => !isGraphReadRestricted(error) && failureCount < 1,
+    // 읽기 제한(403 GRAPH_READ_RESTRICTED, WD-28)은 다시 물어도 같은 답이다 — 전역 기본이 403 을 재시도하지 않는다(WD-126).
   });
 
 /**

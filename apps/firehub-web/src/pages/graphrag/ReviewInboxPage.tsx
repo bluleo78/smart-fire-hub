@@ -19,8 +19,9 @@ import {
   REVIEW_ITEMS_QUERY_KEY,
   useApproveReviewItem, useRejectReviewItem, useReviewItemEvidence, useReviewItemsPending,
 } from '@/hooks/queries/useReviewItems';
-import { handleApiError } from '@/lib/api-error';
+import { handleApiError, isForbiddenError } from '@/lib/api-error';
 import { validatePropertyCorrection } from '@/lib/property-correction';
+import { cn } from '@/lib/utils';
 import type {
   EntityPayload, PropertyPayload, RelationPayload, ReviewItemResponse, ReviewItemType, SynonymPayload,
 } from '@/types/reviewItem';
@@ -191,8 +192,10 @@ export default function ReviewInboxPage() {
     );
   };
   const {
-    data, isLoading, hasNextPage, fetchNextPage, isFetchingNextPage,
+    data, isLoading, isError, error, hasNextPage, fetchNextPage, isFetchingNextPage,
   } = useReviewItemsPending(filter);
+  // 조회 권한 부족(403) — 「항목 없음」 대신 권한 안내를 보이는 기준 (WD-126).
+  const isForbidden = isError && isForbiddenError(error);
   // 무한스크롤 페이지 배열을 표가 쓰는 단일 목록으로 펼친다(#422).
   const pending = data?.pages.flat();
   const approve = useApproveReviewItem();
@@ -311,7 +314,18 @@ export default function ReviewInboxPage() {
           {isLoading && (
             <TableRow><TableCell colSpan={4} className="text-muted-foreground text-center">불러오는 중...</TableCell></TableRow>
           )}
-          {!isLoading && (pending?.length ?? 0) === 0 && (
+          {/* 조회 실패를 「항목 없음」으로 그리지 않는다 (WD-126) — 403 이면 권한 안내, 그 밖은 불러오기 실패 안내.
+              이미 받은 행이 있는 상태에서 「더 보기」만 실패한 경우는 행을 그대로 둔다. */}
+          {!isLoading && isError && (pending?.length ?? 0) === 0 && (
+            <TableRow>
+              <TableCell colSpan={4} className={cn('text-center', isForbidden ? 'text-muted-foreground' : 'text-destructive')}>
+                {isForbidden
+                  ? 'AI 검수 항목을 볼 권한이 없습니다. 관리자에게 권한을 요청하세요.'
+                  : '검수 항목을 불러오지 못했습니다.'}
+              </TableCell>
+            </TableRow>
+          )}
+          {!isLoading && !isError && (pending?.length ?? 0) === 0 && (
             <TableRow><TableCell colSpan={4} className="text-muted-foreground text-center">검수 대기 중인 항목이 없습니다.</TableCell></TableRow>
           )}
           {pending?.map((row) => (

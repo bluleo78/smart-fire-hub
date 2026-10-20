@@ -3,6 +3,34 @@ import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 
 test.describe('AI 검수 인박스', () => {
+  // WD-126: 조회 실패를 「항목 없음」으로 그리지 않는다 — 403 은 권한 안내(재시도 없이 1회 요청), 그 밖은 불러오기 실패 안내.
+  test('검수 항목 조회가 403 이면 「없습니다」 대신 권한 안내를 보인다 (WD-126)', async ({ authenticatedPage: page }) => {
+    const capture = await mockApi(
+      page,
+      'GET',
+      '/api/v1/graphrag/review-items',
+      { status: 403, error: 'Forbidden', message: 'Missing required permission: dataset:read' },
+      { status: 403, capture: true },
+    );
+    await page.goto('/knowledge-graph/review');
+
+    const table = page.getByTestId('review-inbox-table');
+    await expect(table.getByText('AI 검수 항목을 볼 권한이 없습니다. 관리자에게 권한을 요청하세요.')).toBeVisible();
+    await expect(table.getByText('검수 대기 중인 항목이 없습니다.')).toHaveCount(0);
+    expect(capture.requests).toHaveLength(1);
+  });
+
+  test('검수 항목 조회가 500 이면 「없습니다」 대신 불러오기 실패 안내를 보인다 (WD-126)', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockApi(page, 'GET', '/api/v1/graphrag/review-items', { message: 'error' }, { status: 500 });
+    await page.goto('/knowledge-graph/review');
+
+    const table = page.getByTestId('review-inbox-table');
+    await expect(table.getByText('검수 항목을 불러오지 못했습니다.')).toBeVisible({ timeout: 10000 });
+    await expect(table.getByText('검수 대기 중인 항목이 없습니다.')).toHaveCount(0);
+  });
+
   test('동의어·속성 항목이 렌더링된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createSynonymReviewItem(), createPropertyReviewItem()]);
     await page.goto('/knowledge-graph/review');

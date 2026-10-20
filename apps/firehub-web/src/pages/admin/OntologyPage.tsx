@@ -12,7 +12,7 @@ import { useOntologyById, useOntologyGraph, useOntologyList } from '@/hooks/quer
 import { useOntologyElementMutations } from '@/hooks/queries/useOntologyElement';
 import { useAuth } from '@/hooks/useAuth';
 import { useDirtyAggregator, useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
-import { GRAPH_READ_RESTRICTED_MESSAGE, isGraphReadRestricted } from '@/lib/api-error';
+import { GRAPH_READ_RESTRICTED_MESSAGE, isForbiddenError, isGraphReadRestricted } from '@/lib/api-error';
 import { createTypePalette } from '@/lib/ontology-colors';
 import { affectedRelationsFor, isLastActiveEntityType } from '@/lib/ontology-validation';
 import type { GraphNode } from '@/types/ontology';
@@ -107,6 +107,7 @@ export default function OntologyPage() {
     data: ontologies,
     isLoading: isOntologyListLoading,
     isError: isOntologyListError,
+    error: ontologyListError,
     refetch: refetchOntologyList,
   } = useOntologyList('all');
   // NodeDetailDrawer의 "구버전" 배지 기준(#678) — 그래프 인스턴스 노드가 여러 온톨로지에 걸쳐 있을 수
@@ -406,6 +407,18 @@ export default function OntologyPage() {
    * 지식 모델 탭이 예전에 이 게이트 없이 selectedOntology 만 봐서, 0개 테넌트에서 스켈레톤에 갇혔다.
    */
   const renderOntologyListGate = (emptyDescription: string) => {
+    // 조회 권한이 없으면(403) 다시 시도해도 같다 — 재시도 버튼 대신 권한 안내를 보인다 (WD-126).
+    if (isOntologyListError && isForbiddenError(ontologyListError)) {
+      return (
+        <div className="flex h-full items-center justify-center p-6">
+          <RestrictedNotice
+            message="지식그래프를 볼 권한이 없습니다. 관리자에게 권한을 요청하세요."
+            className="max-w-md"
+            data-testid="ontology-forbidden"
+          />
+        </div>
+      );
+    }
     if (isOntologyListError) {
       return (
         <GraphError message="지식 모델 목록을 불러오지 못했습니다." onRetry={() => refetchOntologyList()} />

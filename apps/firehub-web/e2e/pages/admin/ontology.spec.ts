@@ -772,6 +772,31 @@ test.describe('지식그래프 시각화 페이지', () => {
     await expect(page.getByTestId('instance-graph')).toBeVisible();
   });
 
+  // WD-126: 조회 권한이 없으면(403) 다시 시도해도 같으므로 재시도 버튼 대신 권한 안내를 보인다 — 두 탭 모두.
+  for (const view of ['explore', 'model'] as const) {
+    test(`온톨로지 목록이 403 이면 ${view} 탭에 재시도 대신 권한 안내를 보인다 (WD-126)`, async ({
+      authenticatedPage: page,
+    }) => {
+      await setupOntologyMocks(page);
+      const listCapture = await mockApi(
+        page,
+        'GET',
+        '/api/v1/ontologies',
+        { status: 403, error: 'Forbidden', message: 'Missing required permission: dataset:read' },
+        { status: 403, capture: true },
+      );
+      await page.goto(`/knowledge-graph/${view}`);
+
+      await expect(page.getByTestId('ontology-forbidden')).toHaveText(
+        '지식그래프를 볼 권한이 없습니다. 관리자에게 권한을 요청하세요.',
+      );
+      await expect(page.getByText('지식 모델 목록을 불러오지 못했습니다.')).toHaveCount(0);
+      await expect(page.getByRole('button', { name: '다시 시도' })).toHaveCount(0);
+      // 403 은 재시도하지 않는다(전역 기본)
+      expect(listCapture.requests).toHaveLength(1);
+    });
+  }
+
   // (#407) 빈 초안 온톨로지로 전환하면 좌측 타입 필터 패널도 진짜로 비어야 한다 — 예전에는
   // entities.length===0을 "로딩 중"과 동일하게 취급해 이전 온톨로지의 데모 타입 6종(색상표 키)을
   // 그대로 남겨 보여줬다(실재하지 않는 타입이 존재하는 것처럼 보이는 회귀).
