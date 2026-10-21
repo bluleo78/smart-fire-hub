@@ -22,11 +22,12 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { useCanWriteProactive,useCloneProactiveJob, useExecuteProactiveJob, useProactiveJobs, useUpdateProactiveJob } from '@/hooks/queries/useProactiveMessages';
-import { handleApiError } from '@/lib/api-error';
+import { handleApiError, isForbiddenError } from '@/lib/api-error';
 import { cronToLabel } from '@/lib/cron-label';
 import { parseUtcDate, timeAgo } from '@/lib/formatters';
 import { formatNextRunShort } from '@/lib/next-run';
 
+import { ProactiveReadForbiddenNotice } from './components/ProactiveReadForbiddenNotice';
 import { ProactiveWriteNotice } from './components/ProactiveWriteNotice';
 
 function channelSummary(config: Record<string, unknown>): string {
@@ -71,7 +72,7 @@ function isAnomalyIdle(config: Record<string, unknown>): boolean {
 
 export default function ProactiveJobListPage() {
   const navigate = useNavigate();
-  const { data: jobs = [], isLoading, isError } = useProactiveJobs();
+  const { data: jobs = [], isLoading, isError, error } = useProactiveJobs();
   const updateMutation = useUpdateProactiveJob();
   const executeMutation = useExecuteProactiveJob();
   const cloneMutation = useCloneProactiveJob();
@@ -121,6 +122,12 @@ export default function ProactiveJobListPage() {
       onError: () => toast.error('실행에 실패했습니다.'),
     });
   };
+
+  // 조회 권한이 없으면(403) 「잠시 후 다시 시도」는 거짓 안내다 — 다시 시도해도 같으므로 권한 안내만 보인다 (WD-137).
+  // 오류 분기보다 먼저 봐야 하고, early return 이라 쓰기 안내(readonlyNotice)도 함께 뜨지 않는다.
+  if (isError && isForbiddenError(error)) {
+    return <ProactiveReadForbiddenNotice subject="스마트 작업" testId="jobs-forbidden" />;
+  }
 
   // API 에러 시 빈 상태 대신 에러 메시지 표시 (#46)
   if (isError) {

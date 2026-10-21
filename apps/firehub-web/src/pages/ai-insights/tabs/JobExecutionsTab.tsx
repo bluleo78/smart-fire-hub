@@ -22,7 +22,10 @@ import {
 import { TableEmptyRow } from '@/components/ui/table-empty';
 import { TableSkeletonRows } from '@/components/ui/table-skeleton';
 import { useJobExecutions } from '@/hooks/queries/useProactiveMessages';
+import { isForbiddenError } from '@/lib/api-error';
 import { formatDate, formatDuration, getExecutionStatusType, getStatusLabel, timeAgo } from '@/lib/formatters';
+
+import { ProactiveReadForbiddenNotice } from '../components/ProactiveReadForbiddenNotice';
 
 interface JobExecutionsTabProps {
   jobId: number;
@@ -33,7 +36,7 @@ export default function JobExecutionsTab({ jobId }: JobExecutionsTabProps) {
   const [limit, setLimit] = useState(20);
 
   // RUNNING 상태 실행이 있으면 5초 폴링, 아니면 비활성화 — state 없이 직접 유도
-  const { data: executions = [], isLoading } = useJobExecutions(
+  const { data: executions = [], isLoading, isError, error } = useJobExecutions(
     jobId,
     { limit, offset: 0 },
     {
@@ -43,6 +46,12 @@ export default function JobExecutionsTab({ jobId }: JobExecutionsTabProps) {
       },
     },
   );
+
+  // 조회 실패를 「실행 이력이 없습니다」로 그리지 않는다 (WD-137) — 403 이면 권한 안내, 그 밖은 불러오기 실패 안내.
+  // 조회 권한이 없으면 표 대신 권한 안내만 보인다 — 다시 시도해도 같다.
+  if (isError && isForbiddenError(error)) {
+    return <ProactiveReadForbiddenNotice subject="실행 이력" testId="executions-forbidden" />;
+  }
 
   return (
     <div className="flex flex-col" style={{ height: 'calc(100vh - 280px)' }}>
@@ -93,6 +102,12 @@ export default function JobExecutionsTab({ jobId }: JobExecutionsTabProps) {
                   </TableCell>
                 </TableRow>
               ))
+            ) : isError ? (
+              <TableRow>
+                <TableCell colSpan={4} className="py-12 text-center text-destructive">
+                  실행 이력을 불러오지 못했습니다.
+                </TableCell>
+              </TableRow>
             ) : (
               <TableEmptyRow colSpan={4} message="실행 이력이 없습니다." />
             )}

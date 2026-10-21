@@ -22,9 +22,12 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useExecution } from '@/hooks/queries/useProactiveMessages';
 import { useReportActions } from '@/hooks/useReportActions';
+import { isForbiddenError } from '@/lib/api-error';
 import { classifyError } from '@/lib/error-classifier';
 import { formatDate, formatDuration, getStatusBadgeVariant, getStatusLabel, timeAgo } from '@/lib/formatters';
 import { getSections } from '@/lib/proactive-utils';
+
+import { ProactiveReadForbiddenNotice } from './components/ProactiveReadForbiddenNotice';
 
 /** 마크다운 렌더링용 prose 클래스 */
 const PROSE_CLASSES = 'prose prose-sm dark:prose-invert max-w-none';
@@ -39,7 +42,7 @@ export default function ExecutionDetailPage() {
   const executionIdNum = Number(executionId);
 
   // 실행 데이터 조회 — RUNNING 상태일 때 5초 폴링
-  const { data: execution, isLoading } = useExecution(jobIdNum, executionIdNum);
+  const { data: execution, isLoading, isError, error } = useExecution(jobIdNum, executionIdNum);
 
   // HTML 리포트 조회 — COMPLETED 상태이고 result가 있을 때만 활성화
   const { data: htmlResponse } = useQuery({
@@ -63,6 +66,19 @@ export default function ExecutionDetailPage() {
       <div className="flex items-center justify-center h-64 gap-2 text-muted-foreground">
         <Loader2 className="h-5 w-5 animate-spin" />
         <span className="text-sm">실행 정보를 불러오는 중...</span>
+      </div>
+    );
+  }
+
+  // 조회 권한이 없으면(403) 「실행 정보를 찾을 수 없습니다」 대신 권한 안내를 보인다 — 실행은 있는데 볼 권한이 없을 뿐이다 (WD-137).
+  if (isError && isForbiddenError(error)) {
+    return (
+      <div className="flex flex-col items-center gap-2">
+        <ProactiveReadForbiddenNotice subject="실행 결과" testId="execution-forbidden" />
+        <Button variant="ghost" size="sm" onClick={() => navigate(-1)}>
+          <ArrowLeft className="h-4 w-4" />
+          돌아가기
+        </Button>
       </div>
     );
   }

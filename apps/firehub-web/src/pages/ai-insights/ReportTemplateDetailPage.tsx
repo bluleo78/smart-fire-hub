@@ -33,11 +33,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { useCanWriteProactive,useCreateProactiveTemplate, useDeleteProactiveTemplate, useProactiveJobs, useProactiveTemplate, useProactiveTemplates, useUpdateProactiveTemplate } from '@/hooks/queries/useProactiveMessages';
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
-import { handleApiError } from '@/lib/api-error';
+import { handleApiError, isForbiddenError } from '@/lib/api-error';
 import { parseUtcDate } from '@/lib/formatters';
 import { parseTemplateSections, validateSectionKeys } from '@/lib/template-section-types';
 import { type ReportTemplateFormValues, reportTemplateSchema } from '@/lib/validations/report-template';
 
+import { ProactiveReadForbiddenNotice } from './components/ProactiveReadForbiddenNotice';
 import { ProactiveWriteNotice } from './components/ProactiveWriteNotice';
 import { SectionPreview } from './components/SectionPreview';
 import { SectionPropertyEditor } from './components/SectionPropertyEditor';
@@ -64,7 +65,10 @@ export default function ReportTemplateDetailPage() {
   const isNew = !id || id === 'new';
   const templateId = isNew ? 0 : Number(id);
 
-  const { data: templateDirect, isLoading: isLoadingDirect, isError: isErrorDirect } = useProactiveTemplate(templateId);
+  const { data: templateDirect, isLoading: isLoadingDirect, isError: isErrorDirect, error: errorDirect } = useProactiveTemplate(templateId);
+  // 조회 권한 부족(403) — 「불러오는데 실패」 토스트 + 목록 이동 대신 이 화면에 권한 안내를 보이는 기준 (WD-137).
+  // 목록으로 보내 봐야 목록도 같은 권한으로 막혀 있어, 사용자는 왜 튕겼는지 모른 채 다른 안내를 보게 된다.
+  const isForbiddenDirect = isErrorDirect && isForbiddenError(errorDirect);
   const { data: templates = [], isLoading: isLoadingList } = useProactiveTemplates();
   // 삭제 시 영향받는 스마트 작업을 고지하기 위한 조회 (#364)
   // FK가 ON DELETE SET NULL이라 삭제 자체는 막히지 않고, 참조 작업이 조용히 기본 형식으로 전환된다.
@@ -93,11 +97,13 @@ export default function ReportTemplateDetailPage() {
   // useEffect를 훅 순서 보장을 위해 조건부 return 이전에 배치한다
   useEffect(() => {
     if (isNew) return;
+    // 권한 부족은 아래 렌더 분기가 권한 안내로 처리한다 — 토스트·이동을 하지 않는다 (WD-137).
+    if (isForbiddenDirect) return;
     if (isErrorDirect) {
       toast.error('템플릿 정보를 불러오는데 실패했습니다.');
       navigate('/ai-insights/templates');
     }
-  }, [isErrorDirect, isNew, navigate]);
+  }, [isErrorDirect, isForbiddenDirect, isNew, navigate]);
 
   useEffect(() => {
     if (isNew) return;
@@ -366,6 +372,26 @@ export default function ReportTemplateDetailPage() {
       <div className="space-y-6">
         <div className="h-8 w-64 bg-muted animate-pulse rounded" />
         <div className="h-96 bg-muted animate-pulse rounded" />
+      </div>
+    );
+  }
+
+  // 조회 권한이 없으면 복제·편집·삭제 버튼과 쓰기 안내 없이 권한 안내만 보인다 (WD-137).
+  if (!isNew && isForbiddenDirect) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center gap-3">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => navigate('/ai-insights/reports?tab=templates')}
+            aria-label="목록으로"
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </Button>
+          <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">리포트 양식</h1>
+        </div>
+        <ProactiveReadForbiddenNotice subject="리포트 양식" testId="template-forbidden" />
       </div>
     );
   }

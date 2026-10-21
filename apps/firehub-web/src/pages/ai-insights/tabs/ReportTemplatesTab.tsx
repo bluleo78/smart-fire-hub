@@ -7,7 +7,9 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { SearchInput } from '@/components/ui/search-input';
 import { useCanWriteProactive,useProactiveTemplates } from '@/hooks/queries/useProactiveMessages';
+import { isForbiddenError } from '@/lib/api-error';
 
+import { ProactiveReadForbiddenNotice } from '../components/ProactiveReadForbiddenNotice';
 import { ProactiveWriteNotice } from '../components/ProactiveWriteNotice';
 
 /**
@@ -15,7 +17,7 @@ import { ProactiveWriteNotice } from '../components/ProactiveWriteNotice';
  * 생성은 서버가 proactive:write 로 막으므로 권한이 없으면 생성 진입점을 숨기고 안내 한 줄만 둔다(WD-133).
  */
 export default function ReportTemplatesTab() {
-  const { data: templates = [], isLoading } = useProactiveTemplates();
+  const { data: templates = [], isLoading, isError, error } = useProactiveTemplates();
   const navigate = useNavigate();
   // 노출 결정용 — 최종 판정은 서버. 권한을 불러오는 중에는 버튼도 안내도 보이지 않는다.
   const { canWrite, isLoading: isPermissionsLoading } = useCanWriteProactive();
@@ -35,6 +37,27 @@ export default function ReportTemplatesTab() {
 
   if (isLoading) {
     return <div className="py-8 text-center text-muted-foreground text-sm">불러오는 중...</div>;
+  }
+
+  // 조회 실패를 「기본 템플릿 0개 + 커스텀 템플릿 없음」으로 그리지 않는다 (WD-137).
+  // 403 이면 권한 안내만 보인다 — 쓰기 안내·추가 버튼까지 함께 두면 무엇이 막혔는지 헷갈린다.
+  if (isError && isForbiddenError(error)) {
+    return <ProactiveReadForbiddenNotice subject="리포트 양식" testId="templates-forbidden" />;
+  }
+  // 그 밖의 실패는 불러오기 실패 안내 — 작업 목록(ProactiveJobListPage)의 오류 상태와 같은 모양이다.
+  if (isError) {
+    return (
+      <div
+        className="rounded-lg border border-dashed flex flex-col items-center justify-center py-16 gap-3 text-center"
+        data-testid="templates-error"
+      >
+        <FileText className="h-10 w-10 text-muted-foreground" />
+        <div>
+          <p className="text-sm font-medium">리포트 양식을 불러오지 못했습니다</p>
+          <p className="text-xs text-muted-foreground mt-1">잠시 후 다시 시도해 주세요.</p>
+        </div>
+      </div>
+    );
   }
 
   return (

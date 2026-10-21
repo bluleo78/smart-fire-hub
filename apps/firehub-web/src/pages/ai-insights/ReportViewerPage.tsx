@@ -16,6 +16,9 @@ import { proactiveApi } from '@/api/proactive';
 import ReportIframe from '@/components/ai/ReportIframe';
 import { Button } from '@/components/ui/button';
 import { useReportActions } from '@/hooks/useReportActions';
+import { isForbiddenError } from '@/lib/api-error';
+
+import { ProactiveReadForbiddenNotice } from './components/ProactiveReadForbiddenNotice';
 
 export default function ReportViewerPage() {
   const { jobId, executionId } = useParams<{ jobId: string; executionId: string }>();
@@ -30,13 +33,15 @@ export default function ReportViewerPage() {
   const isInvalidParams = isNaN(jobIdNum) || isNaN(executionIdNum);
 
   // HTML 리포트 조회
-  const { data: htmlResponse, isLoading, isError } = useQuery({
+  const { data: htmlResponse, isLoading, isError, error } = useQuery({
     queryKey: ['execution-html', jobIdNum, executionIdNum],
     queryFn: () => proactiveApi.getExecutionHtml(jobIdNum, executionIdNum),
     enabled: !isInvalidParams,
   });
 
   const rawHtml = htmlResponse?.data ?? null;
+  // 조회 권한 부족(403) — 「리포트를 불러올 수 없습니다」 대신 권한 안내를 보이는 기준 (WD-137). 다시 시도해도 같다.
+  const isForbidden = isError && isForbiddenError(error);
 
   // PDF 다운로드 + 인쇄 공통 훅
   const { handleDownloadPdf, handlePrint, downloading } = useReportActions({
@@ -115,7 +120,11 @@ export default function ReportViewerPage() {
           </div>
         )}
 
-        {!isInvalidParams && isError && !isLoading && (
+        {!isInvalidParams && isForbidden && !isLoading && (
+          <ProactiveReadForbiddenNotice subject="리포트" testId="report-forbidden" />
+        )}
+
+        {!isInvalidParams && isError && !isForbidden && !isLoading && (
           <div className="flex flex-col items-center justify-center h-full gap-4 text-muted-foreground">
             <p className="text-sm">리포트를 불러올 수 없습니다.</p>
             <Button variant="ghost" size="sm" onClick={() => navigate(-1)}>

@@ -21,9 +21,10 @@ import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useCanWriteProactive,useCloneProactiveJob, useCreateProactiveJob, useDeleteProactiveJob, useExecuteProactiveJob, useProactiveJob, useProactiveTemplates, useUpdateProactiveJob } from '@/hooks/queries/useProactiveMessages';
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
-import { handleApiError } from '@/lib/api-error';
+import { handleApiError, isForbiddenError } from '@/lib/api-error';
 import { type ProactiveJobFormValues,proactiveJobSchema } from '@/lib/validations/proactive-job';
 
+import { ProactiveReadForbiddenNotice } from './components/ProactiveReadForbiddenNotice';
 import { ProactiveWriteNotice } from './components/ProactiveWriteNotice';
 import JobExecutionsTab from './tabs/JobExecutionsTab';
 import JobMonitoringTab from './tabs/JobMonitoringTab';
@@ -112,7 +113,7 @@ export default function ProactiveJobDetailPage() {
 
   const activeTab = searchParams.get('tab') ?? 'overview';
 
-  const { data: job, isLoading, isError } = useProactiveJob(jobId);
+  const { data: job, isLoading, isError, error } = useProactiveJob(jobId);
   const { data: templates = [] } = useProactiveTemplates();
   // 생성·수정·삭제·복제·지금 실행은 서버가 proactive:write 로 막는다 — 권한이 없으면 폼을 다 채운 뒤에야 403 을 받던
   // 진입점을 숨기고 조회 전용으로 보인다(WD-133). 최종 판정은 서버이고 여기는 노출 결정용이다.
@@ -296,6 +297,22 @@ export default function ProactiveJobDetailPage() {
       <div className="space-y-6">
         <div className="h-8 w-64 bg-muted animate-pulse rounded" />
         <div className="h-96 bg-muted animate-pulse rounded" />
+      </div>
+    );
+  }
+
+  // 조회 권한이 없으면(403) 「작업을 찾을 수 없습니다」는 거짓 안내다 — 작업은 있는데 볼 권한이 없을 뿐이다 (WD-137).
+  // 아래 not-found 분기보다 먼저 보고, 편집·삭제 버튼과 쓰기 안내 없이 권한 안내만 보인다.
+  if (!isNew && isError && isForbiddenError(error)) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center gap-3">
+          <Button variant="ghost" size="icon" onClick={() => navigate('/ai-insights/jobs')} aria-label="목록으로">
+            <ArrowLeft className="h-4 w-4" />
+          </Button>
+          <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">스마트 작업</h1>
+        </div>
+        <ProactiveReadForbiddenNotice subject="스마트 작업" testId="job-forbidden" />
       </div>
     );
   }

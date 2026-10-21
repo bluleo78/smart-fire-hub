@@ -16,7 +16,10 @@ import { TableEmptyRow } from '@/components/ui/table-empty';
 import { TableSkeletonRows } from '@/components/ui/table-skeleton';
 import { useCanWriteProactive,useProactiveJobs, useReports } from '@/hooks/queries/useProactiveMessages';
 import { downloadReportPdf } from '@/hooks/useReportActions';
+import { isForbiddenError } from '@/lib/api-error';
 import { formatDate, timeAgo } from '@/lib/formatters';
+
+import { ProactiveReadForbiddenNotice } from '../components/ProactiveReadForbiddenNotice';
 
 /**
  * 생성된 리포트 목록 탭.
@@ -28,10 +31,12 @@ import { formatDate, timeAgo } from '@/lib/formatters';
 export default function ReportListTab() {
   const navigate = useNavigate();
   const [limit, setLimit] = useState(20);
-  const { data: reports = [], isLoading } = useReports({ limit, offset: 0 });
+  const { data: reports = [], isLoading, isError, error } = useReports({ limit, offset: 0 });
+  // 조회 실패를 빈 목록으로 그리지 않는다 (WD-137) — 403 이면 권한 안내, 그 밖은 불러오기 실패 안내.
+  const isForbidden = isError && isForbiddenError(error);
   // 빈 상태를 "잡이 없음" / "잡은 있으나 리포트 없음" 으로 가르기 위해 잡 목록도 본다.
-  // 리포트가 하나라도 있으면 이 분기 자체가 필요 없으므로 요청을 내지 않는다.
-  const { data: jobs = [] } = useProactiveJobs({ enabled: !isLoading && reports.length === 0 });
+  // 리포트가 하나라도 있거나 조회가 실패했으면(빈 상태를 그리지 않으므로) 이 분기 자체가 필요 없어 요청을 내지 않는다.
+  const { data: jobs = [] } = useProactiveJobs({ enabled: !isLoading && !isError && reports.length === 0 });
   // 작업 생성은 서버가 proactive:write 로 막는다 — 권한이 없으면 눌러도 403 인 「스마트 작업 만들기」 CTA 를 숨긴다(WD-133).
   const { canWrite } = useCanWriteProactive();
 
@@ -52,6 +57,11 @@ export default function ReportListTab() {
       스마트 작업 보기
     </Button>
   );
+
+  // 조회 권한이 없으면 표·빈 상태·「스마트 작업 만들기」 CTA 대신 권한 안내만 보인다 — 다시 시도해도 같다.
+  if (isForbidden) {
+    return <ProactiveReadForbiddenNotice subject="리포트" testId="reports-forbidden" />;
+  }
 
   return (
     // 높이를 뷰포트에 고정하지 않는다 — 리포트가 몇 건뿐일 때 거대한 빈 상자가 남는다.
@@ -128,6 +138,13 @@ export default function ReportListTab() {
                   </TableCell>
                 </TableRow>
               ))
+            ) : isError ? (
+              // 같은 키 재조회 실패면 이전 행이 남아 위 분기가 그대로 그린다. 「더 보기」(키가 바뀜) 실패는 이 오류 안내로 바뀐다.
+              <TableRow>
+                <TableCell colSpan={4} className="py-12 text-center text-destructive">
+                  리포트 목록을 불러오지 못했습니다.
+                </TableCell>
+              </TableRow>
             ) : (
               <TableEmptyRow colSpan={4} message={emptyMessage} emptyAction={emptyAction} />
             )}
