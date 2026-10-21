@@ -30,7 +30,7 @@ import {
   useDashboardStats,
   useSystemHealth,
 } from '../hooks/queries/useDashboard';
-import { useDatasets } from '../hooks/queries/useDatasets';
+import { useDatasetPermissions, useDatasets } from '../hooks/queries/useDatasets';
 import { useAuth } from '../hooks/useAuth';
 import { getStatusBadgeVariant, getStatusLabel, timeAgo } from '../lib/formatters';
 
@@ -52,6 +52,8 @@ export default function HomePage() {
   const { data: attentionItems } = useAttentionItems();
   const { data: dashboardsData, isLoading: isDashboardsLoading } = useDashboards({ page: 0, size: 5 });
   const { data: datasetsData, isLoading: isDatasetsLoading } = useDatasets({ page: 0, size: 5 });
+  // 데이터셋 생성 바로가기는 생성 권한(dataset:write)이 있을 때만 보인다 — 없으면 생성 화면이 권한 안내만 보이므로(WD-144)
+  const { canWriteDataset } = useDatasetPermissions();
 
   // 활동 피드: 필터 상태만 보관. 페이지는 useInfiniteQuery가 내부적으로 관리한다 (이슈 #226).
   const [typeFilter, setTypeFilter] = useState('');
@@ -290,10 +292,12 @@ export default function HomePage() {
       {/* ZONE 3 — 퀵 액션 */}
       <section aria-labelledby="home-quick-actions-heading" className="flex flex-wrap gap-2">
         <h2 id="home-quick-actions-heading" className="sr-only">퀵 액션</h2>
-        <Button variant="outline" size="sm" onClick={() => navigate('/data/datasets/new')}>
-          <Database className="h-4 w-4" />
-          새 데이터셋
-        </Button>
+        {canWriteDataset && (
+          <Button variant="outline" size="sm" onClick={() => navigate('/data/datasets/new')}>
+            <Database className="h-4 w-4" />
+            새 데이터셋
+          </Button>
+        )}
         <Button variant="outline" size="sm" onClick={() => navigate('/pipelines')}>
           <ListChecks className="h-4 w-4" />
           파이프라인 목록
@@ -413,8 +417,13 @@ export default function HomePage() {
                 </div>
               ) : (
                 <p className="text-sm text-muted-foreground py-1.5">
-                  데이터셋이 없습니다.{' '}
-                  <Link to="/data/datasets/new" className="text-primary hover:underline">만들기</Link>
+                  데이터셋이 없습니다.
+                  {canWriteDataset && (
+                    <>
+                      {' '}
+                      <Link to="/data/datasets/new" className="text-primary hover:underline">만들기</Link>
+                    </>
+                  )}
                 </p>
               )}
             </CardContent>

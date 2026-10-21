@@ -26,7 +26,13 @@ import {
 } from '../../components/ui/table';
 import { TableEmptyRow } from '../../components/ui/table-empty';
 import { TableSkeletonRows } from '../../components/ui/table-skeleton';
-import { useCategories, useDatasets, useDeleteDataset, useToggleFavorite } from '../../hooks/queries/useDatasets';
+import {
+  useCategories,
+  useDatasetPermissions,
+  useDatasets,
+  useDeleteDataset,
+  useToggleFavorite,
+} from '../../hooks/queries/useDatasets';
 import { useSecurityLevels } from '../../hooks/queries/useSecurityLevels';
 import { useRecentDatasets } from '../../hooks/useRecentDatasets';
 import { handleApiError } from '../../lib/api-error';
@@ -166,6 +172,9 @@ export default function DatasetListPage() {
   const { data: levels } = useSecurityLevels();
   const deleteDataset = useDeleteDataset();
   const toggleFavorite = useToggleFavorite();
+  // 생성(POST, dataset:write)·삭제(DELETE, dataset:delete) 진입점 노출 — 조회 전용 사용자가 누르고 나서야 403 을 받지 않게 한다(WD-144).
+  // 권한 조회 중에는 둘 다 false 라 버튼을 그리지 않는다(상세 화면 WD-139 와 같다).
+  const { canWriteDataset, canDeleteDataset } = useDatasetPermissions();
   const { recents } = useRecentDatasets();
 
   const categories = categoriesData || [];
@@ -222,10 +231,12 @@ export default function DatasetListPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">데이터셋 관리</h1>
-        <Button onClick={() => setTypeModalOpen(true)}>
-          <Plus className="h-4 w-4" />
-          데이터셋 추가
-        </Button>
+        {canWriteDataset && (
+          <Button onClick={() => setTypeModalOpen(true)}>
+            <Plus className="h-4 w-4" />
+            데이터셋 추가
+          </Button>
+        )}
       </div>
 
       {/* Recent Datasets */}
@@ -539,22 +550,25 @@ export default function DatasetListPage() {
                       )}
                     </div>
 
-                    {/* Delete button — 창을 열면 이 데이터셋을 쓰는 곳(파이프라인·대시보드 등)을 먼저 보여 준다(WD-143) */}
-                    <DatasetDeleteConfirmDialog
-                      datasetId={dataset.id}
-                      itemName={dataset.name}
-                      onConfirm={() => handleDelete(dataset.id, dataset.name)}
-                      trigger={
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          aria-label="삭제"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      }
-                    />
+                    {/* Delete button — 창을 열면 이 데이터셋을 쓰는 곳(파이프라인·대시보드 등)을 먼저 보여 준다(WD-143).
+                        삭제 권한(dataset:delete)이 있을 때만 보인다(WD-144). */}
+                    {canDeleteDataset && (
+                      <DatasetDeleteConfirmDialog
+                        datasetId={dataset.id}
+                        itemName={dataset.name}
+                        onConfirm={() => handleDelete(dataset.id, dataset.name)}
+                        trigger={
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            aria-label="삭제"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        }
+                      />
+                    )}
                   </TableCell>
                 </TableRow>
               ))
@@ -564,8 +578,9 @@ export default function DatasetListPage() {
                 message="데이터셋이 없습니다."
                 searchKeyword={search || undefined}
                 onResetSearch={search ? () => { patchParams({ q: null, page: null }); } : undefined}
+                // 만들 권한이 없으면 안내 문구만 둔다 — "데이터셋이 없습니다." 는 버튼 없이도 그대로 읽힌다(WD-144)
                 emptyAction={
-                  noFiltersActive ? (
+                  noFiltersActive && canWriteDataset ? (
                     <Button size="sm" variant="outline" onClick={() => setTypeModalOpen(true)}>
                       <Plus className="h-4 w-4" />
                       새 데이터셋 만들기

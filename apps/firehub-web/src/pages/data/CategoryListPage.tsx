@@ -41,6 +41,7 @@ import { TableSkeletonRows } from '../../components/ui/table-skeleton';
 import {
   useCategories,
   useCreateCategory,
+  useDatasetPermissions,
   useDeleteCategory,
   useUpdateCategory,
 } from '../../hooks/queries/useDatasets';
@@ -129,6 +130,11 @@ export default function CategoryListPage() {
   const createCategory = useCreateCategory();
   const updateCategory = useUpdateCategory(editingCategory?.id || 0);
   const deleteCategory = useDeleteCategory();
+  // 쓰기 진입점 노출 — 서버 DatasetCategoryController 가 생성·수정은 dataset:write, 삭제는 dataset:delete 를 요구한다(WD-144).
+  // 조회 전용 사용자가 누르고 나서야 403 을 받지 않게 같은 코드로 나눠 숨긴다. 권한 조회 중에는 둘 다 false 라 그리지 않는다.
+  const { canWriteDataset: canWriteCategory, canDeleteDataset: canDeleteCategory } = useDatasetPermissions();
+  // 편집·삭제 둘 다 없으면 빈 칸만 남는 「작업」 열을 통째로 뺀다(데이터셋 필드 탭 WD-139 와 같다)
+  const showActions = canWriteCategory || canDeleteCategory;
 
   // mode: 'onChange' — 입력 즉시 isValid 상태가 반영되어 저장 버튼 비활성화 동작에 사용
   const createForm = useForm<CategoryFormData>({
@@ -204,10 +210,12 @@ export default function CategoryListPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">카테고리 관리</h1>
-        <Button onClick={() => { createForm.reset(); setIsCreateOpen(true); }}>
-          <Plus className="h-4 w-4" />
-          새 카테고리
-        </Button>
+        {canWriteCategory && (
+          <Button onClick={() => { createForm.reset(); setIsCreateOpen(true); }}>
+            <Plus className="h-4 w-4" />
+            새 카테고리
+          </Button>
+        )}
       </div>
 
       {/* 검색·정렬 툴바 — 클라이언트 사이드 필터/정렬 (백엔드 호출 없음) */}
@@ -243,46 +251,52 @@ export default function CategoryListPage() {
             <TableRow>
               <TableHead>이름</TableHead>
               <TableHead>설명</TableHead>
-              <TableHead className="w-[120px]">작업</TableHead>
+              {showActions && <TableHead className="w-[120px]">작업</TableHead>}
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading ? (
-              <TableSkeletonRows columns={3} rows={3} />
+              <TableSkeletonRows columns={showActions ? 3 : 2} rows={3} />
             ) : hasResults ? (
               visibleCategories.map((category) => (
                 <TableRow key={category.id}>
                   <TableCell className="font-medium">{category.name}</TableCell>
                   <TableCell>{category.description || '-'}</TableCell>
-                  <TableCell>
-                    <div className="flex gap-2">
-                      {/* 편집 버튼 — 아이콘만 있으므로 스크린 리더를 위해 aria-label 필수 */}
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        aria-label={`${category.name} 편집`}
-                        onClick={() => openEditDialog(category)}
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </Button>
-                      <DeleteConfirmDialog
-                        entityName="카테고리"
-                        itemName={category.name}
-                        onConfirm={() => handleDelete(category.id, category.name)}
-                        trigger={
-                          /* 삭제 버튼 — 아이콘만 있으므로 스크린 리더를 위해 aria-label 필수 */
-                          <Button variant="outline" size="sm" aria-label={`${category.name} 삭제`}>
-                            <Trash2 className="h-4 w-4" />
+                  {showActions && (
+                    <TableCell>
+                      <div className="flex gap-2">
+                        {/* 편집 버튼(PUT, dataset:write) — 아이콘만 있으므로 스크린 리더를 위해 aria-label 필수 */}
+                        {canWriteCategory && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            aria-label={`${category.name} 편집`}
+                            onClick={() => openEditDialog(category)}
+                          >
+                            <Pencil className="h-4 w-4" />
                           </Button>
-                        }
-                      />
-                    </div>
-                  </TableCell>
+                        )}
+                        {canDeleteCategory && (
+                          <DeleteConfirmDialog
+                            entityName="카테고리"
+                            itemName={category.name}
+                            onConfirm={() => handleDelete(category.id, category.name)}
+                            trigger={
+                              /* 삭제 버튼(DELETE, dataset:delete) — 아이콘만 있으므로 스크린 리더를 위해 aria-label 필수 */
+                              <Button variant="outline" size="sm" aria-label={`${category.name} 삭제`}>
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            }
+                          />
+                        )}
+                      </div>
+                    </TableCell>
+                  )}
                 </TableRow>
               ))
             ) : (
               <TableEmptyRow
-                colSpan={3}
+                colSpan={showActions ? 3 : 2}
                 message={isFiltering ? '검색 결과가 없습니다.' : '카테고리가 없습니다.'}
               />
             )}

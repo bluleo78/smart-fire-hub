@@ -9,6 +9,7 @@ import { useMyPermissions } from './useMyPermissions';
 
 /**
  * 데이터셋 상세 화면(헤더·각 탭·온톨로지 연결 카드)의 쓰기 진입점을 보일지 정하는 권한 묶음 (WD-139). 화면은 권한 코드를 직접 읽지 않고 이 훅만 쓴다.
+ * 데이터셋 목록(추가·삭제)·카테고리 관리(생성·수정·삭제)·홈 퀵 액션도 같은 훅으로 판정한다(WD-144).
  *
  * 조회 권한만 있는 사용자에게 「복제」「수정」「행 추가」 등을 보여 주면 다이얼로그를 다 채운 뒤에야 403 을 받는다.
  * 서버 컨트롤러가 요구하는 권한 코드를 그대로 따라 진입점별로 나눈다 — 정의·메타 변경(dataset:write)과 행 적재·수정(data:import),
@@ -24,8 +25,13 @@ export function useDatasetPermissions() {
     canWriteDataset: permissions.has('dataset:write'),
     /** 행 추가·행 수정·파일 임포트·SQL 실행·문서 업로드 (data:import) */
     canImportData: permissions.has('data:import'),
-    /** 선택 행 삭제 (data:delete) */
+    /** 선택 행 삭제 (data:delete) — 데이터셋 자체 삭제(canDeleteDataset)와 다르다 */
     canDeleteData: permissions.has('data:delete'),
+    /**
+     * 데이터셋 자체 삭제·카테고리 삭제 (dataset:delete — DatasetController·DatasetCategoryController DELETE, WD-144).
+     * 행 삭제(canDeleteData, data:delete)와 이름이 비슷하지만 권한 코드가 다르다. 생성·카테고리 생성/수정은 canWriteDataset.
+     */
+    canDeleteDataset: permissions.has('dataset:delete'),
     /** API 가져오기 — 미리보기·생성 모두 파이프라인 엔드포인트라 pipeline:write */
     canApiImport: permissions.has('pipeline:write'),
     /** 보안 등급 변경 (DatasetSecurityController PUT security-level) */

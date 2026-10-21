@@ -79,7 +79,11 @@ function App() {
               <Route path="/settings/channels" element={<ChannelsPage />} />
               <Route path="/data/categories" element={<CategoryListPage />} />
               <Route path="/data/datasets" element={<DatasetListPage />} />
-              <Route path="/data/datasets/new" element={<DatasetCreatePage />} />
+              {/* 데이터셋 생성 — 서버 POST /datasets 가 dataset:write 를 요구한다. 주소로 직접 들어와 양식을 다 채운 뒤에야 403 을 받지 않게
+                  진입부터 같은 권한으로 막고, 없으면 레이아웃 안에서 권한 안내를 보인다(WD-144) */}
+              <Route element={<AdminOrPermissionRoute permission="dataset:write" />}>
+                <Route path="/data/datasets/new" element={<DatasetCreatePage />} />
+              </Route>
               <Route path="/data/datasets/:id" element={<DatasetDetailPage />} />
               <Route path="/pipelines" element={<PipelineListPage />} />
               <Route path="/pipelines/new" element={<PipelineEditorPage />} />
