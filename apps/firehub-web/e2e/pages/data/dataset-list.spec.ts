@@ -1,7 +1,7 @@
 import { createCategories, createDataset, createDatasets } from '../../factories/dataset.factory';
 import { createPageResponse, mockApi, type MockApiCapture } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
-import { setupDatasetMocks } from '../../fixtures/dataset.fixture';
+import { mockDatasetReferences, setupDatasetMocks } from '../../fixtures/dataset.fixture';
 
 /**
  * 데이터셋 목록 페이지 E2E 테스트
@@ -252,6 +252,8 @@ test.describe('데이터셋 목록 페이지', () => {
       },
     );
     await mockApi(page, 'DELETE', '/api/v1/datasets/11', {});
+    // 삭제 확인 창이 열릴 때 참조 집계를 부른다(WD-143) — 모킹이 없으면 실패 안내로 빠진다.
+    await mockDatasetReferences(page);
 
     await page.goto('/data/datasets');
     await expect(page.getByText('데이터셋 1', { exact: true })).toBeVisible();

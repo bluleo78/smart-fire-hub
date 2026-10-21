@@ -58,8 +58,13 @@ public class AnalyticsDashboardRepository {
   private static final Field<String> U_NAME_ALIAS =
       field(name("user", "name"), String.class).as("created_by_name");
 
-  /** 조회자에게 보이는 대시보드 — 본인 소유이거나 공유된 것. 목록·단건·삭제 영향 범위(WD-86)가 같은 규칙을 쓰도록 한 곳에 둔다. */
-  private static Condition visibleTo(Long userId) {
+  /**
+   * 조회자에게 보이는 대시보드 — 본인 소유이거나 공유된 것. 목록·단건·삭제 영향 범위(WD-86)가 같은 규칙을 쓰도록 한 곳에 둔다.
+   *
+   * <p>공개인 이유(WD-143): 데이터셋 참조 집계({@code DatasetService#getReferences})도 대시보드 이름을 이 규칙으로 가린다 — 규칙을
+   * 복사하면 한쪽만 바뀌는 순간 볼 수 없는 대시보드 이름이 새어 나간다. 조건은 unaliased {@code dashboard} 테이블을 가리킨다.
+   */
+  public static Condition visibleTo(Long userId) {
     return D_CREATED_BY.eq(userId).or(D_IS_SHARED.isTrue());
   }
 

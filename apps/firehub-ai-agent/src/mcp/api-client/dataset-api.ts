@@ -45,6 +45,8 @@ export interface DatasetReferences {
   datasetId: number;
   pipelines: Array<{ id: number; name: string }>;
   dashboards: Array<{ id: number; name: string }>;
+  /** 조회자가 볼 수 없는(남의 비공개) 대시보드 수 — 이름은 서버가 주지 않는다(WD-143). totalCount 에는 포함된다. */
+  hiddenDashboardCount: number;
   proactiveJobs: Array<{ id: number; name: string }>;
   triggers: Array<{ id: number; name: string; pipelineId: number; pipelineName: string }>;
   totalCount: number;

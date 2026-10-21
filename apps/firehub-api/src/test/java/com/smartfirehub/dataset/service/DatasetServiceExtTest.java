@@ -337,7 +337,7 @@ class DatasetServiceExtTest extends IntegrationTestBase {
   void getReferences_existingDataset_returnsResponse() {
     DatasetDetailResponse ds = createSimpleDataset("RefTestDS", "ref_test_ds_ext");
 
-    DatasetReferencesResponse refs = datasetService.getReferences(ds.id());
+    DatasetReferencesResponse refs = datasetService.getReferences(ds.id(), testUserId);
 
     assertThat(refs).isNotNull();
     assertThat(refs.datasetId()).isEqualTo(ds.id());
@@ -347,7 +347,7 @@ class DatasetServiceExtTest extends IntegrationTestBase {
 
   @Test
   void getReferences_nonExistentDataset_throwsNotFound() {
-    assertThatThrownBy(() -> datasetService.getReferences(999999L))
+    assertThatThrownBy(() -> datasetService.getReferences(999999L, testUserId))
         .isInstanceOf(DatasetNotFoundException.class);
   }
 

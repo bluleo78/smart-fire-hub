@@ -1,6 +1,12 @@
 import type { Page } from '@playwright/test';
 
-import { createCategories, createDatasetDetail, createDatasets, createFileDatasetDetail } from '../factories/dataset.factory';
+import {
+  createCategories,
+  createDatasetDetail,
+  createDatasetReferences,
+  createDatasets,
+  createFileDatasetDetail,
+} from '../factories/dataset.factory';
 import { createPageResponse, mockApi } from './api-mock';
 
 /**
@@ -34,13 +40,30 @@ export async function grantDatasetPermissions(page: Page, permissions: string[] 
 }
 
 /**
+ * 데이터셋 참조 집계(GET /datasets/{id}/references, WD-143) 모킹 — 어느 데이터셋 id 든 같은 응답을 준다.
+ * 삭제 확인 창이 열릴 때 부르므로, 모킹이 없으면 창이 실패 안내로 빠진다. 라우트는 나중에 등록한 것이 이기므로 spec 이 덮어쓸 수 있다.
+ * @param body - 응답 본문(기본: 쓰는 곳 없음)
+ * @param status - 응답 상태(실패 안내 검증 시 500 등)
+ */
+export async function mockDatasetReferences(page: Page, body = createDatasetReferences(), status = 200) {
+  await page.route(
+    (url) => /^\/api\/v1\/datasets\/\d+\/references$/.test(url.pathname),
+    (route) => {
+      if (route.request().method() !== 'GET') return route.fallback();
+      return route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
+    },
+  );
+}
+
+/**
  * 데이터셋 목록 페이지 API 모킹
- * - 카테고리 목록, 데이터셋 페이지 목록, 태그 목록을 모킹한다.
+ * - 카테고리 목록, 데이터셋 페이지 목록, 태그 목록, 삭제 확인 창의 참조 집계(쓰는 곳 없음)를 모킹한다.
  */
 export async function setupDatasetMocks(page: Page) {
   await mockApi(page, 'GET', '/api/v1/dataset-categories', createCategories());
   await mockApi(page, 'GET', '/api/v1/datasets', createPageResponse(createDatasets(5)));
   await mockApi(page, 'GET', '/api/v1/datasets/tags', ['sample', 'test', 'production']);
+  await mockDatasetReferences(page);
 }
 
 /**

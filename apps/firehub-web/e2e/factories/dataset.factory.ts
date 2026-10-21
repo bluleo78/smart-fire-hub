@@ -8,6 +8,7 @@ import type {
   CategoryResponse,
   DatasetColumnResponse,
   DatasetDetailResponse,
+  DatasetReferencesResponse,
   DatasetResponse,
 } from '@/types/dataset';
 
@@ -133,4 +134,30 @@ export function createCategories(): CategoryResponse[] {
     createCategory({ id: 2, name: '통계 데이터', description: '통계 분석용 데이터 카테고리' }),
     createCategory({ id: 3, name: '기타', description: '기타 데이터 카테고리' }),
   ];
+}
+
+/**
+ * 데이터셋 참조 집계 응답 생성(WD-143) — 기본은 쓰는 곳 없음. totalCount 는 넘긴 목록 길이 합으로 맞춘다(서버 계산과 같게).
+ */
+export function createDatasetReferences(overrides?: Partial<DatasetReferencesResponse>): DatasetReferencesResponse {
+  const base: DatasetReferencesResponse = {
+    datasetId: 1,
+    pipelines: [],
+    dashboards: [],
+    hiddenDashboardCount: 0,
+    proactiveJobs: [],
+    triggers: [],
+    totalCount: 0,
+    ...overrides,
+  };
+  return {
+    ...base,
+    totalCount:
+      overrides?.totalCount ??
+      base.pipelines.length +
+        base.dashboards.length +
+        base.hiddenDashboardCount +
+        base.proactiveJobs.length +
+        base.triggers.length,
+  };
 }

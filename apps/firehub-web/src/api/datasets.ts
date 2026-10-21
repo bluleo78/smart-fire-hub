@@ -5,6 +5,7 @@ CategoryRequest,
   CategoryResponse, CloneDatasetRequest,
 ColumnStatsResponse,
   CreateDatasetRequest, DataDeleteResponse,   DataQueryResponse,   DatasetColumnResponse, DatasetDetailResponse,
+  DatasetReferencesResponse,
   DatasetResponse,   FavoriteToggleResponse, QueryHistoryResponse,
   RowDataResponse,   SearchIndexStatus, SqlQueryResponse, UpdateColumnRequest,
 UpdateDatasetRequest,
@@ -19,6 +20,9 @@ export const categoriesApi = {
   deleteCategory: (id: number) => client.delete(`/dataset-categories/${id}`),
 };
 
+/** 참조 조회 시간 제한 — 넘으면 조회 실패로 보고 안내만 남긴 채 삭제를 허용한다(조회가 삭제를 무한정 막지 않게, WD-143). */
+export const DATASET_REFERENCES_TIMEOUT_MS = 10_000;
+
 export const datasetsApi = {
   getDatasets: (params: { categoryId?: number; storageType?: string; originType?: string; search?: string; page?: number; size?: number; favoriteOnly?: boolean; status?: string; securityLevelId?: number }) =>
     client.get<PageResponse<DatasetResponse>>('/datasets', { params }),
@@ -26,6 +30,12 @@ export const datasetsApi = {
   createDataset: (data: CreateDatasetRequest) => client.post<DatasetDetailResponse>('/datasets', data),
   updateDataset: (id: number, data: UpdateDatasetRequest) => client.put(`/datasets/${id}`, data),
   deleteDataset: (id: number) => client.delete(`/datasets/${id}`),
+  /** 이 데이터셋을 쓰는 파이프라인(입력·출력)·대시보드·스마트 작업·트리거(WD-143) — 삭제 확인 창이 열릴 때만 부른다. */
+  getReferences: (id: number, signal?: AbortSignal) =>
+    client.get<DatasetReferencesResponse>(`/datasets/${id}/references`, {
+      signal,
+      timeout: DATASET_REFERENCES_TIMEOUT_MS,
+    }),
   addColumn: (datasetId: number, data: AddColumnRequest) =>
     client.post<DatasetColumnResponse>(`/datasets/${datasetId}/columns`, data),
   updateColumn: (datasetId: number, colId: number, data: UpdateColumnRequest) =>

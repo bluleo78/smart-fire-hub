@@ -149,6 +149,21 @@ export function useDeleteDataset() {
   });
 }
 
+/**
+ * 데이터셋 참조 집계(WD-143) — 삭제 확인 창 내용 안에서 쓰므로 창이 열려 있을 때만 마운트되어 조회한다.
+ * gcTime 0: 창이 닫혀 언마운트되면 결과를 버린다 — 다시 열면 새로 조회한다(그 사이 생긴 파이프라인·위젯을 놓치지 않게).
+ * retry false: 실패(시간 초과 포함)하면 바로 안내로 넘어간다(재시도 동안 삭제가 막혀 있지 않게).
+ */
+export function useDatasetReferences(id: number) {
+  return useQuery({
+    // ['datasets'] 아래에 두지 않는다 — 삭제 성공이 ['datasets'] 를 무효화하면 닫히는 중인 창이 지워진 데이터셋을 다시 조회해 404 안내가 비친다.
+    queryKey: ['dataset-references', id],
+    queryFn: ({ signal }) => datasetsApi.getReferences(id, signal).then((r) => r.data),
+    gcTime: 0,
+    retry: false,
+  });
+}
+
 export function useAddColumn(datasetId: number) {
   const queryClient = useQueryClient();
   return useMutation({
