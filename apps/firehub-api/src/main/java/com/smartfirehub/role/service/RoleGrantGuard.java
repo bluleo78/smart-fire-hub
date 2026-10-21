@@ -4,6 +4,7 @@ import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.permission.repository.PermissionRepository;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
+import com.smartfirehub.securitylevel.repository.DatasetAccessRepository;
 import com.smartfirehub.securitylevel.repository.SecurityLevelRepository;
 import com.smartfirehub.securitylevel.repository.SecurityLevelRepository.RoleLevel;
 import java.util.Collection;
@@ -27,6 +28,9 @@ import org.springframework.stereotype.Component;
  * <ul>
  *   <li>역할 부여·회수 — 대상 역할의 모든 권한을 호출자가 갖고 있고, 역할 열람 등급 ≤ 호출자 열람 등급이어야 한다. 시스템 ADMIN 역할은 ADMIN 만
  *       부여·회수할 수 있다.
+ *   <li>역할 부여·회수(WD-140) — 대상 역할이 허용 목록 필요 등급 데이터셋의 허용 목록에 올라 있으면, 호출자가 그 데이터셋을 열람 시점에 이미 볼 수 있어야
+ *       한다(등급 rank 충족 + 본인 항목 또는 자기 역할의 항목으로 허용 목록 충족 — 열람 판정과 같은 식). 역할에 붙은 허용 항목은 권한·등급과 별개의 "열람
+ *       자격" 이라, 권한·등급만 보면 위임자가 자기도 못 보는 데이터셋의 허용 목록 역할을 자기·남에게 붙여 열람을 넓힐 수 있었다.
  *   <li>역할 권한 변경 — 새로 <b>추가</b>되는 권한은 호출자가 가진 것이어야 한다. 제거는 제한하지 않는다.
  * </ul>
  *
@@ -41,17 +45,19 @@ public class RoleGrantGuard {
   static final String ROLE_SCOPE_MESSAGE = "자신에게 없는 권한·등급을 가진 역할은 부여하거나 회수할 수 없습니다";
   static final String ADMIN_ROLE_MESSAGE = "시스템 ADMIN 역할은 ADMIN 만 부여하거나 회수할 수 있습니다";
   static final String PERMISSION_SCOPE_MESSAGE = "자신에게 없는 권한은 역할에 추가할 수 없습니다";
+  static final String ALLOWLIST_SCOPE_MESSAGE = "자신이 열람할 수 없는 데이터셋의 허용 목록이 붙은 역할은 부여하거나 회수할 수 없습니다";
 
   private final ClearanceResolver clearanceResolver;
   private final SecurityLevelRepository levelRepository;
   private final PermissionRepository permissionRepository;
+  private final DatasetAccessRepository accessRepository;
 
   /**
    * 역할 부여·회수 범위 검사. {@code changedRoleIds} 는 실제로 바뀌는 역할(추가 + 제거)만 넘긴다 — 대상이 이미 갖고 있고 그대로 유지되는 역할까지
    * 검사하면, 위임자가 무관한 상위 역할을 가진 사람의 다른 역할을 전혀 편집할 수 없게 된다.
    *
-   * <p>검사 순서: 시스템 ADMIN(전용 메시지가 이겨야 한다) → 역할 존재 → 열람 등급 → 권한 부분집합. 현재 테넌트에서 보이지 않는 역할·등급이 없는 역할은
-   * 판정할 근거가 없으므로 fail-closed 로 거부한다.
+   * <p>검사 순서: 시스템 ADMIN(전용 메시지가 이겨야 한다) → 역할 존재 → 열람 등급 → 권한 부분집합 → 허용 목록(WD-140). 현재 테넌트에서 보이지 않는
+   * 역할·등급이 없는 역할은 판정할 근거가 없으므로 fail-closed 로 거부한다.
    *
    * @throws CodedApiException 403 — 범위를 벗어난 역할이 하나라도 있을 때
    */
@@ -91,6 +97,15 @@ public class RoleGrantGuard {
           || !caller.permissions().containsAll(codesByRole.getOrDefault(roleId, Set.of()))) {
         throw roleScopeViolation();
       }
+    }
+
+    // WD-140: 역할에 붙은 허용 항목도 "나눠 주는 열람 자격" 이다. 허용 목록 필요 등급 데이터셋의 항목 중 호출자 자신이 열람 판정(VIEW — 등급 +
+    // 허용 목록)에서 볼 수 없는 것이 하나라도 있으면 거부한다. 받는 사람은 다른 역할로 등급을 가질 수 있으므로 "허용 목록에 있음" 만으로는 부족하다 —
+    // 호출자가 못 보는 데이터를 남이 보게 만들 수 있다. 바뀌는 역할 전체를 한 번에 조회한다(데이터셋·역할마다 묻지 않는다). 호출자는 여기서 ADMIN 이
+    // 아니므로 admin_bypass 우회는 성립하지 않는다(조건식은 열람 판정과 같은 모양을 그대로 쓴다).
+    if (!accessRepository.findRoleIdsWithAllowlistNotViewable(changedRoleIds, caller).isEmpty()) {
+      throw new CodedApiException(
+          HttpStatus.FORBIDDEN, "ROLE_GRANT_ALLOWLIST_BEYOND_SCOPE", ALLOWLIST_SCOPE_MESSAGE);
     }
   }
 

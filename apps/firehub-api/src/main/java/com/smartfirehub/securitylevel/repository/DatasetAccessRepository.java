@@ -7,6 +7,7 @@ import static com.smartfirehub.jooq.Tables.SECURITY_LEVEL;
 import static com.smartfirehub.jooq.Tables.USER;
 import static com.smartfirehub.jooq.Tables.USER_ROLE;
 import static org.jooq.impl.DSL.exists;
+import static org.jooq.impl.DSL.falseCondition;
 import static org.jooq.impl.DSL.field;
 import static org.jooq.impl.DSL.selectOne;
 
@@ -88,6 +89,39 @@ public class DatasetAccessRepository {
       subject = subject.or(g.ROLE_ID.in(c.roleIds()));
     }
     return exists(selectOne().from(g).where(g.DATASET_ID.eq(datasetIdField)).and(subject));
+  }
+
+  /**
+   * 주어진 역할들의 허용 항목 중, 허용 목록 필요 등급 데이터셋이면서 호출자 {@code c} 가 열람 시점에 <b>볼 수 없는</b> 데이터셋을 가진 역할
+   * id(WD-140 역할 부여 범위 검사용).
+   *
+   * <p>"볼 수 있는가" 는 열람 판정({@link com.smartfirehub.securitylevel.access.DatasetAccessPolicy#decide})의
+   * VIEW 와 같은 식이다 — 등급 rank ≤ 호출자 rank 이고, (허용 목록에 있음({@link #onAllowlistCondition}) 또는
+   * admin_bypass 등급 ∧ 시스템 ADMIN). 이것의 부정(rank 초과 또는 허용 목록 미충족)이면 그 역할을 돌려준다. 허용 목록 필요가 아닌 등급의 허용
+   * 항목은 열람 때 아예 참조되지 않으므로 제외한다 — 그런 데이터셋의 열람은 허용 항목이 아니라 등급만으로 정해지고, 등급은 가드가 역할 등급 상한으로 따로 본다.
+   *
+   * <p>한 번의 조회로 끝난다(데이터셋마다 묻지 않는다). dataset.security_level_id 는 NOT NULL + FK 라 내부 조인이 행을 흘리지 않는다.
+   */
+  public Set<Long> findRoleIdsWithAllowlistNotViewable(Collection<Long> roleIds, Clearance c) {
+    if (roleIds.isEmpty()) {
+      return Set.of();
+    }
+    // onAllowlistCondition 의 별칭(acl_g)과 겹치지 않게 바깥 허용 항목에는 다른 별칭을 쓴다.
+    var g = DATASET_ACCESS_GRANT.as("role_g");
+    Condition bypass = c.tenantAdmin() ? SECURITY_LEVEL.ADMIN_BYPASS.isTrue() : falseCondition();
+    // decide 의 두 거부 절 — CLEARANCE_INSUFFICIENT(rank 초과) 또는 NOT_ON_ALLOWLIST(목록 없음 ∧ 우회 아님).
+    Condition notViewable =
+        SECURITY_LEVEL.RANK.gt(c.rank()).or(onAllowlistCondition(c, g.DATASET_ID).or(bypass).not());
+    return dsl.selectDistinct(g.ROLE_ID)
+        .from(g)
+        .join(DATASET)
+        .on(DATASET.ID.eq(g.DATASET_ID))
+        .join(SECURITY_LEVEL)
+        .on(SECURITY_LEVEL.ID.eq(DATASET.SECURITY_LEVEL_ID))
+        .where(g.ROLE_ID.in(roleIds))
+        .and(SECURITY_LEVEL.ALLOWLIST_REQUIRED.isTrue())
+        .and(notViewable)
+        .fetchSet(g.ROLE_ID);
   }
 
   /**
