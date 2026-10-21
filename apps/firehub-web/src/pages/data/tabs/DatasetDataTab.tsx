@@ -17,6 +17,7 @@ import { Card } from '../../../components/ui/card';
 import { Checkbox } from '../../../components/ui/checkbox';
 import { useDatasetData, useDatasetPermissions, useDeleteDataRows } from '../../../hooks/queries/useDatasets';
 import { useColumnStatsMap } from '../../../hooks/useColumnStatsMap';
+import { toCsvCell } from '../../../lib/csv';
 import { formatCellValue, getRawCellValue,isNullValue } from '../../../lib/formatters';
 import type { DatasetDetailResponse } from '../../../types/dataset';
 import { DataTableToolbar } from '../components/DataTableToolbar';
@@ -159,19 +160,11 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
       return;
     }
 
-    // CSV 셀 escape: 쌍따옴표, 콤마, 개행 포함 시 쌍따옴표로 감싸고 내부 쌍따옴표는 두 번
-    const escapeCell = (value: unknown): string => {
-      if (value === null || value === undefined) return '';
-      const str = typeof value === 'object' ? JSON.stringify(value) : String(value);
-      if (/[",\r\n]/.test(str)) {
-        return `"${str.replace(/"/g, '""')}"`;
-      }
-      return str;
-    };
-
-    const headerRow = columns.map((col) => escapeCell(col.displayName || col.columnName)).join(',');
+    // CSV 셀 직렬화는 공용 toCsvCell — RFC 4180 따옴표 처리 + 문자열 값(표시명 헤더 포함)의 수식 주입 중화
+    // (OWASP CSV Injection, WD-156). 숫자 값은 원형 유지, 객체(GeoJSON 등)는 JSON 문자열.
+    const headerRow = columns.map((col) => toCsvCell(col.displayName || col.columnName)).join(',');
     const dataRows = selectedRows.map((row) =>
-      columns.map((col) => escapeCell(row[col.columnName ?? ''])).join(',')
+      columns.map((col) => toCsvCell(row[col.columnName ?? ''])).join(',')
     );
     // BOM 추가로 Excel에서 UTF-8 한글 깨짐 방지
     const csv = '﻿' + [headerRow, ...dataRows].join('\r\n');

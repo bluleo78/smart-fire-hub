@@ -138,6 +138,43 @@ test.describe('AI 표 위젯 내보내기 정책', () => {
     await page.getByRole('button', { name: 'CSV 다운로드' }).click();
     expect((await download).suggestedFilename()).toBe('결과.csv');
   });
+
+  // WD-156 — CSV 수식 주입(OWASP CSV Injection): 문자열 값·헤더가 = + - @ \t \r 로 시작하면 ' 접두, 숫자 음수는 원형
+  test('CSV 다운로드는 수식으로 시작하는 문자열만 중화하고 숫자는 그대로 둔다', async ({ authenticatedPage: page }) => {
+    const rows = [
+      { v: 'x', n: 1, '=h': 'ok' },
+      { v: '=1+1', n: -5, '=h': '+1' },
+      { v: '@SUM(A1)', n: -5.5, '=h': '-1' },
+      { v: '=HYPERLINK("http://evil","클릭")', n: 0, '=h': '\t=1' },
+    ];
+    const events = [...SHOW_TABLE_EVENTS];
+    events[1] = sseEvent({
+      type: 'tool_use',
+      toolName: 'mcp__firehub__show_table',
+      input: { title: '결과', sql: SQL, columns: ['v', 'n', '=h'], rows },
+      status: 'started',
+    });
+    await mockChatShowTable(page, events);
+    await mockAiSessions(page);
+    await mockApi(page, 'POST', '/api/v1/analytics/queries/export-check', { exportAllowed: true });
+    await showTable(page);
+    const download = page.waitForEvent('download');
+    await panel(page).getByRole('button', { name: '내보내기' }).click();
+    await page.getByRole('button', { name: 'CSV 다운로드' }).click();
+
+    // 내려받은 파일 본문을 그대로 읽어 셀 단위로 확인한다(BOM 제거)
+    const stream = await (await download).createReadStream();
+    const chunks: Buffer[] = [];
+    for await (const chunk of stream) chunks.push(chunk as Buffer);
+    const lines = Buffer.concat(chunks).toString('utf-8').replace(/^\uFEFF/, '').split('\r\n');
+    expect(lines).toEqual([
+      "v,n,'=h",
+      'x,1,ok',
+      "'=1+1,-5,'+1",
+      "'@SUM(A1),-5.5,'-1",
+      `"'=HYPERLINK(""http://evil"",""클릭"")",0,'\t=1`,
+    ]);
+  });
 });
 
 test.describe('AI 표 위젯 — export-check 응답 전 자리 잡기', () => {
@@ -187,14 +224,18 @@ const SHOW_DATASET_EVENTS = [
   sseEvent({ type: 'done', inputTokens: 120 }),
 ];
 
-async function showDataset(page: Page, exportAllowed: boolean) {
+async function showDataset(
+  page: Page,
+  exportAllowed: boolean,
+  rows: Record<string, unknown>[] = [{ id: 1, name: '항목 1' }],
+) {
   await mockChatShowTable(page, SHOW_DATASET_EVENTS);
   await mockAiSessions(page);
   const detail = createDatasetDetail({ id: DATASET_ID, name: '인사_평가_2026', exportAllowed });
   await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}`, detail);
   await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}/data`, {
     columns: detail.columns,
-    rows: [{ id: 1, name: '항목 1' }],
+    rows,
     page: 0,
     size: 20,
     totalElements: 1,
@@ -225,5 +266,24 @@ test.describe('AI 데이터셋 위젯 내보내기 정책', () => {
     await panel(page).getByRole('button', { name: '내보내기' }).click();
     await panel(page).getByRole('button', { name: 'CSV 다운로드' }).click();
     expect((await download).suggestedFilename()).toBe('인사_평가_2026.csv');
+  });
+
+  // WD-156 — CSV 수식 주입(OWASP CSV Injection): TEXT 값만 ' 접두, INTEGER 음수는 원형
+  test('CSV 다운로드는 수식으로 시작하는 문자열만 중화하고 숫자 음수는 그대로 둔다', async ({
+    authenticatedPage: page,
+  }) => {
+    await showDataset(page, true, [
+      { id: 1, name: '항목 1' },
+      { id: -5, name: '=1+1' },
+      { id: 3, name: '-1' },
+    ]);
+    const download = page.waitForEvent('download');
+    await panel(page).getByRole('button', { name: '내보내기' }).click();
+    await panel(page).getByRole('button', { name: 'CSV 다운로드' }).click();
+    const stream = await (await download).createReadStream();
+    const chunks: Buffer[] = [];
+    for await (const chunk of stream) chunks.push(chunk as Buffer);
+    const lines = Buffer.concat(chunks).toString('utf-8').replace(/^\uFEFF/, '').split('\n');
+    expect(lines).toEqual(['id,name', '1,항목 1', "-5,'=1+1", "3,'-1"]);
   });
 });

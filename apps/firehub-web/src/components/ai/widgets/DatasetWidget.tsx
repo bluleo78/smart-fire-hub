@@ -5,6 +5,7 @@ import { useMemo, useState } from 'react';
 import { parseUtcDate } from '@/lib/formatters';
 
 import { datasetsApi } from '../../../api/datasets';
+import { toCsvCell } from '../../../lib/csv';
 import { downloadBlob, downloadCsv } from '../../../lib/download';
 import { ActiveFilterChips } from './table/ActiveFilterChips';
 import { CellRenderer } from './table/CellRenderer';
@@ -148,17 +149,9 @@ export default function DatasetWidget({ input, onNavigate, displayMode }: Widget
       downloadBlob(`${datasetName}.json`, blob);
     } else {
       const colNames = visibleCols.map(c => c.columnName);
-      const header = colNames.join(',');
-      const body = rows.map(row =>
-        colNames.map(col => {
-          const val = row[col];
-          if (val == null) return '';
-          const str = String(val);
-          return str.includes(',') || str.includes('"') || str.includes('\n')
-            ? `"${str.replace(/"/g, '""')}"`
-            : str;
-        }).join(','),
-      );
+      // 셀 직렬화는 공용 toCsvCell — 문자열 값의 수식 주입 중화(OWASP CSV Injection, WD-156) + RFC 4180 따옴표 처리
+      const header = colNames.map(toCsvCell).join(',');
+      const body = rows.map(row => colNames.map(col => toCsvCell(row[col])).join(','));
       downloadCsv(`${datasetName}.csv`, '\uFEFF' + [header, ...body].join('\n'));
     }
   }

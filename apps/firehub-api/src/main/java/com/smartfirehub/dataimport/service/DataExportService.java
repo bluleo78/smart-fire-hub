@@ -7,6 +7,7 @@ import com.smartfirehub.dataimport.dto.ExportFormat;
 import com.smartfirehub.dataimport.dto.ExportRequest;
 import com.smartfirehub.dataimport.dto.ExportResult;
 import com.smartfirehub.dataimport.service.export.CsvExportWriter;
+import com.smartfirehub.dataimport.service.export.CsvFormulaGuard;
 import com.smartfirehub.dataimport.service.export.ExcelExportWriter;
 import com.smartfirehub.dataimport.service.export.ExportWriter;
 import com.smartfirehub.dataimport.service.export.GeoJsonExportWriter;
@@ -217,7 +218,11 @@ public class DataExportService {
           String[] values = new String[columnNames.size()];
           for (int i = 0; i < columnNames.size(); i++) {
             Object val = row.get(columnNames.get(i));
-            values[i] = val != null ? val.toString() : "";
+            // 쿼리 결과는 컬럼 메타가 없으므로 값의 Java 타입으로 판정한다 — 숫자·날짜는 원형, 그 외는 문자열로 보고 중화(CSV 한정).
+            values[i] =
+                format == ExportFormat.CSV
+                    ? CsvFormulaGuard.queryCell(val)
+                    : (val != null ? val.toString() : "");
           }
           writer.writeRow(values);
         }
@@ -259,7 +264,8 @@ public class DataExportService {
             String[] values = new String[columnNames.size()];
             for (int i = 0; i < columnNames.size(); i++) {
               Object val = row.get(columnNames.get(i));
-              values[i] = val != null ? val.toString() : "";
+              // CSV 면 문자열 컬럼 값의 수식 주입을 중화한다(OWASP CSV Injection) — 숫자·날짜 컬럼은 원형 유지.
+              values[i] = toCell(val, selectedColumns.get(i).dataType(), format);
             }
             writer.writeRow(values);
           }
@@ -270,6 +276,17 @@ public class DataExportService {
   }
 
   // --- Helpers ---
+
+  /**
+   * 행 값 하나를 내보내기 셀 문자열로 바꾼다. CSV 일 때만 문자열 컬럼 값의 수식 주입을 중화한다(OWASP CSV Injection, {@link
+   * CsvFormulaGuard}) — XLSX 는 문자열 셀로 써서 수식이 실행되지 않고, 따옴표를 붙이면 셀에 그대로 보여 데이터가 오염된다.
+   */
+  static String toCell(Object val, String dataType, ExportFormat format) {
+    if (format == ExportFormat.CSV) {
+      return CsvFormulaGuard.datasetCell(val, dataType);
+    }
+    return val != null ? val.toString() : "";
+  }
 
   private void writeHeader(
       ExportWriter writer, List<DatasetColumnResponse> selectedColumns, ExportFormat format)

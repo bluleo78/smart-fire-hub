@@ -134,4 +134,47 @@ test.describe('데이터셋 데이터 탭 — 선택 액션 바', () => {
     // 'Carol, Jr.' 는 콤마 포함 → 쌍따옴표로 감싸야 함
     expect(csv).toContain('"Carol, Jr."');
   });
+
+  // WD-156 — CSV 수식 주입(OWASP CSV Injection): TEXT 값이 = + - @ 로 시작하면 ' 접두, INTEGER 음수는 원형
+  test('선택 행 CSV 내보내기는 수식으로 시작하는 문자열만 중화하고 숫자 음수는 그대로 둔다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupMocks(page);
+    // 나중에 등록한 route 가 우선 — 수식 값을 담은 행으로 덮어쓴다
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets/1/data',
+      (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            columns: datasetDetail.columns,
+            rows: [
+              { id: 1, name: '=1+1', amount: -5 },
+              { id: 2, name: '@SUM(A1)', amount: 20 },
+              { id: 3, name: '정상값', amount: null },
+            ],
+            page: 0,
+            size: 50,
+            totalElements: 3,
+            totalPages: 1,
+          }),
+        }),
+    );
+
+    await page.goto('/data/datasets/1?tab=data');
+    await page.getByRole('tab', { name: '데이터' }).click();
+    await expect(page.getByText('정상값')).toBeVisible({ timeout: 10000 });
+    await page.getByRole('checkbox', { name: '전체 선택' }).click();
+    await expect(page.getByText('3개 행 선택됨')).toBeVisible();
+
+    const downloadPromise = page.waitForEvent('download');
+    await page.getByRole('button', { name: '선택 행 CSV 내보내기' }).click();
+    const stream = await (await downloadPromise).createReadStream();
+    const chunks: Buffer[] = [];
+    for await (const chunk of stream) chunks.push(chunk as Buffer);
+    const lines = Buffer.concat(chunks).toString('utf-8').replace(/^\uFEFF/, '').split('\r\n');
+
+    expect(lines).toEqual(['ID,이름,금액', "1,'=1+1,-5", "2,'@SUM(A1),20", '3,정상값,']);
+  });
 });
