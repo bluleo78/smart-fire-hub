@@ -33,6 +33,53 @@ public final class ProactiveCron {
     return trimmed.split("\\s+").length == 5 ? "0 " + trimmed : trimmed;
   }
 
+  /** 5필드(화면 안내 기준) 칸 이름과 허용 범위. 6필드면 앞에 초 칸이 하나 더 붙는다. */
+  private static final String[] FIELD_NAMES = {"분", "시", "일", "월", "요일"};
+
+  private static final String[] FIELD_RANGES = {
+    "0~59", "0~23", "1~31", "1~12 또는 JAN~DEC", "0~7 또는 MON~SUN"
+  };
+
+  /**
+   * 잘못된 cron 식이 왜 틀렸는지 화면 안내(「분 시 일 월 요일」 5칸)와 같은 기준의 한국어로 설명한다(WD-138).
+   *
+   * <p>Spring {@code CronExpression} 의 예외 문구는 영어이고, 5필드 입력도 초 칸을 붙인 6필드 기준으로 말해 사용자가 넣지 않은 값("0 61
+   * * * * *")과 "6칸이 필요하다"는 안내와 다른 칸 수가 보였다. 그래서 칸 수를 먼저 보고, 칸 수가 맞으면 칸을 하나씩 따로 파싱해 처음 틀린 칸의 이름·값·허용
+   * 범위를 알려 준다(다른 칸은 {@code *} 로 채워 그 칸만 검사).
+   *
+   * @return 설명 문구. 식이 유효하면 {@code null}
+   */
+  public static String describeInvalid(String cronExpression) {
+    String trimmed = cronExpression == null ? "" : cronExpression.trim();
+    String[] fields = trimmed.isEmpty() ? new String[0] : trimmed.split("\\s+");
+    if (fields.length != 5 && fields.length != 6) {
+      return "「분 시 일 월 요일」 5칸을 공백으로 나눠 입력해야 하는데 "
+          + fields.length
+          + "칸을 입력했습니다 (예: 0 9 * * * → 매일 09:00)";
+    }
+    try {
+      CronExpression.parse(normalize(trimmed));
+      return null;
+    } catch (IllegalArgumentException wholeInvalid) {
+      // 아래에서 칸별로 원인을 찾는다
+    }
+    int offset = fields.length - 5; // 6필드면 맨 앞이 초 칸
+    for (int i = 0; i < fields.length; i++) {
+      String[] probe = {"*", "*", "*", "*", "*", "*"};
+      probe[i + (6 - fields.length)] = fields[i];
+      try {
+        CronExpression.parse(String.join(" ", probe));
+      } catch (IllegalArgumentException fieldInvalid) {
+        boolean seconds = i < offset;
+        String name = seconds ? "초" : FIELD_NAMES[i - offset];
+        String range = seconds ? "0~59" : FIELD_RANGES[i - offset];
+        return "「" + name + "」 칸의 값 \"" + fields[i] + "\" 이(가) 올바르지 않습니다 (허용 범위 " + range + ")";
+      }
+    }
+    // 칸마다는 맞지만 조합이 성립하지 않는 경우(드묾)
+    return "칸의 조합이 올바른 cron 형식이 아닙니다 (예: 0 9 * * * → 매일 09:00)";
+  }
+
   /**
    * 다음 실행 시각을 UTC 벽시계로 계산한다.
    *

@@ -74,4 +74,35 @@ class ProactiveCronTest {
     assertThat(ProactiveCron.nextExecuteAtUtc(null, "Asia/Seoul")).isNull();
     assertThat(ProactiveCron.nextExecuteAtUtc("  ", "Asia/Seoul")).isNull();
   }
+
+  // ---- WD-138: 잘못된 cron 의 한국어 설명 — 화면 안내(「분 시 일 월 요일」 5칸) 기준 ----
+
+  @Test
+  @DisplayName("유효한 5필드·6필드 cron 은 설명이 없다(null)")
+  void describeInvalidReturnsNullForValid() {
+    assertThat(ProactiveCron.describeInvalid("0 9 * * *")).isNull();
+    assertThat(ProactiveCron.describeInvalid("0 0 9 * * MON-FRI")).isNull();
+  }
+
+  @Test
+  @DisplayName("칸 수가 틀리면 5칸 기준으로 몇 칸을 넣었는지 알려 준다 — 영어·6칸 문구가 아니다")
+  void describeInvalidReportsFieldCountInFiveFieldTerms() {
+    String reason = ProactiveCron.describeInvalid("abc");
+
+    assertThat(reason)
+        .isEqualTo("「분 시 일 월 요일」 5칸을 공백으로 나눠 입력해야 하는데 1칸을 입력했습니다 (예: 0 9 * * * → 매일 09:00)");
+    assertThat(ProactiveCron.describeInvalid("0 9 * *")).contains("4칸을 입력했습니다");
+  }
+
+  @Test
+  @DisplayName("범위를 벗어난 칸은 사용자가 넣은 값 그대로 칸 이름·허용 범위와 함께 알려 준다 — 초 칸을 붙인 값이 나오지 않는다")
+  void describeInvalidNamesTheBadField() {
+    assertThat(ProactiveCron.describeInvalid("61 * * * *"))
+        .isEqualTo("「분」 칸의 값 \"61\" 이(가) 올바르지 않습니다 (허용 범위 0~59)");
+    assertThat(ProactiveCron.describeInvalid("0 25 * * *")).startsWith("「시」 칸의 값 \"25\"");
+    assertThat(ProactiveCron.describeInvalid("0 9 * 13 *")).startsWith("「월」 칸의 값 \"13\"");
+    assertThat(ProactiveCron.describeInvalid("0 9 * * FOO")).startsWith("「요일」 칸의 값 \"FOO\"");
+    // 6필드로 넣으면 맨 앞은 초 칸이다
+    assertThat(ProactiveCron.describeInvalid("70 0 9 * * *")).startsWith("「초」 칸의 값 \"70\"");
+  }
 }

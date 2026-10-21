@@ -99,14 +99,14 @@ public class ProactiveJobService {
    */
   static void validateCronAndTimezone(String cronExpression, String timezone) {
     if (cronExpression != null && !cronExpression.isBlank()) {
-      try {
-        // 등록 경로(ProactiveJobSchedulerService)와 같은 정규화를 거쳐 검증한다 (#354).
-        // 원시 문자열로 검증하면 5필드를 거부하는데, 정작 작업 편집 폼의 CRON_PRESETS 는
-        // 5필드('0 9 * * *')를 보내므로 UI 프리셋으로 만든 작업이 400 으로 막혔다.
-        CronExpression.parse(ProactiveCron.normalize(cronExpression));
-      } catch (IllegalArgumentException e) {
+      // 등록 경로(ProactiveJobSchedulerService)와 같은 정규화를 거쳐 검증한다 (#354).
+      // 원시 문자열로 검증하면 5필드를 거부하는데, 정작 작업 편집 폼의 CRON_PRESETS 는
+      // 5필드('0 9 * * *')를 보내므로 UI 프리셋으로 만든 작업이 400 으로 막혔다.
+      // 실패 사유는 Spring 의 영어·6필드 기준 문구 대신 화면 안내(5칸)와 같은 한국어로 알린다 (WD-138).
+      String reason = ProactiveCron.describeInvalid(cronExpression);
+      if (reason != null) {
         throw new ProactiveJobException(
-            "유효하지 않은 cron 표현식: \"" + cronExpression + "\" — " + e.getMessage());
+            "유효하지 않은 cron 표현식입니다: \"" + cronExpression.trim() + "\" — " + reason);
       }
     }
     if (timezone != null && !timezone.isBlank()) {
