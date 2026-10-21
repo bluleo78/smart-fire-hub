@@ -36,9 +36,14 @@ public class CsvExportWriter implements ExportWriter {
         displayNames.stream().map(CsvFormulaGuard::neutralize).toArray(String[]::new));
   }
 
+  /** 값을 {@link ExportValues#text} 모양의 문자열로 써서 한 행을 쓴다(호출부가 이미 중화한 문자열은 그대로). */
   @Override
-  public void writeRow(String[] values) {
-    csvWriter.writeNext(values);
+  public void writeRow(Object[] values) {
+    String[] cells = new String[values.length];
+    for (int i = 0; i < values.length; i++) {
+      cells[i] = ExportValues.text(values[i]);
+    }
+    csvWriter.writeNext(cells);
   }
 
   @Override

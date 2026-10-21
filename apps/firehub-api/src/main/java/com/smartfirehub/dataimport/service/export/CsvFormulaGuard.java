@@ -74,7 +74,8 @@ public final class CsvFormulaGuard {
   }
 
   /**
-   * 데이터셋 내보내기 CSV 셀 값을 만든다. 컬럼 타입이 문자열이 아니거나 값 자체가 숫자·날짜 등이면 원형({@code toString()}), 그 외에는 중화한다.
+   * 데이터셋 내보내기 CSV 셀 값을 만든다. 컬럼 타입이 문자열이 아니거나 값 자체가 숫자·날짜 등이면 원형({@link ExportValues#text} 모양), 그
+   * 외에는 중화한다.
    *
    * @param value 행 값(null 이면 빈 문자열)
    * @param dataType 데이터셋 컬럼 타입(dataset_column.data_type, 예: TEXT·INTEGER). null 이면 값 타입으로만 판정
@@ -84,7 +85,7 @@ public final class CsvFormulaGuard {
       return "";
     }
     if (isNonTextDataType(dataType)) {
-      return value.toString();
+      return ExportValues.text(value);
     }
     return queryCell(value);
   }
@@ -104,7 +105,7 @@ public final class CsvFormulaGuard {
         || value instanceof Temporal
         || value instanceof java.util.Date
         || value instanceof Boolean) {
-      return value.toString();
+      return ExportValues.text(value);
     }
     return neutralize(value.toString());
   }

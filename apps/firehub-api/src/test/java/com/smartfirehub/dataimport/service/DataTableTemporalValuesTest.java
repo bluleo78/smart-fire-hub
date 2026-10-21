@@ -9,6 +9,7 @@ import com.smartfirehub.audit.service.AuditLogService;
 import com.smartfirehub.dataimport.dto.ExportFormat;
 import com.smartfirehub.dataimport.dto.ExportRequest;
 import com.smartfirehub.dataimport.service.export.CsvExportWriter;
+import com.smartfirehub.dataimport.service.export.ExportValues;
 import com.smartfirehub.dataset.dto.CreateDatasetRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
@@ -25,6 +26,8 @@ import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -35,6 +38,7 @@ import java.util.TimeZone;
 import java.util.TreeMap;
 import org.apache.poi.ss.usermodel.Cell;
 import org.apache.poi.ss.usermodel.CellType;
+import org.apache.poi.ss.usermodel.DateUtil;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
@@ -258,7 +262,10 @@ class DataTableTemporalValuesTest extends IntegrationTestBase {
     assertThat(((Number) dups.get(0).get("duplicate_count")).longValue()).isEqualTo(2L);
   }
 
-  /** 내보내기 기대 행 — 이상 셀은 PG 원문, 정상 셀은 수정 전 Java 값의 toString, NULL 은 빈 문자열. */
+  /**
+   * 내보내기 기대 행 — 이상 셀은 PG 원문, 정상 셀은 수정 전 Java 값을 {@link ExportValues#text} 모양으로(WD-159: 시각 끝의 {@code
+   * .0} 없음 — PG 원문과 같은 모양), NULL 은 빈 문자열.
+   */
   private List<String[]> expectedExportRows() {
     List<String[]> out = new ArrayList<>();
     for (String label : ids.keySet()) {
@@ -266,8 +273,7 @@ class DataTableTemporalValuesTest extends IntegrationTestBase {
       int i = 0;
       for (String col : List.of("d", "ts")) {
         Object old = preFix.get(label).get(col);
-        v[i++] =
-            isAbnormal(label, col) ? pgText.get(label).get(col) : old == null ? "" : old.toString();
+        v[i++] = isAbnormal(label, col) ? pgText.get(label).get(col) : ExportValues.text(old);
       }
       v[2] = label;
       out.add(v);
@@ -306,8 +312,8 @@ class DataTableTemporalValuesTest extends IntegrationTestBase {
     assertThat(new String(actual, StandardCharsets.UTF_8))
         .isEqualTo(new String(expectedCsv(), StandardCharsets.UTF_8));
     String csv = new String(actual, StandardCharsets.UTF_8);
-    // 정상 값은 예전 문자열 그대로(Timestamp.toString 의 ".0" 포함)
-    assertThat(csv).contains("\"2024-06-30\",\"2024-06-30 23:59:59.0\",\"ok2\"");
+    // 정상 값은 PG 원문과 같은 모양 — WD-159 로 Timestamp.toString 의 ".0" 이 빠졌다(소수 초는 0 이 아닐 때만)
+    assertThat(csv).contains("\"2024-06-30\",\"2024-06-30 23:59:59\",\"ok2\"");
     assertThat(csv).contains("\"2024-01-01\",\"2024-01-01 10:00:00.123\",\"ok1\"");
     // 이상 값은 PG 원문
     assertThat(csv).contains("\"10000-01-01\",\"10000-01-01 00:00:00\",\"big\"");
@@ -324,16 +330,44 @@ class DataTableTemporalValuesTest extends IntegrationTestBase {
       assertThat(sheet.getLastRowNum()).isEqualTo(expected.size());
       for (int r = 0; r < expected.size(); r++) {
         Row row = sheet.getRow(r + 1);
+        String label = expected.get(r)[2];
         for (int c = 0; c < 3; c++) {
           Cell cell = row.getCell(c);
-          // 내보내기 Excel 은 모든 셀을 문자열 셀로 쓴다 — 정상·이상 값 모두 예전과 같은 셀 타입
-          assertThat(cell.getCellType()).as("row %d col %d", r, c).isEqualTo(CellType.STRING);
-          assertThat(cell.getStringCellValue())
-              .as("row %d col %d", r, c)
-              .isEqualTo(expected.get(r)[c]);
+          Object old = c == 2 ? label : preFix.get(label).get(List.of("d", "ts").get(c));
+          if (c < 2 && !isAbnormal(label, List.of("d", "ts").get(c)) && old == null) {
+            // NULL 은 빈 셀(WD-159 전에는 "" 문자열 셀)
+            assertThat(cell.getCellType()).as("row %d col %d", r, c).isEqualTo(CellType.BLANK);
+          } else if (c < 2
+              && !isAbnormal(label, List.of("d", "ts").get(c))
+              && excelDateTime(old) != null) {
+            // Excel 날짜 범위 안의 정상 값은 날짜 셀 — 같은 벽시계 값(WD-159)
+            assertThat(cell.getCellType()).as("row %d col %d", r, c).isEqualTo(CellType.NUMERIC);
+            assertThat(DateUtil.isCellDateFormatted(cell)).as("row %d col %d", r, c).isTrue();
+            assertThat(cell.getLocalDateTimeCellValue())
+                .as("row %d col %d", r, c)
+                .isEqualTo(excelDateTime(old));
+          } else {
+            // 이상 값(PG 원문)과 Excel 날짜로 나타낼 수 없는 정상 값(0001년·1900-01)은 문자열 셀 — #769 가드 그대로
+            assertThat(cell.getCellType()).as("row %d col %d", r, c).isEqualTo(CellType.STRING);
+            assertThat(cell.getStringCellValue())
+                .as("row %d col %d", r, c)
+                .isEqualTo(expected.get(r)[c]);
+          }
         }
       }
     }
+  }
+
+  /** Excel 날짜 셀로 쓰일 정상 값의 벽시계 시각 — 1900-03-01 전이거나 날짜·시각 값이 아니면 null(문자열 셀). */
+  private static LocalDateTime excelDateTime(Object value) {
+    LocalDateTime ldt =
+        value instanceof java.sql.Timestamp ts
+            ? ts.toLocalDateTime()
+            : value instanceof java.sql.Date d ? d.toLocalDate().atStartOfDay() : null;
+    if (ldt == null || ldt.toLocalDate().isBefore(LocalDate.of(1900, 3, 1))) {
+      return null;
+    }
+    return ldt;
   }
 
   @Test

@@ -7,8 +7,11 @@ import com.smartfirehub.dataset.service.ColumnPhysicalType;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeFormatterBuilder;
 import java.time.format.DateTimeParseException;
+import java.time.temporal.ChronoField;
 import java.util.*;
 import java.util.HashSet;
 import java.util.regex.Pattern;
@@ -30,7 +33,13 @@ public class DataValidationService {
   private static final List<DateTimeFormatter> TIMESTAMP_FORMATTERS =
       List.of(
           DateTimeFormatter.ISO_LOCAL_DATE_TIME,
-          DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"),
+          // 소수 초(.123·.123456)는 있어도 없어도 된다 — 내보낸 CSV(WD-159)·PG 텍스트 원문 모양을 그대로 다시 임포트할 수 있게
+          new DateTimeFormatterBuilder()
+              .appendPattern("yyyy-MM-dd HH:mm:ss")
+              .optionalStart()
+              .appendFraction(ChronoField.NANO_OF_SECOND, 1, 9, true)
+              .optionalEnd()
+              .toFormatter(),
           DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm:ss"),
           DateTimeFormatter.ofPattern("dd-MM-yyyy HH:mm:ss"),
           DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm:ss"),
@@ -162,6 +171,19 @@ public class DataValidationService {
           try {
             date = LocalDate.parse(value, formatter);
             break;
+          } catch (DateTimeParseException ignored) {
+          }
+        }
+        // Excel 날짜 셀은 임포트 파서(LegacyExcelDataFormatter)가 "2026-05-10T00:00" 같은 ISO 날짜시각으로 읽는다. 자정이면
+        // 날짜만 있는 값으로 받는다 — 내보낸 Excel(WD-159, 날짜 셀)을 고쳐 다시 임포트할 때와 사용자가 만든 날짜 셀 파일 모두.
+        // 자정이 아닌 시각은 날짜로 자르면 값이 바뀌므로 그대로 거부한다.
+        if (date == null) {
+          try {
+            LocalDateTime dateTime =
+                LocalDateTime.parse(value, DateTimeFormatter.ISO_LOCAL_DATE_TIME);
+            if (dateTime.toLocalTime().equals(LocalTime.MIDNIGHT)) {
+              date = dateTime.toLocalDate();
+            }
           } catch (DateTimeParseException ignored) {
           }
         }

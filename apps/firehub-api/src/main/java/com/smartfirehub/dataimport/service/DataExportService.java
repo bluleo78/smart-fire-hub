@@ -216,14 +216,12 @@ public class DataExportService {
       try (ExportWriter writer = createWriter(format, outputStream, null)) {
         writer.writeHeader(columnNames);
         for (Map<String, Object> row : rows) {
-          String[] values = new String[columnNames.size()];
+          Object[] values = new Object[columnNames.size()];
           for (int i = 0; i < columnNames.size(); i++) {
             Object val = row.get(columnNames.get(i));
             // 쿼리 결과는 컬럼 메타가 없으므로 값의 Java 타입으로 판정한다 — 숫자·날짜는 원형, 그 외는 문자열로 보고 중화(CSV 한정).
-            values[i] =
-                format == ExportFormat.CSV
-                    ? CsvFormulaGuard.queryCell(val)
-                    : (val != null ? val.toString() : "");
+            // Excel 은 값을 그대로 넘겨 숫자·날짜 셀로 쓴다(WD-159).
+            values[i] = format == ExportFormat.CSV ? CsvFormulaGuard.queryCell(val) : val;
           }
           writer.writeRow(values);
         }
@@ -264,7 +262,7 @@ public class DataExportService {
           if (rows.isEmpty()) break;
 
           for (Map<String, Object> row : rows) {
-            String[] values = new String[columnNames.size()];
+            Object[] values = new Object[columnNames.size()];
             for (int i = 0; i < columnNames.size(); i++) {
               Object val = row.get(columnNames.get(i));
               // CSV 면 문자열 컬럼 값의 수식 주입을 중화한다(OWASP CSV Injection) — 숫자·날짜 컬럼은 원형 유지.
@@ -281,14 +279,16 @@ public class DataExportService {
   // --- Helpers ---
 
   /**
-   * 행 값 하나를 내보내기 셀 문자열로 바꾼다. CSV 일 때만 문자열 컬럼 값의 수식 주입을 중화한다(OWASP CSV Injection, {@link
-   * CsvFormulaGuard}) — XLSX 는 문자열 셀로 써서 수식이 실행되지 않고, 따옴표를 붙이면 셀에 그대로 보여 데이터가 오염된다.
+   * 행 값 하나를 writer 에 넘길 셀 값으로 바꾼다. CSV 일 때만 문자열 컬럼 값의 수식 주입을 중화한 문자열로 바꾼다(OWASP CSV Injection,
+   * {@link CsvFormulaGuard}) — XLSX 는 문자열 셀로 써서 수식이 실행되지 않고, 따옴표를 붙이면 셀에 그대로 보여 데이터가 오염된다.
+   *
+   * <p>Excel·GeoJSON 은 값을 그대로 넘긴다 — writer 가 Java 타입대로 숫자·참거짓·날짜 셀(또는 JSON 타입)로 쓴다(WD-159).
    */
-  static String toCell(Object val, String dataType, ExportFormat format) {
+  static Object toCell(Object val, String dataType, ExportFormat format) {
     if (format == ExportFormat.CSV) {
       return CsvFormulaGuard.datasetCell(val, dataType);
     }
-    return val != null ? val.toString() : "";
+    return val;
   }
 
   private void writeHeader(

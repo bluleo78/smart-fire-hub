@@ -510,7 +510,9 @@ class DataExportServiceTest extends IntegrationTestBase {
       Row first = wb.getSheetAt(0).getRow(1);
       assertThat(first.getCell(0).getCellType()).isEqualTo(CellType.STRING);
       assertThat(first.getCell(0).getStringCellValue()).isEqualTo("=1+1");
-      assertThat(first.getCell(1).getStringCellValue()).isEqualTo("-5");
+      // 숫자 컬럼은 숫자 셀(WD-159) — 음수도 따옴표 없이 값 그대로
+      assertThat(first.getCell(1).getCellType()).isEqualTo(CellType.NUMERIC);
+      assertThat(first.getCell(1).getNumericCellValue()).isEqualTo(-5.0);
     }
   }
 
