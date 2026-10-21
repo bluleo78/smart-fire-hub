@@ -34,7 +34,7 @@ public class DatasetTagService {
         tagRepository.findByDatasetId(datasetId).stream()
             .anyMatch(existing -> existing.equalsIgnoreCase(tagName));
     if (alreadyExists) {
-      throw new IllegalStateException("Tag already exists: " + tagName);
+      throw new IllegalStateException("이미 추가된 태그입니다: " + tagName);
     }
     tagRepository.insert(datasetId, tagName, userId);
 
