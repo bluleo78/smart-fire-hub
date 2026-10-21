@@ -702,10 +702,9 @@ class DataTableServiceTest extends IntegrationTestBase {
     dataTableRowService.insertBatch(tableName, List.of("name"), List.of(Map.of("name", "old")));
 
     // 스테이징에 새 내용을 적재한 뒤 스왑한다 (REPLACE 적재 전략의 실제 순서)
-    dataTableService.createTempTable(tableName);
-    dataTableRowService.insertBatch(
-        DataTableService.tempTableName(tableName), List.of("name"), List.of(Map.of("name", "new")));
-    dataTableService.swapTable(tableName);
+    String tmp = dataTableService.createTempTable(tableName);
+    dataTableRowService.insertBatch(tmp, List.of("name"), List.of(Map.of("name", "new")));
+    dataTableService.swapTable(tableName, tmp);
 
     // 원본 이름이 스테이징 내용을 담는다 — DROP 과 RENAME 이 둘 다 올바른 스키마에 닿았다는 증거
     List<String> names =
@@ -713,7 +712,7 @@ class DataTableServiceTest extends IntegrationTestBase {
     assertThat(names).containsExactly("new");
 
     // 시퀀스 리네임이 실제로 일어났다 — 빠뜨리면 아무 에러 없이 tmp 이름의 시퀀스가 남고,
-    // 다음 createTempTable 의 DROP SEQUENCE IF EXISTS 가 살아있는 시퀀스를 지우려 든다.
+    // 원본 시퀀스 이름이 사라져 다음 맞바꿈이 엉뚱한 이름을 물려받는다.
     Long canonicalSeq =
         dsl.selectCount()
             .from("pg_sequences")
@@ -724,10 +723,7 @@ class DataTableServiceTest extends IntegrationTestBase {
     Long tmpSeq =
         dsl.selectCount()
             .from("pg_sequences")
-            .where(
-                "schemaname = 'data' AND sequencename = '"
-                    + DataTableService.tempTableName(tableName)
-                    + "_id_seq'")
+            .where("schemaname = 'data' AND sequencename = '" + tmp + "_id_seq'")
             .fetchOne(0, Long.class);
     assertThat(tmpSeq).as("tmp 시퀀스 이름은 남아 있으면 안 된다").isEqualTo(0);
 
@@ -755,8 +751,8 @@ class DataTableServiceTest extends IntegrationTestBase {
     dataTableRowService.insertBatch(tableName, List.of("name"), List.of(Map.of("name", "keep-me")));
 
     // 적재 결과가 0행인 REPLACE — 임시 테이블은 비어 있다
-    dataTableService.createTempTable(tableName);
-    dataTableService.finishReplace(tableName, 0);
+    String tmp = dataTableService.createTempTable(tableName);
+    dataTableService.finishReplace(tableName, tmp, 0);
 
     List<String> names =
         dsl.fetch("SELECT name FROM data.\"" + tableName + "\"").getValues("name", String.class);
@@ -765,10 +761,7 @@ class DataTableServiceTest extends IntegrationTestBase {
     Long tmpTable =
         dsl.selectCount()
             .from("pg_tables")
-            .where(
-                "schemaname = 'data' AND tablename = '"
-                    + DataTableService.tempTableName(tableName)
-                    + "'")
+            .where("schemaname = 'data' AND tablename = '" + tmp + "'")
             .fetchOne(0, Long.class);
     assertThat(tmpTable).as("임시 테이블은 정리돼야 한다 — 남으면 다음 실행이 걸린다").isEqualTo(0);
   }
@@ -782,10 +775,9 @@ class DataTableServiceTest extends IntegrationTestBase {
         List.of(new DatasetColumnRequest("name", "Name", "TEXT", null, true, false, null)));
     dataTableRowService.insertBatch(tableName, List.of("name"), List.of(Map.of("name", "old")));
 
-    dataTableService.createTempTable(tableName);
-    dataTableRowService.insertBatch(
-        DataTableService.tempTableName(tableName), List.of("name"), List.of(Map.of("name", "new")));
-    dataTableService.finishReplace(tableName, 1);
+    String tmp = dataTableService.createTempTable(tableName);
+    dataTableRowService.insertBatch(tmp, List.of("name"), List.of(Map.of("name", "new")));
+    dataTableService.finishReplace(tableName, tmp, 1);
 
     List<String> names =
         dsl.fetch("SELECT name FROM data.\"" + tableName + "\"").getValues("name", String.class);
@@ -842,8 +834,8 @@ class DataTableServiceTest extends IntegrationTestBase {
     String table = "t_swap_upd_" + System.nanoTime();
     tablesToCleanup.add(table);
     dataTableService.createTable(table, List.of(textColumn("name")));
-    dataTableService.createTempTable(table);
-    dataTableService.swapTable(table);
+    String tmp = dataTableService.createTempTable(table);
+    dataTableService.swapTable(table, tmp);
     Long triggers =
         (Long)
             dsl.fetchValue(

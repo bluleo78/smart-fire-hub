@@ -138,8 +138,8 @@ class PythonReadGrantWiringTest extends IntegrationTestBase {
     String pub = table("pub", "공개");
     sync.syncTenant();
     assertThat(selectAs(1, pub)).as("대조군: 맞바꿈 전에는 읽는다").isNull();
-    dataTableService.createTempTable(pub);
-    dataTableService.swapTable(pub); // 트랜잭션 밖 호출 → 즉시 실행 분기
+    String tmp = dataTableService.createTempTable(pub);
+    dataTableService.swapTable(pub, tmp); // 트랜잭션 밖 호출 → 즉시 실행 분기
     assertThat(selectAs(1, pub)).isNull();
   }
 

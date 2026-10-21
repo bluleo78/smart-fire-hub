@@ -343,13 +343,9 @@ class DatasetNameLengthTest extends IntegrationTestBase {
 
   /** REPLACE 한 번(임시 생성 → 적재 → 마무리)을 실제 실행기와 같은 순서로 돌린다. */
   private void replaceWith(String tableName, String value) {
-    dataTableService.createTempTable(tableName);
-    dsl.execute(
-        "INSERT INTO "
-            + DataSchema.qualify(DataTableService.tempTableName(tableName))
-            + " (val) VALUES (?)",
-        value);
-    dataTableService.finishReplace(tableName, 1);
+    String tmp = dataTableService.createTempTable(tableName);
+    dsl.execute("INSERT INTO " + DataSchema.qualify(tmp) + " (val) VALUES (?)", value);
+    dataTableService.finishReplace(tableName, tmp, 1);
   }
 
   @Test
@@ -360,7 +356,7 @@ class DatasetNameLengthTest extends IntegrationTestBase {
 
     replaceWith(legacy, "gamma");
     assertThat(valuesOf(legacy)).containsExactly("gamma");
-    assertThat(physicalTableExists(DataTableService.tempTableName(legacy))).isFalse();
+    assertThat(physicalTableExists(DataTableService.legacyTempTableName(legacy))).isFalse();
 
     // 맞바꿈 후 시퀀스 이름이 테이블 이름과 겹치지 않아 두 번째 REPLACE·이후 삽입도 된다.
     replaceWith(legacy, "delta");
@@ -368,11 +364,14 @@ class DatasetNameLengthTest extends IntegrationTestBase {
     assertThat(valuesOf(legacy)).containsExactly("delta", "epsilon");
 
     // 실패 정리 경로도 원본을 건드리지 않는다.
-    dataTableService.createTempTable(legacy);
-    dataTableService.dropTempTable(legacy);
+    String tmp = dataTableService.createTempTable(legacy);
+    assertThat(physicalTableExists(tmp)).isTrue();
+    dataTableService.dropTempTable(legacy, tmp);
+    assertThat(physicalTableExists(tmp)).isFalse();
     assertThat(valuesOf(legacy)).containsExactly("delta", "epsilon");
-    // 임시 이름은 원본 길이와 무관하게 37자(시퀀스 44자) — 잘림이 생기지 않는다.
-    assertThat(DataTableService.tempTableName(legacy)).hasSize(37).startsWith("rtmp_");
+    // 임시 이름은 원본 길이와 무관하게 50자(시퀀스 57자) — 잘림이 생기지 않는다(WD-151: rtmp_<난수 12>_<md5 32>).
+    assertThat(tmp).hasSize(50).startsWith("rtmp_");
+    assertThat(tmp + "_id_seq").hasSizeLessThanOrEqualTo(63);
   }
 
   @Test
@@ -382,8 +381,8 @@ class DatasetNameLengthTest extends IntegrationTestBase {
     createPhysicalTableWithRows("wd95_orders_tmp");
 
     replaceWith("wd95_orders", "gamma");
-    dataTableService.createTempTable("wd95_orders");
-    dataTableService.dropTempTable("wd95_orders");
+    String tmp = dataTableService.createTempTable("wd95_orders");
+    dataTableService.dropTempTable("wd95_orders", tmp);
 
     assertThat(valuesOf("wd95_orders")).containsExactly("gamma");
     assertThat(valuesOf("wd95_orders_tmp")).containsExactly("alpha", "beta");

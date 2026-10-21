@@ -9,6 +9,7 @@ import com.smartfirehub.dataset.storage.DataStoreBackend;
 import com.smartfirehub.dataset.storage.DataTableNames;
 import com.smartfirehub.dataset.storage.DataTableStore;
 import com.smartfirehub.global.tenant.DataSchema;
+import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.tenant.TenantSchemaProvisioner;
 import com.smartfirehub.securitylevel.pythonread.PythonReadGrantSync;
 import java.util.ArrayList;
@@ -54,9 +55,14 @@ public class PostgresDataTableStore implements DataTableStore {
    * 메서드를 거쳐야 한다.
    */
   private void installUpdatedAtTrigger(String tableName) {
+    installUpdatedAtTrigger(dsl, tableName);
+  }
+
+  /** {@link #installUpdatedAtTrigger(String)} 와 같되 주어진 연결(트랜잭션)에서 실행한다 — 임시 테이블 생성 트랜잭션 안에서 쓴다. */
+  private static void installUpdatedAtTrigger(DSLContext ctx, String tableName) {
     String q = DataSchema.qualify(tableName);
-    dsl.execute("DROP TRIGGER IF EXISTS fh_touch_updated_at ON " + q);
-    dsl.execute(
+    ctx.execute("DROP TRIGGER IF EXISTS fh_touch_updated_at ON " + q);
+    ctx.execute(
         "CREATE TRIGGER fh_touch_updated_at BEFORE INSERT OR UPDATE ON "
             + q
             + " FOR EACH ROW EXECUTE FUNCTION public.fh_touch_updated_at()");
@@ -71,10 +77,10 @@ public class PostgresDataTableStore implements DataTableStore {
    * 생성 트랜잭션 안에서 실행되기 때문에 CONCURRENTLY 자체가 불가능하다.
    *
    * <p>REPLACE 맞바꿈({@link #swapTable}) 뒤에는 이 인덱스 이름이 PostgreSQL 기본 이름({@code
-   * rtmp_<md5>__updated_at_idx})으로 바뀐다(WD-103 조사). 지금은 무해하다 — 런타임에 이 이름으로 다시 만들거나 지우는 코드가 없고(이 메서드는
-   * 방금 만든 테이블에만 쓰인다), V125 는 이미 적용이 끝난 일회성 마이그레이션이다. 다만 V125 의 WARN 로그가 안내하는 수동 수리 명령({@code CREATE
-   * INDEX CONCURRENTLY IF NOT EXISTS "ix_<table>_upd"})을 맞바꿈을 거친 테이블에 돌리면 {@code _updated_at} 인덱스가
-   * 하나 더 생긴다. 이 이름으로 무언가를 찾거나 지우는 코드를 새로 만든다면 PK 유니크·필드 인덱스처럼 카탈로그로 찾아야 한다.
+   * rtmp_<난수>_<md5>__updated_at_idx}, 길면 앞부분)으로 바뀐다(WD-103 조사). 지금은 무해하다 — 런타임에 이 이름으로 다시 만들거나 지우는
+   * 코드가 없고(이 메서드는 방금 만든 테이블에만 쓰인다), V125 는 이미 적용이 끝난 일회성 마이그레이션이다. 다만 V125 의 WARN 로그가 안내하는 수동 수리
+   * 명령({@code CREATE INDEX CONCURRENTLY IF NOT EXISTS "ix_<table>_upd"})을 맞바꿈을 거친 테이블에 돌리면 {@code
+   * _updated_at} 인덱스가 하나 더 생긴다. 이 이름으로 무언가를 찾거나 지우는 코드를 새로 만든다면 PK 유니크·필드 인덱스처럼 카탈로그로 찾아야 한다.
    */
   private void createUpdatedAtIndex(String tableName) {
     dsl.execute(
@@ -113,9 +119,10 @@ public class PostgresDataTableStore implements DataTableStore {
   }
 
   /**
-   * 행 검색 색인 테이블 이름(fh_search_{datasetId})과 REPLACE 임시 테이블({@link DataTableService#TEMP_TABLE_PREFIX})에
-   * 충돌하지 않도록 사용자 테이블 이름에서 예약한다. 파사드({@link DataTableService#validateNewTableName})가 먼저 걸러내지만,
-   * 이 구현에 직접 들어오는 호출(계약 테스트 등)에서도 같은 규칙이 지켜지도록 여기서도 본다.
+   * 행 검색 색인 테이블 이름(fh_search_{datasetId})과 REPLACE 임시 테이블({@link
+   * DataTableService#TEMP_TABLE_PREFIX})에 충돌하지 않도록 사용자 테이블 이름에서 예약한다. 파사드({@link
+   * DataTableService#validateNewTableName})가 먼저 걸러내지만, 이 구현에 직접 들어오는 호출(계약 테스트 등)에서도 같은 규칙이 지켜지도록
+   * 여기서도 본다.
    */
   private void rejectReservedTableName(String tableName) {
     for (String prefix : List.of(IndexRef.TABLE_PREFIX, DataTableService.TEMP_TABLE_PREFIX)) {
@@ -418,7 +425,8 @@ public class PostgresDataTableStore implements DataTableStore {
    *
    * <p>이름을 보지 않는 이유: 같은 필드의 인덱스가 여러 이름으로 존재한다 — 규칙 이름, 63바이트에서 잘린 옛 이름, 해시 이름, 그리고 REPLACE
    * 적재({@link #createTempTable} 의 {@code LIKE ... INCLUDING ALL})가 맞바꿈 뒤 남기는 PostgreSQL 기본
-   * 이름({@code rtmp_<md5>_<col>_idx}). 이름으로 고르면 이 중 일부를 놓치거나 다른 필드의 인덱스를 잡는다.
+   * 이름({@code rtmp_<난수>_<md5>_<col>_idx}, 길면 앞부분, WD-151 이전 맞바꿈이면 {@code rtmp_<md5>_<col>_idx}).
+   * 이름으로 고르면 이 중 일부를 놓치거나 다른 필드의 인덱스를 잡는다.
    *
    * <p>이 기준이 사용자 인덱스를 잡지 않는 근거: 앱 사용자는 데이터 스키마에 인덱스를 만들 수 없다(SQL 스텝은 SELECT/DML 만 허용, PYTHON 읽기 슬롯은
    * 읽기 전용). {@code _updated_at} 인덱스({@code ix_<table>_upd})는 시스템 컬럼 위라 필드 이름으로는 닿지 않는다.
@@ -503,9 +511,9 @@ public class PostgresDataTableStore implements DataTableStore {
    * 카탈로그에서 그 테이블의 <b>PK 유니크 인덱스</b>(사용자가 지정한 기본 키 필드의 유니크 인덱스)를 모두 찾는다(WD-103). 이름은 보지 않는다.
    *
    * <p>이름을 보지 않는 이유: REPLACE 적재({@link #createTempTable} 의 {@code LIKE ... INCLUDING ALL})는 인덱스 이름을
-   * 복사하지 않고 PostgreSQL 기본 이름({@code rtmp_<md5>_<col>_idx}, 겹치면 숫자 접미사)을 새로 짓는다. 맞바꿈({@link
-   * #swapTable}) 뒤에는 {@code ux_<table>_pk} 라는 이름이 사라지므로, 이름으로 찾던 예전 코드는 PK 를 해제·변경해도 옛 유니크 인덱스를 지우지
-   * 못했다(옛 PK 필드에 같은 값을 넣으면 「중복 키」, PK 를 바꾸면 유니크 두 개가 함께 걸림).
+   * 복사하지 않고 PostgreSQL 기본 이름({@code rtmp_<난수>_<md5>_<col>_idx}, 길면 앞부분, 겹치면 숫자 접미사)을 새로 짓는다.
+   * 맞바꿈({@link #swapTable}) 뒤에는 {@code ux_<table>_pk} 라는 이름이 사라지므로, 이름으로 찾던 예전 코드는 PK 를 해제·변경해도 옛
+   * 유니크 인덱스를 지우지 못했다(옛 PK 필드에 같은 값을 넣으면 「중복 키」, PK 를 바꾸면 유니크 두 개가 함께 걸림).
    *
    * <p><b>PK 유니크 인덱스로 보는 기준</b> — 우리가 데이터셋 테이블에 만드는 유니크 인덱스는 시스템 PK({@code id}, {@code
    * <table>_pkey})와 이 PK 유니크 인덱스
@@ -516,7 +524,7 @@ public class PostgresDataTableStore implements DataTableStore {
    *   <li>현재 테넌트 데이터 스키마의 그 테이블에 걸려 있다(REPLACE 임시 테이블 {@code rtmp_*}·행 검색 색인 {@code fh_search_*} 는
    *       다른 테이블이라 닿지 않는다).
    *   <li>UNIQUE 이고 PRIMARY KEY 가 <b>아니다</b> — 시스템 PK({@code indisprimary}, REPLACE 뒤에는 {@code
-   *       rtmp_<md5>_pkey} 라는 이름)는 절대 건드리지 않는다.
+   *       rtmp_<난수>_<md5>_pkey} 라는 이름)는 절대 건드리지 않는다.
    *   <li>제약(UNIQUE·PRIMARY KEY·EXCLUDE 제약)이 소유한 인덱스가 아니다 — 우리는 제약이 아니라 인덱스로만 만든다. 제약이 소유한 인덱스는
    *       {@code DROP INDEX} 로 지울 수도 없다.
    *   <li>btree 이고, 식(expression)·부분(predicate) 인덱스가 아니다(우리가 만드는 모양).
@@ -706,57 +714,85 @@ public class PostgresDataTableStore implements DataTableStore {
   }
 
   /**
-   * Creates a temporary staging table {@link DataTableService#tempTableName} in the current
-   * tenant's data schema with the same structure as the original table (using PostgreSQL's LIKE
-   * ... INCLUDING ALL). Used by the REPLACE load strategy to safely stage new data before
-   * swapping.
+   * 이번 실행 전용 임시 staging 테이블({@link DataTableService#newTempTableName})을 원본과 같은 구조({@code LIKE ...
+   * INCLUDING ALL})로 현재 테넌트 데이터 스키마에 만들고 그 이름을 돌려준다. REPLACE 적재가 새 데이터를 여기에 쌓은 뒤 맞바꾼다.
+   *
+   * <p><b>한 트랜잭션으로 만든다(WD-151).</b> {@code LIKE} 직후의 임시 테이블은 {@code id} 기본값이 아직 원본의 시퀀스를 가리켜 원본에
+   * 의존한다 — 그 순간 같은 원본에 겹친 다른 실행의 맞바꿈({@code DROP TABLE} 원본)이 의존성 오류로 깨진다. 트랜잭션 안에서는 {@code LIKE} 가
+   * 쥔 원본 ACCESS SHARE 잠금이 커밋까지 남아, 맞바꿈이 기본값을 자기 시퀀스로 바꾼 뒤까지 기다린다. 중간에 실패하면 반쯤 만든 임시 테이블도 남지
+   * 않는다(호출자는 이름을 받지 못했으므로 지울 수도 없다).
+   *
+   * <p><b>새 이름에는 DROP IF EXISTS 를 하지 않는다.</b> 난수가 겹치는 극히 드문 경우는 다른 실행의 살아 있는 임시 테이블일 수 있으므로 지우지 않고
+   * CREATE 가 실패하게 둔다. 대신 WD-151 이전의 고정 이름 잔재({@link DataTableService#legacyTempTableName})만 지운다 — 새
+   * 코드는 그 이름을 쓰지 않으므로 살아 있는 실행의 것일 수 없다(시퀀스는 그 테이블 소유라 함께 지워진다). 실행마다 다른 이름의 잔재는 자동으로 쓸지 않는다(근거·수동
+   * 정리는 {@link DataTableService#newTempTableName}).
    */
   @Override
-  public void createTempTable(String tableName) {
+  public String createTempTable(String tableName) {
     DataTableNames.validate(tableName);
-    String tmpName = DataTableService.tempTableName(tableName);
-    // Drop any leftover temp table from a previous failed run
-    dsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(tmpName));
-    dsl.execute(
-        "CREATE TABLE "
-            + DataSchema.qualify(tmpName)
-            + " (LIKE "
-            + DataSchema.qualify(tableName)
-            + " INCLUDING ALL)");
-    // LIKE INCLUDING ALL shares the original SERIAL sequence, creating a dependency
-    // that blocks DROP TABLE on the original. Give the temp table its own sequence.
+    String tmpName = DataTableService.newTempTableName(tableName);
     String tmpSeq = tmpName + "_id_seq";
-    dsl.execute("DROP SEQUENCE IF EXISTS " + DataSchema.qualify(tmpSeq));
-    dsl.execute(
-        "CREATE SEQUENCE "
-            + DataSchema.qualify(tmpSeq)
-            + " OWNED BY "
-            + DataSchema.qualify(tmpName)
-            + ".id");
-    // nextval 인자는 문자열 리터럴 안의 식별자다 — 여기서도 스키마를 한정해야 스왑 후 DEFAULT 가
-    // 엉뚱한 스키마의 시퀀스를 가리키지 않는다.
-    dsl.execute(
-        "ALTER TABLE "
-            + DataSchema.qualify(tmpName)
-            + " ALTER COLUMN id SET DEFAULT nextval('"
-            + DataSchema.qualify(tmpSeq)
-            + "')");
-    // LIKE INCLUDING ALL은 컬럼 기본값·인덱스는 복사하지만 트리거는 복사하지 않는다 — 임시 테이블에도
-    // 별도로 설치해야 스왑(swapTable, RENAME) 후 원본 이름을 물려받은 테이블이 트리거를 유지한다.
-    installUpdatedAtTrigger(tmpName);
+    dsl.transaction(
+        cfg -> {
+          DSLContext tx = org.jooq.impl.DSL.using(cfg);
+          // 옛 고정 이름 잔재 정리(위 Javadoc) — 새 이름에는 하지 않는다.
+          tx.execute(
+              "DROP TABLE IF EXISTS "
+                  + DataSchema.qualify(DataTableService.legacyTempTableName(tableName)));
+          tx.execute(
+              "CREATE TABLE "
+                  + DataSchema.qualify(tmpName)
+                  + " (LIKE "
+                  + DataSchema.qualify(tableName)
+                  + " INCLUDING ALL)");
+          // LIKE INCLUDING ALL shares the original SERIAL sequence, creating a dependency
+          // that blocks DROP TABLE on the original. Give the temp table its own sequence.
+          tx.execute(
+              "CREATE SEQUENCE "
+                  + DataSchema.qualify(tmpSeq)
+                  + " OWNED BY "
+                  + DataSchema.qualify(tmpName)
+                  + ".id");
+          // nextval 인자는 문자열 리터럴 안의 식별자다 — 여기서도 스키마를 한정해야 스왑 후 DEFAULT 가
+          // 엉뚱한 스키마의 시퀀스를 가리키지 않는다.
+          tx.execute(
+              "ALTER TABLE "
+                  + DataSchema.qualify(tmpName)
+                  + " ALTER COLUMN id SET DEFAULT nextval('"
+                  + DataSchema.qualify(tmpSeq)
+                  + "')");
+          // LIKE INCLUDING ALL은 컬럼 기본값·인덱스는 복사하지만 트리거는 복사하지 않는다 — 임시 테이블에도
+          // 별도로 설치해야 스왑(swapTable, RENAME) 후 원본 이름을 물려받은 테이블이 트리거를 유지한다.
+          installUpdatedAtTrigger(tx, tmpName);
+        });
+    return tmpName;
   }
 
   /**
-   * 원본을 지우고 {@link DataTableService#tempTableName} 을 원본 이름으로 바꾼다(현재 테넌트 데이터 스키마). 삭제·리네임은 하나의
-   * {@code dsl.transaction} 안에서 원자적으로 일어난다. 모든 데이터가 임시 테이블에 적재된 뒤에만 호출한다.
+   * 원본을 지우고 이번 실행의 임시 테이블({@code tmpName})을 원본 이름으로 바꾼다(현재 테넌트 데이터 스키마). 삭제·리네임은 하나의 {@code
+   * dsl.transaction} 안에서 원자적으로 일어난다. 모든 데이터가 임시 테이블에 적재된 뒤에만 호출한다.
+   *
+   * <p>같은 원본에 겹친 두 실행의 맞바꿈은 원본의 ACCESS EXCLUSIVE 잠금(DROP)으로 차례로 선다 — 뒤 실행의 DROP 은 앞 실행의 커밋을 기다렸다가 그
+   * 결과(앞 실행이 RENAME 한 새 원본)를 지우고 자기 임시 테이블로 바꾼다. 둘 다 성공하고 나중에 끝난 실행이 이긴다(WD-151).
    */
   @Override
-  public void swapTable(String tableName) {
+  public void swapTable(String tableName, String tmpName) {
     DataTableNames.validate(tableName);
-    String tmpName = DataTableService.tempTableName(tableName);
+    // 파괴 연산(원본 DROP 후 RENAME) 전에 받은 이름이 정말 이 테이블의 임시 테이블인지 본다 — 파사드도 보지만 구현에 직접 들어오는 호출도 막는다.
+    DataTableService.requireTempTableOf(tableName, tmpName);
     dsl.transaction(
         cfg -> {
           var txDsl = org.jooq.impl.DSL.using(cfg);
+          // 맨 먼저 원본을 배타 잠금으로 잡는다(WD-151). 같은 원본에 겹친 다른 실행의 맞바꿈이 끝날 때까지 여기서 기다리고, 잠금을 얻은 뒤에는
+          // 그 실행이 RENAME 해 넣은 현재 원본을 가리킨다(LOCK TABLE 은 잠금 후 이름을 다시 찾는다). 아래 시퀀스 조회
+          // (pg_get_serial_sequence)는 잠금 없이 이름을 찾으므로, 먼저 잡지 않으면 조회 도중 다른 실행이 원본을 지워 사라진 테이블을 보거나,
+          // 두 맞바꿈이 각자 공유 잠금을 쥔 채 DROP 의 배타 잠금으로 올리려다 교착할 수 있다.
+          // 그보다 먼저 테넌트의 PYTHON 읽기 권한 동기화 잠금을 잡는다 — 겹친 다른 실행이 맞바꾼 직후 거는 GRANT 는 테이블 잠금 없이 pg_class
+          // 행을 고쳐, 아래 DROP 과 겹치면 「tuple concurrently updated」로 이 실행이 실패한다(라이브 확인). 동기화도 같은 잠금 안에서
+          // GRANT 하므로 둘이 차례로 돈다. 순서(동기화 잠금 → 테이블 잠금)를 지킨다 — 동기화는 테이블 잠금을 잡지 않아 거꾸로 기다리는 쪽이 없다.
+          PythonReadGrantSync.lockTenantSync(txDsl, TenantContext.require("REPLACE 맞바꿈"));
+          txDsl.execute(
+              "LOCK TABLE " + DataSchema.qualify(tableName) + " IN ACCESS EXCLUSIVE MODE");
           // 원본 id 시퀀스의 실제 이름을 DROP 전에 읽어 둔다 — 원본을 지우면 소유 시퀀스도 함께 사라지고 그 이름을 임시 시퀀스가 물려받는다.
           // 이름을 규칙으로 다시 만들지 않는 이유: PostgreSQL 은 긴 테이블의 시퀀스 이름을 잘라 짓고 충돌하면 번호를 붙이므로, 앞부분이 같은
           // 긴 테이블 둘에서 규칙으로 만든 이름은 다른 테이블의 시퀀스와 겹칠 수 있다.
@@ -775,9 +811,10 @@ public class PostgresDataTableStore implements DataTableStore {
           // RENAME TO 의 새 이름은 스키마를 붙이지 않는다(PostgreSQL 문법). 스키마는 원본을 따라간다.
           txDsl.execute(
               "ALTER TABLE " + DataSchema.qualify(tmpName) + " RENAME TO \"" + tableName + "\"");
-          // 인덱스 이름은 되돌리지 않는다(WD-103) — 임시 테이블이 LIKE 로 받은 PostgreSQL 기본 이름(rtmp_<md5>_*)이 그대로 남는다.
-          // PK 유니크·필드 인덱스는 이름이 아니라 카탈로그로 찾으므로(findPrimaryKeyUniqueIndexes·findFieldIndexes) 동작에 영향이
-          // 없고, 이미 운영에 남은 맞바꿈 이력 테이블도 같은 방식으로 처리된다. _updated_at 인덱스는 createUpdatedAtIndex 주석 참고.
+          // 인덱스 이름은 되돌리지 않는다(WD-103) — 임시 테이블이 LIKE 로 받은 PostgreSQL 기본 이름(rtmp_<난수>_<md5>_*, 잘리면
+          // 앞부분)이 그대로 남는다. PK 유니크·필드 인덱스는 이름이 아니라 카탈로그로 찾으므로(findPrimaryKeyUniqueIndexes·
+          // findFieldIndexes) 동작에 영향이 없고, 이미 운영에 남은 맞바꿈 이력 테이블도 같은 방식으로 처리된다. _updated_at 인덱스는
+          // createUpdatedAtIndex 주석 참고.
           // 시퀀스 리네임을 빠뜨리면 스왑 후 nextval 이 옛 이름의 시퀀스를 가리킨 채 조용히 동작한다.
           String tmpSeq = tmpName + "_id_seq";
           txDsl.execute(
@@ -793,13 +830,14 @@ public class PostgresDataTableStore implements DataTableStore {
   }
 
   /**
-   * Drops the temporary staging table {@link DataTableService#tempTableName} in the current
-   * tenant's data schema if it exists. Called on failure to preserve the original table's data.
+   * 이번 실행의 임시 staging 테이블({@code tmpName})이 있으면 지운다(현재 테넌트 데이터 스키마). 실패 시 원본 데이터를 보존하려고 부른다. 이름이
+   * 실행마다 달라 같은 출력에 적재 중인 다른 실행의 임시 테이블은 지우지 않는다(WD-151).
    */
   @Override
-  public void dropTempTable(String tableName) {
+  public void dropTempTable(String tableName, String tmpName) {
     DataTableNames.validate(tableName);
-    String tmpName = DataTableService.tempTableName(tableName);
+    // 지우기 전에 받은 이름이 정말 이 테이블의 임시 테이블인지 본다 — 실제 데이터셋 테이블을 지우는 일이 없게 한다.
+    DataTableService.requireTempTableOf(tableName, tmpName);
     dsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(tmpName));
   }
 

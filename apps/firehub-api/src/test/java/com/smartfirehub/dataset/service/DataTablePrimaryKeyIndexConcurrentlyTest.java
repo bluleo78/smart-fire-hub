@@ -36,7 +36,10 @@ class DataTablePrimaryKeyIndexConcurrentlyTest extends IntegrationTestBase {
   void dropTable() {
     inTenantFixture(
         () -> {
-          dataTableService.dropTempTable(TABLE);
+          // 맞바꿈이 임시 테이블을 원본으로 바꾸므로 남는 것은 없다 — 옛 고정 이름 잔재만 혹시 몰라 지운다(WD-151).
+          dsl.execute(
+              "DROP TABLE IF EXISTS "
+                  + DataSchema.qualify(DataTableService.legacyTempTableName(TABLE)));
           dataTableService.dropTable(TABLE);
         });
   }
@@ -96,12 +99,10 @@ class DataTablePrimaryKeyIndexConcurrentlyTest extends IntegrationTestBase {
     createPkTable();
     inTenantFixture(
         () -> {
-          dataTableService.createTempTable(TABLE);
+          String tmp = dataTableService.createTempTable(TABLE);
           dsl.execute(
-              "INSERT INTO "
-                  + DataSchema.qualify(DataTableService.tempTableName(TABLE))
-                  + " (ab_x, ab_y) VALUES ('k1', 'a')");
-          dataTableService.finishReplace(TABLE, 1);
+              "INSERT INTO " + DataSchema.qualify(tmp) + " (ab_x, ab_y) VALUES ('k1', 'a')");
+          dataTableService.finishReplace(TABLE, tmp, 1);
         });
     assertThat(uniqueColumnSets(false)).containsExactly("ab_x");
 

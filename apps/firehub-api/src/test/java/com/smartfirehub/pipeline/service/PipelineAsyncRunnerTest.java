@@ -126,6 +126,21 @@ class PipelineAsyncRunnerTest {
               return new PipelineSecurityGate.RunAs(u, Clearance.none(u == null ? 0L : u, 1L));
             });
     lenient().when(pythonReadGrantSync.prepareForRun(any(), anyInt())).thenReturn(2);
+    // 임시 테이블 생성은 이번 실행 전용 이름을 돌려준다(WD-151) — 러너가 그 이름을 적재 대상·마무리·정리에 그대로 넘기는지 단언하려고
+    // 출력별로 정해진 가짜 이름(runTemp)을 쓴다. 쓰지 않는 테스트가 있어 lenient.
+    lenient()
+        .when(dataTableService.createTempTable(anyString()))
+        .thenAnswer(inv -> runTemp(inv.getArgument(0)));
+  }
+
+  /**
+   * 테스트에서 {@code createTempTable(table)} 목이 돌려주는 이번 실행 임시 테이블 이름 — 실제 모양({@code rtmp_<12
+   * hex>_<md5>})과 같되 난수 부분을 고정해 단언할 수 있게 한다.
+   */
+  private static String runTemp(String table) {
+    return DataTableService.TEMP_TABLE_PREFIX
+        + "0123456789ab_"
+        + com.smartfirehub.dataset.storage.DataTableNames.md5Hex(table);
   }
 
   @AfterEach
@@ -1196,9 +1211,9 @@ class PipelineAsyncRunnerTest {
 
   /**
    * 실행기를 끈 PYTHON + REPLACE 는 출력 테이블 세션 잠금 <b>안에서</b> 임시 테이블 생성 → stdout JSON 적재 → 맞바꿈을 한다(#735,
-   * R5). createTempTable 은 출력마다 고정된 임시 이름({@code tempTableName})을 DROP IF EXISTS 후 재생성하므로, 이 구간이 잠금
-   * 밖으로 새면 겹친 실행이 서로의 _tmp 를 지우고 덮는다. 잠금 목이 본문을 실행하지 않게 해 "잠금 밖에서는 출력에 손대지 않는다"를 먼저 고정하고(스크립트 실행은
-   * 읽기 전용이라 잠금 밖), 이어서 본문을 돌려 순서를 확인한다. truncate 는 더 이상 없다.
+   * R5). 임시 테이블 이름이 WD-151 부터 실행마다 달라 임시 테이블 충돌은 이름이 막지만, 같은 출력의 REPLACE·SQL 스텝과의 직렬화라는 기존 동작을 지키려고
+   * 이 경로의 잠금은 유지한다. 잠금 목이 본문을 실행하지 않게 해 "잠금 밖에서는 출력에 손대지 않는다"를 먼저 고정하고(스크립트 실행은 읽기 전용이라 잠금 밖), 이어서
+   * 본문을 돌려 순서를 확인한다. truncate 는 더 이상 없다.
    */
   @Test
   void 실행기_꺼진_PYTHON_REPLACE는_출력_잠금_안에서만_임시테이블에_적재하고_맞바꾼다() {
@@ -1229,9 +1244,8 @@ class PipelineAsyncRunnerTest {
     order.verify(dataTableService).createTempTable("out735_py");
     order
         .verify(localPythonOutputLoader)
-        .load(
-            DataTableService.tempTableName("out735_py"), "[{\"v\": \"a\"}]\n", Map.of("v", "TEXT"));
-    order.verify(dataTableService).finishReplace("out735_py", 0L);
+        .load(runTemp("out735_py"), "[{\"v\": \"a\"}]\n", Map.of("v", "TEXT"));
+    order.verify(dataTableService).finishReplace("out735_py", runTemp("out735_py"), 0L);
   }
 
   /** 같은 셋업에서 잠금 목이 본문을 실행하지 않으면 출력(임시 테이블 생성·적재·맞바꿈)에 아무 일도 일어나지 않는다 — 쓰는 구간 전체가 잠금 안이다. */
@@ -1251,7 +1265,7 @@ class PipelineAsyncRunnerTest {
     verify(outputTableSessionLock).callLocked(eq("out735_py"), any());
 
     verify(dataTableService, never()).createTempTable(anyString());
-    verify(dataTableService, never()).finishReplace(anyString(), anyLong());
+    verify(dataTableService, never()).finishReplace(anyString(), anyString(), anyLong());
     verify(dataTableRowService, never()).truncateTable(anyString());
     verifyNoInteractions(localPythonOutputLoader);
   }
@@ -1339,8 +1353,7 @@ class PipelineAsyncRunnerTest {
         .thenReturn(new PythonScriptExecutor.RunResult(0, "[{\"nope\": 1}]", ""));
     when(outputTableSessionLock.callLocked(eq("out_bad"), any()))
         .thenAnswer(inv -> inv.<java.util.function.Supplier<?>>getArgument(1).get());
-    when(localPythonOutputLoader.load(
-            eq(DataTableService.tempTableName("out_bad")), anyString(), any()))
+    when(localPythonOutputLoader.load(eq(runTemp("out_bad")), anyString(), any()))
         .thenThrow(
             new ScriptExecutionException(
                 "Python 실행 실패: Script succeeded but data insert failed: x"));
@@ -1348,8 +1361,8 @@ class PipelineAsyncRunnerTest {
     String status = runner.executeStep(7411L, step, 74L, "TestPipeline", userId, false);
 
     assertThat(status).isEqualTo("FAILED");
-    verify(dataTableService).dropTempTable("out_bad");
-    verify(dataTableService, never()).finishReplace(anyString(), anyLong());
+    verify(dataTableService).dropTempTable("out_bad", runTemp("out_bad"));
+    verify(dataTableService, never()).finishReplace(anyString(), anyString(), anyLong());
   }
 
   /** 출력 없는 로컬 PYTHON 은 적재하지 않고, 실행 로그는 stdout+stderr 다(executor 와 같은 규칙). */
@@ -2253,8 +2266,13 @@ class PipelineAsyncRunnerTest {
     verify(dataTableService).createTempTable("output_replace");
     // 스왑 여부의 판단은 DataTableService.finishReplace 가 단독으로 갖는다(#685) — 여기서는
     // 실행기가 **적재된 행 수를 정확히 넘겼는지**만 본다. 판단 자체는 DataTableServiceTest 가 본다.
-    verify(dataTableService).finishReplace("output_replace", 10L);
-    verify(dataTableService, never()).dropTempTable(any());
+    verify(dataTableService).finishReplace("output_replace", runTemp("output_replace"), 10L);
+    verify(dataTableService, never()).dropTempTable(any(), any());
+    // 실행기에는 이번 실행의 임시 테이블 이름이 그대로 적재 대상으로 간다(WD-151) — 실행기는 이름을 스스로 만들지 않는다.
+    @SuppressWarnings("unchecked")
+    ArgumentCaptor<Map<String, Object>> pyRequest = ArgumentCaptor.forClass(Map.class);
+    verify(executorClient).executePython(pyRequest.capture(), anyInt());
+    assertThat(pyRequest.getValue()).containsEntry("output_table", runTemp("output_replace"));
   }
 
   @Test
@@ -2297,8 +2315,8 @@ class PipelineAsyncRunnerTest {
     // then: createTempTable 후 rows_loaded=0 → dropTempTable (swap 없음)
     verify(dataTableService).createTempTable("output_norows");
     // 0행이 그대로 전달돼야 finishReplace 가 원본을 지키는 쪽으로 판단할 수 있다.
-    verify(dataTableService).finishReplace("output_norows", 0L);
-    verify(dataTableService, never()).swapTable(any());
+    verify(dataTableService).finishReplace("output_norows", runTemp("output_norows"), 0L);
+    verify(dataTableService, never()).swapTable(any(), any());
   }
 
   // ------------------------------------------------------------------ //
@@ -2947,8 +2965,9 @@ class PipelineAsyncRunnerTest {
     // then: 원본 truncate 없음 + 스테이징만 정리 + 맞바꿈 없음
     assertThat(status).isEqualTo("FAILED");
     verify(dataTableRowService, never()).truncateTable(anyString());
-    verify(dataTableService).dropTempTable("ptmp_api_exec_fail");
-    verify(dataTableService, never()).finishReplace(anyString(), anyLong());
+    // 실패 정리는 이번 실행이 만든 임시 테이블만 지운다(WD-151) — 같은 출력에 적재 중인 다른 실행의 것은 이름이 달라 닿지 않는다.
+    verify(dataTableService).dropTempTable("ptmp_api_exec_fail", runTemp("ptmp_api_exec_fail"));
+    verify(dataTableService, never()).finishReplace(anyString(), anyString(), anyLong());
   }
 
   @Test
@@ -3081,8 +3100,13 @@ class PipelineAsyncRunnerTest {
     // then: 스테이징 생성 → 7행 맞바꿈. 원본 truncate 는 없다.
     assertThat(status).isEqualTo("COMPLETED");
     verify(dataTableService).createTempTable("ptmp_api_replace");
-    verify(dataTableService).finishReplace("ptmp_api_replace", 7L);
-    verify(dataTableService, never()).dropTempTable(anyString());
+    verify(dataTableService).finishReplace("ptmp_api_replace", runTemp("ptmp_api_replace"), 7L);
+    verify(dataTableService, never()).dropTempTable(anyString(), anyString());
+    // 실행기에는 이번 실행의 임시 테이블 이름이 그대로 적재 대상으로 간다(WD-151).
+    @SuppressWarnings("unchecked")
+    ArgumentCaptor<Map<String, Object>> apiRequest = ArgumentCaptor.forClass(Map.class);
+    verify(executorClient).executeApiCall(apiRequest.capture());
+    assertThat(apiRequest.getValue()).containsEntry("output_table", runTemp("ptmp_api_replace"));
     verify(dataTableRowService, never()).truncateTable(anyString());
   }
 

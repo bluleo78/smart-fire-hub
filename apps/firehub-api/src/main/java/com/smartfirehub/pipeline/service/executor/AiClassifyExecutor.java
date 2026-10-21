@@ -142,12 +142,10 @@ public class AiClassifyExecutor {
     // 2. Load strategy
     String loadStrategy = step.loadStrategy() != null ? step.loadStrategy() : "REPLACE";
     boolean isReplace = "REPLACE".equalsIgnoreCase(loadStrategy);
-    String targetTable = outputTableName;
-
-    if (isReplace) {
-      dataTableService.createTempTable(outputTableName);
-      targetTable = DataTableService.tempTableName(outputTableName);
-    }
+    // REPLACE 면 이번 실행 전용 임시 테이블을 만든다(WD-151) — 이름이 실행마다 달라, 같은 출력에 겹친 실행과 생성·적재·정리가 서로 닿지 않는다.
+    // 생성은 아래 try 밖이다: 생성이 실패하면 정리할 이름이 없다.
+    String tempTable = isReplace ? dataTableService.createTempTable(outputTableName) : null;
+    String targetTable = isReplace ? tempTable : outputTableName;
 
     // 3. Output column names: source_id + each outputColumn
     List<String> outputColumnNames = new ArrayList<>();
@@ -305,13 +303,13 @@ public class AiClassifyExecutor {
       // swapTable 을 직접 부른다. 다른 실행기(Python·API_CALL)는 0행이 정상 결과일 수 있어
       // finishReplace 로 판단을 위임하지만, AI_CLASSIFY 에서 0행은 정상 결과가 아니다.
       if (isReplace) {
-        dataTableService.swapTable(outputTableName);
+        dataTableService.swapTable(outputTableName, tempTable);
       }
 
     } catch (Exception e) {
       if (isReplace) {
         try {
-          dataTableService.dropTempTable(outputTableName);
+          dataTableService.dropTempTable(outputTableName, tempTable);
         } catch (Exception dropEx) {
           log.warn("[AI_CLASSIFY] Failed to drop temp table: {}", dropEx.getMessage());
         }

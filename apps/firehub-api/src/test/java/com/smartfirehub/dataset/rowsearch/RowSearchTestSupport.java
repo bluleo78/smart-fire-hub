@@ -34,7 +34,7 @@ final class RowSearchTestSupport {
                           });
                   tx.execute(
                       "DROP TABLE IF EXISTS "
-                          + DataSchema.qualify(DataTableService.tempTableName(srcTable)));
+                          + DataSchema.qualify(DataTableService.legacyTempTableName(srcTable)));
                   tx.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(srcTable));
                 }));
   }

@@ -43,9 +43,9 @@ class DataTableFacadeNameValidationTest {
   @Test
   void 테넌트_컨텍스트_없이_finishReplace에_잘못된_이름을_주면_InvalidTableNameException() {
     TenantContext.clear();
-    assertThatThrownBy(() -> tableService.finishReplace("Bad-Name", 1))
+    assertThatThrownBy(() -> tableService.finishReplace("Bad-Name", "rtmp_x", 1))
         .isInstanceOf(InvalidTableNameException.class);
-    assertThatThrownBy(() -> tableService.finishReplace("Bad-Name", 0))
+    assertThatThrownBy(() -> tableService.finishReplace("Bad-Name", "rtmp_x", 0))
         .isInstanceOf(InvalidTableNameException.class);
   }
 }

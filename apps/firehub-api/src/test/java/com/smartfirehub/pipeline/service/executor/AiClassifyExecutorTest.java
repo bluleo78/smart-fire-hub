@@ -72,11 +72,16 @@ class AiClassifyExecutorTest {
 
   private AiClassifyExecutor executor;
 
+  /** 테스트 출력 {@code output_table} 의 이번 실행 임시 테이블 이름 — createTempTable 목이 돌려준다(WD-151). */
+  private static final String RUN_TEMP = DataTableService.newTempTableName("output_table");
+
   @BeforeEach
   void setUp() {
     aiAgentClient = mock(AiAgentClient.class);
     dataTableRowService = mock(DataTableRowService.class);
     dataTableService = mock(DataTableService.class);
+    // 이번 실행 전용 임시 테이블 이름(WD-151) — 실행기는 createTempTable 이 돌려준 이 이름을 적재·맞바꿈·정리에 그대로 써야 한다.
+    when(dataTableService.createTempTable("output_table")).thenReturn(RUN_TEMP);
     datasetRepository = mock(DatasetRepository.class);
     objectMapper = new ObjectMapper();
     dsl = mock(DSLContext.class, org.mockito.Mockito.RETURNS_DEEP_STUBS);
@@ -292,7 +297,7 @@ class AiClassifyExecutorTest {
         .insertBatch(eq("output_table"), anyList(), anyList(), anyMap());
     // APPEND → no swap/temp table
     verify(dataTableService, never()).createTempTable(anyString());
-    verify(dataTableService, never()).swapTable(anyString());
+    verify(dataTableService, never()).swapTable(anyString(), anyString());
   }
 
   @Test
@@ -333,10 +338,8 @@ class AiClassifyExecutorTest {
     assertThat(result.outputRows()).isEqualTo(1);
     // REPLACE → 임시 테이블 생성 + 스왑
     verify(dataTableService).createTempTable("output_table");
-    verify(dataTableService).swapTable("output_table");
-    verify(dataTableRowService)
-        .insertBatch(
-            eq(DataTableService.tempTableName("output_table")), anyList(), anyList(), anyMap());
+    verify(dataTableService).swapTable("output_table", RUN_TEMP);
+    verify(dataTableRowService).insertBatch(eq(RUN_TEMP), anyList(), anyList(), anyMap());
   }
 
   // -----------------------------------------------------------------------
@@ -494,8 +497,8 @@ class AiClassifyExecutorTest {
 
     // 임시 테이블은 버리고 원본은 건드리지 않는다
     verify(dataTableService).createTempTable("output_table");
-    verify(dataTableService).dropTempTable("output_table");
-    verify(dataTableService, never()).swapTable(anyString());
+    verify(dataTableService).dropTempTable("output_table", RUN_TEMP);
+    verify(dataTableService, never()).swapTable(anyString(), anyString());
   }
 
   /**
@@ -531,8 +534,8 @@ class AiClassifyExecutorTest {
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("0행");
 
-    verify(dataTableService).dropTempTable("output_table");
-    verify(dataTableService, never()).swapTable(anyString());
+    verify(dataTableService).dropTempTable("output_table", RUN_TEMP);
+    verify(dataTableService, never()).swapTable(anyString(), anyString());
   }
 
   /**
@@ -642,8 +645,8 @@ class AiClassifyExecutorTest {
 
     // REPLACE 였으므로 예외 시 임시 테이블을 드롭
     verify(dataTableService).createTempTable("output_table");
-    verify(dataTableService).dropTempTable("output_table");
-    verify(dataTableService, never()).swapTable(anyString());
+    verify(dataTableService).dropTempTable("output_table", RUN_TEMP);
+    verify(dataTableService, never()).swapTable(anyString(), anyString());
   }
 
   // -----------------------------------------------------------------------
@@ -704,10 +707,8 @@ class AiClassifyExecutorTest {
 
     assertThat(result.outputRows()).isEqualTo(3);
     // 핵심 단언: 루프 끝의 한 번이 아니라 배치마다 한 번씩
-    verify(dataTableRowService, times(3))
-        .insertBatch(
-            eq(DataTableService.tempTableName("output_table")), anyList(), anyList(), anyMap());
-    verify(dataTableService).swapTable("output_table");
+    verify(dataTableRowService, times(3)).insertBatch(eq(RUN_TEMP), anyList(), anyList(), anyMap());
+    verify(dataTableService).swapTable("output_table", RUN_TEMP);
   }
 
   /**
@@ -737,11 +738,9 @@ class AiClassifyExecutorTest {
         .hasMessageContaining("AI_CLASSIFY batch 2");
 
     // 첫 배치는 예외 전에 이미 적재됐다 — 모아 두던 구현에서는 0회였다.
-    verify(dataTableRowService, times(1))
-        .insertBatch(
-            eq(DataTableService.tempTableName("output_table")), anyList(), anyList(), anyMap());
-    verify(dataTableService).dropTempTable("output_table");
-    verify(dataTableService, never()).swapTable(anyString());
+    verify(dataTableRowService, times(1)).insertBatch(eq(RUN_TEMP), anyList(), anyList(), anyMap());
+    verify(dataTableService).dropTempTable("output_table", RUN_TEMP);
+    verify(dataTableService, never()).swapTable(anyString(), anyString());
   }
 
   /**
@@ -805,8 +804,8 @@ class AiClassifyExecutorTest {
 
     // 첫 배치에서 곧바로 떨어졌으므로 둘째 배치의 LLM 호출은 없다.
     verify(aiAgentClient, times(1)).classify(any(), any(), anyLong());
-    verify(dataTableService).dropTempTable("output_table");
-    verify(dataTableService, never()).swapTable(anyString());
+    verify(dataTableService).dropTempTable("output_table", RUN_TEMP);
+    verify(dataTableService, never()).swapTable(anyString(), anyString());
   }
 
   /**
@@ -1036,8 +1035,8 @@ class AiClassifyExecutorTest {
         .hasMessageContaining("보낸 2행")
         .hasMessageContaining("누락 [2]");
 
-    verify(dataTableService).dropTempTable("output_table");
-    verify(dataTableService, never()).swapTable(anyString());
+    verify(dataTableService).dropTempTable("output_table", RUN_TEMP);
+    verify(dataTableService, never()).swapTable(anyString(), anyString());
     // 대조 실패로 배치를 버렸어도 캐시 쓰기는 이미 시도됐다.
     verify(dsl)
         .insertInto(

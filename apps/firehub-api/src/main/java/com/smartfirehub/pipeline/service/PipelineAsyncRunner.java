@@ -807,10 +807,9 @@ public class PipelineAsyncRunner {
                                 localPythonOutputLoader.load(
                                     targetTable, run.stdout(), pyColumnTypes)));
             // REPLACE 는 출력 테이블 세션 잠금 아래에서 임시 테이블 생성 → 적재 → 맞바꿈을 한다(#735).
-            // createTempTable 은 출력마다 고정된 이름(DataTableService.tempTableName)을 DROP IF EXISTS 후 다시
-            // 만들므로, 같은 출력에
-            // 로컬 REPLACE 가 겹치면 서로의 임시 테이블을 지우고 덮는다. 잠금 키는 SQL 스텝의 비우기+적재와
-            // 같아 그 경로와도 직렬화된다. 스크립트 실행(읽기 전용)은 잠금 밖 — 쓰는 구간만 덮는다.
+            // 임시 테이블 이름은 WD-151 부터 실행마다 달라 임시 테이블 충돌만 놓고 보면 이 잠금이 없어도 되지만, 예전 동작(같은 출력의 로컬
+            // REPLACE 끼리, 그리고 SQL 스텝의 비우기+적재와 직렬화 — 잠금 키가 같다)을 바꾸지 않으려고 그대로 둔다. 스크립트 실행(읽기
+            // 전용)은 잠금 밖 — 쓰는 구간만 덮는다.
             executionLog =
                 (isReplace ? outputTableSessionLock.callLocked(pyOutputTable, load) : load.get())
                     .log();
@@ -871,12 +870,11 @@ public class PipelineAsyncRunner {
           // REPLACE 전략: API가 DDL 오케스트레이션 (executor는 INSERT만 수행)
           // PYTHON 블록과 같은 이유로 enum(strategy)이 아니라 원본 문자열을 본다 — 알 수 없는 값의
           // REPLACE 폴백을 맞바꿈 경로까지 끌고 오면 동작이 바뀐다.
-          String targetTable = outputTableName;
           boolean isReplace = "REPLACE".equalsIgnoreCase(loadStrategy) && outputTableName != null;
-          if (isReplace) {
-            dataTableService.createTempTable(outputTableName);
-            targetTable = DataTableService.tempTableName(outputTableName);
-          }
+          // 이번 실행 전용 임시 테이블(WD-151) — 이름이 실행마다 달라 같은 출력에 겹친 실행과 생성·적재·정리가 서로 닿지 않는다. 실행기에는 이
+          // 이름을 그대로 적재 대상으로 넘긴다(실행기는 임시 테이블 이름을 스스로 만들지 않는다).
+          String tempTable = isReplace ? dataTableService.createTempTable(outputTableName) : null;
+          String targetTable = isReplace ? tempTable : outputTableName;
           try {
             Map<String, Object> request =
                 buildApiCallExecutorRequest(
@@ -889,13 +887,13 @@ public class PipelineAsyncRunner {
               // 빈 결과 가드는 finishReplace 가 단독으로 갖는다(#685) — API 가 0행을 돌려주면
               // 맞바꾸지 않고 임시 테이블만 버려 원본을 지킨다. 예전에는 여기서 swapTable 을 바로
               // 불러 빈 테이블이 원본을 덮었다(같은 결함이 아직 터지지 않은 상태였다).
-              dataTableService.finishReplace(outputTableName, result.rowsLoaded());
+              dataTableService.finishReplace(outputTableName, tempTable, result.rowsLoaded());
             }
             executionLog = result.executionLog();
           } catch (Exception e) {
             if (isReplace) {
               try {
-                dataTableService.dropTempTable(outputTableName);
+                dataTableService.dropTempTable(outputTableName, tempTable);
               } catch (Exception dropEx) {
                 log.warn(
                     "Failed to drop temp table after API call failure: {}", dropEx.getMessage());
@@ -1169,23 +1167,24 @@ public class PipelineAsyncRunner {
   /**
    * PYTHON 출력 적재의 REPLACE 준비·마무리 — 실행기 켠 경로(executor 가 적재)와 끈 경로(API 가 stdout JSON 적재)가 같이 쓴다.
    *
-   * <p>REPLACE 면 임시 테이블({@link DataTableService#tempTableName})을 만들고 그 이름으로 {@code load} 를 부른 뒤, 적재
-   * 행 수로 맞바꿈 여부를 {@link DataTableService#finishReplace} 에 맡긴다(0행·JSON 없음이면 원본 유지 — 판단은 거기 단독,
-   * #685). 실패하면 임시 테이블을 지우고 예외를 다시 던진다 — 원본은 그대로다. REPLACE 가 아니면 출력 테이블(없으면 null)로 바로 부른다.
+   * <p>REPLACE 면 이번 실행 전용 임시 테이블({@link DataTableService#createTempTable} 이 돌려준 이름, WD-151)을 만들고 그
+   * 이름으로 {@code load} 를 부른 뒤, 적재 행 수로 맞바꿈 여부를 {@link DataTableService#finishReplace} 에 맡긴다(0행·JSON
+   * 없음이면 원본 유지 — 판단은 거기 단독, #685). 실패하면 임시 테이블을 지우고 예외를 다시 던진다 — 원본은 그대로다. REPLACE 가 아니면 출력 테이블(없으면
+   * null)로 바로 부른다.
    */
   private PythonLoad loadPythonOutput(
       String outputTable, boolean isReplace, Function<String, PythonLoad> load) {
     if (!isReplace) {
       return load.apply(outputTable);
     }
-    dataTableService.createTempTable(outputTable);
+    String tempTable = dataTableService.createTempTable(outputTable);
     try {
-      PythonLoad result = load.apply(DataTableService.tempTableName(outputTable));
-      dataTableService.finishReplace(outputTable, result.rowsLoaded());
+      PythonLoad result = load.apply(tempTable);
+      dataTableService.finishReplace(outputTable, tempTable, result.rowsLoaded());
       return result;
     } catch (RuntimeException e) {
       try {
-        dataTableService.dropTempTable(outputTable);
+        dataTableService.dropTempTable(outputTable, tempTable);
       } catch (Exception dropEx) {
         log.warn(
             "Failed to drop temp table after Python execution failure: {}", dropEx.getMessage());
