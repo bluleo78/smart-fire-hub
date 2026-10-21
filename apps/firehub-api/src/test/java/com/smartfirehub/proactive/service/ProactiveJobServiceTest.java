@@ -354,6 +354,49 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
     assertThat(after).isEqualTo(before);
   }
 
+  /**
+   * WD-138: 잘못된 cron 오류 문구는 화면 안내(5칸)와 같은 기준의 한국어여야 한다. 예전에는 Spring 의 영어 문구("must consist of 6
+   * fields")가 붙고, 5필드 입력도 초 칸을 붙인 "0 61 * * * *" 로 보였다.
+   */
+  @Test
+  void createJob_withInvalidCron_reportsKoreanFiveFieldReason() {
+    assertThatThrownBy(
+            () ->
+                proactiveJobService.createJob(
+                    new CreateProactiveJobRequest(
+                        "칸 수 오류",
+                        "프롬프트",
+                        null,
+                        "abc",
+                        "Asia/Seoul",
+                        true,
+                        null,
+                        Map.of("channels", List.of("CHAT"))),
+                    testUserId))
+        .isInstanceOf(ProactiveJobException.class)
+        .hasMessage(
+            "유효하지 않은 cron 표현식입니다: \"abc\" — 「분 시 일 월 요일」 5칸을 공백으로 나눠 입력해야 하는데 1칸을 입력했습니다"
+                + " (예: 0 9 * * * → 매일 09:00)");
+
+    assertThatThrownBy(
+            () ->
+                proactiveJobService.createJob(
+                    new CreateProactiveJobRequest(
+                        "범위 오류",
+                        "프롬프트",
+                        null,
+                        "61 * * * *",
+                        "Asia/Seoul",
+                        true,
+                        null,
+                        Map.of("channels", List.of("CHAT"))),
+                    testUserId))
+        .isInstanceOf(ProactiveJobException.class)
+        .hasMessage(
+            "유효하지 않은 cron 표현식입니다: \"61 * * * *\" — 「분」 칸의 값 \"61\" 이(가) 올바르지 않습니다 (허용 범위 0~59)")
+        .hasMessageNotContaining("0 61");
+  }
+
   /** 존재하지 않는 IANA timezone 으로 생성을 시도하면 ProactiveJobException(→400) 이 발생해야 한다 (#221). */
   @Test
   void createJob_withInvalidTimezone_throws() {
