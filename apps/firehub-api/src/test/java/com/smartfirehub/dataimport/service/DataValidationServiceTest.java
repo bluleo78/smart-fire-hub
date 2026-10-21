@@ -690,4 +690,29 @@ class DataValidationServiceTest {
     assertThat(validateCell(service, varcharCol("code", 10), "a\u0000b").error().error())
         .isEqualTo("저장할 수 없는 문자(NUL)가 포함되어 있습니다");
   }
+
+  /**
+   * Excel 날짜 셀은 임포트 파서가 "2026-05-10T00:00" 으로 읽는다 — DATE 컬럼은 자정 ISO 날짜시각을 날짜로 받아야 내보낸 Excel(WD-159,
+   * 날짜 셀)을 다시 임포트할 수 있다. 자정이 아닌 시각은 자르면 값이 바뀌므로 거부한다.
+   */
+  @Test
+  void convertValue_date_acceptsMidnightIsoDateTimeFromExcelDateCell() throws Exception {
+    assertThat(service.convertValue("2026-05-10T00:00", "DATE"))
+        .isEqualTo(LocalDate.of(2026, 5, 10));
+    assertThat(service.convertValue("2026-05-10T00:00:00", "DATE"))
+        .isEqualTo(LocalDate.of(2026, 5, 10));
+    assertThatThrownBy(() -> service.convertValue("2026-05-10T10:30", "DATE"))
+        .hasMessageContaining("날짜 형식이 아닙니다");
+  }
+
+  /** 내보낸 CSV 의 시각은 0 이 아닌 소수 초를 붙인다(WD-159) — 다시 임포트할 때 그대로 읽혀야 한다. */
+  @Test
+  void convertValue_timestamp_acceptsOptionalFractionalSeconds() throws Exception {
+    assertThat(service.convertValue("2025-12-01 08:05:30.123", "TIMESTAMP"))
+        .isEqualTo(LocalDateTime.of(2025, 12, 1, 8, 5, 30, 123_000_000));
+    assertThat(service.convertValue("2025-12-01 08:05:30.000456", "TIMESTAMP"))
+        .isEqualTo(LocalDateTime.of(2025, 12, 1, 8, 5, 30, 456_000));
+    assertThat(service.convertValue("2025-12-01 08:05:30", "TIMESTAMP"))
+        .isEqualTo(LocalDateTime.of(2025, 12, 1, 8, 5, 30));
+  }
 }

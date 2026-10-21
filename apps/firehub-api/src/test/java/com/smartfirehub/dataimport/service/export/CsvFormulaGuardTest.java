@@ -74,13 +74,15 @@ class CsvFormulaGuardTest {
     assertThat(CsvFormulaGuard.queryCell(new BigDecimal("-5.5"))).isEqualTo("-5.5");
     assertThat(CsvFormulaGuard.queryCell(-1.5d)).isEqualTo("-1.5");
     assertThat(CsvFormulaGuard.queryCell(LocalDate.of(2026, 1, 2))).isEqualTo("2026-01-02");
+    // 시각은 PG 원문과 같은 yyyy-MM-dd HH:mm:ss 모양(WD-159)
     assertThat(CsvFormulaGuard.queryCell(LocalDateTime.of(2026, 1, 2, 3, 4)))
-        .isEqualTo("2026-01-02T03:04");
+        .isEqualTo("2026-01-02 03:04:00");
     assertThat(CsvFormulaGuard.queryCell(OffsetDateTime.of(2026, 1, 2, 3, 4, 0, 0, ZoneOffset.UTC)))
         .isEqualTo("2026-01-02T03:04Z");
     // java.sql.Timestamp 는 Temporal 이 아니라 java.util.Date 하위 — 원형 유지
     Timestamp ts = Timestamp.valueOf("2026-01-02 03:04:05");
-    assertThat(CsvFormulaGuard.queryCell(ts)).isEqualTo(ts.toString());
+    assertThat(CsvFormulaGuard.queryCell(ts))
+        .isEqualTo("2026-01-02 03:04:05"); // 끝의 ".0" 없음(WD-159)
     assertThat(CsvFormulaGuard.queryCell(true)).isEqualTo("true");
     // 모르는 타입은 문자열로 보고 중화(안전 우선)
     Object unknown =
