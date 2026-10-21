@@ -246,11 +246,13 @@ export default function ReportTemplateDetailPage() {
       return;
     }
 
+    // 비운 설명·작성 스타일은 빈 문자열로 보낸다 — 필드를 빼면 서버는 "바꾸지 않음"으로 받아 옛 값이 남는다 (WD-135).
+    // 서버가 빈 값을 NULL 로 저장한다.
     const payload = {
       name: values.name,
-      description: values.description || undefined,
+      description: values.description ?? '',
       sections: resolvedSections,
-      style: styleText.trim() || undefined,
+      style: styleText.trim(),
     };
 
     if (isNew) {

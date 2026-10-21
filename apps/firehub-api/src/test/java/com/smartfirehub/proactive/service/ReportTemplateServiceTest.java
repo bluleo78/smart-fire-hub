@@ -129,6 +129,46 @@ class ReportTemplateServiceTest extends IntegrationTestBase {
     assertThat(updated.description()).isEqualTo("새 설명");
   }
 
+  /**
+   * [WD-135] 설명·작성 스타일을 빈 값으로 보내면 지워지고(NULL), 빠뜨리면(null) 그대로 둔다.
+   *
+   * <p>화면은 비운 값을 빈 문자열로 보내고, AI 도구는 바꿀 필드만 보낸다 — 두 뜻을 모두 지켜야 한다.
+   */
+  @Test
+  void updateTemplate_blankClearsDescriptionAndStyle_nullKeeps() {
+    List<Map<String, Object>> sections = List.of(Map.of("key", "summary", "label", "요약"));
+    ReportTemplateResponse created =
+        reportTemplateService.createTemplate(
+            new CreateReportTemplateRequest("비우기 양식", "테스트 설명", sections, "간결하게"), testUserId);
+
+    // 빠뜨리면(null) 그대로
+    reportTemplateService.updateTemplate(
+        created.id(), new UpdateReportTemplateRequest("이름만 변경", null, null, null), testUserId);
+    ReportTemplateResponse kept = reportTemplateService.getTemplate(created.id());
+    assertThat(kept.name()).isEqualTo("이름만 변경");
+    assertThat(kept.description()).isEqualTo("테스트 설명");
+    assertThat(kept.style()).isEqualTo("간결하게");
+
+    // 빈 값·공백이면 지워진다
+    reportTemplateService.updateTemplate(
+        created.id(), new UpdateReportTemplateRequest("이름만 변경", "", sections, "  "), testUserId);
+    ReportTemplateResponse cleared = reportTemplateService.getTemplate(created.id());
+    assertThat(cleared.description()).isNull();
+    assertThat(cleared.style()).isNull();
+  }
+
+  /** [WD-135] 새 양식도 빈 설명·작성 스타일은 NULL 로 저장한다. */
+  @Test
+  void createTemplate_blankDescriptionAndStyle_storedAsNull() {
+    ReportTemplateResponse created =
+        reportTemplateService.createTemplate(
+            new CreateReportTemplateRequest(
+                "빈 값 양식", "", List.of(Map.of("key", "summary", "label", "요약")), ""),
+            testUserId);
+    assertThat(created.description()).isNull();
+    assertThat(created.style()).isNull();
+  }
+
   @Test
   void deleteTemplate_customTemplate_success() {
     // given: create custom template

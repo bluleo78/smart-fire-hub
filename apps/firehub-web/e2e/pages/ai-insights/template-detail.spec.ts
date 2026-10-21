@@ -695,6 +695,45 @@ test.describe('리포트 템플릿 상세 페이지', () => {
     });
   });
 
+  test('설명·작성 스타일을 비우고 저장하면 빈 값으로 보내 지워진다 (WD-135)', async ({ authenticatedPage: page }) => {
+    // 예전에는 비운 필드를 아예 빼고 보내 서버가 "바꾸지 않음"으로 받아 옛 값이 남았다
+    const template = createTemplate({
+      id: 210,
+      name: '비우기 양식',
+      builtin: false,
+      description: '테스트 설명',
+      style: '간결하게',
+    });
+    await mockApi(page, 'GET', '/api/v1/proactive/templates/210', template);
+    await mockApi(page, 'GET', '/api/v1/proactive/templates', [template]);
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+    let putBody: Record<string, unknown> | undefined;
+    await page.route(
+      (url) => url.pathname === '/api/v1/proactive/templates/210',
+      (route) => {
+        if (route.request().method() === 'PUT') {
+          putBody = route.request().postDataJSON();
+          return route.fulfill({ status: 204 });
+        }
+        return route.fallback();
+      },
+    );
+
+    await page.goto('/ai-insights/templates/210');
+    await expect(page.getByRole('heading', { name: '비우기 양식' })).toBeVisible({ timeout: 10000 });
+    await page.getByRole('button', { name: '편집' }).click();
+    await expect(page.locator('#tpl-desc')).toHaveValue('테스트 설명');
+    await expect(page.locator('#tpl-style')).toHaveValue('간결하게');
+
+    await page.locator('#tpl-desc').fill('');
+    await page.locator('#tpl-style').fill('');
+    await page.getByRole('button', { name: '저장' }).click();
+
+    await expect.poll(() => putBody).toBeDefined();
+    expect(putBody).toMatchObject({ name: '비우기 양식', description: '', style: '' });
+    await expect(page.getByText('템플릿이 수정되었습니다.')).toBeVisible();
+  });
+
   test('삭제 버튼 클릭 시 삭제 확인 다이얼로그가 열린다', async ({ authenticatedPage: page }) => {
     // builtin: false 커스텀 템플릿으로 모킹
     const template = createTemplate({ id: 3, name: '삭제 대상 템플릿', builtin: false });

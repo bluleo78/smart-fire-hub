@@ -122,9 +122,9 @@ public class ReportTemplateRepository {
       String sectionsJson = objectMapper.writeValueAsString(sections);
       return dsl.insertInto(REPORT_TEMPLATE)
           .set(RT_NAME, name)
-          .set(RT_DESCRIPTION, description)
+          .set(RT_DESCRIPTION, blankToNull(description))
           .set(RT_SECTIONS, JSONB.valueOf(sectionsJson))
-          .set(RT_STYLE, style)
+          .set(RT_STYLE, blankToNull(style))
           .set(RT_USER_ID, userId)
           .returning(RT_ID)
           .fetchOne(r -> r.get(RT_ID));
@@ -141,20 +141,32 @@ public class ReportTemplateRepository {
       List<Map<String, Object>> sections,
       String style) {
     // 빌트인 템플릿(user_id IS NULL)은 수정 불가
+    // null 은 "바꾸지 않음"(AI 도구 update_report_template 가 일부 필드만 보낸다), 빈 문자열은 "비움"이다 (WD-135).
+    // 예전에는 화면이 비운 값을 아예 빼고 보내 성공 토스트만 뜨고 옛 값이 남았다 — 화면은 이제 빈 문자열을 보낸다.
     try {
       var query = dsl.update(REPORT_TEMPLATE);
       var step = query.set(RT_UPDATED_AT, ProactiveTime.nowUtc());
       if (name != null) step = step.set(RT_NAME, name);
-      if (description != null) step = step.set(RT_DESCRIPTION, description);
+      if (description != null) step = step.set(RT_DESCRIPTION, blankToNull(description));
       if (sections != null) {
         String sectionsJson = objectMapper.writeValueAsString(sections);
         step = step.set(RT_SECTIONS, JSONB.valueOf(sectionsJson));
       }
-      if (style != null) step = step.set(RT_STYLE, style);
+      if (style != null) step = step.set(RT_STYLE, blankToNull(style));
       step.where(RT_ID.eq(id).and(RT_USER_ID.eq(userId))).execute();
     } catch (Exception e) {
       throw new RuntimeException("Failed to serialize sections", e);
     }
+  }
+
+  /**
+   * 공백뿐인 설명·작성 스타일은 NULL 로 저장한다 (WD-135).
+   *
+   * <p>비운 값을 빈 문자열로 남기면 "값 없음"이 NULL·"" 두 가지가 되고, 실행기는 {@code style != null} 만 보고 빈 지시문을 AI 에 넘긴다.
+   * 저장 시점에 한 가지(NULL)로 맞춘다.
+   */
+  private static String blankToNull(String value) {
+    return value == null || value.isBlank() ? null : value;
   }
 
   public void delete(Long id, Long userId) {
