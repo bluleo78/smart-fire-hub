@@ -2,11 +2,16 @@ import { createQueryResult } from '../../factories/analytics.factory';
 import { setupQueryEditorMocks } from '../../fixtures/analytics.fixture';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
-import { setupDatasetDetailMocks } from '../../fixtures/dataset.fixture';
+import { grantDatasetPermissions, setupDatasetDetailMocks } from '../../fixtures/dataset.fixture';
 
 // 테스트 브라우저는 Desktop Chrome(Windows UA)이라 CodeMirror 의 Mod 가 Ctrl 이고 안내도 "Ctrl+Enter로 실행" 이다.
 // ControlOrMeta 는 실행 호스트(macOS)를 따라 Meta 를 눌러 바인딩에 닿지 않으므로 Control 을 직접 누른다.
 const RUN_SHORTCUT = 'Control+Enter';
+
+// 데이터셋 「SQL」(쿼리 실행=data:import)은 권한이 있을 때만 보인다(WD-139) — 데이터셋 SQL 편집기를 열려면 쓰기 권한을 준다.
+test.beforeEach(async ({ authenticatedPage: page }) => {
+  await grantDatasetPermissions(page);
+});
 
 /**
  * SQL 편집기 실행 단축키(Cmd/Ctrl+Enter) E2E (WD-87)

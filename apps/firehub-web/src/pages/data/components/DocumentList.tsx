@@ -7,7 +7,8 @@ import type { DocumentFileResponse, DocumentStatus } from '../../../types/docume
 
 interface DocumentListProps {
   documents: DocumentFileResponse[];
-  onDelete: (documentId: number) => void;
+  /** 문서 삭제. 미지정이면 삭제 열을 그리지 않는다 — 삭제는 dataset:write 라 조회 전용 사용자에겐 숨긴다 (WD-139). */
+  onDelete?: (documentId: number) => void;
   deletingId?: number | null;
 }
 
@@ -37,7 +38,7 @@ export function DocumentList({ documents, onDelete, deletingId }: DocumentListPr
           <TableHead>크기</TableHead>
           <TableHead>페이지</TableHead>
           <TableHead>청크</TableHead>
-          <TableHead className="w-12" />
+          {onDelete && <TableHead className="w-12" />}
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -52,17 +53,19 @@ export function DocumentList({ documents, onDelete, deletingId }: DocumentListPr
               <TableCell>{formatSize(d.fileSize)}</TableCell>
               <TableCell>{d.pageCount ?? '-'}</TableCell>
               <TableCell>{d.chunkCount ?? '-'}</TableCell>
-              <TableCell>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  aria-label={`${d.originalName} 삭제`}
-                  disabled={deletingId === d.id}
-                  onClick={() => onDelete(d.id)}
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              </TableCell>
+              {onDelete && (
+                <TableCell>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    aria-label={`${d.originalName} 삭제`}
+                    disabled={deletingId === d.id}
+                    onClick={() => onDelete(d.id)}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </TableCell>
+              )}
             </TableRow>
           );
         })}

@@ -4,6 +4,7 @@ import { createColumn, createDatasetDetail } from '../../factories/dataset.facto
 import { createSearchIndexStatus } from '../../factories/search-index.factory';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { grantDatasetPermissions } from '../../fixtures/dataset.fixture';
 
 /**
  * 데이터셋 상세 "검색" 탭 E2E — 검색 대상 필드 선택·저장(payload)·상태 표시·재색인·오류.
@@ -29,6 +30,12 @@ async function setupDataset(page: Page) {
   );
 }
 
+// 쓰기 진입점은 서버 권한이 있을 때만 보인다(WD-139) — 이 파일은 편집·적재 흐름을 검증하므로 데이터셋 쓰기 권한을 준다.
+// 개별 테스트가 다른 권한을 주면 그쪽이 나중에 등록돼 이긴다.
+test.beforeEach(async ({ authenticatedPage: page }) => {
+  await grantDatasetPermissions(page);
+});
+
 test.describe('데이터셋 검색 탭', () => {
   test('필드를 선택해 저장하면 fields 를 PUT 하고 색인 중 상태를 보여준다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     await setupDataset(page);
@@ -44,6 +51,8 @@ test.describe('데이터셋 검색 탭', () => {
 
     await expect(page.getByTestId('search-tab')).toBeVisible();
     await expect(page.getByTestId('search-index-status')).toHaveText(/꺼짐/);
+    // 쓰기 권한이 있으면 선택 안내를 보인다(조회 전용은 현재 설정 설명 — WD-139)
+    await expect(page.getByText('TEXT·VARCHAR 필드만 선택할 수 있습니다.', { exact: false })).toBeVisible();
     // DATE 필드는 선택 불가
     await expect(page.getByRole('checkbox', { name: '접수일' })).toBeDisabled();
 

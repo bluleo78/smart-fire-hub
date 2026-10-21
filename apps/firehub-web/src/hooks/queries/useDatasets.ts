@@ -5,6 +5,36 @@ import { categoriesApi,datasetsApi } from '../../api/datasets';
 import { fetchAllPages } from '../../lib/fetch-all-pages';
 import type { ColumnMappingEntry, ImportMode,ImportResponse, ImportStartResponse } from '../../types/dataImport';
 import type { ApiImportRequest,CloneDatasetRequest } from '../../types/dataset';
+import { useMyPermissions } from './useMyPermissions';
+
+/**
+ * 데이터셋 상세 화면(헤더·각 탭·온톨로지 연결 카드)의 쓰기 진입점을 보일지 정하는 권한 묶음 (WD-139). 화면은 권한 코드를 직접 읽지 않고 이 훅만 쓴다.
+ *
+ * 조회 권한만 있는 사용자에게 「복제」「수정」「행 추가」 등을 보여 주면 다이얼로그를 다 채운 뒤에야 403 을 받는다.
+ * 서버 컨트롤러가 요구하는 권한 코드를 그대로 따라 진입점별로 나눈다 — 정의·메타 변경(dataset:write)과 행 적재·수정(data:import),
+ * 행 삭제(data:delete), API 가져오기(파이프라인을 만들므로 pipeline:write)는 서로 다른 권한이라 하나로 뭉치면 일부 사용자가 잘못 막히거나 열린다.
+ * 서버에 관리자 우회가 없으므로(ADMIN 역할이 권한을 가짐) 권한 코드만 본다. 권한을 불러오는 동안은 빈 집합이라 모두 false — 버튼이 깜빡이지 않는다.
+ * isLoading 은 "권한이 없다"는 안내 문구를 로딩 중에 띄우지 않으려는 화면(매핑 탭·온톨로지 연결 카드)이 쓴다.
+ * 최종 판정은 서버이고 여기는 노출 결정용이다.
+ */
+export function useDatasetPermissions() {
+  const { permissions, isLoading } = useMyPermissions();
+  return {
+    /** 정보 수정·태그·복제·상태 변경·필드 정의·검색 설정·매핑·온톨로지 연결·문서 삭제·오브젝트 업로드 (dataset:write) */
+    canWriteDataset: permissions.has('dataset:write'),
+    /** 행 추가·행 수정·파일 임포트·SQL 실행·문서 업로드 (data:import) */
+    canImportData: permissions.has('data:import'),
+    /** 선택 행 삭제 (data:delete) */
+    canDeleteData: permissions.has('data:delete'),
+    /** API 가져오기 — 미리보기·생성 모두 파이프라인 엔드포인트라 pipeline:write */
+    canApiImport: permissions.has('pipeline:write'),
+    /** 보안 등급 변경 (DatasetSecurityController PUT security-level) */
+    canClassify: permissions.has('dataset:classify'),
+    /** 허용 목록(접근 부여) 추가·삭제 (DatasetSecurityController access-grants) */
+    canGrant: permissions.has('dataset:grant'),
+    isLoading,
+  };
+}
 
 export function useCategories() {
   return useQuery({

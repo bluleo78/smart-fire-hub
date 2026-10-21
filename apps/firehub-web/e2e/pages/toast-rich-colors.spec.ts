@@ -1,7 +1,7 @@
 import { createCategories } from '../factories/dataset.factory';
 import { mockApi } from '../fixtures/api-mock';
 import { expect, test } from '../fixtures/auth.fixture';
-import { setupDatasetDetailMocks } from '../fixtures/dataset.fixture';
+import { grantDatasetPermissions, setupDatasetDetailMocks } from '../fixtures/dataset.fixture';
 
 /**
  * 토스트 종류별 배경색 회귀 테스트 (refs #435)
@@ -33,6 +33,11 @@ async function submitAndReadToastColor(page: import('@playwright/test').Page): P
   await expect(toast).toBeVisible({ timeout: 10000 });
   return toast.evaluate((el) => getComputedStyle(el).backgroundColor);
 }
+
+// 기본 정보 「수정」은 dataset:write 가 있을 때만 보인다(WD-139) — 저장 토스트를 띄우려면 쓰기 권한을 준다.
+test.beforeEach(async ({ authenticatedPage: page }) => {
+  await grantDatasetPermissions(page);
+});
 
 test('성공 토스트와 오류 토스트의 배경색이 서로 다르다', async ({ authenticatedPage: page }) => {
   // 1) 성공 경로 — PUT 200

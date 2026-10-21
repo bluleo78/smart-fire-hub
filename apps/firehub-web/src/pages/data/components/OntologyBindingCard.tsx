@@ -4,8 +4,8 @@ import { toast } from 'sonner';
 import { Button } from '../../../components/ui/button';
 import { Label } from '../../../components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
+import { useDatasetPermissions } from '../../../hooks/queries/useDatasets';
 import { useBindOntology, useOntologyList } from '../../../hooks/queries/useMapping';
-import { useMyPermissions } from '../../../hooks/queries/useMyPermissions';
 import { handleApiError } from '../../../lib/api-error';
 
 interface OntologyBindingCardProps {
@@ -19,8 +19,8 @@ interface OntologyBindingCardProps {
 export function OntologyBindingCard({ datasetId }: OntologyBindingCardProps) {
   // 연결은 서버가 dataset:write 로 막는다 — 권한이 없으면 선택·연결 대신 안내만 보인다(WD-131).
   // 매핑 탭·문서 탭이 함께 쓰는 카드라 권한 판정을 카드 안에 둔다.
-  const { permissions, isLoading: isPermissionsLoading } = useMyPermissions();
-  const canEdit = isPermissionsLoading || permissions.has('dataset:write');
+  // 권한을 불러오는 동안은 선택·연결도 안내도 그리지 않는다 — 조회 전용 사용자에게 연결 버튼이 잠깐 보였다 사라지지 않게(WD-139, 매핑 탭과 같은 규칙).
+  const { canWriteDataset: canEdit, isLoading: isPermissionsLoading } = useDatasetPermissions();
   const { data: ontologies, isLoading } = useOntologyList();
   const bindOntology = useBindOntology(datasetId);
   // Select는 문자열 값만 다루므로 ID를 문자열로 보관하고 전송 직전에 숫자로 바꾼다.
@@ -45,7 +45,7 @@ export function OntologyBindingCard({ datasetId }: OntologyBindingCardProps) {
         </p>
       </div>
 
-      {!canEdit ? (
+      {isPermissionsLoading ? null : !canEdit ? (
         <p className="text-sm text-muted-foreground" data-testid="ontology-binding-readonly">
           온톨로지가 아직 연결되지 않았습니다. 연결하려면 데이터셋 쓰기 권한이 필요합니다. 관리자에게 권한을 요청하세요.
         </p>

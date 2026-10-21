@@ -15,7 +15,7 @@ import {
 } from '../../../components/ui/alert-dialog';
 import { Card } from '../../../components/ui/card';
 import { Checkbox } from '../../../components/ui/checkbox';
-import { useDatasetData, useDeleteDataRows } from '../../../hooks/queries/useDatasets';
+import { useDatasetData, useDatasetPermissions, useDeleteDataRows } from '../../../hooks/queries/useDatasets';
 import { useColumnStatsMap } from '../../../hooks/useColumnStatsMap';
 import { formatCellValue, getRawCellValue,isNullValue } from '../../../lib/formatters';
 import type { DatasetDetailResponse } from '../../../types/dataset';
@@ -63,6 +63,9 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   // 조회자 기준 내보내기 가능(S4) — 서버가 명시적으로 true 를 준 경우만 허용(없거나 null 이면 fail-closed).
   const exportAllowed = dataset.exportAllowed === true;
+  // 쓰기 진입점은 서버가 요구하는 권한별로 따로 연다 (WD-139) — 행 추가·행 수정(더블클릭)·임포트·SQL 실행은 data:import,
+  // 선택 행 삭제는 data:delete, API 가져오기는 pipeline:write. 조회만 가능하면 검색·정렬·복사·내보내기만 남는다.
+  const { canImportData, canDeleteData, canApiImport } = useDatasetPermissions();
 
   const parentRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -225,15 +228,15 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
         dataSearch={dataSearch}
         onSearchChange={setDataSearch}
         sqlEditorOpen={sqlEditorOpen}
-        onToggleSqlEditor={() => setSqlEditorOpen((prev) => !prev)}
-        onAddRow={() => setAddRowOpen(true)}
-        onImport={() => setImportDialogOpen(true)}
+        onToggleSqlEditor={canImportData ? () => setSqlEditorOpen((prev) => !prev) : undefined}
+        onAddRow={canImportData ? () => setAddRowOpen(true) : undefined}
+        onImport={canImportData ? () => setImportDialogOpen(true) : undefined}
         onExport={() => setExportDialogOpen(true)}
-        onApiImport={() => setApiWizardOpen(true)}
+        onApiImport={canApiImport ? () => setApiWizardOpen(true) : undefined}
         exportAllowed={exportAllowed}
       />
 
-      {sqlEditorOpen && (
+      {sqlEditorOpen && canImportData && (
         <SqlQueryEditor datasetId={datasetId} columns={dataset.columns} />
       )}
 
@@ -243,7 +246,7 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
 
       <SelectionActionBar
         selectedCount={selectedCount}
-        onDeleteSelected={() => setDeleteDialogOpen(true)}
+        onDeleteSelected={canDeleteData ? () => setDeleteDialogOpen(true) : undefined}
         // 보조 다운로드(선택 행 CSV)는 차단이면 숨긴다 — 주 버튼만 비활성+툴팁으로 사유를 안내한다(스펙 §5-4)
         onExportSelected={exportAllowed ? handleExportSelected : undefined}
         onClearSelection={clearSelection}
@@ -340,11 +343,12 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
                       ref={rowVirtualizer.measureElement}
                       style={{ height: virtualRow.size, background: isSelected ? 'var(--accent)' : undefined }}
                       className="hover:bg-muted/50 transition-colors"
-                      onDoubleClick={() => {
+                      // 더블클릭 행 수정(PUT 행)은 data:import — 권한이 없으면 핸들러째 두지 않는다 (WD-139)
+                      onDoubleClick={canImportData ? () => {
                         const rowData: Record<string, unknown> = {};
                         for (const col of columns) rowData[col.columnName] = row[col.columnName ?? ''];
                         setEditRowState({ open: true, rowId, data: rowData });
-                      }}
+                      } : undefined}
                     >
                       <td
                         style={{ width: 40, padding: '0 8px', textAlign: 'center', borderBottom: '1px solid var(--border)', verticalAlign: 'middle' }}

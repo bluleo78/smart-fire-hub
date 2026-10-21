@@ -8,9 +8,13 @@ interface DataTableToolbarProps {
   dataSearch: string;
   onSearchChange: (value: string) => void;
   sqlEditorOpen: boolean;
-  onToggleSqlEditor: () => void;
-  onAddRow: () => void;
-  onImport: () => void;
+  /**
+   * 쓰기 진입점 콜백 — 미지정이면 해당 버튼을 그리지 않는다. 권한(SQL 실행·행 추가·임포트=data:import,
+   * API 가져오기=pipeline:write)이 없는 사용자에게 누르면 늘 403 인 버튼을 숨기기 위함이다 (WD-139).
+   */
+  onToggleSqlEditor?: () => void;
+  onAddRow?: () => void;
+  onImport?: () => void;
   onExport: () => void;
   onApiImport?: () => void;
   /** 조회자 기준 내보내기 가능 — false 면 「내보내기」를 비활성하고 사유 툴팁을 띄운다(S4 UI 수준 차단). */
@@ -38,21 +42,27 @@ export function DataTableToolbar({
         // 줄바꿈 시 검색창이 남은 폭으로 눌려 아이콘만 남지 않게 최소 폭을 둔다(좁으면 한 줄을 통째로 쓴다)
         className="min-w-[12rem]"
       />
-      <Button
-        variant={sqlEditorOpen ? 'default' : 'outline'}
-        onClick={onToggleSqlEditor}
-      >
-        <Terminal className="h-4 w-4" />
-        SQL
-      </Button>
-      <Button variant="outline" onClick={onAddRow}>
-        <Plus className="h-4 w-4" />
-        행 추가
-      </Button>
-      <Button variant="outline" onClick={onImport}>
-        <Upload className="h-4 w-4" />
-        임포트
-      </Button>
+      {onToggleSqlEditor && (
+        <Button
+          variant={sqlEditorOpen ? 'default' : 'outline'}
+          onClick={onToggleSqlEditor}
+        >
+          <Terminal className="h-4 w-4" />
+          SQL
+        </Button>
+      )}
+      {onAddRow && (
+        <Button variant="outline" onClick={onAddRow}>
+          <Plus className="h-4 w-4" />
+          행 추가
+        </Button>
+      )}
+      {onImport && (
+        <Button variant="outline" onClick={onImport}>
+          <Upload className="h-4 w-4" />
+          임포트
+        </Button>
+      )}
       {onApiImport && (
         <Button variant="outline" onClick={onApiImport}>
           <Globe className="h-4 w-4" />

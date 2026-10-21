@@ -34,6 +34,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '../../../components/ui/tooltip';
+import { useDatasetPermissions } from '../../../hooks/queries/useDatasets';
 import { useColumnStatsMap } from '../../../hooks/useColumnStatsMap';
 import type { DatasetColumnResponse,DatasetDetailResponse } from '../../../types/dataset';
 import { ColumnExpandedStats,NullProgressBar } from '../components/ColumnStats';
@@ -54,7 +55,7 @@ interface DatasetColumnsTabProps {
   datasetId: number;
 }
 
-// Total column count for colSpan on expanded row
+// Total column count for colSpan on expanded row — 조회 전용이면 「작업」 열이 빠져 하나 줄어든다 (WD-139)
 const TOTAL_COLS = 11;
 
 export const DatasetColumnsTab = React.memo(function DatasetColumnsTab({
@@ -65,6 +66,9 @@ export const DatasetColumnsTab = React.memo(function DatasetColumnsTab({
   const statsMap = useColumnStatsMap(datasetId, hasData);
   // 기본 키 일괄 설정 다이얼로그 오픈 상태 (#117)
   const [primaryKeysOpen, setPrimaryKeysOpen] = React.useState(false);
+  // 필드 추가·편집·삭제·순서·기본 키·설명 편집은 모두 서버가 dataset:write 로 막는다 — 없으면 편집 진입점을 숨기고
+  // 「작업」 열째로 뺀다(빈 열만 남지 않게). 매핑 탭(WD-131)과 같은 규칙이다 (WD-139).
+  const { canWriteDataset } = useDatasetPermissions();
 
   const {
     localColumns,
@@ -106,14 +110,16 @@ export const DatasetColumnsTab = React.memo(function DatasetColumnsTab({
             </span>
           )}
         </h2>
-        <div className="flex items-center gap-2">
-          {/* 기본 키 일괄 설정 — 복합 PK 변경 진입점 (#117) */}
-          <Button variant="outline" onClick={() => setPrimaryKeysOpen(true)}>
-            <KeyRound className=" h-4 w-4" />
-            기본 키 설정
-          </Button>
-          <Button onClick={() => setAddColumnOpen(true)}>필드 추가</Button>
-        </div>
+        {canWriteDataset && (
+          <div className="flex items-center gap-2">
+            {/* 기본 키 일괄 설정 — 복합 PK 변경 진입점 (#117) */}
+            <Button variant="outline" onClick={() => setPrimaryKeysOpen(true)}>
+              <KeyRound className=" h-4 w-4" />
+              기본 키 설정
+            </Button>
+            <Button onClick={() => setAddColumnOpen(true)}>필드 추가</Button>
+          </div>
+        )}
       </div>
 
       <div className="rounded-md border">
@@ -130,7 +136,7 @@ export const DatasetColumnsTab = React.memo(function DatasetColumnsTab({
               <TableHead>설명</TableHead>
               <TableHead>Null %</TableHead>
               <TableHead>Distinct</TableHead>
-              <TableHead>작업</TableHead>
+              {canWriteDataset && <TableHead>작업</TableHead>}
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -195,7 +201,7 @@ export const DatasetColumnsTab = React.memo(function DatasetColumnsTab({
                         col={col}
                         datasetId={datasetId}
                         isEditing={isEditingDesc}
-                        onStartEdit={() => setEditingColumnId(col.id)}
+                        onStartEdit={canWriteDataset ? () => setEditingColumnId(col.id) : undefined}
                         onEndEdit={() => setEditingColumnId(null)}
                       />
                     </TableCell>
@@ -220,6 +226,7 @@ export const DatasetColumnsTab = React.memo(function DatasetColumnsTab({
                         <span className="text-muted-foreground text-sm">-</span>
                       )}
                     </TableCell>
+                    {canWriteDataset && (
                     <TableCell>
                       {/* 행 액션 아이콘 — 스크린리더와 마우스 사용자를 위해 aria-label과 시각적 Tooltip을 함께 제공 */}
                       <TooltipProvider>
@@ -284,11 +291,12 @@ export const DatasetColumnsTab = React.memo(function DatasetColumnsTab({
                         </div>
                       </TooltipProvider>
                     </TableCell>
+                    )}
                   </TableRow>
 
                   {isExpanded && stats && (
                     <TableRow>
-                      <TableCell colSpan={TOTAL_COLS} className="p-0">
+                      <TableCell colSpan={canWriteDataset ? TOTAL_COLS : TOTAL_COLS - 1} className="p-0">
                         <ColumnExpandedStats stats={stats} dataType={col.dataType} />
                       </TableCell>
                     </TableRow>

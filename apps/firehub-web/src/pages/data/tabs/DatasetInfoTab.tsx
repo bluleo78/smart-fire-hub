@@ -17,7 +17,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '../../../components/ui/select';
-import { useUpdateDataset } from '../../../hooks/queries/useDatasets';
+import { useDatasetPermissions, useUpdateDataset } from '../../../hooks/queries/useDatasets';
 import { formatDate, formatRelativeTime, getOriginTypeLabel, getStorageTypeLabel } from '../../../lib/formatters';
 import type { UpdateDatasetFormData } from '../../../lib/validations/dataset';
 import { updateDatasetSchema } from '../../../lib/validations/dataset';
@@ -41,6 +41,8 @@ export const DatasetInfoTab = React.memo(function DatasetInfoTab({
 }: DatasetInfoTabProps) {
   const [isEditing, setIsEditing] = React.useState(false);
   const updateDataset = useUpdateDataset(datasetId);
+  // 기본 정보 수정(PUT /datasets/{id})은 dataset:write — 없으면 「수정」을 숨겨 조회 전용으로 보인다 (WD-139)
+  const { canWriteDataset } = useDatasetPermissions();
 
   const infoForm = useForm<UpdateDatasetFormData>({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -139,7 +141,7 @@ export const DatasetInfoTab = React.memo(function DatasetInfoTab({
       <Card className="p-6">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-xl leading-7 font-semibold">기본 정보</h2>
-          {!isEditing && dataset.originType !== 'TEMP' && (
+          {!isEditing && dataset.originType !== 'TEMP' && canWriteDataset && (
             <Button variant="outline" size="sm" onClick={() => setIsEditing(true)}>
               <Pencil className="h-4 w-4" />
               수정

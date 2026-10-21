@@ -2,7 +2,7 @@ import { createAdminUserDetail } from '../../factories/auth.factory';
 import { createCategories, createColumn, createDatasetDetail } from '../../factories/dataset.factory';
 import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
-import { setupDatasetDetailMocks } from '../../fixtures/dataset.fixture';
+import { grantDatasetPermissions, setupDatasetDetailMocks } from '../../fixtures/dataset.fixture';
 
 /**
  * 데이터셋 상세 페이지에서 공통으로 필요한 API 모킹 설정
@@ -15,6 +15,12 @@ async function setupDetailPageMocks(page: import('@playwright/test').Page, datas
   // useTags() 훅 — 태그 자동완성에 사용
   await mockApi(page, 'GET', '/api/v1/datasets/tags', ['sample', 'test']);
 }
+
+// 쓰기 진입점은 서버 권한이 있을 때만 보인다(WD-139) — 이 파일은 편집·적재 흐름을 검증하므로 데이터셋 쓰기 권한을 준다.
+// 개별 테스트가 다른 권한을 주면 그쪽이 나중에 등록돼 이긴다.
+test.beforeEach(async ({ authenticatedPage: page }) => {
+  await grantDatasetPermissions(page);
+});
 
 /**
  * 데이터셋 상세 페이지 E2E 테스트

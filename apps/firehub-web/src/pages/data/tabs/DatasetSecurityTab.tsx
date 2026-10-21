@@ -23,7 +23,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui
 import { InlineBanner } from '../../../components/ui/inline-banner';
 import { SecurityLevelBadge } from '../../../components/ui/SecurityLevelBadge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../components/ui/table';
-import { useMyPermissions } from '../../../hooks/queries/useMyPermissions';
+import { useDatasetPermissions } from '../../../hooks/queries/useDatasets';
 import { useAccessGrants } from '../../../hooks/queries/useSecurityLevels';
 import { useAuth } from '../../../hooks/useAuth';
 import { useRecentDatasets } from '../../../hooks/useRecentDatasets';
@@ -44,8 +44,7 @@ export function DatasetSecurityTab({ dataset }: { dataset: DatasetDetailResponse
   const navigate = useNavigate();
   const { user, roles } = useAuth();
   const { removeRecent } = useRecentDatasets();
-  const { permissions } = useMyPermissions();
-  const canGrant = permissions.has('dataset:grant');
+  const { canGrant } = useDatasetPermissions();
   const { data: grants = [] } = useAccessGrants(dataset.id, !!level?.allowlistRequired);
   const [addOpen, setAddOpen] = useState(false);
   const [selfRemoval, setSelfRemoval] = useState<AccessGrant | null>(null);

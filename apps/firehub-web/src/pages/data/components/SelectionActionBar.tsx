@@ -4,7 +4,11 @@ import { Button } from '../../../components/ui/button';
 
 interface SelectionActionBarProps {
   selectedCount: number;
-  onDeleteSelected: () => void;
+  /**
+   * 선택 행 삭제. 미지정 시 버튼 비표시 — 행 삭제 권한(data:delete)이 없으면 숨긴다 (WD-139).
+   * 선택 자체는 CSV 내보내기에도 쓰이므로 바는 그대로 둔다.
+   */
+  onDeleteSelected?: () => void;
   /**
    * 선택된 행만 CSV로 내보낸다 (클라이언트 측 변환).
    * 미지정 시 버튼 비표시.
@@ -49,11 +53,13 @@ export function SelectionActionBar({
       )}
 
       {/* 파괴 액션 — 우측 분리 */}
-      <div className="ml-auto">
-        <Button variant="destructive" size="sm" onClick={onDeleteSelected}>
-          삭제
-        </Button>
-      </div>
+      {onDeleteSelected && (
+        <div className="ml-auto">
+          <Button variant="destructive" size="sm" onClick={onDeleteSelected}>
+            삭제
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
