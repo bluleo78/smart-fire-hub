@@ -8,6 +8,8 @@ import com.smartfirehub.dataset.rowsearch.IndexRef;
 import com.smartfirehub.dataset.storage.DataStoreResolver;
 import com.smartfirehub.dataset.storage.DataTableNames;
 import com.smartfirehub.dataset.storage.DataTableStore;
+import java.security.SecureRandom;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
@@ -29,9 +31,9 @@ public class DataTableService {
   /**
    * 새로 만드는 테이블명의 최대 길이(WD-95).
    *
-   * <p>PostgreSQL 은 식별자를 63바이트에서 조용히 자른다({@link DataTableNames} 이 ASCII 만 허용하므로 글자 수 = 바이트 수). 상한이 없으면
-   * 앞 63자가 같은 두 이름이 같은 물리 테이블이 돼 고아 회수 DROP 이 남의 데이터를 지우고, 63자 넘는 컬럼명은 조회 결과 키가 메타데이터와 어긋난다. 테이블은
-   * 63 이 아니라 56 인데, 이름이 V125 와 같은 규약으로 고정된 {@code ix_<table>_upd}(+7)까지 63 안에 들어와야 하기 때문이다.
+   * <p>PostgreSQL 은 식별자를 63바이트에서 조용히 자른다({@link DataTableNames} 이 ASCII 만 허용하므로 글자 수 = 바이트 수). 상한이
+   * 없으면 앞 63자가 같은 두 이름이 같은 물리 테이블이 돼 고아 회수 DROP 이 남의 데이터를 지우고, 63자 넘는 컬럼명은 조회 결과 키가 메타데이터와 어긋난다.
+   * 테이블은 63 이 아니라 56 인데, 이름이 V125 와 같은 규약으로 고정된 {@code ix_<table>_upd}(+7)까지 63 안에 들어와야 하기 때문이다.
    */
   public static final int MAX_TABLE_NAME_LENGTH = 56;
 
@@ -40,7 +42,7 @@ public class DataTableService {
 
   /**
    * REPLACE 적재용 임시 테이블 접두어 — 사용자 테이블명으로는 예약한다({@link #rejectReservedTableName}). 이름 조립은 {@link
-   * #tempTableName} 단독.
+   * #newTempTableName}(실행마다 새 이름)과 {@link #legacyTempTableName}(옛 고정 이름 정리용) 단독.
    */
   public static final String TEMP_TABLE_PREFIX = "rtmp_";
 
@@ -132,15 +134,73 @@ public class DataTableService {
     }
   }
 
+  /** 실행마다 다른 임시 테이블 이름의 난수 부분 길이(hex 글자 수, 48비트). */
+  static final int TEMP_TABLE_RANDOM_HEX = 12;
+
+  /** 임시 테이블 이름의 난수 부분 생성기 — 보안 용도는 아니지만 스레드 안전하고 예측이 어렵다. */
+  private static final SecureRandom TEMP_TABLE_RANDOM = new SecureRandom();
+
   /**
-   * REPLACE 적재용 임시 테이블 이름 — {@code rtmp_} + 원본 이름의 MD5(32자 hex) = 항상 37자.
+   * REPLACE 적재 <b>한 번</b>이 쓸 새 임시 테이블 이름 — {@code rtmp_<난수 12 hex>_<원본 이름의 MD5 32 hex>} = 항상
+   * 50자(WD-151).
    *
-   * <p>원본 이름에 접미사를 붙이지 않는 이유: {@code <table>_tmp} 는 긴 테이블에서 63바이트로 잘려 원본 이름 자체가 될 수 있고(63자면 정리 DROP
-   * 이 원본을 지운다), 실제 데이터셋 {@code orders_tmp} 가 있으면 {@code orders} 의 REPLACE 가 그것을 지운다. 고정 길이 예약 접두어
-   * 이름은 어느 쪽과도 겹치지 않고, 시퀀스 {@code <tmp>_id_seq}(44자)까지 잘리지 않는다. 생성·맞바꿈·정리·적재 대상 계산이 모두 이 메서드만 쓴다.
+   * <p><b>왜 실행마다 다른가.</b> 예전에는 출력마다 고정된 이름({@link #legacyTempTableName})을 DROP IF EXISTS 후 다시 만들었다.
+   * 같은 출력에 REPLACE 두 건이 겹치면 동시 CREATE 가 {@code pg_type_typname_nsp_index} 중복으로 깨지거나, 뒤 실행이 앞 실행의 임시
+   * 테이블을 지우고 다시 만들었고, 실패한 실행의 정리(DROP)가 아직 적재 중인 다른 실행의 임시 테이블을 지웠다. 이름이 실행마다 다르면 생성·적재·정리가 서로 닿지
+   * 않는다. 맞바꿈은 한 트랜잭션(원본 DROP + RENAME)이고 PostgreSQL 의 ACCESS EXCLUSIVE 잠금이 겹친 맞바꿈을 차례로 세우므로, 둘 다
+   * 성공하고 나중에 끝난 실행이 이긴다(REPLACE 의 의미 그대로).
+   *
+   * <p><b>왜 난수가 MD5 앞에 있는가.</b> {@code LIKE ... INCLUDING ALL} 은 인덱스 이름을 PostgreSQL 기본 규칙({@code
+   * <테이블>_<컬럼>_idx})으로 새로 짓는데, 63바이트를 넘으면 긴 쪽의 <b>끝</b>부터 자른다. 난수가 끝에 있으면 컬럼명이 20자 남짓만 돼도 난수가 잘려 두
+   * 실행의 인덱스 이름이 같아지고, 동시에 만들면 같은 종류의 중복 오류가 다시 난다. 앞에 두면 잘리는 것은 MD5 쪽이고 난수는 남는다.
+   *
+   * <p><b>길이.</b> 50자 — 시퀀스 {@code <tmp>_id_seq}(57자), 시스템 PK {@code <tmp>_pkey}(55자)까지 63바이트 안이라
+   * 잘리지 않는다. 원본 이름에 접미사를 붙이지 않는 이유는 예전과 같다: {@code <table>_tmp} 는 긴 테이블에서 원본 이름 자체로 잘릴 수 있고 실제 데이터셋
+   * 이름과 겹칠 수 있다. 사용자 테이블은 {@code rtmp_} 로 시작할 수 없으므로({@link #rejectReservedTableName}) 어떤 데이터셋과도
+   * 겹치지 않는다.
+   *
+   * <p><b>남는 임시 테이블.</b> 실행이 맞바꿈·정리 전에 죽으면(프로세스 종료 등) 그 실행의 임시 테이블이 남는다. 이름이 실행마다 달라 다른 실행이 지울 수 없다
+   * — 살아 있는 실행의 것인지 알 방법이 없어 자동으로 쓸지 않는다. 데이터셋이 아니고 SQL 스텝에서 참조할 수도 없어(예약 접두어) 디스크만 차지한다. 확인된 실행이
+   * 없을 때 운영자가 {@code SELECT relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+   * WHERE n.nspname = '<데이터 스키마>' AND c.relkind = 'r' AND c.relname LIKE 'rtmp\_%'} 로 찾아 DROP
+   * 한다(시퀀스는 테이블 소유라 함께 지워진다).
    */
-  public static String tempTableName(String tableName) {
+  public static String newTempTableName(String tableName) {
+    byte[] random = new byte[TEMP_TABLE_RANDOM_HEX / 2];
+    TEMP_TABLE_RANDOM.nextBytes(random);
+    return TEMP_TABLE_PREFIX
+        + HexFormat.of().formatHex(random)
+        + "_"
+        + DataTableNames.md5Hex(tableName);
+  }
+
+  /**
+   * WD-151 이전의 출력별 고정 임시 테이블 이름 {@code rtmp_<md5>}(37자). 새 실행은 이 이름을 쓰지 않는다 — 옛 버전이 남긴 잔재를 {@code
+   * createTempTable} 이 지우는 데만 쓴다(새 코드에서는 살아 있는 실행이 이 이름을 쓸 수 없으므로 지워도 안전하다).
+   */
+  public static String legacyTempTableName(String tableName) {
     return TEMP_TABLE_PREFIX + DataTableNames.md5Hex(tableName);
+  }
+
+  /**
+   * {@code tempName} 이 {@code tableName} 의 REPLACE 임시 테이블 이름({@link #newTempTableName} 모양)인지 확인한다 —
+   * 아니면 {@link InvalidTableNameException}. 맞바꿈(원본 DROP 후 RENAME)과 정리(DROP)는 받은 이름을 그대로 쓰므로, 인자가
+   * 뒤바뀌거나 잘못 넘어와도 실제 데이터셋 테이블이나 다른 출력의 임시 테이블을 지우지 않게 하는 마지막 관문이다. 정확한 모양({@code rtmp_<12
+   * hex>_<md5(tableName)>})만 통과한다.
+   */
+  public static void requireTempTableOf(String tableName, String tempName) {
+    String expected =
+        "^"
+            + TEMP_TABLE_PREFIX
+            + "[0-9a-f]{"
+            + TEMP_TABLE_RANDOM_HEX
+            + "}_"
+            + DataTableNames.md5Hex(tableName)
+            + "$";
+    if (tempName == null || !tempName.matches(expected)) {
+      throw new InvalidTableNameException(
+          "'" + tempName + "' 은(는) 테이블 '" + tableName + "' 의 REPLACE 임시 테이블 이름이 아닙니다");
+    }
   }
 
   /**
@@ -205,11 +265,15 @@ public class DataTableService {
     resolver.tableStore().dropTable(tableName);
   }
 
-  /** REPLACE 적재용 임시(staging) 테이블 {@link #tempTableName} 을 만든다. */
-  public void createTempTable(String tableName) {
+  /**
+   * REPLACE 적재용 임시(staging) 테이블을 <b>이번 실행 전용 이름</b>({@link #newTempTableName})으로 만들고 그 이름을
+   * 돌려준다(WD-151). 호출자는 적재·{@link #finishReplace}·{@link #swapTable}·{@link #dropTempTable} 에 이 이름을
+   * 그대로 넘긴다 — 이름을 다시 계산할 방법이 없다(난수).
+   */
+  public String createTempTable(String tableName) {
     // 테넌트 해석 전에 이름부터 검증한다(기존 동작 유지).
     DataTableNames.validate(tableName);
-    resolver.tableStore().createTempTable(tableName);
+    return resolver.tableStore().createTempTable(tableName);
   }
 
   /**
@@ -224,25 +288,33 @@ public class DataTableService {
    *
    * <p>부분 실패(일부 배치만 성공)는 여기서 구분하지 않는다 — 성공한 행이 있으면 맞바꾼다. 그것이 {@code onError=CONTINUE} 를 고른 쪽의 선택이다.
    *
+   * @param tempName {@link #createTempTable} 이 돌려준 이번 실행의 임시 테이블 이름
    * @param rowsWritten 임시 테이블에 실제로 적재된 행 수
    */
-  public void finishReplace(String tableName, long rowsWritten) {
+  public void finishReplace(String tableName, String tempName, long rowsWritten) {
     // 테넌트 해석 전에 이름부터 검증한다(기존 동작 유지).
     DataTableNames.validate(tableName);
-    resolver.tableStore().finishReplace(tableName, rowsWritten);
+    requireTempTableOf(tableName, tempName);
+    resolver.tableStore().finishReplace(tableName, tempName, rowsWritten);
   }
 
-  public void swapTable(String tableName) {
+  /** 원본을 이번 실행의 임시 테이블({@code tempName})로 맞바꾼다. 이름이 그 테이블의 임시 테이블 모양이 아니면 거부한다. */
+  public void swapTable(String tableName, String tempName) {
     // 테넌트 해석 전에 이름부터 검증한다(기존 동작 유지).
     DataTableNames.validate(tableName);
-    resolver.tableStore().swapTable(tableName);
+    requireTempTableOf(tableName, tempName);
+    resolver.tableStore().swapTable(tableName, tempName);
   }
 
-  /** 임시(staging) 테이블이 있으면 버린다. 실패 시 원본 데이터를 보존하기 위해 호출한다. */
-  public void dropTempTable(String tableName) {
+  /**
+   * 이번 실행의 임시(staging) 테이블이 있으면 버린다. 실패 시 원본 데이터를 보존하기 위해 호출한다. 다른 실행의 임시 테이블은 이름이 달라 닿지 않는다. 이름이 그
+   * 테이블의 임시 테이블 모양이 아니면 거부한다 — 실제 테이블을 지우는 일이 없게 한다.
+   */
+  public void dropTempTable(String tableName, String tempName) {
     // 테넌트 해석 전에 이름부터 검증한다(기존 동작 유지).
     DataTableNames.validate(tableName);
-    resolver.tableStore().dropTempTable(tableName);
+    requireTempTableOf(tableName, tempName);
+    resolver.tableStore().dropTempTable(tableName, tempName);
   }
 
   public void renameColumn(String tableName, String oldName, String newName) {

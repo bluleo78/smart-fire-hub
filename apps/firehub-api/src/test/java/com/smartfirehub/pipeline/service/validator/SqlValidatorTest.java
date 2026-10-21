@@ -1217,7 +1217,7 @@ class SqlValidatorTest {
   @Test
   void rejectsReplaceTempTables_qualifiedUnqualifiedAndUpperCase() {
     // REPLACE 임시 테이블(rtmp_*)은 적재 중 데이터를 담는 시스템 소유 — 색인 테이블과 같은 방식으로 SQL 참조를 막는다(WD-95)
-    String tmp = DataTableService.tempTableName("orders");
+    String tmp = DataTableService.newTempTableName("orders");
     assertThatThrownBy(() -> validator.validate("SELECT * FROM data.\"" + tmp + "\""))
         .isInstanceOf(UnsafeSqlException.class)
         .hasMessageContaining("시스템 임시 테이블");

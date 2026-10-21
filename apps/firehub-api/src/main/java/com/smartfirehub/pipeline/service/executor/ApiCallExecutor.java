@@ -88,13 +88,12 @@ public class ApiCallExecutor {
     boolean isReplace = "REPLACE".equalsIgnoreCase(loadStrategy);
     boolean swapped = false;
 
-    if (isReplace) {
-      dataTableService.createTempTable(outputTableName);
-    }
+    // REPLACE 면 이번 실행 전용 임시 테이블을 만든다(WD-151) — 이름이 실행마다 달라, 같은 출력에 겹친 실행과 생성·적재·정리가 서로 닿지 않는다.
+    // 생성은 아래 try 밖이다: 생성이 실패하면 정리할 이름이 없다.
+    String tempTable = isReplace ? dataTableService.createTempTable(outputTableName) : null;
 
     // The actual insert target: temp table for REPLACE, original for APPEND
-    String insertTarget =
-        isReplace ? DataTableService.tempTableName(outputTableName) : outputTableName;
+    String insertTarget = isReplace ? tempTable : outputTableName;
 
     long startTime = System.currentTimeMillis();
     int maxDurationMs =
@@ -198,7 +197,7 @@ public class ApiCallExecutor {
       // 적재된 행이 0이면 맞바꾸지 않는다(#685) — API 가 빈 페이지를 돌려줬다고 해서 기존 데이터를
       // 지울 이유는 없다. 판단은 finishReplace 가 단독으로 갖는다.
       if (isReplace) {
-        dataTableService.finishReplace(outputTableName, totalRows);
+        dataTableService.finishReplace(outputTableName, tempTable, totalRows);
         swapped = true;
       }
 
@@ -206,7 +205,7 @@ public class ApiCallExecutor {
       // On failure, clean up the temp table so original data is preserved
       if (isReplace && !swapped) {
         try {
-          dataTableService.dropTempTable(outputTableName);
+          dataTableService.dropTempTable(outputTableName, tempTable);
         } catch (Exception dropEx) {
           log.warn("Failed to drop temp table after API call failure: {}", dropEx.getMessage());
         }

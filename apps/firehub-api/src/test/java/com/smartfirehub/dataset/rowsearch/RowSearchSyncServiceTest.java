@@ -190,12 +190,12 @@ class RowSearchSyncServiceTest extends IntegrationTestBase {
     // swap: 새 시퀀스의 _tmp 를 채우고 맞바꾼다 → id 1 부터 다시, 내용 일부는 같음
     inTenantFixture(
         () -> {
-          dataTableService.createTempTable(SRC);
+          String tmp = dataTableService.createTempTable(SRC);
           dsl.execute(
               "INSERT INTO "
-                  + DataSchema.qualify(DataTableService.tempTableName(SRC))
+                  + DataSchema.qualify(tmp)
                   + " (content, status) VALUES ('c','x'),('z','x')");
-          dataTableService.swapTable(SRC);
+          dataTableService.swapTable(SRC, tmp);
         });
 
     sync.sync(datasetId);

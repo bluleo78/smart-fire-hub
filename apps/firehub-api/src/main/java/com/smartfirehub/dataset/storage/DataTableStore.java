@@ -52,8 +52,11 @@ public interface DataTableStore {
   /** 테이블을 지운다. 호출자 트랜잭션에 참여한다. */
   void dropTable(String tableName);
 
-  /** REPLACE 적재용 임시(staging) 테이블 {@code {tableName}_tmp} 를 만든다. */
-  void createTempTable(String tableName);
+  /**
+   * REPLACE 적재용 임시(staging) 테이블을 이번 실행 전용 이름({@code DataTableService.newTempTableName})으로 만들고 그 이름을
+   * 돌려준다 (WD-151). 같은 테이블에 겹친 실행이 서로의 임시 테이블을 만들거나 지우지 않게 한다.
+   */
+  String createTempTable(String tableName);
 
   /**
    * REPLACE 적재를 마무리한다 — <b>쓴 행이 있을 때만</b> 맞바꾸고, 없으면 임시 테이블만 버린다.
@@ -67,21 +70,25 @@ public interface DataTableStore {
    *
    * <p>부분 실패(일부 배치만 성공)는 구분하지 않는다 — 성공한 행이 있으면 맞바꾼다. 그것이 {@code onError=CONTINUE} 를 고른 쪽의 선택이다.
    *
+   * @param tempName {@link #createTempTable} 이 돌려준 이번 실행의 임시 테이블 이름
    * @param rowsWritten 임시 테이블에 실제로 적재된 행 수
    */
-  default void finishReplace(String tableName, long rowsWritten) {
+  default void finishReplace(String tableName, String tempName, long rowsWritten) {
     if (rowsWritten > 0) {
-      swapTable(tableName);
+      swapTable(tableName, tempName);
     } else {
-      dropTempTable(tableName);
+      dropTempTable(tableName, tempName);
     }
   }
 
-  /** 임시 테이블과 원본을 맞바꾼다. 원본 삭제와 리네임을 구현체 자체의 트랜잭션 블록 안에서 원자적으로 실행한다(호출자 트랜잭션이 있으면 그 안에 중첩된다). */
-  void swapTable(String tableName);
+  /**
+   * 원본을 이번 실행의 임시 테이블({@code tempName})로 맞바꾼다. 원본 삭제와 리네임을 구현체 자체의 트랜잭션 블록 안에서 원자적으로 실행한다(호출자 트랜잭션이
+   * 있으면 그 안에 중첩된다). 구현체는 {@code tempName} 이 그 테이블의 임시 테이블 이름인지 확인해야 한다.
+   */
+  void swapTable(String tableName, String tempName);
 
-  /** 임시(staging) 테이블이 있으면 버린다. 실패 시 원본 보존용. */
-  void dropTempTable(String tableName);
+  /** 이번 실행의 임시(staging) 테이블({@code tempName})이 있으면 버린다. 실패 시 원본 보존용. 다른 실행의 임시 테이블은 건드리지 않는다. */
+  void dropTempTable(String tableName, String tempName);
 
   /** 컬럼 이름을 바꾼다. 호출자 트랜잭션에 참여한다. */
   void renameColumn(String tableName, String oldName, String newName);

@@ -23,9 +23,10 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * WD-103 — REPLACE 적재(createTempTable → swapTable)를 거친 데이터셋에서 PK 를 해제·변경해도 옛 PK 유니크 인덱스가 남던 결함.
  *
- * <p>{@code LIKE ... INCLUDING ALL} 은 인덱스 이름을 복사하지 않고 기본 이름({@code rtmp_<md5>_<col>_idx})을 붙인다. 맞바꿈
- * 뒤 {@code ux_<table>_pk} 이름이 사라지는데, 예전 코드는 그 이름으로만 지워서 옛 PK 유니크를 영영 지우지 못했다. 여기서는 유니크 인덱스를
- * 카탈로그(pg_index)로 직접 세고, 사용자 현상(같은 값 삽입 성공·거부)으로도 단언한다 — 이름이 아니라 "실제로 어떤 컬럼 집합에 유니크가 걸려 있는가"를 본다.
+ * <p>{@code LIKE ... INCLUDING ALL} 은 인덱스 이름을 복사하지 않고 기본 이름({@code rtmp_<난수>_<md5>_<col>_idx}, 길면
+ * 앞부분)을 붙인다. 맞바꿈 뒤 {@code ux_<table>_pk} 이름이 사라지는데, 예전 코드는 그 이름으로만 지워서 옛 PK 유니크를 영영 지우지 못했다. 여기서는
+ * 유니크 인덱스를 카탈로그(pg_index)로 직접 세고, 사용자 현상(같은 값 삽입 성공·거부)으로도 단언한다 — 이름이 아니라 "실제로 어떤 컬럼 집합에 유니크가 걸려
+ * 있는가"를 본다.
  *
  * <p>클래스 레벨 {@code @Transactional}: DDL 이 트랜잭션에 묶이므로 테스트가 만든 테이블·인덱스는 롤백으로 사라진다. 중복 거부 단언은 트랜잭션을
  * 중단(abort)시키므로 각 테스트의 마지막에만 둔다.
@@ -107,16 +108,14 @@ class DataTablePrimaryKeyIndexAfterReplaceTest extends IntegrationTestBase {
 
   /** REPLACE 적재 — 파이프라인(SQL/API_CALL, loadStrategy=REPLACE)과 같은 순서로 임시 테이블에 적재하고 맞바꾼다. */
   private void replaceLoad(String table, String... abXabY) {
-    dataTableService.createTempTable(table);
+    String tmp = dataTableService.createTempTable(table);
     for (int i = 0; i < abXabY.length; i += 2) {
       dsl.execute(
-          "INSERT INTO "
-              + DataSchema.qualify(DataTableService.tempTableName(table))
-              + " (ab_x, ab_y) VALUES (?, ?)",
+          "INSERT INTO " + DataSchema.qualify(tmp) + " (ab_x, ab_y) VALUES (?, ?)",
           abXabY[i],
           abXabY[i + 1]);
     }
-    dataTableService.finishReplace(table, abXabY.length / 2);
+    dataTableService.finishReplace(table, tmp, abXabY.length / 2);
   }
 
   private void insertRow(String table, String abX, String abY) {

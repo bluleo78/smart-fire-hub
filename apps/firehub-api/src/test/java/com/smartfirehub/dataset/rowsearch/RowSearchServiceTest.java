@@ -116,7 +116,10 @@ class RowSearchServiceTest extends IntegrationTestBase {
         () -> {
           index.drop(new IndexRef(DEFAULT_TEST_TENANT_ID, datasetId, SRC));
           dataTableService.dropTable(SRC);
-          dataTableService.dropTempTable(SRC);
+          // 맞바꿈이 임시 테이블을 원본으로 바꾸므로 남는 것은 없다 — 옛 고정 이름 잔재만 혹시 몰라 지운다(WD-151).
+          dsl.execute(
+              "DROP TABLE IF EXISTS "
+                  + DataSchema.qualify(DataTableService.legacyTempTableName(SRC)));
           dsl.execute("DELETE FROM dataset_column WHERE dataset_id = ?", datasetId);
           dsl.execute("DELETE FROM dataset WHERE id = ?", datasetId);
         });
@@ -186,12 +189,12 @@ class RowSearchServiceTest extends IntegrationTestBase {
   void afterSwap_beforeSweep_returnsStaleAndNoHits() {
     inTenantFixture(
         () -> {
-          dataTableService.createTempTable(SRC);
+          String tmp = dataTableService.createTempTable(SRC);
           dsl.execute(
               "INSERT INTO "
-                  + DataSchema.qualify(DataTableService.tempTableName(SRC))
+                  + DataSchema.qualify(tmp)
                   + " (content, status) VALUES ('전혀 다른 행', '완료')");
-          dataTableService.swapTable(SRC);
+          dataTableService.swapTable(SRC, tmp);
         });
 
     var res = service.search(datasetId, req("누수", null, null));

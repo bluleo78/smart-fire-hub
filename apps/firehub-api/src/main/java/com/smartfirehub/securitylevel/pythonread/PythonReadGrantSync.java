@@ -189,6 +189,20 @@ public class PythonReadGrantSync {
   }
 
   /**
+   * 그 테넌트의 동기화 잠금(트랜잭션 범위 advisory)을 주어진 연결의 현재 트랜잭션에서 잡는다 — 트랜잭션이 끝나면 저절로 풀린다.
+   *
+   * <p>동기화 자신과, 동기화의 GRANT 와 겹치면 안 되는 DDL 이 함께 쓴다. GRANT 는 테이블 잠금 없이 pg_class 행(ACL)을 고치므로 같은 테이블의
+   * {@code DROP TABLE} 과 겹치면 한쪽이 {@code tuple concurrently updated/deleted}(XX000)로 깨진다. REPLACE
+   * 맞바꿈(원본 DROP)이 바로 그 경우다 — 같은 출력에 겹친 실행이 맞바꾼 직후 거는 이 동기화의 GRANT 와 다른 실행의 맞바꿈이 부딪혀 실행이 실패했다(WD-151
+   * 라이브 확인).
+   */
+  public static void lockTenantSync(DSLContext ctx, long tenantId) {
+    ctx.execute(
+        "SELECT pg_advisory_xact_lock(hashtextextended({0}, 0))",
+        DSL.val("python_read_sync_t" + tenantId));
+  }
+
+  /**
    * PYTHON 실행 직전 준비(JIT) — 잠금 안에서 읽은 등급 스냅샷으로 실행 주체의 슬롯 k 를 계산하고, <b>그 슬롯 롤 하나의</b> ACL 만 계산값에 맞춘다
    * (CR3 — 매 스텝 10개 롤 전부를 맞추지 않는다. 다른 슬롯은 이 스크립트가 접속하지 않는 롤이라 이벤트·일 1회·그 슬롯의 실행이 맞춘다). 실행 슬롯의 과권한은
    * 매번 실제 ACL 로 확인하므로 손으로 건 GRANT 도 회수하거나(실패하면) 거부한다 — "마지막 동기화 이후 변경 없음" 단락은 이 확인을 건너뛰게 되므로 쓰지
@@ -202,9 +216,9 @@ public class PythonReadGrantSync {
   }
 
   /**
-   * {@link #prepareForRun(Clearance)} 와 같되, 슬롯을 실행 주체 자격 rank 가 아니라 {@code readRank}(스텝이 다루는 데이터의 최고 등급 —
-   * PipelineSecurityGate.pythonReadRank)로 고른다. readRank 는 자격 rank 이하여야 한다 — 넘으면 자격 밖 등급을 읽게 되므로 거부한다
-   * (fail-closed).
+   * {@link #prepareForRun(Clearance)} 와 같되, 슬롯을 실행 주체 자격 rank 가 아니라 {@code readRank}(스텝이 다루는 데이터의
+   * 최고 등급 — PipelineSecurityGate.pythonReadRank)로 고른다. readRank 는 자격 rank 이하여야 한다 — 넘으면 자격 밖 등급을 읽게
+   * 되므로 거부한다 (fail-closed).
    */
   public int prepareForRun(Clearance runAs, int readRank) {
     // 테넌트 일치 확인을 맨 먼저 — 동기화(syncTenant)는 TenantContext 테넌트를, 슬롯 계산은 runAs 의 rank 를 쓴다. 둘이 다르면
@@ -273,9 +287,7 @@ public class PythonReadGrantSync {
   private SyncResult syncInTx(String onlyTable, Integer runRank, boolean terminateSlotSessions) {
     long tenantId = TenantContext.require("PYTHON 읽기 권한 동기화");
     // 같은 테넌트 동기화 직렬화(트랜잭션 종료 시 자동 해제).
-    dsl.execute(
-        "SELECT pg_advisory_xact_lock(hashtextextended({0}, 0))",
-        DSL.val("python_read_sync_t" + tenantId));
+    lockTenantSync(dsl, tenantId);
     String schema = DataSchema.current();
 
     List<String> slotRoleNames = TenantPipelineRole.pythonReadRoleNames(tenantId);

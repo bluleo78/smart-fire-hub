@@ -690,6 +690,10 @@ class ApiCallExecutorTest {
             null,
             null);
 
+    // 이번 실행 전용 임시 테이블 이름(WD-151) — 실행기는 이 이름을 적재·마무리에 그대로 써야 한다(다시 계산하면 다른 실행의 것과 섞인다).
+    String runTemp = DataTableService.newTempTableName("rep_table");
+    when(dataTableService.createTempTable("rep_table")).thenReturn(runTemp);
+
     ApiCallExecutor.ApiCallResult result =
         executor.execute(config, "rep_table", null, "REPLACE", null);
 
@@ -698,19 +702,18 @@ class ApiCallExecutorTest {
     // Must create the temp table first
     verify(dataTableService).createTempTable("rep_table");
 
-    // Rows must be inserted into the _tmp table, not the original
-    verify(dataTableRowService)
-        .insertBatch(eq(DataTableService.tempTableName("rep_table")), anyList(), anyList());
+    // Rows must be inserted into this run's temp table, not the original
+    verify(dataTableRowService).insertBatch(eq(runTemp), anyList(), anyList());
     verify(dataTableRowService, never()).insertBatch(eq("rep_table"), anyList(), anyList());
 
     // On success, swap must be called
     // 스왑 여부의 판단은 DataTableService.finishReplace 가 단독으로 갖는다(#685) — 여기서는
     // 적재된 행 수가 그대로 전달되는지만 본다. API 가 0행을 돌려줘도 원본이 지워지지 않는 것은
     // finishReplace 의 책임이고 DataTableServiceTest 가 본다.
-    verify(dataTableService).finishReplace("rep_table", 2L);
+    verify(dataTableService).finishReplace("rep_table", runTemp, 2L);
 
     // dropTempTable must NOT be called on success
-    verify(dataTableService, never()).dropTempTable(any());
+    verify(dataTableService, never()).dropTempTable(any(), any());
 
     // truncateTable must never be called (old behaviour is gone)
     verify(dataTableRowService, never()).truncateTable(any());
@@ -748,15 +751,19 @@ class ApiCallExecutorTest {
             null,
             null);
 
+    // 실패 정리는 이번 실행이 만든 임시 테이블만 지운다(WD-151) — 같은 출력에 적재 중인 다른 실행의 것은 이름이 달라 닿지 않는다.
+    String runTemp = DataTableService.newTempTableName("rep_fail_table");
+    when(dataTableService.createTempTable("rep_fail_table")).thenReturn(runTemp);
+
     assertThatThrownBy(() -> executor.execute(config, "rep_fail_table", null, "REPLACE", null))
         .isInstanceOf(ApiCallException.class);
 
     // Temp table must be created and then dropped on failure
     verify(dataTableService).createTempTable("rep_fail_table");
-    verify(dataTableService).dropTempTable("rep_fail_table");
+    verify(dataTableService).dropTempTable("rep_fail_table", runTemp);
 
     // swap must NOT be called
-    verify(dataTableService, never()).swapTable(any());
+    verify(dataTableService, never()).swapTable(any(), any());
   }
 
   // -------------------------------------------------------------------------

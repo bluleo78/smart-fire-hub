@@ -441,14 +441,12 @@ class DataTableFieldIndexNameTest extends IntegrationTestBase {
   @Test
   void REPLACE_교체_후에도_필드_인덱스를_찾아_끄고_켤_수_있다() {
     dataTableService.createTable(LONG_TABLE, List.of(text("ab_x", true), text("ab_y", true)));
-    dataTableService.createTempTable(LONG_TABLE);
-    dsl.execute(
-        "INSERT INTO "
-            + DataSchema.qualify(DataTableService.tempTableName(LONG_TABLE))
-            + " (ab_x, ab_y) VALUES ('x', 'y')");
-    dataTableService.swapTable(LONG_TABLE);
+    String tmp = dataTableService.createTempTable(LONG_TABLE);
+    dsl.execute("INSERT INTO " + DataSchema.qualify(tmp) + " (ab_x, ab_y) VALUES ('x', 'y')");
+    dataTableService.swapTable(LONG_TABLE, tmp);
 
-    // LIKE ... INCLUDING ALL 이 인덱스를 복사하며 PostgreSQL 기본 이름(rtmp_<md5>_..._idx)을 붙인다 — 규칙 이름이 사라진다.
+    // LIKE ... INCLUDING ALL 이 인덱스를 복사하며 PostgreSQL 기본 이름(rtmp_<난수>_<md5>_..._idx, 길면 앞부분)을 붙인다 —
+    // 규칙 이름이 사라진다.
     List<Idx> x = indexesOn(LONG_TABLE, "ab_x");
     assertThat(x).as("교체 후 인덱스 %s", allIndexNames(LONG_TABLE)).hasSize(1);
     assertThat(x.get(0).name()).startsWith(DataTableService.TEMP_TABLE_PREFIX);
