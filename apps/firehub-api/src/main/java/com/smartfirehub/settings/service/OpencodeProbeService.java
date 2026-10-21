@@ -467,47 +467,14 @@ public class OpencodeProbeService {
       } catch (SsrfException blocked) {
         throw new GuardViolation(MSG_BLOCKED_ADDRESS, ProbeResult.Reason.BLOCKED_ADDRESS);
       }
-      // 기존 가드가 놓치는 대역을 여기서 보강한다: CGNAT(100.64.0.0/10 — 일부 k8s 파드 CIDR가
-      // 이 대역을 쓴다), IPv6 ULA(fc00::/7 — 듀얼스택 클러스터의 사설 대역;
-      // InetAddress.isSiteLocalAddress() 의 IPv6 판정은 폐기된 fec0::/10 만 본다), 0.0.0.0/8("이
-      // 네트워크" 예약 대역 — InetAddress.isAnyLocalAddress() 는 정확히 0.0.0.0 하나만 보고
-      // 0.0.0.1 등 나머지 /8 전체는 통과시킨다. 이 세 대역만 보강하고 이 서비스 밖
-      // (SsrfProtectionService 자체)으로 넓히지 않는다 — 넓히면 이미 그 클래스를 쓰는 pipeline
-      // API_CALL 경로까지 영향권에 들어간다.
-      if (isCgnat(address) || isIpv6UniqueLocal(address) || isReservedZeroNet(address)) {
-        throw new GuardViolation(MSG_BLOCKED_ADDRESS, ProbeResult.Reason.BLOCKED_ADDRESS);
-      }
+      // CGNAT·IPv6 ULA·0.0.0.0/8 처럼 InetAddress 판정이 놓치는 대역도 이제 공용 가드가 막는다(WD-148) —
+      // 예전에는 이 프로브만 따로 보강했고, 같은 구멍이 pipeline API_CALL 「테스트 호출」에 남아 있었다.
     }
   }
 
   /** DNS 해석. protected — DNS rebinding 테스트가 "실제 이름은 그대로 두고 해석 결과만 사설 IP로" 재현하려면 필요하다. */
   protected InetAddress[] resolve(String host) throws UnknownHostException {
     return InetAddress.getAllByName(host);
-  }
-
-  private static boolean isCgnat(InetAddress address) {
-    byte[] b = address.getAddress();
-    if (b.length != 4) return false; // IPv4 전용 대역
-    int octet1 = b[0] & 0xFF;
-    int octet2 = b[1] & 0xFF;
-    return octet1 == 100 && octet2 >= 64 && octet2 <= 127; // 100.64.0.0/10
-  }
-
-  private static boolean isIpv6UniqueLocal(InetAddress address) {
-    byte[] b = address.getAddress();
-    if (b.length != 16) return false; // IPv6 전용 대역
-    return (b[0] & 0xFE) == 0xFC; // fc00::/7 (상위 7비트 1111110)
-  }
-
-  /**
-   * 0.0.0.0/8("이 네트워크" — RFC 791/1122). {@link InetAddress#isAnyLocalAddress()} 는 전부 0인 주소(0.0.0.0)
-   * 하나만 참을 반환하고, 0.0.0.1 같은 나머지 대역 전체는 통과시킨다(리뷰에서 jshell 로 실측: {@code 0.0.0.1} 은 any/loopback/site
-   * 판정 모두 거짓). 커널·라우팅 설정에 따라 실제 도달 가능성은 갈리지만, 스펙이 명시적으로 나열한 차단 대상 대역이라 문서화된 구멍보다는 막힌 상태가 낫다.
-   */
-  private static boolean isReservedZeroNet(InetAddress address) {
-    byte[] b = address.getAddress();
-    if (b.length != 4) return false; // IPv4 전용 대역
-    return b[0] == 0; // 0.0.0.0/8
   }
 
   // -------------------------------------------------------------------------
