@@ -403,6 +403,91 @@ test.describe('데이터셋 상세 페이지', () => {
     await expect(page.getByText('태그 추가에 실패했습니다.')).not.toBeVisible();
   });
 
+  /**
+   * WD-145: 띄어쓰기·특수문자 태그는 서버가 거절하는데 예전에는 「태그 추가에 실패했습니다」만 보였다.
+   * 입력 단계에서 허용 문자를 안내하고, 어기면 같은 자리에 사유를 보이며 요청을 보내지 않는다.
+   */
+  test('띄어쓰기 태그는 입력창 아래에 사유를 보이고 요청을 보내지 않는다 (WD-145)', async ({ authenticatedPage: page }) => {
+    await setupDetailPageMocks(page, 1);
+    let postCount = 0;
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets/1/tags',
+      (route) => {
+        if (route.request().method() === 'POST') postCount += 1;
+        return route.fulfill({ status: 201, body: '' });
+      },
+    );
+
+    await page.goto('/data/datasets/1');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible();
+    await page.locator('button[title="태그 추가"]').click();
+
+    const tagInput = page.getByPlaceholder(/태그 입력|새 태그/);
+    const hint = page.locator('#tag-input-hint');
+    // 입력 전에는 허용 문자 안내가 보인다
+    await expect(hint).toHaveText('한글·영문·숫자·밑줄(_)·하이픈(-), 50자 이하');
+
+    await tagInput.fill('데이터 분석');
+    await expect(hint).toHaveText(
+      '태그에는 한글·영문·숫자·밑줄(_)·하이픈(-)만 쓸 수 있습니다. 띄어쓰기는 밑줄(_)이나 하이픈(-)으로 바꿔 입력하세요.',
+    );
+    await expect(tagInput).toHaveAttribute('aria-invalid', 'true');
+    await expect(page.getByRole('button', { name: '추가', exact: true })).toBeDisabled();
+
+    // Enter 로도 보내지 않는다
+    await tagInput.press('Enter');
+    await page.waitForTimeout(300);
+    expect(postCount).toBe(0);
+    await expect(page.getByText('태그 추가에 실패했습니다.')).toHaveCount(0);
+
+    // HTML 같은 특수문자도 같은 사유
+    await tagInput.fill('<b>x</b>');
+    await expect(hint).toContainText('만 쓸 수 있습니다');
+
+    // 밑줄로 바꾸면 안내가 돌아오고 추가할 수 있다
+    await tagInput.fill('데이터_분석');
+    await expect(hint).toHaveText('한글·영문·숫자·밑줄(_)·하이픈(-), 50자 이하');
+    await expect(tagInput).not.toHaveAttribute('aria-invalid', 'true');
+    await expect(page.getByRole('button', { name: '추가', exact: true })).toBeEnabled();
+  });
+
+  test('밑줄·하이픈이 든 태그는 그대로 보낸다 (WD-145)', async ({ authenticatedPage: page }) => {
+    await setupDetailPageMocks(page, 1);
+    const addTagCapture = await mockApi(page, 'POST', '/api/v1/datasets/1/tags', {}, { capture: true, status: 201 });
+
+    await page.goto('/data/datasets/1');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible();
+    await page.locator('button[title="태그 추가"]').click();
+    const tagInput = page.getByPlaceholder(/태그 입력|새 태그/);
+    await tagInput.fill('fire-2026_통계');
+    await page.getByRole('button', { name: '추가', exact: true }).click();
+
+    const req = await addTagCapture.waitForRequest();
+    expect(req.payload).toEqual({ tagName: 'fire-2026_통계' });
+  });
+
+  test('서버가 중복(409)으로 거절하면 그 사유를 보인다 (WD-145)', async ({ authenticatedPage: page }) => {
+    await setupDetailPageMocks(page, 1);
+    // 화면의 태그 목록이 낡아 클라이언트 중복 검사를 통과했지만 서버에는 이미 있는 경우
+    await mockApi(
+      page,
+      'POST',
+      '/api/v1/datasets/1/tags',
+      { status: 409, error: 'Conflict', message: '이미 추가된 태그입니다: 신규태그' },
+      { status: 409 },
+    );
+
+    await page.goto('/data/datasets/1');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible();
+    await page.locator('button[title="태그 추가"]').click();
+    const tagInput = page.getByPlaceholder(/태그 입력|새 태그/);
+    await tagInput.fill('신규태그');
+    await tagInput.press('Enter');
+
+    await expect(page.getByText('이미 추가된 태그입니다: 신규태그')).toBeVisible();
+    await expect(page.getByText('태그 추가에 실패했습니다.')).toHaveCount(0);
+  });
+
   test('기존 태그 X 버튼 클릭 — DELETE 호출 검증', async ({ authenticatedPage: page }) => {
     await setupDetailPageMocks(page, 1);
 

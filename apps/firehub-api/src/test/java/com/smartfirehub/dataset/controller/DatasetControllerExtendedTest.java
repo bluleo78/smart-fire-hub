@@ -347,13 +347,49 @@ class DatasetControllerExtendedTest {
   void addTag_invalidName_returnsBadRequest() throws Exception {
     AddTagRequest req = new AddTagRequest("invalid name with spaces!");
 
+    // 빈 본문이 아니라 허용 문자 안내를 돌려줘야 화면이 사유를 보여 준다(WD-145)
     mockMvc
         .perform(
             post("/api/v1/datasets/1/tags")
                 .header("Authorization", "Bearer test-token")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(req)))
-        .andExpect(status().isBadRequest());
+        .andExpect(status().isBadRequest())
+        .andExpect(
+            jsonPath("$.message")
+                .value("태그에는 한글·영문·숫자·밑줄(_)·하이픈(-)만 쓸 수 있습니다. 띄어쓰기는 밑줄(_)이나 하이픈(-)으로 바꿔 입력하세요."));
+    org.mockito.Mockito.verify(datasetTagService, org.mockito.Mockito.never())
+        .addTag(anyLong(), anyString(), anyLong());
+  }
+
+  /** 51자 태그는 길이 사유로 거절한다(WD-145). */
+  @Test
+  void addTag_tooLong_returnsBadRequestWithReason() throws Exception {
+    AddTagRequest req = new AddTagRequest("가".repeat(51));
+
+    mockMvc
+        .perform(
+            post("/api/v1/datasets/1/tags")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(req)))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value("태그는 50자 이하로 입력하세요."));
+  }
+
+  /** 경계: 정확히 50자 태그는 통과한다(WD-145). */
+  @Test
+  void addTag_exactly50Chars_returnsCreated() throws Exception {
+    AddTagRequest req = new AddTagRequest("가".repeat(50));
+    doNothing().when(datasetTagService).addTag(anyLong(), anyString(), anyLong());
+
+    mockMvc
+        .perform(
+            post("/api/v1/datasets/1/tags")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(req)))
+        .andExpect(status().isCreated());
   }
 
   @Test
@@ -366,23 +402,26 @@ class DatasetControllerExtendedTest {
                 .header("Authorization", "Bearer test-token")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(req)))
-        .andExpect(status().isBadRequest());
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value("태그 이름을 입력하세요."));
   }
 
   @Test
   void addTag_duplicateTag_returnsConflict() throws Exception {
     AddTagRequest req = new AddTagRequest("sales");
-    org.mockito.Mockito.doThrow(new IllegalStateException("Tag already exists"))
+    org.mockito.Mockito.doThrow(new IllegalStateException("이미 추가된 태그입니다: sales"))
         .when(datasetTagService)
         .addTag(anyLong(), anyString(), anyLong());
 
+    // 중복 409 도 서비스의 사유를 본문으로 돌려준다(WD-145)
     mockMvc
         .perform(
             post("/api/v1/datasets/1/tags")
                 .header("Authorization", "Bearer test-token")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(req)))
-        .andExpect(status().isConflict());
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.message").value("이미 추가된 태그입니다: sales"));
   }
 
   @Test

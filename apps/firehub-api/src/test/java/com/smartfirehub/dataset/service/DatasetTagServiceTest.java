@@ -125,7 +125,8 @@ class DatasetTagServiceTest extends IntegrationTestBase {
 
     assertThatThrownBy(() -> datasetTagService.addTag(datasetId, "duplicate", testUserId))
         .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("duplicate");
+        // 화면에 그대로 보이는 사유라 한국어여야 한다(WD-145)
+        .hasMessage("이미 추가된 태그입니다: duplicate");
   }
 
   /** 예외: 대소문자만 다른 태그(예: "Test" → "test")는 동일 태그로 취급되어 IllegalStateException이 발생해야 한다 (#671). */

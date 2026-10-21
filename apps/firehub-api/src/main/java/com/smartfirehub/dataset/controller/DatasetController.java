@@ -303,18 +303,25 @@ public class DatasetController {
   @RequirePermission("dataset:write")
   public ResponseEntity<Void> addTag(
       @PathVariable Long id, @RequestBody AddTagRequest request, Authentication authentication) {
-    if (request.tagName() == null
-        || request.tagName().isBlank()
-        || request.tagName().length() > 50
-        || !request.tagName().matches("[a-zA-Z0-9가-힣_\\-]+")) {
-      return ResponseEntity.badRequest().build();
-    }
+    // 거절 사유를 한국어로 돌려준다(WD-145) — 예전에는 빈 400/409 라 화면이 「태그 추가에 실패했습니다」만 보였다.
+    // 400 은 IllegalArgumentException, 중복 409 는 서비스의 IllegalStateException 을 전역 핸들러가 본문과 함께 내려준다.
+    validateTagName(request.tagName());
     Long userId = (Long) authentication.getPrincipal();
-    try {
-      datasetTagService.addTag(id, request.tagName(), userId);
-      return ResponseEntity.status(HttpStatus.CREATED).build();
-    } catch (IllegalStateException e) {
-      return ResponseEntity.status(HttpStatus.CONFLICT).build();
+    datasetTagService.addTag(id, request.tagName(), userId);
+    return ResponseEntity.status(HttpStatus.CREATED).build();
+  }
+
+  /** 태그 이름 규칙: 1~50자, 한글·영문·숫자·밑줄·하이픈만. 웹 입력창(DatasetDetailPage)의 사전 검사와 같은 규칙·문구다. */
+  private static void validateTagName(String tagName) {
+    if (tagName == null || tagName.isBlank()) {
+      throw new IllegalArgumentException("태그 이름을 입력하세요.");
+    }
+    if (tagName.length() > 50) {
+      throw new IllegalArgumentException("태그는 50자 이하로 입력하세요.");
+    }
+    if (!tagName.matches("[a-zA-Z0-9가-힣_\\-]+")) {
+      throw new IllegalArgumentException(
+          "태그에는 한글·영문·숫자·밑줄(_)·하이픈(-)만 쓸 수 있습니다. 띄어쓰기는 밑줄(_)이나 하이픈(-)으로 바꿔 입력하세요.");
     }
   }
 

@@ -66,6 +66,21 @@ import { DatasetSecurityTab } from './tabs/DatasetSecurityTab';
 // 백엔드 dataset_tag.tag_name 컬럼 제약(VARCHAR(50))과 동일한 길이 제한.
 // 클라이언트에서 사전에 제한하여 불필요한 400 요청/토스트 혼란을 방지한다 (#530)
 const TAG_NAME_MAX_LENGTH = 50;
+// 서버(DatasetController.validateTagName)와 같은 허용 문자 — 한글·영문·숫자·밑줄·하이픈 (WD-145)
+const TAG_NAME_PATTERN = /^[a-zA-Z0-9가-힣_-]+$/;
+const TAG_NAME_HINT = '한글·영문·숫자·밑줄(_)·하이픈(-), 50자 이하';
+
+/**
+ * 태그 이름이 서버 규칙을 어기면 사유를 돌려준다(통과면 null). 문구는 서버 응답과 같다 —
+ * 예전에는 띄어쓰기 태그가 서버에서 빈 400 으로 거절돼 「태그 추가에 실패했습니다」만 보였다(WD-145).
+ */
+function tagNameError(tag: string): string | null {
+  if (tag.length > TAG_NAME_MAX_LENGTH) return '태그는 50자 이하로 입력하세요.';
+  if (!TAG_NAME_PATTERN.test(tag)) {
+    return '태그에는 한글·영문·숫자·밑줄(_)·하이픈(-)만 쓸 수 있습니다. 띄어쓰기는 밑줄(_)이나 하이픈(-)으로 바꿔 입력하세요.';
+  }
+  return null;
+}
 
 /**
  * 저장 유형별 유효 탭 — 초기 탭 결정과 ?tab= 동기화가 같은 목록을 쓰도록 한 곳에 둔다. 유형을 모르면(로드 전) 표 데이터셋 목록이다.
@@ -156,6 +171,8 @@ export default function DatasetDetailPage() {
 
   const [tagInputOpen, setTagInputOpen] = useState(false);
   const [tagInput, setTagInput] = useState('');
+  // 입력 중인 태그가 규칙을 어기면 그 사유 — 입력창 아래에 보이고 「추가」를 막는다 (WD-145)
+  const tagInputError = tagInput.trim() ? tagNameError(tagInput.trim()) : null;
   const [statusEditOpen, setStatusEditOpen] = useState(false);
   const [statusValue, setStatusValue] = useState<string>('NONE');
   const [statusNote, setStatusNote] = useState('');
@@ -204,6 +221,8 @@ export default function DatasetDetailPage() {
   const handleAddTag = async () => {
     const tag = tagInput.trim();
     if (!tag) return;
+    // 허용 문자·길이를 먼저 알려 준다 — 서버에 보내 일반 실패 문구를 받는 일이 없게 (WD-145)
+    if (tagInputError) return;
     // 태그 중복 검사는 대소문자를 구분하지 않는다 — "Test"와 "test"는 동일 태그로 취급 (#671)
     if (dataset?.tags?.some((t) => t.toLowerCase() === tag.toLowerCase())) {
       toast.error('이미 추가된 태그입니다.');
@@ -473,8 +492,17 @@ export default function DatasetDetailPage() {
                     }}
                     className="h-8 text-sm"
                     maxLength={TAG_NAME_MAX_LENGTH}
+                    aria-invalid={tagInputError ? true : undefined}
+                    aria-describedby="tag-input-hint"
                     autoFocus
                   />
+                  {/* 허용 문자 안내 — 규칙을 어기면 같은 자리에서 사유로 바뀐다 (WD-145) */}
+                  <p
+                    id="tag-input-hint"
+                    className={`px-1 text-xs ${tagInputError ? 'text-destructive' : 'text-muted-foreground'}`}
+                  >
+                    {tagInputError ?? TAG_NAME_HINT}
+                  </p>
                   {filteredTagSuggestions.length > 0 && (
                     <div className="space-y-0.5">
                       {filteredTagSuggestions.slice(0, 6).map((suggestion) => (
@@ -503,7 +531,7 @@ export default function DatasetDetailPage() {
                       ))}
                     </div>
                   )}
-                  <Button size="sm" onClick={handleAddTag} disabled={!tagInput.trim() || addTag.isPending} className="w-full">
+                  <Button size="sm" onClick={handleAddTag} disabled={!tagInput.trim() || !!tagInputError || addTag.isPending} className="w-full">
                     추가
                   </Button>
                 </PopoverContent>
