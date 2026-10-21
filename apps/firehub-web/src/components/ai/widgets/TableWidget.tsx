@@ -5,6 +5,7 @@ import SyntaxHighlighter from 'react-syntax-highlighter/dist/esm/prism-light';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 
 import { useExportCheck } from '../../../hooks/queries/useAnalytics';
+import { toCsvCell } from '../../../lib/csv';
 import { downloadBlob, downloadCsv } from '../../../lib/download';
 import { ActiveFilterChips } from './table/ActiveFilterChips';
 import { CellRenderer } from './table/CellRenderer';
@@ -31,13 +32,6 @@ type SortDir = 'asc' | 'desc' | null;
 function cellText(value: unknown): string {
   if (value === null || value === undefined) return '';
   return String(value);
-}
-
-function escapeCsv(value: string): string {
-  if (value.includes(',') || value.includes('"') || value.includes('\n') || value.includes('\r')) {
-    return '"' + value.replace(/"/g, '""') + '"';
-  }
-  return value;
 }
 
 export default function TableWidget({ input, onNavigate, displayMode }: WidgetProps<ShowTableInput>) {
@@ -133,9 +127,10 @@ export default function TableWidget({ input, onNavigate, displayMode }: WidgetPr
 
   function handleExport(format: 'csv' | 'json') {
     if (format === 'csv') {
-      const header = columns.map(escapeCsv).join(',');
+      // 원본 값을 그대로 넘긴다 — 문자열만 수식 주입 중화하고 숫자는 원형 유지하려면 타입이 살아 있어야 한다(OWASP CSV Injection, WD-156)
+      const header = columns.map(toCsvCell).join(',');
       const body = sortedRows
-        .map((row) => columns.map((col) => escapeCsv(cellText(row[col]))).join(','))
+        .map((row) => columns.map((col) => toCsvCell(row[col])).join(','))
         .join('\r\n');
       const csv = '\uFEFF' + header + '\r\n' + body;
       downloadCsv(`${title}.csv`, csv);

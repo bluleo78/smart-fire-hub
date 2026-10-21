@@ -110,7 +110,8 @@ public class DataExportAsyncRunner {
             String[] values = new String[columnNames.size()];
             for (int i = 0; i < columnNames.size(); i++) {
               Object val = row.get(columnNames.get(i));
-              values[i] = val != null ? val.toString() : "";
+              // 동기 경로와 같은 규칙 — CSV 면 문자열 컬럼 값의 수식 주입을 중화한다(OWASP CSV Injection).
+              values[i] = DataExportService.toCell(val, selectedColumns.get(i).dataType(), format);
             }
             writer.writeRow(values);
           }

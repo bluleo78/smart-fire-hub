@@ -10,6 +10,7 @@ import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.dto.DatasetResponse;
 import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.job.service.AsyncJobService;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -216,6 +217,47 @@ class DataExportAsyncRunnerTest {
     byte[] bytes = Files.readAllBytes(createdFile);
     assertThat(bytes[0]).isEqualTo((byte) 0x50); // 'P'
     assertThat(bytes[1]).isEqualTo((byte) 0x4B); // 'K'
+  }
+
+  // -----------------------------------------------------------------------
+  // CSV 수식 주입 중화 (WD-156, OWASP CSV Injection) — 5만 행 초과 비동기 경로도 동기 경로와 같은 규칙
+  // -----------------------------------------------------------------------
+
+  /** 비동기 CSV 도 TEXT 값·'=' 표시명 헤더는 중화하고, INTEGER 음수는 원형 그대로 둬야 한다. */
+  @Test
+  void executeAsyncExport_csv_neutralizesFormulaInTextColumns() throws Exception {
+    String jobId = "test-async-job-csv-guard";
+    createdFile = DataExportService.EXPORT_DIR.resolve(jobId + ".csv");
+
+    DatasetResponse dataset = buildDataset(4L, "guard_ds", "수식 데이터셋");
+    List<DatasetColumnResponse> columns =
+        List.of(buildColumn("t", "=헤더", "TEXT"), buildColumn("n", "숫자", "INTEGER"));
+    Map<String, String> columnTypes = Map.of("t", "TEXT", "n", "INTEGER");
+
+    when(dataTableRowService.countRows(anyString(), anyList(), isNull(), anyMap())).thenReturn(2L);
+    when(dataTableRowService.queryData(
+            anyString(), anyList(), isNull(), eq(0), anyInt(), isNull(), eq("ASC"), anyMap()))
+        .thenReturn(List.of(Map.of("t", "=1+1", "n", -5L), Map.of("t", "정상값", "n", 7L)))
+        .thenReturn(List.of());
+
+    asyncRunner.executeAsyncExport(
+        jobId,
+        dataset,
+        columns,
+        columnTypes,
+        null,
+        ExportFormat.CSV,
+        null,
+        "guard.csv",
+        4L,
+        "user",
+        "127.0.0.1",
+        "agent");
+
+    String content = Files.readString(createdFile, StandardCharsets.UTF_8);
+    assertThat(content).contains("\"'=헤더\",\"숫자\"");
+    assertThat(content).contains("\"'=1+1\",\"-5\"");
+    assertThat(content).contains("\"정상값\",\"7\"");
   }
 
   // -----------------------------------------------------------------------
