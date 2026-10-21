@@ -315,8 +315,12 @@ public class PipelineService {
    * (#643). 두 시점의 검증 대상을 구조적으로 맞추기 위해, 여기서도 실제 치환과 동일한 형태(현재 테넌트 데이터 스키마 + 식별자)의 더미로 바꿔 넣는다 — 스텝
    * 번호가 유효한지, 참조 대상이 실제로 존재하는지는 실행 시점에만 알 수 있으므로 (저장 시점엔 DAG의 나머지 스텝이 아직 없을 수도 있음) 검사하지 않고, 오직 "SQL
    * 구조가 유효한가"만 본다.
+   *
+   * <p>공개 정적 메서드인 이유(WD-143): 데이터셋 참조 집계({@code DatasetService#getReferences})도 SQL 스텝 본문을 파싱해 실제로
+   * 읽는 테이블을 찾는다. 같은 치환을 거치지 않으면 {{#N}}·{{last_run_at}} 이 든 스텝은 파싱에 실패해 참조에서 조용히 빠진다 — 치환 규칙을 두 곳에
+   * 복사하면 한쪽만 바뀌는 순간 다시 갈라지므로 이 한 곳을 같이 쓴다. 인스턴스 상태를 쓰지 않는다.
    */
-  private String substituteStepReferencesForValidation(String sql) {
+  public static String substituteStepReferencesForValidation(String sql) {
     // 증분 플레이스홀더도 여기서 유효한 타임스탬프 리터럴로 바꿔 둔다 — {{last_run_at}} 은 SQL 문법이
     // 아니므로 그대로 두면 저장 시점 SQL 가드(AST 파싱)가 항상 실패해 증분 스텝을 아예 저장할 수 없다.
     // 값 자체는 검증에 영향이 없으므로 고정된 epoch 를 쓴다(실행 시점 값은 러너가 따로 주입한다).
@@ -357,7 +361,7 @@ public class PipelineService {
    * 아니라고 보고 빈 목록을 돌려준다). 그런데 스텝 참조가 남아 있으면 JSqlParser 파싱이 실패하고, 그 예외는 조용히 삼켜져 역시 빈 목록이 된다 — 즉 두 치환을
    * 한 덩어리로 쓰든 아예 안 쓰든 경고가 영원히 안 나온다. 그래서 "스텝 참조만" 바꾸는 이 단계가 따로 필요하다.
    */
-  private String substituteStepReferences(String sql) {
+  private static String substituteStepReferences(String sql) {
     Matcher matcher = STEP_REFERENCE_PATTERN.matcher(sql);
     StringBuilder result = new StringBuilder();
     while (matcher.find()) {

@@ -44,9 +44,13 @@ function WidgetContent({ widget, chartData, dataLoading, dataFetching }: WidgetC
     );
   }
 
-  // 열람 권한 없음(스펙 §5-4, 목업 s4 ①) — 권한 부족은 오류가 아니다. 빨간 오류·재시도 대신 차분한 잠금 상태,
+  // 원본 데이터를 볼 수 없음(스펙 §5-4, 목업 s4 ①) — 오류가 아니다. 빨간 오류·재시도 대신 차분한 잠금 상태,
   // 원본 데이터셋 이름은 노출하지 않는다(존재 은닉과 같은 선). 서버는 200 + denied:true + 빈 결과를 주므로
   // 이 검사가 없으면 빈 차트("데이터가 없습니다.")로 보여 정상 0행과 구분되지 않는다.
+  // WD-143: denied 는 "권한 부족"과 "원본 데이터셋 삭제"를 구분하지 않는다 — 서버 SQL 관문이 볼 수 없는 표·없는 표를 일부러 같은 결과로
+  // 주고(스펙 §2.5), 삭제되면 saved_query.dataset_id 도 SET NULL 이라 삭제 사실이 남지 않는다. 조회자 기준으로 둘을 가르면 사용자가 직접
+  // 쓴 SQL 로 숨김 데이터셋 존재를 떠보는 경로가 생기므로, 모든 조회자에게 두 원인을 함께 알리는 같은 문구를 보인다(스펙 §5-4 문구에서
+  // 의도적으로 벗어남 — 관리자에게 삭제된 원본을 "권한 없음"으로 단정하던 오안내를 없앤다).
   if (chartData?.denied) {
     return (
       <div
@@ -54,8 +58,8 @@ function WidgetContent({ widget, chartData, dataLoading, dataFetching }: WidgetC
         className="flex h-full flex-col items-center justify-center gap-1 text-center text-muted-foreground"
       >
         <Lock className="h-5 w-5" aria-hidden="true" />
-        <p className="text-sm font-medium">열람 권한 없음</p>
-        <p className="text-xs">이 위젯의 원본 데이터를 볼 수 있는 권한이 없습니다.</p>
+        <p className="text-sm font-medium">원본 데이터를 볼 수 없음</p>
+        <p className="text-xs">열람 권한이 없거나 원본 데이터셋이 삭제되었을 수 있습니다.</p>
       </div>
     );
   }
@@ -194,7 +198,7 @@ export function DashboardWidgetCard({
           />
         </WidgetErrorBoundary>
       </CardContent>
-      {/* 열람 권한 없음 위젯은 신선도·재시도가 의미 없으므로 신선도 바를 숨긴다(목업 s4 ①) */}
+      {/* 원본을 볼 수 없는(denied) 위젯은 신선도·재시도가 의미 없으므로 신선도 바를 숨긴다(목업 s4 ①) */}
       {!chartData?.denied && (
         <WidgetFreshnessBar
           dataUpdatedAt={dataUpdatedAt}

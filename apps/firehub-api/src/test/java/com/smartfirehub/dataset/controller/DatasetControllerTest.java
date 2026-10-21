@@ -276,13 +276,14 @@ class DatasetControllerTest {
             1L,
             List.of(new DatasetReferencesResponse.ReferenceItem(10L, "Pipeline A")),
             List.of(new DatasetReferencesResponse.ReferenceItem(20L, "Dashboard B")),
+            1,
             List.of(),
             List.of(
                 new DatasetReferencesResponse.TriggerReferenceItem(
                     30L, "Trigger C", 10L, "Pipeline A")),
-            3);
+            4);
 
-    when(datasetService.getReferences(1L)).thenReturn(response);
+    when(datasetService.getReferences(eq(1L), anyLong())).thenReturn(response);
 
     mockMvc
         .perform(get("/api/v1/datasets/1/references").header("Authorization", "Bearer test-token"))
@@ -292,17 +293,18 @@ class DatasetControllerTest {
         .andExpect(jsonPath("$.pipelines[0].name").value("Pipeline A"))
         .andExpect(jsonPath("$.dashboards[0].id").value(20))
         .andExpect(jsonPath("$.dashboards[0].name").value("Dashboard B"))
+        .andExpect(jsonPath("$.hiddenDashboardCount").value(1))
         .andExpect(jsonPath("$.proactiveJobs").isArray())
         .andExpect(jsonPath("$.triggers[0].id").value(30))
         .andExpect(jsonPath("$.triggers[0].name").value("Trigger C"))
         .andExpect(jsonPath("$.triggers[0].pipelineId").value(10))
         .andExpect(jsonPath("$.triggers[0].pipelineName").value("Pipeline A"))
-        .andExpect(jsonPath("$.totalCount").value(3));
+        .andExpect(jsonPath("$.totalCount").value(4));
   }
 
   @Test
   void getReferences_nonexistentDataset_returns404() throws Exception {
-    when(datasetService.getReferences(999L))
+    when(datasetService.getReferences(eq(999L), anyLong()))
         .thenThrow(new DatasetNotFoundException("Dataset not found: 999"));
 
     mockMvc

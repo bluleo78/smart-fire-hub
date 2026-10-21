@@ -281,3 +281,33 @@ export interface SearchIndexStatus {
   embeddingModel: string | null;
 }
 
+
+/** 데이터셋을 쓰는 곳 한 건 — 파이프라인·대시보드·스마트 작업 공통(서버 DatasetReferencesResponse.ReferenceItem). */
+export interface DatasetReferenceItem {
+  id: number;
+  name: string;
+}
+
+/** 이 데이터셋을 감시하는 DATASET_CHANGE 트리거 — 어느 파이프라인의 트리거인지 함께 준다. */
+export interface DatasetTriggerReferenceItem {
+  id: number;
+  name: string;
+  pipelineId: number;
+  pipelineName: string;
+}
+
+/**
+ * 데이터셋 참조 집계(GET /datasets/{id}/references, WD-143) — 삭제 확인 창이 "이 데이터셋을 쓰는 곳"을 보여 주는 데 쓴다.
+ * pipelines 는 출력·입력(pipeline_step_input) 참조를 모두 포함한다(같은 파이프라인은 한 번).
+ * dashboards 는 조회자가 볼 수 있는 것(본인 소유 또는 공유)만 이름이 오고, 볼 수 없는 것은 hiddenDashboardCount 로 개수만 온다.
+ * totalCount 는 볼 수 없는 대시보드까지 센다.
+ */
+export interface DatasetReferencesResponse {
+  datasetId: number;
+  pipelines: DatasetReferenceItem[];
+  dashboards: DatasetReferenceItem[];
+  hiddenDashboardCount: number;
+  proactiveJobs: DatasetReferenceItem[];
+  triggers: DatasetTriggerReferenceItem[];
+  totalCount: number;
+}

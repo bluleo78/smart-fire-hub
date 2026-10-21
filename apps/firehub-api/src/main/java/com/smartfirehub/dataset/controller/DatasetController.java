@@ -130,8 +130,11 @@ public class DatasetController {
   /** 데이터셋을 참조하는 파이프라인/대시보드/스마트잡 집계. 삭제 전 영향 범위 확인용. */
   @GetMapping("/{id}/references")
   @RequirePermission("dataset:read")
-  public ResponseEntity<DatasetReferencesResponse> getReferences(@PathVariable Long id) {
-    return ResponseEntity.ok(datasetService.getReferences(id));
+  public ResponseEntity<DatasetReferencesResponse> getReferences(
+      @PathVariable Long id, Authentication authentication) {
+    // 조회자 — 볼 수 없는 대시보드 이름을 가리는 데 쓴다(WD-143)
+    Long userId = (Long) authentication.getPrincipal();
+    return ResponseEntity.ok(datasetService.getReferences(id, userId));
   }
 
   @PostMapping("/{id}/columns")

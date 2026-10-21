@@ -5,7 +5,6 @@ import { toast } from 'sonner';
 
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
-import { DeleteConfirmDialog } from '../../components/ui/delete-confirm-dialog';
 import { SearchInput } from '../../components/ui/search-input';
 import { SecurityLevelBadge } from '../../components/ui/SecurityLevelBadge';
 import {
@@ -34,6 +33,7 @@ import { handleApiError } from '../../lib/api-error';
 import { formatDateOnly, formatDateTimeMinute, formatRelativeTime, getOriginTypeLabel, getStorageTypeLabel } from '../../lib/formatters';
 import { getPageAfterDelete } from '../../lib/pagination';
 import { iGa } from '../../lib/utils';
+import { DatasetDeleteConfirmDialog } from './components/DatasetDeleteConfirmDialog';
 import { DatasetPreviewSheet } from './components/DatasetPreviewSheet';
 import { DatasetTypeModal, type DatasetTypeSelection } from './components/DatasetTypeModal';
 import { ExportDialog } from './components/ExportDialog';
@@ -539,9 +539,9 @@ export default function DatasetListPage() {
                       )}
                     </div>
 
-                    {/* Delete button */}
-                    <DeleteConfirmDialog
-                      entityName="데이터셋"
+                    {/* Delete button — 창을 열면 이 데이터셋을 쓰는 곳(파이프라인·대시보드 등)을 먼저 보여 준다(WD-143) */}
+                    <DatasetDeleteConfirmDialog
+                      datasetId={dataset.id}
                       itemName={dataset.name}
                       onConfirm={() => handleDelete(dataset.id, dataset.name)}
                       trigger={

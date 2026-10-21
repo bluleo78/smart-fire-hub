@@ -32,8 +32,10 @@ test.describe('대시보드 위젯 — 열람 권한 없음', () => {
     const deniedCard = page.locator('[data-slot="card"]').filter({ hasText: '월별 인건비 추이' });
     const state = deniedCard.getByTestId('widget-denied');
     await expect(state).toBeVisible();
-    await expect(state).toContainText('열람 권한 없음');
-    await expect(state).toContainText('이 위젯의 원본 데이터를 볼 수 있는 권한이 없습니다.');
+    // WD-143: denied 는 권한 부족과 원본 삭제를 구분하지 않으므로(존재 은닉) 두 원인을 함께 알린다 — "권한 없음"으로 단정하지 않는다.
+    await expect(state).toContainText('원본 데이터를 볼 수 없음');
+    await expect(state).toContainText('열람 권한이 없거나 원본 데이터셋이 삭제되었을 수 있습니다.');
+    await expect(state).not.toContainText('권한이 없습니다.');
     // 오류·재시도·토스트·신선도 바 없음
     await expect(deniedCard.getByRole('alert')).toHaveCount(0);
     await expect(deniedCard.getByRole('button', { name: /새로고침|다시 시도/ })).toHaveCount(0);
