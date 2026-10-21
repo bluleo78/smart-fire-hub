@@ -1,4 +1,5 @@
 import { expect, test } from '../fixtures/auth.fixture';
+import { grantDatasetPermissions } from '../fixtures/dataset.fixture';
 
 /**
  * 버튼 안 아이콘-텍스트 간격 회귀 테스트 (refs #436)
@@ -16,6 +17,8 @@ import { expect, test } from '../fixtures/auth.fixture';
 test('버튼 안 아이콘과 텍스트 간격이 컨테이너 gap 과 일치한다', async ({
   authenticatedPage: page,
 }) => {
+  // 측정 대상 「새 데이터셋」 퀵 액션은 생성 권한(dataset:write)이 있을 때만 보인다(WD-144)
+  await grantDatasetPermissions(page);
   await page.goto('/');
 
   const button = page.getByRole('button', { name: '새 데이터셋' });

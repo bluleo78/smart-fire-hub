@@ -17,12 +17,14 @@ import { createPageResponse, mockApi } from './api-mock';
 
 /**
  * 데이터셋 상세의 쓰기 진입점이 서버에서 요구하는 권한 전체 (WD-139).
- * 정의·메타 변경 dataset:write, 행 추가·수정·임포트·SQL 실행 data:import, 행 삭제 data:delete, API 가져오기 pipeline:write.
+ * 정의·메타 변경 dataset:write, 데이터셋 삭제 dataset:delete(WD-144), 행 추가·수정·임포트·SQL 실행 data:import, 행 삭제 data:delete, API 가져오기 pipeline:write.
  * 기본 인증 fixture 의 권한은 빈 목록이라(조회 전용과 같다) 편집 흐름을 검증하는 spec 은 이 권한을 명시적으로 준다.
  */
 export const DATASET_WRITE_PERMISSIONS = [
   'dataset:read',
   'dataset:write',
+  // 데이터셋 자체 삭제·카테고리 삭제(WD-144) — 목록 휴지통·카테고리 삭제 흐름을 검증하는 spec 이 같은 묶음을 쓴다
+  'dataset:delete',
   'data:read',
   'data:import',
   'data:delete',

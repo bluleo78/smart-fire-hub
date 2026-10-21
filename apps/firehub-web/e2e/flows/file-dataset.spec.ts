@@ -1,5 +1,11 @@
 import { expect, test } from '../fixtures/auth.fixture';
-import { setupDatasetMocks, setupFileDatasetCreateMocks } from '../fixtures/dataset.fixture';
+import { grantDatasetPermissions, setupDatasetMocks, setupFileDatasetCreateMocks } from '../fixtures/dataset.fixture';
+
+// 생성·수정·삭제 진입점은 권한이 있을 때만 보인다(WD-144) — 기본 인증 fixture 는 권한이 비어 있으므로 쓰기 흐름을 검증하는 이 spec 은
+// 데이터셋 쓰기 권한(dataset:write·dataset:delete 포함)을 준다. 조회 전용 노출은 dataset-list-permissions.spec.ts 가 검증한다.
+test.beforeEach(async ({ authenticatedPage: page }) => {
+  await grantDatasetPermissions(page);
+});
 
 /**
  * FILE 유형 데이터셋 생성 E2E 테스트

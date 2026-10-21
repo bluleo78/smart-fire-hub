@@ -1,5 +1,6 @@
 import { mockApi } from '../fixtures/api-mock';
 import { expect, test } from '../fixtures/auth.fixture';
+import { grantDatasetPermissions } from '../fixtures/dataset.fixture';
 
 /**
  * 홈 페이지 E2E 테스트
@@ -14,6 +15,8 @@ test.describe('홈 페이지', () => {
    * - 로그인 후 홈('/')으로 이동하여 핵심 UI 요소가 표시되는지 확인한다
    */
   test('홈 페이지 기본 요소가 렌더링된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
+    // 「새 데이터셋」 퀵 액션은 생성 권한(dataset:write)이 있을 때만 보인다(WD-144)
+    await grantDatasetPermissions(page);
     // authenticatedPage는 이미 로그인 + setupHomeMocks가 완료된 상태이므로
     // '/'로 이동하면 대시보드가 정상 로드된다
     await page.goto('/');
@@ -176,6 +179,8 @@ test.describe('홈 페이지', () => {
    * - 각 퀵 액션 버튼을 클릭하면 지정된 URL로 이동하는지 확인한다
    */
   test('퀵 액션 버튼 클릭 시 올바른 페이지로 이동한다', async ({ authenticatedPage: page }) => {
+    // 「새 데이터셋」 퀵 액션·생성 화면 진입은 생성 권한(dataset:write)이 필요하다(WD-144)
+    await grantDatasetPermissions(page);
     await page.goto('/');
 
     // "새 데이터셋" → /data/datasets/new
