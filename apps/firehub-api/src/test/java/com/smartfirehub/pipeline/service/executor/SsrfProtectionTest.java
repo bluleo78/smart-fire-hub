@@ -185,7 +185,7 @@ class SsrfProtectionTest {
     assertFalse(addr.isSiteLocalAddress());
     SsrfException e =
         assertThrows(SsrfException.class, () -> service.validateResolvedAddress(addr));
-    assertTrue(e.getMessage().contains("private/reserved"));
+    assertTrue(e.getMessage().startsWith("내부망 주소는 호출할 수 없습니다(사설·예약 대역): "));
   }
 
   @Test
@@ -248,5 +248,75 @@ class SsrfProtectionTest {
   void validateResolvedAddress_publicAddresses_pass(String literal) throws UnknownHostException {
     InetAddress addr = InetAddress.getByName(literal);
     assertDoesNotThrow(() -> service.validateResolvedAddress(addr));
+  }
+
+  // --- WD-150: 사용자에게 보이는 한국어 문구(Python 실행기 ssrf_protection.py 와 같은 문장) ---
+
+  /** 차단 종류별 문구 — 영어 원문 대신 「내부망 주소는 호출할 수 없습니다(종류): IP」. */
+  @ParameterizedTest
+  @org.junit.jupiter.params.provider.CsvSource({
+    "127.0.0.1, 루프백",
+    "10.1.2.3, 사설망",
+    "169.254.169.254, 링크 로컬",
+    "224.0.0.1, 멀티캐스트",
+    "0.0.0.0, 와일드카드",
+    "100.64.0.1, 사설·예약 대역",
+    "fd00:ec2:0:0:0:0:0:254, 사설·예약 대역",
+    "192.0.2.1, 사설·예약 대역",
+    "64:ff9b:0:0:0:0:7f00:1, 사설·예약 대역",
+  })
+  void validateResolvedAddress_blockedMessage_isKoreanWithKind(String literal, String kind)
+      throws UnknownHostException {
+    InetAddress addr = InetAddress.getByName(literal);
+    SsrfException e =
+        assertThrows(SsrfException.class, () -> service.validateResolvedAddress(addr));
+    org.assertj.core.api.Assertions.assertThat(e.getMessage())
+        .isEqualTo("내부망 주소는 호출할 수 없습니다(" + kind + "): " + literal);
+  }
+
+  @Test
+  void validateUrl_ftpScheme_koreanMessageWithScheme() {
+    SsrfException e =
+        assertThrows(SsrfException.class, () -> service.validateUrl("ftp://example.com/file"));
+    org.assertj.core.api.Assertions.assertThat(e.getMessage())
+        .isEqualTo("http 또는 https 주소만 호출할 수 있습니다(입력: ftp)");
+  }
+
+  @Test
+  void validateUrl_unresolvableHost_koreanMessage() {
+    SsrfException e =
+        assertThrows(
+            SsrfException.class,
+            () -> service.validateUrl("http://wd150-no-such-host.invalid/data"));
+    org.assertj.core.api.Assertions.assertThat(e.getMessage())
+        .isEqualTo("호스트 이름을 찾을 수 없습니다: wd150-no-such-host.invalid");
+  }
+
+  @Test
+  void validateUrl_loopbackUrl_koreanMessage() {
+    SsrfException e =
+        assertThrows(SsrfException.class, () -> service.validateUrl("http://127.0.0.1:8080/x"));
+    org.assertj.core.api.Assertions.assertThat(e.getMessage())
+        .isEqualTo("내부망 주소는 호출할 수 없습니다(루프백): 127.0.0.1");
+  }
+
+  /** URL 을 문구에 넣는 경우에도 쿼리(API 키가 실릴 수 있음)는 빠진다. */
+  @Test
+  void validateUrl_messagesWithUrl_dropQueryString() {
+    SsrfException noScheme =
+        assertThrows(
+            SsrfException.class, () -> service.validateUrl("example.com/api?serviceKey=SECRET123"));
+    org.assertj.core.api.Assertions.assertThat(noScheme.getMessage())
+        .contains("스킴")
+        .doesNotContain("SECRET123")
+        .doesNotContain("?");
+
+    SsrfException invalid =
+        assertThrows(
+            SsrfException.class,
+            () -> service.validateUrl("http://exa mple.com/api?serviceKey=SECRET123"));
+    org.assertj.core.api.Assertions.assertThat(invalid.getMessage())
+        .startsWith("URL 형식이 올바르지 않습니다: ")
+        .doesNotContain("SECRET123");
   }
 }

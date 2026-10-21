@@ -144,15 +144,15 @@ class ApiConnectionServiceExtTest extends IntegrationTestBase {
   @Test
   void create_ssrfViolation_throwsApiConnectionException() {
     // SsrfProtectionService.validateUrl()이 SsrfException을 던지면
-    // ApiConnectionException("SSRF 보호: ...")으로 래핑되어야 한다
-    doThrow(new SsrfException("private IP blocked"))
+    // ApiConnectionException 으로 래핑되며, SSRF 가드의 한국어 문구를 접두 없이 그대로 담는다(WD-150)
+    doThrow(new SsrfException("내부망 주소는 호출할 수 없습니다(사설망): 192.168.1.1"))
         .when(ssrfProtectionService)
         .validateUrl(anyString());
 
     assertThatThrownBy(
             () -> apiConnectionService.create(bearerReq("https://192.168.1.1"), testUserId))
         .isInstanceOf(ApiConnectionException.class)
-        .hasMessageContaining("SSRF 보호");
+        .hasMessage("내부망 주소는 호출할 수 없습니다(사설망): 192.168.1.1");
   }
 
   // ── validateAndNormalizeBaseUrl: IllegalArgumentException → ApiConnectionException ─

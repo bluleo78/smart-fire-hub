@@ -262,8 +262,9 @@ public class ApiCallExecutor {
     while (attempt <= maxRetries) {
       try {
         return doHttpRequest(config, resolvedUrl, decryptedAuthConfig, paginationParams, timeoutMs);
-      } catch (ApiCallException e) {
-        // Non-retryable: propagate immediately
+      } catch (ApiCallException | SsrfException e) {
+        // 재시도 안 함: 고쳐지지 않는 4xx·응답 크기 초과 등(ApiCallException)과 리다이렉트 대상이 내부망인 경우(SsrfException).
+        // 예전에는 SsrfException 이 아래 catch 로 떨어져 같은 차단을 N회 재시도하고 원인까지 묻혔다(WD-150).
         throw e;
       } catch (Exception e) {
         lastException = e;
@@ -283,13 +284,19 @@ public class ApiCallExecutor {
           Thread.sleep(sleepMs);
         } catch (InterruptedException ie) {
           Thread.currentThread().interrupt();
-          throw new ApiCallException("Interrupted during retry backoff", ie);
+          throw new ApiCallException(ApiCallErrorMessages.interrupted(), ie);
         }
         backoffMs = Math.min(backoffMs * 2, maxBackoff);
       }
     }
 
-    throw new ApiCallException("API call failed after " + maxRetries + " retries", lastException);
+    // 마지막 실패 원인을 문구에 담는다(WD-150) — 예전에는 원인이 cause 에만 있고 러너는 getMessage() 만 저장해
+    // 타임아웃·연결 거부가 「API call failed after N retries」로만 보였다. lastException 은 doHttpRequest 가
+    // 이미 사용자 문구(ApiCallErrorMessages)로 만든 예외다.
+    throw new ApiCallException(
+        ApiCallErrorMessages.retriesExhausted(
+            maxRetries, lastException != null ? lastException.getMessage() : ""),
+        lastException);
   }
 
   private String doHttpRequest(
@@ -354,18 +361,15 @@ public class ApiCallExecutor {
       return executeWithRedirects(
           client, method, requestUri, config, resolvedUrl, decryptedAuthConfig, timeoutMs, 0);
     } catch (DataBufferLimitException e) {
-      throw new ApiCallException(
-          "Response exceeded maxResponseSizeMb limit ("
-              + maxResponseSizeMb
-              + " MB) for: "
-              + resolvedUrl,
-          e);
-    } catch (ApiCallException e) {
+      throw new ApiCallException(ApiCallErrorMessages.responseTooLarge(maxResponseSizeMb), e);
+    } catch (ApiCallException | SsrfException | ExternalServiceException e) {
+      // 이미 사용자 문구를 담은 예외 — ExternalServiceException 은 재시도할 HTTP 상태(5xx·408·429)다.
       throw e;
     } catch (Exception e) {
-      // timeout, connection refused, etc. — retryable
+      // 타임아웃·연결 거부 등 — 재시도 대상. 원인을 분류한 한국어 문구로 감싼다(WD-150). 예전 문구는 쿼리 포함
+      // URL 을 담을 수 있어(customUrl 에 serviceKey 등) 원인을 묻고 키까지 남겼다.
       throw new ExternalServiceException(
-          "Request error for " + resolvedUrl + ": " + e.getMessage(), e);
+          ApiCallErrorMessages.describe(e, timeoutMs, requestUri.getHost()), e);
     }
   }
 
@@ -390,8 +394,7 @@ public class ApiCallExecutor {
       int redirectCount) {
 
     if (redirectCount > MAX_REDIRECTS) {
-      throw new ApiCallException(
-          "Too many redirects (max " + MAX_REDIRECTS + ") for: " + resolvedUrl);
+      throw new ApiCallException(ApiCallErrorMessages.tooManyRedirects(MAX_REDIRECTS));
     }
 
     WebClient.RequestHeadersSpec<?> requestSpec =
@@ -418,41 +421,21 @@ public class ApiCallExecutor {
                         .thenReturn(""); // sentinel: empty string + locationRef set
                   }
 
-                  if (status.value() == 401) {
-                    return response
-                        .releaseBody()
-                        .then(
-                            reactor.core.publisher.Mono.error(
-                                new ApiCallException(
-                                    "Authentication failed (401): " + requestUri)));
-                  }
-
-                  if (status.value() == 400 || status.value() == 403 || status.value() == 404) {
-                    return response
-                        .releaseBody()
-                        .then(
-                            reactor.core.publisher.Mono.error(
-                                new ApiCallException(
-                                    "Non-retryable HTTP error "
-                                        + status.value()
-                                        + " for: "
-                                        + requestUri)));
-                  }
-
                   if (status.is4xxClientError() || status.is5xxServerError()) {
-                    // 5xx and other 4xx are retryable — surface as plain RuntimeException
+                    // 상태별 한국어 안내(WD-150). 5xx·408·429 만 재시도(ExternalServiceException), 나머지 4xx 는
+                    // 다시 보내도 같은 답이라 즉시 실패(ApiCallException) — 예전에는 400/401/403/404 만 즉시 실패라
+                    // 405 같은 오류도 재시도하며 오래 걸렸다.
+                    // 문구에 요청 URL 을 넣지 않는다 — requestUri 에는 query 로 붙인 API 키가 들어 있다.
+                    // 본문은 읽지 않고 버린다 — 큰 오류 본문이 응답 크기 제한에 걸려 「응답 크기 초과」로 잘못 보이지 않게.
+                    int code = status.value();
+                    String message = ApiCallErrorMessages.httpStatus(code);
+                    RuntimeException failure =
+                        ApiCallErrorMessages.isRetryableStatus(code)
+                            ? new ExternalServiceException(message)
+                            : new ApiCallException(message);
                     return response
-                        .bodyToMono(String.class)
-                        .flatMap(
-                            b ->
-                                reactor.core.publisher.Mono.error(
-                                    new RuntimeException(
-                                        "HTTP "
-                                            + status.value()
-                                            + " from "
-                                            + requestUri
-                                            + ": "
-                                            + b)));
+                        .releaseBody()
+                        .then(reactor.core.publisher.Mono.<String>error(failure));
                   }
 
                   // 2xx — read the response body (size enforced by ExchangeStrategies codec limit)
@@ -464,7 +447,12 @@ public class ApiCallExecutor {
     // Handle redirect: locationRef is set only when a 3xx was received
     String location = locationRef.get();
     if (location != null) {
-      log.debug("Redirect {}/{}: {} -> {}", redirectCount + 1, MAX_REDIRECTS, requestUri, location);
+      log.debug(
+          "Redirect {}/{}: {} -> {}",
+          redirectCount + 1,
+          MAX_REDIRECTS,
+          ApiCallErrorMessages.redactUrl(requestUri),
+          ApiCallErrorMessages.redactUrl(location));
 
       // SSRF-validate the redirect target before following it
       ssrfProtectionService.validateUrl(location);

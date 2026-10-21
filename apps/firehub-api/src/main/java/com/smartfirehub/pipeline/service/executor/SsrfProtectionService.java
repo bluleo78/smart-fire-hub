@@ -21,14 +21,14 @@ public class SsrfProtectionService {
    */
   public void validateUrl(String url) {
     if (url == null || url.isBlank()) {
-      throw new SsrfException("URL must not be null or blank");
+      throw new SsrfException("호출할 URL 이 비어 있습니다");
     }
 
     URI uri;
     try {
       uri = new URI(url);
     } catch (URISyntaxException e) {
-      throw new SsrfException("Invalid URL: " + url, e);
+      throw new SsrfException("URL 형식이 올바르지 않습니다: " + ApiCallErrorMessages.redactUrl(url), e);
     }
 
     // 스킴이 아예 없는 경우(getScheme()==null)와 스킴은 있으나 허용되지 않는 경우를 구분한다.
@@ -36,16 +36,16 @@ public class SsrfProtectionService {
     // 사용자에게 그대로 노출되어 원인을 이해하기 어렵다 (#561).
     String scheme = uri.getScheme();
     if (scheme == null) {
-      throw new SsrfException("URL에 스킴(http:// 또는 https://)이 없습니다: " + url);
+      throw new SsrfException(
+          "URL에 스킴(http:// 또는 https://)이 없습니다: " + ApiCallErrorMessages.redactUrl(url));
     }
     if (!scheme.equalsIgnoreCase("http") && !scheme.equalsIgnoreCase("https")) {
-      throw new SsrfException(
-          "URL scheme not allowed: " + scheme + ". Only http and https are permitted.");
+      throw new SsrfException("http 또는 https 주소만 호출할 수 있습니다(입력: " + scheme + ")");
     }
 
     String hostname = uri.getHost();
     if (hostname == null || hostname.isBlank()) {
-      throw new SsrfException("URL has no valid hostname: " + url);
+      throw new SsrfException("URL 에 호스트가 없습니다: " + ApiCallErrorMessages.redactUrl(url));
     }
 
     // Resolve all IPs for the hostname to prevent DNS rebinding attacks
@@ -53,7 +53,7 @@ public class SsrfProtectionService {
     try {
       resolvedAddresses = InetAddress.getAllByName(hostname);
     } catch (UnknownHostException e) {
-      throw new SsrfException("Could not resolve hostname: " + hostname, e);
+      throw new SsrfException(ApiCallErrorMessages.unknownHost(hostname), e);
     }
 
     for (InetAddress address : resolvedAddresses) {
@@ -73,31 +73,26 @@ public class SsrfProtectionService {
    */
   public void validateResolvedAddress(InetAddress address) {
     if (address.isLoopbackAddress()) {
-      throw new SsrfException(
-          "Requests to loopback addresses are not allowed: " + address.getHostAddress());
+      throw new SsrfException(blocked("루프백", address));
     }
 
     if (address.isSiteLocalAddress()) {
       // Covers RFC 1918: 10.x.x.x, 172.16-31.x.x, 192.168.x.x
-      throw new SsrfException(
-          "Requests to private/site-local addresses are not allowed: " + address.getHostAddress());
+      throw new SsrfException(blocked("사설망", address));
     }
 
     if (address.isLinkLocalAddress()) {
       // Covers 169.254.x.x (IPv4) and fe80::/10 (IPv6)
-      throw new SsrfException(
-          "Requests to link-local addresses are not allowed: " + address.getHostAddress());
+      throw new SsrfException(blocked("링크 로컬", address));
     }
 
     if (address.isMulticastAddress()) {
-      throw new SsrfException(
-          "Requests to multicast addresses are not allowed: " + address.getHostAddress());
+      throw new SsrfException(blocked("멀티캐스트", address));
     }
 
     if (address.isAnyLocalAddress()) {
       // Covers 0.0.0.0 and ::
-      throw new SsrfException(
-          "Requests to wildcard addresses are not allowed: " + address.getHostAddress());
+      throw new SsrfException(blocked("와일드카드", address));
     }
 
     // InetAddress 의 is*Address() 판정이 놓치는 사설·예약 대역을 직접 막는다(WD-148).
@@ -105,11 +100,19 @@ public class SsrfProtectionService {
     // AWS IMDS 의 IPv6 주소 fd00:ec2::254 도 여기)이 그대로 통과해 「테스트 호출」로 서버 내부 응답을 읽을 수 있었다.
     // 운영 실행 경로의 Python 가드(ipaddress.is_global 기준)와 같은 범위를 막는다.
     if (isReservedRange(address)) {
-      throw new SsrfException(
-          "Requests to private/reserved addresses are not allowed: " + address.getHostAddress());
+      throw new SsrfException(blocked("사설·예약 대역", address));
     }
 
     log.debug("Address passed SSRF validation: {}", address.getHostAddress());
+  }
+
+  /**
+   * 차단 문구 — 「내부망 주소는 호출할 수 없습니다(종류): IP」(WD-150). 예전 영어 원문({@code Requests to loopback addresses
+   * are not allowed})을 실행 상세·「테스트 호출」에서 그대로 봤다. 종류는 고칠 방향(루프백=같은 서버, 사설망=사내 IP 등)을 알려 주므로 남긴다.
+   * Python 실행기 가드({@code ssrf_protection.py})가 같은 문장을 쓴다 — 함께 고칠 것.
+   */
+  private static String blocked(String kind, InetAddress address) {
+    return "내부망 주소는 호출할 수 없습니다(" + kind + "): " + address.getHostAddress();
   }
 
   /**

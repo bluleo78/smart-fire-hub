@@ -6,6 +6,7 @@ import com.smartfirehub.apiconnection.service.UrlUtils;
 import com.smartfirehub.pipeline.dto.ApiCallPreviewRequest;
 import com.smartfirehub.pipeline.dto.ApiCallPreviewResponse;
 import com.smartfirehub.pipeline.service.executor.ApiCallConfig;
+import com.smartfirehub.pipeline.service.executor.ApiCallErrorMessages;
 import com.smartfirehub.pipeline.service.executor.JsonResponseParser;
 import com.smartfirehub.pipeline.service.executor.SsrfProtectionService;
 import java.net.URI;
@@ -34,6 +35,9 @@ public class ApiCallPreviewService {
 
   public ApiCallPreviewResponse preview(ApiCallPreviewRequest request) {
     String resolvedRequestUrl = null;
+    // 오류 문구 분류용(WD-150) — 타임아웃 문구의 초, DNS 실패 문구의 호스트.
+    int timeoutMs = request.timeoutMs() != null ? request.timeoutMs() : DEFAULT_TIMEOUT_MS;
+    String targetHost = null;
     try {
       // 1. URL 결정: apiConnectionId가 있으면 connection.baseUrl + request.url()을 path로 해석
       String resolvedUrl = resolvePreviewUrl(request);
@@ -65,9 +69,9 @@ public class ApiCallPreviewService {
       allQueryParams.forEach(uriBuilder::queryParam);
       URI requestUri = uriBuilder.build(true).toUri();
       resolvedRequestUrl = requestUri.toString();
+      targetHost = requestUri.getHost();
 
       // 6. Execute HTTP request
-      int timeoutMs = request.timeoutMs() != null ? request.timeoutMs() : DEFAULT_TIMEOUT_MS;
       String responseBody = executeRequest(requestUri, request, authConfig, timeoutMs);
 
       // 7. Truncate raw JSON
@@ -96,9 +100,14 @@ public class ApiCallPreviewService {
           true, rawJson, previewRows, columns, allRows.size(), null, resolvedRequestUrl);
 
     } catch (Exception e) {
-      log.error("[Preview] 실패: {}", e.getMessage(), e);
+      // 실행(ApiCallExecutor)과 같은 분류·문구를 쓴다(WD-150) — 예전에는 e.getMessage() 를 그대로 돌려줘 같은 연결 거부가
+      // 실행 상세와 다르게(「Connection refused: …」) 보였고, 4xx 는 WebClientResponseException 메시지에 쿼리로 붙인
+      // API 키가 담긴 URL 이 그대로 노출됐다. 로그에도 원문 메시지 대신 같은 문구를 남긴다(스택은 debug 로만).
+      String message = ApiCallErrorMessages.describe(e, timeoutMs, targetHost);
+      log.warn("[Preview] 실패: {} ({})", message, e.getClass().getSimpleName());
+      log.debug("[Preview] 실패 상세", e);
       return new ApiCallPreviewResponse(
-          false, null, List.of(), List.of(), 0, e.getMessage(), resolvedRequestUrl);
+          false, null, List.of(), List.of(), 0, message, resolvedRequestUrl);
     }
   }
 

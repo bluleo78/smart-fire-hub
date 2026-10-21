@@ -472,7 +472,9 @@ public class ApiConnectionService {
       ssrfProtectionService.validateUrl(raw);
       return UrlUtils.normalizeBaseUrl(raw);
     } catch (SsrfException e) {
-      throw new ApiConnectionException("SSRF 보호: " + e.getMessage());
+      // SsrfProtectionService 문구가 이미 원인을 담은 한국어 안내다(WD-150, 「내부망 주소는 호출할 수 없습니다(루프백): …」) —
+      // 예전 「SSRF 보호: 」 접두는 영어 원문을 감싸던 용도라 사용자에게는 뜻 모를 용어만 더해서 뺀다.
+      throw new ApiConnectionException(e.getMessage());
     } catch (IllegalArgumentException e) {
       throw new ApiConnectionException("유효하지 않은 baseUrl: " + e.getMessage());
     }
