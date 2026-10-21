@@ -13,6 +13,7 @@ import {
 } from '../../../components/ui/alert-dialog';
 import { Badge } from '../../../components/ui/badge';
 import { Button } from '../../../components/ui/button';
+import { useDatasetPermissions } from '../../../hooks/queries/useDatasets';
 import {
   useActivateMapping,
   useBinding,
@@ -21,7 +22,6 @@ import {
   useOntologyList,
   useSaveMapping,
 } from '../../../hooks/queries/useMapping';
-import { useMyPermissions } from '../../../hooks/queries/useMyPermissions';
 import { handleApiError } from '../../../lib/api-error';
 import type { DraftEntity, DraftRelation, MappingDraft } from '../../../lib/mapping-spec';
 import { countRelationsReferencing, emptyDraft, entityLabel, nextDraftId, removeEntity, toDraft, toSpec } from '../../../lib/mapping-spec';
@@ -64,8 +64,7 @@ export function DatasetMappingTab({ dataset, datasetId, onDirtyChange }: Dataset
   const { data: mapping, isLoading: mappingLoading } = useMapping(datasetId);
   // 저장·활성화·연결은 서버가 dataset:write 로 막는다 — 권한이 없으면 편집 진입점을 모두 숨기고 조회 전용으로 보인다
   // (WD-131). 최종 판정은 서버이고 여기는 노출 결정용이다.
-  const { permissions, isLoading: isPermissionsLoading } = useMyPermissions();
-  const canEdit = permissions.has('dataset:write');
+  const { canWriteDataset: canEdit, isLoading: isPermissionsLoading } = useDatasetPermissions();
   const saveMapping = useSaveMapping(datasetId);
   const activateMapping = useActivateMapping(datasetId);
 

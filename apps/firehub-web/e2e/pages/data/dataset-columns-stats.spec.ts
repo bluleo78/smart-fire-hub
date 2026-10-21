@@ -1,7 +1,7 @@
 import { createDatasetDetail } from '../../factories/dataset.factory';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
-import { setupDatasetDetailMocks } from '../../fixtures/dataset.fixture';
+import { grantDatasetPermissions, setupDatasetDetailMocks } from '../../fixtures/dataset.fixture';
 
 /**
  * 데이터셋 컬럼 탭 + ColumnStats 통계 패널 E2E 테스트
@@ -57,6 +57,12 @@ async function setupMocksWithStats(page: import('@playwright/test').Page) {
   // 통계 API를 실제 데이터로 덮어씌워 컬럼 통계 패널이 렌더링되도록 함
   await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}/stats`, createColumnStats());
 }
+
+// 쓰기 진입점은 서버 권한이 있을 때만 보인다(WD-139) — 이 파일은 편집·적재 흐름을 검증하므로 데이터셋 쓰기 권한을 준다.
+// 개별 테스트가 다른 권한을 주면 그쪽이 나중에 등록돼 이긴다.
+test.beforeEach(async ({ authenticatedPage: page }) => {
+  await grantDatasetPermissions(page);
+});
 
 test.describe('DatasetDetailPage — 탭 전환', () => {
   test('데이터셋 이름이 페이지 제목에 표시된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {

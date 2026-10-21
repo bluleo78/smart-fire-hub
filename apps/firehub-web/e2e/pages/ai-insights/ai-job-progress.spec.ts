@@ -1,6 +1,6 @@
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
-import { setupDatasetDetailMocks } from '../../fixtures/dataset.fixture';
+import { grantDatasetPermissions, setupDatasetDetailMocks } from '../../fixtures/dataset.fixture';
 
 /**
  * useJobProgress 훅 E2E 테스트
@@ -78,6 +78,11 @@ async function progressToImportView(page: import('@playwright/test').Page) {
   await expect(importBtn).toBeEnabled({ timeout: 10_000 });
   await importBtn.click();
 }
+
+// 「임포트」는 data:import 가 있을 때만 보인다(WD-139) — 임포트 진행 흐름을 검증하므로 데이터셋 쓰기 권한을 준다.
+test.beforeEach(async ({ authenticatedPage: page }) => {
+  await grantDatasetPermissions(page);
+});
 
 test.describe('useJobProgress — 임포트 진행 상태', () => {
   /**

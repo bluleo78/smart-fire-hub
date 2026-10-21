@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { toast } from 'sonner';
 
 import { Button } from '../../../components/ui/button';
+import { useDatasetPermissions } from '../../../hooks/queries/useDatasets';
 import { useDeleteDocument, useDocuments, useUploadDocument } from '../../../hooks/queries/useDocuments';
 import { useBinding, useOntologyById } from '../../../hooks/queries/useMapping';
 import { extractApiError } from '../../../lib/api-error';
@@ -29,6 +30,8 @@ export function DatasetDocumentsTab({ dataset: _dataset, datasetId }: DatasetDoc
   const { data: documents, isLoading } = useDocuments(datasetId);
   const upload = useUploadDocument(datasetId);
   const remove = useDeleteDocument(datasetId);
+  // 업로드(POST 문서)는 data:import, 삭제(DELETE 문서)는 dataset:write 로 서버 권한이 다르다 — 각각 따로 연다 (WD-139).
+  const { canImportData, canWriteDataset } = useDatasetPermissions();
   // 온톨로지 바인딩 — 미바인딩 데이터셋은 GraphRAG 적재(graphrag_ingest)가 거부되므로(#678),
   // TABLE 데이터셋의 매핑 탭(DatasetMappingTab)과 같은 패턴으로 이 탭에서도 먼저 연결을 유도한다.
   const { data: binding, isLoading: bindingLoading } = useBinding(datasetId);
@@ -77,6 +80,7 @@ export function DatasetDocumentsTab({ dataset: _dataset, datasetId }: DatasetDoc
         </div>
       )}
 
+      {canImportData && (
       <section>
         <h2 className="text-lg font-semibold mb-3">문서 업로드</h2>
         <FileUploadZone
@@ -93,6 +97,7 @@ export function DatasetDocumentsTab({ dataset: _dataset, datasetId }: DatasetDoc
           </Button>
         </div>
       </section>
+      )}
 
       <section data-testid="document-list-section">
         <h2 className="text-lg font-semibold mb-3">문서 목록</h2>
@@ -103,12 +108,15 @@ export function DatasetDocumentsTab({ dataset: _dataset, datasetId }: DatasetDoc
           <div className="flex flex-col items-center py-8 text-center" data-testid="documents-empty-state">
             <FileText className="h-10 w-10 text-muted-foreground mb-3" />
             <p className="text-sm font-medium">업로드된 문서가 없습니다</p>
-            <p className="text-xs text-muted-foreground mt-1">위의 업로드 영역에서 PDF, Word, 텍스트 파일을 추가하세요</p>
+            {/* 업로드 영역이 없는(data:import 없는) 사용자에게 없는 행동을 안내하지 않는다 (WD-139) */}
+            {canImportData && (
+              <p className="text-xs text-muted-foreground mt-1">위의 업로드 영역에서 PDF, Word, 텍스트 파일을 추가하세요</p>
+            )}
           </div>
         ) : (
           <DocumentList
             documents={documents}
-            onDelete={handleDelete}
+            onDelete={canWriteDataset ? handleDelete : undefined}
             deletingId={remove.isPending ? (remove.variables ?? null) : null}
           />
         )}

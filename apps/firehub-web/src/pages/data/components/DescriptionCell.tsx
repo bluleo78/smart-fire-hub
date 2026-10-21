@@ -11,7 +11,11 @@ interface DescriptionCellProps {
   col: DatasetColumnResponse;
   datasetId: number;
   isEditing: boolean;
-  onStartEdit: () => void;
+  /**
+   * 클릭 편집 시작. 미지정이면 편집 불가 — 클릭·연필 아이콘 없이 글만 보인다. 설명 저장(PUT 컬럼)은 dataset:write 라
+   * 권한이 없는 사용자에겐 넘기지 않는다 (WD-139, 툴바 버튼과 같은 "콜백 없음 = 진입점 없음" 규칙).
+   */
+  onStartEdit?: () => void;
   onEndEdit: () => void;
 }
 
@@ -59,6 +63,15 @@ export function DescriptionCell({
     },
     [handleSave, col.description, onEndEdit]
   );
+
+  // 조회 전용 — 연필만 숨기면 클릭 편집이 그대로 살아 있으므로 클릭 핸들러째 없는 표시 전용으로 그린다.
+  if (!onStartEdit) {
+    return (
+      <span className="block truncate text-sm max-w-xs">
+        {col.description || <span className="text-muted-foreground">-</span>}
+      </span>
+    );
+  }
 
   if (isEditing) {
     return (

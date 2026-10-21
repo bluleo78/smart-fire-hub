@@ -1,7 +1,8 @@
 import { Download } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 
 import { Button } from '../../../components/ui/button';
+import { useDatasetPermissions } from '../../../hooks/queries/useDatasets';
 import { useObjectList, useUploadObjects } from '../../../hooks/queries/useObjects';
 import { formatObjectDate, formatObjectSize, openObjectInNewTab } from '../../../lib/objectFile';
 import { collectEntries, filesToItems } from '../../../lib/uploadTree';
@@ -17,12 +18,15 @@ export function DatasetObjectsTab({ datasetId, exportAllowed }: { datasetId: num
     useObjectList(datasetId);
   const upload = useUploadObjects(datasetId);
   const inputRef = useRef<HTMLInputElement>(null);
-  const folderInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  // 업로드 URL 발급(POST upload-urls)은 dataset:write — 없으면 드롭존·폴더 선택·재시도를 숨기고 목록만 보인다 (WD-139)
+  const { canWriteDataset } = useDatasetPermissions();
 
-  // webkitdirectory는 표준 타입에 없어 JSX 속성으로 못 준다 → 마운트 시 ref로 부여(폴더 선택 인풋).
-  useEffect(() => {
-    folderInputRef.current?.setAttribute('webkitdirectory', '');
+  // webkitdirectory는 표준 타입에 없어 JSX 속성으로 못 준다 → 인풋이 붙는 순간 콜백 ref로 부여(폴더 선택 인풋).
+  const attachFolderInput = useCallback((el: HTMLInputElement | null) => {
+    folderInputRef.current = el;
+    el?.setAttribute('webkitdirectory', '');
   }, []);
 
   // 파일/폴더 선택 공통 처리 — webkitRelativePath가 있으면 상대경로로, 없으면 파일명으로 업로드한다.
@@ -54,6 +58,8 @@ export function DatasetObjectsTab({ datasetId, exportAllowed }: { datasetId: num
 
   return (
     <div className="space-y-4 p-2">
+      {canWriteDataset && (
+      <>
       {/* 업로드 드롭존: 클릭 시 파일 선택, 드롭 시 즉시 업로드 */}
       <div
         role="button"
@@ -96,7 +102,7 @@ export function DatasetObjectsTab({ datasetId, exportAllowed }: { datasetId: num
           또는 폴더 선택
         </button>
         <input
-          ref={folderInputRef}
+          ref={attachFolderInput}
           type="file"
           multiple
           className="hidden"
@@ -118,6 +124,8 @@ export function DatasetObjectsTab({ datasetId, exportAllowed }: { datasetId: num
             실패건 재시도
           </button>
         </div>
+      )}
+      </>
       )}
 
       {isLoading ? (

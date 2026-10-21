@@ -17,6 +17,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../..
 import { Checkbox } from '../../../components/ui/checkbox';
 import { Progress } from '../../../components/ui/progress';
 import { StatusBadge, type StatusBadgeType } from '../../../components/ui/status-badge';
+import { useDatasetPermissions } from '../../../hooks/queries/useDatasets';
 import { useReindexSearchIndex, useSearchIndex, useUpdateSearchIndex } from '../../../hooks/queries/useDatasetSearchIndex';
 import { handleApiError } from '../../../lib/api-error';
 import { formatDate } from '../../../lib/formatters';
@@ -51,6 +52,8 @@ export function DatasetSearchTab({ dataset, datasetId }: DatasetSearchTabProps) 
   const { data: status, isLoading } = useSearchIndex(datasetId);
   const update = useUpdateSearchIndex(datasetId);
   const reindex = useReindexSearchIndex(datasetId);
+  // 검색 필드 저장·다시 색인은 서버가 dataset:write 로 막는다 — 없으면 버튼을 숨기고 체크박스는 현재 설정 표시용으로 잠근다 (WD-139)
+  const { canWriteDataset } = useDatasetPermissions();
 
   const columns = useMemo(
     () => [...dataset.columns].sort((a, b) => a.columnOrder - b.columnOrder),
@@ -125,7 +128,7 @@ export function DatasetSearchTab({ dataset, datasetId }: DatasetSearchTabProps) 
             <CardTitle>색인 상태</CardTitle>
             <CardDescription>AI 챗이 이 데이터셋의 행을 내용으로 찾을 수 있는지 보여줍니다.</CardDescription>
           </div>
-          {status.enabled && (
+          {status.enabled && canWriteDataset && (
             <Button variant="outline" size="sm" onClick={startReindex} disabled={reindex.isPending}>
               다시 색인
             </Button>
@@ -172,7 +175,12 @@ export function DatasetSearchTab({ dataset, datasetId }: DatasetSearchTabProps) 
       <Card>
         <CardHeader>
           <CardTitle>검색 대상 필드</CardTitle>
-          <CardDescription>체크한 필드의 내용을 합쳐서 검색합니다. TEXT·VARCHAR 필드만 선택할 수 있습니다.</CardDescription>
+          {/* 조회 전용이면 고를 수 없으니 "선택할 수 있습니다" 같은 행동 안내 대신 현재 설정을 설명한다 (WD-139) */}
+          <CardDescription>
+            {canWriteDataset
+              ? '체크한 필드의 내용을 합쳐서 검색합니다. TEXT·VARCHAR 필드만 선택할 수 있습니다.'
+              : '체크된 필드가 현재 검색 대상이며, 이 필드들의 내용을 합쳐서 검색합니다.'}
+          </CardDescription>
         </CardHeader>
         <CardContent className="space-y-2">
           {columns.map((col) => {
@@ -186,7 +194,7 @@ export function DatasetSearchTab({ dataset, datasetId }: DatasetSearchTabProps) 
                 <Checkbox
                   aria-label={labelText}
                   checked={selected.has(col.columnName)}
-                  disabled={!allowed}
+                  disabled={!allowed || !canWriteDataset}
                   onCheckedChange={(v) => toggle(col.columnName, v === true)}
                 />
                 <span>{labelText}</span>
@@ -197,11 +205,13 @@ export function DatasetSearchTab({ dataset, datasetId }: DatasetSearchTabProps) 
               </label>
             );
           })}
-          <div className="flex justify-end pt-2">
-            <Button onClick={() => setConfirming(true)} disabled={!dirty || update.isPending}>
-              {update.isPending ? '저장 중...' : '저장'}
-            </Button>
-          </div>
+          {canWriteDataset && (
+            <div className="flex justify-end pt-2">
+              <Button onClick={() => setConfirming(true)} disabled={!dirty || update.isPending}>
+                {update.isPending ? '저장 중...' : '저장'}
+              </Button>
+            </div>
+          )}
         </CardContent>
       </Card>
 

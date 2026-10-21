@@ -3,9 +3,16 @@ import { createBinding, createOntologySummaries } from '../../factories/mapping.
 import { createOntologySchema } from '../../factories/ontology.factory';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { grantDatasetPermissions } from '../../fixtures/dataset.fixture';
 import { setupDocumentDatasetMocks } from '../../fixtures/document.fixture';
 
 const DATASET_ID = 1;
+
+// 쓰기 진입점은 서버 권한이 있을 때만 보인다(WD-139) — 이 파일은 편집·적재 흐름을 검증하므로 데이터셋 쓰기 권한을 준다.
+// 개별 테스트가 다른 권한을 주면 그쪽이 나중에 등록돼 이긴다.
+test.beforeEach(async ({ authenticatedPage: page }) => {
+  await grantDatasetPermissions(page);
+});
 
 test.describe('문서 데이터셋 상세', () => {
   test('DOCUMENT 데이터셋은 문서 탭을 보이고 필드/데이터 탭을 숨긴다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {

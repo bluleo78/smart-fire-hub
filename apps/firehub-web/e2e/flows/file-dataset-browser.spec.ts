@@ -5,8 +5,14 @@ import { join } from 'node:path';
 import { createCategories, createDatasetDetail } from '../factories/dataset.factory';
 import { mockApi } from '../fixtures/api-mock';
 import { expect, test } from '../fixtures/auth.fixture';
+import { grantDatasetPermissions } from '../fixtures/dataset.fixture';
 
 const DATASET_ID = 7;
+
+// 업로드 드롭존·폴더 선택은 dataset:write 가 있을 때만 보인다(WD-139) — 이 파일은 업로드 흐름을 검증하므로 쓰기 권한을 준다.
+test.beforeEach(async ({ authenticatedPage: page }) => {
+  await grantDatasetPermissions(page);
+});
 
 test.describe('FILE 데이터셋 오브젝트 브라우저', () => {
   test('오브젝트 목록을 S3 스타일(이름/크기)로 표시한다', { tag: '@smoke' }, async ({

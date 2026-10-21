@@ -3,6 +3,13 @@ import type { Page } from '@playwright/test';
 import { createCategories, createColumn, createDatasetDetail } from '../../factories/dataset.factory';
 import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { grantDatasetPermissions } from '../../fixtures/dataset.fixture';
+
+// 쓰기 진입점은 서버 권한이 있을 때만 보인다(WD-139) — 이 파일은 편집·적재 흐름을 검증하므로 데이터셋 쓰기 권한을 준다.
+// 개별 테스트가 다른 권한을 주면 그쪽이 나중에 등록돼 이긴다.
+test.beforeEach(async ({ authenticatedPage: page }) => {
+  await grantDatasetPermissions(page);
+});
 
 /**
  * API 가져오기 마법사 — 기본 파이프라인 이름 E2E (WD-31④)

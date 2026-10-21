@@ -39,13 +39,12 @@ import {
   useAddTag,
   useCategories,
   useDataset,
+  useDatasetPermissions,
   useRemoveTag,
   useTags,
   useToggleFavorite,
   useUpdateStatus,
 } from '../../hooks/queries/useDatasets';
-import { useMyPermissions } from '../../hooks/queries/useMyPermissions';
-import { useAuth } from '../../hooks/useAuth';
 import { useHorizontalOverflow } from '../../hooks/useHorizontalOverflow';
 import { useRecentDatasets } from '../../hooks/useRecentDatasets';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
@@ -148,7 +147,6 @@ export default function DatasetDetailPage() {
   }, [searchParams, dataset]);
   const { data: categoriesData } = useCategories();
   const { addRecent } = useRecentDatasets();
-  const { isAdmin } = useAuth();
 
   const toggleFavorite = useToggleFavorite();
   const updateStatus = useUpdateStatus(datasetId);
@@ -163,8 +161,8 @@ export default function DatasetDetailPage() {
   const [statusNote, setStatusNote] = useState('');
   const [cloneDialogOpen, setCloneDialogOpen] = useState(false);
   // 보안 등급 변경(✎)은 dataset:classify 보유자에게만(스펙 §5-2). 최종 판정은 서버.
-  const { permissions } = useMyPermissions();
-  const canClassify = permissions.has('dataset:classify');
+  // 복제·태그 추가/제거·상태 변경은 서버가 dataset:write 로 막는다 — 없으면 진입점을 숨긴다(WD-139). 즐겨찾기는 dataset:read 라 그대로 둔다.
+  const { canClassify, canWriteDataset } = useDatasetPermissions();
   const [levelDialogOpen, setLevelDialogOpen] = useState(false);
 
   const categories = categoriesData || [];
@@ -382,13 +380,15 @@ export default function DatasetDetailPage() {
                   </Button>
                 </>
               )}
-              {/* Clone button */}
-              <Button variant="outline" size="sm" className="h-7 gap-1 text-xs" onClick={() => setCloneDialogOpen(true)}>
-                <Copy className="h-3 w-3" />
-                복제
-              </Button>
-              {/* Admin: status change button */}
-              {isAdmin && (
+              {/* Clone button — 복제는 새 데이터셋을 만드는 쓰기(dataset:write)라 권한이 있을 때만 (WD-139) */}
+              {canWriteDataset && (
+                <Button variant="outline" size="sm" className="h-7 gap-1 text-xs" onClick={() => setCloneDialogOpen(true)}>
+                  <Copy className="h-3 w-3" />
+                  복제
+                </Button>
+              )}
+              {/* 상태 변경 — 서버(PUT /status)는 역할이 아니라 dataset:write 만 요구하므로 그 권한으로만 보인다 (WD-139, WD-121 권한 기반과 같은 규칙) */}
+              {canWriteDataset && (
                 <Popover open={statusEditOpen} onOpenChange={setStatusEditOpen}>
                   <PopoverTrigger asChild>
                     <Button variant="ghost" size="sm" className="h-7 gap-1 text-xs text-muted-foreground">
@@ -437,20 +437,24 @@ export default function DatasetDetailPage() {
               {(dataset.tags || []).map((tag) => (
                 <Badge key={tag} variant="secondary" className="text-xs gap-1 pr-1">
                   {tag}
-                  <button
-                    className="ml-0.5 rounded-full hover:bg-muted-foreground/20 transition-colors"
-                    onClick={() => handleRemoveTag(tag)}
-                    title="태그 제거"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
+                  {/* 태그 제거도 dataset:write — 조회 전용이면 태그는 이름만 보인다 (WD-139) */}
+                  {canWriteDataset && (
+                    <button
+                      className="ml-0.5 rounded-full hover:bg-muted-foreground/20 transition-colors"
+                      onClick={() => handleRemoveTag(tag)}
+                      title="태그 제거"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  )}
                 </Badge>
               ))}
 
               {/* Linked pipelines */}
               <LinkedPipelineStatus pipelines={dataset.linkedPipelines ?? []} />
 
-              {/* Add tag popover */}
+              {/* Add tag popover — 태그 추가는 dataset:write 보유자만 (WD-139) */}
+              {canWriteDataset && (
               <Popover open={tagInputOpen} onOpenChange={setTagInputOpen}>
                 <PopoverTrigger asChild>
                   <Button variant="ghost" size="sm" className="h-6 w-6 p-0 rounded-full" title="태그 추가">
@@ -504,6 +508,7 @@ export default function DatasetDetailPage() {
                   </Button>
                 </PopoverContent>
               </Popover>
+              )}
             </div>
           </div>
         </div>
@@ -642,7 +647,7 @@ export default function DatasetDetailPage() {
         )}
       </Tabs>
 
-      {/* Clone Dataset Dialog */}
+      {/* Clone Dataset Dialog — 열림 상태는 권한으로 가려진 「복제」 버튼에서만 바뀐다 */}
       <CloneDatasetDialog
         open={cloneDialogOpen}
         onOpenChange={setCloneDialogOpen}

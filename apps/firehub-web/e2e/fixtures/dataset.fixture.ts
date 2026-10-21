@@ -10,6 +10,30 @@ import { createPageResponse, mockApi } from './api-mock';
  */
 
 /**
+ * 데이터셋 상세의 쓰기 진입점이 서버에서 요구하는 권한 전체 (WD-139).
+ * 정의·메타 변경 dataset:write, 행 추가·수정·임포트·SQL 실행 data:import, 행 삭제 data:delete, API 가져오기 pipeline:write.
+ * 기본 인증 fixture 의 권한은 빈 목록이라(조회 전용과 같다) 편집 흐름을 검증하는 spec 은 이 권한을 명시적으로 준다.
+ */
+export const DATASET_WRITE_PERMISSIONS = [
+  'dataset:read',
+  'dataset:write',
+  'data:read',
+  'data:import',
+  'data:delete',
+  'pipeline:write',
+];
+
+/**
+ * 내 권한 코드(/auth/me/permissions)를 데이터셋 쓰기 권한으로 덮어쓴다.
+ * 픽스처 안에 숨기지 않고 spec 이 직접 부르게 한 이유: 라우트는 나중에 등록한 것이 이기므로, 상세 모킹 헬퍼가 권한까지 덮으면
+ * 그보다 먼저 좁은 권한을 준 테스트가 조용히 넓은 권한으로 바뀐다.
+ * @param permissions - 줄 권한 코드(기본: DATASET_WRITE_PERMISSIONS). 부분 권한 검증 시 일부만 넘긴다.
+ */
+export async function grantDatasetPermissions(page: Page, permissions: string[] = DATASET_WRITE_PERMISSIONS) {
+  await mockApi(page, 'GET', '/api/v1/auth/me/permissions', permissions);
+}
+
+/**
  * 데이터셋 목록 페이지 API 모킹
  * - 카테고리 목록, 데이터셋 페이지 목록, 태그 목록을 모킹한다.
  */
