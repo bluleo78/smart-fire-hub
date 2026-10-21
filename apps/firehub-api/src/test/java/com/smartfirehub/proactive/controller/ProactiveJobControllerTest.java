@@ -1,11 +1,13 @@
 package com.smartfirehub.proactive.controller;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -37,6 +39,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Import;
@@ -187,6 +190,27 @@ class ProactiveJobControllerTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(req)))
         .andExpect(status().isNoContent());
+  }
+
+  /** [WD-136] 화면이 보내는 {@code templateId:null, clearTemplate:true} JSON 이 해제 플래그로 서비스에 전달된다. */
+  @Test
+  void updateJob_clearTemplateJson_passesFlagToService() throws Exception {
+    mockAuth("proactive:write");
+    doNothing().when(proactiveJobService).updateJob(eq(10L), any(), eq(1L));
+
+    mockMvc
+        .perform(
+            put("/api/v1/proactive/jobs/10")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"name\":\"n\",\"templateId\":null,\"clearTemplate\":true}"))
+        .andExpect(status().isNoContent());
+
+    ArgumentCaptor<UpdateProactiveJobRequest> captor =
+        ArgumentCaptor.forClass(UpdateProactiveJobRequest.class);
+    verify(proactiveJobService).updateJob(eq(10L), captor.capture(), eq(1L));
+    assertThat(captor.getValue().templateId()).isNull();
+    assertThat(captor.getValue().clearTemplate()).isTrue();
   }
 
   @Test

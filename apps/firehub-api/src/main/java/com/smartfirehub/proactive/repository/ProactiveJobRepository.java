@@ -219,6 +219,7 @@ public class ProactiveJobRepository {
       String name,
       String prompt,
       Long templateId,
+      boolean clearTemplate,
       String cronExpression,
       String timezone,
       Boolean enabled,
@@ -228,7 +229,13 @@ public class ProactiveJobRepository {
       var query = dsl.update(PROACTIVE_JOB).set(PJ_UPDATED_AT, ProactiveTime.nowUtc());
       if (name != null) query = query.set(PJ_NAME, name);
       if (prompt != null) query = query.set(PJ_PROMPT, prompt);
-      if (templateId != null) query = query.set(PJ_TEMPLATE_ID, templateId);
+      if (templateId != null) {
+        query = query.set(PJ_TEMPLATE_ID, templateId);
+      } else if (clearTemplate) {
+        // 화면에서 「기본 (선택 안 함)」으로 되돌린 명시적 요청(WD-136). templateId=null 만으로는 "미제공"과
+        // 구분할 수 없어 예전에는 무시됐고, 저장 성공 토스트 뒤에도 옛 템플릿이 남았다.
+        query = query.set(PJ_TEMPLATE_ID, (Long) null);
+      }
       if (cronExpression != null) query = query.set(PJ_CRON_EXPRESSION, cronExpression);
       if (timezone != null) query = query.set(PJ_TIMEZONE, timezone);
       if (enabled != null) query = query.set(PJ_ENABLED, enabled);

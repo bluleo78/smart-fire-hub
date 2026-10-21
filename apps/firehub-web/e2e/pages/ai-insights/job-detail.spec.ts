@@ -452,6 +452,47 @@ test.describe('스마트 작업 상세 페이지', () => {
     await expect(page.getByText('올바른 이메일 형식이 아닙니다')).not.toBeVisible();
   });
 
+  test('리포트 템플릿을 「기본 (선택 안 함)」으로 되돌리면 해제 요청(clearTemplate)을 함께 보낸다 (WD-136)', async ({
+    authenticatedPage: page,
+  }) => {
+    // templateId=null 만 보내면 서버가 "바꾸지 않음"으로 받아 옛 템플릿이 남았다
+    const job = createJob({ id: 1, templateId: 2, templateName: '주간 통계 리포트' });
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1', job);
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1/executions', []);
+    await mockApi(page, 'GET', '/api/v1/proactive/templates', createTemplates());
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1/anomaly-events', []);
+    const putCapture = await mockApi(page, 'PUT', '/api/v1/proactive/jobs/1', {}, { capture: true });
+
+    await page.goto('/ai-insights/jobs/1');
+    await page.getByRole('button', { name: '편집' }).click();
+    await page.locator('#job-template').click();
+    await page.getByRole('option', { name: '기본 (선택 안 함)' }).click();
+    await page.getByRole('button', { name: '저장' }).click();
+
+    const req = await putCapture.waitForRequest();
+    expect(req.payload).toMatchObject({ templateId: null, clearTemplate: true });
+    await expect(page.getByText('작업이 저장되었습니다.')).toBeVisible();
+  });
+
+  test('리포트 템플릿을 고른 채 저장하면 해제 요청을 보내지 않는다 (WD-136)', async ({ authenticatedPage: page }) => {
+    const job = createJob({ id: 1, templateId: 2, templateName: '주간 통계 리포트' });
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1', job);
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1/executions', []);
+    await mockApi(page, 'GET', '/api/v1/proactive/templates', createTemplates());
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1/anomaly-events', []);
+    const putCapture = await mockApi(page, 'PUT', '/api/v1/proactive/jobs/1', {}, { capture: true });
+
+    await page.goto('/ai-insights/jobs/1');
+    await page.getByRole('button', { name: '편집' }).click();
+    await page.locator('#job-name').fill('이름만 변경');
+    await page.getByRole('button', { name: '저장' }).click();
+
+    const req = await putCapture.waitForRequest();
+    expect(req.payload).toMatchObject({ templateId: 2, clearTemplate: false });
+  });
+
   test('작업 삭제 — DELETE API 호출 검증', async ({ authenticatedPage: page }) => {
     await setupJobDetailMocks(page, 1);
 

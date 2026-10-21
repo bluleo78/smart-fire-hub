@@ -294,6 +294,41 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
   }
 
   /**
+   * [WD-136] 리포트 템플릿을 「기본 (선택 안 함)」으로 되돌리면(clearTemplate) 템플릿이 해제되고, 플래그 없이 다른 필드만 보내면 그대로 남는다.
+   *
+   * <p>예전에는 templateId=null 이 "바꾸지 않음"으로만 해석돼 해제할 방법이 없었다. AI 도구처럼 바꿀 필드만 보내는 호출은 템플릿을 지우면 안 된다.
+   */
+  @Test
+  void updateJob_clearTemplate_resetsToDefault_omittedKeeps() {
+    Long templateId =
+        dsl.select(REPORT_TEMPLATE.ID).from(REPORT_TEMPLATE).limit(1).fetchOne(REPORT_TEMPLATE.ID);
+    ProactiveJobResponse created =
+        proactiveJobService.createJob(
+            new CreateProactiveJobRequest(
+                "템플릿 작업", "요약", templateId, "0 0 9 * * *", "Asia/Seoul", null, null, Map.of()),
+            testUserId);
+    assertThat(proactiveJobService.getJob(created.id(), testUserId).templateId())
+        .isEqualTo(templateId);
+
+    // 플래그 없이 이름만 바꾸면 템플릿 유지
+    proactiveJobService.updateJob(
+        created.id(),
+        new UpdateProactiveJobRequest("이름만 변경", null, null, null, null, null, null, null),
+        testUserId);
+    assertThat(proactiveJobService.getJob(created.id(), testUserId).templateId())
+        .isEqualTo(templateId);
+
+    // 해제 요청이면 기본 형식(null)으로
+    proactiveJobService.updateJob(
+        created.id(),
+        new UpdateProactiveJobRequest("이름만 변경", null, null, null, null, null, null, null, true),
+        testUserId);
+    ProactiveJobResponse cleared = proactiveJobService.getJob(created.id(), testUserId);
+    assertThat(cleared.templateId()).isNull();
+    assertThat(cleared.templateName()).isNull();
+  }
+
+  /**
    * 잘못된 cron 표현식으로 생성을 시도하면 ProactiveJobException(→400) 이 발생하고 DB 에 저장되지 않아야 한다 (#221). 이전에는 검증 없이
    * 그대로 저장되어 스케줄러가 silent fail 하는 좀비 잡이 만들어졌다.
    */

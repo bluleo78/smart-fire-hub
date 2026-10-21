@@ -194,6 +194,7 @@ public class ProactiveJobService {
         request.name(),
         request.prompt(),
         request.templateId(),
+        Boolean.TRUE.equals(request.clearTemplate()),
         request.cronExpression(),
         request.timezone(),
         request.enabled(),
@@ -213,7 +214,8 @@ public class ProactiveJobService {
 
   @Transactional
   public void toggleJob(Long id, Long userId, boolean enabled) {
-    proactiveJobRepository.update(id, userId, null, null, null, null, null, enabled, null, null);
+    proactiveJobRepository.update(
+        id, userId, null, null, null, false, null, null, enabled, null, null);
     ProactiveJobResponse job = proactiveJobRepository.findById(id, userId).orElse(null);
     if (job != null) {
       if (enabled && job.cronExpression() != null && !job.cronExpression().isBlank()) {

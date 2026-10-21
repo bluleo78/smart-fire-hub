@@ -177,6 +177,8 @@ export interface UpdateProactiveJobRequest {
   name?: string;
   prompt?: string;
   templateId?: number | null;
+  /** true 면 templateId 가 없어도 지정된 템플릿을 해제한다 — 빠뜨리면 서버는 템플릿을 그대로 둔다 (WD-136) */
+  clearTemplate?: boolean;
   cronExpression?: string;
   timezone?: string;
   enabled?: boolean;

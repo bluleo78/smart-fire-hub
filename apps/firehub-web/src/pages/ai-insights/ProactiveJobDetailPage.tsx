@@ -222,8 +222,10 @@ export default function ProactiveJobDetailPage() {
         onError: (err) => handleApiError(err, '작업 생성에 실패했습니다.'),
       });
     } else {
+      // 「기본 (선택 안 함)」을 고르면 templateId 가 null 이 되는데, 서버는 null 을 "바꾸지 않음"으로 받는다.
+      // 해제 의도를 clearTemplate 로 함께 보내야 옛 템플릿이 남지 않는다 (WD-136).
       updateMutation.mutate(
-        { id: jobId, data: payload },
+        { id: jobId, data: { ...payload, clearTemplate: payload.templateId == null } },
         {
           onSuccess: () => {
             toast.success('작업이 저장되었습니다.');
