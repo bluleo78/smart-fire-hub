@@ -2,6 +2,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
 import { AlertTriangle, CheckCircle2, Copy, Loader2, Plus, RefreshCw } from 'lucide-react';
+import type { FocusEvent } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import { Controller, useForm } from 'react-hook-form';
 import { Link } from 'react-router-dom';
@@ -79,9 +80,10 @@ export function AddMemberDialog({ canAssignRoles, canReadRoles }: { canAssignRol
     enabled: open && canReadRoles,
   });
 
+  // 입력란 blur 검증은 아래 validateFilledOnBlur 로 직접 한다(WD-142) — RHF 의 onBlur 모드는 빈 칸까지 검사한다.
   const form = useForm<AddMemberFormData>({
     resolver: zodResolver(addMemberSchema),
-    mode: 'onBlur',
+    mode: 'onSubmit',
     reValidateMode: 'onChange',
     defaultValues: EMPTY_FORM,
   });
@@ -91,11 +93,24 @@ export function AddMemberDialog({ canAssignRoles, canReadRoles }: { canAssignRol
     control,
     setValue,
     setError,
+    trigger,
     reset,
     formState: { errors, isSubmitting },
   } = form;
+  /**
+   * 값을 넣은 칸만 벗어날 때 검사한다(디자인 시스템 09 §E 의 blur 검증 유지). 빈 칸은 제출 때 「필수」를 알린다(WD-142).
+   * 열자마자 이메일에 포커스가 있어, 빈 칸까지 blur 검사하면 다른 곳을 누르는 순간 「이메일은 필수입니다」 줄이 생기며
+   * 내용이 밀리고, 누르던 역할 체크박스가 클릭을 놓쳤다. 이미 오류가 떠 있는 칸은 비워도 다시 검사해 낡은 문구를 남기지 않는다.
+   */
+  const validateFilledOnBlur =
+    (name: 'email' | 'name' | 'temporaryPassword') => (e: FocusEvent<HTMLInputElement>) => {
+      if (e.target.value.trim() !== '' || form.getFieldState(name).error) void trigger(name);
+    };
   // 이메일을 고치면 정지 멤버 상세 링크는 더 이상 그 입력에 대한 것이 아니므로 숨긴다.
-  const emailField = register('email', { onChange: () => setSuspendedUserId(null) });
+  const emailField = register('email', {
+    onChange: () => setSuspendedUserId(null),
+    onBlur: validateFilledOnBlur('email'),
+  });
 
   // 결과 화면으로 바뀌면 제출 버튼이 사라져 포커스가 다이얼로그 컨테이너로 떨어진다 — 다음 행동(복사)으로 옮긴다.
   useEffect(() => {
@@ -279,7 +294,7 @@ export function AddMemberDialog({ canAssignRoles, canReadRoles }: { canAssignRol
                   maxLength={50}
                   aria-invalid={!!errors.name}
                   aria-describedby={errors.name ? 'member-name-error' : undefined}
-                  {...register('name')}
+                  {...register('name', { onBlur: validateFilledOnBlur('name') })}
                 />
               </FormField>
               <FormField
@@ -299,7 +314,7 @@ export function AddMemberDialog({ canAssignRoles, canReadRoles }: { canAssignRol
                     aria-describedby={
                       errors.temporaryPassword ? 'member-password-help member-password-error' : 'member-password-help'
                     }
-                    {...register('temporaryPassword')}
+                    {...register('temporaryPassword', { onBlur: validateFilledOnBlur('temporaryPassword') })}
                   />
                   <Button
                     type="button"

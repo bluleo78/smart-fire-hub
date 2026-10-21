@@ -181,6 +181,35 @@ test.describe('멤버 추가', () => {
     await expect(dialog.getByText('올바른 이메일 형식이 아닙니다')).toBeVisible();
   });
 
+  // WD-142: 열자마자(이메일에 포커스) 역할 체크박스를 누르면, 이메일 blur 검증 오류 문구가 생기며 내용이 밀려
+  // 클릭이 체크박스를 비껴갔다. check() 는 실패 시 재시도하므로 click() 한 번으로 첫 클릭이 먹는지 본다.
+  test('열자마자 누른 역할 체크박스가 첫 클릭에 체크되고, 제출 전에는 오류 문구가 생기지 않는다 (WD-142)', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.goto('/admin/users');
+    await page.getByRole('button', { name: '멤버 추가' }).click();
+    const dialog = page.getByRole('dialog', { name: '멤버 추가' });
+    await expect(dialog.getByLabel('이메일')).toBeFocused();
+    const admin = dialog.getByRole('checkbox', { name: /ADMIN/ });
+    await admin.click();
+    await expect(admin).toBeChecked();
+    await expect(dialog.getByText('이메일은 필수입니다')).toHaveCount(0);
+    // 값을 넣은 칸은 제출 전에도 벗어날 때 검사한다(디자인 시스템 09 §E blur 검증 유지).
+    await dialog.getByLabel('이메일').fill('not-an-email');
+    await dialog.getByLabel('이름').click();
+    await expect(dialog.getByText('올바른 이메일 형식이 아닙니다')).toBeVisible();
+    // 오류가 뜬 칸을 비우고 벗어나면 낡은 형식 오류 대신 「필수」로 바뀐다.
+    await dialog.getByLabel('이메일').fill('');
+    await dialog.getByLabel('이름').click();
+    await expect(dialog.getByText('이메일은 필수입니다')).toBeVisible();
+    await expect(dialog.getByText('올바른 이메일 형식이 아닙니다')).toHaveCount(0);
+    // 빈 이름 칸을 벗어나도 「필수」는 제출 때만 알린다.
+    await dialog.getByLabel('임시 비밀번호').click();
+    await expect(dialog.getByText('이름은 필수입니다')).toHaveCount(0);
+    await dialog.getByRole('button', { name: '추가' }).click();
+    await expect(dialog.getByText('이름은 필수입니다')).toBeVisible();
+  });
+
   test('USER 는 기본 역할로 고정(체크·해제 불가)되고 선택 역할만 전송된다', async ({ authenticatedPage: page }) => {
     const capture = await mockApi(page, 'POST', '/api/v1/users', { userId: 9, created: true }, { status: 201, capture: true });
     await page.goto('/admin/users');
