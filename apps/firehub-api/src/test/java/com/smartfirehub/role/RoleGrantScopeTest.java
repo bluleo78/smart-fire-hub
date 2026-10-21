@@ -1,6 +1,7 @@
 package com.smartfirehub.role;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -43,6 +44,9 @@ import org.springframework.test.web.servlet.ResultActions;
  * <p>WD-140(허용 목록): 역할에 붙은 데이터셋 허용 항목도 범위에 든다. 해당 테스트는 {@link #setUpAllowlistScenario()} 로 따로 구성한다
  * — '기밀'(허용 목록 필요) 데이터셋과 '민감'(허용 목록 불필요) 데이터셋, 그 허용 목록에 올라 있는 '공개' 역할(dataset:read 만 — 권한·등급은 위임자
  * 범위 안이라 거부가 오직 허용 목록 판정에서 나와야 한다), 등급 '기밀' 위임자(aclDelegate, 허용 목록에는 없음).
+ *
+ * <p>WD-141(역할 삭제): 삭제는 보유자 전원에게서의 회수이므로 같은 범위를 받는다. 삭제자(deleter — role:read·role:delete 만, 등급
+ * '내부')는 {@link #deleter()} 로 필요한 테스트에서만 만든다.
  */
 @AutoConfigureMockMvc
 class RoleGrantScopeTest extends IntegrationTestBase {
@@ -50,6 +54,9 @@ class RoleGrantScopeTest extends IntegrationTestBase {
   private static final String ROLE_SCOPE_MESSAGE = "자신에게 없는 권한·등급을 가진 역할은 부여하거나 회수할 수 없습니다";
   private static final String ADMIN_ROLE_MESSAGE = "시스템 ADMIN 역할은 ADMIN 만 부여하거나 회수할 수 있습니다";
   private static final String PERMISSION_SCOPE_MESSAGE = "자신에게 없는 권한은 역할에 추가할 수 없습니다";
+  private static final String DELETE_SCOPE_MESSAGE = "자신에게 없는 권한·등급을 가진 역할은 삭제할 수 없습니다";
+  private static final String DELETE_ALLOWLIST_MESSAGE =
+      "자신이 열람할 수 없는 데이터셋의 허용 목록이 붙은 역할은 삭제할 수 없습니다";
 
   @Autowired private MockMvc mockMvc;
   @Autowired private DSLContext dsl;
@@ -499,6 +506,118 @@ class RoleGrantScopeTest extends IntegrationTestBase {
         .containsExactlyInAnyOrder("role:read", "audit:read", "security:settings");
   }
 
+  // ── 역할 삭제(DELETE /roles/{id}, WD-141) ─────────────────────────────────────
+
+  /** 결함 재현: role:delete 위임자가 자기에게 없는 권한을 가진 역할을 지우면 403 — 역할은 남고 보유자도 그대로다(수정 전에는 204). */
+  @Test
+  void deleter_cannotDeleteRoleWithPermissionTheyLack() throws Exception {
+    long deleter = deleter();
+    grant(target, lackingPermRole);
+
+    deleteRole(deleter, lackingPermRole)
+        .andExpect(status().isForbidden())
+        .andExpect(jsonPath("$.code").value("ROLE_DELETE_BEYOND_SCOPE"))
+        .andExpect(jsonPath("$.message").value(DELETE_SCOPE_MESSAGE));
+
+    assertThat(roleExists(lackingPermRole)).isTrue();
+    assertThat(roleIdsOf(target)).containsExactlyInAnyOrder(userRole, lackingPermRole);
+  }
+
+  /** 자기보다 열람 등급이 높은 역할도 지울 수 없다(권한은 범위 안이어도). */
+  @Test
+  void deleter_cannotDeleteRoleWithHigherClearance() throws Exception {
+    long deleter = deleter();
+    grant(target, highClearanceRole);
+
+    deleteRole(deleter, highClearanceRole)
+        .andExpect(status().isForbidden())
+        .andExpect(jsonPath("$.code").value("ROLE_DELETE_BEYOND_SCOPE"))
+        .andExpect(jsonPath("$.message").value(DELETE_SCOPE_MESSAGE));
+
+    assertThat(roleExists(highClearanceRole)).isTrue();
+    assertThat(roleIdsOf(target)).containsExactlyInAnyOrder(userRole, highClearanceRole);
+  }
+
+  /**
+   * 자기가 열람할 수 없는 기밀 데이터셋의 허용 목록에 붙은 역할도 지울 수 없다. 데이터셋 허용 목록에 다른 항목(admin1)을 더해 "유일 허용 항목" 409 가 아닌
+   * 범위 403 만이 거부 사유가 되게 한다 — 역할('공개', dataset:read)은 권한·등급으로는 삭제자('기밀') 범위 안이다.
+   */
+  @Test
+  void deleter_cannotDeleteRoleOnAllowlistTheyCannotView() throws Exception {
+    setUpAllowlistScenario();
+    grantAllowlistUser(secretDs, admin1);
+    long aclDeleter = aclDeleter();
+    grant(target, listedRole);
+
+    deleteRole(aclDeleter, listedRole)
+        .andExpect(status().isForbidden())
+        .andExpect(jsonPath("$.code").value("ROLE_DELETE_ALLOWLIST_BEYOND_SCOPE"))
+        .andExpect(jsonPath("$.message").value(DELETE_ALLOWLIST_MESSAGE));
+
+    assertThat(roleExists(listedRole)).isTrue();
+    assertThat(roleIdsOf(target)).containsExactlyInAnyOrder(userRole, listedRole);
+  }
+
+  /** 범위 안의 역할은 지울 수 있다(과잉 차단 방지) — 보유자에게서도 함께 사라진다. */
+  @Test
+  void deleter_canDeleteInScopeRole() throws Exception {
+    long deleter = deleter();
+    grant(target, inScopeRole);
+
+    deleteRole(deleter, inScopeRole).andExpect(status().isNoContent());
+
+    assertThat(roleExists(inScopeRole)).isFalse();
+    assertThat(roleIdsOf(target)).containsExactly(userRole);
+  }
+
+  /** 삭제자 본인이 기밀 데이터셋 허용 목록에 있으면(= 이미 열람 가능) 그 허용 목록에 붙은 역할도 지울 수 있다(과잉 차단 방지). */
+  @Test
+  void deleter_onAllowlist_canDeleteListedRole() throws Exception {
+    setUpAllowlistScenario();
+    long aclDeleter = aclDeleter();
+    grantAllowlistUser(secretDs, aclDeleter);
+
+    deleteRole(aclDeleter, listedRole).andExpect(status().isNoContent());
+
+    assertThat(roleExists(listedRole)).isFalse();
+  }
+
+  /** 시스템 ADMIN 은 범위 제한 없이 사용자 정의 역할을 지운다(권한 초과·등급 초과·허용 목록 역할 모두). */
+  @Test
+  void admin_canDeleteAnyCustomRole() throws Exception {
+    setUpAllowlistScenario();
+    grantAllowlistUser(secretDs, admin2); // 유일 허용 항목 409 를 피한다
+
+    deleteRole(admin1, lackingPermRole).andExpect(status().isNoContent());
+    deleteRole(admin1, highClearanceRole).andExpect(status().isNoContent());
+    deleteRole(admin1, listedRole).andExpect(status().isNoContent());
+
+    assertThat(roleExists(lackingPermRole)).isFalse();
+    assertThat(roleExists(highClearanceRole)).isFalse();
+    assertThat(roleExists(listedRole)).isFalse();
+  }
+
+  /**
+   * 기존 계약 유지: 시스템 역할 삭제는 누구든 400(시스템 역할 보호가 범위 403 보다 먼저 — ADMIN 역할도 "ADMIN 만" 403 이 아니라 400), 없는
+   * 역할은 404.
+   */
+  @Test
+  void systemRoleAndUnknownRoleDeletion_contractsUnchanged() throws Exception {
+    long deleter = deleter();
+
+    deleteRole(deleter, adminRole)
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value("Cannot delete system role: ADMIN"));
+    deleteRole(deleter, userRole)
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value("Cannot delete system role: USER"));
+    deleteRole(admin1, userRole).andExpect(status().isBadRequest());
+    deleteRole(deleter, 987_654_321L).andExpect(status().isNotFound());
+
+    assertThat(roleExists(adminRole)).isTrue();
+    assertThat(roleExists(userRole)).isTrue();
+  }
+
   // ── 요청 헬퍼 ─────────────────────────────────────────────────────────────────
 
   private String token(long userId) {
@@ -546,6 +665,11 @@ class RoleGrantScopeTest extends IntegrationTestBase {
             .content(objectMapper.writeValueAsString(Map.of("permissionIds", ids))));
   }
 
+  private ResultActions deleteRole(long caller, long roleId) throws Exception {
+    return mockMvc.perform(
+        delete("/api/v1/roles/" + roleId).header("Authorization", token(caller)));
+  }
+
   /** 데이터셋 하위 경로 — DatasetAccessInterceptor 가 VIEW(등급 + 허용 목록)를 강제하므로 열람 가능 여부를 그대로 드러낸다. */
   private ResultActions getAccessGrants(long caller, long datasetId) throws Exception {
     return mockMvc.perform(
@@ -570,6 +694,27 @@ class RoleGrantScopeTest extends IntegrationTestBase {
             .id();
     users.add(id);
     return id;
+  }
+
+  /** 삭제자(WD-141): role:read·role:delete 만, 등급 '내부'. USER 를 떼어 범위가 정확히 이 역할로만 정해진다. */
+  private long deleter() {
+    long role = createRole("DELETER", "내부", "role:read", "role:delete");
+    long id = member("deleter");
+    replaceRoles(id, role);
+    return id;
+  }
+
+  /** 허용 목록 시나리오용 삭제자: 등급 '기밀' + dataset:read — 등급·권한으로는 listedRole 범위를 덮지만 허용 목록에는 없다. */
+  private long aclDeleter() {
+    long role = createRole("ACL_DELETER", "기밀", "role:read", "role:delete", "dataset:read");
+    long id = member("acl-deleter");
+    replaceRoles(id, role);
+    return id;
+  }
+
+  private boolean roleExists(long roleId) {
+    return inTenantFixture(
+        tenantA, () -> dsl.fetchExists(dsl.selectOne().from("role").where("id = ?", roleId)));
   }
 
   private long roleId(String name) {
