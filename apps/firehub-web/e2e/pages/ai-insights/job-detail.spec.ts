@@ -569,6 +569,39 @@ test.describe('스마트 작업 상세 페이지', () => {
     await expect(page.getByText('파이프라인 연결 오류')).toBeVisible();
   });
 
+  test('개요 탭 — 실행 중이던 최근 실행이 끝나면 다시 읽어 실패로 바뀐다 (WD-134)', async ({ authenticatedPage: page }) => {
+    // 「지금 실행」 직후에는 실행 중 상태가 실리므로, 끝날 때까지 다시 읽어야 결과가 화면에 반영된다
+    const running = createJob({
+      id: 1,
+      lastExecution: createJobExecution({ id: 10, jobId: 1, status: 'RUNNING', completedAt: null }),
+    });
+    const failed = createJob({
+      id: 1,
+      lastExecution: createJobExecution({ id: 10, jobId: 1, status: 'FAILED', errorMessage: 'AI 설정 없음' }),
+    });
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1/executions', []);
+    await mockApi(page, 'GET', '/api/v1/proactive/templates', createTemplates());
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1/anomaly-events', []);
+    let jobCalls = 0;
+    await page.route(
+      (url) => url.pathname === '/api/v1/proactive/jobs/1',
+      (route) => {
+        jobCalls += 1;
+        return route.fulfill({ status: 200, json: jobCalls === 1 ? running : failed });
+      },
+    );
+
+    await page.goto('/ai-insights/jobs/1');
+    const status = page.getByText('마지막 실행 상태').locator('..');
+    await expect(status.locator('[data-slot="badge"]')).toHaveText('실행중');
+
+    // 실행 중이면 5초 간격으로 다시 읽는다 — 끝난 결과(실패와 오류 문구)로 바뀐다
+    await expect(status.locator('[data-slot="badge"]')).toHaveText('실패', { timeout: 10000 });
+    await expect(status.getByText('AI 설정 없음')).toBeVisible();
+    expect(jobCalls).toBeGreaterThanOrEqual(2);
+  });
+
   test('편집 모드 — 트리거 유형 ANOMALY 선택 시 설명 텍스트가 변경된다', async ({ authenticatedPage: page }) => {
     await setupJobDetailMocks(page, 1);
 

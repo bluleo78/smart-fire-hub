@@ -1,4 +1,4 @@
-import { createJob } from '../../factories/ai-insight.factory';
+import { createJob, createJobExecution } from '../../factories/ai-insight.factory';
 import { setupJobListMocks } from '../../fixtures/ai-insight.fixture';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
@@ -293,5 +293,37 @@ test.describe('스마트 작업 목록 페이지', () => {
     // 작업명은 표시되고, '실패' 배지는 더 이상 존재하지 않아야 한다
     await expect(page.getByText('실패 작업')).toBeVisible();
     await expect(page.locator('[data-slot="badge"]').filter({ hasText: '실패' })).toHaveCount(0);
+  });
+
+  test('최근 실행이 실패한 작업은 「마지막 실행」 칸에 실패가 표시된다 (WD-134)', async ({ authenticatedPage: page }) => {
+    // 예약 실행이 계속 실패해도 목록에서는 정상처럼 보이던 결함 — 실패만 표시하고, 성공·이력 없음은 표시하지 않는다
+    // eslint-disable-next-line no-restricted-syntax -- epoch 숫자로 3분 전 시각을 만든다(서버 문자열 파싱 아님)
+    const recent = new Date(Date.now() - 3 * 60 * 1000).toISOString();
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs', [
+      createJob({
+        id: 1,
+        name: '계속 실패하는 작업',
+        lastExecutedAt: recent,
+        lastExecution: createJobExecution({ id: 11, jobId: 1, status: 'FAILED', errorMessage: 'AI 설정 없음' }),
+      }),
+      createJob({
+        id: 2,
+        name: '성공한 작업',
+        lastExecutedAt: recent,
+        lastExecution: createJobExecution({ id: 12, jobId: 2, status: 'COMPLETED' }),
+      }),
+      createJob({ id: 3, name: '실행 전 작업' }),
+    ]);
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+
+    await page.goto('/ai-insights/jobs');
+
+    const failedRow = page.getByRole('row').filter({ hasText: '계속 실패하는 작업' });
+    await expect(failedRow.getByTestId('last-run-failed')).toHaveText('· 실패');
+    // 마우스를 올리면 실패 원인을 볼 수 있다
+    await expect(failedRow.getByTestId('last-run-failed')).toHaveAttribute('title', 'AI 설정 없음');
+    await expect(failedRow).toContainText('3분 전');
+    await expect(page.getByRole('row').filter({ hasText: '성공한 작업' }).getByTestId('last-run-failed')).toHaveCount(0);
+    await expect(page.getByRole('row').filter({ hasText: '실행 전 작업' }).getByTestId('last-run-failed')).toHaveCount(0);
   });
 });

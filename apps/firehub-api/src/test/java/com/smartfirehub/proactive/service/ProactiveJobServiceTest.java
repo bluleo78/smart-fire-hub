@@ -21,10 +21,13 @@ import com.smartfirehub.proactive.exception.ProactiveJobException;
 import com.smartfirehub.proactive.exception.ProactiveJobNotFoundException;
 import com.smartfirehub.proactive.repository.ProactiveJobExecutionRepository;
 import com.smartfirehub.proactive.service.delivery.DeliveryChannel;
+import com.smartfirehub.proactive.util.ProactiveTime;
 import com.smartfirehub.support.IntegrationTestBase;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import org.jooq.DSLContext;
+import org.jooq.impl.DSL;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.aop.framework.AopProxyUtils;
@@ -447,6 +450,71 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
     assertThat(executions).hasSize(1);
     assertThat(executions.get(0).status()).isEqualTo("FAILED");
     assertThat(executions.get(0).errorMessage()).contains("AI Agent 연결 실패");
+  }
+
+  /**
+   * [WD-134] 예약 실행이 실패해도 목록·상세가 "한 번도 안 돈 작업"처럼 보이면 안 된다.
+   *
+   * <p>예전에는 실패 경로가 마지막 실행 시각·다음 실행 시각을 갱신하지 않았고, 잡 응답의 {@code lastExecution} 은 늘 null 이었다. 그래서 계속
+   * 실패하는 작업이 목록에서 「마지막 실행 -」·지난 시각의 「다음 실행」으로 보였다. 등록 시점의 다음 실행 시각을 일부러 과거로 돌려 두고, 실패 한 번 뒤 목록·상세
+   * 모두에서 시각이 갱신되고 실패 상태·문구가 실리는지 본다.
+   */
+  @Test
+  void executeJob_failure_updatesLastAndNextRunAndExposesLastExecution() {
+    ProactiveJobResponse created =
+        proactiveJobService.createJob(buildCreateRequest("실패 표시 작업"), testUserId);
+    // 등록 시점에 계산한 값이 이미 소진된 상황(지난 시각)을 만든다
+    LocalDateTime stale = ProactiveTime.nowUtc().minusHours(1);
+    dsl.update(DSL.table(DSL.name("proactive_job")))
+        .set(DSL.field(DSL.name("next_execute_at"), LocalDateTime.class), stale)
+        .where(DSL.field(DSL.name("id"), Long.class).eq(created.id()))
+        .execute();
+
+    when(proactiveContextCollector.collectContext(any(), any(), any())).thenReturn("{}");
+    when(proactiveAiClient.execute(anyLong(), anyString(), anyString(), any(), any(), any(), any()))
+        .thenThrow(new RuntimeException("AI Agent 연결 실패"));
+
+    assertThatThrownBy(() -> rawAsyncRunner.executeJob(created.id(), testUserId))
+        .isInstanceOf(ProactiveJobException.class);
+
+    LocalDateTime now = ProactiveTime.nowUtc();
+    ProactiveJobResponse detail = proactiveJobService.getJob(created.id(), testUserId);
+    assertThat(detail.lastExecutedAt()).isNotNull();
+    assertThat(detail.nextExecuteAt()).isAfter(now);
+    assertThat(detail.lastExecution()).isNotNull();
+    assertThat(detail.lastExecution().status()).isEqualTo("FAILED");
+    assertThat(detail.lastExecution().errorMessage()).contains("AI Agent 연결 실패");
+    // 목록 응답은 잡 수만큼 반복되므로 리포트 본문은 싣지 않는다
+    assertThat(detail.lastExecution().result()).isNull();
+
+    ProactiveJobResponse listed =
+        proactiveJobService.getJobs(testUserId).stream()
+            .filter(j -> j.id().equals(created.id()))
+            .findFirst()
+            .orElseThrow();
+    assertThat(listed.lastExecution()).isNotNull();
+    assertThat(listed.lastExecution().status()).isEqualTo("FAILED");
+  }
+
+  /** [WD-134] 실행이 여러 번이면 가장 최근 실행이 실리고, 실행 이력이 없는 잡은 null 로 남는다. */
+  @Test
+  void getJobs_attachesLatestExecutionPerJob() {
+    ProactiveJobResponse ran =
+        proactiveJobService.createJob(buildCreateRequest("두 번 실행된 작업"), testUserId);
+    ProactiveJobResponse never =
+        proactiveJobService.createJob(buildCreateRequest("실행된 적 없는 작업"), testUserId);
+    Long first = executionRepository.create(ran.id());
+    executionRepository.updateError(first, "첫 실행 실패");
+    Long second = executionRepository.create(ran.id());
+    executionRepository.updateResult(second, "COMPLETED", Map.of("title", "두 번째"), null);
+
+    Map<Long, ProactiveJobResponse> byId =
+        proactiveJobService.getJobs(testUserId).stream()
+            .collect(java.util.stream.Collectors.toMap(ProactiveJobResponse::id, j -> j));
+
+    assertThat(byId.get(ran.id()).lastExecution().id()).isEqualTo(second);
+    assertThat(byId.get(ran.id()).lastExecution().status()).isEqualTo("COMPLETED");
+    assertThat(byId.get(never.id()).lastExecution()).isNull();
   }
 
   /**

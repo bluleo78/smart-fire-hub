@@ -203,6 +203,18 @@ export default function ProactiveJobListPage() {
                   <TableCell className="text-sm">{cronToLabel(job.cronExpression)}</TableCell>
                   <TableCell className="text-sm text-muted-foreground">
                     {job.lastExecutedAt ? timeAgo(job.lastExecutedAt) : '-'}
+                    {/* 최근 실행이 실패했으면 시각 옆에 바로 알린다 (WD-134). 예약 실행이 계속 실패해도
+                        목록에서는 정상처럼 보여, 실행 이력 탭을 열기 전에는 리포트가 안 만들어지는 걸 알 수 없었다.
+                        '상태' 배지 컬럼은 활성 토글과 겹쳐 뺐으므로(#67) 배지가 아닌 글자로 이 칸 안에만 둔다. */}
+                    {job.lastExecution?.status === 'FAILED' && (
+                      <span
+                        className="ml-1.5 text-destructive font-medium"
+                        title={job.lastExecution.errorMessage ?? undefined}
+                        data-testid="last-run-failed"
+                      >
+                        · 실패
+                      </span>
+                    )}
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">
                     {/* nextExecuteAt은 타임존 표기 없는 UTC 벽시계이므로 parseUtcDate로 해석한다.

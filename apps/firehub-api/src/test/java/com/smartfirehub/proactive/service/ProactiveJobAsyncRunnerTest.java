@@ -18,6 +18,7 @@ import com.smartfirehub.settings.model.AiCredential;
 import com.smartfirehub.settings.model.UnknownAgentTypeException;
 import com.smartfirehub.settings.service.AiCredentialService;
 import com.smartfirehub.settings.service.SettingsService;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -151,6 +152,92 @@ class ProactiveJobAsyncRunnerTest {
 
     verify(aiClient, never()).execute(any(), any(), any(), any(), any(), any(), any());
     verify(executionRepository).updateError(eq(EXECUTION_ID), anyString());
+  }
+
+  /**
+   * [WD-134] 실패한 실행도 마지막 실행 시각과 다음 실행 시각을 갱신한다.
+   *
+   * <p>예전에는 성공 경로에서만 갱신해서, 계속 실패하는 예약 작업이 목록에서 「마지막 실행 -」·지난 시각의 「다음 실행」으로 남았다.
+   */
+  @Test
+  void 실행이_실패해도_마지막_실행과_다음_실행_시각을_갱신한다() {
+    // 스케줄에 등록된 활성 잡 — 등록 시점에 계산한 다음 실행 시각이 이미 지나간 상태
+    LocalDateTime stale = LocalDateTime.of(2026, 1, 1, 0, 0);
+    when(proactiveJobRepository.findById(JOB_ID, USER_ID))
+        .thenReturn(Optional.of(job(true, stale)));
+    when(aiCredentialService.resolve())
+        .thenReturn(new AiCredential.Opencode("openai", "https://api.openai.com/v1", "", "sk-oai"));
+    when(settingsService.getValue("ai.model")).thenReturn(Optional.of(AiBehaviorDefaults.MODEL));
+
+    assertThatThrownBy(() -> runner.executeJob(JOB_ID, USER_ID))
+        .isInstanceOf(ProactiveJobException.class);
+
+    verify(executionRepository).updateError(eq(EXECUTION_ID), anyString());
+    ArgumentCaptor<LocalDateTime> next = ArgumentCaptor.forClass(LocalDateTime.class);
+    verify(proactiveJobRepository).updateLastExecuted(eq(JOB_ID), notNull(), next.capture());
+    assertThat(next.getValue()).isAfter(stale);
+  }
+
+  /**
+   * [WD-134] 비활성 잡을 「지금 실행」 해도 오지 않을 다음 실행 시각을 만들지 않는다.
+   *
+   * <p>스케줄에서 빠진 잡의 다음 실행 시각은 비어 있어야 상세에 「다음 실행」이 잘못 보이지 않고, 등록에 실패한 활성 잡의 「미등록」 표시(#354)도 남는다.
+   */
+  @Test
+  void 스케줄에_없는_잡은_다음_실행_시각을_새로_만들지_않는다() {
+    when(proactiveJobRepository.findById(JOB_ID, USER_ID))
+        .thenReturn(Optional.of(job(false, null)));
+    when(aiCredentialService.resolve())
+        .thenReturn(new AiCredential.Opencode("openai", "https://api.openai.com/v1", "", "sk-oai"));
+    when(settingsService.getValue("ai.model")).thenReturn(Optional.of(AiBehaviorDefaults.MODEL));
+
+    assertThatThrownBy(() -> runner.executeJob(JOB_ID, USER_ID))
+        .isInstanceOf(ProactiveJobException.class);
+
+    verify(proactiveJobRepository).updateLastExecuted(eq(JOB_ID), notNull(), isNull());
+  }
+
+  /** 활성 여부와 다음 실행 시각만 다른 테스트용 잡. */
+  private static ProactiveJobResponse job(boolean enabled, LocalDateTime nextExecuteAt) {
+    return new ProactiveJobResponse(
+        JOB_ID,
+        USER_ID,
+        null,
+        null,
+        "테스트 잡",
+        "요약해줘",
+        "0 0 * * *",
+        "Asia/Seoul",
+        enabled,
+        "SCHEDULE",
+        Map.of(),
+        null,
+        nextExecuteAt,
+        null,
+        null,
+        null);
+  }
+
+  /** [WD-134] 실행 시각 갱신이 실패해도 이미 기록한 실행 결과(성공)를 실패로 뒤집지 않는다. */
+  @Test
+  void 실행_시각_갱신이_실패해도_성공한_실행은_그대로_끝난다() {
+    when(aiCredentialService.resolve()).thenReturn(new AiCredential.Sdk("", "sk-test"));
+    when(aiClient.execute(any(), any(), any(), any(), any(), any(), any()))
+        .thenReturn(
+            new ProactiveResult(
+                "리포트",
+                List.of(new ProactiveResult.Section("summary", "요약", "내용", null, null)),
+                null,
+                null,
+                null));
+    doThrow(new RuntimeException("DB 끊김"))
+        .when(proactiveJobRepository)
+        .updateLastExecuted(any(), any(), any());
+
+    runner.executeJob(JOB_ID, USER_ID);
+
+    verify(executionRepository).updateResult(eq(EXECUTION_ID), eq("COMPLETED"), any(), any());
+    verify(executionRepository, never()).updateError(any(), any());
   }
 
   /**

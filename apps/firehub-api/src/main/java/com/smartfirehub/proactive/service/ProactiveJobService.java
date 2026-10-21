@@ -121,15 +121,31 @@ public class ProactiveJobService {
 
   @Transactional(readOnly = true)
   public List<ProactiveJobResponse> getJobs(Long userId) {
-    return proactiveJobRepository.findByUserId(userId);
+    return withLastExecutions(proactiveJobRepository.findByUserId(userId));
   }
 
   @Transactional(readOnly = true)
   public ProactiveJobResponse getJob(Long id, Long userId) {
     // 존재하지 않는 Job 조회 시 404 반환 (#41)
-    return proactiveJobRepository
-        .findById(id, userId)
-        .orElseThrow(() -> new ProactiveJobNotFoundException("Proactive Job을 찾을 수 없습니다: " + id));
+    ProactiveJobResponse job =
+        proactiveJobRepository
+            .findById(id, userId)
+            .orElseThrow(
+                () -> new ProactiveJobNotFoundException("Proactive Job을 찾을 수 없습니다: " + id));
+    return withLastExecutions(List.of(job)).get(0);
+  }
+
+  /**
+   * 잡마다 가장 최근 실행(상태·오류 문구)을 붙인다 (WD-134).
+   *
+   * <p>화면은 이 값으로 목록의 실패 표시와 상세 「마지막 실행 상태」를 그린다. 잡 행과 실행 이력은 다른 테이블이라 잡 조회 뒤 한 번에 모아 읽는다 (잡 수만큼 따로
+   * 조회하지 않는다).
+   */
+  private List<ProactiveJobResponse> withLastExecutions(List<ProactiveJobResponse> jobs) {
+    Map<Long, ProactiveJobExecutionResponse> latest =
+        executionRepository.findLatestByJobIds(
+            jobs.stream().map(ProactiveJobResponse::id).toList());
+    return jobs.stream().map(job -> job.withLastExecution(latest.get(job.id()))).toList();
   }
 
   @Transactional
@@ -211,8 +227,10 @@ public class ProactiveJobService {
   @Transactional(readOnly = true)
   public List<ProactiveJobExecutionSummaryResponse> getExecutions(
       Long jobId, Long userId, int limit, int offset) {
-    // job 소유권 확인
-    getJob(jobId, userId);
+    // job 소유권 확인 — 실행 이력 탭이 실행 중 5초마다 부르므로 최근 실행까지 붙이는 getJob 대신 잡 행만 확인한다
+    proactiveJobRepository
+        .findById(jobId, userId)
+        .orElseThrow(() -> new ProactiveJobNotFoundException("Proactive Job을 찾을 수 없습니다: " + jobId));
     // 목록은 경량 뷰(result 미포함)를 반환한다 — 리포트 본문은 get_execution(단건)으로 조회 (#604)
     return executionRepository.findSummariesByJobId(jobId, limit, offset);
   }

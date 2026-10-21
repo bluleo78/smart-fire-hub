@@ -95,8 +95,10 @@ public class ProactiveJobAsyncRunner {
     Long executionId = executionRepository.create(jobId);
     executionRepository.updateStatus(executionId, "RUNNING", ProactiveTime.nowUtc(), null);
 
+    // finally 에서 실행 시도 기록에 쓰려고 try 밖에 둔다 — 잡을 읽기 전에 실패하면 null 로 남는다.
+    ProactiveJobResponse job = null;
     try {
-      ProactiveJobResponse job =
+      job =
           proactiveJobRepository
               .findById(jobId, userId)
               .orElseThrow(() -> new ProactiveJobException("Job을 찾을 수 없습니다: " + jobId));
@@ -202,15 +204,6 @@ public class ProactiveJobAsyncRunner {
         executionRepository.updateDeliveredChannels(executionId, deliveredChannels);
       }
 
-      // 마지막 실행 시간 업데이트
-      // 마지막 실행 시각과 함께 다음 실행 예정 시각도 갱신한다 (#348).
-      // 스케줄 등록 시점에 계산한 값은 이번 실행으로 소진됐으므로 여기서 다시 계산해야
-      // 목록의 "다음 실행"이 이미 지나간 시각을 가리키지 않는다.
-      proactiveJobRepository.updateLastExecuted(
-          jobId,
-          ProactiveTime.nowUtc(),
-          ProactiveCron.nextExecuteAtUtc(job.cronExpression(), job.timezone()));
-
       log.info("Proactive job {} executed successfully", jobId);
 
     } catch (Exception e) {
@@ -218,7 +211,32 @@ public class ProactiveJobAsyncRunner {
       executionRepository.updateError(executionId, e.getMessage());
       throw new ProactiveJobException("Job 실행 실패: " + e.getMessage(), e);
     } finally {
+      if (job != null) recordAttempt(jobId, job);
       running.set(false);
+    }
+  }
+
+  /**
+   * 마지막 실행 시각과 다음 실행 예정 시각을 갱신한다 — 성공·실패 모두 (WD-134).
+   *
+   * <p>다음 실행 시각은 스케줄 등록 시점에 계산한 값이 이번 실행으로 소진됐으므로 다시 계산해야 목록의 "다음 실행"이 지나간 시각을 가리키지 않는다 (#348).
+   * 예전에는 성공 경로에서만 불려서, 실행이 계속 실패하면 「마지막 실행」은 `-` 로, 「다음 실행」은 지난 시각으로 남아 한 번도 안 돈 작업처럼 보였다. 여기서 실패해도
+   * 실행 결과 기록(이미 끝남)을 되돌리지 않도록 예외는 로그로만 남긴다.
+   *
+   * <p>다음 실행 시각은 스케줄러에 등록된 활성 잡(값이 이미 있는 잡)만 다시 계산한다. 비활성 잡을 「지금 실행」 했을 때 오지 않을 다음 실행이 생기거나, 등록에
+   * 실패한 활성 잡의 「미등록」 표시(#354)가 가려지지 않게 하려는 것이다 — 그런 잡은 기존 값을 그대로 둔다.
+   */
+  private void recordAttempt(Long jobId, ProactiveJobResponse job) {
+    boolean scheduled = Boolean.TRUE.equals(job.enabled()) && job.nextExecuteAt() != null;
+    try {
+      proactiveJobRepository.updateLastExecuted(
+          jobId,
+          ProactiveTime.nowUtc(),
+          scheduled
+              ? ProactiveCron.nextExecuteAtUtc(job.cronExpression(), job.timezone())
+              : job.nextExecuteAt());
+    } catch (Exception e) {
+      log.warn("Proactive job {} 실행 시각 갱신 실패: {}", jobId, e.getMessage(), e);
     }
   }
 }

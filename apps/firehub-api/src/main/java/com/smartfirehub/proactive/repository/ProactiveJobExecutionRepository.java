@@ -9,6 +9,8 @@ import com.smartfirehub.proactive.dto.ProactiveJobExecutionSummaryResponse;
 import com.smartfirehub.proactive.dto.ReportListItemResponse;
 import com.smartfirehub.proactive.util.ProactiveTime;
 import java.time.LocalDateTime;
+import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -147,6 +149,49 @@ public class ProactiveJobExecutionRepository {
         .fetch(r -> toSummaryResponse(r));
   }
 
+  /**
+   * 잡마다 가장 최근 실행 한 건을 읽는다 — 잡 목록·상세의 「마지막 실행 상태」용 (WD-134).
+   *
+   * <p>예전에는 잡 응답의 {@code lastExecution} 을 채우는 곳이 없어 늘 null 이었고, 예약 실행이 계속 실패해도 목록·상세 어디에도 실패가 드러나지
+   * 않았다. 목록은 잡 수만큼 반복되므로 {@code result}(리포트 본문)는 읽지 않는다({@link #findSummariesByJobId} 와 같은 이유) —
+   * 돌려주는 응답의 {@code result} 는 항상 null 이다.
+   *
+   * @return 잡 ID → 최근 실행. 실행 이력이 없는 잡은 키가 없다
+   */
+  public Map<Long, ProactiveJobExecutionResponse> findLatestByJobIds(Collection<Long> jobIds) {
+    Map<Long, ProactiveJobExecutionResponse> latest = new HashMap<>();
+    if (jobIds.isEmpty()) return latest;
+    dsl.select(
+            PJE_ID,
+            PJE_JOB_ID,
+            PJE_STATUS,
+            PJE_STARTED_AT,
+            PJE_COMPLETED_AT,
+            PJE_ERROR_MESSAGE,
+            PJE_DELIVERED_CHANNELS,
+            PJE_CREATED_AT)
+        .distinctOn(PJE_JOB_ID)
+        .from(PROACTIVE_JOB_EXECUTION)
+        .where(PJE_JOB_ID.in(jobIds))
+        // 인덱스 (job_id, created_at DESC) 순서를 따른다 — 같은 시각이면 나중 행(id 큰 쪽)
+        .orderBy(PJE_JOB_ID, PJE_CREATED_AT.desc(), PJE_ID.desc())
+        .forEach(
+            r ->
+                latest.put(
+                    r.get(PJE_JOB_ID),
+                    new ProactiveJobExecutionResponse(
+                        r.get(PJE_ID),
+                        r.get(PJE_JOB_ID),
+                        r.get(PJE_STATUS),
+                        r.get(PJE_STARTED_AT),
+                        r.get(PJE_COMPLETED_AT),
+                        r.get(PJE_ERROR_MESSAGE),
+                        null,
+                        parseChannels(r.get(PJE_DELIVERED_CHANNELS)),
+                        r.get(PJE_CREATED_AT))));
+    return latest;
+  }
+
   public Optional<ProactiveJobExecutionResponse> findById(Long id) {
     return dsl.select(
             PJE_ID,
@@ -219,10 +264,7 @@ public class ProactiveJobExecutionRepository {
           resultJsonb != null
               ? objectMapper.readValue(resultJsonb.data(), new TypeReference<>() {})
               : null;
-      // deliveredChannels: 쉼표로 구분된 문자열을 리스트로 변환
-      String channelsStr = r.get(PJE_DELIVERED_CHANNELS);
-      List<String> channels =
-          (channelsStr != null && !channelsStr.isBlank()) ? List.of(channelsStr.split(",")) : null;
+      List<String> channels = parseChannels(r.get(PJE_DELIVERED_CHANNELS));
       return new ProactiveJobExecutionResponse(
           r.get(PJE_ID),
           r.get(PJE_JOB_ID),
@@ -239,9 +281,7 @@ public class ProactiveJobExecutionRepository {
   }
 
   private ProactiveJobExecutionSummaryResponse toSummaryResponse(org.jooq.Record r) {
-    String channelsStr = r.get(PJE_DELIVERED_CHANNELS);
-    List<String> channels =
-        (channelsStr != null && !channelsStr.isBlank()) ? List.of(channelsStr.split(",")) : null;
+    List<String> channels = parseChannels(r.get(PJE_DELIVERED_CHANNELS));
     return new ProactiveJobExecutionSummaryResponse(
         r.get(PJE_ID),
         r.get(PJE_JOB_ID),
@@ -251,5 +291,10 @@ public class ProactiveJobExecutionRepository {
         r.get(PJE_ERROR_MESSAGE),
         channels,
         r.get(PJE_CREATED_AT));
+  }
+
+  /** deliveredChannels: 쉼표로 구분해 저장한 문자열을 리스트로 변환한다(비었으면 null). */
+  private static List<String> parseChannels(String channelsStr) {
+    return (channelsStr != null && !channelsStr.isBlank()) ? List.of(channelsStr.split(",")) : null;
   }
 }

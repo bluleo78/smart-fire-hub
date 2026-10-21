@@ -28,6 +28,19 @@ const KEYS = {
 
 // ── Jobs ──────────────────────────────────────────────────────────────────────
 
+/** 실행 중 폴링 간격 — 실행 이력 탭(JobExecutionsTab)과 같은 5초. */
+const RUN_POLL_MS = 5000;
+
+/**
+ * 최근 실행이 아직 끝나지 않았는가.
+ *
+ * 「지금 실행」은 비동기라 직후 조회에는 실행 중 상태가 실린다. 끝날 때까지 다시 읽지 않으면
+ * 목록의 실패 표시와 상세 「마지막 실행 상태」가 실행 중이나 이전 결과로 멈춰 있게 된다 (WD-134).
+ */
+function isRunInFlight(job: ProactiveJob): boolean {
+  return job.lastExecution?.status === 'RUNNING';
+}
+
 /**
  * 스마트 작업 목록 조회.
  *
@@ -39,6 +52,8 @@ export function useProactiveJobs(options?: { enabled?: boolean }) {
     queryKey: KEYS.jobs,
     queryFn: () => proactiveApi.getJobs().then((r) => r.data),
     enabled: options?.enabled ?? true,
+    refetchInterval: (query) =>
+      query.state.data?.some((job) => isRunInFlight(job)) ? RUN_POLL_MS : false,
   });
 }
 
@@ -47,6 +62,7 @@ export function useProactiveJob(id: number) {
     queryKey: KEYS.job(id),
     queryFn: () => proactiveApi.getJob(id).then((r) => r.data),
     enabled: !!id,
+    refetchInterval: (query) => (query.state.data && isRunInFlight(query.state.data) ? RUN_POLL_MS : false),
   });
 }
 
