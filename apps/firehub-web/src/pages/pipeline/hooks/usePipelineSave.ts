@@ -11,7 +11,8 @@ import type { EditorAction,PipelineEditorState } from './pipelineEditorReducer';
 
 interface UsePipelineSaveOptions {
   state: PipelineEditorState;
-  validate: () => boolean;
+  /** 저장 전 검증 — 출력 데이터셋 컬럼 조회가 있어 비동기다(WD-154) */
+  validate: () => Promise<boolean>;
   pipelineId?: number;
   dispatch: Dispatch<EditorAction>;
   /**
@@ -34,7 +35,7 @@ export function usePipelineSave({
   const updateMutation = useUpdatePipeline(pipelineId ?? 0);
 
   const save = useCallback(async (): Promise<boolean> => {
-    if (!validate()) return false;
+    if (!(await validate())) return false;
 
     const stepsRequest: PipelineStepRequest[] = state.steps.map((step) => ({
       // 기존 스텝 id 를 함께 보내 서버가 같은 스텝을 제자리 갱신하게 한다(WD-108) — 이름을 바꿔도 과거 실행 기록이 이어진다.

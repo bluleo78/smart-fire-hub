@@ -837,7 +837,7 @@ class PipelineServiceTest extends IntegrationTestBase {
 
     assertThatThrownBy(() -> pipelineService.createPipeline(request, testUserId))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("aiConfig");
+        .hasMessage("스텝 'ai_step': AI 분류 설정(aiConfig)이 필요합니다");
   }
 
   @Test
@@ -865,7 +865,7 @@ class PipelineServiceTest extends IntegrationTestBase {
 
     assertThatThrownBy(() -> pipelineService.createPipeline(request, testUserId))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("prompt");
+        .hasMessage("스텝 'ai_step': 프롬프트를 입력하세요");
   }
 
   @Test
@@ -892,7 +892,7 @@ class PipelineServiceTest extends IntegrationTestBase {
 
     assertThatThrownBy(() -> pipelineService.createPipeline(request, testUserId))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("outputColumn");
+        .hasMessage("스텝 'ai_step': 출력 컬럼을 최소 1개 정의하세요");
   }
 
   @Test
@@ -924,7 +924,7 @@ class PipelineServiceTest extends IntegrationTestBase {
 
     assertThatThrownBy(() -> pipelineService.createPipeline(request, testUserId))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("outputColumn type");
+        .hasMessageContaining("스텝 'ai_step': 출력 컬럼 타입은 다음 중 하나여야 합니다");
   }
 
   @Test
@@ -958,7 +958,7 @@ class PipelineServiceTest extends IntegrationTestBase {
 
     assertThatThrownBy(() -> pipelineService.createPipeline(request, testUserId))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("batchSize");
+        .hasMessage("스텝 'ai_step': 배치 크기는 1~100 사이여야 합니다");
   }
 
   @Test
@@ -989,7 +989,7 @@ class PipelineServiceTest extends IntegrationTestBase {
 
     assertThatThrownBy(() -> pipelineService.createPipeline(request, testUserId))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("onError");
+        .hasMessageContaining("스텝 'ai_step': 오류 처리 방식은 다음 중 하나여야 합니다");
   }
 
   /**

@@ -3,6 +3,8 @@ package com.smartfirehub.pipeline.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.repository.DatasetColumnRepository;
+import com.smartfirehub.dataset.service.DataTableService;
+import com.smartfirehub.dataset.storage.DataTableNames;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.pipeline.dto.*;
@@ -47,6 +49,14 @@ public class PipelineService {
   private static final Set<String> VALID_OUTPUT_COLUMN_TYPES =
       Set.of("TEXT", "INTEGER", "DECIMAL", "BOOLEAN", "DATE", "TIMESTAMP");
   private static final Set<String> VALID_ON_ERROR = Set.of("CONTINUE", "RETRY_BATCH", "FAIL_STEP");
+
+  // 스텝 출력 컬럼 저장 검증 문구(WD-154) — 웹 편집기(usePipelineValidation)와 같은 문장을 쓴다. 서버는 앞에 「스텝 '<이름>': 」을 붙인다.
+  static final String EMPTY_MAPPING_ROW_MESSAGE = "비어 있는 매핑 행이 있습니다 — 채우거나 삭제하세요";
+  static final String TARGET_COLUMN_REQUIRED_MESSAGE = "대상 컬럼 이름을 입력하세요";
+  static final String SOURCE_FIELD_REQUIRED_MESSAGE = "응답 필드를 입력하세요";
+  static final String OUTPUT_COLUMN_NAME_REQUIRED_MESSAGE = "출력 컬럼 이름을 입력하세요";
+  static final String INVALID_COLUMN_NAME_MESSAGE = "컬럼 이름은 영문 소문자로 시작하고 영문 소문자·숫자·밑줄만 쓸 수 있습니다: ";
+  static final String MISSING_OUTPUT_COLUMN_MESSAGE = "출력 데이터셋에 없는 컬럼입니다: ";
 
   // "스텝 참조" 문법({{#N}}) — 실행 시점(PipelineAsyncRunner#resolveStepReferences)과 동일한 패턴을
   // 저장 시점 검증에도 적용해야 두 시점의 검증 대상이 일치한다 (#643).
@@ -147,8 +157,11 @@ public class PipelineService {
       if ("API_CALL".equals(stepRequest.scriptType())) {
         if (stepRequest.apiConfig() == null || stepRequest.apiConfig().isEmpty()) {
           throw new IllegalArgumentException(
-              "API_CALL step '" + stepRequest.name() + "' requires apiConfig");
+              stepError(stepRequest.name(), "API 호출 설정(apiConfig)이 필요합니다"));
         }
+        // 응답 필드 매핑의 빈 행·형식·중복은 데이터를 보지 않는 검사라 보안 판정 전에 둔다(WD-154). 출력 데이터셋에 컬럼이 있는지는
+        // 아래 출력 판정 뒤에 본다(존재 오라클 방지).
+        validateApiCallFieldMappings(stepRequest);
       }
 
       // Validate AI_CLASSIFY step requirements
@@ -202,6 +215,12 @@ public class PipelineService {
           }
         }
         pipelineSecurityGate.checkNewStepReferencesForSave(editorUserId, newInputs);
+      }
+
+      // WD-154: API_CALL 매핑의 대상 컬럼이 지정 출력 데이터셋에 실제로 있는지 — 출력·입력 보안 판정을 모두 지난 뒤에만 본다. 앞에 두면 볼
+      // 수 없는(또는 없는) 데이터셋 id 로 컬럼 이름을 떠보는 존재 오라클이 된다.
+      if ("API_CALL".equals(stepRequest.scriptType())) {
+        validateApiCallTargetsExist(stepRequest, editorUserId);
       }
 
       // PYTHON 스텝 escalation 코드(shell/동적실행 등) 차단 — pythonConfig 유무와 무관하게 항상 검증 (#270)
@@ -659,39 +678,50 @@ public class PipelineService {
     return matched;
   }
 
+  /**
+   * AI_CLASSIFY 스텝 설정을 저장 전에 검증한다 — 프롬프트·출력 컬럼(이름·타입)·배치 크기·오류 처리.
+   *
+   * <p>출력 컬럼 이름(WD-154): 빈 이름·형식 위반·중복은 실행 시점에야 영어 원문 오류(Invalid name: . Must match …)로 실패했다 — 저장에서
+   * 막고 어느 스텝인지 한국어로 알린다. 출력 데이터셋을 자동 생성(TEMP)하는 스텝은 시스템 예약어도 막는다(TEMP 생성이 예약어를 거부한다).
+   */
   private void validateAiClassifyStep(PipelineStepRequest step) {
     String stepName = step.name();
 
     if (step.aiConfig() == null || step.aiConfig().isEmpty()) {
-      throw new IllegalArgumentException("AI_CLASSIFY step '" + stepName + "' requires aiConfig");
+      throw new IllegalArgumentException(stepError(stepName, "AI 분류 설정(aiConfig)이 필요합니다"));
     }
 
     AiClassifyConfig config = objectMapper.convertValue(step.aiConfig(), AiClassifyConfig.class);
 
     if (config.prompt() == null || config.prompt().isBlank()) {
-      throw new IllegalArgumentException(
-          "AI_CLASSIFY step '" + stepName + "' requires aiConfig.prompt");
+      throw new IllegalArgumentException(stepError(stepName, "프롬프트를 입력하세요"));
     }
     if (config.outputColumns() == null || config.outputColumns().isEmpty()) {
-      throw new IllegalArgumentException(
-          "AI_CLASSIFY step '" + stepName + "' requires at least 1 outputColumn");
+      throw new IllegalArgumentException(stepError(stepName, "출력 컬럼을 최소 1개 정의하세요"));
     }
+    boolean autoOutput = step.outputDatasetId() == null;
+    Set<String> seenNames = new java.util.HashSet<>();
     for (AiClassifyConfig.OutputColumn col : config.outputColumns()) {
+      String name = col.name() == null ? "" : col.name();
+      if (name.isBlank()) {
+        throw new IllegalArgumentException(
+            stepError(stepName, OUTPUT_COLUMN_NAME_REQUIRED_MESSAGE));
+      }
+      rejectInvalidColumnName(stepName, name, autoOutput);
+      if (!seenNames.add(name)) {
+        throw new IllegalArgumentException(stepError(stepName, "출력 컬럼 이름이 중복됩니다: " + name));
+      }
       if (col.type() == null || !VALID_OUTPUT_COLUMN_TYPES.contains(col.type())) {
         throw new IllegalArgumentException(
-            "AI_CLASSIFY step '"
-                + stepName
-                + "' outputColumn type must be one of: "
-                + VALID_OUTPUT_COLUMN_TYPES);
+            stepError(stepName, "출력 컬럼 타입은 다음 중 하나여야 합니다: " + VALID_OUTPUT_COLUMN_TYPES));
       }
     }
     if (config.batchSize() != null && (config.batchSize() < 1 || config.batchSize() > 100)) {
-      throw new IllegalArgumentException(
-          "AI_CLASSIFY step '" + stepName + "' batchSize must be between 1 and 100");
+      throw new IllegalArgumentException(stepError(stepName, "배치 크기는 1~100 사이여야 합니다"));
     }
     if (config.onError() != null && !VALID_ON_ERROR.contains(config.onError())) {
       throw new IllegalArgumentException(
-          "AI_CLASSIFY step '" + stepName + "' onError must be one of: " + VALID_ON_ERROR);
+          stepError(stepName, "오류 처리 방식은 다음 중 하나여야 합니다: " + VALID_ON_ERROR));
     }
   }
 
@@ -702,11 +732,130 @@ public class PipelineService {
       for (PythonStepConfig.OutputColumn col : config.outputColumns()) {
         if (col.type() == null || !VALID_OUTPUT_COLUMN_TYPES.contains(col.type().toUpperCase())) {
           throw new IllegalArgumentException(
-              "Python step '"
-                  + step.name()
-                  + "' outputColumn type must be one of: "
-                  + VALID_OUTPUT_COLUMN_TYPES);
+              stepError(step.name(), "출력 컬럼 타입은 다음 중 하나여야 합니다: " + VALID_OUTPUT_COLUMN_TYPES));
         }
+      }
+    }
+  }
+
+  /** 스텝 검증 오류 문구 — 어느 스텝의 문제인지 앞에 붙인다(예: 「스텝 'API 호출': 응답 필드를 입력하세요」). */
+  private static String stepError(String stepName, String message) {
+    return "스텝 '" + stepName + "': " + message;
+  }
+
+  /** API_CALL 응답 필드 매핑 한 행(원문 그대로 — 공백 판정만 trim 으로 한다). */
+  private record FieldMappingRow(String sourceField, String targetColumn) {}
+
+  /**
+   * apiConfig.fieldMappings 를 행 목록으로 읽는다. 저장 요청의 apiConfig 는 자유 형식 맵이라 레코드 변환 대신 원시 값을 읽는다 — 다른 키의
+   * 형식이 어긋나도 매핑 검증이 엉뚱한 변환 오류로 바뀌지 않게. 행이 객체가 아니면 빈 행으로 본다.
+   */
+  private static List<FieldMappingRow> readFieldMappings(Map<String, Object> apiConfig) {
+    Object raw = apiConfig.get("fieldMappings");
+    if (!(raw instanceof List<?> list)) {
+      return List.of();
+    }
+    List<FieldMappingRow> rows = new java.util.ArrayList<>();
+    for (Object item : list) {
+      if (item instanceof Map<?, ?> m) {
+        Object source = m.get("sourceField");
+        Object target = m.get("targetColumn");
+        rows.add(
+            new FieldMappingRow(
+                source == null ? "" : source.toString(), target == null ? "" : target.toString()));
+      } else {
+        rows.add(new FieldMappingRow("", ""));
+      }
+    }
+    return rows;
+  }
+
+  /**
+   * API_CALL 응답 필드 매핑의 행 단위 검증(WD-154) — 빈 행, 한쪽만 채운 행, 대상 컬럼 이름 형식·예약어, 같은 대상 컬럼 중복.
+   *
+   * <p>왜 저장에서 막나: 빈 대상 컬럼은 실행 시점 적재가 {@code Invalid name: . Must match [a-z][a-z0-9_]*} 영어 원문으로, 같은
+   * 대상 컬럼 둘은 INSERT 컬럼 중복(또는 TEMP 생성 실패)으로 실패했다. 빈 행을 조용히 버리지 않는 이유: 사용자가 채우려던 행일 수 있다 — 채우거나 지우게
+   * 한다.
+   */
+  private static void validateApiCallFieldMappings(PipelineStepRequest step) {
+    String stepName = step.name();
+    boolean autoOutput = step.outputDatasetId() == null;
+    Set<String> seenTargets = new java.util.HashSet<>();
+    for (FieldMappingRow row : readFieldMappings(step.apiConfig())) {
+      boolean sourceBlank = row.sourceField().isBlank();
+      boolean targetBlank = row.targetColumn().isBlank();
+      if (sourceBlank && targetBlank) {
+        throw new IllegalArgumentException(stepError(stepName, EMPTY_MAPPING_ROW_MESSAGE));
+      }
+      if (targetBlank) {
+        throw new IllegalArgumentException(stepError(stepName, TARGET_COLUMN_REQUIRED_MESSAGE));
+      }
+      if (sourceBlank) {
+        throw new IllegalArgumentException(stepError(stepName, SOURCE_FIELD_REQUIRED_MESSAGE));
+      }
+      rejectInvalidColumnName(stepName, row.targetColumn(), autoOutput);
+      if (!seenTargets.add(row.targetColumn())) {
+        throw new IllegalArgumentException(
+            stepError(stepName, "대상 컬럼이 중복됩니다: " + row.targetColumn()));
+      }
+    }
+  }
+
+  /**
+   * 출력 컬럼 이름(API_CALL 대상 컬럼·AI_CLASSIFY 출력 컬럼)의 예약어·형식 검사.
+   *
+   * <p>예약어(id·import_id·created_at·_updated_at)는 출력 데이터셋을 자동 생성할 때만 막는다 — TEMP 생성이 예약어를 거부하기
+   * 때문이다(문구는 데이터셋 생성과 같은 {@link DataTableService#reservedColumnNameMessage}). 지정 출력 데이터셋에는 이 컬럼들이
+   * 물리적으로 있어 적재가 가능하므로 형식 검사만 한다. 형식 규칙은 {@link DataTableNames#isValid} — 공용 영어 문구({@link
+   * DataTableNames#validate})는 다른 호출처와 공유하므로 바꾸지 않고 여기서 한국어 안내를 낸다(WD-111 과 같은 문장).
+   */
+  private static void rejectInvalidColumnName(String stepName, String name, boolean autoOutput) {
+    if (autoOutput && DataTableService.SYSTEM_COLUMNS.contains(name.toLowerCase())) {
+      throw new IllegalArgumentException(
+          stepError(stepName, DataTableService.reservedColumnNameMessage(name)));
+    }
+    if (!DataTableNames.isValid(name)) {
+      throw new IllegalArgumentException(stepError(stepName, INVALID_COLUMN_NAME_MESSAGE + name));
+    }
+  }
+
+  /**
+   * API_CALL 매핑의 대상 컬럼이 지정 출력 데이터셋에 있는지 검증한다(WD-154). 없는 컬럼은 실행 시점에 {@code bad SQL grammar [INSERT
+   * INTO …]} 원문으로 실패했다.
+   *
+   * <p>검사하지 않는 경우:
+   *
+   * <ul>
+   *   <li>출력 미지정(자동 생성) — 매핑으로 TEMP 를 만들므로 매핑이 곧 스키마다.
+   *   <li>편집자가 볼 수 없는 출력(이 파이프라인에 이미 있던 TEMP 의 왕복 보존은 출력 판정을 건너뛴다) — 컬럼 목록을 알려 주면 숨김 데이터셋의 스키마를 떠볼
+   *       수 있다. 실행 시점 오류로 남는다.
+   * </ul>
+   *
+   * <p>지정 출력이 러너 TEMP 여도 검사한다 — 두 번째 실행부터 러너는 TEMP 를 매핑에 맞춰 다시 만들지 않고 그대로 적재하므로(해석된 출력 id 가 그대로
+   * 들어온다), 없는 컬럼은 실행 시점에 똑같이 실패한다. 시스템 컬럼(id 등)은 물리 테이블에 있으므로 있는 것으로 본다.
+   */
+  private void validateApiCallTargetsExist(PipelineStepRequest step, Long editorUserId) {
+    Long outputId = step.outputDatasetId();
+    if (outputId == null || editorUserId == null) {
+      return;
+    }
+    List<FieldMappingRow> rows = readFieldMappings(step.apiConfig());
+    if (rows.isEmpty()) {
+      return;
+    }
+    if (!datasetAccessGuard
+        .checkDatasetReads(clearanceResolver.resolve(editorUserId), List.of(outputId))
+        .allowed()) {
+      return;
+    }
+    Set<String> existing = new java.util.HashSet<>(DataTableService.SYSTEM_COLUMNS);
+    for (DatasetColumnResponse col : columnRepository.findByDatasetId(outputId)) {
+      existing.add(col.columnName());
+    }
+    for (FieldMappingRow row : rows) {
+      if (!existing.contains(row.targetColumn())) {
+        throw new IllegalArgumentException(
+            stepError(step.name(), MISSING_OUTPUT_COLUMN_MESSAGE + row.targetColumn()));
       }
     }
   }

@@ -34,6 +34,7 @@ import { useDataset } from '@/hooks/queries/useDatasets';
 import { columnNameLengthError } from '@/lib/validations/dataset';
 import type { AiClassifyConfig } from '@/types/pipeline';
 
+import { aiOutputColumnNameField } from '../hooks/stepColumnValidation';
 import { InlineFieldError } from './InlineFieldError';
 
 const COLUMN_TYPES = ['TEXT', 'INTEGER', 'DECIMAL', 'BOOLEAN', 'DATE', 'TIMESTAMP'];
@@ -73,6 +74,8 @@ interface AiClassifyStepConfigProps {
    * true 면 상세 조회(404)를 하지 않고 "볼 수 없어 컬럼을 표시할 수 없음"을 보인다. 저장된 inputColumns 값은 건드리지 않는다.
    */
   primaryInputHidden?: boolean;
+  /** 저장 시 검증 오류 조회 — 출력 컬럼 이름 행 아래 인라인 문구에 쓴다(WD-154, 키는 aiOutputColumnNameField) */
+  fieldError?: (field: string) => string | undefined;
 }
 
 interface CollapsibleSectionProps {
@@ -121,6 +124,7 @@ export default function AiClassifyStepConfig({
   onChange,
   readOnly,
   primaryInputHidden = false,
+  fieldError,
 }: AiClassifyStepConfigProps) {
   // 접근성: 라벨↔입력 연결용 id 접두사 (#432). 스텝마다 이 패널이 다시 렌더되므로 하드코딩 id 는 충돌한다.
   const baseId = useId();
@@ -263,7 +267,9 @@ export default function AiClassifyStepConfig({
             </div>
             {outputColumns.map((col, i) => {
               // 출력 컬럼은 임시 데이터셋의 칼럼명이 된다 — 길이 상한은 columnNameLengthError 참고.
-              const nameError = columnNameLengthError(col.name);
+              // 저장 시 검증 오류(빈 이름·형식·중복, WD-154)가 있으면 그것을 먼저 보인다(행당 오류 자리 하나).
+              const nameError =
+                fieldError?.(aiOutputColumnNameField(i)) ?? columnNameLengthError(col.name);
               const nameErrorId = `${baseId}-ai-col-error-${i}`;
               return (
                 <div key={i} className="space-y-0.5">
@@ -271,6 +277,7 @@ export default function AiClassifyStepConfig({
                     <Input
                       className="h-7 text-xs font-mono"
                       placeholder="column_name"
+                      aria-label={`출력 컬럼명 ${i + 1}`}
                       value={col.name}
                       disabled={readOnly}
                       pattern="[a-z][a-z0-9_]*"

@@ -82,4 +82,36 @@ test.describe('데이터셋 상세 — API 가져오기 기본 이름 (WD-31④)
     expect(req.payload).toMatchObject({ pipelineName: 'API Import #1' });
     expect(JSON.stringify(req.payload)).not.toContain('인사 급여');
   });
+
+  /**
+   * WD-154 — 서버가 매핑을 저장 시점에 거부하면(400) 고정 문구 대신 서버 문구(스텝 이름·이유)를 보인다.
+   * 마법사는 빈 매핑 행을 막지 않으므로, 예전에는 생성에 성공한 뒤 실행 시점에야 영어 원문 오류로 실패했다.
+   */
+  test('서버가 매핑을 거부하면 그 이유를 그대로 보인다', async ({ authenticatedPage: page }) => {
+    await setupDataTabMocks(page);
+    const serverMessage = "스텝 'API Data Collection': 비어 있는 매핑 행이 있습니다 — 채우거나 삭제하세요";
+    await mockApi(
+      page,
+      'POST',
+      '/api/v1/datasets/1/api-import',
+      { status: 400, error: 'Bad Request', message: serverMessage },
+      { status: 400 },
+    );
+
+    await page.goto('/data/datasets/1');
+    await expect(page.getByRole('heading', { name: '인사 급여' })).toBeVisible();
+    await page.getByRole('tab', { name: '데이터' }).click();
+    await page.getByRole('button', { name: 'API 가져오기' }).click();
+
+    const dialog = page.getByRole('dialog');
+    await dialog.getByPlaceholder('https://api.example.com/v1/data').fill('https://api.example.com/v1/data');
+    await dialog.getByRole('button', { name: '다음' }).click();
+    await dialog.getByRole('button', { name: '매핑 추가' }).click();
+    await dialog.getByRole('button', { name: '다음' }).click();
+    await dialog.getByRole('button', { name: '다음' }).click();
+    await dialog.getByRole('button', { name: '완료' }).click();
+
+    await expect(page.getByText(serverMessage)).toBeVisible();
+    await expect(page.getByText('API 임포트 생성에 실패했습니다.')).toHaveCount(0);
+  });
 });
