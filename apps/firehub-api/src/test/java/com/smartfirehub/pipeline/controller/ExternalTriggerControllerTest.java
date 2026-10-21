@@ -1,6 +1,7 @@
 package com.smartfirehub.pipeline.controller;
 
 import static com.smartfirehub.jooq.Tables.*;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -9,9 +10,13 @@ import com.smartfirehub.pipeline.dto.*;
 import com.smartfirehub.pipeline.service.PipelineService;
 import com.smartfirehub.pipeline.service.TriggerService;
 import com.smartfirehub.support.IntegrationTestBase;
+import java.nio.charset.StandardCharsets;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -33,6 +38,7 @@ class ExternalTriggerControllerTest extends IntegrationTestBase {
 
   private Long testUserId;
   private Long pipelineId;
+  private String pipelineName;
 
   @BeforeEach
   void setUp() {
@@ -47,10 +53,10 @@ class ExternalTriggerControllerTest extends IntegrationTestBase {
             .fetchOne()
             .getId();
 
+    pipelineName = "Ext Pipeline " + unique;
     PipelineDetailResponse pipeline =
         pipelineService.createPipeline(
-            new CreatePipelineRequest("Ext Pipeline " + unique, "Description", List.of()),
-            testUserId);
+            new CreatePipelineRequest(pipelineName, "Description", List.of()), testUserId);
     pipelineId = pipeline.id();
   }
 
@@ -70,7 +76,86 @@ class ExternalTriggerControllerTest extends IntegrationTestBase {
                 .content("{}"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("triggered"))
-        .andExpect(jsonPath("$.pipelineId").value(pipelineId.intValue()));
+        .andExpect(jsonPath("$.pipelineId").value(pipelineId.intValue()))
+        .andExpect(jsonPath("$.triggerId").value(trigger.id().intValue()))
+        // 실제로 시작한 실행의 id 를 돌려준다(WD-152)
+        .andExpect(jsonPath("$.executionId").isNumber());
+  }
+
+  /**
+   * 회귀 테스트(WD-152): 파이프라인이 비활성이면 실행하지 않았으므로 200 「triggered」가 아니라 409 「skipped」+한국어 사유여야 한다. 예전에는
+   * 결과와 무관하게 200 을 돌려줘 외부 시스템이 실행됐다고 믿었다. 이벤트 로그에도 같은 한국어 사유가 남아야 한다.
+   */
+  @Test
+  void apiTrigger_inactivePipeline_returnsConflictWithKoreanReason() throws Exception {
+    TriggerResponse trigger =
+        triggerService.createTrigger(
+            pipelineId,
+            new CreateTriggerRequest("API Inactive", TriggerType.API, null, Map.of()),
+            testUserId);
+    String rawToken = (String) trigger.config().get("rawToken");
+    deactivatePipeline();
+
+    mockMvc
+        .perform(
+            post("/api/v1/triggers/api/" + rawToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{}"))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.status").value("skipped"))
+        .andExpect(jsonPath("$.reason").value("파이프라인이 비활성 상태라 실행하지 않았습니다"));
+
+    assertSkippedEventWithReason(trigger.id(), "파이프라인이 비활성 상태라 실행하지 않았습니다");
+  }
+
+  /**
+   * 회귀 테스트(WD-152): 꺼진 API 트리거를 맞는 토큰으로 부르면 "토큰이 틀렸다"(401)가 아니라 409 「트리거가 꺼져 있어 실행하지 않았습니다」다. 꺼진
+   * 트리거 발화는 기존대로 이벤트를 남기지 않는다.
+   */
+  @Test
+  void apiTrigger_disabledTrigger_returnsConflict() throws Exception {
+    TriggerResponse trigger =
+        triggerService.createTrigger(
+            pipelineId,
+            new CreateTriggerRequest("API Disabled", TriggerType.API, null, Map.of()),
+            testUserId);
+    String rawToken = (String) trigger.config().get("rawToken");
+    triggerService.toggleTrigger(trigger.id(), false);
+
+    mockMvc
+        .perform(
+            post("/api/v1/triggers/api/" + rawToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{}"))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.status").value("skipped"))
+        .andExpect(jsonPath("$.reason").value("트리거가 꺼져 있어 실행하지 않았습니다"));
+
+    assertThat(eventsOf(trigger.id())).isEmpty();
+  }
+
+  /** 꺼진 API 트리거라도 IP 제한이 먼저다 — 허용되지 않은 IP 에는 "꺼져 있음"을 알려 주지 않고 기존대로 403 이다. */
+  @Test
+  void apiTrigger_disabledTrigger_fromBlockedIp_returnsForbidden() throws Exception {
+    TriggerResponse trigger =
+        triggerService.createTrigger(
+            pipelineId,
+            new CreateTriggerRequest(
+                "API Disabled IP",
+                TriggerType.API,
+                null,
+                Map.of("allowedIps", List.of("10.0.0.0/24"))),
+            testUserId);
+    String rawToken = (String) trigger.config().get("rawToken");
+    triggerService.toggleTrigger(trigger.id(), false);
+
+    mockMvc
+        .perform(
+            post("/api/v1/triggers/api/" + rawToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{}"))
+        .andExpect(status().isForbidden())
+        .andExpect(jsonPath("$.message").value("IP not allowed"));
   }
 
   @Test
@@ -99,18 +184,41 @@ class ExternalTriggerControllerTest extends IntegrationTestBase {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"data\": \"test\"}"))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$.status").value("triggered"));
+        .andExpect(jsonPath("$.status").value("triggered"))
+        .andExpect(jsonPath("$.executionId").isNumber());
+  }
+
+  /** 회귀 테스트(WD-152): 웹훅도 파이프라인이 비활성이면 409 「skipped」+한국어 사유이고, 이벤트 로그에 같은 사유가 남는다. */
+  @Test
+  void webhookTrigger_inactivePipeline_returnsConflictWithKoreanReason() throws Exception {
+    TriggerResponse trigger =
+        triggerService.createTrigger(
+            pipelineId,
+            new CreateTriggerRequest("Webhook Inactive", TriggerType.WEBHOOK, null, Map.of()),
+            testUserId);
+    String webhookId = (String) trigger.config().get("webhookId");
+    deactivatePipeline();
+
+    mockMvc
+        .perform(
+            post("/api/v1/triggers/webhook/" + webhookId)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"data\": \"test\"}"))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.status").value("skipped"))
+        .andExpect(jsonPath("$.reason").value("파이프라인이 비활성 상태라 실행하지 않았습니다"));
+
+    assertSkippedEventWithReason(trigger.id(), "파이프라인이 비활성 상태라 실행하지 않았습니다");
   }
 
   /**
-   * 비활성 웹훅은 404 다 — P2-b 에서 의도적으로 바꾼 외부 계약이라 여기서 고정한다.
+   * 꺼진 웹훅(시크릿 없음)은 409 「트리거가 꺼져 있어 실행하지 않았습니다」다(WD-152).
    *
-   * <p>이전에는 해석에 {@code is_enabled} 필터가 없어 서명검증까지 통과한 뒤 {@code fireTrigger} 가 조용히 반환했고, 컨트롤러는 실행되지도
-   * 않은 요청에 <b>200 {"status":"triggered"}</b> 를 돌려줬다. V95 해석 함수가 비활성 트리거를 아예 해석하지 않으므로 이제 진실을 말한다.
-   * 부수 효과로 비활성 트리거의 테넌트 존재 여부도 노출되지 않는다.
+   * <p>이 계약은 P2-b 의 "꺼진 웹훅은 404"를 대체한다. 그때는 해석 함수(V95)가 꺼진 트리거를 아예 해석하지 않아 404 가 났는데, 그러면 맞는 웹훅 id
+   * 를 가진 호출자도 "웹훅이 없다"는 말만 듣고 꺼져 있다는 것을 알 수 없었다. 시크릿이 없는 웹훅은 웹훅 id 자체가 자격이므로 꺼짐을 알려 준다.
    */
   @Test
-  void webhookTrigger_disabledTrigger_returnsNotFound() throws Exception {
+  void webhookTrigger_disabledTrigger_returnsConflict() throws Exception {
     TriggerResponse trigger =
         triggerService.createTrigger(
             pipelineId,
@@ -124,7 +232,92 @@ class ExternalTriggerControllerTest extends IntegrationTestBase {
             post("/api/v1/triggers/webhook/" + webhookId)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"data\": \"test\"}"))
-        .andExpect(status().isNotFound());
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.status").value("skipped"))
+        .andExpect(jsonPath("$.reason").value("트리거가 꺼져 있어 실행하지 않았습니다"));
+
+    assertThat(eventsOf(trigger.id())).isEmpty();
+  }
+
+  /** 시크릿이 있는 꺼진 웹훅은 서명이 맞을 때만 409 로 꺼짐을 알린다(WD-152). */
+  @Test
+  void webhookTrigger_disabledWithSecret_validSignature_returnsConflict() throws Exception {
+    TriggerResponse trigger = createSecretWebhook("Secure Disabled Webhook");
+    String webhookId = (String) trigger.config().get("webhookId");
+    triggerService.toggleTrigger(trigger.id(), false);
+    String body = "{\"data\": \"test\"}";
+
+    mockMvc
+        .perform(
+            post("/api/v1/triggers/webhook/" + webhookId)
+                .contentType(MediaType.APPLICATION_JSON)
+                .header("X-Hub-Signature", sign(body))
+                .content(body))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.status").value("skipped"))
+        .andExpect(jsonPath("$.reason").value("트리거가 꺼져 있어 실행하지 않았습니다"));
+  }
+
+  /**
+   * 시크릿이 있는 꺼진 웹훅에 서명이 없거나 틀리면 WD-152 이전과 똑같이 404 다 — 서명 통과 전에는 꺼짐은 물론 웹훅의 존재도 드러내지 않는다. 401 을 주면
+   * "이 id 의 웹훅이 있다"는 사실이 서명 없이 새어 나간다.
+   */
+  @Test
+  void webhookTrigger_disabledWithSecret_missingOrInvalidSignature_returnsNotFound()
+      throws Exception {
+    TriggerResponse trigger = createSecretWebhook("Secure Disabled Webhook 2");
+    String webhookId = (String) trigger.config().get("webhookId");
+    triggerService.toggleTrigger(trigger.id(), false);
+
+    mockMvc
+        .perform(
+            post("/api/v1/triggers/webhook/" + webhookId)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"data\": \"test\"}"))
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.message").value("Webhook not found"));
+
+    mockMvc
+        .perform(
+            post("/api/v1/triggers/webhook/" + webhookId)
+                .contentType(MediaType.APPLICATION_JSON)
+                .header("X-Hub-Signature", "sha256=deadbeef")
+                .content("{\"data\": \"test\"}"))
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.message").value("Webhook not found"));
+  }
+
+  /** 켜진 웹훅의 서명 불일치는 기존대로 401 이다. */
+  @Test
+  void webhookTrigger_withSecret_invalidSignature_returnsUnauthorized() throws Exception {
+    TriggerResponse trigger = createSecretWebhook("Secure Webhook Invalid Sig");
+    String webhookId = (String) trigger.config().get("webhookId");
+
+    mockMvc
+        .perform(
+            post("/api/v1/triggers/webhook/" + webhookId)
+                .contentType(MediaType.APPLICATION_JSON)
+                .header("X-Hub-Signature", "sha256=deadbeef")
+                .content("{\"data\": \"test\"}"))
+        .andExpect(status().isUnauthorized())
+        .andExpect(jsonPath("$.message").value("Invalid signature"));
+  }
+
+  /** 켜진 웹훅에 맞는 서명이면 실행되고 200 이다 — 서명 헬퍼가 실제 검증과 같은 형식인지도 함께 고정한다. */
+  @Test
+  void webhookTrigger_withSecret_validSignature_triggersExecution() throws Exception {
+    TriggerResponse trigger = createSecretWebhook("Secure Webhook Valid Sig");
+    String webhookId = (String) trigger.config().get("webhookId");
+    String body = "{\"data\": \"test\"}";
+
+    mockMvc
+        .perform(
+            post("/api/v1/triggers/webhook/" + webhookId)
+                .contentType(MediaType.APPLICATION_JSON)
+                .header("X-Hub-Signature", sign(body))
+                .content(body))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("triggered"));
   }
 
   @Test
@@ -258,5 +451,49 @@ class ExternalTriggerControllerTest extends IntegrationTestBase {
                 .content("{\"data\": \"test\"}"))
         .andExpect(status().isUnauthorized())
         .andExpect(jsonPath("$.message").value("Missing X-Hub-Signature header"));
+  }
+
+  /** 테스트 시크릿. 웹훅 생성과 서명 계산이 같은 값을 쓴다. */
+  private static final String WEBHOOK_SECRET = "my-secret-key";
+
+  /** 시크릿이 설정된 웹훅 트리거를 만든다. */
+  private TriggerResponse createSecretWebhook(String name) {
+    return triggerService.createTrigger(
+        pipelineId,
+        new CreateTriggerRequest(name, TriggerType.WEBHOOK, null, Map.of("secret", WEBHOOK_SECRET)),
+        testUserId);
+  }
+
+  /** 서버 검증과 같은 형식("sha256=" + 소문자 hex HMAC-SHA256)으로 본문 서명을 만든다. */
+  private static String sign(String body) throws Exception {
+    Mac mac = Mac.getInstance("HmacSHA256");
+    mac.init(new SecretKeySpec(WEBHOOK_SECRET.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+    return "sha256=" + HexFormat.of().formatHex(mac.doFinal(body.getBytes(StandardCharsets.UTF_8)));
+  }
+
+  /** 테스트 파이프라인을 비활성으로 바꾼다. */
+  private void deactivatePipeline() {
+    pipelineService.updatePipeline(
+        pipelineId,
+        new UpdatePipelineRequest(pipelineName, "Description", false, null),
+        testUserId);
+  }
+
+  /**
+   * 한 트리거의 이벤트만 추린다 — 같은 파이프라인의 다른 트리거 이벤트와 섞이지 않게 한다. 컨트롤러가 요청 처리 뒤 테넌트 컨텍스트를 비우므로 MockMvc 호출 뒤의
+   * 조회는 테넌트 픽스처 안에서 한다(RLS 아래에서 컨텍스트 없이 읽으면 0행이다).
+   */
+  private List<TriggerEventResponse> eventsOf(Long triggerId) {
+    return inTenantFixture(
+        () ->
+            triggerService.getTriggerEvents(pipelineId, 50).stream()
+                .filter(e -> triggerId.equals(e.triggerId()))
+                .toList());
+  }
+
+  /** 트리거의 건너뜀 이벤트 사유가 기대한 한국어 문구인지 확인한다. */
+  private void assertSkippedEventWithReason(Long triggerId, String reason) {
+    assertThat(eventsOf(triggerId))
+        .anyMatch(e -> "SKIPPED".equals(e.eventType()) && reason.equals(e.detail().get("reason")));
   }
 }

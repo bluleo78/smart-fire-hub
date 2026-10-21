@@ -264,11 +264,55 @@ class TriggerServiceTest extends IntegrationTestBase {
         testUserId);
 
     // Fire trigger
-    triggerService.fireTrigger(created.id(), Map.of());
+    TriggerFireResult result = triggerService.fireTrigger(created.id(), Map.of());
 
-    // Verify SKIPPED event was created
+    // 발화 결과가 "건너뜀 + 한국어 사유"여야 외부 트리거 컨트롤러가 409 로 알릴 수 있다(WD-152)
+    assertThat(result.outcome()).isEqualTo(TriggerFireResult.Outcome.SKIPPED);
+    assertThat(result.reason()).isEqualTo("파이프라인이 비활성 상태라 실행하지 않았습니다");
+    assertThat(result.executionId()).isNull();
+
+    // 이벤트 로그의 사유도 같은 한국어 문구다 — 예전엔 영어 원문("Pipeline is not active")이었다
     List<TriggerEventResponse> events = triggerService.getTriggerEvents(pipelineId, 10);
-    assertThat(events).anyMatch(e -> "SKIPPED".equals(e.eventType()));
+    assertThat(events)
+        .anyMatch(
+            e ->
+                "SKIPPED".equals(e.eventType())
+                    && TriggerService.REASON_PIPELINE_INACTIVE.equals(e.detail().get("reason")));
+  }
+
+  /**
+   * 회귀 테스트(WD-152): 스케줄 트리거가 동시 실행 정책(건너뛰기)에 걸리면 건너뜀 이벤트의 사유가 한국어로 남고, 발화 결과도 같은 사유를 돌려준다. 동시 실행
+   * 정책은 스케줄 트리거에만 적용된다(API·웹훅 트리거는 이 분기를 타지 않는다).
+   */
+  @Test
+  void fireTrigger_scheduleSkipPolicyWithRunningExecution_recordsKoreanReason() {
+    TriggerResponse created =
+        triggerService.createTrigger(
+            pipelineId,
+            new CreateTriggerRequest(
+                "Skip Policy",
+                TriggerType.SCHEDULE,
+                null,
+                Map.of("cron", "0 0 1 1 *", "timezone", "Asia/Seoul", "concurrencyPolicy", "SKIP")),
+            testUserId);
+
+    // 진행 중인 실행을 직접 만든다 — 실제 실행을 띄우면 비동기 러너가 끝내 버려 판정이 경합한다
+    dsl.insertInto(PIPELINE_EXECUTION)
+        .set(PIPELINE_EXECUTION.PIPELINE_ID, pipelineId)
+        .set(PIPELINE_EXECUTION.STATUS, "RUNNING")
+        .set(PIPELINE_EXECUTION.EXECUTED_BY, testUserId)
+        .execute();
+
+    TriggerFireResult result = triggerService.fireTrigger(created.id(), Map.of());
+
+    assertThat(result.outcome()).isEqualTo(TriggerFireResult.Outcome.SKIPPED);
+    assertThat(result.reason()).isEqualTo("이미 실행 중인 실행이 있어 동시 실행 정책(건너뛰기)에 따라 실행하지 않았습니다");
+    List<TriggerEventResponse> events = triggerService.getTriggerEvents(pipelineId, 10);
+    assertThat(events)
+        .anyMatch(
+            e ->
+                "SKIPPED".equals(e.eventType())
+                    && TriggerService.REASON_CONCURRENT_SKIP.equals(e.detail().get("reason")));
   }
 
   @Test

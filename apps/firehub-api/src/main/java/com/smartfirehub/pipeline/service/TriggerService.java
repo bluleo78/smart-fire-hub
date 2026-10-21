@@ -48,6 +48,25 @@ public class TriggerService {
    */
   public static final String CHAIN_DEPTH_PARAM = "chainDepth";
 
+  /**
+   * 파이프라인이 비활성이라 건너뛴 사유(WD-152). 이벤트 로그 detail.reason 과 외부 트리거 409 응답 본문이 같은 문구를 쓴다 — 화면과 호출자가 다른
+   * 말을 하지 않게 한 곳에 둔다. 예전에는 영어 원문("Pipeline is not active")이라 화면에 그대로 보이지 못했다.
+   */
+  public static final String REASON_PIPELINE_INACTIVE = "파이프라인이 비활성 상태라 실행하지 않았습니다";
+
+  /** 동시 실행 정책(건너뛰기)으로 건너뛴 사유(WD-152). 예전 영어 원문은 "Concurrent execution (SKIP policy)". */
+  public static final String REASON_CONCURRENT_SKIP =
+      "이미 실행 중인 실행이 있어 동시 실행 정책(건너뛰기)에 따라 실행하지 않았습니다";
+
+  /** 트리거가 꺼져 있어 실행하지 않은 사유(WD-152). 외부 트리거 409 응답 본문에만 쓰인다 — 꺼진 트리거 발화는 이벤트를 남기지 않는다. */
+  public static final String REASON_TRIGGER_DISABLED = "트리거가 꺼져 있어 실행하지 않았습니다";
+
+  /**
+   * 실행 시작 자체가 실패한 사유(WD-152). 오류 이벤트 detail.reason 과 외부 트리거 500 응답 본문에 쓰인다. 예외 원문은 내부 구조(SQL·경로)를
+   * 드러낼 수 있어 인증 없는 외부 호출자에게 보내지 않고, 원문은 기존대로 detail.error 에만 남긴다.
+   */
+  public static final String REASON_FIRE_ERROR = "파이프라인 실행을 시작하지 못했습니다";
+
   private final TriggerRepository triggerRepository;
   private final TriggerEventRepository triggerEventRepository;
   // 비인증 경로의 테넌트 해석 전용. 해싱은 이 서비스에 남기고 조회만 위임한다.
@@ -388,25 +407,34 @@ public class TriggerService {
     return triggerEventRepository.findByPipelineId(pipelineId, limit);
   }
 
-  /** Fire a trigger: validate conditions, execute pipeline, record event. */
+  /**
+   * 트리거를 발화한다: 조건을 확인하고 파이프라인을 실행한 뒤 이벤트를 남긴다.
+   *
+   * <p>결과를 {@link TriggerFireResult} 로 돌려준다(WD-152). 외부 트리거(API·웹훅) 컨트롤러는 이 값으로 "실제로 실행됐는지"를 응답에
+   * 반영한다 — 예전에는 {@code void} 라 실행되지 않은 호출에도 200 「triggered」가 나갔다. 스케줄·연쇄·데이터 변경 경로는 결과를 쓰지 않고, 사유는
+   * 이벤트 로그(한국어)로만 남는다.
+   */
   @Transactional
-  public void fireTrigger(Long triggerId, Map<String, Object> params) {
+  public TriggerFireResult fireTrigger(Long triggerId, Map<String, Object> params) {
     TriggerResponse trigger;
     try {
       trigger = triggerRepository.findById(triggerId).orElse(null);
     } catch (Exception e) {
       log.warn("Failed to find trigger {} during fire: {}", triggerId, e.getMessage());
-      return;
+      return TriggerFireResult.notFired(TriggerFireResult.Outcome.ERROR, REASON_FIRE_ERROR);
     }
 
     if (trigger == null) {
       log.warn("Trigger {} not found during fire (possibly deleted)", triggerId);
-      return;
+      return TriggerFireResult.notFired(TriggerFireResult.Outcome.NOT_FOUND, null);
     }
 
+    // 꺼진 트리거는 이벤트를 남기지 않는다(기존 동작 유지) — 외부 호출자가 꺼진 트리거를 반복 호출해도 이벤트 로그가 넘치지 않게 한다.
+    // 결과만 돌려줘 외부 트리거 컨트롤러가 "꺼져 있음"을 응답할 수 있게 한다(WD-152).
     if (!trigger.isEnabled()) {
       log.info("Trigger {} is disabled, skipping", triggerId);
-      return;
+      return TriggerFireResult.notFired(
+          TriggerFireResult.Outcome.DISABLED, REASON_TRIGGER_DISABLED);
     }
 
     // 실행 시 연쇄 깊이 방어(WD-106): 저장 시 검사를 빠져나간 순환(검사 결함 이전에 저장된 것 포함)이 있어도 연쇄가 끝없이
@@ -423,11 +451,11 @@ public class TriggerService {
           MAX_CHAIN_DEPTH,
           trigger.pipelineId());
       Map<String, Object> detail = new HashMap<>(params);
-      detail.put(
-          "reason",
-          "연쇄 실행이 최대 " + MAX_CHAIN_DEPTH + "단계를 넘어 더 실행하지 않았습니다. 파이프라인 연쇄가 서로를 부르는 순환인지 확인해 주세요.");
+      String reason =
+          "연쇄 실행이 최대 " + MAX_CHAIN_DEPTH + "단계를 넘어 더 실행하지 않았습니다. 파이프라인 연쇄가 서로를 부르는 순환인지 확인해 주세요.";
+      detail.put("reason", reason);
       triggerEventRepository.create(triggerId, trigger.pipelineId(), null, "SKIPPED", detail);
-      return;
+      return TriggerFireResult.notFired(TriggerFireResult.Outcome.SKIPPED, reason);
     }
 
     // Check if pipeline is active
@@ -438,8 +466,9 @@ public class TriggerService {
           trigger.pipelineId(),
           null,
           "SKIPPED",
-          Map.of("reason", "Pipeline is not active"));
-      return;
+          Map.of("reason", REASON_PIPELINE_INACTIVE));
+      return TriggerFireResult.notFired(
+          TriggerFireResult.Outcome.SKIPPED, REASON_PIPELINE_INACTIVE);
     }
 
     // Check concurrency policy for SCHEDULE triggers
@@ -454,8 +483,9 @@ public class TriggerService {
             trigger.pipelineId(),
             null,
             "SKIPPED",
-            Map.of("reason", "Concurrent execution (SKIP policy)"));
-        return;
+            Map.of("reason", REASON_CONCURRENT_SKIP));
+        return TriggerFireResult.notFired(
+            TriggerFireResult.Outcome.SKIPPED, REASON_CONCURRENT_SKIP);
       }
     }
 
@@ -479,10 +509,16 @@ public class TriggerService {
       triggerRepository.updateTriggerState(triggerId, state);
 
       log.info("Trigger {} fired successfully, execution {}", triggerId, execution.id());
+      return TriggerFireResult.fired(execution.id());
     } catch (Exception e) {
       log.error("Failed to fire trigger {}: {}", triggerId, e.getMessage(), e);
-      triggerEventRepository.create(
-          triggerId, trigger.pipelineId(), null, "ERROR", Map.of("error", e.getMessage()));
+      // 화면에는 한국어 사유(reason)만 보이고, 진단용 예외 원문은 기존대로 error 에 남긴다(WD-152).
+      // 원문이 null 인 예외도 있어 Map.of 대신 HashMap 을 쓴다 — Map.of 는 null 값에서 NPE 를 던진다.
+      Map<String, Object> detail = new HashMap<>();
+      detail.put("reason", REASON_FIRE_ERROR);
+      detail.put("error", e.getMessage());
+      triggerEventRepository.create(triggerId, trigger.pipelineId(), null, "ERROR", detail);
+      return TriggerFireResult.notFired(TriggerFireResult.Outcome.ERROR, REASON_FIRE_ERROR);
     }
   }
 

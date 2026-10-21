@@ -326,8 +326,10 @@ class TriggerServiceExtTest extends IntegrationTestBase {
 
     triggerService.toggleTrigger(created.id(), false);
 
-    // disabled 상태에서 fire → 이벤트 기록 없이 조용히 스킵
-    triggerService.fireTrigger(created.id(), Map.of());
+    // disabled 상태에서 fire → 이벤트 기록 없이 스킵하되, 결과로는 "꺼져 있음"을 알려 준다(WD-152)
+    TriggerFireResult result = triggerService.fireTrigger(created.id(), Map.of());
+    assertThat(result.outcome()).isEqualTo(TriggerFireResult.Outcome.DISABLED);
+    assertThat(result.reason()).isEqualTo("트리거가 꺼져 있어 실행하지 않았습니다");
 
     // 이벤트가 생성되지 않아야 한다 (SKIPPED 이벤트도 없어야 함)
     List<TriggerEventResponse> events = triggerService.getTriggerEvents(pipelineId, 10);
@@ -347,10 +349,16 @@ class TriggerServiceExtTest extends IntegrationTestBase {
             testUserId);
 
     // 파이프라인이 활성 상태(기본값)이면 FIRED 이벤트 생성
-    triggerService.fireTrigger(created.id(), Map.of("source", "test"));
+    TriggerFireResult result = triggerService.fireTrigger(created.id(), Map.of("source", "test"));
 
+    // 발화 결과의 실행 id 가 FIRED 이벤트의 실행 id 와 같아야 외부 호출자에게 돌려준 executionId 를 믿을 수 있다(WD-152)
+    assertThat(result.outcome()).isEqualTo(TriggerFireResult.Outcome.FIRED);
+    assertThat(result.executionId()).isNotNull();
+    assertThat(result.reason()).isNull();
     List<TriggerEventResponse> events = triggerService.getTriggerEvents(pipelineId, 10);
-    assertThat(events).anyMatch(e -> "FIRED".equals(e.eventType()));
+    assertThat(events)
+        .anyMatch(
+            e -> "FIRED".equals(e.eventType()) && result.executionId().equals(e.executionId()));
   }
 
   // -----------------------------------------------------------------------
