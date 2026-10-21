@@ -9,6 +9,8 @@ import java.net.InetAddress;
 import java.net.UnknownHostException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 class SsrfProtectionTest {
 
@@ -161,5 +163,90 @@ class SsrfProtectionTest {
     // which resolves to itself and fails isLinkLocalAddress().
     assertThrows(
         SsrfException.class, () -> service.validateUrl("http://169.254.169.254/latest/meta-data/"));
+  }
+
+  // --- WD-148: InetAddress 판정이 놓치던 사설·예약 대역 ---
+
+  /**
+   * IPv6 고유 로컬(ULA, fc00::/7): {@code isSiteLocalAddress()} 는 IPv6 에서 폐기된 fec0::/10 만 보므로 예전에는 통과해,
+   * 파이프라인 「테스트 호출」로 서버 내부 응답을 읽을 수 있었다(WD-148). AWS IMDS 의 IPv6 주소도 이 대역이다.
+   */
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "fd07:b51a:cc66:0:a617:db5e:ab7:e9f1", // 탐색에서 실제로 뚫린 주소 형태
+        "fd00:ec2::254", // AWS IMDS IPv6
+        "fc00::1",
+        "fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+      })
+  void validateResolvedAddress_ipv6UniqueLocal_blocked(String literal) throws UnknownHostException {
+    InetAddress addr = InetAddress.getByName(literal);
+    // 기존 판정만으로는 못 잡는다는 전제를 함께 못 박는다 — 이 전제가 깨지면 테스트가 공허해진다.
+    assertFalse(addr.isSiteLocalAddress());
+    SsrfException e =
+        assertThrows(SsrfException.class, () -> service.validateResolvedAddress(addr));
+    assertTrue(e.getMessage().contains("private/reserved"));
+  }
+
+  @Test
+  void validateUrl_ipv6UniqueLocalLiteralUrl_blocked() {
+    // URL 문자열 → 호스트 → 해석 → 대역 차단까지 전체 경로(탐색에서 쓴 요청과 같은 모양)
+    assertThrows(
+        SsrfException.class,
+        () ->
+            service.validateUrl(
+                "http://[fd07:b51a:cc66:0:a617:db5e:ab7:e9f1]:6010/api/v1/auth/signup-status"));
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "100.64.0.1", // CGNAT
+        "100.100.100.200", // CGNAT 대역의 클라우드 메타데이터
+        "100.127.255.254",
+        "0.0.0.1", // 「이 네트워크」 — isAnyLocalAddress() 는 0.0.0.0 만 본다
+        "192.0.0.8",
+        "198.18.0.1", // 벤치마크
+        "192.0.2.1", // 문서용
+        "240.0.0.1", // 예약
+        "255.255.255.255",
+      })
+  void validateResolvedAddress_reservedIpv4_blocked(String literal) throws UnknownHostException {
+    InetAddress addr = InetAddress.getByName(literal);
+    assertThrows(SsrfException.class, () -> service.validateResolvedAddress(addr));
+  }
+
+  /** IPv4 를 품는 IPv6 로 사설 IPv4 를 우회하지 못한다(NAT64·6to4·IPv4 호환). 6to4 는 폐기 대역이라 공용 IPv4 를 품어도 막는다. */
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "64:ff9b::a9fe:a9fe", // NAT64 → 169.254.169.254
+        "64:ff9b::7f00:1", // NAT64 → 127.0.0.1
+        "2002:a00:1::1", // 6to4 → 10.0.0.1
+        "2002:808:808::1", // 6to4 → 8.8.8.8 이어도 막는다(Python 가드와 같음)
+        "::127.0.0.1", // IPv4 호환 — isLoopbackAddress() 는 거짓
+        "::ffff:10.0.0.5", // 사상(JDK 가 Inet4Address 로 바꿈)
+      })
+  void validateResolvedAddress_ipv6EmbeddingPrivateIpv4_blocked(String literal)
+      throws UnknownHostException {
+    InetAddress addr = InetAddress.getByName(literal);
+    assertThrows(SsrfException.class, () -> service.validateResolvedAddress(addr));
+  }
+
+  /** 공용 주소는 계속 통과한다 — 대역 표가 너무 넓어 정상 외부 API 를 막지 않는지. */
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "8.8.8.8",
+        "1.1.1.1",
+        "100.63.255.255", // CGNAT 바로 아래
+        "100.128.0.1", // CGNAT 바로 위
+        "2606:4700:4700::1111", // 공용 IPv6
+        "2001:4860:4860::8888", // 2001::/23 밖의 공용 IPv6
+        "64:ff9b::808:808", // NAT64 → 8.8.8.8
+      })
+  void validateResolvedAddress_publicAddresses_pass(String literal) throws UnknownHostException {
+    InetAddress addr = InetAddress.getByName(literal);
+    assertDoesNotThrow(() -> service.validateResolvedAddress(addr));
   }
 }

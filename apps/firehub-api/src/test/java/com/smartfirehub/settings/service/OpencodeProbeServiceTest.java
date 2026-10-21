@@ -245,9 +245,8 @@ class OpencodeProbeServiceTest {
 
   /**
    * IPv4-매핑 IPv6({@code ::ffff:10.0.0.5}): JDK 가 이걸 {@code Inet4Address} 로 정규화해 돌려주므로 {@code
-   * isCgnat}/{@code isIpv6UniqueLocal} 의 "길이로 먼저 거른다" 방어가 실제로는 안 걸리고 대신 {@code
-   * SsrfProtectionService} 의 IPv4 사설 대역 판정이 잡는다 — 이 정규화는 JDK 구현 세부사항이라 미래 버전이 바꿀 수 있다. 지금 핀 박아두면
-   * 바뀌었을 때 조용한 구멍이 아니라 빨간 테스트로 드러난다.
+   * SsrfProtectionService} 의 IPv6 판정이 아니라 IPv4 사설 대역 판정이 잡는다(공용 가드는 사상 주소를 바이트로도 본다, WD-148) — 이
+   * 정규화는 JDK 구현 세부사항이라 미래 버전이 바꿀 수 있다. 지금 핀 박아두면 바뀌었을 때 조용한 구멍이 아니라 빨간 테스트로 드러난다.
    */
   @Test
   void IPv4_매핑_IPv6도_거부한다() throws UnknownHostException {
@@ -298,8 +297,8 @@ class OpencodeProbeServiceTest {
 
   /**
    * 0.0.0.0/8("이 네트워크"): {@link InetAddress#isAnyLocalAddress()} 는 정확히 0.0.0.0 하나만 참이라 0.0.0.1 은 기존
-   * SsrfProtectionService 의 어떤 판정도 통과한다 — 리뷰에서 jshell 로 실측 확인됐다. isReservedZeroNet() 보강이 없으면 이 테스트가
-   * 못 잡는다.
+   * is*Address() 판정을 모두 통과한다 — 리뷰에서 jshell 로 실측 확인됐다. 공용 가드(SsrfProtectionService)의 예약 대역 표가 없으면 이
+   * 테스트가 못 잡는다(WD-148 에서 프로브 전용 보강을 공용 가드로 옮김).
    */
   @Test
   void 예약된_0대역도_거부한다() throws UnknownHostException {
@@ -490,9 +489,8 @@ class OpencodeProbeServiceTest {
   }
 
   /**
-   * WD-50 — {@code /models} 엔드포인트 자체가 없는 게이트웨이(404)도 PROVIDER_REJECTED 로 분류되지만,
-   * {@code httpStatus()} 가 정확히 404 를 들고 나가야 {@link OpencodePutValidator} 가 이 경우만 저장
-   * 차단에서 경고로 낮출 수 있다.
+   * WD-50 — {@code /models} 엔드포인트 자체가 없는 게이트웨이(404)도 PROVIDER_REJECTED 로 분류되지만, {@code
+   * httpStatus()} 가 정확히 404 를 들고 나가야 {@link OpencodePutValidator} 가 이 경우만 저장 차단에서 경고로 낮출 수 있다.
    */
   @Test
   void models_엔드포인트_없음_404는_httpStatus를_담는다() {
