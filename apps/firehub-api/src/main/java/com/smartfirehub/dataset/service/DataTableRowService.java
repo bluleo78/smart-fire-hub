@@ -80,6 +80,39 @@ public class DataTableRowService {
         .queryData(tableName, columns, search, page, size, sortBy, sortDir, columnTypes);
   }
 
+  /**
+   * 출력 컬럼과 검색 대상 컬럼을 따로 받아 조회한다 — 일부 컬럼만 내보내도 검색은 데이터 탭처럼 전체 컬럼에 건다(WD-158).
+   *
+   * @param columns SELECT 할 컬럼(출력 칸)
+   * @param searchColumns 검색어 ILIKE 를 걸 컬럼(GEOMETRY 는 저장소가 뺀다)
+   */
+  public List<Map<String, Object>> queryData(
+      String tableName,
+      List<String> columns,
+      List<String> searchColumns,
+      String search,
+      int page,
+      int size,
+      String sortBy,
+      String sortDir,
+      Map<String, String> columnTypes) {
+    // 테넌트 해석 전에 이름부터 검증한다(위 오버로드와 같은 순서).
+    DataTableNames.validate(tableName);
+    for (String col : columns) {
+      DataTableNames.validate(col);
+    }
+    for (String col : searchColumns) {
+      DataTableNames.validate(col);
+    }
+    if (sortBy != null) {
+      DataTableNames.validate(sortBy);
+    }
+    return resolver
+        .rowStore()
+        .queryData(
+            tableName, columns, searchColumns, search, page, size, sortBy, sortDir, columnTypes);
+  }
+
   /** 기존 시그니처 유지 (하위 호환) */
   public List<Map<String, Object>> queryData(
       String tableName,

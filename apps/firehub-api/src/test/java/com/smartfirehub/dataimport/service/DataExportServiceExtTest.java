@@ -89,7 +89,7 @@ class DataExportServiceExtTest extends IntegrationTestBase {
 
     when(dataTableRowService.countRows(anyString(), anyList(), any(), anyMap())).thenReturn(5L);
     when(dataTableRowService.queryData(
-            anyString(), anyList(), any(), anyInt(), anyInt(), any(), any(), anyMap()))
+            anyString(), anyList(), anyList(), any(), anyInt(), anyInt(), any(), any(), anyMap()))
         .thenReturn(List.of(Map.<String, Object>of("name", "홍길동", "age", 30)))
         .thenReturn(List.of());
     when(asyncJobRepository.findActiveByUserAndJobType(anyLong(), anyString()))
@@ -312,6 +312,7 @@ class DataExportServiceExtTest extends IntegrationTestBase {
         .executeAsyncExport(
             eq("async-job-id-1"),
             any(DatasetResponse.class),
+            anyList(),
             anyList(),
             anyMap(),
             isNull(), // search

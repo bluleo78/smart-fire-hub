@@ -20,9 +20,27 @@ public interface DataRowStore {
   DataStoreBackend backend();
 
   /** 컬럼명 목록으로 행을 검색·정렬·페이징 조회한다. GEOMETRY 컬럼은 GeoJSON 으로 변환한다(columnTypes 가 null 이면 변환 없음). */
+  default List<Map<String, Object>> queryData(
+      String tableName,
+      List<String> columns,
+      String search,
+      int page,
+      int size,
+      String sortBy,
+      String sortDir,
+      Map<String, String> columnTypes) {
+    return queryData(tableName, columns, columns, search, page, size, sortBy, sortDir, columnTypes);
+  }
+
+  /**
+   * 출력 컬럼({@code columns})과 검색어를 거는 컬럼({@code searchColumns})을 따로 받아 조회한다.
+   *
+   * <p>일부 컬럼만 내보낼 때도 검색은 데이터 탭처럼 전체 컬럼에 걸어야 화면과 같은 행이 나온다(WD-158).
+   */
   List<Map<String, Object>> queryData(
       String tableName,
       List<String> columns,
+      List<String> searchColumns,
       String search,
       int page,
       int size,
