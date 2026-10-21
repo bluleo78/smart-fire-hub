@@ -29,12 +29,16 @@ import { cumulativeDescription } from '../../../lib/security-level';
  * 선택이 바뀌면 서버 미리보기로 잠김 방지 두 가지를 판단한다:
  * ① 저장 후 최상위 열람 역할이 0개가 되면 저장 비활성+배너, ② 본인 자격이 내려가면 확인 다이얼로그.
  * 시스템 ADMIN(fixed)은 편집 불가 — 최상위 고정 표시만 한다.
+ * role:write 가 없으면(canEdit=false) 현재 등급만 읽기 전용으로 보인다 — 미리보기·저장 모두 서버가 role:write 로 막는다(WD-121).
  */
 export function RoleClearanceCard({
   roleId,
+  canEdit,
   onDirtyChange,
 }: {
   roleId: number;
+  /** 등급을 바꿀 수 있는가(role:write). false 면 라디오를 잠그고 저장 버튼을 숨긴다. */
+  canEdit: boolean;
   /** 미저장 등급 선택 여부가 바뀔 때 알린다 — 역할 상세의 이탈 경고가 이 카드의 변경도 알 수 있게(WD-118). */
   onDirtyChange?: (dirty: boolean) => void;
 }) {
@@ -117,7 +121,13 @@ export function RoleClearanceCard({
           </div>
         ) : (
           <>
-            <RadioGroup value={selected} onValueChange={setDraft} aria-label="데이터 열람 등급" className="gap-3">
+            <RadioGroup
+              value={selected}
+              onValueChange={setDraft}
+              disabled={!canEdit}
+              aria-label="데이터 열람 등급"
+              className="gap-3"
+            >
               {levels.map((l, i) => (
                 <Label key={l.id} htmlFor={`${baseId}-${l.id}`} className="flex items-start gap-2 font-normal">
                   <RadioGroupItem id={`${baseId}-${l.id}`} value={String(l.id)} aria-label={l.name} className="mt-0.5" />
@@ -135,14 +145,16 @@ export function RoleClearanceCard({
               <InlineBanner variant="warning">최상위 등급을 열람할 수 있는 역할이 최소 1개 필요합니다.</InlineBanner>
             )}
             {changed && preview.isError && <p className="text-sm text-destructive">{previewErrorMessage}</p>}
-            <div className="flex justify-end">
-              <Button
-                disabled={!changed || !previewData || blocked || save.isPending}
-                onClick={() => (lostCount > 0 ? setConfirmOpen(true) : save.mutate())}
-              >
-                {save.isPending ? '저장 중...' : '저장'}
-              </Button>
-            </div>
+            {canEdit && (
+              <div className="flex justify-end">
+                <Button
+                  disabled={!changed || !previewData || blocked || save.isPending}
+                  onClick={() => (lostCount > 0 ? setConfirmOpen(true) : save.mutate())}
+                >
+                  {save.isPending ? '저장 중...' : '저장'}
+                </Button>
+              </div>
+            )}
           </>
         )}
       </CardContent>

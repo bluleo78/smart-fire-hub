@@ -46,11 +46,17 @@ import {
   useDeleteApiConnection,
   useRefreshAllApiConnections,
 } from '../../hooks/queries/useApiConnections';
+import { useMyPermissions } from '../../hooks/queries/useMyPermissions';
 import type { CreateApiConnectionRequest } from '../../types/api-connection';
 
 /** API 연결 목록 페이지 — 생성/삭제/상태 확인 기능 포함 */
 export default function ApiConnectionListPage() {
   const navigate = useNavigate();
+  // 새 연결·연결 테스트·전체 갱신 = apiconnection:write, 삭제 = apiconnection:delete — 서버가 막는 진입점은 숨긴다(WD-121).
+  // 일반 USER 도 조회(apiconnection:read)는 가지므로 이 화면에 들어온다. 서버에 관리자 우회가 없어 권한 코드만 본다.
+  const { permissions } = useMyPermissions();
+  const canWrite = permissions.has('apiconnection:write');
+  const canDelete = permissions.has('apiconnection:delete');
   const { data: connections, isLoading } = useApiConnections();
   const createMutation = useCreateApiConnection();
   const deleteMutation = useDeleteApiConnection();
@@ -242,201 +248,203 @@ export default function ApiConnectionListPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">API 연결 관리</h1>
-        <div className="flex items-center gap-2">
-          {/* 전체 갱신: 모든 연결의 헬스체크 즉시 트리거 */}
-          <Button
-            variant="outline"
-            onClick={handleRefreshAll}
-            disabled={refreshAllMutation.isPending || isRefreshJobActive}
-          >
-            {refreshAllMutation.isPending || isRefreshJobActive ? '갱신 중...' : '전체 갱신'}
-          </Button>
+        {canWrite && (
+          <div className="flex items-center gap-2">
+            {/* 전체 갱신: 모든 연결의 헬스체크 즉시 트리거 */}
+            <Button
+              variant="outline"
+              onClick={handleRefreshAll}
+              disabled={refreshAllMutation.isPending || isRefreshJobActive}
+            >
+              {refreshAllMutation.isPending || isRefreshJobActive ? '갱신 중...' : '전체 갱신'}
+            </Button>
 
-          <Dialog open={dialogOpen} onOpenChange={(open) => { setDialogOpen(open); if (!open) resetForm(); }}>
-            <DialogTrigger asChild>
-              <Button>
-                <Plus className="h-4 w-4" />
-                새 연결
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto overscroll-contain">
-              <DialogHeader>
-                <DialogTitle>새 API 연결 생성</DialogTitle>
-                <DialogDescription className="sr-only">새 외부 API 연결을 추가합니다.</DialogDescription>
-              </DialogHeader>
-              <div className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor={`${baseId}-name`}>연결 이름</Label>
-                  <Input
-                    id={`${baseId}-name`}
-                    placeholder="예: Make.com API"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor={`${baseId}-description`}>설명 (선택)</Label>
-                  <Input
-                    id={`${baseId}-description`}
-                    placeholder="연결에 대한 설명"
-                    value={description}
-                    onChange={(e) => setDescription(e.target.value)}
-                  />
-                </div>
-
-                {/* Base URL: 외부 API의 기본 URL */}
-                <div className="space-y-2">
-                  <Label htmlFor={`${baseId}-base-url`}>Base URL *</Label>
-                  <Input
-                    id={`${baseId}-base-url`}
-                    placeholder="https://api.example.com"
-                    value={baseUrl}
-                    onChange={(e) => setBaseUrl(e.target.value)}
-                  />
-                </div>
-
-                {/* 헬스체크 경로: 10분마다 자동 상태 점검 */}
-                <div className="space-y-2">
-                  <Label htmlFor={`${baseId}-health-path`}>헬스체크 경로 (선택)</Label>
-                  <Input
-                    id={`${baseId}-health-path`}
-                    placeholder="/health"
-                    value={healthCheckPath}
-                    onChange={(e) => setHealthCheckPath(e.target.value)}
-                    /* 아래 도움말 문구를 스크린리더가 함께 읽도록 연결 (#432) */
-                    aria-describedby={`${baseId}-health-path-help`}
-                  />
-                  <p id={`${baseId}-health-path-help`} className="text-xs text-muted-foreground">
-                    10분마다 자동 상태 점검. 비워두면 점검 안 함.
-                  </p>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor={`${baseId}-auth-type`}>인증 유형</Label>
-                  <Select value={authType} onValueChange={(v) => setAuthType(v as 'API_KEY' | 'BEARER')}>
-                    {/* shadcn Select 는 트리거가 실제 포커스 대상이라 id 를 트리거에 건다 */}
-                    <SelectTrigger id={`${baseId}-auth-type`}>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="API_KEY">API Key</SelectItem>
-                      <SelectItem value="BEARER">Bearer Token</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                {authType === 'API_KEY' && (
-                  <>
-                    <div className="space-y-2">
-                      <Label htmlFor={`${baseId}-placement`}>위치</Label>
-                      <Select value={placement} onValueChange={setPlacement}>
-                        <SelectTrigger id={`${baseId}-placement`}>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="header">Header</SelectItem>
-                          <SelectItem value="query">Query Parameter</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-2">
-                      {/* 라벨 텍스트만 placement 에 따라 바뀌고 입력은 하나뿐이라 id 는 고정한다 */}
-                      <Label htmlFor={`${baseId}-auth-name`}>
-                        {placement === 'query' ? '파라미터 이름' : '헤더 이름'}
-                      </Label>
-                      <Input
-                        id={`${baseId}-auth-name`}
-                        placeholder={placement === 'query' ? 'api_key' : 'Authorization'}
-                        value={placement === 'query' ? paramName : headerName}
-                        onChange={(e) =>
-                          placement === 'query'
-                            ? setParamName(e.target.value)
-                            : setHeaderName(e.target.value)
-                        }
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor={`${baseId}-api-key`}>키 값</Label>
-                      <Input
-                        id={`${baseId}-api-key`}
-                        type="password"
-                        placeholder="API 키를 입력하세요"
-                        value={apiKey}
-                        onChange={(e) => setApiKey(e.target.value)}
-                      />
-                    </div>
-                  </>
-                )}
-
-                {authType === 'BEARER' && (
+            <Dialog open={dialogOpen} onOpenChange={(open) => { setDialogOpen(open); if (!open) resetForm(); }}>
+              <DialogTrigger asChild>
+                <Button>
+                  <Plus className="h-4 w-4" />
+                  새 연결
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto overscroll-contain">
+                <DialogHeader>
+                  <DialogTitle>새 API 연결 생성</DialogTitle>
+                  <DialogDescription className="sr-only">새 외부 API 연결을 추가합니다.</DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4">
                   <div className="space-y-2">
-                    <Label htmlFor={`${baseId}-token`}>Bearer Token</Label>
+                    <Label htmlFor={`${baseId}-name`}>연결 이름</Label>
                     <Input
-                      id={`${baseId}-token`}
-                      type="password"
-                      placeholder="토큰을 입력하세요"
-                      value={token}
-                      onChange={(e) => setToken(e.target.value)}
+                      id={`${baseId}-name`}
+                      placeholder="예: Make.com API"
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
                     />
                   </div>
-                )}
-
-                {/* (#90) 인라인 연결 테스트 결과 표시 */}
-                {testResult && (
-                  <div
-                    role="status"
-                    aria-live="polite"
-                    className={`rounded-md border p-3 text-sm ${
-                      testResult.ok
-                        ? 'border-green-500/40 bg-green-500/5 text-green-700 dark:text-green-400'
-                        : 'border-destructive/40 bg-destructive/5 text-destructive'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2 font-medium">
-                      {testResult.ok ? (
-                        <CheckCircle2 className="h-4 w-4" />
-                      ) : (
-                        <XCircle className="h-4 w-4" />
-                      )}
-                      <span>
-                        {testResult.ok ? '연결 성공' : '연결 실패'}
-                        {testResult.status != null && ` · HTTP ${testResult.status}`}
-                        {` · ${testResult.latencyMs}ms`}
-                      </span>
-                    </div>
-                    {testResult.errorMessage && (
-                      <p className="mt-1 break-all text-xs">{testResult.errorMessage}</p>
-                    )}
-                    {testResult.requestUrl && (
-                      <p className="mt-1 break-all font-mono text-xs opacity-80">
-                        {testResult.requestUrl}
-                      </p>
-                    )}
+                  <div className="space-y-2">
+                    <Label htmlFor={`${baseId}-description`}>설명 (선택)</Label>
+                    <Input
+                      id={`${baseId}-description`}
+                      placeholder="연결에 대한 설명"
+                      value={description}
+                      onChange={(e) => setDescription(e.target.value)}
+                    />
                   </div>
-                )}
 
-                <div className="flex gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="flex-1"
-                    onClick={handleTest}
-                    disabled={testing || createMutation.isPending}
-                  >
-                    {testing ? '테스트 중...' : '연결 테스트'}
-                  </Button>
-                  <Button
-                    className="flex-1"
-                    onClick={handleCreate}
-                    disabled={createMutation.isPending}
-                  >
-                    {createMutation.isPending ? '생성 중...' : '생성'}
-                  </Button>
+                  {/* Base URL: 외부 API의 기본 URL */}
+                  <div className="space-y-2">
+                    <Label htmlFor={`${baseId}-base-url`}>Base URL *</Label>
+                    <Input
+                      id={`${baseId}-base-url`}
+                      placeholder="https://api.example.com"
+                      value={baseUrl}
+                      onChange={(e) => setBaseUrl(e.target.value)}
+                    />
+                  </div>
+
+                  {/* 헬스체크 경로: 10분마다 자동 상태 점검 */}
+                  <div className="space-y-2">
+                    <Label htmlFor={`${baseId}-health-path`}>헬스체크 경로 (선택)</Label>
+                    <Input
+                      id={`${baseId}-health-path`}
+                      placeholder="/health"
+                      value={healthCheckPath}
+                      onChange={(e) => setHealthCheckPath(e.target.value)}
+                      /* 아래 도움말 문구를 스크린리더가 함께 읽도록 연결 (#432) */
+                      aria-describedby={`${baseId}-health-path-help`}
+                    />
+                    <p id={`${baseId}-health-path-help`} className="text-xs text-muted-foreground">
+                      10분마다 자동 상태 점검. 비워두면 점검 안 함.
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor={`${baseId}-auth-type`}>인증 유형</Label>
+                    <Select value={authType} onValueChange={(v) => setAuthType(v as 'API_KEY' | 'BEARER')}>
+                      {/* shadcn Select 는 트리거가 실제 포커스 대상이라 id 를 트리거에 건다 */}
+                      <SelectTrigger id={`${baseId}-auth-type`}>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="API_KEY">API Key</SelectItem>
+                        <SelectItem value="BEARER">Bearer Token</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {authType === 'API_KEY' && (
+                    <>
+                      <div className="space-y-2">
+                        <Label htmlFor={`${baseId}-placement`}>위치</Label>
+                        <Select value={placement} onValueChange={setPlacement}>
+                          <SelectTrigger id={`${baseId}-placement`}>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="header">Header</SelectItem>
+                            <SelectItem value="query">Query Parameter</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-2">
+                        {/* 라벨 텍스트만 placement 에 따라 바뀌고 입력은 하나뿐이라 id 는 고정한다 */}
+                        <Label htmlFor={`${baseId}-auth-name`}>
+                          {placement === 'query' ? '파라미터 이름' : '헤더 이름'}
+                        </Label>
+                        <Input
+                          id={`${baseId}-auth-name`}
+                          placeholder={placement === 'query' ? 'api_key' : 'Authorization'}
+                          value={placement === 'query' ? paramName : headerName}
+                          onChange={(e) =>
+                            placement === 'query'
+                              ? setParamName(e.target.value)
+                              : setHeaderName(e.target.value)
+                          }
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor={`${baseId}-api-key`}>키 값</Label>
+                        <Input
+                          id={`${baseId}-api-key`}
+                          type="password"
+                          placeholder="API 키를 입력하세요"
+                          value={apiKey}
+                          onChange={(e) => setApiKey(e.target.value)}
+                        />
+                      </div>
+                    </>
+                  )}
+
+                  {authType === 'BEARER' && (
+                    <div className="space-y-2">
+                      <Label htmlFor={`${baseId}-token`}>Bearer Token</Label>
+                      <Input
+                        id={`${baseId}-token`}
+                        type="password"
+                        placeholder="토큰을 입력하세요"
+                        value={token}
+                        onChange={(e) => setToken(e.target.value)}
+                      />
+                    </div>
+                  )}
+
+                  {/* (#90) 인라인 연결 테스트 결과 표시 */}
+                  {testResult && (
+                    <div
+                      role="status"
+                      aria-live="polite"
+                      className={`rounded-md border p-3 text-sm ${
+                        testResult.ok
+                          ? 'border-green-500/40 bg-green-500/5 text-green-700 dark:text-green-400'
+                          : 'border-destructive/40 bg-destructive/5 text-destructive'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 font-medium">
+                        {testResult.ok ? (
+                          <CheckCircle2 className="h-4 w-4" />
+                        ) : (
+                          <XCircle className="h-4 w-4" />
+                        )}
+                        <span>
+                          {testResult.ok ? '연결 성공' : '연결 실패'}
+                          {testResult.status != null && ` · HTTP ${testResult.status}`}
+                          {` · ${testResult.latencyMs}ms`}
+                        </span>
+                      </div>
+                      {testResult.errorMessage && (
+                        <p className="mt-1 break-all text-xs">{testResult.errorMessage}</p>
+                      )}
+                      {testResult.requestUrl && (
+                        <p className="mt-1 break-all font-mono text-xs opacity-80">
+                          {testResult.requestUrl}
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="flex-1"
+                      onClick={handleTest}
+                      disabled={testing || createMutation.isPending}
+                    >
+                      {testing ? '테스트 중...' : '연결 테스트'}
+                    </Button>
+                    <Button
+                      className="flex-1"
+                      onClick={handleCreate}
+                      disabled={createMutation.isPending}
+                    >
+                      {createMutation.isPending ? '생성 중...' : '생성'}
+                    </Button>
+                  </div>
                 </div>
-              </div>
-            </DialogContent>
-          </Dialog>
-        </div>
+              </DialogContent>
+            </Dialog>
+          </div>
+        )}
       </div>
 
       <div className="rounded-md border">
@@ -479,18 +487,20 @@ export default function ApiConnectionListPage() {
                     {formatDateShort(conn.createdAt)}
                   </TableCell>
                   <TableCell onClick={(e) => e.stopPropagation()}>
-                    <DeleteConfirmDialog
-                      entityName="API 연결"
-                      itemName={conn.name}
-                      // (#647) 이름이 같은 다른 연결과 혼동해 잘못 삭제하지 않도록 ID/Base URL을 함께 표시
-                      extraDetail={`ID: ${conn.id} · ${conn.baseUrl}`}
-                      onConfirm={() => handleDelete(conn.id, conn.name)}
-                      trigger={
-                        <Button variant="outline" size="sm">
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      }
-                    />
+                    {canDelete && (
+                      <DeleteConfirmDialog
+                        entityName="API 연결"
+                        itemName={conn.name}
+                        // (#647) 이름이 같은 다른 연결과 혼동해 잘못 삭제하지 않도록 ID/Base URL을 함께 표시
+                        extraDetail={`ID: ${conn.id} · ${conn.baseUrl}`}
+                        onConfirm={() => handleDelete(conn.id, conn.name)}
+                        trigger={
+                          <Button variant="outline" size="sm">
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        }
+                      />
+                    )}
                   </TableCell>
                 </TableRow>
               ))

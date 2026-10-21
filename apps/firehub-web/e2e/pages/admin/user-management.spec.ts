@@ -10,11 +10,11 @@ import { expect, test } from '../../fixtures/auth.fixture';
 /**
  * 사용자 관리 페이지 E2E 테스트
  * - 사용자 목록 및 상세 페이지 UI를 검증한다.
- * - AdminRoute 통과를 위해 ADMIN 역할로 users/me를 오버라이드한다.
+ * - 관리 화면 권한 가드(AdminOrPermissionRoute) 통과와 화면 안 버튼 노출을 위해 ADMIN 역할·관리 권한 코드로 users/me를 오버라이드한다.
  */
 test.describe('사용자 관리 페이지', () => {
   test.beforeEach(async ({ authenticatedPage: page }) => {
-    // AdminRoute 통과를 위해 ADMIN 역할로 오버라이드
+    // 관리 화면 권한 가드(AdminOrPermissionRoute) 통과와 화면 안 버튼 노출을 위해 ADMIN 역할·관리 권한 코드로 오버라이드
     await setupAdminAuth(page);
   });
 

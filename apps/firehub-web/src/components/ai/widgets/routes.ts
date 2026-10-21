@@ -130,7 +130,7 @@ export const NAVIGABLE_ROUTES: NavigableRoute[] = [
     icon: '👥',
     listPath: '/admin/users',
     detailPath: (id) => `/admin/users/${id}`,
-    aiDescription: '사용자 계정을 추가/수정하거나 역할을 할당하려 할 때. (관리자 전용)',
+    aiDescription: '사용자 계정을 추가/수정하거나 역할을 할당하려 할 때. (사용자 조회 권한 user:read 필요 — 관리자 또는 해당 권한을 받은 사용자)',
     aiExamples: ['사용자 관리 열어줘', '사용자 역할 바꾸고 싶어'],
   },
   {
@@ -139,7 +139,7 @@ export const NAVIGABLE_ROUTES: NavigableRoute[] = [
     icon: '🔐',
     listPath: '/admin/roles',
     detailPath: (id) => `/admin/roles/${id}`,
-    aiDescription: '역할별 권한을 설정하거나 새 역할을 만들려 할 때. (관리자 전용)',
+    aiDescription: '역할별 권한을 설정하거나 새 역할을 만들려 할 때. (역할 조회 권한 role:read 필요 — 관리자 또는 해당 권한을 받은 사용자)',
     aiExamples: ['역할 관리 열어줘', '권한 설정하러 가줘'],
   },
   {
@@ -147,7 +147,7 @@ export const NAVIGABLE_ROUTES: NavigableRoute[] = [
     label: '감사 로그',
     icon: '📋',
     listPath: '/admin/audit-logs',
-    aiDescription: '누가 언제 무엇을 했는지 사용자 행위를 추적/감사하려 할 때. (관리자 전용)',
+    aiDescription: '누가 언제 무엇을 했는지 사용자 행위를 추적/감사하려 할 때. (감사 로그 조회 권한 audit:read 필요 — 관리자 또는 해당 권한을 받은 사용자)',
     aiExamples: ['감사 로그 보여줘', '누가 데이터 삭제했는지 확인하고 싶어'],
   },
   {
@@ -156,7 +156,7 @@ export const NAVIGABLE_ROUTES: NavigableRoute[] = [
     icon: '🔌',
     listPath: '/admin/api-connections',
     detailPath: (id) => `/admin/api-connections/${id}`,
-    aiDescription: '외부 API 인증 정보(API 키, Bearer 토큰)를 등록/수정하려 할 때. 파이프라인의 API_CALL 스텝에서 사용. (관리자 전용)',
+    aiDescription: '외부 API 인증 정보(API 키, Bearer 토큰)를 조회·등록/수정하려 할 때. 파이프라인의 API_CALL 스텝에서 사용. (조회는 apiconnection:read — 일반 사용자도 기본 보유, 등록·수정은 apiconnection:write 필요)',
     aiExamples: ['API 연결 관리 열어줘', 'API 키 등록하러 가줘'],
   },
   {

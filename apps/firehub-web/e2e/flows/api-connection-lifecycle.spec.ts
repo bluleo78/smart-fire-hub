@@ -9,7 +9,7 @@ import { expect, test } from '../fixtures/auth.fixture';
 
 test.describe('API 연결 라이프사이클', () => {
   test.beforeEach(async ({ authenticatedPage: page }) => {
-    // AdminRoute 통과를 위해 ADMIN 역할로 오버라이드
+    // 관리 화면 권한 가드(AdminOrPermissionRoute) 통과와 화면 안 버튼 노출을 위해 ADMIN 역할·관리 권한 코드로 오버라이드
     await setupAdminAuth(page);
   });
 

@@ -25,6 +25,7 @@ import { InlineBanner } from '../../../components/ui/inline-banner';
 import { Input } from '../../../components/ui/input';
 import { Label } from '../../../components/ui/label';
 import { Skeleton } from '../../../components/ui/skeleton';
+import { useAuth } from '../../../hooks/useAuth';
 import { extractApiError } from '../../../lib/api-error';
 import { generateTemporaryPassword } from '../../../lib/temp-password';
 import type { AddMemberFormData } from '../../../lib/validations/user';
@@ -58,9 +59,13 @@ async function copyText(text: string) {
  * 넣지 않는다. 선택 역할은 USER 에 추가된다. 문구는 스펙 §4 인용문 기준(pre-flight F8).
  *
  * @param canAssignRoles role:assign 보유 여부 — 없으면 다른 역할을 고를 수 없고 roleIds 는 빈 배열
+ * @param canReadRoles role:read 보유 여부 — 없으면 역할 목록(GET /roles)을 읽지 않는다(WD-121). 읽으면 확실히 403 이라
+ *   권한 상태가 「역할 목록을 불러오지 못했습니다」라는 오류로 그려진다.
  */
-export function AddMemberDialog({ canAssignRoles }: { canAssignRoles: boolean }) {
+export function AddMemberDialog({ canAssignRoles, canReadRoles }: { canAssignRoles: boolean; canReadRoles: boolean }) {
   const queryClient = useQueryClient();
+  // 시스템 ADMIN 역할은 ADMIN 만 부여할 수 있다(WD-116) — 위임받은 멤버 관리자에게는 그 체크박스를 잠근다.
+  const { isAdmin: isCallerAdmin } = useAuth();
   const [open, setOpen] = useState(false);
   const [created, setCreated] = useState<CreatedCredentials | null>(null);
   const [suspendedUserId, setSuspendedUserId] = useState<number | null>(null);
@@ -71,7 +76,7 @@ export function AddMemberDialog({ canAssignRoles }: { canAssignRoles: boolean })
   const rolesQuery = useQuery({
     queryKey: ['roles'],
     queryFn: () => rolesApi.getRoles().then((r) => r.data),
-    enabled: open,
+    enabled: open && canReadRoles,
   });
 
   const form = useForm<AddMemberFormData>({
@@ -344,12 +349,15 @@ export function AddMemberDialog({ canAssignRoles }: { canAssignRoles: boolean })
                         // USER 는 서버가 항상 부여하는 기본 역할 — 체크 고정·해제 불가, 전송 목록에는 넣지 않는다.
                         const isUser = role.name === 'USER';
                         const id = `member-role-${role.id}`;
+                        // 시스템 ADMIN 역할 — ADMIN 이 아니면 고를 수 없다(서버 RoleGrantGuard 가 403). 열어 두면 추가 시점에야 실패한다.
+                        const adminOnlyLocked = canAssignRoles && !isCallerAdmin && role.isSystem && role.name === 'ADMIN';
                         return (
-                          <div key={role.id} className="flex items-center gap-2">
+                          <div key={role.id} className="flex flex-wrap items-center gap-x-2 gap-y-1">
                             <Checkbox
                               id={id}
                               checked={isUser || field.value.includes(role.id)}
-                              disabled={isUser || !canAssignRoles}
+                              disabled={isUser || !canAssignRoles || adminOnlyLocked}
+                              aria-describedby={adminOnlyLocked ? `${id}-lock` : undefined}
                               onCheckedChange={(checked) =>
                                 field.onChange(
                                   checked ? [...field.value, role.id] : field.value.filter((v) => v !== role.id),
@@ -368,6 +376,12 @@ export function AddMemberDialog({ canAssignRoles }: { canAssignRoles: boolean })
                                 </>
                               )}
                             </Label>
+                            {adminOnlyLocked && (
+                              // 체크박스 폭+간격(pl-6)만큼 들여 역할 이름과 왼쪽을 맞춘다.
+                              <span id={`${id}-lock`} className="basis-full pl-6 text-xs text-muted-foreground">
+                                시스템 ADMIN 역할은 ADMIN 만 부여하거나 회수할 수 있습니다
+                              </span>
+                            )}
                           </div>
                         );
                       })}

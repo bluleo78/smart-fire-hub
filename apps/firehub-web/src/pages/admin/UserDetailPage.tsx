@@ -27,6 +27,7 @@ import { Separator } from '../../components/ui/separator';
 import { Skeleton } from '../../components/ui/skeleton';
 import { Switch } from '../../components/ui/switch';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../components/ui/tooltip';
+import { useMyPermissions } from '../../hooks/queries/useMyPermissions';
 import { useAuth } from '../../hooks/useAuth';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
 import { handleApiError } from '../../lib/api-error';
@@ -42,7 +43,16 @@ export default function UserDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { user: currentUser } = useAuth();
+  const { user: currentUser, isAdmin: isCallerAdmin } = useAuth();
+  // 화면 안 조작은 서버가 막는 권한 코드로만 노출한다(WD-121) — 서버에 관리자 우회가 없으므로 역할 이름은 보지 않는다.
+  // 정지/재활성·멤버 제거 = user:write, 역할 할당 = role:assign(+ 고를 역할 목록 GET /roles = role:read).
+  // 라우트 가드가 권한 조회를 끝낸 뒤에만 이 화면을 그리므로 여기서는 로딩을 따로 기다리지 않는다.
+  const { permissions } = useMyPermissions();
+  const canWriteUser = permissions.has('user:write');
+  // 역할 할당 가능 여부는 화면에 들어온 시점 값으로 고정한다 — 아래 조회 effect 가 이 값에 걸려 있어, 백그라운드 권한
+  // 재조회로 값이 바뀌면 사용자 정보를 다시 읽으며 고르던 체크박스가 초기화된다. 바뀐 권한은 다음 진입부터 반영되고,
+  // 그 사이에도 최종 판정은 서버가 한다. (라우트 가드가 권한 조회를 마친 뒤 그리므로 첫 렌더 값이 곧 확정값이다.)
+  const [canAssignRoles] = useState(() => permissions.has('role:assign') && permissions.has('role:read'));
   const [user, setUser] = useState<UserDetailResponse | null>(null);
   const [allRoles, setAllRoles] = useState<RoleResponse[]>([]);
   const [selectedRoleIds, setSelectedRoleIds] = useState<number[]>([]);
@@ -63,12 +73,14 @@ export default function UserDetailPage() {
       if (!id) return;
       setIsLoading(true);
       try {
+        // 역할 목록(GET /roles, role:read)은 역할을 할당할 수 있을 때만 읽는다 — 사용자 조회 권한(user:read)만 있는
+        // 사람에게도 같이 읽으면 403 이 사용자 조회까지 실패로 만들어 화면이 열리지 않고 목록으로 튕겼다(WD-121).
         const [userRes, rolesRes] = await Promise.all([
           usersApi.getUserById(Number(id)),
-          rolesApi.getRoles(),
+          canAssignRoles ? rolesApi.getRoles() : Promise.resolve(null),
         ]);
         setUser(userRes.data);
-        setAllRoles(rolesRes.data);
+        setAllRoles(rolesRes?.data ?? []);
         const roleIds = userRes.data.roles.map(r => r.id);
         setSelectedRoleIds(roleIds);
         setInitialRoleIds(roleIds);
@@ -81,7 +93,7 @@ export default function UserDetailPage() {
     };
 
     fetchData();
-  }, [id, navigate]);
+  }, [id, navigate, canAssignRoles]);
 
   const handleRoleToggle = (roleId: number, checked: boolean) => {
     setSelectedRoleIds(prev =>
@@ -257,54 +269,57 @@ export default function UserDetailPage() {
         </AlertDialogContent>
       </AlertDialog>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>이 워크스페이스에서 활성</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-2">
-          {/* WD-3: 스위치는 멤버십만 바꾼다 — 전역 비활성 계정은 켜 둬도 로그인할 수 없다는 사실을 조작 전에 읽히도록
-              스위치 위 InlineBanner(info: 이 화면에서 바꿀 수 없는 지속 상태, 06 §E)로 말한다. */}
-          {user.accountActive === false && (
-            <InlineBanner variant="info" icon={<UserX />}>
-              운영자가 이 계정을 비활성화해 지금은 어느 워크스페이스에도 로그인할 수 없습니다. 이 스위치는 이 워크스페이스 멤버십만 바꿉니다.
-            </InlineBanner>
-          )}
-          <div className="flex items-center gap-3">
-            {/* 끄는 방향만 잠근다 — 정지된 사람을 다시 켜는 건 언제나 허용(잠금 규칙은 정지·제거에만 적용).
-                disabled 스위치는 포인터/포커스 이벤트를 못 받으므로 span(tabIndex=0)으로 감싸 툴팁을 띄운다.
-                포커스 가능한 래퍼라 이름(잠금 사유)이 필요하고, role 없는 span 엔 aria-label 이 금지라 group 으로 단다. */}
-            {user.isActive && suspendLock ? (
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <span
-                      tabIndex={0}
-                      role="group"
-                      aria-label={suspendLock}
-                      data-testid="suspend-lock-trigger"
-                      className="inline-flex rounded-full focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring">
-                      <Switch id={activeSwitchId} checked disabled aria-label="이 워크스페이스에서 활성" />
-                    </span>
-                  </TooltipTrigger>
-                  <TooltipContent>{suspendLock}</TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            ) : (
-              <Switch
-                id={activeSwitchId}
-                checked={user.isActive}
-                onCheckedChange={handleSwitchChange}
-                disabled={isTogglingActive}
-                aria-label="이 워크스페이스에서 활성"
-              />
+      {/* 정지/재활성은 user:write — 없으면 카드째 숨긴다. 현재 상태는 기본 정보의 상태 배지로 이미 보인다(WD-121). */}
+      {canWriteUser && (
+        <Card>
+          <CardHeader>
+            <CardTitle>이 워크스페이스에서 활성</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {/* WD-3: 스위치는 멤버십만 바꾼다 — 전역 비활성 계정은 켜 둬도 로그인할 수 없다는 사실을 조작 전에 읽히도록
+                스위치 위 InlineBanner(info: 이 화면에서 바꿀 수 없는 지속 상태, 06 §E)로 말한다. */}
+            {user.accountActive === false && (
+              <InlineBanner variant="info" icon={<UserX />}>
+                운영자가 이 계정을 비활성화해 지금은 어느 워크스페이스에도 로그인할 수 없습니다. 이 스위치는 이 워크스페이스 멤버십만 바꿉니다.
+              </InlineBanner>
             )}
-            <Label htmlFor={activeSwitchId}>{user.isActive ? '활성' : '정지'}</Label>
-          </div>
-          <p className="text-[13px] text-muted-foreground">
-            끄면 이 워크스페이스에만 접근할 수 없습니다. 다른 워크스페이스와 계정 자체는 영향 없음.
-          </p>
-        </CardContent>
-      </Card>
+            <div className="flex items-center gap-3">
+              {/* 끄는 방향만 잠근다 — 정지된 사람을 다시 켜는 건 언제나 허용(잠금 규칙은 정지·제거에만 적용).
+                  disabled 스위치는 포인터/포커스 이벤트를 못 받으므로 span(tabIndex=0)으로 감싸 툴팁을 띄운다.
+                  포커스 가능한 래퍼라 이름(잠금 사유)이 필요하고, role 없는 span 엔 aria-label 이 금지라 group 으로 단다. */}
+              {user.isActive && suspendLock ? (
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span
+                        tabIndex={0}
+                        role="group"
+                        aria-label={suspendLock}
+                        data-testid="suspend-lock-trigger"
+                        className="inline-flex rounded-full focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring">
+                        <Switch id={activeSwitchId} checked disabled aria-label="이 워크스페이스에서 활성" />
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent>{suspendLock}</TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              ) : (
+                <Switch
+                  id={activeSwitchId}
+                  checked={user.isActive}
+                  onCheckedChange={handleSwitchChange}
+                  disabled={isTogglingActive}
+                  aria-label="이 워크스페이스에서 활성"
+                />
+              )}
+              <Label htmlFor={activeSwitchId}>{user.isActive ? '활성' : '정지'}</Label>
+            </div>
+            <p className="text-[13px] text-muted-foreground">
+              끄면 이 워크스페이스에만 접근할 수 없습니다. 다른 워크스페이스와 계정 자체는 영향 없음.
+            </p>
+          </CardContent>
+        </Card>
+      )}
 
       <Separator />
 
@@ -332,59 +347,94 @@ export default function UserDetailPage() {
         </AlertDialogContent>
       </AlertDialog>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>역할 할당</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-3">
-            {allRoles.map((role) => {
-              // 자기 자신의 ADMIN 역할 제거 차단 (#57)
-              const isSelf = currentUser?.id === Number(id);
-              const isOwnAdminRole = isSelf && role.name === 'ADMIN';
-              return (
-              <div key={role.id} className="flex items-center gap-3">
-                <Checkbox
-                  id={`role-${role.id}`}
-                  checked={selectedRoleIds.includes(role.id)}
-                  disabled={isOwnAdminRole}
-                  onCheckedChange={(checked) => handleRoleToggle(role.id, checked === true)}
-                />
-                <Label htmlFor={`role-${role.id}`} className="flex items-center gap-2">
-                  {role.name}
-                  {role.isSystem && (
-                    <Badge variant="outline" className="text-xs">시스템</Badge>
+      {canAssignRoles ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>역할 할당</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-3">
+              {allRoles.map((role) => {
+                // 자기 자신의 ADMIN 역할 제거 차단 (#57)
+                const isSelf = currentUser?.id === Number(id);
+                const isOwnAdminRole = isSelf && role.name === 'ADMIN';
+                // 시스템 ADMIN 역할은 ADMIN 만 부여·회수할 수 있다(WD-116 RoleGrantGuard) — 위임받은 역할 관리자에게는
+                // 붙이는 것도 떼는 것도 잠근다. 열어 두면 저장 시점에야 403 을 받는다.
+                const adminOnlyLocked = !isCallerAdmin && role.isSystem && role.name === 'ADMIN';
+                return (
+                <div key={role.id} className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <Checkbox
+                    id={`role-${role.id}`}
+                    checked={selectedRoleIds.includes(role.id)}
+                    disabled={isOwnAdminRole || adminOnlyLocked}
+                    aria-describedby={adminOnlyLocked ? `role-${role.id}-lock` : undefined}
+                    onCheckedChange={(checked) => handleRoleToggle(role.id, checked === true)}
+                  />
+                  <Label htmlFor={`role-${role.id}`} className="flex items-center gap-2">
+                    {role.name}
+                    {role.isSystem && (
+                      <Badge variant="outline" className="text-xs">시스템</Badge>
+                    )}
+                  </Label>
+                  {role.description && (
+                    <span className="text-sm text-muted-foreground">{role.description}</span>
                   )}
-                </Label>
-                {role.description && (
-                  <span className="text-sm text-muted-foreground">{role.description}</span>
-                )}
-              </div>
-            );
-            })}
-          </div>
-          <Button onClick={handleSaveRolesClick} disabled={isSavingRoles}>
-            {isSavingRoles ? '저장 중...' : '역할 저장'}
-          </Button>
-        </CardContent>
-      </Card>
+                  {adminOnlyLocked && (
+                    // 한 줄을 다 쓰고(basis-full) 체크박스 폭+간격(pl-7)만큼 들여 역할 이름과 왼쪽을 맞춘다(역할 상세 범위 안내와 같은 배치).
+                    <span id={`role-${role.id}-lock`} className="basis-full pl-7 text-xs text-muted-foreground">
+                      시스템 ADMIN 역할은 ADMIN 만 부여하거나 회수할 수 있습니다
+                    </span>
+                  )}
+                </div>
+              );
+              })}
+            </div>
+            <Button onClick={handleSaveRolesClick} disabled={isSavingRoles}>
+              {isSavingRoles ? '저장 중...' : '역할 저장'}
+            </Button>
+          </CardContent>
+        </Card>
+      ) : (
+        // 역할 할당 권한이 없으면 체크박스·저장 대신 지금 가진 역할만 읽기 전용으로 보인다(WD-121) — 저장하면 서버가 403 이다.
+        <Card>
+          <CardHeader>
+            <CardTitle>역할</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {user.roles.length > 0 ? (
+              <ul className="flex flex-wrap gap-2" aria-label="보유 역할">
+                {user.roles.map((role) => (
+                  <li key={role.id}>
+                    <Badge variant="secondary">{role.name}</Badge>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-sm text-muted-foreground">역할이 없습니다.</p>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
-      {/* 위험 구역 — 제거 후엔 저장할 역할 변경이 무의미하므로 이탈 가드(requestNavigate) 대신 navigate 직접 사용 */}
-      <MemberDangerZone
-        user={user}
-        lockReason={removeLock}
-        onConfirm={async () => {
-          try {
-            await usersApi.removeMember(user.id);
-            // 이동 전에 목록 캐시를 무효화해 제거된 멤버가 30초간 남아 보이지 않게 한다
-            await queryClient.invalidateQueries({ queryKey: ['users'] });
-            toast.success('워크스페이스에서 제거되었습니다');
-            navigate('/admin/users');
-          } catch (error) {
-            handleApiError(error, '제거하지 못했습니다');
-          }
-        }}
-      />
+      {/* 위험 구역 — 제거 후엔 저장할 역할 변경이 무의미하므로 이탈 가드(requestNavigate) 대신 navigate 직접 사용.
+          멤버 제거(DELETE /users/{id}/membership)는 user:write — 없으면 구역째 숨긴다(WD-121). */}
+      {canWriteUser && (
+        <MemberDangerZone
+          user={user}
+          lockReason={removeLock}
+          onConfirm={async () => {
+            try {
+              await usersApi.removeMember(user.id);
+              // 이동 전에 목록 캐시를 무효화해 제거된 멤버가 30초간 남아 보이지 않게 한다
+              await queryClient.invalidateQueries({ queryKey: ['users'] });
+              toast.success('워크스페이스에서 제거되었습니다');
+              navigate('/admin/users');
+            } catch (error) {
+              handleApiError(error, '제거하지 못했습니다');
+            }
+          }}
+        />
+      )}
 
       {/* 미저장 변경 이탈 확인 다이얼로그 (#636) */}
       {unsavedChangesDialog}

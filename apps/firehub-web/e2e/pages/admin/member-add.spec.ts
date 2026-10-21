@@ -204,7 +204,8 @@ test.describe('멤버 추가', () => {
   });
 
   test('role:assign 이 없으면 다른 역할은 고를 수 없고 roleIds 는 빈 배열', async ({ authenticatedPage: page }) => {
-    await mockApi(page, 'GET', '/api/v1/auth/me/permissions', ['user:read', 'user:write']);
+    // role:read 는 준다 — 역할 목록은 보이되 고를 수만 없는 경우를 본다(role:read 도 없으면 목록을 읽지 않는다, WD-121).
+    await mockApi(page, 'GET', '/api/v1/auth/me/permissions', ['user:read', 'user:write', 'role:read']);
     const capture = await mockApi(page, 'POST', '/api/v1/users', { userId: 9, created: true }, { status: 201, capture: true });
     await page.goto('/admin/users');
     await page.getByRole('button', { name: '멤버 추가' }).click();

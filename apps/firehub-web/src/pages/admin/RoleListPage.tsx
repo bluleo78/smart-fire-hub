@@ -34,6 +34,7 @@ import {
   TableHeader,
   TableRow,
 } from '../../components/ui/table';
+import { useMyPermissions } from '../../hooks/queries/useMyPermissions';
 import type { CreateRoleFormData } from '../../lib/validations/role';
 import { createRoleSchema } from '../../lib/validations/role';
 import type { RoleResponse } from '../../types/role';
@@ -98,6 +99,11 @@ function RoleDeleteButton({ role, onConfirm }: { role: RoleResponse; onConfirm: 
 
 export default function RoleListPage() {
   const navigate = useNavigate();
+  // 역할 추가(POST /roles) = role:write, 삭제(DELETE /roles/{id}) = role:delete — 서버가 막는 진입점은 숨긴다(WD-121).
+  // 서버에 관리자 우회가 없으므로(ADMIN 역할이 권한을 가짐) 권한 코드만 본다. 라우트 가드가 권한 조회를 끝낸 뒤 그린다.
+  const { permissions } = useMyPermissions();
+  const canWriteRole = permissions.has('role:write');
+  const canDeleteRole = permissions.has('role:delete');
   const [roles, setRoles] = useState<RoleResponse[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -164,47 +170,49 @@ export default function RoleListPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">역할 관리</h1>
-        <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-          <DialogTrigger asChild>
-            <Button>
-              <Plus className="h-4 w-4" />
-              역할 추가
-            </Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>새 역할 생성</DialogTitle>
-              <DialogDescription className="sr-only">새로운 사용자 역할을 생성합니다.</DialogDescription>
-            </DialogHeader>
-            <form onSubmit={form.handleSubmit(onCreateSubmit)} className="space-y-4">
-              <FormField
-                label="역할 이름"
-                htmlFor="role-name"
-                error={form.formState.errors.name?.message}
-              >
-                <Input
-                  id="role-name"
-                  {...form.register('name')}
-                />
-              </FormField>
-              <FormField
-                label="설명 (선택)"
-                htmlFor="role-description"
-              >
-                <Input
-                  id="role-description"
-                  {...form.register('description')}
-                />
-              </FormField>
-              {createError && (
-                <p className="text-sm text-destructive">{createError}</p>
-              )}
-              <Button type="submit" className="w-full" disabled={form.formState.isSubmitting}>
-                {form.formState.isSubmitting ? '생성 중...' : '생성'}
+        {canWriteRole && (
+          <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+            <DialogTrigger asChild>
+              <Button>
+                <Plus className="h-4 w-4" />
+                역할 추가
               </Button>
-            </form>
-          </DialogContent>
-        </Dialog>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>새 역할 생성</DialogTitle>
+                <DialogDescription className="sr-only">새로운 사용자 역할을 생성합니다.</DialogDescription>
+              </DialogHeader>
+              <form onSubmit={form.handleSubmit(onCreateSubmit)} className="space-y-4">
+                <FormField
+                  label="역할 이름"
+                  htmlFor="role-name"
+                  error={form.formState.errors.name?.message}
+                >
+                  <Input
+                    id="role-name"
+                    {...form.register('name')}
+                  />
+                </FormField>
+                <FormField
+                  label="설명 (선택)"
+                  htmlFor="role-description"
+                >
+                  <Input
+                    id="role-description"
+                    {...form.register('description')}
+                  />
+                </FormField>
+                {createError && (
+                  <p className="text-sm text-destructive">{createError}</p>
+                )}
+                <Button type="submit" className="w-full" disabled={form.formState.isSubmitting}>
+                  {form.formState.isSubmitting ? '생성 중...' : '생성'}
+                </Button>
+              </form>
+            </DialogContent>
+          </Dialog>
+        )}
       </div>
 
       <div className="rounded-md border">
@@ -237,7 +245,7 @@ export default function RoleListPage() {
                   </TableCell>
                   <TableCell>{role.description ?? '-'}</TableCell>
                   <TableCell>
-                    {!role.isSystem && (
+                    {canDeleteRole && !role.isSystem && (
                       <RoleDeleteButton role={role} onConfirm={() => handleDelete(role)} />
                     )}
                   </TableCell>

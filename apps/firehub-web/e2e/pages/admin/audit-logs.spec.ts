@@ -8,11 +8,11 @@ import { expect, test } from '../../fixtures/auth.fixture';
  * - 목록 렌더링, 필터, 검색, 페이지네이션을 검증한다.
  * - 날짜 범위 필터(startDate/endDate) 파라미터 전달을 검증한다.
  * - 행 클릭 시 상세 보기 다이얼로그에서 description 전문을 표시하는지 검증한다.
- * - AdminRoute 통과를 위해 ADMIN 역할로 users/me를 오버라이드한다.
+ * - 관리 화면 권한 가드(AdminOrPermissionRoute) 통과와 화면 안 버튼 노출을 위해 ADMIN 역할·관리 권한 코드로 users/me를 오버라이드한다.
  */
 test.describe('감사 로그 페이지', () => {
   test.beforeEach(async ({ authenticatedPage: page }) => {
-    // AdminRoute 통과를 위해 ADMIN 역할로 오버라이드
+    // 관리 화면 권한 가드(AdminOrPermissionRoute) 통과와 화면 안 버튼 노출을 위해 ADMIN 역할·관리 권한 코드로 오버라이드
     await setupAdminAuth(page);
   });
 

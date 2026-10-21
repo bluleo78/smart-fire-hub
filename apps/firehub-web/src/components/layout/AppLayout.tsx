@@ -68,6 +68,11 @@ interface NavItem {
   label: string;
   href: string;
   icon: LucideIcon;
+  /**
+   * 이 메뉴를 보이게 하는 권한 코드 — 라우트 가드(AdminOrPermissionRoute)와 같은 코드다(WD-121).
+   * 없으면 모든 인증 사용자에게 보인다. 메뉴와 라우트가 다른 기준을 쓰면 「보이는데 누르면 막히는」 메뉴가 생긴다.
+   */
+  permission?: string;
 }
 
 /**
@@ -98,7 +103,7 @@ const analyticsNavItems: NavItem[] = [
 
 const automationNavItems: NavItem[] = [
   { label: '파이프라인', href: '/pipelines', icon: GitBranch },
-  { label: 'API 연결', href: '/admin/api-connections', icon: Plug },
+  { label: 'API 연결', href: '/admin/api-connections', icon: Plug, permission: 'apiconnection:read' },
 ];
 
 const aiInsightsNavItems: NavItem[] = [
@@ -115,10 +120,10 @@ const knowledgeGraphNavItems: NavItem[] = [
 ];
 
 const adminNavItems: NavItem[] = [
-  { label: '사용자 관리', href: '/admin/users', icon: Users },
-  { label: '역할 관리', href: '/admin/roles', icon: Shield },
-  { label: '감사 로그', href: '/admin/audit-logs', icon: FileText },
-  { label: '설정', href: '/admin/settings', icon: Settings },
+  { label: '사용자 관리', href: '/admin/users', icon: Users, permission: 'user:read' },
+  { label: '역할 관리', href: '/admin/roles', icon: Shield, permission: 'role:read' },
+  { label: '감사 로그', href: '/admin/audit-logs', icon: FileText, permission: 'audit:read' },
+  { label: '설정', href: '/admin/settings', icon: Settings, permission: 'security:settings' },
 ];
 
 function PageSkeleton() {
@@ -250,13 +255,12 @@ function AppLayoutInner() {
   const navRef = useRef<HTMLElement>(null);
   useActiveNavIntoView(navRef);
   const { isAdmin } = useAuth();
-  // 관리 섹션 노출: ADMIN 은 전체, security:settings 만 가진 사용자는 「설정」만(스펙 §5-1).
+  // 메뉴 노출(WD-121): ADMIN 은 전체, 그 밖에는 항목별 권한 코드를 가진 것만 — 라우트 가드와 같은 판정이다.
+  // 「관리」 그룹은 보이는 항목이 하나라도 있을 때만 그린다(아래 visibleAdminNavItems.length 조건).
   const { permissions } = useMyPermissions();
-  const visibleAdminNavItems = isAdmin
-    ? adminNavItems
-    : permissions.has('security:settings')
-      ? adminNavItems.filter((item) => item.href === '/admin/settings')
-      : [];
+  const canSeeNavItem = (item: NavItem) => !item.permission || isAdmin || permissions.has(item.permission);
+  const visibleAdminNavItems = adminNavItems.filter(canSeeNavItem);
+  const visibleAutomationNavItems = automationNavItems.filter(canSeeNavItem);
   const { brandName } = useBranding(); // 런타임 브랜드명 (사이드바 표시)
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -415,7 +419,7 @@ function AppLayoutInner() {
 
               <NavSection
                 label="자동화"
-                items={automationNavItems}
+                items={visibleAutomationNavItems}
                 isActive={isActive}
                 collapsed={collapsed}
                 onClick={handleNavClick}

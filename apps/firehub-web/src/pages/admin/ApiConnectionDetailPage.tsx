@@ -34,6 +34,7 @@ import {
   useTestApiConnection,
   useUpdateApiConnection,
 } from '../../hooks/queries/useApiConnections';
+import { useMyPermissions } from '../../hooks/queries/useMyPermissions';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
 import type { TestConnectionResponse } from '../../types/api-connection';
 import type { UpdateApiConnectionRequest } from '../../types/api-connection';
@@ -46,6 +47,12 @@ export default function ApiConnectionDetailPage() {
   const updateMutation = useUpdateApiConnection();
   const deleteMutation = useDeleteApiConnection();
   const testMutation = useTestApiConnection();
+  // 지금 확인(POST /{id}/test)·기본 정보 저장·인증 정보 변경 = apiconnection:write, 삭제 = apiconnection:delete (WD-121).
+  // 권한이 없으면 버튼은 숨기고 입력은 잠근다 — 입력이 열려 있으면 고친 값이 저장할 수 없는 「미저장 변경」 경고로 남는다.
+  // 라우트 가드가 권한 조회를 끝낸 뒤에만 이 화면을 그린다. 서버에 관리자 우회가 없으므로 권한 코드만 본다.
+  const { permissions } = useMyPermissions();
+  const canWrite = permissions.has('apiconnection:write');
+  const canDelete = permissions.has('apiconnection:delete');
   // 마지막 "지금 확인" 응답을 저장 — 상태코드/응답 본문/헤더/요청 URL 노출 (#76)
   const [lastTestResult, setLastTestResult] = useState<TestConnectionResponse | null>(null);
 
@@ -303,14 +310,16 @@ export default function ApiConnectionDetailPage() {
           {connection.lastErrorMessage && (
             <p className="text-sm text-destructive">{connection.lastErrorMessage}</p>
           )}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleTest}
-            disabled={testMutation.isPending}
-          >
-            {testMutation.isPending ? '확인 중...' : '지금 확인'}
-          </Button>
+          {canWrite && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleTest}
+              disabled={testMutation.isPending}
+            >
+              {testMutation.isPending ? '확인 중...' : '지금 확인'}
+            </Button>
+          )}
         </CardContent>
       </Card>
 
@@ -425,11 +434,11 @@ export default function ApiConnectionDetailPage() {
         <CardContent className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor={`${baseId}-name`}>연결 이름</Label>
-            <Input id={`${baseId}-name`} value={name} onChange={(e) => setName(e.target.value)} />
+            <Input id={`${baseId}-name`} value={name} onChange={(e) => setName(e.target.value)} disabled={!canWrite} />
           </div>
           <div className="space-y-2">
             <Label htmlFor={`${baseId}-description`}>설명</Label>
-            <Input id={`${baseId}-description`} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="설명 (선택)" />
+            <Input id={`${baseId}-description`} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="설명 (선택)" disabled={!canWrite} />
           </div>
           {/* Base URL: 외부 API 기본 주소 */}
           <div className="space-y-2">
@@ -439,6 +448,7 @@ export default function ApiConnectionDetailPage() {
               value={baseUrl}
               onChange={(e) => setBaseUrl(e.target.value)}
               placeholder="https://api.example.com"
+              disabled={!canWrite}
             />
           </div>
           {/* 헬스체크 경로 */}
@@ -449,6 +459,7 @@ export default function ApiConnectionDetailPage() {
               value={healthCheckPath}
               onChange={(e) => setHealthCheckPath(e.target.value)}
               placeholder="/health (선택)"
+              disabled={!canWrite}
               /* 아래 도움말 문구를 스크린리더가 함께 읽도록 연결 (#432) */
               aria-describedby={`${baseId}-health-path-help`}
             />
@@ -460,9 +471,11 @@ export default function ApiConnectionDetailPage() {
             <div>생성일: {formatDate(connection.createdAt)}</div>
             <div>수정일: {formatDate(connection.updatedAt)}</div>
           </div>
-          <Button onClick={handleSaveInfo} disabled={updateMutation.isPending}>
-            {updateMutation.isPending ? '저장 중...' : '저장'}
-          </Button>
+          {canWrite && (
+            <Button onClick={handleSaveInfo} disabled={updateMutation.isPending}>
+              {updateMutation.isPending ? '저장 중...' : '저장'}
+            </Button>
+          )}
         </CardContent>
       </Card>
 
@@ -473,7 +486,7 @@ export default function ApiConnectionDetailPage() {
         <CardHeader>
           <div className="flex items-center justify-between">
             <CardTitle>인증 설정</CardTitle>
-            {!isEditingAuth && (
+            {canWrite && !isEditingAuth && (
               <Button variant="outline" size="sm" onClick={() => setIsEditingAuth(true)}>
                 인증 정보 변경
               </Button>
@@ -637,25 +650,28 @@ export default function ApiConnectionDetailPage() {
         </CardContent>
       </Card>
 
-      <Separator />
-
-      {/* Delete */}
-      <Card>
-        <CardContent className="pt-6">
-          <DeleteConfirmDialog
-            entityName="API 연결"
-            itemName={connection.name}
-            // (#647) 이름이 같은 다른 연결과 혼동해 잘못 삭제하지 않도록 ID/Base URL을 함께 표시
-            extraDetail={`ID: ${connection.id} · ${connection.baseUrl}`}
-            onConfirm={handleDelete}
-            trigger={
-              <Button variant="destructive">
-                이 연결 삭제
-              </Button>
-            }
-          />
-        </CardContent>
-      </Card>
+      {/* Delete — apiconnection:delete 가 있을 때만(WD-121) */}
+      {canDelete && (
+        <>
+          <Separator />
+          <Card>
+            <CardContent className="pt-6">
+              <DeleteConfirmDialog
+                entityName="API 연결"
+                itemName={connection.name}
+                // (#647) 이름이 같은 다른 연결과 혼동해 잘못 삭제하지 않도록 ID/Base URL을 함께 표시
+                extraDetail={`ID: ${connection.id} · ${connection.baseUrl}`}
+                onConfirm={handleDelete}
+                trigger={
+                  <Button variant="destructive">
+                    이 연결 삭제
+                  </Button>
+                }
+              />
+            </CardContent>
+          </Card>
+        </>
+      )}
     </div>
   );
 }

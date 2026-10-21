@@ -10,7 +10,7 @@ import { expect, test } from '../../fixtures/auth.fixture';
 /**
  * 역할 관리 페이지 E2E 테스트
  * - 역할 목록, 생성 다이얼로그, 시스템 역할 보호, 커스텀 역할 삭제를 검증한다.
- * - AdminRoute 통과를 위해 ADMIN 역할로 users/me를 오버라이드한다.
+ * - 관리 화면 권한 가드(AdminOrPermissionRoute) 통과와 화면 안 버튼 노출을 위해 ADMIN 역할·관리 권한 코드로 users/me를 오버라이드한다.
  */
 /** 역할 정보 카드의 「저장」 — 권한 저장·열람 등급 저장 버튼과 섞이지 않게 카드 안으로 좁힌다 (WD-119). */
 async function saveRoleInfo(page: import('@playwright/test').Page) {
@@ -23,7 +23,7 @@ async function saveRoleInfo(page: import('@playwright/test').Page) {
 
 test.describe('역할 관리 페이지', () => {
   test.beforeEach(async ({ authenticatedPage: page }) => {
-    // AdminRoute 통과를 위해 ADMIN 역할로 오버라이드
+    // 관리 화면 권한 가드(AdminOrPermissionRoute) 통과와 화면 안 버튼 노출을 위해 ADMIN 역할·관리 권한 코드로 오버라이드
     await setupAdminAuth(page);
   });
 

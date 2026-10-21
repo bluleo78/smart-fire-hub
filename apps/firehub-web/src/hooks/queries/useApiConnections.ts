@@ -61,7 +61,7 @@ export function useDeleteApiConnection() {
 }
 
 /**
- * 단일 API 연결 즉시 테스트 (관리자 전용)
+ * 단일 API 연결 즉시 테스트 (apiconnection:write)
  * - 성공/실패 후 목록 캐시를 갱신해 lastStatus를 최신화한다.
  */
 export function useTestApiConnection() {
@@ -75,7 +75,7 @@ export function useTestApiConnection() {
 }
 
 /**
- * 전체 API 연결 일괄 갱신 (관리자 전용)
+ * 전체 API 연결 일괄 갱신 (apiconnection:write)
  * - 백엔드 스케줄러를 즉시 트리거하고 jobId를 반환한다.
  * - 트리거 시점의 invalidate는 Job이 막 시작된 상태라 실제 헬스체크 결과를 반영하지 못하므로
  *   (#548) 남겨두되, 진짜 갱신 반영은 반환된 jobId를 useApiConnectionsRefreshJob으로 추적해야 한다.

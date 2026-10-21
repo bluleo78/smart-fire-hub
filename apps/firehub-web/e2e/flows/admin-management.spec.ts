@@ -10,11 +10,11 @@ import { expect, test } from '../fixtures/auth.fixture';
 /**
  * 관리자 도메인 플로우 E2E 테스트
  * - 사용자 목록 → 상세, 역할 목록 → 생성 등 주요 플로우를 검증한다.
- * - AdminRoute를 통과하기 위해 ADMIN 역할로 users/me를 오버라이드한다.
+ * - 관리 화면 권한 가드(AdminOrPermissionRoute)를 통과하기 위해 ADMIN 역할·관리 권한 코드로 users/me를 오버라이드한다.
  */
 test.describe('관리자 플로우', () => {
   test.beforeEach(async ({ authenticatedPage: page }) => {
-    // AdminRoute 통과를 위해 ADMIN 역할로 오버라이드
+    // 관리 화면 권한 가드(AdminOrPermissionRoute) 통과와 화면 안 버튼 노출을 위해 ADMIN 역할·관리 권한 코드로 오버라이드
     await setupAdminAuth(page);
   });
 

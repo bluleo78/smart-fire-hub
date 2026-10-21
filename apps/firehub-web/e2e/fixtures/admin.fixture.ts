@@ -35,12 +35,13 @@ import { createPageResponse, mockApi } from './api-mock';
 /**
  * 관리자 도메인 모킹 헬퍼
  * - 관리자 페이지(사용자/역할/감사 로그/설정/API 연결) 테스트에서 공통으로 사용하는 API 모킹 함수를 제공한다.
- * - AdminRoute는 ADMIN 역할을 가진 사용자만 접근 허용하므로, 각 헬퍼는 users/me 오버라이드를 포함한다.
+ * - 관리 화면은 ADMIN 이거나 화면별 권한 코드가 있어야 열리고(AdminOrPermissionRoute, WD-121) 화면 안 버튼은 권한 코드로만 노출되므로,
+ *   ADMIN 시나리오는 setupAdminAuth 로 ADMIN 역할과 관리 권한 코드를 함께 준다.
  */
 
 /**
  * 관리자 권한으로 users/me를 오버라이드한다.
- * - authenticatedPage는 기본적으로 USER 역할만 갖고 있어 AdminRoute를 통과하지 못한다.
+ * - authenticatedPage는 기본적으로 USER 역할·빈 권한이라 관리 화면에서 권한 안내만 보인다(apiconnection:read 도 없음).
  * - 이 함수를 beforeEach에서 호출하여 ADMIN 역할 사용자로 전환한다.
  */
 export async function setupAdminAuth(page: Page) {
@@ -51,8 +52,11 @@ export async function setupAdminAuth(page: Page) {
   // 필요시 setupUserListMocks 등으로 오버라이드한다.
   await mockApi(page, 'GET', '/api/v1/users', createPageResponse([]));
   // 멤버 추가 버튼(user:write)·역할 지정(role:assign) 노출 판단용(WD-2). 개별 테스트가 덮어쓴다.
+  // 관리 화면 안 버튼은 권한 코드로만 노출되므로(WD-121, 서버에 관리자 우회 없음) 실제 ADMIN 처럼 관리 화면 권한을 모두 준다
+  // — ADMIN 역할은 시드에서 모든 권한을 받는다(V1·V49).
   await mockApi(page, 'GET', '/api/v1/auth/me/permissions', [
-    'user:read', 'user:write', 'role:assign', 'role:read', 'role:write',
+    'user:read', 'user:write', 'role:assign', 'role:read', 'role:write', 'role:delete', 'permission:read',
+    'audit:read', 'apiconnection:read', 'apiconnection:write', 'apiconnection:delete',
     'security:settings', 'dataset:read', 'dataset:classify', 'dataset:grant',
   ]);
 }

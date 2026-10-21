@@ -17,7 +17,7 @@ import { expect, test } from '../../fixtures/auth.fixture';
  *    들어가지 않고 빈 칸이면 키가 빠져 서버가 유지하는가, 필수 키 규칙이 지켜지는가가 이 탭 고유의 경계다.
  *  - 임베딩 탭은 탭 존재만 본다 — 테넌트 전용 편집(#713)의 저장·연결 테스트·재임베딩 계약은 `embedding-settings.spec.ts` 가 맡는다.
  *
- * AdminRoute 통과를 위해 ADMIN 역할로 users/me 를 오버라이드한다.
+ * 관리 화면 권한 가드(AdminOrPermissionRoute) 통과와 화면 안 버튼 노출을 위해 ADMIN 역할·관리 권한 코드로 users/me 를 오버라이드한다.
  */
 
 /**
@@ -31,7 +31,7 @@ const fieldBox = (page: Page, inputId: string) =>
 
 test.describe('설정 페이지', () => {
   test.beforeEach(async ({ authenticatedPage: page }) => {
-    // AdminRoute 통과를 위해 ADMIN 역할로 오버라이드
+    // 관리 화면 권한 가드(AdminOrPermissionRoute) 통과와 화면 안 버튼 노출을 위해 ADMIN 역할·관리 권한 코드로 오버라이드
     await setupAdminAuth(page);
   });
 

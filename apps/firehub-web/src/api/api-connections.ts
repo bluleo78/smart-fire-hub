@@ -18,13 +18,13 @@ export const apiConnectionsApi = {
     client.put<ApiConnectionResponse>(`/api-connections/${id}`, data),
   delete: (id: number) =>
     client.delete(`/api-connections/${id}`),
-  /** 연결 상태 즉시 점검 (관리자 전용) */
+  /** 연결 상태 즉시 점검 (apiconnection:write) */
   test: (id: number) =>
     client.post<TestConnectionResponse>(`/api-connections/${id}/test`),
   /** 저장 전 dry-run 헬스체크 (#90). payload만 전달, DB 미저장. */
   testPayload: (data: CreateApiConnectionRequest) =>
     client.post<TestConnectionResponse>('/api-connections/test', data),
-  /** 전체 연결 일괄 갱신 (관리자 전용) */
+  /** 전체 연결 일괄 갱신 (apiconnection:write) */
   refreshAll: () =>
     client.post<{ jobId: string }>('/api-connections/refresh-all'),
   /** 파이프라인 스텝용 슬림 목록 (인증 사용자 누구나) */

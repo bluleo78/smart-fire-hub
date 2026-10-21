@@ -26,6 +26,8 @@ import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
 import { Separator } from '../../components/ui/separator';
 import { Skeleton } from '../../components/ui/skeleton';
+import { useMyPermissions } from '../../hooks/queries/useMyPermissions';
+import { useAuth } from '../../hooks/useAuth';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
 import type { UpdateRoleFormData } from '../../lib/validations/role';
 import { updateRoleSchema } from '../../lib/validations/role';
@@ -45,8 +47,21 @@ const PYTHON_READ_NOTICE_PERMISSIONS = new Set(['pipeline:python_execute']);
 export default function RoleDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  // 화면 안 조작은 서버가 막는 권한 코드로만 노출한다(WD-121) — 서버에 관리자 우회가 없으므로 역할 이름은 보지 않는다.
+  // 이름·설명·권한·열람 등급 저장 = role:write. 권한 체크박스에 쓸 전체 권한 목록(GET /permissions)은 permission:read.
+  // 라우트 가드가 권한 조회를 끝낸 뒤에만 이 화면을 그리므로 여기서는 로딩을 따로 기다리지 않는다.
+  const { permissions: myPermissions } = useMyPermissions();
+  const { isAdmin: isCallerAdmin } = useAuth();
+  const canWriteRole = myPermissions.has('role:write');
+  // 전체 목록 조회 여부는 화면에 들어온 시점 값으로 고정한다 — 아래 조회 effect 가 이 값에 걸려 있어, 백그라운드 권한
+  // 재조회로 값이 바뀌면 역할을 다시 읽으며 form.reset 으로 입력 중인 이름·설명과 체크가 지워진다. 바뀐 권한은 다음 진입부터
+  // 반영된다. (라우트 가드가 권한 조회를 마친 뒤 그리므로 첫 렌더 값이 곧 확정값이다.)
+  const [canReadCatalog] = useState(() => myPermissions.has('permission:read'));
+  // 전체 목록이 없으면 빠진 권한을 보여 줄 수 없어 고를 수도 없다 — 권한 편집은 목록까지 읽을 수 있을 때만.
+  const canEditPermissions = canWriteRole && canReadCatalog;
   const [role, setRole] = useState<RoleDetailResponse | null>(null);
-  const [allPermissions, setAllPermissions] = useState<PermissionResponse[]>([]);
+  // 전체 권한 목록. null = 읽지 않음(permission:read 없음) — 이때는 이 역할이 가진 권한만 읽기 전용으로 보인다.
+  const [catalog, setCatalog] = useState<PermissionResponse[] | null>(null);
   const [selectedPermissionIds, setSelectedPermissionIds] = useState<number[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSavingRole, setIsSavingRole] = useState(false);
@@ -86,12 +101,14 @@ export default function RoleDetailPage() {
       if (!id) return;
       setIsLoading(true);
       try {
+        // 전체 권한 목록은 permission:read 가 있을 때만 읽는다 — 역할 조회(role:read)만 있는 사람에게도 같이 읽으면
+        // 403 이 역할 조회까지 실패로 만들어 화면이 열리지 않고 목록으로 튕겼다(WD-121).
         const [roleRes, permRes] = await Promise.all([
           rolesApi.getRoleById(Number(id)),
-          permissionsApi.getPermissions(),
+          canReadCatalog ? permissionsApi.getPermissions() : Promise.resolve(null),
         ]);
         setRole(roleRes.data);
-        setAllPermissions(permRes.data);
+        setCatalog(permRes?.data ?? null);
         setSelectedPermissionIds(roleRes.data.permissions.map(p => p.id));
         form.reset({
           name: roleRes.data.name,
@@ -106,7 +123,17 @@ export default function RoleDetailPage() {
     };
 
     fetchData();
-  }, [id, navigate, form]);
+  }, [id, navigate, form, canReadCatalog]);
+
+  // 체크박스로 그릴 권한 — 전체 목록을 읽었으면 그것, 아니면 이 역할이 가진 권한만.
+  const allPermissions = useMemo(() => catalog ?? role?.permissions ?? [], [catalog, role]);
+
+  // 새로 붙일 수 없는 권한(WD-116 RoleGrantGuard) — ADMIN 이 아니면 자기에게 없는 권한은 역할에 추가할 수 없다(빼는 것은 자유).
+  // 서버는 「저장된 권한 대비 새로 늘어난 것」만 보므로, 이미 저장돼 있던 권한은 이번 편집에서 뺐다가 다시 체크해도 막지 않는다.
+  const savedPermissionIds = useMemo(() => new Set(role?.permissions.map(p => p.id) ?? []), [role]);
+  const isAddLocked = (perm: PermissionResponse) =>
+    !isCallerAdmin && !myPermissions.has(perm.code) && !savedPermissionIds.has(perm.id);
+  const hasAddLocked = canEditPermissions && allPermissions.some(isAddLocked);
 
   const permissionsByCategory = useMemo(() => {
     const grouped: Record<string, PermissionResponse[]> = {};
@@ -239,7 +266,7 @@ export default function RoleDetailPage() {
               <Input
                 id="role-name"
                 {...form.register('name')}
-                disabled={role.isSystem}
+                disabled={role.isSystem || !canWriteRole}
               />
               {form.formState.errors.name && (
                 <p className="text-sm text-destructive">{form.formState.errors.name.message}</p>
@@ -250,22 +277,24 @@ export default function RoleDetailPage() {
               <Input
                 id="role-description"
                 {...form.register('description')}
-                disabled={role.isSystem}
+                disabled={role.isSystem || !canWriteRole}
               />
             </div>
             {roleError && (
               <p className="text-sm text-destructive">{roleError}</p>
             )}
-            {/* 시스템 역할은 수정 불가 — isSystem 플래그로 저장 버튼도 비활성화 */}
-            <Button type="submit" disabled={isSavingRole || role.isSystem}>
-              {isSavingRole ? '저장 중...' : '저장'}
-            </Button>
+            {/* 시스템 역할은 수정 불가 — isSystem 플래그로 저장 버튼도 비활성화. role:write 가 없으면 버튼 자체를 숨긴다(WD-121). */}
+            {canWriteRole && (
+              <Button type="submit" disabled={isSavingRole || role.isSystem}>
+                {isSavingRole ? '저장 중...' : '저장'}
+              </Button>
+            )}
           </form>
         </CardContent>
       </Card>
 
       {/* 데이터 열람 등급 — 권한과 성격이 달라 별도 Card·별도 저장(목업 s3) */}
-      <RoleClearanceCard roleId={role.id} onDirtyChange={setClearanceDirty} />
+      <RoleClearanceCard roleId={role.id} canEdit={canWriteRole} onDirtyChange={setClearanceDirty} />
 
       <Separator />
 
@@ -298,6 +327,11 @@ export default function RoleDetailPage() {
           <CardTitle>권한 할당</CardTitle>
         </CardHeader>
         <CardContent className="space-y-6">
+          {hasAddLocked && (
+            <p id="perm-add-lock-hint" className="text-[13px] text-muted-foreground">
+              자신에게 없는 권한은 추가할 수 없습니다
+            </p>
+          )}
           {Object.entries(permissionsByCategory).map(([category, perms]) => (
             <div key={category} className="space-y-3">
               <h3 className="text-sm font-semibold uppercase text-muted-foreground">
@@ -311,7 +345,8 @@ export default function RoleDetailPage() {
                       id={`perm-${perm.id}`}
                       checked={selectedPermissionIds.includes(perm.id)}
                       onCheckedChange={(checked) => handlePermissionToggle(perm.id, checked === true)}
-                      disabled={role.isSystem}
+                      disabled={role.isSystem || !canEditPermissions || isAddLocked(perm)}
+                      aria-describedby={canEditPermissions && isAddLocked(perm) ? 'perm-add-lock-hint' : undefined}
                     />
                     <Label htmlFor={`perm-${perm.id}`} className="text-sm">
                       {perm.code}
@@ -333,11 +368,14 @@ export default function RoleDetailPage() {
             </div>
           ))}
           {allPermissions.length === 0 && (
-            <p className="text-sm text-muted-foreground">등록된 권한이 없습니다.</p>
+            <p className="text-sm text-muted-foreground">{catalog ? '등록된 권한이 없습니다.' : '이 역할에 할당된 권한이 없습니다.'}</p>
           )}
-          <Button onClick={handleSavePermissionsClick} disabled={isSavingPermissions || role.isSystem}>
-            {isSavingPermissions ? '저장 중...' : '권한 저장'}
-          </Button>
+          {/* 권한 저장은 role:write + 전체 목록(permission:read)이 있을 때만(WD-121) — 없으면 가진 권한만 읽기 전용으로 보인다. */}
+          {canEditPermissions && (
+            <Button onClick={handleSavePermissionsClick} disabled={isSavingPermissions || role.isSystem}>
+              {isSavingPermissions ? '저장 중...' : '권한 저장'}
+            </Button>
+          )}
         </CardContent>
       </Card>
 

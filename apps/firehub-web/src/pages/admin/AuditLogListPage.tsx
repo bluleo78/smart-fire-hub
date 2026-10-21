@@ -31,6 +31,7 @@ import {
 import { TableEmptyRow } from '@/components/ui/table-empty';
 import { TableSkeletonRows } from '@/components/ui/table-skeleton';
 import { useAuditLogs } from '@/hooks/queries/useAuditLogs';
+import { useMyPermissions } from '@/hooks/queries/useMyPermissions';
 import { useUsers } from '@/hooks/queries/useUsers';
 import { useDebounceValue } from '@/hooks/useDebounceValue';
 import { formatDateTime, formatIpAddress } from '@/lib/formatters';
@@ -520,10 +521,13 @@ export default function AuditLogListPage() {
 
   /**
    * 사용자 dropdown 옵션 로드 (#89)
-   * - 관리자 페이지이므로 GET /users 권한 보유 가정 (user:read)
+   * - GET /users 는 user:read — 감사 로그 화면은 audit:read 만으로 열리므로(WD-121) 권한이 있을 때만 읽고,
+   *   없으면 필터 자체를 숨긴다(고를 사용자가 없는 드롭다운은 쓸모가 없고, 확실히 403 일 요청도 보내지 않는다).
    * - 한 페이지당 100명까지 노출. 더 많은 사용자가 있으면 향후 검색 가능한 Combobox로 확장 고려.
    */
-  const { data: usersPage } = useUsers({ size: 100 });
+  const { permissions } = useMyPermissions();
+  const canReadUsers = permissions.has('user:read');
+  const { data: usersPage } = useUsers({ size: 100 }, { enabled: canReadUsers });
 
   const handleFilterChange = (setter: (v: string) => void) => (value: string) => {
     setter(value === 'all' ? '' : value);
@@ -559,19 +563,21 @@ export default function AuditLogListPage() {
           - 옵션은 GET /users 결과(최대 100명) 기반. SelectValue placeholder로 "전체 사용자" 표시.
           - aria-label로 스크린리더 사용자가 필터 의도를 알 수 있도록 한다.
         */}
-        <Select value={userId || 'all'} onValueChange={handleFilterChange(setUserId)}>
-          <SelectTrigger className="w-[180px]" aria-label="사용자 필터">
-            <SelectValue placeholder="전체 사용자" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">전체 사용자</SelectItem>
-            {usersPage?.content.map((u) => (
-              <SelectItem key={u.id} value={String(u.id)}>
-                {u.name} ({u.username})
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        {canReadUsers && (
+          <Select value={userId || 'all'} onValueChange={handleFilterChange(setUserId)}>
+            <SelectTrigger className="w-[180px]" aria-label="사용자 필터">
+              <SelectValue placeholder="전체 사용자" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">전체 사용자</SelectItem>
+              {usersPage?.content.map((u) => (
+                <SelectItem key={u.id} value={String(u.id)}>
+                  {u.name} ({u.username})
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
 
         <Select value={actionType || 'all'} onValueChange={handleFilterChange(setActionType)}>
           {/* 폭 180px — '감사 등급 데이터 접근' 같은 긴 라벨이 잘리지 않게. 그래도 잘리면 title 로 전체 라벨을 보인다 */}

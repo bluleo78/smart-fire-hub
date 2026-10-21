@@ -3,7 +3,6 @@ import { lazy,Suspense } from 'react';
 import { BrowserRouter, Navigate, Route,Routes } from 'react-router-dom';
 
 import { AdminOrPermissionRoute } from './components/AdminOrPermissionRoute';
-import { AdminRoute } from './components/AdminRoute';
 import { AppLayout } from './components/layout/AppLayout';
 import { PageErrorBoundary } from './components/PageErrorBoundary';
 import { ProtectedRoute } from './components/ProtectedRoute';
@@ -113,19 +112,32 @@ function App() {
               <Route path="/knowledge-graph/review" element={<ReviewInboxPage />} />
               {/* 구 URL 하위호환 — 북마크 리다이렉트. */}
               <Route path="/knowledge-graph/synonym-review" element={<Navigate to="/knowledge-graph/review" replace />} />
-              {/* 구 URL 하위호환 — AdminRoute 밖에 둬야 비관리자 북마크도 리다이렉트된다(안 그러면 /로 튕김). */}
+              {/* 구 URL 하위호환 — 관리 화면 권한 가드 밖에 둬야 권한 없는 사용자의 북마크도 리다이렉트된다. */}
               <Route path="/admin/ontology" element={<Navigate to="/knowledge-graph/explore" replace />} />
+              {/* 관리 화면은 역할 이름(ADMIN)이 아니라 화면별 권한 코드로 연다(WD-121) — 서버가 같은 코드로 인가한다.
+                  ADMIN 은 모두 통과. 권한이 없으면 홈으로 튕기지 않고 레이아웃 안에서 권한 안내를 보인다. */}
               {/* 설정은 ADMIN 또는 security:settings 보유자(스펙 §5-1). 탭 노출은 페이지가 권한별로 정한다. */}
               <Route element={<AdminOrPermissionRoute permission="security:settings" />}>
                 <Route path="/admin/settings" element={<SettingsPage />} />
               </Route>
-              <Route element={<AdminRoute />}>
+              {/* 구 URL 하위호환 — 도착지(/admin/settings)가 자기 권한으로 판정하므로 가드 밖에 둔다. */}
+              <Route path="/admin/ai-settings" element={<Navigate to="/admin/settings" replace />} />
+              {/* GET /users·/users/{id} = user:read */}
+              <Route element={<AdminOrPermissionRoute permission="user:read" />}>
                 <Route path="/admin/users" element={<UserListPage />} />
                 <Route path="/admin/users/:id" element={<UserDetailPage />} />
+              </Route>
+              {/* GET /roles·/roles/{id} = role:read */}
+              <Route element={<AdminOrPermissionRoute permission="role:read" />}>
                 <Route path="/admin/roles" element={<RoleListPage />} />
                 <Route path="/admin/roles/:id" element={<RoleDetailPage />} />
+              </Route>
+              {/* GET /admin/audit-logs = audit:read */}
+              <Route element={<AdminOrPermissionRoute permission="audit:read" />}>
                 <Route path="/admin/audit-logs" element={<AuditLogListPage />} />
-                <Route path="/admin/ai-settings" element={<Navigate to="/admin/settings" replace />} />
+              </Route>
+              {/* GET /api-connections·/api-connections/{id} = apiconnection:read — 일반 USER 역할도 기본으로 가진다(V26). */}
+              <Route element={<AdminOrPermissionRoute permission="apiconnection:read" />}>
                 <Route path="/admin/api-connections" element={<ApiConnectionListPage />} />
                 <Route path="/admin/api-connections/:id" element={<ApiConnectionDetailPage />} />
               </Route>

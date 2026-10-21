@@ -78,7 +78,7 @@ await expect(page.getByText('새 데이터셋')).toBeVisible();
 3. 테스트: `e2e/flows/` (해피 패스) 또는 `e2e/pages/` (상세)에 spec 파일 추가
 4. `auth.fixture.ts`의 `test`, `expect`를 import하여 인증 fixture 사용
 5. 셀렉터: `getByRole`/`getByLabel`/`getByText` 우선, `data-testid`는 필요한 곳만
-6. 관리자 페이지: `setupAdminAuth(page)` 호출 필요 (AdminRoute 우회)
+6. 관리자 페이지: `setupAdminAuth(page)` 호출 필요 (ADMIN 사용자 + 관리 화면 권한 코드). 비 ADMIN 권한별 접근은 `/api/v1/auth/me/permissions` 를 덮어써서 검증
 
 ## Architecture
 
@@ -109,7 +109,7 @@ src/
 
 **API Client** (`src/api/client.ts`): Axios instance at `/api/v1` with automatic JWT Bearer injection. Response interceptor handles 401 by refreshing token via `/api/v1/auth/refresh` (HttpOnly cookie) with a queue for concurrent failed requests. Access token is stored in-memory (not localStorage).
 
-**Authentication** (`src/hooks/AuthContext.tsx` + `auth-context-value.ts`): `AuthProvider` wraps the app, provides `useAuth()` hook with `user`, `isAdmin`, `hasRole()`, `login/signup/logout`. Route protection via `ProtectedRoute` (redirects to `/login`) and `AdminRoute` (redirects to `/`).
+**Authentication** (`src/hooks/AuthContext.tsx` + `auth-context-value.ts`): `AuthProvider` wraps the app, provides `useAuth()` hook with `user`, `isAdmin`, `hasRole()`, `login/signup/logout`. Route protection via `ProtectedRoute` (redirects to `/login`) and `AdminOrPermissionRoute` (ADMIN 또는 화면별 권한 코드 — 없으면 레이아웃 안 권한 안내, WD-121).
 
 **Server State**: All data fetching uses TanStack Query hooks in `src/hooks/queries/`. Pattern: `useQuery` for reads, `useMutation` with `queryClient.invalidateQueries()` for writes. Polling via `refetchInterval` for active executions/imports.
 
@@ -117,7 +117,7 @@ src/
 
 **Error Handling**: `handleApiError()` / `extractApiError()` in `src/lib/api-error.ts` extracts backend `ErrorResponse.message` and shows via Sonner toast.
 
-**Routing** (`src/App.tsx`): All pages are lazy-loaded with `React.lazy()` + `Suspense`. Routes nest under `ProtectedRoute > AppLayout`, admin routes additionally nest under `AdminRoute`.
+**Routing** (`src/App.tsx`): All pages are lazy-loaded with `React.lazy()` + `Suspense`. Routes nest under `ProtectedRoute > AppLayout`, admin routes additionally nest under `AdminOrPermissionRoute permission="…"`.
 
 **AI Chat System**: SSE streaming via raw `fetch` (not Axios) in `src/api/ai.ts`. `AIProvider` context manages chat state with three display modes: side panel, floating, fullscreen. Toggle with Cmd/Ctrl+K. Session management with compaction support.
 
