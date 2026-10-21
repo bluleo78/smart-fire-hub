@@ -6,12 +6,15 @@ import time
 from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 from jsonpath_ng import parse as jsonpath_parse
 from app.schemas.requests import ApiCallExecuteRequest, FieldMapping
 from app.schemas.responses import ApiCallExecuteResponse
+from app.services import api_call_errors as errors
+from app.services.api_call_errors import RetryableApiCallError
 from app.services.db_utils import insert_batch
 from app.validators.ssrf_protection import SsrfException, validate_url
 
@@ -20,10 +23,6 @@ logger = logging.getLogger(__name__)
 MAX_REDIRECTS = 5
 DEFAULT_PAGE_SIZE = 100
 MAX_PAGES = 10_000
-
-# Non-retryable HTTP status codes
-NON_RETRYABLE_STATUS = {400, 401, 403, 404}
-
 
 class ApiCallException(Exception):
     """Non-retryable API call error."""
@@ -158,6 +157,10 @@ def _execute_request(request: ApiCallExecuteRequest, extra_params: Dict[str, str
 
     attempt = 0
     last_error: Optional[Exception] = None
+    try:
+        target_host = urlsplit(request.url).hostname
+    except ValueError:
+        target_host = None
 
     while attempt <= max_retries:
         try:
@@ -172,11 +175,14 @@ def _execute_request(request: ApiCallExecuteRequest, extra_params: Dict[str, str
                 max_bytes=max_bytes,
             )
             return response_body
-        except ApiCallException:
-            # Non-retryable — propagate immediately
+        except (ApiCallException, SsrfException):
+            # 재시도 안 함: 고쳐지지 않는 4xx·응답 크기 초과 등과 리다이렉트 대상이 내부망인 경우(SsrfException).
+            # 예전에는 SsrfException 이 아래로 떨어져 같은 차단을 N회 재시도했다(WD-150, Java 와 같게).
             raise
         except Exception as e:
+            # 타임아웃·연결 오류·5xx/408/429 — 재시도. 원인을 사용자 문구로 바꿔 둔다(httpx 영어 원문 대신).
             last_error = e
+            last_message = errors.describe_exception(e, request.timeout_ms, target_host)
             attempt += 1
             if attempt > max_retries:
                 break
@@ -186,11 +192,18 @@ def _execute_request(request: ApiCallExecuteRequest, extra_params: Dict[str, str
             sleep_sec = max(0.0, (backoff_ms + jitter_ms) / 1000.0)
             logger.warning(
                 "Attempt %d/%d failed (%s). Retrying in %.2fs",
-                attempt, max_retries, e, sleep_sec,
+                attempt, max_retries, last_message, sleep_sec,
             )
             time.sleep(sleep_sec)
 
-    raise ApiCallException(f"All {max_retries + 1} attempts failed. Last error: {last_error}")
+    # 마지막 원인을 반드시 담는다(WD-150). 횟수는 Java 와 같게 「재시도 횟수」(max_retries)로 센다 — 예전 「All N attempts」는
+    # 첫 시도까지 세어 Java 문구와 숫자가 달랐다.
+    last_message = (
+        errors.describe_exception(last_error, request.timeout_ms, target_host)
+        if last_error is not None
+        else ""
+    )
+    raise ApiCallException(errors.retries_exhausted_message(max_retries, last_message))
 
 
 def _do_request(
@@ -225,12 +238,10 @@ def _do_request(
             if resp.status_code in (301, 302, 303, 307, 308):
                 redirect_count += 1
                 if redirect_count > MAX_REDIRECTS:
-                    raise ApiCallException(
-                        f"Too many redirects (max {MAX_REDIRECTS})"
-                    )
+                    raise ApiCallException(errors.too_many_redirects_message(MAX_REDIRECTS))
                 location = resp.headers.get("location")
                 if not location:
-                    raise ApiCallException("Redirect response missing Location header")
+                    raise ApiCallException(errors.redirect_without_location_message())
                 # SSRF check on redirect target
                 validate_url(location)
                 current_url = location
@@ -240,32 +251,30 @@ def _do_request(
                     body = None
                 continue
 
-            # Check for non-retryable client errors
-            if resp.status_code in NON_RETRYABLE_STATUS:
-                raise ApiCallException(
-                    f"Non-retryable HTTP error {resp.status_code}: {resp.text[:200]}"
-                )
-
-            # Raise for other HTTP errors (retryable 5xx etc.)
+            # HTTP 오류: 상태별 한국어 안내(WD-150). 5xx·408·429 만 재시도, 나머지 4xx 는 즉시 실패 —
+            # 예전에는 400/401/403/404 만 즉시 실패라 405 같은 오류도 재시도하며 오래 걸렸다. 응답 본문은 붙이지 않는다
+            # (Java 와 같은 문구를 쓰고, 본문에 무엇이 담겼는지 모르므로 실행 기록에 남기지 않는다).
             if resp.status_code >= 400:
-                raise Exception(
-                    f"HTTP error {resp.status_code}: {resp.text[:200]}"
-                )
+                message = errors.http_status_message(resp.status_code)
+                if errors.is_retryable_status(resp.status_code):
+                    raise RetryableApiCallError(message)
+                raise ApiCallException(message)
 
             # Check response size
+            max_mb = max_bytes // (1024 * 1024)
             content_length = resp.headers.get("content-length")
             if content_length and int(content_length) > max_bytes:
-                raise ApiCallException(
-                    f"Response size {content_length} bytes exceeds limit {max_bytes} bytes"
-                )
+                raise ApiCallException(errors.response_too_large_message(max_mb))
 
             content = resp.content
             if len(content) > max_bytes:
-                raise ApiCallException(
-                    f"Response body {len(content)} bytes exceeds limit {max_bytes} bytes"
-                )
+                raise ApiCallException(errors.response_too_large_message(max_mb))
 
-            return resp.json()
+            # JSON 이 아닌 응답(HTML 오류 페이지 등)은 다시 보내도 같다 — 재시도하지 않는다(Java 도 파싱 실패는 재시도 밖).
+            try:
+                return resp.json()
+            except ValueError as e:
+                raise ApiCallException(errors.not_json_message()) from e
 
 
 def _apply_auth(

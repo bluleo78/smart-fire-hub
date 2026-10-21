@@ -9,6 +9,7 @@ import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
 import com.smartfirehub.apiconnection.service.ApiConnectionService;
 import com.smartfirehub.pipeline.dto.ApiCallPreviewRequest;
 import com.smartfirehub.pipeline.dto.ApiCallPreviewResponse;
+import com.smartfirehub.pipeline.service.executor.ApiCallErrorMessages;
 import com.smartfirehub.pipeline.service.executor.JsonResponseParser;
 import com.smartfirehub.pipeline.service.executor.SsrfProtectionService;
 import java.nio.charset.StandardCharsets;
@@ -400,7 +401,8 @@ class ApiCallPreviewServiceTest {
                 5000));
 
     assertThat(response.success()).isFalse();
-    assertThat(response.errorMessage()).isNotNull();
+    // WD-150: 실행과 같은 한국어 차단 문구
+    assertThat(response.errorMessage()).isEqualTo("내부망 주소는 호출할 수 없습니다(루프백): 127.0.0.1");
   }
 
   // =========================================================================
@@ -409,12 +411,16 @@ class ApiCallPreviewServiceTest {
 
   /** 오류: HTTP 서버 연결 실패 시 success=false, errorMessage 반환 */
   @Test
-  void preview_connectionRefused_returnsError() {
-    // WireMock이 아닌 닫힌 포트로 요청
+  void preview_connectionRefused_returnsError() throws Exception {
+    // WireMock이 아닌 닫힌 포트로 요청 — 방금 열었다 닫은 포트라 거부가 확실하다
+    int closedPort;
+    try (java.net.ServerSocket socket = new java.net.ServerSocket(0)) {
+      closedPort = socket.getLocalPort();
+    }
     ApiCallPreviewResponse response =
         service.preview(
             new ApiCallPreviewRequest(
-                "http://localhost:19999/unreachable",
+                "http://localhost:" + closedPort + "/unreachable",
                 "GET",
                 null,
                 null,
@@ -426,7 +432,53 @@ class ApiCallPreviewServiceTest {
                 1000));
 
     assertThat(response.success()).isFalse();
-    assertThat(response.errorMessage()).isNotNull();
+    // WD-150: 실행 상세와 같은 문구(예전: 「Connection refused: …」 영어 원문)
+    assertThat(response.errorMessage()).isEqualTo(ApiCallErrorMessages.connectionRefused());
+    assertThat(response.errorMessage()).isEqualTo("연결이 거부되었습니다 — 주소·포트와 서버 실행 여부를 확인하세요");
+  }
+
+  /**
+   * WD-150: 4xx 는 상태별 한국어 안내 — 쿼리로 붙인 API 키가 문구에 남지 않는다(WebClientResponseException 메시지는 URL 을 담는다).
+   */
+  @Test
+  void preview_401_withQueryApiKey_koreanMessageWithoutSecret() {
+    wireMock.stubFor(get(urlPathEqualTo("/keyed")).willReturn(aResponse().withStatus(401)));
+
+    ApiCallPreviewResponse response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                baseUrl() + "/keyed",
+                "GET",
+                null,
+                null,
+                null,
+                "$",
+                null,
+                null,
+                java.util.Map.of(
+                    "authType", "API_KEY",
+                    "placement", "query",
+                    "paramName", "serviceKey",
+                    "apiKey", "SECRET123"),
+                5000));
+
+    assertThat(response.success()).isFalse();
+    assertThat(response.errorMessage())
+        .isEqualTo("인증에 실패했습니다(HTTP 401) — API 키·토큰 설정을 확인하세요")
+        .doesNotContain("SECRET123");
+  }
+
+  /** WD-150: 5xx 도 실행과 같은 문구. */
+  @Test
+  void preview_503_koreanMessage() {
+    wireMock.stubFor(get(urlEqualTo("/down")).willReturn(aResponse().withStatus(503)));
+
+    ApiCallPreviewResponse response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                baseUrl() + "/down", "GET", null, null, null, "$", null, null, null, 5000));
+
+    assertThat(response.errorMessage()).isEqualTo("대상 서버 오류(HTTP 503)");
   }
 
   // =========================================================================
@@ -735,7 +787,8 @@ class ApiCallPreviewServiceTest {
                 500)); // 500ms timeout → 초과 발생
 
     assertThat(response.success()).isFalse();
-    assertThat(response.errorMessage()).isNotNull();
+    // WD-150: 실행과 같은 타임아웃 문구
+    assertThat(response.errorMessage()).isEqualTo("응답 시간 초과(0.5초) — 대상 서버 상태나 시간 제한을 확인하세요");
   }
 
   /** 오류: 잘못된 dataPath는 success=false, errorMessage 반환 */
@@ -764,6 +817,6 @@ class ApiCallPreviewServiceTest {
                 5000));
 
     assertThat(response.success()).isFalse();
-    assertThat(response.errorMessage()).isNotNull();
+    assertThat(response.errorMessage()).isEqualTo("응답에서 데이터 경로를 찾을 수 없습니다: $.nonexistent.path");
   }
 }

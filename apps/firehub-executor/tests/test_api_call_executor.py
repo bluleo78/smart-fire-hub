@@ -539,3 +539,173 @@ def test_parse_and_map_missing_field_returns_none():
     ]
     rows = _parse_and_map(body, "$.items", mappings, None)
     assert rows[0]["col"] is None
+
+
+# ---------------------------------------------------------------------------
+# WD-150: 재시도 판정·한국어 원인 문구 — 실제 _do_request 분기를 타도록 httpx.Client 만 바꾼다
+# ---------------------------------------------------------------------------
+
+def _status_response(status: int) -> MagicMock:
+    resp = MagicMock()
+    resp.status_code = status
+    resp.headers = {}
+    resp.text = "server said something"
+    return resp
+
+
+def _patched_client(responses):
+    """httpx.Client 를 바꿔 request() 가 responses 를 차례로 돌려주게 한다(마지막 값은 반복)."""
+    mock_client = MagicMock()
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+    seq = list(responses)
+
+    def fake_request(*args, **kwargs):
+        item = seq.pop(0) if len(seq) > 1 else seq[0]
+        if isinstance(item, BaseException):
+            raise item
+        return item
+
+    mock_client.request.side_effect = fake_request
+    return mock_client
+
+
+def test_405_fails_immediately_without_retry():
+    req = make_request(retry=RetryConfig(max_retries=3, initial_backoff_ms=0, max_backoff_ms=0))
+    conn, _ = make_conn()
+    client = _patched_client([_status_response(405)])
+    with patch("app.services.api_call_executor.validate_url"), \
+            patch("httpx.Client", return_value=client), patch("time.sleep"):
+        result = execute_api_call(req, conn)
+
+    assert result.success is False
+    assert result.error == "허용되지 않는 요청 방식입니다(HTTP 405) — GET/POST 설정을 확인하세요"
+    assert client.request.call_count == 1
+
+
+def test_429_is_retried_then_succeeds():
+    req = make_request(retry=RetryConfig(max_retries=2, initial_backoff_ms=0, max_backoff_ms=0))
+    conn, _ = make_conn()
+    client = _patched_client([_status_response(429), mock_response({"items": [{"id": 1, "name": "a"}]})])
+    with patch("app.services.api_call_executor.validate_url"), \
+            patch("httpx.Client", return_value=client), patch("time.sleep"), \
+            patch("app.services.api_call_executor.insert_batch"):
+        result = execute_api_call(req, conn)
+
+    assert result.success is True
+    assert result.rows_loaded == 1
+    assert client.request.call_count == 2
+
+
+def test_503_exhausted_message_includes_cause_and_no_body():
+    req = make_request(retry=RetryConfig(max_retries=2, initial_backoff_ms=0, max_backoff_ms=0))
+    conn, _ = make_conn()
+    client = _patched_client([_status_response(503)])
+    with patch("app.services.api_call_executor.validate_url"), \
+            patch("httpx.Client", return_value=client), patch("time.sleep"):
+        result = execute_api_call(req, conn)
+
+    assert result.error == "API 호출이 2회 재시도 후에도 실패했습니다 — 마지막 오류: 대상 서버 오류(HTTP 503)"
+    assert "server said" not in result.error
+    assert client.request.call_count == 3
+
+
+def test_401_message_has_no_query_key():
+    req = make_request(
+        retry=RetryConfig(max_retries=2, initial_backoff_ms=0, max_backoff_ms=0),
+        auth={"authType": "API_KEY", "placement": "query", "paramName": "serviceKey", "apiKey": "SECRET123"},
+    )
+    conn, _ = make_conn()
+    client = _patched_client([_status_response(401)])
+    with patch("app.services.api_call_executor.validate_url"), \
+            patch("httpx.Client", return_value=client), patch("time.sleep"):
+        result = execute_api_call(req, conn)
+
+    assert result.error == "인증에 실패했습니다(HTTP 401) — API 키·토큰 설정을 확인하세요"
+    assert "SECRET123" not in result.error
+    assert client.request.call_count == 1
+    # 키는 실제로 쿼리로 보냈다(문구에서만 빠진 것)
+    assert client.request.call_args.kwargs["params"]["serviceKey"] == "SECRET123"
+
+
+def test_redirect_ssrf_block_is_not_retried():
+    req = make_request(retry=RetryConfig(max_retries=2, initial_backoff_ms=0, max_backoff_ms=0))
+    conn, _ = make_conn()
+    redirect = _status_response(302)
+    redirect.headers = {"location": "http://127.0.0.1/meta"}
+    client = _patched_client([redirect])
+
+    def validate_side_effect(url):
+        if "127.0.0.1" in url:
+            raise SsrfException("내부망 주소는 호출할 수 없습니다(루프백): 127.0.0.1")
+
+    with patch("app.services.api_call_executor.validate_url", side_effect=validate_side_effect), \
+            patch("httpx.Client", return_value=client), patch("time.sleep"):
+        result = execute_api_call(req, conn)
+
+    assert result.error == "내부망 주소는 호출할 수 없습니다(루프백): 127.0.0.1"
+    assert client.request.call_count == 1
+
+
+def test_non_json_response_is_not_retried():
+    req = make_request(retry=RetryConfig(max_retries=2, initial_backoff_ms=0, max_backoff_ms=0))
+    conn, _ = make_conn()
+    resp = _status_response(200)
+    resp.content = b"<html>oops</html>"
+    resp.json.side_effect = ValueError("Expecting value")
+    client = _patched_client([resp])
+    with patch("app.services.api_call_executor.validate_url"), \
+            patch("httpx.Client", return_value=client), patch("time.sleep"):
+        result = execute_api_call(req, conn)
+
+    assert result.error == "응답이 JSON 형식이 아닙니다 — 대상 API 의 응답 형식을 확인하세요"
+    assert client.request.call_count == 1
+
+
+def test_connection_refused_real_socket_retried_with_cause():
+    """실제 닫힌 포트로 보내 httpx 가 내는 예외를 그대로 분류한다(영어 [Errno …] 원문 대신 한국어 안내)."""
+    import socket as sock
+
+    s = sock.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+
+    req = make_request(
+        url=f"http://127.0.0.1:{port}/api",
+        retry=RetryConfig(max_retries=1, initial_backoff_ms=0, max_backoff_ms=0),
+    )
+    conn, _ = make_conn()
+    with patch("app.services.api_call_executor.validate_url"), patch("time.sleep"):
+        result = execute_api_call(req, conn)
+
+    assert result.error == (
+        "API 호출이 1회 재시도 후에도 실패했습니다 — 마지막 오류: "
+        "연결이 거부되었습니다 — 주소·포트와 서버 실행 여부를 확인하세요"
+    )
+
+
+def test_timeout_real_socket_retried_with_cause():
+    """연결은 받되 응답하지 않는 소켓 — 읽기 타임아웃이 「응답 시간 초과(0.3초)」로 보인다."""
+    import socket as sock
+
+    server = sock.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen(8)
+    port = server.getsockname()[1]
+    try:
+        req = make_request(
+            url=f"http://127.0.0.1:{port}/api",
+            timeout_ms=300,
+            retry=RetryConfig(max_retries=1, initial_backoff_ms=0, max_backoff_ms=0),
+        )
+        conn, _ = make_conn()
+        with patch("app.services.api_call_executor.validate_url"), patch("time.sleep"):
+            result = execute_api_call(req, conn)
+    finally:
+        server.close()
+
+    assert result.error == (
+        "API 호출이 1회 재시도 후에도 실패했습니다 — 마지막 오류: "
+        "응답 시간 초과(0.3초) — 대상 서버 상태나 시간 제한을 확인하세요"
+    )

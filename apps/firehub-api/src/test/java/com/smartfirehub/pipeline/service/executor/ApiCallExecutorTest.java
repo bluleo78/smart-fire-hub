@@ -474,9 +474,10 @@ class ApiCallExecutorTest {
             null,
             null);
 
+    // WD-150: 재시도 소진 문구에 마지막 원인(대상 서버 오류 503)이 담긴다
     assertThatThrownBy(() -> executor.execute(config, "t", null, "APPEND", null))
         .isInstanceOf(ApiCallException.class)
-        .hasMessageContaining("retries");
+        .hasMessage("API 호출이 2회 재시도 후에도 실패했습니다 — 마지막 오류: 대상 서버 오류(HTTP 503)");
 
     // 1 initial + 2 retries = 3 total
     wireMock.verify(3, getRequestedFor(urlEqualTo("/api/always-fail")));
@@ -519,7 +520,7 @@ class ApiCallExecutorTest {
 
     assertThatThrownBy(() -> executor.execute(config, "t", null, "APPEND", null))
         .isInstanceOf(ApiCallException.class)
-        .hasMessageContaining("Data path not found");
+        .hasMessage("응답에서 데이터 경로를 찾을 수 없습니다: $.nonexistent.items");
   }
 
   // -------------------------------------------------------------------------
@@ -756,5 +757,257 @@ class ApiCallExecutorTest {
 
     // swap must NOT be called
     verify(dataTableService, never()).swapTable(any());
+  }
+
+  // -------------------------------------------------------------------------
+  // WD-150: 재시도 판정·한국어 원인 문구·쿼리 키 비노출
+  // -------------------------------------------------------------------------
+
+  /** 재시도·시간 제한만 바꾼 단순 GET 설정. */
+  private ApiCallConfig retryConfig(String url, int maxRetries, int timeoutMs) {
+    return new ApiCallConfig(
+        url,
+        "GET",
+        null,
+        null,
+        null,
+        "JSON",
+        "$.items",
+        List.of(new ApiCallConfig.FieldMapping("name", "name", "TEXT", null, null, null)),
+        "UTC",
+        null,
+        new ApiCallConfig.RetryConfig(maxRetries, 10, 20),
+        timeoutMs,
+        60000,
+        100,
+        null,
+        null,
+        null,
+        null);
+  }
+
+  /** 405 처럼 고쳐지지 않는 4xx 는 재시도하지 않는다 — 예전에는 400/401/403/404 만 즉시 실패라 405 를 N회 재시도했다. */
+  @Test
+  void execute_405_failsImmediatelyWithoutRetry() {
+    wireMock.stubFor(get(urlEqualTo("/api/method")).willReturn(aResponse().withStatus(405)));
+
+    assertThatThrownBy(
+            () ->
+                executor.execute(
+                    retryConfig(baseUrl() + "/api/method", 3, 5000), "t", null, "APPEND", null))
+        .isInstanceOf(ApiCallException.class)
+        .hasMessage("허용되지 않는 요청 방식입니다(HTTP 405) — GET/POST 설정을 확인하세요");
+
+    wireMock.verify(1, getRequestedFor(urlEqualTo("/api/method")));
+  }
+
+  /** 429(Too Many Requests)는 재시도한다. */
+  @Test
+  void execute_429_retriesThenSucceeds() {
+    wireMock.stubFor(
+        get(urlEqualTo("/api/rate"))
+            .inScenario("rate")
+            .whenScenarioStateIs("Started")
+            .willReturn(aResponse().withStatus(429))
+            .willSetStateTo("ok"));
+    wireMock.stubFor(
+        get(urlEqualTo("/api/rate"))
+            .inScenario("rate")
+            .whenScenarioStateIs("ok")
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("{\"items\":[{\"name\":\"A\"}]}")));
+
+    ApiCallExecutor.ApiCallResult result =
+        executor.execute(retryConfig(baseUrl() + "/api/rate", 2, 5000), "t", null, "APPEND", null);
+
+    assertThat(result.totalRows()).isEqualTo(1);
+    wireMock.verify(2, getRequestedFor(urlEqualTo("/api/rate")));
+  }
+
+  /** 429 가 계속되면 재시도 소진 문구에 429 안내가 원인으로 담긴다. */
+  @Test
+  void execute_429_exhaustedMessageIncludesCause() {
+    wireMock.stubFor(get(urlEqualTo("/api/rate-always")).willReturn(aResponse().withStatus(429)));
+
+    assertThatThrownBy(
+            () ->
+                executor.execute(
+                    retryConfig(baseUrl() + "/api/rate-always", 1, 5000),
+                    "t",
+                    null,
+                    "APPEND",
+                    null))
+        .isInstanceOf(ApiCallException.class)
+        .hasMessageContaining("1회 재시도 후에도 실패했습니다 — 마지막 오류: ")
+        .hasMessageContaining("(HTTP 429)");
+    wireMock.verify(2, getRequestedFor(urlEqualTo("/api/rate-always")));
+  }
+
+  /** 타임아웃은 재시도하고, 소진 문구에 「응답 시간 초과(N초)」 원인이 담긴다(예전: 「API call failed after N retries」만). */
+  @Test
+  void execute_timeout_retriesAndMessageIncludesCause() {
+    wireMock.stubFor(
+        get(urlEqualTo("/api/slow"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withFixedDelay(1500)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("{\"items\":[]}")));
+
+    assertThatThrownBy(
+            () ->
+                executor.execute(
+                    retryConfig(baseUrl() + "/api/slow", 1, 300), "t", null, "APPEND", null))
+        .isInstanceOf(ApiCallException.class)
+        .hasMessage("API 호출이 1회 재시도 후에도 실패했습니다 — 마지막 오류: 응답 시간 초과(0.3초) — 대상 서버 상태나 시간 제한을 확인하세요");
+    wireMock.verify(2, getRequestedFor(urlEqualTo("/api/slow")));
+  }
+
+  /** 연결 거부도 재시도하고, 소진 문구에 원인이 담긴다. */
+  @Test
+  void execute_connectionRefused_retriesAndMessageIncludesCause() throws Exception {
+    int closedPort;
+    try (java.net.ServerSocket socket = new java.net.ServerSocket(0)) {
+      closedPort = socket.getLocalPort();
+    }
+
+    assertThatThrownBy(
+            () ->
+                executor.execute(
+                    retryConfig("http://localhost:" + closedPort + "/api", 1, 5000),
+                    "t",
+                    null,
+                    "APPEND",
+                    null))
+        .isInstanceOf(ApiCallException.class)
+        .hasMessage("API 호출이 1회 재시도 후에도 실패했습니다 — 마지막 오류: 연결이 거부되었습니다 — 주소·포트와 서버 실행 여부를 확인하세요");
+  }
+
+  /** 401 문구에 query 로 붙인 API 키가 남지 않는다 — 예전 「Authentication failed (401): <requestUri>」는 키를 담았다. */
+  @Test
+  void execute_401_withQueryApiKey_messageHasNoSecret() {
+    wireMock.stubFor(
+        get(urlPathEqualTo("/api/keyed")).willReturn(aResponse().withStatus(401).withBody("no")));
+
+    Map<String, String> auth =
+        Map.of(
+            "authType", "API_KEY",
+            "placement", "query",
+            "paramName", "serviceKey",
+            "apiKey", "SECRET123");
+
+    assertThatThrownBy(
+            () ->
+                executor.execute(
+                    retryConfig(baseUrl() + "/api/keyed", 2, 5000), "t", auth, "APPEND", null))
+        .isInstanceOf(ApiCallException.class)
+        .hasMessage("인증에 실패했습니다(HTTP 401) — API 키·토큰 설정을 확인하세요")
+        .message()
+        .doesNotContain("SECRET123")
+        .doesNotContain("?");
+
+    // 키는 실제로 쿼리로 보냈다(문구에서만 빠진 것) + 401 은 재시도하지 않는다
+    wireMock.verify(
+        1,
+        getRequestedFor(urlPathEqualTo("/api/keyed"))
+            .withQueryParam("serviceKey", equalTo("SECRET123")));
+  }
+
+  /** 리다이렉트 대상이 내부망이면 재시도하지 않고 한국어 차단 문구로 즉시 실패한다(예전: SsrfException 을 재시도). */
+  @Test
+  void execute_redirectToLoopback_failsImmediatelyWithKoreanMessage() {
+    // 최초 URL(WireMock)만 검증을 건너뛰고 리다이렉트 대상은 실제 가드로 검증한다.
+    SsrfProtectionService realGuardForRedirects =
+        new SsrfProtectionService() {
+          @Override
+          public void validateUrl(String url) {
+            if (!url.startsWith(baseUrl())) {
+              super.validateUrl(url);
+            }
+          }
+        };
+    ApiCallExecutor redirectingExecutor =
+        new ApiCallExecutor(
+            realGuardForRedirects,
+            jsonParser,
+            paginationHandler,
+            dataTableService,
+            dataTableRowService,
+            WebClient.builder());
+    wireMock.stubFor(
+        get(urlEqualTo("/api/redirect"))
+            .willReturn(
+                aResponse().withStatus(302).withHeader("Location", "http://127.0.0.1:1/meta")));
+
+    assertThatThrownBy(
+            () ->
+                redirectingExecutor.execute(
+                    retryConfig(baseUrl() + "/api/redirect", 2, 5000), "t", null, "APPEND", null))
+        .isInstanceOf(SsrfException.class)
+        .hasMessage("내부망 주소는 호출할 수 없습니다(루프백): 127.0.0.1");
+    wireMock.verify(1, getRequestedFor(urlEqualTo("/api/redirect")));
+  }
+
+  /** 응답 크기 초과 문구도 한국어이고, URL(쿼리 포함 가능)을 담지 않는다. */
+  @Test
+  void execute_responseTooLarge_koreanMessage() {
+    String big = "{\"items\":[{\"name\":\"" + "x".repeat(1_200_000) + "\"}]}";
+    wireMock.stubFor(
+        get(urlPathEqualTo("/api/big"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody(big)));
+    ApiCallConfig base = retryConfig(baseUrl() + "/api/big?serviceKey=SECRET123", 2, 5000);
+    ApiCallConfig oneMb =
+        new ApiCallConfig(
+            base.url(),
+            base.method(),
+            null,
+            null,
+            null,
+            base.responseFormat(),
+            base.dataPath(),
+            base.fieldMappings(),
+            base.sourceTimezone(),
+            null,
+            base.retry(),
+            base.timeoutMs(),
+            base.maxDurationMs(),
+            1,
+            null,
+            null,
+            null,
+            null);
+
+    assertThatThrownBy(() -> executor.execute(oneMb, "t", null, "APPEND", null))
+        .isInstanceOf(ApiCallException.class)
+        .hasMessage("응답 크기가 제한(1MB)을 넘었습니다 — 응답 크기 제한을 늘리거나 페이지 크기를 줄이세요");
+    wireMock.verify(1, getRequestedFor(urlPathEqualTo("/api/big")));
+  }
+
+  /** JSON 이 아닌 200 응답(HTML 오류 페이지 등) — Python 실행기와 같은 안내, 재시도하지 않는다. */
+  @Test
+  void execute_nonJsonResponse_koreanMessage() {
+    wireMock.stubFor(
+        get(urlEqualTo("/api/html"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "text/html")
+                    .withBody("<html><body>Service temporarily unavailable</body></html>")));
+
+    assertThatThrownBy(
+            () ->
+                executor.execute(
+                    retryConfig(baseUrl() + "/api/html", 2, 5000), "t", null, "APPEND", null))
+        .isInstanceOf(ApiCallException.class)
+        .hasMessage(ApiCallErrorMessages.notJson());
+    wireMock.verify(1, getRequestedFor(urlEqualTo("/api/html")));
   }
 }

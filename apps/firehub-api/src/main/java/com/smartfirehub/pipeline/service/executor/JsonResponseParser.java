@@ -1,5 +1,6 @@
 package com.smartfirehub.pipeline.service.executor;
 
+import com.jayway.jsonpath.InvalidJsonException;
 import com.jayway.jsonpath.JsonPath;
 import com.jayway.jsonpath.PathNotFoundException;
 import java.math.BigDecimal;
@@ -35,11 +36,22 @@ public class JsonResponseParser {
       List<ApiCallConfig.FieldMapping> fieldMappings,
       Map<String, String> columnTypeMap) {
 
+    // JSON 이 아닌 응답(HTML 오류 페이지·평문·빈 본문)을 먼저 걸러 낸다(WD-150). jayway 의 기본 파서(json-smart)는 관대해서
+    // HTML 을 문자열 하나로 읽어 버리고, 그러면 「데이터 경로를 찾을 수 없습니다」나 0행 성공처럼 원인과 다른 결과가 나온다.
+    // Python 실행기는 resp.json() 실패로 같은 상황을 「JSON 형식이 아닙니다」로 알린다 — 같은 문구를 쓴다.
+    if (!looksLikeJson(jsonResponse)) {
+      throw new ApiCallException(ApiCallErrorMessages.notJson());
+    }
+
     Object extracted;
     try {
       extracted = JsonPath.read(jsonResponse, dataPath);
     } catch (PathNotFoundException e) {
-      throw new ApiCallException("Data path not found: " + dataPath, e);
+      // 실행 상세·「테스트 호출」에 그대로 보이는 문구라 한국어로 둔다(WD-150).
+      throw new ApiCallException("응답에서 데이터 경로를 찾을 수 없습니다: " + dataPath, e);
+    } catch (InvalidJsonException e) {
+      // HTML 오류 페이지 등 JSON 이 아닌 응답 — jayway 의 영어 원문 대신 공용 안내를 쓴다(WD-150, Python 실행기와 같은 문구).
+      throw new ApiCallException(ApiCallErrorMessages.notJson(), e);
     }
 
     List<?> rawList;
@@ -193,6 +205,27 @@ public class JsonResponseParser {
   }
 
   /**
+   * JSON 값의 첫 글자로 시작하는지 본다 — 객체·배열·문자열·숫자·true/false/null. 엄격한 검증이 아니라 HTML({@code <})·평문 같은 흔한
+   * 비JSON 응답을 가려내는 용도다(전체를 한 번 더 파싱하지 않으려고).
+   */
+  static boolean looksLikeJson(String body) {
+    if (body == null) return false;
+    for (int i = 0; i < body.length(); i++) {
+      char c = body.charAt(i);
+      if (Character.isWhitespace(c) || c == '\uFEFF') continue;
+      return c == '{'
+          || c == '['
+          || c == '"'
+          || c == '-'
+          || (c >= '0' && c <= '9')
+          || c == 't'
+          || c == 'f'
+          || c == 'n';
+    }
+    return false;
+  }
+
+  /**
    * Reads a single value from JSON at the given path.
    *
    * @throws ApiCallException if the path is not found
@@ -201,7 +234,7 @@ public class JsonResponseParser {
     try {
       return JsonPath.read(json, path);
     } catch (PathNotFoundException e) {
-      throw new ApiCallException("JSON path not found: " + path, e);
+      throw new ApiCallException("응답에서 JSON 경로를 찾을 수 없습니다: " + path, e);
     }
   }
 }
