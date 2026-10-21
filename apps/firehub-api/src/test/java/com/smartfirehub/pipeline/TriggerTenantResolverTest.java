@@ -91,18 +91,24 @@ class TriggerTenantResolverTest extends IntegrationTestBase {
     assertThat(resolver.resolveByApiToken(tokenHash)).contains(new TriggerRef(triggerId, tenantB));
   }
 
-  /** 비활성 트리거는 테넌트조차 노출하지 않는다 — is_enabled 필터가 함수 안에 있기 때문이다. */
+  /**
+   * 꺼진 트리거도 테넌트를 해석한다(V140, WD-152). 예전(V95)에는 is_enabled 필터로 걸러 맞는 토큰으로 꺼진 트리거를 불러도 "토큰이
+   * 틀렸다"(401)와 구별할 수 없었다. 이제 컨트롤러가 테넌트를 세운 뒤 켜짐 여부를 판정해 409 「트리거가 꺼져 있어 실행하지 않았습니다」로 알린다. 해석 결과(id
+   * 두 개)는 외부 응답에 나가지 않는다.
+   */
   @Test
-  @DisplayName("비활성 트리거는 해석되지 않는다")
-  void disabledTriggerResolvesToEmpty() {
+  @DisplayName("꺼진 트리거도 해석된다 (WD-152)")
+  void disabledTriggerStillResolves() {
     String webhookId = UUID.randomUUID().toString();
-    insertWebhookTrigger(tenantA, webhookId, false);
+    long webhookTriggerId = insertWebhookTrigger(tenantA, webhookId, false);
 
     String tokenHash = "hash-" + UUID.randomUUID();
-    insertApiTrigger(tenantA, tokenHash, false);
+    long apiTriggerId = insertApiTrigger(tenantA, tokenHash, false);
 
-    assertThat(resolver.resolveByWebhookId(webhookId)).isEmpty();
-    assertThat(resolver.resolveByApiToken(tokenHash)).isEmpty();
+    assertThat(resolver.resolveByWebhookId(webhookId))
+        .contains(new TriggerRef(webhookTriggerId, tenantA));
+    assertThat(resolver.resolveByApiToken(tokenHash))
+        .contains(new TriggerRef(apiTriggerId, tenantA));
   }
 
   /** 존재하지 않는 식별자는 예외가 아니라 빈 결과여야 한다 — 호출자가 기존 401/404 로 응답한다. */

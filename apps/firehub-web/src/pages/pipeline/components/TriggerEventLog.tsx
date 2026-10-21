@@ -38,6 +38,16 @@ function getEventLabel(eventType: TriggerEventResponse['eventType']) {
   return labels[eventType] || eventType;
 }
 
+/**
+ * 이벤트에 남은 사유(detail.reason)를 꺼낸다(WD-152). 건너뜀·오류 이벤트는 서버가 한국어 사유를 남기므로 배지 아래에 보여 준다 — 예전엔
+ * 「건너뜀」 배지만 보여 왜 실행되지 않았는지 알 수 없었다. detail 은 자유 형식 JSON 이라 문자열일 때만 쓰고, 예외 원문(detail.error)은
+ * 내부 구조를 드러낼 수 있어 보여 주지 않는다. WD-152 이전에 쌓인 영어 사유는 그대로 보인다(이관하지 않음).
+ */
+function getEventReason(event: TriggerEventResponse): string | null {
+  const reason = event.detail?.reason;
+  return typeof reason === 'string' && reason.trim() !== '' ? reason : null;
+}
+
 interface TriggerEventLogProps {
   pipelineId: number;
 }
@@ -68,30 +78,37 @@ export default function TriggerEventLog({ pipelineId }: TriggerEventLogProps) {
         </TableRow>
       </TableHeader>
       <TableBody>
-        {events.map((event) => (
-          <TableRow key={event.id}>
-            <TableCell className="text-sm">{formatDate(event.createdAt)}</TableCell>
-            <TableCell className="text-sm">{event.triggerName}</TableCell>
-            <TableCell>
-              <Badge variant={getEventBadgeVariant(event.eventType)}>
-                {getEventLabel(event.eventType)}
-              </Badge>
-            </TableCell>
-            <TableCell>
-              {event.executionId ? (
-                <Link
-                  to={`/pipelines/${pipelineId}/executions/${event.executionId}`}
-                  className="text-sm font-mono text-primary hover:underline"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  #{event.executionId}
-                </Link>
-              ) : (
-                <span className="text-sm text-muted-foreground">-</span>
-              )}
-            </TableCell>
-          </TableRow>
-        ))}
+        {events.map((event) => {
+          const reason = getEventReason(event);
+          return (
+            <TableRow key={event.id}>
+              <TableCell className="text-sm">{formatDate(event.createdAt)}</TableCell>
+              <TableCell className="text-sm">{event.triggerName}</TableCell>
+              <TableCell>
+                <Badge variant={getEventBadgeVariant(event.eventType)}>
+                  {getEventLabel(event.eventType)}
+                </Badge>
+                {/* 사유는 배지 아래 보조 문구로 둔다 — 긴 문장도 표 너비 안에서 줄바꿈되게 whitespace-normal 을 준다 */}
+                {reason && (
+                  <p className="mt-1 text-xs text-muted-foreground whitespace-normal">{reason}</p>
+                )}
+              </TableCell>
+              <TableCell>
+                {event.executionId ? (
+                  <Link
+                    to={`/pipelines/${pipelineId}/executions/${event.executionId}`}
+                    className="text-sm font-mono text-primary hover:underline"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    #{event.executionId}
+                  </Link>
+                ) : (
+                  <span className="text-sm text-muted-foreground">-</span>
+                )}
+              </TableCell>
+            </TableRow>
+          );
+        })}
       </TableBody>
     </Table>
   );

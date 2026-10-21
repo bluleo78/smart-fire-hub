@@ -8,6 +8,8 @@
 
 import type { Page } from '@playwright/test';
 
+import type { TriggerEventResponse } from '@/types/pipeline';
+
 import { createPipelineDetail, createTrigger } from '../../factories/pipeline.factory';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
@@ -15,15 +17,16 @@ import { expect, test } from '../../fixtures/auth.fixture';
 /** 파이프라인 상세 + 트리거 리스트 공통 모킹 */
 async function setupTriggerTabMocks(
   page: Page,
-  options?: { triggers?: ReturnType<typeof createTrigger>[] },
+  options?: { triggers?: ReturnType<typeof createTrigger>[]; events?: TriggerEventResponse[] },
 ) {
   const pipelineId = 1;
   const triggers = options?.triggers ?? [];
+  const events = options?.events ?? [];
 
   await mockApi(page, 'GET', `/api/v1/pipelines/${pipelineId}`, createPipelineDetail({ id: pipelineId }));
   await mockApi(page, 'GET', `/api/v1/pipelines/${pipelineId}/executions`, []);
   await mockApi(page, 'GET', `/api/v1/pipelines/${pipelineId}/triggers`, triggers);
-  await mockApi(page, 'GET', `/api/v1/pipelines/${pipelineId}/trigger-events`, []);
+  await mockApi(page, 'GET', `/api/v1/pipelines/${pipelineId}/trigger-events`, events);
   await mockApi(page, 'GET', '/api/v1/datasets', {
     content: [],
     page: 0,
@@ -1042,5 +1045,49 @@ test.describe('파이프라인 트리거 탭', () => {
     expect(payload.config.pollingIntervalSeconds).toBe(120);
     expect(payload.config.datasetIds).toEqual([42, 77]);
     await expect(page.locator('[data-sonner-toast][data-type="error"]')).toHaveCount(0);
+  });
+
+  /**
+   * 회귀 테스트 (WD-152): 트리거 이벤트 로그가 건너뜀·오류 이벤트의 사유(detail.reason)를 배지 아래에 보여 준다. 예전엔 「건너뜀」 배지만
+   * 보여 왜 실행되지 않았는지 알 수 없었다. 예외 원문(detail.error)은 보이지 않아야 하고, 사유가 없는 발화 이벤트에는 사유 문구가 없다.
+   */
+  test('트리거 이벤트 로그 — 건너뜀·오류 이벤트의 사유를 배지 아래에 보여 준다 (WD-152)', async ({
+    authenticatedPage: page,
+  }) => {
+    const base = { triggerId: 30, triggerName: 'API 호출', createdAt: '2026-10-22T09:00:00' };
+    const events: TriggerEventResponse[] = [
+      {
+        ...base,
+        id: 1,
+        eventType: 'SKIPPED',
+        executionId: null,
+        detail: { reason: '파이프라인이 비활성 상태라 실행하지 않았습니다', sourceIp: '10.0.0.1' },
+      },
+      {
+        ...base,
+        id: 2,
+        eventType: 'ERROR',
+        executionId: null,
+        detail: { reason: '파이프라인 실행을 시작하지 못했습니다', error: 'ERROR: relation "x" does not exist' },
+      },
+      { ...base, id: 3, eventType: 'FIRED', executionId: 77, detail: { sourceIp: '10.0.0.1' } },
+    ];
+
+    await setupTriggerTabMocks(page, { events });
+    await gotoTriggerTab(page);
+
+    const rows = page.getByRole('row');
+    const skippedRow = rows.filter({ hasText: '건너뜀' });
+    await expect(skippedRow.getByText('파이프라인이 비활성 상태라 실행하지 않았습니다')).toBeVisible();
+
+    const errorRow = rows.filter({ hasText: '오류' });
+    await expect(errorRow.getByText('파이프라인 실행을 시작하지 못했습니다')).toBeVisible();
+    // 예외 원문은 내부 구조를 드러낼 수 있어 화면에 보이지 않는다
+    await expect(page.getByText('relation "x" does not exist')).toHaveCount(0);
+
+    // 사유가 없는 발화 이벤트는 실행 링크만 있고 사유 문구가 없다
+    const firedRow = rows.filter({ hasText: '발화' });
+    await expect(firedRow.getByRole('link', { name: '#77' })).toBeVisible();
+    await expect(firedRow.locator('p')).toHaveCount(0);
   });
 });

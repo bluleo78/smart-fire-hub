@@ -310,7 +310,10 @@ public class TriggerRepository {
         .execute();
   }
 
-  /** Find API trigger by token hash. */
+  /**
+   * 토큰 해시로 API 트리거를 찾는다. 켜짐 여부와 무관하게 찾는다(WD-152) — 맞는 토큰으로 꺼진 트리거를 부른 호출자에게 "토큰이 틀렸다"(401) 대신 "트리거가
+   * 꺼져 있다"(409)를 알려 주기 위해서다. 켜짐 판정은 {@code TriggerService#fireTrigger} 한 곳에서만 한다.
+   */
   public Optional<TriggerResponse> findByTokenHash(String tokenHash) {
     return dsl.select(
             T_ID,
@@ -325,7 +328,6 @@ public class TriggerRepository {
             T_CREATED_AT)
         .from(PIPELINE_TRIGGER)
         .where(T_TRIGGER_TYPE.eq("API"))
-        .and(T_IS_ENABLED.eq(true))
         .and(field("{0}->>'tokenHash'", String.class, T_CONFIG).eq(tokenHash))
         .fetchOptional(this::mapToResponse);
   }

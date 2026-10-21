@@ -2,11 +2,13 @@ package com.smartfirehub.pipeline.controller;
 
 import com.smartfirehub.global.dto.ErrorResponse;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.pipeline.dto.TriggerFireResult;
 import com.smartfirehub.pipeline.dto.TriggerResponse;
 import com.smartfirehub.pipeline.repository.TriggerTenantResolver;
 import com.smartfirehub.pipeline.service.TriggerService;
 import jakarta.servlet.http.HttpServletRequest;
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
@@ -15,6 +17,20 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+/**
+ * 외부 시스템이 부르는 트리거 엔드포인트(API 토큰·웹훅). 인증 필터를 거치지 않는 공개 경로라, 식별자로 테넌트를 먼저 해석한 뒤 나머지를 그 테넌트 컨텍스트 안에서
+ * 처리한다.
+ *
+ * <p>응답 계약(WD-152) — 호출자가 "실제로 실행됐는지"를 응답만 보고 알 수 있어야 한다:
+ *
+ * <ul>
+ *   <li>실행을 시작함 → 200 {@code {"status":"triggered", pipelineId, triggerId, executionId}}
+ *   <li>조건에 걸려 실행하지 않음(파이프라인 비활성·동시 실행 정책·트리거 꺼짐) → 409 {@code {"status":"skipped","reason":"<한국어
+ *       사유>"}}
+ *   <li>실행 시작 자체가 실패함 → 500 {@code {"status":"failed","reason":"<한국어 사유>"}} — 예외 원문은 내보내지 않는다
+ *   <li>토큰 틀림 401 · IP 차단 403 · 웹훅 없음 404 · 서명 불일치 401 은 기존 그대로다
+ * </ul>
+ */
 @Slf4j
 @RestController
 @RequestMapping("/api/v1/triggers")
@@ -102,13 +118,9 @@ public class ExternalTriggerController {
     fireParams = new java.util.HashMap<>(fireParams);
     fireParams.put("sourceIp", sourceIp);
 
-    triggerService.fireTrigger(trigger.id(), fireParams);
-
-    return ResponseEntity.ok(
-        Map.of(
-            "status", "triggered",
-            "pipelineId", trigger.pipelineId(),
-            "triggerId", trigger.id()));
+    // 켜짐 여부는 토큰·IP 검사를 통과한 뒤에 fireTrigger 가 판정한다 — 맞는 토큰과 허용된 IP 를 가진 호출자에게만 "꺼져 있음"이 드러난다.
+    TriggerFireResult result = triggerService.fireTrigger(trigger.id(), fireParams);
+    return toFireResponse(result, trigger);
   }
 
   /** Webhook trigger: authenticate via optional HMAC-SHA256 signature. */
@@ -168,10 +180,15 @@ public class ExternalTriggerController {
                   request.getRequestURI()));
     }
 
-    // Verify signature if secret is configured
+    // 시크릿이 있으면 서명부터 검증한다 — 꺼짐 여부를 포함해 트리거에 관한 어떤 사실도 서명 통과 전에는 드러내지 않는다(WD-152).
+    // 서명이 없거나 틀리면 응답은 WD-152 이전과 같다: 켜진 웹훅은 401, 꺼진 웹훅은 404(예전엔 꺼진 웹훅을 해석조차 하지 않아 404 였다).
+    // 꺼진 웹훅에 401 을 주면 "이 id 의 웹훅이 존재한다"는 사실이 서명 없이 새어 나간다.
     String secretEncrypted = (String) trigger.config().get("secretEncrypted");
     if (secretEncrypted != null && !secretEncrypted.isEmpty()) {
       if (signature == null || signature.isEmpty()) {
+        if (!trigger.isEnabled()) {
+          return webhookNotFound(request);
+        }
         return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
             .body(
                 new ErrorResponse(
@@ -184,6 +201,9 @@ public class ExternalTriggerController {
       }
       if (!triggerService.verifyWebhookSignature(webhookId, body != null ? body : "", signature)) {
         log.warn("Invalid webhook signature for {} from IP: {}", webhookId, sourceIp);
+        if (!trigger.isEnabled()) {
+          return webhookNotFound(request);
+        }
         return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
             .body(
                 new ErrorResponse(
@@ -202,13 +222,53 @@ public class ExternalTriggerController {
       fireParams.put("payloadSize", body.length());
     }
 
-    triggerService.fireTrigger(trigger.id(), fireParams);
+    TriggerFireResult result = triggerService.fireTrigger(trigger.id(), fireParams);
+    return toFireResponse(result, trigger);
+  }
 
-    return ResponseEntity.ok(
-        Map.of(
-            "status", "triggered",
-            "pipelineId", trigger.pipelineId(),
-            "triggerId", trigger.id()));
+  /**
+   * 발화 결과를 외부 호출자 응답으로 옮긴다(WD-152). 실행을 시작했을 때만 200 「triggered」이고, 실행하지 않았으면 409 「skipped」+한국어 사유,
+   * 시작하다 실패했으면 500 「failed」+한국어 사유다. 예전에는 결과와 무관하게 200 을 돌려줘 실행되지 않은 호출도 실행된 것으로 보였다.
+   */
+  private ResponseEntity<?> toFireResponse(TriggerFireResult result, TriggerResponse trigger) {
+    return switch (result.outcome()) {
+      case FIRED -> {
+        // executionId 는 항상 있지만, null 이 섞여도 Map.of 처럼 NPE 가 나지 않게 순서 보존 맵을 쓴다.
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("status", "triggered");
+        body.put("pipelineId", trigger.pipelineId());
+        body.put("triggerId", trigger.id());
+        body.put("executionId", result.executionId());
+        yield ResponseEntity.ok(body);
+      }
+      case SKIPPED, DISABLED ->
+          ResponseEntity.status(HttpStatus.CONFLICT)
+              .body(Map.of("status", "skipped", "reason", result.reason()));
+      // NOT_FOUND 는 위에서 트리거를 읽은 직후 삭제된 경합이다 — 실행되지 않았다는 사실이 중요하므로 실패로 알린다.
+      case NOT_FOUND, ERROR ->
+          ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+              .body(
+                  Map.of(
+                      "status",
+                      "failed",
+                      "reason",
+                      result.reason() != null
+                          ? result.reason()
+                          : TriggerService.REASON_FIRE_ERROR));
+    };
+  }
+
+  /** 웹훅을 찾지 못했을 때의 404 응답. 해석 실패·RLS 비가시·꺼진 웹훅의 서명 실패가 모두 같은 모양이어야 서로 구별되지 않는다. */
+  private ResponseEntity<?> webhookNotFound(HttpServletRequest request) {
+    return ResponseEntity.status(HttpStatus.NOT_FOUND)
+        .body(
+            new ErrorResponse(
+                404,
+                "Not Found",
+                "Webhook not found",
+                null,
+                Instant.now().toString(),
+                request.getRequestURI()));
   }
 
   private String getClientIp(HttpServletRequest request) {
