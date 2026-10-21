@@ -1528,4 +1528,109 @@ class AiClassifyExecutorTest {
     verify(credentials, times(2)).resolve();
     verify(settings, times(2)).getValue("ai.model");
   }
+
+  // -----------------------------------------------------------------------
+  // 협조적 취소(WD-153) — 배치 사이·재시도 대기 중·REPLACE 맞바꿈 직전
+  // -----------------------------------------------------------------------
+
+  /** 배치 3개(batchSize=1) 입력을 세운다 — 분류 응답은 행마다 맞게 돌려준다. */
+  private void stubThreeBatchInput() {
+    when(datasetRepository.findTableNameById(200L)).thenReturn(Optional.of("output_table"));
+    when(datasetRepository.findTableNameById(1L)).thenReturn(Optional.of("source_table"));
+    when(dataTableRowService.countRows("source_table")).thenReturn(3L);
+    when(dataTableRowService.queryData(anyString(), any(), any(), anyInt(), anyInt()))
+        .thenReturn(List.of(sourceRow(1L, "a"), sourceRow(2L, "b"), sourceRow(3L, "c")));
+    stubCacheMiss();
+    when(aiAgentClient.classify(any(), any(), anyLong()))
+        .thenReturn(classifyResponse(1, "A"))
+        .thenReturn(classifyResponse(2, "B"))
+        .thenReturn(classifyResponse(3, "C"));
+  }
+
+  /** APPEND: 첫 배치를 적재한 뒤 취소되면 다음 배치는 AI 에 보내지 않고, 이미 넣은 1행을 예외·진척에 남긴다(「실패」 문구가 아니다). */
+  @Test
+  void 배치_사이_취소_APPEND_는_다음_배치를_보내지_않고_넣은_행을_남긴다() {
+    stubThreeBatchInput();
+    java.util.concurrent.atomic.AtomicBoolean cancelled =
+        new java.util.concurrent.atomic.AtomicBoolean(false);
+    org.mockito.Mockito.doAnswer(
+            inv -> {
+              cancelled.set(true);
+              return null;
+            })
+        .when(dataTableRowService)
+        .insertBatch(eq("output_table"), anyList(), anyList(), anyMap());
+
+    PipelineStepResponse step = buildStep("APPEND", List.of(1L), 1);
+
+    assertThatThrownBy(() -> executor.execute(step, 100L, 1L, cancelled::get))
+        .isInstanceOfSatisfying(
+            com.smartfirehub.pipeline.exception.PipelineExecutionCancelledException.class,
+            e -> {
+              assertThat(e.rowsKept()).isEqualTo(1);
+              assertThat(e.replaceDiscarded()).isFalse();
+            });
+
+    // 진행 중이던 첫 배치만 AI 에 보냈다.
+    verify(aiAgentClient, times(1)).classify(any(), any(), anyLong());
+    verify(dataTableRowService, times(1))
+        .insertBatch(eq("output_table"), anyList(), anyList(), anyMap());
+    // 마지막 진척은 취소 문구다 — 「AI_CLASSIFY 실패」로 남기지 않는다.
+    verify(executionRepository).updateStepProgress(eq(100L), eq(1), contains("취소 전까지 1행 적재됨"));
+    verify(executionRepository, never())
+        .updateStepProgress(anyLong(), any(), contains("AI_CLASSIFY 실패"));
+  }
+
+  /** REPLACE: 배치 사이에서 취소되면 임시 테이블을 버리고 맞바꾸지 않는다 — 원본이 남는다. */
+  @Test
+  void 배치_사이_취소_REPLACE_는_임시_테이블을_버리고_원본을_지킨다() {
+    stubThreeBatchInput();
+    java.util.concurrent.atomic.AtomicBoolean cancelled =
+        new java.util.concurrent.atomic.AtomicBoolean(false);
+    org.mockito.Mockito.doAnswer(
+            inv -> {
+              cancelled.set(true);
+              return null;
+            })
+        .when(dataTableRowService)
+        .insertBatch(eq(RUN_TEMP), anyList(), anyList(), anyMap());
+
+    PipelineStepResponse step = buildStep("REPLACE", List.of(1L), 1);
+
+    assertThatThrownBy(() -> executor.execute(step, 100L, 1L, cancelled::get))
+        .isInstanceOfSatisfying(
+            com.smartfirehub.pipeline.exception.PipelineExecutionCancelledException.class,
+            e -> assertThat(e.replaceDiscarded()).isTrue());
+
+    verify(aiAgentClient, times(1)).classify(any(), any(), anyLong());
+    verify(dataTableService).dropTempTable("output_table", RUN_TEMP);
+    verify(dataTableService, never()).swapTable(anyString(), anyString());
+  }
+
+  /** RETRY_BATCH 재시도 대기(2·4·8초) 중 취소되면 대기를 다 채우지 않고 곧바로 멈추며, 남은 재시도를 하지 않는다. */
+  @Test
+  void RETRY_BATCH_재시도_대기_중_취소되면_곧바로_멈춘다() {
+    when(datasetRepository.findTableNameById(200L)).thenReturn(Optional.of("output_table"));
+    when(datasetRepository.findTableNameById(1L)).thenReturn(Optional.of("source_table"));
+    when(dataTableRowService.countRows("source_table")).thenReturn(1L);
+    when(dataTableRowService.queryData(anyString(), any(), any(), anyInt(), anyInt()))
+        .thenReturn(List.of(sourceRow(1L, "a")));
+    stubCacheMiss();
+    when(aiAgentClient.classify(any(), any(), anyLong()))
+        .thenThrow(new RuntimeException("AI agent down"));
+
+    PipelineStepResponse step = buildStep("APPEND", List.of(1L), 1, "RETRY_BATCH");
+    long start = System.currentTimeMillis();
+    // 첫 실패 후 재시도 대기(2초)에 들어간 지 약 300ms 뒤 취소 요청이 들어온다.
+    ExecutionCancelCheck cancelAfter300ms = () -> System.currentTimeMillis() - start > 300;
+
+    assertThatThrownBy(() -> executor.execute(step, 100L, 1L, cancelAfter300ms))
+        .isInstanceOf(
+            com.smartfirehub.pipeline.exception.PipelineExecutionCancelledException.class);
+
+    // 2초 대기를 채우지 않았다(조각 간격 200ms 안에 깨어난다 — 여유를 두어 1.5초 미만).
+    assertThat(System.currentTimeMillis() - start).isLessThan(1_500);
+    // 첫 호출 1회 — 재시도는 나가지 않았다.
+    verify(aiAgentClient, times(1)).classify(any(), any(), anyLong());
+  }
 }

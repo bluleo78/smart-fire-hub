@@ -15,6 +15,7 @@ import com.smartfirehub.pipeline.dto.LoadStrategy;
 import com.smartfirehub.pipeline.dto.PipelineStepResponse;
 import com.smartfirehub.pipeline.dto.StepCursor;
 import com.smartfirehub.pipeline.event.PipelineCompletedEvent;
+import com.smartfirehub.pipeline.exception.PipelineExecutionCancelledException;
 import com.smartfirehub.pipeline.exception.ScriptExecutionException;
 import com.smartfirehub.pipeline.repository.PipelineExecutionRepository;
 import com.smartfirehub.pipeline.repository.PipelineRepository;
@@ -22,6 +23,7 @@ import com.smartfirehub.pipeline.repository.PipelineStepRepository;
 import com.smartfirehub.pipeline.service.executor.AiClassifyExecutor;
 import com.smartfirehub.pipeline.service.executor.ApiCallConfig;
 import com.smartfirehub.pipeline.service.executor.ApiCallExecutor;
+import com.smartfirehub.pipeline.service.executor.ExecutionCancelCheck;
 import com.smartfirehub.pipeline.service.executor.ExecutorClient;
 import com.smartfirehub.pipeline.service.validator.PythonScriptValidator;
 import com.smartfirehub.pipeline.service.validator.SqlValidator;
@@ -136,9 +138,20 @@ public class PipelineAsyncRunner {
     Long pipelineCreatedBy = pipelineRepository.findCreatedByIdById(pipelineId).orElse(null);
     String pipelineName = pipelineRepository.findNameById(pipelineId).orElse("Pipeline");
 
+    // 협조적 취소 확인(WD-153) — 체크포인트마다 DB 의 취소 요청을 PK 로 읽는다. 여러 API 인스턴스 중 어디서 취소를 받아도 보이고, 실행기에는 인자로
+    // 넘겨 페이지·배치·재시도 대기 사이에서도 같은 판정을 쓴다.
+    ExecutionCancelCheck cancel = () -> executionRepository.isCancelRequested(executionId);
+
     try {
-      // 실행 상태를 RUNNING으로 업데이트
+      // 실행 상태를 RUNNING으로 업데이트. 조건부 쓰기다(끝나지 않은 실행만) — 대기 중에 취소돼 이미 CANCELLED 인 실행을 되살리지 않는다.
       executionRepository.updateExecutionStatus(executionId, "RUNNING", executionStartedAt, null);
+
+      // 취소 체크포인트(WD-153) — 시작 직후. 대기 중(PENDING)에 취소된 실행은 취소 API 가 이미 CANCELLED·스텝 SKIPPED 로 마감했다 — 스텝을 하나도
+      // 돌리지 않고 끝낸다. 시작 쓰기와 이 확인 사이에 RUNNING 취소가 들어온 경우도 같은 마감으로 정리된다(조건부라 이미 마감된 실행에는 무동작).
+      if (cancel.isCancelRequested()) {
+        finishCancelled(executionId);
+        return;
+      }
 
       // 위상 정렬로 실행 순서 결정
       List<PipelineStepResponse> executionOrder = topologicalSort(steps, stepDependencyMap);
@@ -147,8 +160,15 @@ public class PipelineAsyncRunner {
       Map<Long, String> stepStatuses = new HashMap<>();
 
       // 순서대로 스텝 실행
+      boolean cancelled = false;
       for (PipelineStepResponse step : executionOrder) {
         Long stepExecId = stepIdToStepExecId.get(step.id());
+
+        // 취소 체크포인트(WD-153) — 각 스텝 시작 전(= DAG 스텝 사이). 남은 스텝은 실행하지 않고 아래에서 SKIPPED(취소 사유)로 마감한다.
+        if (cancel.isCancelRequested()) {
+          cancelled = true;
+          break;
+        }
 
         // 의존 스텝이 모두 COMPLETED인지 확인
         boolean canExecute = true;
@@ -179,9 +199,21 @@ public class PipelineAsyncRunner {
         } else {
           // 스텝 실행
           String status =
-              executeStep(stepExecId, step, pipelineId, pipelineName, userId, executorEnabled);
+              executeStep(
+                  stepExecId, step, pipelineId, pipelineName, userId, executorEnabled, cancel);
           stepStatuses.put(step.id(), status);
+          // 스텝 안의 체크포인트가 취소를 알아챘다 — 그 스텝은 CANCELLED 로 기록됐다. 남은 스텝은 돌리지 않는다.
+          if ("CANCELLED".equals(status)) {
+            cancelled = true;
+            break;
+          }
         }
+      }
+
+      if (cancelled) {
+        // 앞선 스텝이 실패했더라도 사용자가 멈춘 실행은 CANCELLED 로 끝낸다(남은 스텝을 돌리지 않은 이유가 취소이므로).
+        finishCancelled(executionId);
+        return;
       }
 
       // 전체 실행 최종 상태 결정
@@ -209,6 +241,11 @@ public class PipelineAsyncRunner {
           new PipelineCompletedEvent(pipelineId, executionId, finalStatus, pipelineCreatedBy));
 
     } catch (Exception e) {
+      // 취소 예외가 스텝 밖까지 올라온 경우(방어) — 실패가 아니라 취소로 마감한다.
+      if (PipelineExecutionCancelledException.findIn(e) != null) {
+        finishCancelled(executionId);
+        return;
+      }
       log.error("Pipeline execution {} failed with exception", executionId, e);
       // 스텝 실행 레코드가 하나도 생성되기 전에 던져진 예외(토폴로지 정렬 실패, DB 오류 등)는
       // 스텝 레벨 error_message로 남길 곳이 없어 원인이 완전히 유실됐다(#517).
@@ -220,6 +257,25 @@ public class PipelineAsyncRunner {
       applicationEventPublisher.publishEvent(
           new PipelineCompletedEvent(pipelineId, executionId, "FAILED", pipelineCreatedBy));
     }
+  }
+
+  /**
+   * 취소된 실행을 마감한다(WD-153) — 아직 시작하지 않은 스텝을 SKIPPED(취소 사유)로, 실행을 CANCELLED 로 바꾼다. 두 쓰기 모두 조건부라(PENDING
+   * 스텝만·끝나지 않은 실행만) 대기 중 취소로 이미 마감된 실행에는 무동작이다.
+   *
+   * <p><b>완료 이벤트를 발행하지 않는다.</b> PIPELINE_CHAIN 트리거는 조건이 ANY 여도 취소된 실행으로는 발화하지 않는다 — 사용자가 멈춘 흐름의 하위
+   * 파이프라인이 이어서 돌면 "멈췄다"는 의도와 반대다. 완료 알림도 보내지 않는다(취소한 사람이 화면에서 결과를 이미 본다). 리스너 쪽에도 같은 방어를
+   * 둔다(TriggerEventService#matchesCondition·NotificationService).
+   */
+  private void finishCancelled(Long executionId) {
+    executionRepository.skipPendingStepsForCancel(executionId);
+    executionRepository.updateExecutionStatus(
+        executionId,
+        "CANCELLED",
+        null,
+        LocalDateTime.now(ZoneOffset.UTC),
+        PipelineExecutionCancelledException.CANCELLED_MESSAGE);
+    log.info("Pipeline execution {} cancelled by user request", executionId);
   }
 
   /**
@@ -303,6 +359,34 @@ public class PipelineAsyncRunner {
       String pipelineName,
       Long userId,
       boolean executorEnabled) {
+    return executeStep(
+        stepExecId,
+        step,
+        pipelineId,
+        pipelineName,
+        userId,
+        executorEnabled,
+        ExecutionCancelCheck.NONE);
+  }
+
+  /**
+   * 개별 스텝 실행 — 협조적 취소 확인({@code cancel}, WD-153)을 받는다.
+   *
+   * <p>스텝 안의 체크포인트: SQL·PYTHON·실행기(firehub-executor) 호출은 그 호출 하나를 기다리므로 <b>호출 직전·직후</b>만 본다(진행 중인 호출은
+   * 자기 타임아웃까지 끝까지 돈다). 로컬 API_CALL 은 페이지 사이·재시도 대기 중, AI_CLASSIFY 는 배치 사이·재시도 대기 중이다(실행기 안). 단 SQL 의
+   * "직후"는 확인하지 않는다 — SQL 스텝은 출력 비우기와 적재가 한 트랜잭션으로 이미 커밋돼 되돌릴 수 없으므로, 그 스텝을 CANCELLED 로 적으면 사실과 다르다.
+   * 그래서 정상 COMPLETED 로 남기고 다음 스텝 시작 전 체크포인트에서 멈춘다.
+   *
+   * @return "COMPLETED" / "FAILED" / "CANCELLED"(체크포인트가 취소를 알아챔 — 남은 스텝을 돌리지 않는다)
+   */
+  String executeStep(
+      Long stepExecId,
+      PipelineStepResponse step,
+      Long pipelineId,
+      String pipelineName,
+      Long userId,
+      boolean executorEnabled,
+      ExecutionCancelCheck cancel) {
     LocalDateTime stepStartedAt = LocalDateTime.now(ZoneOffset.UTC);
 
     try {
@@ -628,6 +712,8 @@ public class PipelineAsyncRunner {
                     + sql;
           }
 
+          // 취소 체크포인트(WD-153) — SQL 실행 직전. 아직 출력에 아무것도 쓰지 않았다(REPLACE 비우기도 이 문장과 같은 트랜잭션이다).
+          cancel.checkpoint(0, false);
           if (executorEnabled) {
             var result = executorClient.executeSql(wrappedSql, preStatements);
             if (!result.success()) {
@@ -664,6 +750,8 @@ public class PipelineAsyncRunner {
           // DELETE 가 들어 있어 사용자 DML 과 같은 트랜잭션·같은 출력 잠금 아래에서 실행된다(#735).
           // APPEND/MERGE 면 빈 목록이다(증분 전체 재생성 DELETE 는 isSelect 게이트가 걸려 여기로 오지
           // 않는다).
+          // 취소 체크포인트(WD-153) — 사용자 DML 실행 직전.
+          cancel.checkpoint(0, false);
           if (executorEnabled) {
             var result = executorClient.executeSql(sql, preStatements);
             if (!result.success()) {
@@ -771,11 +859,16 @@ public class PipelineAsyncRunner {
                         if (pyColumnTypes != null) {
                           request.put("column_type_map", pyColumnTypes);
                         }
+                        // 취소 체크포인트(WD-153) — 실행기 호출 직전. REPLACE 면 빈 임시 테이블을 loadPythonOutput 의 실패 정리가 버린다.
+                        cancel.checkpoint(0, isReplace);
                         var result = executorClient.executePython(request, readSlot);
                         if (!result.success()) {
                           throw pythonRunFailure(
                               "Python 실행 실패: " + result.error(), pyTenantId, pyStartedAt);
                         }
+                        // 취소 체크포인트(WD-153) — 실행기 호출 직후·맞바꿈 전. REPLACE 면 실행기가 채운 임시 테이블을 버려 원본을 지키고,
+                        // APPEND 면 실행기가 이미 넣은 행이 남는다(그 수를 문구에 남긴다).
+                        cancel.checkpoint(isReplace ? 0 : result.rowsLoaded(), isReplace);
                         return new PythonLoad(result.output(), result.rowsLoaded());
                       })
                   .log();
@@ -785,6 +878,8 @@ public class PipelineAsyncRunner {
           // 테이블이 있으면 stderr, 없으면 stdout+stderr(executor 와 동일). REPLACE 판정은 예전 로컬
           // 경로 그대로 해석된 전략(알 수 없는 값 → REPLACE 폴백)을 쓴다.
           boolean isReplace = strategy != LoadStrategy.APPEND && pyOutputTable != null;
+          // 취소 체크포인트(WD-153) — 스크립트 실행 직전.
+          cancel.checkpoint(0, false);
           PythonScriptExecutor.RunResult run = pythonExecutor.run(step.scriptContent(), readSlot);
           String outputText = pyOutputTable != null ? run.stderr() : run.stdout() + run.stderr();
           if (!run.succeeded()) {
@@ -793,6 +888,8 @@ public class PipelineAsyncRunner {
                 pyTenantId,
                 pyStartedAt);
           }
+          // 취소 체크포인트(WD-153) — 스크립트 실행 직후·적재 전. 로컬 경로는 API 가 stdout 을 적재하므로 여기서 멈추면 출력에 아무것도 쓰지 않는다.
+          cancel.checkpoint(0, false);
           if (pyOutputTable == null) {
             executionLog = outputText;
           } else {
@@ -879,10 +976,15 @@ public class PipelineAsyncRunner {
             Map<String, Object> request =
                 buildApiCallExecutorRequest(
                     apiCallConfig, targetTable, decryptedAuth, columnTypeMap, apiConn);
+            // 취소 체크포인트(WD-153) — 실행기 호출 직전. 실행기 안의 페이지·재시도는 이 API 가 들여다볼 수 없어 호출 직전·직후만 본다.
+            cancel.checkpoint(0, isReplace);
             var result = executorClient.executeApiCall(request);
             if (!result.success()) {
               throw new ScriptExecutionException("API_CALL 실행 실패: " + result.error());
             }
+            // 취소 체크포인트(WD-153) — 실행기 호출 직후·맞바꿈 전. REPLACE 면 아래 catch 가 임시 테이블을 버려 원본을 지키고, APPEND 면 이미
+            // 넣은 행이 남는다.
+            cancel.checkpoint(isReplace ? 0 : result.rowsLoaded(), isReplace);
             if (isReplace) {
               // 빈 결과 가드는 finishReplace 가 단독으로 갖는다(#685) — API 가 0행을 돌려주면
               // 맞바꾸지 않고 임시 테이블만 버려 원본을 지킨다. 예전에는 여기서 swapTable 을 바로
@@ -909,7 +1011,8 @@ public class PipelineAsyncRunner {
                   decryptedAuth,
                   loadStrategy,
                   columnTypeMap,
-                  apiConn);
+                  apiConn,
+                  cancel);
           executionLog = result.log();
         }
       } else if ("AI_CLASSIFY".equals(step.scriptType())) {
@@ -1026,7 +1129,7 @@ public class PipelineAsyncRunner {
                 step.apiConnectionId());
 
         AiClassifyExecutor.ExecutionResult aiResult =
-            aiClassifyExecutor.execute(resolvedStep, stepExecId, userId);
+            aiClassifyExecutor.execute(resolvedStep, stepExecId, userId, cancel);
         executionLog = aiResult.executionLog();
         // AI_CLASSIFY는 자체적으로 출력 행 수를 관리
       } else {
@@ -1077,6 +1180,21 @@ public class PipelineAsyncRunner {
       return "COMPLETED";
 
     } catch (Exception e) {
+      // 취소 체크포인트가 던진 예외(WD-153) — 실패가 아니라 CANCELLED 로 기록한다. 실행기가 감싸 던졌어도 원인 사슬에서 찾는다. REPLACE 스테이징
+      // 정리는 실행기·러너의 실패 정리 경로가 이미 했다(예외를 다시 던지기 전에).
+      PipelineExecutionCancelledException cancelled = PipelineExecutionCancelledException.findIn(e);
+      if (cancelled != null) {
+        log.info("Step {} cancelled by user request", step.name());
+        executionRepository.updateStepExecution(
+            stepExecId,
+            "CANCELLED",
+            null,
+            null,
+            cancelled.stepMessage(),
+            null,
+            LocalDateTime.now(ZoneOffset.UTC));
+        return "CANCELLED";
+      }
       log.error("Step {} failed", step.name(), e);
       executionRepository.updateStepExecution(
           stepExecId,

@@ -436,6 +436,15 @@ public class GlobalExceptionHandler {
     return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
   }
 
+  /** 이미 끝난 파이프라인 실행을 취소하려 할 때 409 반환 (WD-153) */
+  @ExceptionHandler(com.smartfirehub.pipeline.exception.ExecutionAlreadyFinishedException.class)
+  public ResponseEntity<ErrorResponse> handleExecutionAlreadyFinished(
+      com.smartfirehub.pipeline.exception.ExecutionAlreadyFinishedException ex,
+      HttpServletRequest request) {
+    ErrorResponse response = buildError(HttpStatus.CONFLICT, ex.getMessage(), null, request);
+    return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
+  }
+
   @ExceptionHandler(CyclicDependencyException.class)
   public ResponseEntity<ErrorResponse> handleCyclicDependency(
       CyclicDependencyException ex, HttpServletRequest request) {

@@ -68,7 +68,7 @@ class AiClassifyInputAccessTest extends IntegrationTestBase {
   @BeforeEach
   void setUp() {
     reset(aiClassifyExecutor);
-    when(aiClassifyExecutor.execute(any(), any(), any()))
+    when(aiClassifyExecutor.execute(any(), any(), any(), any()))
         .thenReturn(new AiClassifyExecutor.ExecutionResult(1, "ok"));
     fx = new SecurityFixture(dsl, fixtureTransactionTemplate, encoder);
     m = "aci" + System.nanoTime();
@@ -217,14 +217,14 @@ class AiClassifyInputAccessTest extends IntegrationTestBase {
     long low = executionService.executePipeline(p, userAt("공개"));
     assertThat(waitForEnd(low)).isEqualTo("FAILED");
     assertThat(stepError(low)).isEqualTo(DatasetAccessGuard.SQL_ACCESS_DENIED_MESSAGE);
-    verify(aiClassifyExecutor, never()).execute(any(), any(), any());
+    verify(aiClassifyExecutor, never()).execute(any(), any(), any(), any());
     // 판정이 TEMP 생성보다 먼저다 — 거부된 실행은 기본 등급 출력 TEMP 를 남기지 않는다.
     assertThat(tempLevel(p)).isNull();
 
     // 대조군: 자격 있는 실행 주체는 실행기에 도달하고, 새 러너 TEMP 는 입력 등급(민감)으로 맞춰진다.
     assertThat(waitForEnd(executionService.executePipeline(p, userAt("민감"))))
         .isEqualTo("COMPLETED");
-    verify(aiClassifyExecutor, times(1)).execute(any(), any(), any());
+    verify(aiClassifyExecutor, times(1)).execute(any(), any(), any(), any());
     assertThat(tempLevel(p)).isEqualTo(fx.levelId("민감"));
   }
 
@@ -235,7 +235,7 @@ class AiClassifyInputAccessTest extends IntegrationTestBase {
     long p = aiPipeline(runner, secId, lowOutId);
     long exec = executionService.executePipeline(p, runner);
     assertThat(waitForEnd(exec)).isEqualTo("COMPLETED");
-    verify(aiClassifyExecutor, times(1)).execute(any(), any(), any());
+    verify(aiClassifyExecutor, times(1)).execute(any(), any(), any(), any());
     assertThat(
             inTenantFixture(
                 () ->
@@ -283,7 +283,7 @@ class AiClassifyInputAccessTest extends IntegrationTestBase {
     long exec = executionService.executePipeline(p, runner);
     assertThat(waitForEnd(exec)).isEqualTo("FAILED");
     assertThat(stepError(exec)).contains("현재 AI 공급자로 보낼 수 없습니다");
-    verify(aiClassifyExecutor, never()).execute(any(), any(), any());
+    verify(aiClassifyExecutor, never()).execute(any(), any(), any(), any());
     // 판정이 TEMP 생성보다 먼저다 — 차단된 실행은 출력 TEMP 를 남기지 않는다.
     assertThat(tempLevel(p)).isNull();
   }

@@ -291,4 +291,69 @@ class PipelineControllerTest {
         .andExpect(jsonPath("$.steps[0].warnings[0]").value("경고 문구"))
         .andExpect(jsonPath("$.steps[0].fullRebuildMode").value("REBUILD_OUTPUT"));
   }
+
+  // ------------------------------------------------------------------ //
+  // 실행 취소(WD-153)
+  // ------------------------------------------------------------------ //
+
+  /** 실행 중 실행 취소 요청은 202 Accepted 와 접수 상태(RUNNING — 다음 체크포인트에서 멈춤)를 돌려준다. */
+  @Test
+  void cancelExecution_running_returnsAccepted() throws Exception {
+    LocalDateTime at = LocalDateTime.of(2026, 10, 22, 1, 2, 3);
+    when(pipelineService.cancelExecution(1L, 42L, 1L))
+        .thenReturn(new CancelExecutionResponse(42L, "RUNNING", at));
+
+    mockMvc
+        .perform(
+            post("/api/v1/pipelines/1/executions/42/cancel")
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isAccepted())
+        .andExpect(jsonPath("$.executionId").value(42))
+        .andExpect(jsonPath("$.status").value("RUNNING"))
+        .andExpect(jsonPath("$.cancelRequestedAt").exists());
+  }
+
+  /** 이미 끝난 실행 취소는 409 와 사용자 문구. */
+  @Test
+  void cancelExecution_finished_returnsConflict() throws Exception {
+    when(pipelineService.cancelExecution(1L, 43L, 1L))
+        .thenThrow(new com.smartfirehub.pipeline.exception.ExecutionAlreadyFinishedException());
+
+    mockMvc
+        .perform(
+            post("/api/v1/pipelines/1/executions/43/cancel")
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.message").value("이미 끝난 실행은 취소할 수 없습니다"));
+  }
+
+  /** 실행 권한(pipeline:execute)이 없으면 403 — 취소는 실행과 같은 권한이다. 서비스는 호출되지 않는다. */
+  @Test
+  void cancelExecution_withoutExecutePermission_returnsForbidden() throws Exception {
+    when(jwtTokenProvider.parseAccessToken("reader-token"))
+        .thenReturn(Optional.of(new JwtTokenProvider.AccessTokenPrincipal(2L, null, false)));
+    when(permissionService.getUserPermissions(2L)).thenReturn(Set.of("pipeline:read"));
+
+    mockMvc
+        .perform(
+            post("/api/v1/pipelines/1/executions/42/cancel")
+                .header("Authorization", "Bearer reader-token"))
+        .andExpect(status().isForbidden());
+    org.mockito.Mockito.verify(pipelineService, org.mockito.Mockito.never())
+        .cancelExecution(anyLong(), anyLong(), anyLong());
+  }
+
+  /** 없는(다른 테넌트·다른 파이프라인 포함) 실행은 404. */
+  @Test
+  void cancelExecution_notFound_returns404() throws Exception {
+    when(pipelineService.cancelExecution(1L, 44L, 1L))
+        .thenThrow(
+            new com.smartfirehub.pipeline.exception.PipelineNotFoundException("Execution not found"));
+
+    mockMvc
+        .perform(
+            post("/api/v1/pipelines/1/executions/44/cancel")
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isNotFound());
+  }
 }

@@ -918,6 +918,17 @@ public class PipelineService {
         null);
   }
 
+  /**
+   * 파이프라인 실행 취소(WD-153). 파이프라인이 보이지 않으면(없음·다른 테넌트 — RLS) 404, 실행이 이 파이프라인 것이 아니면 404(#188 과 같은 이유로
+   * 존재 여부를 숨긴다). 실제 취소 기록은 {@link PipelineExecutionService#cancelExecution} 이 한다.
+   */
+  public CancelExecutionResponse cancelExecution(Long pipelineId, Long executionId, Long userId) {
+    pipelineRepository
+        .findById(pipelineId)
+        .orElseThrow(() -> new PipelineNotFoundException("Pipeline not found: " + pipelineId));
+    return executionService.cancelExecution(pipelineId, executionId, userId);
+  }
+
   @Transactional(readOnly = true)
   public List<PipelineExecutionResponse> getExecutionsByPipelineId(Long pipelineId) {
     // Verify pipeline exists
@@ -1040,7 +1051,10 @@ public class PipelineService {
         execution.completedAt(),
         execution.createdAt(),
         executionError,
-        executionErrorMasked);
+        executionErrorMasked,
+        // 취소 요청 정보는 원문 오류가 아니라 가리지 않는다(WD-153) — 가림 대상 조회자에게도 "누가 언제 취소했는지"는 보여야 한다.
+        execution.cancelRequestedAt(),
+        execution.cancelRequestedBy());
   }
 
   /**

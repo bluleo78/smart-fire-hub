@@ -76,6 +76,31 @@ public class ApiCallExecutor {
       String loadStrategy,
       Map<String, String> columnTypeMap,
       ApiConnectionResponse conn) {
+    return execute(
+        config,
+        outputTableName,
+        decryptedAuthConfig,
+        loadStrategy,
+        columnTypeMap,
+        conn,
+        ExecutionCancelCheck.NONE);
+  }
+
+  /**
+   * 파이프라인 러너용 — 협조적 취소 확인({@code cancel})을 받는다(WD-153).
+   *
+   * <p>체크포인트: 각 페이지 요청 직전(= 페이지 사이 — 진행 중인 페이지는 끝까지 받고 적재한 뒤 멈춘다), 재시도 백오프 대기 중({@link
+   * ExecutionCancelCheck#SLEEP_SLICE_MS} 마다 깨어 확인 — 대기 시간을 다 채우지 않는다), REPLACE 맞바꿈 직전. 모두 아래 try 안이라 취소
+   * 예외가 실패와 같은 정리 경로를 타 REPLACE 임시 테이블이 지워지고 원본이 남는다. APPEND 는 이미 넣은 행이 남고 그 수를 예외에 싣는다.
+   */
+  public ApiCallResult execute(
+      ApiCallConfig config,
+      String outputTableName,
+      Map<String, String> decryptedAuthConfig,
+      String loadStrategy,
+      Map<String, String> columnTypeMap,
+      ApiConnectionResponse conn,
+      ExecutionCancelCheck cancel) {
 
     // 1. URL 결정: apiConnectionId → baseUrl+path, customUrl, 또는 레거시 url 순으로 해석
     String resolvedUrl = resolveTargetUrl(config, conn);
@@ -116,6 +141,9 @@ public class ApiCallExecutor {
         Integer totalCount = null;
 
         while (true) {
+          // 취소 체크포인트(WD-153) — 다음 페이지를 요청하기 전. APPEND 면 지금까지 넣은 행이 남는다.
+          cancel.checkpoint(isReplace ? 0 : totalRows, isReplace);
+
           // Build pagination params
           Map<String, String> pagParams =
               offsetPaginationHandler.buildPaginationParams(
@@ -123,7 +151,15 @@ public class ApiCallExecutor {
 
           // Fetch page
           String responseBody =
-              executeRequest(config, resolvedUrl, decryptedAuthConfig, pagParams, timeoutMs);
+              executeRequest(
+                  config,
+                  resolvedUrl,
+                  decryptedAuthConfig,
+                  pagParams,
+                  timeoutMs,
+                  cancel,
+                  isReplace ? 0 : totalRows,
+                  isReplace);
 
           // Parse data
           List<Map<String, Object>> rows =
@@ -179,8 +215,11 @@ public class ApiCallExecutor {
 
       } else {
         // Single request (no pagination)
+        // 취소 체크포인트(WD-153) — 요청 전.
+        cancel.checkpoint(0, isReplace);
         String responseBody =
-            executeRequest(config, resolvedUrl, decryptedAuthConfig, Map.of(), timeoutMs);
+            executeRequest(
+                config, resolvedUrl, decryptedAuthConfig, Map.of(), timeoutMs, cancel, 0, isReplace);
         List<Map<String, Object>> rows =
             jsonResponseParser.parseAndMap(
                 responseBody, config.dataPath(), config.fieldMappings(), columnTypeMap);
@@ -197,6 +236,8 @@ public class ApiCallExecutor {
       // 적재된 행이 0이면 맞바꾸지 않는다(#685) — API 가 빈 페이지를 돌려줬다고 해서 기존 데이터를
       // 지울 이유는 없다. 판단은 finishReplace 가 단독으로 갖는다.
       if (isReplace) {
+        // 취소 체크포인트(WD-153) — 맞바꾸기 직전. 마지막 페이지를 받는 동안 취소됐으면 임시 테이블을 버리고(아래 catch) 원본을 지킨다.
+        cancel.checkpoint(0, true);
         dataTableService.finishReplace(outputTableName, tempTable, totalRows);
         swapped = true;
       }
@@ -236,12 +277,19 @@ public class ApiCallExecutor {
   // HTTP execution with retry
   // -------------------------------------------------------------------------
 
+  /**
+   * 요청 한 번을 재시도 정책대로 보낸다. 재시도 사이 백오프는 {@code cancel} 이 조각내 자면서 취소를 확인한다(WD-153) — 취소되면 남은 재시도 없이
+   * {@code PipelineExecutionCancelledException} 이 나간다(rowsKept·replaceDiscarded 는 그 예외 문구용).
+   */
   private String executeRequest(
       ApiCallConfig config,
       String resolvedUrl,
       Map<String, String> decryptedAuthConfig,
       Map<String, String> paginationParams,
-      int timeoutMs) {
+      int timeoutMs,
+      ExecutionCancelCheck cancel,
+      long rowsKept,
+      boolean replaceDiscarded) {
 
     int maxRetries = DEFAULT_MAX_RETRIES;
     int initialBackoff = DEFAULT_INITIAL_BACKOFF;
@@ -280,7 +328,8 @@ public class ApiCallExecutor {
             sleepMs,
             e.getMessage());
         try {
-          Thread.sleep(sleepMs);
+          // 취소를 확인하며 잔다 — 예전 Thread.sleep 한 번은 취소해도 백오프(최대 maxBackoff)를 다 채웠다.
+          cancel.sleep(sleepMs, rowsKept, replaceDiscarded);
         } catch (InterruptedException ie) {
           Thread.currentThread().interrupt();
           throw new ApiCallException(ApiCallErrorMessages.interrupted(), ie);

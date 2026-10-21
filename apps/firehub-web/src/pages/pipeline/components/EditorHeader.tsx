@@ -1,4 +1,4 @@
-import { ArrowLeft, Pencil, Play, RotateCcw, Save, X } from 'lucide-react';
+import { ArrowLeft, Ban, Pencil, Play, RotateCcw, Save, X } from 'lucide-react';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 
@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 
 import type { EditorAction,PipelineEditorState } from '../hooks/usePipelineEditor';
+import type { ExecutionCancelState } from '../utils/execution-cancel';
 
 interface EditorHeaderProps {
   state: PipelineEditorState;
@@ -32,6 +33,12 @@ interface EditorHeaderProps {
   onExecute: () => void;
   /** 실행 상세에서 "같은 입력으로 다시 실행" 버튼 핸들러 (이슈 #84) */
   onRerun?: () => void;
+  /** 실행 상세 모드에서 현재 실행의 취소 버튼 상태(WD-153) — 진행 중일 때만 버튼이 보인다. */
+  cancelState?: ExecutionCancelState;
+  /** 「실행 취소」 클릭 — 확인 창을 연다(실제 취소는 창에서 확정할 때). */
+  onCancelExecution?: () => void;
+  /** 취소 요청을 보내는 중 — 중복 클릭 방지 */
+  isCancelling?: boolean;
   isSaving: boolean;
   isExecuting: boolean;
   pipelineId: number | null;
@@ -49,6 +56,9 @@ export function EditorHeader({
   onEdit,
   onExecute,
   onRerun,
+  cancelState = 'hidden',
+  onCancelExecution,
+  isCancelling = false,
   isSaving,
   isExecuting,
   pipelineId,
@@ -125,6 +135,22 @@ export function EditorHeader({
         >
           <RotateCcw className="h-4 w-4" />
           재실행
+        </Button>
+      )}
+
+      {/*
+        실행 취소 버튼(WD-153) — 실행 상세 모드에서 진행 중(PENDING/RUNNING)인 실행에만 표시. 재실행과 자리를 나눠 쓴다
+        (재실행은 종료된 실행에만 보이므로 둘이 동시에 보이지 않는다). 취소 요청이 이미 기록됐으면 실행기가 멈출 때까지
+        「취소 요청됨」으로 비활성 표시해 같은 요청을 다시 보내지 않게 한다.
+      */}
+      {pipelineId !== null && isExecutionMode && cancelState !== 'hidden' && (
+        <Button
+          variant="outline"
+          disabled={cancelState === 'requested' || isCancelling}
+          onClick={onCancelExecution}
+        >
+          <Ban className="h-4 w-4" />
+          {cancelState === 'requested' ? '취소 요청됨' : isCancelling ? '취소 중…' : '실행 취소'}
         </Button>
       )}
 

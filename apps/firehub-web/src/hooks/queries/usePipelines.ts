@@ -79,6 +79,23 @@ export function useExecutePipeline(pipelineId: number) {
   });
 }
 
+/**
+ * 진행 중 실행 취소(WD-153) — 변수는 취소할 실행 id.
+ *
+ * 성공 시 실행 목록·상세(['pipelines', id, 'executions', ...] prefix)를 무효화한다. 무효화 Promise 를 돌려줘
+ * 재조회가 끝날 때까지 isPending 을 유지한다 — 그러지 않으면 서버의 cancelRequestedAt 이 도착하기 전 잠깐
+ * 「실행 취소」 버튼이 다시 눌릴 수 있게 된다. RUNNING 으로 응답하면 상세/목록 폴링이 이어져 CANCELLED 전이를 잡는다.
+ */
+export function useCancelExecution(pipelineId: number) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (executionId: number) =>
+      pipelinesApi.cancelExecution(pipelineId, executionId).then((r) => r.data),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ['pipelines', pipelineId, 'executions'] }),
+  });
+}
+
 // 증분 처리 스텝의 "처음부터 다시 만들기" 예약/취소 — 성공 시 파이프라인 상세를 무효화해
 // StepConfigPanel이 최신 lastRunAt/fullRebuildPending/warnings를 다시 조회하게 한다.
 export function useReserveFullRebuild(pipelineId: number) {

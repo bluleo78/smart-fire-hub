@@ -256,7 +256,7 @@ public class PipelineStepExecution extends TableImpl<PipelineStepExecutionRecord
     @Override
     public List<Check<PipelineStepExecutionRecord>> getChecks() {
         return Arrays.asList(
-            Internal.createCheck(this, DSL.name("pipeline_step_execution_status_check"), "(((status)::text = ANY ((ARRAY['PENDING'::character varying, 'RUNNING'::character varying, 'COMPLETED'::character varying, 'FAILED'::character varying, 'SKIPPED'::character varying])::text[])))", true)
+            Internal.createCheck(this, DSL.name("pipeline_step_execution_status_check"), "(((status)::text = ANY ((ARRAY['PENDING'::character varying, 'RUNNING'::character varying, 'COMPLETED'::character varying, 'FAILED'::character varying, 'SKIPPED'::character varying, 'CANCELLED'::character varying])::text[])))", true)
         );
     }
 

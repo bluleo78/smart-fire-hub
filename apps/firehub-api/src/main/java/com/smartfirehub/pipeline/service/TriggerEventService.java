@@ -311,6 +311,11 @@ public class TriggerEventService {
   }
 
   private boolean matchesCondition(String condition, String status) {
+    // 사용자가 취소한 실행(CANCELLED)은 어떤 조건(ANY 포함)으로도 체인을 발화하지 않는다(WD-153) — 멈춘 흐름의 하위 파이프라인이 이어서 돌면
+    // "멈췄다"는 의도와 반대다. 러너는 취소 시 완료 이벤트 자체를 발행하지 않으며, 이 분기는 그 계약이 깨졌을 때의 방어다.
+    if ("CANCELLED".equals(status)) {
+      return false;
+    }
     return switch (condition) {
       case "SUCCESS" -> "COMPLETED".equals(status);
       case "FAILURE" -> "FAILED".equals(status);

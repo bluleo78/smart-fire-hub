@@ -63,10 +63,67 @@ function SkippedStepNotice() {
   );
 }
 
+/**
+ * 실행 취소로 건너뛴 스텝에 서버가 남기는 문구(WD-153) — 서버 문구와 같아야 한다(firehub-api 와 함께 고칠 것).
+ * 이 문구가 저장된 SKIPPED 는 "선행 스텝 실패" 가 아니라 취소 때문이므로 고정 안내 대신 이 사유를 보여 준다.
+ */
+const CANCEL_SKIPPED_MESSAGE = '실행이 취소되어 이 스텝은 실행하지 않았습니다.';
+
+/**
+ * 취소로 실행하지 않은 SKIPPED 스텝인지(WD-153).
+ * 저장 문구가 취소 문구로 시작하면 취소다. 원문이 가려진 조회자(WD-27)는 문구를 볼 수 없으므로, 실행이 CANCELLED 이고
+ * 가려진 경우도 취소로 본다 — 그러지 않으면 "선행 스텝이 실패…" 라는 사실과 다른 안내가 나온다.
+ */
+function isCancelSkipped(step: StepExecutionResponse, executionStatus?: ExecutionDetailResponse['status']) {
+  if (step.status !== 'SKIPPED') return false;
+  if (step.errorMessage?.startsWith(CANCEL_SKIPPED_MESSAGE)) return true;
+  return executionStatus === 'CANCELLED' && !!step.errorMasked;
+}
+
+/** 취소로 건너뛴 스텝 안내(WD-153) — 건너뜀 안내(WD-111)와 같은 중립 문장 형식으로 취소 사유를 보여 준다. */
+function CancelSkippedStepNotice() {
+  return (
+    <>
+      <Separator />
+      <div className="space-y-2" data-testid="skipped-step-notice">
+        <p className="text-muted-foreground text-xs font-medium">건너뛴 이유</p>
+        <p className="text-xs text-muted-foreground">{CANCEL_SKIPPED_MESSAGE}</p>
+      </div>
+    </>
+  );
+}
+
+/**
+ * 취소가 닿았을 때 진행 중이던(CANCELLED) 스텝 안내(WD-153).
+ *
+ * 실패가 아니라 사용자가 멈춘 것이므로 빨간 「오류 상세」 블록·"스텝 설정을 확인하세요" 를 쓰지 않는다. 서버 문구에는
+ * 취소 전까지 적재된 행 수나 REPLACE 원본 유지 여부가 담기므로 그대로 보여 준다. 원문이 가려졌으면(WD-27) 제한 상태 블록.
+ */
+function CancelledStepNotice({ step }: { step: StepExecutionResponse }) {
+  return (
+    <>
+      <Separator />
+      <div className="space-y-2" data-testid="cancelled-step-notice">
+        <p className="text-muted-foreground text-xs font-medium">취소 내용</p>
+        {step.errorMasked && step.errorMessage ? (
+          <RestrictedNotice message={step.errorMessage} />
+        ) : (
+          <p className="text-xs text-muted-foreground">
+            {step.errorMessage || '사용자가 실행을 취소해 이 스텝은 도중에 멈췄습니다.'}
+          </p>
+        )}
+      </div>
+    </>
+  );
+}
+
 function StepDetails({
   step,
+  executionStatus,
 }: {
   step: StepExecutionResponse;
+  /** 이 스텝이 속한 실행의 상태 — 가려진 SKIPPED 가 취소 때문인지 판별하는 데 쓴다(WD-153). */
+  executionStatus?: ExecutionDetailResponse['status'];
 }) {
   return (
     <div className="flex-1 min-h-0">
@@ -100,8 +157,12 @@ function StepDetails({
           <span>{step.outputRows != null ? step.outputRows.toLocaleString() : '-'}</span>
         </div>
 
-        {step.status === 'SKIPPED' ? (
+        {isCancelSkipped(step, executionStatus) ? (
+          <CancelSkippedStepNotice />
+        ) : step.status === 'SKIPPED' ? (
           <SkippedStepNotice />
+        ) : step.status === 'CANCELLED' ? (
+          <CancelledStepNotice step={step} />
         ) : step.errorMessage && (
           <>
             <Separator />
@@ -163,6 +224,45 @@ function ExecutionErrorMessage({ errorMessage, errorMasked }: { errorMessage: st
 }
 
 /**
+ * 취소 정보를 보여 줄 실행인지(WD-153) — CANCELLED 이거나, 아직 진행 중(PENDING/RUNNING)인데 취소 요청이 기록된 경우.
+ * 마지막 점검 지점 뒤에 닿은 취소는 "효과 없이 접수"돼 COMPLETED/FAILED 로 끝나면서도 cancelRequestedAt 이 남는다 —
+ * 그때는 실제로 취소되지 않았으므로 취소 필드를 무시하고 원래 결과(실패면 오류 안내)를 그대로 보여 준다.
+ */
+function isCancelledExecution(execution: ExecutionDetailResponse) {
+  if (execution.status === 'CANCELLED') return true;
+  return (execution.status === 'PENDING' || execution.status === 'RUNNING') && !!execution.cancelRequestedAt;
+}
+
+/**
+ * 실행 취소 정보(WD-153) — 「{누가}님이 {언제} 취소」.
+ *
+ * 왜 errorMessage 가 아니라 cancelRequestedBy/At 으로 보여 주는가: 취소 시 서버가 errorMessage 에 「사용자가 실행을 취소했습니다.」를
+ * 남기지만 조회자 권한에 따라 가림 문구로 바뀔 수 있다(WD-27). 누가·언제 취소했는지는 별도 필드로 와서 가림과 무관하다.
+ * 아직 RUNNING 이면 "취소 요청됨" — 진행 중인 작업이 끝나는 대로 멈춘다는 것을 알린다. 옛 기록처럼 필드가 없으면 사실만 알린다.
+ */
+function ExecutionCancelInfo({ execution }: { execution: ExecutionDetailResponse }) {
+  const requested = execution.status !== 'CANCELLED';
+  const who = execution.cancelRequestedBy ? `${execution.cancelRequestedBy}님이 ` : '';
+  const when = execution.cancelRequestedAt ? `${formatDate(execution.cancelRequestedAt)}에 ` : '';
+  const hasDetail = who !== '' || when !== '';
+  return (
+    <>
+      <Separator />
+      <div className="space-y-2" data-testid="execution-cancel-info">
+        <p className="text-muted-foreground text-xs font-medium">{requested ? '취소 요청됨' : '취소 정보'}</p>
+        <p className="text-xs text-muted-foreground">
+          {requested
+            ? `${hasDetail ? `${who}${when}취소를 요청했습니다. ` : '취소가 요청됐습니다. '}진행 중인 작업이 끝나는 대로 멈춥니다.`
+            : hasDetail
+              ? `${who}${when}취소했습니다.`
+              : '실행이 취소되었습니다.'}
+        </p>
+      </div>
+    </>
+  );
+}
+
+/**
  * 헤더에는 선택한 스텝명이 표시되지만 실제로는 해당 스텝의 실행 레코드가 존재하지 않는 경우
  * (예: 스텝 실행 전 파이프라인 전체가 실패)를 위한 빈 상태 컴포넌트(#517).
  * 기존에는 이 경우도 ExecutionSummary가 그대로 렌더링되어 "스텝 상세를 보고 있다"는 착각을 줬다.
@@ -175,7 +275,10 @@ function StepNotExecuted({ execution }: { execution: ExecutionDetailResponse }) 
           <p className="text-muted-foreground text-xs">
             이 스텝은 실행되지 않았습니다. 스텝이 실행되기 전 파이프라인 실행이 중단됐거나, 이 실행 이후에 추가된 스텝일 수 있습니다.
           </p>
-          {execution.errorMessage && (
+          {/* 취소된 실행(WD-153)의 errorMessage 는 실패가 아니라 취소 문구이므로 실패 안내 대신 취소 정보를 보여 준다 */}
+          {isCancelledExecution(execution) ? (
+            <ExecutionCancelInfo execution={execution} />
+          ) : execution.errorMessage && (
             <ExecutionErrorMessage errorMessage={execution.errorMessage} errorMasked={execution.errorMasked} />
           )}
         </div>
@@ -243,6 +346,7 @@ function ExecutionSummary({
   const running = execution.stepExecutions.filter(s => s.status === 'RUNNING').length;
   const pending = execution.stepExecutions.filter(s => s.status === 'PENDING').length;
   const skipped = execution.stepExecutions.filter(s => s.status === 'SKIPPED').length;
+  const cancelled = execution.stepExecutions.filter(s => s.status === 'CANCELLED').length;
 
   return (
     <div className="flex-1 min-h-0">
@@ -276,7 +380,10 @@ function ExecutionSummary({
             </span>
           </div>
 
-          {execution.errorMessage && (
+          {/* 취소(요청)된 실행(WD-153)은 실패 안내 대신 누가·언제 취소했는지 보여 준다 */}
+          {isCancelledExecution(execution) ? (
+            <ExecutionCancelInfo execution={execution} />
+          ) : execution.errorMessage && (
             <ExecutionErrorMessage errorMessage={execution.errorMessage} errorMasked={execution.errorMasked} />
           )}
 
@@ -311,6 +418,12 @@ function ExecutionSummary({
                 <div className="flex items-center gap-1.5">
                   <span className="h-2 w-2 rounded-full bg-muted-foreground/60" />
                   <span>건너뜀 {skipped}</span>
+                </div>
+              )}
+              {cancelled > 0 && (
+                <div className="flex items-center gap-1.5">
+                  <span className="h-2 w-2 rounded-full bg-muted-foreground/60" />
+                  <span>취소됨 {cancelled}</span>
                 </div>
               )}
             </div>
@@ -371,12 +484,12 @@ export function ExecutionStepPanel({
 
       {selectedStep === undefined ? (
         deletedStep ? (
-          <StepDetails step={deletedStep} />
+          <StepDetails step={deletedStep} executionStatus={execution.status} />
         ) : (
           <ExecutionSummary execution={execution} onSelectDeleted={setDeletedSelectionId} />
         )
       ) : step ? (
-        <StepDetails step={step} />
+        <StepDetails step={step} executionStatus={execution.status} />
       ) : (
         <StepNotExecuted execution={execution} />
       )}

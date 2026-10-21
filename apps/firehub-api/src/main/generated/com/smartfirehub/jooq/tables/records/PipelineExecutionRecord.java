@@ -174,6 +174,34 @@ public class PipelineExecutionRecord extends UpdatableRecordImpl<PipelineExecuti
         return (String) get(10);
     }
 
+    /**
+     * Setter for <code>public.pipeline_execution.cancel_requested_at</code>.
+     */
+    public void setCancelRequestedAt(LocalDateTime value) {
+        set(11, value);
+    }
+
+    /**
+     * Getter for <code>public.pipeline_execution.cancel_requested_at</code>.
+     */
+    public LocalDateTime getCancelRequestedAt() {
+        return (LocalDateTime) get(11);
+    }
+
+    /**
+     * Setter for <code>public.pipeline_execution.cancel_requested_by</code>.
+     */
+    public void setCancelRequestedBy(Long value) {
+        set(12, value);
+    }
+
+    /**
+     * Getter for <code>public.pipeline_execution.cancel_requested_by</code>.
+     */
+    public Long getCancelRequestedBy() {
+        return (Long) get(12);
+    }
+
     // -------------------------------------------------------------------------
     // Primary key information
     // -------------------------------------------------------------------------
@@ -197,7 +225,7 @@ public class PipelineExecutionRecord extends UpdatableRecordImpl<PipelineExecuti
     /**
      * Create a detached, initialised PipelineExecutionRecord
      */
-    public PipelineExecutionRecord(Long id, Long pipelineId, String status, Long executedBy, LocalDateTime startedAt, LocalDateTime completedAt, LocalDateTime createdAt, String triggeredBy, Long triggerId, Long tenantId, String errorMessage) {
+    public PipelineExecutionRecord(Long id, Long pipelineId, String status, Long executedBy, LocalDateTime startedAt, LocalDateTime completedAt, LocalDateTime createdAt, String triggeredBy, Long triggerId, Long tenantId, String errorMessage, LocalDateTime cancelRequestedAt, Long cancelRequestedBy) {
         super(PipelineExecution.PIPELINE_EXECUTION);
 
         setId(id);
@@ -211,6 +239,8 @@ public class PipelineExecutionRecord extends UpdatableRecordImpl<PipelineExecuti
         setTriggerId(triggerId);
         setTenantId(tenantId);
         setErrorMessage(errorMessage);
+        setCancelRequestedAt(cancelRequestedAt);
+        setCancelRequestedBy(cancelRequestedBy);
         resetChangedOnNotNull();
     }
 }

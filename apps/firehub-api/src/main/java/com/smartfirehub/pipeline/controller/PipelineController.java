@@ -96,6 +96,23 @@ public class PipelineController {
     return ResponseEntity.ok(execution);
   }
 
+  /**
+   * 실행을 취소한다(WD-153, 협조적 취소). 실행과 같은 권한({@code pipeline:execute})을 요구한다 — 실행 경로(POST {@code /{id}/execute})에는
+   * 이 권한 외의 요청 시점 게이트가 없다(보안 등급 판정은 러너가 스텝마다 실행 주체 기준으로 한다). 다른 테넌트의 파이프라인은 RLS 로 보이지 않아 404, 다른
+   * 파이프라인의 실행 id 도 404(#188 과 같은 소유권 검증), 이미 끝난 실행은 409.
+   *
+   * <p>202 Accepted — 대기 중이던 실행은 이미 CANCELLED 지만, 실행 중이던 실행은 요청만 기록되고 러너가 다음 체크포인트에서 멈추므로 "접수"가 맞는
+   * 의미다.
+   */
+  @PostMapping("/{id}/executions/{execId}/cancel")
+  @RequirePermission("pipeline:execute")
+  public ResponseEntity<CancelExecutionResponse> cancelExecution(
+      @PathVariable Long id, @PathVariable Long execId, Authentication authentication) {
+    Long userId = (Long) authentication.getPrincipal();
+    CancelExecutionResponse response = pipelineService.cancelExecution(id, execId, userId);
+    return ResponseEntity.status(HttpStatus.ACCEPTED).body(response);
+  }
+
   @GetMapping("/{id}/trigger-events")
   @RequirePermission("trigger:read")
   public ResponseEntity<List<TriggerEventResponse>> getTriggerEvents(

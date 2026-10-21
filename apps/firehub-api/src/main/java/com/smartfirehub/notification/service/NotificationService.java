@@ -37,6 +37,11 @@ public class NotificationService {
       return;
     }
 
+    // 취소된 실행은 「완료」로 알리지 않는다(WD-153) — 러너는 취소 시 이 이벤트를 발행하지 않지만, 아래 문구가 FAILED 가 아니면 전부 「완료」라
+    // 계약이 깨지면 취소가 완료로 잘못 알려진다. 그 방어다.
+    if ("CANCELLED".equals(event.status())) {
+      return;
+    }
     boolean failed = "FAILED".equals(event.status());
     String severity = failed ? "WARNING" : "INFO";
     // 사용자 화면에 토스트·알림으로 그대로 보이는 문구라 한국어로 쓴다(WD-97)

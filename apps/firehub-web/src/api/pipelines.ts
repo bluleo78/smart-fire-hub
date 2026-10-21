@@ -1,5 +1,6 @@
 import type { PageResponse } from '../types/common';
 import type {
+CancelExecutionResponse,
 CreatePipelineRequest,
 CreateTriggerRequest, ExecutionDetailResponse,
 PipelineDetailResponse, PipelineExecutionResponse,   PipelineResponse, TriggerEventResponse,   TriggerResponse,   UpdatePipelineRequest, UpdateTriggerRequest,
@@ -28,6 +29,10 @@ export const pipelinesApi = {
     client.get<PipelineExecutionResponse[]>(`/pipelines/${pipelineId}/executions`),
   getExecutionById: (pipelineId: number, execId: number) =>
     client.get<ExecutionDetailResponse>(`/pipelines/${pipelineId}/executions/${execId}`),
+  // 진행 중(PENDING/RUNNING) 실행을 취소한다(WD-153). PENDING 은 즉시 CANCELLED, RUNNING 은 요청만 기록되고
+  // 실행기가 다음 점검 지점에서 멈춘다. 이미 끝난 실행은 409.
+  cancelExecution: (pipelineId: number, execId: number) =>
+    client.post<CancelExecutionResponse>(`/pipelines/${pipelineId}/executions/${execId}/cancel`),
 
   // Trigger APIs
   getTriggers: (pipelineId: number) =>

@@ -10,6 +10,7 @@ import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.pipeline.dto.AiClassifyConfig;
 import com.smartfirehub.pipeline.dto.PipelineStepResponse;
+import com.smartfirehub.pipeline.exception.PipelineExecutionCancelledException;
 import com.smartfirehub.pipeline.repository.PipelineExecutionRepository;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
@@ -81,7 +82,18 @@ public class AiClassifyExecutor {
 
   public record ExecutionResult(long outputRows, String executionLog) {}
 
+  /** 취소 확인 없이 실행한다 — 단독 호출·기존 호출부용. 파이프라인 러너는 아래 취소 확인 오버로드를 쓴다. */
   public ExecutionResult execute(PipelineStepResponse step, Long stepExecutionId, Long userId) {
+    return execute(step, stepExecutionId, userId, ExecutionCancelCheck.NONE);
+  }
+
+  /**
+   * AI 분류 스텝을 실행한다. {@code cancel} 은 협조적 취소 확인이다(WD-153) — 체크포인트는 각 배치 시작 전(진행 중인 배치의 AI 호출·적재는 끝까지
+   * 한다), RETRY_BATCH 재시도 대기 중(조각내 자며 확인), REPLACE 맞바꿈 직전. 모두 아래 try 안이라 취소되면 실패와 같은 정리 경로로 REPLACE
+   * 임시 테이블을 버려 원본을 지키고, APPEND 는 이미 넣은 행이 남는다(그 수를 예외에 싣는다).
+   */
+  public ExecutionResult execute(
+      PipelineStepResponse step, Long stepExecutionId, Long userId, ExecutionCancelCheck cancel) {
     AiClassifyConfig config = objectMapper.convertValue(step.aiConfig(), AiClassifyConfig.class);
 
     String outputTableName =
@@ -179,6 +191,9 @@ public class AiClassifyExecutor {
       List<List<Map<String, Object>>> batches = partition(allInputRows, batchSize);
 
       for (int batchIdx = 0; batchIdx < batches.size(); batchIdx++) {
+        // 취소 체크포인트(WD-153) — 배치 사이. 앞 배치까지 적재한 행은 APPEND 면 그대로 남는다.
+        cancel.checkpoint(isReplace ? 0 : written, isReplace);
+
         List<Map<String, Object>> batch = batches.get(batchIdx);
         log.info(
             "[AI_CLASSIFY] Step '{}': Processing batch {}/{} ({} rows)",
@@ -212,7 +227,8 @@ public class AiClassifyExecutor {
             boolean retrySuccess = false;
             for (int retry = 1; retry <= 3; retry++) {
               try {
-                Thread.sleep((long) Math.pow(2, retry) * 1000);
+                // 취소를 확인하며 잔다(WD-153) — 2·4·8초를 다 채우지 않고 취소에 바로 반응한다.
+                cancel.sleep((long) Math.pow(2, retry) * 1000, isReplace ? 0 : written, isReplace);
                 BatchResult batchResult =
                     processBatch(batch, config, promptHash, target, outputColumnSpecs, userId);
                 totalCached += batchResult.cached();
@@ -220,6 +236,9 @@ public class AiClassifyExecutor {
                 classifiedRows = batchResult.rows();
                 retrySuccess = true;
                 break;
+              } catch (PipelineExecutionCancelledException cancelled) {
+                // 취소는 배치 실패가 아니다 — 재시도 실패로 삼키면 남은 재시도를 계속 돈다. 그대로 올려 보낸다.
+                throw cancelled;
               } catch (Exception retryEx) {
                 // 재시도 실패도 "마지막 실패"다 — 담지 않으면 스텝이 떨어질 때 최초 실패만 보고된다.
                 lastBatchFailure = retryEx;
@@ -303,6 +322,8 @@ public class AiClassifyExecutor {
       // swapTable 을 직접 부른다. 다른 실행기(Python·API_CALL)는 0행이 정상 결과일 수 있어
       // finishReplace 로 판단을 위임하지만, AI_CLASSIFY 에서 0행은 정상 결과가 아니다.
       if (isReplace) {
+        // 취소 체크포인트(WD-153) — 맞바꾸기 직전. 마지막 배치 도중 취소됐으면 임시 테이블을 버리고(아래 catch) 원본을 지킨다.
+        cancel.checkpoint(0, true);
         dataTableService.swapTable(outputTableName, tempTable);
       }
 
@@ -318,7 +339,12 @@ public class AiClassifyExecutor {
       // output_rows/log 에 null 을 넘겨 기존 값을 덮지 않으므로(updateStepExecution 은 null 필드를
       // 건너뛴다), 여기서 정리하지 않으면 FAILED 스텝이 "출력행 4 · 배치 4/174 진행 중" 을 계속
       // 보여준다. REPLACE 면 임시 테이블을 버렸으니 실제로 남은 행은 0 이다.
-      reportProgress(stepExecutionId, isReplace ? 0 : written, "AI_CLASSIFY 실패: " + e.getMessage());
+      // 취소는 실패가 아니므로 「실패」 진척을 남기지 않는다(WD-153) — 취소 문구(남은 행 수/원본 유지)를 남긴다.
+      String lastLine =
+          e instanceof PipelineExecutionCancelledException cancelled
+              ? cancelled.stepMessage()
+              : "AI_CLASSIFY 실패: " + e.getMessage();
+      reportProgress(stepExecutionId, isReplace ? 0 : written, lastLine);
       throw e;
     }
 

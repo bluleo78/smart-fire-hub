@@ -1,4 +1,4 @@
-import { Clock, Code, Database, GitBranch, Globe, Link, User } from 'lucide-react';
+import { Ban, Clock, Code, Database, GitBranch, Globe, Link, User } from 'lucide-react';
 import { useEffect, useMemo,useRef, useState } from 'react';
 import { useNavigate,useParams } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -28,18 +28,20 @@ import {
 } from '@/components/ui/table';
 import { Tabs, TabsContent,TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAllDatasets } from '@/hooks/queries/useDatasets';
-import { useExecutePipeline, useExecution, useExecutions,usePipeline } from '@/hooks/queries/usePipelines';
+import { useCancelExecution, useExecutePipeline, useExecution, useExecutions,usePipeline } from '@/hooks/queries/usePipelines';
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import { handleApiError } from '@/lib/api-error';
 import { formatDate, getStatusBadgeVariant, getStatusLabel } from '@/lib/formatters';
 import type { PipelineExecutionResponse } from '@/types/pipeline';
 
+import { CancelExecutionDialog } from './components/CancelExecutionDialog';
 import { EditorHeader } from './components/EditorHeader';
 import { ExecutionStepPanel } from './components/ExecutionStepPanel';
 import { PipelineCanvas } from './components/PipelineCanvas';
 import StepConfigPanel from './components/StepConfigPanel';
 import TriggerTab from './components/TriggerTab';
 import { usePipelineEditor } from './hooks/usePipelineEditor';
+import { getExecutionCancelState } from './utils/execution-cancel';
 
 export default function PipelineEditorPage() {
   const { id, execId } = useParams<{ id: string; execId: string }>();
@@ -83,6 +85,10 @@ export default function PipelineEditorPage() {
   // isError: 존재하지 않는 실행 ID(400 등) 접근 시 에러 상태를 감지한다.
   const { data: executionData, isError: executionError } = useExecution(pipelineId!, executionId!);
   const executeMutation = useExecutePipeline(pipelineId!);
+  const cancelExecutionMutation = useCancelExecution(pipelineId!);
+  // 실행 취소 확인 창의 대상 실행 id(WD-153) — null 이면 닫힘. 상세 헤더·실행 이력 행이 같은 창을 쓴다.
+  // (미저장 변경 취소 확인 showCancelConfirm 과는 별개다.)
+  const [cancelTargetExecId, setCancelTargetExecId] = useState<number | null>(null);
   // 서버 목록 상한(100)을 넘어도 전부 보이도록 전 페이지를 모은다 (#732)
   const { data: allDatasets } = useAllDatasets();
   const { data: executions } = useExecutions(pipelineId ?? 0);
@@ -162,6 +168,28 @@ export default function PipelineEditorPage() {
     } catch (error) {
       // 실행 버튼과 같은 이유로 서버 사유를 보여 준다(WD-110).
       handleApiError(error, '재실행에 실패했습니다.');
+    }
+  };
+
+  /**
+   * 실행 취소 확정(WD-153) — 확인 창에서 「실행 취소」를 눌렀을 때만 호출된다.
+   * 202 CANCELLED(대기 중이라 즉시 취소)와 RUNNING(요청 기록, 진행 중 작업이 끝나면 멈춤)을 다른 문구로 알린다 —
+   * RUNNING 은 화면 상태가 바로 바뀌지 않으므로 "곧 멈춘다"는 것을 알려야 사용자가 다시 누르지 않는다.
+   * 409(이미 끝난 실행) 등은 서버 사유를 그대로 보여 준다.
+   */
+  const handleConfirmCancelExecution = async () => {
+    const targetId = cancelTargetExecId;
+    setCancelTargetExecId(null);
+    if (targetId === null) return;
+    try {
+      const res = await cancelExecutionMutation.mutateAsync(targetId);
+      if (res.status === 'CANCELLED') {
+        toast.success('실행을 취소했습니다.');
+      } else {
+        toast.success('취소를 요청했습니다. 진행 중인 작업이 끝나는 대로 멈춥니다.');
+      }
+    } catch (error) {
+      handleApiError(error, '실행 취소에 실패했습니다.');
     }
   };
 
@@ -248,6 +276,15 @@ export default function PipelineEditorPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      {/* 실행 취소 확인 창(WD-153) — 행 클릭 이동과 섞이지 않도록 목록 밖 페이지 수준에 하나만 둔다 */}
+      <CancelExecutionDialog
+        open={cancelTargetExecId !== null}
+        onOpenChange={(open) => {
+          if (!open) setCancelTargetExecId(null);
+        }}
+        onConfirm={handleConfirmCancelExecution}
+        executionId={cancelTargetExecId}
+      />
       {/* 상위 경로 표시용 breadcrumb (#101) — 캔버스가 화면을 가득 채우는 에디터에서도 위치 인지를 돕는다 */}
       <div className="px-4 pt-3">
         <Breadcrumb
@@ -270,6 +307,9 @@ export default function PipelineEditorPage() {
         onEdit={() => setIsEditing(true)}
         onExecute={handleExecute}
         onRerun={handleRerun}
+        cancelState={executionData ? getExecutionCancelState(executionData) : 'hidden'}
+        onCancelExecution={() => executionData && setCancelTargetExecId(executionData.id)}
+        isCancelling={cancelExecutionMutation.isPending}
         isSaving={isSaving}
         isExecuting={executeMutation.isPending}
         pipelineId={state.pipelineId}
@@ -375,6 +415,10 @@ export default function PipelineEditorPage() {
                     <TableHead>실행자</TableHead>
                     <TableHead>시작시간</TableHead>
                     <TableHead>소요시간</TableHead>
+                    {/* 진행 중 실행의 「실행 취소」 버튼 열(WD-153) — 화면에는 머리글 글자를 보이지 않고 보조기기에만 알린다 */}
+                    <TableHead className="w-32">
+                      <span className="sr-only">작업</span>
+                    </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -409,6 +453,14 @@ export default function PipelineEditorPage() {
                           running={exec.status === 'RUNNING'}
                         />
                       </TableCell>
+                      <TableCell className="text-right">
+                        <ExecutionRowCancelButton
+                          state={getExecutionCancelState(exec)}
+                          pending={cancelExecutionMutation.isPending && cancelExecutionMutation.variables === exec.id}
+                          executionId={exec.id}
+                          onClick={() => setCancelTargetExecId(exec.id)}
+                        />
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -418,5 +470,45 @@ export default function PipelineEditorPage() {
         </TabsContent>
       </Tabs>
     </div>
+  );
+}
+
+/**
+ * 실행 이력 행의 「실행 취소」 버튼(WD-153) — 진행 중(PENDING/RUNNING) 실행에만 보인다.
+ * 행 전체가 상세 이동 링크라 클릭 전파를 막아야 버튼을 눌렀을 때 상세로 넘어가지 않는다.
+ * 취소 요청이 이미 기록됐으면 「취소 요청됨」으로 비활성 표시한다(실행기가 멈출 때까지 다시 보내지 않게).
+ */
+function ExecutionRowCancelButton({
+  state,
+  pending,
+  executionId,
+  onClick,
+}: {
+  state: ReturnType<typeof getExecutionCancelState>;
+  pending: boolean;
+  executionId: number;
+  onClick: () => void;
+}) {
+  if (state === 'hidden') return null;
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      disabled={state === 'requested' || pending}
+      aria-label={
+        state === 'requested'
+          ? `실행 #${executionId} 취소 요청됨`
+          : pending
+            ? `실행 #${executionId} 취소 중`
+            : `실행 #${executionId} 실행 취소`
+      }
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+    >
+      <Ban className="h-3.5 w-3.5" />
+      {state === 'requested' ? '취소 요청됨' : pending ? '취소 중…' : '실행 취소'}
+    </Button>
   );
 }
