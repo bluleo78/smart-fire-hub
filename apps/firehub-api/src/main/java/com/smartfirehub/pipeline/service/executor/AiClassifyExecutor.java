@@ -285,8 +285,19 @@ public class AiClassifyExecutor {
       // 않았다. 의도한 맞바꿈이다: 원자성은 REPLACE 의 스테이징 테이블(임시 테이블 → swapTable)이 맡고,
       // API_CALL 도 APPEND 에서 이미 부분 행을 남긴다. 전손 위험이 부분 적재보다 크다(#690).
       if (written == 0) {
+        // 마지막 실패 사유를 문구에 싣는다(WD-149) — 러너는 getMessage() 만 저장하므로 cause 로만 두면 화면에는
+        // 「0행」까지만 보이고 원인은 로그에만 남는다.
+        String lastReason =
+            lastBatchFailure != null && lastBatchFailure.getMessage() != null
+                ? " 마지막 실패 사유: " + lastBatchFailure.getMessage()
+                : "";
         throw new IllegalStateException(
-            "AI_CLASSIFY 결과가 0행이다(입력 " + allInputRows.size() + "행, 배치 실패 " + totalErrors + "개)",
+            "AI 분류 결과가 0행입니다(입력 "
+                + allInputRows.size()
+                + "행, 배치 실패 "
+                + totalErrors
+                + "개)."
+                + lastReason,
             lastBatchFailure);
       }
 
@@ -320,6 +331,10 @@ public class AiClassifyExecutor {
             "AI_CLASSIFY completed: %d rows output, %d cached, %d AI-processed, %d batch errors,"
                 + " %d rows dropped",
             written, totalCached, totalProcessed, totalErrors, droppedRows);
+    // 일부 배치만 실패해 완료된 경우에도 왜 빠졌는지 화면(실행 로그)에서 보이게 한다(WD-149) — 예: 실행 도중 자격증명이 풀린 경우.
+    if (lastBatchFailure != null && lastBatchFailure.getMessage() != null) {
+      executionLog += " — 마지막 배치 실패 사유: " + lastBatchFailure.getMessage();
+    }
     if (droppedRows > 0) {
       log.warn(
           "[AI_CLASSIFY] Step '{}': {}행이 분류되지 못해 누락됐다(입력 {}행). onError={} 정책에 따라"
