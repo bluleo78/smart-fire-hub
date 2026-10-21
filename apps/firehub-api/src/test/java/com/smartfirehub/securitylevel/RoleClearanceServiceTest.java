@@ -139,6 +139,8 @@ class RoleClearanceServiceTest extends SecurityLevelServiceTest {
 
   @Test
   void deleteRole_soleAllowlistEntry_isRejected() {
+    // 역할 삭제는 행위자 범위 안이어야 한다(WD-141) — 이 테스트는 유일 허용 항목·잠금 판정이 대상이므로 행위자를 ADMIN 으로 만들어 범위 403 을 비킨다.
+    assign(adminRoleId());
     long r = role("기밀");
     long ds = insertDataset("기밀");
     inTenantFixture(
@@ -184,6 +186,8 @@ class RoleClearanceServiceTest extends SecurityLevelServiceTest {
    */
   @Test
   void deleteRole_racingWithGrantRemoval_waitsAndRejects() throws Exception {
+    // 역할 삭제는 행위자 범위 안이어야 한다(WD-141) — 이 테스트는 유일 허용 항목·잠금 판정이 대상이므로 행위자를 ADMIN 으로 만들어 범위 403 을 비킨다.
+    assign(adminRoleId());
     long r = role("기밀");
     long ds = insertDataset("기밀");
     grant(ds, null, r);
@@ -213,6 +217,8 @@ class RoleClearanceServiceTest extends SecurityLevelServiceTest {
    */
   @Test
   void grantRemoval_racingWithDeleteRole_waitsAndRejects() throws Exception {
+    // 역할 삭제는 행위자 범위 안이어야 한다(WD-141) — 이 테스트는 유일 허용 항목·잠금 판정이 대상이므로 행위자를 ADMIN 으로 만들어 범위 403 을 비킨다.
+    assign(adminRoleId());
     long r = role("기밀");
     long ds = insertDataset("기밀");
     grant(ds, null, r);

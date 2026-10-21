@@ -32,6 +32,8 @@ import org.springframework.stereotype.Component;
  *       한다(등급 rank 충족 + 본인 항목 또는 자기 역할의 항목으로 허용 목록 충족 — 열람 판정과 같은 식). 역할에 붙은 허용 항목은 권한·등급과 별개의 "열람
  *       자격" 이라, 권한·등급만 보면 위임자가 자기도 못 보는 데이터셋의 허용 목록 역할을 자기·남에게 붙여 열람을 넓힐 수 있었다.
  *   <li>역할 권한 변경 — 새로 <b>추가</b>되는 권한은 호출자가 가진 것이어야 한다. 제거는 제한하지 않는다.
+ *   <li>역할 삭제(WD-141) — 삭제는 "그 역할을 가진 모든 사람에게서 한꺼번에 회수" 이므로 회수와 같은 범위 검사를 받는다. {@code role:delete}
+ *       만 위임받은 사용자가 자기보다 높은 권한·등급(또는 자기가 못 보는 데이터셋의 허용 목록)이 붙은 역할을 지워 모든 보유자에게서 빼앗을 수 있었다.
  * </ul>
  *
  * <p>서비스 계층(UserService·RoleService)에서 부르는 이유: REST 컨트롤러뿐 아니라 AI 에이전트(내부 토큰 + X-On-Behalf-Of)도 같은
@@ -46,6 +48,28 @@ public class RoleGrantGuard {
   static final String ADMIN_ROLE_MESSAGE = "시스템 ADMIN 역할은 ADMIN 만 부여하거나 회수할 수 있습니다";
   static final String PERMISSION_SCOPE_MESSAGE = "자신에게 없는 권한은 역할에 추가할 수 없습니다";
   static final String ALLOWLIST_SCOPE_MESSAGE = "자신이 열람할 수 없는 데이터셋의 허용 목록이 붙은 역할은 부여하거나 회수할 수 없습니다";
+  static final String DELETE_SCOPE_MESSAGE = "자신에게 없는 권한·등급을 가진 역할은 삭제할 수 없습니다";
+  static final String DELETE_ALLOWLIST_MESSAGE = "자신이 열람할 수 없는 데이터셋의 허용 목록이 붙은 역할은 삭제할 수 없습니다";
+
+  /**
+   * 범위 위반 시 내보낼 오류 코드·메시지 묶음. 판정 규칙은 부여·회수와 삭제가 같고 "무엇을 하려다 막혔는지" 만 다르므로, 규칙은 한 곳({@link
+   * #assertWithinScope})에 두고 문구만 갈아 끼운다.
+   */
+  private record ScopeErrors(
+      String scopeCode, String scopeMessage, String allowlistCode, String allowlistMessage) {}
+
+  private static final ScopeErrors GRANT_ERRORS =
+      new ScopeErrors(
+          "ROLE_GRANT_BEYOND_SCOPE",
+          ROLE_SCOPE_MESSAGE,
+          "ROLE_GRANT_ALLOWLIST_BEYOND_SCOPE",
+          ALLOWLIST_SCOPE_MESSAGE);
+  private static final ScopeErrors DELETE_ERRORS =
+      new ScopeErrors(
+          "ROLE_DELETE_BEYOND_SCOPE",
+          DELETE_SCOPE_MESSAGE,
+          "ROLE_DELETE_ALLOWLIST_BEYOND_SCOPE",
+          DELETE_ALLOWLIST_MESSAGE);
 
   private final ClearanceResolver clearanceResolver;
   private final SecurityLevelRepository levelRepository;
@@ -65,6 +89,23 @@ public class RoleGrantGuard {
     if (changedRoleIds.isEmpty()) {
       return; // 바뀌는 역할이 없으면 판정할 것도 없다(무변경 저장)
     }
+    assertWithinScope(callerId, changedRoleIds, GRANT_ERRORS);
+  }
+
+  /**
+   * 역할 삭제 범위 검사(WD-141). 삭제는 CASCADE 로 모든 보유자에게서 그 역할을 회수하므로 {@link #assertCanChangeRoles} 와 같은
+   * 규칙(시스템 ADMIN → 열람 등급 → 권한 부분집합 → 허용 목록)을 그대로 적용하고, 거부 문구만 "삭제" 로 바꾼다. 시스템 역할 삭제 금지·역할 없음(404)은
+   * 호출하는 {@link RoleService#deleteRole} 가 먼저 판정하므로 여기에 오는 역할은 존재하는 사용자 정의 역할이다.
+   *
+   * @throws CodedApiException 403 — 역할이 호출자 범위를 벗어날 때
+   */
+  public void assertCanDeleteRole(long callerId, long roleId) {
+    assertWithinScope(callerId, Set.of(roleId), DELETE_ERRORS);
+  }
+
+  /** 부여·회수·삭제 공통 범위 판정 본체 — 검사 순서와 fail-closed 규칙은 {@link #assertCanChangeRoles} 문서 참고. */
+  private void assertWithinScope(
+      long callerId, Collection<Long> changedRoleIds, ScopeErrors errors) {
     Clearance caller = clearanceResolver.resolve(callerId);
     if (caller.tenantAdmin()) {
       return; // 시스템 ADMIN 은 제한하지 않는다(잠금 방지 규칙은 UserService 가 따로 본다)
@@ -73,7 +114,8 @@ public class RoleGrantGuard {
         levelRepository.findRoleLevels().stream()
             .collect(Collectors.toMap(RoleLevel::roleId, Function.identity()));
 
-    // ADMIN 은 별도 메시지로 먼저 거른다 — 다른 역할과 섞여 있어도 "왜 안 되는지" 가 정확히 보이게.
+    // ADMIN 은 별도 메시지로 먼저 거른다 — 다른 역할과 섞여 있어도 "왜 안 되는지" 가 정확히 보이게. 삭제 경로에서는 시스템 역할이 먼저 거부되므로
+    // 여기에 닿지 않는다(그래서 삭제 전용 문구를 따로 두지 않는다 — 방어선으로만 남는다).
     for (Long roleId : changedRoleIds) {
       RoleLevel role = roles.get(roleId);
       if (role != null && role.systemAdmin()) {
@@ -95,7 +137,8 @@ public class RoleGrantGuard {
               : rankById.getOrDefault(role.levelId(), Integer.MAX_VALUE);
       if (roleRank > caller.rank()
           || !caller.permissions().containsAll(codesByRole.getOrDefault(roleId, Set.of()))) {
-        throw roleScopeViolation();
+        throw new CodedApiException(
+            HttpStatus.FORBIDDEN, errors.scopeCode(), errors.scopeMessage());
       }
     }
 
@@ -105,7 +148,7 @@ public class RoleGrantGuard {
     // 아니므로 admin_bypass 우회는 성립하지 않는다(조건식은 열람 판정과 같은 모양을 그대로 쓴다).
     if (!accessRepository.findRoleIdsWithAllowlistNotViewable(changedRoleIds, caller).isEmpty()) {
       throw new CodedApiException(
-          HttpStatus.FORBIDDEN, "ROLE_GRANT_ALLOWLIST_BEYOND_SCOPE", ALLOWLIST_SCOPE_MESSAGE);
+          HttpStatus.FORBIDDEN, errors.allowlistCode(), errors.allowlistMessage());
     }
   }
 
@@ -127,10 +170,5 @@ public class RoleGrantGuard {
       throw new CodedApiException(
           HttpStatus.FORBIDDEN, "PERMISSION_GRANT_BEYOND_SCOPE", PERMISSION_SCOPE_MESSAGE);
     }
-  }
-
-  private static CodedApiException roleScopeViolation() {
-    return new CodedApiException(
-        HttpStatus.FORBIDDEN, "ROLE_GRANT_BEYOND_SCOPE", ROLE_SCOPE_MESSAGE);
   }
 }

@@ -106,6 +106,8 @@ class RoleServiceTest extends IntegrationTestBase {
 
   @Test
   void deleteRole_success() {
+    // 자기 범위를 넘는 역할은 삭제할 수 없다(WD-141) — 멤버십·역할이 없는 행위자는 등급이 없어 기본 등급 역할도 범위 밖이므로 ADMIN 으로 만든다.
+    makeCallerAdmin();
     RoleResponse created = roleService.createRole("MODERATOR", "Moderator", callerId);
 
     roleService.deleteRole(created.id(), callerId);
@@ -126,13 +128,7 @@ class RoleServiceTest extends IntegrationTestBase {
   @Test
   void setRolePermissions_customRole_success() {
     // 자신에게 없는 권한은 역할에 추가할 수 없다(WD-116) — 행위자를 기본 테넌트 ADMIN 으로 만든다(테스트 트랜잭션과 함께 롤백).
-    TenantRlsTestSupport.insertActiveMembership(dsl, callerId, DEFAULT_TEST_TENANT_ID);
-    dsl.insertInto(USER_ROLE)
-        .set(USER_ROLE.USER_ID, callerId)
-        .set(
-            USER_ROLE.ROLE_ID,
-            dsl.select(ROLE.ID).from(ROLE).where(ROLE.NAME.eq("ADMIN")).fetchOne(ROLE.ID))
-        .execute();
+    makeCallerAdmin();
     RoleResponse customRole =
         roleService.createRole("CUSTOM_ROLE", "Custom role for test", callerId);
 
@@ -162,5 +158,16 @@ class RoleServiceTest extends IntegrationTestBase {
     assertThatThrownBy(() -> roleService.setRolePermissions(adminRoleId, permissionIds, callerId))
         .isInstanceOf(SystemRoleModificationException.class)
         .hasMessageContaining("Cannot modify permissions of system role");
+  }
+
+  /** 행위자를 기본 테넌트 ADMIN 으로 만든다(범위 가드 WD-116/WD-141 를 통과시키기 위해 — 테스트 트랜잭션과 함께 롤백). */
+  private void makeCallerAdmin() {
+    TenantRlsTestSupport.insertActiveMembership(dsl, callerId, DEFAULT_TEST_TENANT_ID);
+    dsl.insertInto(USER_ROLE)
+        .set(USER_ROLE.USER_ID, callerId)
+        .set(
+            USER_ROLE.ROLE_ID,
+            dsl.select(ROLE.ID).from(ROLE).where(ROLE.NAME.eq("ADMIN")).fetchOne(ROLE.ID))
+        .execute();
   }
 }

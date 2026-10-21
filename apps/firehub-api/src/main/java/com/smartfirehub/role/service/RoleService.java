@@ -105,6 +105,11 @@ public class RoleService {
   /**
    * 역할 삭제. 성공하면 ROLE_DELETE 감사를 남긴다 — 행이 사라지므로 이름·설명과 함께 지워질 권한 코드·이 역할을 가졌던 사용자 id 를 metadata 에
    * 보존한다. 거부 경로는 기록하지 않는다.
+   *
+   * <p>권한 범위(WD-141): 삭제는 그 역할을 가진 모든 사람에게서 한꺼번에 회수하는 것과 같으므로, ADMIN 이 아닌 호출자는 자기 범위 안의 역할(권한 ⊆ 자기
+   * 권한, 등급 ≤ 자기 등급, 허용 목록 데이터셋은 자기가 열람 가능)만 지울 수 있다({@link RoleGrantGuard#assertCanDeleteRole}). 판정
+   * 순서는 역할 없음(404) → 시스템 역할(400) → 범위(403) → 유일 허용 항목(409) 이다 — 앞의 두 계약은 그대로 두고, 범위 판정은 어떤 쓰기·잠금보다
+   * 먼저 한다.
    */
   @Transactional
   public void deleteRole(Long id, Long callerId) {
@@ -116,6 +121,9 @@ public class RoleService {
     if (role.isSystem()) {
       throw new SystemRoleModificationException("Cannot delete system role: " + role.name());
     }
+
+    // WD-141: role:delete 만 위임받은 사용자가 자기보다 높은 역할을 지워 보유자 전원에게서 빼앗지 못하게 — 회수와 같은 범위 검사를 쓰기 전에 한다.
+    roleGrantGuard.assertCanDeleteRole(callerId, id);
 
     // 판단 사항 14: 이 역할이 어떤 허용 목록 필요 데이터셋의 유일한 항목이면, 삭제(ON DELETE CASCADE)가 그 데이터셋을 아무도 못 보게 만든다.
     // 후속 F4: 검사 전에 이 역할이 걸린 데이터셋 행을 잠가 같은 데이터셋의 허용 항목 제거(removeGrant — 같은 행 FOR UPDATE)와 직렬화한다.
