@@ -160,7 +160,7 @@ test.describe('데이터셋 목록 페이지', () => {
     expect(req.url.pathname).toBe('/api/v1/datasets/1/favorite');
   });
 
-  test('서버 에러(500) 시 목록이 비어 있다', async ({ authenticatedPage: page }) => {
+  test('서버 에러(500) 시 빈 목록 대신 오류 안내를 보인다 (WD-146)', async ({ authenticatedPage: page }) => {
     // 500 에러 응답으로 모킹
     await mockApi(page, 'GET', '/api/v1/dataset-categories', [], { status: 500 });
     await mockApi(page, 'GET', '/api/v1/datasets', {}, { status: 500 });
@@ -168,8 +168,10 @@ test.describe('데이터셋 목록 페이지', () => {
 
     await page.goto('/data/datasets');
 
-    // 서버 에러 시 빈 상태 또는 에러 메시지 표시 확인
-    await expect(page.getByText('데이터셋이 없습니다.')).toBeVisible();
+    // 예전에는 「데이터셋이 없습니다.」로 그려 데이터가 없다고 오해하게 했다 — 사유 없는 500 은 기본 문구로 알린다
+    await expect(page.getByText('데이터셋 목록을 불러오지 못했습니다.')).toBeVisible({ timeout: 15000 });
+    await expect(page.getByRole('button', { name: '다시 시도' })).toBeVisible();
+    await expect(page.getByText('데이터셋이 없습니다.')).toHaveCount(0);
   });
 
   test('데이터셋 행 클릭 시 상세 페이지로 이동한다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {

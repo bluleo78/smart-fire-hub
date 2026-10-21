@@ -18,3 +18,14 @@ export function getPageAfterDelete(currentPageItemCount: number, page: number): 
   }
   return page;
 }
+
+/**
+ * URL 쿼리의 페이지 번호·크기 같은 0 이상 정수를 읽는다. 비었거나 숫자가 아니거나 음수·소수면 fallback.
+ *
+ * 손으로 고친·낡은 주소(?page=abc)를 그대로 서버에 보내면 400 이 나고, 목록은 그것을 빈 목록으로 그렸다(WD-146).
+ */
+export function parseNonNegativeInt(raw: string | null, fallback: number): number {
+  if (raw === null || raw.trim() === '') return fallback;
+  const n = Number(raw);
+  return Number.isInteger(n) && n >= 0 ? n : fallback;
+}
