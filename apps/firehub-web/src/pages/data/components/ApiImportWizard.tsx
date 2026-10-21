@@ -25,6 +25,7 @@ import {
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { useCreateApiImport } from '@/hooks/queries/useDatasets';
+import { handleApiError } from '@/lib/api-error';
 import type { DatasetColumnResponse } from '@/types/dataset';
 
 import ApiCallPreview from '../../pipeline/components/ApiCallPreview';
@@ -235,8 +236,10 @@ export function ApiImportWizard({
           onOpenChange(false);
           navigate(`/pipelines/${data.data.pipelineId}`);
         },
-        onError: () => {
-          toast.error('API 임포트 생성에 실패했습니다.');
+        // 서버가 스텝 설정을 거부한 이유(예: 「스텝 'API Data Collection': 비어 있는 매핑 행이 있습니다 — 채우거나 삭제하세요」,
+        // WD-154 저장 시점 매핑 검증)를 그대로 보인다 — 고정 문구만 띄우면 무엇을 고쳐야 하는지 알 수 없다.
+        onError: (error) => {
+          handleApiError(error, 'API 임포트 생성에 실패했습니다.');
         },
       },
     );

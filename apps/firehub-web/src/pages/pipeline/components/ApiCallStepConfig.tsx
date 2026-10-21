@@ -44,6 +44,7 @@ import { useApiConnectionsSelectable } from '@/hooks/queries/useApiConnections';
 import { cn } from '@/lib/utils';
 import { columnNameLengthError } from '@/lib/validations/dataset';
 
+import { mappingRowField, mappingSourceField, mappingTargetField } from '../hooks/stepColumnValidation';
 import ApiCallPreview from './ApiCallPreview';
 import { InlineFieldError } from './InlineFieldError';
 
@@ -81,6 +82,11 @@ interface ApiCallStepConfigProps {
   onChange: (config: Record<string, unknown>) => void;
   onConnectionChange: (id: number | null) => void;
   readOnly: boolean;
+  /**
+   * 저장 시 검증 오류 조회(usePipelineValidation 이 채운 이 스텝의 오류, 키는 stepColumnValidation 의 mapping*Field).
+   * 매핑 행 아래 인라인 문구와 입력의 aria-invalid 에 쓴다(WD-154).
+   */
+  fieldError?: (field: string) => string | undefined;
 }
 
 interface PreviewResult {
@@ -290,6 +296,7 @@ export default function ApiCallStepConfig({
   onChange,
   onConnectionChange,
   readOnly,
+  fieldError,
 }: ApiCallStepConfigProps) {
   // 접근성: 라벨↔입력 연결용 id 접두사 (#432).
   // 이 패널은 스텝이 바뀔 때마다 key 로 재마운트되고 여러 곳에서 재사용될 수 있어 하드코딩 id 는 충돌한다.
@@ -682,25 +689,36 @@ export default function ApiCallStepConfig({
             </div>
           )}
           {fieldMappings.map((mapping, i) => {
-            // 출력 데이터셋이 없으면 대상 컬럼이 임시 데이터셋의 칼럼명이 된다 — 길이 상한은 columnNameLengthError 참고.
-            const targetError = columnNameLengthError(mapping.targetColumn);
-            const targetErrorId = `${baseId}-target-col-error-${i}`;
+            // 행 오류 자리는 하나다 — 저장 시 검증 오류(빈 행 > 응답 필드 > 대상 컬럼, WD-154)가 있으면 그것을, 없으면 입력 중 길이 상한
+            // 안내를 보인다. 출력 데이터셋이 없으면 대상 컬럼이 임시 데이터셋의 칼럼명이 된다 — 길이 상한은 columnNameLengthError 참고.
+            const rowError = fieldError?.(mappingRowField(i));
+            const sourceError = fieldError?.(mappingSourceField(i));
+            const targetError =
+              fieldError?.(mappingTargetField(i)) ?? columnNameLengthError(mapping.targetColumn);
+            const rowMessage = rowError ?? sourceError ?? targetError;
+            const rowErrorId = `${baseId}-mapping-error-${i}`;
+            const sourceInvalid = !!(rowError || sourceError);
+            const targetInvalid = !!(rowError || targetError);
             return (
               <div key={i} className="space-y-0.5">
                 <div className="grid grid-cols-[1fr_1fr_auto] gap-1 items-center">
                   <Input
                     className="h-7 text-xs"
                     placeholder="sourceField"
+                    aria-label={`응답 필드 ${i + 1}`}
                     value={mapping.sourceField}
+                    aria-invalid={sourceInvalid}
+                    aria-describedby={sourceInvalid ? rowErrorId : undefined}
                     disabled={readOnly}
                     onChange={(e) => handleMappingChange(i, 'sourceField', e.target.value)}
                   />
                   <Input
                     className="h-7 text-xs"
                     placeholder="target_col"
+                    aria-label={`대상 컬럼 ${i + 1}`}
                     value={mapping.targetColumn}
-                    aria-invalid={!!targetError}
-                    aria-describedby={targetError ? targetErrorId : undefined}
+                    aria-invalid={targetInvalid}
+                    aria-describedby={targetInvalid ? rowErrorId : undefined}
                     disabled={readOnly}
                     onChange={(e) => handleMappingChange(i, 'targetColumn', e.target.value)}
                   />
@@ -715,7 +733,7 @@ export default function ApiCallStepConfig({
                     </Button>
                   )}
                 </div>
-                <InlineFieldError id={targetErrorId} message={targetError} />
+                <InlineFieldError id={rowErrorId} message={rowMessage} />
               </div>
             );
           })}

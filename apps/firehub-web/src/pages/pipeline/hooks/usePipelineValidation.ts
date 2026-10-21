@@ -1,17 +1,50 @@
+import type { QueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import type { Dispatch } from 'react';
 import { useCallback } from 'react';
 import { toast } from 'sonner';
 
+import { datasetsApi } from '@/api/datasets';
 import { iGa } from '@/lib/utils';
 import { editorPipelineSchema } from '@/lib/validations/pipeline';
+import type { DatasetResponse } from '@/types/dataset';
 
 import type { EditorAction, PipelineEditorState, ValidationError } from './pipelineEditorReducer';
+import { validateAiOutputColumns, validateApiFieldMappings } from './stepColumnValidation';
 
+/**
+ * API_CALL 스텝의 지정 출력 데이터셋 컬럼 이름을 가져온다(WD-154 — 대상 컬럼 존재 검사용).
+ * 알 수 없으면 null 을 돌려 존재 검사를 건너뛴다 — 최종 판정은 서버가 한다:
+ * - 편집기 데이터셋 목록(조회자가 볼 수 있는 전체)이 로드됐는데 그 id 가 없으면 볼 수 없는 출력이다. 상세를 조회하지 않는다(어차피 404).
+ * - 조회 실패(권한·네트워크)도 저장을 막지 않는다.
+ * 쿼리 키는 useDataset 과 같아 스텝 설정 패널이 이미 불러온 상세를 그대로 쓴다.
+ */
+async function loadOutputColumns(queryClient: QueryClient, datasetId: number): Promise<string[] | null> {
+  const visible = queryClient.getQueryData<DatasetResponse[]>(['datasets', 'all']);
+  if (visible && !visible.some((d) => d.id === datasetId)) return null;
+  try {
+    const detail = await queryClient.fetchQuery({
+      queryKey: ['datasets', datasetId],
+      queryFn: () => datasetsApi.getDatasetById(datasetId).then((r) => r.data),
+      staleTime: 30_000,
+      retry: false,
+    });
+    return detail.columns.map((c) => c.columnName);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 편집기 저장 전 검증. 출력 데이터셋 컬럼을 조회해야 하는 검사(WD-154)가 있어 비동기다 — usePipelineSave 가 await 한다.
+ * 오류가 있으면 SET_VALIDATION_ERRORS 로 스텝별 오류(DAG 노드 배지·스텝 설정 패널 인라인 문구)를 채우고 false 를 돌려준다.
+ */
 export function usePipelineValidation(
   state: PipelineEditorState,
   dispatch: Dispatch<EditorAction>,
-): () => boolean {
-  return useCallback((): boolean => {
+): () => Promise<boolean> {
+  const queryClient = useQueryClient();
+  return useCallback(async (): Promise<boolean> => {
     const errors: ValidationError[] = [];
 
     if (!state.name.trim()) {
@@ -55,6 +88,17 @@ export function usePipelineValidation(
             message: 'URL을 입력하세요',
           });
         }
+
+        // 응답 필드 매핑 행 검증(WD-154) — 빈 행·한쪽만 채운 행·대상 컬럼 형식/예약어/중복·출력 데이터셋에 없는 컬럼.
+        // 빈 행을 조용히 버리지 않는다(채우려던 행일 수 있다) — 행 아래에 안내하고 저장을 막는다.
+        const mappings = cfg?.['fieldMappings'];
+        const outputColumns =
+          step.outputDatasetId != null && Array.isArray(mappings) && mappings.length > 0
+            ? await loadOutputColumns(queryClient, step.outputDatasetId)
+            : null;
+        for (const e of validateApiFieldMappings(mappings, step.outputDatasetId == null, outputColumns)) {
+          errors.push({ stepTempId: step.tempId, ...e });
+        }
       }
 
       // AI_CLASSIFY specific validation
@@ -65,6 +109,10 @@ export function usePipelineValidation(
         }
         if (!cfg || !cfg.outputColumns || (cfg.outputColumns as unknown[]).length === 0) {
           errors.push({ stepTempId: step.tempId, field: 'aiConfig.outputColumns', message: '출력 컬럼을 최소 1개 정의하세요' });
+        }
+        // 출력 컬럼 이름 검증(WD-154) — 빈 이름·형식·중복(자동 생성 출력이면 예약어도). 실행 시점 영어 원문 오류 대신 행 아래에 안내한다.
+        for (const e of validateAiOutputColumns(cfg?.outputColumns, step.outputDatasetId == null)) {
+          errors.push({ stepTempId: step.tempId, ...e });
         }
       }
 
@@ -119,5 +167,5 @@ export function usePipelineValidation(
     }
 
     return true;
-  }, [state, dispatch]);
+  }, [state, dispatch, queryClient]);
 }

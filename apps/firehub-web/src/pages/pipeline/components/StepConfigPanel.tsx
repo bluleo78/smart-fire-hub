@@ -412,6 +412,7 @@ export default function StepConfigPanel({
                   onChange={(config) => handleUpdateStep({ apiConfig: config })}
                   onConnectionChange={(id) => handleUpdateStep({ apiConnectionId: id })}
                   readOnly={readOnly}
+                  fieldError={getFieldError}
                 />
               </Suspense>
             </>
@@ -425,6 +426,7 @@ export default function StepConfigPanel({
                   onChange={(config) => handleUpdateStep({ aiConfig: config })}
                   readOnly={readOnly}
                   primaryInputHidden={primaryInputHidden}
+                  fieldError={getFieldError}
                 />
               </Suspense>
             </>

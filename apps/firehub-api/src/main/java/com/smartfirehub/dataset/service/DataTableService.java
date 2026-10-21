@@ -111,14 +111,18 @@ public class DataTableService {
   public void validateNewColumnName(String columnName) {
     // 예약어를 형식보다 먼저 본다 — _updated_at 처럼 형식에도 걸리는 이름에 "예약어"라는 정확한 이유를 준다.
     if (SYSTEM_COLUMNS.contains(columnName.toLowerCase())) {
-      throw new InvalidTableNameException(
-          "컬럼명 '" + columnName + "'은 시스템 예약어입니다. (예약어: id, import_id, created_at, _updated_at)");
+      throw new InvalidTableNameException(reservedColumnNameMessage(columnName));
     }
     validateName(columnName);
     if (columnName.length() > MAX_COLUMN_NAME_LENGTH) {
       throw new InvalidTableNameException(
           "필드명은 최대 " + MAX_COLUMN_NAME_LENGTH + "자까지 쓸 수 있습니다(입력 " + columnName.length() + "자)");
     }
+  }
+
+  /** 시스템 예약 컬럼명 안내 문구 — 데이터셋 컬럼 생성과 파이프라인 스텝 저장 검증(WD-154)이 같은 문장을 쓰도록 한 곳에 둔다. */
+  public static String reservedColumnNameMessage(String columnName) {
+    return "컬럼명 '" + columnName + "'은 시스템 예약어입니다. (예약어: id, import_id, created_at, _updated_at)";
   }
 
   /**

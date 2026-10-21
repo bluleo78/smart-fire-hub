@@ -116,6 +116,49 @@ class PipelineControllerTest {
         .andExpect(jsonPath("$.id").value(1));
   }
 
+  /**
+   * WD-154 — 스텝 출력 컬럼 저장 검증 실패(서비스의 {@link IllegalArgumentException})는 생성·수정 모두 400 과 스텝 이름이 담긴 한국어
+   * 문구로 응답한다. 웹 편집기·AI 에이전트 도구가 이 message 를 그대로 보여 준다.
+   */
+  @Test
+  void createPipeline_stepColumnValidationFailure_returnsBadRequestWithKoreanMessage()
+      throws Exception {
+    String message = "스텝 'API 호출': 출력 데이터셋에 없는 컬럼입니다: no_such_col";
+    when(pipelineService.createPipeline(any(CreatePipelineRequest.class), anyLong()))
+        .thenThrow(new IllegalArgumentException(message));
+
+    mockMvc
+        .perform(
+            post("/api/v1/pipelines")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    objectMapper.writeValueAsString(
+                        new CreatePipelineRequest("p", null, List.of()))))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value(message));
+  }
+
+  @Test
+  void updatePipeline_stepColumnValidationFailure_returnsBadRequestWithKoreanMessage()
+      throws Exception {
+    String message = "스텝 'API 호출': 비어 있는 매핑 행이 있습니다 — 채우거나 삭제하세요";
+    org.mockito.Mockito.doThrow(new IllegalArgumentException(message))
+        .when(pipelineService)
+        .updatePipeline(eq(1L), any(UpdatePipelineRequest.class), anyLong());
+
+    mockMvc
+        .perform(
+            put("/api/v1/pipelines/1")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    objectMapper.writeValueAsString(
+                        new UpdatePipelineRequest("p", null, true, List.of()))))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value(message));
+  }
+
   @Test
   void getPipelineById_withPermission_returnsDetail() throws Exception {
     PipelineDetailResponse detail =
