@@ -203,6 +203,8 @@ class UserServiceTest extends IntegrationTestBase {
 
     Long userRoleId = dsl.select(ROLE.ID).from(ROLE).where(ROLE.NAME.eq("USER")).fetchOne(ROLE.ID);
 
+    // ADMIN 부여는 ADMIN 만 할 수 있다(WD-116) — 행위자를 이 테넌트 ADMIN 으로 만든다.
+    TestUsers.grantRole(dsl, fixtureTransactionTemplate, callerId, DEFAULT_TEST_TENANT_ID, "ADMIN");
     // callerId를 testUserId와 다르게 설정하여 자기 자신 역할 제거 보호 로직 비활성화
     userService.setUserRoles(testUserId, List.of(adminRoleId, userRoleId), callerId);
 

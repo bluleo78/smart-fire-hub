@@ -9,6 +9,7 @@ import com.smartfirehub.role.dto.RoleResponse;
 import com.smartfirehub.role.exception.RoleNotFoundException;
 import com.smartfirehub.role.exception.SystemRoleModificationException;
 import com.smartfirehub.support.IntegrationTestBase;
+import com.smartfirehub.support.TenantRlsTestSupport;
 import java.util.List;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.BeforeEach;
@@ -124,6 +125,14 @@ class RoleServiceTest extends IntegrationTestBase {
 
   @Test
   void setRolePermissions_customRole_success() {
+    // 자신에게 없는 권한은 역할에 추가할 수 없다(WD-116) — 행위자를 기본 테넌트 ADMIN 으로 만든다(테스트 트랜잭션과 함께 롤백).
+    TenantRlsTestSupport.insertActiveMembership(dsl, callerId, DEFAULT_TEST_TENANT_ID);
+    dsl.insertInto(USER_ROLE)
+        .set(USER_ROLE.USER_ID, callerId)
+        .set(
+            USER_ROLE.ROLE_ID,
+            dsl.select(ROLE.ID).from(ROLE).where(ROLE.NAME.eq("ADMIN")).fetchOne(ROLE.ID))
+        .execute();
     RoleResponse customRole =
         roleService.createRole("CUSTOM_ROLE", "Custom role for test", callerId);
 

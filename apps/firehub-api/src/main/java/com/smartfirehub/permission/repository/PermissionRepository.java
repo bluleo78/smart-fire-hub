@@ -3,10 +3,13 @@ package com.smartfirehub.permission.repository;
 import static com.smartfirehub.jooq.Tables.*;
 
 import com.smartfirehub.permission.dto.PermissionResponse;
+import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
 import org.jooq.Record;
@@ -64,6 +67,44 @@ public class PermissionRepository {
         .where(ROLE_PERMISSION.ROLE_ID.eq(roleId))
         .orderBy(PERMISSION.ID.asc())
         .fetch(this::mapToPermissionResponse);
+  }
+
+  /**
+   * 주어진 권한 id 들의 코드. 없는 id 는 결과에서 빠진다 — 역할 권한 교체 전에 "새로 추가되는 권한" 을 코드로 판정하기 위해 쓴다(WD-116).
+   * permission 은 전역 카탈로그(RLS 없음)다.
+   */
+  public Set<String> findCodesByIds(Collection<Long> ids) {
+    if (ids.isEmpty()) {
+      return Set.of();
+    }
+    return new HashSet<>(
+        dsl.select(PERMISSION.CODE)
+            .from(PERMISSION)
+            .where(PERMISSION.ID.in(ids))
+            .fetch(PERMISSION.CODE));
+  }
+
+  /**
+   * 여러 역할의 권한 코드를 한 번의 IN 질의로 모은다(역할 id → 코드 집합). 역할 부여 범위 검사가 바뀌는 역할마다 따로 조회하지 않게 하기 위해
+   * 쓴다(WD-116).
+   *
+   * <p>role_permission 은 RLS 대상이라 현재 테넌트 역할만 보인다. 권한이 0개이거나 보이지 않는(없는·다른 테넌트) 역할은 결과에 키가 없다 — 호출자가
+   * 빈 집합과 "역할 없음" 을 이것만으로 구분해서는 안 된다.
+   */
+  public Map<Long, Set<String>> findCodesByRoleIds(Collection<Long> roleIds) {
+    if (roleIds.isEmpty()) {
+      return Map.of();
+    }
+    return dsl
+        .select(ROLE_PERMISSION.ROLE_ID, PERMISSION.CODE)
+        .from(ROLE_PERMISSION)
+        .join(PERMISSION)
+        .on(PERMISSION.ID.eq(ROLE_PERMISSION.PERMISSION_ID))
+        .where(ROLE_PERMISSION.ROLE_ID.in(roleIds))
+        .fetchGroups(ROLE_PERMISSION.ROLE_ID, PERMISSION.CODE)
+        .entrySet()
+        .stream()
+        .collect(Collectors.toMap(Map.Entry::getKey, e -> new HashSet<>(e.getValue())));
   }
 
   /**

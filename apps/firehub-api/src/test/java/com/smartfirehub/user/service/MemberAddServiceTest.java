@@ -143,6 +143,8 @@ class MemberAddServiceTest extends IntegrationTestBase {
   void addMember_customRoleOnly_stillGetsUserRole() {
     String email = "admin-only-" + System.nanoTime() + "@acme.io";
     long adminRoleA = roleId(tenantA, "ADMIN");
+    // ADMIN 역할은 ADMIN 만 부여할 수 있다(WD-116) — 행위자를 A 의 ADMIN 으로 만든다.
+    TestUsers.grantRole(dsl, fixtureTransactionTemplate, callerId, tenantA, "ADMIN");
 
     AddMemberResponse res = addInA(new AddMemberRequest(email, "관리자만", TEMP, List.of(adminRoleA)));
 
@@ -275,6 +277,7 @@ class MemberAddServiceTest extends IntegrationTestBase {
   void addMember_withAdmin_writesRoleAssignAudit() {
     String email = "admin-grant-" + System.nanoTime() + "@acme.io";
     long adminRoleA = roleId(tenantA, "ADMIN");
+    TestUsers.grantRole(dsl, fixtureTransactionTemplate, callerId, tenantA, "ADMIN"); // WD-116
     AddMemberResponse res = addInA(new AddMemberRequest(email, "관리자", TEMP, List.of(adminRoleA)));
 
     String metadata =

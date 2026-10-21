@@ -12,10 +12,12 @@ import com.smartfirehub.role.repository.RoleRepository;
 import com.smartfirehub.securitylevel.repository.DatasetAccessGrantRepository;
 import com.smartfirehub.user.dto.UserResponse;
 import com.smartfirehub.user.repository.UserRepository;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.TreeSet;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -38,6 +40,7 @@ public class RoleService {
   private final DatasetAccessGrantRepository grantRepository;
   private final UserRepository userRepository;
   private final AuditLogService auditLogService;
+  private final RoleGrantGuard roleGrantGuard;
 
   @Transactional(readOnly = true)
   public List<RoleResponse> getAllRoles() {
@@ -140,6 +143,10 @@ public class RoleService {
    *
    * <p>차이는 요청 id 가 아니라 교체 전/후 실제 저장 상태(권한 코드)로 계산한다 — 요청에 중복 id 가 섞여도, 같은 목록을 다시 보내도 정확하다. 추가·제거가
    * 모두 없으면 감사를 남기지 않는다(멤버십 정지/재활성과 같은 무변경 규칙).
+   *
+   * <p>권한 범위(WD-116): 새로 <b>추가</b>되는 권한은 호출자가 가진 것이어야 한다({@link RoleGrantGuard}) — {@code
+   * role:write} 만 가진 사용자가 자기 역할에 아무 권한이나 붙여 권한을 올리던 결함의 수정이다. 제거는 제한하지 않는다. 판정은 쓰기 <b>전에</b> 한다 —
+   * 쓰고 나서 보면 호출자가 자기 역할에 방금 붙인 권한이 "이미 가진 권한" 으로 보여 검사가 무력해진다.
    */
   @Transactional
   public void setRolePermissions(Long roleId, List<Long> permissionIds, Long callerId) {
@@ -156,6 +163,9 @@ public class RoleService {
     }
 
     TreeSet<String> before = permissionCodes(roleId);
+    Set<String> adding = new HashSet<>(permissionRepository.findCodesByIds(permissionIds));
+    adding.removeAll(before);
+    roleGrantGuard.assertCanAddPermissions(callerId, adding);
     roleRepository.setPermissions(roleId, permissionIds);
     TreeSet<String> after = permissionCodes(roleId);
 

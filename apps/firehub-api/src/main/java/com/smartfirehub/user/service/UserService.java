@@ -9,6 +9,7 @@ import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.role.dto.RoleResponse;
 import com.smartfirehub.role.exception.RoleNotFoundException;
 import com.smartfirehub.role.repository.RoleRepository;
+import com.smartfirehub.role.service.RoleGrantGuard;
 import com.smartfirehub.tenant.dto.TenantMembership;
 import com.smartfirehub.tenant.repository.MembershipRepository;
 import com.smartfirehub.user.dto.AddMemberRequest;
@@ -18,6 +19,7 @@ import com.smartfirehub.user.dto.UserListResponse;
 import com.smartfirehub.user.dto.UserResponse;
 import com.smartfirehub.user.exception.UserNotFoundException;
 import com.smartfirehub.user.repository.UserRepository;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -52,6 +54,7 @@ public class UserService {
   private final AuditLogService auditLogService;
   private final RefreshTokenRepository refreshTokenRepository;
   private final TemporaryAccountCreator temporaryAccountCreator;
+  private final RoleGrantGuard roleGrantGuard;
 
   /**
    * 사용자 목록 조회. 각 사용자의 역할도 함께 내려준다(#586).
@@ -213,12 +216,24 @@ public class UserService {
    *
    * <p>역할 검증을 계정 생성보다 <b>먼저</b> 하는 이유: 잘못된 roleId 로 400 이 나면 트랜잭션이 롤백되긴 하지만, 앞에서 끊으면 불필요한 해시 계산·쓰기
    * 자체가 없다.
+   *
+   * <p>역할 범위(WD-116): 호출자가 고른 역할은 호출자 범위 안이어야 한다({@link RoleGrantGuard}) — {@code role:assign} 위임자가
+   * ADMIN 계정을 만들어 우회하지 못하게. 자동으로 붙는 기본 USER 역할은 검사하지 않는다: 호출자가 고른 것이 아니라 모든 멤버의 기본값이고, 검사하면 USER
+   * 권한을 일부 갖지 않은 {@code user:write} 위임자는 역할 없이도 멤버를 추가할 수 없게 된다.
    */
   @Transactional
   public AddMemberResponse addMember(AddMemberRequest request, Long callerId) {
     long tenantId = TenantContext.require("멤버 추가");
     String email = request.email().trim().toLowerCase(Locale.ROOT);
-    Set<Long> roleIds = resolveMemberRoles(request.roleIds());
+    Set<Long> chosen = validateRequestedRoles(request.roleIds());
+    // USER 를 항상 넣는 이유: USER 는 워크스페이스 기본 역할이다. 초대된 멤버가 권한을 하나도 갖지 않는 상태를 만들지 않는다(사용자 결정, 계획
+    // "판단 사항 1"). 선택 역할은 USER 에 추가된다. USER id 는 한 번만 조회해 합치기·범위 검사 제외에 함께 쓴다.
+    Long userRoleId = userRoleId();
+    Set<Long> roleIds = new LinkedHashSet<>(chosen);
+    roleIds.add(userRoleId);
+    // 400(없는 역할) 판정 뒤, 계정 생성 전에 범위를 본다 — 거부되면 아무것도 쓰지 않는다. 기본 USER 는 호출자가 고른 것이 아니므로 뺀다.
+    chosen.remove(userRoleId);
+    roleGrantGuard.assertCanChangeRoles(callerId, chosen);
 
     Optional<UserResponse> existing = userRepository.findByUsernameIgnoreCase(email);
     boolean created = existing.isEmpty();
@@ -276,25 +291,25 @@ public class UserService {
   }
 
   /**
-   * 요청 역할을 검증하고 USER 를 합친다.
-   *
-   * <p>USER 를 항상 넣는 이유: USER 는 워크스페이스 기본 역할이다. 초대된 멤버가 권한을 하나도 갖지 않는 상태를 만들지 않는다(사용자 결정, 계획 "판단 사항
-   * 1"). 선택 역할은 USER 에 추가된다.
+   * 요청 역할이 모두 이 워크스페이스 역할인지 검증하고, 중복을 걸러 요청 순서대로 돌려준다(USER 는 합치지 않는다 — 호출자 {@link #addMember} 가
+   * 합친다). 없는 역할이 섞이면 400.
    */
-  private Set<Long> resolveMemberRoles(List<Long> requested) {
+  private Set<Long> validateRequestedRoles(List<Long> requested) {
     Set<Long> ids = new LinkedHashSet<>(requested == null ? List.of() : requested);
     Set<Long> visible = roleRepository.findExistingIds(ids);
     if (!visible.containsAll(ids)) {
       throw new CodedApiException(
           HttpStatus.BAD_REQUEST, "INVALID_ROLE", "이 워크스페이스에 없는 역할이 포함되어 있습니다");
     }
-    Long userRoleId =
-        roleRepository
-            .findByName("USER")
-            .orElseThrow(() -> new RoleNotFoundException("System role not found: USER"))
-            .id();
-    ids.add(userRoleId);
     return ids;
+  }
+
+  /** 현재 테넌트의 기본 USER 역할 id. 없으면 프로비저닝 손상이므로 404 계열 예외. */
+  private Long userRoleId() {
+    return roleRepository
+        .findByName("USER")
+        .orElseThrow(() -> new RoleNotFoundException("System role not found: USER"))
+        .id();
   }
 
   /**
@@ -365,6 +380,10 @@ public class UserService {
    *
    * <p>roleIds 가 null 이면 빈 목록(전체 제거)으로 본다 — 예전에는 setRoles 에서 NPE(500)가 났다.
    *
+   * <p>역할 범위(WD-116): 실제로 추가·제거되는 역할(현재와 요청의 대칭차)은 호출자 범위 안이어야 한다({@link RoleGrantGuard}) — {@code
+   * role:assign} 만 위임받은 사용자가 자기에게 ADMIN 을 붙이거나 다른 관리자의 ADMIN 을 떼던 결함의 수정이다. 위 잠금 방지 판정 <b>뒤에</b> 두는
+   * 이유: 기존 400/409 계약을 그대로 유지하고(자기 ADMIN 제거·마지막 ADMIN), 동시 상호 강등에서 진 쪽이 지금처럼 409 를 받게 하기 위해서다.
+   *
    * <p>감사(WD-117): 실제로 역할이 바뀌었으면 ROLE_ASSIGN 감사에 변경 전/후 역할 이름과 추가·제거분을 남긴다 — 누가 ADMIN 을 줬는지 추적할 수
    * 있어야 한다. 전/후는 요청 id 가 아니라 교체 전/후 실제 저장 상태로 계산하고, 차이가 없으면 setUserActive 의 무변경 규칙처럼 기록하지 않는다.
    */
@@ -390,9 +409,24 @@ public class UserService {
       throw new IllegalStateException("이 워크스페이스의 마지막 활성 ADMIN 에게서 ADMIN 역할을 뺄 수 없습니다");
     }
     List<RoleResponse> before = roleRepository.findByUserId(userId);
+    roleGrantGuard.assertCanChangeRoles(callerId, changedRoleIds(before, requested));
     userRepository.setRoles(userId, requested);
     List<RoleResponse> after = roleRepository.findByUserId(userId);
     auditRoleAssign(callerId, userId, before, after);
+  }
+
+  /**
+   * 이번 교체로 실제로 바뀌는 역할 id(추가 + 제거 = 현재와 요청의 대칭차). 그대로 유지되는 역할은 넣지 않는다 — 대상이 이미 가진 무관한 상위 역할 때문에 위임자가
+   * 그 사람의 다른 역할을 못 바꾸는 일이 없게.
+   */
+  private static Set<Long> changedRoleIds(List<RoleResponse> before, List<Long> requested) {
+    Set<Long> current = before.stream().map(RoleResponse::id).collect(Collectors.toSet());
+    Set<Long> wanted = new HashSet<>(requested);
+    Set<Long> changed = new HashSet<>(wanted);
+    changed.removeAll(current); // 추가분
+    current.removeAll(wanted); // 제거분
+    changed.addAll(current);
+    return changed;
   }
 
   /**
