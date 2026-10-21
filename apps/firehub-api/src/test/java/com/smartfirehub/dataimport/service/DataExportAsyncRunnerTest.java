@@ -80,7 +80,15 @@ class DataExportAsyncRunnerTest {
     when(dataTableRowService.countRows(eq("test_ds"), anyList(), isNull(), anyMap()))
         .thenReturn(2L);
     when(dataTableRowService.queryData(
-            eq("test_ds"), anyList(), isNull(), eq(0), anyInt(), isNull(), eq("ASC"), anyMap()))
+            eq("test_ds"),
+            anyList(),
+            anyList(),
+            isNull(),
+            eq(0),
+            anyInt(),
+            isNull(),
+            eq("ASC"),
+            anyMap()))
         .thenReturn(
             List.of(Map.of("name", "홍길동", "value", 100), Map.of("name", "김철수", "value", 200)))
         .thenReturn(List.of());
@@ -89,6 +97,7 @@ class DataExportAsyncRunnerTest {
         jobId,
         dataset,
         columns,
+        columns.stream().map(DatasetColumnResponse::columnName).toList(),
         columnTypes,
         null,
         ExportFormat.CSV,
@@ -143,13 +152,22 @@ class DataExportAsyncRunnerTest {
         .thenReturn(1L);
     // 데이터 조회 시 예외 발생
     when(dataTableRowService.queryData(
-            eq("fail_ds"), anyList(), isNull(), anyInt(), anyInt(), isNull(), eq("ASC"), anyMap()))
+            eq("fail_ds"),
+            anyList(),
+            anyList(),
+            isNull(),
+            anyInt(),
+            anyInt(),
+            isNull(),
+            eq("ASC"),
+            anyMap()))
         .thenThrow(new RuntimeException("DB connection failed"));
 
     asyncRunner.executeAsyncExport(
         jobId,
         dataset,
         columns,
+        columns.stream().map(DatasetColumnResponse::columnName).toList(),
         columnTypes,
         null,
         ExportFormat.CSV,
@@ -194,7 +212,15 @@ class DataExportAsyncRunnerTest {
 
     when(dataTableRowService.countRows(anyString(), anyList(), isNull(), anyMap())).thenReturn(1L);
     when(dataTableRowService.queryData(
-            anyString(), anyList(), isNull(), eq(0), anyInt(), isNull(), eq("ASC"), anyMap()))
+            anyString(),
+            anyList(),
+            anyList(),
+            isNull(),
+            eq(0),
+            anyInt(),
+            isNull(),
+            eq("ASC"),
+            anyMap()))
         .thenReturn(List.of(Map.of("col1", "test")))
         .thenReturn(List.of());
 
@@ -202,6 +228,7 @@ class DataExportAsyncRunnerTest {
         jobId,
         dataset,
         columns,
+        columns.stream().map(DatasetColumnResponse::columnName).toList(),
         columnTypes,
         null,
         ExportFormat.EXCEL,
@@ -236,7 +263,15 @@ class DataExportAsyncRunnerTest {
 
     when(dataTableRowService.countRows(anyString(), anyList(), isNull(), anyMap())).thenReturn(2L);
     when(dataTableRowService.queryData(
-            anyString(), anyList(), isNull(), eq(0), anyInt(), isNull(), eq("ASC"), anyMap()))
+            anyString(),
+            anyList(),
+            anyList(),
+            isNull(),
+            eq(0),
+            anyInt(),
+            isNull(),
+            eq("ASC"),
+            anyMap()))
         .thenReturn(List.of(Map.of("t", "=1+1", "n", -5L), Map.of("t", "정상값", "n", 7L)))
         .thenReturn(List.of());
 
@@ -244,6 +279,7 @@ class DataExportAsyncRunnerTest {
         jobId,
         dataset,
         columns,
+        columns.stream().map(DatasetColumnResponse::columnName).toList(),
         columnTypes,
         null,
         ExportFormat.CSV,

@@ -350,6 +350,7 @@ class DataTableTemporalValuesTest extends IntegrationTestBase {
           jobId,
           datasetRepository.findById(datasetId).orElseThrow(),
           columns,
+          COLS,
           types,
           null,
           ExportFormat.CSV,

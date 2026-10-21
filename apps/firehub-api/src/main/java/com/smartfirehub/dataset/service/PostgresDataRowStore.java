@@ -75,6 +75,7 @@ public class PostgresDataRowStore implements DataRowStore {
   public List<Map<String, Object>> queryData(
       String tableName,
       List<String> columns,
+      List<String> searchColumns,
       String search,
       int page,
       int size,
@@ -83,6 +84,9 @@ public class PostgresDataRowStore implements DataRowStore {
       Map<String, String> columnTypes) {
     DataTableNames.validate(tableName);
     for (String col : columns) {
+      DataTableNames.validate(col);
+    }
+    for (String col : searchColumns) {
       DataTableNames.validate(col);
     }
     if (sortBy != null) {
@@ -101,7 +105,7 @@ public class PostgresDataRowStore implements DataRowStore {
     }
     sql.append(" FROM ").append(DataSchema.qualify(tableName));
 
-    Object[] params = buildSearchWhereClause(sql, columns, search, columnTypes);
+    Object[] params = buildSearchWhereClause(sql, searchColumns, search, columnTypes);
 
     if (sortBy != null) {
       // Skip sorting on GEOMETRY columns (not orderable)

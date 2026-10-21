@@ -49,6 +49,7 @@ public class DataExportAsyncRunner {
    * @param jobId 추적할 비동기 작업 ID
    * @param dataset 내보낼 데이터셋 정보
    * @param selectedColumns 내보낼 컬럼 목록
+   * @param searchColumns 검색어를 걸 컬럼 — 고른 컬럼이 아니라 데이터 탭처럼 전체 컬럼(WD-158)
    * @param columnTypes 컬럼명 → 타입 매핑 (쿼리 필터 처리에 사용)
    * @param search 검색 필터 문자열 (null이면 전체)
    * @param format 내보내기 포맷 (CSV / EXCEL / GEOJSON)
@@ -64,6 +65,7 @@ public class DataExportAsyncRunner {
       String jobId,
       DatasetResponse dataset,
       List<DatasetColumnResponse> selectedColumns,
+      List<String> searchColumns,
       Map<String, String> columnTypes,
       String search,
       ExportFormat format,
@@ -81,7 +83,7 @@ public class DataExportAsyncRunner {
       List<String> columnNames =
           selectedColumns.stream().map(DatasetColumnResponse::columnName).toList();
       long totalRows =
-          dataTableRowService.countRows(dataset.tableName(), columnNames, search, columnTypes);
+          dataTableRowService.countRows(dataset.tableName(), searchColumns, search, columnTypes);
 
       asyncJobService.updateProgress(
           jobId, "EXPORTING", 0, "내보내기 시작: " + totalRows + "행", Map.of("totalRows", totalRows));
@@ -98,6 +100,7 @@ public class DataExportAsyncRunner {
               dataTableRowService.queryData(
                   dataset.tableName(),
                   columnNames,
+                  searchColumns,
                   search,
                   page,
                   PAGE_SIZE,

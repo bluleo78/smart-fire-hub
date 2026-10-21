@@ -122,7 +122,15 @@ class DataExportServiceTest extends IntegrationTestBase {
     when(dataTableRowService.countRows(anyString(), anyList(), any(), anyMap())).thenReturn(10L);
 
     when(dataTableRowService.queryData(
-            eq("test_exp_data"), anyList(), any(), anyInt(), anyInt(), any(), any(), anyMap()))
+            eq("test_exp_data"),
+            anyList(),
+            anyList(),
+            any(),
+            anyInt(),
+            anyInt(),
+            any(),
+            any(),
+            anyMap()))
         .thenReturn(
             List.of(
                 Map.<String, Object>of("name", "테스트1", "value", 100),
@@ -130,7 +138,15 @@ class DataExportServiceTest extends IntegrationTestBase {
         .thenReturn(List.of());
 
     when(dataTableRowService.queryData(
-            eq("test_geo_exp"), anyList(), any(), anyInt(), anyInt(), any(), any(), anyMap()))
+            eq("test_geo_exp"),
+            anyList(),
+            anyList(),
+            any(),
+            anyInt(),
+            anyInt(),
+            any(),
+            any(),
+            anyMap()))
         .thenReturn(
             List.of(
                 Map.<String, Object>of(
@@ -235,6 +251,7 @@ class DataExportServiceTest extends IntegrationTestBase {
     when(dataTableRowService.queryData(
             eq("test_exp_data"),
             eq(List.of("name")),
+            anyList(),
             any(),
             anyInt(),
             anyInt(),
@@ -262,7 +279,15 @@ class DataExportServiceTest extends IntegrationTestBase {
     when(dataTableRowService.countRows(eq("test_exp_data"), anyList(), eq("검색어"), anyMap()))
         .thenReturn(5L);
     when(dataTableRowService.queryData(
-            eq("test_exp_data"), anyList(), eq("검색어"), anyInt(), anyInt(), any(), any(), anyMap()))
+            eq("test_exp_data"),
+            anyList(),
+            anyList(),
+            eq("검색어"),
+            anyInt(),
+            anyInt(),
+            any(),
+            any(),
+            anyMap()))
         .thenReturn(List.of(Map.<String, Object>of("name", "결과", "value", 1)))
         .thenReturn(List.of());
 
@@ -280,7 +305,15 @@ class DataExportServiceTest extends IntegrationTestBase {
     assertThat(bytes).isNotEmpty();
     verify(dataTableRowService, atLeastOnce())
         .queryData(
-            eq("test_exp_data"), anyList(), eq("검색어"), anyInt(), anyInt(), any(), any(), anyMap());
+            eq("test_exp_data"),
+            anyList(),
+            anyList(),
+            eq("검색어"),
+            anyInt(),
+            anyInt(),
+            any(),
+            any(),
+            anyMap());
   }
 
   // === GeoJSON without geometry column ===
@@ -373,7 +406,15 @@ class DataExportServiceTest extends IntegrationTestBase {
                 userId)
             .id();
     when(dataTableRowService.queryData(
-            eq("test_inj_exp"), anyList(), any(), anyInt(), anyInt(), any(), any(), anyMap()))
+            eq("test_inj_exp"),
+            anyList(),
+            anyList(),
+            any(),
+            anyInt(),
+            anyInt(),
+            any(),
+            any(),
+            anyMap()))
         .thenReturn(injectionRows())
         .thenReturn(List.of());
     return id;

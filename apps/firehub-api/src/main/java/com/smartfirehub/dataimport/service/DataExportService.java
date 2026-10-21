@@ -71,11 +71,10 @@ public class DataExportService {
     List<DatasetColumnResponse> selectedColumns = resolveColumns(allColumns, request);
     Map<String, String> columnTypes = buildColumnTypes(allColumns);
 
-    List<String> columnNames =
-        selectedColumns.stream().map(DatasetColumnResponse::columnName).toList();
+    // 검색은 고른 컬럼이 아니라 데이터 탭처럼 전체 컬럼에 건다 — 건수가 화면·실제 파일과 같아야 한다(WD-158).
     long rowCount =
         dataTableRowService.countRows(
-            dataset.tableName(), columnNames, request.search(), columnTypes);
+            dataset.tableName(), searchColumnNames(allColumns), request.search(), columnTypes);
 
     boolean hasGeometry =
         allColumns.stream().anyMatch(col -> "GEOMETRY".equalsIgnoreCase(col.dataType()));
@@ -120,11 +119,11 @@ public class DataExportService {
 
     String filename = buildFilename(dataset.name(), request.format());
 
-    List<String> columnNames =
-        selectedColumns.stream().map(DatasetColumnResponse::columnName).toList();
+    // 컬럼 선택은 출력 칸만 줄이고, 검색은 데이터 탭처럼 전체 컬럼에 건다(WD-158).
+    List<String> searchColumns = searchColumnNames(allColumns);
     long rowCount =
         dataTableRowService.countRows(
-            dataset.tableName(), columnNames, request.search(), columnTypes);
+            dataset.tableName(), searchColumns, request.search(), columnTypes);
 
     if (rowCount > SYNC_THRESHOLD) {
       // Async
@@ -144,6 +143,7 @@ public class DataExportService {
           jobId,
           dataset,
           selectedColumns,
+          searchColumns,
           columnTypes,
           request.search(),
           request.format(),
@@ -161,6 +161,7 @@ public class DataExportService {
           createSyncExport(
               dataset,
               selectedColumns,
+              searchColumns,
               columnTypes,
               request.search(),
               request.format(),
@@ -235,6 +236,7 @@ public class DataExportService {
   private StreamingResponseBody createSyncExport(
       DatasetResponse dataset,
       List<DatasetColumnResponse> selectedColumns,
+      List<String> searchColumns,
       Map<String, String> columnTypes,
       String search,
       ExportFormat format,
@@ -252,6 +254,7 @@ public class DataExportService {
               dataTableRowService.queryData(
                   dataset.tableName(),
                   columnNames,
+                  searchColumns,
                   search,
                   page,
                   PAGE_SIZE,
@@ -312,6 +315,11 @@ public class DataExportService {
       case EXCEL -> new ExcelExportWriter(os);
       case GEOJSON -> new GeoJsonExportWriter(os, geometryColumn);
     };
+  }
+
+  /** 검색어를 걸 컬럼 — 데이터 탭 조회({@code DatasetDataService#getDatasetData})와 같이 데이터셋의 전체 컬럼. */
+  private static List<String> searchColumnNames(List<DatasetColumnResponse> allColumns) {
+    return allColumns.stream().map(DatasetColumnResponse::columnName).toList();
   }
 
   private List<DatasetColumnResponse> resolveColumns(
