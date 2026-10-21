@@ -39,7 +39,7 @@ import type { AuditLogResponse } from '@/types/auditLog';
 
 /**
  * 액션 유형 옵션 목록
- * - 백엔드(AuditLogService.log) 호출부에서 사용 중인 enum 전수: CREATE/UPDATE/DELETE/LOGIN/LOGOUT/IMPORT/EXECUTE/DATA_EXPORT/STATUS_CHANGE
+ * - 백엔드(AuditLogService.log) 호출부에서 사용 중인 enum 전수: CREATE/UPDATE/DELETE/LOGIN/LOGOUT/IMPORT/EXECUTE/CANCEL/DATA_EXPORT/STATUS_CHANGE
  *   + 온톨로지 도메인의 ONTOLOGY_* 4종 + 요소 단위 편집 10종.
  * - #109 회귀: DATA_EXPORT, STATUS_CHANGE 매핑 누락 보강.
  * - ONTOLOGY_* 는 OntologyService가 처음부터 기록해 왔지만 매핑이 없어 영문 raw로 노출되고 있었다.
@@ -57,6 +57,8 @@ const GENERAL_ACTION_TYPES = [
   { value: 'LOGOUT', label: '로그아웃' },
   { value: 'IMPORT', label: '임포트' },
   { value: 'EXECUTE', label: '실행' },
+  // WD-153: 파이프라인 실행 취소(PipelineExecutionService 취소 요청) 감사 기록
+  { value: 'CANCEL', label: '취소' },
   { value: 'DATA_EXPORT', label: '데이터 내보내기' },
   { value: 'STATUS_CHANGE', label: '상태 변경' },
   { value: 'ONTOLOGY_CREATE', label: '지식 모델 생성' },

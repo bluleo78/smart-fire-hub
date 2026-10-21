@@ -126,6 +126,8 @@ test.describe('감사 로그 — 보안 등급 액션', () => {
     await expect(page.getByRole('group')).toHaveCount(5);
     await expect(group('일반').getByRole('option', { name: '생성', exact: true })).toHaveCount(1);
     await expect(group('일반').getByRole('option', { name: '도메인 수정', exact: true })).toHaveCount(1);
+    // WD-153: 파이프라인 실행 취소 감사 기록(CANCEL)이 영문 raw 가 아니라 「취소」로 보인다
+    await expect(group('일반').getByRole('option', { name: '취소', exact: true })).toHaveCount(1);
     await expect(group('멤버 관리').getByRole('option')).toHaveCount(4);
     await expect(group('역할·권한').getByRole('option')).toHaveCount(5);
     await expect(group('데이터셋 보안').getByRole('option')).toHaveCount(6);

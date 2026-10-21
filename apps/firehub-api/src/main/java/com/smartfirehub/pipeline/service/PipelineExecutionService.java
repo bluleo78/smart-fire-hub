@@ -1,9 +1,12 @@
 package com.smartfirehub.pipeline.service;
 
 import com.smartfirehub.audit.service.AuditLogService;
+import com.smartfirehub.pipeline.dto.CancelExecutionResponse;
 import com.smartfirehub.pipeline.dto.PipelineStepRequest;
 import com.smartfirehub.pipeline.dto.PipelineStepResponse;
 import com.smartfirehub.pipeline.exception.CyclicDependencyException;
+import com.smartfirehub.pipeline.exception.ExecutionAlreadyFinishedException;
+import com.smartfirehub.pipeline.exception.PipelineNotFoundException;
 import com.smartfirehub.pipeline.repository.PipelineExecutionRepository;
 import com.smartfirehub.pipeline.repository.PipelineRepository;
 import com.smartfirehub.pipeline.repository.PipelineStepRepository;
@@ -230,6 +233,56 @@ public class PipelineExecutionService {
         null);
 
     return executionId;
+  }
+
+  /**
+   * 파이프라인 실행 취소를 요청한다(WD-153, 협조적 취소).
+   *
+   * <p>대기 중(PENDING — 비동기 스레드가 아직 시작 전)이면 그 자리에서 CANCELLED 로 마감되고, 러너가 나중에 시작해도 아무것도 실행하지 않는다. 실행
+   * 중(RUNNING)이면 요청만 DB 에 남고 러너가 다음 체크포인트에서 멈춘다 — 진행 중인 API 호출·SQL 문장은 자기 타임아웃까지 끝까지 돈다.
+   *
+   * <p><b>경쟁 정리</b>: 실행 상태 쓰기는 러너·취소 양쪽 모두 "끝나지 않은 상태에서만" 하는 조건부 UPDATE 다. 마지막 체크포인트를 지난 뒤(마지막 스텝이
+   * 이미 끝난 뒤) 도착한 요청은 <b>접수하되 효과가 없다</b> — 실행은 정상 COMPLETED/FAILED 로 끝나고 요청 시각만 남는다. 이 시점의 API 는 아직
+   * RUNNING 만 볼 수 있어 "이미 끝남"을 판정할 수 없기 때문이다. 화면은 상태를 폴링해 최종 상태를 보여 준다.
+   *
+   * @throws PipelineNotFoundException 실행이 없거나 이 파이프라인 것이 아니면(404)
+   * @throws ExecutionAlreadyFinishedException 이미 끝난 실행이면(409)
+   */
+  @Transactional
+  public CancelExecutionResponse cancelExecution(Long pipelineId, Long executionId, Long userId) {
+    // 소유권 검증(#188) — 다른 파이프라인의 실행 id 로 취소하지 못하게 하고, 존재 여부도 숨긴다. RLS 라 다른 테넌트 실행도 여기서 404 가 된다.
+    Long ownerPipelineId =
+        executionRepository
+            .findPipelineIdOfExecution(executionId)
+            .filter(pipelineId::equals)
+            .orElseThrow(
+                () ->
+                    new PipelineNotFoundException(
+                        "Execution not found: " + executionId + " in pipeline " + pipelineId));
+
+    PipelineExecutionRepository.CancelRequestResult result =
+        executionRepository
+            .requestCancel(executionId, userId)
+            .orElseThrow(ExecutionAlreadyFinishedException::new);
+
+    // 실행 감사 로그와 짝을 맞춘다 — 누가 언제 어떤 실행을 멈췄는지 감사 화면에서 보이게.
+    String pipelineNameForLog =
+        pipelineRepository.findNameById(ownerPipelineId).orElse("Pipeline");
+    String usernameForLog = userRepository.findById(userId).map(u -> u.username()).orElse(null);
+    auditLogService.log(
+        userId,
+        usernameForLog,
+        "CANCEL",
+        "pipeline",
+        String.valueOf(ownerPipelineId),
+        "파이프라인 실행 취소: " + pipelineNameForLog + " (실행 #" + executionId + ")",
+        null,
+        null,
+        "SUCCESS",
+        null,
+        null);
+
+    return new CancelExecutionResponse(executionId, result.status(), result.cancelRequestedAt());
   }
 
   /**

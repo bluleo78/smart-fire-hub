@@ -487,17 +487,32 @@ public class User extends TableImpl<UserRecord> {
         return _pipelineCreatedByFkey;
     }
 
-    private transient PipelineExecutionPath _pipelineExecution;
+    private transient PipelineExecutionPath _pipelineExecutionCancelRequestedByFkey;
 
     /**
      * Get the implicit to-many join path to the
-     * <code>public.pipeline_execution</code> table
+     * <code>public.pipeline_execution</code> table, via the
+     * <code>pipeline_execution_cancel_requested_by_fkey</code> key
      */
-    public PipelineExecutionPath pipelineExecution() {
-        if (_pipelineExecution == null)
-            _pipelineExecution = new PipelineExecutionPath(this, null, Keys.PIPELINE_EXECUTION__PIPELINE_EXECUTION_EXECUTED_BY_FKEY.getInverseKey());
+    public PipelineExecutionPath pipelineExecutionCancelRequestedByFkey() {
+        if (_pipelineExecutionCancelRequestedByFkey == null)
+            _pipelineExecutionCancelRequestedByFkey = new PipelineExecutionPath(this, null, Keys.PIPELINE_EXECUTION__PIPELINE_EXECUTION_CANCEL_REQUESTED_BY_FKEY.getInverseKey());
 
-        return _pipelineExecution;
+        return _pipelineExecutionCancelRequestedByFkey;
+    }
+
+    private transient PipelineExecutionPath _pipelineExecutionExecutedByFkey;
+
+    /**
+     * Get the implicit to-many join path to the
+     * <code>public.pipeline_execution</code> table, via the
+     * <code>pipeline_execution_executed_by_fkey</code> key
+     */
+    public PipelineExecutionPath pipelineExecutionExecutedByFkey() {
+        if (_pipelineExecutionExecutedByFkey == null)
+            _pipelineExecutionExecutedByFkey = new PipelineExecutionPath(this, null, Keys.PIPELINE_EXECUTION__PIPELINE_EXECUTION_EXECUTED_BY_FKEY.getInverseKey());
+
+        return _pipelineExecutionExecutedByFkey;
     }
 
     private transient PipelineTriggerPath _pipelineTriggerCreatedByFkey;

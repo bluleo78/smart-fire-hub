@@ -796,7 +796,7 @@ class PipelineAsyncRunnerTest {
     assertThat(status).isEqualTo("FAILED");
     verify(tempDatasetService, never()).deleteTempDataset(any());
     verify(tempDatasetService, never()).createTempDataset(any(), any(), any(), any(), any(), any());
-    verify(aiClassifyExecutor, never()).execute(any(), any(), any());
+    verify(aiClassifyExecutor, never()).execute(any(), any(), any(), any());
   }
 
   /**
@@ -856,7 +856,7 @@ class PipelineAsyncRunnerTest {
     assertThat(status).isEqualTo("FAILED");
     verify(dataTableService, never()).createTempTable(anyString());
     verify(executorClient, never()).executeApiCall(any());
-    verify(apiCallExecutor, never()).execute(any(), any(), any(), any(), any(), any());
+    verify(apiCallExecutor, never()).execute(any(), any(), any(), any(), any(), any(), any());
   }
 
   /**
@@ -926,7 +926,7 @@ class PipelineAsyncRunnerTest {
     assertThat(status).isEqualTo("FAILED");
     verify(tempDatasetService, never()).deleteTempDataset(any());
     verify(tempDatasetService, never()).createTempDataset(any(), any(), any(), any(), any(), any());
-    verify(apiCallExecutor, never()).execute(any(), any(), any(), any(), any(), any());
+    verify(apiCallExecutor, never()).execute(any(), any(), any(), any(), any(), any(), any());
   }
 
   /**
@@ -958,7 +958,7 @@ class PipelineAsyncRunnerTest {
     assertThat(status).isEqualTo("FAILED");
     verify(dataTableService, never()).createTempTable(anyString());
     verify(executorClient, never()).executeApiCall(any());
-    verify(apiCallExecutor, never()).execute(any(), any(), any(), any(), any(), any());
+    verify(apiCallExecutor, never()).execute(any(), any(), any(), any(), any(), any(), any());
   }
 
   @Test
@@ -1992,7 +1992,7 @@ class PipelineAsyncRunnerTest {
         .thenReturn(tempDatasetId);
     when(datasetRepository.findTableNameById(tempDatasetId)).thenReturn(Optional.of("ptmp_api"));
     when(columnRepository.findByDatasetId(tempDatasetId)).thenReturn(List.of(col("name", false)));
-    when(apiCallExecutor.execute(any(), eq("ptmp_api"), isNull(), eq("APPEND"), any(), any()))
+    when(apiCallExecutor.execute(any(), eq("ptmp_api"), isNull(), eq("APPEND"), any(), any(), any()))
         .thenReturn(new ApiCallExecutor.ApiCallResult(5, "log"));
 
     // when
@@ -2004,7 +2004,7 @@ class PipelineAsyncRunnerTest {
     verify(tempDatasetService)
         .createTempDataset(
             any(), eq(pipelineId), eq("TestPipeline"), eq(stepId), eq("api-step"), eq(userId));
-    verify(apiCallExecutor).execute(any(), eq("ptmp_api"), isNull(), eq("APPEND"), any(), any());
+    verify(apiCallExecutor).execute(any(), eq("ptmp_api"), isNull(), eq("APPEND"), any(), any(), any());
   }
 
   @Test
@@ -2050,7 +2050,10 @@ class PipelineAsyncRunnerTest {
         .thenReturn(tempDatasetId);
     when(datasetRepository.findTableNameById(tempDatasetId)).thenReturn(Optional.of("ptmp_ai"));
     when(aiClassifyExecutor.execute(
-            argThat(s -> tempDatasetId.equals(s.outputDatasetId())), eq(stepExecId), eq(userId)))
+            argThat(s -> tempDatasetId.equals(s.outputDatasetId())),
+            eq(stepExecId),
+            eq(userId),
+            any()))
         .thenReturn(new AiClassifyExecutor.ExecutionResult(10L, "ai log"));
 
     // when
@@ -2064,7 +2067,10 @@ class PipelineAsyncRunnerTest {
             any(), eq(pipelineId), eq("TestPipeline"), eq(stepId), eq("ai-step"), eq(userId));
     verify(aiClassifyExecutor)
         .execute(
-            argThat(s -> tempDatasetId.equals(s.outputDatasetId())), eq(stepExecId), eq(userId));
+            argThat(s -> tempDatasetId.equals(s.outputDatasetId())),
+            eq(stepExecId),
+            eq(userId),
+            any());
   }
 
   @Test
@@ -2129,7 +2135,8 @@ class PipelineAsyncRunnerTest {
                     s.inputDatasetIds() != null
                         && s.inputDatasetIds().contains(step1OutputDatasetId)),
             eq(stepExec2Id),
-            eq(userId)))
+            eq(userId),
+            any()))
         .thenReturn(new AiClassifyExecutor.ExecutionResult(5L, "ok log"));
 
     // when
@@ -2143,7 +2150,8 @@ class PipelineAsyncRunnerTest {
                     s.inputDatasetIds() != null
                         && s.inputDatasetIds().contains(step1OutputDatasetId)),
             eq(stepExec2Id),
-            eq(userId));
+            eq(userId),
+            any());
   }
 
   @Test
@@ -2923,7 +2931,7 @@ class PipelineAsyncRunnerTest {
     when(objectMapper.convertValue(any(), eq(ApiCallConfig.class))).thenReturn(minimalApiConfig());
     stubReusedTempDataset(stepId, dsId, "ptmp_api_fail");
     when(columnRepository.findByDatasetId(dsId)).thenReturn(List.of(col("name", false)));
-    when(apiCallExecutor.execute(any(), eq("ptmp_api_fail"), isNull(), eq("REPLACE"), any(), any()))
+    when(apiCallExecutor.execute(any(), eq("ptmp_api_fail"), isNull(), eq("REPLACE"), any(), any(), any()))
         .thenThrow(new ScriptExecutionException("API 호출 실패"));
 
     // when
@@ -2984,7 +2992,7 @@ class PipelineAsyncRunnerTest {
                 null,
                 null));
     stubReusedTempDataset(stepId, dsId, "ptmp_ai_fail");
-    when(aiClassifyExecutor.execute(any(), eq(stepExecId), eq(userId)))
+    when(aiClassifyExecutor.execute(any(), eq(stepExecId), eq(userId), any()))
         .thenThrow(new ScriptExecutionException("AI 분류 실패"));
 
     // when
@@ -3010,7 +3018,7 @@ class PipelineAsyncRunnerTest {
     stubReusedTempDataset(stepId, dsId, "ptmp_api_append");
     when(columnRepository.findByDatasetId(dsId)).thenReturn(List.of(col("name", false)));
     when(apiCallExecutor.execute(
-            any(), eq("ptmp_api_append"), isNull(), eq("APPEND"), any(), any()))
+            any(), eq("ptmp_api_append"), isNull(), eq("APPEND"), any(), any(), any()))
         .thenReturn(new ApiCallExecutor.ApiCallResult(3, "log"));
 
     // when
@@ -3042,7 +3050,7 @@ class PipelineAsyncRunnerTest {
                 null,
                 null));
     stubReusedTempDataset(stepId, dsId, "ptmp_ai_append");
-    when(aiClassifyExecutor.execute(any(), eq(stepExecId), eq(userId)))
+    when(aiClassifyExecutor.execute(any(), eq(stepExecId), eq(userId), any()))
         .thenReturn(new AiClassifyExecutor.ExecutionResult(4L, "ai log"));
 
     // when
@@ -3067,7 +3075,7 @@ class PipelineAsyncRunnerTest {
     // (API_CALL 쪽은 execute(..., eq("REPLACE"|"APPEND"), ...) 스텁이 이미 같은 역할을 한다.)
     ArgumentCaptor<PipelineStepResponse> stepCaptor =
         ArgumentCaptor.forClass(PipelineStepResponse.class);
-    verify(aiClassifyExecutor).execute(stepCaptor.capture(), eq(stepExecId), eq(userId));
+    verify(aiClassifyExecutor).execute(stepCaptor.capture(), eq(stepExecId), eq(userId), any());
     assertThat(stepCaptor.getValue().loadStrategy())
         .as("APPEND 스텝의 로드 전략이 실행기까지 그대로 도달해야 한다")
         .isEqualTo("APPEND");
@@ -3118,7 +3126,7 @@ class PipelineAsyncRunnerTest {
     stubReusedTempDataset(stepId, dsId, "ptmp_api_replace_off");
     when(columnRepository.findByDatasetId(dsId)).thenReturn(List.of(col("name", false)));
     when(apiCallExecutor.execute(
-            any(), eq("ptmp_api_replace_off"), isNull(), eq("REPLACE"), any(), any()))
+            any(), eq("ptmp_api_replace_off"), isNull(), eq("REPLACE"), any(), any(), any()))
         .thenReturn(new ApiCallExecutor.ApiCallResult(9, "log"));
 
     String status =
@@ -3132,7 +3140,7 @@ class PipelineAsyncRunnerTest {
 
     assertThat(status).isEqualTo("COMPLETED");
     verify(apiCallExecutor)
-        .execute(any(), eq("ptmp_api_replace_off"), isNull(), eq("REPLACE"), any(), any());
+        .execute(any(), eq("ptmp_api_replace_off"), isNull(), eq("REPLACE"), any(), any(), any());
     verify(dataTableRowService, never()).truncateTable(anyString());
   }
 
@@ -3360,5 +3368,183 @@ class PipelineAsyncRunnerTest {
   private DatasetColumnResponse col(String columnName, boolean isPrimaryKey) {
     return new DatasetColumnResponse(
         null, columnName, null, "TEXT", null, true, false, null, 0, isPrimaryKey);
+  }
+
+  // ------------------------------------------------------------------ //
+  // 협조적 취소(WD-153)
+  // ------------------------------------------------------------------ //
+
+  /** 스텝 사이 취소: 첫 스텝이 끝난 뒤 취소가 들어오면 둘째 스텝은 실행하지 않고, 실행은 CANCELLED·이벤트 없음(체인·알림 미발화). */
+  @Test
+  void executeAsync_스텝_사이_취소되면_남은_스텝을_실행하지_않고_CANCELLED_로_끝낸다() {
+    Long pipelineId = 7L, executionId = 70L, userId = 10L;
+    PipelineStepResponse s1 =
+        stepResponse(701L, "s1", "SQL", "INSERT INTO data.\"t\" VALUES (1)", null, List.of());
+    PipelineStepResponse s2 =
+        stepResponse(702L, "s2", "SQL", "INSERT INTO data.\"t\" VALUES (2)", null, List.of());
+    when(pipelineRepository.findNameById(pipelineId)).thenReturn(Optional.of("P"));
+    when(sqlExecutor.execute(anyList(), anyString())).thenReturn("ok");
+    // 시작 직후 false, s1 시작 전 false, s1 안(SQL 직전) false, s2 시작 전 true
+    when(executionRepository.isCancelRequested(executionId))
+        .thenReturn(false, false, false, true);
+
+    runner.executeAsync(
+        pipelineId,
+        executionId,
+        List.of(s1, s2),
+        Map.of(701L, List.of(), 702L, List.of()),
+        Map.of(701L, 801L, 702L, 802L),
+        userId,
+        false);
+
+    // s1 만 실행됐다
+    verify(sqlExecutor, times(1)).execute(anyList(), anyString());
+    verify(executionRepository)
+        .updateStepExecution(eq(801L), eq("COMPLETED"), any(), any(), any(), any(), any());
+    verify(executionRepository, never())
+        .updateStepExecution(eq(802L), eq("RUNNING"), any(), any(), any(), any(), any());
+    // 남은 스텝은 SKIPPED(취소 사유), 실행은 CANCELLED
+    verify(executionRepository).skipPendingStepsForCancel(executionId);
+    verify(executionRepository)
+        .updateExecutionStatus(
+            eq(executionId),
+            eq("CANCELLED"),
+            isNull(),
+            any(),
+            eq(
+                com.smartfirehub.pipeline.exception.PipelineExecutionCancelledException
+                    .CANCELLED_MESSAGE));
+    verify(executionRepository, never())
+        .updateExecutionStatus(eq(executionId), eq("COMPLETED"), any(), any());
+    // 취소된 실행은 완료 이벤트를 발행하지 않는다 — PIPELINE_CHAIN(ANY 포함)·완료 알림이 발화하지 않는다.
+    verify(applicationEventPublisher, never()).publishEvent(any());
+  }
+
+  /** 대기 중 취소: 러너가 시작하자마자 취소 요청을 보면 스텝을 하나도 돌리지 않는다. */
+  @Test
+  void executeAsync_대기_중_취소된_실행은_스텝을_하나도_실행하지_않는다() {
+    Long pipelineId = 8L, executionId = 80L, userId = 10L;
+    PipelineStepResponse s1 =
+        stepResponse(711L, "s1", "SQL", "INSERT INTO data.\"t\" VALUES (1)", null, List.of());
+    when(executionRepository.isCancelRequested(executionId)).thenReturn(true);
+
+    runner.executeAsync(
+        pipelineId,
+        executionId,
+        List.of(s1),
+        Map.of(711L, List.of()),
+        Map.of(711L, 811L),
+        userId,
+        false);
+
+    verify(sqlExecutor, never()).execute(anyList(), anyString());
+    verify(executionRepository, never())
+        .updateStepExecution(anyLong(), eq("RUNNING"), any(), any(), any(), any(), any());
+    verify(executionRepository).skipPendingStepsForCancel(executionId);
+    verify(applicationEventPublisher, never()).publishEvent(any());
+  }
+
+  /** SQL 스텝 안의 실행 직전 체크포인트: 취소되면 SQL 을 보내지 않고 스텝을 CANCELLED(0행·출력 그대로)로 기록한다. */
+  @Test
+  void executeStep_SQL_실행_직전_취소되면_보내지_않고_CANCELLED_로_기록한다() {
+    PipelineStepResponse s1 =
+        stepResponse(721L, "s1", "SQL", "INSERT INTO data.\"t\" VALUES (1)", null, List.of());
+
+    String status = runner.executeStep(821L, s1, 9L, "P", 10L, false, () -> true);
+
+    assertThat(status).isEqualTo("CANCELLED");
+    verify(sqlExecutor, never()).execute(anyList(), anyString());
+    verify(executionRepository)
+        .updateStepExecution(
+            eq(821L),
+            eq("CANCELLED"),
+            isNull(),
+            isNull(),
+            contains("출력 데이터는 바뀌지 않았습니다"),
+            isNull(),
+            any());
+  }
+
+  /**
+   * 실행기 켠 REPLACE API_CALL: 실행기 호출이 끝난 직후 취소가 보이면 맞바꾸지 않고 임시 테이블을 버린다 — 원본이 남는다(호출 자체는 끝까지 돌았다).
+   */
+  @Test
+  void 실행기_켜진_REPLACE_API_CALL_호출_직후_취소되면_맞바꾸지_않고_임시_테이블을_버린다() {
+    Long stepId = 931L, stepExecId = 961L, dsId = 991L;
+    when(objectMapper.convertValue(any(), eq(ApiCallConfig.class))).thenReturn(minimalApiConfig());
+    stubReusedTempDataset(stepId, dsId, "ptmp_api_cancel");
+    when(columnRepository.findByDatasetId(dsId)).thenReturn(List.of(col("name", false)));
+    java.util.concurrent.atomic.AtomicBoolean cancelled =
+        new java.util.concurrent.atomic.AtomicBoolean(false);
+    when(executorClient.executeApiCall(any()))
+        .thenAnswer(
+            inv -> {
+              // 실행기 호출이 도는 동안 취소 요청이 들어왔다.
+              cancelled.set(true);
+              return new ExecutorClient.ApiCallExecuteResult(true, 7, 1, "ok", null, 20L);
+            });
+
+    String status =
+        runner.executeStep(
+            stepExecId,
+            apiStepNoOutput(stepId, "api-cancel", "REPLACE"),
+            95L,
+            "P",
+            1L,
+            true,
+            cancelled::get);
+
+    assertThat(status).isEqualTo("CANCELLED");
+    verify(executorClient, times(1)).executeApiCall(any());
+    verify(dataTableService, never()).finishReplace(anyString(), anyString(), anyLong());
+    verify(dataTableService).dropTempTable("ptmp_api_cancel", runTemp("ptmp_api_cancel"));
+    verify(executionRepository)
+        .updateStepExecution(
+            eq(stepExecId),
+            eq("CANCELLED"),
+            isNull(),
+            isNull(),
+            contains("기존 데이터를 그대로 유지"),
+            isNull(),
+            any());
+  }
+
+  /** 실행기 켠 APPEND API_CALL: 호출 직후 취소되면 실행기가 넣은 행은 남고 그 수가 스텝 기록에 남는다. */
+  @Test
+  void 실행기_켜진_APPEND_API_CALL_호출_직후_취소되면_넣은_행_수를_남긴다() {
+    Long stepId = 932L, stepExecId = 962L, dsId = 992L;
+    when(objectMapper.convertValue(any(), eq(ApiCallConfig.class))).thenReturn(minimalApiConfig());
+    stubReusedTempDataset(stepId, dsId, "ptmp_api_cancel_append");
+    when(columnRepository.findByDatasetId(dsId)).thenReturn(List.of(col("name", false)));
+    java.util.concurrent.atomic.AtomicBoolean cancelled =
+        new java.util.concurrent.atomic.AtomicBoolean(false);
+    when(executorClient.executeApiCall(any()))
+        .thenAnswer(
+            inv -> {
+              cancelled.set(true);
+              return new ExecutorClient.ApiCallExecuteResult(true, 5, 1, "ok", null, 20L);
+            });
+
+    String status =
+        runner.executeStep(
+            stepExecId,
+            apiStepNoOutput(stepId, "api-cancel-append", "APPEND"),
+            95L,
+            "P",
+            1L,
+            true,
+            cancelled::get);
+
+    assertThat(status).isEqualTo("CANCELLED");
+    verify(dataTableService, never()).createTempTable(anyString());
+    verify(executionRepository)
+        .updateStepExecution(
+            eq(stepExecId),
+            eq("CANCELLED"),
+            isNull(),
+            isNull(),
+            contains("취소 전까지 5행 적재됨"),
+            isNull(),
+            any());
   }
 }

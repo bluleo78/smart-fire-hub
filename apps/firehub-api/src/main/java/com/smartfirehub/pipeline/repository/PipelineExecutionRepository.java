@@ -5,7 +5,9 @@ import static org.jooq.impl.DSL.*;
 import com.smartfirehub.pipeline.dto.ExecutionDetailResponse;
 import com.smartfirehub.pipeline.dto.PipelineExecutionResponse;
 import com.smartfirehub.pipeline.dto.StepExecutionResponse;
+import com.smartfirehub.pipeline.exception.PipelineExecutionCancelledException;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
@@ -46,6 +48,15 @@ public class PipelineExecutionRepository {
       field(name("pipeline_execution", "trigger_id"), Long.class);
   private static final Field<String> PE_ERROR_MESSAGE =
       field(name("pipeline_execution", "error_message"), String.class);
+  // 취소 요청 시각·요청자(V141, WD-153). 러너 체크포인트가 이 값을 읽어 취소를 알아챈다 — 여러 API 인스턴스 중 어디서 요청을 받아도 보이도록
+  // 메모리가 아니라 DB 에 둔다.
+  private static final Field<LocalDateTime> PE_CANCEL_REQUESTED_AT =
+      field(name("pipeline_execution", "cancel_requested_at"), LocalDateTime.class);
+  private static final Field<Long> PE_CANCEL_REQUESTED_BY =
+      field(name("pipeline_execution", "cancel_requested_by"), Long.class);
+
+  /** 아직 끝나지 않은 실행 상태 — 실행 상태 쓰기는 이 상태에서만 일어난다(끝난 실행을 덮어쓰지 않는다, WD-153). */
+  private static final List<String> ACTIVE_STATUSES = List.of("PENDING", "RUNNING");
 
   private static final Table<?> PIPELINE_TRIGGER = table(name("pipeline_trigger"));
   private static final Field<Long> PT_ID = field(name("pipeline_trigger", "id"), Long.class);
@@ -84,6 +95,12 @@ public class PipelineExecutionRepository {
   private static final Table<?> USER_TABLE = table(name("user"));
   private static final Field<Long> U_ID = field(name("user", "id"), Long.class);
   private static final Field<String> U_NAME = field(name("user", "name"), String.class);
+
+  // 취소 요청자 이름 조인용 별칭 — 실행자(executed_by) 조인과 같은 "user" 테이블을 한 번 더 붙인다.
+  private static final Table<?> CANCELLER = table(name("user")).as("canceller");
+  private static final Field<Long> CANCELLER_ID = field(name("canceller", "id"), Long.class);
+  private static final Field<String> CANCELLER_NAME =
+      field(name("canceller", "name"), String.class).as("canceller_name");
 
   private static final Table<?> PIPELINE = table(name("pipeline"));
   private static final Field<Long> P_ID = field(name("pipeline", "id"), Long.class);
@@ -142,7 +159,84 @@ public class PipelineExecutionRepository {
       query = query.set(PE_ERROR_MESSAGE, errorMessage);
     }
 
-    query.where(PE_ID.eq(executionId)).execute();
+    // 끝나지 않은 실행만 갱신한다(WD-153) — 실행 상태를 쓰는 주체가 러너와 취소 API 둘이라, 무조건 쓰면 대기 중 취소로 이미 CANCELLED 가 된
+    // 실행을 러너 시작 쓰기(RUNNING)가 되살리거나, 끝난 실행 상태를 다른 쪽이 덮어쓸 수 있다. 조건부 UPDATE 라 먼저 마감한 쪽이 이긴다.
+    query.where(PE_ID.eq(executionId)).and(PE_STATUS.in(ACTIVE_STATUSES)).execute();
+  }
+
+  /**
+   * 이 실행에 취소 요청이 있는가(WD-153 협조적 취소 체크포인트). PK 한 행·한 컬럼만 읽는 싼 조회라 페이지·배치·재시도 대기 조각마다 불러도 된다. 행이
+   * 없으면(지워진 실행) 취소 아님으로 본다.
+   */
+  public boolean isCancelRequested(Long executionId) {
+    return dsl.fetchExists(
+        dsl.selectOne()
+            .from(PIPELINE_EXECUTION)
+            .where(PE_ID.eq(executionId))
+            .and(PE_CANCEL_REQUESTED_AT.isNotNull()));
+  }
+
+  /** 취소 요청 결과 — 마감 후 상태({@code CANCELLED}=대기 중이라 즉시 마감, {@code RUNNING}=요청만 기록)와 첫 요청 시각. */
+  public record CancelRequestResult(String status, LocalDateTime cancelRequestedAt) {}
+
+  /**
+   * 실행 취소를 요청한다(WD-153). 두 조건부 UPDATE 로 경쟁을 정리한다 — 러너의 상태 쓰기도 조건부라 어느 순서로 와도 한쪽만 이긴다.
+   *
+   * <ol>
+   *   <li>PENDING(스레드 시작 전) 이면 그 자리에서 CANCELLED 로 마감하고 대기 스텝을 SKIPPED(취소 사유)로 바꾼다. 러너가 나중에 시작해도 시작
+   *       쓰기가 조건부라 상태를 되살리지 못하고, 취소 요청을 보고 아무것도 실행하지 않는다.
+   *   <li>RUNNING 이면 요청 시각·요청자만 남긴다(COALESCE — 재요청은 첫 요청을 덮지 않는다). 러너가 다음 체크포인트에서 CANCELLED 로 마감한다.
+   *   <li>둘 다 아니면(이미 끝남) 빈 값 — 호출부가 409 로 바꾼다.
+   * </ol>
+   *
+   * <p>호출부 트랜잭션(서비스의 {@code @Transactional})에 합류해 1번의 실행·스텝 갱신이 함께 커밋된다.
+   */
+  public Optional<CancelRequestResult> requestCancel(Long executionId, Long userId) {
+    LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+    Optional<LocalDateTime> pendingCancelled =
+        dsl.update(PIPELINE_EXECUTION)
+            .set(PE_STATUS, "CANCELLED")
+            .set(PE_COMPLETED_AT, now)
+            .set(PE_ERROR_MESSAGE, PipelineExecutionCancelledException.CANCELLED_MESSAGE)
+            .set(PE_CANCEL_REQUESTED_AT, now)
+            .set(PE_CANCEL_REQUESTED_BY, userId)
+            .where(PE_ID.eq(executionId))
+            .and(PE_STATUS.eq("PENDING"))
+            .returning(PE_CANCEL_REQUESTED_AT)
+            .fetchOptional(r -> r.get(PE_CANCEL_REQUESTED_AT));
+    if (pendingCancelled.isPresent()) {
+      skipPendingStepsForCancel(executionId);
+      return Optional.of(new CancelRequestResult("CANCELLED", pendingCancelled.get()));
+    }
+    return dsl.update(PIPELINE_EXECUTION)
+        .set(PE_CANCEL_REQUESTED_AT, coalesce(PE_CANCEL_REQUESTED_AT, val(now)))
+        .set(PE_CANCEL_REQUESTED_BY, coalesce(PE_CANCEL_REQUESTED_BY, val(userId)))
+        .where(PE_ID.eq(executionId))
+        .and(PE_STATUS.eq("RUNNING"))
+        .returning(PE_CANCEL_REQUESTED_AT)
+        .fetchOptional(r -> new CancelRequestResult("RUNNING", r.get(PE_CANCEL_REQUESTED_AT)));
+  }
+
+  /**
+   * 아직 시작하지 않은(PENDING) 스텝을 취소 사유와 함께 SKIPPED 로 마감한다(WD-153). 대기 중 취소(취소 API)와 실행 중 취소(러너 — 남은 스텝)가
+   * 같이 쓴다. 이미 끝났거나 진행 중인 스텝은 건드리지 않는다.
+   */
+  public void skipPendingStepsForCancel(Long executionId) {
+    dsl.update(PIPELINE_STEP_EXECUTION)
+        .set(PSE_STATUS, "SKIPPED")
+        .set(PSE_ERROR_MESSAGE, PipelineExecutionCancelledException.SKIPPED_BY_CANCEL_MESSAGE)
+        .set(PSE_COMPLETED_AT, LocalDateTime.now(ZoneOffset.UTC))
+        .where(PSE_EXECUTION_ID.eq(executionId))
+        .and(PSE_STATUS.eq("PENDING"))
+        .execute();
+  }
+
+  /** 실행이 속한 파이프라인 id(소유권 검증용, #188) — 스텝 기록까지 읽는 {@link #findExecutionById} 보다 가볍다. */
+  public Optional<Long> findPipelineIdOfExecution(Long executionId) {
+    return dsl.select(PE_PIPELINE_ID)
+        .from(PIPELINE_EXECUTION)
+        .where(PE_ID.eq(executionId))
+        .fetchOptional(PE_PIPELINE_ID);
   }
 
   /**
@@ -265,7 +359,8 @@ public class PipelineExecutionRepository {
             PE_CREATED_AT,
             U_NAME,
             PE_TRIGGERED_BY,
-            PT_NAME)
+            PT_NAME,
+            PE_CANCEL_REQUESTED_AT)
         .from(PIPELINE_EXECUTION)
         .leftJoin(USER_TABLE)
         .on(PE_EXECUTED_BY.eq(U_ID))
@@ -284,7 +379,8 @@ public class PipelineExecutionRepository {
                     r.get(PE_COMPLETED_AT),
                     r.get(PE_CREATED_AT),
                     r.get(PE_TRIGGERED_BY),
-                    r.get(PT_NAME)));
+                    r.get(PT_NAME),
+                    r.get(PE_CANCEL_REQUESTED_AT)));
   }
 
   public Optional<ExecutionDetailResponse> findExecutionById(Long executionId) {
@@ -300,12 +396,16 @@ public class PipelineExecutionRepository {
                 PE_CREATED_AT,
                 PE_ERROR_MESSAGE,
                 P_NAME,
-                U_NAME)
+                U_NAME,
+                PE_CANCEL_REQUESTED_AT,
+                CANCELLER_NAME)
             .from(PIPELINE_EXECUTION)
             .join(PIPELINE)
             .on(PE_PIPELINE_ID.eq(P_ID))
             .leftJoin(USER_TABLE)
             .on(PE_EXECUTED_BY.eq(U_ID))
+            .leftJoin(CANCELLER)
+            .on(PE_CANCEL_REQUESTED_BY.eq(CANCELLER_ID))
             .where(PE_ID.eq(executionId))
             .fetchOptional();
 
@@ -330,7 +430,9 @@ public class PipelineExecutionRepository {
             exec.get(PE_COMPLETED_AT),
             exec.get(PE_CREATED_AT),
             exec.get(PE_ERROR_MESSAGE),
-            false));
+            false,
+            exec.get(PE_CANCEL_REQUESTED_AT),
+            exec.get(CANCELLER_NAME)));
   }
 
   /**

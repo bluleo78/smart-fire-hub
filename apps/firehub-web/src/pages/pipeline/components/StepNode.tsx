@@ -1,5 +1,5 @@
 import { Handle, type Node,type NodeProps, Position } from '@xyflow/react';
-import { Brain, CheckCircle2, Clock,FileCode, Globe, Loader2, Plus, SkipForward, Terminal, X, XCircle } from 'lucide-react';
+import { Ban, Brain, CheckCircle2, Clock,FileCode, Globe, Loader2, Plus, SkipForward, Terminal, X, XCircle } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import { memo, useState } from 'react';
 
@@ -22,7 +22,8 @@ export interface StepNodeData extends Record<string, unknown> {
   isSelected: boolean;
   hasError: boolean;
   hasOutgoingEdge: boolean;
-  executionStatus?: 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'SKIPPED';
+  // CANCELLED = 실행 취소가 닿았을 때 진행 중이던 스텝(WD-153)
+  executionStatus?: 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'SKIPPED' | 'CANCELLED';
   readOnly?: boolean;
   onDelete?: () => void;
   onAddAfter?: () => void;
@@ -140,6 +141,14 @@ const STATUS_CONFIG_LIGHT: Record<NonNullable<StepNodeData['executionStatus']>, 
     color: 'rgb(156,163,175)',
     border: 'rgb(229,231,235)',
   },
+  // 취소됨(WD-153) — 실패가 아니라 사용자가 멈춘 것이므로 오류색이 아닌 건너뜀과 같은 중립 톤을 쓴다
+  CANCELLED: {
+    label: '취소됨',
+    Icon: Ban,
+    bg: 'rgb(249,250,251)',
+    color: 'rgb(107,114,128)',
+    border: 'rgb(209,213,219)',
+  },
 };
 
 const STATUS_CONFIG_DARK: Record<NonNullable<StepNodeData['executionStatus']>, StatusStyle> = {
@@ -178,6 +187,13 @@ const STATUS_CONFIG_DARK: Record<NonNullable<StepNodeData['executionStatus']>, S
     color: 'oklch(0.76 0.14 84)',
     border: 'oklch(0.76 0.14 84 / 30%)',
   },
+  CANCELLED: {
+    label: '취소됨',
+    Icon: Ban,
+    bg: 'oklch(1 0 0 / 5%)',
+    color: 'oklch(0.7 0 0)',
+    border: 'oklch(1 0 0 / 10%)',
+  },
 };
 
 // Execution status → card background tint (monochrome)
@@ -187,6 +203,7 @@ const STATUS_CARD_BG_LIGHT: Record<NonNullable<StepNodeData['executionStatus']>,
   COMPLETED: 'rgba(243,244,246,0.6)',
   FAILED: 'rgba(249,250,251,0.6)',
   SKIPPED: 'rgba(249,250,251,0.6)',
+  CANCELLED: 'rgba(249,250,251,0.6)',
 };
 
 const STATUS_CARD_BG_DARK: Record<NonNullable<StepNodeData['executionStatus']>, string> = {
@@ -195,6 +212,7 @@ const STATUS_CARD_BG_DARK: Record<NonNullable<StepNodeData['executionStatus']>, 
   COMPLETED: 'oklch(1 0 0 / 3%)',
   FAILED: 'oklch(1 0 0 / 3%)',
   SKIPPED: 'oklch(1 0 0 / 3%)',
+  CANCELLED: 'oklch(1 0 0 / 3%)',
 };
 
 export const StepNode = memo(function StepNode({ data }: NodeProps<StepNodeType>) {

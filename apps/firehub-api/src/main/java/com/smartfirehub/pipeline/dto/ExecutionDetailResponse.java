@@ -22,4 +22,11 @@ public record ExecutionDetailResponse(
      * 실행 단위 errorMessage 가 원문 대신 가림 문구로 바뀌었는가(WD-27) — 스텝 단위 {@link
      * StepExecutionResponse#errorMasked} 와 같은 용도.
      */
-    boolean errorMasked) {}
+    boolean errorMasked,
+    /**
+     * 첫 취소 요청 시각(WD-153). 상태가 CANCELLED 가 아니어도 채워질 수 있다 — RUNNING 이면 "취소 요청됨(다음 체크포인트에서 멈춤)", 마지막 체크포인트
+     * 뒤에 도착한 요청이면 COMPLETED/FAILED 인 채로 남는다(효과 없음).
+     */
+    LocalDateTime cancelRequestedAt,
+    /** 취소 요청자 이름(WD-153). 요청자가 삭제됐으면 null. */
+    String cancelRequestedBy) {}

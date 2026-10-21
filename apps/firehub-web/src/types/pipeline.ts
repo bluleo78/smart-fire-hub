@@ -108,6 +108,22 @@ export interface PipelineExecutionResponse {
   startedAt: string | null;
   completedAt: string | null;
   createdAt: string;
+  /**
+   * 사용자가 실행 취소를 요청한 시각(WD-153). 값이 있는데 status 가 아직 RUNNING 이면 "취소 요청됨" 상태다 —
+   * 실행기가 다음 점검 지점에서 멈추면 CANCELLED 가 된다. 구 API 응답에는 없으므로 선택 필드.
+   */
+  cancelRequestedAt?: string | null;
+}
+
+/**
+ * 실행 취소 요청 응답(WD-153, 202).
+ * - CANCELLED: 아직 PENDING 이라 즉시 취소됐다.
+ * - RUNNING: 취소 요청만 기록됐고 실행기가 다음 점검 지점에서 멈춘다(곧 CANCELLED 로 바뀌므로 계속 폴링).
+ */
+export interface CancelExecutionResponse {
+  executionId: number;
+  status: 'CANCELLED' | 'RUNNING';
+  cancelRequestedAt: string;
 }
 
 export interface ExecutionDetailResponse {
@@ -131,6 +147,10 @@ export interface ExecutionDetailResponse {
    * 가림 문구 문자열을 비교하지 않고 이 값으로 "아래 오류 정보를 참고" 안내를 숨긴다. 구 API 응답에는 없으므로 선택 필드.
    */
   errorMasked?: boolean;
+  /** 실행 취소를 요청한 시각(WD-153) — 취소 정보는 가림(WD-27) 대상인 errorMessage 대신 이 값으로 보여 준다. 구 응답에는 없다. */
+  cancelRequestedAt?: string | null;
+  /** 실행 취소를 요청한 사용자 표시 이름(WD-153). 구 응답에는 없다. */
+  cancelRequestedBy?: string | null;
 }
 
 export interface StepExecutionResponse {
@@ -139,7 +159,8 @@ export interface StepExecutionResponse {
   stepId: number | null;
   /** 실행 당시 스텝 이름(스냅샷) — 이후 스텝 이름이 바뀌거나 삭제돼도 그 실행 기준 이름이 온다. */
   stepName: string;
-  status: 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'SKIPPED';
+  /** CANCELLED = 취소가 닿았을 때 진행 중이던 스텝(WD-153). 아직 실행 전이던 스텝은 SKIPPED 로 남는다. */
+  status: 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'SKIPPED' | 'CANCELLED';
   outputRows: number | null;
   log: string | null;
   errorMessage: string | null;

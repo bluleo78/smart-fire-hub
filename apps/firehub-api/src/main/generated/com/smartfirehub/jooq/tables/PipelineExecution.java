@@ -122,6 +122,16 @@ public class PipelineExecution extends TableImpl<PipelineExecutionRecord> {
      */
     public final TableField<PipelineExecutionRecord, String> ERROR_MESSAGE = createField(DSL.name("error_message"), SQLDataType.CLOB, this, "");
 
+    /**
+     * The column <code>public.pipeline_execution.cancel_requested_at</code>.
+     */
+    public final TableField<PipelineExecutionRecord, LocalDateTime> CANCEL_REQUESTED_AT = createField(DSL.name("cancel_requested_at"), SQLDataType.LOCALDATETIME(6), this, "");
+
+    /**
+     * The column <code>public.pipeline_execution.cancel_requested_by</code>.
+     */
+    public final TableField<PipelineExecutionRecord, Long> CANCEL_REQUESTED_BY = createField(DSL.name("cancel_requested_by"), SQLDataType.BIGINT, this, "");
+
     private PipelineExecution(Name alias, Table<PipelineExecutionRecord> aliased) {
         this(alias, aliased, (Field<?>[]) null, null);
     }
@@ -206,7 +216,7 @@ public class PipelineExecution extends TableImpl<PipelineExecutionRecord> {
 
     @Override
     public List<ForeignKey<PipelineExecutionRecord, ?>> getReferences() {
-        return Arrays.asList(Keys.PIPELINE_EXECUTION__FK_PIPELINE_EXECUTION_TENANT, Keys.PIPELINE_EXECUTION__PIPELINE_EXECUTION_EXECUTED_BY_FKEY, Keys.PIPELINE_EXECUTION__PIPELINE_EXECUTION_PIPELINE_ID_FKEY, Keys.PIPELINE_EXECUTION__PIPELINE_EXECUTION_TRIGGER_ID_FKEY);
+        return Arrays.asList(Keys.PIPELINE_EXECUTION__FK_PIPELINE_EXECUTION_TENANT, Keys.PIPELINE_EXECUTION__PIPELINE_EXECUTION_CANCEL_REQUESTED_BY_FKEY, Keys.PIPELINE_EXECUTION__PIPELINE_EXECUTION_EXECUTED_BY_FKEY, Keys.PIPELINE_EXECUTION__PIPELINE_EXECUTION_PIPELINE_ID_FKEY, Keys.PIPELINE_EXECUTION__PIPELINE_EXECUTION_TRIGGER_ID_FKEY);
     }
 
     private transient TenantPath _tenant;
@@ -221,16 +231,30 @@ public class PipelineExecution extends TableImpl<PipelineExecutionRecord> {
         return _tenant;
     }
 
-    private transient UserPath _user;
+    private transient UserPath _pipelineExecutionCancelRequestedByFkey;
 
     /**
-     * Get the implicit join path to the <code>public.user</code> table.
+     * Get the implicit join path to the <code>public.user</code> table, via the
+     * <code>pipeline_execution_cancel_requested_by_fkey</code> key.
      */
-    public UserPath user() {
-        if (_user == null)
-            _user = new UserPath(this, Keys.PIPELINE_EXECUTION__PIPELINE_EXECUTION_EXECUTED_BY_FKEY, null);
+    public UserPath pipelineExecutionCancelRequestedByFkey() {
+        if (_pipelineExecutionCancelRequestedByFkey == null)
+            _pipelineExecutionCancelRequestedByFkey = new UserPath(this, Keys.PIPELINE_EXECUTION__PIPELINE_EXECUTION_CANCEL_REQUESTED_BY_FKEY, null);
 
-        return _user;
+        return _pipelineExecutionCancelRequestedByFkey;
+    }
+
+    private transient UserPath _pipelineExecutionExecutedByFkey;
+
+    /**
+     * Get the implicit join path to the <code>public.user</code> table, via the
+     * <code>pipeline_execution_executed_by_fkey</code> key.
+     */
+    public UserPath pipelineExecutionExecutedByFkey() {
+        if (_pipelineExecutionExecutedByFkey == null)
+            _pipelineExecutionExecutedByFkey = new UserPath(this, Keys.PIPELINE_EXECUTION__PIPELINE_EXECUTION_EXECUTED_BY_FKEY, null);
+
+        return _pipelineExecutionExecutedByFkey;
     }
 
     private transient PipelinePath _pipeline;
