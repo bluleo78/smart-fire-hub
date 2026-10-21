@@ -184,6 +184,7 @@ test.describe('데이터셋 상세 — 내보내기 다이얼로그', () => {
     // 대용량 비동기 안내 표시 확인
     await expect(page.getByText(/비동기 내보내기/)).toBeVisible();
 
+    const downloadPromise = page.waitForEvent('download', { timeout: 15000 });
     await page.getByRole('dialog').getByRole('button', { name: '내보내기' }).click();
 
     // 비동기 내보내기 후 다이얼로그가 닫혀야 한다
@@ -191,6 +192,45 @@ test.describe('데이터셋 상세 — 내보내기 다이얼로그', () => {
 
     // 폴링 진행 중 로딩 토스트가 표시되어야 한다
     await expect(page.getByText(/내보내기 준비 중|내보내기 중/)).toBeVisible({ timeout: 8000 });
+
+    // WD-157 회귀 방지: 다이얼로그가 닫혀 언마운트돼도 폴링이 이어져, 완료되면 서버가 정한 이름으로 파일이 내려받아진다.
+    // (예전에는 언마운트 정리가 첫 폴링 전에 interval 을 지워 상태 확인 0건·다운로드 0건이었다)
+    const download = await downloadPromise;
+    expect(download.suggestedFilename()).toBe('test_export.csv');
+    expect(pollCallCount).toBeGreaterThanOrEqual(2);
+    await expect(page.getByText('파일이 다운로드되었습니다.')).toBeVisible();
+    await expect(page.getByText(/내보내기 준비 중|내보내기 중/)).toHaveCount(0);
+  });
+
+  test('비동기 내보내기: 서버 작업이 실패하면 진행 토스트가 실패 사유로 바뀐다 (WD-157)', async ({ authenticatedPage: page }) => {
+    await setupMocks(page);
+    // setupMocks 의 estimate 를 async=true 로 덮어쓴다(나중에 등록한 route 가 먼저 처리된다)
+    await mockApi(page, 'GET', '/api/v1/datasets/1/export/estimate', { ...estimateResponse, async: true });
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets/1/export',
+      (route) =>
+        route.request().method() === 'POST'
+          ? route.fulfill({ status: 202, contentType: 'application/json', body: JSON.stringify({ jobId: 'job-fail-157' }) })
+          : route.continue(),
+    );
+    await page.route(
+      (url) => url.pathname === '/api/v1/jobs/job-fail-157/status',
+      (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ stage: 'FAILED', progress: 0, errorMessage: '디스크 공간 부족' }),
+        }),
+    );
+
+    await page.goto('/data/datasets/1');
+    await page.getByRole('tab', { name: '데이터' }).click();
+    await page.getByRole('button', { name: '내보내기' }).click();
+    await page.getByRole('dialog').getByRole('button', { name: '내보내기' }).click();
+    await expect(page.getByRole('dialog')).not.toBeVisible({ timeout: 5000 });
+
+    await expect(page.getByText('내보내기 실패: 디스크 공간 부족')).toBeVisible({ timeout: 8000 });
+    await expect(page.getByText(/내보내기 준비 중/)).toHaveCount(0);
   });
 
   test('내보내기 성공 시 다이얼로그가 닫힌다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
