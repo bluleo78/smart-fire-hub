@@ -1,4 +1,5 @@
 import { createJob, createReport, createTemplate } from '../../factories/ai-insight.factory';
+import { mockProactivePermissions } from '../../fixtures/ai-insight.fixture';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 
@@ -9,6 +10,11 @@ import { expect, test } from '../../fixtures/auth.fixture';
 const REPORTS = [createReport()];
 
 const JOB = createJob({ id: 3, name: '월간 화재 통계' });
+
+// 생성·편집·삭제·복제·실행 버튼은 proactive:write 가 있어야 보인다(WD-133) — 이 spec 은 쓰기 권한 사용자를 전제로 한다.
+test.beforeEach(async ({ authenticatedPage: page }) => {
+  await mockProactivePermissions(page);
+});
 
 test.describe('리포트 목록', () => {
   test('생성된 리포트가 목록에 렌더링된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {

@@ -21,16 +21,13 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import {
-  useCloneProactiveJob,
-  useExecuteProactiveJob,
-  useProactiveJobs,
-  useUpdateProactiveJob,
-} from '@/hooks/queries/useProactiveMessages';
+import { useCanWriteProactive,useCloneProactiveJob, useExecuteProactiveJob, useProactiveJobs, useUpdateProactiveJob } from '@/hooks/queries/useProactiveMessages';
 import { handleApiError } from '@/lib/api-error';
 import { cronToLabel } from '@/lib/cron-label';
 import { parseUtcDate, timeAgo } from '@/lib/formatters';
 import { formatNextRunShort } from '@/lib/next-run';
+
+import { ProactiveWriteNotice } from './components/ProactiveWriteNotice';
 
 function channelSummary(config: Record<string, unknown>): string {
   const channels = config?.channels;
@@ -78,6 +75,16 @@ export default function ProactiveJobListPage() {
   const updateMutation = useUpdateProactiveJob();
   const executeMutation = useExecuteProactiveJob();
   const cloneMutation = useCloneProactiveJob();
+  // 생성·복제(POST /proactive/jobs)·활성 전환(PUT)·지금 실행(POST /execute)은 서버가 proactive:write 로 막는다 —
+  // 권한이 없으면 눌러도 늘 403 인 진입점을 숨긴다(WD-133). 최종 판정은 서버이고 여기는 노출 결정용이다.
+  const { canWrite, isLoading: isPermissionsLoading } = useCanWriteProactive();
+
+  // 조회만 가능한 사용자에게 버튼이 없는 이유를 알린다 — 권한을 불러오는 중에는 깜빡이지 않게 숨긴다.
+  // 빈 상태도 별도 early return 이라 두 갈래 모두에서 같은 안내를 쓴다.
+  const readonlyNotice =
+    !isPermissionsLoading && !canWrite ? (
+      <ProactiveWriteNotice subject="스마트 작업" testId="jobs-readonly-notice" />
+    ) : null;
 
   const handleToggle = (job: ProactiveJob, enabled: boolean) => {
     updateMutation.mutate(
@@ -130,18 +137,24 @@ export default function ProactiveJobListPage() {
 
   if (!isLoading && jobs.length === 0) {
     return (
-      <div className="rounded-lg border border-dashed flex flex-col items-center justify-center py-16 gap-3 text-center">
-        <Zap className="h-10 w-10 text-muted-foreground" />
-        <div>
-          <p className="text-sm font-medium">스마트 작업 없음</p>
-          <p className="text-xs text-muted-foreground mt-1">
-            AI가 주기적으로 데이터를 분석하고 리포트를 보내드립니다.
-          </p>
+      <div className="space-y-4">
+        {readonlyNotice}
+        <div className="rounded-lg border border-dashed flex flex-col items-center justify-center py-16 gap-3 text-center">
+          <Zap className="h-10 w-10 text-muted-foreground" />
+          <div>
+            <p className="text-sm font-medium">스마트 작업 없음</p>
+            <p className="text-xs text-muted-foreground mt-1">
+              AI가 주기적으로 데이터를 분석하고 리포트를 보내드립니다.
+            </p>
+          </div>
+          {/* 쓰기 권한이 있을 때만 생성 CTA 를 보인다(WD-133) */}
+          {canWrite && (
+            <Button size="sm" variant="outline" onClick={() => navigate('/ai-insights/jobs/new')}>
+              <Plus className="h-4 w-4" />
+              첫 작업 만들기
+            </Button>
+          )}
         </div>
-        <Button size="sm" variant="outline" onClick={() => navigate('/ai-insights/jobs/new')}>
-          <Plus className="h-4 w-4" />
-          첫 작업 만들기
-        </Button>
       </div>
     );
   }
@@ -152,11 +165,14 @@ export default function ProactiveJobListPage() {
         <p className="text-sm text-muted-foreground">
           스케줄에 따라 자동으로 AI 분석을 실행하고 결과를 전달합니다.
         </p>
-        <Button size="sm" onClick={() => navigate('/ai-insights/jobs/new')}>
-          <Plus className="h-4 w-4" />
-          작업 추가
-        </Button>
+        {canWrite && (
+          <Button size="sm" onClick={() => navigate('/ai-insights/jobs/new')}>
+            <Plus className="h-4 w-4" />
+            작업 추가
+          </Button>
+        )}
       </div>
+      {readonlyNotice}
 
       <div className="rounded-md border">
         <Table aria-label="스마트 작업 목록">
@@ -249,49 +265,57 @@ export default function ProactiveJobListPage() {
                     )}
                   </TableCell>
                   <TableCell>
-                    <Switch
-                      checked={job.enabled}
-                      aria-label={`${job.name} 활성화`}
-                      onClick={(e) => e.stopPropagation()}
-                      onCheckedChange={(checked) => handleToggle(job, checked)}
-                    />
+                    {/* 활성 여부는 상태 정보라 권한이 없어도 보이되 바꿀 수는 없게 비활성화한다(WD-133).
+                        비활성 스위치를 눌렀을 때 클릭이 행으로 새어 상세로 이동하지 않도록 감싼 span 에서 막는다. */}
+                    <span className="inline-flex" onClick={(e) => e.stopPropagation()}>
+                      <Switch
+                        checked={job.enabled}
+                        aria-label={`${job.name} 활성화`}
+                        disabled={!canWrite}
+                        title={canWrite ? undefined : '스마트 작업 쓰기 권한이 있어야 바꿀 수 있습니다'}
+                        onCheckedChange={(checked) => handleToggle(job, checked)}
+                      />
+                    </span>
                   </TableCell>
                   <TableCell>
-                    {/* 아이콘 버튼에 시각적 툴팁 제공 — aria-label만으로는 마우스 사용자가 기능을 파악하기 어려움 */}
-                    <TooltipProvider>
-                      <div className="flex items-center gap-1">
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button
-                              size="icon"
-                              variant="ghost"
-                              className="h-7 w-7"
-                              aria-label="복제"
-                              onClick={(e) => handleClone(e, job)}
-                              disabled={cloneMutation.isPending}
-                            >
-                              <Copy className="h-3.5 w-3.5" />
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent>복제</TooltipContent>
-                        </Tooltip>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button
-                              size="icon"
-                              variant="ghost"
-                              className="h-7 w-7"
-                              aria-label="지금 실행"
-                              onClick={(e) => handleExecute(e, job)}
-                              disabled={executeMutation.isPending}
-                            >
-                              <Play className="h-3.5 w-3.5" />
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent>지금 실행</TooltipContent>
-                        </Tooltip>
-                      </div>
-                    </TooltipProvider>
+                    {/* 아이콘 버튼에 시각적 툴팁 제공 — aria-label만으로는 마우스 사용자가 기능을 파악하기 어려움.
+                        복제(POST /proactive/jobs)·지금 실행(POST /execute)은 쓰기 권한이 있을 때만 보인다(WD-133). */}
+                    {canWrite && (
+                      <TooltipProvider>
+                        <div className="flex items-center gap-1">
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                className="h-7 w-7"
+                                aria-label="복제"
+                                onClick={(e) => handleClone(e, job)}
+                                disabled={cloneMutation.isPending}
+                              >
+                                <Copy className="h-3.5 w-3.5" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>복제</TooltipContent>
+                          </Tooltip>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                className="h-7 w-7"
+                                aria-label="지금 실행"
+                                onClick={(e) => handleExecute(e, job)}
+                                disabled={executeMutation.isPending}
+                              >
+                                <Play className="h-3.5 w-3.5" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>지금 실행</TooltipContent>
+                          </Tooltip>
+                        </div>
+                      </TooltipProvider>
+                    )}
                   </TableCell>
                 </TableRow>
               ))

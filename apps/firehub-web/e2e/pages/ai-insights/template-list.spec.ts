@@ -1,5 +1,5 @@
 import { createTemplate } from '../../factories/ai-insight.factory';
-import { setupTemplateListMocks } from '../../fixtures/ai-insight.fixture';
+import { mockProactivePermissions, setupTemplateListMocks } from '../../fixtures/ai-insight.fixture';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 
@@ -7,6 +7,12 @@ import { expect, test } from '../../fixtures/auth.fixture';
  * 리포트 양식(Template) 목록 페이지 E2E 테스트
  * - 기본/커스텀 템플릿 구분, 빈 상태, 새 템플릿 버튼을 검증한다.
  */
+
+// 생성·편집·삭제·복제·실행 버튼은 proactive:write 가 있어야 보인다(WD-133) — 이 spec 은 쓰기 권한 사용자를 전제로 한다.
+test.beforeEach(async ({ authenticatedPage: page }) => {
+  await mockProactivePermissions(page);
+});
+
 test.describe('리포트 양식 목록 페이지', () => {
   test('템플릿 목록이 기본/커스텀으로 구분되어 렌더링된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     // 기본(builtin: true) + 커스텀(builtin: false) 템플릿 각 1개씩 모킹

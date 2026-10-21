@@ -1,6 +1,7 @@
 import type { Page } from '@playwright/test';
 
 import { createJob, createTemplates } from '../../factories/ai-insight.factory';
+import { mockProactivePermissions } from '../../fixtures/ai-insight.fixture';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 
@@ -39,6 +40,11 @@ async function setupAndNavigateToNotifyTab(
     await notifyTab.click();
   }
 }
+
+// 생성·편집·삭제·복제·실행 버튼은 proactive:write 가 있어야 보인다(WD-133) — 이 spec 은 쓰기 권한 사용자를 전제로 한다.
+test.beforeEach(async ({ authenticatedPage: page }) => {
+  await mockProactivePermissions(page);
+});
 
 test.describe('ChannelRecipientEditor — 4채널 확장', () => {
   test('CHAT/EMAIL/KAKAO/SLACK 4개 체크박스가 모두 렌더링된다', async ({ authenticatedPage: page }) => {

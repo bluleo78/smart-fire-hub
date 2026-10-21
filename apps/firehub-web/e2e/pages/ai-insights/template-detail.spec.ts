@@ -1,5 +1,5 @@
 import { createJob,createTemplate, createTemplateSection } from '../../factories/ai-insight.factory';
-import { setupTemplateDetailMocks } from '../../fixtures/ai-insight.fixture';
+import { mockProactivePermissions, setupTemplateDetailMocks } from '../../fixtures/ai-insight.fixture';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 
@@ -8,6 +8,12 @@ import { expect, test } from '../../fixtures/auth.fixture';
  * - 템플릿 로드, 빌트인/커스텀 구분, 새 템플릿 생성 폼을 검증한다.
  * - TemplateJsonEditor(CodeMirror) 비동기 렌더링으로 인해 데이터 로딩 대기가 필요하다.
  */
+
+// 생성·편집·삭제·복제·실행 버튼은 proactive:write 가 있어야 보인다(WD-133) — 이 spec 은 쓰기 권한 사용자를 전제로 한다.
+test.beforeEach(async ({ authenticatedPage: page }) => {
+  await mockProactivePermissions(page);
+});
+
 test.describe('리포트 템플릿 상세 페이지', () => {
   test('커스텀 템플릿 상세가 올바르게 렌더링된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     // 커스텀 템플릿(builtin: false)으로 모킹

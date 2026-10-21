@@ -31,20 +31,14 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
-import {
-  useCreateProactiveTemplate,
-  useDeleteProactiveTemplate,
-  useProactiveJobs,
-  useProactiveTemplate,
-  useProactiveTemplates,
-  useUpdateProactiveTemplate,
-} from '@/hooks/queries/useProactiveMessages';
+import { useCanWriteProactive,useCreateProactiveTemplate, useDeleteProactiveTemplate, useProactiveJobs, useProactiveTemplate, useProactiveTemplates, useUpdateProactiveTemplate } from '@/hooks/queries/useProactiveMessages';
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import { handleApiError } from '@/lib/api-error';
 import { parseUtcDate } from '@/lib/formatters';
 import { parseTemplateSections, validateSectionKeys } from '@/lib/template-section-types';
 import { type ReportTemplateFormValues, reportTemplateSchema } from '@/lib/validations/report-template';
 
+import { ProactiveWriteNotice } from './components/ProactiveWriteNotice';
 import { SectionPreview } from './components/SectionPreview';
 import { SectionPropertyEditor } from './components/SectionPropertyEditor';
 import { SectionTreeBuilder } from './components/SectionTreeBuilder';
@@ -75,6 +69,9 @@ export default function ReportTemplateDetailPage() {
   // 삭제 시 영향받는 스마트 작업을 고지하기 위한 조회 (#364)
   // FK가 ON DELETE SET NULL이라 삭제 자체는 막히지 않고, 참조 작업이 조용히 기본 형식으로 전환된다.
   const { data: allJobs = [] } = useProactiveJobs();
+  // 생성·수정·삭제·복제(POST /proactive/templates)는 서버가 proactive:write 로 막는다 — 권한이 없으면 진입점을 숨기고
+  // 조회 전용으로 보인다(WD-133). 최종 판정은 서버이고 여기는 노출 결정용이다.
+  const { canWrite, isLoading: isPermissionsLoading } = useCanWriteProactive();
   // Fallback: use list data if single-item API fails
   // #632: 목록 응답이 요약(ReportTemplateSummary)으로 축소되어 sections/style을 포함하지 않는다.
   // 이 폴백은 단건 조회 실패라는 드문 경로뿐 아니라, 단건 조회가 아직 pending인 정상 경로에서도
@@ -361,11 +358,36 @@ export default function ReportTemplateDetailPage() {
     [allJobs, isNew, templateId],
   );
 
-  if (!isNew && isLoading) {
+  // 새 템플릿 화면은 권한을 알기 전까지 빌더를 그리지 않는다 — 조회 전용 사용자에게 폼이 잠깐 비쳤다 사라지지 않게 한다.
+  if ((!isNew && isLoading) || (isNew && isPermissionsLoading)) {
     return (
       <div className="space-y-6">
         <div className="h-8 w-64 bg-muted animate-pulse rounded" />
         <div className="h-96 bg-muted animate-pulse rounded" />
+      </div>
+    );
+  }
+
+  // 쓰기 권한 없이 /ai-insights/templates/new 로 직접 들어오면 저장할 수 없는 빌더 대신 안내만 보인다(WD-133).
+  if (isNew && !canWrite) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center gap-3">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => navigate('/ai-insights/reports?tab=templates')}
+            aria-label="목록으로"
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </Button>
+          <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">새 템플릿</h1>
+        </div>
+        <ProactiveWriteNotice subject="리포트 양식" testId="template-readonly-notice" />
+        <Button variant="outline" size="sm" onClick={() => navigate('/ai-insights/reports?tab=templates')}>
+          <ArrowLeft className="h-4 w-4" />
+          목록으로 돌아가기
+        </Button>
       </div>
     );
   }
@@ -407,7 +429,8 @@ export default function ReportTemplateDetailPage() {
         </div>
 
         <div className="flex items-center gap-2">
-          {!isNew && !isEditing && (
+          {/* 복제(POST)·편집(PUT)·삭제(DELETE)는 모두 쓰기 권한이 있을 때만 보인다(WD-133) — 기본 템플릿의 복제도 마찬가지 */}
+          {!isNew && !isEditing && canWrite && (
             <>
               <Button variant="outline" size="sm" onClick={handleClone} disabled={createMutation.isPending}>
                 <Copy className="h-3.5 w-3.5" />
@@ -447,6 +470,11 @@ export default function ReportTemplateDetailPage() {
           )}
         </div>
       </header>
+
+      {/* 조회만 가능한 사용자에게 버튼이 없는 이유를 알린다 — 권한을 불러오는 중에는 깜빡이지 않게 숨긴다. */}
+      {!isPermissionsLoading && !canWrite && (
+        <ProactiveWriteNotice subject="리포트 양식" testId="template-readonly-notice" />
+      )}
 
       {/* 메타 정보 (읽기 모드) */}
       {!isNew && !isEditing && template && (

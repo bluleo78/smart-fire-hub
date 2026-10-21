@@ -6,11 +6,19 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { SearchInput } from '@/components/ui/search-input';
-import { useProactiveTemplates } from '@/hooks/queries/useProactiveMessages';
+import { useCanWriteProactive,useProactiveTemplates } from '@/hooks/queries/useProactiveMessages';
 
+import { ProactiveWriteNotice } from '../components/ProactiveWriteNotice';
+
+/**
+ * 리포트 양식(템플릿) 목록 탭 — 기본 템플릿과 커스텀 템플릿을 나눠 보여준다.
+ * 생성은 서버가 proactive:write 로 막으므로 권한이 없으면 생성 진입점을 숨기고 안내 한 줄만 둔다(WD-133).
+ */
 export default function ReportTemplatesTab() {
   const { data: templates = [], isLoading } = useProactiveTemplates();
   const navigate = useNavigate();
+  // 노출 결정용 — 최종 판정은 서버. 권한을 불러오는 중에는 버튼도 안내도 보이지 않는다.
+  const { canWrite, isLoading: isPermissionsLoading } = useCanWriteProactive();
   // 커스텀 템플릿 이름 검색어. 템플릿이 늘어날수록(#547) 스크롤만으로는
   // 원하는 항목을 찾기 어려워 클라이언트 사이드 필터를 둔다.
   const [customSearch, setCustomSearch] = useState('');
@@ -70,11 +78,18 @@ export default function ReportTemplatesTab() {
             <h3 className="text-base font-semibold">커스텀 템플릿</h3>
             <p className="text-sm text-muted-foreground mt-1">직접 만든 리포트 템플릿입니다.</p>
           </div>
-          <Button size="sm" onClick={() => navigate('/ai-insights/templates/new')}>
-            <Plus className="h-4 w-4" />
-            템플릿 추가
-          </Button>
+          {canWrite && (
+            <Button size="sm" onClick={() => navigate('/ai-insights/templates/new')}>
+              <Plus className="h-4 w-4" />
+              템플릿 추가
+            </Button>
+          )}
         </div>
+
+        {/* 조회만 가능한 사용자에게 추가 버튼이 없는 이유를 알린다 */}
+        {!isPermissionsLoading && !canWrite && (
+          <ProactiveWriteNotice subject="리포트 양식" testId="templates-readonly-notice" />
+        )}
 
         {customs.length === 0 ? (
           <div className="rounded-lg border border-dashed flex flex-col items-center justify-center py-12 gap-3 text-center">
@@ -85,10 +100,12 @@ export default function ReportTemplatesTab() {
                 나만의 리포트 구조를 만들어 스마트 작업에 사용하세요.
               </p>
             </div>
-            <Button size="sm" variant="outline" onClick={() => navigate('/ai-insights/templates/new')}>
-              <Plus className="h-4 w-4" />
-              첫 템플릿 만들기
-            </Button>
+            {canWrite && (
+              <Button size="sm" variant="outline" onClick={() => navigate('/ai-insights/templates/new')}>
+                <Plus className="h-4 w-4" />
+                첫 템플릿 만들기
+              </Button>
+            )}
           </div>
         ) : (
           <>

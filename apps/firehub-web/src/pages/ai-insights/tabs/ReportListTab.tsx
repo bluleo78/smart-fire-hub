@@ -14,7 +14,7 @@ import {
 } from '@/components/ui/table';
 import { TableEmptyRow } from '@/components/ui/table-empty';
 import { TableSkeletonRows } from '@/components/ui/table-skeleton';
-import { useProactiveJobs, useReports } from '@/hooks/queries/useProactiveMessages';
+import { useCanWriteProactive,useProactiveJobs, useReports } from '@/hooks/queries/useProactiveMessages';
 import { downloadReportPdf } from '@/hooks/useReportActions';
 import { formatDate, timeAgo } from '@/lib/formatters';
 
@@ -32,16 +32,21 @@ export default function ReportListTab() {
   // 빈 상태를 "잡이 없음" / "잡은 있으나 리포트 없음" 으로 가르기 위해 잡 목록도 본다.
   // 리포트가 하나라도 있으면 이 분기 자체가 필요 없으므로 요청을 내지 않는다.
   const { data: jobs = [] } = useProactiveJobs({ enabled: !isLoading && reports.length === 0 });
+  // 작업 생성은 서버가 proactive:write 로 막는다 — 권한이 없으면 눌러도 403 인 「스마트 작업 만들기」 CTA 를 숨긴다(WD-133).
+  const { canWrite } = useCanWriteProactive();
 
   // 빈 상태는 두 갈래다 — 잡이 없는 사용자에게 "리포트가 없다"고만 하면 다음 행동을 알 수 없다
   const hasNoJobs = jobs.length === 0;
   const emptyMessage = hasNoJobs
     ? '스마트 작업을 만들면 생성된 리포트가 여기에 쌓입니다.'
     : '아직 생성된 리포트가 없습니다.';
+  // 잡이 없는데 만들 권한도 없으면 이어갈 행동이 없으므로 CTA 를 두지 않는다(안내 문구만 남긴다).
   const emptyAction = hasNoJobs ? (
-    <Button size="sm" onClick={() => navigate('/ai-insights/jobs/new')}>
-      스마트 작업 만들기
-    </Button>
+    canWrite ? (
+      <Button size="sm" onClick={() => navigate('/ai-insights/jobs/new')}>
+        스마트 작업 만들기
+      </Button>
+    ) : undefined
   ) : (
     <Button variant="outline" size="sm" onClick={() => navigate('/ai-insights/jobs')}>
       스마트 작업 보기

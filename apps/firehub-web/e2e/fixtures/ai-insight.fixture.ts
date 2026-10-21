@@ -19,6 +19,22 @@ import { mockApi } from './api-mock';
  */
 
 /**
+ * 스마트 작업·리포트 양식 권한 코드 모킹(WD-133).
+ * - 생성·수정·삭제·복제·지금 실행 버튼은 proactive:write 가 있을 때만 보인다. 기본 인증 fixture 는 권한을 [] 로
+ *   모킹하므로, 이 버튼들을 다루는 spec 은 beforeEach 에서 이 헬퍼를 불러 쓰기 권한을 준다.
+ * - canWrite=false 면 조회 전용 사용자(proactive:read 만)가 된다. 나중에 등록한 route 가 이기므로
+ *   인증 fixture(권한 [])·파일 단위 beforeEach(쓰기 권한)보다 뒤, 즉 테스트 본문에서 불러야 덮어쓴 값이 유지된다.
+ */
+export async function mockProactivePermissions(page: Page, { canWrite = true }: { canWrite?: boolean } = {}) {
+  await mockApi(
+    page,
+    'GET',
+    '/api/v1/auth/me/permissions',
+    canWrite ? ['proactive:read', 'proactive:write'] : ['proactive:read'],
+  );
+}
+
+/**
  * 작업 목록 페이지 API 모킹
  * - 프로액티브 잡 목록과 읽지 않은 메시지 수를 모킹한다.
  * @param count - 목록에 포함할 잡 수 (기본값: 3)

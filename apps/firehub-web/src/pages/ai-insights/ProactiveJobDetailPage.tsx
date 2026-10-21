@@ -19,19 +19,12 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import {
-  useCloneProactiveJob,
-  useCreateProactiveJob,
-  useDeleteProactiveJob,
-  useExecuteProactiveJob,
-  useProactiveJob,
-  useProactiveTemplates,
-  useUpdateProactiveJob,
-} from '@/hooks/queries/useProactiveMessages';
+import { useCanWriteProactive,useCloneProactiveJob, useCreateProactiveJob, useDeleteProactiveJob, useExecuteProactiveJob, useProactiveJob, useProactiveTemplates, useUpdateProactiveJob } from '@/hooks/queries/useProactiveMessages';
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import { handleApiError } from '@/lib/api-error';
 import { type ProactiveJobFormValues,proactiveJobSchema } from '@/lib/validations/proactive-job';
 
+import { ProactiveWriteNotice } from './components/ProactiveWriteNotice';
 import JobExecutionsTab from './tabs/JobExecutionsTab';
 import JobMonitoringTab from './tabs/JobMonitoringTab';
 import JobOverviewTab from './tabs/JobOverviewTab';
@@ -121,6 +114,9 @@ export default function ProactiveJobDetailPage() {
 
   const { data: job, isLoading, isError } = useProactiveJob(jobId);
   const { data: templates = [] } = useProactiveTemplates();
+  // 생성·수정·삭제·복제·지금 실행은 서버가 proactive:write 로 막는다 — 권한이 없으면 폼을 다 채운 뒤에야 403 을 받던
+  // 진입점을 숨기고 조회 전용으로 보인다(WD-133). 최종 판정은 서버이고 여기는 노출 결정용이다.
+  const { canWrite, isLoading: isPermissionsLoading } = useCanWriteProactive();
 
   const [isEditing, setIsEditing] = useState(isNew);
 
@@ -292,7 +288,8 @@ export default function ProactiveJobDetailPage() {
     setTimeout(() => { isExecutingRef.current = false; }, 1000);
   };
 
-  if (!isNew && isLoading) {
+  // 새 작업 화면은 권한을 알기 전까지 폼을 그리지 않는다 — 조회 전용 사용자에게 폼이 잠깐 비쳤다 사라지지 않게 한다.
+  if ((!isNew && isLoading) || (isNew && isPermissionsLoading)) {
     return (
       <div className="space-y-6">
         <div className="h-8 w-64 bg-muted animate-pulse rounded" />
@@ -314,6 +311,25 @@ export default function ProactiveJobDetailPage() {
           <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">작업을 찾을 수 없습니다</h1>
         </div>
         <p className="text-muted-foreground text-sm">요청하신 작업이 존재하지 않거나 삭제되었습니다.</p>
+        <Button variant="outline" size="sm" onClick={() => navigate('/ai-insights/jobs')}>
+          <ArrowLeft className="h-4 w-4" />
+          목록으로 돌아가기
+        </Button>
+      </div>
+    );
+  }
+
+  // 쓰기 권한 없이 /ai-insights/jobs/new 로 직접 들어오면 채워도 저장할 수 없는 폼 대신 안내만 보인다(WD-133).
+  if (isNew && !canWrite) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center gap-3">
+          <Button variant="ghost" size="icon" onClick={() => navigate('/ai-insights/jobs')} aria-label="목록으로">
+            <ArrowLeft className="h-4 w-4" />
+          </Button>
+          <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">새 스마트 작업</h1>
+        </div>
+        <ProactiveWriteNotice subject="스마트 작업" testId="job-readonly-notice" />
         <Button variant="outline" size="sm" onClick={() => navigate('/ai-insights/jobs')}>
           <ArrowLeft className="h-4 w-4" />
           목록으로 돌아가기
@@ -357,7 +373,8 @@ export default function ProactiveJobDetailPage() {
         </div>
 
         <div className="flex items-center gap-2">
-          {!isNew && !isEditing && (
+          {/* 복제(POST)·지금 실행·편집(PUT)·삭제(DELETE)는 모두 쓰기 권한이 있을 때만 보인다(WD-133) */}
+          {!isNew && !isEditing && canWrite && (
             <>
               <Button
                 variant="outline"
@@ -411,6 +428,11 @@ export default function ProactiveJobDetailPage() {
           )}
         </div>
       </header>
+
+      {/* 조회만 가능한 사용자에게 버튼이 없는 이유를 알린다 — 권한을 불러오는 중에는 깜빡이지 않게 숨긴다. */}
+      {!isPermissionsLoading && !canWrite && (
+        <ProactiveWriteNotice subject="스마트 작업" testId="job-readonly-notice" />
+      )}
 
       {/* 탭 */}
       <Tabs value={activeTab} onValueChange={handleTabChange}>

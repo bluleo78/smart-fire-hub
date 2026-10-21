@@ -1,5 +1,5 @@
 import { createJob, createJobExecution } from '../../factories/ai-insight.factory';
-import { setupJobListMocks } from '../../fixtures/ai-insight.fixture';
+import { mockProactivePermissions, setupJobListMocks } from '../../fixtures/ai-insight.fixture';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 
@@ -7,6 +7,12 @@ import { expect, test } from '../../fixtures/auth.fixture';
  * 스마트 작업(Job) 목록 페이지 E2E 테스트
  * - API 모킹 기반으로 백엔드 없이 목록 페이지 UI를 검증한다.
  */
+
+// 생성·편집·삭제·복제·실행 버튼은 proactive:write 가 있어야 보인다(WD-133) — 이 spec 은 쓰기 권한 사용자를 전제로 한다.
+test.beforeEach(async ({ authenticatedPage: page }) => {
+  await mockProactivePermissions(page);
+});
+
 test.describe('스마트 작업 목록 페이지', () => {
   test('작업 목록이 올바르게 렌더링된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     // 3개 작업 목록을 모킹한 후 목록 페이지 접근

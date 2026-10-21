@@ -1,6 +1,7 @@
 import { createJob, createJobExecution, createTemplates } from '../../factories/ai-insight.factory';
 import { createDataset } from '../../factories/dataset.factory';
 import {
+  mockProactivePermissions,
   setupJobDetailMocks,
   setupJobDetailWithExecutionsMocks,
   setupNewJobMocks,
@@ -12,6 +13,12 @@ import { expect, test } from '../../fixtures/auth.fixture';
  * 스마트 작업(Job) 상세 페이지 E2E 테스트
  * - 기존 작업 조회, 실행 이력, 새 작업 생성 폼 UI를 검증한다.
  */
+
+// 생성·편집·삭제·복제·실행 버튼은 proactive:write 가 있어야 보인다(WD-133) — 이 spec 은 쓰기 권한 사용자를 전제로 한다.
+test.beforeEach(async ({ authenticatedPage: page }) => {
+  await mockProactivePermissions(page);
+});
+
 test.describe('스마트 작업 상세 페이지', () => {
   test('작업 정보가 올바르게 렌더링된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     // 잡 ID 1 상세 페이지 모킹

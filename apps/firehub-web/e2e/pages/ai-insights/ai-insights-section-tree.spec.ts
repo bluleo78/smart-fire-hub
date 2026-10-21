@@ -1,6 +1,7 @@
 import type { Page } from '@playwright/test';
 
 import { createTemplate, createTemplateSection } from '../../factories/ai-insight.factory';
+import { mockProactivePermissions } from '../../fixtures/ai-insight.fixture';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 
@@ -20,6 +21,11 @@ async function setupTemplate(page: Page, overrides: Parameters<typeof createTemp
   await mockApi(page, 'PUT', '/api/v1/proactive/templates/30', { ...template });
   return template;
 }
+
+// 생성·편집·삭제·복제·실행 버튼은 proactive:write 가 있어야 보인다(WD-133) — 이 spec 은 쓰기 권한 사용자를 전제로 한다.
+test.beforeEach(async ({ authenticatedPage: page }) => {
+  await mockProactivePermissions(page);
+});
 
 test.describe('AI 인사이트 섹션 트리 — 렌더링 및 트리 조작', () => {
   /**

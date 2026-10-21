@@ -1,6 +1,7 @@
 import type { Page } from '@playwright/test';
 
 import { createTemplate, createTemplateSection } from '../../factories/ai-insight.factory';
+import { mockProactivePermissions } from '../../fixtures/ai-insight.fixture';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 
@@ -10,6 +11,12 @@ import { expect, test } from '../../fixtures/auth.fixture';
  *   섹션 트리 CRUD 전 경로를 검증해 useSectionTree 훅의 add/remove/update/
  *   toggleCollapsed 브랜치와 SectionPropertyEditor 라벨 편집 경로를 커버한다.
  */
+
+// 생성·편집·삭제·복제·실행 버튼은 proactive:write 가 있어야 보인다(WD-133) — 이 spec 은 쓰기 권한 사용자를 전제로 한다.
+test.beforeEach(async ({ authenticatedPage: page }) => {
+  await mockProactivePermissions(page);
+});
+
 test.describe('리포트 템플릿 섹션 트리 빌더', () => {
   /** 공통 모킹 헬퍼 — 커스텀 템플릿 + 업데이트 API 캡처 */
   async function setupEditableTemplate(page: Page) {

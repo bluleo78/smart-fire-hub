@@ -10,6 +10,7 @@ import type {
   UpdateReportTemplateRequest,
 } from '../../api/proactive';
 import { proactiveApi } from '../../api/proactive';
+import { useMyPermissions } from './useMyPermissions';
 
 const KEYS = {
   jobs: ['proactive', 'jobs'] as const,
@@ -27,6 +28,17 @@ const KEYS = {
 };
 
 // ── Jobs ──────────────────────────────────────────────────────────────────────
+
+/**
+ * 스마트 작업·리포트 양식을 만들거나 바꿀 수 있는가 (WD-133).
+ *
+ * 생성·수정·삭제·지금 실행은 서버가 proactive:write 로 막는다. 권한이 없는데 버튼을 보여 주면 폼을 다 채운 뒤에야
+ * 403 을 받으므로 화면은 이 값으로 진입점을 숨긴다. 서버에 관리자 우회가 없으므로(ADMIN 역할이 권한을 가짐) 권한 코드만 본다.
+ */
+export function useCanWriteProactive() {
+  const { permissions, isLoading } = useMyPermissions();
+  return { canWrite: permissions.has('proactive:write'), isLoading };
+}
 
 /** 실행 중 폴링 간격 — 실행 이력 탭(JobExecutionsTab)과 같은 5초. */
 const RUN_POLL_MS = 5000;

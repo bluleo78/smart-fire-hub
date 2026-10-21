@@ -8,6 +8,7 @@
  * AI 챗은 SSE 스트리밍이므로 page.route()로 SSE 응답을 모킹하여 테스트한다.
  */
 
+import { mockProactivePermissions } from '../fixtures/ai-insight.fixture';
 import { expect,test } from '../fixtures/auth.fixture';
 
 /** SSE 이벤트 직렬화 — 각 이벤트를 "data: {json}\n\n" 형태로 변환 */
@@ -121,6 +122,11 @@ async function openChatAndSend(page: import('@playwright/test').Page, message: s
   await chatInput.fill(message);
   await chatInput.press('Enter');
 }
+
+// 생성·편집·삭제·복제·실행 버튼은 proactive:write 가 있어야 보인다(WD-133) — 이 spec 은 쓰기 권한 사용자를 전제로 한다.
+test.beforeEach(async ({ authenticatedPage: page }) => {
+  await mockProactivePermissions(page);
+});
 
 test.describe('AI 리포트 빌더 위젯', () => {
   test('generate_report 도구 결과가 위젯으로 렌더링된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {

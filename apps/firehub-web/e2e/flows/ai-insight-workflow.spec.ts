@@ -1,5 +1,6 @@
 import { createJob, createTemplate } from '../factories/ai-insight.factory';
 import {
+  mockProactivePermissions,
   setupJobDetailMocks,
   setupJobListMocks,
   setupTemplateListMocks,
@@ -12,6 +13,12 @@ import { expect, test } from '../fixtures/auth.fixture';
  * - 작업 목록 → 상세, 템플릿 목록 확인, 작업 실행 등
  *   여러 페이지를 걸치는 사용자 플로우를 검증한다.
  */
+
+// 생성·편집·삭제·복제·실행 버튼은 proactive:write 가 있어야 보인다(WD-133) — 이 spec 은 쓰기 권한 사용자를 전제로 한다.
+test.beforeEach(async ({ authenticatedPage: page }) => {
+  await mockProactivePermissions(page);
+});
+
 test.describe('AI 인사이트 플로우', () => {
   test('작업 목록 → 작업 상세 페이지로 이동한다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     // 작업 목록 페이지 모킹
