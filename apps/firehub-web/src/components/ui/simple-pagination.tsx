@@ -92,7 +92,8 @@ export function SimplePagination({
       {showCount && (
         <p className="text-sm text-muted-foreground">
           총 {totalElements}건
-          {totalElements! > 0 && (
+          {/* 범위 밖 페이지(낡은 북마크 ?page=999)면 「9991-15」처럼 깨진 범위가 나오므로 범위를 숨긴다(WD-146) */}
+          {totalElements! > 0 && page * pageSize! < totalElements! && (
             <>
               {' '}중 {page * pageSize! + 1}-
               {Math.min((page + 1) * pageSize!, totalElements!)}

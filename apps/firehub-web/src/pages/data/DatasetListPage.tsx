@@ -35,9 +35,9 @@ import {
 } from '../../hooks/queries/useDatasets';
 import { useSecurityLevels } from '../../hooks/queries/useSecurityLevels';
 import { useRecentDatasets } from '../../hooks/useRecentDatasets';
-import { handleApiError } from '../../lib/api-error';
+import { extractApiError, handleApiError, isForbiddenError } from '../../lib/api-error';
 import { formatDateOnly, formatDateTimeMinute, formatRelativeTime, getOriginTypeLabel, getStorageTypeLabel } from '../../lib/formatters';
-import { getPageAfterDelete } from '../../lib/pagination';
+import { getPageAfterDelete, parseNonNegativeInt } from '../../lib/pagination';
 import { iGa } from '../../lib/utils';
 import { DatasetDeleteConfirmDialog } from './components/DatasetDeleteConfirmDialog';
 import { DatasetPreviewSheet } from './components/DatasetPreviewSheet';
@@ -62,14 +62,15 @@ export default function DatasetListPage() {
   const storageType = searchParams.get('storageType') || '';
   const originType = searchParams.get('originType') || '';
   const search = searchParams.get('q') || '';
-  const page = Number(searchParams.get('page') || '0');
+  // 손으로 고친·낡은 주소(?page=abc, ?page=-1)는 첫 페이지로 읽는다 — 그대로 보내면 서버 400 이 빈 목록처럼 보였다(WD-146)
+  const page = parseNonNegativeInt(searchParams.get('page'), 0);
   const favoriteOnly = searchParams.get('favorite') === 'true';
   const statusFilter = searchParams.get('status') || '';
   // 보안 등급 필터 — 서버 쿼리(페이지 내 정렬 한계 회피, 목업 s2). URL 값은 등급 id.
   const securityLevelParam = searchParams.get('securityLevel');
   const securityLevelId = securityLevelParam ? Number(securityLevelParam) : undefined;
   /** 페이지당 표시 건수: 사용자가 selector 로 변경 가능 (기본 10) */
-  const size = Number(searchParams.get('size') || '10');
+  const size = parseNonNegativeInt(searchParams.get('size'), 10) || 10;
   const sortKeyParam = searchParams.get('sort');
   const sortKey: SortKey | null =
     sortKeyParam === 'name' || sortKeyParam === 'createdAt' ? sortKeyParam : null;
@@ -158,7 +159,7 @@ export default function DatasetListPage() {
   const [typeModalOpen, setTypeModalOpen] = useState(false);
 
   const { data: categoriesData } = useCategories();
-  const { data: datasetsData, isLoading } = useDatasets({
+  const { data: datasetsData, isLoading, isError, error: datasetsError, refetch: refetchDatasets, isFetching } = useDatasets({
     categoryId,
     storageType: storageType || undefined,
     originType: originType || undefined,
@@ -197,6 +198,17 @@ export default function DatasetListPage() {
   }, [rawDatasets, sortKey, sortOrder]);
   const totalPages = datasetsData?.totalPages || 0;
   const totalElements = datasetsData?.totalElements;
+
+  /**
+   * 범위 밖 페이지 — 북마크한 뒷 페이지 주소를 데이터가 줄어든 뒤 열면 서버는 빈 페이지를 준다.
+   * 「데이터셋이 없습니다」로 오해하지 않게 마지막 페이지로 옮긴다(WD-146). 옮기는 동안은 빈 안내 대신 로딩 행을 보인다.
+   */
+  const pageOutOfRange = !!datasetsData && page > 0 && page >= Math.max(datasetsData.totalPages, 1);
+  useEffect(() => {
+    if (!pageOutOfRange || !datasetsData) return;
+    const lastPage = Math.max(datasetsData.totalPages - 1, 0);
+    patchParams({ page: lastPage === 0 ? null : lastPage });
+  }, [pageOutOfRange, datasetsData, patchParams]);
 
   const noFiltersActive = !search && !categoryId && !storageType && !originType && !favoriteOnly && !statusFilter && !securityLevelId;
 
@@ -419,8 +431,32 @@ export default function DatasetListPage() {
             </TableRow>
           </TableHeader>
           <tbody>
-            {isLoading ? (
+            {isLoading || pageOutOfRange ? (
               <TableSkeletonRows columns={8} rows={5} />
+            ) : isError && !datasetsData ? (
+              // 조회 실패를 「데이터셋이 없습니다」로 그리지 않는다 — 서버·권한 오류를 데이터가 없다고 오해하게 된다(WD-146).
+              // 이전 데이터가 있는 재조회 실패는 위 분기가 그 데이터를 그대로 보인다.
+              <TableRow>
+                <TableCell colSpan={8} className="py-12 text-center" role="alert">
+                  <p className="text-sm font-medium text-destructive">
+                    {isForbiddenError(datasetsError)
+                      ? '데이터셋 목록을 볼 권한이 없습니다. 관리자에게 권한을 요청하세요.'
+                      : extractApiError(datasetsError, '데이터셋 목록을 불러오지 못했습니다.')}
+                  </p>
+                  {/* 권한 오류는 다시 시도해도 같으므로 버튼을 두지 않는다(WD-137 선례) */}
+                  {!isForbiddenError(datasetsError) && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="mt-3"
+                      disabled={isFetching}
+                      onClick={() => refetchDatasets()}
+                    >
+                      다시 시도
+                    </Button>
+                  )}
+                </TableCell>
+              </TableRow>
             ) : datasets.length > 0 ? (
               datasets.map((dataset) => (
                 <TableRow
