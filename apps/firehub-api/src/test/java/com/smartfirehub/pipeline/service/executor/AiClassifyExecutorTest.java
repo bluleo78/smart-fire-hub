@@ -33,6 +33,7 @@ import com.smartfirehub.settings.service.AiCredentialService;
 import java.lang.reflect.Method;
 import java.math.BigDecimal;
 import java.sql.Timestamp;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -418,11 +419,46 @@ class AiClassifyExecutorTest {
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("0행")
         .hasMessageContaining("배치 실패 1개")
+        // 러너는 getMessage() 만 저장하므로 사유가 문구에도 있어야 화면에 보인다(WD-149)
+        .hasMessageContaining("마지막 실패 사유: AI agent down")
         // 사유가 cause 로 실려야 한다 — 없으면 pipeline_step_execution.error_message 를 보고도
         // 왜 실패했는지 알 수 없고 로그를 따로 뒤져야 한다.
         .hasRootCauseMessage("AI agent down");
 
     verify(dataTableRowService, never()).insertBatch(anyString(), anyList(), anyList(), anyMap());
+  }
+
+  /**
+   * AI 공급자 미설정으로 모든 배치가 실패하면(onError=CONTINUE 기본값) 스텝은 실패하고, <b>자격증명 안내가 문구에 실린다</b>(WD-149). 예전에는
+   * 「0행이다(입력 3행, 배치 실패 3개)」까지만 보이고 원인은 로그에만 남았다. CONTINUE 가 배치마다 계속하는 동작(#707 후속 3 — 실행 도중 고치면 남은
+   * 배치가 성공)은 그대로다.
+   */
+  @Test
+  @SuppressWarnings({"unchecked", "rawtypes"})
+  void execute_withCredentialNotConfigured_andOnErrorContinue_showsCredentialReasonInMessage() {
+    when(datasetRepository.findTableNameById(200L)).thenReturn(Optional.of("output_table"));
+    when(datasetRepository.findTableNameById(1L)).thenReturn(Optional.of("source_table"));
+    when(dataTableRowService.countRows("source_table")).thenReturn(3L);
+    List<Map<String, Object>> rows = new ArrayList<>();
+    for (long i = 1; i <= 3; i++) {
+      Map<String, Object> r = new HashMap<>();
+      r.put("id", i);
+      r.put("text", "row " + i);
+      rows.add(r);
+    }
+    when(dataTableRowService.queryData(anyString(), any(), any(), anyInt(), anyInt()))
+        .thenReturn(rows);
+    stubCacheMiss();
+    String credentialMessage = "AI API 키 또는 OAuth 토큰이 설정되지 않았습니다. 관리자 설정에서 등록하세요.";
+    when(aiAgentClient.classify(any(), any(), anyLong()))
+        .thenThrow(new IllegalStateException(credentialMessage));
+
+    assertThatThrownBy(
+            () -> executor.execute(buildStep("APPEND", List.of(1L), 1, "CONTINUE"), 100L, 1L))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("AI 분류 결과가 0행입니다(입력 3행, 배치 실패 3개). 마지막 실패 사유: " + credentialMessage);
+    // CONTINUE 는 배치마다 다시 시도한다(실행 도중 고치면 남은 배치가 성공해야 하므로)
+    verify(aiAgentClient, times(3)).classify(any(), any(), anyLong());
   }
 
   /**
@@ -539,6 +575,8 @@ class AiClassifyExecutorTest {
 
     assertThat(result.outputRows()).as("성공한 배치의 행은 살아남아야 한다 — CONTINUE 의 존재 이유다").isEqualTo(1);
     assertThat(result.executionLog()).contains("1 batch errors");
+    // 왜 빠졌는지도 실행 로그(화면)에 남는다(WD-149)
+    assertThat(result.executionLog()).contains("마지막 배치 실패 사유: first batch down");
     verify(dataTableRowService).insertBatch(anyString(), anyList(), anyList(), anyMap());
   }
 
