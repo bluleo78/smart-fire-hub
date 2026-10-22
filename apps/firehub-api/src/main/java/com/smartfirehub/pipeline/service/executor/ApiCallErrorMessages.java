@@ -240,8 +240,8 @@ public final class ApiCallErrorMessages {
     return uri == null ? "" : redactUrl(uri.toString());
   }
 
-  /** 자유 문장 안에 섞인 URL 의 쿼리·프래그먼트·userinfo 를 지운다. */
-  static String redactUrlsInText(String text) {
+  /** 자유 문장 안에 섞인 URL 의 쿼리·프래그먼트·userinfo 를 지운다. API 연결 「테스트」의 오류 문구도 같은 가리기를 쓰므로 공개한다(WD-177). */
+  public static String redactUrlsInText(String text) {
     if (text == null) return "";
     String noQuery = URL_QUERY_IN_TEXT.matcher(text).replaceAll("$1");
     return URL_USERINFO_IN_TEXT.matcher(noQuery).replaceAll("$1");

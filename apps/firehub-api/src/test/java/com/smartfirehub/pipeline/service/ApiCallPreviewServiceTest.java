@@ -733,6 +733,115 @@ class ApiCallPreviewServiceTest {
   }
 
   // =========================================================================
+  // WD-177: resolvedUrl·오류 문구에 쿼리 인증 키 원문이 나가지 않는다
+  // =========================================================================
+
+  /** 영숫자 키 — 외부 서버에 원문이 실제로 도착하는지 단언용. */
+  private static final String WD177_KEY = "PreviewSecret0001234";
+
+  /** 쿼리에 그대로 쓸 수 없는 문자(=·한글·공백)와 +·/ 가 섞인 키. */
+  private static final String WD177_SPECIAL_KEY = "pv+k/e==비밀 Qq77";
+
+  private static java.util.Map<String, String> queryAuth(String key) {
+    return java.util.Map.of(
+        "authType", "API_KEY", "placement", "query", "paramName", "serviceKey", "apiKey", key);
+  }
+
+  private ApiCallPreviewResponse previewWithQueryAuth(String url, String key) {
+    return service.preview(
+        new ApiCallPreviewRequest(
+            url, "GET", null, null, null, "$", null, null, queryAuth(key), 2000));
+  }
+
+  /** 키의 원문·form 인코딩형·%20 인코딩형이 모두 없는지. */
+  private static void assertNoSecret(String text, String key) {
+    if (text == null) return;
+    String formEncoded = java.net.URLEncoder.encode(key, StandardCharsets.UTF_8);
+    assertThat(text)
+        .doesNotContain(key)
+        .doesNotContain(formEncoded)
+        .doesNotContain(formEncoded.replace("+", "%20"));
+  }
+
+  @Test
+  void preview_queryKey_success_resolvedUrlMasked_butServerReceivesRawKey() {
+    wireMock.stubFor(
+        get(urlPathEqualTo("/wd177"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("[{\"a\":1}]")));
+
+    ApiCallPreviewResponse response = previewWithQueryAuth(baseUrl() + "/wd177", WD177_KEY);
+
+    assertThat(response.success()).isTrue();
+    assertThat(response.resolvedUrl()).isEqualTo(baseUrl() + "/wd177?serviceKey=****1234");
+    assertNoSecret(response.resolvedUrl(), WD177_KEY);
+    // 호출은 원문 키로 나가야 한다(가리기는 응답용만).
+    assertThat(wireMock.findAll(getRequestedFor(urlPathEqualTo("/wd177"))).get(0).getUrl())
+        .isEqualTo("/wd177?serviceKey=" + WD177_KEY);
+  }
+
+  @Test
+  void preview_queryKey_http401_resolvedUrlMaskedAndNoSecretInError() {
+    wireMock.stubFor(get(urlPathEqualTo("/wd177")).willReturn(aResponse().withStatus(401)));
+
+    ApiCallPreviewResponse response = previewWithQueryAuth(baseUrl() + "/wd177", WD177_KEY);
+
+    assertThat(response.success()).isFalse();
+    assertThat(response.resolvedUrl()).isEqualTo(baseUrl() + "/wd177?serviceKey=****1234");
+    assertNoSecret(response.errorMessage(), WD177_KEY);
+  }
+
+  @Test
+  void preview_queryKey_connectionRefused_resolvedUrlMaskedAndNoSecretInError() throws Exception {
+    int port;
+    try (java.net.ServerSocket s = new java.net.ServerSocket(0)) {
+      port = s.getLocalPort();
+    }
+    String url = "http://localhost:" + port + "/wd177";
+
+    ApiCallPreviewResponse response = previewWithQueryAuth(url, WD177_KEY);
+
+    assertThat(response.success()).isFalse();
+    assertThat(response.resolvedUrl()).isEqualTo(url + "?serviceKey=****1234");
+    assertNoSecret(response.errorMessage(), WD177_KEY);
+  }
+
+  /** 응답이 요청 파라미터(키)를 되울리는 경우 rawJson 에서도 키를 가린다. */
+  @Test
+  void preview_queryKey_responseEchoingKey_rawJsonMasked() {
+    wireMock.stubFor(
+        get(urlPathEqualTo("/wd177"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("[{\"echo\":\"" + WD177_KEY + "\"}]")));
+
+    ApiCallPreviewResponse response = previewWithQueryAuth(baseUrl() + "/wd177", WD177_KEY);
+
+    assertThat(response.success()).isTrue();
+    assertThat(response.rawJson()).contains("****1234");
+    assertNoSecret(response.rawJson(), WD177_KEY);
+  }
+
+  /**
+   * 쿼리에 그대로 쓸 수 없는 문자가 섞인 키: 예전에는 Spring 의 {@code Invalid character '=' for QUERY_PARAM in "<키>"} 가
+   * 분류되지 않은 오류로 그대로 errorMessage·로그에 실렸다.
+   */
+  @Test
+  void preview_specialCharKey_noSecretInErrorOrUrl() {
+    ApiCallPreviewResponse response = previewWithQueryAuth(baseUrl() + "/wd177", WD177_SPECIAL_KEY);
+
+    assertThat(response.success()).isFalse();
+    assertThat(response.errorMessage()).contains("요청 URL 을 만들 수 없습니다");
+    assertNoSecret(response.errorMessage(), WD177_SPECIAL_KEY);
+    assertNoSecret(response.resolvedUrl(), WD177_SPECIAL_KEY);
+  }
+
+  // =========================================================================
   // 타임아웃 검증
   // =========================================================================
 

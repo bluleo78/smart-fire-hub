@@ -215,6 +215,57 @@ class ApiCallExecutorTest {
   }
 
   // -------------------------------------------------------------------------
+  // WD-177: 쿼리 인증 키 원문이 실행 기록·오류 문구에 남지 않는다
+  // -------------------------------------------------------------------------
+
+  /** 정상 호출: 원문 키로 호출하되 실행 로그(DB 에 저장)엔 키가 없다. */
+  @Test
+  void execute_apiKeyQueryAuth_sendsRawKey_executionLogHasNoKey() {
+    wireMock.stubFor(
+        get(urlPathEqualTo("/api/q"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("{\"items\":[]}")));
+    String key = "ExecSecret000005555";
+    Map<String, String> auth =
+        Map.of(
+            "authType", "API_KEY", "placement", "query", "paramName", "serviceKey", "apiKey", key);
+
+    ApiCallExecutor.ApiCallResult result =
+        executor.execute(simpleGetConfig("/api/q"), "t", auth, "APPEND", null);
+
+    assertThat(wireMock.findAll(getRequestedFor(urlPathEqualTo("/api/q"))).get(0).getUrl())
+        .isEqualTo("/api/q?serviceKey=" + key);
+    assertThat(result.log()).doesNotContain(key);
+  }
+
+  /**
+   * 쿼리에 그대로 쓸 수 없는 문자가 섞인 키: 예전에는 Spring 이 키 원문을 담은 메시지로 실패하고, 그 메시지가 재시도 로그·「N회 재시도 후에도 실패」 문구(실행
+   * 기록 DB)에 그대로 실렸다. 이제 원문 없는 고정 문구로, 재시도 없이 즉시 실패한다.
+   */
+  @Test
+  void execute_apiKeyQueryAuth_specialCharKey_failsWithoutKeyAndWithoutRetry() {
+    String key = "ex+k/y==비밀 Ww11";
+    Map<String, String> auth =
+        Map.of(
+            "authType", "API_KEY", "placement", "query", "paramName", "serviceKey", "apiKey", key);
+
+    assertThatThrownBy(() -> executor.execute(simpleGetConfig("/api/q"), "t", auth, "APPEND", null))
+        .isInstanceOf(ApiCallException.class)
+        // 재시도 소진 문구(「API 호출에 실패했습니다: …」)로 감싸이지 않은 고정 문구 그대로여야 한다 — 재시도 경로를 타지 않았다는 뜻.
+        .hasMessageStartingWith("요청 URL 을 만들 수 없습니다")
+        .satisfies(
+            e ->
+                assertThat(e.getMessage())
+                    .doesNotContain(key)
+                    .doesNotContain(
+                        java.net.URLEncoder.encode(key, java.nio.charset.StandardCharsets.UTF_8)));
+    assertThat(wireMock.getAllServeEvents()).isEmpty();
+  }
+
+  // -------------------------------------------------------------------------
   // Test 4: BEARER auth
   // -------------------------------------------------------------------------
 

@@ -2,6 +2,7 @@ package com.smartfirehub.pipeline.service;
 
 import com.smartfirehub.apiconnection.dto.ApiConnectionResponse;
 import com.smartfirehub.apiconnection.service.ApiConnectionService;
+import com.smartfirehub.apiconnection.service.AuthQueryMasker;
 import com.smartfirehub.apiconnection.service.UrlUtils;
 import com.smartfirehub.pipeline.dto.ApiCallPreviewRequest;
 import com.smartfirehub.pipeline.dto.ApiCallPreviewResponse;
@@ -17,7 +18,6 @@ import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
-import org.springframework.web.util.UriComponentsBuilder;
 
 @Service
 @RequiredArgsConstructor
@@ -38,6 +38,8 @@ public class ApiCallPreviewService {
     // 오류 문구 분류용(WD-150) — 타임아웃 문구의 초, DNS 실패 문구의 호스트.
     int timeoutMs = request.timeoutMs() != null ? request.timeoutMs() : DEFAULT_TIMEOUT_MS;
     String targetHost = null;
+    // 오류 문구에서 가릴 인증 쿼리 키(WD-177) — 인증 설정을 읽은 뒤에 채운다.
+    String authSecret = null;
     try {
       // 1. URL 결정: apiConnectionId가 있으면 connection.baseUrl + request.url()을 path로 해석
       String resolvedUrl = resolvePreviewUrl(request);
@@ -53,6 +55,7 @@ public class ApiCallPreviewService {
       if (request.queryParams() != null) {
         allQueryParams.putAll(request.queryParams());
       }
+      String authParamName = null;
       if (authConfig != null) {
         String authType = authConfig.get("authType");
         if ("API_KEY".equals(authType) && "query".equals(authConfig.get("placement"))) {
@@ -60,22 +63,26 @@ public class ApiCallPreviewService {
           String apiKey = authConfig.get("apiKey");
           if (paramName != null && apiKey != null) {
             allQueryParams.put(paramName, apiKey);
+            authParamName = paramName;
+            authSecret = apiKey;
           }
         }
       }
 
-      // 5. Build URI
-      UriComponentsBuilder uriBuilder = UriComponentsBuilder.fromUriString(resolvedUrl);
-      allQueryParams.forEach(uriBuilder::queryParam);
-      URI requestUri = uriBuilder.build(true).toUri();
-      resolvedRequestUrl = requestUri.toString();
+      // 5. Build URI — 호출용(키 원문)과 응답용(키 가림)을 함께 만든다(WD-177). 응답의 resolvedUrl 은 화면·AI 챗으로 나가므로
+      //    인증 쿼리 키를 ****XXXX 로 가린 표시용 URL 이다. 키에 쿼리에 쓸 수 없는 문자가 있으면 원문 없는 고정 문구로 실패한다.
+      AuthQueryMasker.AuthQueryUrls urls =
+          AuthQueryMasker.build(resolvedUrl, allQueryParams, authParamName, authSecret);
+      URI requestUri = urls.callUri();
+      resolvedRequestUrl = urls.displayUrl();
       targetHost = requestUri.getHost();
 
       // 6. Execute HTTP request
       String responseBody = executeRequest(requestUri, request, authConfig, timeoutMs);
 
-      // 7. Truncate raw JSON
-      String rawJson = truncate(responseBody, MAX_RAW_JSON_BYTES);
+      // 7. Truncate raw JSON — (WD-177) 응답이 요청 파라미터를 되울려 인증 키가 담겨 올 수 있어 먼저 가린 뒤 자른다.
+      String rawJson =
+          truncate(AuthQueryMasker.scrubSecret(responseBody, authSecret), MAX_RAW_JSON_BYTES);
 
       // 8. Convert field mappings
       List<ApiCallConfig.FieldMapping> fieldMappings = toFieldMappings(request.fieldMappings());
@@ -103,7 +110,10 @@ public class ApiCallPreviewService {
       // 실행(ApiCallExecutor)과 같은 분류·문구를 쓴다(WD-150) — 예전에는 e.getMessage() 를 그대로 돌려줘 같은 연결 거부가
       // 실행 상세와 다르게(「Connection refused: …」) 보였고, 4xx 는 WebClientResponseException 메시지에 쿼리로 붙인
       // API 키가 담긴 URL 이 그대로 노출됐다. 로그에도 원문 메시지 대신 같은 문구를 남긴다(스택은 debug 로만).
-      String message = ApiCallErrorMessages.describe(e, timeoutMs, targetHost);
+      // 분류하지 못한 원문 메시지에 키가 실려 올 수 있어 인증 쿼리 키(원문·인코딩형)도 가린다(WD-177).
+      String message =
+          AuthQueryMasker.scrubSecret(
+              ApiCallErrorMessages.describe(e, timeoutMs, targetHost), authSecret);
       log.warn("[Preview] 실패: {} ({})", message, e.getClass().getSimpleName());
       log.debug("[Preview] 실패 상세", e);
       return new ApiCallPreviewResponse(

@@ -14,6 +14,7 @@ import com.smartfirehub.apiconnection.exception.ApiConnectionException;
 import com.smartfirehub.apiconnection.exception.ApiConnectionNameAlreadyExistsException;
 import com.smartfirehub.apiconnection.repository.ApiConnectionRepository;
 import com.smartfirehub.job.service.AsyncJobService;
+import com.smartfirehub.pipeline.service.executor.ApiCallErrorMessages;
 import com.smartfirehub.pipeline.service.executor.SsrfException;
 import com.smartfirehub.pipeline.service.executor.SsrfProtectionService;
 import java.net.URI;
@@ -31,7 +32,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
-import org.springframework.web.util.UriComponentsBuilder;
 
 /**
  * API 연결(ApiConnection) 비즈니스 로직 서비스. Phase 9: baseUrl 정규화/SSRF 검증, 헬스체크(testConnection), slim
@@ -204,11 +204,17 @@ public class ApiConnectionService {
     Map<String, String> rawConfig = reader.getDecryptedAuthConfig(id);
     // ── 아래 HTTP 호출은 트랜잭션 밖이다 ──
     String baseUrl = UrlUtils.joinUrl(conn.baseUrl(), conn.healthCheckPath());
-    // placement=query 인 경우 URL 에 인증 파라미터 부착 (#113)
-    String url = applyAuthQueryParams(baseUrl, conn.authType(), rawConfig);
+    // 응답의 requestUrl 은 인증 쿼리 키를 가린 표시용 URL 이다(WD-177). URL 을 만들기 전에 실패하면 키 없는 기준 URL 을 보인다.
+    String displayUrl = baseUrl;
 
     long start = System.currentTimeMillis();
     try {
+      // placement=query 인 경우 URL 에 인증 파라미터 부착 (#113). 호출용·표시용을 함께 만든다(WD-177) — try 안에서 만들어,
+      // 키에 쓸 수 없는 문자가 있어 실패해도 400 응답에 키가 실리지 않고 DOWN 결과(고정 문구)로 돌아가게 한다.
+      AuthQueryMasker.AuthQueryUrls urls =
+          AuthQueryMasker.buildForAuth(baseUrl, conn.authType(), rawConfig);
+      displayUrl = urls.displayUrl();
+      String url = urls.callUrl();
       // 응답 본문/헤더를 함께 받아 디버깅용으로 노출 (#76).
       var resp =
           webClient
@@ -223,34 +229,38 @@ public class ApiConnectionService {
       Integer status = resp != null ? resp.getStatusCode().value() : null;
       boolean ok = resp != null && resp.getStatusCode().is2xxSuccessful();
       String err = ok ? null : ("HTTP " + status);
-      String body = resp != null ? truncateBody(resp.getBody()) : null;
-      Map<String, String> headers = resp != null ? sanitizeHeaders(resp.getHeaders()) : Map.of();
+      String body = resp != null ? truncateBody(resp.getBody(), rawConfig) : null;
+      Map<String, String> headers =
+          resp != null ? sanitizeHeaders(resp.getHeaders(), rawConfig) : Map.of();
       String contentType =
           resp != null && resp.getHeaders().getContentType() != null
               ? resp.getHeaders().getContentType().toString()
               : null;
       repository.updateHealthStatus(id, ok ? "UP" : "DOWN", latency, err);
-      return new TestConnectionResponse(ok, status, latency, err, url, body, headers, contentType);
+      return new TestConnectionResponse(
+          ok, status, latency, err, displayUrl, body, headers, contentType);
 
     } catch (WebClientResponseException e) {
       long latency = System.currentTimeMillis() - start;
       String err = "HTTP " + e.getStatusCode().value();
       repository.updateHealthStatus(id, "DOWN", latency, err);
       // 4xx/5xx 응답 본문도 운영자가 봐야 디버깅 가능하므로 함께 노출.
-      String body = truncateBody(e.getResponseBodyAsString());
-      Map<String, String> headers = sanitizeHeaders(e.getHeaders());
+      String body = truncateBody(e.getResponseBodyAsString(), rawConfig);
+      Map<String, String> headers = sanitizeHeaders(e.getHeaders(), rawConfig);
       String contentType =
           e.getHeaders().getContentType() != null
               ? e.getHeaders().getContentType().toString()
               : null;
       return new TestConnectionResponse(
-          false, e.getStatusCode().value(), latency, err, url, body, headers, contentType);
+          false, e.getStatusCode().value(), latency, err, displayUrl, body, headers, contentType);
 
     } catch (Exception e) {
       long latency = System.currentTimeMillis() - start;
-      String msg = toUserFacingErrorMessage(e);
+      // 예외 메시지에 URL·키가 실릴 수 있어 가린 문구만 응답·lastErrorMessage·알림으로 보낸다(WD-177).
+      String msg = toUserFacingErrorMessage(e, rawConfig);
       repository.updateHealthStatus(id, "DOWN", latency, msg);
-      return new TestConnectionResponse(false, null, latency, msg, url, null, Map.of(), null);
+      return new TestConnectionResponse(
+          false, null, latency, msg, displayUrl, null, Map.of(), null);
     }
   }
 
@@ -264,11 +274,16 @@ public class ApiConnectionService {
     String normalizedPath = normalizeHealthCheckPath(request.healthCheckPath());
     String joinedUrl = UrlUtils.joinUrl(normalizedBaseUrl, normalizedPath);
     Map<String, String> rawConfig = request.authConfig() != null ? request.authConfig() : Map.of();
-    // placement=query 인 경우 URL 에 인증 파라미터 부착 (#113)
-    String url = applyAuthQueryParams(joinedUrl, request.authType(), rawConfig);
+    // 응답의 requestUrl 은 인증 쿼리 키를 가린 표시용 URL 이다(WD-177).
+    String displayUrl = joinedUrl;
 
     long start = System.currentTimeMillis();
     try {
+      // placement=query 인 경우 URL 에 인증 파라미터 부착 (#113). 호출용·표시용을 함께 만든다(WD-177, testConnection 과 같다).
+      AuthQueryMasker.AuthQueryUrls urls =
+          AuthQueryMasker.buildForAuth(joinedUrl, request.authType(), rawConfig);
+      displayUrl = urls.displayUrl();
+      String url = urls.callUrl();
       var resp =
           webClient
               .get()
@@ -282,28 +297,31 @@ public class ApiConnectionService {
       Integer status = resp != null ? resp.getStatusCode().value() : null;
       boolean ok = resp != null && resp.getStatusCode().is2xxSuccessful();
       String err = ok ? null : ("HTTP " + status);
-      String body = resp != null ? truncateBody(resp.getBody()) : null;
-      Map<String, String> headers = resp != null ? sanitizeHeaders(resp.getHeaders()) : Map.of();
+      String body = resp != null ? truncateBody(resp.getBody(), rawConfig) : null;
+      Map<String, String> headers =
+          resp != null ? sanitizeHeaders(resp.getHeaders(), rawConfig) : Map.of();
       String contentType =
           resp != null && resp.getHeaders().getContentType() != null
               ? resp.getHeaders().getContentType().toString()
               : null;
-      return new TestConnectionResponse(ok, status, latency, err, url, body, headers, contentType);
+      return new TestConnectionResponse(
+          ok, status, latency, err, displayUrl, body, headers, contentType);
     } catch (WebClientResponseException e) {
       long latency = System.currentTimeMillis() - start;
       String err = "HTTP " + e.getStatusCode().value();
-      String body = truncateBody(e.getResponseBodyAsString());
-      Map<String, String> headers = sanitizeHeaders(e.getHeaders());
+      String body = truncateBody(e.getResponseBodyAsString(), rawConfig);
+      Map<String, String> headers = sanitizeHeaders(e.getHeaders(), rawConfig);
       String contentType =
           e.getHeaders().getContentType() != null
               ? e.getHeaders().getContentType().toString()
               : null;
       return new TestConnectionResponse(
-          false, e.getStatusCode().value(), latency, err, url, body, headers, contentType);
+          false, e.getStatusCode().value(), latency, err, displayUrl, body, headers, contentType);
     } catch (Exception e) {
       long latency = System.currentTimeMillis() - start;
-      String msg = toUserFacingErrorMessage(e);
-      return new TestConnectionResponse(false, null, latency, msg, url, null, Map.of(), null);
+      String msg = toUserFacingErrorMessage(e, rawConfig);
+      return new TestConnectionResponse(
+          false, null, latency, msg, displayUrl, null, Map.of(), null);
     }
   }
 
@@ -314,12 +332,18 @@ public class ApiConnectionService {
    * NANOSECONDS" 같은 저수준 구현 디테일을 담은 {@link IllegalStateException}을 던진다. 관리자가 나노초 단위를 초로 환산해야만 의미를
    * 파악할 수 있으므로, 타임아웃으로 판별되면 사람이 읽을 수 있는 고정 문구로 치환한다. 그 외 예외는 원래 메시지를 그대로 사용하되, 메시지가 없는
    * 경우(getMessage()==null) 클래스 simple name으로 대체한다.
+   *
+   * <p>(WD-177) 원문 메시지는 응답·{@code lastErrorMessage}·상태 알림으로 나가므로, 메시지 안 URL 의 쿼리·userinfo 를 지우고 인증
+   * 쿼리 키(원문·인코딩형)를 {@code ****XXXX} 로 가린다. API_KEY 를 쿼리로 보내는 연결에서 예외 메시지에 호출 URL 이 실리면 키가 그대로 남기
+   * 때문이다.
    */
-  private static String toUserFacingErrorMessage(Exception e) {
+  private static String toUserFacingErrorMessage(Exception e, Map<String, String> authConfig) {
     if (isTimeoutException(e)) {
       return "응답 시간 초과 (" + HEALTH_CHECK_TIMEOUT_SECONDS + "초)";
     }
-    return e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+    String raw = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+    String redacted = ApiCallErrorMessages.redactUrlsInText(raw);
+    return AuthQueryMasker.scrubSecret(redacted, authSecretOf(authConfig));
   }
 
   /**
@@ -345,10 +369,20 @@ public class ApiConnectionService {
   /** 응답 본문을 최대 4KB로 잘라 반환 (UI 노출용). null/빈값은 그대로 반환. */
   private static final int MAX_BODY_PREVIEW_BYTES = 4096;
 
-  private static String truncateBody(String body) {
+  /**
+   * 응답 본문 미리보기. (WD-177) 오류 본문이 요청 파라미터를 되울려 쿼리 인증 키가 담겨 올 수 있어 키(원문·인코딩형)를 먼저 가린 뒤 자른다 — 자른 뒤 가리면
+   * 경계에 걸친 키 앞부분이 남는다.
+   */
+  private static String truncateBody(String body, Map<String, String> authConfig) {
     if (body == null || body.isEmpty()) return body;
-    if (body.length() <= MAX_BODY_PREVIEW_BYTES) return body;
-    return body.substring(0, MAX_BODY_PREVIEW_BYTES) + "\n... (truncated)";
+    String masked = AuthQueryMasker.scrubSecret(body, authSecretOf(authConfig));
+    if (masked.length() <= MAX_BODY_PREVIEW_BYTES) return masked;
+    return masked.substring(0, MAX_BODY_PREVIEW_BYTES) + "\n... (truncated)";
+  }
+
+  /** 응답·오류 문구에서 가릴 인증 키(API_KEY 의 apiKey). 없으면 null. */
+  private static String authSecretOf(Map<String, String> authConfig) {
+    return authConfig != null ? authConfig.get("apiKey") : null;
   }
 
   /** 민감 헤더 마스킹 — 인증/세션/쿠키 헤더 값은 노출하지 않는다. */
@@ -361,7 +395,13 @@ public class ApiConnectionService {
           "x-api-key",
           "x-auth-token");
 
-  private static Map<String, String> sanitizeHeaders(org.springframework.http.HttpHeaders headers) {
+  /**
+   * 응답 헤더를 UI 노출용으로 옮긴다. 민감 헤더는 통째로 가리고, (WD-177) 나머지 헤더 값에서도 쿼리 인증 키를 가린다 — WebClient 가 리다이렉트를
+   * 따라가지 않아 3xx 의 {@code Location: https://…?serviceKey=<키>} 가 그대로 결과에 실리기 때문이다.
+   */
+  private static Map<String, String> sanitizeHeaders(
+      org.springframework.http.HttpHeaders headers, Map<String, String> authConfig) {
+    String secret = authSecretOf(authConfig);
     Map<String, String> out = new HashMap<>();
     headers.forEach(
         (k, v) -> {
@@ -369,7 +409,7 @@ public class ApiConnectionService {
           if (SENSITIVE_HEADER_NAMES.contains(k.toLowerCase())) {
             out.put(k, "****");
           } else {
-            out.put(k, joined);
+            out.put(k, AuthQueryMasker.scrubSecret(joined, secret));
           }
         });
     return out;
@@ -482,7 +522,7 @@ public class ApiConnectionService {
 
   /**
    * authType과 authConfig를 기반으로 HTTP 인증 헤더를 생성한다. API_KEY + placement=query 인 경우는 URL query param 으로
-   * 전송해야 하므로 헤더에 포함하지 않는다(applyAuthQueryParams 가 처리). (#113)
+   * 전송해야 하므로 헤더에 포함하지 않는다(AuthQueryMasker.buildForAuth 가 처리). (#113)
    */
   private Map<String, String> buildAuthHeaders(String authType, Map<String, String> config) {
     Map<String, String> headers = new HashMap<>();
@@ -502,23 +542,6 @@ public class ApiConnectionService {
       if (token != null) headers.put("Authorization", "Bearer " + token);
     }
     return headers;
-  }
-
-  /**
-   * API_KEY + placement=query 인 경우 URL 에 인증 query parameter(예: serviceKey=...) 를 부착해 반환한다. 그 외에는 원본
-   * URL 을 그대로 반환. (#113)
-   */
-  private String applyAuthQueryParams(String url, String authType, Map<String, String> config) {
-    if (config == null || !"API_KEY".equals(authType)) return url;
-    String placement = config.getOrDefault("placement", "header");
-    if (!"query".equals(placement)) return url;
-    String paramName = config.get("paramName");
-    String apiKey = config.get("apiKey");
-    if (paramName == null || paramName.isBlank() || apiKey == null) return url;
-    return UriComponentsBuilder.fromUriString(url)
-        .queryParam(paramName, apiKey)
-        .build(true)
-        .toUriString();
   }
 
   /**
