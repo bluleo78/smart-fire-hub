@@ -1,6 +1,7 @@
 package com.smartfirehub.pipeline.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartfirehub.apiconnection.service.ApiConnectionReader;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.service.DataTableService;
@@ -59,6 +60,12 @@ public class PipelineService {
   static final String INVALID_COLUMN_NAME_MESSAGE = "컬럼 이름은 영문 소문자로 시작하고 영문 소문자·숫자·밑줄만 쓸 수 있습니다: ";
   static final String MISSING_OUTPUT_COLUMN_MESSAGE = "출력 데이터셋에 없는 컬럼입니다: ";
 
+  /**
+   * 스텝이 참조한 API 연결이 현재 워크스페이스에서 보이지 않을 때의 저장 거절 문구(WD-176). 다른 워크스페이스의 연결과 없는 연결을 같은 문구·같은 400 으로
+   * 거절해야 연결 번호의 존재 여부가 새지 않으므로, 연결 번호를 문구에 넣지 않는다.
+   */
+  static final String API_CONNECTION_NOT_FOUND_MESSAGE = "선택한 API 연결을 찾을 수 없습니다. 연결 목록에서 다시 선택하세요.";
+
   // "스텝 참조" 문법({{#N}}) — 실행 시점(PipelineAsyncRunner#resolveStepReferences)과 동일한 패턴을
   // 저장 시점 검증에도 적용해야 두 시점의 검증 대상이 일치한다 (#643).
   private static final Pattern STEP_REFERENCE_PATTERN = Pattern.compile("\\{\\{#(\\d+)\\}\\}");
@@ -92,6 +99,9 @@ public class PipelineService {
    * DatasetService.deleteDataset})로 지운다.
    */
   private final TempDatasetService tempDatasetService;
+
+  /** 스텝이 참조하는 API 연결이 현재 워크스페이스에서 보이는지 판정(WD-176) — RLS 가 걸린 조회다. */
+  private final ApiConnectionReader apiConnectionReader;
 
   /**
    * 원문 오류를 볼 수 없는 조회자에게 스텝·실행 오류 대신 보여 주는 고정 문구(WD-27). 원문(PG 오류)에는 숨김 테이블명·행 값이 실릴 수 있어 일부만 지우지 않고
@@ -159,6 +169,13 @@ public class PipelineService {
 
     for (int i = 0; i < stepRequests.size(); i++) {
       PipelineStepRequest stepRequest = stepRequests.get(i);
+
+      // WD-176: 참조할 API 연결이 현재 워크스페이스에서 보여야 한다. 외래키 검사는 RLS 를 우회해 다른 워크스페이스의 연결 번호도 통과시켜,
+      // 남의 연결을 참조로 저장(그 워크스페이스는 참조 0건으로 보이는데 삭제가 영영 409)하거나 저장 성공/FK 409 차이로 번호 존재를 떠볼 수
+      // 있었다. 스크립트 유형과 무관하게 본다 — 리포지토리는 유형을 가리지 않고 api_connection_id 를 기록하므로 SQL 스텝으로도 같은
+      // 참조가 생긴다. 수정 경로에도 왕복 보존 예외를 두지 않는다: 같은 워크스페이스 안에서는 연결의 보임 여부가 사용자마다 갈리지 않으므로,
+      // 다시 보낸 값이 안 보인다면 이미 저장된 교차 참조다(되살리지 않는다). null(인라인 인증)은 그대로 허용한다.
+      requireVisibleApiConnection(stepRequest);
 
       // Validate API_CALL step requirements
       if ("API_CALL".equals(stepRequest.scriptType())) {
@@ -809,6 +826,18 @@ public class PipelineService {
               stepError(step.name(), "출력 컬럼 타입은 다음 중 하나여야 합니다: " + VALID_OUTPUT_COLUMN_TYPES));
         }
       }
+    }
+  }
+
+  /**
+   * 스텝의 apiConnectionId 가 현재 워크스페이스에서 보이는 연결인지 확인한다(WD-176). 없거나 다른 워크스페이스의 연결이면 같은 400 문구로 거절한다 —
+   * 응답 차이로 번호 존재 여부가 새지 않게 한다.
+   */
+  private void requireVisibleApiConnection(PipelineStepRequest stepRequest) {
+    Long connectionId = stepRequest.apiConnectionId();
+    if (connectionId != null && !apiConnectionReader.isVisible(connectionId)) {
+      throw new IllegalArgumentException(
+          stepError(stepRequest.name(), API_CONNECTION_NOT_FOUND_MESSAGE));
     }
   }
 

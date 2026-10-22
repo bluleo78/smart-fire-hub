@@ -51,6 +51,17 @@ public class ApiConnectionReader {
   }
 
   /**
+   * 다른 곳(파이프라인 스텝 등)이 이 연결을 참조로 저장해도 되는지 — 현재 워크스페이스에서 보이는 연결인지 판정한다(WD-176).
+   *
+   * <p>RLS 가 걸린 조회라 다른 워크스페이스의 연결과 없는 연결이 똑같이 {@code false} 가 된다. 호출부는 두 경우를 같은 응답으로 거절해야 연결 번호의 존재
+   * 여부가 새지 않는다. {@link #getById} 를 쓰지 않는 이유: 그쪽은 404 와 영어 원문("ApiConnection not found")을 내보내 저장 검증
+   * 오류(400, 한국어 안내)와 어긋난다.
+   */
+  public boolean isVisible(Long id) {
+    return id != null && repository.existsById(id);
+  }
+
+  /**
    * 복호화된 authConfig 를 반환한다. 인증 헤더/쿼리 파라미터 조립에 쓰이므로 마스킹하지 않는다.
    *
    * <p>authType 은 별도 컬럼이라 복호화된 Map 에 들어있지 않다. 호출자(Preview/Executor 등)가 authType 으로 분기(API_KEY +
