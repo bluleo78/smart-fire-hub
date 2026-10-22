@@ -9,8 +9,10 @@ import com.smartfirehub.pipeline.repository.TriggerEventRepository;
 import com.smartfirehub.pipeline.repository.TriggerRepository;
 import com.smartfirehub.pipeline.repository.TriggerTenantResolver;
 import com.smartfirehub.proactive.util.ProactiveCron;
+import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
+import com.smartfirehub.securitylevel.access.DatasetAction;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
@@ -392,19 +394,95 @@ public class TriggerService {
 
   @Transactional(readOnly = true)
   public List<TriggerResponse> getTriggers(Long pipelineId) {
-    return triggerRepository.findByPipelineId(pipelineId);
+    return triggerRepository.findByPipelineId(pipelineId).stream()
+        .map(TriggerService::withoutPollSnapshot)
+        .toList();
   }
 
   @Transactional(readOnly = true)
   public TriggerResponse getTriggerById(Long triggerId) {
     return triggerRepository
         .findById(triggerId)
+        .map(TriggerService::withoutPollSnapshot)
         .orElseThrow(() -> new TriggerNotFoundException("Trigger not found: " + triggerId));
   }
 
+  /**
+   * 트리거 이벤트 목록. 데이터 변경 트리거 이벤트의 {@code detail.changedDatasets} 에서 조회자가 볼 수 없는 데이터셋은 뺀다(WD-161) —
+   * 그대로 두면 숨김(상위 등급) 데이터셋이 <b>언제 바뀌었는지</b>가 드러난다. 판정은 데이터셋 상세와 같은 VIEW(없는 데이터셋도 거부)이고, 이벤트 여러 개에 같은
+   * id 가 나와도 한 번만 판정한다.
+   */
   @Transactional(readOnly = true)
   public List<TriggerEventResponse> getTriggerEvents(Long pipelineId, int limit) {
-    return triggerEventRepository.findByPipelineId(pipelineId, limit);
+    List<TriggerEventResponse> events = triggerEventRepository.findByPipelineId(pipelineId, limit);
+    Clearance viewer = null;
+    Map<Long, Boolean> visible = new HashMap<>();
+    List<TriggerEventResponse> out = new ArrayList<>(events.size());
+    for (TriggerEventResponse e : events) {
+      if (e.detail() == null || !(e.detail().get(CHANGED_DATASETS) instanceof List<?> ids)) {
+        out.add(e);
+        continue;
+      }
+      if (viewer == null) {
+        viewer = clearanceResolver.current();
+      }
+      final Clearance c = viewer;
+      List<Object> kept = new ArrayList<>();
+      for (Object id : ids) {
+        Long datasetId = id instanceof Number n ? n.longValue() : null;
+        if (datasetId != null
+            && visible.computeIfAbsent(
+                datasetId,
+                k -> datasetAccessGuard.check(c, k, DatasetAction.VIEW, null).allowed())) {
+          kept.add(id);
+        }
+      }
+      Map<String, Object> detail = new HashMap<>(e.detail());
+      detail.put(CHANGED_DATASETS, kept);
+      out.add(
+          new TriggerEventResponse(
+              e.id(),
+              e.triggerId(),
+              e.triggerName(),
+              e.eventType(),
+              e.executionId(),
+              detail,
+              e.createdAt()));
+    }
+    return out;
+  }
+
+  /** 데이터 변경 트리거 이벤트 detail 의 변경 데이터셋 id 목록 키({@code TriggerEventService} 가 쓴다). */
+  private static final String CHANGED_DATASETS = "changedDatasets";
+
+  /** 데이터 변경 트리거 폴러의 내부 상태 키 — 감시 데이터셋별 행 수({@code TriggerEventService}). */
+  private static final String POLL_SNAPSHOT = "lastSnapshot";
+
+  /**
+   * 조회 응답에서 데이터 변경 폴러의 행 수 스냅숏을 뺀다(WD-161).
+   *
+   * <p>{@code triggerState.lastSnapshot} 은 {@code {데이터셋id: 행 수}} 로, 폴러가 다음 확인 때 비교하려고 남기는 내부 상태다.
+   * 조회자의 등급과 상관없이 실제 행 수를 담고 있어, 볼 수 없는(상위 등급) 데이터셋의 행 수와 그 변화를 트리거 조회로 지켜볼 수 있었다 — 데이터셋 행 수 API 는
+   * 같은 사용자에게 404 다. 화면·AI 어디서도 이 값을 쓰지 않으므로 조회자와 상관없이 응답에서 뺀다(저장된 상태는 그대로라 폴링 동작은 바뀌지 않는다).
+   */
+  private static TriggerResponse withoutPollSnapshot(TriggerResponse r) {
+    if (r.triggerState() == null || !r.triggerState().containsKey(POLL_SNAPSHOT)) {
+      return r;
+    }
+    Map<String, Object> state = new HashMap<>(r.triggerState());
+    state.remove(POLL_SNAPSHOT);
+    return new TriggerResponse(
+        r.id(),
+        r.pipelineId(),
+        r.triggerType(),
+        r.name(),
+        r.description(),
+        r.isEnabled(),
+        r.config(),
+        state,
+        r.nextFireTime(),
+        r.createdBy(),
+        r.createdAt());
   }
 
   /**
