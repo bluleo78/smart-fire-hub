@@ -12,7 +12,9 @@ import com.smartfirehub.apiconnection.dto.TestConnectionResponse;
 import com.smartfirehub.apiconnection.dto.UpdateApiConnectionRequest;
 import com.smartfirehub.apiconnection.exception.ApiConnectionException;
 import com.smartfirehub.apiconnection.exception.ApiConnectionNameAlreadyExistsException;
+import com.smartfirehub.apiconnection.exception.ApiConnectionNotFoundException;
 import com.smartfirehub.apiconnection.repository.ApiConnectionRepository;
+import com.smartfirehub.global.exception.SerializationException;
 import com.smartfirehub.job.service.AsyncJobService;
 import com.smartfirehub.pipeline.service.executor.ApiCallErrorMessages;
 import com.smartfirehub.pipeline.service.executor.SsrfException;
@@ -60,7 +62,7 @@ public class ApiConnectionService {
   /** WebClient는 프로젝트 관행에 따라 빌더를 직접 생성한다 (별도 Bean 없음). */
   private final WebClient webClient = WebClient.builder().build();
 
-  /** 헬스체크 HTTP 호출 타임아웃(초). 메시지 문구("응답 시간 초과 (N초)")와 값이 어긋나지 않도록 한 곳에서 관리한다. */
+  /** 헬스체크 HTTP 호출 타임아웃(초). 메시지 문구(「응답 시간 초과(N초) — …」)와 값이 어긋나지 않도록 한 곳에서 관리한다. */
   private static final int HEALTH_CHECK_TIMEOUT_SECONDS = 5;
 
   // ── 공개 API ────────────────────────────────────────────────────────────────
@@ -104,11 +106,37 @@ public class ApiConnectionService {
     return reader.getDecryptedAuthConfig(id);
   }
 
+  /**
+   * 연결 수정. 모든 필드는 null 이면 바꾸지 않는다.
+   *
+   * <p><b>인증 방식 변경 검증(WD-180).</b> 예전에는 authConfig 가 없으면 authType 검사를 건너뛰어, authType 만 보낸 수정이 지원하지
+   * 않는 방식(OAUTH2 등)도 200 으로 저장했고, API_KEY → BEARER 처럼 바꾸면 새 방식의 토큰이 없어 인증 헤더 없이 호출되면서도 오류가 없었다. 엉뚱한
+   * 값(FOO)은 DB CHECK 제약에 걸려 409 일반 문구로 뭉뚱그려졌다. 이제 순서대로:
+   *
+   * <ol>
+   *   <li>연결이 없으면 404({@link ApiConnectionNotFoundException}).
+   *   <li>authType 이 오면 authConfig 유무와 상관없이 지원 목록(API_KEY·BEARER)인지 본다 — DB 제약에 기대지 않는다(400).
+   *   <li>authType 이 지금 값과 다르면 새 방식의 비밀 필드(API_KEY → apiKey, BEARER → token)를 담은 authConfig 를 함께
+   *       받아야 한다(400). authConfig 가 없거나 {@code {}}·옛 방식의 필드만 있으면 거절한다 — 그대로 두면 신고된 「인증 헤더 없이 호출」이
+   *       재현된다.
+   *   <li>authType 이 그대로(또는 생략)이고 authConfig 도 없으면 저장된 비밀을 그대로 둔다(기존 동작).
+   * </ol>
+   */
   @Transactional
   public ApiConnectionResponse update(Long id, UpdateApiConnectionRequest request) {
-    repository
-        .findById(id)
-        .orElseThrow(() -> new ApiConnectionException("ApiConnection not found: " + id));
+    Record existing =
+        repository.findById(id).orElseThrow(() -> new ApiConnectionNotFoundException(id));
+    String currentAuthType = existing.get(field(name("api_connection", "auth_type"), String.class));
+
+    // 인증 방식 검증은 이름 중복(409)보다 먼저 — 입력 자체가 틀린 요청은 400 으로 답한다.
+    boolean authTypeChanged = false;
+    if (request.authType() != null) {
+      validateAuthType(request.authType());
+      authTypeChanged = !request.authType().equals(currentAuthType);
+      if (authTypeChanged) {
+        requireAuthConfigForNewAuthType(request.authType(), request.authConfig());
+      }
+    }
 
     // 이름을 변경하는 경우에만 중복 검사 — 자기 자신은 제외 (#647)
     if (request.name() != null && !request.name().isBlank()) {
@@ -119,14 +147,9 @@ public class ApiConnectionService {
 
     String encryptedConfig = null;
     if (request.authConfig() != null) {
-      if (request.authType() != null) {
-        validateAuthType(request.authType());
-      }
       // 조회 결과(maskedAuthConfig)를 그대로 되돌려 보낸 비밀 필드는 저장 원문으로 채운다(WD-179). authType 이 바뀌면 같은 이름의
       // 필드라도 뜻이 달라지므로 저장값을 쓰지 않는다 — 가린 값은 모두 거절된다.
-      boolean sameAuthType =
-          request.authType() == null || request.authType().equals(fetchAuthType(id));
-      Map<String, String> stored = sameAuthType ? reader.getDecryptedAuthConfig(id) : null;
+      Map<String, String> stored = authTypeChanged ? null : reader.getDecryptedAuthConfig(id);
       encryptedConfig =
           serializeAndEncrypt(resolveMaskedSecrets(request.authConfig(), stored, true));
     }
@@ -137,7 +160,7 @@ public class ApiConnectionService {
       normalizedBaseUrl = validateAndNormalizeBaseUrl(request.baseUrl());
     }
 
-    String authType = request.authType() != null ? request.authType() : fetchAuthType(id);
+    String authType = request.authType() != null ? request.authType() : currentAuthType;
     repository.update(
         id,
         request.name(),
@@ -152,9 +175,7 @@ public class ApiConnectionService {
 
   @Transactional
   public void delete(Long id) {
-    repository
-        .findById(id)
-        .orElseThrow(() -> new ApiConnectionException("ApiConnection not found: " + id));
+    repository.findById(id).orElseThrow(() -> new ApiConnectionNotFoundException(id));
     repository.deleteById(id);
   }
 
@@ -167,9 +188,7 @@ public class ApiConnectionService {
    */
   @Transactional(readOnly = true)
   public ApiConnectionReferencesResponse getReferences(Long id) {
-    repository
-        .findById(id)
-        .orElseThrow(() -> new ApiConnectionException("ApiConnection not found: " + id));
+    repository.findById(id).orElseThrow(() -> new ApiConnectionNotFoundException(id));
 
     List<ApiConnectionReferencesResponse.ReferenceItem> pipelines =
         repository.findReferencingPipelines(id).stream()
@@ -225,7 +244,7 @@ public class ApiConnectionService {
 
   /**
    * (#90) 저장 전 dry-run 헬스체크. CreateApiConnectionRequest의 payload를 가지고 외부 API 호출만 수행하고 DB는 변경하지 않는다.
-   * authType 검증/baseUrl SSRF 검증은 동일하게 수행하므로 잘못된 입력은 즉시 ApiConnectionException으로 차단된다.
+   * authType 검증/baseUrl SSRF 검증은 동일하게 수행하므로 잘못된 입력은 즉시 ApiConnectionException(400, WD-180)으로 차단된다.
    */
   public TestConnectionResponse testConnectionPayload(CreateApiConnectionRequest request) {
     validateAuthType(request.authType());
@@ -321,7 +340,7 @@ public class ApiConnectionService {
     } catch (Exception e) {
       long latency = System.currentTimeMillis() - start;
       // 예외 메시지에 URL·키가 실릴 수 있어 가린 문구만 응답·lastErrorMessage·알림으로 보낸다(WD-177).
-      String msg = toUserFacingErrorMessage(e, rawConfig);
+      String msg = toUserFacingErrorMessage(e, targetUrl, rawConfig);
       return new TestConnectionResponse(
           false, null, latency, msg, displayUrl, null, Map.of(), null);
     }
@@ -332,20 +351,43 @@ public class ApiConnectionService {
    *
    * <p>Reactor의 {@code Mono#block(Duration)}은 타임아웃 시 "Timeout on blocking read for 5000000000
    * NANOSECONDS" 같은 저수준 구현 디테일을 담은 {@link IllegalStateException}을 던진다. 관리자가 나노초 단위를 초로 환산해야만 의미를
-   * 파악할 수 있으므로, 타임아웃으로 판별되면 사람이 읽을 수 있는 고정 문구로 치환한다. 그 외 예외는 원래 메시지를 그대로 사용하되, 메시지가 없는
-   * 경우(getMessage()==null) 클래스 simple name으로 대체한다.
+   * 파악할 수 있으므로, 타임아웃으로 판별되면 사람이 읽을 수 있는 고정 문구로 치환한다.
+   *
+   * <p>(WD-180) 그 밖의 예외는 예전에는 원문(「Connection refused: /127.0.0.1:6030」 등 영어)을 그대로 썼다. 이제 API_CALL
+   * 실행·미리보기와 같은 {@link ApiCallErrorMessages#describe} 로 분류해 같은 한국어 문장(「연결이 거부되었습니다 — …」)을 쓴다. 응답
+   * errorMessage·{@code lastErrorMessage}·상태 전환 알림이 모두 이 결과를 쓴다.
    *
    * <p>(WD-177) 원문 메시지는 응답·{@code lastErrorMessage}·상태 알림으로 나가므로, 메시지 안 URL 의 쿼리·userinfo 를 지우고 인증
    * 쿼리 키(원문·인코딩형)를 {@code ****XXXX} 로 가린다. API_KEY 를 쿼리로 보내는 연결에서 예외 메시지에 호출 URL 이 실리면 키가 그대로 남기
    * 때문이다.
    */
-  private static String toUserFacingErrorMessage(Exception e, Map<String, String> authConfig) {
+  private static String toUserFacingErrorMessage(
+      Exception e, String targetUrl, Map<String, String> authConfig) {
+    String message;
     if (isTimeoutException(e)) {
-      return "응답 시간 초과 (" + HEALTH_CHECK_TIMEOUT_SECONDS + "초)";
+      // Reactor block(Duration) 타임아웃(IllegalStateException)은 분류기의 타임아웃 판별에 걸리지 않을 수 있어
+      // 여기서 먼저 본다. 문장은 API_CALL 실행·미리보기와 같다(WD-180).
+      message = ApiCallErrorMessages.timeout(HEALTH_CHECK_TIMEOUT_SECONDS * 1000);
+    } else if (e instanceof AuthQueryMasker.InvalidRequestUrlException) {
+      // 이미 한국어 안내(값 원문 없음) — 분류기 4단계로 보내면 「API 호출 중 오류가 발생했습니다: 」 접두가 겹친다.
+      message = e.getMessage();
+    } else {
+      // 연결 거부·연결 실패·호스트 없음 등은 API_CALL 실행·미리보기와 같은 분류·문장을 쓴다(WD-150 → WD-180). 분류하지 못한 원문은
+      // 분류기가 URL 의 쿼리·userinfo 를 지운다(WD-177).
+      message =
+          ApiCallErrorMessages.describe(e, HEALTH_CHECK_TIMEOUT_SECONDS * 1000, hostOf(targetUrl));
     }
-    String raw = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
-    String redacted = ApiCallErrorMessages.redactUrlsInText(raw);
-    return AuthQueryMasker.scrubSecret(redacted, authSecretOf(authConfig));
+    // 분류하지 못한 원문에 인증 쿼리 키(원문·인코딩형)가 실려 올 수 있어 마지막에 가린다(WD-177).
+    return AuthQueryMasker.scrubSecret(message, authSecretOf(authConfig));
+  }
+
+  /** 「호스트 이름을 찾을 수 없습니다: X」 문구용 호스트. 해석할 수 없으면 null(문구는 「알 수 없음」). */
+  private static String hostOf(String url) {
+    try {
+      return url != null ? URI.create(url).getHost() : null;
+    } catch (IllegalArgumentException e) {
+      return null;
+    }
   }
 
   /**
@@ -518,7 +560,8 @@ public class ApiConnectionService {
       // 예전 「SSRF 보호: 」 접두는 영어 원문을 감싸던 용도라 사용자에게는 뜻 모를 용어만 더해서 뺀다.
       throw new ApiConnectionException(e.getMessage());
     } catch (IllegalArgumentException e) {
-      throw new ApiConnectionException("유효하지 않은 baseUrl: " + e.getMessage());
+      // URI 파서의 영어 원문(「Illegal character in authority at index …」)은 싣지 않고 고정 안내만 보낸다(WD-180).
+      throw new ApiConnectionException("baseUrl 형식이 올바르지 않습니다 — http(s)://호스트[:포트]/경로 형태로 입력하세요");
     }
   }
 
@@ -557,10 +600,48 @@ public class ApiConnectionService {
     }
   }
 
+  /** 지원하는 인증 방식과 그 방식에 반드시 있어야 하는 비밀 필드. 인증 헤더·쿼리 조립({@link #buildAuthHeaders})이 읽는 키와 같다. */
+  private static final Map<String, String> REQUIRED_SECRET_BY_AUTH_TYPE =
+      Map.of("API_KEY", "apiKey", "BEARER", "token");
+
+  /** 안내 문구에 싣는 지원 목록 — 순서를 고정해 문구가 실행마다 달라지지 않게 한다. */
+  private static final String SUPPORTED_AUTH_TYPES_TEXT = "API_KEY, BEARER";
+
+  /**
+   * 인증 방식 값 자체를 검증한다 — 생성·수정·저장 전 테스트 공통. 지원 목록 밖(OAUTH2·BASIC·FOO 등)은 DB CHECK 제약(409 일반 문구)에 닿기
+   * 전에 400 한국어 안내로 거절한다(WD-180).
+   */
   private void validateAuthType(String authType) {
-    if (authType == null || (!authType.equals("API_KEY") && !authType.equals("BEARER"))) {
+    if (authType == null || authType.isBlank()) {
       throw new ApiConnectionException(
-          "Unsupported authType: " + authType + ". Supported: API_KEY, BEARER");
+          "인증 방식(authType)을 입력하세요 (사용 가능: " + SUPPORTED_AUTH_TYPES_TEXT + ")");
+    }
+    if (!REQUIRED_SECRET_BY_AUTH_TYPE.containsKey(authType)) {
+      throw new ApiConnectionException(
+          "지원하지 않는 인증 방식입니다: " + authType + " (사용 가능: " + SUPPORTED_AUTH_TYPES_TEXT + ")");
+    }
+  }
+
+  /**
+   * 인증 방식을 바꾸는 수정에는 새 방식의 비밀 필드를 담은 authConfig 가 함께 와야 한다(WD-180). 저장된 비밀은 옛 방식의 것이라(API 키 ↔ 토큰) 새
+   * 방식으로 쓸 수 없다 — 없이 저장하면 인증 헤더 없이 호출되면서도 오류가 나지 않는다.
+   *
+   * <p>가린 값({@code ****…})은 여기서는 「값이 있음」으로 보고 넘긴다 — 방식이 바뀌면 유지할 저장값이 없으므로 뒤이은 {@link
+   * #resolveMaskedSecrets} 가 따로 거절한다.
+   *
+   * @param newAuthType 검증을 마친(지원 목록 안의) 새 인증 방식
+   */
+  private static void requireAuthConfigForNewAuthType(
+      String newAuthType, Map<String, String> authConfig) {
+    String requiredKey = REQUIRED_SECRET_BY_AUTH_TYPE.get(newAuthType);
+    String value = authConfig != null ? authConfig.get(requiredKey) : null;
+    if (value == null || value.isBlank()) {
+      throw new ApiConnectionException(
+          "인증 방식을 "
+              + newAuthType
+              + "(으)로 바꾸려면 새 방식의 인증 정보(authConfig."
+              + requiredKey
+              + ")를 함께 입력하세요");
     }
   }
 
@@ -580,9 +661,9 @@ public class ApiConnectionService {
    *       원문이나 그 가린 형태는 싣지 않는다.
    * </ul>
    *
-   * <p>예외는 {@link IllegalArgumentException} 이다 — 전역 처리기가 400 으로 바꾼다({@link ApiConnectionException}
-   * 은 404 로 매핑돼 있어 쓰지 않는다). {@link #validateAndNormalizeBaseUrl} 의 try 블록 안에서 부르면 그쪽 catch 가 다른 예외로
-   * 감싸므로 반드시 밖에서 부른다.
+   * <p>예외는 {@link IllegalArgumentException} 이다 — 전역 처리기가 400 으로 바꾼다(WD-179 당시 {@link
+   * ApiConnectionException} 은 404 로 매핑돼 있어 쓰지 않았다. WD-180 부터 그쪽도 400 이지만 동작이 같아 그대로 둔다). {@link
+   * #validateAndNormalizeBaseUrl} 의 try 블록 안에서 부르면 그쪽 catch 가 다른 예외로 감싸므로 반드시 밖에서 부른다.
    *
    * @param requested 요청 authConfig(null 이면 null 을 그대로 돌려준다)
    * @param stored 현재 저장된 복호화 authConfig. 저장값이 없거나(생성·저장 전 테스트) authType 이 바뀌면 null
@@ -631,15 +712,8 @@ public class ApiConnectionService {
       String json = objectMapper.writeValueAsString(authConfig);
       return encryptionService.encrypt(json);
     } catch (JsonProcessingException e) {
-      throw new ApiConnectionException("Failed to serialize authConfig: " + e.getMessage());
+      // 문자열 Map 직렬화 실패는 서버 쪽 문제라 입력 오류(400)가 아니다 — 500 으로 보내고 원문은 원인(cause)으로만 남긴다(WD-180).
+      throw new SerializationException("API 연결 인증 정보를 저장하지 못했습니다", e);
     }
-  }
-
-  private String fetchAuthType(Long id) {
-    Record record =
-        repository
-            .findById(id)
-            .orElseThrow(() -> new ApiConnectionException("ApiConnection not found: " + id));
-    return record.get(field(name("api_connection", "auth_type"), String.class));
   }
 }

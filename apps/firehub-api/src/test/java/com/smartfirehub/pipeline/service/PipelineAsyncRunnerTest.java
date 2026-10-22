@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartfirehub.apiconnection.exception.ApiConnectionNotFoundException;
 import com.smartfirehub.apiconnection.service.ApiConnectionService;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.exception.InvalidTableNameException;
@@ -857,6 +858,49 @@ class PipelineAsyncRunnerTest {
     verify(dataTableService, never()).createTempTable(anyString());
     verify(executorClient, never()).executeApiCall(any());
     verify(apiCallExecutor, never()).execute(any(), any(), any(), any(), any(), any(), any());
+  }
+
+  /**
+   * WD-180 — API_CALL 스텝이 참조한 연결이 실행 시점에 없으면(또는 다른 워크스페이스라 보이지 않으면) 실행 기록에 한국어 안내가 남는다. 예전에는
+   * 「ApiConnection not found: 3」 영어 원문이 그대로 남았다. 호출·임시 테이블 생성 전에 실패한다.
+   */
+  @Test
+  void executeStep_apiCallConnectionNotFound_recordsKoreanMessage() {
+    Long pipelineId = 21L, userId = 2L, stepId = 211L, stepExecId = 311L, connId = 3L;
+    PipelineStepResponse api =
+        new PipelineStepResponse(
+            stepId,
+            "api-missing-conn",
+            null,
+            "API_CALL",
+            null,
+            null,
+            null,
+            List.of(),
+            List.of(),
+            0,
+            "REPLACE",
+            Map.of(),
+            null,
+            null,
+            connId);
+    when(objectMapper.convertValue(any(), eq(ApiCallConfig.class))).thenReturn(minimalApiConfig());
+    when(apiConnectionService.getById(connId))
+        .thenThrow(new ApiConnectionNotFoundException(connId));
+
+    String status = runner.executeStep(stepExecId, api, pipelineId, "TestPipeline", userId, true);
+
+    assertThat(status).isEqualTo("FAILED");
+    ArgumentCaptor<String> error = ArgumentCaptor.forClass(String.class);
+    verify(executionRepository)
+        .updateStepExecution(
+            eq(stepExecId), eq("FAILED"), isNull(), isNull(), error.capture(), isNull(), any());
+    assertThat(error.getValue())
+        .isEqualTo("스텝이 참조한 API 연결을 찾을 수 없습니다. 파이프라인 편집에서 연결을 다시 선택하세요.")
+        .doesNotContain("not found");
+    verify(executorClient, never()).executeApiCall(any());
+    verify(apiCallExecutor, never()).execute(any(), any(), any(), any(), any(), any(), any());
+    verify(dataTableService, never()).createTempTable(anyString());
   }
 
   /**

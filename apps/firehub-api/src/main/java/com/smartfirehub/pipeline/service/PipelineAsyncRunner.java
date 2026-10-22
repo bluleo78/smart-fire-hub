@@ -2,6 +2,7 @@ package com.smartfirehub.pipeline.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.apiconnection.dto.ApiConnectionResponse;
+import com.smartfirehub.apiconnection.exception.ApiConnectionNotFoundException;
 import com.smartfirehub.apiconnection.service.ApiConnectionService;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.repository.DatasetColumnRepository;
@@ -71,6 +72,13 @@ import org.springframework.stereotype.Service;
 @Slf4j
 @RequiredArgsConstructor
 public class PipelineAsyncRunner {
+
+  /**
+   * API_CALL 스텝이 참조한 API 연결이 실행 시점에 없거나 이 워크스페이스에서 보이지 않을 때 실행 기록에 남기는 문구(WD-180). 저장 시점 검증
+   * 문구({@link PipelineService#API_CONNECTION_NOT_FOUND_MESSAGE})와 같은 문체로, 할 일(연결 다시 선택)을 담는다.
+   */
+  static final String API_CONNECTION_NOT_FOUND_AT_RUN_MESSAGE =
+      "스텝이 참조한 API 연결을 찾을 수 없습니다. 파이프라인 편집에서 연결을 다시 선택하세요.";
 
   private final PipelineStepRepository stepRepository;
   private final PipelineExecutionRepository executionRepository;
@@ -920,8 +928,14 @@ public class PipelineAsyncRunner {
         ApiConnectionResponse apiConn = null;
         Map<String, String> decryptedAuth = null;
         if (step.apiConnectionId() != null) {
-          apiConn = apiConnectionService.getById(step.apiConnectionId());
-          decryptedAuth = apiConnectionService.getDecryptedAuthConfig(step.apiConnectionId());
+          try {
+            apiConn = apiConnectionService.getById(step.apiConnectionId());
+            decryptedAuth = apiConnectionService.getDecryptedAuthConfig(step.apiConnectionId());
+          } catch (ApiConnectionNotFoundException e) {
+            // 실행 기록(스텝 오류)에 남는 문구라 사용자가 할 일을 담은 한국어로 바꾼다(WD-180) — 예전에는 「ApiConnection not
+            // found: 3」 영어 원문이 그대로 남았다. 다른 워크스페이스의 연결과 없는 연결은 RLS 로 같은 경로라 같은 문구다(WD-176).
+            throw new ScriptExecutionException(API_CONNECTION_NOT_FOUND_AT_RUN_MESSAGE, e);
+          }
         } else if (apiCallConfig.inlineAuth() != null) {
           decryptedAuth = apiCallConfig.inlineAuth();
         }

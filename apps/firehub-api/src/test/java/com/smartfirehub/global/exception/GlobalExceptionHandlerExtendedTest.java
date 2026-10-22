@@ -66,7 +66,21 @@ class GlobalExceptionHandlerExtendedTest {
     mockMvc
         .perform(get("/test/exception2/api-connection-not-found"))
         .andExpect(status().isNotFound())
-        .andExpect(jsonPath("$.status").value(404));
+        .andExpect(jsonPath("$.status").value(404))
+        .andExpect(jsonPath("$.message").value("API 연결을 찾을 수 없습니다: 88"));
+  }
+
+  /**
+   * 「없음」이 아닌 API 연결 오류(지원하지 않는 인증 방식·내부 주소 거절 등)는 400 이다(WD-180). 예전에는 ApiConnectionException 전체가
+   * 404 로 매핑돼 입력 오류가 「찾을 수 없음」으로 나갔다.
+   */
+  @Test
+  void apiConnectionInvalid_returns400() throws Exception {
+    mockMvc
+        .perform(get("/test/exception2/api-connection-invalid"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.status").value(400))
+        .andExpect(jsonPath("$.message").value("지원하지 않는 인증 방식입니다: FOO (사용 가능: API_KEY, BEARER)"));
   }
 
   @Test
