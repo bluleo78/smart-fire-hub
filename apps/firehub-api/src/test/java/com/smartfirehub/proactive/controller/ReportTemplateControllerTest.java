@@ -119,7 +119,7 @@ class ReportTemplateControllerTest {
   @Test
   void getTemplate_returnsTemplate() throws Exception {
     mockAuth("proactive:read");
-    when(reportTemplateService.getTemplate(5L)).thenReturn(sampleTemplate());
+    when(reportTemplateService.getTemplate(5L, 1L)).thenReturn(sampleTemplate());
 
     mockMvc
         .perform(get("/api/v1/proactive/templates/5").header("Authorization", "Bearer valid-token"))

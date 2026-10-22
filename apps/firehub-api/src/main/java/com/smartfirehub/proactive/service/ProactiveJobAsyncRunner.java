@@ -108,9 +108,11 @@ public class ProactiveJobAsyncRunner {
       String context = contextCollector.collectContext(job.config(), jobId, userId);
 
       // 템플릿 조회 (templateId가 있으면 sections/style 포함)
+      // 작업 소유자가 쓸 수 있는 양식(기본·본인)만 읽는다(WD-163) — 수정 전에 남의 양식이 연결된 작업도 그 양식 내용을 계속 끌어 쓰지 않게,
+      // 삭제된 양식과 같이 기본 형식으로 돌아간다.
       Map<String, Object> template = null;
       if (job.templateId() != null) {
-        var tmpl = reportTemplateRepository.findById(job.templateId());
+        var tmpl = reportTemplateRepository.findVisibleTo(job.templateId(), userId);
         if (tmpl.isPresent()) {
           var t = tmpl.get();
           template = new HashMap<>();
