@@ -515,6 +515,13 @@ public class DataImportService {
 
       DatasetResponse dataset = datasetRepository.findById(datasetId).orElseThrow();
       List<String> columnNames = columns.stream().map(DatasetColumnResponse::columnName).toList();
+      // 대상 테이블에 바로 넣는 경로(APPEND·PK 없는 REPLACE)는 컬럼 타입을 넘겨야 GEOMETRY 가
+      // ST_GeomFromGeoJSON(?) 로 들어간다 — 없으면 GeoJSON 문자열이 varchar 로 묶여 PG 가 거부한다(WD-160).
+      // staging 경로는 staging 테이블을 introspect 해 같은 placeholder 를 이미 쓴다.
+      Map<String, String> columnTypes = new HashMap<>();
+      for (DatasetColumnResponse col : columns) {
+        columnTypes.put(col.columnName(), col.dataType());
+      }
       List<String> pkColumns =
           columns.stream()
               .filter(DatasetColumnResponse::isPrimaryKey)
@@ -711,7 +718,7 @@ public class DataImportService {
                           Map.of("totalRows", totalRowsFinal, "processedRows", globalProcessed));
                     };
                 dataTableRowService.insertBatchWithProgress(
-                    dataset.tableName(), columnNames, rowMapsBatch, wrapped);
+                    dataset.tableName(), columnNames, rowMapsBatch, wrapped, columnTypes);
                 outerProcessed[0] = base + rowMapsBatch.size();
               }
               case UPSERT -> {
@@ -782,7 +789,7 @@ public class DataImportService {
                     replaceNoPkTruncated[0] = true;
                   }
                   dataTableRowService.insertBatchWithProgress(
-                      dataset.tableName(), columnNames, rowMapsBatch, wrapped);
+                      dataset.tableName(), columnNames, rowMapsBatch, wrapped, columnTypes);
                 }
                 outerProcessed[0] = base + rowMapsBatch.size();
               }

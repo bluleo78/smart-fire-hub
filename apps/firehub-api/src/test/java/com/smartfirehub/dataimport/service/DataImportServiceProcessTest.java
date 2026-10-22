@@ -152,4 +152,107 @@ class DataImportServiceProcessTest extends IntegrationTestBase {
     Mockito.verify(asyncJobService, Mockito.never())
         .failJob(Mockito.anyString(), Mockito.anyString());
   }
+
+  // ---- WD-160: 위치(GEOMETRY) 컬럼 임포트 ----
+
+  private Long createGeometryDataset(String tableName) {
+    DatasetDetailResponse dataset =
+        datasetService.createDataset(
+            new CreateDatasetRequest(
+                "Geometry Import " + tableName,
+                tableName,
+                "WD-160 GEOMETRY 임포트 회귀",
+                null,
+                "TABLE",
+                "SOURCE",
+                List.of(
+                    new DatasetColumnRequest("name", "Name", "TEXT", null, true, false, null),
+                    new DatasetColumnRequest("geom", "Geom", "GEOMETRY", null, true, false, null)),
+                null),
+            testUserId);
+    return dataset.id();
+  }
+
+  private Path writeGeometryCsv(String body) throws Exception {
+    Path tempDir = Path.of(System.getProperty("java.io.tmpdir"), "firehub-test");
+    Files.createDirectories(tempDir);
+    Path tempFile = Files.createTempFile(tempDir, "geom-import-", ".csv");
+    Files.writeString(tempFile, "name,geom\n" + body, StandardCharsets.UTF_8);
+    return tempFile;
+  }
+
+  private void runImport(String jobId, Long datasetId, Path csv, String mode) throws Exception {
+    dataImportService.processImport(
+        jobId,
+        datasetId,
+        csv.toString(),
+        "",
+        "",
+        "geom.csv",
+        Files.size(csv),
+        "CSV",
+        testUserId,
+        "Test User",
+        "",
+        "",
+        mode,
+        1L);
+  }
+
+  /** 이름 → ST_AsText(geom) (NULL 이면 null) — 위치 값이 GeoJSON 에서 실제 geometry 로 들어갔는지 본다. */
+  private java.util.Map<String, String> geometries(String tableName) {
+    java.util.Map<String, String> out = new java.util.HashMap<>();
+    dsl.fetch("SELECT name, ST_AsText(geom) AS wkt FROM data.\"" + tableName + "\"")
+        .forEach(r -> out.put(r.get("name", String.class), r.get("wkt", String.class)));
+    return out;
+  }
+
+  private static final String GEOM_ROWS =
+      "서울,\"{\"\"type\"\":\"\"Point\"\",\"\"coordinates\"\":[127,37.5]}\"\n"
+          + "부산,\"{\"\"type\"\":\"\"Point\"\",\"\"coordinates\"\":[129,35.1]}\"\n"
+          + "빈값,\n";
+
+  @Test
+  void append_insertsGeometryFromGeoJson() throws Exception {
+    // 수정 전: GeoJSON 문자열이 varchar 로 묶여 "column geom is of type geometry but expression is of
+    // type character varying" 로 잡이 실패하고 0행이었다
+    String tableName = "process_geom_append";
+    Long datasetId = createGeometryDataset(tableName);
+    runImport("geom-append-job", datasetId, writeGeometryCsv(GEOM_ROWS), "APPEND");
+
+    Mockito.verify(asyncJobService, Mockito.never())
+        .failJob(Mockito.anyString(), Mockito.anyString());
+    java.util.Map<String, String> geoms = geometries(tableName);
+    assertThat(geoms).hasSize(3);
+    assertThat(geoms.get("서울")).isEqualTo("POINT(127 37.5)");
+    assertThat(geoms.get("부산")).isEqualTo("POINT(129 35.1)");
+    assertThat(geoms.get("빈값")).isNull();
+  }
+
+  @Test
+  void replaceWithoutPk_insertsGeometryFromGeoJson() throws Exception {
+    // PK 없는 REPLACE 도 대상 테이블에 바로 넣는 경로 — APPEND 와 같은 결함이었다
+    String tableName = "process_geom_replace";
+    Long datasetId = createGeometryDataset(tableName);
+    runImport("geom-replace-job", datasetId, writeGeometryCsv(GEOM_ROWS), "REPLACE");
+
+    Mockito.verify(asyncJobService, Mockito.never())
+        .failJob(Mockito.anyString(), Mockito.anyString());
+    assertThat(geometries(tableName))
+        .containsEntry("서울", "POINT(127 37.5)")
+        .containsEntry("부산", "POINT(129 35.1)")
+        .hasSize(3);
+  }
+
+  @Test
+  void append_allNullGeometry_succeeds() throws Exception {
+    // 위치 값이 모두 비어 있는 파일 — 수정 전에도 성공했다(NULL 은 geometry 로 들어간다). 타입 캐스트를 넣은 뒤에도 그대로인지 지키는 회귀 가드
+    String tableName = "process_geom_null";
+    Long datasetId = createGeometryDataset(tableName);
+    runImport("geom-null-job", datasetId, writeGeometryCsv("가,\n나,\n"), "APPEND");
+
+    Mockito.verify(asyncJobService, Mockito.never())
+        .failJob(Mockito.anyString(), Mockito.anyString());
+    assertThat(countRows(tableName)).isEqualTo(2);
+  }
 }
