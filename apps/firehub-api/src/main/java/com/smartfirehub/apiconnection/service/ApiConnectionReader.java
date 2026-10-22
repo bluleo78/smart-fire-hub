@@ -6,8 +6,9 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.apiconnection.dto.ApiConnectionResponse;
-import com.smartfirehub.apiconnection.exception.ApiConnectionException;
+import com.smartfirehub.apiconnection.exception.ApiConnectionNotFoundException;
 import com.smartfirehub.apiconnection.repository.ApiConnectionRepository;
+import com.smartfirehub.global.exception.SerializationException;
 import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.Map;
@@ -44,9 +45,7 @@ public class ApiConnectionReader {
   /** 단건 조회 — authConfig 는 마스킹된 형태로 반환한다. */
   public ApiConnectionResponse getById(Long id) {
     Record record =
-        repository
-            .findById(id)
-            .orElseThrow(() -> new ApiConnectionException("ApiConnection not found: " + id));
+        repository.findById(id).orElseThrow(() -> new ApiConnectionNotFoundException(id));
     return toResponse(record);
   }
 
@@ -54,8 +53,8 @@ public class ApiConnectionReader {
    * 다른 곳(파이프라인 스텝 등)이 이 연결을 참조로 저장해도 되는지 — 현재 워크스페이스에서 보이는 연결인지 판정한다(WD-176).
    *
    * <p>RLS 가 걸린 조회라 다른 워크스페이스의 연결과 없는 연결이 똑같이 {@code false} 가 된다. 호출부는 두 경우를 같은 응답으로 거절해야 연결 번호의 존재
-   * 여부가 새지 않는다. {@link #getById} 를 쓰지 않는 이유: 그쪽은 404 와 영어 원문("ApiConnection not found")을 내보내 저장 검증
-   * 오류(400, 한국어 안내)와 어긋난다.
+   * 여부가 새지 않는다. {@link #getById} 를 쓰지 않는 이유: 그쪽은 「연결 없음」 404({@link
+   * ApiConnectionNotFoundException})를 내보내 저장 검증 오류(400, 스텝 이름을 붙인 안내)와 어긋난다.
    */
   public boolean isVisible(Long id) {
     return id != null && repository.existsById(id);
@@ -69,9 +68,7 @@ public class ApiConnectionReader {
    */
   public Map<String, String> getDecryptedAuthConfig(Long id) {
     Record record =
-        repository
-            .findById(id)
-            .orElseThrow(() -> new ApiConnectionException("ApiConnection not found: " + id));
+        repository.findById(id).orElseThrow(() -> new ApiConnectionNotFoundException(id));
     String encryptedConfig = record.get(field(name("api_connection", "auth_config"), String.class));
     Map<String, String> config = decryptToMap(encryptedConfig);
     String authType = record.get(field(name("api_connection", "auth_type"), String.class));
@@ -114,7 +111,9 @@ public class ApiConnectionReader {
       String json = encryptionService.decrypt(encryptedConfig);
       return objectMapper.readValue(json, new TypeReference<Map<String, String>>() {});
     } catch (JsonProcessingException e) {
-      throw new ApiConnectionException("Failed to deserialize authConfig: " + e.getMessage());
+      // 저장 데이터 손상(서버 쪽 문제)이라 입력 오류(400)가 아니다 — 500(SerializationException)으로 나가게 하고, 파서 원문(값 조각이
+      // 실릴 수 있다)은 응답 문구에 싣지 않고 원인(cause)으로만 남긴다(WD-180).
+      throw new SerializationException("저장된 API 연결 인증 정보를 읽지 못했습니다", e);
     }
   }
 

@@ -21,6 +21,7 @@ import com.smartfirehub.apiconnection.dto.ApiConnectionResponse;
 import com.smartfirehub.apiconnection.dto.CreateApiConnectionRequest;
 import com.smartfirehub.apiconnection.dto.TestConnectionResponse;
 import com.smartfirehub.apiconnection.exception.ApiConnectionException;
+import com.smartfirehub.pipeline.service.executor.ApiCallErrorMessages;
 import com.smartfirehub.pipeline.service.executor.SsrfProtectionService;
 import com.smartfirehub.support.IntegrationTestBase;
 import java.net.ServerSocket;
@@ -261,6 +262,20 @@ class ApiConnectionTestUrlMaskingTest extends IntegrationTestBase {
     assertThat(result.requestUrl()).isEqualTo(base + "/health?serviceKey=****9876");
     assertNoSecret(result.errorMessage(), KEY);
     assertNoSecret(apiConnectionService.getById(created.id()).lastErrorMessage(), KEY);
+    // WD-180: 영어 원문(「Connection refused: localhost/127.0.0.1:N」) 대신 API_CALL 실행·미리보기와 같은 한국어 문장이다 —
+    // 응답과
+    // 저장되는 lastErrorMessage 둘 다.
+    assertKoreanConnectionRefused(result.errorMessage());
+    assertKoreanConnectionRefused(apiConnectionService.getById(created.id()).lastErrorMessage());
+  }
+
+  /** 연결 거부 사유가 API_CALL 쪽 한국어 문장(WD-150)과 같고 영어 원문이 없는지 단언한다(WD-180). */
+  private static void assertKoreanConnectionRefused(String message) {
+    assertThat(message)
+        .isEqualTo(ApiCallErrorMessages.connectionRefused())
+        .startsWith("연결이 거부되었습니다")
+        .doesNotContainIgnoringCase("refused")
+        .doesNotContain("127.0.0.1");
   }
 
   /**
@@ -373,6 +388,8 @@ class ApiConnectionTestUrlMaskingTest extends IntegrationTestBase {
     assertThat(result.ok()).isFalse();
     assertThat(result.requestUrl()).isEqualTo(base + "/health?serviceKey=****9876");
     assertNoSecret(result.errorMessage(), KEY);
+    // WD-180: 저장 전 테스트도 같은 한국어 문장
+    assertKoreanConnectionRefused(result.errorMessage());
   }
 
   @Test

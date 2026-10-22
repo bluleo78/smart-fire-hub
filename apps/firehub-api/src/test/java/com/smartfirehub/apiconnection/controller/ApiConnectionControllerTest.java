@@ -12,6 +12,8 @@ import com.smartfirehub.apiconnection.dto.ApiConnectionSelectableResponse;
 import com.smartfirehub.apiconnection.dto.CreateApiConnectionRequest;
 import com.smartfirehub.apiconnection.dto.TestConnectionResponse;
 import com.smartfirehub.apiconnection.dto.UpdateApiConnectionRequest;
+import com.smartfirehub.apiconnection.exception.ApiConnectionException;
+import com.smartfirehub.apiconnection.exception.ApiConnectionNotFoundException;
 import com.smartfirehub.apiconnection.service.ApiConnectionService;
 import com.smartfirehub.global.config.SecurityConfig;
 import com.smartfirehub.global.security.JwtAuthenticationFilter;
@@ -118,8 +120,9 @@ class ApiConnectionControllerTest {
   }
 
   /**
-   * 가린 인증정보(****…) 거절(WD-179)은 서비스가 IllegalArgumentException 으로 던지고 HTTP 400 으로 나가야 한다. 이 패키지의
-   * ApiConnectionException 은 404 로 매핑돼 있어(WD-180) 예외 종류를 바꾸면 400 이 404 로 뒤바뀐다 — 그 회귀를 막는다.
+   * 가린 인증정보(****…) 거절(WD-179)은 서비스가 IllegalArgumentException 으로 던지고 HTTP 400 으로 나가야 한다. WD-179 당시에는
+   * 이 패키지의 ApiConnectionException 이 404 로 매핑돼 있어 예외 종류를 바꾸면 400 이 404 로 뒤바뀌었다(WD-180 에서 「없음」만 404 로
+   * 분리됨) — 400 이 유지되는지 지킨다.
    */
   @Test
   void update_maskedSecretRejected_returnsBadRequest() throws Exception {
@@ -136,6 +139,64 @@ class ApiConnectionControllerTest {
                     objectMapper.writeValueAsString(
                         new UpdateApiConnectionRequest(
                             null, null, null, Map.of("token", "****0000"), null, null))))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value(message));
+  }
+
+  /** 없는(또는 다른 워크스페이스의) 연결 조회는 404 · 한국어 문구다(WD-180). 예전에는 「ApiConnection not found: N」 영어 원문이었다. */
+  @Test
+  void getById_notFound_returns404InKorean() throws Exception {
+    when(apiConnectionService.getById(999L)).thenThrow(new ApiConnectionNotFoundException(999L));
+
+    mockMvc
+        .perform(get("/api/v1/api-connections/999").header("Authorization", "Bearer test-token"))
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.message").value("API 연결을 찾을 수 없습니다: 999"));
+  }
+
+  /**
+   * 수정의 입력 오류(지원하지 않는 인증 방식 등)는 404 가 아니라 400 이다(WD-180). 예전에는 ApiConnectionException 전체가 404 로 매핑돼
+   * 「찾을 수 없음」처럼 나갔다.
+   */
+  @Test
+  void update_unsupportedAuthType_returns400() throws Exception {
+    String message = "지원하지 않는 인증 방식입니다: OAUTH2 (사용 가능: API_KEY, BEARER)";
+    when(apiConnectionService.update(anyLong(), any(UpdateApiConnectionRequest.class)))
+        .thenThrow(new ApiConnectionException(message));
+
+    mockMvc
+        .perform(
+            put("/api/v1/api-connections/1")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    objectMapper.writeValueAsString(
+                        new UpdateApiConnectionRequest(null, null, "OAUTH2", null, null, null))))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value(message));
+  }
+
+  /** 저장 전 테스트의 내부 주소 거절도 입력 오류라 400 이다(WD-180). */
+  @Test
+  void testPayload_internalAddressRejected_returns400() throws Exception {
+    String message = "내부망 주소는 호출할 수 없습니다(루프백): 127.0.0.1";
+    when(apiConnectionService.testConnectionPayload(any(CreateApiConnectionRequest.class)))
+        .thenThrow(new ApiConnectionException(message));
+
+    mockMvc
+        .perform(
+            post("/api/v1/api-connections/test")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    objectMapper.writeValueAsString(
+                        new CreateApiConnectionRequest(
+                            "Loopback",
+                            null,
+                            "BEARER",
+                            Map.of("token", "tok"),
+                            "http://127.0.0.1:6030",
+                            null))))
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.message").value(message));
   }

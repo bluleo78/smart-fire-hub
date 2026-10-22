@@ -10,6 +10,7 @@ import com.smartfirehub.apiconnection.dto.ApiConnectionSelectableResponse;
 import com.smartfirehub.apiconnection.dto.CreateApiConnectionRequest;
 import com.smartfirehub.apiconnection.dto.UpdateApiConnectionRequest;
 import com.smartfirehub.apiconnection.exception.ApiConnectionException;
+import com.smartfirehub.apiconnection.exception.ApiConnectionNotFoundException;
 import com.smartfirehub.apiconnection.repository.ApiConnectionRepository;
 import com.smartfirehub.pipeline.service.executor.SsrfProtectionService;
 import com.smartfirehub.support.IntegrationTestBase;
@@ -21,6 +22,8 @@ import org.jooq.Table;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -273,8 +276,8 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
     apiConnectionService.delete(id);
 
     assertThatThrownBy(() -> apiConnectionService.getById(id))
-        .isInstanceOf(ApiConnectionException.class)
-        .hasMessageContaining("not found");
+        .isInstanceOf(ApiConnectionNotFoundException.class)
+        .hasMessage("API 연결을 찾을 수 없습니다: " + id);
   }
 
   @Test
@@ -443,8 +446,8 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
   @Test
   void getReferences_nonExistentConnection_throwsException() {
     assertThatThrownBy(() -> apiConnectionService.getReferences(-1L))
-        .isInstanceOf(ApiConnectionException.class)
-        .hasMessageContaining("not found");
+        .isInstanceOf(ApiConnectionNotFoundException.class)
+        .hasMessage("API 연결을 찾을 수 없습니다: -1");
   }
 
   // ── #647: 이름 중복 검증 ─────────────────────────────────────────────────────
@@ -689,5 +692,135 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
                         null)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("authConfig.token");
+  }
+
+  // ── WD-180: 인증 방식 변경 검증 ─────────────────────────────────────────────
+
+  /** 저장된 인증 방식·비밀이 그대로인지 확인한다 — 거절된 수정이 아무것도 바꾸지 않았음을 DB 에서 다시 읽어 증명한다. */
+  private void assertAuthUnchanged(Long id, String authType, String secretKey, String secret) {
+    assertThat(apiConnectionService.getById(id).authType()).isEqualTo(authType);
+    assertThat(apiConnectionService.getDecryptedAuthConfig(id).get(secretKey)).isEqualTo(secret);
+  }
+
+  /**
+   * authConfig 없이 authType 만 BEARER 로 바꾸면 400 으로 거절된다. 예전에는 검증 없이 저장돼 토큰 없는 BEARER 가 되었고 인증 헤더 없이
+   * 호출되면서도 오류가 없었다.
+   */
+  @Test
+  void update_authTypeOnlyToBearer_withoutAuthConfig_rejectedAndUnchanged() {
+    ApiConnectionResponse created =
+        apiConnectionService.create(validReq("https://wd180-only.example.com"), testUserId);
+
+    assertThatThrownBy(
+            () ->
+                apiConnectionService.update(
+                    created.id(),
+                    new UpdateApiConnectionRequest(null, null, "BEARER", null, null, null)))
+        .isExactlyInstanceOf(ApiConnectionException.class)
+        .hasMessage("인증 방식을 BEARER(으)로 바꾸려면 새 방식의 인증 정보(authConfig.token)를 함께 입력하세요");
+
+    assertAuthUnchanged(created.id(), "API_KEY", "apiKey", "secret");
+  }
+
+  /**
+   * 방식을 바꾸면서 새 방식의 비밀 필드가 없는 authConfig({@code {}}·옛 방식 필드만)도 같은 이유로 거절한다 — null 만 막으면 신고된 「인증 헤더
+   * 없이 호출」이 그대로 재현된다.
+   */
+  @Test
+  void update_authTypeChangedWithoutNewSecretField_rejectedAndUnchanged() {
+    ApiConnectionResponse created =
+        apiConnectionService.create(validReq("https://wd180-empty.example.com"), testUserId);
+
+    for (Map<String, String> config :
+        List.of(Map.<String, String>of(), Map.of("apiKey", "new-key"), Map.of("token", "  "))) {
+      assertThatThrownBy(
+              () ->
+                  apiConnectionService.update(
+                      created.id(),
+                      new UpdateApiConnectionRequest(null, null, "BEARER", config, null, null)))
+          .as("authConfig=%s", config)
+          .isExactlyInstanceOf(ApiConnectionException.class)
+          .hasMessageContaining("authConfig.token");
+    }
+
+    assertAuthUnchanged(created.id(), "API_KEY", "apiKey", "secret");
+  }
+
+  /**
+   * 지원 목록 밖의 authType 은 authConfig 가 없어도 수정에서 400 한국어로 거절된다. 예전에는 OAUTH2 가 200 으로 저장됐고 FOO 는 DB
+   * CHECK 제약에 걸려 409 일반 문구가 됐다.
+   */
+  @ParameterizedTest
+  @ValueSource(strings = {"OAUTH2", "BASIC", "FOO"})
+  void update_unsupportedAuthType_rejectedInKoreanAndUnchanged(String authType) {
+    ApiConnectionResponse created =
+        apiConnectionService.create(
+            validReq("https://wd180-upd-" + authType.toLowerCase() + ".example.com"), testUserId);
+
+    assertThatThrownBy(
+            () ->
+                apiConnectionService.update(
+                    created.id(),
+                    new UpdateApiConnectionRequest(null, null, authType, null, null, null)))
+        .isExactlyInstanceOf(ApiConnectionException.class)
+        .hasMessage("지원하지 않는 인증 방식입니다: " + authType + " (사용 가능: API_KEY, BEARER)");
+
+    assertAuthUnchanged(created.id(), "API_KEY", "apiKey", "secret");
+  }
+
+  /** 생성도 지원 목록 밖의 authType 을 400 한국어로 거절하고 행을 만들지 않는다. */
+  @ParameterizedTest
+  @ValueSource(strings = {"OAUTH2", "BASIC", "FOO"})
+  void create_unsupportedAuthType_rejectedInKorean(String authType) {
+    String name = "WD180 create " + authType + " " + System.nanoTime();
+    assertThatThrownBy(
+            () ->
+                apiConnectionService.create(
+                    new CreateApiConnectionRequest(
+                        name,
+                        null,
+                        authType,
+                        Map.of("token", "tok"),
+                        "https://wd180-create.example.com",
+                        null),
+                    testUserId))
+        .isExactlyInstanceOf(ApiConnectionException.class)
+        .hasMessage("지원하지 않는 인증 방식입니다: " + authType + " (사용 가능: API_KEY, BEARER)");
+
+    assertThat(apiConnectionService.getAll()).noneMatch(c -> name.equals(c.name()));
+  }
+
+  /** 새 방식에 맞는 authConfig 를 함께 보내면 방식이 정상으로 바뀐다(회귀) — 옛 방식의 비밀은 남지 않는다. */
+  @Test
+  void update_authTypeChangedWithMatchingAuthConfig_succeeds() {
+    ApiConnectionResponse created =
+        apiConnectionService.create(validReq("https://wd180-ok.example.com"), testUserId);
+
+    ApiConnectionResponse updated =
+        apiConnectionService.update(
+            created.id(),
+            new UpdateApiConnectionRequest(
+                null, null, "BEARER", Map.of("token", "wd180-new-token"), null, null));
+
+    assertThat(updated.authType()).isEqualTo("BEARER");
+    Map<String, String> decrypted = apiConnectionService.getDecryptedAuthConfig(created.id());
+    assertThat(decrypted.get("token")).isEqualTo("wd180-new-token");
+    assertThat(decrypted).doesNotContainKey("apiKey");
+  }
+
+  /** authType 이 그대로이고 authConfig 가 없으면 저장된 비밀을 유지한다(현행 유지 회귀). */
+  @Test
+  void update_sameAuthTypeWithoutAuthConfig_keepsStoredSecret() {
+    ApiConnectionResponse created =
+        apiConnectionService.create(validReq("https://wd180-same.example.com"), testUserId);
+    String newName = "WD180 renamed " + System.nanoTime();
+
+    ApiConnectionResponse updated =
+        apiConnectionService.update(
+            created.id(),
+            new UpdateApiConnectionRequest(newName, null, "API_KEY", null, null, null));
+
+    assertThat(updated.name()).isEqualTo(newName);
+    assertAuthUnchanged(created.id(), "API_KEY", "apiKey", "secret");
   }
 }

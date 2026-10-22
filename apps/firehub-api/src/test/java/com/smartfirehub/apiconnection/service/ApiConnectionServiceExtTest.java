@@ -14,6 +14,8 @@ import com.smartfirehub.apiconnection.dto.CreateApiConnectionRequest;
 import com.smartfirehub.apiconnection.dto.TestConnectionResponse;
 import com.smartfirehub.apiconnection.dto.UpdateApiConnectionRequest;
 import com.smartfirehub.apiconnection.exception.ApiConnectionException;
+import com.smartfirehub.apiconnection.exception.ApiConnectionNotFoundException;
+import com.smartfirehub.pipeline.service.executor.ApiCallErrorMessages;
 import com.smartfirehub.pipeline.service.executor.SsrfException;
 import com.smartfirehub.pipeline.service.executor.SsrfProtectionService;
 import com.smartfirehub.support.IntegrationTestBase;
@@ -136,7 +138,9 @@ class ApiConnectionServiceExtTest extends IntegrationTestBase {
 
     assertThatThrownBy(() -> apiConnectionService.create(req, testUserId))
         .isInstanceOf(ApiConnectionException.class)
-        .hasMessageContaining("유효하지 않은 baseUrl");
+        .hasMessageStartingWith("baseUrl 형식이 올바르지 않습니다")
+        // URI 파서의 영어 원문(「Expected authority …」·「Illegal character …」)은 싣지 않는다(WD-180)
+        .hasMessageNotContaining("at index");
   }
 
   // ── validateAndNormalizeBaseUrl: SsrfException → ApiConnectionException ────
@@ -160,21 +164,23 @@ class ApiConnectionServiceExtTest extends IntegrationTestBase {
   @Test
   void create_illegalArgumentBaseUrl_throwsApiConnectionException() {
     // URI.create()가 IllegalArgumentException을 던지도록 — 공백 포함 URL
-    // "유효하지 않은 baseUrl: ..." 메시지
+    // 고정 한국어 안내 「baseUrl 형식이 올바르지 않습니다 — …」(WD-180)
     CreateApiConnectionRequest req =
         new CreateApiConnectionRequest(
             "Illegal URL", null, "BEARER", Map.of("token", "tok"), "http://invalid url", null);
 
     assertThatThrownBy(() -> apiConnectionService.create(req, testUserId))
         .isInstanceOf(ApiConnectionException.class)
-        .hasMessageContaining("유효하지 않은 baseUrl");
+        .hasMessageStartingWith("baseUrl 형식이 올바르지 않습니다")
+        // URI 파서의 영어 원문(「Expected authority …」·「Illegal character …」)은 싣지 않는다(WD-180)
+        .hasMessageNotContaining("at index");
   }
 
   // ── validateAuthType: 유효하지 않은 authType ────────────────────────────────
 
   @Test
   void create_invalidAuthType_throwsApiConnectionException() {
-    // "BASIC" — 지원되지 않는 authType → "Unsupported authType" 예외
+    // "BASIC" — 지원되지 않는 authType → 한국어 안내 예외(WD-180, 400)
     CreateApiConnectionRequest req =
         new CreateApiConnectionRequest(
             "Bad AuthType",
@@ -186,7 +192,7 @@ class ApiConnectionServiceExtTest extends IntegrationTestBase {
 
     assertThatThrownBy(() -> apiConnectionService.create(req, testUserId))
         .isInstanceOf(ApiConnectionException.class)
-        .hasMessageContaining("Unsupported authType");
+        .hasMessage("지원하지 않는 인증 방식입니다: BASIC (사용 가능: API_KEY, BEARER)");
   }
 
   @Test
@@ -197,7 +203,7 @@ class ApiConnectionServiceExtTest extends IntegrationTestBase {
 
     assertThatThrownBy(() -> apiConnectionService.create(req, testUserId))
         .isInstanceOf(ApiConnectionException.class)
-        .hasMessageContaining("Unsupported authType");
+        .hasMessage("인증 방식(authType)을 입력하세요 (사용 가능: API_KEY, BEARER)");
   }
 
   // ── update(): baseUrl 변경 경로 (validateAndNormalizeBaseUrl 호출) ───────────
@@ -266,12 +272,13 @@ class ApiConnectionServiceExtTest extends IntegrationTestBase {
 
   @Test
   void update_nonExistentId_throwsApiConnectionException() {
+    // authConfig 없이 authType 을 바꾸는 요청이지만, 연결이 없으면 인증 방식 검증(400)보다 「없음」(404)이 먼저다(WD-180).
     UpdateApiConnectionRequest updateReq =
         new UpdateApiConnectionRequest("Name", null, "BEARER", null, null, null);
 
     assertThatThrownBy(() -> apiConnectionService.update(999999L, updateReq))
-        .isInstanceOf(ApiConnectionException.class)
-        .hasMessageContaining("not found");
+        .isInstanceOf(ApiConnectionNotFoundException.class)
+        .hasMessage("API 연결을 찾을 수 없습니다: " + 999999L);
   }
 
   // ── getDecryptedAuthConfig(): 존재하지 않는 ID ───────────────────────────────
@@ -279,8 +286,8 @@ class ApiConnectionServiceExtTest extends IntegrationTestBase {
   @Test
   void getDecryptedAuthConfig_nonExistentId_throwsApiConnectionException() {
     assertThatThrownBy(() -> apiConnectionService.getDecryptedAuthConfig(999999L))
-        .isInstanceOf(ApiConnectionException.class)
-        .hasMessageContaining("not found");
+        .isInstanceOf(ApiConnectionNotFoundException.class)
+        .hasMessage("API 연결을 찾을 수 없습니다: " + 999999L);
   }
 
   // ── getById(): 존재하지 않는 ID ──────────────────────────────────────────────
@@ -288,8 +295,8 @@ class ApiConnectionServiceExtTest extends IntegrationTestBase {
   @Test
   void getById_nonExistentId_throwsApiConnectionException() {
     assertThatThrownBy(() -> apiConnectionService.getById(999998L))
-        .isInstanceOf(ApiConnectionException.class)
-        .hasMessageContaining("not found");
+        .isInstanceOf(ApiConnectionNotFoundException.class)
+        .hasMessage("API 연결을 찾을 수 없습니다: " + 999998L);
   }
 
   // ── delete(): 존재하지 않는 ID ───────────────────────────────────────────────
@@ -297,8 +304,8 @@ class ApiConnectionServiceExtTest extends IntegrationTestBase {
   @Test
   void delete_nonExistentId_throwsApiConnectionException() {
     assertThatThrownBy(() -> apiConnectionService.delete(999997L))
-        .isInstanceOf(ApiConnectionException.class)
-        .hasMessageContaining("not found");
+        .isInstanceOf(ApiConnectionNotFoundException.class)
+        .hasMessage("API 연결을 찾을 수 없습니다: " + 999997L);
   }
 
   // ── delete(): 정상 삭제 후 조회 시 not-found ─────────────────────────────────
@@ -312,8 +319,8 @@ class ApiConnectionServiceExtTest extends IntegrationTestBase {
     apiConnectionService.delete(id);
 
     assertThatThrownBy(() -> apiConnectionService.getById(id))
-        .isInstanceOf(ApiConnectionException.class)
-        .hasMessageContaining("not found");
+        .isInstanceOf(ApiConnectionNotFoundException.class)
+        .hasMessage("API 연결을 찾을 수 없습니다: " + id);
   }
 
   // ── testConnection(): 연결 불가 URL → DOWN 상태 반환 ────────────────────────
@@ -386,13 +393,14 @@ class ApiConnectionServiceExtTest extends IntegrationTestBase {
     TestConnectionResponse result = apiConnectionService.testConnection(created.id());
 
     assertThat(result.ok()).isFalse();
-    assertThat(result.errorMessage()).isEqualTo("응답 시간 초과 (5초)");
+    // API_CALL 실행·미리보기와 같은 타임아웃 문장(WD-180)
+    assertThat(result.errorMessage()).isEqualTo(ApiCallErrorMessages.timeout(5000));
     assertThat(result.errorMessage()).doesNotContain("NANOSECONDS");
 
     // 감사 로그/상세 페이지가 실제로 읽는 것은 DB에 저장된 lastErrorMessage다 —
     // DTO 반환값만 확인하면 repository.updateHealthStatus 경로가 안 고쳐진 회귀를 못 잡는다.
     assertThat(apiConnectionService.getById(created.id()).lastErrorMessage())
-        .isEqualTo("응답 시간 초과 (5초)");
+        .isEqualTo(ApiCallErrorMessages.timeout(5000));
   }
 
   // ── refreshAllAsync(): jobId 반환 및 비동기 실행 시작 ─────────────────────────
@@ -427,7 +435,7 @@ class ApiConnectionServiceExtTest extends IntegrationTestBase {
 
   @Test
   void update_withAuthConfigAndInvalidAuthType_throwsApiConnectionException() {
-    // authConfig != null && authType != null → validateAuthType 호출(L113)
+    // authType 이 오면 authConfig 유무와 상관없이 validateAuthType 호출(WD-180)
     ApiConnectionResponse created =
         apiConnectionService.create(bearerReq("https://validate-type.example.com"), testUserId);
 
@@ -437,6 +445,6 @@ class ApiConnectionServiceExtTest extends IntegrationTestBase {
 
     assertThatThrownBy(() -> apiConnectionService.update(created.id(), updateReq))
         .isInstanceOf(ApiConnectionException.class)
-        .hasMessageContaining("Unsupported authType");
+        .hasMessage("지원하지 않는 인증 방식입니다: INVALID_TYPE (사용 가능: API_KEY, BEARER)");
   }
 }

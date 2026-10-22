@@ -4,6 +4,7 @@ import com.smartfirehub.analytics.exception.ChartNotFoundException;
 import com.smartfirehub.analytics.exception.DashboardNotFoundException;
 import com.smartfirehub.analytics.exception.SavedQueryNotFoundException;
 import com.smartfirehub.apiconnection.exception.ApiConnectionException;
+import com.smartfirehub.apiconnection.exception.ApiConnectionNotFoundException;
 import com.smartfirehub.dataimport.exception.ConcurrentImportException;
 import com.smartfirehub.dataimport.exception.ImportProcessingException;
 import com.smartfirehub.dataset.exception.CategoryNotFoundException;
@@ -49,7 +50,13 @@ public class ExceptionStubControllerExtended {
 
   @GetMapping("/api-connection-not-found")
   public void apiConnectionNotFound() {
-    throw new ApiConnectionException("ApiConnection not found: 88");
+    throw new ApiConnectionNotFoundException(88L);
+  }
+
+  /** API 연결 입력 오류 — 404 가 아니라 400 이어야 한다(WD-180). */
+  @GetMapping("/api-connection-invalid")
+  public void apiConnectionInvalid() {
+    throw new ApiConnectionException("지원하지 않는 인증 방식입니다: FOO (사용 가능: API_KEY, BEARER)");
   }
 
   @GetMapping("/file-not-found")

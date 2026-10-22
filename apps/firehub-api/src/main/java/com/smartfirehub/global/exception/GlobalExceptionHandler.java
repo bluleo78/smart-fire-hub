@@ -6,6 +6,7 @@ import com.smartfirehub.analytics.exception.DashboardNotFoundException;
 import com.smartfirehub.analytics.exception.SavedQueryNotFoundException;
 import com.smartfirehub.apiconnection.exception.ApiConnectionException;
 import com.smartfirehub.apiconnection.exception.ApiConnectionNameAlreadyExistsException;
+import com.smartfirehub.apiconnection.exception.ApiConnectionNotFoundException;
 import com.smartfirehub.auth.exception.AccountLockedException;
 import com.smartfirehub.auth.exception.EmailAlreadyExistsException;
 import com.smartfirehub.auth.exception.InvalidCredentialsException;
@@ -601,11 +602,26 @@ public class GlobalExceptionHandler {
     return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
   }
 
-  @ExceptionHandler(ApiConnectionException.class)
+  /**
+   * API 연결이 없거나 보이지 않음 — 404 (WD-180). {@link ApiConnectionException} 의 하위 클래스라 Spring 이 더 구체적인 이
+   * 처리기를 고른다.
+   */
+  @ExceptionHandler(ApiConnectionNotFoundException.class)
   public ResponseEntity<ErrorResponse> handleApiConnectionNotFound(
-      ApiConnectionException ex, HttpServletRequest request) {
+      ApiConnectionNotFoundException ex, HttpServletRequest request) {
     ErrorResponse response = buildError(HttpStatus.NOT_FOUND, ex.getMessage(), null, request);
     return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
+  }
+
+  /**
+   * API 연결 입력·검증 오류(지원하지 않는 인증 방식, 잘못된 기준 URL, 내부 주소 거절 등) — 400 (WD-180). 예전에는 이 예외 전체를 404 로 보내
+   * 입력 오류가 「찾을 수 없음」으로 나갔다.
+   */
+  @ExceptionHandler(ApiConnectionException.class)
+  public ResponseEntity<ErrorResponse> handleApiConnectionInvalid(
+      ApiConnectionException ex, HttpServletRequest request) {
+    ErrorResponse response = buildError(HttpStatus.BAD_REQUEST, ex.getMessage(), null, request);
+    return ResponseEntity.badRequest().body(response);
   }
 
   /** 동일 테넌트 내 API 연결 이름 중복 시 409 반환 (#647). */
