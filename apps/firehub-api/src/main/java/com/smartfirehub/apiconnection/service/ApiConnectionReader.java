@@ -118,12 +118,25 @@ public class ApiConnectionReader {
     }
   }
 
+  /**
+   * authConfig 의 이 키가 「비밀 필드」(응답에서 가리는 필드)인지 판정한다. 키 이름(대소문자 무시)에 key/token/secret/password 조각이 들어
+   * 있으면 비밀이다.
+   *
+   * <p>응답 가리기({@link #maskAuthConfig})와 저장 시 가린 값 거절·유지(WD-179, {@code ApiConnectionService})가 반드시
+   * 같은 기준을 써야 한다 — 기준이 어긋나면 응답에 {@code ****} 로 나간 필드가 수정 때는 비밀로 인식되지 않아 가린 값이 그대로 저장된다. 그래서 판정을 이 한
+   * 곳에 둔다.
+   */
+  static boolean isSensitiveKey(String key) {
+    if (key == null) return false;
+    String lower = key.toLowerCase();
+    return SENSITIVE_KEY_PARTS.stream().anyMatch(lower::contains);
+  }
+
   /** 민감 키(apiKey/token/secret/password 등)의 값을 가려 응답에 노출하지 않는다. */
   private Map<String, String> maskAuthConfig(Map<String, String> authConfig) {
     Map<String, String> masked = new HashMap<>();
     for (Map.Entry<String, String> entry : authConfig.entrySet()) {
-      String key = entry.getKey().toLowerCase();
-      boolean isSensitive = SENSITIVE_KEY_PARTS.stream().anyMatch(key::contains);
+      boolean isSensitive = isSensitiveKey(entry.getKey());
       masked.put(
           entry.getKey(),
           isSensitive ? encryptionService.maskValue(entry.getValue()) : entry.getValue());

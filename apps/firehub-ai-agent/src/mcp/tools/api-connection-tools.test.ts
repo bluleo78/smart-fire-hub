@@ -276,6 +276,23 @@ describe('API Connection MCP Tools', () => {
     });
   });
 
+  describe('update_api_connection — 가려진 값(****…) 처리 (WD-179)', () => {
+    it('도구 설명이 가려진 값을 지어내 보내지 말고 인증 미변경 시 authConfig 를 생략하라고 안내한다', () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const description: string = (server.instance as any)._registeredTools['update_api_connection']
+        .description;
+      expect(description).toContain('****');
+      expect(description).toContain('authConfig를 생략');
+    });
+
+    it('조회 결과의 가린 값은 클라이언트에서 막지 않고 서버로 그대로 전달한다(서버가 유지/거절을 판정)', async () => {
+      const authConfig = { placement: 'query', paramName: 'authKey', apiKey: '****9876' };
+      const result = await invokeTool(server, 'update_api_connection', { id: 5, authConfig });
+      expect(result.isError).toBeFalsy();
+      expect(client.updateApiConnection).toHaveBeenCalledWith(5, { authConfig });
+    });
+  });
+
   describe('update_api_connection', () => {
     it('calls apiClient.updateApiConnection with id and data', async () => {
       const args = { id: 3, name: '수정된 연결', baseUrl: 'https://new.example.com' };

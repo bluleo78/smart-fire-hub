@@ -205,7 +205,10 @@ export function registerApiConnectionTools(
 
     safeTool(
       'update_api_connection',
-      'API 연결을 수정합니다. authConfig를 제공하면 인증 정보가 갱신됩니다. baseUrl/healthCheckPath도 변경 가능.',
+      // WD-179: authConfig 는 통째로 교체된다. 조회 결과의 가린 값(****…)을 그대로 보내면 서버가 저장값을 유지하고,
+      // 그 밖의 ****… 값(지어낸 값·다른 연결 값)은 서버가 400 으로 거절한다. 클라이언트에서 ****… 를 막지 않는 이유:
+      // 비밀은 그대로 두고 placement/paramName 같은 다른 필드만 바꾸는 유일한 경로가 「가린 값 그대로 보내기」이기 때문이다.
+      'API 연결을 수정합니다. authConfig를 제공하면 인증 정보 전체가 교체됩니다(빠진 필드는 지워짐). baseUrl/healthCheckPath도 변경 가능. 인증 정보를 바꾸지 않으면 authConfig를 생략하세요. 가려진 값(****…)을 새 값처럼 지어내 보내지 마세요 — get_api_connection 결과의 가린 값과 정확히 같을 때만 기존 값이 유지되고, 그 외의 ****… 값은 거절됩니다. 비밀 값을 바꾸려면 사용자에게 실제 값을 받으세요.',
       {
         id: z.number().describe('API 연결 ID'),
         name: z.string().optional().describe('연결 이름'),

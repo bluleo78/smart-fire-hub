@@ -11,6 +11,7 @@ import com.smartfirehub.apiconnection.dto.ApiConnectionResponse;
 import com.smartfirehub.apiconnection.dto.ApiConnectionSelectableResponse;
 import com.smartfirehub.apiconnection.dto.CreateApiConnectionRequest;
 import com.smartfirehub.apiconnection.dto.TestConnectionResponse;
+import com.smartfirehub.apiconnection.dto.UpdateApiConnectionRequest;
 import com.smartfirehub.apiconnection.service.ApiConnectionService;
 import com.smartfirehub.global.config.SecurityConfig;
 import com.smartfirehub.global.security.JwtAuthenticationFilter;
@@ -114,6 +115,29 @@ class ApiConnectionControllerTest {
         .andExpect(status().isCreated())
         .andExpect(jsonPath("$.id").value(1))
         .andExpect(jsonPath("$.name").value("GitHub API"));
+  }
+
+  /**
+   * 가린 인증정보(****…) 거절(WD-179)은 서비스가 IllegalArgumentException 으로 던지고 HTTP 400 으로 나가야 한다. 이 패키지의
+   * ApiConnectionException 은 404 로 매핑돼 있어(WD-180) 예외 종류를 바꾸면 400 이 404 로 뒤바뀐다 — 그 회귀를 막는다.
+   */
+  @Test
+  void update_maskedSecretRejected_returnsBadRequest() throws Exception {
+    String message = "authConfig.token 에 가려진 값(****…)은 저장할 수 없습니다.";
+    when(apiConnectionService.update(anyLong(), any(UpdateApiConnectionRequest.class)))
+        .thenThrow(new IllegalArgumentException(message));
+
+    mockMvc
+        .perform(
+            put("/api/v1/api-connections/1")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    objectMapper.writeValueAsString(
+                        new UpdateApiConnectionRequest(
+                            null, null, null, Map.of("token", "****0000"), null, null))))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value(message));
   }
 
   @Test
