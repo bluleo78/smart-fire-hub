@@ -15,6 +15,7 @@ import static org.mockito.Mockito.when;
 import com.smartfirehub.dataset.storage.external.DataStoreProvisioningException;
 import com.smartfirehub.global.tenant.TenantPipelineRoleProvisioner;
 import com.smartfirehub.global.tenant.TenantProvisioningService;
+import com.smartfirehub.notification.service.SseEmitterRegistry;
 import com.smartfirehub.platform.dto.CreateTenantRequest;
 import com.smartfirehub.platform.dto.TenantSummaryResponse;
 import com.smartfirehub.platform.repository.PlatformTenantRepository;
@@ -53,6 +54,7 @@ class PlatformTenantServiceRoleProvisioningTest {
   @Mock PlatformAuditRecorder auditRecorder;
   @Mock TenantDataStoreSetupService dataStoreSetupService;
   @Mock TenantScheduleResumer scheduleResumer;
+  @Mock SseEmitterRegistry sseEmitterRegistry;
 
   @InjectMocks PlatformTenantService service;
 
@@ -209,5 +211,20 @@ class PlatformTenantServiceRoleProvisioningTest {
     verifyNoInteractions(pipelineRoleProvisioner);
     // 무변화 재개와 정지는 예약을 다시 걸지 않는다(WD-174) — 정지 중 발화는 발화 시점 관문이 막는다
     verifyNoInteractions(scheduleResumer);
+  }
+
+  /**
+   * WD-190: 정지는 그 워크스페이스 알림 연결을 모두 닫고(트랜잭션 밖 단위 테스트라 즉시 실행), 재활성은 닫지 않는다. 롤백 시 닫지 않는지는
+   * PlatformTenantControllerTest 가 실제 트랜잭션으로 본다.
+   */
+  @Test
+  void suspend_closesTenantStreams_activateDoesNot() {
+    when(tenantRepository.findById(42L)).thenReturn(Optional.of(tenantIn("SUSPENDED")));
+    service.activate(42L, 1L);
+    verifyNoInteractions(sseEmitterRegistry);
+
+    when(tenantRepository.findById(42L)).thenReturn(Optional.of(tenantIn("ACTIVE")));
+    service.suspend(42L, 1L);
+    verify(sseEmitterRegistry).closeTenant(42L);
   }
 }

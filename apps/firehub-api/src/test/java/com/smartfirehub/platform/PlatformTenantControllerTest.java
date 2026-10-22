@@ -9,7 +9,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.notification.service.SseEmitterRegistry;
+import com.smartfirehub.platform.service.PlatformTenantService;
 import com.smartfirehub.support.IntegrationTestBase;
+import com.smartfirehub.support.OpenedSseStreams;
 import com.smartfirehub.support.TenantRlsTestSupport;
 import java.time.Duration;
 import java.time.Instant;
@@ -26,6 +29,7 @@ import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 /**
  * 테넌트 생명주기 API.
@@ -41,15 +45,20 @@ class PlatformTenantControllerTest extends IntegrationTestBase {
   @Autowired private DSLContext dsl;
   @Autowired private PlatformTransactionManager transactionManager;
   @Autowired private ObjectMapper objectMapper;
+  @Autowired private SseEmitterRegistry sseEmitterRegistry;
+  @Autowired private PlatformTenantService platformTenantService;
 
   private TransactionTemplate tx;
   private String token;
   private Long ownerUserId;
   private Long createdTenant;
+  // 테스트가 실제 레지스트리(싱글턴)에 연 알림 연결 — 다른 테스트의 브로드캐스트에 섞이지 않게 정리한다(WD-190)
+  private OpenedSseStreams streams;
 
   @BeforeEach
   void setUpPlatformSession() {
     tx = new TransactionTemplate(transactionManager);
+    streams = new OpenedSseStreams(sseEmitterRegistry);
     ownerUserId = createUser(false);
     token = jwtTokenProvider.generatePlatformAccessToken(createUser(true), "ops");
     // 운영 조건: 운영자 요청 스레드에는 테넌트 컨텍스트가 없다. JwtAuthenticationFilter 는 요청 끝(finally)에서만
@@ -60,7 +69,10 @@ class PlatformTenantControllerTest extends IntegrationTestBase {
   /** 만든 테넌트를 지운다 — 공유 test DB 라 자기 것만 지운다. */
   @AfterEach
   void cleanUp() {
+    streams.removeAll();
     if (createdTenant != null) {
+      // 구독 테스트가 실제 엔드포인트로 연 연결도 레지스트리에서 뺀다(WD-190)
+      sseEmitterRegistry.closeTenant(createdTenant);
       // WD-12 감사 행(tenant NULL)은 테넌트 cascade 에 걸리지 않는다 — 컨텍스트 없이 resource_id 로 지운다.
       long id = createdTenant;
       TenantRlsTestSupport.runInTenantTransaction(
@@ -174,6 +186,86 @@ class PlatformTenantControllerTest extends IntegrationTestBase {
         .perform(authed(post("/api/platform/tenants/" + createdTenant + "/activate")))
         .andExpect(status().isNoContent());
     assertThat(statusOf(createdTenant)).isEqualTo("ACTIVE");
+  }
+
+  /**
+   * WD-190: 워크스페이스를 정지하면 그 워크스페이스로 연 알림 연결이 사람과 무관하게 모두 닫힌다. 같은 사람의 다른 워크스페이스 연결은 그대로고, 다시 활성화할 때는
+   * 아무것도 닫지 않는다.
+   */
+  @Test
+  void suspend_closesAllStreamsOfThatTenant_activateDoesNot() throws Exception {
+    String slug = "wd190-sse-" + System.nanoTime();
+    createTenant(slug, ownerUserId);
+    createdTenant = tenantIdBySlug(slug);
+    long otherUser = createUser(false);
+    SseEmitter ownerHere = streams.open(ownerUserId, createdTenant);
+    SseEmitter otherHere = streams.open(otherUser, createdTenant);
+    SseEmitter ownerElsewhere = streams.open(ownerUserId, DEFAULT_TEST_TENANT_ID);
+
+    mockMvc
+        .perform(authed(post("/api/platform/tenants/" + createdTenant + "/suspend")))
+        .andExpect(status().isNoContent());
+
+    assertThat(OpenedSseStreams.isClosed(ownerHere)).as("정지된 워크스페이스 연결").isTrue();
+    assertThat(OpenedSseStreams.isClosed(otherHere)).as("다른 사람의 같은 워크스페이스 연결도 닫힌다").isTrue();
+    assertThat(OpenedSseStreams.isClosed(ownerElsewhere)).as("다른 워크스페이스 연결은 유지").isFalse();
+
+    SseEmitter beforeActivate = streams.open(ownerUserId, createdTenant);
+    mockMvc
+        .perform(authed(post("/api/platform/tenants/" + createdTenant + "/activate")))
+        .andExpect(status().isNoContent());
+    assertThat(OpenedSseStreams.isClosed(beforeActivate)).as("재활성은 닫지 않는다").isFalse();
+  }
+
+  /** WD-190: 정지가 롤백되면(여전히 ACTIVE) 연결을 닫지 않는다 — 닫기는 커밋 뒤에만 일어난다. */
+  @Test
+  void suspend_rolledBack_keepsStreamsOpen() throws Exception {
+    String slug = "wd190-rollback-" + System.nanoTime();
+    createTenant(slug, ownerUserId);
+    createdTenant = tenantIdBySlug(slug);
+    SseEmitter ownerHere = streams.open(ownerUserId, createdTenant);
+    long tenant = createdTenant;
+    long operator = ownerUserId; // 감사 행위자 — 롤백되므로 누구든 무방하다
+
+    tx.executeWithoutResult(
+        status -> {
+          platformTenantService.suspend(tenant, operator);
+          status.setRollbackOnly();
+        });
+
+    assertThat(statusOf(createdTenant)).as("롤백돼 여전히 ACTIVE").isEqualTo("ACTIVE");
+    assertThat(OpenedSseStreams.isClosed(ownerHere)).as("롤백이면 연결 유지").isFalse();
+  }
+
+  /**
+   * WD-190: 정지된 워크스페이스의 기존 토큰으로는 알림 구독이 403 이다 — 권한 판정은 워크스페이스 상태를 보지 않아, 연결을 닫아도 곧바로 200 으로 다시
+   * 붙었다. 활성 워크스페이스는 200(회귀).
+   */
+  @Test
+  void notificationSubscribe_okWhileActive_forbiddenAfterSuspend() throws Exception {
+    String slug = "wd190-sub-" + System.nanoTime();
+    createTenant(slug, ownerUserId);
+    createdTenant = tenantIdBySlug(slug);
+    String tenantToken = jwtTokenProvider.generateAccessToken(ownerUserId, slug, createdTenant);
+
+    mockMvc
+        .perform(
+            get("/api/v1/notifications/stream")
+                .header("Authorization", "Bearer " + tenantToken)
+                .accept(MediaType.TEXT_EVENT_STREAM))
+        .andExpect(status().isOk());
+
+    mockMvc
+        .perform(authed(post("/api/platform/tenants/" + createdTenant + "/suspend")))
+        .andExpect(status().isNoContent());
+    TenantContext.clear(); // 필터는 요청 끝에만 지운다 — 다음 요청이 운영 조건과 같게
+
+    mockMvc
+        .perform(
+            get("/api/v1/notifications/stream")
+                .header("Authorization", "Bearer " + tenantToken)
+                .accept(MediaType.TEXT_EVENT_STREAM))
+        .andExpect(status().isForbidden());
   }
 
   /** 생성이 커밋되고(롤백 안 됨) 플랫폼 감사 행이 tenant NULL 로 하나 남으며, 운영자 감사 API 에서 slug 로 찾힌다. */

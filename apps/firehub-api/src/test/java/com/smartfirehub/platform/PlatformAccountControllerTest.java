@@ -14,8 +14,11 @@ import com.smartfirehub.auth.service.RefreshTokenHasher;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.tenant.TenantProvisioningService;
+import com.smartfirehub.notification.service.SseEmitterRegistry;
 import com.smartfirehub.permission.repository.PermissionRepository;
+import com.smartfirehub.platform.service.PlatformAccountService;
 import com.smartfirehub.support.IntegrationTestBase;
+import com.smartfirehub.support.OpenedSseStreams;
 import com.smartfirehub.support.TenantRlsTestSupport;
 import com.smartfirehub.support.TestUsers;
 import java.time.LocalDateTime;
@@ -31,6 +34,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 /**
  * 운영자 콘솔 전역 계정 비활성화/재활성화(#784).
@@ -52,6 +58,9 @@ class PlatformAccountControllerTest extends IntegrationTestBase {
   @Autowired private AuthService authService;
   @Autowired private PermissionRepository permissionRepository;
   @Autowired private TenantProvisioningService provisioningService;
+  @Autowired private SseEmitterRegistry sseEmitterRegistry;
+  @Autowired private PlatformAccountService accountService;
+  @Autowired private PlatformTransactionManager transactionManager;
 
   private String marker;
   private long tenantId;
@@ -59,6 +68,8 @@ class PlatformAccountControllerTest extends IntegrationTestBase {
   private String operatorToken;
   private long target;
   private final List<Long> users = new ArrayList<>();
+  // 테스트가 실제 레지스트리(싱글턴)에 연 알림 연결 — 다른 테스트의 브로드캐스트에 섞이지 않게 정리한다(WD-190)
+  private OpenedSseStreams streams;
 
   @BeforeEach
   void setUp() {
@@ -82,11 +93,13 @@ class PlatformAccountControllerTest extends IntegrationTestBase {
                 tenantId)
             .id();
     users.add(target);
+    streams = new OpenedSseStreams(sseEmitterRegistry);
     TenantContext.clear(); // 운영 조건 재현(위 클래스 주석)
   }
 
   @AfterEach
   void tearDown() {
+    streams.removeAll();
     TenantContext.set(DEFAULT_TEST_TENANT_ID);
     List<Runnable> steps = new ArrayList<>();
     users.forEach(
@@ -113,6 +126,39 @@ class PlatformAccountControllerTest extends IntegrationTestBase {
   private int unrevokedTokens(long userId) {
     return dsl.fetchCount(
         dsl.selectOne().from("refresh_token").where("user_id = ? and revoked = false", userId));
+  }
+
+  /**
+   * WD-190: 전역 계정을 비활성화하면 그 사람의 알림 연결이 <b>모든 워크스페이스</b>에서 닫힌다 — 닫지 않으면 토큰 만료 뒤에도 개인 알림이 최대 1시간 계속
+   * 갔다. 다른 사람의 연결은 그대로다.
+   */
+  @Test
+  void deactivate_closesTargetsStreamsInAllTenants_keepsOthers() throws Exception {
+    SseEmitter targetT = streams.open(target, tenantId);
+    SseEmitter targetOther = streams.open(target, DEFAULT_TEST_TENANT_ID);
+    SseEmitter otherUserT = streams.open(operator, tenantId);
+
+    deactivate(target);
+
+    assertThat(OpenedSseStreams.isClosed(targetT)).as("대상의 이 워크스페이스 연결").isTrue();
+    assertThat(OpenedSseStreams.isClosed(targetOther)).as("대상의 다른 워크스페이스 연결도 닫힌다").isTrue();
+    assertThat(OpenedSseStreams.isClosed(otherUserT)).as("다른 사람의 연결은 유지").isFalse();
+  }
+
+  /** WD-190: 비활성화가 롤백되면(없던 일) 연결을 닫지 않는다 — 닫기는 커밋 뒤에만 일어난다. */
+  @Test
+  void deactivate_rolledBack_keepsStreamsOpen() {
+    SseEmitter targetT = streams.open(target, tenantId);
+
+    new TransactionTemplate(transactionManager)
+        .executeWithoutResult(
+            status -> {
+              accountService.deactivate(target, operator);
+              status.setRollbackOnly();
+            });
+
+    assertThat(active(target)).as("롤백돼 여전히 활성").isTrue();
+    assertThat(OpenedSseStreams.isClosed(targetT)).as("롤백이면 연결 유지").isFalse();
   }
 
   private void deactivate(long userId) throws Exception {
@@ -198,6 +244,8 @@ class PlatformAccountControllerTest extends IntegrationTestBase {
     long otherOps = TenantRlsTestSupport.insertUserWithPassword(dsl, marker + "-ops2", "{noop}x");
     users.add(otherOps);
     TenantRlsTestSupport.grantPlatformSuperAdmin(dsl, otherOps);
+    // 거절된 비활성화는 알림 연결도 닫지 않는다(WD-190)
+    SseEmitter otherOpsStream = streams.open(otherOps, tenantId);
 
     mockMvc
         .perform(
@@ -206,6 +254,7 @@ class PlatformAccountControllerTest extends IntegrationTestBase {
         .andExpect(status().isConflict())
         .andExpect(jsonPath("$.message").value("운영자 계정은 비활성화할 수 없습니다"));
     assertThat(active(otherOps)).isTrue();
+    assertThat(OpenedSseStreams.isClosed(otherOpsStream)).as("거절이면 연결 유지").isFalse();
   }
 
   @Test

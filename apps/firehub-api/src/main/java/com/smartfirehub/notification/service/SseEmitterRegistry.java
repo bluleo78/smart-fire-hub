@@ -98,6 +98,52 @@ public class SseEmitterRegistry {
     CopyOnWriteArrayList<SseEmitter> list = emitters.get(userId);
     if (list == null || list.isEmpty()) return;
     List<SseEmitter> targets = connectionsOfTenant(list, tenantId);
+    closeAll(userId, targets);
+    if (!targets.isEmpty()) {
+      log.debug(
+          "Closed {} SSE emitter(s) for userId={} tenantId={}", targets.size(), userId, tenantId);
+    }
+  }
+
+  /**
+   * 한 사용자의 연결을 <b>워크스페이스와 무관하게 전부</b> 닫는다(WD-190). 운영자가 전역 계정을 비활성화한 직후 부른다 — 그러지 않으면 이미 열린 연결(최대
+   * 1시간)로 파이프라인 완료·임포트 완료 같은 개인 알림이 토큰 만료 뒤에도 계속 갔다. 비활성 계정은 권한이 0개라 재구독은 구독 엔드포인트의 권한 검사가 거절한다. 닫는
+   * 순서는 {@link #closeUserInTenant} 와 같다(목록에서 먼저 빼고 닫기).
+   */
+  public void closeUser(Long userId) {
+    CopyOnWriteArrayList<SseEmitter> list = emitters.get(userId);
+    if (list == null || list.isEmpty()) return;
+    // 순회 중 remove 가 원본을 바꾸므로 스냅샷으로 돈다
+    List<SseEmitter> targets = List.copyOf(list);
+    closeAll(userId, targets);
+    log.debug("Closed {} SSE emitter(s) for userId={} (all tenants)", targets.size(), userId);
+  }
+
+  /**
+   * 한 워크스페이스로 연 연결을 <b>사용자와 무관하게 전부</b> 닫는다(WD-190). 운영자가 워크스페이스를 정지한 직후 부른다 — 그러지 않으면 정지된 워크스페이스의
+   * 실시간 알림이 열린 연결로 계속 갔다. 같은 사용자의 다른 워크스페이스 연결은 그대로 둔다. 닫힌 뒤 웹이 다시 붙으면 구독 엔드포인트가 워크스페이스 상태(ACTIVE
+   * 아님)를 보고 거절한다.
+   *
+   * @param tenantId 정지된 워크스페이스
+   */
+  public void closeTenant(long tenantId) {
+    int[] closed = {0};
+    emitters.forEach(
+        (userId, list) -> {
+          List<SseEmitter> targets = connectionsOfTenant(list, tenantId);
+          closeAll(userId, targets);
+          closed[0] += targets.size();
+        });
+    if (closed[0] > 0) {
+      log.debug("Closed {} SSE emitter(s) for tenantId={}", closed[0], tenantId);
+    }
+  }
+
+  /**
+   * 지정 연결들을 레지스트리에서 빼고 닫는다. 먼저 빼는 이유: 응답에 붙기 전·이미 끊긴 연결은 complete 가 완료 콜백을 부르지 않아 목록에 남을 수 있다(오래된
+   * 연결 정리와 같은 처리).
+   */
+  private void closeAll(Long userId, List<SseEmitter> targets) {
     for (SseEmitter emitter : targets) {
       remove(userId, emitter);
       try {
@@ -105,10 +151,6 @@ public class SseEmitterRegistry {
       } catch (Exception ignored) {
         // 이미 끊긴 연결 — 목록에서는 빠졌으므로 무시한다
       }
-    }
-    if (!targets.isEmpty()) {
-      log.debug(
-          "Closed {} SSE emitter(s) for userId={} tenantId={}", targets.size(), userId, tenantId);
     }
   }
 

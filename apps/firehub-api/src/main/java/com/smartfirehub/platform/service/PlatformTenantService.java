@@ -2,6 +2,8 @@ package com.smartfirehub.platform.service;
 
 import com.smartfirehub.global.tenant.TenantPipelineRoleProvisioner;
 import com.smartfirehub.global.tenant.TenantProvisioningService;
+import com.smartfirehub.global.transaction.AfterCommitRunner;
+import com.smartfirehub.notification.service.SseEmitterRegistry;
 import com.smartfirehub.platform.dto.CreateTenantRequest;
 import com.smartfirehub.platform.dto.TenantCreatedResponse;
 import com.smartfirehub.platform.dto.TenantMemberResponse;
@@ -35,6 +37,8 @@ public class PlatformTenantService {
   private final TenantDataStoreSetupService dataStoreSetupService;
   // 정지 해제 시 그 워크스페이스의 예약(트리거·스마트 작업)을 커밋 뒤 다시 등록한다(WD-174)
   private final TenantScheduleResumer scheduleResumer;
+  // 정지 시 그 워크스페이스로 연 알림 연결을 커밋 뒤 전부 닫는다(WD-190)
+  private final SseEmitterRegistry sseEmitterRegistry;
 
   /**
    * 신규 테넌트를 만들고 초기 Owner 와 기본 시드를 채운다.
@@ -162,6 +166,9 @@ public class PlatformTenantService {
    *
    * <p><b>로그인 반영은 즉시가 아니다.</b> 정지는 {@code select-tenant}/{@code refresh} 에서 재검증되므로 이미 발급된 액세스 토큰은
    * 만료(기본 30분)까지 유효하다. 즉시 차단이 필요하면 별도 조치가 필요하며 이 밴드 범위 밖이다 — 런북에 명시한다.
+   *
+   * <p>예외로 <b>알림 스트림(SSE)은 즉시 끊는다</b>(WD-190): 커밋 뒤 이 워크스페이스로 연 연결을 모두 닫고, 재구독은 구독 엔드포인트가 워크스페이스
+   * 상태를 보고 403 으로 거절한다. 열린 연결은 토큰 만료와 무관하게 최대 1시간 유지돼 정지된 워크스페이스의 알림이 계속 갔기 때문이다.
    */
   @Transactional
   public void suspend(long tenantId, long operatorId) {
@@ -202,6 +209,11 @@ public class PlatformTenantService {
       // 예약 재등록(WD-174) — 기동 재등록은 ACTIVE 테넌트만 돌아, 정지 중 재기동이 있었다면 이 워크스페이스의 예약이 하나도 걸려 있지 않다. 커밋
       // 뒤에 등록한다(롤백되면 정지 상태 그대로이므로 걸면 안 된다). 이미 걸려 있으면 바꿔 끼울 뿐 중복되지 않는다.
       scheduleResumer.resumeAfterCommit(tenantId);
+    }
+    if (!"ACTIVE".equals(status)) {
+      // 정지된 워크스페이스로 연 알림 연결을 모두 닫는다(WD-190). 커밋 뒤에 닫는다 — 롤백되면 여전히 ACTIVE 라 끊으면 안 된다.
+      // 재활성(ACTIVE)은 닫을 이유가 없고, 정지 중 거절당한 웹은 새로고침·재로그인으로 다시 붙는다.
+      AfterCommitRunner.run(() -> sseEmitterRegistry.closeTenant(tenantId));
     }
     // 정지 쪽은 등록된 예약을 그대로 둔다(WD-174). 발화 시점 관문(트리거 발화·스마트 작업 예약 콜백)이 정지 워크스페이스의 실행을 막는다.
     // 스케줄 맵이 트리거·작업 id 만 키로 들고 있어 테넌트 단위로 걷어 낼 근거가 없다.
