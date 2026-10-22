@@ -147,7 +147,7 @@ class UserNotificationTenantScopeTest {
   @Test
   void pipelineFailedNotification_notSentToOtherTenantConnection() {
     // 이 알림은 보안 등급 판정을 쓰지 않는다
-    NotificationService service = new NotificationService(registry, null, null);
+    NotificationService service = new NotificationService(registry, null, null, null);
 
     // @Async 리스너는 pipelineExecutor 스레드의 테넌트를 TenantContextTaskDecorator 로 승계받는다 — 여기서는 그 상태를 직접 세운다
     TenantContext.runScoped(

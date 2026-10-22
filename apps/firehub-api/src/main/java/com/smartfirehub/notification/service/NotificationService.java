@@ -2,6 +2,7 @@ package com.smartfirehub.notification.service;
 
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.notification.dto.NotificationEvent;
+import com.smartfirehub.permission.service.PermissionService;
 import com.smartfirehub.pipeline.event.PipelineCompletedEvent;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
@@ -27,6 +28,11 @@ public class NotificationService {
   // 데이터셋 변경 알림 수신자 판정(보안 등급) — 그 데이터셋을 볼 수 있는 같은 테넌트 사용자에게만 보낸다.
   private final DatasetAccessGuard datasetAccessGuard;
   private final ClearanceResolver clearanceResolver;
+  // API 연결 상태 알림 수신자 판정(WD-187) — 이 워크스페이스 ACTIVE 멤버 중 apiconnection:read 를 가진 사람에게만 보낸다.
+  private final PermissionService permissionService;
+
+  /** API 연결 상태 알림을 받을 수 있는 권한(WD-187) — API 연결 목록·상세를 볼 수 있는 사람이면 그 연결의 상태 변화도 볼 수 있다. */
+  static final String API_CONNECTION_READ = "apiconnection:read";
 
   @Async
   @EventListener
@@ -159,8 +165,12 @@ public class NotificationService {
 
   /**
    * API 연결 상태 변화를 <b>현재 테넌트</b>(헬스체크 스케줄러가 테넌트 순회 중 세운 TenantContext)의 연결에만 대시보드 알림으로 보낸다(WD-19).
-   * 예전 broadcastAll 은 모든 테넌트 접속자에게 API 연결 이름·오류 메시지를 보냈다. 테넌트를 모르면 보내지 않는다(fail-closed). 관리자 전용 표시
-   * 여부는 기존대로 프론트엔드가 거른다.
+   * 예전 broadcastAll 은 모든 테넌트 접속자에게 API 연결 이름·오류 메시지를 보냈다. 테넌트를 모르면 보내지 않는다(fail-closed).
+   *
+   * <p>그 테넌트 안에서도 <b>이 워크스페이스 ACTIVE 멤버(계정 활성) 중 {@code apiconnection:read} 를 가진 사람</b>에게만
+   * 보낸다(WD-187). 예전에는 같은 테넌트 연결 전원에게 보내, 그 권한이 없는 멤버(사용자 지정 역할)·정지된 멤버·제거된 멤버의 열린 연결에도 연결 이름·오류
+   * 문구(호출 URL 포함)가 갔다 — 웹은 권한을 보지 않고 토스트를 띄운다. 수신 가능 집합은 보낼 때마다 한 번의 질의로 만든다(권한 회수·정지가 다음 알림부터 바로
+   * 반영되고, 접속자마다 조회하지 않는다). 그 조회가 실패하면 보내지 않는다(fail-closed) — 상태 변화는 API 연결 화면·감사 로그에 그대로 남는다.
    *
    * @param eventType "API_CONNECTION_DOWN" 또는 "API_CONNECTION_UP"
    * @param message 알림 본문
@@ -187,7 +197,18 @@ public class NotificationService {
       log.warn("broadcastApiConnectionStatus without tenant context — skipped {}", eventType);
       return;
     }
-    registry.broadcastToTenant(tenantId, notification, userId -> true);
+    Set<Long> recipients;
+    try {
+      recipients =
+          permissionService.getActiveMemberIdsWithPermission(tenantId, API_CONNECTION_READ);
+    } catch (RuntimeException e) {
+      log.warn("API 연결 상태 알림 수신자 조회 실패 — 보내지 않음 {}: {}", eventType, e.getMessage());
+      return;
+    }
+    if (recipients.isEmpty()) {
+      return;
+    }
+    registry.broadcastToTenant(tenantId, notification, recipients::contains);
   }
 
   /**

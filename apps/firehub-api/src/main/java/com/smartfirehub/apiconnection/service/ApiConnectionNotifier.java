@@ -57,7 +57,7 @@ public class ApiConnectionNotifier {
                 name, errorMessage != null ? errorMessage : "상태 이상")
             : String.format("API 연결 '%s'이(가) 복구되었습니다", name);
 
-    // 모든 연결 사용자(관리자)에게 대시보드 SSE 브로드캐스트
+    // 이 워크스페이스 ACTIVE 멤버 중 apiconnection:read 를 가진 사용자의 연결에만 대시보드 SSE 알림(WD-187)
     notificationService.broadcastApiConnectionStatus(
         eventType, message, Map.of("apiConnectionId", id));
 

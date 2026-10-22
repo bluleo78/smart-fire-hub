@@ -48,7 +48,7 @@ class TriggerSkippedNotificationScopeTest {
     long t2 = 900_002L;
     RecordingRegistry registry = new RecordingRegistry(new ObjectMapper().findAndRegisterModules());
     // 이 알림은 보안 등급 판정을 쓰지 않는다
-    NotificationService service = new NotificationService(registry, null, null);
+    NotificationService service = new NotificationService(registry, null, null, null);
     registry.register(10L, t1); // 수신자 · 이 워크스페이스
     registry.register(10L, t2); // 같은 수신자 · 다른 워크스페이스 화면
     registry.register(20L, t1); // 수신자 아님 · 이 워크스페이스

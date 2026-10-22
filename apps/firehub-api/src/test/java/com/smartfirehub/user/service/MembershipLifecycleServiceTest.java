@@ -12,6 +12,7 @@ import com.smartfirehub.auth.dto.LoginRequest;
 import com.smartfirehub.auth.service.AuthService;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.tenant.TenantProvisioningService;
+import com.smartfirehub.notification.service.SseEmitterRegistry;
 import com.smartfirehub.role.repository.RoleRepository;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TenantRlsTestSupport;
@@ -32,6 +33,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 /**
  * 멤버십 단위 정지·재활성·제거와 잠금 방지 규칙(WD-2). 비트랜잭션, 새 테넌트 A·B.
@@ -54,6 +56,7 @@ class MembershipLifecycleServiceTest extends IntegrationTestBase {
   @Autowired private AuthService authService;
   @Autowired private TenantProvisioningService provisioningService;
   @Autowired private ObjectMapper objectMapper;
+  @Autowired private SseEmitterRegistry sseEmitterRegistry;
 
   private long tenantA;
   private long tenantB;
@@ -62,6 +65,8 @@ class MembershipLifecycleServiceTest extends IntegrationTestBase {
   private long member;
   private String adminUsername;
   private final List<Long> users = new ArrayList<>();
+  // 테스트가 실제 레지스트리(싱글턴)에 연 알림 연결 — 다른 테스트의 브로드캐스트에 섞이지 않게 정리한다(WD-187)
+  private final List<Object[]> openedStreams = new ArrayList<>();
 
   @BeforeEach
   void setUp() {
@@ -84,6 +89,7 @@ class MembershipLifecycleServiceTest extends IntegrationTestBase {
   @AfterEach
   void tearDown() {
     reset(userRepository);
+    openedStreams.forEach(o -> sseEmitterRegistry.remove((Long) o[0], (SseEmitter) o[1]));
     TenantContext.set(DEFAULT_TEST_TENANT_ID);
     List<Runnable> steps = new ArrayList<>();
     users.forEach(
@@ -216,6 +222,83 @@ class MembershipLifecycleServiceTest extends IntegrationTestBase {
     assertThat(rolesA).isZero();
     assertThat(rolesB).isEqualTo(1); // B 에서는 USER 1개만 가진다(setUp)
     assertThat(userRepository.findById(admin)).isPresent(); // 계정 유지
+  }
+
+  /** 실제 레지스트리에 알림 연결을 연다 — 응답에 붙지 않은 연결이라 send 는 버퍼링되고, 닫힌 뒤의 send 만 IllegalStateException 이다. */
+  private SseEmitter openStream(long userId, long tenantId) {
+    SseEmitter e = sseEmitterRegistry.register(userId, tenantId);
+    openedStreams.add(new Object[] {userId, e});
+    return e;
+  }
+
+  /** 연결이 닫혔는가 — 닫힌(complete) 연결에 send 하면 IllegalStateException 이 난다. */
+  private static boolean isClosed(SseEmitter e) {
+    try {
+      e.send(SseEmitter.event().comment("probe"));
+      return false;
+    } catch (IllegalStateException closed) {
+      return true;
+    } catch (java.io.IOException io) {
+      throw new IllegalStateException(io);
+    }
+  }
+
+  /** WD-187: 정지하면 그 사람의 이 워크스페이스(A) 알림 연결은 즉시 닫히고, 다른 워크스페이스(B) 연결·다른 사람의 A 연결은 그대로다. */
+  @Test
+  void suspend_closesOnlyThisTenantNotificationStream() {
+    SseEmitter adminA = openStream(admin, tenantA);
+    SseEmitter adminB = openStream(admin, tenantB);
+    SseEmitter memberA = openStream(member, tenantA);
+
+    inA(() -> userService.setUserActive(admin, false, owner));
+
+    assertThat(isClosed(adminA)).as("정지된 워크스페이스 연결").isTrue();
+    assertThat(isClosed(adminB)).as("다른 워크스페이스 연결은 유지").isFalse();
+    assertThat(isClosed(memberA)).as("다른 사람의 같은 워크스페이스 연결은 유지").isFalse();
+  }
+
+  /** WD-187: 워크스페이스에서 제거해도 그 워크스페이스 연결만 닫힌다. */
+  @Test
+  void remove_closesOnlyThisTenantNotificationStream() {
+    SseEmitter adminA = openStream(admin, tenantA);
+    SseEmitter adminB = openStream(admin, tenantB);
+
+    inA(() -> userService.removeMember(admin, owner));
+
+    assertThat(isClosed(adminA)).as("제거된 워크스페이스 연결").isTrue();
+    assertThat(isClosed(adminB)).as("다른 워크스페이스 연결은 유지").isFalse();
+  }
+
+  /**
+   * WD-187: 연결은 커밋 뒤에만 닫는다 — 정지가 거절되거나(소유자) 바깥 트랜잭션과 함께 롤백되면 정지는 없던 일이므로 연결도 그대로여야 한다. 재활성도 연결을
+   * 건드리지 않는다.
+   */
+  @Test
+  void rejectedOrRolledBackSuspend_keepsNotificationStreamOpen() {
+    SseEmitter ownerA = openStream(owner, tenantA);
+    SseEmitter adminA = openStream(admin, tenantA);
+
+    assertThatThrownBy(() -> inA(() -> userService.setUserActive(owner, false, admin)))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(isClosed(ownerA)).as("거절된 정지").isFalse();
+
+    // 바깥 트랜잭션에 합류한 정지가 함께 롤백되는 경우 — 멤버십은 ACTIVE 로 남고 연결도 닫히지 않는다
+    inA(
+        () ->
+            fixtureTransactionTemplate.executeWithoutResult(
+                status -> {
+                  userService.setUserActive(admin, false, owner);
+                  status.setRollbackOnly();
+                }));
+    assertThat(membershipRepository.findInTenant(admin, tenantA).orElseThrow().status())
+        .isEqualTo("ACTIVE");
+    assertThat(isClosed(adminA)).as("롤백된 정지").isFalse();
+
+    // 재활성은 닫지 않는다
+    inA(() -> userService.setUserActive(member, false, owner));
+    SseEmitter memberA = openStream(member, tenantA);
+    inA(() -> userService.setUserActive(member, true, owner));
+    assertThat(isClosed(memberA)).as("재활성").isFalse();
   }
 
   @Test

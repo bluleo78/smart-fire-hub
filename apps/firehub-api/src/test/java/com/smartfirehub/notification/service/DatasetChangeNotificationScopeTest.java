@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.permission.service.PermissionService;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.support.IntegrationTestBase;
@@ -34,6 +35,7 @@ class DatasetChangeNotificationScopeTest extends IntegrationTestBase {
   @Autowired private ObjectMapper om;
   @Autowired private DatasetAccessGuard guard;
   @Autowired private ClearanceResolver clearanceResolver;
+  @Autowired private PermissionService permissionService;
 
   private SecurityFixture fx;
   private final List<Long> users = new ArrayList<>();
@@ -108,7 +110,8 @@ class DatasetChangeNotificationScopeTest extends IntegrationTestBase {
   @Test
   void datasetChanged_reachesOnlySameTenantRecipientsWhoCanViewIt() {
     RecordingRegistry registry = new RecordingRegistry(om);
-    NotificationService service = new NotificationService(registry, guard, clearanceResolver);
+    NotificationService service =
+        new NotificationService(registry, guard, clearanceResolver, permissionService);
     registry.register(high, DEFAULT_TEST_TENANT_ID);
     registry.register(low, DEFAULT_TEST_TENANT_ID);
     registry.register(high, tenant2); // 같은 사용자의 다른 테넌트 화면
@@ -132,40 +135,75 @@ class DatasetChangeNotificationScopeTest extends IntegrationTestBase {
   }
 
   /**
-   * WD-19: API 연결 상태 알림(연결 이름·오류 메시지가 실린다)은 현재 테넌트 연결에만 간다 — 예전 broadcastAll 은 모든 테넌트 접속자에게 보냈다. 같은
-   * 테넌트의 모든 사용자는 받는다(등급 판정 없음, 관리자 표시 필터는 웹 몫). 테넌트 컨텍스트가 없으면 아무에게도 보내지 않는다.
+   * 사용자 지정 역할 하나만 가진 테넌트 1 멤버. {@link #userAt} 과 같지만 권한 코드를 고른다(WD-187 — apiconnection:read 유무를 가르기
+   * 위해).
+   */
+  private long userWith(String... permissionCodes) {
+    long uid = fx.createUser("dn_api");
+    users.add(uid);
+    fx.removeUserRole(uid);
+    long rid = fx.createRole("dn_api_r_" + System.nanoTime(), fx.levelId("공개"), permissionCodes);
+    roles.add(rid);
+    fx.assignRole(uid, rid);
+    return uid;
+  }
+
+  /**
+   * WD-19 + WD-187: API 연결 상태 알림(연결 이름·오류 메시지·호출 URL 이 실린다)은 <b>현재 테넌트</b> 연결 중 <b>이 워크스페이스 ACTIVE
+   * 멤버이고 apiconnection:read 를 가진</b> 사용자에게만 간다. 예전에는 같은 테넌트 연결 전원에게 갔다 — 권한 없는 멤버(사용자 지정 역할)·정지
+   * 멤버·제거 멤버의 열린 연결까지. 테넌트 컨텍스트가 없으면 아무에게도 보내지 않는다.
+   *
+   * <p>정지·제거 멤버는 apiconnection:read 역할을 그대로 가진 채로 두어, 역할이 아니라 멤버십 상태만이 그들을 막는다는 것을 보인다. 제거 멤버는 멤버십
+   * 행만 지운다(실제 제거는 역할도 지우지만, 역할이 남아도 멤버십이 없으면 받지 않아야 한다). 권한 보유자의 테넌트 2 연결은 수신 집합에 드는 사람의 연결이라 테넌트
+   * 필터만이 막는다.
    */
   @Test
-  void apiConnectionStatus_reachesOnlyCurrentTenantConnections() {
-    RecordingRegistry registry = new RecordingRegistry(om);
-    NotificationService service = new NotificationService(registry, guard, clearanceResolver);
-    registry.register(high, DEFAULT_TEST_TENANT_ID);
-    registry.register(low, DEFAULT_TEST_TENANT_ID);
-    registry.register(high, tenant2);
-    RecordingEmitter highT1 = registry.created.get(0);
-    RecordingEmitter lowT1 = registry.created.get(1);
-    RecordingEmitter highT2 = registry.created.get(2);
+  void apiConnectionStatus_reachesOnlyActiveMembersWithApiConnectionRead() {
+    long reader = userWith("dataset:read", "apiconnection:read");
+    long noPermission = high; // dataset:read 만 가진 사용자 지정 역할
+    long suspended = userWith("dataset:read", "apiconnection:read");
+    long removed = userWith("dataset:read", "apiconnection:read");
+    dsl.execute(
+        "update membership set status = 'SUSPENDED' where user_id = ? and tenant_id = ?",
+        suspended,
+        DEFAULT_TEST_TENANT_ID);
+    dsl.execute(
+        "delete from membership where user_id = ? and tenant_id = ?",
+        removed,
+        DEFAULT_TEST_TENANT_ID);
 
+    RecordingRegistry registry = new RecordingRegistry(om);
+    NotificationService service =
+        new NotificationService(registry, guard, clearanceResolver, permissionService);
+    registry.register(reader, DEFAULT_TEST_TENANT_ID);
+    registry.register(noPermission, DEFAULT_TEST_TENANT_ID);
+    registry.register(suspended, DEFAULT_TEST_TENANT_ID);
+    registry.register(removed, DEFAULT_TEST_TENANT_ID);
+    registry.register(reader, tenant2); // 같은 권한 보유자의 다른 테넌트 화면
+    RecordingEmitter readerT1 = registry.created.get(0);
+    RecordingEmitter noPermissionT1 = registry.created.get(1);
+    RecordingEmitter suspendedT1 = registry.created.get(2);
+    RecordingEmitter removedT1 = registry.created.get(3);
+    RecordingEmitter readerT2 = registry.created.get(4);
+
+    // 헬스체크 스케줄러처럼 트랜잭션 없이 TenantContext 만 세우고 부른다 — 수신자 조회가 스스로 트랜잭션을 열어야 RLS 아래에서 보인다
     TenantContext.set(DEFAULT_TEST_TENANT_ID);
     service.broadcastApiConnectionStatus(
-        "API_CONNECTION_DOWN", "API 연결 'secret-api'이(가) 응답하지 않습니다", java.util.Map.of());
-    assertThat(highT1.sent).hasValue(1);
-    assertThat(lowT1.sent).hasValue(1);
-    assertThat(highT2.sent).as("다른 테넌트 연결").hasValue(0);
-
-    // 반대 방향: 테넌트 2 의 연결 상태는 테넌트 2 연결에만
-    TenantContext.set(tenant2);
+        "API_CONNECTION_DOWN",
+        "API 연결 'secret-api'이(가) 응답하지 않습니다 (https://internal.example/health)",
+        java.util.Map.of());
     service.broadcastApiConnectionStatus(
-        "API_CONNECTION_UP", "API 연결 't2-api'이(가) 복구되었습니다", java.util.Map.of());
-    assertThat(highT2.sent).hasValue(1);
-    assertThat(highT1.sent).hasValue(1);
-    assertThat(lowT1.sent).hasValue(1);
+        "API_CONNECTION_UP", "API 연결 'secret-api'이(가) 복구되었습니다", java.util.Map.of());
+
+    assertThat(readerT1.sent).as("ACTIVE 멤버 + apiconnection:read").hasValue(2);
+    assertThat(noPermissionT1.sent).as("apiconnection:read 없는 멤버").hasValue(0);
+    assertThat(suspendedT1.sent).as("정지(SUSPENDED) 멤버").hasValue(0);
+    assertThat(removedT1.sent).as("워크스페이스에서 제거된 멤버").hasValue(0);
+    assertThat(readerT2.sent).as("다른 테넌트 연결(WD-19 회귀)").hasValue(0);
 
     TenantContext.clear();
     service.broadcastApiConnectionStatus("API_CONNECTION_UP", "x", java.util.Map.of());
-    assertThat(highT1.sent.get() + lowT1.sent.get() + highT2.sent.get())
-        .as("테넌트 없음 → 미전송")
-        .isEqualTo(3);
+    assertThat(readerT1.sent).as("테넌트 없음 → 미전송").hasValue(2);
   }
 
   /** 리뷰 M2: 한 회차의 여러 데이터셋 알림이 같은 자격 캐시를 쓰면 사용자당 자격 계산은 한 번이다(결과는 그대로). */
@@ -182,7 +220,8 @@ class DatasetChangeNotificationScopeTest extends IntegrationTestBase {
             return clearanceResolver.resolve(userId);
           }
         };
-    NotificationService service = new NotificationService(registry, guard, counting);
+    NotificationService service =
+        new NotificationService(registry, guard, counting, permissionService);
     registry.register(high, DEFAULT_TEST_TENANT_ID);
     registry.register(low, DEFAULT_TEST_TENANT_ID);
     RecordingEmitter highT1 = registry.created.get(0);

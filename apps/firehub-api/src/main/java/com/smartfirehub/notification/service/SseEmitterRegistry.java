@@ -86,6 +86,33 @@ public class SseEmitterRegistry {
   }
 
   /**
+   * 한 사용자의 연결 중 지정 테넌트 화면으로 연 연결만 닫는다(WD-187). 멤버를 정지하거나 워크스페이스에서 제거한 직후 부른다 — 그러지 않으면 이미 열린 연결(최대
+   * 1시간)로 그 워크스페이스의 사용자 단위 알림(파이프라인·임포트·리포트 등)이 계속 갔다. 다른 워크스페이스 연결은 그대로 둔다(그 워크스페이스에서는 여전히 멤버다).
+   * 닫힌 뒤 웹이 다시 붙으면 구독 엔드포인트의 권한 검사(ACTIVE 멤버십 조인)가 거절한다.
+   *
+   * <p>먼저 목록에서 빼고 닫는다: 응답에 붙기 전·이미 끊긴 연결은 complete 가 완료 콜백을 부르지 않아 목록에 남을 수 있다(오래된 연결 정리와 같은 처리).
+   *
+   * @param tenantId 정지·제거가 일어난 워크스페이스
+   */
+  public void closeUserInTenant(long tenantId, Long userId) {
+    CopyOnWriteArrayList<SseEmitter> list = emitters.get(userId);
+    if (list == null || list.isEmpty()) return;
+    List<SseEmitter> targets = connectionsOfTenant(list, tenantId);
+    for (SseEmitter emitter : targets) {
+      remove(userId, emitter);
+      try {
+        emitter.complete();
+      } catch (Exception ignored) {
+        // 이미 끊긴 연결 — 목록에서는 빠졌으므로 무시한다
+      }
+    }
+    if (!targets.isEmpty()) {
+      log.debug(
+          "Closed {} SSE emitter(s) for userId={} tenantId={}", targets.size(), userId, tenantId);
+    }
+  }
+
+  /**
    * 한 사용자에게 알림을 보내되 <b>현재 테넌트(TenantContext) 화면으로 연 연결에만</b> 보낸다(WD-173).
    *
    * <p>예전에는 그 사용자의 모든 연결로 보냈다. 한 사람이 두 워크스페이스 멤버이고 B 화면을 보고 있으면 A 의 「리포트 도착」(리포트 제목·작업 이름)·「파이프라인
