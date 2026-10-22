@@ -332,4 +332,28 @@ test.describe('스마트 작업 목록 페이지', () => {
     await expect(page.getByRole('row').filter({ hasText: '성공한 작업' }).getByTestId('last-run-failed')).toHaveCount(0);
     await expect(page.getByRole('row').filter({ hasText: '실행 전 작업' }).getByTestId('last-run-failed')).toHaveCount(0);
   });
+
+  test('최근 실행이 의도된 건너뜀이면 「마지막 실행」 칸에 실패가 아닌 건너뜀이 표시된다 (WD-191)', async ({ authenticatedPage: page }) => {
+    // 서버는 작업 주인 정지로 실행하지 않은 건너뜀도 status=FAILED 로 남긴다 — 실행 상세와 같은 판정으로 회색 「건너뜀」을 보인다
+    const reason = '작업 주인이 정지됐거나 워크스페이스에서 제거돼 실행하지 않았습니다';
+    // eslint-disable-next-line no-restricted-syntax -- epoch 숫자로 3분 전 시각을 만든다(서버 문자열 파싱 아님)
+    const recent = new Date(Date.now() - 3 * 60 * 1000).toISOString();
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs', [
+      createJob({
+        id: 1,
+        name: '건너뛴 작업',
+        lastExecutedAt: recent,
+        lastExecution: createJobExecution({ id: 11, jobId: 1, status: 'FAILED', errorMessage: reason }),
+      }),
+    ]);
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+
+    await page.goto('/ai-insights/jobs');
+
+    const row = page.getByRole('row').filter({ hasText: '건너뛴 작업' });
+    await expect(row.getByTestId('last-run-skipped')).toHaveText('· 건너뜀');
+    // 마우스를 올리면 건너뛴 사유를 볼 수 있다
+    await expect(row.getByTestId('last-run-skipped')).toHaveAttribute('title', reason);
+    await expect(row.getByTestId('last-run-failed')).toHaveCount(0);
+  });
 });

@@ -24,6 +24,7 @@ import {
 import { useCanWriteProactive,useCloneProactiveJob, useExecuteProactiveJob, useProactiveJobs, useUpdateProactiveJob } from '@/hooks/queries/useProactiveMessages';
 import { handleApiError, isForbiddenError } from '@/lib/api-error';
 import { cronToLabel } from '@/lib/cron-label';
+import { getExecutionDisplayStatus } from '@/lib/error-classifier';
 import { parseUtcDate, timeAgo } from '@/lib/formatters';
 import { formatNextRunShort } from '@/lib/next-run';
 
@@ -229,15 +230,25 @@ export default function ProactiveJobListPage() {
                     {/* 최근 실행이 실패했으면 시각 옆에 바로 알린다 (WD-134). 예약 실행이 계속 실패해도
                         목록에서는 정상처럼 보여, 실행 이력 탭을 열기 전에는 리포트가 안 만들어지는 걸 알 수 없었다.
                         '상태' 배지 컬럼은 활성 토글과 겹쳐 뺐으므로(#67) 배지가 아닌 글자로 이 칸 안에만 둔다. */}
-                    {job.lastExecution?.status === 'FAILED' && (
-                      <span
-                        className="ml-1.5 text-destructive font-medium"
-                        title={job.lastExecution.errorMessage ?? undefined}
-                        data-testid="last-run-failed"
-                      >
-                        · 실패
-                      </span>
-                    )}
+                    {/* 의도된 건너뜀(서버는 FAILED 로 남김)은 빨간 「실패」 대신 회색 「건너뜀」으로 알린다 — 실행 상세와 같은 판정 (WD-191) */}
+                    {job.lastExecution?.status === 'FAILED' &&
+                      (getExecutionDisplayStatus(job.lastExecution.status, job.lastExecution.errorMessage) === 'SKIPPED' ? (
+                        <span
+                          className="ml-1.5 text-muted-foreground font-medium"
+                          title={job.lastExecution.errorMessage ?? undefined}
+                          data-testid="last-run-skipped"
+                        >
+                          · 건너뜀
+                        </span>
+                      ) : (
+                        <span
+                          className="ml-1.5 text-destructive font-medium"
+                          title={job.lastExecution.errorMessage ?? undefined}
+                          data-testid="last-run-failed"
+                        >
+                          · 실패
+                        </span>
+                      ))}
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">
                     {/* nextExecuteAt은 타임존 표기 없는 UTC 벽시계이므로 parseUtcDate로 해석한다.

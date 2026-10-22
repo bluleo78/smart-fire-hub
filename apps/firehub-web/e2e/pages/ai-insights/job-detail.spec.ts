@@ -617,6 +617,55 @@ test.describe('스마트 작업 상세 페이지', () => {
     await expect(page.getByText('파이프라인 연결 오류')).toBeVisible();
   });
 
+  test('개요 탭 — 의도된 건너뜀은 빨간 「실패」가 아닌 회색 「건너뜀」으로 보인다 (WD-191)', async ({ authenticatedPage: page }) => {
+    // 서버는 작업 주인 권한이 없어 실행하지 않은 건너뜀도 status=FAILED 로 남긴다 — 실행 상세와 같은 판정으로 건너뜀을 보여야 한다
+    const reason = '작업 주인에게 스마트 작업 권한이 없어 실행하지 않았습니다';
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/proactive/jobs/1',
+      createJob({ id: 1, lastExecution: createJobExecution({ id: 10, jobId: 1, status: 'FAILED', errorMessage: reason }) }),
+    );
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1/executions', []);
+    await mockApi(page, 'GET', '/api/v1/proactive/templates', createTemplates());
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1/anomaly-events', []);
+
+    await page.goto('/ai-insights/jobs/1');
+
+    const status = page.getByText('마지막 실행 상태').locator('..');
+    await expect(status.locator('[data-slot="badge"]')).toHaveText('건너뜀');
+    // 사유 원문은 그대로 보이되 오류 색(빨강)이 아닌 중립 톤이다
+    const reasonText = status.getByTestId('last-execution-reason');
+    await expect(reasonText).toHaveText(reason);
+    await expect(reasonText).not.toHaveClass(/text-destructive/);
+  });
+
+  test('실행 이력 탭 — 의도된 건너뜀 행은 「실패」가 아닌 「건너뜀」 뱃지로 보인다 (WD-191)', async ({ authenticatedPage: page }) => {
+    // 같은 실행이 상세에서는 건너뜀, 이력 목록에서는 실패로 보이면 헷갈린다 — 목록 행도 같은 판정을 쓴다
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1', createJob({ id: 1 }));
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1/executions', [
+      createJobExecution({ id: 21, jobId: 1, status: 'FAILED', errorMessage: '워크스페이스가 정지되어 실행하지 않았습니다' }),
+      createJobExecution({
+        id: 22,
+        jobId: 1,
+        status: 'FAILED',
+        errorMessage: 'AI API 키 또는 OAuth 토큰이 설정되지 않았습니다. 관리자 설정에서 등록하세요.',
+        startedAt: '2024-01-01T08:00:00Z',
+      }),
+    ]);
+    await mockApi(page, 'GET', '/api/v1/proactive/templates', []);
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+
+    await page.goto('/ai-insights/jobs/1?tab=executions');
+
+    const rows = page.getByRole('row');
+    // 헤더 다음 첫 행 = 건너뜀(회색), 둘째 행 = 진짜 실패(빨강) 그대로
+    await expect(rows.nth(1)).toContainText('건너뜀');
+    await expect(rows.nth(1)).not.toContainText('실패');
+    await expect(rows.nth(2)).toContainText('실패');
+  });
+
   test('개요 탭 — 실행 중이던 최근 실행이 끝나면 다시 읽어 실패로 바뀐다 (WD-134)', async ({ authenticatedPage: page }) => {
     // 「지금 실행」 직후에는 실행 중 상태가 실리므로, 끝날 때까지 다시 읽어야 결과가 화면에 반영된다
     const running = createJob({

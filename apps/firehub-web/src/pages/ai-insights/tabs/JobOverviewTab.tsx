@@ -26,6 +26,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { cronToLabel } from '@/lib/cron-label';
+import { getExecutionDisplayStatus } from '@/lib/error-classifier';
 import { formatDate, getStatusBadgeVariant, getStatusLabel } from '@/lib/formatters';
 import { formatNextRun,getNextRunDate } from '@/lib/next-run';
 import { TIMEZONE_OPTIONS } from '@/lib/timezone-data';
@@ -268,19 +269,29 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates,
         </div>
 
         {/* 마지막 실행 상태 */}
-        {job.lastExecution && (
-          <div className="rounded-lg border p-4 space-y-2">
-            <h3 className="text-sm font-semibold">마지막 실행 상태</h3>
-            <div className="flex items-center gap-2">
-              <Badge variant={getStatusBadgeVariant(job.lastExecution.status)}>
-                {getStatusLabel(job.lastExecution.status)}
-              </Badge>
-              {job.lastExecution.errorMessage && (
-                <span className="text-sm text-destructive">{job.lastExecution.errorMessage}</span>
-              )}
+        {job.lastExecution && (() => {
+          // 의도된 건너뜀(서버는 FAILED 로 남김)은 실행 상세와 같게 회색 「건너뜀」 뱃지 + 중립 톤 사유로 보인다 (WD-191)
+          const displayStatus = getExecutionDisplayStatus(job.lastExecution.status, job.lastExecution.errorMessage);
+          const isSkipped = displayStatus === 'SKIPPED';
+          return (
+            <div className="rounded-lg border p-4 space-y-2">
+              <h3 className="text-sm font-semibold">마지막 실행 상태</h3>
+              <div className="flex items-center gap-2">
+                <Badge variant={getStatusBadgeVariant(displayStatus)}>
+                  {getStatusLabel(displayStatus)}
+                </Badge>
+                {job.lastExecution.errorMessage && (
+                  <span
+                    className={isSkipped ? 'text-sm text-muted-foreground' : 'text-sm text-destructive'}
+                    data-testid="last-execution-reason"
+                  >
+                    {job.lastExecution.errorMessage}
+                  </span>
+                )}
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
       </div>
     );
   }
