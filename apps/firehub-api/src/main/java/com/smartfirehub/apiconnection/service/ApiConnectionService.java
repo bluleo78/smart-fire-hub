@@ -71,7 +71,9 @@ public class ApiConnectionService {
     validateNameNotDuplicated(request.name());
     String normalizedBaseUrl = validateAndNormalizeBaseUrl(request.baseUrl());
 
-    String encryptedConfig = serializeAndEncrypt(request.authConfig());
+    // 저장값이 없으니 가린 값(****…)은 유지할 대상도 없다 — 그대로 저장되지 않게 거절한다(WD-179).
+    String encryptedConfig =
+        serializeAndEncrypt(resolveMaskedSecrets(request.authConfig(), null, false));
     Long id =
         repository.save(
             request.name(),
@@ -120,7 +122,13 @@ public class ApiConnectionService {
       if (request.authType() != null) {
         validateAuthType(request.authType());
       }
-      encryptedConfig = serializeAndEncrypt(request.authConfig());
+      // 조회 결과(maskedAuthConfig)를 그대로 되돌려 보낸 비밀 필드는 저장 원문으로 채운다(WD-179). authType 이 바뀌면 같은 이름의
+      // 필드라도 뜻이 달라지므로 저장값을 쓰지 않는다 — 가린 값은 모두 거절된다.
+      boolean sameAuthType =
+          request.authType() == null || request.authType().equals(fetchAuthType(id));
+      Map<String, String> stored = sameAuthType ? reader.getDecryptedAuthConfig(id) : null;
+      encryptedConfig =
+          serializeAndEncrypt(resolveMaskedSecrets(request.authConfig(), stored, true));
     }
 
     // baseUrl이 있으면 정규화 및 SSRF 검증
@@ -221,9 +229,13 @@ public class ApiConnectionService {
    */
   public TestConnectionResponse testConnectionPayload(CreateApiConnectionRequest request) {
     validateAuthType(request.authType());
+    // 저장 전 테스트도 가린 값(****…)을 인증 값으로 보내지 않는다 — 저장값이 없으니 유지할 것도 없다(WD-179).
+    Map<String, String> rawConfig =
+        request.authConfig() != null
+            ? resolveMaskedSecrets(request.authConfig(), null, false)
+            : Map.of();
     String normalizedBaseUrl = validateAndNormalizeBaseUrl(request.baseUrl());
     String normalizedPath = normalizeHealthCheckPath(request.healthCheckPath());
-    Map<String, String> rawConfig = request.authConfig() != null ? request.authConfig() : Map.of();
     return callHealthCheck(
         UrlUtils.joinUrl(normalizedBaseUrl, normalizedPath), request.authType(), rawConfig);
   }
@@ -550,6 +562,68 @@ public class ApiConnectionService {
       throw new ApiConnectionException(
           "Unsupported authType: " + authType + ". Supported: API_KEY, BEARER");
     }
+  }
+
+  /**
+   * 요청 authConfig 의 비밀 필드에 실린 가린 값({@code ****…})을 처리한다(WD-179).
+   *
+   * <p>조회 응답의 maskedAuthConfig 는 비밀 필드를 {@code ****} + 끝 4자로 가린다. 예전에는 수정 요청이 이 값을 그대로 실어 보내면 (AI 챗
+   * {@code update_api_connection}, API 직접 사용) 통째로 암호화해 저장했다 — 저장된 토큰이 {@code ****3456} 이 돼 이후 호출이
+   * 모두 인증 실패하는데, 화면에는 여전히 {@code ****3456} 으로 보여 무엇이 바뀌었는지 알 수 없었다.
+   *
+   * <ul>
+   *   <li>비밀 필드 판정은 응답 가리기와 같은 {@link ApiConnectionReader#isSensitiveKey} 를 쓴다(기준이 어긋나면 가려 나간 필드를
+   *       여기서 놓친다).
+   *   <li>가린 값이 저장된 같은 필드의 가린 형태와 <b>정확히</b> 같으면 저장 원문으로 채운다 — 조회 결과를 그대로 되돌려 보내도 비밀이 바뀌지 않고, 비밀이
+   *       아닌 필드(placement, paramName 등)만 바꾸는 수정이 가능하다.
+   *   <li>그 밖의 가린 값(끝 4자가 다름, 저장값 없음, authType 변경, 생성·저장 전 테스트)은 400 으로 거절한다. 문구에는 필드 이름만 싣고 저장
+   *       원문이나 그 가린 형태는 싣지 않는다.
+   * </ul>
+   *
+   * <p>예외는 {@link IllegalArgumentException} 이다 — 전역 처리기가 400 으로 바꾼다({@link ApiConnectionException}
+   * 은 404 로 매핑돼 있어 쓰지 않는다). {@link #validateAndNormalizeBaseUrl} 의 try 블록 안에서 부르면 그쪽 catch 가 다른 예외로
+   * 감싸므로 반드시 밖에서 부른다.
+   *
+   * @param requested 요청 authConfig(null 이면 null 을 그대로 돌려준다)
+   * @param stored 현재 저장된 복호화 authConfig. 저장값이 없거나(생성·저장 전 테스트) authType 이 바뀌면 null
+   * @param updating 수정 경로인지 — 거절 문구의 「그대로 두는 방법」 안내에만 쓴다
+   * @return 가린 값을 저장 원문으로 채운 새 Map(요청 Map 은 불변일 수 있어 건드리지 않는다)
+   * @throws IllegalArgumentException 유지할 수 없는 가린 값이 비밀 필드에 있을 때
+   */
+  private Map<String, String> resolveMaskedSecrets(
+      Map<String, String> requested, Map<String, String> stored, boolean updating) {
+    if (requested == null) return null;
+    Map<String, String> resolved = new HashMap<>(requested);
+    for (Map.Entry<String, String> entry : requested.entrySet()) {
+      String key = entry.getKey();
+      String value = entry.getValue();
+      if (!ApiConnectionReader.isSensitiveKey(key)
+          || value == null
+          || !value.startsWith(AuthQueryMasker.MASK_PREFIX)) {
+        continue;
+      }
+      String storedValue = stored != null ? stored.get(key) : null;
+      if (storedValue != null && encryptionService.maskValue(storedValue).equals(value)) {
+        // 조회 결과를 그대로 되돌려 보낸 경우 — 이 필드만 저장 원문으로 채워 비밀을 유지한다.
+        resolved.put(key, storedValue);
+      } else {
+        throw new IllegalArgumentException(maskedValueRejectedMessage(key, updating));
+      }
+    }
+    return resolved;
+  }
+
+  /**
+   * 가린 값 거절 문구. 수정은 authConfig 를 통째로 교체하므로 「그 항목만 빼고 보내라」고 안내하면 비밀이 지워진다 — 그대로 두는 방법은 authConfig 를
+   * 아예 보내지 않거나 조회한 가린 값을 바꾸지 않고 보내는 것이다.
+   */
+  private static String maskedValueRejectedMessage(String key, boolean updating) {
+    String field = "authConfig." + key;
+    return updating
+        ? field
+            + " 에 가려진 값(****…)은 저장할 수 없습니다. 바꾸려면 새 값을 입력하고, 그대로 두려면 authConfig 를 보내지 않거나"
+            + " 조회한 가린 값을 바꾸지 말고 그대로 보내세요."
+        : field + " 에 가려진 값(****…)은 인증 값으로 쓸 수 없습니다. 실제 값을 입력하세요.";
   }
 
   private String serializeAndEncrypt(Map<String, String> authConfig) {

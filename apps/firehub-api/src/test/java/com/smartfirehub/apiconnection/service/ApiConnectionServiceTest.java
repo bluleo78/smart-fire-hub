@@ -509,4 +509,185 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
     assertThat(updated.name()).isEqualTo(name);
     assertThat(updated.description()).isEqualTo("새 설명");
   }
+
+  // ── WD-179: 가린 인증정보(****…)를 수정·생성 요청에 그대로 실어 보낸 경우 ─────────────────────────
+
+  /**
+   * 조회 결과의 maskedAuthConfig 를 그대로 수정 요청에 실어 보내면 저장된 토큰이 바뀌지 않아야 한다(WD-179). 예전에는 {@code ****3456} 이
+   * 그대로 암호화 저장돼 이후 호출이 모두 인증 실패했다.
+   */
+  @Test
+  void update_echoedMaskedAuthConfig_keepsStoredSecret() {
+    ApiConnectionResponse created =
+        apiConnectionService.create(
+            new CreateApiConnectionRequest(
+                "Masked Echo " + System.nanoTime(),
+                null,
+                "BEARER",
+                Map.of("token", "real-bearer-token-3456"),
+                "https://masked-echo.example.com",
+                null),
+            testUserId);
+    Map<String, String> masked = apiConnectionService.getById(created.id()).maskedAuthConfig();
+    assertThat(masked.get("token")).isEqualTo("****3456");
+
+    ApiConnectionResponse updated =
+        apiConnectionService.update(
+            created.id(), new UpdateApiConnectionRequest(null, null, "BEARER", masked, null, null));
+
+    assertThat(apiConnectionService.getDecryptedAuthConfig(created.id()).get("token"))
+        .isEqualTo("real-bearer-token-3456");
+    assertThat(updated.maskedAuthConfig().get("token")).isEqualTo("****3456");
+  }
+
+  /** 저장값의 가린 형태와 다른 가린 값(****0000)은 400(IllegalArgumentException)으로 거절되고 저장값은 그대로여야 한다. */
+  @Test
+  void update_foreignMaskedValue_rejectedAndStoredSecretUnchanged() {
+    ApiConnectionResponse created =
+        apiConnectionService.create(
+            new CreateApiConnectionRequest(
+                "Masked Foreign " + System.nanoTime(),
+                null,
+                "BEARER",
+                Map.of("token", "real-bearer-token-3456"),
+                "https://masked-foreign.example.com",
+                null),
+            testUserId);
+
+    assertThatThrownBy(
+            () ->
+                apiConnectionService.update(
+                    created.id(),
+                    new UpdateApiConnectionRequest(
+                        null, null, null, Map.of("token", "****0000"), null, null)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("authConfig.token")
+        .hasMessageContaining("가려진 값")
+        // 거절 문구에 저장된 원문(이나 그 끝 4자)이 실리면 안 된다
+        .satisfies(
+            e ->
+                assertThat(e.getMessage())
+                    .doesNotContain("real-bearer-token")
+                    .doesNotContain("3456"));
+
+    assertThat(apiConnectionService.getDecryptedAuthConfig(created.id()).get("token"))
+        .isEqualTo("real-bearer-token-3456");
+  }
+
+  /** 가린 apiKey 는 그대로 둔 채 비밀이 아닌 필드(paramName)와 이름만 바꾸면 — 비밀은 유지되고 다른 필드는 반영돼야 한다. */
+  @Test
+  void update_maskedSecretWithOtherFieldChanges_keepsSecretAndAppliesOthers() {
+    ApiConnectionResponse created =
+        apiConnectionService.create(
+            new CreateApiConnectionRequest(
+                "Masked Query " + System.nanoTime(),
+                null,
+                "API_KEY",
+                Map.of("placement", "query", "paramName", "serviceKey", "apiKey", "query-key-9876"),
+                "https://masked-query.example.com",
+                null),
+            testUserId);
+    Map<String, String> edited =
+        new java.util.HashMap<>(apiConnectionService.getById(created.id()).maskedAuthConfig());
+    edited.put("paramName", "authKey");
+    String newName = "Masked Query Renamed " + System.nanoTime();
+
+    ApiConnectionResponse updated =
+        apiConnectionService.update(
+            created.id(), new UpdateApiConnectionRequest(newName, null, null, edited, null, null));
+
+    Map<String, String> decrypted = apiConnectionService.getDecryptedAuthConfig(created.id());
+    assertThat(decrypted.get("apiKey")).isEqualTo("query-key-9876");
+    assertThat(decrypted.get("paramName")).isEqualTo("authKey");
+    assertThat(decrypted.get("placement")).isEqualTo("query");
+    assertThat(updated.name()).isEqualTo(newName);
+  }
+
+  /** authType 이 바뀌면 같은 이름의 필드라도 저장값을 쓰지 않는다 — 끝 4자가 맞는 가린 값이라도 거절된다. */
+  @Test
+  void update_maskedValueWithChangedAuthType_rejected() {
+    ApiConnectionResponse created =
+        apiConnectionService.create(
+            new CreateApiConnectionRequest(
+                "Masked AuthType " + System.nanoTime(),
+                null,
+                "API_KEY",
+                Map.of("headerName", "X-Key", "apiKey", "token-like-key-1111", "token", "t-1111"),
+                "https://masked-authtype.example.com",
+                null),
+            testUserId);
+
+    assertThatThrownBy(
+            () ->
+                apiConnectionService.update(
+                    created.id(),
+                    new UpdateApiConnectionRequest(
+                        null, null, "BEARER", Map.of("token", "****1111"), null, null)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("authConfig.token");
+
+    assertThat(apiConnectionService.getById(created.id()).authType()).isEqualTo("API_KEY");
+  }
+
+  /** 새 실제 값을 보내면 정상 교체된다(회귀) — 가린 값 처리가 일반 교체를 막지 않는다. */
+  @Test
+  void update_newRealSecret_replacesStoredSecret() {
+    ApiConnectionResponse created =
+        apiConnectionService.create(
+            new CreateApiConnectionRequest(
+                "Masked Replace " + System.nanoTime(),
+                null,
+                "BEARER",
+                Map.of("token", "old-bearer-token-3456"),
+                "https://masked-replace.example.com",
+                null),
+            testUserId);
+
+    apiConnectionService.update(
+        created.id(),
+        new UpdateApiConnectionRequest(
+            null, null, "BEARER", Map.of("token", "new-bearer-token-7777"), null, null));
+
+    assertThat(apiConnectionService.getDecryptedAuthConfig(created.id()).get("token"))
+        .isEqualTo("new-bearer-token-7777");
+  }
+
+  /** 생성은 저장값이 없으니 가린 값을 유지할 것도 없다 — 400(IllegalArgumentException)으로 거절되고 행이 생기지 않아야 한다. */
+  @Test
+  void create_maskedSecret_rejected() {
+    String name = "Masked Create " + System.nanoTime();
+    assertThatThrownBy(
+            () ->
+                apiConnectionService.create(
+                    new CreateApiConnectionRequest(
+                        name,
+                        null,
+                        "API_KEY",
+                        Map.of("headerName", "X-Key", "apiKey", "****1234"),
+                        "https://masked-create.example.com",
+                        null),
+                    testUserId))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("authConfig.apiKey")
+        .hasMessageContaining("가려진 값");
+
+    assertThat(apiConnectionService.getAll()).noneMatch(c -> name.equals(c.name()));
+  }
+
+  /** 저장 전 테스트도 가린 값을 인증 값으로 보내지 않는다 — 외부 호출 전에 400 으로 거절된다. */
+  @Test
+  void testConnectionPayload_maskedSecret_rejected() {
+    assertThatThrownBy(
+            () ->
+                apiConnectionService.testConnectionPayload(
+                    new CreateApiConnectionRequest(
+                        "Masked Test",
+                        null,
+                        "BEARER",
+                        Map.of("token", "****1234"),
+                        "https://masked-test.example.com",
+                        null)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("authConfig.token");
+  }
 }
