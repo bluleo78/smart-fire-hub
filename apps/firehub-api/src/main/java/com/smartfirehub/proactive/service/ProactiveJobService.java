@@ -129,6 +129,20 @@ public class ProactiveJobService {
     return withLastExecutions(proactiveJobRepository.findByUserId(userId));
   }
 
+  /**
+   * 요청자가 이 작업의 주인인지 확인한다 — 남의 작업이거나 없는 작업이면 조회와 같은 404 (WD-164).
+   *
+   * <p>「지금 실행」은 실행 슬롯을 잡고 비동기 실행(실행 행 생성 → 소유자 확인)으로 넘긴 뒤 202 를 돌려준다. 소유자 확인이 비동기 쪽에만 있으면 남의 작업
+   * 번호로도 202 가 나가고, 그 작업 주인의 실행 이력에 「Job을 찾을 수 없습니다」 실패가 쌓이며 그동안 주인의 실행이 409 로 막힐 수 있었다. 그래서 슬롯·실행
+   * 행보다 먼저 동기로 확인한다.
+   */
+  @Transactional(readOnly = true)
+  public void requireOwnJob(Long id, Long userId) {
+    if (proactiveJobRepository.findById(id, userId).isEmpty()) {
+      throw new ProactiveJobNotFoundException("Proactive Job을 찾을 수 없습니다: " + id);
+    }
+  }
+
   @Transactional(readOnly = true)
   public ProactiveJobResponse getJob(Long id, Long userId) {
     // 존재하지 않는 Job 조회 시 404 반환 (#41)
