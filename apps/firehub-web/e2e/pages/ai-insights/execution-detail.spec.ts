@@ -117,4 +117,59 @@ test.describe('실행 상세 페이지', () => {
     );
     expect(isOverflowing).toBe(false);
   });
+
+  /**
+   * WD-191 — 서버 사유가 한국어로 바뀐 뒤 영어 키워드 분류기가 엉뚱한 제목·조언을 붙이던 회귀.
+   * 서버 원문 사유는 그대로 보이고, 제목·조언·카드 톤만 사유에 맞게 바뀌는지 본다.
+   */
+  test('AI 키 미설정 실패는 AI 인증 정보 등록을 안내하고 재시도 안내를 하지 않는다 (WD-191)', async ({ authenticatedPage: page }) => {
+    const reason = 'AI API 키 또는 OAuth 토큰이 설정되지 않았습니다. 관리자 설정에서 등록하세요.';
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/proactive/jobs/1/executions/5',
+      createJobExecution({ id: 5, jobId: 1, status: 'FAILED', errorMessage: reason, deliveredChannels: [] }),
+    );
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+
+    await page.goto('/ai-insights/jobs/1/executions/5');
+
+    const card = page.getByTestId('execution-error');
+    await expect(card).toBeVisible();
+    await expect(card.getByRole('heading', { name: 'AI 인증 정보 확인 필요' })).toBeVisible();
+    // 서버 원문 사유는 그대로 보인다
+    await expect(card.getByText(reason)).toBeVisible();
+    await expect(card).toContainText('관리 > 설정 > AI 에이전트 탭에서 AI 인증 정보');
+    // 예전 오분류(AI 모델 오류 + 잠시 후 수동 실행)가 아니어야 한다
+    await expect(card).not.toContainText('AI 모델 오류');
+    await expect(card).not.toContainText('잠시 후 수동 실행');
+    // 실패는 실패로 표시한다
+    await expect(page.locator('[data-slot="badge"]').filter({ hasText: '실패' })).toBeVisible();
+  });
+
+  test('작업 주인 정지로 건너뛴 실행은 오류가 아닌 건너뜀으로 보인다 (WD-191)', async ({ authenticatedPage: page }) => {
+    // 서버는 건너뜀도 status=FAILED 로 남긴다 — 사유 문구로 건너뜀을 가려내야 한다
+    const reason = '작업 주인이 정지됐거나 워크스페이스에서 제거돼 실행하지 않았습니다';
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/proactive/jobs/1/executions/6',
+      createJobExecution({ id: 6, jobId: 1, status: 'FAILED', errorMessage: reason, deliveredChannels: [] }),
+    );
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+
+    await page.goto('/ai-insights/jobs/1/executions/6');
+
+    const card = page.getByTestId('execution-skipped');
+    await expect(card).toBeVisible();
+    await expect(card.getByRole('heading', { name: '건너뜀' })).toBeVisible();
+    await expect(card.getByText(reason)).toBeVisible();
+    await expect(card).toContainText('오류가 아닙니다');
+    // 오류(빨강) 카드·「기타 오류」·「실패」 뱃지는 나오지 않는다
+    await expect(page.getByTestId('execution-error')).toHaveCount(0);
+    await expect(page.getByText('기타 오류')).toHaveCount(0);
+    await expect(page.locator('[data-slot="badge"]').filter({ hasText: '건너뜀' })).toBeVisible();
+    await expect(page.locator('[data-slot="badge"]').filter({ hasText: '실패' })).toHaveCount(0);
+  });
 });
+

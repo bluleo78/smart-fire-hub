@@ -23,6 +23,7 @@ import { TableEmptyRow } from '@/components/ui/table-empty';
 import { TableSkeletonRows } from '@/components/ui/table-skeleton';
 import { useJobExecutions } from '@/hooks/queries/useProactiveMessages';
 import { isForbiddenError } from '@/lib/api-error';
+import { getExecutionDisplayStatus } from '@/lib/error-classifier';
 import { formatDate, formatDuration, getExecutionStatusType, getStatusLabel, timeAgo } from '@/lib/formatters';
 
 import { ProactiveReadForbiddenNotice } from '../components/ProactiveReadForbiddenNotice';
@@ -80,9 +81,15 @@ export default function JobExecutionsTab({ jobId }: JobExecutionsTabProps) {
                     {formatDate(exec.startedAt)} ({timeAgo(exec.startedAt)})
                   </TableCell>
                   <TableCell className="text-center">
-                    <StatusBadge type={getExecutionStatusType(exec.status)}>
-                      {getStatusLabel(exec.status)}
-                    </StatusBadge>
+                    {/* 의도된 건너뜀(서버는 FAILED 로 남김)은 실행 상세와 같게 회색 「건너뜀」으로 보인다 (WD-191) */}
+                    {(() => {
+                      const displayStatus = getExecutionDisplayStatus(exec.status, exec.errorMessage);
+                      return (
+                        <StatusBadge type={getExecutionStatusType(displayStatus)}>
+                          {getStatusLabel(displayStatus)}
+                        </StatusBadge>
+                      );
+                    })()}
                   </TableCell>
                   <TableCell className="text-sm text-center">
                     {exec.completedAt ? formatDuration(exec.startedAt, exec.completedAt) : (

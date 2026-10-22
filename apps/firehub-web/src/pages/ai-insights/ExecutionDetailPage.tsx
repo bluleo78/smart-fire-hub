@@ -5,7 +5,7 @@
  *
  * 실행 상태(RUNNING/COMPLETED/FAILED)에 따라 다른 UI를 렌더링한다.
  * - RUNNING: 스피너 + 폴링 안내 문구
- * - FAILED: 에러 분류 카드 (classifyError)
+ * - FAILED: 사유 분류 카드 (classifyExecutionOutcome) — 의도된 건너뜀은 중립 톤 「건너뜀」 카드
  * - COMPLETED: 요약(마크다운) + HTML 리포트(iframe) 또는 마크다운 섹션 폴백
  */
 
@@ -23,7 +23,7 @@ import { Button } from '@/components/ui/button';
 import { useExecution } from '@/hooks/queries/useProactiveMessages';
 import { useReportActions } from '@/hooks/useReportActions';
 import { isForbiddenError, isNotFoundError } from '@/lib/api-error';
-import { classifyError } from '@/lib/error-classifier';
+import { classifyExecutionOutcome, getExecutionDisplayStatus } from '@/lib/error-classifier';
 import { formatDate, formatDuration, getStatusBadgeVariant, getStatusLabel, timeAgo } from '@/lib/formatters';
 import { EXECUTION_NOT_FOUND_NOTICE, getSections } from '@/lib/proactive-utils';
 
@@ -108,6 +108,12 @@ export default function ExecutionDetailPage() {
     ? getSections(execution.result)
     : [];
 
+  // 실패·건너뜀 카드 분류 (WD-191) — 서버는 의도된 건너뜀(작업 주인 정지·권한 없음·워크스페이스 정지)도 FAILED 로 남기므로
+  // 사유 문구로 가려낸다. 건너뜀이면 상태 뱃지도 「실패」(빨강) 대신 「건너뜀」(중립)으로 보여 카드와 어긋나지 않게 한다.
+  const outcome = classifyExecutionOutcome(execution.status, execution.errorMessage);
+  const isSkipped = outcome?.type === 'skipped';
+  const displayStatus = getExecutionDisplayStatus(execution.status, execution.errorMessage);
+
   return (
     <div className="px-6 py-4 space-y-6">
       {/* 고정 헤더: 뒤로가기 + 실행 번호 */}
@@ -132,8 +138,8 @@ export default function ExecutionDetailPage() {
         {/* 상태 */}
         <div className="rounded-lg border bg-card p-4">
           <p className="text-xs text-muted-foreground mb-1">상태</p>
-          <Badge variant={getStatusBadgeVariant(execution.status)}>
-            {getStatusLabel(execution.status)}
+          <Badge variant={getStatusBadgeVariant(displayStatus)}>
+            {getStatusLabel(displayStatus)}
           </Badge>
         </div>
 
@@ -179,25 +185,32 @@ export default function ExecutionDetailPage() {
         </div>
       )}
 
-      {/* FAILED: 에러 분류 카드 */}
-      {execution.status === 'FAILED' && (() => {
-        const classified = classifyError(execution.errorMessage);
-        return (
-          <div className="rounded-lg border border-destructive/50 bg-destructive/5 p-6 space-y-3">
-            <div className="flex items-center gap-2">
-              <span className="text-lg">{classified.icon}</span>
-              <h3 className="font-semibold text-destructive">{classified.label}</h3>
-            </div>
-            {execution.errorMessage && (
-              // break-words: 긴 URL/JSON/에러코드 포함 시 카드 너비 초과 방지
-              <p className="text-sm text-muted-foreground font-mono whitespace-pre-wrap break-words">
-                {execution.errorMessage}
-              </p>
-            )}
-            <p className="text-sm text-muted-foreground">{classified.guide}</p>
+      {/* FAILED/건너뜀: 사유 분류 카드 — 건너뜀은 오류가 아니므로 빨강(destructive) 대신 중립 톤으로 그린다.
+          서버 원문 사유는 두 경우 모두 그대로 보인다(제목·조언만 분류로 고른다). */}
+      {outcome && (
+        <div
+          className={
+            isSkipped
+              ? 'rounded-lg border bg-muted/40 p-6 space-y-3'
+              : 'rounded-lg border border-destructive/50 bg-destructive/5 p-6 space-y-3'
+          }
+          data-testid={isSkipped ? 'execution-skipped' : 'execution-error'}
+        >
+          <div className="flex items-center gap-2">
+            <span className="text-lg">{outcome.icon}</span>
+            <h3 className={isSkipped ? 'font-semibold text-foreground' : 'font-semibold text-destructive'}>
+              {outcome.label}
+            </h3>
           </div>
-        );
-      })()}
+          {execution.errorMessage && (
+            // break-words: 긴 URL/JSON/에러코드 포함 시 카드 너비 초과 방지
+            <p className="text-sm text-muted-foreground font-mono whitespace-pre-wrap break-words">
+              {execution.errorMessage}
+            </p>
+          )}
+          <p className="text-sm text-muted-foreground">{outcome.guide}</p>
+        </div>
+      )}
 
       {/* COMPLETED 요약 섹션 — 마크다운으로 렌더링.
           HTML 리포트(rawHtml) 유무와 무관하게 항상 렌더한다 (#363).
