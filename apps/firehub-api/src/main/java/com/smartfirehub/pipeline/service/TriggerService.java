@@ -1,6 +1,7 @@
 package com.smartfirehub.pipeline.service;
 
 import com.smartfirehub.global.exception.CryptoException;
+import com.smartfirehub.global.security.PermissionChecker;
 import com.smartfirehub.pipeline.dto.*;
 import com.smartfirehub.pipeline.exception.CyclicTriggerDependencyException;
 import com.smartfirehub.pipeline.exception.TriggerNotFoundException;
@@ -69,6 +70,14 @@ public class TriggerService {
    */
   public static final String REASON_FIRE_ERROR = "파이프라인 실행을 시작하지 못했습니다";
 
+  /**
+   * 실행 주체(트리거를 만든 사용자)에게 「파이프라인 실행」 권한이 없어 건너뛴 사유(WD-167). 트리거는 만든 사람 이름으로 실행되므로, 그 사람이 직접 실행할 수 없는
+   * 파이프라인을 트리거로 돌리면 실행 권한을 우회하게 된다 — 권한을 회수해도 예약 트리거가 계속 돌던 결함.
+   */
+  public static final String REASON_EXECUTOR_NO_EXECUTE_PERMISSION =
+      "트리거를 만든 사용자에게 「파이프라인 실행」 권한이 없어 실행하지 않았습니다. 그 사용자에게 권한을 주거나, 실행 권한이 있는 사용자가 트리거를"
+          + " 다시 만들어 주세요";
+
   private final TriggerRepository triggerRepository;
   private final TriggerEventRepository triggerEventRepository;
   // 비인증 경로의 테넌트 해석 전용. 해싱은 이 서비스에 남기고 조회만 위임한다.
@@ -80,6 +89,8 @@ public class TriggerService {
   // DATASET_CHANGE 감시 대상 VIEW 판정(보안 등급) — 저장하는 사용자가 볼 수 없는 데이터셋을 감시 대상으로 넣지 못하게.
   private final DatasetAccessGuard datasetAccessGuard;
   private final ClearanceResolver clearanceResolver;
+  // 발화 시점에 실행 주체의 pipeline:execute 를 다시 확인한다(WD-167) — 스텝의 python_execute·ai_execute 재확인과 같은 방식
+  private final PermissionChecker permissionChecker;
 
   public TriggerService(
       TriggerRepository triggerRepository,
@@ -89,7 +100,8 @@ public class TriggerService {
       @Lazy PipelineService pipelineService,
       @Lazy TriggerSchedulerService schedulerService,
       DatasetAccessGuard datasetAccessGuard,
-      ClearanceResolver clearanceResolver) {
+      ClearanceResolver clearanceResolver,
+      PermissionChecker permissionChecker) {
     this.triggerRepository = triggerRepository;
     this.triggerEventRepository = triggerEventRepository;
     this.triggerTenantResolver = triggerTenantResolver;
@@ -98,6 +110,7 @@ public class TriggerService {
     this.schedulerService = schedulerService;
     this.datasetAccessGuard = datasetAccessGuard;
     this.clearanceResolver = clearanceResolver;
+    this.permissionChecker = permissionChecker;
   }
 
   /**
@@ -547,6 +560,24 @@ public class TriggerService {
           Map.of("reason", REASON_PIPELINE_INACTIVE));
       return TriggerFireResult.notFired(
           TriggerFireResult.Outcome.SKIPPED, REASON_PIPELINE_INACTIVE);
+    }
+
+    // 실행 주체(트리거를 만든 사용자)가 지금 이 파이프라인을 직접 실행할 수 있어야 한다(WD-167). 직접 실행 API 는 pipeline:execute 를 요구하는데
+    // 트리거 경로는 확인하지 않아, 트리거 권한만으로 실행 권한을 우회하거나 권한을 회수한 뒤에도 예약 실행이 계속 돌았다.
+    if (!permissionChecker.hasPermission(trigger.createdBy(), "pipeline:execute")) {
+      log.info(
+          "Trigger {} skipped: creator {} lacks pipeline:execute (pipeline={})",
+          triggerId,
+          trigger.createdBy(),
+          trigger.pipelineId());
+      triggerEventRepository.create(
+          triggerId,
+          trigger.pipelineId(),
+          null,
+          "SKIPPED",
+          Map.of("reason", REASON_EXECUTOR_NO_EXECUTE_PERMISSION));
+      return TriggerFireResult.notFired(
+          TriggerFireResult.Outcome.SKIPPED, REASON_EXECUTOR_NO_EXECUTE_PERMISSION);
     }
 
     // Check concurrency policy for SCHEDULE triggers

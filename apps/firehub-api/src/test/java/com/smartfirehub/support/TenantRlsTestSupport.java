@@ -196,6 +196,21 @@ public final class TenantRlsTestSupport {
         userId);
   }
 
+  /**
+   * 사용자에게 현재 테넌트의 ADMIN 역할을 준다 — 트리거 테스트의 실행 주체(트리거 생성자)용.
+   *
+   * <p>트리거 발화는 실행 주체의 {@code pipeline:execute} 를 발화 시점에 확인한다(WD-167). 역할 없이 만든 테스트 사용자를 트리거 생성자로 쓰면
+   * 발화가 「실행 권한 없음」으로 건너뛰어진다. {@code user_role} 은 RLS 대상이라 테넌트 컨텍스트가 있는 트랜잭션 안에서 불러야 한다(클래스 레벨
+   * {@code @Transactional} 테스트는 그대로, 아니면 {@link #runInTenantTransaction} 안에서). user 를 지우면 FK
+   * CASCADE 로 함께 지워진다.
+   */
+  public static void grantAdminRole(DSLContext dsl, Long userId) {
+    dsl.execute(
+        "insert into user_role (user_id, role_id) select ?, id from role where name = 'ADMIN'"
+            + " on conflict do nothing",
+        userId);
+  }
+
   /** 위에서 만든 사용자를 지운다. 자식 행이 남아 있으면 FK 때문에 실패하므로 도메인 정리 뒤에 부른다. */
   public static void deleteUser(DSLContext dsl, Long userId) {
     if (userId != null) {
