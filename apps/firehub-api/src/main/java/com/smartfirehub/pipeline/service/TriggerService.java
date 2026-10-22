@@ -1,7 +1,8 @@
 package com.smartfirehub.pipeline.service;
 
 import com.smartfirehub.global.exception.CryptoException;
-import com.smartfirehub.global.security.PermissionChecker;
+import com.smartfirehub.global.security.MemberEligibility;
+import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.pipeline.dto.*;
 import com.smartfirehub.pipeline.exception.CyclicTriggerDependencyException;
 import com.smartfirehub.pipeline.exception.TriggerNotFoundException;
@@ -78,6 +79,15 @@ public class TriggerService {
       "트리거를 만든 사용자에게 「파이프라인 실행」 권한이 없어 실행하지 않았습니다. 그 사용자에게 권한을 주거나, 실행 권한이 있는 사용자가 트리거를"
           + " 다시 만들어 주세요";
 
+  /**
+   * 실행 주체(트리거를 만든 사람)의 계정이 비활성이거나, 이 워크스페이스에서 정지(SUSPENDED)·제거(멤버십 없음)돼 건너뛴 사유(WD-169). 예전에는 이 경우도
+   * 권한 조회가 비어 「권한이 없어」 사유로 남아, 관리자가 권한을 줘야 하는지 사람을 복귀시켜야 하는지 구분할 수 없었다.
+   */
+  public static final String REASON_EXECUTOR_INACTIVE = "트리거를 만든 사람이 이 워크스페이스에서 정지·제거되어 실행하지 않았습니다";
+
+  /** 실행 주체에게 요구하는 권한 — 직접 실행 API 와 같다(WD-167). */
+  private static final String EXECUTE_PERMISSION = "pipeline:execute";
+
   private final TriggerRepository triggerRepository;
   private final TriggerEventRepository triggerEventRepository;
   // 비인증 경로의 테넌트 해석 전용. 해싱은 이 서비스에 남기고 조회만 위임한다.
@@ -90,7 +100,10 @@ public class TriggerService {
   private final DatasetAccessGuard datasetAccessGuard;
   private final ClearanceResolver clearanceResolver;
   // 발화 시점에 실행 주체의 pipeline:execute 를 다시 확인한다(WD-167) — 스텝의 python_execute·ai_execute 재확인과 같은 방식
-  private final PermissionChecker permissionChecker;
+  // 실행 주체 자격 판정(계정 활성 → ACTIVE 멤버 → pipeline:execute). 사유 구분을 위해 권한만 보던 WD-167 확인을 대체한다(WD-169)
+  private final MemberEligibility memberEligibility;
+  // 자격 문제로 건너뛸 때 파이프라인 주인·관리자에게 처음 한 번만 알린다(WD-169)
+  private final TriggerCreatorSkipNotifier creatorSkipNotifier;
 
   public TriggerService(
       TriggerRepository triggerRepository,
@@ -101,7 +114,8 @@ public class TriggerService {
       @Lazy TriggerSchedulerService schedulerService,
       DatasetAccessGuard datasetAccessGuard,
       ClearanceResolver clearanceResolver,
-      PermissionChecker permissionChecker) {
+      MemberEligibility memberEligibility,
+      TriggerCreatorSkipNotifier creatorSkipNotifier) {
     this.triggerRepository = triggerRepository;
     this.triggerEventRepository = triggerEventRepository;
     this.triggerTenantResolver = triggerTenantResolver;
@@ -110,7 +124,8 @@ public class TriggerService {
     this.schedulerService = schedulerService;
     this.datasetAccessGuard = datasetAccessGuard;
     this.clearanceResolver = clearanceResolver;
-    this.permissionChecker = permissionChecker;
+    this.memberEligibility = memberEligibility;
+    this.creatorSkipNotifier = creatorSkipNotifier;
   }
 
   /**
@@ -564,20 +579,26 @@ public class TriggerService {
 
     // 실행 주체(트리거를 만든 사용자)가 지금 이 파이프라인을 직접 실행할 수 있어야 한다(WD-167). 직접 실행 API 는 pipeline:execute 를 요구하는데
     // 트리거 경로는 확인하지 않아, 트리거 권한만으로 실행 권한을 우회하거나 권한을 회수한 뒤에도 예약 실행이 계속 돌았다.
-    if (!permissionChecker.hasPermission(trigger.createdBy(), "pipeline:execute")) {
+    // 판정 순서는 계정 활성 → 이 워크스페이스 ACTIVE 멤버 → 권한이다(WD-169) — 정지·제거된 사람과 권한만 잃은 사람을 다른 사유로 남긴다.
+    long tenantId = TenantContext.require("트리거 실행 주체 자격 확인");
+    MemberEligibility.Status eligibility =
+        memberEligibility.check(trigger.createdBy(), tenantId, EXECUTE_PERMISSION);
+    if (eligibility != MemberEligibility.Status.ELIGIBLE) {
+      String reason =
+          eligibility == MemberEligibility.Status.INACTIVE
+              ? REASON_EXECUTOR_INACTIVE
+              : REASON_EXECUTOR_NO_EXECUTE_PERMISSION;
       log.info(
-          "Trigger {} skipped: creator {} lacks pipeline:execute (pipeline={})",
+          "Trigger {} skipped: creator {} not eligible ({}) (pipeline={})",
           triggerId,
           trigger.createdBy(),
+          eligibility,
           trigger.pipelineId());
+      // 이벤트를 남기기 전에 불러야 한다 — 직전 이벤트(같은 사유의 건너뜀인지)를 보고 처음 한 번만 알린다(WD-169)
+      creatorSkipNotifier.notifyIfFirstSkip(trigger, tenantId, eligibility, reason);
       triggerEventRepository.create(
-          triggerId,
-          trigger.pipelineId(),
-          null,
-          "SKIPPED",
-          Map.of("reason", REASON_EXECUTOR_NO_EXECUTE_PERMISSION));
-      return TriggerFireResult.notFired(
-          TriggerFireResult.Outcome.SKIPPED, REASON_EXECUTOR_NO_EXECUTE_PERMISSION);
+          triggerId, trigger.pipelineId(), null, "SKIPPED", Map.of("reason", reason));
+      return TriggerFireResult.notFired(TriggerFireResult.Outcome.SKIPPED, reason);
     }
 
     // Check concurrency policy for SCHEDULE triggers

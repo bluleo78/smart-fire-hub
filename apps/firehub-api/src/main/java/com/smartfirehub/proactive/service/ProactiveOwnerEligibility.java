@@ -1,10 +1,7 @@
 package com.smartfirehub.proactive.service;
 
-import com.smartfirehub.global.security.PermissionChecker;
+import com.smartfirehub.global.security.MemberEligibility;
 import com.smartfirehub.global.tenant.TenantContext;
-import com.smartfirehub.tenant.repository.MembershipRepository;
-import com.smartfirehub.user.dto.UserResponse;
-import com.smartfirehub.user.repository.UserRepository;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -31,10 +28,8 @@ public class ProactiveOwnerEligibility {
   /** 스마트 작업을 만들고 고칠 수 있는 권한 — 작업 생성·수정·지금 실행 API 가 요구하는 것과 같다. */
   static final String REQUIRED_PERMISSION = "proactive:write";
 
-  private final UserRepository userRepository;
-  private final MembershipRepository membershipRepository;
-  // 권한 조회는 자체 읽기 트랜잭션을 열어 현재 테넌트 GUC 아래(user_role RLS)에서만 본다 — 다른 워크스페이스의 권한으로 통과하지 않는다
-  private final PermissionChecker permissionChecker;
+  // 판정 순서(계정 활성 → ACTIVE 멤버 → 권한)는 트리거와 공유하는 공용 판정을 쓴다(WD-169)
+  private final MemberEligibility memberEligibility;
 
   /**
    * 작업 주인이 지금 이 워크스페이스에서 작업을 돌릴 자격이 있는지 본다. 실행 테넌트 컨텍스트 안에서 부른다.
@@ -48,21 +43,12 @@ public class ProactiveOwnerEligibility {
    */
   public Optional<String> findIneligibilityReason(Long ownerId) {
     long tenantId = TenantContext.require("스마트 작업 주인 자격 확인");
-
-    // 1) 계정 활성 — 운영자가 전역 계정을 비활성화(users.is_active=false)하면 어느 워크스페이스에서도 돌지 않는다
-    boolean accountActive =
-        userRepository.findById(ownerId).map(UserResponse::isActive).orElse(false);
-    if (!accountActive) {
-      return Optional.of(REASON_OWNER_INACTIVE);
-    }
-    // 2) 이 작업 워크스페이스의 ACTIVE 멤버 — 멤버십 정지(SUSPENDED)·제거(행 삭제)면 돌지 않는다
-    if (!membershipRepository.hasActiveMembership(ownerId, tenantId)) {
-      return Optional.of(REASON_OWNER_INACTIVE);
-    }
-    // 3) 이 워크스페이스에서 스마트 작업 쓰기 권한 — 역할 회수·권한 회수면 돌지 않는다
-    if (!permissionChecker.hasPermission(ownerId, REQUIRED_PERMISSION)) {
-      return Optional.of(REASON_OWNER_NO_PERMISSION);
-    }
-    return Optional.empty();
+    return switch (memberEligibility.check(ownerId, tenantId, REQUIRED_PERMISSION)) {
+      // 계정 비활성·멤버십 정지·워크스페이스 제거
+      case INACTIVE -> Optional.of(REASON_OWNER_INACTIVE);
+      // 역할 회수·권한 회수
+      case NO_PERMISSION -> Optional.of(REASON_OWNER_NO_PERMISSION);
+      case ELIGIBLE -> Optional.empty();
+    };
   }
 }
