@@ -6,7 +6,7 @@ import { toast } from 'sonner';
 
 import { ontologyElementApi } from '@/api/ontology-element';
 import { handleApiError } from '@/lib/api-error';
-import { isMappingInUseError } from '@/lib/ontology-mapping-usage';
+import { isMappingInUseError, isMappingTypeConflictError } from '@/lib/ontology-mapping-usage';
 import type {
   CreateEntityTypeRequest,
   CreatePropertyRequest,
@@ -151,6 +151,11 @@ export function useOntologyElementMutations(ontologyId: number) {
           // 사용처를 다시 받아 다음 확인 창부터 미리 막는다.
           handleApiError(error, '매핑에서 사용 중이라 삭제할 수 없습니다.');
           queryClient.invalidateQueries({ queryKey: mappingUsageQueryKey(ontologyId) });
+        } else if (isMappingTypeConflictError(error)) {
+          // WD-185: 매핑이 연결한 컬럼과 맞지 않는 자료형으로의 변경 거부(409). 서버 문구(어느 데이터셋의 어느 컬럼인지)를 그대로
+          // 보이고, 매핑에서 연결을 바꾸기 전엔 다시 해도 같은 409 라 재시도를 주지 않는다. 캐시는 성공 때만 갱신되므로(commitMutation)
+          // 자료형 선택 칸은 서버에 있는 원래 값으로 되돌아가 보인다.
+          handleApiError(error, '매핑에 연결된 컬럼과 맞지 않아 자료형을 바꿀 수 없습니다.');
         } else {
           handleApiError(error, '저장에 실패했습니다.');
           lastFailedRef.current = () => {

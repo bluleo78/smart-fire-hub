@@ -64,3 +64,18 @@ export function isMappingInUseError(error: unknown): boolean {
     (error.response.data as { code?: string } | undefined)?.code === MAPPING_IN_USE_CODE
   );
 }
+
+/**
+ * WD-185: 서버 MappingReferenceService.TYPE_CONFLICT_CODE 와 같은 값. 속성 자료형을 바꾸려 했으나 데이터셋 매핑이 그 속성에 연결한
+ * 컬럼 타입과 맞지 않아 거절된 409 다.
+ */
+export const MAPPING_TYPE_CONFLICT_CODE = 'ONTOLOGY_PROPERTY_TYPE_CONFLICTS_WITH_MAPPING';
+
+/** 자료형 변경이 매핑 연결 컬럼과 충돌해 거절된 409 인가 — 매핑에서 연결을 바꾸기 전엔 다시 해도 같으므로 재시도를 주지 않는다. */
+export function isMappingTypeConflictError(error: unknown): boolean {
+  return (
+    axios.isAxiosError(error) &&
+    error.response?.status === 409 &&
+    (error.response.data as { code?: string } | undefined)?.code === MAPPING_TYPE_CONFLICT_CODE
+  );
+}

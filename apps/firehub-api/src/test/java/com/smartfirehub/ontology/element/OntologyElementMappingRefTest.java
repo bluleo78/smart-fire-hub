@@ -46,6 +46,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
  *   <li>이름 변경(타입·속성·관계)은 같은 온톨로지의 draft·active 매핑에 연쇄 반영된다 — 다른 타입의 같은 이름 속성, 다른 타입 쌍의 같은 이름 관계, 다른
  *       온톨로지의 매핑은 건드리지 않는다.
  *   <li>매핑이 쓰는 요소의 삭제는 409(데이터셋 이름 포함)로 막히고 아무것도 지워지지 않는다. 쓰지 않으면 그대로 지워진다.
+ *   <li>WD-185: 속성 자료형 변경은 매핑이 그 속성에 연결한 컬럼 타입과 맞지 않으면 409 로 막히고 아무것도 바뀌지 않는다.
  * </ul>
  *
  * <p>픽스처 온톨로지(Sensor·Building, Sensor-INSTALLED_IN-Building)는 베이스가 만들고 지운다. 매핑 행은 ontology FK
@@ -133,6 +134,22 @@ class OntologyElementMappingRefTest extends OntologyElementTestSupport {
                 .where(field(name("id"), Long.class).eq(ds))
                 .execute());
     return ds;
+  }
+
+  // WD-185: 자료형 호환 판정은 매핑이 연결한 컬럼의 실제 타입(dataset_column.data_type)을 읽는다. 데이터셋 삭제 시 CASCADE 로 함께
+  // 지워진다. dataType 은 V2 CHECK 값(TEXT·INTEGER·DECIMAL·BOOLEAN·DATE·TIMESTAMP) 중 하나.
+  private void column(long datasetId, String columnName, String dataType) {
+    inTenantFixture(
+        () ->
+            dsl.insertInto(table(name("dataset_column")))
+                .set(field(name("dataset_id"), Long.class), datasetId)
+                .set(field(name("column_name"), String.class), columnName)
+                .set(field(name("data_type"), String.class), dataType)
+                .set(field(name("is_nullable"), Boolean.class), true)
+                .set(field(name("is_indexed"), Boolean.class), false)
+                .set(field(name("is_primary_key"), Boolean.class), false)
+                .set(field(name("column_order"), Integer.class), 1)
+                .execute());
   }
 
   private String datasetName(long datasetId) {
@@ -583,6 +600,322 @@ class OntologyElementMappingRefTest extends OntologyElementTestSupport {
     assertThat(specOf(ds).entities())
         .extracting(EntityMapping::entityType)
         .containsExactly("Detector", "Building");
+  }
+
+  // ── 자료형 변경 차단(WD-185) ─────────────────────────────────────────────
+
+  // Building 에 text 속성 note 를 두고, 데이터셋 컬럼 memo(columnType) 를 note 에 연결한 매핑을 만든다.
+  private long buildingNoteMapped(String datasetName, String columnType, String status) {
+    elementService.addProperty(
+        ontologyId, typeId("Building"), new CreatePropertyRequest("note", "메모", "text", null));
+    long ds = dataset(datasetName);
+    column(ds, "memo", columnType);
+    mapping(ds, ontologyId, buildingNoteSpec(), status);
+    return ds;
+  }
+
+  private static MappingSpec buildingNoteSpec() {
+    return new MappingSpec(
+        List.of(
+            new EntityMapping(
+                "Building", "building_id", List.of(new PropertyMapping("memo", "note")))),
+        List.of());
+  }
+
+  private String dataTypeOf(String type, String property) {
+    return ontologyRepository.findById(ontologyId).entities().stream()
+        .filter(e -> e.type().equals(type))
+        .flatMap(e -> e.properties().stream())
+        .filter(p -> p.name().equals(property))
+        .findFirst()
+        .orElseThrow()
+        .dataType();
+  }
+
+  @Test
+  void 매핑된_컬럼과_맞지_않는_자료형으로_바꾸면_409로_막히고_아무것도_바뀌지_않는다() {
+    long ds = buildingNoteMapped("건물대장", "TEXT", "active");
+    long noteId = propertyId("Building", "note");
+    int versionBefore = ontologyRepository.currentSchemaVersion(ontologyId);
+
+    assertThatThrownBy(
+            () ->
+                elementService.updateProperty(
+                    ontologyId,
+                    typeId("Building"),
+                    noteId,
+                    new UpdatePropertyRequest(null, null, "number", null)))
+        .isInstanceOfSatisfying(
+            CodedApiException.class,
+            e -> {
+              assertThat(e.status()).isEqualTo(HttpStatus.CONFLICT);
+              assertThat(e.code()).isEqualTo(MappingReferenceService.TYPE_CONFLICT_CODE);
+              assertThat(e.getMessage())
+                  .isEqualTo(
+                      "「Building.note」 속성은 「"
+                          + datasetName(ds)
+                          + "」 데이터셋 매핑의 텍스트 컬럼 「memo」에 연결되어 있어 숫자로 바꿀 수 없습니다. 매핑에서 연결을 먼저 바꾸세요.");
+              // 삭제 차단과 같은 존재 은닉 규칙 — id 를 응답에 싣지 않는다.
+              assertThat(e.details()).isNull();
+            });
+
+    // 자료형·매핑·스키마 버전 모두 그대로다.
+    assertThat(dataTypeOf("Building", "note")).isEqualTo("text");
+    assertThat(specOf(ds)).isEqualTo(buildingNoteSpec());
+    assertThat(storedRow(ds).get(field(name("status"), String.class))).isEqualTo("active");
+    assertThat(ontologyRepository.currentSchemaVersion(ontologyId)).isEqualTo(versionBefore);
+  }
+
+  @Test
+  void draft_매핑도_자료형_변경을_막는다() {
+    buildingNoteMapped("초안대장", "TEXT", "draft");
+
+    assertThatThrownBy(
+            () ->
+                elementService.updateProperty(
+                    ontologyId,
+                    typeId("Building"),
+                    propertyId("Building", "note"),
+                    new UpdatePropertyRequest(null, null, "date", null)))
+        .isInstanceOf(CodedApiException.class)
+        .hasMessageContaining("텍스트 컬럼 「memo」에 연결되어 있어 날짜로 바꿀 수 없습니다");
+    assertThat(dataTypeOf("Building", "note")).isEqualTo("text");
+  }
+
+  @Test
+  void 매핑된_컬럼과_맞는_자료형으로는_바꿀_수_있다() {
+    // 정수 컬럼에 연결된 text 속성 → number 는 맞는 쪽으로 바꾸는 것이다. 이어서 date 는 막히고, text 는 언제나 허용된다.
+    long ds = buildingNoteMapped("수치대장", "INTEGER", "active");
+    long noteId = propertyId("Building", "note");
+
+    elementService.updateProperty(
+        ontologyId,
+        typeId("Building"),
+        noteId,
+        new UpdatePropertyRequest(null, null, "number", null));
+    assertThat(dataTypeOf("Building", "note")).isEqualTo("number");
+
+    assertThatThrownBy(
+            () ->
+                elementService.updateProperty(
+                    ontologyId,
+                    typeId("Building"),
+                    noteId,
+                    new UpdatePropertyRequest(null, null, "date", null)))
+        .isInstanceOf(CodedApiException.class)
+        .hasMessageContaining("숫자 컬럼 「memo」에 연결되어 있어 날짜로 바꿀 수 없습니다");
+
+    elementService.updateProperty(
+        ontologyId,
+        typeId("Building"),
+        noteId,
+        new UpdatePropertyRequest(null, null, "text", null));
+    assertThat(dataTypeOf("Building", "note")).isEqualTo("text");
+    assertThat(specOf(ds)).isEqualTo(buildingNoteSpec());
+  }
+
+  @Test
+  void 매핑이_연결하지_않은_속성은_자료형을_바꿀_수_있다() {
+    // Building.note 만 매핑돼 있다 — Building.floors 와, 이름이 같아도 다른 타입인 Sensor.note 는 막히지 않는다.
+    buildingNoteMapped("부분대장", "TEXT", "active");
+    elementService.addProperty(
+        ontologyId, typeId("Building"), new CreatePropertyRequest("floors", "층수", "text", null));
+    elementService.addProperty(
+        ontologyId, typeId("Sensor"), new CreatePropertyRequest("note", "메모", "text", null));
+
+    elementService.updateProperty(
+        ontologyId,
+        typeId("Building"),
+        propertyId("Building", "floors"),
+        new UpdatePropertyRequest(null, null, "number", null));
+    elementService.updateProperty(
+        ontologyId,
+        typeId("Sensor"),
+        propertyId("Sensor", "note"),
+        new UpdatePropertyRequest(null, null, "date", null));
+
+    assertThat(dataTypeOf("Building", "floors")).isEqualTo("number");
+    assertThat(dataTypeOf("Sensor", "note")).isEqualTo("date");
+  }
+
+  @Test
+  void 데이터셋이_지워진_고아_매핑은_자료형_변경을_막지_않는다() {
+    long ds = buildingNoteMapped("지워진대장", "TEXT", "active");
+    inTenantFixture(
+        () ->
+            dsl.deleteFrom(table(name("dataset")))
+                .where(field(name("id"), Long.class).eq(ds))
+                .execute());
+
+    elementService.updateProperty(
+        ontologyId,
+        typeId("Building"),
+        propertyId("Building", "note"),
+        new UpdatePropertyRequest(null, null, "number", null));
+
+    assertThat(dataTypeOf("Building", "note")).isEqualTo("number");
+  }
+
+  @Test
+  void 같은_자료형_재제출은_이미_어긋난_매핑이_있어도_막지_않는다() {
+    // 이 수정 전에 만들어진 어긋난 상태(number 속성 ↔ 텍스트 컬럼)를 흉내 낸다 — 무변경 저장까지 막으면 다른 필드도 못 고친다.
+    long ds = buildingNoteMapped("옛대장", "TEXT", "draft");
+    long noteId = propertyId("Building", "note");
+    inTenantFixture(
+        () ->
+            dsl.update(table(name("ontology_entity_property")))
+                .set(field(name("data_type"), String.class), "number")
+                .where(field(name("id"), Long.class).eq(noteId))
+                .execute());
+
+    elementService.updateProperty(
+        ontologyId,
+        typeId("Building"),
+        noteId,
+        new UpdatePropertyRequest(null, "새 설명", "number", null));
+
+    assertThat(dataTypeOf("Building", "note")).isEqualTo("number");
+    assertThat(specOf(ds)).isEqualTo(buildingNoteSpec());
+  }
+
+  @Test
+  void 볼_수_없는_데이터셋은_이름과_컬럼을_숨기고_개수로_알리되_자료형_변경은_막는다() {
+    long visible = buildingNoteMapped("공개대장", "TEXT", "active");
+    long secret = datasetAbove("비밀대장", "기밀");
+    column(secret, "secret_memo", "TEXT");
+    mapping(
+        secret,
+        ontologyId,
+        new MappingSpec(
+            List.of(
+                new EntityMapping(
+                    "Building", "b", List.of(new PropertyMapping("secret_memo", "note")))),
+            List.of()),
+        "active");
+    String secretName = datasetName(secret);
+
+    assertThatThrownBy(
+            () ->
+                elementService.updateProperty(
+                    ontologyId,
+                    typeId("Building"),
+                    propertyId("Building", "note"),
+                    new UpdatePropertyRequest(null, null, "number", null)))
+        .isInstanceOfSatisfying(
+            CodedApiException.class,
+            e -> {
+              assertThat(e.getMessage())
+                  .isEqualTo(
+                      "「Building.note」 속성은 「"
+                          + datasetName(visible)
+                          + "」 데이터셋 매핑의 텍스트 컬럼 「memo」 및 볼 수 없는 데이터셋 1개의 매핑 컬럼에 연결되어 있어 숫자로 바꿀 수 없습니다. 매핑에서 연결을 먼저 바꾸세요.")
+                  .doesNotContain(secretName)
+                  .doesNotContain("secret_memo");
+              assertThat(e.details()).isNull();
+            });
+    assertThat(dataTypeOf("Building", "note")).isEqualTo("text");
+  }
+
+  @Test
+  void 볼_수_없는_데이터셋만_막으면_개수만_알린다() {
+    elementService.addProperty(
+        ontologyId, typeId("Building"), new CreatePropertyRequest("note", "메모", "text", null));
+    long secret = datasetAbove("비밀대장", "기밀");
+    column(secret, "secret_memo", "TEXT");
+    mapping(
+        secret,
+        ontologyId,
+        new MappingSpec(
+            List.of(
+                new EntityMapping(
+                    "Building", "b", List.of(new PropertyMapping("secret_memo", "note")))),
+            List.of()),
+        "active");
+
+    assertThatThrownBy(
+            () ->
+                elementService.updateProperty(
+                    ontologyId,
+                    typeId("Building"),
+                    propertyId("Building", "note"),
+                    new UpdatePropertyRequest(null, null, "number", null)))
+        .isInstanceOf(CodedApiException.class)
+        .hasMessage(
+            "「Building.note」 속성은 볼 수 없는 데이터셋 1개의 매핑 컬럼에 연결되어 있어 숫자로 바꿀 수 없습니다. 매핑에서 연결을 먼저 바꾸세요.");
+  }
+
+  @Test
+  void 이름과_자료형을_함께_바꿀_때_자료형이_맞지_않으면_이름도_바뀌지_않는다() {
+    // 매핑은 아직 옛 이름(note)을 들고 있다 — 새 이름(memo_text)으로 찾으면 연결을 못 보고 통과해 버린다.
+    long ds = buildingNoteMapped("동시변경대장", "TEXT", "active");
+    long noteId = propertyId("Building", "note");
+
+    assertThatThrownBy(
+            () ->
+                elementService.updateProperty(
+                    ontologyId,
+                    typeId("Building"),
+                    noteId,
+                    new UpdatePropertyRequest("memo_text", null, "number", null)))
+        .isInstanceOf(CodedApiException.class)
+        .hasMessageContaining("「Building.note」 속성은");
+
+    assertThat(propertyId("Building", "note")).isEqualTo(noteId);
+    assertThat(dataTypeOf("Building", "note")).isEqualTo("text");
+    assertThat(specOf(ds)).isEqualTo(buildingNoteSpec());
+  }
+
+  @Test
+  void 이름과_자료형을_함께_바꿀_때_자료형이_맞으면_둘_다_반영되고_매핑_이름도_바뀐다() {
+    long ds = buildingNoteMapped("동시허용대장", "DECIMAL", "active");
+    long noteId = propertyId("Building", "note");
+
+    elementService.updateProperty(
+        ontologyId,
+        typeId("Building"),
+        noteId,
+        new UpdatePropertyRequest("amount", null, "number", null));
+
+    assertThat(propertyId("Building", "amount")).isEqualTo(noteId);
+    assertThat(dataTypeOf("Building", "amount")).isEqualTo("number");
+    assertThat(specOf(ds).entities().get(0).properties())
+        .containsExactly(new PropertyMapping("memo", "amount"));
+  }
+
+  // 매핑 저장(MappingService.validate 의 온톨로지 FOR SHARE)이 진행 중이면 자료형 변경은 그 커밋을 기다렸다가 방금 생긴 연결을 보고
+  // 409 로 막혀야 한다 — 삭제 차단과 같은 잠금 순서(온톨로지 행 → 매핑)다.
+  @Test
+  void 진행_중인_매핑_저장이_끝날_때까지_자료형_변경이_기다렸다가_409로_막힌다() throws Exception {
+    elementService.addProperty(
+        ontologyId, typeId("Building"), new CreatePropertyRequest("note", "메모", "text", null));
+    long ds = dataset("동시자료형표");
+    column(ds, "memo", "TEXT");
+    long buildingId = typeId("Building");
+    long noteId = propertyId("Building", "note");
+
+    PausedTransactionRace.Outcome<Object> out =
+        PausedTransactionRace.run(
+            tx,
+            DEFAULT_TEST_TENANT_ID,
+            () -> {
+              ontologyRepository.lockForShare(ontologyId);
+              dsl.insertInto(table(name("dataset_mapping")))
+                  .set(field(name("dataset_id"), Long.class), ds)
+                  .set(field(name("ontology_id"), Long.class), ontologyId)
+                  .set(field(name("spec"), JSONB.class), JSONB.valueOf(write(buildingNoteSpec())))
+                  .set(field(name("status"), String.class), "draft")
+                  .execute();
+            },
+            () ->
+                elementService.updateProperty(
+                    ontologyId,
+                    buildingId,
+                    noteId,
+                    new UpdatePropertyRequest(null, null, "number", null)));
+
+    assertThat(out.secondBlocked()).isTrue();
+    assertThat(out.secondError()).isInstanceOf(CodedApiException.class);
+    assertThat(dataTypeOf("Building", "note")).isEqualTo("text");
   }
 
   // ── 사용처 조회(삭제 확인 창) ──────────────────────────────────────────────

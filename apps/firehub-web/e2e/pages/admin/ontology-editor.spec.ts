@@ -1761,4 +1761,50 @@ test.describe('지식 모델 편집기 — 데이터셋 매핑 사용처 삭제 
     await expect(page.getByTestId('save-status-chip')).toHaveAttribute('data-state', 'error');
     await expect(page.getByTestId('save-status-retry')).toHaveCount(0);
   });
+
+  /**
+   * WD-185: 매핑이 속성에 연결한 컬럼과 맞지 않는 자료형으로 바꾸면 서버가 409(ONTOLOGY_PROPERTY_TYPE_CONFLICTS_WITH_MAPPING)로
+   * 거절한다. 자동 저장이 조용히 실패하면 사용자는 "바뀐 줄" 알게 되므로, 서버 문구가 토스트로 보이고 선택 칸은 원래 자료형으로
+   * 돌아가야 한다.
+   */
+  test('매핑 연결 컬럼과 맞지 않는 자료형 변경은 서버 409 문구가 토스트로 뜨고 선택 칸이 원래 자료형으로 돌아간다', async ({
+    authenticatedPage: page,
+  }) => {
+    await openEditor(page, createMappingUsage());
+    const serverMessage =
+      '「Damage.피해액」 속성은 「화재사건표」 데이터셋 매핑의 숫자 컬럼 「damage_amount」에 연결되어 있어 날짜로 바꿀 수 없습니다. 매핑에서 연결을 먼저 바꾸세요.';
+    const patched: unknown[] = [];
+    await page.route(
+      (url) => url.pathname === '/api/v1/ontology/1/entity-types/4/properties/1',
+      (route) => {
+        if (route.request().method() !== 'PATCH') return route.fallback();
+        patched.push(route.request().postDataJSON());
+        return route.fulfill({
+          status: 409,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            status: 409,
+            error: 'Conflict',
+            code: 'ONTOLOGY_PROPERTY_TYPE_CONFLICTS_WITH_MAPPING',
+            message: serverMessage,
+          }),
+        });
+      },
+    );
+    await page.getByTestId('outline-entity-4').click(); // Damage — 피해액(number)
+
+    const typeSelect = page.getByTestId('property-row-1').getByLabel('Damage 속성 타입');
+    await expect(typeSelect).toHaveText('number');
+    await typeSelect.click();
+    await page.getByRole('option', { name: 'date' }).click();
+
+    // 서버 문구(어느 데이터셋의 어느 컬럼인지)가 그대로 뜬다.
+    await expect(page.getByText(serverMessage)).toBeVisible();
+    expect(patched).toEqual([{ dataType: 'date' }]);
+    // 저장되지 않았으므로 화면도 원래 자료형을 보인다.
+    await expect(typeSelect).toHaveText('number');
+    // 매핑에서 연결을 바꾸기 전엔 다시 해도 같은 409 라 재시도 어포던스가 없다.
+    await expect(page.getByTestId('save-status-chip')).toHaveAttribute('data-state', 'error');
+    await expect(page.getByTestId('save-status-retry')).toHaveCount(0);
+  });
 });
