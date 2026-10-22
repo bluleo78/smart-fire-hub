@@ -120,7 +120,7 @@ public class TiberoDataRowStore implements DataRowStore {
     return new DataStoreFeatureUnsupportedException(DataStoreBackend.TIBERO, SPATIAL_FEATURE);
   }
 
-  /** 검색어가 있으면 요청 컬럼 전체가 검색 대상, 없으면 비어 있다(WHERE 없음). */
+  /** 검색어가 있으면 넘겨받은 검색 대상 컬럼 전체가 검색 대상, 없으면 비어 있다(WHERE 없음). */
   private static List<String> searchColumns(List<String> columns, String search) {
     return search == null || search.isBlank() ? List.of() : columns;
   }
@@ -218,6 +218,7 @@ public class TiberoDataRowStore implements DataRowStore {
   public List<Map<String, Object>> queryData(
       String tableName,
       List<String> columns,
+      List<String> searchColumns,
       String search,
       int page,
       int size,
@@ -225,9 +226,11 @@ public class TiberoDataRowStore implements DataRowStore {
       String sortDir,
       Map<String, String> columnTypes) {
     Ctx c = enter("queryData", tableName, columnTypes);
-    // 잘못된 이름이면 연결하지 않는다.
+    // 잘못된 이름이면 연결하지 않는다. 출력 컬럼과 검색 대상 컬럼을 따로 받으므로(WD-158) 둘 다 검증한다.
     validateNames(columns, sortBy);
-    List<String> searchCols = searchColumns(columns, search);
+    validateNames(searchColumns, null);
+    // 검색어는 출력 컬럼이 아니라 검색 대상 컬럼에 건다 — 일부 컬럼만 내보내도 화면과 같은 행이 나오게(WD-158).
+    List<String> searchCols = searchColumns(searchColumns, search);
     long offset = (long) page * size;
     return connections.withDml(
         c.tenantId(),

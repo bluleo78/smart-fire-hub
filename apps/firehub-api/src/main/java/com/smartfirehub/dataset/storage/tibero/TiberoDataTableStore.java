@@ -248,17 +248,17 @@ public class TiberoDataTableStore implements DataTableStore {
   }
 
   @Override
-  public void createTempTable(String tableName) {
+  public String createTempTable(String tableName) {
     throw unsupported(TEMP_FEATURE);
   }
 
   @Override
-  public void swapTable(String tableName) {
+  public void swapTable(String tableName, String tempName) {
     throw unsupported(TEMP_FEATURE);
   }
 
   @Override
-  public void dropTempTable(String tableName) {
+  public void dropTempTable(String tableName, String tempName) {
     throw unsupported(TEMP_FEATURE);
   }
 

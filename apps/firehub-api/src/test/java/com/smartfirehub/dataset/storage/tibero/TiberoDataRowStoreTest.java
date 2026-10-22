@@ -365,6 +365,46 @@ class TiberoDataRowStoreTest {
     assertThat(rows.get(0)).containsOnlyKeys("id", "name");
   }
 
+  /**
+   * WD-158: 출력 컬럼과 검색 대상 컬럼을 따로 받으면 검색은 검색 대상 전체에 걸리고 출력은 고른 컬럼만 나온다 — 검색어가 든 컬럼을 빼고 내보내도 화면과 같은 행이
+   * 나와야 한다.
+   */
+  @Test
+  void queryData_separateSearchColumns_searchesAllButSelectsSubset() {
+    store.queryData("orders", List.of("qty"), List.of("name", "qty"), "x", 0, 5, null, null, null);
+
+    Stmt st = dml.last("ROW_NUMBER");
+    // 바깥 SELECT 는 출력 컬럼(qty)만, 검색 WHERE 는 빠진 name 까지 건다.
+    assertThat(st.sql).startsWith("SELECT \"ID\", \"QTY\" FROM (");
+    assertThat(st.sql).contains("UPPER(").contains("\"NAME\"").contains(" OR ");
+    // 바인드: 검색 패턴 2개(검색 컬럼 수) → offset → offset+size.
+    assertThat(st.binds)
+        .containsEntry(1, "%x%")
+        .containsEntry(2, "%x%")
+        .containsEntry(3, 0L)
+        .containsEntry(4, 5L);
+  }
+
+  /** WD-158: 8인자 변형은 출력 컬럼을 그대로 검색 대상으로 쓴다(기존 호출처 동작 유지). */
+  @Test
+  void queryData_eightArgOverload_searchesOutputColumns() {
+    store.queryData("orders", List.of("qty"), "x", 0, 5, null, null, null);
+    Stmt st = dml.last("ROW_NUMBER");
+    assertThat(st.sql).doesNotContain("\"NAME\"");
+    assertThat(st.binds).containsEntry(1, "%x%").containsEntry(2, 0L);
+  }
+
+  /** WD-158: 검색 대상 컬럼 이름도 연결 전에 검증한다. */
+  @Test
+  void queryData_invalidSearchColumn_rejectedBeforeConnecting() {
+    assertThatThrownBy(
+            () ->
+                store.queryData(
+                    "orders", List.of("name"), List.of("Bad"), "x", 0, 5, null, null, null))
+        .isInstanceOf(com.smartfirehub.dataset.exception.InvalidTableNameException.class);
+    assertThat(dmlCalls).isZero();
+  }
+
   @Test
   void queryData_columnResponseOverload_usesColumnNames() {
     DatasetColumnResponse c =

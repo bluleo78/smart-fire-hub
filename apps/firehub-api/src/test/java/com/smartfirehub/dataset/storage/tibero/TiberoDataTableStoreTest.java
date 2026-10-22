@@ -936,18 +936,18 @@ class TiberoDataTableStoreTest {
         .isInstanceOfSatisfying(
             DataStoreFeatureUnsupportedException.class,
             e -> assertThat(e.getMessage()).contains("임시 테이블 교체(파이프라인 출력)"));
-    assertThatThrownBy(() -> store.swapTable("t"))
+    assertThatThrownBy(() -> store.swapTable("t", "t_tmp_1"))
         .isInstanceOf(DataStoreFeatureUnsupportedException.class);
-    assertThatThrownBy(() -> store.dropTempTable("t"))
+    assertThatThrownBy(() -> store.dropTempTable("t", "t_tmp_1"))
         .isInstanceOf(DataStoreFeatureUnsupportedException.class);
     assertThatThrownBy(() -> store.createPrimaryKeyIndexConcurrently("t", List.of("a")))
         .isInstanceOfSatisfying(
             DataStoreFeatureUnsupportedException.class,
             e -> assertThat(e.getMessage()).contains("온라인 PK 인덱스 생성"));
     // finishReplace 는 인터페이스 기본 구현이 swap/drop 을 호출하므로 같은 예외가 난다.
-    assertThatThrownBy(() -> store.finishReplace("t", 3))
+    assertThatThrownBy(() -> store.finishReplace("t", "t_tmp_1", 3))
         .isInstanceOf(DataStoreFeatureUnsupportedException.class);
-    assertThatThrownBy(() -> store.finishReplace("t", 0))
+    assertThatThrownBy(() -> store.finishReplace("t", "t_tmp_1", 0))
         .isInstanceOf(DataStoreFeatureUnsupportedException.class);
     assertThat(ddl).isEmpty();
   }
