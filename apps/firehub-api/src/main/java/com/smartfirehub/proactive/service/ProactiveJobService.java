@@ -130,7 +130,7 @@ public class ProactiveJobService {
   }
 
   /**
-   * 요청자가 이 작업의 주인인지 확인한다 — 남의 작업이거나 없는 작업이면 조회와 같은 404 (WD-164).
+   * 요청자가 이 작업의 주인인지 확인한다 — 남의 작업이거나 없는 작업이면 조회와 같은 404 (WD-164, 수정·삭제는 WD-165).
    *
    * <p>「지금 실행」은 실행 슬롯을 잡고 비동기 실행(실행 행 생성 → 소유자 확인)으로 넘긴 뒤 202 를 돌려준다. 소유자 확인이 비동기 쪽에만 있으면 남의 작업
    * 번호로도 202 가 나가고, 그 작업 주인의 실행 이력에 「Job을 찾을 수 없습니다」 실패가 쌓이며 그동안 주인의 실행이 409 로 막힐 수 있었다. 그래서 슬롯·실행
@@ -214,6 +214,8 @@ public class ProactiveJobService {
 
   @Transactional
   public void updateJob(Long id, UpdateProactiveJobRequest request, Long userId) {
+    // 남의 작업·없는 작업은 404 — 저장소의 id+user_id 조건 UPDATE 는 0행이어도 조용히 지나가 204(무동작)가 나갔다 (WD-165)
+    requireOwnJob(id, userId);
     // 업데이트 요청에 포함된 cronExpression / timezone 도 동일하게 사전 검증한다 (#221).
     validateCronAndTimezone(request.cronExpression(), request.timezone());
     // 보안 등급(S2): 메트릭 SQL 이 작성자가 볼 수 없는 데이터셋을 참조하면 거부(스펙 §4.2 6행). update 도 같은 검사 — 우회로 차단.
@@ -240,6 +242,9 @@ public class ProactiveJobService {
 
   @Transactional
   public void deleteJob(Long id, Long userId) {
+    // 소유자 확인을 스케줄 해제보다 먼저 한다 (WD-165) — 예전엔 남의 삭제 요청이 행은 못 지우면서(204) 주인 작업의 예약 실행만 해제해, 작업은
+    // 「켜짐」으로 남은 채 서버 재시작 전까지 돌지 않았다.
+    requireOwnJob(id, userId);
     schedulerService.unregisterSchedule(id);
     proactiveJobRepository.delete(id, userId);
   }
