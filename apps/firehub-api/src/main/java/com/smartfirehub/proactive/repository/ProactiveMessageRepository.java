@@ -60,6 +60,19 @@ public class ProactiveMessageRepository {
   private static final Table<?> PROACTIVE_JOB = table(name("proactive_job"));
   private static final Field<Long> PJ_ID = field(name("proactive_job", "id"), Long.class);
   private static final Field<String> PJ_NAME = field(name("proactive_job", "name"), String.class);
+  private static final Field<Long> PJ_USER_ID = field(name("proactive_job", "user_id"), Long.class);
+
+  /**
+   * 이 메시지를 받은 사람이 리포트 전문(실행 상세·html)을 열 수 있는가 (WD-162).
+   *
+   * <p>서버는 작업 작성자만 실행 상세·리포트를 열게 한다({@code ProactiveJobRepository.findById(id, userId)} 의 {@code
+   * proactive_job.user_id = 요청자} 조건). 받은 사람에게 「리포트 보기」를 눌러 404 를 맞게 하지 않도록, 같은 규칙(메시지 수신자 = 작업 주인)을
+   * 조회 시점에 계산해 응답에 싣는다. 실행·작업이 없는(LEFT JOIN 결과 NULL) 메시지는 열 리포트가 없으므로 false 다.
+   */
+  private static final Field<Boolean> CAN_VIEW_REPORT =
+      when(PJ_USER_ID.isNotNull().and(PJ_USER_ID.eq(PM_USER_ID)), inline(true))
+          .otherwise(inline(false))
+          .as("can_view_report");
 
   public Long create(
       Long userId,
@@ -95,7 +108,8 @@ public class ProactiveMessageRepository {
             PM_READ,
             PM_READ_AT,
             PJ_NAME,
-            PM_CREATED_AT)
+            PM_CREATED_AT,
+            CAN_VIEW_REPORT)
         .from(PROACTIVE_MESSAGE)
         .leftJoin(PROACTIVE_JOB_EXECUTION)
         .on(PM_EXECUTION_ID.eq(PJE_ID))
@@ -152,7 +166,8 @@ public class ProactiveMessageRepository {
             PM_READ,
             PM_READ_AT,
             PJ_NAME,
-            PM_CREATED_AT)
+            PM_CREATED_AT,
+            CAN_VIEW_REPORT)
         .from(PROACTIVE_MESSAGE)
         .leftJoin(PROACTIVE_JOB_EXECUTION)
         .on(PM_EXECUTION_ID.eq(PJE_ID))
@@ -183,7 +198,9 @@ public class ProactiveMessageRepository {
           r.get(PM_READ),
           r.get(PM_READ_AT),
           r.get(PJ_NAME),
-          r.get(PM_CREATED_AT));
+          r.get(PM_CREATED_AT),
+          // WD-162: 수신자 = 작업 주인일 때만 true — 프런트가 「리포트 보기」 대신 요약·안내를 보일지 고르는 기준
+          Boolean.TRUE.equals(r.get(CAN_VIEW_REPORT)));
     } catch (Exception e) {
       throw new RuntimeException("Failed to deserialize content", e);
     }

@@ -115,6 +115,8 @@ export function createMessage(overrides?: Partial<ProactiveMessage>): ProactiveM
     messageType: 'REPORT',
     read: false,
     createdAt: '2024-01-01T09:01:00Z',
+    // 기본은 작업 작성자가 받은 메시지 — 리포트 전문을 열 수 있다. 받은 사람 시나리오는 false 로 덮어쓴다 (WD-162)
+    canViewReport: true,
     ...overrides,
   };
 }

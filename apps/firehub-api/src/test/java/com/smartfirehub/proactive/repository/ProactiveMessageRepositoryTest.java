@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.smartfirehub.proactive.dto.ProactiveMessageResponse;
 import com.smartfirehub.support.IntegrationTestBase;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import org.jooq.DSLContext;
@@ -21,6 +22,8 @@ import org.springframework.transaction.annotation.Transactional;
 class ProactiveMessageRepositoryTest extends IntegrationTestBase {
 
   @Autowired private ProactiveMessageRepository repository;
+  @Autowired private ProactiveJobRepository jobRepository;
+  @Autowired private ProactiveJobExecutionRepository executionRepository;
   @Autowired private DSLContext dsl;
 
   private Long userId;
@@ -264,5 +267,89 @@ class ProactiveMessageRepositoryTest extends IntegrationTestBase {
     assertThat(all)
         .extracting(ProactiveMessageResponse::id)
         .containsExactlyInAnyOrder(unreadId, readId);
+  }
+
+  // -----------------------------------------------------------------------
+  // canViewReport (WD-162)
+  // -----------------------------------------------------------------------
+
+  private Long createOtherUser(String prefix) {
+    String unique = prefix + "_" + System.nanoTime();
+    return dsl.insertInto(USER)
+        .set(USER.USERNAME, unique)
+        .set(USER.PASSWORD, "pw")
+        .set(USER.NAME, "Recipient")
+        .set(USER.EMAIL, unique + "@example.com")
+        .returning(USER.ID)
+        .fetchOne()
+        .getId();
+  }
+
+  /** userId(작성자) 소유 작업의 COMPLETED 리포트 실행을 만든다 — 채팅 리포트가 가리키는 실행. */
+  private Long createOwnedReportExecution() {
+    Long jobId =
+        jobRepository.create(
+            userId, "주간 현황", "prompt", null, "0 0 9 * * *", "Asia/Seoul", true, null, Map.of());
+    Long execId = executionRepository.create(jobId);
+    executionRepository.updateResult(
+        execId,
+        "COMPLETED",
+        Map.of("title", "주간 리포트", "summary", "요약", "htmlContent", "<h1>body</h1>"),
+        LocalDateTime.now());
+    return execId;
+  }
+
+  /**
+   * 같은 리포트를 작성자와 다른 수신자가 함께 받았을 때 — 작성자 메시지만 canViewReport=true 다.
+   *
+   * <p>서버는 리포트 전문(실행 상세·html)을 작업 작성자에게만 열어 준다. 받은 사람 메시지까지 true 면 화면이 「리포트 보기」를 그려 404 「리포트가
+   * 없습니다」로 이어진다(WD-162 결함). 두 조회 경로(findByUserId·findUnreadByUserId)가 같은 값을 내는지도 본다.
+   */
+  @Test
+  void canViewReport_trueOnlyForJobOwnerRecipient() {
+    Long recipientId = createOtherUser("pmrepo_recipient");
+    Long execId = createOwnedReportExecution();
+
+    repository.create(userId, execId, "주간 리포트", Map.of("summary", "요약"), "REPORT");
+    repository.create(recipientId, execId, "주간 리포트", Map.of("summary", "요약"), "REPORT");
+
+    List<ProactiveMessageResponse> ownerMessages = repository.findByUserId(userId, 20, 0, false);
+    List<ProactiveMessageResponse> recipientMessages =
+        repository.findByUserId(recipientId, 20, 0, false);
+
+    assertThat(ownerMessages)
+        .singleElement()
+        .extracting(ProactiveMessageResponse::canViewReport)
+        .isEqualTo(true);
+    assertThat(recipientMessages)
+        .singleElement()
+        .satisfies(
+            m -> {
+              assertThat(m.canViewReport()).isFalse();
+              // 받은 사람에게도 요약과 작업·실행 참조는 그대로 간다 — 화면이 요약과 안내를 보일 수 있게
+              assertThat(m.jobId()).isNotNull();
+              assertThat(m.executionId()).isEqualTo(execId);
+              assertThat(m.content()).containsEntry("summary", "요약");
+            });
+
+    assertThat(repository.findUnreadByUserId(userId))
+        .singleElement()
+        .extracting(ProactiveMessageResponse::canViewReport)
+        .isEqualTo(true);
+    assertThat(repository.findUnreadByUserId(recipientId))
+        .singleElement()
+        .extracting(ProactiveMessageResponse::canViewReport)
+        .isEqualTo(false);
+  }
+
+  /** 실행에 연결되지 않은 메시지(LEFT JOIN 결과 작업 없음)는 열 리포트가 없으므로 false 다. */
+  @Test
+  void canViewReport_falseWhenMessageHasNoExecution() {
+    repository.create(userId, null, "안내", Map.of(), "REPORT");
+
+    assertThat(repository.findByUserId(userId, 20, 0, false))
+        .singleElement()
+        .extracting(ProactiveMessageResponse::canViewReport)
+        .isEqualTo(false);
   }
 }

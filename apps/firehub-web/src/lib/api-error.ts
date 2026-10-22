@@ -82,6 +82,14 @@ export function isForbiddenError(error: unknown): boolean {
   return axios.isAxiosError(error) && error.response?.status === 403;
 }
 
+/**
+ * 찾을 수 없음(404) 응답인가 (WD-162).
+ * 스마트 작업 리포트·실행 조회는 「없음」과 「작업 작성자가 아님」을 똑같이 404 로 숨기므로, 화면이 두 경우를 함께 말하는 안내를 고를 때 쓴다.
+ */
+export function isNotFoundError(error: unknown): boolean {
+  return axios.isAxiosError(error) && error.response?.status === 404;
+}
+
 /** 지식그래프 읽기 제한 코드(WD-28) — api GraphReadGate.RESTRICTED_CODE 와 같은 값. */
 const GRAPH_READ_RESTRICTED_CODE = 'GRAPH_READ_RESTRICTED';
 
