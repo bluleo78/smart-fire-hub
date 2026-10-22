@@ -98,6 +98,8 @@ public class ProactiveJobController {
   @RequirePermission("proactive:write")
   public ResponseEntity<Void> executeJob(@PathVariable Long id, Authentication authentication) {
     Long userId = (Long) authentication.getPrincipal();
+    // 남의 작업·없는 작업은 슬롯을 잡기 전에 404 — 주인의 실행 이력·슬롯에 흔적을 남기지 않는다 (WD-164)
+    proactiveJobService.requireOwnJob(id, userId);
     // 동기 컨텍스트에서 중복 실행 체크 — @Async 내부에서 throw하면 호출자에 전파되지 않으므로
     // 슬롯 획득을 @Async 호출 이전에 수행한다 (#149)
     proactiveJobService.tryAcquireRunSlot(id);
