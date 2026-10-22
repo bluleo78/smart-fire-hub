@@ -52,6 +52,10 @@ class TriggerEventServiceTest extends IntegrationTestBase {
             .returning(USER.ID)
             .fetchOne()
             .getId();
+    TenantRlsTestSupport.insertActiveMembership(dsl, testUserId, DEFAULT_TEST_TENANT_ID);
+    // WD-167: 트리거는 실행 주체(생성자)의 pipeline:execute 를 발화 시점에 확인한다 — 실행 권한을 준다
+    TenantRlsTestSupport.runInTenantTransaction(
+        tx, DEFAULT_TEST_TENANT_ID, () -> TenantRlsTestSupport.grantAdminRole(dsl, testUserId));
 
     PipelineDetailResponse upstream =
         pipelineService.createPipeline(
@@ -82,6 +86,7 @@ class TriggerEventServiceTest extends IntegrationTestBase {
         tx,
         DEFAULT_TEST_TENANT_ID,
         () -> dsl.deleteFrom(AUDIT_LOG).where(AUDIT_LOG.USER_ID.eq(testUserId)).execute());
+    TenantRlsTestSupport.deleteMembership(dsl, testUserId);
     dsl.deleteFrom(USER).where(USER.ID.eq(testUserId)).execute();
   }
 
@@ -185,8 +190,8 @@ class TriggerEventServiceTest extends IntegrationTestBase {
 
   /**
    * WD-153: 사용자가 취소한 상위 실행(CANCELLED)은 조건이 ANY 여도 체인을 발화하지 않는다. 같은 트리거가 FAILED 로는 발화하는 것을 함께 보여 단언이
-   * 공허하지 않게 한다. 러너는 취소 시 완료 이벤트를 아예 발행하지 않으므로(PipelineAsyncRunnerTest) 이 분기는 그 계약이 깨졌을 때의 방어다.
-   * 리스너는 {@code @Async} 라 프록시를 벗겨 동기로 부른다.
+   * 공허하지 않게 한다. 러너는 취소 시 완료 이벤트를 아예 발행하지 않으므로(PipelineAsyncRunnerTest) 이 분기는 그 계약이 깨졌을 때의 방어다. 리스너는
+   * {@code @Async} 라 프록시를 벗겨 동기로 부른다.
    */
   @Test
   void onPipelineCompleted_cancelledUpstream_doesNotFireEvenAnyCondition() {

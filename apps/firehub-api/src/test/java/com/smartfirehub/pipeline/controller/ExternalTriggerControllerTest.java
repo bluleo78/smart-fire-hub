@@ -10,6 +10,7 @@ import com.smartfirehub.pipeline.dto.*;
 import com.smartfirehub.pipeline.service.PipelineService;
 import com.smartfirehub.pipeline.service.TriggerService;
 import com.smartfirehub.support.IntegrationTestBase;
+import com.smartfirehub.support.TenantRlsTestSupport;
 import java.nio.charset.StandardCharsets;
 import java.util.HexFormat;
 import java.util.List;
@@ -52,6 +53,12 @@ class ExternalTriggerControllerTest extends IntegrationTestBase {
             .returning(USER.ID)
             .fetchOne()
             .getId();
+    TenantRlsTestSupport.insertActiveMembership(dsl, testUserId, DEFAULT_TEST_TENANT_ID);
+    // WD-167: 트리거는 실행 주체(생성자)의 pipeline:execute 를 발화 시점에 확인한다 — 실행 권한을 준다
+    TenantRlsTestSupport.runInTenantTransaction(
+        fixtureTransactionTemplate,
+        DEFAULT_TEST_TENANT_ID,
+        () -> TenantRlsTestSupport.grantAdminRole(dsl, testUserId));
 
     pipelineName = "Ext Pipeline " + unique;
     PipelineDetailResponse pipeline =

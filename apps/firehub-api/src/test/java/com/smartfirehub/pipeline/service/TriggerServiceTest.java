@@ -8,6 +8,7 @@ import com.smartfirehub.pipeline.dto.*;
 import com.smartfirehub.pipeline.exception.CyclicTriggerDependencyException;
 import com.smartfirehub.pipeline.exception.TriggerNotFoundException;
 import com.smartfirehub.support.IntegrationTestBase;
+import com.smartfirehub.support.TenantRlsTestSupport;
 import java.util.List;
 import java.util.Map;
 import org.jooq.DSLContext;
@@ -41,6 +42,9 @@ class TriggerServiceTest extends IntegrationTestBase {
             .returning(USER.ID)
             .fetchOne()
             .getId();
+    TenantRlsTestSupport.insertActiveMembership(dsl, testUserId, DEFAULT_TEST_TENANT_ID);
+    // WD-167: 트리거는 실행 주체(생성자)의 pipeline:execute 를 발화 시점에 확인한다 — 실행 권한을 준다
+    TenantRlsTestSupport.grantAdminRole(dsl, testUserId);
 
     // Create test pipelines
     PipelineDetailResponse pipeline =

@@ -8,6 +8,7 @@ import com.smartfirehub.pipeline.dto.*;
 import com.smartfirehub.pipeline.exception.CyclicTriggerDependencyException;
 import com.smartfirehub.pipeline.exception.TriggerNotFoundException;
 import com.smartfirehub.support.IntegrationTestBase;
+import com.smartfirehub.support.TenantRlsTestSupport;
 import java.util.List;
 import java.util.Map;
 import org.jooq.DSLContext;
@@ -48,6 +49,8 @@ class TriggerServiceExtTest extends IntegrationTestBase {
             .returning(USER.ID)
             .fetchOne()
             .getId();
+    // WD-167: 트리거는 실행 주체(생성자)의 pipeline:execute 를 발화 시점에 확인한다 — 실행 권한을 준다
+    TenantRlsTestSupport.grantAdminRole(dsl, testUserId);
     // 보안 등급(Task 3 D1): DATASET_CHANGE 감시 대상은 저장자가 볼 수 있어야 한다 — 테스트 사용자를 기본 테넌트 USER(기본=내부)
     // 멤버로 만들고, 감시 대상은 실제 데이터셋(기본 등급)으로 쓴다. 예전처럼 존재하지 않는 id(1,2,3)는 이제 저장이 거부된다.
     com.smartfirehub.support.TenantRlsTestSupport.insertActiveMembership(

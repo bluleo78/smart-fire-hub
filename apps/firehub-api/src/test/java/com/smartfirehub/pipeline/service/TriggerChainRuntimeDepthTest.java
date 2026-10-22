@@ -51,6 +51,12 @@ class TriggerChainRuntimeDepthTest extends IntegrationTestBase {
             .returning(USER.ID)
             .fetchOne()
             .getId();
+    TenantRlsTestSupport.insertActiveMembership(dsl, userId, DEFAULT_TEST_TENANT_ID);
+    // WD-167: 트리거는 실행 주체(생성자)의 pipeline:execute 를 발화 시점에 확인한다 — 실행 권한을 준다
+    TenantRlsTestSupport.runInTenantTransaction(
+        fixtureTransactionTemplate,
+        DEFAULT_TEST_TENANT_ID,
+        () -> TenantRlsTestSupport.grantAdminRole(dsl, userId));
     // 스텝 없는 파이프라인은 곧바로 COMPLETED 로 끝나 SUCCESS 조건 연쇄를 발화한다.
     pipelineA =
         pipelineService
@@ -84,6 +90,7 @@ class TriggerChainRuntimeDepthTest extends IntegrationTestBase {
         fixtureTransactionTemplate,
         DEFAULT_TEST_TENANT_ID,
         () -> dsl.deleteFrom(AUDIT_LOG).where(AUDIT_LOG.USER_ID.eq(userId)).execute());
+    TenantRlsTestSupport.deleteMembership(dsl, userId);
     dsl.deleteFrom(USER).where(USER.ID.eq(userId)).execute();
   }
 
