@@ -193,14 +193,27 @@ public class ApiConnectionRepository {
   }
 
   /**
-   * 헬스체크 결과를 DB에 반영한다. last_checked_at은 현재 시각으로 자동 설정된다.
+   * 헬스체크 결과를 DB에 반영하고 <b>바꾸기 직전의 상태</b>를 돌려준다. last_checked_at은 현재 시각으로 자동 설정된다.
+   *
+   * <p><b>왜 직전 상태를 여기서 돌려주나(WD-189)</b>: 상태 전환 알림은 "직전 상태 ≠ 새 상태"로 판단한다. 예전에는 주기 점검이 순회 시작 때 읽어 둔
+   * 값과 비교해, 그 사이 「테스트」가 상태를 먼저 바꿔 두면 전환이 알림 없이 사라졌다. 읽기와 쓰기를 같은 트랜잭션에서 행 잠금({@code FOR UPDATE})으로
+   * 묶어야, 점검·테스트·새로고침이 같은 연결을 동시에 바꿔도 각 전환을 정확히 한 호출만 본다(잠금 없이 읽으면 두 호출이 같은 커밋된 값을 읽어 알림이 두 번 난다).
+   * PostgreSQL 16 에는 {@code RETURNING OLD} 가 없어 잠금 조회 + 갱신 두 문장으로 한다. 클래스 레벨 {@code @Transactional}
+   * 이 두 문장을 한 트랜잭션으로 묶는다.
    *
    * @param id API 연결 ID
    * @param status 헬스체크 상태 (예: "UP", "DOWN")
    * @param latencyMs 응답 지연 ms (오류 시 null)
    * @param errorMessage 오류 메시지 (정상 시 null)
+   * @return 갱신 직전의 last_status. 첫 점검이었거나(null) 그 사이 연결이 지워져 갱신할 행이 없으면 null — 둘 다 알릴 전환이 아니다.
    */
-  public void updateHealthStatus(Long id, String status, Long latencyMs, String errorMessage) {
+  public String updateHealthStatus(Long id, String status, Long latencyMs, String errorMessage) {
+    // 행 잠금으로 직전 상태를 읽는다 — 같은 연결을 갱신하려는 다른 호출은 이 트랜잭션이 끝날 때까지 여기서 기다렸다가 커밋된 새 값을 읽는다.
+    Record previous =
+        dsl.select(AC_LAST_STATUS).from(API_CONNECTION).where(AC_ID.eq(id)).forUpdate().fetchOne();
+    if (previous == null) {
+      return null;
+    }
     dsl.update(API_CONNECTION)
         .set(AC_LAST_STATUS, status)
         .set(AC_LAST_CHECKED_AT, LocalDateTime.now())
@@ -208,6 +221,7 @@ public class ApiConnectionRepository {
         .set(AC_LAST_ERROR_MESSAGE, errorMessage)
         .where(AC_ID.eq(id))
         .execute();
+    return previous.get(AC_LAST_STATUS);
   }
 
   /** 헬스체크 대상 API 연결 목록을 반환한다. health_check_path가 설정된 레코드만 포함한다. */
