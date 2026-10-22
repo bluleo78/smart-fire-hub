@@ -91,11 +91,11 @@ public class EncryptionService {
   /**
    * Returns {@code ****} followed by the last 4 characters of value, or {@code ****} if value has
    * fewer than 4 characters.
+   *
+   * <p>형식은 {@link AuthQueryMasker#maskSecret} 한 곳에서 정한다 — 「테스트」 결과 URL 의 쿼리 키 가리기(WD-177)가 같은 형식을
+   * 써야 화면마다 가린 모양이 달라지지 않는다.
    */
   public String maskValue(String value) {
-    if (value == null || value.length() < 4) {
-      return "****";
-    }
-    return "****" + value.substring(value.length() - 4);
+    return AuthQueryMasker.maskSecret(value);
   }
 }

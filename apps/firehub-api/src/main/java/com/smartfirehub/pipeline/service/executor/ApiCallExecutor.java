@@ -1,6 +1,7 @@
 package com.smartfirehub.pipeline.service.executor;
 
 import com.smartfirehub.apiconnection.dto.ApiConnectionResponse;
+import com.smartfirehub.apiconnection.service.AuthQueryMasker;
 import com.smartfirehub.apiconnection.service.UrlUtils;
 import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.dataset.service.DataTableService;
@@ -20,7 +21,6 @@ import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.ExchangeStrategies;
 import org.springframework.web.reactive.function.client.WebClient;
-import org.springframework.web.util.UriComponentsBuilder;
 import reactor.netty.http.client.HttpClient;
 
 /**
@@ -90,8 +90,8 @@ public class ApiCallExecutor {
    * 파이프라인 러너용 — 협조적 취소 확인({@code cancel})을 받는다(WD-153).
    *
    * <p>체크포인트: 각 페이지 요청 직전(= 페이지 사이 — 진행 중인 페이지는 끝까지 받고 적재한 뒤 멈춘다), 재시도 백오프 대기 중({@link
-   * ExecutionCancelCheck#SLEEP_SLICE_MS} 마다 깨어 확인 — 대기 시간을 다 채우지 않는다), REPLACE 맞바꿈 직전. 모두 아래 try 안이라 취소
-   * 예외가 실패와 같은 정리 경로를 타 REPLACE 임시 테이블이 지워지고 원본이 남는다. APPEND 는 이미 넣은 행이 남고 그 수를 예외에 싣는다.
+   * ExecutionCancelCheck#SLEEP_SLICE_MS} 마다 깨어 확인 — 대기 시간을 다 채우지 않는다), REPLACE 맞바꿈 직전. 모두 아래 try
+   * 안이라 취소 예외가 실패와 같은 정리 경로를 타 REPLACE 임시 테이블이 지워지고 원본이 남는다. APPEND 는 이미 넣은 행이 남고 그 수를 예외에 싣는다.
    */
   public ApiCallResult execute(
       ApiCallConfig config,
@@ -219,7 +219,14 @@ public class ApiCallExecutor {
         cancel.checkpoint(0, isReplace);
         String responseBody =
             executeRequest(
-                config, resolvedUrl, decryptedAuthConfig, Map.of(), timeoutMs, cancel, 0, isReplace);
+                config,
+                resolvedUrl,
+                decryptedAuthConfig,
+                Map.of(),
+                timeoutMs,
+                cancel,
+                0,
+                isReplace);
         List<Map<String, Object>> rows =
             jsonResponseParser.parseAndMap(
                 responseBody, config.dataPath(), config.fieldMappings(), columnTypeMap);
@@ -364,6 +371,8 @@ public class ApiCallExecutor {
     }
 
     // Auth: API_KEY with query param goes into queryParams
+    String authParamName = null;
+    String authSecret = null;
     if (decryptedAuthConfig != null) {
       String authType = decryptedAuthConfig.get("authType");
       if ("API_KEY".equals(authType) && "query".equals(decryptedAuthConfig.get("placement"))) {
@@ -371,14 +380,22 @@ public class ApiCallExecutor {
         String apiKey = decryptedAuthConfig.get("apiKey");
         if (paramName != null && apiKey != null) {
           allQueryParams.put(paramName, apiKey);
+          authParamName = paramName;
+          authSecret = apiKey;
         }
       }
     }
 
     // Build the full URI with query params (resolvedUrl은 이미 SSRF 검증 완료)
-    UriComponentsBuilder uriBuilder = UriComponentsBuilder.fromUriString(resolvedUrl);
-    allQueryParams.forEach(uriBuilder::queryParam);
-    URI requestUri = uriBuilder.build(true).toUri();
+    // (WD-177) 키에 쿼리에 쓸 수 없는 문자(=·공백·한글 등)가 있으면 Spring 이 키 원문을 담은 메시지로 실패해, 재시도 로그·실행
+    // 기록(DB)에 키가 남았다. 공용 빌더가 원문 없는 고정 문구로 바꿔 주고, 다시 보내도 같으므로 재시도하지 않는 ApiCallException 으로 낸다.
+    URI requestUri;
+    try {
+      requestUri =
+          AuthQueryMasker.build(resolvedUrl, allQueryParams, authParamName, authSecret).callUri();
+    } catch (AuthQueryMasker.InvalidRequestUrlException e) {
+      throw new ApiCallException(e.getMessage());
+    }
 
     // Fix 1: enforce maxResponseSizeMb via ExchangeStrategies codec limit.
     // If the response body exceeds this limit WebClient throws DataBufferLimitException,
@@ -416,8 +433,11 @@ public class ApiCallExecutor {
     } catch (Exception e) {
       // 타임아웃·연결 거부 등 — 재시도 대상. 원인을 분류한 한국어 문구로 감싼다(WD-150). 예전 문구는 쿼리 포함
       // URL 을 담을 수 있어(customUrl 에 serviceKey 등) 원인을 묻고 키까지 남겼다.
+      // (WD-177) 분류하지 못한 원문 메시지에 쿼리 인증 키가 실려 올 수 있어 키도 가린다 — 이 문구는 재시도 로그·실행 기록으로 간다.
       throw new ExternalServiceException(
-          ApiCallErrorMessages.describe(e, timeoutMs, requestUri.getHost()), e);
+          AuthQueryMasker.scrubSecret(
+              ApiCallErrorMessages.describe(e, timeoutMs, requestUri.getHost()), authSecret),
+          e);
     }
   }
 
