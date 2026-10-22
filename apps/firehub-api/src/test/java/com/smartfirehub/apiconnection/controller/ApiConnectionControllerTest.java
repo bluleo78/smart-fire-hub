@@ -294,6 +294,56 @@ class ApiConnectionControllerTest {
         .testConnection(org.mockito.ArgumentMatchers.anyLong());
   }
 
+  // ── WD-175: 인증정보 원문 HTTP 노출 경로 제거 ─────────────────────────────────────
+
+  /** 테스트가 심어 두는 원문 토큰. 응답 본문 어디에도 이 문자열이 나오면 안 된다. */
+  private static final String PLAINTEXT_SECRET = "ghp_wd175_plaintext_secret";
+
+  /**
+   * {@code GET /{id}/decrypted} 를 호출하고 "원문이 나가지 않는다"를 단언한다.
+   *
+   * <p>서비스 목이 원문을 돌려주도록 심어 둔다 — 그래야 엔드포인트가 되살아나면 상태(200)·본문(원문)·호출 검증이 모두 실패한다. 스텁이 없으면 목이 빈 Map 을
+   * 돌려줘 본문 단언이 공허해진다. 삭제 후 이 경로는 어떤 매핑에도 걸리지 않아 404 다(실측).
+   */
+  private void assertDecryptedEndpointRemoved() throws Exception {
+    when(apiConnectionService.getDecryptedAuthConfig(1L))
+        .thenReturn(Map.of("authType", "BEARER", "token", PLAINTEXT_SECRET));
+
+    String body =
+        mockMvc
+            .perform(
+                get("/api/v1/api-connections/1/decrypted")
+                    .header("Authorization", "Bearer test-token"))
+            .andExpect(status().isNotFound())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+
+    org.assertj.core.api.Assertions.assertThat(body).doesNotContain(PLAINTEXT_SECRET);
+    org.mockito.Mockito.verify(apiConnectionService, org.mockito.Mockito.never())
+        .getDecryptedAuthConfig(anyLong());
+  }
+
+  /**
+   * WD-175: 일반 사용자(USER 역할 — {@code apiconnection:read} 만 보유)가 {@code /decrypted} 로 토큰·API 키 원문을 받던
+   * 결함. 엔드포인트를 지웠으므로 404 이고 본문에 원문이 없다.
+   */
+  @Test
+  void getDecrypted_endpointRemoved_userWithReadOnly_returnsNotFoundWithoutSecret()
+      throws Exception {
+    when(permissionService.getUserPermissions(1L)).thenReturn(Set.of("apiconnection:read"));
+
+    assertDecryptedEndpointRemoved();
+  }
+
+  /** WD-175: 쓰기·삭제 권한까지 가진 관리자(ADMIN)에게도 원문을 HTTP 로 내보내는 경로는 없다. */
+  @Test
+  void getDecrypted_endpointRemoved_adminWithAllPermissions_returnsNotFoundWithoutSecret()
+      throws Exception {
+    // setUp 이 read·write·delete 를 모두 심어 둔다.
+    assertDecryptedEndpointRemoved();
+  }
+
   /** POST /refresh-all — apiconnection:write 권한 보유 시 jobId 반환. */
   @Test
   void postRefreshAll_withPermission_returnsJobId() throws Exception {
