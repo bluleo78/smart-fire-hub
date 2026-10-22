@@ -92,7 +92,10 @@ class DatasetServiceFileTest {
             org.mockito.Mockito.mock(
                 com.smartfirehub.dataset.rowsearch.SearchColumnRepository.class),
             org.mockito.Mockito.mock(
-                com.smartfirehub.dataset.rowsearch.SearchIndexSettingsService.class));
+                com.smartfirehub.dataset.rowsearch.SearchIndexSettingsService.class),
+            // 이 테스트는 필드 이름 변경·삭제를 쓰지 않아 매핑 참조 보호(WD-186)는 호출되지 않는다.
+            org.mockito.Mockito.mock(
+                com.smartfirehub.mapping.service.MappingReferenceService.class));
   }
 
   @Test

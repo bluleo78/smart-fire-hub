@@ -7,6 +7,14 @@ import static org.jooq.impl.DSL.name;
 import static org.jooq.impl.DSL.table;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartfirehub.dataset.dto.CreateDatasetRequest;
+import com.smartfirehub.dataset.dto.DatasetColumnRequest;
+import com.smartfirehub.dataset.dto.DatasetColumnResponse;
+import com.smartfirehub.dataset.dto.UpdateColumnRequest;
+import com.smartfirehub.dataset.repository.DatasetColumnRepository;
+import com.smartfirehub.dataset.repository.DatasetRepository;
+import com.smartfirehub.dataset.service.DataTableService;
+import com.smartfirehub.dataset.service.DatasetService;
 import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.mapping.dto.MappingSpec;
 import com.smartfirehub.mapping.dto.MappingSpec.EntityMapping;
@@ -14,6 +22,8 @@ import com.smartfirehub.mapping.dto.MappingSpec.PropertyMapping;
 import com.smartfirehub.mapping.dto.MappingSpec.RelationMapping;
 import com.smartfirehub.mapping.dto.OntologyMappingUsage;
 import com.smartfirehub.mapping.service.MappingReferenceService;
+import com.smartfirehub.mapping.service.MappingService;
+import com.smartfirehub.ontology.binding.DatasetOntologyRepository;
 import com.smartfirehub.ontology.dto.CreateOntologyRequest;
 import com.smartfirehub.ontology.dto.OntologyResponse;
 import com.smartfirehub.ontology.element.dto.ElementDtos.CreateEntityTypeRequest;
@@ -47,6 +57,8 @@ import org.springframework.security.crypto.password.PasswordEncoder;
  *       온톨로지의 매핑은 건드리지 않는다.
  *   <li>매핑이 쓰는 요소의 삭제는 409(데이터셋 이름 포함)로 막히고 아무것도 지워지지 않는다. 쓰지 않으면 그대로 지워진다.
  *   <li>WD-185: 속성 자료형 변경은 매핑이 그 속성에 연결한 컬럼 타입과 맞지 않으면 409 로 막히고 아무것도 바뀌지 않는다.
+ *   <li>WD-186: 반대쪽 끝 — 데이터셋 필드 이름 변경은 그 데이터셋의 매핑에 연쇄 반영되고, 매핑이 쓰는 필드 삭제·연결된 속성 자료형과 맞지 않는 필드 타입
+ *       변경은 409 로 막힌다. 필드 변경과 매핑 저장은 데이터셋 행 잠금으로 직렬화된다.
  * </ul>
  *
  * <p>픽스처 온톨로지(Sensor·Building, Sensor-INSTALLED_IN-Building)는 베이스가 만들고 지운다. 매핑 행은 ontology FK
@@ -57,9 +69,18 @@ class OntologyElementMappingRefTest extends OntologyElementTestSupport {
   @Autowired private ObjectMapper objectMapper;
   @Autowired private PasswordEncoder encoder;
   @Autowired private MappingReferenceService mappingReferences;
+  // WD-186: 필드 변경 경로(실제 물리 테이블 DDL 포함)와 매핑 저장을 함께 검증한다.
+  @Autowired private DatasetService datasetService;
+  @Autowired private DataTableService dataTableService;
+  @Autowired private DatasetColumnRepository columnRepository;
+  @Autowired private DatasetRepository datasetRepository;
+  @Autowired private DatasetOntologyRepository bindingRepository;
+  @Autowired private MappingService mappingService;
 
   private long userId;
   private final List<Long> datasetIds = new ArrayList<>();
+  // WD-186: DatasetService 로 만든 데이터셋의 물리 테이블(data 스키마) — 데이터셋 행 삭제로는 사라지지 않아 따로 지운다.
+  private final List<String> tableNames = new ArrayList<>();
   private Long otherOntologyId;
 
   // 데이터셋 이름은 조회자의 보안 등급 가시성으로 걸러진다 — 기본 등급 데이터셋을 볼 수 있는 테넌트 멤버로 인증 컨텍스트를 세운다.
@@ -88,6 +109,9 @@ class OntologyElementMappingRefTest extends OntologyElementTestSupport {
     otherOntologyId = null;
     inTenantFixture(
         () -> {
+          for (String t : tableNames) {
+            dataTableService.dropTable(t);
+          }
           for (Long id : datasetIds) {
             // 고아 매핑 시나리오는 데이터셋을 먼저 지운다 — 매핑 행은 ontology CASCADE 로 정리된다.
             dsl.deleteFrom(table(name("dataset_mapping")))
@@ -99,6 +123,7 @@ class OntologyElementMappingRefTest extends OntologyElementTestSupport {
           }
         });
     datasetIds.clear();
+    tableNames.clear();
     TestUsers.cleanup(dsl, tx, userId, DEFAULT_TEST_TENANT_ID);
   }
 
@@ -948,5 +973,383 @@ class OntologyElementMappingRefTest extends OntologyElementTestSupport {
         .containsEntry(propertyId("Sensor", "model"), used);
     assertThat(usage.relations())
         .containsEntry(relationId("Sensor", "INSTALLED_IN", "Building"), used);
+  }
+
+  // ── 데이터셋 필드 변경(WD-186) ─────────────────────────────────────────────
+
+  // 물리 테이블까지 갖춘 빈 데이터셋 — 필드 이름·타입 변경은 데이터가 있으면 거절되므로 행을 넣지 않는다. 필드: bname·memo(TEXT),
+  // amt(INTEGER), extra(TEXT).
+  private long tableDataset(String label) {
+    String table = "wd186_" + System.nanoTime();
+    long id =
+        datasetService
+            .createDataset(
+                new CreateDatasetRequest(
+                    label + "-" + System.nanoTime(),
+                    table,
+                    null,
+                    null,
+                    "TABLE",
+                    "SOURCE",
+                    List.of(
+                        new DatasetColumnRequest("bname", "건물명", "TEXT", null, true, false, null),
+                        new DatasetColumnRequest("memo", "메모", "TEXT", null, true, false, null),
+                        new DatasetColumnRequest("amt", "금액", "INTEGER", null, true, false, null),
+                        new DatasetColumnRequest("extra", "기타", "TEXT", null, true, false, null)),
+                    null),
+                userId)
+            .id();
+    datasetIds.add(id);
+    tableNames.add(table);
+    return id;
+  }
+
+  // Building 에 note(text)·amount(number) 속성을 둔다.
+  private void addBuildingFieldProperties() {
+    elementService.addProperty(
+        ontologyId, typeId("Building"), new CreatePropertyRequest("note", "메모", "text", null));
+    elementService.addProperty(
+        ontologyId, typeId("Building"), new CreatePropertyRequest("amount", "금액", "number", null));
+  }
+
+  // 이름 필드 bname, memo→note, amt→amount 를 연결한 매핑.
+  private static MappingSpec buildingFieldSpec() {
+    return new MappingSpec(
+        List.of(
+            new EntityMapping(
+                "Building",
+                "bname",
+                List.of(
+                    new PropertyMapping("memo", "note"), new PropertyMapping("amt", "amount")))),
+        List.of());
+  }
+
+  private List<DatasetColumnResponse> columnsOf(long datasetId) {
+    return inTenantFixture(() -> columnRepository.findByDatasetId(datasetId));
+  }
+
+  private long columnId(long datasetId, String columnName) {
+    return columnsOf(datasetId).stream()
+        .filter(c -> c.columnName().equals(columnName))
+        .findFirst()
+        .orElseThrow()
+        .id();
+  }
+
+  private String columnType(long datasetId, String columnName) {
+    return columnsOf(datasetId).stream()
+        .filter(c -> c.columnName().equals(columnName))
+        .findFirst()
+        .orElseThrow()
+        .dataType();
+  }
+
+  private java.time.OffsetDateTime mappingUpdatedAt(long datasetId) {
+    return inTenantFixture(
+        () ->
+            dsl.select(field(name("updated_at"), java.time.OffsetDateTime.class))
+                .from(table(name("dataset_mapping")))
+                .where(field(name("dataset_id"), Long.class).eq(datasetId))
+                .fetchOne(0, java.time.OffsetDateTime.class));
+  }
+
+  private static UpdateColumnRequest rename(String newName) {
+    return new UpdateColumnRequest(newName, null, null, null, null, null, null);
+  }
+
+  private static UpdateColumnRequest retype(String newName, String dataType) {
+    return new UpdateColumnRequest(newName, null, dataType, null, null, null, null);
+  }
+
+  @Test
+  void 필드_이름을_바꾸면_그_데이터셋_매핑의_필드_참조만_바뀌고_상태는_그대로다() {
+    addBuildingFieldProperties();
+    long activeDs = tableDataset("필드리네임-active");
+    long draftDs = tableDataset("필드리네임-draft");
+    mapping(activeDs, ontologyId, buildingFieldSpec(), "active");
+    mapping(draftDs, ontologyId, buildingFieldSpec(), "draft");
+
+    // 속성 연결 필드(memo)와 이름 필드(bname)를 각각 바꾼다.
+    datasetService.updateColumn(activeDs, columnId(activeDs, "memo"), rename("remark"));
+    datasetService.updateColumn(activeDs, columnId(activeDs, "bname"), rename("building_name"));
+
+    assertThat(specOf(activeDs))
+        .isEqualTo(
+            new MappingSpec(
+                List.of(
+                    new EntityMapping(
+                        "Building",
+                        "building_name",
+                        List.of(
+                            new PropertyMapping("remark", "note"),
+                            new PropertyMapping("amt", "amount")))),
+                List.of()));
+    // 이름만 맞추는 갱신이 active 매핑을 draft 로 떨어뜨리면 안 된다.
+    assertThat(storedRow(activeDs).get(field(name("status"), String.class))).isEqualTo("active");
+    // 같은 필드 이름을 쓰는 다른 데이터셋의 매핑은 건드리지 않는다.
+    assertThat(specOf(draftDs)).isEqualTo(buildingFieldSpec());
+    assertThat(storedRow(draftDs).get(field(name("status"), String.class))).isEqualTo("draft");
+
+    // draft 매핑도 같은 규칙 — 상태는 draft 그대로.
+    datasetService.updateColumn(draftDs, columnId(draftDs, "amt"), rename("price"));
+    assertThat(specOf(draftDs).entities().get(0).properties())
+        .containsExactly(
+            new PropertyMapping("memo", "note"), new PropertyMapping("price", "amount"));
+    assertThat(storedRow(draftDs).get(field(name("status"), String.class))).isEqualTo("draft");
+  }
+
+  @Test
+  void 매핑이_쓰지_않는_필드의_이름_변경은_매핑을_다시_쓰지_않는다() {
+    addBuildingFieldProperties();
+    long ds = tableDataset("무관리네임");
+    mapping(ds, ontologyId, buildingFieldSpec(), "active");
+    var before = mappingUpdatedAt(ds);
+
+    datasetService.updateColumn(ds, columnId(ds, "extra"), rename("extra2"));
+
+    assertThat(columnsOf(ds)).extracting(DatasetColumnResponse::columnName).contains("extra2");
+    assertThat(specOf(ds)).isEqualTo(buildingFieldSpec());
+    assertThat(mappingUpdatedAt(ds)).isEqualTo(before);
+  }
+
+  @Test
+  void 매핑이_쓰는_필드는_409로_삭제되지_않고_필드와_매핑이_그대로다() {
+    addBuildingFieldProperties();
+    long ds = tableDataset("필드삭제");
+    mapping(ds, ontologyId, buildingFieldSpec(), "active");
+
+    assertThatThrownBy(() -> datasetService.deleteColumn(ds, columnId(ds, "memo")))
+        .isInstanceOfSatisfying(
+            CodedApiException.class,
+            e -> {
+              assertThat(e.status()).isEqualTo(HttpStatus.CONFLICT);
+              assertThat(e.code()).isEqualTo(MappingReferenceService.COLUMN_IN_USE_CODE);
+              assertThat(e.getMessage())
+                  .isEqualTo(
+                      "'memo' 필드는 이 데이터셋의 지식그래프 매핑(Building.note)에 연결되어 있어 삭제할 수 없습니다."
+                          + " 매핑 탭에서 연결을 먼저 해제하세요.");
+            });
+    // 엔티티 이름 필드도 매핑이 쓰는 필드다.
+    assertThatThrownBy(() -> datasetService.deleteColumn(ds, columnId(ds, "bname")))
+        .isInstanceOf(CodedApiException.class)
+        .hasMessageContaining("'bname' 필드는 이 데이터셋의 지식그래프 매핑(Building 이름)에 연결되어 있어 삭제할 수 없습니다");
+
+    assertThat(columnsOf(ds))
+        .extracting(DatasetColumnResponse::columnName)
+        .containsExactlyInAnyOrder("bname", "memo", "amt", "extra");
+    assertThat(specOf(ds)).isEqualTo(buildingFieldSpec());
+  }
+
+  @Test
+  void 매핑이_쓰지_않는_필드는_삭제된다() {
+    addBuildingFieldProperties();
+    long ds = tableDataset("무관삭제");
+    mapping(ds, ontologyId, buildingFieldSpec(), "draft");
+
+    datasetService.deleteColumn(ds, columnId(ds, "extra"));
+
+    assertThat(columnsOf(ds))
+        .extracting(DatasetColumnResponse::columnName)
+        .containsExactlyInAnyOrder("bname", "memo", "amt");
+    assertThat(specOf(ds)).isEqualTo(buildingFieldSpec());
+  }
+
+  @Test
+  void 매핑_속성_자료형과_맞지_않는_타입으로_바꾸면_409로_막히고_타입은_그대로다() {
+    addBuildingFieldProperties();
+    long ds = tableDataset("타입충돌");
+    mapping(ds, ontologyId, buildingFieldSpec(), "draft");
+
+    assertThatThrownBy(
+            () -> datasetService.updateColumn(ds, columnId(ds, "amt"), retype(null, "TEXT")))
+        .isInstanceOfSatisfying(
+            CodedApiException.class,
+            e -> {
+              assertThat(e.status()).isEqualTo(HttpStatus.CONFLICT);
+              assertThat(e.code()).isEqualTo(MappingReferenceService.COLUMN_TYPE_CONFLICT_CODE);
+              assertThat(e.getMessage())
+                  .isEqualTo(
+                      "'amt' 필드는 이 데이터셋의 지식그래프 매핑에서 숫자 속성 Building.amount에 연결되어 있어 텍스트 타입(TEXT)으로"
+                          + " 바꿀 수 없습니다. 매핑 탭에서 연결을 먼저 해제하세요.");
+            });
+    assertThat(columnType(ds, "amt")).isEqualTo("INTEGER");
+  }
+
+  @Test
+  void 매핑_속성_자료형과_맞는_타입으로는_바꿀_수_있다() {
+    addBuildingFieldProperties();
+    long ds = tableDataset("타입호환");
+    mapping(ds, ontologyId, buildingFieldSpec(), "active");
+
+    // number 속성에 연결된 필드를 다른 숫자 타입으로, text 속성에 연결된 필드는 어떤 타입으로든 바꿀 수 있다.
+    datasetService.updateColumn(ds, columnId(ds, "amt"), retype(null, "DECIMAL"));
+    datasetService.updateColumn(ds, columnId(ds, "memo"), retype(null, "INTEGER"));
+
+    assertThat(columnType(ds, "amt")).isEqualTo("DECIMAL");
+    assertThat(columnType(ds, "memo")).isEqualTo("INTEGER");
+    assertThat(specOf(ds)).isEqualTo(buildingFieldSpec());
+  }
+
+  @Test
+  void 이름과_타입을_함께_바꿀_때_타입이_맞지_않으면_이름도_매핑도_바뀌지_않는다() {
+    addBuildingFieldProperties();
+    long ds = tableDataset("동시변경거절");
+    mapping(ds, ontologyId, buildingFieldSpec(), "active");
+
+    assertThatThrownBy(
+            () -> datasetService.updateColumn(ds, columnId(ds, "amt"), retype("price", "DATE")))
+        .isInstanceOf(CodedApiException.class)
+        .hasMessageContaining("'amt' 필드는");
+
+    assertThat(columnsOf(ds)).extracting(DatasetColumnResponse::columnName).contains("amt");
+    assertThat(specOf(ds)).isEqualTo(buildingFieldSpec());
+  }
+
+  @Test
+  void 이름과_타입을_함께_바꿀_때_타입이_맞으면_둘_다_반영되고_매핑_이름도_바뀐다() {
+    addBuildingFieldProperties();
+    long ds = tableDataset("동시변경허용");
+    mapping(ds, ontologyId, buildingFieldSpec(), "active");
+
+    datasetService.updateColumn(ds, columnId(ds, "amt"), retype("price", "DECIMAL"));
+
+    assertThat(columnType(ds, "price")).isEqualTo("DECIMAL");
+    assertThat(specOf(ds).entities().get(0).properties())
+        .containsExactly(
+            new PropertyMapping("memo", "note"), new PropertyMapping("price", "amount"));
+    assertThat(storedRow(ds).get(field(name("status"), String.class))).isEqualTo("active");
+  }
+
+  // 매핑 저장(온톨로지·데이터셋 FOR SHARE 뒤 삽입)이 커밋 전일 때 필드 이름 변경은 그 커밋을 기다렸다가 방금 생긴 매핑까지 새 이름으로
+  // 맞춰야 한다. 데이터셋 행 잠금이 없으면 이름 변경이 커밋 전 매핑을 못 본 채 끝나고, 매핑은 사라진 옛 이름으로 남는다.
+  @Test
+  void 진행_중인_매핑_저장이_끝난_뒤_필드_이름_변경이_그_매핑까지_반영한다() throws Exception {
+    addBuildingFieldProperties();
+    long ds = tableDataset("동시필드리네임");
+    long memoId = columnId(ds, "memo");
+
+    PausedTransactionRace.Outcome<Object> out =
+        PausedTransactionRace.run(
+            tx,
+            DEFAULT_TEST_TENANT_ID,
+            () -> {
+              ontologyRepository.lockForShare(ontologyId);
+              datasetRepository.lockForShare(ds);
+              dsl.insertInto(table(name("dataset_mapping")))
+                  .set(field(name("dataset_id"), Long.class), ds)
+                  .set(field(name("ontology_id"), Long.class), ontologyId)
+                  .set(field(name("spec"), JSONB.class), JSONB.valueOf(write(buildingFieldSpec())))
+                  .set(field(name("status"), String.class), "active")
+                  .execute();
+            },
+            () -> {
+              datasetService.updateColumn(ds, memoId, rename("remark"));
+              return null;
+            });
+
+    assertThat(out.secondBlocked()).isTrue();
+    assertThat(out.secondError()).isNull();
+    assertThat(specOf(ds).entities().get(0).properties())
+        .containsExactly(
+            new PropertyMapping("remark", "note"), new PropertyMapping("amt", "amount"));
+  }
+
+  // 같은 구도에서 필드 삭제는 매핑 저장 커밋을 기다렸다가 방금 생긴 연결을 보고 409 로 막혀야 한다.
+  @Test
+  void 진행_중인_매핑_저장이_끝날_때까지_필드_삭제가_기다렸다가_409로_막힌다() throws Exception {
+    addBuildingFieldProperties();
+    long ds = tableDataset("동시필드삭제");
+    long memoId = columnId(ds, "memo");
+
+    PausedTransactionRace.Outcome<Object> out =
+        PausedTransactionRace.run(
+            tx,
+            DEFAULT_TEST_TENANT_ID,
+            () -> {
+              ontologyRepository.lockForShare(ontologyId);
+              datasetRepository.lockForShare(ds);
+              dsl.insertInto(table(name("dataset_mapping")))
+                  .set(field(name("dataset_id"), Long.class), ds)
+                  .set(field(name("ontology_id"), Long.class), ontologyId)
+                  .set(field(name("spec"), JSONB.class), JSONB.valueOf(write(buildingFieldSpec())))
+                  .set(field(name("status"), String.class), "draft")
+                  .execute();
+            },
+            () -> {
+              datasetService.deleteColumn(ds, memoId);
+              return null;
+            });
+
+    assertThat(out.secondBlocked()).isTrue();
+    assertThat(out.secondError()).isInstanceOf(CodedApiException.class);
+    assertThat(columnsOf(ds)).extracting(DatasetColumnResponse::columnName).contains("memo");
+  }
+
+  // 지식 모델의 속성 자료형 변경(WD-185, 온톨로지 행 NO KEY UPDATE)이 커밋 전일 때 필드 타입 변경은 그 커밋을 기다렸다가 바뀐 자료형으로
+  // 판정해야 한다. 필드 변경 경로의 온톨로지 공유 잠금이 없으면 둘 다 옛 상태를 보고 통과해 숫자 속성이 텍스트 필드에 연결된 채 남는다.
+  @Test
+  void 진행_중인_속성_자료형_변경이_끝날_때까지_필드_타입_변경이_기다렸다가_409로_막힌다() throws Exception {
+    addBuildingFieldProperties();
+    long ds = tableDataset("동시자료형교차");
+    // text 속성 note 에 INTEGER 필드 amt 를 연결 — 지금은 맞는 쌍이다.
+    mapping(
+        ds,
+        ontologyId,
+        new MappingSpec(
+            List.of(
+                new EntityMapping(
+                    "Building", "bname", List.of(new PropertyMapping("amt", "note")))),
+            List.of()),
+        "active");
+    long buildingId = typeId("Building");
+    long noteId = propertyId("Building", "note");
+    long amtId = columnId(ds, "amt");
+
+    PausedTransactionRace.Outcome<Object> out =
+        PausedTransactionRace.run(
+            tx,
+            DEFAULT_TEST_TENANT_ID,
+            // note 를 number 로 — amt(INTEGER) 와 맞으므로 WD-185 검사를 통과한다.
+            () ->
+                elementService.updateProperty(
+                    ontologyId,
+                    buildingId,
+                    noteId,
+                    new UpdatePropertyRequest(null, null, "number", null)),
+            () -> {
+              datasetService.updateColumn(ds, amtId, retype(null, "TEXT"));
+              return null;
+            });
+
+    assertThat(out.secondBlocked()).isTrue();
+    assertThat(out.secondError())
+        .isInstanceOfSatisfying(
+            CodedApiException.class,
+            e -> assertThat(e.code()).isEqualTo(MappingReferenceService.COLUMN_TYPE_CONFLICT_CODE));
+    assertThat(dataTypeOf("Building", "note")).isEqualTo("number");
+    assertThat(columnType(ds, "amt")).isEqualTo("INTEGER");
+  }
+
+  // 반대 방향: 필드 이름 변경이 커밋 전일 때 매핑 저장은 그 커밋을 기다렸다가 바뀐 필드 목록으로 검증해, 사라진 옛 이름을 400 으로 거절해야
+  // 한다. 매핑 저장 쪽 데이터셋 잠금(MappingService.validate)이 없으면 커밋 전 필드 목록(옛 이름)으로 검증을 통과해 옛 이름을 저장한다.
+  @Test
+  void 진행_중인_필드_이름_변경이_끝날_때까지_매핑_저장이_기다렸다가_옛_이름을_400으로_거절한다() throws Exception {
+    addBuildingFieldProperties();
+    long ds = tableDataset("동시매핑저장");
+    long memoId = columnId(ds, "memo");
+    inTenantFixture(() -> bindingRepository.bind(ds, ontologyId, userId));
+
+    PausedTransactionRace.Outcome<Object> out =
+        PausedTransactionRace.run(
+            tx,
+            DEFAULT_TEST_TENANT_ID,
+            () -> datasetService.updateColumn(ds, memoId, rename("remark")),
+            () -> mappingService.save(ds, buildingFieldSpec(), userId));
+
+    assertThat(out.secondBlocked()).isTrue();
+    assertThat(out.secondError())
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("데이터셋에 없는 필드입니다: memo (Building.note)");
+    assertThat(storedRow(ds)).isNull();
   }
 }

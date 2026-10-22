@@ -252,6 +252,68 @@ test.describe('데이터셋 상세 — 컬럼 탭', () => {
     await expect(page.getByText('필드 삭제')).toBeVisible();
   });
 
+  // WD-186: 지식그래프 매핑이 쓰는 필드 삭제는 서버가 409(코드 + 문구)로 막는다 — 그 문구가 일반 실패 문구로 묻히지 않고
+  // 그대로 보여야 사용자가 "매핑 탭에서 연결을 먼저 해제"할 수 있다.
+  test('매핑이 쓰는 필드 삭제 — 서버 409 문구가 일반 실패 문구 대신 그대로 보인다 (WD-186)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupMocks(page);
+    const message =
+      "'amount' 필드는 이 데이터셋의 지식그래프 매핑(Building.amount)에 연결되어 있어 삭제할 수 없습니다. 매핑 탭에서 연결을 먼저 해제하세요.";
+    const deleteCapture = await mockApi(
+      page,
+      'DELETE',
+      '/api/v1/datasets/5/columns/3',
+      { status: 409, code: 'DATASET_COLUMN_IN_USE_BY_MAPPING', message },
+      { status: 409, capture: true },
+    );
+
+    await page.goto('/data/datasets/5');
+    await page.getByRole('tab', { name: '필드' }).click();
+    await expect(page.getByRole('heading', { name: /필드 목록/ })).toBeVisible({ timeout: 10000 });
+
+    const amountRow = page.getByRole('row').filter({ hasText: 'amount' }).first();
+    await amountRow.getByRole('button').nth(4).click(); // Trash2
+    const dialog = page.getByRole('alertdialog');
+    await expect(dialog).toBeVisible({ timeout: 5000 });
+    await dialog.getByRole('button', { name: '삭제' }).click();
+
+    await deleteCapture.waitForRequest();
+    await expect(page.getByText(message)).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText('필드 삭제에 실패했습니다.')).toHaveCount(0);
+  });
+
+  // WD-186: 매핑 속성 자료형과 맞지 않는 타입 변경도 서버가 409 로 막는다 — 편집 창에서 그 문구가 그대로 보여야 한다.
+  test('매핑 속성과 맞지 않는 필드 수정 — 서버 409 문구가 그대로 보이고 편집 창은 닫히지 않는다 (WD-186)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupMocks(page);
+    const message =
+      "'amount' 필드는 이 데이터셋의 지식그래프 매핑에서 숫자 속성 Building.amount에 연결되어 있어 텍스트 타입(TEXT)으로 바꿀 수 없습니다. 매핑 탭에서 연결을 먼저 해제하세요.";
+    const updateCapture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/datasets/5/columns/3',
+      { status: 409, code: 'DATASET_COLUMN_TYPE_CONFLICTS_WITH_MAPPING', message },
+      { status: 409, capture: true },
+    );
+
+    await page.goto('/data/datasets/5');
+    await page.getByRole('tab', { name: '필드' }).click();
+    await expect(page.getByRole('heading', { name: /필드 목록/ })).toBeVisible({ timeout: 10000 });
+
+    const amountRow = page.getByRole('row').filter({ hasText: 'amount' }).first();
+    await amountRow.getByRole('button', { name: '컬럼 편집' }).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toBeVisible({ timeout: 5000 });
+    await dialog.getByRole('button', { name: '수정' }).click();
+
+    await updateCapture.waitForRequest();
+    await expect(page.getByText(message)).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText('필드 수정에 실패했습니다.')).toHaveCount(0);
+    await expect(dialog.getByRole('heading', { name: '필드 수정' })).toBeVisible();
+  });
+
   test('필드 추가 다이얼로그 — VARCHAR 타입 선택 시 최대 길이 입력 필드가 나타난다', async ({
     authenticatedPage: page,
   }) => {

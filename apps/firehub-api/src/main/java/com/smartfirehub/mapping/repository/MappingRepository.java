@@ -95,6 +95,18 @@ public class MappingRepository {
             r -> new StoredMapping(r.get(M_ONTOLOGY_ID), r.get(M_SPEC).data(), r.get(M_STATUS)));
   }
 
+  // WD-186: 데이터셋 매핑을 행 잠금과 함께 읽는다(필드 이름 변경 연쇄·필드 삭제/타입 변경 판정 전용). 지식 모델 요소 이름 변경
+  // (findByOntologyForUpdate)이 같은 행을 읽고-고쳐-쓰므로, 잠그지 않고 고치면 한쪽 갱신이 유실된다. 호출자는 이 앞에 온톨로지 행
+  // (공유)·데이터셋 행 잠금을 먼저 잡는다(잠금 순서: 온톨로지 행 → 데이터셋 행 → 매핑 행).
+  public Optional<StoredMapping> findByDatasetForUpdate(long datasetId) {
+    return dsl.select(M_ONTOLOGY_ID, M_SPEC, M_STATUS)
+        .from(DATASET_MAPPING)
+        .where(M_DATASET_ID.eq(datasetId))
+        .forUpdate()
+        .fetchOptional(
+            r -> new StoredMapping(r.get(M_ONTOLOGY_ID), r.get(M_SPEC).data(), r.get(M_STATUS)));
+  }
+
   // 상태만 전환(draft→active). updated_by/at 함께 갱신.
   public void updateStatus(long datasetId, String status, Long userId) {
     dsl.update(DATASET_MAPPING)
