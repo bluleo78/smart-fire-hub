@@ -191,6 +191,18 @@ class PipelineControllerTest {
     verify(pipelineService).deletePipeline(1L);
   }
 
+  /** 삭제 영향 조회(WD-170) — 함께 지워질 자동 생성 임시 데이터셋 개수를 그대로 내보낸다. */
+  @Test
+  void getDeleteImpact_withPermission_returnsTempDatasetCount() throws Exception {
+    when(pipelineService.getDeleteImpact(1L)).thenReturn(new PipelineDeleteImpactResponse(2));
+
+    mockMvc
+        .perform(
+            get("/api/v1/pipelines/1/delete-impact").header("Authorization", "Bearer test-token"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.tempDatasetCount").value(2));
+  }
+
   @Test
   void getPipelines_withoutAuth_returnsUnauthorized() throws Exception {
     mockMvc.perform(get("/api/v1/pipelines")).andExpect(status().isUnauthorized());
@@ -348,7 +360,8 @@ class PipelineControllerTest {
   void cancelExecution_notFound_returns404() throws Exception {
     when(pipelineService.cancelExecution(1L, 44L, 1L))
         .thenThrow(
-            new com.smartfirehub.pipeline.exception.PipelineNotFoundException("Execution not found"));
+            new com.smartfirehub.pipeline.exception.PipelineNotFoundException(
+                "Execution not found"));
 
     mockMvc
         .perform(

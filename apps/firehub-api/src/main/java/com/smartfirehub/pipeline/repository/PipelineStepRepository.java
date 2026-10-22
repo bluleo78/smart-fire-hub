@@ -84,6 +84,9 @@ public class PipelineStepRepository {
   // 러너 TEMP(출력 미지정 스텝용 임시 데이터셋)가 어느 스텝 것인지 — V36. 출력 해석 규칙의 유일한 근거다.
   private static final Field<Long> D_SOURCE_PIPELINE_STEP_ID =
       field(name("dataset", "source_pipeline_step_id"), Long.class);
+  // 데이터셋 출처(SOURCE/DERIVED/TEMP, V66). 러너가 자동 생성한 임시 데이터셋은 'TEMP' 다(WD-170 정리 대상 판별).
+  private static final Field<String> D_ORIGIN_TYPE =
+      field(name("dataset", "origin_type"), String.class);
 
   /**
    * 이름을 바꿀 스텝을 잠시 비켜 두는 임시 이름의 접두사(WD-108, {@link #renameStepTemporarily}). 뒤에 스텝 id 를 붙여 파이프라인 안에서
@@ -392,6 +395,54 @@ public class PipelineStepRepository {
         .fetch()
         .forEach(r -> result.putIfAbsent(r.get(D_SOURCE_PIPELINE_STEP_ID), r.get(D_ID)));
     return result;
+  }
+
+  /**
+   * 주어진 스텝들이 만든(러너 자동 생성) 임시 데이터셋 id 를 모두 읽는다(WD-170 — 스텝·파이프라인 삭제 때 함께 지울 후보).
+   *
+   * <p>{@link #findTempDatasetIdsByStepIds} 와 달리 한 스텝에 여럿이어도 전부 돌려준다 — 정리 대상이므로 하나도 빠뜨리면 안 된다.
+   * {@code origin_type='TEMP'} 로 한정해, 출처가 TEMP 가 아닌 데이터셋에 스텝 연결이 남아 있더라도(정상 경로로는 생기지 않음) 사용자가 만든
+   * 데이터셋을 지우지 않게 한다. 스텝을 지우면 {@code source_pipeline_step_id} 가 SET NULL(V36)이 되어 더는 찾을 수 없으므로 반드시
+   * 스텝 삭제 <b>전에</b> 불러야 한다.
+   */
+  public List<Long> findAutoTempDatasetIdsByStepIds(Collection<Long> stepIds) {
+    if (stepIds.isEmpty()) {
+      return List.of();
+    }
+    return dsl.select(D_ID)
+        .from(DATASET)
+        .where(D_SOURCE_PIPELINE_STEP_ID.in(stepIds).and(D_ORIGIN_TYPE.eq("TEMP")))
+        .orderBy(D_ID)
+        .fetch(D_ID);
+  }
+
+  /**
+   * 주어진 데이터셋들 중 {@code excludedStepIds} 밖의 스텝이 <b>출력</b>({@code output_dataset_id})으로 쓰고 있는 것의 id 를
+   * 돌려준다 (WD-170 — 다른 스텝이 출력으로 쓰는 임시 데이터셋은 지우지 않는다. {@code DatasetService.deleteDataset} 의 출력 참조
+   * 거부와 같은 규칙이며, 그 거부가 트랜잭션을 롤백 전용으로 만들기 전에 미리 걸러 내는 데 쓴다).
+   *
+   * <p>제외 스텝은 "곧 지워질 스텝" — 스텝이 자기 임시 데이터셋을 출력으로 되돌려 저장해 둔 경우(웹이 해석된 출력을 왕복 저장)를 참조로 세지 않기 위해서다. 이미
+   * 지운 뒤에 부르면 제외 목록은 비어 있어도 된다.
+   */
+  public Set<Long> findDatasetIdsUsedAsOutputExcludingSteps(
+      Collection<Long> datasetIds, Collection<Long> excludedStepIds) {
+    if (datasetIds.isEmpty()) {
+      return Set.of();
+    }
+    Condition cond = PS_OUTPUT_DATASET_ID.in(datasetIds);
+    if (!excludedStepIds.isEmpty()) {
+      cond = cond.and(PS_ID.notIn(excludedStepIds));
+    }
+    return new HashSet<>(
+        dsl.selectDistinct(PS_OUTPUT_DATASET_ID)
+            .from(PIPELINE_STEP)
+            .where(cond)
+            .fetch(PS_OUTPUT_DATASET_ID));
+  }
+
+  /** 파이프라인의 스텝 id 목록(WD-170 — 파이프라인 삭제·삭제 영향 조회에서 함께 지울 임시 데이터셋을 찾는 데 쓴다). */
+  public List<Long> findStepIdsByPipelineId(Long pipelineId) {
+    return dsl.select(PS_ID).from(PIPELINE_STEP).where(PS_PIPELINE_ID.eq(pipelineId)).fetch(PS_ID);
   }
 
   /** 스텝 증분 책갈피 조회. 스텝이 없으면 빈 Optional. */

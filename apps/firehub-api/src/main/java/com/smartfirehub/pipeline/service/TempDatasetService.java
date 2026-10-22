@@ -100,7 +100,10 @@ public class TempDatasetService {
         .toList();
   }
 
-  /** Delete a temp dataset (used when schema has changed). */
+  /**
+   * 임시 데이터셋을 데이터셋 삭제 경로로 지운다 — 스키마가 바뀌었을 때(러너), 그리고 스텝·파이프라인을 지울 때(WD-170, PipelineService) 쓴다. 출력
+   * 참조 거부는 호출자 트랜잭션을 롤백 전용으로 만들므로 호출자가 미리 걸러서 부른다.
+   */
   public void deleteTempDataset(Long datasetId) {
     datasetService.deleteDataset(datasetId);
   }

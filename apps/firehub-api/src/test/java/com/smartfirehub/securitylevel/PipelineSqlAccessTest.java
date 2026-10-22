@@ -800,10 +800,10 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
         new com.smartfirehub.pipeline.dto.UpdatePipelineRequest(
             "PA " + m + " echo", "보안 등급 TC", true, List.of(pythonStep(temp))),
         pythonUserAt("공개"));
-    // 정리 순서: 이제 스텝이 TEMP 를 출력으로 참조하므로 파이프라인을 먼저 지우고 TEMP 를 지운다(tearDown 은 TEMP 를 먼저 지운다).
+    // 정리: 이제 스텝이 TEMP 를 출력으로 참조하므로(tearDown 은 TEMP 를 먼저 지운다) 파이프라인을 먼저 지운다. 파이프라인 삭제가 그
+    // 스텝이 만든 자동 생성 TEMP 도 함께 지운다(WD-170) — 따로 지울 TEMP 가 남지 않는다.
     pipelineService.deletePipeline(p);
     pipelines.remove(Long.valueOf(p));
-    datasetService.deleteDataset(temp);
   }
 
   /**

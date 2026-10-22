@@ -3,9 +3,13 @@ import type {
 CancelExecutionResponse,
 CreatePipelineRequest,
 CreateTriggerRequest, ExecutionDetailResponse,
+PipelineDeleteImpact,
 PipelineDetailResponse, PipelineExecutionResponse,   PipelineResponse, TriggerEventResponse,   TriggerResponse,   UpdatePipelineRequest, UpdateTriggerRequest,
 } from '../types/pipeline';
 import { client } from './client';
+
+/** 삭제 영향 조회 시간 제한(WD-170) — 분석 삭제 영향(WD-86)과 같은 값. 넘으면 실패로 보고 경고 + 삭제를 허용한다. */
+const DELETE_IMPACT_TIMEOUT_MS = 10_000;
 
 export const pipelinesApi = {
   getPipelines: (params: { page?: number; size?: number }) =>
@@ -18,6 +22,15 @@ export const pipelinesApi = {
     client.put(`/pipelines/${id}`, data),
   deletePipeline: (id: number) =>
     client.delete(`/pipelines/${id}`),
+  /**
+   * 삭제 영향(WD-170) — 함께 지워질 자동 생성 임시 데이터셋 개수. 삭제 확인 창을 열 때만 조회한다.
+   * timeout: 조회가 삭제를 무한정 막지 않게 끊는다(넘으면 호출부가 실패로 보고 경고 + 삭제 허용 — WD-86 과 같은 값).
+   */
+  getDeleteImpact: (id: number, signal?: AbortSignal) =>
+    client.get<PipelineDeleteImpact>(`/pipelines/${id}/delete-impact`, {
+      signal,
+      timeout: DELETE_IMPACT_TIMEOUT_MS,
+    }),
   executePipeline: (id: number) =>
     client.post<PipelineExecutionResponse>(`/pipelines/${id}/execute`),
   // 증분 처리 스텝의 다음 실행에서 전체 재생성(책갈피 무시)을 예약/취소한다.

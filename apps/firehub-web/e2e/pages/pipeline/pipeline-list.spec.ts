@@ -1,7 +1,7 @@
 import { createPipeline, createPipelines } from '../../factories/pipeline.factory';
 import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
-import { setupPipelineMocks } from '../../fixtures/pipeline.fixture';
+import { mockPipelineDeleteImpact, setupPipelineMocks } from '../../fixtures/pipeline.fixture';
 
 /**
  * 파이프라인 목록 페이지 E2E 테스트
@@ -127,6 +127,69 @@ test.describe('파이프라인 목록 페이지', () => {
     expect(req.url.pathname).toBe('/api/v1/pipelines/1');
   });
 
+  test('삭제 확인 창에 함께 삭제될 자동 생성 임시 데이터셋 개수를 안내한다 (WD-170)', async ({ authenticatedPage: page }) => {
+    await setupPipelineMocks(page, 2);
+    // 첫 번째 파이프라인(id:1)이 만든 임시 데이터셋 3개가 함께 지워진다고 서버가 답한다.
+    await mockPipelineDeleteImpact(page, 3);
+    const deleteCapture = await mockApi(page, 'DELETE', '/api/v1/pipelines/1', null, { capture: true });
+
+    await page.goto('/pipelines');
+    const impactRequest = page.waitForRequest((req) => new URL(req.url()).pathname === '/api/v1/pipelines/1/delete-impact');
+    await page.getByRole('button', { name: '삭제' }).first().click();
+    await impactRequest;
+
+    const dialog = page.getByRole('alertdialog');
+    const impact = dialog.getByTestId('pipeline-delete-impact');
+    await expect(impact).toHaveText('자동 생성된 임시 데이터셋 3개도 함께 삭제됩니다');
+    // 증거 스크린샷(WD170_SHOT_DIR 지정 시에만 저장) — 열림 애니메이션을 끝낸 상태로 찍는다.
+    if (process.env.WD170_SHOT_DIR) {
+      await page.screenshot({ path: `${process.env.WD170_SHOT_DIR}/delete-dialog-with-temp.png`, animations: 'disabled' });
+    }
+
+    // 안내를 받은 뒤 삭제 버튼이 켜지고, 누르면 그 파이프라인 삭제 요청이 간다.
+    const confirm = dialog.getByRole('button', { name: '삭제' });
+    await expect(confirm).toBeEnabled();
+    await confirm.click();
+    const req = await deleteCapture.waitForRequest();
+    expect(req.url.pathname).toBe('/api/v1/pipelines/1');
+  });
+
+  test('함께 삭제될 임시 데이터셋이 없으면 안내 문구 없이 일반 확인 창을 보인다 (WD-170)', async ({ authenticatedPage: page }) => {
+    await setupPipelineMocks(page, 2);
+    await mockPipelineDeleteImpact(page, 0);
+
+    await page.goto('/pipelines');
+    const impactRequest = page.waitForRequest((req) => new URL(req.url()).pathname === '/api/v1/pipelines/1/delete-impact');
+    await page.getByRole('button', { name: '삭제' }).first().click();
+    await impactRequest;
+
+    const dialog = page.getByRole('alertdialog');
+    // 조회가 끝나 삭제 버튼이 켜진 뒤에 "없음"을 확인한다 — 조회 중에는 안내가 아직 없어서 공허하게 통과할 수 있다.
+    await expect(dialog.getByRole('button', { name: '삭제' })).toBeEnabled();
+    await expect(dialog.getByTestId('pipeline-delete-impact')).toHaveCount(0);
+    await expect(dialog).not.toContainText('임시 데이터셋');
+    await expect(dialog).toContainText('"파이프라인 1" 파이프라인을 정말 삭제하시겠습니까?');
+    // 증거 스크린샷(WD170_SHOT_DIR 지정 시에만 저장) — 열림 애니메이션을 끝낸 상태로 찍는다.
+    if (process.env.WD170_SHOT_DIR) {
+      await page.screenshot({ path: `${process.env.WD170_SHOT_DIR}/delete-dialog-no-temp.png`, animations: 'disabled' });
+    }
+  });
+
+  test('삭제 영향 조회가 실패하면 경고를 보이고 삭제는 허용한다 (WD-170)', async ({ authenticatedPage: page }) => {
+    await setupPipelineMocks(page, 2);
+    await mockPipelineDeleteImpact(page, 0, 500);
+    const deleteCapture = await mockApi(page, 'DELETE', '/api/v1/pipelines/1', null, { capture: true });
+
+    await page.goto('/pipelines');
+    await page.getByRole('button', { name: '삭제' }).first().click();
+
+    const dialog = page.getByRole('alertdialog');
+    await expect(dialog.getByTestId('pipeline-delete-impact')).toContainText('함께 삭제되는 항목을 불러오지 못했습니다');
+    await dialog.getByRole('button', { name: '삭제' }).click();
+    const req = await deleteCapture.waitForRequest();
+    expect(req.url.pathname).toBe('/api/v1/pipelines/1');
+  });
+
   test('마지막 페이지의 유일한 항목을 삭제하면 이전 페이지로 이동해 남은 항목을 보여준다 (#549)', async ({ authenticatedPage: page }) => {
     // 총 11건 → size=10 기준 2페이지. 삭제 후 프론트가 page를 보정하지 않으면
     // 서버에 더 이상 존재하지 않는 page=1을 그대로 요청해 "결과 없음"으로 오표시된다.
@@ -156,6 +219,7 @@ test.describe('파이프라인 목록 페이지', () => {
       },
     );
     await mockApi(page, 'DELETE', '/api/v1/pipelines/11', null);
+    await mockPipelineDeleteImpact(page);
 
     await page.goto('/pipelines');
     await expect(page.getByText('파이프라인 1', { exact: true })).toBeVisible();

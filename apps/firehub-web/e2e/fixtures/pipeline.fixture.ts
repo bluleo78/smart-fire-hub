@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test';
 
+import type { PipelineDeleteImpact } from '../../src/types/pipeline';
 import {
   createExecution,
   createPipelineDetail,
@@ -25,6 +26,32 @@ export async function setupPipelineMocks(page: Page, count = 5) {
     'GET',
     '/api/v1/pipelines',
     createPageResponse(createPipelines(count)),
+  );
+  // 삭제 확인 창이 열릴 때 부르는 삭제 영향 조회(WD-170) — 기본값은 "함께 지울 임시 데이터셋 없음".
+  await mockPipelineDeleteImpact(page);
+}
+
+/** 파이프라인 삭제 영향 엔드포인트 경로 — GET /api/v1/pipelines/{id}/delete-impact (WD-170) */
+const PIPELINE_DELETE_IMPACT_PATH = /^\/api\/v1\/pipelines\/\d+\/delete-impact$/;
+
+/**
+ * 파이프라인 삭제 영향 API 모킹(WD-170) — 삭제 확인 창이 열릴 때 부른다.
+ * 나중에 등록한 route 가 우선하므로, 목록 셋업의 기본값(0개)을 테스트에서 다시 불러 덮어쓸 수 있다.
+ * @param tempDatasetCount - 함께 지워질 자동 생성 임시 데이터셋 개수(기본값: 0)
+ * @param status - 응답 상태(실패 경로 검증용)
+ */
+export async function mockPipelineDeleteImpact(page: Page, tempDatasetCount = 0, status = 200) {
+  const impact: PipelineDeleteImpact = { tempDatasetCount };
+  await page.route(
+    (url) => PIPELINE_DELETE_IMPACT_PATH.test(url.pathname),
+    (route) => {
+      if (route.request().method() !== 'GET') return route.fallback();
+      return route.fulfill({
+        status,
+        contentType: 'application/json',
+        body: JSON.stringify(status === 200 ? impact : { status, error: 'Internal Server Error', message: '오류' }),
+      });
+    },
   );
 }
 

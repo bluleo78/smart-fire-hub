@@ -70,6 +70,16 @@ public class PipelineController {
     return ResponseEntity.noContent().build();
   }
 
+  /**
+   * 파이프라인 삭제 영향 조회(WD-170) — 함께 지워질 자동 생성 임시 데이터셋 개수를 삭제 확인 창에 보여 주려고 연다. 조회만 하므로 읽기 권한으로 연다(삭제 권한이
+   * 없으면 삭제 자체가 403 이다).
+   */
+  @GetMapping("/{id}/delete-impact")
+  @RequirePermission("pipeline:read")
+  public ResponseEntity<PipelineDeleteImpactResponse> getDeleteImpact(@PathVariable Long id) {
+    return ResponseEntity.ok(pipelineService.getDeleteImpact(id));
+  }
+
   @PostMapping("/{id}/execute")
   @RequirePermission("pipeline:execute")
   public ResponseEntity<PipelineExecutionResponse> executePipeline(
@@ -97,9 +107,9 @@ public class PipelineController {
   }
 
   /**
-   * 실행을 취소한다(WD-153, 협조적 취소). 실행과 같은 권한({@code pipeline:execute})을 요구한다 — 실행 경로(POST {@code /{id}/execute})에는
-   * 이 권한 외의 요청 시점 게이트가 없다(보안 등급 판정은 러너가 스텝마다 실행 주체 기준으로 한다). 다른 테넌트의 파이프라인은 RLS 로 보이지 않아 404, 다른
-   * 파이프라인의 실행 id 도 404(#188 과 같은 소유권 검증), 이미 끝난 실행은 409.
+   * 실행을 취소한다(WD-153, 협조적 취소). 실행과 같은 권한({@code pipeline:execute})을 요구한다 — 실행 경로(POST {@code
+   * /{id}/execute})에는 이 권한 외의 요청 시점 게이트가 없다(보안 등급 판정은 러너가 스텝마다 실행 주체 기준으로 한다). 다른 테넌트의 파이프라인은 RLS 로
+   * 보이지 않아 404, 다른 파이프라인의 실행 id 도 404(#188 과 같은 소유권 검증), 이미 끝난 실행은 409.
    *
    * <p>202 Accepted — 대기 중이던 실행은 이미 CANCELLED 지만, 실행 중이던 실행은 요청만 기록되고 러너가 다음 체크포인트에서 멈추므로 "접수"가 맞는
    * 의미다.
