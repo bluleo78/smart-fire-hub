@@ -56,6 +56,10 @@ public class DatasetCategoryService {
     categoryRepository.update(id, name, description);
   }
 
+  /** 카테고리 삭제 거부 문구 — 보이는 데이터셋이 있든 숨긴 데이터셋만 있든 같다(WD-155). */
+  static final String CATEGORY_IN_USE_MESSAGE =
+      "이 카테고리를 사용 중인 데이터셋이 있어 삭제할 수 없습니다. 목록에 보이지 않는 데이터셋이 연결되어 있을 수 있으니 관리자에게 문의하세요.";
+
   @Transactional
   public void deleteCategory(Long id) {
     categoryRepository
@@ -72,7 +76,9 @@ public class DatasetCategoryService {
     if (hasDatasets) {
       // 다른 "사용 중이라 삭제 불가" 케이스(DatasetInUseException)와 동일하게 한국어 메시지 +
       // 409 Conflict로 응답한다 (#518 — 영어 원문 노출 및 상태 코드 불일치 수정)
-      throw new CategoryInUseException("이 카테고리를 사용 중인 데이터셋이 있어 삭제할 수 없습니다.");
+      // 연결 여부는 볼 수 없는 데이터셋까지 센다 — 숨긴 데이터셋만 든 카테고리는 목록에서 비어 보이는데도 막힌다(WD-155, 알려진
+      // 한계). 그 경우에도 같은 문구로 답하고, 사용자가 「비어 보이는데 왜 막히나」를 이해하도록 안내를 붙인다.
+      throw new CategoryInUseException(CATEGORY_IN_USE_MESSAGE);
     }
 
     categoryRepository.deleteById(id);

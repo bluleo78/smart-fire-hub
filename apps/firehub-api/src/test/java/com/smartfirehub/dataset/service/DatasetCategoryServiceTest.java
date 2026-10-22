@@ -236,7 +236,7 @@ class DatasetCategoryServiceTest extends IntegrationTestBase {
     // When/Then: 삭제 시 한국어 메시지의 CategoryInUseException 발생
     assertThatThrownBy(() -> categoryService.deleteCategory(category.id()))
         .isInstanceOf(CategoryInUseException.class)
-        .hasMessage("이 카테고리를 사용 중인 데이터셋이 있어 삭제할 수 없습니다.");
+        .hasMessage(DatasetCategoryService.CATEGORY_IN_USE_MESSAGE);
 
     // Then: 카테고리는 삭제되지 않고 그대로 남아있어야 한다
     CategoryResponse stillExists = categoryService.getCategoryById(category.id());

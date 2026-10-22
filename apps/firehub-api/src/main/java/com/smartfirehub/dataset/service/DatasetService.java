@@ -254,12 +254,7 @@ public class DatasetService {
           "파일 데이터셋의 저장 경로(prefix)는 지정할 수 없습니다. 서버가 데이터셋마다 자동으로 만듭니다.");
     }
 
-    if (datasetRepository.existsByName(request.name())) {
-      throw new DuplicateDatasetNameException("이미 있는 데이터셋 이름입니다: " + request.name());
-    }
-    if (datasetRepository.existsByTableName(request.tableName())) {
-      throw new DuplicateDatasetNameException("이미 있는 테이블명입니다: " + request.tableName());
-    }
+    requireUnusedNameAndTableName(request.name(), request.tableName());
 
     if (request.categoryId() != null) {
       categoryRepository
@@ -464,11 +459,43 @@ public class DatasetService {
         datasetAccessGuard.exportAllowedForCurrent(dataset.securityLevel()));
   }
 
+  /** 볼 수 있는 데이터셋과 이름이 겹칠 때의 문구 — 조회자가 이미 보는 데이터셋이라 이름을 실어도 된다. */
+  static final String DUPLICATE_NAME_MESSAGE = "이미 있는 데이터셋 이름입니다: ";
+
+  /**
+   * 테이블명 충돌 문구(WD-155). 테이블명은 data 스키마의 물리 테이블 이름이라 워크스페이스 전체에서 유일해야 하고, 볼 수 없는 데이터셋과 겹쳐도 막을 수밖에
+   * 없다. 그래서 보이는 데이터셋과 겹친 경우와 같은 문구로, 받은 값도 싣지 않는다(「알려진 한계」 — deploy.md).
+   */
+  static final String TABLE_NAME_UNAVAILABLE_MESSAGE = "이 테이블명은 사용할 수 없습니다 — 다른 이름을 입력하세요";
+
+  /**
+   * 생성·복제 공통 중복 검사(WD-155). 이름은 조회자가 볼 수 있는 데이터셋 안에서만 겹침을 본다 — 숨긴 데이터셋과 같은 이름이면 그대로 만들어진다(DB 유일 제약
+   * 없음, V142). 테이블명은 물리 제약이라 전체에서 보되 문구를 일반화한다.
+   */
+  private void requireUnusedNameAndTableName(String name, String tableName) {
+    if (datasetRepository.existsVisibleByName(name, datasetAccessGuard.visibleCondition(), null)) {
+      throw new DuplicateDatasetNameException(DUPLICATE_NAME_MESSAGE + name);
+    }
+    if (datasetRepository.existsByTableName(tableName)) {
+      throw new DuplicateDatasetNameException(TABLE_NAME_UNAVAILABLE_MESSAGE);
+    }
+  }
+
   @Transactional
   public void updateDataset(Long id, UpdateDatasetRequest request, Long userId) {
-    datasetRepository
-        .findById(id)
-        .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + id));
+    DatasetResponse current =
+        datasetRepository
+            .findById(id)
+            .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + id));
+
+    // 이름을 바꿀 때도 볼 수 있는 데이터셋끼리만 겹침을 본다(WD-155) — 예전에는 DB 유일 제약이 걸려, 숨긴 데이터셋 이름으로
+    // 바꾸면 409·없는 이름이면 200 으로 갈려 존재가 드러났다.
+    if (request.name() != null
+        && !request.name().equals(current.name())
+        && datasetRepository.existsVisibleByName(
+            request.name(), datasetAccessGuard.visibleCondition(), id)) {
+      throw new DuplicateDatasetNameException(DUPLICATE_NAME_MESSAGE + request.name());
+    }
 
     if (request.categoryId() != null) {
       categoryRepository
@@ -1208,12 +1235,7 @@ public class DatasetService {
     // 2. Validate new names don't already exist
     // 새 테이블명 검증은 중복 검사보다 먼저다(생성 경로와 같은 이유).
     dataTableService.validateNewTableName(request.tableName());
-    if (datasetRepository.existsByName(request.name())) {
-      throw new DuplicateDatasetNameException("이미 있는 데이터셋 이름입니다: " + request.name());
-    }
-    if (datasetRepository.existsByTableName(request.tableName())) {
-      throw new DuplicateDatasetNameException("이미 있는 테이블명입니다: " + request.tableName());
-    }
+    requireUnusedNameAndTableName(request.name(), request.tableName());
 
     // 3. Create new dataset record
     String description =
