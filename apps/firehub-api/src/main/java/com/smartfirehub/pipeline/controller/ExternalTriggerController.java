@@ -25,8 +25,8 @@ import org.springframework.web.bind.annotation.*;
  *
  * <ul>
  *   <li>실행을 시작함 → 200 {@code {"status":"triggered", pipelineId, triggerId, executionId}}
- *   <li>조건에 걸려 실행하지 않음(파이프라인 비활성·동시 실행 정책·트리거 꺼짐) → 409 {@code {"status":"skipped","reason":"<한국어
- *       사유>"}}
+ *   <li>조건에 걸려 실행하지 않음(파이프라인 비활성·동시 실행 정책·트리거 꺼짐·워크스페이스 정지(WD-174)) → 409 {@code
+ *       {"status":"skipped","reason":"<한국어 사유>"}}
  *   <li>실행 시작 자체가 실패함 → 500 {@code {"status":"failed","reason":"<한국어 사유>"}} — 예외 원문은 내보내지 않는다
  *   <li>토큰 틀림 401 · IP 차단 403 · 웹훅 없음 404 · 서명 불일치 401 은 기존 그대로다
  * </ul>
@@ -259,7 +259,8 @@ public class ExternalTriggerController {
         body.put("executionId", result.executionId());
         yield ResponseEntity.ok(body);
       }
-      case SKIPPED, DISABLED ->
+      // 워크스페이스 정지(WD-174)도 같은 409 모양이다 — 사유 「워크스페이스가 정지되어 실행하지 않았습니다」는 externalReason 이 그대로 통과시킨다
+      case SKIPPED, DISABLED, TENANT_SUSPENDED ->
           ResponseEntity.status(HttpStatus.CONFLICT)
               .body(Map.of("status", "skipped", "reason", externalReason(result.reason())));
       // NOT_FOUND 는 위에서 트리거를 읽은 직후 삭제된 경합이다 — 실행되지 않았다는 사실이 중요하므로 실패로 알린다.
