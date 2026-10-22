@@ -197,22 +197,68 @@ public class ApiConnectionService {
    * 안으로 들어와 커넥션 풀을 점유한다. 대신 조회는 별도 빈인 {@link ApiConnectionReader} 를 통해 수행해 프록시를 실제로 통과시킨다(자기호출이면
    * 프록시가 우회돼 트랜잭션이 열리지 않는다). DB 쓰기는 {@code repository.updateHealthStatus} 가 리포지토리 자신의 트랜잭션을 열어
    * 처리하므로, HTTP 구간은 어떤 트랜잭션 안에도 들어가지 않는다.
+   *
+   * <p>화면의 「테스트」뿐 아니라 10분 주기 상태 점검({@link ApiConnectionHealthCheckScheduler})과 일괄 새로고침({@link
+   * #refreshAllAsync})도 이 메서드를 부른다. 호출 직전 주소 검사는 {@link #callHealthCheck} 가 맡는다(WD-178).
    */
   public TestConnectionResponse testConnection(Long id) {
     // ── 여기까지가 트랜잭션 구간(각 호출이 reader 프록시에서 자체 트랜잭션을 연다) ──
     ApiConnectionResponse conn = reader.getById(id);
     Map<String, String> rawConfig = reader.getDecryptedAuthConfig(id);
     // ── 아래 HTTP 호출은 트랜잭션 밖이다 ──
-    String baseUrl = UrlUtils.joinUrl(conn.baseUrl(), conn.healthCheckPath());
+    TestConnectionResponse result =
+        callHealthCheck(
+            UrlUtils.joinUrl(conn.baseUrl(), conn.healthCheckPath()), conn.authType(), rawConfig);
+    // 성공·HTTP 오류·연결 실패·주소 차단 모두 같은 규칙으로 저장한다 — 상태 전환 알림은 스케줄러가 이 결과의 ok 로 판단한다.
+    repository.updateHealthStatus(
+        id, result.ok() ? "UP" : "DOWN", result.latencyMs(), result.errorMessage());
+    return result;
+  }
+
+  /**
+   * (#90) 저장 전 dry-run 헬스체크. CreateApiConnectionRequest의 payload를 가지고 외부 API 호출만 수행하고 DB는 변경하지 않는다.
+   * authType 검증/baseUrl SSRF 검증은 동일하게 수행하므로 잘못된 입력은 즉시 ApiConnectionException으로 차단된다.
+   */
+  public TestConnectionResponse testConnectionPayload(CreateApiConnectionRequest request) {
+    validateAuthType(request.authType());
+    String normalizedBaseUrl = validateAndNormalizeBaseUrl(request.baseUrl());
+    String normalizedPath = normalizeHealthCheckPath(request.healthCheckPath());
+    Map<String, String> rawConfig = request.authConfig() != null ? request.authConfig() : Map.of();
+    return callHealthCheck(
+        UrlUtils.joinUrl(normalizedBaseUrl, normalizedPath), request.authType(), rawConfig);
+  }
+
+  /**
+   * 헬스체크 GET 한 번을 보내고 결과를 만든다 — 저장된 연결 테스트·저장 전 테스트·상태 점검·일괄 새로고침이 모두 여기로 모인다. DB 는 건드리지 않는다(저장은
+   * 호출자 몫).
+   *
+   * <p><b>호출 직전 주소 검사(WD-178).</b> 저장할 때 막는 내부 주소라도, 이미 저장된 연결은 그 뒤에 내부를 가리키게 될 수 있다 — 차단 규칙이 강화되기
+   * 전에 저장된 연결(WD-148 IPv6 ULA 등), DB 직접 변경, DNS 재바인딩. 예전에는 여기서 주소를 다시 보지 않아 서버가 내부 주소로 인증 헤더까지 실어
+   * 요청하고 그 응답 본문을 결과로 보여 줬다. 같은 연결로 하는 API_CALL 미리보기·실행은 호출 시점에 막혀 수준이 달랐다. 그래서 API_CALL 과 같은
+   * {@link SsrfProtectionService#validateUrl} 로 같은 판정을 한다.
+   *
+   * <p>검사 대상은 인증 쿼리 키를 붙이기 <b>전</b> URL(기준 URL + 헬스체크 경로)이다. 키는 쿼리에만 붙어 호스트를 바꾸지 못하고, API_CALL 도
+   * 쿼리를 붙이기 전 URL 을 검사한다. 키 붙은 URL 을 넘기면 검사 실패 문구에 키가 실릴 위험만 커진다.
+   *
+   * <p>리다이렉트: 이 WebClient 는 Reactor Netty 기본값(리다이렉트를 따라가지 않음)이라 3xx 응답을 그대로 결과로 돌려줄 뿐 다른 주소로 다시
+   * 요청하지 않는다. DNS: API_CALL 과 마찬가지로 검사 때 해석한 IP 로 고정하지는 않는다(검사 후 WebClient 가 다시 해석).
+   *
+   * @param targetUrl 인증 쿼리를 붙이기 전 호출 URL(기준 URL + 헬스체크 경로)
+   */
+  private TestConnectionResponse callHealthCheck(
+      String targetUrl, String authType, Map<String, String> rawConfig) {
     // 응답의 requestUrl 은 인증 쿼리 키를 가린 표시용 URL 이다(WD-177). URL 을 만들기 전에 실패하면 키 없는 기준 URL 을 보인다.
-    String displayUrl = baseUrl;
+    String displayUrl = targetUrl;
 
     long start = System.currentTimeMillis();
     try {
+      // 호출 직전 주소 검사(WD-178) — 내부망·로컬이면 SsrfException 으로 아래에서 DOWN 결과가 되고, 외부 호출은 한 건도 나가지 않는다.
+      ssrfProtectionService.validateUrl(targetUrl);
+
       // placement=query 인 경우 URL 에 인증 파라미터 부착 (#113). 호출용·표시용을 함께 만든다(WD-177) — try 안에서 만들어,
       // 키에 쓸 수 없는 문자가 있어 실패해도 400 응답에 키가 실리지 않고 DOWN 결과(고정 문구)로 돌아가게 한다.
       AuthQueryMasker.AuthQueryUrls urls =
-          AuthQueryMasker.buildForAuth(baseUrl, conn.authType(), rawConfig);
+          AuthQueryMasker.buildForAuth(targetUrl, authType, rawConfig);
       displayUrl = urls.displayUrl();
       String url = urls.callUrl();
       // 응답 본문/헤더를 함께 받아 디버깅용으로 노출 (#76).
@@ -220,7 +266,7 @@ public class ApiConnectionService {
           webClient
               .get()
               .uri(url)
-              .headers(h -> buildAuthHeaders(conn.authType(), rawConfig).forEach(h::set))
+              .headers(h -> buildAuthHeaders(authType, rawConfig).forEach(h::set))
               .retrieve()
               .toEntity(String.class)
               .block(Duration.ofSeconds(HEALTH_CHECK_TIMEOUT_SECONDS));
@@ -236,14 +282,20 @@ public class ApiConnectionService {
           resp != null && resp.getHeaders().getContentType() != null
               ? resp.getHeaders().getContentType().toString()
               : null;
-      repository.updateHealthStatus(id, ok ? "UP" : "DOWN", latency, err);
       return new TestConnectionResponse(
           ok, status, latency, err, displayUrl, body, headers, contentType);
+
+    } catch (SsrfException e) {
+      long latency = System.currentTimeMillis() - start;
+      // 차단 사유는 SsrfProtectionService 의 한국어 문구를 그대로 쓴다(「내부망 주소는 호출할 수 없습니다(루프백): 127.0.0.1」) —
+      // 저장 시 검사·API_CALL 실행·미리보기(ApiCallErrorMessages.describe)와 같은 문장이다(WD-150). 호출하지 않았으므로 본문·헤더는
+      // 비운다.
+      return new TestConnectionResponse(
+          false, null, latency, e.getMessage(), displayUrl, null, Map.of(), null);
 
     } catch (WebClientResponseException e) {
       long latency = System.currentTimeMillis() - start;
       String err = "HTTP " + e.getStatusCode().value();
-      repository.updateHealthStatus(id, "DOWN", latency, err);
       // 4xx/5xx 응답 본문도 운영자가 봐야 디버깅 가능하므로 함께 노출.
       String body = truncateBody(e.getResponseBodyAsString(), rawConfig);
       Map<String, String> headers = sanitizeHeaders(e.getHeaders(), rawConfig);
@@ -257,68 +309,6 @@ public class ApiConnectionService {
     } catch (Exception e) {
       long latency = System.currentTimeMillis() - start;
       // 예외 메시지에 URL·키가 실릴 수 있어 가린 문구만 응답·lastErrorMessage·알림으로 보낸다(WD-177).
-      String msg = toUserFacingErrorMessage(e, rawConfig);
-      repository.updateHealthStatus(id, "DOWN", latency, msg);
-      return new TestConnectionResponse(
-          false, null, latency, msg, displayUrl, null, Map.of(), null);
-    }
-  }
-
-  /**
-   * (#90) 저장 전 dry-run 헬스체크. CreateApiConnectionRequest의 payload를 가지고 외부 API 호출만 수행하고 DB는 변경하지 않는다.
-   * authType 검증/baseUrl SSRF 검증은 동일하게 수행하므로 잘못된 입력은 즉시 ApiConnectionException으로 차단된다.
-   */
-  public TestConnectionResponse testConnectionPayload(CreateApiConnectionRequest request) {
-    validateAuthType(request.authType());
-    String normalizedBaseUrl = validateAndNormalizeBaseUrl(request.baseUrl());
-    String normalizedPath = normalizeHealthCheckPath(request.healthCheckPath());
-    String joinedUrl = UrlUtils.joinUrl(normalizedBaseUrl, normalizedPath);
-    Map<String, String> rawConfig = request.authConfig() != null ? request.authConfig() : Map.of();
-    // 응답의 requestUrl 은 인증 쿼리 키를 가린 표시용 URL 이다(WD-177).
-    String displayUrl = joinedUrl;
-
-    long start = System.currentTimeMillis();
-    try {
-      // placement=query 인 경우 URL 에 인증 파라미터 부착 (#113). 호출용·표시용을 함께 만든다(WD-177, testConnection 과 같다).
-      AuthQueryMasker.AuthQueryUrls urls =
-          AuthQueryMasker.buildForAuth(joinedUrl, request.authType(), rawConfig);
-      displayUrl = urls.displayUrl();
-      String url = urls.callUrl();
-      var resp =
-          webClient
-              .get()
-              .uri(url)
-              .headers(h -> buildAuthHeaders(request.authType(), rawConfig).forEach(h::set))
-              .retrieve()
-              .toEntity(String.class)
-              .block(Duration.ofSeconds(HEALTH_CHECK_TIMEOUT_SECONDS));
-
-      long latency = System.currentTimeMillis() - start;
-      Integer status = resp != null ? resp.getStatusCode().value() : null;
-      boolean ok = resp != null && resp.getStatusCode().is2xxSuccessful();
-      String err = ok ? null : ("HTTP " + status);
-      String body = resp != null ? truncateBody(resp.getBody(), rawConfig) : null;
-      Map<String, String> headers =
-          resp != null ? sanitizeHeaders(resp.getHeaders(), rawConfig) : Map.of();
-      String contentType =
-          resp != null && resp.getHeaders().getContentType() != null
-              ? resp.getHeaders().getContentType().toString()
-              : null;
-      return new TestConnectionResponse(
-          ok, status, latency, err, displayUrl, body, headers, contentType);
-    } catch (WebClientResponseException e) {
-      long latency = System.currentTimeMillis() - start;
-      String err = "HTTP " + e.getStatusCode().value();
-      String body = truncateBody(e.getResponseBodyAsString(), rawConfig);
-      Map<String, String> headers = sanitizeHeaders(e.getHeaders(), rawConfig);
-      String contentType =
-          e.getHeaders().getContentType() != null
-              ? e.getHeaders().getContentType().toString()
-              : null;
-      return new TestConnectionResponse(
-          false, e.getStatusCode().value(), latency, err, displayUrl, body, headers, contentType);
-    } catch (Exception e) {
-      long latency = System.currentTimeMillis() - start;
       String msg = toUserFacingErrorMessage(e, rawConfig);
       return new TestConnectionResponse(
           false, null, latency, msg, displayUrl, null, Map.of(), null);

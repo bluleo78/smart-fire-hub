@@ -179,7 +179,7 @@ class ApiConnectionTenantTest extends IntegrationTestBase {
       TenantContext.clear();
     }
 
-    // 127.0.0.1:1 은 즉시 연결 거부된다 — 조회가 성공해 HTTP 단계까지 갔다는 증거이기도 하다.
+    // 127.0.0.1:1 은 호출 직전 주소 검사(WD-178)에서 막혀 DOWN 이 된다 — 외부 HTTP 없이도 조회·저장 단계는 그대로 거친다.
     assertThat(result).isNotNull();
     assertThat(result.ok()).isFalse();
 
