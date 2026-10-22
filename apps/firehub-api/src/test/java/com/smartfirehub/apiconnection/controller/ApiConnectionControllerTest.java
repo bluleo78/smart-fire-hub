@@ -127,7 +127,7 @@ class ApiConnectionControllerTest {
   @Test
   void update_maskedSecretRejected_returnsBadRequest() throws Exception {
     String message = "authConfig.token 에 가려진 값(****…)은 저장할 수 없습니다.";
-    when(apiConnectionService.update(anyLong(), any(UpdateApiConnectionRequest.class)))
+    when(apiConnectionService.update(anyLong(), any(UpdateApiConnectionRequest.class), anyLong()))
         .thenThrow(new IllegalArgumentException(message));
 
     mockMvc
@@ -161,7 +161,7 @@ class ApiConnectionControllerTest {
   @Test
   void update_unsupportedAuthType_returns400() throws Exception {
     String message = "지원하지 않는 인증 방식입니다: OAUTH2 (사용 가능: API_KEY, BEARER)";
-    when(apiConnectionService.update(anyLong(), any(UpdateApiConnectionRequest.class)))
+    when(apiConnectionService.update(anyLong(), any(UpdateApiConnectionRequest.class), anyLong()))
         .thenThrow(new ApiConnectionException(message));
 
     mockMvc
@@ -201,13 +201,32 @@ class ApiConnectionControllerTest {
         .andExpect(jsonPath("$.message").value(message));
   }
 
+  /** 수정은 로그인한 사용자를 감사 행위자로 서비스에 넘긴다(WD-181). */
+  @Test
+  void update_passesCallerAsAuditActor() throws Exception {
+    when(apiConnectionService.update(anyLong(), any(UpdateApiConnectionRequest.class), anyLong()))
+        .thenReturn(sampleConnection());
+
+    mockMvc
+        .perform(
+            put("/api/v1/api-connections/1")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    objectMapper.writeValueAsString(
+                        new UpdateApiConnectionRequest("Renamed", null, null, null, null, null))))
+        .andExpect(status().isOk());
+
+    verify(apiConnectionService).update(eq(1L), any(UpdateApiConnectionRequest.class), eq(1L));
+  }
+
   @Test
   void delete_withPermission_returnsNoContent() throws Exception {
     mockMvc
         .perform(delete("/api/v1/api-connections/1").header("Authorization", "Bearer test-token"))
         .andExpect(status().isNoContent());
 
-    verify(apiConnectionService).delete(1L);
+    verify(apiConnectionService).delete(1L, 1L);
   }
 
   @Test

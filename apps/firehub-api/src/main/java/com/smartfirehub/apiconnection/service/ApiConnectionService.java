@@ -14,16 +14,22 @@ import com.smartfirehub.apiconnection.exception.ApiConnectionException;
 import com.smartfirehub.apiconnection.exception.ApiConnectionNameAlreadyExistsException;
 import com.smartfirehub.apiconnection.exception.ApiConnectionNotFoundException;
 import com.smartfirehub.apiconnection.repository.ApiConnectionRepository;
+import com.smartfirehub.audit.service.AuditLogService;
 import com.smartfirehub.global.exception.SerializationException;
 import com.smartfirehub.job.service.AsyncJobService;
 import com.smartfirehub.pipeline.service.executor.ApiCallErrorMessages;
 import com.smartfirehub.pipeline.service.executor.SsrfException;
 import com.smartfirehub.pipeline.service.executor.SsrfProtectionService;
+import com.smartfirehub.user.dto.UserResponse;
+import com.smartfirehub.user.repository.UserRepository;
 import java.net.URI;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.Executor;
 import lombok.RequiredArgsConstructor;
@@ -56,6 +62,15 @@ public class ApiConnectionService {
   private final SsrfProtectionService ssrfProtectionService;
   private final AsyncJobService asyncJobService;
 
+  /**
+   * 생성·수정·삭제 감사 기록(WD-181). 상태 전환 감사({@link ApiConnectionNotifier})와 같은 resource({@code
+   * api_connection})를 쓴다.
+   */
+  private final AuditLogService auditLogService;
+
+  /** 감사 행위자 username 조회용 — audit_log.username 이 NOT NULL 이라 RoleService·UserService 처럼 조회해서 넣는다. */
+  private final UserRepository userRepository;
+
   @Qualifier("pipelineExecutor")
   private final Executor pipelineExecutor;
 
@@ -85,6 +100,14 @@ public class ApiConnectionService {
             userId,
             normalizedBaseUrl,
             normalizeHealthCheckPath(request.healthCheckPath()));
+
+    // 감사(WD-181) — 이름·인증 방식·기준 URL(쿼리·userinfo 제거)만 남긴다. 인증 정보는 값도 키도 남기지 않는다.
+    audit(
+        userId,
+        "CREATE",
+        id,
+        "API 연결 생성: " + request.name(),
+        connectionSnapshot(request.name(), request.authType(), normalizedBaseUrl));
 
     return reader.getById(id);
   }
@@ -121,9 +144,16 @@ public class ApiConnectionService {
    *       재현된다.
    *   <li>authType 이 그대로(또는 생략)이고 authConfig 도 없으면 저장된 비밀을 그대로 둔다(기존 동작).
    * </ol>
+   *
+   * <p><b>감사(WD-181).</b> 실제로 바뀐 항목이 있으면 UPDATE 감사를 한 건 남긴다 — 바뀐 항목 목록(이름·설명·기준 URL·헬스체크 경로·인증
+   * 방식·인증 정보)과 인증 정보 변경 여부(true/false)만 담고 비밀 값은 남기지 않는다. 조회한 가린 값을 그대로 되돌려 보낸 저장(WD-179)은 비밀이
+   * 그대로이므로 「인증 정보 변경」이 아니다. 바뀐 것이 없으면 기록하지 않는다(역할 수정 ROLE_UPDATE 와 같은 규칙 — 화면은 저장할 때마다 같은 값을 보낼 수
+   * 있어 기록하면 잡음 행만 쌓인다).
+   *
+   * @param userId 수정한 사용자(감사 행위자)
    */
   @Transactional
-  public ApiConnectionResponse update(Long id, UpdateApiConnectionRequest request) {
+  public ApiConnectionResponse update(Long id, UpdateApiConnectionRequest request, Long userId) {
     Record existing =
         repository.findById(id).orElseThrow(() -> new ApiConnectionNotFoundException(id));
     String currentAuthType = existing.get(field(name("api_connection", "auth_type"), String.class));
@@ -146,12 +176,18 @@ public class ApiConnectionService {
     }
 
     String encryptedConfig = null;
+    // 인증 정보가 실제로 바뀌었는지(감사용, WD-181). 인증 방식이 바뀌면 새 방식의 비밀이 반드시 함께 오므로 바뀐 것이다.
+    boolean credentialsChanged = authTypeChanged;
     if (request.authConfig() != null) {
       // 조회 결과(maskedAuthConfig)를 그대로 되돌려 보낸 비밀 필드는 저장 원문으로 채운다(WD-179). authType 이 바뀌면 같은 이름의
       // 필드라도 뜻이 달라지므로 저장값을 쓰지 않는다 — 가린 값은 모두 거절된다.
       Map<String, String> stored = authTypeChanged ? null : reader.getDecryptedAuthConfig(id);
-      encryptedConfig =
-          serializeAndEncrypt(resolveMaskedSecrets(request.authConfig(), stored, true));
+      Map<String, String> resolved = resolveMaskedSecrets(request.authConfig(), stored, true);
+      encryptedConfig = serializeAndEncrypt(resolved);
+      if (!authTypeChanged) {
+        // 비교는 메모리 안에서만 한다 — 값은 어디에도 남기지 않고 true/false 만 감사에 싣는다.
+        credentialsChanged = !withoutAuthTypeKey(resolved).equals(withoutAuthTypeKey(stored));
+      }
     }
 
     // baseUrl이 있으면 정규화 및 SSRF 검증
@@ -161,6 +197,7 @@ public class ApiConnectionService {
     }
 
     String authType = request.authType() != null ? request.authType() : currentAuthType;
+    String normalizedHealthCheckPath = normalizeHealthCheckPath(request.healthCheckPath());
     repository.update(
         id,
         request.name(),
@@ -168,15 +205,39 @@ public class ApiConnectionService {
         authType,
         encryptedConfig,
         normalizedBaseUrl,
-        normalizeHealthCheckPath(request.healthCheckPath()));
+        normalizedHealthCheckPath);
+
+    auditUpdate(
+        userId,
+        id,
+        existing,
+        request,
+        authType,
+        normalizedBaseUrl,
+        normalizedHealthCheckPath,
+        credentialsChanged);
 
     return reader.getById(id);
   }
 
+  /**
+   * 연결 삭제. 성공하면 DELETE 감사를 남긴다(WD-181) — 행이 사라지므로 이름·인증 방식·기준 URL 을 지우기 전에 담아 둔다. 감사는 삭제와 같은 트랜잭션이라
+   * 파이프라인이 참조해 삭제가 거부(FK, 409)되면 감사도 함께 롤백된다 — 거부 경로는 기록하지 않는다(역할 삭제와 같은 규칙).
+   *
+   * @param userId 삭제한 사용자(감사 행위자)
+   */
   @Transactional
-  public void delete(Long id) {
-    repository.findById(id).orElseThrow(() -> new ApiConnectionNotFoundException(id));
+  public void delete(Long id, Long userId) {
+    Record existing =
+        repository.findById(id).orElseThrow(() -> new ApiConnectionNotFoundException(id));
+    String connectionName = existing.get(field(name("api_connection", "name"), String.class));
+    Map<String, Object> snapshot =
+        connectionSnapshot(
+            connectionName,
+            existing.get(field(name("api_connection", "auth_type"), String.class)),
+            existing.get(field(name("api_connection", "base_url"), String.class)));
     repository.deleteById(id);
+    audit(userId, "DELETE", id, "API 연결 삭제: " + connectionName, snapshot);
   }
 
   /**
@@ -715,5 +776,154 @@ public class ApiConnectionService {
       // 문자열 Map 직렬화 실패는 서버 쪽 문제라 입력 오류(400)가 아니다 — 500 으로 보내고 원문은 원인(cause)으로만 남긴다(WD-180).
       throw new SerializationException("API 연결 인증 정보를 저장하지 못했습니다", e);
     }
+  }
+
+  // ── 감사 로그(WD-181) ─────────────────────────────────────────────────────────
+
+  /** 감사 metadata 의 바뀐 항목 키 → description 「바뀐 항목: …」에 쓰는 화면 문구. */
+  private static final Map<String, String> AUDIT_FIELD_LABELS =
+      Map.of(
+          "name", "이름",
+          "description", "설명",
+          "baseUrl", "기준 URL",
+          "healthCheckPath", "헬스체크 경로",
+          "authType", "인증 방식",
+          "authConfig", "인증 정보");
+
+  /**
+   * 수정 감사. 저장된 값({@code existing})과 실제로 쓴 값을 비교해 바뀐 항목만 모은다 — 요청에 필드가 있어도 값이 같으면 바뀐 것이 아니다. 바뀐 항목이
+   * 없으면 남기지 않는다.
+   *
+   * <p>metadata: {@code changedFields}(바뀐 항목 키), {@code credentialsChanged}(인증 정보 변경 여부
+   * true/false), {@code before}/{@code after}(이름·인증 방식·기준 URL·헬스체크 경로 — 비밀이 아닌 항목만, URL·경로의 쿼리는
+   * 지운다). 연결 설명(자유 문장)은 값을 남기지 않고 바뀐 항목 목록에만 넣는다.
+   */
+  private void auditUpdate(
+      Long userId,
+      Long id,
+      Record existing,
+      UpdateApiConnectionRequest request,
+      String authType,
+      String normalizedBaseUrl,
+      String normalizedHealthCheckPath,
+      boolean credentialsChanged) {
+    String beforeName = existing.get(field(name("api_connection", "name"), String.class));
+    String beforeDescription =
+        existing.get(field(name("api_connection", "description"), String.class));
+    String beforeAuthType = existing.get(field(name("api_connection", "auth_type"), String.class));
+    String beforeBaseUrl = existing.get(field(name("api_connection", "base_url"), String.class));
+    String beforeHealthCheckPath =
+        existing.get(field(name("api_connection", "health_check_path"), String.class));
+
+    // 리포지토리 규칙대로 실제로 저장되는 값을 구한다 — null 은 미변경, 헬스체크 경로 "" 는 NULL 로 지움(#115).
+    String afterName = request.name() != null ? request.name() : beforeName;
+    String afterDescription =
+        request.description() != null ? request.description() : beforeDescription;
+    String afterBaseUrl = normalizedBaseUrl != null ? normalizedBaseUrl : beforeBaseUrl;
+    String afterHealthCheckPath =
+        normalizedHealthCheckPath == null
+            ? beforeHealthCheckPath
+            : (normalizedHealthCheckPath.isEmpty() ? null : normalizedHealthCheckPath);
+
+    List<String> changed = new ArrayList<>();
+    if (!Objects.equals(beforeName, afterName)) changed.add("name");
+    if (!Objects.equals(beforeDescription, afterDescription)) changed.add("description");
+    if (!Objects.equals(beforeBaseUrl, afterBaseUrl)) changed.add("baseUrl");
+    if (!Objects.equals(beforeHealthCheckPath, afterHealthCheckPath)) {
+      changed.add("healthCheckPath");
+    }
+    if (!Objects.equals(beforeAuthType, authType)) changed.add("authType");
+    if (credentialsChanged) changed.add("authConfig");
+    if (changed.isEmpty()) {
+      return; // 실제 변경 없음 — 감사 생략(ROLE_UPDATE 와 같은 규칙)
+    }
+
+    Map<String, Object> metadata = new LinkedHashMap<>();
+    metadata.put("changedFields", changed);
+    metadata.put("credentialsChanged", credentialsChanged);
+    metadata.put(
+        "before", updateSnapshot(beforeName, beforeAuthType, beforeBaseUrl, beforeHealthCheckPath));
+    metadata.put("after", updateSnapshot(afterName, authType, afterBaseUrl, afterHealthCheckPath));
+
+    // changed 는 위에서 화면 순서(이름 → 인증 정보)대로 쌓였으므로 그대로 문구로 바꾼다.
+    List<String> labels = changed.stream().map(AUDIT_FIELD_LABELS::get).toList();
+    audit(
+        userId,
+        "UPDATE",
+        id,
+        "API 연결 수정: " + afterName + " (바뀐 항목: " + String.join("·", labels) + ")",
+        metadata);
+  }
+
+  /** 생성·삭제 감사 metadata — 이름·인증 방식·기준 URL(쿼리·userinfo 제거). 인증 정보는 담지 않는다. */
+  private static Map<String, Object> connectionSnapshot(
+      String connectionName, String authType, String baseUrl) {
+    Map<String, Object> snapshot = new LinkedHashMap<>();
+    snapshot.put("name", connectionName);
+    snapshot.put("authType", authType);
+    snapshot.put("baseUrl", redactBaseUrl(baseUrl));
+    return snapshot;
+  }
+
+  /** 수정 감사 before/after 스냅샷. 값이 null 일 수 있어 Map.of 대신 LinkedHashMap 을 쓴다. */
+  private static Map<String, Object> updateSnapshot(
+      String connectionName, String authType, String baseUrl, String healthCheckPath) {
+    Map<String, Object> snapshot = connectionSnapshot(connectionName, authType, baseUrl);
+    snapshot.put("healthCheckPath", stripQuery(healthCheckPath));
+    return snapshot;
+  }
+
+  /**
+   * 기준 URL 의 쿼리·프래그먼트·userinfo 를 지운다. 저장 경로에서 쿼리 키가 붙을 일은 없지만, 혹시 붙어 있어도 감사 로그에 비밀이 남지 않게 한다 — API
+   * 호출 오류 문구와 같은 {@link ApiCallErrorMessages#redactUrl} 을 쓴다.
+   */
+  private static String redactBaseUrl(String baseUrl) {
+    return baseUrl == null ? null : ApiCallErrorMessages.redactUrl(baseUrl);
+  }
+
+  /** 헬스체크 경로의 쿼리·프래그먼트를 지운다 — 경로에 키를 쿼리로 적어 둔 연결이라도 감사 로그에 값이 남지 않게. */
+  private static String stripQuery(String path) {
+    if (path == null) return null;
+    int cut = path.length();
+    int q = path.indexOf('?');
+    int h = path.indexOf('#');
+    if (q >= 0) cut = Math.min(cut, q);
+    if (h >= 0) cut = Math.min(cut, h);
+    return path.substring(0, cut);
+  }
+
+  /**
+   * 인증 정보 비교용 사본. 저장값 조회({@link ApiConnectionReader#getDecryptedAuthConfig})는 저장 JSON 에 없던 {@code
+   * authType} 키를 덧붙여 돌려주므로, 양쪽에서 그 키를 빼고 비교한다(인증 방식은 컬럼으로 따로 비교한다).
+   */
+  private static Map<String, String> withoutAuthTypeKey(Map<String, String> config) {
+    Map<String, String> copy = new HashMap<>(config == null ? Map.of() : config);
+    copy.remove("authType");
+    return copy;
+  }
+
+  /**
+   * API 연결 감사 로그(resource = api_connection, resourceId = 연결 id). 행위자 username 은 감사 테이블 NOT NULL 이라
+   * 조회해서 넣는다 — RoleService.audit 와 같은 방식이다. 호출 트랜잭션 안에서 쓰므로 audit_log.tenant_id 는 GUC 기본값, 즉 현재
+   * 워크스페이스로 기록된다. 성공 경로만 기록한다(다른 도메인의 생성·수정·삭제와 같다).
+   */
+  private void audit(
+      Long userId, String action, Long connectionId, String description, Object metadata) {
+    String actorName =
+        userId == null
+            ? "unknown"
+            : userRepository.findById(userId).map(UserResponse::username).orElse("unknown");
+    auditLogService.log(
+        userId,
+        actorName,
+        action,
+        "api_connection",
+        String.valueOf(connectionId),
+        description,
+        null,
+        null,
+        "SUCCESS",
+        null,
+        metadata);
   }
 }

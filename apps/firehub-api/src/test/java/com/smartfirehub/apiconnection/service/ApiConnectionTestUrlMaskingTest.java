@@ -123,7 +123,12 @@ class ApiConnectionTestUrlMaskingTest extends IntegrationTestBase {
   @AfterEach
   void tearDown() {
     tx.executeWithoutResult(
-        s -> dsl.deleteFrom(API_CONNECTION).where(AC_CREATED_BY.eq(testUserId)).execute());
+        s -> {
+          dsl.deleteFrom(API_CONNECTION).where(AC_CREATED_BY.eq(testUserId)).execute();
+          // 생성·수정·삭제 감사(WD-181)가 이 사용자를 행위자로 남긴다 — audit_log.user_id 는 "user" FK 라 먼저 지운다(RLS 대상이라
+          // 테넌트 트랜잭션 안에서).
+          dsl.execute("delete from audit_log where user_id = ?", testUserId);
+        });
     dsl.deleteFrom(USER_TABLE).where(U_ID.eq(testUserId)).execute();
   }
 

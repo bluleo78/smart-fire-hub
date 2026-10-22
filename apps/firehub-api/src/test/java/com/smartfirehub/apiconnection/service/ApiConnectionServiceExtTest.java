@@ -92,7 +92,12 @@ class ApiConnectionServiceExtTest extends IntegrationTestBase {
     // V96 이후 api_connection 은 RLS 대상이라 트랜잭션 밖 삭제는 GUC 부재로 0행이 되고,
     // 뒤이은 user 삭제가 FK 로 터진다. 도메인 정리는 테넌트 트랜잭션 안에서 한다.
     tx.executeWithoutResult(
-        s -> dsl.deleteFrom(API_CONNECTION).where(AC_CREATED_BY.eq(testUserId)).execute());
+        s -> {
+          dsl.deleteFrom(API_CONNECTION).where(AC_CREATED_BY.eq(testUserId)).execute();
+          // 생성·수정·삭제 감사(WD-181)가 이 사용자를 행위자로 남긴다 — audit_log.user_id 는 "user" FK 라 먼저 지운다(RLS 대상이라
+          // 테넌트 트랜잭션 안에서).
+          dsl.execute("delete from audit_log where user_id = ?", testUserId);
+        });
     dsl.deleteFrom(USER_TABLE).where(U_ID.eq(testUserId)).execute();
   }
 
@@ -223,7 +228,8 @@ class ApiConnectionServiceExtTest extends IntegrationTestBase {
             "https://new.example.com/", // trailing slash → 정규화 후 제거
             null);
 
-    ApiConnectionResponse updated = apiConnectionService.update(created.id(), updateReq);
+    ApiConnectionResponse updated =
+        apiConnectionService.update(created.id(), updateReq, testUserId);
 
     assertThat(updated.baseUrl()).isEqualTo("https://new.example.com");
     assertThat(updated.name()).isEqualTo("Updated Conn");
@@ -238,7 +244,7 @@ class ApiConnectionServiceExtTest extends IntegrationTestBase {
     UpdateApiConnectionRequest updateReq =
         new UpdateApiConnectionRequest(null, null, null, null, "ftp://bad.scheme.com", null);
 
-    assertThatThrownBy(() -> apiConnectionService.update(created.id(), updateReq))
+    assertThatThrownBy(() -> apiConnectionService.update(created.id(), updateReq, testUserId))
         .isInstanceOf(ApiConnectionException.class);
   }
 
@@ -259,7 +265,8 @@ class ApiConnectionServiceExtTest extends IntegrationTestBase {
             null,
             null);
 
-    ApiConnectionResponse updated = apiConnectionService.update(created.id(), updateReq);
+    ApiConnectionResponse updated =
+        apiConnectionService.update(created.id(), updateReq, testUserId);
 
     // authType은 기존 "BEARER" 유지
     assertThat(updated.authType()).isEqualTo("BEARER");
@@ -276,7 +283,7 @@ class ApiConnectionServiceExtTest extends IntegrationTestBase {
     UpdateApiConnectionRequest updateReq =
         new UpdateApiConnectionRequest("Name", null, "BEARER", null, null, null);
 
-    assertThatThrownBy(() -> apiConnectionService.update(999999L, updateReq))
+    assertThatThrownBy(() -> apiConnectionService.update(999999L, updateReq, testUserId))
         .isInstanceOf(ApiConnectionNotFoundException.class)
         .hasMessage("API 연결을 찾을 수 없습니다: " + 999999L);
   }
@@ -303,7 +310,7 @@ class ApiConnectionServiceExtTest extends IntegrationTestBase {
 
   @Test
   void delete_nonExistentId_throwsApiConnectionException() {
-    assertThatThrownBy(() -> apiConnectionService.delete(999997L))
+    assertThatThrownBy(() -> apiConnectionService.delete(999997L, testUserId))
         .isInstanceOf(ApiConnectionNotFoundException.class)
         .hasMessage("API 연결을 찾을 수 없습니다: " + 999997L);
   }
@@ -316,7 +323,7 @@ class ApiConnectionServiceExtTest extends IntegrationTestBase {
         apiConnectionService.create(bearerReq("https://delete-ext.example.com"), testUserId);
     Long id = created.id();
 
-    apiConnectionService.delete(id);
+    apiConnectionService.delete(id, testUserId);
 
     assertThatThrownBy(() -> apiConnectionService.getById(id))
         .isInstanceOf(ApiConnectionNotFoundException.class)
@@ -443,7 +450,7 @@ class ApiConnectionServiceExtTest extends IntegrationTestBase {
         new UpdateApiConnectionRequest(
             null, null, "INVALID_TYPE", Map.of("token", "tok"), null, null);
 
-    assertThatThrownBy(() -> apiConnectionService.update(created.id(), updateReq))
+    assertThatThrownBy(() -> apiConnectionService.update(created.id(), updateReq, testUserId))
         .isInstanceOf(ApiConnectionException.class)
         .hasMessage("지원하지 않는 인증 방식입니다: INVALID_TYPE (사용 가능: API_KEY, BEARER)");
   }
