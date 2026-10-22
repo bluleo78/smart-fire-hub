@@ -10,6 +10,7 @@ import com.smartfirehub.securitylevel.access.DatasetAction;
 import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -108,6 +109,52 @@ public class NotificationService {
             LocalDateTime.now());
 
     registry.broadcast(userId, notification);
+  }
+
+  /**
+   * 트리거가 「만든 사람」 자격 문제(정지·제거·권한 회수)로 실행되지 않았음을 알린다(WD-169). 트리거는 만든 사람 이름으로 돌기 때문에 그 사람이 정지되거나 권한을
+   * 잃으면 매 주기 조용히 건너뛰었다 — 파이프라인 주인과 워크스페이스 관리자가 모르는 채 데이터가 멈춰 있었다.
+   *
+   * <p><b>그 테넌트 연결로만</b> 보낸다({@link SseEmitterRegistry#broadcastToTenant}) — 같은 사람이 다른 워크스페이스 화면으로
+   * 연 연결에는 이 워크스페이스의 트리거·파이프라인 이름이 가지 않는다. 수신자 선정·중복 억제는 호출자({@code TriggerService})가 한다.
+   *
+   * @param recipients 받을 사용자 id(파이프라인 주인·활성 관리자 중 이 워크스페이스 ACTIVE 멤버)
+   * @param cause 토스트 본문에 붙일 짧은 원인(예: 「트리거를 만든 사람이 이 워크스페이스에서 정지·제거되었습니다」)
+   * @param reason 트리거 이벤트에 남긴 것과 같은 사유 문구(metadata 로만 싣는다)
+   */
+  public void notifyTriggerSkipped(
+      long tenantId,
+      Set<Long> recipients,
+      Long pipelineId,
+      Long triggerId,
+      String triggerName,
+      String pipelineName,
+      String cause,
+      String reason) {
+    if (recipients.isEmpty()) {
+      return;
+    }
+    // 토스트 본문 — 화면에 그대로 보이므로 한국어로, 어떤 트리거가 왜 멈췄는지 한 줄로 알게 한다
+    String description =
+        "트리거 「" + triggerName + "」(파이프라인 「" + pipelineName + "」)가 실행되지 않았습니다 — " + cause;
+    Map<String, Object> metadata = new HashMap<>();
+    metadata.put("triggerId", triggerId);
+    metadata.put("triggerName", triggerName);
+    metadata.put("pipelineName", pipelineName);
+    metadata.put("reason", reason);
+    NotificationEvent notification =
+        new NotificationEvent(
+            UUID.randomUUID().toString(),
+            "TRIGGER_SKIPPED",
+            // WARNING 이라 웹 알림 스트림이 별도 분기 없이 경고 토스트로 띄운다(useNotificationStream 의 severity 블록)
+            "WARNING",
+            "트리거 실행 건너뜀",
+            description,
+            "PIPELINE",
+            pipelineId,
+            metadata,
+            LocalDateTime.now());
+    registry.broadcastToTenant(tenantId, notification, recipients::contains);
   }
 
   /**

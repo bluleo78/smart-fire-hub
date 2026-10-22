@@ -322,18 +322,40 @@ public class UserRepository {
    */
   public int countActiveAdmins(long tenantId) {
     return dsl.select(countDistinct(USER.ID))
-        .from(USER)
-        .join(USER_ROLE)
+        .from(activeAdminsOf(tenantId))
+        .where(ACTIVE_ADMIN_CONDITION)
+        .fetchOne(0, Integer.class);
+  }
+
+  /**
+   * 이 테넌트의 "활성 ADMIN" 사용자 id 목록(WD-169). 트리거가 정지·권한 회수로 건너뛰었을 때 알릴 워크스페이스 관리자를 고르는 데 쓴다. 정의는 {@link
+   * #countActiveAdmins} 와 같다 — 멤버십 ACTIVE + 이 테넌트 ADMIN 역할 + 전역 계정 활성. membership.role(OWNER/ADMIN
+   * 라벨)은 표시용이라 쓰지 않는다.
+   */
+  public List<Long> findActiveAdminIds(long tenantId) {
+    return dsl.selectDistinct(USER.ID)
+        .from(activeAdminsOf(tenantId))
+        .where(ACTIVE_ADMIN_CONDITION)
+        .orderBy(USER.ID)
+        .fetch(USER.ID);
+  }
+
+  /**
+   * 활성 ADMIN 판정의 조인 — 세는 쪽과 고르는 쪽이 같은 정의를 쓰게 한 곳에 둔다(WD-169). tenant_id 를 명시한다(membership 은 RLS 가
+   * 없다).
+   */
+  private Table<?> activeAdminsOf(long tenantId) {
+    return USER.join(USER_ROLE)
         .on(USER_ROLE.USER_ID.eq(USER.ID).and(USER_ROLE.TENANT_ID.eq(tenantId)))
         .join(ROLE)
         .on(ROLE.ID.eq(USER_ROLE.ROLE_ID).and(ROLE.TENANT_ID.eq(tenantId)))
         .join(MEMBERSHIP)
-        .on(M_USER_ID.eq(USER.ID).and(M_TENANT_ID.eq(tenantId)))
-        .where(ROLE.NAME.eq("ADMIN"))
-        .and(M_STATUS.eq("ACTIVE"))
-        .and(USER.IS_ACTIVE.isTrue())
-        .fetchOne(0, Integer.class);
+        .on(M_USER_ID.eq(USER.ID).and(M_TENANT_ID.eq(tenantId)));
   }
+
+  /** 활성 ADMIN 판정의 조건 — ADMIN 역할 + 이 테넌트 멤버십 ACTIVE + 전역 계정 활성. */
+  private static final Condition ACTIVE_ADMIN_CONDITION =
+      ROLE.NAME.eq("ADMIN").and(M_STATUS.eq("ACTIVE")).and(USER.IS_ACTIVE.isTrue());
 
   /** 이 테넌트에서 사용자의 역할 배정을 모두 지운다(멤버 제거). RLS 와 별개로 tenant_id 를 명시한다. */
   public int deleteRolesInTenant(Long userId, long tenantId) {

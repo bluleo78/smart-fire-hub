@@ -87,6 +87,29 @@ public class TriggerEventRepository {
             });
   }
 
+  /** 한 트리거의 가장 최근 이벤트 요약 — 종류와 detail.reason(없으면 null)(WD-169). */
+  public record LatestEvent(String eventType, String reason) {}
+
+  /**
+   * 한 트리거의 가장 최근 이벤트를 읽는다(WD-169). 트리거를 만든 사람이 정지·권한 회수돼 건너뛸 때 「처음 한 번만」 알리기 위한 판단 근거다 — 직전 이벤트가 같은
+   * 사유의 건너뜀이면 이미 알렸다고 본다. 별도 컬럼 없이(마이그레이션 없이) 기존 이벤트 이력으로 판단한다.
+   *
+   * <p>순서는 created_at 내림차순(인덱스 idx_trigger_event_trigger_time 을 탄다)에 id 로 동률을 가른다 — 같은 시각에 겹친 이벤트도
+   * 나중에 넣은 것이 최근이다.
+   */
+  public Optional<LatestEvent> findLatestByTrigger(Long triggerId) {
+    Field<String> reason = field("{0}->>'reason'", String.class, TE_DETAIL);
+    return dsl.select(TE_EVENT_TYPE, reason)
+        .from(TRIGGER_EVENT)
+        .where(TE_TRIGGER_ID.eq(triggerId))
+        // MISSED 는 발화 결과가 아니라 「놓친 발화를 지금 대신 돈다」는 표시라 직후의 실제 발화 결과와 짝을 이룬다 — 그것을 직전 이벤트로 보면
+        // 놓친 발화 복구 때마다 같은 건너뜀을 다시 알리게 된다
+        .and(TE_EVENT_TYPE.ne("MISSED"))
+        .orderBy(TE_CREATED_AT.desc(), TE_ID.desc())
+        .limit(1)
+        .fetchOptional(r -> new LatestEvent(r.value1(), r.value2()));
+  }
+
   private Map<String, Object> parseJsonb(JSONB jsonb) {
     if (jsonb == null || jsonb.data() == null) {
       return Collections.emptyMap();

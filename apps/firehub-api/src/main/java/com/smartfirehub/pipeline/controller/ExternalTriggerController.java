@@ -230,6 +230,24 @@ public class ExternalTriggerController {
    * 발화 결과를 외부 호출자 응답으로 옮긴다(WD-152). 실행을 시작했을 때만 200 「triggered」이고, 실행하지 않았으면 409 「skipped」+한국어 사유,
    * 시작하다 실패했으면 500 「failed」+한국어 사유다. 예전에는 결과와 무관하게 200 을 돌려줘 실행되지 않은 호출도 실행된 것으로 보였다.
    */
+  /**
+   * 외부 호출자(토큰·웹훅 주소만 가진 바깥 시스템)에게 돌려줄 건너뜀 사유(WD-169).
+   *
+   * <p>트리거를 만든 사람의 자격 사유(정지·제거, 실행 권한 없음)는 워크스페이스 안의 인사·권한 상태라 바깥에 그대로 알리지 않는다 — 둘을 같은 일반 문구로 바꾼다.
+   * 자세한 사유는 트리거 이벤트 기록과 파이프라인 주인·관리자 알림에 남는다. 그 밖의 사유(파이프라인 비활성·동시 실행·꺼짐)는 그대로다.
+   */
+  static String externalReason(String reason) {
+    if (TriggerService.REASON_EXECUTOR_INACTIVE.equals(reason)
+        || TriggerService.REASON_EXECUTOR_NO_EXECUTE_PERMISSION.equals(reason)) {
+      return REASON_EXECUTOR_NOT_ELIGIBLE_EXTERNAL;
+    }
+    return reason;
+  }
+
+  /** 트리거를 만든 사람의 자격 때문에 건너뛰었을 때 바깥 호출자에게 보이는 일반 사유(WD-169). */
+  static final String REASON_EXECUTOR_NOT_ELIGIBLE_EXTERNAL =
+      "트리거를 만든 사용자가 지금 이 파이프라인을 실행할 수 없어 실행하지 않았습니다. 워크스페이스 관리자에게 문의하세요";
+
   private ResponseEntity<?> toFireResponse(TriggerFireResult result, TriggerResponse trigger) {
     return switch (result.outcome()) {
       case FIRED -> {
@@ -243,7 +261,7 @@ public class ExternalTriggerController {
       }
       case SKIPPED, DISABLED ->
           ResponseEntity.status(HttpStatus.CONFLICT)
-              .body(Map.of("status", "skipped", "reason", result.reason()));
+              .body(Map.of("status", "skipped", "reason", externalReason(result.reason())));
       // NOT_FOUND 는 위에서 트리거를 읽은 직후 삭제된 경합이다 — 실행되지 않았다는 사실이 중요하므로 실패로 알린다.
       case NOT_FOUND, ERROR ->
           ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
