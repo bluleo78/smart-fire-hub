@@ -1,5 +1,8 @@
 package com.smartfirehub.notification.controller;
 
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -11,6 +14,7 @@ import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.notification.service.SseEmitterRegistry;
 import com.smartfirehub.permission.service.PermissionService;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
+import com.smartfirehub.tenant.repository.MembershipRepository;
 import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
@@ -38,6 +42,9 @@ class NotificationControllerTest {
   @MockitoBean private JwtTokenProvider jwtTokenProvider;
   @MockitoBean private JwtProperties jwtProperties;
   @MockitoBean private PermissionService permissionService;
+  // 구독 엔드포인트가 워크스페이스 상태를 본다(WD-190). 실제 판정(정지 403·활성 200)은 PlatformTenantControllerTest 가 실제 DB 로
+  // 검증한다.
+  @MockitoBean private MembershipRepository membershipRepository;
 
   @BeforeEach
   void setUp() {
@@ -46,6 +53,7 @@ class NotificationControllerTest {
     when(permissionService.getUserPermissions(1L)).thenReturn(Set.of("dataset:read"));
     // 구독은 연결마다 테넌트를 남긴다(Task 3 D2) — 토큰의 테넌트(1)로 등록되는지까지 고정한다.
     when(registry.register(1L, 1L)).thenReturn(new SseEmitter());
+    when(membershipRepository.hasActiveMembership(1L, 1L)).thenReturn(true);
   }
 
   /** 인증 토큰과 dataset:read 권한이 있으면 SSE 스트림에 200 OK */
@@ -54,6 +62,20 @@ class NotificationControllerTest {
     mockMvc
         .perform(get("/api/v1/notifications/stream").header("Authorization", "Bearer test-token"))
         .andExpect(status().isOk());
+  }
+
+  /**
+   * WD-190: 워크스페이스가 정지됐으면(멤버십·워크스페이스 ACTIVE 판정 거짓) 권한이 있어도 403 이고 연결을 등록하지 않는다 — 정지 때 닫힌 연결이 기존
+   * 토큰으로 다시 붙지 않게.
+   */
+  @Test
+  void subscribe_whenTenantNotActive_returnsForbiddenWithoutRegistering() throws Exception {
+    when(membershipRepository.hasActiveMembership(1L, 1L)).thenReturn(false);
+
+    mockMvc
+        .perform(get("/api/v1/notifications/stream").header("Authorization", "Bearer test-token"))
+        .andExpect(status().isForbidden());
+    verify(registry, never()).register(anyLong(), anyLong());
   }
 
   /** 인증 토큰 없이 접근하면 401 Unauthorized */

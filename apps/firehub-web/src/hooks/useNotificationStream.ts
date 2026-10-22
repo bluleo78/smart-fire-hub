@@ -58,6 +58,13 @@ export function useNotificationStream() {
           credentials: 'include',
         });
 
+        // 403(권한 없음·정지된 워크스페이스·비활성 계정)은 다시 붙어도 계속 거절된다 — 재시도를 멈춘다(WD-190).
+        // 예전에는 최대 60초 간격으로 끝없이 재시도했다. 권한·워크스페이스가 회복되면 새로고침·재로그인 때 다시 연결한다.
+        // 401(토큰 만료)은 기존대로 재시도한다 — 그 사이 다른 API 호출의 토큰 갱신으로 새 토큰을 집어 온다.
+        if (response.status === 403) {
+          return;
+        }
+
         if (!response.ok || !response.body) {
           throw new Error(`HTTP ${response.status}`);
         }

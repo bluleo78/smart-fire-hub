@@ -402,4 +402,68 @@ test.describe('useNotificationStream — SSE 이벤트 처리', () => {
     // (지수 백오프로 즉시 재시도는 아니지만 첫 시도는 마운트 직후 발생)
     await expect.poll(() => connectAttempts, { timeout: 3000 }).toBeGreaterThanOrEqual(1);
   });
+
+  /**
+   * 회귀 방지 (WD-190): 구독이 403(권한 없음·정지된 워크스페이스·비활성 계정)이면 다시 붙어도 계속 거절되므로
+   * 재시도를 멈춘다. 예전에는 최대 60초 간격으로 끝없이 재시도했다.
+   * 첫 재시도 지연은 1~2초(1000ms + 지터)라, 마운트 직후 이후 3.5초 동안 요청이 늘지 않으면 멈춘 것이다.
+   */
+  test('SSE 구독이 403 이면 재시도하지 않는다', async ({ authenticatedPage: page }) => {
+    let connectAttempts = 0;
+
+    await page.route(
+      (url) => url.pathname === '/api/v1/notifications/stream',
+      (route) => {
+        connectAttempts++;
+        return route.fulfill({
+          status: 403,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            message: '정지되었거나 접근할 수 없는 워크스페이스라 알림을 받을 수 없습니다.',
+          }),
+        });
+      },
+    );
+
+    await page.goto('/');
+    await expect(page.getByRole('heading', { name: '홈' })).toBeVisible();
+
+    await expect.poll(() => connectAttempts, { timeout: 5000 }).toBeGreaterThanOrEqual(1);
+    // 마운트 직후 요청 수(개발 모드 StrictMode 이중 마운트로 2번일 수 있다)를 기준으로 잡는다
+    await page.waitForTimeout(500);
+    const initialAttempts = connectAttempts;
+    // 첫 재시도 지연(최대 2초)을 넉넉히 넘겨 기다린 뒤에도 요청이 늘지 않아야 한다
+    await page.waitForTimeout(3500);
+    expect(connectAttempts).toBe(initialAttempts);
+  });
+
+  /**
+   * WD-190 대조군: 403 이 아닌 HTTP 오류(401 토큰 만료·5xx)는 기존대로 재시도한다 — 403 재시도 중단 테스트가
+   * "애초에 재시도가 안 일어나서" 통과하는 공허한 테스트가 아님을 보인다.
+   */
+  for (const status of [401, 503]) {
+    test(`SSE 구독이 ${status} 이면 재시도한다`, async ({ authenticatedPage: page }) => {
+      let connectAttempts = 0;
+
+      await page.route(
+        (url) => url.pathname === '/api/v1/notifications/stream',
+        (route) => {
+          connectAttempts++;
+          return route.fulfill({ status, contentType: 'application/json', body: '{}' });
+        },
+      );
+
+      await page.goto('/');
+      await expect(page.getByRole('heading', { name: '홈' })).toBeVisible();
+
+      // 403 테스트와 같은 기준점(마운트 직후 요청 수)에서, 같은 시간 창 안에 재시도 요청이 더 와야 한다
+      await expect.poll(() => connectAttempts, { timeout: 5000 }).toBeGreaterThanOrEqual(1);
+      await page.waitForTimeout(500);
+      const initialAttempts = connectAttempts;
+      // 기준점이 첫 재시도 뒤에 잡혀도 다음 재시도(2~3초 뒤)가 들어오도록 창을 6초로 둔다
+      await expect
+        .poll(() => connectAttempts, { timeout: 6000 })
+        .toBeGreaterThan(initialAttempts);
+    });
+  }
 });

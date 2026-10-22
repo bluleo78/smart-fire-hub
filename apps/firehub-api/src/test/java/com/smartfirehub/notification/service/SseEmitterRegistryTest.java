@@ -99,6 +99,55 @@ class SseEmitterRegistryTest {
     assertThat(judged).containsExactly(1L);
   }
 
+  /** WD-190: closeUser 는 그 사용자의 연결을 워크스페이스와 무관하게 전부 닫고 레지스트리에서 뺀다(전역 계정 비활성화). 다른 사용자 연결은 그대로다. */
+  @Test
+  void closeUser_closesAllConnectionsOfThatUserOnly() throws Exception {
+    SseEmitter u1t1 = registry.register(1L, 1L);
+    SseEmitter u1t2 = registry.register(1L, 2L);
+    SseEmitter u2t1 = registry.register(2L, 1L);
+
+    registry.closeUser(1L);
+
+    for (SseEmitter closed : java.util.List.of(u1t1, u1t2)) {
+      org.assertj.core.api.Assertions.assertThatThrownBy(
+              () -> closed.send(SseEmitter.event().comment("x")))
+          .as("그 사용자의 모든 워크스페이스 연결이 닫힌다")
+          .isInstanceOf(IllegalStateException.class);
+    }
+    u2t1.send(SseEmitter.event().comment("x")); // 다른 사용자 연결은 열려 있다
+
+    java.util.Set<Long> judged = new java.util.HashSet<>();
+    registry.broadcastToTenant(1L, sampleEvent(), userId -> judged.add(userId));
+    registry.broadcastToTenant(2L, sampleEvent(), userId -> judged.add(userId));
+    assertThat(judged).as("닫힌 사용자는 어느 테넌트 판정에도 남지 않는다").containsExactly(2L);
+  }
+
+  /**
+   * WD-190: closeTenant 는 그 워크스페이스로 연 연결을 사용자와 무관하게 전부 닫는다(워크스페이스 정지). 같은 사용자의 다른 워크스페이스 연결은 그대로다.
+   */
+  @Test
+  void closeTenant_closesAllConnectionsOfThatTenantOnly() throws Exception {
+    SseEmitter u1t1 = registry.register(1L, 1L);
+    SseEmitter u2t1 = registry.register(2L, 1L);
+    SseEmitter u1t2 = registry.register(1L, 2L);
+
+    registry.closeTenant(1L);
+
+    for (SseEmitter closed : java.util.List.of(u1t1, u2t1)) {
+      org.assertj.core.api.Assertions.assertThatThrownBy(
+              () -> closed.send(SseEmitter.event().comment("x")))
+          .as("정지된 워크스페이스 연결은 모두 닫힌다")
+          .isInstanceOf(IllegalStateException.class);
+    }
+    u1t2.send(SseEmitter.event().comment("x")); // 다른 워크스페이스 연결은 열려 있다
+
+    java.util.Set<Long> judged = new java.util.HashSet<>();
+    registry.broadcastToTenant(1L, sampleEvent(), userId -> judged.add(userId));
+    assertThat(judged).as("정지된 워크스페이스에는 연결이 남지 않는다").isEmpty();
+    registry.broadcastToTenant(2L, sampleEvent(), userId -> judged.add(userId));
+    assertThat(judged).containsExactly(1L);
+  }
+
   @Test
   void remove_nonExistentUser_noException() {
     SseEmitter emitter = new SseEmitter();

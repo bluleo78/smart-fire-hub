@@ -4,6 +4,8 @@ import com.smartfirehub.auth.exception.EmailAlreadyExistsException;
 import com.smartfirehub.auth.repository.RefreshTokenRepository;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.global.exception.CodedApiException;
+import com.smartfirehub.global.transaction.AfterCommitRunner;
+import com.smartfirehub.notification.service.SseEmitterRegistry;
 import com.smartfirehub.platform.dto.CreatePlatformAccountRequest;
 import com.smartfirehub.platform.dto.PlatformAccountResponse;
 import com.smartfirehub.platform.repository.PlatformRoleRepository;
@@ -30,6 +32,7 @@ import org.springframework.transaction.annotation.Transactional;
  *   <li>refresh 세션: 비활성화 시 전부 폐기한다 — 재활성화해도 옛 세션은 살아나지 않고 다시 로그인해야 한다.
  *   <li>권한: 테넌트 권한 조회가 user 활성 조인을 하므로(PermissionRepository) 권한 필요 API 는 즉시 403. 권한 표시가 없는 API 는
  *       access token 만료(최대 30분)까지 열린다.
+ *   <li>알림 스트림(SSE): 커밋 뒤 그 사람의 열린 연결을 모든 워크스페이스에서 닫는다(WD-190). 재구독은 권한 0개라 403 이다.
  * </ul>
  */
 @Service
@@ -42,6 +45,8 @@ public class PlatformAccountService {
   private final RefreshTokenRepository refreshTokenRepository;
   private final PlatformAuditRecorder auditRecorder;
   private final TemporaryAccountCreator temporaryAccountCreator;
+  // 비활성화한 사람의 열린 알림 연결을 커밋 뒤 닫는다(WD-190)
+  private final SseEmitterRegistry sseEmitterRegistry;
 
   /** 페이지 크기 상한 — 감사 로그 목록(PlatformAuditLogService)과 같은 값·같은 400 규칙. */
   static final int MAX_PAGE_SIZE = 100;
@@ -92,6 +97,9 @@ public class PlatformAccountService {
     // 같은 트랜잭션: "비활성인데 refresh 세션은 살아 있는" 중간 상태가 커밋되지 않게 한다.
     refreshTokenRepository.revokeAllByUserId(targetUserId);
     audit(operatorId, "ACCOUNT_DEACTIVATE", target, "전역 계정 비활성화(모든 워크스페이스 로그인 차단, refresh 세션 폐기)");
+    // 열린 알림 연결(최대 1시간)을 모든 워크스페이스에서 닫는다(WD-190) — 닫지 않으면 토큰 만료 뒤에도 개인 알림(파이프라인·임포트 완료 등)이
+    // 계속 간다. 커밋 뒤에 닫는다: 롤백되면 비활성화는 없던 일이라 연결을 끊으면 안 된다.
+    AfterCommitRunner.run(() -> sseEmitterRegistry.closeUser(targetUserId));
   }
 
   /**
