@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.jooq.impl.DSL.*;
 
 import com.smartfirehub.support.IntegrationTestBase;
+import com.smartfirehub.support.PausedTransactionRace;
 import java.util.List;
 import org.jooq.DSLContext;
 import org.jooq.Field;
@@ -170,5 +171,60 @@ class ApiConnectionRepositoryTest extends IntegrationTestBase {
 
     assertThat(ids).contains(id1, id2);
     assertThat(ids).doesNotContain(id3);
+  }
+
+  /** 갱신 직전 상태를 돌려준다 — 첫 점검은 null, 이후엔 직전 값. 없는 연결이면 null(알릴 전환 없음)(WD-189). */
+  @Test
+  void updateHealthStatus_returnsPreviousStatus() {
+    Long id =
+        repository.save(
+            "Prev API",
+            null,
+            "BEARER",
+            "encrypted-config",
+            testUserId,
+            "https://p.example.com",
+            "/ping");
+
+    assertThat(repository.updateHealthStatus(id, "UP", 10L, null)).as("첫 점검").isNull();
+    assertThat(repository.updateHealthStatus(id, "DOWN", null, "x")).isEqualTo("UP");
+    assertThat(repository.updateHealthStatus(id, "DOWN", null, "x")).isEqualTo("DOWN");
+    assertThat(repository.updateHealthStatus(Long.MAX_VALUE, "UP", 1L, null)).isNull();
+  }
+
+  /**
+   * 같은 연결을 두 호출(주기 점검·「테스트」)이 동시에 UP→DOWN 으로 바꾸면 전환을 본 호출은 하나뿐이어야 한다(WD-189). 첫 호출이 커밋 전에 멈춘 사이 두
+   * 번째 호출은 행 잠금에서 기다렸다가 첫 호출이 커밋한 DOWN 을 직전 상태로 받는다.
+   *
+   * <p>"기다렸다"만으로는 판별이 안 된다 — 잠금 없이 읽고 UPDATE 만 해도 UPDATE 가 같은 행에서 기다린다. 그 경우 두 번째 호출은 기다리기 전에 커밋된
+   * UP 을 읽어 UP→DOWN 전환을 한 번 더 보고(= 끊김 알림 두 번) 이 단언이 깨진다. 그래서 돌려받은 직전 상태를 단언한다.
+   */
+  @Test
+  void updateHealthStatus_concurrentSameTransition_secondSeesCommittedPrevious() throws Exception {
+    Long id =
+        repository.save(
+            "Race API",
+            null,
+            "BEARER",
+            "encrypted-config",
+            testUserId,
+            "https://r.example.com",
+            "/ping");
+    repository.updateHealthStatus(id, "UP", 10L, null);
+
+    String[] firstPrevious = new String[1];
+    PausedTransactionRace.Outcome<String> outcome =
+        PausedTransactionRace.run(
+            tx,
+            DEFAULT_TEST_TENANT_ID,
+            () -> firstPrevious[0] = repository.updateHealthStatus(id, "DOWN", null, "first"),
+            () -> repository.updateHealthStatus(id, "DOWN", null, "second"));
+
+    assertThat(outcome.secondError()).isNull();
+    assertThat(outcome.secondBlocked()).as("두 번째 호출은 첫 호출의 행 잠금에서 기다려야 한다").isTrue();
+    assertThat(firstPrevious[0]).as("첫 호출이 UP→DOWN 전환을 본다").isEqualTo("UP");
+    assertThat(outcome.secondResult())
+        .as("두 번째 호출은 커밋된 DOWN 을 직전 상태로 받아 전환을 다시 보지 않는다")
+        .isEqualTo("DOWN");
   }
 }

@@ -21,6 +21,7 @@ import com.smartfirehub.apiconnection.dto.ApiConnectionResponse;
 import com.smartfirehub.apiconnection.dto.CreateApiConnectionRequest;
 import com.smartfirehub.apiconnection.dto.TestConnectionResponse;
 import com.smartfirehub.apiconnection.exception.ApiConnectionException;
+import com.smartfirehub.job.service.AsyncJobService;
 import com.smartfirehub.pipeline.service.executor.ApiCallErrorMessages;
 import com.smartfirehub.pipeline.service.executor.SsrfProtectionService;
 import com.smartfirehub.support.IntegrationTestBase;
@@ -52,11 +53,15 @@ import org.springframework.transaction.support.TransactionTemplate;
  * <p>「테스트」·10분 상태 점검이 호출 직전에 주소를 다시 검사하는지(WD-178)도 이 클래스에서 본다. 같은 컨텍스트 구성({@code @MockitoBean
  * SsrfProtectionService} 하나)을 쓰는 테스트 클래스를 따로 더하면 전체 스위트가 테스트 JVM 메모리 한계를 넘어 멈추므로(실측), 컨텍스트를 공유하는 이
  * 클래스에 둔다. 목은 기본적으로 아무것도 하지 않고, 차단을 증명하는 TC 에서만 {@link #useRealSsrfJudgement()} 로 실제 판정을 건다.
+ *
+ * <p>「테스트」·전체 새로고침이 바꾼 상태도 끊김·복구 알림과 감사 STATUS_CHANGE 를 남기는지(WD-189)도 같은 이유로 여기서 본다. 알림과 감사는 {@link
+ * ApiConnectionNotifier} 한 메서드에서 함께 나가므로 감사 행 수로 알림 횟수를 센다(알림 빈을 목으로 바꾸면 컨텍스트가 하나 더 뜬다).
  */
 class ApiConnectionTestUrlMaskingTest extends IntegrationTestBase {
 
   @Autowired private ApiConnectionService apiConnectionService;
   @Autowired private ApiConnectionHealthCheckScheduler scheduler;
+  @Autowired private AsyncJobService asyncJobService;
   @Autowired private DSLContext dsl;
 
   /** RLS 가 걸린 api_connection 을 테스트가 직접 지울 때 쓰는 트랜잭션 경계. */
@@ -88,6 +93,21 @@ class ApiConnectionTestUrlMaskingTest extends IntegrationTestBase {
       field(name("api_connection", "last_status"), String.class);
   private static final Field<String> AC_LAST_ERROR =
       field(name("api_connection", "last_error_message"), String.class);
+
+  private static final Table<?> AUDIT_LOG = table(name("audit_log"));
+  private static final Field<Long> AL_ID = field(name("audit_log", "id"), Long.class);
+  private static final Field<Long> AL_USER_ID = field(name("audit_log", "user_id"), Long.class);
+  private static final Field<String> AL_USERNAME =
+      field(name("audit_log", "username"), String.class);
+  private static final Field<String> AL_RESOURCE =
+      field(name("audit_log", "resource"), String.class);
+  private static final Field<String> AL_RESOURCE_ID =
+      field(name("audit_log", "resource_id"), String.class);
+  private static final Field<String> AL_ACTION_TYPE =
+      field(name("audit_log", "action_type"), String.class);
+  private static final Field<String> AL_RESULT = field(name("audit_log", "result"), String.class);
+  private static final Field<String> AL_METADATA =
+      field("{0}::text", String.class, field(name("audit_log", "metadata")));
 
   /** SsrfProtectionService 의 루프백 차단 문구 앞부분(WD-150) — API_CALL 실행·미리보기와 같은 문장이어야 한다. */
   private static final String LOOPBACK_BLOCKED = "내부망 주소는 호출할 수 없습니다(루프백)";
@@ -124,10 +144,22 @@ class ApiConnectionTestUrlMaskingTest extends IntegrationTestBase {
   void tearDown() {
     tx.executeWithoutResult(
         s -> {
+          // 주기 점검의 상태 전환 감사는 행위자가 없어(user_id NULL) 아래 user_id 삭제로 지워지지 않는다 — 이 사용자가 만든 연결의 감사를 먼저
+          // 지운다(WD-189).
+          dsl.deleteFrom(AUDIT_LOG)
+              .where(AL_RESOURCE.eq("api_connection"))
+              .and(
+                  AL_RESOURCE_ID.in(
+                      dsl.select(AC_ID.cast(String.class))
+                          .from(API_CONNECTION)
+                          .where(AC_CREATED_BY.eq(testUserId))))
+              .execute();
           dsl.deleteFrom(API_CONNECTION).where(AC_CREATED_BY.eq(testUserId)).execute();
           // 생성·수정·삭제 감사(WD-181)가 이 사용자를 행위자로 남긴다 — audit_log.user_id 는 "user" FK 라 먼저 지운다(RLS 대상이라
           // 테넌트 트랜잭션 안에서).
           dsl.execute("delete from audit_log where user_id = ?", testUserId);
+          // 전체 새로고침 TC(WD-189)가 이 사용자 소유의 비동기 작업을 남긴다 — async_job.user_id 도 "user" FK 다.
+          dsl.execute("delete from async_job where user_id = ?", testUserId);
         });
     dsl.deleteFrom(USER_TABLE).where(U_ID.eq(testUserId)).execute();
   }
@@ -515,5 +547,158 @@ class ApiConnectionTestUrlMaskingTest extends IntegrationTestBase {
     assertThat(result.status()).isEqualTo(302);
     wireMock.verify(1, getRequestedFor(urlPathEqualTo("/health")));
     wireMock.verify(0, getRequestedFor(urlPathEqualTo("/internal")));
+  }
+
+  // ── 상태 전환 알림·감사: 「테스트」·새로고침·주기 점검이 한 곳을 거친다(WD-189) ─────────────
+
+  /** 연결을 만들고 직전 상태를 DB 에서 직접 맞춘다(주기 점검이 이미 한 번 본 연결). 0건 갱신이면 TC 가 공허하므로 1건을 단언한다. */
+  private Long createWithStatus(String name, String lastStatus) {
+    Long id = apiConnectionService.create(queryKeyReq(name, wireMockBase(), KEY), testUserId).id();
+    int updated =
+        inTenantFixture(
+            () ->
+                dsl.update(API_CONNECTION)
+                    .set(AC_LAST_STATUS, lastStatus)
+                    .where(AC_ID.eq(id))
+                    .execute());
+    assertThat(updated).isEqualTo(1);
+    return id;
+  }
+
+  /** 이 연결의 상태 전환 감사(STATUS_CHANGE) 행 — 오래된 것부터. 알림과 같은 메서드에서 남으므로 행 수 = 알림 횟수다. */
+  private List<Record> statusChanges(Long id) {
+    return inTenantFixture(
+        () ->
+            dsl
+                .select(AL_USER_ID, AL_USERNAME, AL_RESULT, AL_METADATA)
+                .from(AUDIT_LOG)
+                .where(AL_RESOURCE.eq("api_connection"))
+                .and(AL_RESOURCE_ID.eq(String.valueOf(id)))
+                .and(AL_ACTION_TYPE.eq("STATUS_CHANGE"))
+                .orderBy(AL_ID.asc())
+                .fetch()
+                .stream()
+                .map(r -> (Record) r)
+                .toList());
+  }
+
+  private String testUsername() {
+    return dsl.select(field(name("user", "username"), String.class))
+        .from(USER_TABLE)
+        .where(U_ID.eq(testUserId))
+        .fetchOne(0, String.class);
+  }
+
+  private static void stubHealth(int status) {
+    wireMock.stubFor(get(urlPathEqualTo("/health")).willReturn(aResponse().withStatus(status)));
+  }
+
+  /**
+   * 끊긴 뒤 주기 점검 전에 「테스트」를 누르면 그 테스트가 끊김 알림·감사를 1회 남기고(행위자 = 누른 사용자), 이어진 주기 점검은 직전 상태가 이미 DOWN 이라 다시
+   * 알리지 않는다. 다시 「테스트」해도 그대로면 알림이 없다. 예전에는 테스트가 상태만 DOWN 으로 저장해 주기 점검도 변화 없음으로 넘겨, 끊김이 알림·기록 없이
+   * 사라졌다.
+   */
+  @Test
+  void testConnection_upToDown_notifiesOnceAsUser_thenSchedulerAndRetestDoNotRepeat() {
+    Long id = createWithStatus("WD189 down", "UP");
+    stubHealth(503);
+
+    TestConnectionResponse result = apiConnectionService.testConnection(id, testUserId);
+
+    assertThat(result.ok()).isFalse();
+    assertThat(readStatus(id).get(AC_LAST_STATUS)).isEqualTo("DOWN");
+    List<Record> changes = statusChanges(id);
+    assertThat(changes).as("테스트가 끊김을 처음 본 호출이므로 알림·감사 1회").hasSize(1);
+    Record change = changes.get(0);
+    assertThat(change.get(AL_USER_ID)).as("행위자는 테스트를 누른 사용자").isEqualTo(testUserId);
+    assertThat(change.get(AL_USERNAME)).isEqualTo(testUsername());
+    assertThat(change.get(AL_RESULT)).isEqualTo("FAILURE");
+    assertThat(change.get(AL_METADATA)).contains("\"from\": \"UP\"").contains("\"to\": \"DOWN\"");
+
+    // 이어진 주기 점검 — 같은 DOWN 이라 중복 알림이 없다.
+    scheduler.runOnce();
+    // 다시 「테스트」해도 상태 그대로면 알림이 없다.
+    apiConnectionService.testConnection(id, testUserId);
+
+    assertThat(statusChanges(id)).as("같은 끊김을 두 번 알리지 않는다").hasSize(1);
+  }
+
+  /** 끊긴 연결을 「테스트」로 복구 확인하면 복구 알림·감사가 1회 남는다(SUCCESS, DOWN→UP). */
+  @Test
+  void testConnection_downToUp_notifiesRecoveryAsUser() {
+    Long id = createWithStatus("WD189 up", "DOWN");
+    stubHealth(200);
+
+    apiConnectionService.testConnection(id, testUserId);
+
+    List<Record> changes = statusChanges(id);
+    assertThat(changes).hasSize(1);
+    assertThat(changes.get(0).get(AL_USER_ID)).isEqualTo(testUserId);
+    assertThat(changes.get(0).get(AL_RESULT)).isEqualTo("SUCCESS");
+    assertThat(changes.get(0).get(AL_METADATA))
+        .contains("\"from\": \"DOWN\"")
+        .contains("\"to\": \"UP\"");
+  }
+
+  /** 상태가 그대로(UP→UP)거나 첫 점검(null→UP)이면 알림·감사가 없다 — 기존 주기 점검 규칙과 같다. */
+  @Test
+  void testConnection_unchangedOrFirstCheck_noNotification() {
+    stubHealth(200);
+    Long same = createWithStatus("WD189 same", "UP");
+    Long first =
+        apiConnectionService
+            .create(queryKeyReq("WD189 first", wireMockBase(), KEY), testUserId)
+            .id();
+
+    apiConnectionService.testConnection(same, testUserId);
+    apiConnectionService.testConnection(first, testUserId);
+
+    assertThat(statusChanges(same)).isEmpty();
+    assertThat(statusChanges(first)).isEmpty();
+    assertThat(readStatus(first).get(AC_LAST_STATUS)).as("첫 점검도 상태는 저장된다").isEqualTo("UP");
+  }
+
+  /** 주기 점검이 먼저 전환을 보면 행위자는 시스템이다(user_id 없음, username=system). */
+  @Test
+  void scheduler_upToDown_notifiesOnceAsSystem() {
+    Long id = createWithStatus("WD189 scheduler", "UP");
+    stubHealth(503);
+
+    scheduler.runOnce();
+
+    List<Record> changes = statusChanges(id);
+    assertThat(changes).hasSize(1);
+    assertThat(changes.get(0).get(AL_USER_ID)).isNull();
+    assertThat(changes.get(0).get(AL_USERNAME)).isEqualTo("system");
+  }
+
+  /** 「전체 새로고침」도 같은 경로 — 끊김을 처음 보면 알림·감사 1회, 행위자는 새로고침을 누른 사용자. */
+  @Test
+  void refreshAll_upToDown_notifiesOnceAsUser() throws Exception {
+    Long id = createWithStatus("WD189 refresh", "UP");
+    stubHealth(503);
+
+    String jobId = apiConnectionService.refreshAllAsync(testUserId);
+    awaitJobCompleted(jobId);
+
+    assertThat(readStatus(id).get(AC_LAST_STATUS)).isEqualTo("DOWN");
+    List<Record> changes = statusChanges(id);
+    assertThat(changes).hasSize(1);
+    assertThat(changes.get(0).get(AL_USER_ID)).isEqualTo(testUserId);
+    assertThat(changes.get(0).get(AL_USERNAME)).isEqualTo(testUsername());
+  }
+
+  /** 새로고침 비동기 작업이 끝날 때까지 기다린다(다른 테스트가 남긴 느린 대상이 있어도 넉넉하게 60초). */
+  private void awaitJobCompleted(String jobId) throws InterruptedException {
+    long deadline = System.currentTimeMillis() + 60_000;
+    while (System.currentTimeMillis() < deadline) {
+      String stage = asyncJobService.getJobStatus(jobId, testUserId).stage();
+      if ("COMPLETED".equals(stage) || "FAILED".equals(stage)) {
+        assertThat(stage).isEqualTo("COMPLETED");
+        return;
+      }
+      Thread.sleep(100);
+    }
+    throw new AssertionError("새로고침 작업이 60초 안에 끝나지 않았습니다: " + jobId);
   }
 }

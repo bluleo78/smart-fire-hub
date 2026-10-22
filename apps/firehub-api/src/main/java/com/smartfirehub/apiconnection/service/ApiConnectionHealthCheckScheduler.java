@@ -2,7 +2,6 @@ package com.smartfirehub.apiconnection.service;
 
 import static org.jooq.impl.DSL.*;
 
-import com.smartfirehub.apiconnection.dto.TestConnectionResponse;
 import com.smartfirehub.apiconnection.repository.ApiConnectionRepository;
 import com.smartfirehub.global.tenant.TenantScopedRunner;
 import java.util.List;
@@ -16,8 +15,9 @@ import org.springframework.stereotype.Component;
 /**
  * API 연결 헬스체크 주기 실행기.
  *
- * <p>10분마다 health_check_path가 설정된 API 연결을 순회하며 상태를 갱신하고, 상태 전환(UP↔DOWN) 발생 시 ApiConnectionNotifier로
- * 알림을 디스패치한다.
+ * <p>10분마다 health_check_path가 설정된 API 연결을 순회하며 상태를 갱신한다. 상태 전환(UP↔DOWN) 알림·감사는 이 클래스가 아니라 상태를 저장하는
+ * {@link ApiConnectionService#testConnection} 이 저장 직후 직전 상태(행 잠금으로 읽음)와 비교해 보낸다 — 예전처럼 순회 시작 때 읽어 둔
+ * 값과 비교하면 그 사이 「테스트」가 바꾼 상태 전환이 알림 없이 사라진다(WD-189).
  *
  * <p>initialDelay=60s: 애플리케이션 기동 직후 외부 API 호출을 방지하기 위해 첫 실행을 1분 뒤로 지연한다.
  */
@@ -35,12 +35,9 @@ public class ApiConnectionHealthCheckScheduler {
   // jOOQ 동적 필드 — jOOQ 코드젠 없이 api_connection 테이블 컬럼에 접근한다
   private static final Field<Long> AC_ID = field(name("api_connection", "id"), Long.class);
   private static final Field<String> AC_NAME = field(name("api_connection", "name"), String.class);
-  private static final Field<String> AC_LAST_STATUS =
-      field(name("api_connection", "last_status"), String.class);
 
   private final ApiConnectionRepository repository;
   private final ApiConnectionService connectionService;
-  private final ApiConnectionNotifier notifier;
   private final TenantScopedRunner tenantScopedRunner;
 
   /**
@@ -68,13 +65,10 @@ public class ApiConnectionHealthCheckScheduler {
     for (Record r : targets) {
       Long id = r.get(AC_ID);
       String name = r.get(AC_NAME);
-      String prevStatus = r.get(AC_LAST_STATUS);
 
       try {
-        TestConnectionResponse result = connectionService.testConnection(id);
-        String newStatus = result.ok() ? "UP" : "DOWN";
-        // 상태 전환 시 Notifier가 알림을 디스패치한다 (최초 체크 및 동일 상태는 내부에서 무시됨)
-        notifier.notifyStatusChange(id, name, prevStatus, newStatus, result.errorMessage());
+        // 시스템 점검(행위자 없음) — 저장·상태 전환 알림·감사는 testConnection 안에서 한 번에 처리된다.
+        connectionService.testConnection(id);
       } catch (Exception e) {
         log.error("헬스체크 실패 — connection id={}, name={}: {}", id, name, e.getMessage());
       }

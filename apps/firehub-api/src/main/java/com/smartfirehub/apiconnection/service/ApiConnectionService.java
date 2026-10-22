@@ -68,6 +68,12 @@ public class ApiConnectionService {
    */
   private final AuditLogService auditLogService;
 
+  /**
+   * 상태 전환(UP↔DOWN) 알림 + 감사 STATUS_CHANGE. 상태를 저장하는 유일한 곳({@link #testConnection(Long, Long)})에서 저장
+   * 직후 부른다 — 주기 점검만 알리던 예전에는 「테스트」·새로고침이 먼저 바꾼 상태가 알림 없이 사라졌다(WD-189).
+   */
+  private final ApiConnectionNotifier notifier;
+
   /** 감사 행위자 username 조회용 — audit_log.username 이 NOT NULL 이라 RoleService·UserService 처럼 조회해서 넣는다. */
   private final UserRepository userRepository;
 
@@ -286,10 +292,17 @@ public class ApiConnectionService {
    * 프록시가 우회돼 트랜잭션이 열리지 않는다). DB 쓰기는 {@code repository.updateHealthStatus} 가 리포지토리 자신의 트랜잭션을 열어
    * 처리하므로, HTTP 구간은 어떤 트랜잭션 안에도 들어가지 않는다.
    *
-   * <p>화면의 「테스트」뿐 아니라 10분 주기 상태 점검({@link ApiConnectionHealthCheckScheduler})과 일괄 새로고침({@link
-   * #refreshAllAsync})도 이 메서드를 부른다. 호출 직전 주소 검사는 {@link #callHealthCheck} 가 맡는다(WD-178).
+   * <p>화면의 「테스트」(AI 연결 테스트 도구도 같은 API)뿐 아니라 10분 주기 상태 점검({@link
+   * ApiConnectionHealthCheckScheduler})과 일괄 새로고침({@link #refreshAllAsync})도 이 메서드를 부른다. 호출 직전 주소
+   * 검사는 {@link #callHealthCheck} 가 맡는다(WD-178).
+   *
+   * <p><b>상태 전환 알림도 여기서 한다(WD-189).</b> last_status 를 쓰는 곳은 이 메서드뿐이라, 저장이 돌려준 직전 상태(행 잠금으로 읽음)와 새
+   * 상태를 비교해 바뀌었으면 알림 + 감사 STATUS_CHANGE 를 남긴다. 예전에는 주기 점검만 순회 시작 때 읽어 둔 값과 비교해, 그 전에 「테스트」가 상태를 바꿔
+   * 두면 끊김·복구가 알림·기록 없이 사라졌다.
+   *
+   * @param actorUserId 「테스트」·전체 새로고침을 누른 사용자. null 이면 시스템(10분 주기 점검) — 감사 기록의 행위자가 된다
    */
-  public TestConnectionResponse testConnection(Long id) {
+  public TestConnectionResponse testConnection(Long id, Long actorUserId) {
     // ── 여기까지가 트랜잭션 구간(각 호출이 reader 프록시에서 자체 트랜잭션을 연다) ──
     ApiConnectionResponse conn = reader.getById(id);
     Map<String, String> rawConfig = reader.getDecryptedAuthConfig(id);
@@ -297,10 +310,46 @@ public class ApiConnectionService {
     TestConnectionResponse result =
         callHealthCheck(
             UrlUtils.joinUrl(conn.baseUrl(), conn.healthCheckPath()), conn.authType(), rawConfig);
-    // 성공·HTTP 오류·연결 실패·주소 차단 모두 같은 규칙으로 저장한다 — 상태 전환 알림은 스케줄러가 이 결과의 ok 로 판단한다.
-    repository.updateHealthStatus(
-        id, result.ok() ? "UP" : "DOWN", result.latencyMs(), result.errorMessage());
+    // 성공·HTTP 오류·연결 실패·주소 차단 모두 같은 규칙으로 저장한다.
+    recordHealthResult(id, conn.name(), result, actorUserId);
     return result;
+  }
+
+  /** 시스템(10분 주기 점검)이 부르는 상태 점검 — 행위자 없이 {@link #testConnection(Long, Long)} 과 같다. */
+  public TestConnectionResponse testConnection(Long id) {
+    return testConnection(id, null);
+  }
+
+  /**
+   * 점검 결과를 저장하고, 직전 상태와 달라졌으면 알림 + 감사 STATUS_CHANGE 를 남긴다 — 상태를 저장하는 모든 경로(주기 점검·「테스트」·전체 새로고침)가
+   * 거치는 한 곳(WD-189).
+   *
+   * <p><b>원자적 비교</b>: 직전 상태는 저장과 같은 트랜잭션에서 행 잠금으로 읽은 값({@link
+   * ApiConnectionRepository#updateHealthStatus} 의 반환값)이다. 점검과 테스트가 같은 연결을 동시에 바꿔도 두 번째 호출은 첫 호출이
+   * 커밋한 값을 직전 상태로 받으므로 한 전환에 알림이 두 번 나거나 빠지지 않는다. 첫 점검(직전 null)·같은 상태는 기존 규칙대로 {@link
+   * ApiConnectionNotifier} 가 건너뛴다.
+   *
+   * <p><b>커밋 후 발송</b>: 이 메서드(와 {@link #testConnection(Long, Long)})에는 트랜잭션이 없다. 저장은 리포지토리 자신의
+   * 트랜잭션에서 커밋된 뒤 반환되므로, 그 다음 줄의 알림은 커밋된 상태에 대해서만 나간다 — 주기 점검이 저장 후 알리던 예전 순서와 같다.
+   *
+   * <p>알림·감사가 실패해도 이미 저장된 점검 결과는 그대로 돌려준다(예전에는 스케줄러가 같은 이유로 감쌌다) — 「테스트」 응답이 500 이 되지 않게 한다.
+   */
+  private void recordHealthResult(
+      Long id, String connectionName, TestConnectionResponse result, Long actorUserId) {
+    String newStatus = result.ok() ? "UP" : "DOWN";
+    String previousStatus =
+        repository.updateHealthStatus(id, newStatus, result.latencyMs(), result.errorMessage());
+    try {
+      notifier.notifyStatusChange(
+          id, connectionName, previousStatus, newStatus, result.errorMessage(), actorUserId);
+    } catch (RuntimeException e) {
+      log.error(
+          "API 연결 상태 전환 알림 실패 — connection id={}, {}→{}: {}",
+          id,
+          previousStatus,
+          newStatus,
+          e.getMessage());
+    }
   }
 
   /**
@@ -547,7 +596,8 @@ public class ApiConnectionService {
               String connName = r.get(field(name("api_connection", "name"), String.class));
 
               try {
-                testConnection(id);
+                // 새로고침을 누른 사용자를 상태 전환 감사의 행위자로 남긴다(WD-189).
+                testConnection(id, userId);
               } catch (Exception e) {
                 log.warn(
                     "refreshAllAsync job {}: connection id={} 실패 — {}", jobId, id, e.getMessage());

@@ -9,6 +9,7 @@ import com.smartfirehub.apiconnection.repository.ApiConnectionRepository;
 import com.smartfirehub.global.tenant.TenantScopedRunner;
 import com.smartfirehub.support.TenantScopedRunnerStubs;
 import java.util.List;
+import java.util.Map;
 import org.jooq.Field;
 import org.jooq.Record;
 import org.junit.jupiter.api.BeforeEach;
@@ -19,15 +20,17 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 /**
- * ApiConnectionHealthCheckScheduler 단위 테스트. Repository, ApiConnectionService,
- * ApiConnectionNotifier를 mock으로 격리하여 스케줄러의 라우팅 로직(상태 전환 감지 → Notifier 호출)을 검증한다.
+ * ApiConnectionHealthCheckScheduler 단위 테스트. Repository, ApiConnectionService 를 mock 으로 격리하여 스케줄러가
+ * 대상마다 시스템 점검({@code testConnection(id)})을 부르는지만 검증한다.
+ *
+ * <p>상태 전환 알림·감사는 스케줄러가 아니라 상태를 저장하는 {@code ApiConnectionService.testConnection} 이 직전 상태(행 잠금)와 비교해
+ * 보낸다(WD-189). 그 동작은 실제 DB·WireMock 을 쓰는 {@code ApiConnectionTestUrlMaskingTest} 가 검증한다.
  */
 @ExtendWith(MockitoExtension.class)
 class ApiConnectionHealthCheckSchedulerTest {
 
   @Mock ApiConnectionRepository repository;
   @Mock ApiConnectionService connectionService;
-  @Mock ApiConnectionNotifier notifier;
   @Mock TenantScopedRunner tenantScopedRunner;
 
   @InjectMocks ApiConnectionHealthCheckScheduler scheduler;
@@ -44,8 +47,6 @@ class ApiConnectionHealthCheckSchedulerTest {
   // 테스트용 jOOQ Record 헬퍼 필드
   private static final Field<Long> AC_ID = field(name("api_connection", "id"), Long.class);
   private static final Field<String> AC_NAME = field(name("api_connection", "name"), String.class);
-  private static final Field<String> AC_LAST_STATUS =
-      field(name("api_connection", "last_status"), String.class);
 
   /** findHealthCheckable()이 빈 목록을 반환하면 아무 동작도 하지 않아야 한다. */
   @Test
@@ -54,84 +55,53 @@ class ApiConnectionHealthCheckSchedulerTest {
 
     scheduler.runOnce();
 
-    verifyNoInteractions(connectionService, notifier);
+    verifyNoInteractions(connectionService);
   }
 
-  /** 헬스체크 성공(ok=true) 시 notifier.notifyStatusChange가 "UP"으로 호출된다. */
+  /**
+   * 대상마다 시스템 점검(행위자 없는 testConnection(id))을 부른다 — 사용자 행위자 오버로드를 부르면 주기 점검 전환이 사람이 한 것처럼 감사에 남는다.
+   */
   @Test
-  void runOnce_success_callsNotifierWithUp() throws Exception {
-    Record r = mockRecord(10L, "Test-API", "DOWN");
-    when(repository.findHealthCheckable()).thenReturn(List.of(r));
-    when(connectionService.testConnection(10L))
-        .thenReturn(
-            new TestConnectionResponse(
-                true, 200, 50L, null, "https://x", null, java.util.Map.of(), null));
+  void runOnce_callsSystemTestConnectionPerTarget() {
+    Record r1 = mockRecord(10L, "API-10");
+    Record r2 = mockRecord(20L, "API-20");
+    when(repository.findHealthCheckable()).thenReturn(List.of(r1, r2));
+    when(connectionService.testConnection(anyLong())).thenReturn(okResponse());
 
     scheduler.runOnce();
 
-    verify(notifier).notifyStatusChange(10L, "Test-API", "DOWN", "UP", null);
-  }
-
-  /** 헬스체크 실패(ok=false) 시 notifier.notifyStatusChange가 "DOWN"으로 호출된다. */
-  @Test
-  void runOnce_failure_callsNotifierWithDown() throws Exception {
-    Record r = mockRecord(20L, "Broken-API", "UP");
-    when(repository.findHealthCheckable()).thenReturn(List.of(r));
-    when(connectionService.testConnection(20L))
-        .thenReturn(
-            new TestConnectionResponse(
-                false, 503, 100L, "HTTP 503", "https://x", null, java.util.Map.of(), null));
-
-    scheduler.runOnce();
-
-    verify(notifier).notifyStatusChange(20L, "Broken-API", "UP", "DOWN", "HTTP 503");
+    verify(connectionService).testConnection(10L);
+    verify(connectionService).testConnection(20L);
+    verify(connectionService, never()).testConnection(anyLong(), any());
   }
 
   /** testConnection 예외 발생 시 해당 연결만 건너뛰고 나머지 계속 처리한다. */
   @Test
-  void runOnce_exceptionOnOne_continuesOthers() throws Exception {
-    Record r1 = mockRecord(1L, "API-1", "UP");
-    Record r2 = mockRecord(2L, "API-2", "UP");
+  void runOnce_exceptionOnOne_continuesOthers() {
+    Record r1 = mockRecord(1L, "API-1");
+    Record r2 = mockRecord(2L, "API-2");
     when(repository.findHealthCheckable()).thenReturn(List.of(r1, r2));
     when(connectionService.testConnection(1L))
         .thenThrow(new RuntimeException("connection refused"));
-    when(connectionService.testConnection(2L))
-        .thenReturn(
-            new TestConnectionResponse(
-                true, 200, 30L, null, "https://x", null, java.util.Map.of(), null));
+    when(connectionService.testConnection(2L)).thenReturn(okResponse());
 
     scheduler.runOnce();
 
-    // API-1은 예외로 notifier 미호출
-    verify(notifier, never()).notifyStatusChange(eq(1L), any(), any(), any(), any());
-    // API-2는 정상 처리
-    verify(notifier).notifyStatusChange(2L, "API-2", "UP", "UP", null);
-  }
-
-  /** 최초 체크(prevStatus=null)여도 notifier는 호출된다 — notifier 내부에서 early-return 처리. */
-  @Test
-  void runOnce_firstCheck_callsNotifierWithNullPrev() throws Exception {
-    Record r = mockRecord(5L, "New-API", null);
-    when(repository.findHealthCheckable()).thenReturn(List.of(r));
-    when(connectionService.testConnection(5L))
-        .thenReturn(
-            new TestConnectionResponse(
-                true, 200, 20L, null, "https://x", null, java.util.Map.of(), null));
-
-    scheduler.runOnce();
-
-    verify(notifier).notifyStatusChange(5L, "New-API", null, "UP", null);
+    // API-1 예외 뒤에도 API-2 는 점검된다
+    verify(connectionService).testConnection(2L);
   }
 
   // ── 헬퍼 ──────────────────────────────────────────────────────────────────
 
+  private static TestConnectionResponse okResponse() {
+    return new TestConnectionResponse(true, 200, 30L, null, "https://x", null, Map.of(), null);
+  }
+
   /** 지정된 값을 반환하는 mock Record를 생성한다. jOOQ Record 인터페이스를 mock으로 대체하여 실제 DB 없이 테스트한다. */
-  @SuppressWarnings("unchecked")
-  private Record mockRecord(Long id, String name, String lastStatus) {
+  private Record mockRecord(Long id, String name) {
     Record r = mock(Record.class);
     when(r.get(AC_ID)).thenReturn(id);
     when(r.get(AC_NAME)).thenReturn(name);
-    when(r.get(AC_LAST_STATUS)).thenReturn(lastStatus);
     return r;
   }
 }

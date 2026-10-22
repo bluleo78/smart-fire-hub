@@ -294,11 +294,11 @@ class ApiConnectionControllerTest {
 
   /**
    * POST /{id}/test — apiconnection:write 권한 보유 시 정상 응답. PermissionInterceptor가
-   * permissionService.getUserPermissions()로 검증한다.
+   * permissionService.getUserPermissions()로 검증한다. 누른 사용자(토큰 주체 1L)를 상태 전환 감사의 행위자로 넘긴다(WD-189).
    */
   @Test
   void postTest_withPermission_returnsResult() throws Exception {
-    when(apiConnectionService.testConnection(1L))
+    when(apiConnectionService.testConnection(1L, 1L))
         .thenReturn(
             new TestConnectionResponse(
                 true,
@@ -316,6 +316,9 @@ class ApiConnectionControllerTest {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.ok").value(true))
         .andExpect(jsonPath("$.status").value(200));
+
+    // 시스템 경로(행위자 없음)가 아니라 요청 사용자로 불려야 한다.
+    verify(apiConnectionService).testConnection(1L, 1L);
   }
 
   /** POST /test — payload 기반 dry-run 연결 테스트. /{id}/test 라우팅에 가로채이지 않고 정상 호출되어야 한다. (#113) */

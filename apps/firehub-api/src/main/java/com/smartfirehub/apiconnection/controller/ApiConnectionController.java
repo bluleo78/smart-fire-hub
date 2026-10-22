@@ -93,8 +93,11 @@ public class ApiConnectionController {
    */
   @PostMapping("/{id:\\d+}/test")
   @RequirePermission("apiconnection:write")
-  public TestConnectionResponse testConnection(@PathVariable Long id) {
-    return apiConnectionService.testConnection(id);
+  public TestConnectionResponse testConnection(
+      @PathVariable Long id, Authentication authentication) {
+    // 누른 사용자를 상태 전환 감사의 행위자로 남긴다(WD-189) — AI 연결 테스트 도구도 이 API 를 사용자 신원으로 부른다.
+    Long userId = (Long) authentication.getPrincipal();
+    return apiConnectionService.testConnection(id, userId);
   }
 
   /**
