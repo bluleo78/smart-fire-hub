@@ -15,6 +15,7 @@ import static org.mockito.Mockito.when;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.repository.DatasetColumnRepository;
+import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.mapping.dto.MappingResponse;
 import com.smartfirehub.mapping.dto.MappingSpec;
 import com.smartfirehub.mapping.repository.MappingRepository;
@@ -34,6 +35,7 @@ class MappingServiceTest {
   private DatasetOntologyRepository bindingRepository;
   private OntologyRepository ontologyRepository;
   private DatasetColumnRepository columnRepository;
+  private DatasetRepository datasetRepository;
   private MappingService service;
 
   private static final long DS = 5001L;
@@ -44,12 +46,14 @@ class MappingServiceTest {
     bindingRepository = mock(DatasetOntologyRepository.class);
     ontologyRepository = mock(OntologyRepository.class);
     columnRepository = mock(DatasetColumnRepository.class);
+    datasetRepository = mock(DatasetRepository.class);
     service =
         new MappingService(
             mappingRepository,
             bindingRepository,
             ontologyRepository,
             columnRepository,
+            datasetRepository,
             new ObjectMapper());
 
     // 기본 fixture: DS는 온톨로지 1에 바인딩, 온톨로지는 Incident/Building + OCCURRED_AT.
@@ -144,6 +148,33 @@ class MappingServiceTest {
     order.verify(ontologyRepository).findById(1L);
   }
 
+  // WD-186: 필드 목록을 읽기 전에 데이터셋 행을 공유 잠금해야 진행 중인 필드 이름 변경·삭제가 끝난 뒤의 필드 목록으로 검증한다.
+  // 잠금 순서는 온톨로지 행 → 데이터셋 행이다(필드 변경 경로와 같은 순서 — 뒤바뀌면 교착 위험).
+  @Test
+  void save_필드_목록을_읽기_전에_온톨로지_다음_데이터셋을_공유잠금한다() {
+    service.save(DS, validSpec(), 42L);
+    var order = inOrder(ontologyRepository, datasetRepository, columnRepository);
+    order.verify(ontologyRepository).lockForShare(1L);
+    order.verify(datasetRepository).lockForShare(DS);
+    order.verify(columnRepository).findByDatasetId(DS);
+  }
+
+  @Test
+  void activate_필드_목록을_읽기_전에_데이터셋을_공유잠금한다() {
+    when(mappingRepository.findByDataset(DS))
+        .thenReturn(
+            Optional.of(
+                new StoredMapping(
+                    1L,
+                    "{\"entities\":[{\"entityType\":\"Building\",\"nameColumn\":\"bld\",\"properties\":[]}],\"relations\":[]}",
+                    "draft")));
+    service.activate(DS, 42L);
+    var order = inOrder(ontologyRepository, datasetRepository, columnRepository);
+    order.verify(ontologyRepository).lockForShare(1L);
+    order.verify(datasetRepository).lockForShare(DS);
+    order.verify(columnRepository).findByDatasetId(DS);
+  }
+
   @Test
   void save_미바인딩_데이터셋은_400() {
     when(bindingRepository.findOntologyIdByDataset(DS)).thenReturn(Optional.empty());
@@ -167,8 +198,25 @@ class MappingServiceTest {
     MappingSpec bad =
         new MappingSpec(
             List.of(new MappingSpec.EntityMapping("Incident", "nope", List.of())), List.of());
+    // WD-186: 내부 키(nameColumn) 대신 사용자 말(필드)과 어느 매핑 항목인지를 싣는다.
     assertThatThrownBy(() -> service.save(DS, bad, 42L))
-        .isInstanceOf(IllegalArgumentException.class);
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("데이터셋에 없는 필드입니다: nope (Incident 이름)");
+  }
+
+  @Test
+  void activate_데이터셋에_없는_속성_필드는_400이고_문구에_필드와_매핑_속성이_실린다() {
+    when(mappingRepository.findByDataset(DS))
+        .thenReturn(
+            Optional.of(
+                new StoredMapping(
+                    1L,
+                    "{\"entities\":[{\"entityType\":\"Incident\",\"nameColumn\":\"id\",\"properties\":[{\"column\":\"memo\",\"propertyName\":\"비고\"}]}],\"relations\":[]}",
+                    "active")));
+    assertThatThrownBy(() -> service.activate(DS, 42L))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("데이터셋에 없는 필드입니다: memo (Incident.비고)");
+    verify(mappingRepository, never()).updateStatus(anyLong(), anyString(), any());
   }
 
   @Test

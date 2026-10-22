@@ -37,6 +37,7 @@ import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.mapping.service.MappingReferenceService;
 import com.smartfirehub.pipeline.service.PipelineService;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.securitylevel.service.DatasetSecurityService;
@@ -178,6 +179,8 @@ public class DatasetService {
   private final RowSearchIndex rowSearchIndex;
   private final SearchColumnRepository searchColumnRepository;
   private final SearchIndexSettingsService searchIndexSettingsService;
+  // WD-186: 필드 이름 변경·타입 변경·삭제가 이 데이터셋의 지식그래프 매핑(필드 이름 참조)을 깨지 않게 지킨다.
+  private final MappingReferenceService mappingReferenceService;
 
   /** 파이프라인 전용 출처 필드를 일반 생성 경로에서 보냈을 때의 오류 코드. */
   public static final String ORIGIN_RESERVED_CODE = "DATASET_ORIGIN_RESERVED";
@@ -640,6 +643,13 @@ public class DatasetService {
             .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
     rejectIfDocument(dataset.storageType(), "컬럼 관리");
 
+    // WD-186: 이름·타입을 바꿀 수 있는 요청이면 필드를 읽기 전에 매핑 저장과 직렬화하는 잠금을 잡는다 — 아래에서 읽는 현재 필드
+    // 이름이 잠금 뒤의 값이어야 매핑 연쇄 갱신·타입 판정이 어긋나지 않는다. 설명만 고치는 요청(설명 칸 인라인 편집)은 매핑과 무관해
+    // 잠그지 않는다.
+    if (request.columnName() != null || request.dataType() != null) {
+      mappingReferenceService.lockForColumnChange(datasetId);
+    }
+
     DatasetColumnResponse column =
         columnRepository
             .findById(columnId)
@@ -656,6 +666,13 @@ public class DatasetService {
 
     if (request.dataType() != null && !VALID_DATA_TYPES.contains(request.dataType())) {
       throw new ColumnModificationException("알 수 없는 데이터 타입입니다: " + request.dataType());
+    }
+
+    // WD-186: 매핑 속성에 연결된 필드의 타입을 그 속성 자료형과 맞지 않게 바꾸면 DDL 전에 409 로 막는다(지식 모델 쪽 WD-185 와
+    // 대칭). 매핑은 아직 옛 이름을 들고 있으므로 현재(변경 전) 이름으로 판정한다 — 이름 연쇄 갱신은 아래 이름 변경 DDL 뒤에 일어난다.
+    if (request.dataType() != null && !request.dataType().equals(column.dataType())) {
+      mappingReferenceService.assertColumnTypeCompatible(
+          datasetId, column.columnName(), request.dataType());
     }
 
     long rowCount = dataTableRowService.countRows(dataset.tableName());
@@ -677,6 +694,8 @@ public class DatasetService {
             dataset.tableName(), column.columnName(), request.columnName());
       }
       dataTableService.renameColumn(dataset.tableName(), column.columnName(), request.columnName());
+      // WD-186: 이 데이터셋의 매핑(draft·active)이 옛 필드 이름을 가리키면 같은 트랜잭션에서 새 이름으로 바꾼다(상태는 그대로).
+      mappingReferenceService.renameColumn(datasetId, column.columnName(), request.columnName());
     }
 
     if (request.dataType() != null && !request.dataType().equals(column.dataType())) {
@@ -877,6 +896,9 @@ public class DatasetService {
             .orElseThrow(() -> new DatasetNotFoundException("Dataset not found: " + datasetId));
     rejectIfDocument(dataset.storageType(), "컬럼 관리");
 
+    // WD-186: 필드를 읽기 전에 매핑 저장과 직렬화하는 잠금을 잡는다 — 판정 직후 매핑 저장이 이 필드를 새로 연결하는 틈을 없앤다.
+    mappingReferenceService.lockForColumnChange(datasetId);
+
     DatasetColumnResponse column =
         columnRepository
             .findById(columnId)
@@ -895,6 +917,10 @@ public class DatasetService {
     if (columns.size() <= 1) {
       throw new ColumnModificationException("데이터셋의 마지막 필드는 삭제할 수 없습니다.");
     }
+
+    // WD-186: 이 데이터셋의 매핑(draft·active)이 쓰는 필드면 409 로 막는다. 그대로 지우면 매핑 탭은 없는 필드를 계속 보여 주고
+    // 활성화는 400, 그래프 투영은 그 필드를 조용히 건너뛰어 노드 0개로 「성공」한다.
+    mappingReferenceService.assertColumnUnused(datasetId, column.columnName());
 
     // 삭제 전에 검색 대상 여부를 잡아 둔다(삭제 후에는 컬럼 행이 없어 판정할 수 없다).
     boolean wasSearchField = searchColumnRepository.isSearchable(columnId);

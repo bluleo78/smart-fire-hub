@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.repository.DatasetColumnRepository;
+import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.mapping.dto.MappingResponse;
 import com.smartfirehub.mapping.dto.MappingSpec;
 import com.smartfirehub.mapping.repository.MappingRepository;
@@ -32,6 +33,8 @@ public class MappingService {
   private final DatasetOntologyRepository bindingRepository;
   private final OntologyRepository ontologyRepository;
   private final DatasetColumnRepository columnRepository;
+  // WD-186: 필드 목록을 읽기 전에 데이터셋 행을 공유 잠금해 필드 이름 변경·타입 변경·삭제와 직렬화한다(validate 주석).
+  private final DatasetRepository datasetRepository;
   private final ObjectMapper objectMapper;
 
   // 매핑 저장(draft). conformance 검증 통과 시 JSONB로 직렬화해 upsert.
@@ -87,6 +90,10 @@ public class MappingService {
     // 스키마로 검증해야, 옛 이름을 저장하거나 방금 삭제 검사를 통과한 요소를 새로 참조하는 일이 없다. 호출자(save/activate)의
     // 트랜잭션이 끝날 때까지 유지된다.
     ontologyRepository.lockForShare(ontologyId);
+    // WD-186: 필드 목록을 읽기 전에 데이터셋 행도 공유 잠금한다 — 진행 중인 필드 이름 변경·타입 변경·삭제(DatasetService, 이 행을
+    // NO KEY UPDATE 로 잡는다)가 끝난 뒤의 필드 목록으로 검증해야, 방금 사라진(이름이 바뀐) 필드를 매핑에 저장하는 일이 없다. 잠금 순서는
+    // 온톨로지 행 → 데이터셋 행 → 매핑 행(upsert)으로, 필드 변경 경로(MappingReferenceService.lockForColumnChange)와 같다.
+    datasetRepository.lockForShare(datasetId);
     OntologyResponse ontology = ontologyRepository.findById(ontologyId);
 
     // 컬럼명→컬럼타입. 존재 확인뿐 아니라 속성 dataType 호환 검사에도 원본 타입이 필요하다.
@@ -117,7 +124,9 @@ public class MappingService {
             "엔티티 타입 '" + em.entityType() + "'가 이미 매핑되어 있습니다. 같은 타입은 한 번만 매핑할 수 있습니다.");
       }
       if (!columns.contains(em.nameColumn())) {
-        throw new IllegalArgumentException("데이터셋에 없는 컬럼(nameColumn): " + em.nameColumn());
+        // WD-186: 사용자 화면은 「필드」라 부른다 — 내부 키(nameColumn) 대신 어느 매핑 항목인지(타입 이름)를 붙인다.
+        throw new IllegalArgumentException(
+            missingFieldMessage(em.nameColumn(), nameColumnLabel(em.entityType())));
       }
       Map<String, OntologyResponse.Property> propByName =
           et.properties().stream()
@@ -130,7 +139,8 @@ public class MappingService {
           throw new IllegalArgumentException(em.entityType() + "에 없는 속성: " + pm.propertyName());
         }
         if (!columns.contains(pm.column())) {
-          throw new IllegalArgumentException("데이터셋에 없는 컬럼(property): " + pm.column());
+          throw new IllegalArgumentException(
+              missingFieldMessage(pm.column(), propertyLabel(em.entityType(), pm.propertyName())));
         }
         checkPropertyType(em.entityType(), prop, pm.column(), columnTypes.get(pm.column()));
       }
@@ -230,6 +240,26 @@ public class MappingService {
       return null;
     }
     return actual;
+  }
+
+  /**
+   * 매핑이 가리키는 필드가 데이터셋에 없을 때의 문구(WD-186). 예: 데이터셋에 없는 필드입니다: memo (Building.note)
+   *
+   * <p>필드를 지우거나 이름을 바꾸는 경로는 이제 매핑을 함께 지키지만(MappingReferenceService), 그 전에 어긋난 매핑이 남아 있을 수 있어 저장·활성화
+   * 검증이 마지막으로 알린다.
+   */
+  static String missingFieldMessage(String column, String mappingLabel) {
+    return "데이터셋에 없는 필드입니다: " + column + " (" + mappingLabel + ")";
+  }
+
+  /** 매핑 항목 표기 — 엔티티 이름(nameColumn) 연결. 예: Building 이름 */
+  static String nameColumnLabel(String entityType) {
+    return entityType + " 이름";
+  }
+
+  /** 매핑 항목 표기 — 속성 연결. 예: Building.note */
+  static String propertyLabel(String entityType, String propertyName) {
+    return entityType + "." + propertyName;
   }
 
   // 오류 메시지용 축약 타입 한글 표기. 자료형 변경 거절 문구(MappingReferenceService)도 같은 표기를 쓴다.

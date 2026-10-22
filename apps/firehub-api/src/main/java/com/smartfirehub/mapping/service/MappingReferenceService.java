@@ -4,12 +4,14 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.repository.DatasetColumnRepository;
+import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.mapping.dto.MappingSpec;
 import com.smartfirehub.mapping.dto.OntologyMappingUsage;
 import com.smartfirehub.mapping.repository.MappingRepository;
 import com.smartfirehub.mapping.repository.MappingRepository.LiveMappingRow;
 import com.smartfirehub.mapping.repository.MappingRepository.OntologyMappingRow;
+import com.smartfirehub.mapping.repository.StoredMapping;
 import com.smartfirehub.ontology.dto.OntologyResponse;
 import com.smartfirehub.ontology.repository.OntologyRepository;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
@@ -18,6 +20,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.function.Predicate;
 import java.util.function.UnaryOperator;
 import java.util.stream.Collectors;
@@ -38,7 +41,11 @@ import org.springframework.transaction.annotation.Transactional;
  *   <li>속성 자료형 변경은 매핑이 그 속성에 연결한 컬럼 타입과 맞지 않으면 409 로 막는다(WD-185).
  * </ul>
  *
- * <p>호출자(OntologyElementService)의 트랜잭션에 합류한다 — 지식 모델 변경과 매핑 갱신이 함께 커밋되거나 함께 롤백돼야 한다.
+ * <p>WD-186: 반대쪽 끝인 데이터셋 필드도 같은 규칙으로 지킨다 — 매핑 spec 은 필드도 이름 문자열(nameColumn·properties[].column)로
+ * 가리킨다. 필드 이름 변경은 그 데이터셋의 매핑에 연쇄 반영하고, 매핑이 쓰는 필드의 삭제와 연결된 속성 자료형과 맞지 않는 타입 변경은 409 로 막는다.
+ *
+ * <p>호출자(OntologyElementService·DatasetService)의 트랜잭션에 합류한다 — 지식 모델·필드 변경과 매핑 갱신이 함께 커밋되거나 함께 롤백돼야
+ * 한다.
  *
  * <p>스코프: 매핑은 dataset_mapping.ontology_id 로 온톨로지에 묶인다(저장 시 바인딩에서 파생). 같은 이름의 요소가 다른 온톨로지에 있어도 그
  * 온톨로지의 매핑은 건드리지 않는다. 테넌트 격리는 리포지토리 쿼리가 RLS(GUC)로 받는다.
@@ -56,6 +63,16 @@ public class MappingReferenceService {
    */
   public static final String TYPE_CONFLICT_CODE = "ONTOLOGY_PROPERTY_TYPE_CONFLICTS_WITH_MAPPING";
 
+  /**
+   * WD-186: 데이터셋 필드 삭제가 매핑에서 쓰여 거절된 409 의 기계용 코드. 지식 모델 요소 삭제 차단(IN_USE_CODE)과 나눈 이유: 웹이 그 코드를 지식
+   * 모델 삭제 확인 창·사용처 갱신에 묶어 두었다.
+   */
+  public static final String COLUMN_IN_USE_CODE = "DATASET_COLUMN_IN_USE_BY_MAPPING";
+
+  /** WD-186: 데이터셋 필드 타입 변경이 매핑에 연결된 속성 자료형과 맞지 않아 거절된 409 의 기계용 코드. */
+  public static final String COLUMN_TYPE_CONFLICT_CODE =
+      "DATASET_COLUMN_TYPE_CONFLICTS_WITH_MAPPING";
+
   /** 문구에 이름을 다 나열하면 토스트가 길어지므로 앞의 몇 개만 보이고 나머지는 "외 n개"로 줄인다(웹 삭제 영향 안내와 같은 규칙). */
   private static final int MAX_NAMES = 5;
 
@@ -64,6 +81,8 @@ public class MappingReferenceService {
   private final DatasetAccessGuard datasetAccessGuard;
   // WD-185: 자료형 호환 판정에 매핑이 연결한 컬럼의 실제 타입이 필요하다(매핑 spec 에는 컬럼 이름만 있다).
   private final DatasetColumnRepository columnRepository;
+  // WD-186: 필드 변경 경로의 데이터셋 행 잠금(lockForColumnChange).
+  private final DatasetRepository datasetRepository;
   private final ObjectMapper objectMapper;
 
   // ── 이름 변경 연쇄 ─────────────────────────────────────────────────────────
@@ -379,6 +398,202 @@ public class MappingReferenceService {
         + "에 연결되어 있어 "
         + MappingService.koreanTypeName(newDataType.toLowerCase())
         + "로 바꿀 수 없습니다. 매핑에서 연결을 먼저 바꾸세요.";
+  }
+
+  // ── 데이터셋 필드 변경(WD-186) ──────────────────────────────────────────────
+
+  /**
+   * 필드 이름 변경·타입 변경·삭제의 첫 문장 — 매핑 저장과 직렬화하는 잠금을 잡는다. 호출자(DatasetService)는 이 뒤에 필드를 읽는다.
+   *
+   * <p>왜: 매핑 저장(MappingService.validate)은 필드 목록을 읽고 검증한 뒤 저장한다. 잠금이 없으면 ① 필드 삭제 판정이 아직 커밋되지 않은 매핑을
+   * 못 본 채 통과하거나 ② 매핑 저장이 이름이 바뀌기 전 필드 목록으로 검증한 옛 이름을 이름 변경 뒤에 저장해, 결함(없는 필드를 가리키는 매핑)이 다시 생긴다. 매핑 행
+   * 잠금만으로는 막지 못한다 — 첫 저장은 잠글 행이 아직 없다. 그래서 데이터셋 행을 잠근다(매핑 저장은 같은 행을 FOR SHARE 로 잡는다).
+   *
+   * <p>온톨로지 행도 공유 잠금하는 이유: 타입 변경 판정은 매핑 속성의 자료형을 읽고, 지식 모델의 속성 자료형 변경(WD-185)은 필드 타입을 읽는다. 서로 잠그지
+   * 않으면 둘 다 통과해 어긋난 쌍이 남는다. 자료형 변경은 온톨로지 행을 NO KEY UPDATE 로 잡으므로 공유 잠금과 충돌해 직렬화된다.
+   *
+   * <p>잠금 순서(교착 방지): <b>온톨로지 행 → 데이터셋 행 → 매핑 행</b>. 매핑 저장(온톨로지 SHARE → 데이터셋 SHARE → upsert)과 지식 모델
+   * 요소 편집(온톨로지 NO KEY UPDATE → 매핑 행 FOR UPDATE)이 모두 이 순서를 따른다. 매핑의 온톨로지는 잠그기 전에 잠금 없이 읽는다.
+   */
+  public void lockForColumnChange(long datasetId) {
+    Long ontologyId = mappedOntologyId(datasetId);
+    if (ontologyId != null) {
+      ontologyRepository.lockForShare(ontologyId);
+    }
+    datasetRepository.lockForColumnChange(datasetId);
+    // 잠금 없이 읽은 뒤 데이터셋 행을 잡기까지 사이에 첫 매핑 저장(또는 다른 온톨로지로의 재저장)이 커밋됐을 수 있다. 이제 데이터셋 행을
+    // 쥐었으므로 매핑의 온톨로지는 더 바뀌지 않는다(저장은 이 행의 SHARE 가 필요하다) — 다시 읽어 다르면 그 온톨로지도 공유 잠금한다.
+    // 순서가 데이터셋 → 온톨로지로 뒤집히지만 교착은 없다: 아직 매핑 행을 쥐지 않았고, 온톨로지를 배타로 쥘 수 있는 요소 편집은 데이터셋 행을
+    // 기다리지 않는다.
+    Long current = mappedOntologyId(datasetId);
+    if (current != null && !current.equals(ontologyId)) {
+      ontologyRepository.lockForShare(current);
+    }
+  }
+
+  private Long mappedOntologyId(long datasetId) {
+    return mappingRepository.findByDataset(datasetId).map(StoredMapping::ontologyId).orElse(null);
+  }
+
+  /**
+   * 필드 이름 변경을 이 데이터셋의 매핑(draft·active)에 반영한다 — 엔티티 이름 필드(nameColumn)와 속성 연결(properties[].column)
+   * 모두. 관계 매핑은 필드가 아니라 entities 인덱스를 가리키므로 손댈 것이 없다. 상태는 덮지 않는다(updateSpec).
+   */
+  public void renameColumn(long datasetId, String oldName, String newName) {
+    Optional<StoredMapping> stored = mappingRepository.findByDatasetForUpdate(datasetId);
+    if (stored.isEmpty()) {
+      return;
+    }
+    MappingSpec before = deserialize(stored.get().specJson());
+    MappingSpec after =
+        new MappingSpec(
+            mapEntities(
+                before,
+                em ->
+                    new MappingSpec.EntityMapping(
+                        em.entityType(),
+                        oldName.equals(em.nameColumn()) ? newName : em.nameColumn(),
+                        em.properties() == null
+                            ? null
+                            : em.properties().stream()
+                                .map(
+                                    pm ->
+                                        oldName.equals(pm.column())
+                                            ? new MappingSpec.PropertyMapping(
+                                                newName, pm.propertyName())
+                                            : pm)
+                                .toList())),
+            before.relations());
+    // 바뀌지 않았으면 쓰지 않는다 — updated_at 이 의미 없이 움직이지 않게(rewriteAll 과 같은 이유).
+    if (!Objects.equals(before, after)) {
+      mappingRepository.updateSpec(datasetId, serialize(after));
+    }
+  }
+
+  /**
+   * 이 데이터셋의 매핑이 이 필드를 쓰면 409. 예: 'memo' 필드는 이 데이터셋의 지식그래프 매핑(Building.note)에 연결되어 있어 삭제할 수 없습니다. 매핑
+   * 탭에서 연결을 먼저 해제하세요.
+   *
+   * <p>데이터셋 이름을 숨길 필요가 없다 — 호출자는 이미 그 데이터셋을 보고 필드를 지우려는 사람이다.
+   */
+  public void assertColumnUnused(long datasetId, String columnName) {
+    MappingSpec spec = mappingSpecOf(datasetId);
+    if (spec == null || spec.entities() == null) {
+      return;
+    }
+    List<String> usages = new ArrayList<>();
+    for (MappingSpec.EntityMapping em : spec.entities()) {
+      if (columnName.equals(em.nameColumn())) {
+        usages.add(MappingService.nameColumnLabel(em.entityType()));
+      }
+      if (em.properties() != null) {
+        for (MappingSpec.PropertyMapping pm : em.properties()) {
+          if (columnName.equals(pm.column())) {
+            usages.add(MappingService.propertyLabel(em.entityType(), pm.propertyName()));
+          }
+        }
+      }
+    }
+    if (usages.isEmpty()) {
+      return;
+    }
+    throw new CodedApiException(
+        HttpStatus.CONFLICT,
+        COLUMN_IN_USE_CODE,
+        "'"
+            + columnName
+            + "' 필드는 이 데이터셋의 지식그래프 매핑("
+            + joinLimited(usages)
+            + ")에 연결되어 있어 삭제할 수 없습니다. 매핑 탭에서 연결을 먼저 해제하세요.");
+  }
+
+  /**
+   * 필드 타입을 newDataType 으로 바꿔도 이 필드가 연결된 매핑 속성들의 자료형과 맞는지 확인하고, 하나라도 맞지 않으면 409.
+   *
+   * <p>왜: 타입만 바꾸고 매핑을 그대로 두면 재저장·활성화가 400 으로 막히고 그래프 투영은 숫자·날짜 속성에 엉뚱한 값을 넣는다. 호환 판정은 매핑 저장
+   * 검증·WD-185 와 같은 규칙(MappingService.incompatibleColumnKind)이다. 엔티티 이름 필드(nameColumn)는 자료형 검사 대상이
+   * 아니다(저장 검증과 같음).
+   *
+   * <p>columnName 은 <b>현재(변경 전) 이름</b>이어야 한다 — 이름과 타입을 함께 바꾸는 요청에서 매핑은 아직 옛 이름을 들고 있다.
+   */
+  public void assertColumnTypeCompatible(long datasetId, String columnName, String newDataType) {
+    Optional<StoredMapping> stored = mappingRepository.findByDataset(datasetId);
+    if (stored.isEmpty()) {
+      return;
+    }
+    MappingSpec spec = deserialize(stored.get().specJson());
+    if (spec.entities() == null) {
+      return;
+    }
+    OntologyResponse ontology = null;
+    List<String> conflicts = new ArrayList<>();
+    String columnKind = null;
+    for (MappingSpec.EntityMapping em : spec.entities()) {
+      if (em.properties() == null) {
+        continue;
+      }
+      for (MappingSpec.PropertyMapping pm : em.properties()) {
+        if (!columnName.equals(pm.column())) {
+          continue;
+        }
+        if (ontology == null) {
+          ontology = ontologyRepository.findById(stored.get().ontologyId());
+        }
+        // 지식 모델에서 이미 사라진 속성(어긋난 옛 매핑)은 자료형을 모르므로 막지 않는다(저장 검증이 따로 알린다 — 과소차단).
+        String want = propertyDataType(ontology, em.entityType(), pm.propertyName());
+        String kind = MappingService.incompatibleColumnKind(want, newDataType);
+        if (kind == null) {
+          continue;
+        }
+        columnKind = kind;
+        conflicts.add(
+            MappingService.koreanTypeName(want.toLowerCase())
+                + " 속성 "
+                + MappingService.propertyLabel(em.entityType(), pm.propertyName()));
+      }
+    }
+    if (conflicts.isEmpty()) {
+      return;
+    }
+    throw new CodedApiException(
+        HttpStatus.CONFLICT,
+        COLUMN_TYPE_CONFLICT_CODE,
+        "'"
+            + columnName
+            + "' 필드는 이 데이터셋의 지식그래프 매핑에서 "
+            + joinLimited(conflicts)
+            + "에 연결되어 있어 "
+            + MappingService.koreanTypeName(columnKind)
+            + " 타입("
+            + newDataType
+            + ")으로 바꿀 수 없습니다. 매핑 탭에서 연결을 먼저 해제하세요.");
+  }
+
+  // 엔티티 타입의 속성 자료형(없으면 null).
+  private static String propertyDataType(
+      OntologyResponse ontology, String entityType, String propertyName) {
+    return ontology.entities().stream()
+        .filter(et -> entityType.equals(et.type()))
+        .flatMap(et -> et.properties().stream())
+        .filter(p -> propertyName.equals(p.name()))
+        .map(OntologyResponse.Property::dataType)
+        .findFirst()
+        .orElse(null);
+  }
+
+  // 데이터셋의 매핑 spec(없으면 null). 잠금은 호출자가 이미 잡았다(lockForColumnChange) — 판정만 하므로 행을 따로 잠그지 않는다.
+  private MappingSpec mappingSpecOf(long datasetId) {
+    return mappingRepository
+        .findByDataset(datasetId)
+        .map(m -> deserialize(m.specJson()))
+        .orElse(null);
+  }
+
+  // 앞의 몇 개만 보이고 나머지는 "외 n개"(삭제 차단 문구와 같은 규칙).
+  private static String joinLimited(List<String> items) {
+    String shown = items.stream().limit(MAX_NAMES).collect(Collectors.joining(", "));
+    int rest = items.size() - Math.min(items.size(), MAX_NAMES);
+    return rest > 0 ? shown + " 외 " + rest + "개" : shown;
   }
 
   // ── 화면 미리보기 ──────────────────────────────────────────────────────────

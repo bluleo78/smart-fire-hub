@@ -342,6 +342,20 @@ public class DatasetRepository {
     return countQuery.where(condition).fetchOne(0, Long.class);
   }
 
+  // WD-186: 필드 이름 변경·타입 변경·삭제가 잡는 데이터셋 행 잠금. 매핑 저장·활성화(MappingService.validate — 이 행을 FOR SHARE
+  // 로 잡고 나서 필드 목록을 읽는다)와 직렬화해, "옛 필드 목록으로 검증한 매핑이 필드 변경 뒤에 저장되는" 틈을 없앤다. NO KEY UPDATE
+  // 인 이유: FOR SHARE 와는 충돌하면서도, 이 데이터셋을 FK 로 참조하는 단순 삽입(KEY SHARE)까지 막지는 않는다.
+  // 잠금 순서(교착 방지): 온톨로지 행 → 데이터셋 행 → 매핑 행. MappingReferenceService.lockForColumnChange 참고.
+  public void lockForColumnChange(Long id) {
+    dsl.select(DS_ID).from(DATASET).where(DS_ID.eq(id)).forNoKeyUpdate().fetch();
+  }
+
+  // WD-186: 매핑 저장·활성화가 필드 목록을 읽기 전에 잡는 공유 잠금 — 진행 중인 필드 변경(lockForColumnChange)이 끝난 뒤의 필드
+  // 목록으로 검증하게 한다. 매핑 저장끼리는 서로 막지 않는다(SHARE 는 서로 호환).
+  public void lockForShare(Long id) {
+    dsl.select(DS_ID).from(DATASET).where(DS_ID.eq(id)).forShare().fetch();
+  }
+
   public Optional<DatasetResponse> findById(Long id) {
     return findById(id, null);
   }
