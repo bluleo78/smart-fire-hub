@@ -17,6 +17,13 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
+/**
+ * API 연결 관리 REST 컨트롤러.
+ *
+ * <p>인증정보 원문을 HTTP 로 내보내는 경로는 두지 않는다(WD-175). 예전 {@code GET /{id}/decrypted} 는 읽기 권한({@code
+ * apiconnection:read})만으로 토큰·API 키 평문을 돌려줘, 수정 권한이 없는 일반 사용자도 비밀을 통째로 가져갈 수 있었다. 소비자가 없음을 확인하고 지웠다
+ * — 실행기·미리보기는 {@link ApiConnectionService#getDecryptedAuthConfig} 를 서버 안에서만 쓴다.
+ */
 @RestController
 @RequestMapping("/api/v1/api-connections")
 @RequiredArgsConstructor
@@ -64,13 +71,6 @@ public class ApiConnectionController {
   @RequirePermission("apiconnection:read")
   public ResponseEntity<ApiConnectionReferencesResponse> getReferences(@PathVariable Long id) {
     return ResponseEntity.ok(apiConnectionService.getReferences(id));
-  }
-
-  @GetMapping("/{id}/decrypted")
-  @RequirePermission("apiconnection:read")
-  public ResponseEntity<java.util.Map<String, String>> getDecryptedApiConnection(
-      @PathVariable Long id) {
-    return ResponseEntity.ok(apiConnectionService.getDecryptedAuthConfig(id));
   }
 
   /** 파이프라인 스텝에서 사용할 API 연결 slim 목록. 일반 사용자도 접근 가능하나 민감 필드(authConfig 등)는 제외되어 내려간다. */
