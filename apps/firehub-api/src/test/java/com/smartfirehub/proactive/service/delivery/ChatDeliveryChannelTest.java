@@ -1,5 +1,6 @@
 package com.smartfirehub.proactive.service.delivery;
 
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -14,8 +15,10 @@ import com.smartfirehub.proactive.dto.ProactiveJobResponse;
 import com.smartfirehub.proactive.dto.ProactiveResult;
 import com.smartfirehub.proactive.repository.ProactiveMessageRepository;
 import com.smartfirehub.support.IntegrationTestBase;
+import com.smartfirehub.user.dto.UserResponse;
 import java.util.List;
 import java.util.Map;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -26,6 +29,60 @@ class ChatDeliveryChannelTest extends IntegrationTestBase {
 
   @MockitoBean private ProactiveMessageRepository messageRepository;
   @MockitoBean private SseEmitterRegistry sseRegistry;
+  @MockitoBean private ActiveRecipientResolver recipientResolver;
+
+  /** 기본: 지정한 수신자가 모두 받을 수 있다(해석기를 통과시킨다). 거르는 경우는 해당 테스트가 따로 스텁한다. */
+  @BeforeEach
+  void allRecipientsReceivable() {
+    when(recipientResolver.activeUsers(any()))
+        .thenAnswer(
+            inv ->
+                inv.<List<Long>>getArgument(0).stream()
+                    .map(id -> new UserResponse(id, "u" + id, null, "u" + id, true, null))
+                    .toList());
+  }
+
+  /** WD-172: 정지·제거돼 해석기가 거른 수신자에게는 메시지도 알림도 만들지 않는다 — 남은 수신자는 그대로 받는다. */
+  @Test
+  void deliver_skipsRecipientsTheResolverDrops() {
+    Map<String, Object> config =
+        Map.of(
+            "channels",
+            List.of(
+                Map.of(
+                    "type", "CHAT",
+                    "recipientUserIds", List.of(10, 20),
+                    "recipientEmails", List.of())));
+    when(recipientResolver.activeUsers(List.of(10L, 20L)))
+        .thenReturn(List.of(new UserResponse(10L, "u10", null, "u10", true, null)));
+    when(messageRepository.create(anyLong(), anyLong(), anyString(), any(), anyString()))
+        .thenReturn(100L);
+
+    chatDeliveryChannel.deliver(makeJob(99L, config), 1L, makeResult());
+
+    verify(messageRepository).create(eq(10L), eq(1L), anyString(), any(), anyString());
+    verify(messageRepository, never()).create(eq(20L), anyLong(), anyString(), any(), anyString());
+    verify(sseRegistry, never()).broadcast(eq(20L), any());
+  }
+
+  /** WD-172: 받을 사람이 아무도 없으면 던진다 — 정상 반환이면 실행 기록에 「채팅으로 전달됨」이 거짓으로 남는다. */
+  @Test
+  void deliver_noReceivableRecipient_throws() {
+    Map<String, Object> config =
+        Map.of(
+            "channels",
+            List.of(
+                Map.of(
+                    "type", "CHAT",
+                    "recipientUserIds", List.of(20),
+                    "recipientEmails", List.of())));
+    when(recipientResolver.activeUsers(List.of(20L))).thenReturn(List.of());
+
+    assertThatThrownBy(() -> chatDeliveryChannel.deliver(makeJob(99L, config), 1L, makeResult()))
+        .hasMessageContaining("받을 수 있는 수신자가 없습니다");
+    verify(messageRepository, never())
+        .create(anyLong(), anyLong(), anyString(), any(), anyString());
+  }
 
   private ProactiveResult makeResult() {
     return new ProactiveResult("Test Report", List.of(), null, null, null);

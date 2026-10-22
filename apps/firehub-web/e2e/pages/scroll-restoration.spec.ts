@@ -1,6 +1,8 @@
 import type { Locator } from '@playwright/test';
 
 import { expect, test } from '../fixtures/auth.fixture';
+import { setupDatasetMocks } from '../fixtures/dataset.fixture';
+import { setupPipelineMocks } from '../fixtures/pipeline.fixture';
 
 /**
  * 라우트 전환 시 스크롤 위치 회귀 가드.
@@ -15,6 +17,8 @@ import { expect, test } from '../fixtures/auth.fixture';
  */
 
 const SHORT_VIEWPORT = { width: 1280, height: 400 };
+/** 모킹한 파이프라인 목록의 첫 행 이름 — 목록이 그려졌는지 기다리는 표지 */
+const PIPELINE_ROW = '파이프라인 1';
 
 /** `main`이 스크롤 가능해질 때까지 기다리고 최대 스크롤 오프셋을 돌려준다. */
 async function waitForScrollable(main: Locator): Promise<number> {
@@ -50,8 +54,12 @@ test.describe('앱 셸 높이', () => {
 });
 
 test.describe('라우트 전환 스크롤 위치', () => {
+  // 목록 API 를 모킹해 화면 높이를 고정한다 — 모킹이 없으면 로딩 스켈레톤·오류 화면 높이가 부하에 따라 달라져, 스크롤 가능 여부와
+  // 목표 오프셋이 실행마다 흔들렸다(전체 E2E 에서 간헐 실패).
   test.beforeEach(async ({ authenticatedPage: page }) => {
     await page.setViewportSize(SHORT_VIEWPORT);
+    await setupDatasetMocks(page);
+    await setupPipelineMocks(page, 20);
   });
 
   // 주의: 이 테스트만으로는 리셋 로직을 지워도 통과한다(뮤테이션으로 확인함).
@@ -76,6 +84,7 @@ test.describe('라우트 전환 스크롤 위치', () => {
     // 0으로 클램프해서, 리셋 로직을 지워도 통과하는 공허한 단언이 된다.
     await page.getByRole('link', { name: '파이프라인' }).click();
     await expect(page).toHaveURL(/\/pipelines/);
+    await expect(page.getByText(PIPELINE_ROW, { exact: true }).first()).toBeVisible();
     await waitForScrollable(main);
 
     await expect.poll(() => main.evaluate((el) => el.scrollTop)).toBe(0);
@@ -84,9 +93,12 @@ test.describe('라우트 전환 스크롤 위치', () => {
   test('뒤로가기는 이전 화면의 스크롤 위치를 복원한다', async ({
     authenticatedPage: page,
   }) => {
+    // 행이 그려진 뒤에 maxScroll 을 잰다. 처음 잰 높이가 로딩 스켈레톤 높이면, 뒤로 돌아왔을 때의 최종 화면(더 짧다)에서
+    // 목표 위치가 클램프돼 복원 경로가 멀쩡해도 실패했다(main 코드에서도 결정적 실패).
     await page.goto('/data/datasets');
     const main = page.locator('main');
     await expect(main).toBeVisible();
+    await expect(page.getByText('데이터셋 1', { exact: true }).first()).toBeVisible();
     const max = await waitForScrollable(main);
 
     // maxScroll의 절반 — 클램프되지 않으면서 0과도 확실히 구분되는 위치

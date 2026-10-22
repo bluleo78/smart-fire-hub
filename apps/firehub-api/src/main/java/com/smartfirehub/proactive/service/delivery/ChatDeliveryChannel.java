@@ -8,6 +8,7 @@ import com.smartfirehub.proactive.repository.ProactiveMessageRepository;
 import com.smartfirehub.proactive.util.ProactiveConfigParser;
 import com.smartfirehub.proactive.util.ProactiveConfigParser.ChannelConfig;
 import com.smartfirehub.proactive.util.ProactiveTime;
+import com.smartfirehub.user.dto.UserResponse;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -24,6 +25,7 @@ public class ChatDeliveryChannel implements DeliveryChannel {
 
   private final ProactiveMessageRepository messageRepository;
   private final SseEmitterRegistry sseRegistry;
+  private final ActiveRecipientResolver recipientResolver;
 
   @Override
   public String type() {
@@ -37,11 +39,19 @@ public class ChatDeliveryChannel implements DeliveryChannel {
       Optional<ChannelConfig> chatConfig =
           ProactiveConfigParser.getChannelConfig(job.config(), "CHAT");
 
-      List<Long> userIds =
+      List<Long> configuredIds =
           chatConfig
               .map(ChannelConfig::recipientUserIds)
               .filter(ids -> !ids.isEmpty())
               .orElse(List.of(job.userId())); // 미지정 시 생성자
+
+      // 정지·제거된 멤버는 받지 않는다(WD-172) — 저장된 수신자는 그대로 두고 전달 시점에만 거른다.
+      List<Long> userIds =
+          recipientResolver.activeUsers(configuredIds).stream().map(UserResponse::id).toList();
+      if (userIds.isEmpty()) {
+        // 한 건도 안 보냈는데 정상 반환하면 실행 기록에 「채팅으로 전달됨」이 남는다 — 던져서 deliveredChannels 에서 빠지게 한다.
+        throw new IllegalStateException("채팅 리포트를 받을 수 있는 수신자가 없습니다 — 지정한 수신자가 모두 정지·제거되었습니다");
+      }
 
       // htmlContent는 수십 KB일 수 있으므로 채팅 메시지 contentMap에서 제외한다.
       // 대신 summary 텍스트만 저장하고, executionId를 메타데이터로 포함해

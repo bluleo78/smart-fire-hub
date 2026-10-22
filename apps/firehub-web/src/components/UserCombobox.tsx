@@ -57,7 +57,22 @@ export default function UserCombobox({
     () => selectedUserIds.filter((id) => !userCache.has(id)),
     [selectedUserIds, userCache],
   );
-  const { data: hydratedUsers } = useRecipientsByIds(missingIds);
+  const {
+    data: hydratedUsers,
+    isSuccess: hydrated,
+    isFetching: hydrating,
+  } = useRecipientsByIds(missingIds);
+
+  // 조회를 마쳤는데도 이름을 찾지 못한 id — 정지·제거되었거나 이 워크스페이스에 없는 사용자다(WD-172).
+  // 서버는 이런 사람에게 리포트를 보내지 않지만, 저장된 목록에는 남아 있으므로 칩으로 보여 줘야 관리자가 뺄 수 있다.
+  // (이름은 보여 주지 않는다 — 수신자 조회가 이 워크스페이스 ACTIVE 멤버만 돌려주는 것은 다른 워크스페이스 사용자 정보 노출을 막기 위해서다.)
+  const unreachableIds = useMemo(
+    () =>
+      hydrated && !hydrating
+        ? missingIds.filter((id) => !(hydratedUsers ?? []).some((u) => u.userId === id))
+        : [],
+    [hydrated, hydrating, missingIds, hydratedUsers],
+  );
 
   useEffect(() => {
     if (!hydratedUsers || hydratedUsers.length === 0) return;
@@ -97,7 +112,7 @@ export default function UserCombobox({
           className="w-full justify-between font-normal h-auto min-h-9"
         >
           <div className="flex flex-wrap gap-1 flex-1 text-left">
-            {selectedUsers.length === 0 ? (
+            {selectedUsers.length === 0 && unreachableIds.length === 0 ? (
               <span className="text-muted-foreground">{placeholder}</span>
             ) : (
               selectedUsers.map((u) => (
@@ -120,6 +135,31 @@ export default function UserCombobox({
                 </Badge>
               ))
             )}
+            {unreachableIds.map((id) => (
+              <Badge
+                key={`unreachable-${id}`}
+                variant="outline"
+                className="flex items-center gap-1 text-muted-foreground"
+                title="정지·제거되었거나 이 워크스페이스에 없는 사용자입니다. 리포트를 받지 않습니다."
+              >
+                받을 수 없는 사용자
+                <span
+                  role="button"
+                  tabIndex={0}
+                  aria-label="받을 수 없는 사용자 빼기"
+                  className="cursor-pointer rounded-full hover:bg-muted"
+                  onClick={(e) => handleRemove(id, e)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      onChange(selectedUserIds.filter((sid) => sid !== id));
+                    }
+                  }}
+                >
+                  <X className="h-3 w-3" />
+                </span>
+              </Badge>
+            ))}
           </div>
           <ChevronsUpDown className=" h-4 w-4 shrink-0 opacity-50" />
         </Button>

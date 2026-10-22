@@ -236,4 +236,39 @@ test.describe('ChannelRecipientEditor — 4채널 확장', () => {
     await expect(slackSection.getByText('DongHee')).toBeVisible({ timeout: 5000 });
     await expect(slackSection.getByText('사용자 검색 (이름 또는 이메일)')).not.toBeVisible();
   });
+  // WD-172: 정지·제거된 수신자는 수신자 조회(현재 워크스페이스 ACTIVE 멤버만)에서 빠져 칩이 사라졌고, 그래서 관리자가 뺄 수 없었다.
+  // 이름을 찾지 못한 id 는 「받을 수 없는 사용자」 칩으로 보이고, 빼고 저장하면 그 id 가 요청에서 빠져야 한다.
+  test('정지·제거된 수신자는 「받을 수 없는 사용자」 칩으로 보이고 빼서 저장할 수 있다 (WD-172)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 42 만 이 워크스페이스 ACTIVE 멤버 — 77 은 정지·제거되어 조회 결과에 없다
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/recipients', [
+      { userId: 42, name: 'DongHee', email: 'donghee@example.com' },
+    ]);
+    const save = await mockApi(page, 'PUT', '/api/v1/proactive/jobs/1', createJob({ id: 1 }), {
+      capture: true,
+    });
+
+    await setupAndNavigateToNotifyTab(page, {
+      config: {
+        channels: [{ type: 'CHAT', recipientUserIds: [42, 77], recipientEmails: [] }],
+      },
+    });
+
+    const chatSection = page
+      .locator('div.rounded-lg.border')
+      .filter({ has: page.getByRole('checkbox', { name: /채팅/ }) });
+    await expect(chatSection.getByText('DongHee')).toBeVisible({ timeout: 5000 });
+    await expect(chatSection.getByText('받을 수 없는 사용자')).toBeVisible({ timeout: 5000 });
+
+    await chatSection.getByRole('button', { name: '받을 수 없는 사용자 빼기' }).click();
+    await expect(chatSection.getByText('받을 수 없는 사용자')).not.toBeVisible();
+    await expect(chatSection.getByText('1명에게 전달됩니다')).toBeVisible();
+
+    await page.getByRole('button', { name: '저장' }).click();
+    const req = await save.waitForRequest();
+    const channels = (req.payload as { config: { channels: { type: string; recipientUserIds: number[] }[] } })
+      .config.channels;
+    expect(channels.find((c) => c.type === 'CHAT')?.recipientUserIds).toEqual([42]);
+  });
 });
