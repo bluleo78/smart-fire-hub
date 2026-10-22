@@ -42,8 +42,13 @@ class DatasetDomainColumnTest extends IntegrationTestBase {
   }
 
   @Test
-  void datasetNameAndTableNameUniquesAreBothScopedToTenant() {
-    assertThat(indexDef("dataset", "idx_dataset_name")).contains("tenant_id").contains("name");
+  void datasetNameIndexIsNotUnique_butTableNameUniqueIsScopedToTenant() {
+    // WD-155(V142): 이름 유일 범위는 앱이 「볼 수 있는 데이터셋」 안에서만 판정한다 — DB 유일 제약이 있으면 숨긴 데이터셋과 같은
+    // 이름으로 만들 때 409 가 나서 존재가 드러난다. 인덱스는 조회용 일반 인덱스로 남는다.
+    assertThat(indexDef("dataset", "idx_dataset_name"))
+        .contains("tenant_id")
+        .contains("name")
+        .doesNotContain("UNIQUE");
 
     // P3-b2 T5(V112)가 이 단언을 뒤집었다 — 예전 이름은
     // datasetNameUniqueIsScopedToTenantButTableNameIsNot 이었고 "table_name 은 의도적으로

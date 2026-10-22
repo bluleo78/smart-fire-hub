@@ -472,8 +472,19 @@ public class DatasetRepository {
     dsl.deleteFrom(DATASET).where(DS_ID.eq(id)).execute();
   }
 
-  public boolean existsByName(String name) {
-    return dsl.fetchExists(dsl.selectOne().from(DATASET).where(DS_NAME.eq(name)));
+  /**
+   * 조회자가 볼 수 있는 데이터셋 가운데 같은 이름이 있는가(WD-155). 이름 유일 범위는 「볼 수 있는 데이터셋」이다 — 볼 수 없는(상위 등급) 데이터셋과 겹치는지까지
+   * 보면 이름을 맞혀 보는 것만으로 존재가 드러난다. DB 유일 제약도 없다(V142).
+   *
+   * @param visible 조회자 가시성 조건({@code DatasetAccessGuard.visibleCondition})
+   * @param excludeId 이름 변경 시 자기 자신(없으면 null)
+   */
+  public boolean existsVisibleByName(String name, Condition visible, Long excludeId) {
+    Condition c = DS_NAME.eq(name).and(visible);
+    if (excludeId != null) {
+      c = c.and(DS_ID.ne(excludeId));
+    }
+    return dsl.fetchExists(dsl.selectOne().from(DATASET).where(c));
   }
 
   public boolean existsByTableName(String tableName) {
