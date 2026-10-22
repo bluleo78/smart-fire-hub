@@ -9,13 +9,13 @@ import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { mappingApi } from '@/api/mapping';
-import type { MappingResponse } from '@/types/mapping';
+import type { BindOntologyResponse, MappingResponse } from '@/types/mapping';
 
-import { useSaveMapping } from './useMapping';
+import { useBindOntology, useSaveMapping } from './useMapping';
 import { mappingUsageQueryKey } from './useOntologyElement';
 
 vi.mock('@/api/mapping', () => ({
-  mappingApi: { saveMapping: vi.fn() },
+  mappingApi: { saveMapping: vi.fn(), bindOntology: vi.fn() },
 }));
 
 describe('useSaveMapping', () => {
@@ -44,5 +44,51 @@ describe('useSaveMapping', () => {
 
     expect(queryClient.getQueryState(mappingUsageQueryKey(1))?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(mappingUsageQueryKey(2))?.isInvalidated).toBe(true);
+  });
+});
+
+/**
+ * WD-184: 다른 모델로 다시 연결하면 백엔드가 이전 모델 기준 매핑을 지운다. 캐시된 옛 매핑이 새 모델 아래에 남아 보이지 않게
+ * 매핑·사용처 캐시를 무효화하고, 결과를 돌려주어 호출부가 삭제 안내를 띄울 수 있어야 한다.
+ */
+describe('useBindOntology', () => {
+  function setup(response: BindOntologyResponse | undefined) {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    queryClient.setQueryData(['datasets', 5, 'ontology-binding'], { datasetId: 5, ontologyId: 1 });
+    queryClient.setQueryData(['datasets', 5, 'mapping'], { datasetId: 5, ontologyId: 1 });
+    queryClient.setQueryData(mappingUsageQueryKey(1), { entityTypes: {}, properties: {}, relations: {} });
+    vi.mocked(mappingApi.bindOntology).mockResolvedValue({ data: response } as Awaited<
+      ReturnType<typeof mappingApi.bindOntology>
+    >);
+    const wrapper = ({ children }: { children: React.ReactNode }) =>
+      React.createElement(QueryClientProvider, { client: queryClient }, children);
+    const { result } = renderHook(() => useBindOntology(5), { wrapper });
+    return { queryClient, result };
+  }
+
+  it('매핑이 지워지면 바인딩·매핑·사용처 캐시를 모두 무효화하고 결과를 돌려준다', async () => {
+    const response: BindOntologyResponse = {
+      datasetId: 5, ontologyId: 2, mappingRemoved: true, previousOntologyId: 1, previousOntologyName: '건물',
+    };
+    const { queryClient, result } = setup(response);
+    let returned: BindOntologyResponse | null = null;
+    await act(async () => {
+      returned = await result.current.mutateAsync(2);
+    });
+    expect(returned).toEqual(response);
+    expect(queryClient.getQueryState(['datasets', 5, 'ontology-binding'])?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(['datasets', 5, 'mapping'])?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(mappingUsageQueryKey(1))?.isInvalidated).toBe(true);
+  });
+
+  it('지운 매핑이 없으면 매핑 캐시는 그대로 두고, 본문이 없으면 null 을 돌려준다', async () => {
+    const { queryClient, result } = setup(undefined);
+    let returned: BindOntologyResponse | null | undefined;
+    await act(async () => {
+      returned = await result.current.mutateAsync(1);
+    });
+    expect(returned).toBeNull();
+    expect(queryClient.getQueryState(['datasets', 5, 'ontology-binding'])?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(['datasets', 5, 'mapping'])?.isInvalidated).toBe(false);
   });
 });

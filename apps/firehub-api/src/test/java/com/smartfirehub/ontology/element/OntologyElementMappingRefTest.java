@@ -21,9 +21,12 @@ import com.smartfirehub.mapping.dto.MappingSpec.EntityMapping;
 import com.smartfirehub.mapping.dto.MappingSpec.PropertyMapping;
 import com.smartfirehub.mapping.dto.MappingSpec.RelationMapping;
 import com.smartfirehub.mapping.dto.OntologyMappingUsage;
+import com.smartfirehub.mapping.repository.MappingRepository;
 import com.smartfirehub.mapping.service.MappingReferenceService;
 import com.smartfirehub.mapping.service.MappingService;
 import com.smartfirehub.ontology.binding.DatasetOntologyRepository;
+import com.smartfirehub.ontology.binding.DatasetOntologyService;
+import com.smartfirehub.ontology.dto.BindOntologyResponse;
 import com.smartfirehub.ontology.dto.CreateOntologyRequest;
 import com.smartfirehub.ontology.dto.OntologyResponse;
 import com.smartfirehub.ontology.element.dto.ElementDtos.CreateEntityTypeRequest;
@@ -40,6 +43,7 @@ import java.util.ArrayList;
 import java.util.List;
 import org.jooq.JSONB;
 import org.jooq.Record;
+import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -76,6 +80,9 @@ class OntologyElementMappingRefTest extends OntologyElementTestSupport {
   @Autowired private DatasetRepository datasetRepository;
   @Autowired private DatasetOntologyRepository bindingRepository;
   @Autowired private MappingService mappingService;
+  // WD-184: 다른 지식 모델로 재연결할 때 옛 모델 기준 매핑이 지워지는지 — 실제 서비스(잠금·트랜잭션 포함)로 검증한다.
+  @Autowired private DatasetOntologyService bindingService;
+  @Autowired private MappingRepository mappingRepository;
 
   private long userId;
   private final List<Long> datasetIds = new ArrayList<>();
@@ -1350,6 +1357,127 @@ class OntologyElementMappingRefTest extends OntologyElementTestSupport {
     assertThat(out.secondError())
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("데이터셋에 없는 필드입니다: memo (Building.note)");
+    assertThat(storedRow(ds)).isNull();
+  }
+
+  // ── 다른 지식 모델로 재연결(WD-184) ─────────────────────────────────────────
+
+  // 재연결 대상 모델 B — 픽스처 모델(Sensor·Building)과 타입이 겹치지 않는다(Pump). 연결은 운영 중(active) 모델만 받는다.
+  private long rebindTarget() {
+    otherOntologyId =
+        ontologyService.createOntology(
+            new CreateOntologyRequest(
+                "재연결대상-" + System.nanoTime(),
+                List.of(
+                    new OntologyResponse.EntityType(
+                        "Pump",
+                        "펌프",
+                        "표기 그대로",
+                        "embedding",
+                        List.of(new OntologyResponse.Property("pressure", "압력", "number", null)))),
+                List.of(),
+                "active"));
+    return otherOntologyId;
+  }
+
+  // 픽스처 모델 A 를 운영 중으로 올린다 — bind 는 초안 모델 연결을 거부한다.
+  private void activateFixtureOntology() {
+    ontologyService.changeStatus(ontologyId, "active");
+  }
+
+  private List<Long> liveMappingDatasets(long ontology) {
+    return mappingRepository.findLiveByOntology(ontology, DSL.trueCondition()).stream()
+        .map(MappingRepository.LiveMappingRow::datasetId)
+        .toList();
+  }
+
+  private Long boundOntology(long datasetId) {
+    return bindingRepository.findOntologyIdByDataset(datasetId).orElse(null);
+  }
+
+  @Test
+  void 다른_모델로_재연결하면_옛_모델_기준_매핑을_지우고_응답으로_알리며_옛_모델_사용처에서_빠진다() {
+    activateFixtureOntology();
+    long b = rebindTarget();
+    long ds = dataset("재연결표");
+    long untouched = dataset("그대로표");
+    bindingService.bind(ds, ontologyId, userId);
+    bindingService.bind(untouched, ontologyId, userId);
+    mapping(ds, ontologyId, sensorBuildingSpec(), "active");
+    mapping(untouched, ontologyId, sensorBuildingSpec(), "active");
+    // 전제: 재연결 전에는 두 데이터셋 모두 모델 A 의 사용처다(아래 "빠진다" 단언이 공허하지 않게).
+    assertThat(liveMappingDatasets(ontologyId)).contains(ds, untouched);
+
+    BindOntologyResponse res = bindingService.bind(ds, b, userId);
+
+    assertThat(res.mappingRemoved()).isTrue();
+    assertThat(res.ontologyId()).isEqualTo(b);
+    assertThat(res.previousOntologyId()).isEqualTo(ontologyId);
+    assertThat(res.previousOntologyName())
+        .isEqualTo(ontologyRepository.findById(ontologyId).domain());
+    assertThat(boundOntology(ds)).isEqualTo(b);
+    assertThat(storedRow(ds)).isNull();
+    assertThat(mappingService.get(ds)).isEmpty();
+    // 옛 모델의 사용처·참조 수에서 빠진다 — 다른 데이터셋의 같은 모델 매핑은 건드리지 않는다.
+    assertThat(liveMappingDatasets(ontologyId)).doesNotContain(ds).contains(untouched);
+    assertThat(storedRow(untouched).get(field(name("status"), String.class))).isEqualTo("active");
+  }
+
+  @Test
+  void 같은_모델로_다시_연결하면_매핑을_그대로_둔다() {
+    activateFixtureOntology();
+    long ds = dataset("같은모델재연결표");
+    bindingService.bind(ds, ontologyId, userId);
+    mapping(ds, ontologyId, sensorBuildingSpec(), "active");
+
+    BindOntologyResponse res = bindingService.bind(ds, ontologyId, userId);
+
+    assertThat(res.mappingRemoved()).isFalse();
+    assertThat(res.previousOntologyId()).isEqualTo(ontologyId);
+    assertThat(storedRow(ds).get(field(name("status"), String.class))).isEqualTo("active");
+    assertThat(specOf(ds)).isEqualTo(sensorBuildingSpec());
+    assertThat(liveMappingDatasets(ontologyId)).contains(ds);
+  }
+
+  @Test
+  void 처음_연결하면_지울_매핑도_이전_모델도_없다() {
+    activateFixtureOntology();
+    long ds = dataset("첫연결표");
+
+    BindOntologyResponse res = bindingService.bind(ds, ontologyId, userId);
+
+    assertThat(res.mappingRemoved()).isFalse();
+    assertThat(res.previousOntologyId()).isNull();
+    assertThat(res.previousOntologyName()).isNull();
+    assertThat(boundOntology(ds)).isEqualTo(ontologyId);
+  }
+
+  // 재연결이 커밋되기 전에 시작한 매핑 저장은 재연결(데이터셋 행 NO KEY UPDATE)을 기다렸다가, 바뀐 연결 모델(B)로 다시 검증해야 한다.
+  // 저장 쪽 재조회가 없으면 잠금 전에 읽은 옛 모델(A)로 검증을 통과해, 재연결이 지운 A 기준 매핑을 재연결 뒤에 되살린다(고아 매핑).
+  @Test
+  void 진행_중인_재연결이_끝날_때까지_매핑_저장이_기다렸다가_새_모델로_검증해_옛_모델_매핑을_되살리지_않는다() throws Exception {
+    activateFixtureOntology();
+    addModelProperties();
+    long b = rebindTarget();
+    long ds = dataset("동시재연결표");
+    column(ds, "sensor_id", "TEXT");
+    column(ds, "m1", "TEXT");
+    column(ds, "building_id", "TEXT");
+    column(ds, "m2", "TEXT");
+    bindingService.bind(ds, ontologyId, userId);
+
+    PausedTransactionRace.Outcome<Object> out =
+        PausedTransactionRace.run(
+            tx,
+            DEFAULT_TEST_TENANT_ID,
+            () -> bindingService.bind(ds, b, userId),
+            () -> mappingService.save(ds, sensorBuildingSpec(), userId));
+
+    assertThat(out.secondBlocked()).isTrue();
+    assertThat(out.secondError())
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("온톨로지에 없는 엔티티 타입: Sensor");
+    assertThat(boundOntology(ds)).isEqualTo(b);
     assertThat(storedRow(ds)).isNull();
   }
 }

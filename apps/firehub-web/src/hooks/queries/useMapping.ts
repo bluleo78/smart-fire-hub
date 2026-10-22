@@ -40,12 +40,23 @@ export function useBinding(datasetId: number) {
   });
 }
 
-/** 온톨로지 연결. 성공 시 바인딩 쿼리를 무효화해 탭이 매핑 편집 상태로 전이한다. */
+/**
+ * 온톨로지 연결. 성공 시 바인딩 쿼리를 무효화해 탭이 매핑 편집 상태로 전이한다.
+ * WD-184: 다른 모델로 다시 연결하면 백엔드가 이전 모델 기준 매핑을 지운다(mappingRemoved). 그때는 캐시된 옛 매핑이
+ * 새 모델 아래에 남아 보이지 않게 매핑 쿼리와, 지식 모델 화면의 사용처 쿼리도 함께 무효화한다.
+ * 결과(BindOntologyResponse)를 돌려주어 호출부가 삭제 안내를 띄울 수 있게 한다. 테스트 목처럼 본문이 없으면 null.
+ */
 export function useBindOntology(datasetId: number) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (ontologyId: number) => mappingApi.bindOntology(datasetId, ontologyId),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['datasets', datasetId, 'ontology-binding'] }),
+    mutationFn: (ontologyId: number) => mappingApi.bindOntology(datasetId, ontologyId).then((r) => r.data ?? null),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['datasets', datasetId, 'ontology-binding'] });
+      if (data?.mappingRemoved) {
+        queryClient.invalidateQueries({ queryKey: ['datasets', datasetId, 'mapping'] });
+        queryClient.invalidateQueries({ queryKey: [MAPPING_USAGE_QUERY_PREFIX] });
+      }
+    },
   });
 }
 

@@ -81,19 +81,24 @@ public class MappingService {
 
   // conformance 검증 — 위반 시 IllegalArgumentException(→400). 통과하면 바인딩 ontologyId 반환.
   private long validate(long datasetId, MappingSpec spec) {
-    long ontologyId =
-        bindingRepository
-            .findOntologyIdByDataset(datasetId)
-            .orElseThrow(
-                () -> new IllegalArgumentException("데이터셋이 온톨로지에 바인딩되지 않았습니다: " + datasetId));
+    long lockedOntologyId = boundOntologyId(datasetId);
     // WD-129: 스키마를 읽기 전에 온톨로지 행을 공유 잠금한다 — 진행 중인 요소 이름 변경·삭제(행을 배타 잠금)가 끝난 뒤의
     // 스키마로 검증해야, 옛 이름을 저장하거나 방금 삭제 검사를 통과한 요소를 새로 참조하는 일이 없다. 호출자(save/activate)의
     // 트랜잭션이 끝날 때까지 유지된다.
-    ontologyRepository.lockForShare(ontologyId);
+    ontologyRepository.lockForShare(lockedOntologyId);
     // WD-186: 필드 목록을 읽기 전에 데이터셋 행도 공유 잠금한다 — 진행 중인 필드 이름 변경·타입 변경·삭제(DatasetService, 이 행을
     // NO KEY UPDATE 로 잡는다)가 끝난 뒤의 필드 목록으로 검증해야, 방금 사라진(이름이 바뀐) 필드를 매핑에 저장하는 일이 없다. 잠금 순서는
     // 온톨로지 행 → 데이터셋 행 → 매핑 행(upsert)으로, 필드 변경 경로(MappingReferenceService.lockForColumnChange)와 같다.
     datasetRepository.lockForShare(datasetId);
+    // WD-184: 연결 모델은 잠그기 전에 잠금 없이 읽었다. 그 사이 다른 모델로의 재연결(DatasetOntologyService.bind — 이 데이터셋 행을
+    // NO KEY UPDATE 로 잡는다)이 커밋됐을 수 있다. 이제 데이터셋 행을 쥐었으므로 연결은 더 바뀌지 않는다 — 다시 읽어 다르면 새 모델을
+    // 공유 잠금하고 그 스키마로 검증한다. 옛 모델로 검증해 저장하면 재연결이 지운 옛 모델 기준 매핑이 되살아난다(고아 매핑).
+    // 순서가 데이터셋 → 온톨로지로 뒤집히지만 교착은 없다: 아직 매핑 행을 쥐지 않았고, 온톨로지를 배타로 쥘 수 있는 요소 편집은 데이터셋 행을
+    // 기다리지 않는다(lockForColumnChange 와 같은 논리).
+    long ontologyId = boundOntologyId(datasetId);
+    if (ontologyId != lockedOntologyId) {
+      ontologyRepository.lockForShare(ontologyId);
+    }
     OntologyResponse ontology = ontologyRepository.findById(ontologyId);
 
     // 컬럼명→컬럼타입. 존재 확인뿐 아니라 속성 dataType 호환 검사에도 원본 타입이 필요하다.
@@ -181,6 +186,13 @@ public class MappingService {
       }
     }
     return ontologyId;
+  }
+
+  // 데이터셋의 연결 모델 id — 미연결이면 IllegalArgumentException(→400).
+  private long boundOntologyId(long datasetId) {
+    return bindingRepository
+        .findOntologyIdByDataset(datasetId)
+        .orElseThrow(() -> new IllegalArgumentException("데이터셋이 온톨로지에 바인딩되지 않았습니다: " + datasetId));
   }
 
   // 데이터셋 컬럼 타입 → 온톨로지 dataType(text|number|date) 축약.

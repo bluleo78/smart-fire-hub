@@ -350,6 +350,14 @@ public class DatasetRepository {
     dsl.select(DS_ID).from(DATASET).where(DS_ID.eq(id)).forNoKeyUpdate().fetch();
   }
 
+  // WD-184: 지식 모델 연결·재연결(DatasetOntologyService.bind)이 잡는 데이터셋 행 잠금. 재연결은 "이전 연결 읽기 → 연결 갱신 → 옛 모델
+  // 기준 매핑 삭제"를 한 덩어리로 해야 하는데, 매핑 저장·활성화(MappingService.validate — 이 행을 FOR SHARE 로 잡는다)와 직렬화하지
+  // 않으면 옛 모델로 검증한 매핑이 재연결 뒤에 저장돼 고아 매핑이 다시 생긴다. NO KEY UPDATE 인 이유는 lockForColumnChange 와 같다.
+  // 잠금 순서: 데이터셋 행 → 매핑 행(온톨로지 행은 잡지 않는다) — 온톨로지 행 → 데이터셋 행 → 매핑 행 규약의 부분 순서다.
+  public void lockForOntologyRebind(Long id) {
+    dsl.select(DS_ID).from(DATASET).where(DS_ID.eq(id)).forNoKeyUpdate().fetch();
+  }
+
   // WD-186: 매핑 저장·활성화가 필드 목록을 읽기 전에 잡는 공유 잠금 — 진행 중인 필드 변경(lockForColumnChange)이 끝난 뒤의 필드
   // 목록으로 검증하게 한다. 매핑 저장끼리는 서로 막지 않는다(SHARE 는 서로 호환).
   public void lockForShare(Long id) {

@@ -76,9 +76,14 @@ describe('datasetApi (via FireHubApiClient)', () => {
   // 서로를 막아 에이전트 단독으로 완결할 수 없다. 엔드포인트 계약을 고정한다.
   describe('지식그래프 구축 엔드포인트', () => {
     it('bindDatasetOntology calls PUT /datasets/:id/ontology with ontologyId body', async () => {
-      const scope = nock(BASE_URL).put('/datasets/7/ontology', { ontologyId: 3 }).reply(204);
-      await client.bindDatasetOntology(7, 3);
+      // WD-184: 200 + 본문(매핑 삭제 여부·이전 모델)을 그대로 돌려준다.
+      const body = {
+        datasetId: 7, ontologyId: 3, mappingRemoved: true, previousOntologyId: 2, previousOntologyName: '건물',
+      };
+      const scope = nock(BASE_URL).put('/datasets/7/ontology', { ontologyId: 3 }).reply(200, body);
+      const result = await client.bindDatasetOntology(7, 3);
       expect(scope.isDone()).toBe(true);
+      expect(result).toEqual(body);
     });
 
     it('activateDatasetMapping calls POST /datasets/:id/mapping/activate', async () => {

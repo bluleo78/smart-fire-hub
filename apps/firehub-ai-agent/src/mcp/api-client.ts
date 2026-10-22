@@ -2,6 +2,7 @@ import axios, { AxiosInstance, AxiosError } from 'axios';
 import { API_ERROR_PREFIX } from '../constants.js';
 import { createCategoryApi } from './api-client/category-api.js';
 import {
+  type BindOntologyResult,
   createDatasetApi,
   type DatasetColumnInput,
   type DatasetColumnResponse,
@@ -304,9 +305,9 @@ export class FireHubApiClient {
     await this._datasets.saveDatasetMapping(id, spec);
   }
 
-  // 데이터셋↔온톨로지 바인딩 설정 위임(구축 파이프라인 1단계).
-  async bindDatasetOntology(id: number, ontologyId: number): Promise<void> {
-    await this._datasets.bindDatasetOntology(id, ontologyId);
+  // 데이터셋↔온톨로지 바인딩 설정 위임(구축 파이프라인 1단계). WD-184: 재연결로 지운 매핑이 있으면 결과가 알린다.
+  async bindDatasetOntology(id: number, ontologyId: number): Promise<BindOntologyResult> {
+    return this._datasets.bindDatasetOntology(id, ontologyId);
   }
 
   // draft 매핑 활성화 위임(구축 파이프라인 3단계). 활성화된 매핑 상태를 반환한다.

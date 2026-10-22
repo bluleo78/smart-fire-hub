@@ -601,7 +601,9 @@ export function registerGraphragTools(
     ),
     safeTool(
       'graphrag_bind_ontology',
-      '데이터셋을 온톨로지에 바인딩한다(멱등). 표 데이터셋 매핑 추론·투영의 사전 조건. 관리/구축 목적으로만 사용.',
+      '데이터셋을 온톨로지에 바인딩한다. 표 데이터셋 매핑 추론·투영의 사전 조건. 관리/구축 목적으로만 사용. '
+        + '같은 온톨로지로 다시 연결하면 아무것도 바뀌지 않지만, 다른 온톨로지로 바꾸면 이전 온톨로지 기준 매핑이 삭제된다'
+        + '(결과의 mappingRemoved·notice) — 이미 매핑이 있는 데이터셋을 다른 온톨로지로 바꾸기 전에는 사용자 확인을 받을 것.',
       {
         datasetId: z.number().describe('바인딩할 데이터셋 ID'),
         ontologyId: z.number().describe('바인딩 대상 온톨로지 ID(graphrag_list_ontologies 로 확인)'),
@@ -617,9 +619,25 @@ export function registerGraphragTools(
               + `${ontologies.map((o) => `${o.id}(${o.domain})`).join(', ') || '없음'}`,
           );
         }
-        await apiClient.bindDatasetOntology(args.datasetId, args.ontologyId);
+        const bound = await apiClient.bindDatasetOntology(args.datasetId, args.ontologyId);
+        // WD-184: 다른 온톨로지로 재연결하면 백엔드가 이전 온톨로지 기준 매핑을 지운다. 답에 그 사실을 실어야 에이전트가
+        // "매핑이 그대로 있다"고 오해하지 않고 새 온톨로지 기준 매핑을 다시 만들도록 안내한다. 구버전 백엔드(204, 본문 없음)는 삭제 없음으로 본다.
+        const mappingRemoved = bound?.mappingRemoved === true;
+        const previousName = bound?.previousOntologyName ?? `id=${bound?.previousOntologyId ?? '?'}`;
         return jsonResult({
-          datasetId: args.datasetId, ontologyId: args.ontologyId, domain: target.domain, bound: true,
+          datasetId: args.datasetId,
+          ontologyId: args.ontologyId,
+          domain: target.domain,
+          bound: true,
+          mappingRemoved,
+          previousOntologyId: bound?.previousOntologyId ?? null,
+          previousOntologyName: bound?.previousOntologyName ?? null,
+          ...(mappingRemoved
+            ? {
+              notice: `이전 모델(${previousName}) 기준 매핑을 삭제했습니다. `
+                + `새 모델(${target.domain}) 기준으로 매핑을 다시 만들어야 합니다(graphrag_infer_mapping 또는 데이터셋 "매핑" 탭).`,
+            }
+            : {}),
         });
       },
     ),

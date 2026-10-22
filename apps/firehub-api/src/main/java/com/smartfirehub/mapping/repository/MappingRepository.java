@@ -107,6 +107,17 @@ public class MappingRepository {
             r -> new StoredMapping(r.get(M_ONTOLOGY_ID), r.get(M_SPEC).data(), r.get(M_STATUS)));
   }
 
+  // WD-184: 이 데이터셋의 매핑 중 keepOntologyId 가 아닌 모델 기준 매핑을 지운다(다른 지식 모델로 재연결할 때). 지운 행이 있으면
+  // true. "이전 연결 ≠ 새 연결"이 아니라 "매핑의 모델 ≠ 새 연결"로 거르는 이유: 이 수정 전에 이미 어긋난 행(연결 B, 매핑 A)이 있으면
+  // A 로 다시 연결할 때 맞는 매핑을 지우지 않고, 다른 모델로 연결할 때는 함께 정리된다. 호출자는 데이터셋 행 잠금을 먼저 잡는다.
+  public boolean deleteByDatasetExceptOntology(long datasetId, long keepOntologyId) {
+    return dsl.deleteFrom(DATASET_MAPPING)
+            .where(M_DATASET_ID.eq(datasetId))
+            .and(M_ONTOLOGY_ID.ne(keepOntologyId))
+            .execute()
+        > 0;
+  }
+
   // 상태만 전환(draft→active). updated_by/at 함께 갱신.
   public void updateStatus(long datasetId, String status, Long userId) {
     dsl.update(DATASET_MAPPING)

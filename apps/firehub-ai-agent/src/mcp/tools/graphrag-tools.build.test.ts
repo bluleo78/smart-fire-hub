@@ -133,7 +133,22 @@ describe('graphrag_bind_ontology', () => {
     const client = baseClient();
     const out = await findTool(client, 'graphrag_bind_ontology').handler({ datasetId: 900, ontologyId: 2 });
     expect(client.bindDatasetOntology).toHaveBeenCalledWith(900, 2);
-    expect(out).toMatchObject({ datasetId: 900, ontologyId: 2, domain: 'safety', bound: true });
+    expect(out).toMatchObject({ datasetId: 900, ontologyId: 2, domain: 'safety', bound: true, mappingRemoved: false });
+    expect(out.notice).toBeUndefined();
+  });
+
+  // WD-184: 다른 온톨로지로 재연결해 백엔드가 이전 온톨로지 기준 매핑을 지웠으면, 답에 그 사실과 안내 문구를 싣는다.
+  // 싣지 않으면 에이전트가 매핑이 그대로 있다고 여겨 곧장 활성화·투영으로 넘어간다.
+  it('다른 온톨로지로 재연결해 매핑이 지워지면 이전 모델 이름과 함께 삭제를 알린다', async () => {
+    const client = baseClient({
+      bindDatasetOntology: vi.fn().mockResolvedValue({
+        datasetId: 900, ontologyId: 2, mappingRemoved: true, previousOntologyId: 1, previousOntologyName: 'fire',
+      }),
+    });
+    const out = await findTool(client, 'graphrag_bind_ontology').handler({ datasetId: 900, ontologyId: 2 });
+    expect(out).toMatchObject({ mappingRemoved: true, previousOntologyId: 1, previousOntologyName: 'fire' });
+    expect(out.notice).toContain('이전 모델(fire) 기준 매핑을 삭제했습니다');
+    expect(out.notice).toContain('safety');
   });
 
   // 잘못된 id 로 바인딩하면 뒤늦게 추론 단계에서 실패한다 — 사전 거부 + 후보 안내로 자체 정정 유도.

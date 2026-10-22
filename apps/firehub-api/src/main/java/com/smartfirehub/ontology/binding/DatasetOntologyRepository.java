@@ -17,9 +17,10 @@ import org.springframework.transaction.annotation.Transactional;
 // 데이터셋↔온톨로지 바인딩(N:1) 저장/조회. OntologyRepository와 동일한 plain-SQL DSL 패턴(codegen 비의존).
 @Repository
 @RequiredArgsConstructor
-// RLS GUC 는 트랜잭션 시작 시점에만 주입되는데 호출자 DatasetOntologyService(bind/get)는 트랜잭션
-// 경계를 만들지 않는다. 여기서 열지 않으면 bind 는 tenant_id NOT NULL 위반, get 은 조용히 0행이
-// 된다. 지우지 말 것.
+// RLS GUC 는 트랜잭션 시작 시점에만 주입되는데 호출자 DatasetOntologyService.get 은 트랜잭션 경계를 만들지 않는다.
+// 여기서 열지 않으면 get 은 조용히 0행이 되고, 리포지토리를 직접 부르는 호출(테스트 픽스처 등)의 bind 는 tenant_id
+// NOT NULL 위반이 된다. WD-184 이후 DatasetOntologyService.bind 는 자체 트랜잭션(재연결 시 매핑 삭제와 원자적)을
+// 열고 여기에 합류한다. 지우지 말 것.
 @Transactional
 public class DatasetOntologyRepository {
 

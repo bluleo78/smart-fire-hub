@@ -63,6 +63,19 @@ export interface RowSearchBody {
   limit?: number;
 }
 
+/**
+ * 데이터셋↔온톨로지 바인딩 결과 — 백엔드 `BindOntologyResponse` 미러(WD-184).
+ * mappingRemoved=true 면 다른 모델로 재연결하면서 이전 모델(previousOntologyName) 기준 매핑을 지웠다는 뜻이다.
+ * previousOntologyId/Name 은 이번 연결 직전의 연결 모델이고 첫 연결이면 null 이다.
+ */
+export interface BindOntologyResult {
+  datasetId: number;
+  ontologyId: number;
+  mappingRemoved: boolean;
+  previousOntologyId: number | null;
+  previousOntologyName: string | null;
+}
+
 export function createDatasetApi(client: AxiosInstance) {
   return {
     async listDatasets(params?: {
@@ -184,11 +197,13 @@ export function createDatasetApi(client: AxiosInstance) {
     async saveDatasetMapping(id: number, spec: unknown): Promise<void> {
       await client.put(`/datasets/${id}/mapping`, spec);
     },
-    // 데이터셋↔온톨로지 바인딩 설정(PUT /datasets/{id}/ontology, 멱등 UPSERT).
+    // 데이터셋↔온톨로지 바인딩 설정(PUT /datasets/{id}/ontology, UPSERT).
     // 왜 필요한가: 매핑 추론(graphrag_infer_mapping)이 바인딩 없으면 거부하므로, 바인딩 수단이
     // 없으면 에이전트 단독으로는 구축 파이프라인을 시작조차 못 하는 데드엔드가 된다.
-    async bindDatasetOntology(id: number, ontologyId: number): Promise<void> {
-      await client.put(`/datasets/${id}/ontology`, { ontologyId });
+    // WD-184: 다른 모델로 다시 연결하면 백엔드가 옛 모델 기준 매핑을 지우고 200 본문으로 알린다(mappingRemoved·이전 모델).
+    async bindDatasetOntology(id: number, ontologyId: number): Promise<BindOntologyResult> {
+      const response = await client.put(`/datasets/${id}/ontology`, { ontologyId });
+      return response.data;
     },
     // draft 매핑을 활성화(POST /datasets/{id}/mapping/activate). 백엔드가 conformance 재검증 후 전환.
     // 표 투영(graphrag_project_table)이 active 만 허용하므로 파이프라인 완결에 필수.
