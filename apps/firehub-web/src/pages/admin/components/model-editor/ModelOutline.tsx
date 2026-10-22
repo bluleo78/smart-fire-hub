@@ -1,5 +1,5 @@
-import { Plus } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { PanelLeftClose, PanelLeftOpen, Plus } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -37,6 +37,50 @@ interface Props {
   // 도메인명 필드의 dirty(#484) — OntologyPage가 useDirtyAggregator로 다른 인스펙터 필드들과
   // OR-합산해 useUnsavedChangesGuard에 연결한다. 미전달 시(선택 안 함) 그냥 보고를 건너뛴다.
   onDirtyChange?: ReportDirty;
+  // 좁은 본문에서 목록이 펼쳐져 있는지(WD-130) — 본문 폭이 넉넉하면(@min-[856px]/kg-body) 이 값과
+  // 무관하게 항상 펼쳐진 패널이 보이고, 좁으면 false=얇은 접기 막대(ModelOutlineRail)·true=이 패널로
+  // 바뀐다. 편집 패널과 한 번에 하나만 열리도록(좁을 때 둘 다 들어갈 폭이 없다) OntologyPage가 소유한다.
+  expanded: boolean;
+  onExpandedChange: (expanded: boolean) => void;
+  // 접기 막대의 「목록 펼치기」 버튼 ref(WD-130) — 접을 때 포커스를 돌려줄 곳이다(아래 포커스 관리 참고).
+  railButtonRef: React.RefObject<HTMLButtonElement | null>;
+}
+
+// 좁은 본문용 목록 접기 막대(WD-130) — 지식 모델 본문(@container/kg-body) 폭이 856px 미만이면 목록 패널
+// 대신 이 얇은 막대만 남긴다. 「목록 펼치기」를 누르면 목록 패널이 겹치지 않고 붙어 캔버스를 밀어낸다.
+// 넓은 본문에서는 목록이 항상 펼쳐져 있으므로 막대는 숨는다. w-10(40px)은 856px 미만 대역에서 캔버스
+// 최소 280px + 편집 패널 320px과 함께 들어가도록(40+280+320=640) 가능한 한 얇게 둔 값이다.
+// 목록 패널과 형제로 렌더해야 하므로(둘 다 본문 flex 줄의 항목) 별도 컴포넌트로 둔다.
+export function ModelOutlineRail({
+  expanded,
+  onExpand,
+  buttonRef,
+}: {
+  expanded: boolean;
+  onExpand: () => void;
+  buttonRef: React.RefObject<HTMLButtonElement | null>;
+}) {
+  return (
+    <div
+      className={cn(
+        'w-10 shrink-0 flex-col items-center border-r py-2',
+        expanded ? 'hidden' : 'flex @min-[856px]/kg-body:hidden',
+      )}
+      data-testid="model-outline-rail"
+    >
+      <Button
+        ref={buttonRef}
+        variant="ghost"
+        size="icon"
+        className="h-8 w-8"
+        onClick={onExpand}
+        aria-label="목록 펼치기"
+        aria-expanded={false}
+      >
+        <PanelLeftOpen className="h-4 w-4" />
+      </Button>
+    </div>
+  );
 }
 
 // 편집 모드 좌측 아웃라인 — 타입/관계를 목록으로 보여주고 클릭 시 선택 상태를 갱신한다.
@@ -52,6 +96,9 @@ export default function ModelOutline({
   onAddEntityType,
   addEntityTypeButtonRef,
   onDirtyChange,
+  expanded,
+  onExpandedChange,
+  railButtonRef,
 }: Props) {
   const entities = schema.entities.filter((e): e is typeof e & { id: number } => e.id != null);
   const relations = schema.relations.filter((r): r is typeof r & { id: number } => r.id != null);
@@ -101,19 +148,67 @@ export default function ModelOutline({
   const isSelected = (kind: SchemaGraphSelection['kind'], id: number) =>
     selected?.kind === kind && selected.id === id;
 
+  // 접기/펼치기 포커스 관리(WD-130) — 포커스가 있던 쪽(막대 또는 패널)이 display:none이 되면 포커스가
+  // body로 떨어져 키보드 사용자가 위치를 잃는다. 펼침 상태가 바뀐 직후 포커스를 잃었거나 숨은 쪽에
+  // 남아 있으면 지금 보이는 쪽의 토글 버튼(펼치면 「목록 접기」, 접으면 「목록 펼치기」)으로 옮긴다.
+  // 넓은 본문에서는 두 토글 버튼이 모두 숨어 있어(offsetParent=null) 아무것도 하지 않는다. 마운트가
+  // 아니라 "값이 바뀐 때"만 돌도록 이전 값을 비교한다(StrictMode의 effect 이중 실행에도 마운트 직후
+  // 포커스를 빼앗지 않게).
+  const collapseButtonRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const prevExpandedRef = useRef(expanded);
+  useEffect(() => {
+    if (prevExpandedRef.current === expanded) return;
+    prevExpandedRef.current = expanded;
+    const active = document.activeElement;
+    const hiddenHas = (el: HTMLElement | null | undefined) =>
+      !!el && el.offsetParent === null && el.contains(active);
+    const lost =
+      !active ||
+      active === document.body ||
+      hiddenHas(railButtonRef.current?.parentElement) ||
+      hiddenHas(panelRef.current);
+    if (!lost) return;
+    const target = expanded ? collapseButtonRef.current : railButtonRef.current;
+    if (target && target.offsetParent !== null) target.focus();
+  }, [expanded, railButtonRef]);
+
   return (
-    // (리뷰 IMP-4, #403로 xl 완화) sm(640px) 미만뿐 아니라 태블릿·좁은 데스크톱 폭까지 숨긴다 —
-    // 아웃라인(w-64)+캔버스+인스펙터(w-80)를 모두 고정폭으로 두면 320px 뷰포트에서 캔버스가 폭 0으로
-    // 밀려나고 인스펙터가 화면 밖으로 잘려 나간다. <main> 자체는 조상 노드의 overflow-hidden에 가려
-    // 스크롤로 드러나지 않아 SC 1.4.10 게이트를 통과하면서도 실사용은 불가능한 상태였다. 처음엔 sm(640px)
-    // 을 기준으로 삼았으나, w-64+w-80(합 576px)이 640~1024px 폭에서도 캔버스를 200px 안팎으로 짓눌러
-    // 태블릿 세로(예 834px)에서 스키마 그래프를 사실상 읽을 수 없었다(#403). AppLayout 사이드바(펼침
-    // 시 lg:w-60=240px)까지 더하면 1024px에서도 아웃라인+인스펙터+사이드바가 이미 816px를 차지해
-    // 캔버스가 여전히 짓눌리므로(실측), lg(1024px)가 아니라 xl(1280px) 이상에서만 3-pane을 보여줘야
-    // 사이드바+두 패널을 빼고도 캔버스에 충분한 폭이 남는다.
-    <div className="hidden w-64 shrink-0 flex-col overflow-hidden border-r xl:flex" data-testid="model-outline">
+    // 원래는 창 폭 기준 `hidden xl:flex`(1280px 미만 통째로 숨김, #403 — 목록 w-64 + 편집 패널 w-80이
+    // 캔버스를 짓누르던 것을 막으려고)였다. 그러면 1024px 노트북·태블릿에서 목록·편집 패널이 모두 사라져
+    // 「첫 타입 만들기」가 수정 모드만 켜고 아무것도 열지 못했고(WD-130), 반대로 넓은 창에서 AI 챗
+    // 패널(380px)을 열어 본문만 좁아지면 그대로 나와 캔버스를 짓눌렀다. 그래서 창 폭이 아니라 실제 남은
+    // 본문 폭(OntologyPage의 @container/kg-body)을 기준으로 삼는다.
+    // 기준 856px = 목록 w-64(256) + 캔버스 최소(280) + 편집 패널 w-80(320). 그 이상이면 지금처럼 항상
+    // 펼쳐 두고, 미만이면 expanded일 때만 보인다(접혀 있으면 ModelOutlineRail). 본문이 536px(=256+280)
+    // 미만이라 캔버스와 나란히 들어갈 수 없으면 펼친 목록이 캔버스 자리를 대신 차지한다(OntologyPage가
+    // 캔버스 쪽을 숨긴다 — 겹치는 서랍이 아니라 같은 줄의 패널을 유지한다).
+    <div
+      ref={panelRef}
+      className={cn(
+        'w-64 shrink-0 flex-col overflow-hidden border-r',
+        expanded
+          ? 'flex @max-[536px]/kg-body:w-auto @max-[536px]/kg-body:flex-1 @max-[536px]/kg-body:border-r-0'
+          : 'hidden @min-[856px]/kg-body:flex',
+      )}
+      data-testid="model-outline"
+    >
       <div className="flex flex-col gap-1.5 px-4 pt-4 pb-2">
-        <span className="text-xs font-medium uppercase text-muted-foreground">지식 모델</span>
+        <div className="flex items-center justify-between">
+          <span className="text-xs font-medium uppercase text-muted-foreground">지식 모델</span>
+          {/* 좁은 본문에서만 보이는 접기 버튼(WD-130) — 넓은 본문에서는 목록이 항상 펼쳐져 있어 숨긴다. */}
+          <Button
+            ref={collapseButtonRef}
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6 @min-[856px]/kg-body:hidden"
+            onClick={() => onExpandedChange(false)}
+            aria-label="목록 접기"
+            aria-expanded
+          >
+            <PanelLeftClose className="h-3.5 w-3.5" />
+          </Button>
+        </div>
         <Label htmlFor="model-outline-domain" className="sr-only">
           도메인
         </Label>

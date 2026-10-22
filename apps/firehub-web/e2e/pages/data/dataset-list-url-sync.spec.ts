@@ -57,10 +57,16 @@ test.describe('데이터셋 목록 — URL 동기화', () => {
     await page.goto('/data/datasets');
     await expect(page.getByRole('heading', { name: /데이터셋/ })).toBeVisible();
 
-    await page.getByRole('button', { name: '즐겨찾기', exact: true }).click();
+    const favoriteButton = page.getByRole('button', { name: '즐겨찾기', exact: true });
+    await expect(favoriteButton).toHaveAttribute('aria-pressed', 'false');
+    await favoriteButton.click();
     await expect.poll(() => new URL(page.url()).searchParams.get('favorite')).toBe('true');
+    // 주소는 화면이 다시 그려지기 전에 먼저 바뀐다 — 버튼이 켜짐으로 그려진 뒤에 다시 눌러야 「끄기」로 처리된다.
+    // 주소만 보고 바로 누르면 부하가 큰 전체 실행에서 낡은 화면의 「켜기」가 한 번 더 돌아 favorite 이 남았다.
+    await expect(favoriteButton).toHaveAttribute('aria-pressed', 'true');
 
-    await page.getByRole('button', { name: '즐겨찾기', exact: true }).click();
+    await favoriteButton.click();
     await expect.poll(() => new URL(page.url()).searchParams.get('favorite')).toBeNull();
+    await expect(favoriteButton).toHaveAttribute('aria-pressed', 'false');
   });
 });

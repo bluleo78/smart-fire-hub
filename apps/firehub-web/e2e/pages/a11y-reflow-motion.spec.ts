@@ -51,7 +51,8 @@ test.describe('320px 리플로우 (#345)', () => {
   // 밀려나고 인스펙터가 화면 밖으로 잘려 나가는 상태를 놓칠 수 있었다(구현 중 실측) — 그래서
   // mainOverflow 0인지 뿐 아니라 캔버스가 실제로 화면 안에서 양의 폭을 갖는지도 함께 확인한다.
   // `> 0`은 캔버스가 1px로 밀려나도 통과하는 반쪽짜리 단언이었다(M-3, S2 최종 리뷰) — 실제 구현
-  // (xl:flex/xl:block, #403로 sm에서 완화)이 보장하는 것을 그대로 단언한다: 아웃라인/인스펙터가 실제로 숨겨져 320px
+  // (본문 컨테이너 폭 기준 접기, WD-130 — 이전엔 창 폭 xl:flex/xl:block, #403)이 보장하는 것을 그대로 단언한다:
+  // 선택 전에는 아웃라인(접기 막대만 남음)/인스펙터가 실제로 숨겨져 320px
   // 대부분을 캔버스가 차지하는지(실측 248px 안팎 — 컨테이너 padding 등을 뺀 값이라 320에 못
   // 미치지만 리플로우가 깨졌을 때의 0~수px과는 자릿수가 다르다) + 폭이 있는지 함께 확인한다.
   test('요소 편집기 모드(3-pane)도 320px에서 가로 스크롤 없이 표시된다', async ({ authenticatedPage: page }) => {
@@ -164,6 +165,10 @@ test.describe('지식그래프 툴바 태블릿 폭 겹침 (#402)', () => {
  * 까지 겹치면 1024px 뷰포트에서도 아웃라인+인스펙터+사이드바가 이미 816px를 차지해 캔버스가 여전히
  * 짓눌리는 것을 실측했기 때문이다(수정 전 lg 시도에서 이 테스트가 실패하며 드러남). 캔버스 wrapper에는
  * 방어적으로 `min-w-[280px]`도 추가했다.
+ * WD-130: 창 폭 xl로 통째로 숨기면 1024px에서 편집 수단 자체가 사라져(「첫 타입 만들기」가 아무것도 못 엶)
+ * 기준을 본문 컨테이너 폭(856px)으로 바꾸고, 좁을 때는 목록을 접기 막대로·편집 패널은 선택/생성 폼이
+ * 있을 때만 붙게 했다. 아래 단언(선택 전 아웃라인·인스펙터 숨김, 캔버스 넓음)은 그 규칙에서도 그대로
+ * 성립한다 — 좁은 본문에서 선택·펼치기 동작은 ontology-editor-narrow-layout.spec.ts가 검증한다.
  */
 test.describe('지식 모델 3-pane 편집기 태블릿·좁은 데스크톱 폭 캔버스 압착 (#403)', () => {
   test('834px(iPad Air 세로)에서 아웃라인/인스펙터가 숨고 캔버스가 넓게 보인다', async ({
@@ -176,7 +181,8 @@ test.describe('지식 모델 3-pane 편집기 태블릿·좁은 데스크톱 폭
     await page.getByRole('button', { name: '수정 모드' }).click();
 
     // 수정 전에는 이 폭에서 아웃라인/인스펙터가 sm:flex/sm:block으로 이미 나타나 캔버스가
-    // 210px 안팎으로 압착됐다(#403 실측) — xl 완화 후에는 둘 다 숨고 캔버스가 뷰포트 대부분을 차지한다.
+    // 210px 안팎으로 압착됐다(#403 실측) — 지금은 본문(786px)이 856px 미만이라 선택 전엔 둘 다 숨고
+    // (아웃라인은 40px 접기 막대만 남는다) 캔버스가 뷰포트 대부분을 차지한다(WD-130).
     await expect(page.getByTestId('model-outline')).toBeHidden();
     await expect(page.getByTestId('model-inspector')).toBeHidden();
     const canvasBox = await page.getByTestId('schema-graph').boundingBox();
@@ -184,7 +190,8 @@ test.describe('지식 모델 3-pane 편집기 태블릿·좁은 데스크톱 폭
   });
 
   // 1024px(구 lg 경계)에서는 AppLayout 사이드바(펼침 시 240px)까지 겹치면 3-pane을 보여줘도 캔버스가
-  // 여전히 짓눌린다는 것을 실측으로 확인했다 — 그래서 이 폭에서는 계속 숨겨져야 한다(xl 미만).
+  // 여전히 짓눌린다는 것을 실측으로 확인했다 — 그래서 이 폭(본문 736px < 856px)에서는 선택 전 계속
+  // 숨겨져야 한다(WD-130: 선택·생성 폼이 생기면 편집 패널만 붙는다).
   test('1024px(구 lg 경계)에서는 사이드바까지 감안해 여전히 아웃라인/인스펙터가 숨는다', async ({
     authenticatedPage: page,
   }) => {
@@ -210,7 +217,8 @@ test.describe('지식 모델 3-pane 편집기 태블릿·좁은 데스크톱 폭
     await expect(page.getByTestId('model-outline')).toBeVisible();
     await expect(page.getByTestId('model-inspector')).toBeVisible();
     const canvasBox = await page.getByTestId('schema-graph').boundingBox();
-    // xl 기준폭(1280) - 사이드바(240, 펼침) - 아웃라인(256) - 인스펙터(320) - 여백 ≈ 400px대 —
+    // 1280 - 사이드바(240, 펼침) - main 여백(48) = 본문 992px ≥ 856px(WD-130 접기 기준) → 3칸.
+    // 992 - 아웃라인(256) - 인스펙터(320) ≈ 400px대 —
     // 최소 하한(280px)보다 충분히 넓어야 한다.
     expect(canvasBox!.width).toBeGreaterThan(280);
   });
