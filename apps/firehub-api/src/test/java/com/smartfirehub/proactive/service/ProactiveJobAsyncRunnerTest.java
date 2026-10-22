@@ -15,6 +15,7 @@ import com.smartfirehub.proactive.exception.ProactiveJobException;
 import com.smartfirehub.proactive.repository.ProactiveJobExecutionRepository;
 import com.smartfirehub.proactive.repository.ProactiveJobRepository;
 import com.smartfirehub.proactive.repository.ReportTemplateRepository;
+import com.smartfirehub.proactive.service.delivery.DeliveryChannel;
 import com.smartfirehub.settings.model.AiBehaviorDefaults;
 import com.smartfirehub.settings.model.AiCredential;
 import com.smartfirehub.settings.model.UnknownAgentTypeException;
@@ -51,6 +52,8 @@ class ProactiveJobAsyncRunnerTest {
   @Mock AiCredentialService aiCredentialService;
   @Mock SettingsService settingsService;
   @Mock NotificationDispatcher notificationDispatcher;
+  @Mock ProactiveOwnerEligibility ownerEligibility;
+  @Mock DeliveryChannel chatChannel;
 
   private ProactiveJobAsyncRunner runner;
 
@@ -60,9 +63,9 @@ class ProactiveJobAsyncRunnerTest {
 
   @BeforeEach
   void setUp() {
-    // deliveryChannels 는 빈 리스트로 고정 — 발송 경로는 이 테스트의 관심사가 아니다(Mockito 로
-    // List<DeliveryChannel> 자체를 모킹하면 for-each 순회에서 iterator() 가 null 을 돌려줘 NPE
-    // 가 난다 — 실제 빈 리스트를 쓴다).
+    // deliveryChannels 는 목 채널 하나짜리 실제 리스트 — Mockito 로 List<DeliveryChannel> 자체를 모킹하면
+    // for-each 순회에서 iterator() 가 null 을 돌려줘 NPE 가 난다. 채널 하나는 WD-166 건너뜀 테스트가
+    // 「전달하지 않았다」를 확인하려고 둔다(다른 테스트에서는 deliver 가 아무것도 하지 않는 목이다).
     runner =
         new ProactiveJobAsyncRunner(
             proactiveJobRepository,
@@ -73,8 +76,12 @@ class ProactiveJobAsyncRunnerTest {
             aiCredentialService,
             settingsService,
             new ObjectMapper(),
-            List.of(),
-            notificationDispatcher);
+            List.of(chatChannel),
+            notificationDispatcher,
+            ownerEligibility);
+    // 기본은 자격 있는 주인(WD-166) — 건너뜀 테스트만 사유를 돌려주게 바꾼다
+    lenient().when(ownerEligibility.findIneligibilityReason(USER_ID)).thenReturn(Optional.empty());
+    lenient().when(chatChannel.type()).thenReturn("CHAT");
 
     ProactiveJobResponse job =
         new ProactiveJobResponse(
@@ -377,5 +384,49 @@ class ProactiveJobAsyncRunnerTest {
     verify(aiClient, never()).execute(any(), any(), any(), any(), any(), any(), any());
     verify(executionRepository).updateError(eq(EXECUTION_ID), anyString());
     verify(executionRepository, never()).updateResult(any(), any(), any(), any());
+  }
+
+  /**
+   * [WD-166] 작업 주인이 실행 자격을 잃었으면(정지·제거·권한 회수) 리포트를 만들지도 보내지도 않는다 — 컨텍스트 수집·AI 호출·채널 전달·알림 큐가 모두 0
+   * 이고, 실행 이력에는 사유 문구로 FAILED 가 남는다. 예외를 던지지 않고(매분 예약이면 오류 스택이 폭주) 마지막·다음 실행 시각 갱신은 그대로 돈다.
+   */
+  @Test
+  void 작업_주인이_자격을_잃었으면_만들지도_보내지도_않고_사유를_남긴다() {
+    for (String reason :
+        List.of(
+            ProactiveOwnerEligibility.REASON_OWNER_INACTIVE,
+            ProactiveOwnerEligibility.REASON_OWNER_NO_PERMISSION)) {
+      clearInvocations(executionRepository, proactiveJobRepository);
+      when(ownerEligibility.findIneligibilityReason(USER_ID)).thenReturn(Optional.of(reason));
+
+      // 예외 없이 끝난다
+      runner.executeJob(JOB_ID, USER_ID);
+
+      verify(executionRepository).updateError(EXECUTION_ID, reason);
+      verify(executionRepository, never()).updateResult(any(), any(), any(), any());
+      verify(proactiveJobRepository).updateLastExecuted(eq(JOB_ID), notNull(), any());
+    }
+    verifyNoInteractions(contextCollector, aiClient, aiCredentialService, notificationDispatcher);
+    verify(chatChannel, never()).deliver(any(), any(), any());
+  }
+
+  /** [WD-166] 양성 대조 — 자격 있는 주인의 작업은 그대로 실행되고 전달된다. */
+  @Test
+  void 자격_있는_주인의_작업은_그대로_실행되고_전달된다() {
+    when(aiCredentialService.resolve()).thenReturn(new AiCredential.Sdk("", "sk-test"));
+    when(aiClient.execute(any(), any(), any(), any(), any(), any(), any()))
+        .thenReturn(
+            new ProactiveResult(
+                "리포트",
+                List.of(new ProactiveResult.Section("summary", "요약", "내용", null, null)),
+                null,
+                null,
+                null));
+
+    runner.executeJob(JOB_ID, USER_ID);
+
+    verify(ownerEligibility).findIneligibilityReason(USER_ID);
+    verify(executionRepository).updateResult(eq(EXECUTION_ID), eq("COMPLETED"), any(), any());
+    verify(chatChannel).deliver(any(), eq(EXECUTION_ID), any());
   }
 }

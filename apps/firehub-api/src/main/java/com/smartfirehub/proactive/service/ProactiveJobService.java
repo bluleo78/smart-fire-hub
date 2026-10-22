@@ -54,6 +54,8 @@ public class ProactiveJobService {
   private final MetricSqlAccessChecker metricSqlAccessChecker;
   // 작업에 연결할 리포트 양식이 작성자가 쓸 수 있는 것(기본·본인)인지 확인한다(WD-163)
   private final ReportTemplateRepository reportTemplateRepository;
+  // 이상 탐지 알림을 보내기 전에 작업 주인이 아직 자격이 있는지 본다(WD-166)
+  private final ProactiveOwnerEligibility ownerEligibility;
 
   // 동시 실행 방지: jobId -> running flag
   private final ConcurrentHashMap<Long, AtomicBoolean> runningJobs = new ConcurrentHashMap<>();
@@ -70,7 +72,8 @@ public class ProactiveJobService {
       SseEmitterRegistry sseEmitterRegistry,
       ProactiveJobAsyncRunner asyncRunner,
       MetricSqlAccessChecker metricSqlAccessChecker,
-      ReportTemplateRepository reportTemplateRepository) {
+      ReportTemplateRepository reportTemplateRepository,
+      ProactiveOwnerEligibility ownerEligibility) {
     this.proactiveJobRepository = proactiveJobRepository;
     this.executionRepository = executionRepository;
     this.schedulerService = schedulerService;
@@ -80,6 +83,7 @@ public class ProactiveJobService {
     this.asyncRunner = asyncRunner;
     this.metricSqlAccessChecker = metricSqlAccessChecker;
     this.reportTemplateRepository = reportTemplateRepository;
+    this.ownerEligibility = ownerEligibility;
     // asyncRunner가 runningJobs 맵을 공유하여 슬롯 해제가 동일한 맵에 반영되도록 한다
     asyncRunner.setRunningJobs(this.runningJobs);
   }
@@ -397,6 +401,7 @@ public class ProactiveJobService {
 
     // 해당 사용자에게 SSE를 통해 실시간 이상 탐지 알림을 전송한다
     // 연결이 없거나 전송 실패해도 job 실행에는 영향을 주지 않는다
+    // 정지·제거·권한 회수된 주인에게는 보내지 않는다(WD-166) — 실행 자체는 아래 실행기가 건너뛰며 이력에 사유를 남긴다
     try {
       var notification =
           new NotificationEvent(
@@ -414,7 +419,12 @@ public class ProactiveJobService {
                   "currentValue", event.currentValue(),
                   "deviation", event.deviation()),
               ProactiveTime.nowUtc());
-      sseEmitterRegistry.broadcast(event.userId(), notification);
+      if (ownerEligibility.findIneligibilityReason(event.userId()).isEmpty()) {
+        sseEmitterRegistry.broadcast(event.userId(), notification);
+      } else {
+        log.info(
+            "Anomaly notification skipped for job {} (owner no longer eligible)", event.jobId());
+      }
     } catch (Exception e) {
       log.warn(
           "Failed to send SSE notification for anomaly event (job={}): {}",

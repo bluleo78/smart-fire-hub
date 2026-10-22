@@ -54,6 +54,8 @@ public class ProactiveJobAsyncRunner {
   private final ObjectMapper objectMapper;
   private final List<DeliveryChannel> deliveryChannels;
   private final NotificationDispatcher notificationDispatcher;
+  // 실행 직전 작업 주인 자격(계정 활성·ACTIVE 멤버·proactive:write) 재확인(WD-166)
+  private final ProactiveOwnerEligibility ownerEligibility;
 
   // notification.outbox.enabled=true면 Dispatcher 경로, false면 기존 DeliveryChannel 직접 호출
   @Value("${notification.outbox.enabled:false}")
@@ -117,6 +119,21 @@ public class ProactiveJobAsyncRunner {
           proactiveJobRepository
               .findById(jobId, userId)
               .orElseThrow(() -> new ProactiveJobException("Job을 찾을 수 없습니다: " + jobId));
+
+      // 작업 주인 자격 재확인(WD-166) — 컨텍스트 수집·AI 호출·전달보다 먼저 본다. 예약·이상 탐지·지금 실행이 모두 이 지점을 지난다.
+      // 주인이 정지·제거됐거나 스마트 작업 권한을 잃었으면 리포트를 만들지도 보내지도 않고 실행 이력에 사유만 남긴다. 예외를 던지지 않고
+      // log.info 한 줄로 끝내는 이유: 매분 예약 작업이면 실행마다 스택이 쌓여 로그가 폭주하고, 이것은 결함이 아니라 예정된 건너뜀이다.
+      // 작업 enabled·스케줄은 그대로 둔다 — 주인을 복구하면 다음 실행부터 저절로 다시 돈다. finally 의 recordAttempt 는 그대로 돈다.
+      var ineligible = ownerEligibility.findIneligibilityReason(job.userId());
+      if (ineligible.isPresent()) {
+        log.info(
+            "Proactive job {} skipped: owner {} ineligible ({})",
+            jobId,
+            job.userId(),
+            ineligible.get());
+        executionRepository.updateError(executionId, ineligible.get());
+        return;
+      }
 
       // 컨텍스트 수집
       // 컨텍스트는 작업 소유자 자격으로 거른다(보안 등급 — 볼 수 없는 데이터셋 이름이 리포트에 실리지 않게).
