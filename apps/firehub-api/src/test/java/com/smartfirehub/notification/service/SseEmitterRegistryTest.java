@@ -72,6 +72,33 @@ class SseEmitterRegistryTest {
     registry.broadcast(1L, sampleEvent());
   }
 
+  /**
+   * WD-187: closeUserInTenant 는 그 사용자의 지정 테넌트 연결만 닫고 레지스트리에서도 뺀다 — 이후 그 테넌트 브로드캐스트의 수신자 판정 대상에서
+   * 빠진다. 같은 사용자의 다른 테넌트 연결·다른 사용자의 같은 테넌트 연결은 그대로다.
+   */
+  @Test
+  void closeUserInTenant_closesOnlyThatTenantsConnectionsOfThatUser() throws Exception {
+    SseEmitter u1t1 = registry.register(1L, 1L);
+    SseEmitter u1t2 = registry.register(1L, 2L);
+    SseEmitter u2t1 = registry.register(2L, 1L);
+
+    registry.closeUserInTenant(1L, 1L);
+
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> u1t1.send(SseEmitter.event().comment("x")))
+        .as("닫힌 연결")
+        .isInstanceOf(IllegalStateException.class);
+    u1t2.send(SseEmitter.event().comment("x")); // 다른 테넌트 연결은 열려 있다
+    u2t1.send(SseEmitter.event().comment("x")); // 다른 사용자 연결은 열려 있다
+
+    java.util.Set<Long> judged = new java.util.HashSet<>();
+    registry.broadcastToTenant(1L, sampleEvent(), userId -> judged.add(userId));
+    assertThat(judged).as("테넌트 1 연결이 남은 사용자만 판정").containsExactly(2L);
+    judged.clear();
+    registry.broadcastToTenant(2L, sampleEvent(), userId -> judged.add(userId));
+    assertThat(judged).containsExactly(1L);
+  }
+
   @Test
   void remove_nonExistentUser_noException() {
     SseEmitter emitter = new SseEmitter();

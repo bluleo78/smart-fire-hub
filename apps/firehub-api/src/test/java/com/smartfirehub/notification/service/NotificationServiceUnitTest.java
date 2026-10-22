@@ -25,6 +25,9 @@ class NotificationServiceUnitTest {
   /** SseEmitterRegistry 모킹 — SSE 연결 상태에 의존하지 않고 순수 로직만 검증 */
   @Mock private SseEmitterRegistry registry;
 
+  /** API 연결 상태 알림 수신자 조회(WD-187) — 알림 문구 검증에서는 받을 사람이 있다고만 돌려준다 */
+  @Mock private com.smartfirehub.permission.service.PermissionService permissionService;
+
   /** 테스트 대상 서비스 — @Mock이 자동 주입된다 */
   @InjectMocks private NotificationService notificationService;
 
@@ -199,6 +202,9 @@ class NotificationServiceUnitTest {
   /** API 연결 끊김은 WARNING 이라 토스트로 뜬다 — 제목도 본문처럼 한국어여야 한다(WD-97). */
   @Test
   void broadcastApiConnectionStatus_titlesAreKorean() {
+    // 받을 사람이 없으면 보내지 않으므로(WD-187) 권한 보유자 한 명을 둔다
+    when(permissionService.getActiveMemberIdsWithPermission(1L, "apiconnection:read"))
+        .thenReturn(java.util.Set.of(7L));
     com.smartfirehub.global.tenant.TenantContext.set(1L);
     try {
       notificationService.broadcastApiConnectionStatus(

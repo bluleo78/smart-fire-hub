@@ -6,6 +6,7 @@ import com.smartfirehub.auth.repository.RefreshTokenRepository;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.notification.service.SseEmitterRegistry;
 import com.smartfirehub.role.dto.RoleResponse;
 import com.smartfirehub.role.exception.RoleNotFoundException;
 import com.smartfirehub.role.repository.RoleRepository;
@@ -34,6 +35,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * 사용자 관리 서비스.
@@ -55,6 +58,8 @@ public class UserService {
   private final RefreshTokenRepository refreshTokenRepository;
   private final TemporaryAccountCreator temporaryAccountCreator;
   private final RoleGrantGuard roleGrantGuard;
+  // 정지·제거된 멤버의 그 워크스페이스 알림 스트림을 닫는다(WD-187)
+  private final SseEmitterRegistry sseEmitterRegistry;
 
   /**
    * 사용자 목록 조회. 각 사용자의 역할도 함께 내려준다(#586).
@@ -469,6 +474,9 @@ public class UserService {
       assertRemovable(userId, callerId, membership, tenantId);
     }
     membershipRepository.updateStatus(userId, tenantId, active ? "ACTIVE" : "SUSPENDED");
+    if (!active) {
+      closeNotificationStreamsAfterCommit(userId, tenantId);
+    }
     audit(
         callerId,
         active ? "MEMBER_REACTIVATE" : "MEMBER_SUSPEND",
@@ -487,6 +495,29 @@ public class UserService {
     assertRemovable(userId, callerId, membership, tenantId);
     userRepository.deleteRolesInTenant(userId, tenantId);
     membershipRepository.delete(userId, tenantId);
+    closeNotificationStreamsAfterCommit(userId, tenantId);
     audit(callerId, "MEMBER_REMOVE", userId, "워크스페이스에서 제거", null);
+  }
+
+  /**
+   * 정지·제거된 사용자의 <b>이 워크스페이스</b> 알림 스트림(SSE)을 커밋 뒤에 닫는다(WD-187). 열린 연결은 최대 1시간 유지돼, 그동안 정지·제거된 사람에게
+   * 이 워크스페이스의 실시간 알림(API 연결 끊김·파이프라인 실행 결과 등)이 계속 갔다. 다른 워크스페이스 연결은 닫지 않는다 — 거기서는 여전히 멤버다.
+   *
+   * <p>커밋 뒤에 닫는 이유: 마지막 ADMIN 판정 등으로 트랜잭션이 롤백되면 정지·제거는 없던 일인데 연결만 끊기면 안 된다. 닫은 뒤 웹이 재연결하면 구독 엔드포인트의
+   * 권한 검사(ACTIVE 멤버십 조인)가 거절한다. 트랜잭션 밖에서 불리는 일은 없지만(@Transactional) 동기화가 없으면 바로 닫는다.
+   */
+  private void closeNotificationStreamsAfterCommit(Long userId, long tenantId) {
+    Runnable close = () -> sseEmitterRegistry.closeUserInTenant(tenantId, userId);
+    if (TransactionSynchronizationManager.isSynchronizationActive()) {
+      TransactionSynchronizationManager.registerSynchronization(
+          new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+              close.run();
+            }
+          });
+    } else {
+      close.run();
+    }
   }
 }

@@ -3,6 +3,7 @@ package com.smartfirehub.permission.repository;
 import static com.smartfirehub.jooq.Tables.*;
 
 import com.smartfirehub.permission.dto.PermissionResponse;
+import com.smartfirehub.securitylevel.repository.ActiveMembership;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
@@ -13,7 +14,7 @@ import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
 import org.jooq.Record;
-import org.jooq.impl.DSL;
+import org.jooq.Table;
 import org.springframework.stereotype.Repository;
 
 @Repository
@@ -119,25 +120,44 @@ public class PermissionRepository {
    * 멤버(ACTIVE 조인)와 같은 의미다.
    */
   public Set<String> findPermissionCodesByUserId(Long userId) {
-    var ms = DSL.table(DSL.name("membership"));
-    var msUser = DSL.field(DSL.name("membership", "user_id"), Long.class);
-    var msTenant = DSL.field(DSL.name("membership", "tenant_id"), Long.class);
-    var msStatus = DSL.field(DSL.name("membership", "status"), String.class);
     List<String> codes =
         dsl.selectDistinct(PERMISSION.CODE)
-            .from(PERMISSION)
-            .join(ROLE_PERMISSION)
-            .on(ROLE_PERMISSION.PERMISSION_ID.eq(PERMISSION.ID))
-            .join(USER_ROLE)
-            .on(USER_ROLE.ROLE_ID.eq(ROLE_PERMISSION.ROLE_ID))
-            .join(USER)
-            .on(USER.ID.eq(USER_ROLE.USER_ID))
-            .join(ms)
-            .on(msUser.eq(USER_ROLE.USER_ID).and(msTenant.eq(USER_ROLE.TENANT_ID)))
+            .from(activeMemberGrants())
             .where(USER_ROLE.USER_ID.eq(userId))
-            .and(msStatus.eq("ACTIVE"))
-            .and(USER.IS_ACTIVE.isTrue())
             .fetch(r -> r.get(PERMISSION.CODE));
     return new HashSet<>(codes);
+  }
+
+  /**
+   * 이 테넌트에서 권한 {@code code} 를 가진 사용자 id 집합(WD-187). 알림 수신자를 고를 때 접속자마다 권한을 따로 조회하지 않고 한 번의 질의로 받을 수
+   * 있는 사람 전체를 만든다.
+   *
+   * <p>판정 기준은 {@link #findPermissionCodesByUserId} 와 같은 조인({@link #activeMemberGrants})이다 — 계정 활성 +
+   * 이 테넌트 ACTIVE 멤버의 역할만 센다. 그래서 정지(SUSPENDED)·제거(멤버십 없음)·계정 비활성 사용자는 저절로 빠진다. user_role 은 RLS 대상이라
+   * 호출자가 테넌트 GUC 가 주입된 트랜잭션 안에서 불러야 하고, RLS 와 별개로 tenant_id 를 명시해 다른 테넌트 역할이 섞이지 않게 한다.
+   */
+  public Set<Long> findActiveMemberIdsWithPermission(long tenantId, String code) {
+    return dsl.selectDistinct(USER_ROLE.USER_ID)
+        .from(activeMemberGrants())
+        .where(PERMISSION.CODE.eq(code))
+        .and(USER_ROLE.TENANT_ID.eq(tenantId))
+        .fetchSet(USER_ROLE.USER_ID);
+  }
+
+  /**
+   * 권한 → 역할 → 사용자 역할 → 계정(활성) → 멤버십(같은 테넌트 ACTIVE) 조인. 사용자 단위 권한 조회와 권한 단위 사용자 조회가 「유효한 권한」을 같은
+   * 기준으로 보게 한 곳에 둔다 — 한쪽만 고치면 화면 권한과 알림 수신 범위가 서로 어긋난다. membership 은 전역 테이블이라 user_role.tenant_id 로
+   * 짝을 맞춘다.
+   */
+  private Table<?> activeMemberGrants() {
+    return PERMISSION
+        .join(ROLE_PERMISSION)
+        .on(ROLE_PERMISSION.PERMISSION_ID.eq(PERMISSION.ID))
+        .join(USER_ROLE)
+        .on(USER_ROLE.ROLE_ID.eq(ROLE_PERMISSION.ROLE_ID))
+        .join(USER)
+        .on(USER.ID.eq(USER_ROLE.USER_ID).and(USER.IS_ACTIVE.isTrue()))
+        .join(ActiveMembership.TABLE)
+        .on(ActiveMembership.of(USER_ROLE.USER_ID, USER_ROLE.TENANT_ID));
   }
 }
