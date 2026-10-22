@@ -1,0 +1,572 @@
+{
+  "_설명": [
+    "Tibero(Oracle) 어휘 규칙 시험 벡터(WD-77). api(TiberoSqlLexerVectorsTest, TiberoSqlGuardTest)와 firehub-db-executor 가 이 파일 하나를 읽는다.",
+    "lexical: 주석(--, 중첩 없는 /* */), 문자열('' 이스케이프), 식별자(\"\" 이스케이프), 대체 따옴표 q'<구분자>..<구분자>'(nq 포함)를 인식한다. $$ 와 E'..' 는 PG 와 달리 특별하지 않다.",
+    "guard: allowed=true 면 requireAllowedStatement 와 requireNoForeignSchemaCalls(sql, tenantSchema) 모두 통과해야 하고, false 면 둘 중 하나가 거부해야 한다.",
+    "stripped 는 stripTrailingSemicolon 결과. 닫히지 않은 리터럴은 어휘 분석기에서 예외, 가드에서는 거부."
+  ],
+  "lexical": [
+    {
+      "name": "line comment hides semicolon",
+      "sql": "SELECT 1 -- a;b\nFROM DUAL",
+      "topLevelSemicolons": 0,
+      "firstKeyword": "SELECT",
+      "stripped": "SELECT 1 -- a;b\nFROM DUAL",
+      "alternativeQuoting": false
+    },
+    {
+      "name": "block comment hides semicolon",
+      "sql": "SELECT /* ; */ 1 FROM DUAL",
+      "topLevelSemicolons": 0,
+      "firstKeyword": "SELECT",
+      "stripped": "SELECT /* ; */ 1 FROM DUAL",
+      "alternativeQuoting": false
+    },
+    {
+      "name": "block comment not nested, text after close is code",
+      "sql": "SELECT 1 /* /* */ ; */ FROM DUAL",
+      "topLevelSemicolons": 1,
+      "firstKeyword": "SELECT",
+      "stripped": "SELECT 1 /* /* */ ; */ FROM DUAL",
+      "alternativeQuoting": false
+    },
+    {
+      "name": "string with doubled quote and semicolon",
+      "sql": "SELECT 'it''s;' FROM DUAL",
+      "topLevelSemicolons": 0,
+      "firstKeyword": "SELECT",
+      "stripped": "SELECT 'it''s;' FROM DUAL",
+      "alternativeQuoting": false
+    },
+    {
+      "name": "quoted identifier with semicolon",
+      "sql": "SELECT \"a;b\" FROM DUAL",
+      "topLevelSemicolons": 0,
+      "firstKeyword": "SELECT",
+      "stripped": "SELECT \"a;b\" FROM DUAL",
+      "alternativeQuoting": false
+    },
+    {
+      "name": "alt quoting brackets",
+      "sql": "SELECT q'[a;b]' FROM DUAL",
+      "topLevelSemicolons": 0,
+      "firstKeyword": "SELECT",
+      "stripped": "SELECT q'[a;b]' FROM DUAL",
+      "alternativeQuoting": true
+    },
+    {
+      "name": "alt quoting braces",
+      "sql": "SELECT q'{x}' FROM DUAL",
+      "topLevelSemicolons": 0,
+      "firstKeyword": "SELECT",
+      "stripped": "SELECT q'{x}' FROM DUAL",
+      "alternativeQuoting": true
+    },
+    {
+      "name": "alt quoting same char uppercase Q",
+      "sql": "SELECT Q'!a;b!' FROM DUAL",
+      "topLevelSemicolons": 0,
+      "firstKeyword": "SELECT",
+      "stripped": "SELECT Q'!a;b!' FROM DUAL",
+      "alternativeQuoting": true
+    },
+    {
+      "name": "alt quoting national nq",
+      "sql": "SELECT nq'(a;b)' FROM DUAL",
+      "topLevelSemicolons": 0,
+      "firstKeyword": "SELECT",
+      "stripped": "SELECT nq'(a;b)' FROM DUAL",
+      "alternativeQuoting": true
+    },
+    {
+      "name": "trailing semicolon stripped",
+      "sql": "SELECT 1 ;  ",
+      "topLevelSemicolons": 1,
+      "firstKeyword": "SELECT",
+      "stripped": "SELECT 1",
+      "alternativeQuoting": false
+    },
+    {
+      "name": "trailing line comment hides semicolon",
+      "sql": "SELECT 1 -- c;",
+      "topLevelSemicolons": 0,
+      "firstKeyword": "SELECT",
+      "stripped": "SELECT 1 -- c;",
+      "alternativeQuoting": false
+    },
+    {
+      "name": "first keyword inside parenthesis",
+      "sql": "(SELECT 1 FROM DUAL)",
+      "topLevelSemicolons": 0,
+      "firstKeyword": "SELECT",
+      "stripped": "(SELECT 1 FROM DUAL)",
+      "alternativeQuoting": false
+    },
+    {
+      "name": "first keyword after comments",
+      "sql": "/* c */ -- d\n  with a as (select 1 from dual) select * from a",
+      "topLevelSemicolons": 0,
+      "firstKeyword": "WITH",
+      "stripped": "/* c */ -- d\n  with a as (select 1 from dual) select * from a",
+      "alternativeQuoting": false
+    },
+    {
+      "name": "dollar quoting is plain characters in Tibero",
+      "sql": "SELECT $$a;b$$ FROM DUAL",
+      "topLevelSemicolons": 1,
+      "firstKeyword": "SELECT",
+      "stripped": "SELECT $$a;b$$ FROM DUAL",
+      "alternativeQuoting": false
+    },
+    {
+      "name": "E prefix is identifier plus literal, backslash is not an escape",
+      "sql": "SELECT E'a\\'; FROM DUAL",
+      "topLevelSemicolons": 1,
+      "firstKeyword": "SELECT",
+      "stripped": "SELECT E'a\\'; FROM DUAL",
+      "alternativeQuoting": false
+    },
+    {
+      "name": "semicolon in middle counted",
+      "sql": "SELECT 1 FROM DUAL; SELECT 2 FROM DUAL",
+      "topLevelSemicolons": 1,
+      "firstKeyword": "SELECT",
+      "stripped": "SELECT 1 FROM DUAL; SELECT 2 FROM DUAL",
+      "alternativeQuoting": false
+    },
+    {
+      "name": "empty input",
+      "sql": "",
+      "topLevelSemicolons": 0,
+      "firstKeyword": "",
+      "stripped": "",
+      "alternativeQuoting": false
+    },
+    {
+      "name": "comment only input",
+      "sql": "-- nothing",
+      "topLevelSemicolons": 0,
+      "firstKeyword": "",
+      "stripped": "-- nothing",
+      "alternativeQuoting": false
+    },
+    {
+      "name": "identifier ending in q is not alt quoting",
+      "sql": "SELECT aq'x' FROM DUAL",
+      "topLevelSemicolons": 0,
+      "firstKeyword": "SELECT",
+      "stripped": "SELECT aq'x' FROM DUAL",
+      "alternativeQuoting": false
+    }
+  ],
+  "guard": [
+    {
+      "name": "select ok",
+      "sql": "SELECT a, b FROM GENIA_T5.t WHERE a > 1",
+      "tenantSchema": "GENIA_T5",
+      "allowed": true
+    },
+    {
+      "name": "select from dual",
+      "sql": "SELECT 1 FROM DUAL",
+      "tenantSchema": "GENIA_T5",
+      "allowed": true
+    },
+    {
+      "name": "with ok",
+      "sql": "WITH x AS (SELECT 1 AS n FROM DUAL) SELECT n FROM x",
+      "tenantSchema": "GENIA_T5",
+      "allowed": true
+    },
+    {
+      "name": "insert select ok",
+      "sql": "INSERT INTO GENIA_T5.t (a) SELECT a FROM GENIA_T5.s",
+      "tenantSchema": "GENIA_T5",
+      "allowed": true
+    },
+    {
+      "name": "update ok",
+      "sql": "UPDATE GENIA_T5.t SET a = 1 WHERE b = 2",
+      "tenantSchema": "GENIA_T5",
+      "allowed": true
+    },
+    {
+      "name": "delete ok",
+      "sql": "DELETE FROM GENIA_T5.t WHERE a = 1",
+      "tenantSchema": "GENIA_T5",
+      "allowed": true
+    },
+    {
+      "name": "merge ok",
+      "sql": "MERGE INTO GENIA_T5.t d USING GENIA_T5.s s ON (d.id = s.id) WHEN MATCHED THEN UPDATE SET d.a = s.a",
+      "tenantSchema": "GENIA_T5",
+      "allowed": true
+    },
+    {
+      "name": "trailing semicolon ok",
+      "sql": "SELECT 1 FROM DUAL;",
+      "tenantSchema": "GENIA_T5",
+      "allowed": true
+    },
+    {
+      "name": "sysdate and systimestamp allowed",
+      "sql": "SELECT SYSDATE, SYSTIMESTAMP FROM DUAL",
+      "tenantSchema": "GENIA_T5",
+      "allowed": true
+    },
+    {
+      "name": "alias column call-less dot ok",
+      "sql": "SELECT t.a FROM GENIA_T5.t t",
+      "tenantSchema": "GENIA_T5",
+      "allowed": true
+    },
+    {
+      "name": "tenant schema function ok",
+      "sql": "SELECT GENIA_T5.f(1) FROM DUAL",
+      "tenantSchema": "GENIA_T5",
+      "allowed": true
+    },
+    {
+      "name": "dangerous name inside string literal ok",
+      "sql": "SELECT 'DBMS_X' FROM DUAL",
+      "tenantSchema": "GENIA_T5",
+      "allowed": true
+    },
+    {
+      "name": "dangerous name inside comment ok",
+      "sql": "SELECT 1 /* DBMS_X */ FROM DUAL",
+      "tenantSchema": "GENIA_T5",
+      "allowed": true
+    },
+    {
+      "name": "column dbms_flag has DBMS_ prefix rejected",
+      "sql": "SELECT dbms_flag FROM GENIA_T5.t",
+      "tenantSchema": "GENIA_T5",
+      "allowed": false
+    },
+    {
+      "name": "drop table",
+      "sql": "DROP TABLE GENIA_T5.t",
+      "tenantSchema": "GENIA_T5",
+      "allowed": false
+    },
+    {
+      "name": "truncate",
+      "sql": "TRUNCATE TABLE GENIA_T5.t",
+      "tenantSchema": "GENIA_T5",
+      "allowed": false
+    },
+    {
+      "name": "anonymous block",
+      "sql": "BEGIN NULL; END;",
+      "tenantSchema": "GENIA_T5",
+      "allowed": false
+    },
+    {
+      "name": "declare",
+      "sql": "DECLARE x NUMBER; BEGIN NULL; END;",
+      "tenantSchema": "GENIA_T5",
+      "allowed": false
+    },
+    {
+      "name": "call",
+      "sql": "CALL p()",
+      "tenantSchema": "GENIA_T5",
+      "allowed": false
+    },
+    {
+      "name": "two statements",
+      "sql": "SELECT 1 FROM DUAL; SELECT 2 FROM DUAL",
+      "tenantSchema": "GENIA_T5",
+      "allowed": false
+    },
+    {
+      "name": "with function",
+      "sql": "WITH FUNCTION f RETURN NUMBER IS BEGIN RETURN 1; END; SELECT f FROM DUAL",
+      "tenantSchema": "GENIA_T5",
+      "allowed": false
+    },
+    {
+      "name": "with function no semicolon",
+      "sql": "WITH /* c */ function f(x NUMBER) RETURN NUMBER IS BEGIN RETURN x; END SELECT f(1) FROM DUAL",
+      "tenantSchema": "GENIA_T5",
+      "allowed": false
+    },
+    {
+      "name": "with procedure",
+      "sql": "WITH PROCEDURE p IS BEGIN NULL; END SELECT 1 FROM DUAL",
+      "tenantSchema": "GENIA_T5",
+      "allowed": false
+    },
+    {
+      "name": "dbms_xmlgen",
+      "sql": "SELECT DBMS_XMLGEN.getxml('select 1 from dual') FROM DUAL",
+      "tenantSchema": "GENIA_T5",
+      "allowed": false
+    },
+    {
+      "name": "utl_http",
+      "sql": "SELECT utl_http.request('http://x') FROM DUAL",
+      "tenantSchema": "GENIA_T5",
+      "allowed": false
+    },
+    {
+      "name": "sys dot",
+      "sql": "SELECT SYS.DBMS_X FROM DUAL",
+      "tenantSchema": "GENIA_T5",
+      "allowed": false
+    },
+    {
+      "name": "sys dot table",
+      "sql": "SELECT * FROM sys.user$",
+      "tenantSchema": "GENIA_T5",
+      "allowed": false
+    },
+    {
+      "name": "xmltable",
+      "sql": "SELECT * FROM XMLTABLE('/a' PASSING XMLTYPE('<a/>'))",
+      "tenantSchema": "GENIA_T5",
+      "allowed": false
+    },
+    {
+      "name": "xmlquery",
+      "sql": "SELECT XMLQUERY('1' RETURNING CONTENT) FROM DUAL",
+      "tenantSchema": "GENIA_T5",
+      "allowed": false
+    },
+    {
+      "name": "httpuritype",
+      "sql": "SELECT HTTPURITYPE('http://x').getclob() FROM DUAL",
+      "tenantSchema": "GENIA_T5",
+      "allowed": false
+    },
+    {
+      "name": "cursor expression",
+      "sql": "SELECT CURSOR(SELECT 1 FROM DUAL) FROM DUAL",
+      "tenantSchema": "GENIA_T5",
+      "allowed": false
+    },
+    {
+      "name": "quoted dbms identifier",
+      "sql": "SELECT \"DBMS_X\".f() FROM DUAL",
+      "tenantSchema": "GENIA_T5",
+      "allowed": false
+    },
+    {
+      "name": "outer join marker without space allowed",
+      "sql": "SELECT a.x FROM GENIA_T5.t a, GENIA_T5.u b WHERE a.id = b.id(+)",
+      "tenantSchema": "GENIA_T5",
+      "allowed": true
+    },
+    {
+      "name": "outer join marker with space allowed",
+      "sql": "SELECT a.x FROM GENIA_T5.t a, GENIA_T5.u b WHERE a.id = b.id (+)",
+      "tenantSchema": "GENIA_T5",
+      "allowed": true
+    },
+    {
+      "name": "htp_x qualified call rejected as foreign schema",
+      "sql": "SELECT htp_x.p() FROM DUAL",
+      "tenantSchema": "GENIA_T5",
+      "allowed": false
+    },
+    {
+      "name": "htfoo is not exactly HTF so guard allows it",
+      "sql": "SELECT htfoo(1) FROM DUAL",
+      "tenantSchema": "GENIA_T5",
+      "allowed": true
+    },
+    {
+      "name": "htp word",
+      "sql": "SELECT HTP.p('x') FROM DUAL",
+      "tenantSchema": "GENIA_T5",
+      "allowed": false
+    },
+    {
+      "name": "lock table",
+      "sql": "LOCK TABLE GENIA_T5.t IN EXCLUSIVE MODE",
+      "tenantSchema": "GENIA_T5",
+      "allowed": false
+    },
+    {
+      "name": "commit",
+      "sql": "COMMIT",
+      "tenantSchema": "GENIA_T5",
+      "allowed": false
+    },
+    {
+      "name": "alter session",
+      "sql": "ALTER SESSION SET NLS_DATE_FORMAT = 'YYYY'",
+      "tenantSchema": "GENIA_T5",
+      "allowed": false
+    },
+    {
+      "name": "other schema function",
+      "sql": "SELECT other_schema.fn(1) FROM DUAL",
+      "tenantSchema": "GENIA_T5",
+      "allowed": false
+    },
+    {
+      "name": "other schema quoted function",
+      "sql": "SELECT \"OTHER\".\"FN\" (1) FROM DUAL",
+      "tenantSchema": "GENIA_T5",
+      "allowed": false
+    },
+    {
+      "name": "three part call",
+      "sql": "SELECT other.pkg.fn(1) FROM DUAL",
+      "tenantSchema": "GENIA_T5",
+      "allowed": false
+    },
+    {
+      "name": "unterminated literal",
+      "sql": "SELECT 'abc FROM DUAL",
+      "tenantSchema": "GENIA_T5",
+      "allowed": false
+    },
+    {
+      "name": "empty",
+      "sql": "",
+      "tenantSchema": "GENIA_T5",
+      "allowed": false
+    },
+    {
+      "name": "comment only",
+      "sql": "-- hi",
+      "tenantSchema": "GENIA_T5",
+      "allowed": false
+    },
+    {
+      "name": "foreign schema call with space before dot",
+      "sql": "SELECT OTHER .FN(1) FROM DUAL",
+      "tenantSchema": "GENIA_T5",
+      "allowed": false
+    },
+    {
+      "name": "foreign schema call with space after dot",
+      "sql": "SELECT OTHER. FN(1) FROM DUAL",
+      "tenantSchema": "GENIA_T5",
+      "allowed": false
+    },
+    {
+      "name": "foreign schema call with comment around dot",
+      "sql": "SELECT OTHER /*c*/ . FN(1) FROM DUAL",
+      "tenantSchema": "GENIA_T5",
+      "allowed": false
+    },
+    {
+      "name": "foreign schema call with newline and line comment around dot",
+      "sql": "SELECT \"OTHER\" -- c\n.\n\"FN\" (1) FROM DUAL",
+      "tenantSchema": "GENIA_T5",
+      "allowed": false
+    },
+    {
+      "name": "alias column with spaces around dot ok",
+      "sql": "SELECT t . a FROM GENIA_T5.t t",
+      "tenantSchema": "GENIA_T5",
+      "allowed": true
+    },
+    {
+      "name": "outer join marker with spaces around dot ok",
+      "sql": "SELECT a.x FROM GENIA_T5.t a, GENIA_T5.u b WHERE a . id = b . id (+)",
+      "tenantSchema": "GENIA_T5",
+      "allowed": true
+    },
+    {
+      "name": "tenant schema call with spaces around dot ok",
+      "sql": "SELECT GENIA_T5 . f(1) FROM DUAL",
+      "tenantSchema": "GENIA_T5",
+      "allowed": true
+    },
+    {
+      "name": "quoted lowercase tenant schema is another schema",
+      "sql": "SELECT \"genia_t5\".f(1) FROM DUAL",
+      "tenantSchema": "GENIA_T5",
+      "allowed": false
+    },
+    {
+      "name": "quoted lowercase tenant schema with spaced dot",
+      "sql": "SELECT \"genia_t5\" . f(1) FROM DUAL",
+      "tenantSchema": "GENIA_T5",
+      "allowed": false
+    },
+    {
+      "name": "unquoted lowercase tenant schema folds to upper ok",
+      "sql": "SELECT genia_t5.f(1) FROM DUAL",
+      "tenantSchema": "GENIA_T5",
+      "allowed": true
+    },
+    {
+      "name": "quoted uppercase tenant schema ok",
+      "sql": "SELECT \"GENIA_T5\".\"F\"(1) FROM DUAL",
+      "tenantSchema": "GENIA_T5",
+      "allowed": true
+    },
+    {
+      "name": "htf_rate column is not HTF",
+      "sql": "SELECT htf_rate FROM GENIA_T5.t",
+      "tenantSchema": "GENIA_T5",
+      "allowed": true
+    },
+    {
+      "name": "HTPRICE column is not HTP",
+      "sql": "SELECT HTPRICE FROM GENIA_T5.t",
+      "tenantSchema": "GENIA_T5",
+      "allowed": true
+    },
+    {
+      "name": "htp package call rejected",
+      "sql": "SELECT HTP.p(1) FROM DUAL",
+      "tenantSchema": "GENIA_T5",
+      "allowed": false
+    },
+    {
+      "name": "htf package call rejected",
+      "sql": "SELECT htf.escape_sc('x') FROM DUAL",
+      "tenantSchema": "GENIA_T5",
+      "allowed": false
+    },
+    {
+      "name": "bare htf identifier rejected",
+      "sql": "SELECT htf FROM GENIA_T5.t",
+      "tenantSchema": "GENIA_T5",
+      "allowed": false
+    },
+    {
+      "name": "non-ASCII foreign schema call rejected",
+      "sql": "SELECT 스키마.FN(1) FROM DUAL",
+      "tenantSchema": "GENIA_T5",
+      "allowed": false
+    },
+    {
+      "name": "mixed ASCII/non-ASCII foreign schema call rejected",
+      "sql": "SELECT A한.NVL(x) FROM DUAL",
+      "tenantSchema": "GENIA_T5",
+      "allowed": false
+    },
+    {
+      "name": "non-ASCII foreign package call rejected",
+      "sql": "SELECT GENIA_T5.t.a, 패키지.함수(1) FROM GENIA_T5.t",
+      "tenantSchema": "GENIA_T5",
+      "allowed": false
+    },
+    {
+      "name": "supplementary-plane foreign schema call rejected",
+      "sql": "SELECT 𝐀𝐁.FN(1) FROM DUAL",
+      "tenantSchema": "GENIA_T5",
+      "allowed": false
+    },
+    {
+      "name": "non-ASCII column ok",
+      "sql": "SELECT 한글컬럼, t.값 FROM GENIA_T5.t t WHERE 한글컬럼 > 1",
+      "tenantSchema": "GENIA_T5",
+      "allowed": true
+    },
+    {
+      "name": "non-ASCII prefix makes one identifier, not DBMS_ call",
+      "sql": "SELECT 한DBMS_X FROM GENIA_T5.t",
+      "tenantSchema": "GENIA_T5",
+      "allowed": true
+    }
+  ]
+}

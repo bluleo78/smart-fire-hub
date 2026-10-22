@@ -2,6 +2,8 @@ package com.smartfirehub.pipeline.service.validator;
 
 import com.smartfirehub.dataset.rowsearch.IndexRef;
 import com.smartfirehub.dataset.service.DataTableService;
+import com.smartfirehub.dataset.storage.tibero.TiberoSqlGuard;
+import com.smartfirehub.dataset.storage.tibero.TiberoSqlLexer;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.util.SqlValidationUtils;
 import com.smartfirehub.pipeline.exception.UnsafeSqlException;
@@ -21,6 +23,7 @@ import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -29,6 +32,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
+import java.util.function.UnaryOperator;
 import java.util.regex.Pattern;
 import lombok.extern.slf4j.Slf4j;
 import net.sf.jsqlparser.JSQLParserException;
@@ -142,6 +146,29 @@ public class SqlValidator {
   private final boolean allowUnqualifiedTables;
 
   /**
+   * Tibero 테넌트 모드 여부(WD-77, 스펙 §5.0·§5.4). 켜지면 세 가지가 달라진다.
+   *
+   * <ul>
+   *   <li>식별자 접기 — 따옴표 없는 이름을 PG 처럼 소문자가 아니라 Tibero 처럼 <b>대문자</b>로 접는다. CTE 이름 대조·참조 테이블 추출이 모두 이
+   *       규칙을 따른다(PG 접기로 대조하면 {@code WITH "orders" AS (…) SELECT * FROM orders} 의 {@code orders} 가
+   *       CTE 로 오인돼 실제 테이블 {@code ORDERS} 가 판정에서 빠진다).
+   *   <li>미한정 {@code DUAL} 하나만 허용 — FROM 절이 필수인 Tibero 에서 상수 조회에 쓰는 시스템 의사 테이블이다.
+   *   <li>{@link #validate} 진입 시 Tibero 가드(대체 따옴표·문장 종류·위험 패키지·남의 스키마 함수 호출)를 먼저 돈다.
+   * </ul>
+   *
+   * <p>PG 검증기(기본 생성자·{@link #forAdhocDataSchemaQueries()})는 항상 {@code false} 다 — 기존 동작은 한 줄도 바뀌지
+   * 않는다.
+   */
+  private final boolean tibero;
+
+  /** Tibero 대체 따옴표({@code q'[..]'}) 거부 안내 — 검증기와 보안 게이트가 같은 문구를 쓴다. */
+  public static final String TIBERO_ALTERNATIVE_QUOTING_MESSAGE =
+      "Tibero 대체 따옴표(q'..')는 지원하지 않습니다. 작은따옴표 두 번('')으로 써 주세요.";
+
+  /** Tibero 시스템 의사 테이블 이름(대문자 접기 결과) — 미한정으로 허용하는 유일한 이름. */
+  public static final String TIBERO_DUAL = "DUAL";
+
+  /**
    * 파이프라인 SQL 스텝 등 기존 호출부를 위한 기본 생성자(= 스프링 빈). 정책은 그대로 유지한다 — 허용 스키마는 <b>현재 테넌트의 데이터 스키마</b>, 미한정
    * 테이블 참조는 거부.
    *
@@ -168,8 +195,132 @@ public class SqlValidator {
 
   /** 허용 스키마를 <b>검증 시점에</b> 해석하는 공급자를 주입받는 생성자 — 근거는 {@link #allowedSchemaSupplier} 참조. */
   private SqlValidator(Supplier<String> allowedSchemaSupplier, boolean allowUnqualifiedTables) {
+    this(allowedSchemaSupplier, allowUnqualifiedTables, false);
+  }
+
+  /** 모든 생성 경로가 모이는 생성자 — {@code tibero} 는 {@link #forTiberoSchema} 만 켠다. */
+  private SqlValidator(
+      Supplier<String> allowedSchemaSupplier, boolean allowUnqualifiedTables, boolean tibero) {
     this.allowedSchemaSupplier = allowedSchemaSupplier;
     this.allowUnqualifiedTables = allowUnqualifiedTables;
+    this.tibero = tibero;
+  }
+
+  /**
+   * Tibero 테넌트의 파이프라인 SQL 검증기를 만든다(WD-77, 스펙 §5.0·§5.4).
+   *
+   * <p>PG 와 같은 원칙이다 — 사용자는 실제 스키마({@code GENIA_T{id}})를 붙여 쓰고, 그 스키마로 한정된 참조만 허용한다. 비교는 Tibero 식별자
+   * 규칙을 따른다 — 따옴표 없는 스키마는 대문자로 접어, 따옴표 스키마는 대소문자 그대로 정확히 비교한다(인용 소문자 {@code "genia_t5"} 는 다른 스키마라
+   * 거부, {@link #isAllowedSchema} 참조). 미한정 참조는 거부하되 {@code DUAL} 하나만 예외다. PG 전용 카탈로그·함수 차단 목록과 함수
+   * 허용목록은 그대로 공유한다(정책이 두 곳으로 갈라지지 않게).
+   *
+   * <p>테넌트별로 스키마가 달라 스프링 빈이 아니라 호출마다 만든다 — 생성 비용은 필드 셋이고 파싱 스레드 풀은 정적 공유다.
+   *
+   * @param tiberoSchema 테넌트 OWNER 스키마(예: {@code GENIA_T5})
+   */
+  public static SqlValidator forTiberoSchema(String tiberoSchema) {
+    return new SqlValidator(() -> tiberoSchema, false, true);
+  }
+
+  /**
+   * Tibero 테넌트의 어휘 모호성 검사(스펙 §4.3·§5.4) — PG 테넌트의 {@link PgLexicalAmbiguityCheck} 자리에 대신 쓴다.
+   * 검증기(Tibero 모드)와 보안 게이트가 공유한다.
+   *
+   * <p>판정은 "JSqlParser 와 Tibero 가 주석·문자열 경계를 같게 자르는가"다. Tibero 규칙(중첩 없는 블록 주석, 백슬래시가 특수하지 않은 문자열)은
+   * JSqlParser 와 같게 잘려서 PG 검사가 막던 {@code 'C:\'}·{@code /* a /* b *}{@code /} 는 통과한다. 이 Tibero 규칙은
+   * 실서버로 고정했다(db-executor {@code TiberoLiveSqlTest.live_lexicalFacts}: {@code 'a\'} → {@code a\},
+   * 중첩 없는 블록 주석, {@code \r} 로 끝나는 {@code --}, {@code q'[..]'} 지원). 다음만 거부한다.
+   *
+   * <ul>
+   *   <li>Tibero 대체 따옴표({@code q'[..]'}·{@code nq'..'}) — 같은 값은 {@code ''} 로 쓸 수 있다.
+   *   <li>닫히지 않은 따옴표·주석 — 어디까지가 코드인지 알 수 없다.
+   *   <li>코드 영역의 {@code //}·백틱·단독 {@code E'..'}·{@code $$} — JSqlParser 만 주석·인용으로 읽는 표기다. 실측:
+   *       {@code SELECT 0 * 1 //* c *}{@code / 1 + (SELECT a FROM hidden) …} 를 JSqlParser 는 {@code
+   *       //} 뒤를 줄 주석으로 버려 테이블 0개로 보고, Tibero 는 나눗셈 + 블록 주석으로 읽어 hidden 을 읽는다. Tibero 에는 이 표기들의 정당한
+   *       용도가 없다.
+   * </ul>
+   *
+   * @throws UnsafeSqlException 위 표기가 있을 때(한국어 안내)
+   */
+  public static void requireTiberoLexicallyUnambiguous(String sql) {
+    String masked;
+    boolean alternative;
+    try {
+      alternative = TiberoSqlLexer.hasAlternativeQuoting(sql);
+      masked = TiberoSqlLexer.maskLiteralsAndComments(sql);
+    } catch (IllegalArgumentException e) {
+      // 닫히지 않은 따옴표·주석은 어디까지가 코드인지 알 수 없다 — fail-closed
+      // 문구는 Tibero 가드와 하나다(db-executor 재검증과 같은 안내).
+      throw new UnsafeSqlException(TiberoSqlGuard.UNTERMINATED_MESSAGE, e);
+    }
+    if (alternative) {
+      throw new UnsafeSqlException(TIBERO_ALTERNATIVE_QUOTING_MESSAGE);
+    }
+    rejectJsqlParserOnlyNotations(sql, masked);
+  }
+
+  /**
+   * 코드 영역(문자열·주석을 공백으로 지운 {@code masked}, 큰따옴표 식별자 안은 건너뜀)에서 JSqlParser 만 특별하게 읽는 표기를 거부한다 — 근거는
+   * {@link #requireTiberoLexicallyUnambiguous} 참조.
+   */
+  private static void rejectJsqlParserOnlyNotations(String sql, String masked) {
+    boolean inQuotedIdentifier = false;
+    for (int i = 0; i < masked.length(); i++) {
+      char c = masked.charAt(i);
+      if (c == '"') {
+        inQuotedIdentifier = !inQuotedIdentifier; // "" 이스케이프는 두 번 뒤집혀 그대로다
+        continue;
+      }
+      if (inQuotedIdentifier) {
+        continue;
+      }
+      char next = i + 1 < masked.length() ? masked.charAt(i + 1) : '\0';
+      // 다음 글자는 원문으로 본다 — "//*" 의 두 번째 / 는 Tibero 에겐 블록 주석 시작이라 masked 에서 공백이 되지만, JSqlParser 는 "//"
+      // 를 줄 주석으로 읽는다(실측 우회 형태가 정확히 이것이다).
+      if (c == '/' && i + 1 < sql.length() && sql.charAt(i + 1) == '/') {
+        throw new UnsafeSqlException("Tibero SQL 에서 '//' 는 허용되지 않습니다. 주석은 -- 또는 /* */ 를 쓰세요.");
+      }
+      if (c == '`') {
+        throw new UnsafeSqlException("Tibero SQL 에서 백틱(`)은 허용되지 않습니다. 식별자는 큰따옴표로 감싸세요.");
+      }
+      if (c == '$' && next == '$') {
+        throw new UnsafeSqlException("Tibero SQL 에서 '$$' 는 허용되지 않습니다.");
+      }
+      // 단독 E/e 바로 뒤에서 문자열이 시작하면 JSqlParser 는 백슬래시 이스케이프 문자열로 읽는다(Tibero 에는 없는 표기).
+      // masked 에서 문자열은 공백이 되므로 원문의 여는 따옴표 위치로 본다.
+      if ((c == 'E' || c == 'e')
+          && i + 1 < sql.length()
+          && sql.charAt(i + 1) == '\''
+          // 단어 경계는 어휘 분석기의 식별자 문자 규칙을 그대로 쓴다(규칙을 한 곳에 둔다).
+          && (i == 0 || !TiberoSqlLexer.isIdentChar(masked.charAt(i - 1)))) {
+        throw new UnsafeSqlException("Tibero SQL 에서 E'..' 문자열 표기는 허용되지 않습니다. 일반 '..' 를 쓰세요.");
+      }
+    }
+  }
+
+  /**
+   * Tibero 모드에서 PG 검증보다 먼저 도는 가드(스펙 §5.4). 거부는 기존 검증 예외({@link UnsafeSqlException})로 감싸 같은 400 경로를
+   * 탄다.
+   *
+   * <p>순서: Tibero 어휘 검사(대체 따옴표·닫히지 않은 리터럴 등) → 단일 문장·첫 키워드·위험 패키지({@code DBMS_}·{@code UTL_}·{@code
+   * SYS.} 등) → 테넌트 스키마가 아닌 스키마로 한정된 함수 호출. 문자열 안 SQL 을 실행하는 함수는 AST 테이블 판정으로 볼 수 없어 이 이름 대조가 유일한
+   * 방어다.
+   */
+  private void requireTiberoGuards(String sql, String tenantSchema) {
+    requireTiberoLexicallyUnambiguous(sql);
+    try {
+      TiberoSqlGuard.requireAllowedStatement(sql);
+      TiberoSqlGuard.requireNoForeignSchemaCalls(sql, tenantSchema);
+    } catch (TiberoSqlGuard.Rejected e) {
+      throw new UnsafeSqlException(e.getMessage(), e);
+    }
+  }
+
+  /**
+   * 이 검증기의 식별자 접기 규칙 — PG 모드는 {@link #foldIdentifier}, Tibero 모드는 {@link #foldTiberoIdentifier}.
+   */
+  private String fold(String raw) {
+    return tibero ? foldTiberoIdentifier(raw) : foldIdentifier(raw);
   }
 
   /**
@@ -595,6 +746,39 @@ public class SqlValidator {
    */
   static final Set<String> ALLOWED_FUNCTIONS = buildAllowedFunctions();
 
+  /**
+   * Tibero 모드에서만 공용 허용목록에 더하는 Oracle/Tibero 내장 함수(WD-77 결정, 소문자 대조). 공용 목록({@link
+   * #ALLOWED_FUNCTIONS})에 이미 있는 이름(집계·윈도·문자열·숫자·{@code decode}·{@code to_char}·{@code regexp_*} 등)은
+   * 다시 적지 않고 Oracle 전용 이름만 둔다 — 두 곳에 적으면 한쪽만 고쳤을 때 다른 쪽이 계속 허용해 정책이 갈라진다. 파일·네트워크·카탈로그 접근이나 문자열을
+   * SQL 로 재해석하는 함수는 없다(그런 패키지는 {@code TiberoSqlGuard} 가 이름으로 먼저 막는다). PG 허용목록은 바뀌지 않는다 — PG 검증기는
+   * {@link #ALLOWED_FUNCTIONS} 만 본다.
+   */
+  static final Set<String> TIBERO_EXTRA_FUNCTIONS =
+      Set.of(
+          "nvl",
+          "nvl2",
+          "instr",
+          "add_months",
+          "months_between",
+          "last_day",
+          "next_day",
+          "extract",
+          "listagg",
+          "sysdate",
+          "systimestamp");
+
+  /**
+   * Tibero 모드 허용목록 = 공용 허용목록 ∪ {@link #TIBERO_EXTRA_FUNCTIONS}. 선언 순서상 {@link #ALLOWED_FUNCTIONS}
+   * 뒤에 둔다.
+   */
+  static final Set<String> TIBERO_ALLOWED_FUNCTIONS = buildTiberoAllowedFunctions();
+
+  private static Set<String> buildTiberoAllowedFunctions() {
+    Set<String> combined = new HashSet<>(ALLOWED_FUNCTIONS);
+    combined.addAll(TIBERO_EXTRA_FUNCTIONS);
+    return Set.copyOf(combined);
+  }
+
   private static Set<String> buildAllowedFunctions() {
     Set<String> combined = new HashSet<>(SQL_STANDARD_FUNCTIONS);
     combined.addAll(POSTGIS_SAFE_FUNCTIONS);
@@ -734,11 +918,15 @@ public class SqlValidator {
     if (scriptContent == null || scriptContent.isBlank()) {
       throw new UnsafeSqlException("SQL 스크립트가 비어 있습니다.");
     }
+    if (tibero) {
+      // Tibero 가드를 PG 검증(파싱·스키마·함수)보다 먼저 — 위험 패키지 호출은 AST 로 판정할 수 없다(스펙 §5.4).
+      requireTiberoGuards(scriptContent, allowedSchema());
+    }
 
     Statement statement = parseSingleStatement(scriptContent);
     requireDmlOrSelect(statement);
 
-    AstNodeCollector collected = collectSafely(statement);
+    AstNodeCollector collected = collectSafely(statement, this::fold);
     // DML 쓰기 대상은 CTE 필터 없이 스키마 검사에 넣는다 — PG 는 DML 대상을 CTE 로 해석하지 않으므로
     // WITH pg_authid AS (SELECT 1) DELETE FROM pg_authid 가 실제 카탈로그 테이블을 겨눈다(referencedTables 와 같은
     // 규칙).
@@ -778,7 +966,7 @@ public class SqlValidator {
       // 경고 계산이 저장을 막는 검증과 다른 실패 경로로 새는 것을 막는다).
       return List.of();
     }
-    AstNodeCollector collected = collectSafely(stmt);
+    AstNodeCollector collected = collectSafely(stmt, this::fold);
     boolean groupBy = collected.plainSelects().stream().anyMatch(ps -> ps.getGroupBy() != null);
     boolean distinct = collected.plainSelects().stream().anyMatch(ps -> ps.getDistinct() != null);
     boolean window = !collected.analyticFunctionNames().isEmpty();
@@ -805,9 +993,9 @@ public class SqlValidator {
    * 경계까지 그대로 올라온다(여기서는 스택이 완전히 풀린 상태라 잡아도 안전하다). {@code e}를 버리지 않고 {@code log.warn}으로 남긴다 — 실제
    * 버그(상한 오설정 등)에서 온 SOE 라면 그 기원이 로그 없이는 완전히 소실된다.
    */
-  private static AstNodeCollector collectSafely(Statement statement) {
+  private static AstNodeCollector collectSafely(Statement statement, UnaryOperator<String> fold) {
     try {
-      return AstNodeCollector.collect(statement);
+      return AstNodeCollector.collect(statement, fold);
     } catch (StackOverflowError e) {
       log.warn("SQL AST 순회 중 StackOverflowError 발생 — 순회 깊이 상한 설정을 점검하세요.", e);
       throw new UnsafeSqlException("SQL 표현식이 너무 복잡해 정적 검증을 완료할 수 없습니다.");
@@ -867,7 +1055,12 @@ public class SqlValidator {
     // PG 와 JSqlParser 가 주석·문자열 경계를 다르게 자르는 표기를 먼저 거부한다 — 그 틈에 넣은 테이블 참조는 JSqlParser 에겐
     // 주석·리터럴이고 PG 에겐 실제 참조다(PgLexicalAmbiguityCheck 문서). validate·unqualifiedTableNames·
     // referencedTables(·incrementalWarnings) 가 모두 이 경로를 지난다.
-    PgLexicalAmbiguityCheck.requireUnambiguous(sql);
+    // Tibero 모드는 PG 어휘 검사 대신 Tibero 어휘 규칙으로 같은 검사를 한다(스펙 §5.4) — 대상 DB 가 Tibero 라 비교 기준이 다르다.
+    if (tibero) {
+      requireTiberoLexicallyUnambiguous(sql);
+    } else {
+      PgLexicalAmbiguityCheck.requireUnambiguous(sql);
+    }
     Statements parsed;
     try {
       parsed = CCJSqlParserUtil.parseStatements(sql, PARSE_EXECUTOR, null);
@@ -967,6 +1160,11 @@ public class SqlValidator {
         if (allowUnqualifiedTables) {
           continue;
         }
+        // Tibero 모드는 미한정 DUAL(따옴표 없거나 "DUAL")만 예외로 둔다 — 상수 조회에 FROM 절이 필수라서다.
+        // 인용 소문자 "dual" 은 Tibero 에서 다른 이름이므로 접기 결과로 대조한다.
+        if (tibero && TIBERO_DUAL.equals(foldTiberoIdentifier(fqn))) {
+          continue;
+        }
         // F9(수정 라운드 1) — name 이 점을 포함한 인용 이름(예: "my.table")이면 인용 없이 이어 붙였을 때
         // "<스키마>.my.table"이 되어 유효하지 않은 SQL 을 권하게 된다(#387-5 와 같은 계열). 시퀀스 쪽
         // (requireSafeSequenceArgument)이 이미 같은 문제를 인용으로 고쳤으므로 같은 방식을 따른다.
@@ -985,7 +1183,7 @@ public class SqlValidator {
       String schema = stripQuotes(fqn.substring(0, dot));
       String name = stripQuotes(fqn.substring(dot + 1));
       rejectSearchIndexTable(name);
-      if (!allowedSchema.equalsIgnoreCase(schema)) {
+      if (!isAllowedSchema(allowedSchema, fqn.substring(0, dot))) {
         throw new UnsafeSqlException(
             "허용되지 않는 스키마 참조: '"
                 + schema
@@ -1028,6 +1226,23 @@ public class SqlValidator {
     if (lower.startsWith(DataTableService.TEMP_TABLE_PREFIX)) {
       throw new UnsafeSqlException("시스템 임시 테이블은 SQL 로 조회·수정할 수 없습니다: '" + name + "'");
     }
+  }
+
+  /**
+   * 한정 이름의 스키마 조각(따옴표 포함 원문)이 허용 스키마인지.
+   *
+   * <ul>
+   *   <li>PG 모드: 따옴표를 벗겨 대소문자 무관 비교 — 기존 동작 그대로다.
+   *   <li>Tibero 모드: Tibero 식별자 규칙 그대로 — 따옴표 없는 이름은 대문자로 접고, 따옴표 이름은 대소문자 그대로 정확히 비교한다. 인용 소문자
+   *       {@code "genia_t5"} 는 Tibero 에서 {@code GENIA_T5} 와 다른 스키마라 대소문자 무관 비교로 통과시키면 판정한 스키마와 실행되는
+   *       스키마가 갈린다.
+   * </ul>
+   */
+  private boolean isAllowedSchema(String allowedSchema, String rawSchemaPart) {
+    if (tibero) {
+      return allowedSchema.equals(foldTiberoIdentifier(rawSchemaPart.strip()));
+    }
+    return allowedSchema.equalsIgnoreCase(stripQuotes(rawSchemaPart));
   }
 
   private static String stripQuotes(String s) {
@@ -1084,6 +1299,15 @@ public class SqlValidator {
     return quoted ? stripQuotes(raw) : raw.toLowerCase();
   }
 
+  /**
+   * Tibero(Oracle) 식별자 접기 규칙 — 인용된 식별자는 원문 그대로, 인용되지 않은 식별자는 대문자로 접는다(로캘 독립). 물리 테이블명이 메타데이터 이름의
+   * 대문자({@code TiberoNames.physical})인 것과 같은 규칙이다.
+   */
+  static String foldTiberoIdentifier(String raw) {
+    boolean quoted = raw.length() >= 2 && raw.startsWith("\"") && raw.endsWith("\"");
+    return quoted ? stripQuotes(raw) : raw.toUpperCase(Locale.ROOT);
+  }
+
   /** 함수 이름(schema.fn 표기 가능)에서 실제 함수명만 뽑아 정규화한다(마지막 dot 뒤 토큰, 따옴표 제거). */
   private static String simpleFunctionName(String rawName) {
     int dot = rawName.lastIndexOf('.');
@@ -1109,20 +1333,20 @@ public class SqlValidator {
    */
   public Set<String> unqualifiedTableNames(String sql) {
     Statement statement = parseSingleStatement(sql);
-    AstNodeCollector collected = collectSafely(statement);
+    AstNodeCollector collected = collectSafely(statement, this::fold);
     Set<String> result = new LinkedHashSet<>();
     // DML 쓰기 대상은 CTE 와 이름이 같아도 실제 테이블이다 — 카탈로그 백스톱이 그 이름을 보도록 남긴다.
     for (String fqn : collected.tableFqns(writeTargetsOf(statement, collected))) {
       // indexOfUnquotedDot 사용 — 순수 indexOf('.')는 "my.table"(따옴표 안에 점이 있는 미한정 테이블)을
       // "점이 있으니 한정됐다"고 오판해 이 결과 집합에서 빠뜨렸다(m5 후속 정정과 같은 근본 원인).
       if (indexOfUnquotedDot(fqn) < 0) {
-        result.add(foldIdentifier(fqn));
+        result.add(fold(fqn));
       }
     }
     return result;
   }
 
-  /** 참조 테이블 이름. PG 식별자 폴딩 적용 결과. 미한정이면 schema 는 null. */
+  /** 참조 테이블 이름. 검증기의 식별자 접기(PG: 소문자, Tibero: 대문자) 적용 결과. 미한정이면 schema 는 null. */
   public record TableName(String schema, String name) {}
 
   /** 읽기 집합과 쓰기 집합(INSERT/UPDATE/DELETE 대상, SELECT INTO 대상). */
@@ -1141,7 +1365,7 @@ public class SqlValidator {
   public ReferencedTables referencedTables(String sql) {
     Statement statement = parseSingleStatement(sql);
     requireDmlOrSelect(statement);
-    AstNodeCollector collected = collectSafely(statement);
+    AstNodeCollector collected = collectSafely(statement, this::fold);
     Set<Table> writeTargets = writeTargetsOf(statement, collected);
     Set<TableName> reads = new LinkedHashSet<>();
     Set<TableName> writes = new LinkedHashSet<>();
@@ -1186,8 +1410,8 @@ public class SqlValidator {
     return writeTargets;
   }
 
-  /** requireDataSchemaOnly 와 같은 분해·거부 규칙으로 이름을 정규화한다. */
-  private static TableName toTableName(Table table) {
+  /** requireDataSchemaOnly 와 같은 분해·거부 규칙으로 이름을 정규화한다. 접기는 이 검증기의 규칙({@link #fold})을 따른다. */
+  private TableName toTableName(Table table) {
     String fqn = table.getFullyQualifiedName();
     if (countUnquotedDots(fqn) > 1) {
       throw new UnsafeSqlException("허용되지 않은 테이블 이름 형식입니다: " + fqn);
@@ -1195,13 +1419,13 @@ public class SqlValidator {
     int dot = indexOfUnquotedDot(fqn);
     if (dot < 0) {
       rejectUnicodeEscapeIdentifier(fqn);
-      return new TableName(null, foldIdentifier(fqn));
+      return new TableName(null, fold(fqn));
     }
     String schema = fqn.substring(0, dot);
     String name = fqn.substring(dot + 1);
     rejectUnicodeEscapeIdentifier(schema);
     rejectUnicodeEscapeIdentifier(name);
-    return new TableName(foldIdentifier(schema), foldIdentifier(name));
+    return new TableName(fold(schema), fold(name));
   }
 
   /**
@@ -1290,7 +1514,9 @@ public class SqlValidator {
   }
 
   private void requireKnownFunctionName(String lower, String rawName) {
-    if (!ALLOWED_FUNCTIONS.contains(lower)) {
+    // Tibero 모드만 Oracle/Tibero 함수를 더한 목록을 쓴다 — PG 모드는 기존 목록 그대로.
+    Set<String> allowed = tibero ? TIBERO_ALLOWED_FUNCTIONS : ALLOWED_FUNCTIONS;
+    if (!allowed.contains(lower)) {
       throw new UnsafeSqlException("허용되지 않는 함수 호출: '" + rawName + "'. 알려진 안전 함수 목록에 없습니다.");
     }
   }
@@ -1535,8 +1761,7 @@ public class SqlValidator {
               + name
               + "\") — 미한정 시퀀스는 허용하지 않습니다.");
     }
-    String schema = stripQuotes(seqRef.substring(0, dot));
-    if (!allowedSchema.equalsIgnoreCase(schema)) {
+    if (!isAllowedSchema(allowedSchema, seqRef.substring(0, dot))) {
       throw new UnsafeSqlException(
           "허용되지 않는 함수 호출: '"
               + fnName
@@ -1635,8 +1860,18 @@ public class SqlValidator {
 
     private final List<TableRef> tables = new ArrayList<>();
 
-    static AstNodeCollector collect(Statement statement) {
-      AstNodeCollector collector = new AstNodeCollector();
+    /**
+     * CTE 별칭 등록·대조에 쓰는 식별자 접기. 검증기 모드(PG/Tibero)를 따른다 — 대상 DB 와 다른 접기로 대조하면 CTE 가 아닌 실제 테이블이 CTE 로
+     * 오인돼 판정에서 빠진다({@link SqlValidator#tibero} 문서).
+     */
+    private final UnaryOperator<String> fold;
+
+    private AstNodeCollector(UnaryOperator<String> fold) {
+      this.fold = fold;
+    }
+
+    static AstNodeCollector collect(Statement statement, UnaryOperator<String> fold) {
+      AstNodeCollector collector = new AstNodeCollector(fold);
       collector.walk(statement, 0);
       return collector;
     }
@@ -1713,12 +1948,12 @@ public class SqlValidator {
      * 대상을 CTE 로 해석하지 않으므로({@code WITH users AS (SELECT 1) DELETE FROM users} 는 실제 users 를 지운다) 여기서
      * 제외하면 스키마 검사·판정에서 그 대상이 사라진다.
      */
-    private static boolean isCteReference(TableRef ref, Set<Table> writeTargets) {
+    private boolean isCteReference(TableRef ref, Set<Table> writeTargets) {
       if (writeTargets.contains(ref.table())) {
         return false;
       }
       String fqn = ref.table().getFullyQualifiedName();
-      return indexOfUnquotedDot(fqn) < 0 && ref.activeCteAliases().contains(foldIdentifier(fqn));
+      return indexOfUnquotedDot(fqn) < 0 && ref.activeCteAliases().contains(fold.apply(fqn));
     }
 
     private void walk(Object node, int depth) {
@@ -1890,10 +2125,13 @@ public class SqlValidator {
       return null;
     }
 
-    /** {@code WithItem}의 별칭을 PG 식별자 폴딩 규칙({@link SqlValidator#foldIdentifier})으로 집합에 더한다. */
-    private static void addAlias(Set<String> aliases, WithItem withItem) {
+    /**
+     * {@code WithItem}의 별칭을 검증기의 식별자 접기({@link #fold}, PG 는 {@link SqlValidator#foldIdentifier})로
+     * 집합에 더한다.
+     */
+    private void addAlias(Set<String> aliases, WithItem withItem) {
       if (withItem.getAlias() != null && withItem.getAlias().getName() != null) {
-        aliases.add(foldIdentifier(withItem.getAlias().getName()));
+        aliases.add(fold.apply(withItem.getAlias().getName()));
       }
     }
 

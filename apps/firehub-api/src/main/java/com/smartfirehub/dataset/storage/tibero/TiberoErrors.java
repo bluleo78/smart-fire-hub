@@ -48,6 +48,22 @@ public final class TiberoErrors {
   }
 
   /**
+   * 오류 문자열에 주어진 코드 중 하나의 표기({@code JDBC-10021:}·{@code ORA-30926})가 있는지. 예외가 아니라 문자열만 있는
+   * 경로(db-executor 응답에 구조화 코드가 없을 때의 폴백, WD-77)가 쓴다.
+   */
+  public static boolean messageHasAnyCode(String message, Set<Integer> codes) {
+    if (message == null) {
+      return false;
+    }
+    for (int code : codes) {
+      if (message.contains(tag(code))) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
    * 오류 코드의 메시지 표기. Oracle 호환 양수 코드는 {@code 942 → "ORA-00942"}, Tibero 음수 코드는 {@code -8033 →
    * "JDBC-8033:"}(실서버 메시지 형식 — 뒤의 콜론으로 -80330 같은 더 긴 코드와 구분한다).
    */

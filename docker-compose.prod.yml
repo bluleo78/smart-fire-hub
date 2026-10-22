@@ -91,6 +91,8 @@ services:
       MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
       MINIO_BUCKET: ${MINIO_BUCKET:-firehub-files}
+      # Tibero 테넌트 SQL 을 보내는 db-executor 주소(WD-77). 같은 네트워크의 db-executor 서비스를 가리킨다.
+      DB_EXECUTOR_BASE_URL: http://db-executor:8090
     depends_on:
       db:
         condition: service_healthy
@@ -102,6 +104,27 @@ services:
       timeout: 5s
       retries: 15
       start_period: 40s
+    restart: unless-stopped
+
+  # Tibero 테넌트 SQL 실행기(WD-77). 포트는 외부에 공개하지 않고 api 만 firehub-net 으로 호출한다.
+  db-executor:
+    build:
+      context: ./apps/firehub-db-executor
+      dockerfile: Dockerfile
+    environment:
+      # api 의 EXECUTOR_INTERNAL_TOKEN, executor 의 EXECUTOR_INTERNAL_SERVICE_TOKEN 과 **같은 .env 키**를 읽는다.
+      EXECUTOR_INTERNAL_TOKEN: ${EXECUTOR_INTERNAL_TOKEN:-executor-token}
+      # 테넌트 저장소 기술자(/internal/executor/**)를 조회할 api 주소.
+      DB_EXECUTOR_API_BASE_URL: http://api:8080
+    networks:
+      - firehub-net
+    # 헬스는 정확히 /actuator/health 만 열려 있다(하위 경로는 401).
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8090/actuator/health > /dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
     restart: unless-stopped
 
   executor:

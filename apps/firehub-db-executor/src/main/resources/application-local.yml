@@ -1,0 +1,4 @@
+# 로컬 개발용 — api(5010) 를 바라보고 개발 토큰을 허용한다.
+app:
+  internal-token: ${EXECUTOR_INTERNAL_TOKEN:dev-executor-token}
+  api-base-url: ${DB_EXECUTOR_API_BASE_URL:http://localhost:5010}

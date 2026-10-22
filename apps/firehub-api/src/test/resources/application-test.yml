@@ -84,6 +84,10 @@ app:
     enabled: false  # tests use direct execution
     # 테스트는 기본 토큰으로 저장소 기술자 엔드포인트를 호출한다. 다른 프로필에는 두지 않는다.
     allow-default-token: true
+  db-executor:
+    # 테스트에는 db-executor 가 없다 — 비워 두어 Tibero 테넌트 SQL 단계가 요청 없이 바로 실패(fail-closed)하게 한다.
+    # 실행 경로는 DbExecutorClientTest(WireMock)·PipelineAsyncRunnerTiberoTest(목)가 검증한다.
+    base-url: ""
   embedding:
     # 재임베딩 백로그 스윕은 테스트가 직접 sweep() 을 부른다 — 배경 투입이 끼어들면 잡 투입 단언이 흔들린다.
     backlog-sweep-enabled: false

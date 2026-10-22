@@ -14,6 +14,7 @@ import com.smartfirehub.global.security.PermissionInterceptor;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.util.SqlValidationUtils;
 import com.smartfirehub.pipeline.exception.UnsafeSqlException;
+import com.smartfirehub.pipeline.service.PipelineDataSchema;
 import com.smartfirehub.pipeline.service.validator.PgLexicalAmbiguityCheck;
 import com.smartfirehub.pipeline.service.validator.SqlValidator;
 import com.smartfirehub.securitylevel.ai.AiCall;
@@ -27,6 +28,7 @@ import java.util.Collection;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -60,6 +62,13 @@ public class DatasetAccessGuard {
    * 작업)에서는 empty 라 기존 동작과 같다.
    */
   private final AiCallContext aiCallContext;
+
+  /**
+   * 테넌트 백엔드별 데이터 스키마·검증기(WD-77, 스펙 §5.0·§5.4). Tibero 테넌트의 파이프라인 SQL(Tibero 에서 실행될 SQL)은 이 빈이 주는
+   * 스키마({@code GENIA_T{id}})·Tibero 식별자 접기로 판정한다 — PG 테넌트와 Tibero 테넌트의 대화형 SQL(아직 PG 에서 실행)은 이 빈을
+   * 거치지 않고 기존 PG 경로 그대로다.
+   */
+  private final PipelineDataSchema pipelineDataSchema;
 
   /**
    * 참조 테이블 추출 전용 인스턴스 — 스프링 빈이 아니다. 스키마 허용 여부는 이 인스턴스가 아니라 {@link #checkSql} 이 테넌트 data 스키마와 대조해
@@ -620,24 +629,40 @@ public class DatasetAccessGuard {
     if (sql == null || sql.isBlank()) {
       throw new UnsafeSqlException("SQL 이 비어 있습니다.");
     }
-    // PG·JSqlParser 어휘가 갈리는 표기를 받은 문자열 그대로 먼저 거부한다(위 Javadoc).
-    PgLexicalAmbiguityCheck.requireUnambiguous(sql);
-    // 끝 세미콜론(뒤 공백 포함)만 뗀다 — 그 외 정규화는 판정 문자열과 실행 문자열을 어긋나게 한다(위 Javadoc).
-    String exact = SqlValidationUtils.removeTrailingSemicolon(sql.strip());
-    SqlValidator.ReferencedTables refs = sqlParser.referencedTables(exact);
-    String dataSchema = DataSchema.current();
-
-    // 1) 스키마 검사 + 이름 수집. 다른 스키마 참조는 매핑을 볼 것도 없이 거부.
+    // Tibero 어휘·스키마 규칙은 Tibero 에서 실행될 SQL, 즉 파이프라인 SQL 단계(PIPELINE_SAVE·PIPELINE_RUN)에만 쓴다(§5.4).
+    // 대화형·분석·지표 SQL(INTERACTIVE)은 Tibero 테넌트여도 아직 PG 에서 실행되므로 PG 규칙(PG 어휘 검사·PG 데이터 스키마)으로
+    // 판정한다 — Tibero 규칙으로 보면 PG 어휘 검사를 건너뛴 판정으로 PG 에서 실행될 수 있다.
+    // PG 테넌트는 모드와 무관하게 PG 규칙 그대로다.
+    boolean tibero = pipelineDataSchema.isTibero() && mode != SqlAccessMode.INTERACTIVE;
     Set<String> readNames = new LinkedHashSet<>();
     Set<String> writeNames = new LinkedHashSet<>();
+    // 어휘 검사: 받은 문자열 그대로 먼저 거부한다(위 Javadoc). PG 는 PG·JSqlParser 어휘가 갈리는 표기, Tibero 는 Tibero 어휘 규칙(대체
+    // 따옴표·닫히지 않은 리터럴·JSqlParser 전용 표기 — SqlValidator#requireTiberoLexicallyUnambiguous)이다.
+    if (tibero) {
+      SqlValidator.requireTiberoLexicallyUnambiguous(sql);
+    } else {
+      PgLexicalAmbiguityCheck.requireUnambiguous(sql);
+    }
+    // 끝 세미콜론(뒤 공백 포함)만 뗀다 — 그 외 정규화는 판정 문자열과 실행 문자열을 어긋나게 한다(위 Javadoc).
+    String exact = SqlValidationUtils.removeTrailingSemicolon(sql.strip());
+    // 참조 추출·데이터 스키마도 실행될 곳의 규칙을 따른다 — Tibero 는 테넌트 Tibero 검증기(따옴표 없으면 대문자 접기)·GENIA_T{id}.
+    SqlValidator.ReferencedTables refs =
+        tibero
+            ? pipelineDataSchema.validator().referencedTables(exact)
+            : sqlParser.referencedTables(exact);
+    String dataSchema = tibero ? pipelineDataSchema.current() : DataSchema.current();
+
+    // 1) 스키마 검사 + 이름 수집. 다른 스키마 참조는 매핑을 볼 것도 없이 거부.
     for (SqlValidator.TableName t : refs.reads()) {
-      if (!collect(t, dataSchema, mode, readNames)) {
-        return deniedVerdict("SQL_OTHER_SCHEMA", null, t.schema() + "." + t.name());
+      SqlVerdict denied = collect(t, dataSchema, mode, readNames, tibero, false);
+      if (denied != null) {
+        return denied;
       }
     }
     for (SqlValidator.TableName t : refs.writes()) {
-      if (!collect(t, dataSchema, mode, writeNames)) {
-        return deniedVerdict("SQL_OTHER_SCHEMA", null, t.schema() + "." + t.name());
+      SqlVerdict denied = collect(t, dataSchema, mode, writeNames, tibero, true);
+      if (denied != null) {
+        return denied;
       }
     }
 
@@ -720,19 +745,47 @@ public class DatasetAccessGuard {
   }
 
   /**
-   * 스키마 검사 + 이름 수집. 테넌트 data 스키마가 아닌 한정 이름이면 false(거부). 미한정 이름은 data 스키마 이름으로 보고 매핑 단계에 맡긴다 — 다른
-   * 스키마로 해석될 미한정 이름(public 테이블 등)은 데이터셋 매핑이 없어 어차피 거부된다. PIPELINE_SAVE 의 step_ref 더미는 건너뛴다.
+   * 참조 하나의 스키마 검사 + 메타데이터 이름 수집. 거부면 그 판정을, 통과면 null 을 돌려준다.
+   *
+   * <ul>
+   *   <li>스키마: 테넌트 데이터 스키마가 아닌 한정 이름이면 거부. 이름은 접기(PG 소문자·Tibero 대문자)가 끝난 값이라 바이트 비교한다 — PG 에서 인용된
+   *       대문자 {@code "DATA_T1"}, Tibero 에서 인용 소문자 {@code "genia_t5"} 는 다른 스키마다. 미한정 이름은 데이터 스키마
+   *       이름으로 보고 매핑 단계에 맡긴다 — 다른 스키마로 해석될 미한정 이름(public 테이블 등)은 데이터셋 매핑이 없어 어차피 거부된다.
+   *   <li>Tibero 이름({@code tibero}, WD-77 스펙 §5.0·§5.4): 테이블 물리명은 메타데이터 이름의 대문자이므로 소문자로 되돌려 데이터셋
+   *       매핑에 넘긴다. 소문자가 섞인 인용 이름은 우리 테이블일 수 없어 매핑 없음으로 거부한다. 미한정 {@code DUAL} 은 읽기면 시스템 의사 테이블이라
+   *       판정에서 빼고(데이터셋이 아니다 — {@code dual} 데이터셋 이름은 {@code TiberoNames.validateUserName} 이 막는다), 쓰기
+   *       대상이면 정당한 용도가 없어 거부한다. 한정된 {@code genia_t5.dual} 은 일반 테이블처럼 판정한다.
+   *   <li>PIPELINE_SAVE 의 step_ref 더미는 건너뛴다.
+   * </ul>
+   *
+   * @param tibero Tibero 테넌트의 파이프라인 SQL(Tibero 에서 실행될 SQL)인지
+   * @param write 쓰기 대상인지(Tibero DUAL 규칙에만 쓴다)
    */
-  private static boolean collect(
-      SqlValidator.TableName t, String dataSchema, SqlAccessMode mode, Set<String> out) {
-    // 이름은 PG 폴딩이 끝난 값이라 바이트 비교한다 — "DATA_T1" 처럼 인용된 대문자 스키마는 PG 에서 다른 스키마다.
+  private static SqlVerdict collect(
+      SqlValidator.TableName t,
+      String dataSchema,
+      SqlAccessMode mode,
+      Set<String> out,
+      boolean tibero,
+      boolean write) {
     if (t.schema() != null && !t.schema().equals(dataSchema)) {
-      return false;
+      return deniedVerdict("SQL_OTHER_SCHEMA", null, t.schema() + "." + t.name());
     }
-    if (mode == SqlAccessMode.PIPELINE_SAVE && STEP_REF_PLACEHOLDER.matcher(t.name()).matches()) {
-      return true;
+    String metadataName = t.name();
+    if (tibero) {
+      if (t.schema() == null && SqlValidator.TIBERO_DUAL.equals(t.name())) {
+        return write ? deniedVerdict("SQL_UNMAPPED_TABLE", null, t.name()) : null;
+      }
+      if (!t.name().toUpperCase(Locale.ROOT).equals(t.name())) {
+        return deniedVerdict("SQL_UNMAPPED_TABLE", null, t.name());
+      }
+      metadataName = t.name().toLowerCase(Locale.ROOT);
     }
-    out.add(t.name());
-    return true;
+    if (mode == SqlAccessMode.PIPELINE_SAVE
+        && STEP_REF_PLACEHOLDER.matcher(metadataName).matches()) {
+      return null;
+    }
+    out.add(metadataName);
+    return null;
   }
 }

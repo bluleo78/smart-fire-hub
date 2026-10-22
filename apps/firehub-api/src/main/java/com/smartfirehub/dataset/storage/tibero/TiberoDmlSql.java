@@ -21,12 +21,14 @@ final class TiberoDmlSql {
 
   // ---------- 이름·검색 헬퍼 ----------
 
-  private static String tbl(String schema, String table) {
+  /** 메타데이터 테이블 이름을 검증하고 {@code "S"."T"} 로 한정한다. 파이프라인 적재 문장({@link TiberoPipelineSql})도 쓴다. */
+  static String tbl(String schema, String table) {
     DataTableNames.validate(table);
     return TiberoNames.table(schema, table);
   }
 
-  private static String col(String name) {
+  /** 메타데이터 컬럼 이름을 검증하고 {@code "C"} 로 인용한다. */
+  static String col(String name) {
     DataTableNames.validate(name);
     return TiberoNames.column(name);
   }
@@ -37,20 +39,17 @@ final class TiberoDmlSql {
     return TiberoNames.table(schema, stagingPhysical);
   }
 
-  private static String seq(String schema, String table) {
-    return TiberoNames.quote(TiberoNames.physical(schema))
-        + "."
-        + TiberoNames.quote(TiberoNames.sequenceName(schema, table));
+  /** 테이블 전용 시퀀스의 한정 이름 {@code "S"."SQ_…"}. */
+  static String seq(String schema, String table) {
+    return TiberoNames.qualified(schema, TiberoNames.sequenceName(schema, table));
   }
 
   private static String stgSeq(String schema, String stagingPhysical) {
-    return TiberoNames.quote(TiberoNames.physical(schema))
-        + "."
-        + TiberoNames.quote(TiberoNames.stagingSequenceName(stagingPhysical));
+    return TiberoNames.qualified(schema, TiberoNames.stagingSequenceName(stagingPhysical));
   }
 
   /** 컬럼 목록을 {@code "A", "B"} 로 잇는다. */
-  private static String cols(List<String> names) {
+  static String cols(List<String> names) {
     List<String> out = new ArrayList<>();
     for (String n : names) {
       out.add(col(n));
@@ -306,6 +305,24 @@ final class TiberoDmlSql {
       List<String> columns,
       List<String> pkColumns,
       boolean withImportId) {
+    // 기존 호출자는 "바뀐 행만" 조건 없이 항상 UPDATE 한다 — 출력이 바뀌지 않게 false 로 위임한다.
+    return mergeCore(schema, table, using, columns, pkColumns, withImportId, false);
+  }
+
+  /**
+   * MERGE 공통 본문(파이프라인 적재용 확장, WD-77). {@code changedOnly} 가 true 면 PG {@code IS DISTINCT FROM} 처럼
+   * 값이 바뀐 행만 갱신한다: UPDATE 에 {@code WHERE (DECODE(t.c, s.c, 0, 1) = 1 OR …)}(DECODE 는 NULL 끼리 같게
+   * 본다)를 걸어 안 바뀐 행의 {@code _UPDATED_AT} 이 움직이지 않게 한다(증분 읽기가 재처리하지 않도록). 또 갱신할 컬럼이 하나도 없으면(모든 컬럼이 키)
+   * PG 의 {@code DO NOTHING} 처럼 {@code WHEN MATCHED} 절 전체를 뺀다.
+   */
+  static String mergeCore(
+      String schema,
+      String table,
+      String using,
+      List<String> columns,
+      List<String> pkColumns,
+      boolean withImportId,
+      boolean changedOnly) {
     Set<String> pkSet = new HashSet<>(pkColumns);
     List<String> on = new ArrayList<>();
     for (String pk : pkColumns) {
@@ -320,7 +337,30 @@ final class TiberoDmlSql {
     if (withImportId) {
       sets.add("t.\"IMPORT_ID\" = s.\"IMPORT_ID\"");
     }
+    // 바뀐 행만 모드의 변경 감지 대상은 키가 아닌 데이터 컬럼뿐이다(IMPORT_ID·_UPDATED_AT 제외).
+    List<String> changed = new ArrayList<>(sets);
     sets.add("t.\"_UPDATED_AT\" = SYSTIMESTAMP");
+    String matched;
+    if (changedOnly) {
+      if (changed.isEmpty()) {
+        matched = ""; // 모든 컬럼이 키 — 갱신할 것이 없다
+      } else {
+        List<String> diffs = new ArrayList<>();
+        for (String c : columns) {
+          if (!pkSet.contains(c)) {
+            diffs.add("DECODE(t." + col(c) + ", s." + col(c) + ", 0, 1) = 1");
+          }
+        }
+        matched =
+            " WHEN MATCHED THEN UPDATE SET "
+                + String.join(", ", sets)
+                + " WHERE ("
+                + String.join(" OR ", diffs)
+                + ")";
+      }
+    } else {
+      matched = " WHEN MATCHED THEN UPDATE SET " + String.join(", ", sets);
+    }
 
     List<String> insertCols = new ArrayList<>();
     List<String> insertVals = new ArrayList<>();
@@ -343,8 +383,8 @@ final class TiberoDmlSql {
         + using
         + " s ON ("
         + String.join(" AND ", on)
-        + ") WHEN MATCHED THEN UPDATE SET "
-        + String.join(", ", sets)
+        + ")"
+        + matched
         + " WHEN NOT MATCHED THEN INSERT ("
         + String.join(", ", insertCols)
         + ") VALUES ("

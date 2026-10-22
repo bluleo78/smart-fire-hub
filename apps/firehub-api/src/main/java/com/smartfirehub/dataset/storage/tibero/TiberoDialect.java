@@ -2,6 +2,7 @@ package com.smartfirehub.dataset.storage.tibero;
 
 import com.smartfirehub.dataset.storage.DataStoreBackend;
 import com.smartfirehub.dataset.storage.DataStoreFeatureUnsupportedException;
+import java.util.Arrays;
 import java.util.Locale;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -44,6 +45,14 @@ public final class TiberoDialect {
       this.codes = codes;
     }
 
+    /**
+     * 오류 코드 하나가 이 종류의 "객체 없음" 코드인지. db-executor 처럼 예외가 아니라 응답의 숫자 코드({@code db_error.code})로 받는 경로가
+     * 쓴다(WD-77) — 부호까지 정확히 비교한다(Tibero 음수·Oracle 양수).
+     */
+    public boolean hasCode(int code) {
+      return Arrays.stream(codes).anyMatch(c -> c == code);
+    }
+
     /** 예외 체인에 이 종류의 "객체 없음" 오류(코드 또는 {@code ORA-xxxxx} 표기)가 있는지. */
     public boolean matches(Throwable error) {
       for (int code : codes) {
@@ -71,6 +80,26 @@ public final class TiberoDialect {
 
   /** 값이 컬럼 길이보다 큼 — {@code DataIntegrityViolationException}(TEXT 4000 바이트 초과 등). */
   public static final Set<Integer> VALUE_TOO_LARGE = Set.of(12899, -11048);
+
+  /**
+   * MERGE 원본(사용자 SELECT 결과)에 같은 키가 두 번 이상 나옴 — PG 의 "ON CONFLICT DO UPDATE command cannot affect
+   * row a second time"(SQLState 21000)에 해당한다(WD-77, 실서버 측정 2026-10-22).
+   *
+   * <ul>
+   *   <li>{@code -10021}({@code JDBC-10021:Inconsistent set of rows in source tables.}) — 대상에 이미 있는
+   *       키가 원본에 두 번 나올 때. Oracle 의 ORA-30926 에 해당한다.
+   *   <li>{@code -4008}({@code JDBC-4008:Duplicate unique key found during multi insert.}) — 대상에 없는
+   *       새 키가 원본에 두 번 나와 두 행이 모두 INSERT 로 갈 때. 일반 고유 위반({@link #UNIQUE_VIOLATION}, -10007)과 코드가
+   *       다르다.
+   * </ul>
+   */
+  public static final Set<Integer> MERGE_SOURCE_DUPLICATE = Set.of(30926, -10021, -4008);
+
+  /**
+   * 한 문장으로 여러 행을 넣다가 그 행들끼리 고유 키가 겹침({@code -4008}) — MERGE 가 아닌 INSERT…SELECT 적재에서는 일반 고유 위반과 같은
+   * 뜻으로 안내한다.
+   */
+  public static final Set<Integer> MULTI_INSERT_DUPLICATE = Set.of(-4008);
 
   /** 무결성 위반으로 바꿀 오류 코드(중복 키 제외). */
   public static final Set<Integer> INTEGRITY_VIOLATIONS =
@@ -108,6 +137,22 @@ public final class TiberoDialect {
 
   /** JDBC 드라이버 클래스(드라이버 jar 는 로컬 libs 에서 선택적으로 가져온다). */
   public static final String DRIVER_CLASS = "com.tmax.tibero.jdbc.TbDriver";
+
+  /**
+   * 드라이버 클래스를 불러온다(초기화 포함 — 드라이버가 {@code DriverManager} 에 스스로 등록된다). 드라이버 jar 는 선택 사항이라 없을 수 있어, 기동
+   * 점검({@code TiberoDriverStartupCheck})과 외부 DB 접속({@code JdbcExternalDbConnector})이 같은 판정을 쓴다.
+   *
+   * @param driverClassName 드라이버 클래스명(운영은 {@link #DRIVER_CLASS}, 테스트는 없는 이름으로 누락을 재현)
+   * @return 불러왔으면 null, 못 불러왔으면 그 오류(없는 클래스·링크 오류)
+   */
+  public static Throwable loadDriver(String driverClassName) {
+    try {
+      Class.forName(driverClassName);
+      return null;
+    } catch (ClassNotFoundException | LinkageError e) {
+      return e;
+    }
+  }
 
   /** 커넥션 유효성 검사 쿼리(FROM 절이 필수라 DUAL 이 필요). */
   public static final String VALIDATION_QUERY = "SELECT 1 FROM DUAL";

@@ -1,0 +1,38 @@
+server:
+  port: 8090
+
+spring:
+  application:
+    name: firehub-db-executor
+  # 메타 DB 가 없다 — DataSource 자동 구성을 끈다(테넌트 풀은 TenantPools 가 직접 만든다).
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
+  jackson:
+    generator:
+      # 결과 NUMBER(BigDecimal)를 지수 표기(1E-7) 없이 쓴다 — 고정값 valueConversions 와 같은 JSON 텍스트.
+      write-bigdecimal-as-plain: true
+
+app:
+  # 비어 있으면 기동 실패(DbExecutorProperties). api 와 같은 EXECUTOR_INTERNAL_TOKEN 을 쓴다.
+  internal-token: ${EXECUTOR_INTERNAL_TOKEN:}
+  api-base-url: ${DB_EXECUTOR_API_BASE_URL:http://api:8080}
+  descriptor-ttl-seconds: 60
+  pool:
+    max-pools: 8
+    max-size: 4
+  # 시간 제한(스펙 §4.3-4) — api 호출 제한(/execute/sql 60초, /execute/probe 35초)보다 짧아야 한다.
+  sql:
+    statement-timeout-seconds: 50
+    total-timeout-seconds: 55
+  probe:
+    timeout-seconds: 30
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: always

@@ -8,5 +8,34 @@
     {"schema": "GENIA_T7", "table": "sales", "out": "SQ_683D10AA89"},
     {"schema": "genia_t43259", "table": "order_items", "out": "SQ_57BF7EBEAF"},
     {"schema": "GENIA_T2", "table": "t", "out": "SQ_53E3F9B707"}
+  ],
+  "_columnNames": "결과 컬럼명 정규화(WD-77 db-executor ValueConverter.columnName, WD-75 Python tibero._result_column_name): 전부 대문자면 소문자로, 아니면 그대로.",
+  "columnNames": [
+    {"in": "AMOUNT", "out": "amount"},
+    {"in": "ID_KEY", "out": "id_key"},
+    {"in": "A1$#", "out": "a1$#"},
+    {"in": "TotalAmt", "out": "TotalAmt"},
+    {"in": "amount", "out": "amount"},
+    {"in": "금액", "out": "금액"},
+    {"in": "COUNT(*)", "out": "count(*)"}
+  ],
+  "_valueConversions": "db-executor 결과 값 변환(WD-77 ValueConverter). kind=number 는 (precision, scale) 메타와 in(10진 문자열), kind=timestamp 는 in(ISO 로컬 일시). json 은 응답 JSON 에 실리는 그 값의 정확한 텍스트다(BigDecimal 은 지수 표기 없이). 실서버 측정(WD-77): Tibero 는 리터럴 1.5 를 NUMBER(38,0), COUNT(*) 를 (0,0) 으로 알려 주므로 scale 0 이어도 소수는 자르지 않는다.",
+  "valueConversions": [
+    {"kind": "number", "precision": 18, "scale": 6, "in": "1.5", "json": "1.500000"},
+    {"kind": "number", "precision": 10, "scale": 2, "in": "-3", "json": "-3.00"},
+    {"kind": "number", "precision": 19, "scale": 0, "in": "42", "json": "42"},
+    {"kind": "number", "precision": 1, "scale": 0, "in": "1", "json": "1"},
+    {"kind": "number", "precision": 38, "scale": 0, "in": "123456789012345678901234567890", "json": "123456789012345678901234567890"},
+    {"kind": "number", "precision": 10, "scale": 0, "in": "2.5", "json": "2.5"},
+    {"kind": "number", "precision": 38, "scale": 0, "in": "1.5", "json": "1.5"},
+    {"kind": "number", "precision": 0, "scale": 0, "in": "3", "json": "3"},
+    {"kind": "number", "precision": 0, "scale": -127, "in": "100", "json": "100"},
+    {"kind": "number", "precision": 0, "scale": -127, "in": "1.50", "json": "1.5"},
+    {"kind": "number", "precision": 0, "scale": -127, "in": "0.0000001", "json": "0.0000001"},
+    {"kind": "number", "precision": 0, "scale": -127, "in": "-12.3400", "json": "-12.34"},
+    {"kind": "timestamp", "in": "2026-10-22T13:45:00", "json": "\"2026-10-22T13:45:00\""},
+    {"kind": "timestamp", "in": "2026-10-22T00:00:00", "json": "\"2026-10-22T00:00:00\""},
+    {"kind": "timestamp", "in": "2026-10-22T13:45:00.123", "json": "\"2026-10-22T13:45:00.123000\""},
+    {"kind": "timestamp", "in": "2026-10-22T13:45:00.000001", "json": "\"2026-10-22T13:45:00.000001\""}
   ]
 }

@@ -38,6 +38,9 @@ app:
     enabled: false  # local dev: direct execution (no executor service needed)
     # 로컬은 기본 토큰(dev-executor-token)으로 저장소 기술자 엔드포인트를 쓸 수 있게 한다. 다른 프로필에는 두지 않는다.
     allow-default-token: true
+  db-executor:
+    # 로컬 개발: 맥에서 띄운 firehub-db-executor(포트 8090). executor.enabled=false 여도 Tibero 테넌트는 이 주소로만 실행한다.
+    base-url: http://localhost:8090
   embedding:
     ollama-allowed-base-urls: http://host.docker.internal:11434,http://localhost:11434
 

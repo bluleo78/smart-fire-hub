@@ -600,6 +600,31 @@ executor 는 실행 요청 앞단에서 api 의 테넌트 저장소 기술자(`G
 - **이미지 확인**: `docker run --rm <img> odbcinst -q -d` 로 Tibero ODBC 드라이버가 등록됐는지 본다.
 - **롤백**: 이미지만 되돌린다. 마이그레이션은 없다.
 
+### Tibero DB 실행기 (WD-77, 마이그레이션 없음)
+
+Tibero 테넌트의 파이프라인 SQL 단계는 api 가 새 서비스 `db-executor`(`apps/firehub-db-executor`, Spring Boot, 포트 8090)로 보낸다. db-executor 는 Tibero JDBC 로 직접 실행하고, 테넌트 저장소 기술자는 api 에서 조회한다. 포트는 외부에 공개하지 않는다(api 만 내부망으로 호출).
+
+- **배포 순서**: **api 먼저, 그다음 db-executor.** api 가 `DB_EXECUTOR_BASE_URL`(기본 `http://db-executor:8090`)로 db-executor 를 부르고, db-executor 는 시작 후 api 의 기술자 엔드포인트를 쓴다. 새 api 가 먼저 떠 있어야 db-executor 호출이 의미가 있다.
+- **토큰(필수)**: api(`EXECUTOR_INTERNAL_TOKEN`), executor(`EXECUTOR_INTERNAL_SERVICE_TOKEN`), db-executor(`EXECUTOR_INTERNAL_TOKEN`) 세 곳에 **같은 비기본 시크릿**을 넣는다. compose 에서는 `.env` 의 `EXECUTOR_INTERNAL_TOKEN` 키 하나가 셋 모두에 매핑된다. 값을 바꾸면 세 서비스를 함께 재기동한다. 기본값(`executor-token`)이면 api 가 Tibero 기술자 조회를 503 으로 거부한다(WD-75 토큰 체크리스트와 동일).
+- **환경 변수**: db-executor 는 `DB_EXECUTOR_API_BASE_URL`(기본 `http://api:8080`), api 는 `DB_EXECUTOR_BASE_URL`(기본 `http://db-executor:8090`). 서비스명·포트가 기본과 같으면 명시하지 않아도 된다.
+- **JDBC jar 반입(커밋 금지)**: api 이미지는 예전에 `libs/` 를 복사하지 않아 **운영 api 이미지에 Tibero JDBC 가 없었다.** 이제 api·db-executor 두 Dockerfile 모두 `COPY libs/ libs/` 를 하고, gradle 이 `libs/tibero*.jar` 를 classpath 에 얹는다. **이미지를 빌드하는 컴퓨터**의 아래 두 폴더에 공식 jar(예: `tibero7-jdbc-17.jar`)를 둔다.
+  - `apps/firehub-api/libs/`
+  - `apps/firehub-db-executor/libs/`
+  - `*.jar` 는 `.gitignore` 로 무시되고 `libs/.gitkeep` 만 추적된다. 폴더가 비어 있어도 빌드는 성공하지만 이미지에 드라이버가 없다(아래 확인 필수).
+  - 재배포 라이선스는 운영자가 확인할 사항이다(이 저장소는 jar 를 커밋하지 않는다).
+- **이미지 확인**: 빌드한 이미지에 jar 가 들어갔는지 본다. 이미지의 jar 는 `/app/app.jar` 이고 안쪽 `BOOT-INF/lib/` 에 있어야 한다.
+
+  ```bash
+  docker create --name chk <이미지>
+  docker cp chk:/app/app.jar /tmp/chk-app.jar && docker rm chk
+  unzip -l /tmp/chk-app.jar | grep -i 'BOOT-INF/lib/tibero'     # 한 줄 나와야 정상
+  ```
+  - 한 줄도 안 나오면 빌드 머신의 `libs/` 가 비어 있었던 것이다. api 는 `app.data-store.tibero-enabled=true` 일 때 기동 로그에 ERROR 「Tibero 저장소가 켜져 있지만 JDBC 드라이버(...)가 없습니다」를 1회 남기고(기동은 계속), db-executor 는 health 가 DOWN 이다.
+- **health**: db-executor 의 `/actuator/health` **정확한 경로**만 열려 있다. `/actuator/health/liveness` 같은 하위 경로는 설계상 401 이므로 probe·healthcheck 는 반드시 `/actuator/health` 를 쓴다. `DOWN` 은 Tibero 드라이버 누락(또는 내부 점검 실패)을 뜻한다 — jar 를 넣고 이미지를 다시 빌드한다.
+- **deploy.sh**: `./scripts/deploy.sh db-executor` 가 `apps/firehub-db-executor/` 를 빌드·push(`$REGISTRY/db-executor:latest`)한다. 운영 compose(`~/prod`)에도 같은 이름의 서비스가 있어야 재기동된다. `all` 에는 포함하지 않는다(개별 배포).
+- **k8s**: 운영 Helm 차트(`~/k8s/smart-fire-hub`, 이 저장소 밖)에 db-executor **Deployment + Service(`db-executor:8090`)** 를 추가하고, api 에 환경 변수 `DB_EXECUTOR_BASE_URL` 을 준다. readiness/liveness probe 경로는 정확히 `/actuator/health` 이다. **차트 수정은 사용자 승인 후에** 한다(이 작업에서는 읽지도 고치지도 않았다). 차트에 db-executor 가 없으면 Tibero 테넌트 SQL 단계는 접속 오류로 실패한다.
+- **롤백**: 이미지만 되돌린다. 마이그레이션은 없다.
+
 ### 부분 배포 (빌드+push 완료 후 컨테이너만 재시작)
 
 ```bash

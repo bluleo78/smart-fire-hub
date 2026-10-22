@@ -10,6 +10,8 @@ import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.dataset.storage.DataTableNames;
+import com.smartfirehub.dataset.storage.tibero.TiberoPipelineSql;
+import com.smartfirehub.dataset.storage.tibero.TiberoSqlLexer;
 import com.smartfirehub.global.security.PermissionChecker;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.pipeline.dto.LoadStrategy;
@@ -24,6 +26,7 @@ import com.smartfirehub.pipeline.repository.PipelineStepRepository;
 import com.smartfirehub.pipeline.service.executor.AiClassifyExecutor;
 import com.smartfirehub.pipeline.service.executor.ApiCallConfig;
 import com.smartfirehub.pipeline.service.executor.ApiCallExecutor;
+import com.smartfirehub.pipeline.service.executor.DbExecutorClient;
 import com.smartfirehub.pipeline.service.executor.ExecutionCancelCheck;
 import com.smartfirehub.pipeline.service.executor.ExecutorClient;
 import com.smartfirehub.pipeline.service.validator.PythonScriptValidator;
@@ -45,6 +48,7 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Queue;
@@ -96,9 +100,23 @@ public class PipelineAsyncRunner {
   private final ObjectMapper objectMapper;
   private final PermissionChecker permissionChecker;
   private final ExecutorClient executorClient;
+
+  /**
+   * Tibero 저장소 테넌트의 SQL 단계 실행·컬럼 탐지 전용 클라이언트(WD-77, 스펙 §5.1). Tibero 테넌트 SQL 은 이것으로만 실행한다 — {@code
+   * executorEnabled} 와 무관하고 PG 실행기({@link #executorClient}·{@link #sqlExecutor}·{@link
+   * #sqlColumnProbe})로 폴백하지 않는다.
+   */
+  private final DbExecutorClient dbExecutorClient;
+
   private final AiClassifyExecutor aiClassifyExecutor;
   private final TempDatasetService tempDatasetService;
-  private final SqlValidator sqlValidator;
+
+  /**
+   * 테넌트 백엔드별 데이터 스키마·검증기 선택(WD-77, 스펙 §5.0). SQL 스텝 검증기와 {@code {{#N}}} 한정 이름을 모두 여기서 얻는다 — PG 테넌트는
+   * 기존 검증기 빈·{@code DataSchema.qualify} 그대로다.
+   */
+  private final PipelineDataSchema pipelineDataSchema;
+
   private final PythonScriptValidator pythonScriptValidator;
   private final IncrementalCursorService incrementalCursorService;
   private final OutputTableSessionLock outputTableSessionLock;
@@ -402,6 +420,14 @@ public class PipelineAsyncRunner {
       executionRepository.updateStepExecution(
           stepExecId, "RUNNING", null, null, null, stepStartedAt, null);
 
+      // Tibero 저장소 테넌트 판정(WD-77, 스펙 §5.1) — 이 스텝에서 한 번만 묻는다(테넌트 백엔드는 생성 후 불변이다). 아직 Tibero 로
+      // 적재할 수 없는 스텝 종류는 무엇이든 하기 전에(권한 확인·TEMP 생성·실행기 호출·임시 테이블 맞바꿈 전에) 실패시킨다 — 그 경로들은 PG
+      // 전용(PG 임시 테이블 맞바꿈·PG 슬롯 롤·PG 적재)이라 Tibero 테넌트 데이터를 PG 에 쓰거나 예외로 어중간하게 멈춘다.
+      boolean tiberoTenant = pipelineDataSchema.isTibero();
+      if (tiberoTenant) {
+        rejectUnsupportedTiberoStep(step.scriptType());
+      }
+
       // WD-30: 러너 TEMP 의 쓰기 후 허용 목록 확정 계획(출력 등급 처리가 채운다 — 허용 목록 필요 입력이 없거나 출력이 전부 교체되지 않으면 null).
       PipelineSecurityGate.OutputAllowlistPlan allowlistPlan = null;
 
@@ -472,6 +498,11 @@ public class PipelineAsyncRunner {
         // V123 의 DB 함수가 책임진다.
         // 판정은 저장·예약 API 와 공유하는 단일 헬퍼로 내린다(#739) — 세 곳이 어긋나면 소비되지 않는 예약이 생긴다.
         incrementalStep = LastRunAtPlaceholder.isIncrementalStep(step.scriptType(), sql);
+        if (incrementalStep && tiberoTenant) {
+          // 커서 후보·책갈피는 PG 시계와 PG 트리거(_updated_at)에 기대고 있다. Tibero 의 _UPDATED_AT 은
+          // SYSTIMESTAMP 라 그대로 쓰면 누락·중복 위험이 있다(스펙 §2 비목표). 커서를 읽거나 후보를 잡기 전에 거부한다.
+          throw new ScriptExecutionException(TIBERO_INCREMENTAL_UNSUPPORTED);
+        }
         if (incrementalStep) {
           // 저장 시점(PipelineService.saveSteps)이 이미 REPLACE+증분을 거부하지만, 그 검증을 우회해
           // 저장된 레거시 행에 대한 2차 방어를 둔다 — REPLACE 로 돌면 매 실행 출력에 변경분만 남는다.
@@ -505,7 +536,16 @@ public class PipelineAsyncRunner {
         // 단일 statement·세미콜론 없음이 보장되어 구조적으로 안전하다. (#136)
         // 조회/DML 판정도 이 검증이 파싱한 AST 로 얻는다(WD-93) — 저장 시점(PipelineService#validateAndJudgeQuery)과
         // 같은 메서드다. 예전 어휘 판정은 앞 주석·CTE 이름·VALUES 등을 DML 로 오판해 REPLACE 출력만 비운 채 완료됐다.
-        boolean isSelect = sqlValidator.validate(sql) == SqlValidator.StatementKind.QUERY;
+        // 검증기는 테넌트 백엔드에 맞춰 PipelineDataSchema 가 고른다 — PG 는 기존 빈 그대로,
+        // Tibero 는 GENIA_T{id} 스키마·Tibero 가드 검증기다(저장 시점과 같은 선택, WD-77).
+        boolean isSelect =
+            pipelineDataSchema.validator().validate(sql) == SqlValidator.StatementKind.QUERY;
+        if (tiberoTenant && !isSelect && "INSERT".equals(TiberoSqlLexer.firstKeyword(sql))) {
+          // Tibero 출력 테이블은 ID 기본값·트리거가 없다(적재 문장이 시퀀스로 채운다). 사용자가 쓴 INSERT 는 ID 가 비어 실패하므로
+          // 보안 게이트·실행기 호출 전에 거부하고 SELECT 적재로 안내한다. 검증을 통과했으므로 따옴표·주석이 닫혀 있어 어휘 분석기가
+          // 예외를 던지지 않는다. UPDATE 가 _UPDATED_AT 을 움직이지 않는 문제는 2단계(증분) 과제다.
+          throw new ScriptExecutionException(TIBERO_USER_INSERT_UNSUPPORTED);
+        }
         // 보안 등급(S2, 스펙 §4.2 5행): 실행 주체(수동=요청자, 트리거=트리거 생성자) 기준 판정. 판정 문자열은 스텝 참조·증분
         // 플레이스홀더를 치환하고 위에서 검증한 바로 이 sql 이다 — DML 분기는 이 문자열을 그대로, SELECT 분기는 러너가 만든
         // INSERT/MERGE 래퍼 + 이 문자열을 실행하므로 판정한 테이블 = 실행되는 테이블이다(가드 계약). 원문(scriptContent)이나
@@ -532,6 +572,11 @@ public class PipelineAsyncRunner {
 
         // SELECT이고 outputDatasetId가 없으면 임시 데이터셋 자동 생성
         if (isSelect && outputDatasetId == null) {
+          if (tiberoTenant) {
+            // 임시 데이터셋 자동 생성은 이름 규칙(Tibero 30자)·probe 타입 역매핑이 정해진 뒤(2단계)에 한다(스펙 §2 비목표). 사용자 SQL 을
+            // 돌리는 probe·TEMP 생성보다 먼저 거부한다.
+            throw new ScriptExecutionException(TIBERO_OUTPUTLESS_SELECT_UNSUPPORTED);
+          }
           tempDatasetAutoCreated = true;
           // SELECT * FROM {{#N}} 처럼 이전 스텝(또는 실제 데이터셋)의 결과를 그대로 재사용하면
           // 결과 컬럼에 시스템 예약 컬럼(id/import_id/created_at/_updated_at)이 그대로 섞여 들어온다.
@@ -581,7 +626,12 @@ public class PipelineAsyncRunner {
         boolean isMerge = strategy == LoadStrategy.MERGE;
         if (strategy == LoadStrategy.REPLACE) {
           if (outputTableName != null) {
-            preStatements.add(OutputClearStatement.deleteAll(outputTableName));
+            // Tibero 는 같은 계약의 Tibero 판 비우기 문장 — db-executor 가 선행문 형식을 다시 검사하고 대상 테이블을 먼저 잠근 뒤 같은
+            // 트랜잭션에서 실행한다(#731/#735 와 같은 직렬화·원자성).
+            preStatements.add(
+                tiberoTenant
+                    ? TiberoPipelineSql.deleteAll(pipelineDataSchema.current(), outputTableName)
+                    : OutputClearStatement.deleteAll(outputTableName));
           }
         }
 
@@ -630,7 +680,14 @@ public class PipelineAsyncRunner {
           pipelineSecurityGate.propagateToWriteTargets(access, runAs);
         }
 
-        if (isSelect && outputTableName != null && outputDatasetId != null) {
+        if (tiberoTenant) {
+          // Tibero 테넌트: 컬럼 탐지·실행 모두 db-executor 로만 한다. executorEnabled 와 무관하고 PG 실행기로
+          // 폴백하지 않는다(스펙 §3). 여기까지 오면 검증·보안 게이트·출력 등급 처리가 이미 끝났다(사용자 SQL 은 게이트 통과 뒤에만 실행된다 — probe
+          // 포함).
+          executionLog =
+              executeTiberoSqlStep(
+                  sql, preStatements, isSelect, outputTableName, outputDatasetId, isMerge, cancel);
+        } else if (isSelect && outputTableName != null && outputDatasetId != null) {
           // SELECT 자동 적재: 컬럼 추출 → 매칭 → INSERT INTO ... SELECT 래핑
           // 이번 실행에서 임시 데이터셋을 자동 생성/재사용한 경우에만 위와 동일한 규칙으로 예약어
           // 컬럼명을 별칭 처리한다 — 임시 데이터셋에 실제로 저장된 컬럼명(id_1 등)과 정확히
@@ -665,23 +722,8 @@ public class PipelineAsyncRunner {
           // 목록에서 뽑는다(같은 스텝 실행 안에서 두 번 읽을 이유가 없다).
           List<DatasetColumnResponse> outputColumns =
               columnRepository.findByDatasetId(outputDatasetId);
-          java.util.Set<String> outputColumnNames =
-              outputColumns.stream()
-                  .map(DatasetColumnResponse::columnName)
-                  .collect(Collectors.toSet());
-
           List<String> matchedColumns =
-              selectColumns.stream().filter(outputColumnNames::contains).toList();
-
-          if (matchedColumns.isEmpty()) {
-            throw new ScriptExecutionException(
-                "SELECT 결과 컬럼이 출력 데이터셋의 컬럼과 일치하지 않습니다. "
-                    + "SELECT alias를 출력 테이블 컬럼명과 맞춰주세요. "
-                    + "SELECT 컬럼: "
-                    + selectColumns
-                    + ", 출력 테이블 컬럼: "
-                    + outputColumnNames);
-          }
+              matchOutputColumns(selectColumns, selectColumns, outputColumnNames(outputColumns));
 
           // 출력 테이블은 현재 테넌트의 데이터 스키마에 있다 — 스키마명을 직접 적지 않고
           // DataSchema.qualify 로 조립한다(테이블명 인용·따옴표 이중화까지 그쪽이 책임진다).
@@ -694,15 +736,7 @@ public class PipelineAsyncRunner {
             // (PipelineService.saveSteps)에 PK 존재가 이미 검증됐지만, 저장 이후 데이터셋 스키마가
             // 바뀌었을 수 있어(컬럼 삭제 등) 실행 시점에도 다시 확인한다 — 조용히 APPEND 로 격하되면
             // 안 되므로 여기서 명확히 실패시킨다.
-            mergePkColumns =
-                outputColumns.stream()
-                    .filter(DatasetColumnResponse::isPrimaryKey)
-                    .map(DatasetColumnResponse::columnName)
-                    .toList();
-            if (mergePkColumns.isEmpty()) {
-              throw new ScriptExecutionException(
-                  "MERGE 에는 출력 데이터셋 PK 컬럼이 필요합니다(데이터셋 스키마가 변경되었는지 확인하세요).");
-            }
+            mergePkColumns = requireMergePk(outputColumns);
             wrappedSql =
                 MergeSqlBuilder.build(
                     DataSchema.qualify(outputTableName), matchedColumns, mergePkColumns, sql);
@@ -1222,6 +1256,226 @@ public class PipelineAsyncRunner {
     }
   }
 
+  /**
+   * Tibero 테넌트에서 아직 실행할 수 없는 스텝 종류 → 거부 문구(스펙 §5.1). Python·API 수집 결과 적재는 2단계({@code
+   * /execute/load}), AI 분류는 Tibero 임시 테이블 교체가 미구현이다. SQL 과 알 수 없는 종류는 여기 없다 — 후자는 기존 분기가 거부한다.
+   */
+  private static final Map<String, String> TIBERO_UNSUPPORTED_STEP_TYPES =
+      Map.of(
+          "PYTHON", "Tibero 저장소 테넌트에서는 아직 Python 단계를 실행할 수 없습니다.",
+          "API_CALL", "Tibero 저장소 테넌트에서는 아직 API 수집 단계를 실행할 수 없습니다.",
+          "AI_CLASSIFY", "Tibero 저장소 테넌트에서는 아직 AI 분류 단계를 실행할 수 없습니다.");
+
+  /** Tibero 테넌트 증분 SQL 스텝 거부 문구(스펙 §5.1 — Tibero 시계 기준 커서는 2단계). */
+  static final String TIBERO_INCREMENTAL_UNSUPPORTED =
+      "Tibero 저장소 테넌트에서는 아직 증분 SQL 단계를 실행할 수 없습니다.";
+
+  /** Tibero 테넌트 사용자 INSERT 거부 문구 — 출력 테이블에 ID 기본값이 없어 SELECT 적재만 받는다. */
+  static final String TIBERO_USER_INSERT_UNSUPPORTED =
+      "Tibero 저장소 테넌트에서는 INSERT 를 직접 쓸 수 없습니다. SELECT 결과를 출력 데이터셋에 적재해 주세요.";
+
+  /** Tibero 결과 컬럼이 따옴표 소문자·대소문자 섞인 이름이라 적재 대상으로 쓸 수 없을 때의 안내(이름은 뒤에 붙인다). */
+  static final String TIBERO_QUOTED_RESULT_COLUMN_PREFIX = "Tibero 결과 컬럼 이름은 따옴표 없는 별칭으로 써 주세요(";
+
+  /** Tibero 테넌트 출력 없는 SELECT 거부 문구(스펙 §5.1 — 임시 데이터셋 자동 생성은 2단계). */
+  static final String TIBERO_OUTPUTLESS_SELECT_UNSUPPORTED =
+      "Tibero 저장소 테넌트의 SQL 단계는 출력 데이터셋을 지정해야 합니다.";
+
+  /**
+   * Tibero 테넌트에서 아직 실행할 수 없는 스텝 종류면 한국어 문구로 실패시킨다({@link #TIBERO_UNSUPPORTED_STEP_TYPES}). SQL 스텝의
+   * 거부(증분·사용자 INSERT·출력 없는 SELECT)는 치환·검증이 끝난 SQL 을 봐야 해서 SQL 분기 안 제자리에 둔다.
+   */
+  private static void rejectUnsupportedTiberoStep(String scriptType) {
+    String message = scriptType == null ? null : TIBERO_UNSUPPORTED_STEP_TYPES.get(scriptType);
+    if (message != null) {
+      throw new ScriptExecutionException(message);
+    }
+  }
+
+  /**
+   * Tibero 테넌트 SQL 스텝을 db-executor 로 실행한다(WD-77, 스펙 §5.1·§5.2). 호출 전에 검증·보안 게이트·출력 등급 처리가 끝나 있어야
+   * 한다.
+   *
+   * <p>SELECT 적재는 PG 경로와 같은 순서다: 결과 컬럼 탐지(probe) → 출력 데이터셋 컬럼과 맞춤 → 적재 문장 생성({@link
+   * TiberoPipelineSql}) → 실행. 사용자 DML 은 문장을 그대로 보낸다. 두 경우 모두 REPLACE 비우기 선행문을 같은 요청(같은 트랜잭션)으로 보낸다.
+   *
+   * <p>실행기가 돌려준 실패(HTTP 200 + success=false)는 Tibero 오류 코드로 번역한 문구의 {@link
+   * ScriptExecutionException} 이 된다. 실행기에 닿지 못한 경우는 {@link DbExecutorClient} 가 이미 연결 실패 문구로 던진다.
+   *
+   * @param sql 검증·게이트를 통과한 사용자 SQL(참조 치환 후)
+   * @param preStatements 본 문장과 같은 트랜잭션으로 보낼 선행문(REPLACE 비우기)
+   * @param isSelect 검증기가 판정한 조회문인지(아니면 사용자 DML)
+   * @param outputTableName 출력 테이블 메타데이터 이름(없으면 null)
+   * @param outputDatasetId 출력 데이터셋 id(SELECT 적재면 필수 — 없는 경우는 호출 전에 거부됐다)
+   * @param isMerge MERGE 적재인지
+   * @param cancel 협조적 취소 확인(WD-153) — 실행 요청 직전에 확인한다
+   * @return 실행 로그
+   */
+  private String executeTiberoSqlStep(
+      String sql,
+      List<String> preStatements,
+      boolean isSelect,
+      String outputTableName,
+      Long outputDatasetId,
+      boolean isMerge,
+      ExecutionCancelCheck cancel) {
+    if (!isSelect) {
+      // 사용자 DML — 문장을 그대로 보낸다(REPLACE 면 비우기 선행문이 같은 트랜잭션으로 함께 간다).
+      return runOnDbExecutor(sql, preStatements, null, cancel);
+    }
+    if (outputTableName == null) {
+      // 출력 데이터셋 테이블 이름을 찾지 못했다(삭제 중 등). PG 경로는 이때 SELECT 를 그대로 실행하지만 결과를 쓸 곳이 없다 — Tibero 는
+      // 실행하지 않고 실패시킨다.
+      throw new ScriptExecutionException("출력 데이터셋의 테이블을 찾을 수 없습니다.");
+    }
+
+    // 결과 컬럼 탐지 — 실행기가 WHERE 1 = 0 으로 감싸 행 없이 실행한다. 실패 문구 접두는 PG 와 같은
+    // PROBE_PREFIX 다(#682 규칙이 이 접두를 본다).
+    DbExecutorClient.ProbeResult probe = dbExecutorClient.probe(sql);
+    if (!probe.success()) {
+      throw new ScriptExecutionException(
+          PipelineSqlErrorMessages.describeTiberoError(
+              PipelineSqlErrorMessages.PROBE_PREFIX, probe.dbError(), probe.error()));
+    }
+    List<DatasetColumnResponse> outputColumns = columnRepository.findByDatasetId(outputDatasetId);
+    List<String> matchedColumns = matchTiberoColumns(probe.columns(), outputColumns);
+
+    String schema = pipelineDataSchema.current();
+    if (!isMerge) {
+      return runOnDbExecutor(
+          TiberoPipelineSql.insertSelect(schema, outputTableName, matchedColumns, sql),
+          preStatements,
+          null,
+          cancel);
+    }
+    // PG 경로와 같이 출력 데이터셋의 기존 PK 를 병합 키로 쓴다 — 저장 이후 스키마가 바뀌었을 수 있어 실행 시점에 다시 확인한다.
+    List<String> mergePkColumns = requireMergePk(outputColumns);
+    return runOnDbExecutor(
+        TiberoPipelineSql.mergeSelect(schema, outputTableName, matchedColumns, mergePkColumns, sql),
+        preStatements,
+        mergePkColumns,
+        cancel);
+  }
+
+  /**
+   * Tibero 결과 컬럼을 출력 데이터셋 컬럼과 맞춘다 — PG 경로와 같은 규칙(데이터셋 컬럼을 하나도 빼지 않고, 결과에 있는 것만 대상). 시스템
+   * 컬럼(ID·_UPDATED_AT·IMPORT_ID)은 데이터셋 사용자 컬럼이 아니므로 여기서 자연히 빠지고, ID·_UPDATED_AT 은 적재 문장이
+   * 시퀀스·SYSTIMESTAMP 로 채운다.
+   *
+   * @param probed 실행기가 탐지한 결과 컬럼(이름은 바꾸지 않고 온다 — 따옴표 없는 별칭은 Tibero 가 대문자로 접어 돌려준다)
+   * @return 적재 대상 컬럼(메타데이터 이름)
+   */
+  private static List<String> matchTiberoColumns(
+      List<DbExecutorClient.ProbeColumn> probed, List<DatasetColumnResponse> outputColumns) {
+    List<String> probedNames = probed.stream().map(DbExecutorClient.ProbeColumn::name).toList();
+    Set<String> outputColumnNames = outputColumnNames(outputColumns);
+    List<String> selectColumns = new ArrayList<>();
+    for (String name : probedNames) {
+      String normalized = normalizeTiberoResultColumn(name);
+      if (normalized != null) {
+        selectColumns.add(normalized);
+      } else if (name != null && outputColumnNames.contains(name.toLowerCase(Locale.ROOT))) {
+        // 따옴표 소문자·대소문자 섞인 별칭(AS "amount", AS "Amount")은 출력 컬럼을 노린 이름이지만 Tibero 에서는 쓴 그대로라,
+        // 적재 문장의 src."AMOUNT" 참조와 맞지 않는다. 조용히 빼면 그 컬럼이 비어(NULL) 적재되므로 맞춤 계산보다 먼저 안내하고 실패시킨다.
+        throw new ScriptExecutionException(TIBERO_QUOTED_RESULT_COLUMN_PREFIX + name + ").");
+      }
+    }
+    // 실패 안내에는 사용자가 쓴 그대로의(탐지된) 이름을 보여 준다.
+    return matchOutputColumns(selectColumns, probedNames, outputColumnNames);
+  }
+
+  /** 출력 데이터셋 컬럼 이름 집합(메타데이터 이름). */
+  private static Set<String> outputColumnNames(List<DatasetColumnResponse> outputColumns) {
+    return outputColumns.stream()
+        .map(DatasetColumnResponse::columnName)
+        .collect(Collectors.toSet());
+  }
+
+  /**
+   * SELECT 결과 컬럼 중 출력 데이터셋에 있는 것만 적재 대상으로 고른다(PG·Tibero 공용). 하나도 없으면 무엇을 맞춰야 하는지 안내하고 실패시킨다.
+   *
+   * @param selectColumns 맞춤에 쓸 결과 컬럼(메타데이터 이름)
+   * @param shownColumns 실패 안내에 보여 줄 결과 컬럼(PG 는 맞춤 이름 그대로, Tibero 는 탐지된 원래 이름)
+   */
+  private static List<String> matchOutputColumns(
+      List<String> selectColumns, List<String> shownColumns, Set<String> outputColumnNames) {
+    List<String> matchedColumns =
+        selectColumns.stream().filter(outputColumnNames::contains).toList();
+    if (matchedColumns.isEmpty()) {
+      throw new ScriptExecutionException(
+          "SELECT 결과 컬럼이 출력 데이터셋의 컬럼과 일치하지 않습니다. "
+              + "SELECT alias를 출력 테이블 컬럼명과 맞춰주세요. "
+              + "SELECT 컬럼: "
+              + shownColumns
+              + ", 출력 테이블 컬럼: "
+              + outputColumnNames);
+    }
+    return matchedColumns;
+  }
+
+  /**
+   * MERGE 병합 키 = 출력 데이터셋의 기존 PK 컬럼(PG·Tibero 공용). 저장 시점에 검증됐어도 이후 스키마가 바뀌었을 수 있어(컬럼 삭제 등) 실행 시점에 다시
+   * 확인한다 — 조용히 APPEND 로 격하되면 안 되므로 없으면 명확히 실패시킨다.
+   */
+  private static List<String> requireMergePk(List<DatasetColumnResponse> outputColumns) {
+    List<String> pk =
+        outputColumns.stream()
+            .filter(DatasetColumnResponse::isPrimaryKey)
+            .map(DatasetColumnResponse::columnName)
+            .toList();
+    if (pk.isEmpty()) {
+      throw new ScriptExecutionException("MERGE 에는 출력 데이터셋 PK 컬럼이 필요합니다(데이터셋 스키마가 변경되었는지 확인하세요).");
+    }
+    return pk;
+  }
+
+  /**
+   * db-executor 로 문장을 실행하고 실패 응답을 한국어 문구로 바꾼다.
+   *
+   * @param mergePkColumns MERGE 적재면 출력 PK(원본 키 중복 안내용), 아니면 null
+   * @param cancel 협조적 취소 확인(WD-153)
+   */
+  private String runOnDbExecutor(
+      String query,
+      List<String> preStatements,
+      List<String> mergePkColumns,
+      ExecutionCancelCheck cancel) {
+    // 취소 체크포인트(WD-153) — PG 경로와 같이 실행 직전. 아직 출력에 아무것도 쓰지 않았다(REPLACE 비우기도 이 요청과 같은 트랜잭션이다).
+    cancel.checkpoint(0, false);
+    ExecutorClient.SqlExecuteResult result = dbExecutorClient.executeSql(query, preStatements);
+    if (!result.success()) {
+      String translated =
+          mergePkColumns != null
+              ? PipelineSqlErrorMessages.describeTiberoMergeError(
+                  result.dbError(), result.error(), mergePkColumns)
+              : null;
+      throw new ScriptExecutionException(
+          translated != null
+              ? translated
+              : PipelineSqlErrorMessages.describeTiberoError(
+                  PipelineSqlErrorMessages.EXECUTION_PREFIX, result.dbError(), result.error()));
+    }
+    return result.executionLog();
+  }
+
+  /**
+   * Tibero 결과 컬럼 이름(실행기가 바꾸지 않고 보낸 원래 이름)을 메타데이터 이름으로 바꾼다. 맞춤에 쓸 수 없으면 null.
+   *
+   * <ul>
+   *   <li>전부 대문자 — Tibero 가 따옴표 없는 별칭을 대문자로 접은 것이다. 소문자로 바꿔 메타데이터(소문자) 컬럼과 맞춘다. 적재 문장의 {@code
+   *       src."AMOUNT"} 참조가 이 물리 이름과 같다.
+   *   <li>그 밖(따옴표 소문자 {@code "amount"}·대소문자 섞임 {@code "Mixed"}) — 사용자가 따옴표로 지은 다른 이름이라 맞춤에 쓰지 않는다.
+   *       쓰면 적재 문장이 대문자 물리 이름을 참조해 "알 수 없는 식별자"로 실패한다. 실행기가 예전처럼 소문자로 바꿔 보내면 {@code AS "amount"} 와
+   *       {@code AS amount} 를 가를 수 없어서, 실행기는 원래 이름을 보내고 여기서만 정규화한다.
+   * </ul>
+   */
+  static String normalizeTiberoResultColumn(String name) {
+    if (name == null || !name.equals(name.toUpperCase(Locale.ROOT))) {
+      return null;
+    }
+    return name.toLowerCase(Locale.ROOT);
+  }
+
   /** 러너 소유 TEMP 출력 — 데이터셋 id 와 이번 실행에서 새로 만든(빈) 테이블인지. */
   private record StepTemp(Long datasetId, boolean fresh) {}
 
@@ -1570,7 +1824,10 @@ public class PipelineAsyncRunner {
                           "{{#" + stepNumber + "}} 참조 실패: 데이터셋 테이블을 찾을 수 없습니다"));
 
       // {{#n}} 참조를 실제 테이블 FQN 으로 치환한다 — 스키마는 현재 테넌트에서 파생시킨다.
-      matcher.appendReplacement(result, Matcher.quoteReplacement(DataSchema.qualify(tableName)));
+      // Tibero 테넌트는 "GENIA_T{id}"."<대문자 물리명>"(WD-77, 스펙 §5.0),
+      // PG 는 DataSchema.qualify 그대로다(PipelineDataSchema 가 고른다).
+      matcher.appendReplacement(
+          result, Matcher.quoteReplacement(pipelineDataSchema.qualify(tableName)));
     }
     matcher.appendTail(result);
     return result.toString();

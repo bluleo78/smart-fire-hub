@@ -1,6 +1,9 @@
 package com.smartfirehub.pipeline.service;
 
 import com.smartfirehub.dataset.service.DataExceptionTranslator;
+import com.smartfirehub.dataset.storage.tibero.TiberoDialect;
+import com.smartfirehub.dataset.storage.tibero.TiberoErrors;
+import com.smartfirehub.pipeline.service.executor.ExecutorClient.DbError;
 import com.smartfirehub.pipeline.service.executor.ExecutorClient.PgError;
 import java.util.List;
 import java.util.regex.Pattern;
@@ -122,10 +125,7 @@ public final class PipelineSqlErrorMessages {
       noUniqueConstraint = raw.contains(MergeSqlBuilder.NO_UNIQUE_CONSTRAINT_PG_MESSAGE);
     }
     if (duplicateKey) {
-      return "SQL 결과에 같은 키("
-          + String.join(", ", pkColumns)
-          + ")가 두 번 이상 나옵니다. "
-          + "키별로 한 행만 나오도록 SQL을 수정하세요.";
+      return mergeDuplicateKeyMessage(pkColumns);
     }
     if (noUniqueConstraint) {
       return "출력 데이터셋의 PK("
@@ -133,6 +133,82 @@ public final class PipelineSqlErrorMessages {
           + ") 유니크 인덱스가 유효하지 않습니다. 데이터셋 설정에서 PK 를 다시 지정한 뒤 다시 실행하세요.";
     }
     return null;
+  }
+
+  /**
+   * Tibero 테넌트(db-executor) SQL 실패 문구(WD-77, 스펙 §5.3) — PG 판({@link #describeExecutorError})과 같은 모양
+   * "접두: 안내\n원인: 원문" 이다.
+   *
+   * <p>안내 문장은 PG 판과 <b>같은 문장</b>을 쓴다 — Tibero 코드를 같은 뜻의 SQLState 로 옮겨 {@link #guide} 에 넘긴다(문구가 두 벌로
+   * 갈리지 않게). 코드 묶음은 {@link TiberoDialect} 것만 쓴다: 고유 위반(·다중 행 INSERT 키 겹침)→23505, MERGE 원본 키
+   * 중복→21000, NOT NULL→23502, 값 너무 큼→22001, 테이블 없음→42P01. 모르는 코드는 일반 안내다(코드를 추측해 늘리지 않는다).
+   *
+   * <p>원문은 저장소 메시지 그대로({@code JDBC-10007:...}). 실행기가 사용자 SQL 을 감싼 내부 문장을 메시지에 싣지 않으므로 걷어낼 것이 없다.
+   * {@code err} 가 없으면(검증 거부·연결 실패·시간 초과처럼 DB 오류가 아니면) 실행기 문구를 그대로 쓴다 — 그 문구는 이미 한국어 안내다.
+   *
+   * @param prefix {@link #EXECUTION_PREFIX} 또는 {@link #PROBE_PREFIX}
+   * @param err 실행기 응답의 {@code db_error}(없으면 null)
+   * @param error 실행기 응답의 {@code error}
+   */
+  public static String describeTiberoError(String prefix, DbError err, String error) {
+    if (err == null) {
+      return prefix + ": " + nullToEmpty(error);
+    }
+    String raw = err.message() != null && !err.message().isBlank() ? err.message() : error;
+    String guide = guide(new PgError(tiberoSqlState(err.code()), raw, null, null, null));
+    return prefix + ": " + guide + CAUSE_LABEL + nullToEmpty(raw);
+  }
+
+  /**
+   * Tibero 오류 코드를 같은 뜻의 PostgreSQL SQLState 로 옮긴다 — 안내 문장을 PG 판과 공유하기 위한 대응표다. 모르면 분류 밖 상태값(일반 안내).
+   */
+  private static String tiberoSqlState(int code) {
+    if (TiberoDialect.UNIQUE_VIOLATION.contains(code)
+        || TiberoDialect.MULTI_INSERT_DUPLICATE.contains(code)) {
+      return "23505";
+    }
+    if (TiberoDialect.MERGE_SOURCE_DUPLICATE.contains(code)) {
+      return "21000";
+    }
+    if (TiberoDialect.NOT_NULL_INSERT.contains(code)) {
+      return "23502";
+    }
+    if (TiberoDialect.VALUE_TOO_LARGE.contains(code)) {
+      return "22001";
+    }
+    if (TiberoDialect.NotFound.TABLE.hasCode(code)) {
+      return "42P01";
+    }
+    return "XX000";
+  }
+
+  /**
+   * Tibero 테넌트 MERGE 스텝 실패를 출력 PK 를 짚는 안내로 바꾼다(PG 판 {@link #describeMergeError} 의 "같은 키 두 번" 과 같은
+   * 문구). MERGE 문맥 오류가 아니면 null — 호출부가 {@link #describeTiberoError} 를 쓴다.
+   *
+   * <p>실서버 측정(2026-10-22): 대상에 있는 키가 원본에 두 번 → {@code -10021}, 대상에 없는 새 키가 원본에 두 번 → {@code -4008}.
+   * 둘 다 원인이 "SELECT 결과에 같은 키가 여럿" 이라 같은 안내다({@link TiberoDialect#MERGE_SOURCE_DUPLICATE}). 구조화 코드가
+   * 없으면 메시지 표기({@code JDBC-10021:}·{@code ORA-30926})로 폴백한다.
+   *
+   * @param err 실행기 응답의 {@code db_error}(없으면 null)
+   * @param rawMessage 실행기 오류 문자열(폴백 판정용)
+   * @param pkColumns 출력 데이터셋 PK 컬럼(안내 문구용)
+   */
+  public static String describeTiberoMergeError(
+      DbError err, String rawMessage, List<String> pkColumns) {
+    boolean sourceDuplicate =
+        err != null
+            ? TiberoDialect.MERGE_SOURCE_DUPLICATE.contains(err.code())
+            : TiberoErrors.messageHasAnyCode(rawMessage, TiberoDialect.MERGE_SOURCE_DUPLICATE);
+    return sourceDuplicate ? mergeDuplicateKeyMessage(pkColumns) : null;
+  }
+
+  /** MERGE 원본에 같은 키가 두 번 이상 — PG·Tibero 두 판이 같은 문장을 쓴다. */
+  private static String mergeDuplicateKeyMessage(List<String> pkColumns) {
+    return "SQL 결과에 같은 키("
+        + String.join(", ", pkColumns)
+        + ")가 두 번 이상 나옵니다. "
+        + "키별로 한 행만 나오도록 SQL을 수정하세요.";
   }
 
   /** 구조화 오류 필드로 "접두: 안내\n원인: 원문" 을 만든다. */

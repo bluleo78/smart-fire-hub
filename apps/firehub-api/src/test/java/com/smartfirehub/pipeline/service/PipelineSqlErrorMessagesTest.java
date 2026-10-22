@@ -2,6 +2,7 @@ package com.smartfirehub.pipeline.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.smartfirehub.pipeline.service.executor.ExecutorClient.DbError;
 import com.smartfirehub.pipeline.service.executor.ExecutorClient.PgError;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -228,6 +229,95 @@ class PipelineSqlErrorMessagesTest {
                 List.of("k")))
         .startsWith("SQL 결과에 같은 키(k)");
     assertThat(PipelineSqlErrorMessages.describeMergeError(null, "ERROR: boom", List.of("k")))
+        .isNull();
+  }
+
+  // ── Tibero(db-executor db_error) 분기(WD-77, 스펙 §5.3) ─────────────────────────────────────
+
+  /** Tibero 코드(음수 자체 코드·Oracle 호환 양수 코드)마다 PG 판과 같은 뜻의 안내가 나온다. */
+  @ParameterizedTest
+  @CsvSource(
+      delimiter = '|',
+      value = {
+        "-10007|같은 키 값이 이미 있습니다",
+        "1|같은 키 값이 이미 있습니다",
+        "-4008|같은 키 값이 이미 있습니다",
+        "-10021|키별로 한 행만 나오도록",
+        "30926|키별로 한 행만 나오도록",
+        "-10005|비워 둘 수 없는데 빈 값(NULL)이 들어갔습니다",
+        "1400|비워 둘 수 없는데 빈 값(NULL)이 들어갔습니다",
+        "-11048|글자 수 제한",
+        "12899|글자 수 제한",
+        "-8033|SQL 에서 참조한 테이블이 없습니다",
+        "942|SQL 에서 참조한 테이블이 없습니다",
+        "-99999|데이터베이스가 SQL 실행을 거부했습니다"
+      })
+  void tiberoError_classifiesKnownCodesLikePg(int code, String expected) {
+    String msg =
+        PipelineSqlErrorMessages.describeTiberoError(
+            PipelineSqlErrorMessages.EXECUTION_PREFIX,
+            new DbError(code, "JDBC" + code + ":raw"),
+            "JDBC" + code + ":raw");
+    assertThat(msg).startsWith("SQL 실행 실패: ").contains(expected);
+    // 원문은 실행기가 준 저장소 메시지 그대로 — 구분 줄 뒤에 둔다(PG 판과 같은 모양).
+    assertThat(msg).endsWith("\n원인: JDBC" + code + ":raw");
+  }
+
+  /** PG 판과 같은 안내 문장을 그대로 쓴다 — 두 판의 문구가 갈라지지 않게. */
+  @Test
+  void tiberoError_guideIsSameSentenceAsPg() {
+    assertThat(
+            PipelineSqlErrorMessages.describeTiberoError(
+                PipelineSqlErrorMessages.EXECUTION_PREFIX,
+                new DbError(-10007, "JDBC-10007:UNIQUE constraint violation"),
+                null))
+        .isEqualTo(
+            "SQL 실행 실패: "
+                + PipelineSqlErrorMessages.guide(pg("23505"))
+                + "\n원인: JDBC-10007:UNIQUE constraint violation");
+  }
+
+  /** db_error 가 없으면(검증 거부·연결 실패처럼 DB 오류가 아니면) 실행기 문구를 그대로 쓴다 — 안내를 추측해 붙이지 않는다. */
+  @Test
+  void tiberoError_withoutDbError_usesExecutorMessage() {
+    assertThat(
+            PipelineSqlErrorMessages.describeTiberoError(
+                PipelineSqlErrorMessages.PROBE_PREFIX, null, "테넌트 저장소에 연결하지 못했습니다."))
+        .isEqualTo("SQL 컬럼 타입 분석 실패: 테넌트 저장소에 연결하지 못했습니다.");
+  }
+
+  /** MERGE 원본 키 중복(실서버 측정 -10021·-4008, Oracle 30926)은 PG 의 21000 과 같은 문구로 출력 PK 를 짚는다. */
+  @ParameterizedTest
+  @CsvSource({
+    "-10021,JDBC-10021:Inconsistent set of rows in source tables.",
+    "-4008,JDBC-4008:Duplicate unique key found during multi insert.",
+    "30926,ORA-30926: unable to get a stable set of rows in the source tables"
+  })
+  void tiberoMergeError_sourceDuplicate_sameMessageAsPg(int code, String message) {
+    String pgMessage =
+        PipelineSqlErrorMessages.describeMergeError(
+            new PgError("21000", MergeSqlBuilder.DUPLICATE_KEY_PG_MESSAGE, null, null, null),
+            null,
+            List.of("a", "b"));
+    assertThat(
+            PipelineSqlErrorMessages.describeTiberoMergeError(
+                new DbError(code, message), message, List.of("a", "b")))
+        .isNotNull()
+        .isEqualTo(pgMessage);
+  }
+
+  /** 구조화 코드가 없으면 메시지 표기(JDBC-10021:)로 폴백하고, MERGE 문맥이 아닌 오류는 null(호출부가 일반 문구를 쓴다). */
+  @Test
+  void tiberoMergeError_fallbackAndNonMergeCodes() {
+    assertThat(
+            PipelineSqlErrorMessages.describeTiberoMergeError(
+                null, "JDBC-10021:Inconsistent set of rows in source tables.", List.of("k")))
+        .startsWith("SQL 결과에 같은 키(k)");
+    assertThat(
+            PipelineSqlErrorMessages.describeTiberoMergeError(
+                new DbError(-10007, "JDBC-10007:UNIQUE constraint violation"), null, List.of("k")))
+        .isNull();
+    assertThat(PipelineSqlErrorMessages.describeTiberoMergeError(null, "boom", List.of("k")))
         .isNull();
   }
 }

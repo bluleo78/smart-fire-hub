@@ -2,8 +2,8 @@
 set -euo pipefail
 
 # Smart Fire Hub 운영 배포 스크립트
-# Usage: ./scripts/deploy.sh [api|executor|web|ai-agent|channel|admin|db|minio|all]
-# all = api + executor + web + ai-agent + channel (5개 앱 전부, db/minio/admin 제외 — 셋 다 개별 배포로만 재기동)
+# Usage: ./scripts/deploy.sh [api|executor|db-executor|web|ai-agent|channel|admin|db|minio|all]
+# all = api + executor + web + ai-agent + channel (5개 앱 전부, db/minio/admin/db-executor 제외 — 모두 개별 배포로만 재기동)
 # admin(firehub-admin, 플랫폼 슈퍼관리자 콘솔)은 권한상승 경로를 배포 수준에서도 분리하기 위해
 # 의도적으로 all 밖에 둔다 — 배포는 항상 `./scripts/deploy.sh admin`으로 명시적으로 트리거한다.
 
@@ -53,6 +53,10 @@ build_and_push() {
       log "Building + pushing $app (context: apps/firehub-executor/)"
       docker buildx build --platform "$PLATFORM" -t "$REGISTRY/executor:latest" --push apps/firehub-executor/
       ;;
+    db-executor)
+      log "Building + pushing $app (context: apps/firehub-db-executor/)"
+      docker buildx build --platform "$PLATFORM" -t "$REGISTRY/db-executor:latest" --push apps/firehub-db-executor/
+      ;;
     channel)
       log "Building + pushing $app (context: apps/firehub-channel/)"
       docker buildx build --platform "$PLATFORM" -t "$REGISTRY/channel:latest" --push apps/firehub-channel/
@@ -69,7 +73,7 @@ build_and_push() {
       log "$app is a public image (minio/minio) — skip build/push, pull only"
       ;;
     *)
-      error "Unknown app: $app (valid: api, web, ai-agent, executor, channel, admin, db, minio)"
+      error "Unknown app: $app (valid: api, web, ai-agent, executor, db-executor, channel, admin, db, minio)"
       ;;
   esac
 }

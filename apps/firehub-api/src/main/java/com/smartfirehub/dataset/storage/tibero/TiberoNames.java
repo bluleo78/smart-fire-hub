@@ -58,7 +58,15 @@ public final class TiberoNames {
     if (TiberoDialect.RESERVED_WORDS.contains(upper)) {
       throw new IllegalArgumentException("Tibero 예약어라 사용할 수 없는 이름입니다: " + metadataName);
     }
+    // DUAL 은 예약어는 아니지만 막는다(WD-77). 미한정 DUAL 은 OWNER 세션에서 자기 스키마를 먼저 찾으므로, 같은 이름의 테이블이 있으면
+    // 보안 게이트가 시스템 DUAL 로 보고 건너뛴 참조가 실제로는 그 데이터셋을 읽는다(등급 판정 우회).
+    if (RESERVED_DUAL.equals(upper)) {
+      throw new IllegalArgumentException("'dual' 은 Tibero 예약 이름이라 데이터셋 이름으로 쓸 수 없습니다.");
+    }
   }
+
+  /** 사용자 이름으로 쓸 수 없는 시스템 의사 테이블 이름(대문자). */
+  private static final String RESERVED_DUAL = "DUAL";
 
   /**
    * 물리 이름을 큰따옴표로 인용한다(예약어·대소문자 문제 회피).
@@ -79,7 +87,15 @@ public final class TiberoNames {
    * #validateUserName} 으로 검사해야 한다.
    */
   public static String table(String schema, String tableName) {
-    return quote(physical(schema)) + "." + quote(physical(tableName));
+    return qualified(schema, physical(tableName));
+  }
+
+  /**
+   * 스키마 한정 객체 이름 {@code "SCHEMA"."NAME"}. {@code physicalName} 은 이미 물리 이름(테이블 물리명·시퀀스 이름 등)이라 대문자로
+   * 바꾸지 않고 그대로 인용한다 — 테이블·시퀀스·스테이징 시퀀스 한정 이름이 모두 이 한 곳을 지난다.
+   */
+  public static String qualified(String schema, String physicalName) {
+    return quote(physical(schema)) + "." + quote(physicalName);
   }
 
   /** 인용된 컬럼 이름 {@code "COL"}. 사용자 제공 컬럼 이름은 호출 전에 {@link #validateUserName} 으로 검사해야 한다. */

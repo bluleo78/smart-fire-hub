@@ -13,6 +13,7 @@ import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.dataset.service.DataTableService;
+import com.smartfirehub.dataset.storage.DataStoreResolver;
 import com.smartfirehub.global.security.PermissionChecker;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.pipeline.dto.AiClassifyConfig;
@@ -26,6 +27,7 @@ import com.smartfirehub.pipeline.repository.PipelineStepRepository;
 import com.smartfirehub.pipeline.service.executor.AiClassifyExecutor;
 import com.smartfirehub.pipeline.service.executor.ApiCallConfig;
 import com.smartfirehub.pipeline.service.executor.ApiCallExecutor;
+import com.smartfirehub.pipeline.service.executor.DbExecutorClient;
 import com.smartfirehub.pipeline.service.executor.ExecutorClient;
 import com.smartfirehub.pipeline.service.validator.PythonScriptValidator;
 import com.smartfirehub.pipeline.service.validator.SqlValidator;
@@ -77,9 +79,18 @@ class PipelineAsyncRunnerTest {
   @Mock PermissionChecker permissionChecker;
   @Mock TempDatasetService tempDatasetService;
   @Mock ExecutorClient executorClient;
+  // Tibero 테넌트 전용 실행기(WD-77) — 이 클래스는 PG 테넌트만 다루므로 호출되지 않는다(Tibero 경로는
+  // PipelineAsyncRunnerTiberoTest).
+  @Mock DbExecutorClient dbExecutorClient;
+
   // 러너는 조회/DML 판정을 검증기 반환값(파싱한 AST 의 문장 종류)으로 받는다(WD-93) — 목이면 판정 규칙을 테스트에 다시 적게 되므로 실제
   // 검증기를 쓴다. 테스트 SQL 이 미한정 테이블을 쓸 수 있게 허용형(data 스키마 + 미한정 허용) 정책이다.
-  @Spy SqlValidator sqlValidator = new SqlValidator("data", true);
+  // 러너는 검증기·{{#N}} 한정 이름을 PipelineDataSchema 에서 얻는다(WD-77) — 저장소 판정기 목의 기본값(null)은 TIBERO 가 아니므로
+  // 실제 PipelineDataSchema 가 PG 경로(위 검증기·DataSchema.qualify)를 그대로 고른다.
+  @Spy
+  PipelineDataSchema pipelineDataSchema =
+      new PipelineDataSchema(mock(DataStoreResolver.class), new SqlValidator("data", true));
+
   @Mock PythonScriptValidator pythonScriptValidator;
   @Mock IncrementalCursorService incrementalCursorService;
   @Mock OutputTableSessionLock outputTableSessionLock;
@@ -1081,7 +1092,7 @@ class PipelineAsyncRunnerTest {
     when(executorClient.executeSql(anyString(), anyList()))
         .thenReturn(
             new ExecutorClient.SqlExecuteResult(
-                true, List.of(), List.of(), 0, "2 rows affected", null, null));
+                true, List.of(), List.of(), 0, "2 rows affected", null, null, null));
 
     // when
     String status =
@@ -1123,7 +1134,7 @@ class PipelineAsyncRunnerTest {
     when(executorClient.executeSql(anyString(), anyList()))
         .thenReturn(
             new ExecutorClient.SqlExecuteResult(
-                true, List.of(), List.of(), 0, "2 rows affected", null, null));
+                true, List.of(), List.of(), 0, "2 rows affected", null, null, null));
 
     // when
     String status =
@@ -1223,7 +1234,7 @@ class PipelineAsyncRunnerTest {
     when(executorClient.executeSql(anyString(), anyList()))
         .thenReturn(
             new ExecutorClient.SqlExecuteResult(
-                true, List.of(), List.of(), 1, "1 row(s) affected", null, null));
+                true, List.of(), List.of(), 1, "1 row(s) affected", null, null, null));
 
     String status = runner.executeStep(7351L, step, 73L, "TestPipeline", 1L, true);
 
@@ -1642,7 +1653,7 @@ class PipelineAsyncRunnerTest {
     when(executorClient.executeSql(anyString(), anyList()))
         .thenReturn(
             new ExecutorClient.SqlExecuteResult(
-                true, List.of(), List.of(), 0, "2 rows affected", null, null));
+                true, List.of(), List.of(), 0, "2 rows affected", null, null, null));
 
     // when
     String status =
@@ -1706,6 +1717,7 @@ class PipelineAsyncRunnerTest {
                 0,
                 null,
                 "ERROR: ON CONFLICT DO UPDATE command cannot affect row a second time",
+                null,
                 null));
 
     // when
@@ -1824,6 +1836,7 @@ class PipelineAsyncRunnerTest {
                 null,
                 "ERROR: there is no unique or exclusion constraint matching the ON CONFLICT"
                     + " specification",
+                null,
                 null));
 
     // when
@@ -3282,7 +3295,8 @@ class PipelineAsyncRunnerTest {
                     "duplicate key value violates unique constraint \"ux_out_orders_pk\"",
                     "Key (k)=(1) already exists.",
                     null,
-                    null)));
+                    null),
+                null));
 
     String status = runner.executeStep(stepExecId, sqlStep, 36L, "TestPipeline", 1L, true);
 
@@ -3332,6 +3346,7 @@ class PipelineAsyncRunnerTest {
                 "syntax error at or near \"FORM\"\n"
                     + "LINE 1: INSERT INTO \"data\".\"out_orders\" (\"k\") SELECT k FORM x\n"
                     + "                                                       ^\n",
+                null,
                 null));
 
     runner.executeStep(stepExecId, sqlStep, 37L, "TestPipeline", 1L, true);

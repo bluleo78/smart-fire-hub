@@ -52,6 +52,20 @@ class TiberoNamesTest {
     }
   }
 
+  /**
+   * {@code dual} 은 예약 이름이다(WD-77). 미한정 {@code DUAL} 은 OWNER 세션에서 자기 스키마를 먼저 찾으므로, 같은 이름의 데이터셋이 있으면
+   * 보안 게이트가 시스템 DUAL 로 보고 건너뛴 참조가 실제로는 그 데이터셋을 읽는다.
+   */
+  @Test
+  void validateUserName_rejectsDual_caseInsensitive() {
+    for (String name : new String[] {"dual", "DUAL", "Dual"}) {
+      assertThatThrownBy(() -> TiberoNames.validateUserName(name))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessage("'dual' 은 Tibero 예약 이름이라 데이터셋 이름으로 쓸 수 없습니다.");
+    }
+    assertThatCode(() -> TiberoNames.validateUserName("dual_sales")).doesNotThrowAnyException();
+  }
+
   @Test
   void validateUserName_rejectsOver30() {
     assertThatCode(() -> TiberoNames.validateUserName("a".repeat(30))).doesNotThrowAnyException();

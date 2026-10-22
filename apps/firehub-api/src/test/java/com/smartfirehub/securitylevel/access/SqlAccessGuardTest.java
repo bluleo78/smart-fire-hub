@@ -2,11 +2,16 @@ package com.smartfirehub.securitylevel.access;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.doReturn;
 
+import com.smartfirehub.dataset.storage.DataStoreAccountRole;
+import com.smartfirehub.dataset.storage.DataStoreBackend;
+import com.smartfirehub.dataset.storage.DataStoreResolver;
 import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.pipeline.exception.UnsafeSqlException;
+import com.smartfirehub.pipeline.service.validator.SqlValidator;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.SecurityFixture;
 import java.util.ArrayList;
@@ -17,6 +22,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 
 /** 스펙 §4.1 requireSql: 참조 테이블 → 데이터셋 매핑 → 판정, fail-closed, 쓰기 하향 금지. */
 class SqlAccessGuardTest extends IntegrationTestBase {
@@ -25,6 +31,11 @@ class SqlAccessGuardTest extends IntegrationTestBase {
   @Autowired private PasswordEncoder encoder;
   @Autowired private DatasetAccessGuard guard;
   @Autowired private ClearanceResolver clearanceResolver;
+
+  /**
+   * Tibero 테넌트 판정(WD-77) 테스트만 백엔드를 TIBERO 로 바꾼다. 스파이라 다른 테스트에서는 실제 해석(PG)을 그대로 쓰고, 스텁은 테스트마다 초기화된다.
+   */
+  @MockitoSpyBean private DataStoreResolver dataStoreResolver;
 
   private SecurityFixture fx;
   private final List<Long> datasets = new ArrayList<>();
@@ -335,6 +346,240 @@ class SqlAccessGuardTest extends IntegrationTestBase {
     SqlAccessResult r = guard.checkSql(c, "SELECT * FROM " + high, SqlAccessMode.INTERACTIVE);
     assertThat(r.allowed()).isFalse();
     assertThat(r.code()).isEqualTo("DATASET_SQL_ACCESS_DENIED");
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Tibero 테넌트(WD-77, 스펙 §5.0·§5.4) — 스키마는 GENIA_T{id}, 따옴표 없는 이름은 대문자로 접는다.
+  // Tibero 규칙은 Tibero 에서 실행될 SQL(파이프라인 SQL 단계 — PIPELINE_SAVE·PIPELINE_RUN)에만 적용한다. 대화형·분석·지표
+  // SQL(INTERACTIVE)은 아직 PG 에서 실행되므로 Tibero 테넌트여도 PG 규칙으로 판정한다(맨 아래 테스트).
+  // ---------------------------------------------------------------------------------------------
+
+  /** Tibero 규칙으로 판정하는 모드(파이프라인 SQL 단계 판정 경로). */
+  private static final List<SqlAccessMode> TIBERO_RULE_MODES =
+      List.of(SqlAccessMode.PIPELINE_SAVE, SqlAccessMode.PIPELINE_RUN);
+
+  /** 현재(기본 테스트) 테넌트를 Tibero 저장소로 보이게 하고, 그 테넌트의 Tibero 스키마 이름을 돌려준다. */
+  private String asTiberoTenant() {
+    doReturn(DataStoreBackend.TIBERO).when(dataStoreResolver).currentBackend();
+    return DataStoreAccountRole.OWNER.usernameFor(DEFAULT_TEST_TENANT_ID);
+  }
+
+  private boolean allowed(Clearance c, String sql, SqlAccessMode mode) {
+    return guard.checkSql(c, sql, mode).allowed();
+  }
+
+  @Test
+  void tibero_tenantSchemaSpellings_areJudgedAgainstDatasets() {
+    String schema = asTiberoTenant();
+    Clearance c = userAt("민감"); // 기밀(허용 목록 필요)은 못 본다
+    List<String> spellings =
+        List.of(
+            schema.toLowerCase() + ".%s", // genia_t1.orders — 대문자로 접힌다
+            schema + ".%S", // GENIA_T1.ORDERS
+            "\"" + schema + "\".\"%S\"", // "GENIA_T1"."ORDERS" — 러너 {{#N}} 치환 꼴
+            "%s"); // 미한정 — OWNER 세션의 기본 스키마로 해석된다
+    for (String spelling : spellings) {
+      assertThat(
+              allowed(c, "SELECT * FROM " + spelling.formatted(high), SqlAccessMode.PIPELINE_RUN))
+          .as(spelling)
+          .isTrue();
+      assertThat(
+              guard
+                  .checkSql(
+                      c, "SELECT * FROM " + spelling.formatted(hidden), SqlAccessMode.PIPELINE_RUN)
+                  .code())
+          .as(spelling)
+          .isEqualTo("DATASET_SQL_ACCESS_DENIED");
+    }
+    SqlAccessResult r =
+        guard.requireSql(c, "SELECT * FROM " + schema + "." + high, SqlAccessMode.PIPELINE_RUN);
+    assertThat(r.readDatasetIds()).hasSize(1);
+    assertThat(r.effectiveLevel().name()).isEqualTo("민감");
+  }
+
+  @Test
+  void tibero_otherSchemasAndForeignCaseSpellings_areDenied() {
+    String schema = asTiberoTenant();
+    Clearance c = userAt("기밀");
+    List<String> denied =
+        List.of(
+            // PG 데이터 스키마(data/data_t{id})는 Tibero 테넌트의 스키마가 아니다
+            "SELECT * FROM " + DataSchema.current() + "." + high,
+            // 다른 테넌트 스키마
+            "SELECT * FROM genia_t999." + high,
+            // 인용 소문자 스키마는 Tibero 에서 다른 스키마다
+            "SELECT * FROM \"" + schema.toLowerCase() + "\"." + high,
+            // 인용 소문자 테이블은 우리 물리 테이블(대문자)일 수 없다
+            "SELECT * FROM " + schema + ".\"" + high + "\"",
+            // 사전 뷰는 데이터셋이 아니다
+            "SELECT * FROM all_tables");
+    for (String sql : denied) {
+      assertThat(guard.checkSql(c, sql, SqlAccessMode.PIPELINE_RUN).code())
+          .as(sql)
+          .isEqualTo("DATASET_SQL_ACCESS_DENIED");
+    }
+  }
+
+  @Test
+  void tibero_unqualifiedDual_isNotATable_butCannotBeWritten() {
+    asTiberoTenant();
+    Clearance c = userAt("민감");
+    SqlAccessResult constant =
+        guard.requireSql(c, "SELECT SYSDATE FROM DUAL", SqlAccessMode.PIPELINE_RUN);
+    assertThat(constant.allowed()).isTrue();
+    assertThat(constant.readDatasetIds()).isEmpty();
+    assertThat(constant.effectiveLevel()).isNull();
+    assertThat(
+            guard
+                .requireSql(c, "SELECT * FROM " + high + ", dual", SqlAccessMode.PIPELINE_RUN)
+                .readDatasetIds())
+        .hasSize(1);
+    for (String sql :
+        List.of("DELETE FROM DUAL", "INSERT INTO DUAL (dummy) SELECT 'x' FROM DUAL")) {
+      assertThat(guard.checkSql(c, sql, SqlAccessMode.PIPELINE_RUN).code())
+          .as(sql)
+          .isEqualTo("DATASET_SQL_ACCESS_DENIED");
+    }
+  }
+
+  /**
+   * DUAL 건너뛰기는 <b>미한정</b> DUAL 만이다. 테넌트 스키마로 한정한 {@code genia_t1.dual} 은 시스템 DUAL 이 아니라 그 스키마의
+   * 테이블이므로 다른 테이블과 같이 데이터셋 매핑으로 판정한다(매핑이 없으면 거부).
+   */
+  @Test
+  void tibero_qualifiedDual_isJudgedLikeAnyTable() {
+    String schema = asTiberoTenant();
+    Clearance c = userAt("기밀");
+    for (String sql :
+        List.of(
+            "SELECT * FROM " + schema.toLowerCase() + ".dual",
+            "SELECT * FROM \"" + schema + "\".\"DUAL\"")) {
+      assertThat(guard.checkSql(c, sql, SqlAccessMode.PIPELINE_RUN).code())
+          .as(sql)
+          .isEqualTo("DATASET_SQL_ACCESS_DENIED");
+    }
+  }
+
+  /**
+   * Tibero 테넌트는 PG 어휘 검사 대신 Tibero 어휘 규칙으로 본다(스펙 §5.4) — PG 검사가 막던 표기 중 Tibero 에 모호하지 않은 것은 통과한다.
+   */
+  @Test
+  void tibero_lexicalRules_replacePgCheck() {
+    asTiberoTenant();
+    Clearance c = userAt("민감");
+    assertThat(allowed(c, "SELECT 'C:\\' FROM " + high, SqlAccessMode.PIPELINE_RUN)).isTrue();
+    assertThat(allowed(c, "/* a /* b */ SELECT 1 FROM " + high, SqlAccessMode.PIPELINE_RUN))
+        .isTrue();
+    // 백슬래시가 있어도 판정은 뒤의 숨김 참조를 본다(JSqlParser·Tibero 가 같게 자른다)
+    assertThat(
+            guard
+                .checkSql(
+                    c,
+                    "SELECT a FROM "
+                        + pub
+                        + " WHERE b = 'x\\' OR EXISTS (SELECT 1 FROM "
+                        + hidden
+                        + ") -- '",
+                    SqlAccessMode.PIPELINE_RUN)
+                .code())
+        .isEqualTo("DATASET_SQL_ACCESS_DENIED");
+    // JSqlParser 만 주석으로 읽는 // 는 거부(실측: JSqlParser 는 뒤의 숨김 참조를 못 본다)
+    String slashSlash = "SELECT 0 * 1 //* c */ 1 + (SELECT a FROM " + hidden + ") AS v FROM DUAL";
+    for (SqlAccessMode mode : TIBERO_RULE_MODES) {
+      assertThatThrownBy(() -> guard.checkSql(c, slashSlash, mode))
+          .as(mode.name())
+          .isInstanceOf(UnsafeSqlException.class);
+    }
+    assertThatThrownBy(
+            () -> guard.checkSql(c, "SELECT 'open FROM DUAL", SqlAccessMode.PIPELINE_RUN))
+        .isInstanceOf(UnsafeSqlException.class)
+        .hasMessage("SQL 의 따옴표 또는 주석이 닫히지 않았습니다.");
+  }
+
+  @Test
+  void tibero_pipelineSave_ignoresQuotedUppercaseStepRefPlaceholder_only() {
+    String schema = asTiberoTenant();
+    Clearance c = userAt("공개");
+    String dummy = "SELECT * FROM \"" + schema + "\".\"STEP_REF_1\"";
+    assertThat(allowed(c, dummy, SqlAccessMode.PIPELINE_SAVE)).isTrue();
+    assertThat(allowed(c, dummy, SqlAccessMode.PIPELINE_RUN)).isFalse();
+  }
+
+  @Test
+  void tibero_alternativeQuoting_isRejectedWithTiberoMessage() {
+    asTiberoTenant();
+    Clearance c = userAt("민감");
+    String sql = "SELECT q'[ ' AS c, (SELECT a FROM " + hidden + ") AS w -- ]' FROM " + pub;
+    for (SqlAccessMode mode : TIBERO_RULE_MODES) {
+      assertThatThrownBy(() -> guard.checkSql(c, sql, mode))
+          .as(mode.name())
+          .isInstanceOf(UnsafeSqlException.class)
+          .hasMessage(SqlValidator.TIBERO_ALTERNATIVE_QUOTING_MESSAGE);
+    }
+  }
+
+  /**
+   * CTE 이름 대조도 Tibero 접기를 따른다. PG 접기라면 {@code WITH "hidden" … FROM hidden} 의 뒤쪽 {@code hidden} 이
+   * CTE 로 보여 판정에서 빠지지만, Tibero 는 그것을 {@code HIDDEN}(실제 테이블)으로 읽는다 — 우회가 되면 안 된다.
+   */
+  @Test
+  void tibero_cteMatching_followsTiberoFolding() {
+    asTiberoTenant();
+    Clearance c = userAt("민감");
+    assertThat(
+            guard
+                .checkSql(
+                    c,
+                    "WITH \"" + hidden + "\" AS (SELECT 1 a FROM DUAL) SELECT * FROM " + hidden,
+                    SqlAccessMode.PIPELINE_RUN)
+                .code())
+        .isEqualTo("DATASET_SQL_ACCESS_DENIED");
+    assertThat(
+            allowed(
+                c,
+                "WITH "
+                    + hidden
+                    + " AS (SELECT 1 a FROM DUAL) SELECT * FROM "
+                    + hidden.toUpperCase(),
+                SqlAccessMode.PIPELINE_RUN))
+        .as("같은 접기로 맞는 CTE 참조는 실제 테이블이 아니다")
+        .isTrue();
+  }
+
+  /**
+   * F4(보안) — 대화형·분석·지표 SQL(INTERACTIVE)은 Tibero 테넌트여도 아직 PG 에서 실행된다. 그래서 PG 규칙으로 판정해야 한다: PG 어휘
+   * 검사({@code PgLexicalAmbiguityCheck})를 건너뛰지 않고, 허용 스키마는 PG 데이터 스키마({@code
+   * DataSchema.current()})다. Tibero 규칙으로 판정하면 PG 어휘 검사를 건너뛴 판정으로 PG 에서 실행될 수 있다.
+   */
+  @Test
+  void tibero_interactiveMode_isJudgedWithPgRules() {
+    String tiberoSchema = asTiberoTenant();
+    Clearance c = userAt("민감");
+    String pgSchema = DataSchema.current();
+    // PG 어휘 검사가 적용된다 — Tibero 규칙이면 통과하는 백슬래시 문자열을 PG 규칙은 모호 표기로 거부한다.
+    assertThatThrownBy(
+            () ->
+                guard.checkSql(
+                    c, "SELECT 'C:\\' FROM " + pgSchema + "." + high, SqlAccessMode.INTERACTIVE))
+        .isInstanceOf(UnsafeSqlException.class);
+    assertThat(allowed(c, "SELECT 'C:\\' FROM " + high, SqlAccessMode.PIPELINE_RUN)).isTrue();
+    // 허용 스키마는 PG 데이터 스키마다.
+    assertThat(allowed(c, "SELECT * FROM " + pgSchema + "." + high, SqlAccessMode.INTERACTIVE))
+        .isTrue();
+    for (String sql :
+        List.of(
+            "SELECT * FROM " + tiberoSchema + "." + high,
+            "SELECT * FROM \"" + tiberoSchema + "\".\"" + high.toUpperCase() + "\"",
+            // PG 규칙에서 DUAL 은 데이터셋이 아니다(Tibero 규칙의 DUAL 예외는 Tibero 실행 SQL 에만).
+            "SELECT 1 FROM DUAL")) {
+      assertThat(guard.checkSql(c, sql, SqlAccessMode.INTERACTIVE).code())
+          .as(sql)
+          .isEqualTo("DATASET_SQL_ACCESS_DENIED");
+    }
+    // 같은 SQL 을 파이프라인 모드로 보면 Tibero 규칙이다.
+    assertThat(allowed(c, "SELECT * FROM " + tiberoSchema + "." + high, SqlAccessMode.PIPELINE_RUN))
+        .isTrue();
+    assertThat(allowed(c, "SELECT 1 FROM DUAL", SqlAccessMode.PIPELINE_RUN)).isTrue();
   }
 
   /** 거부 응답에서 클라이언트가 볼 수 있는 모든 것(상태·코드·메시지·부가 정보)을 한 문자열로. 허용되면 "ALLOWED". */

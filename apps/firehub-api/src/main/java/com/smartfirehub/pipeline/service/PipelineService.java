@@ -36,6 +36,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.UnaryOperator;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
@@ -77,7 +78,13 @@ public class PipelineService {
   private final UserRepository userRepository;
   private final TriggerRepository triggerRepository;
   private final ObjectMapper objectMapper;
-  private final SqlValidator sqlValidator;
+
+  /**
+   * 테넌트 백엔드별 데이터 스키마·검증기 선택(WD-77, 스펙 §5.0). SQL 스텝 검증기와 {@code {{#N}}} 더미 한정 이름을 여기서 얻는다 — PG 테넌트는
+   * 기존 검증기 빈·{@code DataSchema.qualify} 그대로라 러너와 같은 선택이 된다.
+   */
+  private final PipelineDataSchema pipelineDataSchema;
+
   private final PythonScriptValidator pythonScriptValidator;
   private final DatasetColumnRepository columnRepository;
   private final PipelineSecurityGate pipelineSecurityGate;
@@ -262,7 +269,7 @@ public class PipelineService {
       // 테이블 참조로 치환한 뒤 검증한다 — 그렇지 않으면 UI가 권장하는 표준 사용법이 저장 단계에서 항상 파싱 실패로 거부된다 (#643).
       boolean sqlStepIsQuery = false;
       if ("SQL".equals(stepRequest.scriptType())) {
-        String substituted = substituteStepReferencesForValidation(stepRequest.scriptContent());
+        String substituted = substituteForValidation(stepRequest.scriptContent());
         sqlStepIsQuery = validateAndJudgeQuery(substituted);
         // 보안 등급(S2): 편집자가 볼 수 없는 데이터셋을 참조하는 스텝은 저장할 수 없다(스펙 §4.2 5행). 검증한 바로 그
         // 문자열을 판정한다(가드 계약). {{#N}} 더미는 판정에서 빠지고 실행 시점에 실제 테이블로 판정된다(판단 사항 4).
@@ -361,14 +368,30 @@ public class PipelineService {
    *
    * <p>공개 정적 메서드인 이유(WD-143): 데이터셋 참조 집계({@code DatasetService#getReferences})도 SQL 스텝 본문을 파싱해 실제로
    * 읽는 테이블을 찾는다. 같은 치환을 거치지 않으면 {{#N}}·{{last_run_at}} 이 든 스텝은 파싱에 실패해 참조에서 조용히 빠진다 — 치환 규칙을 두 곳에
-   * 복사하면 한쪽만 바뀌는 순간 다시 갈라지므로 이 한 곳을 같이 쓴다. 인스턴스 상태를 쓰지 않는다.
+   * 복사하면 한쪽만 바뀌는 순간 다시 갈라지므로 이 한 곳을 같이 쓴다. 인스턴스 상태를 쓰지 않는다 — 더미는 PG 꼴({@link
+   * DataSchema#qualify})이다. 파이프라인 저장 검증은 테넌트 백엔드에 맞춘 {@link #substituteForValidation} 을 쓴다(WD-77).
    */
   public static String substituteStepReferencesForValidation(String sql) {
+    return substituteStepReferencesForValidation(sql, DataSchema::qualify);
+  }
+
+  /**
+   * 파이프라인 저장 검증용 치환 — 더미 한정 이름을 러너와 같은 {@link PipelineDataSchema#qualify} 로 만든다(WD-77). Tibero 테넌트는
+   * {@code "GENIA_T{id}"."STEP_REF_N"}, PG 테넌트는 {@link DataSchema#qualify} 그대로라 정적 변형과 결과가 같다.
+   */
+  private String substituteForValidation(String sql) {
+    return substituteStepReferencesForValidation(sql, pipelineDataSchema::qualify);
+  }
+
+  /** 두 치환 변형의 공통 본문. {@code qualifier} 는 {@code {{#N}}} 더미 테이블 이름을 한정하는 함수다. */
+  private static String substituteStepReferencesForValidation(
+      String sql, UnaryOperator<String> qualifier) {
     // 증분 플레이스홀더도 여기서 유효한 타임스탬프 리터럴로 바꿔 둔다 — {{last_run_at}} 은 SQL 문법이
     // 아니므로 그대로 두면 저장 시점 SQL 가드(AST 파싱)가 항상 실패해 증분 스텝을 아예 저장할 수 없다.
     // 값 자체는 검증에 영향이 없으므로 고정된 epoch 를 쓴다(실행 시점 값은 러너가 따로 주입한다).
     return LastRunAtPlaceholder.substitute(
-        substituteStepReferences(sql), java.time.OffsetDateTime.parse("1970-01-01T00:00:00Z"));
+        substituteStepReferences(sql, qualifier),
+        java.time.OffsetDateTime.parse("1970-01-01T00:00:00Z"));
   }
 
   /**
@@ -381,7 +404,8 @@ public class PipelineService {
    * @param substituted {@link #substituteStepReferencesForValidation} 을 거친 SQL — 러너도 치환한 문자열을 검증한다
    */
   private boolean validateAndJudgeQuery(String substituted) {
-    return sqlValidator.validate(substituted) == SqlValidator.StatementKind.QUERY;
+    // 러너(PipelineAsyncRunner)와 같은 PipelineDataSchema.validator() 라 저장·실행 판정이 갈리지 않는다.
+    return pipelineDataSchema.validator().validate(substituted) == SqlValidator.StatementKind.QUERY;
   }
 
   /**
@@ -390,7 +414,7 @@ public class PipelineService {
    */
   private boolean judgeQueryOrFalse(String scriptContent) {
     try {
-      return validateAndJudgeQuery(substituteStepReferencesForValidation(scriptContent));
+      return validateAndJudgeQuery(substituteForValidation(scriptContent));
     } catch (UnsafeSqlException e) {
       return false;
     }
@@ -404,11 +428,13 @@ public class PipelineService {
    * 아니라고 보고 빈 목록을 돌려준다). 그런데 스텝 참조가 남아 있으면 JSqlParser 파싱이 실패하고, 그 예외는 조용히 삼켜져 역시 빈 목록이 된다 — 즉 두 치환을
    * 한 덩어리로 쓰든 아예 안 쓰든 경고가 영원히 안 나온다. 그래서 "스텝 참조만" 바꾸는 이 단계가 따로 필요하다.
    */
-  private static String substituteStepReferences(String sql) {
+  private static String substituteStepReferences(String sql, UnaryOperator<String> qualifier) {
     Matcher matcher = STEP_REFERENCE_PATTERN.matcher(sql);
     StringBuilder result = new StringBuilder();
     while (matcher.find()) {
-      String dummyTableRef = DataSchema.qualify("step_ref_" + matcher.group(1));
+      // 러너의 실제 치환과 같은 꼴 — 파이프라인 검증은 PipelineDataSchema.qualify(Tibero 는
+      // "GENIA_T{id}"."STEP_REF_N", PG 는 DataSchema.qualify 그대로), 데이터셋 참조 집계는 DataSchema.qualify.
+      String dummyTableRef = qualifier.apply("step_ref_" + matcher.group(1));
       matcher.appendReplacement(result, Matcher.quoteReplacement(dummyTableRef));
     }
     matcher.appendTail(result);
@@ -483,7 +509,10 @@ public class PipelineService {
     // {{last_run_at}} 은 남겨야 한다 — incrementalWarnings 가 그 존재로 증분 여부를 판단한다.
     List<String> warnings =
         new java.util.ArrayList<>(
-            sqlValidator.incrementalWarnings(substituteStepReferences(step.scriptContent())));
+            pipelineDataSchema
+                .validator()
+                .incrementalWarnings(
+                    substituteStepReferences(step.scriptContent(), pipelineDataSchema::qualify)));
     // equalsIgnoreCase — 실행기(PipelineAsyncRunner)가 로드 전략을 대소문자 무시로 해석하므로
     // 여기만 대소문자를 가리면 소문자 레거시 행("append")이 APPEND 로 실행되면서 경고만 빠진다.
     if ("APPEND".equalsIgnoreCase(step.loadStrategy())) {
@@ -1230,9 +1259,7 @@ public class PipelineService {
       try {
         SqlAccessResult sqlAccess =
             datasetAccessGuard.checkSql(
-                viewer,
-                substituteStepReferencesForValidation(step.scriptContent()),
-                SqlAccessMode.PIPELINE_SAVE);
+                viewer, substituteForValidation(step.scriptContent()), SqlAccessMode.PIPELINE_SAVE);
         if (!sqlAccess.allowed()) {
           return false;
         }

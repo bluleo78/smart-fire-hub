@@ -50,11 +50,20 @@ public class ExecutorClient {
     }
     this.maxResponseBytes = maxResponseBytes;
     this.webClient =
-        webClientBuilder
-            .baseUrl(executorBaseUrl)
-            .defaultHeader("Authorization", "Internal " + executorToken)
-            .codecs(c -> c.defaultCodecs().maxInMemorySize(maxResponseBytes))
-            .build();
+        internalClient(webClientBuilder, executorBaseUrl, executorToken, maxResponseBytes);
+  }
+
+  /**
+   * 내부 실행기(Python executor·db-executor) 호출용 WebClient — 내부 토큰 인증({@code Authorization: Internal
+   * <token>})과 응답 본문 버퍼 한도를 건다. 두 실행기 클라이언트가 같은 인증 방식·메모리 보호 정책을 쓰도록 여기 한 곳에서 만든다.
+   */
+  static WebClient internalClient(
+      WebClient.Builder builder, String baseUrl, String internalToken, int maxResponseBytes) {
+    return builder
+        .baseUrl(baseUrl)
+        .defaultHeader("Authorization", "Internal " + internalToken)
+        .codecs(c -> c.defaultCodecs().maxInMemorySize(maxResponseBytes))
+        .build();
   }
 
   /**
@@ -65,6 +74,11 @@ public class ExecutorClient {
    * 기존 "연결 실패" 처리 유지).
    */
   private <T> T guardSize(Supplier<T> call) {
+    return guardSize(maxResponseBytes, call);
+  }
+
+  /** {@link #guardSize(Supplier)} 의 공용판 — db-executor 클라이언트도 같은 크기 초과 판정을 쓴다. */
+  static <T> T guardSize(int maxResponseBytes, Supplier<T> call) {
     try {
       return call.get();
     } catch (RuntimeException e) {
@@ -90,8 +104,18 @@ public class ExecutorClient {
    * 추적하기 어려운 부작용이 된다.
    */
   private Map<String, Object> withTenant(Map<String, Object> request) {
+    return withTenant(request, "executor 실행 요청");
+  }
+
+  /**
+   * {@link #withTenant(Map)} 의 공용판 — db-executor 클라이언트도 같은 필드명({@code tenantId})·fail-closed 규칙으로
+   * 싣는다.
+   *
+   * @param purpose 테넌트가 없을 때 예외 문구에 넣을 호출 목적
+   */
+  static Map<String, Object> withTenant(Map<String, Object> request, String purpose) {
     Map<String, Object> body = new LinkedHashMap<>(request);
-    body.put("tenantId", TenantContext.require("executor 실행 요청"));
+    body.put("tenantId", TenantContext.require(purpose));
     return body;
   }
 
@@ -209,6 +233,8 @@ public class ExecutorClient {
    * @param pgError 실패가 PostgreSQL 오류일 때의 구조화 필드(SQLState·주 메시지·DETAIL·HINT·컬럼, WD-111) — 스텝 오류를
    *     SQLState 로 분류한 한국어 안내 + 원문으로 만드는 데 쓴다. 검증 거부처럼 PG 오류가 아니거나 이 필드를 보내지 않는 구버전 실행기면 null 이고,
    *     그때는 {@code error} 문자열만 쓴다.
+   * @param dbError 실패가 Tibero 등 JDBC 저장소 오류일 때의 코드·메시지(firehub-db-executor 응답의 {@code db_error},
+   *     WD-77). PG 실행기(firehub-executor)는 이 필드를 보내지 않으므로 PG 경로에서는 언제나 null 이다.
    */
   public record SqlExecuteResult(
       boolean success,
@@ -217,7 +243,18 @@ public class ExecutorClient {
       @JsonProperty("row_count") int rowCount,
       @JsonProperty("execution_log") String executionLog,
       String error,
-      @JsonProperty("pg_error") PgError pgError) {}
+      @JsonProperty("pg_error") PgError pgError,
+      @JsonProperty("db_error") DbError dbError) {}
+
+  /**
+   * JDBC 저장소(Tibero) 오류 — db-executor 가 문장 실행 중 난 {@code SQLException} 의 {@code getErrorCode()} 와
+   * 메시지를 그대로 싣는다(WD-77, 스펙 §5.3). 코드는 Tibero 자체 음수 코드(예: -10007 고유 위반)이며, 사용자 문구 분류는 {@code
+   * PipelineSqlErrorMessages#describeTiberoError} 가 {@code TiberoDialect} 코드 묶음으로 한다.
+   *
+   * @param code 저장소 오류 코드(부호 포함)
+   * @param message 저장소 오류 메시지(예: {@code JDBC-10007:UNIQUE constraint violation ...})
+   */
+  public record DbError(int code, String message) {}
 
   /**
    * PostgreSQL 서버 구조화 오류 중 사용자 문구에 쓰는 필드만. firehub-executor SQL 실행 응답의 {@code pg_error}(필드명

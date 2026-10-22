@@ -1,0 +1,5 @@
+build/
+.gradle/
+# Tibero JDBC 드라이버는 라이선스상 커밋하지 않는다(디렉터리만 .gitkeep 으로 유지).
+libs/*.jar
+!libs/.gitkeep

@@ -1,5 +1,6 @@
 package com.smartfirehub.dataset.storage.external;
 
+import com.smartfirehub.dataset.storage.tibero.TiberoDialect;
 import jakarta.annotation.PreDestroy;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -37,7 +38,7 @@ import org.springframework.stereotype.Component;
 @Component
 public class JdbcExternalDbConnector implements ExternalDbConnector {
 
-  static final String DEFAULT_DRIVER_CLASS = "com.tmax.tibero.jdbc.TbDriver";
+  static final String DEFAULT_DRIVER_CLASS = TiberoDialect.DRIVER_CLASS;
   static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(10);
 
   /** 테스트에서 주입하는 접속 함수. SQLException 을 그대로 던질 수 있다. */
@@ -70,9 +71,7 @@ public class JdbcExternalDbConnector implements ExternalDbConnector {
   public Connection open(ExternalDbTarget target, String username, String password)
       throws ExternalDbConnectionException {
     // 드라이버가 없으면 DriverManager 의 모호한 "No suitable driver" 대신 분명한 사유를 낸다.
-    try {
-      Class.forName(driverClassName);
-    } catch (ClassNotFoundException | LinkageError e) {
+    if (TiberoDialect.loadDriver(driverClassName) != null) {
       throw new ExternalDbConnectionException("Tibero JDBC 드라이버가 설치되지 않았습니다");
     }
     final String url;
