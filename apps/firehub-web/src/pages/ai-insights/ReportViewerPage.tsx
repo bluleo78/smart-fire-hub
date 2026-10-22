@@ -16,7 +16,8 @@ import { proactiveApi } from '@/api/proactive';
 import ReportIframe from '@/components/ai/ReportIframe';
 import { Button } from '@/components/ui/button';
 import { useReportActions } from '@/hooks/useReportActions';
-import { isForbiddenError } from '@/lib/api-error';
+import { isForbiddenError, isNotFoundError } from '@/lib/api-error';
+import { REPORT_NOT_FOUND_NOTICE } from '@/lib/proactive-utils';
 
 import { ProactiveReadForbiddenNotice } from './components/ProactiveReadForbiddenNotice';
 
@@ -42,6 +43,9 @@ export default function ReportViewerPage() {
   const rawHtml = htmlResponse?.data ?? null;
   // 조회 권한 부족(403) — 「리포트를 불러올 수 없습니다」 대신 권한 안내를 보이는 기준 (WD-137). 다시 시도해도 같다.
   const isForbidden = isError && isForbiddenError(error);
+  // 404 — 서버는 리포트가 없을 때와 작업 작성자가 아닐 때(받은 사람이 주소로 직접 연 경우)를 똑같이 404 로 숨긴다.
+  // 「불러올 수 없습니다」는 일시 오류처럼 읽혀 다시 시도하게 만들므로, 두 경우를 함께 말하는 안내를 보인다 (WD-162).
+  const isNotFound = isError && isNotFoundError(error);
 
   // PDF 다운로드 + 인쇄 공통 훅
   const { handleDownloadPdf, handlePrint, downloading } = useReportActions({
@@ -124,7 +128,20 @@ export default function ReportViewerPage() {
           <ProactiveReadForbiddenNotice subject="리포트" testId="report-forbidden" />
         )}
 
-        {!isInvalidParams && isError && !isForbidden && !isLoading && (
+        {!isInvalidParams && isNotFound && !isLoading && (
+          <div
+            className="flex flex-col items-center justify-center h-full gap-4 text-muted-foreground"
+            data-testid="report-not-found"
+          >
+            <p className="text-sm text-center break-keep px-4">{REPORT_NOT_FOUND_NOTICE}</p>
+            <Button variant="ghost" size="sm" onClick={() => navigate(-1)}>
+              <ArrowLeft className="h-4 w-4" />
+              돌아가기
+            </Button>
+          </div>
+        )}
+
+        {!isInvalidParams && isError && !isForbidden && !isNotFound && !isLoading && (
           <div className="flex flex-col items-center justify-center h-full gap-4 text-muted-foreground">
             <p className="text-sm">리포트를 불러올 수 없습니다.</p>
             <Button variant="ghost" size="sm" onClick={() => navigate(-1)}>

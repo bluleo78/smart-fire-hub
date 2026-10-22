@@ -22,10 +22,10 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useExecution } from '@/hooks/queries/useProactiveMessages';
 import { useReportActions } from '@/hooks/useReportActions';
-import { isForbiddenError } from '@/lib/api-error';
+import { isForbiddenError, isNotFoundError } from '@/lib/api-error';
 import { classifyError } from '@/lib/error-classifier';
 import { formatDate, formatDuration, getStatusBadgeVariant, getStatusLabel, timeAgo } from '@/lib/formatters';
-import { getSections } from '@/lib/proactive-utils';
+import { EXECUTION_NOT_FOUND_NOTICE, getSections } from '@/lib/proactive-utils';
 
 import { ProactiveReadForbiddenNotice } from './components/ProactiveReadForbiddenNotice';
 
@@ -83,11 +83,13 @@ export default function ExecutionDetailPage() {
     );
   }
 
-  // 실행 데이터 없음
+  // 실행 데이터 없음 — 404 는 「실행이 없음」과 「작업 작성자가 아님」을 똑같이 숨기므로 두 경우를 함께 말한다 (WD-162)
   if (!execution) {
     return (
       <div className="flex flex-col items-center justify-center h-64 gap-4 text-muted-foreground">
-        <p className="text-sm">실행 정보를 찾을 수 없습니다.</p>
+        <p className="text-sm text-center break-keep px-4" data-testid="execution-not-found">
+          {isError && isNotFoundError(error) ? EXECUTION_NOT_FOUND_NOTICE : '실행 정보를 찾을 수 없습니다.'}
+        </p>
         <Button variant="ghost" size="sm" onClick={() => navigate(-1)}>
           <ArrowLeft className="h-4 w-4" />
           돌아가기

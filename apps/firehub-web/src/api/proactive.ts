@@ -155,6 +155,12 @@ export interface ProactiveMessage {
   messageType: string;
   read: boolean;
   createdAt: string;
+  /**
+   * 이 메시지를 받은 내가 리포트 전문(실행 상세·html)을 열 수 있는가 (WD-162).
+   * 서버는 작업 작성자에게만 리포트 전문을 열어 주므로, 작성자가 아닌 수신자에게는 false 다 —
+   * 화면은 「리포트 보기」 대신 요약과 안내 문구를 보인다. 404 를 받고 나서 추측하지 않도록 서버가 사실을 실어 준다.
+   */
+  canViewReport: boolean;
 }
 
 export interface RecipientResponse {

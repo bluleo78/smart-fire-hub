@@ -65,7 +65,8 @@ class ProactiveMessageControllerTest {
         false,
         null,
         "daily-report",
-        LocalDateTime.now());
+        LocalDateTime.now(),
+        false); // canViewReport — 작성자가 아닌 수신자 메시지(WD-162)
   }
 
   @Test
@@ -78,7 +79,9 @@ class ProactiveMessageControllerTest {
         .perform(get("/api/v1/proactive/messages").header("Authorization", "Bearer valid-token"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$[0].id").value(1))
-        .andExpect(jsonPath("$[0].title").value("Daily Report"));
+        .andExpect(jsonPath("$[0].title").value("Daily Report"))
+        // WD-162: 웹이 「리포트 보기」/안내를 고르는 키 이름 — 이름이 바뀌면 웹이 조용히 undefined 를 읽는다
+        .andExpect(jsonPath("$[0].canViewReport").value(false));
   }
 
   @Test

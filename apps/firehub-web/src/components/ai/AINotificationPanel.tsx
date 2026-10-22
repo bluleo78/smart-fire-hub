@@ -4,6 +4,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
 import ReportModal from '@/components/ai/ReportModal';
+import { RestrictedNotice } from '@/components/ui/restricted-notice';
 
 import type { ProactiveMessage } from '../../api/proactive';
 import {
@@ -13,7 +14,7 @@ import {
   useUnreadCount,
 } from '../../hooks/queries/useProactiveMessages';
 import { relativeOrShortDate } from '../../lib/formatters';
-import { getSections } from '../../lib/proactive-utils';
+import { getSections, REPORT_OWNER_ONLY_NOTICE } from '../../lib/proactive-utils';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -154,6 +155,11 @@ function DetailView({
   // (백엔드 ProactiveMessageResponse에서 execution JOIN으로 jobId/executionId를 직접 반환)
   const jobId = message.jobId;
   const executionId = message.executionId;
+  // 리포트를 가리키는 메시지인가 / 내가 그 전문을 열 수 있는가 (WD-162).
+  // 서버는 작업 작성자에게만 리포트 전문을 열어 주므로, 작성자가 아닌 수신자에게 「리포트 보기」를 그리면 눌러도
+  // 「리포트가 없습니다」만 보였다. 서버가 실어 준 canViewReport 로 버튼과 안내를 가른다 — 요약은 위 섹션에 그대로 보인다.
+  const hasReport = !!jobId && !!executionId;
+  const canOpenReport = hasReport && message.canViewReport;
 
   return (
     <div className="flex flex-col h-full">
@@ -202,9 +208,13 @@ function DetailView({
         )}
       </div>
 
-      {/* Footer — 리포트 보기 + AI에게 물어보기 */}
+      {/* Footer — 리포트 보기(작성자) 또는 열람 안내(받은 사람) + AI에게 물어보기 */}
       <div className="px-3 py-2.5 border-t border-border/40 space-y-1.5">
-        {jobId && executionId && (
+        {/* 받은 사람: 전문을 열 수 없으므로 버튼 대신 이유를 알린다 (WD-162) */}
+        {hasReport && !canOpenReport && (
+          <RestrictedNotice message={REPORT_OWNER_ONLY_NOTICE} data-testid="report-owner-only-notice" />
+        )}
+        {canOpenReport && jobId && executionId && (
           <>
             <button
               onClick={() => setReportModalOpen(true)}

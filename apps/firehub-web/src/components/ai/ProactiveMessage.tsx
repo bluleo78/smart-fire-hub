@@ -4,10 +4,11 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
 import ReportModal from '@/components/ai/ReportModal';
+import { RestrictedNotice } from '@/components/ui/restricted-notice';
 import { parseUtcDate } from '@/lib/formatters';
 
 import type { ProactiveMessage as ProactiveMessageType } from '../../api/proactive';
-import { getSections } from '../../lib/proactive-utils';
+import { getSections, REPORT_OWNER_ONLY_NOTICE } from '../../lib/proactive-utils';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
 
@@ -27,6 +28,9 @@ export function ProactiveMessage({ message, onMarkRead, onFollowUp }: ProactiveM
   // ChatDeliveryChannel이 저장한 jobId/executionId — 리포트 보기 링크 생성에 사용
   const jobId = message.content.jobId as string | undefined;
   const executionId = message.content.executionId as string | undefined;
+  // 작업 작성자가 아닌 수신자는 리포트 전문을 열 수 없다 — 버튼 대신 안내를 보인다 (WD-162, 알림 패널과 같은 기준)
+  const hasReport = !!jobId && !!executionId;
+  const canOpenReport = hasReport && message.canViewReport;
   const time = parseUtcDate(message.createdAt).toLocaleTimeString('ko-KR', {
     hour: '2-digit',
     minute: '2-digit',
@@ -89,8 +93,13 @@ export function ProactiveMessage({ message, onMarkRead, onFollowUp }: ProactiveM
       )}
 
       {/* Footer — 리포트 보기 링크 (jobId/executionId가 있을 때) + 자세히 분석하기 */}
+      {hasReport && !canOpenReport && (
+        <div className="px-3 pb-2">
+          <RestrictedNotice message={REPORT_OWNER_ONLY_NOTICE} />
+        </div>
+      )}
       <div className="px-3 pb-3 flex gap-2">
-        {jobId && executionId && (
+        {canOpenReport && jobId && executionId && (
           <>
             <Button
               variant="default"
