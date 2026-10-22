@@ -1808,3 +1808,66 @@ test.describe('지식 모델 편집기 — 데이터셋 매핑 사용처 삭제 
     await expect(page.getByTestId('save-status-retry')).toHaveCount(0);
   });
 });
+
+test.describe('EntityInspector — 속성 행 폭(WD-188)', () => {
+  // 편집 패널(320px 고정)에 이름·자료형·단위·삭제를 한 줄로 몰아 이름 칸 글자 영역이 17px 만 남던 결함의 회귀 가드.
+  // 입력 요소의 scrollWidth 는 브라우저마다 글자 넘침을 반영하는지 보장되지 않으므로, 값의 실제 글자 폭을
+  // 같은 글꼴로 canvas 에 재서 칸의 글자 영역(clientWidth - 좌우 padding)과 직접 비교한다.
+  async function textFits(locator: import('@playwright/test').Locator) {
+    return locator.evaluate((el) => {
+      const style = getComputedStyle(el);
+      const text = el instanceof HTMLInputElement ? el.value : (el.textContent ?? '');
+      const ctx = document.createElement('canvas').getContext('2d')!;
+      ctx.font = style.font;
+      const textWidth = ctx.measureText(text).width;
+      const contentWidth = el.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+      return { text, textWidth, contentWidth, scrollWidth: el.scrollWidth, clientWidth: el.clientWidth };
+    });
+  }
+
+  test('1440×900 에서 기존 속성·새 속성 폼의 이름과 자료형이 잘리지 않는다', async ({ authenticatedPage: page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await setupAdminAuth(page);
+    await setupOntologyMocks(page);
+    // Damage(4)의 속성 이름을 결함 재현에 쓰인 정도 길이의 영문 이름으로 바꾼다 — page.route 는 나중 등록이 앞선다.
+    const schema = createOntologySchema();
+    await mockApi(page, 'GET', '/api/v1/ontology/1', {
+      ...schema,
+      entities: schema.entities.map((e) =>
+        e.id === 4 ? { ...e, properties: e.properties.map((p) => ({ ...p, name: 'construction_year' })) } : e,
+      ),
+    });
+    await page.goto('/knowledge-graph/model');
+    await page.getByRole('button', { name: '수정 모드' }).click();
+    await page.getByTestId('outline-entity-4').click();
+
+    // 기존 속성 행 — 이름 전체가 글자 영역 안에 들어가고, 자료형 「number」가 잘리지 않는다.
+    const row = page.getByTestId('property-row-1');
+    const nameInput = row.getByLabel('Damage 속성 이름');
+    await expect(nameInput).toHaveValue('construction_year');
+    const name = await textFits(nameInput);
+    expect(name.textWidth).toBeLessThanOrEqual(name.contentWidth);
+    expect(name.scrollWidth).toBeLessThanOrEqual(name.clientWidth);
+
+    const typeValue = row.getByLabel('Damage 속성 타입').locator('[data-slot="select-value"]');
+    await expect(typeValue).toHaveText('number');
+    const type = await textFits(typeValue);
+    expect(type.textWidth).toBeLessThanOrEqual(type.contentWidth);
+    expect(type.scrollWidth).toBeLessThanOrEqual(type.clientWidth);
+
+    // 새 속성 추가 폼 — 같은 길이의 이름과 자료형 number 를 넣어도 잘리지 않는다.
+    const form = page.getByTestId('add-property-form');
+    await form.getByLabel('새 속성 이름').fill('construction_year');
+    await form.getByLabel('새 속성 타입').click();
+    await page.getByRole('option', { name: 'number' }).click();
+    const newName = await textFits(form.getByLabel('새 속성 이름'));
+    expect(newName.textWidth).toBeLessThanOrEqual(newName.contentWidth);
+    expect(newName.scrollWidth).toBeLessThanOrEqual(newName.clientWidth);
+
+    const newTypeValue = form.getByLabel('새 속성 타입').locator('[data-slot="select-value"]');
+    await expect(newTypeValue).toHaveText('number');
+    const newType = await textFits(newTypeValue);
+    expect(newType.textWidth).toBeLessThanOrEqual(newType.contentWidth);
+    expect(newType.scrollWidth).toBeLessThanOrEqual(newType.clientWidth);
+  });
+});

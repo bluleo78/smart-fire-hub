@@ -104,6 +104,11 @@ function PropertyRow({ entityType, property, existingNames, onUpdate, onDelete, 
 
   return (
     <div className="flex flex-col gap-1.5 rounded border p-2" data-testid={`property-row-${property.id}`}>
+      {/* WD-188: 편집 패널은 320px 고정이라 이름·자료형·단위·삭제를 한 줄에 두면 이름 칸 글자 영역이
+          17px 만 남아 「floors」가 「flo」로, 자료형이 「numbe」로 잘렸다. 그래서 두 줄로 나눈다 —
+          1줄 = 이름(남는 폭 전부) + 삭제, 2줄 = 자료형 + 단위(반씩). DOM 순서를 화면 순서와 같게 둬
+          Tab 이 이름 → 삭제 → 자료형 → 단위 → 설명으로 보이는 대로 흐른다(CSS 로 위치만 옮기면
+          포커스 순서가 화면과 어긋난다). 삭제는 확인 창을 거치므로 Tab 길목에 있어도 바로 지워지지 않는다. */}
       <div className="flex items-center gap-1.5">
         <Input
           aria-label={`${entityType} 속성 이름`}
@@ -113,30 +118,7 @@ function PropertyRow({ entityType, property, existingNames, onUpdate, onDelete, 
           value={nameField.value}
           onChange={(e) => nameField.onChange(e.target.value)}
           onBlur={nameField.onBlur}
-          className="flex-1"
-        />
-        <Select
-          value={property.dataType ?? 'text'}
-          onValueChange={(v: 'text' | 'number' | 'date') => onUpdate({ dataType: v })}
-        >
-          <SelectTrigger aria-label={`${entityType} 속성 타입`} className="w-24">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {DATA_TYPES.map((dt) => (
-              <SelectItem key={dt} value={dt}>
-                {dt}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Input
-          aria-label={`${entityType} 속성 단위`}
-          placeholder="단위"
-          value={unitField.value}
-          onChange={(e) => unitField.onChange(e.target.value)}
-          onBlur={unitField.onBlur}
-          className="w-20"
+          className="min-w-0 flex-1"
         />
         {/* 확인 없이 즉시 삭제되던 결함(#419) — 엔티티 타입 삭제(DeleteTypeConfirm)와 동일한
             AlertDialog 패턴을 범용 DeleteConfirmDialog로 적용한다. 속성 삭제는 FK CASCADE 파급이
@@ -157,6 +139,30 @@ function PropertyRow({ entityType, property, existingNames, onUpdate, onDelete, 
               <Trash2 className="h-3.5 w-3.5" />
             </Button>
           }
+        />
+      </div>
+      <div className="grid grid-cols-2 gap-1.5">
+        <Select
+          value={property.dataType ?? 'text'}
+          onValueChange={(v: 'text' | 'number' | 'date') => onUpdate({ dataType: v })}
+        >
+          <SelectTrigger aria-label={`${entityType} 속성 타입`} className="w-full">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {DATA_TYPES.map((dt) => (
+              <SelectItem key={dt} value={dt}>
+                {dt}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Input
+          aria-label={`${entityType} 속성 단위`}
+          placeholder="단위"
+          value={unitField.value}
+          onChange={(e) => unitField.onChange(e.target.value)}
+          onBlur={unitField.onBlur}
         />
       </div>
       <Input
@@ -543,27 +549,28 @@ function EditEntityForm({
           ))}
 
         {/* 새 속성 추가 폼 — 예약어/중복은 API 호출 없이 여기서 막는다(#329 이식: aria-invalid/describedby). */}
+        {/* WD-188: 기존 속성 행과 같은 두 줄 배치 — 1줄 = 이름(전체 폭), 2줄 = 자료형 + 단위(반씩).
+            삭제 버튼이 없으니 1줄은 이름만 둔다. */}
         <div className="flex flex-col gap-1.5 rounded border border-dashed p-2" data-testid="add-property-form">
-          <div className="flex items-center gap-1.5">
-            <Input
-              aria-label="새 속성 이름"
-              aria-invalid={newPropError ? true : undefined}
-              aria-describedby={newPropError ? 'new-property-error' : undefined}
-              placeholder="속성명"
-              value={newProp.name}
-              onChange={(e) => {
-                setNewProp((p) => ({ ...p, name: e.target.value }));
-                // 이전 검증 실패 표시가 이름을 고친 뒤에도 다음 "속성 추가" 클릭까지 남아있지
-                // 않도록 입력이 바뀌는 즉시 지운다(Task 4 리뷰 M-2).
-                setNewPropError(null);
-              }}
-              className="flex-1"
-            />
+          <Input
+            aria-label="새 속성 이름"
+            aria-invalid={newPropError ? true : undefined}
+            aria-describedby={newPropError ? 'new-property-error' : undefined}
+            placeholder="속성명"
+            value={newProp.name}
+            onChange={(e) => {
+              setNewProp((p) => ({ ...p, name: e.target.value }));
+              // 이전 검증 실패 표시가 이름을 고친 뒤에도 다음 "속성 추가" 클릭까지 남아있지
+              // 않도록 입력이 바뀌는 즉시 지운다(Task 4 리뷰 M-2).
+              setNewPropError(null);
+            }}
+          />
+          <div className="grid grid-cols-2 gap-1.5">
             <Select
               value={newProp.dataType}
               onValueChange={(v: 'text' | 'number' | 'date') => setNewProp((p) => ({ ...p, dataType: v }))}
             >
-              <SelectTrigger aria-label="새 속성 타입" className="w-24">
+              <SelectTrigger aria-label="새 속성 타입" className="w-full">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -579,7 +586,6 @@ function EditEntityForm({
               placeholder="단위(선택)"
               value={newProp.unit}
               onChange={(e) => setNewProp((p) => ({ ...p, unit: e.target.value }))}
-              className="w-20"
             />
           </div>
           <Input
