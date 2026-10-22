@@ -45,6 +45,19 @@ public class ProactiveContextCollector {
    *     없어 명시해야 한다(없으면 "아무것도 못 봄"으로 데이터셋 항목이 전부 빠진다). 소유자 미상(null)이면 아무것도 못 보는 자격(fail-closed)
    */
   public String collectContext(Map<String, Object> config, Long jobId, Long ownerUserId) {
+    return collectContext(config, jobId, ownerUserId, null);
+  }
+
+  /**
+   * 리포트 컨텍스트 수집 — 이상 탐지로 시작된 실행이면 그 이상(지표·현재값·평균·편차·최근 값)을 함께 싣는다(WD-171).
+   *
+   * <p>예전에는 이상 이벤트가 실행기로 전달되지 않아 이상 탐지 리포트가 평소 예약 리포트와 같은 내용이었다 — 받는 사람이 왜 리포트가 왔는지 알 수 없었다. 이상 정보는
+   * 대상 필터(scope=SELECTED) 뒤에 넣어 항상 실리고, 길이 제한에 잘리지 않게 직렬화 맨 앞에 둔다.
+   *
+   * @param anomaly 이상 탐지 이벤트. 예약·수동 실행이면 null
+   */
+  public String collectContext(
+      Map<String, Object> config, Long jobId, Long ownerUserId, AnomalyEvent anomaly) {
     try {
       Map<String, Object> context = new HashMap<>();
 
@@ -142,8 +155,16 @@ public class ProactiveContextCollector {
       // config.targets 기반 필터링 (scope: ALL/SELECTED)
       applyTargetFilter(context, config);
 
+      // 이상 탐지 실행이면 이상 정보를 맨 앞에 싣는다(WD-171) — 필터 뒤라 항상 남고, 앞에 있어 길이 제한에 잘리지 않는다
+      Map<String, Object> payload = context;
+      if (anomaly != null) {
+        payload = new LinkedHashMap<>();
+        addAnomalyContext(payload, anomaly);
+        payload.putAll(context);
+      }
+
       // JSON 직렬화 후 크기 제한
-      String json = objectMapper.writeValueAsString(context);
+      String json = objectMapper.writeValueAsString(payload);
       if (json.length() > MAX_CONTEXT_LENGTH) {
         json = json.substring(0, MAX_CONTEXT_LENGTH) + "...[truncated]";
       }
