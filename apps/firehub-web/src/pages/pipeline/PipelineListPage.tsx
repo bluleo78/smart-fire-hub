@@ -3,7 +3,6 @@ import { useMemo,useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
-import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
 import { SimplePagination } from '@/components/ui/simple-pagination';
 import { TableEmptyRow } from '@/components/ui/table-empty';
 import { TableSkeletonRows } from '@/components/ui/table-skeleton';
@@ -26,6 +25,7 @@ import {
 import { useDeletePipeline,usePipelines } from '../../hooks/queries/usePipelines';
 import { formatDateOnly, formatDateTimeMinute } from '../../lib/formatters';
 import { getPageAfterDelete } from '../../lib/pagination';
+import { PipelineDeleteConfirmDialog } from './components/PipelineDeleteConfirmDialog';
 
 export default function PipelineListPage() {
   const navigate = useNavigate();
@@ -174,8 +174,9 @@ export default function PipelineListPage() {
                     {formatDateOnly(pipeline.createdAt)}
                   </TableCell>
                   <TableCell>
-                    <DeleteConfirmDialog
-                      entityName="파이프라인"
+                    {/* WD-170: 함께 삭제될 자동 생성 임시 데이터셋 개수를 안내하는 파이프라인 전용 확인 창 */}
+                    <PipelineDeleteConfirmDialog
+                      pipelineId={pipeline.id}
                       itemName={pipeline.name}
                       onConfirm={() => handleDelete(pipeline.id, pipeline.name)}
                       trigger={

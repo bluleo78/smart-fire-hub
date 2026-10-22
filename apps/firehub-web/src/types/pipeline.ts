@@ -198,6 +198,14 @@ export interface TriggerEventResponse {
   createdAt: string;
 }
 
+/**
+ * 파이프라인 삭제 영향(WD-170) — 삭제하면 함께 지워질 자동 생성 임시 데이터셋 개수.
+ * 다른 파이프라인 스텝이 출력으로 쓰고 있어 남는 임시 데이터셋은 세지 않는다(서버의 실제 삭제와 같은 판정).
+ */
+export interface PipelineDeleteImpact {
+  tempDatasetCount: number;
+}
+
 export interface CreateTriggerRequest {
   name: string;
   triggerType: TriggerType;

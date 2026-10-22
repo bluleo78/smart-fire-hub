@@ -53,7 +53,25 @@ export function useDeletePipeline() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: pipelinesApi.deletePipeline,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['pipelines'] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['pipelines'] });
+      // 파이프라인이 만든 자동 생성 임시 데이터셋도 함께 지워지므로(WD-170) 데이터셋 목록도 다시 읽는다.
+      queryClient.invalidateQueries({ queryKey: ['datasets'] });
+    },
+  });
+}
+
+/**
+ * 파이프라인 삭제 영향(WD-170) — 삭제 확인 창 내용 안에서 쓰므로 창이 열려 있을 때만 마운트되어 조회한다.
+ * gcTime 0: 창이 닫혀 언마운트되면 결과를 버린다 — 다시 열면 새로 조회한다(그 사이 실행으로 생긴 임시 데이터셋을 놓치지 않게).
+ * retry false: 실패(시간 초과 포함)하면 바로 안내로 넘어간다(재시도 동안 삭제가 막혀 있지 않게). WD-86 useDeleteImpact 와 같은 규칙.
+ */
+export function usePipelineDeleteImpact(id: number) {
+  return useQuery({
+    queryKey: ['pipelines', id, 'delete-impact'],
+    queryFn: ({ signal }) => pipelinesApi.getDeleteImpact(id, signal).then((r) => r.data),
+    gcTime: 0,
+    retry: false,
   });
 }
 
@@ -65,6 +83,8 @@ export function useUpdatePipeline(pipelineId: number) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['pipelines'] });
       queryClient.invalidateQueries({ queryKey: ['pipelines', pipelineId] });
+      // 저장에서 뺀 스텝의 자동 생성 임시 데이터셋이 함께 지워지므로(WD-170) 데이터셋 목록도 다시 읽는다.
+      queryClient.invalidateQueries({ queryKey: ['datasets'] });
     },
   });
 }

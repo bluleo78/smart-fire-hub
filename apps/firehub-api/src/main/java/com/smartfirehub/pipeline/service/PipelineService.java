@@ -28,6 +28,7 @@ import com.smartfirehub.securitylevel.ai.AiCall;
 import com.smartfirehub.securitylevel.ai.AiCallContext;
 import com.smartfirehub.securitylevel.ai.AiHostingResolver;
 import com.smartfirehub.user.repository.UserRepository;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -85,6 +86,12 @@ public class PipelineService {
 
   /** AI 대행 요청 판별(S3 §4.3) — 실행 기록 원문이 LLM 으로 갈 때 관련 데이터셋의 AI(+SHARE) 정책까지 본다. */
   private final AiCallContext aiCallContext;
+
+  /**
+   * 스텝이 만든 자동 생성 임시 데이터셋 정리(WD-170) — 파이프라인 삭제·스텝 제거 때 메타·물리 테이블을 데이터셋 삭제와 같은 경로({@code
+   * DatasetService.deleteDataset})로 지운다.
+   */
+  private final TempDatasetService tempDatasetService;
 
   /**
    * 원문 오류를 볼 수 없는 조회자에게 스텝·실행 오류 대신 보여 주는 고정 문구(WD-27). 원문(PG 오류)에는 숨김 테이블명·행 값이 실릴 수 있어 일부만 지우지 않고
@@ -562,6 +569,9 @@ public class PipelineService {
               .map(PipelineStepResponse::id)
               .filter(sid -> !keptIds.contains(sid))
               .toList();
+      // 2-1) 지울 스텝이 만든 자동 생성 임시 데이터셋을 미리 모아 둔다(WD-170) — 스텝을 지우면 source_pipeline_step_id 가
+      // SET NULL(V36)이 되어 더는 찾을 수 없다. 실제 삭제는 저장이 끝난 뒤(7) 출력 참조를 다시 보고 한다.
+      List<Long> removedStepTempIds = stepRepository.findAutoTempDatasetIdsByStepIds(removedIds);
       stepRepository.deleteSteps(id, removedIds);
 
       // 3) 남는 스텝의 입력·의존을 비운다 — 요청이 전체를 다시 보내므로 saveSteps 가 새 이름→id 맵으로 다시 잇는다.
@@ -620,7 +630,71 @@ public class PipelineService {
           stepRepository.setCursor(sid, before.lastRunAt(), false);
         }
       }
+
+      // 7) 뺀 스텝이 만든 자동 생성 임시 데이터셋을 지운다(WD-170). 그대로 두면 연결만 끊긴 채 남아, 같은 이름의 스텝을 다시 넣으면
+      // 러너가 새 임시 데이터셋을 만들려다 이름(ptmp_<파이프라인 id>_<스텝>) 충돌로 매번 실패한다. 저장(5)이 끝난 뒤에 하는 이유: 같은 저장에서
+      // 남는·새 스텝이 그 임시 데이터셋을 출력으로 넘겨받을 수 있다(왕복 보존 출력) — 저장 후 상태로 출력 참조를 봐야 한다.
+      deleteAutoTempDatasets(removedStepTempIds, removedIds);
     }
+  }
+
+  /**
+   * 함께 지울 자동 생성 임시 데이터셋만 고른다(WD-170) — 삭제 경로와 삭제 영향 조회가 같은 판정을 쓰게 하는 단일 지점이다(화면의 N 과 실제로 지워지는 개수가
+   * 어긋나지 않게).
+   *
+   * <p>{@code excludedStepIds} 밖의 스텝이 출력({@code output_dataset_id})으로 쓰는 임시 데이터셋은 남긴다 — 데이터셋
+   * 삭제({@code DatasetService.deleteDataset})가 출력 참조 시 거부하는 것과 같은 규칙이다. 입력으로만 참조하는 스텝은 막지 않는다(데이터셋
+   * 삭제와 같음 — {@code pipeline_step_input.dataset_id} 가 ON DELETE CASCADE 라 그 입력 연결만 함께 사라진다).
+   *
+   * @param tempIds 후보 임시 데이터셋 id(지울 스텝들이 만든 것)
+   * @param excludedStepIds 곧 지워질(또는 이미 지운) 스텝 — 자기 임시 데이터셋을 출력으로 되돌려 저장해 둔 경우를 참조로 세지 않는다
+   */
+  private List<Long> selectDeletableAutoTemps(
+      List<Long> tempIds, Collection<Long> excludedStepIds) {
+    Set<Long> usedAsOutput =
+        stepRepository.findDatasetIdsUsedAsOutputExcludingSteps(tempIds, excludedStepIds);
+    return tempIds.stream().filter(tid -> !usedAsOutput.contains(tid)).toList();
+  }
+
+  /**
+   * 자동 생성 임시 데이터셋을 데이터셋 삭제 경로로 지운다(WD-170) — 물리 테이블(DROP)·행 검색 색인·컬럼 메타·데이터셋 행(태그·즐겨찾기 등은 FK
+   * CASCADE)·감사 로그까지 기존 삭제와 똑같다. 호출자 트랜잭션에 합류하므로(같은 커넥션, PostgreSQL DDL 은 트랜잭션 안) 중간에 실패하면 스텝·파이프라인
+   * 삭제까지 함께 되돌아간다 — 반쯤 지워진 상태가 남지 않는다.
+   *
+   * <p>출력 참조 판정을 먼저 해서 걸러 낸다. 데이터셋 삭제의 출력 참조 거부(DatasetInUseException)는 합류한 트랜잭션을 롤백 전용으로 만들어 잡아도
+   * 커밋이 실패하므로, 거부에 기대지 않고 미리 거른다(그 거부는 안전망으로만 남는다). 데이터셋 소유자·보안 등급 확인은 하지 않는다 — 파이프라인을 지울 수 있는 사람이면
+   * 그 파이프라인이 만든 임시 데이터셋도 지워져야 한다.
+   */
+  private void deleteAutoTempDatasets(List<Long> tempIds, Collection<Long> excludedStepIds) {
+    if (tempIds.isEmpty()) {
+      return;
+    }
+    List<Long> deletable = selectDeletableAutoTemps(tempIds, excludedStepIds);
+    for (Long tempId : deletable) {
+      tempDatasetService.deleteTempDataset(tempId);
+    }
+    if (deletable.size() < tempIds.size()) {
+      log.info(
+          "Kept {} auto temp dataset(s) still used as output by other steps: {}",
+          tempIds.size() - deletable.size(),
+          tempIds.stream().filter(t -> !deletable.contains(t)).toList());
+    }
+  }
+
+  /**
+   * 파이프라인을 지우면 함께 지워질 자동 생성 임시 데이터셋 개수(WD-170 — 삭제 확인 창 안내용). 실제 삭제({@link #deletePipeline})와 같은
+   * 판정({@link #selectDeletableAutoTemps})을 쓴다.
+   *
+   * @throws PipelineNotFoundException 파이프라인이 없을 때
+   */
+  @Transactional(readOnly = true)
+  public PipelineDeleteImpactResponse getDeleteImpact(Long id) {
+    pipelineRepository
+        .findById(id)
+        .orElseThrow(() -> new PipelineNotFoundException("Pipeline not found: " + id));
+    List<Long> stepIds = stepRepository.findStepIdsByPipelineId(id);
+    List<Long> tempIds = stepRepository.findAutoTempDatasetIdsByStepIds(stepIds);
+    return new PipelineDeleteImpactResponse(selectDeletableAutoTemps(tempIds, stepIds).size());
   }
 
   /**
@@ -873,8 +947,17 @@ public class PipelineService {
       log.info("Disabled {} chain triggers referencing pipeline {}", disabled, id);
     }
 
+    // 스텝이 만든 자동 생성 임시 데이터셋을 스텝 삭제 전에 모아 둔다(WD-170) — 스텝을 지우면 source_pipeline_step_id 가
+    // SET NULL(V36)이 되어 찾을 수 없다.
+    List<Long> stepIds = stepRepository.findStepIdsByPipelineId(id);
+    List<Long> tempIds = stepRepository.findAutoTempDatasetIdsByStepIds(stepIds);
+
     // Delete steps (cascade deletes inputs and dependencies)
     stepRepository.deleteByPipelineId(id);
+
+    // 임시 데이터셋은 스텝 다음에 지운다(WD-170) — 스텝이 자기 임시 데이터셋을 출력(output_dataset_id, FK RESTRICT)으로 들고 있을
+    // 수 있어 먼저 지우면 걸린다. 다른 파이프라인 스텝이 출력으로 쓰는 것은 남긴다. 같은 트랜잭션이라 실패하면 전부 되돌아간다.
+    deleteAutoTempDatasets(tempIds, stepIds);
 
     // Delete pipeline
     pipelineRepository.deleteById(id);
