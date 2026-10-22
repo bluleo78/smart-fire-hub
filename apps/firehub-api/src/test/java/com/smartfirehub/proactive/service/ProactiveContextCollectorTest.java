@@ -54,6 +54,33 @@ class ProactiveContextCollectorTest extends IntegrationTestBase {
     assertThat(context).contains("테스트 내용");
   }
 
+  /**
+   * [WD-171] 이상 탐지 실행이면 감지된 이상이 컨텍스트 맨 앞에 실린다 — 대상 필터(scope=SELECTED)로 다른 항목을 거를 때도 남는다. 이벤트 없는
+   * 수집에는 anomaly 키가 없다(대조).
+   */
+  @Test
+  void collectContext_withAnomaly_putsAnomalyFirst_evenWhenTargetsAreSelected() throws Exception {
+    var event =
+        new com.smartfirehub.proactive.dto.AnomalyEvent(
+            7L, null, "ds_total", "데이터셋수", 9.0, 8.08, 0.28, 3.3, "medium", List.of(8.0, 8.0));
+    Map<String, Object> config = Map.of("scope", "SELECTED", "targets", List.of("stats"));
+
+    String withAnomaly = contextCollector.collectContext(config, null, null, event);
+    JsonNode root = objectMapper.readTree(withAnomaly);
+    assertThat(root.fieldNames().next()).isEqualTo("anomaly");
+    JsonNode anomaly = root.path("anomaly");
+    assertThat(anomaly.path("metricName").asText()).isEqualTo("데이터셋수");
+    assertThat(anomaly.path("currentValue").asDouble()).isEqualTo(9.0);
+    assertThat(anomaly.path("deviation").asText()).isEqualTo("3.30σ");
+    assertThat(anomaly.path("expectedRange").path("mean").asDouble()).isEqualTo(8.08);
+    // 대상 필터는 그대로 — stats 만 남고 다른 항목은 걸러진다
+    assertThat(root.has("stats")).isTrue();
+    assertThat(root.has("activityFeed")).isFalse();
+
+    String withoutAnomaly = contextCollector.collectContext(config, null, null);
+    assertThat(objectMapper.readTree(withoutAnomaly).has("anomaly")).isFalse();
+  }
+
   @Test
   void collectContext_works_without_jobId() {
     String context = contextCollector.collectContext(Map.of(), null, null);

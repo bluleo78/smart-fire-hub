@@ -7,6 +7,7 @@ import static org.mockito.Mockito.*;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.notification.service.NotificationDispatcher;
+import com.smartfirehub.proactive.dto.AnomalyEvent;
 import com.smartfirehub.proactive.dto.ProactiveJobResponse;
 import com.smartfirehub.proactive.dto.ProactiveResult;
 import com.smartfirehub.proactive.dto.ReportTemplateResponse;
@@ -95,7 +96,8 @@ class ProactiveJobAsyncRunnerTest {
             null);
     when(proactiveJobRepository.findById(JOB_ID, USER_ID)).thenReturn(Optional.of(job));
     when(executionRepository.create(JOB_ID)).thenReturn(EXECUTION_ID);
-    when(contextCollector.collectContext(any(), eq(JOB_ID), any())).thenReturn("{}");
+    // 이상 탐지 실행(WD-171)은 4인자 수집을 쓰므로 이 기본 스텁을 쓰지 않는다 — lenient
+    lenient().when(contextCollector.collectContext(any(), eq(JOB_ID), any())).thenReturn("{}");
   }
 
   /**
@@ -195,6 +197,27 @@ class ProactiveJobAsyncRunnerTest {
     assertThat(templateCaptor.getAllValues().get(1)).containsEntry("style", "formal");
     // 소유자 범위 없이 id 로만 읽는 경로는 쓰지 않는다
     verify(reportTemplateRepository, never()).findById(anyLong());
+  }
+
+  /** [WD-171] 이상 탐지로 시작된 실행은 감지된 이상을 컨텍스트 수집에 넘긴다 — 예약·수동 실행(이벤트 없음)은 기존 수집을 그대로 쓴다(대조). */
+  @Test
+  void 이상_탐지_실행은_이상을_컨텍스트_수집에_넘긴다() {
+    when(aiCredentialService.resolve())
+        .thenReturn(new AiCredential.Opencode("openai", "https://api.openai.com/v1", "", "sk"));
+    when(settingsService.getValue("ai.model")).thenReturn(Optional.of("openai/gpt-4o"));
+    when(aiClient.execute(eq(USER_ID), any(), any(), any(), any(), any(), any()))
+        .thenReturn(new ProactiveResult("제목", List.of(), null, null, "요약 내용"));
+    AnomalyEvent event =
+        new AnomalyEvent(
+            JOB_ID, USER_ID, "m1", "실패율", 0.9, 0.1, 0.05, 16.0, "high", List.of(0.1, 0.12));
+    when(contextCollector.collectContext(any(), eq(JOB_ID), any(), eq(event)))
+        .thenReturn("{\"anomaly\":{}}");
+
+    runner.executeJob(JOB_ID, USER_ID, event);
+
+    verify(contextCollector).collectContext(any(), eq(JOB_ID), eq(USER_ID), eq(event));
+    verify(aiClient)
+        .execute(eq(USER_ID), anyString(), eq("{\"anomaly\":{}}"), any(), any(), any(), any());
   }
 
   /**

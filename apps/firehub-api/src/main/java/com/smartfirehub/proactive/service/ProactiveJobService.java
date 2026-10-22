@@ -431,7 +431,8 @@ public class ProactiveJobService {
       return;
     }
     try {
-      asyncRunner.executeJob(event.jobId(), event.userId());
+      // 감지된 이상을 함께 넘겨 리포트가 무엇 때문에 왔는지 설명하게 한다(WD-171)
+      asyncRunner.executeJob(event.jobId(), event.userId(), event);
       recordCooldown(event.jobId());
     } catch (Exception e) {
       log.warn("Anomaly-triggered execution failed for job {}: {}", event.jobId(), e.getMessage());

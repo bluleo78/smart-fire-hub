@@ -3,6 +3,7 @@ package com.smartfirehub.proactive.service;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.notification.service.NotificationDispatcher;
+import com.smartfirehub.proactive.dto.AnomalyEvent;
 import com.smartfirehub.proactive.dto.ProactiveJobResponse;
 import com.smartfirehub.proactive.dto.ProactiveResult;
 import com.smartfirehub.proactive.exception.ProactiveJobException;
@@ -84,6 +85,20 @@ public class ProactiveJobAsyncRunner {
    */
   @Async("pipelineExecutor")
   public void executeJob(Long jobId, Long userId) {
+    runJob(jobId, userId, null);
+  }
+
+  /**
+   * 이상 탐지로 시작된 실행 — 감지된 이상을 리포트 컨텍스트에 함께 싣는다(WD-171).
+   *
+   * @param anomaly 실행을 일으킨 이상 탐지 이벤트
+   */
+  @Async("pipelineExecutor")
+  public void executeJob(Long jobId, Long userId, AnomalyEvent anomaly) {
+    runJob(jobId, userId, anomaly);
+  }
+
+  private void runJob(Long jobId, Long userId, AnomalyEvent anomaly) {
     // 슬롯 획득은 tryAcquireRunSlot()에서 사전 수행됨.
     // @Async 특성상 이 메서드 내부에서 throw한 예외는 호출자에게 전파되지 않으므로
     // 중복 실행 방지 체크는 동기 컨텍스트(컨트롤러/이벤트 리스너)에서 미리 처리한다.
@@ -105,7 +120,11 @@ public class ProactiveJobAsyncRunner {
 
       // 컨텍스트 수집
       // 컨텍스트는 작업 소유자 자격으로 거른다(보안 등급 — 볼 수 없는 데이터셋 이름이 리포트에 실리지 않게).
-      String context = contextCollector.collectContext(job.config(), jobId, userId);
+      // 이상 탐지 실행이면 감지된 이상도 싣는다(WD-171)
+      String context =
+          anomaly == null
+              ? contextCollector.collectContext(job.config(), jobId, userId)
+              : contextCollector.collectContext(job.config(), jobId, userId, anomaly);
 
       // 템플릿 조회 (templateId가 있으면 sections/style 포함)
       // 작업 소유자가 쓸 수 있는 양식(기본·본인)만 읽는다(WD-163) — 수정 전에 남의 양식이 연결된 작업도 그 양식 내용을 계속 끌어 쓰지 않게,
