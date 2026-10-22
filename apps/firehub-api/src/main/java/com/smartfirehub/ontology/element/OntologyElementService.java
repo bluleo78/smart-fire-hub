@@ -228,6 +228,13 @@ public class OntologyElementService {
     if (req.dataType() != null && !OntologyRules.DATA_TYPES.contains(req.dataType())) {
       throw OntologyRules.invalidDataType(req.name() == null ? currentName : req.name());
     }
+    // WD-185: 자료형이 실제로 바뀔 때만, 이 속성에 컬럼을 연결한 매핑과 새 자료형이 맞는지 본다(맞지 않으면 409). 같은 값 재제출은
+    // 검사하지 않는다 — 이미 어긋난 옛 매핑 때문에 무변경 저장까지 막히면 안 된다. 매핑은 아직 옛 이름을 들고 있으므로(이름 연쇄는
+    // 아래에서 일어난다) 현재 이름으로 찾는다. 온톨로지 행 잠금(assertEditable) 뒤라 WD-129 와 같은 잠금 순서다.
+    if (req.dataType() != null
+        && !req.dataType().equals(findProperty(ontologyId, entityTypeId, propertyId).dataType())) {
+      mappingReferences.assertDataTypeCompatible(ontologyId, typeName, currentName, req.dataType());
+    }
 
     elementRepository.updateProperty(propertyId, req);
     // WD-129: 이 타입의 매핑 안에서만 속성명을 새 이름으로 맞춘다(속성명은 타입 안에서만 유일).

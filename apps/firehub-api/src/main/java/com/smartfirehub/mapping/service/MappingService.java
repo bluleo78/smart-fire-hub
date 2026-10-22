@@ -204,11 +204,8 @@ public class MappingService {
   private static void checkPropertyType(
       String entityType, OntologyResponse.Property prop, String columnName, String columnType) {
     String want = prop.dataType();
-    if (want == null || want.isBlank() || "text".equalsIgnoreCase(want)) {
-      return; // 미지정 속성은 판정 대상이 아니고, text는 모두 허용
-    }
-    String actual = collapseColumnType(columnType);
-    if (actual == null || actual.equals(want.toLowerCase())) {
+    String actual = incompatibleColumnKind(want, columnType);
+    if (actual == null) {
       return;
     }
     throw new IllegalArgumentException(
@@ -217,8 +214,26 @@ public class MappingService {
             entityType, prop.name(), want, koreanTypeName(actual), columnName, columnType));
   }
 
-  // 오류 메시지용 축약 타입 한글 표기.
-  private static String koreanTypeName(String collapsed) {
+  /**
+   * 속성 자료형(want)과 컬럼 타입이 호환되지 않으면 컬럼의 축약 타입(number|date|text)을, 호환되면 null 을 돌려준다.
+   *
+   * <p>매핑 저장·활성화(checkPropertyType)와 지식 모델의 속성 자료형 변경(WD-185, MappingReferenceService)이 같은 규칙을 써야
+   * 한다 — 한쪽만 고치면 "자료형 변경은 통과했는데 매핑 재저장이 400" 같은 어긋남이 다시 생긴다. 그래서 규칙은 여기 한 곳에만 둔다. 미지정·text 속성은 판정
+   * 대상이 아니고(text 는 모든 컬럼을 문자열로 담을 수 있다), 모르는 컬럼 타입도 막지 않는다(과소차단).
+   */
+  static String incompatibleColumnKind(String want, String columnType) {
+    if (want == null || want.isBlank() || "text".equalsIgnoreCase(want)) {
+      return null; // 미지정 속성은 판정 대상이 아니고, text는 모두 허용
+    }
+    String actual = collapseColumnType(columnType);
+    if (actual == null || actual.equals(want.toLowerCase())) {
+      return null;
+    }
+    return actual;
+  }
+
+  // 오류 메시지용 축약 타입 한글 표기. 자료형 변경 거절 문구(MappingReferenceService)도 같은 표기를 쓴다.
+  static String koreanTypeName(String collapsed) {
     return switch (collapsed) {
       case "number" -> "숫자";
       case "date" -> "날짜";

@@ -2,6 +2,8 @@ package com.smartfirehub.mapping.service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartfirehub.dataset.dto.DatasetColumnResponse;
+import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.mapping.dto.MappingSpec;
 import com.smartfirehub.mapping.dto.OntologyMappingUsage;
@@ -33,6 +35,7 @@ import org.springframework.transaction.annotation.Transactional;
  * <ul>
  *   <li>이름 변경은 같은 온톨로지의 모든 매핑(draft·active)에 같은 트랜잭션으로 연쇄 반영하고,
  *   <li>삭제는 매핑이 쓰고 있으면 409 로 막는다.
+ *   <li>속성 자료형 변경은 매핑이 그 속성에 연결한 컬럼 타입과 맞지 않으면 409 로 막는다(WD-185).
  * </ul>
  *
  * <p>호출자(OntologyElementService)의 트랜잭션에 합류한다 — 지식 모델 변경과 매핑 갱신이 함께 커밋되거나 함께 롤백돼야 한다.
@@ -47,12 +50,20 @@ public class MappingReferenceService {
   /** 삭제 차단 409 의 기계용 코드 — 웹이 문구가 아니라 이 코드로 "매핑 사용 중"을 가린다. */
   public static final String IN_USE_CODE = "ONTOLOGY_ELEMENT_IN_USE_BY_MAPPING";
 
+  /**
+   * WD-185: 속성 자료형 변경이 매핑에 연결된 컬럼 타입과 맞지 않아 거절된 409 의 기계용 코드. 삭제 차단(IN_USE_CODE)과 나눈 이유: 웹이 삭제 확인
+   * 창용 문구·사용처 갱신을 IN_USE_CODE 에 묶어 두었고, 이 거절은 "삭제"가 아니라 "연결된 컬럼과의 충돌"이다.
+   */
+  public static final String TYPE_CONFLICT_CODE = "ONTOLOGY_PROPERTY_TYPE_CONFLICTS_WITH_MAPPING";
+
   /** 문구에 이름을 다 나열하면 토스트가 길어지므로 앞의 몇 개만 보이고 나머지는 "외 n개"로 줄인다(웹 삭제 영향 안내와 같은 규칙). */
   private static final int MAX_NAMES = 5;
 
   private final MappingRepository mappingRepository;
   private final OntologyRepository ontologyRepository;
   private final DatasetAccessGuard datasetAccessGuard;
+  // WD-185: 자료형 호환 판정에 매핑이 연결한 컬럼의 실제 타입이 필요하다(매핑 spec 에는 컬럼 이름만 있다).
+  private final DatasetColumnRepository columnRepository;
   private final ObjectMapper objectMapper;
 
   // ── 이름 변경 연쇄 ─────────────────────────────────────────────────────────
@@ -254,6 +265,120 @@ public class MappingReferenceService {
       where = hiddenPart + "의 매핑에서";
     }
     return subjectPhrase + " " + where + " 사용 중이라 삭제할 수 없습니다. 매핑에서 먼저 빼 주세요.";
+  }
+
+  // ── 자료형 변경 차단(WD-185) ─────────────────────────────────────────────────
+
+  /**
+   * 속성 자료형을 newDataType 으로 바꿔도 이 속성을 쓰는 매핑들의 연결 컬럼과 맞는지 확인하고, 하나라도 맞지 않으면 409 로 막는다.
+   *
+   * <p>왜: 자료형만 바꾸고 매핑을 그대로 두면 그 매핑의 재저장·활성화가 400 으로 막히고(MappingService.checkPropertyType), 그래프 투영은
+   * 숫자·날짜 속성에 문자열을 그대로 넣는다. 삭제 차단과 같은 이유·범위다 — 살아 있는 데이터셋의 매핑(상태 무관)만 보고, 고아 매핑은 사용자가 손댈 수 없으므로 막지
+   * 않는다. 호환 판정은 매핑 저장 검증과 같은 규칙(MappingService.incompatibleColumnKind)이다.
+   *
+   * <p>propertyName 은 <b>현재(변경 전) 이름</b>이어야 한다 — 이름과 자료형을 함께 바꾸는 요청에서 매핑은 아직 옛 이름을 들고 있다(이름 연쇄 갱신은
+   * 이 검사 뒤에 일어난다). 잠금: 호출자가 이미 온톨로지 행을 배타 잠금했다(assertEditable) — 매핑 저장은 같은 행을 공유
+   * 잠금하므로(MappingService.validate) 이 판정 뒤에 새 연결이 끼어들지 못한다.
+   */
+  public void assertDataTypeCompatible(
+      long ontologyId, String typeName, String propertyName, String newDataType) {
+    List<TypeConflict> visible = new ArrayList<>();
+    int hidden = 0;
+    for (ParsedRow r : liveMappings(ontologyId)) {
+      List<String> columns = mappedColumns(r.spec(), typeName, propertyName);
+      if (columns.isEmpty()) {
+        continue;
+      }
+      // 컬럼 타입은 데이터셋 컬럼 정의에서 읽는다. 이미 지워진 컬럼은 타입을 모르므로 막지 않는다(저장 검증과 같은 과소차단).
+      Map<String, String> columnTypes =
+          columnRepository.findByDatasetId(r.row().datasetId()).stream()
+              .collect(
+                  Collectors.toMap(
+                      DatasetColumnResponse::columnName,
+                      c -> c.dataType() == null ? "" : c.dataType(),
+                      (a, b) -> a));
+      boolean datasetConflicts = false;
+      for (String column : columns) {
+        String kind = MappingService.incompatibleColumnKind(newDataType, columnTypes.get(column));
+        if (kind == null) {
+          continue;
+        }
+        datasetConflicts = true;
+        if (r.row().datasetName() != null) {
+          visible.add(new TypeConflict(r.row().datasetName(), column, kind));
+        }
+      }
+      // 볼 수 없는 데이터셋은 이름은 물론 컬럼 이름·타입도 싣지 않는다 — 그것만으로도 어느 데이터셋인지 짐작할 수 있다. 개수로만 알린다.
+      if (datasetConflicts && r.row().datasetName() == null) {
+        hidden++;
+      }
+    }
+    if (visible.isEmpty() && hidden == 0) {
+      return;
+    }
+    throw new CodedApiException(
+        HttpStatus.CONFLICT,
+        TYPE_CONFLICT_CODE,
+        typeConflictMessage(typeName + "." + propertyName, newDataType, visible, hidden));
+  }
+
+  // 매핑에서 이 타입의 이 속성에 연결된 컬럼들. 한 매핑 안에서 같은 속성을 두 컬럼에 연결한 경우(검증이 막지 않는다)도 모두 본다.
+  private static List<String> mappedColumns(
+      MappingSpec spec, String typeName, String propertyName) {
+    if (spec.entities() == null) {
+      return List.of();
+    }
+    return spec.entities().stream()
+        .filter(em -> typeName.equals(em.entityType()) && em.properties() != null)
+        .flatMap(em -> em.properties().stream())
+        .filter(pm -> propertyName.equals(pm.propertyName()))
+        .map(MappingSpec.PropertyMapping::column)
+        .toList();
+  }
+
+  // 자료형 충돌 한 건(볼 수 있는 데이터셋만). columnKind 는 축약 타입(number|date|text).
+  record TypeConflict(String datasetName, String columnName, String columnKind) {}
+
+  /**
+   * 자료형 변경 거절 문구. 예: 「Building.note」 속성은 「건물대장」 데이터셋 매핑의 텍스트 컬럼 「memo」에 연결되어 있어 숫자로 바꿀 수 없습니다. 매핑에서
+   * 연결을 먼저 바꾸세요.
+   *
+   * <p>나열 규칙은 삭제 차단 문구(inUseMessage)와 같다 — 앞의 몇 건만 보이고 "외 n개", 볼 수 없는 데이터셋은 개수로만.
+   */
+  static String typeConflictMessage(
+      String propertyLabel, String newDataType, List<TypeConflict> visible, int hidden) {
+    List<String> shown =
+        visible.stream()
+            .limit(MAX_NAMES)
+            .map(
+                c ->
+                    "「"
+                        + c.datasetName()
+                        + "」 데이터셋 매핑의 "
+                        + MappingService.koreanTypeName(c.columnKind())
+                        + " 컬럼 「"
+                        + c.columnName()
+                        + "」")
+            .collect(Collectors.toList());
+    int rest = visible.size() - shown.size();
+    String visiblePart =
+        shown.isEmpty() ? null : String.join(", ", shown) + (rest > 0 ? " 외 " + rest + "개" : "");
+    String hiddenPart = hidden > 0 ? "볼 수 없는 데이터셋 " + hidden + "개의 매핑 컬럼" : null;
+    String where;
+    if (visiblePart != null && hiddenPart != null) {
+      where = visiblePart + " 및 " + hiddenPart;
+    } else if (visiblePart != null) {
+      where = visiblePart;
+    } else {
+      where = hiddenPart;
+    }
+    return "「"
+        + propertyLabel
+        + "」 속성은 "
+        + where
+        + "에 연결되어 있어 "
+        + MappingService.koreanTypeName(newDataType.toLowerCase())
+        + "로 바꿀 수 없습니다. 매핑에서 연결을 먼저 바꾸세요.";
   }
 
   // ── 화면 미리보기 ──────────────────────────────────────────────────────────
