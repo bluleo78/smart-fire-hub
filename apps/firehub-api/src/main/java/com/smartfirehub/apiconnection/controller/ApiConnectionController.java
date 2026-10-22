@@ -55,14 +55,21 @@ public class ApiConnectionController {
   @PutMapping("/{id}")
   @RequirePermission("apiconnection:write")
   public ResponseEntity<ApiConnectionResponse> updateApiConnection(
-      @PathVariable Long id, @Valid @RequestBody UpdateApiConnectionRequest request) {
-    return ResponseEntity.ok(apiConnectionService.update(id, request));
+      @PathVariable Long id,
+      @Valid @RequestBody UpdateApiConnectionRequest request,
+      Authentication authentication) {
+    // 수정한 사용자를 감사 행위자로 넘긴다(WD-181) — 생성과 같은 방식.
+    Long userId = (Long) authentication.getPrincipal();
+    return ResponseEntity.ok(apiConnectionService.update(id, request, userId));
   }
 
   @DeleteMapping("/{id}")
   @RequirePermission("apiconnection:delete")
-  public ResponseEntity<Void> deleteApiConnection(@PathVariable Long id) {
-    apiConnectionService.delete(id);
+  public ResponseEntity<Void> deleteApiConnection(
+      @PathVariable Long id, Authentication authentication) {
+    // 삭제한 사용자를 감사 행위자로 넘긴다(WD-181).
+    Long userId = (Long) authentication.getPrincipal();
+    apiConnectionService.delete(id, userId);
     return ResponseEntity.noContent().build();
   }
 

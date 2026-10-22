@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.jooq.impl.DSL.*;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.apiconnection.dto.ApiConnectionReferencesResponse;
 import com.smartfirehub.apiconnection.dto.ApiConnectionResponse;
 import com.smartfirehub.apiconnection.dto.ApiConnectionSelectableResponse;
@@ -18,6 +20,7 @@ import java.util.List;
 import java.util.Map;
 import org.jooq.DSLContext;
 import org.jooq.Field;
+import org.jooq.Record;
 import org.jooq.Table;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -42,6 +45,8 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
 
   /** RLS 가 걸린 테이블을 테스트가 직접 만질 때 쓰는 트랜잭션 경계 — GUC 주입의 유일한 통로다. */
   @Autowired private TransactionTemplate tx;
+
+  @Autowired private ObjectMapper objectMapper;
 
   /**
    * SSRF 보호 서비스를 mock으로 교체 — 테스트 환경에서 DNS 해석이 불가한 외부 도메인 사용 허용. validateUrl은 아무 동작도 하지 않도록 기본
@@ -100,7 +105,12 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
     // 정책이 전 행을 차단하고 0행 삭제로 조용히 끝난 뒤, 이어지는 user 삭제가 FK 로 터진다.
     // 그래서 도메인 정리는 반드시 테넌트 트랜잭션 안에서 한다("user" 는 전역 테이블이라 무관).
     tx.executeWithoutResult(
-        s -> dsl.deleteFrom(API_CONNECTION).where(AC_CREATED_BY.eq(testUserId)).execute());
+        s -> {
+          dsl.deleteFrom(API_CONNECTION).where(AC_CREATED_BY.eq(testUserId)).execute();
+          // 생성·수정·삭제 감사(WD-181)가 이 사용자를 행위자로 남긴다 — audit_log.user_id 는 "user" FK 라 먼저 지운다(RLS 대상이라
+          // 테넌트 트랜잭션 안에서).
+          dsl.execute("delete from audit_log where user_id = ?", testUserId);
+        });
     dsl.deleteFrom(USER_TABLE).where(U_ID.eq(testUserId)).execute();
   }
 
@@ -188,7 +198,8 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
     // name/description만 변경 — authConfig/baseUrl 미변경
     UpdateApiConnectionRequest updateReq =
         new UpdateApiConnectionRequest("Updated Name", "Updated Desc", null, null, null, null);
-    ApiConnectionResponse updated = apiConnectionService.update(created.id(), updateReq);
+    ApiConnectionResponse updated =
+        apiConnectionService.update(created.id(), updateReq, testUserId);
 
     assertThat(updated.name()).isEqualTo("Updated Name");
     assertThat(updated.description()).isEqualTo("Updated Desc");
@@ -209,7 +220,7 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
     Map<String, String> newConfig = Map.of("token", "new-token-bbbb");
     UpdateApiConnectionRequest updateReq =
         new UpdateApiConnectionRequest("Token Conn", null, "BEARER", newConfig, null, null);
-    apiConnectionService.update(created.id(), updateReq);
+    apiConnectionService.update(created.id(), updateReq, testUserId);
 
     Map<String, String> decrypted = apiConnectionService.getDecryptedAuthConfig(created.id());
     assertThat(decrypted.get("token")).isEqualTo("new-token-bbbb");
@@ -235,7 +246,7 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
     // 빈 문자열로 update → clear
     UpdateApiConnectionRequest clearReq =
         new UpdateApiConnectionRequest(null, null, null, null, null, "");
-    apiConnectionService.update(created.id(), clearReq);
+    apiConnectionService.update(created.id(), clearReq, testUserId);
 
     ApiConnectionResponse afterClear = apiConnectionService.getById(created.id());
     assertThat(afterClear.healthCheckPath()).isNull();
@@ -257,7 +268,7 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
     // healthCheckPath=null → 미변경
     UpdateApiConnectionRequest keepReq =
         new UpdateApiConnectionRequest("Renamed", null, null, null, null, null);
-    apiConnectionService.update(created.id(), keepReq);
+    apiConnectionService.update(created.id(), keepReq, testUserId);
 
     ApiConnectionResponse afterKeep = apiConnectionService.getById(created.id());
     assertThat(afterKeep.name()).isEqualTo("Renamed");
@@ -273,7 +284,7 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
     ApiConnectionResponse created = apiConnectionService.create(req, testUserId);
     Long id = created.id();
 
-    apiConnectionService.delete(id);
+    apiConnectionService.delete(id, testUserId);
 
     assertThatThrownBy(() -> apiConnectionService.getById(id))
         .isInstanceOf(ApiConnectionNotFoundException.class)
@@ -492,7 +503,7 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
     UpdateApiConnectionRequest updateReq =
         new UpdateApiConnectionRequest(nameA, null, null, null, null, null);
 
-    assertThatThrownBy(() -> apiConnectionService.update(connB.id(), updateReq))
+    assertThatThrownBy(() -> apiConnectionService.update(connB.id(), updateReq, testUserId))
         .isInstanceOf(
             com.smartfirehub.apiconnection.exception.ApiConnectionNameAlreadyExistsException.class)
         .hasMessageContaining(nameA);
@@ -507,7 +518,8 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
 
     UpdateApiConnectionRequest updateReq =
         new UpdateApiConnectionRequest(name, "새 설명", null, null, null, null);
-    ApiConnectionResponse updated = apiConnectionService.update(created.id(), updateReq);
+    ApiConnectionResponse updated =
+        apiConnectionService.update(created.id(), updateReq, testUserId);
 
     assertThat(updated.name()).isEqualTo(name);
     assertThat(updated.description()).isEqualTo("새 설명");
@@ -536,7 +548,9 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
 
     ApiConnectionResponse updated =
         apiConnectionService.update(
-            created.id(), new UpdateApiConnectionRequest(null, null, "BEARER", masked, null, null));
+            created.id(),
+            new UpdateApiConnectionRequest(null, null, "BEARER", masked, null, null),
+            testUserId);
 
     assertThat(apiConnectionService.getDecryptedAuthConfig(created.id()).get("token"))
         .isEqualTo("real-bearer-token-3456");
@@ -562,7 +576,8 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
                 apiConnectionService.update(
                     created.id(),
                     new UpdateApiConnectionRequest(
-                        null, null, null, Map.of("token", "****0000"), null, null)))
+                        null, null, null, Map.of("token", "****0000"), null, null),
+                    testUserId))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("authConfig.token")
         .hasMessageContaining("가려진 값")
@@ -597,7 +612,9 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
 
     ApiConnectionResponse updated =
         apiConnectionService.update(
-            created.id(), new UpdateApiConnectionRequest(newName, null, null, edited, null, null));
+            created.id(),
+            new UpdateApiConnectionRequest(newName, null, null, edited, null, null),
+            testUserId);
 
     Map<String, String> decrypted = apiConnectionService.getDecryptedAuthConfig(created.id());
     assertThat(decrypted.get("apiKey")).isEqualTo("query-key-9876");
@@ -625,7 +642,8 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
                 apiConnectionService.update(
                     created.id(),
                     new UpdateApiConnectionRequest(
-                        null, null, "BEARER", Map.of("token", "****1111"), null, null)))
+                        null, null, "BEARER", Map.of("token", "****1111"), null, null),
+                    testUserId))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("authConfig.token");
 
@@ -649,7 +667,8 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
     apiConnectionService.update(
         created.id(),
         new UpdateApiConnectionRequest(
-            null, null, "BEARER", Map.of("token", "new-bearer-token-7777"), null, null));
+            null, null, "BEARER", Map.of("token", "new-bearer-token-7777"), null, null),
+        testUserId);
 
     assertThat(apiConnectionService.getDecryptedAuthConfig(created.id()).get("token"))
         .isEqualTo("new-bearer-token-7777");
@@ -715,7 +734,8 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
             () ->
                 apiConnectionService.update(
                     created.id(),
-                    new UpdateApiConnectionRequest(null, null, "BEARER", null, null, null)))
+                    new UpdateApiConnectionRequest(null, null, "BEARER", null, null, null),
+                    testUserId))
         .isExactlyInstanceOf(ApiConnectionException.class)
         .hasMessage("인증 방식을 BEARER(으)로 바꾸려면 새 방식의 인증 정보(authConfig.token)를 함께 입력하세요");
 
@@ -737,7 +757,8 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
               () ->
                   apiConnectionService.update(
                       created.id(),
-                      new UpdateApiConnectionRequest(null, null, "BEARER", config, null, null)))
+                      new UpdateApiConnectionRequest(null, null, "BEARER", config, null, null),
+                      testUserId))
           .as("authConfig=%s", config)
           .isExactlyInstanceOf(ApiConnectionException.class)
           .hasMessageContaining("authConfig.token");
@@ -761,7 +782,8 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
             () ->
                 apiConnectionService.update(
                     created.id(),
-                    new UpdateApiConnectionRequest(null, null, authType, null, null, null)))
+                    new UpdateApiConnectionRequest(null, null, authType, null, null, null),
+                    testUserId))
         .isExactlyInstanceOf(ApiConnectionException.class)
         .hasMessage("지원하지 않는 인증 방식입니다: " + authType + " (사용 가능: API_KEY, BEARER)");
 
@@ -800,7 +822,8 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
         apiConnectionService.update(
             created.id(),
             new UpdateApiConnectionRequest(
-                null, null, "BEARER", Map.of("token", "wd180-new-token"), null, null));
+                null, null, "BEARER", Map.of("token", "wd180-new-token"), null, null),
+            testUserId);
 
     assertThat(updated.authType()).isEqualTo("BEARER");
     Map<String, String> decrypted = apiConnectionService.getDecryptedAuthConfig(created.id());
@@ -818,9 +841,230 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
     ApiConnectionResponse updated =
         apiConnectionService.update(
             created.id(),
-            new UpdateApiConnectionRequest(newName, null, "API_KEY", null, null, null));
+            new UpdateApiConnectionRequest(newName, null, "API_KEY", null, null, null),
+            testUserId);
 
     assertThat(updated.name()).isEqualTo(newName);
     assertAuthUnchanged(created.id(), "API_KEY", "apiKey", "secret");
+  }
+
+  // ── 생성·수정·삭제 감사 로그(WD-181) ───────────────────────────────────────────
+
+  /** 이 연결의 api_connection 감사 행(id 순). audit_log 는 RLS 대상이라 테넌트 트랜잭션 안에서 읽는다(서비스 호출은 이미 커밋됨). */
+  private List<Record> connectionAudits(String action, Long connectionId) {
+    return tx.execute(
+        s ->
+            dsl.fetch(
+                "select user_id, username, tenant_id, description, result, metadata::text as metadata"
+                    + " from audit_log where resource = 'api_connection' and action_type = ?"
+                    + " and resource_id = ? order by id",
+                action,
+                String.valueOf(connectionId)));
+  }
+
+  /** 이 연결의 모든 감사 행 본문(description + metadata)을 한 문자열로 — 비밀이 어디에도 없는지 한 번에 본다. */
+  private String allAuditText(Long connectionId) {
+    return tx.execute(
+        s ->
+            String.join(
+                "\n",
+                dsl.fetch(
+                        "select coalesce(description, '') || ' ' || coalesce(metadata::text, '')"
+                            + " || ' ' || coalesce(error_message, '') as t from audit_log"
+                            + " where resource = 'api_connection' and resource_id = ?",
+                        String.valueOf(connectionId))
+                    .getValues("t", String.class)));
+  }
+
+  /** 행위자·테넌트·결과 공통 단언 — 행위자는 서비스에 넘긴 사용자, 테넌트는 호출 시점 워크스페이스(기본 테스트 테넌트)다. */
+  private void assertAuditActor(Record row) {
+    String username =
+        dsl.select(U_USERNAME).from(USER_TABLE).where(U_ID.eq(testUserId)).fetchOne(U_USERNAME);
+    assertThat(row.get("user_id", Long.class)).isEqualTo(testUserId);
+    assertThat(row.get("username", String.class)).isEqualTo(username);
+    assertThat(row.get("tenant_id", Long.class)).isEqualTo(DEFAULT_TEST_TENANT_ID);
+    assertThat(row.get("result", String.class)).isEqualTo("SUCCESS");
+  }
+
+  private JsonNode auditMetadata(Record row) throws Exception {
+    return objectMapper.readTree(row.get("metadata", String.class));
+  }
+
+  private static List<String> jsonTexts(JsonNode array) {
+    List<String> out = new java.util.ArrayList<>();
+    array.forEach(n -> out.add(n.asText()));
+    return out;
+  }
+
+  /** 생성 감사 — 이름·인증 방식·기준 URL(쿼리 제거)만 남고 비밀은 어디에도 없다. */
+  @Test
+  void create_writesCreateAudit_withoutSecrets() throws Exception {
+    String secret = "wd181-create-secret-key-4821";
+    ApiConnectionResponse created =
+        apiConnectionService.create(
+            new CreateApiConnectionRequest(
+                "WD181 Create",
+                null,
+                "API_KEY",
+                Map.of("placement", "header", "headerName", "X-Key", "apiKey", secret),
+                "https://wd181-create.example.com/v1?apikey=wd181-url-secret",
+                null),
+            testUserId);
+
+    List<Record> rows = connectionAudits("CREATE", created.id());
+    assertThat(rows).hasSize(1);
+    assertAuditActor(rows.get(0));
+    assertThat(rows.get(0).get("description", String.class)).isEqualTo("API 연결 생성: WD181 Create");
+    JsonNode meta = auditMetadata(rows.get(0));
+    assertThat(meta.get("name").asText()).isEqualTo("WD181 Create");
+    assertThat(meta.get("authType").asText()).isEqualTo("API_KEY");
+    assertThat(meta.get("baseUrl").asText()).isEqualTo("https://wd181-create.example.com/v1");
+
+    String text = allAuditText(created.id());
+    assertThat(text)
+        .doesNotContain(secret)
+        .doesNotContain("wd181-url-secret")
+        .doesNotContain("****");
+  }
+
+  /** 인증 정보를 바꾼 수정 — 바뀐 항목·credentialsChanged=true 가 남고, 옛 비밀·새 비밀은 남지 않는다. */
+  @Test
+  void update_credentialsChanged_writesUpdateAuditWithFlagTrue() throws Exception {
+    String oldSecret = "wd181-old-bearer-token-1357";
+    String newSecret = "wd181-new-bearer-token-2468";
+    ApiConnectionResponse created =
+        apiConnectionService.create(
+            new CreateApiConnectionRequest(
+                "WD181 Cred",
+                null,
+                "BEARER",
+                Map.of("token", oldSecret),
+                "https://wd181-cred.example.com",
+                null),
+            testUserId);
+
+    apiConnectionService.update(
+        created.id(),
+        new UpdateApiConnectionRequest(
+            "WD181 Cred Renamed",
+            null,
+            null,
+            Map.of("token", newSecret),
+            "https://wd181-cred-new.example.com",
+            null),
+        testUserId);
+
+    List<Record> rows = connectionAudits("UPDATE", created.id());
+    assertThat(rows).hasSize(1);
+    assertAuditActor(rows.get(0));
+    assertThat(rows.get(0).get("description", String.class))
+        .isEqualTo("API 연결 수정: WD181 Cred Renamed (바뀐 항목: 이름·기준 URL·인증 정보)");
+    JsonNode meta = auditMetadata(rows.get(0));
+    assertThat(jsonTexts(meta.get("changedFields")))
+        .containsExactly("name", "baseUrl", "authConfig");
+    assertThat(meta.get("credentialsChanged").asBoolean()).isTrue();
+    assertThat(meta.get("before").get("name").asText()).isEqualTo("WD181 Cred");
+    assertThat(meta.get("after").get("name").asText()).isEqualTo("WD181 Cred Renamed");
+    assertThat(meta.get("after").get("baseUrl").asText())
+        .isEqualTo("https://wd181-cred-new.example.com");
+
+    String text = allAuditText(created.id());
+    assertThat(text).doesNotContain(oldSecret).doesNotContain(newSecret).doesNotContain("****");
+  }
+
+  /**
+   * 조회한 가린 값(****…)을 그대로 되돌려 보낸 수정(WD-179 — 비밀 유지)은 인증 정보 변경이 아니다. credentialsChanged=false 이고, 입력에
+   * 실제로 있던 가린 값·저장 비밀·헬스체크 경로 쿼리의 값은 감사 어디에도 없다.
+   */
+  @Test
+  void update_maskedSecretResent_writesUpdateAuditWithFlagFalse() throws Exception {
+    String secret = "wd181-keep-secret-key-9753";
+    ApiConnectionResponse created =
+        apiConnectionService.create(
+            new CreateApiConnectionRequest(
+                "WD181 Keep",
+                null,
+                "API_KEY",
+                Map.of("placement", "header", "headerName", "X-Key", "apiKey", secret),
+                "https://wd181-keep.example.com",
+                null),
+            testUserId);
+    Map<String, String> masked = apiConnectionService.getById(created.id()).maskedAuthConfig();
+    assertThat(masked.get("apiKey")).as("입력에 가린 값이 실제로 실린다").startsWith("****");
+
+    apiConnectionService.update(
+        created.id(),
+        new UpdateApiConnectionRequest(
+            "WD181 Keep Renamed",
+            null,
+            "API_KEY",
+            masked,
+            null,
+            "/status?apikey=wd181-path-secret"),
+        testUserId);
+
+    // 비밀은 그대로 유지됐다(WD-179) — 그래서 「인증 정보 변경」이 아니다.
+    assertThat(apiConnectionService.getDecryptedAuthConfig(created.id()).get("apiKey"))
+        .isEqualTo(secret);
+    List<Record> rows = connectionAudits("UPDATE", created.id());
+    assertThat(rows).hasSize(1);
+    assertAuditActor(rows.get(0));
+    assertThat(rows.get(0).get("description", String.class))
+        .isEqualTo("API 연결 수정: WD181 Keep Renamed (바뀐 항목: 이름·헬스체크 경로)");
+    JsonNode meta = auditMetadata(rows.get(0));
+    assertThat(jsonTexts(meta.get("changedFields"))).containsExactly("name", "healthCheckPath");
+    assertThat(meta.get("credentialsChanged").asBoolean()).isFalse();
+    assertThat(meta.get("after").get("healthCheckPath").asText()).isEqualTo("/status");
+
+    String text = allAuditText(created.id());
+    assertThat(text)
+        .doesNotContain(secret)
+        .doesNotContain(masked.get("apiKey"))
+        .doesNotContain("****")
+        .doesNotContain("wd181-path-secret");
+  }
+
+  /** 바뀐 것이 없는 저장(같은 값 재전송)은 감사를 남기지 않는다 — ROLE_UPDATE 와 같은 규칙. */
+  @Test
+  void update_noActualChange_writesNoUpdateAudit() {
+    ApiConnectionResponse created =
+        apiConnectionService.create(
+            validReq("https://wd181-same.example.com", "WD181 Same"), testUserId);
+    Map<String, String> masked = apiConnectionService.getById(created.id()).maskedAuthConfig();
+
+    apiConnectionService.update(
+        created.id(),
+        new UpdateApiConnectionRequest(
+            "WD181 Same", null, "API_KEY", masked, "https://wd181-same.example.com", null),
+        testUserId);
+
+    assertThat(connectionAudits("UPDATE", created.id())).isEmpty();
+  }
+
+  /** 삭제 감사 — 지우기 전에 담아 둔 이름·인증 방식이 남는다. */
+  @Test
+  void delete_writesDeleteAudit() throws Exception {
+    String secret = "wd181-delete-secret-key-8642";
+    ApiConnectionResponse created =
+        apiConnectionService.create(
+            new CreateApiConnectionRequest(
+                "WD181 Delete",
+                null,
+                "BEARER",
+                Map.of("token", secret),
+                "https://wd181-delete.example.com",
+                null),
+            testUserId);
+
+    apiConnectionService.delete(created.id(), testUserId);
+
+    List<Record> rows = connectionAudits("DELETE", created.id());
+    assertThat(rows).hasSize(1);
+    assertAuditActor(rows.get(0));
+    assertThat(rows.get(0).get("description", String.class)).isEqualTo("API 연결 삭제: WD181 Delete");
+    JsonNode meta = auditMetadata(rows.get(0));
+    assertThat(meta.get("name").asText()).isEqualTo("WD181 Delete");
+    assertThat(meta.get("authType").asText()).isEqualTo("BEARER");
+    assertThat(allAuditText(created.id())).doesNotContain(secret).doesNotContain("****");
   }
 }
