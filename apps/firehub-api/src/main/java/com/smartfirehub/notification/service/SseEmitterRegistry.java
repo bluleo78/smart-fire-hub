@@ -2,6 +2,7 @@ package com.smartfirehub.notification.service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.notification.dto.NotificationEvent;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -29,7 +30,8 @@ public class SseEmitterRegistry {
 
   /**
    * 연결(emitter)별 구독 테넌트. 사용자 단위가 아니라 연결 단위인 이유: 한 사용자가 두 테넌트 화면을 동시에 열 수 있다. 테넌트 범위 브로드캐스트 ({@link
-   * #broadcastToTenant})가 다른 테넌트 연결로 새지 않게 하는 근거다. SseEmitter 는 equals 를 재정의하지 않아 동일성 키로 동작한다.
+   * #broadcastToTenant})와 사용자 단위 브로드캐스트({@link #broadcast}, WD-173)가 다른 테넌트 연결로 새지 않게 하는 근거다.
+   * SseEmitter 는 equals 를 재정의하지 않아 동일성 키로 동작한다.
    */
   private final ConcurrentHashMap<SseEmitter, Long> emitterTenants = new ConcurrentHashMap<>();
 
@@ -83,10 +85,50 @@ public class SseEmitterRegistry {
     }
   }
 
+  /**
+   * 한 사용자에게 알림을 보내되 <b>현재 테넌트(TenantContext) 화면으로 연 연결에만</b> 보낸다(WD-173).
+   *
+   * <p>예전에는 그 사용자의 모든 연결로 보냈다. 한 사람이 두 워크스페이스 멤버이고 B 화면을 보고 있으면 A 의 「리포트 도착」(리포트 제목·작업 이름)·「파이프라인
+   * 실행 실패」 토스트가 B 화면에 떴고, A 에서 제거된 뒤에도 떴다. 사용자 단위 알림은 모두 그 알림이 생긴 워크스페이스의 일이므로 그 워크스페이스 연결로만 간다.
+   *
+   * <p>테넌트를 시그니처로 받지 않고 컨텍스트에서 읽는 이유: 호출부(파이프라인 완료·임포트·문서·리포트 CHAT 전달·발송함 CHAT·이상 탐지)는 전부 이미 테넌트
+   * 스코프 안에서 돈다(요청·runScoped·TenantContextTaskDecorator). 호출부마다 테넌트를 다시 해석하게 하면 해석 지점이 늘어 각자 다르게 틀릴
+   * 수 있다. 컨텍스트가 없으면 어느 워크스페이스 알림인지 모르므로 <b>보내지 않는다</b>(fail-closed) — 알림함·실행 이력에는 이미 남아 있어 실시간 토스트만
+   * 빠진다.
+   */
   public void broadcast(Long userId, NotificationEvent event) {
+    Long tenantId = TenantContext.get();
+    if (tenantId == null) {
+      log.warn(
+          "SSE broadcast without tenant context — skipped userId={} eventType={}",
+          userId,
+          event.eventType());
+      return;
+    }
+    broadcastToUserInTenant(tenantId, userId, event);
+  }
+
+  /**
+   * 한 사용자의 연결 중 지정 테넌트 화면으로 연 연결에만 보낸다(WD-173). 다른 테넌트 연결, 테넌트가 기록되지 않은 연결로는 보내지 않는다.
+   *
+   * @param tenantId 알림이 생긴 워크스페이스
+   */
+  public void broadcastToUserInTenant(long tenantId, Long userId, NotificationEvent event) {
     CopyOnWriteArrayList<SseEmitter> list = emitters.get(userId);
     if (list == null || list.isEmpty()) return;
-    send(userId, list, event);
+    List<SseEmitter> targets = connectionsOfTenant(list, tenantId);
+    if (targets.isEmpty()) return;
+    send(userId, targets, event);
+  }
+
+  /**
+   * 연결 목록 중 지정 테넌트로 구독한 연결만 고른다 — 사용자 단위({@link #broadcastToUserInTenant})와 테넌트 단위({@link
+   * #broadcastToTenant}, WD-169 트리거 건너뜀 등)가 같은 판정을 쓰게 한 곳에 둔다(WD-173). {@link #emitterTenants} 에
+   * 기록이 없는 연결(정리 remove 와 전송이 겹치는 경합 등)은 {@code equals(null)} 이 거짓이라 제외된다(fail-closed).
+   */
+  private List<SseEmitter> connectionsOfTenant(List<SseEmitter> list, long tenantId) {
+    Long tenant = tenantId;
+    return list.stream().filter(e -> tenant.equals(emitterTenants.get(e))).toList();
   }
 
   /** 지정 연결들에 이벤트를 보내고 끊긴 연결은 정리한다. */
@@ -117,10 +159,7 @@ public class SseEmitterRegistry {
       long tenantId, NotificationEvent event, LongPredicate recipientAllowed) {
     emitters.forEach(
         (userId, list) -> {
-          List<SseEmitter> targets =
-              list.stream()
-                  .filter(e -> Long.valueOf(tenantId).equals(emitterTenants.get(e)))
-                  .toList();
+          List<SseEmitter> targets = connectionsOfTenant(list, tenantId);
           if (targets.isEmpty()) {
             return;
           }
