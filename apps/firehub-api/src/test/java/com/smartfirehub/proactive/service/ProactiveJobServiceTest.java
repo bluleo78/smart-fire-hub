@@ -46,6 +46,7 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
   @Autowired private ProactiveJobExecutionRepository executionRepository;
   @Autowired private DSLContext dsl;
   @Autowired private com.smartfirehub.settings.service.AiCredentialService aiCredentialService;
+  @Autowired private com.smartfirehub.global.security.PermissionChecker permissionChecker;
 
   @MockitoBean private ProactiveAiClient proactiveAiClient;
   @MockitoBean private ProactiveContextCollector proactiveContextCollector;
@@ -57,6 +58,8 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
   @MockitoBean private com.smartfirehub.notification.service.SseEmitterRegistry sseEmitterRegistry;
 
   private Long testUserId;
+  // 작업 주인 역할(proactive:read·write) — WD-166 권한 회수 테스트가 이 역할에서 권한을 뺀다
+  private Long ownerRoleId;
 
   @BeforeEach
   void setUp() {
@@ -73,6 +76,30 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
             .returning(USER.ID)
             .fetchOne()
             .getId();
+    // 실행 직전 작업 주인 자격 재확인(WD-166) — 주인은 기본 테넌트 ACTIVE 멤버이면서 proactive:write 를 가져야 실행된다.
+    // ADMIN 은 다른 우회(관리자 전권)를 함께 들고 와 다른 단언이 엉뚱한 이유로 통과할 수 있으므로 스마트 작업 권한만 가진 역할을 준다.
+    // 클래스가 @Transactional 이라 역할·멤버십도 테스트마다 롤백된다(역할의 tenant_id 는 GUC DEFAULT).
+    com.smartfirehub.support.TenantRlsTestSupport.insertActiveMembership(
+        dsl, testUserId, DEFAULT_TEST_TENANT_ID);
+    ownerRoleId =
+        dsl.insertInto(ROLE)
+            .set(ROLE.NAME, "proactive_owner_" + System.nanoTime())
+            .set(ROLE.IS_SYSTEM, false)
+            .returning(ROLE.ID)
+            .fetchOne()
+            .getId();
+    for (String code : List.of("proactive:read", "proactive:write")) {
+      dsl.insertInto(ROLE_PERMISSION)
+          .set(ROLE_PERMISSION.ROLE_ID, ownerRoleId)
+          .set(
+              ROLE_PERMISSION.PERMISSION_ID,
+              dsl.select(PERMISSION.ID).from(PERMISSION).where(PERMISSION.CODE.eq(code)))
+          .execute();
+    }
+    dsl.insertInto(USER_ROLE)
+        .set(USER_ROLE.USER_ID, testUserId)
+        .set(USER_ROLE.ROLE_ID, ownerRoleId)
+        .execute();
 
     // 실행 경로는 AI 호출 전에 자격증명 완결성을 검사한다. AI 자격증명은 테넌트 전용(#706)이라
     // 플랫폼 기본값이 없으므로, 기본 테넌트에 자격증명을 심어 둔다(proactiveAiClient 는 mock 이라 키
@@ -833,5 +860,208 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
 
     assertThat(results).hasSize(1);
     assertThat(results.get(0).metricName()).isEqualTo("메트릭1");
+  }
+
+  // ── 작업 주인 자격 재확인(WD-166) ─────────────────────────────────────────────────
+
+  /** 리포트가 만들어지면 전달까지 가는 정상 스텁 — 건너뜀이면 아래 협력자가 하나도 불리지 않아야 한다. */
+  private void stubSuccessfulRun() {
+    when(proactiveContextCollector.collectContext(any(), any(), any())).thenReturn("{}");
+    when(proactiveAiClient.execute(anyLong(), anyString(), anyString(), any(), any(), any(), any()))
+        .thenReturn(buildMockResult());
+    when(chatDeliveryChannel.type()).thenReturn("CHAT");
+  }
+
+  /**
+   * 주인 자격을 잃게 한 뒤 한 번 실행하면 건너뛰고(AI·전달 0, FAILED + 사유), 자격을 되돌리면 아무 조치 없이 다음 실행이 정상으로 돈다는 것을 본다. 작업은
+   * 켜진 채, 다음 실행 시각도 그대로 남아야 한다(스케줄 해제·비활성화를 하지 않는다).
+   */
+  private void assertSkippedWhileIneligibleThenResumes(
+      Runnable revoke, Runnable restore, String expectedReason) {
+    ProactiveJobResponse created =
+        proactiveJobService.createJob(buildCreateRequest("주인 자격 확인 작업"), testUserId);
+    stubSuccessfulRun();
+
+    revoke.run();
+    // 예외 없이 끝난다 — 예정된 건너뜀이라 오류로 다시 던지지 않는다
+    rawAsyncRunner.executeJob(created.id(), testUserId);
+
+    var skipped = executionRepository.findByJobId(created.id(), 10, 0);
+    assertThat(skipped).hasSize(1);
+    assertThat(skipped.get(0).status()).isEqualTo("FAILED");
+    assertThat(skipped.get(0).errorMessage()).isEqualTo(expectedReason);
+    verify(proactiveContextCollector, never()).collectContext(any(), any(), any());
+    verify(proactiveAiClient, never())
+        .execute(anyLong(), anyString(), anyString(), any(), any(), any(), any());
+    verify(chatDeliveryChannel, never()).deliver(any(), anyLong(), any());
+    // 실행 시도 기록은 그대로 돈다. 작업은 켜진 채이고 다음 실행도 예정돼 있다
+    ProactiveJobResponse afterSkip = proactiveJobService.getJob(created.id(), testUserId);
+    assertThat(afterSkip.lastExecutedAt()).isNotNull();
+    assertThat(afterSkip.enabled()).isTrue();
+    assertThat(afterSkip.nextExecuteAt()).isNotNull();
+
+    // 자격을 되돌리면 다음 실행은 저절로 정상
+    restore.run();
+    rawAsyncRunner.executeJob(created.id(), testUserId);
+
+    var resumed = executionRepository.findByJobId(created.id(), 10, 0);
+    assertThat(resumed).hasSize(2);
+    assertThat(resumed.get(0).status()).isEqualTo("COMPLETED");
+    verify(proactiveAiClient, times(1))
+        .execute(anyLong(), anyString(), anyString(), any(), any(), any(), any());
+    verify(chatDeliveryChannel, times(1)).deliver(any(), anyLong(), any());
+  }
+
+  private void setOwnerAccountActive(boolean active) {
+    dsl.update(USER).set(USER.IS_ACTIVE, active).where(USER.ID.eq(testUserId)).execute();
+  }
+
+  private void setOwnerMembershipStatus(String status) {
+    dsl.execute(
+        "update membership set status = ? where user_id = ? and tenant_id = ?",
+        status,
+        testUserId,
+        DEFAULT_TEST_TENANT_ID);
+  }
+
+  private void setOwnerRoleProactiveWrite(boolean granted) {
+    if (granted) {
+      dsl.insertInto(ROLE_PERMISSION)
+          .set(ROLE_PERMISSION.ROLE_ID, ownerRoleId)
+          .set(
+              ROLE_PERMISSION.PERMISSION_ID,
+              dsl.select(PERMISSION.ID)
+                  .from(PERMISSION)
+                  .where(PERMISSION.CODE.eq("proactive:write")))
+          .execute();
+    } else {
+      dsl.deleteFrom(ROLE_PERMISSION)
+          .where(ROLE_PERMISSION.ROLE_ID.eq(ownerRoleId))
+          .and(
+              ROLE_PERMISSION.PERMISSION_ID.in(
+                  dsl.select(PERMISSION.ID)
+                      .from(PERMISSION)
+                      .where(PERMISSION.CODE.eq("proactive:write"))))
+          .execute();
+    }
+  }
+
+  /** [WD-166] 양성 대조 — 자격 있는 주인의 작업은 그대로 만들어지고 전달된다. */
+  @Test
+  void executeJob_eligibleOwner_runsAndDelivers() {
+    ProactiveJobResponse created =
+        proactiveJobService.createJob(buildCreateRequest("자격 있는 주인 작업"), testUserId);
+    stubSuccessfulRun();
+
+    rawAsyncRunner.executeJob(created.id(), testUserId);
+
+    var executions = executionRepository.findByJobId(created.id(), 10, 0);
+    assertThat(executions).hasSize(1);
+    assertThat(executions.get(0).status()).isEqualTo("COMPLETED");
+    verify(chatDeliveryChannel, times(1)).deliver(any(), anyLong(), any());
+  }
+
+  /** [WD-166] 운영자가 주인 계정을 비활성화(users.is_active=false)하면 건너뛰고, 다시 활성화하면 재개한다. */
+  @Test
+  void executeJob_ownerAccountDeactivated_skippedUntilReactivated() {
+    assertSkippedWhileIneligibleThenResumes(
+        () -> setOwnerAccountActive(false),
+        () -> setOwnerAccountActive(true),
+        ProactiveOwnerEligibility.REASON_OWNER_INACTIVE);
+  }
+
+  /** [WD-166] 워크스페이스 멤버십이 정지(SUSPENDED)되면 건너뛰고, 정지를 풀면 재개한다. */
+  @Test
+  void executeJob_ownerMembershipSuspended_skippedUntilReinstated() {
+    assertSkippedWhileIneligibleThenResumes(
+        () -> setOwnerMembershipStatus("SUSPENDED"),
+        () -> setOwnerMembershipStatus("ACTIVE"),
+        ProactiveOwnerEligibility.REASON_OWNER_INACTIVE);
+  }
+
+  /**
+   * [WD-166] 워크스페이스에서 제거(멤버십 행 삭제)되면 건너뛰고, 다시 초대(ACTIVE 멤버십)하면 재개한다. 역할(user_role)은 그대로 남아 있어도 멤버가
+   * 아니면 돌지 않는다.
+   */
+  @Test
+  void executeJob_ownerRemovedFromWorkspace_skippedUntilReinvited() {
+    assertSkippedWhileIneligibleThenResumes(
+        () ->
+            dsl.execute(
+                "delete from membership where user_id = ? and tenant_id = ?",
+                testUserId,
+                DEFAULT_TEST_TENANT_ID),
+        () ->
+            com.smartfirehub.support.TenantRlsTestSupport.insertActiveMembership(
+                dsl, testUserId, DEFAULT_TEST_TENANT_ID),
+        ProactiveOwnerEligibility.REASON_OWNER_INACTIVE);
+  }
+
+  /** [WD-166] 주인 역할에서 proactive:write 를 회수하면 건너뛰고(권한 사유), 권한을 되돌리면 재개한다. */
+  @Test
+  void executeJob_ownerLosesProactiveWrite_skippedUntilRegranted() {
+    assertSkippedWhileIneligibleThenResumes(
+        () -> setOwnerRoleProactiveWrite(false),
+        () -> setOwnerRoleProactiveWrite(true),
+        ProactiveOwnerEligibility.REASON_OWNER_NO_PERMISSION);
+  }
+
+  /**
+   * [WD-166] 권한은 작업이 속한 워크스페이스에서만 본다 — 다른 워크스페이스에서 proactive:write 를 가진 것으로는 통과하지 않는다. 주인은 기본
+   * 워크스페이스에서는 읽기 권한만, 다른 워크스페이스에서는 ACTIVE 멤버이면서 쓰기 권한을 가진다.
+   */
+  @Test
+  void executeJob_proactiveWriteOnlyInAnotherWorkspace_skipped() {
+    setOwnerRoleProactiveWrite(false);
+    long otherTenant =
+        com.smartfirehub.support.TenantRlsTestSupport.createActiveTenant(dsl, "wd166");
+    com.smartfirehub.support.TenantRlsTestSupport.insertActiveMembership(
+        dsl, testUserId, otherTenant);
+    // 다른 워크스페이스의 역할·권한은 그 테넌트 GUC 아래에서 만든다(role·user_role 의 tenant_id 는 GUC DEFAULT). 끝나면 기본 테넌트로
+    // 되돌린다
+    dsl.execute("select set_config('app.tenant_id', ?, true)", String.valueOf(otherTenant));
+    try {
+      Long otherRoleId =
+          dsl.insertInto(ROLE)
+              .set(ROLE.NAME, "proactive_writer_" + System.nanoTime())
+              .set(ROLE.IS_SYSTEM, false)
+              .returning(ROLE.ID)
+              .fetchOne()
+              .getId();
+      dsl.insertInto(ROLE_PERMISSION)
+          .set(ROLE_PERMISSION.ROLE_ID, otherRoleId)
+          .set(
+              ROLE_PERMISSION.PERMISSION_ID,
+              dsl.select(PERMISSION.ID)
+                  .from(PERMISSION)
+                  .where(PERMISSION.CODE.eq("proactive:write")))
+          .execute();
+      dsl.insertInto(USER_ROLE)
+          .set(USER_ROLE.USER_ID, testUserId)
+          .set(USER_ROLE.ROLE_ID, otherRoleId)
+          .execute();
+      // 양성 대조: 그 워크스페이스에서는 정말 쓰기 권한이 있다(이 픽스처가 헛돌지 않는다)
+      assertThat(permissionChecker.hasPermission(testUserId, "proactive:write")).isTrue();
+    } finally {
+      dsl.execute(
+          "select set_config('app.tenant_id', ?, true)", String.valueOf(DEFAULT_TEST_TENANT_ID));
+    }
+    // 작업 워크스페이스(기본)로 돌아오면 같은 조회가 권한 없음이다 — 권한 조회가 현재 테넌트로 한정된다
+    assertThat(permissionChecker.hasPermission(testUserId, "proactive:write")).isFalse();
+
+    ProactiveJobResponse created =
+        proactiveJobService.createJob(buildCreateRequest("다른 워크스페이스 권한 작업"), testUserId);
+    stubSuccessfulRun();
+
+    rawAsyncRunner.executeJob(created.id(), testUserId);
+
+    var executions = executionRepository.findByJobId(created.id(), 10, 0);
+    assertThat(executions).hasSize(1);
+    assertThat(executions.get(0).status()).isEqualTo("FAILED");
+    assertThat(executions.get(0).errorMessage())
+        .isEqualTo(ProactiveOwnerEligibility.REASON_OWNER_NO_PERMISSION);
+    verify(proactiveAiClient, never())
+        .execute(anyLong(), anyString(), anyString(), any(), any(), any(), any());
+    verify(chatDeliveryChannel, never()).deliver(any(), anyLong(), any());
   }
 }
