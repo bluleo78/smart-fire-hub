@@ -5,6 +5,7 @@ import com.smartfirehub.proactive.dto.ReportTemplateResponse;
 import com.smartfirehub.proactive.dto.ReportTemplateSummaryResponse;
 import com.smartfirehub.proactive.dto.UpdateReportTemplateRequest;
 import com.smartfirehub.proactive.exception.ProactiveJobException;
+import com.smartfirehub.proactive.exception.ProactiveJobNotFoundException;
 import com.smartfirehub.proactive.repository.ReportTemplateRepository;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
@@ -19,19 +20,20 @@ public class ReportTemplateService {
 
   /**
    * 리포트 양식 목록을 요약 정보(섹션 전체 JSONB 제외)로 page/size 페이지네이션 조회한다(#632). AI
-   * subagent(list_report_templates)와 프론트엔드 목록 탭이 공통으로 사용하며, 상세 구조는 {@link #getTemplate(Long)}로 별도
-   * 조회해야 한다.
+   * subagent(list_report_templates)와 프론트엔드 목록 탭이 공통으로 사용하며, 상세 구조는 {@link #getTemplate(Long,
+   * Long)}로 별도 조회해야 한다.
    */
   @Transactional(readOnly = true)
   public List<ReportTemplateSummaryResponse> getTemplates(Long userId, int page, int size) {
     return reportTemplateRepository.findAllForUser(userId, page, size);
   }
 
+  /** 리포트 양식 단건 조회 — 기본 양식과 본인 양식만 보인다. 남의 양식은 없는 양식과 같은 404 로 답한다(WD-163, 존재 여부도 드러내지 않음). */
   @Transactional(readOnly = true)
-  public ReportTemplateResponse getTemplate(Long id) {
+  public ReportTemplateResponse getTemplate(Long id, Long userId) {
     return reportTemplateRepository
-        .findById(id)
-        .orElseThrow(() -> new ProactiveJobException("템플릿을 찾을 수 없습니다: " + id));
+        .findVisibleTo(id, userId)
+        .orElseThrow(() -> new ProactiveJobNotFoundException("템플릿을 찾을 수 없습니다: " + id));
   }
 
   @Transactional
@@ -46,7 +48,7 @@ public class ReportTemplateService {
 
   @Transactional
   public void updateTemplate(Long id, UpdateReportTemplateRequest request, Long userId) {
-    ReportTemplateResponse template = getTemplate(id);
+    ReportTemplateResponse template = getTemplate(id, userId);
     if (template.builtin()) {
       throw new ProactiveJobException("빌트인 템플릿은 수정할 수 없습니다");
     }
@@ -56,7 +58,7 @@ public class ReportTemplateService {
 
   @Transactional
   public void deleteTemplate(Long id, Long userId) {
-    ReportTemplateResponse template = getTemplate(id);
+    ReportTemplateResponse template = getTemplate(id, userId);
     if (template.builtin()) {
       throw new ProactiveJobException("빌트인 템플릿은 삭제할 수 없습니다");
     }

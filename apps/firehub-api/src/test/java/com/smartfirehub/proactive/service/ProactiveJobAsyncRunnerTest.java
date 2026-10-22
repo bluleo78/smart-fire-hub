@@ -9,6 +9,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.notification.service.NotificationDispatcher;
 import com.smartfirehub.proactive.dto.ProactiveJobResponse;
 import com.smartfirehub.proactive.dto.ProactiveResult;
+import com.smartfirehub.proactive.dto.ReportTemplateResponse;
 import com.smartfirehub.proactive.exception.ProactiveJobException;
 import com.smartfirehub.proactive.repository.ProactiveJobExecutionRepository;
 import com.smartfirehub.proactive.repository.ProactiveJobRepository;
@@ -131,6 +132,69 @@ class ProactiveJobAsyncRunnerTest {
 
     assertThat(credentialCaptor.getValue()).isEqualTo(credential);
     assertThat(modelCaptor.getValue()).isEqualTo("openai/gpt-4o");
+  }
+
+  /**
+   * [WD-163] 실행은 작업 소유자가 쓸 수 있는 양식(기본·본인)만 읽는다 — 수정 전에 남의 양식이 연결된 작업이 그 양식의 섹션·지시문을 계속 끌어 쓰지 않고,
+   * 삭제된 양식처럼 기본 형식(template=null)으로 돌아간다. 같은 stub 이 양식을 돌려주면 그대로 실리는 것을 양성 대조로 함께 본다.
+   */
+  @Test
+  void 작업_소유자가_쓸_수_없는_양식이면_양식_없이_실행한다() {
+    long templateId = 77L;
+    ProactiveJobResponse job =
+        new ProactiveJobResponse(
+            JOB_ID,
+            USER_ID,
+            templateId,
+            "남의 양식",
+            "테스트 잡",
+            "요약해줘",
+            "0 0 * * *",
+            "Asia/Seoul",
+            true,
+            "SCHEDULE",
+            Map.of(),
+            null,
+            null,
+            null,
+            null,
+            null);
+    when(proactiveJobRepository.findById(JOB_ID, USER_ID)).thenReturn(Optional.of(job));
+    when(aiCredentialService.resolve())
+        .thenReturn(new AiCredential.Opencode("openai", "https://api.openai.com/v1", "", "sk"));
+    when(settingsService.getValue("ai.model")).thenReturn(Optional.of("openai/gpt-4o"));
+    when(aiClient.execute(eq(USER_ID), anyString(), anyString(), any(), any(), any(), any()))
+        .thenReturn(new ProactiveResult("제목", List.of(), null, null, "요약 내용"));
+
+    // 소유자 범위 밖 → 양식 없이
+    when(reportTemplateRepository.findVisibleTo(templateId, USER_ID)).thenReturn(Optional.empty());
+    runner.executeJob(JOB_ID, USER_ID);
+
+    // 양성 대조: 소유자 범위 안 → 양식이 실린다
+    when(reportTemplateRepository.findVisibleTo(templateId, USER_ID))
+        .thenReturn(
+            Optional.of(
+                new ReportTemplateResponse(
+                    templateId,
+                    "내 양식",
+                    null,
+                    List.of(Map.of("key", "s")),
+                    "formal",
+                    USER_ID,
+                    false,
+                    LocalDateTime.now(),
+                    LocalDateTime.now())));
+    runner.executeJob(JOB_ID, USER_ID);
+
+    @SuppressWarnings("unchecked")
+    ArgumentCaptor<Map<String, Object>> templateCaptor = ArgumentCaptor.forClass(Map.class);
+    verify(aiClient, times(2))
+        .execute(
+            eq(USER_ID), anyString(), anyString(), any(), any(), templateCaptor.capture(), any());
+    assertThat(templateCaptor.getAllValues().get(0)).isNull();
+    assertThat(templateCaptor.getAllValues().get(1)).containsEntry("style", "formal");
+    // 소유자 범위 없이 id 로만 읽는 경로는 쓰지 않는다
+    verify(reportTemplateRepository, never()).findById(anyLong());
   }
 
   /**

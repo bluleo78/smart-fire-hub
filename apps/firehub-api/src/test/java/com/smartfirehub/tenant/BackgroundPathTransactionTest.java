@@ -126,14 +126,15 @@ class BackgroundPathTransactionTest extends IntegrationTestBase {
    * V99 로 RLS 가 걸린 {@code report_template} 이 배경 잡 형태에서 읽히는지.
    *
    * <p>{@code ProactiveJobAsyncRunner.executeJob} 이 정확히 이 형태다: {@code @Async} 만 있고 트랜잭션이 없는 스레드에서
-   * {@code reportTemplateRepository.findById(...)} 를 부른다. 리포지토리가 자기 트랜잭션을 열지 않으면 GUC 가 비어 0행이 되고,
-   * 예외 없이 {@code template = null} 이 되어 사용자의 sections·style 없는 리포트가 만들어진다(최종 리뷰 Critical-1).
+   * {@code reportTemplateRepository.findVisibleTo(...)} 를 부른다(WD-163 부터 소유자 범위 조회). 리포지토리가 자기 트랜잭션을
+   * 열지 않으면 GUC 가 비어 0행이 되고, 예외 없이 {@code template = null} 이 되어 사용자의 sections·style 없는 리포트가 만들어진다(최종
+   * 리뷰 Critical-1).
    */
   @Test
   void reportTemplateIsReadableFromBackgroundThreadShape() {
     TenantContext.set(tenantId);
     try {
-      assertThat(reportTemplateRepository.findById(reportTemplateId))
+      assertThat(reportTemplateRepository.findVisibleTo(reportTemplateId, userId))
           .as("배경 잡 형태에서 report_template 이 안 보이면 리포트가 양식 없이 생성된다")
           .isPresent();
     } finally {

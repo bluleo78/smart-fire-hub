@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
+import org.jooq.Condition;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.JSONB;
@@ -88,6 +89,20 @@ public class ReportTemplateRepository {
   }
 
   public Optional<ReportTemplateResponse> findById(Long id) {
+    return fetchOne(RT_ID.eq(id));
+  }
+
+  /**
+   * 사용자가 쓸 수 있는 양식만 단건 조회한다 — 기본(빌트인, user_id NULL) 양식이거나 본인 양식일 때만 돌려준다(WD-163).
+   *
+   * <p>목록({@link #findAllForUser})과 같은 범위다. 상세 조회·작업 연결·작업 실행이 이 범위를 따르지 않으면 양식 번호만으로 남의 비공개 양식(섹션
+   * 지시문 전체)을 읽거나 내 작업에 연결해 쓸 수 있었다.
+   */
+  public Optional<ReportTemplateResponse> findVisibleTo(Long id, Long userId) {
+    return fetchOne(RT_ID.eq(id).and(RT_USER_ID.isNull().or(RT_USER_ID.eq(userId))));
+  }
+
+  private Optional<ReportTemplateResponse> fetchOne(Condition condition) {
     return dsl.select(
             RT_ID,
             RT_NAME,
@@ -98,7 +113,7 @@ public class ReportTemplateRepository {
             RT_CREATED_AT,
             RT_UPDATED_AT)
         .from(REPORT_TEMPLATE)
-        .where(RT_ID.eq(id))
+        .where(condition)
         .fetchOptional(
             r ->
                 toResponse(

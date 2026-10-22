@@ -17,6 +17,7 @@ import com.smartfirehub.proactive.exception.ProactiveJobNotFoundException;
 import com.smartfirehub.proactive.repository.AnomalyEventRepository;
 import com.smartfirehub.proactive.repository.ProactiveJobExecutionRepository;
 import com.smartfirehub.proactive.repository.ProactiveJobRepository;
+import com.smartfirehub.proactive.repository.ReportTemplateRepository;
 import com.smartfirehub.proactive.util.ProactiveCron;
 import com.smartfirehub.proactive.util.ProactiveTime;
 import com.smartfirehub.user.repository.UserRepository;
@@ -51,6 +52,8 @@ public class ProactiveJobService {
   // Spring AOP @Async 프록시를 우회하는 self-call 문제를 방지하기 위해 별도 빈으로 분리 (이슈 #192)
   private final ProactiveJobAsyncRunner asyncRunner;
   private final MetricSqlAccessChecker metricSqlAccessChecker;
+  // 작업에 연결할 리포트 양식이 작성자가 쓸 수 있는 것(기본·본인)인지 확인한다(WD-163)
+  private final ReportTemplateRepository reportTemplateRepository;
 
   // 동시 실행 방지: jobId -> running flag
   private final ConcurrentHashMap<Long, AtomicBoolean> runningJobs = new ConcurrentHashMap<>();
@@ -66,7 +69,8 @@ public class ProactiveJobService {
       AnomalyEventRepository anomalyEventRepository,
       SseEmitterRegistry sseEmitterRegistry,
       ProactiveJobAsyncRunner asyncRunner,
-      MetricSqlAccessChecker metricSqlAccessChecker) {
+      MetricSqlAccessChecker metricSqlAccessChecker,
+      ReportTemplateRepository reportTemplateRepository) {
     this.proactiveJobRepository = proactiveJobRepository;
     this.executionRepository = executionRepository;
     this.schedulerService = schedulerService;
@@ -75,6 +79,7 @@ public class ProactiveJobService {
     this.sseEmitterRegistry = sseEmitterRegistry;
     this.asyncRunner = asyncRunner;
     this.metricSqlAccessChecker = metricSqlAccessChecker;
+    this.reportTemplateRepository = reportTemplateRepository;
     // asyncRunner가 runningJobs 맵을 공유하여 슬롯 해제가 동일한 맵에 반영되도록 한다
     asyncRunner.setRunningJobs(this.runningJobs);
   }
@@ -148,6 +153,17 @@ public class ProactiveJobService {
     return jobs.stream().map(job -> job.withLastExecution(latest.get(job.id()))).toList();
   }
 
+  /**
+   * 작업에 연결하려는 리포트 양식이 작성자가 쓸 수 있는 양식(기본·본인)인지 확인한다(WD-163). 남의 양식 id 는 없는 양식과 같이 거절해 존재 여부도 드러내지
+   * 않는다. templateId 가 없으면(기본 형식) 검사하지 않는다.
+   */
+  private void requireUsableTemplate(Long templateId, Long userId) {
+    if (templateId != null
+        && reportTemplateRepository.findVisibleTo(templateId, userId).isEmpty()) {
+      throw new ProactiveJobException("리포트 양식을 찾을 수 없습니다: " + templateId);
+    }
+  }
+
   @Transactional
   public ProactiveJobResponse createJob(CreateProactiveJobRequest request, Long userId) {
     // cronExpression / timezone 형식을 사전 검증한다. 잘못된 값을 그대로 저장하면 스케줄러가 silent fail 하여
@@ -155,6 +171,7 @@ public class ProactiveJobService {
     validateCronAndTimezone(request.cronExpression(), request.timezone());
     // 보안 등급(S2): 메트릭 SQL 이 작성자가 볼 수 없는 데이터셋을 참조하면 거부(스펙 §4.2 6행). update 도 같은 검사 — 우회로 차단.
     metricSqlAccessChecker.requireMetricQueriesAllowed(request.config(), userId);
+    requireUsableTemplate(request.templateId(), userId);
 
     Long id =
         proactiveJobRepository.create(
@@ -187,6 +204,7 @@ public class ProactiveJobService {
     validateCronAndTimezone(request.cronExpression(), request.timezone());
     // 보안 등급(S2): 메트릭 SQL 이 작성자가 볼 수 없는 데이터셋을 참조하면 거부(스펙 §4.2 6행). update 도 같은 검사 — 우회로 차단.
     metricSqlAccessChecker.requireMetricQueriesAllowed(request.config(), userId);
+    requireUsableTemplate(request.templateId(), userId);
 
     proactiveJobRepository.update(
         id,

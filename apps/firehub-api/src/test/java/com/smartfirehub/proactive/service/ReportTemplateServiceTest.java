@@ -9,6 +9,7 @@ import com.smartfirehub.proactive.dto.ReportTemplateResponse;
 import com.smartfirehub.proactive.dto.ReportTemplateSummaryResponse;
 import com.smartfirehub.proactive.dto.UpdateReportTemplateRequest;
 import com.smartfirehub.proactive.exception.ProactiveJobException;
+import com.smartfirehub.proactive.exception.ProactiveJobNotFoundException;
 import com.smartfirehub.support.IntegrationTestBase;
 import java.util.List;
 import java.util.Map;
@@ -101,7 +102,7 @@ class ReportTemplateServiceTest extends IntegrationTestBase {
     assertThat(created.builtin()).isFalse();
 
     // findById
-    ReportTemplateResponse found = reportTemplateService.getTemplate(created.id());
+    ReportTemplateResponse found = reportTemplateService.getTemplate(created.id(), testUserId);
     assertThat(found.name()).isEqualTo("테스트 템플릿");
   }
 
@@ -124,7 +125,7 @@ class ReportTemplateServiceTest extends IntegrationTestBase {
     reportTemplateService.updateTemplate(created.id(), updateReq, testUserId);
 
     // then
-    ReportTemplateResponse updated = reportTemplateService.getTemplate(created.id());
+    ReportTemplateResponse updated = reportTemplateService.getTemplate(created.id(), testUserId);
     assertThat(updated.name()).isEqualTo("수정 후 이름");
     assertThat(updated.description()).isEqualTo("새 설명");
   }
@@ -144,7 +145,7 @@ class ReportTemplateServiceTest extends IntegrationTestBase {
     // 빠뜨리면(null) 그대로
     reportTemplateService.updateTemplate(
         created.id(), new UpdateReportTemplateRequest("이름만 변경", null, null, null), testUserId);
-    ReportTemplateResponse kept = reportTemplateService.getTemplate(created.id());
+    ReportTemplateResponse kept = reportTemplateService.getTemplate(created.id(), testUserId);
     assertThat(kept.name()).isEqualTo("이름만 변경");
     assertThat(kept.description()).isEqualTo("테스트 설명");
     assertThat(kept.style()).isEqualTo("간결하게");
@@ -152,7 +153,7 @@ class ReportTemplateServiceTest extends IntegrationTestBase {
     // 빈 값·공백이면 지워진다
     reportTemplateService.updateTemplate(
         created.id(), new UpdateReportTemplateRequest("이름만 변경", "", sections, "  "), testUserId);
-    ReportTemplateResponse cleared = reportTemplateService.getTemplate(created.id());
+    ReportTemplateResponse cleared = reportTemplateService.getTemplate(created.id(), testUserId);
     assertThat(cleared.description()).isNull();
     assertThat(cleared.style()).isNull();
   }
@@ -182,8 +183,8 @@ class ReportTemplateServiceTest extends IntegrationTestBase {
     reportTemplateService.deleteTemplate(id, testUserId);
 
     // then: not found
-    assertThatThrownBy(() -> reportTemplateService.getTemplate(id))
-        .isInstanceOf(ProactiveJobException.class)
+    assertThatThrownBy(() -> reportTemplateService.getTemplate(id, testUserId))
+        .isInstanceOf(ProactiveJobNotFoundException.class)
         .hasMessageContaining("템플릿을 찾을 수 없습니다");
   }
 

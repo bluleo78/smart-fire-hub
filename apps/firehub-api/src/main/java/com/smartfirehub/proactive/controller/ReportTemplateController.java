@@ -40,8 +40,10 @@ public class ReportTemplateController {
 
   @GetMapping("/{id}")
   @RequirePermission("proactive:read")
-  public ResponseEntity<ReportTemplateResponse> getTemplate(@PathVariable Long id) {
-    return ResponseEntity.ok(reportTemplateService.getTemplate(id));
+  public ResponseEntity<ReportTemplateResponse> getTemplate(
+      @PathVariable Long id, Authentication authentication) {
+    Long userId = (Long) authentication.getPrincipal();
+    return ResponseEntity.ok(reportTemplateService.getTemplate(id, userId));
   }
 
   @PostMapping
