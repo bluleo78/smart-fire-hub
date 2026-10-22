@@ -1,4 +1,4 @@
-import { AlertCircle, Boxes, PanelLeft, PanelLeftClose, PenLine, Plus } from 'lucide-react';
+import { AlertCircle, Boxes, PanelLeft, PanelLeftClose, PenLine, Plus, X } from 'lucide-react';
 import { useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 
@@ -15,13 +15,14 @@ import { GRAPH_READ_RESTRICTED_MESSAGE, isForbiddenError, isGraphReadRestricted 
 import { createTypePalette } from '@/lib/ontology-colors';
 import { mappingUsageFor } from '@/lib/ontology-mapping-usage';
 import { affectedRelationsFor, isLastActiveEntityType } from '@/lib/ontology-validation';
+import { cn } from '@/lib/utils';
 import type { GraphNode } from '@/types/ontology';
 
 import InstanceGraph from './components/InstanceGraph';
 import DeleteTypeConfirm from './components/model-editor/DeleteTypeConfirm';
 import EntityInspector from './components/model-editor/EntityInspector';
 import MappingUsageWarning from './components/model-editor/MappingUsageWarning';
-import ModelOutline from './components/model-editor/ModelOutline';
+import ModelOutline, { ModelOutlineRail } from './components/model-editor/ModelOutline';
 import RelationInspector from './components/model-editor/RelationInspector';
 import SaveStatusChip from './components/model-editor/SaveStatusChip';
 import NodeDetailDrawer from './components/NodeDetailDrawer';
@@ -145,10 +146,15 @@ export default function OntologyPage() {
   // 대칭. 전체 문서 모달이 유일한 엔티티 타입 생성 경로였는데, 그 모달을 지우면서 이 상태가 그
   // 자리를 대체한다.
   const [creatingEntity, setCreatingEntity] = useState(false);
+  // 좁은 본문(지식 모델 본문 컨테이너 폭 856px 미만)에서 목록(ModelOutline)이 펼쳐져 있는지(WD-130).
+  // 넓은 본문에서는 목록이 항상 펼쳐져 있어 이 값은 화면에 아무 영향이 없다 — 그래서 본문 폭을 JS로
+  // 재지 않고도, 편집 패널에 내용이 생기는 모든 경로(요소 선택·생성 폼 열기)에서 무조건 false로 되돌려
+  // "좁을 때는 목록과 편집 패널 중 하나만" 규칙을 지킨다(좁을 때 둘 다 펼치면 캔버스 280px이 안 남는다).
+  const [outlineExpanded, setOutlineExpanded] = useState(false);
   // 캔버스 Delete 키로 요청된 엔티티 타입 삭제 확인(S3 Task 4) — EntityInspector가 이미 같은
   // DeleteTypeConfirm을 트리거 버튼(entity-delete-trigger)으로 여는 인스턴스를 갖고 있지만, 그 트리거는
-  // sm 미만에서 숨겨지거나(인스펙터 pane 자체가 hidden sm:block) 생성 폼 등 다른 내용을 보여주는 중일
-  // 수 있어 캔버스 요청이 그 트리거에 기댈 수 없다 — controlled open(entity id 자체를 상태로 둔다)의
+  // 좁은 본문에서 편집 패널이 닫혀 있거나(WD-130 — 본문 856px 미만에서는 선택·생성 폼이 있을 때만 붙는다)
+  // 생성 폼 등 다른 내용을 보여주는 중일 수 있어 캔버스 요청이 그 트리거에 기댈 수 없다 — controlled open(entity id 자체를 상태로 둔다)의
   // 별도 인스턴스를 둔다.
   const [canvasDeleteEntityId, setCanvasDeleteEntityId] = useState<number | null>(null);
   // 캔버스/아웃라인 Delete 키로 요청된 관계 삭제 확인(#420) — RelationInspector의 "관계 삭제" 버튼도
@@ -238,6 +244,22 @@ export default function OntologyPage() {
   // 버튼에 붙는다(DeleteTypeConfirm.tsx 주석 참고). 선택이 바뀌어도 리마운트되지 않는 안정적인
   // 대상이어야 하므로 훅 최상단에서 한 번만 만든다.
   const addEntityTypeButtonRef = useRef<HTMLButtonElement>(null);
+  // 좁은 본문의 목록 접기 막대 「목록 펼치기」 버튼(WD-130) — 아래 editorFocusRestoreRef의 대체 대상.
+  const outlineRailButtonRef = useRef<HTMLButtonElement>(null);
+  // 삭제 확인 창이 닫힌 뒤 포커스를 돌려줄 곳(WD-130). 원래는 언제나 아웃라인의 「타입 추가」 버튼이었지만,
+  // 좁은 본문에서는 목록이 접기 막대로 접혀 그 버튼이 display:none이다 — 숨은 요소의 focus()는 조용히
+  // 실패해 포커스가 body로 떨어진다. 그래서 읽는 순간 보이는 쪽(「타입 추가」, 아니면 「목록 펼치기」)을
+  // 돌려주는 getter 객체로 둔다. 다이얼로그는 닫힐 때 current를 읽으므로 그 시점의 배치를 따른다.
+  const editorFocusRestoreRef = useMemo<React.RefObject<HTMLElement | null>>(
+    () => ({
+      get current() {
+        const add = addEntityTypeButtonRef.current;
+        if (add && add.offsetParent !== null) return add;
+        return outlineRailButtonRef.current ?? add;
+      },
+    }),
+    [],
+  );
   // 캔버스 Delete의 in-flight 중복 요청 차단(리뷰 I-2) — SchemaGraph의 keydown 가드는 e.repeat와
   // 모달 존재로 대부분을 막지만, 두 구멍이 남는다: (1) Radix AlertDialogAction은 클릭 즉시 다이얼로그를
   // 닫으므로(exit 애니메이션이 끝나면 DOM에서도 사라진다) DELETE 응답을 기다리는 동안은 "모달이 열려
@@ -252,6 +274,7 @@ export default function OntologyPage() {
     if (modelSelected) setModelSelected(null);
     if (creatingRelation) setCreatingRelation(false);
     if (creatingEntity) setCreatingEntity(false);
+    if (outlineExpanded) setOutlineExpanded(false);
     if (canvasDeleteEntityId != null) setCanvasDeleteEntityId(null);
     if (canvasDeleteRelationId != null) setCanvasDeleteRelationId(null);
   }
@@ -316,10 +339,24 @@ export default function OntologyPage() {
 
   // 아웃라인/캔버스에서 요소를 선택하면 "새 관계 만들기"/"새 타입 만들기" 폼이 열려 있어도 닫는다 —
   // 셋을 동시에 보여줄 자리가 없다(인스펙터는 한 번에 하나만 보여준다).
+  // 좁은 본문에서는 선택과 함께 펼쳐 둔 목록을 접는다(WD-130) — 편집 패널이 붙을 자리를 내준다.
   const selectModelElement = (selection: SchemaGraphSelection) => {
     setCreatingRelation(false);
     setCreatingEntity(false);
+    setOutlineExpanded(false);
     setModelSelected(selection);
+  };
+
+  // 편집 패널(인스펙터)에 보여줄 것이 있는가(WD-130) — 선택(사라진 요소의 안내 포함)이나 생성 폼.
+  // 좁은 본문에서는 이 값이 참일 때만 편집 패널이 붙는다(넓은 본문은 지금처럼 항상 붙어 안내 문구를 보인다).
+  const inspectorHasContent = modelSelected != null || creatingRelation || creatingEntity;
+  // 좁은 본문의 편집 패널 ✕(WD-130) — 패널만 따로 숨기는 상태를 두지 않고 선택·생성 폼을 함께 푼다.
+  // 편집 패널은 늘 "지금 선택된 것"을 보여주는 자리라, 선택을 남긴 채 패널만 닫으면 캔버스엔 선택 표시가
+  // 남았는데 편집할 곳은 없는 어중간한 상태가 된다. 다시 열려면 타입/관계를 다시 고르면 된다.
+  const closeInspector = () => {
+    setModelSelected(null);
+    setCreatingRelation(false);
+    setCreatingEntity(false);
   };
 
   // 인스펙터 관계 클릭 → 대상 노드를 인스펙터에 로드하고 캔버스에서 포커싱한다.
@@ -544,6 +581,7 @@ export default function OntologyPage() {
                 setModelSelected(null);
                 setCreatingRelation(false);
                 setCreatingEntity(false);
+                setOutlineExpanded(false);
               }}
               aria-pressed={modelEditMode}
             >
@@ -578,31 +616,48 @@ export default function OntologyPage() {
         </div>
       </div>
 
-      {/* 본문 — [좌측 타입 필터] · [그래프 캔버스 + 인스펙터]. */}
-      <div className="flex min-h-0 flex-1">
+      {/* 본문 — [좌측 타입 필터] · [그래프 캔버스 + 인스펙터].
+          @container/kg-body(WD-130): 편집 모드의 목록·편집 패널 배치를 창 폭이 아니라 이 본문의 실제 폭으로
+          정한다 — 사이드바·AI 챗 패널이 열리면 같은 창 폭에서도 본문이 수백 px 줄어들기 때문이다.
+          기준 폭(856/640/536px)의 근거는 ModelOutline.tsx와 아래 인스펙터 pane 주석 참고. */}
+      <div className="@container/kg-body flex min-h-0 flex-1">
         {/* 좌측 패널 — 편집 모드(showEditor)에서는 타입 필터 대신 아웃라인(타입/관계 목록)을 보여준다.
             아웃라인은 selectedSchema만 다룬다(편집 대상이 항상 선택된 온톨로지이므로 bare schema 분기가 없다).
             읽기 모드는 기존 그대로: resolution 그룹핑 + 개수 + 토글 필터(접기 가능).
             두 탭이 selectedOntologyId를 공유하므로(#677 후속) filterEntities(=selectedSchema.entities)가
             어느 탭에서나 캔버스가 실제로 보여주는 것과 같은 온톨로지의 타입 어휘다. */}
+        {/* 좁은 본문에서 목록 대신 남는 접기 막대(WD-130) — 넓은 본문·목록 펼침 중에는 스스로 숨는다. */}
+        {showEditor && selectedSchema && (
+          <ModelOutlineRail
+            expanded={outlineExpanded}
+            onExpand={() => setOutlineExpanded(true)}
+            buttonRef={outlineRailButtonRef}
+          />
+        )}
         {showEditor && selectedSchema ? (
           <ModelOutline
             schema={selectedSchema}
             selected={modelSelected}
             onSelect={selectModelElement}
             mutations={elementMutations}
+            // 생성 폼을 열 때도 좁은 본문의 펼친 목록을 접어 편집 패널 자리를 내준다(WD-130, selectModelElement와 같은 규칙).
             onAddRelation={() => {
               setModelSelected(null);
               setCreatingEntity(false);
+              setOutlineExpanded(false);
               setCreatingRelation(true);
             }}
             onAddEntityType={() => {
               setModelSelected(null);
               setCreatingRelation(false);
+              setOutlineExpanded(false);
               setCreatingEntity(true);
             }}
             addEntityTypeButtonRef={addEntityTypeButtonRef}
             onDirtyChange={makeModelDirtyReporter('outline')}
+            expanded={outlineExpanded}
+            onExpandedChange={setOutlineExpanded}
+            railButtonRef={outlineRailButtonRef}
           />
         ) : graphRestricted ? null : (
           // 읽기 제한(WD-28)이면 그리지 않는다.
@@ -620,14 +675,32 @@ export default function OntologyPage() {
           />
         )}
 
-        {/* 그래프 캔버스 + 인스펙터(도킹) 영역 — 드로어 도킹 검증용 testid 유지. */}
-        <div className="flex min-w-0 flex-1 overflow-hidden" data-testid="instance-graph-panel">
+        {/* 그래프 캔버스 + 인스펙터(도킹) 영역 — 드로어 도킹 검증용 testid 유지.
+            본문이 536px(목록 256 + 캔버스 280) 미만인데 좁은 본문에서 목록을 펼치면 목록과 캔버스가 나란히
+            들어갈 수 없어, 목록이 이 영역 자리를 대신 차지한다(WD-130 — 겹치는 서랍 대신 같은 줄의 패널). */}
+        <div
+          className={cn(
+            'flex min-w-0 flex-1 overflow-hidden',
+            showEditor && outlineExpanded && '@max-[536px]/kg-body:hidden',
+          )}
+          data-testid="instance-graph-panel"
+        >
           {/* min-w-[280px]: flex 기본 min-width:auto 때문에 그래프가 안 줄어들어 인스펙터가 밖으로
               잘리는 것을 막으면서(원래 min-w-0의 목적), 동시에 캔버스 자체가 280px 밑으로는 줄어들지
-              않게 하한을 둔다(#403 방어 가드) — ModelOutline/인스펙터는 xl 미만에서 숨고, 읽기 모드의
-              TypeFilterPanel도 이제(#414) sm 미만에서 함께 숨는다. 이 하한은 그 두 브레이크포인트
-              사이에서 패널이 펼침 상태로 남아 있는 폭 대역(sm~xl)에 대한 추가 방어선이다. */}
-          <div className="relative min-w-[280px] flex-1">
+              않게 하한을 둔다(#403 방어 가드). 편집 모드의 목록·편집 패널은 본문 폭(@container/kg-body)
+              기준으로 이 하한이 지켜질 때만 캔버스 옆에 붙는다(WD-130). 읽기 모드의 TypeFilterPanel은
+              창 폭 sm(640px) 미만에서 숨는다(#414).
+              편집 모드에서 본문이 640px(접기 막대 40 + 캔버스 280 + 편집 패널 320) 미만이면 편집 패널을
+              캔버스 옆에 붙일 폭이 없다 — 그때는 편집 패널이 캔버스 자리를 대신 차지하고(✕로 닫으면 캔버스가
+              돌아온다), 캔버스 혼자일 때는 하한을 풀어 접기 막대 옆 남은 폭을 다 쓴다(320px 창에서 280px
+              하한이 본문 밖으로 밀려 잘리던 것을 막는다). */}
+          <div
+            className={cn(
+              'relative min-w-[280px] flex-1',
+              showEditor && '@max-[640px]/kg-body:min-w-0',
+              showEditor && inspectorHasContent && !outlineExpanded && '@max-[640px]/kg-body:hidden',
+            )}
+          >
             <TabsContent value="schema" className="m-0 h-full">
               {/* 목록 게이트(renderOntologyListGate)를 먼저 통과해야 선택된 온톨로지의 스키마 상태를 본다. */}
               {renderOntologyListGate(
@@ -646,15 +719,15 @@ export default function OntologyPage() {
                         // 전체 문서 모달이 사라졌으므로(Task 6) CTA("첫 타입 만들기")는 수정 모드를
                         // 켠다. S3 Task 4부터는 생성 폼(creatingEntity)까지 함께 열어 CTA 한 번으로
                         // 첫 타입을 만드는 곳까지 도달한다 — 모드만 켜면 사용자가 아웃라인의 "타입
-                        // 추가"를 다시 찾아야 했다(OntologyEmptyState.tsx 주석 참고). 다만 인스펙터
-                        // pane 자체가 `hidden sm:block`이라(리뷰 M-4) sm 미만 폭에서는 생성 폼이 열려도
-                        // 화면에 보이지 않는다 — "수정 모드만 켜진" 것처럼 보인다. 이전 동작(모드만
-                        // 켜짐)보다 나빠지진 않지만 CTA 문구가 약속한 결과와는 어긋난다는 점을
-                        // 기록해 둔다.
+                        // 추가"를 다시 찾아야 했다(OntologyEmptyState.tsx 주석 참고). 예전엔 인스펙터
+                        // pane이 창 폭 1280px 미만에서 통째로 숨어(xl:block, 리뷰 M-4) 1024px 창에서는
+                        // 생성 폼이 열려도 보이지 않아 "수정 모드만 켜진" 것처럼 보였다(WD-130). 이제 좁은
+                        // 본문에서도 생성 폼이 있으면 편집 패널이 붙으므로 CTA가 약속한 폼이 실제로 보인다.
                         onDefine={
                           canEdit
                             ? () => {
                                 setModelEditMode(true);
+                                setOutlineExpanded(false);
                                 setCreatingEntity(true);
                               }
                             : undefined
@@ -747,13 +820,37 @@ export default function OntologyPage() {
           )}
           {/* 편집 모드 세 번째 pane — 타입/관계 인스펙터. 타입 선택은 Task 4의 EntityInspector, 관계
               선택·생성은 Task 5의 RelationInspector가 채운다.
-              (리뷰 IMP-4, #403로 xl 완화) sm(640px) 미만뿐 아니라 태블릿·좁은 데스크톱 폭(sm~lg 대역,
-              예 834px)까지 숨긴다 — w-64+w-80 고정폭 2개(576px)가 sm 기준에서는 640~1024px 사이 폭에서
-              캔버스를 200px 안팎으로 짓눌러 스키마 그래프를 사실상 못 읽게 만들었다(#403). AppLayout
-              사이드바(펼침 시 240px)까지 겹치면 1024px에서도 여전히 짓눌리므로(실측) xl(1280px) 이상에서만
-              3-pane을 동시에 보여주고, 그 미만에서는 ModelOutline과 함께 숨겨 캔버스 전체 폭을 확보한다. */}
+              배치 기준은 창 폭이 아니라 본문 폭(@container/kg-body, WD-130)이다. 예전엔 창 폭 xl(1280px)
+              미만에서 통째로 숨겨(#403 — 목록 w-64 + 편집 w-80이 캔버스를 짓누르던 것을 막으려고) 1024px
+              창에서는 편집 수단이 아예 없었고, 넓은 창 + AI 챗 패널처럼 본문만 좁아진 경우는 막지 못했다.
+              - 본문 ≥ 856px(목록 256 + 캔버스 최소 280 + 편집 320): 지금처럼 항상 붙는다(선택 전엔 안내 문구).
+              - 본문 < 856px: 선택이나 생성 폼이 있을 때만 붙고, ✕(편집 패널 닫기)로 닫는다. 목록을 펼친
+                동안에는 숨는다(둘 다 붙이면 캔버스 280px이 안 남는다 — 선택하면 목록이 접히며 다시 붙는다).
+              - 본문 < 640px(접기 막대 40 + 캔버스 280 + 편집 320): 캔버스 옆에 붙일 폭이 없어 캔버스 자리를
+                대신 차지한다(겹치는 서랍이 아니라 같은 줄의 패널 — AI 챗과 나란히 보는 배치를 유지한다). */}
           {showEditor && (
-            <div className="hidden w-80 shrink-0 overflow-y-auto border-l p-4 xl:block" data-testid="model-inspector">
+            <div
+              className={cn(
+                'w-80 shrink-0 overflow-y-auto border-l p-4',
+                inspectorHasContent ? 'block' : 'hidden @min-[856px]/kg-body:block',
+                outlineExpanded && '@max-[856px]/kg-body:hidden',
+                '@max-[640px]/kg-body:w-auto @max-[640px]/kg-body:flex-1 @max-[640px]/kg-body:border-l-0',
+              )}
+              data-testid="model-inspector"
+            >
+              {/* 좁은 본문에서만 보이는 머리줄(WD-130) — 넓은 본문에서는 편집 패널이 늘 붙어 있어 닫을 일이 없다. */}
+              <div className="mb-3 flex items-center justify-between @min-[856px]/kg-body:hidden">
+                <span className="text-xs font-medium uppercase text-muted-foreground">편집</span>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6"
+                  onClick={closeInspector}
+                  aria-label="편집 패널 닫기"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </Button>
+              </div>
               {selectedEntity && selectedSchema ? (
                 <EntityInspector
                   key={selectedEntity.id}
@@ -761,7 +858,7 @@ export default function OntologyPage() {
                   entity={selectedEntity}
                   mutations={elementMutations}
                   onDeleted={() => setModelSelected(null)}
-                  restoreFocusRef={addEntityTypeButtonRef}
+                  restoreFocusRef={editorFocusRestoreRef}
                   status={selectedOntology?.status}
                   onDirtyChange={makeModelDirtyReporter('entity')}
                 />
@@ -772,7 +869,7 @@ export default function OntologyPage() {
                   relation={selectedRelation}
                   mutations={elementMutations}
                   onDeleted={() => setModelSelected(null)}
-                  restoreFocusRef={addEntityTypeButtonRef}
+                  restoreFocusRef={editorFocusRestoreRef}
                   onDirtyChange={makeModelDirtyReporter('relation')}
                 />
               ) : creatingRelation && selectedSchema ? (
@@ -822,7 +919,7 @@ export default function OntologyPage() {
           onOpenChange={(o) => {
             if (!o) setCanvasDeleteEntityId(null);
           }}
-          restoreFocusRef={addEntityTypeButtonRef}
+          restoreFocusRef={editorFocusRestoreRef}
           onConfirm={() => {
             // entity.id가 아니라 canvasDeleteEntityId(상태로 들고 있던 number)를 쓴다 — EntityTypeDef.id는
             // 레거시 폴백(엔티티에 id가 없는 스키마)을 감안해 타입상 optional이지만, 이 다이얼로그는
@@ -841,7 +938,7 @@ export default function OntologyPage() {
               if (!result) return;
               // 포커스를 먼저 옮긴 뒤 나머지 상태를 정리한다 — EntityInspector의 entity-delete-trigger와
               // 같은 순서(#328류 회피, DeleteTypeConfirm.tsx restoreFocusRef 주석 참고).
-              addEntityTypeButtonRef.current?.focus();
+              editorFocusRestoreRef.current?.focus();
               setCanvasDeleteEntityId(null);
               if (modelSelected?.kind === 'entity' && modelSelected.id === entityTypeId) setModelSelected(null);
             }).finally(() => {
@@ -865,7 +962,7 @@ export default function OntologyPage() {
           onOpenChange={(o) => {
             if (!o) setCanvasDeleteRelationId(null);
           }}
-          restoreFocusRef={addEntityTypeButtonRef}
+          restoreFocusRef={editorFocusRestoreRef}
           onConfirm={() => {
             const relationId = canvasDeleteRelationId;
             if (relationId == null) return;
@@ -879,7 +976,7 @@ export default function OntologyPage() {
               if (!result) return;
               // 포커스를 먼저 옮긴 뒤 나머지 상태를 정리한다 — RelationInspector의
               // relation-delete-trigger와 같은 순서(#328류 회피).
-              addEntityTypeButtonRef.current?.focus();
+              editorFocusRestoreRef.current?.focus();
               setCanvasDeleteRelationId(null);
               if (modelSelected?.kind === 'relation' && modelSelected.id === relationId) setModelSelected(null);
             }).finally(() => {

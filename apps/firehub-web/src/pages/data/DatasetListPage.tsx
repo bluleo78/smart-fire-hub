@@ -356,10 +356,11 @@ export default function DatasetListPage() {
             </SelectContent>
           </Select>
 
-          {/* Favorite toggle */}
+          {/* Favorite toggle — 켜짐 상태를 aria-pressed 로 알린다(스크린리더가 토글 버튼으로 읽고, 테스트가 화면 반영을 기다릴 기준이 된다) */}
           <Button
             variant={favoriteOnly ? 'default' : 'outline'}
             size="sm"
+            aria-pressed={favoriteOnly}
             onClick={() => {
               patchParams({ favorite: !favoriteOnly ? 'true' : null, page: null });
             }}
