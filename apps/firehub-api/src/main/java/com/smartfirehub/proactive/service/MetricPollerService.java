@@ -18,6 +18,7 @@ import com.smartfirehub.proactive.repository.MetricSnapshotRepository.MetricSnap
 import com.smartfirehub.proactive.util.ProactiveTime;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
+import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.securitylevel.ai.AiCall;
 import com.smartfirehub.securitylevel.ai.AiCallContext;
 import com.smartfirehub.securitylevel.ai.AiHostingResolver;
@@ -57,6 +58,8 @@ public class MetricPollerService {
   // 실행을 공유 목적 AI 범위로 감싸 관문이 VIEW 뒤에 AI(forShare 호스팅)+SHARE 까지 판정하게 한다.
   private final AiCallContext aiCallContext;
   private final AiHostingResolver aiHostingResolver;
+  // 시스템 메트릭 「데이터셋 수」를 소유자가 볼 수 있는 데이터셋으로 한정한다(WD-168) — 홈 대시보드·리포트 컨텍스트와 같은 가시성 규칙.
+  private final DatasetAccessGuard datasetAccessGuard;
 
   /**
    * 데이터셋 메트릭 SQL 검증기 — 애드혹 분석 쿼리({@code AnalyticsQueryExecutionService})와 같은 정책(현재 테넌트 데이터 스키마만,
@@ -162,8 +165,8 @@ public class MetricPollerService {
   }
 
   /**
-   * 잡 1회 평가 동안의 소유자 자격 메모. 데이터셋 메트릭이 처음 판정할 때 계산하고(시스템 메트릭만 있으면 계산하지 않는다) 같은 평가의 다음 메트릭이 재사용한다. 계산이
-   * 실패하면 저장하지 않는다 — 다음 메트릭이 다시 시도해 메트릭별 실패 격리가 그대로다. 다음 폴링 주기는 새로 계산한다.
+   * 잡 1회 평가 동안의 소유자 자격 메모. 데이터셋 메트릭·「데이터셋 수」 시스템 메트릭이 처음 판정할 때 계산하고(그 밖의 시스템 메트릭만 있으면 계산하지 않는다) 같은
+   * 평가의 다음 메트릭이 재사용한다. 계산이 실패하면 저장하지 않는다 — 다음 메트릭이 다시 시도해 메트릭별 실패 격리가 그대로다. 다음 폴링 주기는 새로 계산한다.
    *
    * <p>공유 목적 AI 문맥({@link #shareCall()})도 같은 규칙으로 잡당 한 번만 계산한다 — 호스팅 판정은 테넌트 설정(채팅·임베딩 자격증명)을 읽으므로
    * 메트릭마다 다시 읽지 않는다.
@@ -225,8 +228,15 @@ public class MetricPollerService {
       String metricKey = (String) metric.getOrDefault("metricKey", metricId);
       // 시스템 메트릭은 dataset(V88)·pipeline_execution(V96) 등 RLS 테이블을 dsl 로 직접 집계한다 —
       // 트랜잭션 안에서 실행해야 GUC 가 주입되고, 그러지 않으면 언제나 0 이 수집된다.
-      Double collected = transactionTemplate.execute(status -> collectSystemMetric(metricKey));
-      value = collected == null ? 0.0 : collected;
+      // 수집 실패(소유자 자격 계산 실패 등)는 데이터셋 메트릭처럼 이 메트릭만 건너뛴다 — 같은 잡의 다음 메트릭은 그대로 돈다.
+      try {
+        Double collected =
+            transactionTemplate.execute(status -> collectSystemMetric(metricKey, ownerClearance));
+        value = collected == null ? 0.0 : collected;
+      } catch (Exception e) {
+        log.error("MetricPollerService: failed to collect system metric '{}'", metricId, e);
+        return;
+      }
     } else if ("dataset".equals(source)) {
       // 데이터셋 메트릭: 사용자 정의 SQL을 executor를 통해 실행하여 숫자 1개를 수집한다
       String query = (String) metric.get("query");
@@ -312,7 +322,7 @@ public class MetricPollerService {
     }
   }
 
-  private double collectSystemMetric(String metricKey) {
+  private double collectSystemMetric(String metricKey, OwnerClearance ownerClearance) {
     return switch (metricKey) {
       case "pipeline_failure_rate" -> {
         // Failed / total pipeline executions in last 24 hours
@@ -346,8 +356,18 @@ public class MetricPollerService {
                 .fetchOne(0, int.class);
       }
       case "dataset_total_count" -> {
-        // Count total datasets
-        yield (double) dsl.selectCount().from(DATASET).fetchOne(0, int.class);
+        // 소유자가 볼 수 있는 데이터셋만 센다(WD-168) — 테넌트 전체를 세면 숨긴(상위 등급) 데이터셋의 개수와 생성 사실이 값·리포트로 드러난다.
+        // 리포트 컨텍스트의 stats.totalDatasets(DashboardService.getStats — 소유자 자격 + 공유 목적 AI 범위)와 같은 규칙이라
+        // 두 값이 어긋나지 않는다.
+        Clearance clearance = ownerClearance.get();
+        yield aiCallContext.callWith(
+            ownerClearance.shareCall(),
+            () ->
+                (double)
+                    dsl.selectCount()
+                        .from(DATASET)
+                        .where(datasetAccessGuard.visibleCondition(clearance))
+                        .fetchOne(0, int.class));
       }
       case "active_user_count" -> {
         // Count distinct users who executed pipelines in last 24 hours

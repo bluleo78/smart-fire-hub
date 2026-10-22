@@ -144,8 +144,15 @@ class CleanupSchedulerTenantTest extends IntegrationTestBase {
           deleteMyRows(pipelineB);
           return null;
         });
+    TenantRlsTestSupport.deleteMembership(dsl, userA);
     TenantRlsTestSupport.deleteUser(dsl, userA);
     TenantRlsTestSupport.deleteUser(dsl, userB);
+    // 메트릭 폴러 테스트가 만든 역할 — 보안 등급 FK 때문에 테넌트 삭제(등급 삭제)보다 먼저 지운다(user_role 은 사용자 삭제로 CASCADE).
+    inTenant(
+        tenantA,
+        () ->
+            dsl.execute(
+                "delete from role where tenant_id = ? and name = 'cleanup-viewer'", tenantA));
     TenantRlsTestSupport.deleteTenants(dsl, tenantA, tenantB);
     TenantContext.clear();
   }
@@ -313,9 +320,16 @@ class CleanupSchedulerTenantTest extends IntegrationTestBase {
   @DisplayName("메트릭 폴러: SYSTEM 메트릭이 테넌트 데이터의 실제 값을 수집한다(RLS 적용 dataset)")
   void metricPollerCollectsSystemMetricWithTenantVisibleData() {
     int datasetCountA = 3;
+    // 「데이터셋 수」는 잡 주인이 볼 수 있는 데이터셋만 센다(WD-168) — 주인을 테넌트 A 의 ACTIVE 멤버로 두고, 테넌트 기본 등급(내부)까지
+    // 보는 역할을 준다(테스트 테넌트에는 시스템 역할이 없어 직접 만든다 — 역할 등급 DEFAULT 가 테넌트 기본 등급이고 데이터셋도 같은 등급이다).
+    TenantRlsTestSupport.insertActiveMembership(dsl, userA, tenantA);
     inTenant(
         tenantA,
         () -> {
+          dsl.execute(
+              "with r as (insert into role (name, is_system) values ('cleanup-viewer', false)"
+                  + " returning id) insert into user_role (user_id, role_id) select ?, id from r",
+              userA);
           for (int i = 0; i < datasetCountA; i++) {
             insertDataset(userA);
           }

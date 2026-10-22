@@ -318,6 +318,60 @@ class MetricSqlAccessTest extends IntegrationTestBase {
     verify(executorClient, never()).executeQuery(anyString(), anyInt(), anyBoolean());
   }
 
+  /**
+   * WD-168: 시스템 메트릭 「데이터셋 수」는 소유자가 볼 수 있는 데이터셋만 센다 — 숨김(상위 등급) 데이터셋이 늘어도 값이 그대로이고, 볼 수 있는 데이터셋이 늘면
+   * 1 오른다(대조 — 집계가 실제로 돈다는 확인).
+   */
+  @Test
+  void poller_datasetTotalCount_countsOnlyOwnerVisibleDatasets() {
+    long jobId = insertSystemMetricJob(userAt("공개"), "dataset_total_count");
+    poller.poll();
+    double before = latestSnapshot(jobId);
+
+    datasets.add(
+        fx.createDatasetRow("ms" + System.nanoTime() + "_sec2", fx.levelId("민감"), users.get(0)));
+    poller.poll();
+    assertThat(latestSnapshot(jobId)).isEqualTo(before);
+
+    datasets.add(
+        fx.createDatasetRow("ms" + System.nanoTime() + "_pub2", fx.levelId("공개"), users.get(0)));
+    poller.poll();
+    assertThat(latestSnapshot(jobId)).isEqualTo(before + 1);
+  }
+
+  /** 시스템 메트릭 잡 — pollingInterval 0 이라 매 poll() 마다 수집한다. */
+  private long insertSystemMetricJob(long ownerId, String metricKey) {
+    String cfg =
+        "{\"anomaly\":{\"metrics\":[{\"id\":\"s1\",\"source\":\"system\",\"metricKey\":\""
+            + metricKey
+            + "\",\"pollingInterval\":0}]}}";
+    return TenantRlsTestSupport.runInTenantTransaction(
+        fixtureTransactionTemplate,
+        DEFAULT_TEST_TENANT_ID,
+        () ->
+            dsl.fetchOne(
+                    "insert into proactive_job(user_id,name,prompt,cron_expression,enabled,trigger_type,config)"
+                        + " values (?,?,?,?,true,'ANOMALY',?::jsonb) returning id",
+                    ownerId,
+                    "ms-sys",
+                    "p",
+                    "0 * * * *",
+                    cfg)
+                .get(0, Long.class));
+  }
+
+  /** 잡의 가장 최근 수집 값. */
+  private double latestSnapshot(long jobId) {
+    return TenantRlsTestSupport.runInTenantTransaction(
+        fixtureTransactionTemplate,
+        DEFAULT_TEST_TENANT_ID,
+        () ->
+            dsl.fetchOne(
+                    "select value from metric_snapshot where job_id = ? order by id desc limit 1",
+                    jobId)
+                .get(0, Double.class));
+  }
+
   private void insertAnomalyJob(long ownerId, String query) {
     String cfg =
         "{\"anomaly\":{\"metrics\":[{\"id\":\"m1\",\"source\":\"dataset\",\"query\":\""
