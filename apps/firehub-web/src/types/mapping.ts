@@ -29,3 +29,16 @@ export interface MappingResponse {
 
 /** 데이터셋↔온톨로지 바인딩. ontologyId가 null이면 미바인딩(매핑 저장·활성화 불가). */
 export interface DatasetOntologyResponse { datasetId: number; ontologyId: number | null; }
+
+/**
+ * 바인딩 설정(PUT) 결과 — 백엔드 BindOntologyResponse 미러(WD-184).
+ * 다른 모델로 다시 연결하면 백엔드가 이전 모델 기준 매핑을 지우고 mappingRemoved=true 로 알린다.
+ * previousOntologyId/Name 은 직전 연결 모델(첫 연결이면 null)이다.
+ */
+export interface BindOntologyResponse {
+  datasetId: number;
+  ontologyId: number;
+  mappingRemoved: boolean;
+  previousOntologyId: number | null;
+  previousOntologyName: string | null;
+}

@@ -29,8 +29,14 @@ export function OntologyBindingCard({ datasetId }: OntologyBindingCardProps) {
   const handleBind = async () => {
     if (!selected) return;
     try {
-      await bindOntology.mutateAsync(Number(selected));
-      toast.success('온톨로지를 연결했습니다.');
+      const result = await bindOntology.mutateAsync(Number(selected));
+      // WD-184: 다른 모델로 다시 연결해 이전 모델 기준 매핑이 지워졌으면 그 사실을 함께 알린다(이 카드는 보통 첫 연결이라 드물다).
+      if (result?.mappingRemoved) {
+        const previous = result.previousOntologyName ?? '이전 모델';
+        toast.success(`온톨로지를 연결했습니다. 이전 모델(${previous}) 기준 매핑을 삭제했습니다.`);
+      } else {
+        toast.success('온톨로지를 연결했습니다.');
+      }
     } catch (error) {
       handleApiError(error, '온톨로지 연결에 실패했습니다.');
     }

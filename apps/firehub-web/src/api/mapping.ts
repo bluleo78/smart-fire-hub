@@ -1,4 +1,4 @@
-import type { DatasetOntologyResponse, MappingResponse, MappingSpec } from '@/types/mapping';
+import type { BindOntologyResponse, DatasetOntologyResponse, MappingResponse, MappingSpec } from '@/types/mapping';
 
 import { client } from './client';
 
@@ -14,7 +14,7 @@ export const mappingApi = {
   activateMapping: (datasetId: number) =>
     client.post<MappingResponse>(`/datasets/${datasetId}/mapping/activate`),
   getBinding: (datasetId: number) => client.get<DatasetOntologyResponse>(`/datasets/${datasetId}/ontology`),
-  // 멱등 upsert — 204를 반환한다.
+  // upsert — 200 + 결과 본문. 같은 모델 재연결은 멱등이고, 다른 모델로 바꾸면 이전 모델 기준 매핑이 지워진다(WD-184).
   bindOntology: (datasetId: number, ontologyId: number) =>
-    client.put(`/datasets/${datasetId}/ontology`, { ontologyId }),
+    client.put<BindOntologyResponse>(`/datasets/${datasetId}/ontology`, { ontologyId }),
 };
