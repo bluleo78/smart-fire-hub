@@ -101,6 +101,13 @@ public final class TiberoDialect {
    */
   public static final Set<Integer> MULTI_INSERT_DUPLICATE = Set.of(-4008);
 
+  /**
+   * 문장이 중간에 취소됨({@code JDBC-12040:Statement canceled.}) — 문장 시간 제한(queryTimeout)이나 실행기의 마감 취소로 난다.
+   * PG 의 {@code 57014}(query_canceled)에 해당한다(WD-77, 실서버 측정 2026-10-23). Oracle 짝 코드는 실측하지 않아 넣지
+   * 않는다.
+   */
+  public static final Set<Integer> STATEMENT_CANCELED = Set.of(-12040);
+
   /** 무결성 위반으로 바꿀 오류 코드(중복 키 제외). */
   public static final Set<Integer> INTEGRITY_VIOLATIONS =
       Stream.of(NOT_NULL_INSERT, NOT_NULL_ENABLE_NULLS_FOUND, VALUE_TOO_LARGE)

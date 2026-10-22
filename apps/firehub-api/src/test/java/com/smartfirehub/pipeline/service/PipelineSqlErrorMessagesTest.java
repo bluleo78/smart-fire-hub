@@ -250,6 +250,7 @@ class PipelineSqlErrorMessagesTest {
         "12899|글자 수 제한",
         "-8033|SQL 에서 참조한 테이블이 없습니다",
         "942|SQL 에서 참조한 테이블이 없습니다",
+        "-12040|실행 시간 제한을 넘거나 취소되어",
         "-99999|데이터베이스가 SQL 실행을 거부했습니다"
       })
   void tiberoError_classifiesKnownCodesLikePg(int code, String expected) {
@@ -275,6 +276,34 @@ class PipelineSqlErrorMessagesTest {
             "SQL 실행 실패: "
                 + PipelineSqlErrorMessages.guide(pg("23505"))
                 + "\n원인: JDBC-10007:UNIQUE constraint violation");
+  }
+
+  /**
+   * 오류 위치는 사용자 SQL 기준 줄 번호로 고친다. 실행기가 사용자 SQL 을 감싼 첫 줄(프로브 {@code SELECT * FROM (}·적재 {@code INSERT
+   * … FROM (}·{@code MERGE … USING (}) 다음 줄부터 싣기 때문에 Tibero 가 알려 주는 줄은 하나 크다(실서버 측정 2026-10-23). 소스
+   * 이름 자리의 {@code of null} 도 걷어낸다.
+   */
+  @Test
+  void tiberoError_positionLineIsRelativeToUserSql() {
+    String raw =
+        "JDBC-8026:Invalid identifier.\nat line 3, column 21 of null:\nSELECT region, SUM(x)\n"
+            + "                   ^";
+    assertThat(
+            PipelineSqlErrorMessages.describeTiberoError(
+                PipelineSqlErrorMessages.PROBE_PREFIX, new DbError(-8026, raw), raw))
+        .endsWith(
+            "\n원인: JDBC-8026:Invalid identifier.\nat line 2, column 21:\nSELECT region, SUM(x)\n"
+                + "                   ^");
+  }
+
+  /** 감싼 첫 줄에서 난 오류(사용자 SQL 밖)는 사용자 기준 줄이 없으므로 위치 줄만 걷어낸다 — 0번째 줄을 보이지 않는다. */
+  @Test
+  void tiberoError_positionOnWrapperLine_isDropped() {
+    String raw = "JDBC-8006:Missing FROM keyword.\nat line 1, column 9 of null:";
+    assertThat(
+            PipelineSqlErrorMessages.describeTiberoError(
+                PipelineSqlErrorMessages.EXECUTION_PREFIX, new DbError(-8006, raw), raw))
+        .endsWith("\n원인: JDBC-8006:Missing FROM keyword.");
   }
 
   /** db_error 가 없으면(검증 거부·연결 실패처럼 DB 오류가 아니면) 실행기 문구를 그대로 쓴다 — 안내를 추측해 붙이지 않는다. */

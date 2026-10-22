@@ -6,6 +6,7 @@ import com.smartfirehub.dataset.storage.tibero.TiberoErrors;
 import com.smartfirehub.pipeline.service.executor.ExecutorClient.DbError;
 import com.smartfirehub.pipeline.service.executor.ExecutorClient.PgError;
 import java.util.List;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.postgresql.util.ServerErrorMessage;
 
@@ -55,6 +56,11 @@ public final class PipelineSqlErrorMessages {
    */
   private static final Pattern POSITION_LINES =
       Pattern.compile("(?m)^LINE \\d+:.*(?:\\R[ \\t]*\\^[ \\t]*)?(?:\\R|$)");
+
+  /** Tibero 오류의 위치 줄과, 이어지면 그 아래 메아리 줄·캐럿 줄. 1: 줄 번호, 2: 열 번호, 3: 메아리·캐럿(앞 개행 포함, 없으면 빈 문자열). */
+  private static final Pattern TIBERO_POSITION =
+      Pattern.compile(
+          "(?m)^at line (\\d+), column (\\d+) of [^:\\n]*:((?:\\R(?![ \\t]*\\^).*)?(?:\\R[ \\t]*\\^[ \\t]*$)?)");
 
   private PipelineSqlErrorMessages() {}
 
@@ -154,9 +160,35 @@ public final class PipelineSqlErrorMessages {
     if (err == null) {
       return prefix + ": " + nullToEmpty(error);
     }
-    String raw = err.message() != null && !err.message().isBlank() ? err.message() : error;
+    String raw =
+        toUserSqlPosition(
+            err.message() != null && !err.message().isBlank() ? err.message() : error);
     String guide = guide(new PgError(tiberoSqlState(err.code()), raw, null, null, null));
     return prefix + ": " + guide + CAUSE_LABEL + nullToEmpty(raw);
+  }
+
+  /**
+   * Tibero 오류의 위치 줄({@code at line N, column M of <소스>:})을 사용자 SQL 기준으로 고친다.
+   *
+   * <p>실행기는 사용자 SQL 을 감싼 첫 줄(프로브 {@code SELECT * FROM (}·적재 {@code INSERT … FROM (}·{@code MERGE …
+   * USING (}) 바로 다음 줄부터 싣는다. 그래서 Tibero 가 알려 주는 줄 번호는 사용자 SQL 기준보다 하나 크고(열 번호는 그대로), 소스 이름은 늘
+   * {@code null} 이다(실서버 측정 2026-10-23). 줄 번호를 하나 줄이고 소스 이름을 걷어낸다. 감싼 첫 줄에서 난 오류는 사용자 SQL 밖이라 위치 줄과
+   * 그 아래 메아리·캐럿 줄(내부 문장)을 함께 걷어낸다.
+   */
+  static String toUserSqlPosition(String message) {
+    if (message == null) {
+      return null;
+    }
+    Matcher m = TIBERO_POSITION.matcher(message);
+    StringBuilder sb = new StringBuilder();
+    while (m.find()) {
+      int userLine = Integer.parseInt(m.group(1)) - 1;
+      String replacement =
+          userLine >= 1 ? "at line " + userLine + ", column " + m.group(2) + ":" + m.group(3) : "";
+      m.appendReplacement(sb, Matcher.quoteReplacement(replacement));
+    }
+    m.appendTail(sb);
+    return sb.toString().strip();
   }
 
   /**
@@ -178,6 +210,9 @@ public final class PipelineSqlErrorMessages {
     }
     if (TiberoDialect.NotFound.TABLE.hasCode(code)) {
       return "42P01";
+    }
+    if (TiberoDialect.STATEMENT_CANCELED.contains(code)) {
+      return "57014";
     }
     return "XX000";
   }
