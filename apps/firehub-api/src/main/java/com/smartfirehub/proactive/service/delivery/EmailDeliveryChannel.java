@@ -8,7 +8,7 @@ import com.smartfirehub.proactive.service.ReportRenderUtils.ChartImage;
 import com.smartfirehub.proactive.util.ProactiveConfigParser;
 import com.smartfirehub.proactive.util.ProactiveConfigParser.ChannelConfig;
 import com.smartfirehub.settings.service.SettingsService;
-import com.smartfirehub.user.repository.UserRepository;
+import com.smartfirehub.user.dto.UserResponse;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -37,10 +37,11 @@ public class EmailDeliveryChannel implements DeliveryChannel {
   private static final String DEFAULT_FROM = "noreply@smartfirehub.io";
 
   private final SettingsService settingsService;
-  private final UserRepository userRepository;
   private final TemplateEngine templateEngine;
   private final ReportRenderUtils reportRenderUtils;
   private final PdfExportService pdfExportService;
+  // 정지·제거된 멤버를 수신자에서 거른다(WD-172) — 전역 user 조회는 멤버십·계정 활성을 보지 않는다.
+  private final ActiveRecipientResolver recipientResolver;
 
   /** 이메일 내 "웹에서 보기" 링크 생성에 사용할 앱 기본 URL. application.yml에서 app.base-url로 설정하며, 없으면 빈 링크로 처리한다. */
   @Value("${app.base-url:}")
@@ -87,39 +88,52 @@ public class EmailDeliveryChannel implements DeliveryChannel {
           "SMTP 미설정 — 이메일 리포트를 발송할 수 없습니다. 워크스페이스 설정 › 이메일에서 SMTP 서버를 등록하세요");
     }
 
+    // config에서 EMAIL 채널의 수신자 목록 구성 — 아래 try 밖에서 한다: 받을 사람이 없을 때의 예외(WD-172)가 바깥 catch 에
+    // 삼켜지면 정상 반환이 되어 실행 기록에 「이메일로 전달됨」이 거짓으로 남는다(SMTP 미설정 검사와 같은 이유).
+    List<String> toAddresses = new ArrayList<>();
+
+    Optional<ChannelConfig> emailConfig =
+        ProactiveConfigParser.getChannelConfig(job.config(), "EMAIL");
+
+    if (emailConfig.isPresent()) {
+      ChannelConfig cfg = emailConfig.get();
+
+      // 등록 사용자 이메일 — 지금 받을 수 있는 멤버만(정지·제거 제외, WD-172)
+      recipientResolver.activeUsers(cfg.recipientUserIds()).stream()
+          .map(UserResponse::email)
+          .filter(e -> e != null && !e.isBlank())
+          .forEach(toAddresses::add);
+
+      // 외부 이메일 추가
+      toAddresses.addAll(cfg.recipientEmails());
+    }
+
+    boolean recipientsConfigured =
+        emailConfig
+            .map(c -> !c.recipientUserIds().isEmpty() || !c.recipientEmails().isEmpty())
+            .orElse(false);
+    if (toAddresses.isEmpty() && recipientsConfigured) {
+      // 수신자를 지정했는데 받을 사람이 없다(모두 정지·제거됐거나 메일 주소가 없다) — 작업 주인에게 대신 보내지 않고, 정상 반환하지도
+      // 않는다(정상 반환이면 실행 기록에 「이메일로 전달됨」이 거짓으로 남는다).
+      throw new IllegalStateException(
+          "이메일 리포트를 받을 수 있는 수신자가 없습니다 — 지정한 사용자가 모두 정지·제거되었거나 이메일 주소가 없습니다");
+    }
+
+    // 미지정 시 생성자 이메일 (기존 동작) — 주인도 받을 수 있는 멤버일 때만
+    if (toAddresses.isEmpty()) {
+      String ownerEmail =
+          recipientResolver.activeUsers(List.of(job.userId())).stream()
+              .map(UserResponse::email)
+              .findFirst()
+              .orElse(null);
+      if (ownerEmail == null || ownerEmail.isBlank()) {
+        log.warn("EmailDeliveryChannel skipped: no email for userId {}", job.userId());
+        return;
+      }
+      toAddresses.add(ownerEmail);
+    }
+
     try {
-      // config에서 EMAIL 채널의 수신자 목록 구성
-      List<String> toAddresses = new ArrayList<>();
-
-      Optional<ChannelConfig> emailConfig =
-          ProactiveConfigParser.getChannelConfig(job.config(), "EMAIL");
-
-      if (emailConfig.isPresent()) {
-        ChannelConfig cfg = emailConfig.get();
-
-        // 등록 사용자 이메일 조회
-        for (Long userId : cfg.recipientUserIds()) {
-          userRepository
-              .findById(userId)
-              .map(u -> u.email())
-              .filter(e -> e != null && !e.isBlank())
-              .ifPresent(toAddresses::add);
-        }
-
-        // 외부 이메일 추가
-        toAddresses.addAll(cfg.recipientEmails());
-      }
-
-      // 미지정 시 생성자 이메일 (기존 동작)
-      if (toAddresses.isEmpty()) {
-        String ownerEmail = userRepository.findById(job.userId()).map(u -> u.email()).orElse(null);
-        if (ownerEmail == null || ownerEmail.isBlank()) {
-          log.warn("EmailDeliveryChannel skipped: no email for userId {}", job.userId());
-          return;
-        }
-        toAddresses.add(ownerEmail);
-      }
-
       // 이메일 공통 준비 (SMTP, 템플릿) - 루프 밖에서 1회 수행
       // htmlContent가 있으면 요약(summary) 기반 이메일을 보내고, PDF에 전체 리포트를 첨부한다.
       // htmlContent가 없으면 기존 sections 기반 전체 내용을 이메일 본문에 포함한다.

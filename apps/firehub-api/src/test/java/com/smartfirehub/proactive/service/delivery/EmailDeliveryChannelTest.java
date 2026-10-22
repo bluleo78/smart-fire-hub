@@ -2,7 +2,6 @@ package com.smartfirehub.proactive.service.delivery;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -14,10 +13,8 @@ import com.smartfirehub.proactive.service.PdfExportService;
 import com.smartfirehub.proactive.service.ReportRenderUtils;
 import com.smartfirehub.settings.service.SettingsService;
 import com.smartfirehub.user.dto.UserResponse;
-import com.smartfirehub.user.repository.UserRepository;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -38,7 +35,7 @@ import org.thymeleaf.spring6.SpringTemplateEngine;
 class EmailDeliveryChannelTest {
 
   @Mock private SettingsService settingsService;
-  @Mock private UserRepository userRepository;
+  @Mock private ActiveRecipientResolver recipientResolver;
   @Mock private SpringTemplateEngine templateEngine;
   @Mock private ReportRenderUtils reportRenderUtils;
   @Mock private PdfExportService pdfExportService;
@@ -104,7 +101,7 @@ class EmailDeliveryChannelTest {
         .hasMessageContaining("워크스페이스 설정 › 이메일");
 
     // 던지기 전에 아무 일도 하지 않는다 — 수신자 조회조차 가지 않는다.
-    verify(userRepository, never()).findById(anyLong());
+    verify(recipientResolver, never()).activeUsers(any());
   }
 
   @Test
@@ -115,8 +112,8 @@ class EmailDeliveryChannelTest {
             Map.of(
                 "smtp.host", "smtp.example.com",
                 "smtp.port", "587"));
-    when(userRepository.findById(1L))
-        .thenReturn(Optional.of(makeUser(1L, "Owner", "owner@example.com")));
+    when(recipientResolver.activeUsers(List.of(1L)))
+        .thenReturn(List.of(makeUser(1L, "Owner", "owner@example.com")));
     when(templateEngine.process(anyString(), any(IContext.class))).thenReturn("<html/>");
 
     Map<String, Object> config =
@@ -133,7 +130,7 @@ class EmailDeliveryChannelTest {
     emailDeliveryChannel.deliver(job, 1L, makeResult());
 
     // Verify owner email was resolved
-    verify(userRepository).findById(1L);
+    verify(recipientResolver).activeUsers(List.of(1L));
   }
 
   @Test
@@ -143,10 +140,11 @@ class EmailDeliveryChannelTest {
             Map.of(
                 "smtp.host", "smtp.example.com",
                 "smtp.port", "587"));
-    when(userRepository.findById(10L))
-        .thenReturn(Optional.of(makeUser(10L, "Alice", "alice@example.com")));
-    when(userRepository.findById(20L))
-        .thenReturn(Optional.of(makeUser(20L, "Bob", "bob@example.com")));
+    when(recipientResolver.activeUsers(List.of(10L, 20L)))
+        .thenReturn(
+            List.of(
+                makeUser(10L, "Alice", "alice@example.com"),
+                makeUser(20L, "Bob", "bob@example.com")));
     when(templateEngine.process(anyString(), any(IContext.class))).thenReturn("<html/>");
 
     Map<String, Object> config =
@@ -162,10 +160,9 @@ class EmailDeliveryChannelTest {
     // Will try to send but SMTP will fail internally (caught)
     emailDeliveryChannel.deliver(job, 1L, makeResult());
 
-    verify(userRepository).findById(10L);
-    verify(userRepository).findById(20L);
+    verify(recipientResolver).activeUsers(List.of(10L, 20L));
     // owner should NOT be looked up (recipients specified)
-    verify(userRepository, never()).findById(99L);
+    verify(recipientResolver, never()).activeUsers(List.of(99L));
   }
 
   @Test
@@ -189,8 +186,35 @@ class EmailDeliveryChannelTest {
 
     emailDeliveryChannel.deliver(job, 1L, makeResult());
 
-    // No user repository calls needed for external emails
-    verify(userRepository, never()).findById(anyLong());
+    // 외부 메일만 지정 — 작업 주인으로 대체하지 않는다
+    verify(recipientResolver, never()).activeUsers(List.of(99L));
+  }
+
+  /**
+   * WD-172: 지정한 사용자 수신자가 모두 정지·제거돼 받을 사람이 없으면, 작업 주인에게 대신 보내지 않고 예외를 던진다 — 정상 반환이면 실행 기록에 「이메일로
+   * 전달됨」이 거짓으로 남는다.
+   */
+  @Test
+  void deliver_allRecipientsUnreachable_throwsInsteadOfFallingBackToOwner() {
+    when(settingsService.getSmtpConfig())
+        .thenReturn(Map.of("smtp.host", "smtp.example.com", "smtp.port", "587"));
+    when(recipientResolver.activeUsers(List.of(10L))).thenReturn(List.of());
+
+    Map<String, Object> config =
+        Map.of(
+            "channels",
+            List.of(
+                Map.of(
+                    "type", "EMAIL",
+                    "recipientUserIds", List.of(10),
+                    "recipientEmails", List.of())));
+    ProactiveJobResponse job = makeJob(99L, config);
+
+    assertThatThrownBy(() -> emailDeliveryChannel.deliver(job, 1L, makeResult()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("받을 수 있는 수신자가 없습니다");
+    verify(recipientResolver, never()).activeUsers(List.of(99L));
+    verify(templateEngine, never()).process(anyString(), any(IContext.class));
   }
 
   @Test
@@ -200,8 +224,8 @@ class EmailDeliveryChannelTest {
             Map.of(
                 "smtp.host", "smtp.example.com",
                 "smtp.port", "587"));
-    when(userRepository.findById(10L))
-        .thenReturn(Optional.of(makeUser(10L, "Alice", "alice@example.com")));
+    when(recipientResolver.activeUsers(List.of(10L)))
+        .thenReturn(List.of(makeUser(10L, "Alice", "alice@example.com")));
     when(templateEngine.process(anyString(), any(IContext.class))).thenReturn("<html/>");
 
     Map<String, Object> config =
@@ -217,9 +241,9 @@ class EmailDeliveryChannelTest {
     emailDeliveryChannel.deliver(job, 1L, makeResult());
 
     // Registered user resolved
-    verify(userRepository).findById(10L);
+    verify(recipientResolver).activeUsers(List.of(10L));
     // Owner not involved
-    verify(userRepository, never()).findById(99L);
+    verify(recipientResolver, never()).activeUsers(List.of(99L));
   }
 
   @Test
