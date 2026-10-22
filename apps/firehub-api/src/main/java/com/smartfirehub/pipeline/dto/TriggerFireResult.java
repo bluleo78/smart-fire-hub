@@ -21,6 +21,11 @@ public record TriggerFireResult(Outcome outcome, Long executionId, String reason
     SKIPPED,
     /** 트리거가 꺼져 있어 실행하지 않았다 — 기존 동작대로 이벤트는 남기지 않는다. */
     DISABLED,
+    /**
+     * 워크스페이스(테넌트)가 정지돼 실행하지 않았다(WD-174) — 이벤트·알림을 남기지 않는다. 정지는 운영자가 의도한 상태라 매 주기 건너뜀 행을 쌓을 이유가 없고,
+     * 구성원은 어차피 들어와 볼 수 없다. 외부 호출자에게는 409 「skipped」+사유로 알린다.
+     */
+    TENANT_SUSPENDED,
     /** 트리거가 없다(발화 직전 삭제 등) — 이벤트를 남길 대상이 없다. */
     NOT_FOUND,
     /** 실행을 시작하려다 실패했다 — 오류 이벤트가 남는다. */

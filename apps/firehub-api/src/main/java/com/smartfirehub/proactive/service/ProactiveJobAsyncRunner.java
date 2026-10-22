@@ -2,6 +2,7 @@ package com.smartfirehub.proactive.service;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.notification.service.NotificationDispatcher;
 import com.smartfirehub.proactive.dto.AnomalyEvent;
 import com.smartfirehub.proactive.dto.ProactiveJobResponse;
@@ -17,6 +18,7 @@ import com.smartfirehub.proactive.util.ProactiveTime;
 import com.smartfirehub.settings.model.AiCredential;
 import com.smartfirehub.settings.service.AiCredentialService;
 import com.smartfirehub.settings.service.SettingsService;
+import com.smartfirehub.tenant.repository.TenantRepository;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -56,6 +58,11 @@ public class ProactiveJobAsyncRunner {
   private final NotificationDispatcher notificationDispatcher;
   // 실행 직전 작업 주인 자격(계정 활성·ACTIVE 멤버·proactive:write) 재확인(WD-166)
   private final ProactiveOwnerEligibility ownerEligibility;
+  // 실행 직전 워크스페이스(테넌트) 상태 재확인 — 「지금 실행」이 정지 워크스페이스에서 돌지 않게(WD-174)
+  private final TenantRepository tenantRepository;
+
+  /** 워크스페이스(테넌트)가 정지돼 실행하지 않은 사유(WD-174). 실행 이력의 오류 메시지로 남는다. */
+  public static final String REASON_TENANT_SUSPENDED = "워크스페이스가 정지되어 실행하지 않았습니다";
 
   // notification.outbox.enabled=true면 Dispatcher 경로, false면 기존 DeliveryChannel 직접 호출
   @Value("${notification.outbox.enabled:false}")
@@ -124,6 +131,17 @@ public class ProactiveJobAsyncRunner {
       // 주인이 정지·제거됐거나 스마트 작업 권한을 잃었으면 리포트를 만들지도 보내지도 않고 실행 이력에 사유만 남긴다. 예외를 던지지 않고
       // log.info 한 줄로 끝내는 이유: 매분 예약 작업이면 실행마다 스택이 쌓여 로그가 폭주하고, 이것은 결함이 아니라 예정된 건너뜀이다.
       // 작업 enabled·스케줄은 그대로 둔다 — 주인을 복구하면 다음 실행부터 저절로 다시 돈다. finally 의 recordAttempt 는 그대로 돈다.
+      // 워크스페이스 정지 확인(WD-174) — 주인 자격(WD-166)보다 먼저 본다. 주인 자격 판정은 테넌트가 ACTIVE 인지도 함께 봐서, 여기서 거르지
+      // 않으면 정지 워크스페이스의 실행이 「작업 주인이 정지됐거나…」라는 틀린 사유로 남는다. 예약·이상 탐지 경로는 이보다 앞(발화 시점)에서 실행 행
+      // 없이 조용히 건너뛰므로, 여기까지 오는 것은 정지 직후 아직 유효한 토큰으로 누른 「지금 실행」과 경합뿐이다 — 사람이 누른 실행이므로 사유를
+      // 실행 이력에 한 번 남긴다. finally 가 실행 슬롯을 풀므로 정지를 해제한 뒤 「이미 실행 중」으로 막히지 않는다.
+      long tenantId = TenantContext.require("스마트 작업 실행 워크스페이스 상태 확인");
+      if (!tenantRepository.isActive(tenantId)) {
+        log.info("Proactive job {} skipped: tenant {} is not active", jobId, tenantId);
+        executionRepository.updateError(executionId, REASON_TENANT_SUSPENDED);
+        return;
+      }
+
       var ineligible = ownerEligibility.findIneligibilityReason(job.userId());
       if (ineligible.isPresent()) {
         log.info(

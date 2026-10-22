@@ -33,6 +33,8 @@ public class PlatformTenantService {
   private final TenantPipelineRoleProvisioner pipelineRoleProvisioner;
   private final PlatformAuditRecorder auditRecorder;
   private final TenantDataStoreSetupService dataStoreSetupService;
+  // 정지 해제 시 그 워크스페이스의 예약(트리거·스마트 작업)을 커밋 뒤 다시 등록한다(WD-174)
+  private final TenantScheduleResumer scheduleResumer;
 
   /**
    * 신규 테넌트를 만들고 초기 Owner 와 기본 시드를 채운다.
@@ -155,8 +157,11 @@ public class PlatformTenantService {
   /**
    * 테넌트를 정지한다.
    *
-   * <p><b>반영은 즉시가 아니다.</b> 정지는 {@code select-tenant}/{@code refresh} 에서 재검증되므로 이미 발급된 액세스 토큰은 만료(기본
-   * 30분)까지 유효하다. 즉시 차단이 필요하면 별도 조치가 필요하며 이 밴드 범위 밖이다 — 런북에 명시한다.
+   * <p>백그라운드 실행(예약·연쇄·데이터 변경·외부 API·웹훅 트리거, 예약·이상 탐지 스마트 작업)은 다음 발화부터 즉시 멈춘다(WD-174) — 각 발화 시점이 테넌트
+   * 상태를 다시 본다. 이미 시작된 실행은 끝까지 돈다.
+   *
+   * <p><b>로그인 반영은 즉시가 아니다.</b> 정지는 {@code select-tenant}/{@code refresh} 에서 재검증되므로 이미 발급된 액세스 토큰은
+   * 만료(기본 30분)까지 유효하다. 즉시 차단이 필요하면 별도 조치가 필요하며 이 밴드 범위 밖이다 — 런북에 명시한다.
    */
   @Transactional
   public void suspend(long tenantId, long operatorId) {
@@ -194,7 +199,12 @@ public class PlatformTenantService {
       // (fail-closed 지만 가용성 결함). 멱등이고, 생성과 같은 이유로 감사 뒤 마지막에 두며 실패는 전파한다 — 삼키면
       // "ACTIVE 인데 롤 없음"이 커밋으로 확정되고, 전파하면 상태 변경이 롤백돼 재시도할 수 있다.
       pipelineRoleProvisioner.ensureRoleIfAutoProvisionEnabled(tenantId);
+      // 예약 재등록(WD-174) — 기동 재등록은 ACTIVE 테넌트만 돌아, 정지 중 재기동이 있었다면 이 워크스페이스의 예약이 하나도 걸려 있지 않다. 커밋
+      // 뒤에 등록한다(롤백되면 정지 상태 그대로이므로 걸면 안 된다). 이미 걸려 있으면 바꿔 끼울 뿐 중복되지 않는다.
+      scheduleResumer.resumeAfterCommit(tenantId);
     }
+    // 정지 쪽은 등록된 예약을 그대로 둔다(WD-174). 발화 시점 관문(트리거 발화·스마트 작업 예약 콜백)이 정지 워크스페이스의 실행을 막는다.
+    // 스케줄 맵이 트리거·작업 id 만 키로 들고 있어 테넌트 단위로 걷어 낼 근거가 없다.
   }
 
   private TenantNotFoundException notFound(long tenantId) {

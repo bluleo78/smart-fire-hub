@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.notification.service.NotificationDispatcher;
 import com.smartfirehub.proactive.dto.AnomalyEvent;
 import com.smartfirehub.proactive.dto.ProactiveJobResponse;
@@ -21,10 +22,12 @@ import com.smartfirehub.settings.model.AiCredential;
 import com.smartfirehub.settings.model.UnknownAgentTypeException;
 import com.smartfirehub.settings.service.AiCredentialService;
 import com.smartfirehub.settings.service.SettingsService;
+import com.smartfirehub.tenant.repository.TenantRepository;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -54,12 +57,21 @@ class ProactiveJobAsyncRunnerTest {
   @Mock NotificationDispatcher notificationDispatcher;
   @Mock ProactiveOwnerEligibility ownerEligibility;
   @Mock DeliveryChannel chatChannel;
+  @Mock TenantRepository tenantRepository;
+
+  /** 실행 테넌트(WD-174 워크스페이스 정지 확인이 컨텍스트에서 읽는다). */
+  private static final long TENANT_ID = 1L;
 
   private ProactiveJobAsyncRunner runner;
 
   private static final Long JOB_ID = 10L;
   private static final Long USER_ID = 1L;
   private static final Long EXECUTION_ID = 100L;
+
+  @AfterEach
+  void clearTenant() {
+    TenantContext.clear();
+  }
 
   @BeforeEach
   void setUp() {
@@ -78,7 +90,11 @@ class ProactiveJobAsyncRunnerTest {
             new ObjectMapper(),
             List.of(chatChannel),
             notificationDispatcher,
-            ownerEligibility);
+            ownerEligibility,
+            tenantRepository);
+    // 운영에서는 스케줄러·요청이 테넌트 컨텍스트를 세운 채 실행기를 부른다 — 기본은 ACTIVE 워크스페이스(WD-174)
+    TenantContext.set(TENANT_ID);
+    lenient().when(tenantRepository.isActive(TENANT_ID)).thenReturn(true);
     // 기본은 자격 있는 주인(WD-166) — 건너뜀 테스트만 사유를 돌려주게 바꾼다
     lenient().when(ownerEligibility.findIneligibilityReason(USER_ID)).thenReturn(Optional.empty());
     lenient().when(chatChannel.type()).thenReturn("CHAT");
@@ -407,6 +423,24 @@ class ProactiveJobAsyncRunnerTest {
       verify(proactiveJobRepository).updateLastExecuted(eq(JOB_ID), notNull(), any());
     }
     verifyNoInteractions(contextCollector, aiClient, aiCredentialService, notificationDispatcher);
+    verify(chatChannel, never()).deliver(any(), any(), any());
+  }
+
+  /**
+   * [WD-174] 워크스페이스가 정지됐으면 주인 자격 판정보다 먼저 멈춘다 — 「작업 주인이 정지됐거나…」라는 틀린 사유가 아니라 워크스페이스 정지 사유를 남기고, 컨텍스트
+   * 수집·AI 호출·전달·알림 큐가 모두 0 이다. 여기까지 오는 것은 「지금 실행」(사람이 누른 실행)뿐이라 이력에 사유를 한 번 남긴다.
+   */
+  @Test
+  void 워크스페이스가_정지됐으면_주인_자격을_보기_전에_정지_사유로_멈춘다() {
+    when(tenantRepository.isActive(TENANT_ID)).thenReturn(false);
+
+    runner.executeJob(JOB_ID, USER_ID);
+
+    verify(executionRepository)
+        .updateError(EXECUTION_ID, ProactiveJobAsyncRunner.REASON_TENANT_SUSPENDED);
+    verify(executionRepository, never()).updateResult(any(), any(), any(), any());
+    verifyNoInteractions(
+        ownerEligibility, contextCollector, aiClient, aiCredentialService, notificationDispatcher);
     verify(chatChannel, never()).deliver(any(), any(), any());
   }
 

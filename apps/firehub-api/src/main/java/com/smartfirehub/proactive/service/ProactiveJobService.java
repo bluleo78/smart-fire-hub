@@ -20,6 +20,7 @@ import com.smartfirehub.proactive.repository.ProactiveJobRepository;
 import com.smartfirehub.proactive.repository.ReportTemplateRepository;
 import com.smartfirehub.proactive.util.ProactiveCron;
 import com.smartfirehub.proactive.util.ProactiveTime;
+import com.smartfirehub.tenant.repository.TenantRepository;
 import com.smartfirehub.user.repository.UserRepository;
 import java.time.DateTimeException;
 import java.time.LocalDateTime;
@@ -56,6 +57,8 @@ public class ProactiveJobService {
   private final ReportTemplateRepository reportTemplateRepository;
   // 이상 탐지 알림을 보내기 전에 작업 주인이 아직 자격이 있는지 본다(WD-166)
   private final ProactiveOwnerEligibility ownerEligibility;
+  // 이상 탐지 처리 전에 워크스페이스(테넌트)가 정지됐는지 본다(WD-174)
+  private final TenantRepository tenantRepository;
 
   // 동시 실행 방지: jobId -> running flag
   private final ConcurrentHashMap<Long, AtomicBoolean> runningJobs = new ConcurrentHashMap<>();
@@ -73,7 +76,8 @@ public class ProactiveJobService {
       ProactiveJobAsyncRunner asyncRunner,
       MetricSqlAccessChecker metricSqlAccessChecker,
       ReportTemplateRepository reportTemplateRepository,
-      ProactiveOwnerEligibility ownerEligibility) {
+      ProactiveOwnerEligibility ownerEligibility,
+      TenantRepository tenantRepository) {
     this.proactiveJobRepository = proactiveJobRepository;
     this.executionRepository = executionRepository;
     this.schedulerService = schedulerService;
@@ -84,6 +88,7 @@ public class ProactiveJobService {
     this.metricSqlAccessChecker = metricSqlAccessChecker;
     this.reportTemplateRepository = reportTemplateRepository;
     this.ownerEligibility = ownerEligibility;
+    this.tenantRepository = tenantRepository;
     // asyncRunner가 runningJobs 맵을 공유하여 슬롯 해제가 동일한 맵에 반영되도록 한다
     asyncRunner.setRunningJobs(this.runningJobs);
   }
@@ -371,6 +376,19 @@ public class ProactiveJobService {
   @EventListener
   @Async("pipelineExecutor")
   public void onAnomalyDetected(AnomalyEvent event) {
+    // 워크스페이스 정지 관문(WD-174) — 이상 이벤트 저장·SSE 알림·실행보다 먼저 본다. 지표 폴러(MetricPollerService)는 ACTIVE 테넌트만
+    // 돌아
+    // 정지 워크스페이스에서는 이 이벤트가 새로 생기지 않지만, 폴링 도중 정지되는 경합에서도 AI 호출·전달이 시작되지 않게 같은 규칙을 둔다.
+    // 실행 행·알림 없이 log.info 한 줄로 끝낸다 — 정지는 운영자가 의도한 상태다.
+    long tenantId = TenantContext.require("이상 탐지 실행 워크스페이스 상태 확인");
+    if (!tenantRepository.isActive(tenantId)) {
+      log.info(
+          "Anomaly for job {} ignored: tenant {} is not active (metric={})",
+          event.jobId(),
+          tenantId,
+          event.metricName());
+      return;
+    }
     if (isInCooldown(event.jobId())) {
       log.info(
           "Anomaly detected for job {} but in cooldown, skipping (metric={})",

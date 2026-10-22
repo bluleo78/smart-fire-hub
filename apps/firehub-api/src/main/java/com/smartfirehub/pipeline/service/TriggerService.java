@@ -15,6 +15,7 @@ import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.securitylevel.access.DatasetAction;
+import com.smartfirehub.tenant.repository.TenantRepository;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
@@ -85,6 +86,12 @@ public class TriggerService {
    */
   public static final String REASON_EXECUTOR_INACTIVE = "트리거를 만든 사람이 이 워크스페이스에서 정지·제거되어 실행하지 않았습니다";
 
+  /**
+   * 워크스페이스(테넌트)가 정지돼 실행하지 않은 사유(WD-174). 외부 트리거 409 응답 본문에만 쓰인다 — 정지 중 발화는 이벤트를 남기지 않는다. 외부 호출자는
+   * 토큰·웹훅 주소를 가진 연동 주체라 정지 사실을 알려도 된다(연동 장애 원인을 알아야 한다).
+   */
+  public static final String REASON_TENANT_SUSPENDED = "워크스페이스가 정지되어 실행하지 않았습니다";
+
   /** 실행 주체에게 요구하는 권한 — 직접 실행 API 와 같다(WD-167). */
   private static final String EXECUTE_PERMISSION = "pipeline:execute";
 
@@ -104,6 +111,8 @@ public class TriggerService {
   private final MemberEligibility memberEligibility;
   // 자격 문제로 건너뛸 때 파이프라인 주인·관리자에게 처음 한 번만 알린다(WD-169)
   private final TriggerCreatorSkipNotifier creatorSkipNotifier;
+  // 발화 시점 워크스페이스(테넌트) 상태 확인 — 정지된 워크스페이스의 트리거는 아예 실행하지 않는다(WD-174)
+  private final TenantRepository tenantRepository;
 
   public TriggerService(
       TriggerRepository triggerRepository,
@@ -115,7 +124,8 @@ public class TriggerService {
       DatasetAccessGuard datasetAccessGuard,
       ClearanceResolver clearanceResolver,
       MemberEligibility memberEligibility,
-      TriggerCreatorSkipNotifier creatorSkipNotifier) {
+      TriggerCreatorSkipNotifier creatorSkipNotifier,
+      TenantRepository tenantRepository) {
     this.triggerRepository = triggerRepository;
     this.triggerEventRepository = triggerEventRepository;
     this.triggerTenantResolver = triggerTenantResolver;
@@ -126,6 +136,7 @@ public class TriggerService {
     this.clearanceResolver = clearanceResolver;
     this.memberEligibility = memberEligibility;
     this.creatorSkipNotifier = creatorSkipNotifier;
+    this.tenantRepository = tenantRepository;
   }
 
   /**
@@ -522,6 +533,19 @@ public class TriggerService {
    */
   @Transactional
   public TriggerFireResult fireTrigger(Long triggerId, Map<String, Object> params) {
+    // 워크스페이스 정지 관문(WD-174) — 다른 어떤 판정보다 먼저 본다. 예약(cron 콜백·놓친 발화)·연쇄·데이터 변경·외부 API·웹훅이 모두 이
+    // 메서드를 지나므로 여기 한 곳이 모든 트리거 경로의 차단 지점이다. 예전에는 정지 후에도 등록된 cron 이 남아 매 주기 실행이 COMPLETED 됐고,
+    // WD-169 이후에는 만든 사람 자격 판정(hasActiveMembership 이 테넌트 ACTIVE 도 본다)에 걸려 「만든 사람이 정지·제거」라는 틀린 사유의
+    // SKIPPED 이벤트와 관리자 알림이 쌓였다. 정지는 운영자가 의도한 상태이므로 이벤트·알림·상태 갱신 없이 log.info 한 줄로 끝낸다.
+    // 외부 호출 경로에서는 토큰·IP·서명 검사를 이미 통과한 뒤라 정지 사실을 돌려줘도 인증 전 정보 노출이 아니다.
+    long firingTenantId = TenantContext.require("트리거 발화 워크스페이스 상태 확인");
+    if (!tenantRepository.isActive(firingTenantId)) {
+      log.info(
+          "Trigger {} not fired: tenant {} is not active (suspended)", triggerId, firingTenantId);
+      return TriggerFireResult.notFired(
+          TriggerFireResult.Outcome.TENANT_SUSPENDED, REASON_TENANT_SUSPENDED);
+    }
+
     TriggerResponse trigger;
     try {
       trigger = triggerRepository.findById(triggerId).orElse(null);

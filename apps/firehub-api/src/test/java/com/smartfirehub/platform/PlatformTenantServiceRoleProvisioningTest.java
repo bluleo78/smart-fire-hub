@@ -22,6 +22,7 @@ import com.smartfirehub.platform.service.PlatformAuditRecorder;
 import com.smartfirehub.platform.service.PlatformTenantService;
 import com.smartfirehub.platform.service.TenantDataStoreSetupService;
 import com.smartfirehub.platform.service.TenantDataStoreSetupService.SetupOutcome;
+import com.smartfirehub.platform.service.TenantScheduleResumer;
 import com.smartfirehub.user.dto.UserResponse;
 import com.smartfirehub.user.repository.UserRepository;
 import java.time.LocalDateTime;
@@ -51,6 +52,7 @@ class PlatformTenantServiceRoleProvisioningTest {
   @Mock TenantPipelineRoleProvisioner pipelineRoleProvisioner;
   @Mock PlatformAuditRecorder auditRecorder;
   @Mock TenantDataStoreSetupService dataStoreSetupService;
+  @Mock TenantScheduleResumer scheduleResumer;
 
   @InjectMocks PlatformTenantService service;
 
@@ -172,12 +174,15 @@ class PlatformTenantServiceRoleProvisioningTest {
 
     service.activate(42L, 1L);
 
-    InOrder order = inOrder(tenantRepository, auditRecorder, pipelineRoleProvisioner);
+    InOrder order =
+        inOrder(tenantRepository, auditRecorder, pipelineRoleProvisioner, scheduleResumer);
     order.verify(tenantRepository).updateStatus(42L, "ACTIVE");
     order
         .verify(auditRecorder)
         .record(eq(1L), eq("TENANT_ACTIVATE"), eq("tenant"), eq("42"), anyString(), anyMap());
     order.verify(pipelineRoleProvisioner).ensureRoleIfAutoProvisionEnabled(42L);
+    // 예약 재등록(WD-174)은 커밋 뒤로 미뤄 건다 — 롤 보장이 실패해 롤백되면 걸리지 않게 마지막에 둔다
+    order.verify(scheduleResumer).resumeAfterCommit(42L);
   }
 
   /** 롤 보장 실패는 전파한다 — 삼키면 "ACTIVE 인데 롤 없음"이 커밋된다. 전파하면 @Transactional 이 상태 변경을 롤백한다. */
@@ -202,5 +207,7 @@ class PlatformTenantServiceRoleProvisioningTest {
 
     verify(tenantRepository).updateStatus(42L, "SUSPENDED");
     verifyNoInteractions(pipelineRoleProvisioner);
+    // 무변화 재개와 정지는 예약을 다시 걸지 않는다(WD-174) — 정지 중 발화는 발화 시점 관문이 막는다
+    verifyNoInteractions(scheduleResumer);
   }
 }

@@ -5,6 +5,7 @@ import com.smartfirehub.global.tenant.TenantScopedRunner;
 import com.smartfirehub.proactive.dto.ProactiveJobResponse;
 import com.smartfirehub.proactive.repository.ProactiveJobRepository;
 import com.smartfirehub.proactive.util.ProactiveCron;
+import com.smartfirehub.tenant.repository.TenantRepository;
 import jakarta.annotation.PostConstruct;
 import java.time.ZoneId;
 import java.util.List;
@@ -25,15 +26,19 @@ public class ProactiveJobSchedulerService {
   private final ProactiveJobRepository proactiveJobRepository;
   private final ProactiveJobService proactiveJobService;
   private final TenantScopedRunner tenantScopedRunner;
+  // 발화 시점 워크스페이스(테넌트) 상태 확인 — 정지된 워크스페이스의 예약 작업은 아예 시작하지 않는다(WD-174)
+  private final TenantRepository tenantRepository;
   private final ConcurrentHashMap<Long, ScheduledFuture<?>> scheduledTasks =
       new ConcurrentHashMap<>();
 
   public ProactiveJobSchedulerService(
       ProactiveJobRepository proactiveJobRepository,
       TenantScopedRunner tenantScopedRunner,
-      @Lazy ProactiveJobService proactiveJobService) {
+      @Lazy ProactiveJobService proactiveJobService,
+      TenantRepository tenantRepository) {
     this.proactiveJobRepository = proactiveJobRepository;
     this.tenantScopedRunner = tenantScopedRunner;
+    this.tenantRepository = tenantRepository;
     this.proactiveJobService = proactiveJobService;
 
     ThreadPoolTaskScheduler scheduler = new ThreadPoolTaskScheduler();
@@ -57,25 +62,44 @@ public class ProactiveJobSchedulerService {
    */
   @PostConstruct
   public void reloadAllSchedules() {
-    tenantScopedRunner.forEachActiveTenant(
-        tenantId -> {
-          List<ProactiveJobResponse> jobs = proactiveJobRepository.findAllEnabled(tenantId);
-          log.info("Reloading {} enabled proactive jobs (tenant={})", jobs.size(), tenantId);
+    tenantScopedRunner.forEachActiveTenant(tenantId -> registerTenantSchedules(tenantId));
+  }
 
-          for (ProactiveJobResponse job : jobs) {
-            try {
-              if (job.cronExpression() != null && !job.cronExpression().isBlank()) {
-                registerSchedule(job.id(), job.cronExpression(), job.timezone());
-              }
-            } catch (Exception e) {
-              log.error(
-                  "Failed to register proactive job schedule {} (tenant={}): {}",
-                  job.id(),
-                  tenantId,
-                  e.getMessage());
-            }
-          }
-        });
+  /**
+   * 현재 테넌트의 활성 스마트 작업 크론을 전부 (재)등록한다. 기동 순회와 워크스페이스 정지 해제(WD-174)가 같은 본문을 쓴다.
+   *
+   * <p>정지 해제에서 필요한 이유: 기동 재등록은 ACTIVE 테넌트만 돌므로, 정지 중 api 가 재기동되면 그 워크스페이스의 작업은 등록되지 않은 채 남는다 — 해제해도
+   * 다음 재기동까지 예약 실행이 돌지 않았다. 이미 등록된 작업을 다시 불러도 {@link #doRegister} 의 {@code compute()} 가 옛 스케줄을 취소하고
+   * 바꿔 끼우므로 중복 등록되지 않는다(멱등).
+   *
+   * <p><b>호출 규약</b>: 테넌트 컨텍스트가 {@code tenantId} 로 서 있고, 다른 트랜잭션에 묶이지 않은 스레드에서 불러야 한다 — 리포지토리 호출마다
+   * 자기 트랜잭션이 열려 그 테넌트 GUC 가 주입된다(기동 순회, 정지 해제의 새 스레드 모두 그렇다).
+   *
+   * @return 조회된 활성 작업 수
+   */
+  public int registerTenantSchedules(long tenantId) {
+    List<ProactiveJobResponse> jobs = proactiveJobRepository.findAllEnabled(tenantId);
+    log.info("Reloading {} enabled proactive jobs (tenant={})", jobs.size(), tenantId);
+
+    for (ProactiveJobResponse job : jobs) {
+      try {
+        if (job.cronExpression() != null && !job.cronExpression().isBlank()) {
+          registerSchedule(job.id(), job.cronExpression(), job.timezone());
+        }
+      } catch (Exception e) {
+        log.error(
+            "Failed to register proactive job schedule {} (tenant={}): {}",
+            job.id(),
+            tenantId,
+            e.getMessage());
+      }
+    }
+    return jobs.size();
+  }
+
+  /** 이 작업의 크론이 현재 이 인스턴스에 걸려 있는지(WD-174 정지 해제 재등록 확인용). */
+  public boolean isScheduled(Long jobId) {
+    return scheduledTasks.containsKey(jobId);
   }
 
   /**
@@ -164,6 +188,14 @@ public class ProactiveJobSchedulerService {
    * 테넌트를 알아내는 순서는 <b>불가능하다</b>(0행). 컨텍스트가 먼저, 잡 조회가 나중이다.
    */
   public void runScheduledJob(Long jobId) {
+    // 워크스페이스 정지 관문(WD-174) — 잡 조회·비동기 실행 제출보다 먼저 본다. 정지 후에도 등록된 크론이 남아 매 주기 그 워크스페이스 AI 자격증명으로
+    // AI 를 부르고 메일을 보내던 결함의 수정이다. WD-166 의 주인 자격 확인에 맡기면 매 주기 「작업 주인이 정지됐거나…」라는 틀린 사유의 FAILED
+    // 실행 행이 쌓이므로, 그보다 앞에서 실행 행·전달 없이 log.info 한 줄로 끝낸다. 크론은 그대로 둔다 — 해제하면 다음 주기부터 저절로 돈다.
+    long tenantId = TenantContext.require("스마트 작업 예약 발화 워크스페이스 상태 확인");
+    if (!tenantRepository.isActive(tenantId)) {
+      log.info("Scheduled proactive job {} not run: tenant {} is not active", jobId, tenantId);
+      return;
+    }
     try {
       // system execution — userId를 job owner로 단일 조회
       proactiveJobRepository

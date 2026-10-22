@@ -92,6 +92,36 @@ public class TriggerSchedulerService {
   }
 
   /**
+   * 현재 테넌트의 활성 SCHEDULE 트리거를 전부 (재)등록한다 — 워크스페이스 정지 해제 전용(WD-174).
+   *
+   * <p>기동 재등록({@link #reloadAllSchedules})은 ACTIVE 테넌트만 돌므로, 정지 중 api 가 재기동되면 그 워크스페이스의 예약은 등록되지 않은
+   * 채 남아 정지를 풀어도 다음 재기동까지 돌지 않았다. 이미 등록된 트리거를 다시 불러도 {@link #registerSchedule} 의 {@code compute()}
+   * 가 옛 스케줄을 취소하고 바꿔 끼우므로 중복 등록되지 않는다(멱등).
+   *
+   * <p><b>놓친 발화({@link #detectMissedFire})는 보지 않는다.</b> 정지 중 지나간 발화는 운영자가 의도해 막은 것이라, 해제 순간 MISSED
+   * 이벤트를 남기고 따라잡기 실행을 시작하면 안 된다. {@code registerSchedule} 이 다음 실행 시각을 "지금부터"로 덮어써 정지 중 낡은 값도 함께
+   * 정리된다.
+   *
+   * <p><b>호출 규약</b>: 테넌트 컨텍스트가 서 있고, 다른 트랜잭션에 묶이지 않은 스레드에서 불러야 한다 — 기동 재등록과 같이 리포지토리 호출마다 자기 트랜잭션이
+   * 열려 그 테넌트 GUC 가 주입된다. 정지 해제 쪽이 커밋 뒤 새 스레드에서 부른다.
+   *
+   * @return 등록을 시도한 트리거 수
+   */
+  public int registerTenantSchedules() {
+    long tenantId = TenantContext.require("워크스페이스 재개 시 예약 트리거 재등록");
+    List<TriggerResponse> schedules = triggerRepository.findEnabledByType("SCHEDULE");
+    log.info(
+        "Re-registering {} schedule triggers on tenant resume (tenant={})",
+        schedules.size(),
+        tenantId);
+    for (TriggerResponse trigger : schedules) {
+      // 한 트리거의 잘못된 값이 나머지 등록을 막지 않게 하나씩 격리한다(실패는 경고 후 "스케줄 없음"으로 정리)
+      registerScheduleAfterCommit(trigger.id(), trigger.config());
+    }
+    return schedules.size();
+  }
+
+  /**
    * Register a cron schedule using ConcurrentHashMap.compute() for atomic registration.
    *
    * <p>이 스케줄러 풀({@code ThreadPoolTaskScheduler})에는 {@code TaskDecorator} 가 없다. 발화는 몇 시간 뒤 풀 스레드에서
