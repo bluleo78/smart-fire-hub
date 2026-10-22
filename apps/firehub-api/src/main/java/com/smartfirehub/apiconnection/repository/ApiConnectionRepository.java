@@ -244,6 +244,15 @@ public class ApiConnectionRepository {
         dsl.selectOne().from(API_CONNECTION).where(AC_NAME.eq(name)).and(AC_ID.ne(excludeId)));
   }
 
+  /**
+   * 이 id 의 API 연결이 현재 워크스페이스에서 보이는지 확인한다(WD-176). {@link #existsByName} 과 같이 RLS(V96) 정책이 {@code
+   * app.tenant_id} GUC 로 걸러 주므로, 다른 워크스페이스의 연결과 없는 연결은 똑같이 {@code false} 다. 외래키 검사는 RLS 를 우회해 다른
+   * 워크스페이스 행도 통과시키므로, 참조를 저장하기 전에는 반드시 이 조회로 확인해야 한다.
+   */
+  public boolean existsById(Long id) {
+    return dsl.fetchExists(dsl.selectOne().from(API_CONNECTION).where(AC_ID.eq(id)));
+  }
+
   public void deleteById(Long id) {
     dsl.deleteFrom(API_CONNECTION).where(AC_ID.eq(id)).execute();
   }
