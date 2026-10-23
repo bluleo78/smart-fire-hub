@@ -134,6 +134,15 @@ const ROLE_ACTION_TYPES = [
 ];
 
 /**
+ * 스마트 작업 관리 액션(WD-192) — ProactiveJobAdminService(proactive:admin)가 남의 작업을 끄거나 삭제할 때 남긴다.
+ * - resource=proactive_job, resourceId=작업 id. 작성자 본인의 끄기·삭제는 감사 대상이 아니다(관리 행위만 기록).
+ */
+const PROACTIVE_ADMIN_ACTION_TYPES = [
+  { value: 'PROACTIVE_JOB_ADMIN_DISABLE', label: '스마트 작업 관리자 끄기' },
+  { value: 'PROACTIVE_JOB_ADMIN_DELETE', label: '스마트 작업 관리자 삭제' },
+];
+
+/**
  * 액션 필터 드롭다운 그룹 — 항목이 30개를 넘어 성격별로 나눠 찾기 쉽게 한다.
  * 라벨 매핑(ACTION_LABEL_MAP)은 그룹과 무관하게 평면 목록(ACTION_TYPES)에서 만든다.
  */
@@ -143,6 +152,7 @@ const ACTION_GROUPS = [
   { label: '역할·권한', items: ROLE_ACTION_TYPES },
   { label: '데이터셋 보안', items: DATASET_SECURITY_ACTION_TYPES },
   { label: '보안 설정', items: SECURITY_SETTINGS_ACTION_TYPES },
+  { label: '스마트 작업 관리', items: PROACTIVE_ADMIN_ACTION_TYPES },
 ];
 
 /** 전체 액션 유형(평면) — 라벨 매핑용 */
@@ -266,6 +276,8 @@ const RESOURCES = [
   { value: 'query_result', label: '쿼리 결과' },
   // HostingChangeAuditor.RESOURCE — resourceId 는 슬롯 이름(CHAT/CLASSIFY/EMBEDDING)이다(WD-49).
   { value: 'ai_provider_hosting', label: 'AI 호스팅 위치' },
+  // ProactiveJobAdminService.AUDIT_RESOURCE — 관리자 끄기·삭제(WD-192)
+  { value: 'proactive_job', label: '스마트 작업' },
 ];
 
 /** 결과 필터 옵션 목록 */

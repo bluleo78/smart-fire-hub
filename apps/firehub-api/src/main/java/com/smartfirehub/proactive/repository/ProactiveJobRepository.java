@@ -278,6 +278,83 @@ public class ProactiveJobRepository {
     dsl.deleteFrom(PROACTIVE_JOB).where(PJ_ID.eq(id).and(PJ_USER_ID.eq(userId))).execute();
   }
 
+  // ── 관리자(proactive:admin) 경로(WD-192) ─────────────────────────────────────────
+  // 요청 경로에서 user_id 조건 없이 도는 유일한 조회·변경들이다. RLS 에만 기대지 않고 tenant_id 를 명시한다
+  // (findAllEnabled 선례) — 정책이 빠지거나 바뀌어도 다른 워크스페이스 작업이 보이거나 꺼지지 않게.
+
+  private static final Table<?> USER_TABLE = table(name("user"));
+  private static final Field<Long> U_ID = field(name("user", "id"), Long.class);
+  private static final Field<String> U_NAME = field(name("user", "name"), String.class);
+
+  /**
+   * 관리자 목록용 최소 행 — 작업 내용(프롬프트·설정)은 읽지 않는다.
+   *
+   * @param ownerId 작성자 id (자격 판정용, 응답에는 싣지 않는다)
+   */
+  public record WorkspaceJobRow(
+      Long id,
+      String name,
+      Long ownerId,
+      String ownerName,
+      Boolean enabled,
+      LocalDateTime nextExecuteAt,
+      String timezone) {}
+
+  /** 이 워크스페이스의 스마트 작업 전부(최소 열 + 작성자 이름). 작성자 이름은 같은 질의에서 조인해 N+1 을 피한다. */
+  public List<WorkspaceJobRow> findWorkspaceRows(long tenantId) {
+    return dsl.select(
+            PJ_ID, PJ_NAME, PJ_USER_ID, U_NAME, PJ_ENABLED, PJ_NEXT_EXECUTE_AT, PJ_TIMEZONE)
+        .from(PROACTIVE_JOB)
+        .leftJoin(USER_TABLE)
+        .on(U_ID.eq(PJ_USER_ID))
+        .where(PJ_TENANT_ID.eq(tenantId))
+        .orderBy(PJ_ID.desc())
+        .fetch(
+            r ->
+                new WorkspaceJobRow(
+                    r.get(PJ_ID),
+                    r.get(PJ_NAME),
+                    r.get(PJ_USER_ID),
+                    r.get(U_NAME),
+                    r.get(PJ_ENABLED),
+                    r.get(PJ_NEXT_EXECUTE_AT),
+                    r.get(PJ_TIMEZONE)));
+  }
+
+  /** 이 워크스페이스의 작업 한 건(최소 행). 다른 워크스페이스·없는 작업이면 빈 값 — 호출자가 404 로 바꾼다. */
+  public Optional<WorkspaceJobRow> findWorkspaceRow(Long id, long tenantId) {
+    return dsl.select(
+            PJ_ID, PJ_NAME, PJ_USER_ID, U_NAME, PJ_ENABLED, PJ_NEXT_EXECUTE_AT, PJ_TIMEZONE)
+        .from(PROACTIVE_JOB)
+        .leftJoin(USER_TABLE)
+        .on(U_ID.eq(PJ_USER_ID))
+        .where(PJ_ID.eq(id).and(PJ_TENANT_ID.eq(tenantId)))
+        .fetchOptional(
+            r ->
+                new WorkspaceJobRow(
+                    r.get(PJ_ID),
+                    r.get(PJ_NAME),
+                    r.get(PJ_USER_ID),
+                    r.get(U_NAME),
+                    r.get(PJ_ENABLED),
+                    r.get(PJ_NEXT_EXECUTE_AT),
+                    r.get(PJ_TIMEZONE)));
+  }
+
+  /** 관리자 끄기 — enabled 만 false 로 바꾼다. 켜기는 이 경로로 하지 않는다(자격 없는 사람이 자동 실행을 늘리면 안 된다). */
+  public void disableInTenant(Long id, long tenantId) {
+    dsl.update(PROACTIVE_JOB)
+        .set(PJ_ENABLED, false)
+        .set(PJ_UPDATED_AT, ProactiveTime.nowUtc())
+        .where(PJ_ID.eq(id).and(PJ_TENANT_ID.eq(tenantId)))
+        .execute();
+  }
+
+  /** 관리자 삭제 — 작성자와 무관하게 이 워크스페이스의 작업을 지운다. */
+  public void deleteInTenant(Long id, long tenantId) {
+    dsl.deleteFrom(PROACTIVE_JOB).where(PJ_ID.eq(id).and(PJ_TENANT_ID.eq(tenantId))).execute();
+  }
+
   private ProactiveJobResponse toResponse(
       org.jooq.Record r,
       com.smartfirehub.proactive.dto.ProactiveJobExecutionResponse lastExecution) {

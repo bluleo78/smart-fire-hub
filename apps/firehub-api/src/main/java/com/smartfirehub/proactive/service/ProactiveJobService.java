@@ -135,7 +135,23 @@ public class ProactiveJobService {
 
   @Transactional(readOnly = true)
   public List<ProactiveJobResponse> getJobs(Long userId) {
-    return withLastExecutions(proactiveJobRepository.findByUserId(userId));
+    return withOwnerEligibility(
+        withLastExecutions(proactiveJobRepository.findByUserId(userId)), userId);
+  }
+
+  /**
+   * 작업 주인의 실행 자격 판정을 붙인다(WD-192).
+   *
+   * <p>여기 오는 작업은 모두 요청자 본인 것이라 주인이 한 명뿐이다 — 판정을 한 번만 하고 모든 행에 같은 값을 싣는다(작업 수만큼 조회하지 않는다). 판정은 실행기가
+   * 실행 직전에 보는 것과 같은 {@link ProactiveOwnerEligibility} 다.
+   */
+  private List<ProactiveJobResponse> withOwnerEligibility(
+      List<ProactiveJobResponse> jobs, Long ownerId) {
+    if (jobs.isEmpty()) {
+      return jobs;
+    }
+    var code = ownerEligibility.findIneligibilityCode(ownerId);
+    return jobs.stream().map(job -> job.withOwnerEligibility(code)).toList();
   }
 
   /**
@@ -160,7 +176,7 @@ public class ProactiveJobService {
             .findById(id, userId)
             .orElseThrow(
                 () -> new ProactiveJobNotFoundException("Proactive Job을 찾을 수 없습니다: " + id));
-    return withLastExecutions(List.of(job)).get(0);
+    return withOwnerEligibility(withLastExecutions(List.of(job)), userId).get(0);
   }
 
   /**
@@ -218,7 +234,7 @@ public class ProactiveJobService {
         && !job.cronExpression().isBlank()) {
       schedulerService.registerSchedule(job.id(), job.cronExpression(), job.timezone());
     }
-    return job;
+    return withOwnerEligibility(List.of(job), userId).get(0);
   }
 
   @Transactional
@@ -256,6 +272,19 @@ public class ProactiveJobService {
     requireOwnJob(id, userId);
     schedulerService.unregisterSchedule(id);
     proactiveJobRepository.delete(id, userId);
+  }
+
+  /**
+   * 내 작업 끄기(WD-192) — 컨트롤러가 proactive:read 만으로 허용하는 유일한 상태 변경이다.
+   *
+   * <p>작성자가 스마트 작업 쓰기 권한을 잃으면 작업은 「활성」인 채 실행 때마다 건너뛰는데(WD-166), 끄기·삭제까지 쓰기 권한을 요구하면 본인조차 정리할 수 없었다.
+   * 그래서 끄기는 읽기 권한으로 열되 <b>끄기만</b> 한다 — 켜기는 자동 실행을 늘리므로 여전히 쓰기 권한이 필요한 PUT 으로만 한다. 남의 작업·없는 작업은
+   * 404(WD-165 와 같다).
+   */
+  @Transactional
+  public void disableOwnJob(Long id, Long userId) {
+    requireOwnJob(id, userId);
+    toggleJob(id, userId, false);
   }
 
   @Transactional

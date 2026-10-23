@@ -14,6 +14,8 @@ export function ProactiveWriteNotice({ subject, testId }: ProactiveWriteNoticePr
   return (
     <p className="text-sm text-muted-foreground" data-testid={testId}>
       {subject}을 만들거나 바꾸려면 스마트 작업 쓰기 권한이 필요합니다. 관리자에게 권한을 요청하세요.
+      {/* 작업 화면만: 쓰기 권한이 없어도 내 작업은 끄거나 삭제할 수 있다(WD-192) — 버튼이 왜 둘만 남았는지 함께 알린다 */}
+      {subject === '스마트 작업' && ' 내 작업을 끄거나 삭제하는 것은 지금 권한으로도 할 수 있습니다.'}
     </p>
   );
 }

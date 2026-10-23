@@ -14,6 +14,8 @@ import { useMyPermissions } from './useMyPermissions';
 
 const KEYS = {
   jobs: ['proactive', 'jobs'] as const,
+  // 워크스페이스 전체(관리자) 목록 — 'jobs' 접두사 아래에 두어 내 작업 변경 시 함께 무효화된다
+  workspaceJobs: ['proactive', 'jobs', 'workspace'] as const,
   job: (id: number) => ['proactive', 'jobs', id] as const,
   executions: (jobId: number) => ['proactive', 'executions', jobId] as const,
   recipients: (search: string) => ['proactive', 'recipients', search] as const,
@@ -38,6 +40,15 @@ const KEYS = {
 export function useCanWriteProactive() {
   const { permissions, isLoading } = useMyPermissions();
   return { canWrite: permissions.has('proactive:write'), isLoading };
+}
+
+/**
+ * 워크스페이스 전체 스마트 작업을 보고 끄거나 삭제할 수 있는가 (WD-192, proactive:admin).
+ * 이 권한으로도 남의 작업 열람·편집·켜기·지금 실행은 할 수 없다(서버가 막는다) — 화면은 「워크스페이스 전체」 보기 노출에만 쓴다.
+ */
+export function useCanAdminProactive() {
+  const { permissions, isLoading } = useMyPermissions();
+  return { canAdmin: permissions.has('proactive:admin'), isLoading };
 }
 
 /** 실행 중 폴링 간격 — 실행 이력 탭(JobExecutionsTab)과 같은 5초. */
@@ -105,6 +116,53 @@ export function useDeleteProactiveJob() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (id: number) => proactiveApi.deleteJob(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: KEYS.jobs });
+    },
+  });
+}
+
+/**
+ * 내 작업 끄기 (WD-192) — 쓰기 권한이 없는 작성자도 쓸 수 있도록 PUT(쓰기 권한) 대신 끄기 전용 엔드포인트를 쓴다.
+ * 쓰기 권한이 있는 사람도 같은 경로로 끈다 — 끄기 경로를 하나로 둬 권한별 분기를 없앤다.
+ */
+export function useDisableProactiveJob() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => proactiveApi.disableJob(id),
+    onSuccess: (_data, id) => {
+      queryClient.invalidateQueries({ queryKey: KEYS.jobs });
+      queryClient.invalidateQueries({ queryKey: KEYS.job(id) });
+    },
+  });
+}
+
+/** 워크스페이스 전체 스마트 작업 목록 (WD-192, proactive:admin 전용) — 권한이 있을 때만 enabled 로 부른다. */
+export function useWorkspaceProactiveJobs(options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: KEYS.workspaceJobs,
+    queryFn: () => proactiveApi.getWorkspaceJobs().then((r) => r.data),
+    enabled: options?.enabled ?? true,
+  });
+}
+
+/** 관리자 끄기 (WD-192) — 남의 작업이라도 끈다. 켜기는 없다. */
+export function useAdminDisableProactiveJob() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => proactiveApi.adminDisableJob(id),
+    onSuccess: () => {
+      // 내 작업 목록·상세에도 같은 작업이 있을 수 있어 jobs 접두사 전체를 무효화한다
+      queryClient.invalidateQueries({ queryKey: KEYS.jobs });
+    },
+  });
+}
+
+/** 관리자 삭제 (WD-192) — 남의 작업이라도 삭제한다. */
+export function useAdminDeleteProactiveJob() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => proactiveApi.adminDeleteJob(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: KEYS.jobs });
     },

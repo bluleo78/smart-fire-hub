@@ -2,6 +2,9 @@ package com.smartfirehub.proactive.service;
 
 import com.smartfirehub.global.security.MemberEligibility;
 import com.smartfirehub.global.tenant.TenantContext;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -24,6 +27,15 @@ public class ProactiveOwnerEligibility {
 
   /** 작업 주인에게 실행 워크스페이스의 스마트 작업 쓰기 권한(proactive:write)이 없어 건너뛴 사유(WD-166). */
   public static final String REASON_OWNER_NO_PERMISSION = "작업 주인에게 스마트 작업 권한이 없어 실행하지 않았습니다";
+
+  /**
+   * 화면용 사유 코드(WD-192) — 작업 응답의 {@code ownerIneligibleReason}. 실행 이력 문구(위 REASON_*)와 같은 판정에서 나오지만,
+   * 웹이 문구를 직접 고르도록 기계 코드로 준다. 계정 비활성·멤버십 정지·워크스페이스 제거.
+   */
+  public static final String CODE_OWNER_INACTIVE = "OWNER_INACTIVE";
+
+  /** 화면용 사유 코드(WD-192) — 작업 주인에게 이 워크스페이스의 proactive:write 가 없다(역할·권한 회수). */
+  public static final String CODE_OWNER_NO_PERMISSION = "OWNER_NO_PERMISSION";
 
   /** 스마트 작업을 만들고 고칠 수 있는 권한 — 작업 생성·수정·지금 실행 API 가 요구하는 것과 같다. */
   static final String REQUIRED_PERMISSION = "proactive:write";
@@ -48,6 +60,40 @@ public class ProactiveOwnerEligibility {
       case INACTIVE -> Optional.of(REASON_OWNER_INACTIVE);
       // 역할 회수·권한 회수
       case NO_PERMISSION -> Optional.of(REASON_OWNER_NO_PERMISSION);
+      case ELIGIBLE -> Optional.empty();
+    };
+  }
+
+  /**
+   * 작업 주인이 지금 실행 자격이 있는지 화면용 사유 코드로 본다(WD-192). 실행기가 쓰는 {@link #findIneligibilityReason} 과 같은 판정이라
+   * 목록·상세의 「실행되지 않음」 표시가 실제 실행 건너뜀과 어긋나지 않는다.
+   *
+   * @return 자격이 없으면 {@link #CODE_OWNER_INACTIVE}·{@link #CODE_OWNER_NO_PERMISSION}, 있으면 빈 값
+   */
+  public Optional<String> findIneligibilityCode(Long ownerId) {
+    long tenantId = TenantContext.require("스마트 작업 주인 자격 표시");
+    return codeOf(memberEligibility.check(ownerId, tenantId, REQUIRED_PERMISSION));
+  }
+
+  /**
+   * 여러 작업 주인의 자격을 한 번에 본다(WD-192 — 워크스페이스 전체 목록의 N+1 방지). 판정 규칙은 {@link #findIneligibilityCode} 와
+   * 같은 {@code MemberEligibility} 를 배치로 쓴다.
+   *
+   * @return 주인 id → 사유 코드(자격이 있으면 빈 값). 입력의 id 는 모두 키로 나온다
+   */
+  public Map<Long, Optional<String>> findIneligibilityCodes(Collection<Long> ownerIds) {
+    long tenantId = TenantContext.require("스마트 작업 주인 자격 표시");
+    Map<Long, Optional<String>> result = new HashMap<>();
+    memberEligibility
+        .checkAll(ownerIds, tenantId, REQUIRED_PERMISSION)
+        .forEach((ownerId, status) -> result.put(ownerId, codeOf(status)));
+    return result;
+  }
+
+  private static Optional<String> codeOf(MemberEligibility.Status status) {
+    return switch (status) {
+      case INACTIVE -> Optional.of(CODE_OWNER_INACTIVE);
+      case NO_PERMISSION -> Optional.of(CODE_OWNER_NO_PERMISSION);
       case ELIGIBLE -> Optional.empty();
     };
   }

@@ -19,11 +19,12 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { useCanWriteProactive,useCloneProactiveJob, useCreateProactiveJob, useDeleteProactiveJob, useExecuteProactiveJob, useProactiveJob, useProactiveTemplates, useUpdateProactiveJob } from '@/hooks/queries/useProactiveMessages';
+import { useCanWriteProactive,useCloneProactiveJob, useCreateProactiveJob, useDeleteProactiveJob, useDisableProactiveJob, useExecuteProactiveJob, useProactiveJob, useProactiveTemplates, useUpdateProactiveJob } from '@/hooks/queries/useProactiveMessages';
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import { handleApiError, isForbiddenError } from '@/lib/api-error';
 import { type ProactiveJobFormValues,proactiveJobSchema } from '@/lib/validations/proactive-job';
 
+import { OwnerIneligibleBadge } from './components/OwnerIneligibleBadge';
 import { ProactiveReadForbiddenNotice } from './components/ProactiveReadForbiddenNotice';
 import { ProactiveWriteNotice } from './components/ProactiveWriteNotice';
 import JobExecutionsTab from './tabs/JobExecutionsTab';
@@ -147,6 +148,7 @@ export default function ProactiveJobDetailPage() {
   const createMutation = useCreateProactiveJob();
   const updateMutation = useUpdateProactiveJob();
   const deleteMutation = useDeleteProactiveJob();
+  const disableMutation = useDisableProactiveJob();
   const executeMutation = useExecuteProactiveJob();
   const cloneMutation = useCloneProactiveJob();
 
@@ -248,6 +250,15 @@ export default function ProactiveJobDetailPage() {
         navigate('/ai-insights/jobs');
       },
       onError: (err) => handleApiError(err, '작업 삭제에 실패했습니다.'),
+    });
+  };
+
+  // 끄기 — 쓰기 권한이 없는 작성자도 쓸 수 있는 끄기 전용 API (WD-192). 켜기는 편집(쓰기 권한)으로만 한다.
+  const handleDisable = () => {
+    if (!job) return;
+    disableMutation.mutate(jobId, {
+      onSuccess: () => toast.success('작업이 비활성화되었습니다.'),
+      onError: (err) => handleApiError(err, '작업을 끄지 못했습니다.'),
     });
   };
 
@@ -380,6 +391,10 @@ export default function ProactiveJobDetailPage() {
                   {job.enabled ? '활성' : '비활성'}
                 </Badge>
               )}
+              {/* 「활성」이어도 작성자 자격이 없으면 실행 때마다 건너뛴다 — 정상처럼 보이지 않게 배지로 알린다 (WD-192) */}
+              {!isNew && job?.ownerEligible === false && (
+                <OwnerIneligibleBadge reason={job.ownerIneligibleReason} variant="badge" />
+              )}
               {/* 미저장 변경사항 표시 — #56/#57/#58과 동일 시각 패턴 (이슈 #59) */}
               {isDirty && (
                 <span className="text-xs text-muted-foreground flex items-center gap-1">
@@ -426,6 +441,32 @@ export default function ProactiveJobDetailPage() {
                     size="sm"
                     disabled={deleteMutation.isPending}
                   >
+                    삭제
+                  </Button>
+                }
+              />
+            </>
+          )}
+          {/* 쓰기 권한이 없는 작성자에게는 끄기·삭제만 보인다 (WD-192) — 권한을 잃은 뒤에도 자기 작업을 정리할 수 있게.
+              서버는 끄기·삭제를 읽기 권한으로 허용하고 편집·켜기·복제·지금 실행은 여전히 쓰기 권한을 요구한다. */}
+          {!isNew && !isEditing && !isPermissionsLoading && !canWrite && job && (
+            <>
+              {job.enabled && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleDisable}
+                  disabled={disableMutation.isPending}
+                >
+                  끄기
+                </Button>
+              )}
+              <DeleteConfirmDialog
+                entityName="스마트 작업"
+                itemName={job.name}
+                onConfirm={handleDelete}
+                trigger={
+                  <Button variant="destructive" size="sm" disabled={deleteMutation.isPending}>
                     삭제
                   </Button>
                 }

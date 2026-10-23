@@ -70,6 +70,9 @@ export function createJob(overrides?: Partial<ProactiveJob>): ProactiveJob {
     createdAt: '2024-01-01T00:00:00Z',
     updatedAt: '2024-01-01T00:00:00Z',
     lastExecution: null,
+    // 기본은 작성자가 실행 자격이 있는 작업 — 「작성자 권한 없음」 시나리오는 false 로 덮어쓴다 (WD-192)
+    ownerEligible: true,
+    ownerIneligibleReason: null,
     ...overrides,
   };
 }

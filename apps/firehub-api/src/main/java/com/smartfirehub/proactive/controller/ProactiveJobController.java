@@ -81,8 +81,27 @@ public class ProactiveJobController {
     return ResponseEntity.noContent().build();
   }
 
+  /**
+   * 내 작업 끄기(WD-192) — proactive:read 만으로 된다.
+   *
+   * <p>작성자가 쓰기 권한을 잃으면 작업은 「활성」인 채 실행 때마다 건너뛰는데(WD-166), 끄기가 PUT(쓰기 권한)에만 있으면 본인도 끌 수 없었다. PUT 의
+   * 권한을 읽기로 낮추고 "끄기만 하는 요청"을 서비스에서 판별하는 대신 끄기 전용 엔드포인트를 둔다 — {@code @RequirePermission} 은 메서드 단위라,
+   * PUT 을 낮추면 쓰기 권한 확인이 손으로 짠 판별 로직에 달리고 그 판별이 새 필드 하나를 놓치면 곧 권한 상승이 된다. 켜기는 여전히 PUT(쓰기 권한)으로만 한다.
+   */
+  @PostMapping("/{id}/disable")
+  @RequirePermission("proactive:read")
+  public ResponseEntity<Void> disableJob(@PathVariable Long id, Authentication authentication) {
+    Long userId = (Long) authentication.getPrincipal();
+    proactiveJobService.disableOwnJob(id, userId);
+    return ResponseEntity.noContent().build();
+  }
+
+  /**
+   * 내 작업 삭제 — proactive:read 만으로 된다(WD-192). 쓰기 권한을 잃은 작성자도 자기 작업을 정리할 수 있어야 한다. 남의 작업·없는 작업은 서비스가
+   * 404 로 막는다(WD-165).
+   */
   @DeleteMapping("/{id}")
-  @RequirePermission("proactive:write")
+  @RequirePermission("proactive:read")
   public ResponseEntity<Void> deleteJob(@PathVariable Long id, Authentication authentication) {
     Long userId = (Long) authentication.getPrincipal();
     proactiveJobService.deleteJob(id, userId);

@@ -112,32 +112,35 @@ test.describe('스마트 작업 목록 페이지', () => {
     await expect(page.locator('[data-slot="badge"]').filter({ hasText: '비활성' })).toHaveCount(0);
   });
 
-  test('작업 활성/비활성 토글 — PUT payload 검증', async ({ authenticatedPage: page }) => {
-    // enabled: true 인 작업으로 모킹
+  test('작업 끄기 — 끄기 전용 POST, 켜기 — PUT payload 검증 (WD-192)', async ({ authenticatedPage: page }) => {
+    // 켜진 작업 1, 꺼진 작업 2
     await mockApi(page, 'GET', '/api/v1/proactive/jobs', [
       createJob({ id: 1, name: '잡 1', enabled: true }),
+      createJob({ id: 2, name: '잡 2', enabled: false }),
     ]);
     await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
 
-    // PUT /api/v1/proactive/jobs/1 캡처 설정 — goto 이전에 등록해야 한다
-    const updateCapture = await mockApi(
+    // 끄기는 PUT 이 아니라 끄기 전용 POST /jobs/{id}/disable 로 간다 — 쓰기 권한을 잃은 작성자도 끌 수 있게 한 경로를 쓰기 권한자도 같이 쓴다
+    const disableCapture = await mockApi(page, 'POST', '/api/v1/proactive/jobs/1/disable', {}, { capture: true });
+    // 켜기는 자동 실행을 늘리므로 여전히 PUT(쓰기 권한) 으로만 간다
+    const enableCapture = await mockApi(
       page,
       'PUT',
-      '/api/v1/proactive/jobs/1',
-      createJob({ id: 1, name: '잡 1', enabled: false }),
+      '/api/v1/proactive/jobs/2',
+      createJob({ id: 2, name: '잡 2', enabled: true }),
       { capture: true },
     );
 
     await page.goto('/ai-insights/jobs');
 
-    // 활성화 스위치 클릭 (현재 enabled=true → false 로 전환)
-    const toggle = page.getByRole('switch', { name: '잡 1 활성화' });
-    await expect(toggle).toBeVisible();
-    await toggle.click();
+    await page.getByRole('switch', { name: '잡 1 활성화' }).click();
+    const disableReq = await disableCapture.waitForRequest();
+    expect(disableReq).toBeTruthy();
+    await expect(page.getByText('작업이 비활성화되었습니다.')).toBeVisible();
 
-    // PUT API payload 검증 — enabled: false 가 전달되어야 한다
-    const req = await updateCapture.waitForRequest();
-    expect(req.payload).toMatchObject({ enabled: false });
+    await page.getByRole('switch', { name: '잡 2 활성화' }).click();
+    const enableReq = await enableCapture.waitForRequest();
+    expect(enableReq.payload).toMatchObject({ enabled: true });
   });
 
   test('작업 실행 — POST API 호출 검증', async ({ authenticatedPage: page }) => {

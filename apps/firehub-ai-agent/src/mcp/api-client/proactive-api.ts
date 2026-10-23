@@ -34,6 +34,13 @@ export function createProactiveApi(client: AxiosInstance) {
         config?: Record<string, unknown>;
       },
     ): Promise<unknown> {
+      // WD-192: 끄기만 하는 요청은 전용 끄기 API(proactive:read)로 보낸다 — PUT 은 proactive:write 가 필요해, 쓰기 권한을
+      // 잃은 작성자가 채팅으로 "작업 꺼 줘"라고 하면 403 이 났다. 다른 필드가 함께 오면 편집이므로 PUT 그대로.
+      const keys = Object.keys(data).filter((k) => data[k as keyof typeof data] !== undefined);
+      if (keys.length === 1 && keys[0] === 'enabled' && data.enabled === false) {
+        await client.post(`/proactive/jobs/${id}/disable`);
+        return { id, enabled: false, success: true };
+      }
       // UpdateProactiveJobRequest.config는 nullable이지만, MCP에서 명시적으로 전달된 경우만 보냄.
       const response = await client.put(`/proactive/jobs/${id}`, data);
       return response.data;

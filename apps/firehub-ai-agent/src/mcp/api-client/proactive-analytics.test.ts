@@ -76,6 +76,24 @@ describe('proactiveApi (via FireHubApiClient)', () => {
     expect(result).toEqual(mock);
   });
 
+  // WD-192: 끄기만 하는 요청은 쓰기 권한 없이도 되는 전용 끄기 API 로 보낸다.
+  it('updateSmartJob with only enabled=false calls POST /proactive/jobs/:id/disable', async () => {
+    const scope = nock(BASE_URL).post('/proactive/jobs/5/disable').reply(204);
+    const result = await client.updateSmartJob(5, { enabled: false });
+    expect(result).toEqual({ id: 5, enabled: false, success: true });
+    expect(scope.isDone()).toBe(true);
+  });
+
+  // 끄면서 다른 필드도 바꾸면 편집이므로 PUT 그대로(쓰기 권한 필요).
+  it('updateSmartJob with enabled=false and other fields still calls PUT', async () => {
+    const mock = { id: 5, name: 'x', enabled: false };
+    nock(BASE_URL)
+      .put('/proactive/jobs/5', (reqBody: Record<string, unknown>) => reqBody.enabled === false)
+      .reply(200, mock);
+    const result = await client.updateSmartJob(5, { name: 'x', enabled: false });
+    expect(result).toEqual(mock);
+  });
+
   it('deleteSmartJob calls DELETE /proactive/jobs/:id', async () => {
     nock(BASE_URL).delete('/proactive/jobs/7').reply(204);
     const result = await client.deleteSmartJob(7);

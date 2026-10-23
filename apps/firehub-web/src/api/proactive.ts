@@ -141,6 +141,33 @@ export interface ProactiveJob {
   createdAt: string;
   updatedAt: string;
   lastExecution: ProactiveJobExecution | null;
+  /**
+   * 작성자가 지금 실행 자격이 있는가 (WD-192). 작성자가 정지·제거되거나 스마트 작업 쓰기 권한을 잃으면 작업은 「활성」인 채
+   * 실행 때마다 건너뛴다(자동으로 꺼지지 않는다) — 화면은 false 일 때 「작성자 권한 없음 — 실행되지 않음」을 보인다.
+   * 판정하지 않은 응답(구버전 서버 등)은 값이 없으므로 false 일 때만 안내한다.
+   */
+  ownerEligible?: boolean | null;
+  /** 자격이 없는 사유 코드 — 계정·멤버십 비활성(OWNER_INACTIVE) / 쓰기 권한 없음(OWNER_NO_PERMISSION) */
+  ownerIneligibleReason?: OwnerIneligibleReason | null;
+}
+
+/** 작성자 실행 자격이 없는 사유 코드 (WD-192, 서버 ProactiveOwnerEligibility.CODE_*) */
+export type OwnerIneligibleReason = 'OWNER_INACTIVE' | 'OWNER_NO_PERMISSION';
+
+/**
+ * 워크스페이스 전체 스마트 작업 목록의 행 (WD-192, proactive:admin 전용).
+ * 남의 작업 내용(프롬프트·설정·수신자·리포트)은 서버가 싣지 않는다 — 관리자는 끄기·삭제만 할 수 있다.
+ */
+export interface ProactiveJobAdminSummary {
+  id: number;
+  name: string;
+  ownerName: string | null;
+  enabled: boolean;
+  ownerEligible: boolean;
+  ownerIneligibleReason: OwnerIneligibleReason | null;
+  nextExecuteAt: string | null;
+  timezone: string | null;
+  lastExecutionStatus: 'RUNNING' | 'COMPLETED' | 'FAILED' | null;
 }
 
 export interface ProactiveMessage {
@@ -225,6 +252,12 @@ export const proactiveApi = {
   updateJob: (id: number, data: UpdateProactiveJobRequest) =>
     client.put<ProactiveJob>(`/proactive/jobs/${id}`, data),
   deleteJob: (id: number) => client.delete(`/proactive/jobs/${id}`),
+  /** 내 작업 끄기 — 쓰기 권한 없이 읽기 권한만으로 된다(WD-192). 켜기는 updateJob(쓰기 권한)으로만 한다. */
+  disableJob: (id: number) => client.post(`/proactive/jobs/${id}/disable`),
+  // 워크스페이스 관리(proactive:admin, WD-192) — 목록(최소 정보)·끄기·삭제만 있다
+  getWorkspaceJobs: () => client.get<ProactiveJobAdminSummary[]>('/proactive/admin/jobs'),
+  adminDisableJob: (id: number) => client.post(`/proactive/admin/jobs/${id}/disable`),
+  adminDeleteJob: (id: number) => client.delete(`/proactive/admin/jobs/${id}`),
   executeJob: (id: number) =>
     client.post<ProactiveJobExecution>(`/proactive/jobs/${id}/execute`),
   getJobExecutions: (jobId: number, params?: { limit?: number; offset?: number }) =>

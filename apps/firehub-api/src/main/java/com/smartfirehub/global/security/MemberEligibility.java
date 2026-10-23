@@ -1,8 +1,14 @@
 package com.smartfirehub.global.security;
 
+import com.smartfirehub.permission.repository.PermissionRepository;
 import com.smartfirehub.tenant.repository.MembershipRepository;
 import com.smartfirehub.user.dto.UserResponse;
 import com.smartfirehub.user.repository.UserRepository;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -34,6 +40,8 @@ public class MemberEligibility {
   private final MembershipRepository membershipRepository;
   // 권한 조회는 자체 읽기 트랜잭션을 열어 현재 테넌트 GUC 아래(user_role RLS)에서만 본다 — 다른 워크스페이스의 권한으로 통과하지 않는다
   private final PermissionChecker permissionChecker;
+  // 배치 판정(checkAll) 용 — 사용자 단위 권한 조회와 같은 조인(activeMemberGrants)으로 「권한 가진 사람 전체」를 한 번에 받는다
+  private final PermissionRepository permissionRepository;
 
   /**
    * 사용자가 지금 이 워크스페이스에서 권한 {@code permissionCode} 가 필요한 일을 할 자격이 있는지 본다. 실행 테넌트 컨텍스트 안에서 부른다.
@@ -63,5 +71,38 @@ public class MemberEligibility {
     }
     // 2) 이 워크스페이스의 ACTIVE 멤버 — 멤버십 정지(SUSPENDED)·제거(행 삭제)면 아니다
     return membershipRepository.hasActiveMembership(userId, tenantId);
+  }
+
+  /**
+   * 여러 사람의 자격을 한 번에 본다(WD-192) — 워크스페이스 전체 스마트 작업 목록처럼 주인이 여럿인 화면에서 사람마다 {@link #check} 를 부르면 N+1 이
+   * 되기 때문이다.
+   *
+   * <p>판정 규칙과 순서는 {@link #check} 와 같다(계정 활성 → ACTIVE 멤버 → 권한). 계정 활성·멤버십은 {@code
+   * MembershipRepository.findActiveMemberIds}(={@link #isActiveMember} 의 배치판), 권한은 {@code
+   * PermissionRepository.findActiveMemberIdsWithPermission}(=권한 확인이 쓰는 {@code
+   * findPermissionCodesByUserId} 와 같은 조인)로 본다. user_role 이 RLS 대상이라 테넌트 GUC 가 주입된 트랜잭션 안에서 불러야 한다.
+   *
+   * @return 사용자 id → 판정. 입력에 있던 id 는 모두 키로 나온다
+   */
+  public Map<Long, Status> checkAll(
+      Collection<Long> userIds, long tenantId, String permissionCode) {
+    Set<Long> distinct = new HashSet<>(userIds);
+    Map<Long, Status> result = new HashMap<>();
+    if (distinct.isEmpty()) {
+      return result;
+    }
+    Set<Long> activeMembers = membershipRepository.findActiveMemberIds(tenantId, distinct);
+    Set<Long> permitted =
+        permissionRepository.findActiveMemberIdsWithPermission(tenantId, permissionCode);
+    for (Long userId : distinct) {
+      if (!activeMembers.contains(userId)) {
+        result.put(userId, Status.INACTIVE);
+      } else if (!permitted.contains(userId)) {
+        result.put(userId, Status.NO_PERMISSION);
+      } else {
+        result.put(userId, Status.ELIGIBLE);
+      }
+    }
+    return result;
   }
 }

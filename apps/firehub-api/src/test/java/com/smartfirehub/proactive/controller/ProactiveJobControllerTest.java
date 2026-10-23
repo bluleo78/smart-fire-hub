@@ -233,7 +233,8 @@ class ProactiveJobControllerTest {
 
   @Test
   void deleteJob_returnsNoContent() throws Exception {
-    mockAuth("proactive:write");
+    // WD-192: 내 작업 삭제는 읽기 권한만으로 된다 — 쓰기 권한을 잃은 작성자도 자기 작업을 정리할 수 있어야 한다
+    mockAuth("proactive:read");
     doNothing().when(proactiveJobService).deleteJob(10L, 1L);
 
     mockMvc

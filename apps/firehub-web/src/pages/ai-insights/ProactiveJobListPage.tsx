@@ -21,13 +21,14 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import { useCanWriteProactive,useCloneProactiveJob, useExecuteProactiveJob, useProactiveJobs, useUpdateProactiveJob } from '@/hooks/queries/useProactiveMessages';
+import { useCanWriteProactive,useCloneProactiveJob, useDisableProactiveJob, useExecuteProactiveJob, useProactiveJobs, useUpdateProactiveJob } from '@/hooks/queries/useProactiveMessages';
 import { handleApiError, isForbiddenError } from '@/lib/api-error';
 import { cronToLabel } from '@/lib/cron-label';
 import { getExecutionDisplayStatus } from '@/lib/error-classifier';
 import { parseUtcDate, timeAgo } from '@/lib/formatters';
 import { formatNextRunShort } from '@/lib/next-run';
 
+import { OwnerIneligibleBadge } from './components/OwnerIneligibleBadge';
 import { ProactiveReadForbiddenNotice } from './components/ProactiveReadForbiddenNotice';
 import { ProactiveWriteNotice } from './components/ProactiveWriteNotice';
 
@@ -75,6 +76,7 @@ export default function ProactiveJobListPage() {
   const navigate = useNavigate();
   const { data: jobs = [], isLoading, isError, error } = useProactiveJobs();
   const updateMutation = useUpdateProactiveJob();
+  const disableMutation = useDisableProactiveJob();
   const executeMutation = useExecuteProactiveJob();
   const cloneMutation = useCloneProactiveJob();
   // 생성·복제(POST /proactive/jobs)·활성 전환(PUT)·지금 실행(POST /execute)은 서버가 proactive:write 로 막는다 —
@@ -89,13 +91,17 @@ export default function ProactiveJobListPage() {
     ) : null;
 
   const handleToggle = (job: ProactiveJob, enabled: boolean) => {
-    updateMutation.mutate(
-      { id: job.id, data: { enabled } },
-      {
-        onSuccess: () => toast.success(`작업이 ${enabled ? '활성화' : '비활성화'}되었습니다.`),
-        onError: () => toast.error('상태 변경에 실패했습니다.'),
-      },
-    );
+    const callbacks = {
+      onSuccess: () => toast.success(`작업이 ${enabled ? '활성화' : '비활성화'}되었습니다.`),
+      onError: () => toast.error('상태 변경에 실패했습니다.'),
+    };
+    // 끄기는 끄기 전용 API(읽기 권한)로 — 쓰기 권한을 잃은 작성자도 자기 작업을 끌 수 있어야 한다(WD-192).
+    // 켜기는 자동 실행을 늘리므로 여전히 쓰기 권한이 필요한 PUT 으로만 한다.
+    if (!enabled) {
+      disableMutation.mutate(job.id, callbacks);
+    } else {
+      updateMutation.mutate({ id: job.id, data: { enabled } }, callbacks);
+    }
   };
 
   const handleClone = (e: React.MouseEvent, job: ProactiveJob) => {
@@ -214,6 +220,11 @@ export default function ProactiveJobListPage() {
                       {/* 이상 탐지가 켜졌지만 메트릭이 0개면 그 사실을 목록에서 바로 보이게 한다 (#362).
                           '다음 실행' 칸이 아니라 작업명 아래에 두는 이유: 이상 탐지는 cron 스케줄과
                           독립적이라, cron이 정상 등록된 작업의 '다음 실행'을 덮어쓰면 오히려 틀린 정보가 된다. */}
+                      {/* 작성자가 정지·제거되거나 쓰기 권한을 잃으면 「활성」이어도 실행 때마다 건너뛴다 — 정상처럼 보이지 않게 알린다 (WD-192).
+                          값이 없는 응답(판정 전)은 조용히 둔다 — false 일 때만 보인다. */}
+                      {job.ownerEligible === false && (
+                        <OwnerIneligibleBadge reason={job.ownerIneligibleReason} variant="inline" />
+                      )}
                       {isAnomalyIdle(job.config) && (
                         <span
                           className="text-xs text-destructive font-medium"
@@ -283,14 +294,15 @@ export default function ProactiveJobListPage() {
                     )}
                   </TableCell>
                   <TableCell>
-                    {/* 활성 여부는 상태 정보라 권한이 없어도 보이되 바꿀 수는 없게 비활성화한다(WD-133).
+                    {/* 활성 여부는 상태 정보라 권한이 없어도 보인다(WD-133). 쓰기 권한이 없으면 켜기는 막고 끄기만 허용한다 —
+                        쓰기 권한을 잃은 작성자가 자기 작업을 정리할 수 있어야 하기 때문이다(WD-192).
                         비활성 스위치를 눌렀을 때 클릭이 행으로 새어 상세로 이동하지 않도록 감싼 span 에서 막는다. */}
                     <span className="inline-flex" onClick={(e) => e.stopPropagation()}>
                       <Switch
                         checked={job.enabled}
                         aria-label={`${job.name} 활성화`}
-                        disabled={!canWrite}
-                        title={canWrite ? undefined : '스마트 작업 쓰기 권한이 있어야 바꿀 수 있습니다'}
+                        disabled={!canWrite && !job.enabled}
+                        title={canWrite || job.enabled ? undefined : '스마트 작업 쓰기 권한이 있어야 켤 수 있습니다'}
                         onCheckedChange={(checked) => handleToggle(job, checked)}
                       />
                     </span>

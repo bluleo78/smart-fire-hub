@@ -10,6 +10,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
 import org.jooq.Field;
@@ -110,6 +111,34 @@ public class MembershipRepository {
         .fetchMap(
             r -> r.get(M_USER_ID),
             r -> new TenantMembership(r.get(M_USER_ID), r.get(M_ROLE), r.get(M_STATUS)));
+  }
+
+  /**
+   * 주어진 사용자 중 「계정 활성 + 이 테넌트 ACTIVE 멤버 + 테넌트 ACTIVE」인 사람의 id(WD-192).
+   *
+   * <p>{@code MemberEligibility.isActiveMember} 의 사용자 단위 판정(계정 활성 → {@link #hasActiveMembership})을
+   * 목록 화면에서 한 번의 질의로 하기 위한 배치판이다 — 워크스페이스 전체 스마트 작업 목록이 작업 주인마다 따로 조회하면 N+1 이 된다. 조건을 바꿀 때는 두 곳을 함께
+   * 바꾼다. membership·tenant·user 모두 전역 테이블이라 tenant_id 를 직접 건다.
+   */
+  public Set<Long> findActiveMemberIds(long tenantId, Collection<Long> userIds) {
+    if (userIds.isEmpty()) {
+      return Set.of();
+    }
+    Table<?> user = table(name("user"));
+    Field<Long> uId = field(name("user", "id"), Long.class);
+    Field<Boolean> uActive = field(name("user", "is_active"), Boolean.class);
+    return dsl.select(M_USER_ID)
+        .from(MEMBERSHIP)
+        .join(TENANT)
+        .on(T_ID.eq(M_TENANT_ID))
+        .join(user)
+        .on(uId.eq(M_USER_ID))
+        .where(M_TENANT_ID.eq(tenantId))
+        .and(M_USER_ID.in(userIds))
+        .and(M_STATUS.eq("ACTIVE"))
+        .and(T_STATUS.eq("ACTIVE"))
+        .and(uActive.isTrue())
+        .fetchSet(M_USER_ID);
   }
 
   /** 멤버 추가: 이 테넌트의 ACTIVE MEMBER 로 넣는다. 중복은 호출자가 먼저 걸러 409 로 응답한다. */

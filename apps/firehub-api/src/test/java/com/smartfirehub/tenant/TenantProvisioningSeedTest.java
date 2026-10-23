@@ -77,6 +77,43 @@ class TenantProvisioningSeedTest extends IntegrationTestBase {
     assertThat(count).isEqualTo(3);
   }
 
+  /**
+   * WD-192: 새 워크스페이스의 시스템 ADMIN 역할도 스마트 작업 관리 권한(proactive:admin)을 받는다. V143 은 이미 있는 테넌트에만 부여하고, 이후
+   * 테넌트는 프로비저닝이 기본 테넌트의 시스템 역할 권한을 복제해서 받는다 — 함수를 다시 정의하지 않은 근거를 여기서 확인한다.
+   */
+  @Test
+  void provisionDefaults_systemAdminGetsProactiveAdmin() {
+    long tenantId = createTenantRow();
+    try {
+      tenantProvisioningService.provisionDefaults(tenantId);
+      Integer count =
+          TenantRlsTestSupport.runInTenantTransaction(
+              tx,
+              tenantId,
+              () ->
+                  dsl.fetchCount(
+                      dsl.selectOne()
+                          .from(table(name("role_permission")))
+                          .join(table(name("role")))
+                          .on(
+                              field(name("role", "id"), Long.class)
+                                  .eq(field(name("role_permission", "role_id"), Long.class)))
+                          .join(table(name("permission")))
+                          .on(
+                              field(name("permission", "id"), Long.class)
+                                  .eq(field(name("role_permission", "permission_id"), Long.class)))
+                          .where(field(name("role", "tenant_id"), Long.class).eq(tenantId))
+                          .and(field(name("role", "name"), String.class).eq("ADMIN"))
+                          .and(field(name("role", "is_system"), Boolean.class).isTrue())
+                          .and(
+                              field(name("permission", "code"), String.class)
+                                  .eq("proactive:admin"))));
+      assertThat(count).isEqualTo(1);
+    } finally {
+      TenantRlsTestSupport.deleteProvisionedTenantCascade(dsl, tx, tenantId);
+    }
+  }
+
   /** 검증 전용 테넌트 행을 만든다. slug 는 공유 test DB 에서의 충돌 방지를 위해 나노초로 유일화한다. */
   private long createTenantRow() {
     String slug = "p7a-seed-" + System.nanoTime();
