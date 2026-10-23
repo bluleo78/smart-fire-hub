@@ -7,6 +7,8 @@
  * - 확인 창을 닫으면 API 를 부르지 않고, 확정하면 POST .../executions/{id}/cancel 을 보낸다
  * - 취소 후 재조회한 상태(CANCELLED)가 「취소됨」 배지·취소 정보로 반영되고, 409 는 서버 사유를 보여 준다
  * - 취소된 스텝·취소로 건너뛴 스텝은 실패(오류 상세)가 아니라 취소 사유로 보인다
+ * - 확인 창은 실제 취소 동작(완료 스텝 유지·진행 중 SQL 반영·Python/API REPLACE 미반영·남은 스텝 건너뜀)을 안내한다(WD-209)
+ * - 취소된 실행 요약은 취소 전에 완료돼 결과가 반영된 스텝(→ 출력 데이터셋)을 나열하고, 없으면 보이지 않는다(WD-209)
  */
 
 import type { Page, Route } from '@playwright/test';
@@ -15,6 +17,8 @@ import type { ExecutionDetailResponse, PipelineExecutionResponse } from '../../.
 import {
   createExecution,
   createExecutionDetail,
+  createPipelineDetail,
+  createStep,
   createStepExecution,
 } from '../../factories/pipeline.factory';
 import { mockApi } from '../../fixtures/api-mock';
@@ -133,10 +137,8 @@ test.describe('파이프라인 실행 취소 (WD-153)', () => {
     await headerCancelButton(page).click();
     const dialog = page.getByRole('alertdialog');
     await expect(dialog.getByRole('heading', { name: '실행을 취소할까요?' })).toBeVisible();
-    // 협력적 취소의 의미(진행 중 작업은 마침·남은 스텝 미실행·REPLACE/APPEND 결과)를 알린다
-    await expect(dialog).toContainText('진행 중인 API 호출이나 SQL 은 끝까지 마친 뒤 멈추고');
-    await expect(dialog).toContainText('교체(REPLACE)');
-    await expect(dialog).toContainText('추가(APPEND)');
+    // 협력적 취소의 의미를 알린다 — 문구 자체는 아래 WD-209 테스트에서 자세히 본다
+    await expect(dialog).toContainText('이미 완료된 스텝의 결과는 그대로 남습니다.');
 
     await dialog.getByRole('button', { name: '실행 취소', exact: true }).click();
 
@@ -373,5 +375,103 @@ test.describe('파이프라인 실행 취소 (WD-153)', () => {
     const skippedNotice = page.getByTestId('skipped-step-notice');
     await expect(skippedNotice).toContainText('실행이 취소되어 이 스텝은 실행하지 않았습니다.');
     await expect(skippedNotice).not.toContainText('선행 스텝이 실패');
+  });
+
+  test('확인 창은 실제 취소 동작을 안내한다 — 완료 스텝은 남고, 시작한 SQL 문장은 반영, 멈춘 Python·API REPLACE 는 미반영 (WD-209)', async ({ authenticatedPage: page }) => {
+    await setupPipelineEditorMocks(page, PIPELINE_ID);
+    await mockDetail(page, () => runningDetail());
+
+    await page.goto(`/pipelines/${PIPELINE_ID}/executions/${EXEC_ID}`);
+    await headerCancelButton(page).click();
+    const description = page.getByRole('alertdialog').getByTestId('cancel-execution-description');
+    await expect(description).toContainText('실행 #7을(를) 멈춥니다.');
+    await expect(description).toContainText('취소해도 이미 반영된 데이터는 되돌리지 않습니다.');
+    const items = description.getByRole('listitem');
+    await expect(items).toHaveText([
+      '이미 완료된 스텝의 결과는 그대로 남습니다.',
+      '이미 실행을 시작한 SQL 문장은 끝까지 실행되어 결과가 반영됩니다.',
+      /진행 중인 Python·API 호출·AI 분류 스텝은 지금 하는 호출을 마친 뒤 멈춥니다\. 이렇게 멈춘 스텝은 교체\(REPLACE\)\s*방식이면 교체를 반영하지 않아 기존 데이터가 유지되고, 추가\(APPEND\) 방식이면 멈추기 전까지 적재된 행이 남습니다\./,
+      '아직 시작하지 않은 스텝은 실행하지 않고 건너뜁니다.',
+    ]);
+    // 예전의 사실과 다른 문구(REPLACE 면 기존 데이터가 무조건 유지되는 것처럼 읽힘)는 없어야 한다
+    await expect(description).not.toContainText('교체(REPLACE) 방식 스텝은 기존 데이터가 그대로 유지');
+  });
+
+  test('취소된 실행 요약: 취소 전에 완료된 스텝이 있으면 스텝 → 출력 데이터셋을 반영 안내로 보여 준다 (WD-209)', async ({ authenticatedPage: page }) => {
+    // 정의: ① 데이터 추출(→ 원천 적재본) ② 데이터 변환(→ 출력 데이터셋)
+    await setupPipelineEditorMocks(page, PIPELINE_ID);
+    await mockApi(
+      page,
+      'GET',
+      `/api/v1/pipelines/${PIPELINE_ID}`,
+      createPipelineDetail({
+        id: PIPELINE_ID,
+        steps: [
+          createStep({ id: 1, name: '데이터 추출', outputDatasetId: 10, outputDatasetName: '원천 적재본' }),
+          createStep({ id: 2, name: '데이터 변환', stepOrder: 1, dependsOnStepNames: ['데이터 추출'] }),
+        ],
+      }),
+    );
+    // ① 완료 → ② 진행 중 취소, 그리고 실행 이후 정의에서 삭제된 완료 스텝 하나(출력 이름을 찾을 수 없음)
+    await mockDetail(page, () =>
+      createExecutionDetail({
+        id: EXEC_ID,
+        pipelineId: PIPELINE_ID,
+        status: 'CANCELLED',
+        errorMessage: '사용자가 실행을 취소했습니다.',
+        cancelRequestedAt: '2024-01-01T00:00:30Z',
+        cancelRequestedBy: '홍길동',
+        stepExecutions: [
+          createStepExecution({ id: 1, stepId: 1, stepName: '데이터 추출', status: 'COMPLETED', startedAt: '2024-01-01T00:00:00Z' }),
+          createStepExecution({ id: 3, stepId: null, stepName: '옛 정리 스텝', status: 'COMPLETED', startedAt: '2024-01-01T00:00:10Z' }),
+          createStepExecution({
+            id: 2,
+            stepId: 2,
+            stepName: '데이터 변환',
+            status: 'CANCELLED',
+            outputRows: null,
+            errorMessage: '사용자가 실행을 취소했습니다. 적재 중이던 데이터는 버리고 기존 데이터를 그대로 유지했습니다(REPLACE).',
+            startedAt: '2024-01-01T00:00:20Z',
+          }),
+        ],
+      }),
+    );
+
+    await page.goto(`/pipelines/${PIPELINE_ID}/executions/${EXEC_ID}`);
+    await expect(page.getByTestId('execution-cancel-info')).toContainText('홍길동님이');
+    const applied = page.getByTestId('cancel-applied-steps');
+    await expect(applied).toContainText('취소 전에 완료된 스텝 2개의 결과는 반영되어 있습니다:');
+    // 실행 순서대로, 출력 데이터셋은 현재 정의에서 찾는다. 삭제된 스텝은 이름만, 진행 중이던(CANCELLED) 스텝은 넣지 않는다
+    await expect(applied.getByRole('listitem')).toHaveText(['데이터 추출 → 원천 적재본', '옛 정리 스텝']);
+    await expect(applied).not.toContainText('데이터 변환');
+  });
+
+  test('취소된 실행 요약: 취소 전에 완료된 스텝이 없으면 반영 안내를 보이지 않는다 (WD-209)', async ({ authenticatedPage: page }) => {
+    await setupPipelineEditorMocks(page, PIPELINE_ID);
+    // 진행 중 스텝 CANCELLED + 남은 스텝 SKIPPED 뿐 — 완료 스텝 없음
+    await mockDetail(page, () => cancelledDetail());
+
+    await page.goto(`/pipelines/${PIPELINE_ID}/executions/${EXEC_ID}`);
+    // 취소 정보가 그려진 뒤에도 반영 안내는 없어야 한다
+    await expect(page.getByTestId('execution-cancel-info')).toContainText('취소했습니다.');
+    await expect(page.getByTestId('cancel-applied-steps')).toHaveCount(0);
+  });
+
+  test('취소 요청만 기록된 RUNNING 실행에는 완료 스텝이 있어도 반영 안내를 아직 보이지 않는다 (WD-209)', async ({ authenticatedPage: page }) => {
+    await setupPipelineEditorMocks(page, PIPELINE_ID);
+    await mockDetail(page, () =>
+      runningDetail({
+        cancelRequestedAt: '2024-01-01T00:00:30Z',
+        cancelRequestedBy: '홍길동',
+        stepExecutions: [
+          createStepExecution({ id: 1, stepId: 1, status: 'COMPLETED' }),
+          createStepExecution({ id: 2, stepId: 2, stepName: '데이터 변환', status: 'RUNNING', completedAt: null, outputRows: null, log: null }),
+        ],
+      }),
+    );
+
+    await page.goto(`/pipelines/${PIPELINE_ID}/executions/${EXEC_ID}`);
+    await expect(page.getByTestId('execution-cancel-info')).toContainText('진행 중인 작업이 끝나는 대로 멈춥니다.');
+    await expect(page.getByTestId('cancel-applied-steps')).toHaveCount(0);
   });
 });

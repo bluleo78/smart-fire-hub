@@ -8,7 +8,7 @@ import { RestrictedNotice } from '@/components/ui/restricted-notice';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { formatDate, getStatusBadgeVariant, getStatusLabel } from '@/lib/formatters';
-import type { ExecutionDetailResponse, StepExecutionResponse } from '@/types/pipeline';
+import type { ExecutionDetailResponse, PipelineStepResponse, StepExecutionResponse } from '@/types/pipeline';
 
 import { deletedStepExecutions, findStepExecution } from '../utils/step-execution';
 
@@ -20,6 +20,11 @@ interface ExecutionStepPanelProps {
    */
   selectedStep?: { id?: number; name: string };
   onClose: () => void;
+  /**
+   * 현재 파이프라인 정의의 스텝(WD-209) — 취소된 실행 요약에서 「취소 전에 완료된 스텝」의 출력 데이터셋 이름을 찾는 데 쓴다.
+   * 스텝 실행 기록에는 출력 데이터셋이 남지 않아(스냅샷 없음) 기록의 stepId 로 정의를 찾아 붙인다. 없으면 스텝 이름만 보인다.
+   */
+  pipelineSteps?: PipelineStepResponse[];
 }
 
 /**
@@ -262,6 +267,59 @@ function ExecutionCancelInfo({ execution }: { execution: ExecutionDetailResponse
   );
 }
 
+/** 취소 전에 완료돼 결과가 반영된 스텝 한 줄(WD-209) — 이름과, 정의에서 찾은 출력 데이터셋 이름(볼 수 없거나 없으면 null). */
+interface AppliedStep {
+  id: number;
+  stepName: string;
+  outputDatasetName: string | null;
+}
+
+/**
+ * 취소된 실행에서 취소 전에 이미 완료된(COMPLETED) 스텝 목록(WD-209).
+ *
+ * 왜 필요한가: 협조적 취소(WD-153)는 이미 끝난 스텝을 되돌리지 않는다 — 예를 들어 ① SQL REPLACE 가 끝난 뒤 ② 진행 중에 취소하면 ①의 교체는
+ * 데이터셋에 반영돼 있다. 요약이 누가·언제 취소했는지만 보이면 「취소=아무것도 안 바뀜」으로 오해하므로 반영된 스텝을 짚어 준다.
+ *
+ * 출력이 없는 스텝(예: 출력 미지정 DML)도 데이터를 바꿨을 수 있어 COMPLETED 면 모두 넣는다. 출력 데이터셋 이름은 현재 정의에서 stepId 로 찾는다 —
+ * 실행 이후 삭제된 스텝(stepId null)이나 조회자가 볼 수 없는 데이터셋(outputDatasetName null)은 이름 없이 스텝만 보인다(id 는 노출하지 않는다).
+ * 순서는 실행 순서(시작 시각)다.
+ */
+function appliedStepsBeforeCancel(
+  stepExecutions: StepExecutionResponse[],
+  pipelineSteps: PipelineStepResponse[] | undefined,
+): AppliedStep[] {
+  return stepExecutions
+    .filter((se) => se.status === 'COMPLETED')
+    .sort((a, b) => (a.startedAt ?? '').localeCompare(b.startedAt ?? ''))
+    .map((se) => {
+      const def = se.stepId !== null ? pipelineSteps?.find((ps) => ps.id === se.stepId) : undefined;
+      return { id: se.id, stepName: se.stepName, outputDatasetName: def?.outputDatasetName ?? null };
+    });
+}
+
+/**
+ * 취소 전에 완료돼 결과가 반영된 스텝 안내(WD-209) — 해당 스텝이 없으면 아무것도 그리지 않는다.
+ * 실행이 끝난(CANCELLED) 경우에만 부른다: 아직 RUNNING(취소 요청됨)이면 진행 중인 SQL 스텝 등이 더 완료될 수 있어 목록이 확정되지 않았다.
+ */
+function CancelAppliedStepsNotice({ steps }: { steps: AppliedStep[] }) {
+  if (steps.length === 0) return null;
+  return (
+    <div className="space-y-1" data-testid="cancel-applied-steps">
+      <p className="text-xs text-muted-foreground">
+        취소 전에 완료된 스텝 {steps.length}개의 결과는 반영되어 있습니다:
+      </p>
+      <ol className="list-decimal space-y-0.5 pl-4 text-xs">
+        {steps.map((st) => (
+          <li key={st.id}>
+            {st.stepName}
+            {st.outputDatasetName && <span className="text-muted-foreground"> → {st.outputDatasetName}</span>}
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
 /**
  * 헤더에는 선택한 스텝명이 표시되지만 실제로는 해당 스텝의 실행 레코드가 존재하지 않는 경우
  * (예: 스텝 실행 전 파이프라인 전체가 실패)를 위한 빈 상태 컴포넌트(#517).
@@ -336,9 +394,12 @@ function DeletedStepList({
 function ExecutionSummary({
   execution,
   onSelectDeleted,
+  pipelineSteps,
 }: {
   execution: ExecutionDetailResponse;
   onSelectDeleted: (stepExecutionId: number) => void;
+  /** 출력 데이터셋 이름을 찾을 현재 정의 스텝(WD-209) */
+  pipelineSteps?: PipelineStepResponse[];
 }) {
   const total = execution.stepExecutions.length;
   const completed = execution.stepExecutions.filter(s => s.status === 'COMPLETED').length;
@@ -385,6 +446,10 @@ function ExecutionSummary({
             <ExecutionCancelInfo execution={execution} />
           ) : execution.errorMessage && (
             <ExecutionErrorMessage errorMessage={execution.errorMessage} errorMasked={execution.errorMasked} />
+          )}
+          {/* 취소로 끝난 실행이면 취소 전에 이미 반영된 스텝을 알린다(WD-209) — 「취소=아무것도 안 바뀜」 오해 방지 */}
+          {execution.status === 'CANCELLED' && (
+            <CancelAppliedStepsNotice steps={appliedStepsBeforeCancel(execution.stepExecutions, pipelineSteps)} />
           )}
 
           <Separator />
@@ -446,6 +511,7 @@ export function ExecutionStepPanel({
   execution,
   selectedStep,
   onClose,
+  pipelineSteps,
 }: ExecutionStepPanelProps) {
   // 스텝을 선택하지 않은 경우(null)와, 선택했지만 해당 스텝의 실행 레코드가 아예 없는 경우
   // (undefined — 스텝 실행 전 파이프라인이 실패했거나, 이 실행 이후 새로 추가된 스텝)를 명확히 구분한다(#517).
@@ -486,7 +552,7 @@ export function ExecutionStepPanel({
         deletedStep ? (
           <StepDetails step={deletedStep} executionStatus={execution.status} />
         ) : (
-          <ExecutionSummary execution={execution} onSelectDeleted={setDeletedSelectionId} />
+          <ExecutionSummary execution={execution} onSelectDeleted={setDeletedSelectionId} pipelineSteps={pipelineSteps} />
         )
       ) : step ? (
         <StepDetails step={step} executionStatus={execution.status} />
