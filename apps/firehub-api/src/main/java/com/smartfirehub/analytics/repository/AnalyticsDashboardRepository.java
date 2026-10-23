@@ -206,6 +206,22 @@ public class AnalyticsDashboardRepository {
     return Optional.of(mapToResponse(r, List.of(), 0));
   }
 
+  /**
+   * 소유자 대시보드 행을 {@code SELECT ... FOR UPDATE} 로 잠근다(WD-202). 행이 없거나 남의 것이면 false.
+   *
+   * <p>위젯 추가는 "개수 세기 → 같은 차트 확인 → 삽입" 순서라, 잠금 없이 동시에 들어오면 모두 같은 개수를 보고 통과해 한도(20개)를 넘기거나 같은 차트가 겹쳐
+   * 들어갔다. 대시보드 행을 잠가 같은 대시보드의 위젯 추가를 한 줄로 세운다 — 호출부 트랜잭션이 끝날 때 풀린다. user 를 조인하는 {@link
+   * #findByIdForOwner} 에 걸면 사용자 행까지 잠기므로 dashboard 만 읽는 별도 쿼리로 둔다. 테넌트 범위는 다른 쿼리와 같이 RLS 가 건다.
+   */
+  public boolean lockByIdForOwner(Long id, Long userId) {
+    return dsl.select(D_ID)
+        .from(D)
+        .where(D_ID.eq(id).and(D_CREATED_BY.eq(userId)))
+        .forUpdate()
+        .fetchOptional()
+        .isPresent();
+  }
+
   public Long insert(CreateDashboardRequest req, Long userId) {
     return dsl.insertInto(D)
         .set(D_NAME, req.name())

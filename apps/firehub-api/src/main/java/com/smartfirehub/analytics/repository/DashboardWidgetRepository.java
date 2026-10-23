@@ -114,6 +114,14 @@ public class DashboardWidgetRepository {
         .fetchOne(0, Integer.class);
   }
 
+  /** 이 대시보드에 같은 차트 위젯이 이미 있는지(WD-202 — 같은 차트 중복 추가 거부용). */
+  public boolean existsByDashboardIdAndChartId(Long dashboardId, Long chartId) {
+    return dsl.fetchExists(
+        dsl.selectOne()
+            .from(DW)
+            .where(DW_DASHBOARD_ID.eq(dashboardId).and(DW_CHART_ID.eq(chartId))));
+  }
+
   public Long insert(Long dashboardId, AddWidgetRequest req) {
     return dsl.insertInto(DW)
         .set(DW_DASHBOARD_ID, dashboardId)
