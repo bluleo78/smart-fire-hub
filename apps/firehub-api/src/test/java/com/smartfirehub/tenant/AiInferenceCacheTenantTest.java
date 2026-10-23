@@ -15,6 +15,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.service.DataTableRowService;
@@ -110,8 +111,8 @@ class AiInferenceCacheTenantTest extends IntegrationTestBase {
             mock(PipelineExecutionRepository.class),
             // 분류 공급자는 이 테스트의 관심사(테넌트 격리)가 아니다 — 미설정 테넌트로 고정한다(#707).
             stubUseChat(),
-            // 입력 컬럼 해석(WD-214)도 이 테스트의 관심사가 아니다.
-            mock(DatasetColumnRepository.class));
+            // 입력 컬럼 해석(WD-214)·존재 대조(WD-215)도 이 테스트의 관심사가 아니다 — 고르는 text 가 있는 데이터셋으로 세운다.
+            textColumnRepository());
 
     when(datasetRepository.findTableNameById(200L)).thenReturn(Optional.of("output_table"));
     when(datasetRepository.findTableNameById(1L)).thenReturn(Optional.of("source_table"));
@@ -263,6 +264,17 @@ class AiInferenceCacheTenantTest extends IntegrationTestBase {
   }
 
   /** 미설정 테넌트(UseChat)를 돌려주는 해석기 스텁 — 기존 캐시 키(옛 promptHash)를 그대로 쓰게 한다. */
+  /** 입력 데이터셋 컬럼이 text 하나인 저장소 목(WD-215 — 실행기가 조회 전에 고른 입력 컬럼을 대조한다). */
+  private static DatasetColumnRepository textColumnRepository() {
+    DatasetColumnRepository repo = mock(DatasetColumnRepository.class);
+    when(repo.findByDatasetId(anyLong()))
+        .thenReturn(
+            List.of(
+                new DatasetColumnResponse(
+                    1L, "text", "text", "TEXT", null, true, false, null, 0, false)));
+    return repo;
+  }
+
   private static AiClassifyTargetResolver stubUseChat() {
     AiClassifyTargetResolver resolver = mock(AiClassifyTargetResolver.class);
     when(resolver.resolve()).thenReturn(new AiClassifyTarget.UseChat());

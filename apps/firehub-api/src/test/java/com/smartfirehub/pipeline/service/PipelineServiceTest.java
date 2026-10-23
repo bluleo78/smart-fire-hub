@@ -815,6 +815,128 @@ class PipelineServiceTest extends IntegrationTestBase {
     assertThat(response.steps().get(0).scriptType()).isEqualTo("AI_CLASSIFY");
   }
 
+  // ---------------------------------------------------------------- WD-215 입력 컬럼 존재 검증
+
+  /** AI_CLASSIFY 스텝 — 입력 컬럼만 바꿔 가며 쓴다. 출력은 지정 출력 데이터셋. */
+  private PipelineStepRequest aiStepWithInputColumns(
+      List<Long> inputIds, List<String> dependsOn, List<String> inputColumns) {
+    return new PipelineStepRequest(
+        "ai_step",
+        "AI step",
+        "AI_CLASSIFY",
+        null,
+        outputDatasetId,
+        inputIds,
+        dependsOn,
+        "REPLACE",
+        null,
+        Map.of(
+            "prompt",
+            "Classify the sentiment",
+            "outputColumns",
+            List.of(Map.of("name", "sentiment", "type", "TEXT")),
+            "inputColumns",
+            inputColumns),
+        null,
+        null);
+  }
+
+  /**
+   * WD-215: 입력 데이터셋에 없는 입력 컬럼은 저장에서 한국어로 거부한다. 예전엔 저장이 성공하고 실행 시 조회 SQL 이 깨지며 내부 SQL 원문이 스텝 오류에 그대로
+   * 보였다.
+   */
+  @Test
+  void createPipeline_aiClassifyStep_inputColumnNotInDataset_throwsException() {
+    CreatePipelineRequest request =
+        new CreatePipelineRequest(
+            "AI Pipeline",
+            null,
+            List.of(
+                aiStepWithInputColumns(
+                    List.of(inputDatasetId), null, List.of("col1", "nonexist_col"))));
+
+    assertThatThrownBy(() -> pipelineService.createPipeline(request, testUserId))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("스텝 'ai_step': 입력 컬럼 'nonexist_col'이(가) 입력 데이터셋에 없습니다. 입력 컬럼 필터에서 다시 고르세요");
+  }
+
+  /** WD-215: 실행기는 같은 입력 컬럼으로 입력 데이터셋을 하나씩 조회하므로, 둘째 입력에만 없어도 거부한다. */
+  @Test
+  void createPipeline_aiClassifyStep_inputColumnMissingInSecondInput_throwsException() {
+    CreatePipelineRequest request =
+        new CreatePipelineRequest(
+            "AI Pipeline",
+            null,
+            List.of(
+                aiStepWithInputColumns(
+                    List.of(inputDatasetId, pkOutputDatasetId), null, List.of("col1"))));
+
+    assertThatThrownBy(() -> pipelineService.createPipeline(request, testUserId))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("스텝 'ai_step': 입력 컬럼 'col1'이(가) 입력 데이터셋에 없습니다. 입력 컬럼 필터에서 다시 고르세요");
+  }
+
+  /** WD-215: 수정 경로도 같다 — 저장 뒤 칸이 지워진 스텝을 그대로 다시 저장하면 어느 칸인지 알리며 거부한다. */
+  @Test
+  void updatePipeline_aiClassifyStep_inputColumnNotInDataset_throwsException() {
+    PipelineDetailResponse created =
+        pipelineService.createPipeline(
+            new CreatePipelineRequest(
+                "AI Pipeline",
+                null,
+                List.of(aiStepWithInputColumns(List.of(inputDatasetId), null, List.of("col1")))),
+            testUserId);
+
+    UpdatePipelineRequest update =
+        new UpdatePipelineRequest(
+            "AI Pipeline",
+            null,
+            true,
+            List.of(aiStepWithInputColumns(List.of(inputDatasetId), null, List.of("gone_col"))));
+
+    assertThatThrownBy(() -> pipelineService.updatePipeline(created.id(), update, testUserId))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("스텝 'ai_step': 입력 컬럼 'gone_col'이(가) 입력 데이터셋에 없습니다. 입력 컬럼 필터에서 다시 고르세요");
+  }
+
+  /** WD-215: 시스템 컬럼(id·created_at 등)은 물리 테이블에 늘 있으므로 입력 컬럼으로 골라도 막지 않는다. */
+  @Test
+  void createPipeline_aiClassifyStep_systemInputColumns_succeeds() {
+    PipelineDetailResponse response =
+        pipelineService.createPipeline(
+            new CreatePipelineRequest(
+                "AI Pipeline",
+                null,
+                List.of(
+                    aiStepWithInputColumns(
+                        List.of(inputDatasetId), null, List.of("id", "col1", "created_at")))),
+            testUserId);
+    assertThat(response.steps()).hasSize(1);
+  }
+
+  /**
+   * WD-215: 명시 입력 없이 의존 스텝 출력을 실행 시점에 자동 해석하는 스텝은 저장 시점에 입력이 정해지지 않았으므로 막지 않는다(실행기가 조회 전에 다시 본다).
+   */
+  @Test
+  void createPipeline_aiClassifyStep_inputsFromDependency_notRejected() {
+    List<PipelineStepRequest> steps =
+        List.of(
+            new PipelineStepRequest(
+                "step1",
+                "First step",
+                "SQL",
+                "SELECT * FROM data.src_table",
+                outputDatasetId,
+                List.of(inputDatasetId),
+                null),
+            aiStepWithInputColumns(List.of(), List.of("step1"), List.of("later_col")));
+
+    PipelineDetailResponse response =
+        pipelineService.createPipeline(
+            new CreatePipelineRequest("AI Pipeline", null, steps), testUserId);
+    assertThat(response.steps()).hasSize(2);
+  }
+
   @Test
   void createPipeline_aiClassifyStep_missingAiConfig_throwsException() {
     List<PipelineStepRequest> steps =

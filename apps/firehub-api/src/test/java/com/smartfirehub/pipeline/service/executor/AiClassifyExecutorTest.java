@@ -90,6 +90,10 @@ class AiClassifyExecutorTest {
     dsl = mock(DSLContext.class, org.mockito.Mockito.RETURNS_DEEP_STUBS);
     executionRepository = mock(PipelineExecutionRepository.class);
     datasetColumnRepository = mock(DatasetColumnRepository.class);
+    // 기본 입력 데이터셋 컬럼 = text(WD-215) — 실행기가 조회 전에 고른 입력 컬럼이 데이터셋에 있는지 대조하므로, 기존 테스트가 고르는
+    // text 를 있는 컬럼으로 세운다. 컬럼 구성이 관심사인 테스트는 데이터셋별로 다시 세운다.
+    when(datasetColumnRepository.findByDatasetId(anyLong()))
+        .thenReturn(List.of(column(1L, "text", 0)));
 
     // TransactionTemplate 은 mock 이 아니라 실물을 쓴다. mock 이면 execute/executeWithoutResult 가
     // 콜백을 아예 실행하지 않아 캐시 조회·쓰기가 통째로 사라지고, 아래 캐시 단언들이 조용히
@@ -374,6 +378,105 @@ class AiClassifyExecutorTest {
           .containsExactly("title", "body");
       assertThat(result.outputRows()).isEqualTo(1);
     }
+  }
+
+  /** 데이터셋 사용자 컬럼 목 — 이름만 의미가 있다. */
+  private static DatasetColumnResponse column(Long id, String name, int order) {
+    return new DatasetColumnResponse(id, name, name, "TEXT", null, true, false, null, order, false);
+  }
+
+  /** 입력 컬럼 대조용 AI_CLASSIFY 스텝 — 출력 200(output_table), 입력은 주어진 데이터셋들, 고른 입력 컬럼은 inputColumns. */
+  @SuppressWarnings("unchecked")
+  private PipelineStepResponse stepWithInputColumns(
+      List<Long> inputIds, List<String> inputColumns) {
+    AiClassifyConfig config =
+        new AiClassifyConfig(
+            "Classify rows",
+            List.of(new OutputColumn("category", "TEXT")),
+            inputColumns,
+            20,
+            "CONTINUE");
+    return new PipelineStepResponse(
+        10L,
+        "AI Step",
+        "desc",
+        "AI_CLASSIFY",
+        null,
+        200L,
+        "output_table",
+        inputIds,
+        List.of(),
+        1,
+        "APPEND",
+        null,
+        objectMapper.convertValue(config, Map.class),
+        null,
+        null);
+  }
+
+  /**
+   * WD-215 회귀 가드: 저장 뒤 입력 데이터셋에서 고른 컬럼이 지워지면, 조회 SQL 을 보내기 전에 어느 컬럼이 없는지 한국어로 알리며 실패해야 한다.
+   *
+   * <p>예전엔 queryData 가 그대로 나가 {@code bad SQL grammar [SELECT id, "gone_col" FROM
+   * <스키마>."source_table" …]} 원문이 스텝 오류로 저장됐다(러너는 예외 메시지를 그대로 저장한다). 그래서 문구에 테이블 이름이 없고, 조회·행 수
+   * 세기·AI 호출이 한 번도 없어야 한다.
+   */
+  @Test
+  void execute_withInputColumnMissingFromDataset_failsInKoreanBeforeQuery() {
+    when(datasetRepository.findTableNameById(200L)).thenReturn(Optional.of("output_table"));
+    when(datasetRepository.findTableNameById(1L)).thenReturn(Optional.of("source_table"));
+
+    assertThatThrownBy(
+            () ->
+                executor.execute(
+                    stepWithInputColumns(List.of(1L), List.of("id", "text", "gone_col")), 100L, 1L))
+        .hasMessageContaining("입력 컬럼 'gone_col'이(가) 입력 데이터셋에 없습니다")
+        .hasMessageNotContaining("source_table")
+        .hasMessageNotContaining("SELECT")
+        .hasMessageNotContaining("'text'")
+        .hasMessageNotContaining("'id'");
+    verify(dataTableRowService, never()).countRows(anyString());
+    verify(dataTableRowService, never()).queryData(anyString(), any(), any(), anyInt(), anyInt());
+    verify(aiAgentClient, never()).classify(any(), any(), anyLong());
+  }
+
+  /**
+   * WD-215: 입력 데이터셋이 여럿이면 실행기는 같은 입력 컬럼으로 각각 조회해 이어 붙인다 — 하나에라도 없으면 그 조회가 깨지므로, 첫 데이터셋을 읽기 전에 막아야
+   * 한다(일부만 읽고 실패하지 않게).
+   */
+  @Test
+  void execute_withInputColumnMissingFromSecondDataset_failsBeforeAnyQuery() {
+    when(datasetRepository.findTableNameById(200L)).thenReturn(Optional.of("output_table"));
+    when(datasetRepository.findTableNameById(1L)).thenReturn(Optional.of("source_a"));
+    when(datasetRepository.findTableNameById(2L)).thenReturn(Optional.of("source_b"));
+    when(datasetColumnRepository.findByDatasetId(1L))
+        .thenReturn(List.of(column(1L, "text", 0), column(2L, "label", 1)));
+    when(datasetColumnRepository.findByDatasetId(2L)).thenReturn(List.of(column(3L, "text", 0)));
+
+    assertThatThrownBy(
+            () ->
+                executor.execute(
+                    stepWithInputColumns(List.of(1L, 2L), List.of("text", "label")), 100L, 1L))
+        .hasMessageContaining("입력 컬럼 'label'이(가) 입력 데이터셋에 없습니다")
+        .hasMessageNotContaining("source_");
+    verify(dataTableRowService, never()).countRows(anyString());
+    verify(dataTableRowService, never()).queryData(anyString(), any(), any(), anyInt(), anyInt());
+  }
+
+  /** WD-215: 시스템 컬럼(id·created_at 등)은 데이터셋 컬럼 정의에 없어도 물리 테이블에 있으므로 막지 않는다 — id 만 빼고 그대로 조회한다. */
+  @Test
+  @SuppressWarnings({"unchecked", "rawtypes"})
+  void execute_withSystemInputColumns_isNotRejected() {
+    when(datasetRepository.findTableNameById(200L)).thenReturn(Optional.of("output_table"));
+    when(datasetRepository.findTableNameById(1L)).thenReturn(Optional.of("source_table"));
+    when(dataTableRowService.countRows("source_table")).thenReturn(0L);
+
+    AiClassifyExecutor.ExecutionResult result =
+        executor.execute(
+            stepWithInputColumns(List.of(1L), List.of("id", "text", "created_at")), 100L, 1L);
+
+    assertThat(result.outputRows()).isZero();
+    verify(dataTableRowService).countRows("source_table");
   }
 
   @Test

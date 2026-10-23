@@ -209,6 +209,9 @@ public class PipelineService {
               clearanceResolver.resolve(editorUserId),
               stepRequest.inputDatasetIds(),
               new AiCall(aiHostingResolver.classify(), false));
+          // WD-215: 고른 입력 컬럼이 명시 입력 데이터셋에 실제로 있는지 — 입력 보안·AI 판정을 지난 뒤에만 본다(앞에 두면 볼 수 없는
+          // 데이터셋으로 컬럼 이름을 떠보는 존재 오라클이 된다, WD-154 와 같은 이유).
+          validateAiClassifyInputColumnsExist(stepRequest);
         }
       }
 
@@ -843,6 +846,50 @@ public class PipelineService {
       throw new IllegalArgumentException(
           stepError(stepName, "오류 처리 방식은 다음 중 하나여야 합니다: " + VALID_ON_ERROR));
     }
+  }
+
+  /**
+   * AI_CLASSIFY 입력 컬럼({@code aiConfig.inputColumns})이 명시 입력 데이터셋마다 실제로 있는지 확인한다(WD-215).
+   *
+   * <p>예전에는 없는 칸 이름도 저장에 성공하고, 실행 시 조회 SQL 이 깨지면서 내부 SQL 원문(스키마·테이블 이름)이 스텝 오류에 그대로 보였다. 실행기는 같은 입력
+   * 컬럼 목록으로 입력 데이터셋을 하나씩 조회해 이어 붙이므로, 어느 하나에라도 없으면 그 데이터셋 조회가 깨진다 — 그래서 모든 명시 입력에서 본다. 시스템 컬럼(id
+   * 등)은 물리 테이블에 늘 있으므로 있는 것으로 본다.
+   *
+   * <p>명시 입력이 없으면(의존 스텝 출력을 실행 시점에 자동 해석) 저장 시점에는 입력이 정해지지 않았으므로 보지 않는다 — 실행기가 조회 전에 다시 본다. 호출부는 입력
+   * 보안 판정을 이미 통과한 뒤에만 부른다.
+   */
+  private void validateAiClassifyInputColumnsExist(PipelineStepRequest step) {
+    if (step.inputDatasetIds() == null || step.inputDatasetIds().isEmpty()) {
+      return;
+    }
+    AiClassifyConfig config = objectMapper.convertValue(step.aiConfig(), AiClassifyConfig.class);
+    if (config.inputColumns() == null || config.inputColumns().isEmpty()) {
+      return;
+    }
+    for (Long datasetId : step.inputDatasetIds()) {
+      if (datasetId == null) {
+        continue;
+      }
+      Set<String> existing = new java.util.HashSet<>(DataTableService.SYSTEM_COLUMNS);
+      for (DatasetColumnResponse col : columnRepository.findByDatasetId(datasetId)) {
+        existing.add(col.columnName());
+      }
+      List<String> missing =
+          config.inputColumns().stream().filter(c -> !existing.contains(c)).distinct().toList();
+      if (!missing.isEmpty()) {
+        throw new IllegalArgumentException(
+            stepError(step.name(), missingInputColumnsMessage(missing)));
+      }
+    }
+  }
+
+  /** 없는 입력 컬럼 안내 문구 — 저장 거부와 테스트가 같은 문구를 쓴다(WD-215). */
+  static String missingInputColumnsMessage(List<String> missing) {
+    return "입력 컬럼 "
+        + missing.stream()
+            .map(c -> "'" + c + "'")
+            .collect(java.util.stream.Collectors.joining(", "))
+        + "이(가) 입력 데이터셋에 없습니다. 입력 컬럼 필터에서 다시 고르세요";
   }
 
   private void validatePythonStep(PipelineStepRequest step) {

@@ -37,6 +37,8 @@ import type { AiClassifyConfig } from '@/types/pipeline';
 import { aiOutputColumnNameField } from '../hooks/stepColumnValidation';
 import { InlineFieldError } from './InlineFieldError';
 
+/** 데이터셋 컬럼 정의에는 없지만 물리 테이블에 늘 있는 시스템 컬럼 — 서버도 입력 컬럼으로 허용한다(WD-215). */
+const SYSTEM_INPUT_COLUMNS = new Set(['id', 'import_id', 'created_at', '_updated_at']);
 const COLUMN_TYPES = ['TEXT', 'INTEGER', 'DECIMAL', 'BOOLEAN', 'DATE', 'TIMESTAMP'];
 
 const PRESETS = [
@@ -140,6 +142,14 @@ export default function AiClassifyStepConfig({
   const prompt = aiConfig.prompt ?? '';
   const outputColumns = aiConfig.outputColumns ?? [];
   const inputColumns = aiConfig.inputColumns ?? [];
+  // WD-215: 저장 뒤 데이터셋에서 지워졌거나 이름이 바뀐 입력 컬럼. 목록에 없으면 체크 해제할 방법이 없어(개수만 세어짐) 서버가 저장을
+  // 계속 거부하므로, "데이터셋에 없음"으로 따로 보여 해제할 수 있게 한다. 시스템 컬럼(id 등)은 서버가 허용하므로 표시하지 않는다.
+  // 상세를 아직 못 받았으면(로딩·숨김) 판단하지 않는다.
+  const staleInputColumns = datasetDetail
+    ? inputColumns.filter(
+        (c) => !SYSTEM_INPUT_COLUMNS.has(c) && !columns.some((col) => col.columnName === c),
+      )
+    : [];
   const batchSize = aiConfig.batchSize ?? 20;
   const onError = aiConfig.onError ?? 'CONTINUE';
 
@@ -343,11 +353,29 @@ export default function AiClassifyStepConfig({
             <Skeleton className="h-5 w-full" />
             <Skeleton className="h-5 w-3/4" />
           </div>
-        ) : columns.length === 0 ? (
+        ) : columns.length === 0 && staleInputColumns.length === 0 ? (
           <p className="text-xs text-muted-foreground">데이터셋에 컬럼이 없습니다</p>
         ) : (
           <>
             <div className="space-y-1.5 max-h-[180px] overflow-y-auto pr-1">
+              {staleInputColumns.map((colName) => (
+                <div key={`stale-${colName}`} className="flex items-center gap-2">
+                  <Checkbox
+                    id={`${baseId}-stale-${colName}`}
+                    checked
+                    disabled={readOnly}
+                    onCheckedChange={() => toggleInputColumn(colName)}
+                    className="h-3.5 w-3.5 border-warning data-[state=checked]:bg-warning data-[state=checked]:border-warning"
+                  />
+                  <label
+                    htmlFor={`${baseId}-stale-${colName}`}
+                    className="text-xs font-mono cursor-pointer select-none flex-1"
+                  >
+                    {colName}
+                    <span className="ml-1.5 text-warning">(데이터셋에 없음 — 체크를 해제하세요)</span>
+                  </label>
+                </div>
+              ))}
               {columns.map((col) => (
                 <div key={col.columnName} className="flex items-center gap-2">
                   <Checkbox

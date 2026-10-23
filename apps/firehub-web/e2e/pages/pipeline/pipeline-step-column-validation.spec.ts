@@ -261,4 +261,75 @@ test.describe('스텝 출력 컬럼 저장 검증 (WD-154)', () => {
     await expect(page.getByText(serverMessage)).toBeVisible();
     await expect(page.getByText('파이프라인이 생성되었습니다.')).toHaveCount(0);
   });
+  test('입력 데이터셋에서 지워진 AI 분류 입력 컬럼은 "데이터셋에 없음"으로 보이고, 체크를 해제하면 빠진 채로 저장된다 (WD-215)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 저장 뒤 입력 데이터셋에서 gone_col 이 지워진 상황 — 예전엔 목록에 안 보여 해제할 수 없었고(개수만 셈) 저장이 계속 400 이었다.
+    const INPUT_ID = 20;
+    const step = createStep({
+      id: 7,
+      name: 'AI 분류',
+      scriptType: 'AI_CLASSIFY',
+      scriptContent: '',
+      outputDatasetId: OUTPUT_ID,
+      outputDatasetName: 'API 출력',
+      inputDatasetIds: [INPUT_ID],
+      aiConfig: {
+        prompt: '분류',
+        outputColumns: [{ name: 'label', type: 'TEXT' }],
+        inputColumns: ['col1', 'gone_col', 'id'],
+      },
+    });
+    await mockApi(page, 'GET', '/api/v1/pipelines/1', createPipelineDetail({ id: 1, steps: [step] }));
+    await mockApi(page, 'GET', '/api/v1/pipelines/1/executions', []);
+    await mockApi(page, 'GET', '/api/v1/pipelines/1/triggers', []);
+    await mockApi(page, 'GET', '/api/v1/pipelines/1/trigger-events', []);
+    await mockApi(page, 'GET', '/api/v1/api-connections/selectable', []);
+    await mockApi(page, 'GET', '/api/v1/datasets', {
+      content: [
+        createDataset({ id: OUTPUT_ID, name: 'API 출력', tableName: 'api_out' }),
+        createDataset({ id: INPUT_ID, name: '분류 입력', tableName: 'cls_in' }),
+      ],
+      page: 0,
+      size: 100,
+      totalElements: 2,
+      totalPages: 1,
+    });
+    for (const [id, name, tableName] of [
+      [OUTPUT_ID, 'API 출력', 'api_out'],
+      [INPUT_ID, '분류 입력', 'cls_in'],
+    ] as const) {
+      await mockApi(
+        page,
+        'GET',
+        `/api/v1/datasets/${id}`,
+        createDatasetDetail({
+          id,
+          name,
+          tableName,
+          columns: [createColumn({ id: 1, columnName: 'col1', dataType: 'TEXT', columnOrder: 0 })],
+        }),
+      );
+    }
+    const putCapture = await mockApi(page, 'PUT', '/api/v1/pipelines/1', {}, { capture: true });
+
+    await page.goto('/pipelines/1');
+    await page.getByRole('button', { name: '수정' }).click();
+    await page.locator('.react-flow__node').first().click();
+    await page.getByRole('button', { name: /입력 컬럼/ }).click();
+
+    // 지워진 칸은 체크된 채 "데이터셋에 없음"으로 보이고, 시스템 컬럼 id 는 경고하지 않는다
+    const stale = page.getByRole('checkbox', { name: /gone_col/ });
+    await expect(stale).toBeChecked();
+    await expect(page.getByText('(데이터셋에 없음 — 체크를 해제하세요)')).toHaveCount(1);
+    await expect(page.getByRole('checkbox', { name: /^col1/ })).toBeChecked();
+
+    await stale.click();
+    await expect(page.getByRole('checkbox', { name: /gone_col/ })).toHaveCount(0);
+
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+    const req = await putCapture.waitForRequest();
+    const payload = req.payload as { steps: Array<{ aiConfig: { inputColumns: string[] } }> };
+    expect(payload.steps[0].aiConfig.inputColumns).toEqual(['col1', 'id']);
+  });
 });
