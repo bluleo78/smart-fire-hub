@@ -251,6 +251,8 @@ class BackgroundPathTransactionTest extends IntegrationTestBase {
   private static final Set<String> ALL_CALLERS_TRANSACTIONAL_REPOSITORIES =
       Set.of(
           "AnalyticsDashboardRepository",
+          // WD-199: 호출자는 AnalyticsAdminService 하나뿐이고 메서드가 모두 @Transactional 이다(웹 요청 전용, 배경 호출자 없음).
+          "AnalyticsWorkspaceRepository",
           "ChartRepository",
           "DashboardWidgetRepository",
           "SavedQueryRepository",

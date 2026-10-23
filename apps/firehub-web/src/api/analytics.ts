@@ -1,5 +1,7 @@
 import type {
   AddWidgetRequest,
+  AnalyticsAdminItem,
+  AnalyticsAdminKind,
   AnalyticsQueryRequest,
   AnalyticsQueryResult,
   Chart,
@@ -106,6 +108,29 @@ export const analyticsApi = {
    */
   getDeleteImpact: (kind: 'query' | 'chart', id: number, signal?: AbortSignal) =>
     client.get<DeleteImpact>(`/analytics/${kind === 'query' ? 'queries' : 'charts'}/${id}/delete-impact`, {
+      signal,
+      timeout: DELETE_IMPACT_TIMEOUT_MS,
+    }),
+
+  // ============================================================
+  // 워크스페이스 분석 자산 관리(analytics:admin, WD-199) — 목록(최소 정보)·공유 해제·삭제만 있다
+  // ============================================================
+
+  /** 워크스페이스의 해당 종류 자산 전부(이름·작성자·작성자 활성 여부·공유 여부·수정일). */
+  getWorkspaceItems: (kind: AnalyticsAdminKind) =>
+    client.get<AnalyticsAdminItem[]>(`/analytics/admin/${kind}`),
+
+  /** 남의 자산이라도 공유를 해제한다(공유하기는 없다). */
+  adminUnshare: (kind: AnalyticsAdminKind, id: number) =>
+    client.post(`/analytics/admin/${kind}/${id}/unshare`),
+
+  /** 남의 자산이라도 삭제한다 — 작성자 삭제와 같은 CASCADE(쿼리→차트→위젯, 차트→위젯, 대시보드→위젯). */
+  adminDelete: (kind: AnalyticsAdminKind, id: number) =>
+    client.delete(`/analytics/admin/${kind}/${id}`),
+
+  /** 관리자 삭제 영향 범위 — 작성자 경로(getDeleteImpact)와 같은 응답. 이름은 관리자에게 보이는 것만, 나머지는 개수만. */
+  getAdminDeleteImpact: (kind: 'query' | 'chart', id: number, signal?: AbortSignal) =>
+    client.get<DeleteImpact>(`/analytics/admin/${kind === 'query' ? 'queries' : 'charts'}/${id}/delete-impact`, {
       signal,
       timeout: DELETE_IMPACT_TIMEOUT_MS,
     }),

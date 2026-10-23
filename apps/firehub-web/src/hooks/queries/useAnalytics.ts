@@ -5,6 +5,7 @@ import { analyticsApi } from '../../api/analytics';
 import { fetchAllPages } from '../../lib/fetch-all-pages';
 import type {
   AddWidgetRequest,
+  AnalyticsAdminKind,
   AnalyticsQueryRequest,
   CreateChartRequest,
   CreateDashboardRequest,
@@ -14,6 +15,7 @@ import type {
   UpdateSavedQueryRequest,
   UpdateWidgetRequest,
 } from '../../types/analytics';
+import { useMyPermissions } from './useMyPermissions';
 
 // ============================================================
 // Phase 1: Saved Queries
@@ -284,10 +286,15 @@ export function useDeleteChart() {
  * gcTime 0: 창이 닫혀 언마운트되면 결과를 버린다 — 다시 열면 새로 조회한다(그 사이 생긴 차트·위젯을 놓치지 않게).
  * retry false: 실패(시간 초과 포함)하면 바로 안내로 넘어간다(재시도 동안 삭제가 막혀 있지 않게).
  */
-export function useDeleteImpact(kind: 'query' | 'chart', id: number) {
+export function useDeleteImpact(kind: 'query' | 'chart', id: number, options?: { admin?: boolean }) {
+  // admin: 워크스페이스 관리자 삭제(WD-199) — 작성자 경로는 소유자 관문(404)이라 관리자 전용 경로로 조회한다
+  const admin = options?.admin ?? false;
   return useQuery({
-    queryKey: ['analytics', 'delete-impact', kind, id],
-    queryFn: ({ signal }) => analyticsApi.getDeleteImpact(kind, id, signal).then((r) => r.data),
+    queryKey: ['analytics', 'delete-impact', admin ? 'admin' : 'owner', kind, id],
+    queryFn: ({ signal }) =>
+      (admin ? analyticsApi.getAdminDeleteImpact(kind, id, signal) : analyticsApi.getDeleteImpact(kind, id, signal)).then(
+        (r) => r.data,
+      ),
     gcTime: 0,
     retry: false,
   });
@@ -395,6 +402,52 @@ export function useRemoveWidget(dashboardId: number) {
     mutationFn: (widgetId: number) => analyticsApi.removeWidget(dashboardId, widgetId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['analytics', 'dashboards', dashboardId] });
+    },
+  });
+}
+
+// ============================================================
+// 워크스페이스 분석 자산 관리(analytics:admin, WD-199)
+// ============================================================
+
+/**
+ * 워크스페이스 전체 분석 자산을 보고 공유 해제·삭제할 수 있는가 (WD-199, analytics:admin).
+ * 이 권한으로도 남의 비공개 자산 열람·편집·실행은 할 수 없다(서버가 막는다) — 화면은 「워크스페이스 전체」 보기 노출에만 쓴다.
+ */
+export function useCanAdminAnalytics() {
+  const { permissions, isLoading } = useMyPermissions();
+  return { canAdmin: permissions.has('analytics:admin'), isLoading };
+}
+
+/** 워크스페이스 전체 자산 목록 (WD-199) — 「워크스페이스 전체」 보기에서만 마운트되어 조회한다. */
+export function useWorkspaceAnalyticsItems(kind: AnalyticsAdminKind) {
+  return useQuery({
+    queryKey: ['analytics', 'admin', kind],
+    queryFn: () => analyticsApi.getWorkspaceItems(kind).then((r) => r.data),
+  });
+}
+
+/**
+ * 관리자 공유 해제·삭제 (WD-199). 성공하면 분석 목록 전체(['analytics'])를 무효화한다 — 관리자 본인 자산도 「내 ○○」·「공유됨」에
+ * 함께 보이고, 쿼리·차트 삭제는 CASCADE 로 다른 종류(차트·대시보드 위젯)까지 바꾸기 때문이다.
+ */
+export function useAdminUnshareAnalyticsItem(kind: AnalyticsAdminKind) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => analyticsApi.adminUnshare(kind, id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['analytics'] });
+    },
+  });
+}
+
+/** 관리자 삭제 (WD-199) — 무효화 범위는 공유 해제와 같다. */
+export function useAdminDeleteAnalyticsItem(kind: AnalyticsAdminKind) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => analyticsApi.adminDelete(kind, id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['analytics'] });
     },
   });
 }

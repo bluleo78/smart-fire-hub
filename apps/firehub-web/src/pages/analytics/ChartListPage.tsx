@@ -10,6 +10,7 @@ import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { AnalyticsDeleteConfirmDialog } from '../../components/analytics/AnalyticsDeleteConfirmDialog';
+import { WorkspaceAnalyticsTable } from '../../components/analytics/WorkspaceAnalyticsTable';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { SearchInput } from '../../components/ui/search-input';
@@ -24,7 +25,7 @@ import {
 import { TableEmptyRow } from '../../components/ui/table-empty';
 import { TableSkeletonRows } from '../../components/ui/table-skeleton';
 import { Tabs, TabsList, TabsTrigger } from '../../components/ui/tabs';
-import { useCharts, useDeleteChart } from '../../hooks/queries/useAnalytics';
+import { useCanAdminAnalytics, useCharts, useDeleteChart } from '../../hooks/queries/useAnalytics';
 import { useIsOwner } from '../../hooks/useIsOwner';
 import { handleApiError } from '../../lib/api-error';
 import { formatDateShort, formatRelativeTime } from '../../lib/formatters';
@@ -32,10 +33,16 @@ import { getPageAfterDelete } from '../../lib/pagination';
 import { iGa } from '../../lib/utils';
 import { CHART_TYPE_LABELS } from '../../types/analytics';
 
+/** 목록 보기 — 「워크스페이스 전체」는 analytics:admin 에게만 보인다(WD-199). */
+type ListTab = 'mine' | 'shared' | 'workspace';
+
 export default function ChartListPage() {
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
-  const [tab, setTab] = useState<'mine' | 'shared'>('mine');
+  const [tab, setTab] = useState<ListTab>('mine');
+  // 관리자(analytics:admin)에게만 「워크스페이스 전체」 보기를 둔다 (WD-199) — 정지·제거된 작성자가 공유한 자산을 정리할 수 있게 한다.
+  const { canAdmin } = useCanAdminAnalytics();
+  const workspaceView = canAdmin && tab === 'workspace';
   const [page, setPage] = useState(0);
   const size = 10;
 
@@ -82,161 +89,168 @@ export default function ChartListPage() {
       <Tabs
         value={tab}
         onValueChange={(v) => {
-          setTab(v as 'mine' | 'shared');
+          setTab(v as ListTab);
           setPage(0);
         }}
       >
         <TabsList>
           <TabsTrigger value="mine">내 차트</TabsTrigger>
           <TabsTrigger value="shared">공유됨</TabsTrigger>
+          {canAdmin && <TabsTrigger value="workspace">워크스페이스 전체</TabsTrigger>}
         </TabsList>
       </Tabs>
 
-      {/* Filters */}
-      <div className="flex items-center gap-3 flex-wrap">
-        <SearchInput
-          placeholder="차트 검색..."
-          value={search}
-          onChange={(value) => {
-            setSearch(value);
-            setPage(0);
-          }}
-        />
-      </div>
+      {workspaceView ? (
+        <WorkspaceAnalyticsTable kind="charts" />
+      ) : (
+        <>
+          {/* Filters */}
+          <div className="flex items-center gap-3 flex-wrap">
+            <SearchInput
+              placeholder="차트 검색..."
+              value={search}
+              onChange={(value) => {
+                setSearch(value);
+                setPage(0);
+              }}
+            />
+          </div>
 
-      {/* Table */}
-      <div className="rounded-md border">
-        <Table aria-label="차트 목록">
-          <TableHeader>
-            <TableRow>
-              <TableHead>이름</TableHead>
-              <TableHead>타입</TableHead>
-              <TableHead>쿼리</TableHead>
-              <TableHead>수정일</TableHead>
-              <TableHead className="w-[80px]" />
-            </TableRow>
-          </TableHeader>
-          <tbody>
-            {isLoading ? (
-              <TableSkeletonRows columns={5} rows={5} />
-            ) : charts.length > 0 ? (
-              charts.map((chart) => (
-                <TableRow
-                  key={chart.id}
-                  className="cursor-pointer hover:bg-muted/50 transition-colors group row-hover"
-                  onClick={() => navigate(`/analytics/charts/${chart.id}`)}
-                >
-                  <TableCell className="font-medium">
-                    <div className="flex items-center gap-2">
-                      <BarChart2 className="h-4 w-4 shrink-0 text-muted-foreground" />
-                      {/* min-w-0: flex 아이템 기본값(min-width:auto)이 truncate 축소를 막는 문제 방지 */}
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-1.5">
-                          <span className="block truncate max-w-xs" title={chart.name}>
-                            {chart.name}
-                          </span>
-                          {chart.isShared && (
-                            <Badge variant="secondary" className="text-xs gap-1 py-0">
-                              <Share2 className="h-2.5 w-2.5" />
-                              공유
-                            </Badge>
-                          )}
-                        </div>
-                        {chart.description && (
-                          <p className="text-xs text-muted-foreground truncate max-w-xs mt-0.5">
-                            {chart.description}
-                          </p>
-                        )}
-                        <p className="text-xs text-muted-foreground mt-0.5">
-                          {chart.createdByName}
-                        </p>
-                      </div>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant="outline" className="text-xs">
-                      {CHART_TYPE_LABELS[chart.chartType] ?? chart.chartType}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
-                    <span className="text-sm text-muted-foreground truncate max-w-[200px] block">
-                      {chart.savedQueryName}
-                    </span>
-                  </TableCell>
-                  <TableCell>
-                    <span
-                      className="text-sm text-muted-foreground"
-                      title={formatDateShort(chart.updatedAt)}
+          {/* Table */}
+          <div className="rounded-md border">
+            <Table aria-label="차트 목록">
+              <TableHeader>
+                <TableRow>
+                  <TableHead>이름</TableHead>
+                  <TableHead>타입</TableHead>
+                  <TableHead>쿼리</TableHead>
+                  <TableHead>수정일</TableHead>
+                  <TableHead className="w-[80px]" />
+                </TableRow>
+              </TableHeader>
+              <tbody>
+                {isLoading ? (
+                  <TableSkeletonRows columns={5} rows={5} />
+                ) : charts.length > 0 ? (
+                  charts.map((chart) => (
+                    <TableRow
+                      key={chart.id}
+                      className="cursor-pointer hover:bg-muted/50 transition-colors group row-hover"
+                      onClick={() => navigate(`/analytics/charts/${chart.id}`)}
                     >
-                      {formatRelativeTime(chart.updatedAt)}
-                    </span>
-                  </TableCell>
-                  <TableCell>
-                    {isOwner(chart.createdBy) && (
-                      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 w-7 p-0"
-                          title="편집"
-                          aria-label="편집"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            navigate(`/analytics/charts/${chart.id}`);
-                          }}
+                      <TableCell className="font-medium">
+                        <div className="flex items-center gap-2">
+                          <BarChart2 className="h-4 w-4 shrink-0 text-muted-foreground" />
+                          {/* min-w-0: flex 아이템 기본값(min-width:auto)이 truncate 축소를 막는 문제 방지 */}
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              <span className="block truncate max-w-xs" title={chart.name}>
+                                {chart.name}
+                              </span>
+                              {chart.isShared && (
+                                <Badge variant="secondary" className="text-xs gap-1 py-0">
+                                  <Share2 className="h-2.5 w-2.5" />
+                                  공유
+                                </Badge>
+                              )}
+                            </div>
+                            {chart.description && (
+                              <p className="text-xs text-muted-foreground truncate max-w-xs mt-0.5">
+                                {chart.description}
+                              </p>
+                            )}
+                            <p className="text-xs text-muted-foreground mt-0.5">
+                              {chart.createdByName}
+                            </p>
+                          </div>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="outline" className="text-xs">
+                          {CHART_TYPE_LABELS[chart.chartType] ?? chart.chartType}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <span className="text-sm text-muted-foreground truncate max-w-[200px] block">
+                          {chart.savedQueryName}
+                        </span>
+                      </TableCell>
+                      <TableCell>
+                        <span
+                          className="text-sm text-muted-foreground"
+                          title={formatDateShort(chart.updatedAt)}
                         >
-                          <Pencil size={13} />
-                        </Button>
-                        {/* WD-86: 함께 삭제되는 항목(CASCADE)을 창을 열 때 조회해 보여 준다 */}
-                        <AnalyticsDeleteConfirmDialog
-                          kind="chart"
-                          id={chart.id}
-                          itemName={chart.name}
-                          onConfirm={() => handleDelete(chart.id, chart.name)}
-                          trigger={
+                          {formatRelativeTime(chart.updatedAt)}
+                        </span>
+                      </TableCell>
+                      <TableCell>
+                        {isOwner(chart.createdBy) && (
+                          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                             <Button
                               variant="ghost"
                               size="sm"
                               className="h-7 w-7 p-0"
-                              aria-label="삭제"
-                              onClick={(e) => e.stopPropagation()}
+                              title="편집"
+                              aria-label="편집"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                navigate(`/analytics/charts/${chart.id}`);
+                              }}
                             >
-                              <Trash2 className="h-3.5 w-3.5" />
+                              <Pencil size={13} />
                             </Button>
-                          }
-                        />
-                      </div>
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))
-            ) : (
-              <TableEmptyRow
-                colSpan={5}
-                message="차트가 없습니다."
-                searchKeyword={search || undefined}
-                onResetSearch={search ? () => { setSearch(''); setPage(0); } : undefined}
-                emptyAction={
-                  !search ? (
-                    <Button size="sm" variant="outline" onClick={() => navigate('/analytics/charts/new')}>
-                      <Plus className="h-4 w-4" />
-                      새 차트 만들기
-                    </Button>
-                  ) : undefined
-                }
-              />
-            )}
-          </tbody>
-        </Table>
-      </div>
+                            {/* WD-86: 함께 삭제되는 항목(CASCADE)을 창을 열 때 조회해 보여 준다 */}
+                            <AnalyticsDeleteConfirmDialog
+                              kind="chart"
+                              id={chart.id}
+                              itemName={chart.name}
+                              onConfirm={() => handleDelete(chart.id, chart.name)}
+                              trigger={
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-7 w-7 p-0"
+                                  aria-label="삭제"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </Button>
+                              }
+                            />
+                          </div>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))
+                ) : (
+                  <TableEmptyRow
+                    colSpan={5}
+                    message="차트가 없습니다."
+                    searchKeyword={search || undefined}
+                    onResetSearch={search ? () => { setSearch(''); setPage(0); } : undefined}
+                    emptyAction={
+                      !search ? (
+                        <Button size="sm" variant="outline" onClick={() => navigate('/analytics/charts/new')}>
+                          <Plus className="h-4 w-4" />
+                          새 차트 만들기
+                        </Button>
+                      ) : undefined
+                    }
+                  />
+                )}
+              </tbody>
+            </Table>
+          </div>
 
-      <SimplePagination
-        page={page}
-        totalPages={totalPages}
-        onPageChange={setPage}
-        totalElements={totalElements}
-        pageSize={size}
-      />
+          <SimplePagination
+            page={page}
+            totalPages={totalPages}
+            onPageChange={setPage}
+            totalElements={totalElements}
+            pageSize={size}
+          />
+        </>
+      )}
     </div>
   );
 }

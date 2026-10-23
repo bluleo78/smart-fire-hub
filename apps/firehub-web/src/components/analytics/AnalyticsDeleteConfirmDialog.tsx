@@ -17,6 +17,7 @@ type Kind = 'query' | 'chart';
  * - ready: 결과 있음 → 영향이 있으면 빨간 상자, 없으면 일반 확인 창
  */
 type Status = 'loading' | 'notOwned' | 'error' | 'ready';
+// (WD-199) 관리자 경로에서 404 는 「본인 것 아님」이 아니라 「이미 지워졌거나 없는 항목」이다 — notOwned 와 같은 막음, 문구만 다르다.
 
 /** 종류별 문구 — 쿼리·차트가 다른 곳은 여기에만 둔다. */
 const COPY = {
@@ -40,6 +41,9 @@ const LABEL = {
 
 /** 본인 소유가 아니어서 지울 수 없을 때의 안내 문구 — 쿼리·차트 모두 같은 문구를 쓴다. */
 const NOT_OWNER_MESSAGE = '본인이 만든 항목만 삭제할 수 있습니다.';
+
+/** (WD-199) 관리자 삭제 중 404 — 다른 사람이 먼저 지웠거나 워크스페이스에 없는 항목이다. */
+const ADMIN_NOT_FOUND_MESSAGE = '이미 삭제되었거나 찾을 수 없는 항목입니다.';
 
 /** 이름을 다 나열하면 창이 길어지므로 앞의 몇 개만 보이고 나머지는 "외 n개"로 줄인다. */
 const MAX_NAMES = 5;
@@ -83,8 +87,18 @@ function ImpactBanner({ title, children }: { title: string; children: ReactNode 
  * 삭제 버튼은 창 바닥(공용 다이얼로그)에 있으므로 상태를 onStatus 로 올린다. 언마운트 때 loading 으로 되돌려,
  * 다시 열었을 때 첫 화면부터 삭제 버튼이 꺼져 있게 한다.
  */
-function ImpactDetails({ kind, id, onStatus }: { kind: Kind; id: number; onStatus: (s: Status) => void }) {
-  const { data, isPending, isError, error } = useDeleteImpact(kind, id);
+function ImpactDetails({
+  kind,
+  id,
+  admin,
+  onStatus,
+}: {
+  kind: Kind;
+  id: number;
+  admin: boolean;
+  onStatus: (s: Status) => void;
+}) {
+  const { data, isPending, isError, error } = useDeleteImpact(kind, id, { admin });
   const status: Status = isPending
     ? 'loading'
     : isError
@@ -107,7 +121,7 @@ function ImpactDetails({ kind, id, onStatus }: { kind: Kind; id: number; onStatu
     case 'notOwned':
       return (
         <InlineBanner variant="info" icon={<Lock />} data-testid="delete-not-owner">
-          {NOT_OWNER_MESSAGE}
+          {admin ? ADMIN_NOT_FOUND_MESSAGE : NOT_OWNER_MESSAGE}
         </InlineBanner>
       );
     case 'error':
@@ -144,6 +158,13 @@ interface AnalyticsDeleteConfirmDialogProps {
   itemName: string;
   onConfirm: () => void;
   trigger: ReactNode;
+  /**
+   * (WD-199) 워크스페이스 관리자(analytics:admin)가 남의 항목을 지우는 창 — 영향 범위를 관리자 전용 경로로 조회한다
+   * (작성자 경로는 소유자 관문이라 404). 기본 false 면 기존과 같다.
+   */
+  admin?: boolean;
+  /** (WD-199) 확인 문구 뒤 괄호에 붙일 보조 정보 — 관리자 창은 「작성자: 이름」을 보여 누구의 것을 지우는지 확인시킨다. */
+  extraDetail?: string;
 }
 
 /**
@@ -151,7 +172,15 @@ interface AnalyticsDeleteConfirmDialogProps {
  * 함께 사라지므로, 창을 열 때 서버에서 영향 범위를 받아 빨간 상자로 보여 준다. 연결된 것이 없으면 지금과 같은 일반 확인 창이다.
  * 공용 DeleteConfirmDialog 를 그대로 쓰고(제목·문구·destructive 확인 버튼 불변식 유지) details 슬롯에 안내만 끼운다.
  */
-export function AnalyticsDeleteConfirmDialog({ kind, id, itemName, onConfirm, trigger }: AnalyticsDeleteConfirmDialogProps) {
+export function AnalyticsDeleteConfirmDialog({
+  kind,
+  id,
+  itemName,
+  onConfirm,
+  trigger,
+  admin = false,
+  extraDetail,
+}: AnalyticsDeleteConfirmDialogProps) {
   const [status, setStatus] = useState<Status>('loading');
 
   return (
@@ -160,7 +189,8 @@ export function AnalyticsDeleteConfirmDialog({ kind, id, itemName, onConfirm, tr
       itemName={itemName}
       onConfirm={onConfirm}
       trigger={trigger}
-      details={<ImpactDetails kind={kind} id={id} onStatus={setStatus} />}
+      extraDetail={extraDetail}
+      details={<ImpactDetails kind={kind} id={id} admin={admin} onStatus={setStatus} />}
       confirmDisabled={status === 'loading' || status === 'notOwned'}
     />
   );

@@ -186,6 +186,28 @@ export interface DeleteImpact {
   hiddenDashboardCount: number;
 }
 
+/**
+ * 워크스페이스 분석 자산 관리(WD-199, analytics:admin)의 자산 종류 — 관리자 API 경로 조각과 같다.
+ * 대시보드·차트·저장 쿼리 목록 화면이 「워크스페이스 전체」 보기에서 같은 표 컴포넌트를 쓴다.
+ */
+export type AnalyticsAdminKind = 'dashboards' | 'charts' | 'queries';
+
+/**
+ * 워크스페이스 전체 분석 자산 목록의 행 (WD-199, analytics:admin 전용).
+ * 남의 자산 내용(SQL·차트 설정·위젯·설명)은 서버가 싣지 않는다 — 관리자는 공유 해제·삭제만 할 수 있다.
+ */
+export interface AnalyticsAdminItem {
+  id: number;
+  name: string;
+  ownerId: number;
+  /** 작성자 이름 — 계정이 지워졌으면 null */
+  ownerName: string | null;
+  /** 작성자가 지금 이 워크스페이스의 활성 멤버인가 — 계정 비활성·정지·제거면 false */
+  ownerActive: boolean;
+  isShared: boolean;
+  updatedAt: string;
+}
+
 export interface ChartListItem {
   id: number;
   name: string;

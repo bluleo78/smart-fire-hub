@@ -119,13 +119,22 @@ test.describe('감사 로그 — 보안 등급 액션', () => {
     await req;
   });
 
-  test('액션 드롭다운은 일반·멤버 관리·역할·권한·데이터셋 보안·보안 설정·스마트 작업 관리 6그룹으로 나뉜다', async ({ authenticatedPage: page }) => {
+  test('액션 드롭다운은 일반·멤버 관리·역할·권한·데이터셋 보안·보안 설정·스마트 작업 관리·분석 자산 관리 7그룹으로 나뉜다', async ({ authenticatedPage: page }) => {
     await page.goto('/admin/audit-logs');
     await page.getByRole('combobox', { name: '액션 유형 필터' }).click();
     const group = (name: string) => page.getByRole('group', { name, exact: true });
-    await expect(page.getByRole('group')).toHaveCount(6);
+    await expect(page.getByRole('group')).toHaveCount(7);
     // WD-192: 관리자가 남의 스마트 작업을 끄거나 지운 기록이 영문 raw 가 아니라 한국어로 보인다
     await expect(group('스마트 작업 관리').getByRole('option')).toHaveText(['스마트 작업 관리자 끄기', '스마트 작업 관리자 삭제']);
+    // WD-199: 관리자가 남의 대시보드·차트·쿼리를 공유 해제하거나 지운 기록도 한국어로 보인다
+    await expect(group('분석 자산 관리').getByRole('option')).toHaveText([
+      '대시보드 관리자 공유 해제',
+      '대시보드 관리자 삭제',
+      '차트 관리자 공유 해제',
+      '차트 관리자 삭제',
+      '쿼리 관리자 공유 해제',
+      '쿼리 관리자 삭제',
+    ]);
     await expect(group('일반').getByRole('option', { name: '생성', exact: true })).toHaveCount(1);
     await expect(group('일반').getByRole('option', { name: '도메인 수정', exact: true })).toHaveCount(1);
     // WD-153: 파이프라인 실행 취소 감사 기록(CANCEL)이 영문 raw 가 아니라 「취소」로 보인다

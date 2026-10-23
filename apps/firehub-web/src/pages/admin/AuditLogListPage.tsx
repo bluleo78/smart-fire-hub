@@ -143,6 +143,19 @@ const PROACTIVE_ADMIN_ACTION_TYPES = [
 ];
 
 /**
+ * 분석 자산 관리 액션(WD-199) — AnalyticsAdminService(analytics:admin)가 남의 대시보드·차트·저장 쿼리를 공유 해제하거나 삭제할 때 남긴다.
+ * - resource=dashboard/chart/saved_query, resourceId=자산 id. 작성자 본인의 공유 변경·삭제는 감사 대상이 아니다(관리 행위만 기록).
+ */
+const ANALYTICS_ADMIN_ACTION_TYPES = [
+  { value: 'ANALYTICS_DASHBOARD_ADMIN_UNSHARE', label: '대시보드 관리자 공유 해제' },
+  { value: 'ANALYTICS_DASHBOARD_ADMIN_DELETE', label: '대시보드 관리자 삭제' },
+  { value: 'ANALYTICS_CHART_ADMIN_UNSHARE', label: '차트 관리자 공유 해제' },
+  { value: 'ANALYTICS_CHART_ADMIN_DELETE', label: '차트 관리자 삭제' },
+  { value: 'ANALYTICS_QUERY_ADMIN_UNSHARE', label: '쿼리 관리자 공유 해제' },
+  { value: 'ANALYTICS_QUERY_ADMIN_DELETE', label: '쿼리 관리자 삭제' },
+];
+
+/**
  * 액션 필터 드롭다운 그룹 — 항목이 30개를 넘어 성격별로 나눠 찾기 쉽게 한다.
  * 라벨 매핑(ACTION_LABEL_MAP)은 그룹과 무관하게 평면 목록(ACTION_TYPES)에서 만든다.
  */
@@ -153,6 +166,7 @@ const ACTION_GROUPS = [
   { label: '데이터셋 보안', items: DATASET_SECURITY_ACTION_TYPES },
   { label: '보안 설정', items: SECURITY_SETTINGS_ACTION_TYPES },
   { label: '스마트 작업 관리', items: PROACTIVE_ADMIN_ACTION_TYPES },
+  { label: '분석 자산 관리', items: ANALYTICS_ADMIN_ACTION_TYPES },
 ];
 
 /** 전체 액션 유형(평면) — 라벨 매핑용 */
@@ -278,6 +292,10 @@ const RESOURCES = [
   { value: 'ai_provider_hosting', label: 'AI 호스팅 위치' },
   // ProactiveJobAdminService.AUDIT_RESOURCE — 관리자 끄기·삭제(WD-192)
   { value: 'proactive_job', label: '스마트 작업' },
+  // AnalyticsAssetKind.table() — 관리자 공유 해제·삭제(WD-199)
+  { value: 'dashboard', label: '대시보드' },
+  { value: 'chart', label: '차트' },
+  { value: 'saved_query', label: '저장 쿼리' },
 ];
 
 /** 결과 필터 옵션 목록 */
