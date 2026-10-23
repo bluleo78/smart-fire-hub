@@ -1,6 +1,7 @@
 package com.smartfirehub.analytics.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.smartfirehub.analytics.dto.AddWidgetRequest;
 import com.smartfirehub.analytics.dto.CreateChartRequest;
@@ -10,13 +11,25 @@ import com.smartfirehub.analytics.dto.DashboardResponse;
 import com.smartfirehub.analytics.dto.UpdateChartRequest;
 import com.smartfirehub.analytics.dto.UpdateDashboardRequest;
 import com.smartfirehub.analytics.dto.UpdateSavedQueryRequest;
+import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.support.IntegrationTestBase;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import org.jooq.DSLContext;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 @Transactional
@@ -430,5 +443,220 @@ class AnalyticsDashboardServiceTest extends IntegrationTestBase {
     DashboardResponse afterRemove = dashboardService.getById(dashboard.id(), ownerUserId);
     assertThat(afterRemove.widgets()).extracting(w -> w.chartId()).containsExactly(myChart);
     assertThat(chartSharedInDb(othersChart)).isFalse();
+  }
+
+  // ── WD-202: 위젯 추가는 대시보드 행 잠금으로 직렬화하고, 같은 차트 중복을 서버에서 거부한다 ─────────────────────
+
+  private static final String DUPLICATE_CHART_MESSAGE = "이미 대시보드에 추가된 차트입니다";
+  private static final String LIMIT_MESSAGE = "대시보드에는 위젯을 최대 20개까지 넣을 수 있습니다";
+
+  @Test
+  void addWidget_sameChartTwice_rejectedAsConflict_andKeepsSingleWidget() {
+    // 웹 편집 화면만 막던 중복을 서버가 막는다 — AI 도구·API·차트 편집기 「대시보드에 추가」가 모두 이 경로를 탄다.
+    DashboardResponse dashboard =
+        dashboardService.create(
+            new CreateDashboardRequest("중복 차트 대시보드", null, false, null), ownerUserId);
+    Long chart = createChartAs(ownerUserId, "한 번만 들어갈 차트", createSavedQuery(), false);
+    dashboardService.addWidget(
+        dashboard.id(), new AddWidgetRequest(chart, 0, 0, 6, 4), ownerUserId);
+
+    // IllegalStateException 은 GlobalExceptionHandler 가 409 + 이 문구로 내보낸다(한도 초과와 같은 형태).
+    assertThatThrownBy(
+            () ->
+                dashboardService.addWidget(
+                    dashboard.id(), new AddWidgetRequest(chart, 6, 0, 6, 4), ownerUserId))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage(DUPLICATE_CHART_MESSAGE);
+    assertThat(dashboardService.getById(dashboard.id(), ownerUserId).widgets())
+        .extracting(w -> w.chartId())
+        .containsExactly(chart);
+  }
+
+  /**
+   * 동시 위젯 추가 경합(WD-202). 테스트 트랜잭션을 끈다 — 작업 스레드들이 서로의 커밋과 픽스처를 봐야 한다. 각 요청은 제품 경로({@code addWidget}
+   * 의 @Transactional)가 스스로 연 트랜잭션에서 돈다. 커밋된 픽스처는 finally 에서 지운다.
+   *
+   * <p>테스트 커넥션 풀이 2개라 경합 폭이 운영보다 좁다 — 잠금 유무를 결정적으로 가르는 것은 아래 {@link
+   * #addWidget_waitsForDashboardRowLock_thenSeesCommittedDuplicate} 이고, 이 테스트는 결과 불변식(한도·중복)을 확인한다.
+   */
+  @Test
+  @Transactional(propagation = Propagation.NOT_SUPPORTED)
+  void addWidget_concurrentRequests_neverExceedLimitOrDuplicate() throws Exception {
+    try {
+      Long queryId = createSavedQuery();
+      DashboardResponse dashboard =
+          dashboardService.create(
+              new CreateDashboardRequest("경합 대시보드", null, false, null), ownerUserId);
+      for (int i = 0; i < 18; i++) {
+        Long c = createChartAs(ownerUserId, "기존 차트 " + i, queryId, false);
+        dashboardService.addWidget(
+            dashboard.id(), new AddWidgetRequest(c, 0, i * 4, 6, 4), ownerUserId);
+      }
+      List<Long> newCharts = new ArrayList<>();
+      for (int i = 0; i < 12; i++) {
+        newCharts.add(createChartAs(ownerUserId, "새 차트 " + i, queryId, false));
+      }
+
+      // 서로 다른 차트 12건 동시 추가 → 남은 2칸만 성공, 나머지는 한도 409
+      Map<String, Integer> distinct = raceAddWidget(dashboard.id(), newCharts);
+      assertThat(distinct).containsExactlyInAnyOrderEntriesOf(Map.of("OK", 2, LIMIT_MESSAGE, 10));
+      assertThat(widgetChartIds(dashboard.id())).hasSize(20).doesNotHaveDuplicates();
+
+      // 같은 차트 8건 동시 추가(빈 대시보드) → 1건만 성공, 나머지는 중복 409
+      DashboardResponse empty =
+          dashboardService.create(
+              new CreateDashboardRequest("같은 차트 경합", null, false, null), ownerUserId);
+      Long sameChart = newCharts.get(0);
+      Map<String, Integer> same =
+          raceAddWidget(empty.id(), java.util.Collections.nCopies(8, sameChart));
+      assertThat(same)
+          .containsExactlyInAnyOrderEntriesOf(Map.of("OK", 1, DUPLICATE_CHART_MESSAGE, 7));
+      assertThat(widgetChartIds(empty.id())).containsExactly(sameChart);
+    } finally {
+      cleanupCommittedFixtures();
+    }
+  }
+
+  /**
+   * 잠금이 실제로 위젯 추가를 막는지 결정적으로 본다(WD-202). 다른 트랜잭션이 대시보드 행을 쥔 동안 addWidget 은 끝나지 않아야 하고, 그 트랜잭션이 같은
+   * 차트를 넣고 커밋하면 풀려난 addWidget 은 그 커밋을 보고 중복으로 거부해야 한다. 잠금이 없으면 addWidget 이 바로 끝나 같은 차트가 두 개가 된다.
+   */
+  @Test
+  @Transactional(propagation = Propagation.NOT_SUPPORTED)
+  void addWidget_waitsForDashboardRowLock_thenSeesCommittedDuplicate() throws Exception {
+    ExecutorService pool = Executors.newFixedThreadPool(2);
+    try {
+      DashboardResponse dashboard =
+          dashboardService.create(
+              new CreateDashboardRequest("잠금 대기 대시보드", null, false, null), ownerUserId);
+      Long chart = createChartAs(ownerUserId, "잠금 대기 차트", createSavedQuery(), false);
+
+      CountDownLatch locked = new CountDownLatch(1);
+      CountDownLatch release = new CountDownLatch(1);
+      // 첫 트랜잭션: 대시보드 행을 FOR UPDATE 로 잡고, 신호가 오면 같은 차트 위젯을 넣고 커밋한다(다른 요청의 추가를 흉내).
+      Future<?> holder =
+          pool.submit(
+              () ->
+                  inTenantFixture(
+                      () -> {
+                        dsl.execute(
+                            "SELECT id FROM dashboard WHERE id = ? FOR UPDATE", dashboard.id());
+                        locked.countDown();
+                        try {
+                          if (!release.await(30, TimeUnit.SECONDS)) {
+                            throw new AssertionError("release 신호가 오지 않았다");
+                          }
+                        } catch (InterruptedException e) {
+                          Thread.currentThread().interrupt();
+                          throw new AssertionError(e);
+                        }
+                        dsl.execute(
+                            "INSERT INTO dashboard_widget (dashboard_id, chart_id, position_x,"
+                                + " position_y, width, height) VALUES (?, ?, 0, 0, 6, 4)",
+                            dashboard.id(),
+                            chart);
+                      }));
+      assertThat(locked.await(30, TimeUnit.SECONDS)).isTrue();
+
+      CompletableFuture<Void> adder =
+          CompletableFuture.runAsync(
+              () -> {
+                TenantContext.set(DEFAULT_TEST_TENANT_ID);
+                try {
+                  dashboardService.addWidget(
+                      dashboard.id(), new AddWidgetRequest(chart, 6, 0, 6, 4), ownerUserId);
+                } finally {
+                  TenantContext.clear();
+                }
+              },
+              pool);
+
+      // 잠금을 쥔 동안에는 끝나면 안 된다(관측 조회는 풀 2개를 둘 다 쓰고 있어 하지 않는다).
+      Thread.sleep(1_000);
+      if (adder.isDone()) {
+        adder.get(); // 예외로 끝났으면 그대로 드러낸다
+        throw new AssertionError("addWidget 이 대시보드 행 잠금을 기다리지 않고 끝났다");
+      }
+
+      release.countDown();
+      holder.get(30, TimeUnit.SECONDS);
+      assertThatThrownBy(() -> adder.get(30, TimeUnit.SECONDS))
+          .hasCauseInstanceOf(IllegalStateException.class)
+          .hasRootCauseMessage(DUPLICATE_CHART_MESSAGE);
+      assertThat(widgetChartIds(dashboard.id())).containsExactly(chart);
+    } finally {
+      pool.shutdownNow();
+      cleanupCommittedFixtures();
+    }
+  }
+
+  /** 같은 대시보드에 addWidget 을 동시에 쏘고 결과를 "OK" 또는 409 문구별 건수로 모은다. 그 밖의 예외는 그대로 테스트 실패로 드러낸다. */
+  private Map<String, Integer> raceAddWidget(Long dashboardId, List<Long> chartIds)
+      throws Exception {
+    ExecutorService pool = Executors.newFixedThreadPool(chartIds.size());
+    CyclicBarrier start = new CyclicBarrier(chartIds.size());
+    try {
+      List<Future<String>> futures = new ArrayList<>();
+      for (Long chartId : chartIds) {
+        futures.add(
+            pool.submit(
+                () -> {
+                  // 운영의 요청 필터처럼 스레드마다 테넌트 컨텍스트를 세운다 — 없으면 트랜잭션에 GUC 가 안 붙는다.
+                  TenantContext.set(DEFAULT_TEST_TENANT_ID);
+                  try {
+                    start.await(30, TimeUnit.SECONDS);
+                    dashboardService.addWidget(
+                        dashboardId, new AddWidgetRequest(chartId, 0, 0, 6, 4), ownerUserId);
+                    return "OK";
+                  } catch (IllegalStateException e) {
+                    return e.getMessage();
+                  } finally {
+                    TenantContext.clear();
+                  }
+                }));
+      }
+      Map<String, Integer> outcomes = new TreeMap<>();
+      for (Future<String> f : futures) {
+        outcomes.merge(f.get(60, TimeUnit.SECONDS), 1, Integer::sum);
+      }
+      return outcomes;
+    } finally {
+      pool.shutdownNow();
+    }
+  }
+
+  /** 대시보드의 위젯 차트 id 들(DB 원본, 커밋된 값). */
+  private List<Long> widgetChartIds(Long dashboardId) {
+    return inTenantFixture(
+        () ->
+            dsl.select(DSL.field(DSL.name("chart_id"), Long.class))
+                .from(DSL.table(DSL.name("dashboard_widget")))
+                .where(DSL.field(DSL.name("dashboard_id"), Long.class).eq(dashboardId))
+                .fetch(DSL.field(DSL.name("chart_id"), Long.class)));
+  }
+
+  /** 트랜잭션을 끈 테스트가 커밋한 픽스처(이 클래스의 두 사용자와 그들이 만든 분석 자원)를 지운다. */
+  private void cleanupCommittedFixtures() {
+    awaitSecurityAudit();
+    List<Long> users = List.of(ownerUserId, otherUserId);
+    inTenantFixture(
+        () -> {
+          dsl.execute(
+              "DELETE FROM dashboard_widget WHERE dashboard_id IN"
+                  + " (SELECT id FROM dashboard WHERE created_by = ANY(?))",
+              (Object) users.toArray(new Long[0]));
+          dsl.execute(
+              "DELETE FROM dashboard WHERE created_by = ANY(?)",
+              (Object) users.toArray(new Long[0]));
+          dsl.execute(
+              "DELETE FROM chart WHERE created_by = ANY(?)", (Object) users.toArray(new Long[0]));
+          dsl.execute(
+              "DELETE FROM saved_query WHERE created_by = ANY(?)",
+              (Object) users.toArray(new Long[0]));
+          dsl.execute(
+              "DELETE FROM audit_log WHERE user_id = ANY(?)", (Object) users.toArray(new Long[0]));
+          dsl.execute(
+              "DELETE FROM \"user\" WHERE id = ANY(?)", (Object) users.toArray(new Long[0]));
+        });
   }
 }

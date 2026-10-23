@@ -185,8 +185,7 @@ public class AnalyticsDashboardService {
     DashboardResponse dashboard =
         dashboardRepository
             .findById(dashboardId, userId, widgets)
-            .orElseThrow(
-                () -> DashboardNotFoundException.forId(dashboardId));
+            .orElseThrow(() -> DashboardNotFoundException.forId(dashboardId));
 
     // 2. Enforce widget limit — 볼 수 없는 차트의 위젯은 데이터 조립에서 먼저 뺀다(WD-195).
     // 예전에는 위젯 루프에서 건너뛰기 전에 그 차트의 저장 쿼리를 이 조회자 자격으로 판정·실행하고 감사 기록(recordDelivered)까지 남겼다 —
@@ -287,17 +286,28 @@ public class AnalyticsDashboardService {
 
   @Transactional
   public DashboardResponse addWidget(Long dashboardId, AddWidgetRequest req, Long userId) {
-    // Verify dashboard ownership
+    // 대시보드 행을 먼저 잠가 같은 대시보드의 위젯 추가를 직렬화한다(WD-202). 잠금 없이 동시 요청 12건이 같은 개수(18)를 보고 모두 통과해
+    // 위젯이 29개까지 쌓였다. 잠금은 이 트랜잭션이 끝날 때 풀리므로 뒤 요청은 앞 요청의 삽입을 본 뒤 개수·중복을 판정한다.
+    if (!dashboardRepository.lockByIdForOwner(dashboardId, userId)) {
+      throw DashboardNotFoundException.forId(dashboardId);
+    }
+
+    // Verify dashboard ownership (공유 여부는 잠금 뒤에 읽어 최신 값을 쓴다)
     DashboardResponse dashboard =
         dashboardRepository
             .findByIdForOwner(dashboardId, userId)
-            .orElseThrow(
-                () -> DashboardNotFoundException.forId(dashboardId));
+            .orElseThrow(() -> DashboardNotFoundException.forId(dashboardId));
 
     // Verify chart access
     chartService
         .getByIdOptional(req.chartId(), userId)
         .orElseThrow(() -> ChartNotFoundException.forId(req.chartId()));
+
+    // 같은 차트는 한 대시보드에 한 번만(WD-202). 예전에는 웹 편집 화면만 막아 AI 도구·API·차트 편집기의 「대시보드에 추가」로는 중복이 쌓였다.
+    // 이미 쌓인 중복은 건드리지 않는다(DB 유일 제약 없음) — 새로 넣는 것만 거부한다. 409 문구는 웹 토스트·AI 도구 결과로 그대로 나간다.
+    if (widgetRepository.existsByDashboardIdAndChartId(dashboardId, req.chartId())) {
+      throw new IllegalStateException("이미 대시보드에 추가된 차트입니다");
+    }
 
     // Check widget limit — 문구는 화면 토스트로 그대로 나가므로 한국어(WD-196)
     int currentCount = widgetRepository.countByDashboardId(dashboardId);
@@ -325,10 +335,7 @@ public class AnalyticsDashboardService {
         .findByIdForOwner(dashboardId, userId)
         .orElseThrow(() -> DashboardNotFoundException.forId(dashboardId));
 
-    widgetRepository
-        .findById(widgetId, dashboardId)
-        .orElseThrow(
-            () -> widgetNotFound(widgetId));
+    widgetRepository.findById(widgetId, dashboardId).orElseThrow(() -> widgetNotFound(widgetId));
 
     widgetRepository.update(widgetId, req);
     return getById(dashboardId, userId);
@@ -349,8 +356,8 @@ public class AnalyticsDashboardService {
   /**
    * 이 대시보드에 없는 위젯 id 거절(400) — 단건 수정·삭제 공용.
    *
-   * <p>WD-196: 영어 원문(「Widget not found: 1 in dashboard 3」)이 토스트로 그대로 보였다. 한국어로 바꾸고 대시보드 id 는 빼서, 일괄 배치
-   * 저장의 「이 대시보드에 없는 위젯이 포함되어 있습니다」와 같은 결로 맞춘다.
+   * <p>WD-196: 영어 원문(「Widget not found: 1 in dashboard 3」)이 토스트로 그대로 보였다. 한국어로 바꾸고 대시보드 id 는 빼서, 일괄
+   * 배치 저장의 「이 대시보드에 없는 위젯이 포함되어 있습니다」와 같은 결로 맞춘다.
    */
   private static IllegalArgumentException widgetNotFound(Long widgetId) {
     return new IllegalArgumentException("위젯을 찾을 수 없습니다: " + widgetId);

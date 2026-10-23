@@ -260,6 +260,8 @@ class AnalyticsDashboardServiceUnitTest {
             LocalDateTime.now(),
             0L,
             false);
+    // WD-202: 개수를 세기 전에 대시보드 행을 잠근다(소유자 대시보드라 잠금 성공).
+    when(dashboardRepository.lockByIdForOwner(dashboardId, userId)).thenReturn(true);
     when(dashboardRepository.findByIdForOwner(dashboardId, userId))
         .thenReturn(Optional.of(dashboard));
     when(chartService.getByIdOptional(chartId, userId)).thenReturn(Optional.of(chart));
