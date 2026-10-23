@@ -54,6 +54,11 @@ class ApiCallErrorMessagesTest {
     assertThat(ApiCallErrorMessages.responseTooLarge(10))
         .isEqualTo("응답 크기가 제한(10MB)을 넘었습니다 — 응답 크기 제한을 늘리거나 페이지 크기를 줄이세요");
     assertThat(ApiCallErrorMessages.tooManyRedirects(5)).isEqualTo("리다이렉트가 너무 많습니다(최대 5회)");
+    // WD-212: 데이터 경로 문구 — Python 실행기 test_api_call_errors.py 가 같은 문자열을 단언한다.
+    assertThat(ApiCallErrorMessages.dataPathNotFound("$.data.items"))
+        .isEqualTo("응답에서 데이터 경로를 찾을 수 없습니다: $.data.items");
+    assertThat(ApiCallErrorMessages.dataPathInvalid("$.data["))
+        .isEqualTo("데이터 경로(JSONPath) 형식이 올바르지 않습니다: $.data[ — 예: $.data.items");
   }
 
   @ParameterizedTest

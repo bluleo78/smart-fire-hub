@@ -81,3 +81,19 @@ def test_describe_exception_classification():
 
     other = RuntimeError("bad thing at https://a.example/p?serviceKey=SECRET123 now")
     assert errors.describe_exception(other, 1000, "h") == "API 호출 중 오류가 발생했습니다: bad thing at https://a.example/p now"
+
+
+def test_data_path_and_load_literals_wd212():
+    """WD-212: 데이터 경로 문구는 Java ApiCallErrorMessages(dataPathNotFound·dataPathInvalid)와 같은 문자열이다
+    (ApiCallErrorMessagesTest.sharedLiterals_matchPythonExecutor 가 같은 문장을 단언). 적재·예기치 못한 오류 문구는 Java 에
+    대응이 없어 실행기 전용이다."""
+    assert errors.data_path_not_found_message("$.data.items") == "응답에서 데이터 경로를 찾을 수 없습니다: $.data.items"
+    assert errors.data_path_invalid_message("$.data[") == (
+        "데이터 경로(JSONPath) 형식이 올바르지 않습니다: $.data[ — 예: $.data.items"
+    )
+    assert errors.load_failed_message() == (
+        "API 응답을 출력 데이터셋에 적재하지 못했습니다 — 필드 매핑과 출력 데이터셋 컬럼 형식을 확인하세요"
+    )
+    assert errors.unexpected_error_message() == (
+        "API 호출 스텝 실행 중 예기치 못한 오류가 발생했습니다 — 잠시 후 다시 실행하고, 계속되면 관리자에게 문의하세요"
+    )

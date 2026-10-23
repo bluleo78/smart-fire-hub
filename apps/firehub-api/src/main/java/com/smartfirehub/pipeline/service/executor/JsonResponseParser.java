@@ -1,6 +1,7 @@
 package com.smartfirehub.pipeline.service.executor;
 
 import com.jayway.jsonpath.InvalidJsonException;
+import com.jayway.jsonpath.InvalidPathException;
 import com.jayway.jsonpath.JsonPath;
 import com.jayway.jsonpath.PathNotFoundException;
 import java.math.BigDecimal;
@@ -47,15 +48,25 @@ public class JsonResponseParser {
     try {
       extracted = JsonPath.read(jsonResponse, dataPath);
     } catch (PathNotFoundException e) {
-      // 실행 상세·「테스트 호출」에 그대로 보이는 문구라 한국어로 둔다(WD-150).
-      throw new ApiCallException("응답에서 데이터 경로를 찾을 수 없습니다: " + dataPath, e);
+      // 실행 상세·「테스트 호출」에 그대로 보이는 문구라 한국어로 둔다(WD-150). Python 실행기도 같은 규칙·같은 문구로 실패한다(WD-212) —
+      // 정의된 경로(필드·인덱스만)가 없거나, 와일드카드·필터 앞까지의 경로가 없을 때다. 와일드카드 뒤가 비면 예외 없이 빈 목록(0행)이다.
+      throw new ApiCallException(ApiCallErrorMessages.dataPathNotFound(dataPath), e);
     } catch (InvalidJsonException e) {
       // HTML 오류 페이지 등 JSON 이 아닌 응답 — jayway 의 영어 원문 대신 공용 안내를 쓴다(WD-150, Python 실행기와 같은 문구).
       throw new ApiCallException(ApiCallErrorMessages.notJson(), e);
+    } catch (InvalidPathException e) {
+      // JSONPath 문법 오류(WD-212). PathNotFoundException 이 이 클래스의 하위라 위 catch 뒤에 둔다
+      // (순서를 바꾸면 「찾을 수 없음」이 문법 오류로 보인다). 예전에는 jayway 영어 원문이 스텝 오류로 그대로 저장됐다.
+      // Python 실행기와 같은 문구다.
+      throw new ApiCallException(ApiCallErrorMessages.dataPathInvalid(dataPath), e);
     }
 
     List<?> rawList;
-    if (extracted instanceof List<?> list) {
+    if (extracted == null) {
+      // 경로 값이 JSON null 이면 0행으로 본다(WD-212) — 빈 배열과 같은 「데이터 없음」이다. 예전에는 List.of(null) 이 NPE 를 던져
+      // 메시지 없는 실패가 저장됐다. Python 실행기도 null 을 0행으로 처리한다.
+      rawList = List.of();
+    } else if (extracted instanceof List<?> list) {
       rawList = list;
     } else {
       rawList = List.of(extracted);

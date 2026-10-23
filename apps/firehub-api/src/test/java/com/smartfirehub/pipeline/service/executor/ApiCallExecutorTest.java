@@ -703,6 +703,43 @@ class ApiCallExecutorTest {
   }
 
   // -------------------------------------------------------------------------
+  // WD-212: 데이터 경로 규칙·문구 — Python 실행기(tests/test_api_call_executor.py)가 같은 규칙과 같은 문자열을 단언한다
+  // -------------------------------------------------------------------------
+
+  private static final String WD212_JSON =
+      """
+      {"data":{"items":[{"id":1},{"id":2}],"empty":[],"single":{"id":3},"nul":null},"list":[{"id":1},{"id":2}]}
+      """;
+
+  private static final List<ApiCallConfig.FieldMapping> WD212_MAPPING =
+      List.of(new ApiCallConfig.FieldMapping("id", "id", null, null, null, null));
+
+  @Test
+  void parseAndMap_dataPathRules_matchPythonExecutor() {
+    // 빈 배열 매치는 0행 정상, 단일 객체는 1행, JSON null 은 0행(예전에는 NPE), 와일드카드 뒤가 비면 0행
+    assertThat(jsonParser.parseAndMap(WD212_JSON, "$.data.items", WD212_MAPPING, null)).hasSize(2);
+    assertThat(jsonParser.parseAndMap(WD212_JSON, "$.data.empty", WD212_MAPPING, null)).isEmpty();
+    assertThat(jsonParser.parseAndMap(WD212_JSON, "$.data.single", WD212_MAPPING, null))
+        .containsExactly(Map.of("id", 3));
+    assertThat(jsonParser.parseAndMap(WD212_JSON, "$.data.nul", WD212_MAPPING, null)).isEmpty();
+    assertThat(jsonParser.parseAndMap(WD212_JSON, "$.list[*]", WD212_MAPPING, null)).hasSize(2);
+    assertThat(jsonParser.parseAndMap(WD212_JSON, "$.list[*].zz", WD212_MAPPING, null)).isEmpty();
+  }
+
+  @Test
+  void parseAndMap_pathNotFound_andSyntaxError_areKorean() {
+    for (String path : List.of("$.data.missing", "$.list[5]", "$.data.items.id", "$.missing[*]")) {
+      assertThatThrownBy(() -> jsonParser.parseAndMap(WD212_JSON, path, WD212_MAPPING, null))
+          .isInstanceOf(ApiCallException.class)
+          .hasMessage("응답에서 데이터 경로를 찾을 수 없습니다: " + path);
+    }
+    // 문법 오류 — 예전에는 jayway 영어 원문(InvalidPathException)이 그대로 스텝 오류가 됐다
+    assertThatThrownBy(() -> jsonParser.parseAndMap(WD212_JSON, "$..", WD212_MAPPING, null))
+        .isInstanceOf(ApiCallException.class)
+        .hasMessage("데이터 경로(JSONPath) 형식이 올바르지 않습니다: $.. — 예: $.data.items");
+  }
+
+  // -------------------------------------------------------------------------
   // Test 11: null dataType preserves native Jackson types (Integer, Boolean, String)
   // -------------------------------------------------------------------------
 

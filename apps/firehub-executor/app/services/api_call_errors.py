@@ -103,6 +103,41 @@ def not_json_message() -> str:
     return "응답이 JSON 형식이 아닙니다 — 대상 API 의 응답 형식을 확인하세요"
 
 
+# ---------------------------------------------------------------------------
+# 데이터 경로(JSONPath)·적재·예기치 못한 오류(WD-212)
+# ---------------------------------------------------------------------------
+
+def data_path_not_found_message(data_path: str) -> str:
+    """응답에 데이터 경로가 없을 때(Java ``ApiCallErrorMessages.dataPathNotFound`` 와 같은 문장).
+
+    예전 실행기는 이 경우 ``[]`` 를 돌려 「완료·0행」으로 끝났고, REPLACE 출력이면 옛 데이터가 남아 갱신이 멈춘 것을
+    사용자가 알 수 없었다. Java 경로는 같은 상황을 실패로 알린다 — 같은 규칙·같은 문장으로 맞춘다.
+    """
+    return f"응답에서 데이터 경로를 찾을 수 없습니다: {data_path}"
+
+
+def data_path_invalid_message(data_path: str) -> str:
+    """데이터 경로가 JSONPath 문법에 맞지 않을 때(Java ``ApiCallErrorMessages.dataPathInvalid`` 와 같은 문장).
+
+    파서 원문(영어, 라이브러리마다 다름)은 싣지 않는다 — Java(jayway)와 Python(jsonpath_ng)의 원문이 달라 두 경로 문구가 갈린다.
+    """
+    return f"데이터 경로(JSONPath) 형식이 올바르지 않습니다: {data_path} — 예: $.data.items"
+
+
+def load_failed_message() -> str:
+    """API 응답을 출력 테이블에 넣다가 DB 오류가 났을 때(psycopg2 오류).
+
+    원문(내부 테이블 이름·SQL·값)은 로그에만 남긴다. Java 로컬 경로(ApiCallExecutor)에는 아직 대응 문구가 없어(적재 예외 원문이
+    그대로 나간다) 이 문장은 실행기 전용이다 — Java 에 같은 분류를 넣게 되면 이 문장을 그대로 쓸 것.
+    """
+    return "API 응답을 출력 데이터셋에 적재하지 못했습니다 — 필드 매핑과 출력 데이터셋 컬럼 형식을 확인하세요"
+
+
+def unexpected_error_message() -> str:
+    """분류하지 못한 실행기 내부 예외. 원문은 로그에만 남긴다(load_failed_message 와 같은 이유로 실행기 전용 문장)."""
+    return "API 호출 스텝 실행 중 예기치 못한 오류가 발생했습니다 — 잠시 후 다시 실행하고, 계속되면 관리자에게 문의하세요"
+
+
 def retries_exhausted_message(retries: int, last_error: str) -> str:
     """재시도를 다 쓴 뒤의 문구 — 마지막 원인을 반드시 담는다. 재시도 0회면 「API 호출에 실패했습니다: 원인」."""
     if retries <= 0:
