@@ -3,6 +3,7 @@ package com.smartfirehub.dataset.service;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -15,6 +16,7 @@ import com.smartfirehub.dataset.exception.ColumnModificationException;
 import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.rowsearch.SearchColumnRepository;
+import com.smartfirehub.mapping.service.MappingReferenceService;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
@@ -42,6 +44,8 @@ class DatasetServiceUpdateColumnOrderTest {
   @Mock private DataTableService dataTableService;
   @Mock private DataTableRowService dataTableRowService;
   @Mock private SearchColumnRepository searchColumnRepository;
+  // WD-186: updateColumn 이 매핑 잠금·타입 판정·이름 연쇄 갱신을 부르므로 가짜로 둔다(없으면 null 주입으로 NPE).
+  @Mock private MappingReferenceService mappingReferenceService;
 
   @InjectMocks private DatasetService datasetService;
 
@@ -87,10 +91,11 @@ class DatasetServiceUpdateColumnOrderTest {
                     primaryKey)));
   }
 
-  /** 어떤 물리 DDL 도, 메타 저장도 하지 않았는지. */
+  /** 어떤 물리 DDL 도, 메타 저장(매핑의 필드 이름 연쇄 갱신 포함)도 하지 않았는지. */
   private void verifyNoDdl() {
     verify(dataTableService, never()).renameIndex(anyString(), anyString(), anyString());
     verify(dataTableService, never()).renameColumn(anyString(), anyString(), anyString());
+    verify(mappingReferenceService, never()).renameColumn(anyLong(), anyString(), anyString());
     verify(dataTableService, never())
         .alterColumnType(anyString(), anyString(), anyString(), any(), any());
     verify(dataTableService, never()).setColumnNullable(anyString(), anyString(), anyBoolean());
